@@ -155,9 +155,8 @@ print apply(inc@, 10)  ' Prints 11
 
 jdBasic is an active project. Future plans include:
 
-* **Advanced APL Features**: Implementing `SCAN` (cumulative reduce), `ROTATE`, and allowing function references in `OUTER`.
-* **More Data Structures**: Adding first-class support for associative arrays (maps/dictionaries).
-* **Expanded Standard Library**: Creating more modules for features like enhanced file I/O or graphics.
+* **Advanced APL Features**: Implementing `SCAN` (cumulative reduce), `ROTATE`.
+* **Expanded Standard Library**: Creating more modules for features like enhanced file I/O or gaming stuff.
 * **Improved Error Reporting**: Providing more descriptive messages and context for runtime errors.
 * **Cross-platform Builds**.
 
