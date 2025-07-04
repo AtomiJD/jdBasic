@@ -117,6 +117,7 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
 ### Filesystem
 
   * **`DIR [path]`**: Lists files and directories. Supports wildcards like `*` and `?`.
+  * **`DIR$([path])->String`**: Lists files and directories and return them as string array. Supports wildcards like `*` and `?`.
   * **`CD "path"`**: Changes the current working directory.
   * **`PWD`**: Prints the current working directory.
   * **`MKDIR "path"`**: Creates a new directory.
@@ -209,6 +210,11 @@ This suite of functions provides the building blocks for creating and training n
   * **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix.
   * **`GRADE(vector)`**: Returns the indices that would sort the vector.
   * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, \*, /, MOD, \>, \<, =, ^) or a reference to a function (srq@).
+  * **`APPEND(array, value) -> array`**: Appends a value or another array to an array, returning a new array.
+  * **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array.
+  * **`SHIFT(array, shift_vector, \[fill_value\]) -> array`**: Non-cyclically shifts an N-dimensional array.
+  * **`CONVOLVE(array, kernel, wrap_mode) -> array`**: Performs a 2D convolution of an array with a kernel.
+  * **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.
 
 ### File I/O Functions
 
