@@ -1,0 +1,52 @@
+' Example 1: Basic replacement
+PRINT FORMAT$("Hello, {}. Welcome to {}!", "World", "jdBasic")
+' Output: Hello, World. Welcome to jdBasic!
+
+' Example 2: Positional arguments
+PRINT FORMAT$("Second arg: {1}, First arg: {0}", "First", "Second")
+' Output: Second arg: Second, First arg: First
+
+' Example 3: Number formatting (padding, precision, hex)
+val = 42
+
+PRINT FORMAT$("Pi is approx. {:0.4f}", pi)
+PRINT FORMAT$("The value is [{:5d}]", val)
+PRINT FORMAT$("The value in hex is {:#x}", val)
+
+
+' Example 4: Formatting a complex type (like an array)
+a = RESHAPE(IOTA(4), [2,2])
+PRINT FORMAT$("My matrix is: {}", a)
+
+
+' --- ALIGNMENT EXAMPLES (Corrected) ---
+s$ = "jdBasic"
+width = 20
+
+PRINT "1: Left, 2: Right, 3: Centered"
+PRINT FORMAT$("|{:<" + STR$(width) + "}|", s$) ' Left aligned
+PRINT FORMAT$("|{:>" + STR$(width) + "}|", s$) ' Right aligned
+PRINT FORMAT$("|{:^" + STR$(width) + "}|", s$) ' Center aligned
+
+
+' --- FILLING EXAMPLES ---
+word$ = "Hello"
+
+PRINT FORMAT$("Fill with '*': {:*<15}", word$)
+PRINT FORMAT$("Fill with '-': {:->15}", word$)
+PRINT FORMAT$("Fill with '.': {:.^15}", word$)
+
+
+' --- NUMBER ALIGNMENT ---
+n1 = 123
+n2 = 45.678
+
+' Right-align in a field of 10, filling with spaces
+PRINT FORMAT$("Value: [{:>10}]", n1)
+
+' Right-align and pad with zeros to a width of 10
+PRINT FORMAT$("Value: [{:0>10}]", n1)
+
+' Align and format a floating point number at the same time
+PRINT FORMAT$("Price: [{:>12.2f}]", n2)
+PRINT FORMAT$("Price: [{:0>12.2f}]", n2)

@@ -1,0 +1,49 @@
+' ===============================================
+' == jdBASIC Mouse Drawing Demo
+' ===============================================
+'
+' This program demonstrates the MOUSEX, MOUSEY,
+' and MOUSEB functions.
+'
+' --- CONTROLS ---
+' - Move the mouse to position the cursor.
+' - Hold the LEFT mouse button (1) to draw.
+' - Hold the RIGHT mouse button (3) to erase.
+' - Press the ESC key to quit.
+'
+' -----------------------------------------------
+
+SCREEN 800, 600, "jdBasic Mouse Drawing"
+
+' Main drawing loop
+DO
+  ' Get mouse coordinates
+  CLS 20, 20, 30 ' Clear to a dark background
+  TEXT 10, 10, "Left-click and drag to draw. Right-click to erase. ESC to quit.", 200, 200, 200
+  MX = MOUSEX()
+  MY = MOUSEY()
+
+  ' Check if the left mouse button is held down
+  IF MOUSEB(1) THEN
+    ' Draw a small circle at the mouse position
+    CIRCLE MX, MY, 3, 255, 200, 100
+  ENDIF
+
+  ' Check if the right mouse button is held down
+  IF MOUSEB(3) THEN
+    ' Erase by drawing a larger black circle
+    CIRCLE MX, MY, 10, 20, 20, 30 ' Use the background color
+  ENDIF
+
+  ' Redraw the screen to show any new drawing
+  SCREENFLIP
+  
+  ' Use INKEY$ to check for the ESC key (ASCII 27)
+  KEY$ = INKEY$()
+  IF KEY$ <> "" AND ASC(KEY$) = 27 THEN
+    EXITDO
+  ENDIF
+
+  ' Small delay to prevent 100% CPU usage
+  SLEEP 10
+LOOP

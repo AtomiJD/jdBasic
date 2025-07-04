@@ -1,0 +1,135 @@
+' ===================================================================
+' == jdBASIC Generic Function Plotting Library
+' ===================================================================
+'
+' This library provides a subroutine, PLOTTER, to draw a 2D graph
+' of any user-defined function.
+'
+' --- HOW TO USE ---
+' 1. Define a function in your code that takes one argument (x)
+'    and returns a numeric value (y).
+'    e.g., func my_func(x)
+'              return SIN(x) * 5
+'          endfunc
+'
+' 2. Call the PLOTTER subroutine with the required parameters.
+'
+' -------------------------------------------------------------------
+
+' --- Coordinate Mapping Functions (Corrected Syntax) ---
+' These functions convert math coordinates to screen pixel coordinates.
+func MAP_X(x)
+    return PLOT_LEFT + (x - X_MIN) * PLOT_W / (X_MAX - X_MIN)
+endfunc
+
+func MAP_Y(y)
+    return PLOT_BOTTOM - (y - Y_MIN) * PLOT_H / (Y_MAX - Y_MIN)
+endfunc
+
+SUB PLOTTER(FN_TO_PLOT, X_MIN, X_MAX, Y_MIN, Y_MAX, TITLE$)
+    ' --- Parameters ---
+    ' FN_TO_PLOT: A function reference to the function to be plotted.
+    ' X_MIN, X_MAX: The domain (min and max x-values) for the plot.
+    ' Y_MIN, Y_MAX: The range (min and max y-values) for the plot.
+    ' TITLE$: A string to display as the title of the graph.
+    ' ----------------------------------------------------------------
+
+    ' --- Configuration ---
+    SCREEN_W = 800
+    SCREEN_H = 600
+    MARGIN = 60 ' Pixels to leave around the edge of the screen
+
+    ' Plotting area dimensions
+    PLOT_W = SCREEN_W - (2 * MARGIN)
+    PLOT_H = SCREEN_H - (2 * MARGIN)
+    PLOT_LEFT = MARGIN
+    PLOT_TOP = MARGIN
+    PLOT_RIGHT = PLOT_LEFT + PLOT_W
+    PLOT_BOTTOM = PLOT_TOP + PLOT_H
+
+    ' --- Drawing ---
+    SCREEN SCREEN_W, SCREEN_H, "jdBASIC Function Plotter"
+    CLS 0, 15, 30 ' Clear to a dark blue background
+
+    ' Draw Plot Title
+    TEXT 10, 10, TITLE$, 200, 200, 255
+
+    ' Draw Plot Area Bounding Box
+    RECT PLOT_LEFT, PLOT_TOP, PLOT_W, PLOT_H, 50, 80, 100, FALSE
+
+    ' --- Draw Axes and Labels ---
+    ' Calculate position of math origin (0,0) on the screen
+    ORIGIN_SX = MAP_X(0)
+    ORIGIN_SY = MAP_Y(0)
+    
+    ' Draw X-Axis (only if it's visible within the plot area)
+    IF ORIGIN_SY >= PLOT_TOP AND ORIGIN_SY <= PLOT_BOTTOM THEN
+        LINE PLOT_LEFT, ORIGIN_SY, PLOT_RIGHT, ORIGIN_SY, 100, 130, 150
+    ENDIF
+
+    ' Draw Y-Axis (only if it's visible)
+    IF ORIGIN_SX >= PLOT_LEFT AND ORIGIN_SX <= PLOT_RIGHT THEN
+        LINE ORIGIN_SX, PLOT_TOP, ORIGIN_SX, PLOT_BOTTOM, 100, 130, 150
+    ENDIF
+    
+    ' Draw Axis Labels
+    TEXT PLOT_LEFT - 10, PLOT_BOTTOM + 10, STR$(X_MIN), 180, 180, 180
+    TEXT PLOT_RIGHT - 10, PLOT_BOTTOM + 10, STR$(X_MAX), 180, 180, 180
+    TEXT PLOT_LEFT - 40, PLOT_BOTTOM, STR$(Y_MIN), 180, 180, 180
+    TEXT PLOT_LEFT - 40, PLOT_TOP, STR$(Y_MAX), 180, 180, 180
+
+    ' --- Plot the Function ---
+    ' Calculate step size for smooth plotting (one pixel at a time)
+    X_STEP = (X_MAX - X_MIN) / PLOT_W
+
+    FOR x = X_MIN TO X_MAX STEP X_STEP
+        ' Calculate current point and next point
+        y1 = FN_TO_PLOT(x)
+        y2 = FN_TO_PLOT(x + X_STEP)
+
+        ' Convert math coordinates to screen coordinates
+        sx1 = MAP_X(x)
+        sy1 = MAP_Y(y1)
+        sx2 = MAP_X(x + X_STEP)
+        sy2 = MAP_Y(y2)
+
+        ' Draw a line segment, but only if it's within the plot's Y-range
+        IF (y1 >= Y_MIN AND y1 <= Y_MAX) OR (y2 >= Y_MIN AND y2 <= Y_MAX) THEN
+            LINE sx1, sy1, sx2, sy2, 150, 255, 150
+        ENDIF
+    NEXT x
+
+    ' Update the screen to show the final plot
+    SCREENFLIP
+ENDSUB
+
+
+' ===================================================================
+' ==                  EXAMPLE USAGE
+' ===================================================================
+
+' 1. Define the functions you want to plot using the func..endfunc syntax.
+'    The function must take one parameter.
+func SINE_WAVE(x)
+    return SIN(x) * 2
+endfunc
+
+func PARABOLA(x)
+    return (x * x) - 4
+endfunc
+
+func COMPLEX_FUNC(x)
+    return COS(x) * x
+endfunc
+
+' --- Plot the Sine Wave ---
+PLOTTER SINE_WAVE@, -5, 5, -3, 3, "y = SIN(x) * 2"
+SLEEP 4000 ' Pause for 4 seconds to view the plot
+
+' --- Plot the Parabola ---
+PLOTTER PARABOLA@, -4, 4, -5, 12, "y = x^2 - 4" 
+SLEEP 4000
+
+' --- Plot the more Complex Function ---
+PLOTTER COMPLEX_FUNC@, -10, 10, -10, 10, "y = COS(x) * x" 
+SLEEP 4000

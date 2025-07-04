@@ -1,0 +1,119 @@
+' ===================================================================
+' == jdBASIC Generic Data Plotting Library
+' == Version 2.0
+' ===================================================================
+'
+' This library provides a subroutine, DATA_PLOTTER, to draw a 2D
+' bar or line chart from a 2D data array (e.g., from CSVREADER).
+'
+' -------------------------------------------------------------------
+
+SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
+    ' --- Parameters ---
+    ' DATA_ARRAY:    A 2D array containing the data to plot.
+    ' PLOT_TYPE$:    A string, either "BAR" or "LINE".
+    ' TITLE$:        A string to display as the title of the graph.
+    ' X_LABEL_COL:   The 0-based column index for x-axis labels.
+    ' Y_VALUE_COL:   The 0-based column index for y-axis values.
+    ' ----------------------------------------------------------------
+
+    ' --- Configuration ---
+    SCREEN_W = 800
+    SCREEN_H = 600
+    MARGIN = 80 ' Increased margin for labels
+    
+    PLOT_W = SCREEN_W - (2 * MARGIN)
+    PLOT_H = SCREEN_H - (2 * MARGIN)
+    PLOT_LEFT = MARGIN
+    PLOT_TOP = MARGIN
+    PLOT_BOTTOM = PLOT_TOP + PLOT_H
+
+    ' --- Data Extraction & Analysis ---
+    X_LABELS = SLICE(DATA_ARRAY, 1, X_LABEL_COL)
+    Y_VALUES = SLICE(DATA_ARRAY, 1, Y_VALUE_COL)
+    
+    NUM_POINTS = LEN(Y_VALUES)
+    IF NUM_POINTS = 0 THEN
+        PRINT "Error: No data to plot."
+        RETURN
+    ENDIF
+
+    Y_MAX = MAX(Y_VALUES) * 1.1 ' Find max value and add 10% for padding
+    Y_MIN = 0 ' For bar and line charts, Y-axis starts at 0
+
+    ' --- Coordinate Mapping Functions ---
+    func MAP_Y(y)
+        return PLOT_BOTTOM - (y - Y_MIN) * PLOT_H / (Y_MAX - Y_MIN)
+    endfunc
+
+    ' --- Drawing ---
+    SCREEN SCREEN_W, SCREEN_H, "jdBASIC Data Plotter"
+    CLS 20, 30, 40 ' Dark background
+
+    ' Draw Title and Bounding Box
+    TEXT 10, 10, TITLE$, 220, 220, 255
+    RECT PLOT_LEFT, PLOT_TOP, PLOT_W, PLOT_H, 60, 90, 110, FALSE
+
+    ' Draw Y-Axis and its labels
+    LINE PLOT_LEFT, PLOT_TOP, PLOT_LEFT, PLOT_BOTTOM, 120, 150, 170
+    TEXT PLOT_LEFT - 40, PLOT_BOTTOM - 15, STR$(Y_MIN), 180, 180, 180
+    TEXT PLOT_LEFT - 40, PLOT_TOP, STR$(Y_MAX), 180, 180, 180
+    
+    ' Draw X-Axis
+    LINE PLOT_LEFT, PLOT_BOTTOM, PLOT_LEFT + PLOT_W, PLOT_BOTTOM, 120, 150, 170
+
+    ' --- Plotting Logic ---
+    IF UCASE$(PLOT_TYPE$) = "BAR" THEN
+        BAR_WIDTH = (PLOT_W / NUM_POINTS) * 0.8 ' 80% of available space
+        BAR_SPACING = (PLOT_W / NUM_POINTS) * 0.2
+
+        FOR i = 0 TO NUM_POINTS - 1
+            x_pos = PLOT_LEFT + (i * (BAR_WIDTH + BAR_SPACING)) + BAR_SPACING
+            bar_height = MAP_Y(0) - MAP_Y(Y_VALUES[i])
+            
+            RECT x_pos, MAP_Y(Y_VALUES[i]), BAR_WIDTH, bar_height, 100, 180, 255, TRUE
+            ' Draw X Label centered under the bar
+            TEXT x_pos, PLOT_BOTTOM + 10, X_LABELS[i], 200, 200, 200
+        NEXT i
+    ENDIF
+    IF UCASE$(PLOT_TYPE$) = "LINE" THEN
+        POINT_SPACING = PLOT_W / (NUM_POINTS - 1)
+        
+        FOR i = 0 TO NUM_POINTS - 2 ' Loop to second to last point
+            x1 = PLOT_LEFT + i * POINT_SPACING
+            y1 = MAP_Y(Y_VALUES[i])
+            
+            x2 = PLOT_LEFT + (i + 1) * POINT_SPACING
+            y2 = MAP_Y(Y_VALUES[i+1])
+
+            LINE x1, y1, x2, y2, 255, 100, 100
+            ' Draw X Label under the point
+            TEXT x1 - 10, PLOT_BOTTOM + 10, X_LABELS[i], 200, 200, 200
+        NEXT i
+        ' Draw the label for the very last point
+        last_x = PLOT_LEFT + (NUM_POINTS - 1) * POINT_SPACING
+        TEXT last_x - 10, PLOT_BOTTOM + 10, X_LABELS[NUM_POINTS-1], 200, 200, 200
+    ENDIF
+
+    SCREENFLIP
+ENDSUB
+
+
+' ===================================================================
+' ==                  EXAMPLE USAGE
+' ===================================================================
+
+
+PRINT "Plotting Bar Chart from sales_data.csv..."
+SALES_ARRAY = CSVREADER("sales_data.csv", ",", TRUE) ' True = has header
+PRINT SALES_ARRAY
+' Plot data, type "BAR", title, col 0 for X-labels, col 1 for Y-values
+DATA_PLOTTER SALES_ARRAY, "BAR", "Monthly Sales Revenue", 0, 1
+SLEEP 5000 ' Pause to view
+
+PRINT "Plotting Line Chart from stock_prices.csv..."
+STOCK_ARRAY = CSVREADER("stock_prices.csv", ",", TRUE)
+PRINT STOCK_ARRAY
+' Plot data, type "LINE", title, col 0 for X-labels, col 1 for Y-values
+DATA_PLOTTER STOCK_ARRAY, "LINE", "Stock Price Fluctuation", 0, 1
+SLEEP 5000 ' Pause to view

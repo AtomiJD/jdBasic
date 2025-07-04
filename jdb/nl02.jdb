@@ -1,0 +1,35 @@
+' --- Part 2: A Layer of Neurons ---
+
+PRINT "--- Simulating a Layer of 4 Neurons ---"
+PRINT
+
+' The same 3 inputs as before. We can think of this as a 1x3 matrix.
+INPUTS = [[0.5, -1.2, 0.8]]
+
+' Now, we have 4 neurons, so we need a weight matrix.
+' The shape must be (number of inputs) x (number of neurons).
+' So, a 3x4 matrix. Each *column* represents the weights for one neuron.
+' Row 1 weights for input 1 to each of the 4 neurons
+' Row 2 weights for input 2 to each of the 4 neurons
+' Row 3 weights for input 3 to each of the 4 neurons
+WEIGHTS = [[0.8, -0.2,  0.3, 1.0],  [0.1,  0.4, -0.5, 0.2],  [-0.4, 0.9,  0.1, 0.8]]  
+
+' Each of the 4 neurons has its own bias. This is a 1x4 vector.
+BIASES = [[0.5, -0.1, 0.2, -0.3]]
+
+PRINT "Input Vector (1x3):"
+PRINT FRMV$(INPUTS)
+PRINT
+PRINT "Weight Matrix (3x4):"
+PRINT FRMV$(WEIGHTS)
+PRINT
+PRINT "Bias Vector (1x4):"
+PRINT FRMV$(BIASES)
+PRINT
+
+' The entire forward pass calculation for all 4 neurons at once!
+' The result of INPUTS (1x3) @ WEIGHTS (3x4) is a 1x4 matrix.
+LAYER_OUTPUTS = MATMUL(INPUTS, WEIGHTS) + BIASES
+
+PRINT "Layer Outputs (1x4):"
+PRINT FRMV$(LAYER_OUTPUTS)

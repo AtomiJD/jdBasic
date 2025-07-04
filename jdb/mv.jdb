@@ -1,0 +1,117 @@
+Print "' --- Array-Scalar Math ---"
+V = IOTA(7)
+Print "IOTA(7): ";V
+M = RESHAPE(V, [2, 4])
+Print "M = RESHAPE(V, [2, 4]): "; M
+Print
+
+Print "Reverse REVERSE([10, 20, 30])"
+PRINT REVERSE([10, 20, 30])
+Print
+
+Print "T = TRANSPOSE([[1,2],[3,4]])"
+T = TRANSPOSE([[1,2],[3,4]])
+PRINT T
+Print
+
+Print "' --- Array-Array Math ---"
+V = IOTA(5)
+PRINT "Original Vector: "; V
+PRINT "V * 10 = "; V * 10
+PRINT "100 + V = "; 100 + V
+PRINT ""
+
+V2 = V + 10
+PRINT "V2 is V + 10: "; V2
+PRINT "V + V2 = "; V + V2
+PRINT ""
+
+Print "' --- Matrix Math ---"
+A = RESHAPE(IOTA(6), [2, 3])
+B = A * 2
+PRINT "Matrix A:"; A
+PRINT "Matrix B (A*2):"; B
+PRINT "A + B ="; A + B
+Print 
+
+'Print "'--- This will cause a shape mismatch error, as expected ---"
+'PRINT A + V 
+
+PRINT "--- Numeric Reductions ---"
+V = [2, 3, 4, 5, 6]
+PRINT "Vector is "; V
+PRINT "SUM: "; SUM(V)         ' Should be 20
+PRINT "PRODUCT: "; PRODUCT(V) ' Should be 720
+PRINT "MIN: "; MIN(V)         ' Should be 2
+PRINT "MAX: "; MAX(V)         ' Should be 6
+PRINT ""
+
+PRINT "--- Boolean Reductions ---"
+B1 = [TRUE, TRUE, TRUE]
+B2 = [TRUE, FALSE, TRUE]
+PRINT "B1 is "; B1
+PRINT "ANY(B1): "; ANY(B1)     ' Should be TRUE
+PRINT "ALL(B1): "; ALL(B1)     ' Should be TRUE
+PRINT ""
+PRINT "B2 is "; B2
+PRINT "ANY(B2): "; ANY(B2)     ' Should be TRUE
+PRINT "ALL(B2): "; ALL(B2)     ' Should be FALSE
+PRINT ""
+
+PRINT "--- Reductions work on matrices too! ---"
+M = RESHAPE(IOTA(9), [3,3])
+PRINT "Matrix M:"; M
+PRINT "SUM of M: "; SUM(M)     ' Should be 45
+Print
+
+PRINT "--- Testing MATMUL ---"
+A = [[1, 2], [3, 4]]
+B = [[5, 6], [7, 8]]
+C = MATMUL(A, B)
+PRINT "Matrix A:"; A
+PRINT "Matrix B:"; B
+PRINT "MATMUL(A, B) ="; C  ' Should be [[19, 22], [43, 50]]
+PRINT ""
+
+PRINT "--- Testing OUTER ---"
+V1 = [10, 20]
+V2 = [1, 2, 3]
+PRINT "Vector V1: "; V1
+PRINT "Vector V2: "; V2
+M_MULT = OUTER(V1, V2, "*")
+PRINT "OUTER(V1, V2, *) ="; M_MULT
+
+M_ADD = OUTER(V1, V2, "+")
+PRINT "OUTER(V1, V2, +) ="; M_ADD
+Print
+
+Print "--- Slicing and Sorting ---"
+Print
+
+V = IOTA(8)
+PRINT "Original Vector V: "; V
+PRINT ""
+PRINT "TAKE(3, V) = "; TAKE(3, V)     ' Should be [1 2 3]
+PRINT "TAKE(-3, V) = "; TAKE(-3, V)   ' Should be [6 7 8]
+PRINT ""
+PRINT "DROP(3, V) = "; DROP(3, V)     ' Should be [4 5 6 7 8]
+PRINT "DROP(-3, V) = "; DROP(-3, V)   ' Should be [1 2 3 4 5]
+Print
+
+' Create an unsorted array of scores
+SCORES = [98, 75, 100, 82, 91]
+PRINT "Original Scores: "; SCORES
+PRINT ""
+
+' Get the indices that WOULD sort the scores
+G = GRADE(SCORES)
+PRINT "Grade of Scores: "; G  ' Should be [1 3 4 0 2] (indices of 75, 82, 91, 98, 100)
+PRINT ""
+
+' Now, use the grade vector to print the scores in sorted order
+PRINT "Scores sorted by rank:"
+FOR I = 0 TO LEN(G)-1
+    PRINT SCORES[G[I]]
+NEXT I
+
+

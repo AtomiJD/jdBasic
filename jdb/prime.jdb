@@ -1,0 +1,77 @@
+' APL-inspired Sieve of Eratosthenes for jdBasic
+' -----------------------------------------------
+
+PRINT "--- APL Style Sieve ---"
+LIMIT = 60000
+T=tick()
+
+
+' 1. Create a boolean mask, initially all TRUE, for numbers 1 to 100.
+'    We use RESHAPE on a single TRUE value to fill the array.
+IS_PRIME = RESHAPE([TRUE], [LIMIT])
+
+' 2. Mark 1 as not prime (arrays are 0-indexed).
+IS_PRIME[0] = FALSE
+
+' 3. Loop from 2 up to the square root of the limit.
+FOR P = 2 TO SQR(LIMIT)
+    ' If P is still considered prime...
+    IF IS_PRIME[P-1] THEN
+        ' ...mark all of its multiples as FALSE.
+        ' The first multiple to mark is P*P.
+        FOR J = P*P TO LIMIT STEP P
+            IS_PRIME[J-1] = FALSE
+        NEXT J
+    ENDIF
+NEXT P
+
+' 4. Print all the numbers whose entry in the IS_PRIME mask is still TRUE.
+PRINT "Primes up to "; LIMIT; ":"
+FOR I = 1 TO LIMIT
+    IF IS_PRIME[I-1] THEN
+        PRINT I; " ";
+    ENDIF
+NEXT I
+print
+PRINT "Time: "; tick()-t
+print
+
+' Traditional Functional/Procedural Approach for jdBasic
+' ----------------------------------------------------
+
+PRINT "--- Functional Style ---"
+
+' A reusable function to test if a single number N is prime.
+FUNC IS_PRIME(N)
+    ' Numbers less than 2 are not prime.
+    IF N < 2 THEN RETURN FALSE
+    ' 2 is the only even prime.
+    IF N = 2 THEN RETURN TRUE
+    ' All other even numbers are not prime.
+    IF N MOD 2 = 0 THEN RETURN FALSE
+
+    ' Check for odd divisors from 3 up to the square root of N.
+    LIMIT = SQR(N)
+    FOR D = 3 TO LIMIT STEP 2
+        IF N MOD D = 0 THEN
+            ' A divisor was found, so it's not prime.
+            RETURN FALSE
+        ENDIF
+    NEXT D
+
+    ' If the loop finishes, no divisors were found. It's prime.
+    RETURN TRUE
+ENDFUNC
+
+' Main loop: Test every number from 1 to 100 using our function.
+T=tick()
+PRINT "Primes up to "; LIMIT
+FOR I = 1 TO LIMIT
+    IF IS_PRIME(I) THEN
+        PRINT I; " ";
+    ENDIF
+NEXT I
+print
+PRINT "Time: "; tick()-t
+print
+

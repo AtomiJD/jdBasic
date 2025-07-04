@@ -1,0 +1,47 @@
+PRINT "Factorial of 5 is: "; FAC(5)
+PRINT "Factorial of 10 is: "; FAC(10)
+PRINT "Factorial of 0 is: "; FAC(0)
+PRINT "Factorial of 1 is: "; FAC(1)
+
+' Test a larger value
+PRINT "Factorial of 170 is: "; FAC(170)
+
+SETLOCALE "de_DE"
+
+' Program to calculate the odds for the German Lotto "6 aus 49"
+' This uses the FAC() factorial function and the combination formula.
+'
+' The formula for combinations ("n choose k") is:
+' C(n, k) = n! / (k! * (n-k)!)
+
+PRINT "--- German Lotto '6 aus 49' Odds Calculator ---"
+PRINT
+
+' --- Part 1: Calculate the odds of getting 6 correct numbers ---
+n = 49  ' Total numbers to choose from
+k = 6   ' Numbers to choose
+
+PRINT "Calculating the number of ways to choose"; k; "numbers from a set of"; n; "..."
+PRINT "Formula: FAC(n) / (FAC(k) * FAC(n - k))"
+PRINT
+
+' Calculate n! / (k! * (n-k)!) using the FAC function
+combinations = FAC(n) / (FAC(k) * FAC(n - k))
+
+PRINT "Total possible combinations for 6 numbers: "; combinations
+PRINT "The chance of matching all 6 numbers is 1 in "; combinations
+PRINT "--------------------------------------------------------"
+
+' --- Part 2: Include the "Superzahl" for the jackpot ---
+' The German Lotto jackpot requires matching the 6 numbers AND an
+' additional "Superzahl", which is a digit from 0 to 9 (10 possibilities).
+
+PRINT
+PRINT "Calculating jackpot odds including the Superzahl (0-9)..."
+PRINT
+
+superzahl_options = 10
+jackpot_combinations = combinations * superzahl_options
+
+PRINT "Total possible jackpot combinations (6 numbers + Superzahl):"; jackpot_combinations
+PRINT "The chance of winning the jackpot is 1 in "; jackpot_combinations; "!"

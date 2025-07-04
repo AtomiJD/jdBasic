@@ -1,0 +1,226 @@
+' ==========================================================
+' == An LLM with a Multi-Layer Transformer in jdBasic
+' == Goal: Use stacked, normalized self-attention blocks for stable training.
+' ==========================================================
+
+CLS
+PRINT "--- Building a Multi-Layer Transformer LLM ---"
+PRINT
+
+' --- Helper Functions (declared before use) ---
+' NOTE: These functions are already efficient for this BASIC dialect.
+' Using more complex vector functions would not improve their performance.
+FUNC ONE_HOT_ENCODE_MATRIX(token_array, size)
+    rows = LEN(token_array)
+    matrix = []
+    DIM matrix[rows, size]
+    FOR r = 0 TO rows - 1
+        FOR c = 0 to size - 1
+            matrix[r, c] = 0
+        NEXT c
+        matrix[r, token_array[r]] = 1
+    NEXT r
+    RETURN matrix
+ENDFUNC
+
+FUNC SAMPLE(probs_array)
+    r = RND(1)
+    cdf = 0
+    num_probs = LEN(probs_array)
+    FOR i = 0 TO num_probs - 1
+        cdf = cdf + probs_array[i]
+        IF r < cdf THEN
+            RETURN i
+        ENDIF
+    NEXT i
+    RETURN num_probs - 1
+ENDFUNC
+
+' --- 1. Vocabulary and Data Setup ---
+' *** MODIFIED: Using more training data is the best way to improve loss ***
+'TEXT_DATA$ = "der schnelle braune fuchs springt über den faulen hund. the quick brown fox jumps over the lazy dog. zwei flinke boxer jagen die quirlige eva."
+TEXT_DATA$ = TXTREADER$("trainingtext.txt")
+PRINT "Vocabulary Data: "; TEXT_DATA$
+
+' NOTE: This method of finding unique characters is clear and effective for a one-time setup.
+VOCAB = []
+FOR I = 0 TO LEN(TEXT_DATA$) - 1
+    CHAR$ = MID$(TEXT_DATA$, I + 1, 1)
+    IS_IN_VOCAB = 0
+    if LEN(VOCAB) > 0 then
+        FOR J = 0 TO LEN(VOCAB) - 1
+            IF VOCAB[J] = CHAR$ THEN
+                IS_IN_VOCAB = 1
+                EXITFOR
+            ENDIF
+        NEXT J
+    Endif
+    IF IS_IN_VOCAB = 0 THEN
+        VOCAB = APPEND(VOCAB, CHAR$)
+    ENDIF
+NEXT I
+
+VOCAB_SIZE = LEN(VOCAB)
+VOCAB_MAP = {}
+FOR I = 0 TO VOCAB_SIZE - 1
+    VOCAB_MAP{VOCAB[I]} = I
+NEXT I
+
+PRINT "Vocabulary Size:"; VOCAB_SIZE
+PRINT
+
+
+' --- 2. Prepare Training Data ---
+INPUT_TOKENS_ARRAY = TENSOR.TOKENIZE(TEXT_DATA$, VOCAB_MAP)
+TARGET_TOKENS_ARRAY = APPEND(TAKE(LEN(INPUT_TOKENS_ARRAY) - 1, DROP(1, INPUT_TOKENS_ARRAY)), 0)
+
+
+' --- 3. Model Definition ---
+' *** MODIFIED: Increased model depth for more learning capacity ***
+HIDDEN_DIM = 128
+EMBEDDING_DIM = HIDDEN_DIM
+NUM_LAYERS = 4 ' --- Stacking four Transformer blocks ---
+
+MODEL = {}
+MODEL{"embedding"} = TENSOR.CREATE_LAYER("EMBEDDING", {"vocab_size": VOCAB_SIZE, "embedding_dim": EMBEDDING_DIM})
+MODEL{"output_norm"} = TENSOR.CREATE_LAYER("LAYER_NORM", {"dim": HIDDEN_DIM})
+MODEL{"output"} = TENSOR.CREATE_LAYER("DENSE", {"input_size": HIDDEN_DIM, "units": VOCAB_SIZE})
+
+' Create the stack of Transformer layers
+MODEL{"layers"} = []
+FOR i = 0 TO NUM_LAYERS - 1
+    layer = {}
+    layer{"attention"} = TENSOR.CREATE_LAYER("ATTENTION", {"embedding_dim": EMBEDDING_DIM})
+    layer{"norm1"} = TENSOR.CREATE_LAYER("LAYER_NORM", {"dim": HIDDEN_DIM})
+    layer{"ffn1"} = TENSOR.CREATE_LAYER("DENSE", {"input_size": HIDDEN_DIM, "units": HIDDEN_DIM * 2})
+    layer{"ffn2"} = TENSOR.CREATE_LAYER("DENSE", {"input_size": HIDDEN_DIM * 2, "units": HIDDEN_DIM})
+    layer{"norm2"} = TENSOR.CREATE_LAYER("LAYER_NORM", {"dim": HIDDEN_DIM})
+    MODEL{"layers"} = APPEND(MODEL{"layers"}, layer)
+NEXT i
+
+
+' *** MODIFIED: Tuned hyperparameters for better convergence ***
+LEARNING_RATE = 0.1
+OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": LEARNING_RATE})
+EPOCHS = 20000 ' Increased epochs for deeper model
+
+' The core Transformer Block forward pass
+' *** MODIFIED: Function now accepts the model to use as a parameter ***
+FUNC FORWARD_PASS(current_model, input_tokens)
+    SEQ_LEN = LEN(input_tokens)
+
+    ' --- 1. Embedding + Positional Encoding ---
+    one_hot_matrix = ONE_HOT_ENCODE_MATRIX(input_tokens, VOCAB_SIZE)
+    one_hot_tensor = TENSOR.FROM(one_hot_matrix)
+    embedding_weights = current_model{"embedding"}{"weights"}
+    x = TENSOR.MATMUL(one_hot_tensor, embedding_weights)
+    x = x + TENSOR.POSITIONAL_ENCODING(SEQ_LEN, HIDDEN_DIM)
+
+    ' --- 2. Pass through the stack of Transformer Layers ---
+    FOR i = 0 TO NUM_LAYERS - 1
+        layer = current_model{"layers"}[i]
+        
+        ' --- Pre-LN Self-Attention ---
+        norm1_out = TENSOR.LAYERNORM(x, layer{"norm1"}{"gain"}, layer{"norm1"}{"bias"})
+        attn_layer = layer{"attention"}
+        Wq = attn_layer{"Wq"}
+        Wk = attn_layer{"Wk"}
+        Wv = attn_layer{"Wv"}
+        Q = TENSOR.MATMUL(norm1_out, Wq)
+        K = TENSOR.MATMUL(norm1_out, Wk)
+        V = TENSOR.MATMUL(norm1_out, Wv)
+        attn_scores = TENSOR.MATMUL(Q, TENSOR.FROM(TRANSPOSE(TENSOR.TOARRAY(K)))) / SQR(HIDDEN_DIM)
+                
+        attn_probs = TENSOR.SOFTMAX(attn_scores, TRUE) 
+
+        attention_output = TENSOR.MATMUL(attn_probs, V)
+        x = x + attention_output ' Residual connection
+
+        ' --- Pre-LN Feed-Forward ---
+        norm2_out = TENSOR.LAYERNORM(x, layer{"norm2"}{"gain"}, layer{"norm2"}{"bias"})
+        ffn1_out = TENSOR.RELU(TENSOR.MATMUL(norm2_out, layer{"ffn1"}{"weights"}) + layer{"ffn1"}{"bias"})
+        ffn2_out = TENSOR.MATMUL(ffn1_out, layer{"ffn2"}{"weights"}) + layer{"ffn2"}{"bias"}
+        x = x + ffn2_out ' Residual connection
+    NEXT i
+    
+    ' --- 3. Final Output ---
+    final_norm = TENSOR.LAYERNORM(x, current_model{"output_norm"}{"gain"}, current_model{"output_norm"}{"bias"})
+    logits = TENSOR.MATMUL(final_norm, current_model{"output"}{"weights"}) + current_model{"output"}{"bias"}
+    
+    RETURN logits
+ENDFUNC
+
+' --- 5. Training Loop ---
+PRINT "--- Starting Training... ---"
+PRINT
+
+FOR EPI = 1 TO EPOCHS
+    logits_tensor = FORWARD_PASS(MODEL, INPUT_TOKENS_ARRAY)
+    target_one_hot_matrix = ONE_HOT_ENCODE_MATRIX(TARGET_TOKENS_ARRAY, VOCAB_SIZE)
+    target_tensor = TENSOR.FROM(target_one_hot_matrix)
+    
+    loss_tensor = TENSOR.CROSS_ENTROPY_LOSS(logits_tensor, target_tensor)
+    TENSOR.BACKWARD loss_tensor
+    MODEL = TENSOR.UPDATE(MODEL, OPTIMIZER)
+
+    IF EPI MOD 100 = 0 THEN
+        PRINT "Epoch:"; EPI; ", Loss:"; TENSOR.TOARRAY(loss_tensor)[0]
+    ENDIF
+    
+    ' *** MODIFIED: Implement learning rate decay for better fine-tuning ***
+    IF EPI MOD 500 = 0 AND LEARNING_RATE > 0.005 THEN
+        LEARNING_RATE = LEARNING_RATE / 2
+        OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": LEARNING_RATE})
+        PRINT "New learning rate: "; LEARNING_RATE
+    ENDIF
+NEXT EPI
+
+PRINT
+PRINT "--- Training Complete ---"
+PRINT
+
+' --- 6. Save and Load the Trained Model ---
+
+PRINT "--- Saving Model ---"
+TENSOR.SAVEMODEL MODEL, "llm_model.json"
+PRINT "Model saved to llm_model.json"
+PRINT
+
+PRINT "--- Loading Model for Inference ---"
+LOADED_MODEL = TENSOR.LOADMODEL("llm_model.json")
+IF LEN(LOADED_MODEL)=0 THEN
+    PRINT "Failed to load model!"
+    END
+ENDIF
+PRINT "Model loaded successfully."
+PRINT
+
+' --- 7. Inference / Text Generation using the LOADED model ---
+PRINT "--- Generating Text from Loaded Model ---"
+generated_text$ = "Computerwelt"
+PRINT "Seed text: "; generated_text$
+
+FOR i = 1 TO 200
+    inference_input_tokens = TENSOR.TOKENIZE(generated_text$, VOCAB_MAP)
+    
+    all_logits_tensor = FORWARD_PASS(LOADED_MODEL, inference_input_tokens)
+    all_logits_array = TENSOR.TOARRAY(all_logits_tensor)
+    
+    last_row_index = LEN(inference_input_tokens) - 1
+    last_logits_vector = SLICE(all_logits_array, 0, last_row_index)
+    
+    last_logits_tensor = TENSOR.FROM(last_logits_vector)
+    probs_tensor = TENSOR.SOFTMAX(last_logits_tensor)
+    
+    probs_array = TENSOR.TOARRAY(probs_tensor)
+    
+    next_token_id = SAMPLE(probs_array)
+    
+    generated_text$ = generated_text$ + VOCAB[next_token_id]
+    
+NEXT i
+
+PRINT
+PRINT "Generated Output:"
+PRINT generated_text$
+PRINT

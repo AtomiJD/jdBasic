@@ -1,0 +1,87 @@
+' =================================================================
+' NeReLa Basic Program to Read Records from an Access Database
+' =================================================================
+
+' --- IMPORTANT ---
+' You must change this path to the full, correct path of your
+' Access database file.
+db_path = "D:\usr\dev\c\NeReLaBasicInterpreter\jdb\Orders.accdb"
+table_name = "Orders"
+
+PRINT "--- Access Database Reader ---"
+PRINT "Connecting to: "; db_path
+PRINT ""
+
+' 1. Create the necessary ADO COM objects.
+'    The Connection object manages the connection to the database.
+'    The Recordset object holds the data retrieved from a table.
+conn = CREATEOBJECT("ADODB.Connection")
+rs = CREATEOBJECT("ADODB.Recordset")
+
+' 2. Define the connection string.
+'    For modern .accdb files, you need the "ACE" provider.
+'    This requires the Microsoft Access Database Engine to be installed.
+conn_str = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + db_path
+
+' 3. Open the connection to the database.
+'    This is like logging into the database file.
+conn.Open(conn_str)
+PRINT "Connection successful."
+
+' 4. Define the SQL query to select all records from the table.
+sql = "SELECT * FROM " + table_name
+
+' 5. Open the recordset.
+'    This executes the SQL query on the opened connection and
+'    loads the results into the 'rs' object. The cursor is now
+'    at the first record.
+rs.Open(sql, conn)
+
+SETLOCALE "de-DE"
+PRINT "Recordset opened. Reading data..."
+PRINT "-------------------------------------"
+
+' 6. Loop through all the records in the recordset.
+'    The loop continues as long as the 'EOF' (End of File)
+'    property of the recordset is FALSE.
+IF NOT rs.EOF THEN
+    rs.MoveFirst()
+    DO WHILE NOT rs.EOF
+        ' Access the data in each field by its name using the Fields collection.
+
+        record_id = rs.Fields("ID").Value
+        customer = rs.Fields("Customer").Value
+        order_date = rs.Fields("OrderDate").Value
+        order_Amount = rs.Fields("Amount").Value
+        order_Price = rs.Fields("Price").Value
+        order_Description = rs.Fields("Description").Value
+
+        ' Print the retrieved values for the current record.
+        ' Calculate the total for the current record
+        order_Total = order_Amount * order_Price
+        ' Define the format string.
+        ' {:.2Lf} formats the number with a comma for thousands and 2 decimal places using locales
+        format_str = "ID: {:6} | Customer: {:20} | Date: {} | Amount: {:.2f} | Price: {:.2Lf} {} | Total: {:>10.2Lf} {} | Desc: {}"
+
+        ' Use the FORMAT$ function to create the output string
+        output_line = FORMAT$(format_str, record_id, customer, order_date, order_Amount, order_Price, "€", order_Total, "€", order_Description)
+
+        ' Print the single formatted line
+        PRINT output_line
+
+        ' Move the cursor to the next record in the set.
+        rs.MoveNext()
+    LOOP
+ELSE 
+    PRINT "No Records"
+ENDIF 
+PRINT "-------------------------------------"
+PRINT "End of records."
+
+' 7. Clean up by closing the recordset and the connection.
+'    This releases the file lock and frees up resources.
+rs.Close()
+conn.Close()
+
+PRINT "Database connection closed. Program finished."
+

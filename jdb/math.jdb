@@ -1,0 +1,29 @@
+export module MATH
+
+' This function will be public because of the 'export' keyword.
+' Other programs that import this module can use it.
+export func add(a, b)
+    return a + b
+endfunc
+
+' This function is private to this module because it does NOT have 'export'.
+' It can be called by other functions inside this file, but not from outside.
+func secret_multiplier()
+    return 2
+endfunc
+
+' This exported function demonstrates calling a private function.
+export func add_and_double(a, b)
+    ' First, add the two numbers using the public 'add' function
+    result = add(a, b)
+    
+    ' Then, multiply by a secret internal value
+    result = result * secret_multiplier()
+    
+    return result
+endfunc
+
+' This is an exported procedure.
+export sub print_sum(a, b)
+    print a; " + "; b; " = "; add(a,b)
+endsub

@@ -1,0 +1,86 @@
+' ==========================================================
+' == jdBasic Sprite System Test Program
+' ==
+' == This program demonstrates loading, creating, moving,
+' == and detecting collisions between sprites.
+' ==========================================================
+
+' --- 1. Initialization ---
+PRINT "Initializing Graphics and Sound..."
+SCREEN 800, 600, "jdBasic Sprite Test"
+SOUND.INIT
+
+' --- 2. Load Assets ---
+' NOTE: You must provide 'player.png' and 'enemy.png' files
+' in the same directory as the interpreter to run this demo.
+' They should be small images (e.g., 32x32 pixels).
+PRINT "Loading sprite images..."
+SPRITE.LOAD 1, "player.png" ' Assign image to type_id 1
+SPRITE.LOAD 2, "enemy.png"  ' Assign image to type_id 2
+
+' Configure a simple sound voice for collision feedback
+SOUND.VOICE 0, "SQUARE", 0.01, 0.1, 0.5, 0.2
+
+' --- 3. Create Game Objects ---
+PRINT "Creating sprites..."
+PLAYER_ID = SPRITE.CREATE(1, 400, 500) ' Create player sprite from type 1
+ENEMY1_ID = SPRITE.CREATE(2, 100, 100) ' Create enemy sprite from type 2
+ENEMY2_ID = SPRITE.CREATE(2, 700, 150) ' Create another enemy
+
+' --- 4. Set Initial Velocities ---
+' Make the enemies move automatically
+SPRITE.SET_VELOCITY ENEMY1_ID, 2, 1.5
+SPRITE.SET_VELOCITY ENEMY2_ID, -1.5, 2
+
+' --- 5. Main Game Loop ---
+PRINT "Starting main loop... Press ESC to quit."
+DO
+  ' --- Handle Input: Exit on ESC key ---
+  k$ = INKEY$
+  IF k$ = CHR$(27) THEN ' 27 is the ASCII code for ESC
+    EXITDO
+  ENDIF
+
+  ' --- Player Control: Move player sprite to mouse position ---
+  SPRITE.MOVE PLAYER_ID, MOUSEX(), MOUSEY()
+
+  ' --- Update Game State ---
+  SPRITE.UPDATE ' Move all sprites based on their set velocities
+
+  ' --- Simple AI: Bounce enemies off the screen edges ---
+  ' A real game would need GET_VELOCITY functions to do this properly.
+  ' Here we just reset the position for simplicity.
+  IF SPRITE.GET_X(ENEMY1_ID) < 0 OR SPRITE.GET_X(ENEMY1_ID) > 770 THEN
+      SPRITE.MOVE ENEMY1_ID, 400, 100
+  ENDIF
+  IF SPRITE.GET_Y(ENEMY2_ID) < 0 OR SPRITE.GET_Y(ENEMY2_ID) > 570 THEN
+      SPRITE.MOVE ENEMY2_ID, 400, 100
+  ENDIF
+
+  ' --- Check for Collisions ---
+  COLLISION_STATUS$ = "No Collision"
+  ' Check if the player sprite is touching either enemy sprite
+  IF SPRITE.COLLISION(PLAYER_ID, ENEMY1_ID) OR SPRITE.COLLISION(PLAYER_ID, ENEMY2_ID) THEN
+      COLLISION_STATUS$ = "COLLISION!"
+      SOUND.PLAY 0, 220 ' Play a low 'A' note
+  ENDIF
+
+  ' --- Drawing Phase ---
+  CLS 0, 0, 50 ' Clear screen to a dark blue
+
+  SPRITE.DRAW_ALL ' Draw all active sprites at their new positions
+
+  ' Draw UI / Status Text
+  TEXT 10, 10, "jdBasic Sprite Demo", 255, 255, 0 ' Yellow
+  TEXT 10, 40, "Move mouse to control player. Press ESC to quit.", 200, 200, 200 ' Grey
+  TEXT 650, 10, COLLISION_STATUS$, 255, 0, 0 ' Red
+
+  SCREENFLIP ' Push everything drawn to the window
+
+  SLEEP 16 ' Wait for ~16ms to target roughly 60 FPS
+
+LOOP UNTIL FALSE ' Loop "forever" until EXITDO is called
+
+' --- 6. Shutdown ---
+PRINT "Program finished."
+' The graphics system will be shut down automatically by the interpreter.

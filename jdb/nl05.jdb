@@ -1,0 +1,121 @@
+' ==========================================================
+' == An Autodiff Neural Network in jdBasic (Corrected)
+' == Goal: Learn the XOR logic gate with the new high-level API
+' ==========================================================
+
+' --- 1. Define Training Data ---
+' The four possible inputs for the XOR problem. [cite: 21]
+TRAINING_INPUT_DATA = [[0, 0], [0, 1], [1, 0], [1, 1]]
+' The corresponding correct outputs for XOR. [cite: 22]
+TRAINING_OUTPUT_DATA = [[0], [1], [1], [0]]
+
+' Convert the raw data arrays into Tensors to enable automatic differentiation. [cite: 23]
+INPUTS = TENSOR.FROM(TRAINING_INPUT_DATA)
+TARGETS = TENSOR.FROM(TRAINING_OUTPUT_DATA)
+
+
+' --- 2. Define the Neural Network Model ---
+' Model is now a Map to conform to the new API
+MODEL = {}
+
+' Layer 1: A dense layer with 2 inputs and 3 hidden units (neurons). [cite: 25]
+HIDDEN_LAYER = TENSOR.CREATE_LAYER("DENSE", {"input_size": 2, "units": 3})
+' Layer 2: A dense layer with 3 inputs (from hidden layer) and 1 output unit. [cite: 26]
+OUTPUT_LAYER = TENSOR.CREATE_LAYER("DENSE", {"input_size": 3, "units": 1})
+
+' Layers are stored in the "layers" key of the model map
+MODEL{"layers"} = [HIDDEN_LAYER, OUTPUT_LAYER]
+
+
+' --- 3. Setup the Optimizer and Training Parameters ---
+' The optimizer will update the model's weights and biases based on the gradients. [cite: 28]
+' SGD (Stochastic Gradient Descent) is a simple and effective optimizer. [cite: 28]
+OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": 0.1})
+EPOCHS = 15000 ' The number of times to iterate over the training data.
+
+
+' --- 4. Define Helper Functions ---
+
+' The forward pass function takes the model and an input tensor,
+' and returns the model's prediction. [cite: 31]
+FUNC MODEL_FORWARD(current_model, input_tensor)
+    temp_tensor = input_tensor
+    model_layers = current_model{"layers"}
+    ' Process the input through each layer in the model. [cite: 32]
+    FOR i = 0 TO LEN(model_layers) - 1
+        layer = model_layers[i]
+        
+        ' Get the weights and biases for the current layer. [cite: 33]
+        weights = layer{"weights"}
+        bias = layer{"bias"}
+        
+        ' Apply the layer's logic: output = sigmoid(input * weights + bias)
+        temp_tensor = MATMUL(temp_tensor, weights) + bias
+        temp_tensor = TENSOR.SIGMOID(temp_tensor)
+    NEXT i
+    RETURN temp_tensor
+ENDFUNC
+
+' The loss function measures how wrong the model's predictions are. [cite: 34]
+' We use Mean Squared Error (MSE). [cite: 34]
+FUNC MSE_LOSS(predicted_tensor, actual_tensor)
+    ' Calculate the difference (error) between prediction and actual target. [cite: 35]
+    errors = actual_tensor - predicted_tensor
+    ' Square the errors. [cite: 36]
+    squared_errors = errors ^ 2
+    ' Return the average of the squared errors. [cite: 37]
+    RETURN SUM(squared_errors) / LEN(TENSOR.TOARRAY(errors))[0]
+ENDFUNC
+
+
+' --- 5. The Training Loop ---
+CLS
+PRINT "--- Starting Training for XOR Gate ---"
+
+FOR epoch = 1 TO EPOCHS
+    ' --- a) Forward Pass ---
+    ' Get the model's current predictions for the training inputs. [cite: 38]
+    PREDICTIONS = MODEL_FORWARD(MODEL, INPUTS)
+
+    ' --- b) Calculate Loss ---
+    ' Calculate how far off the predictions are from the actual targets. [cite: 39]
+    ' The result is a Tensor that is the root of our computation graph. [cite: 39]
+    LOSS = MSE_LOSS(PREDICTIONS, TARGETS)
+    
+    ' --- c) Backpropagation ---
+    ' This one command calculates the gradient (derivative) of the loss
+    ' with respect to every parameter (weight and bias) in the model. [cite: 41]
+    TENSOR.BACKWARD LOSS
+
+    ' --- d) Update Parameters ---
+    ' The optimizer uses the calculated gradients to update the model's
+    ' weights and biases, nudging them in the right direction to reduce the loss. [cite: 42]
+    MODEL = TENSOR.UPDATE(MODEL, OPTIMIZER)
+
+    ' --- e) Print Progress ---
+    IF epoch MOD 1000 = 0 THEN
+        PRINT "Epoch:"; epoch; ", Loss:"; TENSOR.TOARRAY(LOSS) 
+    ENDIF
+NEXT epoch
+
+' --- 6. Save the Trained Model ---
+PRINT
+PRINT "--- Training Complete ---"
+TENSOR.SAVEMODEL MODEL, "xor_model.jmd"
+PRINT "Model saved to xor_model.jmd"
+PRINT
+
+
+' --- 7. Verification and Final Predictions ---
+PRINT "--- Verifying Final Predictions ---"
+final_predictions_array = TENSOR.TOARRAY(PREDICTIONS)
+
+input_pair = TRAINING_INPUT_DATA
+
+predicted_val = final_predictions_array
+
+target_val = TRAINING_OUTPUT_DATA
+
+PRINT "Input: :   "; input_pair
+PRINT "Target:    "; target_val
+PRINT "Predicted: "; predicted_val

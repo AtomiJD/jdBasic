@@ -1,0 +1,54 @@
+' --- File Writer Demo ---
+REPORT$ = "jdBasic File Report" + vbNewLine
+REPORT$ = REPORT$ + "---------------------" + vbNewLine
+REPORT$ = REPORT$ + "Date: " + DATE$() + vbNewLine
+REPORT$ = REPORT$ + "Status: OK"
+
+TXTWRITER "report.txt", REPORT$
+PRINT "report.txt has been written with correct newlines."
+
+' You can also use other constants we added, like PI
+PRINT "The value of PI is: "; PI
+
+
+PRINT "--- Testing CSVWRITER ---"
+' --- Writing a CSV with a Header Row ---
+
+PRINT "Preparing data and headers..."
+
+' 1. Create the array of headers.
+HEADERS = ["ID", "Value1", "Value2"]
+
+' 2. Create the numeric data matrix.
+DATA_MATRIX = RESHAPE(IOTA(12), [4, 3])
+DATA_MATRIX = DATA_MATRIX * 1.1
+
+' 3. Call CSVWRITER with all four arguments.
+CSVWRITER "data_with_header.csv", DATA_MATRIX, ";", HEADERS
+
+PRINT "File 'data_with_header.csv' has been written successfully!"
+
+PRINT "File export test complete."
+
+
+' --- Locale Formatting Demo ---
+
+MY_NUMBER = 1234567.89
+
+PRINT "Default 'C' Locale:"
+PRINT MY_NUMBER
+PRINT ""
+
+' For Windows, locale names are "German", "French", etc.
+' On Linux, they are often "de_DE.UTF-8", "fr_FR.UTF-8"
+PRINT "Setting locale to German..."
+SETLOCALE "German"
+
+PRINT "German Locale:"
+PRINT MY_NUMBER
+
+' The CSVWRITER will now also use this format!
+DATA = RESHAPE([PI, MY_NUMBER], [1, 2])
+CSVWRITER "german_numbers.csv", DATA, ";"
+
+PRINT "german_numbers.csv has been written."

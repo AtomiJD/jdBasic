@@ -1,0 +1,71 @@
+' ==========================================================
+' == CNN Forward Pass Test in jdBasic
+' == Goal: Use CONV2D and MAXPOOL2D for Edge Detection
+' ==========================================================
+
+' --- 1. Define the Input Image ---
+' We'll create a simple 7x7 grayscale image with a "plus" sign in the middle.
+' The shape must be [batch, channels, height, width], so [1, 1, 7, 7].
+IMAGE_DATA = [[  [0, 0, 0, 1, 0, 0, 0],  [0, 0, 0, 1, 0, 0, 0],  [0, 0, 0, 1, 0, 0, 0],  [1, 1, 1, 1, 1, 1, 1],  [0, 0, 0, 1, 0, 0, 0],  [0, 0, 0, 1, 0, 0, 0],  [0, 0, 0, 1, 0, 0, 0]]]
+' Reshape to the required 4D format [1, 1, 7, 7]
+INPUT_IMAGE = RESHAPE(IMAGE_DATA, [1, 1, 7, 7])
+INPUT_TENSOR = TENSOR.FROM(INPUT_IMAGE)
+
+PRINT "--- Original Image (7x7) ---"
+PRINT IMAGE_DATA
+PRINT
+
+
+' --- 2. Define the Kernels (Filters) ---
+' We'll use two 3x3 Sobel operators to detect horizontal and vertical edges.
+' Shape must be [out_channels, in_channels, height, width] -> [2, 1, 3, 3]
+
+' Kernel to detect horizontal edges
+K_HORIZONTAL = [  [-1, -2, -1],  [ 0,  0,  0],  [ 1,  2,  1]]
+
+' Kernel to detect vertical edges
+K_VERTICAL = [  [-1, 0, 1],  [-2, 0, 2],  [-1, 0, 1]]
+
+' Combine them into a single 4D kernel array
+KERNEL_DATA = [K_HORIZONTAL, K_VERTICAL]
+KERNEL_TENSOR = TENSOR.FROM(RESHAPE(KERNEL_DATA, [2, 1, 3, 3]))
+
+' Create a bias tensor (one bias per output channel, initialized to zero)
+BIAS_TENSOR = TENSOR.FROM([0, 0])
+
+
+' --- 3. Apply the Convolutional Layer ---
+' We use a stride of 1 and no padding.
+PRINT "--- Applying CONV2D Layer ---"
+FEATURE_MAPS_TENSOR = TENSOR.CONV2D(INPUT_TENSOR, KERNEL_TENSOR, BIAS_TENSOR, 1, 0)
+FEATURE_MAPS_ARRAY = TENSOR.TOARRAY(FEATURE_MAPS_TENSOR)
+' Use SLICE to extract the feature maps correctly ---
+' First, remove the batch dimension (dim 0, index 0) to get a 3D array [2, 5, 5]
+ALL_MAPS = SLICE(FEATURE_MAPS_ARRAY, 0, 0)
+' Then, slice out each 2D feature map
+MAP1 = SLICE(ALL_MAPS, 0, 0)
+MAP2 = SLICE(ALL_MAPS, 0, 1)
+
+PRINT "Feature Map 1 (Horizontal Edges):"
+PRINT FRMV$(MAP1)
+PRINT
+PRINT "Feature Map 2 (Vertical Edges):"
+PRINT FRMV$(MAP2)
+PRINT
+
+' --- 4. Apply the Max Pooling Layer ---
+PRINT "--- Applying MAXPOOL2D Layer (2x2 pool, stride 2) ---"
+POOLED_TENSOR = TENSOR.MAXPOOL2D(FEATURE_MAPS_TENSOR, 2, 2)
+POOLED_ARRAY = TENSOR.TOARRAY(POOLED_TENSOR)
+
+' --- FIX: Use SLICE to extract the pooled maps ---
+ALL_POOLED = SLICE(POOLED_ARRAY, 0, 0)
+POOLED_MAP1 = SLICE(ALL_POOLED, 0, 0)
+POOLED_MAP2 = SLICE(ALL_POOLED, 0, 1)
+
+PRINT "Pooled Map 1:"
+PRINT FRMV$(POOLED_MAP1)
+PRINT
+PRINT "Pooled Map 2:"
+PRINT FRMV$(POOLED_MAP2)
+PRINT

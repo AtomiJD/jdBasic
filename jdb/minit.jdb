@@ -1,0 +1,71 @@
+' ==========================================================
+' == Save/Load Test Program - Complex Nested Structure
+' == Goal: Isolate and debug the TENSOR.SAVEMODEL and
+' ==       TENSOR.LOADMODEL functionality with a structure
+' ==       that mimics the full model.
+' ==========================================================
+
+CLS
+PRINT "--- Starting Save/Load Test (Complex Model) ---"
+PRINT
+
+' 1. Create a data structure that mimics the full model:
+'    A main map containing a list (array) of layers, where each
+'    layer is a map containing a tensor.
+TEST_MODEL = {}
+TEST_MODEL{"layers"} = []
+
+' Create Layer 1
+layer1 = {}
+layer1_array = [[1, 2, 3], [4, 5, 6]]
+layer1{"weights"} = TENSOR.FROM(layer1_array)
+TEST_MODEL{"layers"} = APPEND(TEST_MODEL{"layers"}, layer1)
+
+' Create Layer 2
+layer2 = {}
+layer2_array = [[10, 20, 30], [40, 50, 60]]
+layer2{"weights"} = TENSOR.FROM(layer2_array)
+TEST_MODEL{"layers"} = APPEND(TEST_MODEL{"layers"}, layer2)
+
+
+' 2. Print the original object to see its structure
+PRINT "--- ORIGINAL MODEL ---"
+PRINT TEST_MODEL
+PRINT
+
+
+' 3. Save the model to a file
+PRINT "--- SAVING MODEL ---"
+TENSOR.SAVEMODEL TEST_MODEL, "test_model.json"
+PRINT "Model saved to test_model.json"
+PRINT
+
+
+' 4. Load the model from the file into a new variable
+PRINT "--- LOADING MODEL ---"
+LOADED_MODEL = TENSOR.LOADMODEL("test_model.json")
+IF LEN(LOADED_MODEL)=0 THEN
+    PRINT "Error: Failed to load model from file."
+    END
+ENDIF
+PRINT "Model loaded successfully."
+PRINT
+
+
+' 5. Print the loaded object to compare it with the original
+PRINT "--- LOADED MODEL ---"
+PRINT LOADED_MODEL
+PRINT
+
+' 6. Check if the loaded tensor's data can be accessed from deep
+'    within the nested structure.
+PRINT "--- VERIFYING LOADED DATA ---"
+loaded_layer2_tensor = LOADED_MODEL{"layers"}[1]{"weights"}
+loaded_array = TENSOR.TOARRAY(loaded_layer2_tensor)
+
+' This line will cause an error if the shape information was lost during loading
+PRINT "Value at (1, 2) of loaded layer 2 array: "; loaded_array[1, 2] 
+
+PRINT
+PRINT "--- Test Complete ---"
+

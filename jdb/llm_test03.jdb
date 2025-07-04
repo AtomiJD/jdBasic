@@ -1,0 +1,29 @@
+' test_simple.txt (Corrected)
+
+PRINT "--- Testing Simple MATMUL and Backward Pass ---"
+
+' 1. Create two simple tensors
+A_arr = [[1, 2], [3, 4]]
+B_arr = [[5, 6], [7, 8]]
+
+A = TENSOR.FROM(A_arr)
+B = TENSOR.FROM(B_arr)
+
+' 2. Forward Pass
+C = TENSOR.MATMUL(A, B)
+PRINT "C (Result of A @ B):"
+PRINT FRMV$(TENSOR.TOARRAY(C))
+PRINT
+
+' 3. Backward Pass
+TENSOR.BACKWARD C
+
+' 4. Check Gradients
+' Access the .grad property of the tensor
+PRINT "Gradient of A:"
+PRINT FRMV$(TENSOR.TOARRAY(A.grad))
+PRINT
+
+PRINT "Gradient of B:"
+PRINT FRMV$(TENSOR.TOARRAY(B.grad))
+PRINT

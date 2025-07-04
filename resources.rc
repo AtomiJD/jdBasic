@@ -1,0 +1,5 @@
+// jdBasic.rc
+// This is a resource script file for jdBasic.exe
+
+// Include the icon
+IDI_APP_ICON ICON "resources\jdBasic.ico"
