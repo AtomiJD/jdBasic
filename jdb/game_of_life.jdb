@@ -1,11 +1,8 @@
 ' jdBasic Game of Life - Optimized with CONVOLVE
-
 ' Initial State: A "Glider"
 board = PLACE(RESHAPE([0], [10, 10]), [[0, 1, 0], [0, 0, 1], [1, 1, 1]], [1, 1])
-
 ' Define the 3x3 kernel to sum up all neighbors including the cell itself.
 kernel = [[1, 1, 1], [1, 1, 1], [1, 1, 1]]
-
 FOR I = 1 to 100
     CLS
     PRINT "jdBasic Game of Life"
