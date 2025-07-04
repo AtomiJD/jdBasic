@@ -3120,6 +3120,53 @@ BasicValue builtin_getenv_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 }
 
 // --- Filesystem ---
+// 
+// // DIR$(wildcard$) -> array
+// Returns an array of strings containing filenames that match the wildcard pattern.
+BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "DIR$ requires exactly one argument (e.g., \"*.txt\").");
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    std::string full_pattern_str = to_string(args[0]);
+    fs::path pattern_path(full_pattern_str);
+
+    // Separate the path from the wildcard filename
+    fs::path target_dir = pattern_path.has_parent_path() ? pattern_path.parent_path() : ".";
+    std::string wildcard = pattern_path.has_filename() ? pattern_path.filename().string() : "*";
+
+    if (!fs::exists(target_dir) || !fs::is_directory(target_dir)) {
+        Error::set(6, vm.runtime_current_line, "Directory not found: " + target_dir.string());
+        return {};
+    }
+
+    try {
+        // Use the existing wildcard to regex converter
+        std::regex pattern(wildcard_to_regex(wildcard), std::regex::icase);
+
+        for (const auto& entry : fs::directory_iterator(target_dir)) {
+            std::string filename_str = entry.path().filename().string();
+            if (std::regex_match(filename_str, pattern)) {
+                result_ptr->data.push_back(filename_str);
+            }
+        }
+    }
+    catch (const std::regex_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid wildcard pattern: " + std::string(e.what()));
+        return {};
+    }
+    catch (const fs::filesystem_error& e) {
+        Error::set(12, vm.runtime_current_line, "Filesystem error: " + std::string(e.what()));
+        return {};
+    }
+
+    // Set the shape of the resulting 1D array
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
 // DIR [path_string]
 BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     try {
@@ -3722,6 +3769,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("GETENV$", 1, builtin_getenv_str);
 
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
+    register_func("DIR$", 1, builtin_dir_str);
     register_proc("CD", 1, builtin_cd);
     register_proc("PWD", 0, builtin_pwd);
     register_proc("COLOR", 2, builtin_color);

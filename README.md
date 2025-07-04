@@ -1,6 +1,6 @@
-# jdBasic - The Neo Retro Lambda BASIC Interpreter
+# jdBasic - A modern functional BASIC Interpreter
 
-**jdBasic** (also known as **NeReLa BASIC** for **Ne**o **Re**tro **La**mbda) is not your grandfather's BASIC. It's a modern, powerful interpreter that blends the simplicity and familiarity of classic BASIC with concepts from functional and array-oriented programming.
+**jdBasic** is not your grandfather's BASIC. It's a modern, powerful interpreter that blends the simplicity and familiarity of classic BASIC with concepts from functional and array-oriented programming.
 
 Whether you're looking to relive the nostalgia of 8-bit coding with modern conveniences or explore powerful data processing paradigms in a simple syntax, jdBasic offers a unique and powerful environment. The language is designed to be easy to learn but capable enough to build complex, modular applications.
 
