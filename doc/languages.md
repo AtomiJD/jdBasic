@@ -1,10 +1,10 @@
-# NeReLa Basic Language Reference
+# jdBasic Language Reference
 
-This document describes the syntax, commands, and functions for the NeReLa Basic interpreter.
+This document describes the syntax, commands, and functions for the jdBasic interpreter.
 
 ## Data Types
 
-NeReLa Basic supports a variety of data types. While variables are variants and can hold any type, they can be explicitly created using the `DIM` statement.
+jdBasic supports a variety of data types. While variables are variants and can hold any type, they can be explicitly created using the `DIM` statement.
 
   * **Boolean**: `TRUE` or `FALSE`.
   * **Number**: 64-bit double-precision floating-point numbers.
@@ -56,7 +56,7 @@ EmptyArray = []
 
 ## Chained Access Syntax
 
-NeReLa Basic supports a modern, chained syntax for accessing elements within nested data structures, which is especially useful for JSON, COM objects, and Tensors.
+jdBasic supports a modern, chained syntax for accessing elements within nested data structures, which is especially useful for JSON, COM objects, and Tensors.
 
 **JSON and Map/Array Chaining**
 You can chain `{"key"}` and `[index]` accessors to navigate complex objects returned by `JSON.PARSE$`.
@@ -127,7 +127,7 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
 
 ### Tensor & AI Functions
 
-This suite of functions provides the building blocks for creating and training neural networks directly within NeReLa Basic. The core component is the `Tensor` data type, which supports automatic differentiation.
+This suite of functions provides the building blocks for creating and training neural networks directly within jdBasic. The core component is the `Tensor` data type, which supports automatic differentiation.
 
 #### Core & Conversion
 
