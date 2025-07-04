@@ -3619,6 +3619,8 @@ BasicValue builtin_httpput(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 
 #endif
 
+// Async, Await and Task things
+
 
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
@@ -3780,5 +3782,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TXTREADER$", 1, builtin_txtreader_str);
     register_proc("TXTWRITER", 2, builtin_txtwriter);
     register_proc("CSVWRITER", -1, builtin_csvwriter); // -1 for optional delimiter
+
+    // Task thing
 
 }

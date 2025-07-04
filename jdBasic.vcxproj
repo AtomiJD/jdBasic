@@ -148,6 +148,7 @@
   <ItemGroup>
     <ClCompile Include="source\BuiltinFunctions.cpp" />
     <ClCompile Include="source\Commands.cpp" />
+    <ClCompile Include="source\Compiler.cpp" />
     <ClCompile Include="source\DAPHandler.cpp" />
     <ClCompile Include="source\Error.cpp" />
     <ClCompile Include="source\Graphics.cpp" />
@@ -167,6 +168,7 @@
     <ClInclude Include="include\AIFunctions.hpp" />
     <ClInclude Include="include\BuiltinFunctions.hpp" />
     <ClInclude Include="include\Commands.hpp" />
+    <ClInclude Include="include\Compiler.hpp" />
     <ClInclude Include="include\DAPHandler.hpp" />
     <ClInclude Include="include\Error.hpp" />
     <ClInclude Include="include\Graphics.hpp" />
@@ -183,7 +185,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
-    <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="jdBasic.ico" />

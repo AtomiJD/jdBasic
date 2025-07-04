@@ -26,6 +26,8 @@ namespace {
         {"ENDFUNC", Tokens::ID::ENDFUNC},
         {"SUB",    Tokens::ID::SUB},
         {"ENDSUB", Tokens::ID::ENDSUB},
+        {"AWAIT",   Tokens::ID::AWAIT},
+        {"ASYNC",   Tokens::ID::ASYNC},   // Add this
         {"TYPE",    Tokens::ID::TYPE},      
         {"ENDTYPE",Tokens::ID::ENDTYPE},  
         {"FOR",     Tokens::ID::FOR},

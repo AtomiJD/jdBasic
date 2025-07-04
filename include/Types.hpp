@@ -13,6 +13,7 @@
 #include <vector>     
 #include <numeric>    // for std::accumulate
 #include <stdexcept>  // for exceptions
+#include <future>
 #include <map>
 #include "json.hpp" 
 
@@ -34,6 +35,8 @@ enum class DataType {
     MAP,
     JSON 
 };
+
+
 
 // A struct to hold our date/time value, based on std::chrono.
 struct DateTime {
@@ -197,7 +200,6 @@ struct Tensor {
     bool has_been_processed = false;
 };
 #endif
-
 
 //==============================================================================
 // HELPER FUNCTIONS

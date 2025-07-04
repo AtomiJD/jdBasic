@@ -19,6 +19,7 @@
 // Forward declarations
 class NetworkManager;
 class DAPHandler;
+class Compiler;
 
 class NeReLaBasic {
 public:
@@ -50,12 +51,6 @@ public:
         std::vector<uint16_t> exit_patch_locations; // To patch EXIT FOR jumps
     };
 
-    // --- This struct is for the COMPILER for_stack ---
-    struct CompilerForLoopInfo {
-        uint16_t source_line;
-        std::vector<uint16_t> exit_patch_locations;
-    };
-
     // A type alias for our native C++ function pointers.
     // All native functions will take a vector of arguments and return a single BasicValue.
     using NativeFunction = std::function<BasicValue(NeReLaBasic&, const std::vector<BasicValue>&)>;
@@ -65,6 +60,7 @@ public:
         int arity = 0; // The number of arguments the function takes.
         bool is_procedure = false;
         bool is_exported = false;
+        bool is_async = false;
         std::string module_name;
         uint16_t start_pcode = 0;
         std::vector<std::string> parameter_names;
@@ -83,25 +79,10 @@ public:
         size_t for_stack_size_on_entry;
     };
 
-    struct IfStackInfo {
-        uint16_t patch_address; // The address in the bytecode we need to patch
-        uint16_t source_line;   // The source code line number of the IF statement
-    };
-
     struct BasicModule {
         std::string name;
         std::vector<uint8_t> p_code;
         FunctionTable function_table;
-    };
-
-    // --- For DO...LOOP Stack ---
-    struct DoLoopInfo {
-        uint16_t loop_start_pcode_addr; // Address of the 'DO' token (or statement after it)
-        uint16_t condition_pcode_addr;  // Address where the condition is (for pre-test loops)
-        bool is_pre_test;               // True if WHILE/UNTIL is with DO, false if with LOOP
-        Tokens::ID condition_type;      // WHILE or UNTIL
-        uint16_t source_line;           // For error reporting
-        std::vector<uint16_t> exit_patch_locations; // To patch EXIT DO jumps
     };
 
     // --- Structures for User-Defined Types ---
@@ -152,13 +133,8 @@ public:
     std::vector<uint8_t> program_p_code;    // Stores the compiled bytecode for RUN/DUMP
     std::vector<uint8_t> direct_p_code;     // Temporary buffer for direct-mode commands
     const std::vector<uint8_t>* active_p_code = nullptr;    //Active P-Code Pointer
-
-    std::vector<IfStackInfo> if_stack;
     std::vector<ForLoopInfo> for_stack;
-    std::vector <CompilerForLoopInfo> compiler_for_stack;
-    std::vector<DoLoopInfo> do_loop_stack;
 
-    //std::unordered_map<std::string, FunctionInfo> function_table;
     std::vector<StackFrame> call_stack;
     std::vector<uint16_t> func_stack;
 
@@ -176,14 +152,14 @@ public:
     std::unordered_map<std::string, BasicValue> variables;
     std::map<std::string, TypeInfo> user_defined_types; // Storage for UDTs
 
-    std::unordered_map<std::string, uint16_t> label_addresses;
+    //std::unordered_map<std::string, uint16_t> label_addresses;
 
     // --- C++ Modules ---
     std::map<std::string, BasicModule> compiled_modules;
     // True if the compiler is currently processing a module file
-    bool is_compiling_module = false;
+    // bool is_compiling_module = false;
     // Holds the name of the module currently being compiled
-    std::string current_module_name;
+    // std::string current_module_name;
 
 #ifdef SDL3
     Graphics graphics_system;
@@ -215,13 +191,16 @@ public:
     BasicValue err_code = 0.0; // ERR
     BasicValue erl_line = 0.0; // ERL
 
+    std::unique_ptr<Compiler> compiler;
+
     // --- Member Functions ---
     NeReLaBasic(); // Constructor
+    ~NeReLaBasic(); //Destructor
+
     void start();  // The main REPL
     void execute(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     bool loadSourceFromFile(const std::string& filename);
     std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
-    void pre_scan_and_parse_types();
 
     // --- New Declarations for Expression Parsing ---
     BasicValue evaluate_expression();
@@ -233,21 +212,14 @@ public:
     BasicValue parse_factor();
     BasicValue parse_array_literal();
     BasicValue parse_map_literal();
-    bool compile_module(const std::string& module_name, const std::string& module_source_code);
-    uint8_t tokenize_program(std::vector<uint8_t>& out_p_code, const std::string& source);
     void statement();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_repl_command(const std::vector<uint8_t>& repl_p_code);
-    uint8_t tokenize(const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, FunctionTable& compilation_func_table);
 
 private:
     void init_basic();
     void init_system();
     void init_screen();
-
-    // --- Lexer---
-    Tokens::ID parse(NeReLaBasic& vm, bool is_start_of_statement);
-    
 };
 
 extern NeReLaBasic* g_vm_instance_ptr;

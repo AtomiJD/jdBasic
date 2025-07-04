@@ -8,6 +8,7 @@
 #include "Commands.hpp"
 #include "StringUtils.hpp"
 #include "NeReLaBasic.hpp" // We need the full class definition here
+#include "Compiler.hpp""
 #include "TextIO.hpp"
 #include "Tokens.hpp"
 #include "Error.hpp"
@@ -691,9 +692,9 @@ void Commands::do_goto(NeReLaBasic& vm) {
     std::string label_name = read_string(vm);
 
     // Look up the label in the address map
-    if (vm.label_addresses.count(label_name)) {
+    if (vm.compiler->label_addresses.count(label_name)) {
         // Found it! Set the program counter to the stored address.
-        uint16_t target_address = vm.label_addresses[label_name];
+        uint16_t target_address = vm.compiler->label_addresses[label_name];
         vm.pcode = target_address;
     }
     else {
@@ -751,8 +752,8 @@ void Commands::do_for(NeReLaBasic& vm) {
     if (Error::get() != 0) return;
     set_variable(vm, var_name, start_val, true);
     // FOR always create a new local or global var!
-    //if (!vm.call_stack.empty()) {
-    //    vm.call_stack.back().local_variables[var_name] = start_val;
+    //if (!current_task_call_stack.empty()) {
+    //    current_task_call_stack.back().local_variables[var_name] = start_val;
     //}
     //else {
     //    vm.variables[var_name] = start_val;
@@ -959,35 +960,37 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
     }
 
     // --- Execution Logic for BASIC Functions ---
-    if (func_info.native_impl != nullptr) {
-        // Native C++ function/procedure
-        func_info.native_impl(vm, args);
-    }
-    else {
-        // User-defined BASIC function/procedure
-        NeReLaBasic::StackFrame frame;
-        for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
-            if (i < args.size()) {
-                frame.local_variables[func_info.parameter_names[i]] = args[i];
+
+        if (func_info.native_impl != nullptr) {
+            // Native C++ function/procedure
+            func_info.native_impl(vm, args);
+        }
+        else {
+            // User-defined BASIC function/procedure
+            NeReLaBasic::StackFrame frame;
+            for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
+                if (i < args.size()) {
+                    frame.local_variables[func_info.parameter_names[i]] = args[i];
+                }
             }
+
+            frame.return_p_code_ptr = vm.active_p_code;
+            frame.return_pcode = vm.pcode;
+            frame.previous_function_table_ptr = vm.active_function_table;
+            frame.for_stack_size_on_entry = vm.for_stack.size();
+            frame.function_name = real_func_to_call;
+            vm.call_stack.push_back(frame);
+
+            // CONTEXT SWITCH
+            if (!func_info.module_name.empty() && vm.compiled_modules.count(func_info.module_name)) {
+                auto& target_module = vm.compiled_modules[func_info.module_name];
+                vm.active_p_code = &target_module.p_code;
+                vm.active_function_table = &target_module.function_table;
+            }
+
+            vm.pcode = func_info.start_pcode; // Jump to function start
         }
-
-        frame.return_p_code_ptr = vm.active_p_code;
-        frame.return_pcode = vm.pcode;
-        frame.previous_function_table_ptr = vm.active_function_table;
-        frame.for_stack_size_on_entry = vm.for_stack.size();
-        frame.function_name = real_func_to_call;
-        vm.call_stack.push_back(frame);
-
-        // CONTEXT SWITCH
-        if (!func_info.module_name.empty() && vm.compiled_modules.count(func_info.module_name)) {
-            auto& target_module = vm.compiled_modules[func_info.module_name];
-            vm.active_p_code = &target_module.p_code;
-            vm.active_function_table = &target_module.function_table;
-        }
-
-        vm.pcode = func_info.start_pcode; // Jump to function start
-    }
+    
 }
 
 // --- Implementation of do_return ---
@@ -1160,8 +1163,8 @@ void Commands::do_resume(NeReLaBasic& vm) {
     else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
         vm.pcode++; // Consume STRING token
         std::string target_label = read_string(vm);
-        if (vm.label_addresses.count(target_label)) {
-            vm.pcode = vm.label_addresses[target_label];
+        if (vm.compiler->label_addresses.count(target_label)) {
+            vm.pcode = vm.compiler->label_addresses[target_label];
             // For a GOTO-style resume, clear the stack to prevent unexpected returns
             vm.call_stack.clear();
             vm.for_stack.clear();
@@ -1384,10 +1387,10 @@ void Commands::do_compile(NeReLaBasic& vm) {
 
     // Compile into the main program buffer
     TextIO::print("Compiling...\n");
-    if (vm.tokenize_program(vm.program_p_code, source_to_compile) == 0) {
-        if (!vm.if_stack.empty()) {
+    if (vm.compiler->tokenize_program(vm,vm.program_p_code, source_to_compile) == 0) {
+        if (!vm.compiler->if_stack.empty()) {
             // There are unclosed IF blocks. Get the line number of the last one.
-            uint16_t error_line = vm.if_stack.back().source_line;
+            uint16_t error_line = vm.compiler->if_stack.back().source_line;
             Error::set(4, error_line); // New Error: Missing ENDIF
         }
         else {
@@ -1436,7 +1439,7 @@ void Commands::do_stop(NeReLaBasic& vm) {
 
         // Tokenize the direct-mode line into its own p-code buffer.
         vm.direct_p_code.clear();
-        if (vm.tokenize(inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
+        if (vm.compiler->tokenize(vm, inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
             Error::print(); // Print tokenization error
             continue;       // And prompt again
         }
@@ -1459,14 +1462,14 @@ void Commands::do_stop(NeReLaBasic& vm) {
 void Commands::do_run(NeReLaBasic& vm) {
 
     do_compile(vm);
-    if (!vm.do_loop_stack.empty()) {
+    if (!vm.compiler->do_loop_stack.empty()) {
         // There are unclosed DO loops. Get the line number of the last one.
-        uint16_t error_line = vm.do_loop_stack.back().source_line;
+        uint16_t error_line = vm.compiler->do_loop_stack.back().source_line;
         Error::set(14, error_line); // Unclosed loop
     }
-    if (!vm.if_stack.empty()) {
+    if (!vm.compiler->if_stack.empty()) {
         // There are unclosed Ifs. Get the line number of the last one.
-        uint16_t error_line = vm.if_stack.back().source_line;
+        uint16_t error_line = vm.compiler->if_stack.back().source_line;
         Error::set(4, error_line); // Unclosed for
     }
 
