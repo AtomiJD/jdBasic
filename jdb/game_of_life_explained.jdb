@@ -1,0 +1,40 @@
+'jdBasic Game of Life APL like implementations
+
+func GameOfLife(board)
+    ' 1. Create all 8 neighbors by rotating the board.
+    ' This is the equivalent of the APL neighbor calculation.
+    N1 = ROTATE(board, [-1, -1]) ' Top-left
+    N2 = ROTATE(board, [-1,  0]) ' Top-center
+    N3 = ROTATE(board, [-1,  1]) ' Top-right
+    N4 = ROTATE(board, [ 0, -1]) ' Mid-left
+    N5 = ROTATE(board, [ 0,  1]) ' Mid-right
+    N6 = ROTATE(board, [ 1, -1]) ' Bot-left
+    N7 = ROTATE(board, [ 1,  0]) ' Bot-center
+    N8 = ROTATE(board, [ 1,  1]) ' Bot-right
+    ' 2. Sum the 8 neighbor matrices to get the neighbor count for each cell.
+    neighbor_count = N1 + N2 + N3 + N4 + N5 + N6 + N7 + N8
+    ' 3. Apply the Game of Life rules using element-wise logic.
+    ' Rule 1: A cell is born if it's currently dead AND has exactly 3 neighbors.
+    births = (board = 0) AND (neighbor_count = 3)
+    ' Rule 2: A cell survives if it's currently alive AND has 2 or 3 neighbors.
+    survivals = (board = 1) AND ((neighbor_count = 2) OR (neighbor_count = 3))
+    ' 4. The new board is the combination of all cells that are born or survive.
+    new_board = births OR survivals
+    RETURN new_board
+endfunc
+
+' Initial State: A "Glider"
+DIM board[10, 10]
+board[1, 2] = 1
+board[2, 3] = 1
+board[3, 1] = 1
+board[3, 2] = 1
+board[3, 3] = 1
+
+FOR I = 1 to 100
+    CLS
+    PRINT "Next Generation:"
+    PRINT FRMV$(board)
+    board = GameOfLife(board) * 1
+    SLEEP 500
+NEXT

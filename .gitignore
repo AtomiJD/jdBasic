@@ -363,4 +363,5 @@ MigrationBackup/
 FodyWeavers.xsd
 
 #Atomis ausschluss Zeug
-*_old.*
+docs/*_old.*
+fluppi/

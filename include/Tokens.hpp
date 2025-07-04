@@ -96,6 +96,7 @@ namespace Tokens {
         EXIT_FOR = 0x58, 
         EXIT_DO = 0x59,
         TENSOR = 0x5A,
+        XOR = 0x5B,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

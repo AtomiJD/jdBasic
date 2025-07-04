@@ -2442,17 +2442,81 @@ BasicValue NeReLaBasic::parse_comparison() {
 }
 
 // Level 1: Handles AND, OR
+// Level 1: Handles AND, OR, XOR with element-wise array support
 BasicValue NeReLaBasic::evaluate_expression() {
     BasicValue left = parse_comparison();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (op == Tokens::ID::AND || op == Tokens::ID::OR) {
+        if (op == Tokens::ID::AND || op == Tokens::ID::OR || op == Tokens::ID::XOR) {
             pcode++;
             BasicValue right = parse_comparison();
-            if (op == Tokens::ID::AND) left = to_bool(left) && to_bool(right);
-            else left = to_bool(left) || to_bool(right);
+
+            left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
+                using LeftT = std::decay_t<decltype(l)>;
+                using RightT = std::decay_t<decltype(r)>;
+
+                // Helper lambda for Array-Scalar operations
+                auto array_scalar_op = [op, this](const auto& arr_ptr, const auto& scalar_val) -> BasicValue {
+                    if (!arr_ptr) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
+                    bool scalar_bool = to_bool(scalar_val);
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = arr_ptr->shape;
+                    result_ptr->data.reserve(arr_ptr->data.size());
+
+                    for (const auto& elem : arr_ptr->data) {
+                        bool elem_bool = to_bool(elem);
+                        bool result = false;
+                        if (op == Tokens::ID::AND) result = elem_bool && scalar_bool;
+                        else if (op == Tokens::ID::OR) result = elem_bool || scalar_bool;
+                        else if (op == Tokens::ID::XOR) result = elem_bool != scalar_bool;
+                        result_ptr->data.push_back(result);
+                    }
+                    return result_ptr;
+                    };
+
+                // Case 1: Array AND/OR/XOR Array
+                if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                    if (!l || !r) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
+                    if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Array shape mismatch in logical operation."); return false; }
+
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = l->shape;
+                    result_ptr->data.reserve(l->data.size());
+
+                    for (size_t i = 0; i < l->data.size(); ++i) {
+                        bool left_bool = to_bool(l->data[i]);
+                        bool right_bool = to_bool(r->data[i]);
+                        bool result = false;
+                        if (op == Tokens::ID::AND) result = left_bool && right_bool;
+                        else if (op == Tokens::ID::OR) result = left_bool || right_bool;
+                        else if (op == Tokens::ID::XOR) result = left_bool != right_bool; // Logical XOR
+                        result_ptr->data.push_back(result);
+                    }
+                    return result_ptr;
+                }
+                // Case 2: Array op Scalar
+                else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
+                    return array_scalar_op(l, r);
+                }
+                // Case 3: Scalar op Array
+                else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                    return array_scalar_op(r, l);
+                }
+                // Case 4: Scalar op Scalar (fallback)
+                else {
+                    bool left_bool = to_bool(l);
+                    bool right_bool = to_bool(r);
+                    if (op == Tokens::ID::AND) return left_bool && right_bool;
+                    if (op == Tokens::ID::OR) return left_bool || right_bool;
+                    if (op == Tokens::ID::XOR) return left_bool != right_bool; // Logical XOR
+                }
+
+                return false; // Should not be reached
+                }, left, right);
         }
-        else break;
+        else {
+            break;
+        }
     }
     return left;
 }

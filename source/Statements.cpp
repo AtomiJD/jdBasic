@@ -37,6 +37,7 @@ namespace {
         {"OR",      Tokens::ID::OR},
         {"NOT",     Tokens::ID::NOT},
         {"MOD",     Tokens::ID::MOD},
+        {"XOR",     Tokens::ID::XOR},
         {"TRUE",    Tokens::ID::JD_TRUE},
         {"FALSE",   Tokens::ID::JD_FALSE},
         {"GOTO",    Tokens::ID::GOTO},

@@ -1684,7 +1684,304 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
         return 0.0; \
     }
 
+// ROTATE(array, shift_vector) -> array
+// Cyclically shifts an N-dimensional array.
+BasicValue builtin_rotate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "ROTATE requires 2 arguments: array, shift_vector");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Both arguments to ROTATE must be arrays.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& shift_vec_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!source_ptr || !shift_vec_ptr || source_ptr->data.empty()) {
+        return source_ptr; // Return original array if source/shift is null or empty
+    }
+    if (source_ptr->shape.size() != shift_vec_ptr->data.size()) {
+        Error::set(15, vm.runtime_current_line, "Shift vector must have one element for each dimension of the source array.");
+        return {};
+    }
 
+    // 2. --- Setup ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape;
+    result_ptr->data.resize(source_ptr->data.size()); // Pre-allocate result data
+
+    const auto& shape = source_ptr->shape;
+    std::vector<long long> shifts;
+    for (const auto& val : shift_vec_ptr->data) {
+        shifts.push_back(static_cast<long long>(to_double(val)));
+    }
+
+    // 3. --- Main Logic ---
+    // Iterate through each element of the source array by its linear index
+    for (size_t source_linear_idx = 0; source_linear_idx < source_ptr->data.size(); ++source_linear_idx) {
+
+        // Convert source linear index to N-dimensional coordinates
+        std::vector<long long> source_coords(shape.size());
+        size_t temp_idx = source_linear_idx;
+        for (int d = shape.size() - 1; d >= 0; --d) {
+            source_coords[d] = temp_idx % shape[d];
+            temp_idx /= shape[d];
+        }
+
+        // Calculate destination coordinates with cyclic rotation
+        std::vector<long long> dest_coords = source_coords;
+        for (size_t d = 0; d < shape.size(); ++d) {
+            long long dim_size = static_cast<long long>(shape[d]);
+            // The (a % n + n) % n trick handles negative shifts correctly
+            dest_coords[d] = (source_coords[d] + shifts[d]) % dim_size;
+            if (dest_coords[d] < 0) {
+                dest_coords[d] += dim_size;
+            }
+        }
+
+        // Convert destination coordinates back to a linear index
+        size_t dest_linear_idx = 0;
+        size_t multiplier = 1;
+        for (int d = shape.size() - 1; d >= 0; --d) {
+            dest_linear_idx += dest_coords[d] * multiplier;
+            multiplier *= shape[d];
+        }
+
+        // Copy the value
+        result_ptr->data[dest_linear_idx] = source_ptr->data[source_linear_idx];
+    }
+
+    return result_ptr;
+}
+
+// SHIFT(array, shift_vector, [fill_value]) -> array
+// Non-cyclically shifts an N-dimensional array.
+BasicValue builtin_shift(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "SHIFT requires 2 or 3 arguments: array, shift_vector, [fill_value]");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "First two arguments to SHIFT must be arrays.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& shift_vec_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!source_ptr || !shift_vec_ptr || source_ptr->data.empty()) {
+        return source_ptr;
+    }
+    if (source_ptr->shape.size() != shift_vec_ptr->data.size()) {
+        Error::set(15, vm.runtime_current_line, "Shift vector must have one element for each dimension of the source array.");
+        return {};
+    }
+
+    // 2. --- Setup ---
+    BasicValue fill_value = 0.0; // Default fill value
+    if (args.size() == 3) {
+        fill_value = args[2];
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape;
+    // Initialize the entire result array with the fill value
+    result_ptr->data.assign(source_ptr->data.size(), fill_value);
+
+    const auto& shape = source_ptr->shape;
+    std::vector<long long> shifts;
+    for (const auto& val : shift_vec_ptr->data) {
+        shifts.push_back(static_cast<long long>(to_double(val)));
+    }
+
+    // 3. --- Main Logic ---
+    for (size_t source_linear_idx = 0; source_linear_idx < source_ptr->data.size(); ++source_linear_idx) {
+
+        // Convert source linear index to N-dimensional coordinates
+        std::vector<long long> source_coords(shape.size());
+        size_t temp_idx = source_linear_idx;
+        for (int d = shape.size() - 1; d >= 0; --d) {
+            source_coords[d] = temp_idx % shape[d];
+            temp_idx /= shape[d];
+        }
+
+        // Calculate destination coordinates
+        std::vector<long long> dest_coords = source_coords;
+        bool is_in_bounds = true;
+        for (size_t d = 0; d < shape.size(); ++d) {
+            dest_coords[d] = source_coords[d] + shifts[d];
+            // Check if the destination is out of bounds
+            if (dest_coords[d] < 0 || dest_coords[d] >= static_cast<long long>(shape[d])) {
+                is_in_bounds = false;
+                break;
+            }
+        }
+
+        if (is_in_bounds) {
+            // Convert destination coordinates back to a linear index
+            size_t dest_linear_idx = 0;
+            size_t multiplier = 1;
+            for (int d = shape.size() - 1; d >= 0; --d) {
+                dest_linear_idx += dest_coords[d] * multiplier;
+                multiplier *= shape[d];
+            }
+            // Copy the value
+            result_ptr->data[dest_linear_idx] = source_ptr->data[source_linear_idx];
+        }
+        // If out of bounds, the value is discarded (and the cell keeps its fill_value).
+    }
+
+    return result_ptr;
+}
+
+// CONVOLVE(array, kernel, wrap_mode) -> array
+// Performs a 2D convolution of an array with a kernel.
+BasicValue builtin_convolve(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "CONVOLVE requires 3 arguments: array, kernel, wrap_mode");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "First two arguments to CONVOLVE must be arrays.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& kernel_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+
+    if (!source_ptr || !kernel_ptr) {
+        Error::set(15, vm.runtime_current_line, "Cannot perform convolution on a null array.");
+        return {};
+    }
+    if (source_ptr->shape.size() != 2 || kernel_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line, "CONVOLVE currently only supports 2D arrays.");
+        return {};
+    }
+
+    // 2. --- Setup ---
+    bool wrap_mode = to_bool(args[2]);
+
+    long long source_h = source_ptr->shape[0];
+    long long source_w = source_ptr->shape[1];
+    long long kernel_h = kernel_ptr->shape[0];
+    long long kernel_w = kernel_ptr->shape[1];
+
+    // The center of the kernel (integer division)
+    long long kernel_center_y = kernel_h / 2;
+    long long kernel_center_x = kernel_w / 2;
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape;
+    result_ptr->data.resize(source_ptr->data.size());
+
+    // 3. --- Main Convolution Loop ---
+    // Iterate over every pixel of the source/output array
+    for (long long y = 0; y < source_h; ++y) {
+        for (long long x = 0; x < source_w; ++x) {
+
+            double sum = 0.0;
+            // Iterate over every element of the kernel
+            for (long long ky = 0; ky < kernel_h; ++ky) {
+                for (long long kx = 0; kx < kernel_w; ++kx) {
+
+                    // Calculate the corresponding coordinate in the source array to sample from.
+                    // This is the source pixel that aligns with the current kernel pixel.
+                    long long source_sample_y = y + ky - kernel_center_y;
+                    long long source_sample_x = x + kx - kernel_center_x;
+
+                    double source_val = 0.0;
+
+                    // Handle edge conditions
+                    if (wrap_mode) {
+                        // Toroidal wrapping: use modulo arithmetic
+                        long long wrapped_y = (source_sample_y % source_h + source_h) % source_h;
+                        long long wrapped_x = (source_sample_x % source_w + source_w) % source_w;
+                        source_val = to_double(source_ptr->data[wrapped_y * source_w + wrapped_x]);
+                    }
+                    else {
+                        // Non-wrapping: check if the sample is within bounds
+                        if (source_sample_y >= 0 && source_sample_y < source_h &&
+                            source_sample_x >= 0 && source_sample_x < source_w) {
+                            source_val = to_double(source_ptr->data[source_sample_y * source_w + source_sample_x]);
+                        }
+                        // If out of bounds, source_val remains 0.0 (zero-padding)
+                    }
+
+                    double kernel_val = to_double(kernel_ptr->data[ky * kernel_w + kx]);
+                    sum += source_val * kernel_val;
+                }
+            }
+            // Store the final calculated sum in the output array
+            result_ptr->data[y * source_w + x] = sum;
+        }
+    }
+    return result_ptr;
+}
+
+// PLACE(destination_array, source_array, coordinates_vector) -> array
+// Places a source array into a destination array at a given coordinate.
+BasicValue builtin_place(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "PLACE requires 3 arguments: destination_array, source_array, coords_vector");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) ||
+        !std::holds_alternative<std::shared_ptr<Array>>(args[1]) ||
+        !std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+        Error::set(15, vm.runtime_current_line, "All arguments to PLACE must be arrays.");
+        return {};
+    }
+
+    const auto& dest_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const auto& coords_ptr = std::get<std::shared_ptr<Array>>(args[2]);
+
+    if (!dest_ptr || !source_ptr || !coords_ptr) {
+        Error::set(15, vm.runtime_current_line, "Arguments to PLACE cannot be null arrays.");
+        return {};
+    }
+    if (dest_ptr->shape.size() != 2 || source_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line, "PLACE currently only supports 2D arrays.");
+        return {};
+    }
+    if (coords_ptr->data.size() != 2) {
+        Error::set(15, vm.runtime_current_line, "Coordinate vector for PLACE must have two elements [row, col].");
+        return {};
+    }
+
+    // 2. --- Setup and Bounds Checking ---
+    long long dest_h = dest_ptr->shape[0];
+    long long dest_w = dest_ptr->shape[1];
+    long long source_h = source_ptr->shape[0];
+    long long source_w = source_ptr->shape[1];
+
+    long long start_row = static_cast<long long>(to_double(coords_ptr->data[0]));
+    long long start_col = static_cast<long long>(to_double(coords_ptr->data[1]));
+
+    if (start_row + source_h > dest_h || start_col + source_w > dest_w) {
+        Error::set(10, vm.runtime_current_line, "Source array does not fit in destination at specified coordinates.");
+        return {};
+    }
+
+    // 3. --- Create a copy and perform the placement ---
+    auto result_ptr = std::make_shared<Array>(*dest_ptr); // Create a deep copy to modify
+
+    for (long long sy = 0; sy < source_h; ++sy) {
+        for (long long sx = 0; sx < source_w; ++sx) {
+            long long dy = start_row + sy;
+            long long dx = start_col + sx;
+
+            // Calculate flat indices for source and destination
+            size_t source_idx = sy * source_w + sx;
+            size_t dest_idx = dy * dest_w + dx;
+
+            result_ptr->data[dest_idx] = source_ptr->data[source_idx];
+        }
+    }
+
+    return result_ptr;
+}
 
 // PRODUCT(array, [dimension]) -> number or array
 BasicValue builtin_product(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -3347,6 +3644,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MVLET", 4, builtin_mvlet);
     register_func("DIFF", 2, builtin_diff);
     register_func("APPEND", 2, builtin_append);
+    register_func("ROTATE", 2, builtin_rotate);
+    register_func("SHIFT", -1, builtin_shift);
+    register_func("CONVOLVE", 3, builtin_convolve);
+    register_func("PLACE", 3, builtin_place);
 
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);
