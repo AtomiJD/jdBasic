@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include "Types.hpp"
 #include "SpriteSystem.hpp" 
 
 class Graphics {
@@ -22,6 +23,7 @@ public:
     void rect(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, bool is_filled);
     void circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b);
     void text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint8 g, Uint8 b);
+    void plot_raw(int start_x, int start_y, const std::shared_ptr<Array>& color_matrix, float scale = 1.0f, float scaleY = 1.0f);
 
     int get_mouse_x() const;
     int get_mouse_y() const;

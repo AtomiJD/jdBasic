@@ -1,0 +1,31 @@
+' jdBasic Game of Life - Optimized with CONVOLVE
+' 1. Vars
+
+SCREEN_W = 1000
+SCREEN_H = 1000
+
+CALC_W = 100
+CALC_H = 100
+DX = SCREEN_W / CALC_W
+DY = SCREEN_H / CALC_H
+
+SIZE = 100
+
+' 2. Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Game of Life in jdBasic (Vectorized)"
+CLS 0, 0, 0 ' Clear screen to black
+
+' 3. Initial State: A "Glider"
+board = PLACE(RESHAPE([0], [SIZE, SIZE]), [[0, 1, 0], [0, 0, 1], [1, 1, 1]], [1, 1])
+
+' 4. Define the 3x3 kernel to sum up all neighbors including the cell itself.
+kernel = RESHAPE([1], [3,3])
+do
+    board = (((board = 0) AND (CONVOLVE(board, kernel, 1) = 3)) OR ((board = 1) AND (CONVOLVE(board, kernel, 1) = 3 OR CONVOLVE(board, kernel, 1) = 4))) * 1 
+    CLS
+    PLOTRAW 0, 0, board * 120030, DX, DY
+    SCREENFLIP
+    SLEEP 100
+    a$ = inkey$()
+loop until a$ > ""

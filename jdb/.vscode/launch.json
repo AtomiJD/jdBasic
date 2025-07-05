@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "jdBasic Releas Version",
             "program": "${file}",
-            "runtime": "D:/usr/dev/c/NeReLaBasicInterpreter/x64/Release/jdBASIC.exe",
+            "runtime": "D:/usr/dev/c/jdbasic/x64/Release/jdBASIC.exe",
             "stopOnEntry": true
         }
     ]

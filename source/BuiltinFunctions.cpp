@@ -857,6 +857,31 @@ BasicValue builtin_text(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false; // Procedures return a dummy value
 }
 
+BasicValue builtin_plotraw(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. Validate Arguments
+    if (args.size() >5) {
+        Error::set(8, vm.runtime_current_line, "PLOTRAW requires 3 arguments: x, y, matrix, scaleX, scaleY");
+        return false;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+        Error::set(15, vm.runtime_current_line, "Third argument to PLOTRAW must be a matrix.");
+        return false;
+    }
+
+    // 2. Parse Arguments
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+    int scaleX = static_cast<int>(to_double(args[3]));
+    int scaleY = static_cast<int>(to_double(args[4]));
+
+    const auto& matrix_ptr = std::get<std::shared_ptr<Array>>(args[2]);
+
+    // 3. Call the Graphics System Method
+    vm.graphics_system.plot_raw(x, y, matrix_ptr, scaleX, scaleY);
+
+    return false; // Procedures return a dummy value
+}
+
 // --- SDL Sound Functions ---
 
 // SOUND.INIT
@@ -3715,6 +3740,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("RECT", -1, builtin_rect);     
     register_proc("CIRCLE", -1, builtin_circle); 
     register_proc("TEXT", -1, builtin_text);
+    register_proc("PLOTRAW", -1, builtin_plotraw);
 
     register_proc("SOUND.INIT", 0, builtin_sound_init);
     register_proc("SOUND.VOICE", 6, builtin_sound_voice);

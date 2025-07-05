@@ -1,0 +1,25 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "jdbasic",
+            "request": "launch",
+            "name": "jdbasic Debug in Integrated Terminal",
+            "program": "",
+            "stopOnEntry": true,
+            "runtime": "D:/usr/dev/c/jdbasic/x64/Release/jdBASIC.exe",
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "jdbasic",
+            "request": "launch",
+            "name": "jdBasic: Debug File",
+            "program": "${file}",
+            "stopOnEntry": true,
+            "runtime": "D:/usr/dev/c/jdbasic/x64/Release/jdBASIC.exe"
+        }
+    ]
+}

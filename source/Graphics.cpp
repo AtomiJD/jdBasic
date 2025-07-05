@@ -227,4 +227,52 @@ void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, 
         SDL_RenderPoint(renderer, x, y);
     }
 }
+
+void Graphics::plot_raw(int start_x, int start_y, const std::shared_ptr<Array>& color_matrix, float scaleX, float scaleY) {
+    if (!renderer || !color_matrix || color_matrix->shape.size() != 2) {
+        // Do nothing if graphics aren't ready, matrix is null, or not 2D
+        return;
+    }
+
+    size_t height = color_matrix->shape[0];
+    size_t width = color_matrix->shape[1];
+
+    // Loop through the matrix data
+    if (scaleX > 1 || scaleY > 1) {
+        SDL_FRect rect = { (float)0, (float)0, (float)0, (float)0 };
+        for (size_t r = 0; r < height; ++r) {
+            for (size_t c = 0; c < width; ++c) {
+                // Get the packed color value
+                uint32_t packed_color = static_cast<uint32_t>(std::get<double>(color_matrix->data[r * width + c]));
+
+                // Unpack the R, G, B components
+                Uint8 red = (packed_color >> 16) & 0xFF;
+                Uint8 green = (packed_color >> 8) & 0xFF;
+                Uint8 blue = packed_color & 0xFF;
+                rect = { static_cast<float>(start_x*scaleX + c * scaleX), static_cast<float>(start_y*scaleY + r * scaleX), (float)scaleX, (float)scaleY };
+                // Set the draw color and plot the single point
+                SDL_SetRenderDrawColor(renderer, red, green, blue, 255);
+                SDL_RenderFillRect(renderer, &rect);
+            }
+        }
+    }
+    else {
+        for (size_t r = 0; r < height; ++r) {
+            for (size_t c = 0; c < width; ++c) {
+                // Get the packed color value
+                uint32_t packed_color = static_cast<uint32_t>(std::get<double>(color_matrix->data[r * width + c]));
+
+                // Unpack the R, G, B components
+                Uint8 red = (packed_color >> 16) & 0xFF;
+                Uint8 green = (packed_color >> 8) & 0xFF;
+                Uint8 blue = packed_color & 0xFF;
+
+                // Set the draw color and plot the single point
+                SDL_SetRenderDrawColor(renderer, red, green, blue, 255);
+                SDL_RenderPoint(renderer, static_cast<float>(start_x + c), static_cast<float>(start_y + r));
+            }
+        }
+    }
+}
+
 #endif
