@@ -499,14 +499,15 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
             case Tokens::ID::CALLFUNC: {
                 // The buffer holds the function name (e.g., "lall").
                 // Write the CALLFUNC token, then write the function name string.
-                out_p_code.push_back(static_cast<uint8_t>(token));
-                for (char c : vm.buffer) {
-                    out_p_code.push_back(c);
+                std::string func_name = StringUtils::to_upper(vm.buffer);
+                if (compilation_func_table.count(func_name) && compilation_func_table.at(func_name).is_async) {
+                    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::OP_START_TASK));
                 }
-                out_p_code.push_back(0); // Null terminator
-
-                // The arguments inside (...) will be tokenized as a normal expression
-                // by subsequent loops, which is what the evaluator expects.
+                else {
+                    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::CALLFUNC));
+                }
+                for (char c : vm.buffer) out_p_code.push_back(c);
+                out_p_code.push_back(0);
                 continue;
             }
             case Tokens::ID::ONERRORCALL: {

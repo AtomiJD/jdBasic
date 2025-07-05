@@ -209,7 +209,7 @@ void NeReLaBasic::start() {
             if (is_stopped) {
                 TextIO::print("Resuming...\n");
                 is_stopped = false;
-                execute(program_p_code, true); // Continues from the saved pcode
+                execute_main_program(program_p_code, true); // Continues from the saved pcode
                 if (Error::get() != 0) Error::print();
             }
             else {
@@ -225,7 +225,7 @@ void NeReLaBasic::start() {
             continue;
         }
         // Execute the direct-mode p_code
-        execute(direct_p_code, false);
+        execute_synchronous_block(direct_p_code);
 
         if (Error::get() != 0) {
             Error::print();
@@ -233,7 +233,7 @@ void NeReLaBasic::start() {
     }
 }
 
-BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
+BasicValue NeReLaBasic::execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
 
     UINT16 old_line = 0;
 
@@ -394,7 +394,65 @@ void NeReLaBasic::step_over() {
     dap_cv.notify_one();
 }
 
-void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run, bool resume_mode) {
+
+// Wrapper for synchronous function calls from the expression parser
+BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
+    if (func_info.native_impl != nullptr) {
+        return func_info.native_impl(*this, args);
+    }
+    return execute_synchronous_function(func_info, args);
+}
+
+// New synchronous executor for REPL and direct commands
+void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_run) {
+    if (code_to_run.empty()) return;
+
+    auto prev_active_p_code = active_p_code;
+    auto prev_pcode = pcode;
+    active_p_code = &code_to_run;
+    pcode = 0;
+
+    while (pcode < active_p_code->size()) {
+        if (pcode == 0) pcode += 2; // Skip line number
+        Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        if (token == Tokens::ID::NOCMD || token == Tokens::ID::C_CR) break;
+        statement();
+        if (Error::get() != 0) break;
+        if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COLON) {
+            pcode++;
+        }
+    }
+
+    active_p_code = prev_active_p_code;
+    pcode = prev_pcode;
+}
+
+// New synchronous executor for user-defined functions
+BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
+    size_t initial_stack_depth = call_stack.size();
+
+    StackFrame frame;
+    // ... (populate frame with args, return address, etc.)
+    call_stack.push_back(frame);
+
+    // Context switch
+    auto prev_active_code = this->active_p_code;
+    auto prev_pcode = this->pcode;
+    // ... (set active_p_code and pcode to function's start)
+
+    while (call_stack.size() > initial_stack_depth && !is_stopped) {
+        if (Error::get() != 0) break;
+        statement();
+    }
+
+    // Context restore
+    this->active_p_code = prev_active_code;
+    this->pcode = prev_pcode;
+
+    return variables["RETVAL"];
+}
+
+void NeReLaBasic::execute_t(const std::vector<uint8_t>& code_to_run, bool resume_mode) {
     // If there's no code to run, do nothing.
     if (code_to_run.empty()) {
         return;
@@ -616,6 +674,103 @@ void NeReLaBasic::execute(const std::vector<uint8_t>& code_to_run, bool resume_m
     active_p_code = prev_active_p_code;
     // Clear the global VM pointer when execution finishes
     g_vm_instance_ptr = nullptr;
+}
+
+void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, bool resume_mode) {
+    if (code_to_run.empty()) return;
+
+    task_queue.clear();
+    next_task_id = 0;
+
+    auto main_task = std::make_shared<Task>();
+    main_task->id = next_task_id++;
+    main_task->status = TaskStatus::RUNNING;
+    main_task->p_code_ptr = &code_to_run;
+    main_task->p_code_counter = resume_mode ? this->pcode : 2;
+    task_queue[main_task->id] = main_task;
+
+    Error::clear();
+
+    while (!task_queue.empty()) {
+#ifdef SDL3
+        if (graphics_system.is_initialized) { if (!graphics_system.handle_events()) break; }
+#endif
+        if (!nopause_active && _kbhit()) {
+            char key = _getch();
+            if (key == 27) { TextIO::print("\n--- BREAK ---\n"); break; }
+            else if (key == ' ') {
+                TextIO::print("\n--- PAUSED (Press any key to resume) ---\n");
+                _getch();
+                TextIO::print("--- RESUMED ---\n");
+            }
+        }
+        if (dap_handler) { // Check if the debugger is attached
+            debug_state = DebugState::PAUSED;
+            // Tell the client we are paused at the entry point.
+            runtime_current_line = (*active_p_code)[0] | ((*active_p_code)[1] << 8);
+            dap_handler->send_stopped_message("entry", runtime_current_line, this->program_to_debug);
+            // Wait for the first "continue" or "next" command from the client.
+            pause_for_debugger();
+        }
+
+        // --- Scheduler Loop ---
+        for (auto it = task_queue.begin(); it != task_queue.end(); ) {
+            current_task = it->second.get();
+
+            // --- Context Switch: Load VM state from current task ---
+            this->pcode = current_task->p_code_counter;
+            this->active_p_code = current_task->p_code_ptr;
+            this->call_stack = current_task->call_stack;
+            this->for_stack = current_task->for_stack;
+            current_task->yielded_execution = false; // Reset yield flag
+
+            bool task_removed = false;
+            if (current_task->status == TaskStatus::RUNNING) {
+                runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+                pcode += 2;
+                statement(); // Execute one statement
+
+                // If the statement was AWAIT, the yielded flag will be set.
+                if (!current_task->yielded_execution) {
+                    // If not yielded, check for normal completion
+                    if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+                        current_task->status = TaskStatus::COMPLETED;
+                        // Store result from RETURN if it was a function
+                        if (variables.count("RETVAL")) {
+                            current_task->result = variables["RETVAL"];
+                        }
+                    }
+                }
+            }
+            else if (current_task->status == TaskStatus::PAUSED_ON_AWAIT) {
+                if (current_task->awaiting_task && current_task->awaiting_task->status == TaskStatus::COMPLETED) {
+                    current_task->status = TaskStatus::RUNNING;
+                    current_task->awaiting_task = nullptr;
+                    // The task will now re-execute the AWAIT and get the result.
+                }
+            }
+
+            // --- Context Switch: Save VM state back to current task ---
+            current_task->p_code_counter = this->pcode;
+            current_task->call_stack = this->call_stack;
+            current_task->for_stack = this->for_stack;
+
+            if (current_task->status == TaskStatus::COMPLETED || current_task->status == TaskStatus::ERRORED) {
+                it = task_queue.erase(it);
+                task_removed = true;
+            }
+
+            if (!task_removed) { ++it; }
+        }
+
+        if (task_queue.empty() || !task_queue.count(0)) { break; }
+    }
+end_of_loop:
+#ifdef SDL3
+    graphics_system.shutdown();
+    sound_system.shutdown();
+#endif
+    current_task = nullptr;
 }
 
 void NeReLaBasic::statement() {
@@ -916,151 +1071,193 @@ BasicValue NeReLaBasic::parse_map_literal() {
 BasicValue NeReLaBasic::parse_primary() {
     BasicValue current_value;
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+    if (token == Tokens::ID::OP_START_TASK) {
+        pcode++; // consume OP_START_TASK
+        std::string func_name = to_upper(read_string(*this));
+        if (!active_function_table->count(func_name)) {
+            Error::set(22, runtime_current_line, "Async function not found: " + func_name);
+            return {};
+        }
+        const auto& func_info = active_function_table->at(func_name);
+        std::vector<BasicValue> args;
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            while (true) {
+                args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+            }
+        }
+        pcode++; // Consume ')'
 
-    if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
-        pcode++;
-        std::string var_or_qual_name = to_upper(read_string(*this));
-
-        if (var_or_qual_name.find('.') != std::string::npos) {
-            auto [final_obj, final_member] = resolve_dot_chain(var_or_qual_name);
-            if (Error::get() != 0) return {};
-            if (final_member.empty()) { current_value = final_obj; }
-            else if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
-                auto& map_ptr = std::get<std::shared_ptr<Map>>(final_obj);
-                if (map_ptr && map_ptr->data.count(final_member)) {
-                    current_value = map_ptr->data.at(final_member);
-                }
-                else { Error::set(3, runtime_current_line, "Member not found: " + final_member); return {}; }
-            }
-            else if (std::holds_alternative<std::shared_ptr<Tensor>>(final_obj)) {
-                const auto& tensor_ptr = std::get<std::shared_ptr<Tensor>>(final_obj);
-                if (!tensor_ptr) {
-                    Error::set(3, runtime_current_line, "Cannot access member of a null Tensor.");
-                    return {};
-                }
-                if (final_member == "GRAD") {
-                    if (tensor_ptr->grad) {
-                        current_value = tensor_ptr->grad;
-                    }
-                    else {
-                        // If .grad is accessed but doesn't exist yet, return a valid but empty Tensor.
-                        current_value = std::make_shared<Tensor>();
-                    }
-                }
-                else {
-                    Error::set(3, runtime_current_line, "Invalid member for Tensor: " + final_member + ". Only .grad is supported.");
-                    return {};
-                }
-            }
-#ifdef JDCOM
-            else if (std::holds_alternative<ComObject>(final_obj)) {
-                IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-                _variant_t result_vt;
-                HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt, DISPATCH_PROPERTYGET);
-                if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property not found: " + final_member); return {}; }
-                current_value = variant_t_to_basic_value(result_vt, *this);
-            }
-#endif
-            else { Error::set(15, runtime_current_line, "Invalid object for dot notation."); return {}; }
+        auto new_task = std::make_shared<Task>();
+        new_task->id = next_task_id++;
+        new_task->status = TaskStatus::RUNNING;
+        if (!func_info.module_name.empty() && compiled_modules.count(func_info.module_name)) {
+            new_task->p_code_ptr = &compiled_modules.at(func_info.module_name).p_code;
         }
         else {
-            current_value = get_variable(*this, var_or_qual_name);
+            new_task->p_code_ptr = &program_p_code;
         }
+        new_task->p_code_counter = func_info.start_pcode;
+
+        StackFrame frame;
+        frame.function_name = func_name;
+        for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
+            if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
+        }
+        new_task->call_stack.push_back(frame);
+        task_queue[new_task->id] = new_task;
+        current_value = TaskRef{ new_task->id };
+
     }
-    else if (token == Tokens::ID::CALLFUNC) {
-        pcode++;
-        std::string identifier_being_called = to_upper(read_string(*this));
-        std::string real_func_to_call = identifier_being_called;
-
-        if (!active_function_table->count(real_func_to_call)) {
-            BasicValue& var = get_variable(*this, identifier_being_called);
-            if (std::holds_alternative<FunctionRef>(var)) {
-                real_func_to_call = std::get<FunctionRef>(var).name;
-            }
-        }
-
-        if (active_function_table->count(real_func_to_call)) {
-            const auto& func_info = active_function_table->at(real_func_to_call);
-            std::vector<BasicValue> args;
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                while (true) {
-                    args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
-                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
-                }
-            }
+    else {
+        if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
             pcode++;
-            if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return {}; }
-            current_value = execute_function_for_value(func_info, args);
-        }
-        else if (identifier_being_called.find('.') != std::string::npos) {
+            std::string var_or_qual_name = to_upper(read_string(*this));
+
+            if (var_or_qual_name.find('.') != std::string::npos) {
+                auto [final_obj, final_member] = resolve_dot_chain(var_or_qual_name);
+                if (Error::get() != 0) return {};
+                if (final_member.empty()) { current_value = final_obj; }
+                else if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
+                    auto& map_ptr = std::get<std::shared_ptr<Map>>(final_obj);
+                    if (map_ptr && map_ptr->data.count(final_member)) {
+                        current_value = map_ptr->data.at(final_member);
+                    }
+                    else { Error::set(3, runtime_current_line, "Member not found: " + final_member); return {}; }
+                }
+                else if (std::holds_alternative<std::shared_ptr<Tensor>>(final_obj)) {
+                    const auto& tensor_ptr = std::get<std::shared_ptr<Tensor>>(final_obj);
+                    if (!tensor_ptr) {
+                        Error::set(3, runtime_current_line, "Cannot access member of a null Tensor.");
+                        return {};
+                    }
+                    if (final_member == "GRAD") {
+                        if (tensor_ptr->grad) {
+                            current_value = tensor_ptr->grad;
+                        }
+                        else {
+                            // If .grad is accessed but doesn't exist yet, return a valid but empty Tensor.
+                            current_value = std::make_shared<Tensor>();
+                        }
+                    }
+                    else {
+                        Error::set(3, runtime_current_line, "Invalid member for Tensor: " + final_member + ". Only .grad is supported.");
+                        return {};
+                    }
+                }
 #ifdef JDCOM
-            auto [final_obj, final_method] = resolve_dot_chain(identifier_being_called);
-            if (Error::get() != 0) return {};
-            if (!std::holds_alternative<ComObject>(final_obj)) {
-                Error::set(15, runtime_current_line, "Methods can only be called on COM objects."); return {};
+                else if (std::holds_alternative<ComObject>(final_obj)) {
+                    IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+                    _variant_t result_vt;
+                    HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt, DISPATCH_PROPERTYGET);
+                    if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property not found: " + final_member); return {}; }
+                    current_value = variant_t_to_basic_value(result_vt, *this);
+                }
+#endif
+                else { Error::set(15, runtime_current_line, "Invalid object for dot notation."); return {}; }
             }
-            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-            if (!pDisp) { Error::set(1, runtime_current_line, "Uninitialized COM object."); return {}; }
-            std::vector<BasicValue> com_args;
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                while (true) {
-                    com_args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
-                    Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+            else {
+                current_value = get_variable(*this, var_or_qual_name);
+            }
+        }
+        else if (token == Tokens::ID::CALLFUNC) {
+            pcode++;
+            std::string identifier_being_called = to_upper(read_string(*this));
+            std::string real_func_to_call = identifier_being_called;
+
+            if (!active_function_table->count(real_func_to_call)) {
+                BasicValue& var = get_variable(*this, identifier_being_called);
+                if (std::holds_alternative<FunctionRef>(var)) {
+                    real_func_to_call = std::get<FunctionRef>(var).name;
                 }
             }
-            pcode++;
-            _variant_t result_vt;
-            HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
-            if (FAILED(hr)) {
-                hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
-                if (FAILED(hr)) { Error::set(12, runtime_current_line, "Failed to call COM method or get property '" + final_method + "'"); return {}; }
+
+            if (active_function_table->count(real_func_to_call)) {
+                const auto& func_info = active_function_table->at(real_func_to_call);
+                std::vector<BasicValue> args;
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                    while (true) {
+                        args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                        if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+                    }
+                }
+                pcode++;
+                if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return {}; }
+                current_value = execute_function_for_value(func_info, args);
             }
-            current_value = variant_t_to_basic_value(result_vt, *this);
+            else if (identifier_being_called.find('.') != std::string::npos) {
+#ifdef JDCOM
+                auto [final_obj, final_method] = resolve_dot_chain(identifier_being_called);
+                if (Error::get() != 0) return {};
+                if (!std::holds_alternative<ComObject>(final_obj)) {
+                    Error::set(15, runtime_current_line, "Methods can only be called on COM objects."); return {};
+                }
+                IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+                if (!pDisp) { Error::set(1, runtime_current_line, "Uninitialized COM object."); return {}; }
+                std::vector<BasicValue> com_args;
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                    while (true) {
+                        com_args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                        if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+                    }
+                }
+                pcode++;
+                _variant_t result_vt;
+                HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+                if (FAILED(hr)) {
+                    hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
+                    if (FAILED(hr)) { Error::set(12, runtime_current_line, "Failed to call COM method or get property '" + final_method + "'"); return {}; }
+                }
+                current_value = variant_t_to_basic_value(result_vt, *this);
 #else
-            Error::set(22, runtime_current_line, "Unknown function: " + identifier_being_called); return {};
+                Error::set(22, runtime_current_line, "Unknown function: " + identifier_being_called); return {};
 #endif
+            }
+            else { Error::set(22, runtime_current_line, "Unknown function: " + real_func_to_call); return {}; }
         }
-        else { Error::set(22, runtime_current_line, "Unknown function: " + real_func_to_call); return {}; }
+        else if (token == Tokens::ID::JD_TRUE) {
+            pcode++; current_value = true;
+        }
+        else if (token == Tokens::ID::JD_FALSE) {
+            pcode++; current_value = false;
+        }
+        else if (token == Tokens::ID::NUMBER) {
+            pcode++; double value;
+            memcpy(&value, &(*active_p_code)[pcode], sizeof(double));
+            pcode += sizeof(double);
+            current_value = value;
+        }
+        else if (token == Tokens::ID::STRING) {
+            pcode++; current_value = read_string(*this);
+        }
+        else if (token == Tokens::ID::CONSTANT) {
+            pcode++; current_value = builtin_constants.at(read_string(*this));
+        }
+        else if (token == Tokens::ID::FUNCREF) {
+            pcode++; current_value = FunctionRef{ to_upper(read_string(*this)) };
+        }
+        else if (token == Tokens::ID::C_LEFTBRACKET) {
+            current_value = parse_array_literal();
+        }
+        else if (token == Tokens::ID::C_LEFTBRACE) {
+            current_value = parse_map_literal();
+        }
+        else if (token == Tokens::ID::C_LEFTPAREN) {
+            pcode++; current_value = evaluate_expression();
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTPAREN) { Error::set(18, runtime_current_line); return {}; }
+        }
+        else { Error::set(1, runtime_current_line); return {}; }
+        if (Error::get() != 0) return {};
     }
-    else if (token == Tokens::ID::JD_TRUE) {
-        pcode++; current_value = true;
-    }
-    else if (token == Tokens::ID::JD_FALSE) {
-        pcode++; current_value = false;
-    }
-    else if (token == Tokens::ID::NUMBER) {
-        pcode++; double value;
-        memcpy(&value, &(*active_p_code)[pcode], sizeof(double));
-        pcode += sizeof(double);
-        current_value = value;
-    }
-    else if (token == Tokens::ID::STRING) {
-        pcode++; current_value = read_string(*this);
-    }
-    else if (token == Tokens::ID::CONSTANT) {
-        pcode++; current_value = builtin_constants.at(read_string(*this));
-    }
-    else if (token == Tokens::ID::FUNCREF) {
-        pcode++; current_value = FunctionRef{ to_upper(read_string(*this)) };
-    }
-    else if (token == Tokens::ID::C_LEFTBRACKET) {
-        current_value = parse_array_literal();
-    }
-    else if (token == Tokens::ID::C_LEFTBRACE) {
-        current_value = parse_map_literal();
-    }
-    else if (token == Tokens::ID::C_LEFTPAREN) {
-        pcode++; current_value = evaluate_expression();
-        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTPAREN) { Error::set(18, runtime_current_line); return {}; }
-    }
-    else { Error::set(1, runtime_current_line); return {}; }
-    if (Error::get() != 0) return {};
 
     // --- MAIN LOOP FOR HANDLING ACCESSORS LIKE [..], {..}, .member ---
     while (true) {
@@ -1178,6 +1375,35 @@ BasicValue NeReLaBasic::parse_primary() {
 // Level 5: Handles unary operators like - and NOT
 BasicValue NeReLaBasic::parse_unary() {
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+
+    if (token == Tokens::ID::AWAIT) {
+        pcode++; // Consume AWAIT
+        BasicValue task_ref_val = parse_unary(); // AWAIT has high precedence
+        if (Error::get() != 0) return {};
+
+        if (!std::holds_alternative<TaskRef>(task_ref_val)) {
+            Error::set(15, runtime_current_line, "Can only AWAIT a TaskRef object.");
+            return {};
+        }
+        int task_id_to_await = std::get<TaskRef>(task_ref_val).id;
+
+        if (task_queue.count(task_id_to_await)) {
+            auto& task_to_await = task_queue.at(task_id_to_await);
+            if (task_to_await->status == TaskStatus::COMPLETED) {
+                return task_to_await->result;
+            }
+            else {
+                current_task->status = TaskStatus::PAUSED_ON_AWAIT;
+                current_task->awaiting_task = task_to_await;
+                current_task->yielded_execution = true;
+                return false; // Dummy value, will be re-evaluated
+            }
+        }
+        else {
+            // Task not found, assume it's done.
+            return false; // Return default value
+        }
+    }
 
     if (token == Tokens::ID::C_MINUS) {
         pcode++; // Consume the '-'

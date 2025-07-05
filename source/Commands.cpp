@@ -269,7 +269,10 @@ std::string to_string(const BasicValue& val) {
                 tensor_str += float_array_to_string(*(arg->grad->data));
             }
             return tensor_str;
+        } else if constexpr (std::is_same_v<T, TaskRef>) {
+            return "<Task ID: " + std::to_string(arg.id) + ">";
         }
+
 #ifdef JDCOM
         else if constexpr (std::is_same_v<T, ComObject>) { // This is the problematic part
             // For a ComObject, you typically can't get a meaningful string
@@ -1295,6 +1298,7 @@ void Commands::do_exit_do(NeReLaBasic& vm) {
     vm.pcode = jump_target;
 }
 
+
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;
 
@@ -1446,7 +1450,7 @@ void Commands::do_stop(NeReLaBasic& vm) {
 
         // Execute the single command from the direct_p_code buffer.
         // We are NOT in resume_mode for this single command execution.
-        vm.execute(vm.direct_p_code, false);
+        vm.execute_main_program(vm.direct_p_code, false);
 
         // Restore the pointers to the main program's state.
         vm.pcode = original_pcode;
@@ -1490,7 +1494,7 @@ void Commands::do_run(NeReLaBasic& vm) {
 
     TextIO::print("Running...\n");
     // Execute from the main program buffer
-    vm.execute(vm.program_p_code, false);
+    vm.execute_main_program(vm.program_p_code, false);
 
     // If the execution resulted in an error, print it
     if (Error::get() != 0) {

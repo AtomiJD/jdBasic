@@ -17,7 +17,6 @@
 #include <map>
 #include "json.hpp" 
 
-
 // Forward-declare the Array struct so BasicValue can know it exists.
 struct Array;
 struct Map;
@@ -35,8 +34,6 @@ enum class DataType {
     MAP,
     JSON 
 };
-
-
 
 // A struct to hold our date/time value, based on std::chrono.
 struct DateTime {
@@ -111,12 +108,16 @@ struct JsonObject {
     nlohmann::json data;
 };
 
+struct TaskRef {
+    int id = -1;
+    bool operator==(const TaskRef&) const = default;
+};
 
-// --- Use a std::shared_ptr to break the circular dependency ---    
+// --- Use a std::shared_ptr to break the circular dependency ---
 #ifdef JDCOM
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef>;
 #else
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef>;
 #endif
 
 
@@ -175,19 +176,7 @@ using GradFunc = std::function<std::vector<std::shared_ptr<Tensor>>(std::shared_
      }
  };
 
-#ifdef ALTUNDPAMPIG
-struct Tensor {
-    std::shared_ptr<Array> data; // The actual matrix/vector data
-    std::shared_ptr<Tensor> grad; // The gradient, also a Tensor
 
-    // --- For Autodiff ---
-    std::vector<std::shared_ptr<Tensor>> parents; // Tensors this one was created from
-    GradFunc backward_fn = nullptr; // The function to compute the gradient
-
-    // A flag to prevent re-computing gradients in complex graphs
-    bool has_been_processed = false;
-};
-#else
 struct Tensor {
     std::shared_ptr<FloatArray> data; // The actual matrix/vector data
     std::shared_ptr<Tensor> grad; // The gradient, also a Tensor
@@ -199,7 +188,6 @@ struct Tensor {
     // A flag to prevent re-computing gradients in complex graphs
     bool has_been_processed = false;
 };
-#endif
 
 //==============================================================================
 // HELPER FUNCTIONS

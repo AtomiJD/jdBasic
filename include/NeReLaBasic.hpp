@@ -21,8 +21,18 @@ class NetworkManager;
 class DAPHandler;
 class Compiler;
 
+// Enum for the status of an asynchronous task
+enum class TaskStatus {
+    RUNNING,
+    PAUSED_ON_AWAIT,
+    COMPLETED,
+    ERRORED
+};
+
 class NeReLaBasic {
 public:
+    // --- Nested Types for Execution Machinery ---
+    struct FunctionInfo;
     // --- Member Variables (Global State) ---
     std::string buffer;
     std::string lineinput;
@@ -77,6 +87,18 @@ public:
         const std::vector<uint8_t>* return_p_code_ptr;
         FunctionTable* previous_function_table_ptr;
         size_t for_stack_size_on_entry;
+    };
+
+    struct Task {
+        int id;
+        TaskStatus status = TaskStatus::RUNNING;
+        BasicValue result = false;
+        std::shared_ptr<Task> awaiting_task = nullptr;
+        const std::vector<uint8_t>* p_code_ptr = nullptr;
+        uint16_t p_code_counter = 0;
+        std::vector<StackFrame> call_stack;
+        std::vector<ForLoopInfo> for_stack;
+        bool yielded_execution = false; // Flag to signal a yield from AWAIT
     };
 
     struct BasicModule {
@@ -193,12 +215,17 @@ public:
 
     std::unique_ptr<Compiler> compiler;
 
+    std::map<int, std::shared_ptr<Task>> task_queue;
+    int next_task_id = 0;
+    Task* current_task = nullptr;
+
     // --- Member Functions ---
     NeReLaBasic(); // Constructor
     ~NeReLaBasic(); //Destructor
 
     void start();  // The main REPL
     void execute(const std::vector<uint8_t>& code_to_run, bool resume_mode);
+    void execute_t(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     bool loadSourceFromFile(const std::string& filename);
     std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
 
@@ -215,6 +242,10 @@ public:
     void statement();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_repl_command(const std::vector<uint8_t>& repl_p_code);
+    void execute_synchronous_block(const std::vector<uint8_t>& code_to_run);
+    BasicValue execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
+    void execute_main_program(const std::vector<uint8_t>& code_to_run, bool resume_mode);
+    BasicValue execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
 
 private:
     void init_basic();

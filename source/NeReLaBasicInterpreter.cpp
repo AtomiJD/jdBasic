@@ -76,7 +76,7 @@ int main(int argc, char* argv[]) {
             dap_server.send_output_message("jdBasic REPL is Ready\nType your command and <enter>\n");
             // The file is now loaded and compiled. Start the execution loop.
             // The loop will immediately pause and wait for a 'continue' or 'step' command.
-            interpreter.execute(interpreter.program_p_code, false);
+            interpreter.execute_main_program(interpreter.program_p_code, false);
         }
         else {
             TextIO::print("? DAP Error: Launch failed. Shutting down.\n");

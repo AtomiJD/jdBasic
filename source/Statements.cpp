@@ -27,7 +27,7 @@ namespace {
         {"SUB",    Tokens::ID::SUB},
         {"ENDSUB", Tokens::ID::ENDSUB},
         {"AWAIT",   Tokens::ID::AWAIT},
-        {"ASYNC",   Tokens::ID::ASYNC},   // Add this
+        {"ASYNC",   Tokens::ID::ASYNC},  
         {"TYPE",    Tokens::ID::TYPE},      
         {"ENDTYPE",Tokens::ID::ENDTYPE},  
         {"FOR",     Tokens::ID::FOR},
