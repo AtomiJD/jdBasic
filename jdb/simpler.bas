@@ -1,0 +1,3 @@
+A = 0
+IF A = 0 THEN PRINT "Atomi"
+PRINT "FERTIG"

@@ -748,11 +748,13 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
         if (!if_stack.empty()) {
             // This performs the ENDIF logic implicitly by patching the jump address.
             IfStackInfo last_if_info = if_stack.back();
+            
             if_stack.pop_back();
 
             uint16_t jump_target = out_p_code.size();
             out_p_code[last_if_info.patch_address] = jump_target & 0xFF;
             out_p_code[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+            
         }
         else {
             // This indicates a compiler logic error, but we can safeguard against it.
@@ -924,7 +926,18 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
             if (vm.compiled_modules.count(mod_name)) continue;
             std::string filename = mod_name + ".jdb";
             std::ifstream mod_file(filename);
-            if (!mod_file) { Error::set(6, 0); TextIO::print("? Error: Module file not found: " + filename + "\n"); return 1; }
+            if (!mod_file) { 
+                std::filesystem::path program_path(vm.program_to_debug);
+                std::filesystem::path module_path = program_path.parent_path() / filename;
+
+                mod_file.open(module_path); // Attempt to open the file at the new path
+
+                if (!mod_file) {
+                    Error::set(6, 0);
+                    TextIO::print("? Error: Module file not found in current directory or source directory: " + filename + "\n");
+                    return 1;
+                }
+            }
             std::stringstream buffer;
             buffer << mod_file.rdbuf();
             if (!compile_module(vm, mod_name, buffer.str())) {

@@ -89,6 +89,15 @@ public:
         size_t for_stack_size_on_entry;
     };
 
+    enum class DebugState {
+        RUNNING,    // Normal execution
+        PAUSED,     // Stopped at a breakpoint, step, etc.
+        STEP_OVER
+    };
+
+    DebugState debug_state = DebugState::RUNNING;
+
+
     struct Task {
         int id;
         TaskStatus status = TaskStatus::RUNNING;
@@ -99,6 +108,21 @@ public:
         std::vector<StackFrame> call_stack;
         std::vector<ForLoopInfo> for_stack;
         bool yielded_execution = false; // Flag to signal a yield from AWAIT
+        // --- Per-Task Error Handling State ---
+        bool error_handler_active = false;
+        std::string error_handler_function_name = "";
+        bool jump_to_error_handler = true;
+        uint16_t resume_pcode_next_statement = 0;
+        uint16_t resume_pcode = 0;
+        uint16_t resume_runtime_line = 0;
+        const std::vector<uint8_t>* resume_p_code_ptr = nullptr;
+        FunctionTable* resume_function_table_ptr = nullptr;
+        std::vector<StackFrame> resume_call_stack_snapshot;
+        std::vector<ForLoopInfo> resume_for_stack_snapshot;
+
+        // --- Per-Task Debug State ---
+        DebugState debug_state = DebugState::RUNNING;
+        size_t step_over_stack_depth = 0;
     };
 
     struct BasicModule {
@@ -118,14 +142,6 @@ public:
         // Using a map for members allows for quick lookup
         std::map<std::string, MemberInfo> members;
     };
-
-    enum class DebugState {
-        RUNNING,    // Normal execution
-        PAUSED,     // Stopped at a breakpoint, step, etc.
-        STEP_OVER   
-    };
-
-    DebugState debug_state = DebugState::RUNNING;
 
     std::promise<bool> dap_launch_promise; // Used to signal that launch has occurred
     std::string program_to_debug; // Will hold the path from the launch request

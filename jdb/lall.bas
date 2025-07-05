@@ -6,3 +6,4 @@ For i = 1 to 3
         Endif
     next j
 next i
+PRINT "ENDE"

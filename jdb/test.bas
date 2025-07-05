@@ -20,6 +20,7 @@ print
 ' Call the exported 'print_sum' procedure
 print "Calling MATH.PRINT_SUM 100, 23..."
 MATH.PRINT_SUM 100, 23
+
 print
 
 print "--- Module Test Complete ---"

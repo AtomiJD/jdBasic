@@ -1,7 +1,5 @@
 ' --- Map Data Type Test ---
-
 DIM person AS MAP
-
 PRINT "Assigning values to the map..."
 person{"name"} = "John Doe"
 person{"age"} = 42
