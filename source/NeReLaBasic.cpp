@@ -487,6 +487,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     if (code_to_run.empty()) return;
 
     task_queue.clear();
+    task_completed.clear();
     next_task_id = 0;
 
     auto main_task = std::make_shared<Task>();
@@ -509,6 +510,8 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
         // Wait for the first "continue" or "next" command from the client.
         pause_for_debugger();
     }
+
+    
 
     while (!task_queue.empty()) {
 #ifdef SDL3
@@ -680,6 +683,8 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             current_task->for_stack = this->for_stack;
 
             if (current_task->status == TaskStatus::COMPLETED || current_task->status == TaskStatus::ERRORED) {
+                int task_id_to_delete = current_task->id;
+                task_completed[task_id_to_delete] = task_queue.at(task_id_to_delete);
                 it = task_queue.erase(it);
                 task_removed = true;
             }
@@ -1315,10 +1320,12 @@ BasicValue NeReLaBasic::parse_unary() {
         }
         int task_id_to_await = std::get<TaskRef>(task_ref_val).id;
 
-        if (task_queue.count(task_id_to_await)) {
-            auto& task_to_await = task_queue.at(task_id_to_await);
+        if (task_completed.count(task_id_to_await)) {
+            auto& task_to_await = task_completed.at(task_id_to_await);
             if (task_to_await->status == TaskStatus::COMPLETED) {
-                return task_to_await->result;
+                auto r = task_to_await->result;
+                task_completed.erase(task_id_to_await);
+                return r;
             }
             else {
                 current_task->status = TaskStatus::PAUSED_ON_AWAIT;

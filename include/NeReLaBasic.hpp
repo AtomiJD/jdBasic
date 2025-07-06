@@ -233,6 +233,7 @@ public:
     std::unique_ptr<Compiler> compiler;
 
     std::map<int, std::shared_ptr<Task>> task_queue;
+    std::map<int, std::shared_ptr<Task>> task_completed;
     int next_task_id = 0;
     Task* current_task = nullptr;
 
