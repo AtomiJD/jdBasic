@@ -260,3 +260,175 @@ SUB UPDATE_GAME()
     ENDIF
 ENDSUB
 
+REM ======================================================================
+REM RENDERING
+REM ======================================================================
+
+sub print_alien(i, f, t)
+    LOCATE AY[I], AX[I]
+    print ALIEN_T[t*4+f*2]
+    LOCATE AY[I]+1, AX[I]
+    print ALIEN_T[t*4+1+f*2]
+endsub
+
+SUB PRINT_PLAYER()
+    LOCATE PY, PX
+    PRINT PLAYER_T[0]
+    LOCATE PY+1, PX
+    PRINT PLAYER_T[1]
+ENDSUB
+
+SUB PRINT_BLOCK(I, HITS)
+    LOCATE BY[I], BX[I]
+    IF HITS = 0 THEN
+        PRINT BLOCK_A_T[0]
+        LOCATE BY[I]+1, BX[I]
+        PRINT BLOCK_A_T[1]
+    ENDIF
+    IF HITS = 1 THEN
+        PRINT BLOCK_B_T[0]
+        LOCATE BY[I]+1, BX[I]
+        PRINT BLOCK_B_T[1]
+    ENDIF
+    IF HITS = 2 THEN
+        PRINT BLOCK_C_T[0]
+        LOCATE BY[I]+1, BX[I]
+        PRINT BLOCK_C_T[1]
+    ENDIF
+ENDSUB
+
+
+SUB RENDER_SCREEN()
+    CLS
+    COLOR 7, 0
+    LOCATE 1, 1
+    PRINT "LIVES: " + STR$(LIVES);
+    LOCATE 1, 35
+    PRINT "JD INVADERS";
+    LOCATE 1, 68
+    PRINT "SCORE: " + STR$(SCORE);
+    LOCATE 2, 1
+    PRINT "--------------------------------------------------------------------------------";
+
+    REM -- DRAW ALIENS --
+    FOR I = 0 TO MAX_ALIENS - 1
+        IF AV[I] = 1 THEN
+            TYPE = AT[I]
+            IF TYPE = 0 THEN 
+               COLOR 1, 0 ' Red
+	    ENDIF
+            IF TYPE = 1 THEN 
+               COLOR 2, 0 ' Green
+	    ENDIF
+            IF TYPE = 2 THEN 
+               COLOR 6, 0 ' Cyan
+            ENDIF
+	    PRINT_ALIEN I, FRAME, TYPE
+        ENDIF
+    NEXT I
+    
+    REM -- DRAW BLOCKS --
+    COLOR 1, 0 ' Gray
+    FOR I = 0 TO MAX_BLOCKS - 1 
+        IF BV[I] = 1 THEN 
+            HITS = BH[I] 
+            PRINT_BLOCK I, HITS 
+        ENDIF
+    NEXT I 
+
+    REM -- DRAW PLAYER --
+    IF PVIS = 1 THEN
+        COLOR 4, 0 ' Blue
+	PRINT_PLAYER 
+    ENDIF
+    
+    REM -- DRAW MISSILES --
+    IF PMVIS = 1 THEN
+        COLOR 7, 0 ' White
+        LOCATE PMY, PMX
+	PRINT P_MISSILE$;
+    ENDIF
+    IF AMVIS = 1 THEN
+        COLOR 1, 0 ' Red
+        LOCATE AMY, AMX
+	PRINT A_MISSILE$;
+    ENDIF
+
+    REM -- DRAW GAME OVER MESSAGES --
+    IF GAMEOVER > 0 THEN
+        COLOR 7, 0
+        LOCATE 20, 35
+	PRINT "GAME OVER"
+        IF GAMEOVER = 1 THEN
+            LOCATE 22, 28
+	    PRINT "PRESS 'N' FOR NEXT LEVEL"
+        ELSE
+            LOCATE 22, 36
+	    PRINT "YOU LOST"
+            LOCATE 23, 29
+	    PRINT "PRESS 'N' TO RESTART"
+        ENDIF
+    ENDIF
+ENDSUB
+
+
+REM ======================================================================
+REM MAIN GAME LOOP
+REM ======================================================================
+SUB GAME_LOOP()
+MAIN_LOOP:
+    
+    K$ = INKEY$()
+    IF K$ = "z" or asc(k$) = 27 THEN 
+	GOTO END_GAME
+    ENDIF
+    IF GAMEOVER > 0 THEN
+        IF K$ = "n" THEN
+            IF GAMEOVER = 1 THEN
+                LIVES = LIVES + 1
+                INIT_LEVEL
+            ELSE
+                INIT_GAME
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF PVIS = 1 THEN
+        IF K$ = "a" THEN 
+	   PDIR = -1
+	ENDIF
+        IF K$ = "d" THEN 
+	   PDIR = 1
+	ENDIF
+        IF K$ = " " AND PMFIRE = 0 THEN 
+	   FIRE_PLAYER_MISSILE
+	ENDIF
+    ENDIF
+    
+    IF GAMEOVER = 0 THEN
+        SFRAME = SFRAME + 1
+        IF SFRAME > SPEED THEN
+            UPDATE_GAME
+	    RENDER_SCREEN
+            SFRAME = 0
+	    FRAME = FRAME + 1
+	    IF FRAME > 1 then
+	       FRAME = 0
+	    ENDIF
+        ENDIF
+    ENDIF
+
+    SLEEP 20
+    GOTO MAIN_LOOP
+
+END_GAME:
+    CURSOR 1
+    CLS
+ENDSUB
+
+
+
+CLS
+CURSOR 0
+INIT_GAME
+GAME_LOOP

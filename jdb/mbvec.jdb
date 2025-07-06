@@ -5,10 +5,10 @@
 
 ' --- 1. Configuration and Setup ---
 SCREEN_W = 1920
-SCREEN_H = 1080
-MAX_ITERATIONS = 100 ' Increase for more detail, but slower rendering
-CALC_W = 1920
-CALC_H = 1080
+ SCREEN_H = 1080
+MAX_ITERATIONS = 50 ' Increase for more detail, but slower rendering
+CALC_W = 192
+CALC_H = 108
 DX = SCREEN_W / CALC_W
 DY = SCREEN_H / CALC_H
 ' Define the view of the complex plane to render

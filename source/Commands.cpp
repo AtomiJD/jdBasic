@@ -845,231 +845,145 @@ void Commands::do_func(NeReLaBasic& vm) {
 // ... (existing includes and helper functions)
 
 void Commands::do_callfunc(NeReLaBasic& vm) {
-//    std::string identifier_being_called = to_upper(read_string(vm)); // Reads the function/member name
-//
-//#ifdef JDCOM
-//    size_t dot_pos = identifier_being_called.find('.');
-//    if (dot_pos != std::string::npos) {
-//        // This is a qualified call, e.g., "obj.Method" or "obj.Property"
-//        std::string obj_var_name = identifier_being_called.substr(0, dot_pos);
-//        std::string member_name = identifier_being_called.substr(dot_pos + 1);
-//
-//        BasicValue& com_obj_val = get_variable(vm, to_upper(obj_var_name));
-//        if (!std::holds_alternative<ComObject>(com_obj_val)) {
-//            Error::set(15, vm.runtime_current_line); // Type Mismatch: Base is not a COM object
-//            return;
-//        }
-//        IDispatchPtr pDisp = std::get<ComObject>(com_obj_val).ptr;
-//        if (!pDisp) {
-//            Error::set(1, vm.runtime_current_line); // Object not initialized
-//            return;
-//        }
-//
-//        // Parse arguments within parentheses
-//        std::vector<BasicValue> com_args;
-//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
-//            Error::set(1, vm.runtime_current_line); // Syntax Error: Missing '('
-//            return;
-//        }
-//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-//            while (true) {
-//                com_args.push_back(vm.evaluate_expression());
-//                if (Error::get() != 0) return;
-//                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-//                if (separator == Tokens::ID::C_RIGHTPAREN) break;
-//                if (separator != Tokens::ID::C_COMMA) {
-//                    Error::set(1, vm.runtime_current_line); // Syntax Error: Missing ','
-//                    return;
-//                }
-//                vm.pcode++;
-//            }
-//        }
-//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-//            Error::set(18, vm.runtime_current_line); // Syntax Error: Missing ')'
-//            return;
-//        }
-//        else {
-//            vm.pcode++; // Consume ')'
-//        }
-//
-//        _variant_t result_vt_unused; // Method/property called as a statement, result is ignored.
-//        HRESULT hr;
-//
-//        // Strategy for statement-style calls:
-//        // First, try as a method (DISPATCH_METHOD). This is the most common use for statements.
-//        hr = invoke_com_method(pDisp, member_name, com_args, result_vt_unused, DISPATCH_METHOD);
-//        if (FAILED(hr)) {
-//            // If it failed as a method, and there are arguments, try as an indexed property GET.
-//            // This covers cases like obj.Cells(1,1) where the result is not assigned but the call is still needed.
-//            // Note: If you want to allow setting properties in a command-like fashion (e.g., obj.Value("New Text")),
-//            //       you'd need more sophisticated parsing to determine if it's a PROPERTYPUT vs PROPERTYGET.
-//            //       For now, let's stick to methods and property gets for `do_callfunc`.
-//            if (!com_args.empty()) {
-//                hr = invoke_com_method(pDisp, member_name, com_args, result_vt_unused, DISPATCH_PROPERTYGET);
-//            }
-//
-//            if (FAILED(hr)) {
-//                Error::set(12, vm.runtime_current_line); // General COM error
-//                return;
-//            }
-//        }
-//        // Successfully invoked COM method/property. No return value needed.
-//        return; // Exit do_callfunc
-//    }
-//#endif  
-//    // --- Original Logic for non-COM function calls (Built-in or User-Defined BASIC) ---
-//    // This part remains largely the same.
-//    std::string real_func_to_call = identifier_being_called;
-//
-//    // Check for higher-order function calls (e.g., func_var(arg))
-//    if (!vm.active_function_table->count(real_func_to_call)) {
-//        BasicValue& var = get_variable(vm, identifier_being_called);
-//        if (std::holds_alternative<FunctionRef>(var)) {
-//            real_func_to_call = std::get<FunctionRef>(var).name;
-//        }
-//    }
-//
-//    if (!vm.active_function_table->count(real_func_to_call)) {
-//        Error::set(22, vm.runtime_current_line); // Undefined function
-//        return;
-//    }
-//
-//    const auto& func_info = vm.active_function_table->at(real_func_to_call);
-//    std::vector<BasicValue> args;
-//
-//    // Argument Parsing Logic (as it was)
-//    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
-//        Error::set(1, vm.runtime_current_line); // Syntax Error
-//        return;
-//    }
-//    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-//        while (true) {
-//            args.push_back(vm.evaluate_expression());
-//            if (Error::get() != 0) return;
-//            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-//            if (separator == Tokens::ID::C_RIGHTPAREN) break;
-//            if (separator != Tokens::ID::C_COMMA) {
-//                Error::set(1, vm.runtime_current_line); // Syntax Error
-//                return;
-//            }
-//            vm.pcode++;
-//        }
-//    }
-//    vm.pcode++; // Consume ')'
-//
-//    if (func_info.arity != -1 && args.size() != func_info.arity) {
-//        Error::set(26, vm.runtime_current_line); // Incorrect number of arguments
-//        return;
-//    }
-//
-//    // --- Execution Logic for BASIC Functions ---
-//
-//        if (func_info.native_impl != nullptr) {
-//            // Native C++ function/procedure
-//            func_info.native_impl(vm, args);
-//        }
-//        else {
-//            // User-defined BASIC function/procedure
-//            NeReLaBasic::StackFrame frame;
-//            for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
-//                if (i < args.size()) {
-//                    frame.local_variables[func_info.parameter_names[i]] = args[i];
-//                }
-//            }
-//
-//            frame.return_p_code_ptr = vm.active_p_code;
-//            frame.return_pcode = vm.pcode;
-//            frame.previous_function_table_ptr = vm.active_function_table;
-//            frame.for_stack_size_on_entry = vm.for_stack.size();
-//            frame.function_name = real_func_to_call;
-//            vm.call_stack.push_back(frame);
-//
-//            // CONTEXT SWITCH
-//            if (!func_info.module_name.empty() && vm.compiled_modules.count(func_info.module_name)) {
-//                auto& target_module = vm.compiled_modules[func_info.module_name];
-//                vm.active_p_code = &target_module.p_code;
-//                vm.active_function_table = &target_module.function_table;
-//            }
-//
-//            vm.pcode = func_info.start_pcode; // Jump to function start
-//        }
-// This function handles calling a function as a statement, where the return value is discarded.
-std::string identifier_being_called = to_upper(read_string(vm));
+    std::string identifier_being_called = to_upper(read_string(vm));
 
-std::string real_func_to_call = identifier_being_called;
-// Check for higher-order function calls (e.g., func_var(arg))
-if (!vm.active_function_table->count(real_func_to_call)) {
-    BasicValue& var = get_variable(vm, identifier_being_called);
-    if (std::holds_alternative<FunctionRef>(var)) {
-        real_func_to_call = std::get<FunctionRef>(var).name;
+    // Check if the identifier contains a dot, which signifies a potential method call (e.g., "conn.Open").
+    if (identifier_being_called.find('.') != std::string::npos) {
+#ifdef JDCOM // This logic is only compiled if COM support is enabled.
+        // It's a dot-chain, so resolve it to get the target object and the method name.
+        auto [final_obj, final_method] = vm.resolve_dot_chain(identifier_being_called);
+        if (Error::get() != 0) {
+            return; // An error occurred during resolution.
+        }
+
+        // Ensure we have a COM object to call a method on.
+        if (!std::holds_alternative<ComObject>(final_obj)) {
+            Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+            return;
+        }
+
+        IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+        if (!pDisp) {
+            Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
+            return;
+        }
+
+        // Parse arguments from the bytecode stream.
+        std::vector<BasicValue> com_args;
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
+            Error::set(1, vm.runtime_current_line, "Syntax Error: Missing '('.");
+            return;
+        }
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            while (true) {
+                com_args.push_back(vm.evaluate_expression());
+                if (Error::get() != 0) return;
+
+                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                if (separator != Tokens::ID::C_COMMA) {
+                    Error::set(1, vm.runtime_current_line, "Syntax Error: Missing ','.");
+                    return;
+                }
+                vm.pcode++;
+            }
+        }
+        vm.pcode++; // Consume ')'
+
+        _variant_t result_vt; // Result is discarded for statement calls.
+        HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+
+        if (FAILED(hr)) {
+            // If the method call fails, it might be a property get with parameters (e.g., obj.Item(1)).
+            // We still try this even for a statement call, as the call itself might have side effects.
+            hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
+            if (FAILED(hr)) {
+                Error::set(12, vm.runtime_current_line, "Failed to call COM method or get property '" + final_method + "'");
+                return;
+            }
+        }
+#else
+        // If COM is not defined, this is an error because dot notation is not supported.
+        Error::set(22, vm.runtime_current_line, "Unknown function: " + identifier_being_called);
+#endif
     }
-}
+    else {
+        // --- Original Logic for standard jdbasic function calls ---
+        std::string real_func_to_call = identifier_being_called;
 
-if (!vm.active_function_table->count(real_func_to_call)) {
-    Error::set(22, vm.runtime_current_line, "Undefined function: " + real_func_to_call);
-    return;
-}
+        // Check for higher-order function calls (e.g., func_var(arg))
+        if (!vm.active_function_table->count(real_func_to_call)) {
+            BasicValue& var = get_variable(vm, identifier_being_called);
+            if (std::holds_alternative<FunctionRef>(var)) {
+                real_func_to_call = std::get<FunctionRef>(var).name;
+            }
+        }
 
-const auto& func_info = vm.active_function_table->at(real_func_to_call);
-std::vector<BasicValue> args;
+        if (!vm.active_function_table->count(real_func_to_call)) {
+            Error::set(22, vm.runtime_current_line, "Undefined function: " + real_func_to_call);
+            return;
+        }
 
-// --- Argument Parsing ---
-if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
-    Error::set(1, vm.runtime_current_line); return;
-}
-if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-    while (true) {
-        args.push_back(vm.evaluate_expression());
-        if (Error::get() != 0) return;
-        Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-        if (separator == Tokens::ID::C_RIGHTPAREN) break;
-        if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
-        vm.pcode++;
+        const auto& func_info = vm.active_function_table->at(real_func_to_call);
+        std::vector<BasicValue> args;
+
+        // Argument Parsing
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
+            Error::set(1, vm.runtime_current_line); return;
+        }
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            while (true) {
+                args.push_back(vm.evaluate_expression());
+                if (Error::get() != 0) return;
+                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+                vm.pcode++;
+            }
+        }
+        vm.pcode++; // Consume ')'
+
+        if (func_info.arity != -1 && args.size() != func_info.arity) {
+            Error::set(26, vm.runtime_current_line, "Incorrect number of arguments."); return;
+        }
+
+        // Unified Execution Logic
+        if (func_info.native_impl != nullptr) {
+            // Call native C++ function
+            func_info.native_impl(vm, args);
+        }
+        else {
+            // For a user-defined BASIC function, use the synchronous executor
+            // and discard its return value.
+            vm.execute_synchronous_function(func_info, args);
+        }
     }
-}
-vm.pcode++; // Consume ')'
-
-if (func_info.arity != -1 && args.size() != func_info.arity) {
-    Error::set(26, vm.runtime_current_line); return;
-}
-
-// --- UNIFIED EXECUTION LOGIC ---
-if (func_info.native_impl != nullptr) {
-    // Call native C++ function (which doesn't return a value to the BASIC environment)
-    func_info.native_impl(vm, args);
-}
-else {
-    // For a user-defined BASIC function, use the robust synchronous executor
-    // and simply discard its return value. This fixes the recursion bug.
-    vm.execute_synchronous_function(func_info, args);
-}
 }
 
 // --- Implementation of do_return ---
 void Commands::do_return(NeReLaBasic& vm) {
-    if (vm.current_task == nullptr) {
-        Error::set(25, vm.runtime_current_line, "RETURN without a function call in a task context.");
-        return;
-    }
-
     // Evaluate the return value expression, if any.
-    BasicValue return_val = false; // Default return value
+    BasicValue return_val = false; // Default return value for functions without an explicit return value.
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-    if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::C_COLON && next_token != Tokens::ID::ENDFUNC) {
+
+    // Check if there is an expression to evaluate after the RETURN keyword.
+    if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::C_COLON && next_token != Tokens::ID::ENDFUNC && next_token != Tokens::ID::ENDSUB) {
         return_val = vm.evaluate_expression();
         if (Error::get() != 0) {
-            vm.current_task->status = TaskStatus::ERRORED;
+            if (vm.current_task) vm.current_task->status = TaskStatus::ERRORED;
             return;
         }
     }
 
-    // Store the result directly in the current task object.
-    vm.current_task->result = return_val;
+    // For ALL returns (sync or async), set the global RETVAL.
+    // This ensures that synchronous calls get their return value correctly.
+    // The expression evaluator that called the function will read this value.
+    vm.variables["RETVAL"] = return_val;
 
     // Pop the stack frame for the returning function.
     if (vm.call_stack.empty()) {
         Error::set(25, vm.runtime_current_line, "RETURN without function call.");
-        vm.current_task->status = TaskStatus::ERRORED;
+        if (vm.current_task) vm.current_task->status = TaskStatus::ERRORED;
         return;
     }
     NeReLaBasic::StackFrame frame = vm.call_stack.back();
@@ -1080,36 +994,31 @@ void Commands::do_return(NeReLaBasic& vm) {
         vm.for_stack.resize(frame.for_stack_size_on_entry);
     }
 
-    // If the call stack for this task is now empty, the task is complete.
-    if (vm.call_stack.empty()) {
+    // --- UNIFIED CONTEXT RESTORE ---
+    // This fixes the bug where pcode was not restored for synchronous calls.
+    if (vm.call_stack.empty() && frame.is_async_call) {
         vm.current_task->status = TaskStatus::COMPLETED;
         // By setting the status, we signal the main scheduler to stop
         // executing this task. The scheduler will handle cleanup.
     }
     else {
-        // It was a normal return within the task. Restore context to continue
-        // execution in the calling function within the same task.
         vm.pcode = frame.return_pcode;
         vm.active_p_code = frame.return_p_code_ptr;
         vm.active_function_table = frame.previous_function_table_ptr;
     }
+
+    // --- TASK COMPLETION CHECK (Async-specific) ---
+    // Additionally, if this return causes a background task's call stack to become empty,
+    // mark that task as completed.
+    if (vm.current_task != nullptr && frame.is_async_call && vm.call_stack.empty()) {
+        vm.current_task->result = return_val; // Store the final result in the task object.
+        vm.current_task->status = TaskStatus::COMPLETED;
+    }
 }
 
 void Commands::do_endfunc(NeReLaBasic& vm) {
-    if (vm.call_stack.empty()) {
-        Error::set(23, vm.runtime_current_line); return;
-    }
-
-    // ENDFUNC implies a default return value of 0.
-    vm.variables["RETVAL"] = 0.0;
-
-    // Pop the stack and set pcode to the return address.
-    auto& frame = vm.call_stack.back();
-    vm.for_stack.resize(frame.for_stack_size_on_entry);
-    vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
-    vm.pcode = frame.return_pcode;              // Restore program counter
-    vm.active_function_table = frame.previous_function_table_ptr;
-    vm.call_stack.pop_back();
+    // ENDFUNC is treated as a RETURN with a default value (false).
+    do_return(vm);
 }
 
 
@@ -1121,9 +1030,12 @@ void Commands::do_sub(NeReLaBasic& vm) {
 
 void Commands::do_callsub(NeReLaBasic& vm) {
     std::string proc_name = to_upper(read_string(vm));
-    
+    int funcnotfound = false;
+    if (!vm.active_function_table->count(proc_name)) {
+        funcnotfound = true;
+    }
     // Check if it's a COM method call by looking for a '.'
-    if (proc_name.find('.') != std::string::npos) {
+    if (proc_name.find('.') != std::string::npos && funcnotfound) {
 #ifdef JDCOM
         // It's a dot-chain, so resolve it to get the object and the method name.
         auto [final_obj, final_method] = vm.resolve_dot_chain(proc_name);
@@ -1156,7 +1068,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
 #endif
     }
     else {
-        if (!vm.active_function_table->count(proc_name)) {
+        if (funcnotfound) {
             Error::set(22, vm.runtime_current_line); return;
         }
         const auto& proc_info = vm.active_function_table->at(proc_name);
@@ -1187,45 +1099,12 @@ void Commands::do_callsub(NeReLaBasic& vm) {
 
         vm.execute_function_for_value(proc_info, args);
     }
-    //if (proc_info.native_impl != nullptr) {
-    //    proc_info.native_impl(vm, args);
-    //}
-    //else {
-    //    NeReLaBasic::StackFrame frame;
-    //    frame.return_p_code_ptr = vm.active_p_code;
-    //    frame.return_pcode = vm.pcode;
-    //    frame.previous_function_table_ptr = vm.active_function_table;
-    //    frame.for_stack_size_on_entry = vm.for_stack.size();
-    //    frame.function_name = proc_name;
-    //    for (size_t i = 0; i < proc_info.parameter_names.size(); ++i) {
-    //        if (i < args.size()) frame.local_variables[proc_info.parameter_names[i]] = args[i];
-    //    }
-    //    vm.call_stack.push_back(frame);
-
-    //    if (!proc_info.module_name.empty() && vm.compiled_modules.count(proc_info.module_name)) {
-    //        auto& target_module = vm.compiled_modules[proc_info.module_name];
-    //        vm.active_p_code = &target_module.p_code;
-    //        vm.active_function_table = &target_module.function_table;
-    //    }
-    //    vm.pcode = proc_info.start_pcode;
-    //}
 }
 
 // At runtime, ENDSUB handles returning from a procedure call.
 // It pops the call stack and restores the program counter.
 void Commands::do_endsub(NeReLaBasic& vm) {
-    if (vm.call_stack.empty()) {
-        Error::set(9, vm.runtime_current_line); // RETURN without GOSUB/CALL
-        return;
-    }
-    // For a procedure, there is no return value to set.
-    // We just pop the stack and set pcode to the return address.
-    auto& frame = vm.call_stack.back();
-    vm.for_stack.resize(frame.for_stack_size_on_entry);
-    vm.active_p_code = frame.return_p_code_ptr; // Restore context
-    vm.pcode = frame.return_pcode;              // Restore PC
-    vm.active_function_table = frame.previous_function_table_ptr;
-    vm.call_stack.pop_back();
+    do_return(vm);
 }
 
 // This command will expect a function name string directly after it.

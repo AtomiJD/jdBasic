@@ -87,6 +87,7 @@ public:
         const std::vector<uint8_t>* return_p_code_ptr;
         FunctionTable* previous_function_table_ptr;
         size_t for_stack_size_on_entry = 0;
+        bool is_async_call = false;
     };
 
     enum class DebugState {

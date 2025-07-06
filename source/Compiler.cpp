@@ -127,8 +127,6 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             return keywordToken;
         }
 
-
-
         if (is_start_of_statement) {
             if (vm.active_function_table->count(vm.buffer) && vm.active_function_table->at(vm.buffer).is_procedure) {
                 return Tokens::ID::CALLSUB; // It's a command-style procedure call!
@@ -141,20 +139,11 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
         char action_suffix = (suffix_ptr < vm.lineinput.length()) ? vm.lineinput[suffix_ptr] : '\0';
 
-        if (is_start_of_statement && action_suffix != '=') {
-            // If it's explicitly called with parens, it's a function call statement.
-            if (action_suffix == '(') {
-                vm.prgptr = suffix_ptr;
-                return Tokens::ID::CALLFUNC;
-            }
-            // Otherwise, it's a procedure-style call like `MySub` or `obj.Quit`.
-            return Tokens::ID::CALLSUB;
-        }
-
         if (is_start_of_statement && action_suffix == ':') {
             vm.prgptr = suffix_ptr + 1;
             return Tokens::ID::LABEL;
         }
+
         if (action_suffix == '(') {
             vm.prgptr = suffix_ptr;
             return Tokens::ID::CALLFUNC;
@@ -172,6 +161,16 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
                 vm.prgptr = suffix_ptr;
                 return Tokens::ID::MAP_ACCESS;
             }
+        }
+
+        if (is_start_of_statement && action_suffix != '=') {
+            // If it's explicitly called with parens, it's a function call statement.
+            if (action_suffix == '(') {
+                vm.prgptr = suffix_ptr;
+                return Tokens::ID::CALLFUNC;
+            }
+            // Otherwise, it's a procedure-style call like `MySub` or `obj.Quit`.
+            return Tokens::ID::CALLSUB;
         }
         // If not at the start of a statement, it's part of an expression.
         // The brackets will be tokenized separately as C_LEFTBRACKET / C_LEFTBRACE,
@@ -245,6 +244,8 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
 
     bool is_start_of_statement = true;
     bool is_one_liner_if = false;
+    int brace_nesting_level = 0;
+    int bracket_nesting_level = 0;
 
     // This pointer will track if a LOOP statement was found on the current line,
     // so we know to patch its jumps after the whole line is tokenized.
@@ -276,10 +277,17 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
         if (Error::get() != 0) return Error::get();
         if (token == Tokens::ID::NOCMD) break; // End of line reached.
 
-        // Any token other than a comment or label means we are no longer at the start of a statement
-        if (token == Tokens::ID::C_COLON) {
+        // *** NEW: Update nesting level based on token ***
+        if (token == Tokens::ID::C_LEFTBRACE) brace_nesting_level++;
+        if (token == Tokens::ID::C_RIGHTBRACE && brace_nesting_level > 0) brace_nesting_level--;
+        if (token == Tokens::ID::C_LEFTBRACKET) bracket_nesting_level++;
+        if (token == Tokens::ID::C_RIGHTBRACKET && bracket_nesting_level > 0) bracket_nesting_level--;
+
+        // *** MODIFIED: Only treat colon as a statement separator if at the top level ***
+        if (token == Tokens::ID::C_COLON && brace_nesting_level == 0 && bracket_nesting_level == 0) {
             is_start_of_statement = true;
         }
+
         else if (token != Tokens::ID::LABEL && token != Tokens::ID::REM) {
             is_start_of_statement = false;
         }

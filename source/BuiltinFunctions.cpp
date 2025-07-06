@@ -3617,7 +3617,6 @@ BasicValue builtin_httppost(NeReLaBasic& vm, const std::vector<BasicValue>& args
         std::string reason = "?Network Error: " + response_body + "\n";
         Error::set(1001, vm.runtime_current_line, reason);
     }
-
     return response_body;
 }
 
@@ -3644,7 +3643,62 @@ BasicValue builtin_httpput(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 
 #endif
 
-// Async, Await and Task things
+// Other
+
+// Implementation of the TYPEOF function
+BasicValue builtin_typeof(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(26, vm.runtime_current_line, "TYPEOF requires exactly one argument.");
+        return std::string(""); // Return empty string on error
+    }
+
+    const BasicValue& val = args[0];
+
+    // Use std::visit to check the type held by the BasicValue variant
+    return std::visit([](auto&& arg) -> std::string {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            return "BOOLEAN";
+        }
+        else if constexpr (std::is_same_v<T, int>) {
+            return "INTEGER";
+        }
+        else if constexpr (std::is_same_v<T, double>) {
+            return "DOUBLE";
+        }
+        else if constexpr (std::is_same_v<T, std::string>) {
+            return "STRING";
+        }
+        else if constexpr (std::is_same_v<T, DateTime>) {
+            return "DATE";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
+            return "ARRAY";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
+            return "MAP";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
+            return "JSON";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Tensor>>) {
+            return "TENSOR";
+        }
+#ifdef JDCOM
+        else if constexpr (std::is_same_v<T, ComObject>) {
+            return "COMOBJECT";
+        }
+#endif
+        else if constexpr (std::is_same_v<T, FunctionRef>) {
+            return "FUNCREF";
+        }
+        else if constexpr (std::is_same_v<T, TaskRef>) {
+            return "TASKREF";
+        }
+        return "UNKNOWN";
+        }, val);
+}
+
 
 
 // --- The Registration Function ---
@@ -3687,6 +3741,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SPLIT", 2, builtin_split);
     register_func("FRMV$", 1, builtin_frmv_str);
     register_func("FORMAT$", -1, builtin_format_str);
+
+    register_func("TYPEOF", 1, builtin_typeof);
 
     // --- Register Math Functions ---
     register_func("SIN", 1, builtin_sin);

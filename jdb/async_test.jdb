@@ -1,0 +1,75 @@
+' ================================================================
+' NeReLaBasic (jdBasic) ASYNC/AWAIT Demonstration
+' This program shows how to run tasks in the background
+' and wait for their results without blocking the main program.
+' ================================================================
+
+PRINT "--- Starting ASYNC/AWAIT Demonstration ---"
+PRINT
+
+' ================================================================
+'          A S Y N C   F U N C T I O N   D E F I N I T I O N S
+' ================================================================
+
+' This function simulates a "download" that takes some time.
+ASYNC FUNC DOWNLOADFILE(url$, duration)
+  PRINT "  [Task 1] Starting download from "; url$
+  ' Simulate work by looping
+  FOR i = 1 TO duration
+    PRINT "  [Task 1] ... downloading chunk "; i; " of "; duration; " ..."
+  NEXT i
+  PRINT "  [Task 1] Download finished."
+  RETURN "Download of " + url$ + " successful."
+ENDFUNC
+
+' This function simulates a "data processing" job.
+ASYNC FUNC PROCESSDATA(dataset$, duration)
+  PRINT "    [Task 2] Starting to process data from "; dataset$
+  ' Simulate work by looping
+  FOR i = 1 TO duration
+    PRINT "    [Task 2] ... processing record block "; i; " of "; duration; " ..."
+  NEXT i
+  PRINT "    [Task 2] Data processing finished."
+  RETURN "Processed " + dataset$ + " and found 42 insights."
+ENDFUNC
+
+' --- Step 1: Start the asynchronous tasks ---
+' We call two ASYNC functions. This creates two new tasks that
+' start running in the background. The calls return immediately
+' with a "Task Reference" handle, which we store in variables.
+
+PRINT "Main: Kicking off background tasks..."
+task1 = DOWNLOADFILE("https://example.com/data.zip", 5)
+task2 = PROCESSDATA("some_large_dataset.csv", 3)
+PRINT "Main: Background tasks have been started."
+PRINT
+
+' --- Step 2: Main program continues its own work ---
+' While the background tasks are running, the main program is not
+' blocked. It can continue to execute other commands.
+PRINT "Main: Now doing other work while tasks run in the background."
+FOR i = 1 TO 4
+  PRINT "Main: ... processing main task step "; i; " ..."
+  ' In a real program, you could do other things here,
+  ' like updating the UI or handling user input.
+NEXT i
+PRINT "Main: Finished with other work."
+PRINT
+
+' --- Step 3: Wait for the tasks to complete and get results ---
+' Now we use AWAIT. This will pause the main program until the
+' specified task is finished. It then returns the value from
+' the task's RETURN statement.
+
+PRINT "Main: Now waiting for Task 1 to complete..."
+result1 = AWAIT task1
+PRINT "Main: Task 1 finished with result: '"; result1; "'"
+PRINT
+
+PRINT "Main: Now waiting for Task 2 to complete..."
+result2 = AWAIT task2
+PRINT "Main: Task 2 finished with result: '"; result2; "'"
+PRINT
+
+PRINT "--- Demonstration Complete ---"
+

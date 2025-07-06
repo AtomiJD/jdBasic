@@ -125,54 +125,6 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
 
 ## Functions
 
-### Tensor & AI Functions
-
-This suite of functions provides the building blocks for creating and training neural networks directly within NeReLa Basic. The core component is the `Tensor` data type, which supports automatic differentiation.
-
-#### Core & Conversion
-
-  * **`TENSOR.FROM(array)`**: Converts a standard `Array` into a `Tensor`, enabling it to be used in the neural network graph.
-  * **`TENSOR.TOARRAY(tensor)`**: Converts a `Tensor` back into a standard `Array`, allowing you to inspect its data or use it with other array functions.
-  * **Tensor Operations**: Standard arithmetic operators are overloaded to work element-wise with Tensors and support backpropagation.
-      * **`+`**, **`-`**, **`*`**: Perform tensor addition, subtraction, and element-wise multiplication. Broadcasting rules (e.g., matrix + vector) apply.
-      * **`/`**, **`^`**: Perform division and power operations between a tensor and a scalar.
-  * **`tensor.grad`**: Accesses the gradient of a tensor after `TENSOR.BACKWARD` has been called. This is not a function but property access using dot notation.
-
-#### Model Building
-
-  * **`TENSOR.CREATE_LAYER(type$, options_map)`**: A factory for creating neural network layers. It returns a `Map` containing the initialized weight and bias tensors.
-      * `type$`: "DENSE", "EMBEDDING", "LAYER\_NORM", "ATTENTION".
-      * `options_map`: A `Map` with layer-specific parameters.
-          * **DENSE**: `{"input_size": ..., "units": ...}`
-          * **EMBEDDING**: `{"vocab_size": ..., "embedding_dim": ...}`
-          * **LAYER\_NORM**: `{"dim": ...}`
-          * **ATTENTION**: `{"embedding_dim": ...}`
-  * **`TENSOR.CREATE_OPTIMIZER(type$, options_map)`**: A factory for creating optimizers.
-      * `type$`: "SGD".
-      * `options_map`: `{"learning_rate": ...}`
-
-#### Training & I/O
-
-  * **`TENSOR.BACKWARD loss_tensor`**: A procedure that performs backpropagation on the computational graph, starting from the final loss tensor. It computes the gradients for all parent tensors.
-  * **`TENSOR.UPDATE(model_map, optimizer_map)`**: Updates the model's parameters (weights and biases) using the gradients calculated by `TENSOR.BACKWARD` and the specified optimizer's learning rate. Returns the updated model map.
-  * **`TENSOR.SAVEMODEL model_map, "filename.json"`**: Saves a model (a `Map` containing parameter tensors) to a human-readable JSON file.
-  * **`TENSOR.LOADMODEL("filename.json")`**: Loads a model from a JSON file, restoring the tensors and model structure.
-
-#### Layers & Activations
-
-  * **`TENSOR.SIGMOID(tensor)`**: Applies the element-wise sigmoid activation function.
-  * **`TENSOR.RELU(tensor)`**: Applies the element-wise Rectified Linear Unit (ReLU) activation function.
-  * **`TENSOR.SOFTMAX(tensor, [is_causal])`**: Applies the softmax function to the last dimension of the input tensor. If the optional `is_causal` argument is `TRUE`, it applies a causal mask for use in autoregressive models.
-  * **`TENSOR.LAYERNORM(input, gain, bias)`**: Applies layer normalization to the input tensor.
-  * **`TENSOR.CONV2D(input, kernel, bias, stride, padding)`**: Performs a 2D convolution operation, essential for CNNs.
-  * **`TENSOR.MAXPOOL2D(input, pool_size, stride)`**: Performs a 2D max pooling operation.
-
-#### LLM & Loss Helpers
-
-  * **`TENSOR.CROSS_ENTROPY_LOSS(logits, actual_one_hot)`**: Calculates the cross-entropy loss between the model's raw output (logits) and the true target labels (in one-hot encoded format).
-  * **`TENSOR.TOKENIZE(text$, vocab_map)`**: Converts a string into a 1D `Array` of integer token IDs based on the provided vocabulary map.
-  * **`TENSOR.POSITIONAL_ENCODING(seq_len, d_model)`**: Generates a sinusoidal positional encoding `Tensor`, used to give the model information about the position of tokens in a sequence.
-
 ### JSON Functions
 
   * **`JSON.PARSE$(json_string$)`**: Parses a JSON string and returns a special `JsonObject`. This object can be accessed like a `Map` or an `Array`.
@@ -232,6 +184,111 @@ This suite of functions provides the building blocks for creating and training n
   * **`NOW()`**: Returns a `DateTime` object for the current moment.
   * **`DATEADD(part$, num, date)`**: Adds an interval to a `DateTime` object.
   * **`CVDATE(date_string$)`**: Converts a string ("YYYY-MM-DD") to a `DateTime` object.
+
+  ### Type Functions
+
+  * **`TYPEOF(AnyVar)`**: Returns the type of an object as string.
+
+  ### Async Functions
+
+  * **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronius.
+  * **`AWAIT task`**: Waits for the given task to be completed and returns the result of the function.
+
+  ```basic
+' This function simulates a "download" that takes some time.
+ASYNC FUNC DOWNLOADFILE(url$, duration)
+  PRINT "  [Task 1] Starting download from "; url$
+  ' Simulate work by looping
+  FOR i = 1 TO duration
+    PRINT "  [Task 1] ... downloading chunk "; i; " of "; duration; " ..."
+  NEXT i
+  PRINT "  [Task 1] Download finished."
+  RETURN "Download of " + url$ + " successful."
+ENDFUNC
+
+' This function simulates a "data processing" job.
+ASYNC FUNC PROCESSDATA(dataset$, duration)
+  PRINT "    [Task 2] Starting to process data from "; dataset$
+  ' Simulate work by looping
+  FOR i = 1 TO duration
+    PRINT "    [Task 2] ... processing record block "; i; " of "; duration; " ..."
+  NEXT i
+  PRINT "    [Task 2] Data processing finished."
+  RETURN "Processed " + dataset$ + " and found 42 insights."
+ENDFUNC
+
+task1 = DOWNLOADFILE("https://example.com/data.zip", 5)
+task2 = PROCESSDATA("some_large_dataset.csv", 3)
+
+PRINT "Main: Now doing other work while tasks run in the background."
+FOR i = 1 TO 4
+  PRINT "Main: ... processing main task step "; i; " ..."
+  ' In a real program, you could do other things here,
+  ' like updating the UI or handling user input.
+NEXT i
+PRINT "Main: Finished with other work."
+
+PRINT "Main: Now waiting for Task 1 to complete..."
+result1 = AWAIT task1
+PRINT "Main: Task 1 finished with result: '"; result1; "'"
+PRINT
+
+PRINT "Main: Now waiting for Task 2 to complete..."
+result2 = AWAIT task2
+PRINT "Main: Task 2 finished with result: '"; result2; "'"
+PRINT
+```
+  
+
+
+
+  ### Tensor & AI Functions
+
+This suite of functions provides the building blocks for creating and training neural networks directly within NeReLa Basic. The core component is the `Tensor` data type, which supports automatic differentiation.
+
+#### Core & Conversion
+
+  * **`TENSOR.FROM(array)`**: Converts a standard `Array` into a `Tensor`, enabling it to be used in the neural network graph.
+  * **`TENSOR.TOARRAY(tensor)`**: Converts a `Tensor` back into a standard `Array`, allowing you to inspect its data or use it with other array functions.
+  * **Tensor Operations**: Standard arithmetic operators are overloaded to work element-wise with Tensors and support backpropagation.
+      * **`+`**, **`-`**, **`*`**: Perform tensor addition, subtraction, and element-wise multiplication. Broadcasting rules (e.g., matrix + vector) apply.
+      * **`/`**, **`^`**: Perform division and power operations between a tensor and a scalar.
+  * **`tensor.grad`**: Accesses the gradient of a tensor after `TENSOR.BACKWARD` has been called. This is not a function but property access using dot notation.
+
+#### Model Building
+
+  * **`TENSOR.CREATE_LAYER(type$, options_map)`**: A factory for creating neural network layers. It returns a `Map` containing the initialized weight and bias tensors.
+      * `type$`: "DENSE", "EMBEDDING", "LAYER\_NORM", "ATTENTION".
+      * `options_map`: A `Map` with layer-specific parameters.
+          * **DENSE**: `{"input_size": ..., "units": ...}`
+          * **EMBEDDING**: `{"vocab_size": ..., "embedding_dim": ...}`
+          * **LAYER\_NORM**: `{"dim": ...}`
+          * **ATTENTION**: `{"embedding_dim": ...}`
+  * **`TENSOR.CREATE_OPTIMIZER(type$, options_map)`**: A factory for creating optimizers.
+      * `type$`: "SGD".
+      * `options_map`: `{"learning_rate": ...}`
+
+#### Training & I/O
+
+  * **`TENSOR.BACKWARD loss_tensor`**: A procedure that performs backpropagation on the computational graph, starting from the final loss tensor. It computes the gradients for all parent tensors.
+  * **`TENSOR.UPDATE(model_map, optimizer_map)`**: Updates the model's parameters (weights and biases) using the gradients calculated by `TENSOR.BACKWARD` and the specified optimizer's learning rate. Returns the updated model map.
+  * **`TENSOR.SAVEMODEL model_map, "filename.json"`**: Saves a model (a `Map` containing parameter tensors) to a human-readable JSON file.
+  * **`TENSOR.LOADMODEL("filename.json")`**: Loads a model from a JSON file, restoring the tensors and model structure.
+
+#### Layers & Activations
+
+  * **`TENSOR.SIGMOID(tensor)`**: Applies the element-wise sigmoid activation function.
+  * **`TENSOR.RELU(tensor)`**: Applies the element-wise Rectified Linear Unit (ReLU) activation function.
+  * **`TENSOR.SOFTMAX(tensor, [is_causal])`**: Applies the softmax function to the last dimension of the input tensor. If the optional `is_causal` argument is `TRUE`, it applies a causal mask for use in autoregressive models.
+  * **`TENSOR.LAYERNORM(input, gain, bias)`**: Applies layer normalization to the input tensor.
+  * **`TENSOR.CONV2D(input, kernel, bias, stride, padding)`**: Performs a 2D convolution operation, essential for CNNs.
+  * **`TENSOR.MAXPOOL2D(input, pool_size, stride)`**: Performs a 2D max pooling operation.
+
+#### LLM & Loss Helpers
+
+  * **`TENSOR.CROSS_ENTROPY_LOSS(logits, actual_one_hot)`**: Calculates the cross-entropy loss between the model's raw output (logits) and the true target labels (in one-hot encoded format).
+  * **`TENSOR.TOKENIZE(text$, vocab_map)`**: Converts a string into a 1D `Array` of integer token IDs based on the provided vocabulary map.
+  * **`TENSOR.POSITIONAL_ENCODING(seq_len, d_model)`**: Generates a sinusoidal positional encoding `Tensor`, used to give the model information about the position of tokens in a sequence.
 
 ## The Integrated Editor
 

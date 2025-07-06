@@ -1,6 +1,10 @@
-FUNC LALL(a,b)
- PRINT A,b
+
+FUNC BERT(A)
+ C = a * 2
+ return c
 ENDFUNC
 
-PRINT LALL(1,2)
+Lall = 1
+print lall, bert(5)
+
 
