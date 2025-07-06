@@ -73,7 +73,8 @@ int main(int argc, char* argv[]) {
 
         if (launch_ok) {
             TextIO::print("Launch request received. Starting execution...\n");
-            dap_server.send_output_message("jdBasic REPL is Ready\nType your command and <enter>\n");
+            dap_server.send_output_message("jdBasic REPL is Ready\n");
+            dap_server.send_output_message("Type your command and <enter>\n");
             // The file is now loaded and compiled. Start the execution loop.
             // The loop will immediately pause and wait for a 'continue' or 'step' command.
             interpreter.execute_main_program(interpreter.program_p_code, false);

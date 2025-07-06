@@ -86,7 +86,7 @@ public:
         uint16_t return_pcode = 0; // Where to jump back to after the function ends
         const std::vector<uint8_t>* return_p_code_ptr;
         FunctionTable* previous_function_table_ptr;
-        size_t for_stack_size_on_entry;
+        size_t for_stack_size_on_entry = 0;
     };
 
     enum class DebugState {

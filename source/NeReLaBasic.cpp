@@ -140,6 +140,7 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     // Initialize ERR and ERL as global variables
     builtin_constants["ERR"] = 0.0;
     builtin_constants["ERL"] = 0.0;
+    builtin_constants["ERRMSG"] = "";
 }
 
 NeReLaBasic::~NeReLaBasic() = default;
@@ -714,13 +715,29 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     main_task->status = TaskStatus::RUNNING;
     main_task->p_code_ptr = &code_to_run;
     main_task->p_code_counter = resume_mode ? this->pcode : 0;
-    if (dap_handler) {
-        main_task->debug_state = DebugState::PAUSED;
-        dap_handler->send_stopped_message("entry", 0, this->program_to_debug);
-    }
+    //if (dap_handler) {
+    //    main_task->debug_state = DebugState::PAUSED;
+    //    dap_handler->send_stopped_message("entry", 0, this->program_to_debug);
+    //}
     task_queue[main_task->id] = main_task;
 
     Error::clear();
+    g_vm_instance_ptr = this;
+
+    //dap_handler->send_output_message("We are in execute main.\n");
+
+    if (dap_handler) { // Check if the debugger is attached
+        debug_state = DebugState::PAUSED;
+        dap_handler->send_output_message("debug_state = DebugState::PAUSED.\n");
+        // Tell the client we are paused at the entry point.
+        runtime_current_line = (*active_p_code)[0] | ((*active_p_code)[1] << 8);
+        dap_handler->send_output_message("runtime_current_line = (*active_p_code)[0] | ((*active_p_code)[1] << 8);\n");
+        dap_handler->send_stopped_message("entry", runtime_current_line, this->program_to_debug);
+        dap_handler->send_output_message("dap_handler->send_stopped_message('entry', runtime_current_line, this->program_to_debug);\n");
+        // Wait for the first "continue" or "next" command from the client.
+        pause_for_debugger();
+        dap_handler->send_output_message("pause_for_debugger();\n");
+    }
 
     while (!task_queue.empty()) {
 #ifdef SDL3
@@ -744,23 +761,19 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             this->active_p_code = current_task->p_code_ptr;
             this->call_stack = current_task->call_stack;
             this->for_stack = current_task->for_stack;
+            // Restore the correct function table for the current context
+            if (!this->call_stack.empty()) {
+                this->active_function_table = this->call_stack.back().previous_function_table_ptr;
+            }
+            else {
+                this->active_function_table = &this->main_function_table;
+            }
             current_task->yielded_execution = false;
 
             bool task_removed = false;
 
             // --- Task Execution Logic ---
             if (current_task->status == TaskStatus::RUNNING) {
-                // --- Task Completion & Error Check at the TOP ---
-                if (Error::get() != 0 || pcode >= active_p_code->size() || 
-                    (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD &&
-                     static_cast<Tokens::ID>((*active_p_code)[pcode-1]) != Tokens::ID::C_CR)
-                    ) {
-                    current_task->status = (Error::get() != 0) ? TaskStatus::ERRORED : TaskStatus::COMPLETED;
-                    if (variables.count("RETVAL")) {
-                        current_task->result = variables["RETVAL"];
-                    }
-                    goto end_of_task_processing; // Skip to cleanup
-                }
                 // --- DAP and Breakpoint Logic ---
                 if (dap_handler) {
                     if (current_task->debug_state == DebugState::PAUSED) {
@@ -776,38 +789,42 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                         }
                     }
                 }
+                // Check if the task's pcode is valid *before* executing
+                if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+                    // This can happen if a function ends without RETURN/ENDFUNC. Mark as complete.
+                    current_task->status = TaskStatus::COMPLETED;
+                }
+                else {
+                    // Execute one line of the task
+                    runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+                    pcode += 2;
 
-                // --- Main Statement Execution ---
-                runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
-                pcode += 2;
-
-                bool line_is_done = false;
-                bool statement_is_run = false;
-                while (!line_is_done && pcode < active_p_code->size()) {
-                    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
-                        statement();
-                    }
-                    if (Error::get() != 0 || is_stopped) {
-                        line_is_done = true; // Stop processing this line on error
-                        continue;
-                    }
-                    
-                    // After the statement, check the token that follows.
-                    if (pcode < active_p_code->size()) {
-                        Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                        if (next_token == Tokens::ID::C_COLON) {
-                            pcode++; // Consume the separator and loop again for the next statement.
+                    bool line_is_done = false;
+                    while (!line_is_done && pcode < active_p_code->size()) {
+                        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
+                            statement();
                         }
-                        else {
-                            // Token (C_CR, NOCMD) means the line is finished.
-                            if (next_token == Tokens::ID::C_CR || next_token == Tokens::ID::NOCMD) {
+
+                        // If the statement caused the task to complete (e.g. RETURN) or yield (AWAIT), stop processing this line.
+                        if (current_task->status != TaskStatus::RUNNING || current_task->yielded_execution) {
+                            line_is_done = true;
+                            continue;
+                        }
+
+                        // Handle multi-statement lines
+                        if (pcode < active_p_code->size()) {
+                            Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                            if (next_token == Tokens::ID::C_COLON) {
+                                pcode++;
+                            }
+                            else {
                                 line_is_done = true;
                             }
                         }
+                        else {
+                            line_is_done = true;
+                        }
                     }
-
-
-                    // --- Post-Line Processing ---
                     if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
                         pcode++;
                     }
@@ -906,8 +923,10 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     graphics_system.shutdown();
     sound_system.shutdown();
 #endif
+    g_vm_instance_ptr = nullptr;
     current_task = nullptr;
 }
+
 void NeReLaBasic::statement() {
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]); // Peek at the token
 
@@ -1235,7 +1254,7 @@ BasicValue NeReLaBasic::parse_primary() {
         else {
             new_task->p_code_ptr = &program_p_code;
         }
-        new_task->p_code_counter = func_info.start_pcode;
+        new_task->p_code_counter = func_info.start_pcode + 1; //Dirty JD was here!
 
         StackFrame frame;
         frame.function_name = func_name;
@@ -1857,7 +1876,6 @@ BasicValue NeReLaBasic::parse_comparison() {
     return left;
 }
 
-// Level 1: Handles AND, OR
 // Level 1: Handles AND, OR, XOR with element-wise array support
 BasicValue NeReLaBasic::evaluate_expression() {
     BasicValue left = parse_comparison();

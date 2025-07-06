@@ -126,6 +126,9 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         if (keywordToken != Tokens::ID::NOCMD) {
             return keywordToken;
         }
+
+
+
         if (is_start_of_statement) {
             if (vm.active_function_table->count(vm.buffer) && vm.active_function_table->at(vm.buffer).is_procedure) {
                 return Tokens::ID::CALLSUB; // It's a command-style procedure call!
@@ -137,6 +140,16 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             suffix_ptr++;
         }
         char action_suffix = (suffix_ptr < vm.lineinput.length()) ? vm.lineinput[suffix_ptr] : '\0';
+
+        if (is_start_of_statement && action_suffix != '=') {
+            // If it's explicitly called with parens, it's a function call statement.
+            if (action_suffix == '(') {
+                vm.prgptr = suffix_ptr;
+                return Tokens::ID::CALLFUNC;
+            }
+            // Otherwise, it's a procedure-style call like `MySub` or `obj.Quit`.
+            return Tokens::ID::CALLSUB;
+        }
 
         if (is_start_of_statement && action_suffix == ':') {
             vm.prgptr = suffix_ptr + 1;

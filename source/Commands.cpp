@@ -1047,24 +1047,52 @@ else {
 
 // --- Implementation of do_return ---
 void Commands::do_return(NeReLaBasic& vm) {
-    if (vm.call_stack.empty()) {
-        Error::set(23, vm.runtime_current_line); return;
+    if (vm.current_task == nullptr) {
+        Error::set(25, vm.runtime_current_line, "RETURN without a function call in a task context.");
+        return;
     }
 
-    // Evaluate the expression that comes after the RETURN keyword.
-    BasicValue return_value = vm.evaluate_expression();
-    if (Error::get() != 0) return;
+    // Evaluate the return value expression, if any.
+    BasicValue return_val = false; // Default return value
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::C_COLON && next_token != Tokens::ID::ENDFUNC) {
+        return_val = vm.evaluate_expression();
+        if (Error::get() != 0) {
+            vm.current_task->status = TaskStatus::ERRORED;
+            return;
+        }
+    }
 
-    // Set the special return value variable.
-    vm.variables["RETVAL"] = return_value;
+    // Store the result directly in the current task object.
+    vm.current_task->result = return_val;
 
-    // Pop the stack and set pcode to the return address.
-    auto& frame = vm.call_stack.back();
-    vm.for_stack.resize(frame.for_stack_size_on_entry);
-    vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
-    vm.pcode = frame.return_pcode;              // Restore program counter
-    vm.active_function_table = frame.previous_function_table_ptr;
+    // Pop the stack frame for the returning function.
+    if (vm.call_stack.empty()) {
+        Error::set(25, vm.runtime_current_line, "RETURN without function call.");
+        vm.current_task->status = TaskStatus::ERRORED;
+        return;
+    }
+    NeReLaBasic::StackFrame frame = vm.call_stack.back();
     vm.call_stack.pop_back();
+
+    // Restore the FOR loop stack to its state before the function call.
+    if (vm.for_stack.size() > frame.for_stack_size_on_entry) {
+        vm.for_stack.resize(frame.for_stack_size_on_entry);
+    }
+
+    // If the call stack for this task is now empty, the task is complete.
+    if (vm.call_stack.empty()) {
+        vm.current_task->status = TaskStatus::COMPLETED;
+        // By setting the status, we signal the main scheduler to stop
+        // executing this task. The scheduler will handle cleanup.
+    }
+    else {
+        // It was a normal return within the task. Restore context to continue
+        // execution in the calling function within the same task.
+        vm.pcode = frame.return_pcode;
+        vm.active_p_code = frame.return_p_code_ptr;
+        vm.active_function_table = frame.previous_function_table_ptr;
+    }
 }
 
 void Commands::do_endfunc(NeReLaBasic& vm) {
@@ -1093,38 +1121,72 @@ void Commands::do_sub(NeReLaBasic& vm) {
 
 void Commands::do_callsub(NeReLaBasic& vm) {
     std::string proc_name = to_upper(read_string(vm));
+    
+    // Check if it's a COM method call by looking for a '.'
+    if (proc_name.find('.') != std::string::npos) {
+#ifdef JDCOM
+        // It's a dot-chain, so resolve it to get the object and the method name.
+        auto [final_obj, final_method] = vm.resolve_dot_chain(proc_name);
+        if (Error::get() != 0) return; // An error occurred during resolution
 
-    if (!vm.active_function_table->count(proc_name)) {
-        Error::set(22, vm.runtime_current_line); return;
+        // Ensure we have a COM object to call a method on.
+        if (!std::holds_alternative<ComObject>(final_obj)) {
+            Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+            return;
+        }
+
+        IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+        if (!pDisp) {
+            Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
+            return;
+        }
+
+        // For a procedure call, there are no arguments and we ignore the return value.
+        std::vector<BasicValue> com_args; // Empty args
+        _variant_t result_vt;             // We discard the result
+
+        // Invoke as a method.
+        HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+        if (FAILED(hr)) {
+            Error::set(12, vm.runtime_current_line, "Failed to call COM method '" + final_method + "'");
+            return;
+        }
+#else
+        Error::set(22, vm.runtime_current_line, "Unknown procedure: " + upper_identifier);
+#endif
     }
-    const auto& proc_info = vm.active_function_table->at(proc_name);
-    std::vector<BasicValue> args;
+    else {
+        if (!vm.active_function_table->count(proc_name)) {
+            Error::set(22, vm.runtime_current_line); return;
+        }
+        const auto& proc_info = vm.active_function_table->at(proc_name);
+        std::vector<BasicValue> args;
 
-    Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+        Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-    if (token != Tokens::ID::C_CR) {
-        if (proc_info.arity == -1 || proc_info.arity > 0) {
-            while (true) {
-                args.push_back(vm.evaluate_expression());
-                if (Error::get() != 0) return;
-                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-                if (separator == Tokens::ID::C_CR) break;
-                if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+        if (token != Tokens::ID::C_CR) {
+            if (proc_info.arity == -1 || proc_info.arity > 0) {
+                while (true) {
+                    args.push_back(vm.evaluate_expression());
+                    if (Error::get() != 0) return;
+                    Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                    if (separator == Tokens::ID::C_CR) break;
+                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+                    vm.pcode++;
+                }
+            }
+            else {
+                vm.pcode++;
                 vm.pcode++;
             }
         }
-        else {
-            vm.pcode++;
-            vm.pcode++;
+
+        if (proc_info.arity != -1 && args.size() != proc_info.arity) {
+            Error::set(26, vm.runtime_current_line); return;
         }
+
+        vm.execute_function_for_value(proc_info, args);
     }
-
-    if (proc_info.arity != -1 && args.size() != proc_info.arity) {
-        Error::set(26, vm.runtime_current_line); return;
-    }
-
-    vm.execute_function_for_value(proc_info, args);
-
     //if (proc_info.native_impl != nullptr) {
     //    proc_info.native_impl(vm, args);
     //}
