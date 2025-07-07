@@ -1127,14 +1127,24 @@ BasicValue builtin_create_layer(NeReLaBasic& vm, const std::vector<BasicValue>& 
     return layer_result_ptr;
 }
 
+// --- MODIFIED: This function now creates different types of optimizers ---
 BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
-    if (!std::holds_alternative<std::string>(args[0]) || !std::holds_alternative<std::shared_ptr<Map>>(args[1])) {
-        Error::set(15, vm.runtime_current_line); return {};
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "CREATE_OPTIMIZER requires 2 arguments: type$, options_map");
+        return {};
     }
+    if (!std::holds_alternative<std::string>(args[0]) || !std::holds_alternative<std::shared_ptr<Map>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Invalid arguments for CREATE_OPTIMIZER.");
+        return {};
+    }
+
     std::string optimizer_type = to_upper(std::get<std::string>(args[0]));
     const auto& options_map_ptr = std::get<std::shared_ptr<Map>>(args[1]);
-    if (!options_map_ptr) { Error::set(3, vm.runtime_current_line); return {}; }
+    if (!options_map_ptr) {
+        Error::set(3, vm.runtime_current_line, "Optimizer options map cannot be null.");
+        return {};
+    }
+
     auto optimizer_result_ptr = std::make_shared<Map>();
     optimizer_result_ptr->data["type"] = optimizer_type;
 
@@ -1142,16 +1152,46 @@ BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValu
         if (optimizer_type == "SGD") {
             optimizer_result_ptr->data["learning_rate"] = options_map_ptr->data.at("learning_rate");
         }
+        else if (optimizer_type == "ADAM") {
+            optimizer_result_ptr->data["learning_rate"] = options_map_ptr->data.at("learning_rate");
+            // Set default values for Adam if not provided
+            optimizer_result_ptr->data["beta1"] = options_map_ptr->data.count("beta1") ? options_map_ptr->data.at("beta1") : 0.9;
+            optimizer_result_ptr->data["beta2"] = options_map_ptr->data.count("beta2") ? options_map_ptr->data.at("beta2") : 0.999;
+            optimizer_result_ptr->data["epsilon"] = options_map_ptr->data.count("epsilon") ? options_map_ptr->data.at("epsilon") : 1e-8;
+            optimizer_result_ptr->data["t"] = 0.0; // Timestep starts at 0
+        }
         else {
             Error::set(1, vm.runtime_current_line, "Unknown optimizer type: " + optimizer_type);
             return {};
         }
     }
     catch (const std::out_of_range& e) {
-        Error::set(1, vm.runtime_current_line, "Missing 'learning_rate' option for SGD optimizer.");
+        Error::set(1, vm.runtime_current_line, "Missing required option for " + optimizer_type + " optimizer.");
         return {};
     }
     return optimizer_result_ptr;
+}
+
+// --- MODIFIED: This function now acts as a dispatcher ---
+BasicValue builtin_optimizer_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    const auto& model_map = std::get<std::shared_ptr<Map>>(args[0]);
+    const auto& optimizer_map = std::get<std::shared_ptr<Map>>(args[1]);
+
+    std::string optimizer_type = to_string(optimizer_map->data.at("type"));
+    std::string update_func_name = optimizer_type + ".UPDATE";
+
+    // Find the correct update function (e.g., "ADAM.UPDATE") in the function table
+    if (vm.main_function_table.count(update_func_name)) {
+        const auto& func_info = vm.main_function_table.at(update_func_name);
+        if (func_info.native_impl) {
+            // Call the specific optimizer's update function
+            return func_info.native_impl(vm, args);
+        }
+    }
+
+    Error::set(22, vm.runtime_current_line, "Optimizer update function not found for type: " + optimizer_type);
+    return {};
 }
 
 // --- Autodiff and Training Functions ---

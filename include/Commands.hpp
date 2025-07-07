@@ -29,8 +29,8 @@ namespace Commands {
     void do_resume(NeReLaBasic& vm);
     void do_do(NeReLaBasic& vm);
     void do_loop(NeReLaBasic& vm);
-    void do_start_task(NeReLaBasic& vm);
-    void do_await_task(NeReLaBasic& vm);
+    
+    void do_dllimport(NeReLaBasic& vm);
 
     void do_edit(NeReLaBasic& vm);
     void do_list(NeReLaBasic& vm);

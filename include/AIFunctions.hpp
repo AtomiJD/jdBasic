@@ -19,6 +19,9 @@ BasicValue builtin_update(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 BasicValue builtin_save_model(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 BasicValue builtin_load_model(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 
+BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValue>& args);
+BasicValue builtin_optimizer_update(NeReLaBasic& vm, const std::vector<BasicValue>& args);
+
 BasicValue builtin_tensor_tokenize(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 BasicValue builtin_tensor_positional_encoding(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 BasicValue builtin_tensor_softmax(NeReLaBasic& vm, const std::vector<BasicValue>& args);

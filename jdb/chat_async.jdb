@@ -1,0 +1,107 @@
+' In ChatBot.jdb
+
+' --- Simple JSON Error Handler ---
+ASYNC SUB HandleJsonError() ' Make the error handler an ASYNC SUB
+    PRINT
+    PRINT "!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    PRINT "! JSON PARSING FAILED!   !"
+    PRINT "!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    PRINT "Error Code: "; ERR
+    PRINT "Line Number: "; ERL
+    PRINT "This usually means OpenAI returned an error message instead of a valid chat completion."
+    PRINT "Raw response from server:"
+    PRINT RESPONSE$
+    RESUME NEXT ' Skip the failed parsing and continue the loop
+ENDSUB
+
+' The main function that makes the network call must now be ASYNC
+FUNC GetAIResponse()
+    PRINT "Sending to OpenAI..."
+    
+    ' --- Create the payload using the FULL conversation history ---
+    payload{"model"} = "gpt-4o-mini"
+    payload{"messages"} = conversation_history
+
+    JSON_BODY$ = JSON.STRINGIFY$(payload)
+
+    ' =================================================================
+    ' The core change: AWAIT the new async function
+    ' =================================================================
+    task1 = AWAIT HTTP.POST_ASYNC(API_URL$, JSON_BODY$, "application/json")
+    Print "Type: "; Typeof(task1)
+    RESPONSE$ = AWAIT task1
+    
+    ' Check for network errors before parsing
+    IF HTTP.STATUSCODE() >= 400 THEN
+        PRINT "AI Error: Received HTTP Status "; HTTP.STATUSCODE()
+        RETURN ""
+    ENDIF
+
+    ON ERROR CALL HandleJsonError
+    RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+    
+    AI_MESSAGE$ = RESPONSE_JSON{"choices"}[0]{"message"}{"content"}
+    
+    RETURN AI_MESSAGE$
+ENDSUB
+
+
+' --- Main Program Loop ---
+CLS
+PRINT "--- OpenAI API Chat Client (with History) for NeReLa Basic ---"
+PRINT
+
+API_KEY$ = Getenv$("OPENAI_API_KEY")
+
+IF LEN(API_KEY$) = 0 THEN
+    PRINT "Error: OPENAI_API_KEY environment variable not set."
+    GOTO ENDE
+ENDIF
+
+API_URL$ = "https://api.openai.com/v1/chat/completions"
+
+HTTP.SETHEADER "Content-Type", "application/json"
+HTTP.SETHEADER "Authorization", "Bearer " + API_KEY$
+
+PRINT
+PRINT "Headers are set. You can now start chatting."
+PRINT "Type 'exit' or 'quit' to end the program."
+PRINT
+
+' --- Initialize conversation history and payload map ---
+conversation_history = []
+DIM payload AS MAP
+
+DO
+    PRINT
+    INPUT "> "; USER_PROMPT$
+
+    IF LCASE$(USER_PROMPT$) = "exit" OR LCASE$(USER_PROMPT$) = "quit" THEN
+       EXITDO
+    ENDIF
+    
+    ' --- Add the user's new message to the history ---
+    DIM user_message AS MAP
+    user_message{"role"} = "user"
+    user_message{"content"} = USER_PROMPT$
+    conversation_history = APPEND(conversation_history, user_message)
+
+    ' --- Call the new async function and AWAIT its result ---
+    AI_MESSAGE$ = GetAIResponse()
+    
+    ' --- Add the AI's response to the history for the next turn ---
+    IF AI_MESSAGE$ <> "" THEN
+        PRINT
+        PRINT "AI: "; AI_MESSAGE$
+        
+        DIM assistant_message AS MAP
+        assistant_message{"role"} = "assistant"
+        assistant_message{"content"} = AI_MESSAGE$
+        conversation_history = APPEND(conversation_history, assistant_message)
+    ENDIF
+    
+LOOP WHILE 1
+
+
+ENDE:
+Print "Bye."

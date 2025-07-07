@@ -294,9 +294,9 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
 
         // Use a switch for special compile-time tokens.
         switch (token) {
-                // --- Ignore IMPORT and MODULE keywords during this phase ---
+            // --- Ignore IMPORT and MODULE keywords during this phase ---
             case Tokens::ID::IMPORT:
-            case Tokens::ID::MODULE:
+            case Tokens::ID::EXPORT:
                 vm.prgptr = vm.lineinput.length(); // Skip the rest of the line
                 continue;
 

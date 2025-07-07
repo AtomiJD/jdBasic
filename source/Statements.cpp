@@ -64,6 +64,7 @@ namespace {
         {"MODULE",  Tokens::ID::MODULE},
         {"EXPORT",  Tokens::ID::EXPORT},
         {"IMPORT",  Tokens::ID::IMPORT},
+        {"DLLIMPORT",  Tokens::ID::DLLIMPORT},
         {"AS",      Tokens::ID::AS},
         {"MAP",     Tokens::ID::MAP},
         {"JSON",    Tokens::ID::JSON},

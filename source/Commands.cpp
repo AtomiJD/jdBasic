@@ -459,6 +459,26 @@ void Commands::do_dim(NeReLaBasic& vm) {
     }
 }
 
+
+// --- Implementation for the IMPORT command ---
+void Commands::do_dllimport(NeReLaBasic& vm) {
+    // The IMPORT token has been consumed. The next token should be a string literal
+    // containing the name of the module to load (e.g., "aifunc").
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::STRING) {
+        Error::set(1, vm.runtime_current_line, "IMPORT command requires a string literal for the module name.");
+        return;
+    }
+    vm.pcode++; // Consume the STRING token
+
+    // Read the module name from the bytecode.
+    std::string module_name = read_string(vm);
+
+    // Call the new method in NeReLaBasic to handle the dynamic loading.
+    // The method will handle adding the file extension (.dll or .so)
+    // and setting any errors if loading fails.
+    vm.load_dynamic_module(module_name);
+}
+
 void Commands::do_input(NeReLaBasic& vm) {
     // Peek at the next token to see if there is an optional prompt string.
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);

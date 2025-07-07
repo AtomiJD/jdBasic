@@ -1,4 +1,4 @@
-export module MATH
+export MODULE MATH
 
 ' This function will be public because of the 'export' keyword.
 ' Other programs that import this module can use it.

@@ -1,0 +1,126 @@
+' ==========================================================
+' == An Autodiff Neural Network in jdBasic with Adam Optimizer
+' == Goal: Learn the XOR logic gate using the Adam optimizer.
+' ==========================================================
+
+' --- 0. Import External AI Functions ---
+' Load the custom functions from your DLL, including the Adam optimizer logic.
+DLLIMPORT "aifunc"
+
+CLS
+PRINT "--- Starting XOR Gate Training with Adam Optimizer ---"
+PRINT
+
+' --- 1. Define Training Data ---
+' The four possible inputs for the XOR problem.
+TRAINING_INPUT_DATA = [[0, 0], [0, 1], [1, 0], [1, 1]]
+' The corresponding correct outputs for XOR.
+TRAINING_OUTPUT_DATA = [[0], [1], [1], [0]]
+
+' Convert the raw data arrays into Tensors for automatic differentiation.
+INPUTS = TENSOR.FROM(TRAINING_INPUT_DATA)
+TARGETS = TENSOR.FROM(TRAINING_OUTPUT_DATA)
+
+
+' --- 2. Define the Neural Network Model ---
+' The model is a map containing the layers.
+MODEL = {}
+
+' Layer 1: A dense layer with 2 inputs and 3 hidden units.
+HIDDEN_LAYER = TENSOR.CREATE_LAYER("DENSE", {"input_size": 2, "units": 3})
+' Layer 2: A dense layer with 3 inputs (from the hidden layer) and 1 output unit.
+OUTPUT_LAYER = TENSOR.CREATE_LAYER("DENSE", {"input_size": 3, "units": 1})
+
+' Store the layers in the model map.
+MODEL{"layers"} = [HIDDEN_LAYER, OUTPUT_LAYER]
+
+
+' --- 3. Setup the Optimizer and Training Parameters ---
+' Create the Adam optimizer with its specific hyperparameters.
+' Adam often converges faster and requires less tuning of the learning rate than SGD.
+ '   "learning_rate": 0.01,   A typical learning rate for Adam.
+ '   "beta1": 0.9,            Exponential decay rate for the first moment estimates.
+ '   "beta2": 0.999,          Exponential decay rate for the second moment estimates.
+ '   "epsilon": 1e-8          A small constant to prevent division by zero.
+OPTIMIZER_OPTIONS = {"learning_rate": 0.01, "beta1": 0.9, "beta2": 0.999, "epsilon": 1e-8 }
+OPTIMIZER = TENSOR.CREATE_OPTIMIZER("ADAM", OPTIMIZER_OPTIONS)
+
+EPOCHS = 2500 ' The number of times to iterate over the training data.
+
+
+' --- 4. Define Helper Functions ---
+
+' The forward pass function sends an input through the model to get a prediction.
+FUNC MODEL_FORWARD(current_model, input_tensor)
+    temp_tensor = input_tensor
+    model_layers = current_model{"layers"}
+    STOP
+    ' Process the input through each layer.
+    FOR i = 0 TO LEN(model_layers) - 1
+        layer = model_layers[i]
+        weights = layer{"weights"}
+        bias = layer{"bias"}
+        
+        ' Calculate: output = input * weights + bias
+        temp_tensor = MATMUL(temp_tensor, weights) + bias
+        PRINT "Vor sigmoid "; temp_tensor
+        ' Apply the sigmoid activation function to introduce non-linearity.
+        temp_tensor = TENSOR.SIGMOID(temp_tensor)
+        PRINT "NACH sigmoid "; temp_tensor
+    NEXT i
+    RETURN temp_tensor
+ENDFUNC
+
+' The loss function measures how wrong the model's predictions are.
+' We use Mean Squared Error (MSE).
+FUNC MSE_LOSS(predicted_tensor, actual_tensor)
+    errors = actual_tensor - predicted_tensor
+    squared_errors = errors ^ 2
+    RETURN SUM(squared_errors) / LEN(TENSOR.TOARRAY(errors))[0]
+ENDFUNC
+
+
+' --- 5. The Training Loop ---
+FOR epoch = 1 TO EPOCHS
+    ' --- a) Forward Pass ---
+    ' Get the model's current predictions for all training inputs.
+    PREDICTIONS = MODEL_FORWARD(MODEL, INPUTS)
+
+    ' --- b) Calculate Loss ---
+    ' Calculate how far off the predictions are from the actual targets.
+    ' This creates the root of our computation graph for backpropagation.
+    LOSS = MSE_LOSS(PREDICTIONS, TARGETS)
+    print LOSS
+    ' --- c) Backpropagation ---
+    ' This single command calculates the gradient of the loss
+    ' with respect to every weight and bias in the model.
+    TENSOR.BACKWARD LOSS
+
+    ' --- d) Update Parameters ---
+    ' The Adam optimizer uses the calculated gradients and its internal
+    ' moving averages to update the model's parameters.
+    MODEL = TENSOR.UPDATE(MODEL, OPTIMIZER)
+    
+    ' --- e) Print Progress ---
+    IF epoch MOD 100 = 0 THEN
+        PRINT "Epoch:"; epoch; ", Loss:"; TENSOR.TOARRAY(LOSS)[0]
+    ENDIF
+NEXT epoch
+
+' --- 6. Verification and Final Predictions ---
+PRINT
+PRINT "--- Training Complete ---"
+PRINT
+
+PRINT "--- Final Predictions vs Targets ---"
+final_predictions_tensor = MODEL_FORWARD(MODEL, INPUTS)
+final_predictions_array = TENSOR.TOARRAY(final_predictions_tensor)
+
+FOR I = 0 TO LEN(TRAINING_INPUT_DATA) - 1
+    input_pair$ = "[" + STR$(TRAINING_INPUT_DATA[I][0]) + ", " + STR$(TRAINING_INPUT_DATA[I][1]) + "]"
+    target_val = TRAINING_OUTPUT_DATA[I][0]
+    predicted_val = final_predictions_array[I, 0]
+    
+    PRINT "Input: "; input_pair$; " -> Target: "; target_val; ", Predicted: "; predicted_val
+NEXT I
+

@@ -10,6 +10,7 @@
 #include "Types.hpp"
 #include "DAPHandler.hpp"
 #include "Compiler.hpp"
+#include "ModuleInterface.h"
 #include <iostream>
 #include <fstream>   // For std::ifstream
 #include <string>
@@ -29,7 +30,7 @@ std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::sha
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
 
-const std::string NERELA_VERSION = "0.7.2";
+const std::string NERELA_VERSION = "0.8.4";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -143,7 +144,102 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     builtin_constants["ERRMSG"] = "";
 }
 
-NeReLaBasic::~NeReLaBasic() = default;
+NeReLaBasic::~NeReLaBasic() {
+    // --- NEW: Unload any dynamically loaded libraries on exit ---
+    for (auto& lib_handle : loaded_libraries) {
+#ifdef _WIN32
+        FreeLibrary(lib_handle);
+#else
+        dlclose(lib_handle);
+#endif
+    }
+}
+
+// Converts a std::string (UTF-8) to a std::wstring (UTF-16)
+std::wstring string_to_wstring(const std::string& str) {
+    if (str.empty()) {
+        return L"";
+    }
+
+    // 1. Get the required buffer size for the wide string.
+    //    The last parameter is -1 for null-terminated strings.
+    int required_size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+    if (required_size == 0) {
+        // Handle error if needed, e.g., by throwing an exception or returning an empty string.
+        return L"";
+    }
+
+    // 2. Create a std::wstring with the required size.
+    std::wstring wstr(required_size - 1, 0); // -1 because required_size includes the null terminator
+
+    // 3. Perform the actual conversion.
+    int bytes_converted = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], required_size);
+    if (bytes_converted == 0) {
+        // Handle error
+        return L"";
+    }
+
+    return wstr;
+}
+// --- Implementation for loading a dynamic module ---
+bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
+    std::string full_path = module_path;
+    
+
+    // --- Define the new registration function pointer type ---
+    using RegisterModuleWithServicesFunc = void(*)(NeReLaBasic*, ModuleServices*);
+
+#ifdef _WIN32
+    if (full_path.size() < 4 || full_path.substr(full_path.size() - 4) != ".dll") {
+        full_path += ".dll";
+    }
+
+    std::wstring wfull_path = string_to_wstring(full_path);
+    LPCWSTR my_lpcwstr = wfull_path.c_str();
+    HMODULE lib_handle = LoadLibrary(my_lpcwstr);
+    if (!lib_handle) {
+        Error::set(6, runtime_current_line, "Failed to load DLL: " + full_path + " (Error code: " + std::to_string(GetLastError()) + ")");
+        return false;
+    }
+
+    auto register_func = (RegisterModuleWithServicesFunc)GetProcAddress(lib_handle, "jdBasic_register_module");
+    if (!register_func) {
+        Error::set(22, runtime_current_line, "Cannot find 'jdBasic_register_module' entry point in " + full_path);
+        FreeLibrary(lib_handle);
+        return false;
+    }
+#else
+    if (full_path.size() < 3 || full_path.substr(full_path.size() - 3) != ".so") {
+        full_path += ".so";
+    }
+
+    void* lib_handle = dlopen(full_path.c_str(), RTLD_LAZY);
+    if (!lib_handle) {
+        Error::set(6, runtime_current_line, "Failed to load shared library: " + std::string(dlerror()));
+        return false;
+    }
+
+    auto register_func = (RegisterModuleWithServicesFunc)dlsym(lib_handle, "jdBasic_register_module");
+    const char* dlsym_error = dlerror();
+    if (dlsym_error) {
+        Error::set(22, runtime_current_line, "Cannot find symbol 'jdBasic_register_module': " + std::string(dlsym_error));
+        dlclose(lib_handle);
+        return false;
+    }
+#endif
+
+    // --- NEW: Create and populate the services struct ---
+    ModuleServices services;
+    services.error_set = &Error::set;
+    services.to_upper = &to_upper; // This assumes to_upper is a free function.
+
+    // --- Call the registration function, passing the services ---
+    register_func(this, &services);
+
+    loaded_libraries.push_back(lib_handle);
+    TextIO::print("Successfully imported module: " + full_path + "\n");
+    return true;
+}
 
 bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
     std::ifstream infile(filename);
@@ -530,6 +626,31 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
         for (auto it = task_queue.begin(); it != task_queue.end(); ) {
             current_task = it->second.get();
 
+            bool task_removed = false;
+
+            if (current_task->result_future.valid()) {
+                // Check if the future is ready without blocking the interpreter.
+                if (current_task->result_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                    // The C++ thread is done! Get the result and complete this task.
+                    try {
+                        current_task->result = current_task->result_future.get();
+                        current_task->status = TaskStatus::COMPLETED;
+                        int task_id_to_delete = current_task->id;
+                        task_completed[task_id_to_delete] = task_queue.at(task_id_to_delete);
+                        it = task_queue.erase(it);
+                        task_removed = true;
+                    }
+                    catch (const std::exception& e) {
+                        // Handle exceptions from the background C++ thread.
+                        current_task->result = "Error: " + std::string(e.what());
+                        current_task->status = TaskStatus::ERRORED;
+                    }
+                }
+                // If the future is not ready yet, we just skip to the next task.
+                if (!task_removed) ++it;
+                continue;
+            }
+
             // --- Context Switch: Load ---
             this->pcode = current_task->p_code_counter;
             this->active_p_code = current_task->p_code_ptr;
@@ -543,8 +664,6 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                 this->active_function_table = &this->main_function_table;
             }
             current_task->yielded_execution = false;
-
-            bool task_removed = false;
 
             // --- Task Execution Logic ---
             if (current_task->status == TaskStatus::RUNNING) {
@@ -822,6 +941,10 @@ void NeReLaBasic::statement() {
     case Tokens::ID::EDIT:
         pcode++;
         Commands::do_edit(*this);
+        break;
+    case Tokens::ID::DLLIMPORT:
+        pcode++;
+        Commands::do_dllimport(*this);
         break;
 
     case Tokens::ID::LIST:
@@ -1142,14 +1265,14 @@ BasicValue NeReLaBasic::parse_primary() {
         pcode++; // Consume BSYNC
         // Expect a function call right after
         if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::CALLFUNC) {
-            Error::set(1, runtime_current_line, "BSYNC must be followed by a function call.");
+            Error::set(1, runtime_current_line, "THREAD must be followed by a function call.");
             return {};
         }
         pcode++; // Consume CALLFUNC
 
         std::string func_name = to_upper(read_string(*this));
         if (!active_function_table->count(func_name)) {
-            Error::set(22, runtime_current_line, "Function not found for BSYNC: " + func_name);
+            Error::set(22, runtime_current_line, "Function not found for THREAD: " + func_name);
             return {};
         }
         const auto& func_info = active_function_table->at(func_name);

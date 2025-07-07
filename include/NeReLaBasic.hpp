@@ -10,6 +10,15 @@
 #include "NetworkManager.hpp"
 #include <functional> 
 #include <future>
+
+// --- NEW: Platform-specific includes for dynamic library loading ---
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
+
 #ifdef SDL3
 #include "Graphics.hpp"
 #include "SoundSystem.hpp"
@@ -64,6 +73,9 @@ public:
     // A type alias for our native C++ function pointers.
     // All native functions will take a vector of arguments and return a single BasicValue.
     using NativeFunction = std::function<BasicValue(NeReLaBasic&, const std::vector<BasicValue>&)>;
+
+    // --- A type alias for the registration function in the DLL ---
+    using ModuleRegisterFunc = void(*)(NeReLaBasic*);
 
     struct FunctionInfo {
         std::string name;
@@ -120,7 +132,7 @@ public:
         FunctionTable* resume_function_table_ptr = nullptr;
         std::vector<StackFrame> resume_call_stack_snapshot;
         std::vector<ForLoopInfo> resume_for_stack_snapshot;
-
+        std::future<BasicValue>  result_future; // For C++ background tasks like HTTP
         // --- Per-Task Debug State ---
         DebugState debug_state = DebugState::RUNNING;
         size_t step_over_stack_depth = 0;
@@ -200,6 +212,12 @@ public:
     // Holds the name of the module currently being compiled
     // std::string current_module_name;
 
+#ifdef _WIN32
+    std::vector<HMODULE> loaded_libraries;
+#else
+    std::vector<void*> loaded_libraries;
+#endif
+
 #ifdef SDL3
     Graphics graphics_system;
     SoundSystem sound_system;
@@ -251,6 +269,9 @@ public:
     void execute_t(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     bool loadSourceFromFile(const std::string& filename);
     std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
+
+    // --- Function to load a dynamic module ---
+    bool load_dynamic_module(const std::string& module_path);
 
     // --- New Declarations for Expression Parsing ---
     BasicValue evaluate_expression();

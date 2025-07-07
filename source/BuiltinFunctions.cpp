@@ -24,6 +24,8 @@
 #include <format>
 #include <functional>
 #include <random>
+#include <future>
+
 
 #ifdef HTTP
 #include "NetworkManager.hpp"
@@ -3617,7 +3619,58 @@ BasicValue builtin_httppost(NeReLaBasic& vm, const std::vector<BasicValue>& args
         std::string reason = "?Network Error: " + response_body + "\n";
         Error::set(1001, vm.runtime_current_line, reason);
     }
+
     return response_body;
+}
+
+// This helper now calls the public httpPost method.
+void perform_http_post_internal(
+    NetworkManager& nm, // Pass a reference to the network manager
+    std::string url,
+    std::string body,
+    std::string content_type,
+    std::shared_ptr<std::promise<BasicValue>> promise)
+{
+    try {
+        // Call the public method, not the private helper
+        std::string response = nm.httpPost(url, body, content_type);
+        promise->set_value(response);
+    }
+    catch (...) {
+        promise->set_exception(std::current_exception());
+    }
+}
+
+// The new async built-in function that your BASIC code will AWAIT.
+BasicValue builtin_http_post_async(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "HTTP.POST_ASYNC requires 3 arguments: url, body, content_type");
+        return {};
+    }
+
+    std::string url = to_string(args[0]);
+    std::string body = to_string(args[1]);
+    std::string content_type = to_string(args[2]);
+
+    // 1. Create a promise to get the result from the background thread.
+    auto promise = std::make_shared<std::promise<BasicValue>>();
+    std::future<BasicValue> future = promise->get_future();
+
+    // 2. Launch the blocking work in a detached C++ thread.
+    //    Pass the network manager by reference using std::ref.
+    std::thread(perform_http_post_internal, std::ref(vm.network_manager), url, body, content_type, promise).detach();
+
+    // 3. Create a "waiter" task for the interpreter's scheduler.
+    auto waiter_task = std::make_shared<NeReLaBasic::Task>();
+    waiter_task->id = vm.next_task_id++;
+    waiter_task->status = TaskStatus::RUNNING;
+
+    // 4. Correctly assign the future. Since the types now match, this is simple.
+    waiter_task->result_future = std::move(future);
+
+    // 5. Add the waiter task to the queue and return a handle to it.
+    vm.task_queue[waiter_task->id] = waiter_task;
+    return TaskRef{ waiter_task->id };
 }
 
 // HTTP.PUT$(URL$, Data$, ContentType$) -> ResponseBody$
@@ -3882,6 +3935,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("HTTP.CLEARHEADERS", 0, builtin_http_clearheaders);
     register_func("HTTP.STATUSCODE", 0, builtin_http_statuscode);
     register_func("HTTP.POST$", 3, builtin_httppost);
+    register_func("HTTP.POST_ASYNC", 3, builtin_http_post_async);
     register_func("HTTP.PUT$", 3, builtin_httpput);
 #endif
 

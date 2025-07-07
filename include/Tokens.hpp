@@ -102,6 +102,7 @@ namespace Tokens {
         OP_START_TASK = 0x5E,
         OP_AWAIT_TASK = 0x5F,
         THREAD = 0x60,
+        DLLIMPORT = 0x61,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,
