@@ -889,6 +889,141 @@ void NeReLaBasic::statement() {
     }
 }
 
+/**
+ * @brief Copy constructor for creating an isolated VM instance for a background thread.
+ *
+ * This constructor performs a specialized copy. It duplicates the essential
+ * program definition (like p-code and function tables) but intentionally
+ * does NOT copy the runtime state (like variables, call stacks, or the program counter).
+ * This creates a "clean" clone of the interpreter that can safely execute a function
+ * in a separate thread without interfering with the original instance.
+ * @param other The original NeReLaBasic instance to clone.
+ */
+NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
+    // --- 1. Copy Program Definition Data ---
+    // These members define the program itself and are safe to copy. They are read-only
+    // during execution in the new thread.
+    source_lines(other.source_lines),
+    program_p_code(other.program_p_code),
+    direct_p_code(), // A new, empty buffer for the new instance.
+    main_function_table(other.main_function_table),
+    module_function_tables(other.module_function_tables),
+    compiled_modules(other.compiled_modules),
+    user_defined_types(other.user_defined_types),
+    builtin_constants(other.builtin_constants),
+    nopause_active(other.nopause_active)
+{
+    // --- 2. Initialize Runtime State to Defaults ---
+    // These members represent the execution state and MUST be reset to their
+    // default values to ensure the new instance is a clean slate.
+
+    // Pointers and counters
+    pcode = 0;
+    prgptr = 0;
+    linenr = 0;
+    runtime_current_line = 0;
+    current_source_line = 0;
+    current_statement_start_pcode = 0;
+
+    // State flags
+    is_stopped = false;
+    trace = 0;
+
+    // I/O and Graphics
+    buffer.reserve(64);
+    lineinput.reserve(160);
+    filename.reserve(40);
+    graphmode = 0;
+    fgcolor = 2;
+    bgcolor = 0;
+
+    // Stacks (must be empty for the new thread)
+    variables.clear();
+    for_stack.clear();
+    call_stack.clear();
+    func_stack.clear();
+
+    // Asynchronous Task System (not used by BSYNC threads)
+    task_queue.clear();
+    task_completed.clear();
+    next_task_id = 0;
+    current_task = nullptr;
+
+    // Error Handling State (must be reset)
+    error_handler_active = false;
+    jump_to_error_handler = false;
+    error_handler_function_name = "";
+    err_code = 0.0;
+    erl_line = 0.0;
+    resume_pcode = 0;
+    resume_pcode_next_statement = 0;
+    resume_runtime_line = 0;
+    resume_p_code_ptr = nullptr;
+    resume_function_table_ptr = nullptr;
+    resume_call_stack_snapshot.clear();
+    resume_for_stack_snapshot.clear();
+
+    // Debugger State (the new thread is not being debugged)
+    dap_handler = nullptr;
+    debug_state = DebugState::RUNNING;
+    step_over_stack_depth = 0;
+    breakpoints.clear();
+
+    // --- 3. Handle Members Requiring Special Initialization ---
+
+    // The compiler is a unique_ptr and must be a new instance.
+    compiler = std::make_unique<Compiler>();
+
+    // Set the active pointers to point to THIS instance's data, not the other's.
+    active_p_code = &this->program_p_code;
+    active_function_table = &this->main_function_table;
+
+    // The hardware abstractions (Graphics, Sound, Network) are default-constructed,
+    // which correctly gives the new instance its own non-initialized systems.
+
+    // Note: We don't need to re-run `register_builtin_functions` because the native
+    // function pointers within the `std::function` objects inside the copied
+    // FunctionInfo structs are already correct.
+}
+
+BasicValue NeReLaBasic::launch_bsync_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
+    auto promise = std::make_shared<std::promise<BasicValue>>();
+    std::future<BasicValue> future = promise->get_future();
+
+    // The thread lambda captures the promise and arguments.
+    std::thread worker_thread([this, promise, func_info, args]() {
+        try {
+            // 1. Create a completely isolated copy of the interpreter.
+            auto thread_vm = std::make_unique<NeReLaBasic>(*this);
+
+            // 2. Execute the function synchronously *within this thread* using the isolated VM.
+            BasicValue result = thread_vm->execute_synchronous_function(func_info, args);
+
+            // 3. Fulfill the promise with the result.
+            promise->set_value(result);
+        }
+        catch (const std::exception& e) {
+            // Handle exceptions within the thread to avoid crashing.
+            promise->set_exception(std::current_exception());
+        }
+        });
+
+    // Get the ID of the thread we just created.
+    std::thread::id worker_id = worker_thread.get_id();
+
+    // Store the future so we can get the result later, keyed by the thread ID.
+    {
+        std::lock_guard<std::mutex> lock(background_tasks_mutex);
+        background_tasks[worker_id] = std::move(future);
+    }
+
+    // Detach the thread to let it run independently. The `future` is our way to sync with it.
+    worker_thread.detach();
+
+    // Return the handle to the BASIC script.
+    return ThreadHandle{ worker_id };
+}
+
 // --- CLASS MEMBER FUNCTION FOR PARSING ARRAY LITERALS ---
 BasicValue NeReLaBasic::parse_array_literal() {
     // We expect the current token to be '['
@@ -1002,6 +1137,41 @@ BasicValue NeReLaBasic::parse_map_literal() {
 BasicValue NeReLaBasic::parse_primary() {
     BasicValue current_value;
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+
+    if (token == Tokens::ID::THREAD) {
+        pcode++; // Consume BSYNC
+        // Expect a function call right after
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::CALLFUNC) {
+            Error::set(1, runtime_current_line, "BSYNC must be followed by a function call.");
+            return {};
+        }
+        pcode++; // Consume CALLFUNC
+
+        std::string func_name = to_upper(read_string(*this));
+        if (!active_function_table->count(func_name)) {
+            Error::set(22, runtime_current_line, "Function not found for BSYNC: " + func_name);
+            return {};
+        }
+        const auto& func_info = active_function_table->at(func_name);
+
+        // Parse arguments just like a normal function call
+        std::vector<BasicValue> args;
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            while (true) {
+                args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+            }
+        }
+        pcode++; // Consume ')'
+
+        // Launch the function in a background thread and get the handle
+        return launch_bsync_function(func_info, args);
+    }
+    else
+
     if (token == Tokens::ID::OP_START_TASK) {
         pcode++; // consume OP_START_TASK
         std::string func_name = to_upper(read_string(*this));
@@ -1155,7 +1325,9 @@ BasicValue NeReLaBasic::parse_primary() {
                 Error::set(22, runtime_current_line, "Unknown function: " + identifier_being_called); return {};
 #endif
             }
-            else { Error::set(22, runtime_current_line, "Unknown function: " + real_func_to_call); return {}; }
+            else { 
+                Error::set(22, runtime_current_line, "Unknown function: " + real_func_to_call); return {}; 
+            }
         }
         else if (token == Tokens::ID::JD_TRUE) {
             pcode++; current_value = true;

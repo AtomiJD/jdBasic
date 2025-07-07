@@ -269,7 +269,14 @@ std::string to_string(const BasicValue& val) {
                 tensor_str += float_array_to_string(*(arg->grad->data));
             }
             return tensor_str;
-        } else if constexpr (std::is_same_v<T, TaskRef>) {
+        }  
+        else if constexpr (std::is_same_v<T, ThreadHandle>) {
+            // Use a stringstream to build the string
+            std::stringstream ss;
+            ss << "[ThreadHandle:" << arg.id << "]";
+            return ss.str(); // Return the built string
+        }
+        else if constexpr (std::is_same_v<T, TaskRef>) {
             return "<Task ID: " + std::to_string(arg.id) + ">";
         }
 

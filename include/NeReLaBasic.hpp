@@ -237,6 +237,11 @@ public:
     int next_task_id = 0;
     Task* current_task = nullptr;
 
+    std::mutex background_tasks_mutex;
+    std::map<std::thread::id, std::future<BasicValue>> background_tasks;
+
+    NeReLaBasic(const NeReLaBasic& other);
+
     // --- Member Functions ---
     NeReLaBasic(); // Constructor
     ~NeReLaBasic(); //Destructor
@@ -264,6 +269,7 @@ public:
     BasicValue execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_main_program(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     BasicValue execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
+    BasicValue launch_bsync_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
 
 private:
     void init_basic();

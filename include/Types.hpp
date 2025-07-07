@@ -113,11 +113,15 @@ struct TaskRef {
     bool operator==(const TaskRef&) const = default;
 };
 
+struct ThreadHandle {
+    std::thread::id id; // Use the thread's ID as a unique identifier
+};
+
 // --- Use a std::shared_ptr to break the circular dependency ---
 #ifdef JDCOM
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef, ThreadHandle >;
 #else
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef>;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef, ThreadHandle >;
 #endif
 
 

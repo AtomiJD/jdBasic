@@ -82,7 +82,7 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         // to your BasicValue variant.
         return 0.0;
 
-    // --- Numeric Types (all converted to double) ---
+        // --- Numeric Types (all converted to double) ---
     case VT_I1:       return (double)vt.cVal;
     case VT_UI1:      return (double)vt.bVal;
     case VT_I2:       return (double)vt.iVal;
@@ -106,12 +106,12 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         [[fallthrough]];
     }
 
-    // --- Boolean ---
+              // --- Boolean ---
     case VT_BOOL:
         // vt.boolVal is a VARIANT_BOOL, which is -1 for true and 0 for false.
         return (vt.boolVal != 0);
 
-    // --- Date/Time ---
+        // --- Date/Time ---
     case VT_DATE: {
         SYSTEMTIME st;
         if (VariantTimeToSystemTime(vt.date, &st) == 1) {
@@ -130,7 +130,7 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         [[fallthrough]];
     }
 
-    // --- String ---
+                // --- String ---
     case VT_BSTR: {
         if (vt.bstrVal) {
             // The _bstr_t wrapper handles the conversion from BSTR to char*
@@ -139,13 +139,13 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         return std::string("");
     }
 
-    // --- COM Object ---
+                // --- COM Object ---
     case VT_DISPATCH: {
         // The ComObject wrapper handles the IDispatch pointer
         return ComObject(vt.pdispVal);
     }
 
-    // --- Unhandled / Advanced Types ---
+                    // --- Unhandled / Advanced Types ---
     case VT_ERROR:
     case VT_VARIANT: // Pointer to another VARIANT, requires recursion
     case VT_UNKNOWN: // IUnknown pointer, could try to QueryInterface for IDispatch
@@ -414,7 +414,7 @@ namespace {
         }
         return inverse;
     }
-} 
+}
 
 // --- JSON Functionality ---
 
@@ -859,7 +859,7 @@ BasicValue builtin_text(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
 BasicValue builtin_plotraw(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // 1. Validate Arguments
-    if (args.size() >5) {
+    if (args.size() > 5) {
         Error::set(8, vm.runtime_current_line, "PLOTRAW requires 3 arguments: x, y, matrix, scaleX, scaleY");
         return false;
     }
@@ -3699,6 +3699,51 @@ BasicValue builtin_typeof(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         }, val);
 }
 
+//  Built-in to check if a thread is done.
+BasicValue is_thread_done(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1 || !std::holds_alternative<ThreadHandle>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "IS_THREAD_DONE requires a ThreadHandle.");
+        return false;
+    }
+    const auto& handle = std::get<ThreadHandle>(args[0]);
+
+    std::lock_guard<std::mutex> lock(vm.background_tasks_mutex);
+    auto it = vm.background_tasks.find(handle.id);
+    if (it == vm.background_tasks.end()) {
+        return true; // If it's not in the map, it's finished and result was taken.
+    }
+
+    // Check if the future is ready without blocking.
+    auto status = it->second.wait_for(std::chrono::seconds(0));
+    return (status == std::future_status::ready);
+}
+
+// Built-in to get a thread's result (this will block).
+BasicValue get_thread_result(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1 || !std::holds_alternative<ThreadHandle>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "GET_THREAD_RESULT requires a ThreadHandle.");
+        return {};
+    }
+    const auto& handle = std::get<ThreadHandle>(args[0]);
+    std::future<BasicValue> result_future;
+
+    {
+        std::lock_guard<std::mutex> lock(vm.background_tasks_mutex);
+        auto it = vm.background_tasks.find(handle.id);
+        if (it == vm.background_tasks.end()) {
+            Error::set(3, vm.runtime_current_line, "Thread result already retrieved or invalid handle.");
+            return {};
+        }
+        // Move the future out of the map; a future's result can only be retrieved once.
+        result_future = std::move(it->second);
+        vm.background_tasks.erase(it);
+    }
+
+    // .get() will block here until the thread finishes and returns its value.
+    // It will also re-throw any exception caught in the thread.
+    return result_future.get();
+}
+
 
 
 // --- The Registration Function ---
@@ -3742,7 +3787,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("FRMV$", 1, builtin_frmv_str);
     register_func("FORMAT$", -1, builtin_format_str);
 
+    // --- Other things
     register_func("TYPEOF", 1, builtin_typeof);
+    register_func("THREAD.ISDONE", 1, is_thread_done);
+    register_func("THREAD.GETRESULT", 1, get_thread_result);
 
     // --- Register Math Functions ---
     register_func("SIN", 1, builtin_sin);
@@ -3792,9 +3840,9 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SCREEN", -1, builtin_screen);
     register_proc("PSET", -1, builtin_pset);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
-    register_proc("LINE", -1, builtin_line);     
-    register_proc("RECT", -1, builtin_rect);     
-    register_proc("CIRCLE", -1, builtin_circle); 
+    register_proc("LINE", -1, builtin_line);
+    register_proc("RECT", -1, builtin_rect);
+    register_proc("CIRCLE", -1, builtin_circle);
     register_proc("TEXT", -1, builtin_text);
     register_proc("PLOTRAW", -1, builtin_plotraw);
 
