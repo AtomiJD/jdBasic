@@ -30,7 +30,7 @@ std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::sha
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
 
-const std::string NERELA_VERSION = "0.8.4";
+const std::string NERELA_VERSION = "0.8.5";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -142,6 +142,11 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     builtin_constants["ERR"] = 0.0;
     builtin_constants["ERL"] = 0.0;
     builtin_constants["ERRMSG"] = "";
+
+    debug_state = DebugState::RUNNING;
+    step_over_stack_depth = 0;
+    step_out_stack_depth = 0;
+
 }
 
 NeReLaBasic::~NeReLaBasic() {
@@ -268,7 +273,7 @@ void NeReLaBasic::init_screen() {
 void NeReLaBasic::init_system() {
     // Let's set the program start memory location, as in the original.
     pcode = 0;
-    trace = 0;
+    trace = 1;
 
     TextIO::print("Trace is:  ");
     TextIO::print_uw(trace);
@@ -378,24 +383,24 @@ BasicValue NeReLaBasic::execute_function_for_value_t(const FunctionInfo& func_in
             break;
         }
 
-        if (dap_handler) {
-            // 1. Handle general PAUSED state (e.g., user manually paused)
-            if (debug_state == DebugState::PAUSED) {
-                pause_for_debugger();
-            }
+        //if (dap_handler) {
+        //    // 1. Handle general PAUSED state (e.g., user manually paused)
+        //    if (debug_state == DebugState::PAUSED) {
+        //        pause_for_debugger();
+        //    }
 
-            // 2. Check for regular breakpoints
-            if (breakpoints.count(runtime_current_line)) {
-                // Pause if a breakpoint is hit, unless we are stepping over a call
-                // and are currently inside that call (stack is deeper).
-                if (debug_state != DebugState::STEP_OVER ) {
-                    debug_state = DebugState::PAUSED;
-                    dap_handler->send_stopped_message("breakpoint", runtime_current_line, this->program_to_debug);
-                    pause_for_debugger();
-                    continue; // Re-evaluate the loop after un-pausing
-                }
-            }
-        }
+        //    // 2. Check for regular breakpoints
+        //    if (breakpoints.count(runtime_current_line)) {
+        //        // Pause if a breakpoint is hit, unless we are stepping over a call
+        //        // and are currently inside that call (stack is deeper).
+        //        if (debug_state != DebugState::STEP_OVER ) {
+        //            debug_state = DebugState::PAUSED;
+        //            dap_handler->send_stopped_message("breakpoint", runtime_current_line, this->program_to_debug);
+        //            pause_for_debugger();
+        //            continue; // Re-evaluate the loop after un-pausing
+        //        }
+        //    }
+        //}
 
         old_line = runtime_current_line;
         try
@@ -407,16 +412,18 @@ BasicValue NeReLaBasic::execute_function_for_value_t(const FunctionInfo& func_in
             TextIO::print("Exception " + std::string(e.what()));
         }
         // --- >> DAP INTEGRATION POINT (POST-EXECUTION) << ---
-        if (dap_handler && runtime_current_line > old_line) {
-            // Check if a "step over" action has completed
-            if (debug_state == DebugState::STEP_OVER ) {
-                debug_state = DebugState::PAUSED;
-                // Update line number for the message, as the next loop hasn't run yet
-                dap_handler->send_stopped_message("step", runtime_current_line, this->program_to_debug);
-                pause_for_debugger();
-                continue; // Re-evaluate loop after command
-            }
-        }
+        //if (dap_handler && runtime_current_line > old_line) {
+        //    // Check if a "step over" action has completed
+        //    if (debug_state == DebugState::STEP_OVER ) {
+        //        debug_state = DebugState::PAUSED;
+        //        // Update line number for the message, as the next loop hasn't run yet
+        //        dap_handler->send_stopped_message("step", runtime_current_line, this->program_to_debug);
+        //        pause_for_debugger();
+        //        continue; // Re-evaluate loop after command
+        //    }
+        //}
+        handle_debug_events();
+
 
     }
     return variables["RETVAL"];
@@ -478,7 +485,6 @@ void NeReLaBasic::execute_repl_command(const std::vector<uint8_t>& repl_p_code) 
     this->pcode = original_pcode;
 }
 
-// In NeReLaBasic.cpp
 void NeReLaBasic::pause_for_debugger() {
     std::unique_lock<std::mutex> lock(dap_mutex);
     dap_command_received = false;
@@ -486,6 +492,7 @@ void NeReLaBasic::pause_for_debugger() {
     dap_command_received = false;
 }
 
+// MODIFIED: All debug methods now affect `this->debug_state`, not `current_task`.
 void NeReLaBasic::resume_from_debugger() {
     {
         std::lock_guard<std::mutex> lock(dap_mutex);
@@ -504,6 +511,83 @@ void NeReLaBasic::step_over() {
     }
     dap_cv.notify_one();
 }
+
+void NeReLaBasic::step_in() {
+    {
+        std::lock_guard<std::mutex> lock(dap_mutex);
+        debug_state = DebugState::STEP_IN;
+        dap_command_received = true;
+    }
+    dap_cv.notify_one();
+}
+
+void NeReLaBasic::step_out() {
+    {
+        std::lock_guard<std::mutex> lock(dap_mutex);
+        debug_state = DebugState::STEP_OUT;
+        step_out_stack_depth = call_stack.size();
+        dap_command_received = true;
+    }
+    dap_cv.notify_one();
+}
+
+// MODIFIED: The generic debug handler now uses `this->debug_state`.
+void NeReLaBasic::handle_debug_events() {
+    // If no debugger is attached or we are running freely, do nothing.
+    if (!dap_handler)  {
+        return;
+    }
+
+    // Get the line number for the *next* statement to be executed.
+    //runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+
+    bool should_pause = false;
+    std::string pause_reason = "step";
+    dap_handler->send_output_message("in handle: " + std::to_string(runtime_current_line) + ", b: " + std::to_string(breakpoints.count(runtime_current_line)));
+    // 1. Check for a breakpoint. This has high priority.
+    if (breakpoints.count(runtime_current_line)) {
+        should_pause = true;
+        pause_reason = "breakpoint";
+        dap_handler->send_output_message("in break: ");
+    }
+    // 2. Check for stepping completion.
+    else {
+        switch (debug_state) {
+        case DebugState::PAUSED:
+            should_pause = true;
+            break;
+
+        case DebugState::STEP_IN:
+            should_pause = true;
+            pause_reason = "step";
+            break;
+
+        case DebugState::STEP_OUT:
+            if (call_stack.size() < step_out_stack_depth) {
+                should_pause = true;
+                pause_reason = "step";
+            }
+            break;
+
+        case DebugState::STEP_OVER:
+            if (call_stack.size() <= step_over_stack_depth) {
+                should_pause = true;
+                pause_reason = "step";
+            }
+            break;
+
+        case DebugState::RUNNING:
+            break;
+        }
+    }
+
+    if (should_pause) {
+        debug_state = DebugState::PAUSED;
+        dap_handler->send_stopped_message(pause_reason, runtime_current_line, this->program_to_debug);
+        pause_for_debugger();
+    }
+}
+
 
 // Wrapper for synchronous function calls from the expression parser
 BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
@@ -534,6 +618,9 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
         {
             TextIO::print("Exception " + std::string(e.what()));
         }
+
+        handle_debug_events();
+
         if (Error::get() != 0) break;
         if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COLON) {
             pcode++;
@@ -548,7 +635,9 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
 BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
     size_t initial_stack_depth = call_stack.size();
 
-    // --- FIX: Properly initialize the stack frame ---
+
+
+    // --- Properly initialize the stack frame ---
     StackFrame frame;
     frame.return_p_code_ptr = this->active_p_code;
     frame.return_pcode = this->pcode;
@@ -577,6 +666,9 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
 
     // --- Execution Loop ---
     while (call_stack.size() > initial_stack_depth && !is_stopped) {
+        
+        handle_debug_events();
+
         if (Error::get() != 0) {
             while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
             break;
@@ -594,6 +686,7 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
         {
             TextIO::print("Exception " + std::string(e.what()));
         }
+        
     }
 
     // --- Context restore ---
@@ -698,20 +791,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             // --- Task Execution Logic ---
             if (current_task->status == TaskStatus::RUNNING) {
                 // --- DAP and Breakpoint Logic ---
-                if (dap_handler) {
-                    if (debug_state == DebugState::PAUSED) {
-                        pause_for_debugger();
-                    }
-                    runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
-                    if (breakpoints.count(runtime_current_line)) {
-                        if (debug_state != DebugState::STEP_OVER || call_stack.size() <= current_task->step_over_stack_depth) {
-                            debug_state = DebugState::PAUSED;
-                            dap_handler->send_stopped_message("breakpoint", runtime_current_line, this->program_to_debug);
-                            pause_for_debugger();
-                            //continue; // Re-evaluate this task in the next scheduler cycle
-                        }
-                    }
-                }
+                handle_debug_events();
                 // Check if the task's pcode is valid *before* executing
                 //if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
                 if (pcode >= active_p_code->size()) {
@@ -760,13 +840,13 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                         pcode++;
                     }
 
-                    // --- Post-Statement DAP Logic ---
-                    if (dap_handler && (debug_state == DebugState::STEP_OVER )) {
-                        debug_state = DebugState::PAUSED;
-                        uint16_t next_line = (pcode < active_p_code->size() - 1) ? (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8) : runtime_current_line;
-                        dap_handler->send_stopped_message("step", next_line, this->program_to_debug);
-                        pause_for_debugger();
-                    }
+                    //// --- Post-Statement DAP Logic ---
+                    //if (dap_handler && (debug_state == DebugState::STEP_OVER )) {
+                    //    debug_state = DebugState::PAUSED;
+                    //    uint16_t next_line = (pcode < active_p_code->size() - 1) ? (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8) : runtime_current_line;
+                    //    dap_handler->send_stopped_message("step", next_line, this->program_to_debug);
+                    //    pause_for_debugger();
+                    //}
 
                     // --- Error Handling Logic ---
                     if (Error::get() != 0 && current_task->error_handler_active && current_task->jump_to_error_handler) {

@@ -64,7 +64,9 @@ int main(int argc, char* argv[]) {
         dap_server.start(dap_port);
 
         TextIO::print("DAP mode is active. Waiting for client to connect and send launch request...\n");
-
+        interpreter.init_screen();
+        interpreter.init_system();
+        interpreter.init_basic();
         // Get the future from the promise before the server potentially fulfills it
         auto launch_future = interpreter.dap_launch_promise.get_future();
 
@@ -77,6 +79,7 @@ int main(int argc, char* argv[]) {
             dap_server.send_output_message("Type your command and <enter>\n");
             // The file is now loaded and compiled. Start the execution loop.
             // The loop will immediately pause and wait for a 'continue' or 'step' command.
+
             interpreter.execute_main_program(interpreter.program_p_code, false);
         }
         else {
@@ -98,6 +101,9 @@ int main(int argc, char* argv[]) {
             if (interpreter.loadSourceFromFile(filename)) {
                 // File loaded successfully. Now, we can execute the same logic
                 // as the RUN command to compile and execute the code.
+                interpreter.init_screen();
+                interpreter.init_system();
+                interpreter.init_basic();
                 Commands::do_run(interpreter);
 
                 TextIO::print("\n--- ENDED (Press any key to exit) ---\n");

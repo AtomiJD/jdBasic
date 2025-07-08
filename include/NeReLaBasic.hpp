@@ -106,12 +106,15 @@ public:
         RUNNING,    // Normal execution
         PAUSED,     // Stopped at a breakpoint, step, etc.
         STEP_OVER,
-        STEP_INTO,
+        STEP_IN,
         STEP_OUT
     };
 
+    
     DebugState debug_state = DebugState::RUNNING;
-
+    // For 'next' (step over) functionality
+    size_t step_over_stack_depth = 0;
+    size_t step_out_stack_depth = 0;
 
     struct Task {
         int id;
@@ -135,9 +138,6 @@ public:
         std::vector<StackFrame> resume_call_stack_snapshot;
         std::vector<ForLoopInfo> resume_for_stack_snapshot;
         std::future<BasicValue>  result_future; // For C++ background tasks like HTTP
-        // --- Per-Task Debug State ---
-        DebugState debug_state = DebugState::RUNNING;
-        size_t step_over_stack_depth = 0;
     };
 
     struct BasicModule {
@@ -171,12 +171,12 @@ public:
     // Breakpoints: line number -> BreakpointInfo (can be just bool for now)
     std::map<uint16_t, bool> breakpoints;
 
-    // For 'next' (step over) functionality
-    size_t step_over_stack_depth = 0;
-
     void pause_for_debugger();
     void resume_from_debugger();
     void step_over();
+    void step_in();
+    void step_out();
+    void handle_debug_events();
 
     // This table will hold our built-in constants like 'vbNewLine' and 'PI'
     std::map<std::string, BasicValue> builtin_constants;
@@ -293,11 +293,12 @@ public:
     void execute_main_program(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     BasicValue execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     BasicValue launch_bsync_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
-
-private:
     void init_basic();
     void init_system();
     void init_screen();
+
+private:
+
 };
 
 extern NeReLaBasic* g_vm_instance_ptr;
