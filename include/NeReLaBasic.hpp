@@ -105,7 +105,9 @@ public:
     enum class DebugState {
         RUNNING,    // Normal execution
         PAUSED,     // Stopped at a breakpoint, step, etc.
-        STEP_OVER
+        STEP_OVER,
+        STEP_INTO,
+        STEP_OUT
     };
 
     DebugState debug_state = DebugState::RUNNING;

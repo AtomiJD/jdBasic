@@ -398,7 +398,14 @@ BasicValue NeReLaBasic::execute_function_for_value_t(const FunctionInfo& func_in
         }
 
         old_line = runtime_current_line;
-        statement();
+        try
+        {
+            statement();
+        }
+        catch (const std::exception& e)
+        {
+            TextIO::print("Exception " + std::string(e.what()));
+        }
         // --- >> DAP INTEGRATION POINT (POST-EXECUTION) << ---
         if (dap_handler && runtime_current_line > old_line) {
             // Check if a "step over" action has completed
@@ -445,7 +452,14 @@ void NeReLaBasic::execute_repl_command(const std::vector<uint8_t>& repl_p_code) 
         }
 
         // Execute one statement from the REPL command
-        statement();
+        try
+        {
+            statement();
+        }
+        catch (const std::exception& e)
+        {
+            TextIO::print("Exception " + std::string(e.what()));
+        }
 
         // If the statement caused an error, stop processing
         if (Error::get() != 0) {
@@ -491,7 +505,6 @@ void NeReLaBasic::step_over() {
     dap_cv.notify_one();
 }
 
-
 // Wrapper for synchronous function calls from the expression parser
 BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
     if (func_info.native_impl != nullptr) {
@@ -513,7 +526,14 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
         if (pcode == 0) pcode += 2; // Skip line number
         Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
         if (token == Tokens::ID::NOCMD || token == Tokens::ID::C_CR) break;
-        statement();
+        try
+        {
+            statement();
+        }
+        catch (const std::exception& e)
+        {
+            TextIO::print("Exception " + std::string(e.what()));
+        }
         if (Error::get() != 0) break;
         if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COLON) {
             pcode++;
@@ -566,7 +586,14 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
             while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
             break;
         }
-        statement();
+        try
+        {
+            statement();
+        }
+        catch (const std::exception& e)
+        {
+            TextIO::print("Exception " + std::string(e.what()));
+        }
     }
 
     // --- Context restore ---
@@ -615,7 +642,10 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 #endif
         if (!nopause_active && _kbhit()) {
             char key = _getch();
-            if (key == 27) { TextIO::print("\n--- BREAK ---\n"); break; }
+            if (key == 27) { 
+                TextIO::print("\n--- BREAK ---\n"); 
+                break; 
+            }
             else if (key == ' ') {
                 TextIO::print("\n--- PAUSED (Press any key to resume) ---\n");
                 _getch();
@@ -696,7 +726,15 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                     bool line_is_done = false;
                     while (!line_is_done && pcode < active_p_code->size()) {
                         if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
-                            statement();
+                            try
+                            {
+                                statement();
+                            }
+                            catch (const std::exception& e)
+                            {
+                                TextIO::print("Exception " + std::string(e.what()));
+                            }
+                            
                         }
 
                         // If the statement caused the task to complete (e.g. RETURN) or yield (AWAIT), stop processing this line.
@@ -991,7 +1029,8 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_dump(*this);
         break;
-
+    case Tokens::ID::C_UNDERLINE:
+        pcode++; // Fall through and consume C_CR
     case Tokens::ID::C_CR:
         // This token is followed by a 2-byte line number. Skip it during execution.
         pcode++;

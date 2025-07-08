@@ -58,7 +58,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             return Tokens::ID::STRING;
         }
         else {
-            Error::set(1, vm.runtime_current_line); // Unterminated string
+            Error::set(1, vm.runtime_current_line, "Unterminated string"); // Unterminated string
             return Tokens::ID::NOCMD;
         }
     }
@@ -226,21 +226,25 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case '.': return Tokens::ID::C_DOT;
     case ':': return Tokens::ID::C_COLON;
     case '^': return Tokens::ID::C_CARET;
+    case '_': return Tokens::ID::C_UNDERLINE;
     }
 
     // If we get here, the character is not recognized.
     Error::set(1, vm.current_source_line);
+    //Error::set(1, vm.current_source_line, "Unrecognized character.");
     return Tokens::ID::NOCMD;
 }
 
-uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table) {
+uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline) {
 
     vm.lineinput = line;
     vm.prgptr = 0;
 
     // Write the line number prefix for this line's bytecode.
-    out_p_code.push_back(lineNumber & 0xFF);
-    out_p_code.push_back((lineNumber >> 8) & 0xFF);
+    if (!multiline) {
+        out_p_code.push_back(lineNumber & 0xFF);
+        out_p_code.push_back((lineNumber >> 8) & 0xFF);
+    }
 
     bool is_start_of_statement = true;
     bool is_one_liner_if = false;
@@ -260,6 +264,11 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
 
         bool is_exported = false;
         Tokens::ID token = parse(vm, is_start_of_statement);
+
+        if (token == Tokens::ID::C_UNDERLINE) {
+
+            goto _deckig;
+        }
 
         if (token == Tokens::ID::EXPORT) {
             is_exported = true;
@@ -397,7 +406,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     }
                 }
                 else {
-                    Error::set(1, vm.current_source_line);
+                    Error::set(1, vm.current_source_line,"Function not declared properly.");
                 }
 
                 info.arity = info.parameter_names.size();
@@ -449,7 +458,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 }
                 else {
                     // This is an error, e.g., "GOTO 123" or "GOTO +"
-                    Error::set(1, vm.runtime_current_line); // Syntax Error
+                    Error::set(1, vm.runtime_current_line, "Misformed GOTO."); // Syntax Error
                 }
                 // We have now processed GOTO and its argument, so restart the main loop
                 continue;
@@ -479,7 +488,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
             case Tokens::ID::ELSE: {
                 // A single-line IF cannot have an ELSE clause.
                 if (is_one_liner_if) {
-                    Error::set(1, vm.current_source_line); // Syntax Error
+                    Error::set(1, vm.current_source_line, "A single-line IF cannot have an ELSE clause."); // Syntax Error
                     continue; // Stop processing this token
                 }
                 // Pop the IF's placeholder address from the stack.
@@ -502,7 +511,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
             case Tokens::ID::ENDIF: {
                 // A single-line IF does not use an explicit ENDIF.
                 if (is_one_liner_if) {
-                    Error::set(1, vm.current_source_line); // Syntax Error
+                    Error::set(1, vm.current_source_line, "A single-line IF does not use an explicit ENDIF"); // Syntax Error
                     continue; // Stop processing this token
                 }
                 // Pop the corresponding IF or ELSE placeholder address from the stack.
@@ -619,7 +628,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 if (next_token_peek == Tokens::ID::WHILE || next_token_peek == Tokens::ID::UNTIL) {
                     // This is a post-test loop.
                     if (current_do_loop_info.is_pre_test) {
-                        Error::set(1, lineNumber); // Syntax Error: Condition on both DO and LOOP
+                        Error::set(1, lineNumber,"Condition on both DO and LOOP."); // Syntax Error: Condition on both DO and LOOP
                         return 1;
                     }
                     current_do_loop_info.is_pre_test = false; // Confirm it's post-test
@@ -689,7 +698,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 // If used in expressions, this case will require further logic.
                 // For now, let's assume they are handled by their parent DO/LOOP.
                 // If they appear here, it implies a syntax error.
-                Error::set(1, lineNumber); // Syntax Error: WHILE/UNTIL out of place
+                Error::set(1, lineNumber,"WHILE/UNTIL out of place"); // Syntax Error: WHILE/UNTIL out of place
                 return 1;
 
             case Tokens::ID::NEXT: {
@@ -785,6 +794,9 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
     // Every line of bytecode ends with a carriage return token.
     out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::C_CR));
     return 0; // Success
+_deckig:
+    lineNumber++;
+    return 1; // Multiline
 
 }
 
@@ -988,6 +1000,7 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
     vm.current_source_line = 1;
     bool skipping_type_block = false;
 
+    int multiline = false;
     while (std::getline(source_stream, line)) {
         std::stringstream temp_stream(line);
         std::string first_word;
@@ -1007,8 +1020,8 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
             vm.current_source_line++;
             continue;
         }
-
-        if (tokenize(vm, line, vm.current_source_line++, out_p_code, *target_func_table) != 0) {
+        multiline = tokenize(vm, line, vm.current_source_line++, out_p_code, *target_func_table, multiline);
+        if (multiline > 1) {
             vm.active_function_table = nullptr;
             return 1;
         }

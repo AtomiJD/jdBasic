@@ -134,6 +134,12 @@ void DAPHandler::process_command(const std::string& command_line) {
     else if (command == "next") {
         vm.step_over();
     }
+    else if (command == "stepin") {
+        vm.step_in();
+    }
+    else if (command == "stepout") {
+        vm.step_out();
+    }
     else if (command == "set_breakpoint") {
         on_set_breakpoint(args);
     }
