@@ -279,6 +279,12 @@ std::string to_string(const BasicValue& val) {
         else if constexpr (std::is_same_v<T, TaskRef>) {
             return "<Task ID: " + std::to_string(arg.id) + ">";
         }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<OpaqueHandle>>) {
+            if (arg && arg->ptr) {
+                return "<Handle: " + arg->type_name + ">";
+            }
+            return "<Null Handle>";
+        }
 
 #ifdef JDCOM
         else if constexpr (std::is_same_v<T, ComObject>) { // This is the problematic part
@@ -875,7 +881,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
     std::string identifier_being_called = to_upper(read_string(vm));
 
     // Check if the identifier contains a dot, which signifies a potential method call (e.g., "conn.Open").
-    if (identifier_being_called.find('.') != std::string::npos) {
+    if (identifier_being_called.find('.') != std::string::npos && !vm.active_function_table->count(identifier_being_called)) {
 #ifdef JDCOM // This logic is only compiled if COM support is enabled.
         // It's a dot-chain, so resolve it to get the target object and the method name.
         auto [final_obj, final_method] = vm.resolve_dot_chain(identifier_being_called);
@@ -978,6 +984,10 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         if (func_info.native_impl != nullptr) {
             // Call native C++ function
             func_info.native_impl(vm, args);
+        } else if (func_info.native_dll_impl != nullptr) {
+            BasicValue result;
+            // Call it using the new "output pointer" style
+            func_info.native_dll_impl(vm, args, &result);
         }
         else {
             // For a user-defined BASIC function, use the synchronous executor

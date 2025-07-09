@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "jdBasic", "jdBasic.vcxproj"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "aifunc", "..\aifunc\aifunc.vcxproj", "{2870169D-C96E-4B86-AFB4-B5B7D140301A}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sqlitefunc", "..\sqlitefunc\sqlitefunc.vcxproj", "{89311ECE-BCD7-4676-B916-DC0BB03230B7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -31,6 +33,14 @@ Global
 		{2870169D-C96E-4B86-AFB4-B5B7D140301A}.Release|x64.Build.0 = Release|x64
 		{2870169D-C96E-4B86-AFB4-B5B7D140301A}.Release|x86.ActiveCfg = Release|Win32
 		{2870169D-C96E-4B86-AFB4-B5B7D140301A}.Release|x86.Build.0 = Release|Win32
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Debug|x64.ActiveCfg = Debug|x64
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Debug|x64.Build.0 = Debug|x64
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Debug|x86.ActiveCfg = Debug|Win32
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Debug|x86.Build.0 = Debug|Win32
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Release|x64.ActiveCfg = Release|x64
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Release|x64.Build.0 = Release|x64
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Release|x86.ActiveCfg = Release|Win32
+		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

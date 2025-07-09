@@ -74,6 +74,8 @@ public:
     // All native functions will take a vector of arguments and return a single BasicValue.
     using NativeFunction = std::function<BasicValue(NeReLaBasic&, const std::vector<BasicValue>&)>;
 
+    using NativeDLLFunction = void(*)(NeReLaBasic&, const std::vector<BasicValue>&, BasicValue*);
+
     // --- A type alias for the registration function in the DLL ---
     using ModuleRegisterFunc = void(*)(NeReLaBasic*);
 
@@ -87,6 +89,7 @@ public:
         uint16_t start_pcode = 0;
         std::vector<std::string> parameter_names;
         NativeFunction native_impl = nullptr; // A pointer to a C++ function
+        NativeDLLFunction native_dll_impl = nullptr; // A pointer to a C++ function in an DLL
     };
 
     using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>;

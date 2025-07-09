@@ -1214,8 +1214,15 @@ BasicValue builtin_optimizer_update(NeReLaBasic& vm, const std::vector<BasicValu
     // Find the correct update function (e.g., "ADAM.UPDATE") in the function table
     if (vm.main_function_table.count(update_func_name)) {
         const auto& func_info = vm.main_function_table.at(update_func_name);
-        if (func_info.native_impl) {
-            // Call the specific optimizer's update function
+        if (func_info.native_dll_impl != nullptr) {
+            BasicValue result;
+            // Call it using the new "output pointer" style
+            func_info.native_dll_impl(vm, args, &result);
+            return result;
+        }
+        // Priority 2: Check for the old internal function pointer
+        else if (func_info.native_impl != nullptr) {
+            // Call it using the old "return by value" style
             return func_info.native_impl(vm, args);
         }
     }

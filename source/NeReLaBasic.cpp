@@ -237,6 +237,7 @@ bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     ModuleServices services;
     services.error_set = &Error::set;
     services.to_upper = &to_upper; // This assumes to_upper is a free function.
+    services.to_string = &to_string;
 
     // --- Call the registration function, passing the services ---
     register_func(this, &services);
@@ -273,7 +274,7 @@ void NeReLaBasic::init_screen() {
 void NeReLaBasic::init_system() {
     // Let's set the program start memory location, as in the original.
     pcode = 0;
-    trace = 1;
+    trace = 0;
 
     TextIO::print("Trace is:  ");
     TextIO::print_uw(trace);
@@ -335,99 +336,6 @@ void NeReLaBasic::start() {
     }
 }
 
-BasicValue NeReLaBasic::execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
-
-    UINT16 old_line = 0;
-
-    if (func_info.native_impl != nullptr) {
-        return func_info.native_impl(*this, args);
-    }
-
-    size_t initial_stack_depth = call_stack.size();
-
-    // 1. Set up the new stack frame
-    NeReLaBasic::StackFrame frame;
-    frame.return_p_code_ptr = this->active_p_code;
-    frame.return_pcode = this->pcode;
-    frame.previous_function_table_ptr = this->active_function_table;
-    frame.for_stack_size_on_entry = this->for_stack.size();
-    frame.function_name = func_info.name;
-    frame.linenr = runtime_current_line;
-
-    for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
-        if (i < args.size()) frame.local_variables[func_info.parameter_names[i]] = args[i];
-    }
-    call_stack.push_back(frame);
-
-    // 2. --- CONTEXT SWITCH ---
-    if (!func_info.module_name.empty() && compiled_modules.count(func_info.module_name)) {
-        this->active_p_code = &this->compiled_modules.at(func_info.module_name).p_code;
-        this->active_function_table = &this->compiled_modules.at(func_info.module_name).function_table;
-    }
-    // 3. Set the program counter to the function's start address IN THE NEW CONTEXT
-    this->pcode = func_info.start_pcode;
-
-    // 4. Execute statements until the function returns
-    this->pcode = func_info.start_pcode;
-    while (call_stack.size() > initial_stack_depth && !is_stopped) {
-
-        if (Error::get() != 0) {
-            // Unwind stack on error to prevent infinite loops
-            while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
-            this->active_function_table = frame.previous_function_table_ptr; // Restore context
-            return false;
-        }
-        if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
-            Error::set(25, runtime_current_line); // Missing RETURN
-            while (call_stack.size() > initial_stack_depth) call_stack.pop_back();
-            break;
-        }
-
-        //if (dap_handler) {
-        //    // 1. Handle general PAUSED state (e.g., user manually paused)
-        //    if (debug_state == DebugState::PAUSED) {
-        //        pause_for_debugger();
-        //    }
-
-        //    // 2. Check for regular breakpoints
-        //    if (breakpoints.count(runtime_current_line)) {
-        //        // Pause if a breakpoint is hit, unless we are stepping over a call
-        //        // and are currently inside that call (stack is deeper).
-        //        if (debug_state != DebugState::STEP_OVER ) {
-        //            debug_state = DebugState::PAUSED;
-        //            dap_handler->send_stopped_message("breakpoint", runtime_current_line, this->program_to_debug);
-        //            pause_for_debugger();
-        //            continue; // Re-evaluate the loop after un-pausing
-        //        }
-        //    }
-        //}
-
-        old_line = runtime_current_line;
-        try
-        {
-            statement();
-        }
-        catch (const std::exception& e)
-        {
-            TextIO::print("Exception " + std::string(e.what()));
-        }
-        // --- >> DAP INTEGRATION POINT (POST-EXECUTION) << ---
-        //if (dap_handler && runtime_current_line > old_line) {
-        //    // Check if a "step over" action has completed
-        //    if (debug_state == DebugState::STEP_OVER ) {
-        //        debug_state = DebugState::PAUSED;
-        //        // Update line number for the message, as the next loop hasn't run yet
-        //        dap_handler->send_stopped_message("step", runtime_current_line, this->program_to_debug);
-        //        pause_for_debugger();
-        //        continue; // Re-evaluate loop after command
-        //    }
-        //}
-        handle_debug_events();
-
-
-    }
-    return variables["RETVAL"];
-}
 
 void NeReLaBasic::execute_repl_command(const std::vector<uint8_t>& repl_p_code) {
     if (repl_p_code.empty()) {
@@ -543,12 +451,12 @@ void NeReLaBasic::handle_debug_events() {
 
     bool should_pause = false;
     std::string pause_reason = "step";
-    dap_handler->send_output_message("in handle: " + std::to_string(runtime_current_line) + ", b: " + std::to_string(breakpoints.count(runtime_current_line)));
+    //dap_handler->send_output_message("in handle: " + std::to_string(runtime_current_line) + ", b: " + std::to_string(breakpoints.count(runtime_current_line)));
     // 1. Check for a breakpoint. This has high priority.
     if (breakpoints.count(runtime_current_line)) {
         should_pause = true;
         pause_reason = "breakpoint";
-        dap_handler->send_output_message("in break: ");
+        //dap_handler->send_output_message("in break: ");
     }
     // 2. Check for stepping completion.
     else {
@@ -591,10 +499,22 @@ void NeReLaBasic::handle_debug_events() {
 
 // Wrapper for synchronous function calls from the expression parser
 BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
-    if (func_info.native_impl != nullptr) {
+    // Priority 1: Check for the new ABI-safe DLL function pointer
+    if (func_info.native_dll_impl != nullptr) {
+        BasicValue result;
+        // Call it using the new "output pointer" style
+        func_info.native_dll_impl(*this, args, &result);
+        return result;
+    }
+    // Priority 2: Check for the old internal function pointer
+    else if (func_info.native_impl != nullptr) {
+        // Call it using the old "return by value" style
         return func_info.native_impl(*this, args);
     }
-    return execute_synchronous_function(func_info, args);
+    // Priority 3: If neither native pointer is set, it's a user-defined BASIC function
+    else {
+        return execute_synchronous_function(func_info, args);
+    }
 }
 
 // New synchronous executor for REPL and direct commands

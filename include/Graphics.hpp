@@ -18,10 +18,27 @@ public:
     void update_screen(); // Shows whatever has been drawn
     void clear_screen();  // Clears the screen to the default color
     void clear_screen(Uint8 r, Uint8 g, Uint8 b); 
-    void pset(int x, int y, Uint8 r, Uint8 g, Uint8 b); 
+
+    void setDrawColor(Uint8 r, Uint8 g, Uint8 b);
+
+    // Scalar drawing functions (updated)
+    void pset(int x, int y);
+    void line(int x1, int y1, int x2, int y2);
+    void rect(int x, int y, int w, int h, bool is_filled);
+    void circle(int center_x, int center_y, int radius);
+
+    // Overloads for scalar drawing with explicit color
+    void pset(int x, int y, Uint8 r, Uint8 g, Uint8 b);
     void line(int x1, int y1, int x2, int y2, Uint8 r, Uint8 g, Uint8 b);
     void rect(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, bool is_filled);
     void circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b);
+
+    // New vectorized drawing functions
+    void pset(const std::shared_ptr<Array>& points, const std::shared_ptr<Array>& colors);
+    void line(const std::shared_ptr<Array>& lines, const std::shared_ptr<Array>& colors);
+    void rect(const std::shared_ptr<Array>& rects, bool is_filled, const std::shared_ptr<Array>& colors);
+    void circle(const std::shared_ptr<Array>& circles, const std::shared_ptr<Array>& colors);
+
     void text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint8 g, Uint8 b);
     void plot_raw(int start_x, int start_y, const std::shared_ptr<Array>& color_matrix, float scale = 1.0f, float scaleY = 1.0f);
 
@@ -47,5 +64,6 @@ private:
     float mouse_x = 0.0f;
     float mouse_y = 0.0f;
     Uint32 mouse_button_state = 0;
+    SDL_Color draw_color = { 255, 255, 255, 255 }; // Default to white
 };
 #endif

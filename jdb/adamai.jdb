@@ -124,7 +124,7 @@ FOR epoch = 1 TO EPOCHS
     ' and apply the correct update logic, managing the momentum (m) and
     ' variance (v) states internally.
     'MODEL = TENSOR.UPDATE(MODEL, OPTIMIZER)
-    STOP
+
     MODEL = ADAM.UPDATE(MODEL, OPTIMIZER)
 
     ' --- e) Print Progress ---

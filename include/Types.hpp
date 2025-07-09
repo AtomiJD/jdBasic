@@ -96,6 +96,46 @@ struct ComObject {
 };
 #endif
 
+struct OpaqueHandle {
+    void* ptr = nullptr;
+    std::string type_name;
+    std::function<void(void*)> deleter;
+
+    // Constructor
+    OpaqueHandle(void* p, std::string t, std::function<void(void*)> d)
+        : ptr(p), type_name(std::move(t)), deleter(std::move(d)) {}
+
+    // Destructor that calls the custom deleter
+    ~OpaqueHandle() {
+        if (ptr && deleter) {
+            deleter(ptr);
+            ptr = nullptr;
+        }
+    }
+
+    // Disable copying
+    OpaqueHandle(const OpaqueHandle&) = delete;
+    OpaqueHandle& operator=(const OpaqueHandle&) = delete;
+
+    // Allow moving
+    OpaqueHandle(OpaqueHandle&& other) noexcept
+        : ptr(other.ptr), type_name(std::move(other.type_name)), deleter(std::move(other.deleter)) {
+        other.ptr = nullptr;
+        other.deleter = nullptr;
+    }
+    OpaqueHandle& operator=(OpaqueHandle&& other) noexcept {
+        if (this != &other) {
+            if (ptr && deleter) deleter(ptr);
+            ptr = other.ptr;
+            type_name = std::move(other.type_name);
+            deleter = std::move(other.deleter);
+            other.ptr = nullptr;
+            other.deleter = nullptr;
+        }
+        return *this;
+    }
+};
+
 // This struct represents a "pointer" or "reference" to a function.
 // We just store the function's name.
 struct FunctionRef {
@@ -119,9 +159,9 @@ struct ThreadHandle {
 
 // --- Use a std::shared_ptr to break the circular dependency ---
 #ifdef JDCOM
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef, ThreadHandle >;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
 #else
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef, ThreadHandle >;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
 #endif
 
 

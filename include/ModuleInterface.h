@@ -11,7 +11,9 @@ class NeReLaBasic;
 // These types match the signatures of the functions the DLL needs from the main app.
 using ErrorSetFunc = void(*)(unsigned char, unsigned short, const std::string&);
 using ToUpperFunc = std::string(*)(std::string);
+using ToStringFunc = std::string(*)(const BasicValue&);
 
+using NativeDLLFunction = void(*)(NeReLaBasic&, const std::vector<BasicValue>&, BasicValue*);
 /**
  * @brief A struct to hold all the functions the main app provides to a module.
  *
@@ -21,5 +23,6 @@ using ToUpperFunc = std::string(*)(std::string);
 struct ModuleServices {
     ErrorSetFunc error_set;
     ToUpperFunc to_upper;
+    ToStringFunc to_string;
     // If you get more linker errors for other functions, add their pointer types here.
 };

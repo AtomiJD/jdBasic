@@ -743,24 +743,6 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false; // Procedures return a dummy value
 }
 
-// PSET x, y, [r, g, b]
-// Sets a pixel at a specific coordinate to a color.
-BasicValue builtin_pset(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 2 || args.size() > 5) { Error::set(8, vm.runtime_current_line); return false; }
-
-    int x = static_cast<int>(to_double(args[0]));
-    int y = static_cast<int>(to_double(args[1]));
-    Uint8 r = 255, g = 255, b = 255; // Default to white
-
-    if (args.size() == 5) {
-        r = static_cast<Uint8>(to_double(args[2]));
-        g = static_cast<Uint8>(to_double(args[3]));
-        b = static_cast<Uint8>(to_double(args[4]));
-    }
-    vm.graphics_system.pset(x, y, r, g, b);
-    return false;
-}
-
 // SCREENFLIP
 // Updates the screen to show all drawing done since the last flip.
 BasicValue builtin_screenflip(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -769,63 +751,181 @@ BasicValue builtin_screenflip(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return false;
 }
 
-// LINE x1, y1, x2, y2, [r, g, b]
+BasicValue builtin_drawcolor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    Uint8 r = static_cast<Uint8>(to_double(args[0]));
+    Uint8 g = static_cast<Uint8>(to_double(args[1]));
+    Uint8 b = static_cast<Uint8>(to_double(args[2]));
+    vm.graphics_system.setDrawColor(r, g, b);
+    return false;
+}
+
+
+// Replace the existing 'builtin_pset' function with this new version
+BasicValue builtin_pset(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& points = std::get<std::shared_ptr<Array>>(args[0]);
+        std::shared_ptr<Array> colors = nullptr;
+        // Check for optional colors matrix
+        if (args.size() == 2 && std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+            colors = std::get<std::shared_ptr<Array>>(args[1]);
+        }
+        else if (args.size() > 1) {
+            Error::set(15, vm.runtime_current_line, "Second argument for vectorized PSET must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.pset(points, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 2 || args.size() == 4 || args.size() > 5) {
+        Error::set(8, vm.runtime_current_line, "Usage: PSET x, y, [r, g, b] OR PSET matrix, [colors]");
+        return false;
+    }
+
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+
+    if (args.size() == 5) {
+        Uint8 r = static_cast<Uint8>(to_double(args[2]));
+        Uint8 g = static_cast<Uint8>(to_double(args[3]));
+        Uint8 b = static_cast<Uint8>(to_double(args[4]));
+        vm.graphics_system.pset(x, y, r, g, b);
+    }
+    else { // 2 args
+        vm.graphics_system.pset(x, y);
+    }
+    return false;
+}
+
+
+// Replace the existing 'builtin_line' function with this new version
 BasicValue builtin_line(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 4 || args.size() > 7) { Error::set(8, vm.runtime_current_line); return false; }
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& lines = std::get<std::shared_ptr<Array>>(args[0]);
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 2 && std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+            colors = std::get<std::shared_ptr<Array>>(args[1]);
+        }
+        else if (args.size() > 1) {
+            Error::set(15, vm.runtime_current_line, "Second argument for vectorized LINE must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.line(lines, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 4 || args.size() == 5 || args.size() == 6 || args.size() > 7) {
+        Error::set(8, vm.runtime_current_line, "Usage: LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]");
+        return false;
+    }
 
     int x1 = static_cast<int>(to_double(args[0]));
     int y1 = static_cast<int>(to_double(args[1]));
     int x2 = static_cast<int>(to_double(args[2]));
     int y2 = static_cast<int>(to_double(args[3]));
-    Uint8 r = 255, g = 255, b = 255;
 
     if (args.size() == 7) {
-        r = static_cast<Uint8>(to_double(args[4]));
-        g = static_cast<Uint8>(to_double(args[5]));
-        b = static_cast<Uint8>(to_double(args[6]));
+        Uint8 r = static_cast<Uint8>(to_double(args[4]));
+        Uint8 g = static_cast<Uint8>(to_double(args[5]));
+        Uint8 b = static_cast<Uint8>(to_double(args[6]));
+        vm.graphics_system.line(x1, y1, x2, y2, r, g, b);
     }
-    vm.graphics_system.line(x1, y1, x2, y2, r, g, b);
+    else { // 4 args
+        vm.graphics_system.line(x1, y1, x2, y2);
+    }
     return false;
 }
 
-// RECT x, y, w, h, [r, g, b], [fill_bool]
+// Replace the existing 'builtin_rect' function with this new version
 BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 4 || args.size() > 8) { Error::set(8, vm.runtime_current_line); return false; }
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& rects = std::get<std::shared_ptr<Array>>(args[0]);
+        bool is_filled = false;
+        if (args.size() >= 2) is_filled = to_bool(args[1]);
+
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 3 && std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+            colors = std::get<std::shared_ptr<Array>>(args[2]);
+        }
+        else if (args.size() > 2) {
+            Error::set(15, vm.runtime_current_line, "Third argument for vectorized RECT must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.rect(rects, is_filled, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 4 || args.size() > 8) {
+        Error::set(8, vm.runtime_current_line, "Usage: RECT x, y, w, h, [r, g, b], [fill] OR RECT matrix, [fill], [colors]");
+        return false;
+    }
 
     int x = static_cast<int>(to_double(args[0]));
     int y = static_cast<int>(to_double(args[1]));
     int w = static_cast<int>(to_double(args[2]));
     int h = static_cast<int>(to_double(args[3]));
-    Uint8 r = 255, g = 255, b = 255;
     bool fill = false;
 
-    if (args.size() >= 7) {
-        r = static_cast<Uint8>(to_double(args[4]));
-        g = static_cast<Uint8>(to_double(args[5]));
-        b = static_cast<Uint8>(to_double(args[6]));
+    if (args.size() >= 7) { // Color is provided
+        Uint8 r = static_cast<Uint8>(to_double(args[4]));
+        Uint8 g = static_cast<Uint8>(to_double(args[5]));
+        Uint8 b = static_cast<Uint8>(to_double(args[6]));
+        if (args.size() == 8) fill = to_bool(args[7]);
+        vm.graphics_system.rect(x, y, w, h, r, g, b, fill);
     }
-    if (args.size() == 8) {
-        fill = to_bool(args[7]);
+    else { // No color, just check for fill
+        if (args.size() == 5) fill = to_bool(args[4]);
+        vm.graphics_system.rect(x, y, w, h, fill);
     }
-    vm.graphics_system.rect(x, y, w, h, r, g, b, fill);
     return false;
 }
 
-// CIRCLE x, y, radius, [r, g, b]
+// Replace the existing 'builtin_circle' function with this new version
 BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 3 || args.size() > 6) { Error::set(8, vm.runtime_current_line); return false; }
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& circles = std::get<std::shared_ptr<Array>>(args[0]);
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 2 && std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+            colors = std::get<std::shared_ptr<Array>>(args[1]);
+        }
+        else if (args.size() > 1) {
+            Error::set(15, vm.runtime_current_line, "Second argument for vectorized CIRCLE must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.circle(circles, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 3 || args.size() == 4 || args.size() == 5 || args.size() > 6) {
+        Error::set(8, vm.runtime_current_line, "Usage: CIRCLE x, y, r, [r, g, b] OR CIRCLE matrix, [colors]");
+        return false;
+    }
 
     int x = static_cast<int>(to_double(args[0]));
     int y = static_cast<int>(to_double(args[1]));
     int radius = static_cast<int>(to_double(args[2]));
-    Uint8 r = 255, g = 255, b = 255;
 
     if (args.size() == 6) {
-        r = static_cast<Uint8>(to_double(args[3]));
-        g = static_cast<Uint8>(to_double(args[4]));
-        b = static_cast<Uint8>(to_double(args[5]));
+        Uint8 r = static_cast<Uint8>(to_double(args[3]));
+        Uint8 g = static_cast<Uint8>(to_double(args[4]));
+        Uint8 b = static_cast<Uint8>(to_double(args[5]));
+        vm.graphics_system.circle(x, y, radius, r, g, b);
     }
-    vm.graphics_system.circle(x, y, radius, r, g, b);
+    else { // 3 args
+        vm.graphics_system.circle(x, y, radius);
+    }
     return false;
 }
 
@@ -1299,15 +1399,85 @@ BasicValue builtin_reverse(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     return new_array_ptr;
 }
 
+///**
+// * @brief Extracts a slice from an N-dimensional array along a specified dimension.
+// * @param vm The interpreter instance.
+// * @param args A vector: array, dimension, index
+// * @return A new Array of rank N-1.
+// */
+//BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+//    if (args.size() != 3) {
+//        Error::set(8, vm.runtime_current_line, "SLICE requires 3 arguments: array, dimension, index");
+//        return {};
+//    }
+//    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+//        Error::set(15, vm.runtime_current_line, "First argument to SLICE must be an array.");
+//        return {};
+//    }
+//
+//    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+//    int dimension = static_cast<int>(to_double(args[1]));
+//    int index = static_cast<int>(to_double(args[2]));
+//
+//    if (!source_ptr || source_ptr->shape.empty()) {
+//        Error::set(15, vm.runtime_current_line, "Cannot slice a null or empty array."); return {};
+//    }
+//    if (dimension < 0 || (size_t)dimension >= source_ptr->shape.size()) {
+//        Error::set(10, vm.runtime_current_line, "Slice dimension is out of bounds."); return {};
+//    }
+//    if (index < 0 || (size_t)index >= source_ptr->shape[dimension]) {
+//        Error::set(10, vm.runtime_current_line, "Slice index is out of bounds for the given dimension."); return {};
+//    }
+//
+//    // 1. Determine the shape of the resulting slice (rank is N-1)
+//    std::vector<size_t> new_shape;
+//    for (size_t i = 0; i < source_ptr->shape.size(); ++i) {
+//        if (i != (size_t)dimension) {
+//            new_shape.push_back(source_ptr->shape[i]);
+//        }
+//    }
+//    // If we slice a 1D vector, the result is a scalar. We'll represent it as a 1-element array.
+//    if (new_shape.empty()) {
+//        new_shape.push_back(1);
+//    }
+//
+//    auto result_ptr = std::make_shared<Array>();
+//    result_ptr->shape = new_shape;
+//
+//    // 2. Calculate strides for efficient data copying
+//    size_t outer_dims = 1;
+//    for (int i = 0; i < dimension; ++i) {
+//        outer_dims *= source_ptr->shape[i];
+//    }
+//
+//    size_t inner_dims = 1;
+//    for (size_t i = dimension + 1; i < source_ptr->shape.size(); ++i) {
+//        inner_dims *= source_ptr->shape[i];
+//    }
+//
+//    // 3. Iterate and copy the sliced data
+//    for (size_t i = 0; i < outer_dims; ++i) {
+//        size_t start_pos = (i * source_ptr->shape[dimension] * inner_dims) + ((size_t)index * inner_dims);
+//        result_ptr->data.insert(result_ptr->data.end(),
+//            source_ptr->data.begin() + start_pos,
+//            source_ptr->data.begin() + start_pos + inner_dims);
+//    }
+//
+//    return result_ptr;
+//}
+
 /**
- * @brief Extracts a slice from an N-dimensional array along a specified dimension.
+ * @brief Extracts a slice or a range of slices from an N-dimensional array.
  * @param vm The interpreter instance.
- * @param args A vector: array, dimension, index
- * @return A new Array of rank N-1.
+ * @param args A vector:
+ * - 3 args: array, dimension, index (extracts one slice, reduces rank by 1)
+ * - 4 args: array, dimension, index, count (extracts 'count' slices, preserves rank)
+ * @return A new Array.
  */
 BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 3) {
-        Error::set(8, vm.runtime_current_line, "SLICE requires 3 arguments: array, dimension, index");
+    // 1. --- Argument Validation ---
+    if (args.size() < 3 || args.size() > 4) {
+        Error::set(8, vm.runtime_current_line, "SLICE requires 3 or 4 arguments: array, dimension, index, [count]");
         return {};
     }
     if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
@@ -1317,34 +1487,45 @@ BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
     int dimension = static_cast<int>(to_double(args[1]));
-    int index = static_cast<int>(to_double(args[2]));
+    int start_index = static_cast<int>(to_double(args[2]));
+    int count = 1;
+    bool reduce_rank = (args.size() == 3); // Only reduce rank for the original 3-arg call
 
+    if (!reduce_rank) {
+        count = static_cast<int>(to_double(args[3]));
+    }
+
+    // 2. --- Further Validation ---
     if (!source_ptr || source_ptr->shape.empty()) {
         Error::set(15, vm.runtime_current_line, "Cannot slice a null or empty array."); return {};
     }
     if (dimension < 0 || (size_t)dimension >= source_ptr->shape.size()) {
         Error::set(10, vm.runtime_current_line, "Slice dimension is out of bounds."); return {};
     }
-    if (index < 0 || (size_t)index >= source_ptr->shape[dimension]) {
-        Error::set(10, vm.runtime_current_line, "Slice index is out of bounds for the given dimension."); return {};
+    if (start_index < 0 || count < 0 || (size_t)(start_index + count) > source_ptr->shape[dimension]) {
+        Error::set(10, vm.runtime_current_line, "Slice index or count is out of bounds for the given dimension."); return {};
+    }
+    if (count == 0) { // Return an empty array of the correct shape
+        auto empty_ptr = std::make_shared<Array>();
+        empty_ptr->shape = source_ptr->shape;
+        empty_ptr->shape[dimension] = 0;
+        return empty_ptr;
     }
 
-    // 1. Determine the shape of the resulting slice (rank is N-1)
-    std::vector<size_t> new_shape;
-    for (size_t i = 0; i < source_ptr->shape.size(); ++i) {
-        if (i != (size_t)dimension) {
-            new_shape.push_back(source_ptr->shape[i]);
-        }
+    // 3. --- New Shape Calculation ---
+    std::vector<size_t> new_shape = source_ptr->shape;
+    if (reduce_rank) {
+        new_shape.erase(new_shape.begin() + dimension);
+        if (new_shape.empty()) new_shape.push_back(1); // Handle slicing a 1D vector to a scalar
     }
-    // If we slice a 1D vector, the result is a scalar. We'll represent it as a 1-element array.
-    if (new_shape.empty()) {
-        new_shape.push_back(1);
+    else {
+        new_shape[dimension] = count; // For range slice, just change the dimension size
     }
 
     auto result_ptr = std::make_shared<Array>();
     result_ptr->shape = new_shape;
 
-    // 2. Calculate strides for efficient data copying
+    // 4. --- Data Copying Logic ---
     size_t outer_dims = 1;
     for (int i = 0; i < dimension; ++i) {
         outer_dims *= source_ptr->shape[i];
@@ -1355,12 +1536,90 @@ BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         inner_dims *= source_ptr->shape[i];
     }
 
-    // 3. Iterate and copy the sliced data
+    size_t source_dim_size = source_ptr->shape[dimension];
+    size_t chunk_to_copy_size = count * inner_dims;
+    result_ptr->data.reserve(outer_dims * chunk_to_copy_size);
+
     for (size_t i = 0; i < outer_dims; ++i) {
-        size_t start_pos = (i * source_ptr->shape[dimension] * inner_dims) + ((size_t)index * inner_dims);
+        size_t block_start_pos = (i * source_dim_size * inner_dims) + (start_index * inner_dims);
         result_ptr->data.insert(result_ptr->data.end(),
-            source_ptr->data.begin() + start_pos,
-            source_ptr->data.begin() + start_pos + inner_dims);
+            source_ptr->data.begin() + block_start_pos,
+            source_ptr->data.begin() + block_start_pos + chunk_to_copy_size);
+    }
+
+    return result_ptr;
+}
+
+// STACK(dimension, array1, array2, ...) -> matrix
+// Stacks 1D vectors into a 2D matrix.
+BasicValue builtin_stack(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() < 3) {
+        Error::set(8, vm.runtime_current_line, "STACK requires at least 3 arguments: dimension, array1, array2, ...");
+        return {};
+    }
+
+    int dimension = static_cast<int>(to_double(args[0]));
+    if (dimension != 0 && dimension != 1) {
+        Error::set(1, vm.runtime_current_line, "First argument (dimension) to STACK must be 0 (rows) or 1 (columns).");
+        return {};
+    }
+
+    // 2. --- Collect and Validate Source Arrays ---
+    std::vector<std::shared_ptr<Array>> source_arrays;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (!std::holds_alternative<std::shared_ptr<Array>>(args[i])) {
+            Error::set(15, vm.runtime_current_line, "All arguments to STACK after dimension must be arrays.");
+            return {};
+        }
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[i]);
+        if (!arr_ptr || arr_ptr->shape.size() != 1) {
+            Error::set(15, vm.runtime_current_line, "All arrays passed to STACK must be 1D vectors.");
+            return {};
+        }
+        source_arrays.push_back(arr_ptr);
+    }
+
+    if (source_arrays.empty()) {
+        return {}; // Return empty if no arrays were provided
+    }
+
+    // Verify that all vectors have the same size
+    size_t required_size = source_arrays[0]->data.size();
+    for (size_t i = 1; i < source_arrays.size(); ++i) {
+        if (source_arrays[i]->data.size() != required_size) {
+            Error::set(15, vm.runtime_current_line, "All vectors in STACK must have the same length.");
+            return {};
+        }
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+
+    // 3. --- Row Stacking (dimension == 0) ---
+    if (dimension == 0) {
+        size_t rows = source_arrays.size();
+        size_t cols = required_size;
+        result_ptr->shape = { rows, cols };
+        result_ptr->data.reserve(rows * cols);
+
+        // Simply append the data from each vector
+        for (const auto& arr_ptr : source_arrays) {
+            result_ptr->data.insert(result_ptr->data.end(), arr_ptr->data.begin(), arr_ptr->data.end());
+        }
+    }
+    // 4. --- Column Stacking (dimension == 1) ---
+    else { // dimension == 1
+        size_t rows = required_size;
+        size_t cols = source_arrays.size();
+        result_ptr->shape = { rows, cols };
+        result_ptr->data.resize(rows * cols);
+
+        // Interleave the data from the source vectors
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) {
+                result_ptr->data[r * cols + c] = source_arrays[c]->data[r];
+            }
+        }
     }
 
     return result_ptr;
@@ -2785,88 +3044,139 @@ BasicValue builtin_append(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
 
 // --- Arithmetic Functions ---
+// Helper to apply a scalar math function element-wise to an array or a scalar.
+// It takes the input BasicValue and a function object that performs the scalar operation.
+BasicValue apply_math_op(const BasicValue& input, const std::function<double(double)>& op) {
+    // Case 1: Input is an Array (vector or matrix)
+    if (const auto& arr_ptr = std::get_if<std::shared_ptr<Array>>(&input)) {
+        if (!*arr_ptr) return {}; // Return empty on null pointer
 
-// SIN(numeric_expression)
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = (*arr_ptr)->shape; // Result has the same shape
+        result_ptr->data.reserve((*arr_ptr)->data.size());
+
+        // Apply the operation to each element
+        for (const auto& val : (*arr_ptr)->data) {
+            result_ptr->data.push_back(op(to_double(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar
+    else {
+        return op(to_double(input));
+    }
+}
+// SIN(numeric_expression or array)
 BasicValue builtin_sin(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    return std::sin(to_double(args[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::sin(d); });
 }
 
-// COS(numeric_expression)
+// COS(numeric_expression or array)
 BasicValue builtin_cos(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    return std::cos(to_double(args[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::cos(d); });
 }
 
-// TAN(numeric_expression)
+// TAN(numeric_expression or array)
 BasicValue builtin_tan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    return std::tan(to_double(args[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::tan(d); });
 }
 
-// SQR(numeric_expression) - Square Root
+// SQR(numeric_expression or array) - Square Root
 BasicValue builtin_sqr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    double val = to_double(args[0]);
-    return (val < 0) ? 0.0 : std::sqrt(val); // Return 0 for negative input
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    // Apply sqrt, returning 0 for negative inputs to avoid domain errors
+    return apply_math_op(args[0], [](double d) { return (d < 0) ? 0.0 : std::sqrt(d); });
 }
 
-// RND(numeric_expression) -> returns a random number between 0.0 and 1.0
+// RND(numeric_expression or array)
 BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return 0.0;
     }
 
-    // Classic BASIC RND(1) returns a value between 0.0 and 0.999...
-    // We can ignore the argument's value for this simple, standard implementation.
-    // RAND_MAX is a constant defined in <cstdlib>.
-    return static_cast<double>(rand()) / (RAND_MAX + 1.0);
+    const BasicValue& input = args[0];
+
+    // Case 1: Input is an Array. Return an array of the same shape with random numbers.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {};
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        size_t total_size = arr_ptr->size();
+        result_ptr->data.reserve(total_size);
+
+        for (size_t i = 0; i < total_size; ++i) {
+            result_ptr->data.push_back(static_cast<double>(rand()) / (RAND_MAX + 1.0));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Return a single random number.
+    else {
+        // Classic BASIC RND(1) behavior
+        return static_cast<double>(rand()) / (RAND_MAX + 1.0);
+    }
 }
 
-// --- Arithmetic Functions ---
-
-// FAC(numeric_expression) -> number
-// Calculates the factorial of a non-negative integer.
+// FAC(numeric_expression or array)
 BasicValue builtin_fac(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    // 1. Validate the number of arguments.
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return 0.0;
     }
 
-    // 2. Convert the input BasicValue to a number.
-    double n_double = to_double(args[0]);
+    // Lambda to perform the core factorial calculation
+    auto factorial_op = [&](double n_double) {
+        if (n_double != std::floor(n_double) || n_double < 0) return 0.0;
+        long long n = static_cast<long long>(n_double);
+        if (n > 170) return std::numeric_limits<double>::infinity();
 
-    // Factorial is only defined for integers. Check if the number has a fractional part.
-    if (n_double != std::floor(n_double)) {
-        Error::set(1, vm.runtime_current_line, "Argument to FAC must be an integer."); // Syntax error or illegal function call
-        return 0.0;
+        double result = 1.0;
+        for (long long i = 2; i <= n; ++i) { result *= i; }
+        return result;
+        };
+
+    const BasicValue& input = args[0];
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        // Vectorized case: no detailed error setting for performance
+        return apply_math_op(input, factorial_op);
     }
-
-    long long n = static_cast<long long>(n_double);
-
-    // 3. Validate the domain of the input.
-    if (n < 0) {
-        Error::set(1, vm.runtime_current_line, "Argument to FAC cannot be negative."); // Or a more specific error
-        return 0.0; // Factorial is not defined for negative numbers.
+    else {
+        // Scalar case: keep the original detailed error checking
+        double n_double = to_double(input);
+        if (n_double != std::floor(n_double)) {
+            Error::set(1, vm.runtime_current_line, "Argument to FAC must be an integer.");
+            return 0.0;
+        }
+        long long n = static_cast<long long>(n_double);
+        if (n < 0) {
+            Error::set(1, vm.runtime_current_line, "Argument to FAC cannot be negative.");
+            return 0.0;
+        }
+        if (n > 170) {
+            Error::set(4, vm.runtime_current_line, "FAC argument too large, causes overflow.");
+            return 0.0;
+        }
+        return factorial_op(n_double);
     }
-
-    // Factorials grow very quickly. 20! is the largest that fits in a 64-bit integer.
-    // We calculate using 'double' to handle larger values up to ~170! before overflowing.
-    if (n > 170) {
-        Error::set(4, vm.runtime_current_line, "FAC argument too large, causes overflow."); // Overflow error
-        return 0.0;
-    }
-
-    // 4. Perform the calculation.
-    double result = 1.0;
-    for (long long i = 2; i <= n; ++i) {
-        result *= i;
-    }
-
-    return result;
 }
+
 
 // --- Date and Time Functions ---
 // 
@@ -3748,6 +4058,9 @@ BasicValue builtin_typeof(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         else if constexpr (std::is_same_v<T, TaskRef>) {
             return "TASKREF";
         }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<OpaqueHandle>>) {
+            return arg ? arg->type_name : "NULL_HANDLE";
+        }
         return "UNKNOWN";
         }, val);
 }
@@ -3871,7 +4184,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TAKE", 2, builtin_take);
     register_func("DROP", 2, builtin_drop);
     register_func("GRADE", 1, builtin_grade);
-    register_func("SLICE", 3, builtin_slice);
+    register_func("SLICE", -1, builtin_slice);
+    register_func("STACK", -1, builtin_stack);
     register_func("MVLET", 4, builtin_mvlet);
     register_func("DIFF", 2, builtin_diff);
     register_func("APPEND", 2, builtin_append);
@@ -3891,8 +4205,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     // --- Register Methods ---
 #ifdef SDL3
     register_proc("SCREEN", -1, builtin_screen);
-    register_proc("PSET", -1, builtin_pset);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
+    register_proc("DRAWCOLOR", 3, builtin_drawcolor);
+
+    register_proc("PSET", -1, builtin_pset);
     register_proc("LINE", -1, builtin_line);
     register_proc("RECT", -1, builtin_rect);
     register_proc("CIRCLE", -1, builtin_circle);

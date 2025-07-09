@@ -1,6 +1,7 @@
 #ifdef SDL3
 #include "Graphics.hpp"
 #include "TextIO.hpp"
+#include <vector>
 
 Graphics::Graphics() {}
 
@@ -191,16 +192,106 @@ void Graphics::text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint
     SDL_DestroySurface(text_surface);
 }
 
+void Graphics::setDrawColor(Uint8 r, Uint8 g, Uint8 b) {
+    if (!renderer) return;
+    draw_color = { r, g, b, 255 };
+}
+
+// --- PSET ---
+void Graphics::pset(int x, int y) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, 255);
+    SDL_RenderPoint(renderer, (float)x, (float)y);
+}
+
 void Graphics::pset(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
     if (!renderer) return;
     SDL_SetRenderDrawColor(renderer, r, g, b, 255);
     SDL_RenderPoint(renderer, (float)x, (float)y);
 }
 
+// Vectorized PSET
+void Graphics::pset(const std::shared_ptr<Array>& points, const std::shared_ptr<Array>& colors) {
+    if (!renderer || !points || points->shape.size() != 2 || points->shape[1] < 2) return;
+
+    size_t num_items = points->shape[0];
+    size_t point_stride = points->shape[1];
+    bool has_colors = colors && colors->shape.size() == 2 && colors->shape[0] == num_items && colors->shape[1] >= 3;
+    size_t color_stride = has_colors ? colors->shape[1] : 0;
+
+    if (!has_colors) {
+        SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, draw_color.a);
+    }
+
+    for (size_t i = 0; i < num_items; ++i) {
+        float x = static_cast<float>(std::get<double>(points->data[i * point_stride + 0]));
+        float y = static_cast<float>(std::get<double>(points->data[i * point_stride + 1]));
+
+        if (has_colors) {
+            Uint8 r = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 0]));
+            Uint8 g = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 1]));
+            Uint8 b = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 2]));
+            SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+        }
+        SDL_RenderPoint(renderer, x, y);
+    }
+}
+
+
+// --- LINE ---
+void Graphics::line(int x1, int y1, int x2, int y2) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, 255);
+    SDL_RenderLine(renderer, (float)x1, (float)y1, (float)x2, (float)y2);
+}
+
 void Graphics::line(int x1, int y1, int x2, int y2, Uint8 r, Uint8 g, Uint8 b) {
     if (!renderer) return;
     SDL_SetRenderDrawColor(renderer, r, g, b, 255);
     SDL_RenderLine(renderer, (float)x1, (float)y1, (float)x2, (float)y2);
+}
+
+// Vectorized LINE
+void Graphics::line(const std::shared_ptr<Array>& lines, const std::shared_ptr<Array>& colors) {
+    if (!renderer || !lines || lines->shape.size() != 2 || lines->shape[1] < 4) return;
+
+    size_t num_items = lines->shape[0];
+    size_t line_stride = lines->shape[1];
+    bool has_colors = colors && colors->shape.size() == 2 && colors->shape[0] == num_items && colors->shape[1] >= 3;
+    size_t color_stride = has_colors ? colors->shape[1] : 0;
+
+    if (!has_colors) {
+        SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, draw_color.a);
+    }
+
+    for (size_t i = 0; i < num_items; ++i) {
+        float x1 = static_cast<float>(std::get<double>(lines->data[i * line_stride + 0]));
+        float y1 = static_cast<float>(std::get<double>(lines->data[i * line_stride + 1]));
+        float x2 = static_cast<float>(std::get<double>(lines->data[i * line_stride + 2]));
+        float y2 = static_cast<float>(std::get<double>(lines->data[i * line_stride + 3]));
+
+        if (has_colors) {
+            Uint8 r = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 0]));
+            Uint8 g = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 1]));
+            Uint8 b = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 2]));
+            SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+        }
+        SDL_RenderLine(renderer, x1, y1, x2, y2);
+    }
+}
+
+
+// --- RECT ---
+void Graphics::rect(int x, int y, int w, int h, bool is_filled) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, 255);
+    SDL_FRect rect = { (float)x, (float)y, (float)w, (float)h };
+    if (is_filled) {
+        SDL_RenderFillRect(renderer, &rect);
+    }
+    else {
+        SDL_RenderRect(renderer, &rect);
+    }
 }
 
 void Graphics::rect(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, bool is_filled) {
@@ -215,16 +306,106 @@ void Graphics::rect(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, bool 
     }
 }
 
-void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b) {
-    if (!renderer) return;
-    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+// Vectorized RECT
+void Graphics::rect(const std::shared_ptr<Array>& rects, bool is_filled, const std::shared_ptr<Array>& colors) {
+    if (!renderer || !rects || rects->shape.size() != 2 || rects->shape[1] < 4) return;
 
-    // Simple trigonometric algorithm to draw a circle
+    size_t num_items = rects->shape[0];
+    size_t rect_stride = rects->shape[1];
+    bool has_colors = colors && colors->shape.size() == 2 && colors->shape[0] == num_items && colors->shape[1] >= 3;
+    size_t color_stride = has_colors ? colors->shape[1] : 0;
+
+    if (!has_colors) {
+        SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, draw_color.a);
+    }
+
+    std::vector<SDL_FRect> sdl_rects;
+    if (!has_colors) {
+        sdl_rects.resize(num_items);
+    }
+
+    for (size_t i = 0; i < num_items; ++i) {
+        SDL_FRect current_rect = {
+            static_cast<float>(std::get<double>(rects->data[i * rect_stride + 0])),
+            static_cast<float>(std::get<double>(rects->data[i * rect_stride + 1])),
+            static_cast<float>(std::get<double>(rects->data[i * rect_stride + 2])),
+            static_cast<float>(std::get<double>(rects->data[i * rect_stride + 3]))
+        };
+
+        if (has_colors) {
+            Uint8 r = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 0]));
+            Uint8 g = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 1]));
+            Uint8 b = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 2]));
+            SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+            if (is_filled) SDL_RenderFillRect(renderer, &current_rect);
+            else SDL_RenderRect(renderer, &current_rect);
+        }
+        else {
+            sdl_rects[i] = current_rect;
+        }
+    }
+
+    if (!has_colors && num_items > 0) {
+        if (is_filled) SDL_RenderFillRects(renderer, sdl_rects.data(), num_items);
+        else SDL_RenderRects(renderer, sdl_rects.data(), num_items);
+    }
+}
+
+
+// --- CIRCLE ---
+void Graphics::circle(int center_x, int center_y, int radius) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, 255);
     for (int i = 0; i < 360; ++i) {
-        float angle = i * 3.14159f / 180.0f; // Convert degree to radian
+        float angle = i * 3.14159f / 180.0f;
         float x = center_x + radius * cos(angle);
         float y = center_y + radius * sin(angle);
         SDL_RenderPoint(renderer, x, y);
+    }
+}
+
+void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    for (int i = 0; i < 360; ++i) {
+        float angle = i * 3.14159f / 180.0f;
+        float x = center_x + radius * cos(angle);
+        float y = center_y + radius * sin(angle);
+        SDL_RenderPoint(renderer, x, y);
+    }
+}
+
+// Vectorized CIRCLE
+void Graphics::circle(const std::shared_ptr<Array>& circles, const std::shared_ptr<Array>& colors) {
+    if (!renderer || !circles || circles->shape.size() != 2 || circles->shape[1] < 3) return;
+
+    size_t num_items = circles->shape[0];
+    size_t circle_stride = circles->shape[1];
+    bool has_colors = colors && colors->shape.size() == 2 && colors->shape[0] == num_items && colors->shape[1] >= 3;
+    size_t color_stride = has_colors ? colors->shape[1] : 0;
+
+    if (!has_colors) {
+        SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, draw_color.a);
+    }
+
+    for (size_t i = 0; i < num_items; ++i) {
+        int cx = static_cast<int>(std::get<double>(circles->data[i * circle_stride + 0]));
+        int cy = static_cast<int>(std::get<double>(circles->data[i * circle_stride + 1]));
+        int rad = static_cast<int>(std::get<double>(circles->data[i * circle_stride + 2]));
+
+        if (has_colors) {
+            Uint8 r = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 0]));
+            Uint8 g = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 1]));
+            Uint8 b = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 2]));
+            SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+        }
+
+        for (int angle_deg = 0; angle_deg < 360; ++angle_deg) {
+            float angle_rad = angle_deg * 3.14159f / 180.0f;
+            float x = cx + rad * cos(angle_rad);
+            float y = cy + rad * sin(angle_rad);
+            SDL_RenderPoint(renderer, x, y);
+        }
     }
 }
 
