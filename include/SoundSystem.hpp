@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <vector>
 #include <string>
+#include <map>
 
 // Enum for different oscillator waveforms
 enum class Waveform {
@@ -36,13 +37,27 @@ struct Voice {
     double release_time = 0.2;
 };
 
+// --- Struct to hold loaded WAV file data ---
+// The audio data is converted to the device's native format (float) upon loading.
+struct SoundChunk {
+    float* buffer = nullptr;
+    Uint32 length = 0; // Length in bytes
+};
+
+// --- Struct to manage a single playback instance of a SoundChunk ---
+struct SoundChannel {
+    int sample_id = -1;       // ID of the SoundChunk to play
+    Uint32 position = 0;      // Current position in the buffer, in bytes
+    bool is_active = false;
+};
+
 class SoundSystem {
 public:
     SoundSystem();
     ~SoundSystem();
 
     // Initializes SDL_Audio and opens an audio device
-    bool init(int num_tracks = 8);
+    bool init(int num_tracks = 8, int num_channels = 16);
 
     // Closes the audio device and cleans up
     void shutdown();
@@ -59,7 +74,18 @@ public:
     // Immediately stops a note on a specified track
     void stop_note(int track_index);
 
+    // Loads a WAV file and stores it with a given ID.
+    // Returns true on success, false on failure.
+    bool load_sound(int sample_id, const std::string& filename);
+
+    // Plays a pre-loaded sound on the next available channel.
+    void play_sound(int sample_id);
+
     bool is_initialized = false;
+
+    // --- State for WAV file playback ---
+    std::map<int, SoundChunk> loaded_samples; // Stores loaded WAV data, mapped by ID.
+    std::vector<SoundChannel> channels;       // A pool of channels for playing sounds.
 
 private:
     // --- UPDATED: The new SDL3 audio stream callback signature ---
@@ -74,5 +100,7 @@ private:
     SDL_AudioSpec audio_spec;
 
     std::vector<Voice> tracks; // A vector to hold all our synthesizer tracks
+
+
 };
 #endif
