@@ -1200,83 +1200,221 @@ BasicValue builtin_sprite_collision(NeReLaBasic& vm, const std::vector<BasicValu
 
 // --- String Functions ---
 
-// LEFT$(string, n)
+// A generic helper to apply an operation element-wise to an array or a scalar.
+// The provided lambda 'op' can set errors via the vm_ref.
+BasicValue apply_elementwise_op(NeReLaBasic& vm, const BasicValue& input, const std::function<BasicValue(NeReLaBasic&, const BasicValue&)>& op) {
+    // Case 1: Input is an Array. Apply the op to each element.
+    if (const auto& arr_ptr = std::get_if<std::shared_ptr<Array>>(&input)) {
+        if (!*arr_ptr) return {}; // Return empty on null pointer
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = (*arr_ptr)->shape; // Result has the same shape
+        result_ptr->data.reserve((*arr_ptr)->data.size());
+
+        for (const auto& val : (*arr_ptr)->data) {
+            BasicValue result = op(vm, val);
+            // If the operation on an element failed, stop and return.
+            if (Error::get() != 0) {
+                return {};
+            }
+            result_ptr->data.push_back(result);
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Apply the op directly.
+    else {
+        return op(vm, input);
+    }
+}
+
+// LEFT$(string_or_array, n) -> string or array
 BasicValue builtin_left_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) return std::string("");
-    std::string source = to_string(args[0]);
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "LEFT$ requires 2 arguments.");
+        return std::string("");
+    }
+
+    const BasicValue& input = args[0];
     int count = static_cast<int>(to_double(args[1]));
     if (count < 0) count = 0;
-    return source.substr(0, count);
+
+    // Helper lambda to perform the core LEFT$ operation on a single string.
+    auto perform_left = [count](const std::string& source) {
+        return source.substr(0, count);
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {}; // Handle null array
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape; // Result has the same shape
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_left(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_left(to_string(input));
+    }
 }
 
-// RIGHT$(string, n)
+// RIGHT$(string_or_array, n) -> string or array
 BasicValue builtin_right_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) return std::string("");
-    std::string source = to_string(args[0]);
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "RIGHT$ requires 2 arguments.");
+        return std::string("");
+    }
+
+    const BasicValue& input = args[0];
     int count = static_cast<int>(to_double(args[1]));
     if (count < 0) count = 0;
-    if (count > source.length()) count = source.length();
-    return source.substr(source.length() - count);
+
+    // Helper lambda to perform the core RIGHT$ operation on a single string.
+    auto perform_right = [count](const std::string& source) {
+        if (static_cast<size_t>(count) > source.length()) {
+            return source;
+        }
+        return source.substr(source.length() - count);
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {}; // Handle null array
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_right(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_right(to_string(input));
+    }
 }
 
-// MID$(string, start, [length]) - Overloaded
+// MID$(string_or_array, start, [length]) -> string or array
 BasicValue builtin_mid_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 2 || args.size() > 3) return std::string("");
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "MID$ requires 2 or 3 arguments.");
+        return std::string("");
+    }
 
-    std::string source = to_string(args[0]);
+    const BasicValue& input = args[0];
     int start = static_cast<int>(to_double(args[1])) - 1; // BASIC is 1-indexed
     if (start < 0) start = 0;
 
-    if (args.size() == 2) { // MID$(str, start) -> get rest of string
-        return source.substr(start);
+    // Helper lambda to perform the core MID$ operation on a single string.
+    auto perform_mid = [&](const std::string& source) -> std::string {
+        if (static_cast<size_t>(start) >= source.length()) {
+            return ""; // Start position is out of bounds
+        }
+        if (args.size() == 2) { // MID$(str, start) -> get rest of string
+            return source.substr(start);
+        }
+        else { // MID$(str, start, len)
+            int length = static_cast<int>(to_double(args[2]));
+            if (length < 0) length = 0;
+            return source.substr(start, length);
+        }
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {};
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_mid(to_string(val)));
+        }
+        return result_ptr;
     }
-    else { // MID$(str, start, len)
-        int length = static_cast<int>(to_double(args[2]));
-        if (length < 0) length = 0;
-        return source.substr(start, length);
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_mid(to_string(input));
     }
 }
 
-// LCASE$(string)
+// Helper function to apply a string-to-string operation element-wise.
+// This simplifies the implementation for LCASE$, UCASE$, and TRIM$.
+BasicValue apply_string_op(const BasicValue& input, const std::function<std::string(const std::string&)>& op) {
+    // Case 1: Input is an Array (vector or matrix)
+    if (const auto& arr_ptr = std::get_if<std::shared_ptr<Array>>(&input)) {
+        if (!*arr_ptr) return {}; // Return empty on null pointer
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = (*arr_ptr)->shape; // Result has the same shape
+        result_ptr->data.reserve((*arr_ptr)->data.size());
+
+        // Apply the operation to each element
+        for (const auto& val : (*arr_ptr)->data) {
+            result_ptr->data.push_back(op(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar
+    else {
+        return op(to_string(input));
+    }
+}
+
+// LCASE$(string_or_array) -> string or array
 BasicValue builtin_lcase_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    std::string s = to_string(args[0]);
-    std::transform(s.begin(), s.end(), s.begin(),
-        [](unsigned char c) { return std::tolower(c); });
-    return s;
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "LCASE$ requires 1 argument.");
+        return std::string("");
+    }
+    auto op = [](const std::string& s) {
+        std::string lower_s = s;
+        std::transform(lower_s.begin(), lower_s.end(), lower_s.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        return lower_s;
+        };
+    return apply_string_op(args[0], op);
 }
 
-// UCASE$(string)
+// UCASE$(string_or_array) -> string or array
 BasicValue builtin_ucase_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    std::string s = to_string(args[0]);
-    std::transform(s.begin(), s.end(), s.begin(),
-        [](unsigned char c) { return std::toupper(c); });
-    return s;
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "UCASE$ requires 1 argument.");
+        return std::string("");
+    }
+    auto op = [](const std::string& s) {
+        std::string upper_s = s;
+        std::transform(upper_s.begin(), upper_s.end(), upper_s.begin(),
+            [](unsigned char c) { return std::toupper(c); });
+        return upper_s;
+        };
+    return apply_string_op(args[0], op);
 }
 
-// TRIM$(string)
+// TRIM$(string_or_array) -> string or array
 BasicValue builtin_trim_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    std::string s = to_string(args[0]);
-    s.erase(0, s.find_first_not_of(" \t\n\r"));
-    s.erase(s.find_last_not_of(" \t\n\r") + 1);
-    return s;
-}
-
-// CHR$(number)
-BasicValue builtin_chr_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    char c = static_cast<char>(static_cast<int>(to_double(args[0])));
-    return std::string(1, c);
-}
-
-// ASC(string)
-BasicValue builtin_asc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    std::string s = to_string(args[0]);
-    if (s.empty()) return 0.0;
-    return static_cast<double>(static_cast<unsigned char>(s[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "TRIM$ requires 1 argument.");
+        return std::string("");
+    }
+    auto op = [](const std::string& s) {
+        std::string trimmed_s = s;
+        size_t start = trimmed_s.find_first_not_of(" \t\n\r");
+        if (start == std::string::npos) return std::string(""); // String is all whitespace
+        size_t end = trimmed_s.find_last_not_of(" \t\n\r");
+        return trimmed_s.substr(start, end - start + 1);
+        };
+    return apply_string_op(args[0], op);
 }
 
 // INSTR([start], haystack$, needle$) - Overloaded
@@ -1335,32 +1473,51 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return std::string("");
 }
 
-// VAL(string_expression) -> number
+// VAL(string_expression_or_array) -> number or array
 BasicValue builtin_val(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, 0); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return 0.0;
     }
-    std::string s = to_string(args[0]);
-    try {
-        // std::stod will parse the string until it finds a non-numeric character.
-        // This behavior is very similar to classic BASIC VAL().
-        return std::stod(s);
-    }
-    catch (const std::exception&) {
-        // If the string is not a valid number at all (e.g., "hello")
-        return 0.0;
-    }
+    auto op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        std::string s = to_string(v);
+        try {
+            // std::stod mimics classic VAL behavior by parsing until a non-numeric char.
+            return std::stod(s);
+        }
+        catch (const std::exception&) {
+            return 0.0;
+        }
+        };
+    return apply_elementwise_op(vm, args[0], op);
 }
 
-// STR$(numeric_expression) -> string
+// STR$(numeric_expression_or_array) -> string or array
 BasicValue builtin_str_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, 0); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return std::string("");
     }
-    // to_string is already a helper in your project that does this conversion.
-    return to_string(args[0]);
+    // The operation is simply our existing to_string helper.
+    auto op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        return to_string(v);
+        };
+    return apply_elementwise_op(vm, args[0], op);
+}
+
+// CHR$(number)
+BasicValue builtin_chr_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return std::string("");
+    char c = static_cast<char>(static_cast<int>(to_double(args[0])));
+    return std::string(1, c);
+}
+
+// ASC(string)
+BasicValue builtin_asc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return 0.0;
+    std::string s = to_string(args[0]);
+    if (s.empty()) return 0.0;
+    return static_cast<double>(static_cast<unsigned char>(s[0]));
 }
 
 // REVERSE(array) -> array
@@ -1398,73 +1555,6 @@ BasicValue builtin_reverse(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 
     return new_array_ptr;
 }
-
-///**
-// * @brief Extracts a slice from an N-dimensional array along a specified dimension.
-// * @param vm The interpreter instance.
-// * @param args A vector: array, dimension, index
-// * @return A new Array of rank N-1.
-// */
-//BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-//    if (args.size() != 3) {
-//        Error::set(8, vm.runtime_current_line, "SLICE requires 3 arguments: array, dimension, index");
-//        return {};
-//    }
-//    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
-//        Error::set(15, vm.runtime_current_line, "First argument to SLICE must be an array.");
-//        return {};
-//    }
-//
-//    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
-//    int dimension = static_cast<int>(to_double(args[1]));
-//    int index = static_cast<int>(to_double(args[2]));
-//
-//    if (!source_ptr || source_ptr->shape.empty()) {
-//        Error::set(15, vm.runtime_current_line, "Cannot slice a null or empty array."); return {};
-//    }
-//    if (dimension < 0 || (size_t)dimension >= source_ptr->shape.size()) {
-//        Error::set(10, vm.runtime_current_line, "Slice dimension is out of bounds."); return {};
-//    }
-//    if (index < 0 || (size_t)index >= source_ptr->shape[dimension]) {
-//        Error::set(10, vm.runtime_current_line, "Slice index is out of bounds for the given dimension."); return {};
-//    }
-//
-//    // 1. Determine the shape of the resulting slice (rank is N-1)
-//    std::vector<size_t> new_shape;
-//    for (size_t i = 0; i < source_ptr->shape.size(); ++i) {
-//        if (i != (size_t)dimension) {
-//            new_shape.push_back(source_ptr->shape[i]);
-//        }
-//    }
-//    // If we slice a 1D vector, the result is a scalar. We'll represent it as a 1-element array.
-//    if (new_shape.empty()) {
-//        new_shape.push_back(1);
-//    }
-//
-//    auto result_ptr = std::make_shared<Array>();
-//    result_ptr->shape = new_shape;
-//
-//    // 2. Calculate strides for efficient data copying
-//    size_t outer_dims = 1;
-//    for (int i = 0; i < dimension; ++i) {
-//        outer_dims *= source_ptr->shape[i];
-//    }
-//
-//    size_t inner_dims = 1;
-//    for (size_t i = dimension + 1; i < source_ptr->shape.size(); ++i) {
-//        inner_dims *= source_ptr->shape[i];
-//    }
-//
-//    // 3. Iterate and copy the sliced data
-//    for (size_t i = 0; i < outer_dims; ++i) {
-//        size_t start_pos = (i * source_ptr->shape[dimension] * inner_dims) + ((size_t)index * inner_dims);
-//        result_ptr->data.insert(result_ptr->data.end(),
-//            source_ptr->data.begin() + start_pos,
-//            source_ptr->data.begin() + start_pos + inner_dims);
-//    }
-//
-//    return result_ptr;
-//}
 
 /**
  * @brief Extracts a slice or a range of slices from an N-dimensional array.
@@ -3249,74 +3339,158 @@ time_t add_to_tm(time_t base_time, int years, int months, int days, int hours, i
     return mktime(&timeinfo); // mktime normalizes the date/time components
 }
 
-// DATEADD(part$, number, dateValue)
+// DATEADD(part$, number, dateValue_or_array)
 BasicValue builtin_dateadd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return false;
     }
 
     std::string part = to_upper(to_string(args[0]));
     int number = static_cast<int>(to_double(args[1]));
+    const BasicValue& date_input = args[2];
 
-    DateTime start_date;
-    if (std::holds_alternative<DateTime>(args[2])) {
-        start_date = std::get<DateTime>(args[2]);
+    // This helper lambda now uses modern chrono for all calculations.
+    auto perform_date_add = [&](const DateTime& start_date) -> BasicValue {
+        auto tp = start_date.time_point;
+        std::chrono::system_clock::time_point new_tp;
+
+        // Simple duration-based arithmetic
+        if (part == "S") {
+            new_tp = tp + std::chrono::seconds{ number };
+        }
+        else if (part == "N") { // "N" for minutes in classic BASIC
+            new_tp = tp + std::chrono::minutes{ number };
+        }
+        else if (part == "H") {
+            new_tp = tp + std::chrono::hours{ number };
+        }
+        // Calendar-based arithmetic
+        else if (part == "D" || part == "M" || part == "YYYY") {
+            // To correctly add calendar months/years, we must work in local time.
+            const std::chrono::time_zone* current_tz;
+            try {
+                current_tz = std::chrono::current_zone();
+            }
+            catch (const std::runtime_error&) {
+                current_tz = std::chrono::locate_zone("UTC");
+            }
+
+            // Decompose the time point into date and time-of-day parts in the local zone
+            auto local_time = current_tz->to_local(tp);
+            auto local_days = std::chrono::floor<std::chrono::days>(local_time);
+            auto time_of_day = local_time - local_days;
+
+            std::chrono::year_month_day ymd{ local_days };
+
+            if (part == "D") {
+                // Adding days is simple calendar arithmetic
+                new_tp = std::chrono::sys_days{ ymd } + std::chrono::days{ number } + time_of_day;
+                // Note: The above is UTC, which is fine as that's what we store.
+            }
+            else { // Month or Year
+                if (part == "M") {
+                    ymd += std::chrono::months{ number };
+                }
+                else { // YYYY
+                    ymd += std::chrono::years{ number };
+                }
+
+                // If a date is invalid (e.g., adding 1 month to Jan 31 -> Feb 31),
+                // clamp to the last valid day of that new month.
+                if (!ymd.ok()) {
+                    ymd = ymd.year() / ymd.month() / std::chrono::last;
+                }
+
+                // Re-assemble the date and time parts and convert back to system time (UTC)
+                new_tp = current_tz->to_sys(std::chrono::local_days{ ymd } + time_of_day);
+            }
+        }
+        else {
+            Error::set(1, vm.runtime_current_line, "Invalid interval for DATEADD. Use YYYY, M, D, H, N, or S.");
+            return false;
+        }
+
+        return DateTime{ new_tp };
+        };
+
+    // --- Vectorized Logic (this part remains the same) ---
+
+    // Case 1: The third argument is an Array.
+    if (std::holds_alternative<std::shared_ptr<Array>>(date_input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(date_input);
+        if (!arr_ptr) return {};
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            if (!std::holds_alternative<DateTime>(val)) {
+                Error::set(15, vm.runtime_current_line, "All elements in array for DATEADD must be DateTime objects.");
+                return {};
+            }
+            const auto& dt = std::get<DateTime>(val);
+            BasicValue new_date = perform_date_add(dt);
+            if (Error::get() != 0) return {}; // Propagate error from lambda
+            result_ptr->data.push_back(new_date);
+        }
+        return result_ptr;
     }
+    // Case 2: The third argument is a scalar.
     else {
-        Error::set(15, vm.runtime_current_line); // Type mismatch for 3rd arg
-        return false;
+        if (!std::holds_alternative<DateTime>(date_input)) {
+            Error::set(15, vm.runtime_current_line, "Third argument to DATEADD must be a DateTime object or an array of them.");
+            return false;
+        }
+        const auto& start_date = std::get<DateTime>(date_input);
+        return perform_date_add(start_date);
     }
-
-    time_t start_time_t = std::chrono::system_clock::to_time_t(start_date.time_point);
-    time_t new_time_t;
-
-    if (part == "YYYY") new_time_t = add_to_tm(start_time_t, number, 0, 0, 0, 0, 0);
-    else if (part == "M") new_time_t = add_to_tm(start_time_t, 0, number, 0, 0, 0, 0);
-    else if (part == "D") new_time_t = add_to_tm(start_time_t, 0, 0, number, 0, 0, 0);
-    else if (part == "H") new_time_t = add_to_tm(start_time_t, 0, 0, 0, number, 0, 0);
-    else if (part == "N") new_time_t = add_to_tm(start_time_t, 0, 0, 0, 0, number, 0);
-    else if (part == "S") new_time_t = add_to_tm(start_time_t, 0, 0, 0, 0, 0, number);
-    else {
-        Error::set(1, vm.runtime_current_line); // Invalid interval string
-        return false;
-    }
-
-    return DateTime{ std::chrono::system_clock::from_time_t(new_time_t) };
 }
-// CVDATE(string_expression) -> DateTime
+// CVDATE(string_expression_or_array) -> DateTime, array, or boolean false on error
 // Parses a string like "YYYY-MM-DD" into a DateTime object.
 BasicValue builtin_cvdate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
-        return false; // Return boolean false on error
-    }
-
-    std::string date_str = to_string(args[0]);
-    std::tm tm = {};
-    std::stringstream ss(date_str);
-
-    // Try to parse the date in "YYYY-MM-DD" format.
-    // Check for leftover characters by peeking.
-    ss >> std::get_time(&tm, "%Y-%m-%d");
-
-    if (ss.fail() || ss.peek() != EOF) {
-        // If parsing failed or there's extra junk in the string.
-        Error::set(15, vm.runtime_current_line); // Type Mismatch is a suitable error
-        return false; // Return boolean false on error
-    }
-
-    // Convert std::tm to time_t, then to a time_point
-    time_t time = std::mktime(&tm);
-    if (time == -1) {
-        // mktime can fail if the tm struct is invalid
-        Error::set(15, vm.runtime_current_line);
+        Error::set(8, vm.runtime_current_line);
         return false;
     }
-    auto time_point = std::chrono::system_clock::from_time_t(time);
 
-    // Return the new DateTime object
-    return DateTime{ time_point };
+    auto cvdate_op = [](NeReLaBasic& vm_ref, const BasicValue& v) -> BasicValue {
+        std::string date_str = to_string(v);
+
+        int p_year, p_month, p_day;
+        char dash1, dash2;
+        std::stringstream ss(date_str);
+
+        // Manually parse the components from the string
+        ss >> p_year >> dash1 >> p_month >> dash2 >> p_day;
+
+        if (ss.fail() || ss.peek() != EOF || dash1 != '-' || dash2 != '-') {
+            Error::set(15, vm_ref.runtime_current_line, "Invalid date format. Expected 'YYYY-MM-DD'.");
+            return false;
+        }
+
+        // Use C++20's std::chrono::year_month_day for robust validation and conversion
+        std::chrono::year_month_day ymd{
+            std::chrono::year{p_year},
+            std::chrono::month{(unsigned int)p_month},
+            std::chrono::day{(unsigned int)p_day}
+        };
+
+        // The .ok() method checks if the date is valid (e.g., not February 30th)
+        if (!ymd.ok()) {
+            Error::set(15, vm_ref.runtime_current_line, "Invalid date components (e.g., month > 12 or invalid day).");
+            return false;
+        }
+
+        // std::chrono::sys_days is a time_point that represents a whole day.
+        // This will correctly convert to the time_point in your DateTime struct.
+        auto time_point = std::chrono::sys_days{ ymd };
+
+        return DateTime{ time_point };
+    };
+
+    return apply_elementwise_op(vm, args[0], cvdate_op);
 }
 
 

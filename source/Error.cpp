@@ -52,8 +52,8 @@ void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& custo
         current_error_code = errorCode;
         error_line_number = lineNumber;
         custom_error_message = customMessage; // Store the custom message
-        if (!customMessage.empty()) {
-            g_vm_instance_ptr->builtin_constants["ERRMSG"] = customMessage;
+        if (!custom_error_message.empty()) {
+            g_vm_instance_ptr->builtin_constants["ERRMSG"] = custom_error_message;
         }
 
         if (g_vm_instance_ptr && g_vm_instance_ptr->error_handler_active) {

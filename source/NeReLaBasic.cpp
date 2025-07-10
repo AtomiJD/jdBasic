@@ -295,6 +295,7 @@ void NeReLaBasic::start() {
     std::string inputLine;
 
     while (true) {
+        g_vm_instance_ptr = this;
         Error::clear();
         direct_p_code.clear();
         linenr = 0;

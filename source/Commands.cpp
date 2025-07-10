@@ -209,10 +209,34 @@ std::string to_string(const BasicValue& val) {
         else if constexpr (std::is_same_v<T, DateTime>) {
             // Logic to convert DateTime to a string
             auto tp = arg.time_point;
-            auto in_time_t = std::chrono::system_clock::to_time_t(tp);
+            // First, we need to handle the time zone conversion correctly.
+            // The date is created as UTC, so we convert it to the user's local time for printing.
+            const std::chrono::time_zone* current_tz;
+            try {
+                current_tz = std::chrono::current_zone();
+            }
+            catch (const std::runtime_error&) {
+                // Fallback to UTC if the time zone database is not found on the system
+                current_tz = std::chrono::locate_zone("UTC");
+            }
+
+            // Convert the stored time_point to the local time zone.
+            auto local_time = current_tz->to_local(tp);
+
+            // Decompose the local time_point into calendar and time parts.
+            auto days_point = std::chrono::floor<std::chrono::days>(local_time);
+            std::chrono::year_month_day ymd{ days_point };
+            std::chrono::hh_mm_ss hms{ local_time - days_point };
+
+            // Manually format the string to ensure consistent output.
             std::stringstream ss;
-#pragma warning(suppress : 4996)
-            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+            ss << ymd.year() << "-"
+                << std::setw(2) << std::setfill('0') << static_cast<unsigned>(ymd.month()) << "-"
+                << std::setw(2) << std::setfill('0') << static_cast<unsigned>(ymd.day()) << " "
+                << std::setw(2) << std::setfill('0') << hms.hours().count() << ":"
+                << std::setw(2) << std::setfill('0') << hms.minutes().count() << ":"
+                << std::setw(2) << std::setfill('0') << hms.seconds().count();
+
             return ss.str();
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
