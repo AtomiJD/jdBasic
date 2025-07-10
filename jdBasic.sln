@@ -5,9 +5,9 @@ VisualStudioVersion = 17.7.34221.43
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "jdBasic", "jdBasic.vcxproj", "{5700E7AB-B96A-49F7-B7C6-F3A20A1DD5B3}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "aifunc", "..\aifunc\aifunc.vcxproj", "{2870169D-C96E-4B86-AFB4-B5B7D140301A}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "aifunc", "plugins\aifunc\aifunc.vcxproj", "{2870169D-C96E-4B86-AFB4-B5B7D140301A}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sqlitefunc", "..\sqlitefunc\sqlitefunc.vcxproj", "{89311ECE-BCD7-4676-B916-DC0BB03230B7}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sqlitefunc", "plugins\sqlitefunc\sqlitefunc.vcxproj", "{89311ECE-BCD7-4676-B916-DC0BB03230B7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

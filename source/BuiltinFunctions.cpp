@@ -25,6 +25,7 @@
 #include <functional>
 #include <random>
 #include <future>
+#include <regex>
 
 
 #ifdef HTTP
@@ -4284,7 +4285,118 @@ BasicValue get_thread_result(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     return result_future.get();
 }
 
+// REGEX.MATCH(pattern$, text$) -> Boolean or Array
+BasicValue builtin_regex_match(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "REGEX.MATCH requires 2 arguments: pattern, text");
+        return false;
+    }
 
+    std::string pattern_str = to_string(args[0]);
+    std::string text_str = to_string(args[1]);
+    std::smatch matches;
+
+    try {
+        std::regex pattern(pattern_str);
+
+        if (std::regex_match(text_str, matches, pattern)) {
+            // If there are capture groups (...), return them as an array.
+            if (matches.size() > 1) {
+                auto result_ptr = std::make_shared<Array>();
+                // Start at 1 to skip the full match (matches[0])
+                for (size_t i = 1; i < matches.size(); ++i) {
+                    result_ptr->data.push_back(matches[i].str());
+                }
+                result_ptr->shape = { result_ptr->data.size() };
+                return result_ptr;
+            }
+            else {
+                // No capture groups, but the whole string matched.
+                return true;
+            }
+        }
+        else {
+            // The string did not match the pattern.
+            return false;
+        }
+    }
+    catch (const std::regex_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid regex pattern: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// Regex functions
+
+// REGEX.FINDALL(pattern$, text$) -> Array
+BasicValue builtin_regex_findall(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "REGEX.FINDALL requires 2 arguments: pattern, text");
+        return {};
+    }
+
+    std::string pattern_str = to_string(args[0]);
+    std::string text_str = to_string(args[1]);
+    auto result_ptr = std::make_shared<Array>();
+
+    try {
+        std::regex pattern(pattern_str);
+        auto words_begin = std::sregex_iterator(text_str.begin(), text_str.end(), pattern);
+        auto words_end = std::sregex_iterator();
+
+        bool has_capture_groups = pattern.mark_count() > 0;
+
+        if (has_capture_groups) {
+            // Return a 2D array of captured groups
+            for (auto it = words_begin; it != words_end; ++it) {
+                const std::smatch& match = *it;
+                auto row_ptr = std::make_shared<Array>();
+                // Start at 1 to get only the captured groups
+                for (size_t i = 1; i < match.size(); ++i) {
+                    row_ptr->data.push_back(match[i].str());
+                }
+                row_ptr->shape = { row_ptr->data.size() };
+                result_ptr->data.push_back(row_ptr);
+            }
+            result_ptr->shape = { result_ptr->data.size() };
+        }
+        else {
+            // No capture groups, just return all full matches as a 1D array.
+            for (auto it = words_begin; it != words_end; ++it) {
+                result_ptr->data.push_back((*it).str());
+            }
+            result_ptr->shape = { result_ptr->data.size() };
+        }
+
+        return result_ptr;
+    }
+    catch (const std::regex_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid regex pattern: " + std::string(e.what()));
+        return {};
+    }
+}
+
+// REGEX.REPLACE(pattern$, text$, replacement$) -> String
+BasicValue builtin_regex_replace(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "REGEX.REPLACE requires 3 arguments: pattern, text, replacement");
+        return std::string("");
+    }
+
+    std::string pattern_str = to_string(args[0]);
+    std::string text_str = to_string(args[1]);
+    std::string replacement_str = to_string(args[2]);
+
+    try {
+        std::regex pattern(pattern_str);
+        // regex_replace finds all matches and replaces them according to the format string.
+        return std::regex_replace(text_str, pattern, replacement_str);
+    }
+    catch (const std::regex_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid regex pattern: " + std::string(e.what()));
+        return std::string("");
+    }
+}
 
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
@@ -4326,6 +4438,11 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SPLIT", 2, builtin_split);
     register_func("FRMV$", 1, builtin_frmv_str);
     register_func("FORMAT$", -1, builtin_format_str);
+
+    // --- Register Regex Functions ---
+    register_func("REGEX.MATCH", 2, builtin_regex_match);
+    register_func("REGEX.FINDALL", 2, builtin_regex_findall);
+    register_func("REGEX.REPLACE", 3, builtin_regex_replace);
 
     // --- Other things
     register_func("TYPEOF", 1, builtin_typeof);

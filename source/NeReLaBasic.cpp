@@ -30,7 +30,7 @@ std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::sha
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
 
-const std::string NERELA_VERSION = "0.8.5";
+const std::string NERELA_VERSION = "0.9.0";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -374,7 +374,8 @@ void NeReLaBasic::execute_repl_command(const std::vector<uint8_t>& repl_p_code) 
         }
         catch (const std::exception& e)
         {
-            TextIO::print("Exception " + std::string(e.what()));
+            //TextIO::print("Exception " + std::string(e.what()));
+            Error::set(1, 1, "Exception " + std::string(e.what()));
         }
 
         // If the statement caused an error, stop processing
@@ -537,7 +538,8 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
         }
         catch (const std::exception& e)
         {
-            TextIO::print("Exception " + std::string(e.what()));
+            //TextIO::print("Exception " + std::string(e.what()));
+            Error::set(1, 1, "Exception " + std::string(e.what()));
         }
 
         handle_debug_events();
@@ -605,7 +607,8 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
         }
         catch (const std::exception& e)
         {
-            TextIO::print("Exception " + std::string(e.what()));
+            //TextIO::print("Exception " + std::string(e.what()));
+            Error::set(1, 1, "Exception " + std::string(e.what()));
         }
         
     }
@@ -635,8 +638,8 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 
     task_queue[main_task->id] = main_task;
 
-    Error::clear();
     g_vm_instance_ptr = this;
+    Error::clear();
 
     //dap_handler->send_output_message("We are in execute main.\n");
 
@@ -733,7 +736,8 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                             }
                             catch (const std::exception& e)
                             {
-                                TextIO::print("Exception " + std::string(e.what()));
+                                //TextIO::print("Exception " + std::string(e.what()));
+                                Error::set(1, 1, "Exception " + std::string(e.what()));
                             }
                             
                         }

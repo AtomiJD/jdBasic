@@ -1,0 +1,117 @@
+' ===================================================================
+' == jdBasic Regular Expression (REGEX) Demonstration
+' ===================================================================
+'
+' This program demonstrates the usage of the new REGEX functions:
+' - REGEX.MATCH: For validating strings against a pattern.
+' - REGEX.FINDALL: For extracting all matching parts of a string.
+' - REGEX.REPLACE: For finding and replacing text.
+'
+' -------------------------------------------------------------------
+
+CLS
+PRINT "--- jdBasic REGEX Function Showcase ---"
+PRINT
+
+' ===================================================================
+' 1. REGEX.MATCH - For Validation and Simple Group Extraction
+' ===================================================================
+
+PRINT "--- 1. REGEX.MATCH ---"
+PRINT
+
+' --- Example 1a: Simple Validation (Is it a valid email?) ---
+PRINT "Example 1a: Validating an email address"
+email_pattern$ = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+test_email_good$ = "test.user@example.com"
+test_email_bad$ = "not-an-email"
+
+PRINT "Pattern: "; email_pattern$
+PRINT "Testing '"; test_email_good$; "': "; REGEX.MATCH(email_pattern$, test_email_good$) ' Should be TRUE
+PRINT "Testing '"; test_email_bad$; "': "; REGEX.MATCH(email_pattern$, test_email_bad$)   ' Should be FALSE
+PRINT
+
+' --- Example 1b: Extracting Capture Groups ---
+PRINT "Example 1b: Extracting parts of a date with capture groups"
+date_pattern$ = "^(\d{4})-(\d{2})-(\d{2})$" ' Captures Year, Month, Day
+test_date$ = "2025-07-10"
+
+PRINT "Pattern: "; date_pattern$
+PRINT "Testing '"; test_date$; "'"
+date_parts = REGEX.MATCH(date_pattern$, test_date$)
+
+IF len(date_parts) > 0 THEN
+    PRINT "Match successful. Captured groups:"
+    PRINT "  Year:  "; date_parts[0]
+    PRINT "  Month: "; date_parts[1]
+    PRINT "  Day:   "; date_parts[2]
+ELSE
+    PRINT "No match found."
+ENDIF
+PRINT
+
+' ===================================================================
+' 2. REGEX.FINDALL - For Extracting All Occurrences
+' ===================================================================
+
+PRINT "--- 2. REGEX.FINDALL ---"
+PRINT
+
+' --- Example 2a: Finding all numbers in a string ---
+PRINT "Example 2a: Finding all numbers"
+text_with_numbers$ = "Order 123 has 5 items for a total of 99.50 dollars."
+number_pattern$ = "\d+\.?\d*" ' Matches one or more digits, optionally followed by a dot and more digits
+
+PRINT "Text: "; text_with_numbers$
+all_numbers = REGEX.FINDALL(number_pattern$, text_with_numbers$)
+PRINT "All numbers found: "; all_numbers
+PRINT
+
+' --- Example 2b: Finding all key-value pairs with capture groups ---
+PRINT "Example 2b: Finding key-value pairs"
+config_string$ = "user=admin, pass=12345, host=localhost, port=8080"
+kv_pattern$ = "(\w+)=(\w+)" ' Group 1 captures the key, Group 2 captures the value
+
+PRINT "Text: "; config_string$
+all_pairs = REGEX.FINDALL(kv_pattern$, config_string$)
+
+PRINT "Found "; LEN(all_pairs); " pairs:"
+' The result is a 2D array: [[key1, val1], [key2, val2], ...]
+FOR i = 0 TO LEN(all_pairs) - 1
+    key$ = all_pairs[i][0]
+    value$ = all_pairs[i][1]
+    PRINT "  Key: '"; key$; "', Value: '"; value$; "'"
+NEXT i
+PRINT
+
+' ===================================================================
+' 3. REGEX.REPLACE - For Transforming Text
+' ===================================================================
+
+PRINT "--- 3. REGEX.REPLACE ---"
+PRINT
+
+' --- Example 3a: Reformatting a date string ---
+PRINT "Example 3a: Reformatting a date"
+iso_date$ = "2025-07-10"
+reformat_pattern$ = "(\d{4})-(\d{2})-(\d{2})"
+' Use backreferences $3, $2, $1 to reorder the captured groups
+us_format$ = "$2/$3/$1"
+
+PRINT "Original date: "; iso_date$
+new_date$ = REGEX.REPLACE(reformat_pattern$, iso_date$, us_format$)
+PRINT "Reformatted date: "; new_date$
+PRINT
+
+' --- Example 3b: Censoring sensitive words ---
+PRINT "Example 3b: Censoring words"
+secret_message$ = "The secret codes are 'alpha' and 'gamma'."
+censor_pattern$ = "alpha|gamma" ' Matches either 'alpha' or 'gamma'
+censored_message$ = REGEX.REPLACE(censor_pattern$, secret_message$, "[REDACTED]")
+
+PRINT "Original message: "; secret_message$
+PRINT "Censored message: "; censored_message$
+PRINT
+
+PRINT "--- REGEX Demo Complete ---"
+

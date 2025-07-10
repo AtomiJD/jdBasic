@@ -102,6 +102,9 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`RESUME [NEXT | "label"]`**: Used within an error handler to resume execution. `RESUME` retries the failed line, `RESUME NEXT` continues on the next line, and `RESUME "label"` jumps to a label.
   * **`SLEEP milliseconds`**: Pauses execution for a specified duration.
   * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
+  * **`IMPORT [modul]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
+  * **`EXPORT MODUL [module]`**: Marks a file as EXPORT for importing with IMPORT
+  * **`IMPORTDLL [funcfile]`**: Loads the funcfile.dll as dynmaic library and register all included functions for jdBasic.
 
 ### Development & Debugging
 
@@ -144,12 +147,22 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`INSTR([start, ]haystack$, needle$)`**: Finds the position of one string within another.
   * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
 
+### Regular Expression Functions
+
+* **`REGEX.MATCH(pattern$, text$)`**: Checks if the entire `text$` string matches the `pattern$`.
+    * Returns `TRUE` or `FALSE` if the pattern has no capture groups.
+    * If the pattern contains capture groups `(...)`, it returns a 1D array of the captured substrings upon a successful match, otherwise `FALSE`.
+* **`REGEX.FINDALL(pattern$, text$)`**: Finds all non-overlapping occurrences of `pattern$` in `text$`.
+    * Returns a 1D array of all matches found.
+    * If the pattern contains capture groups, it returns a 2D array where each row contains the groups for a single match.
+* **`REGEX.REPLACE(pattern$, text$, replacement$)`**: Replaces all occurrences of `pattern$` in `text$` with `replacement$`. The replacement string can use backreferences like `$1`, `$2` to insert captured group content.
+
 ### Array & Matrix Functions
 
   * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
   * **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
   * **`IOTA(N)`**: Generates a 1D array of numbers from 1 to N.
-  * \*\*Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)` **: Functions that reduce an array to a single value (e.g.,   `SUM(my\_array)`or a vector`SUM(my\_array, dimension)\`). Dimension is 0 for reduce along rows and 1 for columns.
+  * **Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
   * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
   * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
   * **`REVERSE(array)`**: Reverses the elements of an array.
@@ -159,12 +172,12 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
   * **`SOLVE(matrix A, vextor b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
   * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
+  * **`STACK(dimension, array1, array2, ...) -> matrix`**: Stacks 1D vectors into a 2D matrix.
   * **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix.
   * **`GRADE(vector)`**: Returns the indices that would sort the vector.
   * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, \*, /, MOD, \>, \<, =, ^) or a reference to a function (srq@).
-  * **`APPEND(array, value) -> array`**: Appends a value or another array to an array, returning a new array.
   * **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array.
-  * **`SHIFT(array, shift_vector, \[fill_value\]) -> array`**: Non-cyclically shifts an N-dimensional array.
+  * **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Non-cyclically shifts an N-dimensional array.
   * **`CONVOLVE(array, kernel, wrap_mode) -> array`**: Performs a 2D convolution of an array with a kernel.
   * **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.
 
@@ -185,16 +198,69 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`DATEADD(part$, num, date)`**: Adds an interval to a `DateTime` object.
   * **`CVDATE(date_string$)`**: Converts a string ("YYYY-MM-DD") to a `DateTime` object.
 
-  ### Type Functions
+### HTTP Functions
+
+  * **`HTTP.GET$(url$)`**: Performs an HTTP GET request and returns the response body as a string.
+  * **`HTTP.POST$(url$, data$, contentType$)`**: Performs an HTTP POST request with the given data and content type, returning the response body.
+  * **`HTTP.PUT$(url$, data$, contentType$)`**: Performs an HTTP PUT request.
+  * **`HTTP.POST_ASYNC(url$, data$, contentType$)`**: Performs an HTTP POST request asynchronously, returning a task handle that can be used with `AWAIT`.
+  * **`HTTP.SETHEADER(name$, value$)`**: Sets a custom header for subsequent HTTP requests.
+  * **`HTTP.CLEARHEADERS()`**: Clears all custom HTTP headers.
+  * **`HTTP.STATUSCODE()`**: Returns the HTTP status code from the last request.
+
+### Graphics and Multimedia Functions
+
+#### Graphics
+
+  * **`SCREEN width, height, [title$]`**: Initializes a graphics window of the specified size.
+  * **`SCREENFLIP`**: Updates the screen to show all drawing operations performed since the last flip.
+  * **`DRAWCOLOR r, g, b`**: Sets the current drawing color using RGB values (0-255).
+  * **`PSET x, y, [r, g, b]`**: Draws a single pixel at the specified coordinates. Can also take a matrix of points.
+  * **`LINE x1, y1, x2, y2, [r, g, b]`**: Draws a line between two points. Can also take a matrix of lines.
+  * **`RECT x, y, w, h, [fill], [r, g, b]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
+  * **`CIRCLE x, y, radius, [r, g, b]`**: Draws a circle. Can also take a matrix of circles.
+  * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
+  * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
+
+#### Sound
+
+  * **`SOUND.INIT()`**: Initializes the audio system. Must be called before other sound functions.
+  * **`SOUND.VOICE track, waveform$, attack, decay, sustain, release`**: Configures the ADSR envelope and waveform for a sound track.
+  * **`SOUND.PLAY track, frequency`**: Plays a note at a specific frequency on the given track.
+  * **`SOUND.RELEASE track`**: Starts the release phase of the note on the given track.
+  * **`SOUND.STOP track`**: Immediately stops the note on the given track.
+
+#### Sprites
+
+  * **`SPRITE.LOAD type_id, "filename.png"`**: Loads a sprite image from a file and assigns it a type ID.
+  * **`SPRITE.CREATE(type_id, x, y)`**: Creates an instance of a sprite at a given position and returns its unique instance ID.
+  * **`SPRITE.MOVE instance_id, x, y`**: Moves a sprite instance to a new position.
+  * **`SPRITE.SET_VELOCITY instance_id, vx, vy`**: Sets the velocity for a sprite instance for use with `SPRITE.UPDATE`.
+  * **`SPRITE.DELETE instance_id`**: Removes a sprite instance.
+  * **`SPRITE.UPDATE()`**: Updates the positions of all sprites based on their velocities.
+  * **`SPRITE.DRAW_ALL()`**: Draws all active sprite instances to the screen.
+  * **`SPRITE.GET_X(instance_id)` / `SPRITE.GET_Y(instance_id)`**: Returns the X or Y coordinate of a sprite instance.
+  * **`SPRITE.COLLISION(id1, id2)`**: Returns `TRUE` if the bounding boxes of two sprite instances are colliding.
+
+### Type Functions
 
   * **`TYPEOF(AnyVar)`**: Returns the type of an object as string.
 
-  ### Async Functions
+### Thread Functions
+
+This section describes functions for low-level, background-threaded tasks, distinct from the `ASYNC`/`AWAIT` pattern. A function launched with `THREAD` will run in parallel.
+
+  * **`THREAD.ISDONE(handle)`**: Returns `TRUE` if the background thread associated with the handle has finished its execution.
+  * **`THREAD.GETRESULT(handle)`**: Waits for the thread to complete and returns its result. This is a blocking call.
+
+### Async Functions
 
   * **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronius.
   * **`AWAIT task`**: Waits for the given task to be completed and returns the result of the function.
 
-  ```basic
+<!-- end list -->
+
+```basic
 ' This function simulates a "download" that takes some time.
 ASYNC FUNC DOWNLOADFILE(url$, duration)
   PRINT "  [Task 1] Starting download from "; url$
@@ -238,11 +304,8 @@ result2 = AWAIT task2
 PRINT "Main: Task 2 finished with result: '"; result2; "'"
 PRINT
 ```
-  
 
-
-
-  ### Tensor & AI Functions
+### Tensor & AI Functions
 
 This suite of functions provides the building blocks for creating and training neural networks directly within NeReLa Basic. The core component is the `Tensor` data type, which supports automatic differentiation.
 
