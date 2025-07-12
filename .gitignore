@@ -365,3 +365,5 @@ FodyWeavers.xsd
 #Atomis ausschluss Zeug
 doc/*_old.*
 fluppi/
+jdb/_*.*
+

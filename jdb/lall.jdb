@@ -1,0 +1,18 @@
+PRINT "START"
+PWD 
+
+if len(dir$("_art_model.json"))[0] > 0 then
+    input "Training data found, skip learning?"; a$
+    if ucase(left(a$,1)) = "Y" then
+        GOTO SKIP_TRAINING
+    endif
+Endif
+
+goto ENDE
+
+SKIP_TRAINING:
+print "No Training"
+
+ENDE:
+print "end"
+

@@ -1,0 +1,11 @@
+
+'AtomiJD Divider
+FUNC JD(x,y)
+    IF Y = 0 THEN
+        RETURN "Infinity"
+    ELSE
+        RETURN x/y
+    ENDIF
+ENDFUNC
+
+PRINT 10 JD@ 5, 10 JD@ 0, iota(10) jd@ 2, iota(10) jd@ iota(10)*2, 2 jd@ [1,2,4]

@@ -30,7 +30,7 @@ std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::sha
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
 
-const std::string NERELA_VERSION = "0.9.0";
+const std::string NERELA_VERSION = "0.9.1";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -451,13 +451,21 @@ void NeReLaBasic::handle_debug_events() {
     // Get the line number for the *next* statement to be executed.
     //runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
 
+    //TextIO::print("D: " + std::to_string((int) (*active_p_code)[pcode - 1]) + ", " + std::to_string((int)(*active_p_code)[pcode]) + ", " + std::to_string((int)(*active_p_code)[pcode + 1]) + ", " + std::to_string((int)(*active_p_code)[pcode + 2]));
+    // Skip empty and rem lines
+    if (pcode>0 && pcode < (active_p_code->size()-2))
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode - 1]) == Tokens::ID::C_CR && static_cast<Tokens::ID>((*active_p_code)[pcode + 2]) == Tokens::ID::C_CR) 
+            { return; }
+
     bool should_pause = false;
+    int line_adder = 1;
     std::string pause_reason = "step";
     //dap_handler->send_output_message("in handle: " + std::to_string(runtime_current_line) + ", b: " + std::to_string(breakpoints.count(runtime_current_line)));
     // 1. Check for a breakpoint. This has high priority.
     if (breakpoints.count(runtime_current_line)) {
         should_pause = true;
         pause_reason = "breakpoint";
+        line_adder = 0;
         //dap_handler->send_output_message("in break: ");
     }
     // 2. Check for stepping completion.
@@ -493,7 +501,7 @@ void NeReLaBasic::handle_debug_events() {
 
     if (should_pause) {
         debug_state = DebugState::PAUSED;
-        dap_handler->send_stopped_message(pause_reason, runtime_current_line, this->program_to_debug);
+        dap_handler->send_stopped_message(pause_reason, runtime_current_line+line_adder, this->program_to_debug);
         pause_for_debugger();
     }
 }
@@ -716,6 +724,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             if (current_task->status == TaskStatus::RUNNING) {
                 // --- DAP and Breakpoint Logic ---
                 handle_debug_events();
+
                 // Check if the task's pcode is valid *before* executing
                 //if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
                 if (pcode >= active_p_code->size()) {
@@ -1527,7 +1536,10 @@ BasicValue NeReLaBasic::parse_primary() {
             pcode++; current_value = evaluate_expression();
             if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTPAREN) { Error::set(18, runtime_current_line); return {}; }
         }
-        else { Error::set(1, runtime_current_line); return {}; }
+        else { 
+            Error::set(1, runtime_current_line);
+            return {};
+        }
         if (Error::get() != 0) return {};
     }
 
@@ -1746,69 +1758,148 @@ BasicValue NeReLaBasic::parse_factor() {
     BasicValue left = parse_power();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD) {
+        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD || op == Tokens::ID::FUNCREF) {
             pcode++;
-            BasicValue right = parse_power();
 
-            bool is_left_tensor = std::holds_alternative<std::shared_ptr<Tensor>>(left);
+            // --- Handle user-defined operators ---
+            if (op == Tokens::ID::FUNCREF) {
+                std::string func_name = to_upper(read_string(*this));
 
-            if (is_left_tensor) {
-                if (op == Tokens::ID::C_ASTR) {
-                    if (!std::holds_alternative<std::shared_ptr<Tensor>>(right)) { Error::set(15, runtime_current_line, "Tensor can only be element-wise multiplied by another Tensor."); return {}; }
-                    left = tensor_elementwise_multiply(*this, left, right);
+                BasicValue right = parse_power();
+
+                if (active_function_table->count(func_name)) {
+                    const auto& func_info = active_function_table->at(func_name);
+                    if (func_info.arity != 2) {
+                        Error::set(26, runtime_current_line, "Custom operator function '" + func_name + "' must take 2 arguments.");
+                        return {};
+                    }
+                    // Case 1: Array @ Scalar
+                    if (std::holds_alternative<std::shared_ptr<Array>>(left) && !std::holds_alternative<std::shared_ptr<Array>>(right)) {
+                        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(left);
+                        auto result_ptr = std::make_shared<Array>(); // Create a new array for the results
+                        result_ptr->shape = arr_ptr->shape; // The result has the same shape
+
+                        for (const auto& element : arr_ptr->data) {
+                            // Call the BASIC function for each element against the scalar
+                            BasicValue element_result = execute_function_for_value(func_info, { element, right });
+                            if (Error::get() != 0) return {};
+                            result_ptr->data.push_back(element_result);
+                        }
+                        left = result_ptr; // The new array is now our result
+                    }
+                    // Case 2: Scalar @ Array
+                    else if (!std::holds_alternative<std::shared_ptr<Array>>(left) && std::holds_alternative<std::shared_ptr<Array>>(right)) {
+                        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(right);
+                        auto result_ptr = std::make_shared<Array>();
+                        result_ptr->shape = arr_ptr->shape;
+
+                        for (const auto& element : arr_ptr->data) {
+                            // Call the BASIC function for the scalar against each element
+                            BasicValue element_result = execute_function_for_value(func_info, { left, element });
+                            if (Error::get() != 0) return {};
+                            result_ptr->data.push_back(element_result);
+                        }
+                        left = result_ptr;
+                    }
+                    // Case 3: Array @ Array
+                    else if (std::holds_alternative<std::shared_ptr<Array>>(left) && std::holds_alternative<std::shared_ptr<Array>>(right)) {
+                        const auto& left_arr_ptr = std::get<std::shared_ptr<Array>>(left);
+                        const auto& right_arr_ptr = std::get<std::shared_ptr<Array>>(right);
+
+                        if (left_arr_ptr->shape != right_arr_ptr->shape) {
+                            Error::set(15, runtime_current_line, "Array shape mismatch for operator '" + func_name + "'");
+                            return {};
+                        }
+
+                        auto result_ptr = std::make_shared<Array>();
+                        result_ptr->shape = left_arr_ptr->shape;
+
+                        for (size_t i = 0; i < left_arr_ptr->data.size(); ++i) {
+                            // Call the BASIC function for each pair of elements
+                            BasicValue element_result = execute_function_for_value(func_info, { left_arr_ptr->data[i], right_arr_ptr->data[i] });
+                            if (Error::get() != 0) return {};
+                            result_ptr->data.push_back(element_result);
+                        }
+                        left = result_ptr;
+                    }
+                    // Case 4: Scalar @ Scalar (The original behavior)
+                    else {
+                        left = execute_function_for_value(func_info, { left, right });
+                        if (Error::get() != 0) return {};
+                    }
+
                 }
-                else if (op == Tokens::ID::C_SLASH) {
-                    if (std::holds_alternative<std::shared_ptr<Tensor>>(right)) { Error::set(1, runtime_current_line, "Tensor-by-Tensor division is not supported."); return {}; }
-                    left = tensor_scalar_divide(*this, left, right);
-                }
-                else { // MOD
-                    Error::set(1, runtime_current_line, "MOD operator is not supported for Tensors."); return {};
+                else {
+                    Error::set(22, runtime_current_line, "Undefined function used as operator: " + func_name);
+                    return {};
                 }
             }
-            else {
-                left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
-                    using LeftT = std::decay_t<decltype(l)>; using RightT = std::decay_t<decltype(r)>;
+            else
+            {
 
-                    auto array_op = [op, this](const auto& arr, double scalar, bool arr_is_left) -> BasicValue {
-                        auto result_ptr = std::make_shared<Array>(); result_ptr->shape = arr->shape;
-                        for (const auto& elem : arr->data) {
-                            double arr_val = to_double(elem); double res = 0;
-                            if (op == Tokens::ID::C_ASTR) res = arr_is_left ? arr_val * scalar : scalar * arr_val;
-                            else if (op == Tokens::ID::C_SLASH) {
-                                if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
-                                res = arr_is_left ? arr_val / scalar : scalar / arr_val;
-                            }
-                            else { // MOD
-                                if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
-                                res = static_cast<double>(arr_is_left ? static_cast<long long>(arr_val) % static_cast<long long>(scalar) : static_cast<long long>(scalar) % static_cast<long long>(arr_val));
-                            }
-                            result_ptr->data.push_back(res);
-                        }
-                        return result_ptr;
-                        };
 
-                    if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
-                        if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Shape mismatch for element-wise operation."); return false; }
-                        auto result_ptr = std::make_shared<Array>(); result_ptr->shape = l->shape;
-                        for (size_t i = 0; i < l->data.size(); ++i) {
-                            double val_l = to_double(l->data[i]); double val_r = to_double(r->data[i]); double res = 0;
-                            if (op == Tokens::ID::C_ASTR) res = val_l * val_r;
-                            else if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; } res = val_l / val_r; }
-                            else { if (val_r == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; } res = static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
-                            result_ptr->data.push_back(res);
+                BasicValue right = parse_power();
+
+                bool is_left_tensor = std::holds_alternative<std::shared_ptr<Tensor>>(left);
+
+                if (is_left_tensor) {
+                    if (op == Tokens::ID::C_ASTR) {
+                        if (!std::holds_alternative<std::shared_ptr<Tensor>>(right)) { Error::set(15, runtime_current_line, "Tensor can only be element-wise multiplied by another Tensor."); return {}; }
+                        left = tensor_elementwise_multiply(*this, left, right);
+                    }
+                    else if (op == Tokens::ID::C_SLASH) {
+                        if (std::holds_alternative<std::shared_ptr<Tensor>>(right)) { Error::set(1, runtime_current_line, "Tensor-by-Tensor division is not supported."); return {}; }
+                        left = tensor_scalar_divide(*this, left, right);
+                    }
+                    else { // MOD
+                        Error::set(1, runtime_current_line, "MOD operator is not supported for Tensors."); return {};
+                    }
+                }
+                else {
+                    left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
+                        using LeftT = std::decay_t<decltype(l)>; using RightT = std::decay_t<decltype(r)>;
+
+                        auto array_op = [op, this](const auto& arr, double scalar, bool arr_is_left) -> BasicValue {
+                            auto result_ptr = std::make_shared<Array>(); result_ptr->shape = arr->shape;
+                            for (const auto& elem : arr->data) {
+                                double arr_val = to_double(elem); double res = 0;
+                                if (op == Tokens::ID::C_ASTR) res = arr_is_left ? arr_val * scalar : scalar * arr_val;
+                                else if (op == Tokens::ID::C_SLASH) {
+                                    if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                    res = arr_is_left ? arr_val / scalar : scalar / arr_val;
+                                }
+                                else { // MOD
+                                    if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                    res = static_cast<double>(arr_is_left ? static_cast<long long>(arr_val) % static_cast<long long>(scalar) : static_cast<long long>(scalar) % static_cast<long long>(arr_val));
+                                }
+                                result_ptr->data.push_back(res);
+                            }
+                            return result_ptr;
+                            };
+
+                        if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                            if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Shape mismatch for element-wise operation."); return false; }
+                            auto result_ptr = std::make_shared<Array>(); result_ptr->shape = l->shape;
+                            for (size_t i = 0; i < l->data.size(); ++i) {
+                                double val_l = to_double(l->data[i]); double val_r = to_double(r->data[i]); double res = 0;
+                                if (op == Tokens::ID::C_ASTR) res = val_l * val_r;
+                                else if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; } res = val_l / val_r; }
+                                else { if (val_r == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; } res = static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
+                                result_ptr->data.push_back(res);
+                            }
+                            return result_ptr;
                         }
-                        return result_ptr;
-                    }
-                    else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) { return array_op(l, to_double(r), true); }
-                    else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) { return array_op(r, to_double(l), false); }
-                    else { // scalar op
-                        double val_l = to_double(l); double val_r = to_double(r);
-                        if (op == Tokens::ID::C_ASTR) return val_l * val_r;
-                        if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
-                        if (op == Tokens::ID::MOD) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
-                    }
-                    return false;
+                        else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) { return array_op(l, to_double(r), true); }
+                        else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) { return array_op(r, to_double(l), false); }
+                        else { // scalar op
+                            double val_l = to_double(l); double val_r = to_double(r);
+                            if (op == Tokens::ID::C_ASTR) return val_l * val_r;
+                            if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
+                            if (op == Tokens::ID::MOD) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
+                        }
+                        return false;
                     }, left, right);
+                }
             }
         }
         else { break; }

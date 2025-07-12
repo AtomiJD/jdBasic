@@ -63,7 +63,7 @@ Here is an example `launch.json` file with both configurations:
       "type": "jdbasic",
       "request": "launch",
       "name": "jdBasic: Debug a specific file",
-      "program": "${workspaceFolder}/src/main.bas",
+      "program": "${file}",
       "stopOnEntry": true,
       "runtime": "C:/path/to/your/jdBASIC.exe"
     }

@@ -35,6 +35,7 @@ namespace {
         {"IF",      Tokens::ID::IF},
         {"THEN",    Tokens::ID::THEN},
         {"ELSE",    Tokens::ID::ELSE},
+        {"ELSEIF",  Tokens::ID::ELSEIF},
         {"ENDIF",   Tokens::ID::ENDIF},
         {"AND",     Tokens::ID::AND},
         {"OR",      Tokens::ID::OR},

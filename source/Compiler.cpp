@@ -466,24 +466,53 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
             case Tokens::ID::IF: {
                 // Write the IF token, then leave a 2-byte placeholder for the jump address.
                 out_p_code.push_back(static_cast<uint8_t>(token));
+                if_stack.push_back({ 0, vm.current_source_line });
+
                 if_stack.push_back({ (uint16_t)out_p_code.size(), vm.current_source_line }); // Save address of the placeholder
                 out_p_code.push_back(0); // Placeholder byte 1
                 out_p_code.push_back(0); // Placeholder byte 2
                 break; // The expression after IF will be tokenized next
             }
             case Tokens::ID::THEN: {
-                // This is the key decision point. We look ahead without consuming tokens.
+                // This logic is now only responsible for detecting a one-liner.
                 size_t peek_ptr = vm.prgptr;
                 while (peek_ptr < vm.lineinput.length() && StringUtils::isspace(vm.lineinput[peek_ptr])) {
                     peek_ptr++;
                 }
-                // If nothing but a comment or whitespace follows THEN, it's a block IF.
-                // Otherwise, it's a single-line IF.
                 if (peek_ptr < vm.lineinput.length() && vm.lineinput[peek_ptr] != '\'') {
                     is_one_liner_if = true;
                 }
-                // We never write the THEN token to bytecode, so we just continue.
-                continue;
+                continue; // We never write THEN to bytecode.
+            }
+            case Tokens::ID::ELSEIF: { 
+                // An ELSEIF acts as an ELSE for the previous block and an IF for its own.
+
+                // 1. Check for a preceding IF/ELSEIF.
+                if (if_stack.empty() || if_stack.back().patch_address == 0) {
+                    Error::set(1, lineNumber, "ELSEIF without IF.");
+                    continue;
+                }
+                IfStackInfo previous_if_jump_info = if_stack.back();
+                if_stack.pop_back();
+
+                // 2. Emit an unconditional jump (like ELSE) to skip to ENDIF.
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::ELSE));
+                if_stack.push_back({ (uint16_t)out_p_code.size(), vm.current_source_line });
+                out_p_code.push_back(0);
+                out_p_code.push_back(0);
+
+                // 3. Patch the previous IF/ELSEIF's conditional jump to land here.
+                uint16_t jump_target_for_previous_if = out_p_code.size();
+                out_p_code[previous_if_jump_info.patch_address] = jump_target_for_previous_if & 0xFF;
+                out_p_code[previous_if_jump_info.patch_address + 1] = (jump_target_for_previous_if >> 8) & 0xFF;
+
+                // 4. Emit a conditional jump (like IF) for this ELSEIF's own condition.
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::IF));
+                if_stack.push_back({ (uint16_t)out_p_code.size(), vm.current_source_line });
+                out_p_code.push_back(0);
+                out_p_code.push_back(0);
+
+                break; // Continue to tokenize the condition expression.
             }
             case Tokens::ID::ELSE: {
                 // A single-line IF cannot have an ELSE clause.
@@ -491,7 +520,12 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     Error::set(1, vm.current_source_line, "A single-line IF cannot have an ELSE clause."); // Syntax Error
                     continue; // Stop processing this token
                 }
-                // Pop the IF's placeholder address from the stack.
+
+                // Pop the IF's or a previous ELSEIF's placeholder address from the stack.
+                if (if_stack.empty()) { // Added check
+                    Error::set(1, lineNumber, "ELSE without IF.");
+                    continue;
+                }
                 IfStackInfo if_info = if_stack.back();
                 if_stack.pop_back();
 
@@ -500,30 +534,38 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 if_stack.push_back({ (uint16_t)out_p_code.size(), vm.current_source_line }); // Push address of ELSE's placeholder
                 out_p_code.push_back(0); // Placeholder byte 1
                 out_p_code.push_back(0); // Placeholder byte 2
-                //vm.prgptr = vm.lineinput.length(); 
 
-                // Go back and patch the original IF's jump to point to the instruction AFTER the ELSE's placeholder.
+                // Go back and patch the original IF/ELSEIF's jump to point to the instruction AFTER the ELSE's placeholder.
                 uint16_t jump_target = out_p_code.size();
                 out_p_code[if_info.patch_address] = jump_target & 0xFF;
                 out_p_code[if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
                 continue;
             }
             case Tokens::ID::ENDIF: {
-                // A single-line IF does not use an explicit ENDIF.
                 if (is_one_liner_if) {
-                    Error::set(1, vm.current_source_line, "A single-line IF does not use an explicit ENDIF"); // Syntax Error
-                    continue; // Stop processing this token
+                    Error::set(1, vm.current_source_line, "A single-line IF does not use an explicit ENDIF");
+                    continue;
                 }
-                // Pop the corresponding IF or ELSE placeholder address from the stack.
-                IfStackInfo last_if_info = if_stack.back();
-                if_stack.pop_back();
-
-                // Patch it to point to the current location.
                 uint16_t jump_target = out_p_code.size();
-                out_p_code[last_if_info.patch_address] = jump_target & 0xFF;
-                out_p_code[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+                bool marker_found = false;
 
-                // Don't write the ENDIF token, it's a compile-time marker.
+                while (!if_stack.empty()) {
+                    IfStackInfo info = if_stack.back();
+                    if_stack.pop_back();
+
+                    if (info.patch_address == 0) {
+                        marker_found = true;
+                        break; // Found the marker, the block is closed.
+                    }
+
+                    // Patch the placeholder to jump to the current location (after ENDIF).
+                    out_p_code[info.patch_address] = jump_target & 0xFF;
+                    out_p_code[info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+                }
+
+                if (!marker_found) {
+                    Error::set(4, lineNumber, "Mismatched ENDIF without a corresponding IF block.");
+                }
                 continue;
             }
             case Tokens::ID::CALLFUNC: {
@@ -776,19 +818,21 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
 
     if (is_one_liner_if) {
         if (!if_stack.empty()) {
-            // This performs the ENDIF logic implicitly by patching the jump address.
-            IfStackInfo last_if_info = if_stack.back();
-            
+            // Pop and patch the conditional jump's placeholder.
+            IfStackInfo placeholder_info = if_stack.back();
             if_stack.pop_back();
 
             uint16_t jump_target = out_p_code.size();
-            out_p_code[last_if_info.patch_address] = jump_target & 0xFF;
-            out_p_code[last_if_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
-            
-        }
-        else {
-            // This indicates a compiler logic error, but we can safeguard against it.
-            Error::set(4, vm.current_source_line); // Unclosed IF
+            out_p_code[placeholder_info.patch_address] = jump_target & 0xFF;
+            out_p_code[placeholder_info.patch_address + 1] = (jump_target >> 8) & 0xFF;
+
+            if (!if_stack.empty() && if_stack.back().patch_address == 0) {
+                if_stack.pop_back();
+            }
+            else {
+                // This case would indicate a compiler logic error.
+                Error::set(4, vm.current_source_line, "Mismatched stack for single-line IF.");
+            }
         }
     }
     // Every line of bytecode ends with a carriage return token.

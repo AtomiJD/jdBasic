@@ -21,7 +21,7 @@ TYPE T_Alien
   InitialY      ' Array of initial Y
   Points        ' Array of point values
   Direction     ' Array of directions
-  Type          ' Array of types
+  Species       ' Array of types
   Visible       ' Boolean array of visibility
 ENDTYPE
 
@@ -106,7 +106,7 @@ SUB INIT_LEVEL()
     Aliens.Y = RESHAPE(AlienYMatrix, [MAX_ALIENS])
     Aliens.InitialX = Aliens.X
     Aliens.InitialY = Aliens.Y
-    Aliens.Type = RESHAPE(AlienTypeMatrix, [MAX_ALIENS])
+    Aliens.Species = RESHAPE(AlienTypeMatrix, [MAX_ALIENS])
     Aliens.Points = RESHAPE(AlienPointsMatrix, [MAX_ALIENS])
     Aliens.Direction = RESHAPE([1], [MAX_ALIENS])
     Aliens.Visible = RESHAPE([TRUE], [MAX_ALIENS])
@@ -118,14 +118,21 @@ SUB INIT_LEVEL()
     Blocks.Visible = RESHAPE([TRUE], [MAX_BLOCKS])
 
     REM --- INIT PLAYER AND MISSILES ---
-    Player.X = 40 : Player.Y = 35 : Player.Direction = 0
-    Player.Visible = TRUE : Player.RespawnTimer = 0
-    PlayerMissile.Visible = FALSE : PlayerMissile.IsFiring = FALSE
-    AlienMissile.Visible = FALSE : AlienMissile.IsFiring = FALSE
+    Player.X = 40 
+    Player.Y = 35 
+    Player.Direction = 0
+    Player.Visible = TRUE 
+    Player.RespawnTimer = 0
+    PlayerMissile.Visible = FALSE 
+    PlayerMissile.IsFiring = FALSE
+    AlienMissile.Visible = FALSE 
+    AlienMissile.IsFiring = FALSE
 ENDSUB
 
 SUB INIT_GAME()
     OPTION "NOPAUSE"
+    CLS
+    CURSOR 0
     LIVES = 3
     SCORE = 0
     DIFFICULTY = 10
@@ -162,17 +169,17 @@ FUNC FIND_FIRST_HIT_INDEX(Projectile, Target)
     REM Returns the index of the first target hit, or -1 if no hit.
     
     HitMask = (Projectile.Y >= Target.Y) AND (Projectile.Y < Target.Y + 2) AND (Projectile.X >= Target.X) AND (Projectile.X < Target.X + 4) AND Target.Visible
-    
-    IF ANY(HitMask) THEN
-        ' This is a vectorized method to find the index of the first TRUE value.
-        ' 1. Create a score where non-hits are high (2) and hits are low (1).
-        Scores = (HitMask * -1) + 2
-        ' 2. Get the sort order; indices of hits will come first.
-        GradeOrder = GRADE(Scores)
-        ' 3. Take the very first index from the sorted list.
-        RETURN TAKE(1, GradeOrder)[0]
-    ENDIF
-    
+    IF HitMask NOT FALSE THEN
+        IF ANY(HitMask) THEN
+            ' This is a vectorized method to find the index of the first TRUE value.
+            ' 1. Create a score where non-hits are high (2) and hits are low (1).
+            Scores = (HitMask * -1) + 2
+            ' 2. Get the sort order; indices of hits will come first.
+            GradeOrder = GRADE(Scores)
+            ' 3. Take the very first index from the sorted list.
+            RETURN TAKE(1, GradeOrder)[0]
+        ENDIF
+    ENDIF    
     RETURN -1
 ENDFUNC
 
@@ -265,38 +272,37 @@ REM RENDERING
 REM ======================================================================
 
 sub print_alien(i, f, t)
-    LOCATE AY[I], AX[I]
+    LOCATE Aliens.Y[I], Aliens.X[I]
     print ALIEN_T[t*4+f*2]
-    LOCATE AY[I]+1, AX[I]
+    LOCATE Aliens.Y[I]+1, Aliens.X[I]
     print ALIEN_T[t*4+1+f*2]
 endsub
 
 SUB PRINT_PLAYER()
-    LOCATE PY, PX
+    LOCATE Player.Y, Player.X
     PRINT PLAYER_T[0]
-    LOCATE PY+1, PX
+    LOCATE Player.Y+1, Player.X
     PRINT PLAYER_T[1]
 ENDSUB
 
 SUB PRINT_BLOCK(I, HITS)
-    LOCATE BY[I], BX[I]
+    LOCATE Blocks.Y[I], Blocks.X[I]
     IF HITS = 0 THEN
         PRINT BLOCK_A_T[0]
-        LOCATE BY[I]+1, BX[I]
+        LOCATE Blocks.Y[I]+1, Blocks.X[I]
         PRINT BLOCK_A_T[1]
     ENDIF
     IF HITS = 1 THEN
         PRINT BLOCK_B_T[0]
-        LOCATE BY[I]+1, BX[I]
+        LOCATE Blocks.Y[I]+1, Blocks.X[I]
         PRINT BLOCK_B_T[1]
     ENDIF
     IF HITS = 2 THEN
         PRINT BLOCK_C_T[0]
-        LOCATE BY[I]+1, BX[I]
+        LOCATE Blocks.Y[I]+1, Blocks.X[I]
         PRINT BLOCK_C_T[1]
     ENDIF
 ENDSUB
-
 
 SUB RENDER_SCREEN()
     CLS
@@ -312,46 +318,46 @@ SUB RENDER_SCREEN()
 
     REM -- DRAW ALIENS --
     FOR I = 0 TO MAX_ALIENS - 1
-        IF AV[I] = 1 THEN
-            TYPE = AT[I]
-            IF TYPE = 0 THEN 
+        IF Aliens.Visible[I] = 1 THEN
+            Spec = Aliens.Species[I]
+            IF Spec = 0 THEN 
                COLOR 1, 0 ' Red
-	    ENDIF
-            IF TYPE = 1 THEN 
+	        ENDIF
+            IF Spec = 1 THEN 
                COLOR 2, 0 ' Green
-	    ENDIF
-            IF TYPE = 2 THEN 
+	        ENDIF
+            IF Spec = 2 THEN 
                COLOR 6, 0 ' Cyan
             ENDIF
-	    PRINT_ALIEN I, FRAME, TYPE
+	    PRINT_ALIEN I, FRAME, Spec
         ENDIF
     NEXT I
     
     REM -- DRAW BLOCKS --
     COLOR 1, 0 ' Gray
     FOR I = 0 TO MAX_BLOCKS - 1 
-        IF BV[I] = 1 THEN 
-            HITS = BH[I] 
+        IF Blocks.Visible[I] = 1 THEN 
+            HITS = Blocks.Hits[I] 
             PRINT_BLOCK I, HITS 
         ENDIF
     NEXT I 
 
     REM -- DRAW PLAYER --
-    IF PVIS = 1 THEN
+    IF Player.Visible = 1 THEN
         COLOR 4, 0 ' Blue
-	PRINT_PLAYER 
+	    PRINT_PLAYER 
     ENDIF
     
     REM -- DRAW MISSILES --
-    IF PMVIS = 1 THEN
+    IF PlayerMissile.Visible = 1 THEN
         COLOR 7, 0 ' White
-        LOCATE PMY, PMX
-	PRINT P_MISSILE$;
+        LOCATE PlayerMissile.Y, PlayerMissile.X
+	    PRINT P_MISSILE$;
     ENDIF
-    IF AMVIS = 1 THEN
+    IF AlienMissile.Visible = 1 THEN
         COLOR 1, 0 ' Red
-        LOCATE AMY, AMX
-	PRINT A_MISSILE$;
+        LOCATE AlienMissile.Y, AlienMissile.X
+	    PRINT A_MISSILE$;
     ENDIF
 
     REM -- DRAW GAME OVER MESSAGES --
@@ -393,28 +399,28 @@ MAIN_LOOP:
         ENDIF
     ENDIF
 
-    IF PVIS = 1 THEN
+    IF Player.Visible = 1 THEN
         IF K$ = "a" THEN 
-	   PDIR = -1
-	ENDIF
+    	    Player.Direction = -1
+    	ENDIF
         IF K$ = "d" THEN 
-	   PDIR = 1
-	ENDIF
-        IF K$ = " " AND PMFIRE = 0 THEN 
-	   FIRE_PLAYER_MISSILE
-	ENDIF
+            Player.Direction = 1
+        ENDIF
+        IF K$ = " " AND PlayerMissile.IsFiring = 0 THEN 
+            FIRE_PLAYER_MISSILE
+        ENDIF
     ENDIF
     
     IF GAMEOVER = 0 THEN
         SFRAME = SFRAME + 1
         IF SFRAME > SPEED THEN
             UPDATE_GAME
-	    RENDER_SCREEN
+	        RENDER_SCREEN
             SFRAME = 0
-	    FRAME = FRAME + 1
-	    IF FRAME > 1 then
-	       FRAME = 0
-	    ENDIF
+            FRAME = FRAME + 1
+            IF FRAME > 1 then
+            FRAME = 0
+            ENDIF
         ENDIF
     ENDIF
 
@@ -426,9 +432,5 @@ END_GAME:
     CLS
 ENDSUB
 
-
-
-CLS
-CURSOR 0
 INIT_GAME
 GAME_LOOP

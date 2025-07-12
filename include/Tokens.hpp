@@ -85,6 +85,7 @@ namespace Tokens {
         TYPE = 0x4B,    
         ENDTYPE = 0x4C, 
         INPUT = 0x4D, 
+        ELSEIF = 0x4E,
         STOP = 0x50,    
         RESUME = 0x51, 
         C_LEFTBRACE = 0x52,  

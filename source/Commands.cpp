@@ -536,7 +536,7 @@ void Commands::do_input(NeReLaBasic& vm) {
         }
     }
     else {
-        // --- Case 2: No prompt string ---
+        // --- Case 2: No prompt string ---l
         TextIO::print("? ");
     }
 

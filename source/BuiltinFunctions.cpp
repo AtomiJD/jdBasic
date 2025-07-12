@@ -2572,7 +2572,10 @@ BasicValue builtin_max(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // ANY(array, [dimension]) -> boolean or array
 BasicValue builtin_any(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() < 1 || args.size() > 2) { Error::set(8, vm.runtime_current_line); return false; }
-    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line, "First argument to ANY must be an array."); return false; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { 
+        Error::set(15, vm.runtime_current_line, "First argument to ANY must be an array."); 
+        return false; 
+    }
     const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
     if (!arr_ptr || arr_ptr->data.empty()) { return false; } // ANY of empty is false
 
@@ -2643,6 +2646,175 @@ BasicValue builtin_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
     else { Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1."); return true; }
     return result_ptr;
+}
+
+// SCAN(operator, array) -> array
+// Performs a cumulative reduction (scan) along the last axis of an array.
+BasicValue builtin_scan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SCAN requires 2 arguments: operator, array");
+        return {};
+    }
+    const BasicValue& op_arg = args[0];
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to SCAN must be an array.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!source_ptr || source_ptr->data.empty()) {
+        return source_ptr; // Return original array if null or empty
+    }
+
+    // 2. --- Setup ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape;
+    result_ptr->data.resize(source_ptr->data.size());
+
+    size_t last_dim_size = source_ptr->shape.back();
+    if (last_dim_size == 0) {
+        return source_ptr; // Nothing to scan
+    }
+    size_t num_slices = source_ptr->data.size() / last_dim_size;
+
+    // 3. --- Operator Logic ---
+    // The main loop iterates through each slice (e.g., each row in a 2D matrix)
+    for (size_t i = 0; i < num_slices; ++i) {
+        size_t slice_start_idx = i * last_dim_size;
+
+        // The accumulator holds the cumulative result for the current slice.
+        // Initialize it with the first element of the slice.
+        BasicValue accumulator = source_ptr->data[slice_start_idx];
+        result_ptr->data[slice_start_idx] = accumulator;
+
+        // Loop through the rest of the slice (from the second element onwards)
+        for (size_t j = 1; j < last_dim_size; ++j) {
+            size_t current_idx = slice_start_idx + j;
+            const BasicValue& current_val = source_ptr->data[current_idx];
+
+            // --- Apply the operator ---
+            if (std::holds_alternative<std::string>(op_arg)) {
+                const std::string op = to_upper(std::get<std::string>(op_arg));
+                double acc_d = to_double(accumulator);
+                double cur_d = to_double(current_val);
+
+                if (op == "+") accumulator = acc_d + cur_d;
+                else if (op == "-") accumulator = acc_d - cur_d;
+                else if (op == "*") accumulator = acc_d * cur_d;
+                else if (op == "/") {
+                    if (cur_d == 0.0) { Error::set(2, vm.runtime_current_line); return {}; }
+                    accumulator = acc_d / cur_d;
+                }
+                else if (op == "MIN") accumulator = std::min(acc_d, cur_d);
+                else if (op == "MAX") accumulator = std::max(acc_d, cur_d);
+                else { Error::set(1, vm.runtime_current_line, "Invalid operator string for SCAN: " + op); return {}; }
+            }
+            else if (std::holds_alternative<FunctionRef>(op_arg)) {
+                const std::string func_name = to_upper(std::get<FunctionRef>(op_arg).name);
+                if (!vm.active_function_table->count(func_name)) {
+                    Error::set(22, vm.runtime_current_line, "Operator function '" + func_name + "' not found.");
+                    return {};
+                }
+                const auto& func_info = vm.active_function_table->at(func_name);
+                if (func_info.arity != 2) {
+                    Error::set(26, vm.runtime_current_line, "Operator function '" + func_name + "' must accept exactly two arguments.");
+                    return {};
+                }
+                std::vector<BasicValue> func_args = { accumulator, current_val };
+                accumulator = vm.execute_function_for_value(func_info, func_args);
+                if (Error::get() != 0) return {}; // Propagate error
+            }
+            else {
+                Error::set(15, vm.runtime_current_line, "First argument to SCAN must be an operator string or a function reference.");
+                return {};
+            }
+
+            result_ptr->data[current_idx] = accumulator;
+        }
+    }
+
+    return result_ptr;
+}
+
+// REDUCE(function@, array, [initial_value]) -> value
+// Performs a cumulative reduction on an array using a user-provided function.
+BasicValue builtin_reduce(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "REDUCE requires 2 or 3 arguments: function_ref, array, [initial_value]");
+        return {};
+    }
+    if (!std::holds_alternative<FunctionRef>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to REDUCE must be a function reference (e.g., MyFunc@).");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to REDUCE must be an array.");
+        return {};
+    }
+
+    // 2. --- Argument Parsing ---
+    const auto& func_ref = std::get<FunctionRef>(args[0]);
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const std::string func_name = to_upper(func_ref.name);
+
+    // 3. --- Further Validation ---
+    // Check if the provided function exists and has the correct signature (2 arguments).
+    if (!vm.active_function_table->count(func_name)) {
+        Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for REDUCE.");
+        return {};
+    }
+    const auto& func_info = vm.active_function_table->at(func_name);
+    if (func_info.arity != 2) {
+        Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' must accept exactly two arguments (accumulator, current_value).");
+        return {};
+    }
+
+    // Handle empty or null arrays. An initial value is required in these cases.
+    if (!arr_ptr || arr_ptr->data.empty()) {
+        if (args.size() == 3) {
+            return args[2]; // If an initial value is given, return it.
+        }
+        else {
+            Error::set(15, vm.runtime_current_line, "Cannot reduce a null or empty array without an initial value.");
+            return {};
+        }
+    }
+
+    // 4. --- Reduction Logic ---
+    BasicValue accumulator;
+    size_t start_index = 0;
+
+    // Determine the starting value for the accumulator.
+    if (args.size() == 3) {
+        // An initial value was provided by the user.
+        accumulator = args[2];
+        start_index = 0;
+    }
+    else {
+        // No initial value provided; use the first element of the array.
+        accumulator = arr_ptr->data[0];
+        start_index = 1;
+    }
+
+    // Iterate through the array elements, applying the user's function.
+    for (size_t i = start_index; i < arr_ptr->data.size(); ++i) {
+        const BasicValue& current_element = arr_ptr->data[i];
+
+        // Prepare the two arguments to pass to the user's BASIC function.
+        std::vector<BasicValue> func_args = { accumulator, current_element };
+
+        // Execute the user's function and update the accumulator with the result.
+        accumulator = vm.execute_function_for_value(func_info, func_args);
+
+        // If the user's function caused an error, stop and propagate it.
+        if (Error::get() != 0) {
+            return {};
+        }
+    }
+
+    // Return the final accumulated value.
+    return accumulator;
 }
 
 // IOTA(N) -> vector
@@ -3268,6 +3440,41 @@ BasicValue builtin_fac(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 }
 
+// INT(numeric_expression or array) - Traditional BASIC integer function (floor)
+BasicValue builtin_int(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::floor(d); });
+}
+
+// FLOOR(numeric_expression or array) - Rounds down
+BasicValue builtin_floor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::floor(d); });
+}
+
+// CEIL(numeric_expression or array) - Rounds up
+BasicValue builtin_ceil(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::ceil(d); });
+}
+
+// TRUNC(numeric_expression or array) - Truncates toward zero
+BasicValue builtin_trunc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::trunc(d); });
+}
 
 // --- Date and Time Functions ---
 // 
@@ -3650,7 +3857,7 @@ BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     std::string wildcard = pattern_path.has_filename() ? pattern_path.filename().string() : "*";
 
     if (!fs::exists(target_dir) || !fs::is_directory(target_dir)) {
-        Error::set(6, vm.runtime_current_line, "Directory not found: " + target_dir.string());
+        //Error::set(6, vm.runtime_current_line, "Directory or file not found: " + target_dir.string());
         return {};
     }
 
@@ -4456,6 +4663,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SQR", 1, builtin_sqr);
     register_func("RND", 1, builtin_rnd);
     register_func("FAC", 1, builtin_fac);
+    register_func("INT", 1, builtin_int);
+    register_func("FLOOR", 1, builtin_floor);
+    register_func("CEIL", 1, builtin_ceil);
+    register_func("TRUNC", 1, builtin_trunc);
 
     // --- Register APL-style Array Functions ---
     register_func("IOTA", 1, builtin_iota);
@@ -4467,6 +4678,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MAX", -1, builtin_max);
     register_func("ANY", -1, builtin_any);
     register_func("ALL", -1, builtin_all);
+    register_func("SCAN", 2, builtin_scan);
+    register_func("REDUCE", -1, builtin_reduce);
     register_func("MATMUL", 2, builtin_matmul);
     register_func("OUTER", 3, builtin_outer);
     register_func("INTEGRATE", 3, builtin_integrate);

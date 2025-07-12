@@ -1,6 +1,6 @@
 # jdBasic - A modern functional BASIC Interpreter
 
-**jdBasic** is not your grandfather's BASIC. It's a modern, powerful interpreter that blends the simplicity and familiarity of classic BASIC with concepts from functional and array-oriented programming.
+**jdBasic**: A modern BASIC interpreter with APL-style array processing and a built-in Tensor engine for building and training neural networks from scratch..
 
 Whether you're looking to relive the nostalgia of 8-bit coding with modern conveniences or explore powerful data processing paradigms in a simple syntax, jdBasic offers a unique and powerful environment. The language is designed to be easy to learn but capable enough to build complex, modular applications.
 
@@ -44,11 +44,15 @@ This is where jdBasic becomes a powerful tool for data manipulation, inspired by
 
 ## Getting Started
 
+Get the latest release at: https://github.com/AtomiJD/jdBasic/releases/tag/jdbasic
+Download: release.zip
+Extract it wherever you want.
+Open a command window and change your directory to the "code" folder.
+
 To run a jdBasic program, simply pass the source file to the interpreter from your command line:
 
 ```sh
-# Replace 'jdBasic' with the actual executable name on your system
-jdBasic test.bas
+..\bin\jdBasic test.bas
 ```
 
 ## Language Tour: A Look at the Syntax
@@ -157,6 +161,7 @@ print apply(inc@, 10)  ' Prints 11
 
 jdBasic is an active project. Future plans include:
 
+* **More Syntax Features**: Enhance TYPDEF with subs and functions.
 * **Advanced APL Features**: Implementing `SCAN` (cumulative reduce), `ROTATE`.
 * **Expanded Standard Library**: Creating more modules for features like enhanced file I/O or gaming stuff.
 * **Improved Error Reporting**: Providing more descriptive messages and context for runtime errors.

@@ -1,0 +1,26 @@
+FOR i = 1 TO 10
+ if I = 1 then 
+    PRINT "Outer 1"
+ elseif I = 2 then
+    PRINT "Outer Elseif 2"
+ elseif I = 3 then
+    PRINT "Outer Elseif 3"
+ elseif I = 4 then
+    PRINT "Outer Elseif 4"    
+    FOR J = 1 TO 10
+        IF J = 2 THEN
+            PRINT "Inner J=2"
+        ELSEIF J = 3 THEN
+            PRINT "Inner Elseif 3"
+        ELSEIF J = 4 THEN
+            PRINT "Inner Elseif 4"
+        ELSE
+            PRINT "Inner Else "; J
+        ENDIF
+    NEXT J
+ elseif I = 5 then
+    PRINT "Outer Elseif 5"
+ ELSE 
+    PRINT "Outer greater then 5: "; I
+ ENDIF
+NEXT I
