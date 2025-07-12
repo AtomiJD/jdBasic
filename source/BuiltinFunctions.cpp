@@ -753,15 +753,45 @@ BasicValue builtin_screenflip(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 }
 
 BasicValue builtin_drawcolor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 3) {
-        Error::set(8, vm.runtime_current_line);
+    // Check for the correct number of arguments (either 1 or 3)
+    if (args.size() != 1 && args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "DRAWCOLOR requires 3 numeric arguments or 1 array argument.");
         return false;
     }
-    Uint8 r = static_cast<Uint8>(to_double(args[0]));
-    Uint8 g = static_cast<Uint8>(to_double(args[1]));
-    Uint8 b = static_cast<Uint8>(to_double(args[2]));
+
+    Uint8 r, g, b;
+
+    // Case 1: Single array argument, e.g., DRAWCOLOR [r, g, b]
+    if (args.size() == 1) {
+        // Ensure the argument is an array
+        if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+            Error::set(15, vm.runtime_current_line, "Single argument to DRAWCOLOR must be an array.");
+            return false;
+        }
+
+        const auto& color_vec_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+
+        // Ensure the array is valid and has exactly 3 elements
+        if (!color_vec_ptr || color_vec_ptr->data.size() != 3) {
+            Error::set(15, vm.runtime_current_line, "Color array for DRAWCOLOR must contain exactly 3 elements.");
+            return false;
+        }
+
+        // Extract RGB values from the array
+        r = static_cast<Uint8>(to_double(color_vec_ptr->data[0]));
+        g = static_cast<Uint8>(to_double(color_vec_ptr->data[1]));
+        b = static_cast<Uint8>(to_double(color_vec_ptr->data[2]));
+    }
+    // Case 2: Three separate scalar arguments, e.g., DRAWCOLOR r, g, b
+    else {
+        r = static_cast<Uint8>(to_double(args[0]));
+        g = static_cast<Uint8>(to_double(args[1]));
+        b = static_cast<Uint8>(to_double(args[2]));
+    }
+
+    // Call the underlying graphics system function with the extracted colors
     vm.graphics_system.setDrawColor(r, g, b);
-    return false;
+    return false; // Procedures return a dummy value
 }
 
 
@@ -4710,7 +4740,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 #ifdef SDL3
     register_proc("SCREEN", -1, builtin_screen);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
-    register_proc("DRAWCOLOR", 3, builtin_drawcolor);
+    register_proc("DRAWCOLOR", -1, builtin_drawcolor);
 
     register_proc("PSET", -1, builtin_pset);
     register_proc("LINE", -1, builtin_line);

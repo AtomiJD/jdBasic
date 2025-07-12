@@ -1,4 +1,4 @@
-REM =================================================================
+  REM =================================================================
 REM JD'S INVADERS - MODERNIZED & VECTORIZED (ADVANCED)
 REM Refactored to use a Structure-of-Arrays (SoA) design with
 REM advanced array-oriented functions for collision detection.
@@ -141,7 +141,7 @@ ENDSUB
 
 SUB FIRE_PLAYER_MISSILE()
     PlayerMissile.X = Player.X + 2
-    PlayerMissile.Y = Player.Y - 1
+    PlayerMissile.Y = Player.Y - 4
     PlayerMissile.Visible = TRUE
     PlayerMissile.IsFiring = TRUE
 ENDSUB
@@ -183,6 +183,21 @@ FUNC FIND_FIRST_HIT_INDEX(Projectile, Target)
     RETURN -1
 ENDFUNC
 
+SUB CHECK_PLAYER_MISSILE_HITS()
+    FOR i = 0 TO MAX_ALIENS - 1
+        IF Aliens.Visible[i] THEN
+            IF (PlayerMissile.X >= Aliens.X[i] AND PlayerMissile.X < Aliens.X[i] + 4) AND (PlayerMissile.Y >= Aliens.Y[i] AND PlayerMissile.Y < Aliens.Y[i] + 2) THEN
+                Aliens.Visible[i] = FALSE
+                SCORE = SCORE + Aliens.Points[i]
+                PRINT Aliens.Points[i]
+                PlayerMissile.Visible = 0
+                PlayerMissile.IsFiring = 0
+                EXITFOR                           
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
 SUB UPDATE_GAME()
     REM --- MOVE PLAYER ---
     IF Player.Visible THEN
@@ -195,22 +210,15 @@ SUB UPDATE_GAME()
         IF Player.RespawnTimer = 0 THEN Player.Visible = TRUE
     ENDIF
 
-    REM --- MOVE PLAYER MISSILE AND CHECK HITS (VECTORIZED) ---
-    IF PlayerMissile.Visible THEN
-        PlayerMissile.Y = PlayerMissile.Y - 1
-        IF PlayerMissile.Y < 3 THEN
-            PlayerMissile.Visible = FALSE
-            PlayerMissile.IsFiring = FALSE
-        ELSE
-            HitIndex = FIND_FIRST_HIT_INDEX(PlayerMissile, Aliens)
-            IF HitIndex > -1 THEN
-                Aliens.Visible[HitIndex] = FALSE
-                SCORE = SCORE + Aliens.Points[HitIndex]
-                PlayerMissile.Visible = FALSE
-                PlayerMissile.IsFiring = FALSE
-            ENDIF
-        ENDIF
-    ENDIF
+   IF PlayerMissile.Visible THEN
+       PlayerMissile.Y = PlayerMissile.Y - 1
+       IF PlayerMissile.Y < 3 THEN
+           PlayerMissile.Visible = FALSE
+           PlayerMissile.IsFiring = FALSE
+       ELSE
+           CHECK_PLAYER_MISSILE_HITS 
+       ENDIF
+   ENDIF
 
     REM --- MOVE ALIENS (VECTORIZED) ---
     NextX = Aliens.X + Aliens.Direction
@@ -244,27 +252,29 @@ SUB UPDATE_GAME()
     IF AliveCount = 0 AND GAMEOVER = 0 THEN GAMEOVER = 1
 
     REM --- MOVE ALIEN MISSILE AND CHECK HITS (VECTORIZED) ---
-    IF AlienMissile.Visible THEN
-        AlienMissile.Y = AlienMissile.Y + 1
-        IF AlienMissile.Y > 36 THEN
-            AlienMissile.Visible = FALSE
-            AlienMissile.IsFiring = FALSE
-        ELSE
-            IF Player.Visible AND FIND_FIRST_HIT_INDEX(AlienMissile, Player) > -1 THEN
-                PLAYER_DIE()
-                AlienMissile.Visible = FALSE
-                AlienMissile.IsFiring = FALSE
-            ELSE
-                BlockHitIndex = FIND_FIRST_HIT_INDEX(AlienMissile, Blocks)
-                IF BlockHitIndex > -1 THEN
-                    Blocks.Hits[BlockHitIndex] = Blocks.Hits[BlockHitIndex] + 1
-                    IF Blocks.Hits[BlockHitIndex] >= 3 THEN Blocks.Visible[BlockHitIndex] = FALSE
-                    AlienMissile.Visible = FALSE
-                    AlienMissile.IsFiring = FALSE
-                ENDIF
-            ENDIF
-        ENDIF
-    ENDIF
+   IF AlienMissile.Visible THEN
+       AlienMissile.Y = AlienMissile.Y + 1
+       IF AlienMissile.Y > 36 THEN
+           AlienMissile.Visible = FALSE
+           AlienMissile.IsFiring = FALSE
+       ELSE
+           ' Direct collision check for the player
+           IF Player.Visible AND (AlienMissile.X >= Player.X AND AlienMissile.X < Player.X + 4 AND AlienMissile.Y >= Player.Y AND AlienMissile.Y < Player.Y + 2) THEN
+               PLAYER_DIE()
+               AlienMissile.Visible = FALSE
+               AlienMissile.IsFiring = FALSE
+           ELSE
+               ' Vectorized collision check for the blocks
+               BlockHitIndex = FIND_FIRST_HIT_INDEX(AlienMissile, Blocks)
+               IF BlockHitIndex > -1 THEN
+                   Blocks.Hits[BlockHitIndex] = Blocks.Hits[BlockHitIndex] + 1
+                   IF Blocks.Hits[BlockHitIndex] >= 3 THEN Blocks.Visible[BlockHitIndex] = FALSE
+                   AlienMissile.Visible = FALSE
+                   AlienMissile.IsFiring = FALSE
+               ENDIF
+           ENDIF
+       ENDIF
+   ENDIF
 ENDSUB
 
 REM ======================================================================

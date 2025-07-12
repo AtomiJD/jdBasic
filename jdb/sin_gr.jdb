@@ -56,12 +56,6 @@ DO
     ' --- Clear the screen for the new frame ---
     CLS 0, 0, 0
 
-    ' --- Draw Axes ---
-    ' Draw the X-axis (horizontal line in the middle)
-    LINE [0, SCREEN_H / 2, SCREEN_W, SCREEN_H / 2], AXIS_COLOR
-    ' Draw the Y-axis (vertical line near the left)
-    LINE [20, 0, 20, SCREEN_H], AXIS_COLOR
-
     ' --- Prepare and Draw Wave 1 (Red) ---
     angle1 = (x_axis / NUM_POINTS) * FREQUENCY1 * 2 * PI + time_step
     y_wave1 = SIN(angle1)
@@ -71,7 +65,8 @@ DO
     x2_vec1 = SLICE(x_coords, 0, 1, NUM_POINTS - 1)
     y2_vec1 = SLICE(y_coords1, 0, 1, NUM_POINTS - 1)
     lines_to_draw1 = STACK(1, x1_vec1, y1_vec1, x2_vec1, y2_vec1)
-    LINE lines_to_draw1, COLOR1
+    DRAWCOLOR COLOR1
+    LINE lines_to_draw1
 
     ' --- Prepare and Draw Wave 2 (Green) ---
     angle2 = (x_axis / NUM_POINTS) * FREQUENCY2 * 2 * PI + time_step * 1.5
@@ -82,7 +77,8 @@ DO
     x2_vec2 = SLICE(x_coords, 0, 1, NUM_POINTS - 1)
     y2_vec2 = SLICE(y_coords2, 0, 1, NUM_POINTS - 1)
     lines_to_draw2 = STACK(1, x1_vec2, y1_vec2, x2_vec2, y2_vec2)
-    LINE lines_to_draw2, COLOR2
+    DRAWCOLOR COLOR2
+    LINE lines_to_draw2
 
     ' --- Prepare and Draw Wave 3 (Blue) ---
     angle3 = (x_axis / NUM_POINTS) * FREQUENCY3 * 2 * PI + time_step * 0.5
@@ -93,7 +89,15 @@ DO
     x2_vec3 = SLICE(x_coords, 0, 1, NUM_POINTS - 1)
     y2_vec3 = SLICE(y_coords3, 0, 1, NUM_POINTS - 1)
     lines_to_draw3 = STACK(1, x1_vec3, y1_vec3, x2_vec3, y2_vec3)
-    LINE lines_to_draw3, COLOR3
+    DRAWCOLOR COLOR3
+    LINE lines_to_draw3
+
+    ' --- Draw Axes ---
+    ' Draw the X-axis (horizontal line in the middle)
+    DRAWCOLOR AXIS_COLOR
+    LINE 0, SCREEN_H / 2, SCREEN_W, SCREEN_H / 2
+    ' Draw the Y-axis (vertical line near the left)
+    LINE 20, 0, 20, SCREEN_H
 
     ' --- Update the screen and advance the animation ---
     SCREENFLIP

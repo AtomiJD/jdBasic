@@ -267,7 +267,7 @@ bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
 void NeReLaBasic::init_screen() {
     TextIO::setColor(fgcolor, bgcolor);
     TextIO::clearScreen();
-    TextIO::print("NeReLa Basic v " + NERELA_VERSION + "\n");
+    TextIO::print("jdBasic v " + NERELA_VERSION + "\n");
     TextIO::print("(c) 2025\n\n");
 }
 
@@ -275,10 +275,10 @@ void NeReLaBasic::init_system() {
     // Let's set the program start memory location, as in the original.
     pcode = 0;
     trace = 0;
-
-    TextIO::print("Trace is:  ");
-    TextIO::print_uw(trace);
-    TextIO::nl();
+    
+    //TextIO::print("Trace is:  ");
+    //TextIO::print_uw(trace);
+    //TextIO::nl();
 }
 
 void NeReLaBasic::init_basic() {
@@ -299,7 +299,7 @@ void NeReLaBasic::start() {
         Error::clear();
         direct_p_code.clear();
         linenr = 0;
-        TextIO::print("Ready\n? ");
+        TextIO::print("Ready\n" + prompt);
 
         if (!std::getline(std::cin, inputLine) || inputLine.empty()) {
             std::cin.clear();

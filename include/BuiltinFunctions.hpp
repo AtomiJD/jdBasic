@@ -16,6 +16,7 @@ using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>
 // function table (e.g., the main table or a module's table) that it should populate.
 void register_builtin_functions(NeReLaBasic& vm, FunctionTable& table_to_populate);
 BasicValue builtin_transpose(NeReLaBasic& vm, const std::vector<BasicValue>& args);
+BasicValue builtin_getenv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 BasicValue array_sum(NeReLaBasic& vm, const std::vector<BasicValue>& args);
 
 BasicValue json_to_basic_value(const nlohmann::json& j);

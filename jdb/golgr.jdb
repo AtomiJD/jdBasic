@@ -17,6 +17,7 @@ SCREEN SCREEN_W, SCREEN_H, "Game of Life in jdBasic (Vectorized)"
 CLS 0, 0, 0 ' Clear screen to black
 
 ' 3. Initial State: A "Glider"
+
 board = PLACE(RESHAPE([0], [SIZE, SIZE]), [[0, 1, 0], [0, 0, 1], [1, 1, 1]], [1, 1])
 
 ' 4. Define the 3x3 kernel to sum up all neighbors including the cell itself.

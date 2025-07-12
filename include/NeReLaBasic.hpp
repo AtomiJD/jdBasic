@@ -50,6 +50,7 @@ public:
     uint16_t prgptr = 0;
     uint16_t pcode = 0;
     uint16_t linenr = 0;
+    std::string prompt = "> ";
 
     uint8_t graphmode = 0;
     uint8_t fgcolor = 2;

@@ -638,7 +638,7 @@ void Commands::do_let(NeReLaBasic& vm) {
             if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
             vm.pcode++;
         }
-        vm.pcode++;
+        vm.pcode++; // consume ']'
 
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
@@ -646,15 +646,35 @@ void Commands::do_let(NeReLaBasic& vm) {
         BasicValue value_to_assign = vm.evaluate_expression();
         if (Error::get() != 0) return;
 
-        // Get the array, check its type, and perform assignment
-        BasicValue& array_var = get_variable(vm, name);
-        if (!std::holds_alternative<std::shared_ptr<Array>>(array_var)) {
-            Error::set(15, vm.runtime_current_line); // Type Mismatch
+        // --- NEW LOGIC TO FIX THE BUG ---
+        // The 'name' could be a simple variable "A" or a dot-chain "ALIENS.VISIBLE".
+        // We must resolve it to get the actual array object.
+        auto [parent_obj, member_name] = vm.resolve_dot_chain(name);
+        if (Error::get() != 0) return;
+
+        BasicValue* array_val_ptr = nullptr;
+
+        if (member_name.empty()) {
+            // Simple case: The variable itself is the array (e.g., A[i] = 10)
+            array_val_ptr = &parent_obj;
+        }
+        else if (std::holds_alternative<std::shared_ptr<Map>>(parent_obj)) {
+            // Dot-chain case: The array is a member of a Map/UDT (e.g., Aliens.Visible[i] = 0)
+            auto& map_ptr = std::get<std::shared_ptr<Map>>(parent_obj);
+            if (map_ptr && map_ptr->data.count(member_name)) {
+                array_val_ptr = &map_ptr->data.at(member_name);
+            }
+        }
+
+        if (!array_val_ptr || !std::holds_alternative<std::shared_ptr<Array>>(*array_val_ptr)) {
+            Error::set(15, vm.runtime_current_line, "Variable '" + name + "' is not an array.");
             return;
         }
-        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(array_var);
-        if (!arr_ptr) { Error::set(15, vm.runtime_current_line); return; }
 
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(*array_val_ptr);
+        if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array is null."); return; }
+
+        // The rest of the logic can now proceed correctly.
         try {
             size_t flat_index = arr_ptr->get_flat_index(indices);
             arr_ptr->data[flat_index] = value_to_assign;
