@@ -18,10 +18,10 @@ Y_MIN = -1.0
 Y_MAX = 1.0
 
 ' A more zoomed-in view to see more detail
-' X_MIN = -0.75
-' X_MAX = -0.74
-' Y_MIN = 0.1
-' Y_MAX = 0.11
+'X_MIN = -0.75
+'X_MAX = -0.74
+'Y_MIN = 0.1
+'Y_MAX = 0.11
 
 ' --- 2. Initialize Graphics ---
 PRINT "Initializing graphics screen..."

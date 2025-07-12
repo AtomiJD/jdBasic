@@ -288,6 +288,7 @@ public:
     BasicValue parse_factor();
     BasicValue parse_array_literal();
     BasicValue parse_map_literal();
+    BasicValue parse_pipe();
     void statement();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_repl_command(const std::vector<uint8_t>& repl_p_code);

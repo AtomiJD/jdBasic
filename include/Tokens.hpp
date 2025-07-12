@@ -105,6 +105,7 @@ namespace Tokens {
         THREAD = 0x60,
         DLLIMPORT = 0x61,
         C_UNDERLINE = 0x62,
+        C_PIPE = 0x63,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

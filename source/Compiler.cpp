@@ -205,6 +205,14 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
         vm.prgptr++;
         return Tokens::ID::C_GT;
+    case '|': // CASE for the pipe operator
+        if (vm.prgptr + 1 < vm.lineinput.length() && vm.lineinput[vm.prgptr + 1] == '>') {
+            vm.prgptr += 2; 
+            return Tokens::ID::C_PIPE;
+        }
+        // If it's just '|' by itself, you could make it an OR operator
+        // or treat it as an error. For now, we'll let it fall through.
+        break;
     }
 
     // Handle all other single-character tokens

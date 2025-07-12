@@ -147,6 +147,19 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`INSTR([start, ]haystack$, needle$)`**: Finds the position of one string within another.
   * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
 
+### Math/Arithmetic/Round Functions
+  * **`SIN(numeric expression or array)`**: Returns the Sinus.
+  * **`COS(numeric expression or array)`**: Returns the Cosinus.
+  * **`TAN(numeric expression or array)`**: Returns the Tangens.
+  * **`SQR(numeric expression or array)`**: Returns the Square Root
+  * **`RND(numeric expression or array)`**: Returns a random value
+  * **`FAC(numeric expression or array)`**: Factorial Function.
+  * **`INT(numeric expression or array)`**: Traditional BASIC integer function (floor)
+  * **`FLOOR(numeric expression or array)`**: Rounds down.
+  * **`CEIL(numeric expression or array)`**: Rounds up.
+  * **`TRUNC(numeric expression or array)`**: Truncates toward zero.
+
+
 ### Regular Expression Functions
 
 * **`REGEX.MATCH(pattern$, text$)`**: Checks if the entire `text$` string matches the `pattern$`.
@@ -162,7 +175,9 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
   * **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
   * **`IOTA(N)`**: Generates a 1D array of numbers from 1 to N.
-  * **Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
+  * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
+  * **`SCAN(operator, array) -> array`**: Performs a cumulative reduction (scan) along the last axis of an array.
+  * **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
   * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
   * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
   * **`REVERSE(array)`**: Reverses the elements of an array.
@@ -215,10 +230,10 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`SCREEN width, height, [title$]`**: Initializes a graphics window of the specified size.
   * **`SCREENFLIP`**: Updates the screen to show all drawing operations performed since the last flip.
   * **`DRAWCOLOR r, g, b`**: Sets the current drawing color using RGB values (0-255).
-  * **`PSET x, y, [r, g, b]`**: Draws a single pixel at the specified coordinates. Can also take a matrix of points.
-  * **`LINE x1, y1, x2, y2, [r, g, b]`**: Draws a line between two points. Can also take a matrix of lines.
-  * **`RECT x, y, w, h, [fill], [r, g, b]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
-  * **`CIRCLE x, y, radius, [r, g, b]`**: Draws a circle. Can also take a matrix of circles.
+  * **`PSET x, y, [r, g, b] OR PSET matrix, [colors]`**: Draws a single pixel at the specified coordinates. Can also take a matrix of points.
+  * **`LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]`**: Draws a line between two points. Can also take a matrix of lines.
+  * **`RECT x, y, w, h, [r, g, b], [fill] OR RECT matrix, [fill], [colors]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
+  * **`CIRCLE x, y, r, [r, g, b] OR CIRCLE matrix, [colors]`**: Draws a circle. Can also take a matrix of circles.
   * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
   * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
 

@@ -2087,9 +2087,53 @@ BasicValue NeReLaBasic::parse_comparison() {
     return left;
 }
 
+BasicValue NeReLaBasic::parse_pipe() {
+    // First, parse the expression to the left of the pipe.
+    // This will handle all higher-precedence operations first.
+    BasicValue left = parse_comparison();
+
+    while (true) {
+        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        if (op == Tokens::ID::C_PIPE) {
+            pcode++; // Consume the '|>' token
+
+            // The right-hand side MUST be a function reference
+            Tokens::ID rhs_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+            if (rhs_token != Tokens::ID::FUNCREF) {
+                Error::set(1, runtime_current_line, "Right-hand side of a pipe operator '|>' must be a function reference (e.g., MyFunc@).");
+                return {};
+            }
+            pcode++; // Consume the FUNCREF token
+
+            std::string func_name = to_upper(read_string(*this));
+            if (!active_function_table->count(func_name)) {
+                Error::set(22, runtime_current_line, "Function '" + func_name + "' not found for pipe operator.");
+                return {};
+            }
+            const auto& func_info = active_function_table->at(func_name);
+
+            // IMPORTANT: For this implementation, the piped function must take exactly one argument.
+            if (func_info.arity != 1) {
+                Error::set(26, runtime_current_line, "Function '" + func_name + "' must accept exactly one argument to be used with the pipe operator.");
+                return {};
+            }
+
+            // Execute the function, passing the left-side result as the single argument.
+            left = execute_function_for_value(func_info, { left });
+            if (Error::get() != 0) return {}; // Propagate any error from the function call
+
+        }
+        else {
+            break; // No more pipe operators, exit the loop.
+        }
+    }
+    return left;
+}
+
 // Level 1: Handles AND, OR, XOR with element-wise array support
 BasicValue NeReLaBasic::evaluate_expression() {
-    BasicValue left = parse_comparison();
+    //BasicValue left = parse_comparison();
+    BasicValue left = parse_pipe();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
         if (op == Tokens::ID::AND || op == Tokens::ID::OR || op == Tokens::ID::XOR) {

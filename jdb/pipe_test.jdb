@@ -1,0 +1,87 @@
+' ===================================================================
+' == Pipe Operator (`|>`) Demo for jdBasic
+' ==
+' == This program demonstrates how to use the custom pipe operator
+' == to create clean, readable, and efficient data processing chains.
+' ===================================================================
+CLS
+
+' --- 1. The Core Multi-Argument Function ---
+' This is our main filtering logic. It takes TWO arguments:
+' an array of data and a string describing the filter criteria.
+' Because it takes two arguments, it CANNOT be used directly with the pipe.
+FUNC FILTER(data_array, criteria$)
+    ' Simple parser for criteria like "> 100" or "< 50"
+    parts = SPLIT(criteria$, " ")
+    operator$ = parts[0]
+    value = VAL(parts[1])
+
+    ' Create a boolean mask based on the criteria
+    IF operator$ = ">" THEN
+        mask = data_array > value
+    ELSEIF operator$ = "<" THEN
+        mask = data_array < value
+    ELSE
+        ' Return the original array if the operator is unknown
+        RETURN data_array
+    ENDIF
+
+    ' Use the boolean mask to select the matching elements
+    ' The result of MASK*DATA_ARRAY will have zeros for non-matching elements.
+    ' We then filter those out.
+    filtered_with_zeros = mask * data_array
+    
+    final_result = []
+    FOR i = 0 TO LEN(filtered_with_zeros)[0] - 1
+        IF filtered_with_zeros[i] <> 0 THEN
+            final_result = APPEND(final_result, filtered_with_zeros[i])
+        ENDIF
+    NEXT i
+    
+    RETURN final_result
+ENDFUNC
+
+
+' --- 2. Pipe-Compatible (Single-Argument) Functions ---
+
+' This function creates a "closure". It takes only ONE argument (the array)
+' and calls our main FILTER function with a hard-coded second argument.
+' This makes it compatible with the pipe operator.
+FUNC FILTER_GT_150(data_array)
+  RETURN FILTER(data_array, "> 150")
+ENDFUNC
+
+' A simple function to sum the elements of an array.
+' It takes one argument, so it's naturally pipe-compatible.
+FUNC SUM_ARRAY(data_array)
+    RETURN SUM(data_array)
+ENDFUNC
+
+' A function to format a number into a nice string for display.
+' It also takes one argument.
+FUNC FORMAT_RESULT$(result_value)
+    RETURN "Total of High-Value Sales: " + result_value
+ENDFUNC
+
+' --- 3. The Main Program ---
+
+' Our initial dataset
+SALES_DATA = [100, 250, 80, 500, 120, 180, 300]
+PRINT "Original Sales Data: "; SALES_DATA
+PRINT
+
+' --- The "Old Way": Nested Function Calls ---
+' This is hard to read from left to right. You have to read it inside-out.
+PRINT "--- Processing the Old Way (Nested) ---"
+filtered_sales = FILTER_GT_150(SALES_DATA)
+sum_of_sales = SUM_ARRAY(filtered_sales)
+formatted_result$ = FORMAT_RESULT$(sum_of_sales)
+PRINT formatted_result$
+PRINT
+
+' --- The "New Way": The Pipe Operator ---
+' This is clean, logical, and reads like a set of instructions.
+PRINT "--- Processing the New Way (with Pipe Operator) ---"
+final_result$ = SALES_DATA |> FILTER_GT_150@ |> SUM_ARRAY@ |> FORMAT_RESULT$@
+PRINT final_result$
+
