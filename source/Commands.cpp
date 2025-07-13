@@ -7,7 +7,7 @@
 #include <conio.h>
 #include "Commands.hpp"
 #include "StringUtils.hpp"
-#include "NeReLaBasic.hpp" // We need the full class definition here
+#include "NeReLaBasic.hpp" 
 #include "Compiler.hpp""
 #include "TextIO.hpp"
 #include "Tokens.hpp"
@@ -1210,53 +1210,103 @@ void Commands::do_onerrorcall(NeReLaBasic& vm) {
 }
 
 void Commands::do_resume(NeReLaBasic& vm) {
-    // Clear the error state in the Error module (so program can continue normally)
-    Error::clear();
-    vm.current_task->error_handler_active = false; // Deactivate handler after RESUME
+    if (!vm.current_task || !vm.current_task->error_handler_active || !vm.is_processing_event) {
+        Error::set(1, vm.runtime_current_line, "RESUME without an active error handler.");
+        return;
+    }
+
+    Error::clear(); // Clear any error state from within the handler.
+
+    NeReLaBasic::Task* task = vm.current_task;
+    vm.is_processing_event = false; // We are now leaving the error handler
 
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
     if (next_token == Tokens::ID::NEXT) {
         vm.pcode++; // Consume NEXT token
 
-        // Restore the execution context exactly as it was before the error handler was called
-        vm.pcode = vm.resume_pcode_next_statement; // Points to the line/statement that caused the error
-        // The main loop in execute() will then re-evaluate it and proceed.
-        vm.runtime_current_line = vm.resume_runtime_line;
-        vm.active_p_code = vm.resume_p_code_ptr;
-        vm.active_function_table = vm.resume_function_table_ptr;
-        vm.call_stack = vm.resume_call_stack_snapshot;
-        vm.for_stack = vm.resume_for_stack_snapshot;
+        // Restore the full execution context to the state before the error.
+        vm.call_stack = task->resume_call_stack_snapshot;
+        vm.for_stack = task->resume_for_stack_snapshot;
+        vm.active_p_code = task->resume_p_code_ptr;
+        vm.active_function_table = task->resume_function_table_ptr;
 
-    }
-    else if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR) {
-        // Simple RESUME (like RESUME 0 or RESUME current line)
-        // Restore context as for RESUME NEXT
-        vm.pcode = vm.resume_pcode;
-        vm.runtime_current_line = vm.resume_runtime_line;
-        vm.active_p_code = vm.resume_p_code_ptr;
-        vm.active_function_table = vm.resume_function_table_ptr;
-        vm.call_stack = vm.resume_call_stack_snapshot;
-        vm.for_stack = vm.resume_for_stack_snapshot;
+        // Jump to the statement AFTER the one that caused the error.
+        vm.pcode = task->resume_pcode_next_statement;
+        // The line number will be updated when the pcode is processed by the main loop
 
     }
     else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
         vm.pcode++; // Consume STRING token
         std::string target_label = read_string(vm);
         if (vm.compiler->label_addresses.count(target_label)) {
-            vm.pcode = vm.compiler->label_addresses[target_label];
-            // For a GOTO-style resume, clear the stack to prevent unexpected returns
+            // A GOTO-style resume aborts the old execution path.
+            // Clear the stacks before jumping.
             vm.call_stack.clear();
             vm.for_stack.clear();
+            vm.pcode = vm.compiler->label_addresses[target_label];
         }
         else {
-            Error::set(11, vm.runtime_current_line); // Undefined label
+            Error::set(11, vm.runtime_current_line, "Undefined label in RESUME.");
         }
     }
     else {
-        Error::set(1, vm.runtime_current_line); // Syntax Error
+        // Simple RESUME (or RESUME 0) - re-execute the failing line.
+
+        // Restore context
+        vm.call_stack = task->resume_call_stack_snapshot;
+        vm.for_stack = task->resume_for_stack_snapshot;
+        vm.active_p_code = task->resume_p_code_ptr;
+        vm.active_function_table = task->resume_function_table_ptr;
+
+        // Jump back to the start of the statement that caused the error.
+        vm.pcode = task->resume_pcode;
     }
-    // The main execution loop will then continue from the new vm.pcode value.
+}
+
+void Commands::do_on(NeReLaBasic& vm) {
+    std::string event_name = to_upper(read_string(vm));
+    std::string func_name = to_upper(read_string(vm));
+
+    if (vm.active_function_table->count(func_name)) {
+        const auto& func_info = vm.active_function_table->at(func_name);
+        if (!func_info.is_procedure) {
+            Error::set(22, vm.runtime_current_line, "Event handler '" + func_name + "' must be a SUB procedure.");
+            return;
+        }
+        if (event_name == "ERROR") {
+            if (func_info.arity != 1) {
+                Error::set(26, vm.runtime_current_line, "Error handler for ON ERROR must accept exactly one argument.");
+                return;
+            }
+            if (vm.current_task) {
+                vm.current_task->error_handler_function_name = func_name;
+                vm.current_task->error_handler_active = true;
+            }
+        }
+        else {
+            vm.event_handlers[event_name] = func_name;
+        }
+    }
+    else {
+        Error::set(22, vm.runtime_current_line, "Event handler '" + func_name + "' not found.");
+    }
+}
+
+void Commands::do_raiseevent(NeReLaBasic& vm) {
+    std::string event_name = to_upper(read_string(vm));
+
+    // Evaluate the expression for the event data
+    BasicValue event_data = false;
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) {
+        vm.pcode++;
+        event_data = vm.evaluate_expression();
+        if (Error::get() != 0) {
+            return;
+        }
+    }
+
+    vm.raise_event(event_name, event_data);
 }
 
 void Commands::do_do(NeReLaBasic& vm) {
@@ -1520,14 +1570,16 @@ void Commands::do_stop(NeReLaBasic& vm) {
 
         // Tokenize the direct-mode line into its own p-code buffer.
         vm.direct_p_code.clear();
-        if (vm.compiler->tokenize(vm, inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
+        //if (vm.compiler->tokenize(vm, inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
+        if (vm.compiler->tokenize(vm, inputLine, 0, vm.direct_p_code, vm.main_function_table) != 0) {
             Error::print(); // Print tokenization error
             continue;       // And prompt again
         }
 
         // Execute the single command from the direct_p_code buffer.
         // We are NOT in resume_mode for this single command execution.
-        vm.execute_main_program(vm.direct_p_code, false);
+        vm.execute_synchronous_block(vm.direct_p_code);
+        //vm.execute_main_program(vm.direct_p_code, false);
 
         // Restore the pointers to the main program's state.
         vm.pcode = original_pcode;
@@ -1579,6 +1631,10 @@ void Commands::do_run(NeReLaBasic& vm) {
         Error::clear();
     }
     vm.active_function_table = &vm.main_function_table;
+}
+
+void Commands::do_end(NeReLaBasic& vm) {
+    vm.program_ended = true;
 }
 
 void Commands::do_tron(NeReLaBasic& vm) {

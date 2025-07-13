@@ -27,8 +27,11 @@ namespace Commands {
     void do_callsub(NeReLaBasic& vm);
     void do_onerrorcall(NeReLaBasic& vm);
     void do_resume(NeReLaBasic& vm);
+    void do_on(NeReLaBasic& vm);
+    void do_raiseevent(NeReLaBasic& vm);
     void do_do(NeReLaBasic& vm);
     void do_loop(NeReLaBasic& vm);
+    void do_end(NeReLaBasic& vm);
     
     void do_dllimport(NeReLaBasic& vm);
 

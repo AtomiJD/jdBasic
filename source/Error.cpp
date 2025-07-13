@@ -48,34 +48,72 @@ namespace {
 }
 
 void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& customMessage) {
-    if (current_error_code == 0) { // Only store the first error
+    if (g_vm_instance_ptr == nullptr || g_vm_instance_ptr->current_task == nullptr) {
         current_error_code = errorCode;
         error_line_number = lineNumber;
-        custom_error_message = customMessage; // Store the custom message
-        if (!custom_error_message.empty()) {
-            g_vm_instance_ptr->builtin_constants["ERRMSG"] = custom_error_message;
+        custom_error_message = customMessage;
+        return;
+    }
+
+    NeReLaBasic* vm = g_vm_instance_ptr;
+    NeReLaBasic::Task* task = vm->current_task;
+
+    if (task->error_handler_active && vm->is_processing_event) {
+        // A second error occurred inside the error handler itself. This is fatal.
+        current_error_code = errorCode;
+        error_line_number = lineNumber;
+        custom_error_message = customMessage;
+        task->status = TaskStatus::ERRORED;
+        return;
+    }
+
+    // Check if an error handler is defined for this task.
+    if (task->error_handler_active && !task->error_handler_function_name.empty()) {
+        current_error_code = errorCode;
+        error_line_number = lineNumber;
+        custom_error_message = customMessage;
+
+        task->jump_to_error_handler = true;
+
+        // Save execution context
+        task->resume_pcode = vm->current_statement_start_pcode;
+        task->resume_runtime_line = lineNumber;
+        task->resume_p_code_ptr = vm->active_p_code;
+        task->resume_function_table_ptr = vm->active_function_table;
+        task->resume_call_stack_snapshot = vm->call_stack;
+        task->resume_for_stack_snapshot = vm->for_stack;
+
+        std::string full_message = getMessage(errorCode) + (customMessage.empty() ? "" : ", " + customMessage);
+
+        // --- NEW: Create and store the structured Map for the argument ---
+        auto error_data_map = std::make_shared<Map>();
+        error_data_map->data["CODE"] = static_cast<double>(errorCode);
+        error_data_map->data["LINE"] = static_cast<double>(lineNumber);
+        error_data_map->data["MESSAGE"] = full_message;
+        vm->current_error_data = error_data_map;
+
+        // Set the global error variables for the handler to access
+        vm->variables["ERR"] = static_cast<double>(errorCode);
+        vm->variables["ERL"] = static_cast<double>(lineNumber);
+        vm->variables["ERRMSG$"] = getMessage(errorCode) + (customMessage.empty() ? "" : ", " + customMessage);
+
+        // Calculate where RESUME NEXT should jump to.
+        uint16_t next_pcode = vm->pcode;
+        while (next_pcode < vm->active_p_code->size()) {
+            if (static_cast<Tokens::ID>((*vm->active_p_code)[next_pcode]) == Tokens::ID::C_CR) {
+                next_pcode+=3; // Move past C_CR to the next line's metadata
+                break;
+            }
+            next_pcode++;
         }
+        task->resume_pcode_next_statement = next_pcode;
 
-        if (g_vm_instance_ptr && g_vm_instance_ptr->error_handler_active) {
-            // Set the built-in error variables (ERR and ERL)
-            g_vm_instance_ptr->err_code = static_cast<double>(errorCode);
-            g_vm_instance_ptr->erl_line = static_cast<double>(lineNumber);
-            g_vm_instance_ptr->builtin_constants["ERR"] = g_vm_instance_ptr->err_code;
-            g_vm_instance_ptr->builtin_constants["ERL"] = g_vm_instance_ptr->erl_line;
-            // Save current context for RESUME
-            g_vm_instance_ptr->resume_runtime_line = g_vm_instance_ptr->runtime_current_line;
-            g_vm_instance_ptr->resume_p_code_ptr = g_vm_instance_ptr->active_p_code;
-            g_vm_instance_ptr->resume_function_table_ptr = g_vm_instance_ptr->active_function_table;
-            g_vm_instance_ptr->resume_call_stack_snapshot = g_vm_instance_ptr->call_stack;
-            g_vm_instance_ptr->resume_for_stack_snapshot = g_vm_instance_ptr->for_stack;
-
-            // The main execution loop will calculate resume_pcode_next_statement
-            // for RESUME NEXT. For simple RESUME (retry current), use current_statement_start_pcode.
-            g_vm_instance_ptr->resume_pcode = g_vm_instance_ptr->current_statement_start_pcode; // <<< NEW
-
-            // Signal the main execution loop to jump to the error handler
-            g_vm_instance_ptr->jump_to_error_handler = true;
-        }
+    }
+    else {
+        // This is an untrappable error (no handler set).
+        current_error_code = errorCode;
+        error_line_number = lineNumber;
+        custom_error_message = customMessage;
     }
 }
 

@@ -65,7 +65,7 @@ void trim(std::string& s) {
         s = s.substr(start, end - start + 1);
 }
 
-// --- MODIFIED: The chain resolver now handles both UDTs (Maps) and COM Objects ---
+// --- The chain resolver now handles both UDTs (Maps) and COM Objects ---
 std::pair<BasicValue, std::string> NeReLaBasic::resolve_dot_chain(const std::string& chain_string) {
     std::stringstream ss(chain_string);
     std::string segment;
@@ -139,9 +139,9 @@ NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memo
     builtin_constants["PI"] = 3.14159265358979323846;
     
     // Initialize ERR and ERL as global variables
-    builtin_constants["ERR"] = 0.0;
-    builtin_constants["ERL"] = 0.0;
-    builtin_constants["ERRMSG"] = "";
+    //builtin_constants["ERR"] = 0.0;
+    //builtin_constants["ERL"] = 0.0;
+    //builtin_constants["ERRMSG"] = "";
 
     debug_state = DebugState::RUNNING;
     step_over_stack_depth = 0;
@@ -272,7 +272,6 @@ void NeReLaBasic::init_screen() {
 }
 
 void NeReLaBasic::init_system() {
-    // Let's set the program start memory location, as in the original.
     pcode = 0;
     trace = 0;
     
@@ -284,6 +283,47 @@ void NeReLaBasic::init_system() {
 void NeReLaBasic::init_basic() {
     TextIO::nl();
     //TextIO::print("Ready\n");
+}
+
+void NeReLaBasic::process_system_events() {
+    // 1. Process the internal event queue (for events raised by RAISEEVENT)
+    process_event_queue();
+
+    // 2. Process system-level keyboard events if not paused by OPTION "NOPAUSE"
+    if (!nopause_active && _kbhit()) {
+        char key = _getch();
+
+        auto key_data = std::make_shared<Map>();
+        key_data->data["key"] = std::string(1, key);
+
+        int scancode = static_cast<unsigned char>(key);
+        // On Windows, extended keys (arrows, etc.) send a 224 prefix.
+        // We read the second byte and map it to the custom scancodes our BASIC program expects.
+        if (scancode == 224) {
+            int extended_code = _getch();
+            switch (extended_code) {
+            case 75: scancode = 276; break; // Left Arrow
+            case 77: scancode = 275; break; // Right Arrow
+            case 71: scancode = 280; break; // Home
+            case 79: scancode = 279; break; // End
+            case 83: scancode = 281; break; // Delete
+            default: scancode = 0; // Unhandled extended key
+            }
+        }
+        key_data->data["scancode"] = static_cast<double>(scancode);
+
+        // Raise the "KEYDOWN" event. It will be picked up by process_event_queue()
+        // on the next iteration of whichever loop is currently active.
+        raise_event("KEYDOWN", key_data);
+    }
+
+#ifdef SDL3
+    if (graphics_system.is_initialized) {
+        if (!graphics_system.handle_events(*this)) {
+            program_ended = true;
+        }
+    }
+#endif
 }
 
 // The main REPL
@@ -330,6 +370,10 @@ void NeReLaBasic::start() {
         }
         // Execute the direct-mode p_code
         execute_synchronous_block(direct_p_code);
+        if (program_ended) { // Check if the END command was executed
+            Error::clear();
+            program_ended = false;
+        }
 
         if (Error::get() != 0) {
             Error::print();
@@ -506,6 +550,39 @@ void NeReLaBasic::handle_debug_events() {
     }
 }
 
+void NeReLaBasic::raise_event(const std::string& event_name, BasicValue data) {
+    event_queue.push_back({ to_upper(event_name), data });
+}
+
+void NeReLaBasic::process_event_queue() {
+    if (is_processing_event || event_queue.empty()) {
+        return;
+    }
+
+    is_processing_event = true;
+
+    auto event_pair = event_queue.front();
+    event_queue.pop_front();
+
+    std::string event_name = event_pair.first;
+    BasicValue event_data = event_pair.second;
+
+    if (event_handlers.count(event_name)) {
+        std::string handler_func_name = event_handlers.at(event_name);
+        if (active_function_table->count(handler_func_name)) {
+            const auto& func_info = active_function_table->at(handler_func_name);
+
+            auto args_array = std::make_shared<Array>();
+            args_array->shape = { 1 };
+            args_array->data.push_back(event_data);
+
+            std::vector<BasicValue> args = { args_array };
+
+            execute_synchronous_function(func_info, args);
+        }
+    }
+    is_processing_event = false;
+}
 
 // Wrapper for synchronous function calls from the expression parser
 BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
@@ -537,6 +614,9 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
     pcode = 0;
 
     while (pcode < active_p_code->size()) {
+        process_system_events(); 
+        if (program_ended) break;
+
         if (pcode == 0) pcode += 2; // Skip line number
         Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
         if (token == Tokens::ID::NOCMD || token == Tokens::ID::C_CR) break;
@@ -565,9 +645,6 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
 // New synchronous executor for user-defined functions
 BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
     size_t initial_stack_depth = call_stack.size();
-
-
-
     // --- Properly initialize the stack frame ---
     StackFrame frame;
     frame.return_p_code_ptr = this->active_p_code;
@@ -597,7 +674,9 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
 
     // --- Execution Loop ---
     while (call_stack.size() > initial_stack_depth && !is_stopped) {
-        
+        process_system_events(); 
+        if (program_ended) break;
+
         handle_debug_events();
 
         if (Error::get() != 0) {
@@ -637,6 +716,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     task_queue.clear();
     task_completed.clear();
     next_task_id = 0;
+    program_ended = false;
 
     auto main_task = std::make_shared<Task>();
     main_task->id = next_task_id++;
@@ -662,21 +742,13 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     
 
     while (!task_queue.empty()) {
-#ifdef SDL3
-        if (graphics_system.is_initialized) { if (!graphics_system.handle_events()) break; }
-#endif
-        if (!nopause_active && _kbhit()) {
-            char key = _getch();
-            if (key == 27) { 
-                TextIO::print("\n--- BREAK ---\n"); 
-                break; 
-            }
-            else if (key == ' ') {
-                TextIO::print("\n--- PAUSED (Press any key to resume) ---\n");
-                _getch();
-                TextIO::print("--- RESUMED ---\n");
-            }
+        process_system_events();
+        if (program_ended) {
+            break;
         }
+#ifdef SDL3
+        if (graphics_system.is_initialized) { if (!graphics_system.handle_events(*this)) break; }
+#endif
 
         for (auto it = task_queue.begin(); it != task_queue.end(); ) {
             current_task = it->second.get();
@@ -750,7 +822,44 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                             }
                             
                         }
+                        // --- Error Handling Logic ---
+                        if (Error::get() != 0) {
+                            if (current_task->jump_to_error_handler) {
+                                // A trappable error occurred. Jump to the handler.
+                                current_task->jump_to_error_handler = false; // Reset the trigger
+                                Error::clear(); // Clear the error so the handler can run
+                                is_processing_event = true; // Mark that we are in an error handler
 
+                                const auto& handler_name = current_task->error_handler_function_name;
+                                if (this->main_function_table.count(handler_name)) {
+                                    const auto& proc_info = this->main_function_table.at(handler_name);
+
+                                    // Perform a GOSUB-like call to the handler
+                                    StackFrame frame;
+                                    frame.function_name = handler_name;
+                                    // A return from an error handler is illegal; only RESUME is allowed.
+                                    // Set return pointers to a safe but invalid state.
+                                    frame.return_pcode = active_p_code->size();
+                                    frame.return_p_code_ptr = active_p_code;
+                                    frame.previous_function_table_ptr = active_function_table;
+                                    frame.for_stack_size_on_entry = for_stack.size();
+                                    call_stack.push_back(frame);
+
+                                    // Set pcode to the start of the handler
+                                    pcode = proc_info.start_pcode;
+                                }
+                                else {
+                                    Error::set(22, runtime_current_line, "Handler not found: " + handler_name);
+                                    current_task->status = TaskStatus::ERRORED;
+                                }
+                            }
+                            else {
+                                // An untrappable error occurred.
+                                current_task->status = TaskStatus::ERRORED;
+                            }
+                            line_is_done = true; // Stop processing the rest of this errored line
+                            continue;
+                        }
                         // If the statement caused the task to complete (e.g. RETURN) or yield (AWAIT), stop processing this line.
                         if (current_task->status != TaskStatus::RUNNING || current_task->yielded_execution) {
                             line_is_done = true;
@@ -782,62 +891,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                     //    pause_for_debugger();
                     //}
 
-                    // --- Error Handling Logic ---
-                    if (Error::get() != 0 && current_task->error_handler_active && current_task->jump_to_error_handler) {
-                        jump_to_error_handler = false; // Reset the flag
-                        // Clear the actual error code so ERR/ERL can be read by the handler
-                        uint8_t caught_error_code = Error::get();
-                        Error::clear();
 
-                        // Invoke the error handling function (like a CALLSUB)
-                        // You can re-use your do_callsub logic or call it directly:
-                        if (active_function_table->count(error_handler_function_name)) {
-                            const auto& proc_info = active_function_table->at(error_handler_function_name);
-                            // Call the procedure without arguments (ERR and ERL are global vars)
-                            NeReLaBasic::StackFrame frame;
-                            frame.return_p_code_ptr = this->active_p_code;
-                            frame.return_pcode = this->pcode;
-                            frame.previous_function_table_ptr = this->active_function_table;
-                            frame.for_stack_size_on_entry = this->for_stack.size();
-                            frame.function_name = error_handler_function_name;
-                            frame.linenr = runtime_current_line;
-                            // No args to pass if ERR and ERL are global
-                            this->call_stack.push_back(frame);
-
-                            if (!proc_info.module_name.empty() && compiled_modules.count(proc_info.module_name)) {
-                                auto& target_module = compiled_modules[proc_info.module_name];
-                                this->active_p_code = &target_module.p_code;
-                                this->active_function_table = &target_module.function_table;
-                            }
-                            uint16_t current_error_pcode_snapshot = pcode; // Save where the error occurred
-
-                            // Find the end of the current logical line
-                            while (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::NOCMD) {
-                                pcode++; // Move past the current problematic statement/expression
-                            }
-                            if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
-                                pcode++; // Consume C_CR
-                                pcode += 2; // Consume line number bytes for the *next* line
-                            }
-                            // Now pcode points to the start of the *next* statement after the error line.
-                            resume_pcode_next_statement = pcode;
-
-                            // Restore pcode to where it was for ERL to be accurate in the handler
-                            pcode = current_error_pcode_snapshot;
-
-                            Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                            if (next_token == Tokens::ID::C_CR)
-                                pcode++; // Consume the C_CR
-                        }
-                        else {
-                            // If the error handler function is somehow not found at runtime,
-                            // this is a fatal error, print the original error and stop.
-                            Error::set(caught_error_code, runtime_current_line); // Re-set original error
-                            Error::print();
-                            break; // Stop execution
-                        }
-                        continue; // Continue execution loop from the new pcode (the error handler)
-                    }
                 }
             }
             else if (current_task->status == TaskStatus::PAUSED_ON_AWAIT) {
@@ -870,7 +924,6 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     graphics_system.shutdown();
     sound_system.shutdown();
 #endif
-    g_vm_instance_ptr = nullptr;
     current_task = nullptr;
 }
 
@@ -966,9 +1019,21 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_callsub(*this);
         break;
-    case Tokens::ID::ONERRORCALL:
+    //case Tokens::ID::ONERRORCALL:
+    //    pcode++;
+    //    Commands::do_onerrorcall(*this);
+    //    break;
+    case Tokens::ID::ON:
         pcode++;
-        Commands::do_onerrorcall(*this);
+        Commands::do_on(*this);
+        break;
+    case Tokens::ID::RAISEEVENT:
+        pcode++;
+        Commands::do_raiseevent(*this);
+        break;
+    case Tokens::ID::END:
+        pcode++;
+        Commands::do_end(*this);
         break;
     case Tokens::ID::RESUME:
         pcode++;

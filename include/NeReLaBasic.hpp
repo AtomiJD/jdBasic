@@ -5,13 +5,14 @@
 #include <cstdint>
 #include <map>
 #include <unordered_map>
+#include <deque>
 #include "Types.hpp"
 #include "Tokens.hpp"
 #include "NetworkManager.hpp"
 #include <functional> 
 #include <future>
 
-// --- NEW: Platform-specific includes for dynamic library loading ---
+// --- Platform-specific includes for dynamic library loading ---
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -57,6 +58,7 @@ public:
     uint8_t bgcolor = 0;
     uint8_t trace = 0;
     bool is_stopped = false;
+    bool program_ended = false;
     bool nopause_active = false; // Set to true by OPTION "NOPAUSE", disables ESC/Spacebar break/pause
 
     uint16_t runtime_current_line = 0;
@@ -217,6 +219,10 @@ public:
     // bool is_compiling_module = false;
     // Holds the name of the module currently being compiled
     // std::string current_module_name;
+        // --- Event Handling System ---
+    std::map<std::string, std::string> event_handlers; // Maps event name to function name
+    std::deque<std::pair<std::string, BasicValue>> event_queue; // Queue of raised events
+    bool is_processing_event = false; // Prevents event recursion
 
 #ifdef _WIN32
     std::vector<HMODULE> loaded_libraries;
@@ -235,6 +241,7 @@ public:
 
     // --- Error Handling State ---
     bool error_handler_active = false;
+    BasicValue current_error_data;
     std::string error_handler_function_name = ""; // Name of the function to call on error
 
     // Context to return to after RESUME
@@ -279,7 +286,7 @@ public:
     // --- Function to load a dynamic module ---
     bool load_dynamic_module(const std::string& module_path);
 
-    // --- New Declarations for Expression Parsing ---
+    // --- Declarations for Expression Parsing ---
     BasicValue evaluate_expression();
     BasicValue parse_comparison();
     BasicValue parse_term();
@@ -291,12 +298,15 @@ public:
     BasicValue parse_map_literal();
     BasicValue parse_pipe();
     void statement();
+    void process_system_events();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_repl_command(const std::vector<uint8_t>& repl_p_code);
     void execute_synchronous_block(const std::vector<uint8_t>& code_to_run);
     BasicValue execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_main_program(const std::vector<uint8_t>& code_to_run, bool resume_mode);
-    BasicValue execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
+    void raise_event(const std::string& event_name, BasicValue data);
+    void process_event_queue();
+    //BasicValue execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     BasicValue launch_bsync_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void init_basic();
     void init_system();

@@ -15,15 +15,7 @@ Compiler::Compiler() {
 
 // Move the body of NeReLaBasic::parse here
 Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
-    // The entire body of the original parse function goes here.
-    // Replace member access:
-    //  'buffer' -> 'vm.buffer'
-    //  'prgptr' -> 'vm.prgptr'
-    //  'lineinput' -> 'vm.lineinput'
-    //  'active_function_table' -> 'vm.active_function_table'
-    //  'builtin_constants' -> 'vm.builtin_constants'
-    //  'Error::set(1, runtime_current_line)' -> 'Error::set(1, vm.runtime_current_line)'
-    // ...etc.
+
     vm.buffer.clear();
 
     // --- Step 1: Skip any leading whitespace ---
@@ -78,12 +70,12 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     // structure like a Trie or a specialized keyword matcher.
 
     // Attempt to match "ON ERROR CALL"
-    if (vm.prgptr + 13 <= vm.lineinput.length() && // "ON ERROR CALL" is 13 chars long (including spaces)
-        StringUtils::to_upper(vm.lineinput.substr(vm.prgptr, 13)) == "ON ERROR CALL") {
-        vm.buffer = "ON ERROR CALL"; // Store the full keyword
-        vm.prgptr += 14;           // Advance past the keyword
-        return Tokens::ID::ONERRORCALL;
-    }
+    //if (vm.prgptr + 13 <= vm.lineinput.length() && // "ON ERROR CALL" is 13 chars long (including spaces)
+    //    StringUtils::to_upper(vm.lineinput.substr(vm.prgptr, 13)) == "ON ERROR CALL") {
+    //    vm.buffer = "ON ERROR CALL"; // Store the full keyword
+    //    vm.prgptr += 14;           // Advance past the keyword
+    //    return Tokens::ID::ONERRORCALL;
+    //}
     // Add other multi-word keywords here if you introduce them (e.g., "ON GOSUB")
     // Example: if (prgptr + X <= lineinput.length() && StringUtils::to_upper(lineinput.substr(prgptr, X)) == "ANOTHER MULTI WORD KEYWORD") { ... }
 
@@ -320,6 +312,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 // Keywords that are ignored at compile-time (they are just markers).
             case Tokens::ID::TO:
             case Tokens::ID::STEP:
+            case Tokens::ID::CALL:
                 continue; // Do nothing, just consume the token.
 
                 // A comment token means we ignore the rest of the line.
@@ -331,7 +324,29 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
             case Tokens::ID::LABEL:
                 label_addresses[vm.buffer] = out_p_code.size();
                 continue;
-
+            case Tokens::ID::ON: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                // Parse the event name (identifier)
+                parse(vm, false);
+                for (char c : vm.buffer) out_p_code.push_back(c);
+                out_p_code.push_back(0); // Null terminator for event name
+                // Parse the CALL keyword
+                parse(vm, false);
+                // Parse the function name
+                parse(vm, false);
+                for (char c : vm.buffer) out_p_code.push_back(c);
+                out_p_code.push_back(0); // Null terminator for function name
+                continue;
+            }
+            case Tokens::ID::RAISEEVENT: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                // Parse the event name (identifier)
+                parse(vm, false);
+                for (char c : vm.buffer) out_p_code.push_back(c);
+                out_p_code.push_back(0); // Null terminator
+                // The comma is handled as part of the expression parsing
+                continue;
+            }
                 // Handle FUNC: parse the name, write a placeholder, and store the patch address.
             case Tokens::ID::FUNC: {
                 parse(vm, is_start_of_statement); // Parse the next token, which is the function name.
@@ -590,14 +605,14 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 out_p_code.push_back(0);
                 continue;
             }
-            case Tokens::ID::ONERRORCALL: {
-                out_p_code.push_back(static_cast<uint8_t>(token));
-                parse(vm, is_start_of_statement); // Parse the next token which is the function name
-                for (char c : vm.buffer) out_p_code.push_back(c);
-                out_p_code.push_back(0); // Null terminator for the function name
-                vm.prgptr = vm.lineinput.length(); // Consume rest of the line as it's just the function name
-                continue;
-            }
+            //case Tokens::ID::ONERRORCALL: {
+            //    out_p_code.push_back(static_cast<uint8_t>(token));
+            //    parse(vm, is_start_of_statement); // Parse the next token which is the function name
+            //    for (char c : vm.buffer) out_p_code.push_back(c);
+            //    out_p_code.push_back(0); // Null terminator for the function name
+            //    vm.prgptr = vm.lineinput.length(); // Consume rest of the line as it's just the function name
+            //    continue;
+            //}
             case Tokens::ID::RESUME: { // Handle RESUME arguments during tokenization
                 out_p_code.push_back(static_cast<uint8_t>(token));
                 // Peek to see if RESUME is followed by NEXT or a string (label)

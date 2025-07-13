@@ -1,6 +1,7 @@
 #ifdef SDL3
 #include "Graphics.hpp"
 #include "TextIO.hpp"
+#include "NeReLaBasic.hpp"
 #include <vector>
 
 Graphics::Graphics() {}
@@ -86,41 +87,81 @@ void Graphics::update_screen() {
     SDL_RenderPresent(renderer);
 }
 
-bool Graphics::handle_events() {
+bool Graphics::handle_events(NeReLaBasic& vm) {
     if (!is_initialized) return true;
 
     SDL_Event event;
     // Poll for all pending events
     while (SDL_PollEvent(&event) != 0) {
         // Check if the event is the user trying to close the window
-        if (event.type == SDL_EVENT_QUIT) {
-            quit_event_received = true;
-        }
-        else if (event.type == SDL_EVENT_TEXT_INPUT) {
-            // event.text.text is a null-terminated string
-            // For INKEY$, we typically just care about the first character.
-            if (event.text.text[0] != '\0') {
-                key_buffer.push_back(event.text.text[0]);
+        switch (event.type) {
+            case SDL_EVENT_QUIT:
+                quit_event_received = true;
+                vm.raise_event("QUIT", true);
+                break;
+
+
+            case SDL_EVENT_TEXT_INPUT: {
+                // event.text.text is a null-terminated string
+                // For INKEY$, we typically just care about the first character.
+                if (event.text.text[0] != '\0') {
+                    key_buffer.push_back(event.text.text[0]);
+                    if (key_buffer.size() > 80) // If there is no inkey$ we need to clear the buffer from time to time
+                        key_buffer.clear();
+                }
+                auto text_data = std::make_shared<Map>();
+                text_data->data["text"] = std::string(event.text.text);
+                vm.raise_event("KEYPRESS", text_data);
+                break;
             }
-        }
-        // --- Capture keydown for non-text keys like ESC ---
-        else if (event.type == SDL_EVENT_KEY_DOWN) {
-            // The value 27 is the ASCII code for the Escape key.
-            if (event.key.key == SDLK_ESCAPE) {
-                key_buffer.push_back(27);
+            // --- Capture keydown for non-text keys like ESC ---
+            case SDL_EVENT_KEY_DOWN: {
+                // The value 27 is the ASCII code for the Escape key.
+                if (event.key.key == SDLK_ESCAPE) {
+                    key_buffer.push_back(27);
+                }
+                auto key_data = std::make_shared<Map>();
+                key_data->data["scancode"] = static_cast<double>(event.key.scancode);
+                key_data->data["keycode"] = static_cast<double>(event.key.key);
+                key_data->data["repeat"] = static_cast<bool>(event.key.repeat);
+                vm.raise_event("KEYDOWN", key_data);
+                break;
             }
-        }
-        // --- Handle mouse events ---
-        else if (event.type == SDL_EVENT_MOUSE_MOTION) {
-            mouse_x = event.motion.x;
-            mouse_y = event.motion.y;
-        }
-        else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
-            // Update coordinates on click as well
-            mouse_x = event.button.x;
-            mouse_y = event.button.y;
-            // Get the full button state bitmask
-            mouse_button_state = SDL_GetMouseState(NULL, NULL);
+                // --- Handle mouse events ---
+            case SDL_EVENT_MOUSE_MOTION: {
+                auto mouse_data = std::make_shared<Map>();
+                mouse_data->data["x"] = static_cast<double>(event.motion.x);
+                mouse_data->data["y"] = static_cast<double>(event.motion.y);
+                mouse_data->data["xrel"] = static_cast<double>(event.motion.xrel);
+                mouse_data->data["yrel"] = static_cast<double>(event.motion.yrel);
+                vm.raise_event("MOUSEMOVE", mouse_data);
+                mouse_x = event.motion.x;
+                mouse_y = event.motion.y;
+                break;
+            }
+            case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+                mouse_x = event.button.x;
+                mouse_y = event.button.y;
+                auto mouse_data = std::make_shared<Map>();
+                mouse_data->data["button"] = static_cast<double>(event.button.button);
+                mouse_data->data["x"] = static_cast<double>(event.button.x);
+                mouse_data->data["y"] = static_cast<double>(event.button.y);
+                mouse_data->data["clicks"] = static_cast<double>(event.button.clicks);
+                vm.raise_event("MOUSECLICK", mouse_data);
+                mouse_button_state = SDL_GetMouseState(NULL, NULL);
+                break;
+            }
+            case SDL_EVENT_MOUSE_BUTTON_UP: {
+                mouse_x = event.button.x;
+                mouse_y = event.button.y;
+                auto mouse_data = std::make_shared<Map>();
+                mouse_data->data["button"] = static_cast<double>(event.button.button);
+                mouse_data->data["x"] = static_cast<double>(event.button.x);
+                mouse_data->data["y"] = static_cast<double>(event.button.y);
+                vm.raise_event("MOUSEUP", mouse_data);
+                mouse_button_state = SDL_GetMouseState(NULL, NULL);
+                break;
+            }
         }
     }
     return !quit_event_received;

@@ -8,6 +8,8 @@
 #include "Types.hpp"
 #include "SpriteSystem.hpp" 
 
+class NeReLaBasic;
+
 class Graphics {
 public:
     Graphics();
@@ -46,7 +48,7 @@ public:
     int get_mouse_y() const;
     bool get_mouse_button_state(int button) const;
 
-    bool handle_events(); 
+    bool handle_events(NeReLaBasic& vm);
     bool should_quit();   
 
     std::string get_key_from_buffer();

@@ -78,8 +78,10 @@ namespace {
         {"TENSOR",  Tokens::ID::TENSOR},
         {"STOP",    Tokens::ID::STOP},    
         {"RESUME",  Tokens::ID::RESUME},  
-        {"ON ERROR CALL", Tokens::ID::ONERRORCALL},
-        // ... and so on for all your keywords.
+        {"ON",      Tokens::ID::ON},
+        {"CALL",    Tokens::ID::CALL},
+        {"RAISEEVENT", Tokens::ID::RAISEEVENT},
+        {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace
 
