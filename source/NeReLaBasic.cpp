@@ -502,14 +502,12 @@ void NeReLaBasic::handle_debug_events() {
             { return; }
 
     bool should_pause = false;
-    int line_adder = 1;
     std::string pause_reason = "step";
     //dap_handler->send_output_message("in handle: " + std::to_string(runtime_current_line) + ", b: " + std::to_string(breakpoints.count(runtime_current_line)));
     // 1. Check for a breakpoint. This has high priority.
     if (breakpoints.count(runtime_current_line)) {
         should_pause = true;
         pause_reason = "breakpoint";
-        line_adder = 0;
         //dap_handler->send_output_message("in break: ");
     }
     // 2. Check for stepping completion.
@@ -545,7 +543,7 @@ void NeReLaBasic::handle_debug_events() {
 
     if (should_pause) {
         debug_state = DebugState::PAUSED;
-        dap_handler->send_stopped_message(pause_reason, runtime_current_line+line_adder, this->program_to_debug);
+        dap_handler->send_stopped_message(pause_reason, runtime_current_line, this->program_to_debug);
         pause_for_debugger();
     }
 }
@@ -697,6 +695,12 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
             //TextIO::print("Exception " + std::string(e.what()));
             Error::set(1, 1, "Exception " + std::string(e.what()));
         }
+
+        // Handle multi-statement lines separated by ':'
+        if (pcode < active_p_code->size() &&
+            static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COLON) {
+            pcode++; // Consume the colon and continue the loop
+        }
         
     }
 
@@ -794,19 +798,19 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 
             // --- Task Execution Logic ---
             if (current_task->status == TaskStatus::RUNNING) {
-                // --- DAP and Breakpoint Logic ---
-                handle_debug_events();
-
                 // Check if the task's pcode is valid *before* executing
                 //if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
                 if (pcode >= active_p_code->size()) {
                     // This can happen if a function ends without RETURN/ENDFUNC. Mark as complete.
                     current_task->status = TaskStatus::COMPLETED;
+                    handle_debug_events();
                 }
                 else {
                     // Execute one line of the task
                     runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
                     pcode += 2;
+
+                    handle_debug_events();
 
                     bool line_is_done = false;
                     while (!line_is_done && pcode < active_p_code->size()) {

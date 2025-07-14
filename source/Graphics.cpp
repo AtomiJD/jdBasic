@@ -1,6 +1,7 @@
 #ifdef SDL3
 #include "Graphics.hpp"
 #include "TextIO.hpp"
+#include "Error.hpp"
 #include "NeReLaBasic.hpp"
 #include <vector>
 
@@ -100,7 +101,6 @@ bool Graphics::handle_events(NeReLaBasic& vm) {
                 vm.raise_event("QUIT", true);
                 break;
 
-
             case SDL_EVENT_TEXT_INPUT: {
                 // event.text.text is a null-terminated string
                 // For INKEY$, we typically just care about the first character.
@@ -147,7 +147,7 @@ bool Graphics::handle_events(NeReLaBasic& vm) {
                 mouse_data->data["x"] = static_cast<double>(event.button.x);
                 mouse_data->data["y"] = static_cast<double>(event.button.y);
                 mouse_data->data["clicks"] = static_cast<double>(event.button.clicks);
-                vm.raise_event("MOUSECLICK", mouse_data);
+                vm.raise_event("MOUSEDOWN", mouse_data);
                 mouse_button_state = SDL_GetMouseState(NULL, NULL);
                 break;
             }
@@ -253,7 +253,10 @@ void Graphics::pset(int x, int y, Uint8 r, Uint8 g, Uint8 b) {
 
 // Vectorized PSET
 void Graphics::pset(const std::shared_ptr<Array>& points, const std::shared_ptr<Array>& colors) {
-    if (!renderer || !points || points->shape.size() != 2 || points->shape[1] < 2) return;
+    if (!renderer || !points || points->shape.size() != 2 || points->shape[1] < 2) {
+        Error::set(1, 1, "pset needs active renderer and shape [n,2] if parameter 1 is an array.");
+        return;
+    }
 
     size_t num_items = points->shape[0];
     size_t point_stride = points->shape[1];
@@ -294,7 +297,10 @@ void Graphics::line(int x1, int y1, int x2, int y2, Uint8 r, Uint8 g, Uint8 b) {
 
 // Vectorized LINE
 void Graphics::line(const std::shared_ptr<Array>& lines, const std::shared_ptr<Array>& colors) {
-    if (!renderer || !lines || lines->shape.size() != 2 || lines->shape[1] < 4) return;
+    if (!renderer || !lines || lines->shape.size() != 2 || lines->shape[1] < 4) {
+        Error::set(1, 1, "Line needs active renderer and shape [n,4] if parameter 1 is an array.");
+        return;
+    }
 
     size_t num_items = lines->shape[0];
     size_t line_stride = lines->shape[1];
@@ -349,7 +355,10 @@ void Graphics::rect(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, bool 
 
 // Vectorized RECT
 void Graphics::rect(const std::shared_ptr<Array>& rects, bool is_filled, const std::shared_ptr<Array>& colors) {
-    if (!renderer || !rects || rects->shape.size() != 2 || rects->shape[1] < 4) return;
+    if (!renderer || !rects || rects->shape.size() != 2 || rects->shape[1] < 4) {
+        Error::set(1, 1, "rect needs active renderer and shape [n,4] if parameter 1 is an array.");
+        return;
+    }
 
     size_t num_items = rects->shape[0];
     size_t rect_stride = rects->shape[1];
@@ -418,7 +427,10 @@ void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, 
 
 // Vectorized CIRCLE
 void Graphics::circle(const std::shared_ptr<Array>& circles, const std::shared_ptr<Array>& colors) {
-    if (!renderer || !circles || circles->shape.size() != 2 || circles->shape[1] < 3) return;
+    if (!renderer || !circles || circles->shape.size() != 2 || circles->shape[1] < 3) {
+        Error::set(1, 1, "circle needs active renderer and shape [n,3] if parameter 1 is an array.");
+        return;
+    }
 
     size_t num_items = circles->shape[0];
     size_t circle_stride = circles->shape[1];

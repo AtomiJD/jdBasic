@@ -504,6 +504,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 }
                 if (peek_ptr < vm.lineinput.length() && vm.lineinput[peek_ptr] != '\'') {
                     is_one_liner_if = true;
+                    is_start_of_statement = true;
                 }
                 continue; // We never write THEN to bytecode.
             }

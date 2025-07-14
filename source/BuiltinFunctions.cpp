@@ -3470,6 +3470,16 @@ BasicValue builtin_fac(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 }
 
+// ABS(numeric_expression or array)
+BasicValue builtin_abs(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    // Use the existing helper to apply std::abs to scalars or array elements
+    return apply_math_op(args[0], [](double d) { return std::abs(d); });
+}
+
 // INT(numeric_expression or array) - Traditional BASIC integer function (floor)
 BasicValue builtin_int(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
@@ -4693,6 +4703,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SQR", 1, builtin_sqr);
     register_func("RND", 1, builtin_rnd);
     register_func("FAC", 1, builtin_fac);
+    register_func("ABS", 1, builtin_abs);
     register_func("INT", 1, builtin_int);
     register_func("FLOOR", 1, builtin_floor);
     register_func("CEIL", 1, builtin_ceil);

@@ -92,7 +92,7 @@ SUB HandleKey(KeyData)
         IF LEN(G_BUFFER$) < G_MAX_LENGTH AND KeyAsc >= 32 AND KeyAsc <= 126 THEN
             MaskChar$ = MID$(G_MASK_CHARS$, G_CURSOR_POS + 1, 1)
             IsAllowed = FALSE
-            IF MaskChar$ = "@" AND INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ", UCASE$(KeyChar$)) > 0 THEN IsAllowed = TRUE
+            IF MaskChar$ = "@" AND INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 ", UCASE$(KeyChar$)) > 0 THEN IsAllowed = TRUE
             IF MaskChar$ = "#" AND INSTR("0123456789", KeyChar$) > 0 THEN IsAllowed = TRUE
             IF MaskChar$ = KeyChar$ THEN IsAllowed = TRUE
 
@@ -106,7 +106,6 @@ SUB HandleKey(KeyData)
     ' --- Redraw the field ONLY after a key has been processed ---
     DrawInputField
 ENDSUB
-
 
 SUB DrawInputField()
     ' This subroutine handles all screen drawing for the input field.
@@ -132,7 +131,6 @@ SUB DrawInputField()
     CursorCol = G_POS_X + LEN(G_CAPTION$) + 1 + G_CURSOR_POS
     LOCATE G_POS_Y, CursorCol
 ENDSUB
-
 
 FUNC ParseMask(Mask$)
     ' This function analyzes the mask string and returns a Map.
