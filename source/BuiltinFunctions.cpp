@@ -26,6 +26,7 @@
 #include <random>
 #include <future>
 #include <regex>
+#include <cmath>
 
 
 #ifdef HTTP
@@ -725,7 +726,7 @@ extern const std::map<std::string, Waveform> waveform_map;
 // SCREEN width, height, [title$]
 // Initializes the graphics screen.
 BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 2 || args.size() > 3) {
+    if (args.size() < 2 || args.size() > 4) {
         Error::set(8, vm.runtime_current_line);
         return false;
     }
@@ -733,11 +734,19 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     int width = static_cast<int>(to_double(args[0]));
     int height = static_cast<int>(to_double(args[1]));
     std::string title = "jdBasic Graphics";
+    float scale = 1.0f;
+
     if (args.size() == 3) {
         title = to_string(args[2]);
     }
 
-    if (!vm.graphics_system.init(title, width, height)) {
+    if (args.size() == 4) {
+        scale = static_cast<float>(to_double(args[3]));
+    }
+    // --- END OF NEW BLOCK ---
+
+    // Pass all arguments, including the new scale factor, to the init method
+    if (!vm.graphics_system.init(title, width, height, scale)) {
         Error::set(1, vm.runtime_current_line); // Generic error
     }
 
@@ -1013,6 +1022,107 @@ BasicValue builtin_plotraw(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     vm.graphics_system.plot_raw(x, y, matrix_ptr, scaleX, scaleY);
 
     return false; // Procedures return a dummy value
+}
+
+// --- TURTLE GRAPHICS PROCEDURES ---
+
+// TURTLE.FORWARD distance
+BasicValue builtin_turtle_forward(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float distance = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_forward(distance);
+    return false;
+}
+
+// TURTLE.BACKWARD distance
+BasicValue builtin_turtle_backward(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float distance = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_backward(distance);
+    return false;
+}
+
+// TURTLE.LEFT degrees
+BasicValue builtin_turtle_left(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float degrees = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_left(degrees);
+    return false;
+}
+
+// TURTLE.RIGHT degrees
+BasicValue builtin_turtle_right(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float degrees = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_right(degrees);
+    return false;
+}
+
+// TURTLE.PENUP
+BasicValue builtin_turtle_penup(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_penup();
+    return false;
+}
+
+// TURTLE.PENDOWN
+BasicValue builtin_turtle_pendown(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_pendown();
+    return false;
+}
+
+// TURTLE.SETPOS x, y
+BasicValue builtin_turtle_setpos(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return false; }
+    float x = static_cast<float>(to_double(args[0]));
+    float y = static_cast<float>(to_double(args[1]));
+    vm.graphics_system.turtle_setpos(x, y);
+    return false;
+}
+
+// TURTLE.SETHEADING degrees
+BasicValue builtin_turtle_setheading(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float degrees = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_setheading(degrees);
+    return false;
+}
+
+// TURTLE.HOME
+BasicValue builtin_turtle_home(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    // We need screen dimensions for home, but we can get them from the renderer
+    int w, h;
+    SDL_GetRenderOutputSize(vm.graphics_system.renderer, &w, &h);
+    vm.graphics_system.turtle_home(w, h);
+    return false;
+}
+
+// TURTLE.DRAW
+// Redraws the entire path the turtle has taken so far.
+BasicValue builtin_turtle_draw(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_draw_path();
+    return false;
+}
+
+// TURTLE.CLEAR
+// Clears the turtle's path memory. Does not clear the screen.
+BasicValue builtin_turtle_clear(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_clear_path();
+    return false;
+}
+
+// TURTLE.SET_COLOR r, g, b
+BasicValue builtin_turtle_set_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return false; }
+    Uint8 r = static_cast<Uint8>(to_double(args[0]));
+    Uint8 g = static_cast<Uint8>(to_double(args[1]));
+    Uint8 b = static_cast<Uint8>(to_double(args[2]));
+    vm.graphics_system.turtle_set_color(r, g, b);
+    return false;
 }
 
 // --- SDL Sound Functions ---
@@ -4759,6 +4869,19 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("CIRCLE", -1, builtin_circle);
     register_proc("TEXT", -1, builtin_text);
     register_proc("PLOTRAW", -1, builtin_plotraw);
+
+    register_proc("TURTLE.FORWARD", 1, builtin_turtle_forward);
+    register_proc("TURTLE.BACKWARD", 1, builtin_turtle_backward);
+    register_proc("TURTLE.LEFT", 1, builtin_turtle_left);
+    register_proc("TURTLE.RIGHT", 1, builtin_turtle_right);
+    register_proc("TURTLE.PENUP", 0, builtin_turtle_penup);
+    register_proc("TURTLE.PENDOWN", 0, builtin_turtle_pendown);
+    register_proc("TURTLE.SETPOS", 2, builtin_turtle_setpos);
+    register_proc("TURTLE.SETHEADING", 1, builtin_turtle_setheading);
+    register_proc("TURTLE.HOME", 0, builtin_turtle_home);
+    register_proc("TURTLE.SET_COLOR", 3, builtin_turtle_set_color);
+    register_proc("TURTLE.DRAW", 0, builtin_turtle_draw);
+    register_proc("TURTLE.CLEAR", 0, builtin_turtle_clear);
 
     register_proc("SOUND.INIT", 0, builtin_sound_init);
     register_proc("SOUND.VOICE", 6, builtin_sound_voice);

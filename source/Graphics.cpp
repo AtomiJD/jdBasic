@@ -4,6 +4,7 @@
 #include "Error.hpp"
 #include "NeReLaBasic.hpp"
 #include <vector>
+#include <cmath>
 
 Graphics::Graphics() {}
 
@@ -11,9 +12,9 @@ Graphics::~Graphics() {
     shutdown();
 }
 
-bool Graphics::init(const std::string& title, int width, int height) {
+bool Graphics::init(const std::string& title, int width, int height, float scale) {
     if (is_initialized) {
-        shutdown(); // Close existing window if any
+        shutdown();
     }
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -27,18 +28,19 @@ bool Graphics::init(const std::string& title, int width, int height) {
         return false;
     }
 
-    bool success = SDL_CreateWindowAndRenderer(title.c_str(), width, height, 0, &window, &renderer); //SDL_WINDOW_FULLSCREEN removed
+    bool success = SDL_CreateWindowAndRenderer(title.c_str(), width, height, 0, &window, &renderer);
     if (!success) {
         TextIO::print("Window could not be created! SDL_Error: " + std::string(SDL_GetError()) + "\n");
         return false;
     }
 
-    // Initialize the sprite system and pass it our renderer
+    if (scale <= 0.0f) { scale = 1.0f; } // Prevent invalid scale values
+    SDL_SetRenderScale(renderer, scale, scale);
+    
     sprite_system.init(renderer);
 
     font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 24);
     if (!font) {
-        // Use TextIO for consistency, but also cerr for visibility during debugging
         std::cerr << "Failed to load font! SDL_Error: " << SDL_GetError() << std::endl;
         TextIO::print("WARNING: Failed to load font. TEXT command will not work.\n");
     }
@@ -46,6 +48,11 @@ bool Graphics::init(const std::string& title, int width, int height) {
     SDL_StartTextInput(window);
 
     is_initialized = true;
+
+    int logical_width, logical_height;
+    SDL_GetRenderOutputSize(renderer, &logical_width, &logical_height);
+    turtle_home(logical_width, logical_height);
+
     clear_screen();
     update_screen();
     return true;
@@ -281,7 +288,6 @@ void Graphics::pset(const std::shared_ptr<Array>& points, const std::shared_ptr<
     }
 }
 
-
 // --- LINE ---
 void Graphics::line(int x1, int y1, int x2, int y2) {
     if (!renderer) return;
@@ -326,7 +332,6 @@ void Graphics::line(const std::shared_ptr<Array>& lines, const std::shared_ptr<A
         SDL_RenderLine(renderer, x1, y1, x2, y2);
     }
 }
-
 
 // --- RECT ---
 void Graphics::rect(int x, int y, int w, int h, bool is_filled) {
@@ -400,7 +405,6 @@ void Graphics::rect(const std::shared_ptr<Array>& rects, bool is_filled, const s
         else SDL_RenderRects(renderer, sdl_rects.data(), num_items);
     }
 }
-
 
 // --- CIRCLE ---
 void Graphics::circle(int center_x, int center_y, int radius) {
@@ -508,5 +512,87 @@ void Graphics::plot_raw(int start_x, int start_y, const std::shared_ptr<Array>& 
         }
     }
 }
+
+// Sets the turtle to the center of the screen, facing right.
+void Graphics::turtle_home(int screen_width, int screen_height) {
+    turtle_x = screen_width / 2.0f;
+    turtle_y = screen_height / 2.0f;
+    turtle_angle = 0.0f;
+    pen_down = true;
+    pen_color = { 255, 255, 255, 255 }; // Reset color to white
+    turtle_clear_path();
+}
+
+// Moves the turtle forward, drawing a line if the pen is down.
+void Graphics::turtle_forward(float distance) {
+    // This part remains the same
+    const float angle_rad = turtle_angle * M_PI / 180.0f;
+    const float old_x = turtle_x;
+    const float old_y = turtle_y;
+    turtle_x += distance * cos(angle_rad);
+    turtle_y += distance * sin(angle_rad);
+
+    // If the pen is down, ADD the line segment to our path vector
+    if (pen_down) {
+        turtle_path.push_back({ old_x, old_y, turtle_x, turtle_y, pen_color });
+    }
+}
+
+// Draws every line currently stored in the turtle's path vector.
+void Graphics::turtle_draw_path() {
+    if (!renderer) return;
+
+    for (const auto& line : turtle_path) {
+        SDL_SetRenderDrawColor(renderer, line.color.r, line.color.g, line.color.b, line.color.a);
+        SDL_RenderLine(renderer, line.x1, line.y1, line.x2, line.y2);
+    }
+}
+
+// Clears the turtle's path history.
+void Graphics::turtle_clear_path() {
+    turtle_path.clear();
+}
+
+// Moves the turtle backward.
+void Graphics::turtle_backward(float distance) {
+    turtle_forward(-distance);
+}
+
+// Turns the turtle left by a number of degrees.
+void Graphics::turtle_left(float degrees) {
+    turtle_angle -= degrees;
+}
+
+// Turns the turtle right by a number of degrees.
+void Graphics::turtle_right(float degrees) {
+    turtle_angle += degrees;
+}
+
+// Lifts the pen, so moving doesn't draw.
+void Graphics::turtle_penup() {
+    pen_down = false;
+}
+
+// Puts the pen down, so moving will draw.
+void Graphics::turtle_pendown() {
+    pen_down = true;
+}
+
+// Moves the turtle to an absolute screen position without drawing.
+void Graphics::turtle_setpos(float x, float y) {
+    turtle_x = x;
+    turtle_y = y;
+}
+
+// Sets the turtle's absolute heading in degrees.
+void Graphics::turtle_setheading(float degrees) {
+    turtle_angle = degrees;
+}
+
+// Sets the color of the pen.
+void Graphics::turtle_set_color(Uint8 r, Uint8 g, Uint8 b) {
+    pen_color = { r, g, b, 255 };
+}
+
 
 #endif

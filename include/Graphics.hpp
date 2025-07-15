@@ -8,14 +8,24 @@
 #include "Types.hpp"
 #include "SpriteSystem.hpp" 
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+
 class NeReLaBasic;
+
+struct TurtleLine {
+    float x1, y1, x2, y2;
+    SDL_Color color;
+};
 
 class Graphics {
 public:
     Graphics();
     ~Graphics();
 
-    bool init(const std::string& title, int width, int height);
+    bool init(const std::string& title, int width, int height, float scale = 1.0f);
     void shutdown();
     void update_screen(); // Shows whatever has been drawn
     void clear_screen();  // Clears the screen to the default color
@@ -53,19 +63,42 @@ public:
 
     std::string get_key_from_buffer();
 
+    void turtle_home(int screen_width, int screen_height);
+    void turtle_forward(float distance);
+    void turtle_backward(float distance);
+    void turtle_left(float degrees);
+    void turtle_right(float degrees);
+    void turtle_penup();
+    void turtle_pendown();
+    void turtle_setpos(float x, float y);
+    void turtle_setheading(float degrees);
+    void turtle_set_color(Uint8 r, Uint8 g, Uint8 b);
+    void turtle_draw_path();
+    void turtle_clear_path();
+
     bool is_initialized = false;
     bool quit_event_received = false;
 
     SpriteSystem sprite_system;
 
+    SDL_Renderer* renderer = nullptr;
+
 private:
     SDL_Window* window = nullptr;
-    SDL_Renderer* renderer = nullptr;
+    
     TTF_Font* font = nullptr;
     std::deque<char> key_buffer;
     float mouse_x = 0.0f;
     float mouse_y = 0.0f;
     Uint32 mouse_button_state = 0;
     SDL_Color draw_color = { 255, 255, 255, 255 }; // Default to white
+
+    // TURTLE STATE VARIABLES 
+    float turtle_x = 0.0f;
+    float turtle_y = 0.0f;
+    float turtle_angle = 0.0f; // 0 degrees = facing right
+    bool pen_down = true;
+    std::vector<TurtleLine> turtle_path;
+    SDL_Color pen_color = { 255, 255, 255, 255 }; // Default to white
 };
 #endif

@@ -589,6 +589,9 @@ BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info
         BasicValue result;
         // Call it using the new "output pointer" style
         func_info.native_dll_impl(*this, args, &result);
+        //if (Error::get() != 0) {
+        //    Error::print();
+        //}
         return result;
     }
     // Priority 2: Check for the old internal function pointer

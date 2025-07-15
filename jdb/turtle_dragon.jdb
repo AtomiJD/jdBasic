@@ -1,0 +1,65 @@
+' ===============================================
+' == Dragon Curve Fractal in jdBasic
+' ===============================================
+
+SUB Update()
+    CLS 10, 20, 30
+    TURTLE.DRAW
+    SCREENFLIP
+    SLEEP 1
+ENDSUB
+
+' --- L-System Generation ---
+AXIOM$ = "FX"
+RULES = {}
+RULES{"X"} = "X+YF+"
+RULES{"Y"} = "-FX-Y"
+GENERATIONS = 10 ' Be careful, >14 can be very slow!
+
+PRINT "Generating Dragon Curve string..."
+CURRENT_STRING$ = AXIOM$
+FOR I = 1 TO GENERATIONS
+    NEXT_STRING$ = ""
+    FOR J = 1 TO LEN(CURRENT_STRING$)
+        CHAR$ = MID$(CURRENT_STRING$, J, 1)
+        IF MAP.EXISTS(RULES, CHAR$) THEN
+            NEXT_STRING$ = NEXT_STRING$ + RULES{CHAR$}
+        ELSE
+            NEXT_STRING$ = NEXT_STRING$ + CHAR$
+        ENDIF
+    NEXT J
+    CURRENT_STRING$ = NEXT_STRING$
+NEXT I
+PRINT "String generated with "; LEN(CURRENT_STRING$); " commands."
+PRINT CURRENT_STRING$
+
+' --- Main Drawing Program ---
+SCREEN 1920, 1080, "Dragon Curve", 2
+CLS 40, 10, 10 ' Dark red background
+
+TURTLE.PENUP
+TURTLE.SETPOS 300, 200
+TURTLE.PENDOWN
+TURTLE.SET_COLOR 255, 215, 0 ' Gold color
+
+STEP_LENGTH = 4
+
+PRINT "Drawing curve...Press ESC to quit."
+' Interpret the final string as drawing commands
+FOR I = 1 TO LEN(CURRENT_STRING$)
+    CMD$ = MID$(CURRENT_STRING$, I, 1)
+    IF CMD$ = "F" THEN
+        TURTLE.FORWARD STEP_LENGTH
+    ELSEIF CMD$ = "+" THEN
+        TURTLE.RIGHT 90
+    ELSEIF CMD$ = "-" THEN
+        TURTLE.LEFT 90
+    ENDIF
+    Update
+    IF INKEY$() = CHR$(27) THEN EXITFOR
+NEXT I
+
+PRINT "Dragon Curve drawing complete. Press ESC to quit."
+DO WHILE INKEY$() <> CHR$(27)
+    SLEEP 20
+LOOP

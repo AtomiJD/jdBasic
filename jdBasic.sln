@@ -9,6 +9,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "aifunc", "plugins\aifunc\ai
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sqlitefunc", "plugins\sqlitefunc\sqlitefunc.vcxproj", "{89311ECE-BCD7-4676-B916-DC0BB03230B7}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tffunc", "plugins\tffunc\tffunc.vcxproj", "{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -41,6 +43,14 @@ Global
 		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Release|x64.Build.0 = Release|x64
 		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Release|x86.ActiveCfg = Release|Win32
 		{89311ECE-BCD7-4676-B916-DC0BB03230B7}.Release|x86.Build.0 = Release|Win32
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Debug|x64.ActiveCfg = Debug|x64
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Debug|x64.Build.0 = Debug|x64
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Debug|x86.ActiveCfg = Debug|Win32
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Debug|x86.Build.0 = Debug|Win32
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Release|x64.ActiveCfg = Release|x64
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Release|x64.Build.0 = Release|x64
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Release|x86.ActiveCfg = Release|Win32
+		{DAE3EC46-4A95-408B-955B-9D8E8B2F3F1A}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

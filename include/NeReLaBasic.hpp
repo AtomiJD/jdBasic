@@ -135,7 +135,7 @@ public:
         // --- Per-Task Error Handling State ---
         bool error_handler_active = false;
         std::string error_handler_function_name = "";
-        bool jump_to_error_handler = true;
+        bool jump_to_error_handler = false;
         uint16_t resume_pcode_next_statement = 0;
         uint16_t resume_pcode = 0;
         uint16_t resume_runtime_line = 0;

@@ -1,0 +1,60 @@
+' TensorFlow Integration Example
+' Requires a model file "model.pb" in the same directory.
+
+DLLIMPORT "tffunc"
+PRINT "TensorFlow Version: "; TENSORFLOW.VERSION()
+
+' 1. Create Graph and Session
+GraphHandle = TENSORFLOW.NEW_GRAPH()
+PRINT GraphHandle
+IF NOT Typeof(GraphHandle) = "TF_GRAPH" THEN
+  PRINT "Failed to create graph"
+  END
+ENDIF
+
+' 2. Load the pre-trained model from a file
+Success = TENSORFLOW.LOAD_GRAPH_FROM_FILE(GraphHandle, "model.pb")
+IF Success = FALSE THEN
+    PRINT "Failed to load model from file."
+    END
+ENDIF
+
+SessionHandle = TENSORFLOW.NEW_SESSION(GraphHandle)
+
+IF NOT Typeof(SessionHandle) = "TF_SESSION" THEN
+  PRINT "Failed to create session"
+  END
+ENDIF
+
+' 3. Prepare input data
+DIM InputData[1, 4]  ' FIX: Define as a 1x4 matrix
+InputData[0, 0] = 1.0
+InputData[0, 1] = 2.0
+InputData[0, 2] = 3.0
+InputData[0, 3] = 4.0
+
+InputTensor = TENSORFLOW.NEW_TENSOR_FROM_ARRAY(InputData)
+
+' 4. Run Inference
+DIM Inputs AS MAP
+Inputs{"input:0"} = InputTensor
+
+DIM Outputs[1]
+Outputs[0] = "output:0"
+
+ResultMap = TENSORFLOW.SESSION_RUN(SessionHandle, GraphHandle, Inputs, Outputs,[])
+
+' 5. Process the results
+IF TYPEOF(ResultMap) = "MAP" THEN
+  ResultTensor = ResultMap{"output:0"}
+  ResultArray = TENSORFLOW.NEW_ARRAY_FROM_TENSOR(ResultTensor)
+
+  PRINT "Inference Result:"
+  PRINT FRMV$(ResultArray)
+ELSE
+  PRINT "Inference failed."
+ENDIF
+
+' Handles for TF objects are managed by OpaqueHandle and will be
+' automatically deleted when they go out of scope.
+PRINT "Done."

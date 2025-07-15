@@ -736,6 +736,10 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue;
             }
             case Tokens::ID::EXIT_DO: {
+                if (do_loop_stack.empty()) {
+                    Error::set(1, lineNumber, "EXITDO without DO.");
+                    return 1;
+                }
                 out_p_code.push_back(static_cast<uint8_t>(token));
                 // Add current location to the patch list for the current DO loop
                 do_loop_stack.back().exit_patch_locations.push_back(out_p_code.size());
