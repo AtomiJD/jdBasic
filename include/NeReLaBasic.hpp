@@ -23,6 +23,8 @@
 #ifdef SDL3
 #include "Graphics.hpp"
 #include "SoundSystem.hpp"
+#include "SpriteSystem.hpp"
+#include "TileMapSystem.hpp"
 #endif
 
 

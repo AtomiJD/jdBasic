@@ -743,7 +743,6 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     if (args.size() == 4) {
         scale = static_cast<float>(to_double(args[3]));
     }
-    // --- END OF NEW BLOCK ---
 
     // Pass all arguments, including the new scale factor, to the init method
     if (!vm.graphics_system.init(title, width, height, scale)) {
@@ -1243,34 +1242,81 @@ BasicValue builtin_mouseb(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 // --- SPRITE PROCEDURES & FUNCTIONS ---
 
 // SPRITE.LOAD type_id, "filename.png"
-BasicValue builtin_sprite_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+//BasicValue builtin_sprite_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+//    if (args.size() != 2) {
+//        Error::set(8, vm.runtime_current_line);
+//        return false;
+//    }
+//    int type_id = static_cast<int>(to_double(args[0]));
+//    std::string filename = to_string(args[1]);
+//
+//    // The sprite system is a member of the graphics system
+//    if (!vm.graphics_system.sprite_system.load_sprite_type(type_id, filename)) {
+//        // The C++ function already prints a detailed error.
+//        Error::set(1, vm.runtime_current_line, "Failed to load sprite.");
+//    }
+//    return false;
+//}
+
+// SPRITE.LOAD_ASEPRITE type_id, "filename.json"
+// Loads a sprite sheet and animation data from an Aseprite export.
+BasicValue builtin_sprite_load_aseprite(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) {
-        Error::set(8, vm.runtime_current_line);
+        Error::set(8, vm.runtime_current_line, "SPRITE.LOAD_ASEPRITE requires 2 arguments: type_id, filename$.");
         return false;
     }
     int type_id = static_cast<int>(to_double(args[0]));
     std::string filename = to_string(args[1]);
 
-    // The sprite system is a member of the graphics system
-    if (!vm.graphics_system.sprite_system.load_sprite_type(type_id, filename)) {
-        // The C++ function already prints a detailed error.
-        Error::set(1, vm.runtime_current_line, "Failed to load sprite.");
+    // The sprite system is now a direct member of the VM
+    if (!vm.graphics_system.sprite_system.load_aseprite_file(type_id, filename)) {
+        Error::set(12, vm.runtime_current_line, "Failed to load Aseprite file. Check path and JSON format.");
     }
-    return false;
+    return false; // Procedure
 }
 
 // SPRITE.CREATE(type_id, x, y) -> instance_id
+// Creates an instance of a loaded sprite type.
 BasicValue builtin_sprite_create(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) {
-        Error::set(8, vm.runtime_current_line);
-        return -1.0;
+        Error::set(8, vm.runtime_current_line, "SPRITE.CREATE requires 3 arguments: type_id, x, y.");
+        return -1.0; // Return -1 on error
     }
     int type_id = static_cast<int>(to_double(args[0]));
     float x = static_cast<float>(to_double(args[1]));
     float y = static_cast<float>(to_double(args[2]));
 
     int instance_id = vm.graphics_system.sprite_system.create_sprite(type_id, x, y);
+    if (instance_id == -1) {
+        Error::set(1, vm.runtime_current_line, "Failed to create sprite. Ensure the type_id has been loaded.");
+    }
     return static_cast<double>(instance_id);
+}
+
+// SPRITE.SET_ANIMATION instance_id, "animation_name$"
+// Sets the current animation for a sprite instance.
+BasicValue builtin_sprite_set_animation(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.SET_ANIMATION requires 2 arguments: instance_id, animation_name$.");
+        return false;
+    }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    std::string anim_name = to_string(args[1]);
+    vm.graphics_system.sprite_system.set_animation(instance_id, anim_name);
+    return false; // Procedure
+}
+
+// SPRITE.SET_FLIP instance_id, flip_boolean
+// Sets the horizontal flip state of a sprite.
+BasicValue builtin_sprite_set_flip(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.SET_FLIP requires 2 arguments: instance_id, flip_boolean.");
+        return false;
+    }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    bool flip = to_bool(args[1]);
+    vm.graphics_system.sprite_system.set_flip(instance_id, flip);
+    return false; // Procedure
 }
 
 // SPRITE.MOVE instance_id, x, y
@@ -1301,11 +1347,19 @@ BasicValue builtin_sprite_delete(NeReLaBasic& vm, const std::vector<BasicValue>&
     return false;
 }
 
-// SPRITE.UPDATE
+// SPRITE.UPDATE [delta_time]
+// Updates all sprites. Now accepts an optional delta_time for frame-rate independent physics.
 BasicValue builtin_sprite_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
-    vm.graphics_system.sprite_system.update();
-    return false;
+    if (args.size() > 1) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.UPDATE accepts 0 or 1 argument: [delta_time].");
+        return false;
+    }
+    float dt = 1.0f / 60.0f; // Default to 60 FPS if no delta is provided
+    if (args.size() == 1) {
+        dt = static_cast<float>(to_double(args[0]));
+    }
+    vm.graphics_system.sprite_system.update(dt);
+    return false; // Procedure
 }
 
 // SPRITE.DRAW_ALL
@@ -1336,6 +1390,141 @@ BasicValue builtin_sprite_collision(NeReLaBasic& vm, const std::vector<BasicValu
     int id2 = static_cast<int>(to_double(args[1]));
     return vm.graphics_system.sprite_system.check_collision(id1, id2);
 }
+
+// SPRITE.ADD_TO_GROUP group_id, instance_id
+// Adds a sprite to a group.
+BasicValue builtin_sprite_add_to_group(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.ADD_TO_GROUP requires 2 arguments: group_id, instance_id.");
+        return false;
+    }
+    int group_id = static_cast<int>(to_double(args[0]));
+    int instance_id = static_cast<int>(to_double(args[1]));
+    vm.graphics_system.sprite_system.add_to_group(group_id, instance_id);
+    return false; // Procedure
+}
+
+// SPRITE.COLLISION_GROUP(instance_id, group_id) -> hit_instance_id
+// Checks for collision between a single sprite and a group.
+BasicValue builtin_sprite_collision_group(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.COLLISION_GROUP requires 2 arguments: instance_id, group_id.");
+        return -1.0;
+    }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    int group_id = static_cast<int>(to_double(args[1]));
+    int hit_id = vm.graphics_system.sprite_system.check_collision_sprite_group(instance_id, group_id);
+    return static_cast<double>(hit_id);
+}
+
+// SPRITE.CREATE_GROUP() -> group_id
+// Creates a new, empty sprite group.
+BasicValue builtin_sprite_create_group(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.CREATE_GROUP takes no arguments.");
+        return -1.0;
+    }
+    return static_cast<double>(vm.graphics_system.sprite_system.create_group());
+}
+
+// SPRITE.COLLISION_GROUPS(group_id1, group_id2) -> array[hit_id1, hit_id2]
+// Checks for collision between two groups of sprites.
+BasicValue builtin_sprite_collision_groups(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.COLLISION_GROUPS requires 2 arguments: group_id1, group_id2.");
+        return {}; // Return empty BasicValue
+    }
+    int group_id1 = static_cast<int>(to_double(args[0]));
+    int group_id2 = static_cast<int>(to_double(args[1]));
+    std::pair<int, int> hit_pair = vm.graphics_system.sprite_system.check_collision_groups(group_id1, group_id2);
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = { 2 };
+    result_ptr->data.push_back(static_cast<double>(hit_pair.first));
+    result_ptr->data.push_back(static_cast<double>(hit_pair.second));
+    return result_ptr;
+}
+
+// -- - TILEMAP PROCEDURES & FUNCTIONS-- -
+
+// MAP.LOAD "map_name", "filename.json"
+// Loads a Tiled map file.
+BasicValue builtin_map_load(NeReLaBasic & vm, const std::vector<BasicValue>&args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "MAP.LOAD requires 2 arguments: map_name$, filename$.");
+        return false;
+    }
+    std::string map_name = to_string(args[0]);
+    std::string filename = to_string(args[1]);
+    if (!vm.graphics_system.tilemap_system.load_map(map_name, filename)) {
+        Error::set(12, vm.runtime_current_line, "Failed to load Tiled map file.");
+    }
+    return false; // Procedure
+}
+
+// MAP.DRAW_LAYER "map_name", "layer_name", [world_offset_x], [world_offset_y]
+// Draws a specific tile layer from a loaded map.
+BasicValue builtin_map_draw_layer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 2 || args.size() > 4) {
+        Error::set(8, vm.runtime_current_line, "MAP.DRAW_LAYER requires 2 to 4 arguments: map_name$, layer_name$, [offsetX], [offsetY].");
+        return false;
+    }
+    std::string map_name = to_string(args[0]);
+    std::string layer_name = to_string(args[1]);
+    int offset_x = 0;
+    int offset_y = 0;
+    if (args.size() >= 3) {
+        offset_x = static_cast<int>(to_double(args[2]));
+    }
+    if (args.size() == 4) {
+        offset_y = static_cast<int>(to_double(args[3]));
+    }
+    vm.graphics_system.tilemap_system.draw_layer(map_name, layer_name, offset_x, offset_y);
+    return false; // Procedure
+}
+
+// MAP.GET_OBJECTS("map_name", "object_type") -> Array of Maps
+// Retrieves all objects of a certain type from an object layer.
+BasicValue builtin_map_get_objects(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "MAP.GET_OBJECTS requires 2 arguments: map_name$, object_type$.");
+        return {};
+    }
+    std::string map_name = to_string(args[0]);
+    std::string object_type = to_string(args[1]);
+
+    auto objects_data = vm.graphics_system.tilemap_system.get_objects_by_type(map_name, object_type);
+
+    auto results_array = std::make_shared<Array>();
+    results_array->shape = { objects_data.size() };
+
+    for (const auto& obj_map : objects_data) {
+        auto map_ptr = std::make_shared<Map>();
+        for (const auto& pair : obj_map) {
+            // Tiled properties can be bool, float, or string. We'll try to parse intelligently.
+            // For now, we just treat them all as strings for simplicity.
+            map_ptr->data[pair.first] = pair.second;
+        }
+        results_array->data.push_back(map_ptr);
+    }
+
+    return results_array;
+}
+
+// MAP.COLLIDES(sprite_id, "map_name", "layer_name") -> boolean
+// Checks if a sprite is colliding with any solid tile on a given layer.
+BasicValue builtin_map_collides(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "MAP.COLLIDES requires 3 arguments: sprite_id, map_name$, layer_name$.");
+        return false;
+    }
+    int sprite_id = static_cast<int>(to_double(args[0]));
+    std::string map_name = to_string(args[1]);
+    std::string layer_name = to_string(args[2]);
+
+    return vm.graphics_system.tilemap_system.check_sprite_collision(sprite_id, vm.graphics_system.sprite_system, map_name, layer_name);
+}
+
 
 #endif
 
@@ -4894,18 +5083,33 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MOUSEB", 1, builtin_mouseb);
 
     // Sprite Procedures
-    register_proc("SPRITE.LOAD", 2, builtin_sprite_load);
+    //register_proc("SPRITE.LOAD", 2, builtin_sprite_load);
+    register_proc("SPRITE.LOAD_ASEPRITE", 2, builtin_sprite_load_aseprite);
     register_proc("SPRITE.MOVE", 3, builtin_sprite_move);
     register_proc("SPRITE.SET_VELOCITY", 3, builtin_sprite_set_velocity);
     register_proc("SPRITE.DELETE", 1, builtin_sprite_delete);
-    register_proc("SPRITE.UPDATE", 0, builtin_sprite_update);
+    register_proc("SPRITE.UPDATE", -1, builtin_sprite_update); // Now has optional arg
     register_proc("SPRITE.DRAW_ALL", 0, builtin_sprite_draw_all);
-
-    // Sprite Functions
+    register_proc("SPRITE.SET_ANIMATION", 2, builtin_sprite_set_animation);
+    register_proc("SPRITE.SET_FLIP", 2, builtin_sprite_set_flip);
+    register_proc("SPRITE.ADD_TO_GROUP", 2, builtin_sprite_add_to_group);
     register_func("SPRITE.CREATE", 3, builtin_sprite_create);
     register_func("SPRITE.GET_X", 1, builtin_sprite_get_x);
     register_func("SPRITE.GET_Y", 1, builtin_sprite_get_y);
     register_func("SPRITE.COLLISION", 2, builtin_sprite_collision);
+    register_func("SPRITE.CREATE_GROUP", 0, builtin_sprite_create_group);
+    register_func("SPRITE.COLLISION_GROUP", 2, builtin_sprite_collision_group);
+    register_func("SPRITE.COLLISION_GROUPS", 2, builtin_sprite_collision_groups);
+    register_func("SPRITE.GET_X", 1, builtin_sprite_get_x);
+    register_func("SPRITE.GET_Y", 1, builtin_sprite_get_y);
+
+
+    // --- Add New TileMap Functions ---
+    register_proc("MAP.LOAD", 2, builtin_map_load);
+    register_proc("MAP.DRAW_LAYER", -1, builtin_map_draw_layer); // Optional args
+    register_func("MAP.GET_OBJECTS", 2, builtin_map_get_objects);
+    register_func("MAP.COLLIDES", 3, builtin_map_collides);
+
 
 #endif
 #ifdef JDCOM

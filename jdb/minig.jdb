@@ -1,0 +1,161 @@
+' ==========================================================
+' == jdBasic Advanced Sprite & Tilemap Demo
+' ==========================================================
+'
+' This program demonstrates:
+' - Loading a Tiled map and drawing its layers.
+' - Loading an animated sprite from Aseprite.
+' - Player movement and animation state changes.
+' - Basic camera follow.
+' - Collision detection with the tilemap.
+'
+' --- CONTROLS ---
+' - A/D or Left/Right Arrows: Move the player.
+' - ESC: Quit the program.
+'
+' ----------------------------------------------------------
+
+' --- 0. Evetis
+ON "KEYDOWN" CALL HandleKeys
+ON "KEYUP" CALL HandleKeysUP
+
+Dim Event As Map
+Event{"type"} = "NA"
+
+SUB HandleKeys(data)
+    Event  = data[0]
+    Event{"type"} = "KEYDOWN"
+ENDSUB
+
+SUB HandleKeysUP(data)
+    Event  = data[0]
+    Event{"type"} = "KEYUP"
+ENDSUB
+
+' --- 1. Initialization ---
+SCREEN 800, 600, "jdBasic Advanced Demo"
+OPTION "NOPAUSE" ' Disable pause on focus loss
+
+' --- 2. Asset Loading ---
+PRINT "Loading assets..."
+
+' Load the level map from Tiled
+MAP.LOAD "level1", "level1.json"
+
+' Load the character animations from Aseprite
+' The character will be sprite type ID 1
+SPRITE.LOAD_ASEPRITE 1, "character.json"
+
+' --- 3. Game Object Creation ---
+' Find the player's spawn point from the Tiled map data
+SPAWN_POINTS = MAP.GET_OBJECTS("level1", "spawn_point")
+IF LEN(SPAWN_POINTS) > 0 THEN
+    SPAWN = SPAWN_POINTS[0] ' Use the first spawn point found
+    PLAYER_ID = SPRITE.CREATE(1, VAL(SPAWN{"x"}), VAL(SPAWN{"y"}))
+ELSE
+    ' Fallback if no spawn point is found
+    PLAYER_ID = SPRITE.CREATE(1, 100, 300)
+ENDIF
+
+' --- 4. Game Variables ---
+PLAYER_SPEED = 200.0
+GRAVITY = 800.0
+JUMP_FORCE = -450.0
+
+PLAYER_VX = 0.0 ' Player X velocity
+PLAYER_VY = 0.0 ' Player Y velocity
+IS_GROUNDED = FALSE
+
+' Camera position
+CAM_X = 0
+CAM_Y = 0
+
+LAST_TICK = TICK()
+
+' --- 5. Main Game Loop ---
+DO
+    ' --- Delta Time Calculation ---
+    CURRENT_TICK = TICK()
+    DELTA_TIME = (CURRENT_TICK - LAST_TICK) / 1000.0
+    LAST_TICK = CURRENT_TICK
+    
+    ' --- Handle Input ---
+    'EVENT = GET_EVENT() ' Get the latest event
+    
+    PLAYER_VX = 0
+    IF EVENT{"type"} = "KEYDOWN" THEN
+        ' Move left
+        IF EVENT{"scancode"} = 4 OR EVENT{"scancode"} = 80 THEN ' A or Left Arrow
+            PLAYER_VX = -PLAYER_SPEED
+            SPRITE.SET_FLIP PLAYER_ID, TRUE
+        ENDIF
+        ' Move right
+        IF EVENT{"scancode"} = 7 OR EVENT{"scancode"} = 79 THEN ' D or Right Arrow
+            PLAYER_VX = PLAYER_VX + PLAYER_SPEED
+            SPRITE.SET_FLIP PLAYER_ID, FALSE
+        ENDIF
+        ' Jump
+        IF EVENT{"scancode"} = 26 OR EVENT{"scancode"} = 82 THEN ' W or Up Arrow
+            IF IS_GROUNDED THEN
+                PLAYER_VY = JUMP_FORCE
+            ENDIF
+        ENDIF
+        ' Exit
+        IF EVENT{"scancode"} = 41 THEN EXITDO ' ESC key
+    ENDIF
+
+    ' --- Update Game Logic ---
+    
+    ' Apply gravity
+    PLAYER_VY = PLAYER_VY + GRAVITY * DELTA_TIME
+    
+    ' Set player velocity
+    SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
+    
+    ' Update all sprite positions based on velocity
+    SPRITE.UPDATE DELTA_TIME
+    
+    ' --- Collision Detection & Response ---
+    IS_GROUNDED = FALSE
+    IF MAP.COLLIDES(PLAYER_ID, "level1", "Collision") THEN
+        ' Simple collision response:
+        ' If we were falling, stop vertical movement and mark as grounded.
+        IF PLAYER_VY > 0 THEN
+            PLAYER_VY = 0
+            IS_GROUNDED = TRUE
+            ' Nudge the player up slightly to prevent getting stuck
+            SPRITE.MOVE PLAYER_ID, SPRITE.GET_X(PLAYER_ID), SPRITE.GET_Y(PLAYER_ID) - 1
+        ENDIF
+        SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
+    ENDIF
+
+    ' --- Update Animation State ---
+    IF PLAYER_VX <> 0 THEN
+        SPRITE.SET_ANIMATION PLAYER_ID, "run"
+    ELSE
+        SPRITE.SET_ANIMATION PLAYER_ID, "idle"
+    ENDIF
+
+    ' --- Update Camera ---
+    ' Make the camera follow the player smoothly
+    CAM_X = CAM_X + (SPRITE.GET_X(PLAYER_ID) - CAM_X - 400) * 0.1
+    CAM_Y = CAM_Y + (SPRITE.GET_Y(PLAYER_ID) - CAM_Y - 300) * 0.1
+
+    ' --- Drawing Phase ---
+    CLS 50, 150, 255 ' Clear to a sky blue color
+
+    ' Draw the map layers with the camera offset
+    MAP.DRAW_LAYER "level1", "Background", CAM_X, CAM_Y
+    MAP.DRAW_LAYER "level1", "Collision", CAM_X, CAM_Y
+    
+    ' Draw all sprites
+    SPRITE.DRAW_ALL
+    
+    ' Draw UI
+    TEXT 10, 10, "jdBasic Platformer Demo", 255, 255, 0
+    
+    SCREENFLIP
+LOOP
+
+' --- 6. Shutdown ---
+PRINT "Program finished."

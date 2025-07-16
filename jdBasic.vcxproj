@@ -163,6 +163,7 @@
     <ClCompile Include="source\StringUtils.cpp" />
     <ClCompile Include="source\TextEditor.cpp" />
     <ClCompile Include="source\TextIO.cpp" />
+    <ClCompile Include="source\TileMapSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\AIFunctions.hpp" />
@@ -180,6 +181,7 @@
     <ClInclude Include="include\StringUtils.hpp" />
     <ClInclude Include="include\TextEditor.hpp" />
     <ClInclude Include="include\TextIO.hpp" />
+    <ClInclude Include="include\TileMapSystem.hpp" />
     <ClInclude Include="include\Tokens.hpp" />
     <ClInclude Include="include\Types.hpp" />
   </ItemGroup>

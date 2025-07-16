@@ -38,6 +38,7 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
     SDL_SetRenderScale(renderer, scale, scale);
     
     sprite_system.init(renderer);
+    tilemap_system.init(renderer);
 
     font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 24);
     if (!font) {
@@ -63,8 +64,8 @@ void Graphics::shutdown() {
 
     SDL_StopTextInput(window);
 
-    // Shut down the sprite system first to free its textures
     sprite_system.shutdown();
+    tilemap_system.shutdown();
 
     if (font) {
         TTF_CloseFont(font);
@@ -121,7 +122,7 @@ bool Graphics::handle_events(NeReLaBasic& vm) {
                 vm.raise_event("KEYPRESS", text_data);
                 break;
             }
-            // --- Capture keydown for non-text keys like ESC ---
+                // --- Capture keydown for non-text keys like ESC ---
             case SDL_EVENT_KEY_DOWN: {
                 // The value 27 is the ASCII code for the Escape key.
                 if (event.key.key == SDLK_ESCAPE) {
@@ -132,6 +133,14 @@ bool Graphics::handle_events(NeReLaBasic& vm) {
                 key_data->data["keycode"] = static_cast<double>(event.key.key);
                 key_data->data["repeat"] = static_cast<bool>(event.key.repeat);
                 vm.raise_event("KEYDOWN", key_data);
+                break;
+            }
+            case SDL_EVENT_KEY_UP: {
+                auto key_data = std::make_shared<Map>();
+                key_data->data["scancode"] = static_cast<double>(event.key.scancode);
+                key_data->data["keycode"] = static_cast<double>(event.key.key);
+                key_data->data["repeat"] = static_cast<bool>(event.key.repeat);
+                vm.raise_event("KEYUP", key_data);
                 break;
             }
                 // --- Handle mouse events ---

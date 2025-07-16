@@ -7,6 +7,7 @@
 #include <deque>
 #include "Types.hpp"
 #include "SpriteSystem.hpp" 
+#include "TileMapSystem.hpp"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -80,6 +81,7 @@ public:
     bool quit_event_received = false;
 
     SpriteSystem sprite_system;
+    TileMapSystem tilemap_system;
 
     SDL_Renderer* renderer = nullptr;
 
