@@ -656,9 +656,9 @@
   "size": { "w": 4608, "h": 64 },
   "scale": "1",
   "frameTags": [
-   { "name": "Idle", "from": 0, "to": 7, "duration": 200, "direction": "forward", "color": "#000000ff" },
+   { "name": "idle", "from": 0, "to": 7, "duration": 200, "direction": "forward", "color": "#000000ff" },
    { "name": "Walk", "from": 8, "to": 15, "duration": 200, "direction": "forward", "color": "#000000ff" },
-   { "name": "Run", "from": 16, "to": 23, "duration": 200, "direction": "forward", "color": "#000000ff" },
+   { "name": "run", "from": 16, "to": 23, "duration": 200, "direction": "forward", "color": "#000000ff" },
    { "name": "AttackA", "from": 24, "to": 29, "duration": 200, "direction": "forward", "color": "#000000ff" },
    { "name": "AttackB", "from": 30, "to": 35, "duration": 200, "direction": "forward", "color": "#000000ff" },
    { "name": "AttackC", "from": 36, "to": 45, "duration": 200, "direction": "forward", "color": "#000000ff" },

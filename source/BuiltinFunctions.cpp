@@ -1362,10 +1362,19 @@ BasicValue builtin_sprite_update(NeReLaBasic& vm, const std::vector<BasicValue>&
     return false; // Procedure
 }
 
-// SPRITE.DRAW_ALL
+// SPRITE.DRAW_ALL [cam_x], [cam_y]
 BasicValue builtin_sprite_draw_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
-    vm.graphics_system.sprite_system.draw_all();
+    if (args.size() > 2) { // Allow 0 or 2 arguments
+        Error::set(8, vm.runtime_current_line, "SPRITE.DRAW_ALL takes 0 or 2 arguments: [cam_x], [cam_y]");
+        return false;
+    }
+    float cam_x = 0.0f;
+    float cam_y = 0.0f;
+    if (args.size() == 2) {
+        cam_x = static_cast<float>(to_double(args[0]));
+        cam_y = static_cast<float>(to_double(args[1]));
+    }
+    vm.graphics_system.sprite_system.draw_all(cam_x, cam_y);
     return false;
 }
 
@@ -1525,6 +1534,19 @@ BasicValue builtin_map_collides(NeReLaBasic& vm, const std::vector<BasicValue>& 
     return vm.graphics_system.tilemap_system.check_sprite_collision(sprite_id, vm.graphics_system.sprite_system, map_name, layer_name);
 }
 
+BasicValue builtin_map_get_tile_id(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 4) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    std::string map_name = to_string(args[0]);
+    std::string layer_name = to_string(args[1]);
+    int tile_x = static_cast<int>(to_double(args[2]));
+    int tile_y = static_cast<int>(to_double(args[3]));
+
+    int tile_id = vm.graphics_system.tilemap_system.get_tile_id(map_name, layer_name, tile_x, tile_y);
+    return static_cast<double>(tile_id);
+}
 
 #endif
 
@@ -5089,7 +5111,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SPRITE.SET_VELOCITY", 3, builtin_sprite_set_velocity);
     register_proc("SPRITE.DELETE", 1, builtin_sprite_delete);
     register_proc("SPRITE.UPDATE", -1, builtin_sprite_update); // Now has optional arg
-    register_proc("SPRITE.DRAW_ALL", 0, builtin_sprite_draw_all);
+    register_proc("SPRITE.DRAW_ALL", 2, builtin_sprite_draw_all);
     register_proc("SPRITE.SET_ANIMATION", 2, builtin_sprite_set_animation);
     register_proc("SPRITE.SET_FLIP", 2, builtin_sprite_set_flip);
     register_proc("SPRITE.ADD_TO_GROUP", 2, builtin_sprite_add_to_group);
@@ -5109,6 +5131,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("MAP.DRAW_LAYER", -1, builtin_map_draw_layer); // Optional args
     register_func("MAP.GET_OBJECTS", 2, builtin_map_get_objects);
     register_func("MAP.COLLIDES", 3, builtin_map_collides);
+    register_func("MAP.GET_TILE_ID", 4, builtin_map_get_tile_id);
 
 
 #endif

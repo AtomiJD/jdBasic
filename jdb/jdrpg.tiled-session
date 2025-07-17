@@ -1,0 +1,52 @@
+{
+    "Map/SizeTest": {
+        "height": 4300,
+        "width": 2
+    },
+    "activeFile": "untitled.tmx",
+    "expandedProjectPaths": [
+        "."
+    ],
+    "file.lastUsedOpenFilter": "All Files (*)",
+    "fileStates": {
+        "DSPlus_TileA2_ModernExterior.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 3
+        },
+        "Int2.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "Intern.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "untitled.tmx": {
+            "scale": 2.1236458333333332,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 473.0073085789965,
+                "y": 311.96350615588364
+            }
+        }
+    },
+    "last.exportedFilePath": "D:/usr/dev/c/jdBasic/jdb",
+    "last.imagePath": "D:/usr/dev/c/media/tilemaps",
+    "lastUsedTilesetExportFilter": "All Files (*)",
+    "map.lastUsedExportFilter": "JSON map files (*.tmj *.json)",
+    "map.lastUsedFormat": "tmx",
+    "openFiles": [
+        "untitled.tmx",
+        "Intern.tsx",
+        "Int2.tsx"
+    ],
+    "project": "jdrpg.tiled-project",
+    "recentFiles": [
+        "Int2.tsx",
+        "Intern.tsx",
+        "untitled.tmx",
+        "DSPlus_TileA2_ModernExterior.tsx"
+    ],
+    "tileset.lastUsedFormat": "tsx",
+    "tileset.useTransparentColor": true
+}

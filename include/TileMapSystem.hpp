@@ -28,6 +28,7 @@ public:
     std::vector<std::map<std::string, std::string>> get_objects_by_type(const std::string& map_name, const std::string& type);
 
     // Checks if a sprite's rect collides with any solid tiles on a layer.
+    int get_tile_id(const std::string& map_name, const std::string& layer_name, int tile_x, int tile_y) const;
     bool check_sprite_collision(int sprite_instance_id, const SpriteSystem& sprite_system, const std::string& map_name, const std::string& layer_name);
 
 private:

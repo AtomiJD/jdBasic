@@ -63,6 +63,7 @@ public:
     float get_x(int instance_id) const;
     float get_y(int instance_id) const;
     const SDL_FRect* get_sprite_rect(int instance_id) const;
+    SDL_FRect get_collision_rect(int instance_id) const;
 
     // --- Grouping ---
     int create_group();
@@ -72,7 +73,7 @@ public:
 
     // --- Core Engine Functions ---
     void update(float delta_time);
-    void draw_all();
+    void draw_all(float cam_x = 0.0f, float cam_y = 0.0f);
 
     // --- Collision Detection ---
     bool check_collision(int instance_id1, int instance_id2);

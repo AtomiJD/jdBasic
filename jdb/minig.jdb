@@ -32,19 +32,41 @@ SUB HandleKeysUP(data)
     Event{"type"} = "KEYUP"
 ENDSUB
 
+SUB DrawDebugTiles()
+    ' Calculate player's tile position
+    PLAYER_TILE_X = INT(SPRITE.GET_X(PLAYER_ID) / 32)
+    PLAYER_TILE_Y = INT(SPRITE.GET_Y(PLAYER_ID) / 32)
+    
+    ' Check a 3x3 grid of tiles around the player
+    FOR TY = PLAYER_TILE_Y - 1 TO PLAYER_TILE_Y + 1
+        FOR TX = PLAYER_TILE_X - 1 TO PLAYER_TILE_X + 1
+            TILE_ID = MAP.GET_TILE_ID("level1", "Collision", TX, TY)
+            IF TILE_ID <> 0 THEN
+                ' This tile is solid, draw a red box around it
+                SCREEN_X = TX * 32 - CAM_X
+                SCREEN_Y = TY * 32 - CAM_Y
+                RECT SCREEN_X, SCREEN_Y, 32, 32, 255, 0, 0, FALSE
+            ENDIF
+        NEXT
+    NEXT
+ENDSUB
+
+' --- 0. Delete me
+cd "D:\usr\dev\c\jdBasic\jdb"
+
 ' --- 1. Initialization ---
-SCREEN 800, 600, "jdBasic Advanced Demo"
+SCREEN 1920, 1080, "jdBasic Advanced Demo", 2
 OPTION "NOPAUSE" ' Disable pause on focus loss
 
 ' --- 2. Asset Loading ---
 PRINT "Loading assets..."
 
-' Load the level map from Tiled
-MAP.LOAD "level1", "level1.json"
-
 ' Load the character animations from Aseprite
 ' The character will be sprite type ID 1
 SPRITE.LOAD_ASEPRITE 1, "character.json"
+
+' Load the level map from Tiled
+MAP.LOAD "level1", "levels.json"
 
 ' --- 3. Game Object Creation ---
 ' Find the player's spawn point from the Tiled map data
@@ -54,17 +76,14 @@ IF LEN(SPAWN_POINTS) > 0 THEN
     PLAYER_ID = SPRITE.CREATE(1, VAL(SPAWN{"x"}), VAL(SPAWN{"y"}))
 ELSE
     ' Fallback if no spawn point is found
-    PLAYER_ID = SPRITE.CREATE(1, 100, 300)
+    PLAYER_ID = SPRITE.CREATE(1, 400, 250)
 ENDIF
 
 ' --- 4. Game Variables ---
-PLAYER_SPEED = 200.0
-GRAVITY = 800.0
-JUMP_FORCE = -450.0
+PLAYER_SPEED = 75.0
 
 PLAYER_VX = 0.0 ' Player X velocity
 PLAYER_VY = 0.0 ' Player Y velocity
-IS_GROUNDED = FALSE
 
 ' Camera position
 CAM_X = 0
@@ -83,33 +102,40 @@ DO
     'EVENT = GET_EVENT() ' Get the latest event
     
     PLAYER_VX = 0
+    PLAYER_VY = 0
     IF EVENT{"type"} = "KEYDOWN" THEN
         ' Move left
         IF EVENT{"scancode"} = 4 OR EVENT{"scancode"} = 80 THEN ' A or Left Arrow
             PLAYER_VX = -PLAYER_SPEED
+            PLAYER_VY = 0
             SPRITE.SET_FLIP PLAYER_ID, TRUE
         ENDIF
         ' Move right
         IF EVENT{"scancode"} = 7 OR EVENT{"scancode"} = 79 THEN ' D or Right Arrow
-            PLAYER_VX = PLAYER_VX + PLAYER_SPEED
+            PLAYER_VX = PLAYER_SPEED
+            PLAYER_VY = 0
             SPRITE.SET_FLIP PLAYER_ID, FALSE
         ENDIF
-        ' Jump
+        ' Move up
         IF EVENT{"scancode"} = 26 OR EVENT{"scancode"} = 82 THEN ' W or Up Arrow
-            IF IS_GROUNDED THEN
-                PLAYER_VY = JUMP_FORCE
-            ENDIF
+                PLAYER_VY = -PLAYER_SPEED
+                PLAYER_VX = 0
+        ENDIF
+        ' Move down
+        IF EVENT{"scancode"} = 22 OR EVENT{"scancode"} = 81 THEN ' W or Up Arrow
+                PLAYER_VY = PLAYER_SPEED
+                PLAYER_VX = 0
         ENDIF
         ' Exit
         IF EVENT{"scancode"} = 41 THEN EXITDO ' ESC key
+
+        PRINT PLAYER_VY
     ENDIF
 
     ' --- Update Game Logic ---
-    
-    ' Apply gravity
-    PLAYER_VY = PLAYER_VY + GRAVITY * DELTA_TIME
-    
-    ' Set player velocity
+    LAST_X = SPRITE.GET_X(PLAYER_ID)
+    LAST_Y = SPRITE.GET_Y(PLAYER_ID)    
+        ' Set player velocity
     SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
     
     ' Update all sprite positions based on velocity
@@ -118,19 +144,15 @@ DO
     ' --- Collision Detection & Response ---
     IS_GROUNDED = FALSE
     IF MAP.COLLIDES(PLAYER_ID, "level1", "Collision") THEN
-        ' Simple collision response:
-        ' If we were falling, stop vertical movement and mark as grounded.
-        IF PLAYER_VY > 0 THEN
-            PLAYER_VY = 0
-            IS_GROUNDED = TRUE
-            ' Nudge the player up slightly to prevent getting stuck
-            SPRITE.MOVE PLAYER_ID, SPRITE.GET_X(PLAYER_ID), SPRITE.GET_Y(PLAYER_ID) - 1
-        ENDIF
+        PLAYER_VX = 0
+        PLAYER_VY = 0
+        SPRITE.SET_VELOCITY PLAYER_ID, 0, 0
+        SPRITE.MOVE PLAYER_ID, LAST_X, LAST_Y
         SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
     ENDIF
 
     ' --- Update Animation State ---
-    IF PLAYER_VX <> 0 THEN
+    IF PLAYER_VX <> 0 OR PLAYER_VY <> 0 THEN
         SPRITE.SET_ANIMATION PLAYER_ID, "run"
     ELSE
         SPRITE.SET_ANIMATION PLAYER_ID, "idle"
@@ -138,8 +160,10 @@ DO
 
     ' --- Update Camera ---
     ' Make the camera follow the player smoothly
-    CAM_X = CAM_X + (SPRITE.GET_X(PLAYER_ID) - CAM_X - 400) * 0.1
-    CAM_Y = CAM_Y + (SPRITE.GET_Y(PLAYER_ID) - CAM_Y - 300) * 0.1
+    SX = SPRITE.GET_X(PLAYER_ID)
+    SY = SPRITE.GET_Y(PLAYER_ID)
+    CAM_X = CAM_X + (SX - CAM_X - 400) * 0.1
+    CAM_Y = CAM_Y + (SY - CAM_Y - 300) * 0.1
 
     ' --- Drawing Phase ---
     CLS 50, 150, 255 ' Clear to a sky blue color
@@ -149,10 +173,12 @@ DO
     MAP.DRAW_LAYER "level1", "Collision", CAM_X, CAM_Y
     
     ' Draw all sprites
-    SPRITE.DRAW_ALL
+    SPRITE.DRAW_ALL CAM_X, CAM_Y
+
+    'DrawDebugTiles
     
     ' Draw UI
-    TEXT 10, 10, "jdBasic Platformer Demo", 255, 255, 0
+    TEXT 10, 10, "jdBasic RPG Demo X,y: " + str$(sx) + ", " + str$(sy), 255, 255, 0
     
     SCREENFLIP
 LOOP

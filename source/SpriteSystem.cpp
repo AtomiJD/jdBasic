@@ -79,17 +79,60 @@ bool SpriteSystem::load_aseprite_file(int type_id, const std::string& json_filen
     SpriteType new_sprite_type;
     new_sprite_type.id = type_id;
 
-    std::map<std::string, SDL_Texture*> frame_textures;
-    for (auto const& [frame_name, frame_data] : data["frames"].items()) {
-        auto rect_data = frame_data["frame"];
-        SDL_FRect src_rect = { rect_data["x"], rect_data["y"], rect_data["w"], rect_data["h"] };
-        SDL_Texture* frame_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, src_rect.w, src_rect.h);
-        SDL_SetTextureBlendMode(frame_tex, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderTarget(renderer, frame_tex);
-        SDL_RenderTexture(renderer, main_sheet, &src_rect, NULL);
-        texture_atlas.push_back(frame_tex);
-        frame_textures[frame_name] = frame_tex;
+    std::vector<SDL_Texture*> sorted_frame_textures;
+    if (data["frames"].is_array()) { // Handle JSON Array format
+        sorted_frame_textures.resize(data["frames"].size());
+        for (size_t i = 0; i < data["frames"].size(); ++i) {
+            auto rect_data = data["frames"][i]["frame"];
+            SDL_FRect src_rect = { rect_data["x"], rect_data["y"], rect_data["w"], rect_data["h"] };
+            SDL_Texture* frame_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, src_rect.w, src_rect.h);
+            SDL_SetTextureBlendMode(frame_tex, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderTarget(renderer, frame_tex);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0); // fully transparent
+            SDL_RenderClear(renderer);
+            SDL_FRect dst_rect = { 0.0f, 0.0f, src_rect.w, src_rect.h };
+            SDL_RenderTexture(renderer, main_sheet, &src_rect, &dst_rect);
+            //SDL_RenderTexture(renderer, main_sheet, &src_rect, NULL);
+            texture_atlas.push_back(frame_tex);
+            sorted_frame_textures[i] = frame_tex;
+            SDL_SetRenderTarget(renderer, NULL);
+
+        }
     }
+    else { // Handle JSON Hash format
+        // Find the max frame index to size the vector correctly
+        int max_frame_idx = -1;
+        for (auto const& [key, val] : data["frames"].items()) {
+            size_t last_space = key.find_last_of(" ");
+            size_t last_dot = key.find_last_of(".");
+            if (last_space != std::string::npos && last_dot != std::string::npos) {
+                std::string num_str = key.substr(last_space + 1, last_dot - last_space - 1);
+                max_frame_idx = std::max(max_frame_idx, std::stoi(num_str));
+            }
+        }
+        sorted_frame_textures.resize(max_frame_idx + 1, nullptr);
+
+        for (auto const& [key, val] : data["frames"].items()) {
+            auto rect_data = val["frame"];
+            SDL_FRect src_rect = { rect_data["x"], rect_data["y"], rect_data["w"], rect_data["h"] };
+            SDL_Texture* frame_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, src_rect.w, src_rect.h);
+            SDL_SetTextureBlendMode(frame_tex, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderTarget(renderer, frame_tex);
+            SDL_RenderTexture(renderer, main_sheet, &src_rect, NULL);
+            texture_atlas.push_back(frame_tex);
+
+            size_t last_space = key.find_last_of(" ");
+            size_t last_dot = key.find_last_of(".");
+            if (last_space != std::string::npos && last_dot != std::string::npos) {
+                std::string num_str = key.substr(last_space + 1, last_dot - last_space - 1);
+                int frame_idx = std::stoi(num_str);
+                if (frame_idx < sorted_frame_textures.size()) {
+                    sorted_frame_textures[frame_idx] = frame_tex;
+                }
+            }
+        }
+    }
+
     SDL_SetRenderTarget(renderer, NULL);
     SDL_DestroyTexture(main_sheet);
 
@@ -102,19 +145,11 @@ bool SpriteSystem::load_aseprite_file(int type_id, const std::string& json_filen
         int to = tag["to"];
 
         for (int i = from; i <= to; ++i) {
-            for (auto const& [key, val] : data["frames"].items()) {
-                if (val.contains("frame") && val["frame"].contains("x") && val["frame"].contains("w") && val["frame"]["w"] != 0) {
-                    if (val["frame"]["x"].get<int>() / val["frame"]["w"].get<int>() == i) {
-                        if (frame_textures.count(key)) {
-                            anim.frames.push_back(frame_textures[key]);
-                            break;
-                        }
-                    }
-                }
-            }
+            anim.frames.push_back(sorted_frame_textures[i]);
         }
         new_sprite_type.animations[anim.name] = anim;
     }
+
     sprite_types[type_id] = new_sprite_type;
     return true;
 }
@@ -168,6 +203,10 @@ void SpriteSystem::set_animation(int instance_id, const std::string& animation_n
                 sprite->current_animation_name = animation_name;
                 sprite->current_frame = 0;
                 sprite->frame_timer = 0.0f;
+                Animation& anim = sprite_types[sprite->type_id].animations.at(animation_name);
+                if (!anim.frames.empty() && anim.frames[0]) {
+                    SDL_GetTextureSize(anim.frames[0], &sprite->rect.w, &sprite->rect.h);
+                }
             }
         }
     }
@@ -200,6 +239,24 @@ const SDL_FRect* SpriteSystem::get_sprite_rect(int instance_id) const {
     return nullptr;
 }
 
+SDL_FRect SpriteSystem::get_collision_rect(int instance_id) const {
+    const SDL_FRect* p_sprite_rect = this->get_sprite_rect(instance_id);
+    if (!p_sprite_rect) {
+        return { 0, 0, 0, 0 };
+    }
+
+    SDL_FRect collision_rect = *p_sprite_rect;
+    float y_offset = 32.0f;
+    float x_inset = 16.0f; // Inset from each side
+
+    collision_rect.y += y_offset;
+    collision_rect.h -= (y_offset * 1.5f);
+    collision_rect.x += x_inset;
+    collision_rect.w -= (x_inset * 2.0f); // Shrink width from both sides
+
+    return collision_rect;
+}
+
 void SpriteSystem::update(float delta_time) {
     for (auto& [id, sprite_ptr] : active_sprites) {
         Sprite* sprite = sprite_ptr.get();
@@ -208,22 +265,35 @@ void SpriteSystem::update(float delta_time) {
         sprite->x += sprite->vx * delta_time;
         sprite->y += sprite->vy * delta_time;
 
+        sprite->rect.x = sprite->x;
+        sprite->rect.y = sprite->y;
+
         if (!sprite->current_animation_name.empty()) {
-            if (sprite_types.count(sprite->type_id) && sprite_types.at(sprite->type_id).animations.count(sprite->current_animation_name)) {
-                Animation& anim = sprite_types.at(sprite->type_id).animations.at(sprite->current_animation_name);
-                if (!anim.frames.empty()) {
+            // Ensure the sprite type and animation exist before proceeding
+            if (sprite_types.count(sprite->type_id) &&
+                sprite_types.at(sprite->type_id).animations.count(sprite->current_animation_name)) {
+
+                // Get a pointer to the animation, not a reference
+                const Animation* anim = &sprite_types.at(sprite->type_id).animations.at(sprite->current_animation_name);
+
+                if (anim && !anim->frames.empty()) {
                     sprite->frame_timer += delta_time;
-                    if (sprite->frame_timer >= anim.frame_duration && anim.frame_duration > 0) {
-                        sprite->frame_timer -= anim.frame_duration;
-                        sprite->current_frame = (sprite->current_frame + 1) % anim.frames.size();
+                    if (sprite->frame_timer >= anim->frame_duration && anim->frame_duration > 0) {
+                        sprite->frame_timer -= anim->frame_duration;
+                        sprite->current_frame = (sprite->current_frame + 1) % anim->frames.size();
                     }
+                    // Sync the entire rect (x, y, w, h) with the sprite's current state
+                    sprite->rect.x = sprite->x;
+                    sprite->rect.y = sprite->y;
+                    SDL_GetTextureSize(anim->frames[sprite->current_frame], &sprite->rect.w, &sprite->rect.h);
+
                 }
             }
         }
     }
 }
 
-void SpriteSystem::draw_all() {
+void SpriteSystem::draw_all(float cam_x, float cam_y) { // Add parameters
     if (!renderer) return;
 
     for (auto& [id, sprite_ptr] : active_sprites) {
@@ -235,13 +305,43 @@ void SpriteSystem::draw_all() {
             if (sprite->current_frame >= anim.frames.size()) continue;
 
             SDL_Texture* tex = anim.frames[sprite->current_frame];
+
             if (tex) {
-                SDL_GetTextureSize(tex, &sprite->rect.w, &sprite->rect.h);
-                sprite->rect.x = sprite->x;
-                sprite->rect.y = sprite->y;
+                //SDL_GetTextureSize(tex, &sprite->rect.w, &sprite->rect.h);
+                //// Apply the camera offset here
+                //sprite->rect.x = sprite->x - cam_x;
+                //sprite->rect.y = sprite->y - cam_y;
+
+                //SDL_FlipMode flip_flag = sprite->is_flipped ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
+
+                //bool result = SDL_RenderTextureRotated(renderer, tex, nullptr, &sprite->rect, 0.0, nullptr, flip_flag);
+                //if (!result ) {
+                //    TextIO::print("SDL_RenderTextureRotated failed for animation "
+                //        + sprite->current_animation_name
+                //        + ": " + SDL_GetError() + "\n");
+                //}
+                //SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Set color to bright red
+                //SDL_FRect debug_rect = get_collision_rect(id);
+                //debug_rect.x -= cam_x; // Apply camera offset
+                //debug_rect.y -= cam_y;
+                //SDL_RenderRect(renderer, &debug_rect);
+                SDL_FRect render_rect = sprite->rect;
+                render_rect.x -= cam_x;
+                render_rect.y -= cam_y;
 
                 SDL_FlipMode flip_flag = sprite->is_flipped ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
-                SDL_RenderTextureRotated(renderer, tex, nullptr, &sprite->rect, 0.0, nullptr, flip_flag);
+                SDL_RenderTextureRotated(renderer, tex, nullptr, &render_rect, 0.0, nullptr, flip_flag);
+                
+                //DEBUG RED BOX !
+                //SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+                //SDL_FRect debug_rect = get_collision_rect(id); // Gets the box in WORLD coordinates
+                //debug_rect.x -= cam_x;                         // Applies camera offset for drawing
+                //debug_rect.y -= cam_y;
+                //SDL_RenderRect(renderer, &debug_rect);
+                //END DEBUG RED BOX 
+            }
+            else {
+                TextIO::print("No Texture: " + sprite->current_animation_name + "\n");
             }
         }
     }

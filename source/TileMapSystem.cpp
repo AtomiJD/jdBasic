@@ -113,6 +113,7 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
                 if (obj_data.contains("properties")) {
                     for (const auto& prop : obj_data["properties"]) {
                         mo.properties[prop["name"]] = json_property_to_string(prop["value"]);
+                        mo.properties[prop["type"]] = json_property_to_string(prop["value"]);
                     }
                 }
                 ol.objects.push_back(mo);
@@ -188,20 +189,30 @@ std::vector<std::map<std::string, std::string>> TileMapSystem::get_objects_by_ty
     return found_objects;
 }
 
-// NOTE: This implementation assumes you will add a public `get_sprite_rect` method
-// to your SpriteSystem class that returns a const SDL_FRect*.
-// Example: const SDL_FRect* SpriteSystem::get_sprite_rect(int instance_id) const;
+int TileMapSystem::get_tile_id(const std::string& map_name, const std::string& layer_name, int tile_x, int tile_y) const {
+    if (!loaded_maps.count(map_name) || !loaded_maps.at(map_name).tile_layers.count(layer_name)) {
+        return 0; // Map or layer not found
+    }
+
+    const auto& layer = loaded_maps.at(map_name).tile_layers.at(layer_name);
+
+    // Bounds check
+    if (tile_x < 0 || tile_x >= layer.width || tile_y < 0 || tile_y >= layer.height) {
+        return 0; // Out of bounds
+    }
+
+    return layer.data[tile_y * layer.width + tile_x];
+}
+
 bool TileMapSystem::check_sprite_collision(int sprite_instance_id, const SpriteSystem& sprite_system, const std::string& map_name, const std::string& layer_name) {
     if (!loaded_maps.count(map_name) || !loaded_maps[map_name].tile_layers.count(layer_name)) {
         return false;
     }
 
-    // This is a placeholder for getting the sprite's rect.
-    // You must implement a way to get this from your SpriteSystem.
-    // For now, we'll simulate getting it based on x/y, but width/height will be missing.
-    // A proper implementation requires a function like `sprite_system.get_sprite_rect(id)`.
-    SDL_FRect sprite_rect = { sprite_system.get_x(sprite_instance_id), sprite_system.get_y(sprite_instance_id), 32, 32 }; // Assuming 32x32 for now
-
+    SDL_FRect collision_rect = sprite_system.get_collision_rect(sprite_instance_id);
+    if (collision_rect.w == 0 && collision_rect.h == 0) {
+        return false; // No collision if the rect is empty
+    }
 
     const auto& map = loaded_maps.at(map_name);
     const auto& layer = map.tile_layers.at(layer_name);
@@ -211,22 +222,33 @@ bool TileMapSystem::check_sprite_collision(int sprite_instance_id, const SpriteS
     int tile_h = map.tilesets[0].tile_height;
 
     // Determine the range of tiles to check based on the sprite's bounding box
-    int start_x = static_cast<int>(sprite_rect.x) / tile_w;
-    int end_x = static_cast<int>(sprite_rect.x + sprite_rect.w) / tile_w;
-    int start_y = static_cast<int>(sprite_rect.y) / tile_h;
-    int end_y = static_cast<int>(sprite_rect.y + sprite_rect.h) / tile_h;
+    int start_x = static_cast<int>(collision_rect.x) / tile_w;
+    int end_x = static_cast<int>(collision_rect.x + collision_rect.w) / tile_w;
+    int start_y = static_cast<int>(collision_rect.y) / tile_h;
+    int end_y = static_cast<int>(collision_rect.y + collision_rect.h) / tile_h;
 
     // Loop through only the potentially colliding tiles
     for (int y = start_y; y <= end_y; ++y) {
         for (int x = start_x; x <= end_x; ++x) {
             // Bounds check for the tile coordinates
             if (x >= 0 && x < layer.width && y >= 0 && y < layer.height) {
-                if (layer.data[y * layer.width + x] != 0) { // Check if the tile is not empty
+                int tile_gid = layer.data[y * layer.width + x]; // Get the tile ID
+                if (tile_gid != 0) { // Check if the tile is not empty
+
+                    // --- ADD THIS LINE FOR DEBUGGING ---
+                    //TextIO::print("Collision check at [" + std::to_string(x) + "," + std::to_string(y) + "] found tile ID: " + std::to_string(tile_gid) + "\n");
+
                     SDL_FRect tile_rect = { (float)(x * tile_w), (float)(y * tile_h), (float)tile_w, (float)tile_h };
-                    if (SDL_HasRectIntersectionFloat(&sprite_rect, &tile_rect)) {
+                    if (SDL_HasRectIntersectionFloat(&collision_rect, &tile_rect)) {
                         return true; // Collision detected
                     }
                 }
+                //if (layer.data[y * layer.width + x] != 0) { // Check if the tile is not empty
+                //    SDL_FRect tile_rect = { (float)(x * tile_w), (float)(y * tile_h), (float)tile_w, (float)tile_h };
+                //    if (SDL_HasRectIntersectionFloat(&sprite_rect, &tile_rect)) {
+                //        return true; // Collision detected
+                //    }
+                //}
             }
         }
     }
