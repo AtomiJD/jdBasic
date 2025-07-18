@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.2" class="menu" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="32" tileheight="32" infinite="0" backgroundcolor="#000032" nextlayerid="4" nextobjectid="6">
+ <editorsettings>
+  <export target="main_menu.json" format="json"/>
+ </editorsettings>
+ <objectgroup id="3" name="MenuObjects">
+  <object id="1" name="Start" type="menu_item" x="350" y="210">
+   <properties>
+    <property name="index" type="int" value="0"/>
+    <property name="text" value="Start"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="2" name="Load" type="menu_item" x="350" y="245">
+   <properties>
+    <property name="index" type="int" value="1"/>
+    <property name="text" value="Load"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="3" name="Settings" type="menu_item" x="350" y="280">
+   <properties>
+    <property name="index" type="int" value="2"/>
+    <property name="text" value="Settings"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="4" name="Exit" type="menu_item" x="350" y="350">
+   <properties>
+    <property name="index" type="int" value="4"/>
+    <property name="text" value="Exit"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="5" name="Credits" type="menu_item" x="350" y="315">
+   <properties>
+    <property name="index" type="int" value="3"/>
+    <property name="text" value="Credits"/>
+   </properties>
+   <point/>
+  </object>
+ </objectgroup>
+ <imagelayer id="2" name="Background" offsetx="-2.84217e-14" offsety="-72.5168">
+  <image source="../../media/pictures/Ocean1.png" width="960" height="720"/>
+ </imagelayer>
+</map>

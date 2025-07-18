@@ -29,6 +29,7 @@ public:
 
     // Checks if a sprite's rect collides with any solid tiles on a layer.
     int get_tile_id(const std::string& map_name, const std::string& layer_name, int tile_x, int tile_y) const;
+    void draw_debug_collisions(int sprite_instance_id, const SpriteSystem& sprite_system, const std::string& map_name, const std::string& layer_name, float cam_x, float cam_y);
     bool check_sprite_collision(int sprite_instance_id, const SpriteSystem& sprite_system, const std::string& map_name, const std::string& layer_name);
 
 private:
@@ -39,6 +40,7 @@ private:
         int tile_count;
         int columns;
         SDL_Texture* texture = nullptr;
+        std::map<int, std::vector<SDL_FRect>> per_tile_collisions;
     };
 
     struct TileLayer {
@@ -46,6 +48,12 @@ private:
         int width;
         int height;
         std::vector<int> data;
+    };
+
+    struct ImageLayer {
+        std::string name;
+        SDL_Texture* texture = nullptr;
+        SDL_FRect rect; // Stores the image's position and size in the world
     };
 
     struct MapObject {
@@ -67,6 +75,7 @@ private:
         std::vector<Tileset> tilesets;
         std::map<std::string, TileLayer> tile_layers;
         std::map<std::string, ObjectLayer> object_layers;
+        std::map<std::string, ImageLayer> image_layers;
     };
 
     SDL_Renderer* renderer = nullptr;

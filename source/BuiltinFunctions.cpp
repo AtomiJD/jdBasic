@@ -968,6 +968,26 @@ BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false;
 }
 
+// SETFONT font_path$, font_size
+// Sets the font and size for subsequent TEXT commands.
+BasicValue builtin_setfont(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SETFONT requires 2 arguments: font_path$, font_size.");
+        return false;
+    }
+
+    std::string path = to_string(args[0]);
+    int size = static_cast<int>(to_double(args[1]));
+
+    if (!vm.graphics_system.load_font(path, size)) {
+        // The C++ function already prints a detailed error.
+        // We can set a generic BASIC error if we want.
+        Error::set(1, vm.runtime_current_line, "Failed to set font.");
+    }
+
+    return false; // This is a procedure
+}
+
 // TEXT x, y, content$, [r, g, b]
 // Draws a string on the graphics screen.
 BasicValue builtin_text(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1201,6 +1221,47 @@ BasicValue builtin_sound_stop(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return false;
 }
 
+// SFX.LOAD id, "filepath.wav"
+BasicValue builtin_sfx_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line, "SFX.LOAD requires 2 arguments: id, filepath$"); return false; }
+    int id = static_cast<int>(to_double(args[0]));
+    std::string path = to_string(args[1]);
+    if (!vm.sound_system.load_sound(id, path)) {
+        Error::set(1, vm.runtime_current_line, "Failed to load sound effect.");
+    }
+    return false;
+}
+
+// SFX.PLAY id
+BasicValue builtin_sfx_play(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line, "SFX.PLAY requires 1 argument: id"); return false; }
+    int id = static_cast<int>(to_double(args[0]));
+    vm.sound_system.play_sound(id);
+    return false;
+}
+
+// MUSIC.PLAY music_id, [looping_bool]
+BasicValue builtin_music_play(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 1 || args.size() > 2) {
+        Error::set(8, vm.runtime_current_line, "MUSIC.PLAY requires 1 or 2 arguments: sound_id, [looping_bool]");
+        return false;
+    }
+    int id = static_cast<int>(to_double(args[0]));
+    bool loop = true; // Default to looping for music
+    if (args.size() == 2) {
+        loop = to_bool(args[1]);
+    }
+    vm.sound_system.play_music(id, loop);
+    return false;
+}
+
+// MUSIC.STOP
+BasicValue builtin_music_stop(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line, "MUSIC.STOP takes no arguments."); return false; }
+    vm.sound_system.stop_music();
+    return false;
+}
+
 // MOUSEX() -> returns the current X coordinate of the mouse
 BasicValue builtin_mousex(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (!args.empty()) {
@@ -1242,21 +1303,21 @@ BasicValue builtin_mouseb(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 // --- SPRITE PROCEDURES & FUNCTIONS ---
 
 // SPRITE.LOAD type_id, "filename.png"
-//BasicValue builtin_sprite_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-//    if (args.size() != 2) {
-//        Error::set(8, vm.runtime_current_line);
-//        return false;
-//    }
-//    int type_id = static_cast<int>(to_double(args[0]));
-//    std::string filename = to_string(args[1]);
-//
-//    // The sprite system is a member of the graphics system
-//    if (!vm.graphics_system.sprite_system.load_sprite_type(type_id, filename)) {
-//        // The C++ function already prints a detailed error.
-//        Error::set(1, vm.runtime_current_line, "Failed to load sprite.");
-//    }
-//    return false;
-//}
+BasicValue builtin_sprite_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line);
+        return false;
+    }
+    int type_id = static_cast<int>(to_double(args[0]));
+    std::string filename = to_string(args[1]);
+
+    // The sprite system is a member of the graphics system
+    if (!vm.graphics_system.sprite_system.load_sprite_type(type_id, filename)) {
+        // The C++ function already prints a detailed error.
+        Error::set(1, vm.runtime_current_line, "Failed to load sprite.");
+    }
+    return false;
+}
 
 // SPRITE.LOAD_ASEPRITE type_id, "filename.json"
 // Loads a sprite sheet and animation data from an Aseprite export.
@@ -1546,6 +1607,24 @@ BasicValue builtin_map_get_tile_id(NeReLaBasic& vm, const std::vector<BasicValue
 
     int tile_id = vm.graphics_system.tilemap_system.get_tile_id(map_name, layer_name, tile_x, tile_y);
     return static_cast<double>(tile_id);
+}
+
+// MAP.DRAW_DEBUG_COLLISIONS player_id, "map", "layer"
+BasicValue builtin_map_draw_debug(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return false; }
+    int sprite_id = static_cast<int>(to_double(args[0]));
+    std::string map_name = to_string(args[1]);
+    std::string layer_name = to_string(args[2]);
+
+    // We need the camera values, which are in BASIC variables.
+    // This is a simple way to get them from the VM.
+    float cam_x = to_double(vm.variables["CAM_X"]);
+    float cam_y = to_double(vm.variables["CAM_Y"]);
+
+    vm.graphics_system.tilemap_system.draw_debug_collisions(
+        sprite_id, vm.graphics_system.sprite_system, map_name, layer_name, cam_x, cam_y
+    );
+    return false;
 }
 
 #endif
@@ -5073,6 +5152,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SCREEN", -1, builtin_screen);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
     register_proc("DRAWCOLOR", -1, builtin_drawcolor);
+    register_proc("SETFONT", 2, builtin_setfont);
 
     register_proc("PSET", -1, builtin_pset);
     register_proc("LINE", -1, builtin_line);
@@ -5100,12 +5180,17 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SOUND.RELEASE", 1, builtin_sound_release);
     register_proc("SOUND.STOP", 1, builtin_sound_stop);
 
+    register_proc("SFX.LOAD", 2, builtin_sfx_load);
+    register_proc("SFX.PLAY", 1, builtin_sfx_play);
+    register_proc("MUSIC.PLAY", -1, builtin_music_play);
+    register_proc("MUSIC.STOP", 0, builtin_music_stop);
+
     register_func("MOUSEX", 0, builtin_mousex);
     register_func("MOUSEY", 0, builtin_mousey);
     register_func("MOUSEB", 1, builtin_mouseb);
 
     // Sprite Procedures
-    //register_proc("SPRITE.LOAD", 2, builtin_sprite_load);
+    register_proc("SPRITE.LOAD", 2, builtin_sprite_load);
     register_proc("SPRITE.LOAD_ASEPRITE", 2, builtin_sprite_load_aseprite);
     register_proc("SPRITE.MOVE", 3, builtin_sprite_move);
     register_proc("SPRITE.SET_VELOCITY", 3, builtin_sprite_set_velocity);
@@ -5132,6 +5217,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MAP.GET_OBJECTS", 2, builtin_map_get_objects);
     register_func("MAP.COLLIDES", 3, builtin_map_collides);
     register_func("MAP.GET_TILE_ID", 4, builtin_map_get_tile_id);
+    register_proc("MAP.DRAW_DEBUG_COLLISIONS", 3, builtin_map_draw_debug);
 
 
 #endif

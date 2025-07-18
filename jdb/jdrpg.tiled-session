@@ -21,9 +21,17 @@
             "scaleInDock": 1,
             "scaleInEditor": 1
         },
+        "menu.tmx": {
+            "scale": 2.1236458333333332,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 480.0706332466769,
+                "y": 319.96860744592146
+            }
+        },
         "untitled.tmx": {
             "scale": 2.1236458333333332,
-            "selectedLayer": 2,
+            "selectedLayer": 0,
             "viewCenter": {
                 "x": 473.0073085789965,
                 "y": 311.96350615588364
@@ -41,6 +49,7 @@
         "Int2.tsx"
     ],
     "project": "jdrpg.tiled-project",
+    "property.type": "int",
     "recentFiles": [
         "Int2.tsx",
         "Intern.tsx",

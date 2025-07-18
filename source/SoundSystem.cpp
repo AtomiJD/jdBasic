@@ -31,14 +31,14 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
         return false;
     }
 
-    // --- UPDATED: Modern SDL3 audio initialization ---
+    // --- Modern SDL3 audio initialization ---
     SDL_AudioSpec desired_spec;
     SDL_zero(desired_spec);
     desired_spec.freq = 44100;
     desired_spec.format = SDL_AUDIO_F32;
     desired_spec.channels = 1;
 
-    // Open a stream with a callback. This is the new way to do it.
+    //// Open a stream with a callback. This is the new way to do it.
     audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec, &SoundSystem::audio_callback, this);
 
     if (audio_stream == nullptr) {
@@ -63,13 +63,14 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
 void SoundSystem::shutdown() {
     if (!is_initialized) return;
 
-    // --- UPDATED: Correct cleanup order ---
-    if (audio_device_id != 0) {
-        SDL_PauseAudioDevice(audio_device_id);
-    }
-    if (audio_stream) {
-        SDL_DestroyAudioStream(audio_stream);
-    }
+//    // --- Correct cleanup order ---
+//    if (audio_device_id != 0) {
+//        SDL_PauseAudioDevice(audio_device_id);
+//    }
+//    if (audio_stream) {
+//        SDL_DestroyAudioStream(audio_stream);
+////        audio_stream = nullptr;
+//    }
 
     // --- Free all loaded sound chunks ---
     for (auto const& [id, chunk] : loaded_samples) {
@@ -79,11 +80,11 @@ void SoundSystem::shutdown() {
     }
     loaded_samples.clear();
 
-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    //SDL_QuitSubSystem(SDL_INIT_AUDIO);
     is_initialized = false;
 }
 
-// --- UPDATED: The audio callback now mixes synth voices AND sample channels ---
+// --- The audio callback now mixes synth voices AND sample channels ---
 void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int additional_len, int total_len) {
     SoundSystem* self = static_cast<SoundSystem*>(userdata);
     int num_samples = additional_len / sizeof(float);
@@ -118,8 +119,12 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
                         active_sources++;
                     }
                     else {
-                        // Sound has finished playing
-                        channel.is_active = false;
+                        if (channel.is_looping) {
+                            channel.position = 0; // Loop back to the start
+                        }
+                        else {
+                            channel.is_active = false; // Sound has finished playing
+                        }
                     }
                 }
                 else {
@@ -139,7 +144,6 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
 
     SDL_PutAudioStreamData(stream, buffer.data(), additional_len);
 }
-
 
 // --- Load a WAV file from disk ---
 bool SoundSystem::load_sound(int sample_id, const std::string& filename) {
@@ -190,16 +194,14 @@ bool SoundSystem::load_sound(int sample_id, const std::string& filename) {
     return true;
 }
 
-
 // --- Play a loaded WAV file ---
-void SoundSystem::play_sound(int sample_id) {
+void SoundSystem::play_sound(int sample_id, bool looping) {
     if (!is_initialized || loaded_samples.find(sample_id) == loaded_samples.end()) {
-        return; // Sound not loaded or system not ready
+        return;
     }
 
     SDL_LockAudioStream(audio_stream);
 
-    // Find the first available (inactive) channel
     int channel_to_use = -1;
     for (int i = 0; i < channels.size(); ++i) {
         if (!channels[i].is_active) {
@@ -208,15 +210,52 @@ void SoundSystem::play_sound(int sample_id) {
         }
     }
 
-    // If we found a free channel, configure it to play our sound
     if (channel_to_use != -1) {
         channels[channel_to_use].sample_id = sample_id;
-        channels[channel_to_use].position = 0; // Start from the beginning
+        channels[channel_to_use].position = 0;
+        channels[channel_to_use].is_looping = looping; // Set the looping flag
         channels[channel_to_use].is_active = true;
     }
-    // If no channel is free, the sound is simply not played.
 
     SDL_UnlockAudioStream(audio_stream);
+}
+
+void SoundSystem::play_music(int sample_id, bool looping) {
+    if (!is_initialized || loaded_samples.find(sample_id) == loaded_samples.end()) {
+        return;
+    }
+
+    // Stop any previously playing music first
+    stop_music();
+
+    SDL_LockAudioStream(audio_stream);
+
+    int channel_to_use = -1;
+    for (int i = 0; i < channels.size(); ++i) {
+        if (!channels[i].is_active) {
+            channel_to_use = i;
+            break;
+        }
+    }
+
+    if (channel_to_use != -1) {
+        channels[channel_to_use].sample_id = sample_id;
+        channels[channel_to_use].position = 0;
+        channels[channel_to_use].is_looping = looping;
+        channels[channel_to_use].is_active = true;
+        music_channel_id = channel_to_use; // IMPORTANT: Remember which channel is the music
+    }
+
+    SDL_UnlockAudioStream(audio_stream);
+}
+
+void SoundSystem::stop_music() {
+    if (music_channel_id != -1 && music_channel_id < channels.size()) {
+        SDL_LockAudioStream(audio_stream);
+        channels[music_channel_id].is_active = false; // Deactivate the specific music channel
+        music_channel_id = -1; // Forget the channel
+        SDL_UnlockAudioStream(audio_stream);
+    }
 }
 
 float SoundSystem::generate_sample(Voice& voice) {
@@ -297,4 +336,6 @@ void SoundSystem::stop_note(int track_index) {
         SDL_UnlockAudioStream(audio_stream);
     }
 }
+
+
 #endif

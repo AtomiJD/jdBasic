@@ -28,6 +28,8 @@ public:
 
     bool init(const std::string& title, int width, int height, float scale = 1.0f);
     void shutdown();
+    bool load_font(const std::string& font_path, int font_size);
+
     void update_screen(); // Shows whatever has been drawn
     void clear_screen();  // Clears the screen to the default color
     void clear_screen(Uint8 r, Uint8 g, Uint8 b); 

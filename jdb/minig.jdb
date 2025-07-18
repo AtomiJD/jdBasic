@@ -32,25 +32,6 @@ SUB HandleKeysUP(data)
     Event{"type"} = "KEYUP"
 ENDSUB
 
-SUB DrawDebugTiles()
-    ' Calculate player's tile position
-    PLAYER_TILE_X = INT(SPRITE.GET_X(PLAYER_ID) / 32)
-    PLAYER_TILE_Y = INT(SPRITE.GET_Y(PLAYER_ID) / 32)
-    
-    ' Check a 3x3 grid of tiles around the player
-    FOR TY = PLAYER_TILE_Y - 1 TO PLAYER_TILE_Y + 1
-        FOR TX = PLAYER_TILE_X - 1 TO PLAYER_TILE_X + 1
-            TILE_ID = MAP.GET_TILE_ID("level1", "Collision", TX, TY)
-            IF TILE_ID <> 0 THEN
-                ' This tile is solid, draw a red box around it
-                SCREEN_X = TX * 32 - CAM_X
-                SCREEN_Y = TY * 32 - CAM_Y
-                RECT SCREEN_X, SCREEN_Y, 32, 32, 255, 0, 0, FALSE
-            ENDIF
-        NEXT
-    NEXT
-ENDSUB
-
 ' --- 0. Delete me
 cd "D:\usr\dev\c\jdBasic\jdb"
 
@@ -64,124 +45,225 @@ PRINT "Loading assets..."
 ' Load the character animations from Aseprite
 ' The character will be sprite type ID 1
 SPRITE.LOAD_ASEPRITE 1, "character.json"
+SPRITE.LOAD 2, "player.png"
 
 ' Load the level map from Tiled
 MAP.LOAD "level1", "levels.json"
+MAP.LOAD "main_menu", "main_menu.json"
+
+SUB SortMenuItems()
+    ' This uses a simple Bubble Sort to order the menu items
+    ' based on the "index" custom property from Tiled.
+    N = LEN(MENU_ITEMS)
+    IF N < 2 THEN RETURN
+
+    FOR I = 0 TO N - 2
+        FOR J = 0 TO N - I - 2
+            ' Get the index property of two adjacent items
+            IndexA = VAL(MENU_ITEMS[J]{"index"})
+            IndexB = VAL(MENU_ITEMS[J+1]{"index"})
+            
+            ' If the first is greater than the second, swap them
+            IF IndexA > IndexB THEN
+                TempItem = MENU_ITEMS[J]
+                MENU_ITEMS[J] = MENU_ITEMS[J+1]
+                MENU_ITEMS[J+1] = TempItem
+            ENDIF
+        NEXT
+    NEXT
+ENDSUB
+
+DIM GameState AS STRING
+GameState = "MainMenu"
+SETFONT ".\fonts\SuperVanilla.ttf", 24
+SOUND.INIT
+SFX.LOAD THEME_MUSIC, "music/Theme1.wav"
+MUSIC.PLAY THEME_MUSIC
+
+DO WHILE GameState = "MainMenu"
+    ' --- Menu Setup (runs once) ---
+    MENU_ITEMS = MAP.GET_OBJECTS("main_menu", "menu_item")
+    SortMenuItems
+    CURRENT_SELECTION = 0
+    SELECTOR_ID = SPRITE.CREATE(2, 0, 0)
+    MUSIC.PLAY -1 
+    ' --- The Actual Menu Loop ---
+    DO
+        ' --- Handle Menu Input ---
+        IF Event{"type"} = "KEYDOWN" THEN
+            ' Move selection down
+            IF Event{"scancode"} = 81 OR Event{"scancode"} = 22 THEN ' S or Down Arrow
+                CURRENT_SELECTION = CURRENT_SELECTION + 1
+                IF CURRENT_SELECTION >= LEN(MENU_ITEMS) THEN CURRENT_SELECTION = 0
+            ENDIF
+            ' Move selection up
+            IF Event{"scancode"} = 82 OR Event{"scancode"} = 26 THEN ' W or Up Arrow
+                CURRENT_SELECTION = CURRENT_SELECTION - 1
+                IF CURRENT_SELECTION < 0 THEN CURRENT_SELECTION = LEN(MENU_ITEMS) - 1
+            ENDIF
+            
+            ' Handle selection action
+            IF Event{"scancode"} = 40 THEN ' Enter key
+                IF CURRENT_SELECTION = 0 THEN GameState = "Playing" : EXITDO ' Start Game
+                IF CURRENT_SELECTION = 1 THEN PRINT "Load Game not implemented!"
+                IF CURRENT_SELECTION = 2 THEN PRINT "Settings not implemented!"
+                IF CURRENT_SELECTION = 3 THEN PRINT "Credits not implemented!"
+                IF CURRENT_SELECTION = 4 THEN GameState = "Exit" : EXITDO ' Exit
+            ENDIF
+            
+            Event{"type"} = "NA" ' Consume event
+        ENDIF
+
+        ' --- Update Menu Logic ---
+        ' Position the selector sprite next to the selected text
+        SELECTED_ITEM = MENU_ITEMS[CURRENT_SELECTION]
+        SELECTOR_X = VAL(SELECTED_ITEM{"x"}) - 40 ' Position selector to the left
+        SELECTOR_Y = VAL(SELECTED_ITEM{"y"})
+        SPRITE.MOVE SELECTOR_ID, SELECTOR_X, SELECTOR_Y
+
+        ' --- Drawing Phase ---
+        CLS 20, 20, 40 ' Dark blue clear color
+        MAP.DRAW_LAYER "main_menu", "Background"
+
+        ' Draw all the menu text items
+        FOR I = 0 TO LEN(MENU_ITEMS) - 1
+            ITEM = MENU_ITEMS[I]
+            TX = VAL(ITEM{"x"})
+            TY = VAL(ITEM{"y"})
+            ' Highlight the selected item in yellow
+            IF I = CURRENT_SELECTION THEN
+                TEXT TX, TY, ITEM{"text"}, 255, 255, 0
+            ELSE
+                TEXT TX, TY, ITEM{"text"}, 255, 255, 255
+            ENDIF
+        NEXT
+
+        SPRITE.DRAW_ALL 0,0' Draw the selector
+        SCREENFLIP
+    LOOP UNTIL 1=2
+
+    ' --- Cleanup after menu exits ---
+    SPRITE.DELETE SELECTOR_ID
+LOOP ' This outer loop handles changing GameState
+
+MUSIC.STOP
 
 ' --- 3. Game Object Creation ---
 ' Find the player's spawn point from the Tiled map data
-SPAWN_POINTS = MAP.GET_OBJECTS("level1", "spawn_point")
-IF LEN(SPAWN_POINTS) > 0 THEN
-    SPAWN = SPAWN_POINTS[0] ' Use the first spawn point found
-    PLAYER_ID = SPRITE.CREATE(1, VAL(SPAWN{"x"}), VAL(SPAWN{"y"}))
-ELSE
-    ' Fallback if no spawn point is found
-    PLAYER_ID = SPRITE.CREATE(1, 400, 250)
-ENDIF
+IF GameState = "Playing" THEN
+    SPAWN_POINTS = MAP.GET_OBJECTS("level1", "spawn_point")
+    IF LEN(SPAWN_POINTS) > 0 THEN
+        SPAWN = SPAWN_POINTS[0] ' Use the first spawn point found
+        PLAYER_ID = SPRITE.CREATE(1, VAL(SPAWN{"x"}), VAL(SPAWN{"y"}))
+    ELSE
+        ' Fallback if no spawn point is found
+        PLAYER_ID = SPRITE.CREATE(1, 400, 250)
+    ENDIF
 
-' --- 4. Game Variables ---
-PLAYER_SPEED = 75.0
+    ' --- 4. Game Variables ---
+    PLAYER_SPEED = 75.0
 
-PLAYER_VX = 0.0 ' Player X velocity
-PLAYER_VY = 0.0 ' Player Y velocity
+    PLAYER_VX = 0.0 ' Player X velocity
+    PLAYER_VY = 0.0 ' Player Y velocity
 
-' Camera position
-CAM_X = 0
-CAM_Y = 0
+    ' Camera position
+    CAM_X = 0
+    CAM_Y = 0
 
 LAST_TICK = TICK()
 
 ' --- 5. Main Game Loop ---
-DO
-    ' --- Delta Time Calculation ---
-    CURRENT_TICK = TICK()
-    DELTA_TIME = (CURRENT_TICK - LAST_TICK) / 1000.0
-    LAST_TICK = CURRENT_TICK
-    
-    ' --- Handle Input ---
-    'EVENT = GET_EVENT() ' Get the latest event
-    
-    PLAYER_VX = 0
-    PLAYER_VY = 0
-    IF EVENT{"type"} = "KEYDOWN" THEN
-        ' Move left
-        IF EVENT{"scancode"} = 4 OR EVENT{"scancode"} = 80 THEN ' A or Left Arrow
-            PLAYER_VX = -PLAYER_SPEED
-            PLAYER_VY = 0
-            SPRITE.SET_FLIP PLAYER_ID, TRUE
-        ENDIF
-        ' Move right
-        IF EVENT{"scancode"} = 7 OR EVENT{"scancode"} = 79 THEN ' D or Right Arrow
-            PLAYER_VX = PLAYER_SPEED
-            PLAYER_VY = 0
-            SPRITE.SET_FLIP PLAYER_ID, FALSE
-        ENDIF
-        ' Move up
-        IF EVENT{"scancode"} = 26 OR EVENT{"scancode"} = 82 THEN ' W or Up Arrow
-                PLAYER_VY = -PLAYER_SPEED
-                PLAYER_VX = 0
-        ENDIF
-        ' Move down
-        IF EVENT{"scancode"} = 22 OR EVENT{"scancode"} = 81 THEN ' W or Up Arrow
-                PLAYER_VY = PLAYER_SPEED
-                PLAYER_VX = 0
-        ENDIF
-        ' Exit
-        IF EVENT{"scancode"} = 41 THEN EXITDO ' ESC key
 
-        PRINT PLAYER_VY
-    ENDIF
-
-    ' --- Update Game Logic ---
-    LAST_X = SPRITE.GET_X(PLAYER_ID)
-    LAST_Y = SPRITE.GET_Y(PLAYER_ID)    
-        ' Set player velocity
-    SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
-    
-    ' Update all sprite positions based on velocity
-    SPRITE.UPDATE DELTA_TIME
-    
-    ' --- Collision Detection & Response ---
-    IS_GROUNDED = FALSE
-    IF MAP.COLLIDES(PLAYER_ID, "level1", "Collision") THEN
+    DO
+        ' --- Delta Time Calculation ---
+        CURRENT_TICK = TICK()
+        DELTA_TIME = (CURRENT_TICK - LAST_TICK) / 1000.0
+        LAST_TICK = CURRENT_TICK
+        
+        ' --- Handle Input ---
+        'EVENT = GET_EVENT() ' Get the latest event
+        
         PLAYER_VX = 0
         PLAYER_VY = 0
-        SPRITE.SET_VELOCITY PLAYER_ID, 0, 0
-        SPRITE.MOVE PLAYER_ID, LAST_X, LAST_Y
+        IF EVENT{"type"} = "KEYDOWN" THEN
+            ' Move left
+            IF EVENT{"scancode"} = 4 OR EVENT{"scancode"} = 80 THEN ' A or Left Arrow
+                PLAYER_VX = -PLAYER_SPEED
+                PLAYER_VY = 0
+                SPRITE.SET_FLIP PLAYER_ID, TRUE
+            ENDIF
+            ' Move right
+            IF EVENT{"scancode"} = 7 OR EVENT{"scancode"} = 79 THEN ' D or Right Arrow
+                PLAYER_VX = PLAYER_SPEED
+                PLAYER_VY = 0
+                SPRITE.SET_FLIP PLAYER_ID, FALSE
+            ENDIF
+            ' Move up
+            IF EVENT{"scancode"} = 26 OR EVENT{"scancode"} = 82 THEN ' W or Up Arrow
+                    PLAYER_VY = -PLAYER_SPEED
+                    PLAYER_VX = 0
+            ENDIF
+            ' Move down
+            IF EVENT{"scancode"} = 22 OR EVENT{"scancode"} = 81 THEN ' W or Up Arrow
+                    PLAYER_VY = PLAYER_SPEED
+                    PLAYER_VX = 0
+            ENDIF
+            ' Exit
+            IF EVENT{"scancode"} = 41 THEN EXITDO ' ESC key
+
+        ENDIF
+
+        ' --- Update Game Logic ---
+        LAST_X = SPRITE.GET_X(PLAYER_ID)
+        LAST_Y = SPRITE.GET_Y(PLAYER_ID)    
+            ' Set player velocity
         SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
-    ENDIF
+        
+        ' Update all sprite positions based on velocity
+        SPRITE.UPDATE DELTA_TIME
+        
+        ' --- Collision Detection & Response ---
+        IS_GROUNDED = FALSE
+        IF MAP.COLLIDES(PLAYER_ID, "level1", "Collision") THEN
+            PLAYER_VX = 0
+            PLAYER_VY = 0
+            SPRITE.SET_VELOCITY PLAYER_ID, 0, 0
+            SPRITE.MOVE PLAYER_ID, LAST_X, LAST_Y
+            SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
+        ENDIF
 
-    ' --- Update Animation State ---
-    IF PLAYER_VX <> 0 OR PLAYER_VY <> 0 THEN
-        SPRITE.SET_ANIMATION PLAYER_ID, "run"
-    ELSE
-        SPRITE.SET_ANIMATION PLAYER_ID, "idle"
-    ENDIF
+        ' --- Update Animation State ---
+        IF PLAYER_VX <> 0 OR PLAYER_VY <> 0 THEN
+            SPRITE.SET_ANIMATION PLAYER_ID, "run"
+        ELSE
+            SPRITE.SET_ANIMATION PLAYER_ID, "idle"
+        ENDIF
 
-    ' --- Update Camera ---
-    ' Make the camera follow the player smoothly
-    SX = SPRITE.GET_X(PLAYER_ID)
-    SY = SPRITE.GET_Y(PLAYER_ID)
-    CAM_X = CAM_X + (SX - CAM_X - 400) * 0.1
-    CAM_Y = CAM_Y + (SY - CAM_Y - 300) * 0.1
+        ' --- Update Camera ---
+        ' Make the camera follow the player smoothly
+        SX = SPRITE.GET_X(PLAYER_ID)
+        SY = SPRITE.GET_Y(PLAYER_ID)
+        CAM_X = CAM_X + (SX - CAM_X - 400) * 0.1
+        CAM_Y = CAM_Y + (SY - CAM_Y - 300) * 0.1
 
-    ' --- Drawing Phase ---
-    CLS 50, 150, 255 ' Clear to a sky blue color
+        ' --- Drawing Phase ---
+        CLS 50, 150, 255 ' Clear to a sky blue color
 
-    ' Draw the map layers with the camera offset
-    MAP.DRAW_LAYER "level1", "Background", CAM_X, CAM_Y
-    MAP.DRAW_LAYER "level1", "Collision", CAM_X, CAM_Y
-    
-    ' Draw all sprites
-    SPRITE.DRAW_ALL CAM_X, CAM_Y
+        ' Draw the map layers with the camera offset
+        MAP.DRAW_LAYER "level1", "Background", CAM_X, CAM_Y
+        MAP.DRAW_LAYER "level1", "Collision", CAM_X, CAM_Y
+        
+        ' Draw all sprites
+        SPRITE.DRAW_ALL CAM_X, CAM_Y
 
-    'DrawDebugTiles
-    
-    ' Draw UI
-    TEXT 10, 10, "jdBasic RPG Demo X,y: " + str$(sx) + ", " + str$(sy), 255, 255, 0
-    
-    SCREENFLIP
-LOOP
+        MAP.DRAW_DEBUG_COLLISIONS PLAYER_ID, "level1", "Collision"
+        
+        ' Draw UI
+        TEXT 10, 10, "jdBasic RPG Demo X,y: " + str$(sx) + ", " + str$(sy), 255, 255, 0
+        
+        SCREENFLIP
+    LOOP
+ENDIF
 
 ' --- 6. Shutdown ---
 PRINT "Program finished."

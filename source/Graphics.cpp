@@ -40,10 +40,10 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
     sprite_system.init(renderer);
     tilemap_system.init(renderer);
 
-    font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 24);
-    if (!font) {
-        std::cerr << "Failed to load font! SDL_Error: " << SDL_GetError() << std::endl;
-        TextIO::print("WARNING: Failed to load font. TEXT command will not work.\n");
+    // Load a default font on startup. Change this path to your desired default font.
+    if (!load_font("C:/Windows/Fonts/cour.ttf", 16)) { // Example: Courier New, size 16
+        // If the default fails, you might want to shutdown or handle the error
+        TextIO::print("Warning: Could not load the default font.\n");
     }
 
     SDL_StartTextInput(window);
@@ -83,6 +83,22 @@ void Graphics::shutdown() {
     TTF_Quit();
     SDL_Quit();
     is_initialized = false;
+}
+
+bool Graphics::load_font(const std::string& font_path, int font_size) {
+    // If a font is already loaded, close it first to prevent memory leaks
+    if (font) {
+        TTF_CloseFont(font);
+        font = nullptr;
+    }
+
+    // Load the new font
+    font = TTF_OpenFont(font_path.c_str(), font_size);
+    if (!font) {
+        TextIO::print("Error: Failed to load font '" + font_path + "': " + SDL_GetError() + "\n");
+        return false;
+    }
+    return true;
 }
 
 void Graphics::clear_screen() {

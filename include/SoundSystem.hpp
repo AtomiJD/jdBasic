@@ -49,6 +49,7 @@ struct SoundChannel {
     int sample_id = -1;       // ID of the SoundChunk to play
     Uint32 position = 0;      // Current position in the buffer, in bytes
     bool is_active = false;
+    bool is_looping = false;
 };
 
 class SoundSystem {
@@ -59,27 +60,19 @@ public:
     // Initializes SDL_Audio and opens an audio device
     bool init(int num_tracks = 8, int num_channels = 16);
 
-    // Closes the audio device and cleans up
     void shutdown();
 
-    // Configures a voice/track with waveform and ADSR parameters
     void set_voice(int track_index, Waveform waveform, double attack, double decay, double sustain, double release);
-
-    // Starts playing a note on a specified track
     void play_note(int track_index, double frequency);
-
-    // Starts the release phase for a note on a specified track
     void release_note(int track_index);
-
-    // Immediately stops a note on a specified track
     void stop_note(int track_index);
 
     // Loads a WAV file and stores it with a given ID.
     // Returns true on success, false on failure.
     bool load_sound(int sample_id, const std::string& filename);
-
-    // Plays a pre-loaded sound on the next available channel.
-    void play_sound(int sample_id);
+    void play_sound(int sample_id, bool looping = false); // Add looping parameter
+    void play_music(int sample_id, bool looping = true);
+    void stop_music();
 
     bool is_initialized = false;
 
@@ -100,7 +93,6 @@ private:
     SDL_AudioSpec audio_spec;
 
     std::vector<Voice> tracks; // A vector to hold all our synthesizer tracks
-
-
+    int music_channel_id = -1;
 };
 #endif

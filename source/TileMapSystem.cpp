@@ -36,6 +36,11 @@ void TileMapSystem::shutdown() {
                 SDL_DestroyTexture(tileset.texture);
             }
         }
+        for (auto& [layer_name, layer_data] : map_data.image_layers) {
+            if (layer_data.texture) {
+                SDL_DestroyTexture(layer_data.texture);
+            }
+        }
     }
     loaded_maps.clear();
 }
@@ -83,6 +88,23 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
             TextIO::print("Error loading tileset image: " + image_path.string() + "\n");
             return false;
         }
+        if (ts_data.contains("tiles")) {
+            for (const auto& tile_data : ts_data["tiles"]) {
+                int local_id = tile_data["id"];
+                if (tile_data.contains("objectgroup") && tile_data["objectgroup"].contains("objects")) {
+                    std::vector<SDL_FRect> collision_rects;
+                    for (const auto& obj : tile_data["objectgroup"]["objects"]) {
+                        collision_rects.push_back({
+                            obj["x"].get<float>(),
+                            obj["y"].get<float>(),
+                            obj["width"].get<float>(),
+                            obj["height"].get<float>()
+                            });
+                    }
+                    ts.per_tile_collisions[local_id] = collision_rects;
+                }
+            }
+        }
         new_map.tilesets.push_back(ts);
     }
 
@@ -120,6 +142,34 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
             }
             new_map.object_layers[ol.name] = ol;
         }
+        else if (layer_data["type"] == "imagelayer") {
+            ImageLayer il;
+            il.name = layer_data["name"];
+
+            // Construct the full path to the image
+            std::filesystem::path image_path = map_dir;
+            image_path /= layer_data["image"].get<std::string>();
+
+            // Load the texture
+            il.texture = IMG_LoadTexture(renderer, image_path.string().c_str());
+            if (!il.texture) {
+                TextIO::print("Error loading image layer texture: " + image_path.string() + "\n");
+                // Handle error appropriately, maybe return false
+                continue;
+            }
+
+            // Get texture dimensions and layer position
+            float w, h;
+            SDL_GetTextureSize(il.texture, &w, &h);
+            il.rect = {
+                layer_data["x"].get<float>(),
+                layer_data["y"].get<float>(),
+                (float)w,
+                (float)h
+            };
+
+            new_map.image_layers[il.name] = il;
+        }
     }
 
     loaded_maps[map_name] = new_map;
@@ -127,40 +177,51 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
 }
 
 void TileMapSystem::draw_layer(const std::string& map_name, const std::string& layer_name, int world_offset_x, int world_offset_y) {
-    if (!loaded_maps.count(map_name) || !loaded_maps[map_name].tile_layers.count(layer_name)) {
-        return;
-    }
+    if (!loaded_maps.count(map_name)) return;
 
     const auto& map = loaded_maps[map_name];
-    const auto& layer = map.tile_layers.at(layer_name);
 
-    for (int y = 0; y < layer.height; ++y) {
-        for (int x = 0; x < layer.width; ++x) {
-            int tile_gid = layer.data[y * layer.width + x];
-            if (tile_gid == 0) continue;
+    if (map.tile_layers.count(layer_name)) {
+        const auto& layer = map.tile_layers.at(layer_name);
+        for (int y = 0; y < layer.height; ++y) {
+            for (int x = 0; x < layer.width; ++x) {
+                int tile_gid = layer.data[y * layer.width + x];
+                if (tile_gid == 0) continue;
 
-            const Tileset* current_tileset = nullptr;
-            for (const auto& ts : map.tilesets) {
-                if (tile_gid >= ts.first_gid) {
-                    current_tileset = &ts;
+                const Tileset* current_tileset = nullptr;
+                for (const auto& ts : map.tilesets) {
+                    if (tile_gid >= ts.first_gid) {
+                        current_tileset = &ts;
+                    }
                 }
+                if (!current_tileset) continue;
+
+                int local_tile_id = tile_gid - current_tileset->first_gid;
+                int ts_x = (local_tile_id % current_tileset->columns) * current_tileset->tile_width;
+                int ts_y = (local_tile_id / current_tileset->columns) * current_tileset->tile_height;
+
+                SDL_FRect src_rect = { ts_x, ts_y, current_tileset->tile_width, current_tileset->tile_height };
+                SDL_FRect dest_rect = {
+                    (float)(x * current_tileset->tile_width - world_offset_x),
+                    (float)(y * current_tileset->tile_height - world_offset_y),
+                    (float)current_tileset->tile_width,
+                    (float)current_tileset->tile_height
+                };
+
+                SDL_RenderTexture(renderer, current_tileset->texture, &src_rect, &dest_rect);
             }
-            if (!current_tileset) continue;
-
-            int local_tile_id = tile_gid - current_tileset->first_gid;
-            int ts_x = (local_tile_id % current_tileset->columns) * current_tileset->tile_width;
-            int ts_y = (local_tile_id / current_tileset->columns) * current_tileset->tile_height;
-
-            SDL_FRect src_rect = { ts_x, ts_y, current_tileset->tile_width, current_tileset->tile_height };
-            SDL_FRect dest_rect = {
-                (float)(x * current_tileset->tile_width - world_offset_x),
-                (float)(y * current_tileset->tile_height - world_offset_y),
-                (float)current_tileset->tile_width,
-                (float)current_tileset->tile_height
-            };
-
-            SDL_RenderTexture(renderer, current_tileset->texture, &src_rect, &dest_rect);
         }
+    } else if (map.image_layers.count(layer_name)) {
+        const auto& layer = map.image_layers.at(layer_name);
+
+        // Create a destination rectangle from the layer's stored rect
+        SDL_FRect dest_rect = layer.rect;
+
+        // Apply the camera offset
+        dest_rect.x -= world_offset_x;
+        dest_rect.y -= world_offset_y;
+
+        SDL_RenderTexture(renderer, layer.texture, nullptr, &dest_rect);
     }
 }
 
@@ -209,50 +270,112 @@ bool TileMapSystem::check_sprite_collision(int sprite_instance_id, const SpriteS
         return false;
     }
 
-    SDL_FRect collision_rect = sprite_system.get_collision_rect(sprite_instance_id);
-    if (collision_rect.w == 0 && collision_rect.h == 0) {
-        return false; // No collision if the rect is empty
-    }
+    SDL_FRect player_coll_rect = sprite_system.get_collision_rect(sprite_instance_id);
+    if (player_coll_rect.w == 0) return false;
 
     const auto& map = loaded_maps.at(map_name);
     const auto& layer = map.tile_layers.at(layer_name);
-    if (map.tilesets.empty()) return false;
 
-    int tile_w = map.tilesets[0].tile_width;
-    int tile_h = map.tilesets[0].tile_height;
+    int start_tile_x = static_cast<int>(player_coll_rect.x) / map.tilesets[0].tile_width;
+    int end_tile_x = static_cast<int>(player_coll_rect.x + player_coll_rect.w) / map.tilesets[0].tile_width;
+    int start_tile_y = static_cast<int>(player_coll_rect.y) / map.tilesets[0].tile_height;
+    int end_tile_y = static_cast<int>(player_coll_rect.y + player_coll_rect.h) / map.tilesets[0].tile_height;
 
-    // Determine the range of tiles to check based on the sprite's bounding box
-    int start_x = static_cast<int>(collision_rect.x) / tile_w;
-    int end_x = static_cast<int>(collision_rect.x + collision_rect.w) / tile_w;
-    int start_y = static_cast<int>(collision_rect.y) / tile_h;
-    int end_y = static_cast<int>(collision_rect.y + collision_rect.h) / tile_h;
+    for (int ty = start_tile_y; ty <= end_tile_y; ++ty) {
+        for (int tx = start_tile_x; tx <= end_tile_x; ++tx) {
+            if (tx < 0 || tx >= layer.width || ty < 0 || ty >= layer.height) continue;
 
-    // Loop through only the potentially colliding tiles
-    for (int y = start_y; y <= end_y; ++y) {
-        for (int x = start_x; x <= end_x; ++x) {
-            // Bounds check for the tile coordinates
-            if (x >= 0 && x < layer.width && y >= 0 && y < layer.height) {
-                int tile_gid = layer.data[y * layer.width + x]; // Get the tile ID
-                if (tile_gid != 0) { // Check if the tile is not empty
+            int gid = layer.data[ty * layer.width + tx];
+            if (gid == 0) continue;
 
-                    // --- ADD THIS LINE FOR DEBUGGING ---
-                    //TextIO::print("Collision check at [" + std::to_string(x) + "," + std::to_string(y) + "] found tile ID: " + std::to_string(tile_gid) + "\n");
+            const Tileset* tileset = nullptr;
+            for (const auto& ts : map.tilesets) {
+                if (gid >= ts.first_gid) {
+                    tileset = &ts;
+                }
+            }
+            if (!tileset) continue;
 
-                    SDL_FRect tile_rect = { (float)(x * tile_w), (float)(y * tile_h), (float)tile_w, (float)tile_h };
-                    if (SDL_HasRectIntersectionFloat(&collision_rect, &tile_rect)) {
-                        return true; // Collision detected
+            int local_id = gid - tileset->first_gid;
+            int tile_world_x = tx * tileset->tile_width;
+            int tile_world_y = ty * tileset->tile_height;
+
+            // Check if this tile has custom collision shapes
+            if (tileset->per_tile_collisions.count(local_id)) {
+                // It does! Check against each custom shape.
+                for (const auto& custom_rect : tileset->per_tile_collisions.at(local_id)) {
+                    SDL_FRect world_shape_rect = custom_rect;
+                    world_shape_rect.x += tile_world_x;
+                    world_shape_rect.y += tile_world_y;
+
+                    if (SDL_HasRectIntersectionFloat(&player_coll_rect, &world_shape_rect)) {
+                        return true; // Collision found!
                     }
                 }
-                //if (layer.data[y * layer.width + x] != 0) { // Check if the tile is not empty
-                //    SDL_FRect tile_rect = { (float)(x * tile_w), (float)(y * tile_h), (float)tile_w, (float)tile_h };
-                //    if (SDL_HasRectIntersectionFloat(&sprite_rect, &tile_rect)) {
-                //        return true; // Collision detected
-                //    }
-                //}
+            }
+            else {
+                // It doesn't. Fall back to full-tile collision.
+                SDL_FRect tile_rect = {
+                    (float)tile_world_x, (float)tile_world_y,
+                    (float)tileset->tile_width, (float)tileset->tile_height
+                };
+                if (SDL_HasRectIntersectionFloat(&player_coll_rect, &tile_rect)) {
+                    return true;
+                }
             }
         }
     }
 
-    return false; // No collision
+    return false;
+}
+
+void TileMapSystem::draw_debug_collisions(int sprite_instance_id, const SpriteSystem& sprite_system, const std::string& map_name, const std::string& layer_name, float cam_x, float cam_y) {
+    // This function mirrors check_sprite_collision but draws instead of checking
+    SDL_FRect player_coll_rect = sprite_system.get_collision_rect(sprite_instance_id);
+    if (player_coll_rect.w == 0) return;
+
+    const auto& map = loaded_maps.at(map_name);
+    const auto& layer = map.tile_layers.at(layer_name);
+    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red for all tile debug boxes
+
+    // ... (copy the entire start_tile_x to end_tile_y calculation from the function above) ...
+    int start_tile_x = static_cast<int>(player_coll_rect.x) / map.tilesets[0].tile_width;
+    int end_tile_x = static_cast<int>(player_coll_rect.x + player_coll_rect.w) / map.tilesets[0].tile_width;
+    int start_tile_y = static_cast<int>(player_coll_rect.y) / map.tilesets[0].tile_height;
+    int end_tile_y = static_cast<int>(player_coll_rect.y + player_coll_rect.h) / map.tilesets[0].tile_height;
+
+    for (int ty = start_tile_y; ty <= end_tile_y; ++ty) {
+        for (int tx = start_tile_x; tx <= end_tile_x; ++tx) {
+            if (tx < 0 || tx >= layer.width || ty < 0 || ty >= layer.height) continue;
+            int gid = layer.data[ty * layer.width + tx];
+            if (gid == 0) continue;
+            // ... (copy the tileset and local_id logic from the function above) ...
+            const Tileset* tileset = nullptr;
+            for (const auto& ts : map.tilesets) { if (gid >= ts.first_gid) tileset = &ts; }
+            if (!tileset) continue;
+            int local_id = gid - tileset->first_gid;
+            int tile_world_x = tx * tileset->tile_width;
+            int tile_world_y = ty * tileset->tile_height;
+
+            if (tileset->per_tile_collisions.count(local_id)) {
+                for (const auto& custom_rect : tileset->per_tile_collisions.at(local_id)) {
+                    SDL_FRect world_shape_rect = custom_rect;
+                    world_shape_rect.x += tile_world_x;
+                    world_shape_rect.y += tile_world_y;
+                    // Apply camera for drawing
+                    world_shape_rect.x -= cam_x;
+                    world_shape_rect.y -= cam_y;
+                    SDL_RenderRect(renderer, &world_shape_rect);
+                }
+            }
+            else {
+                SDL_FRect tile_rect = {
+                    (float)tile_world_x - cam_x, (float)tile_world_y - cam_y,
+                    (float)tileset->tile_width, (float)tileset->tile_height
+                };
+                SDL_RenderRect(renderer, &tile_rect);
+            }
+        }
+    }
 }
 #endif
