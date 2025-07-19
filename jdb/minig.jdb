@@ -44,8 +44,8 @@ PRINT "Loading assets..."
 
 ' Load the character animations from Aseprite
 ' The character will be sprite type ID 1
-SPRITE.LOAD_ASEPRITE 1, "character.json"
-SPRITE.LOAD 2, "player.png"
+SPRITE.LOAD_ASEPRITE 1, "atomi.json"
+SPRITE.LOAD 2, "pictures\point.png"
 
 ' Load the level map from Tiled
 MAP.LOAD "level1", "levels.json"
@@ -119,6 +119,7 @@ DO WHILE GameState = "MainMenu"
         SELECTED_ITEM = MENU_ITEMS[CURRENT_SELECTION]
         SELECTOR_X = VAL(SELECTED_ITEM{"x"}) - 40 ' Position selector to the left
         SELECTOR_Y = VAL(SELECTED_ITEM{"y"})
+        
         SPRITE.MOVE SELECTOR_ID, SELECTOR_X, SELECTOR_Y
 
         ' --- Drawing Phase ---
@@ -137,7 +138,7 @@ DO WHILE GameState = "MainMenu"
                 TEXT TX, TY, ITEM{"text"}, 255, 255, 255
             ENDIF
         NEXT
-
+        SPRITE.UPDATE 0
         SPRITE.DRAW_ALL 0,0' Draw the selector
         SCREENFLIP
     LOOP UNTIL 1=2
@@ -190,13 +191,11 @@ LAST_TICK = TICK()
             IF EVENT{"scancode"} = 4 OR EVENT{"scancode"} = 80 THEN ' A or Left Arrow
                 PLAYER_VX = -PLAYER_SPEED
                 PLAYER_VY = 0
-                SPRITE.SET_FLIP PLAYER_ID, TRUE
             ENDIF
             ' Move right
             IF EVENT{"scancode"} = 7 OR EVENT{"scancode"} = 79 THEN ' D or Right Arrow
                 PLAYER_VX = PLAYER_SPEED
                 PLAYER_VY = 0
-                SPRITE.SET_FLIP PLAYER_ID, FALSE
             ENDIF
             ' Move up
             IF EVENT{"scancode"} = 26 OR EVENT{"scancode"} = 82 THEN ' W or Up Arrow
@@ -210,12 +209,14 @@ LAST_TICK = TICK()
             ENDIF
             ' Exit
             IF EVENT{"scancode"} = 41 THEN EXITDO ' ESC key
-
+            LAST_VX = PLAYER_VX
+            LAST_VY = PLAYER_VY
         ENDIF
 
         ' --- Update Game Logic ---
         LAST_X = SPRITE.GET_X(PLAYER_ID)
-        LAST_Y = SPRITE.GET_Y(PLAYER_ID)    
+        LAST_Y = SPRITE.GET_Y(PLAYER_ID)   
+
             ' Set player velocity
         SPRITE.SET_VELOCITY PLAYER_ID, PLAYER_VX, PLAYER_VY
         
@@ -233,10 +234,32 @@ LAST_TICK = TICK()
         ENDIF
 
         ' --- Update Animation State ---
-        IF PLAYER_VX <> 0 OR PLAYER_VY <> 0 THEN
-            SPRITE.SET_ANIMATION PLAYER_ID, "run"
+        IF PLAYERV_X <> 0 OR PLAYER_VY <> 0 THEN
+              IF PLAYER_VY > 0 THEN
+                SPRITE.SET_ANIMATION PLAYER_ID, "walk"
+            ENDIF
+            IF PLAYER_VY < 0 THEN 
+                SPRITE.SET_ANIMATION PLAYER_ID, "backwalk"
+            ENDIF
+            IF PLAYERV_X < 0 THEN 
+                SPRITE.SET_ANIMATION PLAYER_ID, "leftwalk"
+            ENDIF
+            IF PLAYERV_X > 0 THEN 
+                SPRITE.SET_ANIMATION PLAYER_ID, "rightwalk"
+            ENDIF
         ELSE
-            SPRITE.SET_ANIMATION PLAYER_ID, "idle"
+            IF LAST_VY > 0 THEN
+                SPRITE.SET_ANIMATION PLAYER_ID, "idle"
+            ENDIF
+            IF LAST_VY < 0 THEN 
+                SPRITE.SET_ANIMATION PLAYER_ID, "backidle"
+            ENDIF
+            IF LAST_VX < 0 THEN 
+                SPRITE.SET_ANIMATION PLAYER_ID, "leftidle"
+            ENDIF
+            IF LAST_VX > 0 THEN 
+                SPRITE.SET_ANIMATION PLAYER_ID, "rightidle"
+            ENDIF
         ENDIF
 
         ' --- Update Camera ---
@@ -251,6 +274,7 @@ LAST_TICK = TICK()
 
         ' Draw the map layers with the camera offset
         MAP.DRAW_LAYER "level1", "Background", CAM_X, CAM_Y
+        MAP.DRAW_LAYER "level1", "Walls", CAM_X, CAM_Y
         MAP.DRAW_LAYER "level1", "Collision", CAM_X, CAM_Y
         
         ' Draw all sprites

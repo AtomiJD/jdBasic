@@ -9,6 +9,9 @@
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
+        "": {
+            "scaleInDock": 1
+        },
         "DSPlus_TileA2_ModernExterior.tsx": {
             "scaleInDock": 1,
             "scaleInEditor": 3
@@ -22,11 +25,14 @@
             "scaleInEditor": 1
         },
         "menu.tmx": {
+            "expandedObjectLayers": [
+                3
+            ],
             "scale": 2.1236458333333332,
             "selectedLayer": 1,
             "viewCenter": {
                 "x": 480.0706332466769,
-                "y": 319.96860744592146
+                "y": 451.34644626477666
             }
         },
         "untitled.tmx": {
@@ -39,7 +45,7 @@
         }
     },
     "last.exportedFilePath": "D:/usr/dev/c/jdBasic/jdb",
-    "last.imagePath": "D:/usr/dev/c/media/tilemaps",
+    "last.imagePath": "D:/usr/dev/c/media/LimeZu/moderninteriors-win/1_Interiors/32x32/Theme_Sorter_32x32",
     "lastUsedTilesetExportFilter": "All Files (*)",
     "map.lastUsedExportFilter": "JSON map files (*.tmj *.json)",
     "map.lastUsedFormat": "tmx",
@@ -51,11 +57,13 @@
     "project": "jdrpg.tiled-project",
     "property.type": "int",
     "recentFiles": [
+        "menu.tmx",
         "Int2.tsx",
         "Intern.tsx",
         "untitled.tmx",
         "DSPlus_TileA2_ModernExterior.tsx"
     ],
+    "tileset.embedInMap": true,
     "tileset.lastUsedFormat": "tsx",
     "tileset.useTransparentColor": true
 }

@@ -85,7 +85,7 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
 
         ts.texture = IMG_LoadTexture(renderer, image_path.string().c_str());
         if (!ts.texture) {
-            TextIO::print("Error loading tileset image: " + image_path.string() + "\n");
+            TextIO::print("Error loading tileset image: " + image_path.string() + ", " + SDL_GetError() + "\n");
             return false;
         }
         if (ts_data.contains("tiles")) {

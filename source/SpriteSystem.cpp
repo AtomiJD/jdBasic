@@ -139,7 +139,7 @@ bool SpriteSystem::load_aseprite_file(int type_id, const std::string& json_filen
     for (const auto& tag : data["meta"]["frameTags"]) {
         Animation anim;
         anim.name = tag["name"];
-        int duration_ms = tag["duration"];
+        int duration_ms = 0.2f; // tag["duration"];
         anim.frame_duration = duration_ms > 0 ? (float)duration_ms / 1000.0f : 0.1f;
         int from = tag["from"];
         int to = tag["to"];
@@ -167,6 +167,11 @@ int SpriteSystem::create_sprite(int type_id, float x, float y) {
     new_sprite->instance_id = instance_id;
     if (!sprite_types[type_id].animations.empty()) {
         new_sprite->current_animation_name = sprite_types[type_id].animations.begin()->first;
+        Animation& default_anim = sprite_types[type_id].animations.at(new_sprite->current_animation_name);
+        // If it has frames, get the size of the first frame
+        if (!default_anim.frames.empty() && default_anim.frames[0]) {
+            SDL_GetTextureSize(default_anim.frames[0], &new_sprite->rect.w, &new_sprite->rect.h);
+        }
     }
     active_sprites[instance_id] = std::move(new_sprite);
     return instance_id;
@@ -247,7 +252,7 @@ SDL_FRect SpriteSystem::get_collision_rect(int instance_id) const {
 
     SDL_FRect collision_rect = *p_sprite_rect;
     float y_offset = 32.0f;
-    float x_inset = 16.0f; // Inset from each side
+    float x_inset = 8.0f; // Inset from each side
 
     collision_rect.y += y_offset;
     collision_rect.h -= (y_offset * 1.5f);
@@ -333,11 +338,11 @@ void SpriteSystem::draw_all(float cam_x, float cam_y) { // Add parameters
                 SDL_RenderTextureRotated(renderer, tex, nullptr, &render_rect, 0.0, nullptr, flip_flag);
                 
                 //DEBUG RED BOX !
-                //SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
-                //SDL_FRect debug_rect = get_collision_rect(id); // Gets the box in WORLD coordinates
-                //debug_rect.x -= cam_x;                         // Applies camera offset for drawing
-                //debug_rect.y -= cam_y;
-                //SDL_RenderRect(renderer, &debug_rect);
+                SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+                SDL_FRect debug_rect = get_collision_rect(id); // Gets the box in WORLD coordinates
+                debug_rect.x -= cam_x;                         // Applies camera offset for drawing
+                debug_rect.y -= cam_y;
+                SDL_RenderRect(renderer, &debug_rect);
                 //END DEBUG RED BOX 
             }
             else {
