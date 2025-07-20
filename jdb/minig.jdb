@@ -48,7 +48,7 @@ SPRITE.LOAD_ASEPRITE 1, "atomi.json"
 SPRITE.LOAD 2, "pictures\point.png"
 
 ' Load the level map from Tiled
-MAP.LOAD "level1", "levels.json"
+MAP.LOAD "level1", "tiled\jdrpg.json"
 MAP.LOAD "main_menu", "main_menu.json"
 
 SUB SortMenuItems()
@@ -273,14 +273,13 @@ LAST_TICK = TICK()
         CLS 50, 150, 255 ' Clear to a sky blue color
 
         ' Draw the map layers with the camera offset
-        MAP.DRAW_LAYER "level1", "Background", CAM_X, CAM_Y
-        MAP.DRAW_LAYER "level1", "Walls", CAM_X, CAM_Y
-        MAP.DRAW_LAYER "level1", "Collision", CAM_X, CAM_Y
+        MAP.DRAW_LAYER "level1", "background", CAM_X, CAM_Y
+        MAP.DRAW_LAYER "level1", "collision", CAM_X, CAM_Y
         
         ' Draw all sprites
         SPRITE.DRAW_ALL CAM_X, CAM_Y
 
-        MAP.DRAW_DEBUG_COLLISIONS PLAYER_ID, "level1", "Collision"
+        'MAP.DRAW_DEBUG_COLLISIONS PLAYER_ID, "level1", "collision"
         
         ' Draw UI
         TEXT 10, 10, "jdBasic RPG Demo X,y: " + str$(sx) + ", " + str$(sy), 255, 255, 0
