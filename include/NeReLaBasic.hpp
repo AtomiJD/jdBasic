@@ -17,6 +17,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <ncurses.h>
 #endif
 
 

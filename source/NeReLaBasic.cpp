@@ -16,7 +16,11 @@
 #include <string>
 #include <stdexcept>
 #include <cstring>
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <ncurses.h>
+#endif
 #include <algorithm> // for std::transform, std::find_if
 #include <cctype>    // for std::isspace, std::toupper
 
@@ -160,6 +164,7 @@ NeReLaBasic::~NeReLaBasic() {
     }
 }
 
+#ifdef _WIN32
 // Converts a std::string (UTF-8) to a std::wstring (UTF-16)
 std::wstring string_to_wstring(const std::string& str) {
     if (str.empty()) {
@@ -186,6 +191,8 @@ std::wstring string_to_wstring(const std::string& str) {
 
     return wstr;
 }
+#endif
+
 // --- Implementation for loading a dynamic module ---
 bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     std::string full_path = module_path;
@@ -269,6 +276,9 @@ void NeReLaBasic::init_screen() {
     TextIO::clearScreen();
     TextIO::print("jdBasic v " + NERELA_VERSION + "\n");
     TextIO::print("(c) 2025\n\n");
+// #ifndef _WIN32    
+//     keypad(stdscr, TRUE); 
+// #endif    
 }
 
 void NeReLaBasic::init_system() {
@@ -290,8 +300,14 @@ void NeReLaBasic::process_system_events() {
     process_event_queue();
 
     // 2. Process system-level keyboard events if not paused by OPTION "NOPAUSE"
+#ifdef _WIN32
     if (!nopause_active && _kbhit()) {
         char key = _getch();
+#else
+    if (!nopause_active && TextIO::kbhit()) {
+        char key = getch();
+#endif
+
 
         auto key_data = std::make_shared<Map>();
         key_data->data["key"] = std::string(1, key);
@@ -300,7 +316,11 @@ void NeReLaBasic::process_system_events() {
         // On Windows, extended keys (arrows, etc.) send a 224 prefix.
         // We read the second byte and map it to the custom scancodes our BASIC program expects.
         if (scancode == 224) {
+#ifdef _WIN32            
             int extended_code = _getch();
+#else
+            int extended_code = getch();
+#endif           
             switch (extended_code) {
             case 75: scancode = 276; break; // Left Arrow
             case 77: scancode = 275; break; // Right Arrow

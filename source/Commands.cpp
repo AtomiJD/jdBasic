@@ -4,11 +4,15 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <ncurses.h>
+#endif
 #include "Commands.hpp"
 #include "StringUtils.hpp"
 #include "NeReLaBasic.hpp" 
-#include "Compiler.hpp""
+#include "Compiler.hpp"
 #include "TextIO.hpp"
 #include "Tokens.hpp"
 #include "Error.hpp"
@@ -207,6 +211,7 @@ std::string to_string(const BasicValue& val) {
             return "<Function: " + arg.name + ">";
         }
         else if constexpr (std::is_same_v<T, DateTime>) {
+#ifdef _WIN32            
             // Logic to convert DateTime to a string
             auto tp = arg.time_point;
             // First, we need to handle the time zone conversion correctly.
@@ -236,7 +241,26 @@ std::string to_string(const BasicValue& val) {
                 << std::setw(2) << std::setfill('0') << hms.hours().count() << ":"
                 << std::setw(2) << std::setfill('0') << hms.minutes().count() << ":"
                 << std::setw(2) << std::setfill('0') << hms.seconds().count();
+#else
+            // This implementation uses the C-style time library for maximum compatibility,
+            // as C++20 time_zone features are not available on all compilers (e.g., GCC < 11).
 
+            // 1. Convert the chrono::time_point to the legacy time_t.
+            auto tp = arg.time_point;
+            std::time_t time = std::chrono::system_clock::to_time_t(tp);
+
+            // 2. Convert to a tm struct in the local time zone.
+            // 'localtime' is not thread-safe on all platforms, but for simple conversion it's fine.
+            // For thread-safe versions, you might use 'localtime_r' (on POSIX systems).
+            std::tm local_tm = *std::localtime(&time);
+
+            // 3. Use a stringstream to format the date and time.
+            std::stringstream ss;
+            
+            // The put_time manipulator formats the tm struct according to the format string.
+            // The format "%Y-%m-%d %H:%M:%S" matches your original desired output.
+            ss << std::put_time(&local_tm, "%Y-%m-%d %H:%M:%S");
+#endif
             return ss.str();
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
@@ -1145,7 +1169,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
             return;
         }
 #else
-        Error::set(22, vm.runtime_current_line, "Unknown procedure: " + upper_identifier);
+        Error::set(22, vm.runtime_current_line, "Unknown procedure: " + proc_name);
 #endif
     }
     else {

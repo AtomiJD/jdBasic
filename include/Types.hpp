@@ -45,7 +45,14 @@ struct DateTime {
     // Constructor from a time_point.
     DateTime(const std::chrono::system_clock::time_point& tp) : time_point(tp) {}
 
+#ifdef _WIN32    
     bool operator==(const DateTime&) const = default;
+#else
+    bool operator==(const DateTime& other) const {
+        return time_point == other.time_point;
+    }
+#endif
+
 };
 
 #ifdef JDCOM
@@ -141,7 +148,13 @@ struct OpaqueHandle {
 struct FunctionRef {
     std::string name;
     // This lets std::variant compare it if needed.
+#ifdef _WIN32    
     bool operator==(const FunctionRef&) const = default;
+#else
+    bool operator==(const FunctionRef& other) const {
+        return name == other.name;
+    }
+#endif
 };
 
 struct JsonObject {
@@ -150,11 +163,24 @@ struct JsonObject {
 
 struct TaskRef {
     int id = -1;
+#ifdef _WIN32    
     bool operator==(const TaskRef&) const = default;
+#else
+    bool operator==(const TaskRef& other) const {
+        return id == other.id;
+    }
+#endif    
 };
 
 struct ThreadHandle {
     std::thread::id id; // Use the thread's ID as a unique identifier
+#ifdef _WIN32    
+    bool operator==(const ThreadHandle&) const = default;
+#else
+    bool operator==(const ThreadHandle& other) const {
+        return id == other.id;
+    }
+#endif    
 };
 
 // --- Use a std::shared_ptr to break the circular dependency ---
@@ -200,7 +226,13 @@ struct Array {
     }
 
     // This lets std::variant compare it if needed.
+#ifdef _WIN32    
     bool operator==(const Array&) const = default;
+#else
+    bool operator==(const Array& other) const {
+        return data == other.data;
+    }
+#endif     
 };
 
 // --- A structure to represent a Map (associative array) ---

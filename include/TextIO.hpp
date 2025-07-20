@@ -6,6 +6,9 @@
 #include <sstream>
 #include <streambuf>
 #include <cstdint> // For uint16_t, uint8_t
+#ifndef _WIN32
+#include <ncurses.h>
+#endif  
 
 // The CoutRedirector class from above
 class CoutRedirector {
@@ -27,6 +30,9 @@ public:
 
 // A namespace for all text input/output related functions
 namespace TextIO {
+    #ifndef _WIN32
+    int kbhit();
+    #endif
     void print(const std::string& message);
     void print_uw(uint16_t value);
     void print_uwhex(uint16_t value);

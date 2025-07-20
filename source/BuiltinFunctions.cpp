@@ -9,7 +9,11 @@
 #include <thread>
 #include <chrono>
 #include <cmath> // For sin, cos, etc.
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <ncurses.h>
+#endif
 #include <algorithm>    // For std::transform
 #include <string>       // For std::string, std::to_string
 #include <vector>       // For std::vector
@@ -21,7 +25,12 @@
 #include <sstream>
 #include <unordered_set>
 #include <cstdlib> 
+#ifdef _WIN32
 #include <format>
+#else
+#include <fmt/core.h>
+#include <fmt/format.h>
+#endif
 #include <functional>
 #include <random>
 #include <future>
@@ -1896,10 +1905,17 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     // --- Original console-based logic (fallback) ---
     // If graphics are not active, use the old conio.h method.
+#ifdef _WIN32    
     if (_kbhit()) {
         char c = _getch();
         return std::string(1, c);
     }
+#else
+    if (TextIO::kbhit()) {
+        char c = getch();
+        return std::string(1, c);
+    }
+#endif
 
     return std::string("");
 }
@@ -2440,19 +2456,35 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                             // Check for integer-only types: d, x, X, b, B, o, c
                             if (std::string("dxXbo").find(type_char) != std::string::npos) {
                                 // It's an integer format. Cast the double to a long long.
+#ifdef _WIN32
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<long long>(value)));
+#else
+                                return fmt::format(format_specifier, value);
+#endif                                
                             }
                             if (type_char == 'c') {
                                 // Handle character case
+#ifdef _WIN32                                
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<char>(static_cast<long long>(value))));
+#else
+                                return fmt::format(format_specifier, value);
+#endif                                
                             }
                         }
                         // If it's not an integer type, format as a double.
+#ifdef _WIN32
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
+#else
+                        return fmt::format(format_specifier, value);
+#endif                                
                     }
                     else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
                         // These types are fine as they are
+#ifdef _WIN32
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
+#else
+                        return fmt::format(format_specifier, value);
+#endif                                
                     }
                     else {
                         // Fallback for complex types (Array, Map, etc.)
@@ -2460,7 +2492,11 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                     }
                     }, arg);
             }
+#ifdef _WIN32            
             catch (const std::format_error& e) {
+#else                
+            catch (const fmt::format_error& e) {
+#endif
                 result << "{FORMAT ERROR: " << e.what() << "}";
             }
         }
@@ -3975,7 +4011,11 @@ BasicValue builtin_time_str(NeReLaBasic& vm, const std::vector<BasicValue>& args
 // Helper to safely add time units to a time_t
 time_t add_to_tm(time_t base_time, int years, int months, int days, int hours, int minutes, int seconds) {
     struct tm timeinfo;
+#ifdef _WIN32
     localtime_s(&timeinfo, &base_time); // Use safe version
+#else
+    localtime_r(&base_time, &timeinfo);
+#endif    
 
     timeinfo.tm_year += years;
     timeinfo.tm_mon += months;
@@ -4015,6 +4055,7 @@ BasicValue builtin_dateadd(NeReLaBasic& vm, const std::vector<BasicValue>& args)
         }
         // Calendar-based arithmetic
         else if (part == "D" || part == "M" || part == "YYYY") {
+#ifdef _WIN32            
             // To correctly add calendar months/years, we must work in local time.
             const std::chrono::time_zone* current_tz;
             try {
@@ -4053,6 +4094,24 @@ BasicValue builtin_dateadd(NeReLaBasic& vm, const std::vector<BasicValue>& args)
                 // Re-assemble the date and time parts and convert back to system time (UTC)
                 new_tp = current_tz->to_sys(std::chrono::local_days{ ymd } + time_of_day);
             }
+#else
+                // Convert time_point to time_t
+                std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+                std::tm timeinfo;
+                localtime_r(&tt, &timeinfo);
+
+                if (part == "D") {
+                    timeinfo.tm_mday += number;
+                } else if (part == "M") {
+                    timeinfo.tm_mon += number;
+                } else { // "YYYY"
+                    timeinfo.tm_year += number;
+                }
+
+                // Normalize and convert back to time_point
+                std::time_t new_tt = mktime(&timeinfo);
+                new_tp = std::chrono::system_clock::from_time_t(new_tt);
+#endif            
         }
         else {
             Error::set(1, vm.runtime_current_line, "Invalid interval for DATEADD. Use YYYY, M, D, H, N, or S.");
@@ -4117,7 +4176,7 @@ BasicValue builtin_cvdate(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
             Error::set(15, vm_ref.runtime_current_line, "Invalid date format. Expected 'YYYY-MM-DD'.");
             return false;
         }
-
+#ifdef _WIN32
         // Use C++20's std::chrono::year_month_day for robust validation and conversion
         std::chrono::year_month_day ymd{
             std::chrono::year{p_year},
@@ -4134,7 +4193,21 @@ BasicValue builtin_cvdate(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         // std::chrono::sys_days is a time_point that represents a whole day.
         // This will correctly convert to the time_point in your DateTime struct.
         auto time_point = std::chrono::sys_days{ ymd };
-
+#else
+        std::tm timeinfo = {};
+        timeinfo.tm_year = p_year - 1900;
+        timeinfo.tm_mon = p_month - 1;
+        timeinfo.tm_mday = p_day;
+        timeinfo.tm_hour = 0;
+        timeinfo.tm_min = 0;
+        timeinfo.tm_sec = 0;
+        std::time_t tt = mktime(&timeinfo);
+        if (tt == -1) {
+            Error::set(15, vm_ref.runtime_current_line, "Invalid date components (e.g., month > 12 or invalid day).");
+            return false;
+        }
+        auto time_point = std::chrono::system_clock::from_time_t(tt);
+#endif
         return DateTime{ time_point };
     };
 

@@ -6,11 +6,15 @@
 #include "Error.hpp"    // Required for Error::print
 #include "TextIO.hpp"
 #include "DAPHandler.hpp" 
-#include <windows.h> 
 #include <iostream>
 #include <string>
 #include <fstream>
+#ifdef _WIN32
+#include <windows.h> 
 #include <conio.h>
+#else
+#include <ncurses.h>
+#endif
 #ifdef JDCOM         // also define: NOMINMAX!!!!!
 #include <objbase.h> // Required for CoInitializeEx, CoUninitialize
 #endif 
@@ -28,8 +32,14 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+#ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+#else
+    // initscr();
+    // cbreak();       // Line buffering disabled
+    // noecho();       // Don't echo() while we do getch
+#endif
 
     // Create an instance of our interpreter
     NeReLaBasic interpreter;
@@ -89,7 +99,11 @@ int main(int argc, char* argv[]) {
         dap_server.stop();
 
         TextIO::print("\n--- ENDED (Press any key to exit) ---\n");
+#ifdef _WIN32        
         _getch();
+#else
+        getch();
+#endif        
     }
     else {
 
@@ -107,7 +121,11 @@ int main(int argc, char* argv[]) {
                 Commands::do_run(interpreter);
 
                 TextIO::print("\n--- ENDED (Press any key to exit) ---\n");
+#ifdef _WIN32        
                 _getch();
+#else
+                getch();
+#endif     
             }
             // Note: If do_run encounters a runtime error, it is handled internally
             // by the Error::print() call within the execution loop.

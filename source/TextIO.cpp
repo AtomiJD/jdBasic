@@ -7,7 +7,34 @@
 #include <streambuf>
 #include <cstdint> // For uint16_t, uint8_t
 
+#ifndef _WIN32
+#include <ncurses.h>
+/**
+ * @brief Checks if a key has been pressed on the console.
+ * * This function is a non-blocking equivalent of conio.h's _kbhit().
+ * It uses ncurses's non-blocking getch() to peek at the input buffer.
+ * If a character is present, it is pushed back onto the buffer
+ * so it can be read by a subsequent getch() call.
+ * * @return int Returns 1 if a key has been pressed, 0 otherwise.
+ */
+int TextIO::kbhit() {
+    // Set getch() to be non-blocking
+    nodelay(stdscr, TRUE);
 
+    int ch = getch();
+
+    if (ch != ERR) {
+        // A key was hit. Push it back onto the input stream
+        // so it can be read by the next call to getch().
+        ungetch(ch);
+        nodelay(stdscr, FALSE); // Restore blocking mode
+        return 1;
+    } else {
+        nodelay(stdscr, FALSE); // Restore blocking mode
+        return 0;
+    }
+}
+#endif
 
 void TextIO::print(const std::string& message) {
     std::cout << message;
