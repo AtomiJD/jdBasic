@@ -367,6 +367,8 @@ doc/*_old.*
 fluppi/
 jdb/_*.*
 libs/tf
+jdb/fonts
+jdb/music
 
 
 
