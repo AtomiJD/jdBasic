@@ -68,6 +68,8 @@ public:
     uint16_t current_source_line = 0;
     uint16_t current_statement_start_pcode = 0; // Tracks the start of the current statement
 
+    using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>;
+
     struct ForLoopInfo {
         std::string variable_name; // Name of the loop counter (e.g., "i")
         double end_value = 0;
@@ -165,6 +167,7 @@ public:
         std::string name;
         // Using a map for members allows for quick lookup
         std::map<std::string, MemberInfo> members;
+        FunctionTable methods;
     };
 
     std::promise<bool> dap_launch_promise; // Used to signal that launch has occurred
@@ -199,6 +202,7 @@ public:
 
     std::vector<StackFrame> call_stack;
     std::vector<uint16_t> func_stack;
+    std::vector<std::shared_ptr<Map>> this_stack;
 
     // The main program has its own function table
     FunctionTable main_function_table;
@@ -218,11 +222,8 @@ public:
 
     // --- C++ Modules ---
     std::map<std::string, BasicModule> compiled_modules;
-    // True if the compiler is currently processing a module file
-    // bool is_compiling_module = false;
-    // Holds the name of the module currently being compiled
-    // std::string current_module_name;
-        // --- Event Handling System ---
+
+    // --- Event Handling System ---
     std::map<std::string, std::string> event_handlers; // Maps event name to function name
     std::deque<std::pair<std::string, BasicValue>> event_queue; // Queue of raised events
     bool is_processing_event = false; // Prevents event recursion

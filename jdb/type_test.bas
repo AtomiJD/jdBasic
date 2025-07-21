@@ -3,6 +3,9 @@ TYPE T_Character
     Name AS STRING
     HitPoints AS INTEGER
     Strength AS DOUBLE
+    SUB INIT()
+        THIS.HitPoints = 150
+    ENDSUB
 ENDTYPE
 
 ' 2. Initialize an empty array to hold the characters
@@ -11,8 +14,9 @@ PRINT "Created an empty party array."
 
 ' 3. Create and populate the first character instance
 DIM Player1 AS T_Character
+Player1.INIT
 Player1.Name = "Atomi"
-Player1.HitPoints = 150
+'Player1.HitPoints = 150
 Player1.Strength = 18.5
 
 ' 4. Append the first character to the array

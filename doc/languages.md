@@ -92,7 +92,7 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
 
 ```basic
 PRINT "--- Processing the Pipe Way (with Pipe Operator) ---"
-final_result$ = SALES_DATA |> FILTER_GT_150@ |> SUM_ARRAY@ |> FORMAT_RESULT$@
+final_result$ = FILTER_GT_150(SALES_DATA) |> SUM_ARRAY(?) |> FORMAT_RESULT$(?)
 PRINT final_result$
 ```
 

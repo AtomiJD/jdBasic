@@ -480,6 +480,8 @@ void Commands::do_dim(NeReLaBasic& vm) {
                 const auto& type_info = vm.user_defined_types.at(type_name_str);
                 auto udt_instance = std::make_shared<Map>();
 
+                udt_instance->type_name_if_udt = type_name_str;
+
                 for (const auto& member_pair : type_info.members) {
                     const auto& member_info = member_pair.second;
                     BasicValue member_default_val;
@@ -638,11 +640,23 @@ void Commands::do_print(NeReLaBasic& vm) {
 }
 
 void Commands::do_let(NeReLaBasic& vm) {
-    Tokens::ID var_type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-    vm.pcode++;
-    std::string name = to_upper(read_string(vm));
+    static bool is_this = false;
+    std::string name = "";
 
-    size_t dot_pos = name.find('.');
+    Tokens::ID var_type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+    if (var_type_token == Tokens::ID::THIS_KEYWORD) {
+        is_this = true;
+        vm.pcode += 3;
+        name = to_upper(read_string(vm));
+    }
+    else {
+        is_this = false;
+        vm.pcode++;
+        name = to_upper(read_string(vm));
+    }
+
+    //size_t dot_pos = name.find('.');
 
     // --- Case 1: ARRAY ELEMENT ASSIGNMENT (e.g., A[i, j] = ...) ---
     if (var_type_token == Tokens::ID::ARRAY_ACCESS) {
@@ -741,15 +755,22 @@ void Commands::do_let(NeReLaBasic& vm) {
     // --- Case 3: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
     else {
         // --- CORRECTED: Logic for dot-notation assignment ---
-        if (name.find('.') != std::string::npos) {
+        if (name.find('.') != std::string::npos || is_this == true) {
             if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
                 Error::set(1, vm.runtime_current_line); return;
             }
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
+            std::string prefix = "";
+            if (is_this == true) {
+                prefix = "THIS.";
+            }
 
-            auto [final_obj, final_member] = vm.resolve_dot_chain(name);
+            auto [final_obj, final_member] = vm.resolve_dot_chain(prefix + name);
             if (Error::get() != 0) return;
+            if (is_this == true) {
+                final_obj = vm.variables[to_string(final_obj)];
+            }
 
             // Case 1: The target is a User-Defined Type (a Map)
             if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
@@ -790,6 +811,7 @@ void Commands::do_let(NeReLaBasic& vm) {
         }
     }
 }
+
 
 void Commands::do_goto(NeReLaBasic& vm) {
     // The label name was stored as a string in the bytecode after the GOTO token.
@@ -941,66 +963,106 @@ void Commands::do_func(NeReLaBasic& vm) {
     vm.pcode = jump_over_address;
 }
 
-// Commands.cpp
-
-// ... (existing includes and helper functions)
-
 void Commands::do_callfunc(NeReLaBasic& vm) {
     std::string identifier_being_called = to_upper(read_string(vm));
 
     // Check if the identifier contains a dot, which signifies a potential method call (e.g., "conn.Open").
     if (identifier_being_called.find('.') != std::string::npos && !vm.active_function_table->count(identifier_being_called)) {
+        size_t dot_pos = identifier_being_called.find('.');
+        std::string object_name = to_upper(identifier_being_called.substr(0, dot_pos));
+        std::string method_name = to_upper(identifier_being_called.substr(dot_pos + 1));
+        if (vm.variables.contains(object_name)) {
+            // 1. Get the object instance
+            BasicValue& object_instance_val = get_variable(vm, object_name);
+            if (!std::holds_alternative<std::shared_ptr<Map>>(object_instance_val)) {
+                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                return;
+            }
+            auto object_instance_ptr = std::get<std::shared_ptr<Map>>(object_instance_val);
+
+            // 2. Get its type and find the method
+            std::string type_name = object_instance_ptr->type_name_if_udt;
+            if (type_name.empty() || !vm.user_defined_types.count(type_name)) {
+                Error::set(15, vm.runtime_current_line, "Object has no type information.");
+                return;
+            }
+            const auto& type_info = vm.user_defined_types.at(type_name);
+            if (!type_info.methods.count(method_name)) {
+                Error::set(22, vm.runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'.");
+                return;
+            }
+
+            // 3. Get the mangled function name and its FunctionInfo
+            std::string mangled_name = type_name + "." + method_name;
+            const auto& func_info = vm.active_function_table->at(mangled_name);
+
+            // 4. Parse arguments
+            auto args = vm.parse_argument_list();
+            if (Error::get() != 0) return;
+
+            // 5. *** SET THE 'THIS' CONTEXT ***
+            vm.this_stack.push_back(object_instance_ptr);
+
+            // 6. Execute the function
+            vm.execute_synchronous_function(func_info, args);
+
+            // 7. *** CLEAN UP THE 'THIS' CONTEXT ***
+            vm.this_stack.pop_back();
+        }
+
 #ifdef JDCOM // This logic is only compiled if COM support is enabled.
         // It's a dot-chain, so resolve it to get the target object and the method name.
-        auto [final_obj, final_method] = vm.resolve_dot_chain(identifier_being_called);
-        if (Error::get() != 0) {
-            return; // An error occurred during resolution.
-        }
+        else {
+            auto [final_obj, final_method] = vm.resolve_dot_chain(identifier_being_called);
+            if (Error::get() != 0) {
+                return; // An error occurred during resolution.
+            }
 
-        // Ensure we have a COM object to call a method on.
-        if (!std::holds_alternative<ComObject>(final_obj)) {
-            Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
-            return;
-        }
+            // Ensure we have a COM object to call a method on.
+            if (!std::holds_alternative<ComObject>(final_obj)) {
+                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                return;
+            }
 
-        IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-        if (!pDisp) {
-            Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
-            return;
-        }
+            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+            if (!pDisp) {
+                Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
+                return;
+            }
 
-        // Parse arguments from the bytecode stream.
-        std::vector<BasicValue> com_args;
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
-            Error::set(1, vm.runtime_current_line, "Syntax Error: Missing '('.");
-            return;
-        }
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            while (true) {
-                com_args.push_back(vm.evaluate_expression());
-                if (Error::get() != 0) return;
+            // Parse arguments from the bytecode stream.
+            std::vector<BasicValue> com_args;
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
+                Error::set(1, vm.runtime_current_line, "Syntax Error: Missing '('.");
+                return;
+            }
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                while (true) {
+                    com_args.push_back(vm.evaluate_expression());
+                    if (Error::get() != 0) return;
 
-                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-                if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                if (separator != Tokens::ID::C_COMMA) {
-                    Error::set(1, vm.runtime_current_line, "Syntax Error: Missing ','.");
+                    Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                    if (separator != Tokens::ID::C_COMMA) {
+                        Error::set(1, vm.runtime_current_line, "Syntax Error: Missing ','.");
+                        return;
+                    }
+                    vm.pcode++;
+                }
+            }
+            vm.pcode++; // Consume ')'
+
+            _variant_t result_vt; // Result is discarded for statement calls.
+            HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+
+            if (FAILED(hr)) {
+                // If the method call fails, it might be a property get with parameters (e.g., obj.Item(1)).
+                // We still try this even for a statement call, as the call itself might have side effects.
+                hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
+                if (FAILED(hr)) {
+                    Error::set(12, vm.runtime_current_line, "Failed to call COM method or get property '" + final_method + "'");
                     return;
                 }
-                vm.pcode++;
-            }
-        }
-        vm.pcode++; // Consume ')'
-
-        _variant_t result_vt; // Result is discarded for statement calls.
-        HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
-
-        if (FAILED(hr)) {
-            // If the method call fails, it might be a property get with parameters (e.g., obj.Item(1)).
-            // We still try this even for a statement call, as the call itself might have side effects.
-            hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
-            if (FAILED(hr)) {
-                Error::set(12, vm.runtime_current_line, "Failed to call COM method or get property '" + final_method + "'");
-                return;
             }
         }
 #else
@@ -1141,32 +1203,102 @@ void Commands::do_callsub(NeReLaBasic& vm) {
     }
     // Check if it's a COM method call by looking for a '.'
     if (proc_name.find('.') != std::string::npos && funcnotfound) {
+
+        size_t dot_pos = proc_name.find('.');
+        std::string object_name = to_upper(proc_name.substr(0, dot_pos));
+        std::string method_name = to_upper(proc_name.substr(dot_pos + 1));
+        if (vm.variables.contains(object_name)) {
+            // 1. Get the object instance
+            BasicValue& object_instance_val = get_variable(vm, object_name);
+            if (!std::holds_alternative<std::shared_ptr<Map>>(object_instance_val)) {
+                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                return;
+            }
+            auto object_instance_ptr = std::get<std::shared_ptr<Map>>(object_instance_val);
+
+            // 2. Get its type and find the method
+            std::string type_name = object_instance_ptr->type_name_if_udt;
+            if (type_name.empty() || !vm.user_defined_types.count(type_name)) {
+                Error::set(15, vm.runtime_current_line, "Object has no type information.");
+                return;
+            }
+            const auto& type_info = vm.user_defined_types.at(type_name);
+            if (!type_info.methods.count(method_name)) {
+                Error::set(22, vm.runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'.");
+                return;
+            }
+
+            // 3. Get the mangled function name and its FunctionInfo
+            std::string mangled_name = type_name + "." + method_name;
+            const auto& func_info = vm.active_function_table->at(mangled_name);
+
+            // 4. Parse arguments
+            //auto args = vm.parse_argument_list();
+            //if (Error::get() != 0) return;
+            std::vector<BasicValue> args;
+
+            Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+            if (token != Tokens::ID::C_CR) {
+                if (func_info.arity == -1 || func_info.arity > 0) {
+                    while (true) {
+                        args.push_back(vm.evaluate_expression());
+                        if (Error::get() != 0) return;
+                        Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                        if (separator == Tokens::ID::C_CR) break;
+                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+                        vm.pcode++;
+                    }
+                }
+                else {
+                    vm.pcode++;
+                    vm.pcode++;
+                }
+            }
+
+            if (func_info.arity != -1 && args.size() != func_info.arity) {
+                Error::set(26, vm.runtime_current_line); return;
+            }
+
+            // 5. *** SET THE 'THIS' CONTEXT ***
+            object_instance_ptr->data["THIS"] = object_name;
+            vm.this_stack.push_back(object_instance_ptr);
+
+            // 6. Execute the function
+            vm.execute_synchronous_function(func_info, args);
+
+            // 7. *** CLEAN UP THE 'THIS' CONTEXT ***
+            vm.this_stack.pop_back();
+        }
+
 #ifdef JDCOM
-        // It's a dot-chain, so resolve it to get the object and the method name.
-        auto [final_obj, final_method] = vm.resolve_dot_chain(proc_name);
-        if (Error::get() != 0) return; // An error occurred during resolution
+        else {
+            // It's a dot-chain, so resolve it to get the object and the method name.
+            auto [final_obj, final_method] = vm.resolve_dot_chain(proc_name);
+            if (Error::get() != 0) return; // An error occurred during resolution
 
-        // Ensure we have a COM object to call a method on.
-        if (!std::holds_alternative<ComObject>(final_obj)) {
-            Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
-            return;
-        }
+            // Ensure we have a COM object to call a method on.
+            if (!std::holds_alternative<ComObject>(final_obj)) {
+                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                return;
+            }
 
-        IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-        if (!pDisp) {
-            Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
-            return;
-        }
+            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+            if (!pDisp) {
+                Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
+                return;
+            }
 
-        // For a procedure call, there are no arguments and we ignore the return value.
-        std::vector<BasicValue> com_args; // Empty args
-        _variant_t result_vt;             // We discard the result
+            // For a procedure call, there are no arguments and we ignore the return value.
+            std::vector<BasicValue> com_args; // Empty args
+            _variant_t result_vt;             // We discard the result
 
-        // Invoke as a method.
-        HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
-        if (FAILED(hr)) {
-            Error::set(12, vm.runtime_current_line, "Failed to call COM method '" + final_method + "'");
-            return;
+            // Invoke as a method.
+            HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+            if (FAILED(hr)) {
+                Error::set(12, vm.runtime_current_line, "Failed to call COM method '" + final_method + "'");
+                return;
+            }
         }
 #else
         Error::set(22, vm.runtime_current_line, "Unknown procedure: " + proc_name);

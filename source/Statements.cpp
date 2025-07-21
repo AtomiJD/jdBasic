@@ -82,6 +82,7 @@ namespace {
         {"CALL",    Tokens::ID::CALL},
         {"RAISEEVENT", Tokens::ID::RAISEEVENT},
         {"LAMBDA",  Tokens::ID::LAMBDA},
+        {"THIS",  Tokens::ID::THIS_KEYWORD},
         {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace

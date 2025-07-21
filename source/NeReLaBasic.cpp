@@ -84,7 +84,31 @@ std::pair<BasicValue, std::string> NeReLaBasic::resolve_dot_chain(const std::str
     }
 
     // Get the base variable (e.g., "PLAYER").
-    BasicValue current_object = get_variable(*this, to_upper(parts[0]));
+    //BasicValue current_object = get_variable(*this, to_upper(parts[0]));
+    BasicValue current_object;
+    std::string base = to_upper(parts[0]);
+
+    if (base == "THIS") {
+        // Resolve THIS from the current call stack
+        if (!this_stack.empty()) {
+            auto& frame = this_stack.back();
+            auto it = frame.get();
+            if (it) {
+                current_object = it->data["THIS"];
+            }
+            else {
+                Error::set(13, runtime_current_line, "`THIS` is undefined.");
+                return {};
+            }
+        }
+        else {
+            Error::set(13, runtime_current_line, "`THIS` used outside method block.");
+            return {};
+        }
+    }
+    else {
+        current_object = get_variable(*this, base);
+    }
 
     // Navigate the chain up to the second-to-last part.
     for (size_t i = 1; i < parts.size() - 1; ++i) {
@@ -983,6 +1007,7 @@ void NeReLaBasic::statement() {
         Commands::do_print(*this); // Pass a reference to ourselves
         break;
 
+    case Tokens::ID::THIS_KEYWORD:
     case Tokens::ID::VARIANT:
     case Tokens::ID::INT:
     case Tokens::ID::STRVAR:
@@ -1594,19 +1619,6 @@ BasicValue NeReLaBasic::parse_primary() {
             }
 
             if (active_function_table->count(real_func_to_call)) {
-                //const auto& func_info = active_function_table->at(real_func_to_call);
-                //std::vector<BasicValue> args;
-                //if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
-                //if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                //    while (true) {
-                //        args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
-                //        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                //        if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                //        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
-                //    }
-                //}
-                //pcode++;
-                //if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return {}; }
                 const auto& func_info = active_function_table->at(real_func_to_call);
 
                 std::vector<BasicValue> args = parse_argument_list();
@@ -1619,32 +1631,76 @@ BasicValue NeReLaBasic::parse_primary() {
                 current_value = execute_function_for_value(func_info, args);
             }
             else if (identifier_being_called.find('.') != std::string::npos) {
-#ifdef JDCOM
-                auto [final_obj, final_method] = resolve_dot_chain(identifier_being_called);
-                if (Error::get() != 0) return {};
-                if (!std::holds_alternative<ComObject>(final_obj)) {
-                    Error::set(15, runtime_current_line, "Methods can only be called on COM objects."); return {};
-                }
-                IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-                if (!pDisp) { Error::set(1, runtime_current_line, "Uninitialized COM object."); return {}; }
-                std::vector<BasicValue> com_args;
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                    while (true) {
-                        com_args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
-                        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                        if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+                size_t dot_pos = identifier_being_called.find('.');
+                std::string object_name = to_upper(identifier_being_called.substr(0, dot_pos));
+                std::string method_name = to_upper(identifier_being_called.substr(dot_pos + 1));
+                if (variables.contains(object_name)) {
+                    // 1. Get the object instance
+                    BasicValue& object_instance_val = get_variable(*this, object_name);
+                    if (!std::holds_alternative<std::shared_ptr<Map>>(object_instance_val)) {
+                        Error::set(15, runtime_current_line, "Methods can only be called on objects.");
+                        return {};
                     }
+                    auto object_instance_ptr = std::get<std::shared_ptr<Map>>(object_instance_val);
+
+                    // 2. Get its type and find the method
+                    std::string type_name = object_instance_ptr->type_name_if_udt;
+                    if (type_name.empty() || !user_defined_types.count(type_name)) {
+                        Error::set(15, runtime_current_line, "Object has no type information.");
+                        return {};
+                    }
+                    const auto& type_info = user_defined_types.at(type_name);
+                    if (!type_info.methods.count(method_name)) {
+                        Error::set(22, runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'.");
+                        return {};
+                    }
+
+                    // 3. Get the mangled function name and its FunctionInfo
+                    std::string mangled_name = type_name + "." + method_name;
+                    const auto& func_info = active_function_table->at(mangled_name);
+
+                    // 4. Parse arguments
+                    auto args = parse_argument_list();
+                    if (Error::get() != 0) return {};
+
+                    // 5. *** SET THE 'THIS' CONTEXT ***
+                    this_stack.push_back(object_instance_ptr);
+
+                    // 6. Execute the function
+                    current_value = execute_function_for_value(func_info, args);
+
+                    // 7. *** CLEAN UP THE 'THIS' CONTEXT ***
+                    this_stack.pop_back();
                 }
-                pcode++;
-                _variant_t result_vt;
-                HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
-                if (FAILED(hr)) {
-                    hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
-                    if (FAILED(hr)) { Error::set(12, runtime_current_line, "Failed to call COM method or get property '" + final_method + "'"); return {}; }
+#ifdef JDCOM
+                else
+                {
+                    auto [final_obj, final_method] = resolve_dot_chain(identifier_being_called);
+                    if (Error::get() != 0) return {};
+                    if (!std::holds_alternative<ComObject>(final_obj)) {
+                        Error::set(15, runtime_current_line, "Methods can only be called on COM objects."); return {};
+                    }
+                    IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+                    if (!pDisp) { Error::set(1, runtime_current_line, "Uninitialized COM object."); return {}; }
+                    std::vector<BasicValue> com_args;
+                    if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+                    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                        while (true) {
+                            com_args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                            Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                            if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                            if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+                        }
+                    }
+                    pcode++;
+                    _variant_t result_vt;
+                    HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+                    if (FAILED(hr)) {
+                        hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
+                        if (FAILED(hr)) { Error::set(12, runtime_current_line, "Failed to call COM method or get property '" + final_method + "'"); return {}; }
+                    }
+                    current_value = variant_t_to_basic_value(result_vt, *this);
                 }
-                current_value = variant_t_to_basic_value(result_vt, *this);
 #else
                 Error::set(22, runtime_current_line, "Unknown function: " + identifier_being_called); return {};
 #endif
@@ -1652,6 +1708,15 @@ BasicValue NeReLaBasic::parse_primary() {
             else { 
                 Error::set(22, runtime_current_line, "Unknown function: " + real_func_to_call); return {}; 
             }
+        }
+        else if (token == Tokens::ID::THIS_KEYWORD) {
+            pcode++; // Consume the token
+            if (this_stack.empty()) {
+                Error::set(1, runtime_current_line, "'this' can only be used inside a method.");
+                return {};
+            }
+            // The current value is a reference to the object on top of the stack
+            current_value = this_stack.back();
         }
         else if (token == Tokens::ID::JD_TRUE) {
             pcode++; current_value = true;

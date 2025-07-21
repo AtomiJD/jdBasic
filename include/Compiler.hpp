@@ -75,7 +75,8 @@ public:
     bool is_compiling_module = false;
     std::string current_module_name;
 
-    // --- Private Methods for the Compilation Pipeline ---
+    std::string current_type_context;
+    bool in_method_block = false;
 
     /**
      * @brief Tokenizes a single line of source code into p-code.

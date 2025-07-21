@@ -112,6 +112,7 @@ namespace Tokens {
         LAMBDA = 0x67,
         C_ARROW = 0x68,
         PLACEHOLDER = 0x69,
+        THIS_KEYWORD = 0x6A,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

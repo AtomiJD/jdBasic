@@ -13,6 +13,7 @@ static int lambda_counter = 0;
 
 Compiler::Compiler() {
     // Constructor can be used to initialize any specific compiler state if needed.
+    std::string current_type_context;
 }
 
 // Move the body of NeReLaBasic::parse here
@@ -71,13 +72,12 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     // This is a simple linear scan. For more keywords, consider a more efficient
     // structure like a Trie or a specialized keyword matcher.
 
-    // Attempt to match "ON ERROR CALL"
-    //if (vm.prgptr + 13 <= vm.lineinput.length() && // "ON ERROR CALL" is 13 chars long (including spaces)
-    //    StringUtils::to_upper(vm.lineinput.substr(vm.prgptr, 13)) == "ON ERROR CALL") {
-    //    vm.buffer = "ON ERROR CALL"; // Store the full keyword
-    //    vm.prgptr += 14;           // Advance past the keyword
-    //    return Tokens::ID::ONERRORCALL;
-    //}
+    // Attempt to match "THIS."
+    if (vm.prgptr + 5 <= vm.lineinput.length() && // "THIS. is 5 chars long (including spaces)
+        StringUtils::to_upper(vm.lineinput.substr(vm.prgptr, 5)) == "THIS.") {
+        vm.prgptr += 4;           // Advance past the keyword
+        return Tokens::ID::THIS_KEYWORD;
+    }
     // Add other multi-word keywords here if you introduce them (e.g., "ON GOSUB")
     // Example: if (prgptr + X <= lineinput.length() && StringUtils::to_upper(lineinput.substr(prgptr, X)) == "ANOTHER MULTI WORD KEYWORD") { ... }
 
@@ -94,6 +94,11 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             }
             // If the part is empty, it's an error (e.g. "MODULE..FUNC") but we let it pass for now
             if (vm.prgptr == part_start) break;
+
+            //vm.buffer = vm.lineinput.substr(ident_start_pos, vm.prgptr - ident_start_pos);
+            //if (StringUtils::to_upper(vm.buffer) == "THIS") {
+            //    return Tokens::ID::THIS_KEYWORD;
+            //}
 
             // If we see a dot, loop again for the next part
             if (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] == '.') {
@@ -272,11 +277,12 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
     while (vm.prgptr < vm.lineinput.length()) {
 
         bool is_exported = false;
+
         Tokens::ID token = parse(vm, is_start_of_statement);
 
         if (token == Tokens::ID::C_UNDERLINE) {
 
-            goto _deckig;
+            goto _dreckig;
         }
 
         if (token == Tokens::ID::EXPORT) {
@@ -387,7 +393,14 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
 
                 info.arity = info.parameter_names.size();
                 info.start_pcode = out_p_code.size() + 3; // +3 for FUNC token and 2-byte address
-                compilation_func_table[info.name] = info;
+
+                std::string final_function_name = info.name;
+                if (!this->current_type_context.empty()) {
+                    // We are inside a TYPE block, so create the mangled name.
+                    final_function_name = this->current_type_context + "." + info.name;
+                }
+
+                compilation_func_table[final_function_name] = info;
 
                 out_p_code.push_back(static_cast<uint8_t>(token));
                 func_stack.push_back(out_p_code.size()); // Store address of the placeholder
@@ -443,7 +456,13 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
 
                 info.arity = info.parameter_names.size();
                 info.start_pcode = out_p_code.size() + 3; // +3 for SUB token and 2-byte address
-                compilation_func_table[info.name] = info;
+
+                std::string final_function_name = info.name;
+                if (!this->current_type_context.empty()) {
+                    // We are inside a TYPE block, so create the mangled name.
+                    final_function_name = this->current_type_context + "." + info.name;
+                }
+                compilation_func_table[final_function_name] = info;
 
                 // Write the SUB token and its placeholder jump address
                 out_p_code.push_back(static_cast<uint8_t>(token));
@@ -958,7 +977,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
     // Every line of bytecode ends with a carriage return token.
     out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::C_CR));
     return 0; // Success
-_deckig:
+_dreckig:
     lineNumber++;
     return 1; // Multiline
 
@@ -1002,6 +1021,7 @@ void Compiler::pre_scan_and_parse_types(NeReLaBasic& vm) {
     std::stringstream source_stream(vm.source_code);
     std::string line;
     bool in_type_block = false;
+    bool in_sub_block = false;
     NeReLaBasic::TypeInfo current_type_info;
 
     while (std::getline(source_stream, line)) {
@@ -1015,7 +1035,38 @@ void Compiler::pre_scan_and_parse_types(NeReLaBasic& vm) {
                 in_type_block = false;
                 vm.user_defined_types[current_type_info.name] = current_type_info;
             }
-            else if (!first_word.empty()) {
+            else if (first_word == "SUB" || first_word == "FUNC") {
+                // --- NEW: Recognize a method declaration ---
+                in_sub_block = true;
+                std::string decl_line = line.substr(line.find(first_word) + first_word.length());
+                StringUtils::trim(decl_line);
+
+                std::string method_name;
+                size_t paren_pos = decl_line.find('(');
+                if (paren_pos != std::string::npos) {
+                    method_name = decl_line.substr(0, paren_pos);
+                    StringUtils::trim(method_name);
+                }
+                else {
+                    method_name = decl_line;
+                }
+
+                NeReLaBasic::FunctionInfo method_info;
+                method_info.name = StringUtils::to_upper(method_name);
+                method_info.is_procedure = (first_word == "SUB");
+
+                // The full, unique "mangled" name for the method
+                std::string mangled_name = current_type_info.name + "." + method_info.name;
+
+                // Store the method by its short name ("UPDATE") in the TypeInfo
+                current_type_info.methods[method_info.name] = method_info;
+
+            }
+            else if (first_word == "ENDSUB" || first_word == "ENDFUNC") {
+                in_sub_block = false;
+                continue;
+            }
+            else if (!first_word.empty() && !in_sub_block) {
                 NeReLaBasic::MemberInfo member;
                 member.name = first_word;
 
@@ -1050,6 +1101,9 @@ void Compiler::pre_scan_and_parse_types(NeReLaBasic& vm) {
                 current_type_info.name = StringUtils::to_upper(type_name);
             }
         }
+    }
+    if (in_sub_block) {
+        Error::set(1, vm.current_source_line, "SUB/FUNC without ENDSUB/ENDFUNC in TYPE.");
     }
 }
 
@@ -1092,7 +1146,7 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
 
     vm.source_code = source; // Store source for pre-scanning
 
-    // NEW: Pre-scan for TYPE definitions
+    //  Pre-scan for TYPE definitions
     vm.user_defined_types.clear();
     this->pre_scan_and_parse_types(vm);
 
@@ -1184,33 +1238,93 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
     bool skipping_type_block = false;
 
     int multiline = false;
+    bool in_type_definition_block = false;
+    this->in_method_block = false;
+
     while (std::getline(source_stream, line)) {
-        std::stringstream temp_stream(line);
-        std::string first_word;
-        temp_stream >> first_word;
+        //std::stringstream temp_stream(line);
+        //std::string first_word;
+        //temp_stream >> first_word;
+        //first_word = StringUtils::to_upper(first_word);
+
+        //// This is the corrected logic for skipping the TYPE blocks
+        //if (skipping_type_block) {
+        //    if (first_word == "ENDTYPE") {
+        //        skipping_type_block = false;
+        //    }
+        //    vm.current_source_line++;
+        //    continue;
+        //}
+        //else if (first_word == "TYPE") {
+        //    skipping_type_block = true;
+        //    vm.current_source_line++;
+        //    continue;
+        //}
+
+
+        //multiline = tokenize(vm, line, vm.current_source_line++, out_p_code, *target_func_table, multiline);
+        //if (multiline > 1) {
+        //    vm.active_function_table = nullptr;
+        //    return 1;
+        //}
+               // Prepare to inspect the line
+        std::string trimmed_line = line;
+        StringUtils::trim(trimmed_line);
+        if (trimmed_line.empty() || trimmed_line[0] == '\'') {
+            vm.current_source_line++;
+            continue;
+        }
+        std::string first_word = trimmed_line.substr(0, trimmed_line.find(' '));
         first_word = StringUtils::to_upper(first_word);
 
-        // This is the corrected logic for skipping the TYPE blocks
-        if (skipping_type_block) {
-            if (first_word == "ENDTYPE") {
-                skipping_type_block = false;
+        bool line_should_be_tokenized = false;
+
+        if (in_type_definition_block) {
+            // --- We are INSIDE a TYPE...ENDTYPE block ---
+            if (first_word == "SUB" || first_word == "FUNC") {
+                this->in_method_block = true;
+                line_should_be_tokenized = true; // Tokenize the start of the method
             }
-            vm.current_source_line++;
-            continue;
+            else if (first_word == "ENDSUB" || first_word == "ENDFUNC") {
+                this->in_method_block = false;
+                line_should_be_tokenized = true; // Tokenize the end of the method
+            }
+            else if (this->in_method_block) {
+                line_should_be_tokenized = true; // This is the method's body, tokenize it!
+            }
+            else if (first_word == "ENDTYPE") {
+                in_type_definition_block = false;
+                this->current_type_context = "";
+                //line_should_be_tokenized = true; // Tokenize ENDTYPE to patch jumps
+            }
+            // If none of the above, it's a data member line (e.g., "Name AS STRING"), so we SKIP it.
+            // line_should_be_tokenized remains false.
         }
-        else if (first_word == "TYPE") {
-            skipping_type_block = true;
-            vm.current_source_line++;
-            continue;
+        else {
+            // --- We are OUTSIDE a TYPE...ENDTYPE block ---
+            if (first_word == "TYPE") {
+                in_type_definition_block = true;
+                std::stringstream ss(trimmed_line);
+                std::string keyword, type_name;
+                ss >> keyword >> type_name;
+                this->current_type_context = StringUtils::to_upper(type_name);
+                //line_should_be_tokenized = true; // Tokenize TYPE to create the skippable block
+            }
+            else {
+                // This is regular global code.
+                line_should_be_tokenized = true;
+            }
         }
-        multiline = tokenize(vm, line, vm.current_source_line++, out_p_code, *target_func_table, multiline);
-        if (multiline > 1) {
-            vm.active_function_table = nullptr;
-            return 1;
+
+        if (line_should_be_tokenized) {
+            multiline = tokenize(vm, line, vm.current_source_line, out_p_code, *target_func_table, multiline);
+            if (multiline > 1) { /* error handling */ }
         }
+
+        vm.current_source_line++;
     }
 
-    // 8. *** NEW: COMPILE PENDING LAMBDAS (PASS 2) ***
+    // 8. *** COMPILE PENDING LAMBDAS (PASS 2) ***
     for (const auto& lambda_to_compile : pending_lambdas) {
         // The start address for this lambda's code is the current size of the main p-code buffer.
         uint16_t lambda_start_address = out_p_code.size();
