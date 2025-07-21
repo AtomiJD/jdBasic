@@ -5280,9 +5280,6 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SPRITE.CREATE_GROUP", 0, builtin_sprite_create_group);
     register_func("SPRITE.COLLISION_GROUP", 2, builtin_sprite_collision_group);
     register_func("SPRITE.COLLISION_GROUPS", 2, builtin_sprite_collision_groups);
-    register_func("SPRITE.GET_X", 1, builtin_sprite_get_x);
-    register_func("SPRITE.GET_Y", 1, builtin_sprite_get_y);
-
 
     // --- Add New TileMap Functions ---
     register_proc("MAP.LOAD", 2, builtin_map_load);

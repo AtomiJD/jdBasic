@@ -35,7 +35,7 @@ This is where jdBasic becomes a powerful tool for data manipulation, inspired by
 * **Rich Data Types**: In addition to arrays, jdBasic has full support for Date/Time objects.
 * **Array Literals**: Initialize arrays with a simple, clean syntax (e.g., `my_array = [[1, 2], [3, 4]]`).
 
-#### Functional Programming Core (The "Lambda" in NeReLa)
+#### Functional Programming Core 
 
 * **First-Class Functions**: Treat functions as values. Assign them to variables and pass them to other functions.
 * **Higher-Order Functions**: Create functions that take other functions as arguments, enabling powerful patterns like `map` and `filter`.

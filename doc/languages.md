@@ -86,6 +86,56 @@ You can access the gradient of a tensor after backpropagation using dot notation
 gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
 ```
 
+## Functional Syntax
+
+**Function chaining (The Pipe Operator **`|>`**)**
+
+```basic
+PRINT "--- Processing the Pipe Way (with Pipe Operator) ---"
+final_result$ = SALES_DATA |> FILTER_GT_150@ |> SUM_ARRAY@ |> FORMAT_RESULT$@
+PRINT final_result$
+```
+
+**Function as operators**
+
+```basic
+'AtomiJD Divider
+FUNC JD(x,y)
+    IF Y = 0 THEN
+        RETURN "Infinity"
+    ELSE
+        RETURN x/y
+    ENDIF
+ENDFUNC
+
+PRINT 10 JD@ 5, 10 JD@ 0, iota(10) jd@ 2, iota(10) jd@ iota(10)*2, 2 jd@ [1,2,4]
+'Should return:
+'2       Infinity        [0.5 1 1.5 2 2.5 3 3.5 4 4.5 5] [2 2 2 2 2 2 2 2 2 2]   [2 1 0.5]
+```
+
+**Higher Order Function**
+
+```basic
+print "Using higher order functions"
+print
+
+func inc(ab)
+    return ab+1
+endfunc
+func dec(ac)
+    return ac-1
+endfunc
+
+func apply(fa,cc)
+    return fa(cc)
+endfunc
+
+print apply(inc@,10) ' Should return 11
+print apply(dec@,12) ' Should return 11
+```
+
+
+
 ## Commands
 
 ### System & Flow Control
@@ -230,6 +280,7 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`SCREEN width, height, [title$]`**: Initializes a graphics window of the specified size.
   * **`SCREENFLIP`**: Updates the screen to show all drawing operations performed since the last flip.
   * **`DRAWCOLOR r, g, b`**: Sets the current drawing color using RGB values (0-255).
+  * **`SETFONT filename$, size`**: Sets the current font to filename$ and size.
   * **`PSET x, y, [r, g, b] OR PSET matrix, [colors]`**: Draws a single pixel at the specified coordinates. Can also take a matrix of points.
   * **`LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]`**: Draws a line between two points. Can also take a matrix of lines.
   * **`RECT x, y, w, h, [r, g, b], [fill] OR RECT matrix, [fill], [colors]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
@@ -244,18 +295,50 @@ gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
   * **`SOUND.PLAY track, frequency`**: Plays a note at a specific frequency on the given track.
   * **`SOUND.RELEASE track`**: Starts the release phase of the note on the given track.
   * **`SOUND.STOP track`**: Immediately stops the note on the given track.
+  * **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file to slot id.
+  * **`FX.PLAY id`**: Plays a WAV file with slot id.
+  * **`MUSIC.PLAY id`**: Plays a WAV file as background music in slot id.
+  * **`MUSIC.STOP`**: Immediately stops the background music.
 
-#### Sprites
+#### Sprites and Maps
 
   * **`SPRITE.LOAD type_id, "filename.png"`**: Loads a sprite image from a file and assigns it a type ID.
+  * **`SPRITE.LOAD_ASEPRITE type_id, "filename.json"`**: Loads a sprite sheet and animation data from an Aseprite export.
   * **`SPRITE.CREATE(type_id, x, y)`**: Creates an instance of a sprite at a given position and returns its unique instance ID.
   * **`SPRITE.MOVE instance_id, x, y`**: Moves a sprite instance to a new position.
   * **`SPRITE.SET_VELOCITY instance_id, vx, vy`**: Sets the velocity for a sprite instance for use with `SPRITE.UPDATE`.
   * **`SPRITE.DELETE instance_id`**: Removes a sprite instance.
-  * **`SPRITE.UPDATE()`**: Updates the positions of all sprites based on their velocities.
-  * **`SPRITE.DRAW_ALL()`**: Draws all active sprite instances to the screen.
+  * **`SPRITE.SET_ANIMATION instance_id, "animation_name$"`**: Sets the current animation for a sprite instance.
+  * **`SPRITE.SET_FLIP instance_id, flip_boolean`**: Sets the horizontal flip state of a sprite.
+  * **`SPRITE.UPDATE`**: Updates the positions of all sprites based on their velocities.
+  * **`SPRITE.DRAW_ALL wx,wy `**: Draws all active sprite instances to the screen. If wx,wy is set it renderes as world coodinates.
   * **`SPRITE.GET_X(instance_id)` / `SPRITE.GET_Y(instance_id)`**: Returns the X or Y coordinate of a sprite instance.
   * **`SPRITE.COLLISION(id1, id2)`**: Returns `TRUE` if the bounding boxes of two sprite instances are colliding.
+  * **`SPRITE.CREATE_GROUP() -> group_id`**: Creates a new, empty sprite group.
+  * **`SPRITE.COLLISION_GROUPS(group_id1, group_id2) -> array[hit_id1, hit_id2]`**: Checks for collision between two groups of sprites.
+  * **`SPRITE.COLLISION_GROUP(instance_id, group_id) -> hit_instance_id`**: Checks for collision between a single sprite and a group.
+
+  * **`MAP.LOAD "map_name", "filename.json"`**: Loads a Tiled map file.
+  * **`MAP.DRAW_LAYER "map_name", "layer_name", [world_offset_x], [world_offset_y]`**: Draws a specific tile layer from a loaded map.
+  * **`MAP.GET_OBJECTS("map_name", "object_type") -> Array of Objects`**: Retrieves all objects of a certain type from an object layer.
+  * **`MAP.COLLIDES(sprite_id, "map_name", "layer_name") -> boolean`**: Checks if a sprite is colliding with any solid tile on a given layer.
+  * **`MAP.GET_TILE_ID "mapname", "layername", tileX, tileY`**: Returns the tile id from the given position.
+  * **`MAP.DRAW_DEBUG_COLLISIONS player_id, "map", "layer"`**: For debug purpose. Draws a rect around the tile near x,y. CAM_X and CAM_Y must be set.
+
+  #### Turtle
+  
+  * **`TUERTLE.FORWARD distance`**: Moves the turte forward with the distance at the given angle.
+  * **`TUERTLE.BACKWARD distance`**: Moves the turte backward with the distance at the given angle.
+  * **`TUERTLE.LEFT degrees`**: Subtract degrees to the turles angle.
+  * **`TUERTLE.RIGHT degrees`**: Adds degrees to the turles angle.
+  * **`TUERTLE.PENUP`**: Stop drawing while moving.
+  * **`TUERTLE.PENDOWN`**: Begins drawing while moving.
+  * **`TUERTLE.SETPOS x, y`**: Set the turle position to x,y
+  * **`TUERTLE.SETHEADING degrees`**: Set the turtles angle to the degres
+  * **`TUERTLE.HOME`**: Move the turtles position to the center of the cancas
+  * **`TUERTLE.DRAW`**: Redraws the entire path the turtle has taken so far.
+  * **`TUERTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
+  * **`TUERTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
 
 ### Type Functions
 

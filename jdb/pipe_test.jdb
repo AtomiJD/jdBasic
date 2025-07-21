@@ -41,7 +41,6 @@ FUNC FILTER(data_array, criteria$)
     RETURN final_result
 ENDFUNC
 
-
 ' --- 2. Pipe-Compatible (Single-Argument) Functions ---
 
 ' This function creates a "closure". It takes only ONE argument (the array)
@@ -79,7 +78,7 @@ formatted_result$ = FORMAT_RESULT$(sum_of_sales)
 PRINT formatted_result$
 PRINT
 
-' --- The "New Way": The Pipe Operator ---
+' --- The "Pipe Way": The Pipe Operator ---
 ' This is clean, logical, and reads like a set of instructions.
 PRINT "--- Processing the New Way (with Pipe Operator) ---"
 final_result$ = SALES_DATA |> FILTER_GT_150@ |> SUM_ARRAY@ |> FORMAT_RESULT$@
