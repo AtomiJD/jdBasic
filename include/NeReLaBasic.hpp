@@ -274,6 +274,9 @@ public:
     std::mutex background_tasks_mutex;
     std::map<std::thread::id, std::future<BasicValue>> background_tasks;
 
+    bool is_in_pipe_call = false;
+    BasicValue piped_value_for_call;
+
     NeReLaBasic(const NeReLaBasic& other);
 
     // --- Member Functions ---
@@ -290,6 +293,7 @@ public:
     bool load_dynamic_module(const std::string& module_path);
 
     // --- Declarations for Expression Parsing ---
+    std::vector<BasicValue> parse_argument_list();
     BasicValue evaluate_expression();
     BasicValue parse_comparison();
     BasicValue parse_term();

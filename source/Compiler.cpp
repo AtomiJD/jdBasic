@@ -235,6 +235,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case ':': return Tokens::ID::C_COLON;
     case '^': return Tokens::ID::C_CARET;
     case '_': return Tokens::ID::C_UNDERLINE;
+    case '?': return Tokens::ID::PLACEHOLDER;
     }
 
     // If we get here, the character is not recognized.

@@ -1401,6 +1401,53 @@ BasicValue NeReLaBasic::parse_map_literal() {
     return new_map_ptr;
 }
 
+std::vector<BasicValue> NeReLaBasic::parse_argument_list() {
+    std::vector<BasicValue> args;
+    // Expect '(' to start the argument list
+    if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) {
+        Error::set(1, runtime_current_line, "Expected '('.");
+        return {};
+    }
+
+    // Check for empty argument list: ()
+    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTPAREN) {
+        pcode++; // Consume ')'
+        return args;
+    }
+
+    // Loop through the arguments
+    while (true) {
+        // *** Check for the placeholder '?' ***
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::PLACEHOLDER) {
+            pcode++; // Consume '?'
+            if (!is_in_pipe_call) {
+                Error::set(1, runtime_current_line, "Placeholder '?' can only be used on the right side of a pipe '|>' operator.");
+                return {};
+            }
+            args.push_back(piped_value_for_call);
+        }
+        else {
+            // Original logic: evaluate the expression for the argument.
+            args.push_back(evaluate_expression());
+        }
+
+        if (Error::get() != 0) return {};
+
+        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        if (separator == Tokens::ID::C_RIGHTPAREN) {
+            break; // End of list
+        }
+        if (separator != Tokens::ID::C_COMMA) {
+            Error::set(1, runtime_current_line, "Expected ',' or ')' in argument list.");
+            return {};
+        }
+        pcode++; // Consume ','
+    }
+
+    pcode++; // Consume ')'
+    return args;
+}
+
 // Level 5: Handles highest-precedence items
 BasicValue NeReLaBasic::parse_primary() {
     BasicValue current_value;
@@ -1547,19 +1594,28 @@ BasicValue NeReLaBasic::parse_primary() {
             }
 
             if (active_function_table->count(real_func_to_call)) {
+                //const auto& func_info = active_function_table->at(real_func_to_call);
+                //std::vector<BasicValue> args;
+                //if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
+                //if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                //    while (true) {
+                //        args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
+                //        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                //        if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                //        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
+                //    }
+                //}
+                //pcode++;
+                //if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return {}; }
                 const auto& func_info = active_function_table->at(real_func_to_call);
-                std::vector<BasicValue> args;
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_LEFTPAREN) { Error::set(1, runtime_current_line); return {}; }
-                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
-                    while (true) {
-                        args.push_back(evaluate_expression()); if (Error::get() != 0) return {};
-                        Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                        if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, runtime_current_line); return {}; } pcode++;
-                    }
+
+                std::vector<BasicValue> args = parse_argument_list();
+                if (Error::get() != 0) return {};
+
+                if (func_info.arity != -1 && args.size() != func_info.arity) {
+                    Error::set(26, runtime_current_line);
+                    return {};
                 }
-                pcode++;
-                if (func_info.arity != -1 && args.size() != func_info.arity) { Error::set(26, runtime_current_line); return {}; }
                 current_value = execute_function_for_value(func_info, args);
             }
             else if (identifier_being_called.find('.') != std::string::npos) {
@@ -2179,45 +2235,67 @@ BasicValue NeReLaBasic::parse_comparison() {
     return left;
 }
 
+//BasicValue NeReLaBasic::parse_pipe() {
+//    // First, parse the expression to the left of the pipe.
+//    // This will handle all higher-precedence operations first.
+//    BasicValue left = parse_comparison();
+//
+//    while (true) {
+//        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+//        if (op == Tokens::ID::C_PIPE) {
+//            pcode++; // Consume the '|>' token
+//
+//            // The right-hand side MUST be a function reference
+//            Tokens::ID rhs_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+//            if (rhs_token != Tokens::ID::FUNCREF) {
+//                Error::set(1, runtime_current_line, "Right-hand side of a pipe operator '|>' must be a function reference (e.g., MyFunc@).");
+//                return {};
+//            }
+//            pcode++; // Consume the FUNCREF token
+//
+//            std::string func_name = to_upper(read_string(*this));
+//            if (!active_function_table->count(func_name)) {
+//                Error::set(22, runtime_current_line, "Function '" + func_name + "' not found for pipe operator.");
+//                return {};
+//            }
+//            const auto& func_info = active_function_table->at(func_name);
+//
+//            // IMPORTANT: For this implementation, the piped function must take exactly one argument.
+//            if (func_info.arity != 1) {
+//                Error::set(26, runtime_current_line, "Function '" + func_name + "' must accept exactly one argument to be used with the pipe operator.");
+//                return {};
+//            }
+//
+//            // Execute the function, passing the left-side result as the single argument.
+//            left = execute_function_for_value(func_info, { left });
+//            if (Error::get() != 0) return {}; // Propagate any error from the function call
+//
+//        }
+//        else {
+//            break; // No more pipe operators, exit the loop.
+//        }
+//    }
+//    return left;
+//}
+
 BasicValue NeReLaBasic::parse_pipe() {
-    // First, parse the expression to the left of the pipe.
-    // This will handle all higher-precedence operations first.
     BasicValue left = parse_comparison();
 
-    while (true) {
-        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (op == Tokens::ID::C_PIPE) {
-            pcode++; // Consume the '|>' token
+    while (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_PIPE) {
+        pcode++; // Consume '|>'
 
-            // The right-hand side MUST be a function reference
-            Tokens::ID rhs_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-            if (rhs_token != Tokens::ID::FUNCREF) {
-                Error::set(1, runtime_current_line, "Right-hand side of a pipe operator '|>' must be a function reference (e.g., MyFunc@).");
-                return {};
-            }
-            pcode++; // Consume the FUNCREF token
+        // Set the pipe context before evaluating the RHS
+        is_in_pipe_call = true;
+        piped_value_for_call = left;
 
-            std::string func_name = to_upper(read_string(*this));
-            if (!active_function_table->count(func_name)) {
-                Error::set(22, runtime_current_line, "Function '" + func_name + "' not found for pipe operator.");
-                return {};
-            }
-            const auto& func_info = active_function_table->at(func_name);
+        // The RHS is a full expression, which will typically be a function call.
+        // Our modified argument parser will now see the context.
+        left = parse_comparison();
 
-            // IMPORTANT: For this implementation, the piped function must take exactly one argument.
-            if (func_info.arity != 1) {
-                Error::set(26, runtime_current_line, "Function '" + func_name + "' must accept exactly one argument to be used with the pipe operator.");
-                return {};
-            }
+        // IMPORTANT: Reset the pipe context after the RHS has been evaluated
+        is_in_pipe_call = false;
 
-            // Execute the function, passing the left-side result as the single argument.
-            left = execute_function_for_value(func_info, { left });
-            if (Error::get() != 0) return {}; // Propagate any error from the function call
-
-        }
-        else {
-            break; // No more pipe operators, exit the loop.
-        }
+        if (Error::get() != 0) return {};
     }
     return left;
 }
