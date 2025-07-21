@@ -315,7 +315,6 @@ print apply(dec@,12) ' Should return 11
 * **`SPRITE.CREATE_GROUP() -> group_id`**: Creates a new, empty sprite group.
 * **`SPRITE.COLLISION_GROUPS(group_id1, group_id2) -> array[hit_id1, hit_id2]`**: Checks for collision between two groups of sprites.
 * **`SPRITE.COLLISION_GROUP(instance_id, group_id) -> hit_instance_id`**: Checks for collision between a single sprite and a group.
-
 * **`MAP.LOAD "map_name", "filename.json"`**: Loads a Tiled map file.
 * **`MAP.DRAW_LAYER "map_name", "layer_name", [world_offset_x], [world_offset_y]`**: Draws a specific tile layer from a loaded map.
 * **`MAP.GET_OBJECTS("map_name", "object_type") -> Array of Objects`**: Retrieves all objects of a certain type from an object layer.
@@ -323,7 +322,7 @@ print apply(dec@,12) ' Should return 11
 * **`MAP.GET_TILE_ID "mapname", "layername", tileX, tileY`**: Returns the tile id from the given position.
 * **`MAP.DRAW_DEBUG_COLLISIONS player_id, "map", "layer"`**: For debug purpose. Draws a rect around the tile near x,y. CAM_X and CAM_Y must be set.
 
-  #### Turtle
+#### Turtle
   
 * **`TUERTLE.FORWARD distance`**: Moves the turte forward with the distance at the given angle.
 * **`TUERTLE.BACKWARD distance`**: Moves the turte backward with the distance at the given angle.
