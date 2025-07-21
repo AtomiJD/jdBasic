@@ -9,6 +9,8 @@
 #include <sstream>
 #include <fstream>
 
+static int lambda_counter = 0;
+
 Compiler::Compiler() {
     // Constructor can be used to initialize any specific compiler state if needed.
 }
@@ -197,6 +199,12 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
         vm.prgptr++;
         return Tokens::ID::C_GT;
+    case '-': // New case for '->'
+        if (vm.prgptr + 1 < vm.lineinput.length() && vm.lineinput[vm.prgptr + 1] == '>') {
+            vm.prgptr += 2; return Tokens::ID::C_ARROW;
+        }
+        // If not '->', it will fall through to the single-character handler for '-'
+        break;
     case '|': // CASE for the pipe operator
         if (vm.prgptr + 1 < vm.lineinput.length() && vm.lineinput[vm.prgptr + 1] == '>') {
             vm.prgptr += 2; 
@@ -797,6 +805,89 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue;
             }
 
+            case Tokens::ID::LAMBDA: {
+                // 1. Generate a unique name for the anonymous function.
+                lambda_counter++;
+                std::string hidden_name = "__LAMBDA_" + std::to_string(lambda_counter);
+                hidden_name = StringUtils::to_upper(hidden_name);
+
+                // 2. Parse the parameter list.
+                std::string param_list;
+                size_t start_of_params = vm.prgptr;
+                size_t arrow_pos = vm.lineinput.find("->", vm.prgptr);
+                if (arrow_pos == std::string::npos) {
+                    Error::set(1, lineNumber, "Lambda missing '->' arrow.");
+                    return 1;
+                }
+                param_list = vm.lineinput.substr(start_of_params, arrow_pos - start_of_params);
+                StringUtils::trim(param_list);
+
+                vm.prgptr = arrow_pos + 2; // Move parser past '->'
+                std::string body_expression_full = vm.lineinput.substr(vm.prgptr);
+
+                // 3. *** THE FIX: Robustly parse the expression body by balancing brackets ***
+                size_t end_of_expr = 0;
+                int paren_level = 0;
+                int bracket_level = 0;
+                int brace_level = 0;
+
+                for (char c : body_expression_full) {
+                    // Check for the end condition ONLY if we are at the top level of nesting.
+                    if (paren_level == 0 && bracket_level == 0 && brace_level == 0) {
+                        if (c == ',' || c == ')') {
+                            break; // Found the end of the expression.
+                        }
+                    }
+
+                    // Update nesting levels
+                    if (c == '(') paren_level++;
+                    else if (c == ')') paren_level--;
+                    else if (c == '[') bracket_level++;
+                    else if (c == ']') bracket_level--;
+                    else if (c == '{') brace_level++;
+                    else if (c == '}') brace_level--;
+
+                    end_of_expr++;
+                }
+
+                std::string body_expression = body_expression_full.substr(0, end_of_expr);
+                vm.prgptr += end_of_expr;
+                StringUtils::trim(body_expression);
+
+                // 4. Construct the synthetic function source code.
+                std::string synthetic_func_source = "FUNC " + hidden_name + "(" + param_list + ")\n";
+                synthetic_func_source += "  RETURN " + body_expression + "\n";
+                synthetic_func_source += "ENDFUNC\n";
+
+                // 5. Create the placeholder FunctionInfo and parse parameter names.
+                NeReLaBasic::FunctionInfo info;
+                info.name = hidden_name;
+
+                if (!param_list.empty()) {
+                    std::stringstream pss(param_list);
+                    std::string param;
+                    while (std::getline(pss, param, ',')) {
+                        StringUtils::trim(param);
+                        if (!param.empty()) {
+                            info.parameter_names.push_back(StringUtils::to_upper(param));
+                        }
+                    }
+                }
+                info.arity = info.parameter_names.size();
+                info.start_pcode = 0xFFFF; // Mark as unpatched for Pass 2
+                compilation_func_table[hidden_name] = info;
+
+                // 6. Add this lambda to the "pending work" list for Pass 2.
+                pending_lambdas.push_back({ hidden_name, synthetic_func_source, lineNumber });
+
+                // 7. Write ONLY the FUNCREF token to the main p-code stream.
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::FUNCREF));
+                for (char c : hidden_name) out_p_code.push_back(c);
+                out_p_code.push_back(0);
+
+                continue;
+            }
+
             case Tokens::ID::AS:
                 // This is a keyword we need at runtime for DIM.
                 // Write the token to the bytecode stream.
@@ -961,6 +1052,24 @@ void Compiler::pre_scan_and_parse_types(NeReLaBasic& vm) {
     }
 }
 
+uint8_t Compiler::tokenize_lambda(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source, NeReLaBasic::FunctionTable& compilation_func_table, uint16_t start_line) {
+    std::string line;
+    std::stringstream source_stream(source);
+
+    uint16_t current_lambda_line = start_line; // Use a local line counter for this compilation
+    bool multiline = false;
+
+    while (std::getline(source_stream, line)) {
+        // We pass the local line number, protecting vm.current_source_line
+        multiline = tokenize(vm, line, current_lambda_line++, out_p_code, compilation_func_table, multiline);
+        if (multiline > 1) {
+            vm.active_function_table = nullptr;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // Move the body of NeReLaBasic::tokenize_program here
 uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source) {
     // The entire body of the original tokenize_program function goes here.
@@ -978,6 +1087,7 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
     func_stack.clear();
     label_addresses.clear();
     do_loop_stack.clear();
+    pending_lambdas.clear();
 
     vm.source_code = source; // Store source for pre-scanning
 
@@ -1099,7 +1209,21 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
         }
     }
 
-    // 8. Finalize p_code and linking
+    // 8. *** NEW: COMPILE PENDING LAMBDAS (PASS 2) ***
+    for (const auto& lambda_to_compile : pending_lambdas) {
+        // The start address for this lambda's code is the current size of the main p-code buffer.
+        uint16_t lambda_start_address = out_p_code.size();
+
+        // Update the FunctionInfo that was created during Pass 1.
+        if (target_func_table->count(lambda_to_compile.name)) {
+            target_func_table->at(lambda_to_compile.name).start_pcode = lambda_start_address+5; //skip the line number and the func tocen and the jump address!
+        }
+
+        // Now, compile the lambda's source and append its bytecode to the end of the main buffer.
+        tokenize_lambda(vm, out_p_code, lambda_to_compile.source_code, *target_func_table, lambda_to_compile.source_line);
+    }
+
+    // 9. Finalize p_code and linking
     out_p_code.push_back(0); out_p_code.push_back(0);
     out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NOCMD));
 

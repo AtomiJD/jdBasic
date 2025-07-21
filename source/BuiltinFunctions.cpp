@@ -3283,6 +3283,128 @@ BasicValue builtin_reduce(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return accumulator;
 }
 
+// SELECT(function@, array) -> array
+// Applies a function to each element of an array, returning a new array of the same shape.
+BasicValue builtin_select(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SELECT requires 2 arguments: function_ref, array");
+        return {};
+    }
+    if (!std::holds_alternative<FunctionRef>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to SELECT must be a function reference (e.g., MyFunc@).");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to SELECT must be an array.");
+        return {};
+    }
+
+    // 2. --- Argument Parsing ---
+    const auto& func_ref = std::get<FunctionRef>(args[0]);
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const std::string func_name = to_upper(func_ref.name);
+
+    // 3. --- Further Validation ---
+    if (!vm.active_function_table->count(func_name)) {
+        Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for SELECT.");
+        return {};
+    }
+    const auto& func_info = vm.active_function_table->at(func_name);
+    // A mapping function must take exactly one argument (the current element).
+    if (func_info.arity != 1) {
+        Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' for SELECT must accept exactly one argument.");
+        return {};
+    }
+    if (!source_ptr) {
+        return {}; // Return empty if the source array is null
+    }
+
+    // 4. --- Mapping Logic ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape; // The result has the same shape as the source
+    result_ptr->data.reserve(source_ptr->data.size());
+
+    // Iterate through the source array elements
+    for (const auto& element : source_ptr->data) {
+        // Prepare the single argument to pass to the user's BASIC function
+        std::vector<BasicValue> func_args = { element };
+
+        // Execute the user's function and get the transformed value
+        BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args);
+
+        // If the user's function caused an error, stop and propagate it
+        if (Error::get() != 0) {
+            return {};
+        }
+
+        result_ptr->data.push_back(mapped_value);
+    }
+
+    return result_ptr;
+}
+// FILTER(function@, array) -> array
+// Returns a new 1D array containing only elements for which the predicate function returns TRUE.
+BasicValue builtin_filter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "FILTER requires 2 arguments: function_ref, array");
+        return {};
+    }
+    if (!std::holds_alternative<FunctionRef>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to FILTER must be a function reference (e.g., IsEven@).");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to FILTER must be an array.");
+        return {};
+    }
+
+    // 2. --- Argument Parsing ---
+    const auto& func_ref = std::get<FunctionRef>(args[0]);
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const std::string func_name = to_upper(func_ref.name);
+
+    // 3. --- Further Validation ---
+    if (!vm.active_function_table->count(func_name)) {
+        Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for FILTER.");
+        return {};
+    }
+    const auto& func_info = vm.active_function_table->at(func_name);
+    // A predicate function must take exactly one argument.
+    if (func_info.arity != 1) {
+        Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' for FILTER must accept exactly one argument.");
+        return {};
+    }
+    if (!source_ptr) {
+        return {};
+    }
+
+    // 4. --- Filtering Logic ---
+    auto result_ptr = std::make_shared<Array>();
+    // The result data will be built up dynamically.
+
+    for (const auto& element : source_ptr->data) {
+        std::vector<BasicValue> func_args = { element };
+        BasicValue predicate_result = vm.execute_function_for_value(func_info, func_args);
+
+        if (Error::get() != 0) {
+            return {};
+        }
+
+        // Check if the predicate function returned a TRUE value
+        if (to_bool(predicate_result)) {
+            // If it did, add the *original* element to our results
+            result_ptr->data.push_back(element);
+        }
+    }
+
+    // The result of a filter is always a flat, 1D array.
+    result_ptr->shape = { result_ptr->data.size() };
+
+    return result_ptr;
+}
+
 // IOTA(N) -> vector
 // Generates a vector of numbers from 1 to N.
 BasicValue builtin_iota(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -5193,6 +5315,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("ANY", -1, builtin_any);
     register_func("ALL", -1, builtin_all);
     register_func("SCAN", 2, builtin_scan);
+    register_func("SELECT", 2, builtin_select);
+    register_func("FILTER", 2, builtin_filter);
     register_func("REDUCE", -1, builtin_reduce);
     register_func("MATMUL", 2, builtin_matmul);
     register_func("OUTER", 3, builtin_outer);

@@ -1,0 +1,38 @@
+' --- Example for MAP and FILTER ---
+
+FUNC SQUARE(x)
+  RETURN x * x
+ENDFUNC
+
+FUNC IS_EVEN(n)
+  RETURN (n MOD 2) = 0
+ENDFUNC
+
+' Create an initial array of numbers
+MyNumbers = IOTA(10)
+PRINT "Original Array: "; FRMV$(MyNumbers)
+PRINT
+
+' Use MAP to transform every element
+SquaredNumbers = SELECT(SQUARE@, MyNumbers)
+PRINT "After MAP(SQUARE@, ...): "; FRMV$(SquaredNumbers)
+PRINT
+
+' Use FILTER to keep only the even numbers
+EvenNumbers = FILTER(IS_EVEN@, MyNumbers)
+PRINT "After FILTER(IS_EVEN@, ...): "; FRMV$(EvenNumbers)
+PRINT
+
+' You can chain these operations together!
+' Let's get the squares of only the even numbers.
+result = SELECT(SQUARE@,FILTER(IS_EVEN@, MyNumbers))
+PRINT "Squares of even numbers: "; FRMV$(result)
+
+' Expected Output:
+' Original Array:           1 2 3 4 5 6 7 8 9 10
+'
+' After MAP(SQUARE@, ...):  1 4 9 16 25 36 49 64 81 100
+'
+' After FILTER(IS_EVEN@, ...): 2 4 6 8 10
+'
+' Squares of even numbers:  4 16 36 64 100

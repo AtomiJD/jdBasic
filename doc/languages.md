@@ -225,6 +225,8 @@ print apply(dec@,12) ' Should return 11
 * **`IOTA(N)`**: Generates a 1D array of numbers from 1 to N.
 * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
 * **`SCAN(operator, array) -> array`**: Performs a cumulative reduction (scan) along the last axis of an array.
+* **`SELECT(function@, array) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument.
+* **`FILTER(function@, array) -> array`**: Filters an array by applying a user-defined predicate function to each element. It returns a new 1D array containing only the elements for which the predicate function returned `TRUE`. The provided function must accept one argument and should return a boolean value.
 * **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
 * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
 * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.

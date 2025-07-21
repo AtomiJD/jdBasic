@@ -25,6 +25,7 @@ public:
      * @return 0 on success, non-zero on error.
      */
     uint8_t tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source);
+    uint8_t tokenize_lambda(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source, NeReLaBasic::FunctionTable& compilation_func_table, uint16_t start_line);
 
 
     // --- Compiler-Specific State ---
@@ -60,6 +61,15 @@ public:
 
     // Maps label names to their bytecode address
     std::unordered_map<std::string, uint16_t> label_addresses;
+
+    // This struct will hold the information we need to compile a lambda later.
+    struct PendingLambda {
+        std::string name;           // The unique generated name (e.g., "__LAMBDA_1")
+        std::string source_code;    // The synthetic "FUNC...ENDFUNC" source
+        uint16_t source_line;       // The original line number for error reporting
+    };
+
+    std::vector<PendingLambda> pending_lambdas; // Our "pending work" list
 
     // State for module compilation
     bool is_compiling_module = false;

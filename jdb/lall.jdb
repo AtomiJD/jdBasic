@@ -1,6 +1,10 @@
-TRON
-A = 1
-IF A = 1 then PRINT 20
-IF A = 1 then SLEEP 20
-print a
-PRINT b
+func dec(ac)
+    return ac-1
+endfunc
+
+func apply(fa,cc)
+    return fa(cc)
+endfunc
+
+print apply(inc@,10)
+oad 
