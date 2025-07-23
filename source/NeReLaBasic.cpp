@@ -34,7 +34,7 @@ std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::sha
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
 
-const std::string NERELA_VERSION = "0.9.1";
+const std::string NERELA_VERSION = "0.9.2";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -401,11 +401,12 @@ void NeReLaBasic::start() {
 
         // Tokenize the direct-mode line, passing '0' as the line number
         active_function_table = &main_function_table;
-        if (compiler->tokenize(*this, inputLine, 0, direct_p_code, *active_function_table) != 0) {
+        if (compiler->tokenize(*this, inputLine, 0, direct_p_code, *active_function_table,false,true) != 0) {
             Error::print();
             continue;
         }
         // Execute the direct-mode p_code
+        //dump_p_code(direct_p_code, "dump");
         execute_synchronous_block(direct_p_code);
         if (program_ended) { // Check if the END command was executed
             Error::clear();
@@ -1079,6 +1080,7 @@ void NeReLaBasic::statement() {
         Commands::do_raiseevent(*this);
         break;
     case Tokens::ID::END:
+    case Tokens::ID::T_EOF:
         pcode++;
         Commands::do_end(*this);
         break;

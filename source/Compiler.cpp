@@ -267,7 +267,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
 
 
 
-uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline) {
+uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline, bool fromrepl) {
 
     vm.lineinput = line;
     vm.prgptr = 0;
@@ -863,7 +863,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 vm.prgptr = arrow_pos + 2; // Move parser past '->'
                 std::string body_expression_full = vm.lineinput.substr(vm.prgptr);
 
-                // 3. *** THE FIX: Robustly parse the expression body by balancing brackets ***
+                // 3. *** Robustly parse the expression body by balancing brackets ***
                 size_t end_of_expr = 0;
                 int paren_level = 0;
                 int bracket_level = 0;
@@ -992,6 +992,27 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
             }
         }
     }
+
+    if (fromrepl) {
+        if (!pending_lambdas.empty()) {
+            for (const auto& lambda_to_compile : pending_lambdas) {
+                // The start address is the current end of the p-code vector.
+                uint16_t lambda_start_address = out_p_code.size();
+
+                // Update the FunctionInfo with the correct start address.
+                if (compilation_func_table.count(lambda_to_compile.name)) {
+                    // Point it to just after the FUNC token and its 2-byte placeholder.
+                    compilation_func_table.at(lambda_to_compile.name).start_pcode = lambda_start_address + 5;
+                }
+
+                // Compile the lambda's source and append its bytecode directly.
+                tokenize_lambda(vm, out_p_code, lambda_to_compile.source_code, compilation_func_table, lambda_to_compile.source_line);
+            }
+            // Clear the list now that they've been compiled.
+            pending_lambdas.clear();
+        }
+    }
+
     // Every line of bytecode ends with a carriage return token.
     out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::C_CR));
     return 0; // Success

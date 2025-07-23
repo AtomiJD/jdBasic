@@ -25,8 +25,6 @@ objXL = CREATEOBJECT("Excel.Application")
 ' Access a property
 objXL.Visible = TRUE
 
-
-
 ' Call a method
 wb = objXL.Workbooks.Add()
 
@@ -42,5 +40,3 @@ PRINT "Excel automation complete."
 DoComError
 
 Print "Finish"
-
-

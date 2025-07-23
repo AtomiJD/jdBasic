@@ -54,3 +54,6 @@ std::string to_string(const BasicValue& val);
 std::string to_upper(std::string s);
 std::string read_string(NeReLaBasic& vm);
 
+void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& name);
+
+

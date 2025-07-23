@@ -81,7 +81,7 @@ public:
     /**
      * @brief Tokenizes a single line of source code into p-code.
      */
-    uint8_t tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline=false);
+    uint8_t tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline=false, bool fromrepl = false);
 
     /**
      * @brief (Lexer) Parses the next token from the current line in the VM's state.
