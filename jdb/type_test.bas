@@ -5,7 +5,12 @@ TYPE T_Character
     Strength AS DOUBLE
     SUB INIT()
         THIS.HitPoints = 150
+        THIS.Strength = 4.5
     ENDSUB
+    FUNC GETSUMMARY()
+        r =  THIS.Name + ": Hitpoints: " + str$(THIS.HitPoints) + ", Strength: " + THIS.Strength
+        RETURN r
+    ENDFUNC
 ENDTYPE
 
 ' 2. Initialize an empty array to hold the characters
@@ -16,7 +21,6 @@ PRINT "Created an empty party array."
 DIM Player1 AS T_Character
 Player1.INIT
 Player1.Name = "Atomi"
-'Player1.HitPoints = 150
 Player1.Strength = 18.5
 
 ' 4. Append the first character to the array
@@ -37,8 +41,8 @@ PRINT
 ' 7. Access and print the data from the array
 PRINT "--- Current Party ---"
 PRINT "Party size: "; LEN(Party)
-PRINT "First Item in Array Name:"
-print party[0].Name
+PRINT "First Item in Array: "; 
+print party[0].GETSUMMARY()
 
 PRINT
 PRINT "Full party data:"

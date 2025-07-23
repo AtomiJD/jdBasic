@@ -87,7 +87,7 @@ public:
      * @brief (Lexer) Parses the next token from the current line in the VM's state.
      */
     Tokens::ID parse(NeReLaBasic& vm, bool is_start_of_statement);
-
+    
     /**
      * @brief Compiles a dependent module file.
      */

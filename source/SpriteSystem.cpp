@@ -1,6 +1,7 @@
 #ifdef SDL3
 #include "SpriteSystem.hpp"
 #include "TextIO.hpp"
+#include "Error.hpp"
 #include "json.hpp" // For parsing Aseprite JSON
 #include <fstream>
 #include <filesystem>
@@ -156,6 +157,7 @@ bool SpriteSystem::load_aseprite_file(int type_id, const std::string& json_filen
 
 int SpriteSystem::create_sprite(int type_id, float x, float y) {
     if (sprite_types.find(type_id) == sprite_types.end()) {
+        Error::set(24, 0, "Sprite with id " + std::to_string(type_id) + " not found.");
         return -1;
     }
     int instance_id = next_instance_id++;

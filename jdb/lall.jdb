@@ -1,10 +1,19 @@
-func dec(ac)
-    return ac-1
-endfunc
+objXL = CREATEOBJECT("Excel.Application")
 
-func apply(fa,cc)
-    return fa(cc)
-endfunc
+' Access a property
+objXL.Visible = TRUE
 
-print apply(inc@,10)
-oad 
+
+
+' Call a method
+wb = objXL.Workbooks.Add()
+
+' Set a cell value
+objcell = objXL.ActiveSheet.Cells(1, 1)
+objcell.Value = "Hello from NeReLa Basic!"
+
+' Quit Excel
+STOP
+objXL.Quit()
+
+PRINT "Excel automation complete."

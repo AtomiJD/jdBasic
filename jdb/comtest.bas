@@ -1,5 +1,5 @@
 
-SUB Atomi()
+SUB Atomi(data)
     PRINT "An error occurred: "; ERR
     PRINT "Error Line: "; ERL
     ' You could add logic here to clean up or ask the user to retry

@@ -91,15 +91,8 @@ std::pair<BasicValue, std::string> NeReLaBasic::resolve_dot_chain(const std::str
     if (base == "THIS") {
         // Resolve THIS from the current call stack
         if (!this_stack.empty()) {
-            auto& frame = this_stack.back();
-            auto it = frame.get();
-            if (it) {
-                current_object = it->data["THIS"];
-            }
-            else {
-                Error::set(13, runtime_current_line, "`THIS` is undefined.");
-                return {};
-            }
+            // CORRECTED: The object on the stack *is* THIS.
+            current_object = this_stack.back();
         }
         else {
             Error::set(13, runtime_current_line, "`THIS` used outside method block.");
@@ -934,15 +927,6 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                         pcode++;
                     }
 
-                    //// --- Post-Statement DAP Logic ---
-                    //if (dap_handler && (debug_state == DebugState::STEP_OVER )) {
-                    //    debug_state = DebugState::PAUSED;
-                    //    uint16_t next_line = (pcode < active_p_code->size() - 1) ? (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8) : runtime_current_line;
-                    //    dap_handler->send_stopped_message("step", next_line, this->program_to_debug);
-                    //    pause_for_debugger();
-                    //}
-
-
                 }
             }
             else if (current_task->status == TaskStatus::PAUSED_ON_AWAIT) {
@@ -1510,9 +1494,7 @@ BasicValue NeReLaBasic::parse_primary() {
         // Launch the function in a background thread and get the handle
         return launch_bsync_function(func_info, args);
     }
-    else
-
-    if (token == Tokens::ID::OP_START_TASK) {
+    else if (token == Tokens::ID::OP_START_TASK) {
         pcode++; // consume OP_START_TASK
         std::string func_name = to_upper(read_string(*this));
         if (!active_function_table->count(func_name)) {
@@ -1634,13 +1616,15 @@ BasicValue NeReLaBasic::parse_primary() {
                 size_t dot_pos = identifier_being_called.find('.');
                 std::string object_name = to_upper(identifier_being_called.substr(0, dot_pos));
                 std::string method_name = to_upper(identifier_being_called.substr(dot_pos + 1));
-                if (variables.contains(object_name)) {
+                BasicValue& object_instance_val = get_variable(*this, object_name);
+                auto jt = std::holds_alternative<std::shared_ptr<Map>>(object_instance_val);
+                if (variables.contains(object_name) && jt) {
                     // 1. Get the object instance
-                    BasicValue& object_instance_val = get_variable(*this, object_name);
-                    if (!std::holds_alternative<std::shared_ptr<Map>>(object_instance_val)) {
-                        Error::set(15, runtime_current_line, "Methods can only be called on objects.");
-                        return {};
-                    }
+                    //BasicValue& object_instance_val = get_variable(*this, object_name);
+                    //if (!std::holds_alternative<std::shared_ptr<Map>>(object_instance_val)) {
+                    //    Error::set(15, runtime_current_line, "Methods can only be called on objects.");
+                    //    return {};
+                    //}
                     auto object_instance_ptr = std::get<std::shared_ptr<Map>>(object_instance_val);
 
                     // 2. Get its type and find the method
@@ -1837,30 +1821,90 @@ BasicValue NeReLaBasic::parse_primary() {
             else { Error::set(15, runtime_current_line, "Key access '{}' can only be used on a Map or JSON object."); return {}; }
 
         }
+        //        else if (accessor_token == Tokens::ID::C_DOT) {
+        //            pcode++; // Consume '.'
+        //            Tokens::ID member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        //            if (member_token != Tokens::ID::VARIANT && member_token != Tokens::ID::INT && member_token != Tokens::ID::STRVAR) {
+        //                Error::set(1, runtime_current_line, "Expected member name after '.'"); return {};
+        //            }
+        //            pcode++;
+        //            std::string member_name = to_upper(read_string(*this));
+        //
+        //            if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
+        //                const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
+        //                if (!map_ptr || map_ptr->data.find(member_name) == map_ptr->data.end()) { Error::set(3, runtime_current_line, "Member '" + member_name + "' not found in object."); return {}; }
+        //                current_value = map_ptr->data.at(member_name);
+        //            }
+        //#ifdef JDCOM
+        //            else if (std::holds_alternative<ComObject>(current_value)) {
+        //                IDispatchPtr pDisp = std::get<ComObject>(current_value).ptr;
+        //                _variant_t result_vt;
+        //                HRESULT hr = invoke_com_method(pDisp, member_name, {}, result_vt, DISPATCH_PROPERTYGET);
+        //                if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property '" + member_name + "' not found or failed to get."); return {}; }
+        //                current_value = variant_t_to_basic_value(result_vt, *this);
+        //            }
+        //#endif
+        //            else { Error::set(15, runtime_current_line, "Member access '.' can only be used on an object."); return {}; }
+        //        }
         else if (accessor_token == Tokens::ID::C_DOT) {
             pcode++; // Consume '.'
             Tokens::ID member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-            if (member_token != Tokens::ID::VARIANT && member_token != Tokens::ID::INT && member_token != Tokens::ID::STRVAR) {
+            if (member_token != Tokens::ID::VARIANT && member_token != Tokens::ID::INT && member_token != Tokens::ID::STRVAR && member_token != Tokens::ID::CALLFUNC) {
                 Error::set(1, runtime_current_line, "Expected member name after '.'"); return {};
             }
-            pcode++;
+            pcode++; // Consume the variant/int/strvar token
             std::string member_name = to_upper(read_string(*this));
 
-            if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
-                const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
-                if (!map_ptr || map_ptr->data.find(member_name) == map_ptr->data.end()) { Error::set(3, runtime_current_line, "Member '" + member_name + "' not found in object."); return {}; }
-                current_value = map_ptr->data.at(member_name);
+            // --- NEW LOGIC: Look ahead for a function call ---
+            Tokens::ID after_member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+
+            if (after_member_token == Tokens::ID::C_LEFTPAREN) {
+                // --- Case A: It's a METHOD CALL, e.g., .GETALL() ---
+                if (!std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
+                    Error::set(15, runtime_current_line, "Methods can only be called on objects.");
+                    return {};
+                }
+                auto object_instance_ptr = std::get<std::shared_ptr<Map>>(current_value);
+                if (!object_instance_ptr) { Error::set(1, runtime_current_line, "Cannot call method on a null object."); return {}; }
+
+                std::string type_name = object_instance_ptr->type_name_if_udt;
+                if (type_name.empty() || !user_defined_types.count(type_name)) {
+                    Error::set(15, runtime_current_line, "Object has no type information for method call."); return {};
+                }
+                const auto& type_info = user_defined_types.at(type_name);
+                if (!type_info.methods.count(member_name)) {
+                    Error::set(22, runtime_current_line, "Method '" + member_name + "' not found in type '" + type_name + "'."); return {};
+                }
+
+                std::string mangled_name = type_name + "." + member_name;
+                const auto& func_info = active_function_table->at(mangled_name);
+
+                auto args = parse_argument_list(); // This parses the '()' and arguments
+                if (Error::get() != 0) return {};
+
+                this_stack.push_back(object_instance_ptr);
+                current_value = execute_function_for_value(func_info, args); // Execute and update current_value
+                this_stack.pop_back();
+
             }
+            else {
+                // --- Case B: It's a DATA MEMBER ACCESS, e.g., .Name ---
+                if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
+                    const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
+                    if (!map_ptr || map_ptr->data.find(member_name) == map_ptr->data.end()) { Error::set(3, runtime_current_line, "Member '" + member_name + "' not found in object."); return {}; }
+                    current_value = map_ptr->data.at(member_name);
+                }
 #ifdef JDCOM
-            else if (std::holds_alternative<ComObject>(current_value)) {
-                IDispatchPtr pDisp = std::get<ComObject>(current_value).ptr;
-                _variant_t result_vt;
-                HRESULT hr = invoke_com_method(pDisp, member_name, {}, result_vt, DISPATCH_PROPERTYGET);
-                if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property '" + member_name + "' not found or failed to get."); return {}; }
-                current_value = variant_t_to_basic_value(result_vt, *this);
-            }
+                else if (std::holds_alternative<ComObject>(current_value)) {
+                    IDispatchPtr pDisp = std::get<ComObject>(current_value).ptr;
+                    _variant_t result_vt;
+                    HRESULT hr = invoke_com_method(pDisp, member_name, {}, result_vt, DISPATCH_PROPERTYGET);
+                    if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property '" + member_name + "' not found or failed to get."); return {}; }
+                    current_value = variant_t_to_basic_value(result_vt, *this);
+                }
 #endif
-            else { Error::set(15, runtime_current_line, "Member access '.' can only be used on an object."); return {}; }
+                else { Error::set(15, runtime_current_line, "Member access '.' can only be used on an object."); return {}; }
+            }
         }
         else {
             break; // No more accessors, break the loop

@@ -95,11 +95,6 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             // If the part is empty, it's an error (e.g. "MODULE..FUNC") but we let it pass for now
             if (vm.prgptr == part_start) break;
 
-            //vm.buffer = vm.lineinput.substr(ident_start_pos, vm.prgptr - ident_start_pos);
-            //if (StringUtils::to_upper(vm.buffer) == "THIS") {
-            //    return Tokens::ID::THIS_KEYWORD;
-            //}
-
             // If we see a dot, loop again for the next part
             if (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] == '.') {
                 vm.prgptr++;
@@ -154,7 +149,28 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         if (is_start_of_statement) {
             if (action_suffix == '[') {
                 vm.prgptr = suffix_ptr;
-                return Tokens::ID::ARRAY_ACCESS;
+                size_t open_paren = 0;
+                size_t res_ptr = vm.prgptr;
+                while (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] != '\n') {
+                    if (vm.lineinput[vm.prgptr] == '=') {
+                        open_paren = 1; break;
+                    }
+                    if (vm.lineinput[vm.prgptr] == '(') open_paren = 2;
+                    vm.prgptr++;
+                }
+                vm.prgptr = res_ptr;
+                if (open_paren==1) {
+                    return Tokens::ID::ARRAY_ACCESS;
+                }
+                else
+                {
+                    if (open_paren==2) {
+                        return Tokens::ID::CALLFUNC;
+                    }
+                    else {
+                        return Tokens::ID::CALLSUB;
+                    }
+                }
             }
             if (action_suffix == '{') {
                 vm.prgptr = suffix_ptr;
@@ -248,6 +264,8 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     //Error::set(1, vm.current_source_line, "Unrecognized character.");
     return Tokens::ID::NOCMD;
 }
+
+
 
 uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline) {
 

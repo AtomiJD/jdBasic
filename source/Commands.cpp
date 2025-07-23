@@ -399,121 +399,262 @@ void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& 
     }
 }
 
+// Helper function to create a default value for a given type name.
+BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name_str_upper) {
+    if (type_name_str_upper == "INTEGER") {
+        return 0;
+    }
+    if (type_name_str_upper == "DOUBLE") {
+        return 0.0;
+    }
+    if (type_name_str_upper == "STRING") {
+        return std::string("");
+    }
+    if (type_name_str_upper == "DATE") {
+        return DateTime{};
+    }
+    if (type_name_str_upper == "BOOLEAN" || type_name_str_upper == "BOOL") {
+        return false;
+    }
+    if (type_name_str_upper == "MAP") {
+        return std::make_shared<Map>();
+    }
+
+    // Check if it's a User-Defined Type
+    if (vm.user_defined_types.count(type_name_str_upper)) {
+        const auto& type_info = vm.user_defined_types.at(type_name_str_upper);
+        auto udt_instance = std::make_shared<Map>();
+
+        udt_instance->type_name_if_udt = type_name_str_upper;
+
+        // Initialize all members to their default values
+        for (const auto& member_pair : type_info.members) {
+            const auto& member_info = member_pair.second;
+            BasicValue member_default_val;
+            switch (member_info.type_id) {
+            case DataType::INTEGER:  member_default_val = 0; break;
+            case DataType::STRING:   member_default_val = std::string(""); break;
+            case DataType::BOOL:     member_default_val = false; break;
+            case DataType::DATETIME: member_default_val = DateTime{}; break;
+            case DataType::MAP:      member_default_val = std::make_shared<Map>(); break;
+            default:                 member_default_val = 0.0; break;
+            }
+            udt_instance->data[member_info.name] = member_default_val;
+        }
+        return udt_instance;
+    }
+
+    // If the type is unknown, set an error and return a default value.
+    Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str_upper + "'");
+    return 0.0;
+}
+
 void Commands::do_dim(NeReLaBasic& vm) {
+    // Read the variable name first.
     Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
     std::string var_name = to_upper(read_string(vm));
 
-    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    bool is_array = false;
+    std::vector<size_t> dimensions;
+    std::string type_name = "DOUBLE"; // Default to DOUBLE if no type is specified.
+    bool type_was_specified = false;
 
-    if (next_token == Tokens::ID::C_LEFTBRACKET) {
-        // --- Case 1: ARRAY DECLARATION (e.g., DIM A[2, 3]) ---
+    // --- Part 1: Check for array dimensions [ ... ] ---
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_LEFTBRACKET) {
+        is_array = true;
         vm.pcode++; // Consume '['
 
-        std::vector<size_t> dimensions;
         while (true) {
             BasicValue size_val = vm.evaluate_expression();
             if (Error::get() != 0) return;
-
-            double dim_double = to_double(size_val);
-            if (dim_double < 0) {
-                Error::set(10, vm.runtime_current_line); // Bad subscript
-                return;
-            }
-            dimensions.push_back(static_cast<size_t>(dim_double));
+            dimensions.push_back(static_cast<size_t>(to_double(size_val)));
 
             Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (separator == Tokens::ID::C_COMMA) {
-                vm.pcode++;
-            }
-            else if (separator == Tokens::ID::C_RIGHTBRACKET) {
-                break;
-            }
-            else {
-                Error::set(1, vm.runtime_current_line); // Syntax error: Expected , or ]
-                return;
-            }
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+            vm.pcode++; // Consume ','
         }
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-            Error::set(1, vm.runtime_current_line); return;
-        }
+        vm.pcode++; // Consume ']'
+    }
 
-        // --- Create the Array on the heap using std::make_shared ---
+    // --- Part 2: Check for an optional type specifier AS ... ---
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::AS) {
+        vm.pcode++; // Consume 'AS'
+        type_was_specified = true;
+
+        // The type name is tokenized as VARIANT by the compiler
+        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+        switch (type_token) {
+        case Tokens::ID::INT:       type_name = "INTEGER"; break;
+        case Tokens::ID::DOUBLE:    type_name = "DOUBLE";  break;
+        case Tokens::ID::STRTYPE:   type_name = "STRING";  break;
+        case Tokens::ID::DATE:      type_name = "DATE";    break;
+        case Tokens::ID::BOOL:      type_name = "BOOLEAN"; break;
+        case Tokens::ID::MAP:       type_name = "MAP";     break;
+            // Add any other built-in types you have here.
+
+            // This case handles user-defined types, like T_Character.
+        case Tokens::ID::VARIANT:
+            // Only if the token is VARIANT do we read a string name.
+            type_name = to_upper(read_string(vm));
+            break;
+
+        default:
+            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
+            return;
+        }
+    }
+
+    // --- Part 3: Create the variable(s) based on what we found ---
+    if (is_array) {
+        // --- This is the new logic for creating typed or untyped arrays ---
         auto new_array_ptr = std::make_shared<Array>();
         new_array_ptr->shape = dimensions;
-
         size_t total_size = new_array_ptr->size();
 
-        bool is_string_array = (var_name.back() == '$');
-        BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
+        // If it's a string array (e.g., DIM A$[10]), override the type.
+        if (var_name.back() == '$') {
+            type_name = "STRING";
+        }
 
-        new_array_ptr->data.assign(total_size, default_val);
+        // Reserve memory for efficiency
+        new_array_ptr->data.reserve(total_size);
 
-        // Store the shared_ptr in the BasicValue variant
+        // ** CRITICAL PART **
+        // Create a new, unique instance for each element in the array.
+        for (size_t i = 0; i < total_size; ++i) {
+            BasicValue default_instance = create_default_instance(vm, type_name);
+            if (Error::get() != 0) return; // Stop if the type was invalid
+            new_array_ptr->data.push_back(default_instance);
+        }
         set_variable(vm, var_name, new_array_ptr);
     }
-    else
-    {
-        // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
-            Error::set(1, vm.runtime_current_line); return;
+    else {
+        // --- This is for single variables (e.g., DIM N AS INTEGER) ---
+        if (!type_was_specified && var_name.back() == '$') {
+            type_name = "STRING";
         }
-
-        // Get the token that represents the type
-        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-
-        BasicValue default_value;
-        bool type_found = true; // Assume success
-
-        switch (type_token) {
-        case Tokens::ID::INT:       default_value = 0; break;
-        case Tokens::ID::DOUBLE:    default_value = 0.0; break;
-        case Tokens::ID::STRTYPE:   default_value = std::string(""); break;
-        case Tokens::ID::DATE:      default_value = DateTime{}; break;
-        case Tokens::ID::BOOL:      default_value = false; break;
-        case Tokens::ID::MAP:       default_value = std::make_shared<Map>(); break;
-
-            // This case handles user-defined types, which are tokenized as VARIANT.
-        case Tokens::ID::VARIANT: {
-            // The type name is a string that follows the VARIANT token.
-            std::string type_name_str = to_upper(read_string(vm));
-            if (vm.user_defined_types.count(type_name_str)) {
-                const auto& type_info = vm.user_defined_types.at(type_name_str);
-                auto udt_instance = std::make_shared<Map>();
-
-                udt_instance->type_name_if_udt = type_name_str;
-
-                for (const auto& member_pair : type_info.members) {
-                    const auto& member_info = member_pair.second;
-                    BasicValue member_default_val;
-                    switch (member_info.type_id) {
-                    case DataType::INTEGER:     member_default_val = 0; break;
-                    case DataType::STRING:      member_default_val = std::string(""); break;
-                    case DataType::BOOL:        member_default_val = false; break;
-                    case DataType::DATETIME:    member_default_val = DateTime{}; break;
-                    case DataType::MAP:         member_default_val = std::make_shared<Map>(); break;
-                    default:                    member_default_val = 0.0; break;
-                    }
-                    udt_instance->data[member_info.name] = member_default_val;
-                }
-                default_value = udt_instance;
-            }
-            else {
-                type_found = false;
-                Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str + "'");
-            }
-            break;
-        }
-        default:
-            type_found = false;
-            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
-            break;
-        }
-
-        if (type_found) {
-            set_variable(vm, var_name, default_value);
-        }
+        BasicValue default_instance = create_default_instance(vm, type_name);
+        if (Error::get() != 0) return;
+        set_variable(vm, var_name, default_instance);
     }
 }
+
+//void Commands::do_dim(NeReLaBasic& vm) {
+//    Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+//    std::string var_name = to_upper(read_string(vm));
+//
+//    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+//
+//    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+//        // --- Case 1: ARRAY DECLARATION (e.g., DIM A[2, 3]) ---
+//        vm.pcode++; // Consume '['
+//
+//        std::vector<size_t> dimensions;
+//        while (true) {
+//            BasicValue size_val = vm.evaluate_expression();
+//            if (Error::get() != 0) return;
+//
+//            double dim_double = to_double(size_val);
+//            if (dim_double < 0) {
+//                Error::set(10, vm.runtime_current_line); // Bad subscript
+//                return;
+//            }
+//            dimensions.push_back(static_cast<size_t>(dim_double));
+//
+//            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+//            if (separator == Tokens::ID::C_COMMA) {
+//                vm.pcode++;
+//            }
+//            else if (separator == Tokens::ID::C_RIGHTBRACKET) {
+//                break;
+//            }
+//            else {
+//                Error::set(1, vm.runtime_current_line); // Syntax error: Expected , or ]
+//                return;
+//            }
+//        }
+//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+//            Error::set(1, vm.runtime_current_line); return;
+//        }
+//
+//        // --- Create the Array on the heap using std::make_shared ---
+//        auto new_array_ptr = std::make_shared<Array>();
+//        new_array_ptr->shape = dimensions;
+//
+//        size_t total_size = new_array_ptr->size();
+//
+//        bool is_string_array = (var_name.back() == '$');
+//        BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
+//
+//        new_array_ptr->data.assign(total_size, default_val);
+//
+//        // Store the shared_ptr in the BasicValue variant
+//        set_variable(vm, var_name, new_array_ptr);
+//    }
+//    else
+//    {
+//        // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
+//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
+//            Error::set(1, vm.runtime_current_line); return;
+//        }
+//
+//        // Get the token that represents the type
+//        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+//
+//        BasicValue default_value;
+//        bool type_found = true; // Assume success
+//
+//        switch (type_token) {
+//        case Tokens::ID::INT:       default_value = 0; break;
+//        case Tokens::ID::DOUBLE:    default_value = 0.0; break;
+//        case Tokens::ID::STRTYPE:   default_value = std::string(""); break;
+//        case Tokens::ID::DATE:      default_value = DateTime{}; break;
+//        case Tokens::ID::BOOL:      default_value = false; break;
+//        case Tokens::ID::MAP:       default_value = std::make_shared<Map>(); break;
+//
+//            // This case handles user-defined types, which are tokenized as VARIANT.
+//        case Tokens::ID::VARIANT: {
+//            // The type name is a string that follows the VARIANT token.
+//            std::string type_name_str = to_upper(read_string(vm));
+//            if (vm.user_defined_types.count(type_name_str)) {
+//                const auto& type_info = vm.user_defined_types.at(type_name_str);
+//                auto udt_instance = std::make_shared<Map>();
+//
+//                udt_instance->type_name_if_udt = type_name_str;
+//
+//                for (const auto& member_pair : type_info.members) {
+//                    const auto& member_info = member_pair.second;
+//                    BasicValue member_default_val;
+//                    switch (member_info.type_id) {
+//                    case DataType::INTEGER:     member_default_val = 0; break;
+//                    case DataType::STRING:      member_default_val = std::string(""); break;
+//                    case DataType::BOOL:        member_default_val = false; break;
+//                    case DataType::DATETIME:    member_default_val = DateTime{}; break;
+//                    case DataType::MAP:         member_default_val = std::make_shared<Map>(); break;
+//                    default:                    member_default_val = 0.0; break;
+//                    }
+//                    udt_instance->data[member_info.name] = member_default_val;
+//                }
+//                default_value = udt_instance;
+//            }
+//            else {
+//                type_found = false;
+//                Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str + "'");
+//            }
+//            break;
+//        }
+//        default:
+//            type_found = false;
+//            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
+//            break;
+//        }
+//
+//        if (type_found) {
+//            set_variable(vm, var_name, default_value);
+//        }
+//    }
+//}
 
 
 // --- Implementation for the IMPORT command ---
@@ -642,6 +783,7 @@ void Commands::do_print(NeReLaBasic& vm) {
 void Commands::do_let(NeReLaBasic& vm) {
     static bool is_this = false;
     std::string name = "";
+    std::string member_var = "";
 
     Tokens::ID var_type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
@@ -678,9 +820,16 @@ void Commands::do_let(NeReLaBasic& vm) {
         }
         vm.pcode++; // consume ']'
 
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_DOT) {
+            vm.pcode++;
+            vm.pcode++;
+            member_var = to_upper(read_string(vm));
+        }
+
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
         }
+
         BasicValue value_to_assign = vm.evaluate_expression();
         if (Error::get() != 0) return;
 
@@ -715,11 +864,19 @@ void Commands::do_let(NeReLaBasic& vm) {
         // The rest of the logic can now proceed correctly.
         try {
             size_t flat_index = arr_ptr->get_flat_index(indices);
-            arr_ptr->data[flat_index] = value_to_assign;
+            if (member_var.length()>0) {
+                auto& map_ptr = std::get<std::shared_ptr<Map>>(arr_ptr->data[flat_index]);
+                auto dataparent = arr_ptr->data[flat_index];
+                map_ptr->data[member_var] = value_to_assign;
+            }
+            else {
+                arr_ptr->data[flat_index] = value_to_assign;
+            }
         }
         catch (const std::exception&) {
             Error::set(10, vm.runtime_current_line); // Bad subscript
         }
+
     }
     // --- Case 2: MAP ASSIGNMENT  ---
     else if (var_type_token == Tokens::ID::MAP_ACCESS) {
@@ -768,9 +925,9 @@ void Commands::do_let(NeReLaBasic& vm) {
 
             auto [final_obj, final_member] = vm.resolve_dot_chain(prefix + name);
             if (Error::get() != 0) return;
-            if (is_this == true) {
-                final_obj = vm.variables[to_string(final_obj)];
-            }
+            //if (is_this == true) {
+            //    final_obj = vm.variables[to_string(final_obj)];
+            //}
 
             // Case 1: The target is a User-Defined Type (a Map)
             if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
@@ -964,55 +1121,120 @@ void Commands::do_func(NeReLaBasic& vm) {
 }
 
 void Commands::do_callfunc(NeReLaBasic& vm) {
+    std::vector<size_t> indices;
+    std::string object_name = "";
+    std::string method_name = "";
+    bool is_array_access = false;
+
+    // The first string is either a function name or an object/array name.
     std::string identifier_being_called = to_upper(read_string(vm));
 
-    // Check if the identifier contains a dot, which signifies a potential method call (e.g., "conn.Open").
-    if (identifier_being_called.find('.') != std::string::npos && !vm.active_function_table->count(identifier_being_called)) {
-        size_t dot_pos = identifier_being_called.find('.');
-        std::string object_name = to_upper(identifier_being_called.substr(0, dot_pos));
-        std::string method_name = to_upper(identifier_being_called.substr(dot_pos + 1));
-        if (vm.variables.contains(object_name)) {
-            // 1. Get the object instance
-            BasicValue& object_instance_val = get_variable(vm, object_name);
-            if (!std::holds_alternative<std::shared_ptr<Map>>(object_instance_val)) {
-                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
-                return;
-            }
-            auto object_instance_ptr = std::get<std::shared_ptr<Map>>(object_instance_val);
+    // --- 1. Initial Parsing for Array Access ---
+    // Check if this is an array element method call, e.g., NPCS[0].GetName()
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+        is_array_access = true;
+        object_name = identifier_being_called; // The part before '[' is the array name
+        vm.pcode++; // Consume '['
 
-            // 2. Get its type and find the method
+        // Parse array indices (which can be expressions)
+        while (true) {
+            BasicValue index_val = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            indices.push_back(static_cast<size_t>(to_double(index_val)));
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line, "Expected ',' or ']' in array index."); return; }
+            vm.pcode++;
+        }
+        vm.pcode++; // Consume ']'
+
+        // After the array access, there must be a dot for the method name
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_DOT) {
+            Error::set(1, vm.runtime_current_line, "Expected '.' for method call on array element."); return;
+        }
+
+        // The next string is the method name
+        method_name = to_upper(read_string(vm));
+    }
+
+    // --- 2. Main Logic for Method Calls vs. Standard Function Calls ---
+    bool is_method_call = is_array_access || (identifier_being_called.find('.') != std::string::npos && !vm.active_function_table->count(identifier_being_called));
+
+    if (is_method_call) {
+        // If it wasn't an array access, it's a simple dot notation call like `OBJ.METHOD()`
+        if (!is_array_access) {
+            size_t dot_pos = identifier_being_called.find('.');
+            object_name = to_upper(identifier_being_called.substr(0, dot_pos));
+            method_name = to_upper(identifier_being_called.substr(dot_pos + 1));
+        }
+
+        BasicValue& base_variable = get_variable(vm, object_name);
+        auto jt = (std::holds_alternative<std::shared_ptr<Map>>(base_variable) || std::holds_alternative<std::shared_ptr<Array>>(base_variable));
+
+        if (vm.variables.contains(object_name) && jt) {
+            // This pointer will hold the specific object instance we need to call the method on.
+            std::shared_ptr<Map> object_instance_ptr;
+            //BasicValue& base_variable = get_variable(vm, object_name);
+
+            if (is_array_access) {
+                // --- PATH 1: The call is on an array element like NPCS[i].METHOD() ---
+                if (!std::holds_alternative<std::shared_ptr<Array>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Variable '" + object_name + "' is not an array."); return;
+                }
+                const auto& arr_ptr = std::get<std::shared_ptr<Array>>(base_variable);
+                if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array '" + object_name + "' is null."); return; }
+
+                size_t flat_index = arr_ptr->get_flat_index(indices);
+                if (flat_index >= arr_ptr->data.size()) { Error::set(10, vm.runtime_current_line, "Array index out of bounds."); return; }
+
+                BasicValue& element_val = arr_ptr->data[flat_index];
+                if (!std::holds_alternative<std::shared_ptr<Map>>(element_val)) {
+                    Error::set(15, vm.runtime_current_line, "Array element is not an object that can have methods."); return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(element_val);
+
+            }
+            else {
+                // --- PATH 2: The call is on a simple object variable like MY_NPC.METHOD() ---
+                if (!std::holds_alternative<std::shared_ptr<Map>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Methods can only be called on objects."); return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(base_variable);
+            }
+
+            // --- 3. UNIFIED EXECUTION LOGIC ---
+            // At this point, `object_instance_ptr` correctly points to the target object.
+            if (!object_instance_ptr) { Error::set(1, vm.runtime_current_line, "Object instance is null."); return; }
+
             std::string type_name = object_instance_ptr->type_name_if_udt;
             if (type_name.empty() || !vm.user_defined_types.count(type_name)) {
-                Error::set(15, vm.runtime_current_line, "Object has no type information.");
-                return;
+                Error::set(15, vm.runtime_current_line, "Object has no type information."); return;
             }
             const auto& type_info = vm.user_defined_types.at(type_name);
             if (!type_info.methods.count(method_name)) {
-                Error::set(22, vm.runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'.");
-                return;
+                Error::set(22, vm.runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'."); return;
             }
 
-            // 3. Get the mangled function name and its FunctionInfo
             std::string mangled_name = type_name + "." + method_name;
             const auto& func_info = vm.active_function_table->at(mangled_name);
 
-            // 4. Parse arguments
+            // Parse arguments using the dedicated helper for expressions
             auto args = vm.parse_argument_list();
             if (Error::get() != 0) return;
 
-            // 5. *** SET THE 'THIS' CONTEXT ***
+            // SET THE 'THIS' CONTEXT
             vm.this_stack.push_back(object_instance_ptr);
 
-            // 6. Execute the function
-            vm.execute_synchronous_function(func_info, args);
+            // Execute the function and let the wrapper handle the return value
+            vm.execute_function_for_value(func_info, args);
 
-            // 7. *** CLEAN UP THE 'THIS' CONTEXT ***
+            // CLEAN UP THE 'THIS' CONTEXT
             vm.this_stack.pop_back();
-        }
 
 #ifdef JDCOM // This logic is only compiled if COM support is enabled.
         // It's a dot-chain, so resolve it to get the target object and the method name.
-        else {
+        } else {
             auto [final_obj, final_method] = vm.resolve_dot_chain(identifier_being_called);
             if (Error::get() != 0) {
                 return; // An error occurred during resolution.
@@ -1196,26 +1418,105 @@ void Commands::do_sub(NeReLaBasic& vm) {
 }
 
 void Commands::do_callsub(NeReLaBasic& vm) {
+    std::vector<size_t> indices;
+    std::string object_name = "";
+    std::string method_name = "";
     std::string proc_name = to_upper(read_string(vm));
-    int funcnotfound = false;
-    if (!vm.active_function_table->count(proc_name)) {
-        funcnotfound = true;
-    }
-    // Check if it's a COM method call by looking for a '.'
-    if (proc_name.find('.') != std::string::npos && funcnotfound) {
+    bool func_not_found = !vm.active_function_table->count(proc_name);
+    bool is_array_access = false;
 
-        size_t dot_pos = proc_name.find('.');
-        std::string object_name = to_upper(proc_name.substr(0, dot_pos));
-        std::string method_name = to_upper(proc_name.substr(dot_pos + 1));
-        if (vm.variables.contains(object_name)) {
-            // 1. Get the object instance
-            BasicValue& object_instance_val = get_variable(vm, object_name);
-            if (!std::holds_alternative<std::shared_ptr<Map>>(object_instance_val)) {
-                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+    // Check if the next token indicates an array access, e.g., NPCS[0]
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+        is_array_access = true;
+        object_name = proc_name; // The part before '[' is the object/array name
+        vm.pcode++; // Consume '['
+
+        // Parse array indices
+        while (true) {
+            BasicValue index_val = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            indices.push_back(static_cast<size_t>(to_double(index_val)));
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line, "Expected ',' or ']' in array index."); return; }
+            vm.pcode++;
+        }
+        vm.pcode++; // Consume ']'
+
+        // After the array access, there must be a dot for the method name
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_DOT) {
+            Error::set(1, vm.runtime_current_line, "Expected '.' for method call on array element."); return;
+        }
+        vm.pcode++; // consume '.'
+        // The next string is the method name
+        method_name = to_upper(read_string(vm));
+    }
+
+    // --- Main Logic for Method Calls vs. Standard Procedure Calls ---
+
+    // This block handles method calls like `MyObject.DoSomething()` or `MyArray[i].DoSomething()`
+    if (is_array_access || (proc_name.find('.') != std::string::npos && func_not_found)) {
+
+        // If it wasn't an array access, it's a simple dot notation call like `OBJ.METHOD`
+        if (!is_array_access) {
+            size_t dot_pos = proc_name.find('.');
+            object_name = to_upper(proc_name.substr(0, dot_pos));
+            method_name = to_upper(proc_name.substr(dot_pos + 1));
+        }
+
+        BasicValue& base_variable = get_variable(vm, object_name);
+        auto jt = (std::holds_alternative<std::shared_ptr<Map>>(base_variable) || std::holds_alternative<std::shared_ptr<Array>>(base_variable));
+
+        if (vm.variables.contains(object_name) && jt) {
+            // This pointer will hold the specific object instance we need to call the method on.
+            std::shared_ptr<Map> object_instance_ptr;
+            BasicValue& base_variable = get_variable(vm, object_name);
+
+            if (is_array_access) {
+                // --- PATH 1: The call is on an array element like NPCS[i].METHOD() ---
+
+                // 1. Verify the base variable is an array.
+                if (!std::holds_alternative<std::shared_ptr<Array>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Variable '" + object_name + "' is not an array.");
+                    return;
+                }
+                const auto& arr_ptr = std::get<std::shared_ptr<Array>>(base_variable);
+                if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array '" + object_name + "' is null."); return; }
+
+                // 2. Get the specific element from the array.
+                size_t flat_index = arr_ptr->get_flat_index(indices);
+                if (flat_index >= arr_ptr->data.size()) {
+                    Error::set(10, vm.runtime_current_line, "Array index out of bounds."); // Bad subscript
+                    return;
+                }
+                BasicValue& element_val = arr_ptr->data[flat_index];
+
+                // 3. Verify the element is an object (a Map) and get its pointer.
+                if (!std::holds_alternative<std::shared_ptr<Map>>(element_val)) {
+                    Error::set(15, vm.runtime_current_line, "Array element is not an object that can have methods.");
+                    return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(element_val);
+
+            }
+            else {
+                // --- PATH 2: The call is on a simple object variable like MY_NPC.METHOD() ---
+                if (!std::holds_alternative<std::shared_ptr<Map>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                    return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(base_variable);
+            }
+
+            // --- UNIFIED LOGIC ---
+            // At this point, `object_instance_ptr` correctly points to the object we want to call the method on,
+            // whether it came from a simple variable or an array element.
+
+            if (!object_instance_ptr) {
+                Error::set(1, vm.runtime_current_line, "Object instance is null.");
                 return;
             }
-            auto object_instance_ptr = std::get<std::shared_ptr<Map>>(object_instance_val);
-
             // 2. Get its type and find the method
             std::string type_name = object_instance_ptr->type_name_if_udt;
             if (type_name.empty() || !vm.user_defined_types.count(type_name)) {
@@ -1261,7 +1562,8 @@ void Commands::do_callsub(NeReLaBasic& vm) {
             }
 
             // 5. *** SET THE 'THIS' CONTEXT ***
-            object_instance_ptr->data["THIS"] = object_name;
+            //object_instance_ptr->data["THIS"] = object_name;
+
             vm.this_stack.push_back(object_instance_ptr);
 
             // 6. Execute the function
@@ -1305,7 +1607,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
 #endif
     }
     else {
-        if (funcnotfound) {
+        if (func_not_found) {
             Error::set(22, vm.runtime_current_line); return;
         }
         const auto& proc_info = vm.active_function_table->at(proc_name);
