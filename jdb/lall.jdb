@@ -10,10 +10,9 @@ wb = objXL.Workbooks.Add()
 
 ' Set a cell value
 objcell = objXL.ActiveSheet.Cells(1, 1)
-objcell.Value = "Hello from NeReLa Basic!"
+objcell.Value = "Hello from jdBasic!"
 
 ' Quit Excel
-STOP
 objXL.Quit()
 
 PRINT "Excel automation complete."

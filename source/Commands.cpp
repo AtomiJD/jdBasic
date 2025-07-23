@@ -1944,6 +1944,7 @@ void Commands::do_load(NeReLaBasic& vm) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         vm.source_lines.push_back(line);
     }
+    vm.program_to_debug = filename;
 }
 
 void Commands::do_save(NeReLaBasic& vm) {

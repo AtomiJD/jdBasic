@@ -96,6 +96,7 @@ void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& custo
         vm->variables["ERR"] = static_cast<double>(errorCode);
         vm->variables["ERL"] = static_cast<double>(lineNumber);
         vm->variables["ERRMSG$"] = getMessage(errorCode) + (customMessage.empty() ? "" : ", " + customMessage);
+        vm->variables["STACK$"] = vm->get_stacktrace();
 
         // Calculate where RESUME NEXT should jump to.
         uint16_t next_pcode = vm->pcode;

@@ -305,6 +305,9 @@ public:
     BasicValue parse_array_literal();
     BasicValue parse_map_literal();
     BasicValue parse_pipe();
+
+    // --- Main execution ---
+    BasicValue get_stacktrace();
     void statement();
     void process_system_events();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);

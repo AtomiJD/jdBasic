@@ -476,6 +476,17 @@ void NeReLaBasic::execute_repl_command(const std::vector<uint8_t>& repl_p_code) 
     this->pcode = original_pcode;
 }
 
+BasicValue NeReLaBasic::get_stacktrace() {
+    std::string stack_string = "[GLOBAL]\n";
+    int i;
+    int frames = call_stack.size();
+    for (i = frames - 1; i >= 0; --i) {
+        const auto& frame = call_stack[i];
+        stack_string += std::to_string(i + 1) + ":, frames: " + std::to_string(frames) + ", linenr "  + std::to_string(frame.linenr) + ", function name: " + frame.function_name + ", program: " + program_to_debug + "\n";
+    }
+    return to_string(stack_string);
+}
+
 void NeReLaBasic::pause_for_debugger() {
     std::unique_lock<std::mutex> lock(dap_mutex);
     dap_command_received = false;
@@ -483,7 +494,7 @@ void NeReLaBasic::pause_for_debugger() {
     dap_command_received = false;
 }
 
-// MODIFIED: All debug methods now affect `this->debug_state`, not `current_task`.
+// All debug methods now affect `this->debug_state`, not `current_task`.
 void NeReLaBasic::resume_from_debugger() {
     {
         std::lock_guard<std::mutex> lock(dap_mutex);
@@ -522,7 +533,7 @@ void NeReLaBasic::step_out() {
     dap_cv.notify_one();
 }
 
-// MODIFIED: The generic debug handler now uses `this->debug_state`.
+// The generic debug handler now uses `this->debug_state`.
 void NeReLaBasic::handle_debug_events() {
     // If no debugger is attached or we are running freely, do nothing.
     if (!dap_handler)  {
