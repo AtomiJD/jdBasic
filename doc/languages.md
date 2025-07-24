@@ -145,7 +145,7 @@ print apply(dec@,12) ' Should return 11
 * **`IF condition THEN ... [ELSE ...] ENDIF`**: Conditional execution block. Single-line `IF condition THEN statement` is also supported.
 * **`FOR ... TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
-* **`ON ERROR CALL sub_name`**: Sets a global error handler. If an error occurs, the specified subroutine is called.
+* **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Error handling.
 * **`OPTION option$`**: Sets a VM option. `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
 * **`RESUME [NEXT | "label"]`**: Used within an error handler to resume execution. `RESUME` retries the failed line, `RESUME NEXT` continues on the next line, and `RESUME "label"` jumps to a label.
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration.

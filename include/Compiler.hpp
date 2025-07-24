@@ -56,6 +56,24 @@ public:
     };
     std::vector<DoLoopInfo> do_loop_stack;
 
+    // --- TRY...CATCH...FINALLY blocks ---
+    struct TryBlockInfo {
+        uint16_t source_line;
+        // The address of the 2-byte placeholder for the CATCH block's address.
+        uint16_t catch_addr_placeholder;
+        // The address of the 2-byte placeholder for the FINALLY block's address.
+        uint16_t finally_addr_placeholder;
+
+        // Stores addresses of JUMP placeholders that need to be patched to point to the FINALLY block.
+        std::vector<uint16_t> jump_to_finally_patches;
+        // Stores addresses of JUMP placeholders that need to be patched to point *past* the FINALLY block.
+        uint16_t jump_past_finally_patch = 0;
+
+        bool has_catch = false;
+        bool has_finally = false;
+    };
+    std::vector<TryBlockInfo> try_stack;
+
     // For tracking FUNC/SUB declarations and patching jumps
     std::vector<uint16_t> func_stack;
 

@@ -745,6 +745,117 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 // If no argument (simple RESUME), nothing more needs to be written to pcode.
                 continue;
             }
+
+            case Tokens::ID::TRY: {
+                // When we see TRY, we push a new handler onto the stack and emit the p-code.
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::OP_PUSH_HANDLER));
+
+                TryBlockInfo info;
+                info.source_line = lineNumber;
+
+                // Reserve 2 bytes for the CATCH address, store the placeholder's location.
+                info.catch_addr_placeholder = out_p_code.size();
+                out_p_code.push_back(0); out_p_code.push_back(0);
+
+                // Reserve 2 bytes for the FINALLY address.
+                info.finally_addr_placeholder = out_p_code.size();
+                out_p_code.push_back(0); out_p_code.push_back(0);
+
+                try_stack.push_back(info);
+                continue; // Continue tokenizing the contents of the TRY block.
+            }
+
+            case Tokens::ID::CATCH: {
+                if (try_stack.empty()) {
+                    Error::set(1, lineNumber, "CATCH without TRY."); return 1;
+                }
+                TryBlockInfo& current_try = try_stack.back();
+                if (current_try.has_catch) {
+                    Error::set(1, lineNumber, "Multiple CATCH blocks are not supported."); return 1;
+                }
+                current_try.has_catch = true;
+
+                // 1. Emit an unconditional jump to skip over this CATCH block if the TRY block succeeded.
+                //    We'll patch this jump later to point to the FINALLY or ENDTRY.
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::ELSE)); // Re-using ELSE as a generic JUMP opcode
+                current_try.jump_to_finally_patches.push_back(out_p_code.size());
+                out_p_code.push_back(0); out_p_code.push_back(0);
+
+                // 2. The current location is the start of the CATCH block. Patch the placeholder in OP_PUSH_HANDLER.
+                uint16_t catch_addr = out_p_code.size();
+                out_p_code[current_try.catch_addr_placeholder] = catch_addr & 0xFF;
+                out_p_code[current_try.catch_addr_placeholder + 1] = (catch_addr >> 8) & 0xFF;
+
+                continue;
+            }
+
+            case Tokens::ID::FINALLY: {
+                if (try_stack.empty()) {
+                    Error::set(1, lineNumber, "FINALLY without TRY."); return 1;
+                }
+                TryBlockInfo& current_try = try_stack.back();
+                if (current_try.has_finally) {
+                    Error::set(1, lineNumber, "Multiple FINALLY blocks are not supported."); return 1;
+                }
+                current_try.has_finally = true;
+
+                // 1. If there was a CATCH block, it needs to jump to the FINALLY block when it's done.
+                //    Emit a jump and store its location to be patched later.
+                if (current_try.has_catch) {
+                    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::ELSE));
+                    current_try.jump_to_finally_patches.push_back(out_p_code.size());
+                    out_p_code.push_back(0); out_p_code.push_back(0);
+                }
+
+                // 2. The current location is the start of the FINALLY block.
+                uint16_t finally_addr = out_p_code.size();
+
+                // 3. Patch the main placeholder in OP_PUSH_HANDLER.
+                out_p_code[current_try.finally_addr_placeholder] = finally_addr & 0xFF;
+                out_p_code[current_try.finally_addr_placeholder + 1] = (finally_addr >> 8) & 0xFF;
+
+                // 4. Patch all pending jumps (from the end of TRY and CATCH) to point here.
+                for (uint16_t patch_addr : current_try.jump_to_finally_patches) {
+                    out_p_code[patch_addr] = finally_addr & 0xFF;
+                    out_p_code[patch_addr + 1] = (finally_addr >> 8) & 0xFF;
+                }
+                current_try.jump_to_finally_patches.clear(); // Clear them as they are now patched.
+
+                continue;
+            }
+
+            case Tokens::ID::ENDTRY: {
+                if (try_stack.empty()) {
+                    Error::set(1, lineNumber, "ENDTRY without TRY."); return 1;
+                }
+                TryBlockInfo current_try = try_stack.back();
+                try_stack.pop_back();
+
+                uint16_t end_addr = out_p_code.size();
+
+                // If there was no FINALLY block, all pending jumps must go to the ENDTRY location.
+                if (!current_try.has_finally) {
+                    // Patch the main finally_addr placeholder to point here.
+                    out_p_code[current_try.finally_addr_placeholder] = end_addr & 0xFF;
+                    out_p_code[current_try.finally_addr_placeholder + 1] = (end_addr >> 8) & 0xFF;
+
+                    // Patch any jumps from TRY or CATCH blocks.
+                    for (uint16_t patch_addr : current_try.jump_to_finally_patches) {
+                        out_p_code[patch_addr] = end_addr & 0xFF;
+                        out_p_code[patch_addr + 1] = (end_addr >> 8) & 0xFF;
+                    }
+                }
+                else {
+                    // If there was a FINALLY, we just need to ensure the code continues after it.
+                    // The jumps to FINALLY were already patched. We don't need to do anything here
+                    // because execution will naturally fall through from the FINALLY block to here.
+                }
+
+                // Finally, emit the instruction to pop the handler from the runtime stack.
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::OP_POP_HANDLER));
+                continue;
+            }
+
             case Tokens::ID::DO: {
                 out_p_code.push_back(static_cast<uint8_t>(token));
                 DoLoopInfo info;

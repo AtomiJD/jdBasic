@@ -682,6 +682,13 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
 
         handle_debug_events();
 
+        if (jump_to_catch_pending) {
+            pcode = pending_catch_address;
+            jump_to_catch_pending = false; // Reset flag
+            Error::clear(); // Clear error now that we've jumped
+            continue; // Continue execution in the CATCH/FINALLY block
+        }
+
         if (Error::get() != 0) break;
         if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COLON) {
             pcode++;
@@ -747,7 +754,12 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
             //TextIO::print("Exception " + std::string(e.what()));
             Error::set(1, 1, "Exception " + std::string(e.what()));
         }
-
+        if (jump_to_catch_pending) {
+            pcode = pending_catch_address;
+            jump_to_catch_pending = false; // Reset flag
+            Error::clear(); // Clear error now that we've jumped
+            continue; // Continue execution in the CATCH/FINALLY block
+        }
         // Handle multi-statement lines separated by ':'
         if (pcode < active_p_code->size() &&
             static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COLON) {
@@ -879,41 +891,50 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                             
                         }
                         // --- Error Handling Logic ---
+                        if (jump_to_catch_pending) {
+                            pcode = pending_catch_address;
+                            jump_to_catch_pending = false; // Reset flag
+                            Error::clear(); // Clear error now that we've jumped
+                            continue; // Continue execution in the CATCH/FINALLY block
+                        }
                         if (Error::get() != 0) {
-                            if (current_task->jump_to_error_handler) {
-                                // A trappable error occurred. Jump to the handler.
-                                current_task->jump_to_error_handler = false; // Reset the trigger
-                                Error::clear(); // Clear the error so the handler can run
-                                is_processing_event = true; // Mark that we are in an error handler
+                            //if (current_task->jump_to_error_handler) {
+                            //    // A trappable error occurred. Jump to the handler.
+                            //    current_task->jump_to_error_handler = false; // Reset the trigger
+                            //    Error::clear(); // Clear the error so the handler can run
+                            //    is_processing_event = true; // Mark that we are in an error handler
 
-                                const auto& handler_name = current_task->error_handler_function_name;
-                                if (this->main_function_table.count(handler_name)) {
-                                    const auto& proc_info = this->main_function_table.at(handler_name);
+                            //    const auto& handler_name = current_task->error_handler_function_name;
+                            //    if (this->main_function_table.count(handler_name)) {
+                            //        const auto& proc_info = this->main_function_table.at(handler_name);
 
-                                    // Perform a GOSUB-like call to the handler
-                                    StackFrame frame;
-                                    frame.function_name = handler_name;
-                                    // A return from an error handler is illegal; only RESUME is allowed.
-                                    // Set return pointers to a safe but invalid state.
-                                    frame.return_pcode = active_p_code->size();
-                                    frame.return_p_code_ptr = active_p_code;
-                                    frame.previous_function_table_ptr = active_function_table;
-                                    frame.for_stack_size_on_entry = for_stack.size();
-                                    call_stack.push_back(frame);
+                            //        // Perform a GOSUB-like call to the handler
+                            //        StackFrame frame;
+                            //        frame.function_name = handler_name;
+                            //        // A return from an error handler is illegal; only RESUME is allowed.
+                            //        // Set return pointers to a safe but invalid state.
+                            //        frame.return_pcode = active_p_code->size();
+                            //        frame.return_p_code_ptr = active_p_code;
+                            //        frame.previous_function_table_ptr = active_function_table;
+                            //        frame.for_stack_size_on_entry = for_stack.size();
+                            //        call_stack.push_back(frame);
 
-                                    // Set pcode to the start of the handler
-                                    pcode = proc_info.start_pcode;
-                                }
-                                else {
-                                    Error::set(22, runtime_current_line, "Handler not found: " + handler_name);
-                                    current_task->status = TaskStatus::ERRORED;
-                                }
-                            }
-                            else {
-                                // An untrappable error occurred.
-                                current_task->status = TaskStatus::ERRORED;
-                            }
-                            line_is_done = true; // Stop processing the rest of this errored line
+                            //        // Set pcode to the start of the handler
+                            //        pcode = proc_info.start_pcode;
+                            //    }
+                            //    else {
+                            //        Error::set(22, runtime_current_line, "Handler not found: " + handler_name);
+                            //        current_task->status = TaskStatus::ERRORED;
+                            //    }
+                            //}
+                            //else {
+                            //    // An untrappable error occurred.
+                            //    current_task->status = TaskStatus::ERRORED;
+                            //}
+                            // The new Error::set function will have already jumped to a CATCH block if one exists.
+                            // If we get here, it means the error was unhandled.
+                            current_task->status = TaskStatus::ERRORED;
+                            line_is_done = true;
                             continue;
                         }
                         // If the statement caused the task to complete (e.g. RETURN) or yield (AWAIT), stop processing this line.
@@ -1067,10 +1088,20 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_callsub(*this);
         break;
-    //case Tokens::ID::ONERRORCALL:
-    //    pcode++;
-    //    Commands::do_onerrorcall(*this);
-    //    break;
+    case Tokens::ID::TRY:
+    case Tokens::ID::CATCH:
+    case Tokens::ID::FINALLY:
+    case Tokens::ID::ENDTRY:
+        pcode++; // Should not happen, but skip if it does.
+        break;
+    case Tokens::ID::OP_PUSH_HANDLER:
+        pcode++;
+        Commands::do_push_handler(*this);
+        break;
+    case Tokens::ID::OP_POP_HANDLER:
+        pcode++;
+        Commands::do_pop_handler(*this);
+        break;
     case Tokens::ID::ON:
         pcode++;
         Commands::do_on(*this);
@@ -1084,10 +1115,10 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_end(*this);
         break;
-    case Tokens::ID::RESUME:
-        pcode++;
-        Commands::do_resume(*this);
-        break;
+    //case Tokens::ID::RESUME:
+    //    pcode++;
+    //    Commands::do_resume(*this);
+    //    break;
     case Tokens::ID::LOOP:
         pcode++;
         Commands::do_loop(*this);
@@ -1232,6 +1263,7 @@ NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
     for_stack.clear();
     call_stack.clear();
     func_stack.clear();
+    handler_stack.clear();
 
     // Asynchronous Task System (not used by BSYNC threads)
     task_queue.clear();
@@ -1245,13 +1277,13 @@ NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
     error_handler_function_name = "";
     err_code = 0.0;
     erl_line = 0.0;
-    resume_pcode = 0;
-    resume_pcode_next_statement = 0;
-    resume_runtime_line = 0;
-    resume_p_code_ptr = nullptr;
-    resume_function_table_ptr = nullptr;
-    resume_call_stack_snapshot.clear();
-    resume_for_stack_snapshot.clear();
+    //resume_pcode = 0;
+    //resume_pcode_next_statement = 0;
+    //resume_runtime_line = 0;
+    //resume_p_code_ptr = nullptr;
+    //resume_function_table_ptr = nullptr;
+    //resume_call_stack_snapshot.clear();
+    //resume_for_stack_snapshot.clear();
 
     // Debugger State (the new thread is not being debugged)
     dap_handler = nullptr;

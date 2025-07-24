@@ -1,17 +1,3 @@
-' --- Simple JSON Error Handler ---
-SUB HandleJsonError()
-    PRINT
-    PRINT "!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    PRINT "! JSON PARSING FAILED!   !"
-    PRINT "!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    PRINT "Error Code: "; ERR
-    PRINT "Line Number: "; ERL
-    PRINT "This usually means OpenAI returned an error message instead of a valid chat completion."
-    PRINT "Raw response from server:"
-    PRINT RESPONSE$
-    RESUME NEXT ' Skip the failed parsing and continue the loop
-ENDSUB
-
 REM --- NeReLa Basic OpenAI Chat Client with JSON Parsing ---
 REM This program uses the HTTP.POST$ function to send a prompt
 REM to the OpenAI Chat Completions API and then parses the
@@ -72,8 +58,15 @@ DO
 
     RESPONSE$ = HTTP.POST$(API_URL$, JSON_BODY$,"application/json")
 
-    ON ERROR CALL HandleJsonError
-    RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+    TRY
+        RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+    CATCH
+        PRINT "Error in JSON.PARSE$(RESPONSE$)"
+        PRINT "Error Code: "; ERR
+        PRINT "Error Line: "; ERL
+        PRINT "Error Message: "; ERRMSG$
+    ENDTRY
+
     'print RESPONSE_JSON 
     AI_MESSAGE$ = RESPONSE_JSON{"choices"}[0]{"message"}{"content"}
     

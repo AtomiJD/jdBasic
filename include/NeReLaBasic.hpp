@@ -170,6 +170,19 @@ public:
         FunctionTable methods;
     };
 
+    // --- NEW: For TRY/CATCH Runtime ---
+    struct ExceptionHandler {
+        uint16_t catch_address;    // p-code address of the CATCH block
+        uint16_t finally_address;  // p-code address of the FINALLY block
+        size_t call_stack_depth;   // Stack depth at the moment TRY was entered
+        size_t for_stack_depth;    // FOR loop stack depth at the moment TRY was entered
+    };
+    std::vector<ExceptionHandler> handler_stack;
+
+    // --- Flags for pending jumps from Error::set ---
+    bool jump_to_catch_pending = false;
+    uint16_t pending_catch_address = 0;
+
     std::promise<bool> dap_launch_promise; // Used to signal that launch has occurred
     std::string program_to_debug; // Will hold the path from the launch request
 
@@ -248,15 +261,15 @@ public:
     BasicValue current_error_data;
     std::string error_handler_function_name = ""; // Name of the function to call on error
 
-    // Context to return to after RESUME
-    // These will store the state *before* the error handler is invoked.
-    uint16_t resume_pcode_next_statement = 0; // Where RESUME NEXT should jump
-    uint16_t resume_pcode = 0;
-    uint16_t resume_runtime_line = 0;
-    const std::vector<uint8_t>* resume_p_code_ptr = nullptr; // Raw pointer, assuming it points to active_p_code
-    NeReLaBasic::FunctionTable* resume_function_table_ptr = nullptr; // Raw pointer
-    std::vector<StackFrame> resume_call_stack_snapshot; // Snapshot of call stack for RESUME NEXT/0
-    std::vector<ForLoopInfo> resume_for_stack_snapshot; // Snapshot of FOR stack
+    //// Context to return to after RESUME
+    //// These will store the state *before* the error handler is invoked.
+    //uint16_t resume_pcode_next_statement = 0; // Where RESUME NEXT should jump
+    //uint16_t resume_pcode = 0;
+    //uint16_t resume_runtime_line = 0;
+    //const std::vector<uint8_t>* resume_p_code_ptr = nullptr; // Raw pointer, assuming it points to active_p_code
+    //NeReLaBasic::FunctionTable* resume_function_table_ptr = nullptr; // Raw pointer
+    //std::vector<StackFrame> resume_call_stack_snapshot; // Snapshot of call stack for RESUME NEXT/0
+    //std::vector<ForLoopInfo> resume_for_stack_snapshot; // Snapshot of FOR stack
 
     // Flag to signal the main loop to jump to error handler
     bool jump_to_error_handler = false;

@@ -1722,81 +1722,111 @@ void Commands::do_endsub(NeReLaBasic& vm) {
     do_return(vm);
 }
 
-// This command will expect a function name string directly after it.
-void Commands::do_onerrorcall(NeReLaBasic& vm) {
-    // Read the function name from bytecode
-    if (!vm.current_task) {
-        Error::set(1, vm.runtime_current_line, "ON ERROR can only be used in a running program.");
-        return;
-    }
-    std::string func_name = to_upper(read_string(vm)); // read_string handles pcode increment
+//// This command will expect a function name string directly after it.
+//void Commands::do_onerrorcall(NeReLaBasic& vm) {
+//    // Read the function name from bytecode
+//    if (!vm.current_task) {
+//        Error::set(1, vm.runtime_current_line, "ON ERROR can only be used in a running program.");
+//        return;
+//    }
+//    std::string func_name = to_upper(read_string(vm)); // read_string handles pcode increment
+//
+//    // Check if the function actually exists
+//    // (It must be a SUB, not a FUNC, as it's called as a procedure)
+//    if (vm.main_function_table.count(func_name) && vm.main_function_table.at(func_name).is_procedure) {
+//        vm.current_task->error_handler_function_name = func_name;
+//        vm.current_task->error_handler_active = true;
+//    }
+//    else {
+//        // Error if function not found or it's not a procedure (SUB)
+//        Error::set(22, vm.runtime_current_line); // Undefined function
+//    }
+//}
 
-    // Check if the function actually exists
-    // (It must be a SUB, not a FUNC, as it's called as a procedure)
-    if (vm.main_function_table.count(func_name) && vm.main_function_table.at(func_name).is_procedure) {
-        vm.current_task->error_handler_function_name = func_name;
-        vm.current_task->error_handler_active = true;
-    }
-    else {
-        // Error if function not found or it's not a procedure (SUB)
-        Error::set(22, vm.runtime_current_line); // Undefined function
+// ---  Commands for TRY/CATCH ---
+void Commands::do_push_handler(NeReLaBasic& vm) {
+    // Read the two 2-byte addresses from p-code.
+    // These were written by the compiler.
+    uint8_t catch_lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t catch_msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t catch_addr = (catch_msb << 8) | catch_lsb;
+
+    uint8_t finally_lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t finally_msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t finally_addr = (finally_msb << 8) | finally_lsb;
+
+    // Push the handler information onto the runtime stack.
+    vm.handler_stack.push_back({
+        catch_addr,
+        finally_addr,
+        vm.call_stack.size(),
+        vm.for_stack.size()
+        });
+}
+
+void Commands::do_pop_handler(NeReLaBasic& vm) {
+    // This is called at ENDTRY. It simply removes the handler for the
+    // block we are now leaving.
+    if (!vm.handler_stack.empty()) {
+        vm.handler_stack.pop_back();
     }
 }
 
-void Commands::do_resume(NeReLaBasic& vm) {
-    if (!vm.current_task || !vm.current_task->error_handler_active || !vm.is_processing_event) {
-        Error::set(1, vm.runtime_current_line, "RESUME without an active error handler.");
-        return;
-    }
 
-    Error::clear(); // Clear any error state from within the handler.
-
-    NeReLaBasic::Task* task = vm.current_task;
-    vm.is_processing_event = false; // We are now leaving the error handler
-
-    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-
-    if (next_token == Tokens::ID::NEXT) {
-        vm.pcode++; // Consume NEXT token
-
-        // Restore the full execution context to the state before the error.
-        vm.call_stack = task->resume_call_stack_snapshot;
-        vm.for_stack = task->resume_for_stack_snapshot;
-        vm.active_p_code = task->resume_p_code_ptr;
-        vm.active_function_table = task->resume_function_table_ptr;
-
-        // Jump to the statement AFTER the one that caused the error.
-        vm.pcode = task->resume_pcode_next_statement;
-        // The line number will be updated when the pcode is processed by the main loop
-
-    }
-    else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
-        vm.pcode++; // Consume STRING token
-        std::string target_label = read_string(vm);
-        if (vm.compiler->label_addresses.count(target_label)) {
-            // A GOTO-style resume aborts the old execution path.
-            // Clear the stacks before jumping.
-            vm.call_stack.clear();
-            vm.for_stack.clear();
-            vm.pcode = vm.compiler->label_addresses[target_label];
-        }
-        else {
-            Error::set(11, vm.runtime_current_line, "Undefined label in RESUME.");
-        }
-    }
-    else {
-        // Simple RESUME (or RESUME 0) - re-execute the failing line.
-
-        // Restore context
-        vm.call_stack = task->resume_call_stack_snapshot;
-        vm.for_stack = task->resume_for_stack_snapshot;
-        vm.active_p_code = task->resume_p_code_ptr;
-        vm.active_function_table = task->resume_function_table_ptr;
-
-        // Jump back to the start of the statement that caused the error.
-        vm.pcode = task->resume_pcode;
-    }
-}
+//void Commands::do_resume(NeReLaBasic& vm) {
+//    if (!vm.current_task || !vm.current_task->error_handler_active || !vm.is_processing_event) {
+//        Error::set(1, vm.runtime_current_line, "RESUME without an active error handler.");
+//        return;
+//    }
+//
+//    Error::clear(); // Clear any error state from within the handler.
+//
+//    NeReLaBasic::Task* task = vm.current_task;
+//    vm.is_processing_event = false; // We are now leaving the error handler
+//
+//    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+//
+//    if (next_token == Tokens::ID::NEXT) {
+//        vm.pcode++; // Consume NEXT token
+//
+//        // Restore the full execution context to the state before the error.
+//        vm.call_stack = task->resume_call_stack_snapshot;
+//        vm.for_stack = task->resume_for_stack_snapshot;
+//        vm.active_p_code = task->resume_p_code_ptr;
+//        vm.active_function_table = task->resume_function_table_ptr;
+//
+//        // Jump to the statement AFTER the one that caused the error.
+//        vm.pcode = task->resume_pcode_next_statement;
+//        // The line number will be updated when the pcode is processed by the main loop
+//
+//    }
+//    else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
+//        vm.pcode++; // Consume STRING token
+//        std::string target_label = read_string(vm);
+//        if (vm.compiler->label_addresses.count(target_label)) {
+//            // A GOTO-style resume aborts the old execution path.
+//            // Clear the stacks before jumping.
+//            vm.call_stack.clear();
+//            vm.for_stack.clear();
+//            vm.pcode = vm.compiler->label_addresses[target_label];
+//        }
+//        else {
+//            Error::set(11, vm.runtime_current_line, "Undefined label in RESUME.");
+//        }
+//    }
+//    else {
+//        // Simple RESUME (or RESUME 0) - re-execute the failing line.
+//
+//        // Restore context
+//        vm.call_stack = task->resume_call_stack_snapshot;
+//        vm.for_stack = task->resume_for_stack_snapshot;
+//        vm.active_p_code = task->resume_p_code_ptr;
+//        vm.active_function_table = task->resume_function_table_ptr;
+//
+//        // Jump back to the start of the statement that caused the error.
+//        vm.pcode = task->resume_pcode;
+//    }
+//}
 
 void Commands::do_on(NeReLaBasic& vm) {
     std::string event_name = to_upper(read_string(vm));

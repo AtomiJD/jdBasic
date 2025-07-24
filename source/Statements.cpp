@@ -88,6 +88,10 @@ namespace {
         {"BXOR",    Tokens::ID::BXOR},
         {"ANDALSO", Tokens::ID::ANDALSO},
         {"ORELSE",  Tokens::ID::ORELSE},
+        {"TRY",     Tokens::ID::TRY},
+        {"CATCH",   Tokens::ID::CATCH},
+        {"FINALLY", Tokens::ID::FINALLY},
+        {"ENDTRY",  Tokens::ID::ENDTRY},
         {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace

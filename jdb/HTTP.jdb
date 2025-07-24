@@ -2,7 +2,7 @@ export module HTTP
 
 ' Fetches the content from a URL using an HTTP GET request.
 ' Returns the response body as a string.
-' On error, returns an empty string and sets the error code.
+
 export func GET$(URL$)
     JSON_DATA$ = HTTPGET$(URL$)
     return JSON_DATA$

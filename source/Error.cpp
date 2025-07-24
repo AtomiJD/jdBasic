@@ -48,7 +48,7 @@ namespace {
 }
 
 void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& customMessage) {
-    if (g_vm_instance_ptr == nullptr || g_vm_instance_ptr->current_task == nullptr) {
+    if (g_vm_instance_ptr == nullptr) {
         current_error_code = errorCode;
         error_line_number = lineNumber;
         custom_error_message = customMessage;
@@ -56,65 +56,48 @@ void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& custo
     }
 
     NeReLaBasic* vm = g_vm_instance_ptr;
-    NeReLaBasic::Task* task = vm->current_task;
 
-    if (task->error_handler_active && vm->is_processing_event) {
-        // A second error occurred inside the error handler itself. This is fatal.
+    // Check if there is an active error handler on the stack
+    if (!vm->handler_stack.empty()) {
+        // Get the handler for the current TRY block
+        NeReLaBasic::ExceptionHandler handler = vm->handler_stack.back();
+
+        // Store error info for the CATCH block to access via ERR, ERL, etc.
         current_error_code = errorCode;
         error_line_number = lineNumber;
         custom_error_message = customMessage;
-        task->status = TaskStatus::ERRORED;
-        return;
-    }
-
-    // Check if an error handler is defined for this task.
-    if (task->error_handler_active && !task->error_handler_function_name.empty()) {
-        current_error_code = errorCode;
-        error_line_number = lineNumber;
-        custom_error_message = customMessage;
-
-        task->jump_to_error_handler = true;
-
-        // Save execution context
-        task->resume_pcode = vm->current_statement_start_pcode;
-        task->resume_runtime_line = lineNumber;
-        task->resume_p_code_ptr = vm->active_p_code;
-        task->resume_function_table_ptr = vm->active_function_table;
-        task->resume_call_stack_snapshot = vm->call_stack;
-        task->resume_for_stack_snapshot = vm->for_stack;
-
-        std::string full_message = getMessage(errorCode) + (customMessage.empty() ? "" : ", " + customMessage);
-
-        // --- NEW: Create and store the structured Map for the argument ---
-        auto error_data_map = std::make_shared<Map>();
-        error_data_map->data["CODE"] = static_cast<double>(errorCode);
-        error_data_map->data["LINE"] = static_cast<double>(lineNumber);
-        error_data_map->data["MESSAGE"] = full_message;
-        vm->current_error_data = error_data_map;
-
-        // Set the global error variables for the handler to access
         vm->variables["ERR"] = static_cast<double>(errorCode);
         vm->variables["ERL"] = static_cast<double>(lineNumber);
         vm->variables["ERRMSG$"] = getMessage(errorCode) + (customMessage.empty() ? "" : ", " + customMessage);
         vm->variables["STACK$"] = vm->get_stacktrace();
 
-        // Calculate where RESUME NEXT should jump to.
-        uint16_t next_pcode = vm->pcode;
-        while (next_pcode < vm->active_p_code->size()) {
-            if (static_cast<Tokens::ID>((*vm->active_p_code)[next_pcode]) == Tokens::ID::C_CR) {
-                next_pcode+=3; // Move past C_CR to the next line's metadata
-                break;
-            }
-            next_pcode++;
+        // UNWIND THE STACKS to the state they were in when TRY was entered
+        if (vm->call_stack.size() > handler.call_stack_depth) {
+            vm->call_stack.resize(handler.call_stack_depth);
         }
-        task->resume_pcode_next_statement = next_pcode;
+        if (vm->for_stack.size() > handler.for_stack_depth) {
+            vm->for_stack.resize(handler.for_stack_depth);
+        }
 
+        // Set the pending jump flags for the main execution loop to handle.
+        vm->jump_to_catch_pending = true;
+        if (handler.catch_address != 0) {
+            vm->pending_catch_address = handler.catch_address;
+        }
+        else {
+            // If no CATCH, jump to FINALLY (or past the block if no FINALLY)
+            vm->pending_catch_address = handler.finally_address;
+        }
+        return;
     }
-    else {
-        // This is an untrappable error (no handler set).
-        current_error_code = errorCode;
-        error_line_number = lineNumber;
-        custom_error_message = customMessage;
+
+    // No handler found, this is an unhandled exception.
+    // Set the global error state to halt the program.
+    current_error_code = errorCode;
+    error_line_number = lineNumber;
+    custom_error_message = customMessage;
+    if (vm->current_task) {
+        vm->current_task->status = TaskStatus::ERRORED;
     }
 }
 
