@@ -12,6 +12,8 @@
 #ifdef _WIN32
 #include <conio.h>
 #else
+#include <codecvt> // for std::wstring_convert
+#include <locale>  // for std::locale
 #include <ncurses.h>
 #endif
 #include <algorithm>    // For std::transform
@@ -36,7 +38,6 @@
 #include <future>
 #include <regex>
 #include <cmath>
-
 
 #ifdef HTTP
 #include "NetworkManager.hpp"
@@ -83,7 +84,6 @@ _variant_t basic_value_to_variant_t(const BasicValue& val) {
 }
 
 // Helper to convert _variant_t back to BasicValue
-
 BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
     switch (vt.vt) {
         // --- Null / Empty ---
@@ -1952,20 +1952,86 @@ BasicValue builtin_str_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     return apply_elementwise_op(vm, args[0], op);
 }
 
-// CHR$(number)
+// CHR$(number_or_array)
 BasicValue builtin_chr_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    char c = static_cast<char>(static_cast<int>(to_double(args[0])));
-    return std::string(1, c);
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return std::string("");
+    }
+
+    // This lambda contains the core logic for converting a code point to a UTF-8 string.
+    auto chr_op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        long code_point = static_cast<long>(to_double(v));
+
+        if (code_point < 0 || code_point > 0x10FFFF) {
+            return std::string(""); // Invalid Unicode code point
+        }
+
+#ifdef _WIN32
+        // --- Windows-specific, non-deprecated method ---
+        wchar_t wstr[2];
+        if (code_point <= 0xFFFF) {
+            // Fits in a single wchar_t
+            wstr[0] = static_cast<wchar_t>(code_point);
+            wstr[1] = L'\0';
+        }
+        else {
+            // Handle supplementary planes (e.g., emojis) by creating a surrogate pair
+            // This is more advanced but correct for full Unicode support.
+            // For now, we can simplify and just handle the Basic Multilingual Plane.
+            // A simple approach for characters > 0xFFFF might return "" or "?".
+            // However, most common characters (including all of Latin-1, etc.) are <= 0xFFFF.
+            return std::string(""); // Or handle surrogate pairs if needed
+        }
+
+        // First, find the required buffer size
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], -1, NULL, 0, NULL, NULL);
+        if (size_needed == 0) {
+            return std::string(""); // Conversion error
+        }
+
+        // Allocate buffer and perform the conversion
+        std::string utf8_str(size_needed - 1, 0); // -1 to not include the null terminator
+        WideCharToMultiByte(CP_UTF8, 0, &wstr[0], -1, &utf8_str[0], size_needed, NULL, NULL);
+
+        return utf8_str;
+#else
+        // --- C++17 Deprecated (but cross-platform) method for other systems ---
+        // You can keep the old code here inside an #else block for Linux/macOS
+        try {
+            std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+            return converter.to_bytes(static_cast<wchar_t>(code_point));
+        }
+        catch (const std::range_error&) {
+            return std::string("");
+        }
+#endif
+        };
+
+    // Use the helper to apply the operation element-wise.
+    return apply_elementwise_op(vm, args[0], chr_op);
 }
 
-// ASC(string)
+// ASC(string_or_array)
 BasicValue builtin_asc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    std::string s = to_string(args[0]);
-    if (s.empty()) return 0.0;
-    return static_cast<double>(static_cast<unsigned char>(s[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+
+    // This lambda contains the core logic for a single element.
+    auto asc_op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        std::string s = to_string(v);
+        if (s.empty()) {
+            return 0.0;
+        }
+        return static_cast<double>(static_cast<unsigned char>(s[0]));
+        };
+
+    // Use the helper to apply the operation element-wise.
+    return apply_elementwise_op(vm, args[0], asc_op);
 }
+
 
 // REVERSE(array) -> array
 // Reverses the elements of an array along its last dimension.

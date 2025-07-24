@@ -313,7 +313,7 @@ std::string to_string(const BasicValue& val) {
 
             if (arg->grad && arg->grad->data) {
                 tensor_str += "\n  .grad=";
-                // MODIFIED: Call the new helper for the gradient's FloatArray
+                // Call the new helper for the gradient's FloatArray
                 tensor_str += float_array_to_string(*(arg->grad->data));
             }
             return tensor_str;

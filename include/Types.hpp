@@ -272,8 +272,31 @@ struct Tensor {
 // multiple .cpp files without causing linker errors.
 //==============================================================================
 
+// Helper to convert a BasicValue to a int for math operations.
+inline int to_int(const BasicValue& val) {
+    if (std::holds_alternative<int>(val)) {
+        return std::get<int>(val);
+    }
+    if (std::holds_alternative<double>(val)) {
+        // Truncate the double, as BASIC's INT function does.
+        return static_cast<int>(std::get<double>(val));
+    }
+    if (std::holds_alternative<bool>(val)) {
+        return std::get<bool>(val) ? 1 : 0;
+    }
+    if (std::holds_alternative<std::shared_ptr<Array>>(val)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(val);
+        if (arr_ptr && arr_ptr->data.size() == 1) {
+            // Coerce single-element array to a number
+            return to_int(arr_ptr->data[0]);
+        }
+    }
+    return 0;
+}
+
 // Helper to convert a BasicValue to a double for math operations.
 // This is called "coercion". It treats booleans as 1.0 or 0.0.
+
 inline double to_double(const BasicValue& val) {
     if (std::holds_alternative<double>(val)) {
         return std::get<double>(val);

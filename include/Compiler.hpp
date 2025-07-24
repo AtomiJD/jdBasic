@@ -96,24 +96,16 @@ public:
     std::string current_type_context;
     bool in_method_block = false;
 
-    /**
-     * @brief Tokenizes a single line of source code into p-code.
-     */
+    // Tokenizes a single line of source code into p-code.
     uint8_t tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline=false, bool fromrepl = false);
 
-    /**
-     * @brief (Lexer) Parses the next token from the current line in the VM's state.
-     */
+    // (Lexer) Parses the next token from the current line in the VM's state.
     Tokens::ID parse(NeReLaBasic& vm, bool is_start_of_statement);
     
-    /**
-     * @brief Compiles a dependent module file.
-     */
+    //Compiles a dependent module file.
     bool compile_module(NeReLaBasic& vm, const std::string& module_name, const std::string& module_source_code);
 
-    /**
-     * @brief Scans source code for TYPE...ENDTYPE blocks to populate the UDT map.
-     */
+    //Scans source code for TYPE...ENDTYPE blocks to populate the UDT map.
     void pre_scan_and_parse_types(NeReLaBasic& vm);
 private:
 

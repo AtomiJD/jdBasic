@@ -124,6 +124,7 @@ namespace Tokens {
         ENDTRY = 0x83,
         OP_PUSH_HANDLER = 0x84,
         OP_POP_HANDLER = 0x85,
+        INTEGER_LITERAL = 0x90, // Integer
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

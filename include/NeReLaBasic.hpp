@@ -170,7 +170,7 @@ public:
         FunctionTable methods;
     };
 
-    // --- NEW: For TRY/CATCH Runtime ---
+    // --- For TRY/CATCH Runtime ---
     struct ExceptionHandler {
         uint16_t catch_address;    // p-code address of the CATCH block
         uint16_t finally_address;  // p-code address of the FINALLY block

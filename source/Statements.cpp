@@ -105,7 +105,7 @@ Tokens::ID Statements::get(const std::string& statement) {
 
     if (it != keyword_map.end()) {
         // We found the keyword in the map, return its token.
-        return it->second; // it->second is the value (the Token::ID)
+        return it->second; 
     }
 
     // It's not a keyword.

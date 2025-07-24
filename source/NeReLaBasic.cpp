@@ -1816,6 +1816,12 @@ BasicValue NeReLaBasic::parse_primary() {
             pcode += sizeof(double);
             current_value = value;
         }
+        else if (token == Tokens::ID::INTEGER_LITERAL) {
+            pcode++; int value;
+            memcpy(&value, &(*active_p_code)[pcode], sizeof(int));
+            pcode += sizeof(int);
+            current_value = value;
+        }
         else if (token == Tokens::ID::STRING) {
             pcode++; current_value = read_string(*this);
         }
@@ -2324,8 +2330,6 @@ BasicValue NeReLaBasic::parse_factor() {
             }
             else
             {
-
-
                 BasicValue right = parse_power();
 
                 bool is_left_tensor = std::holds_alternative<std::shared_ptr<Tensor>>(left);
@@ -2419,10 +2423,22 @@ BasicValue NeReLaBasic::parse_factor() {
                         else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) { return array_op(l, to_double(r), true); }
                         else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) { return array_op(r, to_double(l), false); }
                         else { // scalar op
-                            double val_l = to_double(l); double val_r = to_double(r);
-                            if (op == Tokens::ID::C_ASTR) return val_l * val_r;
-                            if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
-                            if (op == Tokens::ID::MOD) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
+                            if constexpr (std::is_same_v<LeftT, double> || std::is_same_v<RightT, double>) {
+                                double val_l = to_double(l); double val_r = to_double(r);
+                                if (op == Tokens::ID::C_ASTR) return val_l * val_r;
+                                if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
+                                if (op == Tokens::ID::MOD) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
+                            }
+                            else {
+                                if (op == Tokens::ID::C_ASTR) {
+                                    int left_i = to_int(l);
+                                    int right_i = to_int(r);
+                                    return left_i * right_i;
+                                }
+                                double val_l = to_double(l); double val_r = to_double(r);
+                                if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
+                                if (op == Tokens::ID::MOD) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
+                            }
                         }
                         return false;
                     }, left, right);
@@ -2471,7 +2487,27 @@ BasicValue NeReLaBasic::parse_term() {
                     else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
                         // This uses the same array_add/subtract helpers from BuiltinFunctions.cpp
                         // Ensure they are globally accessible or duplicate the logic here.
-                        if (op == Tokens::ID::C_PLUS) return array_add(l, r); else return array_subtract(l, r);
+                        if (!l || !r || l->data.empty()) { // Handle null or empty arrays
+                            if (op == Tokens::ID::C_PLUS) return r; else return l;
+                        }
+                        // Check if either array contains strings to decide the operation type
+                        bool is_string_op = std::holds_alternative<std::string>(l->data[0]) || std::holds_alternative<std::string>(r->data[0]);
+
+                        if (op == Tokens::ID::C_PLUS && is_string_op) {
+                            // Perform element-wise string concatenation
+                            if (l->shape != r->shape) { Error::set(15, 0, "Array shapes must match for element-wise operation."); return {}; }
+                            auto result_ptr = std::make_shared<Array>();
+                            result_ptr->shape = l->shape;
+                            result_ptr->data.reserve(l->data.size());
+                            for (size_t i = 0; i < l->data.size(); ++i) {
+                                result_ptr->data.push_back(to_string(l->data[i]) + to_string(r->data[i]));
+                            }
+                            return result_ptr;
+                        }
+                        else {
+                            // Fallback to existing numeric operations
+                            if (op == Tokens::ID::C_PLUS) return array_add(l, r); else return array_subtract(l, r);
+                        }
                     }
                     else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
                         auto result_ptr = std::make_shared<Array>(); result_ptr->shape = l->shape;
@@ -2486,8 +2522,21 @@ BasicValue NeReLaBasic::parse_term() {
                         return result_ptr;
                     }
                     else {
-                        if (op == Tokens::ID::C_PLUS) return to_double(l) + to_double(r);
-                        else return to_double(l) - to_double(r);
+                        if constexpr (std::is_same_v<LeftT, double> || std::is_same_v<RightT, double>) {
+                            double left_d = to_double(l);
+                            double right_d = to_double(r);
+                            if (op == Tokens::ID::C_PLUS) return left_d + right_d;
+                            else return left_d - right_d;
+                        }
+                        // Otherwise, perform integer math
+                        else {
+                            int left_i = to_int(l);
+                            int right_i = to_int(r);
+                            if (op == Tokens::ID::C_PLUS) return left_i + right_i;
+                            else return left_i - right_i;
+                        }
+                        //if (op == Tokens::ID::C_PLUS) return to_double(l) + to_double(r);
+                        //else return to_double(l) - to_double(r);
                     }
                     }, left, right);
             }
@@ -2640,7 +2689,7 @@ BasicValue NeReLaBasic::parse_pipe() {
         // Our modified argument parser will now see the context.
         left = parse_comparison();
 
-        // IMPORTANT: Reset the pipe context after the RHS has been evaluated
+        // Reset the pipe context after the RHS has been evaluated
         is_in_pipe_call = false;
 
         if (Error::get() != 0) return {};
@@ -2707,14 +2756,9 @@ BasicValue NeReLaBasic::parse_bitwise_or() {
 }
 
 // --- The Expression Skipping Implementation ---
-
-//void NeReLaBasic::skip_expression(); // Forward declaration for recursion
-
 // Base Case: Skips a primary element like a literal, variable, function call, or parenthesized expression.
 void NeReLaBasic::skip_primary() {
-
     if (pcode >= active_p_code->size()) return;
-
 
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
@@ -2725,6 +2769,9 @@ void NeReLaBasic::skip_primary() {
     switch (token) {
     case Tokens::ID::NUMBER:
         pcode += sizeof(double); // Skip the 8-byte double literal
+        break;
+    case Tokens::ID::INTEGER_LITERAL:
+        pcode += sizeof(int); // Skip the 8-byte double literal
         break;
     case Tokens::ID::STRING:
     case Tokens::ID::VARIANT:

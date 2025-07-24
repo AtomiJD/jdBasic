@@ -11,7 +11,7 @@
 
 static int lambda_counter = 0;
 
-static double convert_numeric_literal(const std::string& s) {
+static double convert_double_literal(const std::string& s) {
     if (s.empty()) return 0.0;
 
     char prefix = s[0];
@@ -30,6 +30,28 @@ static double convert_numeric_literal(const std::string& s) {
     catch (const std::exception&) {
         // Return 0.0 if conversion fails
         return 0.0;
+    }
+}
+
+static int convert_numeric_literal(const std::string& s) {
+    if (s.empty()) return 0.0;
+
+    char prefix = s[0];
+    std::string value_str = s.substr(1);
+
+    try {
+        if (prefix == '$') {
+            return static_cast<int>(std::stoll(value_str, nullptr, 16));
+        }
+        if (prefix == '%') {
+            return static_cast<int>(std::stoll(value_str, nullptr, 2));
+        }
+        // If no prefix, it's a standard decimal number.
+        return std::stoi(s);
+    }
+    catch (const std::exception&) {
+        // Return 0.0 if conversion fails
+        return 0;
     }
 }
 
@@ -124,18 +146,6 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         vm.buffer = vm.lineinput.substr(num_start_pos, vm.prgptr - num_start_pos);
         return Tokens::ID::NUMBER;
     }
-    //if (StringUtils::isdigit(currentChar) || (currentChar == '-' && StringUtils::isdigit(vm.lineinput[vm.prgptr + 1]))) {
-    //    size_t num_start_pos = vm.prgptr;
-    //    while (vm.prgptr < vm.lineinput.length() && (StringUtils::isdigit(vm.lineinput[vm.prgptr]) || vm.lineinput[vm.prgptr] == '.')) {
-    //        vm.prgptr++;
-    //    }
-    //    vm.buffer = vm.lineinput.substr(num_start_pos, vm.prgptr - num_start_pos);
-    //    return Tokens::ID::NUMBER;
-    //}
-
-    // --- Prioritize Multi-Word Keywords (BEFORE single identifiers) ---
-    // This is a simple linear scan. For more keywords, consider a more efficient
-    // structure like a Trie or a specialized keyword matcher.
 
     // Attempt to match "THIS."
     if (vm.prgptr + 5 <= vm.lineinput.length() && // "THIS. is 5 chars long (including spaces)
@@ -143,9 +153,6 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         vm.prgptr += 4;           // Advance past the keyword
         return Tokens::ID::THIS_KEYWORD;
     }
-    // Add other multi-word keywords here if you introduce them (e.g., "ON GOSUB")
-    // Example: if (prgptr + X <= lineinput.length() && StringUtils::to_upper(lineinput.substr(prgptr, X)) == "ANOTHER MULTI WORD KEYWORD") { ... }
-
 
     // Handle Identifiers (Variables, Keywords, Functions)
     if (StringUtils::isletter(currentChar)) {
@@ -1109,19 +1116,45 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue; // Continue to the next token
             
             default: {
-                out_p_code.push_back(static_cast<uint8_t>(token));
+                //out_p_code.push_back(static_cast<uint8_t>(token));
                 if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT ||
                     token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS || token == Tokens::ID::MAP_ACCESS ||
                     token == Tokens::ID::CALLFUNC || token == Tokens::ID::CONSTANT || token == Tokens::ID::STRVAR)
                 {
+                    out_p_code.push_back(static_cast<uint8_t>(token));
                     for (char c : vm.buffer) out_p_code.push_back(c);
                     out_p_code.push_back(0);
+                } else if (token == Tokens::ID::NUMBER) {
+                    // Check if the number literal contains a decimal point.
+                    if (vm.buffer.find('.') == std::string::npos) {
+                        // It's an integer literal.
+                        try {
+                            out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::INTEGER_LITERAL));
+                            int value = convert_numeric_literal(vm.buffer);
+                            uint8_t int_bytes[sizeof(int)];
+                            memcpy(int_bytes, &value, sizeof(int));
+                            out_p_code.insert(out_p_code.end(), int_bytes, int_bytes + sizeof(int));
+                        }
+                        catch (const std::out_of_range&) {
+                            // The number is too big for an int, so fall back to double.
+                            out_p_code.push_back(static_cast<uint8_t>(token));
+                            double value = convert_double_literal(vm.buffer);
+                            uint8_t double_bytes[sizeof(double)];
+                            memcpy(double_bytes, &value, sizeof(double));
+                            out_p_code.insert(out_p_code.end(), double_bytes, double_bytes + sizeof(double));
+                        }
+                    }
+                    else {
+                        // It has a decimal point, treat it as a double (original behavior).
+                        out_p_code.push_back(static_cast<uint8_t>(token));
+                        double value = convert_double_literal(vm.buffer);
+                        uint8_t double_bytes[sizeof(double)];
+                        memcpy(double_bytes, &value, sizeof(double));
+                        out_p_code.insert(out_p_code.end(), double_bytes, double_bytes + sizeof(double));
+                    }
                 }
-                else if (token == Tokens::ID::NUMBER) {
-                    double value = convert_numeric_literal(vm.buffer);
-                    uint8_t double_bytes[sizeof(double)];
-                    memcpy(double_bytes, &value, sizeof(double));
-                    out_p_code.insert(out_p_code.end(), double_bytes, double_bytes + sizeof(double));
+                else {
+                    out_p_code.push_back(static_cast<uint8_t>(token));
                 }
             }
         } // switch
@@ -1198,7 +1231,6 @@ _dreckig:
 
 }
 
-// Move the body of NeReLaBasic::compile_module here
 bool Compiler::compile_module(NeReLaBasic& vm, const std::string& module_name, const std::string& module_source_code) {
     // The entire body of the original compile_module function goes here.
     // Replace member access with 'vm.' or direct member access as appropriate.
@@ -1229,7 +1261,6 @@ bool Compiler::compile_module(NeReLaBasic& vm, const std::string& module_name, c
     return true;
 }
 
-// Move the body of NeReLaBasic::pre_scan_and_parse_types here
 void Compiler::pre_scan_and_parse_types(NeReLaBasic& vm) {
     // The entire body of the original pre_scan_and_parse_types function goes here.
     // e.g., 'vm.source_code', 'vm.user_defined_types'
@@ -1340,18 +1371,7 @@ uint8_t Compiler::tokenize_lambda(NeReLaBasic& vm, std::vector<uint8_t>& out_p_c
     return 0;
 }
 
-// Move the body of NeReLaBasic::tokenize_program here
 uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source) {
-    // The entire body of the original tokenize_program function goes here.
-    // Resetting compiler state is now done on 'this' object:
-    //  'if_stack.clear();'
-    //  'func_stack.clear();'
-    //  'label_addresses.clear();'
-    //  'do_loop_stack.clear();'
-    //  ... and so on
-    // The call to the single-line tokenizer is now:
-    //  'if (this->tokenize(vm, line, vm.current_source_line++, out_p_code, *target_func_table) != 0) { ... }'
-        // 1. Reset compiler state
     out_p_code.clear();
     if_stack.clear();
     func_stack.clear();
@@ -1457,32 +1477,7 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
     this->in_method_block = false;
 
     while (std::getline(source_stream, line)) {
-        //std::stringstream temp_stream(line);
-        //std::string first_word;
-        //temp_stream >> first_word;
-        //first_word = StringUtils::to_upper(first_word);
-
-        //// This is the corrected logic for skipping the TYPE blocks
-        //if (skipping_type_block) {
-        //    if (first_word == "ENDTYPE") {
-        //        skipping_type_block = false;
-        //    }
-        //    vm.current_source_line++;
-        //    continue;
-        //}
-        //else if (first_word == "TYPE") {
-        //    skipping_type_block = true;
-        //    vm.current_source_line++;
-        //    continue;
-        //}
-
-
-        //multiline = tokenize(vm, line, vm.current_source_line++, out_p_code, *target_func_table, multiline);
-        //if (multiline > 1) {
-        //    vm.active_function_table = nullptr;
-        //    return 1;
-        //}
-               // Prepare to inspect the line
+        // Prepare to inspect the line
         std::string trimmed_line = line;
         StringUtils::trim(trimmed_line);
         if (trimmed_line.empty() || trimmed_line[0] == '\'') {

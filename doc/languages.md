@@ -54,6 +54,70 @@ MyArray = [1, 2, 3, 4] ' Creates an array
 EmptyArray = []
 ```
 
+## Operators
+
+jdBasic supports a rich set of operators for arithmetic, string manipulation, and logical comparisons.
+
+### String Operators
+
+Standard arithmetic operators are overloaded for powerful string manipulation.
+
+**`+`**: (Concatenation): Joins two strings.
+
+```basic
+"Hello " + "World!" -> "Hello World!"
+```
+
+**`-`**: (Replacement): Removes all occurrences of the right string from the left string.
+
+```basic
+"abababac" - "ab" -> "ac"
+```
+
+**`*`**: (Repetition): Repeats a string a specified number of times.
+
+```basic
+"-" * 10 -> "----------"
+```
+
+**`/`**: (Slicing): Extracts a substring from the left or right.
+
+```basic
+5 / "Welcome" -> "Welco" (Left part)
+"Welcome" / 4 -> "come" (Right part)
+```
+
+**`-`**: (Unary Split): Splits a string into an array of its characters.
+
+```basic
+-"ABC" -> ["A", "B", "C"]
+```
+
+### Bitwise Operators
+
+These operators perform bit-level calculations on numeric values, which are treated as 64-bit integers.
+
+**`BAND`**: (Bitwise AND): 5 BAND 3 -> 1 (%0101 & %0011 = %0001)
+
+**`BOR`**: (Bitwise OR): 5 BOR 3 -> 7 (%0101 | %0011 = %0111)
+
+**`BXOR`**: (Bitwise XOR): 5 BXOR 3 -> 6 (%0101 ^ %0011 = %0110)
+
+### Logical Operators
+
+These operators are used in conditional logic, such as IF statements.
+
+**`AND`**:, **`OR`**:, **`XOR`**:: Standard logical operators. They evaluate both sides of the expression and support element-wise operations on arrays.
+
+**`ANDALSO`**:: A short-circuiting version of AND. If the left side is FALSE, the right side is never evaluated. This is safer for chained conditions.
+
+**`ORELSE`**:: A short-circuiting version of OR. If the left side is TRUE, the right side is never evaluated.
+
+```basic
+' This is safe because the second part is never run if MyMap is NULL
+IF MyMap <> NULL ANDALSO MAP.EXISTS(MyMap, "key") THEN ...
+```
+
 ## Chained Access Syntax
 
 NeReLa Basic supports a modern, chained syntax for accessing elements within nested data structures, which is especially useful for JSON, COM objects, and Tensors.
@@ -145,7 +209,7 @@ print apply(dec@,12) ' Should return 11
 * **`IF condition THEN ... [ELSE ...] ENDIF`**: Conditional execution block. Single-line `IF condition THEN statement` is also supported.
 * **`FOR ... TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
-* **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Error handling.
+* **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`OPTION option$`**: Sets a VM option. `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
 * **`RESUME [NEXT | "label"]`**: Used within an error handler to resume execution. `RESUME` retries the failed line, `RESUME NEXT` continues on the next line, and `RESUME "label"` jumps to a label.
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration.
@@ -173,6 +237,36 @@ print apply(dec@,12) ' Should return 11
 * **`PWD`**: Prints the current working directory.
 * **`MKDIR "path"`**: Creates a new directory.
 * **`KILL "filename"`**: Deletes a file.
+
+
+### Error Handling (TRY...CATCH)
+
+jdBasic uses a modern, structured error handling system. The old ON ERROR system is no longer supported.
+
+* **`TRY`**: Begins a block of code that is protected.
+* **`CATCH`**: If an error occurs inside the TRY block, execution jumps to the CATCH block.
+* **`FINALLY`**: This block of code is always executed after the TRY or CATCH block, regardless of whether an error occurred. It's ideal for cleanup tasks like closing files.
+* **`ENDTRY`**: Ends the error handling block.
+
+Inside a CATCH block, you can use the following built-in variables:
+
+* **`ERR`**: The numeric error code.
+* **`ERL`**: The line number where the error occurred.
+* **`ERRMSG$`**: The descriptive error message string.
+* **`STACK$`**: The call stack .
+
+```basic
+TRY
+    PRINT "Opening file..."
+    ' Code that might fail, e.g., file operations
+    A = 10 / 0
+CATCH
+    PRINT "An error occurred!"
+    PRINT "Code: "; ERR; ", Line: "; ERL; ", Message: "; ERRMSG$
+FINALLY
+    PRINT "Closing file (this always runs)."
+ENDTRY
+```
 
 ## Functions
 

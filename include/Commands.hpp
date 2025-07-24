@@ -25,8 +25,6 @@ namespace Commands {
     void do_sub(NeReLaBasic& vm);
     void do_endsub(NeReLaBasic& vm);
     void do_callsub(NeReLaBasic& vm);
-    //void do_onerrorcall(NeReLaBasic& vm);
-    //void do_resume(NeReLaBasic& vm);
     void do_push_handler(NeReLaBasic& vm);
     void do_pop_handler(NeReLaBasic& vm);
     void do_on(NeReLaBasic& vm);
