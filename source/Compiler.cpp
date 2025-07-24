@@ -11,6 +11,28 @@
 
 static int lambda_counter = 0;
 
+static double convert_numeric_literal(const std::string& s) {
+    if (s.empty()) return 0.0;
+
+    char prefix = s[0];
+    std::string value_str = s.substr(1);
+
+    try {
+        if (prefix == '$') {
+            return static_cast<double>(std::stoll(value_str, nullptr, 16));
+        }
+        if (prefix == '%') {
+            return static_cast<double>(std::stoll(value_str, nullptr, 2));
+        }
+        // If no prefix, it's a standard decimal number.
+        return std::stod(s);
+    }
+    catch (const std::exception&) {
+        // Return 0.0 if conversion fails
+        return 0.0;
+    }
+}
+
 Compiler::Compiler() {
     // Constructor can be used to initialize any specific compiler state if needed.
     std::string current_type_context;
@@ -59,14 +81,57 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     }
 
     // Handle Numbers
-    if (StringUtils::isdigit(currentChar) || (currentChar == '_' && StringUtils::isdigit(vm.lineinput[vm.prgptr + 1]))) {
+    if (currentChar == '$') {
         size_t num_start_pos = vm.prgptr;
+        vm.prgptr++; // Move past the '$'
+        size_t hex_digits_start = vm.prgptr;
+        // Consume all valid hexadecimal characters (0-9, a-f, A-F)
+        while (vm.prgptr < vm.lineinput.length() && isxdigit(static_cast<unsigned char>(vm.lineinput[vm.prgptr]))) {
+            vm.prgptr++;
+        }
+        // Ensure at least one hex digit was found after the prefix
+        if (vm.prgptr > hex_digits_start) {
+            vm.buffer = vm.lineinput.substr(num_start_pos, vm.prgptr - num_start_pos);
+            return Tokens::ID::NUMBER;
+        }
+        // Otherwise, it was just a '$'. Backtrack so it can be parsed as a string variable.
+        vm.prgptr = num_start_pos;
+    }
+    // Handle Binary: e.g., %1011, %0010
+    else if (currentChar == '%') {
+        size_t num_start_pos = vm.prgptr;
+        vm.prgptr++; // Move past the '%'
+        size_t bin_digits_start = vm.prgptr;
+        // Consume all valid binary characters (0 or 1)
+        while (vm.prgptr < vm.lineinput.length() && (vm.lineinput[vm.prgptr] == '0' || vm.lineinput[vm.prgptr] == '1')) {
+            vm.prgptr++;
+        }
+        // Ensure at least one binary digit was found
+        if (vm.prgptr > bin_digits_start) {
+            vm.buffer = vm.lineinput.substr(num_start_pos, vm.prgptr - num_start_pos);
+            return Tokens::ID::NUMBER;
+        }
+        // Backtrack if it was just a standalone '%'
+        vm.prgptr = num_start_pos;
+    }
+    // Handle Decimal (with the crash fix)
+    else if (StringUtils::isdigit(currentChar)) {
+        size_t num_start_pos = vm.prgptr;
+        vm.prgptr++; // Move past the first character (digit or '-')
         while (vm.prgptr < vm.lineinput.length() && (StringUtils::isdigit(vm.lineinput[vm.prgptr]) || vm.lineinput[vm.prgptr] == '.')) {
             vm.prgptr++;
         }
         vm.buffer = vm.lineinput.substr(num_start_pos, vm.prgptr - num_start_pos);
         return Tokens::ID::NUMBER;
     }
+    //if (StringUtils::isdigit(currentChar) || (currentChar == '-' && StringUtils::isdigit(vm.lineinput[vm.prgptr + 1]))) {
+    //    size_t num_start_pos = vm.prgptr;
+    //    while (vm.prgptr < vm.lineinput.length() && (StringUtils::isdigit(vm.lineinput[vm.prgptr]) || vm.lineinput[vm.prgptr] == '.')) {
+    //        vm.prgptr++;
+    //    }
+    //    vm.buffer = vm.lineinput.substr(num_start_pos, vm.prgptr - num_start_pos);
+    //    return Tokens::ID::NUMBER;
+    //}
 
     // --- Prioritize Multi-Word Keywords (BEFORE single identifiers) ---
     // This is a simple linear scan. For more keywords, consider a more efficient
@@ -942,7 +1007,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     out_p_code.push_back(0);
                 }
                 else if (token == Tokens::ID::NUMBER) {
-                    double value = std::stod(vm.buffer);
+                    double value = convert_numeric_literal(vm.buffer);
                     uint8_t double_bytes[sizeof(double)];
                     memcpy(double_bytes, &value, sizeof(double));
                     out_p_code.insert(out_p_code.end(), double_bytes, double_bytes + sizeof(double));

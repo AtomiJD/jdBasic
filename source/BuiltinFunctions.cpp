@@ -4276,6 +4276,101 @@ BasicValue builtin_dateadd(NeReLaBasic& vm, const std::vector<BasicValue>& args)
         return perform_date_add(start_date);
     }
 }
+
+// DATEDIFF(part$, date1, date2) -> number or array
+// Calculates the difference between two dates in the specified unit. Now supports vectorized operations.
+BasicValue builtin_datediff(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "DATEDIFF requires 3 arguments: part$, date1, date2");
+        return 0.0;
+    }
+
+    std::string part = to_upper(to_string(args[0]));
+    const BasicValue& date1_arg = args[1];
+    const BasicValue& date2_arg = args[2];
+
+    // Helper lambda to calculate the difference between two single DateTime objects.
+    auto calculate_diff = [&](const DateTime& d1, const DateTime& d2) -> BasicValue {
+        auto duration = d2.time_point - d1.time_point;
+        if (part == "D") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::hours>(duration).count() / 24.0);
+        }
+        else if (part == "H") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::hours>(duration).count());
+        }
+        else if (part == "N") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::minutes>(duration).count());
+        }
+        else if (part == "S") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(duration).count());
+        }
+        Error::set(1, vm.runtime_current_line, "Invalid interval for DATEDIFF. Use D, H, N, or S.");
+        return 0.0;
+        };
+
+    // Use std::visit to handle all combinations of scalar and array inputs.
+    return std::visit([&](auto&& arg1, auto&& arg2) -> BasicValue {
+        using T1 = std::decay_t<decltype(arg1)>;
+        using T2 = std::decay_t<decltype(arg2)>;
+
+        // Case 1: Array vs Array
+        if constexpr (std::is_same_v<T1, std::shared_ptr<Array>> && std::is_same_v<T2, std::shared_ptr<Array>>) {
+            if (!arg1 || !arg2) { Error::set(15, vm.runtime_current_line, "Input arrays cannot be null."); return {}; }
+            if (arg1->shape != arg2->shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise DATEDIFF."); return {}; }
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = arg1->shape;
+            result_ptr->data.reserve(arg1->data.size());
+
+            for (size_t i = 0; i < arg1->data.size(); ++i) {
+                if (!std::holds_alternative<DateTime>(arg1->data[i]) || !std::holds_alternative<DateTime>(arg2->data[i])) {
+                    Error::set(15, vm.runtime_current_line, "All array elements must be DateTime objects."); return {};
+                }
+                result_ptr->data.push_back(calculate_diff(std::get<DateTime>(arg1->data[i]), std::get<DateTime>(arg2->data[i])));
+                if (Error::get() != 0) return {};
+            }
+            return result_ptr;
+        }
+        // Case 2: Scalar vs Array
+        else if constexpr (std::is_same_v<T1, DateTime> && std::is_same_v<T2, std::shared_ptr<Array>>) {
+            if (!arg2) { Error::set(15, vm.runtime_current_line, "Input array cannot be null."); return {}; }
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = arg2->shape;
+            result_ptr->data.reserve(arg2->data.size());
+
+            for (const auto& elem : arg2->data) {
+                if (!std::holds_alternative<DateTime>(elem)) { Error::set(15, vm.runtime_current_line, "All array elements must be DateTime objects."); return {}; }
+                result_ptr->data.push_back(calculate_diff(arg1, std::get<DateTime>(elem)));
+                if (Error::get() != 0) return {};
+            }
+            return result_ptr;
+        }
+        // Case 3: Array vs Scalar
+        else if constexpr (std::is_same_v<T1, std::shared_ptr<Array>> && std::is_same_v<T2, DateTime>) {
+            if (!arg1) { Error::set(15, vm.runtime_current_line, "Input array cannot be null."); return {}; }
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = arg1->shape;
+            result_ptr->data.reserve(arg1->data.size());
+
+            for (const auto& elem : arg1->data) {
+                if (!std::holds_alternative<DateTime>(elem)) { Error::set(15, vm.runtime_current_line, "All array elements must be DateTime objects."); return {}; }
+                result_ptr->data.push_back(calculate_diff(std::get<DateTime>(elem), arg2));
+                if (Error::get() != 0) return {};
+            }
+            return result_ptr;
+        }
+        // Case 4: Scalar vs Scalar
+        else if constexpr (std::is_same_v<T1, DateTime> && std::is_same_v<T2, DateTime>) {
+            return calculate_diff(arg1, arg2);
+        }
+        // Default: Invalid type combination
+        else {
+            Error::set(15, vm.runtime_current_line, "Invalid argument types for DATEDIFF. Must be DateTime objects or arrays of them.");
+            return {};
+        }
+        }, date1_arg, date2_arg);
+}
+
 // CVDATE(string_expression_or_array) -> DateTime, array, or boolean false on error
 // Parses a string like "YYYY-MM-DD" into a DateTime object.
 BasicValue builtin_cvdate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -5342,6 +5437,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("DATE$", 0, builtin_date_str);
     register_func("TIME$", 0, builtin_time_str);
     register_func("DATEADD", 3, builtin_dateadd);
+    register_func("DATEDIFF", 3, builtin_datediff);
     register_func("CVDATE", 1, builtin_cvdate);
 
     // --- Register Methods ---

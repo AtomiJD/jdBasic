@@ -26,7 +26,9 @@ This is where jdBasic becomes a powerful tool for data manipulation, inspired by
 * **Data Analysis & Reduction**: Instantly aggregate arrays with `SUM`, `PRODUCT`, `MIN`, `MAX`, `ANY`, and `ALL`. Use the powerful `GRADE` function to get sort indices for complex data analysis.
 * **Advanced Linear Algebra**: Perform standard matrix multiplication with `MATMUL` and create combination tables with `OUTER`.
 
- ![APL Demo](demo.gif)
+ ![One liner Game of Life](demo.gif)
+
+ ![One liner Biorythm](BioRythmOneLine.png)
 
 #### Modern Enhancements
 

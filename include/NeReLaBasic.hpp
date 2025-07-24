@@ -305,6 +305,26 @@ public:
     BasicValue parse_array_literal();
     BasicValue parse_map_literal();
     BasicValue parse_pipe();
+    BasicValue parse_bitwise_or();
+    BasicValue parse_bitwise_xor();
+    BasicValue parse_bitwise_and();
+    BasicValue parse_logical_and();
+    BasicValue parse_logical_or();
+    void skip_logical_or();
+    void skip_logical_and();
+    void skip_bitwise_or();
+    void skip_bitwise_xor();
+    void skip_bitwise_and();
+    void skip_pipe();
+    void skip_comparison();
+    void skip_term();
+    void skip_factor();
+    void skip_power();
+    void skip_expression();
+    void skip_primary();
+    void skip_unary();
+    void skip_binary_op_chain(std::function<void()> skip_higher_precedence, const std::vector<Tokens::ID>& operators);
+
 
     // --- Main execution ---
     BasicValue get_stacktrace();

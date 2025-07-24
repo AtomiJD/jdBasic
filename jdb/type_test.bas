@@ -42,7 +42,8 @@ PRINT
 PRINT "--- Current Party ---"
 PRINT "Party size: "; LEN(Party)
 PRINT "First Item in Array: "; 
-print party[0].GETSUMMARY()
+PRINT party[0].GETSUMMARY()
+PRINT party[0].Name
 
 PRINT
 PRINT "Full party data:"

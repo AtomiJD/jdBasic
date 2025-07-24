@@ -6,8 +6,8 @@ TYPE T_Character
         THIS.HitPoints = 150
         THIS.Name = "Default Name"
     ENDSUB
-    FUNC GETALL()
-        r =  THIS.Name + ", " + str$(THIS.HitPoints) + ", " + THIS.Strength
+    FUNC GETSUMMARY()
+        r =  THIS.Name + ": Hitpoints: " + str$(THIS.HitPoints) + ", Strength: " + THIS.Strength
         RETURN r
     ENDFUNC
 ENDTYPE
@@ -15,11 +15,13 @@ ENDTYPE
 ' This now works perfectly!
 DIM NPCS[10] AS T_Character
 
+NPCS[iota(10)-1].HitPoints = iota(10) * 10
+NPCS[iota(10)-1].Strength = iota(10) * 0.3
+
 ' You must initialize each character individually
 NPCS[0].INIT
 NPCS[0].Name = "Atomi"
-STOP
-PRINT NPCS[1].GETALL() 
+PRINT NPCS[0].GETSUMMARY() 
 
 NPCS[1].INIT ' Hitpoints will be set to 150
 NPCS[1].Name = "Valerius"
@@ -28,7 +30,6 @@ NPCS[1].Strength = 25.5
 
 ' You can initialize the rest in a loop
 FOR i = 2 TO 9
-    NPCS[i].INIT
     NPCS[i].Name = "Goblin #" + STR$(i - 1)
 NEXT i
 

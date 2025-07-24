@@ -1,18 +1,2 @@
-objXL = CREATEOBJECT("Excel.Application")
-
-' Access a property
-objXL.Visible = TRUE
-
-
-
-' Call a method
-wb = objXL.Workbooks.Add()
-
-' Set a cell value
-objcell = objXL.ActiveSheet.Cells(1, 1)
-objcell.Value = "Hello from jdBasic!"
-
-' Quit Excel
-objXL.Quit()
-
-PRINT "Excel automation complete."
+PRINT  5 BXOR 3
+PRINT  5 BOR 3

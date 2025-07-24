@@ -260,7 +260,8 @@ print apply(dec@,12) ' Should return 11
 * **`TICK()`**: Returns the number of milliseconds since the program started.
 * **`DATE$` / `TIME$`**: Returns the current system date/time as a string.
 * **`NOW()`**: Returns a `DateTime` object for the current moment.
-* **`DATEADD(part$, num, date)`**: Adds an interval to a `DateTime` object.
+* **`DATEADD(part$, num, date)`**: Adds an interval to a `DateTime` object. Interval part$: D,H,N,S
+* **`DATEDIFF(part$, date1, date2) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S
 * **`CVDATE(date_string$)`**: Converts a string ("YYYY-MM-DD") to a `DateTime` object.
 
 ### HTTP Functions

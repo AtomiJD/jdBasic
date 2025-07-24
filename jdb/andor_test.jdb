@@ -1,0 +1,57 @@
+' ANDALSO, ORELSE Tests
+' 
+
+PRINT "--- Vectorized OR vs. Scalar ORELSE ---"
+PRINT
+
+arr1 = [TRUE, FALSE, FALSE, TRUE]
+arr2 = [FALSE, TRUE, FALSE, TRUE]
+
+' Vectorized OR works element-wise
+PRINT "arr1 OR arr2: "; arr1 OR arr2
+PRINT
+
+' --- Short-circuiting example ---
+DIM MyMap AS MAP
+MyMap = NULL
+
+' ORELSE works on scalars and short-circuits to prevent an error
+' This works because (2 > 1) is TRUE, so the right side is never checked.
+STOP
+IF (2 > 1) ORELSE MAP.EXISTS(MyMap, "key") THEN
+    PRINT "ORELSE short-circuited correctly!"
+ENDIF
+
+
+PRINT 
+PRINT "--- ANDALSO test"
+PRINT 
+
+DIM MyMap AS MAP
+MyMap = NULL ' Simulate a map that might not be initialized
+
+' This would CRASH with normal AND because it tries MyMap{"key"}
+' IF MyMap <> NULL AND MyMap{"key"} = "test" THEN PRINT "OK"
+
+' This runs SAFELY with ANDALSO
+IF MyMap <> NULL ANDALSO MAP.EXISTS(MyMap, "key") THEN
+    PRINT "Map exists and has the key."
+ELSE
+    PRINT "Map is NULL or does not have the key. (No crash)"
+ENDIF
+
+' --- ORELSE Example ---
+DIM IsAdmin AS BOOL
+IsAdmin = TRUE
+
+FUNC ExpensiveCheck()
+    PRINT "(Expensive check was run!)"
+    RETURN TRUE
+ENDFUNC
+
+PRINT
+PRINT "Checking permissions..."
+' With ORELSE, ExpensiveCheck() is never called because IsAdmin is already true.
+IF IsAdmin ORELSE ExpensiveCheck() THEN
+    PRINT "Access Granted."
+ENDIF

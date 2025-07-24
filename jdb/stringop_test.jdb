@@ -1,0 +1,25 @@
+PRINT "--- String Operator Showcase ---"
+
+' 1. Concatenation (+)
+PRINT "Hello " + "World!"
+
+' 2. Replacement (-)
+PRINT "The quick brown fox jumps over the lazy dog" - "brown "
+PRINT "ababababc" - "ab"
+
+' 3. Repetition (*)
+PRINT "-" * 40
+PRINT "Beetlejuice " * 3
+
+' 4. Slicing (/)
+PRINT 5 / "This is a long string"  ' Left part
+PRINT "This is a long string" / 6  ' Right part
+
+' 5. Unary Minus (-) to split string
+char_array = -"jdBasic"
+PRINT "Character array from 'jdBasic':"
+PRINT char_array
+
+' Chaining them together
+PRINT ("Atomi "+("A"*10)+" truncate me." - "AA") / 3
+

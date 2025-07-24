@@ -1314,6 +1314,63 @@ BasicValue NeReLaBasic::launch_bsync_function(const FunctionInfo& func_info, con
     return ThreadHandle{ worker_id };
 }
 
+// A generic helper to apply any binary operation element-wise.
+// It handles scalar-scalar, array-scalar, scalar-array, and array-array operations.
+static BasicValue apply_binary_op(
+    const BasicValue& left,
+    const BasicValue& right,
+    const std::function<BasicValue(const BasicValue&, const BasicValue&)>& op
+) {
+    // Case 1: Array-Array operation
+    if (std::holds_alternative<std::shared_ptr<Array>>(left) && std::holds_alternative<std::shared_ptr<Array>>(right)) {
+        const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
+        const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
+        if (!left_ptr || !right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+        if (left_ptr->shape != right_ptr->shape) { Error::set(15, 0, "Array shapes must match for element-wise operation."); return {}; }
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = left_ptr->shape;
+        result_ptr->data.reserve(left_ptr->data.size());
+
+        for (size_t i = 0; i < left_ptr->data.size(); ++i) {
+            result_ptr->data.push_back(op(left_ptr->data[i], right_ptr->data[i]));
+        }
+        return result_ptr;
+    }
+    // Case 2: Array-Scalar operation
+    else if (std::holds_alternative<std::shared_ptr<Array>>(left)) {
+        const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
+        if (!left_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = left_ptr->shape;
+        result_ptr->data.reserve(left_ptr->data.size());
+
+        for (const auto& elem : left_ptr->data) {
+            result_ptr->data.push_back(op(elem, right));
+        }
+        return result_ptr;
+    }
+    // Case 3: Scalar-Array operation
+    else if (std::holds_alternative<std::shared_ptr<Array>>(right)) {
+        const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
+        if (!right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = right_ptr->shape;
+        result_ptr->data.reserve(right_ptr->data.size());
+
+        for (const auto& elem : right_ptr->data) {
+            result_ptr->data.push_back(op(left, elem));
+        }
+        return result_ptr;
+    }
+    // Case 4: Scalar-Scalar operation
+    else {
+        return op(left, right);
+    }
+}
+
 // --- CLASS MEMBER FUNCTION FOR PARSING ARRAY LITERALS ---
 BasicValue NeReLaBasic::parse_array_literal() {
     // We expect the current token to be '['
@@ -1757,15 +1814,71 @@ BasicValue NeReLaBasic::parse_primary() {
     while (true) {
         Tokens::ID accessor_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
+        //if (accessor_token == Tokens::ID::C_LEFTBRACKET) { // Array index access: e.g., A[i, j]
+        //    pcode++; // Consume '['
+
+        //    std::vector<size_t> indices;
+        //    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+        //        while (true) {
+        //            BasicValue index_val = evaluate_expression();
+        //            if (Error::get() != 0) return {};
+        //            indices.push_back(static_cast<size_t>(to_double(index_val)));
+
+        //            Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        //            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+        //            if (separator != Tokens::ID::C_COMMA) {
+        //                Error::set(1, runtime_current_line, "Expected ',' or ']' in array index.");
+        //                return {};
+        //            }
+        //            pcode++; // Consume ','
+        //        }
+        //    }
+        //    if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+        //        Error::set(16, runtime_current_line, "Missing ']' in array access.");
+        //        return {};
+        //    }
+
+        //    if (std::holds_alternative<std::shared_ptr<Array>>(current_value)) {
+        //        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(current_value);
+        //        if (!arr_ptr) { Error::set(15, runtime_current_line, "Attempt to index a null array."); return {}; }
+
+        //        try {
+        //            size_t flat_index = arr_ptr->get_flat_index(indices);
+        //            // The get_flat_index function already checks bounds, but an extra check is safe.
+        //            if (flat_index >= arr_ptr->data.size()) {
+        //                throw std::out_of_range("Calculated index is out of bounds.");
+        //            }
+        //            BasicValue next_val = arr_ptr->data[flat_index];
+        //            current_value = std::move(next_val);
+        //            //current_value = arr_ptr->data[flat_index]; // Update current value with the element
+        //        }
+        //        catch (const std::exception&) {
+        //            // This catches errors from get_flat_index (dimension mismatch or out of bounds)
+        //            Error::set(10, runtime_current_line, "Array index out of bounds or dimension mismatch.");
+        //            return {};
+        //        }
+        //    }
+        //    else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
+        //        if (indices.size() != 1) {
+        //            Error::set(15, runtime_current_line, "Multi-dimensional indexing is not supported for JSON objects."); return {};
+        //        }
+        //        size_t index = indices[0];
+        //        const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
+        //        if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) { Error::set(10, runtime_current_line, "JSON index out of bounds."); return {}; }
+        //        current_value = json_to_basic_value(json_ptr->data[index]);
+        //    }
+        //    else { Error::set(15, runtime_current_line, "Indexing '[]' can only be used on an Array."); return {}; }
+
+        //}
         if (accessor_token == Tokens::ID::C_LEFTBRACKET) { // Array index access: e.g., A[i, j]
             pcode++; // Consume '['
 
-            std::vector<size_t> indices;
+            // This now supports vectorized indexing for read access.
+            std::vector<BasicValue> index_expressions;
             if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
                 while (true) {
-                    BasicValue index_val = evaluate_expression();
+                    index_expressions.push_back(evaluate_expression());
                     if (Error::get() != 0) return {};
-                    indices.push_back(static_cast<size_t>(to_double(index_val)));
 
                     Tokens::ID separator = static_cast<Tokens::ID>((*active_p_code)[pcode]);
                     if (separator == Tokens::ID::C_RIGHTBRACKET) break;
@@ -1785,27 +1898,86 @@ BasicValue NeReLaBasic::parse_primary() {
                 const auto& arr_ptr = std::get<std::shared_ptr<Array>>(current_value);
                 if (!arr_ptr) { Error::set(15, runtime_current_line, "Attempt to index a null array."); return {}; }
 
-                try {
-                    size_t flat_index = arr_ptr->get_flat_index(indices);
-                    // The get_flat_index function already checks bounds, but an extra check is safe.
-                    if (flat_index >= arr_ptr->data.size()) {
-                        throw std::out_of_range("Calculated index is out of bounds.");
+                // NEW: Check if this is a vectorized or scalar read operation
+                bool is_vectorized_read = false;
+                for (const auto& expr : index_expressions) {
+                    if (std::holds_alternative<std::shared_ptr<Array>>(expr)) {
+                        is_vectorized_read = true;
+                        break;
                     }
-                    BasicValue next_val = arr_ptr->data[flat_index];
-                    current_value = std::move(next_val);
-                    //current_value = arr_ptr->data[flat_index]; // Update current value with the element
                 }
-                catch (const std::exception&) {
-                    // This catches errors from get_flat_index (dimension mismatch or out of bounds)
-                    Error::set(10, runtime_current_line, "Array index out of bounds or dimension mismatch.");
-                    return {};
+
+                if (is_vectorized_read) {
+                    // Vectorized Read Logic
+                    long long num_reads = -1;
+                    for (const auto& expr : index_expressions) {
+                        if (std::holds_alternative<std::shared_ptr<Array>>(expr)) {
+                            const auto& index_arr = std::get<std::shared_ptr<Array>>(expr);
+                            if (num_reads == -1) {
+                                num_reads = index_arr->data.size();
+                            }
+                            else if (num_reads != static_cast<long long>(index_arr->data.size())) {
+                                Error::set(15, runtime_current_line, "Index arrays for reading must have the same length.");
+                                return {};
+                            }
+                        }
+                    }
+
+                    if (num_reads == -1) {
+                        Error::set(15, runtime_current_line, "Vectorized read requires at least one index array.");
+                        return {};
+                    }
+
+                    auto result_ptr = std::make_shared<Array>();
+                    result_ptr->shape = { (size_t)num_reads }; // The result is always a 1D vector
+                    result_ptr->data.reserve(num_reads);
+
+                    std::vector<size_t> current_coords(index_expressions.size());
+                    for (long long i = 0; i < num_reads; ++i) {
+                        for (size_t dim = 0; dim < index_expressions.size(); ++dim) {
+                            if (std::holds_alternative<std::shared_ptr<Array>>(index_expressions[dim])) {
+                                current_coords[dim] = static_cast<size_t>(to_double(std::get<std::shared_ptr<Array>>(index_expressions[dim])->data[i]));
+                            }
+                            else {
+                                current_coords[dim] = static_cast<size_t>(to_double(index_expressions[dim]));
+                            }
+                        }
+                        try {
+                            size_t flat_index = arr_ptr->get_flat_index(current_coords);
+                            result_ptr->data.push_back(arr_ptr->data[flat_index]);
+                        }
+                        catch (const std::exception&) {
+                            Error::set(10, runtime_current_line, "Array index out of bounds during vectorized read.");
+                            return {};
+                        }
+                    }
+                    current_value = result_ptr; // The result of the operation is the new array
+                }
+                else {
+                    // Original logic for scalar read
+                    std::vector<size_t> indices;
+                    for (const auto& expr : index_expressions) {
+                        indices.push_back(static_cast<size_t>(to_double(expr)));
+                    }
+                    try {
+                        size_t flat_index = arr_ptr->get_flat_index(indices);
+                        if (flat_index >= arr_ptr->data.size()) {
+                            throw std::out_of_range("Calculated index is out of bounds.");
+                        }
+                        BasicValue next_val = arr_ptr->data[flat_index];
+                        current_value = std::move(next_val);
+                    }
+                    catch (const std::exception&) {
+                        Error::set(10, runtime_current_line, "Array index out of bounds or dimension mismatch.");
+                        return {};
+                    }
                 }
             }
             else if (std::holds_alternative<std::shared_ptr<JsonObject>>(current_value)) {
-                if (indices.size() != 1) {
+                if (index_expressions.size() != 1) {
                     Error::set(15, runtime_current_line, "Multi-dimensional indexing is not supported for JSON objects."); return {};
                 }
-                size_t index = indices[0];
+                size_t index = static_cast<size_t>(to_double(index_expressions[0]));
                 const auto& json_ptr = std::get<std::shared_ptr<JsonObject>>(current_value);
                 if (!json_ptr || !json_ptr->data.is_array() || index >= json_ptr->data.size()) { Error::set(10, runtime_current_line, "JSON index out of bounds."); return {}; }
                 current_value = json_to_basic_value(json_ptr->data[index]);
@@ -1868,7 +2040,7 @@ BasicValue NeReLaBasic::parse_primary() {
             pcode++; // Consume the variant/int/strvar token
             std::string member_name = to_upper(read_string(*this));
 
-            // --- NEW LOGIC: Look ahead for a function call ---
+            // --- Look ahead for a function call ---
             Tokens::ID after_member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
 
             if (after_member_token == Tokens::ID::C_LEFTPAREN) {
@@ -1963,10 +2135,24 @@ BasicValue NeReLaBasic::parse_unary() {
 
     if (token == Tokens::ID::C_MINUS) {
         pcode++; // Consume the '-'
-        // Recursively call to handle expressions like -(5+2) or -x
-        // Note: The result of a unary minus is always a number.
-        return -to_double(parse_unary());
-    }
+        BasicValue value = parse_unary(); // Evaluate the expression first
+
+        // If the value is a string, split it into an array of characters.
+        if (std::holds_alternative<std::string>(value)) {
+            const std::string& s = std::get<std::string>(value);
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = { s.length() };
+            result_ptr->data.reserve(s.length());
+            for (char c : s) {
+                result_ptr->data.push_back(std::string(1, c));
+            }
+            return result_ptr;
+        }
+        else {
+            // Otherwise, perform the original numeric negation.
+            return -to_double(value);
+        }
+    }    
     if (token == Tokens::ID::NOT) {
         pcode++; // Consume 'NOT'
         // The result of NOT is always a boolean.
@@ -2129,6 +2315,45 @@ BasicValue NeReLaBasic::parse_factor() {
                     left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
                         using LeftT = std::decay_t<decltype(l)>; using RightT = std::decay_t<decltype(r)>;
 
+                        if constexpr ((std::is_same_v<LeftT, std::string> && !std::is_same_v<RightT, std::string> && !std::is_same_v<RightT, std::shared_ptr<Array>>) ||
+                            (!std::is_same_v<LeftT, std::string> && !std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::string>)) {
+
+                            if (op == Tokens::ID::C_ASTR) { // String repetition
+                                std::string s;
+                                int count;
+                                if constexpr (std::is_same_v<LeftT, std::string>) {
+                                    s = l;
+                                    count = static_cast<int>(to_double(r));
+                                }
+                                else {
+                                    s = r;
+                                    count = static_cast<int>(to_double(l));
+                                }
+                                if (count < 0) count = 0;
+                                std::stringstream ss;
+                                for (int i = 0; i < count; ++i) {
+                                    ss << s;
+                                }
+                                return ss.str();
+                            }
+
+                            if (op == Tokens::ID::C_SLASH) { // String slicing
+                                if constexpr (std::is_same_v<LeftT, std::string>) { // e.g. "Atomi" / 2
+                                    std::string s = l;
+                                    int count = static_cast<int>(to_double(r));
+                                    if (count < 0) count = 0;
+                                    if (static_cast<size_t>(count) > s.length()) return s;
+                                    return s.substr(s.length() - count);
+                                }
+                                else { // e.g. 2 / "Atomi"
+                                    std::string s = r;
+                                    int count = static_cast<int>(to_double(l));
+                                    if (count < 0) count = 0;
+                                    return s.substr(0, count);
+                                }
+                            }
+                        }
+
                         auto array_op = [op, this](const auto& arr, double scalar, bool arr_is_left) -> BasicValue {
                             auto result_ptr = std::make_shared<Array>(); result_ptr->shape = arr->shape;
                             for (const auto& elem : arr->data) {
@@ -2196,8 +2421,20 @@ BasicValue NeReLaBasic::parse_term() {
                 left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
                     using LeftT = std::decay_t<decltype(l)>; using RightT = std::decay_t<decltype(r)>;
                     if constexpr (std::is_same_v<LeftT, std::string> || std::is_same_v<RightT, std::string>) {
-                        if (op == Tokens::ID::C_PLUS) return to_string(l) + to_string(r);
-                        else { Error::set(15, runtime_current_line, "Cannot subtract strings."); return false; }
+                        if (op == Tokens::ID::C_PLUS) {
+                            return to_string(l) + to_string(r);
+                        }
+                        else { // Subtraction is now string replacement
+                            std::string s_left = to_string(l);
+                            std::string s_right = to_string(r);
+                            if (s_right.empty()) return s_left; // Avoid infinite loop
+                            size_t pos = s_left.find(s_right);
+                            while (pos != std::string::npos) {
+                                s_left.erase(pos, s_right.length());
+                                pos = s_left.find(s_right, pos);
+                            }
+                            return s_left;
+                        }
                     }
                     else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
                         // This uses the same array_add/subtract helpers from BuiltinFunctions.cpp
@@ -2357,49 +2594,6 @@ BasicValue NeReLaBasic::parse_comparison() {
     return left;
 }
 
-//BasicValue NeReLaBasic::parse_pipe() {
-//    // First, parse the expression to the left of the pipe.
-//    // This will handle all higher-precedence operations first.
-//    BasicValue left = parse_comparison();
-//
-//    while (true) {
-//        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-//        if (op == Tokens::ID::C_PIPE) {
-//            pcode++; // Consume the '|>' token
-//
-//            // The right-hand side MUST be a function reference
-//            Tokens::ID rhs_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-//            if (rhs_token != Tokens::ID::FUNCREF) {
-//                Error::set(1, runtime_current_line, "Right-hand side of a pipe operator '|>' must be a function reference (e.g., MyFunc@).");
-//                return {};
-//            }
-//            pcode++; // Consume the FUNCREF token
-//
-//            std::string func_name = to_upper(read_string(*this));
-//            if (!active_function_table->count(func_name)) {
-//                Error::set(22, runtime_current_line, "Function '" + func_name + "' not found for pipe operator.");
-//                return {};
-//            }
-//            const auto& func_info = active_function_table->at(func_name);
-//
-//            // IMPORTANT: For this implementation, the piped function must take exactly one argument.
-//            if (func_info.arity != 1) {
-//                Error::set(26, runtime_current_line, "Function '" + func_name + "' must accept exactly one argument to be used with the pipe operator.");
-//                return {};
-//            }
-//
-//            // Execute the function, passing the left-side result as the single argument.
-//            left = execute_function_for_value(func_info, { left });
-//            if (Error::get() != 0) return {}; // Propagate any error from the function call
-//
-//        }
-//        else {
-//            break; // No more pipe operators, exit the loop.
-//        }
-//    }
-//    return left;
-//}
-
 BasicValue NeReLaBasic::parse_pipe() {
     BasicValue left = parse_comparison();
 
@@ -2422,78 +2616,238 @@ BasicValue NeReLaBasic::parse_pipe() {
     return left;
 }
 
-// Level 1: Handles AND, OR, XOR with element-wise array support
-BasicValue NeReLaBasic::evaluate_expression() {
-    //BasicValue left = parse_comparison();
-    BasicValue left = parse_pipe();
+// Level 1c: Bitwise AND (Highest bitwise precedence)
+BasicValue NeReLaBasic::parse_bitwise_and() {
+    BasicValue left = parse_pipe(); // Calls the next higher precedence level
+    while (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::BAND) {
+        pcode++;
+        BasicValue right = parse_pipe();
+
+        left = std::visit([](auto&& l, auto&& r) -> BasicValue {
+            // Vectorized logic for bitwise operators
+            auto bitwise_op = [](const BasicValue& v1, const BasicValue& v2) {
+                long long n1 = static_cast<long long>(to_double(v1));
+                long long n2 = static_cast<long long>(to_double(v2));
+                return static_cast<double>(n1 & n2);
+                };
+            return apply_binary_op(l, r, bitwise_op);
+            }, left, right);
+    }
+    return left;
+}
+
+// Level 1b: Bitwise XOR
+BasicValue NeReLaBasic::parse_bitwise_xor() {
+    BasicValue left = parse_bitwise_and(); // Calls the next higher precedence level
+    while (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::BXOR) {
+        pcode++;
+        BasicValue right = parse_bitwise_and();
+
+        left = std::visit([](auto&& l, auto&& r) -> BasicValue {
+            auto bitwise_op = [](const BasicValue& v1, const BasicValue& v2) {
+                long long n1 = static_cast<long long>(to_double(v1));
+                long long n2 = static_cast<long long>(to_double(v2));
+                return static_cast<double>(n1 ^ n2);
+                };
+            return apply_binary_op(l, r, bitwise_op);
+            }, left, right);
+    }
+    return left;
+}
+
+// Level 1a: Bitwise OR (Lowest bitwise precedence)
+BasicValue NeReLaBasic::parse_bitwise_or() {
+    BasicValue left = parse_bitwise_xor(); // Calls the next higher precedence level
+    while (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::BOR) {
+        pcode++;
+        BasicValue right = parse_bitwise_xor();
+
+        left = std::visit([](auto&& l, auto&& r) -> BasicValue {
+            auto bitwise_op = [](const BasicValue& v1, const BasicValue& v2) {
+                long long n1 = static_cast<long long>(to_double(v1));
+                long long n2 = static_cast<long long>(to_double(v2));
+                return static_cast<double>(n1 | n2);
+                };
+            return apply_binary_op(l, r, bitwise_op);
+            }, left, right);
+    }
+    return left;
+}
+
+// --- The Expression Skipping Implementation ---
+
+//void NeReLaBasic::skip_expression(); // Forward declaration for recursion
+
+// Base Case: Skips a primary element like a literal, variable, function call, or parenthesized expression.
+void NeReLaBasic::skip_primary() {
+
+    if (pcode >= active_p_code->size()) return;
+
+
+    Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+
+    // Most tokens are a single byte, so we can pre-increment.
+    // Cases that need more work will advance pcode further.
+    pcode++;
+
+    switch (token) {
+    case Tokens::ID::NUMBER:
+        pcode += sizeof(double); // Skip the 8-byte double literal
+        break;
+    case Tokens::ID::STRING:
+    case Tokens::ID::VARIANT:
+    case Tokens::ID::FUNCREF:
+    case Tokens::ID::CONSTANT:
+        read_string(*this); // Reads the string to advance pcode past it
+        break;
+    case Tokens::ID::CALLFUNC:
+        read_string(*this); // Skip function name
+        // Now, explicitly skip the argument list that MUST follow.
+        if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_LEFTPAREN) {
+            pcode++; // Skip '('
+            if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                while (true) {
+                    skip_expression(); // Recursively skip each argument expression
+                    if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTPAREN) break;
+                    pcode++; // Skip comma
+                }
+            }
+            if (pcode < active_p_code->size()) pcode++; // Skip ')'
+        }
+        break;
+
+        // CORRECTED LOGIC: C_LEFTPAREN is only for parenthesized expressions.
+    case Tokens::ID::C_LEFTPAREN:
+        skip_expression(); // Skip the inner expression
+        if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTPAREN) {
+            pcode++; // Skip ')'
+        }
+        break;
+    case Tokens::ID::C_LEFTBRACKET: // Skip Array Literal
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACKET) {
+            while (true) {
+                skip_expression();
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTBRACKET) break;
+                pcode++; // Skip comma
+            }
+        }
+        pcode++; // Skip ']'
+        break;
+    case Tokens::ID::C_LEFTBRACE: // Skip Map Literal
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_RIGHTBRACE) {
+            while (true) {
+                skip_expression(); // Skip key
+                pcode++; // Skip colon
+                skip_expression(); // Skip value
+                if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_RIGHTBRACE) break;
+                pcode++; // Skip comma
+            }
+        }
+        pcode++; // Skip '}'
+        break;
+        // For simple tokens (TRUE, FALSE, THIS, etc.), just consuming the token is enough.
+    default:
+        break;
+    }
+
+    // After skipping the primary, we must also skip any chained accessors like `[...]`, `{. A..}`, or `.MEMBER`
+    while (true) {
+        Tokens::ID accessor_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        if (accessor_token == Tokens::ID::C_LEFTBRACKET || accessor_token == Tokens::ID::C_LEFTBRACE) {
+            pcode++; // consume '[' or '{'
+            skip_expression();
+            pcode++; // consume ']' or '}'
+        }
+        else if (accessor_token == Tokens::ID::C_DOT) {
+            pcode++; // consume '.'
+            pcode++; // consume VARIANT/CALLFUNC token
+            read_string(*this); // consume member name
+        }
+        else {
+            break;
+        }
+    }
+}
+
+// Skips unary operators and their operands
+void NeReLaBasic::skip_unary() {
+    Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+    if (token == Tokens::ID::C_MINUS || token == Tokens::ID::NOT || token == Tokens::ID::AWAIT) {
+        pcode++; // Skip the unary operator
+    }
+    skip_primary();
+}
+
+// Forward declarations for the new parsing chain
+
+
+// Skips a chain of binary operations for a given precedence level.
+void NeReLaBasic::skip_binary_op_chain(std::function<void()> skip_higher_precedence, const std::vector<Tokens::ID>& operators) {
+    skip_higher_precedence(); // Skip the first operand
+    while (pcode < active_p_code->size())  {
+        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        bool is_op = false;
+        for (auto valid_op : operators) {
+            if (op == valid_op) {
+                is_op = true;
+                break;
+            }
+        }
+
+        if (is_op) {
+            pcode++; // Consume the operator
+            if (op == Tokens::ID::FUNCREF) { read_string(*this); } // Custom ops have a name
+            skip_higher_precedence(); // Skip the next operand
+        }
+        else {
+            break;
+        }
+    }
+}
+
+void NeReLaBasic::skip_power() { skip_binary_op_chain([this] { skip_unary(); }, { Tokens::ID::C_CARET }); }
+void NeReLaBasic::skip_factor() { skip_binary_op_chain([this] { skip_power(); }, { Tokens::ID::C_ASTR, Tokens::ID::C_SLASH, Tokens::ID::MOD, Tokens::ID::FUNCREF }); }
+void NeReLaBasic::skip_term() { skip_binary_op_chain([this] { skip_factor(); }, { Tokens::ID::C_PLUS, Tokens::ID::C_MINUS }); }
+void NeReLaBasic::skip_comparison() { skip_binary_op_chain([this] { skip_term(); }, { Tokens::ID::C_EQ, Tokens::ID::C_NE, Tokens::ID::C_LT, Tokens::ID::C_GT, Tokens::ID::C_LE, Tokens::ID::C_GE }); }
+void NeReLaBasic::skip_pipe() { skip_binary_op_chain([this] { skip_comparison(); }, { Tokens::ID::C_PIPE }); }
+void NeReLaBasic::skip_bitwise_and() { skip_binary_op_chain([this] { skip_pipe(); }, { Tokens::ID::BAND }); }
+void NeReLaBasic::skip_bitwise_xor() { skip_binary_op_chain([this] { skip_bitwise_and(); }, { Tokens::ID::BXOR }); }
+void NeReLaBasic::skip_bitwise_or() { skip_binary_op_chain([this] { skip_bitwise_xor(); }, { Tokens::ID::BOR }); }
+void NeReLaBasic::skip_logical_and() { skip_binary_op_chain([this] { skip_bitwise_or(); }, { Tokens::ID::AND, Tokens::ID::ANDALSO }); }
+void NeReLaBasic::skip_logical_or() { skip_binary_op_chain([this] { skip_logical_and(); }, { Tokens::ID::OR, Tokens::ID::ORELSE }); }
+
+// Top-level function, now correctly structured
+void NeReLaBasic::skip_expression() {
+    skip_logical_or();
+    while (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::XOR) {
+        pcode++;
+        skip_logical_or();
+    }
+}
+
+// Level for logical AND / ANDALSO
+BasicValue NeReLaBasic::parse_logical_and() {
+    BasicValue left = parse_bitwise_or();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (op == Tokens::ID::AND || op == Tokens::ID::OR || op == Tokens::ID::XOR) {
+        if (op == Tokens::ID::AND) {
             pcode++;
-            BasicValue right = parse_comparison();
-
-            left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
-                using LeftT = std::decay_t<decltype(l)>;
-                using RightT = std::decay_t<decltype(r)>;
-
-                // Helper lambda for Array-Scalar operations
-                auto array_scalar_op = [op, this](const auto& arr_ptr, const auto& scalar_val) -> BasicValue {
-                    if (!arr_ptr) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
-                    bool scalar_bool = to_bool(scalar_val);
-                    auto result_ptr = std::make_shared<Array>();
-                    result_ptr->shape = arr_ptr->shape;
-                    result_ptr->data.reserve(arr_ptr->data.size());
-
-                    for (const auto& elem : arr_ptr->data) {
-                        bool elem_bool = to_bool(elem);
-                        bool result = false;
-                        if (op == Tokens::ID::AND) result = elem_bool && scalar_bool;
-                        else if (op == Tokens::ID::OR) result = elem_bool || scalar_bool;
-                        else if (op == Tokens::ID::XOR) result = elem_bool != scalar_bool;
-                        result_ptr->data.push_back(result);
-                    }
-                    return result_ptr;
-                    };
-
-                // Case 1: Array AND/OR/XOR Array
-                if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
-                    if (!l || !r) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
-                    if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Array shape mismatch in logical operation."); return false; }
-
-                    auto result_ptr = std::make_shared<Array>();
-                    result_ptr->shape = l->shape;
-                    result_ptr->data.reserve(l->data.size());
-
-                    for (size_t i = 0; i < l->data.size(); ++i) {
-                        bool left_bool = to_bool(l->data[i]);
-                        bool right_bool = to_bool(r->data[i]);
-                        bool result = false;
-                        if (op == Tokens::ID::AND) result = left_bool && right_bool;
-                        else if (op == Tokens::ID::OR) result = left_bool || right_bool;
-                        else if (op == Tokens::ID::XOR) result = left_bool != right_bool; // Logical XOR
-                        result_ptr->data.push_back(result);
-                    }
-                    return result_ptr;
-                }
-                // Case 2: Array op Scalar
-                else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
-                    return array_scalar_op(l, r);
-                }
-                // Case 3: Scalar op Array
-                else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
-                    return array_scalar_op(r, l);
-                }
-                // Case 4: Scalar op Scalar (fallback)
-                else {
-                    bool left_bool = to_bool(l);
-                    bool right_bool = to_bool(r);
-                    if (op == Tokens::ID::AND) return left_bool && right_bool;
-                    if (op == Tokens::ID::OR) return left_bool || right_bool;
-                    if (op == Tokens::ID::XOR) return left_bool != right_bool; // Logical XOR
-                }
-
-                return false; // Should not be reached
-                }, left, right);
+            BasicValue right = parse_bitwise_or();
+            auto and_op = [](const BasicValue& v1, const BasicValue& v2) { return to_bool(v1) && to_bool(v2); };
+            left = apply_binary_op(left, right, and_op);
+        }
+        else if (op == Tokens::ID::ANDALSO) {
+            pcode++;
+            if (std::holds_alternative<std::shared_ptr<Array>>(left)) {
+                Error::set(15, runtime_current_line, "ANDALSO operator does not support array operands.");
+                return {};
+            }
+            if (to_bool(left)) {
+                left = parse_bitwise_or(); // Evaluate RHS
+            }
+            else {
+                skip_expression(); // Skip RHS
+            }
         }
         else {
             break;
@@ -2501,3 +2855,130 @@ BasicValue NeReLaBasic::evaluate_expression() {
     }
     return left;
 }
+
+BasicValue NeReLaBasic::parse_logical_or() {
+    BasicValue left = parse_logical_and();
+    while (true) {
+        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        if (op == Tokens::ID::OR) {
+            pcode++;
+            BasicValue right = parse_logical_and();
+            auto or_op = [](const BasicValue& v1, const BasicValue& v2) { return to_bool(v1) || to_bool(v2); };
+            left = apply_binary_op(left, right, or_op);
+        }
+        else if (op == Tokens::ID::ORELSE) {
+            pcode++;
+            if (std::holds_alternative<std::shared_ptr<Array>>(left)) {
+                Error::set(15, runtime_current_line, "ORELSE operator does not support array operands.");
+                return {};
+            }
+            if (!to_bool(left)) {
+                left = parse_logical_and(); // Evaluate RHS
+            }
+            else {
+                skip_expression(); // Skip RHS
+            }
+        }
+        else {
+            break;
+        }
+    }
+    return left;
+}
+
+// Top-level expression function
+BasicValue NeReLaBasic::evaluate_expression() {
+    BasicValue left = parse_logical_or();
+
+    // The loop now only handles XOR, which is non-short-circuiting
+    while (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::XOR) {
+        pcode++;
+        BasicValue right = parse_logical_or();
+        // Use the generic helper for vectorized XOR
+        auto xor_op = [](const BasicValue& v1, const BasicValue& v2) -> BasicValue {
+            return to_bool(v1) != to_bool(v2);
+            };
+        left = apply_binary_op(left, right, xor_op);
+    }
+    return left;
+}
+
+//// Level 1: Handles AND, OR, XOR with element-wise array support
+//BasicValue NeReLaBasic::evaluate_expression() {
+//    //BasicValue left = parse_comparison();
+//    BasicValue left = parse_bitwise_or();
+//    while (true) {
+//        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+//        if (op == Tokens::ID::AND || op == Tokens::ID::OR || op == Tokens::ID::XOR) {
+//            pcode++;
+//            BasicValue right = parse_comparison();
+//
+//            left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
+//                using LeftT = std::decay_t<decltype(l)>;
+//                using RightT = std::decay_t<decltype(r)>;
+//
+//                // Helper lambda for Array-Scalar operations
+//                auto array_scalar_op = [op, this](const auto& arr_ptr, const auto& scalar_val) -> BasicValue {
+//                    if (!arr_ptr) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
+//                    bool scalar_bool = to_bool(scalar_val);
+//                    auto result_ptr = std::make_shared<Array>();
+//                    result_ptr->shape = arr_ptr->shape;
+//                    result_ptr->data.reserve(arr_ptr->data.size());
+//
+//                    for (const auto& elem : arr_ptr->data) {
+//                        bool elem_bool = to_bool(elem);
+//                        bool result = false;
+//                        if (op == Tokens::ID::AND) result = elem_bool && scalar_bool;
+//                        else if (op == Tokens::ID::OR) result = elem_bool || scalar_bool;
+//                        else if (op == Tokens::ID::XOR) result = elem_bool != scalar_bool;
+//                        result_ptr->data.push_back(result);
+//                    }
+//                    return result_ptr;
+//                    };
+//
+//                // Case 1: Array AND/OR/XOR Array
+//                if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
+//                    if (!l || !r) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
+//                    if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Array shape mismatch in logical operation."); return false; }
+//
+//                    auto result_ptr = std::make_shared<Array>();
+//                    result_ptr->shape = l->shape;
+//                    result_ptr->data.reserve(l->data.size());
+//
+//                    for (size_t i = 0; i < l->data.size(); ++i) {
+//                        bool left_bool = to_bool(l->data[i]);
+//                        bool right_bool = to_bool(r->data[i]);
+//                        bool result = false;
+//                        if (op == Tokens::ID::AND) result = left_bool && right_bool;
+//                        else if (op == Tokens::ID::OR) result = left_bool || right_bool;
+//                        else if (op == Tokens::ID::XOR) result = left_bool != right_bool; // Logical XOR
+//                        result_ptr->data.push_back(result);
+//                    }
+//                    return result_ptr;
+//                }
+//                // Case 2: Array op Scalar
+//                else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
+//                    return array_scalar_op(l, r);
+//                }
+//                // Case 3: Scalar op Array
+//                else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
+//                    return array_scalar_op(r, l);
+//                }
+//                // Case 4: Scalar op Scalar (fallback)
+//                else {
+//                    bool left_bool = to_bool(l);
+//                    bool right_bool = to_bool(r);
+//                    if (op == Tokens::ID::AND) return left_bool && right_bool;
+//                    if (op == Tokens::ID::OR) return left_bool || right_bool;
+//                    if (op == Tokens::ID::XOR) return left_bool != right_bool; // Logical XOR
+//                }
+//
+//                return false; // Should not be reached
+//                }, left, right);
+//        }
+//        else {
+//            break;
+//        }
+//    }
+//    return left;
+//}

@@ -807,11 +807,10 @@ void Commands::do_let(NeReLaBasic& vm) {
         }
 
         // Parse multiple comma-separated indices
-        std::vector<size_t> indices;
+        std::vector<BasicValue> index_expressions;
         while (true) {
-            BasicValue index_val = vm.evaluate_expression();
+            index_expressions.push_back(vm.evaluate_expression());
             if (Error::get() != 0) return;
-            indices.push_back(static_cast<size_t>(to_double(index_val)));
 
             Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
             if (separator == Tokens::ID::C_RIGHTBRACKET) break;
@@ -833,7 +832,6 @@ void Commands::do_let(NeReLaBasic& vm) {
         BasicValue value_to_assign = vm.evaluate_expression();
         if (Error::get() != 0) return;
 
-        // --- NEW LOGIC TO FIX THE BUG ---
         // The 'name' could be a simple variable "A" or a dot-chain "ALIENS.VISIBLE".
         // We must resolve it to get the actual array object.
         auto [parent_obj, member_name] = vm.resolve_dot_chain(name);
@@ -861,23 +859,101 @@ void Commands::do_let(NeReLaBasic& vm) {
         const auto& arr_ptr = std::get<std::shared_ptr<Array>>(*array_val_ptr);
         if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array is null."); return; }
 
-        // The rest of the logic can now proceed correctly.
-        try {
-            size_t flat_index = arr_ptr->get_flat_index(indices);
-            if (member_var.length()>0) {
-                auto& map_ptr = std::get<std::shared_ptr<Map>>(arr_ptr->data[flat_index]);
-                auto dataparent = arr_ptr->data[flat_index];
-                map_ptr->data[member_var] = value_to_assign;
+
+        // Logik für vektorisierte Zuweisung
+        // =======================================
+
+         // 1. Bestimme die Anzahl der Zuweisungen
+        long long num_assignments = -1;
+        for (const auto& expr : index_expressions) {
+            if (std::holds_alternative<std::shared_ptr<Array>>(expr)) {
+                const auto& index_arr = std::get<std::shared_ptr<Array>>(expr);
+                if (num_assignments == -1) {
+                    num_assignments = index_arr->data.size();
+                }
+                else if (num_assignments != static_cast<long long>(index_arr->data.size())) {
+                    Error::set(15, vm.runtime_current_line, "Index arrays must have the same length.");
+                    return;
+                }
             }
-            else {
-                arr_ptr->data[flat_index] = value_to_assign;
-            }
-        }
-        catch (const std::exception&) {
-            Error::set(10, vm.runtime_current_line); // Bad subscript
         }
 
+        // Wenn kein Index-Array gefunden wurde, ist es eine normale Skalar-Zuweisung
+        if (num_assignments == -1) {
+            std::vector<size_t> scalar_indices;
+            for (const auto& expr : index_expressions) {
+                scalar_indices.push_back(static_cast<size_t>(to_double(expr)));
+            }
+            try {
+                size_t flat_index = arr_ptr->get_flat_index(scalar_indices);
+                if (member_var.length() > 0) {
+                    auto& map_ptr = std::get<std::shared_ptr<Map>>(arr_ptr->data[flat_index]);
+                    auto dataparent = arr_ptr->data[flat_index];
+                    map_ptr->data[member_var] = value_to_assign;
+                }
+                else {
+                    arr_ptr->data[flat_index] = value_to_assign;
+                }
+            }
+            catch (const std::exception&) {
+                Error::set(10, vm.runtime_current_line, "Array index out of bounds or dimension mismatch.");
+            }
+            return; // Frühzeitiger Ausstieg für den einfachen Fall
+        }
+
+        // 2. Bereite die RHS (rechte Seite) vor
+        bool rhs_is_array = std::holds_alternative<std::shared_ptr<Array>>(value_to_assign);
+        std::shared_ptr<Array> rhs_arr_ptr = nullptr;
+        if (rhs_is_array) {
+            rhs_arr_ptr = std::get<std::shared_ptr<Array>>(value_to_assign);
+            if (static_cast<long long>(rhs_arr_ptr->data.size()) != num_assignments) {
+                // Ausnahme: Wenn das RHS-Array nur ein Element hat, behandeln wir es wie einen Skalar
+                if (rhs_arr_ptr->data.size() == 1) {
+                    value_to_assign = rhs_arr_ptr->data[0];
+                    rhs_is_array = false;
+                }
+                else {
+                    Error::set(15, vm.runtime_current_line, "Right-hand side array must have the same length as index arrays.");
+                    return;
+                }
+            }
+        }
+
+        // 3. Führe die Zuweisungen iterativ durch
+        std::vector<size_t> current_coords(index_expressions.size());
+        for (long long i = 0; i < num_assignments; ++i) {
+            // a. Stelle die Koordinaten für diese Iteration zusammen
+            for (size_t dim = 0; dim < index_expressions.size(); ++dim) {
+                if (std::holds_alternative<std::shared_ptr<Array>>(index_expressions[dim])) {
+                    current_coords[dim] = static_cast<size_t>(to_double(std::get<std::shared_ptr<Array>>(index_expressions[dim])->data[i]));
+                }
+                else {
+                    current_coords[dim] = static_cast<size_t>(to_double(index_expressions[dim]));
+                }
+            }
+
+            // b. Hole den zuzuweisenden Wert
+            const BasicValue& value_to_set = rhs_is_array ? rhs_arr_ptr->data[i] : value_to_assign;
+
+            // c. Führe die Zuweisung durch
+            try {
+                size_t flat_index = arr_ptr->get_flat_index(current_coords);
+                if (member_var.length() > 0) {
+                    auto& map_ptr = std::get<std::shared_ptr<Map>>(arr_ptr->data[flat_index]);
+                    auto dataparent = arr_ptr->data[flat_index];
+                    map_ptr->data[member_var] = value_to_set;
+                }
+                else {
+                    arr_ptr->data[flat_index] = value_to_set;
+                }
+            }
+            catch (const std::exception&) {
+                Error::set(10, vm.runtime_current_line, "Array index out of bounds during vectorized assignment.");
+                return;
+            }
+        }
     }
+
     // --- Case 2: MAP ASSIGNMENT  ---
     else if (var_type_token == Tokens::ID::MAP_ACCESS) {
         // Handle map assignment: my_map{"key"} = value
