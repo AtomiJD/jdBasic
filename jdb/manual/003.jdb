@@ -1,0 +1,8 @@
+' =========================================================
+' Simple Array Math
+' =========================================================
+
+my_numbers = [10, 20, 30, 40, 50]
+PRINT "Original numbers: ", my_numbers
+my_numbers = my_numbers * 2 + 5
+PRINT "Calculated numbers: ",  my_numbers

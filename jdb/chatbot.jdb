@@ -4,7 +4,7 @@ REM to the OpenAI Chat Completions API and then parses the
 REM JSON response to extract the message content.
 
 CLS
-PRINT "--- OpenAI API Chat Client (with History) for NeReLa Basic ---"
+PRINT "--- OpenAI API Chat Client (with History) for jdBasic ---"
 PRINT
 
 API_KEY$ = Getenv$("OPENAI_API_KEY")
@@ -40,7 +40,6 @@ DO
 
     PRINT "Sending to OpenAI..."
     
-    ' --- FIX: Declare message maps INSIDE the loop ---
     ' This creates a fresh map for each turn, preventing history from being overwritten.
     DIM user_message AS MAP
     DIM assistant_message AS MAP

@@ -345,7 +345,7 @@ public:
     void process_system_events();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_repl_command(const std::vector<uint8_t>& repl_p_code);
-    void execute_synchronous_block(const std::vector<uint8_t>& code_to_run);
+    void execute_synchronous_block(const std::vector<uint8_t>& code_to_run, int multiline = false);
     BasicValue execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_main_program(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     void raise_event(const std::string& event_name, BasicValue data);

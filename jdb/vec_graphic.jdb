@@ -12,7 +12,7 @@ ENDFUNC
 
 ' 2. Initialize Graphics ---
 PRINT "Initializing graphics screen..."
-SCREEN SCREEN_W, SCREEN_H, "Lines and dots (Vectorized)"
+SCREEN SCREEN_W, SCREEN_H, "Lines (Vectorized)"
 CLS 0, 0, 0 ' Clear screen to black
 
 PRINT "Building line matrix..."

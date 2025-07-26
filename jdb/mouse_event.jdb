@@ -19,15 +19,6 @@ DIM hue_counter AS INTEGER
 DIM G_QUIT AS BOOLEAN ' Flag to signal program exit
 
 ' --- 2. Event Handler Subroutines ---
-
-SUB OnError(data)
-    PRINT "Error occurred!"
-    PRINT "Code: "; ERR
-    PRINT "Line: "; ERL
-    PRINT "Message: "; ERRMSG$
-    RESUME NEXT ' Continue after the line that caused the error
-ENDSUB
-
 SUB OnMouseDown(data)
     IF data[0]{"button"} = 1 THEN
         is_drawing = TRUE
@@ -121,19 +112,15 @@ ON "MOUSEDOWN" CALL OnMouseDown
 ON "MOUSEUP" CALL OnMouseUp
 ON "MOUSEMOVE" CALL OnMouseMove
 ON "KEYDOWN" CALL OnKeyDown
-ON "ERROR" CALL OnError
 
 PRINT "--- Starting Drawing App. Hold left-click to draw. Press ESC to quit. ---"
 
 ' The main loop now handles redrawing the entire scene from the G_LINES array.
 DO
-    ' Clear the screen for the new frame
-   ' CLS 10, 10, 20
-    
 
-     if len(G_LINES) > 1 THEN
-        LINE RESHAPE(G_LINES,[len(G_LINES)[0]/4,4]), RESHAPE(G_COLORS,[len(G_COLORS)[0]/3,3])
-     ENDIF
+    if len(G_LINES) > 1 THEN
+       LINE RESHAPE(G_LINES,[len(G_LINES)[0]/4,4]), RESHAPE(G_COLORS,[len(G_COLORS)[0]/3,3])
+    ENDIF
     ' Update the screen
     SCREENFLIP
     

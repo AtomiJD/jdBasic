@@ -1,9 +1,0 @@
-DIM I As Integer
-I = 5
-PRINT "I: ", I, " Type: ", TypeOf(I)
-
-J = 5
-PRINT "J: ", J, " Type: ", TypeOf(J)
-
-K = 5.0
-PRINT "K: ", K, " Type: ", TypeOf(K)

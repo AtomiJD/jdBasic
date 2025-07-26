@@ -2,7 +2,6 @@
 
 ON "MY_CUSTOM_EVENT" CALL HandleCustomEvent
 ON "KEYDOWN" CALL HandleKeys
-ON "ERROR" CALL HandleErrors
 ON "QUIT" CALL HandleQuit
 
 SUB HandleCustomEvent(data)
@@ -17,14 +16,6 @@ ENDSUB
 SUB HandleKeys(data)
   PRINT "Key down! Scancode: "; data[0]{"scancode"}
   IF data[0]{"scancode"} = 27 THEN RAISEEVENT "QUIT", 0 ' ESC key
-ENDSUB
-
-SUB HandleErrors(data)
-  PRINT "--- An Error Occurred! ---"
-  PRINT "Code: "; data[0]{"CODE"}
-  PRINT "Line: "; data[0]{"LINE"}
-  PRINT "Message: "; data[0]{"MESSAGE"}
-  ' You could choose to STOP here or attempt to RESUME
 ENDSUB
 
 PRINT "Event system is active. Press keys or wait for events."

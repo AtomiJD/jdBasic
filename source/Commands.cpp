@@ -1691,7 +1691,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
 
         Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-        if (token != Tokens::ID::C_CR) {
+        if (token != Tokens::ID::C_CR && token != Tokens::ID::C_COLON) {
             if (proc_info.arity == -1 || proc_info.arity > 0) {
                 while (true) {
                     args.push_back(vm.evaluate_expression());

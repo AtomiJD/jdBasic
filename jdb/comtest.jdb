@@ -1,4 +1,7 @@
-' --- COM Object test
+' ==========================================================
+' == COM Object test
+' == Goal: Use CREATEOBJECT to create a com object
+' ==========================================================
 
 TRY
     ' Initialize a COM object

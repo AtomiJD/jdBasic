@@ -1,5 +1,6 @@
 #include "Commands.hpp"
 #include "NeReLaBasic.hpp"
+#include "Compiler.hpp"
 #include "BuiltinFunctions.hpp"
 #include "AIFunctions.hpp"
 #include "TextIO.hpp"
@@ -1892,7 +1893,7 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return std::string("");
     }
 
-    // --- ADDED: Context-aware logic ---
+    // --- Context-aware logic ---
 #ifdef SDL3
     // If the graphics system is initialized, get input from SDL's event queue.
     if (vm.graphics_system.is_initialized) {
@@ -1918,6 +1919,101 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 #endif
 
     return std::string("");
+}
+
+// WAITKEY$() -> string$
+// Waits for a key to be pressed and returns it as a string.
+BasicValue builtin_waitkey_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "WAITKEY$ takes no arguments.");
+        return std::string("");
+    }
+
+#ifdef SDL3
+    // If the graphics system is active, we must wait in a loop that
+    // continues to process events, so the window doesn't freeze.
+    if (vm.graphics_system.is_initialized) {
+        std::string key;
+        while (true) {
+            // The main event handler for SDL is in the graphics system.
+            // Calling this in a loop effectively waits for an event.
+            if (!vm.graphics_system.handle_events(vm)) {
+                // This indicates the user closed the window.
+                // vm.program_ended = true; // Signal the main loop to terminate
+                return std::string("");
+            }
+
+            // Check if handle_events() populated the key buffer.
+            key = vm.graphics_system.get_key_from_buffer();
+            if (!key.empty()) {
+                return key;
+            }
+
+            // Also process any internal BASIC events that might have been queued.
+            vm.process_event_queue();
+
+            // A short delay to prevent this waiting loop from using 100% CPU.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+#endif
+
+    // Fallback to standard blocking console input if graphics are not initialized.
+#ifdef _WIN32
+    char c = _getch();
+#else
+    char c = getch();
+#endif
+
+    return std::string(1, c);
+}
+
+// REPLACE$(source_string_or_array, find_string$, replace_with_string$) -> string or array
+BasicValue builtin_replace_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "REPLACE$ requires 3 arguments.");
+        return std::string("");
+    }
+
+    const BasicValue& input = args[0];
+    std::string find_str = to_string(args[1]);
+    std::string replace_str = to_string(args[2]);
+
+    // Edge case: if find_str is empty, return the original string to avoid infinite loops.
+    if (find_str.empty()) {
+        return input;
+    }
+
+    // Helper lambda to perform the core REPLACE$ operation on a single string.
+    auto perform_replace = [&](const std::string& source) -> std::string {
+        std::string result = source;
+        size_t start_pos = 0;
+        while ((start_pos = result.find(find_str, start_pos)) != std::string::npos) {
+            result.replace(start_pos, find_str.length(), replace_str);
+            // Move past the replaced section to avoid re-matching parts of the replacement string.
+            start_pos += replace_str.length();
+        }
+        return result;
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {}; // Handle null array
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape; // Result has the same shape
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_replace(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_replace(to_string(input));
+    }
 }
 
 // VAL(string_expression_or_array) -> number or array
@@ -4801,7 +4897,7 @@ BasicValue builtin_mkdir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // KILL path_string (deletes a file)
 BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, 0); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
         return false;
     }
     std::string path_str = to_string(args[0]);
@@ -4825,7 +4921,7 @@ BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // Reads the entire content of a text file into a single string.
 BasicValue builtin_txtreader_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line);
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
         return std::string("");
     }
     std::string filename = to_string(args[0]);
@@ -4847,7 +4943,7 @@ BasicValue builtin_txtreader_str(NeReLaBasic& vm, const std::vector<BasicValue>&
 // Reads a delimited file (like CSV) into a 2D array of numbers.
 BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.empty() || args.size() > 3) {
-        Error::set(8, vm.runtime_current_line);
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
         return {};
     }
 
@@ -5401,6 +5497,39 @@ BasicValue builtin_regex_replace(NeReLaBasic& vm, const std::vector<BasicValue>&
     }
 }
 
+// --- System self codeing functions ---
+// 
+// EXECUTE(code_string$)
+// Compiles and executes a string of jdBasic code at runtime.
+BasicValue builtin_execute(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "EXECUTE requires exactly one string argument.");
+        return false;
+    }
+
+    std::string code_to_execute = to_string(args[0]);
+    if (code_to_execute.empty()) {
+        return false; // Nothing to do
+    }
+
+    // 1. Compile the string using the new, non-destructive snippet compiler.
+    std::vector<uint8_t> temp_p_code;
+    if (vm.compiler->tokenize_snippet(vm, temp_p_code, code_to_execute) != 0) {
+        // The snippet compiler set an error, so we just return.
+        return false;
+    }
+
+    // 2. Execute the compiled p-code block synchronously.
+    try {
+        vm.execute_synchronous_block(temp_p_code, true);
+    }
+    catch (const std::exception& e) {
+        Error::set(1, vm.runtime_current_line, "Runtime error in code executed via EXECUTE: " + std::string(e.what()));
+    }
+
+    return false; // EXECUTE is a procedure.
+}
+
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
     // Helper lambda to make registration cleaner
@@ -5435,7 +5564,9 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("LCASE$", 1, builtin_lcase_str);
     register_func("UCASE$", 1, builtin_ucase_str);
     register_func("TRIM$", 1, builtin_trim_str);
+    register_func("REPLACE$", 3, builtin_replace_str);
     register_func("INKEY$", 0, builtin_inkey);
+    register_func("WAITKEY$", 0, builtin_waitkey_str);
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
     register_func("SPLIT", 2, builtin_split);
@@ -5568,12 +5699,12 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SPRITE.COLLISION_GROUPS", 2, builtin_sprite_collision_groups);
 
     // --- Add New TileMap Functions ---
-    register_proc("MAP.LOAD", 2, builtin_map_load);
-    register_proc("MAP.DRAW_LAYER", -1, builtin_map_draw_layer); // Optional args
-    register_func("MAP.GET_OBJECTS", 2, builtin_map_get_objects);
-    register_func("MAP.COLLIDES", 3, builtin_map_collides);
-    register_func("MAP.GET_TILE_ID", 4, builtin_map_get_tile_id);
-    register_proc("MAP.DRAW_DEBUG_COLLISIONS", 3, builtin_map_draw_debug);
+    register_proc("TILEMAP.LOAD", 2, builtin_map_load);
+    register_proc("TILEMAP.DRAW_LAYER", -1, builtin_map_draw_layer); // Optional args
+    register_func("TILEMAP.GET_OBJECTS", 2, builtin_map_get_objects);
+    register_func("TILEMAP.COLLIDES", 3, builtin_map_collides);
+    register_func("TILEMAP.GET_TILE_ID", 4, builtin_map_get_tile_id);
+    register_proc("TILEMAP.DRAW_DEBUG_COLLISIONS", 3, builtin_map_draw_debug);
 
 
 #endif
@@ -5614,6 +5745,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("COLOR", 2, builtin_color);
     register_proc("MKDIR", 1, builtin_mkdir);
     register_proc("KILL", 1, builtin_kill);
+
+    register_proc("EXECUTE", 1, builtin_execute);
 
     register_func("CSVREADER", -1, builtin_csvreader); // -1 for optional args
     register_func("TXTREADER$", 1, builtin_txtreader_str);

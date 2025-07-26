@@ -1371,6 +1371,61 @@ uint8_t Compiler::tokenize_lambda(NeReLaBasic& vm, std::vector<uint8_t>& out_p_c
     return 0;
 }
 
+uint8_t Compiler::tokenize_snippet(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source_snippet) {
+    // --- 1. Save the current state of the compiler's stacks ---
+    auto saved_if_stack = if_stack;
+    auto saved_func_stack = func_stack;
+    auto saved_do_loop_stack = do_loop_stack;
+    auto saved_compiler_for_stack = compiler_for_stack;
+    // Note: We don't save/restore label_addresses or pending_lambdas,
+    // as they should be scoped to this snippet only.
+
+    // --- 2. Clear the stacks for a clean compilation of the snippet ---
+    if_stack.clear();
+    func_stack.clear();
+    do_loop_stack.clear();
+    compiler_for_stack.clear();
+    // Clear any temporary structures from previous compilations
+    label_addresses.clear();
+    pending_lambdas.clear();
+
+    // --- 3. Compile the snippet line by line ---
+    std::stringstream source_stream(source_snippet);
+    std::string line;
+    uint16_t line_num = 1;
+    bool is_multiline = false;
+    uint8_t error_code = 0;
+
+    //out_p_code.push_back(0); out_p_code.push_back(0);
+
+    while (std::getline(source_stream, line)) {
+        is_multiline = tokenize(vm, line, line_num++, out_p_code, *vm.active_function_table, is_multiline, false);
+        if (Error::get() != 0) {
+            error_code = Error::get();
+            break; // Stop on compilation error
+        }
+    }
+
+    // After tokenizing, ensure all control structures were properly closed within the snippet.
+    if (error_code == 0 && (!if_stack.empty() || !func_stack.empty() || !do_loop_stack.empty() || !compiler_for_stack.empty())) {
+        Error::set(1, line_num, "Unclosed block (IF/FUNC/DO/FOR) in dynamically executed code.");
+        error_code = 1;
+    }
+
+    // Finalize the snippet's p-code
+    out_p_code.push_back(0); out_p_code.push_back(0);
+    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::NOCMD));
+
+
+    // --- 4. Restore the original compiler state ---
+    if_stack = saved_if_stack;
+    func_stack = saved_func_stack;
+    do_loop_stack = saved_do_loop_stack;
+    compiler_for_stack = saved_compiler_for_stack;
+
+    return error_code;
+}
+
 uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source) {
     out_p_code.clear();
     if_stack.clear();

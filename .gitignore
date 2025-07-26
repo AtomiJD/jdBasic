@@ -369,6 +369,7 @@ jdb/_*.*
 libs/tf
 jdb/fonts
 jdb/music
+jdb/intern
 
 
 

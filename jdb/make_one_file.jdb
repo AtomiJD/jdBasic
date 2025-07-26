@@ -3,7 +3,7 @@
 PRINT "Starting to combine all .jdb files..."
 
 ' 1. Get a list of all files with the .jdb extension
-jdb_files$ = DIR$("*.bas")
+jdb_files$ = DIR$("*.jdb")
 
 ' Check if any files were found
 IF LEN(jdb_files$) = 0 THEN

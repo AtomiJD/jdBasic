@@ -107,6 +107,9 @@ public:
 
     //Scans source code for TYPE...ENDTYPE blocks to populate the UDT map.
     void pre_scan_and_parse_types(NeReLaBasic& vm);
+
+    //Snippet compiler for eval() and execute()
+    uint8_t tokenize_snippet(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source_snippet);
 private:
 
 };

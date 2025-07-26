@@ -2,9 +2,9 @@
 ' -----------------------------------------------
 
 PRINT "--- APL Style Sieve ---"
-LIMIT = 60000
+PRINT "Wait for Array creation..."
+LIMIT = 10000
 T=tick()
-
 
 ' 1. Create a boolean mask, initially all TRUE, for numbers 1 to 100.
 '    We use RESHAPE on a single TRUE value to fill the array.

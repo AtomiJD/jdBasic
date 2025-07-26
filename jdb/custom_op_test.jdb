@@ -1,3 +1,7 @@
+' ==========================================================
+' == Custom Operator Test
+' == Goal: Show how a custom operator works.
+' ==========================================================
 
 'AtomiJD Divider
 FUNC JD(x,y)

@@ -1,0 +1,13 @@
+'
+
+DIM A[5]
+TRY
+    A[6] = 10 ' This will cause an "Array out of bounds" error
+CATCH
+    PRINT "Error occurred!"
+    PRINT "Code: "; ERR
+    PRINT "Line: "; ERL
+    PRINT "Message: "; ERRMSG$
+ENDTRY
+
+PRINT "Program finished normally."

@@ -66,7 +66,8 @@ FOR I = 0 TO VOCAB_SIZE - 1
     VOCAB_MAP{VOCAB[I]} = I
 NEXT I
 
-PRINT "Vocabulary Size:"; VOCAB_SIZE
+PRINT "Vocabulary Size: "; VOCAB_SIZE
+PRINT "Vocabulary     : ", VOCAB
 PRINT
 
 
@@ -163,16 +164,17 @@ FOR EPI = 1 TO EPOCHS
     TENSOR.BACKWARD loss_tensor
     MODEL = TENSOR.UPDATE(MODEL, OPTIMIZER)
 
-    IF EPI MOD 100 = 0 THEN
+    IF EPI MOD 10 = 0 THEN
         PRINT "Epoch:"; EPI; ", Loss:"; TENSOR.TOARRAY(loss_tensor)[0]
     ENDIF
     
-    ' *** MODIFIED: Implement learning rate decay for better fine-tuning ***
+    ' ***Implement learning rate decay for better fine-tuning ***
     IF EPI MOD 2000 = 0 AND LEARNING_RATE > 0.005 THEN
         LEARNING_RATE = LEARNING_RATE / 2
         OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": LEARNING_RATE})
         PRINT "New learning rate: "; LEARNING_RATE
     ENDIF
+
 NEXT EPI
 
 PRINT
@@ -181,9 +183,9 @@ PRINT
 
 ' --- 6. Inference / Text Generation ---
 PRINT "--- Generating Text ---"
-PRINT "Seed text: 'der'"
+PRINT "Seed text: 'Atomi'"
 
-generated_text$ = "Achim"
+generated_text$ = "Atomi"
 
 FOR i = 1 TO 200
     inference_input_tokens = TENSOR.TOKENIZE(generated_text$, VOCAB_MAP)

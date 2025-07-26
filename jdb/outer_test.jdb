@@ -28,4 +28,11 @@ hypot_table = OUTER(A, B, HYPOT@)
 
 PRINT "Hypotenuse Table (A OUTER B, HYPOT@):"
 PRINT hypot_table
+PRINT
 
+PRINT "--- Testing OUTER with a Lambda Function ---"
+' Use the custom lambda with OUTER
+hypot_table = OUTER(A, B, lambda x,y -> SQR(X*X + Y*Y))
+
+PRINT "Hypotenuse Table OUTER(A, B, lambda x,y -> SQR(X*X + Y*Y))"
+PRINT hypot_table

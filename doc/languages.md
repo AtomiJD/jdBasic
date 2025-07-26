@@ -160,6 +160,14 @@ final_result$ = FILTER_GT_150(SALES_DATA) |> SUM_ARRAY(?) |> FORMAT_RESULT$(?)
 PRINT final_result$
 ```
 
+**Lambda Function chaining (The Pipe Operator **`|>`**)**
+
+```basic
+PRINT "--- Processing the Pipe / Lambda Way (with Pipe Operator) ---"
+PRINT SELECT(lambda i -> i + 1, iota(10))
+PRINT SELECT(lambda i -> i + 1, iota(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
+```
+
 ### Function as operators
 
 ```basic
@@ -211,7 +219,6 @@ print apply(dec@,12) ' Should return 11
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`OPTION option$`**: Sets a VM option. `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
-* **`RESUME [NEXT | "label"]`**: Used within an error handler to resume execution. `RESUME` retries the failed line, `RESUME NEXT` continues on the next line, and `RESUME "label"` jumps to a label.
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [modul]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb

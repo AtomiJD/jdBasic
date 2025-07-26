@@ -32,7 +32,7 @@ SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
     X_LABELS = SLICE(DATA_ARRAY, 1, X_LABEL_COL)
     Y_VALUES = SLICE(DATA_ARRAY, 1, Y_VALUE_COL)
     
-    NUM_POINTS = LEN(Y_VALUES)
+    NUM_POINTS = LEN(Y_VALUES)[0] 'Len returns a Array, we need a scalar!
     IF NUM_POINTS = 0 THEN
         PRINT "Error: No data to plot."
         RETURN

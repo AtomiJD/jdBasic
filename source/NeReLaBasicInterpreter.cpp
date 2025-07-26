@@ -91,6 +91,8 @@ int main(int argc, char* argv[]) {
             // The loop will immediately pause and wait for a 'continue' or 'step' command.
 
             interpreter.execute_main_program(interpreter.program_p_code, false);
+            if (Error::get() != 0) Error::print();
+
         }
         else {
             TextIO::print("? DAP Error: Launch failed. Shutting down.\n");
