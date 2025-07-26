@@ -1,0 +1,182 @@
+' ===================================================================
+' == jdBasic Masked Input Field Library (Event-Driven & Native Cursor)
+' ==
+' == This version uses the console's native cursor for a more
+' == professional look and feel, removing the manual "_" cursor.
+' ===================================================================
+
+' --- Global variables used by the event handler to manage state ---
+DIM G_BUFFER$ AS STRING
+DIM G_CURSOR_POS AS INTEGER
+DIM G_MAX_LENGTH AS INTEGER
+DIM G_MASK_CHARS$ AS STRING
+DIM G_POS_X AS INTEGER
+DIM G_POS_Y AS INTEGER
+DIM G_CAPTION$ AS STRING
+DIM G_INPUT_COMPLETE AS BOOLEAN
+
+' ===================================================================
+' == The Main Input Function (Setup and Wait)
+' ===================================================================
+
+FUNC JDINPUT$(X, Y, Mask$, Caption$)
+    ' --- 1. Turn on the system cursor for the input operation ---
+    CURSOR 1
+
+    ' --- 2. Parse the Mask and Initialize Global State ---
+    MaskInfo = ParseMask(Mask$)
+    G_MAX_LENGTH = MaskInfo{"length"}
+    G_MASK_CHARS$ = MaskInfo{"chars"}
+    G_BUFFER$ = ""
+    G_CURSOR_POS = 0
+    G_POS_X = X
+    G_POS_Y = Y
+    G_CAPTION$ = Caption$
+    G_INPUT_COMPLETE = FALSE
+
+    ' --- 3. Perform the initial draw ---
+    DrawInputField
+
+    ' --- 4. Register the Event Handler ---
+    ON "KEYDOWN" CALL HandleKey
+
+    ' --- 5. Wait for Completion ---
+    DO
+        SLEEP 50 ' Yield CPU time
+    LOOP UNTIL G_INPUT_COMPLETE
+
+    ' --- 6. Cleanup and Return ---
+    CURSOR 0           ' Hide the cursor again
+    
+    ' Erase the input field line from the screen
+    LOCATE G_POS_Y, G_POS_X
+    PRINT "                                                                                "
+
+    RETURN G_BUFFER$
+ENDFUNC
+
+' ===================================================================
+' == Event Handler and Helper Subroutines
+' ===================================================================
+
+SUB HandleKey(KeyData)
+    ' This subroutine is the core of the logic, called only on key press.
+    
+    ' --- CORRECTED: Access the Map at index 0 of the KeyData array ---
+    KeyAsc = KeyData[0]{"scancode"}
+    KeyChar$ = KeyData[0]{"key"}
+
+    ' --- Key Handling Logic ---
+    IF KeyAsc = 13 THEN ' Enter key
+        G_INPUT_COMPLETE = TRUE
+        RETURN
+    
+    ELSEIF KeyAsc = 8 THEN ' Backspace
+        IF G_CURSOR_POS > 0 THEN
+            G_BUFFER$ = LEFT$(G_BUFFER$, G_CURSOR_POS - 1) + RIGHT$(G_BUFFER$, LEN(G_BUFFER$) - G_CURSOR_POS)
+            G_CURSOR_POS = G_CURSOR_POS - 1
+        ENDIF
+    ELSEIF KeyAsc = 275 THEN ' Right Arrow
+        IF G_CURSOR_POS < LEN(G_BUFFER$) THEN G_CURSOR_POS = G_CURSOR_POS + 1
+    ELSEIF KeyAsc = 276 THEN ' Left Arrow
+        IF G_CURSOR_POS > 0 THEN G_CURSOR_POS = G_CURSOR_POS - 1
+    ELSEIF KeyAsc = 279 THEN ' End Key
+        G_CURSOR_POS = LEN(G_BUFFER$)
+    ELSEIF KeyAsc = 280 THEN ' Home Key
+        G_CURSOR_POS = 0
+    ELSEIF KeyAsc = 281 THEN ' Delete Key
+        IF G_CURSOR_POS < LEN(G_BUFFER$) THEN
+            G_BUFFER$ = LEFT$(G_BUFFER$, G_CURSOR_POS) + RIGHT$(G_BUFFER$, LEN(G_BUFFER$) - G_CURSOR_POS - 1)
+        ENDIF
+    ELSE ' --- Handle Printable Characters ---
+        IF LEN(G_BUFFER$) < G_MAX_LENGTH AND KeyAsc >= 32 AND KeyAsc <= 126 THEN
+            MaskChar$ = MID$(G_MASK_CHARS$, G_CURSOR_POS + 1, 1)
+            IsAllowed = FALSE
+            IF MaskChar$ = "@" AND INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 ", UCASE$(KeyChar$)) > 0 THEN IsAllowed = TRUE
+            IF MaskChar$ = "#" AND INSTR("0123456789", KeyChar$) > 0 THEN IsAllowed = TRUE
+            IF MaskChar$ = KeyChar$ THEN IsAllowed = TRUE
+
+            IF IsAllowed THEN
+                G_BUFFER$ = LEFT$(G_BUFFER$, G_CURSOR_POS) + KeyChar$ + RIGHT$(G_BUFFER$, LEN(G_BUFFER$) - G_CURSOR_POS)
+                G_CURSOR_POS = G_CURSOR_POS + 1
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' --- Redraw the field ONLY after a key has been processed ---
+    DrawInputField
+ENDSUB
+
+SUB DrawInputField()
+    ' This subroutine handles all screen drawing for the input field.
+    ' It no longer draws a manual cursor.
+    
+    ' Go to the start of the line to redraw it
+    LOCATE G_POS_Y, G_POS_X
+    
+    Display$ = G_CAPTION$ + "["
+    FOR i = 0 TO G_MAX_LENGTH - 1
+        IF i < LEN(G_BUFFER$) THEN
+            Display$ = Display$ + MID$(G_BUFFER$, i + 1, 1)
+        ELSE
+            Display$ = Display$ + " " ' Use space for empty chars
+        ENDIF
+    NEXT i
+    Display$ = Display$ + "]"
+    
+    PRINT Display$; ' Use semicolon to prevent newline
+    
+    ' --- NEW: Position the actual system cursor ---
+    ' Calculate the target column for the cursor
+    CursorCol = G_POS_X + LEN(G_CAPTION$) + 1 + G_CURSOR_POS
+    LOCATE G_POS_Y, CursorCol
+ENDSUB
+
+FUNC ParseMask(Mask$)
+    ' This function analyzes the mask string and returns a Map.
+    Result = {}
+    
+    IF INSTR(Mask$, ":") > 0 THEN
+        Parts = SPLIT(Mask$, ":")
+        Length = VAL(Parts[1])
+        CharType$ = Parts[0]
+        Result{"length"} = Length
+        Result{"chars"} = ""
+        FOR i = 1 TO Length
+            Result{"chars"} = Result{"chars"} + CharType$
+        NEXT i
+    ELSE
+        Result{"length"} = LEN(Mask$)
+        Result{"chars"} = Mask$
+    ENDIF
+
+    RETURN Result
+ENDFUNC
+
+' ===================================================================
+' == Main Program - Example Usage
+' ===================================================================
+
+CLS
+PRINT "--- jdBasic Masked Input Field Demo (Native Cursor) ---"
+PRINT
+
+' --- Example 1: Alphanumeric input for a name ---
+PRINT "Enter your name (max 20 chars)."
+Name$ = JDINPUT$(2, 2, "@:20", "Name: ")
+PRINT
+PRINT "Hello, "; Name$; "!"
+PRINT
+
+' --- Example 2: Numeric input for a price ---
+PRINT "Enter a price (e.g., 1234.56)."
+Price$ = JDINPUT$(2, 7, "####0.##", "Price: ")
+PRINT
+PRINT "The price you entered is: "; Price$
+PRINT
+
+PRINT "--- Demo Complete ---"
+
+CURSOR 1
+
+END

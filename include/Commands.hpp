@@ -25,10 +25,15 @@ namespace Commands {
     void do_sub(NeReLaBasic& vm);
     void do_endsub(NeReLaBasic& vm);
     void do_callsub(NeReLaBasic& vm);
-    void do_onerrorcall(NeReLaBasic& vm);
-    void do_resume(NeReLaBasic& vm);
+    void do_push_handler(NeReLaBasic& vm);
+    void do_pop_handler(NeReLaBasic& vm);
+    void do_on(NeReLaBasic& vm);
+    void do_raiseevent(NeReLaBasic& vm);
     void do_do(NeReLaBasic& vm);
     void do_loop(NeReLaBasic& vm);
+    void do_end(NeReLaBasic& vm);
+    
+    void do_dllimport(NeReLaBasic& vm);
 
     void do_edit(NeReLaBasic& vm);
     void do_list(NeReLaBasic& vm);
@@ -48,4 +53,7 @@ void set_variable(NeReLaBasic& vm, const std::string& name, const BasicValue& va
 std::string to_string(const BasicValue& val);
 std::string to_upper(std::string s);
 std::string read_string(NeReLaBasic& vm);
+
+void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& name);
+
 

@@ -1,0 +1,10 @@
+' =========================================================
+' 10. A Simple AI Tensor
+' =========================================================
+
+A = TENSOR.FROM([[1, 2], [3, 4]])
+B = TENSOR.FROM([[5, 6], [7, 8]])
+C = TENSOR.MATMUL(A, B)
+TENSOR.BACKWARD C
+PRINT "Tensor:"
+PRINT FRMV$(TENSOR.TOARRAY(c))

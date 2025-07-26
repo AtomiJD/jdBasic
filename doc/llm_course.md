@@ -1,10 +1,8 @@
-# jdbasic_llm_course.md
+# A Course: Neural Networks from Scratch in jdBasic
 
-## A Course: Neural Networks from Scratch in jdBasic
+Welcome\! This course will guide you through the core concepts of neural networks by building them from the ground up, using only the powerful array and matrix functions of the `jdBasic` language. By the end of this course, you will understand the fundamental mechanics of how a neural network learns, and you will have a working, trainable Transformer model written entirely in `jdBasic`.
 
-Welcome! This course will guide you through the core concepts of neural networks by building them from the ground up, using only the powerful array and matrix functions of the `jdBasic` language. By the end of this course, you will understand the fundamental mechanics of how a neural network learns, and you will have a working, trainable Transformer model written entirely in `jdBasic`.
-
----
+-----
 
 ## Part I: The Fundamentals
 
@@ -12,9 +10,11 @@ Welcome! This course will guide you through the core concepts of neural networks
 
 The most fundamental component of a neural network is the **neuron**. It takes several inputs, multiplies each by a "weight," sums them up, adds a bias, and produces a single output.
 
-* **Inputs**: The data we feed into the neuron.
-* **Weights**: Numbers representing the "strength" of each input. These are the values the network will learn.
-* **Bias**: A value that allows the neuron to shift its output, helping the network learn patterns.
+  * **Inputs**: The data we feed into the neuron.
+  * **Weights**: Numbers representing the "strength" of each input. These are the values the network will learn.
+  * **Bias**: A value that allows the neuron to shift its output, helping the network learn patterns.
+
+<!-- end list -->
 
 ```basic
 ' Our neuron has 3 inputs.
@@ -26,7 +26,7 @@ BIAS = 0.5
 ' The core calculation: (input * weight) summed up, plus the bias.
 OUTPUT = SUM(INPUTS * WEIGHTS) + BIAS
 PRINT "Final Neuron Output: "; OUTPUT
-````
+```
 
 **What's happening?** We used `jdBasic`'s element-wise array multiplication (`INPUTS * WEIGHTS`) and then `SUM()` to perform the neuron's calculation in two clean steps.
 
@@ -171,63 +171,156 @@ NEXT EPI
 
 -----
 
-### Chapter 6: The Transformer - The Engine of Modern LLMs
+### Chapter 6: The Transformer - The AI Artist
 
-RNNs are powerful but have a weakness: they process information one step at a time. This makes it difficult for them to handle very long-term dependencies. The **Transformer** architecture solves this by processing the entire input sequence at once using its magic ingredient: the **Self-Attention** mechanism.
+RNNs are powerful, but they process information one step at a time. The **Transformer** architecture solves this by processing the entire input sequence at once using its magic ingredient: the **Self-Attention** mechanism. This allows it to model complex relationships between distant tokens in the sequence.
 
-**Goal**: Build a multi-layer Transformer that can learn patterns in text more effectively, incorporating advanced training techniques and a practical save/load workflow.
+**Goal**: Build a generative AI that learns a simple "drawing language" and then uses that knowledge to create its own unique, abstract art. This project combines all the concepts we've learned into a practical, creative application.
 
-#### Code Sample: A Multi-Layer Transformer
+#### Code Sample: The AI Artist Transformer
 
 ```basic
-' ==========================================================
-' == An LLM with a Multi-Layer Transformer in jdBasic
-' == Goal: Use stacked, normalized self-attention blocks for stable training.
-' ==========================================================
+' ===================================================================
+' == AI Artist for jdBasic
+' ==
+' == This program demonstrates the power of jdBasic's built-in
+' == Tensor engine by training a Transformer Language Model to
+' == generate abstract art.
+' ==
+' == HOW IT WORKS:
+' == 1. A simple "drawing language" is defined (e.g., "C 100 200 50 ...").
+' == 2. A Transformer LLM is trained on examples of this language.
+' == 3. The trained model is then used to generate new, unique
+' ==    sequences of drawing commands, creating generative art.
+' ===================================================================
 
-CLS
-PRINT "--- Building a Multi-Layer Transformer LLM ---"
-PRINT
+'TRON
+TROFF
 
-' --- Helper Functions (declared before use) ---
-' NOTE: These functions are already efficient for this BASIC dialect.
-' Using more complex vector functions would not improve their performance.
+' ===================================================================
+' == SHARED HELPER FUNCTIONS (Used by Training and Inference)
+' ===================================================================
+
+FUNC FORWARD_PASS(current_model, input_tokens)
+    SEQ_LEN = LEN(input_tokens)[0] ' <-- FIX: Use LEN(...)[0]
+    HIDDEN_DIM = LEN(TENSOR.TOARRAY(current_model{"output_norm"}{"bias"}))[1]
+
+    one_hot = ONE_HOT_ENCODE_MATRIX(input_tokens, VOCAB_SIZE)
+    x = MATMUL(TENSOR.FROM(one_hot), current_model{"embedding"}{"weights"})
+
+    x = x + TENSOR.POSITIONAL_ENCODING(SEQ_LEN, HIDDEN_DIM)
+
+    FOR i = 0 TO LEN(current_model{"layers"})[0] - 1 ' <-- FIX: Use LEN(...)[0]
+        layer = current_model{"layers"}[i]
+        norm1_out = TENSOR.LAYERNORM(x, layer{"norm1"}{"gain"}, layer{"norm1"}{"bias"})
+        
+        Q = MATMUL(norm1_out, layer{"attention"}{"Wq"})
+        K = MATMUL(norm1_out, layer{"attention"}{"Wk"})
+        V = MATMUL(norm1_out, layer{"attention"}{"Wv"})
+        
+        attn_scores = MATMUL(Q, TENSOR.FROM(TRANSPOSE(TENSOR.TOARRAY(K)))) / SQR(HIDDEN_DIM)
+        attn_probs = TENSOR.SOFTMAX(attn_scores, TRUE)
+        attention_output = MATMUL(attn_probs, V)
+        x = x + attention_output
+
+        norm2_out = TENSOR.LAYERNORM(x, layer{"norm2"}{"gain"}, layer{"norm2"}{"bias"})
+        ffn1_out = TENSOR.RELU(MATMUL(norm2_out, layer{"ffn1"}{"weights"}) + layer{"ffn1"}{"bias"})
+        ffn2_out = MATMUL(ffn1_out, layer{"ffn2"}{"weights"}) + layer{"ffn2"}{"bias"}
+        x = x + ffn2_out
+    NEXT i
+    
+    final_norm = TENSOR.LAYERNORM(x, current_model{"output_norm"}{"gain"}, current_model{"output_norm"}{"bias"})
+    logits = MATMUL(final_norm, current_model{"output"}{"weights"}) + current_model{"output"}{"bias"}
+    
+    RETURN logits
+ENDFUNC
+
 FUNC ONE_HOT_ENCODE_MATRIX(token_array, size)
-    rows = LEN(token_array)
-    matrix = []
-    DIM matrix[rows, size]
+    rows = LEN(token_array)[0] ' <-- FIX: Extract the scalar size
+    matrix = RESHAPE([0], [rows, size])
     FOR r = 0 TO rows - 1
-        FOR c = 0 to size - 1
-            matrix[r, c] = 0
-        NEXT c
         matrix[r, token_array[r]] = 1
     NEXT r
     RETURN matrix
 ENDFUNC
 
 FUNC SAMPLE(probs_array)
-    r = RND(1)
+    r = RND(1) 
     cdf = 0
-    num_probs = LEN(probs_array)
+    num_probs = LEN(probs_array)[0] ' <-- FIX: Use LEN(...)[0]
     FOR i = 0 TO num_probs - 1
         cdf = cdf + probs_array[i]
-        IF r < cdf THEN
-            RETURN i
-        ENDIF
+        IF r < cdf THEN RETURN i
     NEXT i
     RETURN num_probs - 1
 ENDFUNC
 
-' --- 1. Vocabulary and Data Setup ---
-' *** MODIFIED: Using more training data is the best way to improve loss ***
-'TEXT_DATA$ = "der schnelle braune fuchs springt über den faulen hund. the quick brown fox jumps over the lazy dog. zwei flinke boxer jagen die quirlige eva."
-TEXT_DATA$ = TXTREADER$("trainingtext.txt")
-PRINT "Vocabulary Data: "; TEXT_DATA$
+' --- A smarter sampling function to improve generation quality ---
+FUNC SAMPLE_TOP_K(probs_array, k)
+    ' 1. Get the indices that would sort the probabilities in descending order
+    sorted_indices = REVERSE(grade(probs_array))
+    
+    ' 2. Take the top 'k' indices and their corresponding probabilities
+    top_indices = TAKE(k, sorted_indices)
+    top_probs = []
+    FOR i = 0 TO LEN(top_indices)[0] - 1
+        top_probs = APPEND(top_probs, probs_array[top_indices[i]])
+    NEXT i
+    
+    ' 3. Re-normalize the top k probabilities so they sum to 1
+    total_prob = SUM(top_probs)
+    IF total_prob = 0 THEN RETURN top_indices[0] ' Failsafe
+    renormalized_probs = top_probs / total_prob
+    
+    ' 4. Sample from this smaller, cleaner distribution
+    r = RND(1)
+    cdf = 0
+    num_probs = LEN(renormalized_probs)[0]
+    FOR i = 0 TO num_probs - 1
+        cdf = cdf + renormalized_probs[i]
+        IF r < cdf THEN RETURN top_indices[i] ' Return the ORIGINAL index
+    NEXT i
+    RETURN top_indices[num_probs - 1] ' Failsafe
+ENDFUNC
 
-' NOTE: This method of finding unique characters is clear and effective for a one-time setup.
+
+' ===================================================================
+' == PART 1: TRAINING THE AI MODEL (The "Brain" of the Artist)
+' ===================================================================
+'
+' NOTE: This section is commented out by default because training
+' can take time. A pre-trained 'art_model.json' is expected to
+' exist. To train the model yourself, simply remove the initial
+' GOTO statement and the REM comments.
+
+'GOTO SKIP_TRAINING
+l = len(dir$("_art_model.json"))[0]
+if len(dir$("_art_model.json"))[0] > 0 then
+    input "Training data found, skip learning?"; a$
+    if ucase$(left$(a$,1)) = "Y" then
+        GOTO SKIP_TRAINING
+    endif
+ELSE
+    Print "No training data found."
+Endif
+
+REM --- Training Data: A simple language for drawing shapes ---
+REM Format: "TYPE X Y SIZE R G B;"
+REM C=Circle, L=Line, R=Rectangle
+TRAINING_DATA$ = "C 400 300 100 255 0 0; L 100 100 700 500 0 255 0; R 200 150 400 300 120 0 255;"
+TRAINING_DATA$ = TRAINING_DATA$ + "C 150 450 80 255 255 0; L 50 550 750 50 255 0 255; R 600 100 120 0 255 255;"
+TRAINING_DATA$ = TRAINING_DATA$ + "L 200 150 21 55 0 150 0; R 400 500 180 50 75 0 150; L 300 200 420 120 150 255 0;"
+PRINT "--- 1. Setting up Vocabulary and Training Data ---"
+' Create a vocabulary of all unique characters in our drawing language.
+
+REM --- Procedurally Generate a Large, Varied Training Dataset ---
+PRINT "--- 1. Generating Diverse Training Data ---"
+
+REM TXTWRITER "artai_training_data.txt", TRAINING_DATA$
+
 VOCAB = []
-FOR I = 0 TO LEN(TEXT_DATA$) - 1
-    CHAR$ = MID$(TEXT_DATA$, I + 1, 1)
+FOR I = 0 TO LEN(TRAINING_DATA$) - 1
+    CHAR$ = MID$(TRAINING_DATA$, I + 1, 1)
     IS_IN_VOCAB = 0
     if LEN(VOCAB) > 0 then
         FOR J = 0 TO LEN(VOCAB) - 1
@@ -242,33 +335,30 @@ FOR I = 0 TO LEN(TEXT_DATA$) - 1
     ENDIF
 NEXT I
 
-VOCAB_SIZE = LEN(VOCAB)
+VOCAB_SIZE = LEN(VOCAB)[0] ' <-- FIX: Extract the scalar size
+
+' Create a Map for fast character-to-index lookup.
 VOCAB_MAP = {}
 FOR I = 0 TO VOCAB_SIZE - 1
     VOCAB_MAP{VOCAB[I]} = I
 NEXT I
 
 PRINT "Vocabulary Size:"; VOCAB_SIZE
-PRINT
 
+' Prepare the input and target sequences for the LLM.
+' The target is the input shifted by one character.
+INPUT_TOKENS = TENSOR.TOKENIZE(TRAINING_DATA$, VOCAB_MAP)
+TARGET_TOKENS = APPEND(TAKE(LEN(INPUT_TOKENS)[0] - 1, DROP(1, INPUT_TOKENS)), 0) ' <-- FIX: Use LEN(...)[0]
 
-' --- 2. Prepare Training Data ---
-INPUT_TOKENS_ARRAY = TENSOR.TOKENIZE(TEXT_DATA$, VOCAB_MAP)
-TARGET_TOKENS_ARRAY = APPEND(TAKE(LEN(INPUT_TOKENS_ARRAY) - 1, DROP(1, INPUT_TOKENS_ARRAY)), 0)
-
-
-' --- 3. Model Definition ---
-' *** MODIFIED: Increased model depth for more learning capacity ***
-HIDDEN_DIM = 128
+PRINT "--- 2. Building the Transformer Model ---"
+HIDDEN_DIM = 64
 EMBEDDING_DIM = HIDDEN_DIM
-NUM_LAYERS = 4 ' --- Stacking four Transformer blocks ---
+NUM_LAYERS = 2 ' A 2-layer Transformer is sufficient for this task
 
 MODEL = {}
 MODEL{"embedding"} = TENSOR.CREATE_LAYER("EMBEDDING", {"vocab_size": VOCAB_SIZE, "embedding_dim": EMBEDDING_DIM})
 MODEL{"output_norm"} = TENSOR.CREATE_LAYER("LAYER_NORM", {"dim": HIDDEN_DIM})
 MODEL{"output"} = TENSOR.CREATE_LAYER("DENSE", {"input_size": HIDDEN_DIM, "units": VOCAB_SIZE})
-
-' Create the stack of Transformer layers
 MODEL{"layers"} = []
 FOR i = 0 TO NUM_LAYERS - 1
     layer = {}
@@ -280,144 +370,143 @@ FOR i = 0 TO NUM_LAYERS - 1
     MODEL{"layers"} = APPEND(MODEL{"layers"}, layer)
 NEXT i
 
-
-' *** MODIFIED: Tuned hyperparameters for better convergence ***
-LEARNING_RATE = 0.1
-OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": LEARNING_RATE})
-EPOCHS = 20000 ' Increased epochs for deeper model
-
-' The core Transformer Block forward pass
-' *** MODIFIED: Function now accepts the model to use as a parameter ***
-FUNC FORWARD_PASS(current_model, input_tokens)
-    SEQ_LEN = LEN(input_tokens)
-
-    ' --- 1. Embedding + Positional Encoding ---
-    one_hot_matrix = ONE_HOT_ENCODE_MATRIX(input_tokens, VOCAB_SIZE)
-    one_hot_tensor = TENSOR.FROM(one_hot_matrix)
-    embedding_weights = current_model{"embedding"}{"weights"}
-    x = TENSOR.MATMUL(one_hot_tensor, embedding_weights)
-    x = x + TENSOR.POSITIONAL_ENCODING(SEQ_LEN, HIDDEN_DIM)
-
-    ' --- 2. Pass through the stack of Transformer Layers ---
-    FOR i = 0 TO NUM_LAYERS - 1
-        layer = current_model{"layers"}[i]
-        
-        ' --- Pre-LN Self-Attention ---
-        norm1_out = TENSOR.LAYERNORM(x, layer{"norm1"}{"gain"}, layer{"norm1"}{"bias"})
-        attn_layer = layer{"attention"}
-        Wq = attn_layer{"Wq"}
-        Wk = attn_layer{"Wk"}
-        Wv = attn_layer{"Wv"}
-        Q = TENSOR.MATMUL(norm1_out, Wq)
-        K = TENSOR.MATMUL(norm1_out, Wk)
-        V = TENSOR.MATMUL(norm1_out, Wv)
-        attn_scores = TENSOR.MATMUL(Q, TENSOR.FROM(TRANSPOSE(TENSOR.TOARRAY(K)))) / SQR(HIDDEN_DIM)
-        
-        attn_probs = TENSOR.SOFTMAX(attn_scores, TRUE) 
-
-        attention_output = TENSOR.MATMUL(attn_probs, V)
-        x = x + attention_output ' Residual connection
-
-        ' --- Pre-LN Feed-Forward ---
-        norm2_out = TENSOR.LAYERNORM(x, layer{"norm2"}{"gain"}, layer{"norm2"}{"bias"})
-        ffn1_out = TENSOR.RELU(TENSOR.MATMUL(norm2_out, layer{"ffn1"}{"weights"}) + layer{"ffn1"}{"bias"})
-        ffn2_out = TENSOR.MATMUL(ffn1_out, layer{"ffn2"}{"weights"}) + layer{"ffn2"}{"bias"}
-        x = x + ffn2_out ' Residual connection
-    NEXT i
-    
-    ' --- 3. Final Output ---
-    final_norm = TENSOR.LAYERNORM(x, current_model{"output_norm"}{"gain"}, current_model{"output_norm"}{"bias"})
-    logits = TENSOR.MATMUL(final_norm, current_model{"output"}{"weights"}) + current_model{"output"}{"bias"}
-    
-    RETURN logits
-ENDFUNC
-
-' --- 5. Training Loop ---
-PRINT "--- Starting Training... ---"
-PRINT
+' --- 3. The Training Loop ---
+PRINT "--- 3. Starting Training (this may take a few minutes)... ---"
+OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": 0.05})
+EPOCHS = 5000
 
 FOR EPI = 1 TO EPOCHS
-    logits_tensor = FORWARD_PASS(MODEL, INPUT_TOKENS_ARRAY)
-    target_one_hot_matrix = ONE_HOT_ENCODE_MATRIX(TARGET_TOKENS_ARRAY, VOCAB_SIZE)
-    target_tensor = TENSOR.FROM(target_one_hot_matrix)
+    ' Forward pass through the entire model
+    logits_tensor = FORWARD_PASS(MODEL, INPUT_TOKENS)
     
+    ' Prepare target tensor
+    target_one_hot = ONE_HOT_ENCODE_MATRIX(TARGET_TOKENS, VOCAB_SIZE)
+    target_tensor = TENSOR.FROM(target_one_hot)
+    
+    ' Calculate loss, backpropagate, and update the model
     loss_tensor = TENSOR.CROSS_ENTROPY_LOSS(logits_tensor, target_tensor)
     TENSOR.BACKWARD loss_tensor
     MODEL = TENSOR.UPDATE(MODEL, OPTIMIZER)
 
     IF EPI MOD 100 = 0 THEN
-        PRINT "Epoch:"; EPI; ", Loss:"; TENSOR.TOARRAY(loss_tensor)[0]
-    ENDIF
-    
-    ' *** MODIFIED: Implement learning rate decay for better fine-tuning ***
-    IF EPI MOD 2000 = 0 AND LEARNING_RATE > 0.005 THEN
-        LEARNING_RATE = LEARNING_RATE / 2
-        OPTIMIZER = TENSOR.CREATE_OPTIMIZER("SGD", {"learning_rate": LEARNING_RATE})
-        PRINT "New learning rate: "; LEARNING_RATE
+        PRINT "Epoch:"; EPI; ", Loss: "; TENSOR.TOARRAY(loss_tensor)[0]
     ENDIF
 NEXT EPI
 
-PRINT
-PRINT "--- Training Complete ---"
-PRINT
+PRINT "--- 4. Training Complete. Saving model... ---"
+' --- FIX: Save the vocabulary along with the model parameters ---
+MODEL{"vocab"} = VOCAB
+MODEL{"vocab_map"} = VOCAB_MAP
+TENSOR.SAVEMODEL MODEL, "_art_model.json"
+PRINT "Model saved to _art_model.json"
+PRINT ""
 
-' --- 6. Save and Load the Trained Model ---
 
-PRINT "--- Saving Model ---"
-TENSOR.SAVEMODEL MODEL, "llm_model.json"
-PRINT "Model saved to llm_model.json"
-PRINT
+' ===================================================================
+' == PART 2: THE GENERATIVE ARTIST
+' ===================================================================
 
-PRINT "--- Loading Model for Inference ---"
-LOADED_MODEL = TENSOR.LOADMODEL("llm_model.json")
-IF LEN(LOADED_MODEL)=0 THEN
-    PRINT "Failed to load model!"
+SKIP_TRAINING:
+
+' --- 2. Setup Graphics and Generation Loop ---
+SCREEN 800, 600, "jdBasic AI Artist"
+CLS 10, 15, 20 ' Dark background
+
+PRINT "--- AI Artist Initializing ---"
+' --- 1. Load the Pre-Trained Model ---
+PRINT "Loading pre-trained AI model 'art_model.json'..."
+ARTIST_MODEL = TENSOR.LOADMODEL("_art_model.json")
+IF LEN(ARTIST_MODEL) = 0 THEN
+    PRINT "ERROR: Could not load 'art_model.json'."
+    PRINT "Please run the training section first by removing the GOTO."
     END
 ENDIF
 PRINT "Model loaded successfully."
-PRINT
+' --- FIX: Re-create the vocabulary from the loaded model file ---
+VOCAB = ARTIST_MODEL{"vocab"}
+VOCAB_MAP = ARTIST_MODEL{"vocab_map"}
+VOCAB_SIZE = LEN(VOCAB)[0] ' <-- FIX: Re-initialize global vars from loaded model
 
-' --- 7. Inference / Text Generation using the LOADED model ---
-PRINT "--- Generating Text from Loaded Model ---"
-generated_text$ = "Computerwelt"
-PRINT "Seed text: "; generated_text$
+generated_command$ = "C" ' Start with a seed to generate a Circle
+PRINT "Seed command: '"; generated_command$; "'"
+PRINT "Press ESC to quit."
 
-FOR i = 1 TO 200
-    inference_input_tokens = TENSOR.TOKENIZE(generated_text$, VOCAB_MAP)
+DO
+    ' --- a. Generate the next character using the AI ---
+    inference_tokens = TENSOR.TOKENIZE(generated_command$, VOCAB_MAP)
+    all_logits = FORWARD_PASS(ARTIST_MODEL, inference_tokens)
     
-    all_logits_tensor = FORWARD_PASS(LOADED_MODEL, inference_input_tokens)
-    all_logits_array = TENSOR.TOARRAY(all_logits_tensor)
-    
-    last_row_index = LEN(inference_input_tokens) - 1
-    last_logits_vector = SLICE(all_logits_array, 0, last_row_index)
-    
-    last_logits_tensor = TENSOR.FROM(last_logits_vector)
-    probs_tensor = TENSOR.SOFTMAX(last_logits_tensor)
-    
-    probs_array = TENSOR.TOARRAY(probs_tensor)
-    
-    next_token_id = SAMPLE(probs_array)
-    
-    generated_text$ = generated_text$ + VOCAB[next_token_id]
-    
-NEXT i
+    ' Get the logits for the very last character in the sequence
+    last_logits_vec = SLICE(TENSOR.TOARRAY(all_logits), 0, LEN(inference_tokens)[0] - 1) 
+    TEMPERATURE = 1.2
+    last_logits_vec = last_logits_vec / TEMPERATURE
 
-PRINT
-PRINT "Generated Output:"
-PRINT generated_text$
-PRINT
+    ' Convert logits to probabilities and sample the next character
+    'probs = TENSOR.SOFTMAX(TENSOR.FROM(last_logits_vec))
+    'next_token_id = SAMPLE(TENSOR.TOARRAY(probs))
+    probs = TENSOR.TOARRAY(TENSOR.SOFTMAX(TENSOR.FROM(last_logits_vec))) 
+    next_token_id = SAMPLE_TOP_K(probs, 5)
+    next_char$ = VOCAB[next_token_id]
+    
+    generated_command$ = generated_command$ + next_char$
+   
+    ' --- b. Check if a command is complete ---
+    IF next_char$ = ";" THEN
+        PRINT "AI Generated Command: "; generated_command$
+        
+        ' --- c. Parse and Execute the Drawing Command ---
+        parts = SPLIT(TRIM$(LEFT$(generated_command$, LEN(generated_command$)-1)), " ")
+        
+        IF LEN(parts)[0] = 7 THEN 
+            TYPE$ = UCASE$(parts[0])
+            x = VAL(parts[1]) 
+            y = VAL(parts[2]) 
+            size = VAL(parts[3])
+            r = VAL(parts[4]) 
+            g = VAL(parts[5]) 
+            b = VAL(parts[6])
+
+            IF TYPE$ = "C" THEN
+                CIRCLE x, y, size, r, g, b
+            ENDIF
+            IF TYPE$ = "R" THEN
+                RECT x, y, size, size/2, r, g, b, TRUE
+            ENDIF
+            IF TYPE$ = "L" THEN
+                ' For lines, interpret 'size' as a second point offset
+                LINE x, y, x+size, y+size, r, g, b
+            ENDIF
+            
+            SCREENFLIP
+            generated_command$ = parts[0]
+        ELSE 
+            PRINT "Invalid command generated. Resetting seed..."
+            ' Reset with a random shape to encourage variety
+            shape_choice = RND(1)
+            IF shape_choice < 0.33 THEN
+                generated_command$ = "C"
+            ELSEIF shape_choice < 0.66 THEN 
+                generated_command$ = "R"
+            ELSE
+                generated_command$ = "L"
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' Check for exit key
+    IF INKEY$() = CHR$(27) THEN EXITDO
+    SLEEP 10 ' Small delay
+LOOP
 ```
 
-#### Deconstructing the Transformer 🚀
+#### Deconstructing the AI Artist 🚀
 
 This script demonstrates a complete, modern machine learning workflow.
 
-  * **Scaling Up**: To improve performance, the model is made deeper with `NUM_LAYERS = 4` and a wider `HIDDEN_DIM = 128`. More importantly, it loads its training data from an external file (`trainingtext.txt`), showing how to use larger datasets to get better results.
-  * **Causal Masking**: When predicting the next token, the model must not see future tokens. The `TENSOR.SOFTMAX(scores, TRUE)` command enables a **causal mask**, which prevents this "cheating" during training and is critical for text generation.
-  * **Learning Rate Decay**: The training loop reduces the learning rate over time. It starts larger to make quick progress and then gets smaller to carefully fine-tune the model's parameters.
-  * **Practical Workflow**: The script finishes by saving the fully trained model to a file using `TENSOR.SAVEMODEL`. It then immediately loads it back with `TENSOR.LOADMODEL` and performs inference, proving that the model's knowledge can be stored and reused.
+  * **A Creative Goal**: Instead of just predicting text, this model learns the syntax of a simple graphical language. Its goal is to generate new, valid commands that result in abstract art. 
+  * **Self-Attention in Action**: The `FORWARD_PASS` function is a pure Transformer. It uses self-attention (`Q`, `K`, `V` matrices) to weigh the importance of all previous characters when predicting the next one. This is what allows it to learn complex grammatical rules, like how many numbers should follow a "C". 
+  * **Robust Training**: The model is trained on a set of example drawing commands. The training loop calculates the `CROSS_ENTROPY_LOSS`, backpropagates the error with `TENSOR.BACKWARD`, and updates the model with `TENSOR.UPDATE`. 
+  * **Creative Generation**: During inference, the AI uses a `TEMPERATURE` variable to make its predictions less deterministic. A higher temperature allows for more surprising (and creative) outputs. It also includes error handling: if it generates a syntactically incorrect command, it resets itself with a new random seed, preventing it from getting stuck in a feedback loop. 
+  * **Practical Workflow**: The script finishes by saving the fully trained model to `_art_model.json` using `TENSOR.SAVEMODEL`. It then immediately loads it back with `TENSOR.LOADMODEL` and performs inference, proving that the model's knowledge can be stored and reused. 
 
-Congratulations\! You have now journeyed from the basics of a single neuron to building, training, and deploying a Transformer model—the foundation of modern AI—all within the `jdBasic` environment. You are well-equipped to experiment, build, and continue your learning journey.
-
-```
-```
+Congratulations\! You have now journeyed from the basics of a single neuron to building, training, and deploying a creative Transformer model—the foundation of modern AI—all within the `jdBasic` environment. You are well-equipped to experiment, build, and continue your learning journey.

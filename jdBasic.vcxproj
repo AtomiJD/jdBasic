@@ -73,9 +73,9 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <TargetName>jdBasic</TargetName>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include;</IncludePath>
     <ReferencePath>$(VC_ReferencesPath_x64);</ReferencePath>
-    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT;$(SolutionDir)libs\SDL3_image-3.2.4\lib\x64;$(SolutionDir)libs\SDL3_ttf-3.2.2\lib\x64</LibraryPath>
+    <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT;$(SolutionDir)libs\SDL3_image-3.2.4\lib\x64;$(SolutionDir)libs\SDL3_ttf-3.2.2\lib\x64;</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <TargetName>jdBasic</TargetName>
@@ -121,7 +121,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); libssl.lib;libcrypto.lib; SDL3.lib; SDL3_ttf.lib; SDL3_image.lib</AdditionalDependencies>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); libssl.lib;libcrypto.lib; SDL3.lib; SDL3_ttf.lib; SDL3_image.lib; </AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -148,6 +148,7 @@
   <ItemGroup>
     <ClCompile Include="source\BuiltinFunctions.cpp" />
     <ClCompile Include="source\Commands.cpp" />
+    <ClCompile Include="source\Compiler.cpp" />
     <ClCompile Include="source\DAPHandler.cpp" />
     <ClCompile Include="source\Error.cpp" />
     <ClCompile Include="source\Graphics.cpp" />
@@ -162,11 +163,13 @@
     <ClCompile Include="source\StringUtils.cpp" />
     <ClCompile Include="source\TextEditor.cpp" />
     <ClCompile Include="source\TextIO.cpp" />
+    <ClCompile Include="source\TileMapSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\AIFunctions.hpp" />
     <ClInclude Include="include\BuiltinFunctions.hpp" />
     <ClInclude Include="include\Commands.hpp" />
+    <ClInclude Include="include\Compiler.hpp" />
     <ClInclude Include="include\DAPHandler.hpp" />
     <ClInclude Include="include\Error.hpp" />
     <ClInclude Include="include\Graphics.hpp" />
@@ -178,12 +181,12 @@
     <ClInclude Include="include\StringUtils.hpp" />
     <ClInclude Include="include\TextEditor.hpp" />
     <ClInclude Include="include\TextIO.hpp" />
+    <ClInclude Include="include\TileMapSystem.hpp" />
     <ClInclude Include="include\Tokens.hpp" />
     <ClInclude Include="include\Types.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
-    <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="jdBasic.ico" />

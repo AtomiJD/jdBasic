@@ -1,0 +1,89 @@
+' Mandelbrot Set Generator for jdBasic
+' -------------------------------------
+' This program calculates and draws the Mandelbrot fractal.
+' It iterates through each pixel, mapping it to the complex plane
+' and coloring it based on how quickly the value escapes to infinity.
+
+' --- 1. Configuration and Setup ---
+SCREEN_W = 800
+SCREEN_H = 600
+CALC_W = 400
+CALC_H = 300
+DX = SCREEN_W / CALC_W
+DY = SCREEN_H / CALC_H
+
+MAX_ITERATIONS = 50 ' Increase for more detail, but slower rendering
+
+' Define the view of the complex plane to render
+' Default view
+X_MIN = -2.0
+X_MAX = 1.0
+Y_MIN = -1.0
+Y_MAX = 1.0
+
+' A more zoomed-in view to see more detail
+' X_MIN = -0.75
+' X_MAX = -0.74
+' Y_MIN = 0.1
+' Y_MAX = 0.11
+
+' --- 2. Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Mandelbrot Set in jdBasic"
+CLS 0, 0, 0 ' Clear screen to black
+
+' --- 3. Main Calculation and Drawing Loop ---
+PRINT "Calculating Mandelbrot set... This may take a moment."
+
+' Loop through every pixel on the screen
+FOR PY = 0 TO CALC_H - 1
+  FOR PX = 0 TO CALC_W - 1
+    ' Map the pixel coordinates (PX, PY) to a complex number (C_REAL, C_IMAG)
+    C_REAL = X_MIN + (PX / CALC_W) * (X_MAX - X_MIN)
+    C_IMAG = Y_MIN + (PY / CALC_H) * (Y_MAX - Y_MIN)
+
+    ' Initialize the iteration variables for this point
+    Z_REAL = 0
+    Z_IMAG = 0
+    ITER = 0
+
+    ' The main Mandelbrot iteration loop
+    DO WHILE (Z_REAL * Z_REAL + Z_IMAG * Z_IMAG) <= 4 AND ITER < MAX_ITERATIONS
+      ' Calculate z^2 + c
+      Z_REAL_NEW = (Z_REAL * Z_REAL - Z_IMAG * Z_IMAG) + C_REAL
+      Z_IMAG_NEW = (2 * Z_REAL * Z_IMAG) + C_IMAG
+
+      ' Update z for the next iteration
+      Z_REAL = Z_REAL_NEW
+      Z_IMAG = Z_IMAG_NEW
+
+      ITER = ITER + 1
+    LOOP
+
+    ' --- 4. Coloring the Pixel ---
+    ' If the loop finished because it reached max iterations, the point is in the set.
+    IF ITER = MAX_ITERATIONS THEN
+      ' Draw a black pixel for points inside the set
+      RECT PX*DX, PY*DY, DX, DY, 0, 0, 0, TRUE
+    ELSE
+      ' The point is outside the set. Color it based on the escape time (ITER).
+      ' This creates the colorful bands around the set.
+      R = (ITER * 8) MOD 255
+      G = (ITER * 5) MOD 255
+      B = (ITER * 12) MOD 255
+      RECT PX*DX, PY*DY, DX, DY, R, G, B, TRUE
+    ENDIF
+  NEXT PX
+  PRINT "ROW: "; PY
+NEXT PY
+
+' --- 5. Display the Final Image and Wait ---
+PRINT "Calculation complete. Displaying result."
+SCREENFLIP ' Push the completed drawing to the screen
+
+PRINT "Press any key to exit."
+' Wait for a key press before closing the window
+do
+ a$ = inkey$()
+ sleep 10
+loop until a$ > ""

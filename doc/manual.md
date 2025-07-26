@@ -54,8 +54,8 @@ FUNC SQUARE_IT(X)
     RETURN X * X
 ENDFUNC
 
-' The MAP function applies a function to each element of an array
-result = MAP(SQUARE_IT@, [1, 2, 3, 4])
+' The SELECT function applies a function to each element of an array
+result = SELECT(SQUARE_IT@, [1, 2, 3, 4])
 PRINT result ' Output: [1, 4, 9, 16]
 ```
 
@@ -64,16 +64,27 @@ PRINT result ' Output: [1, 4, 9, 16]
 ```basic
 ' Read the entire content of a file into a string
 file_content$ = TXTREADER$("my_file.txt")
+PRINT file_content$
 ```
 
 **6. Graphics and Sprites**
 
 ```basic
-' Create a window and bounce an enemy sprite
+' Create a window and moves an enemy sprite
 SCREEN 800, 600, "My Game"
 SPRITE.LOAD 1, "enemy.png"
 ENEMY_ID = SPRITE.CREATE(1, 100, 100)
-SPRITE.SET_VELOCITY ENEMY_ID, 2, 1.5
+SPRITE.SET_VELOCITY ENEMY_ID, 20, 15
+
+DO 
+    CLS
+    SPRITE.UPDATE 
+    SPRITE.DRAW_ALL 0,0
+    SCREENFLIP
+
+    A$ = INKEY$()
+    SLEEP 20 
+LOOP UNTIL A$ > ""
 ```
 
 **7. Matrix Multiplication**
@@ -85,12 +96,18 @@ C = MATMUL(A, B)
 PRINT C ' Output: [[19, 22], [43, 50]]
 ```
 
-**8. Interacting with OpenAI**
+**8. Bitwise Operator**
 
 ```basic
-' Set headers and post a request to the OpenAI API
-HTTP.SETHEADER "Authorization", "Bearer " + API_KEY$
-RESPONSE$ = HTTP.POST$(API_URL$, JSON_BODY$, "application/json")
+A = %0101  
+B = %0011  
+
+PRINT "A = 5 (%0101), B = 3 (%0011)"
+PRINT "-----------------------------"
+PRINT "A BAND B: "; A BAND B  ' %0101 AND %0011 = %0001 -> 1
+PRINT "A BOR B:  "; A BOR B   ' %0101 OR  %0011 = %0111 -> 7
+PRINT "A BXOR B: "; A BXOR B  ' %0101 XOR %0011 = %0110 -> 6
+PRINT
 ```
 
 **9. COM Automation**
@@ -99,7 +116,10 @@ RESPONSE$ = HTTP.POST$(API_URL$, JSON_BODY$, "application/json")
 ' Automate Microsoft Excel
 objXL = CREATEOBJECT("Excel.Application")
 objXL.Visible = TRUE
-objXL.ActiveSheet.Cells(1, 1).Value = "Hello from jdBasic!"
+wb = objXL.Workbooks.Add()
+objcell = objXL.ActiveSheet.Cells(1, 1)
+objcell.Value = "Hello from jdBasic!"
+objXL.Quit()
 ```
 
 **10. A Simple AI Tensor**
@@ -110,6 +130,8 @@ A = TENSOR.FROM([[1, 2], [3, 4]])
 B = TENSOR.FROM([[5, 6], [7, 8]])
 C = TENSOR.MATMUL(A, B)
 TENSOR.BACKWARD C
+PRINT "Tensor:"
+PRINT FRMV$(TENSOR.TOARRAY(c))
 ```
 
 -----
@@ -120,11 +142,11 @@ This chapter covers the absolute essentials to get you writing and running your 
 
 ### Running a Program
 
-To run a `jdBasic` program, save your code in a text file (e.g., `test.bas`) and pass the filename to the interpreter from your command line:
+To run a `jdBasic` program, save your code in a text file (e.g., `test.jdb`) and pass the filename to the interpreter from your command line:
 
 ```sh
 # Replace 'jdBasic' with the actual executable name on your system
-jdBasic test.bas
+jdBasic test.jdb
 ```
 
 ### The `Ready` Prompt
@@ -279,7 +301,7 @@ PRINT "Loop finished."
 i=0
 do while i < 5
  i=i+1
- print "Achim: "; I
+ print "LOOP #: "; I
 loop
 ```
 
@@ -295,7 +317,7 @@ do
     print "Exit do at i: "; I
     exitdo
  endif
- print "Achim: "; I
+ print "LOOP #: "; I
 loop until i > 5
 ```
 
@@ -415,24 +437,24 @@ This chapter serves as a technical reference for `jdBasic`'s syntax, commands, a
   * **`FOR...TO...STEP...NEXT`**: Looping construct.
   * **`DO...LOOP [WHILE/UNTIL]`**: Flexible looping.
   * **`GOTO label`**: Jumps to a code label.
-  * **`ON ERROR CALL sub`**: Sets a global error handler.
+  * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
   * **`SLEEP ms`**: Pauses for milliseconds.
   * **`STOP`**: Halts execution, can be resumed.
 
 **Code Sample 1: Error Handling**
 
 ```basic
-sub MyErrorHandler()
-    PRINT "An error occurred!"
-    PRINT "Error Code: "; ERR
-    PRINT "Line Number: "; ERL
-    RESUME NEXT ' Continue after the line that caused the error
-endsub
-
-ON ERROR CALL MyErrorHandler
 DIM A[5]
-A[6] = 10 ' This will cause an "Array out of bounds" error
-PRINT "This line will be printed because of RESUME NEXT."
+TRY
+    A[6] = 10 ' This will cause an "Array out of bounds" error
+CATCH
+    PRINT "Error occurred!"
+    PRINT "Code: "; ERR
+    PRINT "Line: "; ERL
+    PRINT "Message: "; ERRMSG$
+ENDTRY
+
+PRINT "Program finished normally."
 ```
 
 **Development & Debugging**

@@ -7,10 +7,19 @@
         {
             "type": "jdbasic",
             "request": "launch",
-            "name": "jdBasic Releas Version",
+            "name": "jdBasic Release Version",
             "program": "${file}",
-            "runtime": "D:/usr/dev/c/NeReLaBasicInterpreter/x64/Release/jdBASIC.exe",
+            "runtime": "D:/usr/dev/c/jdbasic/x64/release/jdBASIC.exe",
+            "stopOnEntry": true
+        },
+        {
+            "type": "jdbasic",
+            "request": "launch",
+            "name": "jdBasic Debug Version",
+            "program": "${file}",
+            "runtime": "D:/usr/dev/c/jdbasic/x64/debug/jdBASIC.exe",
             "stopOnEntry": true
         }
+
     ]
 }

@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <vector>
 #include <string>
+#include <map>
 
 // Enum for different oscillator waveforms
 enum class Waveform {
@@ -36,30 +37,48 @@ struct Voice {
     double release_time = 0.2;
 };
 
+// --- Struct to hold loaded WAV file data ---
+// The audio data is converted to the device's native format (float) upon loading.
+struct SoundChunk {
+    float* buffer = nullptr;
+    Uint32 length = 0; // Length in bytes
+};
+
+// --- Struct to manage a single playback instance of a SoundChunk ---
+struct SoundChannel {
+    int sample_id = -1;       // ID of the SoundChunk to play
+    Uint32 position = 0;      // Current position in the buffer, in bytes
+    bool is_active = false;
+    bool is_looping = false;
+};
+
 class SoundSystem {
 public:
     SoundSystem();
     ~SoundSystem();
 
     // Initializes SDL_Audio and opens an audio device
-    bool init(int num_tracks = 8);
+    bool init(int num_tracks = 8, int num_channels = 16);
 
-    // Closes the audio device and cleans up
     void shutdown();
 
-    // Configures a voice/track with waveform and ADSR parameters
     void set_voice(int track_index, Waveform waveform, double attack, double decay, double sustain, double release);
-
-    // Starts playing a note on a specified track
     void play_note(int track_index, double frequency);
-
-    // Starts the release phase for a note on a specified track
     void release_note(int track_index);
-
-    // Immediately stops a note on a specified track
     void stop_note(int track_index);
 
+    // Loads a WAV file and stores it with a given ID.
+    // Returns true on success, false on failure.
+    bool load_sound(int sample_id, const std::string& filename);
+    void play_sound(int sample_id, bool looping = false); // Add looping parameter
+    void play_music(int sample_id, bool looping = true);
+    void stop_music();
+
     bool is_initialized = false;
+
+    // --- State for WAV file playback ---
+    std::map<int, SoundChunk> loaded_samples; // Stores loaded WAV data, mapped by ID.
+    std::vector<SoundChannel> channels;       // A pool of channels for playing sounds.
 
 private:
     // --- UPDATED: The new SDL3 audio stream callback signature ---
@@ -74,5 +93,6 @@ private:
     SDL_AudioSpec audio_spec;
 
     std::vector<Voice> tracks; // A vector to hold all our synthesizer tracks
+    int music_channel_id = -1;
 };
 #endif

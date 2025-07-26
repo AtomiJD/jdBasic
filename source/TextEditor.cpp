@@ -1,6 +1,10 @@
 #include "TextEditor.hpp"
 #include "TextIO.hpp"
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <ncurses.h>
+#endif
 #include <algorithm>
 #include <cctype> 
 #include <fstream> // For saving the file
@@ -8,6 +12,7 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 void TextEditor::get_window_size(int& rows, int& cols) {
+#ifdef _WIN32
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
         cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
@@ -17,6 +22,11 @@ void TextEditor::get_window_size(int& rows, int& cols) {
         cols = 80;
         rows = 25;
     }
+
+#else
+    getmaxyx(stdscr, rows, cols);
+#endif        
+
 }
 
 // MODIFIED: Constructor now accepts and stores the filename
@@ -154,7 +164,11 @@ void TextEditor::move_cursor(int key) {
 
 void TextEditor::process_keypress(int c) {
     if (c == 224 || c == 0) {
+#ifdef _WIN32        
         move_cursor(_getch());
+#else
+        move_cursor(getch());
+#endif
         return;
     }
     switch (c) {
@@ -195,7 +209,11 @@ std::string TextEditor::prompt_user(const std::string& prompt, const std::string
         status_msg = prompt + input;
         draw_status_bar();
         TextIO::locate(screen_rows + 2, prompt.length() + input.length() + 1);
+#ifdef _WIN32        
         int key = _getch();
+#else
+        int key = getch();
+#endif
         if (key == 13) { // Enter
             status_msg = "";
             return input;
@@ -273,17 +291,31 @@ void TextEditor::go_to_line() {
 void TextEditor::run() {
     int key;
     TextIO::setCursor(true);
+
+#ifndef _WIN32
+    keypad(stdscr, TRUE);
+#endif
+
     while (true) {
         draw_screen();
         TextIO::locate(cy - top_row + 1, cx + 1);
-        key = _getch();
+
+#ifdef _WIN32
+        int key = _getch();
+#else
+        int key = getch();
+#endif
 
         if (key == CTRL_KEY('x')) { break; }
         else if (key == CTRL_KEY('s')) { save_file(); }
         else if (key == CTRL_KEY('f')) { find_text(); }
         else if (key == CTRL_KEY('g')) { go_to_line(); }
         else if (key == 224 || key == 0) { // Special keys like arrows, F3, etc.
+#ifdef _WIN32        
             int ex_key = _getch();
+#else
+            int ex_key = getch();
+#endif
             if (ex_key == 61 && !last_search_query.empty()) { // F3 for Find Next
                 find_text();
             }

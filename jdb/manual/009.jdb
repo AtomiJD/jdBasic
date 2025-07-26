@@ -1,0 +1,11 @@
+' =========================================================
+' 9. COM Automation
+' =========================================================
+
+' Automate Microsoft Excel
+objXL = CREATEOBJECT("Excel.Application")
+objXL.Visible = TRUE
+wb = objXL.Workbooks.Add()
+objcell = objXL.ActiveSheet.Cells(1, 1)
+objcell.Value = "Hello from jdBasic!"
+objXL.Quit()

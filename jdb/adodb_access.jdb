@@ -5,7 +5,7 @@
 ' --- IMPORTANT ---
 ' You must change this path to the full, correct path of your
 ' Access database file.
-db_path = "D:\usr\dev\c\NeReLaBasicInterpreter\jdb\Orders.accdb"
+db_path = "Orders.accdb"
 table_name = "Orders"
 
 PRINT "--- Access Database Reader ---"
@@ -25,6 +25,7 @@ conn_str = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + db_path
 
 ' 3. Open the connection to the database.
 '    This is like logging into the database file.
+stop
 conn.Open(conn_str)
 PRINT "Connection successful."
 

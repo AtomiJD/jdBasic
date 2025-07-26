@@ -1,6 +1,7 @@
 // DAPHandler.cpp
 #include "DAPHandler.hpp"
 #include "NeReLaBasic.hpp"
+#include "Compiler.hpp"
 #include "TextIO.hpp" // For logging/debugging only
 #include "Commands.hpp" // For to_string
 #include "Error.hpp"
@@ -132,6 +133,12 @@ void DAPHandler::process_command(const std::string& command_line) {
     }
     else if (command == "next") {
         vm.step_over();
+    }
+    else if (command == "stepin") {
+        vm.step_in();
+    }
+    else if (command == "stepout") {
+        vm.step_out();
     }
     else if (command == "set_breakpoint") {
         on_set_breakpoint(args);
@@ -304,7 +311,7 @@ void DAPHandler::on_repl(const std::string& inputLine) {
 
         // Tokenize the REPL input line into its own temporary p-code buffer.
         vm.direct_p_code.clear();
-        if (vm.tokenize(inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
+        if (vm.compiler->tokenize(vm, inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
             // If tokenization fails, print the syntax error to the redirected string.
             Error::print();
         }

@@ -1,0 +1,109 @@
+' jdBasic Bouncing Rainbow Lines
+' A vectorized animation demonstrating physics and color gradients.
+
+' -------------------------------------------------
+' 1. SETUP & INITIALIZATION
+' -------------------------------------------------
+SCREEN_W = 1920
+SCREEN_H = 1080
+MAX_LINES = 500
+LINES_PER_FRAME = 1 ' How many new lines to add each frame
+
+' --- Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Bouncing Rainbow Lines"
+CLS 0, 0, 0 ' Clear screen to black
+
+' --- Initialize Position & Velocity Matrices for ALL possible lines ---
+PRINT "Generating initial positions and velocities..."
+
+' Create a dummy 1D vector to define the number of random values to generate.
+dummy_col = RESHAPE([0], [MAX_LINES])
+
+' Generate the X and Y columns separately, scale them, and then stack them.
+P1 = STACK(1, RND(dummy_col) * SCREEN_W, RND(dummy_col) * SCREEN_H)
+P2 = STACK(1, RND(dummy_col) * SCREEN_W, RND(dummy_col) * SCREEN_H)
+
+' V1 and V2 hold the velocities.
+dummy_shape_2d = RESHAPE([0], [MAX_LINES, 2])
+V1 = (RND(dummy_shape_2d) - 0.5) * 8
+V2 = (RND(dummy_shape_2d) - 0.5) * 8
+
+' --- Animation Loop Variables ---
+num_lines = 1
+time_step = 0
+
+' -------------------------------------------------
+' 2. MAIN ANIMATION LOOP
+' -------------------------------------------------
+PRINT "Starting animation loop... Press any key to exit."
+DO
+    ' --- Clear the screen for the new frame ---
+    CLS 0, 0, 0
+
+    ' --- Increment the number of active lines ---
+    IF num_lines < MAX_LINES THEN
+        num_lines = num_lines + LINES_PER_FRAME
+        IF num_lines > MAX_LINES THEN num_lines = MAX_LINES
+    ENDIF
+
+    ' --- Update all positions with their velocities in one operation ---
+    P1 = P1 + V1
+    P2 = P2 + V2
+
+    ' --- Vectorized Bouncing Logic ---
+    p1_bounce_x = (SLICE(P1, 1, 0) < 0) OR (SLICE(P1, 1, 0) > SCREEN_W)
+    p1_bounce_y = (SLICE(P1, 1, 1) < 0) OR (SLICE(P1, 1, 1) > SCREEN_H)
+    p2_bounce_x = (SLICE(P2, 1, 0) < 0) OR (SLICE(P2, 1, 0) > SCREEN_W)
+    p2_bounce_y = (SLICE(P2, 1, 1) < 0) OR (SLICE(P2, 1, 1) > SCREEN_H)
+
+    v1_x_flipped = SLICE(V1, 1, 0) * (1 - 2 * p1_bounce_x)
+    v1_y_flipped = SLICE(V1, 1, 1) * (1 - 2 * p1_bounce_y)
+    v2_x_flipped = SLICE(V2, 1, 0) * (1 - 2 * p2_bounce_x)
+    v2_y_flipped = SLICE(V2, 1, 1) * (1 - 2 * p2_bounce_y)
+
+    V1 = STACK(1, v1_x_flipped, v1_y_flipped)
+    V2 = STACK(1, v2_x_flipped, v2_y_flipped)
+
+    ' --- Vectorized Rainbow Color Generation ---
+    hue = (IOTA(num_lines) / num_lines) * 2 * PI
+    r = (SIN(hue + time_step) * 127.5) + 127.5
+    g = (SIN(hue + time_step + (2 * PI / 3)) * 127.5) + 127.5
+    b = (SIN(hue + time_step + (4 * PI / 3)) * 127.5) + 127.5
+    colors = STACK(1, r, g, b)
+
+    ' --- Prepare Matrices for Drawing ---
+    ' Select the first 'num_lines' rows from the main position matrices.
+    ' This is the correct way to get a sub-matrix.
+    active_p1 = SLICE(P1, 0, 0, num_lines)
+    active_p2 = SLICE(P2, 0, 0, num_lines)
+
+    ' Extract each column of coordinate data. This now works because active_p1/p2 have the correct shape.
+    x1_col = SLICE(active_p1, 1, 0)
+    y1_col = SLICE(active_p1, 1, 1)
+    x2_col = SLICE(active_p2, 1, 0)
+    y2_col = SLICE(active_p2, 1, 1)
+
+    ' Explicitly RESHAPE the columns into 1D vectors for STACK.
+    x1_vec = RESHAPE(x1_col, [num_lines])
+    y1_vec = RESHAPE(y1_col, [num_lines])
+    x2_vec = RESHAPE(x2_col, [num_lines])
+    y2_vec = RESHAPE(y2_col, [num_lines])
+
+    ' Combine the 1D vectors into a single (num_lines x 4) matrix for drawing.
+    lines_to_draw = STACK(1, x1_vec, y1_vec, x2_vec, y2_vec)
+
+    ' --- Draw all active lines in one command ---
+    LINE lines_to_draw, colors
+
+    ' --- Update the screen and advance time ---
+    SCREENFLIP
+    time_step = time_step + 0.05
+    SLEEP 16 ' Aim for ~60 FPS
+
+    ' --- Check for user input to exit the loop ---
+    a$ = INKEY$()
+LOOP UNTIL a$ > ""
+
+' --- Clean up ---
+PRINT "Animation finished."

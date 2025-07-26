@@ -1,5 +1,6 @@
 #include "Commands.hpp"
 #include "NeReLaBasic.hpp"
+#include "Compiler.hpp"
 #include "BuiltinFunctions.hpp"
 #include "AIFunctions.hpp"
 #include "TextIO.hpp"
@@ -9,7 +10,13 @@
 #include <thread>
 #include <chrono>
 #include <cmath> // For sin, cos, etc.
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <codecvt> // for std::wstring_convert
+#include <locale>  // for std::locale
+#include <ncurses.h>
+#endif
 #include <algorithm>    // For std::transform
 #include <string>       // For std::string, std::to_string
 #include <vector>       // For std::vector
@@ -21,9 +28,17 @@
 #include <sstream>
 #include <unordered_set>
 #include <cstdlib> 
+#ifdef _WIN32
 #include <format>
+#else
+#include <fmt/core.h>
+#include <fmt/format.h>
+#endif
 #include <functional>
 #include <random>
+#include <future>
+#include <regex>
+#include <cmath>
 
 #ifdef HTTP
 #include "NetworkManager.hpp"
@@ -70,7 +85,6 @@ _variant_t basic_value_to_variant_t(const BasicValue& val) {
 }
 
 // Helper to convert _variant_t back to BasicValue
-
 BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
     switch (vt.vt) {
         // --- Null / Empty ---
@@ -82,7 +96,7 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         // to your BasicValue variant.
         return 0.0;
 
-    // --- Numeric Types (all converted to double) ---
+        // --- Numeric Types (all converted to double) ---
     case VT_I1:       return (double)vt.cVal;
     case VT_UI1:      return (double)vt.bVal;
     case VT_I2:       return (double)vt.iVal;
@@ -106,12 +120,12 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         [[fallthrough]];
     }
 
-    // --- Boolean ---
+              // --- Boolean ---
     case VT_BOOL:
         // vt.boolVal is a VARIANT_BOOL, which is -1 for true and 0 for false.
         return (vt.boolVal != 0);
 
-    // --- Date/Time ---
+        // --- Date/Time ---
     case VT_DATE: {
         SYSTEMTIME st;
         if (VariantTimeToSystemTime(vt.date, &st) == 1) {
@@ -130,7 +144,7 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         [[fallthrough]];
     }
 
-    // --- String ---
+                // --- String ---
     case VT_BSTR: {
         if (vt.bstrVal) {
             // The _bstr_t wrapper handles the conversion from BSTR to char*
@@ -139,13 +153,13 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
         return std::string("");
     }
 
-    // --- COM Object ---
+                // --- COM Object ---
     case VT_DISPATCH: {
         // The ComObject wrapper handles the IDispatch pointer
         return ComObject(vt.pdispVal);
     }
 
-    // --- Unhandled / Advanced Types ---
+                    // --- Unhandled / Advanced Types ---
     case VT_ERROR:
     case VT_VARIANT: // Pointer to another VARIANT, requires recursion
     case VT_UNKNOWN: // IUnknown pointer, could try to QueryInterface for IDispatch
@@ -414,7 +428,7 @@ namespace {
         }
         return inverse;
     }
-} 
+}
 
 // --- JSON Functionality ---
 
@@ -722,7 +736,7 @@ extern const std::map<std::string, Waveform> waveform_map;
 // SCREEN width, height, [title$]
 // Initializes the graphics screen.
 BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 2 || args.size() > 3) {
+    if (args.size() < 2 || args.size() > 4) {
         Error::set(8, vm.runtime_current_line);
         return false;
     }
@@ -730,33 +744,22 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     int width = static_cast<int>(to_double(args[0]));
     int height = static_cast<int>(to_double(args[1]));
     std::string title = "jdBasic Graphics";
+    float scale = 1.0f;
+
     if (args.size() == 3) {
         title = to_string(args[2]);
     }
 
-    if (!vm.graphics_system.init(title, width, height)) {
+    if (args.size() == 4) {
+        scale = static_cast<float>(to_double(args[3]));
+    }
+
+    // Pass all arguments, including the new scale factor, to the init method
+    if (!vm.graphics_system.init(title, width, height, scale)) {
         Error::set(1, vm.runtime_current_line); // Generic error
     }
 
     return false; // Procedures return a dummy value
-}
-
-// PSET x, y, [r, g, b]
-// Sets a pixel at a specific coordinate to a color.
-BasicValue builtin_pset(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 2 || args.size() > 5) { Error::set(8, vm.runtime_current_line); return false; }
-
-    int x = static_cast<int>(to_double(args[0]));
-    int y = static_cast<int>(to_double(args[1]));
-    Uint8 r = 255, g = 255, b = 255; // Default to white
-
-    if (args.size() == 5) {
-        r = static_cast<Uint8>(to_double(args[2]));
-        g = static_cast<Uint8>(to_double(args[3]));
-        b = static_cast<Uint8>(to_double(args[4]));
-    }
-    vm.graphics_system.pset(x, y, r, g, b);
-    return false;
 }
 
 // SCREENFLIP
@@ -767,64 +770,232 @@ BasicValue builtin_screenflip(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return false;
 }
 
-// LINE x1, y1, x2, y2, [r, g, b]
+BasicValue builtin_drawcolor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // Check for the correct number of arguments (either 1 or 3)
+    if (args.size() != 1 && args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "DRAWCOLOR requires 3 numeric arguments or 1 array argument.");
+        return false;
+    }
+
+    Uint8 r, g, b;
+
+    // Case 1: Single array argument, e.g., DRAWCOLOR [r, g, b]
+    if (args.size() == 1) {
+        // Ensure the argument is an array
+        if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+            Error::set(15, vm.runtime_current_line, "Single argument to DRAWCOLOR must be an array.");
+            return false;
+        }
+
+        const auto& color_vec_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+
+        // Ensure the array is valid and has exactly 3 elements
+        if (!color_vec_ptr || color_vec_ptr->data.size() != 3) {
+            Error::set(15, vm.runtime_current_line, "Color array for DRAWCOLOR must contain exactly 3 elements.");
+            return false;
+        }
+
+        // Extract RGB values from the array
+        r = static_cast<Uint8>(to_double(color_vec_ptr->data[0]));
+        g = static_cast<Uint8>(to_double(color_vec_ptr->data[1]));
+        b = static_cast<Uint8>(to_double(color_vec_ptr->data[2]));
+    }
+    // Case 2: Three separate scalar arguments, e.g., DRAWCOLOR r, g, b
+    else {
+        r = static_cast<Uint8>(to_double(args[0]));
+        g = static_cast<Uint8>(to_double(args[1]));
+        b = static_cast<Uint8>(to_double(args[2]));
+    }
+
+    // Call the underlying graphics system function with the extracted colors
+    vm.graphics_system.setDrawColor(r, g, b);
+    return false; // Procedures return a dummy value
+}
+
+
+// Replace the existing 'builtin_pset' function with this new version
+BasicValue builtin_pset(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& points = std::get<std::shared_ptr<Array>>(args[0]);
+        std::shared_ptr<Array> colors = nullptr;
+        // Check for optional colors matrix
+        if (args.size() == 2 && std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+            colors = std::get<std::shared_ptr<Array>>(args[1]);
+        }
+        else if (args.size() > 1) {
+            Error::set(15, vm.runtime_current_line, "Second argument for vectorized PSET must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.pset(points, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 2 || args.size() == 4 || args.size() > 5) {
+        Error::set(8, vm.runtime_current_line, "Usage: PSET x, y, [r, g, b] OR PSET matrix, [colors]");
+        return false;
+    }
+
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+
+    if (args.size() == 5) {
+        Uint8 r = static_cast<Uint8>(to_double(args[2]));
+        Uint8 g = static_cast<Uint8>(to_double(args[3]));
+        Uint8 b = static_cast<Uint8>(to_double(args[4]));
+        vm.graphics_system.pset(x, y, r, g, b);
+    }
+    else { // 2 args
+        vm.graphics_system.pset(x, y);
+    }
+    return false;
+}
+
+
+// Replace the existing 'builtin_line' function with this new version
 BasicValue builtin_line(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 4 || args.size() > 7) { Error::set(8, vm.runtime_current_line); return false; }
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& lines = std::get<std::shared_ptr<Array>>(args[0]);
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 2 && std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+            colors = std::get<std::shared_ptr<Array>>(args[1]);
+        }
+        else if (args.size() > 1) {
+            Error::set(15, vm.runtime_current_line, "Second argument for vectorized LINE must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.line(lines, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 4 || args.size() == 5 || args.size() == 6 || args.size() > 7) {
+        Error::set(8, vm.runtime_current_line, "Usage: LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]");
+        return false;
+    }
 
     int x1 = static_cast<int>(to_double(args[0]));
     int y1 = static_cast<int>(to_double(args[1]));
     int x2 = static_cast<int>(to_double(args[2]));
     int y2 = static_cast<int>(to_double(args[3]));
-    Uint8 r = 255, g = 255, b = 255;
 
     if (args.size() == 7) {
-        r = static_cast<Uint8>(to_double(args[4]));
-        g = static_cast<Uint8>(to_double(args[5]));
-        b = static_cast<Uint8>(to_double(args[6]));
+        Uint8 r = static_cast<Uint8>(to_double(args[4]));
+        Uint8 g = static_cast<Uint8>(to_double(args[5]));
+        Uint8 b = static_cast<Uint8>(to_double(args[6]));
+        vm.graphics_system.line(x1, y1, x2, y2, r, g, b);
     }
-    vm.graphics_system.line(x1, y1, x2, y2, r, g, b);
+    else { // 4 args
+        vm.graphics_system.line(x1, y1, x2, y2);
+    }
     return false;
 }
 
-// RECT x, y, w, h, [r, g, b], [fill_bool]
+// Replace the existing 'builtin_rect' function with this new version
 BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 4 || args.size() > 8) { Error::set(8, vm.runtime_current_line); return false; }
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& rects = std::get<std::shared_ptr<Array>>(args[0]);
+        bool is_filled = false;
+        if (args.size() >= 2) is_filled = to_bool(args[1]);
+
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 3 && std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+            colors = std::get<std::shared_ptr<Array>>(args[2]);
+        }
+        else if (args.size() > 2) {
+            Error::set(15, vm.runtime_current_line, "Third argument for vectorized RECT must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.rect(rects, is_filled, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 4 || args.size() > 8) {
+        Error::set(8, vm.runtime_current_line, "Usage: RECT x, y, w, h, [r, g, b], [fill] OR RECT matrix, [fill], [colors]");
+        return false;
+    }
 
     int x = static_cast<int>(to_double(args[0]));
     int y = static_cast<int>(to_double(args[1]));
     int w = static_cast<int>(to_double(args[2]));
     int h = static_cast<int>(to_double(args[3]));
-    Uint8 r = 255, g = 255, b = 255;
     bool fill = false;
 
-    if (args.size() >= 7) {
-        r = static_cast<Uint8>(to_double(args[4]));
-        g = static_cast<Uint8>(to_double(args[5]));
-        b = static_cast<Uint8>(to_double(args[6]));
+    if (args.size() >= 7) { // Color is provided
+        Uint8 r = static_cast<Uint8>(to_double(args[4]));
+        Uint8 g = static_cast<Uint8>(to_double(args[5]));
+        Uint8 b = static_cast<Uint8>(to_double(args[6]));
+        if (args.size() == 8) fill = to_bool(args[7]);
+        vm.graphics_system.rect(x, y, w, h, r, g, b, fill);
     }
-    if (args.size() == 8) {
-        fill = to_bool(args[7]);
+    else { // No color, just check for fill
+        if (args.size() == 5) fill = to_bool(args[4]);
+        vm.graphics_system.rect(x, y, w, h, fill);
     }
-    vm.graphics_system.rect(x, y, w, h, r, g, b, fill);
     return false;
 }
 
-// CIRCLE x, y, radius, [r, g, b]
+// Replace the existing 'builtin_circle' function with this new version
 BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 3 || args.size() > 6) { Error::set(8, vm.runtime_current_line); return false; }
+    // Case 1: Vector/Matrix arguments
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& circles = std::get<std::shared_ptr<Array>>(args[0]);
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 2 && std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+            colors = std::get<std::shared_ptr<Array>>(args[1]);
+        }
+        else if (args.size() > 1) {
+            Error::set(15, vm.runtime_current_line, "Second argument for vectorized CIRCLE must be a color matrix.");
+            return false;
+        }
+        vm.graphics_system.circle(circles, colors);
+        return false;
+    }
+
+    // Case 2: Scalar arguments
+    if (args.size() < 3 || args.size() == 4 || args.size() == 5 || args.size() > 6) {
+        Error::set(8, vm.runtime_current_line, "Usage: CIRCLE x, y, r, [r, g, b] OR CIRCLE matrix, [colors]");
+        return false;
+    }
 
     int x = static_cast<int>(to_double(args[0]));
     int y = static_cast<int>(to_double(args[1]));
     int radius = static_cast<int>(to_double(args[2]));
-    Uint8 r = 255, g = 255, b = 255;
 
     if (args.size() == 6) {
-        r = static_cast<Uint8>(to_double(args[3]));
-        g = static_cast<Uint8>(to_double(args[4]));
-        b = static_cast<Uint8>(to_double(args[5]));
+        Uint8 r = static_cast<Uint8>(to_double(args[3]));
+        Uint8 g = static_cast<Uint8>(to_double(args[4]));
+        Uint8 b = static_cast<Uint8>(to_double(args[5]));
+        vm.graphics_system.circle(x, y, radius, r, g, b);
     }
-    vm.graphics_system.circle(x, y, radius, r, g, b);
+    else { // 3 args
+        vm.graphics_system.circle(x, y, radius);
+    }
     return false;
+}
+
+// SETFONT font_path$, font_size
+// Sets the font and size for subsequent TEXT commands.
+BasicValue builtin_setfont(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SETFONT requires 2 arguments: font_path$, font_size.");
+        return false;
+    }
+
+    std::string path = to_string(args[0]);
+    int size = static_cast<int>(to_double(args[1]));
+
+    if (!vm.graphics_system.load_font(path, size)) {
+        // The C++ function already prints a detailed error.
+        // We can set a generic BASIC error if we want.
+        Error::set(1, vm.runtime_current_line, "Failed to set font.");
+    }
+
+    return false; // This is a procedure
 }
 
 // TEXT x, y, content$, [r, g, b]
@@ -855,6 +1026,132 @@ BasicValue builtin_text(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     vm.graphics_system.text(x, y, content, r, g, b);
 
     return false; // Procedures return a dummy value
+}
+
+BasicValue builtin_plotraw(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. Validate Arguments
+    if (args.size() > 5) {
+        Error::set(8, vm.runtime_current_line, "PLOTRAW requires 3 arguments: x, y, matrix, scaleX, scaleY");
+        return false;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+        Error::set(15, vm.runtime_current_line, "Third argument to PLOTRAW must be a matrix.");
+        return false;
+    }
+
+    // 2. Parse Arguments
+    int x = static_cast<int>(to_double(args[0]));
+    int y = static_cast<int>(to_double(args[1]));
+    int scaleX = static_cast<int>(to_double(args[3]));
+    int scaleY = static_cast<int>(to_double(args[4]));
+
+    const auto& matrix_ptr = std::get<std::shared_ptr<Array>>(args[2]);
+
+    // 3. Call the Graphics System Method
+    vm.graphics_system.plot_raw(x, y, matrix_ptr, scaleX, scaleY);
+
+    return false; // Procedures return a dummy value
+}
+
+// --- TURTLE GRAPHICS PROCEDURES ---
+
+// TURTLE.FORWARD distance
+BasicValue builtin_turtle_forward(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float distance = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_forward(distance);
+    return false;
+}
+
+// TURTLE.BACKWARD distance
+BasicValue builtin_turtle_backward(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float distance = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_backward(distance);
+    return false;
+}
+
+// TURTLE.LEFT degrees
+BasicValue builtin_turtle_left(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float degrees = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_left(degrees);
+    return false;
+}
+
+// TURTLE.RIGHT degrees
+BasicValue builtin_turtle_right(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float degrees = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_right(degrees);
+    return false;
+}
+
+// TURTLE.PENUP
+BasicValue builtin_turtle_penup(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_penup();
+    return false;
+}
+
+// TURTLE.PENDOWN
+BasicValue builtin_turtle_pendown(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_pendown();
+    return false;
+}
+
+// TURTLE.SETPOS x, y
+BasicValue builtin_turtle_setpos(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return false; }
+    float x = static_cast<float>(to_double(args[0]));
+    float y = static_cast<float>(to_double(args[1]));
+    vm.graphics_system.turtle_setpos(x, y);
+    return false;
+}
+
+// TURTLE.SETHEADING degrees
+BasicValue builtin_turtle_setheading(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    float degrees = static_cast<float>(to_double(args[0]));
+    vm.graphics_system.turtle_setheading(degrees);
+    return false;
+}
+
+// TURTLE.HOME
+BasicValue builtin_turtle_home(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    // We need screen dimensions for home, but we can get them from the renderer
+    int w, h;
+    SDL_GetRenderOutputSize(vm.graphics_system.renderer, &w, &h);
+    vm.graphics_system.turtle_home(w, h);
+    return false;
+}
+
+// TURTLE.DRAW
+// Redraws the entire path the turtle has taken so far.
+BasicValue builtin_turtle_draw(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_draw_path();
+    return false;
+}
+
+// TURTLE.CLEAR
+// Clears the turtle's path memory. Does not clear the screen.
+BasicValue builtin_turtle_clear(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.graphics_system.turtle_clear_path();
+    return false;
+}
+
+// TURTLE.SET_COLOR r, g, b
+BasicValue builtin_turtle_set_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return false; }
+    Uint8 r = static_cast<Uint8>(to_double(args[0]));
+    Uint8 g = static_cast<Uint8>(to_double(args[1]));
+    Uint8 b = static_cast<Uint8>(to_double(args[2]));
+    vm.graphics_system.turtle_set_color(r, g, b);
+    return false;
 }
 
 // --- SDL Sound Functions ---
@@ -934,6 +1231,47 @@ BasicValue builtin_sound_stop(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return false;
 }
 
+// SFX.LOAD id, "filepath.wav"
+BasicValue builtin_sfx_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line, "SFX.LOAD requires 2 arguments: id, filepath$"); return false; }
+    int id = static_cast<int>(to_double(args[0]));
+    std::string path = to_string(args[1]);
+    if (!vm.sound_system.load_sound(id, path)) {
+        Error::set(1, vm.runtime_current_line, "Failed to load sound effect.");
+    }
+    return false;
+}
+
+// SFX.PLAY id
+BasicValue builtin_sfx_play(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) { Error::set(8, vm.runtime_current_line, "SFX.PLAY requires 1 argument: id"); return false; }
+    int id = static_cast<int>(to_double(args[0]));
+    vm.sound_system.play_sound(id);
+    return false;
+}
+
+// MUSIC.PLAY music_id, [looping_bool]
+BasicValue builtin_music_play(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 1 || args.size() > 2) {
+        Error::set(8, vm.runtime_current_line, "MUSIC.PLAY requires 1 or 2 arguments: sound_id, [looping_bool]");
+        return false;
+    }
+    int id = static_cast<int>(to_double(args[0]));
+    bool loop = true; // Default to looping for music
+    if (args.size() == 2) {
+        loop = to_bool(args[1]);
+    }
+    vm.sound_system.play_music(id, loop);
+    return false;
+}
+
+// MUSIC.STOP
+BasicValue builtin_music_stop(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line, "MUSIC.STOP takes no arguments."); return false; }
+    vm.sound_system.stop_music();
+    return false;
+}
+
 // MOUSEX() -> returns the current X coordinate of the mouse
 BasicValue builtin_mousex(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (!args.empty()) {
@@ -991,18 +1329,65 @@ BasicValue builtin_sprite_load(NeReLaBasic& vm, const std::vector<BasicValue>& a
     return false;
 }
 
+// SPRITE.LOAD_ASEPRITE type_id, "filename.json"
+// Loads a sprite sheet and animation data from an Aseprite export.
+BasicValue builtin_sprite_load_aseprite(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.LOAD_ASEPRITE requires 2 arguments: type_id, filename$.");
+        return false;
+    }
+    int type_id = static_cast<int>(to_double(args[0]));
+    std::string filename = to_string(args[1]);
+
+    // The sprite system is now a direct member of the VM
+    if (!vm.graphics_system.sprite_system.load_aseprite_file(type_id, filename)) {
+        Error::set(12, vm.runtime_current_line, "Failed to load Aseprite file. Check path and JSON format.");
+    }
+    return false; // Procedure
+}
+
 // SPRITE.CREATE(type_id, x, y) -> instance_id
+// Creates an instance of a loaded sprite type.
 BasicValue builtin_sprite_create(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) {
-        Error::set(8, vm.runtime_current_line);
-        return -1.0;
+        Error::set(8, vm.runtime_current_line, "SPRITE.CREATE requires 3 arguments: type_id, x, y.");
+        return -1.0; // Return -1 on error
     }
     int type_id = static_cast<int>(to_double(args[0]));
     float x = static_cast<float>(to_double(args[1]));
     float y = static_cast<float>(to_double(args[2]));
 
     int instance_id = vm.graphics_system.sprite_system.create_sprite(type_id, x, y);
+    if (instance_id == -1) {
+        Error::set(1, vm.runtime_current_line, "Failed to create sprite. Ensure the type_id has been loaded.");
+    }
     return static_cast<double>(instance_id);
+}
+
+// SPRITE.SET_ANIMATION instance_id, "animation_name$"
+// Sets the current animation for a sprite instance.
+BasicValue builtin_sprite_set_animation(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.SET_ANIMATION requires 2 arguments: instance_id, animation_name$.");
+        return false;
+    }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    std::string anim_name = to_string(args[1]);
+    vm.graphics_system.sprite_system.set_animation(instance_id, anim_name);
+    return false; // Procedure
+}
+
+// SPRITE.SET_FLIP instance_id, flip_boolean
+// Sets the horizontal flip state of a sprite.
+BasicValue builtin_sprite_set_flip(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.SET_FLIP requires 2 arguments: instance_id, flip_boolean.");
+        return false;
+    }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    bool flip = to_bool(args[1]);
+    vm.graphics_system.sprite_system.set_flip(instance_id, flip);
+    return false; // Procedure
 }
 
 // SPRITE.MOVE instance_id, x, y
@@ -1033,17 +1418,34 @@ BasicValue builtin_sprite_delete(NeReLaBasic& vm, const std::vector<BasicValue>&
     return false;
 }
 
-// SPRITE.UPDATE
+// SPRITE.UPDATE [delta_time]
+// Updates all sprites. Now accepts an optional delta_time for frame-rate independent physics.
 BasicValue builtin_sprite_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
-    vm.graphics_system.sprite_system.update();
-    return false;
+    if (args.size() > 1) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.UPDATE accepts 0 or 1 argument: [delta_time].");
+        return false;
+    }
+    float dt = 1.0f / 60.0f; // Default to 60 FPS if no delta is provided
+    if (args.size() == 1) {
+        dt = static_cast<float>(to_double(args[0]));
+    }
+    vm.graphics_system.sprite_system.update(dt);
+    return false; // Procedure
 }
 
-// SPRITE.DRAW_ALL
+// SPRITE.DRAW_ALL [cam_x], [cam_y]
 BasicValue builtin_sprite_draw_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
-    vm.graphics_system.sprite_system.draw_all();
+    if (args.size() > 2) { // Allow 0 or 2 arguments
+        Error::set(8, vm.runtime_current_line, "SPRITE.DRAW_ALL takes 0 or 2 arguments: [cam_x], [cam_y]");
+        return false;
+    }
+    float cam_x = 0.0f;
+    float cam_y = 0.0f;
+    if (args.size() == 2) {
+        cam_x = static_cast<float>(to_double(args[0]));
+        cam_y = static_cast<float>(to_double(args[1]));
+    }
+    vm.graphics_system.sprite_system.draw_all(cam_x, cam_y);
     return false;
 }
 
@@ -1069,87 +1471,391 @@ BasicValue builtin_sprite_collision(NeReLaBasic& vm, const std::vector<BasicValu
     return vm.graphics_system.sprite_system.check_collision(id1, id2);
 }
 
+// SPRITE.ADD_TO_GROUP group_id, instance_id
+// Adds a sprite to a group.
+BasicValue builtin_sprite_add_to_group(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.ADD_TO_GROUP requires 2 arguments: group_id, instance_id.");
+        return false;
+    }
+    int group_id = static_cast<int>(to_double(args[0]));
+    int instance_id = static_cast<int>(to_double(args[1]));
+    vm.graphics_system.sprite_system.add_to_group(group_id, instance_id);
+    return false; // Procedure
+}
+
+// SPRITE.COLLISION_GROUP(instance_id, group_id) -> hit_instance_id
+// Checks for collision between a single sprite and a group.
+BasicValue builtin_sprite_collision_group(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.COLLISION_GROUP requires 2 arguments: instance_id, group_id.");
+        return -1.0;
+    }
+    int instance_id = static_cast<int>(to_double(args[0]));
+    int group_id = static_cast<int>(to_double(args[1]));
+    int hit_id = vm.graphics_system.sprite_system.check_collision_sprite_group(instance_id, group_id);
+    return static_cast<double>(hit_id);
+}
+
+// SPRITE.CREATE_GROUP() -> group_id
+// Creates a new, empty sprite group.
+BasicValue builtin_sprite_create_group(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.CREATE_GROUP takes no arguments.");
+        return -1.0;
+    }
+    return static_cast<double>(vm.graphics_system.sprite_system.create_group());
+}
+
+// SPRITE.COLLISION_GROUPS(group_id1, group_id2) -> array[hit_id1, hit_id2]
+// Checks for collision between two groups of sprites.
+BasicValue builtin_sprite_collision_groups(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SPRITE.COLLISION_GROUPS requires 2 arguments: group_id1, group_id2.");
+        return {}; // Return empty BasicValue
+    }
+    int group_id1 = static_cast<int>(to_double(args[0]));
+    int group_id2 = static_cast<int>(to_double(args[1]));
+    std::pair<int, int> hit_pair = vm.graphics_system.sprite_system.check_collision_groups(group_id1, group_id2);
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = { 2 };
+    result_ptr->data.push_back(static_cast<double>(hit_pair.first));
+    result_ptr->data.push_back(static_cast<double>(hit_pair.second));
+    return result_ptr;
+}
+
+// -- - TILEMAP PROCEDURES & FUNCTIONS-- -
+
+// MAP.LOAD "map_name", "filename.json"
+// Loads a Tiled map file.
+BasicValue builtin_map_load(NeReLaBasic & vm, const std::vector<BasicValue>&args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "MAP.LOAD requires 2 arguments: map_name$, filename$.");
+        return false;
+    }
+    std::string map_name = to_string(args[0]);
+    std::string filename = to_string(args[1]);
+    if (!vm.graphics_system.tilemap_system.load_map(map_name, filename)) {
+        Error::set(12, vm.runtime_current_line, "Failed to load Tiled map file.");
+    }
+    return false; // Procedure
+}
+
+// MAP.DRAW_LAYER "map_name", "layer_name", [world_offset_x], [world_offset_y]
+// Draws a specific tile layer from a loaded map.
+BasicValue builtin_map_draw_layer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 2 || args.size() > 4) {
+        Error::set(8, vm.runtime_current_line, "MAP.DRAW_LAYER requires 2 to 4 arguments: map_name$, layer_name$, [offsetX], [offsetY].");
+        return false;
+    }
+    std::string map_name = to_string(args[0]);
+    std::string layer_name = to_string(args[1]);
+    int offset_x = 0;
+    int offset_y = 0;
+    if (args.size() >= 3) {
+        offset_x = static_cast<int>(to_double(args[2]));
+    }
+    if (args.size() == 4) {
+        offset_y = static_cast<int>(to_double(args[3]));
+    }
+    vm.graphics_system.tilemap_system.draw_layer(map_name, layer_name, offset_x, offset_y);
+    return false; // Procedure
+}
+
+// MAP.GET_OBJECTS("map_name", "object_type") -> Array of Maps
+// Retrieves all objects of a certain type from an object layer.
+BasicValue builtin_map_get_objects(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "MAP.GET_OBJECTS requires 2 arguments: map_name$, object_type$.");
+        return {};
+    }
+    std::string map_name = to_string(args[0]);
+    std::string object_type = to_string(args[1]);
+
+    auto objects_data = vm.graphics_system.tilemap_system.get_objects_by_type(map_name, object_type);
+
+    auto results_array = std::make_shared<Array>();
+    results_array->shape = { objects_data.size() };
+
+    for (const auto& obj_map : objects_data) {
+        auto map_ptr = std::make_shared<Map>();
+        for (const auto& pair : obj_map) {
+            // Tiled properties can be bool, float, or string. We'll try to parse intelligently.
+            // For now, we just treat them all as strings for simplicity.
+            map_ptr->data[pair.first] = pair.second;
+        }
+        results_array->data.push_back(map_ptr);
+    }
+
+    return results_array;
+}
+
+// MAP.COLLIDES(sprite_id, "map_name", "layer_name") -> boolean
+// Checks if a sprite is colliding with any solid tile on a given layer.
+BasicValue builtin_map_collides(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "MAP.COLLIDES requires 3 arguments: sprite_id, map_name$, layer_name$.");
+        return false;
+    }
+    int sprite_id = static_cast<int>(to_double(args[0]));
+    std::string map_name = to_string(args[1]);
+    std::string layer_name = to_string(args[2]);
+
+    return vm.graphics_system.tilemap_system.check_sprite_collision(sprite_id, vm.graphics_system.sprite_system, map_name, layer_name);
+}
+
+BasicValue builtin_map_get_tile_id(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 4) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    std::string map_name = to_string(args[0]);
+    std::string layer_name = to_string(args[1]);
+    int tile_x = static_cast<int>(to_double(args[2]));
+    int tile_y = static_cast<int>(to_double(args[3]));
+
+    int tile_id = vm.graphics_system.tilemap_system.get_tile_id(map_name, layer_name, tile_x, tile_y);
+    return static_cast<double>(tile_id);
+}
+
+// MAP.DRAW_DEBUG_COLLISIONS player_id, "map", "layer"
+BasicValue builtin_map_draw_debug(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return false; }
+    int sprite_id = static_cast<int>(to_double(args[0]));
+    std::string map_name = to_string(args[1]);
+    std::string layer_name = to_string(args[2]);
+
+    // We need the camera values, which are in BASIC variables.
+    // This is a simple way to get them from the VM.
+    float cam_x = to_double(vm.variables["CAM_X"]);
+    float cam_y = to_double(vm.variables["CAM_Y"]);
+
+    vm.graphics_system.tilemap_system.draw_debug_collisions(
+        sprite_id, vm.graphics_system.sprite_system, map_name, layer_name, cam_x, cam_y
+    );
+    return false;
+}
+
 #endif
 
 // --- String Functions ---
 
-// LEFT$(string, n)
+// A generic helper to apply an operation element-wise to an array or a scalar.
+// The provided lambda 'op' can set errors via the vm_ref.
+BasicValue apply_elementwise_op(NeReLaBasic& vm, const BasicValue& input, const std::function<BasicValue(NeReLaBasic&, const BasicValue&)>& op) {
+    // Case 1: Input is an Array. Apply the op to each element.
+    if (const auto& arr_ptr = std::get_if<std::shared_ptr<Array>>(&input)) {
+        if (!*arr_ptr) return {}; // Return empty on null pointer
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = (*arr_ptr)->shape; // Result has the same shape
+        result_ptr->data.reserve((*arr_ptr)->data.size());
+
+        for (const auto& val : (*arr_ptr)->data) {
+            BasicValue result = op(vm, val);
+            // If the operation on an element failed, stop and return.
+            if (Error::get() != 0) {
+                return {};
+            }
+            result_ptr->data.push_back(result);
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Apply the op directly.
+    else {
+        return op(vm, input);
+    }
+}
+
+// LEFT$(string_or_array, n) -> string or array
 BasicValue builtin_left_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) return std::string("");
-    std::string source = to_string(args[0]);
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "LEFT$ requires 2 arguments.");
+        return std::string("");
+    }
+
+    const BasicValue& input = args[0];
     int count = static_cast<int>(to_double(args[1]));
     if (count < 0) count = 0;
-    return source.substr(0, count);
+
+    // Helper lambda to perform the core LEFT$ operation on a single string.
+    auto perform_left = [count](const std::string& source) {
+        return source.substr(0, count);
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {}; // Handle null array
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape; // Result has the same shape
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_left(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_left(to_string(input));
+    }
 }
 
-// RIGHT$(string, n)
+// RIGHT$(string_or_array, n) -> string or array
 BasicValue builtin_right_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) return std::string("");
-    std::string source = to_string(args[0]);
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "RIGHT$ requires 2 arguments.");
+        return std::string("");
+    }
+
+    const BasicValue& input = args[0];
     int count = static_cast<int>(to_double(args[1]));
     if (count < 0) count = 0;
-    if (count > source.length()) count = source.length();
-    return source.substr(source.length() - count);
+
+    // Helper lambda to perform the core RIGHT$ operation on a single string.
+    auto perform_right = [count](const std::string& source) {
+        if (static_cast<size_t>(count) > source.length()) {
+            return source;
+        }
+        return source.substr(source.length() - count);
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {}; // Handle null array
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_right(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_right(to_string(input));
+    }
 }
 
-// MID$(string, start, [length]) - Overloaded
+// MID$(string_or_array, start, [length]) -> string or array
 BasicValue builtin_mid_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 2 || args.size() > 3) return std::string("");
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "MID$ requires 2 or 3 arguments.");
+        return std::string("");
+    }
 
-    std::string source = to_string(args[0]);
+    const BasicValue& input = args[0];
     int start = static_cast<int>(to_double(args[1])) - 1; // BASIC is 1-indexed
     if (start < 0) start = 0;
 
-    if (args.size() == 2) { // MID$(str, start) -> get rest of string
-        return source.substr(start);
+    // Helper lambda to perform the core MID$ operation on a single string.
+    auto perform_mid = [&](const std::string& source) -> std::string {
+        if (static_cast<size_t>(start) >= source.length()) {
+            return ""; // Start position is out of bounds
+        }
+        if (args.size() == 2) { // MID$(str, start) -> get rest of string
+            return source.substr(start);
+        }
+        else { // MID$(str, start, len)
+            int length = static_cast<int>(to_double(args[2]));
+            if (length < 0) length = 0;
+            return source.substr(start, length);
+        }
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {};
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_mid(to_string(val)));
+        }
+        return result_ptr;
     }
-    else { // MID$(str, start, len)
-        int length = static_cast<int>(to_double(args[2]));
-        if (length < 0) length = 0;
-        return source.substr(start, length);
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_mid(to_string(input));
     }
 }
 
-// LCASE$(string)
+// Helper function to apply a string-to-string operation element-wise.
+// This simplifies the implementation for LCASE$, UCASE$, and TRIM$.
+BasicValue apply_string_op(const BasicValue& input, const std::function<std::string(const std::string&)>& op) {
+    // Case 1: Input is an Array (vector or matrix)
+    if (const auto& arr_ptr = std::get_if<std::shared_ptr<Array>>(&input)) {
+        if (!*arr_ptr) return {}; // Return empty on null pointer
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = (*arr_ptr)->shape; // Result has the same shape
+        result_ptr->data.reserve((*arr_ptr)->data.size());
+
+        // Apply the operation to each element
+        for (const auto& val : (*arr_ptr)->data) {
+            result_ptr->data.push_back(op(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar
+    else {
+        return op(to_string(input));
+    }
+}
+
+// LCASE$(string_or_array) -> string or array
 BasicValue builtin_lcase_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    std::string s = to_string(args[0]);
-    std::transform(s.begin(), s.end(), s.begin(),
-        [](unsigned char c) { return std::tolower(c); });
-    return s;
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "LCASE$ requires 1 argument.");
+        return std::string("");
+    }
+    auto op = [](const std::string& s) {
+        std::string lower_s = s;
+        std::transform(lower_s.begin(), lower_s.end(), lower_s.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        return lower_s;
+        };
+    return apply_string_op(args[0], op);
 }
 
-// UCASE$(string)
+// UCASE$(string_or_array) -> string or array
 BasicValue builtin_ucase_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    std::string s = to_string(args[0]);
-    std::transform(s.begin(), s.end(), s.begin(),
-        [](unsigned char c) { return std::toupper(c); });
-    return s;
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "UCASE$ requires 1 argument.");
+        return std::string("");
+    }
+    auto op = [](const std::string& s) {
+        std::string upper_s = s;
+        std::transform(upper_s.begin(), upper_s.end(), upper_s.begin(),
+            [](unsigned char c) { return std::toupper(c); });
+        return upper_s;
+        };
+    return apply_string_op(args[0], op);
 }
 
-// TRIM$(string)
+// TRIM$(string_or_array) -> string or array
 BasicValue builtin_trim_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    std::string s = to_string(args[0]);
-    s.erase(0, s.find_first_not_of(" \t\n\r"));
-    s.erase(s.find_last_not_of(" \t\n\r") + 1);
-    return s;
-}
-
-// CHR$(number)
-BasicValue builtin_chr_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return std::string("");
-    char c = static_cast<char>(static_cast<int>(to_double(args[0])));
-    return std::string(1, c);
-}
-
-// ASC(string)
-BasicValue builtin_asc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    std::string s = to_string(args[0]);
-    if (s.empty()) return 0.0;
-    return static_cast<double>(static_cast<unsigned char>(s[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "TRIM$ requires 1 argument.");
+        return std::string("");
+    }
+    auto op = [](const std::string& s) {
+        std::string trimmed_s = s;
+        size_t start = trimmed_s.find_first_not_of(" \t\n\r");
+        if (start == std::string::npos) return std::string(""); // String is all whitespace
+        size_t end = trimmed_s.find_last_not_of(" \t\n\r");
+        return trimmed_s.substr(start, end - start + 1);
+        };
+    return apply_string_op(args[0], op);
 }
 
 // INSTR([start], haystack$, needle$) - Overloaded
@@ -1187,7 +1893,7 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return std::string("");
     }
 
-    // --- ADDED: Context-aware logic ---
+    // --- Context-aware logic ---
 #ifdef SDL3
     // If the graphics system is initialized, get input from SDL's event queue.
     if (vm.graphics_system.is_initialized) {
@@ -1200,41 +1906,228 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     // --- Original console-based logic (fallback) ---
     // If graphics are not active, use the old conio.h method.
+#ifdef _WIN32    
     if (_kbhit()) {
         char c = _getch();
         return std::string(1, c);
     }
+#else
+    if (TextIO::kbhit()) {
+        char c = getch();
+        return std::string(1, c);
+    }
+#endif
 
     return std::string("");
 }
 
-// VAL(string_expression) -> number
-BasicValue builtin_val(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) {
-        Error::set(8, 0); // Wrong number of arguments
-        return 0.0;
+// WAITKEY$() -> string$
+// Waits for a key to be pressed and returns it as a string.
+BasicValue builtin_waitkey_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "WAITKEY$ takes no arguments.");
+        return std::string("");
     }
-    std::string s = to_string(args[0]);
-    try {
-        // std::stod will parse the string until it finds a non-numeric character.
-        // This behavior is very similar to classic BASIC VAL().
-        return std::stod(s);
+
+#ifdef SDL3
+    // If the graphics system is active, we must wait in a loop that
+    // continues to process events, so the window doesn't freeze.
+    if (vm.graphics_system.is_initialized) {
+        std::string key;
+        while (true) {
+            // The main event handler for SDL is in the graphics system.
+            // Calling this in a loop effectively waits for an event.
+            if (!vm.graphics_system.handle_events(vm)) {
+                // This indicates the user closed the window.
+                // vm.program_ended = true; // Signal the main loop to terminate
+                return std::string("");
+            }
+
+            // Check if handle_events() populated the key buffer.
+            key = vm.graphics_system.get_key_from_buffer();
+            if (!key.empty()) {
+                return key;
+            }
+
+            // Also process any internal BASIC events that might have been queued.
+            vm.process_event_queue();
+
+            // A short delay to prevent this waiting loop from using 100% CPU.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
-    catch (const std::exception&) {
-        // If the string is not a valid number at all (e.g., "hello")
-        return 0.0;
+#endif
+
+    // Fallback to standard blocking console input if graphics are not initialized.
+#ifdef _WIN32
+    char c = _getch();
+#else
+    char c = getch();
+#endif
+
+    return std::string(1, c);
+}
+
+// REPLACE$(source_string_or_array, find_string$, replace_with_string$) -> string or array
+BasicValue builtin_replace_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "REPLACE$ requires 3 arguments.");
+        return std::string("");
+    }
+
+    const BasicValue& input = args[0];
+    std::string find_str = to_string(args[1]);
+    std::string replace_str = to_string(args[2]);
+
+    // Edge case: if find_str is empty, return the original string to avoid infinite loops.
+    if (find_str.empty()) {
+        return input;
+    }
+
+    // Helper lambda to perform the core REPLACE$ operation on a single string.
+    auto perform_replace = [&](const std::string& source) -> std::string {
+        std::string result = source;
+        size_t start_pos = 0;
+        while ((start_pos = result.find(find_str, start_pos)) != std::string::npos) {
+            result.replace(start_pos, find_str.length(), replace_str);
+            // Move past the replaced section to avoid re-matching parts of the replacement string.
+            start_pos += replace_str.length();
+        }
+        return result;
+        };
+
+    // Case 1: Input is an Array. Apply the operation to each element.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {}; // Handle null array
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape; // Result has the same shape
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            result_ptr->data.push_back(perform_replace(to_string(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Perform the operation directly.
+    else {
+        return perform_replace(to_string(input));
     }
 }
 
-// STR$(numeric_expression) -> string
+// VAL(string_expression_or_array) -> number or array
+BasicValue builtin_val(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    auto op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        std::string s = to_string(v);
+        try {
+            // std::stod mimics classic VAL behavior by parsing until a non-numeric char.
+            return std::stod(s);
+        }
+        catch (const std::exception&) {
+            return 0.0;
+        }
+        };
+    return apply_elementwise_op(vm, args[0], op);
+}
+
+// STR$(numeric_expression_or_array) -> string or array
 BasicValue builtin_str_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, 0); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return std::string("");
     }
-    // to_string is already a helper in your project that does this conversion.
-    return to_string(args[0]);
+    // The operation is simply our existing to_string helper.
+    auto op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        return to_string(v);
+        };
+    return apply_elementwise_op(vm, args[0], op);
 }
+
+// CHR$(number_or_array)
+BasicValue builtin_chr_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return std::string("");
+    }
+
+    // This lambda contains the core logic for converting a code point to a UTF-8 string.
+    auto chr_op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        long code_point = static_cast<long>(to_double(v));
+
+        if (code_point < 0 || code_point > 0x10FFFF) {
+            return std::string(""); // Invalid Unicode code point
+        }
+
+#ifdef _WIN32
+        // --- Windows-specific, non-deprecated method ---
+        wchar_t wstr[2];
+        if (code_point <= 0xFFFF) {
+            // Fits in a single wchar_t
+            wstr[0] = static_cast<wchar_t>(code_point);
+            wstr[1] = L'\0';
+        }
+        else {
+            // Handle supplementary planes (e.g., emojis) by creating a surrogate pair
+            // This is more advanced but correct for full Unicode support.
+            // For now, we can simplify and just handle the Basic Multilingual Plane.
+            // A simple approach for characters > 0xFFFF might return "" or "?".
+            // However, most common characters (including all of Latin-1, etc.) are <= 0xFFFF.
+            return std::string(""); // Or handle surrogate pairs if needed
+        }
+
+        // First, find the required buffer size
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], -1, NULL, 0, NULL, NULL);
+        if (size_needed == 0) {
+            return std::string(""); // Conversion error
+        }
+
+        // Allocate buffer and perform the conversion
+        std::string utf8_str(size_needed - 1, 0); // -1 to not include the null terminator
+        WideCharToMultiByte(CP_UTF8, 0, &wstr[0], -1, &utf8_str[0], size_needed, NULL, NULL);
+
+        return utf8_str;
+#else
+        // --- C++17 Deprecated (but cross-platform) method for other systems ---
+        // You can keep the old code here inside an #else block for Linux/macOS
+        try {
+            std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+            return converter.to_bytes(static_cast<wchar_t>(code_point));
+        }
+        catch (const std::range_error&) {
+            return std::string("");
+        }
+#endif
+        };
+
+    // Use the helper to apply the operation element-wise.
+    return apply_elementwise_op(vm, args[0], chr_op);
+}
+
+// ASC(string_or_array)
+BasicValue builtin_asc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+
+    // This lambda contains the core logic for a single element.
+    auto asc_op = [](NeReLaBasic&, const BasicValue& v) -> BasicValue {
+        std::string s = to_string(v);
+        if (s.empty()) {
+            return 0.0;
+        }
+        return static_cast<double>(static_cast<unsigned char>(s[0]));
+        };
+
+    // Use the helper to apply the operation element-wise.
+    return apply_elementwise_op(vm, args[0], asc_op);
+}
+
 
 // REVERSE(array) -> array
 // Reverses the elements of an array along its last dimension.
@@ -1273,14 +2166,17 @@ BasicValue builtin_reverse(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 }
 
 /**
- * @brief Extracts a slice from an N-dimensional array along a specified dimension.
+ * @brief Extracts a slice or a range of slices from an N-dimensional array.
  * @param vm The interpreter instance.
- * @param args A vector: array, dimension, index
- * @return A new Array of rank N-1.
+ * @param args A vector:
+ * - 3 args: array, dimension, index (extracts one slice, reduces rank by 1)
+ * - 4 args: array, dimension, index, count (extracts 'count' slices, preserves rank)
+ * @return A new Array.
  */
 BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 3) {
-        Error::set(8, vm.runtime_current_line, "SLICE requires 3 arguments: array, dimension, index");
+    // 1. --- Argument Validation ---
+    if (args.size() < 3 || args.size() > 4) {
+        Error::set(8, vm.runtime_current_line, "SLICE requires 3 or 4 arguments: array, dimension, index, [count]");
         return {};
     }
     if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
@@ -1290,34 +2186,45 @@ BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
     int dimension = static_cast<int>(to_double(args[1]));
-    int index = static_cast<int>(to_double(args[2]));
+    int start_index = static_cast<int>(to_double(args[2]));
+    int count = 1;
+    bool reduce_rank = (args.size() == 3); // Only reduce rank for the original 3-arg call
 
+    if (!reduce_rank) {
+        count = static_cast<int>(to_double(args[3]));
+    }
+
+    // 2. --- Further Validation ---
     if (!source_ptr || source_ptr->shape.empty()) {
         Error::set(15, vm.runtime_current_line, "Cannot slice a null or empty array."); return {};
     }
     if (dimension < 0 || (size_t)dimension >= source_ptr->shape.size()) {
         Error::set(10, vm.runtime_current_line, "Slice dimension is out of bounds."); return {};
     }
-    if (index < 0 || (size_t)index >= source_ptr->shape[dimension]) {
-        Error::set(10, vm.runtime_current_line, "Slice index is out of bounds for the given dimension."); return {};
+    if (start_index < 0 || count < 0 || (size_t)(start_index + count) > source_ptr->shape[dimension]) {
+        Error::set(10, vm.runtime_current_line, "Slice index or count is out of bounds for the given dimension."); return {};
+    }
+    if (count == 0) { // Return an empty array of the correct shape
+        auto empty_ptr = std::make_shared<Array>();
+        empty_ptr->shape = source_ptr->shape;
+        empty_ptr->shape[dimension] = 0;
+        return empty_ptr;
     }
 
-    // 1. Determine the shape of the resulting slice (rank is N-1)
-    std::vector<size_t> new_shape;
-    for (size_t i = 0; i < source_ptr->shape.size(); ++i) {
-        if (i != (size_t)dimension) {
-            new_shape.push_back(source_ptr->shape[i]);
-        }
+    // 3. --- New Shape Calculation ---
+    std::vector<size_t> new_shape = source_ptr->shape;
+    if (reduce_rank) {
+        new_shape.erase(new_shape.begin() + dimension);
+        if (new_shape.empty()) new_shape.push_back(1); // Handle slicing a 1D vector to a scalar
     }
-    // If we slice a 1D vector, the result is a scalar. We'll represent it as a 1-element array.
-    if (new_shape.empty()) {
-        new_shape.push_back(1);
+    else {
+        new_shape[dimension] = count; // For range slice, just change the dimension size
     }
 
     auto result_ptr = std::make_shared<Array>();
     result_ptr->shape = new_shape;
 
-    // 2. Calculate strides for efficient data copying
+    // 4. --- Data Copying Logic ---
     size_t outer_dims = 1;
     for (int i = 0; i < dimension; ++i) {
         outer_dims *= source_ptr->shape[i];
@@ -1328,12 +2235,90 @@ BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         inner_dims *= source_ptr->shape[i];
     }
 
-    // 3. Iterate and copy the sliced data
+    size_t source_dim_size = source_ptr->shape[dimension];
+    size_t chunk_to_copy_size = count * inner_dims;
+    result_ptr->data.reserve(outer_dims * chunk_to_copy_size);
+
     for (size_t i = 0; i < outer_dims; ++i) {
-        size_t start_pos = (i * source_ptr->shape[dimension] * inner_dims) + ((size_t)index * inner_dims);
+        size_t block_start_pos = (i * source_dim_size * inner_dims) + (start_index * inner_dims);
         result_ptr->data.insert(result_ptr->data.end(),
-            source_ptr->data.begin() + start_pos,
-            source_ptr->data.begin() + start_pos + inner_dims);
+            source_ptr->data.begin() + block_start_pos,
+            source_ptr->data.begin() + block_start_pos + chunk_to_copy_size);
+    }
+
+    return result_ptr;
+}
+
+// STACK(dimension, array1, array2, ...) -> matrix
+// Stacks 1D vectors into a 2D matrix.
+BasicValue builtin_stack(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() < 3) {
+        Error::set(8, vm.runtime_current_line, "STACK requires at least 3 arguments: dimension, array1, array2, ...");
+        return {};
+    }
+
+    int dimension = static_cast<int>(to_double(args[0]));
+    if (dimension != 0 && dimension != 1) {
+        Error::set(1, vm.runtime_current_line, "First argument (dimension) to STACK must be 0 (rows) or 1 (columns).");
+        return {};
+    }
+
+    // 2. --- Collect and Validate Source Arrays ---
+    std::vector<std::shared_ptr<Array>> source_arrays;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (!std::holds_alternative<std::shared_ptr<Array>>(args[i])) {
+            Error::set(15, vm.runtime_current_line, "All arguments to STACK after dimension must be arrays.");
+            return {};
+        }
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[i]);
+        if (!arr_ptr || arr_ptr->shape.size() != 1) {
+            Error::set(15, vm.runtime_current_line, "All arrays passed to STACK must be 1D vectors.");
+            return {};
+        }
+        source_arrays.push_back(arr_ptr);
+    }
+
+    if (source_arrays.empty()) {
+        return {}; // Return empty if no arrays were provided
+    }
+
+    // Verify that all vectors have the same size
+    size_t required_size = source_arrays[0]->data.size();
+    for (size_t i = 1; i < source_arrays.size(); ++i) {
+        if (source_arrays[i]->data.size() != required_size) {
+            Error::set(15, vm.runtime_current_line, "All vectors in STACK must have the same length.");
+            return {};
+        }
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+
+    // 3. --- Row Stacking (dimension == 0) ---
+    if (dimension == 0) {
+        size_t rows = source_arrays.size();
+        size_t cols = required_size;
+        result_ptr->shape = { rows, cols };
+        result_ptr->data.reserve(rows * cols);
+
+        // Simply append the data from each vector
+        for (const auto& arr_ptr : source_arrays) {
+            result_ptr->data.insert(result_ptr->data.end(), arr_ptr->data.begin(), arr_ptr->data.end());
+        }
+    }
+    // 4. --- Column Stacking (dimension == 1) ---
+    else { // dimension == 1
+        size_t rows = required_size;
+        size_t cols = source_arrays.size();
+        result_ptr->shape = { rows, cols };
+        result_ptr->data.resize(rows * cols);
+
+        // Interleave the data from the source vectors
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) {
+                result_ptr->data[r * cols + c] = source_arrays[c]->data[r];
+            }
+        }
     }
 
     return result_ptr;
@@ -1633,19 +2618,35 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                             // Check for integer-only types: d, x, X, b, B, o, c
                             if (std::string("dxXbo").find(type_char) != std::string::npos) {
                                 // It's an integer format. Cast the double to a long long.
+#ifdef _WIN32
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<long long>(value)));
+#else
+                                return fmt::format(format_specifier, value);
+#endif                                
                             }
                             if (type_char == 'c') {
                                 // Handle character case
+#ifdef _WIN32                                
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<char>(static_cast<long long>(value))));
+#else
+                                return fmt::format(format_specifier, value);
+#endif                                
                             }
                         }
                         // If it's not an integer type, format as a double.
+#ifdef _WIN32
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
+#else
+                        return fmt::format(format_specifier, value);
+#endif                                
                     }
                     else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
                         // These types are fine as they are
+#ifdef _WIN32
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
+#else
+                        return fmt::format(format_specifier, value);
+#endif                                
                     }
                     else {
                         // Fallback for complex types (Array, Map, etc.)
@@ -1653,7 +2654,11 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                     }
                     }, arg);
             }
+#ifdef _WIN32            
             catch (const std::format_error& e) {
+#else                
+            catch (const fmt::format_error& e) {
+#endif
                 result << "{FORMAT ERROR: " << e.what() << "}";
             }
         }
@@ -2195,7 +3200,10 @@ BasicValue builtin_max(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // ANY(array, [dimension]) -> boolean or array
 BasicValue builtin_any(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() < 1 || args.size() > 2) { Error::set(8, vm.runtime_current_line); return false; }
-    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { Error::set(15, vm.runtime_current_line, "First argument to ANY must be an array."); return false; }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) { 
+        Error::set(15, vm.runtime_current_line, "First argument to ANY must be an array."); 
+        return false; 
+    }
     const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
     if (!arr_ptr || arr_ptr->data.empty()) { return false; } // ANY of empty is false
 
@@ -2265,6 +3273,297 @@ BasicValue builtin_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         }
     }
     else { Error::set(1, vm.runtime_current_line, "Invalid dimension for reduction. Must be 0 or 1."); return true; }
+    return result_ptr;
+}
+
+// SCAN(operator, array) -> array
+// Performs a cumulative reduction (scan) along the last axis of an array.
+BasicValue builtin_scan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SCAN requires 2 arguments: operator, array");
+        return {};
+    }
+    const BasicValue& op_arg = args[0];
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to SCAN must be an array.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!source_ptr || source_ptr->data.empty()) {
+        return source_ptr; // Return original array if null or empty
+    }
+
+    // 2. --- Setup ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape;
+    result_ptr->data.resize(source_ptr->data.size());
+
+    size_t last_dim_size = source_ptr->shape.back();
+    if (last_dim_size == 0) {
+        return source_ptr; // Nothing to scan
+    }
+    size_t num_slices = source_ptr->data.size() / last_dim_size;
+
+    // 3. --- Operator Logic ---
+    // The main loop iterates through each slice (e.g., each row in a 2D matrix)
+    for (size_t i = 0; i < num_slices; ++i) {
+        size_t slice_start_idx = i * last_dim_size;
+
+        // The accumulator holds the cumulative result for the current slice.
+        // Initialize it with the first element of the slice.
+        BasicValue accumulator = source_ptr->data[slice_start_idx];
+        result_ptr->data[slice_start_idx] = accumulator;
+
+        // Loop through the rest of the slice (from the second element onwards)
+        for (size_t j = 1; j < last_dim_size; ++j) {
+            size_t current_idx = slice_start_idx + j;
+            const BasicValue& current_val = source_ptr->data[current_idx];
+
+            // --- Apply the operator ---
+            if (std::holds_alternative<std::string>(op_arg)) {
+                const std::string op = to_upper(std::get<std::string>(op_arg));
+                double acc_d = to_double(accumulator);
+                double cur_d = to_double(current_val);
+
+                if (op == "+") accumulator = acc_d + cur_d;
+                else if (op == "-") accumulator = acc_d - cur_d;
+                else if (op == "*") accumulator = acc_d * cur_d;
+                else if (op == "/") {
+                    if (cur_d == 0.0) { Error::set(2, vm.runtime_current_line); return {}; }
+                    accumulator = acc_d / cur_d;
+                }
+                else if (op == "MIN") accumulator = std::min(acc_d, cur_d);
+                else if (op == "MAX") accumulator = std::max(acc_d, cur_d);
+                else { Error::set(1, vm.runtime_current_line, "Invalid operator string for SCAN: " + op); return {}; }
+            }
+            else if (std::holds_alternative<FunctionRef>(op_arg)) {
+                const std::string func_name = to_upper(std::get<FunctionRef>(op_arg).name);
+                if (!vm.active_function_table->count(func_name)) {
+                    Error::set(22, vm.runtime_current_line, "Operator function '" + func_name + "' not found.");
+                    return {};
+                }
+                const auto& func_info = vm.active_function_table->at(func_name);
+                if (func_info.arity != 2) {
+                    Error::set(26, vm.runtime_current_line, "Operator function '" + func_name + "' must accept exactly two arguments.");
+                    return {};
+                }
+                std::vector<BasicValue> func_args = { accumulator, current_val };
+                accumulator = vm.execute_function_for_value(func_info, func_args);
+                if (Error::get() != 0) return {}; // Propagate error
+            }
+            else {
+                Error::set(15, vm.runtime_current_line, "First argument to SCAN must be an operator string or a function reference.");
+                return {};
+            }
+
+            result_ptr->data[current_idx] = accumulator;
+        }
+    }
+
+    return result_ptr;
+}
+
+// REDUCE(function@, array, [initial_value]) -> value
+// Performs a cumulative reduction on an array using a user-provided function.
+BasicValue builtin_reduce(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "REDUCE requires 2 or 3 arguments: function_ref, array, [initial_value]");
+        return {};
+    }
+    if (!std::holds_alternative<FunctionRef>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to REDUCE must be a function reference (e.g., MyFunc@).");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to REDUCE must be an array.");
+        return {};
+    }
+
+    // 2. --- Argument Parsing ---
+    const auto& func_ref = std::get<FunctionRef>(args[0]);
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const std::string func_name = to_upper(func_ref.name);
+
+    // 3. --- Further Validation ---
+    // Check if the provided function exists and has the correct signature (2 arguments).
+    if (!vm.active_function_table->count(func_name)) {
+        Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for REDUCE.");
+        return {};
+    }
+    const auto& func_info = vm.active_function_table->at(func_name);
+    if (func_info.arity != 2) {
+        Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' must accept exactly two arguments (accumulator, current_value).");
+        return {};
+    }
+
+    // Handle empty or null arrays. An initial value is required in these cases.
+    if (!arr_ptr || arr_ptr->data.empty()) {
+        if (args.size() == 3) {
+            return args[2]; // If an initial value is given, return it.
+        }
+        else {
+            Error::set(15, vm.runtime_current_line, "Cannot reduce a null or empty array without an initial value.");
+            return {};
+        }
+    }
+
+    // 4. --- Reduction Logic ---
+    BasicValue accumulator;
+    size_t start_index = 0;
+
+    // Determine the starting value for the accumulator.
+    if (args.size() == 3) {
+        // An initial value was provided by the user.
+        accumulator = args[2];
+        start_index = 0;
+    }
+    else {
+        // No initial value provided; use the first element of the array.
+        accumulator = arr_ptr->data[0];
+        start_index = 1;
+    }
+
+    // Iterate through the array elements, applying the user's function.
+    for (size_t i = start_index; i < arr_ptr->data.size(); ++i) {
+        const BasicValue& current_element = arr_ptr->data[i];
+
+        // Prepare the two arguments to pass to the user's BASIC function.
+        std::vector<BasicValue> func_args = { accumulator, current_element };
+
+        // Execute the user's function and update the accumulator with the result.
+        accumulator = vm.execute_function_for_value(func_info, func_args);
+
+        // If the user's function caused an error, stop and propagate it.
+        if (Error::get() != 0) {
+            return {};
+        }
+    }
+
+    // Return the final accumulated value.
+    return accumulator;
+}
+
+// SELECT(function@, array) -> array
+// Applies a function to each element of an array, returning a new array of the same shape.
+BasicValue builtin_select(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SELECT requires 2 arguments: function_ref, array");
+        return {};
+    }
+    if (!std::holds_alternative<FunctionRef>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to SELECT must be a function reference (e.g., MyFunc@).");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to SELECT must be an array.");
+        return {};
+    }
+
+    // 2. --- Argument Parsing ---
+    const auto& func_ref = std::get<FunctionRef>(args[0]);
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const std::string func_name = to_upper(func_ref.name);
+
+    // 3. --- Further Validation ---
+    if (!vm.active_function_table->count(func_name)) {
+        Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for SELECT.");
+        return {};
+    }
+    const auto& func_info = vm.active_function_table->at(func_name);
+    // A mapping function must take exactly one argument (the current element).
+    if (func_info.arity != 1) {
+        Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' for SELECT must accept exactly one argument.");
+        return {};
+    }
+    if (!source_ptr) {
+        return {}; // Return empty if the source array is null
+    }
+
+    // 4. --- Mapping Logic ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape; // The result has the same shape as the source
+    result_ptr->data.reserve(source_ptr->data.size());
+
+    // Iterate through the source array elements
+    for (const auto& element : source_ptr->data) {
+        // Prepare the single argument to pass to the user's BASIC function
+        std::vector<BasicValue> func_args = { element };
+
+        // Execute the user's function and get the transformed value
+        BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args);
+
+        // If the user's function caused an error, stop and propagate it
+        if (Error::get() != 0) {
+            return {};
+        }
+
+        result_ptr->data.push_back(mapped_value);
+    }
+
+    return result_ptr;
+}
+// FILTER(function@, array) -> array
+// Returns a new 1D array containing only elements for which the predicate function returns TRUE.
+BasicValue builtin_filter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "FILTER requires 2 arguments: function_ref, array");
+        return {};
+    }
+    if (!std::holds_alternative<FunctionRef>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to FILTER must be a function reference (e.g., IsEven@).");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Second argument to FILTER must be an array.");
+        return {};
+    }
+
+    // 2. --- Argument Parsing ---
+    const auto& func_ref = std::get<FunctionRef>(args[0]);
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    const std::string func_name = to_upper(func_ref.name);
+
+    // 3. --- Further Validation ---
+    if (!vm.active_function_table->count(func_name)) {
+        Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for FILTER.");
+        return {};
+    }
+    const auto& func_info = vm.active_function_table->at(func_name);
+    // A predicate function must take exactly one argument.
+    if (func_info.arity != 1) {
+        Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' for FILTER must accept exactly one argument.");
+        return {};
+    }
+    if (!source_ptr) {
+        return {};
+    }
+
+    // 4. --- Filtering Logic ---
+    auto result_ptr = std::make_shared<Array>();
+    // The result data will be built up dynamically.
+
+    for (const auto& element : source_ptr->data) {
+        std::vector<BasicValue> func_args = { element };
+        BasicValue predicate_result = vm.execute_function_for_value(func_info, func_args);
+
+        if (Error::get() != 0) {
+            return {};
+        }
+
+        // Check if the predicate function returned a TRUE value
+        if (to_bool(predicate_result)) {
+            // If it did, add the *original* element to our results
+            result_ptr->data.push_back(element);
+        }
+    }
+
+    // The result of a filter is always a flat, 1D array.
+    result_ptr->shape = { result_ptr->data.size() };
+
     return result_ptr;
 }
 
@@ -2758,87 +4057,183 @@ BasicValue builtin_append(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
 
 // --- Arithmetic Functions ---
+// Helper to apply a scalar math function element-wise to an array or a scalar.
+// It takes the input BasicValue and a function object that performs the scalar operation.
+BasicValue apply_math_op(const BasicValue& input, const std::function<double(double)>& op) {
+    // Case 1: Input is an Array (vector or matrix)
+    if (const auto& arr_ptr = std::get_if<std::shared_ptr<Array>>(&input)) {
+        if (!*arr_ptr) return {}; // Return empty on null pointer
 
-// SIN(numeric_expression)
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = (*arr_ptr)->shape; // Result has the same shape
+        result_ptr->data.reserve((*arr_ptr)->data.size());
+
+        // Apply the operation to each element
+        for (const auto& val : (*arr_ptr)->data) {
+            result_ptr->data.push_back(op(to_double(val)));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar
+    else {
+        return op(to_double(input));
+    }
+}
+// SIN(numeric_expression or array)
 BasicValue builtin_sin(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    return std::sin(to_double(args[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::sin(d); });
 }
 
-// COS(numeric_expression)
+// COS(numeric_expression or array)
 BasicValue builtin_cos(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    return std::cos(to_double(args[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::cos(d); });
 }
 
-// TAN(numeric_expression)
+// TAN(numeric_expression or array)
 BasicValue builtin_tan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    return std::tan(to_double(args[0]));
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::tan(d); });
 }
 
-// SQR(numeric_expression) - Square Root
+// SQR(numeric_expression or array) - Square Root
 BasicValue builtin_sqr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) return 0.0;
-    double val = to_double(args[0]);
-    return (val < 0) ? 0.0 : std::sqrt(val); // Return 0 for negative input
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    // Apply sqrt, returning 0 for negative inputs to avoid domain errors
+    return apply_math_op(args[0], [](double d) { return (d < 0) ? 0.0 : std::sqrt(d); });
 }
 
-// RND(numeric_expression) -> returns a random number between 0.0 and 1.0
+// RND(numeric_expression or array)
 BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return 0.0;
     }
 
-    // Classic BASIC RND(1) returns a value between 0.0 and 0.999...
-    // We can ignore the argument's value for this simple, standard implementation.
-    // RAND_MAX is a constant defined in <cstdlib>.
-    return static_cast<double>(rand()) / (RAND_MAX + 1.0);
+    const BasicValue& input = args[0];
+
+    // Case 1: Input is an Array. Return an array of the same shape with random numbers.
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+        if (!arr_ptr) return {};
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        size_t total_size = arr_ptr->size();
+        result_ptr->data.reserve(total_size);
+
+        for (size_t i = 0; i < total_size; ++i) {
+            result_ptr->data.push_back(static_cast<double>(rand()) / (RAND_MAX + 1.0));
+        }
+        return result_ptr;
+    }
+    // Case 2: Input is a scalar. Return a single random number.
+    else {
+        // Classic BASIC RND(1) behavior
+        return static_cast<double>(rand()) / (RAND_MAX + 1.0);
+    }
 }
 
-// --- Arithmetic Functions ---
-
-// FAC(numeric_expression) -> number
-// Calculates the factorial of a non-negative integer.
+// FAC(numeric_expression or array)
 BasicValue builtin_fac(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    // 1. Validate the number of arguments.
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return 0.0;
     }
 
-    // 2. Convert the input BasicValue to a number.
-    double n_double = to_double(args[0]);
+    // Lambda to perform the core factorial calculation
+    auto factorial_op = [&](double n_double) {
+        if (n_double != std::floor(n_double) || n_double < 0) return 0.0;
+        long long n = static_cast<long long>(n_double);
+        if (n > 170) return std::numeric_limits<double>::infinity();
 
-    // Factorial is only defined for integers. Check if the number has a fractional part.
-    if (n_double != std::floor(n_double)) {
-        Error::set(1, vm.runtime_current_line, "Argument to FAC must be an integer."); // Syntax error or illegal function call
+        double result = 1.0;
+        for (long long i = 2; i <= n; ++i) { result *= i; }
+        return result;
+        };
+
+    const BasicValue& input = args[0];
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        // Vectorized case: no detailed error setting for performance
+        return apply_math_op(input, factorial_op);
+    }
+    else {
+        // Scalar case: keep the original detailed error checking
+        double n_double = to_double(input);
+        if (n_double != std::floor(n_double)) {
+            Error::set(1, vm.runtime_current_line, "Argument to FAC must be an integer.");
+            return 0.0;
+        }
+        long long n = static_cast<long long>(n_double);
+        if (n < 0) {
+            Error::set(1, vm.runtime_current_line, "Argument to FAC cannot be negative.");
+            return 0.0;
+        }
+        if (n > 170) {
+            Error::set(4, vm.runtime_current_line, "FAC argument too large, causes overflow.");
+            return 0.0;
+        }
+        return factorial_op(n_double);
+    }
+}
+
+// ABS(numeric_expression or array)
+BasicValue builtin_abs(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
         return 0.0;
     }
+    // Use the existing helper to apply std::abs to scalars or array elements
+    return apply_math_op(args[0], [](double d) { return std::abs(d); });
+}
 
-    long long n = static_cast<long long>(n_double);
-
-    // 3. Validate the domain of the input.
-    if (n < 0) {
-        Error::set(1, vm.runtime_current_line, "Argument to FAC cannot be negative."); // Or a more specific error
-        return 0.0; // Factorial is not defined for negative numbers.
-    }
-
-    // Factorials grow very quickly. 20! is the largest that fits in a 64-bit integer.
-    // We calculate using 'double' to handle larger values up to ~170! before overflowing.
-    if (n > 170) {
-        Error::set(4, vm.runtime_current_line, "FAC argument too large, causes overflow."); // Overflow error
+// INT(numeric_expression or array) - Traditional BASIC integer function (floor)
+BasicValue builtin_int(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
         return 0.0;
     }
+    return apply_math_op(args[0], [](double d) { return std::floor(d); });
+}
 
-    // 4. Perform the calculation.
-    double result = 1.0;
-    for (long long i = 2; i <= n; ++i) {
-        result *= i;
+// FLOOR(numeric_expression or array) - Rounds down
+BasicValue builtin_floor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
     }
+    return apply_math_op(args[0], [](double d) { return std::floor(d); });
+}
 
-    return result;
+// CEIL(numeric_expression or array) - Rounds up
+BasicValue builtin_ceil(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::ceil(d); });
+}
+
+// TRUNC(numeric_expression or array) - Truncates toward zero
+BasicValue builtin_trunc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    return apply_math_op(args[0], [](double d) { return std::trunc(d); });
 }
 
 // --- Date and Time Functions ---
@@ -2900,7 +4295,11 @@ BasicValue builtin_time_str(NeReLaBasic& vm, const std::vector<BasicValue>& args
 // Helper to safely add time units to a time_t
 time_t add_to_tm(time_t base_time, int years, int months, int days, int hours, int minutes, int seconds) {
     struct tm timeinfo;
+#ifdef _WIN32
     localtime_s(&timeinfo, &base_time); // Use safe version
+#else
+    localtime_r(&base_time, &timeinfo);
+#endif    
 
     timeinfo.tm_year += years;
     timeinfo.tm_mon += months;
@@ -2912,74 +4311,286 @@ time_t add_to_tm(time_t base_time, int years, int months, int days, int hours, i
     return mktime(&timeinfo); // mktime normalizes the date/time components
 }
 
-// DATEADD(part$, number, dateValue)
+// DATEADD(part$, number, dateValue_or_array)
 BasicValue builtin_dateadd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line);
         return false;
     }
 
     std::string part = to_upper(to_string(args[0]));
     int number = static_cast<int>(to_double(args[1]));
+    const BasicValue& date_input = args[2];
 
-    DateTime start_date;
-    if (std::holds_alternative<DateTime>(args[2])) {
-        start_date = std::get<DateTime>(args[2]);
+    // This helper lambda now uses modern chrono for all calculations.
+    auto perform_date_add = [&](const DateTime& start_date) -> BasicValue {
+        auto tp = start_date.time_point;
+        std::chrono::system_clock::time_point new_tp;
+
+        // Simple duration-based arithmetic
+        if (part == "S") {
+            new_tp = tp + std::chrono::seconds{ number };
+        }
+        else if (part == "N") { // "N" for minutes in classic BASIC
+            new_tp = tp + std::chrono::minutes{ number };
+        }
+        else if (part == "H") {
+            new_tp = tp + std::chrono::hours{ number };
+        }
+        // Calendar-based arithmetic
+        else if (part == "D" || part == "M" || part == "YYYY") {
+#ifdef _WIN32            
+            // To correctly add calendar months/years, we must work in local time.
+            const std::chrono::time_zone* current_tz;
+            try {
+                current_tz = std::chrono::current_zone();
+            }
+            catch (const std::runtime_error&) {
+                current_tz = std::chrono::locate_zone("UTC");
+            }
+
+            // Decompose the time point into date and time-of-day parts in the local zone
+            auto local_time = current_tz->to_local(tp);
+            auto local_days = std::chrono::floor<std::chrono::days>(local_time);
+            auto time_of_day = local_time - local_days;
+
+            std::chrono::year_month_day ymd{ local_days };
+
+            if (part == "D") {
+                // Adding days is simple calendar arithmetic
+                new_tp = std::chrono::sys_days{ ymd } + std::chrono::days{ number } + time_of_day;
+                // Note: The above is UTC, which is fine as that's what we store.
+            }
+            else { // Month or Year
+                if (part == "M") {
+                    ymd += std::chrono::months{ number };
+                }
+                else { // YYYY
+                    ymd += std::chrono::years{ number };
+                }
+
+                // If a date is invalid (e.g., adding 1 month to Jan 31 -> Feb 31),
+                // clamp to the last valid day of that new month.
+                if (!ymd.ok()) {
+                    ymd = ymd.year() / ymd.month() / std::chrono::last;
+                }
+
+                // Re-assemble the date and time parts and convert back to system time (UTC)
+                new_tp = current_tz->to_sys(std::chrono::local_days{ ymd } + time_of_day);
+            }
+#else
+                // Convert time_point to time_t
+                std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+                std::tm timeinfo;
+                localtime_r(&tt, &timeinfo);
+
+                if (part == "D") {
+                    timeinfo.tm_mday += number;
+                } else if (part == "M") {
+                    timeinfo.tm_mon += number;
+                } else { // "YYYY"
+                    timeinfo.tm_year += number;
+                }
+
+                // Normalize and convert back to time_point
+                std::time_t new_tt = mktime(&timeinfo);
+                new_tp = std::chrono::system_clock::from_time_t(new_tt);
+#endif            
+        }
+        else {
+            Error::set(1, vm.runtime_current_line, "Invalid interval for DATEADD. Use YYYY, M, D, H, N, or S.");
+            return false;
+        }
+
+        return DateTime{ new_tp };
+        };
+
+    // --- Vectorized Logic (this part remains the same) ---
+
+    // Case 1: The third argument is an Array.
+    if (std::holds_alternative<std::shared_ptr<Array>>(date_input)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(date_input);
+        if (!arr_ptr) return {};
+
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = arr_ptr->shape;
+        result_ptr->data.reserve(arr_ptr->data.size());
+
+        for (const auto& val : arr_ptr->data) {
+            if (!std::holds_alternative<DateTime>(val)) {
+                Error::set(15, vm.runtime_current_line, "All elements in array for DATEADD must be DateTime objects.");
+                return {};
+            }
+            const auto& dt = std::get<DateTime>(val);
+            BasicValue new_date = perform_date_add(dt);
+            if (Error::get() != 0) return {}; // Propagate error from lambda
+            result_ptr->data.push_back(new_date);
+        }
+        return result_ptr;
     }
+    // Case 2: The third argument is a scalar.
     else {
-        Error::set(15, vm.runtime_current_line); // Type mismatch for 3rd arg
-        return false;
+        if (!std::holds_alternative<DateTime>(date_input)) {
+            Error::set(15, vm.runtime_current_line, "Third argument to DATEADD must be a DateTime object or an array of them.");
+            return false;
+        }
+        const auto& start_date = std::get<DateTime>(date_input);
+        return perform_date_add(start_date);
     }
-
-    time_t start_time_t = std::chrono::system_clock::to_time_t(start_date.time_point);
-    time_t new_time_t;
-
-    if (part == "YYYY") new_time_t = add_to_tm(start_time_t, number, 0, 0, 0, 0, 0);
-    else if (part == "M") new_time_t = add_to_tm(start_time_t, 0, number, 0, 0, 0, 0);
-    else if (part == "D") new_time_t = add_to_tm(start_time_t, 0, 0, number, 0, 0, 0);
-    else if (part == "H") new_time_t = add_to_tm(start_time_t, 0, 0, 0, number, 0, 0);
-    else if (part == "N") new_time_t = add_to_tm(start_time_t, 0, 0, 0, 0, number, 0);
-    else if (part == "S") new_time_t = add_to_tm(start_time_t, 0, 0, 0, 0, 0, number);
-    else {
-        Error::set(1, vm.runtime_current_line); // Invalid interval string
-        return false;
-    }
-
-    return DateTime{ std::chrono::system_clock::from_time_t(new_time_t) };
 }
-// CVDATE(string_expression) -> DateTime
+
+// DATEDIFF(part$, date1, date2) -> number or array
+// Calculates the difference between two dates in the specified unit. Now supports vectorized operations.
+BasicValue builtin_datediff(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "DATEDIFF requires 3 arguments: part$, date1, date2");
+        return 0.0;
+    }
+
+    std::string part = to_upper(to_string(args[0]));
+    const BasicValue& date1_arg = args[1];
+    const BasicValue& date2_arg = args[2];
+
+    // Helper lambda to calculate the difference between two single DateTime objects.
+    auto calculate_diff = [&](const DateTime& d1, const DateTime& d2) -> BasicValue {
+        auto duration = d2.time_point - d1.time_point;
+        if (part == "D") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::hours>(duration).count() / 24.0);
+        }
+        else if (part == "H") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::hours>(duration).count());
+        }
+        else if (part == "N") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::minutes>(duration).count());
+        }
+        else if (part == "S") {
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(duration).count());
+        }
+        Error::set(1, vm.runtime_current_line, "Invalid interval for DATEDIFF. Use D, H, N, or S.");
+        return 0.0;
+        };
+
+    // Use std::visit to handle all combinations of scalar and array inputs.
+    return std::visit([&](auto&& arg1, auto&& arg2) -> BasicValue {
+        using T1 = std::decay_t<decltype(arg1)>;
+        using T2 = std::decay_t<decltype(arg2)>;
+
+        // Case 1: Array vs Array
+        if constexpr (std::is_same_v<T1, std::shared_ptr<Array>> && std::is_same_v<T2, std::shared_ptr<Array>>) {
+            if (!arg1 || !arg2) { Error::set(15, vm.runtime_current_line, "Input arrays cannot be null."); return {}; }
+            if (arg1->shape != arg2->shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise DATEDIFF."); return {}; }
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = arg1->shape;
+            result_ptr->data.reserve(arg1->data.size());
+
+            for (size_t i = 0; i < arg1->data.size(); ++i) {
+                if (!std::holds_alternative<DateTime>(arg1->data[i]) || !std::holds_alternative<DateTime>(arg2->data[i])) {
+                    Error::set(15, vm.runtime_current_line, "All array elements must be DateTime objects."); return {};
+                }
+                result_ptr->data.push_back(calculate_diff(std::get<DateTime>(arg1->data[i]), std::get<DateTime>(arg2->data[i])));
+                if (Error::get() != 0) return {};
+            }
+            return result_ptr;
+        }
+        // Case 2: Scalar vs Array
+        else if constexpr (std::is_same_v<T1, DateTime> && std::is_same_v<T2, std::shared_ptr<Array>>) {
+            if (!arg2) { Error::set(15, vm.runtime_current_line, "Input array cannot be null."); return {}; }
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = arg2->shape;
+            result_ptr->data.reserve(arg2->data.size());
+
+            for (const auto& elem : arg2->data) {
+                if (!std::holds_alternative<DateTime>(elem)) { Error::set(15, vm.runtime_current_line, "All array elements must be DateTime objects."); return {}; }
+                result_ptr->data.push_back(calculate_diff(arg1, std::get<DateTime>(elem)));
+                if (Error::get() != 0) return {};
+            }
+            return result_ptr;
+        }
+        // Case 3: Array vs Scalar
+        else if constexpr (std::is_same_v<T1, std::shared_ptr<Array>> && std::is_same_v<T2, DateTime>) {
+            if (!arg1) { Error::set(15, vm.runtime_current_line, "Input array cannot be null."); return {}; }
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = arg1->shape;
+            result_ptr->data.reserve(arg1->data.size());
+
+            for (const auto& elem : arg1->data) {
+                if (!std::holds_alternative<DateTime>(elem)) { Error::set(15, vm.runtime_current_line, "All array elements must be DateTime objects."); return {}; }
+                result_ptr->data.push_back(calculate_diff(std::get<DateTime>(elem), arg2));
+                if (Error::get() != 0) return {};
+            }
+            return result_ptr;
+        }
+        // Case 4: Scalar vs Scalar
+        else if constexpr (std::is_same_v<T1, DateTime> && std::is_same_v<T2, DateTime>) {
+            return calculate_diff(arg1, arg2);
+        }
+        // Default: Invalid type combination
+        else {
+            Error::set(15, vm.runtime_current_line, "Invalid argument types for DATEDIFF. Must be DateTime objects or arrays of them.");
+            return {};
+        }
+        }, date1_arg, date2_arg);
+}
+
+// CVDATE(string_expression_or_array) -> DateTime, array, or boolean false on error
 // Parses a string like "YYYY-MM-DD" into a DateTime object.
 BasicValue builtin_cvdate(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
-        return false; // Return boolean false on error
-    }
-
-    std::string date_str = to_string(args[0]);
-    std::tm tm = {};
-    std::stringstream ss(date_str);
-
-    // Try to parse the date in "YYYY-MM-DD" format.
-    // Check for leftover characters by peeking.
-    ss >> std::get_time(&tm, "%Y-%m-%d");
-
-    if (ss.fail() || ss.peek() != EOF) {
-        // If parsing failed or there's extra junk in the string.
-        Error::set(15, vm.runtime_current_line); // Type Mismatch is a suitable error
-        return false; // Return boolean false on error
-    }
-
-    // Convert std::tm to time_t, then to a time_point
-    time_t time = std::mktime(&tm);
-    if (time == -1) {
-        // mktime can fail if the tm struct is invalid
-        Error::set(15, vm.runtime_current_line);
+        Error::set(8, vm.runtime_current_line);
         return false;
     }
-    auto time_point = std::chrono::system_clock::from_time_t(time);
 
-    // Return the new DateTime object
-    return DateTime{ time_point };
+    auto cvdate_op = [](NeReLaBasic& vm_ref, const BasicValue& v) -> BasicValue {
+        std::string date_str = to_string(v);
+
+        int p_year, p_month, p_day;
+        char dash1, dash2;
+        std::stringstream ss(date_str);
+
+        // Manually parse the components from the string
+        ss >> p_year >> dash1 >> p_month >> dash2 >> p_day;
+
+        if (ss.fail() || ss.peek() != EOF || dash1 != '-' || dash2 != '-') {
+            Error::set(15, vm_ref.runtime_current_line, "Invalid date format. Expected 'YYYY-MM-DD'.");
+            return false;
+        }
+#ifdef _WIN32
+        // Use C++20's std::chrono::year_month_day for robust validation and conversion
+        std::chrono::year_month_day ymd{
+            std::chrono::year{p_year},
+            std::chrono::month{(unsigned int)p_month},
+            std::chrono::day{(unsigned int)p_day}
+        };
+
+        // The .ok() method checks if the date is valid (e.g., not February 30th)
+        if (!ymd.ok()) {
+            Error::set(15, vm_ref.runtime_current_line, "Invalid date components (e.g., month > 12 or invalid day).");
+            return false;
+        }
+
+        // std::chrono::sys_days is a time_point that represents a whole day.
+        // This will correctly convert to the time_point in your DateTime struct.
+        auto time_point = std::chrono::sys_days{ ymd };
+#else
+        std::tm timeinfo = {};
+        timeinfo.tm_year = p_year - 1900;
+        timeinfo.tm_mon = p_month - 1;
+        timeinfo.tm_mday = p_day;
+        timeinfo.tm_hour = 0;
+        timeinfo.tm_min = 0;
+        timeinfo.tm_sec = 0;
+        std::time_t tt = mktime(&timeinfo);
+        if (tt == -1) {
+            Error::set(15, vm_ref.runtime_current_line, "Invalid date components (e.g., month > 12 or invalid day).");
+            return false;
+        }
+        auto time_point = std::chrono::system_clock::from_time_t(tt);
+#endif
+        return DateTime{ time_point };
+    };
+
+    return apply_elementwise_op(vm, args[0], cvdate_op);
 }
 
 
@@ -3138,7 +4749,7 @@ BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     std::string wildcard = pattern_path.has_filename() ? pattern_path.filename().string() : "*";
 
     if (!fs::exists(target_dir) || !fs::is_directory(target_dir)) {
-        Error::set(6, vm.runtime_current_line, "Directory not found: " + target_dir.string());
+        //Error::set(6, vm.runtime_current_line, "Directory or file not found: " + target_dir.string());
         return {};
     }
 
@@ -3286,7 +4897,7 @@ BasicValue builtin_mkdir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // KILL path_string (deletes a file)
 BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, 0); // Wrong number of arguments
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
         return false;
     }
     std::string path_str = to_string(args[0]);
@@ -3310,7 +4921,7 @@ BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // Reads the entire content of a text file into a single string.
 BasicValue builtin_txtreader_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line);
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
         return std::string("");
     }
     std::string filename = to_string(args[0]);
@@ -3332,7 +4943,7 @@ BasicValue builtin_txtreader_str(NeReLaBasic& vm, const std::vector<BasicValue>&
 // Reads a delimited file (like CSV) into a 2D array of numbers.
 BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.empty() || args.size() > 3) {
-        Error::set(8, vm.runtime_current_line);
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
         return {};
     }
 
@@ -3596,6 +5207,56 @@ BasicValue builtin_httppost(NeReLaBasic& vm, const std::vector<BasicValue>& args
     return response_body;
 }
 
+// This helper now calls the public httpPost method.
+void perform_http_post_internal(
+    NetworkManager& nm, // Pass a reference to the network manager
+    std::string url,
+    std::string body,
+    std::string content_type,
+    std::shared_ptr<std::promise<BasicValue>> promise)
+{
+    try {
+        // Call the public method, not the private helper
+        std::string response = nm.httpPost(url, body, content_type);
+        promise->set_value(response);
+    }
+    catch (...) {
+        promise->set_exception(std::current_exception());
+    }
+}
+
+// The new async built-in function that your BASIC code will AWAIT.
+BasicValue builtin_http_post_async(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "HTTP.POST_ASYNC requires 3 arguments: url, body, content_type");
+        return {};
+    }
+
+    std::string url = to_string(args[0]);
+    std::string body = to_string(args[1]);
+    std::string content_type = to_string(args[2]);
+
+    // 1. Create a promise to get the result from the background thread.
+    auto promise = std::make_shared<std::promise<BasicValue>>();
+    std::future<BasicValue> future = promise->get_future();
+
+    // 2. Launch the blocking work in a detached C++ thread.
+    //    Pass the network manager by reference using std::ref.
+    std::thread(perform_http_post_internal, std::ref(vm.network_manager), url, body, content_type, promise).detach();
+
+    // 3. Create a "waiter" task for the interpreter's scheduler.
+    auto waiter_task = std::make_shared<NeReLaBasic::Task>();
+    waiter_task->id = vm.next_task_id++;
+    waiter_task->status = TaskStatus::RUNNING;
+
+    // 4. Correctly assign the future. Since the types now match, this is simple.
+    waiter_task->result_future = std::move(future);
+
+    // 5. Add the waiter task to the queue and return a handle to it.
+    vm.task_queue[waiter_task->id] = waiter_task;
+    return TaskRef{ waiter_task->id };
+}
+
 // HTTP.PUT$(URL$, Data$, ContentType$) -> ResponseBody$
 BasicValue builtin_httpput(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) {
@@ -3619,6 +5280,255 @@ BasicValue builtin_httpput(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 
 #endif
 
+// Other
+
+// Implementation of the TYPEOF function
+BasicValue builtin_typeof(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(26, vm.runtime_current_line, "TYPEOF requires exactly one argument.");
+        return std::string(""); // Return empty string on error
+    }
+
+    const BasicValue& val = args[0];
+
+    // Use std::visit to check the type held by the BasicValue variant
+    return std::visit([](auto&& arg) -> std::string {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, bool>) {
+            return "BOOLEAN";
+        }
+        else if constexpr (std::is_same_v<T, int>) {
+            return "INTEGER";
+        }
+        else if constexpr (std::is_same_v<T, double>) {
+            return "DOUBLE";
+        }
+        else if constexpr (std::is_same_v<T, std::string>) {
+            return "STRING";
+        }
+        else if constexpr (std::is_same_v<T, DateTime>) {
+            return "DATE";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
+            return "ARRAY";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
+            return "MAP";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
+            return "JSON";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Tensor>>) {
+            return "TENSOR";
+        }
+#ifdef JDCOM
+        else if constexpr (std::is_same_v<T, ComObject>) {
+            return "COMOBJECT";
+        }
+#endif
+        else if constexpr (std::is_same_v<T, FunctionRef>) {
+            return "FUNCREF";
+        }
+        else if constexpr (std::is_same_v<T, TaskRef>) {
+            return "TASKREF";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<OpaqueHandle>>) {
+            return arg ? arg->type_name : "NULL_HANDLE";
+        }
+        return "UNKNOWN";
+        }, val);
+}
+
+//  Built-in to check if a thread is done.
+BasicValue is_thread_done(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1 || !std::holds_alternative<ThreadHandle>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "IS_THREAD_DONE requires a ThreadHandle.");
+        return false;
+    }
+    const auto& handle = std::get<ThreadHandle>(args[0]);
+
+    std::lock_guard<std::mutex> lock(vm.background_tasks_mutex);
+    auto it = vm.background_tasks.find(handle.id);
+    if (it == vm.background_tasks.end()) {
+        return true; // If it's not in the map, it's finished and result was taken.
+    }
+
+    // Check if the future is ready without blocking.
+    auto status = it->second.wait_for(std::chrono::seconds(0));
+    return (status == std::future_status::ready);
+}
+
+// Built-in to get a thread's result (this will block).
+BasicValue get_thread_result(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1 || !std::holds_alternative<ThreadHandle>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "GET_THREAD_RESULT requires a ThreadHandle.");
+        return {};
+    }
+    const auto& handle = std::get<ThreadHandle>(args[0]);
+    std::future<BasicValue> result_future;
+
+    {
+        std::lock_guard<std::mutex> lock(vm.background_tasks_mutex);
+        auto it = vm.background_tasks.find(handle.id);
+        if (it == vm.background_tasks.end()) {
+            Error::set(3, vm.runtime_current_line, "Thread result already retrieved or invalid handle.");
+            return {};
+        }
+        // Move the future out of the map; a future's result can only be retrieved once.
+        result_future = std::move(it->second);
+        vm.background_tasks.erase(it);
+    }
+
+    // .get() will block here until the thread finishes and returns its value.
+    // It will also re-throw any exception caught in the thread.
+    return result_future.get();
+}
+
+// REGEX.MATCH(pattern$, text$) -> Boolean or Array
+BasicValue builtin_regex_match(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "REGEX.MATCH requires 2 arguments: pattern, text");
+        return false;
+    }
+
+    std::string pattern_str = to_string(args[0]);
+    std::string text_str = to_string(args[1]);
+    std::smatch matches;
+
+    try {
+        std::regex pattern(pattern_str);
+
+        if (std::regex_match(text_str, matches, pattern)) {
+            // If there are capture groups (...), return them as an array.
+            if (matches.size() > 1) {
+                auto result_ptr = std::make_shared<Array>();
+                // Start at 1 to skip the full match (matches[0])
+                for (size_t i = 1; i < matches.size(); ++i) {
+                    result_ptr->data.push_back(matches[i].str());
+                }
+                result_ptr->shape = { result_ptr->data.size() };
+                return result_ptr;
+            }
+            else {
+                // No capture groups, but the whole string matched.
+                return true;
+            }
+        }
+        else {
+            // The string did not match the pattern.
+            return false;
+        }
+    }
+    catch (const std::regex_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid regex pattern: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// Regex functions
+
+// REGEX.FINDALL(pattern$, text$) -> Array
+BasicValue builtin_regex_findall(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "REGEX.FINDALL requires 2 arguments: pattern, text");
+        return {};
+    }
+
+    std::string pattern_str = to_string(args[0]);
+    std::string text_str = to_string(args[1]);
+    auto result_ptr = std::make_shared<Array>();
+
+    try {
+        std::regex pattern(pattern_str);
+        auto words_begin = std::sregex_iterator(text_str.begin(), text_str.end(), pattern);
+        auto words_end = std::sregex_iterator();
+
+        bool has_capture_groups = pattern.mark_count() > 0;
+
+        if (has_capture_groups) {
+            // Return a 2D array of captured groups
+            for (auto it = words_begin; it != words_end; ++it) {
+                const std::smatch& match = *it;
+                auto row_ptr = std::make_shared<Array>();
+                // Start at 1 to get only the captured groups
+                for (size_t i = 1; i < match.size(); ++i) {
+                    row_ptr->data.push_back(match[i].str());
+                }
+                row_ptr->shape = { row_ptr->data.size() };
+                result_ptr->data.push_back(row_ptr);
+            }
+            result_ptr->shape = { result_ptr->data.size() };
+        }
+        else {
+            // No capture groups, just return all full matches as a 1D array.
+            for (auto it = words_begin; it != words_end; ++it) {
+                result_ptr->data.push_back((*it).str());
+            }
+            result_ptr->shape = { result_ptr->data.size() };
+        }
+
+        return result_ptr;
+    }
+    catch (const std::regex_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid regex pattern: " + std::string(e.what()));
+        return {};
+    }
+}
+
+// REGEX.REPLACE(pattern$, text$, replacement$) -> String
+BasicValue builtin_regex_replace(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "REGEX.REPLACE requires 3 arguments: pattern, text, replacement");
+        return std::string("");
+    }
+
+    std::string pattern_str = to_string(args[0]);
+    std::string text_str = to_string(args[1]);
+    std::string replacement_str = to_string(args[2]);
+
+    try {
+        std::regex pattern(pattern_str);
+        // regex_replace finds all matches and replaces them according to the format string.
+        return std::regex_replace(text_str, pattern, replacement_str);
+    }
+    catch (const std::regex_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid regex pattern: " + std::string(e.what()));
+        return std::string("");
+    }
+}
+
+// --- System self codeing functions ---
+// 
+// EXECUTE(code_string$)
+// Compiles and executes a string of jdBasic code at runtime.
+BasicValue builtin_execute(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "EXECUTE requires exactly one string argument.");
+        return false;
+    }
+
+    std::string code_to_execute = to_string(args[0]);
+    if (code_to_execute.empty()) {
+        return false; // Nothing to do
+    }
+
+    // 1. Compile the string using the new, non-destructive snippet compiler.
+    std::vector<uint8_t> temp_p_code;
+    if (vm.compiler->tokenize_snippet(vm, temp_p_code, code_to_execute) != 0) {
+        // The snippet compiler set an error, so we just return.
+        return false;
+    }
+
+    // 2. Execute the compiled p-code block synchronously.
+    try {
+        vm.execute_synchronous_block(temp_p_code, true);
+    }
+    catch (const std::exception& e) {
+        Error::set(1, vm.runtime_current_line, "Runtime error in code executed via EXECUTE: " + std::string(e.what()));
+    }
+
+    return false; // EXECUTE is a procedure.
+}
 
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
@@ -3654,12 +5564,24 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("LCASE$", 1, builtin_lcase_str);
     register_func("UCASE$", 1, builtin_ucase_str);
     register_func("TRIM$", 1, builtin_trim_str);
+    register_func("REPLACE$", 3, builtin_replace_str);
     register_func("INKEY$", 0, builtin_inkey);
+    register_func("WAITKEY$", 0, builtin_waitkey_str);
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
     register_func("SPLIT", 2, builtin_split);
     register_func("FRMV$", 1, builtin_frmv_str);
     register_func("FORMAT$", -1, builtin_format_str);
+
+    // --- Register Regex Functions ---
+    register_func("REGEX.MATCH", 2, builtin_regex_match);
+    register_func("REGEX.FINDALL", 2, builtin_regex_findall);
+    register_func("REGEX.REPLACE", 3, builtin_regex_replace);
+
+    // --- Other things
+    register_func("TYPEOF", 1, builtin_typeof);
+    register_func("THREAD.ISDONE", 1, is_thread_done);
+    register_func("THREAD.GETRESULT", 1, get_thread_result);
 
     // --- Register Math Functions ---
     register_func("SIN", 1, builtin_sin);
@@ -3668,6 +5590,11 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SQR", 1, builtin_sqr);
     register_func("RND", 1, builtin_rnd);
     register_func("FAC", 1, builtin_fac);
+    register_func("ABS", 1, builtin_abs);
+    register_func("INT", 1, builtin_int);
+    register_func("FLOOR", 1, builtin_floor);
+    register_func("CEIL", 1, builtin_ceil);
+    register_func("TRUNC", 1, builtin_trunc);
 
     // --- Register APL-style Array Functions ---
     register_func("IOTA", 1, builtin_iota);
@@ -3679,6 +5606,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MAX", -1, builtin_max);
     register_func("ANY", -1, builtin_any);
     register_func("ALL", -1, builtin_all);
+    register_func("SCAN", 2, builtin_scan);
+    register_func("SELECT", 2, builtin_select);
+    register_func("FILTER", 2, builtin_filter);
+    register_func("REDUCE", -1, builtin_reduce);
     register_func("MATMUL", 2, builtin_matmul);
     register_func("OUTER", 3, builtin_outer);
     register_func("INTEGRATE", 3, builtin_integrate);
@@ -3687,7 +5618,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TAKE", 2, builtin_take);
     register_func("DROP", 2, builtin_drop);
     register_func("GRADE", 1, builtin_grade);
-    register_func("SLICE", 3, builtin_slice);
+    register_func("SLICE", -1, builtin_slice);
+    register_func("STACK", -1, builtin_stack);
     register_func("MVLET", 4, builtin_mvlet);
     register_func("DIFF", 2, builtin_diff);
     register_func("APPEND", 2, builtin_append);
@@ -3702,17 +5634,35 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("DATE$", 0, builtin_date_str);
     register_func("TIME$", 0, builtin_time_str);
     register_func("DATEADD", 3, builtin_dateadd);
+    register_func("DATEDIFF", 3, builtin_datediff);
     register_func("CVDATE", 1, builtin_cvdate);
 
     // --- Register Methods ---
 #ifdef SDL3
     register_proc("SCREEN", -1, builtin_screen);
-    register_proc("PSET", -1, builtin_pset);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
-    register_proc("LINE", -1, builtin_line);     
-    register_proc("RECT", -1, builtin_rect);     
-    register_proc("CIRCLE", -1, builtin_circle); 
+    register_proc("DRAWCOLOR", -1, builtin_drawcolor);
+    register_proc("SETFONT", 2, builtin_setfont);
+
+    register_proc("PSET", -1, builtin_pset);
+    register_proc("LINE", -1, builtin_line);
+    register_proc("RECT", -1, builtin_rect);
+    register_proc("CIRCLE", -1, builtin_circle);
     register_proc("TEXT", -1, builtin_text);
+    register_proc("PLOTRAW", -1, builtin_plotraw);
+
+    register_proc("TURTLE.FORWARD", 1, builtin_turtle_forward);
+    register_proc("TURTLE.BACKWARD", 1, builtin_turtle_backward);
+    register_proc("TURTLE.LEFT", 1, builtin_turtle_left);
+    register_proc("TURTLE.RIGHT", 1, builtin_turtle_right);
+    register_proc("TURTLE.PENUP", 0, builtin_turtle_penup);
+    register_proc("TURTLE.PENDOWN", 0, builtin_turtle_pendown);
+    register_proc("TURTLE.SETPOS", 2, builtin_turtle_setpos);
+    register_proc("TURTLE.SETHEADING", 1, builtin_turtle_setheading);
+    register_proc("TURTLE.HOME", 0, builtin_turtle_home);
+    register_proc("TURTLE.SET_COLOR", 3, builtin_turtle_set_color);
+    register_proc("TURTLE.DRAW", 0, builtin_turtle_draw);
+    register_proc("TURTLE.CLEAR", 0, builtin_turtle_clear);
 
     register_proc("SOUND.INIT", 0, builtin_sound_init);
     register_proc("SOUND.VOICE", 6, builtin_sound_voice);
@@ -3720,23 +5670,42 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SOUND.RELEASE", 1, builtin_sound_release);
     register_proc("SOUND.STOP", 1, builtin_sound_stop);
 
+    register_proc("SFX.LOAD", 2, builtin_sfx_load);
+    register_proc("SFX.PLAY", 1, builtin_sfx_play);
+    register_proc("MUSIC.PLAY", -1, builtin_music_play);
+    register_proc("MUSIC.STOP", 0, builtin_music_stop);
+
     register_func("MOUSEX", 0, builtin_mousex);
     register_func("MOUSEY", 0, builtin_mousey);
     register_func("MOUSEB", 1, builtin_mouseb);
 
     // Sprite Procedures
     register_proc("SPRITE.LOAD", 2, builtin_sprite_load);
+    register_proc("SPRITE.LOAD_ASEPRITE", 2, builtin_sprite_load_aseprite);
     register_proc("SPRITE.MOVE", 3, builtin_sprite_move);
     register_proc("SPRITE.SET_VELOCITY", 3, builtin_sprite_set_velocity);
     register_proc("SPRITE.DELETE", 1, builtin_sprite_delete);
-    register_proc("SPRITE.UPDATE", 0, builtin_sprite_update);
-    register_proc("SPRITE.DRAW_ALL", 0, builtin_sprite_draw_all);
-
-    // Sprite Functions
+    register_proc("SPRITE.UPDATE", -1, builtin_sprite_update); // Now has optional arg
+    register_proc("SPRITE.DRAW_ALL", 2, builtin_sprite_draw_all);
+    register_proc("SPRITE.SET_ANIMATION", 2, builtin_sprite_set_animation);
+    register_proc("SPRITE.SET_FLIP", 2, builtin_sprite_set_flip);
+    register_proc("SPRITE.ADD_TO_GROUP", 2, builtin_sprite_add_to_group);
     register_func("SPRITE.CREATE", 3, builtin_sprite_create);
     register_func("SPRITE.GET_X", 1, builtin_sprite_get_x);
     register_func("SPRITE.GET_Y", 1, builtin_sprite_get_y);
     register_func("SPRITE.COLLISION", 2, builtin_sprite_collision);
+    register_func("SPRITE.CREATE_GROUP", 0, builtin_sprite_create_group);
+    register_func("SPRITE.COLLISION_GROUP", 2, builtin_sprite_collision_group);
+    register_func("SPRITE.COLLISION_GROUPS", 2, builtin_sprite_collision_groups);
+
+    // --- Add New TileMap Functions ---
+    register_proc("TILEMAP.LOAD", 2, builtin_map_load);
+    register_proc("TILEMAP.DRAW_LAYER", -1, builtin_map_draw_layer); // Optional args
+    register_func("TILEMAP.GET_OBJECTS", 2, builtin_map_get_objects);
+    register_func("TILEMAP.COLLIDES", 3, builtin_map_collides);
+    register_func("TILEMAP.GET_TILE_ID", 4, builtin_map_get_tile_id);
+    register_proc("TILEMAP.DRAW_DEBUG_COLLISIONS", 3, builtin_map_draw_debug);
+
 
 #endif
 #ifdef JDCOM
@@ -3750,6 +5719,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("HTTP.CLEARHEADERS", 0, builtin_http_clearheaders);
     register_func("HTTP.STATUSCODE", 0, builtin_http_statuscode);
     register_func("HTTP.POST$", 3, builtin_httppost);
+    register_func("HTTP.POST_ASYNC", 3, builtin_http_post_async);
     register_func("HTTP.PUT$", 3, builtin_httpput);
 #endif
 
@@ -3776,9 +5746,13 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("MKDIR", 1, builtin_mkdir);
     register_proc("KILL", 1, builtin_kill);
 
+    register_proc("EXECUTE", 1, builtin_execute);
+
     register_func("CSVREADER", -1, builtin_csvreader); // -1 for optional args
     register_func("TXTREADER$", 1, builtin_txtreader_str);
     register_proc("TXTWRITER", 2, builtin_txtwriter);
     register_proc("CSVWRITER", -1, builtin_csvwriter); // -1 for optional delimiter
+
+    // Task thing
 
 }

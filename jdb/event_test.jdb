@@ -1,0 +1,30 @@
+' Event Handling Demo
+
+ON "MY_CUSTOM_EVENT" CALL HandleCustomEvent
+ON "KEYDOWN" CALL HandleKeys
+ON "QUIT" CALL HandleQuit
+
+SUB HandleCustomEvent(data)
+  PRINT "Custom event received! Data: "; data[0]
+ENDSUB
+
+SUB HandleQuit(data)
+  PRINT "Program will be terminated."
+  END
+ENDSUB
+
+SUB HandleKeys(data)
+  PRINT "Key down! Scancode: "; data[0]{"scancode"}
+  IF data[0]{"scancode"} = 27 THEN RAISEEVENT "QUIT", 0 ' ESC key
+ENDSUB
+
+PRINT "Event system is active. Press keys or wait for events."
+PRINT "Raising a custom event in 3 seconds..."
+
+SLEEP 1000
+RAISEEVENT "MY_CUSTOM_EVENT", "Hello from the main program!"
+
+DO
+  ' Main program loop
+  sleep 15
+LOOP

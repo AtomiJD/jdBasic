@@ -48,34 +48,56 @@ namespace {
 }
 
 void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& customMessage) {
-    if (current_error_code == 0) { // Only store the first error
+    if (g_vm_instance_ptr == nullptr) {
         current_error_code = errorCode;
         error_line_number = lineNumber;
-        custom_error_message = customMessage; // Store the custom message
-        if (!customMessage.empty()) {
-            g_vm_instance_ptr->builtin_constants["ERRMSG"] = customMessage;
+        custom_error_message = customMessage;
+        return;
+    }
+
+    NeReLaBasic* vm = g_vm_instance_ptr;
+
+    // Check if there is an active error handler on the stack
+    if (!vm->handler_stack.empty()) {
+        // Get the handler for the current TRY block
+        NeReLaBasic::ExceptionHandler handler = vm->handler_stack.back();
+
+        // Store error info for the CATCH block to access via ERR, ERL, etc.
+        current_error_code = errorCode;
+        error_line_number = lineNumber;
+        custom_error_message = customMessage;
+        vm->variables["ERR"] = static_cast<double>(errorCode);
+        vm->variables["ERL"] = static_cast<double>(lineNumber);
+        vm->variables["ERRMSG$"] = getMessage(errorCode) + (customMessage.empty() ? "" : ", " + customMessage);
+        vm->variables["STACK$"] = vm->get_stacktrace(); // String with global call stack
+
+        // UNWIND THE STACKS to the state they were in when TRY was entered
+        if (vm->call_stack.size() > handler.call_stack_depth) {
+            vm->call_stack.resize(handler.call_stack_depth);
+        }
+        if (vm->for_stack.size() > handler.for_stack_depth) {
+            vm->for_stack.resize(handler.for_stack_depth);
         }
 
-        if (g_vm_instance_ptr && g_vm_instance_ptr->error_handler_active) {
-            // Set the built-in error variables (ERR and ERL)
-            g_vm_instance_ptr->err_code = static_cast<double>(errorCode);
-            g_vm_instance_ptr->erl_line = static_cast<double>(lineNumber);
-            g_vm_instance_ptr->builtin_constants["ERR"] = g_vm_instance_ptr->err_code;
-            g_vm_instance_ptr->builtin_constants["ERL"] = g_vm_instance_ptr->erl_line;
-            // Save current context for RESUME
-            g_vm_instance_ptr->resume_runtime_line = g_vm_instance_ptr->runtime_current_line;
-            g_vm_instance_ptr->resume_p_code_ptr = g_vm_instance_ptr->active_p_code;
-            g_vm_instance_ptr->resume_function_table_ptr = g_vm_instance_ptr->active_function_table;
-            g_vm_instance_ptr->resume_call_stack_snapshot = g_vm_instance_ptr->call_stack;
-            g_vm_instance_ptr->resume_for_stack_snapshot = g_vm_instance_ptr->for_stack;
-
-            // The main execution loop will calculate resume_pcode_next_statement
-            // for RESUME NEXT. For simple RESUME (retry current), use current_statement_start_pcode.
-            g_vm_instance_ptr->resume_pcode = g_vm_instance_ptr->current_statement_start_pcode; // <<< NEW
-
-            // Signal the main execution loop to jump to the error handler
-            g_vm_instance_ptr->jump_to_error_handler = true;
+        // Set the pending jump flags for the main execution loop to handle.
+        vm->jump_to_catch_pending = true;
+        if (handler.catch_address != 0) {
+            vm->pending_catch_address = handler.catch_address;
         }
+        else {
+            // If no CATCH, jump to FINALLY (or past the block if no FINALLY)
+            vm->pending_catch_address = handler.finally_address;
+        }
+        return;
+    }
+
+    // No handler found, this is an unhandled exception.
+    // Set the global error state to halt the program.
+    current_error_code = errorCode;
+    error_line_number = lineNumber;
+    custom_error_message = customMessage;
+    if (vm->current_task) {
+        vm->current_task->status = TaskStatus::ERRORED;
     }
 }
 

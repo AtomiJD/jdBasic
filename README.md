@@ -1,6 +1,7 @@
+
 # jdBasic - A modern functional BASIC Interpreter
 
-**jdBasic** is not your grandfather's BASIC. It's a modern, powerful interpreter that blends the simplicity and familiarity of classic BASIC with concepts from functional and array-oriented programming.
+**jdBasic**: A modern BASIC interpreter with APL-style array processing and a built-in Tensor engine for building and training neural networks from scratch.
 
 Whether you're looking to relive the nostalgia of 8-bit coding with modern conveniences or explore powerful data processing paradigms in a simple syntax, jdBasic offers a unique and powerful environment. The language is designed to be easy to learn but capable enough to build complex, modular applications.
 
@@ -10,156 +11,156 @@ jdBasic is packed with features that bridge the gap between retro and modern pro
 
 #### Classic BASIC Foundations
 
-* Familiar control flow with `FOR...NEXT` loops, `GOTO`, and labels.
-* Multi-line `IF...THEN...ELSE...ENDIF` blocks for conditional logic.
-* Single-line `IF...THEN` for concise checks.
-* A rich library of built-in functions for string manipulation (`TRIM$`, `LEFT$`, `MID$`, `INSTR`, etc.) and math (`SQR`, `SIN`, `RND`, etc.).
+  * Familiar control flow with `FOR...NEXT` loops, `GOTO`, and labels.
+  * Multi-line `IF...THEN...ELSE...ENDIF` blocks for conditional logic.
+  * Robust error handling with `TRY...CATCH...FINALLY` blocks.
 
 #### APL-Inspired Array Programming
 
-This is where jdBasic becomes a powerful tool for data manipulation, inspired by the APL programming language.
-
-* **N-Dimensional Arrays**: First-class support for vectors, matrices, and higher-dimension arrays.
-* **Element-Wise Operations**: Perform arithmetic on entire arrays at once (e.g., `My_Array = My_Array * 2 + 5`).
-* **Array Creation**: Generate data with `IOTA` and change array dimensions with `RESHAPE`.
-* **Slicing and Transformation**: Use `TAKE` and `DROP` to select elements, and `REVERSE` or `TRANSPOSE` to alter array structure.
-* **Data Analysis & Reduction**: Instantly aggregate arrays with `SUM`, `PRODUCT`, `MIN`, `MAX`, `ANY`, and `ALL`. Use the powerful `GRADE` function to get sort indices for complex data analysis.
-* **Advanced Linear Algebra**: Perform standard matrix multiplication with `MATMUL` and create combination tables with `OUTER`.
-
- ![APL Demo](demo.gif)
+  * **N-Dimensional Arrays**: First-class support for vectors, matrices, and higher-dimension arrays.
+  * **Element-Wise Operations**: Perform arithmetic on entire arrays at once (e.g., `My_Array * 2 + 5`). Most built-in functions (`SIN`, `SQR`, `RIGHT$`, etc.) are vectorized and apply to every element automatically.
+  * **Data Analysis & Reduction**: Instantly aggregate arrays with `SUM`, `PRODUCT`, `MIN`, `MAX`, and perform cumulative operations with `SCAN`.
+  
+  ![One liner Game of Life](demo.gif)
 
 #### Modern Enhancements
 
-* **Modular Programming**: Organize your code into reusable modules with `IMPORT`.
-* **Typed Variables**: Declare variables with types like `DATE` for better code clarity and safety.
-* **Rich Data Types**: In addition to arrays, jdBasic has full support for Date/Time objects.
-* **Array Literals**: Initialize arrays with a simple, clean syntax (e.g., `my_array = [[1, 2], [3, 4]]`).
+  * **Modular Programming**: Organize your code into reusable modules with `IMPORT`.
+  * **Rich Data Types**: Full support for `Date`/`Time` objects, `Map`s, and user-defined `TYPE`s.
+  * **Cross-Platform**: Run your code on both Windows and Linux.
+  * **Library Integration**: Connect to external libraries for databases (`SQLite`) and machine learning (`TensorFlow`).
 
-#### Functional Programming Core (The "Lambda" in NeReLa)
+#### Functional Programming Core
 
-* **First-Class Functions**: Treat functions as values. Assign them to variables and pass them to other functions.
-* **Higher-Order Functions**: Create functions that take other functions as arguments, enabling powerful patterns like `map` and `filter`.
-* **Recursion**: Write elegant, recursive functions for tasks like calculating factorials or traversing data structures.
-* **Clean Function/Procedure Syntax**: Easily define multi-line functions (`FUNC...ENDFUNC`) and procedures (`SUB...ENDSUB`).
+  * **First-Class Functions**: Treat functions as values. Assign them to variables and pass them to other functions using the `@` handle.
+  * **Higher-Order Functions**: Use powerful functions like `SELECT` (map) and `FILTER` that take other functions as arguments.
+  * **Lambda Functions**: Define anonymous, inline functions for concise data manipulation (e.g., `lambda i -> i * 2`).
+  * **Pipe Operator (`|>`):** Chain function calls together into elegant, readable data pipelines.
 
 ## Getting Started
 
+Read the language reference:
+[https://github.com/AtomiJD/jdBasic/blob/development/doc/languages.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/languages.md)
+
+Read the manual:
+[https://github.com/AtomiJD/jdBasic/blob/development/doc/manual.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/manual.md)
+
+Get the latest release at: [https://github.com/AtomiJD/jdBasic/releases/tag/jdbasic](https://github.com/AtomiJD/jdBasic/releases/tag/jdbasic)
+Download: release.zip
+Extract it wherever you want.
+Open a command window and change your directory to the "jdb" folder.
+
 To run a jdBasic program, simply pass the source file to the interpreter from your command line:
 
-```sh
-# Replace 'jdBasic' with the actual executable name on your system
-jdBasic test.bas
+```basic
+..\bin\jdBasic test.jdb
 ```
+
+If you want to code in vs code take a look at:
+[https://github.com/AtomiJD/jdBasic/blob/development/vscode_extension/vscode_readme.md](https://github.com/AtomiJD/jdBasic/blob/development/vscode_extension/vscode_readme.md)
 
 ## Language Tour: A Look at the Syntax
 
-The following examples demonstrate the core capabilities of the language.
+### Functional Pipelines with Lambdas and Pipes
 
-### Looping and Control Flow
-
-Classic `FOR...NEXT` loops and `GOTO` statements are fully supported for simple iteration and control.
+This is where jdBasic truly shines. You can combine higher-order functions (`SELECT`, `FILTER`), anonymous `lambda` functions, and the pipe operator (`|>`) to create powerful and declarative data processing pipelines.
 
 ```basic
-' Classic For...Next loop
-for i = 1 to 5
-    print "lall: "; i
-next i
+' --- Functional Pipeline Example ---
+
+' Start with a sequence of numbers from 1 to 10
+numbers = IOTA(10)
+PRINT "Original numbers: "; numbers
+
+' This pipeline:
+' 1. Filters the numbers to keep only those greater than 5
+' 2. Multiplies each of the remaining numbers by 10
+' The '?' in the pipe sequence is a placeholder for the result of the previous step.
+result = numbers |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
+
+PRINT "Result: "; result
+' Expected Output: [60 70 80 90 100]
 ```
+![One liner Biorythm](BioRythmOneLine.png)
 
-### APL-Style Array Processing
+### Object-Oriented Programming with `TYPE`
 
-This example demonstrates the power of array-oriented programming to calculate vector statistics with minimal looping.
+Define your own data structures using `TYPE`, which can contain methods (`FUNC` or `SUB`). This allows for an object-oriented style of programming.
 
 ```basic
-' --- Vector Statistics using an APL-inspired style ---
+' --- RPG Player TYPE Example ---
 
-PRINT "--- Array-Oriented Statistics ---"
+TYPE Player
+    Name AS STRING
+    Health AS INTEGER
+    MaxHealth AS INTEGER
+    AttackPower AS INTEGER
 
-' 1. Create a sample data vector using our array functions.
-V = (IOTA(10) * 1.3) + 5
+    ' Method to take damage
+    SUB TakeDamage(damage)
+        ' 'THIS' refers to the current object instance
+        THIS.Health = THIS.Health - damage
+        IF THIS.Health < 0 THEN THIS.Health = 0
+        PRINT THIS.Name; " takes "; damage; " damage! Health is now "; THIS.Health
+    ENDSUB
 
-PRINT "Data Vector V: "; V
+    ' Method to check if the player is defeated
+    FUNC IsDefeated()
+        RETURN THIS.Health <= 0
+    ENDFUNC
 
-' 2. Calculate stats using reduction functions.
-V_LEN = LEN(V)[0]
-V_SUM = SUM(V)
-V_MEAN = V_SUM / V_LEN
+    ' Method to display status
+    SUB ShowStatus()
+        PRINT "--- Player: "; THIS.Name; " ---"
+        PRINT "  Health: "; THIS.Health; " / "; THIS.MaxHealth
+        PRINT "  Attack: "; THIS.AttackPower
+    ENDSUB
+ENDTYPE
 
-PRINT "Count: "; V_LEN
-PRINT "Sum:   "; V_SUM
-PRINT "Mean:  "; V_MEAN
+' Create a player instance
+DIM Hero AS Player
+Hero.Name = "Arion"
+Hero.Health = 100
+Hero.MaxHealth = 100
+Hero.AttackPower = 15
 
-' 3. Calculate Standard Deviation by operating on whole arrays.
-DEVIATIONS = V - V_MEAN
-SQUARED_DEVS = DEVIATIONS * DEVIATIONS
-VARIANCE = SUM(SQUARED_DEVS) / V_LEN
-STD_DEV = SQR(VARIANCE)
+' Create an enemy
+DIM Goblin AS Player
+Goblin.Name = "Goblin"
+Goblin.Health = 30
+Goblin.MaxHealth = 30
+Goblin.AttackPower = 5
 
-PRINT "Standard Deviation: "; STD_DEV
+Hero.ShowStatus()
+Goblin.ShowStatus()
+
+PRINT
+PRINT "A wild Goblin appears! Battle starts!"
+Goblin.TakeDamage(Hero.AttackPower) ' Hero attacks Goblin
+IF NOT Goblin.IsDefeated() THEN
+    Hero.TakeDamage(Goblin.AttackPower)  ' Goblin attacks Hero
+ENDIF
+
+IF Goblin.IsDefeated() THEN
+    PRINT Goblin.Name; " has been defeated!"
+ENDIF
 ```
 
-### Working with Arrays (Classic Syntax)
+## What's New & What's Next?
 
-Declare, access, and initialize arrays with a modern literal syntax.
+jdBasic is an active project with many recent additions and exciting plans.
 
-```basic
-PRINT "Array Test"
+#### What's New?
 
-' Declare an array of 20 elements
-Dim a[20]
+  * **Cross-Platform Support**: jdBasic is now available for both Windows and Linux\!
+  * **Robust Error Handling**: The `TRY...CATCH...FINALLY` structure is fully implemented for writing safer, more resilient code.
+  * **Advanced Array Operations**: Powerful APL functions like `SCAN` (cumulative reduce) and `ROTATE` (cyclical shift) have been added.
+  * **Library Integrations**: jdBasic can now interface with external libraries, with modules for `SQLite` and `TensorFlow` already available.
 
-' Initialize arrays directly with literal values
-my_numbers = [10, 20, 30, 40, 50]
-my_strings$ = ["alpha", "beta", "gamma"]
-```
+#### What's Next?
 
-### Date and Time
+  * **Enhanced Game Development**: Major improvements are planned for the `SPRITE` and `MAP` libraries to make game creation easier and more powerful.
+  * **GUI Toolkit Integration**: We are exploring the integration of a GUI library to enable the creation of applications with native graphical user interfaces.
+  * **Improved Linux Build**: The Linux version will be enhanced with libraries like SDL2 for better graphics and hardware support.
 
-jdBasic has built-in support for date/time manipulation.
-
-```basic
-PRINT "--- DATE Test ---"
-Print "Now: "; Now()
-
-DIM deadline AS DATE
-deadline = CVDate("2025-07-01") ' Convert string to Date type
-deadline = DATEADD("D", 10, deadline) ' Add 10 days
-
-If deadline > Now() then
-    print "Deadline is in the future"
-endif
-```
-
-### Functional Programming: The Heart of jdBasic
-
-This is where jdBasic truly shines. Functions are first-class citizens.
-
-#### Higher-Order Functions
-
-The `@` operator creates a reference to a function, allowing it to be passed as an argument.
-
-```basic
-' A function that takes another function as an argument
-func apply(fa, cc)
-    return fa(cc) ' Execute the passed-in function
-endfunc
-
-' A simple function to be used as an argument
-func inc(ab)
-    return ab+1
-endfunc
-
-' Pass the 'inc' function to 'apply'
-print apply(inc@, 10)  ' Prints 11
-```
-
-## Future Roadmap
-
-jdBasic is an active project. Future plans include:
-
-* **Advanced APL Features**: Implementing `SCAN` (cumulative reduce), `ROTATE`.
-* **Expanded Standard Library**: Creating more modules for features like enhanced file I/O or gaming stuff.
-* **Improved Error Reporting**: Providing more descriptive messages and context for runtime errors.
-* **Cross-platform Builds**.
-
-Contributions and feedback are welcome!
+Contributions and feedback are welcome\!

@@ -1,0 +1,136 @@
+' ===============================================
+' == jdBasic Rainbow Mouse Drawing Demo (Event-Driven v2)
+' ===============================================
+'
+' This version is fully event-driven and stores all drawn
+' lines in an array, redrawing them each frame.
+'
+' --- CONTROLS ---
+' - Hold the LEFT mouse button to draw.
+' - Press the ESC key to quit.
+'
+' -----------------------------------------------
+
+' --- 1. Global State Variables ---
+DIM is_drawing AS BOOLEAN
+DIM prev_x AS INTEGER
+DIM prev_y AS INTEGER
+DIM hue_counter AS INTEGER
+DIM G_QUIT AS BOOLEAN ' Flag to signal program exit
+
+' --- 2. Event Handler Subroutines ---
+SUB OnMouseDown(data)
+    IF data[0]{"button"} = 1 THEN
+        is_drawing = TRUE
+        prev_x = data[0]{"x"}
+        prev_y = data[0]{"y"}
+    ENDIF
+ENDSUB
+
+SUB OnMouseUp(data)
+    is_drawing = FALSE
+    prev_x = -1
+    prev_y = -1
+ENDSUB
+
+SUB OnMouseMove(data)
+    IF is_drawing THEN
+        mx = data[0]{"x"}
+        my = data[0]{"y"}
+
+        color_array = HSVtoRGB(hue_counter, 1.0, 1.0)
+        
+        ' Create a new line segment array: [x1, y1, x2, y2, r, g, b]
+        new_line = [prev_x, prev_y, mx, my]
+        new_color = [color_array[0], color_array[1], color_array[2]]
+        
+        ' Add the new line segment to our global list of lines
+        G_LINES = APPEND(G_LINES, new_line)
+        G_COLORS = APPEND(G_COLORS, new_color)
+
+        prev_x = mx
+        prev_y = my
+        hue_counter = (hue_counter + 2) MOD 360
+    ENDIF
+ENDSUB
+
+' --- NEW: Event handler for keyboard input ---
+SUB OnKeyDown(data)
+    ' Check if the pressed key is ESC (ASCII 27)
+    PRINT data
+    IF data[0]{"keycode"} = 27 THEN
+        G_QUIT = TRUE
+    ENDIF
+ENDSUB
+
+
+' --- 3. Helper Function: HSV to RGB Color Conversion ---
+FUNC HSVtoRGB(h, s, v)
+    c = v * s
+    h_prime = h / 60.0
+    x = c * (1 - ABS(h_prime MOD 2 - 1))
+    m = v - c
+
+    IF h_prime >= 0 AND h_prime < 1 THEN
+        r_ = c : g_ = x : b_ = 0
+    ELSEIF h_prime >= 1 AND h_prime < 2 THEN
+        r_ = x : g_ = c : b_ = 0
+    ELSEIF h_prime >= 2 AND h_prime < 3 THEN
+        r_ = 0 : g_ = c : b_ = x
+    ELSEIF h_prime >= 3 AND h_prime < 4 THEN
+        r_ = 0 : g_ = x : b_ = c
+    ELSEIF h_prime >= 4 AND h_prime < 5 THEN
+        r_ = x : g_ = 0 : b_ = c
+    ELSEIF h_prime >= 5 AND h_prime < 6 THEN
+        r_ = c : g_ = 0 : b_ = x
+    ELSE
+        r_ = 0 : g_ = 0 : b_ = 0
+    ENDIF
+
+    r = (r_ + m) * 255
+    g = (g_ + m) * 255
+    b = (b_ + m) * 255
+
+    RETURN [r, g, b]
+ENDFUNC
+
+
+' --- 4. Main Program Setup and Loop ---
+SCREEN 800, 600, "Rainbow Paint (Event-Driven)"
+
+' Initialize global state variables
+is_drawing = FALSE
+prev_x = -1
+prev_y = -1
+hue_counter = 0
+G_LINES = []
+G_COLORS = []
+G_QUIT = FALSE
+
+' Register ALL event handlers
+ON "MOUSEDOWN" CALL OnMouseDown
+ON "MOUSEUP" CALL OnMouseUp
+ON "MOUSEMOVE" CALL OnMouseMove
+ON "KEYDOWN" CALL OnKeyDown
+
+PRINT "--- Starting Drawing App. Hold left-click to draw. Press ESC to quit. ---"
+
+' The main loop now handles redrawing the entire scene from the G_LINES array.
+DO
+
+    if len(G_LINES) > 1 THEN
+       LINE RESHAPE(G_LINES,[len(G_LINES)[0]/4,4]), RESHAPE(G_COLORS,[len(G_COLORS)[0]/3,3])
+    ENDIF
+    ' Update the screen
+    SCREENFLIP
+    
+    ' Check the quit flag, which is set by the OnKeyDown handler
+    IF G_QUIT THEN EXITDO
+    if is_drawing = FALSE THEN 
+        SLEEP 10 
+    ENDIF
+LOOP
+
+' --- 5. Shutdown ---
+CLS
+PRINT "Drawing app closed."

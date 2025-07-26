@@ -1,0 +1,39 @@
+print "--- Web Test Program ---"
+print
+
+' Test a simple GET request to an API that returns JSON
+
+API_URL$ = "https://jsonplaceholder.typicode.com/todos/1"
+
+TRY
+    JSON_DATA$ = HTTP.GET$(API_URL$)
+CATCH
+    PRINT "Error fetching URL: "; API_URL$; " (Error: "; ERR; ")"
+FINALLY
+    PRINT "HTTP Status Code: "; HTTP.STATUSCODE()
+    PRINT "Received JSON:"; JSON_DATA$
+ENDTRY
+
+' Test setting headers (e.g., for a simple authentication)
+PRINT "Testing HTTP.CLEARHEADERS..."
+
+HTTP.CLEARHEADERS
+PRINT "Testing HTTP.SETHEADER..."
+
+HTTP.SETHEADER "X-Custom-Header", "MyCustomValue" 
+HTTP.SETHEADER "Accept", "application/json" 
+
+' Try another GET request with headers
+API_URL2$ = "https://httpbin.org/headers" ' This API echoes back headers
+PRINT "Fetching headers from httpbin.org/headers..."
+
+TRY
+    HEADER_RESPONSE$ = HTTP.GET$(API_URL2$)
+CATCH
+    PRINT "Error fetching URL: "; API_URL2$; " (Error: "; ERR; ")"
+FINALLY
+    PRINT "HTTP Status Code: "; HTTP.STATUSCODE()
+    PRINT "Headers Received:"; HEADER_RESPONSE$
+ENDTRY
+
+PRINT "--- Web Test Complete ---"

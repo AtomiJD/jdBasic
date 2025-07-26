@@ -13,9 +13,9 @@
 #include <vector>     
 #include <numeric>    // for std::accumulate
 #include <stdexcept>  // for exceptions
+#include <future>
 #include <map>
 #include "json.hpp" 
-
 
 // Forward-declare the Array struct so BasicValue can know it exists.
 struct Array;
@@ -45,7 +45,14 @@ struct DateTime {
     // Constructor from a time_point.
     DateTime(const std::chrono::system_clock::time_point& tp) : time_point(tp) {}
 
+#ifdef _WIN32    
     bool operator==(const DateTime&) const = default;
+#else
+    bool operator==(const DateTime& other) const {
+        return time_point == other.time_point;
+    }
+#endif
+
 };
 
 #ifdef JDCOM
@@ -96,24 +103,91 @@ struct ComObject {
 };
 #endif
 
+struct OpaqueHandle {
+    void* ptr = nullptr;
+    std::string type_name;
+    std::function<void(void*)> deleter;
+
+    // Constructor
+    OpaqueHandle(void* p, std::string t, std::function<void(void*)> d)
+        : ptr(p), type_name(std::move(t)), deleter(std::move(d)) {}
+
+    // Destructor that calls the custom deleter
+    ~OpaqueHandle() {
+        if (ptr && deleter) {
+            deleter(ptr);
+            ptr = nullptr;
+        }
+    }
+
+    // Disable copying
+    OpaqueHandle(const OpaqueHandle&) = delete;
+    OpaqueHandle& operator=(const OpaqueHandle&) = delete;
+
+    // Allow moving
+    OpaqueHandle(OpaqueHandle&& other) noexcept
+        : ptr(other.ptr), type_name(std::move(other.type_name)), deleter(std::move(other.deleter)) {
+        other.ptr = nullptr;
+        other.deleter = nullptr;
+    }
+    OpaqueHandle& operator=(OpaqueHandle&& other) noexcept {
+        if (this != &other) {
+            if (ptr && deleter) deleter(ptr);
+            ptr = other.ptr;
+            type_name = std::move(other.type_name);
+            deleter = std::move(other.deleter);
+            other.ptr = nullptr;
+            other.deleter = nullptr;
+        }
+        return *this;
+    }
+};
+
 // This struct represents a "pointer" or "reference" to a function.
 // We just store the function's name.
 struct FunctionRef {
     std::string name;
     // This lets std::variant compare it if needed.
+#ifdef _WIN32    
     bool operator==(const FunctionRef&) const = default;
+#else
+    bool operator==(const FunctionRef& other) const {
+        return name == other.name;
+    }
+#endif
 };
 
 struct JsonObject {
     nlohmann::json data;
 };
 
-
-// --- Use a std::shared_ptr to break the circular dependency ---    
-#ifdef JDCOM
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>>;
+struct TaskRef {
+    int id = -1;
+#ifdef _WIN32    
+    bool operator==(const TaskRef&) const = default;
 #else
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>>;
+    bool operator==(const TaskRef& other) const {
+        return id == other.id;
+    }
+#endif    
+};
+
+struct ThreadHandle {
+    std::thread::id id; // Use the thread's ID as a unique identifier
+#ifdef _WIN32    
+    bool operator==(const ThreadHandle&) const = default;
+#else
+    bool operator==(const ThreadHandle& other) const {
+        return id == other.id;
+    }
+#endif    
+};
+
+// --- Use a std::shared_ptr to break the circular dependency ---
+#ifdef JDCOM
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
+#else
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
 #endif
 
 
@@ -152,12 +226,19 @@ struct Array {
     }
 
     // This lets std::variant compare it if needed.
+#ifdef _WIN32    
     bool operator==(const Array&) const = default;
+#else
+    bool operator==(const Array& other) const {
+        return data == other.data;
+    }
+#endif     
 };
 
 // --- A structure to represent a Map (associative array) ---
 struct Map {
     std::map<std::string, BasicValue> data;
+    std::string type_name_if_udt; // Stores the name of the UDT, e.g., "T_SPRITE"
 };
 
 using GradFunc = std::function<std::vector<std::shared_ptr<Tensor>>(std::shared_ptr<Tensor>)>;
@@ -172,19 +253,7 @@ using GradFunc = std::function<std::vector<std::shared_ptr<Tensor>>(std::shared_
      }
  };
 
-#ifdef ALTUNDPAMPIG
-struct Tensor {
-    std::shared_ptr<Array> data; // The actual matrix/vector data
-    std::shared_ptr<Tensor> grad; // The gradient, also a Tensor
 
-    // --- For Autodiff ---
-    std::vector<std::shared_ptr<Tensor>> parents; // Tensors this one was created from
-    GradFunc backward_fn = nullptr; // The function to compute the gradient
-
-    // A flag to prevent re-computing gradients in complex graphs
-    bool has_been_processed = false;
-};
-#else
 struct Tensor {
     std::shared_ptr<FloatArray> data; // The actual matrix/vector data
     std::shared_ptr<Tensor> grad; // The gradient, also a Tensor
@@ -196,8 +265,6 @@ struct Tensor {
     // A flag to prevent re-computing gradients in complex graphs
     bool has_been_processed = false;
 };
-#endif
-
 
 //==============================================================================
 // HELPER FUNCTIONS
@@ -205,8 +272,31 @@ struct Tensor {
 // multiple .cpp files without causing linker errors.
 //==============================================================================
 
+// Helper to convert a BasicValue to a int for math operations.
+inline int to_int(const BasicValue& val) {
+    if (std::holds_alternative<int>(val)) {
+        return std::get<int>(val);
+    }
+    if (std::holds_alternative<double>(val)) {
+        // Truncate the double, as BASIC's INT function does.
+        return static_cast<int>(std::get<double>(val));
+    }
+    if (std::holds_alternative<bool>(val)) {
+        return std::get<bool>(val) ? 1 : 0;
+    }
+    if (std::holds_alternative<std::shared_ptr<Array>>(val)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(val);
+        if (arr_ptr && arr_ptr->data.size() == 1) {
+            // Coerce single-element array to a number
+            return to_int(arr_ptr->data[0]);
+        }
+    }
+    return 0;
+}
+
 // Helper to convert a BasicValue to a double for math operations.
 // This is called "coercion". It treats booleans as 1.0 or 0.0.
+
 inline double to_double(const BasicValue& val) {
     if (std::holds_alternative<double>(val)) {
         return std::get<double>(val);

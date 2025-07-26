@@ -4,10 +4,15 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <ncurses.h>
+#endif
 #include "Commands.hpp"
 #include "StringUtils.hpp"
-#include "NeReLaBasic.hpp" // We need the full class definition here
+#include "NeReLaBasic.hpp" 
+#include "Compiler.hpp"
 #include "TextIO.hpp"
 #include "Tokens.hpp"
 #include "Error.hpp"
@@ -206,12 +211,56 @@ std::string to_string(const BasicValue& val) {
             return "<Function: " + arg.name + ">";
         }
         else if constexpr (std::is_same_v<T, DateTime>) {
+#ifdef _WIN32            
             // Logic to convert DateTime to a string
             auto tp = arg.time_point;
-            auto in_time_t = std::chrono::system_clock::to_time_t(tp);
+            // First, we need to handle the time zone conversion correctly.
+            // The date is created as UTC, so we convert it to the user's local time for printing.
+            const std::chrono::time_zone* current_tz;
+            try {
+                current_tz = std::chrono::current_zone();
+            }
+            catch (const std::runtime_error&) {
+                // Fallback to UTC if the time zone database is not found on the system
+                current_tz = std::chrono::locate_zone("UTC");
+            }
+
+            // Convert the stored time_point to the local time zone.
+            auto local_time = current_tz->to_local(tp);
+
+            // Decompose the local time_point into calendar and time parts.
+            auto days_point = std::chrono::floor<std::chrono::days>(local_time);
+            std::chrono::year_month_day ymd{ days_point };
+            std::chrono::hh_mm_ss hms{ local_time - days_point };
+
+            // Manually format the string to ensure consistent output.
             std::stringstream ss;
-#pragma warning(suppress : 4996)
-            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+            ss << ymd.year() << "-"
+                << std::setw(2) << std::setfill('0') << static_cast<unsigned>(ymd.month()) << "-"
+                << std::setw(2) << std::setfill('0') << static_cast<unsigned>(ymd.day()) << " "
+                << std::setw(2) << std::setfill('0') << hms.hours().count() << ":"
+                << std::setw(2) << std::setfill('0') << hms.minutes().count() << ":"
+                << std::setw(2) << std::setfill('0') << hms.seconds().count();
+#else
+            // This implementation uses the C-style time library for maximum compatibility,
+            // as C++20 time_zone features are not available on all compilers (e.g., GCC < 11).
+
+            // 1. Convert the chrono::time_point to the legacy time_t.
+            auto tp = arg.time_point;
+            std::time_t time = std::chrono::system_clock::to_time_t(tp);
+
+            // 2. Convert to a tm struct in the local time zone.
+            // 'localtime' is not thread-safe on all platforms, but for simple conversion it's fine.
+            // For thread-safe versions, you might use 'localtime_r' (on POSIX systems).
+            std::tm local_tm = *std::localtime(&time);
+
+            // 3. Use a stringstream to format the date and time.
+            std::stringstream ss;
+            
+            // The put_time manipulator formats the tm struct according to the format string.
+            // The format "%Y-%m-%d %H:%M:%S" matches your original desired output.
+            ss << std::put_time(&local_tm, "%Y-%m-%d %H:%M:%S");
+#endif
             return ss.str();
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
@@ -264,11 +313,27 @@ std::string to_string(const BasicValue& val) {
 
             if (arg->grad && arg->grad->data) {
                 tensor_str += "\n  .grad=";
-                // MODIFIED: Call the new helper for the gradient's FloatArray
+                // Call the new helper for the gradient's FloatArray
                 tensor_str += float_array_to_string(*(arg->grad->data));
             }
             return tensor_str;
+        }  
+        else if constexpr (std::is_same_v<T, ThreadHandle>) {
+            // Use a stringstream to build the string
+            std::stringstream ss;
+            ss << "[ThreadHandle:" << arg.id << "]";
+            return ss.str(); // Return the built string
         }
+        else if constexpr (std::is_same_v<T, TaskRef>) {
+            return "<Task ID: " + std::to_string(arg.id) + ">";
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<OpaqueHandle>>) {
+            if (arg && arg->ptr) {
+                return "<Handle: " + arg->type_name + ">";
+            }
+            return "<Null Handle>";
+        }
+
 #ifdef JDCOM
         else if constexpr (std::is_same_v<T, ComObject>) { // This is the problematic part
             // For a ComObject, you typically can't get a meaningful string
@@ -334,118 +399,281 @@ void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& 
     }
 }
 
+// Helper function to create a default value for a given type name.
+BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name_str_upper) {
+    if (type_name_str_upper == "INTEGER") {
+        return 0;
+    }
+    if (type_name_str_upper == "DOUBLE") {
+        return 0.0;
+    }
+    if (type_name_str_upper == "STRING") {
+        return std::string("");
+    }
+    if (type_name_str_upper == "DATE") {
+        return DateTime{};
+    }
+    if (type_name_str_upper == "BOOLEAN" || type_name_str_upper == "BOOL") {
+        return false;
+    }
+    if (type_name_str_upper == "MAP") {
+        return std::make_shared<Map>();
+    }
+
+    // Check if it's a User-Defined Type
+    if (vm.user_defined_types.count(type_name_str_upper)) {
+        const auto& type_info = vm.user_defined_types.at(type_name_str_upper);
+        auto udt_instance = std::make_shared<Map>();
+
+        udt_instance->type_name_if_udt = type_name_str_upper;
+
+        // Initialize all members to their default values
+        for (const auto& member_pair : type_info.members) {
+            const auto& member_info = member_pair.second;
+            BasicValue member_default_val;
+            switch (member_info.type_id) {
+            case DataType::INTEGER:  member_default_val = 0; break;
+            case DataType::STRING:   member_default_val = std::string(""); break;
+            case DataType::BOOL:     member_default_val = false; break;
+            case DataType::DATETIME: member_default_val = DateTime{}; break;
+            case DataType::MAP:      member_default_val = std::make_shared<Map>(); break;
+            default:                 member_default_val = 0.0; break;
+            }
+            udt_instance->data[member_info.name] = member_default_val;
+        }
+        return udt_instance;
+    }
+
+    // If the type is unknown, set an error and return a default value.
+    Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str_upper + "'");
+    return 0.0;
+}
+
 void Commands::do_dim(NeReLaBasic& vm) {
+    // Read the variable name first.
     Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
     std::string var_name = to_upper(read_string(vm));
 
-    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    bool is_array = false;
+    std::vector<size_t> dimensions;
+    std::string type_name = "DOUBLE"; // Default to DOUBLE if no type is specified.
+    bool type_was_specified = false;
 
-    if (next_token == Tokens::ID::C_LEFTBRACKET) {
-        // --- Case 1: ARRAY DECLARATION (e.g., DIM A[2, 3]) ---
+    // --- Part 1: Check for array dimensions [ ... ] ---
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_LEFTBRACKET) {
+        is_array = true;
         vm.pcode++; // Consume '['
 
-        std::vector<size_t> dimensions;
         while (true) {
             BasicValue size_val = vm.evaluate_expression();
             if (Error::get() != 0) return;
-
-            double dim_double = to_double(size_val);
-            if (dim_double < 0) {
-                Error::set(10, vm.runtime_current_line); // Bad subscript
-                return;
-            }
-            dimensions.push_back(static_cast<size_t>(dim_double));
+            dimensions.push_back(static_cast<size_t>(to_double(size_val)));
 
             Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (separator == Tokens::ID::C_COMMA) {
-                vm.pcode++;
-            }
-            else if (separator == Tokens::ID::C_RIGHTBRACKET) {
-                break;
-            }
-            else {
-                Error::set(1, vm.runtime_current_line); // Syntax error: Expected , or ]
-                return;
-            }
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+            vm.pcode++; // Consume ','
         }
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-            Error::set(1, vm.runtime_current_line); return;
-        }
+        vm.pcode++; // Consume ']'
+    }
 
-        // --- Create the Array on the heap using std::make_shared ---
+    // --- Part 2: Check for an optional type specifier AS ... ---
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::AS) {
+        vm.pcode++; // Consume 'AS'
+        type_was_specified = true;
+
+        // The type name is tokenized as VARIANT by the compiler
+        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+        switch (type_token) {
+        case Tokens::ID::INT:       type_name = "INTEGER"; break;
+        case Tokens::ID::DOUBLE:    type_name = "DOUBLE";  break;
+        case Tokens::ID::STRTYPE:   type_name = "STRING";  break;
+        case Tokens::ID::DATE:      type_name = "DATE";    break;
+        case Tokens::ID::BOOL:      type_name = "BOOLEAN"; break;
+        case Tokens::ID::MAP:       type_name = "MAP";     break;
+            // Add any other built-in types you have here.
+
+            // This case handles user-defined types, like T_Character.
+        case Tokens::ID::VARIANT:
+            // Only if the token is VARIANT do we read a string name.
+            type_name = to_upper(read_string(vm));
+            break;
+
+        default:
+            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
+            return;
+        }
+    }
+
+    // --- Part 3: Create the variable(s) based on what we found ---
+    if (is_array) {
+        // --- This is the new logic for creating typed or untyped arrays ---
         auto new_array_ptr = std::make_shared<Array>();
         new_array_ptr->shape = dimensions;
-
         size_t total_size = new_array_ptr->size();
 
-        bool is_string_array = (var_name.back() == '$');
-        BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
+        // If it's a string array (e.g., DIM A$[10]), override the type.
+        if (var_name.back() == '$') {
+            type_name = "STRING";
+        }
 
-        new_array_ptr->data.assign(total_size, default_val);
+        // Reserve memory for efficiency
+        new_array_ptr->data.reserve(total_size);
 
-        // Store the shared_ptr in the BasicValue variant
+        // ** CRITICAL PART **
+        // Create a new, unique instance for each element in the array.
+        for (size_t i = 0; i < total_size; ++i) {
+            BasicValue default_instance = create_default_instance(vm, type_name);
+            if (Error::get() != 0) return; // Stop if the type was invalid
+            new_array_ptr->data.push_back(default_instance);
+        }
         set_variable(vm, var_name, new_array_ptr);
     }
-    else
-    {
-        // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
-            Error::set(1, vm.runtime_current_line); return;
+    else {
+        // --- This is for single variables (e.g., DIM N AS INTEGER) ---
+        if (!type_was_specified && var_name.back() == '$') {
+            type_name = "STRING";
         }
-
-        // Get the token that represents the type
-        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-
-        BasicValue default_value;
-        bool type_found = true; // Assume success
-
-        switch (type_token) {
-        case Tokens::ID::INT:       default_value = 0; break;
-        case Tokens::ID::DOUBLE:    default_value = 0.0; break;
-        case Tokens::ID::STRTYPE:   default_value = std::string(""); break;
-        case Tokens::ID::DATE:      default_value = DateTime{}; break;
-        case Tokens::ID::BOOL:      default_value = false; break;
-        case Tokens::ID::MAP:       default_value = std::make_shared<Map>(); break;
-
-            // This case handles user-defined types, which are tokenized as VARIANT.
-        case Tokens::ID::VARIANT: {
-            // The type name is a string that follows the VARIANT token.
-            std::string type_name_str = to_upper(read_string(vm));
-            if (vm.user_defined_types.count(type_name_str)) {
-                const auto& type_info = vm.user_defined_types.at(type_name_str);
-                auto udt_instance = std::make_shared<Map>();
-
-                for (const auto& member_pair : type_info.members) {
-                    const auto& member_info = member_pair.second;
-                    BasicValue member_default_val;
-                    switch (member_info.type_id) {
-                    case DataType::INTEGER:     member_default_val = 0; break;
-                    case DataType::STRING:      member_default_val = std::string(""); break;
-                    case DataType::BOOL:        member_default_val = false; break;
-                    case DataType::DATETIME:    member_default_val = DateTime{}; break;
-                    case DataType::MAP:         member_default_val = std::make_shared<Map>(); break;
-                    default:                    member_default_val = 0.0; break;
-                    }
-                    udt_instance->data[member_info.name] = member_default_val;
-                }
-                default_value = udt_instance;
-            }
-            else {
-                type_found = false;
-                Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str + "'");
-            }
-            break;
-        }
-        default:
-            type_found = false;
-            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
-            break;
-        }
-
-        if (type_found) {
-            set_variable(vm, var_name, default_value);
-        }
+        BasicValue default_instance = create_default_instance(vm, type_name);
+        if (Error::get() != 0) return;
+        set_variable(vm, var_name, default_instance);
     }
+}
+
+//void Commands::do_dim(NeReLaBasic& vm) {
+//    Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+//    std::string var_name = to_upper(read_string(vm));
+//
+//    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+//
+//    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+//        // --- Case 1: ARRAY DECLARATION (e.g., DIM A[2, 3]) ---
+//        vm.pcode++; // Consume '['
+//
+//        std::vector<size_t> dimensions;
+//        while (true) {
+//            BasicValue size_val = vm.evaluate_expression();
+//            if (Error::get() != 0) return;
+//
+//            double dim_double = to_double(size_val);
+//            if (dim_double < 0) {
+//                Error::set(10, vm.runtime_current_line); // Bad subscript
+//                return;
+//            }
+//            dimensions.push_back(static_cast<size_t>(dim_double));
+//
+//            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+//            if (separator == Tokens::ID::C_COMMA) {
+//                vm.pcode++;
+//            }
+//            else if (separator == Tokens::ID::C_RIGHTBRACKET) {
+//                break;
+//            }
+//            else {
+//                Error::set(1, vm.runtime_current_line); // Syntax error: Expected , or ]
+//                return;
+//            }
+//        }
+//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
+//            Error::set(1, vm.runtime_current_line); return;
+//        }
+//
+//        // --- Create the Array on the heap using std::make_shared ---
+//        auto new_array_ptr = std::make_shared<Array>();
+//        new_array_ptr->shape = dimensions;
+//
+//        size_t total_size = new_array_ptr->size();
+//
+//        bool is_string_array = (var_name.back() == '$');
+//        BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
+//
+//        new_array_ptr->data.assign(total_size, default_val);
+//
+//        // Store the shared_ptr in the BasicValue variant
+//        set_variable(vm, var_name, new_array_ptr);
+//    }
+//    else
+//    {
+//        // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
+//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
+//            Error::set(1, vm.runtime_current_line); return;
+//        }
+//
+//        // Get the token that represents the type
+//        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+//
+//        BasicValue default_value;
+//        bool type_found = true; // Assume success
+//
+//        switch (type_token) {
+//        case Tokens::ID::INT:       default_value = 0; break;
+//        case Tokens::ID::DOUBLE:    default_value = 0.0; break;
+//        case Tokens::ID::STRTYPE:   default_value = std::string(""); break;
+//        case Tokens::ID::DATE:      default_value = DateTime{}; break;
+//        case Tokens::ID::BOOL:      default_value = false; break;
+//        case Tokens::ID::MAP:       default_value = std::make_shared<Map>(); break;
+//
+//            // This case handles user-defined types, which are tokenized as VARIANT.
+//        case Tokens::ID::VARIANT: {
+//            // The type name is a string that follows the VARIANT token.
+//            std::string type_name_str = to_upper(read_string(vm));
+//            if (vm.user_defined_types.count(type_name_str)) {
+//                const auto& type_info = vm.user_defined_types.at(type_name_str);
+//                auto udt_instance = std::make_shared<Map>();
+//
+//                udt_instance->type_name_if_udt = type_name_str;
+//
+//                for (const auto& member_pair : type_info.members) {
+//                    const auto& member_info = member_pair.second;
+//                    BasicValue member_default_val;
+//                    switch (member_info.type_id) {
+//                    case DataType::INTEGER:     member_default_val = 0; break;
+//                    case DataType::STRING:      member_default_val = std::string(""); break;
+//                    case DataType::BOOL:        member_default_val = false; break;
+//                    case DataType::DATETIME:    member_default_val = DateTime{}; break;
+//                    case DataType::MAP:         member_default_val = std::make_shared<Map>(); break;
+//                    default:                    member_default_val = 0.0; break;
+//                    }
+//                    udt_instance->data[member_info.name] = member_default_val;
+//                }
+//                default_value = udt_instance;
+//            }
+//            else {
+//                type_found = false;
+//                Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str + "'");
+//            }
+//            break;
+//        }
+//        default:
+//            type_found = false;
+//            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
+//            break;
+//        }
+//
+//        if (type_found) {
+//            set_variable(vm, var_name, default_value);
+//        }
+//    }
+//}
+
+
+// --- Implementation for the IMPORT command ---
+void Commands::do_dllimport(NeReLaBasic& vm) {
+    // The IMPORT token has been consumed. The next token should be a string literal
+    // containing the name of the module to load (e.g., "aifunc").
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::STRING) {
+        Error::set(1, vm.runtime_current_line, "IMPORT command requires a string literal for the module name.");
+        return;
+    }
+    vm.pcode++; // Consume the STRING token
+
+    // Read the module name from the bytecode.
+    std::string module_name = read_string(vm);
+
+    // Call the new method in NeReLaBasic to handle the dynamic loading.
+    // The method will handle adding the file extension (.dll or .so)
+    // and setting any errors if loading fails.
+    vm.load_dynamic_module(module_name);
 }
 
 void Commands::do_input(NeReLaBasic& vm) {
@@ -475,7 +703,7 @@ void Commands::do_input(NeReLaBasic& vm) {
         }
     }
     else {
-        // --- Case 2: No prompt string ---
+        // --- Case 2: No prompt string ---l
         TextIO::print("? ");
     }
 
@@ -553,11 +781,24 @@ void Commands::do_print(NeReLaBasic& vm) {
 }
 
 void Commands::do_let(NeReLaBasic& vm) {
-    Tokens::ID var_type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-    vm.pcode++;
-    std::string name = to_upper(read_string(vm));
+    static bool is_this = false;
+    std::string name = "";
+    std::string member_var = "";
 
-    size_t dot_pos = name.find('.');
+    Tokens::ID var_type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+    if (var_type_token == Tokens::ID::THIS_KEYWORD) {
+        is_this = true;
+        vm.pcode += 3;
+        name = to_upper(read_string(vm));
+    }
+    else {
+        is_this = false;
+        vm.pcode++;
+        name = to_upper(read_string(vm));
+    }
+
+    //size_t dot_pos = name.find('.');
 
     // --- Case 1: ARRAY ELEMENT ASSIGNMENT (e.g., A[i, j] = ...) ---
     if (var_type_token == Tokens::ID::ARRAY_ACCESS) {
@@ -566,42 +807,153 @@ void Commands::do_let(NeReLaBasic& vm) {
         }
 
         // Parse multiple comma-separated indices
-        std::vector<size_t> indices;
+        std::vector<BasicValue> index_expressions;
         while (true) {
-            BasicValue index_val = vm.evaluate_expression();
+            index_expressions.push_back(vm.evaluate_expression());
             if (Error::get() != 0) return;
-            indices.push_back(static_cast<size_t>(to_double(index_val)));
 
             Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
             if (separator == Tokens::ID::C_RIGHTBRACKET) break;
             if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
             vm.pcode++;
         }
-        vm.pcode++;
+        vm.pcode++; // consume ']'
+
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_DOT) {
+            vm.pcode++;
+            vm.pcode++;
+            member_var = to_upper(read_string(vm));
+        }
 
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
             Error::set(1, vm.runtime_current_line); return;
         }
+
         BasicValue value_to_assign = vm.evaluate_expression();
         if (Error::get() != 0) return;
 
-        // Get the array, check its type, and perform assignment
-        BasicValue& array_var = get_variable(vm, name);
-        if (!std::holds_alternative<std::shared_ptr<Array>>(array_var)) {
-            Error::set(15, vm.runtime_current_line); // Type Mismatch
+        // The 'name' could be a simple variable "A" or a dot-chain "ALIENS.VISIBLE".
+        // We must resolve it to get the actual array object.
+        auto [parent_obj, member_name] = vm.resolve_dot_chain(name);
+        if (Error::get() != 0) return;
+
+        BasicValue* array_val_ptr = nullptr;
+
+        if (member_name.empty()) {
+            // Simple case: The variable itself is the array (e.g., A[i] = 10)
+            array_val_ptr = &parent_obj;
+        }
+        else if (std::holds_alternative<std::shared_ptr<Map>>(parent_obj)) {
+            // Dot-chain case: The array is a member of a Map/UDT (e.g., Aliens.Visible[i] = 0)
+            auto& map_ptr = std::get<std::shared_ptr<Map>>(parent_obj);
+            if (map_ptr && map_ptr->data.count(member_name)) {
+                array_val_ptr = &map_ptr->data.at(member_name);
+            }
+        }
+
+        if (!array_val_ptr || !std::holds_alternative<std::shared_ptr<Array>>(*array_val_ptr)) {
+            Error::set(15, vm.runtime_current_line, "Variable '" + name + "' is not an array.");
             return;
         }
-        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(array_var);
-        if (!arr_ptr) { Error::set(15, vm.runtime_current_line); return; }
 
-        try {
-            size_t flat_index = arr_ptr->get_flat_index(indices);
-            arr_ptr->data[flat_index] = value_to_assign;
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(*array_val_ptr);
+        if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array is null."); return; }
+
+
+        // Logik für vektorisierte Zuweisung
+        // =======================================
+
+         // 1. Bestimme die Anzahl der Zuweisungen
+        long long num_assignments = -1;
+        for (const auto& expr : index_expressions) {
+            if (std::holds_alternative<std::shared_ptr<Array>>(expr)) {
+                const auto& index_arr = std::get<std::shared_ptr<Array>>(expr);
+                if (num_assignments == -1) {
+                    num_assignments = index_arr->data.size();
+                }
+                else if (num_assignments != static_cast<long long>(index_arr->data.size())) {
+                    Error::set(15, vm.runtime_current_line, "Index arrays must have the same length.");
+                    return;
+                }
+            }
         }
-        catch (const std::exception&) {
-            Error::set(10, vm.runtime_current_line); // Bad subscript
+
+        // Wenn kein Index-Array gefunden wurde, ist es eine normale Skalar-Zuweisung
+        if (num_assignments == -1) {
+            std::vector<size_t> scalar_indices;
+            for (const auto& expr : index_expressions) {
+                scalar_indices.push_back(static_cast<size_t>(to_double(expr)));
+            }
+            try {
+                size_t flat_index = arr_ptr->get_flat_index(scalar_indices);
+                if (member_var.length() > 0) {
+                    auto& map_ptr = std::get<std::shared_ptr<Map>>(arr_ptr->data[flat_index]);
+                    auto dataparent = arr_ptr->data[flat_index];
+                    map_ptr->data[member_var] = value_to_assign;
+                }
+                else {
+                    arr_ptr->data[flat_index] = value_to_assign;
+                }
+            }
+            catch (const std::exception&) {
+                Error::set(10, vm.runtime_current_line, "Array index out of bounds or dimension mismatch.");
+            }
+            return; // Frühzeitiger Ausstieg für den einfachen Fall
+        }
+
+        // 2. Bereite die RHS (rechte Seite) vor
+        bool rhs_is_array = std::holds_alternative<std::shared_ptr<Array>>(value_to_assign);
+        std::shared_ptr<Array> rhs_arr_ptr = nullptr;
+        if (rhs_is_array) {
+            rhs_arr_ptr = std::get<std::shared_ptr<Array>>(value_to_assign);
+            if (static_cast<long long>(rhs_arr_ptr->data.size()) != num_assignments) {
+                // Ausnahme: Wenn das RHS-Array nur ein Element hat, behandeln wir es wie einen Skalar
+                if (rhs_arr_ptr->data.size() == 1) {
+                    value_to_assign = rhs_arr_ptr->data[0];
+                    rhs_is_array = false;
+                }
+                else {
+                    Error::set(15, vm.runtime_current_line, "Right-hand side array must have the same length as index arrays.");
+                    return;
+                }
+            }
+        }
+
+        // 3. Führe die Zuweisungen iterativ durch
+        std::vector<size_t> current_coords(index_expressions.size());
+        for (long long i = 0; i < num_assignments; ++i) {
+            // a. Stelle die Koordinaten für diese Iteration zusammen
+            for (size_t dim = 0; dim < index_expressions.size(); ++dim) {
+                if (std::holds_alternative<std::shared_ptr<Array>>(index_expressions[dim])) {
+                    current_coords[dim] = static_cast<size_t>(to_double(std::get<std::shared_ptr<Array>>(index_expressions[dim])->data[i]));
+                }
+                else {
+                    current_coords[dim] = static_cast<size_t>(to_double(index_expressions[dim]));
+                }
+            }
+
+            // b. Hole den zuzuweisenden Wert
+            const BasicValue& value_to_set = rhs_is_array ? rhs_arr_ptr->data[i] : value_to_assign;
+
+            // c. Führe die Zuweisung durch
+            try {
+                size_t flat_index = arr_ptr->get_flat_index(current_coords);
+                if (member_var.length() > 0) {
+                    auto& map_ptr = std::get<std::shared_ptr<Map>>(arr_ptr->data[flat_index]);
+                    auto dataparent = arr_ptr->data[flat_index];
+                    map_ptr->data[member_var] = value_to_set;
+                }
+                else {
+                    arr_ptr->data[flat_index] = value_to_set;
+                }
+            }
+            catch (const std::exception&) {
+                Error::set(10, vm.runtime_current_line, "Array index out of bounds during vectorized assignment.");
+                return;
+            }
         }
     }
+
     // --- Case 2: MAP ASSIGNMENT  ---
     else if (var_type_token == Tokens::ID::MAP_ACCESS) {
         // Handle map assignment: my_map{"key"} = value
@@ -636,15 +988,22 @@ void Commands::do_let(NeReLaBasic& vm) {
     // --- Case 3: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
     else {
         // --- CORRECTED: Logic for dot-notation assignment ---
-        if (name.find('.') != std::string::npos) {
+        if (name.find('.') != std::string::npos || is_this == true) {
             if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
                 Error::set(1, vm.runtime_current_line); return;
             }
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
+            std::string prefix = "";
+            if (is_this == true) {
+                prefix = "THIS.";
+            }
 
-            auto [final_obj, final_member] = vm.resolve_dot_chain(name);
+            auto [final_obj, final_member] = vm.resolve_dot_chain(prefix + name);
             if (Error::get() != 0) return;
+            //if (is_this == true) {
+            //    final_obj = vm.variables[to_string(final_obj)];
+            //}
 
             // Case 1: The target is a User-Defined Type (a Map)
             if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
@@ -686,14 +1045,15 @@ void Commands::do_let(NeReLaBasic& vm) {
     }
 }
 
+
 void Commands::do_goto(NeReLaBasic& vm) {
     // The label name was stored as a string in the bytecode after the GOTO token.
     std::string label_name = read_string(vm);
 
     // Look up the label in the address map
-    if (vm.label_addresses.count(label_name)) {
+    if (vm.compiler->label_addresses.count(label_name)) {
         // Found it! Set the program counter to the stored address.
-        uint16_t target_address = vm.label_addresses[label_name];
+        uint16_t target_address = vm.compiler->label_addresses[label_name];
         vm.pcode = target_address;
     }
     else {
@@ -751,8 +1111,8 @@ void Commands::do_for(NeReLaBasic& vm) {
     if (Error::get() != 0) return;
     set_variable(vm, var_name, start_val, true);
     // FOR always create a new local or global var!
-    //if (!vm.call_stack.empty()) {
-    //    vm.call_stack.back().local_variables[var_name] = start_val;
+    //if (!current_task_call_stack.empty()) {
+    //    current_task_call_stack.back().local_variables[var_name] = start_val;
     //}
     //else {
     //    vm.variables[var_name] = start_val;
@@ -836,197 +1196,294 @@ void Commands::do_func(NeReLaBasic& vm) {
     vm.pcode = jump_over_address;
 }
 
-// Commands.cpp
-
-// ... (existing includes and helper functions)
-
 void Commands::do_callfunc(NeReLaBasic& vm) {
-    std::string identifier_being_called = to_upper(read_string(vm)); // Reads the function/member name
+    std::vector<size_t> indices;
+    std::string object_name = "";
+    std::string method_name = "";
+    bool is_array_access = false;
 
-#ifdef JDCOM
-    size_t dot_pos = identifier_being_called.find('.');
-    if (dot_pos != std::string::npos) {
-        // This is a qualified call, e.g., "obj.Method" or "obj.Property"
-        std::string obj_var_name = identifier_being_called.substr(0, dot_pos);
-        std::string member_name = identifier_being_called.substr(dot_pos + 1);
+    // The first string is either a function name or an object/array name.
+    std::string identifier_being_called = to_upper(read_string(vm));
 
-        BasicValue& com_obj_val = get_variable(vm, to_upper(obj_var_name));
-        if (!std::holds_alternative<ComObject>(com_obj_val)) {
-            Error::set(15, vm.runtime_current_line); // Type Mismatch: Base is not a COM object
+    // --- 1. Initial Parsing for Array Access ---
+    // Check if this is an array element method call, e.g., NPCS[0].GetName()
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+        is_array_access = true;
+        object_name = identifier_being_called; // The part before '[' is the array name
+        vm.pcode++; // Consume '['
+
+        // Parse array indices (which can be expressions)
+        while (true) {
+            BasicValue index_val = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            indices.push_back(static_cast<size_t>(to_double(index_val)));
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line, "Expected ',' or ']' in array index."); return; }
+            vm.pcode++;
+        }
+        vm.pcode++; // Consume ']'
+
+        // After the array access, there must be a dot for the method name
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_DOT) {
+            Error::set(1, vm.runtime_current_line, "Expected '.' for method call on array element."); return;
+        }
+
+        // The next string is the method name
+        method_name = to_upper(read_string(vm));
+    }
+
+    // --- 2. Main Logic for Method Calls vs. Standard Function Calls ---
+    bool is_method_call = is_array_access || (identifier_being_called.find('.') != std::string::npos && !vm.active_function_table->count(identifier_being_called));
+
+    if (is_method_call) {
+        // If it wasn't an array access, it's a simple dot notation call like `OBJ.METHOD()`
+        if (!is_array_access) {
+            size_t dot_pos = identifier_being_called.find('.');
+            object_name = to_upper(identifier_being_called.substr(0, dot_pos));
+            method_name = to_upper(identifier_being_called.substr(dot_pos + 1));
+        }
+
+        BasicValue& base_variable = get_variable(vm, object_name);
+        auto jt = (std::holds_alternative<std::shared_ptr<Map>>(base_variable) || std::holds_alternative<std::shared_ptr<Array>>(base_variable));
+
+        if (vm.variables.contains(object_name) && jt) {
+            // This pointer will hold the specific object instance we need to call the method on.
+            std::shared_ptr<Map> object_instance_ptr;
+            //BasicValue& base_variable = get_variable(vm, object_name);
+
+            if (is_array_access) {
+                // --- PATH 1: The call is on an array element like NPCS[i].METHOD() ---
+                if (!std::holds_alternative<std::shared_ptr<Array>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Variable '" + object_name + "' is not an array."); return;
+                }
+                const auto& arr_ptr = std::get<std::shared_ptr<Array>>(base_variable);
+                if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array '" + object_name + "' is null."); return; }
+
+                size_t flat_index = arr_ptr->get_flat_index(indices);
+                if (flat_index >= arr_ptr->data.size()) { Error::set(10, vm.runtime_current_line, "Array index out of bounds."); return; }
+
+                BasicValue& element_val = arr_ptr->data[flat_index];
+                if (!std::holds_alternative<std::shared_ptr<Map>>(element_val)) {
+                    Error::set(15, vm.runtime_current_line, "Array element is not an object that can have methods."); return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(element_val);
+
+            }
+            else {
+                // --- PATH 2: The call is on a simple object variable like MY_NPC.METHOD() ---
+                if (!std::holds_alternative<std::shared_ptr<Map>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Methods can only be called on objects."); return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(base_variable);
+            }
+
+            // --- 3. UNIFIED EXECUTION LOGIC ---
+            // At this point, `object_instance_ptr` correctly points to the target object.
+            if (!object_instance_ptr) { Error::set(1, vm.runtime_current_line, "Object instance is null."); return; }
+
+            std::string type_name = object_instance_ptr->type_name_if_udt;
+            if (type_name.empty() || !vm.user_defined_types.count(type_name)) {
+                Error::set(15, vm.runtime_current_line, "Object has no type information."); return;
+            }
+            const auto& type_info = vm.user_defined_types.at(type_name);
+            if (!type_info.methods.count(method_name)) {
+                Error::set(22, vm.runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'."); return;
+            }
+
+            std::string mangled_name = type_name + "." + method_name;
+            const auto& func_info = vm.active_function_table->at(mangled_name);
+
+            // Parse arguments using the dedicated helper for expressions
+            auto args = vm.parse_argument_list();
+            if (Error::get() != 0) return;
+
+            // SET THE 'THIS' CONTEXT
+            vm.this_stack.push_back(object_instance_ptr);
+
+            // Execute the function and let the wrapper handle the return value
+            vm.execute_function_for_value(func_info, args);
+
+            // CLEAN UP THE 'THIS' CONTEXT
+            vm.this_stack.pop_back();
+
+#ifdef JDCOM // This logic is only compiled if COM support is enabled.
+        // It's a dot-chain, so resolve it to get the target object and the method name.
+        } else {
+            auto [final_obj, final_method] = vm.resolve_dot_chain(identifier_being_called);
+            if (Error::get() != 0) {
+                return; // An error occurred during resolution.
+            }
+
+            // Ensure we have a COM object to call a method on.
+            if (!std::holds_alternative<ComObject>(final_obj)) {
+                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                return;
+            }
+
+            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+            if (!pDisp) {
+                Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
+                return;
+            }
+
+            // Parse arguments from the bytecode stream.
+            std::vector<BasicValue> com_args;
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
+                Error::set(1, vm.runtime_current_line, "Syntax Error: Missing '('.");
+                return;
+            }
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                while (true) {
+                    com_args.push_back(vm.evaluate_expression());
+                    if (Error::get() != 0) return;
+
+                    Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                    if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                    if (separator != Tokens::ID::C_COMMA) {
+                        Error::set(1, vm.runtime_current_line, "Syntax Error: Missing ','.");
+                        return;
+                    }
+                    vm.pcode++;
+                }
+            }
+            vm.pcode++; // Consume ')'
+
+            _variant_t result_vt; // Result is discarded for statement calls.
+            HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+
+            if (FAILED(hr)) {
+                // If the method call fails, it might be a property get with parameters (e.g., obj.Item(1)).
+                // We still try this even for a statement call, as the call itself might have side effects.
+                hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_PROPERTYGET);
+                if (FAILED(hr)) {
+                    Error::set(12, vm.runtime_current_line, "Failed to call COM method or get property '" + final_method + "'");
+                    return;
+                }
+            }
+        }
+#else
+        // If COM is not defined, this is an error because dot notation is not supported.
+        Error::set(22, vm.runtime_current_line, "Unknown function: " + identifier_being_called);
+#endif
+    }
+    else {
+        // --- Original Logic for standard jdbasic function calls ---
+        std::string real_func_to_call = identifier_being_called;
+
+        // Check for higher-order function calls (e.g., func_var(arg))
+        if (!vm.active_function_table->count(real_func_to_call)) {
+            BasicValue& var = get_variable(vm, identifier_being_called);
+            if (std::holds_alternative<FunctionRef>(var)) {
+                real_func_to_call = std::get<FunctionRef>(var).name;
+            }
+        }
+
+        if (!vm.active_function_table->count(real_func_to_call)) {
+            Error::set(22, vm.runtime_current_line, "Undefined function: " + real_func_to_call);
             return;
         }
-        IDispatchPtr pDisp = std::get<ComObject>(com_obj_val).ptr;
-        if (!pDisp) {
-            Error::set(1, vm.runtime_current_line); // Object not initialized
-            return;
-        }
 
-        // Parse arguments within parentheses
-        std::vector<BasicValue> com_args;
+        const auto& func_info = vm.active_function_table->at(real_func_to_call);
+        std::vector<BasicValue> args;
+
+        // Argument Parsing
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
-            Error::set(1, vm.runtime_current_line); // Syntax Error: Missing '('
-            return;
+            Error::set(1, vm.runtime_current_line); return;
         }
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
             while (true) {
-                com_args.push_back(vm.evaluate_expression());
+                args.push_back(vm.evaluate_expression());
                 if (Error::get() != 0) return;
                 Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
                 if (separator == Tokens::ID::C_RIGHTPAREN) break;
-                if (separator != Tokens::ID::C_COMMA) {
-                    Error::set(1, vm.runtime_current_line); // Syntax Error: Missing ','
-                    return;
-                }
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
                 vm.pcode++;
             }
         }
-        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-            Error::set(18, vm.runtime_current_line); // Syntax Error: Missing ')'
-            return;
+        vm.pcode++; // Consume ')'
+
+        if (func_info.arity != -1 && args.size() != func_info.arity) {
+            Error::set(26, vm.runtime_current_line, "Incorrect number of arguments."); return;
+        }
+
+        // Unified Execution Logic
+        if (func_info.native_impl != nullptr) {
+            // Call native C++ function
+            func_info.native_impl(vm, args);
+        } else if (func_info.native_dll_impl != nullptr) {
+            BasicValue result;
+            // Call it using the new "output pointer" style
+            func_info.native_dll_impl(vm, args, &result);
         }
         else {
-            vm.pcode++; // Consume ')'
+            // For a user-defined BASIC function, use the synchronous executor
+            // and discard its return value.
+            vm.execute_synchronous_function(func_info, args);
         }
-
-        _variant_t result_vt_unused; // Method/property called as a statement, result is ignored.
-        HRESULT hr;
-
-        // Strategy for statement-style calls:
-        // First, try as a method (DISPATCH_METHOD). This is the most common use for statements.
-        hr = invoke_com_method(pDisp, member_name, com_args, result_vt_unused, DISPATCH_METHOD);
-        if (FAILED(hr)) {
-            // If it failed as a method, and there are arguments, try as an indexed property GET.
-            // This covers cases like obj.Cells(1,1) where the result is not assigned but the call is still needed.
-            // Note: If you want to allow setting properties in a command-like fashion (e.g., obj.Value("New Text")),
-            //       you'd need more sophisticated parsing to determine if it's a PROPERTYPUT vs PROPERTYGET.
-            //       For now, let's stick to methods and property gets for `do_callfunc`.
-            if (!com_args.empty()) {
-                hr = invoke_com_method(pDisp, member_name, com_args, result_vt_unused, DISPATCH_PROPERTYGET);
-            }
-
-            if (FAILED(hr)) {
-                Error::set(12, vm.runtime_current_line); // General COM error
-                return;
-            }
-        }
-        // Successfully invoked COM method/property. No return value needed.
-        return; // Exit do_callfunc
-    }
-#endif  
-    // --- Original Logic for non-COM function calls (Built-in or User-Defined BASIC) ---
-    // This part remains largely the same.
-    std::string real_func_to_call = identifier_being_called;
-
-    // Check for higher-order function calls (e.g., func_var(arg))
-    if (!vm.active_function_table->count(real_func_to_call)) {
-        BasicValue& var = get_variable(vm, identifier_being_called);
-        if (std::holds_alternative<FunctionRef>(var)) {
-            real_func_to_call = std::get<FunctionRef>(var).name;
-        }
-    }
-
-    if (!vm.active_function_table->count(real_func_to_call)) {
-        Error::set(22, vm.runtime_current_line); // Undefined function
-        return;
-    }
-
-    const auto& func_info = vm.active_function_table->at(real_func_to_call);
-    std::vector<BasicValue> args;
-
-    // Argument Parsing Logic (as it was)
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_LEFTPAREN) {
-        Error::set(1, vm.runtime_current_line); // Syntax Error
-        return;
-    }
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
-        while (true) {
-            args.push_back(vm.evaluate_expression());
-            if (Error::get() != 0) return;
-            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (separator == Tokens::ID::C_RIGHTPAREN) break;
-            if (separator != Tokens::ID::C_COMMA) {
-                Error::set(1, vm.runtime_current_line); // Syntax Error
-                return;
-            }
-            vm.pcode++;
-        }
-    }
-    vm.pcode++; // Consume ')'
-
-    if (func_info.arity != -1 && args.size() != func_info.arity) {
-        Error::set(26, vm.runtime_current_line); // Incorrect number of arguments
-        return;
-    }
-
-    // --- Execution Logic for BASIC Functions ---
-    if (func_info.native_impl != nullptr) {
-        // Native C++ function/procedure
-        func_info.native_impl(vm, args);
-    }
-    else {
-        // User-defined BASIC function/procedure
-        NeReLaBasic::StackFrame frame;
-        for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
-            if (i < args.size()) {
-                frame.local_variables[func_info.parameter_names[i]] = args[i];
-            }
-        }
-
-        frame.return_p_code_ptr = vm.active_p_code;
-        frame.return_pcode = vm.pcode;
-        frame.previous_function_table_ptr = vm.active_function_table;
-        frame.for_stack_size_on_entry = vm.for_stack.size();
-        frame.function_name = real_func_to_call;
-        vm.call_stack.push_back(frame);
-
-        // CONTEXT SWITCH
-        if (!func_info.module_name.empty() && vm.compiled_modules.count(func_info.module_name)) {
-            auto& target_module = vm.compiled_modules[func_info.module_name];
-            vm.active_p_code = &target_module.p_code;
-            vm.active_function_table = &target_module.function_table;
-        }
-
-        vm.pcode = func_info.start_pcode; // Jump to function start
     }
 }
 
 // --- Implementation of do_return ---
 void Commands::do_return(NeReLaBasic& vm) {
-    if (vm.call_stack.empty()) {
-        Error::set(23, vm.runtime_current_line); return;
+    // Evaluate the return value expression, if any.
+    BasicValue return_val = false; // Default return value for functions without an explicit return value.
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+    // Check if there is an expression to evaluate after the RETURN keyword.
+    if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::C_COLON && next_token != Tokens::ID::ENDFUNC && next_token != Tokens::ID::ENDSUB) {
+        return_val = vm.evaluate_expression();
+        if (Error::get() != 0) {
+            if (vm.current_task) vm.current_task->status = TaskStatus::ERRORED;
+            return;
+        }
     }
 
-    // Evaluate the expression that comes after the RETURN keyword.
-    BasicValue return_value = vm.evaluate_expression();
-    if (Error::get() != 0) return;
+    // For ALL returns (sync or async), set the global RETVAL.
+    // This ensures that synchronous calls get their return value correctly.
+    // The expression evaluator that called the function will read this value.
+    vm.variables["RETVAL"] = return_val;
 
-    // Set the special return value variable.
-    vm.variables["RETVAL"] = return_value;
-
-    // Pop the stack and set pcode to the return address.
-    auto& frame = vm.call_stack.back();
-    vm.for_stack.resize(frame.for_stack_size_on_entry);
-    vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
-    vm.pcode = frame.return_pcode;              // Restore program counter
-    vm.active_function_table = frame.previous_function_table_ptr;
+    // Pop the stack frame for the returning function.
+    if (vm.call_stack.empty()) {
+        Error::set(25, vm.runtime_current_line, "RETURN without function call.");
+        if (vm.current_task) vm.current_task->status = TaskStatus::ERRORED;
+        return;
+    }
+    NeReLaBasic::StackFrame frame = vm.call_stack.back();
     vm.call_stack.pop_back();
+
+    // Restore the FOR loop stack to its state before the function call.
+    if (vm.for_stack.size() > frame.for_stack_size_on_entry) {
+        vm.for_stack.resize(frame.for_stack_size_on_entry);
+    }
+
+    // --- UNIFIED CONTEXT RESTORE ---
+    // This fixes the bug where pcode was not restored for synchronous calls.
+    if (vm.call_stack.empty() && frame.is_async_call) {
+        vm.current_task->status = TaskStatus::COMPLETED;
+        // By setting the status, we signal the main scheduler to stop
+        // executing this task. The scheduler will handle cleanup.
+    }
+    else {
+        vm.pcode = frame.return_pcode;
+        vm.active_p_code = frame.return_p_code_ptr;
+        vm.active_function_table = frame.previous_function_table_ptr;
+    }
+
+    // --- TASK COMPLETION CHECK (Async-specific) ---
+    // Additionally, if this return causes a background task's call stack to become empty,
+    // mark that task as completed.
+    if (vm.current_task != nullptr && frame.is_async_call && vm.call_stack.empty()) {
+        vm.current_task->result = return_val; // Store the final result in the task object.
+        vm.current_task->status = TaskStatus::COMPLETED;
+    }
 }
 
 void Commands::do_endfunc(NeReLaBasic& vm) {
-    if (vm.call_stack.empty()) {
-        Error::set(23, vm.runtime_current_line); return;
-    }
-
-    // ENDFUNC implies a default return value of 0.
-    vm.variables["RETVAL"] = 0.0;
-
-    // Pop the stack and set pcode to the return address.
-    auto& frame = vm.call_stack.back();
-    vm.for_stack.resize(frame.for_stack_size_on_entry);
-    vm.active_p_code = frame.return_p_code_ptr; // Restore bytecode context
-    vm.pcode = frame.return_pcode;              // Restore program counter
-    vm.active_function_table = frame.previous_function_table_ptr;
-    vm.call_stack.pop_back();
+    // ENDFUNC is treated as a RETURN with a default value (false).
+    do_return(vm);
 }
 
 
@@ -1037,143 +1494,383 @@ void Commands::do_sub(NeReLaBasic& vm) {
 }
 
 void Commands::do_callsub(NeReLaBasic& vm) {
+    std::vector<size_t> indices;
+    std::string object_name = "";
+    std::string method_name = "";
     std::string proc_name = to_upper(read_string(vm));
+    bool func_not_found = !vm.active_function_table->count(proc_name);
+    bool is_array_access = false;
 
-    if (!vm.active_function_table->count(proc_name)) {
-        Error::set(22, vm.runtime_current_line); return;
+    // Check if the next token indicates an array access, e.g., NPCS[0]
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (next_token == Tokens::ID::C_LEFTBRACKET) {
+        is_array_access = true;
+        object_name = proc_name; // The part before '[' is the object/array name
+        vm.pcode++; // Consume '['
+
+        // Parse array indices
+        while (true) {
+            BasicValue index_val = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            indices.push_back(static_cast<size_t>(to_double(index_val)));
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line, "Expected ',' or ']' in array index."); return; }
+            vm.pcode++;
+        }
+        vm.pcode++; // Consume ']'
+
+        // After the array access, there must be a dot for the method name
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_DOT) {
+            Error::set(1, vm.runtime_current_line, "Expected '.' for method call on array element."); return;
+        }
+        vm.pcode++; // consume '.'
+        // The next string is the method name
+        method_name = to_upper(read_string(vm));
     }
-    const auto& proc_info = vm.active_function_table->at(proc_name);
-    std::vector<BasicValue> args;
 
-    Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    // --- Main Logic for Method Calls vs. Standard Procedure Calls ---
 
-    if (token != Tokens::ID::C_CR) {
-        if (proc_info.arity == -1 || proc_info.arity > 0) {
-            while (true) {
-                args.push_back(vm.evaluate_expression());
-                if (Error::get() != 0) return;
-                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-                if (separator == Tokens::ID::C_CR) break;
-                if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+    // This block handles method calls like `MyObject.DoSomething()` or `MyArray[i].DoSomething()`
+    if (is_array_access || (proc_name.find('.') != std::string::npos && func_not_found)) {
+
+        // If it wasn't an array access, it's a simple dot notation call like `OBJ.METHOD`
+        if (!is_array_access) {
+            size_t dot_pos = proc_name.find('.');
+            object_name = to_upper(proc_name.substr(0, dot_pos));
+            method_name = to_upper(proc_name.substr(dot_pos + 1));
+        }
+
+        BasicValue& base_variable = get_variable(vm, object_name);
+        auto jt = (std::holds_alternative<std::shared_ptr<Map>>(base_variable) || std::holds_alternative<std::shared_ptr<Array>>(base_variable));
+
+        if (vm.variables.contains(object_name) && jt) {
+            // This pointer will hold the specific object instance we need to call the method on.
+            std::shared_ptr<Map> object_instance_ptr;
+            BasicValue& base_variable = get_variable(vm, object_name);
+
+            if (is_array_access) {
+                // --- PATH 1: The call is on an array element like NPCS[i].METHOD() ---
+
+                // 1. Verify the base variable is an array.
+                if (!std::holds_alternative<std::shared_ptr<Array>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Variable '" + object_name + "' is not an array.");
+                    return;
+                }
+                const auto& arr_ptr = std::get<std::shared_ptr<Array>>(base_variable);
+                if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array '" + object_name + "' is null."); return; }
+
+                // 2. Get the specific element from the array.
+                size_t flat_index = arr_ptr->get_flat_index(indices);
+                if (flat_index >= arr_ptr->data.size()) {
+                    Error::set(10, vm.runtime_current_line, "Array index out of bounds."); // Bad subscript
+                    return;
+                }
+                BasicValue& element_val = arr_ptr->data[flat_index];
+
+                // 3. Verify the element is an object (a Map) and get its pointer.
+                if (!std::holds_alternative<std::shared_ptr<Map>>(element_val)) {
+                    Error::set(15, vm.runtime_current_line, "Array element is not an object that can have methods.");
+                    return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(element_val);
+
+            }
+            else {
+                // --- PATH 2: The call is on a simple object variable like MY_NPC.METHOD() ---
+                if (!std::holds_alternative<std::shared_ptr<Map>>(base_variable)) {
+                    Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                    return;
+                }
+                object_instance_ptr = std::get<std::shared_ptr<Map>>(base_variable);
+            }
+
+            // --- UNIFIED LOGIC ---
+            // At this point, `object_instance_ptr` correctly points to the object we want to call the method on,
+            // whether it came from a simple variable or an array element.
+
+            if (!object_instance_ptr) {
+                Error::set(1, vm.runtime_current_line, "Object instance is null.");
+                return;
+            }
+            // 2. Get its type and find the method
+            std::string type_name = object_instance_ptr->type_name_if_udt;
+            if (type_name.empty() || !vm.user_defined_types.count(type_name)) {
+                Error::set(15, vm.runtime_current_line, "Object has no type information.");
+                return;
+            }
+            const auto& type_info = vm.user_defined_types.at(type_name);
+            if (!type_info.methods.count(method_name)) {
+                Error::set(22, vm.runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'.");
+                return;
+            }
+
+            // 3. Get the mangled function name and its FunctionInfo
+            std::string mangled_name = type_name + "." + method_name;
+            const auto& func_info = vm.active_function_table->at(mangled_name);
+
+            // 4. Parse arguments
+            //auto args = vm.parse_argument_list();
+            //if (Error::get() != 0) return;
+            std::vector<BasicValue> args;
+
+            Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+            if (token != Tokens::ID::C_CR) {
+                if (func_info.arity == -1 || func_info.arity > 0) {
+                    while (true) {
+                        args.push_back(vm.evaluate_expression());
+                        if (Error::get() != 0) return;
+                        Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                        if (separator == Tokens::ID::C_CR) break;
+                        if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+                        vm.pcode++;
+                    }
+                }
+                else {
+                    vm.pcode++;
+                    vm.pcode++;
+                }
+            }
+
+            if (func_info.arity != -1 && args.size() != func_info.arity) {
+                Error::set(26, vm.runtime_current_line); return;
+            }
+
+            // 5. *** SET THE 'THIS' CONTEXT ***
+            //object_instance_ptr->data["THIS"] = object_name;
+
+            vm.this_stack.push_back(object_instance_ptr);
+
+            // 6. Execute the function
+            vm.execute_synchronous_function(func_info, args);
+
+            // 7. *** CLEAN UP THE 'THIS' CONTEXT ***
+            vm.this_stack.pop_back();
+        }
+
+#ifdef JDCOM
+        else {
+            // It's a dot-chain, so resolve it to get the object and the method name.
+            auto [final_obj, final_method] = vm.resolve_dot_chain(proc_name);
+            if (Error::get() != 0) return; // An error occurred during resolution
+
+            // Ensure we have a COM object to call a method on.
+            if (!std::holds_alternative<ComObject>(final_obj)) {
+                Error::set(15, vm.runtime_current_line, "Methods can only be called on objects.");
+                return;
+            }
+
+            IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+            if (!pDisp) {
+                Error::set(1, vm.runtime_current_line, "Uninitialized COM object.");
+                return;
+            }
+
+            // For a procedure call, there are no arguments and we ignore the return value.
+            std::vector<BasicValue> com_args; // Empty args
+            _variant_t result_vt;             // We discard the result
+
+            // Invoke as a method.
+            HRESULT hr = invoke_com_method(pDisp, final_method, com_args, result_vt, DISPATCH_METHOD);
+            if (FAILED(hr)) {
+                Error::set(12, vm.runtime_current_line, "Failed to call COM method '" + final_method + "'");
+                return;
+            }
+        }
+#else
+        Error::set(22, vm.runtime_current_line, "Unknown procedure: " + proc_name);
+#endif
+    }
+    else {
+        if (func_not_found) {
+            Error::set(22, vm.runtime_current_line); return;
+        }
+        const auto& proc_info = vm.active_function_table->at(proc_name);
+        std::vector<BasicValue> args;
+
+        Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+        if (token != Tokens::ID::C_CR && token != Tokens::ID::C_COLON) {
+            if (proc_info.arity == -1 || proc_info.arity > 0) {
+                while (true) {
+                    args.push_back(vm.evaluate_expression());
+                    if (Error::get() != 0) return;
+                    Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                    if (separator == Tokens::ID::C_CR) break;
+                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+                    vm.pcode++;
+                }
+            }
+            else {
+                vm.pcode++;
                 vm.pcode++;
             }
         }
-        else {
-            vm.pcode++;
-            vm.pcode++;
-        }
-    }
 
-    if (proc_info.arity != -1 && args.size() != proc_info.arity) {
-        Error::set(26, vm.runtime_current_line); return;
-    }
-
-    if (proc_info.native_impl != nullptr) {
-        proc_info.native_impl(vm, args);
-    }
-    else {
-        NeReLaBasic::StackFrame frame;
-        frame.return_p_code_ptr = vm.active_p_code;
-        frame.return_pcode = vm.pcode;
-        frame.previous_function_table_ptr = vm.active_function_table;
-        frame.for_stack_size_on_entry = vm.for_stack.size();
-        frame.function_name = proc_name;
-        for (size_t i = 0; i < proc_info.parameter_names.size(); ++i) {
-            if (i < args.size()) frame.local_variables[proc_info.parameter_names[i]] = args[i];
+        if (proc_info.arity != -1 && args.size() != proc_info.arity) {
+            Error::set(26, vm.runtime_current_line); return;
         }
-        vm.call_stack.push_back(frame);
 
-        if (!proc_info.module_name.empty() && vm.compiled_modules.count(proc_info.module_name)) {
-            auto& target_module = vm.compiled_modules[proc_info.module_name];
-            vm.active_p_code = &target_module.p_code;
-            vm.active_function_table = &target_module.function_table;
-        }
-        vm.pcode = proc_info.start_pcode;
+        vm.execute_function_for_value(proc_info, args);
     }
 }
 
 // At runtime, ENDSUB handles returning from a procedure call.
 // It pops the call stack and restores the program counter.
 void Commands::do_endsub(NeReLaBasic& vm) {
-    if (vm.call_stack.empty()) {
-        Error::set(9, vm.runtime_current_line); // RETURN without GOSUB/CALL
-        return;
-    }
-    // For a procedure, there is no return value to set.
-    // We just pop the stack and set pcode to the return address.
-    auto& frame = vm.call_stack.back();
-    vm.for_stack.resize(frame.for_stack_size_on_entry);
-    vm.active_p_code = frame.return_p_code_ptr; // Restore context
-    vm.pcode = frame.return_pcode;              // Restore PC
-    vm.active_function_table = frame.previous_function_table_ptr;
-    vm.call_stack.pop_back();
+    do_return(vm);
 }
 
-// This command will expect a function name string directly after it.
-void Commands::do_onerrorcall(NeReLaBasic& vm) {
-    // Read the function name from bytecode
-    std::string func_name = to_upper(read_string(vm)); // read_string handles pcode increment
+//// This command will expect a function name string directly after it.
+//void Commands::do_onerrorcall(NeReLaBasic& vm) {
+//    // Read the function name from bytecode
+//    if (!vm.current_task) {
+//        Error::set(1, vm.runtime_current_line, "ON ERROR can only be used in a running program.");
+//        return;
+//    }
+//    std::string func_name = to_upper(read_string(vm)); // read_string handles pcode increment
+//
+//    // Check if the function actually exists
+//    // (It must be a SUB, not a FUNC, as it's called as a procedure)
+//    if (vm.main_function_table.count(func_name) && vm.main_function_table.at(func_name).is_procedure) {
+//        vm.current_task->error_handler_function_name = func_name;
+//        vm.current_task->error_handler_active = true;
+//    }
+//    else {
+//        // Error if function not found or it's not a procedure (SUB)
+//        Error::set(22, vm.runtime_current_line); // Undefined function
+//    }
+//}
 
-    // Check if the function actually exists
-    // (It must be a SUB, not a FUNC, as it's called as a procedure)
-    if (vm.main_function_table.count(func_name) && vm.main_function_table.at(func_name).is_procedure) {
-        vm.error_handler_function_name = func_name;
-        vm.error_handler_active = true;
-    }
-    else {
-        // Error if function not found or it's not a procedure (SUB)
-        Error::set(22, vm.runtime_current_line); // Undefined function
+// ---  Commands for TRY/CATCH ---
+void Commands::do_push_handler(NeReLaBasic& vm) {
+    // Read the two 2-byte addresses from p-code.
+    // These were written by the compiler.
+    uint8_t catch_lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t catch_msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t catch_addr = (catch_msb << 8) | catch_lsb;
+
+    uint8_t finally_lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t finally_msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t finally_addr = (finally_msb << 8) | finally_lsb;
+
+    // Push the handler information onto the runtime stack.
+    vm.handler_stack.push_back({
+        catch_addr,
+        finally_addr,
+        vm.call_stack.size(),
+        vm.for_stack.size()
+        });
+}
+
+void Commands::do_pop_handler(NeReLaBasic& vm) {
+    // This is called at ENDTRY. It simply removes the handler for the
+    // block we are now leaving.
+    if (!vm.handler_stack.empty()) {
+        vm.handler_stack.pop_back();
     }
 }
 
-void Commands::do_resume(NeReLaBasic& vm) {
-    // Clear the error state in the Error module (so program can continue normally)
-    Error::clear();
-    vm.error_handler_active = false; // Deactivate handler after RESUME
 
-    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+//void Commands::do_resume(NeReLaBasic& vm) {
+//    if (!vm.current_task || !vm.current_task->error_handler_active || !vm.is_processing_event) {
+//        Error::set(1, vm.runtime_current_line, "RESUME without an active error handler.");
+//        return;
+//    }
+//
+//    Error::clear(); // Clear any error state from within the handler.
+//
+//    NeReLaBasic::Task* task = vm.current_task;
+//    vm.is_processing_event = false; // We are now leaving the error handler
+//
+//    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+//
+//    if (next_token == Tokens::ID::NEXT) {
+//        vm.pcode++; // Consume NEXT token
+//
+//        // Restore the full execution context to the state before the error.
+//        vm.call_stack = task->resume_call_stack_snapshot;
+//        vm.for_stack = task->resume_for_stack_snapshot;
+//        vm.active_p_code = task->resume_p_code_ptr;
+//        vm.active_function_table = task->resume_function_table_ptr;
+//
+//        // Jump to the statement AFTER the one that caused the error.
+//        vm.pcode = task->resume_pcode_next_statement;
+//        // The line number will be updated when the pcode is processed by the main loop
+//
+//    }
+//    else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
+//        vm.pcode++; // Consume STRING token
+//        std::string target_label = read_string(vm);
+//        if (vm.compiler->label_addresses.count(target_label)) {
+//            // A GOTO-style resume aborts the old execution path.
+//            // Clear the stacks before jumping.
+//            vm.call_stack.clear();
+//            vm.for_stack.clear();
+//            vm.pcode = vm.compiler->label_addresses[target_label];
+//        }
+//        else {
+//            Error::set(11, vm.runtime_current_line, "Undefined label in RESUME.");
+//        }
+//    }
+//    else {
+//        // Simple RESUME (or RESUME 0) - re-execute the failing line.
+//
+//        // Restore context
+//        vm.call_stack = task->resume_call_stack_snapshot;
+//        vm.for_stack = task->resume_for_stack_snapshot;
+//        vm.active_p_code = task->resume_p_code_ptr;
+//        vm.active_function_table = task->resume_function_table_ptr;
+//
+//        // Jump back to the start of the statement that caused the error.
+//        vm.pcode = task->resume_pcode;
+//    }
+//}
 
-    if (next_token == Tokens::ID::NEXT) {
-        vm.pcode++; // Consume NEXT token
+void Commands::do_on(NeReLaBasic& vm) {
+    std::string event_name = to_upper(read_string(vm));
+    std::string func_name = to_upper(read_string(vm));
 
-        // Restore the execution context exactly as it was before the error handler was called
-        vm.pcode = vm.resume_pcode_next_statement; // Points to the line/statement that caused the error
-        // The main loop in execute() will then re-evaluate it and proceed.
-        vm.runtime_current_line = vm.resume_runtime_line;
-        vm.active_p_code = vm.resume_p_code_ptr;
-        vm.active_function_table = vm.resume_function_table_ptr;
-        vm.call_stack = vm.resume_call_stack_snapshot;
-        vm.for_stack = vm.resume_for_stack_snapshot;
-
-    }
-    else if (next_token == Tokens::ID::NOCMD || next_token == Tokens::ID::C_CR) {
-        // Simple RESUME (like RESUME 0 or RESUME current line)
-        // Restore context as for RESUME NEXT
-        vm.pcode = vm.resume_pcode;
-        vm.runtime_current_line = vm.resume_runtime_line;
-        vm.active_p_code = vm.resume_p_code_ptr;
-        vm.active_function_table = vm.resume_function_table_ptr;
-        vm.call_stack = vm.resume_call_stack_snapshot;
-        vm.for_stack = vm.resume_for_stack_snapshot;
-
-    }
-    else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
-        vm.pcode++; // Consume STRING token
-        std::string target_label = read_string(vm);
-        if (vm.label_addresses.count(target_label)) {
-            vm.pcode = vm.label_addresses[target_label];
-            // For a GOTO-style resume, clear the stack to prevent unexpected returns
-            vm.call_stack.clear();
-            vm.for_stack.clear();
+    if (vm.active_function_table->count(func_name)) {
+        const auto& func_info = vm.active_function_table->at(func_name);
+        if (!func_info.is_procedure) {
+            Error::set(22, vm.runtime_current_line, "Event handler '" + func_name + "' must be a SUB procedure.");
+            return;
+        }
+        if (event_name == "ERROR") {
+            if (func_info.arity != 1) {
+                Error::set(26, vm.runtime_current_line, "Error handler for ON ERROR must accept exactly one argument.");
+                return;
+            }
+            if (vm.current_task) {
+                vm.current_task->error_handler_function_name = func_name;
+                vm.current_task->error_handler_active = true;
+            }
         }
         else {
-            Error::set(11, vm.runtime_current_line); // Undefined label
+            vm.event_handlers[event_name] = func_name;
         }
     }
     else {
-        Error::set(1, vm.runtime_current_line); // Syntax Error
+        Error::set(22, vm.runtime_current_line, "Event handler '" + func_name + "' not found.");
     }
-    // The main execution loop will then continue from the new vm.pcode value.
+}
+
+void Commands::do_raiseevent(NeReLaBasic& vm) {
+    std::string event_name = to_upper(read_string(vm));
+
+    // Evaluate the expression for the event data
+    BasicValue event_data = false;
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) {
+        vm.pcode++;
+        event_data = vm.evaluate_expression();
+        if (Error::get() != 0) {
+            return;
+        }
+    }
+
+    vm.raise_event(event_name, event_data);
 }
 
 void Commands::do_do(NeReLaBasic& vm) {
@@ -1292,6 +1989,7 @@ void Commands::do_exit_do(NeReLaBasic& vm) {
     vm.pcode = jump_target;
 }
 
+
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;
 
@@ -1352,6 +2050,7 @@ void Commands::do_load(NeReLaBasic& vm) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         vm.source_lines.push_back(line);
     }
+    vm.program_to_debug = filename;
 }
 
 void Commands::do_save(NeReLaBasic& vm) {
@@ -1384,10 +2083,10 @@ void Commands::do_compile(NeReLaBasic& vm) {
 
     // Compile into the main program buffer
     TextIO::print("Compiling...\n");
-    if (vm.tokenize_program(vm.program_p_code, source_to_compile) == 0) {
-        if (!vm.if_stack.empty()) {
+    if (vm.compiler->tokenize_program(vm,vm.program_p_code, source_to_compile) == 0) {
+        if (!vm.compiler->if_stack.empty()) {
             // There are unclosed IF blocks. Get the line number of the last one.
-            uint16_t error_line = vm.if_stack.back().source_line;
+            uint16_t error_line = vm.compiler->if_stack.back().source_line;
             Error::set(4, error_line); // New Error: Missing ENDIF
         }
         else {
@@ -1436,14 +2135,16 @@ void Commands::do_stop(NeReLaBasic& vm) {
 
         // Tokenize the direct-mode line into its own p-code buffer.
         vm.direct_p_code.clear();
-        if (vm.tokenize(inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
+        //if (vm.compiler->tokenize(vm, inputLine, 0, vm.direct_p_code, *vm.active_function_table) != 0) {
+        if (vm.compiler->tokenize(vm, inputLine, 0, vm.direct_p_code, vm.main_function_table) != 0) {
             Error::print(); // Print tokenization error
             continue;       // And prompt again
         }
 
         // Execute the single command from the direct_p_code buffer.
         // We are NOT in resume_mode for this single command execution.
-        vm.execute(vm.direct_p_code, false);
+        vm.execute_synchronous_block(vm.direct_p_code);
+        //vm.execute_main_program(vm.direct_p_code, false);
 
         // Restore the pointers to the main program's state.
         vm.pcode = original_pcode;
@@ -1459,14 +2160,14 @@ void Commands::do_stop(NeReLaBasic& vm) {
 void Commands::do_run(NeReLaBasic& vm) {
 
     do_compile(vm);
-    if (!vm.do_loop_stack.empty()) {
+    if (!vm.compiler->do_loop_stack.empty()) {
         // There are unclosed DO loops. Get the line number of the last one.
-        uint16_t error_line = vm.do_loop_stack.back().source_line;
+        uint16_t error_line = vm.compiler->do_loop_stack.back().source_line;
         Error::set(14, error_line); // Unclosed loop
     }
-    if (!vm.if_stack.empty()) {
+    if (!vm.compiler->if_stack.empty()) {
         // There are unclosed Ifs. Get the line number of the last one.
-        uint16_t error_line = vm.if_stack.back().source_line;
+        uint16_t error_line = vm.compiler->if_stack.back().source_line;
         Error::set(4, error_line); // Unclosed for
     }
 
@@ -1487,13 +2188,18 @@ void Commands::do_run(NeReLaBasic& vm) {
 
     TextIO::print("Running...\n");
     // Execute from the main program buffer
-    vm.execute(vm.program_p_code, false);
+    vm.execute_main_program(vm.program_p_code, false);
 
     // If the execution resulted in an error, print it
     if (Error::get() != 0) {
         Error::print();
+        Error::clear();
     }
     vm.active_function_table = &vm.main_function_table;
+}
+
+void Commands::do_end(NeReLaBasic& vm) {
+    vm.program_ended = true;
 }
 
 void Commands::do_tron(NeReLaBasic& vm) {

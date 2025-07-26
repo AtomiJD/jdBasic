@@ -6,11 +6,15 @@
 #include "Error.hpp"    // Required for Error::print
 #include "TextIO.hpp"
 #include "DAPHandler.hpp" 
-#include <windows.h> 
 #include <iostream>
 #include <string>
 #include <fstream>
+#ifdef _WIN32
+#include <windows.h> 
 #include <conio.h>
+#else
+#include <ncurses.h>
+#endif
 #ifdef JDCOM         // also define: NOMINMAX!!!!!
 #include <objbase.h> // Required for CoInitializeEx, CoUninitialize
 #endif 
@@ -28,8 +32,14 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+#ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+#else
+    // initscr();
+    // cbreak();       // Line buffering disabled
+    // noecho();       // Don't echo() while we do getch
+#endif
 
     // Create an instance of our interpreter
     NeReLaBasic interpreter;
@@ -64,7 +74,9 @@ int main(int argc, char* argv[]) {
         dap_server.start(dap_port);
 
         TextIO::print("DAP mode is active. Waiting for client to connect and send launch request...\n");
-
+        interpreter.init_screen();
+        interpreter.init_system();
+        interpreter.init_basic();
         // Get the future from the promise before the server potentially fulfills it
         auto launch_future = interpreter.dap_launch_promise.get_future();
 
@@ -73,10 +85,14 @@ int main(int argc, char* argv[]) {
 
         if (launch_ok) {
             TextIO::print("Launch request received. Starting execution...\n");
-            dap_server.send_output_message("jdBasic REPL is Ready\nType your command and <enter>\n");
+            dap_server.send_output_message("jdBasic REPL is Ready\n");
+            dap_server.send_output_message("Type your command and <enter>\n");
             // The file is now loaded and compiled. Start the execution loop.
             // The loop will immediately pause and wait for a 'continue' or 'step' command.
-            interpreter.execute(interpreter.program_p_code, false);
+
+            interpreter.execute_main_program(interpreter.program_p_code, false);
+            if (Error::get() != 0) Error::print();
+
         }
         else {
             TextIO::print("? DAP Error: Launch failed. Shutting down.\n");
@@ -85,7 +101,11 @@ int main(int argc, char* argv[]) {
         dap_server.stop();
 
         TextIO::print("\n--- ENDED (Press any key to exit) ---\n");
+#ifdef _WIN32        
         _getch();
+#else
+        getch();
+#endif        
     }
     else {
 
@@ -97,10 +117,17 @@ int main(int argc, char* argv[]) {
             if (interpreter.loadSourceFromFile(filename)) {
                 // File loaded successfully. Now, we can execute the same logic
                 // as the RUN command to compile and execute the code.
+                interpreter.init_screen();
+                interpreter.init_system();
+                interpreter.init_basic();
                 Commands::do_run(interpreter);
 
                 TextIO::print("\n--- ENDED (Press any key to exit) ---\n");
+#ifdef _WIN32        
                 _getch();
+#else
+                getch();
+#endif     
             }
             // Note: If do_run encounters a runtime error, it is handled internally
             // by the Error::print() call within the execution loop.

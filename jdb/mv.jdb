@@ -113,5 +113,3 @@ PRINT "Scores sorted by rank:"
 FOR I = 0 TO LEN(G)-1
     PRINT SCORES[G[I]]
 NEXT I
-
-

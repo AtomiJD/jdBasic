@@ -1,0 +1,35 @@
+' This function defines the core logic for one step of the Fibonacci sequence.
+' It takes the sequence so far (the accumulator) and appends the next number.
+' The second argument, 'i', comes from the IOTA array and is ignored;
+' it's only there to satisfy the REDUCE function's signature.
+FUNC NextFib(acc_array, i)
+    ' Calculate the next number by summing the last two elements of the array.
+    next_val = acc_array[LEN(acc_array)-1] + acc_array[LEN(acc_array)-2]
+    
+    ' Return a new array with the next number appended.
+    RETURN APPEND(acc_array, next_val)
+ENDFUNC
+
+' --- Fibonacci Sequence Program ---
+PRINT
+PRINT "Fibonacci Sequence Program"
+PRINT
+
+' 1. Define the initial state for the reduction. This is the seed of our sequence.
+initial_sequence = [0, 1]
+
+' 2. Define how many MORE numbers we want to generate.
+'    We already have 2.
+iterations = IOTA(20)
+
+' 3. Use REDUCE to generate the full sequence.
+'    - It starts with 'initial_sequence'.
+'    - For each number in 'iterations', it calls NextFib.
+'    - The result of NextFib becomes the new accumulator for the next step.
+fib_sequence = REDUCE(NextFib@, iterations, initial_sequence)
+
+' 4. Print the final result.
+PRINT "Fibonacci sequence generated with REDUCE:"
+PRINT fib_sequence
+
+PRINT "Test done."

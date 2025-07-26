@@ -363,5 +363,13 @@ MigrationBackup/
 FodyWeavers.xsd
 
 #Atomis ausschluss Zeug
-docs/*_old.*
+doc/*_old.*
 fluppi/
+jdb/_*.*
+libs/tf
+jdb/fonts
+jdb/music
+jdb/intern
+
+
+

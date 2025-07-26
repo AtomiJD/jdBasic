@@ -549,6 +549,9 @@ BasicValue builtin_matmul(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         return result_ptr;
 
     }
+    else {
+        Error::set(15, vm.runtime_current_line, "Argument to MATMULT must be an Array ot Tensor."); return {};
+    }
     return {};
 }
 
@@ -573,6 +576,11 @@ namespace {
 
 BasicValue builtin_conv2d(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 5) { Error::set(8, vm.runtime_current_line, "CONV2D requires 5 arguments."); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0]) ||
+        !std::holds_alternative<std::shared_ptr<Tensor>>(args[1]) ||
+        !std::holds_alternative<std::shared_ptr<Tensor>>(args[2])) {
+        Error::set(15, vm.runtime_current_line, "Arguments 1-3 to TENSOR.CONV2D must be a Tensor."); return {};
+    }
     const auto& input_tensor = std::get<std::shared_ptr<Tensor>>(args[0]);
     const auto& kernel_tensor = std::get<std::shared_ptr<Tensor>>(args[1]);
     const auto& bias_tensor = std::get<std::shared_ptr<Tensor>>(args[2]);
@@ -670,6 +678,9 @@ BasicValue builtin_conv2d(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
 BasicValue builtin_maxpool2d(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) { Error::set(8, vm.runtime_current_line, "MAXPOOL2D requires 3 arguments."); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument 1 to TENSOR.MAXPOOL2 must be a Tensor."); return {};
+    }
     const auto& input = std::get<std::shared_ptr<Tensor>>(args[0]);
     int pool_size = static_cast<int>(to_double(args[1]));
     int stride = static_cast<int>(to_double(args[2]));
@@ -737,6 +748,11 @@ BasicValue builtin_layer_norm(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     if (args.size() != 3) {
         Error::set(8, vm.runtime_current_line, "LAYER_NORM requires 3 arguments: input_tensor, gain_tensor, bias_tensor.");
         return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0]) || 
+        !std::holds_alternative<std::shared_ptr<Tensor>>(args[1]) ||
+        !std::holds_alternative<std::shared_ptr<Tensor>>(args[2])) {
+        Error::set(15, vm.runtime_current_line, "Arguments to TENSOR.LAYER_NORM must be a Tensor."); return {};
     }
     const auto& x = std::get<std::shared_ptr<Tensor>>(args[0]);
     const auto& gain = std::get<std::shared_ptr<Tensor>>(args[1]);
@@ -834,6 +850,10 @@ BasicValue builtin_layer_norm(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 
 BasicValue builtin_sigmoid(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to TENSOR.SIGMOID must be a Tensor."); return {};
+    }
+    
     const auto& input_tensor = std::get<std::shared_ptr<Tensor>>(args[0]);
 
     auto result_array = std::make_shared<FloatArray>();
@@ -1055,6 +1075,9 @@ BasicValue builtin_to_tensor(NeReLaBasic& vm, const std::vector<BasicValue>& arg
 
 BasicValue builtin_toarray(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to TENSOR.TOARRAY must be a Tensor."); return {};
+    }
     const auto& tensor_ptr = std::get<std::shared_ptr<Tensor>>(args[0]);
 
     auto generic_array_ptr = std::make_shared<Array>();
@@ -1068,6 +1091,12 @@ BasicValue builtin_toarray(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 
 BasicValue builtin_create_layer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::string>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument 1 to TENSOR.CREATE_LAYER must be a String."); return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Argument 1 to TENSOR.CREATE_LAYER must be a Map."); return {};
+    }
     std::string layer_type = to_upper(std::get<std::string>(args[0]));
     const auto& options_map_ptr = std::get<std::shared_ptr<Map>>(args[1]);
     auto layer_result_ptr = std::make_shared<Map>();
@@ -1127,14 +1156,24 @@ BasicValue builtin_create_layer(NeReLaBasic& vm, const std::vector<BasicValue>& 
     return layer_result_ptr;
 }
 
+// --- MODIFIED: This function now creates different types of optimizers ---
 BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
-    if (!std::holds_alternative<std::string>(args[0]) || !std::holds_alternative<std::shared_ptr<Map>>(args[1])) {
-        Error::set(15, vm.runtime_current_line); return {};
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "CREATE_OPTIMIZER requires 2 arguments: type$, options_map");
+        return {};
     }
+    if (!std::holds_alternative<std::string>(args[0]) || !std::holds_alternative<std::shared_ptr<Map>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Invalid arguments for CREATE_OPTIMIZER.");
+        return {};
+    }
+
     std::string optimizer_type = to_upper(std::get<std::string>(args[0]));
     const auto& options_map_ptr = std::get<std::shared_ptr<Map>>(args[1]);
-    if (!options_map_ptr) { Error::set(3, vm.runtime_current_line); return {}; }
+    if (!options_map_ptr) {
+        Error::set(3, vm.runtime_current_line, "Optimizer options map cannot be null.");
+        return {};
+    }
+
     auto optimizer_result_ptr = std::make_shared<Map>();
     optimizer_result_ptr->data["type"] = optimizer_type;
 
@@ -1142,22 +1181,64 @@ BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValu
         if (optimizer_type == "SGD") {
             optimizer_result_ptr->data["learning_rate"] = options_map_ptr->data.at("learning_rate");
         }
+        else if (optimizer_type == "ADAM") {
+            optimizer_result_ptr->data["learning_rate"] = options_map_ptr->data.at("learning_rate");
+            // Set default values for Adam if not provided
+            optimizer_result_ptr->data["beta1"] = options_map_ptr->data.count("beta1") ? options_map_ptr->data.at("beta1") : 0.9;
+            optimizer_result_ptr->data["beta2"] = options_map_ptr->data.count("beta2") ? options_map_ptr->data.at("beta2") : 0.999;
+            optimizer_result_ptr->data["epsilon"] = options_map_ptr->data.count("epsilon") ? options_map_ptr->data.at("epsilon") : 1e-8;
+            optimizer_result_ptr->data["t"] = 0.0; // Timestep starts at 0
+        }
         else {
             Error::set(1, vm.runtime_current_line, "Unknown optimizer type: " + optimizer_type);
             return {};
         }
     }
     catch (const std::out_of_range& e) {
-        Error::set(1, vm.runtime_current_line, "Missing 'learning_rate' option for SGD optimizer.");
+        Error::set(1, vm.runtime_current_line, "Missing required option for " + optimizer_type + " optimizer.");
         return {};
     }
     return optimizer_result_ptr;
+}
+
+// --- MODIFIED: This function now acts as a dispatcher ---
+BasicValue builtin_optimizer_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+
+    const auto& model_map = std::get<std::shared_ptr<Map>>(args[0]);
+    const auto& optimizer_map = std::get<std::shared_ptr<Map>>(args[1]);
+
+    std::string optimizer_type = to_string(optimizer_map->data.at("type"));
+    std::string update_func_name = optimizer_type + ".UPDATE";
+
+    // Find the correct update function (e.g., "ADAM.UPDATE") in the function table
+    if (vm.main_function_table.count(update_func_name)) {
+        const auto& func_info = vm.main_function_table.at(update_func_name);
+        if (func_info.native_dll_impl != nullptr) {
+            BasicValue result;
+            // Call it using the new "output pointer" style
+            func_info.native_dll_impl(vm, args, &result);
+            return result;
+        }
+        // Priority 2: Check for the old internal function pointer
+        else if (func_info.native_impl != nullptr) {
+            // Call it using the old "return by value" style
+            return func_info.native_impl(vm, args);
+        }
+    }
+
+    Error::set(22, vm.runtime_current_line, "Optimizer update function not found for type: " + optimizer_type);
+    return {};
 }
 
 // --- Autodiff and Training Functions ---
 
 BasicValue builtin_backward(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) { Error::set(8, vm.runtime_current_line); return false; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0]) ) {
+        Error::set(15, vm.runtime_current_line, "Argument to TENSOR.BACKWARD must be Tensor.");
+        return {};
+    }
     auto loss_tensor = std::get<std::shared_ptr<Tensor>>(args[0]);
     if (!loss_tensor || !loss_tensor->data) { Error::set(3, vm.runtime_current_line); return false; }
 
@@ -1207,6 +1288,10 @@ BasicValue builtin_backward(NeReLaBasic& vm, const std::vector<BasicValue>& args
 
 BasicValue builtin_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0]) || !std::holds_alternative<std::shared_ptr<Map>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Arguments to TENSOR.UPDATE must be MAPS.");
+        return {};
+    }
     const auto& model_map = std::get<std::shared_ptr<Map>>(args[0]);
     const auto& optimizer_map = std::get<std::shared_ptr<Map>>(args[1]);
     double lr = to_double(optimizer_map->data.at("learning_rate"));
@@ -1299,6 +1384,9 @@ BasicValue builtin_tensor_positional_encoding(NeReLaBasic& vm, const std::vector
 
 BasicValue builtin_tensor_relu(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) { Error::set(15, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to TENSOR.RELU must be a Tensor."); return {};
+    }
     const auto& input_tensor = std::get<std::shared_ptr<Tensor>>(args[0]);
 
     auto result_data = std::make_shared<FloatArray>();
@@ -1328,6 +1416,9 @@ BasicValue builtin_tensor_relu(NeReLaBasic& vm, const std::vector<BasicValue>& a
 
 BasicValue builtin_tensor_softmax(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() < 1) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to TENSOR.SOFTMAX must be a Tensor."); return {};
+    }
     const auto& input_tensor = std::get<std::shared_ptr<Tensor>>(args[0]);
     bool is_causal = false;
     if (args.size() > 1) {
@@ -1406,6 +1497,9 @@ BasicValue builtin_tensor_softmax(NeReLaBasic& vm, const std::vector<BasicValue>
 
 BasicValue builtin_tensor_cross_entropy_loss(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
+    if (!std::holds_alternative<std::shared_ptr<Tensor>>(args[0]) || !std::holds_alternative<std::shared_ptr<Tensor>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Arguments to TENSOR.CROSS_ENTRY_LOSS must be a Tensor."); return {};
+    }
     const auto& logits_tensor = std::get<std::shared_ptr<Tensor>>(args[0]);
     const auto& actual_tensor = std::get<std::shared_ptr<Tensor>>(args[1]);
 

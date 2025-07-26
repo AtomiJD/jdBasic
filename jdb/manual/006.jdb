@@ -1,0 +1,18 @@
+' =========================================================
+' 6. Graphics and Sprites
+' =========================================================
+
+SCREEN 800, 600, "My Game"
+SPRITE.LOAD 1, "enemy.png"
+ENEMY_ID = SPRITE.CREATE(1, 100, 100)
+SPRITE.SET_VELOCITY ENEMY_ID, 20, 15
+
+DO 
+    CLS
+    SPRITE.UPDATE 
+    SPRITE.DRAW_ALL 0,0
+    SCREENFLIP
+
+    A$ = INKEY$()
+    SLEEP 20 
+LOOP UNTIL A$ > ""

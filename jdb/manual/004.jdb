@@ -1,0 +1,11 @@
+' =========================================================
+' Higher-Order Functions
+' =========================================================
+
+FUNC SQUARE_IT(X)
+    RETURN X * X
+ENDFUNC
+
+' The SELECT function applies a function to each element of an array
+result = SELECT(SQUARE_IT@, [1, 2, 3, 4])
+PRINT result ' Output: [1, 4, 9, 16]

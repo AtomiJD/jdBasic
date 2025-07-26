@@ -1,0 +1,162 @@
+' Mandelbrot Set Generator for jdBasic (Interactive Zoom)
+' --------------------------------------------------------------------
+' This program interactively calculates and draws the Mandelbrot fractal.
+'
+' - It uses APL-style array operations for high performance.
+' - Click on the image to zoom in on that point.
+' - Press the ESC key to exit the program.
+' --------------------------------------------------------------------
+
+' --- 1. Global Configuration and Setup ---
+SCREEN_W = 1920
+SCREEN_H = 1080
+MAX_ITERATIONS = 100 ' Increase for more detail, but slower rendering
+CALC_W = 384         ' Increased calculation resolution for better zoom quality
+CALC_H = 216
+DX = SCREEN_W / CALC_W
+DY = SCREEN_H / CALC_H
+
+' Define the initial view of the complex plane
+X_MIN = -2.0
+X_MAX = 1.0
+Y_MIN = -1.5
+Y_MAX = 1.5
+
+' --- 2. Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Interactive Mandelbrot Set in jdBasic"
+CLS 0, 0, 0 ' Clear screen to black
+
+
+' ====================================================================
+' ==  SUBROUTINE TO CALCULATE AND DRAW THE FRACTAL
+' ====================================================================
+SUB CalculateAndDrawMandelbrot()
+    ' This subroutine contains the core calculation and drawing logic.
+    ' It is called once at the start and every time we zoom.
+
+    ' --- 3. Vectorized Coordinate Setup ---
+    PRINT "Creating coordinate matrices for the current view..."
+
+    ' Create 1D vectors for all X and Y coordinates on the screen
+    PX_VEC = (IOTA(CALC_W) - 1) / (CALC_W - 1)
+    PY_VEC = (IOTA(CALC_H) - 1) / (CALC_H - 1)
+
+    ' Use OUTER to expand the 1D vectors into 2D coordinate matrices
+    C_REAL = OUTER(PY_VEC*0, PX_VEC, "+") * (X_MAX - X_MIN) + X_MIN
+    C_IMAG = OUTER(PY_VEC, PX_VEC*0, "+") * (Y_MAX - Y_MIN) + Y_MIN
+
+
+    ' --- 4. Vectorized Iteration ---
+    PRINT "Calculating Mandelbrot set with matrix operations..."
+
+    ' Initialize Z and iteration-count matrices
+    Z_REAL = RESHAPE([0], [CALC_H, CALC_W])
+    Z_IMAG = RESHAPE([0], [CALC_H, CALC_W])
+    ITERATIONS = RESHAPE([0], [CALC_H, CALC_W])
+
+    ' This loop replaces the inner DO/WHILE. It iterates for all points at once.
+    FOR I = 1 TO MAX_ITERATIONS
+      ' Create a boolean mask of points that are still within the escape radius
+      STILL_CALCULATING_MASK = (Z_REAL^2 + Z_IMAG^2) <= 4
+
+      ' If all points have escaped, we can stop early
+      IF NOT ANY(STILL_CALCULATING_MASK) THEN EXITFOR
+
+      ' Increment iteration count only for points still being calculated
+      ITERATIONS = ITERATIONS + STILL_CALCULATING_MASK
+
+      ' Calculate z^2 + c for all points
+      Z_REAL_NEW = (Z_REAL^2 - Z_IMAG^2) + C_REAL
+      Z_IMAG_NEW = (2 * Z_REAL * Z_IMAG) + C_IMAG
+
+      ' Update Z values only for the points still inside the mask
+      Z_REAL = Z_REAL_NEW * STILL_CALCULATING_MASK + Z_REAL * (1 - STILL_CALCULATING_MASK)
+      Z_IMAG = Z_IMAG_NEW * STILL_CALCULATING_MASK + Z_IMAG * (1 - STILL_CALCULATING_MASK)
+    NEXT I
+
+
+    ' --- 5. Vectorized Coloring ---
+    PRINT "Calculating final color matrix..."
+
+    ' Create a mask for points inside the set (those that reached max iterations)
+    INSIDE_SET_MASK = (ITERATIONS >= MAX_ITERATIONS)
+
+    ' Calculate colors for points outside the set based on escape time
+    R = (ITERATIONS * 8) MOD 255
+    G = (ITERATIONS * 5) MOD 255
+    B = (ITERATIONS * 12) MOD 255
+
+    ' Apply the "inside set" mask to make those pixels black
+    R = R * (1 - INSIDE_SET_MASK)
+    G = G * (1 - INSIDE_SET_MASK)
+    B = B * (1 - INSIDE_SET_MASK)
+
+    ' Pack the R, G, and B matrices into a single integer color matrix
+    ' The formula is equivalent to (R << 16) | (G << 8) | B
+    COLOR_MATRIX = R * 65536 + G * 256 + B
+
+
+    ' --- 6. Draw the Final Image ---
+    PRINT "Drawing final image with PLOTRAW..."
+
+    ' Call the high-performance procedure to draw the entire matrix at once
+    PLOTRAW 0, 0, COLOR_MATRIX, DX, DY
+
+    ' Push the completed drawing to the screen
+    SCREENFLIP
+    PRINT "Ready. Click to zoom or press ESC to exit."
+ENDSUB
+
+
+' ====================================================================
+' ==  MAIN INTERACTIVE LOOP
+' ====================================================================
+
+' First, draw the initial view
+CalculateAndDrawMandelbrot
+
+DO
+    ' --- Check for User Input ---
+    ' Check for a left mouse button click
+    IF MOUSEB(1) THEN
+        MX = MOUSEX()
+        MY = MOUSEY()
+        PRINT "Mouse clicked at: "; MX; ", "; MY
+
+        ' --- Zoom Logic ---
+        ' Convert screen coordinates (MX, MY) to complex plane coordinates
+        CLICK_REAL = X_MIN + (MX / SCREEN_W) * (X_MAX - X_MIN)
+        CLICK_IMAG = Y_MIN + (MY / SCREEN_H) * (Y_MAX - Y_MIN)
+
+        ' Define how much to zoom in. 2.0 means the view will be half the size.
+        ZOOM_FACTOR = 2.0
+
+        ' Calculate the new width and height of the view in the complex plane
+        NEW_WIDTH = (X_MAX - X_MIN) / ZOOM_FACTOR
+        NEW_HEIGHT = (Y_MAX - Y_MIN) / ZOOM_FACTOR
+
+        ' Recenter the view on the point that was clicked
+        X_MIN = CLICK_REAL - NEW_WIDTH / 2
+        X_MAX = CLICK_REAL + NEW_WIDTH / 2
+        Y_MIN = CLICK_IMAG - NEW_HEIGHT / 2
+        Y_MAX = CLICK_IMAG + NEW_HEIGHT / 2
+
+        ' Now that the view coordinates are updated, recalculate and redraw
+        CalculateAndDrawMandelbrot
+    ENDIF
+
+    ' Check if the user pressed a key
+    KEY$ = INKEY$()
+    IF KEY$ <> "" THEN
+        ' Check if the pressed key was ESC (ASCII code 27)
+        IF ASC(KEY$) = 27 THEN
+            EXITDO ' Exit the main loop
+        ENDIF
+    ENDIF
+
+    ' Pause briefly to prevent the loop from using 100% CPU
+    SLEEP 20
+LOOP
+
+PRINT "Program finished."

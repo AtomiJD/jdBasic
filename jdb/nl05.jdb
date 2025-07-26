@@ -18,7 +18,7 @@ TARGETS = TENSOR.FROM(TRAINING_OUTPUT_DATA)
 ' Model is now a Map to conform to the new API
 MODEL = {}
 
-' Layer 1: A dense layer with 2 inputs and 3 hidden units (neurons). [cite: 25]
+' Layer 1: A dense layer with 2 inputs and 3 hidden units (neurons). 
 HIDDEN_LAYER = TENSOR.CREATE_LAYER("DENSE", {"input_size": 2, "units": 3})
 ' Layer 2: A dense layer with 3 inputs (from hidden layer) and 1 output unit. [cite: 26]
 OUTPUT_LAYER = TENSOR.CREATE_LAYER("DENSE", {"input_size": 3, "units": 1})

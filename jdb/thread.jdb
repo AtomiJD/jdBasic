@@ -1,0 +1,29 @@
+
+FUNC LongComputation(n)
+    PRINT "Starting long computation in background..."
+    total = 0
+    FOR i = 1 TO n
+        total = total + i
+    NEXT i
+    PRINT "Background computation finished."
+    RETURN total
+ENDFUNC
+
+' --- Main Program ---
+PRINT "Launching background thread..."
+handle = THREAD LongComputation(10000)
+PRINT "Main thread is continuing its work..."
+PRINT "The handle is: "; handle
+
+' Do other work here...
+a = 1
+DO WHILE NOT THREAD.ISDONE(handle)
+    PRINT "Main thread waiting... a = "; a
+    a = a + 1
+    ' You could add a SLEEP here
+LOOP
+
+PRINT "Thread is done! Getting result..."
+finalResult = THREAD.GETRESULT(handle)
+
+PRINT "The final result from the thread is:"; finalResult

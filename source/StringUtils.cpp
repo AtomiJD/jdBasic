@@ -36,14 +36,14 @@ void StringUtils::strip(std::string& str) {
 }
 
 // Left trim
-static inline void StringUtils::ltrim(std::string& s) {
+inline void StringUtils::ltrim(std::string& s) {
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
         return !std::isspace(ch);
         }));
 }
 
 // Right trim
-static inline void StringUtils::rtrim(std::string& s) {
+inline void StringUtils::rtrim(std::string& s) {
     s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
         return !std::isspace(ch);
         }).base(), s.end());

@@ -26,12 +26,16 @@ namespace {
         {"ENDFUNC", Tokens::ID::ENDFUNC},
         {"SUB",    Tokens::ID::SUB},
         {"ENDSUB", Tokens::ID::ENDSUB},
+        {"AWAIT",   Tokens::ID::AWAIT},
+        {"ASYNC",   Tokens::ID::ASYNC},
+        {"THREAD",   Tokens::ID::THREAD},
         {"TYPE",    Tokens::ID::TYPE},      
         {"ENDTYPE",Tokens::ID::ENDTYPE},  
         {"FOR",     Tokens::ID::FOR},
         {"IF",      Tokens::ID::IF},
         {"THEN",    Tokens::ID::THEN},
         {"ELSE",    Tokens::ID::ELSE},
+        {"ELSEIF",  Tokens::ID::ELSEIF},
         {"ENDIF",   Tokens::ID::ENDIF},
         {"AND",     Tokens::ID::AND},
         {"OR",      Tokens::ID::OR},
@@ -61,6 +65,7 @@ namespace {
         {"MODULE",  Tokens::ID::MODULE},
         {"EXPORT",  Tokens::ID::EXPORT},
         {"IMPORT",  Tokens::ID::IMPORT},
+        {"DLLIMPORT",  Tokens::ID::DLLIMPORT},
         {"AS",      Tokens::ID::AS},
         {"MAP",     Tokens::ID::MAP},
         {"JSON",    Tokens::ID::JSON},
@@ -73,8 +78,21 @@ namespace {
         {"TENSOR",  Tokens::ID::TENSOR},
         {"STOP",    Tokens::ID::STOP},    
         {"RESUME",  Tokens::ID::RESUME},  
-        {"ON ERROR CALL", Tokens::ID::ONERRORCALL},
-        // ... and so on for all your keywords.
+        {"ON",      Tokens::ID::ON},
+        {"CALL",    Tokens::ID::CALL},
+        {"RAISEEVENT", Tokens::ID::RAISEEVENT},
+        {"LAMBDA",  Tokens::ID::LAMBDA},
+        {"THIS",    Tokens::ID::THIS_KEYWORD},
+        {"BAND",    Tokens::ID::BAND},
+        {"BOR",     Tokens::ID::BOR},
+        {"BXOR",    Tokens::ID::BXOR},
+        {"ANDALSO", Tokens::ID::ANDALSO},
+        {"ORELSE",  Tokens::ID::ORELSE},
+        {"TRY",     Tokens::ID::TRY},
+        {"CATCH",   Tokens::ID::CATCH},
+        {"FINALLY", Tokens::ID::FINALLY},
+        {"ENDTRY",  Tokens::ID::ENDTRY},
+        {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace
 
@@ -87,7 +105,7 @@ Tokens::ID Statements::get(const std::string& statement) {
 
     if (it != keyword_map.end()) {
         // We found the keyword in the map, return its token.
-        return it->second; // it->second is the value (the Token::ID)
+        return it->second; 
     }
 
     // It's not a keyword.

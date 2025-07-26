@@ -1,0 +1,18 @@
+' First, define a function that takes two arguments and adds them.
+PRINT "REDUCE test "
+PRINT 
+
+FUNC MyAdd(accumulator, current_value)
+    RETURN accumulator + current_value
+ENDFUNC
+
+' Create an array of numbers to sum.
+my_numbers = [10, 20, 30, 40]
+
+' Use REDUCE to apply the MyAdd function to the array.
+' The initial value for the accumulator is 0.
+total = REDUCE(MyAdd@, my_numbers, 0)
+
+PRINT "The sum is: "; total ' Output: The sum is: 100
+
+PRINT "Test done."

@@ -1,0 +1,7 @@
+' =========================================================
+' 5. File I/O
+' =========================================================
+
+' Read the entire content of a file into a string
+file_content$ = TXTREADER$("my_file.txt")
+PRINT file_content$

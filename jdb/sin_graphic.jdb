@@ -1,0 +1,112 @@
+' jdBasic Sine Wave Plot
+' This program demonstrates how to plot multiple sine waves with different
+' properties using vectorized operations. It also includes simple axes.
+
+' -------------------------------------------------
+' 1. SETUP & INITIALIZATION
+' -------------------------------------------------
+SCREEN_W = 1920
+SCREEN_H = 1080
+
+' --- Graphing Parameters ---
+NUM_POINTS = 1000 ' Number of points to calculate. More points = smoother curve.
+
+' --- Wave 1 Parameters (Red) ---
+AMPLITUDE1 = 400
+FREQUENCY1 = 4
+COLOR1 = [255, 50, 50]
+
+' --- Wave 2 Parameters (Green) ---
+AMPLITUDE2 = 250
+FREQUENCY2 = 8
+COLOR2 = [50, 255, 50]
+
+' --- Wave 3 Parameters (Blue) ---
+AMPLITUDE3 = 150
+FREQUENCY3 = 2
+COLOR3 = [100, 100, 255]
+
+' --- Axes Color ---
+AXIS_COLOR = [100, 100, 100] ' Grey
+
+' --- Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Vectorized Sine Waves"
+CLS 0, 0, 0 ' Clear screen to black
+
+' -------------------------------------------------
+' 2. GENERATE COORDINATE VECTORS
+' -------------------------------------------------
+' --- Create the base X-axis vector ---
+' IOTA(NUM_POINTS) creates a vector [0, 1, 2, ..., NUM_POINTS-1]
+x_axis = IOTA(NUM_POINTS)
+
+' --- Scale the X-axis to fit the screen width ---
+' This creates the pixel coordinates for the x-axis.
+x_coords = x_axis * (SCREEN_W / (NUM_POINTS - 1))
+
+' --- Animation Loop Variables ---
+time_step = 0
+
+' -------------------------------------------------
+' 3. MAIN ANIMATION LOOP
+' -------------------------------------------------
+PRINT "Starting animation loop... Press any key to exit."
+DO
+    ' --- Clear the screen for the new frame ---
+    CLS 0, 0, 0
+
+    ' --- Prepare and Draw Wave 1 (Red) ---
+    angle1 = (x_axis / NUM_POINTS) * FREQUENCY1 * 2 * PI + time_step
+    y_wave1 = SIN(angle1)
+    y_coords1 = (y_wave1 * AMPLITUDE1) + (SCREEN_H / 2)
+    x1_vec1 = SLICE(x_coords, 0, 0, NUM_POINTS - 1)
+    y1_vec1 = SLICE(y_coords1, 0, 0, NUM_POINTS - 1)
+    x2_vec1 = SLICE(x_coords, 0, 1, NUM_POINTS - 1)
+    y2_vec1 = SLICE(y_coords1, 0, 1, NUM_POINTS - 1)
+    lines_to_draw1 = STACK(1, x1_vec1, y1_vec1, x2_vec1, y2_vec1)
+    DRAWCOLOR COLOR1
+    LINE lines_to_draw1
+
+    ' --- Prepare and Draw Wave 2 (Green) ---
+    angle2 = (x_axis / NUM_POINTS) * FREQUENCY2 * 2 * PI + time_step * 1.5
+    y_wave2 = SIN(angle2)
+    y_coords2 = (y_wave2 * AMPLITUDE2) + (SCREEN_H / 2)
+    x1_vec2 = SLICE(x_coords, 0, 0, NUM_POINTS - 1)
+    y1_vec2 = SLICE(y_coords2, 0, 0, NUM_POINTS - 1)
+    x2_vec2 = SLICE(x_coords, 0, 1, NUM_POINTS - 1)
+    y2_vec2 = SLICE(y_coords2, 0, 1, NUM_POINTS - 1)
+    lines_to_draw2 = STACK(1, x1_vec2, y1_vec2, x2_vec2, y2_vec2)
+    DRAWCOLOR COLOR2
+    LINE lines_to_draw2
+
+    ' --- Prepare and Draw Wave 3 (Blue) ---
+    angle3 = (x_axis / NUM_POINTS) * FREQUENCY3 * 2 * PI + time_step * 0.5
+    y_wave3 = SIN(angle3)
+    y_coords3 = (y_wave3 * AMPLITUDE3) + (SCREEN_H / 2)
+    x1_vec3 = SLICE(x_coords, 0, 0, NUM_POINTS - 1)
+    y1_vec3 = SLICE(y_coords3, 0, 0, NUM_POINTS - 1)
+    x2_vec3 = SLICE(x_coords, 0, 1, NUM_POINTS - 1)
+    y2_vec3 = SLICE(y_coords3, 0, 1, NUM_POINTS - 1)
+    lines_to_draw3 = STACK(1, x1_vec3, y1_vec3, x2_vec3, y2_vec3)
+    DRAWCOLOR COLOR3
+    LINE lines_to_draw3
+
+    ' --- Draw Axes ---
+    ' Draw the X-axis (horizontal line in the middle)
+    DRAWCOLOR AXIS_COLOR
+    LINE 0, SCREEN_H / 2, SCREEN_W, SCREEN_H / 2
+    ' Draw the Y-axis (vertical line near the left)
+    LINE 20, 0, 20, SCREEN_H
+
+    ' --- Update the screen and advance the animation ---
+    SCREENFLIP
+    time_step = time_step + 0.05
+    SLEEP 16 ' Aim for ~60 FPS
+
+    ' --- Check for user input to exit the loop ---
+    a$ = INKEY$()
+LOOP UNTIL a$ > ""
+
+' --- Clean up ---
+PRINT "Animation finished."
