@@ -34,7 +34,7 @@ std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::sha
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
 
-const std::string NERELA_VERSION = "0.9.2";
+const std::string NERELA_VERSION = "0.9.3";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -145,7 +145,7 @@ std::pair<BasicValue, std::string> NeReLaBasic::resolve_dot_chain(const std::str
 }
 
 // Constructor: Initializes the interpreter state
-NeReLaBasic::NeReLaBasic() : program_p_code(65536, 0) { // Allocate 64KB of memory
+NeReLaBasic::NeReLaBasic()  { 
     buffer.reserve(64);
     lineinput.reserve(160);
     filename.reserve(40);
@@ -291,11 +291,13 @@ bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
 void NeReLaBasic::init_screen() {
     TextIO::setColor(fgcolor, bgcolor);
     TextIO::clearScreen();
-    TextIO::print("jdBasic v " + NERELA_VERSION + "\n");
-    TextIO::print("(c) 2025\n\n");
-// #ifndef _WIN32    
-//     keypad(stdscr, TRUE); 
-// #endif    
+#ifdef _WIN32    
+        std::string sos = "win32 64 bit";
+#else
+        std::string sos = "linux";
+#endif    
+    TextIO::print("jdBasic v " + NERELA_VERSION + ", OS: " + sos + "\n");
+    TextIO::print("Copyright (c) 2025 Computerwelt AI Solutions LLC.\nAll Rights Reserved.\nType HELP for more infos.");
 }
 
 void NeReLaBasic::init_system() {
@@ -807,8 +809,6 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
         pause_for_debugger();
     }
 
-    
-
     while (!task_queue.empty()) {
         process_system_events();
         if (program_ended) {
@@ -885,7 +885,6 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                             }
                             catch (const std::exception& e)
                             {
-                                //TextIO::print("Exception " + std::string(e.what()));
                                 Error::set(1, 1, "Exception " + std::string(e.what()));
                             }
                             
@@ -1082,10 +1081,6 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_end(*this);
         break;
-    //case Tokens::ID::RESUME:
-    //    pcode++;
-    //    Commands::do_resume(*this);
-    //    break;
     case Tokens::ID::LOOP:
         pcode++;
         Commands::do_loop(*this);
@@ -1244,13 +1239,6 @@ NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
     error_handler_function_name = "";
     err_code = 0.0;
     erl_line = 0.0;
-    //resume_pcode = 0;
-    //resume_pcode_next_statement = 0;
-    //resume_runtime_line = 0;
-    //resume_p_code_ptr = nullptr;
-    //resume_function_table_ptr = nullptr;
-    //resume_call_stack_snapshot.clear();
-    //resume_for_stack_snapshot.clear();
 
     // Debugger State (the new thread is not being debugged)
     dap_handler = nullptr;
@@ -2011,31 +1999,6 @@ BasicValue NeReLaBasic::parse_primary() {
             else { Error::set(15, runtime_current_line, "Key access '{}' can only be used on a Map or JSON object."); return {}; }
 
         }
-        //        else if (accessor_token == Tokens::ID::C_DOT) {
-        //            pcode++; // Consume '.'
-        //            Tokens::ID member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        //            if (member_token != Tokens::ID::VARIANT && member_token != Tokens::ID::INT && member_token != Tokens::ID::STRVAR) {
-        //                Error::set(1, runtime_current_line, "Expected member name after '.'"); return {};
-        //            }
-        //            pcode++;
-        //            std::string member_name = to_upper(read_string(*this));
-        //
-        //            if (std::holds_alternative<std::shared_ptr<Map>>(current_value)) {
-        //                const auto& map_ptr = std::get<std::shared_ptr<Map>>(current_value);
-        //                if (!map_ptr || map_ptr->data.find(member_name) == map_ptr->data.end()) { Error::set(3, runtime_current_line, "Member '" + member_name + "' not found in object."); return {}; }
-        //                current_value = map_ptr->data.at(member_name);
-        //            }
-        //#ifdef JDCOM
-        //            else if (std::holds_alternative<ComObject>(current_value)) {
-        //                IDispatchPtr pDisp = std::get<ComObject>(current_value).ptr;
-        //                _variant_t result_vt;
-        //                HRESULT hr = invoke_com_method(pDisp, member_name, {}, result_vt, DISPATCH_PROPERTYGET);
-        //                if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property '" + member_name + "' not found or failed to get."); return {}; }
-        //                current_value = variant_t_to_basic_value(result_vt, *this);
-        //            }
-        //#endif
-        //            else { Error::set(15, runtime_current_line, "Member access '.' can only be used on an object."); return {}; }
-        //        }
         else if (accessor_token == Tokens::ID::C_DOT) {
             pcode++; // Consume '.'
             Tokens::ID member_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
@@ -2502,8 +2465,6 @@ BasicValue NeReLaBasic::parse_term() {
                             if (op == Tokens::ID::C_PLUS) return left_i + right_i;
                             else return left_i - right_i;
                         }
-                        //if (op == Tokens::ID::C_PLUS) return to_double(l) + to_double(r);
-                        //else return to_double(l) - to_double(r);
                     }
                     }, left, right);
             }
@@ -2948,83 +2909,3 @@ BasicValue NeReLaBasic::evaluate_expression() {
     }
     return left;
 }
-
-//// Level 1: Handles AND, OR, XOR with element-wise array support
-//BasicValue NeReLaBasic::evaluate_expression() {
-//    //BasicValue left = parse_comparison();
-//    BasicValue left = parse_bitwise_or();
-//    while (true) {
-//        Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-//        if (op == Tokens::ID::AND || op == Tokens::ID::OR || op == Tokens::ID::XOR) {
-//            pcode++;
-//            BasicValue right = parse_comparison();
-//
-//            left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
-//                using LeftT = std::decay_t<decltype(l)>;
-//                using RightT = std::decay_t<decltype(r)>;
-//
-//                // Helper lambda for Array-Scalar operations
-//                auto array_scalar_op = [op, this](const auto& arr_ptr, const auto& scalar_val) -> BasicValue {
-//                    if (!arr_ptr) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
-//                    bool scalar_bool = to_bool(scalar_val);
-//                    auto result_ptr = std::make_shared<Array>();
-//                    result_ptr->shape = arr_ptr->shape;
-//                    result_ptr->data.reserve(arr_ptr->data.size());
-//
-//                    for (const auto& elem : arr_ptr->data) {
-//                        bool elem_bool = to_bool(elem);
-//                        bool result = false;
-//                        if (op == Tokens::ID::AND) result = elem_bool && scalar_bool;
-//                        else if (op == Tokens::ID::OR) result = elem_bool || scalar_bool;
-//                        else if (op == Tokens::ID::XOR) result = elem_bool != scalar_bool;
-//                        result_ptr->data.push_back(result);
-//                    }
-//                    return result_ptr;
-//                    };
-//
-//                // Case 1: Array AND/OR/XOR Array
-//                if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
-//                    if (!l || !r) { Error::set(15, runtime_current_line, "Operation on null array."); return false; }
-//                    if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Array shape mismatch in logical operation."); return false; }
-//
-//                    auto result_ptr = std::make_shared<Array>();
-//                    result_ptr->shape = l->shape;
-//                    result_ptr->data.reserve(l->data.size());
-//
-//                    for (size_t i = 0; i < l->data.size(); ++i) {
-//                        bool left_bool = to_bool(l->data[i]);
-//                        bool right_bool = to_bool(r->data[i]);
-//                        bool result = false;
-//                        if (op == Tokens::ID::AND) result = left_bool && right_bool;
-//                        else if (op == Tokens::ID::OR) result = left_bool || right_bool;
-//                        else if (op == Tokens::ID::XOR) result = left_bool != right_bool; // Logical XOR
-//                        result_ptr->data.push_back(result);
-//                    }
-//                    return result_ptr;
-//                }
-//                // Case 2: Array op Scalar
-//                else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
-//                    return array_scalar_op(l, r);
-//                }
-//                // Case 3: Scalar op Array
-//                else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
-//                    return array_scalar_op(r, l);
-//                }
-//                // Case 4: Scalar op Scalar (fallback)
-//                else {
-//                    bool left_bool = to_bool(l);
-//                    bool right_bool = to_bool(r);
-//                    if (op == Tokens::ID::AND) return left_bool && right_bool;
-//                    if (op == Tokens::ID::OR) return left_bool || right_bool;
-//                    if (op == Tokens::ID::XOR) return left_bool != right_bool; // Logical XOR
-//                }
-//
-//                return false; // Should not be reached
-//                }, left, right);
-//        }
-//        else {
-//            break;
-//        }
-//    }
-//    return left;
-//}

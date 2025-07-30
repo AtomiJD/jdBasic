@@ -653,6 +653,120 @@ BasicValue builtin_map_values(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 // C++ Implementations of our Native BASIC Functions
 //=========================================================
 
+/**
+ * @brief Implements the HELP$() function.
+ * @return An array of strings containing all available help topics.
+ */
+BasicValue builtin_help_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "HELP$ does not accept arguments.");
+        return {}; // Return empty BasicValue, which will result in a null array pointer
+    }
+
+    std::ifstream help_file("help.txt");
+    if (!help_file) {
+        // For a function that returns a value, we don't print an error to the console.
+        // We just return an empty array, which is valid in BASIC.
+        auto empty_array = std::make_shared<Array>();
+        empty_array->shape = { 0 };
+        return empty_array;
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    std::string line;
+    while (std::getline(help_file, line)) {
+        if (!line.empty() && line[0] == '[') {
+            size_t end_pos = line.find(']');
+            if (end_pos != std::string::npos) {
+                result_ptr->data.push_back(line.substr(1, end_pos - 1));
+            }
+        }
+    }
+
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
+
+/**
+ * @brief Implements the HELP procedure.
+ * @details If called with no arguments, it prints a multi-column list of all topics.
+ * If called with a topic string, it prints the detailed help for that topic.
+ */
+BasicValue builtin_help(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() > 1) {
+        Error::set(8, vm.runtime_current_line, "HELP accepts zero or one argument.");
+        return false; // Procedures return a dummy value
+    }
+
+    std::string topic;
+    if (!args.empty()) {
+        topic = to_upper(to_string(args[0]));
+    }
+
+    std::ifstream help_file("help.txt");
+    if (!help_file) {
+        TextIO::print("Error: help.txt not found.\n");
+        return false;
+    }
+
+    if (topic.empty()) {
+        // If no topic is specified, list all available commands in multiple columns.
+        TextIO::print("Available commands and functions. Use HELP \"command\" for details.\n\n");
+        std::string line;
+        int command_count = 0;
+        const int commands_per_line = 5;
+        const int column_width = 24; // Width for each column
+
+        while (std::getline(help_file, line)) {
+            if (!line.empty() && line[0] == '[') {
+                size_t end_pos = line.find(']');
+                if (end_pos != std::string::npos) {
+                    std::string command = line.substr(1, end_pos - 1);
+
+                    std::stringstream ss;
+                    ss << std::left << std::setw(column_width) << command;
+                    TextIO::print(ss.str());
+
+                    command_count++;
+                    if (command_count % commands_per_line == 0) {
+                        TextIO::nl();
+                    }
+                }
+            }
+        }
+        // Print a final newline if the last line of commands wasn't full
+        if (command_count % commands_per_line != 0) {
+            TextIO::nl();
+        }
+        TextIO::nl();
+        return false;
+    }
+
+    // Search for the specific topic in the help file (this part is unchanged)
+    std::string search_tag = "[" + topic + "]";
+    std::string line;
+    bool found = false;
+    while (std::getline(help_file, line)) {
+        if (line == search_tag) {
+            found = true;
+            TextIO::nl();
+            // Print the next two lines which contain Syntax and Description
+            if (std::getline(help_file, line)) TextIO::print(line + "\n");
+            if (std::getline(help_file, line)) TextIO::print(line + "\n");
+            TextIO::nl();
+            break;
+        }
+    }
+
+    if (!found) {
+        TextIO::print("No help found for topic: " + topic + "\n");
+    }
+
+    return false; // It's a procedure, so it returns a dummy boolean
+}
+
+
 BasicValue builtin_setlocale(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
         Error::set(8, vm.runtime_current_line);
@@ -4236,6 +4350,95 @@ BasicValue builtin_trunc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return apply_math_op(args[0], [](double d) { return std::trunc(d); });
 }
 
+namespace { // Anonymous namespace for local helpers
+
+    // Helper for binary bitwise operations that supports vectorization
+    BasicValue apply_bitwise_op(
+        const BasicValue& left,
+        const BasicValue& right,
+        const std::function<long long(long long, long long)>& op
+    ) {
+        // Case 1: Array vs Array
+        if (std::holds_alternative<std::shared_ptr<Array>>(left) && std::holds_alternative<std::shared_ptr<Array>>(right)) {
+            const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
+            const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
+            if (!left_ptr || !right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+            if (left_ptr->shape != right_ptr->shape) { Error::set(15, 0, "Array shapes must match for element-wise bitwise operation."); return {}; }
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = left_ptr->shape;
+            result_ptr->data.reserve(left_ptr->data.size());
+
+            for (size_t i = 0; i < left_ptr->data.size(); ++i) {
+                long long l = static_cast<long long>(to_double(left_ptr->data[i]));
+                long long r = static_cast<long long>(to_double(right_ptr->data[i]));
+                result_ptr->data.push_back(static_cast<double>(op(l, r)));
+            }
+            return result_ptr;
+        }
+        // Case 2: Array vs Scalar
+        else if (std::holds_alternative<std::shared_ptr<Array>>(left)) {
+            const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
+            if (!left_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+            long long r_scalar = static_cast<long long>(to_double(right));
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = left_ptr->shape;
+            result_ptr->data.reserve(left_ptr->data.size());
+
+            for (const auto& elem : left_ptr->data) {
+                long long l = static_cast<long long>(to_double(elem));
+                result_ptr->data.push_back(static_cast<double>(op(l, r_scalar)));
+            }
+            return result_ptr;
+        }
+        // Case 3: Scalar vs Array
+        else if (std::holds_alternative<std::shared_ptr<Array>>(right)) {
+            const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
+            if (!right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+            long long l_scalar = static_cast<long long>(to_double(left));
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = right_ptr->shape;
+            result_ptr->data.reserve(right_ptr->data.size());
+
+            for (const auto& elem : right_ptr->data) {
+                long long r = static_cast<long long>(to_double(elem));
+                result_ptr->data.push_back(static_cast<double>(op(l_scalar, r)));
+            }
+            return result_ptr;
+        }
+        // Case 4: Scalar vs Scalar
+        else {
+            long long l = static_cast<long long>(to_double(left));
+            long long r = static_cast<long long>(to_double(right));
+            return static_cast<double>(op(l, r));
+        }
+    }
+
+}
+
+// SHL(value_or_array, bits_to_shift) -> number or array
+BasicValue builtin_shl(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SHL requires 2 arguments: value, bits_to_shift");
+        return {};
+    }
+    auto shift_op = [](long long val, long long bits) { return val << bits; };
+    return apply_bitwise_op(args[0], args[1], shift_op);
+}
+
+// SHR(value_or_array, bits_to_shift) -> number or array
+BasicValue builtin_shr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SHR requires 2 arguments: value, bits_to_shift");
+        return {};
+    }
+    auto shift_op = [](long long val, long long bits) { return val >> bits; };
+    return apply_bitwise_op(args[0], args[1], shift_op);
+}
+
+
 // --- Date and Time Functions ---
 // 
 // TICK() -> returns milliseconds since the program started
@@ -5595,6 +5798,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("FLOOR", 1, builtin_floor);
     register_func("CEIL", 1, builtin_ceil);
     register_func("TRUNC", 1, builtin_trunc);
+    register_func("SHL", 2, builtin_shl);
+    register_func("SHR", 2, builtin_shr);
 
     // --- Register APL-style Array Functions ---
     register_func("IOTA", 1, builtin_iota);
@@ -5730,6 +5935,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MAP.KEYS", 1, builtin_map_keys);
     register_func("MAP.VALUES", 1, builtin_map_values);
 
+    register_proc("HELP", -1, builtin_help);
+    register_func("HELP$", 0, builtin_help_str);
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
     register_proc("LOCATE", 2, builtin_locate);

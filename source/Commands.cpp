@@ -2257,6 +2257,11 @@ void Commands::do_dump(NeReLaBasic& vm) {
             }
         }
     }
+    else if (arg_str == "STACK") { // Dump the call stack
+        TextIO::print("--- Call Stack ---\n");
+        BasicValue stack_trace = vm.get_stacktrace();
+        TextIO::print(to_string(stack_trace));
+    }
     else {
         // Fallback to original behavior: dump p-code for a module.
         if (vm.compiled_modules.count(arg_str)) {
