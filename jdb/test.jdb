@@ -266,12 +266,12 @@ func iseven(a)
    return r
 endfunc
 
-func filter(fu,in[],out[])
+func filter(fu,iin[],out[])
    j=0
-   for i = 0 to len(in) - 1
-      m=fu(in[i])
+   for i = 0 to len(iin) - 1
+      m=fu(iin[i])
       if m = 1 then
-         out[j]=in[i]
+         out[j]=iin[i]
          j=j+1
       endif
    next i

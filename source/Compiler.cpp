@@ -1210,9 +1210,11 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     // Point it to just after the FUNC token and its 2-byte placeholder.
                     compilation_func_table.at(lambda_to_compile.name).start_pcode = lambda_start_address + 5;
                 }
-
+                auto prev_modulename = current_module_name;
+                current_module_name = "REPL";
                 // Compile the lambda's source and append its bytecode directly.
                 tokenize_lambda(vm, out_p_code, lambda_to_compile.source_code, compilation_func_table, lambda_to_compile.source_line);
+                current_module_name = prev_modulename;
             }
             // Clear the list now that they've been compiled.
             pending_lambdas.clear();

@@ -725,9 +725,12 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
     auto prev_active_func_table = this->active_function_table;
     auto prev_active_p_code = this->active_p_code;
 
-    if (!func_info.module_name.empty() && compiled_modules.count(func_info.module_name)) {
+    if (func_info.module_name != "REPL" && !func_info.module_name.empty() && compiled_modules.count(func_info.module_name)) {
         this->active_p_code = &this->compiled_modules.at(func_info.module_name).p_code;
         this->active_function_table = &this->compiled_modules.at(func_info.module_name).function_table;
+    }
+    else if (func_info.module_name.empty()) {
+        this->active_p_code = &this->program_p_code;
     }
     this->pcode = func_info.start_pcode;
 
@@ -771,8 +774,8 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
     }
 
     // --- Context restore ---
-    //this->active_function_table = prev_active_func_table;
-    //this->active_p_code = prev_active_p_code;
+    this->active_function_table = prev_active_func_table;
+    this->active_p_code = prev_active_p_code;
 
     if (variables.count("RETVAL")) {
         return variables["RETVAL"];
