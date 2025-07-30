@@ -1,0 +1,23 @@
+{
+    "source_code": [
+        "func nor(x,y)",
+        " return ((not x) and (not y))",
+        "endfunc",
+        "",
+        "func lall(x,y)",
+        " return x*y-1",
+        "endfunc",
+        "",
+        "print lall(2,3)",
+        "",
+        "print FALSE nor@ FALSE",
+        "print TRUE nor@ FALSE",
+        "print FALSE nor@ TRUE",
+        "print TRUE nor@ TRUE",
+        ""
+    ],
+    "variables": {
+        "A$": "Atomi",
+        "RETVAL": false
+    }
+}

@@ -19,6 +19,15 @@
             "program": "${file}",
             "runtime": "D:/usr/dev/c/jdbasic/x64/debug/jdBASIC.exe",
             "stopOnEntry": true
+        },
+		{
+            "type": "jdbasic",
+            "request": "launch",
+            "name": "Debug in Integrated Terminal",
+            "program": "${file}",
+            "runtime": "D:/usr/dev/c/jdbasic/x64/release/jdBASIC.exe", 
+            "stopOnEntry": true,
+            "console": "integratedTerminal" 
         }
 
     ]

@@ -4933,6 +4933,102 @@ BasicValue builtin_getenv_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 #endif
 }
 
+// SAVEWS "basename" - Saves source code and global variables to "basename.jsws".
+BasicValue builtin_savews(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "SAVEWS requires exactly one string argument for the filename.");
+        return false;
+    }
+    // Automatically append the .jsws extension
+    std::string filename = to_string(args[0]) + ".jsws";
+
+    try {
+        nlohmann::json j_workspace;
+
+        // 1. Save the source code currently in memory
+        j_workspace["source_code"] = vm.source_lines;
+
+        // 2. Save the global variables
+        auto variables_map = std::make_shared<Map>();
+        // Manually copy elements to handle potential map type mismatch (e.g., map vs unordered_map)
+        for (const auto& pair : vm.variables) {
+            variables_map->data[pair.first] = pair.second;
+        }
+        j_workspace["variables"] = basic_to_json_value(variables_map);
+
+        std::ofstream outfile(filename);
+        if (!outfile) {
+            Error::set(12, vm.runtime_current_line, "Failed to open file for writing.");
+            return false;
+        }
+
+        outfile << j_workspace.dump(4); // Pretty-print JSON
+        TextIO::print("Workspace saved to " + filename + "\n");
+
+    }
+    catch (const std::exception& e) {
+        Error::set(1, vm.runtime_current_line, "Failed to serialize workspace: " + std::string(e.what()));
+    }
+    return false; // It's a procedure
+}
+
+// LOADWS "basename" - Loads source and variables from "basename.jsws".
+BasicValue builtin_loadws(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "LOADWS requires exactly one string argument for the filename.");
+        return false;
+    }
+    // Automatically append the .jsws extension
+    std::string filename = to_string(args[0]) + ".jsws";
+
+    std::ifstream infile(filename);
+    if (!infile) {
+        Error::set(6, vm.runtime_current_line, "Workspace file not found: " + filename);
+        return false;
+    }
+
+    try {
+        nlohmann::json j_workspace;
+        infile >> j_workspace;
+
+        if (!j_workspace.is_object() || !j_workspace.contains("source_code") || !j_workspace.contains("variables")) {
+            Error::set(1, vm.runtime_current_line, "Invalid or corrupt workspace file format.");
+            return false;
+        }
+
+        // 1. Load the source code
+        vm.source_lines = j_workspace["source_code"].get<std::vector<std::string>>();
+
+        // 2. Load the variables
+        BasicValue deserialized_vars = json_to_basic_value(j_workspace["variables"]);
+        if (std::holds_alternative<std::shared_ptr<Map>>(deserialized_vars)) {
+            const auto& map_ptr = std::get<std::shared_ptr<Map>>(deserialized_vars);
+            if (map_ptr) {
+                vm.variables.clear();
+                // Manually copy elements to handle potential map type mismatch
+                for (const auto& pair : map_ptr->data) {
+                    vm.variables[pair.first] = pair.second;
+                }
+            }
+        }
+        else {
+            Error::set(1, vm.runtime_current_line, "Invalid variables format in workspace file.");
+            return false;
+        }
+
+        TextIO::print("Workspace loaded from " + filename + "\n");
+        TextIO::print("Source code has been loaded into memory. Type LIST to view.\n");
+
+    }
+    catch (const nlohmann::json::parse_error& e) {
+        Error::set(1, vm.runtime_current_line, "Invalid JSON in workspace file: " + std::string(e.what()));
+    }
+    catch (const std::exception& e) {
+        Error::set(1, vm.runtime_current_line, "Failed to load workspace: " + std::string(e.what()));
+    }
+    return false; // It's a procedure
+}
+
 // --- Filesystem ---
 // 
 // // DIR$(wildcard$) -> array
@@ -5944,6 +6040,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);
     register_func("GETENV$", 1, builtin_getenv_str);
+    register_proc("SAVEWS", 1, builtin_savews);
+    register_proc("LOADWS", 1, builtin_loadws);
 
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
     register_func("DIR$", 1, builtin_dir_str);
