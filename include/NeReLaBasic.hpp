@@ -317,6 +317,7 @@ public:
     BasicValue parse_factor();
     BasicValue parse_array_literal();
     BasicValue parse_map_literal();
+    BasicValue parse_membership();
     BasicValue parse_pipe();
     BasicValue parse_bitwise_or();
     BasicValue parse_bitwise_xor();
@@ -328,6 +329,7 @@ public:
     void skip_bitwise_or();
     void skip_bitwise_xor();
     void skip_bitwise_and();
+    void skip_membership();
     void skip_pipe();
     void skip_comparison();
     void skip_term();

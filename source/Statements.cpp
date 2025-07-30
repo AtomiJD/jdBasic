@@ -92,6 +92,7 @@ namespace {
         {"CATCH",   Tokens::ID::CATCH},
         {"FINALLY", Tokens::ID::FINALLY},
         {"ENDTRY",  Tokens::ID::ENDTRY},
+        {"IN",      Tokens::ID::IN_OPERATOR},
         {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace

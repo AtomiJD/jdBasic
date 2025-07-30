@@ -136,6 +136,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         // Backtrack if it was just a standalone '%'
         vm.prgptr = num_start_pos;
     }
+
     // Handle Decimal (with the crash fix)
     else if (StringUtils::isdigit(currentChar)) {
         size_t num_start_pos = vm.prgptr;
@@ -178,6 +179,10 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
         vm.buffer = vm.lineinput.substr(ident_start_pos, vm.prgptr - ident_start_pos);
         vm.buffer = StringUtils::to_upper(vm.buffer);
+
+        //if (vm.buffer == "IN") {
+        //    return Tokens::ID::IN_OPERATOR;
+        //}
 
         if (vm.builtin_constants.count(vm.buffer)) {
             return Tokens::ID::CONSTANT;
@@ -724,14 +729,6 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 out_p_code.push_back(0);
                 continue;
             }
-            //case Tokens::ID::ONERRORCALL: {
-            //    out_p_code.push_back(static_cast<uint8_t>(token));
-            //    parse(vm, is_start_of_statement); // Parse the next token which is the function name
-            //    for (char c : vm.buffer) out_p_code.push_back(c);
-            //    out_p_code.push_back(0); // Null terminator for the function name
-            //    vm.prgptr = vm.lineinput.length(); // Consume rest of the line as it's just the function name
-            //    continue;
-            //}
             case Tokens::ID::RESUME: { // Handle RESUME arguments during tokenization
                 out_p_code.push_back(static_cast<uint8_t>(token));
                 // Peek to see if RESUME is followed by NEXT or a string (label)

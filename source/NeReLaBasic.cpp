@@ -2603,8 +2603,63 @@ BasicValue NeReLaBasic::parse_comparison() {
     return left;
 }
 
+BasicValue NeReLaBasic::parse_membership() {
+    BasicValue left = parse_comparison(); // This is the "needle"
+
+    while (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::IN_OPERATOR) {
+        pcode++; // Consume the 'IN' token
+        BasicValue right = parse_comparison(); // This is the "haystack"
+
+        // Use std::visit to handle the different types for the haystack
+        left = std::visit([this, &left](auto&& haystack_arg) -> BasicValue {
+            using HaystackT = std::decay_t<decltype(haystack_arg)>;
+
+            // Case 1: Check if a key exists in a Map
+            if constexpr (std::is_same_v<HaystackT, std::shared_ptr<Map>>) {
+                if (!haystack_arg) {
+                    Error::set(15, runtime_current_line, "Cannot use IN on a null Map.");
+                    return false;
+                }
+                std::string key_to_find = to_string(left);
+                return haystack_arg->data.count(key_to_find) > 0;
+            }
+            // Case 2: Check if a value exists in an Array
+            else if constexpr (std::is_same_v<HaystackT, std::shared_ptr<Array>>) {
+                if (!haystack_arg) {
+                    Error::set(15, runtime_current_line, "Cannot use IN on a null Array.");
+                    return false;
+                }
+                for (const auto& element : haystack_arg->data) {
+                    // This comparison handles different types by converting to string as a fallback.
+                    // A more strict comparison could be implemented if needed.
+                    if (std::holds_alternative<double>(left) && std::holds_alternative<double>(element)) {
+                        if (std::get<double>(left) == std::get<double>(element)) return true;
+                    }
+                    else if (to_string(left) == to_string(element)) {
+                        return true;
+                    }
+                }
+                return false; // Not found after checking all elements
+            }
+            // Case 3 (Bonus): Check if a substring exists in a String
+            else if constexpr (std::is_same_v<HaystackT, std::string>) {
+                std::string needle_str = to_string(left);
+                return haystack_arg.find(needle_str) != std::string::npos;
+            }
+            // Default: The haystack is an unsupported type
+            else {
+                Error::set(15, runtime_current_line, "IN operator requires a Map, Array, or String on the right-hand side.");
+                return false;
+            }
+            }, right);
+
+        if (Error::get() != 0) return {};
+    }
+    return left;
+}
+
 BasicValue NeReLaBasic::parse_pipe() {
-    BasicValue left = parse_comparison();
+    BasicValue left = parse_membership();
 
     while (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_PIPE) {
         pcode++; // Consume '|>'
@@ -2785,9 +2840,6 @@ void NeReLaBasic::skip_unary() {
     skip_primary();
 }
 
-// Forward declarations for the new parsing chain
-
-
 // Skips a chain of binary operations for a given precedence level.
 void NeReLaBasic::skip_binary_op_chain(std::function<void()> skip_higher_precedence, const std::vector<Tokens::ID>& operators) {
     skip_higher_precedence(); // Skip the first operand
@@ -2816,7 +2868,8 @@ void NeReLaBasic::skip_power() { skip_binary_op_chain([this] { skip_unary(); }, 
 void NeReLaBasic::skip_factor() { skip_binary_op_chain([this] { skip_power(); }, { Tokens::ID::C_ASTR, Tokens::ID::C_SLASH, Tokens::ID::MOD, Tokens::ID::FUNCREF }); }
 void NeReLaBasic::skip_term() { skip_binary_op_chain([this] { skip_factor(); }, { Tokens::ID::C_PLUS, Tokens::ID::C_MINUS }); }
 void NeReLaBasic::skip_comparison() { skip_binary_op_chain([this] { skip_term(); }, { Tokens::ID::C_EQ, Tokens::ID::C_NE, Tokens::ID::C_LT, Tokens::ID::C_GT, Tokens::ID::C_LE, Tokens::ID::C_GE }); }
-void NeReLaBasic::skip_pipe() { skip_binary_op_chain([this] { skip_comparison(); }, { Tokens::ID::C_PIPE }); }
+void NeReLaBasic::skip_membership() { skip_binary_op_chain([this] { skip_comparison(); }, { Tokens::ID::IN_OPERATOR }); }
+void NeReLaBasic::skip_pipe() { skip_binary_op_chain([this] { skip_membership(); }, { Tokens::ID::C_PIPE }); }
 void NeReLaBasic::skip_bitwise_and() { skip_binary_op_chain([this] { skip_pipe(); }, { Tokens::ID::BAND }); }
 void NeReLaBasic::skip_bitwise_xor() { skip_binary_op_chain([this] { skip_bitwise_and(); }, { Tokens::ID::BXOR }); }
 void NeReLaBasic::skip_bitwise_or() { skip_binary_op_chain([this] { skip_bitwise_xor(); }, { Tokens::ID::BOR }); }
