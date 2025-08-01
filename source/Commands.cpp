@@ -1989,7 +1989,6 @@ void Commands::do_exit_do(NeReLaBasic& vm) {
     vm.pcode = jump_target;
 }
 
-
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;
 
@@ -2013,11 +2012,9 @@ void Commands::do_edit(NeReLaBasic& vm) {
         }
     }
 
-    // MODIFIED: Pass the filename to the editor's constructor
+    // Pass the filename to the editor's constructor
     TextEditor editor(vm.source_lines, filename_to_edit);
     editor.run();
-
-    // The old save prompt is no longer needed here, as saving is handled inside the editor
 }
 
 void Commands::do_list(NeReLaBasic& vm) {
@@ -2080,6 +2077,9 @@ void Commands::do_compile(NeReLaBasic& vm) {
         ss << line << '\n';
     }
     std::string source_to_compile = ss.str();
+
+    // Always compile modules!
+    vm.compiled_modules.clear();
 
     // Compile into the main program buffer
     TextIO::print("Compiling...\n");

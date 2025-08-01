@@ -93,7 +93,7 @@ Standard arithmetic operators are overloaded for powerful string manipulation.
 -"ABC" -> ["A", "B", "C"]
 ```
 
-### Bitwise Operators
+### Bitwise Operators / Operations
 
 These operators perform bit-level calculations on numeric values, which are treated as 64-bit integers.
 
@@ -103,7 +103,11 @@ These operators perform bit-level calculations on numeric values, which are trea
 
 **`BXOR`**: (Bitwise XOR): 5 BXOR 3 -> 6 (%0101 ^ %0011 = %0110)
 
-### Logical Operators
+**`SHL(value or array, bits to shift) -> number or array`**: Bitwise shift left
+
+**`SHR(value or array, bits to shift) -> number or array`**: Bitwise shift right
+
+### Logical Operators 
 
 These operators are used in conditional logic, such as IF statements.
 
@@ -116,6 +120,17 @@ These operators are used in conditional logic, such as IF statements.
 ```basic
 ' This is safe because the second part is never run if MyMap is NULL
 IF MyMap <> NULL ANDALSO MAP.EXISTS(MyMap, "key") THEN ...
+```
+
+**`IN`**:: Evaluates if the left hand value exists in the right hand expression.
+
+```basic
+DIM MyMap As MAP 
+MyMap = {"name": "jd", "value": 100}
+IF "Lall" IN MyMap THEN PRINT "Key exists!"
+
+MyArray = [10, 20, 30]
+IF 20 IN MyArray THEN PRINT "Value exists!"
 ```
 
 ## Chained Access Syntax
@@ -222,6 +237,7 @@ print apply(dec@,12) ' Should return 11
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [modul]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
+* **`EXECUTE(code_string$)`**: Compiles and executes a string of jdBasic code at runtime.
 * **`EXPORT MODUL [module]`**: Marks a file as EXPORT for importing with IMPORT
 * **`IMPORTDLL [funcfile]`**: Loads the funcfile.dll as dynmaic library and register all included functions for jdBasic.
 
@@ -232,9 +248,11 @@ print apply(dec@,12) ' Should return 11
 * **`EDIT`**: Opens the integrated text editor with the current source code.
 * **`LIST`**: Lists the current source code in memory to the console.
 * **`LOAD "filename"`**: Loads a source file from disk into memory.
-* **`RUN`**: Compiles and runs the program currently in memory.
 * **`SAVE "filename"`**: Saves the source code in memory to a file on disk.
+* **`RUN`**: Compiles and runs the program currently in memory.
 * **`TRON` / `TROFF`**: Turns instruction tracing on or off.
+* **`LOADWS "workspacename"`**: Loads a source file and all variables of an saved workspace from disk into memory.
+* **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
 
 ### Filesystem
 
@@ -244,7 +262,6 @@ print apply(dec@,12) ' Should return 11
 * **`PWD`**: Prints the current working directory.
 * **`MKDIR "path"`**: Creates a new directory.
 * **`KILL "filename"`**: Deletes a file.
-
 
 ### Error Handling (TRY...CATCH)
 
@@ -326,7 +343,7 @@ ENDTRY
 * **`IOTA(N)`**: Generates a 1D array of numbers from 1 to N.
 * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
 * **`SCAN(operator, array) -> array`**: Performs a cumulative reduction (scan) along the last axis of an array.
-* **`SELECT(function@, array) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument.
+* **`SELECT(function@, array, [row_wise_bool]) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument. If the optional third argument 'row_wise_bool' is TRUE, it applies the function to each row of a 2D matrix instead. The result of a row-wise select is always a 1D array.
 * **`FILTER(function@, array) -> array`**: Filters an array by applying a user-defined predicate function to each element. It returns a new 1D array containing only the elements for which the predicate function returned `TRUE`. The provided function must accept one argument and should return a boolean value.
 * **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
 * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.

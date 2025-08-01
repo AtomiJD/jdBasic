@@ -8,7 +8,9 @@
 '
 ' -------------------------------------------------------------------
 
-SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
+export MODULE PLOTTER
+
+EXPORT SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
     ' --- Parameters ---
     ' DATA_ARRAY:    A 2D array containing the data to plot.
     ' PLOT_TYPE$:    A string, either "BAR" or "LINE".
@@ -32,7 +34,7 @@ SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
     X_LABELS = SLICE(DATA_ARRAY, 1, X_LABEL_COL)
     Y_VALUES = SLICE(DATA_ARRAY, 1, Y_VALUE_COL)
     
-    NUM_POINTS = LEN(Y_VALUES)[0] 'Len returns a Array, we need a scalar!
+    NUM_POINTS = LEN(Y_VALUES)
     IF NUM_POINTS = 0 THEN
         PRINT "Error: No data to plot."
         RETURN
@@ -64,13 +66,15 @@ SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
 
     ' --- Plotting Logic ---
     IF UCASE$(PLOT_TYPE$) = "BAR" THEN
-        BAR_WIDTH = (PLOT_W / NUM_POINTS) * 0.8 ' 80% of available space
-        BAR_SPACING = (PLOT_W / NUM_POINTS) * 0.2
+        BAR_WIDTH = PLOT_W / NUM_POINTS * 0.8 ' 80% of available space
+        BAR_SPACING = PLOT_W / NUM_POINTS * 0.2
 
         FOR i = 0 TO NUM_POINTS - 1
             x_pos = PLOT_LEFT + (i * (BAR_WIDTH + BAR_SPACING)) + BAR_SPACING
             bar_height = MAP_Y(0) - MAP_Y(Y_VALUES[i])
-            
+            IF  TYPEOF(X_pos)  = "ARRAY" THEN X_pos = X_pos[0]
+            IF  TYPEOF(BAR_WIDTH)  = "ARRAY" THEN BAR_WIDTH = BAR_WIDTH[0]
+            IF  TYPEOF(bar_height)  = "ARRAY" THEN bar_height = bar_height[0]
             RECT x_pos, MAP_Y(Y_VALUES[i]), BAR_WIDTH, bar_height, 100, 180, 255, TRUE
             ' Draw X Label centered under the bar
             TEXT x_pos, PLOT_BOTTOM + 10, X_LABELS[i], 200, 200, 200
@@ -85,6 +89,10 @@ SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
             
             x2 = PLOT_LEFT + (i + 1) * POINT_SPACING
             y2 = MAP_Y(Y_VALUES[i+1])
+            IF  TYPEOF(x1)  = "ARRAY" THEN x1 = x1[0]
+            IF  TYPEOF(y1)  = "ARRAY" THEN y1 = y1[0]
+            IF  TYPEOF(x2)  = "ARRAY" THEN x2 = x2[0]
+            IF  TYPEOF(y2)  = "ARRAY" THEN y2 = y2[0]
 
             LINE x1, y1, x2, y2, 255, 100, 100
             ' Draw X Label under the point
@@ -98,32 +106,3 @@ SUB DATA_PLOTTER(DATA_ARRAY, PLOT_TYPE$, TITLE$, X_LABEL_COL, Y_VALUE_COL)
     SCREENFLIP
 ENDSUB
 
-
-' ===================================================================
-' ==                  EXAMPLE USAGE
-' ===================================================================
-
-
-CD "D:\usr\dev\c\jdBasic\jdb"
-
-PRINT "Plotting Bar Chart from sales_data.csv..."
-SALES_ARRAY = CSVREADER("lall.csv", ",") ' True = has header
-PRINT SALES_ARRAY
-' Plot data, type "BAR", title, col 0 for X-labels, col 1 for Y-values
-DATA_PLOTTER SALES_ARRAY, "BAR", "Monthly Sales Revenue", 0, 1
-SLEEP 5000 ' Pause to view
-
-
-PRINT "Plotting Bar Chart from sales_data.csv..."
-SALES_ARRAY = CSVREADER("sales_data.csv", ",", TRUE) ' True = has header
-PRINT SALES_ARRAY
-' Plot data, type "BAR", title, col 0 for X-labels, col 1 for Y-values
-DATA_PLOTTER SALES_ARRAY, "BAR", "Monthly Sales Revenue", 0, 1
-SLEEP 5000 ' Pause to view
-
-PRINT "Plotting Line Chart from stock_prices.csv..."
-STOCK_ARRAY = CSVREADER("stock_prices.csv", ",", TRUE)
-PRINT STOCK_ARRAY
-' Plot data, type "LINE", title, col 0 for X-labels, col 1 for Y-values
-DATA_PLOTTER STOCK_ARRAY, "LINE", "Stock Price Fluctuation", 0, 1
-SLEEP 5000 ' Pause to view

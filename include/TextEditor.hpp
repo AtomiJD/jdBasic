@@ -20,7 +20,7 @@ private:
     void draw_line(const std::string& line);
     void get_window_size(int& rows, int& cols);
 
-    // --- NEW HELPER FUNCTIONS FOR NEW FEATURES ---
+    // --- HELPER FUNCTIONS FOR NEW FEATURES ---
     void save_file();
     void find_text();
     void go_to_line();
@@ -34,7 +34,7 @@ private:
     int top_row = 0;
     std::string status_msg;
 
-    // --- NEW STATE VARIABLES ---
+    // --- STATE VARIABLES ---
     std::string filename;
     bool file_modified = false;
     std::string last_search_query;

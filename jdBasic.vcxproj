@@ -162,6 +162,7 @@
     <ClCompile Include="source\SpriteSystem.cpp" />
     <ClCompile Include="source\Statements.cpp" />
     <ClCompile Include="source\StringUtils.cpp" />
+    <ClCompile Include="source\TestEditorWin.cpp" />
     <ClCompile Include="source\TextEditor.cpp" />
     <ClCompile Include="source\TextIO.cpp" />
     <ClCompile Include="source\TileMapSystem.cpp" />

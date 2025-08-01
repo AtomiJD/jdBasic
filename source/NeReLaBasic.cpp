@@ -171,7 +171,7 @@ NeReLaBasic::NeReLaBasic()  {
 }
 
 NeReLaBasic::~NeReLaBasic() {
-    // --- NEW: Unload any dynamically loaded libraries on exit ---
+    // --- Unload any dynamically loaded libraries on exit ---
     for (auto& lib_handle : loaded_libraries) {
 #ifdef _WIN32
         FreeLibrary(lib_handle);
@@ -257,7 +257,7 @@ bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     }
 #endif
 
-    // --- NEW: Create and populate the services struct ---
+    // --- Create and populate the services struct ---
     ModuleServices services;
     services.error_set = &Error::set;
     services.to_upper = &to_upper; // This assumes to_upper is a free function.
@@ -702,6 +702,7 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
 }
 
 // New synchronous executor for user-defined functions
+// We should do a second for REPL and optimize this for speed!
 BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
     size_t initial_stack_depth = call_stack.size();
     // --- Properly initialize the stack frame ---
@@ -724,13 +725,14 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
     // --- Context switch ---
     auto prev_active_func_table = this->active_function_table;
     auto prev_active_p_code = this->active_p_code;
+    //auto has_no_lambda = func_info.name.find("__lambda") == std::string::npos;
 
     if (func_info.module_name != "REPL" && !func_info.module_name.empty() && compiled_modules.count(func_info.module_name)) {
         this->active_p_code = &this->compiled_modules.at(func_info.module_name).p_code;
         this->active_function_table = &this->compiled_modules.at(func_info.module_name).function_table;
-    }
-    else if (func_info.module_name.empty()) {
-        this->active_p_code = &this->program_p_code;
+    }  else {
+        if (func_info.module_name != "REPL")
+            this->active_p_code = &this->program_p_code;
     }
     this->pcode = func_info.start_pcode;
 

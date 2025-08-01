@@ -444,12 +444,16 @@ nlohmann::json basic_to_json_value(const BasicValue& val) {
             return nlohmann::json(arg);
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
-            if (!arg) return nlohmann::json::array();
-            nlohmann::json j_arr = nlohmann::json::array();
+            if (!arg) return nlohmann::json(); // Serialize null pointer as JSON null
+            // Create a JSON object to store both shape and data
+            nlohmann::json j_obj;
+            j_obj["__type__"] = "array";
+            j_obj["shape"] = arg->shape; // Save the shape vector
+            j_obj["data"] = nlohmann::json::array();
             for (const auto& elem : arg->data) {
-                j_arr.push_back(basic_to_json_value(elem));
+                j_obj["data"].push_back(basic_to_json_value(elem));
             }
-            return j_arr;
+            return j_obj;
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
             if (!arg) return nlohmann::json::object();
@@ -460,20 +464,12 @@ nlohmann::json basic_to_json_value(const BasicValue& val) {
             return j_obj;
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
-            // If we encounter a JsonObject, just return its internal data.
             return arg ? arg->data : nlohmann::json(nullptr);
         }
         else if constexpr (std::is_same_v<T, DateTime> || std::is_same_v<T, FunctionRef>) {
-            // Convert these types to their string representation
             return nlohmann::json(to_string(arg));
         }
-#ifdef JDCOM
-        else if constexpr (std::is_same_v<T, ComObject>) {
-            return nlohmann::json("<COM Object>");
-        }
-#endif
         else {
-            // Should not be reached if all types are handled. Return null.
             return nlohmann::json(nullptr);
         }
         }, val);
@@ -481,10 +477,9 @@ nlohmann::json basic_to_json_value(const BasicValue& val) {
 
 
 // Helper function to convert a nlohmann::json object to a BasicValue
-// This is essential for accessing parts of the parsed JSON from BASIC.
 BasicValue json_to_basic_value(const nlohmann::json& j) {
     if (j.is_null()) {
-        return 0.0; // Or handle as an error/special null type
+        return 0.0;
     }
     if (j.is_boolean()) {
         return j.get<bool>();
@@ -496,7 +491,17 @@ BasicValue json_to_basic_value(const nlohmann::json& j) {
         return j.get<std::string>();
     }
     if (j.is_object()) {
-        // Convert JSON object to our BASIC Map
+        // Check for our special array format first
+        if (j.contains("__type__") && j["__type__"] == "array") {
+            auto arr_ptr = std::make_shared<Array>();
+            arr_ptr->shape = j["shape"].get<std::vector<size_t>>();
+            const auto& data_arr = j["data"];
+            for (const auto& item : data_arr) {
+                arr_ptr->data.push_back(json_to_basic_value(item));
+            }
+            return arr_ptr;
+        }
+        // Otherwise, it's a Map
         auto map_ptr = std::make_shared<Map>();
         for (auto& [key, value] : j.items()) {
             map_ptr->data[key] = json_to_basic_value(value);
@@ -504,7 +509,7 @@ BasicValue json_to_basic_value(const nlohmann::json& j) {
         return map_ptr;
     }
     if (j.is_array()) {
-        // Convert JSON array to our BASIC Array (always 1D for simplicity here)
+        // Fallback for simple JSON arrays (treats them as 1D)
         auto array_ptr = std::make_shared<Array>();
         for (const auto& item : j) {
             array_ptr->data.push_back(json_to_basic_value(item));
@@ -512,7 +517,6 @@ BasicValue json_to_basic_value(const nlohmann::json& j) {
         array_ptr->shape = { array_ptr->data.size() };
         return array_ptr;
     }
-    // Default fallback
     return 0.0;
 }
 
@@ -2325,7 +2329,7 @@ BasicValue builtin_slice(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return empty_ptr;
     }
 
-    // 3. --- New Shape Calculation ---
+    // 3. Shape Calculation ---
     std::vector<size_t> new_shape = source_ptr->shape;
     if (reduce_rank) {
         new_shape.erase(new_shape.begin() + dimension);
@@ -3168,7 +3172,7 @@ BasicValue array_sum(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return total;
     }
 
-    // 3. --- New Functionality: Reduce along a Dimension ---
+    // 3. --- Functionality: Reduce along a Dimension ---
     if (arr_ptr->shape.size() != 2) {
         Error::set(15, vm.runtime_current_line, "Dimensional reduction currently only supports 2D matrices.");
         return 0.0;
@@ -3559,12 +3563,15 @@ BasicValue builtin_reduce(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return accumulator;
 }
 
-// SELECT(function@, array) -> array
-// Applies a function to each element of an array, returning a new array of the same shape.
+// SELECT(function@, array, [row_wise_bool]) -> array
+// Applies a function to each element of an array.
+// If the optional third argument 'row_wise_bool' is TRUE, it applies the
+// function to each row of a 2D matrix instead. The result of a row-wise
+// select is always a 1D array.
 BasicValue builtin_select(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // 1. --- Argument Validation ---
-    if (args.size() != 2) {
-        Error::set(8, vm.runtime_current_line, "SELECT requires 2 arguments: function_ref, array");
+    if (args.size() != 2 && args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "SELECT requires 2 or 3 arguments: function_ref, array, [row_wise_bool]");
         return {};
     }
     if (!std::holds_alternative<FunctionRef>(args[0])) {
@@ -3581,13 +3588,18 @@ BasicValue builtin_select(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[1]);
     const std::string func_name = to_upper(func_ref.name);
 
+    // Parse the optional third argument, defaulting to element-wise.
+    bool row_wise = false;
+    if (args.size() == 3) {
+        row_wise = to_bool(args[2]);
+    }
+
     // 3. --- Further Validation ---
     if (!vm.active_function_table->count(func_name)) {
         Error::set(22, vm.runtime_current_line, "Function '" + func_name + "' not found for SELECT.");
         return {};
     }
     const auto& func_info = vm.active_function_table->at(func_name);
-    // A mapping function must take exactly one argument (the current element).
     if (func_info.arity != 1) {
         Error::set(26, vm.runtime_current_line, "Function '" + func_name + "' for SELECT must accept exactly one argument.");
         return {};
@@ -3598,23 +3610,46 @@ BasicValue builtin_select(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
     // 4. --- Mapping Logic ---
     auto result_ptr = std::make_shared<Array>();
-    result_ptr->shape = source_ptr->shape; // The result has the same shape as the source
-    result_ptr->data.reserve(source_ptr->data.size());
 
-    // Iterate through the source array elements
-    for (const auto& element : source_ptr->data) {
-        // Prepare the single argument to pass to the user's BASIC function
-        std::vector<BasicValue> func_args = { element };
-
-        // Execute the user's function and get the transformed value
-        BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args);
-
-        // If the user's function caused an error, stop and propagate it
-        if (Error::get() != 0) {
+    if (row_wise) {
+        // --- Row-wise Operation ---
+        if (source_ptr->shape.size() != 2) {
+            Error::set(15, vm.runtime_current_line, "Row-wise SELECT requires a 2D matrix as the source array.");
             return {};
         }
 
-        result_ptr->data.push_back(mapped_value);
+        size_t rows = source_ptr->shape[0];
+        size_t cols = source_ptr->shape[1];
+        result_ptr->data.reserve(rows);
+
+        for (size_t r = 0; r < rows; ++r) {
+            // Create a temporary 1D array representing the current row.
+            auto row_as_array = std::make_shared<Array>();
+            row_as_array->shape = { cols };
+            auto start_it = source_ptr->data.begin() + (r * cols);
+            auto end_it = start_it + cols;
+            row_as_array->data.assign(start_it, end_it);
+
+            std::vector<BasicValue> func_args = { row_as_array };
+            BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args);
+            if (Error::get() != 0) return {};
+
+            result_ptr->data.push_back(mapped_value);
+        }
+        result_ptr->shape = { result_ptr->data.size() };
+    }
+    else {
+        // --- Element-wise Operation (Default Behavior) ---
+        result_ptr->shape = source_ptr->shape;
+        result_ptr->data.reserve(source_ptr->data.size());
+
+        for (const auto& element : source_ptr->data) {
+            std::vector<BasicValue> func_args = { element };
+            BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args);
+            if (Error::get() != 0) return {};
+
+            result_ptr->data.push_back(mapped_value);
+        }
     }
 
     return result_ptr;
@@ -5238,8 +5273,90 @@ BasicValue builtin_txtreader_str(NeReLaBasic& vm, const std::vector<BasicValue>&
 }
 
 
+//// CSVREADER(filename$, [delimiter$], [has_header_bool]) -> array
+//// Reads a delimited file (like CSV) into a 2D array of numbers.
+//BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+//    if (args.empty() || args.size() > 3) {
+//        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
+//        return {};
+//    }
+//
+//    // --- 1. Parse Arguments ---
+//    std::string filename = to_string(args[0]);
+//    char delimiter = ',';
+//    bool has_header = false;
+//
+//    if (args.size() > 1) {
+//        std::string delim_str = to_string(args[1]);
+//        if (!delim_str.empty()) {
+//            delimiter = delim_str[0];
+//        }
+//    }
+//    if (args.size() > 2) {
+//        has_header = to_bool(args[2]);
+//    }
+//
+//    // --- 2. Open File ---
+//    std::ifstream infile(filename);
+//    if (!infile) {
+//        Error::set(6, vm.runtime_current_line); // File not found
+//        return {};
+//    }
+//
+//    // --- 3. Read and Parse ---
+//    std::vector<BasicValue> flat_data;
+//    size_t rows = 0;
+//    size_t cols = 0;
+//    std::string line;
+//
+//    // Handle header row if specified
+//    if (has_header && std::getline(infile, line)) {
+//        // Just consume the line and do nothing with it.
+//    }
+//
+//    // Loop through the rest of the file
+//    while (std::getline(infile, line)) {
+//        rows++;
+//        std::stringstream line_stream(line);
+//        std::string cell;
+//        size_t current_cols = 0;
+//
+//        while (std::getline(line_stream, cell, delimiter)) {
+//            current_cols++;
+//            try {
+//                // Try to convert each cell to a number.
+//                flat_data.push_back(std::stod(cell));
+//            }
+//            catch (const std::invalid_argument&) {
+//                // If conversion fails, store 0.0, a common practice.
+//                flat_data.push_back(0.0);
+//            }
+//        }
+//
+//        // --- 4. Determine Shape and Validate ---
+//        if (rows == 1) {
+//            // This is the first data row, so it determines the number of columns.
+//            cols = current_cols;
+//        }
+//        else {
+//            // For all subsequent rows, verify they have the correct number of columns.
+//            if (current_cols != cols) {
+//                Error::set(15, vm.runtime_current_line); // Type Mismatch (or a new "Invalid file format" error)
+//                return {};
+//            }
+//        }
+//    }
+//
+//    // --- 5. Create and Return the Array ---
+//    auto result_ptr = std::make_shared<Array>();
+//    result_ptr->shape = { rows, cols };
+//    result_ptr->data = flat_data;
+//    return result_ptr;
+//}
+
 // CSVREADER(filename$, [delimiter$], [has_header_bool]) -> array
-// Reads a delimited file (like CSV) into a 2D array of numbers.
+// Reads a delimited file (like CSV) into a 2D array, preserving
+// numbers as doubles and non-numeric data as strings.
 BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.empty() || args.size() > 3) {
         Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
@@ -5274,12 +5391,10 @@ BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     size_t cols = 0;
     std::string line;
 
-    // Handle header row if specified
     if (has_header && std::getline(infile, line)) {
-        // Just consume the line and do nothing with it.
+        // Consume the header line and do nothing with it.
     }
 
-    // Loop through the rest of the file
     while (std::getline(infile, line)) {
         rows++;
         std::stringstream line_stream(line);
@@ -5288,27 +5403,44 @@ BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& arg
 
         while (std::getline(line_stream, cell, delimiter)) {
             current_cols++;
-            try {
-                // Try to convert each cell to a number.
-                flat_data.push_back(std::stod(cell));
+
+            // --- Intelligent Type Conversion ---
+            // Trim whitespace from the cell first
+            size_t start = cell.find_first_not_of(" \t\r\n");
+            size_t end = cell.find_last_not_of(" \t\r\n");
+            std::string trimmed_cell = (start == std::string::npos) ? "" : cell.substr(start, end - start + 1);
+
+            if (trimmed_cell.empty()) {
+                flat_data.push_back(std::string(""));
+                continue;
             }
-            catch (const std::invalid_argument&) {
-                // If conversion fails, store 0.0, a common practice.
-                flat_data.push_back(0.0);
+
+            try {
+                size_t pos;
+                double num_val = std::stod(trimmed_cell, &pos);
+
+                // Check if the entire string was consumed by stod.
+                // This prevents "123xyz" from being read as the number 123.
+                if (pos == trimmed_cell.length()) {
+                    flat_data.push_back(num_val);
+                }
+                else {
+                    flat_data.push_back(trimmed_cell); // Partial number, treat as string
+                }
+            }
+            catch (const std::exception&) {
+                // If stod fails completely, it's definitely a string.
+                flat_data.push_back(trimmed_cell);
             }
         }
 
         // --- 4. Determine Shape and Validate ---
         if (rows == 1) {
-            // This is the first data row, so it determines the number of columns.
             cols = current_cols;
         }
-        else {
-            // For all subsequent rows, verify they have the correct number of columns.
-            if (current_cols != cols) {
-                Error::set(15, vm.runtime_current_line); // Type Mismatch (or a new "Invalid file format" error)
-                return {};
-            }
+        else if (current_cols != cols) {
+            Error::set(15, vm.runtime_current_line, "Inconsistent number of columns in CSV file.");
+            return {};
         }
     }
 
@@ -5908,7 +6040,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("ANY", -1, builtin_any);
     register_func("ALL", -1, builtin_all);
     register_func("SCAN", 2, builtin_scan);
-    register_func("SELECT", 2, builtin_select);
+    register_func("SELECT", -1, builtin_select);
     register_func("FILTER", 2, builtin_filter);
     register_func("REDUCE", -1, builtin_reduce);
     register_func("MATMUL", 2, builtin_matmul);

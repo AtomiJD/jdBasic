@@ -1,3 +1,5 @@
+
+#ifndef _WIN32
 #include "TextEditor.hpp"
 #include "TextIO.hpp"
 #ifdef _WIN32
@@ -331,3 +333,4 @@ void TextEditor::run() {
     TextIO::clearScreen();
     TextIO::setCursor(true);
 }
+#endif

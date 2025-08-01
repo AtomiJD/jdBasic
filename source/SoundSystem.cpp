@@ -63,15 +63,6 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
 void SoundSystem::shutdown() {
     if (!is_initialized) return;
 
-//    // --- Correct cleanup order ---
-//    if (audio_device_id != 0) {
-//        SDL_PauseAudioDevice(audio_device_id);
-//    }
-//    if (audio_stream) {
-//        SDL_DestroyAudioStream(audio_stream);
-////        audio_stream = nullptr;
-//    }
-
     // --- Free all loaded sound chunks ---
     for (auto const& [id, chunk] : loaded_samples) {
         if (chunk.buffer) {
@@ -80,7 +71,6 @@ void SoundSystem::shutdown() {
     }
     loaded_samples.clear();
 
-    //SDL_QuitSubSystem(SDL_INIT_AUDIO);
     is_initialized = false;
 }
 
@@ -336,6 +326,5 @@ void SoundSystem::stop_note(int track_index) {
         SDL_UnlockAudioStream(audio_stream);
     }
 }
-
 
 #endif

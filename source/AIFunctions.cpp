@@ -1156,7 +1156,7 @@ BasicValue builtin_create_layer(NeReLaBasic& vm, const std::vector<BasicValue>& 
     return layer_result_ptr;
 }
 
-// --- MODIFIED: This function now creates different types of optimizers ---
+// --- This function  creates different types of optimizers ---
 BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) {
         Error::set(8, vm.runtime_current_line, "CREATE_OPTIMIZER requires 2 arguments: type$, options_map");
@@ -1201,7 +1201,7 @@ BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValu
     return optimizer_result_ptr;
 }
 
-// --- MODIFIED: This function now acts as a dispatcher ---
+// --- This function acts as a dispatcher ---
 BasicValue builtin_optimizer_update(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return {}; }
 

@@ -220,7 +220,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             return Tokens::ID::CALLFUNC;
         }
 
-        // --- MODIFIED LOGIC FOR ACCESSORS ---
+        // --- LOGIC FOR ACCESSORS ---
         // If at the start of a statement, an identifier followed by a bracket is an assignment target.
         // This is a LET statement, so we generate a special token for the do_let command.
         if (is_start_of_statement) {
@@ -1210,11 +1210,9 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     // Point it to just after the FUNC token and its 2-byte placeholder.
                     compilation_func_table.at(lambda_to_compile.name).start_pcode = lambda_start_address + 5;
                 }
-                auto prev_modulename = current_module_name;
-                current_module_name = "REPL";
                 // Compile the lambda's source and append its bytecode directly.
                 tokenize_lambda(vm, out_p_code, lambda_to_compile.source_code, compilation_func_table, lambda_to_compile.source_line);
-                current_module_name = prev_modulename;
+                compilation_func_table.at(lambda_to_compile.name).module_name = "REPL";
             }
             // Clear the list now that they've been compiled.
             pending_lambdas.clear();
@@ -1234,6 +1232,7 @@ bool Compiler::compile_module(NeReLaBasic& vm, const std::string& module_name, c
     // The entire body of the original compile_module function goes here.
     // Replace member access with 'vm.' or direct member access as appropriate.
     // e.g., 'this->tokenize_program(...)'
+    // 
     if (vm.compiled_modules.count(module_name)) {
         return true; // Already compiled
     }
@@ -1281,7 +1280,7 @@ void Compiler::pre_scan_and_parse_types(NeReLaBasic& vm) {
                 vm.user_defined_types[current_type_info.name] = current_type_info;
             }
             else if (first_word == "SUB" || first_word == "FUNC") {
-                // --- NEW: Recognize a method declaration ---
+                // --- Recognize a method declaration ---
                 in_sub_block = true;
                 std::string decl_line = line.substr(line.find(first_word) + first_word.length());
                 StringUtils::trim(decl_line);
