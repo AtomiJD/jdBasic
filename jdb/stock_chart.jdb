@@ -1,0 +1,132 @@
+' =================================================================
+' == jdBasic Stock Data to Excel Chart
+' ==
+' == This program fetches intraday stock data from Alpha Vantage,
+' == parses the JSON response, opens Microsoft Excel via COM,
+' == writes the data to a worksheet, and creates a line chart.
+' =================================================================
+
+' --- 1. Fetch Data from API ---
+PRINT "Fetching stock data for IBM from Alpha Vantage..."
+
+' Define the API URL. NOTE: The "demo" key is limited.
+' Replace with your own free key from alphavantage.co for reliability.
+
+current_stock$ = "IBM"
+API_KEY$ = "demo"
+'API_KEY$ = Getenv$("ALPHA_VANTAGE_API_KEY")
+API_URL$ = "https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=" + current_stock$ + "&interval=5min&apikey=" + API_KEY$
+
+' Use the built-in HTTP.GET$ function to retrieve the data.
+JSON_RESPONSE$ = HTTP.GET$(API_URL$)
+
+' Basic error check for the HTTP request.
+IF ERR <> 0 OR LEN(JSON_RESPONSE$) < 100 THEN
+    PRINT "Error: Failed to fetch data from the API."
+    PRINT "HTTP Status Code: "; HTTP.STATUSCODE()
+    PRINT "Response: "; JSON_RESPONSE$
+    END
+ENDIF
+
+PRINT "Data fetched successfully."
+PRINT
+
+' --- 2. Parse the JSON Data ---
+PRINT "Parsing JSON response..."
+
+' The JSON.PARSE$ function converts the string into a nested Map object.
+STOCK_DATA = JSON.PARSE$(JSON_RESPONSE$)
+
+' Extract the main time series object from the parsed data.
+TIME_SERIES = STOCK_DATA{"Time Series (5min)"}
+PRINT "JSON parsed. Found time series data."
+PRINT
+
+' --- 3. Automate Excel using COM ---
+PRINT "Launching Microsoft Excel..."
+
+' Use CREATEOBJECT to start Excel. It runs in the background by default.
+objXL = CREATEOBJECT("Excel.Application")
+IF ERR <> 0 THEN
+    PRINT "Error: Could not start Excel. Please ensure it is installed."
+    END
+ENDIF
+
+' Make the Excel window visible to the user.
+objXL.Visible = TRUE
+
+' Add a new, empty workbook.
+objWB = objXL.Workbooks.Add()
+
+
+PRINT "Excel is running and a new workbook has been created."
+PRINT
+
+' --- 4. Write Data to the Worksheet ---
+PRINT "Writing data to the worksheet..."
+
+' Set column headers.
+objcell = objXL.ActiveSheet.Cells(1, 1)
+objcell.Value = "Timestamp"
+objcell = objXL.ActiveSheet.Cells(1, 2)
+objcell.Value =  "Closing Price"
+
+' Get an array of all the timestamps (which are the keys of the time series map).
+TIMESTAMPS = MAP.KEYS(TIME_SERIES)
+
+'Remember the date for Cchart title
+current_date$ = TIMESTAMPS[0]
+
+' Loop through the timestamps, get the corresponding data, and write to cells.
+' We start at row 2 because row 1 has the headers.
+FOR i = 0 TO LEN(TIMESTAMPS) - 1
+    current_timestamp$ = TIMESTAMPS[i]
+    
+    ' Get the data object for the current timestamp.
+    price_data = TIME_SERIES{current_timestamp$}
+    ' Only get the time value
+    current_timestamp$ = RIGHT$(current_timestamp$,8)
+    
+    ' Extract the closing price. Note the key is "4. close".
+    closing_price = VAL(price_data{"4. close"})
+    
+    ' Write the timestamp to column A and the price to column B.
+    objcell = objXL.ActiveSheet.Cells(i + 2, 1)
+    objcell.Value = current_timestamp$
+    objcell = objXL.ActiveSheet.Cells(i + 2, 2)
+    objcell.Value = closing_price
+NEXT i
+
+PRINT "Data writing complete."
+PRINT
+
+' --- 5. Create the Chart ---
+PRINT "Creating the chart..."
+
+' Get the total number of data rows to define the chart's data range.
+num_data_rows = LEN(TIMESTAMPS)[0]
+data_range = objXL.ActiveSheet.Range("A1:B" + STR$(num_data_rows + 1))
+
+' Create a new chart object on the worksheet.
+chartObject = objXL.ActiveSheet.ChartObjects.Add(150, 20, 600, 350) ' Left, Top, Width, Height
+chart = chartObject.Chart
+
+' Set the data source for the chart.
+' This tells Excel which cells contain the data to be plotted.
+' It includes the header row for automatic legend/axis titles.
+a = chart.SetSourceData(data_range)
+
+' Set the chart type to a line graph. (xlLine = 4)
+chart.ChartType = 4
+
+' Add a title to the chart.
+chart.HasTitle = TRUE
+chart.ChartTitle.Text = current_stock$ + " Intraday Stock Price (5min) " + LEFT$(current_date$,10)
+
+PRINT "Chart created successfully."
+PRINT
+PRINT "--- Program Finished ---"
+
+' NOTE: The script will end here, but Excel will remain open
+' with the data and the chart for you to view.
+

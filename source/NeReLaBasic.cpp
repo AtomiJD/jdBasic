@@ -33,8 +33,7 @@ BasicValue tensor_scalar_divide(NeReLaBasic& vm, const BasicValue& a, const Basi
 std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
-
-const std::string NERELA_VERSION = "0.9.3";
+const std::string NERELA_VERSION = "0.9.4";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
