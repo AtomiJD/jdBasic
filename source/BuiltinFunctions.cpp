@@ -2086,6 +2086,22 @@ BasicValue builtin_waitkey_str(NeReLaBasic& vm, const std::vector<BasicValue>& a
     return std::string(1, c);
 }
 
+// REVERSE$(string_or_array) -> string or array
+BasicValue builtin_reverse_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "REVERSE$ requires 1 argument.");
+        return std::string("");
+    }
+    // Define the reverse operation as a lambda
+    auto op = [](const std::string& s) {
+        std::string reversed_s = s;
+        std::reverse(reversed_s.begin(), reversed_s.end());
+        return reversed_s;
+        };
+    // Use the existing helper to apply it element-wise
+    return apply_string_op(args[0], op);
+}
+
 // REPLACE$(source_string_or_array, find_string$, replace_with_string$) -> string or array
 BasicValue builtin_replace_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) {
@@ -2521,7 +2537,6 @@ BasicValue builtin_mvlet(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result_ptr;
 }
 
-
 // TRANSPOSE(matrix) -> matrix
 // Transposes a 2D matrix.
 BasicValue builtin_transpose(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -2587,6 +2602,272 @@ BasicValue builtin_split(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     result_ptr->data.push_back(source.substr(start, end));
 
     result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
+// NORMALIZE(array) -> array
+// Scales the elements of a numeric array to the range [0.0, 1.0].
+BasicValue builtin_normalize(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "NORMALIZE requires 1 array argument.");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to NORMALIZE must be an array.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!source_ptr || source_ptr->data.empty()) {
+        return source_ptr; // Return original if null or empty
+    }
+
+    // Find min and max values
+    double min_val = to_double(source_ptr->data[0]);
+    double max_val = to_double(source_ptr->data[0]);
+    for (size_t i = 1; i < source_ptr->data.size(); ++i) {
+        double current_val = to_double(source_ptr->data[i]);
+        if (current_val < min_val) min_val = current_val;
+        if (current_val > max_val) max_val = current_val;
+    }
+
+    double range = max_val - min_val;
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape;
+    result_ptr->data.reserve(source_ptr->data.size());
+
+    if (range == 0.0) { // All elements are the same
+        result_ptr->data.assign(source_ptr->data.size(), 0.0);
+    }
+    else {
+        for (const auto& val : source_ptr->data) {
+            result_ptr->data.push_back((to_double(val) - min_val) / range);
+        }
+    }
+    return result_ptr;
+}
+
+// UNIQUE(array) -> array
+// Returns a new array containing only the unique elements from the source.
+BasicValue builtin_unique(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "UNIQUE requires 1 array argument.");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to UNIQUE must be an array.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!source_ptr) return {};
+
+    auto result_ptr = std::make_shared<Array>();
+    std::unordered_set<std::string> seen; // Use string representation for robust uniqueness
+
+    for (const auto& val : source_ptr->data) {
+        std::string s = to_string(val);
+        if (seen.find(s) == seen.end()) {
+            seen.insert(s);
+            result_ptr->data.push_back(val);
+        }
+    }
+
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
+// SHUFFLE(array) -> array
+// Returns a new array with the elements of the source array randomly shuffled.
+BasicValue builtin_shuffle(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "SHUFFLE requires 1 array argument.");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to SHUFFLE must be an array.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!source_ptr) return {};
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = source_ptr->shape;
+    result_ptr->data = source_ptr->data; // Make a copy
+
+    // Use a high-quality random number generator for shuffling
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(result_ptr->data.begin(), result_ptr->data.end(), g);
+
+    return result_ptr;
+}
+
+// FIND_IN_ARRAY(array, value) -> number
+// Finds the first 0-based index of a value in an array. Returns -1 if not found.
+BasicValue builtin_find_in_array(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "FIND_IN_ARRAY requires 2 arguments: array, value_to_find");
+        return -1.0;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to FIND_IN_ARRAY must be an array.");
+        return -1.0;
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const BasicValue& value_to_find = args[1];
+
+    if (source_ptr) {
+        for (size_t i = 0; i < source_ptr->data.size(); ++i) {
+            // The overloaded == for BasicValue handles the comparison
+            if (source_ptr->data[i] == value_to_find) {
+                return static_cast<double>(i);
+            }
+        }
+    }
+    return -1.0; // Not found
+}
+
+// DISTANCE(point1_array, point2_array) -> number
+// Calculates the Euclidean distance between two points.
+BasicValue builtin_distance(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "DISTANCE requires 2 array arguments.");
+        return 0.0;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Arguments to DISTANCE must be arrays.");
+        return 0.0;
+    }
+    const auto& p1_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& p2_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+
+    if (!p1_ptr || !p2_ptr || p1_ptr->data.size() != p2_ptr->data.size()) {
+        Error::set(15, vm.runtime_current_line, "Point arrays for DISTANCE must have the same number of elements.");
+        return 0.0;
+    }
+
+    double sum_of_squares = 0.0;
+    for (size_t i = 0; i < p1_ptr->data.size(); ++i) {
+        double diff = to_double(p1_ptr->data[i]) - to_double(p2_ptr->data[i]);
+        sum_of_squares += diff * diff;
+    }
+
+    return std::sqrt(sum_of_squares);
+}
+
+namespace { // Anonymous namespace for local helpers
+
+    // Helper for binary bitwise operations that supports vectorization
+    BasicValue apply_bitwise_op(
+        const BasicValue& left,
+        const BasicValue& right,
+        const std::function<long long(long long, long long)>& op
+    ) {
+        // Case 1: Array vs Array
+        if (std::holds_alternative<std::shared_ptr<Array>>(left) && std::holds_alternative<std::shared_ptr<Array>>(right)) {
+            const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
+            const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
+            if (!left_ptr || !right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+            if (left_ptr->shape != right_ptr->shape) { Error::set(15, 0, "Array shapes must match for element-wise bitwise operation."); return {}; }
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = left_ptr->shape;
+            result_ptr->data.reserve(left_ptr->data.size());
+
+            for (size_t i = 0; i < left_ptr->data.size(); ++i) {
+                long long l = static_cast<long long>(to_double(left_ptr->data[i]));
+                long long r = static_cast<long long>(to_double(right_ptr->data[i]));
+                result_ptr->data.push_back(static_cast<double>(op(l, r)));
+            }
+            return result_ptr;
+        }
+        // Case 2: Array vs Scalar
+        else if (std::holds_alternative<std::shared_ptr<Array>>(left)) {
+            const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
+            if (!left_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+            long long r_scalar = static_cast<long long>(to_double(right));
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = left_ptr->shape;
+            result_ptr->data.reserve(left_ptr->data.size());
+
+            for (const auto& elem : left_ptr->data) {
+                long long l = static_cast<long long>(to_double(elem));
+                result_ptr->data.push_back(static_cast<double>(op(l, r_scalar)));
+            }
+            return result_ptr;
+        }
+        // Case 3: Scalar vs Array
+        else if (std::holds_alternative<std::shared_ptr<Array>>(right)) {
+            const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
+            if (!right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
+            long long l_scalar = static_cast<long long>(to_double(left));
+
+            auto result_ptr = std::make_shared<Array>();
+            result_ptr->shape = right_ptr->shape;
+            result_ptr->data.reserve(right_ptr->data.size());
+
+            for (const auto& elem : right_ptr->data) {
+                long long r = static_cast<long long>(to_double(elem));
+                result_ptr->data.push_back(static_cast<double>(op(l_scalar, r)));
+            }
+            return result_ptr;
+        }
+        // Case 4: Scalar vs Scalar
+        else {
+            long long l = static_cast<long long>(to_double(left));
+            long long r = static_cast<long long>(to_double(right));
+            return static_cast<double>(op(l, r));
+        }
+    }
+}
+
+// LERP(start, end, alpha) -> number or array
+// Performs linear interpolation.
+BasicValue builtin_lerp(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "LERP requires 3 arguments: start, end, alpha");
+        return 0.0;
+    }
+
+    const BasicValue& start_val = args[0];
+    const BasicValue& end_val = args[1];
+    double alpha = to_double(args[2]);
+
+    auto lerp_op = [alpha](double a, double b) {
+        return a + (b - a) * alpha;
+        };
+
+    bool start_is_array = std::holds_alternative<std::shared_ptr<Array>>(start_val);
+    bool end_is_array = std::holds_alternative<std::shared_ptr<Array>>(end_val);
+
+    // Case 1: Scalar LERP
+    if (!start_is_array && !end_is_array) {
+        return lerp_op(to_double(start_val), to_double(end_val));
+    }
+
+    // Case 2: Vectorized LERP (handles array/array, array/scalar, scalar/array)
+    const auto& arr1 = start_is_array ? std::get<std::shared_ptr<Array>>(start_val) : nullptr;
+    const auto& arr2 = end_is_array ? std::get<std::shared_ptr<Array>>(end_val) : nullptr;
+
+    if (arr1 && arr2 && arr1->shape != arr2->shape) {
+        Error::set(15, vm.runtime_current_line, "Array shapes must match for LERP.");
+        return {};
+    }
+
+    // Determine the shape and size from whichever input is an array
+    const auto& shape_ref = arr1 ? arr1->shape : arr2->shape;
+    size_t total_size = arr1 ? arr1->data.size() : arr2->data.size();
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = shape_ref;
+    result_ptr->data.reserve(total_size);
+
+    for (size_t i = 0; i < total_size; ++i) {
+        double s = start_is_array ? to_double(arr1->data[i]) : to_double(start_val);
+        double e = end_is_array ? to_double(arr2->data[i]) : to_double(end_val);
+        result_ptr->data.push_back(lerp_op(s, e));
+    }
     return result_ptr;
 }
 
@@ -4204,6 +4485,106 @@ BasicValue builtin_append(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return result_ptr;
 }
 
+// --- Sorting and Comparison Helpers ---
+
+// A robust less-than comparison for sorting BasicValues.
+// Numbers are considered "less than" strings.
+bool basic_value_less(const BasicValue& a, const BasicValue& b) {
+    // Both are numbers (common case)
+    if (std::holds_alternative<double>(a) && std::holds_alternative<double>(b)) {
+        return std::get<double>(a) < std::get<double>(b);
+    }
+    // Both are strings
+    if (std::holds_alternative<std::string>(a) && std::holds_alternative<std::string>(b)) {
+        return std::get<std::string>(a) < std::get<std::string>(b);
+    }
+    // One is a number, the other is not (treat numbers as smaller)
+    if (std::holds_alternative<double>(a) && !std::holds_alternative<double>(b)) {
+        return true;
+    }
+    if (!std::holds_alternative<double>(a) && std::holds_alternative<double>(b)) {
+        return false;
+    }
+    // Default case for other types
+    return false;
+}
+
+// XSORT(array, [dimension], [descending_bool]) -> array
+// A high-performance sort that can operate along a dimension of a 2D matrix.
+BasicValue builtin_xsort(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. --- Argument Validation ---
+    if (args.empty() || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "XSORT requires 1 to 3 arguments: array, [dimension], [descending_bool]");
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to XSORT must be an array.");
+        return {};
+    }
+    const auto& source_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!source_ptr || source_ptr->data.empty()) {
+        return source_ptr; // Return original array if it's null or empty
+    }
+
+    // 2. --- Argument Parsing ---
+    bool has_dimension = args.size() > 1;
+    int dimension = has_dimension ? static_cast<int>(to_double(args[1])) : -1;
+    bool descending = (args.size() == 3) ? to_bool(args[2]) : false;
+
+    // Create a copy to sort
+    auto result_ptr = std::make_shared<Array>(*source_ptr);
+
+    // 3. --- Define Comparison Lambda ---
+    auto comparator = [&](const BasicValue& a, const BasicValue& b) {
+        return descending ? basic_value_less(b, a) : basic_value_less(a, b);
+        };
+
+    // 4. --- Sorting Logic ---
+    // Case A: 1D Array or no dimension specified
+    if (!has_dimension || source_ptr->shape.size() == 1) {
+        std::sort(result_ptr->data.begin(), result_ptr->data.end(), comparator);
+        return result_ptr;
+    }
+
+    // Case B: 2D Matrix with dimension specified
+    if (source_ptr->shape.size() != 2) {
+        Error::set(15, vm.runtime_current_line, "Dimensional sort in XSORT currently only supports 2D matrices.");
+        return {};
+    }
+    size_t rows = source_ptr->shape[0];
+    size_t cols = source_ptr->shape[1];
+
+    if (dimension == 1) { // Sort each row independently
+        for (size_t r = 0; r < rows; ++r) {
+            auto row_start = result_ptr->data.begin() + (r * cols);
+            auto row_end = row_start + cols;
+            std::sort(row_start, row_end, comparator);
+        }
+    }
+    else if (dimension == 0) { // Sort each column independently
+        // This is complex to do in-place. The easiest way is to transpose,
+        // sort the new rows, and then transpose back.
+        BasicValue transposed = builtin_transpose(vm, { result_ptr });
+        auto transposed_ptr = std::get<std::shared_ptr<Array>>(transposed);
+        size_t t_rows = transposed_ptr->shape[0];
+        size_t t_cols = transposed_ptr->shape[1];
+
+        for (size_t r = 0; r < t_rows; ++r) {
+            auto row_start = transposed_ptr->data.begin() + (r * t_cols);
+            auto row_end = row_start + t_cols;
+            std::sort(row_start, row_end, comparator);
+        }
+        // Transpose back to the original orientation
+        return builtin_transpose(vm, { transposed_ptr });
+    }
+    else {
+        Error::set(1, vm.runtime_current_line, "Invalid dimension for XSORT. Must be 0 or 1 for a matrix.");
+        return {};
+    }
+
+    return result_ptr;
+}
+
 
 // --- Arithmetic Functions ---
 // Helper to apply a scalar math function element-wise to an array or a scalar.
@@ -4385,73 +4766,6 @@ BasicValue builtin_trunc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return apply_math_op(args[0], [](double d) { return std::trunc(d); });
 }
 
-namespace { // Anonymous namespace for local helpers
-
-    // Helper for binary bitwise operations that supports vectorization
-    BasicValue apply_bitwise_op(
-        const BasicValue& left,
-        const BasicValue& right,
-        const std::function<long long(long long, long long)>& op
-    ) {
-        // Case 1: Array vs Array
-        if (std::holds_alternative<std::shared_ptr<Array>>(left) && std::holds_alternative<std::shared_ptr<Array>>(right)) {
-            const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
-            const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
-            if (!left_ptr || !right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
-            if (left_ptr->shape != right_ptr->shape) { Error::set(15, 0, "Array shapes must match for element-wise bitwise operation."); return {}; }
-
-            auto result_ptr = std::make_shared<Array>();
-            result_ptr->shape = left_ptr->shape;
-            result_ptr->data.reserve(left_ptr->data.size());
-
-            for (size_t i = 0; i < left_ptr->data.size(); ++i) {
-                long long l = static_cast<long long>(to_double(left_ptr->data[i]));
-                long long r = static_cast<long long>(to_double(right_ptr->data[i]));
-                result_ptr->data.push_back(static_cast<double>(op(l, r)));
-            }
-            return result_ptr;
-        }
-        // Case 2: Array vs Scalar
-        else if (std::holds_alternative<std::shared_ptr<Array>>(left)) {
-            const auto& left_ptr = std::get<std::shared_ptr<Array>>(left);
-            if (!left_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
-            long long r_scalar = static_cast<long long>(to_double(right));
-
-            auto result_ptr = std::make_shared<Array>();
-            result_ptr->shape = left_ptr->shape;
-            result_ptr->data.reserve(left_ptr->data.size());
-
-            for (const auto& elem : left_ptr->data) {
-                long long l = static_cast<long long>(to_double(elem));
-                result_ptr->data.push_back(static_cast<double>(op(l, r_scalar)));
-            }
-            return result_ptr;
-        }
-        // Case 3: Scalar vs Array
-        else if (std::holds_alternative<std::shared_ptr<Array>>(right)) {
-            const auto& right_ptr = std::get<std::shared_ptr<Array>>(right);
-            if (!right_ptr) { Error::set(15, 0, "Operation on a null array."); return {}; }
-            long long l_scalar = static_cast<long long>(to_double(left));
-
-            auto result_ptr = std::make_shared<Array>();
-            result_ptr->shape = right_ptr->shape;
-            result_ptr->data.reserve(right_ptr->data.size());
-
-            for (const auto& elem : right_ptr->data) {
-                long long r = static_cast<long long>(to_double(elem));
-                result_ptr->data.push_back(static_cast<double>(op(l_scalar, r)));
-            }
-            return result_ptr;
-        }
-        // Case 4: Scalar vs Scalar
-        else {
-            long long l = static_cast<long long>(to_double(left));
-            long long r = static_cast<long long>(to_double(right));
-            return static_cast<double>(op(l, r));
-        }
-    }
-
-}
 
 // SHL(value_or_array, bits_to_shift) -> number or array
 BasicValue builtin_shl(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -5996,6 +6310,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("UCASE$", 1, builtin_ucase_str);
     register_func("TRIM$", 1, builtin_trim_str);
     register_func("REPLACE$", 3, builtin_replace_str);
+    register_func("REVERSE$", 1, builtin_reverse_str);
     register_func("INKEY$", 0, builtin_inkey);
     register_func("WAITKEY$", 0, builtin_waitkey_str);
     register_func("VAL", 1, builtin_val);
@@ -6026,6 +6341,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("FLOOR", 1, builtin_floor);
     register_func("CEIL", 1, builtin_ceil);
     register_func("TRUNC", 1, builtin_trunc);
+    register_func("DISTANCE", 2, builtin_distance);
+    register_func("LERP", 3, builtin_lerp);
     register_func("SHL", 2, builtin_shl);
     register_func("SHR", 2, builtin_shr);
 
@@ -6053,6 +6370,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("GRADE", 1, builtin_grade);
     register_func("SLICE", -1, builtin_slice);
     register_func("STACK", -1, builtin_stack);
+    register_func("XSORT", -1, builtin_xsort);
     register_func("MVLET", 4, builtin_mvlet);
     register_func("DIFF", 2, builtin_diff);
     register_func("APPEND", 2, builtin_append);
@@ -6060,6 +6378,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SHIFT", -1, builtin_shift);
     register_func("CONVOLVE", 3, builtin_convolve);
     register_func("PLACE", 3, builtin_place);
+    register_func("NORMALIZE", 1, builtin_normalize);
+    register_func("UNIQUE", 1, builtin_unique);
+    register_func("SHUFFLE", 1, builtin_shuffle);
+    register_func("FIND_IN_ARRAY", 2, builtin_find_in_array);
 
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);
