@@ -104,16 +104,6 @@ ENDSUB
 ' ===================================================================
 
 
-CD "D:\usr\dev\c\jdBasic\jdb"
-
-PRINT "Plotting Bar Chart from sales_data.csv..."
-SALES_ARRAY = CSVREADER("lall.csv", ",") ' True = has header
-PRINT SALES_ARRAY
-' Plot data, type "BAR", title, col 0 for X-labels, col 1 for Y-values
-DATA_PLOTTER SALES_ARRAY, "BAR", "Monthly Sales Revenue", 0, 1
-SLEEP 5000 ' Pause to view
-
-
 PRINT "Plotting Bar Chart from sales_data.csv..."
 SALES_ARRAY = CSVREADER("sales_data.csv", ",", TRUE) ' True = has header
 PRINT SALES_ARRAY

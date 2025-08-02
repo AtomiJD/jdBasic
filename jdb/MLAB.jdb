@@ -21,11 +21,12 @@ EXPORT MODULE MLAB
 ' It uses the APL-style GRADE function, which returns the indices
 ' that *would* sort the array. We then use those indices to
 ' reorder the original array.
+
 EXPORT FUNC SORT(A)
   RETURN A[GRADE(A)]
 ENDFUNC
 
-' NEW: Sorts a 1D array in descending order.
+' Sorts a 1D array in descending order.
 EXPORT FUNC SORT_DESC(A)
   ' We reverse the grade indices to get descending order.
   RETURN A[REVERSE(GRADE(A))]
@@ -51,7 +52,7 @@ EXPORT FUNC MEDIAN(A)
   ENDIF
 ENDFUNC
 
-' NEW: Creates a Map counting the occurrences of each unique item in an array.
+' Creates a Map counting the occurrences of each unique item in an array.
 EXPORT FUNC FREQUENCY_MAP(A)
     DIM FreqMap AS MAP
     FOR i = 0 TO LEN(A)[0] - 1
@@ -65,7 +66,7 @@ EXPORT FUNC FREQUENCY_MAP(A)
     RETURN FreqMap
 ENDFUNC
 
-' NEW: Calculates the Mode (most common value) of a 1D array.
+' Calculates the Mode (most common value) of a 1D array.
 EXPORT FUNC MODE(A)
     FreqMap = FREQUENCY_MAP(A)
     IF LEN(MAP.KEYS(FreqMap)) = 0 THEN RETURN NULL ' Handle empty array
@@ -92,18 +93,95 @@ EXPORT FUNC STDDEV(A)
   RETURN SQR(SUM(VAR) / LEN(A)[0])
 ENDFUNC
 
-' NEW: Calculates the Population Variance of a 1D array.
+' Calculates the Population Variance of a 1D array.
 EXPORT FUNC VARIANCE(A)
     AVG = MEAN(A)
     VAR_SUM = SUM((A - AVG) ^ 2)
     RETURN VAR_SUM / LEN(A)[0]
 ENDFUNC
 
+' Finds the common elements between two 1D arrays.
+EXPORT FUNC INTERSECT(A1, A2)
+    ' Convert arrays to maps for efficient lookup
+    DIM Map1 AS MAP
+    FOR i = 0 TO LEN(A1)[0] - 1 : Map1{STR$(A1[i])} = TRUE : NEXT i
+    
+    Intersection = []
+    FOR i = 0 TO LEN(A2)[0] - 1
+        val = A2[i]
+        IF MAP.EXISTS(Map1, STR$(val)) THEN
+            ' To avoid duplicates, check if it's already in the result
+            is_in_result = FALSE
+            FOR j = 0 TO LEN(Intersection)[0] - 1
+                IF Intersection[j] = val THEN is_in_result = TRUE : EXITFOR
+            NEXT j
+            IF NOT is_in_result THEN Intersection = APPEND(Intersection, val)
+        ENDIF
+    NEXT i
+    RETURN Intersection
+ENDFUNC
+
+' ==========================================================
+' == ARRAY & MATRIX CREATION
+' ==========================================================
+
+' NEW: Creates an array of a given shape filled with zeros.
+EXPORT FUNC ZEROS(ShapeVector)
+    RETURN RESHAPE([0], ShapeVector)
+ENDFUNC
+
+' NEW: Creates an array of a given shape filled with ones.
+EXPORT FUNC ONES(ShapeVector)
+    RETURN RESHAPE([1], ShapeVector)
+ENDFUNC
+
+' NEW: Creates an N x N identity matrix.
+EXPORT FUNC EYE(N)
+    ' Creates a boolean matrix where M[i,j] is TRUE if i=j,
+    ' then multiplies by 1 to convert TRUE/FALSE to 1/0.
+    RETURN OUTER(IOTA(N), IOTA(N), "=") * 1
+ENDFUNC
+
+' ==========================================================
+' == COMBINATORICS & FINANCIAL
+' ==========================================================
+
+' Calculates Combinations ("n choose k").
+EXPORT FUNC COMBINATIONS(n, k)
+    IF k < 0 OR n < k THEN RETURN 0
+    RETURN FAC(n) / (FAC(k) * FAC(n - k))
+ENDFUNC
+
+' Calculates Permutations.
+EXPORT FUNC PERMUTATIONS(n, k)
+    IF k < 0 OR n < k THEN RETURN 0
+    RETURN FAC(n) / FAC(n - k)
+ENDFUNC
+
+' Calculates the periodic payment for a loan.
+' rate: The interest rate per period.
+' nper: The total number of payment periods.
+' pv: The present value, or the total amount of the loan.
+EXPORT FUNC PMT(rate, nper, pv)
+    IF rate = 0 THEN RETURN pv / nper
+    RETURN (rate * pv) / (1 - (1 + rate) ^ -nper)
+ENDFUNC
+
+' Calculates the future value of an investment.
+' pmt: The payment made each period.
+' pv: The present value (optional, use 0 if none).
+EXPORT FUNC FV(rate, nper, pmt, pv)
+    IF rate = 0 THEN RETURN pv + (pmt * nper)
+    fv_pv = pv * (1 + rate) ^ nper
+    fv_pmt = pmt * (((1 + rate) ^ nper - 1) / rate)
+    RETURN fv_pv + fv_pmt
+ENDFUNC
+
 ' ==========================================================
 ' == STRING UTILITIES
 ' ==========================================================
 
-' NEW: Joins elements of an array into a single string with a delimiter.
+' Joins elements of an array into a single string with a delimiter.
 EXPORT FUNC JOIN$(StringArray, Delimiter$)
     Result$ = ""
     NumElements = LEN(StringArray)[0]
@@ -123,20 +201,49 @@ EXPORT FUNC PAD_LEFT$(original$, total_length, pad_char$)
   RETURN (pad_char$ * padding_needed) + original$
 ENDFUNC
 
-' NEW: Pads a string on the right.
+' Pads a string on the right.
 EXPORT FUNC PAD_RIGHT$(original$, total_length, pad_char$)
   padding_needed = total_length - LEN(original$)
   IF padding_needed <= 0 THEN RETURN original$
   RETURN original$ + (pad_char$ * padding_needed)
 ENDFUNC
 
-' NEW: Pads a string on both sides to center it.
+' Pads a string on both sides to center it.
 EXPORT FUNC PAD_CENTER$(original$, total_length, pad_char$)
     padding_needed = total_length - LEN(original$)
     IF padding_needed <= 0 THEN RETURN original$
     left_pad = INT(padding_needed / 2)
     right_pad = total_length - LEN(original$) - left_pad
     RETURN (pad_char$ * left_pad) + original$ + (pad_char$ * right_pad)
+ENDFUNC
+
+' Calculates the Levenshtein (edit) distance between two strings.
+EXPORT FUNC LEVENSHTEIN(s1$, s2$)
+    m = LEN(s1$)
+    n = LEN(s2$)
+
+    ' Create and initialize the distance matrix
+    D = ZEROS([m + 1, n + 1])
+    FOR i = 0 TO m : D[i, 0] = i : NEXT i
+    FOR j = 0 TO n : D[0, j] = j : NEXT j
+
+    ' Fill the rest of the matrix
+    FOR j = 1 TO n
+        FOR i = 1 TO m
+            IF MID$(s1$, i, 1) = MID$(s2$, j, 1) THEN
+                cost = 0
+            ELSE
+                cost = 1
+            ENDIF
+            
+            ' Core calculation using the MIN reduction on a temporary array
+            values = [D[i-1, j] + 1, D[i, j-1] + 1, D[i-1, j-1] + cost]
+            D[i, j] = MIN(values)
+        NEXT i
+    NEXT j
+    
+    ' The final distance is in the bottom-right cell
+    RETURN D[m, n]
 ENDFUNC
 
 ' A simple word-wrap function.

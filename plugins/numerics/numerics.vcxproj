@@ -52,5 +52,8 @@
   <ItemGroup>
     <ClCompile Include="numerics.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="readme.txt" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

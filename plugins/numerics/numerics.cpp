@@ -179,6 +179,70 @@ void builtin_svd(NeReLaBasic& vm, const std::vector<BasicValue>& args, BasicValu
     *out_result = result_map;
 }
 
+// MANDELBROT(C_REAL, C_IMAG, MAX_ITERATIONS) -> Array of iteration counts
+void builtin_mandelbrot(NeReLaBasic& vm, const std::vector<BasicValue>& args, BasicValue* out_result) {
+    // 1. --- Argument Validation ---
+    if (args.size() != 3) {
+        g_error_set(8, vm.runtime_current_line, "MANDELBROT requires 3 arguments: C_REAL_matrix, C_IMAG_matrix, max_iterations");
+        *out_result = {}; return;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0]) || !std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+        g_error_set(15, vm.runtime_current_line, "First two arguments to MANDELBROT must be arrays.");
+        *out_result = {}; return;
+    }
+    const auto& c_real_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    const auto& c_imag_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!c_real_ptr || !c_imag_ptr || c_real_ptr->shape != c_imag_ptr->shape || c_real_ptr->shape.size() != 2) {
+        g_error_set(15, vm.runtime_current_line, "Input arguments must be 2D matrices of the same shape.");
+        *out_result = {}; return;
+    }
+    int max_iter = static_cast<int>(to_double(args[2]));
+
+    // 2. --- Data Conversion to Eigen ---
+    Eigen::MatrixXd c_real = jd_array_to_eigen_matrix(c_real_ptr);
+    Eigen::MatrixXd c_imag = jd_array_to_eigen_matrix(c_imag_ptr);
+    long rows = c_real.rows();
+    long cols = c_real.cols();
+
+    // 3. --- High-Performance Iteration in C++ ---
+    Eigen::MatrixXd z_real = Eigen::MatrixXd::Zero(rows, cols);
+    Eigen::MatrixXd z_imag = Eigen::MatrixXd::Zero(rows, cols);
+    Eigen::MatrixXi iterations = Eigen::MatrixXi::Zero(rows, cols);
+
+    for (int i = 0; i < max_iter; ++i) {
+        // Create a boolean mask of which points are still inside the escape radius
+        Eigen::Array<bool, Eigen::Dynamic, Eigen::Dynamic> still_calculating_mask = (z_real.array().square() + z_imag.array().square()) <= 4.0;
+
+        // If no points are left, exit early
+        if (!still_calculating_mask.any()) {
+            break;
+        }
+
+        // Increment iteration count for points still being calculated
+        iterations.array() += still_calculating_mask.cast<int>();
+
+        // Calculate z^2 + c
+        Eigen::MatrixXd z_real_new = (z_real.array().square() - z_imag.array().square()).matrix() + c_real;
+        Eigen::MatrixXd z_imag_new = (2 * z_real.array() * z_imag.array()).matrix() + c_imag;
+
+        // Use Eigen's `select` to update only the values within the mask.
+        // This is much faster than multiplying by the mask.
+        z_real = still_calculating_mask.select(z_real_new, z_real);
+        z_imag = still_calculating_mask.select(z_imag_new, z_imag);
+    }
+
+    // 4. --- Convert Result back to jdBasic Array ---
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = { (size_t)rows, (size_t)cols };
+    result_ptr->data.resize(rows * cols);
+    for (long r = 0; r < rows; ++r) {
+        for (long c = 0; c < cols; ++c) {
+            result_ptr->data[r * cols + c] = static_cast<double>(iterations(r, c));
+        }
+    }
+    *out_result = result_ptr;
+}
+
 // === REGISTRATION LOGIC ===
 
 void register_numerics_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table) {
@@ -194,6 +258,7 @@ void register_numerics_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& ta
     register_func("IFFT", 1, builtin_ifft);
     register_func("EIG", 1, builtin_eig);
     register_func("SVD", 1, builtin_svd);
+    register_func("MANDELBROT", 3, builtin_mandelbrot);
 }
 
 // The main entry point of the DLL.
