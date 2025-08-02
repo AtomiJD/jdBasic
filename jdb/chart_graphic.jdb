@@ -117,3 +117,5 @@ PRINT STOCK_ARRAY
 ' Plot data, type "LINE", title, col 0 for X-labels, col 1 for Y-values
 DATA_PLOTTER STOCK_ARRAY, "LINE", "Stock Price Fluctuation", 0, 1
 SLEEP 5000 ' Pause to view
+
+

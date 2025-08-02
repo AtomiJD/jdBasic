@@ -264,3 +264,128 @@ EXPORT FUNC WORD_WRAP$(text$, max_width)
     RETURN result$
 ENDFUNC
 
+' ==========================================================
+' == PROCEDURAL GENERATION
+' ==========================================================
+
+' Generates a 2D array of value noise (a simple form of Perlin noise).
+' width, height: Dimensions of the output noise map.
+' scale: The "zoom" level of the noise. Larger scale = larger features.
+EXPORT FUNC PERLIN_NOISE(width, height, scale)
+    ' --- Helper function for smooth interpolation (Smoothstep) ---
+    FUNC FADE(t)
+        RETURN t * t * t * (t * (t * 6 - 15) + 10)
+    ENDFUNC
+
+    ' --- Helper function for linear interpolation ---
+    FUNC LERP(t, a, b)
+        RETURN a + t * (b - a)
+    ENDFUNC
+
+    ' --- Main Noise Generation ---
+    ' Determine the size of the smaller random grid based on the scale
+    grid_w = CEIL(width / scale) + 1
+    grid_h = CEIL(height / scale) + 1
+
+    ' Create a grid of random values between 0 and 1
+    random_grid = RND(ONES([grid_h, grid_w]))
+
+    noise_map = ZEROS([height, width])
+
+    FOR y = 0 TO height - 1
+        FOR x = 0 TO width - 1
+            ' Calculate the corresponding coordinates in the random grid
+            gx = x / scale
+            gy = y / scale
+
+            ' Get the integer coordinates of the grid cell's top-left corner
+            g_x0 = INT(gx)
+            g_y0 = INT(gy)
+
+            ' Get the fractional coordinates within that cell (0.0 to 1.0)
+            fx = gx - g_x0
+            fy = gy - g_y0
+
+            ' Apply the fade function for smoother transitions
+            ufx = FADE(fx)
+            ufy = FADE(fy)
+
+            ' Get the random values from the four corners of the cell
+            v00 = random_grid[g_y0, g_x0]
+            v10 = random_grid[g_y0, g_x0 + 1]
+            v01 = random_grid[g_y0 + 1, g_x0]
+            v11 = random_grid[g_y0 + 1, g_x0 + 1]
+
+            ' Interpolate between the corner values
+            x_interp1 = LERP(ufx, v00, v10)
+            x_interp2 = LERP(ufx, v01, v11)
+            final_val = LERP(ufy, x_interp1, x_interp2)
+
+            noise_map[y, x] = final_val
+        NEXT x
+    NEXT y
+
+    RETURN noise_map
+ENDFUNC
+
+' Generates a perfect maze using the Recursive Backtracking algorithm.
+' Returns a 2D array where 0 represents a path and 1 represents a wall.
+EXPORT FUNC CREATE_MAZE(width, height)
+    ' Ensure width and height are odd numbers for a proper maze structure
+    w = INT(width / 2) * 2 + 1
+    h = INT(height / 2) * 2 + 1
+
+    maze = ONES([h, w])
+    ' The stack will store coordinate pairs sequentially: [x1, y1, x2, y2, ...]
+    stack_flat = []
+
+    ' Start at a random odd-numbered cell
+    start_x = INT(RND(1) * (w / 2)) * 2 + 1
+    start_y = INT(RND(1) * (h / 2)) * 2 + 1
+    
+    maze[start_y, start_x] = 0 ' Mark start as path
+    stack_flat = APPEND(stack_flat, [start_x, start_y])
+
+    DO WHILE LEN(stack_flat)[0] > 0
+        len_flat = LEN(stack_flat)[0]
+        cx = stack_flat[len_flat - 2]
+        cy = stack_flat[len_flat - 1]
+
+        ' Find all unvisited neighbors
+        neighbors_flat = []
+        ' --- FIX: Use short-circuiting ANDALSO to prevent out-of-bounds access ---
+        ' Check North (Y-2)
+        IF cy - 2 >= 0 ANDALSO maze[cy - 2, cx] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx, cy - 2, 0]) ' 0=N
+        ' Check East (X+2)
+        IF cx + 2 < w ANDALSO maze[cy, cx + 2] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx + 2, cy, 1]) ' 1=E
+        ' Check South (Y+2)
+        IF cy + 2 < h ANDALSO maze[cy + 2, cx] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx, cy + 2, 2]) ' 2=S
+        ' Check West (X-2)
+        IF cx - 2 >= 0 ANDALSO maze[cy, cx - 2] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx - 2, cy, 3]) ' 3=W
+
+        num_neighbors = LEN(neighbors_flat)[0] / 3
+        IF num_neighbors > 0 THEN
+            ' Manually extract the chosen neighbor from the flat array
+            rand_idx = INT(RND(1) * num_neighbors)
+            start_idx = rand_idx * 3
+            nx = neighbors_flat[start_idx]
+            ny = neighbors_flat[start_idx + 1]
+            direction = neighbors_flat[start_idx + 2]
+            
+            ' Carve a path between the current cell and the chosen neighbor
+            maze[ny, nx] = 0
+            IF direction = 0 THEN maze[cy - 1, cx] = 0 ' Path North
+            IF direction = 1 THEN maze[cy, cx + 1] = 0 ' Path East
+            IF direction = 2 THEN maze[cy + 1, cx] = 0 ' Path South
+            IF direction = 3 THEN maze[cy, cx - 1] = 0 ' Path West
+
+            ' Push the new cell coordinates to the flat stack
+            stack_flat = APPEND(stack_flat, [nx, ny])
+        ELSE
+            ' Backtrack by dropping the last coordinate pair
+            stack_flat = TAKE(len_flat - 2, stack_flat)
+        ENDIF
+    LOOP
+
+    RETURN maze
+ENDFUNC
