@@ -1,8 +1,21 @@
 ' ==========================================================
-' ==  A General-Purpose Function Library for jdBasic
+' ==  A General-Purpose Function Library for jdBasic (MLAB)
+' ==========================================================
+' This module provides a collection of high-level functions
+' for statistics, array manipulation, string utilities, and more,
+' building upon the core features of the jdBasic language.
+'
+' To use these functions in another program, add the line:
+' IMPORT MLAB
+'
+' Then call functions with: MLAB.SORT(my_array)
 ' ==========================================================
 
 EXPORT MODULE MLAB
+
+' ==========================================================
+' == STATISTICS & DATA ANALYSIS
+' ==========================================================
 
 ' Sorts a 1D array in ascending order.
 ' It uses the APL-style GRADE function, which returns the indices
@@ -10,6 +23,12 @@ EXPORT MODULE MLAB
 ' reorder the original array.
 EXPORT FUNC SORT(A)
   RETURN A[GRADE(A)]
+ENDFUNC
+
+' NEW: Sorts a 1D array in descending order.
+EXPORT FUNC SORT_DESC(A)
+  ' We reverse the grade indices to get descending order.
+  RETURN A[REVERSE(GRADE(A))]
 ENDFUNC
 
 ' Calculates the Mean (average) of a 1D array.
@@ -32,6 +51,40 @@ EXPORT FUNC MEDIAN(A)
   ENDIF
 ENDFUNC
 
+' NEW: Creates a Map counting the occurrences of each unique item in an array.
+EXPORT FUNC FREQUENCY_MAP(A)
+    DIM FreqMap AS MAP
+    FOR i = 0 TO LEN(A)[0] - 1
+        key$ = STR$(A[i]) ' Map keys must be strings
+        IF MAP.EXISTS(FreqMap, key$) THEN
+            FreqMap{key$} = FreqMap{key$} + 1
+        ELSE
+            FreqMap{key$} = 1
+        ENDIF
+    NEXT i
+    RETURN FreqMap
+ENDFUNC
+
+' NEW: Calculates the Mode (most common value) of a 1D array.
+EXPORT FUNC MODE(A)
+    FreqMap = FREQUENCY_MAP(A)
+    IF LEN(MAP.KEYS(FreqMap)) = 0 THEN RETURN NULL ' Handle empty array
+    
+    MaxCount = 0
+    ModeValue = NULL
+    
+    Keys = MAP.KEYS(FreqMap)
+    FOR i = 0 TO LEN(Keys)[0] - 1
+        key$ = Keys[i]
+        Count = FreqMap{key$}
+        IF Count > MaxCount THEN
+            MaxCount = Count
+            ModeValue = VAL(key$) ' Convert string key back to number
+        ENDIF
+    NEXT i
+    RETURN ModeValue
+ENDFUNC
+
 ' Calculates the Population Standard Deviation of a 1D array.
 EXPORT FUNC STDDEV(A)
   AVG = MEAN(A)
@@ -39,11 +92,51 @@ EXPORT FUNC STDDEV(A)
   RETURN SQR(SUM(VAR) / LEN(A)[0])
 ENDFUNC
 
-' Pads a string on the left with a given character to a total length.
+' NEW: Calculates the Population Variance of a 1D array.
+EXPORT FUNC VARIANCE(A)
+    AVG = MEAN(A)
+    VAR_SUM = SUM((A - AVG) ^ 2)
+    RETURN VAR_SUM / LEN(A)[0]
+ENDFUNC
+
+' ==========================================================
+' == STRING UTILITIES
+' ==========================================================
+
+' NEW: Joins elements of an array into a single string with a delimiter.
+EXPORT FUNC JOIN$(StringArray, Delimiter$)
+    Result$ = ""
+    NumElements = LEN(StringArray)[0]
+    FOR i = 0 TO NumElements - 1
+        Result$ = Result$ + StringArray[i]
+        IF i < NumElements - 1 THEN
+            Result$ = Result$ + Delimiter$
+        ENDIF
+    NEXT i
+    RETURN Result$
+ENDFUNC
+
+' Pads a string on the left.
 EXPORT FUNC PAD_LEFT$(original$, total_length, pad_char$)
   padding_needed = total_length - LEN(original$)
   IF padding_needed <= 0 THEN RETURN original$
   RETURN (pad_char$ * padding_needed) + original$
+ENDFUNC
+
+' NEW: Pads a string on the right.
+EXPORT FUNC PAD_RIGHT$(original$, total_length, pad_char$)
+  padding_needed = total_length - LEN(original$)
+  IF padding_needed <= 0 THEN RETURN original$
+  RETURN original$ + (pad_char$ * padding_needed)
+ENDFUNC
+
+' NEW: Pads a string on both sides to center it.
+EXPORT FUNC PAD_CENTER$(original$, total_length, pad_char$)
+    padding_needed = total_length - LEN(original$)
+    IF padding_needed <= 0 THEN RETURN original$
+    left_pad = INT(padding_needed / 2)
+    right_pad = total_length - LEN(original$) - left_pad
+    RETURN (pad_char$ * left_pad) + original$ + (pad_char$ * right_pad)
 ENDFUNC
 
 ' A simple word-wrap function.
@@ -63,3 +156,4 @@ EXPORT FUNC WORD_WRAP$(text$, max_width)
     result$ = result$ + TRIM$(current_line$)
     RETURN result$
 ENDFUNC
+

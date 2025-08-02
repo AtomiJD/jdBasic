@@ -1,0 +1,22 @@
+' Load the new numerical functions from the DLL
+DLLIMPORT "numerics.dll"
+
+' --- Now you can use the functions ---
+
+' Test FFT
+PRINT "--- FFT Test ---"
+Signal = SIN(IOTA(16) * PI / 8)
+FreqData = FFT(Signal)
+PRINT "Frequency Data (Real/Imaginary):"
+PRINT FRMV$(FreqData)
+PRINT
+
+' Test EIG
+PRINT "--- EIG Test ---"
+A = [[1, 2], [3, 4]]
+EigResult = EIG(A)
+PRINT "Eigenvalues:"
+PRINT FRMV$(EigResult{"EIGENVALUES"})
+PRINT "Eigenvectors (Complex):"
+' This will be a 2x2x2 array [row, col, (real/imag)]
+PRINT EigResult{"EIGENVECTORS"}
