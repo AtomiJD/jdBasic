@@ -166,6 +166,7 @@ NeReLaBasic::NeReLaBasic()  {
     debug_state = DebugState::RUNNING;
     step_over_stack_depth = 0;
     step_out_stack_depth = 0;
+    last_keyboard_check_time = std::chrono::steady_clock::now();
 
 }
 
@@ -315,7 +316,17 @@ void NeReLaBasic::init_basic() {
 
 void NeReLaBasic::process_system_events() {
     // 1. Process the internal event queue (for events raised by RAISEEVENT)
+    
     process_event_queue();
+
+    auto current_time = std::chrono::steady_clock::now();
+    if (current_time - last_keyboard_check_time < keyboard_check_interval) {
+        // Not enough time has passed, so skip the keyboard check for this loop iteration.
+        return;
+    }
+
+    // --- It's time to check the keyboard; reset the timer for the next interval ---
+    last_keyboard_check_time = current_time;
 
     // 2. Process system-level keyboard events if not paused by OPTION "NOPAUSE"
 #ifdef _WIN32
@@ -354,7 +365,7 @@ void NeReLaBasic::process_system_events() {
         // on the next iteration of whichever loop is currently active.
         raise_event("KEYDOWN", key_data);
     }
-
+    return;
 #ifdef SDL3
     if (graphics_system.is_initialized) {
         if (!graphics_system.handle_events(*this)) {

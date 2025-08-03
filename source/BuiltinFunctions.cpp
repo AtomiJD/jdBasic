@@ -2071,7 +2071,7 @@ BasicValue builtin_waitkey_str(NeReLaBasic& vm, const std::vector<BasicValue>& a
             vm.process_event_queue();
 
             // A short delay to prevent this waiting loop from using 100% CPU.
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 #endif

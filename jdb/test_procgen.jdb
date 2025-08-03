@@ -11,8 +11,6 @@ IMPORT MLAB
 ' start/end: A 1D array with two elements [x, y].
 ' Returns an array of points for the path, or an empty array if no path is found.
 
-CD "D:\usr\dev\c\jdBasic\jdb"
-
 ' --- Helper function to calculate Manhattan distance heuristic ---
 FUNC Heuristic(p1, p2)
     RETURN ABS(p1[0] - p2[0]) + ABS(p1[1] - p2[1])
@@ -55,7 +53,7 @@ FUNC A_STAR_SOLVER(maze, start_pos, end_pos)
 
         current_node = openList[current_idx]
 
-        ' --- FIX: Manually remove current node from openList to avoid C++ crash ---
+        ' --- Manually remove current node from openList to avoid C++ crash ---
         newOpenList = []
         FOR j = 0 TO LEN(openList)[0] - 1
             IF j <> current_idx THEN
@@ -142,9 +140,10 @@ FUNC A_STAR_SOLVER(maze, start_pos, end_pos)
 ENDFUNC
 
 ' --- 1. Generate Perlin Noise ---
-PRINT "Generating Perlin noise (50x50)..."
+PSIZE = 100
+PRINT format$("Generating Perlin noise ({:3d}x{:3d})...", PSIZE,PSIZE)
 ' A larger scale gives smoother, more cloud-like noise.
-NoiseMap = MLAB.PERLIN_NOISE(50, 50, 32) 
+NoiseMap = MLAB.PERLIN_NOISE(PSIZE, PSIZE, 32) 
 
 ' Convert the noise values [0, 1] to grayscale colors [0, 255]
 ColorMap = NoiseMap * 255
@@ -165,21 +164,14 @@ PRINT "Solving maze with A*..."
 start_point = [1, 1]
 end_point = [49, 29]
 
-' be = false: ba = false
-' XA = 1 : YA = 10 : XE = 1 : YE = 10
-
-' do 
-'     if MazeMatrix[ya,xa] = 0 then ba = TRUE
-'     if MazeMatrix[ye,xe] = 0 then be = TRUE
-'     xa = xa + 1
-'     xe = xe + 1
-
-' loop until (be = true and ba = true) or xa > 46
-
-' start_point = [xa, ya]
-' end_point = [xe, ye]
-
 path = A_STAR_SOLVER(MazeMatrix, start_point, end_point)
+
+SUB Draw()
+    ' Draw the noise on the left side
+    PLOTRAW 45, 45, FinalColorMap, 5, 5
+    ' Draw the maze on the right side, scaled up
+    PLOTRAW X1, Y1, FinalMazeMap, Z, Z
+ENDSUB
 
 ' --- 3. Draw the Results ---
 PRINT "Drawing results..."
@@ -188,20 +180,16 @@ CLS 20, 20, 40
 
 
 L = LEN(path)[0] 
-X1 = 32 : Y1 = 32 : Z = 15
-
+X1 = 50 : Y1 = 15 : Z = 15
 
 IF L > 0 THEN
     PRINT "Drawing path..."
-    ' Draw the noise on the left side
-    PLOTRAW 45, 45, FinalColorMap, 5, 5
-    ' Draw the maze on the right side, scaled up
-    PLOTRAW X1, Y1, FinalMazeMap, Z, Z
+    Draw
     SCREENFLIP
     SLEEP 2000
     FOR J = 0 TO LEN(path)[0] - 1
         CLS 20, 20, 40
-        PLOTRAW X1, Y1, FinalMazeMap, Z, Z
+        Draw
         FOR i = 0 TO  J
             point = SLICE(path, 0, i) ' Get the i-th row (coordinate pair)
             px = X1*z + point[1] * Z
@@ -209,18 +197,13 @@ IF L > 0 THEN
             ' Draw a filled rectangle for each point in the path
             RECT px, py, Z, Z, 255, 0, 0, TRUE
         NEXT i
-        PLOTRAW 45, 45, FinalColorMap, 5, 5
         SCREENFLIP
     NEXT J
 ELSE
     PRINT "No path found."
-    ' Draw the noise on the left side
-    PLOTRAW 45, 45, FinalColorMap, 5, 5
-    ' Draw the maze on the right side, scaled up
-    PLOTRAW X1, Y1, FinalMazeMap, Z, Z
+    Draw
     SCREENFLIP
 ENDIF
-
 
 PRINT "Done. Press any key to exit."
 

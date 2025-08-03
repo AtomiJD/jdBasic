@@ -291,6 +291,9 @@ public:
     bool is_in_pipe_call = false;
     BasicValue piped_value_for_call;
 
+    std::chrono::steady_clock::time_point last_keyboard_check_time;
+    const std::chrono::milliseconds keyboard_check_interval{ 10 };
+
     NeReLaBasic(const NeReLaBasic& other);
 
     // --- Member Functions ---
