@@ -975,17 +975,61 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue;
             }
             case Tokens::ID::FOR: {
-                // Push a new loop info struct onto the *compiler* stack.
-                compiler_for_stack.push_back({ lineNumber });
-                // Write the FOR token, the rest is handled by the expression parser at runtime.
-                out_p_code.push_back(static_cast<uint8_t>(token));
-                // --- Add placeholder for the skip-ahead address ---
-                // Store the address where the placeholder begins.
-                compiler_for_stack.back().next_statement_patch_address = out_p_code.size();
-                // Write two empty bytes. These will be patched by NEXT.
-                out_p_code.push_back(0); // Placeholder LSB
-                out_p_code.push_back(0); // Placeholder MSB
-                break;
+                // --- Lookahead to see if "EACH" follows "FOR" ---
+                size_t saved_prgptr = vm.prgptr;
+                Tokens::ID next_token = parse(vm, false); // Peek at the next token
+                vm.prgptr = saved_prgptr;                 // Reset the pointer after peeking
+
+                if (next_token == Tokens::ID::EACH) {
+                    // --- This is a FOR EACH loop ---
+                    parse(vm, false); // Consume the "EACH" keyword
+
+                    // Parse the element variable name
+                    Tokens::ID var_token = parse(vm, false);
+                    if (var_token != Tokens::ID::VARIANT && var_token != Tokens::ID::STRVAR) {
+                        Error::set(1, lineNumber, "Variable name expected after FOR EACH.");
+                        return 1;
+                    }
+                    std::string element_var_name = vm.buffer;
+
+                    // Parse and consume the "IN" keyword
+                    if (parse(vm, false) != Tokens::ID::IN_OPERATOR) {
+                        Error::set(1, lineNumber, "'IN' keyword expected after variable in FOR EACH.");
+                        return 1;
+                    }
+
+                    // Emit the FOR_EACH opcode
+                    out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::FOR_EACH));
+
+                    // Push loop info onto the compiler stack to be patched by NEXT
+                    compiler_for_stack.push_back({ lineNumber });
+
+                    // Write the 2-byte placeholder for the jump address IMMEDIATELY after the opcode
+                    compiler_for_stack.back().next_statement_patch_address = out_p_code.size();
+                    out_p_code.push_back(0); // Placeholder LSB
+                    out_p_code.push_back(0); // Placeholder MSB
+
+                    // Manually write the variable token and name string
+                    out_p_code.push_back(static_cast<uint8_t>(var_token));
+                    for (char c : element_var_name) out_p_code.push_back(c);
+                    out_p_code.push_back(0); // Null terminator
+
+                    // The collection expression that follows will be tokenized normally
+                    break;
+                }
+                else {
+                    // Push a new loop info struct onto the *compiler* stack.
+                    compiler_for_stack.push_back({ lineNumber });
+                    // Write the FOR token, the rest is handled by the expression parser at runtime.
+                    out_p_code.push_back(static_cast<uint8_t>(token));
+                    // --- Add placeholder for the skip-ahead address ---
+                    // Store the address where the placeholder begins.
+                    compiler_for_stack.back().next_statement_patch_address = out_p_code.size();
+                    // Write two empty bytes. These will be patched by NEXT.
+                    out_p_code.push_back(0); // Placeholder LSB
+                    out_p_code.push_back(0); // Placeholder MSB
+                    break;
+                }
             }
 
             case Tokens::ID::WHILE:

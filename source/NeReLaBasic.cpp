@@ -718,6 +718,7 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
     frame.return_pcode = this->pcode;
     frame.previous_function_table_ptr = this->active_function_table;
     frame.for_stack_size_on_entry = this->for_stack.size();
+    frame.for_each_stack_size_on_entry = this->for_each_stack.size();
     frame.function_name = func_info.name;
     frame.linenr = runtime_current_line;
     frame.is_async_call = func_info.is_async;
@@ -863,6 +864,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             this->active_p_code = current_task->p_code_ptr;
             this->call_stack = current_task->call_stack;
             this->for_stack = current_task->for_stack;
+            this->for_each_stack = current_task->for_each_stack;
             // Restore the correct function table for the current context
             if (!this->call_stack.empty()) {
                 this->active_function_table = this->call_stack.back().previous_function_table_ptr;
@@ -952,6 +954,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             current_task->p_code_counter = this->pcode;
             current_task->call_stack = this->call_stack;
             current_task->for_stack = this->for_stack;
+            current_task->for_each_stack = this->for_each_stack;
 
             if (current_task->status == TaskStatus::COMPLETED || current_task->status == TaskStatus::ERRORED) {
                 int task_id_to_delete = current_task->id;
@@ -1033,6 +1036,10 @@ void NeReLaBasic::statement() {
     case Tokens::ID::FOR:
         pcode++;
         Commands::do_for(*this);
+        break;
+    case Tokens::ID::FOR_EACH :
+        pcode++;
+        Commands::do_for_each(*this);
         break;
     case Tokens::ID::NEXT:
         pcode++;

@@ -78,6 +78,16 @@ public:
         std::vector<uint16_t> exit_patch_locations; // To patch EXIT FOR jumps
     };
 
+    struct ForEachLoopInfo {
+        std::string variable_name;
+        // We use a variant to hold a pointer to either collection type
+        std::variant<std::shared_ptr<Array>, std::shared_ptr<Map>> collection;
+        size_t current_index = 0;
+        uint16_t loop_body_pcode = 0;
+        // This will store a copy of the keys for stable map iteration
+        std::vector<std::string> map_keys;
+    };
+
     // A type alias for our native C++ function pointers.
     // All native functions will take a vector of arguments and return a single BasicValue.
     using NativeFunction = std::function<BasicValue(NeReLaBasic&, const std::vector<BasicValue>&)>;
@@ -110,6 +120,7 @@ public:
         const std::vector<uint8_t>* return_p_code_ptr;
         FunctionTable* previous_function_table_ptr;
         size_t for_stack_size_on_entry = 0;
+        size_t for_each_stack_size_on_entry = 0;
         bool is_async_call = false;
     };
 
@@ -136,6 +147,7 @@ public:
         uint16_t p_code_counter = 0;
         std::vector<StackFrame> call_stack;
         std::vector<ForLoopInfo> for_stack;
+        std::vector<ForEachLoopInfo> for_each_stack;
         bool yielded_execution = false; // Flag to signal a yield from AWAIT
         // --- Per-Task Error Handling State ---
         bool error_handler_active = false;
@@ -148,6 +160,7 @@ public:
         FunctionTable* resume_function_table_ptr = nullptr;
         std::vector<StackFrame> resume_call_stack_snapshot;
         std::vector<ForLoopInfo> resume_for_stack_snapshot;
+        std::vector<ForEachLoopInfo> resume_for_each_stack_snapshot;
         std::future<BasicValue>  result_future; // For C++ background tasks like HTTP
     };
 
@@ -212,6 +225,7 @@ public:
     std::vector<uint8_t> direct_p_code;     // Temporary buffer for direct-mode commands
     const std::vector<uint8_t>* active_p_code = nullptr;    //Active P-Code Pointer
     std::vector<ForLoopInfo> for_stack;
+    std::vector<ForEachLoopInfo> for_each_stack;
 
     std::vector<StackFrame> call_stack;
     std::vector<uint16_t> func_stack;

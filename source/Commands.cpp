@@ -1160,7 +1160,91 @@ void Commands::do_for(NeReLaBasic& vm) {
     vm.for_stack.push_back(loop_info);
 }
 
+void Commands::do_for_each(NeReLaBasic& vm) {
+    // 1. Read the data in the correct order
+
+    // Read the 2-byte jump address FIRST
+    uint16_t pcode_after_next;
+    memcpy(&pcode_after_next, &(*vm.active_p_code)[vm.pcode], sizeof(uint16_t));
+    vm.pcode += sizeof(uint16_t);
+
+    // Read the variable name SECOND
+    vm.pcode++; // Consume the variable type token (e.g., VARIANT)
+    std::string var_name = read_string(vm);
+
+    // 2. Evaluate the expression to get the collection
+    BasicValue collection_val = vm.evaluate_expression();
+    if (Error::get() != 0) return;
+
+    NeReLaBasic::ForEachLoopInfo info;
+    info.variable_name = var_name;
+    info.loop_body_pcode = vm.pcode; // Start of the loop body
+
+    // 3. Check the collection type and prepare for iteration
+    if (std::holds_alternative<std::shared_ptr<Array>>(collection_val)) {
+        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(collection_val);
+        if (!arr_ptr || arr_ptr->data.empty()) {
+            vm.pcode = pcode_after_next; // Collection is empty, skip the loop
+            return;
+        }
+        info.collection = arr_ptr;
+        set_variable(vm, var_name, arr_ptr->data[0]); // Assign first element
+    }
+    else if (std::holds_alternative<std::shared_ptr<Map>>(collection_val)) {
+        const auto& map_ptr = std::get<std::shared_ptr<Map>>(collection_val);
+        if (!map_ptr || map_ptr->data.empty()) {
+            vm.pcode = pcode_after_next; // Collection is empty, skip the loop
+            return;
+        }
+        info.collection = map_ptr;
+        // For maps, we iterate over the values. First, get the keys.
+        for (const auto& pair : map_ptr->data) {
+            info.map_keys.push_back(pair.first);
+        }
+        set_variable(vm, var_name, map_ptr->data.at(info.map_keys[0])); // Assign first value
+    }
+    else {
+        Error::set(15, vm.runtime_current_line, "FOR EACH requires an Array or Map.");
+        return;
+    }
+
+    // 4. Push the state onto the stack to begin the loop
+    vm.for_each_stack.push_back(info);
+}
+
 void Commands::do_next(NeReLaBasic& vm) {
+    // --- NEW: Check for an active FOR EACH loop first ---
+    if (!vm.for_each_stack.empty()) {
+        NeReLaBasic::ForEachLoopInfo info = vm.for_each_stack.back();
+        vm.for_each_stack.pop_back();
+
+        info.current_index++;
+
+        // Check if we are iterating an Array
+        if (auto* arr_ptr_variant = std::get_if<std::shared_ptr<Array>>(&info.collection)) {
+            const auto& arr_ptr = *arr_ptr_variant;
+            if (info.current_index < arr_ptr->data.size()) {
+                set_variable(vm, info.variable_name, arr_ptr->data[info.current_index]);
+                vm.pcode = info.loop_body_pcode; // Jump back to loop start
+                vm.for_each_stack.push_back(info); // Push updated state back
+            }
+            // If index is out of bounds, the loop is done. We just don't push back.
+        }
+        // Check if we are iterating a Map
+        else if (auto* map_ptr_variant = std::get_if<std::shared_ptr<Map>>(&info.collection)) {
+            const auto& map_ptr = *map_ptr_variant;
+            if (info.current_index < info.map_keys.size()) {
+                const std::string& key = info.map_keys[info.current_index];
+                set_variable(vm, info.variable_name, map_ptr->data.at(key));
+                vm.pcode = info.loop_body_pcode; // Jump back to loop start
+                vm.for_each_stack.push_back(info); // Push updated state back
+            }
+        }
+        return; // We have handled the NEXT statement for FOR EACH
+    }
+
+    // --- Logic for numeric FOR loops ---
+
     // 1. Check if there is anything on the FOR stack.
     if (vm.for_stack.empty()) {
         Error::set(21, vm.runtime_current_line); // New Error: NEXT without FOR
@@ -1472,6 +1556,10 @@ void Commands::do_return(NeReLaBasic& vm) {
     // Restore the FOR loop stack to its state before the function call.
     if (vm.for_stack.size() > frame.for_stack_size_on_entry) {
         vm.for_stack.resize(frame.for_stack_size_on_entry);
+    }
+
+    if (vm.for_each_stack.size() > frame.for_each_stack_size_on_entry) {
+        vm.for_each_stack.resize(frame.for_each_stack_size_on_entry);
     }
 
     // --- UNIFIED CONTEXT RESTORE ---
