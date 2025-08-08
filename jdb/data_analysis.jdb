@@ -1,6 +1,7 @@
 ' --- CSV Data Analysis Program ---
 
 PRINT "Loading temperature data from temps.csv..."
+PWD
 ' Load the CSV file, skipping the header row.
 TEMP_DATA = CSVREADER("temps.csv", ",", TRUE)
 PRINT "Data loaded. Matrix is:"

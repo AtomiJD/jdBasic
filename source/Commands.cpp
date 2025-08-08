@@ -1091,7 +1091,11 @@ void Commands::do_else(NeReLaBasic& vm) {
 void Commands::do_for(NeReLaBasic& vm) {
     // FOR [variable] = [start_expr] TO [end_expr] STEP [step_expr]
 
-    // 1. Get the loop variable name.
+    // 1. --- Read the 2-byte jump address FIRST ---
+    uint16_t pcode_after_next;
+    memcpy(&pcode_after_next, &(*vm.active_p_code)[vm.pcode], sizeof(uint16_t));
+    vm.pcode += sizeof(uint16_t); // Advance the pointer past the address.
+
     Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     if (var_token != Tokens::ID::VARIANT && var_token != Tokens::ID::INT) {
         Error::set(1, vm.runtime_current_line); // Syntax Error
@@ -1109,21 +1113,14 @@ void Commands::do_for(NeReLaBasic& vm) {
     // 3. Evaluate the start expression and assign it.
     BasicValue start_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
-    set_variable(vm, var_name, start_val, true);
     // FOR always create a new local or global var!
-    //if (!current_task_call_stack.empty()) {
-    //    current_task_call_stack.back().local_variables[var_name] = start_val;
-    //}
-    //else {
-    //    vm.variables[var_name] = start_val;
-    //}
-    //vm.variables[var_name] = start_val;
+    set_variable(vm, var_name, start_val, true);
 
     // 4. The 'TO' keyword was skipped by the tokenizer. Evaluate the end expression.
     BasicValue end_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
 
-    // 5. --- THIS IS THE CORRECTED LOGIC FOR STEP ---
+    // 5. --- LOGIC FOR STEP ---
     double step_val = 1.0; // Default step is 1.
 
     // The TO and STEP keywords were skipped by the tokenizer.
@@ -1136,6 +1133,23 @@ void Commands::do_for(NeReLaBasic& vm) {
         step_val = to_double(step_expr_val);
     }
 
+    double d_start = to_double(start_val);
+    double d_end = to_double(end_val);
+
+    bool skip_loop = false;
+    if (step_val > 0 && d_start > d_end) {
+        skip_loop = true;
+    }
+    else if (step_val < 0 && d_start < d_end) {
+        skip_loop = true;
+    }
+
+    if (skip_loop) {
+        // Jump the p-code pointer to the address we read in step 1.
+        vm.pcode = pcode_after_next;
+        return;
+    }
+
     // 6. Push all the loop info onto the FOR stack.
     NeReLaBasic::ForLoopInfo loop_info;
     loop_info.variable_name = var_name;
@@ -1145,6 +1159,7 @@ void Commands::do_for(NeReLaBasic& vm) {
 
     vm.for_stack.push_back(loop_info);
 }
+
 void Commands::do_next(NeReLaBasic& vm) {
     // 1. Check if there is anything on the FOR stack.
     if (vm.for_stack.empty()) {

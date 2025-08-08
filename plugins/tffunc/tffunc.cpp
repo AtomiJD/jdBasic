@@ -295,7 +295,7 @@ void builtin_tf_new_session(NeReLaBasic& vm, const std::vector<BasicValue>& args
             TF_DeleteSession(static_cast<TF_Session*>(p), s);
             TF_DeleteStatus(s);
         }
-        };
+    };
 
     *out_result = std::make_shared<OpaqueHandle>(session, "TF_SESSION", deleter);
 }

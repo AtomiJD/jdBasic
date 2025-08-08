@@ -44,6 +44,7 @@ private:
     int cx = 0, cy = 0, top_row = 0;
     int visual_cx = 0;
     bool file_modified = false;
+    bool overwrite_mode = false;
     std::wstring last_search_query;
 
     void draw_screen();
@@ -55,6 +56,7 @@ private:
     std::wstring prompt(const std::wstring& msg);
 
     void clear_screen();
+    int calculate_visual_cx(int line_idx, int char_pos);
     void set_cursor(int row, int col);
     void write_status(const std::wstring& msg);
 
@@ -74,6 +76,21 @@ private:
         return strTo;
     }
 };
+
+int TextEditorWinImpl::calculate_visual_cx(int line_idx, int char_pos) {
+    if (line_idx >= lines_ref.size()) return 0;
+    int visual_pos = 0;
+    const std::string& line = lines_ref[line_idx];
+    for (int i = 0; i < char_pos; ++i) {
+        if (line[i] == '\t') {
+            visual_pos += 4 - (visual_pos % 4);
+        }
+        else {
+            visual_pos++;
+        }
+    }
+    return visual_pos;
+}
 
 void TextEditorWinImpl::run() {
     DWORD original_mode;
@@ -116,6 +133,36 @@ void TextEditorWinImpl::run() {
                 case VK_RIGHT: move_cursor(1, 0); break;
                 case VK_UP: move_cursor(0, -1); break;
                 case VK_DOWN: move_cursor(0, 1); break;
+                case VK_HOME: // Pos1 key
+                    cx = 0;
+                    break;
+                case VK_END: // End key
+                    cx = (int)lines_ref[cy].length();
+                    break;
+                case VK_PRIOR: // PageUp key
+                    cy = std::max(0, cy - screen_rows);
+                    top_row = std::max(0, top_row - screen_rows);
+                    break;
+                case VK_NEXT: // PageDown key
+                    cy = std::min((int)lines_ref.size() - 1, cy + screen_rows);
+                    top_row = std::min((int)lines_ref.size() - screen_rows, top_row + screen_rows);
+                    if (top_row < 0) top_row = 0;
+                    break;
+                case VK_INSERT: // Ins key
+                    overwrite_mode = !overwrite_mode;
+                    break;
+                case VK_DELETE: // Del key
+                    if (cx < lines_ref[cy].length()) {
+                        lines_ref[cy].erase(cx, 1);
+                        file_modified = true;
+                    }
+                    else if (cy < lines_ref.size() - 1) {
+                        // If at the end of the line, merge with the next line
+                        lines_ref[cy] += lines_ref[cy + 1];
+                        lines_ref.erase(lines_ref.begin() + cy + 1);
+                        file_modified = true;
+                    }
+                    break;
                 case VK_RETURN: {
                     std::string remain = lines_ref[cy].substr(cx);
                     std::string indent;
@@ -154,16 +201,27 @@ void TextEditorWinImpl::run() {
                     wchar_t ch = key.uChar.UnicodeChar;
                     if (iswprint(ch)) {
                         std::wstring wline = string_to_wstring(lines_ref[cy]);
-                        wline.insert(cx, 1, ch);
+                        if (overwrite_mode && cx < wline.length()) {
+                            // Overwrite mode: replace character
+                            wline[cx] = ch;
+                        }
+                        else {
+                            // Insert mode: insert character
+                            wline.insert(cx, 1, ch);
+                        }
                         lines_ref[cy] = wstring_to_string(wline);
                         cx++;
-                        visual_cx++;
                         file_modified = true;
                     }
                 }
                 }
             }
+            // Ensure cursor doesn't go past the end of the line after a move
+            if (cx > lines_ref[cy].length()) {
+                cx = (int)lines_ref[cy].length();
+            }
             draw_screen();
+            visual_cx = calculate_visual_cx(cy, cx);
             set_cursor(cy - top_row, visual_cx);
         }
     }
@@ -195,7 +253,7 @@ void TextEditorWinImpl::write_status(const std::wstring& msg) {
 }
 
 void TextEditorWinImpl::draw_line(const std::string& line, int row) {
-    visual_cx = 0;
+    //visual_cx = 0;
     std::wstring wline = string_to_wstring(line);
     std::vector<CHAR_INFO> buffer(screen_cols);
     COORD bufferSize = { (SHORT)screen_cols, 1 };
@@ -210,7 +268,7 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
             for (int s = 0; s < spaces && col < screen_cols; ++s, ++col) {
                 buffer[col].Char.UnicodeChar = L' ';
                 buffer[col].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
-                visual_cx++;
+                //visual_cx++;
             }
             ++i;
             continue;
@@ -219,21 +277,34 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
         WORD attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
 
         if (ch == L'"') {
-            size_t end = wline.find(L'"', i + 1);
-            if (end == std::wstring::npos) end = wline.size();
-            for (; i <= end && i < wline.size() && col < screen_cols; ++i, ++col) {
+            // This is the corrected block
+            const WORD string_attr = FOREGROUND_RED | FOREGROUND_GREEN;
+
+            // Color the opening quote
+            buffer[col].Char.UnicodeChar = wline[i];
+            buffer[col].Attributes = string_attr;
+            i++; col++;
+
+            // Loop until we find the closing quote or the end of the line
+            while (i < wline.size() && col < screen_cols) {
                 buffer[col].Char.UnicodeChar = wline[i];
-                buffer[col].Attributes = FOREGROUND_RED | FOREGROUND_INTENSITY;
-                visual_cx++;
+                buffer[col].Attributes = string_attr;
+
+                // If this character was the closing quote, break out
+                if (wline[i] == L'"') {
+                    i++; col++;
+                    break;
+                }
+                i++; col++;
             }
-            continue;
+            continue; // Continue the main parsing loop
         }
 
         if (ch == L'\'') {
             while (i < wline.size() && col < screen_cols) {
                 buffer[col].Char.UnicodeChar = wline[i++];
                 buffer[col++].Attributes = FOREGROUND_GREEN;
-                visual_cx++;
+                //visual_cx++;
             }
             break;
         }
@@ -244,7 +315,7 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
             for (size_t j = start; j < i && col < screen_cols; ++j, ++col) {
                 buffer[col].Char.UnicodeChar = wline[j];
                 buffer[col].Attributes = FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
-                visual_cx++;
+                //visual_cx++;
             }
             continue;
         }
@@ -259,7 +330,7 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
             for (size_t j = 0; j < word.length() && col < screen_cols; ++j, ++col) {
                 buffer[col].Char.UnicodeChar = word[j];
                 buffer[col].Attributes = kwAttr;
-                visual_cx++;
+                //visual_cx++;
             }
             continue;
         }
@@ -268,7 +339,7 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
         buffer[col].Attributes = attr;
         ++i;
         ++col;
-        visual_cx++;
+        //visual_cx++;
     }
 
     for (; col < screen_cols; ++col) {
@@ -295,6 +366,15 @@ void TextEditorWinImpl::draw_screen() {
     std::wstring status = L" " + string_to_wstring(filename);
     if (file_modified) status += L" *";
     status += L" | Line: " + std::to_wstring(cy + 1) + L" Col: " + std::to_wstring(cx + 1);
+
+    // Indicator for overwrite mode
+    if (overwrite_mode) {
+        status += L" | OVR";
+    }
+    else {
+        status += L" | INS";
+    }
+
     status += L" | ^S:Save ^F:Find ^G:GoTo ^X:Exit";
     write_status(status);
 }

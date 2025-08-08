@@ -128,7 +128,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <IntrinsicFunctions>false</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);  SDL3; HTTP; JDCOM; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT; </PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>

@@ -1,4 +1,4 @@
-' NeReLaBasic - 1D Finite Element Method Example
+' jdBasic - 1D Finite Element Method Example
 ' ------------------------------------------------
 ' This program calculates the displacement of nodes in a simple
 ' 1D bar system made of two elements, fixed at one end and with

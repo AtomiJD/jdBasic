@@ -1,5 +1,5 @@
 ' =================================================================
-' NeReLa Basic Program to Read Records from an Access Database
+' jdBasic Program to Read Records from an Access Database
 ' =================================================================
 
 ' --- IMPORTANT ---
@@ -25,7 +25,6 @@ conn_str = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + db_path
 
 ' 3. Open the connection to the database.
 '    This is like logging into the database file.
-stop
 conn.Open(conn_str)
 PRINT "Connection successful."
 

@@ -979,6 +979,12 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 compiler_for_stack.push_back({ lineNumber });
                 // Write the FOR token, the rest is handled by the expression parser at runtime.
                 out_p_code.push_back(static_cast<uint8_t>(token));
+                // --- Add placeholder for the skip-ahead address ---
+                // Store the address where the placeholder begins.
+                compiler_for_stack.back().next_statement_patch_address = out_p_code.size();
+                // Write two empty bytes. These will be patched by NEXT.
+                out_p_code.push_back(0); // Placeholder LSB
+                out_p_code.push_back(0); // Placeholder MSB
                 break;
             }
 
@@ -1003,6 +1009,18 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     return 1;
                 }
                 CompilerForLoopInfo& loop_info = compiler_for_stack.back();
+
+                // --- Patch the FOR statement's skip-ahead address ---
+                // The target address is the current end of the bytecode, which is
+                // right after where the NEXT instruction will be.
+                uint16_t jump_target_after_next = out_p_code.size() + 1; // +1 for the NEXT token itself
+
+                // Use the stored address to patch the placeholder written by FOR.
+                uint16_t patch_addr = loop_info.next_statement_patch_address;
+                if (patch_addr != 0) {
+                    out_p_code[patch_addr] = jump_target_after_next & 0xFF;
+                    out_p_code[patch_addr + 1] = (jump_target_after_next >> 8) & 0xFF;
+                }
 
                 // First, write the NEXT token to the bytecode.
                 out_p_code.push_back(static_cast<uint8_t>(token));

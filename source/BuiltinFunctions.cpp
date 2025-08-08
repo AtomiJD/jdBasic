@@ -5378,6 +5378,73 @@ BasicValue builtin_loadws(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false; // It's a procedure
 }
 
+// NEW
+// Empties the source code, compiled p-code, and user-defined function tables.
+BasicValue builtin_new(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "NEW does not accept arguments.");
+        return false;
+    }
+
+    // 1. Clear source code from memory
+    vm.source_lines.clear();
+
+    // 2. Clear the compiled bytecode for the main program
+    vm.program_p_code.clear();
+
+    // 3. Clear all user-defined types (UDTs)
+    vm.user_defined_types.clear();
+
+    // 4. Remove all user-defined functions from the main function table,
+    //    but keep the built-in C++ functions.
+    for (auto it = vm.main_function_table.begin(); it != vm.main_function_table.end(); ) {
+        // A user-defined function has neither a native C++ implementation
+        // nor a native DLL implementation.
+        if (it->second.native_impl == nullptr && it->second.native_dll_impl == nullptr) {
+            it = vm.main_function_table.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+
+    return false; // This is a procedure
+}
+
+// CLEARWS
+// Empties source code, p-code, and all global variables.
+BasicValue builtin_clearws(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "CLEARWS does not accept arguments.");
+        return false;
+    }
+
+    // 1. Clear source code
+    vm.source_lines.clear();
+
+    // 2. Clear compiled p-code
+    vm.program_p_code.clear();
+
+    // 3. Clear all user-defined types (UDTs)
+    vm.user_defined_types.clear();
+
+    // 4. Remove user-defined functions (same as NEW)
+    for (auto it = vm.main_function_table.begin(); it != vm.main_function_table.end(); ) {
+        if (it->second.native_impl == nullptr && it->second.native_dll_impl == nullptr) {
+            it = vm.main_function_table.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+
+    // 5. Clear all global variables
+    vm.variables.clear();
+
+    TextIO::print("Workspace cleared.\n");
+    return false; // This is a procedure
+}
+
 // --- Filesystem ---
 // 
 // // DIR$(wildcard$) -> array
@@ -6496,6 +6563,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("GETENV$", 1, builtin_getenv_str);
     register_proc("SAVEWS", 1, builtin_savews);
     register_proc("LOADWS", 1, builtin_loadws);
+    register_proc("CLEARWS", 0, builtin_clearws);
+    register_proc("NEW", 0, builtin_new);
 
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
     register_func("DIR$", 1, builtin_dir_str);

@@ -178,7 +178,6 @@ PRINT "Drawing results..."
 SCREEN 1920, 1080, "Procedural Generation Test"
 CLS 20, 20, 40
 
-
 L = LEN(path)[0] 
 X1 = 50 : Y1 = 15 : Z = 15
 

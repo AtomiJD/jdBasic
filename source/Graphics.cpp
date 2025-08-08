@@ -34,6 +34,8 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
         return false;
     }
 
+    SDL_RaiseWindow(window);           // 1. Brings the window to the front.
+
     if (scale <= 0.0f) { scale = 1.0f; } // Prevent invalid scale values
     SDL_SetRenderScale(renderer, scale, scale);
     

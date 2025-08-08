@@ -213,7 +213,6 @@ std::wstring string_to_wstring(const std::string& str) {
 // --- Implementation for loading a dynamic module ---
 bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     std::string full_path = module_path;
-    
 
     // --- Define the new registration function pointer type ---
     using RegisterModuleWithServicesFunc = void(*)(NeReLaBasic*, ModuleServices*);
@@ -336,8 +335,6 @@ void NeReLaBasic::process_system_events() {
     if (!nopause_active && TextIO::kbhit()) {
         char key = getch();
 #endif
-
-
         auto key_data = std::make_shared<Map>();
         key_data->data["key"] = std::string(1, key);
 

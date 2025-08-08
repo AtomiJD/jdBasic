@@ -41,6 +41,7 @@ public:
     // For FOR...NEXT loops
     struct CompilerForLoopInfo {
         uint16_t source_line;
+        uint16_t next_statement_patch_address = 0;
         std::vector<uint16_t> exit_patch_locations;
     };
     std::vector<CompilerForLoopInfo> compiler_for_stack;

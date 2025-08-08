@@ -10,6 +10,7 @@
             "name": "jdBasic Release Version",
             "program": "${file}",
             "runtime": "D:/usr/dev/c/jdbasic/x64/release/jdBASIC.exe",
+            "cwd": "${workspaceFolder}",
             "stopOnEntry": true
         },
         {
@@ -18,6 +19,7 @@
             "name": "jdBasic Debug Version",
             "program": "${file}",
             "runtime": "D:/usr/dev/c/jdbasic/x64/debug/jdBASIC.exe",
+            "cwd": "${workspaceFolder}",
             "stopOnEntry": true
         },
 		{
@@ -27,8 +29,8 @@
             "program": "${file}",
             "runtime": "D:/usr/dev/c/jdbasic/x64/release/jdBASIC.exe", 
             "stopOnEntry": true,
-            "console": "integratedTerminal" 
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"  
         }
-
     ]
 }
