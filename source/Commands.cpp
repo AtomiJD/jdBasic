@@ -1876,60 +1876,7 @@ void Commands::do_pop_handler(NeReLaBasic& vm) {
 }
 
 
-//void Commands::do_resume(NeReLaBasic& vm) {
-//    if (!vm.current_task || !vm.current_task->error_handler_active || !vm.is_processing_event) {
-//        Error::set(1, vm.runtime_current_line, "RESUME without an active error handler.");
-//        return;
-//    }
-//
-//    Error::clear(); // Clear any error state from within the handler.
-//
-//    NeReLaBasic::Task* task = vm.current_task;
-//    vm.is_processing_event = false; // We are now leaving the error handler
-//
-//    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-//
-//    if (next_token == Tokens::ID::NEXT) {
-//        vm.pcode++; // Consume NEXT token
-//
-//        // Restore the full execution context to the state before the error.
-//        vm.call_stack = task->resume_call_stack_snapshot;
-//        vm.for_stack = task->resume_for_stack_snapshot;
-//        vm.active_p_code = task->resume_p_code_ptr;
-//        vm.active_function_table = task->resume_function_table_ptr;
-//
-//        // Jump to the statement AFTER the one that caused the error.
-//        vm.pcode = task->resume_pcode_next_statement;
-//        // The line number will be updated when the pcode is processed by the main loop
-//
-//    }
-//    else if (next_token == Tokens::ID::STRING) { // RESUME "LABEL"
-//        vm.pcode++; // Consume STRING token
-//        std::string target_label = read_string(vm);
-//        if (vm.compiler->label_addresses.count(target_label)) {
-//            // A GOTO-style resume aborts the old execution path.
-//            // Clear the stacks before jumping.
-//            vm.call_stack.clear();
-//            vm.for_stack.clear();
-//            vm.pcode = vm.compiler->label_addresses[target_label];
-//        }
-//        else {
-//            Error::set(11, vm.runtime_current_line, "Undefined label in RESUME.");
-//        }
-//    }
-//    else {
-//        // Simple RESUME (or RESUME 0) - re-execute the failing line.
-//
-//        // Restore context
-//        vm.call_stack = task->resume_call_stack_snapshot;
-//        vm.for_stack = task->resume_for_stack_snapshot;
-//        vm.active_p_code = task->resume_p_code_ptr;
-//        vm.active_function_table = task->resume_function_table_ptr;
-//
-//        // Jump back to the start of the statement that caused the error.
-//        vm.pcode = task->resume_pcode;
-//    }
-//}
+
 
 void Commands::do_on(NeReLaBasic& vm) {
     std::string event_name = to_upper(read_string(vm));

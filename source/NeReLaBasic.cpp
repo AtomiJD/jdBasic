@@ -144,7 +144,11 @@ std::pair<BasicValue, std::string> NeReLaBasic::resolve_dot_chain(const std::str
 }
 
 // Constructor: Initializes the interpreter state
-NeReLaBasic::NeReLaBasic()  { 
+#ifdef HTTP
+NeReLaBasic::NeReLaBasic() : network_manager(*this) {
+#else
+NeReLaBasic::NeReLaBasic() {
+#endif
     buffer.reserve(64);
     lineinput.reserve(160);
     filename.reserve(40);
@@ -313,6 +317,85 @@ void NeReLaBasic::init_basic() {
     //TextIO::print("Ready\n");
 }
 
+#ifdef HTTP
+// --- Implementation of server event methods ---
+
+void NeReLaBasic::queue_http_request(std::shared_ptr<ServerRequestEvent> request) {
+    std::lock_guard<std::mutex> lock(http_queue_mutex);
+    http_request_queue.push_back(request);
+}
+
+void NeReLaBasic::process_http_requests() {
+    std::shared_ptr<ServerRequestEvent> request;
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(http_queue_mutex);
+            if (http_request_queue.empty()) {
+                break;
+            }
+            request = http_request_queue.front();
+            http_request_queue.pop_front();
+        }
+
+        if (request) {
+            std::string handler_function_name = network_manager.getRouteHandler(request->method, request->path);
+            auto it = main_function_table.find(to_upper(handler_function_name));
+
+            if (!handler_function_name.empty() && it != main_function_table.end()) {
+                // ... (code to create the request_map is unchanged)
+                auto request_map = std::make_shared<Map>();
+                request_map->data["path"] = request->path;
+                request_map->data["method"] = request->method;
+                request_map->data["body"] = request->body;
+                auto headers_map = std::make_shared<Map>();
+                for (const auto& header : request->headers) {
+                    headers_map->data[header.first] = header.second;
+                }
+                request_map->data["headers"] = headers_map;
+
+                std::vector<BasicValue> args = { request_map };
+                BasicValue result = execute_synchronous_function(it->second, args);
+
+
+
+                // --- RESPONSE HANDLING ---
+                // Write the result directly into the event struct's response fields
+                if (const auto& map_ptr = std::get_if<std::shared_ptr<Map>>(&result)) {
+                    // Check for the advanced response format: map with "body" and "content_type"
+                    if ((*map_ptr)->data.count("body") && (*map_ptr)->data.count("content_type")) {
+                        request->response_body = to_string((*map_ptr)->data["body"]);
+                        request->content_type = to_string((*map_ptr)->data["content_type"]);
+                    }
+                    else {
+                        // Fallback: treat the whole map as a JSON body
+                        nlohmann::json j = basic_to_json_value(result);
+                        request->response_body = j.dump();
+                        request->content_type = "application/json";
+                    }
+                }
+                else {
+                    // **THE FIX**: If the result is a simple string, assume it's HTML.
+                    request->response_body = to_string(result);
+                    request->content_type = "text/html"; // Changed from "text/plain"
+                }
+                request->status_code = 200; // OK
+            }
+            else {
+                request->status_code = 500; // Internal Server Error
+                request->response_body = "Handler function '" + handler_function_name + "' not found in BASIC code.";
+            }
+
+            // Notify the waiting server thread that the request has been handled
+            {
+                std::lock_guard<std::mutex> lock(*request->mtx);
+                request->handled = true;
+            }
+            request->cv->notify_one();
+        }
+    }
+}
+#endif
+
 void NeReLaBasic::process_system_events() {
     // 1. Process the internal event queue (for events raised by RAISEEVENT)
     
@@ -323,6 +406,10 @@ void NeReLaBasic::process_system_events() {
         // Not enough time has passed, so skip the keyboard check for this loop iteration.
         return;
     }
+    //Lets try to make the HTTP request not in every event loop
+#ifdef HTTP
+    process_http_requests();
+#endif
 
     // --- It's time to check the keyboard; reset the timer for the next interval ---
     last_keyboard_check_time = current_time;
@@ -824,6 +911,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 
     while (!task_queue.empty()) {
         process_system_events();
+
         if (program_ended) {
             break;
         }
@@ -972,6 +1060,9 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 #ifdef SDL3
     graphics_system.shutdown();
     sound_system.shutdown();
+#endif
+#ifdef HTTP
+    network_manager.stopServer();
 #endif
     current_task = nullptr;
 }
@@ -1202,6 +1293,7 @@ void NeReLaBasic::statement() {
  * @param other The original NeReLaBasic instance to clone.
  */
 NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
+    network_manager(*this),
     // --- 1. Copy Program Definition Data ---
     // These members define the program itself and are safe to copy. They are read-only
     // during execution in the new thread.

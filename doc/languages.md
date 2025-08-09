@@ -231,6 +231,7 @@ print apply(dec@,12) ' Should return 11
 * **`GOTO label`**: Jumps execution to a `label:`.
 * **`IF condition THEN ... [ELSE ...] ENDIF`**: Conditional execution block. Single-line `IF condition THEN statement` is also supported.
 * **`FOR ... TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
+* **`FOR EACH variable IN collection`**: This command provides a simple way to iterate over every element in a collection, such as an Array or a Map.
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`OPTION option$`**: Sets a VM option. `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
@@ -253,6 +254,8 @@ print apply(dec@,12) ' Should return 11
 * **`TRON` / `TROFF`**: Turns instruction tracing on or off.
 * **`LOADWS "workspacename"`**: Loads a source file and all variables of an saved workspace from disk into memory.
 * **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
+* **`CLEARWS "workspacename"`**: Empties source code, p-code, and all global variables
+* **`NEW"`**: Empties the source code, compiled p-code, and user-defined function tables.
 
 ### Filesystem
 
@@ -391,6 +394,76 @@ ENDTRY
 * **`HTTP.SETHEADER(name$, value$)`**: Sets a custom header for subsequent HTTP requests.
 * **`HTTP.CLEARHEADERS()`**: Clears all custom HTTP headers.
 * **`HTTP.STATUSCODE()`**: Returns the HTTP status code from the last request.
+* **`HTTP.SERVER.START(port)`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success.
+* **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
+* **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.
+* **`HTTP.SERVER.ON_POST(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
+
+### Building a Web Server & API
+
+The built-in HTTP server allows `jdBasic` to serve websites and create simple JSON APIs. The server runs in the background, handling requests by calling user-defined `jdBasic` functions.
+
+Handler functions receive one argument: a `Map` containing details about the incoming request (e.g., path, headers, body). The `RETURN` value of the function is sent back to the client as the response.
+
+  * If the function returns a `Map`, it is automatically converted to a JSON string with `Content-Type: application/json`.
+  * If the function returns a `String`, it is sent with `Content-Type: text/html`.
+
+<!-- end list -->
+
+```basic
+' --- Web Server and API Example ---
+ExitMe = FALSE
+
+SUB HandleKeys(data)
+    ExitMe = TRUE
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKeys
+' Handler for the main web page at "/"
+FUNC HandleWebsite(request)
+    ' Build an HTML string to return as the website
+    html$ = "<!DOCTYPE html><html><head><title>My jdBasic Site</title></head>"
+    html$ = html$ + "<body><h1>Welcome!</h1><p>This page is served by jdBasic.</p>"
+    html$ = html$ + "</body></html>"
+
+    ' Return the HTML string. The server will send it with Content-Type: text/html.
+    RETURN html$
+ENDFUNC
+
+' Handler for a JSON API endpoint at "/api/info"
+FUNC HandleApi(request)
+    ' Create a response map
+    response_map = {
+        "server_time": NOW(),
+        "status": "ok",
+        "request_path": request{"path"}
+    }
+    
+    ' Return the map. The server will convert it to a JSON string.
+    RETURN response_map
+ENDFUNC
+
+' --- Main Program ---
+PRINT "Setting up HTTP server..."
+
+HTTP.SERVER.ON_GET "/", "HandleWebsite"
+HTTP.SERVER.ON_POST "/api/info", "HandleApi"
+
+IF HTTP.SERVER.START(8080) THEN
+    PRINT "Server is running at http://localhost:8080"
+    PRINT "Press any key to stop."
+    
+    ' Loop to keep the main program alive while the server runs in the background
+    DO
+        SLEEP 100
+    LOOP UNTIL ExitMe = TRUE
+ELSE
+    PRINT "Error starting server: "; ERRMSG$
+ENDIF
+
+PRINT "Shutting down server..."
+HTTP.SERVER.STOP
+```
 
 ### Graphics and Multimedia Functions
 

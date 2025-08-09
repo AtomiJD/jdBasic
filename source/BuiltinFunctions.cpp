@@ -6089,6 +6089,58 @@ BasicValue builtin_httpput(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     return response_body;
 }
 
+// HTTP.SERVER.START port
+BasicValue builtin_http_server_start(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "HTTP.SERVER.START requires 1 argument: port");
+        return false;
+    }
+    int port = static_cast<int>(to_double(args[0]));
+    if (port <= 0 || port > 65535) {
+        Error::set(1, vm.runtime_current_line, "Invalid port number.");
+        return false;
+    }
+    if (!vm.network_manager.startServer(port)) {
+        Error::set(1004, vm.runtime_current_line, "Failed to start HTTP server."); // New error code
+        return false;
+    }
+    return true;
+}
+
+// HTTP.SERVER.STOP
+BasicValue builtin_http_server_stop(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "HTTP.SERVER.STOP takes no arguments.");
+        return false;
+    }
+    vm.network_manager.stopServer();
+    return false;
+}
+
+// HTTP.SERVER.ON_GET path$, function_name$
+BasicValue builtin_http_server_on_get(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "HTTP.SERVER.ON_GET requires 2 string arguments: path, function_name");
+        return false;
+    }
+    std::string path = to_string(args[0]);
+    std::string func_name = to_upper(to_string(args[1]));
+    vm.network_manager.registerServerRoute("GET", path, func_name);
+    return false;
+}
+
+// HTTP.SERVER.ON_POST path$, function_name$
+BasicValue builtin_http_server_on_post(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "HTTP.SERVER.ON_POST requires 2 string arguments: path, function_name");
+        return false;
+    }
+    std::string path = to_string(args[0]);
+    std::string func_name = to_upper(to_string(args[1]));
+    vm.network_manager.registerServerRoute("POST", path, func_name);
+    return false;
+}
+
 
 #endif
 
@@ -6543,6 +6595,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("HTTP.POST$", 3, builtin_httppost);
     register_func("HTTP.POST_ASYNC", 3, builtin_http_post_async);
     register_func("HTTP.PUT$", 3, builtin_httpput);
+    register_func("HTTP.SERVER.START", 1, builtin_http_server_start);
+    register_proc("HTTP.SERVER.STOP", 0, builtin_http_server_stop);
+    register_proc("HTTP.SERVER.ON_GET", 2, builtin_http_server_on_get);
+    register_proc("HTTP.SERVER.ON_POST", 2, builtin_http_server_on_post);
 #endif
 
     register_func("JSON.PARSE$", 1, builtin_json_parse);

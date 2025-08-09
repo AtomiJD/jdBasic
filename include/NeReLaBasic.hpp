@@ -30,7 +30,10 @@
 
 
 // Forward declarations
+#ifdef HTTP
 class NetworkManager;
+struct ServerRequestEvent; 
+#endif
 class DAPHandler;
 class Compiler;
 
@@ -268,6 +271,9 @@ public:
 
 #ifdef HTTP
     NetworkManager network_manager;
+    // --- Server Event Handling ---
+    std::deque<std::shared_ptr<ServerRequestEvent>> http_request_queue;
+    std::mutex http_queue_mutex;
 #endif
 
     // --- Error Handling State ---
@@ -375,6 +381,10 @@ public:
     void init_system();
     void init_screen();
 
+#ifdef HTTP
+    void queue_http_request(std::shared_ptr<ServerRequestEvent> request);
+    void process_http_requests();
+#endif 
 private:
 
 };

@@ -2,16 +2,22 @@
 //#define CPPHTTPLIB_OPENSSL_SUPPORT
 #ifdef HTTP
 #include "NetworkManager.hpp"
-#include "Error.hpp" // For setting BASIC errors
-#include <iostream>  // For debugging output
+#include "Error.hpp"
+#include <iostream>
+#include <chrono>
 
-NetworkManager::NetworkManager() : last_http_status_code(0) {
+// --- FIX: Include the full header for NeReLaBasic here ---
+#include "NeReLaBasic.hpp" 
+#include "Types.hpp" 
+
+NetworkManager::NetworkManager(NeReLaBasic& vm) : vm_ref(vm), last_http_status_code(0) {
     // You might want to do some global initialization here if httplib needed it,
     // but for basic usage, it often doesn't.
 }
 
 NetworkManager::~NetworkManager() {
     // Clean up any persistent resources if necessary
+    stopServer();
 }
 
 namespace { // Keep this helper private to this file
@@ -92,6 +98,15 @@ namespace { // Keep this helper private to this file
     }
 } // end anonymous namespace
 
+std::string NetworkManager::getRouteHandler(const std::string& method, const std::string& path) {
+    std::lock_guard<std::mutex> lock(route_mutex);
+    const auto& route_map = (method == "GET") ? get_routes : post_routes;
+    auto it = route_map.find(path);
+    if (it != route_map.end()) {
+        return it->second;
+    }
+    return "";
+}
 
 std::string NetworkManager::httpGet(const std::string& url_str) {
     last_http_status_code = 0; // Reset status
@@ -221,6 +236,109 @@ std::string NetworkManager::httpPost(const std::string& url, const std::string& 
 
 std::string NetworkManager::httpPut(const std::string& url, const std::string& body, const std::string& content_type) {
     return httpPostOrPut("PUT", url, body, content_type, custom_headers, last_http_status_code);
+}
+
+// --- Generic Request Handler ---
+// This function is called by the httplib server thread.
+// It creates an event and pushes it onto the VM's queue.
+void NetworkManager::queue_request_for_vm(const httplib::Request& req, httplib::Response& res) {
+    std::string handler_function_name = getRouteHandler(req.method, req.path);
+    if (handler_function_name.empty()) {
+        res.status = 404;
+        res.set_content("Not Found: No handler registered for " + req.path, "text/plain");
+        return;
+    }
+
+    // Create the simplified event and synchronization tools
+    auto event = std::make_shared<ServerRequestEvent>();
+    event->method = req.method;
+    event->path = req.path;
+    event->body = req.body;
+    event->headers = req.headers;
+    event->cv = std::make_shared<std::condition_variable>();
+    event->mtx = std::make_shared<std::mutex>();
+
+    // Queue the event for the main VM thread to process
+    vm_ref.queue_http_request(event);
+
+    // Wait for the main thread to handle the request and fill in the response fields
+    std::unique_lock<std::mutex> lock(*event->mtx);
+    if (!event->cv->wait_for(lock, std::chrono::seconds(10), [&event] { return event->handled; })) {
+        // If the handler in BASIC takes too long, send a timeout response
+        res.status = 504; // Gateway Timeout
+        res.set_content("Request timed out in BASIC script.", "text/plain");
+        return;
+    }
+
+    // --- Build the final response from the data the main thread provided ---
+    res.status = event->status_code;
+    res.set_content(event->response_body, event->content_type.c_str());
+}
+
+// --- Server Management Methods ---
+bool NetworkManager::startServer(int port) {
+    if (http_server) {
+        std::cerr << "Server is already running." << std::endl;
+        return false;
+    }
+    try {
+        http_server = std::make_unique<httplib::Server>();
+        setup_server_routes(); // Setup generic handlers
+
+        server_thread = std::make_unique<std::thread>([this, port]() {
+            std::cout << "HTTP Server starting on port " << port << "..." << std::endl;
+            if (!http_server->listen("0.0.0.0", port)) {
+                std::cerr << "Failed to start HTTP server." << std::endl;
+                // Consider a mechanism to report this failure back to the main thread
+            }
+            });
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception while starting server: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void NetworkManager::stopServer() {
+    if (http_server) {
+        http_server->stop();
+        if (server_thread && server_thread->joinable()) {
+            server_thread->join();
+        }
+        http_server.reset();
+        server_thread.reset();
+        std::cout << "HTTP Server stopped." << std::endl;
+    }
+}
+
+void NetworkManager::registerServerRoute(const std::string& method, const std::string& path, const std::string& function_name) {
+    std::lock_guard<std::mutex> lock(route_mutex);
+    if (method == "GET") {
+        get_routes[path] = function_name;
+    }
+    else if (method == "POST") {
+        post_routes[path] = function_name;
+    }
+}
+
+bool NetworkManager::isServerRunning() const {
+    return http_server && http_server->is_running();
+}
+
+
+void NetworkManager::setup_server_routes() {
+    if (!http_server) return;
+
+    // Generic handler for all GET requests
+    http_server->Get(R"(/.*)", [this](const httplib::Request& req, httplib::Response& res) {
+        this->queue_request_for_vm(req, res);
+        });
+
+    // Generic handler for all POST requests
+    http_server->Post(R"(/.*)", [this](const httplib::Request& req, httplib::Response& res) {
+        this->queue_request_for_vm(req, res);
+        });
 }
 
 #endif
