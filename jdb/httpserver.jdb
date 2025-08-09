@@ -1,0 +1,92 @@
+' Simple Web Server Example in jdBasic
+' Corrected according to the official language reference.
+
+' Define the function to handle GET requests to the root path "/"
+' It accepts one argument: a Map containing request details.
+
+ExitMe = FALSE
+
+SUB HandleKeys(data)
+    ExitMe = TRUE
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKeys
+
+FUNC HandleRoot(request)
+    ' Create a response map using literal syntax
+    ' print typeof(request), request
+    ' response = {"message": "Hello from jdBasic!", "timestamp": NOW(), "path": request{"path"}, "handler": "HandleRoot"  }
+
+    ' ' Return the map. The HTTP server will automatically convert it to a JSON string.
+    ' RETURN response
+
+    PRINT "Request for root page received. Sending HTML response."
+
+    ' Build the HTML content using string concatenation
+    html$ = "<!DOCTYPE html>"
+    html$ = html$ + "<html>"
+    html$ = html$ + "<head>"
+    html$ = html$ + "  <title>jdBasic Web Server</title>"
+    html$ = html$ + "  <style>"
+    html$ = html$ + "    body { font-family: sans-serif; background-color: #f0f0f0; color: #333; }"
+    html$ = html$ + "    .container { max-width: 800px; margin: 40px auto; padding: 20px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }"
+    html$ = html$ + "    h1 { color: #00599c; }"
+    html$ = html$ + "  </style>"
+    html$ = html$ + "</head>"
+    html$ = html$ + "<body>"
+    html$ = html$ + "  <div class='container'>"
+    html$ = html$ + "    <h1>Hello from a jdBasic Website!</h1>"
+    html$ = html$ + "    <p>This page was generated and served entirely by jdBasic.</p>"
+    html$ = html$ + "    <p>The current server time is: " + NOW() + "</p>"
+    html$ = html$ + "  </div>"
+    html$ = html$ + "</body>"
+    html$ = html$ + "</html>"
+
+    RETURN html$
+ENDFUNC
+
+' Define the function to handle POST requests to "/data"
+FUNC HandleData(request)
+    ' The request body is passed as a string.
+    ' Use the built-in JSON parser to convert it into a navigable object.
+    print typeof(request), request
+    posted_data = JSON.PARSE$(request{"body"})
+    
+    ' Create a response map to echo the received data
+    response = { "status": "success", "data_received": posted_data  }
+    
+    RETURN response
+ENDFUNC
+
+' --- Main Program ---
+PRINT "Setting up HTTP server..."
+
+' Register the handler functions for specific routes.
+' The second argument is a string containing the exact function name.
+HTTP.SERVER.ON_GET "/", "HandleRoot"
+HTTP.SERVER.ON_POST "/data", "HandleData"
+
+' Start the server on port 8080
+IF HTTP.SERVER.START(8080) THEN
+    PRINT "Server is running at http://localhost:8080"
+    PRINT "  GET http://localhost:8080/"
+    PRINT "  POST http://localhost:8080/data"
+    PRINT
+    PRINT "Press any key in the console window to stop the server."
+    
+    ' The server runs in the background. The main program must not exit.
+    ' This loop keeps the program alive and responsive to a shutdown key.
+    DO
+        SLEEP 100 ' Idle for 100ms to prevent high CPU usage
+    LOOP UNTIL ExitMe = TRUE ' Exit when any key is pressed
+    
+ELSE
+    PRINT "Error: Could not start server."
+    PRINT "Error Code: "; ERR
+    PRINT "Description: "; ERRMSG$
+ENDIF
+
+PRINT
+PRINT "Shutting down server..."
+HTTP.SERVER.STOP
+PRINT "Server stopped."

@@ -254,7 +254,7 @@ print apply(dec@,12) ' Should return 11
 * **`TRON` / `TROFF`**: Turns instruction tracing on or off.
 * **`LOADWS "workspacename"`**: Loads a source file and all variables of an saved workspace from disk into memory.
 * **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
-* **`CLEARWS "workspacename"`**: Empties source code, p-code, and all global variables
+* **`CLEARWS`**: Empties source code, p-code, and all global variables
 * **`NEW"`**: Empties the source code, compiled p-code, and user-defined function tables.
 
 ### Filesystem

@@ -80,24 +80,73 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
 
     // Handle Comments
     if (currentChar == '\'') {
-        vm.prgptr = vm.lineinput.length(); // Skip to end of line
-        return parse(vm, is_start_of_statement); // Call parse again to get the NOCMD token
+        //vm.prgptr = vm.lineinput.length(); // Skip to end of line
+        //return parse(vm, is_start_of_statement); // Call parse again to get the NOCMD token
+        size_t end_of_line = vm.lineinput.find('\n', vm.prgptr);
+        if (end_of_line != std::string::npos) {
+            vm.prgptr = end_of_line; // Skip to the newline character.
+        }
+        else {
+            vm.prgptr = vm.lineinput.length(); // If no newline (last line), skip to the end.
+        }
+        return parse(vm, is_start_of_statement); // Re-call to process what's after the comment.
     }
 
     // Handle String Literals (including "")
+    //if (currentChar == '"') {
+    //    vm.prgptr++; // Consume opening "
+    //    size_t string_start_pos = vm.prgptr;
+    //    while (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] != '"') {
+    //        vm.prgptr++;
+    //    }
+    //    if (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] == '"') {
+    //        vm.buffer = vm.lineinput.substr(string_start_pos, vm.prgptr - string_start_pos);
+    //        vm.prgptr++; // Consume closing "
+    //        return Tokens::ID::STRING;
+    //    }
+    //    else {
+    //        Error::set(1, vm.runtime_current_line, "Unterminated string"); // Unterminated string
+    //        return Tokens::ID::NOCMD;
+    //    }
+    //}
+
     if (currentChar == '"') {
         vm.prgptr++; // Consume opening "
         size_t string_start_pos = vm.prgptr;
-        while (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] != '"') {
+
+        while (vm.prgptr < vm.lineinput.length()) {
+            if (vm.lineinput[vm.prgptr] == '"') {
+                // Look ahead to see if it's a doubled quote
+                if (vm.prgptr + 1 < vm.lineinput.length() && vm.lineinput[vm.prgptr + 1] == '"') {
+                    // It's a doubled quote, so treat it as a single literal quote.
+                    // Skip both quotes to continue the search.
+                    vm.prgptr += 2;
+                    continue;
+                }
+                // It's a single, terminating quote.
+                break;
+            }
             vm.prgptr++;
         }
+
         if (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] == '"') {
-            vm.buffer = vm.lineinput.substr(string_start_pos, vm.prgptr - string_start_pos);
-            vm.prgptr++; // Consume closing "
+            // The substring from the source might contain "" pairs. We need to un-escape them.
+            std::string raw_substr = vm.lineinput.substr(string_start_pos, vm.prgptr - string_start_pos);
+            vm.buffer.clear();
+            for (size_t i = 0; i < raw_substr.length(); ++i) {
+                if (raw_substr[i] == '"' && i + 1 < raw_substr.length() && raw_substr[i + 1] == '"') {
+                    vm.buffer += '"'; // Add a single quote to the final buffer
+                    i++; // Skip the second quote of the pair
+                }
+                else {
+                    vm.buffer += raw_substr[i];
+                }
+            }
+            vm.prgptr++; // Consume the final closing "
             return Tokens::ID::STRING;
         }
         else {
-            Error::set(1, vm.runtime_current_line, "Unterminated string"); // Unterminated string
+            Error::set(1, vm.runtime_current_line, "Unterminated string");
             return Tokens::ID::NOCMD;
         }
     }
@@ -179,10 +228,6 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
         vm.buffer = vm.lineinput.substr(ident_start_pos, vm.prgptr - ident_start_pos);
         vm.buffer = StringUtils::to_upper(vm.buffer);
-
-        //if (vm.buffer == "IN") {
-        //    return Tokens::ID::IN_OPERATOR;
-        //}
 
         if (vm.builtin_constants.count(vm.buffer)) {
             return Tokens::ID::CONSTANT;
@@ -1583,24 +1628,96 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
         }
     }
     // 7. Main compilation loop
-    std::stringstream source_stream(source);
-    vm.current_source_line = 1;
+    //std::stringstream source_stream(source);
+    //vm.current_source_line = 1;
     bool skipping_type_block = false;
 
+    // MULTI-LINE logic
+    std::stringstream source_stream(source);
+    vm.current_source_line = 0;
+    std::string logical_line_buffer;
+    uint16_t logical_line_start_number = 0;
     int multiline = false;
+
     bool in_type_definition_block = false;
     this->in_method_block = false;
 
     while (std::getline(source_stream, line)) {
-        // Prepare to inspect the line
-        std::string trimmed_line = line;
-        StringUtils::trim(trimmed_line);
-        if (trimmed_line.empty() || trimmed_line[0] == '\'') {
-            vm.current_source_line++;
+        //// Prepare to inspect the line
+        //std::string trimmed_line = line;
+        //StringUtils::trim(trimmed_line);
+        //if (trimmed_line.empty() || trimmed_line[0] == '\'') {
+        //    vm.current_source_line++;
+        //    continue;
+        //}
+        //std::string first_word = trimmed_line.substr(0, trimmed_line.find(' '));
+        //first_word = StringUtils::to_upper(first_word);
+
+        vm.current_source_line++;
+
+        if (logical_line_buffer.empty()) {
+            logical_line_start_number = vm.current_source_line;
+        }
+        logical_line_buffer += line + "\n";
+
+        // Check for balanced brackets/braces to see if we should tokenize yet.
+        // This check correctly ignores brackets inside strings and comments.
+        int brace_level = 0;
+        int bracket_level = 0;
+        //bool in_string = false;
+        //bool in_comment_on_line = false;
+
+        size_t i = 0;
+        while (i < logical_line_buffer.length()) {
+            char c = logical_line_buffer[i];
+
+            if (c == '\'') {
+                while (i < logical_line_buffer.length() && logical_line_buffer[i] != '\n') {
+                    i++;
+                }
+                continue;
+            }
+
+            if (c == '"') {
+                i++;
+                while (i < logical_line_buffer.length()) {
+                    if (logical_line_buffer[i] == '"') {
+                        if (i + 1 < logical_line_buffer.length() && logical_line_buffer[i + 1] == '"') {
+                            i++;
+                        }
+                        else {
+                            break;
+                        }
+                    }
+                    i++;
+                }
+            }
+            else {
+                if (c == '{') brace_level++;
+                else if (c == '}') brace_level--;
+                else if (c == '[') bracket_level++;
+                else if (c == ']') bracket_level--;
+            }
+            i++;
+        }
+
+        // If levels are not zero, we need more lines.
+        if (brace_level > 0 || bracket_level > 0) {
+            continue; // Go to the next iteration to get more lines.
+        }
+
+        // --- If we reach here, the buffer is balanced and ready for tokenization ---
+
+        // The logic for skipping TYPE blocks etc. is applied to the whole logical line.
+        std::string trimmed_logical_line = logical_line_buffer;
+        StringUtils::trim(trimmed_logical_line);
+        if (trimmed_logical_line.empty() || trimmed_logical_line[0] == '\'') {
+            logical_line_buffer.clear(); // It was just comments or whitespace, reset.
             continue;
         }
-        std::string first_word = trimmed_line.substr(0, trimmed_line.find(' '));
+        std::string first_word = trimmed_logical_line.substr(0, trimmed_logical_line.find_first_of(" \t\n\r"));
         first_word = StringUtils::to_upper(first_word);
+
 
         bool line_should_be_tokenized = false;
 
@@ -1629,11 +1746,11 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
             // --- We are OUTSIDE a TYPE...ENDTYPE block ---
             if (first_word == "TYPE") {
                 in_type_definition_block = true;
-                std::stringstream ss(trimmed_line);
+                //std::stringstream ss(trimmed_line);
+                std::stringstream ss(trimmed_logical_line);
                 std::string keyword, type_name;
                 ss >> keyword >> type_name;
                 this->current_type_context = StringUtils::to_upper(type_name);
-                //line_should_be_tokenized = true; // Tokenize TYPE to create the skippable block
             }
             else {
                 // This is regular global code.
@@ -1642,11 +1759,18 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
         }
 
         if (line_should_be_tokenized) {
-            multiline = tokenize(vm, line, vm.current_source_line, out_p_code, *target_func_table, multiline);
+            multiline = tokenize(vm, logical_line_buffer, logical_line_start_number, out_p_code, *target_func_table, multiline);
             if (multiline > 1) { /* error handling */ }
         }
+        // Reset the buffer for the next logical line.
+        logical_line_buffer.clear();
+        //vm.current_source_line++;
+    }
 
-        vm.current_source_line++;
+    // After the loop, check for any incomplete statement at the end of the file.
+    if (!logical_line_buffer.empty()) {
+        Error::set(1, vm.current_source_line, "Unterminated multi-line statement at end of file.");
+        return 1; // Return an error code
     }
 
     // 8. *** COMPILE PENDING LAMBDAS (PASS 2) ***
