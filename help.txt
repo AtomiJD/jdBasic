@@ -22,6 +22,10 @@ Description: Conditional execution block. Single-line IF condition THEN statemen
 Syntax: FOR ... TO ... STEP ... NEXT
 Description: Defines a loop that repeats a specific number of times.
 
+[FOR EACH]
+Syntax: FOR EACH variable IN collection
+Description: Iterates over every element in a collection, such as an Array or a Map.
+
 [DO]
 Syntax: DO ... LOOP [WHILE/UNTIL condition]
 Description: Defines a loop that continues as long as a condition is met or until a condition is met.
@@ -41,6 +45,10 @@ Description: Pauses execution for a specified duration.
 [STOP]
 Syntax: STOP
 Description: Halts program execution and returns to the Ready prompt, preserving variable state. Execution can be continued with RESUME.
+
+[EXECUTE]
+Syntax: EXECUTE(code_string$)
+Description: Compiles and executes a string of jdBasic code at runtime.
 
 [IMPORT]
 Syntax: IMPORT [modul]
@@ -86,9 +94,29 @@ Description: Saves the source code in memory to a file on disk.
 Syntax: TRON / TROFF
 Description: Turns instruction tracing on or off.
 
+[LOADWS]
+Syntax: LOADWS "workspacename"
+Description: Loads a source file and all variables of a saved workspace from disk into memory.
+
+[SAVEWS]
+Syntax: SAVEWS "workspacename"
+Description: Saves the source code and variables (Workspace) in memory to a file on disk.
+
+[CLEARWS]
+Syntax: CLEARWS
+Description: Empties source code, p-code, and all global variables.
+
+[NEW]
+Syntax: NEW
+Description: Empties the source code, compiled p-code, and user-defined function tables.
+
 [DIR]
 Syntax: DIR [path]
 Description: Lists files and directories. Supports wildcards like * and ?.
+
+[DIR$]
+Syntax: DIR$([path]) -> String
+Description: Lists files and directories and returns them as a string array. Supports wildcards like * and ?.
 
 [CD]
 Syntax: CD "path"
@@ -414,6 +442,22 @@ Description: Clears all custom HTTP headers.
 Syntax: HTTP.STATUSCODE()
 Description: Returns the HTTP status code from the last request.
 
+[HTTP.SERVER.START]
+Syntax: HTTP.SERVER.START(port)
+Description: Starts a non-blocking HTTP server on the specified port.
+
+[HTTP.SERVER.STOP]
+Syntax: HTTP.SERVER.STOP
+Description: Stops the running HTTP server.
+
+[HTTP.SERVER.ON_GET]
+Syntax: HTTP.SERVER.ON_GET(path$, function_name$)
+Description: Registers a function to handle incoming GET requests.
+
+[HTTP.SERVER.ON_POST]
+Syntax: HTTP.SERVER.ON_POST(path$, function_name$)
+Description: Registers a function to handle incoming POST requests.
+
 [TYPEOF]
 Syntax: TYPEOF(AnyVar)
 Description: Returns the type of an object as string.
@@ -433,6 +477,26 @@ Description: Marks a function as asynchronius.
 [AWAIT]
 Syntax: AWAIT task
 Description: Waits for the given task to be completed and returns the result of the function.
+
+[GRAPHICS COMMANDS]
+Syntax: SCREEN, SCREENFLIP, DRAWCOLOR, SETFONT, PSET, LINE, RECT, CIRCLE, TEXT, PLOTRAW
+Description: Functions for opening a graphics window and drawing shapes and text.
+
+[SOUND COMMANDS]
+Syntax: SOUND.INIT, SOUND.VOICE, SOUND.PLAY, SOUND.RELEASE, SOUND.STOP, SFX.LOAD, FX.PLAY, MUSIC.PLAY, MUSIC.STOP
+Description: Functions for initializing the sound system, configuring voices, and playing notes and sound effects.
+
+[SPRITE & MAP COMMANDS]
+Syntax: SPRITE., MAP.
+Description: A suite of commands for loading and managing sprites, animations, and tile maps from the Tiled editor. Includes functions for movement, collision detection, and drawing.
+
+[TURTLE GRAPHICS]
+Syntax: TURTLE.*
+Description: A suite of commands for turtle graphics, allowing for path-based drawing. Includes functions for movement, pen control, and color.
+
+[TENSOR & AI FUNCTIONS]
+Syntax: TENSOR.*
+Description: A comprehensive suite of functions for creating, training, and running neural networks. Includes core tensor operations, layer creation, optimizers, training loops (BACKWARD/UPDATE), and helpers for building LLMs and CNNs.
 
 [CREDITS]
 Syntax: No Command :-)

@@ -450,93 +450,109 @@ BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name
 }
 
 void Commands::do_dim(NeReLaBasic& vm) {
-    // Read the variable name first.
-    Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-    std::string var_name = to_upper(read_string(vm));
-
-    bool is_array = false;
-    std::vector<size_t> dimensions;
-    std::string type_name = "DOUBLE"; // Default to DOUBLE if no type is specified.
-    bool type_was_specified = false;
-
-    // --- Part 1: Check for array dimensions [ ... ] ---
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_LEFTBRACKET) {
-        is_array = true;
-        vm.pcode++; // Consume '['
-
-        while (true) {
-            BasicValue size_val = vm.evaluate_expression();
-            if (Error::get() != 0) return;
-            dimensions.push_back(static_cast<size_t>(to_double(size_val)));
-
-            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-            if (separator == Tokens::ID::C_RIGHTBRACKET) break;
-            if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
-            vm.pcode++; // Consume ','
-        }
-        vm.pcode++; // Consume ']'
-    }
-
-    // --- Part 2: Check for an optional type specifier AS ... ---
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::AS) {
-        vm.pcode++; // Consume 'AS'
-        type_was_specified = true;
-
-        // The type name is tokenized as VARIANT by the compiler
-        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-        switch (type_token) {
-        case Tokens::ID::INT:       type_name = "INTEGER"; break;
-        case Tokens::ID::DOUBLE:    type_name = "DOUBLE";  break;
-        case Tokens::ID::STRTYPE:   type_name = "STRING";  break;
-        case Tokens::ID::DATE:      type_name = "DATE";    break;
-        case Tokens::ID::BOOL:      type_name = "BOOLEAN"; break;
-        case Tokens::ID::MAP:       type_name = "MAP";     break;
-            // Add any other built-in types you have here.
-
-            // This case handles user-defined types, like T_Character.
-        case Tokens::ID::VARIANT:
-            // Only if the token is VARIANT do we read a string name.
-            type_name = to_upper(read_string(vm));
+    while (true) {
+        Tokens::ID token_check = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+        // If it's not a variable token, it's the end of the DIM statement.
+        if (token_check != Tokens::ID::VARIANT && token_check != Tokens::ID::INT && token_check != Tokens::ID::STRVAR && token_check != Tokens::ID::ARRAY_ACCESS) {
             break;
-
-        default:
-            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
-            return;
-        }
-    }
-
-    // --- Part 3: Create the variable(s) based on what we found ---
-    if (is_array) {
-        // --- This is the new logic for creating typed or untyped arrays ---
-        auto new_array_ptr = std::make_shared<Array>();
-        new_array_ptr->shape = dimensions;
-        size_t total_size = new_array_ptr->size();
-
-        // If it's a string array (e.g., DIM A$[10]), override the type.
-        if (var_name.back() == '$') {
-            type_name = "STRING";
         }
 
-        // Reserve memory for efficiency
-        new_array_ptr->data.reserve(total_size);
+        // Read the variable name first.
+        Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+        std::string var_name = to_upper(read_string(vm));
 
-        // ** CRITICAL PART **
-        // Create a new, unique instance for each element in the array.
-        for (size_t i = 0; i < total_size; ++i) {
+        bool is_array = false;
+        std::vector<size_t> dimensions;
+        std::string type_name = "DOUBLE"; // Default to DOUBLE if no type is specified.
+        bool type_was_specified = false;
+
+        // --- Part 1: Check for array dimensions [ ... ] ---
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_LEFTBRACKET) {
+            is_array = true;
+            vm.pcode++; // Consume '['
+
+            while (true) {
+                BasicValue size_val = vm.evaluate_expression();
+                if (Error::get() != 0) return;
+                dimensions.push_back(static_cast<size_t>(to_double(size_val)));
+
+                Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                if (separator == Tokens::ID::C_RIGHTBRACKET) break;
+                if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
+                vm.pcode++; // Consume ','
+            }
+            vm.pcode++; // Consume ']'
+        }
+
+        // --- Part 2: Check for an optional type specifier AS ... ---
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::AS) {
+            vm.pcode++; // Consume 'AS'
+            type_was_specified = true;
+
+            // The type name is tokenized as VARIANT by the compiler
+            Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
+            switch (type_token) {
+            case Tokens::ID::INT:       type_name = "INTEGER"; break;
+            case Tokens::ID::DOUBLE:    type_name = "DOUBLE";  break;
+            case Tokens::ID::STRTYPE:   type_name = "STRING";  break;
+            case Tokens::ID::DATE:      type_name = "DATE";    break;
+            case Tokens::ID::BOOL:      type_name = "BOOLEAN"; break;
+            case Tokens::ID::MAP:       type_name = "MAP";     break;
+                // Add any other built-in types you have here.
+
+                // This case handles user-defined types, like T_Character.
+            case Tokens::ID::VARIANT:
+                // Only if the token is VARIANT do we read a string name.
+                type_name = to_upper(read_string(vm));
+                break;
+
+            default:
+                Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
+                return;
+            }
+        }
+
+        // --- Part 3: Create the variable(s) based on what we found ---
+        if (is_array) {
+            // --- This is the new logic for creating typed or untyped arrays ---
+            auto new_array_ptr = std::make_shared<Array>();
+            new_array_ptr->shape = dimensions;
+            size_t total_size = new_array_ptr->size();
+
+            // If it's a string array (e.g., DIM A$[10]), override the type.
+            if (var_name.back() == '$') {
+                type_name = "STRING";
+            }
+
+            // Reserve memory for efficiency
+            new_array_ptr->data.reserve(total_size);
+
+            // ** CRITICAL PART **
+            // Create a new, unique instance for each element in the array.
+            for (size_t i = 0; i < total_size; ++i) {
+                BasicValue default_instance = create_default_instance(vm, type_name);
+                if (Error::get() != 0) return; // Stop if the type was invalid
+                new_array_ptr->data.push_back(default_instance);
+            }
+            set_variable(vm, var_name, new_array_ptr);
+        }
+        else {
+            // --- This is for single variables (e.g., DIM N AS INTEGER) ---
+            if (!type_was_specified && var_name.back() == '$') {
+                type_name = "STRING";
+            }
             BasicValue default_instance = create_default_instance(vm, type_name);
-            if (Error::get() != 0) return; // Stop if the type was invalid
-            new_array_ptr->data.push_back(default_instance);
+            if (Error::get() != 0) return;
+            set_variable(vm, var_name, default_instance);
         }
-        set_variable(vm, var_name, new_array_ptr);
-    }
-    else {
-        // --- This is for single variables (e.g., DIM N AS INTEGER) ---
-        if (!type_was_specified && var_name.back() == '$') {
-            type_name = "STRING";
+
+        // Part 4: Check for a comma to continue the list
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) {
+            vm.pcode++; // Consume the comma and loop again
         }
-        BasicValue default_instance = create_default_instance(vm, type_name);
-        if (Error::get() != 0) return;
-        set_variable(vm, var_name, default_instance);
+        else {
+            break; // No comma, so the DIM statement is complete.
+        }
     }
 }
 
@@ -1770,8 +1786,25 @@ void Commands::do_callsub(NeReLaBasic& vm) {
                 return;
             }
 
+            std::vector<BasicValue> com_args;
+            Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+            // Check if there are arguments to parse. Arguments are present if the
+            // statement doesn't immediately end.
+            if (token != Tokens::ID::C_CR && token != Tokens::ID::C_COLON && token != Tokens::ID::NOCMD) {
+                while (true) {
+                    com_args.push_back(vm.evaluate_expression());
+                    if (Error::get() != 0) return;
+                    Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+                    // Stop parsing at the end of the line or statement.
+                    if (separator == Tokens::ID::C_CR || separator == Tokens::ID::C_COLON || separator == Tokens::ID::NOCMD) break;
+                    // Arguments must be separated by commas.
+                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line, "Expected ',' to separate arguments."); return; }
+                    vm.pcode++; // Consume the comma
+                }
+            }
             // For a procedure call, there are no arguments and we ignore the return value.
-            std::vector<BasicValue> com_args; // Empty args
+            // std::vector<BasicValue> com_args; // Empty args
             _variant_t result_vt;             // We discard the result
 
             // Invoke as a method.

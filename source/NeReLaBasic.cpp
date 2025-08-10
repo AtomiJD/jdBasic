@@ -630,6 +630,8 @@ void NeReLaBasic::step_out() {
     dap_cv.notify_one();
 }
 
+static int debug_line = 0;
+
 // The generic debug handler now uses `this->debug_state`.
 void NeReLaBasic::handle_debug_events() {
     // If no debugger is attached or we are running freely, do nothing.
@@ -639,7 +641,11 @@ void NeReLaBasic::handle_debug_events() {
 
     // Get the line number for the *next* statement to be executed.
     //runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
-
+    if (runtime_current_line == debug_line)
+    {
+        return;
+    }
+    debug_line = runtime_current_line;
     //TextIO::print("D: " + std::to_string((int) (*active_p_code)[pcode - 1]) + ", " + std::to_string((int)(*active_p_code)[pcode]) + ", " + std::to_string((int)(*active_p_code)[pcode + 1]) + ", " + std::to_string((int)(*active_p_code)[pcode + 2]));
     // Skip empty and rem lines
     if (pcode>0 && pcode < (active_p_code->size()-2))

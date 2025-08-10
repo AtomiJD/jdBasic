@@ -5832,18 +5832,40 @@ BasicValue builtin_csvreader(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     return result_ptr;
 }
 
-// TXTWRITER filename$, content$
+// TXTWRITER filename$, content$, [mode$]
 // Writes the content of a string variable to a text file.
+// If mode$ is "APPEND", the content is added to the end of the file.
 BasicValue builtin_txtwriter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) {
-        Error::set(8, vm.runtime_current_line);
+    // --- CHANGE: Check for 2 or 3 arguments ---
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "TXTWRITER requires 2 or 3 arguments.");
         return false;
     }
 
     std::string filename = to_string(args[0]);
     std::string content = to_string(args[1]);
+    bool append_mode = false;
 
-    std::ofstream outfile(filename);
+    // --- CHANGE: Check for the optional third argument ---
+    if (args.size() == 3) {
+        // Convert mode to uppercase for case-insensitive comparison
+        std::string mode = to_upper(to_string(args[2]));
+        if (mode == "APPEND") {
+            append_mode = true;
+        }
+    }
+
+    // --- Open the file with the correct mode ---
+    std::ofstream outfile;
+    if (append_mode) {
+        // Open in append mode, which adds to the end of the file.
+        outfile.open(filename, std::ios::app);
+    }
+    else {
+        // Default behavior: overwrite the file.
+        outfile.open(filename);
+    }
+
     if (!outfile) {
         Error::set(12, vm.runtime_current_line); // File I/O Error
         return false;
@@ -5852,6 +5874,7 @@ BasicValue builtin_txtwriter(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     outfile << content;
     return false; // Procedures return a dummy value
 }
+
 
 // CSVWRITER filename$, array, [delimiter$], [header_array]
 // Writes a 2D array to a CSV file, with an optional header row.
@@ -6634,7 +6657,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
     register_func("CSVREADER", -1, builtin_csvreader); // -1 for optional args
     register_func("TXTREADER$", 1, builtin_txtreader_str);
-    register_proc("TXTWRITER", 2, builtin_txtwriter);
+    register_proc("TXTWRITER", -1, builtin_txtwriter);
     register_proc("CSVWRITER", -1, builtin_csvwriter); // -1 for optional delimiter
 
     // Task thing
