@@ -527,7 +527,6 @@ void Commands::do_dim(NeReLaBasic& vm) {
             // Reserve memory for efficiency
             new_array_ptr->data.reserve(total_size);
 
-            // ** CRITICAL PART **
             // Create a new, unique instance for each element in the array.
             for (size_t i = 0; i < total_size; ++i) {
                 BasicValue default_instance = create_default_instance(vm, type_name);
@@ -2039,14 +2038,17 @@ void Commands::do_exit_for(NeReLaBasic& vm) {
     uint8_t msb = (*vm.active_p_code)[vm.pcode++];
     uint16_t jump_target = (msb << 8) | lsb;
 
-    // The FOR stack for this loop is still active. We must pop it
-    // to correctly clean up the loop state before jumping out.
-    if (!vm.for_stack.empty()) {
+    // Give precedence to FOR EACH loops, consistent with do_next.
+    if (!vm.for_each_stack.empty()) {
+        vm.for_each_stack.pop_back();
+    }
+    // Otherwise, assume it's a numeric FOR loop.
+    else if (!vm.for_stack.empty()) {
         vm.for_stack.pop_back();
     }
     else {
-        // This should not happen if the tokenizer works correctly, but it's a safe-guard.
-        Error::set(1, vm.runtime_current_line, "EXIT FOR without active FOR loop.");
+        // This error is now more general.
+        Error::set(1, vm.runtime_current_line, "EXIT FOR without active FOR or FOR EACH loop.");
         return;
     }
 

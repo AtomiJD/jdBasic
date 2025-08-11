@@ -68,7 +68,10 @@ namespace { // Keep this helper private to this file
             headers.emplace(pair.first, pair.second);
         }
 
-        // --- THE CORE CHANGE ---
+        //if (!content_type.empty()) {
+        //    headers.emplace("Content-Type", content_type);
+        //}
+
         // Use the verb to decide which httplib method to call
         httplib::Result res;
         if (verb == "POST") {
@@ -77,11 +80,6 @@ namespace { // Keep this helper private to this file
         else if (verb == "PUT") {
             res = cli->Put(path.c_str(), headers, body, content_type.c_str());
         }
-        else {
-            last_http_status_code = -1;
-            return "Error: Invalid internal HTTP verb.";
-        }
-        // --- END OF CORE CHANGE ---
 
         if (res) {
             last_http_status_code = res->status;

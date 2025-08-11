@@ -436,7 +436,7 @@ namespace {
 nlohmann::json basic_to_json_value(const BasicValue& val);
 
 // Helper function to convert a BasicValue into a nlohmann::json object.
-nlohmann::json basic_to_json_value(const BasicValue& val) {
+nlohmann::json basic_to_json_value_for_serialize(const BasicValue& val) {
     return std::visit([](auto&& arg) -> nlohmann::json {
         using T = std::decay_t<decltype(arg)>;
 
@@ -454,6 +454,43 @@ nlohmann::json basic_to_json_value(const BasicValue& val) {
                 j_obj["data"].push_back(basic_to_json_value(elem));
             }
             return j_obj;
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
+            if (!arg) return nlohmann::json::object();
+            nlohmann::json j_obj = nlohmann::json::object();
+            for (const auto& pair : arg->data) {
+                j_obj[pair.first] = basic_to_json_value(pair.second);
+            }
+            return j_obj;
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {
+            return arg ? arg->data : nlohmann::json(nullptr);
+        }
+        else if constexpr (std::is_same_v<T, DateTime> || std::is_same_v<T, FunctionRef>) {
+            return nlohmann::json(to_string(arg));
+        }
+        else {
+            return nlohmann::json(nullptr);
+        }
+        }, val);
+}
+
+// Helper function to convert a BasicValue into a nlohmann::json object.
+nlohmann::json basic_to_json_value(const BasicValue& val) {
+    return std::visit([](auto&& arg) -> nlohmann::json {
+        using T = std::decay_t<decltype(arg)>;
+
+        if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, double> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
+            return nlohmann::json(arg);
+        }
+        else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
+            if (!arg) return nlohmann::json::array(); // Serialize null pointer as empty JSON array
+            // Create a standard JSON array
+            nlohmann::json j_arr = nlohmann::json::array();
+            for (const auto& elem : arg->data) {
+                j_arr.push_back(basic_to_json_value(elem)); // Recursively convert each element
+            }
+            return j_arr;
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
             if (!arg) return nlohmann::json::object();
@@ -561,7 +598,8 @@ BasicValue builtin_json_stringify(NeReLaBasic& vm, const std::vector<BasicValue>
         nlohmann::json j = basic_to_json_value(val_to_stringify);
         // dump() with no arguments creates a compact string, ideal for API calls.
         // For pretty-printing, you could use j.dump(4)
-        return j.dump();
+        //return j.dump();
+        return j.dump(4);
     }
     catch (const std::exception& e) {
         Error::set(15, vm.runtime_current_line); // Type Mismatch or other conversion error
@@ -6031,7 +6069,6 @@ BasicValue builtin_httppost(NeReLaBasic& vm, const std::vector<BasicValue>& args
     std::string url = to_string(args[0]);
     std::string body = to_string(args[1]);
     std::string content_type = to_string(args[2]);
-
     std::string response_body = vm.network_manager.httpPost(url, body, content_type);
 
     if (vm.network_manager.last_http_status_code >= 400 || vm.network_manager.last_http_status_code == -1) {

@@ -112,6 +112,7 @@ void builtin_sqlite_exec(NeReLaBasic& vm, const std::vector<BasicValue>& args, B
 
     if (rc != SQLITE_OK) {
         /* error handling */
+        g_last_error_message = zErrMsg;
         sqlite3_free(zErrMsg);
         *out_result = false;
         return;

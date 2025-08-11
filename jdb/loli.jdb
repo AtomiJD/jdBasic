@@ -1,0 +1,27 @@
+FUNC CHAT$(USER_PROMPT$)
+    API_KEY$ = GETENV$("OPENAI_API_KEY")
+    URL$ = "https://api.openai.com/v1/chat/completions"
+    'URL$ = "https://f6e690aa1c02.ngrok-free.app/data"
+
+    HTTP.SETHEADER "Authorization", "Bearer " + API_KEY$
+
+    ' Create the JSON body as a map
+    BODY_MAP = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": USER_PROMPT$}]}
+
+    ' Convert the map to a JSON string
+    BODY$ = JSON.STRINGIFY$(BODY_MAP)
+
+    ' *** THE FIX: Explicitly set the Content-Type to "application/json" ***
+    RESPONSE$ = HTTP.POST$(URL$, BODY$, "application/json")
+    HTTP.CLEARHEADERS
+
+    IF ERR <> 0 THEN
+        RETURN "Error: " + ERRMSG$
+    ENDIF
+    PRINT 
+    ' Parse the response
+    RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+    RETURN RESPONSE$ 'RESPONSE_JSON{"choices"}{0}{"message"}{"content"}
+ENDFUNC
+
+PRINT CHAT$("hello")

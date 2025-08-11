@@ -10,6 +10,7 @@
 #ifndef CPPHTTPLIB_OPENSSL_SUPPORT
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #endif
+#define CPPHTTPLIB_NO_DEFAULT_USER_AGENT
 #include <httplib.h> // Include httplib here
 
 #include <string>

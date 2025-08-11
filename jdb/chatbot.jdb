@@ -18,8 +18,8 @@ REM The API endpoint for chat completions
 API_URL$ = "https://api.openai.com/v1/chat/completions"
 
 REM Set the required HTTP headers for the OpenAI API
-HTTP.SETHEADER "Content-Type", "application/json"
 HTTP.SETHEADER "Authorization", "Bearer " + API_KEY$
+'HTTP.SETHEADER "Content-Type", "application/json"
 
 PRINT
 PRINT "Headers are set. You can now start chatting."
@@ -53,11 +53,9 @@ DO
     payload{"model"} = "gpt-4o-mini"
     payload{"messages"} = conversation_history
 
-    JSON_BODY$ = JSON.STRINGIFY$(payload)
-
-    RESPONSE$ = HTTP.POST$(API_URL$, JSON_BODY$,"application/json")
-
     TRY
+        JSON_BODY$ = JSON.STRINGIFY$(payload)
+        RESPONSE$ = HTTP.POST$(API_URL$, JSON_BODY$, "application/json")
         RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
     CATCH
         PRINT "Error in JSON.PARSE$(RESPONSE$)"
@@ -77,7 +75,7 @@ DO
     assistant_message{"content"} = AI_MESSAGE$
     conversation_history = APPEND(conversation_history, assistant_message)
 
-LOOP WHILE 1
+LOOP UNTIL 1=2
 
 
 ENDE:
