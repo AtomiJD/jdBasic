@@ -172,6 +172,7 @@ std::string NetworkManager::httpGet(const std::string& url_str) {
 
     // Correct way to create and assign to std::unique_ptr<httplib::Client>
     std::unique_ptr<httplib::SSLClient> cli; // This declaration is fine as a local variable.
+    std::unique_ptr<httplib::Client> cli_http;
 
     if (protocol == "https") {
         // Create the SSLClient unique_ptr first, then move it into the base unique_ptr.
@@ -181,9 +182,9 @@ std::string NetworkManager::httpGet(const std::string& url_str) {
         // ssl_cli->set_verify_ssl(false);
     }
     else {
-        std::cout << "NetworkManager Debug: HTTP not supported "  << std::endl;
-        return "";
-        //cli = std::make_unique<httplib::Client>(host.c_str(), port);
+        //std::cout << "NetworkManager Debug: HTTP not supported "  << std::endl;
+        //return "";
+        cli_http = std::make_unique<httplib::Client>(host.c_str(), port);
     }
 
     // Now, set timeouts and headers on the *base* client pointer
@@ -198,6 +199,31 @@ std::string NetworkManager::httpGet(const std::string& url_str) {
         }
 
         auto res = cli->Get(path.c_str(), headers); // Call Get on the base class pointer
+        // ... (rest of success/error handling) ...
+        if (res) {
+            last_http_status_code = res->status;
+            //std::cout << "NetworkManager Debug: Request successful. Status: " << res->status << ", Body size: " << res->body.length() << std::endl;
+            return res->body;
+        }
+        else {
+            last_http_status_code = -1;
+            std::cerr << "NetworkManager Error: HTTP GET failed for URL: " << url_str
+                << ". httplib error code: " << httplib::to_string(res.error())
+                << std::endl;
+            return "";
+        }
+    }
+    else if (cli_http) {
+        cli_http->set_connection_timeout(5);
+        cli_http->set_read_timeout(5);
+        cli_http->set_write_timeout(5);
+
+        httplib::Headers headers;
+        for (const auto& pair : custom_headers) {
+            headers.emplace(pair.first, pair.second);
+        }
+
+        auto res = cli_http->Get(path.c_str(), headers); // Call Get on the base class pointer
         // ... (rest of success/error handling) ...
         if (res) {
             last_http_status_code = res->status;

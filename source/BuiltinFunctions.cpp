@@ -5341,7 +5341,7 @@ BasicValue builtin_savews(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         for (const auto& pair : vm.variables) {
             variables_map->data[pair.first] = pair.second;
         }
-        j_workspace["variables"] = basic_to_json_value(variables_map);
+        j_workspace["variables"] = basic_to_json_value_for_serialize(variables_map);
 
         std::ofstream outfile(filename);
         if (!outfile) {
@@ -6484,7 +6484,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("LEN", 1, builtin_len);
     register_func("ASC", 1, builtin_asc);
     register_func("CHR$", 1, builtin_chr_str);
-    register_func("INSTR", -1, builtin_instr); // -1 for variable args
+    register_func("INSTR$", -1, builtin_instr); // -1 for variable args
     register_func("LCASE$", 1, builtin_lcase_str);
     register_func("UCASE$", 1, builtin_ucase_str);
     register_func("TRIM$", 1, builtin_trim_str);

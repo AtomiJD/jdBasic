@@ -1,0 +1,218 @@
+' --- jdBasic Process Pipe (Workflow) Engine v2 ---
+' Reads a workflow from an external "workflow.json" file and handles triggers.
+'
+' You need OPENAI_API_KEY and TELEGRAM_API set as Environment variable 
+' In an extra cmd window run: ngrok HTTP 8080
+'
+
+
+' =================================================================
+' SECTION 1: INITIALIZATION
+' =================================================================
+
+' Load the SQLite module for database operations
+DLLIMPORT "sqlitefunc"
+
+' Load the Workflow Library
+IMPORT WFLIB
+
+' Global variables for the execution engine
+DIM GLOBAL_RETURN
+DIM INPUT_DATA
+
+' Load the workflow definition from the JSON file
+PRINT "Loading workflow from workflow.json..."
+workflow_json_string$ = TXTREADER$("workflow.json")
+IF workflow_json_string$ = "" THEN
+    PRINT "Error: Could not read workflow.json"
+    END
+ENDIF
+
+workflow_definition = JSON.PARSE$(workflow_json_string$)
+PRINT "Workflow loaded: '"; workflow_definition{"description"}; "'"
+PRINT
+
+' =================================================================
+' SECTION 2: THE EXECUTION ENGINE
+' =================================================================
+
+' The main function that runs a workflow from a specific start node.
+FUNC RUN_WORKFLOW(workflow_def, start_node_id$, initial_data)
+    DIM workflow_map AS MAP
+    DIM node_outputs AS MAP
+    
+    ' For easy lookup, convert the nodes array into a map keyed by node ID.
+    FOR EACH node IN workflow_def{"nodes"}
+        workflow_map{node{"id"}} = node
+    NEXT
+    
+    current_node_id$ = start_node_id$
+    
+    ' The main execution loop
+    previous_node_id$ = ""
+    DO
+        PRINT "--- Executing Node: '"; current_node_id$; "' ---"
+        current_node = workflow_map{current_node_id$}
+        
+        DIM input_for_this_node
+        IF previous_node_id$ <> "" THEN
+            input_for_this_node = node_outputs{previous_node_id$}
+        ELSE
+            input_for_this_node = initial_data
+        ENDIF
+
+        ' Execute the node based on its type
+        node_result = EXECUTE_NODE(current_node, input_for_this_node)
+        
+        node_outputs{current_node_id$} = node_result
+        PRINT "Output: "; node_result
+        PRINT
+        
+        previous_node_id$ = current_node_id$
+        IF MAP.EXISTS(current_node{"connections"}, "output") THEN
+            current_node_id$ = current_node{"connections"}{"output"}
+        ELSE
+            current_node_id$ = ""
+        ENDIF
+        
+    LOOP WHILE current_node_id$ <> ""
+    
+    RETURN node_outputs{previous_node_id$}
+ENDFUNC
+
+
+' This function handles the logic for each specific node type.
+FUNC EXECUTE_NODE(node, rdata)
+    DIM result
+    INPUT_DATA = rdata
+    node_type$ = node{"type"}
+
+    IF node_type$ = "WEBHOOK_TRIGGER" THEN
+        PRINT "  Type: Webhook Trigger"
+        PRINT "  INFO: This node is the entry point. Passing received data."
+        result = rdata ' The trigger node's job is just to pass the initial data through.
+
+    ELSEIF node_type$ = "SET_DATA" THEN
+        PRINT "  Type: Set Data"
+        code_to_run$ = node{"parameters"}{"code"}
+        PRINT "  Executing code: "; code_to_run$
+        PRINT "--------Code---------------"
+        PRINT code_to_run$
+        PRINT "--------End Code-----------"
+        EXECUTE(code_to_run$) ' EXECUTE is a procedure
+        PRINT "--- RETURN VALUE OF CODE ---"
+        PRINT GLOBAL_RETURN
+        PRINT "--- END RETURN VALUE ---"
+        result = GLOBAL_RETURN ' The result is retrieved from the global variable
+
+    ELSEIF node_type$ = "SQLITE_EXEC" THEN
+        PRINT "  Type: SQLite Execute"
+        db_file$ = node{"parameters"}{"db_file"}
+        query$ = node{"parameters"}{"query"}
+        ' Replace placeholder '?' with the actual input data
+        query$ = REPLACE$(query$, "?", TSQL(rdata{"ai_response"}))
+        'query$ = REPLACE$(query$, "?", TSQL(rdata))
+
+        PRINT "  DB File: "; db_file$
+        PRINT "  Query: "; query$
+        
+        db = SQLITE.OPEN(db_file$)
+        IF TYPEOF(db) <> "SQLITEDB" THEN
+            result = {"error": "SQLite DB open failed", "reason": SQLITE.ERROR$()}
+        ELSE
+            SQLITE.EXEC(db, "CREATE TABLE IF NOT EXISTS logs (message TEXT, timestamp DATETIME);")
+            success = SQLITE.EXEC(db, query$)
+            IF success THEN
+                result = {"status": "OK"}
+            ELSE
+                result = {"error": "SQLite exec failed", "reason": SQLITE.ERROR$()}
+            ENDIF
+            SQLITE.CLOSE db
+        ENDIF
+    ELSE
+        PRINT "  Type: Unknown ('"; node{"type"}; "')"
+        result = {"error": "Unknown node type"}
+    ENDIF
+    
+    RETURN result
+ENDFUNC
+
+' Helper function to sanitize a string for SQL insertion
+FUNC TSQL(s$)
+    s$ = REPLACE$(s$, "'", "''")
+    RETURN s$
+ENDFUNC
+
+' =================================================================
+' SECTION 3: WEBHOOK SERVER SETUP & MAIN LOOP
+' =================================================================
+
+' This function is called by the HTTP server whenever a POST request is received.
+FUNC HandleWebhook(request)
+    PRINT
+    PRINT ">>> Webhook received at path: "; request{"path"}; " <<<"
+    
+    ' Parse the incoming JSON data from Telegram
+    webhook_data = JSON.PARSE$(request{"body"})
+    
+    ' Find the correct workflow start node based on the request path
+    start_node_id$ = ""
+    FOR EACH node IN workflow_definition{"nodes"}
+        IF node{"type"} = "WEBHOOK_TRIGGER" AND node{"parameters"}{"path"} = request{"path"} THEN
+            start_node_id$ = node{"id"}
+            EXITFOR
+        ENDIF
+    NEXT
+    
+    IF start_node_id$ = "" THEN
+        PRINT "No workflow trigger found for this path."
+        RETURN {"status": "error", "message": "No trigger found"}
+    ENDIF
+
+    ' Run the workflow with the received data as the initial input
+    RUN_WORKFLOW(workflow_definition, start_node_id$, webhook_data)
+    
+    ' Return a success message to Telegram
+    RETURN {"status": "ok"}
+ENDFUNC
+
+' --- Main Program Body ---
+PRINT "Setting up workflow triggers..."
+
+' Get Telegram API key from environment variable
+telegram_api_key$ = GETENV$("TELEGRAM_API")
+IF telegram_api_key$ = "" THEN
+    PRINT "Error: TELEGRAM_API environment variable not set."
+    END
+ENDIF
+
+' Register the webhook handler with the HTTP server
+webhook_path$ = "/telegram"
+HTTP.SERVER.ON_POST webhook_path$, "HandleWebhook"
+
+' Set the webhook with Telegram's API
+server_url$ = WFLIB.get_ngrok_url()
+server_url$ = server_url$ + webhook_path$
+telegram_api_url$ = "https://api.telegram.org/bot" + telegram_api_key$ + "/setWebhook?url=" + server_url$
+PRINT "Setting Telegram webhook..."
+PRINT telegram_api_url$
+PRINT 
+response$ = HTTP.GET$(telegram_api_url$)
+PRINT "Telegram API response: "; response$
+PRINT
+
+' Start the server
+IF HTTP.SERVER.START(8080) THEN
+    PRINT "Server is running at http://localhost:8080"
+    PRINT "Listening for webhooks. Press ESC to stop."
+    
+    ' Loop to keep the main program alive while the server runs in the background
+    DO
+        SLEEP 100
+    LOOP UNTIL INKEY$() = CHR$(27) ' Loop until ESC is pressed
+ELSE
+    PRINT "Error starting server: "; ERRMSG$
+ENDIF
+
+PRINT "Shutting down server..."
+HTTP.SERVER.STOP

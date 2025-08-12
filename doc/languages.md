@@ -313,7 +313,7 @@ ENDTRY
 * **`LCASE$(str$)`**, **`UCASE$(str$)`**, **`TRIM$(str$)`**: Manipulates string case and whitespace.
 * **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings.
 * **`CHR$(ascii_code)`**, **`ASC(char$)`**: Converts between ASCII codes and characters.
-* **`INSTR([start, ]haystack$, needle$)`**: Finds the position of one string within another.
+* **`INSTR$([start, ]haystack$, needle$)`**: Finds the position of one string within another.
 * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
 
 ### Math/Arithmetic/Round Functions

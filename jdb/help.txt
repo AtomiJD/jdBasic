@@ -191,7 +191,7 @@ Syntax: ASC(char$)
 Description: Converts between ASCII codes and characters.
 
 [INSTR]
-Syntax: INSTR([start, ]haystack$, needle$)
+Syntax: INSTR$([start, ]haystack$, needle$)
 Description: Finds the position of one string within another.
 
 [SPLIT]

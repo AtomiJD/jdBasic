@@ -1,0 +1,55 @@
+{
+  "description": "Receives a message from a Telegram webhook, gets an AI completion from OpenAI, sends the reply to Telegram, and logs it to an SQLite database.",
+  "start_node": "telegram_webhook_trigger",
+  "nodes": [
+    {
+      "id": "telegram_webhook_trigger",
+      "type": "WEBHOOK_TRIGGER",
+      "parameters": {
+        "path": "/telegram"
+      },
+      "connections": {
+        "output": "extract_message_data"
+      }
+    },
+    {
+      "id": "extract_message_data",
+      "type": "SET_DATA",
+      "parameters": {
+        "code": "DIM output_map AS MAP\noutput_map{\"user_message\"} = INPUT_DATA{\"message\"}{\"text\"}\noutput_map{\"chat_id\"} = INPUT_DATA{\"message\"}{\"chat\"}{\"id\"}\nGLOBAL_RETURN = output_map"
+      },
+      "connections": {
+        "output": "get_openai_completion"
+      }
+    },
+    {
+      "id": "get_openai_completion",
+      "type": "SET_DATA",
+      "parameters": {
+        "code": "API_KEY$ = GETENV$(\"OPENAI_API_KEY\")\nIF API_KEY$ = \"\" THEN\n  GLOBAL_RETURN = {\"error\": \"OPENAI_API_KEY not set\"}\n  RETURN\nENDIF\nHTTP.SETHEADER \"Authorization\", \"Bearer \" + API_KEY$\nDIM user_message AS MAP\nuser_message{\"role\"} = \"user\"\nuser_message{\"content\"} = INPUT_DATA{\"user_message\"}\nmessages_array = [user_message]\nDIM payload AS MAP\npayload{\"model\"} = \"gpt-4o-mini\"\npayload{\"messages\"} = messages_array\nJSON_BODY$ = JSON.STRINGIFY$(payload)\nRESPONSE$ = HTTP.POST$(\"https://api.openai.com/v1/chat/completions\", JSON_BODY$, \"application/json\")\nRESPONSE_JSON = JSON.PARSE$(RESPONSE$)\nDIM output_map AS MAP\noutput_map{\"ai_response\"} = RESPONSE_JSON{\"choices\"}[0]{\"message\"}{\"content\"}\noutput_map{\"chat_id\"} = INPUT_DATA{\"chat_id\"}\nGLOBAL_RETURN = output_map"
+      },
+      "connections": {
+        "output": "send_telegram_reply"
+      }
+    },
+    {
+      "id": "send_telegram_reply",
+      "type": "SET_DATA",
+      "parameters": {
+        "code": "API_KEY$ = GETENV$(\"TELEGRAM_API\")\nchat_id = INPUT_DATA{\"chat_id\"}\ntext$ = INPUT_DATA{\"ai_response\"}\ntelegram_api_url$ = \"https://api.telegram.org/bot\" + API_KEY$ + \"/sendMessage\"\npayload = { \"chat_id\": chat_id, \"text\": text$ }\nHTTP.POST$(telegram_api_url$, JSON.STRINGIFY$(payload), \"application/json\")\nGLOBAL_RETURN = INPUT_DATA"
+      },
+      "connections": {
+        "output": "log_ai_response_to_db"
+      }
+    },
+    {
+      "id": "log_ai_response_to_db",
+      "type": "SQLITE_EXEC",
+      "parameters": {
+        "db_file": "telegram_log.db",
+        "query": "INSERT INTO logs (message, timestamp) VALUES ('?', CURRENT_TIMESTAMP);"
+      },
+      "connections": {}
+    }
+  ]
+}

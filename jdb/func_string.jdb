@@ -19,8 +19,8 @@ PRINT "Character for 66 is "; CHR$(66)
 PRINT
 
 HAYSTACK$ = "the quick brown fox jumps over the lazy dog"
-PRINT "Position of 'fox' is "; INSTR(HAYSTACK$, "fox")
-PRINT "Position of 'the' after pos 5 is "; INSTR(5, HAYSTACK$, "the")
+PRINT "Position of 'fox' is "; INSTR$(HAYSTACK$, "fox")
+PRINT "Position of 'the' after pos 5 is "; INSTR$(5, HAYSTACK$, "the")
 PRINT
 
 PRINT "--- Math Test ---"

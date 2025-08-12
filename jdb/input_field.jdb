@@ -92,8 +92,8 @@ SUB HandleKey(KeyData)
         IF LEN(G_BUFFER$) < G_MAX_LENGTH AND KeyAsc >= 32 AND KeyAsc <= 126 THEN
             MaskChar$ = MID$(G_MASK_CHARS$, G_CURSOR_POS + 1, 1)
             IsAllowed = FALSE
-            IF MaskChar$ = "@" AND INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 ", UCASE$(KeyChar$)) > 0 THEN IsAllowed = TRUE
-            IF MaskChar$ = "#" AND INSTR("0123456789", KeyChar$) > 0 THEN IsAllowed = TRUE
+            IF MaskChar$ = "@" AND INSTR$("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 ", UCASE$(KeyChar$)) > 0 THEN IsAllowed = TRUE
+            IF MaskChar$ = "#" AND INSTR$("0123456789", KeyChar$) > 0 THEN IsAllowed = TRUE
             IF MaskChar$ = KeyChar$ THEN IsAllowed = TRUE
 
             IF IsAllowed THEN
@@ -136,7 +136,7 @@ FUNC ParseMask(Mask$)
     ' This function analyzes the mask string and returns a Map.
     Result = {}
     
-    IF INSTR(Mask$, ":") > 0 THEN
+    IF INSTR$(Mask$, ":") > 0 THEN
         Parts = SPLIT(Mask$, ":")
         Length = VAL(Parts[1])
         CharType$ = Parts[0]
