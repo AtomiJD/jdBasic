@@ -201,6 +201,7 @@ public:
 
     std::promise<bool> dap_launch_promise; // Used to signal that launch has occurred
     std::string program_to_debug; // Will hold the path from the launch request
+    std::vector<std::string> command_line_args;
 
     DAPHandler* dap_handler = nullptr;
 

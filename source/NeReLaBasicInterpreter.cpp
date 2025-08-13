@@ -51,6 +51,7 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
+        interpreter.command_line_args.push_back(argv[i]);
         if (arg == "--debug") {
             dap_mode = true;
             if (i + 1 < argc && isdigit(argv[i + 1][0])) {

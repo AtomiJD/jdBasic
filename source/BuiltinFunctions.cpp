@@ -4715,6 +4715,38 @@ BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 }
 
+// LOG(numeric_expression or array) - Natural Logarithm
+BasicValue builtin_log(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    // Use the helper, but add a domain check for non-positive numbers.
+    return apply_math_op(args[0], [&](double d) {
+        if (d <= 0) {
+            Error::set(1, vm.runtime_current_line, "Argument to LOG must be positive.");
+            return 0.0; // Return 0 on domain error
+        }
+        return std::log(d);
+        });
+}
+
+// LOG10(numeric_expression or array) - Base-10 Logarithm
+BasicValue builtin_log10(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    // Use the helper, adding the same domain check.
+    return apply_math_op(args[0], [&](double d) {
+        if (d <= 0) {
+            Error::set(1, vm.runtime_current_line, "Argument to LOG10 must be positive.");
+            return 0.0;
+        }
+        return std::log10(d);
+        });
+}
+
 // FAC(numeric_expression or array)
 BasicValue builtin_fac(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
@@ -4804,6 +4836,62 @@ BasicValue builtin_trunc(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return apply_math_op(args[0], [](double d) { return std::trunc(d); });
 }
 
+// ROUND(number_or_array, decimals) -> number or array
+BasicValue builtin_round(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "ROUND requires 2 arguments: value, decimals");
+        return 0.0;
+    }
+
+    const BasicValue& input = args[0];
+    int decimals = static_cast<int>(to_double(args[1]));
+    double multiplier = std::pow(10.0, decimals);
+
+    // This is the core rounding operation
+    auto perform_round = [multiplier](double d) {
+        return std::round(d * multiplier) / multiplier;
+        };
+
+    // Apply the operation element-wise if the input is an array
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        return apply_math_op(input, perform_round);
+    }
+    // Otherwise, apply it to the scalar value
+    else {
+        return perform_round(to_double(input));
+    }
+}
+
+// CLAMP(value_or_array, min, max) -> number or array
+BasicValue builtin_clamp(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "CLAMP requires 3 arguments: value, min, max");
+        return 0.0;
+    }
+
+    const BasicValue& input = args[0];
+    double min_val = to_double(args[1]);
+    double max_val = to_double(args[2]);
+
+    if (min_val > max_val) {
+        Error::set(1, vm.runtime_current_line, "Min value cannot be greater than max value in CLAMP.");
+        return 0.0;
+    }
+
+    // This is the core clamping operation
+    auto perform_clamp = [min_val, max_val](double d) {
+        return std::max(min_val, std::min(d, max_val));
+        };
+
+    // Apply the operation element-wise if the input is an array
+    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+        return apply_math_op(input, perform_clamp);
+    }
+    // Otherwise, apply it to the scalar value
+    else {
+        return perform_clamp(to_double(input));
+    }
+}
 
 // SHL(value_or_array, bits_to_shift) -> number or array
 BasicValue builtin_shl(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -6421,7 +6509,159 @@ BasicValue builtin_regex_replace(NeReLaBasic& vm, const std::vector<BasicValue>&
     }
 }
 
-// --- System self codeing functions ---
+// --- OS Functions ---
+
+// OS.ARGS() -> ARRAY
+// Returns the command-line arguments passed to the interpreter.
+BasicValue builtin_os_args(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "OS.ARGS does not accept arguments.");
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->data.reserve(vm.command_line_args.size());
+
+    for (const auto& arg : vm.command_line_args) {
+        result_ptr->data.push_back(arg);
+    }
+
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+}
+
+// OS.EXEC(command$, [args_array$]) -> MAP
+// Executes an external command and captures its output and exit code.
+BasicValue builtin_os_exec(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty() || args.size() > 2) {
+        Error::set(8, vm.runtime_current_line, "OS.EXEC requires 1 or 2 arguments: command$, [args_array$]");
+        return {};
+    }
+
+    // 1. Construct the full command string
+    std::string command = to_string(args[0]);
+    if (args.size() == 2) {
+        if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
+            Error::set(15, vm.runtime_current_line, "Second argument to OS.EXEC must be an array of strings.");
+            return {};
+        }
+        const auto& args_array = std::get<std::shared_ptr<Array>>(args[1]);
+        if (args_array) {
+            for (const auto& arg : args_array->data) {
+                // A simple approach: add spaces and quotes around arguments
+                command += " \"" + to_string(arg) + "\"";
+            }
+        }
+    }
+
+    std::string output;
+    int exit_code = -1;
+
+#ifdef _WIN32
+    // --- Windows Implementation using CreateProcess and Pipes ---
+    HANDLE hChildStd_OUT_Rd = NULL;
+    HANDLE hChildStd_OUT_Wr = NULL;
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    if (!CreatePipe(&hChildStd_OUT_Rd, &hChildStd_OUT_Wr, &sa, 0)) {
+        Error::set(1, vm.runtime_current_line, "Failed to create pipe for command output.");
+        return {};
+    }
+    if (!SetHandleInformation(hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0)) {
+        Error::set(1, vm.runtime_current_line, "Failed to set handle information.");
+        return {};
+    }
+
+    PROCESS_INFORMATION piProcInfo = { 0 };
+    STARTUPINFOA siStartInfo = { 0 };
+    siStartInfo.cb = sizeof(STARTUPINFOA);
+    siStartInfo.hStdError = hChildStd_OUT_Wr;
+    siStartInfo.hStdOutput = hChildStd_OUT_Wr;
+    siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+    BOOL bSuccess = CreateProcessA(NULL,
+        &command[0],     // command line
+        NULL,            // process security attributes
+        NULL,            // primary thread security attributes
+        TRUE,            // handles are inherited
+        0,               // creation flags
+        NULL,            // use parent's environment
+        NULL,            // use parent's current directory
+        &siStartInfo,
+        &piProcInfo);
+
+    if (!bSuccess) {
+        Error::set(1, vm.runtime_current_line, "CreateProcess failed.");
+        return {};
+    }
+
+    CloseHandle(hChildStd_OUT_Wr); // Close write end of pipe in parent
+
+    CHAR chBuf[256];
+    DWORD dwRead;
+    while (ReadFile(hChildStd_OUT_Rd, chBuf, sizeof(chBuf), &dwRead, NULL) && dwRead > 0) {
+        output.append(chBuf, dwRead);
+    }
+
+    WaitForSingleObject(piProcInfo.hProcess, INFINITE);
+
+    DWORD dwExitCode;
+    GetExitCodeProcess(piProcInfo.hProcess, &dwExitCode);
+    exit_code = dwExitCode;
+
+    CloseHandle(piProcInfo.hProcess);
+    CloseHandle(piProcInfo.hThread);
+    CloseHandle(hChildStd_OUT_Rd);
+
+#else
+    // --- POSIX (Linux, macOS) Implementation using popen ---
+    std::string cmd_with_stderr = command + " 2>&1"; // Redirect stderr to stdout
+    FILE* pipe = popen(cmd_with_stderr.c_str(), "r");
+    if (!pipe) {
+        Error::set(1, vm.runtime_current_line, "Failed to execute command.");
+        return {};
+    }
+    char buffer[128];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    int status = pclose(pipe);
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    }
+#endif
+
+    // 2. Assemble the result map
+    auto result_map = std::make_shared<Map>();
+    result_map->data["output"] = output;
+    result_map->data["exit_code"] = static_cast<double>(exit_code);
+
+    return result_map;
+}
+
+// OS.GETOS() -> STRING
+// Returns a string identifying the current operating system ("WINDOWS", "LINUX", "MACOS").
+BasicValue builtin_os_getos(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "OS.GETOS does not accept arguments.");
+        return std::string("");
+    }
+
+#ifdef _WIN32
+    return std::string("WINDOWS");
+#elif __APPLE__
+    return std::string("MACOS");
+#elif __linux__
+    return std::string("LINUX");
+#else
+    return std::string("UNKNOWN");
+#endif
+}
+
+// --- System self coding functions ---
 // 
 // EXECUTE(code_string$)
 // Compiles and executes a string of jdBasic code at runtime.
@@ -6452,6 +6692,51 @@ BasicValue builtin_execute(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     }
 
     return false; // EXECUTE is a procedure.
+}
+
+// EVAL(expression_string$) -> BasicValue
+// Compiles and evaluates a string as an expression, returning its value.
+BasicValue builtin_eval(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "EVAL requires exactly one string argument.");
+        return false;
+    }
+
+    std::string code_to_evaluate = to_string(args[0]);
+    if (code_to_evaluate.empty()) {
+        return false; // Return a default value for an empty expression
+    }
+
+    // 1. Compile the string into temporary p-code using the existing snippet compiler.
+    std::vector<uint8_t> temp_p_code;
+    if (vm.compiler->tokenize_snippet(vm, temp_p_code, code_to_evaluate) != 0) {
+        // An error occurred during compilation. The compiler has already set the error message.
+        return false;
+    }
+
+    // 2. Save the current execution context of the VM.
+    auto prev_active_p_code = vm.active_p_code;
+    auto prev_pcode = vm.pcode;
+
+    // 3. Switch the VM's context to the new temporary p-code.
+    vm.active_p_code = &temp_p_code;
+    // The tokenizer adds a 2-byte line number (0,0). The evaluator starts after it.
+    vm.pcode = 2;
+
+    // 4. Run the expression evaluator on the temporary p-code.
+    BasicValue result = vm.evaluate_expression();
+
+    // 5. Restore the VM's original execution context.
+    vm.active_p_code = prev_active_p_code;
+    vm.pcode = prev_pcode;
+
+    // Check for a runtime error during evaluation. If so, return a default value.
+    if (Error::get() != 0) {
+        return false;
+    }
+
+    // 6. Return the result of the expression.
+    return result;
 }
 
 // --- The Registration Function ---
@@ -6514,12 +6799,16 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TAN", 1, builtin_tan);
     register_func("SQR", 1, builtin_sqr);
     register_func("RND", 1, builtin_rnd);
+    register_func("LOG", 1, builtin_log);
+    register_func("LOG10", 1, builtin_log10);
     register_func("FAC", 1, builtin_fac);
     register_func("ABS", 1, builtin_abs);
     register_func("INT", 1, builtin_int);
     register_func("FLOOR", 1, builtin_floor);
     register_func("CEIL", 1, builtin_ceil);
     register_func("TRUNC", 1, builtin_trunc);
+    register_func("ROUND", 2, builtin_round);
+    register_func("CLAMP", 3, builtin_clamp);
     register_func("DISTANCE", 2, builtin_distance);
     register_func("LERP", 3, builtin_lerp);
     register_func("SHL", 2, builtin_shl);
@@ -6690,7 +6979,12 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("MKDIR", 1, builtin_mkdir);
     register_proc("KILL", 1, builtin_kill);
 
+    register_func("OS.ARGS", 0, builtin_os_args);
+    register_func("OS.EXEC", -1, builtin_os_exec);
+    register_func("OS.GETOS", 0, builtin_os_getos);
+
     register_proc("EXECUTE", 1, builtin_execute);
+    register_func("EVAL", 1, builtin_eval);
 
     register_func("CSVREADER", -1, builtin_csvreader); // -1 for optional args
     register_func("TXTREADER$", 1, builtin_txtreader_str);
