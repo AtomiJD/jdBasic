@@ -248,6 +248,10 @@ public:
     std::unordered_map<std::string, BasicValue> variables;
     std::map<std::string, TypeInfo> user_defined_types; // Storage for UDTs
 
+    // --- Structure for Enum Definitions ---
+    using EnumMembers = std::unordered_map<std::string, int>;
+    std::unordered_map<std::string, EnumMembers> user_defined_enums;
+
     //std::unordered_map<std::string, uint16_t> label_addresses;
 
     // --- C++ Modules ---

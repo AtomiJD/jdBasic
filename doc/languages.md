@@ -54,6 +54,107 @@ MyArray = [1, 2, 3, 4] ' Creates an array
 EmptyArray = []
 ```
 
+## Enumerations
+
+To improve code clarity, you can define named integer constants using `ENUM`.
+
+* **`ENUM name ... ENDENUM`**: Defines a new enumeration. Members are assigned incrementing integer values starting from 0 by default. You can also assign explicit integer values.
+
+```basic
+' Using automatic values (Car = 0, Truck = 1, Boat = 2)
+ENUM VehicleType
+    Car
+    Truck
+    Boat
+ENDENUM
+
+' Using explicit values
+ENUM WebStatus
+    OK = 200
+    NotFound = 404
+    Error = 500
+ENDENUM
+
+PRINT "Vehicle: ", VehicleType.Car  ' Prints 0
+PRINT "Status: ", WebStatus.NotFound ' Prints 404
+
+CurrentVehicle = VehicleType.Truck
+IF CurrentVehicle = VehicleType.Truck THEN
+    PRINT "It's a truck!"
+ENDIF
+```
+
+## User-Defined Types (TYPE...ENDTYPE)
+
+You can create your own complex data structures, similar to a `struct` in C or a simple class, using the **`TYPE...ENDTYPE`** block. This allows you to group related variables into a single object.
+
+* **`TYPE TypeName`**: Begins the definition of a new custom type.
+* **`MemberName AS Type`**: Inside the block, you declare the data members (properties) of the type. Supported data types include `INTEGER`, `DOUBLE`, `STRING`, `BOOLEAN`, `DATE`, and `MAP`.
+* **`SUB` / `FUNC`**: You can define methods (procedures and functions) that operate on the type's data. Inside a method, use the **`THIS`** keyword to refer to the specific object instance the method was called on.
+* **`ENDTYPE`**: Ends the type definition.
+
+### Instantiation and Usage
+
+You create an instance of your custom type using the `DIM` command. You can then access its members and call its methods using dot notation (`.`).
+
+### Example
+
+Here is a complete example defining a `Character` type, creating instances of it, and using its members and methods.
+
+```basic
+' --- 1. Define the custom data type ---
+TYPE Character
+    Name AS STRING
+    Health AS INTEGER
+    Position AS MAP ' UDTs can contain other complex types like Maps
+
+    ' A method to display the character's info
+    SUB PrintInfo()
+        PRINT "Name: " + THIS.Name
+        PRINT "Health: " + THIS.Health
+        PRINT "Position: (" + THIS.Position{"x"} + ", " + THIS.Position{"y"} + ")"
+    ENDSUB
+
+    ' A method to deal damage
+    SUB TakeDamage(damage_amount)
+        THIS.Health = THIS.Health - damage_amount
+        IF THIS.Health < 0 THEN THIS.Health = 0
+    ENDSUB
+ENDTYPE
+
+' --- 2. Create instances of the new type ---
+DIM Player1 AS Character
+DIM Enemy AS Character
+
+' --- 3. Assign values to the members ---
+Player1.Name = "Hero"
+Player1.Health = 100
+Player1.Position = {"x": 10, "y": 20}
+
+Enemy.Name = "Goblin"
+Enemy.Health = 30
+Enemy.Position = {"x": 50, "y": 60}
+
+' --- 4. Call methods on the instances ---
+Player1.PrintInfo()
+PRINT ""
+Enemy.PrintInfo()
+
+PRINT ""
+PRINT Enemy.Name + " takes 12 damage!"
+Enemy.TakeDamage(12)
+Enemy.PrintInfo()
+
+' You can also create arrays of your custom types
+DIM NPCs[2] AS Character
+NPCs[0].Name = "Villager"
+NPCs[0].Health = 10
+NPCs[1].Name = "Guard"
+NPCs[1].Health = 80
+PRINT ""
+PRINT "First NPC is: " + NPCs[0].Name
+```
+
 ## Operators
 
 jdBasic supports a rich set of operators for arithmetic, string manipulation, and logical comparisons.
@@ -107,7 +208,7 @@ These operators perform bit-level calculations on numeric values, which are trea
 
 **`SHR(value or array, bits to shift) -> number or array`**: Bitwise shift right
 
-### Logical Operators 
+### Logical Operators
 
 These operators are used in conditional logic, such as IF statements.
 

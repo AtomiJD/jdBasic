@@ -94,6 +94,8 @@ namespace {
         {"ENDTRY",  Tokens::ID::ENDTRY},
         {"IN",      Tokens::ID::IN_OPERATOR},
         {"EACH",    Tokens::ID::EACH},
+        {"ENUM",    Tokens::ID::ENUM},        
+        {"ENDENUM", Tokens::ID::ENDENUM},
         {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace

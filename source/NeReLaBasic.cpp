@@ -1715,48 +1715,68 @@ BasicValue NeReLaBasic::parse_primary() {
         if (token == Tokens::ID::VARIANT || token == Tokens::ID::INT || token == Tokens::ID::STRVAR) {
             pcode++;
             std::string var_or_qual_name = to_upper(read_string(*this));
+            size_t dot_pos = var_or_qual_name.find('.');
 
-            if (var_or_qual_name.find('.') != std::string::npos) {
-                auto [final_obj, final_member] = resolve_dot_chain(var_or_qual_name);
-                if (Error::get() != 0) return {};
-                if (final_member.empty()) { current_value = final_obj; }
-                else if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
-                    auto& map_ptr = std::get<std::shared_ptr<Map>>(final_obj);
-                    if (map_ptr && map_ptr->data.count(final_member)) {
-                        current_value = map_ptr->data.at(final_member);
-                    }
-                    else { Error::set(3, runtime_current_line, "Member not found: " + final_member); return {}; }
-                }
-                else if (std::holds_alternative<std::shared_ptr<Tensor>>(final_obj)) {
-                    const auto& tensor_ptr = std::get<std::shared_ptr<Tensor>>(final_obj);
-                    if (!tensor_ptr) {
-                        Error::set(3, runtime_current_line, "Cannot access member of a null Tensor.");
-                        return {};
-                    }
-                    if (final_member == "GRAD") {
-                        if (tensor_ptr->grad) {
-                            current_value = tensor_ptr->grad;
-                        }
-                        else {
-                            // If .grad is accessed but doesn't exist yet, return a valid but empty Tensor.
-                            current_value = std::make_shared<Tensor>();
-                        }
+            if (dot_pos != std::string::npos) {
+                std::string enum_name = var_or_qual_name.substr(0, dot_pos);
+                std::string member_name = var_or_qual_name.substr(dot_pos + 1);
+
+                // Check if the first part is a known enum
+                auto enum_it = user_defined_enums.find(enum_name);
+                if (enum_it != user_defined_enums.end()) {
+                    // It is an enum! Now check for the member.
+                    auto member_it = enum_it->second.find(member_name);
+                    if (member_it != enum_it->second.end()) {
+                        // Member found! The value is the integer.
+                        current_value = static_cast<double>(member_it->second);
                     }
                     else {
-                        Error::set(3, runtime_current_line, "Invalid member for Tensor: " + final_member + ". Only .grad is supported.");
+                        Error::set(3, runtime_current_line, "Enum member '" + member_name + "' not found in '" + enum_name + "'.");
                         return {};
                     }
                 }
+                else {
+                    auto [final_obj, final_member] = resolve_dot_chain(var_or_qual_name);
+                    if (Error::get() != 0) return {};
+                    if (final_member.empty()) { current_value = final_obj; }
+                    else if (std::holds_alternative<std::shared_ptr<Map>>(final_obj)) {
+                        auto& map_ptr = std::get<std::shared_ptr<Map>>(final_obj);
+                        if (map_ptr && map_ptr->data.count(final_member)) {
+                            current_value = map_ptr->data.at(final_member);
+                        }
+                        else { Error::set(3, runtime_current_line, "Member not found: " + final_member); return {}; }
+                    }
+                    else if (std::holds_alternative<std::shared_ptr<Tensor>>(final_obj)) {
+                        const auto& tensor_ptr = std::get<std::shared_ptr<Tensor>>(final_obj);
+                        if (!tensor_ptr) {
+                            Error::set(3, runtime_current_line, "Cannot access member of a null Tensor.");
+                            return {};
+                        }
+                        if (final_member == "GRAD") {
+                            if (tensor_ptr->grad) {
+                                current_value = tensor_ptr->grad;
+                            }
+                            else {
+                                // If .grad is accessed but doesn't exist yet, return a valid but empty Tensor.
+                                current_value = std::make_shared<Tensor>();
+                            }
+                        }
+                        else {
+                            Error::set(3, runtime_current_line, "Invalid member for Tensor: " + final_member + ". Only .grad is supported.");
+                            return {};
+                        }
+                    }
 #ifdef JDCOM
-                else if (std::holds_alternative<ComObject>(final_obj)) {
-                    IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
-                    _variant_t result_vt;
-                    HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt, DISPATCH_PROPERTYGET);
-                    if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property not found: " + final_member); return {}; }
-                    current_value = variant_t_to_basic_value(result_vt, *this);
-                }
+                    else if (std::holds_alternative<ComObject>(final_obj)) {
+                        IDispatchPtr pDisp = std::get<ComObject>(final_obj).ptr;
+                        _variant_t result_vt;
+                        HRESULT hr = invoke_com_method(pDisp, final_member, {}, result_vt, DISPATCH_PROPERTYGET);
+                        if (FAILED(hr)) { Error::set(12, runtime_current_line, "COM property not found: " + final_member); return {}; }
+                        current_value = variant_t_to_basic_value(result_vt, *this);
+                    }
 #endif
-                else { Error::set(15, runtime_current_line, "Invalid object for dot notation."); return {}; }
+                    else { Error::set(15, runtime_current_line, "Invalid object for dot notation."); return {}; }
+                }
             }
             else {
                 current_value = get_variable(*this, var_or_qual_name);

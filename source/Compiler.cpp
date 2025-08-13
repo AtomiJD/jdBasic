@@ -1458,6 +1458,59 @@ void Compiler::pre_scan_and_parse_types(NeReLaBasic& vm) {
     }
 }
 
+void Compiler::pre_scan_and_parse_enums(NeReLaBasic& vm) {
+    std::stringstream source_stream(vm.source_code);
+    std::string line;
+    bool in_enum_block = false;
+    std::string current_enum_name;
+    int current_enum_value = 0;
+
+    while (std::getline(source_stream, line)) {
+        std::stringstream line_stream(line);
+        std::string first_word;
+        line_stream >> first_word;
+        first_word = StringUtils::to_upper(first_word);
+
+        if (in_enum_block) {
+            if (first_word == "ENDENUM") {
+                in_enum_block = false;
+            }
+            else if (!first_word.empty() && first_word[0] != '\'') {
+                // This line is an enum member
+                std::string member_name = first_word;
+                int member_value = current_enum_value;
+
+                // Check for explicit assignment (e.g., "NotFound = 404")
+                std::string equals_sign, value_str;
+                line_stream >> equals_sign >> value_str;
+                if (equals_sign == "=" && !value_str.empty()) {
+                    try {
+                        member_value = std::stoi(value_str);
+                    }
+                    catch (const std::exception&) {
+                        // Handle malformed number if necessary, here we just ignore it
+                    }
+                }
+
+                // Store the member and its value
+                vm.user_defined_enums[current_enum_name][StringUtils::to_upper(member_name)] = member_value;
+
+                // Set the next automatic value
+                current_enum_value = member_value + 1;
+            }
+        }
+        else {
+            if (first_word == "ENUM") {
+                in_enum_block = true;
+                line_stream >> current_enum_name;
+                current_enum_name = StringUtils::to_upper(current_enum_name);
+                current_enum_value = 0; // Reset for the new enum
+                vm.user_defined_enums[current_enum_name] = {}; // Create the entry
+            }
+        }
+    }
+}
+
 uint8_t Compiler::tokenize_lambda(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source, NeReLaBasic::FunctionTable& compilation_func_table, uint16_t start_line) {
     std::string line;
     std::stringstream source_stream(source);
@@ -1544,6 +1597,10 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
     //  Pre-scan for TYPE definitions
     vm.user_defined_types.clear();
     this->pre_scan_and_parse_types(vm);
+
+    // --- Pre-scan for ENUM definitions ---
+    vm.user_defined_enums.clear();
+    this->pre_scan_and_parse_enums(vm);
 
     // 2. Pre-scan to find imports and determine if we are a module
     is_compiling_module = false;
@@ -1640,6 +1697,7 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
     int multiline = false;
 
     bool in_type_definition_block = false;
+    bool in_enum_definition_block = false;
     this->in_method_block = false;
 
     while (std::getline(source_stream, line)) {
@@ -1718,6 +1776,15 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
         std::string first_word = trimmed_logical_line.substr(0, trimmed_logical_line.find_first_of(" \t\n\r"));
         first_word = StringUtils::to_upper(first_word);
 
+        // --- ENUM BLOCK SKIPPING LOGIC ---
+        if (in_enum_definition_block) {
+            if (first_word == "ENDENUM") {
+                in_enum_definition_block = false;
+            }
+            // Skip this line entirely, don't tokenize
+            logical_line_buffer.clear();
+            continue;
+        }
 
         bool line_should_be_tokenized = false;
 
@@ -1751,6 +1818,9 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
                 std::string keyword, type_name;
                 ss >> keyword >> type_name;
                 this->current_type_context = StringUtils::to_upper(type_name);
+            }   else if (first_word == "ENUM") { 
+                in_enum_definition_block = true;
+                // Don't tokenize, just continue to the next line
             }
             else {
                 // This is regular global code.
