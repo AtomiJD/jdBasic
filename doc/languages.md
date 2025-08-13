@@ -339,9 +339,20 @@ print apply(dec@,12) ' Should return 11
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [modul]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
-* **`EXECUTE(code_string$)`**: Compiles and executes a string of jdBasic code at runtime.
 * **`EXPORT MODUL [module]`**: Marks a file as EXPORT for importing with IMPORT
 * **`IMPORTDLL [funcfile]`**: Loads the funcfile.dll as dynmaic library and register all included functions for jdBasic.
+
+### Dynamic Code Functions
+
+* **`EXECUTE(code_string$)`**: Compiles and executes a string of jdBasic code at runtime.
+* **`EVAL(expression_string$) -> value`**: Compiles and evaluates a string as a single expression, returning its result. This is the functional counterpart to the `EXECUTE` command.
+
+```basic
+    X = 10
+    Y = 20
+    MyFormula$ = "SQR(X^2 + Y^2)"
+    PRINT EVAL(MyFormula$) ' Evaluates the formula using current X and Y
+```
 
 ### Development & Debugging
 
@@ -366,6 +377,37 @@ print apply(dec@,12) ' Should return 11
 * **`PWD`**: Prints the current working directory.
 * **`MKDIR "path"`**: Creates a new directory.
 * **`KILL "filename"`**: Deletes a file.
+
+### OS Functions
+
+* **`OS.GETOS() -> string$`**: Returns a string identifying the current operating system. Possible values are `"WINDOWS"`, `"LINUX"`, and `"MACOS"`.
+
+    ```basic
+    PRINT "Running on: " + OS.GETOS()
+    ```
+
+  * **`OS.ARGS() -> array`**: Returns a 1D array of strings containing the command-line arguments passed to the jdBasic interpreter.
+
+    ```basic
+    CmdArgs = OS.ARGS()
+    PRINT "Launched with " + LEN(CmdArgs) + " arguments."
+    ```
+
+* **`OS.EXEC(command$, [args_array$]) -> map`**: Executes an external program or shell command. It returns a `Map` containing two keys: `"output"` (the captured standard output and error text) and `"exit_code"` (the integer return code from the program).
+
+    > **Note on Windows**: Internal commands like `dir` or `cls` are not standalone programs. To run them, you must execute the command shell `cmd.exe` with the `/c` flag, like this: `OS.EXEC("cmd /c dir")`.
+
+    ```basic
+    ' On Linux/macOS
+    Result = OS.EXEC("ls -l")
+
+    ' On Windows
+    Result = OS.EXEC("ping", ["-n", "4", "google.com"])
+
+    PRINT "Exit Code: " + Result{"exit_code"}
+    PRINT "--- Output ---"
+    PRINT Result{"output"}
+    ```
 
 ### Error Handling (TRY...CATCH)
 
@@ -424,10 +466,13 @@ ENDTRY
 * **`TAN(numeric expression or array)`**: Returns the Tangens.
 * **`SQR(numeric expression or array)`**: Returns the Square Root
 * **`RND(numeric expression or array)`**: Returns a random value
+* **`LOG(n)`**: Returns the natural logarithm of `n`.
+* **`LOG10(n)`**: Returns the base-10 logarithm of `n`.
 * **`FAC(numeric expression or array)`**: Factorial Function.
 * **`INT(numeric expression or array)`**: Traditional BASIC integer function (floor)
 * **`FLOOR(numeric expression or array)`**: Rounds down.
 * **`CEIL(numeric expression or array)`**: Rounds up.
+* **`ROUND(n, decimals)`**: Rounds the number `n` to the specified number of decimal places.
 * **`TRUNC(numeric expression or array)`**: Truncates toward zero.
 
 ### Regular Expression Functions
@@ -506,8 +551,8 @@ The built-in HTTP server allows `jdBasic` to serve websites and create simple JS
 
 Handler functions receive one argument: a `Map` containing details about the incoming request (e.g., path, headers, body). The `RETURN` value of the function is sent back to the client as the response.
 
-  * If the function returns a `Map`, it is automatically converted to a JSON string with `Content-Type: application/json`.
-  * If the function returns a `String`, it is sent with `Content-Type: text/html`.
+* If the function returns a `Map`, it is automatically converted to a JSON string with `Content-Type: application/json`.
+* If the function returns a `String`, it is sent with `Content-Type: text/html`.
 
 <!-- end list -->
 
