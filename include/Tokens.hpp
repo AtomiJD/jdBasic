@@ -129,6 +129,11 @@ namespace Tokens {
         FOR_EACH = 0x88,   
         ENUM = 0x89,      
         ENDENUM = 0x8A,   
+        SWITCH = 0x8B,
+        CASE = 0x8C,
+        DEFAULT = 0x8D,
+        ENDSWITCH = 0x8E,
+        EXIT_SWITCH = 0x8F,
         INTEGER_LITERAL = 0x90, // Integer
         GET = 0xBA,
         WAIT = 0xD1,

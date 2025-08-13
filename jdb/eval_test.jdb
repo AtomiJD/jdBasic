@@ -1,0 +1,19 @@
+' Simple direct evaluation
+PRINT "EVAL(""5 * (2 + 3)"") ="; EVAL("5 * (2 + 3)")  ' Prints 25
+
+' Using variables from the current scope
+X = 10
+Y = 20
+EXPR$ = "SQR(X^2 + Y^2)"
+
+PRINT "The expression is: " + EXPR$
+PRINT "The result is: " + EVAL(EXPR$) ' Evaluates SQR(10^2 + 20^2)
+
+' Dynamically calling functions
+FUNC AddTwo(n)
+    RETURN n + 2
+ENDFUNC
+
+FunctionName$ = "AddTwo"
+Value = 8
+PRINT EVAL(FunctionName$ + "(" + Value + ")") ' Prints 10

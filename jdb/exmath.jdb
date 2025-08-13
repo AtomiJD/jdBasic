@@ -1,0 +1,19 @@
+PRINT "Logarithms:"
+PRINT "LOG(10) = "; LOG(10)         ' Natural log
+PRINT "LOG10(10) = "; LOG10(10)     ' Base-10 log
+PRINT
+
+PRINT "Rounding:"
+PRINT "ROUND(3.14159, 2) = "; ROUND(3.14159, 2)
+PRINT "ROUND(123.456, -1) = "; ROUND(123.456, -1) ' Rounds to the nearest 10
+PRINT
+
+PRINT "Clamping:"
+PRINT "CLAMP(50, 0, 100) = "; CLAMP(50, 0, 100)   ' Inside range -> 50
+PRINT "CLAMP(150, 0, 100) = "; CLAMP(150, 0, 100)  ' Above range -> 100
+PRINT "CLAMP(-50, 0, 100) = "; CLAMP(-50, 0, 100)   ' Below range -> 0
+PRINT
+
+PRINT "Vectorized Clamping:"
+MyArray = [-5, 10, 25, 60]
+PRINT CLAMP(MyArray, 0, 20) ' Should print [0 10 20 20]

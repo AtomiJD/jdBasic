@@ -5311,6 +5311,23 @@ BasicValue builtin_locate(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return false; // Procedures return a dummy value.
 }
 
+BasicValue builtin_getx(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "GETX does not accept arguments.");
+        return false;
+    }
+
+    return to_double(TextIO::getCursorX());
+}
+
+BasicValue builtin_gety(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "GETY does not accept arguments.");
+        return false;
+    }
+    return to_double(TextIO::getCursorY());
+}
+
 // SLEEP milliseconds
 BasicValue builtin_sleep(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
@@ -6962,6 +6979,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("SETLOCALE", 1, builtin_setlocale);
     register_proc("CLS", -1, builtin_cls);
     register_proc("LOCATE", 2, builtin_locate);
+    register_func("GETX", 0, builtin_getx);
+    register_func("GETY", 0, builtin_gety);
     register_proc("SLEEP", 1, builtin_sleep);
     register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);

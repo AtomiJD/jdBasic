@@ -1176,6 +1176,22 @@ void NeReLaBasic::statement() {
     case Tokens::ID::ENDTRY:
         pcode++; // Should not happen, but skip if it does.
         break;
+    case Tokens::ID::SWITCH:
+        pcode++;
+        Commands::do_switch(*this);
+        break;
+    case Tokens::ID::CASE:
+        pcode++;
+        Commands::do_case(*this);
+        break;
+    case Tokens::ID::DEFAULT:
+        pcode++;
+        Commands::do_default(*this);
+        break;
+    case Tokens::ID::ENDSWITCH:
+        pcode++;
+        Commands::do_endswitch(*this);
+        break;
     case Tokens::ID::OP_PUSH_HANDLER:
         pcode++;
         Commands::do_push_handler(*this);

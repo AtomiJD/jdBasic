@@ -7,6 +7,15 @@
 #include <streambuf>
 #include <cstdint> // For uint16_t, uint8_t
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>  // For STDIN_FILENO, read, write
+#include <termios.h> // For termios
+#include <cstdio>    // For sscanf
+#endif
+
+
 #ifndef _WIN32
 #include <ncurses.h>
 /**
@@ -82,4 +91,62 @@ void TextIO::setCursor(bool on) {
     else {
         std::cout << "\033[?25l"; // ANSI code to hide cursor
     }
+}
+
+void TextIO::getCursorPosition(int& row, int& col) {
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (GetConsoleScreenBufferInfo(hConsole, &csbi)) {
+        // The Win32 API returns 0-based coordinates.
+        // We add 1 to match the 1-based indexing used by locate().
+        col = csbi.dwCursorPosition.X + 1;
+        row = csbi.dwCursorPosition.Y + 1;
+    }
+    else {
+        // In case of an error, return -1.
+        row = -1;
+        col = -1;
+    }
+#else
+    // 1. Set the terminal to raw mode to read the response character by character.
+    struct termios old_tio, new_tio;
+    tcgetattr(STDIN_FILENO, &old_tio);
+    new_tio = old_tio;
+    new_tio.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_tio);
+
+    // 2. Send the DSR query "\x1B[6n" to request the cursor position.
+    std::cout << "\x1B[6n" << std::flush;
+
+    // 3. Read the response from stdin. The response is in the format "\x1B[<row>;<col>R".
+    char buf[32] = { 0 };
+    int i = 0;
+    while (i < sizeof(buf) - 1) {
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
+        i++;
+    }
+
+    // 4. Parse the row and column from the response buffer.
+    if (sscanf(buf, "\x1B[%d;%d", &row, &col) != 2) {
+        row = -1;
+        col = -1;
+    }
+
+    // 5. Restore the original terminal settings.
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);
+#endif
+}
+
+int TextIO::getCursorX() {
+    int row, col;
+    getCursorPosition(row, col);
+    return col;
+}
+
+int TextIO::getCursorY() {
+    int row, col;
+    getCursorPosition(row, col);
+    return row;
 }

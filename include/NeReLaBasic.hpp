@@ -253,6 +253,10 @@ public:
     using EnumMembers = std::unordered_map<std::string, int>;
     std::unordered_map<std::string, EnumMembers> user_defined_enums;
 
+    // --- Runtime stack for SWITCH values ---
+    std::vector<BasicValue> switch_value_stack;
+    std::vector<bool> switch_case_matched_stack;
+
     //std::unordered_map<std::string, uint16_t> label_addresses;
 
     // --- C++ Modules ---

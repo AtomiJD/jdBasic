@@ -342,6 +342,70 @@ print apply(dec@,12) ' Should return 11
 * **`EXPORT MODUL [module]`**: Marks a file as EXPORT for importing with IMPORT
 * **`IMPORTDLL [funcfile]`**: Loads the funcfile.dll as dynmaic library and register all included functions for jdBasic.
 
+### SWITCH...CASE...ENDSWITCH
+
+Provides a clear way to execute one of several blocks of code based on the value of a single expression. It is a more readable alternative to a long series of `IF...ELSEIF` statements.
+
+* **`SWITCH expression`**: Evaluates the `expression` once at the beginning.
+* **`CASE value_expression`**: Compares its `value_expression` to the main switch expression. If they are equal, the code block following the `CASE` is executed.
+* **`DEFAULT`**: An optional block that executes if no preceding `CASE` statement matches.
+* **`ENDSWITCH`**: Marks the end of the `SWITCH` block.
+
+**Note**: The interpreter does not "fall through" cases. Once a `CASE` or `DEFAULT` block is executed, control jumps immediately to the statement following `ENDSWITCH`.
+
+**Example:**
+
+```basic
+INPUT "Enter a command (start, stop, pause): ", command$
+
+SWITCH UCASE$(command$)
+    CASE "START"
+        PRINT "Starting process..."
+        ' ... code to start ...
+
+    CASE "STOP"
+        PRINT "Stopping process..."
+        ' ... code to stop ...
+
+    CASE "PAUSE"
+        PRINT "Pausing process."
+
+    DEFAULT
+        PRINT "Unknown command: " + command$
+ENDSWITCH
+
+PRINT "Switch block finished."
+```
+
+### Error Handling (TRY...CATCH)
+
+jdBasic uses a modern, structured error handling system. The old ON ERROR system is no longer supported.
+
+* **`TRY`**: Begins a block of code that is protected.
+* **`CATCH`**: If an error occurs inside the TRY block, execution jumps to the CATCH block.
+* **`FINALLY`**: This block of code is always executed after the TRY or CATCH block, regardless of whether an error occurred. It's ideal for cleanup tasks like closing files.
+* **`ENDTRY`**: Ends the error handling block.
+
+Inside a CATCH block, you can use the following built-in variables:
+
+* **`ERR`**: The numeric error code.
+* **`ERL`**: The line number where the error occurred.
+* **`ERRMSG$`**: The descriptive error message string.
+* **`STACK$`**: The call stack .
+
+```basic
+TRY
+    PRINT "Opening file..."
+    ' Code that might fail, e.g., file operations
+    A = 10 / 0
+CATCH
+    PRINT "An error occurred!"
+    PRINT "Code: "; ERR; ", Line: "; ERL; ", Message: "; ERRMSG$
+FINALLY
+    PRINT "Closing file (this always runs)."
+ENDTRY
+```
+
 ### Dynamic Code Functions
 
 * **`EXECUTE(code_string$)`**: Compiles and executes a string of jdBasic code at runtime.
@@ -367,7 +431,7 @@ print apply(dec@,12) ' Should return 11
 * **`LOADWS "workspacename"`**: Loads a source file and all variables of an saved workspace from disk into memory.
 * **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
 * **`CLEARWS`**: Empties source code, p-code, and all global variables
-* **`NEW"`**: Empties the source code, compiled p-code, and user-defined function tables.
+* **`NEW`**: Empties the source code, compiled p-code, and user-defined function tables.
 
 ### Filesystem
 
@@ -408,35 +472,6 @@ print apply(dec@,12) ' Should return 11
     PRINT "--- Output ---"
     PRINT Result{"output"}
     ```
-
-### Error Handling (TRY...CATCH)
-
-jdBasic uses a modern, structured error handling system. The old ON ERROR system is no longer supported.
-
-* **`TRY`**: Begins a block of code that is protected.
-* **`CATCH`**: If an error occurs inside the TRY block, execution jumps to the CATCH block.
-* **`FINALLY`**: This block of code is always executed after the TRY or CATCH block, regardless of whether an error occurred. It's ideal for cleanup tasks like closing files.
-* **`ENDTRY`**: Ends the error handling block.
-
-Inside a CATCH block, you can use the following built-in variables:
-
-* **`ERR`**: The numeric error code.
-* **`ERL`**: The line number where the error occurred.
-* **`ERRMSG$`**: The descriptive error message string.
-* **`STACK$`**: The call stack .
-
-```basic
-TRY
-    PRINT "Opening file..."
-    ' Code that might fail, e.g., file operations
-    A = 10 / 0
-CATCH
-    PRINT "An error occurred!"
-    PRINT "Code: "; ERR; ", Line: "; ERL; ", Message: "; ERRMSG$
-FINALLY
-    PRINT "Closing file (this always runs)."
-ENDTRY
-```
 
 ## Functions
 

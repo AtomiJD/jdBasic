@@ -1,0 +1,38 @@
+PRINT "Running on OS: " + OS.GETOS()
+
+CurrentOS$ = OS.GETOS()
+
+IF CurrentOS$ = "WINDOWS" THEN
+    PRINT "This is a Windows machine."
+    ' Execute a Windows-specific command
+    PRINT OS.EXEC("cmd /c dir")
+ELSEIF CurrentOS$ = "LINUX" THEN
+    PRINT "This is a Linux machine."
+    ' Execute a Linux-specific command
+    PRINT OS.EXEC("ls -l")
+ELSE
+    PRINT "Running on another OS."
+ENDIF
+
+' --- Example for OS.ARGS ---
+PRINT "Command-line arguments received:"
+ARGS_ARRAY = OS.ARGS()
+FOR EACH arg IN ARGS_ARRAY
+    PRINT " > " + arg
+NEXT
+
+PRINT
+
+' --- Example for OS.EXEC ---
+PRINT "Pinging google.com..."
+' Note: On Windows use "ping", on Linux use "ping -c 4"
+IF CurrentOS$ = "WINDOWS" THEN
+    ping_result = OS.EXEC("ping google.com")
+ELSE
+    ping_result = OS.EXEC("ping -c 4 google.com")
+ENDIF
+
+PRINT "Exit Code: " + ping_result{"exit_code"}
+PRINT "--- Output ---"
+PRINT ping_result{"output"}
+PRINT "--------------"

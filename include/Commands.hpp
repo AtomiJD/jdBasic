@@ -33,6 +33,10 @@ namespace Commands {
     void do_do(NeReLaBasic& vm);
     void do_loop(NeReLaBasic& vm);
     void do_end(NeReLaBasic& vm);
+    void do_switch(NeReLaBasic& vm);
+    void do_case(NeReLaBasic& vm);
+    void do_default(NeReLaBasic& vm);
+    void do_endswitch(NeReLaBasic& vm);
     
     void do_dllimport(NeReLaBasic& vm);
 

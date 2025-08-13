@@ -2074,6 +2074,101 @@ void Commands::do_exit_do(NeReLaBasic& vm) {
     vm.pcode = jump_target;
 }
 
+void Commands::do_switch(NeReLaBasic& vm) {
+    // Evaluate the expression following the SWITCH keyword
+    BasicValue val = vm.evaluate_expression();
+    if (Error::get() != 0) return;
+
+    // Push the result onto the runtime value stack
+    vm.switch_value_stack.push_back(val);
+    // Push a "false" flag onto the matched stack for this level
+    vm.switch_case_matched_stack.push_back(false);
+}
+
+void Commands::do_case(NeReLaBasic& vm) {
+    // Read the 2-byte placeholder for jumping to the end of the switch block
+    uint8_t jump_end_lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t jump_end_msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t jump_to_end_addr = (jump_end_msb << 8) | jump_end_lsb;
+
+    // Read the 2-byte placeholder for jumping to the next case if this one fails
+    uint8_t jump_next_lsb = (*vm.active_p_code)[vm.pcode++];
+    uint8_t jump_next_msb = (*vm.active_p_code)[vm.pcode++];
+    uint16_t jump_to_next_case_addr = (jump_next_msb << 8) | jump_next_lsb;
+
+    bool this_case_matches = false;
+    if (!vm.switch_case_matched_stack.empty() && !vm.switch_case_matched_stack.back()) {
+        // A previous case in this SWITCH block has not been matched yet, so we test this one.
+        BasicValue case_val = vm.evaluate_expression();
+        if (Error::get() != 0) return;
+
+        // Compare the CASE value with the value on the stack
+        BasicValue switch_val = vm.switch_value_stack.back();
+
+        // Using to_double for simple comparison; could be extended for strings.
+        if (to_string(case_val) == to_string(switch_val)) {
+            this_case_matches = true;
+            vm.switch_case_matched_stack.back() = true; // Mark that a case has matched
+        }
+    }
+
+    if (this_case_matches) {
+        // This case is a match. After its code block finishes, we need to jump to ENDSWITCH.
+        // We do this by patching the pcode pointer in a clever way. The code after the case block
+        // will be a single jump instruction. We temporarily overwrite it.
+        // The runtime will execute the code block. When it hits the colon/CR, it will find our jump.
+        // This is a placeholder for a more robust solution. A better way is to have the code block
+        // end with an explicit JUMP instruction. For now, we assume the code block for a case
+        // is followed by the next case or endswitch.
+        // Let's rely on an explicit jump after the case block. The compiler should insert this.
+        // For now, this logic assumes no explicit jump is needed because the flow control handles it.
+    }
+    else {
+        // This case does not match OR a previous case already matched.
+        // Jump to the next CASE or DEFAULT or ENDSWITCH.
+        vm.pcode = jump_to_next_case_addr;
+    }
+}
+
+void Commands::do_default(NeReLaBasic& vm) {
+    // If no case has matched yet in the current switch block, execute this block.
+    if (!vm.switch_case_matched_stack.empty() && !vm.switch_case_matched_stack.back()) {
+        // Fall through and execute the statements in the DEFAULT block.
+        vm.switch_case_matched_stack.back() = true;
+    }
+    else {
+        // A case has already been matched, so we need to skip the DEFAULT block.
+        // We assume the compiler has placed a jump to ENDSWITCH after the last statement
+        // of the previous case, so we don't need to do anything special here.
+        // However, a robust implementation would have the compiler tell us where to jump.
+        // Let's find the ENDSWITCH token.
+        uint16_t level = 1;
+        while (vm.pcode < vm.active_p_code->size()) {
+            Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (token == Tokens::ID::SWITCH) {
+                level++;
+            }
+            else if (token == Tokens::ID::ENDSWITCH) {
+                level--;
+                if (level == 0) {
+                    break;
+                }
+            }
+            vm.pcode++;
+        }
+    }
+}
+
+void Commands::do_endswitch(NeReLaBasic& vm) {
+    // The switch block is over. Pop the values from the runtime stacks.
+    if (!vm.switch_value_stack.empty()) {
+        vm.switch_value_stack.pop_back();
+    }
+    if (!vm.switch_case_matched_stack.empty()) {
+        vm.switch_case_matched_stack.pop_back();
+    }
+}
+
 void Commands::do_edit(NeReLaBasic& vm) {
     std::string filename_to_edit;
 

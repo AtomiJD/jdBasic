@@ -75,6 +75,18 @@ public:
     };
     std::vector<TryBlockInfo> try_stack;
 
+    // --- For SWITCH...CASE...ENDSWITCH blocks ---
+    struct SwitchBlockInfo {
+        uint16_t source_line;
+        // Stores addresses of jump placeholders from each CASE that need to be patched
+        // to point to the instruction *after* the ENDSWITCH.
+        std::vector<uint16_t> jump_to_end_patches;
+        // Stores the address of the conditional jump from the *previous* CASE,
+        // which needs to be patched to point to the *current* CASE.
+        uint16_t previous_case_jump_patch_addr = 0;
+    };
+    std::vector<SwitchBlockInfo> switch_stack;
+
     // For tracking FUNC/SUB declarations and patching jumps
     std::vector<uint16_t> func_stack;
 

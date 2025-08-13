@@ -50,6 +50,10 @@ Description: Halts program execution and returns to the Ready prompt, preserving
 Syntax: EXECUTE(code_string$)
 Description: Compiles and executes a string of jdBasic code at runtime.
 
+[EVAL]
+Syntax: EVAL(expression_string$) -> value
+Description: Compiles and evaluates a string as a single expression, returning its result. This is the functional counterpart to the `EXECUTE` command.
+
 [IMPORT]
 Syntax: IMPORT [modul]
 Description: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
@@ -134,6 +138,18 @@ Description: Creates a new directory.
 Syntax: KILL "filename"
 Description: Deletes a file.
 
+[OS.GETOS]
+Syntax: OS.GETOS() -> string$
+Description: Returns a string identifying the current operating system. Possible values are "WINDOWS", "LINUX", and "MACOS".
+
+[OS.ARGS]
+Syntax: OS.ARGS() -> array
+Description: Returns a 1D array of strings containing the command-line arguments passed to the jdBasic interpreter.
+
+[OS.EXEC]
+Syntax: OS.EXEC(command$, [args_array$]) -> map
+Description: Executes an external program or shell command. It returns a `Map` containing two keys: `"output"` (the captured standard output and error text) and `"exit_code"` (the integer return code from the program).
+
 [JSON.PARSE$]
 Syntax: JSON.PARSE$(json_string$)
 Description: Parses a JSON string and returns a special JsonObject.
@@ -210,6 +226,14 @@ Description: Returns the Cosinus.
 Syntax: TAN(numeric expression or array)
 Description: Returns the Tangens.
 
+[LOG]
+Syntax: LOG(numeric expression or array)
+Description: Returns the natural logarithm.
+
+[LOG10]
+Syntax: LOG10(numeric expression or array)
+Description: Returns the base-10 logarithm.
+
 [SQR]
 Syntax: SQR(numeric expression or array)
 Description: Returns the Square Root
@@ -233,6 +257,14 @@ Description: Rounds down.
 [CEIL]
 Syntax: CEIL(numeric expression or array)
 Description: Rounds up.
+
+[ROUND]
+Syntax: ROUND(n, decimals)
+Description: Rounds the number n to the specified number of decimal places.
+
+[CLAMP]
+Syntax: CLAMP(n, lower, upper)
+Description: Clamps the number in the given bounds.
 
 [TRUNC]
 Syntax: TRUNC(numeric expression or array)

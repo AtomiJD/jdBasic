@@ -905,6 +905,94 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue;
             }
 
+            case Tokens::ID::SWITCH: {
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                // The expression following SWITCH will be tokenized and evaluated at runtime.
+                // Push a new info block onto the compiler's switch stack.
+                switch_stack.push_back({ lineNumber });
+                continue;
+            }
+
+            case Tokens::ID::CASE: {
+                if (switch_stack.empty()) {
+                    Error::set(1, lineNumber, "CASE without SWITCH.");
+                    return 1;
+                }
+                SwitchBlockInfo& current_switch = switch_stack.back();
+
+                // 1. Patch the previous CASE's conditional jump to land here.
+                if (current_switch.previous_case_jump_patch_addr != 0) {
+                    uint16_t here = out_p_code.size();
+                    out_p_code[current_switch.previous_case_jump_patch_addr] = here & 0xFF;
+                    out_p_code[current_switch.previous_case_jump_patch_addr + 1] = (here >> 8) & 0xFF;
+                }
+
+                // 2. Emit the CASE opcode.
+                out_p_code.push_back(static_cast<uint8_t>(token));
+
+                // 3. Add a 2-byte placeholder for the jump-to-end if this case's code runs.
+                //    Store its address so ENDSWITCH can patch it.
+                current_switch.jump_to_end_patches.push_back(out_p_code.size());
+                out_p_code.push_back(0); out_p_code.push_back(0);
+
+                // The case value expression will be tokenized next. After it, the runtime
+                // will perform a conditional jump if the value doesn't match.
+                // 4. Add a 2-byte placeholder for this conditional jump. Store its address
+                //    so the *next* CASE or ENDSWITCH can patch it.
+                current_switch.previous_case_jump_patch_addr = out_p_code.size();
+                out_p_code.push_back(0); out_p_code.push_back(0);
+
+                // Let the tokenizer continue with the CASE's expression.
+                break;
+            }
+
+            case Tokens::ID::DEFAULT: {
+                if (switch_stack.empty()) {
+                    Error::set(1, lineNumber, "DEFAULT without SWITCH.");
+                    return 1;
+                }
+                SwitchBlockInfo& current_switch = switch_stack.back();
+
+                // Patch the previous CASE's jump to land here.
+                if (current_switch.previous_case_jump_patch_addr != 0) {
+                    uint16_t here = out_p_code.size();
+                    out_p_code[current_switch.previous_case_jump_patch_addr] = here & 0xFF;
+                    out_p_code[current_switch.previous_case_jump_patch_addr + 1] = (here >> 8) & 0xFF;
+                }
+
+                // No more cases can follow DEFAULT.
+                current_switch.previous_case_jump_patch_addr = 0;
+
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                continue;
+            }
+
+            case Tokens::ID::ENDSWITCH: {
+                if (switch_stack.empty()) {
+                    Error::set(1, lineNumber, "ENDSWITCH without SWITCH.");
+                    return 1;
+                }
+                SwitchBlockInfo current_switch = switch_stack.back();
+                switch_stack.pop_back();
+
+                uint16_t end_addr = out_p_code.size();
+
+                // 1. Patch the last CASE's conditional jump to land here.
+                if (current_switch.previous_case_jump_patch_addr != 0) {
+                    out_p_code[current_switch.previous_case_jump_patch_addr] = end_addr & 0xFF;
+                    out_p_code[current_switch.previous_case_jump_patch_addr + 1] = (end_addr >> 8) & 0xFF;
+                }
+
+                // 2. Patch all of the "jump-to-end" placeholders to land here.
+                for (uint16_t patch_addr : current_switch.jump_to_end_patches) {
+                    out_p_code[patch_addr] = end_addr & 0xFF;
+                    out_p_code[patch_addr + 1] = (end_addr >> 8) & 0xFF;
+                }
+
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                continue;
+            }
+
             case Tokens::ID::DO: {
                 out_p_code.push_back(static_cast<uint8_t>(token));
                 DoLoopInfo info;

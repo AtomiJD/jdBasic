@@ -96,6 +96,11 @@ namespace {
         {"EACH",    Tokens::ID::EACH},
         {"ENUM",    Tokens::ID::ENUM},        
         {"ENDENUM", Tokens::ID::ENDENUM},
+        {"SWITCH",  Tokens::ID::SWITCH},
+        {"CASE",    Tokens::ID::CASE},
+        {"DEFAULT", Tokens::ID::DEFAULT},
+        {"ENDSWITCH", Tokens::ID::ENDSWITCH},
+        {"EXITSWITCH", Tokens::ID::EXIT_SWITCH},
         {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace

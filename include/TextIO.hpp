@@ -41,4 +41,7 @@ namespace TextIO {
     void setColor(uint8_t foreground, uint8_t background);
     void locate(int row, int col);
     void setCursor(bool on);
+    int getCursorX();
+    int getCursorY();
+    void getCursorPosition(int& row, int& col);
 }
