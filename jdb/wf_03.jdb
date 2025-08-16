@@ -1,0 +1,271 @@
+' --- jdBasic Process Pipe (Workflow) Engine v4 (Thread-Safe) ---
+' Reads a workflow from an external "workflow.json" file and handles triggers.
+
+' =================================================================
+' SECTION 1: INITIALIZATION
+' =================================================================
+
+DLLIMPORT "sqlitefunc"
+IMPORT WFLIB
+
+ON "KEYDOWN" CALL HandleKeys
+ON "QUIT" CALL HandleQuit
+
+SUB HandleQuit(data)
+  PRINT "Program will be terminated."
+  GOTO GETOUT
+ENDSUB
+
+SUB HandleKeys(data)
+  IF data[0]{"scancode"} = 27 THEN RAISEEVENT "QUIT", 0 ' ESC key
+ENDSUB
+
+DIM GLOBAL_RETURN
+DIM INPUT_DATA
+DIM handle 
+
+PRINT "Loading workflow from workflow.json..."
+workflow_json_string$ = TXTREADER$("workflow.json")
+IF workflow_json_string$ = "" THEN
+    PRINT "Error: Could not read workflow.json"
+    END
+ENDIF
+
+workflow_definition = JSON.PARSE$(workflow_json_string$)
+PRINT "Workflow loaded: '"; workflow_definition{"description"}; "'"
+PRINT
+
+' =================================================================
+' SECTION 2: THE THREADED EXECUTION ENGINE
+' =================================================================
+
+' The THREAD keyword will make it run asynchronously.
+FUNC RUN_WORKFLOW(workflow_def, start_node_id$, initial_data)
+    DIM workflow_map AS MAP
+    DIM node_outputs AS MAP
+    
+    ' For easy lookup, convert the nodes array into a map keyed by node ID.
+    FOR EACH node IN workflow_def{"nodes"}
+        workflow_map{node{"id"}} = node
+    NEXT
+    
+    current_node_id$ = start_node_id$
+    
+    ' The main execution loop
+    previous_node_id$ = ""
+    DO
+        PRINT "--- Executing Node: '"; current_node_id$; "' ---"
+        current_node = workflow_map{current_node_id$}
+        
+        DIM input_for_this_node
+        IF previous_node_id$ <> "" THEN
+            input_for_this_node = node_outputs{previous_node_id$}
+        ELSE
+            input_for_this_node = initial_data
+        ENDIF
+
+        ' Execute the node based on its type
+        node_result = EXECUTE_NODE(current_node, input_for_this_node)
+        
+        node_outputs{current_node_id$} = node_result
+        PRINT "Output: "; node_result
+        PRINT
+        
+        previous_node_id$ = current_node_id$
+        IF MAP.EXISTS(current_node{"connections"}, "output") THEN
+            current_node_id$ = current_node{"connections"}{"output"}
+        ELSE
+            current_node_id$ = ""
+        ENDIF
+        
+    LOOP WHILE current_node_id$ <> ""
+   
+    RETURN node_outputs{previous_node_id$}
+ENDFUNC
+
+
+' This function handles the logic for each specific node type. It remains unchanged.
+FUNC EXECUTE_NODE(node, rdata)
+    DIM result
+    INPUT_DATA = rdata
+    node_type$ = node{"type"}
+
+    IF node_type$ = "WEBHOOK_TRIGGER" THEN
+        PRINT "  Type: Webhook Trigger"
+        PRINT "  INFO: This node is the entry point. Passing received data."
+        result = rdata 
+
+    ELSEIF node_type$ = "SET_DATA" THEN
+        PRINT "  Type: Set Data"
+        code_to_run$ = ""
+        IF TYPEOF(node{"parameters"}{"code"}) = "ARRAY" THEN
+            FOR EACH line IN node{"parameters"}{"code"}
+                code_to_run$ = code_to_run$ + line + CHR$(10)
+            NEXT
+        ELSE
+            code_to_run$ = node{"parameters"}{"code"}
+        ENDIF
+        
+        PRINT "  Executing code..."
+        EXECUTE(code_to_run$) 
+        result = GLOBAL_RETURN 
+
+    ELSEIF node_type$ = "SQLITE_QUERY" THEN
+        PRINT "  Type: SQLite Query"
+        db_file$ = node{"parameters"}{"db_file"}
+        query$ = node{"parameters"}{"query"}
+        chat_id = rdata{"message"}{"chat"}{"id"}
+        
+        PRINT "  DB File: "; db_file$
+        PRINT "  Query: "; query$
+
+        db = SQLITE.OPEN(db_file$)
+        IF TYPEOF(db) <> "SQLITEDB" THEN
+            result = {"error": "SQLite DB open failed", "reason": SQLITE.ERROR$()}
+        ELSE
+            query_result = SQLITE.QUERY(db, query$, [chat_id])
+            IF TYPEOF(query_result) = "BOOLEAN" THEN
+                 result = {"error": "SQLite query failed", "reason": SQLITE.ERROR$()}
+            ELSE
+                 result = rdata
+                 result{"history"} = query_result
+            ENDIF
+            SQLITE.CLOSE db
+        ENDIF
+
+    ELSEIF node_type$ = "SQLITE_EXEC" THEN
+        PRINT "  Type: SQLite Execute"
+        db_file$ = node{"parameters"}{"db_file"}
+        query$ = node{"parameters"}{"query"}
+        
+        DIM params
+        IF INSTR(LCASE$(query$), "role, content, timestamp") > 0 AND INSTR(LCASE$(query$), "'user'") > 0 THEN
+            params = [rdata{"message"}{"chat"}{"id"}, rdata{"message"}{"text"}, TICK()]
+        ELSE
+            params = [rdata{"chat_id"}, rdata{"ai_response"}, TICK()]
+        ENDIF
+
+        PRINT "  DB File: "; db_file$
+        PRINT "  Query: "; query$
+        
+        db = SQLITE.OPEN(db_file$)
+        IF TYPEOF(db) <> "SQLITEDB" THEN
+            result = {"error": "SQLite DB open failed", "reason": SQLITE.ERROR$()}
+        ELSE
+            SQLITE.EXEC(db, "CREATE TABLE IF NOT EXISTS conversations (chat_id TEXT, role TEXT, content TEXT, timestamp INTEGER);")
+            success = SQLITE.EXEC(db, query$, params)
+     
+            IF success THEN
+                result = rdata 
+            ELSE
+                result = {"error": "SQLite exec failed", "reason": SQLITE.ERROR$()}
+            ENDIF
+            SQLITE.CLOSE db
+        ENDIF
+    
+    ELSE
+        PRINT "  Type: Unknown ('"; node{"type"}; "')"
+        result = {"error": "Unknown node type"}
+    ENDIF
+    
+    RETURN result
+ENDFUNC
+
+' Helper function to sanitize a string for SQL insertion
+FUNC TSQL(s$)
+    s$ = REPLACE$(s$, "'", "''")
+    RETURN s$
+ENDFUNC
+
+' =================================================================
+' SECTION 3: WEBHOOK SERVER SETUP & MAIN LOOP
+' =================================================================
+
+' This function is called by the HTTP server whenever a POST request is received.
+FUNC HandleWebhook(request)
+    PRINT
+    PRINT ">>> Webhook received at path: "; request{"path"}; " <<<"
+    
+    webhook_data = JSON.PARSE$(request{"body"})
+    
+    start_node_id$ = ""
+    FOR EACH node IN workflow_definition{"nodes"}
+        IF node{"type"} = "WEBHOOK_TRIGGER" AND node{"parameters"}{"path"} = request{"path"} THEN
+            start_node_id$ = node{"id"}
+            EXITFOR
+        ENDIF
+    NEXT
+    
+    IF start_node_id$ = "" THEN
+        PRINT "No workflow trigger found for this path."
+        RETURN {"status": "error", "message": "No trigger found"}
+    ENDIF
+
+    ' MODIFIED: Launch the workflow in a true background thread using the THREAD keyword.
+    ' This call starts the function in parallel and returns immediately with a thread handle.
+    PRINT "--- Launching workflow in background thread ---"
+    handle = THREAD RUN_WORKFLOW(workflow_definition, start_node_id$, webhook_data)
+    
+    ' Immediately return a success message to Telegram to prevent timeouts.
+    RETURN {"status": "ok"}
+ENDFUNC
+
+' --- Main Program Body ---
+PRINT "Setting up workflow triggers..."
+
+telegram_api_key$ = GETENV$("TELEGRAM_API")
+IF telegram_api_key$ = "" THEN
+    PRINT "Error: TELEGRAM_API environment variable not set."
+    END
+ENDIF
+
+webhook_path$ = "/telegram"
+HTTP.SERVER.ON_POST webhook_path$, "HandleWebhook"
+
+server_url$ = WFLIB.get_ngrok_url()
+server_url$ = server_url$ + webhook_path$
+telegram_api_url$ = "https://api.telegram.org/bot" + telegram_api_key$ + "/setWebhook?url=" + server_url$
+PRINT "Setting Telegram webhook..."
+PRINT telegram_api_url$
+PRINT 
+response$ = HTTP.GET$(telegram_api_url$)
+PRINT "Telegram API response: "; response$
+PRINT
+
+IF HTTP.SERVER.START(8080) THEN
+    DREH = "|/-\-"
+    DREHI = 0
+    FOREVER = 0
+    handle = -1
+    PRINT "Server is running at http://localhost:8080"
+    PRINT "Listening for webhooks. Press ESC to stop."
+    DO
+        TRY
+            IF handle >= 0 ANDALSO THREAD.ISDONE(handle) THEN
+                ThreadResult = THREAD.GETRESULT(handle)
+                handle = -1
+                PRINT "Thread done..."
+                PRINT ThreadResult
+                PRINT "---"
+            ENDIF 
+        CATCH
+            PRINT "Error: ", ERRMSG$
+        ENDTRY
+        TRY
+            DREHI = DREHI + 1
+            DREHY = GETY()
+            LOCATE DREHY, 1
+            PRINT MID$(DREH, DREHI MOD 5, 1); 
+            SLEEP 100 
+        CATCH
+            PRINT "Error: ", ERRMSG$
+        ENDTRY
+    LOOP UNTIL FOREVER
+ELSE
+    PRINT "Error starting server: "; ERRMSG$
+ENDIF
+
+GETOUT:
+PRINT "Shutting down server..."
+HTTP.SERVER.STOP
+END

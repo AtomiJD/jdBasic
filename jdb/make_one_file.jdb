@@ -34,4 +34,4 @@ output_filename$ = "all_code.txt"
 PRINT "Writing combined code to: "; output_filename$
 TXTWRITER output_filename$, combined_code$
 
-PRINT "Done. All files have been combined into 'all_code.jdb'."
+PRINT "Done. All files have been combined into 'all_code.txt'."

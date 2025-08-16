@@ -690,6 +690,125 @@ BasicValue builtin_map_values(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return result_ptr;
 }
 
+// MAP.DELETE(map, key$)
+BasicValue builtin_map_delete(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "MAP.DELETE requires 2 arguments: map, key$");
+        return false;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "First argument to MAP.DELETE must be a Map.");
+        return false;
+    }
+
+    const auto& map_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    if (!map_ptr) {
+        Error::set(15, vm.runtime_current_line, "Map variable is null.");
+        return false;
+    }
+
+    const std::string key = to_string(args[1]);
+    map_ptr->data.erase(key); // erase() safely does nothing if the key doesn't exist
+
+    return false; // This is a procedure
+}
+
+// MAP.CLEAR(map)
+BasicValue builtin_map_clear(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "MAP.CLEAR requires 1 argument: map");
+        return false;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to MAP.CLEAR must be a Map.");
+        return false;
+    }
+
+    const auto& map_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    if (!map_ptr) {
+        Error::set(15, vm.runtime_current_line, "Map variable is null.");
+        return false;
+    }
+
+    map_ptr->data.clear();
+
+    return false; // This is a procedure
+}
+
+// MAP.SIZE(map) -> number
+BasicValue builtin_map_size(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return 0.0;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to MAP.SIZE must be a Map.");
+        return 0.0;
+    }
+
+    const auto& map_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    if (!map_ptr) {
+        return 0.0; // Size of a null map is 0
+    }
+
+    return static_cast<double>(map_ptr->data.size());
+}
+
+// MAP.MERGE(destination_map, source_map)
+BasicValue builtin_map_merge(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "MAP.MERGE requires 2 arguments: destination_map, source_map");
+        return false;
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0]) || !std::holds_alternative<std::shared_ptr<Map>>(args[1])) {
+        Error::set(15, vm.runtime_current_line, "Both arguments to MAP.MERGE must be Maps.");
+        return false;
+    }
+
+    const auto& dest_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    const auto& source_ptr = std::get<std::shared_ptr<Map>>(args[1]);
+
+    if (!dest_ptr || !source_ptr) {
+        Error::set(15, vm.runtime_current_line, "Map variables for MAP.MERGE cannot be null.");
+        return false;
+    }
+
+    // The insert_or_assign method is perfect for this. It inserts new elements
+    // and updates existing ones.
+    dest_ptr->data.insert(source_ptr->data.begin(), source_ptr->data.end());
+
+    return false; // This is a procedure
+}
+
+// MAP.ITEMS(map) -> array
+BasicValue builtin_map_items(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line);
+        return {};
+    }
+    if (!std::holds_alternative<std::shared_ptr<Map>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to MAP.ITEMS must be a Map.");
+        return {};
+    }
+
+    const auto& map_ptr = std::get<std::shared_ptr<Map>>(args[0]);
+    if (!map_ptr) {
+        Error::set(15, vm.runtime_current_line, "Map variable is null.");
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->data.reserve(map_ptr->data.size() * 2);
+
+    for (const auto& pair : map_ptr->data) {
+        result_ptr->data.push_back(pair.first);  // Key
+        result_ptr->data.push_back(pair.second); // Value
+    }
+
+    result_ptr->shape = { map_ptr->data.size(), 2 };
+    return result_ptr;
+}
+
 
 //=========================================================
 // C++ Implementations of our Native BASIC Functions
@@ -6973,6 +7092,11 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MAP.EXISTS", 2, builtin_map_exists);
     register_func("MAP.KEYS", 1, builtin_map_keys);
     register_func("MAP.VALUES", 1, builtin_map_values);
+    register_proc("MAP.DELETE", 2, builtin_map_delete);
+    register_proc("MAP.CLEAR", 1, builtin_map_clear);
+    register_func("MAP.SIZE", 1, builtin_map_size);
+    register_proc("MAP.MERGE", 2, builtin_map_merge);
+    register_func("MAP.ITEMS", 1, builtin_map_items);
 
     register_proc("HELP", -1, builtin_help);
     register_func("HELP$", 0, builtin_help_str);

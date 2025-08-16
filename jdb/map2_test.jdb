@@ -1,0 +1,96 @@
+CLS
+PRINT "--- jdBasic Complete Map Feature Demo ---"
+PRINT
+
+' =================================================================
+PRINT "--- 1. Initialization and Basic Assignments ---"
+' =================================================================
+' Create a map to hold a player's inventory
+DIM inventory AS MAP
+
+inventory{"gold"} = 1250
+inventory{"potions"} = 15
+inventory{"sword"} = "Iron Longsword"
+inventory{"level"} = 25
+
+PRINT "Initial Inventory:"
+PRINT inventory
+PRINT
+
+' =================================================================
+PRINT "--- 2. Querying the Map ---"
+' =================================================================
+
+' --- MAP.EXISTS ---
+PRINT "Does the 'sword' key exist? "; MAP.EXISTS(inventory, "sword") ' TRUE
+PRINT "Does the 'armor' key exist? "; MAP.EXISTS(inventory, "armor") ' FALSE
+PRINT
+
+' --- MAP.SIZE ---
+PRINT "Number of items in inventory: "; MAP.SIZE(inventory) ' 4
+PRINT
+
+' --- MAP.KEYS ---
+key_list = MAP.KEYS(inventory)
+PRINT "Inventory Keys: "; key_list
+PRINT
+
+' --- MAP.VALUES ---
+value_list = MAP.VALUES(inventory)
+PRINT "Inventory Values: "; value_list
+PRINT
+
+' =================================================================
+PRINT "--- 3. Modifying the Map ---"
+' =================================================================
+
+' --- MAP.DELETE ---
+PRINT "Player sold their sword..."
+MAP.DELETE inventory, "sword"
+PRINT "Inventory after deleting 'sword': "; inventory
+PRINT "New size: "; MAP.SIZE(inventory)
+PRINT
+
+' --- MAP.MERGE ---
+' Create another map with new items to add
+DIM loot AS MAP
+loot{"gold"} = 250 ' This will overwrite the existing gold value
+loot{"armor"} = "Leather Tunic"
+loot{"gems"} = 5
+
+PRINT "Found loot: "; loot
+PRINT "Merging loot into inventory..."
+MAP.MERGE inventory, loot
+PRINT "Inventory after merge: "; inventory
+PRINT "New size: "; MAP.SIZE(inventory)
+PRINT
+
+' =================================================================
+PRINT "--- 4. Iterating with MAP.ITEMS ---"
+' =================================================================
+
+' --- MAP.ITEMS ---
+' This is the best way to loop through all key-value pairs
+PRINT "--- Full Inventory Report ---"
+inventory_items = MAP.ITEMS(inventory)
+num_items = LEN(inventory_items)[0] ' Get number of rows
+
+FOR i = 0 TO num_items - 1
+    item_key$ = inventory_items[i, 0]
+    item_value = inventory_items[i, 1]
+    PRINT FORMAT$("{:<10} | {}", item_key$, item_value)
+NEXT i
+PRINT
+
+' =================================================================
+PRINT "--- 5. Clearing the Map ---"
+' =================================================================
+
+' --- MAP.CLEAR ---
+PRINT "Dropping all items..."
+MAP.CLEAR inventory
+PRINT "Is the inventory empty now? "; MAP.SIZE(inventory) = 0 ' TRUE
+PRINT "Final inventory state: "; inventory
+PRINT
+
+PRINT "--- Demo Complete ---"

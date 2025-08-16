@@ -1476,8 +1476,9 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
                     return;
                 }
             }
-        }
+        
 #else
+        }
         // If COM is not defined, this is an error because dot notation is not supported.
         Error::set(22, vm.runtime_current_line, "Unknown function: " + identifier_being_called);
 #endif
