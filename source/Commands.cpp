@@ -1424,7 +1424,8 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
 
 #ifdef JDCOM // This logic is only compiled if COM support is enabled.
         // It's a dot-chain, so resolve it to get the target object and the method name.
-        } else {
+        }
+        else {
             auto [final_obj, final_method] = vm.resolve_dot_chain(identifier_being_called);
             if (Error::get() != 0) {
                 return; // An error occurred during resolution.
@@ -1476,7 +1477,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
                     return;
                 }
             }
-        
+        }
 #else
         }
         // If COM is not defined, this is an error because dot notation is not supported.
