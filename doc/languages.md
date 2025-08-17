@@ -539,12 +539,19 @@ ENDTRY
 * **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
 * **`SOLVE(matrix A, vextor b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
 * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
+* **`NORMALIZE(array) -> array`**: Scales the elements of a numeric array to the range [0.0, 1.0].
+* **`UNIQUE(array) -> array`**: Returns a new array containing only the unique elements from the source.
+* **`SHUFFLE(array) -> array`**: Returns a new array with the elements of the source array randomly shuffled.
+* **`FIND_IN_ARRAY(array, value) -> number`**: Finds the first 0-based index of a value in an array. Returns -1 if not found.
+* **`DISTANCE(point1_array, point2_array) -> number`**: Calculates the Euclidean distance between two points.
 * **`STACK(dimension, array1, array2, ...) -> matrix`**: Stacks 1D vectors into a 2D matrix.
 * **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix.
+* **`LERP(start, end, alpha) -> number or array`**: Performs linear interpolation.
 * **`GRADE(vector)`**: Returns the indices that would sort the vector.
 * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, \*, /, MOD, \>, \<, =, ^) or a reference to a function (srq@).
 * **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array.
 * **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Non-cyclically shifts an N-dimensional array.
+* **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix.
 * **`CONVOLVE(array, kernel, wrap_mode) -> array`**: Performs a 2D convolution of an array with a kernel.
 * **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.
 

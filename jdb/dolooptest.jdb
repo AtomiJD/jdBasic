@@ -2,7 +2,7 @@ print "--- do/while/loop test ---"
 i=0
 do while i < 5
  i=i+1
- print "Achim: "; I
+ print "Atomi: "; I
 loop
 print
 
@@ -10,7 +10,7 @@ print "--- do/until/loop test ---"
 i=0
 do until i > 5
  i=i+1
- print "Achim: "; I
+ print "Atomi: "; I
 loop
 print
 
@@ -18,7 +18,7 @@ print "--- do/loop/while test ---"
 i=0
 do
  i=i+1
- print "Achim: "; I
+ print "Atomi: "; I
 loop while i < 5
 print
 
@@ -38,7 +38,7 @@ do
         exitdo
     endif
  loop
- print "Achim: "; I
+ print "Atomi: "; I
 loop until i > 5
 
 print "--- test done ---"
