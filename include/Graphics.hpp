@@ -32,7 +32,10 @@ public:
 
     void update_screen(); // Shows whatever has been drawn
     void clear_screen();  // Clears the screen to the default color
-    void clear_screen(Uint8 r, Uint8 g, Uint8 b); 
+    void clear_screen(Uint8 r, Uint8 g, Uint8 b);
+    int get_width() const;
+    int get_height() const;
+    void toggle_fullscreen();
 
     void setDrawColor(Uint8 r, Uint8 g, Uint8 b);
 
@@ -40,19 +43,30 @@ public:
     void pset(int x, int y);
     void line(int x1, int y1, int x2, int y2);
     void rect(int x, int y, int w, int h, bool is_filled);
-    void circle(int center_x, int center_y, int radius);
+    void circle(int center_x, int center_y, int radius, bool is_filled);
+    void ellipse(int center_x, int center_y, int radius_x, int radius_y, bool is_filled);
+    void rounded_rect(int x, int y, int w, int h, int radius, bool is_filled);
+    void circle_sector(int center_x, int center_y, int radius, float start_angle, float end_angle, bool is_filled);
+
 
     // Overloads for scalar drawing with explicit color
     void pset(int x, int y, Uint8 r, Uint8 g, Uint8 b);
     void line(int x1, int y1, int x2, int y2, Uint8 r, Uint8 g, Uint8 b);
     void rect(int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, bool is_filled);
-    void circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b);
+    void circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b, bool is_filled);
+    void ellipse(int center_x, int center_y, int radius_x, int radius_y, Uint8 r, Uint8 g, Uint8 b, bool is_filled);
+    void rounded_rect(int x, int y, int w, int h, int radius, Uint8 r, Uint8 g, Uint8 b, bool is_filled);
+    void circle_sector(int center_x, int center_y, int radius, float start_angle, float end_angle, Uint8 r, Uint8 g, Uint8 b, bool is_filled);
 
     // New vectorized drawing functions
     void pset(const std::shared_ptr<Array>& points, const std::shared_ptr<Array>& colors);
     void line(const std::shared_ptr<Array>& lines, const std::shared_ptr<Array>& colors);
     void rect(const std::shared_ptr<Array>& rects, bool is_filled, const std::shared_ptr<Array>& colors);
-    void circle(const std::shared_ptr<Array>& circles, const std::shared_ptr<Array>& colors);
+    void circle(const std::shared_ptr<Array>& circles, bool is_filled, const std::shared_ptr<Array>& colors);
+    void ellipse(const std::shared_ptr<Array>& ellipses, bool is_filled, const std::shared_ptr<Array>& colors);
+    void rounded_rect(const std::shared_ptr<Array>& rects, bool is_filled, const std::shared_ptr<Array>& colors);
+    void circle_sector(const std::shared_ptr<Array>& sectors, bool is_filled, const std::shared_ptr<Array>& colors);
+
 
     void text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint8 g, Uint8 b);
     void plot_raw(int start_x, int start_y, const std::shared_ptr<Array>& color_matrix, float scale = 1.0f, float scaleY = 1.0f);
@@ -62,7 +76,7 @@ public:
     bool get_mouse_button_state(int button) const;
 
     bool handle_events(NeReLaBasic& vm);
-    bool should_quit();   
+    bool should_quit();
 
     std::string get_key_from_buffer();
 
@@ -89,7 +103,7 @@ public:
 
 private:
     SDL_Window* window = nullptr;
-    
+
     TTF_Font* font = nullptr;
     std::deque<char> key_buffer;
     float mouse_x = 0.0f;

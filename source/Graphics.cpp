@@ -233,6 +233,32 @@ void Graphics::clear_screen(Uint8 r, Uint8 g, Uint8 b) {
     SDL_RenderClear(renderer);
 }
 
+int Graphics::get_width() const {
+    if (!renderer) return 0;
+    int w;
+    SDL_GetRenderOutputSize(renderer, &w, NULL);
+    return w;
+}
+
+int Graphics::get_height() const {
+    if (!renderer) return 0;
+    int h;
+    SDL_GetRenderOutputSize(renderer, NULL, &h);
+    return h;
+}
+
+void Graphics::toggle_fullscreen() {
+    if (!window) return;
+    // Get the current flags of the window
+    Uint32 flags = SDL_GetWindowFlags(window);
+    // Check if the fullscreen flag is currently set
+    bool is_currently_fullscreen = (flags & SDL_WINDOW_FULLSCREEN);
+    // Toggle the state
+    if (SDL_SetWindowFullscreen(window, !is_currently_fullscreen) < 0) {
+        TextIO::print("Error toggling fullscreen: " + std::string(SDL_GetError()) + "\n");
+    }
+}
+
 void Graphics::text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint8 g, Uint8 b) {
     if (!renderer || !font) {
         // Don't try to draw if the system isn't ready or the font failed to load
@@ -434,30 +460,46 @@ void Graphics::rect(const std::shared_ptr<Array>& rects, bool is_filled, const s
 }
 
 // --- CIRCLE ---
-void Graphics::circle(int center_x, int center_y, int radius) {
+void Graphics::circle(int center_x, int center_y, int radius, bool is_filled) {
     if (!renderer) return;
     SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, 255);
-    for (int i = 0; i < 360; ++i) {
-        float angle = i * 3.14159f / 180.0f;
-        float x = center_x + radius * cos(angle);
-        float y = center_y + radius * sin(angle);
-        SDL_RenderPoint(renderer, x, y);
+    if (is_filled) {
+        for (int dy = -radius; dy <= radius; dy++) {
+            int dx = static_cast<int>(sqrt(radius * radius - dy * dy));
+            SDL_RenderLine(renderer, center_x - dx, center_y + dy, center_x + dx, center_y + dy);
+        }
+    }
+    else {
+        for (int i = 0; i < 360; ++i) {
+            float angle = i * M_PI / 180.0f;
+            float x = center_x + radius * cos(angle);
+            float y = center_y + radius * sin(angle);
+            SDL_RenderPoint(renderer, x, y);
+        }
     }
 }
 
-void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b) {
+void Graphics::circle(int center_x, int center_y, int radius, Uint8 r, Uint8 g, Uint8 b, bool is_filled) {
     if (!renderer) return;
     SDL_SetRenderDrawColor(renderer, r, g, b, 255);
-    for (int i = 0; i < 360; ++i) {
-        float angle = i * 3.14159f / 180.0f;
-        float x = center_x + radius * cos(angle);
-        float y = center_y + radius * sin(angle);
-        SDL_RenderPoint(renderer, x, y);
+    if (is_filled) {
+        for (int dy = -radius; dy <= radius; dy++) {
+            int dx = static_cast<int>(sqrt(radius * radius - dy * dy));
+            SDL_RenderLine(renderer, center_x - dx, center_y + dy, center_x + dx, center_y + dy);
+        }
+    }
+    else {
+        for (int i = 0; i < 360; ++i) {
+            float angle = i * M_PI / 180.0f;
+            float x = center_x + radius * cos(angle);
+            float y = center_y + radius * sin(angle);
+            SDL_RenderPoint(renderer, x, y);
+        }
     }
 }
 
 // Vectorized CIRCLE
-void Graphics::circle(const std::shared_ptr<Array>& circles, const std::shared_ptr<Array>& colors) {
+void Graphics::circle(const std::shared_ptr<Array>& circles, bool is_filled, const std::shared_ptr<Array>& colors) {
     if (!renderer || !circles || circles->shape.size() != 2 || circles->shape[1] < 3) {
         Error::set(1, 1, "circle needs active renderer and shape [n,3] if parameter 1 is an array.");
         return;
@@ -484,12 +526,191 @@ void Graphics::circle(const std::shared_ptr<Array>& circles, const std::shared_p
             SDL_SetRenderDrawColor(renderer, r, g, b, 255);
         }
 
-        for (int angle_deg = 0; angle_deg < 360; ++angle_deg) {
-            float angle_rad = angle_deg * 3.14159f / 180.0f;
-            float x = cx + rad * cos(angle_rad);
-            float y = cy + rad * sin(angle_rad);
+        if (is_filled) {
+            for (int dy = -rad; dy <= rad; dy++) {
+                int dx = static_cast<int>(sqrt(rad * rad - dy * dy));
+                SDL_RenderLine(renderer, cx - dx, cy + dy, cx + dx, cy + dy);
+            }
+        }
+        else {
+            for (int angle_deg = 0; angle_deg < 360; ++angle_deg) {
+                float angle_rad = angle_deg * M_PI / 180.0f;
+                float x = cx + rad * cos(angle_rad);
+                float y = cy + rad * sin(angle_rad);
+                SDL_RenderPoint(renderer, x, y);
+            }
+        }
+    }
+}
+
+// --- ELLIPSE ---
+void Graphics::ellipse(int center_x, int center_y, int radius_x, int radius_y, bool is_filled) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, 255);
+
+    if (is_filled) {
+        for (int dy = -radius_y; dy <= radius_y; ++dy) {
+            int dx = static_cast<int>(radius_x * sqrt(1 - (float)dy * dy / (radius_y * radius_y)));
+            SDL_RenderLine(renderer, center_x - dx, center_y + dy, center_x + dx, center_y + dy);
+        }
+    }
+    else {
+        for (int i = 0; i < 360; ++i) {
+            float angle = i * M_PI / 180.0f;
+            float x = center_x + radius_x * cos(angle);
+            float y = center_y + radius_y * sin(angle);
             SDL_RenderPoint(renderer, x, y);
         }
+    }
+}
+
+void Graphics::ellipse(int center_x, int center_y, int radius_x, int radius_y, Uint8 r, Uint8 g, Uint8 b, bool is_filled) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+
+    if (is_filled) {
+        for (int dy = -radius_y; dy <= radius_y; ++dy) {
+            int dx = static_cast<int>(radius_x * sqrt(1 - (float)dy * dy / (radius_y * radius_y)));
+            SDL_RenderLine(renderer, center_x - dx, center_y + dy, center_x + dx, center_y + dy);
+        }
+    }
+    else {
+        for (int i = 0; i < 360; ++i) {
+            float angle = i * M_PI / 180.0f;
+            float x = center_x + radius_x * cos(angle);
+            float y = center_y + radius_y * sin(angle);
+            SDL_RenderPoint(renderer, x, y);
+        }
+    }
+}
+
+void Graphics::ellipse(const std::shared_ptr<Array>& ellipses, bool is_filled, const std::shared_ptr<Array>& colors) {
+    if (!renderer || !ellipses || ellipses->shape.size() != 2 || ellipses->shape[1] < 4) return;
+
+    size_t num_items = ellipses->shape[0];
+    size_t ellipse_stride = ellipses->shape[1];
+    bool has_colors = colors && colors->shape.size() == 2 && colors->shape[0] == num_items && colors->shape[1] >= 3;
+    size_t color_stride = has_colors ? colors->shape[1] : 0;
+
+    if (!has_colors) {
+        SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, draw_color.a);
+    }
+
+    for (size_t i = 0; i < num_items; ++i) {
+        int cx = static_cast<int>(std::get<double>(ellipses->data[i * ellipse_stride + 0]));
+        int cy = static_cast<int>(std::get<double>(ellipses->data[i * ellipse_stride + 1]));
+        int rx = static_cast<int>(std::get<double>(ellipses->data[i * ellipse_stride + 2]));
+        int ry = static_cast<int>(std::get<double>(ellipses->data[i * ellipse_stride + 3]));
+
+        if (has_colors) {
+            Uint8 r = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 0]));
+            Uint8 g = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 1]));
+            Uint8 b = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 2]));
+            SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+        }
+
+        if (is_filled) {
+            for (int dy = -ry; dy <= ry; ++dy) {
+                int dx = static_cast<int>(rx * sqrt(1 - (float)dy * dy / (ry * ry)));
+                SDL_RenderLine(renderer, cx - dx, cy + dy, cx + dx, cy + dy);
+            }
+        }
+        else {
+            for (int angle_deg = 0; angle_deg < 360; ++angle_deg) {
+                float angle_rad = angle_deg * M_PI / 180.0f;
+                float x = cx + rx * cos(angle_rad);
+                float y = cy + ry * sin(angle_rad);
+                SDL_RenderPoint(renderer, x, y);
+            }
+        }
+    }
+}
+
+// --- ROUNDED RECT IMPLEMENTATIONS ---
+void Graphics::rounded_rect(int x, int y, int w, int h, int radius, bool is_filled) { rounded_rect(x, y, w, h, radius, draw_color.r, draw_color.g, draw_color.b, is_filled); }
+void Graphics::rounded_rect(int x, int y, int w, int h, int radius, Uint8 r, Uint8 g, Uint8 b, bool is_filled) {
+    if (!renderer || w < 2 * radius || h < 2 * radius) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    int r_ = std::min({ radius, w / 2, h / 2 });
+    int x1 = x + r_; int y1 = y + r_;
+    int x2 = x + w - r_; int y2 = y + h - r_;
+
+    if (is_filled) {
+        SDL_FRect rects[] = {
+            {(float)x1, (float)y, (float)(w - 2 * r_), (float)h},
+            {(float)x, (float)y1, (float)r_, (float)(h - 2 * r_)},
+            {(float)x2, (float)y1, (float)r_, (float)(h - 2 * r_)}
+        };
+        SDL_RenderFillRects(renderer, rects, 3);
+        circle(x1, y1, r_, r, g, b, true); circle(x2, y1, r_, r, g, b, true);
+        circle(x1, y2, r_, r, g, b, true); circle(x2, y2, r_, r, g, b, true);
+    }
+    else {
+        line(x1, y, x2, y, r, g, b); line(x1, y + h, x2, y + h, r, g, b);
+        line(x, y1, x, y2, r, g, b); line(x + w, y1, x + w, y2, r, g, b);
+        // Arcs
+        for (int i = 180; i <= 270; ++i) pset(x1 + r_ * cos(i * M_PI / 180.0), y1 + r_ * sin(i * M_PI / 180.0), r, g, b);
+        for (int i = 270; i <= 360; ++i) pset(x2 + r_ * cos(i * M_PI / 180.0), y1 + r_ * sin(i * M_PI / 180.0), r, g, b);
+        for (int i = 0; i <= 90; ++i)   pset(x2 + r_ * cos(i * M_PI / 180.0), y2 + r_ * sin(i * M_PI / 180.0), r, g, b);
+        for (int i = 90; i <= 180; ++i)  pset(x1 + r_ * cos(i * M_PI / 180.0), y2 + r_ * sin(i * M_PI / 180.0), r, g, b);
+    }
+}
+void Graphics::rounded_rect(const std::shared_ptr<Array>& rects, bool is_filled, const std::shared_ptr<Array>& colors) {
+    if (!renderer || !rects || rects->shape.size() != 2 || rects->shape[1] < 5) return;
+    size_t num_items = rects->shape[0];
+    size_t rect_stride = rects->shape[1];
+    bool has_colors = colors && colors->shape.size() == 2 && colors->shape[0] == num_items && colors->shape[1] >= 3;
+    size_t color_stride = has_colors ? colors->shape[1] : 0;
+    for (size_t i = 0; i < num_items; ++i) {
+        Uint8 r = draw_color.r, g = draw_color.g, b = draw_color.b;
+        if (has_colors) {
+            r = static_cast<Uint8>(to_double(colors->data[i * color_stride + 0]));
+            g = static_cast<Uint8>(to_double(colors->data[i * color_stride + 1]));
+            b = static_cast<Uint8>(to_double(colors->data[i * color_stride + 2]));
+        }
+        rounded_rect(to_double(rects->data[i * rect_stride + 0]), to_double(rects->data[i * rect_stride + 1]),
+            to_double(rects->data[i * rect_stride + 2]), to_double(rects->data[i * rect_stride + 3]),
+            to_double(rects->data[i * rect_stride + 4]), r, g, b, is_filled);
+    }
+}
+
+// --- CIRCLE SECTOR IMPLEMENTATIONS ---
+void Graphics::circle_sector(int cx, int cy, int r, float sa, float ea, bool is_filled) { circle_sector(cx, cy, r, sa, ea, draw_color.r, draw_color.g, draw_color.b, is_filled); }
+void Graphics::circle_sector(int cx, int cy, int radius, float start_angle, float end_angle, Uint8 r, Uint8 g, Uint8 b, bool is_filled) {
+    if (!renderer) return;
+    SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+    float start_rad = start_angle * M_PI / 180.0f;
+    float end_rad = end_angle * M_PI / 180.0f;
+
+    if (is_filled) {
+        for (float angle = start_rad; angle <= end_rad; angle += (M_PI / 180.0f)) {
+            line(cx, cy, cx + radius * cos(angle), cy + radius * sin(angle), r, g, b);
+        }
+    }
+    else {
+        line(cx, cy, cx + radius * cos(start_rad), cy + radius * sin(start_rad), r, g, b);
+        line(cx, cy, cx + radius * cos(end_rad), cy + radius * sin(end_rad), r, g, b);
+        for (float angle = start_rad; angle <= end_rad; angle += (M_PI / 180.0f)) {
+            pset(cx + radius * cos(angle), cy + radius * sin(angle), r, g, b);
+        }
+    }
+}
+void Graphics::circle_sector(const std::shared_ptr<Array>& sectors, bool is_filled, const std::shared_ptr<Array>& colors) {
+    if (!renderer || !sectors || sectors->shape.size() != 2 || sectors->shape[1] < 5) return;
+    size_t num_items = sectors->shape[0];
+    size_t sector_stride = sectors->shape[1];
+    bool has_colors = colors && colors->shape.size() == 2 && colors->shape[0] == num_items && colors->shape[1] >= 3;
+    size_t color_stride = has_colors ? colors->shape[1] : 0;
+    for (size_t i = 0; i < num_items; ++i) {
+        Uint8 r = draw_color.r, g = draw_color.g, b = draw_color.b;
+        if (has_colors) {
+            r = static_cast<Uint8>(to_double(colors->data[i * color_stride + 0]));
+            g = static_cast<Uint8>(to_double(colors->data[i * color_stride + 1]));
+            b = static_cast<Uint8>(to_double(colors->data[i * color_stride + 2]));
+        }
+        circle_sector(to_double(sectors->data[i * sector_stride + 0]), to_double(sectors->data[i * sector_stride + 1]),
+            to_double(sectors->data[i * sector_stride + 2]), to_double(sectors->data[i * sector_stride + 3]),
+            to_double(sectors->data[i * sector_stride + 4]), r, g, b, is_filled);
     }
 }
 

@@ -1045,6 +1045,45 @@ BasicValue builtin_screenflip(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return false;
 }
 
+// Add these two new functions with the other built-ins
+BasicValue builtin_screenwidth(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "SCREENWIDTH does not accept arguments.");
+        return 0.0;
+    }
+    if (vm.graphics_system.is_initialized) {
+        return static_cast<double>(vm.graphics_system.get_width());
+    }
+    return 0.0;
+}
+
+BasicValue builtin_screenheight(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "SCREENHEIGHT does not accept arguments.");
+        return 0.0;
+    }
+    if (vm.graphics_system.is_initialized) {
+        return static_cast<double>(vm.graphics_system.get_height());
+    }
+    return 0.0;
+}
+
+// TOGGLE_FULLSCREEN command
+// Toggles between fullscreen and windowed
+BasicValue builtin_toggle_fullscreen(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "TOGGLE_FULLSCREEN does not accept arguments.");
+        return false;
+    }
+    if (vm.graphics_system.is_initialized) {
+        vm.graphics_system.toggle_fullscreen();
+    }
+    else {
+        Error::set(1, vm.runtime_current_line, "Graphics screen not initialized.");
+    }
+    return false; // It's a procedure
+}
+
 BasicValue builtin_drawcolor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // Check for the correct number of arguments (either 1 or 3)
     if (args.size() != 1 && args.size() != 3) {
@@ -1214,41 +1253,147 @@ BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
-// Replace the existing 'builtin_circle' function with this new version
+// CIRCLE x, y, r, [fill], [r, g, b] OR CIRCLE matrix, [fill], [colors]
 BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // Case 1: Vector/Matrix arguments
     if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
         const auto& circles = std::get<std::shared_ptr<Array>>(args[0]);
+        bool is_filled = false;
+        if (args.size() >= 2) is_filled = to_bool(args[1]);
+
         std::shared_ptr<Array> colors = nullptr;
-        if (args.size() == 2 && std::holds_alternative<std::shared_ptr<Array>>(args[1])) {
-            colors = std::get<std::shared_ptr<Array>>(args[1]);
+        if (args.size() == 3 && std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+            colors = std::get<std::shared_ptr<Array>>(args[2]);
         }
-        else if (args.size() > 1) {
-            Error::set(15, vm.runtime_current_line, "Second argument for vectorized CIRCLE must be a color matrix.");
+        else if (args.size() > 2) {
+            Error::set(15, vm.runtime_current_line, "Third argument for vectorized CIRCLE must be a color matrix.");
             return false;
         }
-        vm.graphics_system.circle(circles, colors);
+        vm.graphics_system.circle(circles, is_filled, colors);
         return false;
     }
 
     // Case 2: Scalar arguments
-    if (args.size() < 3 || args.size() == 4 || args.size() == 5 || args.size() > 6) {
-        Error::set(8, vm.runtime_current_line, "Usage: CIRCLE x, y, r, [r, g, b] OR CIRCLE matrix, [colors]");
+    if (args.size() < 3 || args.size() > 7) {
+        Error::set(8, vm.runtime_current_line, "Usage: CIRCLE x, y, r, [fill], [r, g, b] OR CIRCLE matrix, [fill], [colors]");
         return false;
     }
 
     int x = static_cast<int>(to_double(args[0]));
     int y = static_cast<int>(to_double(args[1]));
     int radius = static_cast<int>(to_double(args[2]));
+    bool fill = false;
 
-    if (args.size() == 6) {
-        Uint8 r = static_cast<Uint8>(to_double(args[3]));
-        Uint8 g = static_cast<Uint8>(to_double(args[4]));
-        Uint8 b = static_cast<Uint8>(to_double(args[5]));
-        vm.graphics_system.circle(x, y, radius, r, g, b);
+    if (args.size() >= 6) { // Color is provided
+        fill = to_bool(args[3]);
+        Uint8 r = static_cast<Uint8>(to_double(args[4]));
+        Uint8 g = static_cast<Uint8>(to_double(args[5]));
+        Uint8 b = static_cast<Uint8>(to_double(args[6]));
+        vm.graphics_system.circle(x, y, radius, r, g, b, fill);
     }
-    else { // 3 args
-        vm.graphics_system.circle(x, y, radius);
+    else { // No color, just check for fill
+        if (args.size() == 4) fill = to_bool(args[3]);
+        vm.graphics_system.circle(x, y, radius, fill);
+    }
+    return false;
+}
+
+
+// ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]
+BasicValue builtin_ellipse(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // Vectorized
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& ellipses = std::get<std::shared_ptr<Array>>(args[0]);
+        bool is_filled = (args.size() >= 2) ? to_bool(args[1]) : false;
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 3 && std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+            colors = std::get<std::shared_ptr<Array>>(args[2]);
+        }
+        vm.graphics_system.ellipse(ellipses, is_filled, colors);
+        return false;
+    }
+
+    // Scalar
+    if (args.size() < 4 || args.size() > 8) {
+        Error::set(8, vm.runtime_current_line, "Usage: ELLIPSE x, y, rx, ry, [fill], [r, g, b]");
+        return false;
+    }
+    int cx = to_double(args[0]);
+    int cy = to_double(args[1]);
+    int rx = to_double(args[2]);
+    int ry = to_double(args[3]);
+    bool fill = (args.size() >= 5) ? to_bool(args[4]) : false;
+
+    if (args.size() == 8) {
+        Uint8 r = to_double(args[5]), g = to_double(args[6]), b = to_double(args[7]);
+        vm.graphics_system.ellipse(cx, cy, rx, ry, r, g, b, fill);
+    }
+    else {
+        vm.graphics_system.ellipse(cx, cy, rx, ry, fill);
+    }
+    return false;
+}
+
+// ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b] OR ROUNDED_RECT matrix, [fill], [colors]
+BasicValue builtin_rounded_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // Vectorized
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& rects = std::get<std::shared_ptr<Array>>(args[0]);
+        bool is_filled = (args.size() >= 2) ? to_bool(args[1]) : false;
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 3 && std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+            colors = std::get<std::shared_ptr<Array>>(args[2]);
+        }
+        vm.graphics_system.rounded_rect(rects, is_filled, colors);
+        return false;
+    }
+
+    // Scalar
+    if (args.size() < 5 || args.size() > 9) {
+        Error::set(8, vm.runtime_current_line, "Usage: ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b]");
+        return false;
+    }
+    int x = to_double(args[0]), y = to_double(args[1]), w = to_double(args[2]), h = to_double(args[3]), rad = to_double(args[4]);
+    bool fill = (args.size() >= 6) ? to_bool(args[5]) : false;
+    if (args.size() == 9) {
+        Uint8 r = to_double(args[6]), g = to_double(args[7]), b = to_double(args[8]);
+        vm.graphics_system.rounded_rect(x, y, w, h, rad, r, g, b, fill);
+    }
+    else {
+        vm.graphics_system.rounded_rect(x, y, w, h, rad, fill);
+    }
+    return false;
+}
+
+// CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]
+BasicValue builtin_circle_sector(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // Vectorized
+    if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        const auto& sectors = std::get<std::shared_ptr<Array>>(args[0]);
+        bool is_filled = (args.size() >= 2) ? to_bool(args[1]) : false;
+        std::shared_ptr<Array> colors = nullptr;
+        if (args.size() == 3 && std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+            colors = std::get<std::shared_ptr<Array>>(args[2]);
+        }
+        vm.graphics_system.circle_sector(sectors, is_filled, colors);
+        return false;
+    }
+
+    // Scalar
+    if (args.size() < 5 || args.size() > 9) {
+        Error::set(8, vm.runtime_current_line, "Usage: CIRCLE_SECTOR cx, cy, rad, start, end, [fill], [r, g, b]");
+        return false;
+    }
+    int cx = to_double(args[0]), cy = to_double(args[1]), rad = to_double(args[2]);
+    float start = to_double(args[3]), end = to_double(args[4]);
+    bool fill = (args.size() >= 6) ? to_bool(args[5]) : false;
+
+    if (args.size() == 9) {
+        Uint8 r = to_double(args[6]), g = to_double(args[7]), b = to_double(args[8]);
+        vm.graphics_system.circle_sector(cx, cy, rad, start, end, r, g, b, fill);
+    }
+    else {
+        vm.graphics_system.circle_sector(cx, cy, rad, start, end, fill);
     }
     return false;
 }
@@ -7000,6 +7145,9 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 #ifdef SDL3
     register_proc("SCREEN", -1, builtin_screen);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
+    register_func("SCREENWIDTH", 0, builtin_screenwidth);
+    register_func("SCREENHEIGHT", 0, builtin_screenheight);
+    register_proc("TOGGLE_FULLSCREEN", 0, builtin_toggle_fullscreen);
     register_proc("DRAWCOLOR", -1, builtin_drawcolor);
     register_proc("SETFONT", 2, builtin_setfont);
 
@@ -7007,6 +7155,9 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("LINE", -1, builtin_line);
     register_proc("RECT", -1, builtin_rect);
     register_proc("CIRCLE", -1, builtin_circle);
+    register_proc("ELLIPSE", -1, builtin_ellipse);
+    register_proc("ROUNDED_RECT", -1, builtin_rounded_rect);
+    register_proc("CIRCLE_SECTOR", -1, builtin_circle_sector);
     register_proc("TEXT", -1, builtin_text);
     register_proc("PLOTRAW", -1, builtin_plotraw);
 
