@@ -321,8 +321,9 @@ std::string to_string(const BasicValue& val) {
         else if constexpr (std::is_same_v<T, ThreadHandle>) {
             // Use a stringstream to build the string
             std::stringstream ss;
-            ss << "[ThreadHandle:" << arg.id << "]";
-            return ss.str(); // Return the built string
+            auto id_hash = std::hash<std::thread::id>{}(arg.id);
+            ss << "[ThreadHandle:" << id_hash << "]";
+            return ss.str();
         }
         else if constexpr (std::is_same_v<T, TaskRef>) {
             return "<Task ID: " + std::to_string(arg.id) + ">";

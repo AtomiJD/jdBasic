@@ -3322,7 +3322,8 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 #ifdef _WIN32
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<long long>(value)));
 #else
-                                return fmt::format(format_specifier, value);
+                                //return fmt::format(format_specifier, value);
+                                return fmt::vformat(format_specifier, fmt::make_format_args(value));
 #endif                                
                             }
                             if (type_char == 'c') {
@@ -3330,7 +3331,8 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 #ifdef _WIN32                                
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<char>(static_cast<long long>(value))));
 #else
-                                return fmt::format(format_specifier, value);
+                                //return fmt::format(format_specifier, value);
+                                return fmt::vformat(format_specifier, fmt::make_format_args(value));
 #endif                                
                             }
                         }
@@ -3338,7 +3340,8 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 #ifdef _WIN32
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
 #else
-                        return fmt::format(format_specifier, value);
+                        // return fmt::format(format_specifier, value);
+                        return fmt::vformat(format_specifier, fmt::make_format_args(value));
 #endif                                
                     }
                     else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
@@ -3346,7 +3349,8 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 #ifdef _WIN32
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
 #else
-                        return fmt::format(format_specifier, value);
+                        // return fmt::format(format_specifier, value);
+                        return fmt::vformat(format_specifier, fmt::make_format_args(value));
 #endif                                
                     }
                     else {

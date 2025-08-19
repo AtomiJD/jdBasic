@@ -113,7 +113,7 @@ public:
         NativeDLLFunction native_dll_impl = nullptr; // A pointer to a C++ function in an DLL
     };
 
-    using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>;
+    //using FunctionTable = std::unordered_map<std::string, NeReLaBasic::FunctionInfo>;
 
     struct StackFrame {
         std::string function_name;

@@ -271,16 +271,17 @@ ENDFUNC
 ' Generates a 2D array of value noise (a simple form of Perlin noise).
 ' width, height: Dimensions of the output noise map.
 ' scale: The "zoom" level of the noise. Larger scale = larger features.
-EXPORT FUNC PERLIN_NOISE(width, height, scale)
-    ' --- Helper function for smooth interpolation (Smoothstep) ---
-    FUNC FADE(t)
-        RETURN t * t * t * (t * (t * 6 - 15) + 10)
-    ENDFUNC
+' --- Helper function for smooth interpolation (Smoothstep) ---
+FUNC FADE(t)
+    RETURN t * t * t * (t * (t * 6 - 15) + 10)
+ENDFUNC
 
-    ' --- Helper function for linear interpolation ---
-    FUNC LERP(t, a, b)
-        RETURN a + t * (b - a)
-    ENDFUNC
+' ' --- Helper function for linear interpolation ---
+' FUNC LERP(t, a, b)
+'     RETURN a + t * (b - a)
+' ENDFUNC
+
+EXPORT FUNC PERLIN_NOISE(width, height, scale)
 
     ' --- Main Noise Generation ---
     ' Determine the size of the smaller random grid based on the scale

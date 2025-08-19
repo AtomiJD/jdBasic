@@ -651,8 +651,8 @@ BasicValue builtin_conv2d(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
                     for (size_t ic = 0; ic < in_channels; ++ic) {
                         for (size_t ky = 0; ky < kernel_h; ++ky) {
                             for (size_t kx = 0; kx < kernel_w; ++kx) {
-                                int input_y = y * stride + ky - padding;
-                                int input_x = x * stride + kx - padding;
+                                int  input_y = y * stride + ky - padding;
+                                int  input_x = x * stride + kx - padding;
 
                                 if (input_y >= 0 && input_y < in_height && input_x >= 0 && input_x < in_width) {
                                     // Gradient for the kernel
@@ -706,8 +706,8 @@ BasicValue builtin_maxpool2d(NeReLaBasic& vm, const std::vector<BasicValue>& arg
                 size_t max_index = 0;
                 for (int py = 0; py < pool_size; ++py) {
                     for (int px = 0; px < pool_size; ++px) {
-                        int input_y = y * stride + py;
-                        int input_x = x * stride + px;
+                        int  input_y = y * stride + py;
+                        int  input_x = x * stride + px;
                         size_t current_index = c * (in_height * in_width) + input_y * in_width + input_x;
                         double current_val = input->data->data[current_index];
                         if (current_val > max_val) {
@@ -1046,7 +1046,7 @@ BasicValue builtin_load_model(NeReLaBasic& vm, const std::vector<BasicValue>& ar
         infile >> j_model;
     }
     catch (const nlohmann::json::parse_error& e) {
-        Error::set(1, vm.runtime_current_line, "Invalid JSON in model file.");
+        Error::set(1, vm.runtime_current_line, e.what());
         return {};
     }
     return tensor_json_to_basic_value(j_model);
@@ -1150,6 +1150,7 @@ BasicValue builtin_create_layer(NeReLaBasic& vm, const std::vector<BasicValue>& 
         }
     }
     catch (const std::out_of_range& e) {
+        UNREFERENCED_PARAMETER(e);
         Error::set(1, vm.runtime_current_line, "Missing required option for layer " + layer_type);
         return {};
     }
@@ -1195,6 +1196,7 @@ BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValu
         }
     }
     catch (const std::out_of_range& e) {
+        UNREFERENCED_PARAMETER(e);
         Error::set(1, vm.runtime_current_line, "Missing required option for " + optimizer_type + " optimizer.");
         return {};
     }
