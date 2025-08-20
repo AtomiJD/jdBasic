@@ -54,6 +54,30 @@ MyArray = [1, 2, 3, 4] ' Creates an array
 EmptyArray = []
 ```
 
+## Reactive Variables and Assignment
+
+Reactive variables needs to be created explicitly with `DIM`.
+
+**`DIM var AS LIVE type]`**
+Declares a reactive variable. The `AS LIVE ` clause is used for specific types.
+
+**`DIM array[size1, size2, ...] AS LIVE INTEGER`**
+Declares an N-dimensional array with given sizes as reactive integer variable.
+
+```basic
+DIM A AS LIVE INTEGER
+DIM B AS LIVE INTEGER
+
+B = 2
+A -> B * 2 'A is reactive and depends on B ' The -> Operator mark this term as reactive
+
+PRINT A 'Prints 4
+
+B = 4
+
+PRINT A 'Prints 8, A is automatically recalculated when B changes
+```
+
 ## Enumerations
 
 To improve code clarity, you can define named integer constants using `ENUM`.
@@ -340,7 +364,7 @@ print apply(dec@,12) ' Should return 11
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [modul]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
 * **`EXPORT MODUL [module]`**: Marks a file as EXPORT for importing with IMPORT
-* **`IMPORTDLL [funcfile]`**: Loads the funcfile.dll as dynmaic library and register all included functions for jdBasic.
+* **`DLLIMPORT [funcfile]`**: Loads the funcfile.dll or funcfile.so as dynmaic library and register all included functions for jdBasic.
 
 ### SWITCH...CASE...ENDSWITCH
 

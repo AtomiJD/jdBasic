@@ -3173,70 +3173,6 @@ BasicValue builtin_lerp(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result_ptr;
 }
 
-// FRMV$(array) -> string$
-// Formats a 1D or 2D array into a right-aligned string matrix.
-BasicValue builtin_frmv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    // 1. Argument Validation
-    if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line); // Wrong number of arguments
-        return std::string("");
-    }
-    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
-        Error::set(15, vm.runtime_current_line, "Argument to FRMV$ must be an array.");
-        return std::string("");
-    }
-    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
-    if (!arr_ptr || arr_ptr->data.empty()) {
-        return std::string(""); // Nothing to format
-    }
-
-    // 2. Determine Shape
-    size_t rows, cols;
-    if (arr_ptr->shape.size() == 1) {
-        rows = 1;
-        cols = arr_ptr->shape[0];
-    }
-    else if (arr_ptr->shape.size() == 2) {
-        rows = arr_ptr->shape[0];
-        cols = arr_ptr->shape[1];
-    }
-    else {
-        Error::set(15, vm.runtime_current_line, "FRMV$ only supports 1D or 2D arrays.");
-        return std::string("");
-    }
-
-    if (cols == 0) {
-        return std::string(""); // No columns to format
-    }
-
-    // 3. Calculate Maximum Width for Each Column
-    std::vector<size_t> col_widths(cols, 0);
-    for (size_t r = 0; r < rows; ++r) {
-        for (size_t c = 0; c < cols; ++c) {
-            std::string val_str = to_string(arr_ptr->data[r * cols + c]);
-            if (val_str.length() > col_widths[c]) {
-                col_widths[c] = val_str.length();
-            }
-        }
-    }
-
-    // 4. Build the Formatted String
-    std::stringstream ss;
-    for (size_t r = 0; r < rows; ++r) {
-        for (size_t c = 0; c < cols; ++c) {
-            ss << std::right << std::setw(col_widths[c]) << to_string(arr_ptr->data[r * cols + c]);
-            if (c < cols - 1) {
-                ss << " "; // Separator between columns
-            }
-        }
-        if (r < rows - 1) {
-            ss << "\n"; // Newline for the next row
-        }
-    }
-
-    return ss.str();
-}
-
 // FORMAT$(format_string$, arg1, arg2, ...) -> string$
 // Formats a string using C++20-style format specifiers.
 BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -3373,6 +3309,92 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
         last_pos = end_brace + 1;
     }
     return result.str();
+}
+
+// FRMV$(array, [format_string$]) -> string$
+// Formats a 1D or 2D array into a string.
+// If format_string$ is provided, it's used to format each row.
+// Otherwise, it creates a right-aligned string matrix.
+BasicValue builtin_frmv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    // 1. Argument Validation
+    if (args.empty() || args.size() > 2) {
+        Error::set(8, vm.runtime_current_line, "FRMV$ requires 1 or 2 arguments: array, [format_string$]");
+        return std::string("");
+    }
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
+        Error::set(15, vm.runtime_current_line, "Argument to FRMV$ must be an array.");
+        return std::string("");
+    }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
+    if (!arr_ptr || arr_ptr->data.empty()) {
+        return std::string(""); // Nothing to format
+    }
+
+    // 2. Determine Shape
+    size_t rows, cols;
+    if (arr_ptr->shape.size() == 1) {
+        rows = 1;
+        cols = arr_ptr->shape[0];
+    }
+    else if (arr_ptr->shape.size() == 2) {
+        rows = arr_ptr->shape[0];
+        cols = arr_ptr->shape[1];
+    }
+    else {
+        Error::set(15, vm.runtime_current_line, "FRMV$ only supports 1D or 2D arrays.");
+        return std::string("");
+    }
+
+    if (cols == 0) {
+        return std::string(""); // No columns to format
+    }
+
+    std::stringstream ss;
+
+    // --- Handle optional format string ---
+    if (args.size() == 2) {
+        std::string format_string = to_string(args[1]);
+        for (size_t r = 0; r < rows; ++r) {
+            std::vector<BasicValue> format_args;
+            format_args.push_back(format_string); // The format string itself is the first argument to builtin_format_str
+            for (size_t c = 0; c < cols; ++c) {
+                format_args.push_back(arr_ptr->data[r * cols + c]);
+            }
+            // Call the existing format function's logic for each row
+            ss << std::get<std::string>(builtin_format_str(vm, format_args));
+            if (r < rows - 1) {
+                ss << "\n";
+            }
+        }
+    }
+    else {
+        // --- Right-aligned grid ---
+        // 3. Calculate Maximum Width for Each Column
+        std::vector<size_t> col_widths(cols, 0);
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) {
+                std::string val_str = to_string(arr_ptr->data[r * cols + c]);
+                if (val_str.length() > col_widths[c]) {
+                    col_widths[c] = val_str.length();
+                }
+            }
+        }
+
+        // 4. Build the Formatted String
+        for (size_t r = 0; r < rows; ++r) {
+            for (size_t c = 0; c < cols; ++c) {
+                ss << std::right << std::setw(col_widths[c]) << to_string(arr_ptr->data[r * cols + c]);
+                if (c < cols - 1) {
+                    ss << " "; // Separator between columns
+                }
+            }
+            if (r < rows - 1) {
+                ss << "\n"; // Newline for the next row
+            }
+        }
+    }
+
+    return ss.str();
 }
 
 // --- Vector and Matrix functions
@@ -5693,6 +5715,30 @@ BasicValue builtin_getenv_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 #endif
 }
 
+// THROW [error_data]
+// Manually raises an error that can be caught by a TRY...CATCH block.
+BasicValue builtin_throw(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() > 1) {
+        Error::set(8, vm.runtime_current_line, "THROW accepts zero or one argument.");
+        return false;
+    }
+
+    BasicValue error_data = "User-defined error"; // Default message if no argument is provided.
+
+    if (args.size() == 1) {
+        error_data = args[0];
+    }
+
+    // We'll use a specific error code for all user-thrown exceptions.
+    const int USER_ERROR_CODE = 1000;
+
+    // Calling Error::set triggers the interpreter's entire error handling mechanism.
+    // It will find the nearest CATCH block and transfer control, just like a built-in error.
+    Error::set(USER_ERROR_CODE, vm.runtime_current_line, to_string(error_data));
+
+    return false; // This is a procedure, so the return value is ignored.
+}
+
 // SAVEWS "basename" - Saves source code and global variables to "basename.jsws".
 BasicValue builtin_savews(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
@@ -7065,7 +7111,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
     register_func("SPLIT", 2, builtin_split);
-    register_func("FRMV$", 1, builtin_frmv_str);
+    register_func("FRMV$", -1, builtin_frmv_str);
     register_func("FORMAT$", -1, builtin_format_str);
 
     // --- Register Regex Functions ---
@@ -7264,6 +7310,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);
     register_func("GETENV$", 1, builtin_getenv_str);
+    register_proc("THROW", -1, builtin_throw);
     register_proc("SAVEWS", 1, builtin_savews);
     register_proc("LOADWS", 1, builtin_loadws);
     register_proc("CLEARWS", 0, builtin_clearws);

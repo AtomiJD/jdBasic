@@ -28,25 +28,26 @@ PRINT "--- Simple reactive order sample ---"
 PRINT 
 PRINT "Customer ordered: "
 Order = STACK(1, Position, Description, Quantity, Price, Total)
-PRINT FRMV$(Order)
+PRINT "Pos Description       Quantity     Price       Total"
+PRINT FRMV$(Order, "{:3d} {:<20} {:5d} {:>8.2f}$ {:>10.2f}$")
 PRINT
 
 PRINT "Regular order:"
-PRINT "Subtotal: ", SumSubTotal
-PRINT "VAT:      ", SumVAT
-PRINT "Total:    ", SumTotal
+PRINT FORMAT$("Subtotal: {:>10.2f}$", SumSubTotal)
+PRINT FORMAT$("VAT:      {:>10.2f}$", SumVAT)
+PRINT FORMAT$("Total:    {:>10.2f}$", SumTotal)
 PRINT 
 
 PRINT "We need new prices up to 10 Percent!"
 Price = Price * 1.1
-PRINT "Subtotal: ", SumSubTotal
-PRINT "VAT:      ", SumVAT
-PRINT "Total:    ", SumTotal
+PRINT FORMAT$("Subtotal: {:>10.2f}$", SumSubTotal)
+PRINT FORMAT$("VAT:      {:>10.2f}$", SumVAT)
+PRINT FORMAT$("Total:    {:>10.2f}$", SumTotal)
 PRINT 
 
 PRINT "Administration reduced VAT to 7.0 %"
 VAT = 7.0
-PRINT "Subtotal: ", SumSubTotal
-PRINT "VAT:      ", SumVAT
-PRINT "Total:    ", SumTotal
+PRINT FORMAT$("Subtotal: {:>10.2f}$", SumSubTotal)
+PRINT FORMAT$("VAT:      {:>10.2f}$", SumVAT)
+PRINT FORMAT$("Total:    {:>10.2f}$", SumTotal)
 PRINT 
