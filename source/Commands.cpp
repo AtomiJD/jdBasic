@@ -452,6 +452,7 @@ BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name
 
 void Commands::do_dim(NeReLaBasic& vm) {
     while (true) {
+        bool is_live = false;
         Tokens::ID token_check = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
         // If it's not a variable token, it's the end of the DIM statement.
         if (token_check != Tokens::ID::VARIANT && token_check != Tokens::ID::INT && token_check != Tokens::ID::STRVAR && token_check != Tokens::ID::ARRAY_ACCESS) {
@@ -490,15 +491,21 @@ void Commands::do_dim(NeReLaBasic& vm) {
             vm.pcode++; // Consume 'AS'
             type_was_specified = true;
 
+            // Check for LIVE keyword
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::LIVE) {
+                is_live = true;
+                vm.pcode++;
+            }
+
             // The type name is tokenized as VARIANT by the compiler
             Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
             switch (type_token) {
-            case Tokens::ID::INT:       type_name = "INTEGER"; break;
-            case Tokens::ID::DOUBLE:    type_name = "DOUBLE";  break;
-            case Tokens::ID::STRTYPE:   type_name = "STRING";  break;
-            case Tokens::ID::DATE:      type_name = "DATE";    break;
-            case Tokens::ID::BOOL:      type_name = "BOOLEAN"; break;
-            case Tokens::ID::MAP:       type_name = "MAP";     break;
+            case Tokens::ID::INT:           type_name = "INTEGER"; break;
+            case Tokens::ID::DOUBLE:        type_name = "DOUBLE";  break;
+            case Tokens::ID::STRTYPE:       type_name = "STRING";  break;
+            case Tokens::ID::DATE:          type_name = "DATE";    break;
+            case Tokens::ID::BOOL:          type_name = "BOOLEAN"; break;
+            case Tokens::ID::MAP:           type_name = "MAP";     break;
                 // Add any other built-in types you have here.
 
                 // This case handles user-defined types, like T_Character.
@@ -511,6 +518,11 @@ void Commands::do_dim(NeReLaBasic& vm) {
                 Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
                 return;
             }
+        }
+
+        if (is_live) {
+            // LIVE IMPLEMENTATION: Register the variable with the reactive system.
+            vm.register_live_variable(var_name);
         }
 
         // --- Part 3: Create the variable(s) based on what we found ---
@@ -796,6 +808,22 @@ void Commands::do_print(NeReLaBasic& vm) {
     }
 }
 
+bool handle_reactive(NeReLaBasic& vm, std::string var_name, std::string key = "") {
+    Tokens::ID cmd = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode-1]);
+
+    // LIVE IMPLEMENTATION: Handle the new reactive assignment instruction
+    if (cmd == Tokens::ID::OP_SET_REACTIVE_DEPENDENCY) {
+        if (key.empty())
+            vm.set_reactive_dependency(var_name);
+        else
+            vm.set_reactive_dependency(var_name + '.' + key);
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
 void Commands::do_let(NeReLaBasic& vm) {
     static bool is_this = false;
     std::string name = "";
@@ -813,8 +841,6 @@ void Commands::do_let(NeReLaBasic& vm) {
         vm.pcode++;
         name = to_upper(read_string(vm));
     }
-
-    //size_t dot_pos = name.find('.');
 
     // --- Case 1: ARRAY ELEMENT ASSIGNMENT (e.g., A[i, j] = ...) ---
     if (var_type_token == Tokens::ID::ARRAY_ACCESS) {
@@ -842,7 +868,13 @@ void Commands::do_let(NeReLaBasic& vm) {
         }
 
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
-            Error::set(1, vm.runtime_current_line); return;
+            auto old_pcode = vm.pcode;
+            if (!handle_reactive(vm, name))
+            {
+                Error::set(1, vm.runtime_current_line);
+                return;
+            }
+            vm.pcode = old_pcode + 2; // skip memory address of reactive term
         }
 
         BasicValue value_to_assign = vm.evaluate_expression();
@@ -968,6 +1000,11 @@ void Commands::do_let(NeReLaBasic& vm) {
                 return;
             }
         }
+        // LIVE IMPLEMENTATION: A change to an element is a change to the whole array.
+        if (vm.live_variables.count(name)) {
+            // For complex types, it's safer to always propagate, as deep comparison is expensive.
+            vm.propagate_changes(name);
+        }
     }
 
     // --- Case 2: MAP ASSIGNMENT  ---
@@ -985,7 +1022,13 @@ void Commands::do_let(NeReLaBasic& vm) {
             Error::set(1, vm.runtime_current_line); return;
         }
         if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
-            Error::set(1, vm.runtime_current_line); return;
+            auto old_pcode = vm.pcode;
+            if (!handle_reactive(vm, name, key))
+            {
+                Error::set(1, vm.runtime_current_line);
+                return;
+            }
+            vm.pcode = old_pcode + 2; // skip memory address of reactive term
         }
 
         BasicValue value_to_assign = vm.evaluate_expression();
@@ -1000,13 +1043,24 @@ void Commands::do_let(NeReLaBasic& vm) {
 
         // Perform the map insertion/update
         map_ptr->data[key] = value_to_assign;
+
+        // LIVE IMPLEMENTATION: Trigger propagation.
+        if (vm.live_variables.count(name)) {
+            vm.propagate_changes(name, key);
+        }
     }
     // --- Case 3: WHOLE VARIABLE ASSIGNMENT (e.g., A = ...) ---
     else {
-        // --- CORRECTED: Logic for dot-notation assignment ---
+        // --- Logic for dot-notation assignment ---
         if (name.find('.') != std::string::npos || is_this == true) {
             if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
-                Error::set(1, vm.runtime_current_line); return;
+                auto old_pcode = vm.pcode;
+                if (!handle_reactive(vm, name))
+                {
+                    Error::set(1, vm.runtime_current_line);
+                    return;
+                }
+                vm.pcode = old_pcode + 2; // skip memory address of reactive term
             }
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
@@ -1031,6 +1085,11 @@ void Commands::do_let(NeReLaBasic& vm) {
                     Error::set(3, vm.runtime_current_line, "Cannot assign to member of a null object.");
                 }
             }
+
+            // LIVE IMPLEMENTATION: Trigger propagation.
+            if (vm.live_variables.count(final_member)) {
+                vm.propagate_changes(final_member);
+            }
 #ifdef JDCOM
             // Case 2: The target is a COM Object
             else if (std::holds_alternative<ComObject>(final_obj)) {
@@ -1052,11 +1111,25 @@ void Commands::do_let(NeReLaBasic& vm) {
         else {
             // It's a regular variable assignment (e.g. A = 10)
             if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
-                Error::set(1, vm.runtime_current_line); return;
+                auto old_pcode = vm.pcode;
+                if (!handle_reactive(vm, name))
+                {
+                    Error::set(1, vm.runtime_current_line);
+                    return;
+                }
+                vm.pcode = old_pcode+2; // skip memory address of reactive term
             }
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
             set_variable(vm, name, value_to_assign);
+            // LIVE IMPLEMENTATION: Trigger propagation if the base variable is LIVE.
+            if (vm.live_variables.count(name)) {
+                // For scalar values, we can check if the value actually changed to avoid needless updates.
+                if (vm.reactive_graph.count(name) && vm.reactive_graph.at(name).last_value != value_to_assign) {
+                    vm.reactive_graph.at(name).last_value = value_to_assign;
+                    vm.propagate_changes(name);
+                }
+            }
         }
     }
 }
@@ -2363,6 +2436,8 @@ void Commands::do_run(NeReLaBasic& vm) {
     vm.variables.clear();
     vm.call_stack.clear();
     vm.for_stack.clear();
+    vm.reactive_graph.clear();
+    vm.live_variables.clear();
     Error::clear();
     vm.is_stopped = false; // Reset the stopped state
 

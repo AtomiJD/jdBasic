@@ -45,6 +45,15 @@ enum class TaskStatus {
     ERRORED
 };
 
+// LIVE IMPLEMENTATION: Struct to manage reactive dependencies for a single variable.
+struct ReactiveNode {
+    std::string name;                           // The variable name.
+    std::vector<uint8_t> expression_pcode;      // The p-code to re-evaluate this variable's value.
+    std::vector<std::string> dependencies;      // List of variable names this node depends on.
+    std::vector<std::string> dependents;        // List of variable names that depend on this node.
+    BasicValue last_value;                      // Cached value to check if the variable actually changed after re-evaluation.
+};
+
 class NeReLaBasic {
 public:
     // --- Nested Types for Execution Machinery ---
@@ -323,6 +332,12 @@ public:
     std::chrono::steady_clock::time_point last_keyboard_check_time;
     const std::chrono::milliseconds keyboard_check_interval{ 10 };
 
+    // LIVE IMPLEMENTATION: Data structures for the reactive graph.
+    // The graph itself, mapping a variable name to its reactive properties.
+    std::unordered_map<std::string, ReactiveNode> reactive_graph;
+    // A simple, fast-lookup set of all variable names declared as LIVE.
+    std::unordered_set<std::string> live_variables;
+
     NeReLaBasic(const NeReLaBasic& other);
 
     // --- Member Functions ---
@@ -330,8 +345,8 @@ public:
     ~NeReLaBasic(); //Destructor
 
     void start();  // The main REPL
-    void execute(const std::vector<uint8_t>& code_to_run, bool resume_mode);
-    void execute_t(const std::vector<uint8_t>& code_to_run, bool resume_mode);
+    //void execute(const std::vector<uint8_t>& code_to_run, bool resume_mode);
+    //void execute_t(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     bool loadSourceFromFile(const std::string& filename);
     std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
 
@@ -372,6 +387,11 @@ public:
     void skip_unary();
     void skip_binary_op_chain(std::function<void()> skip_higher_precedence, const std::vector<Tokens::ID>& operators);
 
+    // --- LIVE reactive functions ---
+    void register_live_variable(const std::string& name);
+    void set_reactive_dependency(const std::string& dependent_name);
+    void analyze_and_build_dependencies(const std::string& dependent_name, const std::vector<uint8_t>& expression_pcode);
+    void propagate_changes(const std::string& changed_variable_name, const std::string& key = "");
 
     // --- Main execution ---
     BasicValue get_stacktrace();

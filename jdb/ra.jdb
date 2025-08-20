@@ -1,0 +1,58 @@
+' ===================================================================
+' == Test cases for reactive variables
+' ===================================================================
+
+DIM A AS LIVE INTEGER
+DIM B AS LIVE INTEGER
+DIM C[3] AS LIVE INTEGER
+DIM D[3] AS LIVE INTEGER
+DIM my_map AS LIVE MAP
+
+my_map{"name"} = "Atomi"
+my_map{"level"} = 99
+A = 2
+
+PRINT "MAP: ", my_map{"level"}
+
+my_map{"level"} -> A * 2
+
+PRINT "MAP: ", my_map{"level"}
+
+B -> A * 2  'B is now dependant of A
+
+PRINT "MAP: ", my_map{"level"}
+
+PRINT "B: ", B
+
+A = 3
+
+PRINT "B: ", B
+
+TRY
+    PRINT "MAP: ", my_map{"level"}
+CATCH
+    PRINT "Map error"
+ENDTRY
+
+C = [1,2,3]
+
+D -> C * A  'D is now dependend of C and A
+
+PRINT D
+
+A = 4
+
+PRINT B, D
+
+C = [1,1,1]
+
+PRINT D
+
+PRINT "MAP: ", my_map{"level"}
+
+A = 2
+
+PRINT "MAP: ", my_map{"level"}
+
+PRINT 
+PRINT "Reactive test finished!"

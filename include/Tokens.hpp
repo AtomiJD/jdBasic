@@ -110,7 +110,7 @@ namespace Tokens {
         RAISEEVENT = 0x65,
         END = 0x66,
         LAMBDA = 0x67,
-        C_ARROW = 0x68,
+        ARROW = 0x68,
         PLACEHOLDER = 0x69,
         THIS_KEYWORD = 0x6A,
         BAND = 0x6B,
@@ -135,6 +135,8 @@ namespace Tokens {
         ENDSWITCH = 0x8E,
         EXIT_SWITCH = 0x8F,
         INTEGER_LITERAL = 0x90, // Integer
+        LIVE = 0x91,
+        OP_SET_REACTIVE_DEPENDENCY = 0x92,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

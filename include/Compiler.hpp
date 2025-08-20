@@ -108,7 +108,9 @@ public:
 
     std::string current_type_context;
     bool in_method_block = false;
-
+    
+    void compile_expression(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code);
+    
     // Tokenizes a single line of source code into p-code.
     uint8_t tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline=false, bool fromrepl = false);
 

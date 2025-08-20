@@ -1073,6 +1073,174 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     current_task = nullptr;
 }
 
+/**
+ * @brief Registers a variable as being 'LIVE', initializing its node in the reactive graph.
+ * This is called by the DIM command at runtime.
+ */
+void NeReLaBasic::register_live_variable(const std::string& name) {
+    live_variables.insert(name);
+    if (reactive_graph.find(name) == reactive_graph.end()) {
+        ReactiveNode node;
+        node.name = name;
+        reactive_graph[name] = node;
+    }
+}
+
+/**
+ * @brief Handles the OP_SET_REACTIVE_DEPENDENCY p-code instruction.
+ * This reads the reactive assignment from p-code and builds the dependency links.
+ */
+void NeReLaBasic::set_reactive_dependency(const std::string& dependent_name) {
+    // Read the expression p-code from the main p-code stream
+    uint16_t expr_size = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+    pcode += 2;
+    expr_size -= 2;
+    std::vector<uint8_t> expression_pcode(active_p_code->begin() + pcode, active_p_code->begin() + pcode + expr_size);
+    pcode += expr_size;
+
+    // Ensure the dependent variable is registered as live
+    size_t dot_pos = dependent_name.find('.');
+    if (dot_pos != std::string::npos) {
+        //std::string enum_name = var_or_qual_name.substr(0, dot_pos);
+        //std::string member_name = var_or_qual_name.substr(dot_pos + 1);
+        auto vartofind = dependent_name.substr(0, dot_pos);;
+        if (live_variables.find(vartofind) == live_variables.end()) {
+            Error::set(100, runtime_current_line, "Variable '" + vartofind + "' must be declared as LIVE to be used in a reactive assignment.");
+            return;
+        }
+    }
+    else {
+        if (live_variables.find(dependent_name) == live_variables.end()) {
+            Error::set(100, runtime_current_line, "Variable '" + dependent_name + "' must be declared as LIVE to be used in a reactive assignment.");
+            return;
+        }
+    }
+    // Add EOL to expression code
+    expression_pcode.push_back(0);
+    // Store the expression and analyze it to build the graph
+    reactive_graph[dependent_name].expression_pcode = expression_pcode;
+    analyze_and_build_dependencies(dependent_name, expression_pcode);
+
+    // Initial evaluation
+    propagate_changes(dependent_name);
+}
+
+/**
+ * @brief Scans an expression's p-code to find all variable dependencies (OP_LOAD_VAR).
+ * It then updates the graph to link the dependent and its dependencies.
+ */
+void NeReLaBasic::analyze_and_build_dependencies(const std::string& dependent_name, const std::vector<uint8_t>& expression_pcode) {
+    ReactiveNode& node = reactive_graph[dependent_name];
+    // Clear old dependencies before re-analyzing
+    node.dependencies.clear();
+
+    int i = 0;
+    while (i < expression_pcode.size()) {
+        Tokens::ID token = static_cast<Tokens::ID>(expression_pcode[i]);
+        if (token == Tokens::ID::VARIANT) {
+            i++; // Move past the token
+            std::string  dependency_name;
+            while (expression_pcode[i] != 0) {
+                dependency_name += expression_pcode[i++];
+            }
+            i++;
+
+            // We found a dependency!
+            node.dependencies.push_back(dependency_name);
+
+            // Now, update the other side of the link: add this node as a dependent to the source variable
+            if (reactive_graph.find(dependency_name) != reactive_graph.end()) {
+                reactive_graph[dependency_name].dependents.push_back(dependent_name);
+            }
+            else {
+                // This could be an error if the dependency isn't LIVE, or we can allow it.
+                // For now, we'll allow depending on non-live variables.
+            }
+
+        }
+        else {
+            // Skip other tokens based on their p-code structure (this part needs to be robust)
+            // For simplicity, we just increment. A full implementation would need to know the size of each instruction.
+            i++;
+        }
+    }
+}
+
+/**
+ * @brief Propagates changes through the graph starting from a changed variable.
+ * Uses a topological sort approach (via a queue) to ensure correct evaluation order.
+ */
+void NeReLaBasic::propagate_changes(const std::string& changed_variable_name, const std::string& key) {
+    std::deque<std::string> evaluation_queue;
+    std::unordered_set<std::string> visited;
+
+    // Start the propagation with the direct dependents of the variable that just changed.
+    if (reactive_graph.count(changed_variable_name)) {
+        for (const auto& dependent : reactive_graph.at(changed_variable_name).dependents) {
+            if (visited.find(dependent) == visited.end()) {
+                evaluation_queue.push_back(dependent);
+                visited.insert(dependent);
+            }
+        }
+    }
+
+    // Process the queue until all affected nodes have been re-evaluated.
+    while (!evaluation_queue.empty()) {
+        std::string node_to_evaluate = evaluation_queue.front();
+        evaluation_queue.pop_front();
+
+        // 1. Re-evaluate the node's expression
+        ReactiveNode& node = reactive_graph[node_to_evaluate];
+        const auto* old_p_code_ptr = active_p_code;
+        int old_pcode_pos = pcode;
+
+        active_p_code = &node.expression_pcode; // Temporarily switch context
+        pcode = 0;
+
+        BasicValue new_value = evaluate_expression(); // This is your existing expression evaluator
+
+        active_p_code = old_p_code_ptr; // Restore context
+        pcode = old_pcode_pos;
+
+        // 2. Check if the value actually changed
+        if (new_value != node.last_value) {
+            // 3. If it changed, update the variable and trigger further propagation
+            size_t dot_pos = node_to_evaluate.find('.');
+            if (dot_pos != std::string::npos || !key.empty()) {
+                auto vartochange = node_to_evaluate.substr(0, dot_pos);
+                auto keytochange = node_to_evaluate.substr(dot_pos + 1);
+                if (!key.empty()) {
+                    keytochange = key;
+                    vartochange = node_to_evaluate;
+                }
+                // We have a map
+                BasicValue& map_var = get_variable(*this, vartochange);
+                if (!std::holds_alternative<std::shared_ptr<Map>>(map_var)) {
+                    Error::set(15, runtime_current_line); return;
+                }
+                const auto& map_ptr = std::get<std::shared_ptr<Map>>(map_var);
+                if (!map_ptr) { Error::set(15, runtime_current_line); return; }
+
+                // Perform the map insertion/update
+                map_ptr->data[keytochange] = new_value;
+            }
+            else {
+                variables[node_to_evaluate] = new_value;
+                node.last_value = new_value;
+            }
+
+            // Add this node's own dependents to the queue
+            for (const auto& next_dependent : node.dependents) {
+                if (visited.find(next_dependent) == visited.end()) {
+                    evaluation_queue.push_back(next_dependent);
+                    visited.insert(next_dependent);
+                }
+            }
+        }
+    }
+}
+
+
 void NeReLaBasic::statement() {
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]); // Peek at the token
 

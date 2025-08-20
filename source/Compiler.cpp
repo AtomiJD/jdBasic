@@ -92,24 +92,6 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         return parse(vm, is_start_of_statement); // Re-call to process what's after the comment.
     }
 
-    // Handle String Literals (including "")
-    //if (currentChar == '"') {
-    //    vm.prgptr++; // Consume opening "
-    //    size_t string_start_pos = vm.prgptr;
-    //    while (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] != '"') {
-    //        vm.prgptr++;
-    //    }
-    //    if (vm.prgptr < vm.lineinput.length() && vm.lineinput[vm.prgptr] == '"') {
-    //        vm.buffer = vm.lineinput.substr(string_start_pos, vm.prgptr - string_start_pos);
-    //        vm.prgptr++; // Consume closing "
-    //        return Tokens::ID::STRING;
-    //    }
-    //    else {
-    //        Error::set(1, vm.runtime_current_line, "Unterminated string"); // Unterminated string
-    //        return Tokens::ID::NOCMD;
-    //    }
-    //}
-
     if (currentChar == '"') {
         vm.prgptr++; // Consume opening "
         size_t string_start_pos = vm.prgptr;
@@ -300,7 +282,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             }
         }
 
-        if (is_start_of_statement && action_suffix != '=') {
+        if (is_start_of_statement && (action_suffix != '=' && action_suffix != '-')) {
             // If it's explicitly called with parens, it's a function call statement.
             if (action_suffix == '(') {
                 vm.prgptr = suffix_ptr;
@@ -344,7 +326,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         return Tokens::ID::C_GT;
     case '-': // New case for '->'
         if (vm.prgptr + 1 < vm.lineinput.length() && vm.lineinput[vm.prgptr + 1] == '>') {
-            vm.prgptr += 2; return Tokens::ID::C_ARROW;
+            vm.prgptr += 2; return Tokens::ID::ARROW;
         }
         // If not '->', it will fall through to the single-character handler for '-'
         break;
@@ -387,8 +369,6 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     return Tokens::ID::NOCMD;
 }
 
-
-
 uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline, bool fromrepl) {
 
     vm.lineinput = line;
@@ -404,6 +384,11 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
     bool is_one_liner_if = false;
     int brace_nesting_level = 0;
     int bracket_nesting_level = 0;
+
+    // --- LIVE IMPLEMENTATION: Simplified post-processing strategy ---
+    bool is_reactive_assignment_line = false;
+    std::string reactive_target_var;
+    size_t expression_start_index = 0; // Will mark where the expression p-code begins
 
     // This pointer will track if a LOOP statement was found on the current line,
     // so we know to patch its jumps after the whole line is tokenized.
@@ -441,13 +426,13 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
         if (Error::get() != 0) return Error::get();
         if (token == Tokens::ID::NOCMD) break; // End of line reached.
 
-        // *** NEW: Update nesting level based on token ***
+        // *** Update nesting level based on token ***
         if (token == Tokens::ID::C_LEFTBRACE) brace_nesting_level++;
         if (token == Tokens::ID::C_RIGHTBRACE && brace_nesting_level > 0) brace_nesting_level--;
         if (token == Tokens::ID::C_LEFTBRACKET) bracket_nesting_level++;
         if (token == Tokens::ID::C_RIGHTBRACKET && bracket_nesting_level > 0) bracket_nesting_level--;
 
-        // *** MODIFIED: Only treat colon as a statement separator if at the top level ***
+        // *** Only treat colon as a statement separator if at the top level ***
         if (token == Tokens::ID::C_COLON && brace_nesting_level == 0 && bracket_nesting_level == 0) {
             is_start_of_statement = true;
         }
@@ -1072,7 +1057,6 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 out_p_code.push_back((current_do_loop_info.loop_start_pcode_addr >> 8) & 0xFF);
 
                 uint16_t jump_target = out_p_code.size(); // The address immediately after this LOOP
-                // *** CRITICAL PATCHING STEP ***
                 // If this was a pre-test loop (DO WHILE/UNTIL), its placeholder for jumping *past* the loop
                 // needs to be patched *now* to point to the instruction *after* the LOOP statement.
                 if (current_do_loop_info.is_pre_test && current_do_loop_info.condition_pcode_addr != 0) {
@@ -1301,6 +1285,34 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue;
             }
 
+            // LIVE IMPLEMENTATION: Handle the '->' operator for live variables/nodes
+            case Tokens::ID::ARROW: {
+                is_reactive_assignment_line = true;
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::OP_SET_REACTIVE_DEPENDENCY));
+                expression_start_index = out_p_code.size();
+                out_p_code.push_back(0); // Placeholder LSB
+                out_p_code.push_back(0); // Placeholder MSB
+                is_start_of_statement = false; // An expression follows
+                continue;
+            }
+
+            case Tokens::ID::DIM: {
+                if (is_start_of_statement) {
+                    out_p_code.push_back(static_cast<uint8_t>(token));
+
+                    // LIVE IMPLEMENTATION: Check for the LIVE keyword after DIM
+                    int current_pos = vm.pcode;
+                    Tokens::ID next_token = parse(vm, false);
+                    if (next_token == Tokens::ID::LIVE) {
+                        out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::LIVE));
+                    }
+                    else {
+                        // It wasn't LIVE, so rewind the parser state
+                        vm.pcode = current_pos;
+                    }
+                }
+            }
+
             case Tokens::ID::AS:
                 // This is a keyword we need at runtime for DIM.
                 // Write the token to the bytecode stream.
@@ -1316,6 +1328,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     out_p_code.push_back(static_cast<uint8_t>(token));
                     for (char c : vm.buffer) out_p_code.push_back(c);
                     out_p_code.push_back(0);
+
                 } else if (token == Tokens::ID::NUMBER) {
                     // Check if the number literal contains a decimal point.
                     if (vm.buffer.find('.') == std::string::npos) {
@@ -1392,6 +1405,13 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 Error::set(4, vm.current_source_line, "Mismatched stack for single-line IF.");
             }
         }
+    }
+
+    // --- Post-line processing: Assemble the reactive assignment if needed ---
+    if (is_reactive_assignment_line) {
+        uint16_t expr_size = out_p_code.size() - expression_start_index;
+        out_p_code[expression_start_index] = expr_size & 0xFF;
+        out_p_code[expression_start_index + 1] = (expr_size >> 8) & 0xFF;
     }
 
     if (fromrepl) {
