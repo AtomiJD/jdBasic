@@ -135,7 +135,7 @@ namespace Tokens {
         ENDSWITCH = 0x8E,
         EXIT_SWITCH = 0x8F,
         INTEGER_LITERAL = 0x90, // Integer
-        LIVE = 0x91,
+        REACT = 0x91,
         OP_SET_REACTIVE_DEPENDENCY = 0x92,
         GET = 0xBA,
         WAIT = 0xD1,

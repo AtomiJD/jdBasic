@@ -401,7 +401,7 @@ void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& 
 }
 
 // Helper function to create a default value for a given type name.
-BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name_str_upper) {
+BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name_str_upper, const std::string& var_name_str_upper = "") {
     if (type_name_str_upper == "INTEGER") {
         return 0;
     }
@@ -427,6 +427,7 @@ BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name
         auto udt_instance = std::make_shared<Map>();
 
         udt_instance->type_name_if_udt = type_name_str_upper;
+        udt_instance->var_name_if_udt = var_name_str_upper;
 
         // Initialize all members to their default values
         for (const auto& member_pair : type_info.members) {
@@ -452,7 +453,7 @@ BasicValue create_default_instance(NeReLaBasic& vm, const std::string& type_name
 
 void Commands::do_dim(NeReLaBasic& vm) {
     while (true) {
-        bool is_live = false;
+        bool is_react = false;
         Tokens::ID token_check = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
         // If it's not a variable token, it's the end of the DIM statement.
         if (token_check != Tokens::ID::VARIANT && token_check != Tokens::ID::INT && token_check != Tokens::ID::STRVAR && token_check != Tokens::ID::ARRAY_ACCESS) {
@@ -491,9 +492,9 @@ void Commands::do_dim(NeReLaBasic& vm) {
             vm.pcode++; // Consume 'AS'
             type_was_specified = true;
 
-            // Check for LIVE keyword
-            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::LIVE) {
-                is_live = true;
+            // Check for REACT keyword
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::REACT) {
+                is_react = true;
                 vm.pcode++;
             }
 
@@ -520,9 +521,9 @@ void Commands::do_dim(NeReLaBasic& vm) {
             }
         }
 
-        if (is_live) {
-            // LIVE IMPLEMENTATION: Register the variable with the reactive system.
-            vm.register_live_variable(var_name);
+        if (is_react) {
+            // REACT IMPLEMENTATION: Register the variable with the reactive system.
+            vm.register_react_variable(var_name);
         }
 
         // --- Part 3: Create the variable(s) based on what we found ---
@@ -542,7 +543,7 @@ void Commands::do_dim(NeReLaBasic& vm) {
 
             // Create a new, unique instance for each element in the array.
             for (size_t i = 0; i < total_size; ++i) {
-                BasicValue default_instance = create_default_instance(vm, type_name);
+                BasicValue default_instance = create_default_instance(vm, type_name, var_name);
                 if (Error::get() != 0) return; // Stop if the type was invalid
                 new_array_ptr->data.push_back(default_instance);
             }
@@ -553,7 +554,7 @@ void Commands::do_dim(NeReLaBasic& vm) {
             if (!type_was_specified && var_name.back() == '$') {
                 type_name = "STRING";
             }
-            BasicValue default_instance = create_default_instance(vm, type_name);
+            BasicValue default_instance = create_default_instance(vm, type_name, var_name);
             if (Error::get() != 0) return;
             set_variable(vm, var_name, default_instance);
         }
@@ -567,123 +568,6 @@ void Commands::do_dim(NeReLaBasic& vm) {
         }
     }
 }
-
-//void Commands::do_dim(NeReLaBasic& vm) {
-//    Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-//    std::string var_name = to_upper(read_string(vm));
-//
-//    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-//
-//    if (next_token == Tokens::ID::C_LEFTBRACKET) {
-//        // --- Case 1: ARRAY DECLARATION (e.g., DIM A[2, 3]) ---
-//        vm.pcode++; // Consume '['
-//
-//        std::vector<size_t> dimensions;
-//        while (true) {
-//            BasicValue size_val = vm.evaluate_expression();
-//            if (Error::get() != 0) return;
-//
-//            double dim_double = to_double(size_val);
-//            if (dim_double < 0) {
-//                Error::set(10, vm.runtime_current_line); // Bad subscript
-//                return;
-//            }
-//            dimensions.push_back(static_cast<size_t>(dim_double));
-//
-//            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-//            if (separator == Tokens::ID::C_COMMA) {
-//                vm.pcode++;
-//            }
-//            else if (separator == Tokens::ID::C_RIGHTBRACKET) {
-//                break;
-//            }
-//            else {
-//                Error::set(1, vm.runtime_current_line); // Syntax error: Expected , or ]
-//                return;
-//            }
-//        }
-//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_RIGHTBRACKET) {
-//            Error::set(1, vm.runtime_current_line); return;
-//        }
-//
-//        // --- Create the Array on the heap using std::make_shared ---
-//        auto new_array_ptr = std::make_shared<Array>();
-//        new_array_ptr->shape = dimensions;
-//
-//        size_t total_size = new_array_ptr->size();
-//
-//        bool is_string_array = (var_name.back() == '$');
-//        BasicValue default_val = is_string_array ? BasicValue{ std::string("") } : BasicValue{ 0.0 };
-//
-//        new_array_ptr->data.assign(total_size, default_val);
-//
-//        // Store the shared_ptr in the BasicValue variant
-//        set_variable(vm, var_name, new_array_ptr);
-//    }
-//    else
-//    {
-//        // --- Case 2: TYPED VARIABLE DECLARATION (e.g., DIM V AS DATE) ---
-//        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::AS) {
-//            Error::set(1, vm.runtime_current_line); return;
-//        }
-//
-//        // Get the token that represents the type
-//        Tokens::ID type_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]);
-//
-//        BasicValue default_value;
-//        bool type_found = true; // Assume success
-//
-//        switch (type_token) {
-//        case Tokens::ID::INT:       default_value = 0; break;
-//        case Tokens::ID::DOUBLE:    default_value = 0.0; break;
-//        case Tokens::ID::STRTYPE:   default_value = std::string(""); break;
-//        case Tokens::ID::DATE:      default_value = DateTime{}; break;
-//        case Tokens::ID::BOOL:      default_value = false; break;
-//        case Tokens::ID::MAP:       default_value = std::make_shared<Map>(); break;
-//
-//            // This case handles user-defined types, which are tokenized as VARIANT.
-//        case Tokens::ID::VARIANT: {
-//            // The type name is a string that follows the VARIANT token.
-//            std::string type_name_str = to_upper(read_string(vm));
-//            if (vm.user_defined_types.count(type_name_str)) {
-//                const auto& type_info = vm.user_defined_types.at(type_name_str);
-//                auto udt_instance = std::make_shared<Map>();
-//
-//                udt_instance->type_name_if_udt = type_name_str;
-//
-//                for (const auto& member_pair : type_info.members) {
-//                    const auto& member_info = member_pair.second;
-//                    BasicValue member_default_val;
-//                    switch (member_info.type_id) {
-//                    case DataType::INTEGER:     member_default_val = 0; break;
-//                    case DataType::STRING:      member_default_val = std::string(""); break;
-//                    case DataType::BOOL:        member_default_val = false; break;
-//                    case DataType::DATETIME:    member_default_val = DateTime{}; break;
-//                    case DataType::MAP:         member_default_val = std::make_shared<Map>(); break;
-//                    default:                    member_default_val = 0.0; break;
-//                    }
-//                    udt_instance->data[member_info.name] = member_default_val;
-//                }
-//                default_value = udt_instance;
-//            }
-//            else {
-//                type_found = false;
-//                Error::set(1, vm.runtime_current_line, "Unknown type name '" + type_name_str + "'");
-//            }
-//            break;
-//        }
-//        default:
-//            type_found = false;
-//            Error::set(1, vm.runtime_current_line, "Invalid type specified for DIM AS.");
-//            break;
-//        }
-//
-//        if (type_found) {
-//            set_variable(vm, var_name, default_value);
-//        }
-//    }
-//}
-
 
 // --- Implementation for the IMPORT command ---
 void Commands::do_dllimport(NeReLaBasic& vm) {
@@ -811,7 +695,7 @@ void Commands::do_print(NeReLaBasic& vm) {
 bool handle_reactive(NeReLaBasic& vm, std::string var_name, std::string key = "") {
     Tokens::ID cmd = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode-1]);
 
-    // LIVE IMPLEMENTATION: Handle the new reactive assignment instruction
+    // REACT IMPLEMENTATION: Handle the new reactive assignment instruction
     if (cmd == Tokens::ID::OP_SET_REACTIVE_DEPENDENCY) {
         if (key.empty())
             vm.set_reactive_dependency(var_name);
@@ -1000,8 +884,8 @@ void Commands::do_let(NeReLaBasic& vm) {
                 return;
             }
         }
-        // LIVE IMPLEMENTATION: A change to an element is a change to the whole array.
-        if (vm.live_variables.count(name)) {
+        // REACT IMPLEMENTATION: A change to an element is a change to the whole array.
+        if (vm.react_variables.count(name)) {
             // For complex types, it's safer to always propagate, as deep comparison is expensive.
             vm.propagate_changes(name);
         }
@@ -1044,8 +928,8 @@ void Commands::do_let(NeReLaBasic& vm) {
         // Perform the map insertion/update
         map_ptr->data[key] = value_to_assign;
 
-        // LIVE IMPLEMENTATION: Trigger propagation.
-        if (vm.live_variables.count(name)) {
+        // REACT IMPLEMENTATION: Trigger propagation.
+        if (vm.react_variables.count(name)) {
             vm.propagate_changes(name, key);
         }
     }
@@ -1080,16 +964,13 @@ void Commands::do_let(NeReLaBasic& vm) {
                 auto& map_ptr = std::get<std::shared_ptr<Map>>(final_obj);
                 if (map_ptr) {
                     map_ptr->data[final_member] = value_to_assign;
+                    prefix = map_ptr->var_name_if_udt;
                 }
                 else {
                     Error::set(3, vm.runtime_current_line, "Cannot assign to member of a null object.");
                 }
             }
 
-            // LIVE IMPLEMENTATION: Trigger propagation.
-            if (vm.live_variables.count(final_member)) {
-                vm.propagate_changes(final_member);
-            }
 #ifdef JDCOM
             // Case 2: The target is a COM Object
             else if (std::holds_alternative<ComObject>(final_obj)) {
@@ -1107,6 +988,18 @@ void Commands::do_let(NeReLaBasic& vm) {
             else {
                 Error::set(15, vm.runtime_current_line, "Dot notation can only be used on objects and user-defined types.");
             }
+            // REACT IMPLEMENTATION: Trigger propagation.
+            if (is_this == true) {
+                auto udt_name = prefix + '.' + name;
+                if (vm.react_variables.count(udt_name)) {
+                    vm.propagate_changes(udt_name);
+                }
+
+            } else {
+                if (vm.react_variables.count(name)) {
+                    vm.propagate_changes(name);
+                }
+            }
         }
         else {
             // It's a regular variable assignment (e.g. A = 10)
@@ -1122,8 +1015,8 @@ void Commands::do_let(NeReLaBasic& vm) {
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
             set_variable(vm, name, value_to_assign);
-            // LIVE IMPLEMENTATION: Trigger propagation if the base variable is LIVE.
-            if (vm.live_variables.count(name)) {
+            // REACT IMPLEMENTATION: Trigger propagation if the base variable is REACT.
+            if (vm.react_variables.count(name)) {
                 // For scalar values, we can check if the value actually changed to avoid needless updates.
                 if (vm.reactive_graph.count(name) && vm.reactive_graph.at(name).last_value != value_to_assign) {
                     vm.reactive_graph.at(name).last_value = value_to_assign;
@@ -2437,7 +2330,7 @@ void Commands::do_run(NeReLaBasic& vm) {
     vm.call_stack.clear();
     vm.for_stack.clear();
     vm.reactive_graph.clear();
-    vm.live_variables.clear();
+    vm.react_variables.clear();
     Error::clear();
     vm.is_stopped = false; // Reset the stopped state
 

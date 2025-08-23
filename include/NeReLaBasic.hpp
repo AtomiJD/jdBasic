@@ -46,7 +46,7 @@ enum class TaskStatus {
     ERRORED
 };
 
-// LIVE IMPLEMENTATION: Struct to manage reactive dependencies for a single variable.
+// REACT IMPLEMENTATION: Struct to manage reactive dependencies for a single variable.
 struct ReactiveNode {
     std::string name;                           // The variable name.
     std::vector<uint8_t> expression_pcode;      // The p-code to re-evaluate this variable's value.
@@ -323,11 +323,11 @@ public:
     std::chrono::steady_clock::time_point last_keyboard_check_time;
     const std::chrono::milliseconds keyboard_check_interval{ 10 };
 
-    // LIVE IMPLEMENTATION: Data structures for the reactive graph.
+    // REACT IMPLEMENTATION: Data structures for the reactive graph.
     // The graph itself, mapping a variable name to its reactive properties.
     std::unordered_map<std::string, ReactiveNode> reactive_graph;
-    // A simple, fast-lookup set of all variable names declared as LIVE.
-    std::unordered_set<std::string> live_variables;
+    // A simple, fast-lookup set of all variable names declared as REACT.
+    std::unordered_set<std::string> react_variables;
 
     NeReLaBasic(const NeReLaBasic& other);
 
@@ -378,8 +378,8 @@ public:
     void skip_unary();
     void skip_binary_op_chain(std::function<void()> skip_higher_precedence, const std::vector<Tokens::ID>& operators);
 
-    // --- LIVE reactive functions ---
-    void register_live_variable(const std::string& name);
+    // --- REACT functions ---
+    void register_react_variable(const std::string& name);
     void set_reactive_dependency(const std::string& dependent_name);
     void analyze_and_build_dependencies(const std::string& dependent_name, const std::vector<uint8_t>& expression_pcode);
     void propagate_changes(const std::string& changed_variable_name, const std::string& key = "");

@@ -29,19 +29,19 @@ CLS 0, 0, 0
 ' ==  SUBROUTINE TO CALCULATE AND DRAW THE FRACTAL
 ' ====================================================================
 SUB CalculateAndDrawMandelbrot()
-    ' --- 3. Vectorized Coordinate Setup (Unchanged) ---
+    ' --- 3. Vectorized Coordinate Setup  ---
     PRINT "Creating coordinate matrices for the current view..."
     PX_VEC = (IOTA(CALC_W) - 1) / (CALC_W - 1)
     PY_VEC = (IOTA(CALC_H) - 1) / (CALC_H - 1)
     C_REAL = OUTER(PY_VEC*0, PX_VEC, "+") * (X_MAX - X_MIN) + X_MIN
     C_IMAG = OUTER(PY_VEC, PX_VEC*0, "+") * (Y_MAX - Y_MIN) + Y_MIN
 
-    ' --- 4. High-Performance Calculation (REPLACED) ---
+    ' --- 4. High-Performance Calculation  ---
     PRINT "Calculating Mandelbrot set with C++ core function..."
     ' The entire slow FOR...NEXT loop is replaced by this single, fast call.
     ITERATIONS = MANDELBROT(C_REAL, C_IMAG, MAX_ITERATIONS)
 
-    ' --- 5. Vectorized Coloring (Unchanged) ---
+    ' --- 5. Vectorized Coloring  ---
     PRINT "Calculating final color matrix..."
     INSIDE_SET_MASK = (ITERATIONS >= MAX_ITERATIONS)
     R = ((ITERATIONS * 8) MOD 255) * (1 - INSIDE_SET_MASK)
@@ -49,16 +49,15 @@ SUB CalculateAndDrawMandelbrot()
     B = ((ITERATIONS * 12) MOD 255) * (1 - INSIDE_SET_MASK)
     COLOR_MATRIX = R * 65536 + G * 256 + B
 
-    ' --- 6. Draw the Final Image (Unchanged) ---
+    ' --- 6. Draw the Final Image  ---
     PRINT "Drawing final image with PLOTRAW..."
     PLOTRAW 0, 0, COLOR_MATRIX, DX, DY
     SCREENFLIP
     PRINT "Ready. Click to zoom or press ESC to exit."
 ENDSUB
 
-
 ' ====================================================================
-' ==  MAIN INTERACTIVE LOOP (Unchanged)
+' ==  MAIN INTERACTIVE LOOP 
 ' ====================================================================
 CalculateAndDrawMandelbrot
 DO

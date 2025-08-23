@@ -58,15 +58,15 @@ EmptyArray = []
 
 Reactive variables needs to be created explicitly with `DIM`.
 
-**`DIM var AS LIVE type]`**
-Declares a reactive variable. The `AS LIVE ` clause is used for specific types.
+**`DIM var AS REAC type]`**
+Declares a reactive variable. The `AS REACT ` clause is used for specific types.
 
-**`DIM array[size1, size2, ...] AS LIVE INTEGER`**
+**`DIM array[size1, size2, ...] AS REACT INTEGER`**
 Declares an N-dimensional array with given sizes as reactive integer variable.
 
 ```basic
-DIM A AS LIVE INTEGER
-DIM B AS LIVE INTEGER
+DIM A AS REACT INTEGER
+DIM B AS REACT INTEGER
 
 B = 2
 A -> B * 2 'A is reactive and depends on B ' The -> Operator mark this term as reactive

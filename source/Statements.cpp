@@ -101,7 +101,7 @@ namespace {
         {"DEFAULT", Tokens::ID::DEFAULT},
         {"ENDSWITCH", Tokens::ID::ENDSWITCH},
         {"EXITSWITCH", Tokens::ID::EXIT_SWITCH},
-        {"LIVE",    Tokens::ID::LIVE},
+        {"REACT",    Tokens::ID::REACT},
         {"END",     Tokens::ID::END}
     };
 } // end anonymous namespace

@@ -385,7 +385,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
     int brace_nesting_level = 0;
     int bracket_nesting_level = 0;
 
-    // --- LIVE IMPLEMENTATION: Simplified post-processing strategy ---
+    // --- REACT IMPLEMENTATION: Simplified post-processing strategy ---
     bool is_reactive_assignment_line = false;
     std::string reactive_target_var;
     size_t expression_start_index = 0; // Will mark where the expression p-code begins
@@ -1285,7 +1285,7 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue;
             }
 
-            // LIVE IMPLEMENTATION: Handle the '->' operator for live variables/nodes
+            // REACT IMPLEMENTATION: Handle the '->' operator for reactive variables/nodes
             case Tokens::ID::ARROW: {
                 is_reactive_assignment_line = true;
                 out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::OP_SET_REACTIVE_DEPENDENCY));
@@ -1300,14 +1300,14 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 if (is_start_of_statement) {
                     out_p_code.push_back(static_cast<uint8_t>(token));
 
-                    // LIVE IMPLEMENTATION: Check for the LIVE keyword after DIM
+                    // REACT IMPLEMENTATION: Check for the REACT keyword after DIM
                     int current_pos = vm.pcode;
                     Tokens::ID next_token = parse(vm, false);
-                    if (next_token == Tokens::ID::LIVE) {
-                        out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::LIVE));
+                    if (next_token == Tokens::ID::REACT) {
+                        out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::REACT));
                     }
                     else {
-                        // It wasn't LIVE, so rewind the parser state
+                        // It wasn't REACT, so rewind the parser state
                         vm.pcode = current_pos;
                     }
                 }

@@ -2,11 +2,11 @@
 ' == Test cases for reactive variables
 ' ===================================================================
 
-DIM A AS LIVE INTEGER
-DIM B AS LIVE INTEGER
-DIM C[3] AS LIVE INTEGER
-DIM D[3] AS LIVE INTEGER
-DIM my_map AS LIVE MAP
+DIM A AS REACT INTEGER
+DIM B AS REACT INTEGER
+DIM C[3] AS REACT INTEGER
+DIM D[3] AS REACT INTEGER
+DIM my_map AS REACT MAPs
 
 my_map{"name"} = "Atomi"
 my_map{"level"} = 99

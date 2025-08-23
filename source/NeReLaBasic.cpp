@@ -1077,8 +1077,8 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
  * @brief Registers a variable as being 'LIVE', initializing its node in the reactive graph.
  * This is called by the DIM command at runtime.
  */
-void NeReLaBasic::register_live_variable(const std::string& name) {
-    live_variables.insert(name);
+void NeReLaBasic::register_react_variable(const std::string& name) {
+    react_variables.insert(name);
     if (reactive_graph.find(name) == reactive_graph.end()) {
         ReactiveNode node;
         node.name = name;
@@ -1104,13 +1104,13 @@ void NeReLaBasic::set_reactive_dependency(const std::string& dependent_name) {
         //std::string enum_name = var_or_qual_name.substr(0, dot_pos);
         //std::string member_name = var_or_qual_name.substr(dot_pos + 1);
         auto vartofind = dependent_name.substr(0, dot_pos);;
-        if (live_variables.find(vartofind) == live_variables.end()) {
+        if (react_variables.find(vartofind) == react_variables.end()) {
             Error::set(100, runtime_current_line, "Variable '" + vartofind + "' must be declared as LIVE to be used in a reactive assignment.");
             return;
         }
     }
     else {
-        if (live_variables.find(dependent_name) == live_variables.end()) {
+        if (react_variables.find(dependent_name) == react_variables.end()) {
             Error::set(100, runtime_current_line, "Variable '" + dependent_name + "' must be declared as LIVE to be used in a reactive assignment.");
             return;
         }
@@ -1134,9 +1134,24 @@ void NeReLaBasic::analyze_and_build_dependencies(const std::string& dependent_na
     // Clear old dependencies before re-analyzing
     node.dependencies.clear();
 
+    // This is the worst method to get the dependencies!
+    // We should use the skipterm() logic to get the right variables in an expression
     int i = 0;
     while (i < expression_pcode.size()) {
         Tokens::ID token = static_cast<Tokens::ID>(expression_pcode[i]);
+        if (token == Tokens::ID::CALLFUNC) {
+            while (i < expression_pcode.size()) {
+                Tokens::ID token = static_cast<Tokens::ID>(expression_pcode[i]);
+                if (token == Tokens::ID::C_LEFTPAREN) break;
+                i++;
+            }
+        }
+        if (expression_pcode[i] == 0x22) { // Skip "....."
+            while (i < expression_pcode.size()) {
+                if (expression_pcode[i] == 0x22) break;
+                i++;
+            }
+        }
         if (token == Tokens::ID::VARIANT) {
             i++; // Move past the token
             std::string  dependency_name;
@@ -1153,8 +1168,17 @@ void NeReLaBasic::analyze_and_build_dependencies(const std::string& dependent_na
                 reactive_graph[dependency_name].dependents.push_back(dependent_name);
             }
             else {
-                // This could be an error if the dependency isn't LIVE, or we can allow it.
-                // For now, we'll allow depending on non-live variables.
+                //Maybe it is a dot var
+                size_t dot_pos = dependency_name.find('.');
+                if (dot_pos != std::string::npos) {
+                    auto vartofind = dependency_name.substr(0, dot_pos);;
+                    if (react_variables.find(vartofind) == react_variables.end()) {
+                        Error::set(100, runtime_current_line, "Variable '" + vartofind + "' must be declared as LIVE to be used in a reactive assignment.");
+                        return;
+                    }
+                    register_react_variable(dependency_name);
+                    reactive_graph[dependency_name].dependents.push_back(dependent_name);
+                }
             }
 
         }

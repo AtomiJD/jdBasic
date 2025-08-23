@@ -15,12 +15,12 @@ PRINT
 
 ' Use MAP to transform every element
 SquaredNumbers = SELECT(SQUARE@, MyNumbers)
-PRINT "After MAP(SQUARE@, ...): "; FRMV$(SquaredNumbers)
+PRINT "After MAP(SQUARE@, ...) : "; FRMV$(SquaredNumbers)
 PRINT
 
 ' Use FILTER to keep only the even numbers
 EvenNumbers = FILTER(IS_EVEN@, MyNumbers)
-PRINT "After FILTER(IS_EVEN@, ...): "; FRMV$(EvenNumbers)
+PRINT "After FILTER(IS_EVEN@, ...) : "; FRMV$(EvenNumbers)
 PRINT
 
 ' You can chain these operations together!

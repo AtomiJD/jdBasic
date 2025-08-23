@@ -217,6 +217,7 @@ struct Array {
 struct Map {
     std::map<std::string, BasicValue> data;
     std::string type_name_if_udt; // Stores the name of the UDT, e.g., "T_SPRITE"
+    std::string var_name_if_udt; // Stores the name of the UDT, e.g., "T_SPRITE"
 };
 
 using GradFunc = std::function<std::vector<std::shared_ptr<Tensor>>(std::shared_ptr<Tensor>)>;

@@ -1,0 +1,153 @@
+' Program to biuld the "hacker" screen
+' Start it from the command line:
+' > jdbasic "hacker_view.jdb" 1
+' > jdbasic "hacker_view.jdb" 2
+' > jdbasic "hacker_view.jdb" 3
+
+ARGS_ARRAY = OS.ARGS()
+
+SWITCH ARGS_ARRAY[1]
+CASE 1 :
+    ' 1. Get a list of all files with the .jdb extension
+    cd "D:\usr\dev\c\jdBasic\jdb"
+    jdb_files$ = DIR$("*.jdb")
+
+    ' Check if any files were found
+    IF LEN(jdb_files$) = 0 THEN
+        PRINT "No .jdb files found in the current directory."
+        END
+    ENDIF
+
+    PRINT "Found " + STR$(LEN(jdb_files$)) + " files to combine."
+
+    ' 2. Initialize an empty string to hold all the code
+    combined_code$ = ""
+    file_separator$ = CHR$(13) + CHR$(10) + "' --- End of File ---" + CHR$(13) + CHR$(10) + CHR$(13) + CHR$(10)
+
+    ' 3. Loop through the list of files
+    FOR i = 0 TO LEN(jdb_files$) - 1
+        current_file$ = jdb_files$[i]
+        PRINT "Reading: "; current_file$
+        
+        ' Read the entire content of the current file
+        file_content$ = TXTREADER$(current_file$)
+        
+        ' Append the content to our master string, followed by a separator
+        combined_code$ = combined_code$ + file_content$ + file_separator$
+    NEXT i
+
+    DO 
+        SL=1
+        for i = 0 to len(combined_code$)
+            PRINT mid$(combined_code$,i,1);
+            A$ = INKEY$()
+            FOR J = 1 TO 5000
+            NEXT J
+            IF A$ > "" THEN EXITDO
+        NEXT I
+    LOOP UNTIL A$ > ""
+CASE 2: 
+    W=40:H=20:F=6:L=0.0
+    ST$=Format$("{:>6.2f}",rnd(1)*10000-5000)
+    DO
+        C=RESHAPE([" "],[H,W]):X=IOTA(W)-1
+        Y=INT((SIN(X/F+L)+1)*((H-1)/2))
+        C[Y,X]="*"
+        c[h/2,iota(w)-1] = "-"
+        IF L > 3.14 THEN
+            L = 0.0
+            ST$=Format$("{:>6.2f}",rnd(1)*10000-5000)
+            SX = RND(1)*(W/2)
+            SY = RND(1)*H+1
+        ENDIF
+        CLS
+        PRINT FRMV$(c)
+        LOCATE SY,SX+L*10
+        PRINT ST$
+        A$ = INKEY$()
+        SLEEP 100
+        L = L + 0.1
+    LOOP UNTIL A$ > ""
+CASE 3:
+    ' jdBasic - Matrix Digital Rain Screensaver
+    ' -----------------------------------------
+    ' This program creates the classic "digital rain" effect,
+    ' inspired by The Matrix films, using jdBasic's array-oriented features.
+
+    ' --- 1. Configuration ---
+    W = 40 ' Width of the screen in characters
+    H = 24 ' Height of the screen in characters
+    DENSITY = 30 ' Percentage of columns that will have a stream
+    CHARS$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    'A$="": FOR I = 160 to 255: A$ = A$ + CHR$(I): NEXT I: CHARS$ = CHARS$ + A$
+    NUM_CHARS = LEN(CHARS$)
+
+    ' --- 2. Initialization ---
+    ' Create the main screen character buffer
+    SCREEN_BUFFER = RESHAPE([" "], [H, W])
+
+    ' Create an array to hold the vertical position (row) of each stream's head.
+    ' Initialize all to -1 to indicate they are off-screen (inactive).
+    STREAM_HEADS = RESHAPE([-1], [W])
+
+    ' Create an array to track the length of each stream.
+    STREAM_LENGTHS = RESHAPE([0], [W])
+
+    ' Create an array to hold the speed of each stream.
+    STREAM_SPEEDS = RESHAPE([0], [W])
+
+    ' --- 3. Main Animation Loop ---
+    DO
+        ' --- a) Update Stream Positions and Characters ---
+        FOR C = 0 TO W - 1
+            ' If a stream is active in this column...
+            IF STREAM_HEADS[C] <> -1 THEN
+                ' --- Move the stream head down ---
+                STREAM_HEADS[C] = STREAM_HEADS[C] + STREAM_SPEEDS[C]
+
+                ' --- Fade out the tail of the stream ---
+                ' Find the tail position.
+                TAIL_POS = STREAM_HEADS[C] - STREAM_LENGTHS[C]
+                ' If the tail is on the screen, replace its character with a space.
+                IF TAIL_POS >= 0 AND TAIL_POS < H THEN
+                    SCREEN_BUFFER[TAIL_POS, C] = " "
+                ENDIF
+
+                ' --- Draw the new head character ---
+                ' If the head is on the screen...
+                IF STREAM_HEADS[C] >= 0 AND STREAM_HEADS[C] < H THEN
+                    ' Pick a random character from our character set.
+                    RAND_CHAR_INDEX = INT(RND(1) * NUM_CHARS)
+                    NEW_CHAR$ = MID$(CHARS$, RAND_CHAR_INDEX + 1, 1)
+                    ' Place the new character at the head's position.
+                    SCREEN_BUFFER[STREAM_HEADS[C], C] = NEW_CHAR$
+                ENDIF
+
+                ' --- Reset the stream if it has fallen off the bottom ---
+                IF TAIL_POS >= H THEN
+                    STREAM_HEADS[C] = -1 ' Deactivate the stream
+                ENDIF
+            ELSE
+                ' --- b) Create New Streams ---
+                ' If the stream is inactive, there's a random chance to start a new one.
+                IF (RND(1) * 100) < DENSITY THEN
+                    ' Activate the stream by setting its head position to the top (row 0).
+                    STREAM_HEADS[C] = 0
+                    ' Assign a random length and speed.
+                    STREAM_LENGTHS[C] = 5 + INT(RND(1) * (H - 5)) ' Length between 5 and H
+                    STREAM_SPEEDS[C] =  0.5 + RND(1)
+                ENDIF
+            ENDIF
+        NEXT C
+
+        ' --- c) Render the Screen ---
+        CLS
+        PRINT FRMV$(SCREEN_BUFFER)
+
+        ' --- d) Check for Exit Key and Delay ---
+        A$ = INKEY$()
+        SLEEP 100 ' Adjust for desired speed
+
+    LOOP UNTIL A$ > ""
+ENDSWITCH
+

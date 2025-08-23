@@ -1,0 +1,70 @@
+'Reactive type test
+INIT = TRUE
+TYPE T_FIRST
+    INPUT1 AS DOUBLE
+    OUTPUT1 AS DOUBLE
+
+    FUNC ProcessMe(A)
+        IF INIT THEN RETURN ""
+        PRINT "Order with "; A; " has arrived."
+        RETURN A
+    ENDFUNC
+ENDTYPE
+
+TYPE T_SECOND
+    INPUT1 AS DOUBLE
+    OUTPUT1 AS DOUBLE
+    Cost As DOUBLE
+
+    FUNC ProcessMe(A)
+        IF INIT THEN RETURN ""
+        B = A + THIS.Cost
+        PRINT "Administrative fee has been added: "; B
+        RETURN B
+    ENDFUNC
+ENDTYPE
+
+TYPE T_THIRD
+    INPUT1 AS DOUBLE
+    OUTPUT1 AS DOUBLE
+    Cost As DOUBLE
+
+    FUNC ProcessMe(A)
+        IF INIT THEN RETURN ""
+        B = A + THIS.Cost
+        PRINT "Item has been sent with shipping costs: "; B
+        RETURN B
+    ENDFUNC
+ENDTYPE
+
+DIM Reception AS REACT T_FIRST
+DIM Administration As REACT T_SECOND
+DIM Shipping As REACT T_THIRD
+
+
+' Create business rule here INIT = TRUE because we don't want to start the process yet.
+Reception.OUTPUT1 -> Reception.ProcessMe(Reception.INPUT1)
+
+Administration.Cost = 1.49
+Administration.INPUT1 -> Reception.OUTPUT1
+Administration.OUTPUT1 -> Administration.ProcessMe(Administration.INPUT1)
+
+Shipping.Cost = 4.99
+Shipping.INPUT1 -> Administration.OUTPUT1
+Shipping.OUTPUT1 -> Shipping.ProcessMe(Shipping.INPUT1)
+
+' Business rules are created so the INIT phase is over -> INIT = FALSE -> Rule engine is armed
+INIT = FALSE
+
+' An item with 1 arrives
+Reception.Input1 = 1
+
+PRINT "Reception: "; Reception.OUTPUT1; ", Administration: "; Administration.OUTPUT1; ", Shipping: "; Shipping.OUTPUT1
+PRINT
+
+
+' An item with 4 arrives
+Reception.Input1 = 4
+
+PRINT "Reception: "; Reception.OUTPUT1; ", Administration: "; Administration.OUTPUT1; ", Shipping: "; Shipping.OUTPUT1
+PRINT
