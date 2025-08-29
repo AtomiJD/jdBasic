@@ -54,6 +54,33 @@ MyArray = [1, 2, 3, 4] ' Creates an array
 EmptyArray = []
 ```
 
+## Destructuring Assignment
+
+Destructuring allows you to unpack values from an array into individual variables in a single statement. It is a concise way to assign multiple variables at once.
+
+[var1, var2, ...]
+Assigns variables from an array expression.
+
+```basic
+DIM A, B, C
+
+' Simple assignment from a literal array
+[A, B] = [1, 2]
+PRINT A, B ' Output: 1 2
+
+' Swapping variables in a single line
+[B, A] = [A, B]
+PRINT A, B ' Output: 2 1
+
+' Unpacking the result of a function that returns an array
+FUNC GetValues()
+    RETURN [10, 20, 30]
+ENDFUNC
+
+[A, B, C] = GetValues()
+PRINT A, B, C ' Output: 10 20 30
+```
+
 ## Reactive Variables and Assignment
 
 Reactive variables needs to be created explicitly with `DIM`.

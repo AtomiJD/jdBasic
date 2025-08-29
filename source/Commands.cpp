@@ -1060,6 +1060,9 @@ void Commands::do_destructure_assign(NeReLaBasic& vm) {
     BasicValue rhs_value = vm.evaluate_expression();
     if (Error::get() != 0) return;
 
+    // Maybe we should allow false assignements? And assign default valus if no matching is achieved?
+    // JDTODO: Discuss this with the community
+
     // 5. Validate that the RHS is an array.
     if (!std::holds_alternative<std::shared_ptr<Array>>(rhs_value)) {
         Error::set(15, vm.runtime_current_line, "Right-hand side of a destructuring assignment must be an array.");
