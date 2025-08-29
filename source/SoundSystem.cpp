@@ -145,14 +145,14 @@ bool SoundSystem::load_sound(int sample_id, const std::string& filename) {
 
     // Load the WAV file
     if (SDL_LoadWAV(filename.c_str(), &loaded_spec, &loaded_buffer, &loaded_length) == false) {
-        TextIO::print("Failed to load WAV '" + filename + "': " + std::string(SDL_GetError()) + "\n");
+        TextIO::print("Failed to load WAV '" + filename + "': " + std::string(SDL_GetError())); TextIO::nl();
         return false;
     }
 
     // Create a stream to convert the loaded audio to our desired format (AUDIO_F32)
     SDL_AudioStream* converter = SDL_CreateAudioStream(&loaded_spec, &audio_spec);
     if (converter == nullptr) {
-        TextIO::print("Failed to create audio converter: " + std::string(SDL_GetError()) + "\n");
+        TextIO::print("Failed to create audio converter: " + std::string(SDL_GetError())); TextIO::nl();
         SDL_free(loaded_buffer);
         return false;
     }

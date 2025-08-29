@@ -10,7 +10,7 @@ extern NeReLaBasic* g_vm_instance_ptr; // Initialize to nullptr
 namespace {
     // These variables hold the current error state.
     // They are in an anonymous namespace, making them accessible only within this file.
-    uint8_t current_error_code = 0;
+    uint16_t current_error_code = 0;
     uint16_t error_line_number = 0;
     std::string custom_error_message = ""; // NEW: For custom error messages.
 
@@ -47,7 +47,7 @@ namespace {
     };
 }
 
-void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& customMessage) {
+void Error::set(uint16_t errorCode, uint16_t lineNumber, const std::string& customMessage) {
     if (g_vm_instance_ptr == nullptr) {
         current_error_code = errorCode;
         error_line_number = lineNumber;
@@ -101,7 +101,7 @@ void Error::set(uint8_t errorCode, uint16_t lineNumber, const std::string& custo
     }
 }
 
-uint8_t Error::get() {
+uint16_t Error::get() {
     return current_error_code;
 }
 
@@ -111,7 +111,7 @@ void Error::clear() {
     custom_error_message.clear(); // Clear the custom message as well
 }
 
-std::string Error::getMessage(uint8_t errorCode) {
+std::string Error::getMessage(uint16_t errorCode) {
     if (errorCode < errorMessages.size()) {
         return errorMessages[errorCode];
     }

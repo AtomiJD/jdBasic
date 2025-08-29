@@ -4,12 +4,12 @@
 ' > jdbasic "hacker_view.jdb" 2
 ' > jdbasic "hacker_view.jdb" 3
 
+CURSOR FALSE
 ARGS_ARRAY = OS.ARGS()
 
 SWITCH ARGS_ARRAY[1]
 CASE 1 :
     ' 1. Get a list of all files with the .jdb extension
-    cd "D:\usr\dev\c\jdBasic\jdb"
     jdb_files$ = DIR$("*.jdb")
 
     ' Check if any files were found
@@ -151,3 +151,4 @@ CASE 3:
     LOOP UNTIL A$ > ""
 ENDSWITCH
 
+CURSOR TRUE

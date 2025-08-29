@@ -31,7 +31,11 @@ public:
 // A namespace for all text input/output related functions
 namespace TextIO {
     #ifndef _WIN32
-    int kbhit();
+    int initKey();
+    void deinitKey();
+    unsigned char jdgetch();
+    ssize_t jdwrite(int fd, const char *buf, size_t count);
+    
     #endif
     void print(const std::string& message);
     void print_uw(uint16_t value);
@@ -44,4 +48,5 @@ namespace TextIO {
     int getCursorX();
     int getCursorY();
     void getCursorPosition(int& row, int& col);
+    void refreshScreen();
 }

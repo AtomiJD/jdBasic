@@ -1150,7 +1150,9 @@ BasicValue builtin_create_layer(NeReLaBasic& vm, const std::vector<BasicValue>& 
         }
     }
     catch (const std::out_of_range& e) {
+#ifdef _WIN32        
         UNREFERENCED_PARAMETER(e);
+#endif        
         Error::set(1, vm.runtime_current_line, "Missing required option for layer " + layer_type);
         return {};
     }
@@ -1196,7 +1198,9 @@ BasicValue builtin_create_optimizer(NeReLaBasic& vm, const std::vector<BasicValu
         }
     }
     catch (const std::out_of_range& e) {
+#ifdef _WIN32        
         UNREFERENCED_PARAMETER(e);
+#endif        
         Error::set(1, vm.runtime_current_line, "Missing required option for " + optimizer_type + " optimizer.");
         return {};
     }

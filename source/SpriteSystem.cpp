@@ -34,7 +34,7 @@ bool SpriteSystem::load_sprite_type(int type_id, const std::string& filename) {
     }
     SDL_Texture* new_texture = IMG_LoadTexture(renderer, filename.c_str());
     if (!new_texture) {
-        TextIO::print("Failed to load texture '" + filename + "': " + std::string(SDL_GetError()) + "\n");
+        TextIO::print("Failed to load texture '" + filename + "': " + std::string(SDL_GetError())); TextIO::nl();
         return false;
     }
     texture_atlas.push_back(new_texture);
@@ -55,7 +55,7 @@ bool SpriteSystem::load_aseprite_file(int type_id, const std::string& json_filen
 
     std::ifstream f(json_filename);
     if (!f.is_open()) {
-        TextIO::print("Error: Could not open Aseprite JSON file: " + json_filename + "\n");
+        TextIO::print("Error: Could not open Aseprite JSON file: " + json_filename); TextIO::nl();
         return false;
     }
     nlohmann::json data;
@@ -63,7 +63,7 @@ bool SpriteSystem::load_aseprite_file(int type_id, const std::string& json_filen
         data = nlohmann::json::parse(f);
     }
     catch (const nlohmann::json::parse_error& e) {
-        TextIO::print("Error: Failed to parse Aseprite JSON: " + std::string(e.what()) + "\n");
+        TextIO::print("Error: Failed to parse Aseprite JSON: " + std::string(e.what())); TextIO::nl();
         return false;
     }
 
@@ -73,7 +73,7 @@ bool SpriteSystem::load_aseprite_file(int type_id, const std::string& json_filen
 
     SDL_Texture* main_sheet = IMG_LoadTexture(renderer, image_path.string().c_str());
     if (!main_sheet) {
-        TextIO::print("Error: Failed to load spritesheet image '" + image_path.string() + "': " + SDL_GetError() + "\n");
+        TextIO::print("Error: Failed to load spritesheet image '" + image_path.string() + "': " + SDL_GetError()); TextIO::nl();
         return false;
     }
 
@@ -348,7 +348,7 @@ void SpriteSystem::draw_all(float cam_x, float cam_y) { // Add parameters
                 //END DEBUG RED BOX 
             }
             else {
-                TextIO::print("No Texture: " + sprite->current_animation_name + "\n");
+                TextIO::print("No Texture: " + sprite->current_animation_name); TextIO::nl();
             }
         }
     }

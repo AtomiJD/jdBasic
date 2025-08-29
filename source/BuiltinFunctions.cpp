@@ -15,7 +15,8 @@
 #else
 #include <codecvt> // for std::wstring_convert
 #include <locale>  // for std::locale
-#include <ncurses.h>
+#include <stdio.h>
+//#include <ncurses.h>
 #endif
 #include <algorithm>    // For std::transform
 #include <string>       // For std::string, std::to_string
@@ -580,7 +581,7 @@ BasicValue builtin_json_parse(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     catch (const nlohmann::json::parse_error& e) {
         // If parsing fails, set a BASIC error and return.
         Error::set(1, vm.runtime_current_line); // Syntax Error (or a new "Invalid JSON" error)
-        TextIO::print("JSON Parse Error: " + std::string(e.what()) + "\n");
+        TextIO::print("JSON Parse Error: " + std::string(e.what())); TextIO::nl();
         return {};
     }
 }
@@ -603,7 +604,7 @@ BasicValue builtin_json_stringify(NeReLaBasic& vm, const std::vector<BasicValue>
     }
     catch (const std::exception& e) {
         Error::set(15, vm.runtime_current_line); // Type Mismatch or other conversion error
-        TextIO::print("JSON Stringify Error: " + std::string(e.what()) + "\n");
+        TextIO::print("JSON Stringify Error: " + std::string(e.what())); TextIO::nl();
         return std::string("");
     }
 }
@@ -867,13 +868,13 @@ BasicValue builtin_help(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     std::ifstream help_file("help.txt");
     if (!help_file) {
-        TextIO::print("Error: help.txt not found.\n");
+        TextIO::print("Error: help.txt not found."); TextIO::nl();
         return false;
     }
 
     if (topic.empty()) {
         // If no topic is specified, list all available commands in multiple columns.
-        TextIO::print("Available commands and functions. Use HELP \"command\" for details.\n\n");
+        TextIO::print("Available commands and functions. Use HELP \"command\" for details."); TextIO::nl(); TextIO::nl();
         std::string line;
         int command_count = 0;
         const int commands_per_line = 5;
@@ -913,15 +914,15 @@ BasicValue builtin_help(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
             found = true;
             TextIO::nl();
             // Print the next two lines which contain Syntax and Description
-            if (std::getline(help_file, line)) TextIO::print(line + "\n");
-            if (std::getline(help_file, line)) TextIO::print(line + "\n");
+            if (std::getline(help_file, line)) TextIO::print(line); TextIO::nl();
+            if (std::getline(help_file, line)) TextIO::print(line); TextIO::nl();
             TextIO::nl();
             break;
         }
     }
 
     if (!found) {
-        TextIO::print("No help found for topic: " + topic + "\n");
+        TextIO::print("No help found for topic: " + topic); TextIO::nl();
     }
 
     return false; // It's a procedure, so it returns a dummy boolean
@@ -2332,12 +2333,11 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return std::string(1, c);
     }
 #else
-    if (TextIO::kbhit()) {
-        char c = getch();
+    char c = TextIO::jdgetch();
+    if (c > 0) {
         return std::string(1, c);
     }
 #endif
-
     return std::string("");
 }
 
@@ -5652,11 +5652,11 @@ BasicValue builtin_option(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
     if (option_str == "NOPAUSE") {
         vm.nopause_active = true; // Set the flag in the VM
-        TextIO::print("OPTION NOPAUSE is active. Break/Pause disabled.\n"); // Optional feedback
+        TextIO::print("OPTION NOPAUSE is active. Break/Pause disabled."); TextIO::nl(); // Optional feedback
     }
     else if (option_str == "PAUSE") { // Optional: allow turning pause back on
         vm.nopause_active = false;
-        TextIO::print("OPTION PAUSE is active. Break/Pause enabled.\n");
+        TextIO::print("OPTION PAUSE is active. Break/Pause enabled."); TextIO::nl();
     }
     // Add more else if blocks here for future options, e.g.:
     // else if (option_str == "GRAPHICSON") {
@@ -5769,7 +5769,7 @@ BasicValue builtin_savews(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         }
 
         outfile << j_workspace.dump(4); // Pretty-print JSON
-        TextIO::print("Workspace saved to " + filename + "\n");
+        TextIO::print("Workspace saved to " + filename); TextIO::nl();
 
     }
     catch (const std::exception& e) {
@@ -5822,8 +5822,8 @@ BasicValue builtin_loadws(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
             return false;
         }
 
-        TextIO::print("Workspace loaded from " + filename + "\n");
-        TextIO::print("Source code has been loaded into memory. Type LIST to view.\n");
+        TextIO::print("Workspace loaded from " + filename); TextIO::nl();
+        TextIO::print("Source code has been loaded into memory. Type LIST to view."); TextIO::nl();
 
     }
     catch (const nlohmann::json::parse_error& e) {
@@ -5898,7 +5898,7 @@ BasicValue builtin_clearws(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     // 5. Clear all global variables
     vm.variables.clear();
 
-    TextIO::print("Workspace cleared.\n");
+    TextIO::print("Workspace cleared."); TextIO::nl();
     return false; // This is a procedure
 }
 
@@ -5968,7 +5968,7 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         }
 
         if (!fs::exists(target_path) || !fs::is_directory(target_path)) {
-            TextIO::print("Directory not found: " + target_path.string() + "\n");
+            TextIO::print("Directory not found: " + target_path.string()); TextIO::nl();
             return false;
         }
 
@@ -6002,15 +6002,15 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
                         TextIO::print(" ");
                     }
                 }
-                TextIO::print(size_str + "\n");
+                TextIO::print(size_str); TextIO::nl();
             }
         }
     }
     catch (const std::regex_error& e) {
-        TextIO::print("Invalid wildcard pattern: " + std::string(e.what()) + "\n");
+        TextIO::print("Invalid wildcard pattern: " + std::string(e.what())); TextIO::nl();
     }
     catch (const fs::filesystem_error& e) {
-        TextIO::print("Error accessing directory: " + std::string(e.what()) + "\n");
+        TextIO::print("Error accessing directory: " + std::string(e.what())); TextIO::nl();
     }
 
     return false; // Procedures return a dummy value
@@ -6026,10 +6026,10 @@ BasicValue builtin_cd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     std::string path_str = to_string(args[0]);
     try {
         fs::current_path(path_str); // This function changes the current working directory
-        TextIO::print("Current directory is now: " + fs::current_path().string() + "\n");
+        TextIO::print("Current directory is now: " + fs::current_path().string()); TextIO::nl();
     }
     catch (const fs::filesystem_error& e) {
-        TextIO::print("Error changing directory: " + std::string(e.what()) + "\n");
+        TextIO::print("Error changing directory: " + std::string(e.what())); TextIO::nl();
     }
     return false;
 }
@@ -6037,10 +6037,10 @@ BasicValue builtin_cd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // PWD
 BasicValue builtin_pwd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     try {
-        TextIO::print(fs::current_path().string() + "\n");
+        TextIO::print(fs::current_path().string()); TextIO::nl();
     }
     catch (const fs::filesystem_error& e) {
-        TextIO::print("Error getting current directory: " + std::string(e.what()) + "\n");
+        TextIO::print("Error getting current directory: " + std::string(e.what())); TextIO::nl();
     }
     return false;
 }
@@ -6054,14 +6054,14 @@ BasicValue builtin_mkdir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     std::string path_str = to_string(args[0]);
     try {
         if (fs::create_directory(path_str)) {
-            TextIO::print("Directory created: " + path_str + "\n");
+            TextIO::print("Directory created: " + path_str); TextIO::nl();
         }
         else {
-            TextIO::print("Directory already exists or error.\n");
+            TextIO::print("Directory already exists or error."); TextIO::nl();
         }
     }
     catch (const fs::filesystem_error& e) {
-        TextIO::print("Error creating directory: " + std::string(e.what()) + "\n");
+        TextIO::print("Error creating directory: " + std::string(e.what())); TextIO::nl();
     }
     return false;
 }
@@ -6075,14 +6075,14 @@ BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     std::string path_str = to_string(args[0]);
     try {
         if (fs::remove(path_str)) {
-            TextIO::print("File deleted: " + path_str + "\n");
+            TextIO::print("File deleted: " + path_str); TextIO::nl();
         }
         else {
-            TextIO::print("File not found or is a non-empty directory.\n");
+            TextIO::print("File not found or is a non-empty directory."); TextIO::nl();
         }
     }
     catch (const fs::filesystem_error& e) {
-        TextIO::print("Error deleting file: " + std::string(e.what()) + "\n");
+        TextIO::print("Error deleting file: " + std::string(e.what())); TextIO::nl();
     }
     return false;
 }

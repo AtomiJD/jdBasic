@@ -321,7 +321,7 @@ public:
     BasicValue piped_value_for_call;
 
     std::chrono::steady_clock::time_point last_keyboard_check_time;
-    const std::chrono::milliseconds keyboard_check_interval{ 10 };
+    const std::chrono::milliseconds keyboard_check_interval{ 100 };
 
     // REACT IMPLEMENTATION: Data structures for the reactive graph.
     // The graph itself, mapping a variable name to its reactive properties.

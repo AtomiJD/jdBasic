@@ -41,8 +41,7 @@ DIM Reception AS REACT T_FIRST
 DIM Administration As REACT T_SECOND
 DIM Shipping As REACT T_THIRD
 
-
-' Create business rule here INIT = TRUE because we don't want to start the process yet.
+' Create business rule. INIT = TRUE because we don't want to start the process yet.
 Reception.OUTPUT1 -> Reception.ProcessMe(Reception.INPUT1)
 
 Administration.Cost = 1.49
@@ -61,7 +60,6 @@ Reception.Input1 = 1
 
 PRINT "Reception: "; Reception.OUTPUT1; ", Administration: "; Administration.OUTPUT1; ", Shipping: "; Shipping.OUTPUT1
 PRINT
-
 
 ' An item with 4 arrives
 Reception.Input1 = 4

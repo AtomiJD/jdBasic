@@ -19,7 +19,7 @@ namespace LocaleManager {
         }
         catch (const std::runtime_error&) {
             Error::set(1, 0); // Re-use "Syntax Error" or create a new "Invalid Locale" error
-            TextIO::print("Error: Invalid or unsupported locale name '" + locale_name + "'\n");
+            TextIO::print("Error: Invalid or unsupported locale name '" + locale_name ); TextIO::nl();
         }
     }
 

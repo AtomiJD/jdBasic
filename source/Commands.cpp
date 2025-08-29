@@ -8,6 +8,7 @@
 #include <conio.h>
 #else
 #include <ncurses.h>
+#include <readline/readline.h> // For readline()
 #endif
 #include "Commands.hpp"
 #include "StringUtils.hpp"
@@ -630,7 +631,17 @@ void Commands::do_input(NeReLaBasic& vm) {
 
     // Read a full line of input from the user.
     std::string user_input_line;
+#ifdef _WIN32
     std::getline(std::cin, user_input_line);
+#else
+        TextIO::deinitKey();
+        char* c_inputLine = readline("");
+        if (c_inputLine == NULL) {
+            TextIO::nl();
+        }
+        user_input_line = c_inputLine;
+        TextIO::initKey();
+#endif
 
     // Store the value, converting type if necessary.
     if (var_name.back() == '$') {
@@ -648,6 +659,7 @@ void Commands::do_input(NeReLaBasic& vm) {
         }
     }
 }
+
 void Commands::do_print(NeReLaBasic& vm) {
     // Loop through all items in the PRINT list until the statement ends.
     while (true) {
@@ -792,7 +804,7 @@ void Commands::do_let(NeReLaBasic& vm) {
         if (!arr_ptr) { Error::set(15, vm.runtime_current_line, "Array is null."); return; }
 
 
-        // Logik für vektorisierte Zuweisung
+        // Logik fï¿½r vektorisierte Zuweisung
         // =======================================
 
          // 1. Bestimme die Anzahl der Zuweisungen
@@ -830,7 +842,7 @@ void Commands::do_let(NeReLaBasic& vm) {
             catch (const std::exception&) {
                 Error::set(10, vm.runtime_current_line, "Array index out of bounds or dimension mismatch.");
             }
-            return; // Frühzeitiger Ausstieg für den einfachen Fall
+            return; // Frï¿½hzeitiger Ausstieg fï¿½r den einfachen Fall
         }
 
         // 2. Bereite die RHS (rechte Seite) vor
@@ -851,10 +863,10 @@ void Commands::do_let(NeReLaBasic& vm) {
             }
         }
 
-        // 3. Führe die Zuweisungen iterativ durch
+        // 3. Fï¿½hre die Zuweisungen iterativ durch
         std::vector<size_t> current_coords(index_expressions.size());
         for (long long i = 0; i < num_assignments; ++i) {
-            // a. Stelle die Koordinaten für diese Iteration zusammen
+            // a. Stelle die Koordinaten fï¿½r diese Iteration zusammen
             for (size_t dim = 0; dim < index_expressions.size(); ++dim) {
                 if (std::holds_alternative<std::shared_ptr<Array>>(index_expressions[dim])) {
                     current_coords[dim] = static_cast<size_t>(to_double(std::get<std::shared_ptr<Array>>(index_expressions[dim])->data[i]));
@@ -867,7 +879,7 @@ void Commands::do_let(NeReLaBasic& vm) {
             // b. Hole den zuzuweisenden Wert
             const BasicValue& value_to_set = rhs_is_array ? rhs_arr_ptr->data[i] : value_to_assign;
 
-            // c. Führe die Zuweisung durch
+            // c. Fï¿½hre die Zuweisung durch
             try {
                 size_t flat_index = arr_ptr->get_flat_index(current_coords);
                 if (member_var.length() > 0) {
@@ -1027,6 +1039,45 @@ void Commands::do_let(NeReLaBasic& vm) {
     }
 }
 
+void Commands::do_destructure_assign(NeReLaBasic& vm) {
+    // 1. Read the variable count from the p-code (which was patched by the compiler).
+    uint8_t var_count = (*vm.active_p_code)[vm.pcode++];
+    
+    // 2. Read the variable names that follow.
+    std::vector<std::string> var_names;
+    for (uint8_t i = 0; i < var_count; ++i) {
+        vm.pcode++; // Skip the VARIANT/STRVAR token
+        var_names.push_back(to_upper(read_string(vm)));
+    }
+
+    // 3. The next token MUST be an equals sign.
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
+        Error::set(1, vm.runtime_current_line, "Expected '=' in destructuring assignment.");
+        return;
+    }
+
+    // 4. Evaluate the expression on the right-hand side.
+    BasicValue rhs_value = vm.evaluate_expression();
+    if (Error::get() != 0) return;
+
+    // 5. Validate that the RHS is an array.
+    if (!std::holds_alternative<std::shared_ptr<Array>>(rhs_value)) {
+        Error::set(15, vm.runtime_current_line, "Right-hand side of a destructuring assignment must be an array.");
+        return;
+    }
+    const auto& arr_ptr = std::get<std::shared_ptr<Array>>(rhs_value);
+
+    // 6. Validate the sizes match.
+    if (!arr_ptr || arr_ptr->data.size() != var_count) {
+        Error::set(1, vm.runtime_current_line, "Number of variables does not match number of values in the array.");
+        return;
+    }
+
+    // 7. Assign the values to the variables in order.
+    for (size_t i = 0; i < var_count; ++i) {
+        set_variable(vm, var_names[i], arr_ptr->data[i]);
+    }
+}
 
 void Commands::do_goto(NeReLaBasic& vm) {
     // The label name was stored as a string in the bytecode after the GOTO token.
@@ -2161,6 +2212,7 @@ void Commands::do_edit(NeReLaBasic& vm) {
         }
     }
 
+    
     // Pass the filename to the editor's constructor
     TextEditor editor(vm.source_lines, filename_to_edit);
     editor.run();
@@ -2360,7 +2412,7 @@ void Commands::do_tron(NeReLaBasic& vm) {
 
 void Commands::do_troff(NeReLaBasic& vm) {
     vm.trace = 0;
-    TextIO::print("TRACE OFF\n");
+    TextIO::print("TRACE OFF"); TextIO::nl();
 }
 
 void Commands::do_dump(NeReLaBasic& vm) {
@@ -2381,35 +2433,35 @@ void Commands::do_dump(NeReLaBasic& vm) {
     std::string arg_str = to_upper(to_string(arg_val));
 
     if (arg_str == "GLOBAL") {
-        TextIO::print("--- Global Variables ---\n");
+        TextIO::print("--- Global Variables ---"); TextIO::nl();
         if (vm.variables.empty()) {
-            TextIO::print("(No global variables defined)\n");
+            TextIO::print("(No global variables defined)"); TextIO::nl();
         }
         else {
             for (const auto& pair : vm.variables) {
-                TextIO::print(pair.first + " = " + to_string(pair.second) + "\n");
+                TextIO::print(pair.first + " = " + to_string(pair.second)); TextIO::nl();
             }
         }
     }
     else if (arg_str == "LOCAL") {
-        TextIO::print("--- Local Variables ---\n");
+        TextIO::print("--- Local Variables ---"); TextIO::nl();
         if (vm.call_stack.empty()) {
-            TextIO::print("(Not inside a function/subroutine)\n");
+            TextIO::print("(Not inside a function/subroutine)"); TextIO::nl();
         }
         else {
             const auto& locals = vm.call_stack.back().local_variables;
             if (locals.empty()) {
-                TextIO::print("(No local variables in current scope)\n");
+                TextIO::print("(No local variables in current scope)"); TextIO::nl();
             }
             else {
                 for (const auto& pair : locals) {
-                    TextIO::print(pair.first + " = " + to_string(pair.second) + "\n");
+                    TextIO::print(pair.first + " = " + to_string(pair.second)); TextIO::nl();
                 }
             }
         }
     }
     else if (arg_str == "STACK") { // Dump the call stack
-        TextIO::print("--- Call Stack ---\n");
+        TextIO::print("--- Call Stack ---"); TextIO::nl();
         BasicValue stack_trace = vm.get_stacktrace();
         TextIO::print(to_string(stack_trace));
     }
@@ -2419,7 +2471,7 @@ void Commands::do_dump(NeReLaBasic& vm) {
             dump_p_code(vm.compiled_modules.at(arg_str).p_code, arg_str);
         }
         else {
-            TextIO::print("? Error: Module '" + arg_str + "' not found, or invalid DUMP argument.\n");
+            TextIO::print("? Error: Module '" + arg_str + "' not found, or invalid DUMP argument."); TextIO::nl();
         }
     }
 }

@@ -112,13 +112,11 @@ void DAPHandler::process_command(const std::string& command_line) {
     std::stringstream ss(command_line);
     std::string command;
     ss >> command;
-    //TextIO::print("Debugger: command: " + command + "'\n");
 
     // Collect arguments
     std::vector<std::string> args;
     std::string arg;
     while (ss >> arg) {
-        //TextIO::print("Debugger: arg: " + arg + "'\n");
         args.push_back(arg);
     }
 
@@ -199,7 +197,6 @@ void DAPHandler::on_start() {
 
 void DAPHandler::on_set_breakpoint(const std::vector<std::string>& args) {
     // Expects: <path> <line>
-    //TextIO::print("Breakpoint: " + args[0]);
     if (args.size() < 2) return;
     try {
         // The path argument (args[0]) is available if needed, but for now
@@ -238,7 +235,6 @@ void DAPHandler::on_get_vars(const std::vector<std::string>& args) {
     // Expects: <scope_id> (e.g., "global", "local_0", "local_1")
     if (args.empty()) return;
     const std::string& scope_id = args[0];
-    //TextIO::print("Debugger: on_get_vars: arg: " + scope_id + "\n");
 
     for (const auto& pair : vm.variables) {
         send_variable_message("2 ", pair.first, to_string(pair.second));
@@ -274,7 +270,7 @@ void DAPHandler::send_stopped_message(const std::string& reason, int line, const
         msg += " " + path;
     }
     send_message(msg);
-    //TextIO::print("Debugger Event Sent: '" + msg + "'\n");
+    //TextIO::print("Debugger Event Sent: '" + msg ); TextIO::nl();
 }
 
 void DAPHandler::send_output_message(const std::string& message) {
@@ -288,7 +284,7 @@ void DAPHandler::send_repl_message(const std::string& message) {
 
 void DAPHandler::send_program_ended_message() {
     send_message("ended");
-    //TextIO::print("Debugger Event Sent: 'ended'\n");
+    //TextIO::print("Debugger Event Sent: 'ended'"); TextIO::nl();
 }
 
 void DAPHandler::send_stack_frame_message(int index, int frames, int line, const std::string& func_name, const std::string& path) {
@@ -296,7 +292,7 @@ void DAPHandler::send_stack_frame_message(int index, int frames, int line, const
 }
 
 void DAPHandler::send_variable_message(const std::string& scope, const std::string& name, const std::string& value) {
-    //TextIO::print("Debugger Event Sent: var: '" + name + "'\n");
+    //TextIO::print("Debugger Event Sent: var: '" + name ); TextIO::nl();
     send_message("var: " + scope + name + " = " + value);
 }
 

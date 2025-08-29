@@ -46,7 +46,7 @@ namespace {
         {"FALSE",   Tokens::ID::JD_FALSE},
         {"GOTO",    Tokens::ID::GOTO},
         {"PRINT",   Tokens::ID::PRINT},
-        {"RETURN",  Tokens::ID::RETURN},
+        {"RETURN",  Tokens::ID::JD_RETURN},
         {"TO",      Tokens::ID::TO},
         {"NEXT",    Tokens::ID::NEXT},
         {"STEP",    Tokens::ID::STEP},

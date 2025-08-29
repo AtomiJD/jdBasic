@@ -13,7 +13,7 @@
 #include <windows.h> 
 #include <conio.h>
 #else
-#include <ncurses.h>
+//#include <ncurses.h>
 #endif
 #ifdef JDCOM         // also define: NOMINMAX!!!!!
 #include <objbase.h> // Required for CoInitializeEx, CoUninitialize
@@ -36,9 +36,8 @@ int main(int argc, char* argv[]) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #else
-    // initscr();
-    // cbreak();       // Line buffering disabled
-    // noecho();       // Don't echo() while we do getch
+    // TextIO::init();
+    // curs_set(1); 
 #endif
 
     // Create an instance of our interpreter
@@ -74,7 +73,7 @@ int main(int argc, char* argv[]) {
 
         dap_server.start(dap_port);
 
-        TextIO::print("DAP mode is active. Waiting for client to connect and send launch request...\n");
+        TextIO::print("DAP mode is active. Waiting for client to connect and send launch request..."); TextIO::nl();
         interpreter.init_screen();
         interpreter.init_system();
         interpreter.init_basic();
@@ -85,7 +84,7 @@ int main(int argc, char* argv[]) {
         bool launch_ok = launch_future.get();
 
         if (launch_ok) {
-            TextIO::print("Launch request received. Starting execution...\n");
+            TextIO::print("Launch request received. Starting execution..."); TextIO::nl();
             dap_server.send_output_message("jdBasic REPL is Ready\n");
             dap_server.send_output_message("Type your command and <enter>\n");
             // The file is now loaded and compiled. Start the execution loop.
@@ -96,12 +95,12 @@ int main(int argc, char* argv[]) {
 
         }
         else {
-            TextIO::print("? DAP Error: Launch failed. Shutting down.\n");
+            TextIO::print("? DAP Error: Launch failed. Shutting down."); TextIO::nl();
         }
 
         dap_server.stop();
 
-        TextIO::print("\n--- ENDED (Press any key to exit) ---\n");
+        TextIO::print("\n--- ENDED (Press any key to exit) ---"); TextIO::nl();
 #ifdef _WIN32        
         _getch();
 #else
@@ -123,7 +122,7 @@ int main(int argc, char* argv[]) {
                 interpreter.init_basic();
                 Commands::do_run(interpreter);
 
-                TextIO::print("\n--- ENDED (Press any key to exit) ---\n");
+                TextIO::print("\n--- ENDED (Press any key to exit) ---"); TextIO::nl();
 #ifdef _WIN32        
                 _getch();
 #else
@@ -143,6 +142,8 @@ int main(int argc, char* argv[]) {
 #ifdef JDCOM
     CoUninitialize();
 #endif
-
+#ifndef _WIN32    
+    //TextIO::deinit();
+#endif
     return 0;
 }

@@ -133,6 +133,13 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         }
     }
 
+    if (is_start_of_statement) {
+        if (currentChar == '[') {
+            vm.prgptr++;
+            return Tokens::ID::DESTRUCTURE_ASSIGN; // This is what's currently happening
+        }
+    }
+
     // Handle Numbers
     if (currentChar == '$') {
         size_t num_start_pos = vm.prgptr;
@@ -384,6 +391,9 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
     bool is_one_liner_if = false;
     int brace_nesting_level = 0;
     int bracket_nesting_level = 0;
+    bool in_destructure_assignment = false;
+    uint16_t destructure_var_count_placeholder_addr = 0;
+    uint8_t destructure_var_count = 0;    
 
     // --- REACT IMPLEMENTATION: Simplified post-processing strategy ---
     bool is_reactive_assignment_line = false;
@@ -1296,6 +1306,43 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue;
             }
 
+            case Tokens::ID::DESTRUCTURE_ASSIGN:
+                // This is the start of our destructuring assignment!
+                in_destructure_assignment = true;
+                destructure_var_count = 0;
+
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::DESTRUCTURE_ASSIGN));
+                
+                // Save the address for the placeholder and write it.
+                destructure_var_count_placeholder_addr = out_p_code.size();
+                out_p_code.push_back(0); // Placeholder for variable count
+
+                is_start_of_statement = false; // The next tokens are part of this command
+                continue; // Let the loop continue to parse the contents of '['
+
+            case Tokens::ID::C_RIGHTBRACKET:
+                if (in_destructure_assignment) {
+                    // We've reached the end of the variable list.
+                    // Go back and patch the placeholder with the correct count.
+                    out_p_code[destructure_var_count_placeholder_addr] = destructure_var_count;
+
+                    // Reset the state.
+                    in_destructure_assignment = false;
+                } else {
+                    // It's the end of a regular array literal.
+                    out_p_code.push_back(static_cast<uint8_t>(token));
+                }
+                continue;
+
+            case Tokens::ID::C_COMMA:
+                if (in_destructure_assignment) {
+                    // It's a separator between variables, just ignore it and continue parsing.
+                } else {
+                    // It's a comma in a regular expression or print list.
+                    out_p_code.push_back(static_cast<uint8_t>(token));
+                }
+                continue;     
+
             case Tokens::ID::DIM: {
                 if (is_start_of_statement) {
                     out_p_code.push_back(static_cast<uint8_t>(token));
@@ -1320,7 +1367,10 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 continue; // Continue to the next token
             
             default: {
-                //out_p_code.push_back(static_cast<uint8_t>(token));
+                if (in_destructure_assignment && (token == Tokens::ID::VARIANT || token == Tokens::ID::STRVAR)) {
+                   destructure_var_count++;
+                }
+
                 if (token == Tokens::ID::STRING || token == Tokens::ID::VARIANT ||
                     token == Tokens::ID::FUNCREF || token == Tokens::ID::ARRAY_ACCESS || token == Tokens::ID::MAP_ACCESS ||
                     token == Tokens::ID::CALLFUNC || token == Tokens::ID::CONSTANT || token == Tokens::ID::STRVAR)
@@ -1452,7 +1502,7 @@ bool Compiler::compile_module(NeReLaBasic& vm, const std::string& module_name, c
         return true; // Already compiled
     }
 
-    TextIO::print("Compiling dependent module: " + module_name + "\n");
+    TextIO::print("Compiling dependent module: " + module_name); TextIO::nl();
 
     // --- No temporary compiler instance. ---
     // We compile the module using our own instance's state, but direct the output
@@ -1468,7 +1518,7 @@ bool Compiler::compile_module(NeReLaBasic& vm, const std::string& module_name, c
         return false;
     }
     else {
-        TextIO::print("OK. Modul compiled to " + std::to_string(vm.compiled_modules[module_name].p_code.size()) + " bytes.\n");
+        TextIO::print("OK. Modul compiled to " + std::to_string(vm.compiled_modules[module_name].p_code.size()) + " bytes."); TextIO::nl();
     }
 
     return true;
@@ -1764,14 +1814,14 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
 
                 if (!mod_file) {
                     Error::set(6, 0);
-                    TextIO::print("? Error: Module file not found in current directory or source directory: " + filename + "\n");
+                    TextIO::print("? Error: Module file not found in current directory or source directory: " + filename); TextIO::nl();
                     return 1;
                 }
             }
             std::stringstream buffer;
             buffer << mod_file.rdbuf();
             if (!compile_module(vm, mod_name, buffer.str())) {
-                TextIO::print("? Error: Failed to compile module: " + mod_name + "\n");
+                TextIO::print("? Error: Failed to compile module: " + mod_name); TextIO::nl();
                 return 1;
             }
         }

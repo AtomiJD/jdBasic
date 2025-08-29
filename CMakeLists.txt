@@ -36,13 +36,15 @@ message(STATUS "Build type is: ${CMAKE_BUILD_TYPE}")
 # sudo apt-get install libsdl3-dev libsdl3-image-dev libsdl3-ttf-dev libssl-dev
 #================================================================================
 
+find_package(PkgConfig REQUIRED)
+
 # Find OpenSSL
 find_package(OpenSSL)
 
 # Find SDL3 and its extension libraries
-# find_package(SDL3 REQUIRED)
-# find_package(SDL3_image REQUIRED)
-# find_package(SDL3_ttf REQUIRED)
+find_package(SDL3 REQUIRED)
+find_package(SDL3_image REQUIRED)
+find_package(SDL3_ttf REQUIRED)
 
 # Find ncurses (for console I/O, replacing conio.h)
 find_package(Curses REQUIRED)
@@ -103,14 +105,15 @@ target_include_directories(jdBasic PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/libs/cpp-httplib"
 
     # Include directories from found packages
-    # ${OPENSSL_INCLUDE_DIR}
-    # ${SDL3_INCLUDE_DIRS}
-    # ${SDL3_IMAGE_INCLUDE_DIRS}
-    # ${SDL3_TTF_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIR}
+    ${SDL3_INCLUDE_DIRS}
+    ${SDL3_IMAGE_INCLUDE_DIRS}
+    ${SDL3_TTF_INCLUDE_DIRS}
 
     ${FMT_INCLUDE_DIRS}
 
     ${CURSES_INCLUDE_DIR}
+    ${READLINE_INCLUDE_DIRS}
 
     # TensorFlow include path (adjust if needed)
     # "${CMAKE_CURRENT_SOURCE_DIR}/libs/tensorflow/include"
@@ -120,10 +123,10 @@ target_include_directories(jdBasic PRIVATE
 # These are equivalent to the PreprocessorDefinitions in the vcxproj.
 target_compile_definitions(jdBasic PRIVATE
     # General flags
-    # SDL3
-    # HTTP
+    SDL3
+    HTTP
     # JDCOM
-    # CPPHTTPLIB_OPENSSL_SUPPORT
+    CPPHTTPLIB_OPENSSL_SUPPORT
 
     # Flags for Linux (replacing Windows-specific ones like _WINSOCKAPI_)
     $<$<NOT:$<CONFIG:Debug>>:NDEBUG> # Add NDEBUG for non-debug builds
@@ -143,11 +146,12 @@ endif()
 # Link jdBasic against all its dependencies.
 target_link_libraries(jdBasic PRIVATE
     # Libraries found by find_package
-    # OpenSSL::SSL
-    # OpenSSL::Crypto
-    # SDL3::SDL3
-    # SDL3_image::SDL3_image
-    # SDL3_ttf::SDL3_ttf
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    SDL3::SDL3
+    SDL3_image::SDL3_image
+    SDL3_ttf::SDL3_ttf
+    # SDL2::SDL2_mixer
 
     # TensorFlow library (adjust if needed)
     # This assumes you have a 'tensorflow' target or library file.
@@ -155,8 +159,11 @@ target_link_libraries(jdBasic PRIVATE
     # "${CMAKE_CURRENT_SOURCE_DIR}/libs/tensorflow/lib/libtensorflow.so"
 
     ${CURSES_LIBRARIES}
+    
     fmt::fmt
     Threads::Threads
+
+    readline
 
     # Add the dynamic linking library (libdl)
     dl

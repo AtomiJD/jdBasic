@@ -10,6 +10,7 @@ namespace Commands {
     void do_input(NeReLaBasic& vm);
     void do_print(NeReLaBasic& vm);
     void do_let(NeReLaBasic& vm);
+    void do_destructure_assign(NeReLaBasic& vm);
     void do_goto(NeReLaBasic& vm);
     void do_if(NeReLaBasic& vm);
     void do_else(NeReLaBasic& vm);

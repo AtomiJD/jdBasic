@@ -50,7 +50,7 @@ namespace Tokens {
         C_GT = 0x28,
         C_EQ = 0x29,
         C_DOLLAR = 0x2A,
-        RETURN = 0x2B,
+        JD_RETURN = 0x2B,
         NUMBER = 0x2C,
         STRING = 0x2D,
         FAST = 0x2E,
@@ -137,6 +137,7 @@ namespace Tokens {
         INTEGER_LITERAL = 0x90, // Integer
         REACT = 0x91,
         OP_SET_REACTIVE_DEPENDENCY = 0x92,
+        DESTRUCTURE_ASSIGN = 0x93,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

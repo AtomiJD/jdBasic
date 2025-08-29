@@ -7,10 +7,10 @@ class NeReLaBasic;
 
 namespace Error {
     // Sets the current error code.
-    void set(uint8_t errorCode, uint16_t lineNumber, const std::string& customMessage = "");
+    void set(uint16_t errorCode, uint16_t lineNumber, const std::string& customMessage = "");
 
     // Gets the current error code.
-    uint8_t get();
+    uint16_t get();
 
     // Clears the current error (sets it to 0).
     void clear();
@@ -19,5 +19,5 @@ namespace Error {
     void print();
 
     // A helper to get the message for a specific code.
-    std::string getMessage(uint8_t errorCode);
+    std::string getMessage(uint16_t errorCode);
 }

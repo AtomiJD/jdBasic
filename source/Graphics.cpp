@@ -18,19 +18,19 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
     }
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        TextIO::print("SDL could not initialize! SDL_Error: " + std::string(SDL_GetError()) + "\n");
+        TextIO::print("SDL could not initialize! SDL_Error: " + std::string(SDL_GetError()) ); TextIO::nl();
         return false;
     }
 
     if (TTF_Init() == -1) {
-        TextIO::print("SDL_ttf could not initialize! SDL_Error: " + std::string(SDL_GetError()) + "\n");
+        TextIO::print("SDL_ttf could not initialize! SDL_Error: " + std::string(SDL_GetError()) ); TextIO::nl();
         SDL_Quit();
         return false;
     }
 
     bool success = SDL_CreateWindowAndRenderer(title.c_str(), width, height, 0, &window, &renderer);
     if (!success) {
-        TextIO::print("Window could not be created! SDL_Error: " + std::string(SDL_GetError()) + "\n");
+        TextIO::print("Window could not be created! SDL_Error: " + std::string(SDL_GetError()) ); TextIO::nl();
         return false;
     }
 
@@ -45,7 +45,7 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
     // Load a default font on startup. Change this path to your desired default font.
     if (!load_font("C:/Windows/Fonts/cour.ttf", 16)) { // Example: Courier New, size 16
         // If the default fails, you might want to shutdown or handle the error
-        TextIO::print("Warning: Could not load the default font.\n");
+        TextIO::print("Warning: Could not load the default font."); TextIO::nl();
     }
 
     SDL_StartTextInput(window);
@@ -97,7 +97,7 @@ bool Graphics::load_font(const std::string& font_path, int font_size) {
     // Load the new font
     font = TTF_OpenFont(font_path.c_str(), font_size);
     if (!font) {
-        TextIO::print("Error: Failed to load font '" + font_path + "': " + SDL_GetError() + "\n");
+        TextIO::print("Error: Failed to load font '" + font_path + "': " + SDL_GetError() ); TextIO::nl();
         return false;
     }
     return true;
@@ -255,7 +255,7 @@ void Graphics::toggle_fullscreen() {
     bool is_currently_fullscreen = (flags & SDL_WINDOW_FULLSCREEN);
     // Toggle the state
     if (SDL_SetWindowFullscreen(window, !is_currently_fullscreen) < 0) {
-        TextIO::print("Error toggling fullscreen: " + std::string(SDL_GetError()) + "\n");
+        TextIO::print("Error toggling fullscreen: " + std::string(SDL_GetError()) ); TextIO::nl();
     }
 }
 

@@ -51,7 +51,7 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
     // 1. Parse JSON
     std::ifstream f(filename);
     if (!f.is_open()) {
-        TextIO::print("Error: Could not open Tiled map file: " + filename + "\n");
+        TextIO::print("Error: Could not open Tiled map file: " + filename); TextIO::nl();
         return false;
     }
     nlohmann::json data;
@@ -59,7 +59,7 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
         data = nlohmann::json::parse(f);
     }
     catch (const nlohmann::json::parse_error& e) {
-        TextIO::print("Error: Failed to parse Tiled JSON: " + std::string(e.what()) + "\n");
+        TextIO::print("Error: Failed to parse Tiled JSON: " + std::string(e.what())); TextIO::nl();
         return false;
     }
 
@@ -85,7 +85,7 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
 
         ts.texture = IMG_LoadTexture(renderer, image_path.string().c_str());
         if (!ts.texture) {
-            TextIO::print("Error loading tileset image: " + image_path.string() + ", " + SDL_GetError() + "\n");
+            TextIO::print("Error loading tileset image: " + image_path.string() + ", " + SDL_GetError()); TextIO::nl();
             return false;
         }
         if (ts_data.contains("tiles")) {
@@ -153,7 +153,7 @@ bool TileMapSystem::load_map(const std::string& map_name, const std::string& fil
             // Load the texture
             il.texture = IMG_LoadTexture(renderer, image_path.string().c_str());
             if (!il.texture) {
-                TextIO::print("Error loading image layer texture: " + image_path.string() + "\n");
+                TextIO::print("Error loading image layer texture: " + image_path.string()); TextIO::nl();
                 // Handle error appropriately, maybe return false
                 continue;
             }

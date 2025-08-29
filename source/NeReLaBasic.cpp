@@ -20,11 +20,13 @@
 #include <conio.h>
 #else
 #include <ncurses.h>
+#include <readline/readline.h> // For readline()
+#include <readline/history.h>  // For add_history()
 #endif
 #include <algorithm> // for std::transform, std::find_if
 #include <cctype>    // for std::isspace, std::toupper
 
-// Forward declarations for tensor math functions from BuiltinFunctions.cpp
+// Forward declarations for tensor math functions from AIFunctions.cpp
 BasicValue tensor_add(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b);
 BasicValue tensor_subtract(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b);
 BasicValue tensor_elementwise_multiply(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b);
@@ -183,6 +185,9 @@ NeReLaBasic::~NeReLaBasic() {
         dlclose(lib_handle);
 #endif
     }
+#ifndef _WIN32
+    endwin(); // Add this to restore the terminal
+#endif
 }
 
 #ifdef _WIN32
@@ -270,17 +275,17 @@ bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     register_func(this, &services);
 
     loaded_libraries.push_back(lib_handle);
-    TextIO::print("Successfully imported module: " + full_path + "\n");
+    TextIO::print("Successfully imported module: " + full_path); TextIO::nl();
     return true;
 }
 
 bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
     std::ifstream infile(filename);
     if (!infile) {
-        TextIO::print("Error: File not found -> " + filename + "\n");
+        TextIO::print("Error: File not found -> " + filename); TextIO::nl();
         return false;
     }
-    TextIO::print("LOADING " + filename + "\n");
+    TextIO::print("LOADING " + filename); TextIO::nl();
     // Read the entire file into the source_code string
     source_lines.clear();
     std::string line;
@@ -299,8 +304,10 @@ void NeReLaBasic::init_screen() {
 #else
         std::string sos = "linux";
 #endif    
-    TextIO::print("jdBasic v " + NERELA_VERSION + ", OS: " + sos + "\n");
-    TextIO::print("Copyright (c) 2025 Computerwelt AI Solutions LLC.\nAll Rights Reserved.\nType HELP for more infos.");
+    TextIO::print("jdBasic v " + NERELA_VERSION + ", OS: " + sos ); TextIO::nl();
+    TextIO::print("Copyright (c) 2025 Computerwelt AI Solutions LLC."); TextIO::nl();
+    TextIO::print("All Rights Reserved."); TextIO::nl();
+    TextIO::print("Type HELP for more infos."); TextIO::nl();
 }
 
 void NeReLaBasic::init_system() {
@@ -314,7 +321,7 @@ void NeReLaBasic::init_system() {
 
 void NeReLaBasic::init_basic() {
     TextIO::nl();
-    //TextIO::print("Ready\n");
+    //TextIO::print("Ready"); TextIO::nl();
 }
 
 #ifdef HTTP
@@ -419,8 +426,10 @@ void NeReLaBasic::process_system_events() {
     if (!nopause_active && _kbhit()) {
         char key = _getch();
 #else
-    if (!nopause_active && TextIO::kbhit()) {
-        char key = getch();
+    //char c = TextIO::jdgetch();
+    char c = 0;
+    if (c > 0) {
+        char key = c;
 #endif
         auto key_data = std::make_shared<Map>();
         key_data->data["key"] = std::string(1, key);
@@ -449,6 +458,7 @@ void NeReLaBasic::process_system_events() {
         // on the next iteration of whichever loop is currently active.
         raise_event("KEYDOWN", key_data);
     }
+    //TextIO::cleanup();
     return;
 #ifdef SDL3
     if (graphics_system.is_initialized) {
@@ -472,25 +482,45 @@ void NeReLaBasic::start() {
         Error::clear();
         direct_p_code.clear();
         linenr = 0;
+        
+#ifdef _WIN32
         TextIO::print("Ready\n" + prompt);
-
         if (!std::getline(std::cin, inputLine) || inputLine.empty()) {
             std::cin.clear();
             continue;
         }
+#else
+        std::string full_prompt = "Ready\n\r" + prompt;
+        // Use readline() to get user input
+        char* c_inputLine = readline(full_prompt.c_str());
+        // Check for EOF (Ctrl+D), which returns NULL
+        if (c_inputLine == NULL) {
+            TextIO::nl();
+            continue;
+        }
+
+        // Convert C-style string to std::string
+        std::string inputLine(c_inputLine);
+
+        // Add non-empty lines to history and free the memory
+        if (!inputLine.empty()) {
+            add_history(c_inputLine);
+        }
+        free(c_inputLine); // IMPORTANT: Free the memory allocated by readline
+#endif
 
         // --- Special handling for RESUME ---
         std::string temp_line = inputLine;
         StringUtils::trim(temp_line);
         if (StringUtils::to_upper(temp_line) == "RESUME") {
             if (is_stopped) {
-                TextIO::print("Resuming...\n");
+                TextIO::print("Resuming..."); TextIO::nl();
                 is_stopped = false;
                 execute_main_program(program_p_code, true); // Continues from the saved pcode
                 if (Error::get() != 0) Error::print();
             }
             else {
-                TextIO::print("?Nothing to resume.\n");
+                TextIO::print("?Nothing to resume."); TextIO::nl();
             }
             continue; // Go back to the REPL prompt
         }
@@ -503,7 +533,9 @@ void NeReLaBasic::start() {
         }
         // Execute the direct-mode p_code
         //dump_p_code(direct_p_code, "dump");
+        
         execute_synchronous_block(direct_p_code);
+                
         if (program_ended) { // Check if the END command was executed
             Error::clear();
             program_ended = false;
@@ -766,7 +798,7 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
     pcode = 0;
 
     while (pcode < active_p_code->size()) {
-        process_system_events(); 
+        //process_system_events(); 
         if (program_ended) break;
 
         if (pcode == 0) pcode += 2; // Skip line number
@@ -904,6 +936,9 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 
     g_vm_instance_ptr = this;
     Error::clear();
+#ifndef _WIN32
+    TextIO::initKey();
+#endif
 
     //dap_handler->send_output_message("We are in execute main.\n");
 
@@ -1069,6 +1104,9 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 #endif
 #ifdef HTTP
     network_manager.stopServer();
+#endif
+#ifndef _WIN32
+    TextIO::deinitKey();
 #endif
     current_task = nullptr;
 }
@@ -1303,7 +1341,10 @@ void NeReLaBasic::statement() {
         //pcode++;
         Commands::do_let(*this);
         break;
-
+    case Tokens::ID::DESTRUCTURE_ASSIGN:
+        pcode++;
+        Commands::do_destructure_assign(*this);
+        break;
     case Tokens::ID::GOTO:
         pcode++;
         Commands::do_goto(*this);
@@ -1346,7 +1387,7 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_endfunc(*this);
         break;
-    case Tokens::ID::RETURN:
+    case Tokens::ID::JD_RETURN:
         pcode++;
         Commands::do_return(*this);
         break;
@@ -1507,7 +1548,9 @@ void NeReLaBasic::statement() {
  * @param other The original NeReLaBasic instance to clone.
  */
 NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
+#ifdef HTTP
     network_manager(*this),
+#endif
     // --- 1. Copy Program Definition Data ---
     // These members define the program itself and are safe to copy. They are read-only
     // during execution in the new thread.

@@ -9,7 +9,7 @@ class NeReLaBasic;
 
 // --- Define Function Pointer Types ---
 // These types match the signatures of the functions the DLL needs from the main app.
-using ErrorSetFunc = void(*)(unsigned char, unsigned short, const std::string&);
+using ErrorSetFunc = void(*)(unsigned short, unsigned short, const std::string&);
 using ToUpperFunc = std::string(*)(std::string);
 using ToStringFunc = std::string(*)(const BasicValue&);
 
