@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>jdBasic Web REPL</title>
+    <style>
+        body {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #000000;
+            color: #00ff00;
+            margin: 0;
+            padding: 0.5em;
+            font-size: 16px;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #main-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 1em);
+            gap: 0.5em;
+        }
+        #repl-container {
+            border: 2px solid #008f00;
+            padding: 1em;
+            display: flex;
+            flex-direction: column;
+            flex-basis: 50%;
+            min-height: 200px;
+        }
+        #terminal {
+            flex-grow: 1;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            margin-bottom: 0.5em;
+        }
+        #input-line {
+            display: flex;
+            border-top: 1px solid #005f00;
+            padding-top: 0.5em;
+        }
+        #prompt { padding-right: 0.5em; }
+        #input {
+            background: transparent; border: none; color: #00ff00;
+            font-family: inherit; font-size: inherit; width: 100%;
+            outline: none; resize: none; line-height: 1.2em;
+        }
+        #canvas-container {
+             border: 2px solid #008f00; padding: 1em;
+             display: flex; justify-content: center; align-items: center;
+             flex-basis: 50%; min-height: 200px;
+        }
+        #canvas {
+             background-color: #111; max-width: 100%;
+             max-height: 100%; object-fit: contain;
+        }
+        @media (min-width: 768px) {
+            #main-container { flex-direction: row; }
+        }
+    </style>
+</head>
+<body>
+    <div id="main-container">
+        <div id="repl-container">
+            <div id="terminal"></div>
+            <div id="input-line">
+                <span id="prompt"></span>
+                <textarea id="input" rows="2" autofocus placeholder="Type command... (Shift+Enter for new line)"></textarea>
+            </div>
+        </div>
+        <div id="canvas-container">
+            <canvas id="canvas" width="640" height="480"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const terminalEl = document.getElementById('terminal');
+        const inputEl = document.getElementById('input');
+        const promptEl = document.getElementById('prompt');
+        const canvasEl = document.getElementById('canvas');
+
+        // --- Terminal Simulator with State ---
+        const terminal = {
+            colors: [
+                '#000000', '#0000aa', '#00aa00', '#00aaaa', '#aa0000',
+                '#aa00aa', '#aa5500', '#aaaaaa', '#555555', '#5555ff',
+                '#55ff55', '#55ffff', '#ff5555', '#ff55ff', '#ffff55', '#ffffff'
+            ],
+            cursor: { x: 1, y: 1 },
+            currentColor: { fg: 7, bg: 0 },
+
+            cls: function() {
+                terminalEl.textContent = '';
+                this.locate(1, 1);
+            },
+            locate: function(row, col) {
+                this.cursor.y = Math.max(1, row);
+                this.cursor.x = Math.max(1, col);
+            },
+            setColor: function(fg, bg) {
+                this.currentColor.fg = fg % 16;
+                this.currentColor.bg = bg % 16;
+            },
+            write: function(text) {
+                if (text.endsWith('Ready\n> ')) {
+                    const cleanText = text.slice(0, -3);
+                    if (cleanText) this.appendSpan(cleanText);
+                    terminalEl.innerHTML += '\n';
+                    promptEl.textContent = '> ';
+                } else {
+                    this.appendSpan(text);
+                }
+                terminalEl.scrollTop = terminalEl.scrollHeight;
+            },
+            appendSpan: function(text) {
+                const span = document.createElement('span');
+                span.textContent = text;
+                span.style.color = this.colors[this.currentColor.fg];
+                span.style.backgroundColor = this.colors[this.currentColor.bg];
+                terminalEl.appendChild(span);
+            },
+            getCursorX: function() { return this.cursor.x; },
+            getCursorY: function() { return this.cursor.y; }
+        };
+        
+        // The single entry point for all C++ TextIO calls
+        window.terminal_handler = function(command, ...args) {
+            switch (command) {
+                case 'print':    return terminal.write(args[0]);
+                case 'cls':      return terminal.cls();
+                case 'locate':   return terminal.locate(args[0], args[1]);
+                case 'setColor': return terminal.setColor(args[0], args[1]);
+                case 'getCursorX': return terminal.getCursorX();
+                case 'getCursorY': return terminal.getCursorY();
+            }
+        };
+
+        var Module = {
+            canvas: canvasEl,
+            onRuntimeInitialized: function() {
+                Module.ccall('init_repl', null, [], []);
+            }
+        };
+
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const command = inputEl.value;
+                terminal.write('> ' + command + '\n');
+                inputEl.value = '';
+                Module.ccall('run_repl_line', null, ['string'], [command]);
+            }
+        });
+    </script>
+    
+    <script async src="index.js"></script>
+
+</body>
+</html>
+

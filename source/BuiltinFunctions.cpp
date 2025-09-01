@@ -1208,7 +1208,7 @@ BasicValue builtin_line(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
-// Replace the existing 'builtin_rect' function with this new version
+//RECT x, y, w, h, [fill], [r, g, b] OR RECT matrix, [fill], [colors]
 BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // Case 1: Vector/Matrix arguments
     if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
@@ -1230,7 +1230,7 @@ BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     // Case 2: Scalar arguments
     if (args.size() < 4 || args.size() > 8) {
-        Error::set(8, vm.runtime_current_line, "Usage: RECT x, y, w, h, [r, g, b], [fill] OR RECT matrix, [fill], [colors]");
+        Error::set(8, vm.runtime_current_line, "Usage: RECT x, y, w, h, [fill], [r, g, b] OR RECT matrix, [fill], [colors]");
         return false;
     }
 
@@ -1238,17 +1238,15 @@ BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     int y = static_cast<int>(to_double(args[1]));
     int w = static_cast<int>(to_double(args[2]));
     int h = static_cast<int>(to_double(args[3]));
-    bool fill = false;
+    bool fill = (args.size() >= 5) ? to_bool(args[4]) : false;
 
-    if (args.size() >= 7) { // Color is provided
-        Uint8 r = static_cast<Uint8>(to_double(args[4]));
-        Uint8 g = static_cast<Uint8>(to_double(args[5]));
-        Uint8 b = static_cast<Uint8>(to_double(args[6]));
-        if (args.size() == 8) fill = to_bool(args[7]);
+    if (args.size() == 8) { // Color is provided, requires 8 args (x,y,w,h,fill,r,g,b)
+        Uint8 r = static_cast<Uint8>(to_double(args[5]));
+        Uint8 g = static_cast<Uint8>(to_double(args[6]));
+        Uint8 b = static_cast<Uint8>(to_double(args[7]));
         vm.graphics_system.rect(x, y, w, h, r, g, b, fill);
     }
-    else { // No color, just check for fill
-        if (args.size() == 5) fill = to_bool(args[4]);
+    else { // No color, just check for fill (4 or 5 args)
         vm.graphics_system.rect(x, y, w, h, fill);
     }
     return false;
@@ -1298,7 +1296,6 @@ BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     }
     return false;
 }
-
 
 // ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]
 BasicValue builtin_ellipse(NeReLaBasic& vm, const std::vector<BasicValue>& args) {

@@ -714,8 +714,11 @@ HTTP.SERVER.STOP
 * **`SETFONT filename$, size`**: Sets the current font to filename$ and size.
 * **`PSET x, y, [r, g, b] OR PSET matrix, [colors]`**: Draws a single pixel at the specified coordinates. Can also take a matrix of points.
 * **`LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]`**: Draws a line between two points. Can also take a matrix of lines.
-* **`RECT x, y, w, h, [r, g, b], [fill] OR RECT matrix, [fill], [colors]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
-* **`CIRCLE x, y, r, [r, g, b] OR CIRCLE matrix, [colors]`**: Draws a circle. Can also take a matrix of circles.
+* **`RECT x, y, w, h, [fill], [r, g, b] OR RECT matrix, [fill], [colors]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
+* **`CIRCLE x, y, r, [fill], [r, g, b] OR CIRCLE matrix, [fill], [colors]`**: Draws a circle. Can also take a matrix of circles.
+* **`ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]`**: Draws a ellipse. Can also take a matrix of circles.
+* **`ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b] OR ROUNDED_RECT matrix, [fill], [colors]`**: Draws a rounded rect. Can also take a matrix of circles.
+* **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of circles.
 * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
 * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
 

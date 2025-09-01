@@ -4,7 +4,6 @@
 ' > jdbasic "hacker_view.jdb" 2
 ' > jdbasic "hacker_view.jdb" 3
 
-CURSOR FALSE
 ARGS_ARRAY = OS.ARGS()
 
 SWITCH ARGS_ARRAY[1]
@@ -151,4 +150,3 @@ CASE 3:
     LOOP UNTIL A$ > ""
 ENDSWITCH
 
-CURSOR TRUE

@@ -1,4 +1,4 @@
-  REM =================================================================
+REM =================================================================
 REM JD'S INVADERS - MODERNIZED & VECTORIZED (ADVANCED)
 REM Refactored to use a Structure-of-Arrays (SoA) design with
 REM advanced array-oriented functions for collision detection.
