@@ -189,6 +189,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <None Include="www\index.html" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="jdBasic.ico" />
