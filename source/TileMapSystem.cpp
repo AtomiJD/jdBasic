@@ -1,4 +1,5 @@
 #ifdef SDL3
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
 #include "TileMapSystem.hpp"
 #include "TextIO.hpp"
 #include "json.hpp"
@@ -200,7 +201,7 @@ void TileMapSystem::draw_layer(const std::string& map_name, const std::string& l
                 int ts_x = (local_tile_id % current_tileset->columns) * current_tileset->tile_width;
                 int ts_y = (local_tile_id / current_tileset->columns) * current_tileset->tile_height;
 
-                SDL_FRect src_rect = { ts_x, ts_y, current_tileset->tile_width, current_tileset->tile_height };
+                SDL_FRect src_rect = { (float)ts_x, (float)ts_y, (float)current_tileset->tile_width, (float)current_tileset->tile_height };
                 SDL_FRect dest_rect = {
                     (float)(x * current_tileset->tile_width - world_offset_x),
                     (float)(y * current_tileset->tile_height - world_offset_y),
@@ -378,4 +379,5 @@ void TileMapSystem::draw_debug_collisions(int sprite_instance_id, const SpriteSy
         }
     }
 }
+#endif
 #endif

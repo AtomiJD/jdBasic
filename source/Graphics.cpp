@@ -39,6 +39,7 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
     if (scale <= 0.0f) { scale = 1.0f; } // Prevent invalid scale values
     SDL_SetRenderScale(renderer, scale, scale);
     
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support    
     sprite_system.init(renderer);
     tilemap_system.init(renderer);
 
@@ -46,7 +47,13 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
     if (!load_font("C:/Windows/Fonts/cour.ttf", 16)) { // Example: Courier New, size 16
         // If the default fails, you might want to shutdown or handle the error
         TextIO::print("Warning: Could not load the default font."); TextIO::nl();
-    }
+    }    
+#else
+    if (!load_font("LiberationSansBold.ttf", 16)) { // Example: Courier New, size 16
+        // If the default fails, you might want to shutdown or handle the error
+        TextIO::print("Warning: Could not load the default font."); TextIO::nl();
+    }    
+#endif    
 
     SDL_StartTextInput(window);
 
@@ -66,8 +73,10 @@ void Graphics::shutdown() {
 
     SDL_StopTextInput(window);
 
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
     sprite_system.shutdown();
     tilemap_system.shutdown();
+#endif
 
     if (font) {
         TTF_CloseFont(font);
@@ -268,7 +277,7 @@ void Graphics::text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint
     SDL_Color color = { r, g, b, 255 };
 
     // Create a surface from the text using the loaded font
-    SDL_Surface* text_surface = TTF_RenderText_Blended(font, text_to_draw.c_str(), 0, color);
+    SDL_Surface* text_surface = TTF_RenderText_Blended(font, text_to_draw.c_str(), sizeof(text_to_draw.c_str()), color);
     if (!text_surface) {
         std::cerr << "Unable to render text surface! SDL_Error: " << SDL_GetError() << std::endl;
         return;

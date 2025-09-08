@@ -16,10 +16,12 @@
 #include <string>
 #include <stdexcept>
 #include <cstring>
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <conio.h>
+#elif defined(__EMSCRIPTEN__)
+
 #else
-#include <ncurses.h>
+//#include <ncurses.h>
 #include <readline/readline.h> // For readline()
 #include <readline/history.h>  // For add_history()
 #endif
@@ -179,13 +181,14 @@ NeReLaBasic::NeReLaBasic() {
 NeReLaBasic::~NeReLaBasic() {
     // --- Unload any dynamically loaded libraries on exit ---
     for (auto& lib_handle : loaded_libraries) {
-#ifdef _WIN32
+#if defined(_WIN32)  
         FreeLibrary(lib_handle);
+#elif defined(__EMSCRIPTEN__)
 #else
         dlclose(lib_handle);
 #endif
     }
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     endwin(); // Add this to restore the terminal
 #endif
 }
@@ -219,6 +222,7 @@ std::wstring string_to_wstring(const std::string& str) {
 }
 #endif
 
+#if !defined(__EMSCRIPTEN__)
 // --- Implementation for loading a dynamic module ---
 bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     std::string full_path = module_path;
@@ -226,7 +230,7 @@ bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     // --- Define the new registration function pointer type ---
     using RegisterModuleWithServicesFunc = void(*)(NeReLaBasic*, ModuleServices*);
 
-#ifdef _WIN32
+#if defined(_WIN32)
     if (full_path.size() < 4 || full_path.substr(full_path.size() - 4) != ".dll") {
         full_path += ".dll";
     }
@@ -278,6 +282,7 @@ bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     TextIO::print("Successfully imported module: " + full_path); TextIO::nl();
     return true;
 }
+#endif
 
 bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
     std::ifstream infile(filename);
@@ -299,8 +304,10 @@ bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
 void NeReLaBasic::init_screen() {
     TextIO::setColor(fgcolor, bgcolor);
     TextIO::clearScreen();
-#ifdef _WIN32    
+#if  defined(_WIN32)
         std::string sos = "win32 64 bit";
+#elif defined(__EMSCRIPTEN__)
+        std::string sos = "web WASM";
 #else
         std::string sos = "linux";
 #endif    
@@ -308,6 +315,17 @@ void NeReLaBasic::init_screen() {
     TextIO::print("Copyright (c) 2025 Computerwelt AI Solutions LLC."); TextIO::nl();
     TextIO::print("All Rights Reserved."); TextIO::nl();
     TextIO::print("Type HELP for more infos."); TextIO::nl();
+    TextIO::nl();
+#if defined(__EMSCRIPTEN__)
+    TextIO::print("This web version is limited in functions (like INKEY$, ON ... CALL, graphics, etc.)"); TextIO::nl();
+    TextIO::print("First steps:"); TextIO::nl();
+    TextIO::print("TYPE: : CD \"dev\" + enter"); TextIO::nl();
+    TextIO::print("TYPE: : DIR \"*.jdb\" + enter"); TextIO::nl();
+    TextIO::print("TYPE: : LOAD \"A LISTED FILE NAME.jdb\" + enter"); TextIO::nl();
+    TextIO::print("TYPE: : RUN + enter"); TextIO::nl();
+    TextIO::print("To change a program:"); TextIO::nl();
+    TextIO::print("TYPE: : EDIT"); TextIO::nl();
+#endif
 }
 
 void NeReLaBasic::init_system() {
@@ -438,8 +456,10 @@ void NeReLaBasic::process_system_events() {
         // On Windows, extended keys (arrows, etc.) send a 224 prefix.
         // We read the second byte and map it to the custom scancodes our BASIC program expects.
         if (scancode == 224) {
-#ifdef _WIN32            
+#if defined(_WIN32)
             int extended_code = _getch();
+#elif defined(__EMSCRIPTEN__)
+            int extended_code = 0;
 #else
             int extended_code = getch();
 #endif           
@@ -483,12 +503,16 @@ void NeReLaBasic::start() {
         direct_p_code.clear();
         linenr = 0;
         
-#ifdef _WIN32
+#if defined(_WIN32)
         TextIO::print("Ready\n" + prompt);
         if (!std::getline(std::cin, inputLine) || inputLine.empty()) {
             std::cin.clear();
             continue;
         }
+#elif defined(__EMSCRIPTEN__)
+        TextIO::print("Ready\n" + prompt);
+        //inputLine = TextIO::jdgets();
+        //TextIO::print("I got: " + inputLine);
 #else
         std::string full_prompt = "Ready\n\r" + prompt;
         // Use readline() to get user input
@@ -547,6 +571,169 @@ void NeReLaBasic::start() {
     }
 }
 
+#ifdef __EMSCRIPTEN__
+void NeReLaBasic::assign_input_value(const std::string& value_str) {
+    std::string var_name = m_input_variable_name;
+    m_input_variable_name.clear(); // Clear for next time
+
+    if (var_name.empty()) return; // Should not happen
+
+    // Your logic to convert string to number if needed and set the variable
+    if (var_name.back() == '$') {
+        set_variable(*this, var_name, value_str);
+    } else {
+        try {
+            set_variable(*this, var_name, std::stod(value_str));
+        } catch (const std::exception&) {
+            set_variable(*this, var_name, 0.0);
+        }
+    }
+}
+
+// Implement the frame-by-frame execution logic for Emscripten
+
+/*
+void NeReLaBasic::execute_one_frame() {
+    if (!active_p_code || pcode >= active_p_code->size()) {
+        // Program has finished, but the loop controller in main will catch this.
+        program_ended = true;
+        return;
+    }
+
+    yielded_for_frame = false;
+
+    // Execute statements until a yield is requested (by SCREENFLIP)
+    // or the program ends.
+    while (!yielded_for_frame && !program_ended ) {
+        if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+            program_ended = true;
+            break;
+        }
+        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+        pcode += 2;
+        bool line_is_done = false;
+        while (!line_is_done && pcode < active_p_code->size()) {
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
+                try
+                {
+                    statement();
+                }
+                catch (const std::exception& e)
+                {
+                    Error::set(1, 1, "Exception " + std::string(e.what()));
+                }
+            }
+            // --- Error Handling Logic ---
+            if (jump_to_catch_pending) {
+                pcode = pending_catch_address;
+                jump_to_catch_pending = false; // Reset flag
+                Error::clear(); // Clear error now that we've jumped
+                continue; // Continue execution in the CATCH/FINALLY block
+            }
+            if (Error::get() != 0) {
+                // The new Error::set function will have already jumped to a CATCH block if one exists.
+                // If we get here, it means the error was unhandled.
+                current_task->status = TaskStatus::ERRORED;
+                line_is_done = true;
+                continue;
+            }
+            // If the statement caused the task to complete (e.g. RETURN) or yield (AWAIT), stop processing this line.
+            if (current_task->status != TaskStatus::RUNNING || current_task->yielded_execution) {
+                line_is_done = true;
+                continue;
+            }
+
+            // Handle multi-statement lines
+            if (pcode < active_p_code->size()) {
+                Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+                if (next_token == Tokens::ID::C_COLON) {
+                    pcode++;
+                }
+                else {
+                    if (next_token == Tokens::ID::C_CR || next_token == Tokens::ID::NOCMD) {
+                        line_is_done = true;
+                    }
+                }
+            }
+        }
+        if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
+            pcode++;
+        }
+
+        if (Error::get() != 0) {
+            Error::print();
+            program_ended = true; // Stop execution on error
+            break;
+        }
+    }
+}
+*/
+// In NeReLaBasic.cpp
+
+void NeReLaBasic::execute_one_frame() {
+    // === 1. Pre-Execution Checks ===
+    // If the program is already marked as ended, or the pcode is out of bounds, do nothing.
+    if (program_ended || !active_p_code || pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+        program_ended = true;
+        return;
+    }
+    // Default the internal state to RUNNING for this frame.
+    // If a command like INPUT needs to pause, it will change this state.
+    this->m_internal_vm_state = VmState::RUNNING;
+
+    // === 2. Execute a Single Statement ===
+    // Read the line number for debugging and error reporting.
+    runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+    pcode += 2;
+
+colon_case_handling:
+    // Execute one statement. Skips empty lines (where the token is a carriage return).
+    if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
+        try {
+            statement(); // This is the call that will set m_internal_vm_state to PAUSED if it's an INPUT command.
+        } catch (const std::exception& e) {
+            Error::set(1, runtime_current_line, "Exception: " + std::string(e.what()));
+        }
+    }
+
+    // === 3. Post-Execution and Error Handling ===
+    // The main execution logic from your original interpreter should be here.
+    // Check if the statement caused an error.
+    if (jump_to_catch_pending) {
+        pcode = pending_catch_address;
+        jump_to_catch_pending = false;
+        Error::clear();
+    } else if (Error::get() != 0) {
+        // An unhandled error occurred. Stop the program.
+        program_ended = true;
+        return;
+    }
+    
+    // Check if the statement caused the task to finish (e.g., RETURN from main).
+    if (current_task && current_task->status != TaskStatus::RUNNING) {
+        program_ended = true;
+        return;
+    }
+
+    // === 4. Advance Program Counter for the Next Frame ===
+    // This part is crucial. It moves the pcode past the statement/line separators
+    // so the next call to this function starts at the right place.
+    if (pcode < active_p_code->size()) {
+        Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
+        
+        // If it's a colon, it means there's another statement on the same line.
+        // We just consume the colon and return. The next frame will execute the next statement.
+        if (next_token == Tokens::ID::C_COLON) {
+            pcode++;
+            goto colon_case_handling;
+        }
+        // If it's a carriage return, consume it to move to the next line for the next frame.
+        else if (next_token == Tokens::ID::C_CR) {
+            pcode++;
+        }
+    }
+}
+#endif
 
 void NeReLaBasic::execute_repl_command(const std::vector<uint8_t>& repl_p_code) {
     if (repl_p_code.empty()) {
@@ -936,10 +1123,9 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 
     g_vm_instance_ptr = this;
     Error::clear();
-#ifndef _WIN32
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
     TextIO::initKey();
 #endif
-
     //dap_handler->send_output_message("We are in execute main.\n");
 
     if (dap_handler) { // Check if the debugger is attached
@@ -1105,9 +1291,9 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 #ifdef HTTP
     network_manager.stopServer();
 #endif
-#ifndef _WIN32
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
     TextIO::deinitKey();
-#endif
+#endif    
     current_task = nullptr;
 }
 
@@ -1304,6 +1490,9 @@ void NeReLaBasic::propagate_changes(const std::string& changed_variable_name, co
 
 
 void NeReLaBasic::statement() {
+#ifdef __EMSCRIPTEN__            
+    //m_internal_vm_state = VmState::RUNNING;
+#endif    
     Tokens::ID token = static_cast<Tokens::ID>((*active_p_code)[pcode]); // Peek at the token
 
     // In trace mode, print the token being executed.
@@ -1321,17 +1510,38 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_dim(*this);
         break;
+#ifdef __EMSCRIPTEN__        
+    case Tokens::ID::INPUT: {
+        m_internal_vm_state = VmState::PAUSED_FOR_INPUT;
+        pcode++; // Consume INPUT
 
+        // Handle optional prompt string
+        if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::STRING) {
+            pcode++; // Consume STRING token
+            std::string prompt = read_string(*this);
+            TextIO::print(prompt);
+            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_SEMICOLON) {
+                pcode++; // Consume ;
+            }
+        }
+
+        // Get the variable name
+        pcode++; // Consume variable type token
+        std::string var_to_set = to_upper(read_string(*this));
+        // This is now a simple, synchronous call.
+        Commands::do_input(*this, var_to_set);
+        break;
+    }
+#else    
     case Tokens::ID::INPUT:
         pcode++;
         Commands::do_input(*this);
         break;
-
+#endif
     case Tokens::ID::PRINT:
         pcode++;
         Commands::do_print(*this); // Pass a reference to ourselves
         break;
-
     case Tokens::ID::THIS_KEYWORD:
     case Tokens::ID::VARIANT:
     case Tokens::ID::INT:
@@ -1466,11 +1676,12 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_edit(*this);
         break;
+#if !defined(__EMSCRIPTEN__)                
     case Tokens::ID::DLLIMPORT:
         pcode++;
         Commands::do_dllimport(*this);
         break;
-
+#endif
     case Tokens::ID::LIST:
         pcode++;
         Commands::do_list(*this);
@@ -1594,7 +1805,9 @@ NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
     call_stack.clear();
     func_stack.clear();
     handler_stack.clear();
-
+#if defined(__EMSCRIPTEN__)     
+    //global_input_queue.clear();
+#endif
     // Asynchronous Task System (not used by BSYNC threads)
     task_queue.clear();
     task_completed.clear();

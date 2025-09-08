@@ -1674,7 +1674,7 @@ uint8_t Compiler::tokenize_lambda(NeReLaBasic& vm, std::vector<uint8_t>& out_p_c
     std::stringstream source_stream(source);
 
     uint16_t current_lambda_line = start_line; // Use a local line counter for this compilation
-    bool multiline = false;
+    uint8_t multiline = false;
 
     while (std::getline(source_stream, line)) {
         // We pass the local line number, protecting vm.current_source_line

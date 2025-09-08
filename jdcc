@@ -1,0 +1,51 @@
+./emcc \
+  -std=c++20 \
+    ~/dev/jdBasic/source/AIFunctions.cpp \
+    ~/dev/jdBasic/source/BuiltinFunctions.cpp \
+    ~/dev/jdBasic/source/Commands.cpp \
+    ~/dev/jdBasic/source/Compiler.cpp \
+    ~/dev/jdBasic/source/DAPHandler.cpp \
+    ~/dev/jdBasic/source/Error.cpp \
+    ~/dev/jdBasic/source/Graphics.cpp \
+    ~/dev/jdBasic/source/LocaleManager.cpp \
+    ~/dev/jdBasic/source/NeReLaBasic.cpp \
+    ~/dev/jdBasic/source/NeReLaBasicInterpreter.cpp \
+    ~/dev/jdBasic/source/NetworkManager.cpp \
+    ~/dev/jdBasic/source/SoundSystem.cpp \
+    ~/dev/jdBasic/source/SpriteSystem.cpp \
+    ~/dev/jdBasic/source/Statements.cpp \
+    ~/dev/jdBasic/source/StringUtils.cpp \
+    ~/dev/jdBasic/source/TextIO.cpp \
+    ~/dev/jdBasic/source/TileMapSystem.cpp \
+  -I ~/dev/jdBasic/include \
+  -I ~/dev/jdBasic/libs/cpp-httplib \
+  -I ~/dev/jdBasic/libs/SDL3-3.2.16/include \
+  -I ~/dev/jdBasic/libs/SDL3_ttf-3.2.2/include \
+  -I ~/dev/jdBasic/libs/SDL3_image-3.2.4/include \
+  -I ~/dev/jdBasic/libs/SDL2_mixer-2.8.1/include \
+  -DSDL3 \
+  -o jdbasic/index.js \
+  -O3 \
+  -s USE_SDL=3 \
+  -s USE_SDL_TTF=3 \
+  -s USE_SDL_IMAGE=3 \
+  -s SDL2_IMAGE_FORMATS='["png"]' \
+  -s ALLOW_MEMORY_GROWTH=1 \
+  -s EXPORTED_FUNCTIONS=['_init_repl','_main','_run_repl_line','_update_source_code'] \
+  -s EXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString'] \
+  -s ASSERTIONS=1 \
+  -s WASM=1 \
+  -s FORCE_FILESYSTEM \
+  -Wl,--wrap=fgets,--wrap=fflush \
+  --preload-file help.txt \
+  --preload-file /home/atomi/dev/jdBasic/jdb/test.jdb@dev/test.jdb \
+  --preload-file /home/atomi/dev/jdBasic/jdb/MATH.jdb@dev/MATH.jdb \
+  --preload-file /home/atomi/dev/jdBasic/jdb/graph_demo.jdb@dev/graph_demo.jdb \
+  --preload-file /home/atomi/dev/jdBasic/jdb/turtle_fib.jdb@dev/turtle_fib.jdb \
+  --preload-file /home/atomi/dev/jdBasic/jdb/re_order.jdb@dev/re_order.jdb \
+  --preload-file /home/atomi/dev/jdBasic/jdb/order.csv@dev/order.csv \
+  --preload-file /home/atomi/dev/jdBasic/jdb/mv.jdb@dev/mv.jdb \
+  --preload-file /home/atomi/dev/jdBasic/jdb/oneliner.jdb@dev/oneliner.jdb \
+  --preload-file /home/atomi/dev/jdBasic/jdb/async_test.jdb@dev/async_test.jdb \
+  --use-preload-plugins
+  

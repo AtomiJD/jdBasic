@@ -4,13 +4,12 @@
 ' -------------------------------------------------
 ' 1. SETUP & INITIALIZATION
 ' -------------------------------------------------
-
 CurrentOS$ = OS.GETOS()
 SCREEN_W = 1920
 SCREEN_H = 1080
 MAX_LINES = 500
 LINES_PER_FRAME = 1 ' How many new lines to add each frame
-FRAMES = 200
+FRAMES = 150
 
 ' --- Initialize Graphics ---
 PRINT "Initializing graphics screen..."
@@ -103,7 +102,6 @@ DO
     SCREENFLIP
     time_step = time_step + 0.05
     SLEEP 16 ' Aim for ~60 FPS
-
     FRAMES = FRAMES - 1
 
 LOOP UNTIL FRAMES < 1

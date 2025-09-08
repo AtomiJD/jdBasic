@@ -1,4 +1,5 @@
 #ifdef SDL3
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
 #include "SpriteSystem.hpp"
 #include "TextIO.hpp"
 #include "Error.hpp"
@@ -424,4 +425,5 @@ std::pair<int, int> SpriteSystem::check_collision_groups(int group_id1, int grou
     }
     return { -1, -1 };
 }
+#endif
 #endif

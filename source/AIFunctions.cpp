@@ -11,7 +11,9 @@
 #include <limits>
 #include <algorithm>
 #include <memory>
+#ifndef __EMSCRIPTEN__
 #include <omp.h>
+#endif
 
 // Forward declarations for functions defined in this file
 BasicValue tensor_add(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b);

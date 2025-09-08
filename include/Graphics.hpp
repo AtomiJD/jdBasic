@@ -96,9 +96,10 @@ public:
     bool is_initialized = false;
     bool quit_event_received = false;
 
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
     SpriteSystem sprite_system;
     TileMapSystem tilemap_system;
-
+#endif
     SDL_Renderer* renderer = nullptr;
 
 private:

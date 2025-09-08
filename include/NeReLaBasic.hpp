@@ -14,13 +14,14 @@
 #include <future>
 
 // --- Platform-specific includes for dynamic library loading ---
-#ifdef _WIN32
+#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
+#ifndef __EMSCRIPTEN__
 #include <windows.h>
+#endif
 #else
 #include <dlfcn.h>
 #include <ncurses.h>
 #endif
-
 
 #ifdef SDL3
 #include "Graphics.hpp"
@@ -37,6 +38,10 @@ struct ServerRequestEvent;
 #endif
 class DAPHandler;
 class Compiler;
+
+#if defined(__EMSCRIPTEN__)  
+enum class VmState { IDLE, RUNNING, PAUSED_FOR_INPUT };
+#endif 
 
 // Enum for the status of an asynchronous task
 enum class TaskStatus {
@@ -295,6 +300,14 @@ public:
     std::mutex http_queue_mutex;
 #endif
 
+#if defined(__EMSCRIPTEN__) 
+    // Flag to signal the main loop to yield for a frame 
+    bool yielded_for_frame = false;
+    std::string m_input_variable_name;
+    VmState m_internal_vm_state = VmState::IDLE;
+    void assign_input_value(const std::string& value);
+#endif
+
     // --- Error Handling State ---
     bool error_handler_active = false;
     BasicValue current_error_data;
@@ -388,6 +401,7 @@ public:
     BasicValue get_stacktrace();
     void statement();
     void process_system_events();
+    void execute_one_frame();
     BasicValue execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_repl_command(const std::vector<uint8_t>& repl_p_code);
     void execute_synchronous_block(const std::vector<uint8_t>& code_to_run, int multiline = false);

@@ -4,10 +4,14 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <conio.h>
+#elif defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#include <thread>
+#include <chrono>
 #else
-#include <ncurses.h>
+//#include <ncurses.h>
 #include <readline/readline.h> // For readline()
 #endif
 #include "Commands.hpp"
@@ -588,6 +592,14 @@ void Commands::do_dllimport(NeReLaBasic& vm) {
     // and setting any errors if loading fails.
     vm.load_dynamic_module(module_name);
 }
+#if defined(__EMSCRIPTEN__)
+//extern "C" void js_set_input_mode(const char* mode);
+
+void Commands::do_input(NeReLaBasic& vm, const std::string& var_name) {
+    vm.m_input_variable_name = var_name;
+}
+
+#else
 
 void Commands::do_input(NeReLaBasic& vm) {
     // Peek at the next token to see if there is an optional prompt string.
@@ -631,22 +643,23 @@ void Commands::do_input(NeReLaBasic& vm) {
 
     // Read a full line of input from the user.
     std::string user_input_line;
-#ifdef _WIN32
+#if defined(_WIN32)
     std::getline(std::cin, user_input_line);
 #else
-        TextIO::deinitKey();
-        char* c_inputLine = readline("");
-        if (c_inputLine == NULL) {
-            TextIO::nl();
-        }
-        user_input_line = c_inputLine;
-        TextIO::initKey();
+    TextIO::deinitKey();
+    char* c_inputLine = readline("");
+    if (c_inputLine == NULL) {
+        TextIO::nl();
+    }
+    user_input_line = c_inputLine;
+    TextIO::initKey();
 #endif
 
     // Store the value, converting type if necessary.
     if (var_name.back() == '$') {
         // It's a string variable, do a direct assignment.
         set_variable(vm, var_name, user_input_line);
+        TextIO::print("Var: " + var_name + ", val: " + user_input_line);
     }
     else {
         // It's a numeric variable. Try to convert the input to a double.
@@ -659,6 +672,7 @@ void Commands::do_input(NeReLaBasic& vm) {
         }
     }
 }
+#endif
 
 void Commands::do_print(NeReLaBasic& vm) {
     // Loop through all items in the PRINT list until the statement ends.
@@ -1059,9 +1073,6 @@ void Commands::do_destructure_assign(NeReLaBasic& vm) {
     // 4. Evaluate the expression on the right-hand side.
     BasicValue rhs_value = vm.evaluate_expression();
     if (Error::get() != 0) return;
-
-    // Maybe we should allow false assignements? And assign default valus if no matching is achieved?
-    // JDTODO: Discuss this with the community
 
     // 5. Validate that the RHS is an array.
     if (!std::holds_alternative<std::shared_ptr<Array>>(rhs_value)) {
@@ -2046,7 +2057,12 @@ void Commands::do_loop(NeReLaBasic& vm) {
     // If it's an unconditional DO...LOOP or a pre-test loop, `should_jump_back` remains true.
 
     if (should_jump_back) {
+#if defined(__EMSCRIPTEN__)
+        // in emscipten execution loop we need to jump at the beginning of tthe line!
+        vm.pcode = loop_start_pcode_addr - 2;
+#else        
         vm.pcode = loop_start_pcode_addr; // Jump back to the start of the loop body
+#endif        
     }
     else {
         // Loop finished for a post-test loop, or pre-test loop already handled the jump.
@@ -2193,6 +2209,36 @@ void Commands::do_endswitch(NeReLaBasic& vm) {
 }
 
 void Commands::do_edit(NeReLaBasic& vm) {
+#ifdef __EMSCRIPTEN__
+    // --- Web Version: Calls out to the JavaScript Monaco Editor ---
+
+    // 1. Combine all source lines into a single string
+    std::stringstream ss;
+    for (const auto& line : vm.source_lines) {
+        ss << line << '\n';
+    }
+    std::string full_code = ss.str();
+
+    // 2. Escape the code to be safely embedded in a JavaScript string literal
+    std::string escaped_code;
+    escaped_code.reserve(full_code.size());
+    for (char c : full_code) {
+        switch (c) {
+            case '\\': escaped_code += "\\\\"; break;
+            case '\'': escaped_code += "\\'"; break;
+            case '\"': escaped_code += "\\\""; break;
+            case '\n': escaped_code += "\\n";  break;
+            case '\r': escaped_code += "\\r";  break;
+            case '\t': escaped_code += "\\t";  break;
+            default:   escaped_code += c;      break;
+        }
+    }
+
+    // 3. Create the JavaScript call and execute it
+    std::string script = "window.show_monaco_editor(\"" + escaped_code + "\");";
+    emscripten_run_script(script.c_str());
+
+#else     
     std::string filename_to_edit;
 
     if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::STRING) {
@@ -2219,7 +2265,9 @@ void Commands::do_edit(NeReLaBasic& vm) {
     // Pass the filename to the editor's constructor
     TextEditor editor(vm.source_lines, filename_to_edit);
     editor.run();
+#endif
 }
+
 
 void Commands::do_list(NeReLaBasic& vm) {
     // Iterate through the vector and print with 1-based line numbers for readability
@@ -2362,7 +2410,6 @@ void Commands::do_stop(NeReLaBasic& vm) {
 }
 
 void Commands::do_run(NeReLaBasic& vm) {
-
     do_compile(vm);
     if (!vm.compiler->do_loop_stack.empty()) {
         // There are unclosed DO loops. Get the line number of the last one.
@@ -2394,8 +2441,9 @@ void Commands::do_run(NeReLaBasic& vm) {
 
     TextIO::print("Running...\n");
     // Execute from the main program buffer
+#ifndef __EMSCRIPTEN__    
     vm.execute_main_program(vm.program_p_code, false);
-
+#endif
     // If the execution resulted in an error, print it
     if (Error::get() != 0) {
         Error::print();

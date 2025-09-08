@@ -6,9 +6,6 @@
 #include <sstream>
 #include <streambuf>
 #include <cstdint> // For uint16_t, uint8_t
-#ifndef _WIN32
-#include <ncurses.h>
-#endif  
 
 // The CoutRedirector class from above
 class CoutRedirector {
@@ -30,13 +27,17 @@ public:
 
 // A namespace for all text input/output related functions
 namespace TextIO {
-    #ifndef _WIN32
+#ifndef _WIN32
+#if defined(__EMSCRIPTEN__)     
+    std::string jdgets();
+    void getline(char* buffer, int buffer_size);
+#else
     int initKey();
     void deinitKey();
     unsigned char jdgetch();
     ssize_t jdwrite(int fd, const char *buf, size_t count);
-    
-    #endif
+#endif
+#endif
     void print(const std::string& message);
     void print_uw(uint16_t value);
     void print_uwhex(uint16_t value);

@@ -1,6 +1,8 @@
 #pragma once
 #ifdef SDL3
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
 #include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -81,4 +83,5 @@ private:
     SDL_Renderer* renderer = nullptr;
     std::map<std::string, TileMap> loaded_maps;
 };
+#endif
 #endif

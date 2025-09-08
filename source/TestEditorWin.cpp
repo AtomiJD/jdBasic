@@ -111,22 +111,19 @@ void TextEditorWinImpl::run() {
         if (input.EventType == KEY_EVENT && input.Event.KeyEvent.bKeyDown) {
             auto key = input.Event.KeyEvent;
 
-            // Fix: Check for Ctrl press but exclude AltGr (Ctrl + Alt)
-            bool is_alt_gr = (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED)) == (LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED);
-            bool is_ctrl_only = (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) && !is_alt_gr;
-
-            if (is_ctrl_only) {
+            if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) {
                 switch (key.wVirtualKeyCode) {
                 case 'X':
-                    goto dreckig;
+                    if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) goto dreckig;
+                    break;
                 case 'S':
-                    save_file();
+                    if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) save_file();
                     break;
                 case 'F':
-                    find_text();
+                    if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) find_text();
                     break;
                 case 'G':
-                    go_to_line();
+                    if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) go_to_line();
                     break;
                 }
             }

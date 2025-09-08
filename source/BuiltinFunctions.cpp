@@ -10,8 +10,13 @@
 #include <thread>
 #include <chrono>
 #include <cmath> // For sin, cos, etc.
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <conio.h>
+#elif defined(__EMSCRIPTEN__)
+#include <codecvt> // for std::wstring_convert
+#include <locale>  // for std::locale
+#include <stdio.h>
+#include <emscripten.h>
 #else
 #include <codecvt> // for std::wstring_convert
 #include <locale>  // for std::locale
@@ -29,7 +34,7 @@
 #include <sstream>
 #include <unordered_set>
 #include <cstdlib> 
-#ifdef _WIN32
+#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
 #include <format>
 #else
 #include <fmt/core.h>
@@ -1035,6 +1040,10 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         Error::set(1, vm.runtime_current_line); // Generic error
     }
 
+#ifdef __EMSCRIPTEN__
+    emscripten_run_script("window.set_graphics_mode(true);");
+#endif
+
     return false; // Procedures return a dummy value
 }
 
@@ -1042,7 +1051,15 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 // Updates the screen to show all drawing done since the last flip.
 BasicValue builtin_screenflip(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+#ifdef __EMSCRIPTEN__
+    // For WASM, SCREENFLIP signals that the frame is done.
+    // The browser will handle the actual screen update.
+    // We set a flag to tell the C++ main loop to yield control.
+    vm.yielded_for_frame = true;
     vm.graphics_system.update_screen();
+#else
+    vm.graphics_system.update_screen();
+#endif
     return false;
 }
 
@@ -1208,7 +1225,7 @@ BasicValue builtin_line(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
-//RECT x, y, w, h, [fill], [r, g, b] OR RECT matrix, [fill], [colors]
+// Replace the existing 'builtin_rect' function with this new version
 BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // Case 1: Vector/Matrix arguments
     if (!args.empty() && std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
@@ -1230,7 +1247,7 @@ BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     // Case 2: Scalar arguments
     if (args.size() < 4 || args.size() > 8) {
-        Error::set(8, vm.runtime_current_line, "Usage: RECT x, y, w, h, [fill], [r, g, b] OR RECT matrix, [fill], [colors]");
+        Error::set(8, vm.runtime_current_line, "Usage: RECT x, y, w, h, [r, g, b], [fill] OR RECT matrix, [fill], [colors]");
         return false;
     }
 
@@ -1238,15 +1255,17 @@ BasicValue builtin_rect(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     int y = static_cast<int>(to_double(args[1]));
     int w = static_cast<int>(to_double(args[2]));
     int h = static_cast<int>(to_double(args[3]));
-    bool fill = (args.size() >= 5) ? to_bool(args[4]) : false;
+    bool fill = false;
 
-    if (args.size() == 8) { // Color is provided, requires 8 args (x,y,w,h,fill,r,g,b)
-        Uint8 r = static_cast<Uint8>(to_double(args[5]));
-        Uint8 g = static_cast<Uint8>(to_double(args[6]));
-        Uint8 b = static_cast<Uint8>(to_double(args[7]));
+    if (args.size() >= 7) { // Color is provided
+        Uint8 r = static_cast<Uint8>(to_double(args[4]));
+        Uint8 g = static_cast<Uint8>(to_double(args[5]));
+        Uint8 b = static_cast<Uint8>(to_double(args[6]));
+        if (args.size() == 8) fill = to_bool(args[7]);
         vm.graphics_system.rect(x, y, w, h, r, g, b, fill);
     }
-    else { // No color, just check for fill (4 or 5 args)
+    else { // No color, just check for fill
+        if (args.size() == 5) fill = to_bool(args[4]);
         vm.graphics_system.rect(x, y, w, h, fill);
     }
     return false;
@@ -1296,6 +1315,7 @@ BasicValue builtin_circle(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     }
     return false;
 }
+
 
 // ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]
 BasicValue builtin_ellipse(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1729,7 +1749,7 @@ BasicValue builtin_mouseb(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 }
 
 // --- SPRITE PROCEDURES & FUNCTIONS ---
-
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
 // SPRITE.LOAD type_id, "filename.png"
 BasicValue builtin_sprite_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) {
@@ -2054,7 +2074,7 @@ BasicValue builtin_map_draw_debug(NeReLaBasic& vm, const std::vector<BasicValue>
     );
     return false;
 }
-
+#endif // EMSCRIPTEN
 #endif
 
 // --- String Functions ---
@@ -2304,6 +2324,11 @@ BasicValue builtin_instr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return static_cast<double>(found_pos + 1); // Return 1-indexed position
     }
 }
+
+#ifdef __EMSCRIPTEN__
+extern "C" char* js_get_inkey();
+#endif
+
 // INKEY$()
 BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (!args.empty()) {
@@ -2329,6 +2354,11 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         char c = _getch();
         return std::string(1, c);
     }
+#elif defined(__EMSCRIPTEN__)
+    char* c_str = js_get_inkey();
+    std::string result(c_str);
+    free(c_str); // Free the memory allocated by EM_JS
+    return result;
 #else
     char c = TextIO::jdgetch();
     if (c > 0) {
@@ -2337,6 +2367,7 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 #endif
     return std::string("");
 }
+
 
 // WAITKEY$() -> string$
 // Waits for a key to be pressed and returns it as a string.
@@ -2376,13 +2407,15 @@ BasicValue builtin_waitkey_str(NeReLaBasic& vm, const std::vector<BasicValue>& a
 #endif
 
     // Fallback to standard blocking console input if graphics are not initialized.
-#ifdef _WIN32
+#if defined(_WIN32)  
     char c = _getch();
+    return std::string(1, c);
+#elif defined(__EMSCRIPTEN__)  
 #else
     char c = getch();
-#endif
-
     return std::string(1, c);
+#endif
+    
 }
 
 // REVERSE$(string_or_array) -> string or array
@@ -2496,7 +2529,7 @@ BasicValue builtin_chr_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
             return std::string(""); // Invalid Unicode code point
         }
 
-#ifdef _WIN32
+#if defined(_WIN32)
         // --- Windows-specific, non-deprecated method ---
         wchar_t wstr[2];
         if (code_point <= 0xFFFF) {
@@ -3252,8 +3285,10 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                             // Check for integer-only types: d, x, X, b, B, o, c
                             if (std::string("dxXbo").find(type_char) != std::string::npos) {
                                 // It's an integer format. Cast the double to a long long.
-#ifdef _WIN32
+#if defined(_WIN32)  
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<long long>(value)));
+#elif defined(__EMSCRIPTEN__)
+                                return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
 #else
                                 //return fmt::format(format_specifier, value);
                                 return fmt::vformat(format_specifier, fmt::make_format_args(value));
@@ -3261,8 +3296,10 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                             }
                             if (type_char == 'c') {
                                 // Handle character case
-#ifdef _WIN32                                
+#if defined(_WIN32)  
                                 return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<char>(static_cast<long long>(value))));
+#elif defined(__EMSCRIPTEN__)
+                                return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
 #else
                                 //return fmt::format(format_specifier, value);
                                 return fmt::vformat(format_specifier, fmt::make_format_args(value));
@@ -3270,7 +3307,7 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                             }
                         }
                         // If it's not an integer type, format as a double.
-#ifdef _WIN32
+#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
 #else
                         // return fmt::format(format_specifier, value);
@@ -3279,7 +3316,7 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                     }
                     else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
                         // These types are fine as they are
-#ifdef _WIN32
+#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
                         return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
 #else
                         // return fmt::format(format_specifier, value);
@@ -3292,7 +3329,7 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                     }
                     }, arg);
             }
-#ifdef _WIN32            
+#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
             catch (const std::format_error& e) {
 #else                
             catch (const fmt::format_error& e) {
@@ -5951,7 +5988,7 @@ BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     try {
         fs::path target_path("."); // Default to current directory
-        std::string wildcard = "*";   // Default to all files
+        std::string wildcard = "*.*";   // Default to all files
 
         if (!args.empty()) {
             fs::path full_arg_path(to_string(args[0]));
@@ -5962,7 +5999,7 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
             else {
                 target_path = full_arg_path;
             }
-        }
+        } 
 
         if (!fs::exists(target_path) || !fs::is_directory(target_path)) {
             TextIO::print("Directory not found: " + target_path.string()); TextIO::nl();
@@ -5974,32 +6011,33 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
         for (const auto& entry : fs::directory_iterator(target_path)) {
             std::string filename_str = entry.path().filename().string();
-
             // Check if the filename matches our regex pattern
-            if (std::regex_match(filename_str, pattern)) {
-                std::string size_str;
-                if (!entry.is_directory()) {
-                    try {
-                        size_str = std::to_string(fs::file_size(entry));
+            if (filename_str.length() > 0) {
+                if (std::regex_match(filename_str, pattern)) {
+                    std::string size_str;
+                    if (!entry.is_directory()) {
+                        try {
+                            size_str = std::to_string(fs::file_size(entry));
+                        }
+                        catch (fs::filesystem_error&) {
+                            size_str = "<ERR>";
+                        }
                     }
-                    catch (fs::filesystem_error&) {
-                        size_str = "<ERR>";
+                    else {
+                        size_str = "<DIR>";
                     }
-                }
-                else {
-                    size_str = "<DIR>";
-                }
 
-                TextIO::print(filename_str);
-                int padding_needed = 25 - static_cast<int>(filename_str.length());
+                    TextIO::print(filename_str);
+                    int padding_needed = 25 - static_cast<int>(filename_str.length());
 
-                // Only print padding if the filename is shorter than the column width.
-                if (padding_needed > 0) {
-                    for (int i = 0; i < padding_needed; ++i) {
-                        TextIO::print(" ");
+                    // Only print padding if the filename is shorter than the column width.
+                    if (padding_needed > 0) {
+                        for (int i = 0; i < padding_needed; ++i) {
+                            TextIO::print(" ");
+                        }
                     }
+                    TextIO::print(size_str); TextIO::nl();
                 }
-                TextIO::print(size_str); TextIO::nl();
             }
         }
     }
@@ -6016,7 +6054,7 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 // CD path_string
 BasicValue builtin_cd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
-        Error::set(8, 0); // Wrong number of arguments
+        Error::set(8, 0, "Wrong number of arguments. Usage: CD \"path\".");
         return false;
     }
 
@@ -6943,7 +6981,8 @@ BasicValue builtin_os_exec(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     CloseHandle(piProcInfo.hProcess);
     CloseHandle(piProcInfo.hThread);
     CloseHandle(hChildStd_OUT_Rd);
-
+#elif defined(__EMSCRIPTEN__)  
+    Error::set(8, vm.runtime_current_line, "OS.EXEC requires windows or linux.");
 #else
     // --- POSIX (Linux, macOS) Implementation using popen ---
     std::string cmd_with_stderr = command + " 2>&1"; // Redirect stderr to stdout
@@ -7103,8 +7142,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TRIM$", 1, builtin_trim_str);
     register_func("REPLACE$", 3, builtin_replace_str);
     register_func("REVERSE$", 1, builtin_reverse_str);
-    register_func("INKEY$", 0, builtin_inkey);
+    #ifndef __EMSCRIPTEN__
     register_func("WAITKEY$", 0, builtin_waitkey_str);
+    register_func("INKEY$", 0, builtin_inkey);    
+    #endif
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
     register_func("SPLIT", 2, builtin_split);
@@ -7237,6 +7278,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MOUSEB", 1, builtin_mouseb);
 
     // Sprite Procedures
+ #if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support   
     register_proc("SPRITE.LOAD", 2, builtin_sprite_load);
     register_proc("SPRITE.LOAD_ASEPRITE", 2, builtin_sprite_load_aseprite);
     register_proc("SPRITE.MOVE", 3, builtin_sprite_move);
@@ -7262,7 +7304,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TILEMAP.COLLIDES", 3, builtin_map_collides);
     register_func("TILEMAP.GET_TILE_ID", 4, builtin_map_get_tile_id);
     register_proc("TILEMAP.DRAW_DEBUG_COLLISIONS", 3, builtin_map_draw_debug);
-
+#endif
 
 #endif
 #ifdef JDCOM

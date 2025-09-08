@@ -8,6 +8,11 @@ class NeReLaBasic; // Forward declaration to avoid circular dependencies
 namespace Commands {
     void do_dim(NeReLaBasic& vm);
     void do_input(NeReLaBasic& vm);
+#if defined(__EMSCRIPTEN__)    
+    void do_input(NeReLaBasic& vm, const std::string& var_name);
+#else
+    void do_input(NeReLaBasic& vm);
+#endif        
     void do_print(NeReLaBasic& vm);
     void do_let(NeReLaBasic& vm);
     void do_destructure_assign(NeReLaBasic& vm);

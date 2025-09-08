@@ -18,8 +18,55 @@
 #include <errno.h>
 #endif
 
+// In TextIO.cpp
 
-#ifndef _WIN32
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+
+EM_JS(void, _flushstdout, (), {
+    window._STDIO._flushstdout();
+});
+
+EM_JS(void, _flushstderr, (), {
+    window._STDIO._flushstderr();
+});
+
+EM_ASYNC_JS(void, _wait_for_stdin, (), {
+    await window._STDIO._flushstdin();
+});
+
+extern "C" {
+extern char *__real_fgets(char *str, int num, FILE *stream);
+extern int __real_fflush(FILE *stream);
+
+char *__wrap_fgets(char * str, int num, FILE * stream) {
+    _wait_for_stdin();
+    return __real_fgets(str, num, stream);
+}
+
+int __wrap_fflush(FILE *stream) {
+    int ret = __real_fflush(stream);
+    if (stream == stdout) {
+        _flushstdout();
+    } else if (stream == stderr) {
+        _flushstderr();
+    }
+    return ret;
+}
+}
+
+std::string TextIO::jdgets() {
+    char buffer[1024]; 
+    if (fgets(buffer, 1024, stdin) == NULL) {
+            return "";
+    }    
+    return std::string(buffer);
+}
+
+#elif !defined(_WIN32)
 int is_icanon = 0;
 static struct termios st;
 
@@ -77,21 +124,27 @@ ssize_t TextIO::jdwrite(int fd, const char *buf, size_t count) {
     }
     return count;
 }
-
 #endif
 
 void TextIO::print(const std::string& message) {
-#ifdef _WIN32    
+#if defined(_WIN32) 
     std::cout << message;
+#elif defined(__EMSCRIPTEN__)
+    printf("%s",message.c_str());
+    fflush(stdout);
+    //js_terminal_handler_write(message.c_str());
 #else
     TextIO::jdwrite(STDOUT_FILENO, message.c_str(), message.length());
 #endif
 }
 
 void TextIO::print_uw(uint16_t value) {
-#ifdef _WIN32
+#if defined(_WIN32) 
     // Explicitly set the stream to decimal mode before printing.
     std::cout << std::dec << value;
+#elif defined(__EMSCRIPTEN__)    
+    std::string s = std::to_string(value);
+    TextIO::print(s);
 #else
     std::string s = std::to_string(value);
     TextIO::jdwrite(STDOUT_FILENO, s.c_str(), s.length());
@@ -99,10 +152,15 @@ void TextIO::print_uw(uint16_t value) {
 }
 
 void TextIO::print_uwhex(uint16_t value) {
-#ifdef _WIN32
+#if defined(_WIN32)
     // std::hex makes the output hexadecimal
     // std::setw and std::setfill ensure it's padded with zeros to 4 digits
     std::cout << '$' << std::hex << std::setw(4) << std::setfill('0') << std::uppercase << value;
+#elif defined(__EMSCRIPTEN__)    
+    std::stringstream ss;
+    ss << '$' << std::hex << std::setw(4) << std::setfill('0') << std::uppercase << value;
+    std::string s = ss.str();
+    TextIO::print(s);
 #else
     std::stringstream ss;
     ss << '$' << std::hex << std::setw(4) << std::setfill('0') << std::uppercase << value;
@@ -112,8 +170,10 @@ void TextIO::print_uwhex(uint16_t value) {
 }
 
 void TextIO::nl() {
-#ifdef _WIN32    
+#if defined(_WIN32)
     std::cout << '\n';
+#elif defined(__EMSCRIPTEN__)    
+    TextIO::print("\n");
 #else
     TextIO::jdwrite(STDOUT_FILENO, "\n\r", 2);
 #endif
@@ -121,8 +181,11 @@ void TextIO::nl() {
 
 void TextIO::clearScreen() {
     const char* clear_code = "\x1B[2J\x1B[H";
-#ifdef _WIN32    
+#if defined(_WIN32) 
     std::cout << clear_code;
+#elif defined(__EMSCRIPTEN__)
+    TextIO::print(clear_code);
+    //js_terminal_handler_cls();
 #else
     TextIO::jdwrite(STDOUT_FILENO, clear_code, 7); // The string literal has a fixed length of 7
 #endif
@@ -135,30 +198,42 @@ void TextIO::setColor(uint8_t foreground, uint8_t background) {
     if (background > 7) bgs = 92;
     std::string s = "\x1B[" + std::to_string(foreground + fgs) + ";" + std::to_string(background + bgs) + "m";
 
-#ifdef _WIN32
+#if defined(_WIN32) 
     std::cout << s;
+#elif defined(__EMSCRIPTEN__)
+    TextIO::print(s);
+    //js_terminal_handler_setColor(foreground, background);
 #else
     TextIO::jdwrite(STDOUT_FILENO, s.c_str(), s.length());
 #endif
 }
 
 void TextIO::locate(int row, int col) {
-    // Using standard ANSI escape codes to position the cursor.
     std::string s = "\x1B[" + std::to_string(row) + ";" + std::to_string(col) + "H";
-
-#ifdef _WIN32
+#if defined(_WIN32) 
+    // Using standard ANSI escape codes to position the cursor.
     std::cout << s;
+#elif defined(__EMSCRIPTEN__)    
+    TextIO::print(s);
+    //js_terminal_handler_locate(row, col);
 #else
+    // Using standard ANSI escape codes to position the cursor.
     TextIO::jdwrite(STDOUT_FILENO, s.c_str(), s.length());
 #endif
 }
 
 void TextIO::setCursor(bool on) {
-    const char* code = on ? "\x1B[?25h" : "\x1B[?25l"; // ANSI code to show/hide cursor
-#ifdef _WIN32
-    std::cout << code;
+    // This is primarily a visual effect in the browser, which we can ignore for now.
+    // The native implementation remains unchanged.
+    const char* code = on ? "\x1B[?25h" : "\x1B[?25l";
+#if !defined(__EMSCRIPTEN__)
+    #if defined(_WIN32)
+        std::cout << code;
+    #else
+        TextIO::jdwrite(STDOUT_FILENO, code, 6);
+    #endif
 #else
-    TextIO::jdwrite(STDOUT_FILENO, code, 6); // The string literals have a fixed length of 6
+    TextIO::print(code);
 #endif
 }
 
@@ -177,6 +252,7 @@ void TextIO::getCursorPosition(int& row, int& col) {
         row = -1;
         col = -1;
     }
+#elif defined(__EMSCRIPTEN__)    
 #else
     // 1. Set the terminal to raw mode to read the response character by character.
     struct termios old_tio, new_tio;
@@ -209,13 +285,25 @@ void TextIO::getCursorPosition(int& row, int& col) {
 }
 
 int TextIO::getCursorX() {
+#if defined(__EMSCRIPTEN__)
+    return 0;
+    //return js_terminal_handler_getCursorX();
+#else
     int row, col;
     getCursorPosition(row, col);
     return col;
+#endif    
 }
 
 int TextIO::getCursorY() {
+#if defined(__EMSCRIPTEN__)
+    return 0;
+    //return js_terminal_handler_getCursorY();
+#else
     int row, col;
     getCursorPosition(row, col);
     return row;
+#endif    
 }
+
+

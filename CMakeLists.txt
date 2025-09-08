@@ -127,6 +127,7 @@ target_compile_definitions(jdBasic PRIVATE
     HTTP
     # JDCOM
     CPPHTTPLIB_OPENSSL_SUPPORT
+    JDEDIT
 
     # Flags for Linux (replacing Windows-specific ones like _WINSOCKAPI_)
     $<$<NOT:$<CONFIG:Debug>>:NDEBUG> # Add NDEBUG for non-debug builds

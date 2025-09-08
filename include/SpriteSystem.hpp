@@ -1,5 +1,6 @@
 #pragma once
 #ifdef SDL3
+#if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
 #include <string>
@@ -97,4 +98,5 @@ private:
     int next_group_id = 0;
     int next_instance_id = 0;
 };
+#endif
 #endif
