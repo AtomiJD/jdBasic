@@ -71,7 +71,22 @@
     </style>
 </head>
 <body class="antialiased">
-
+<!-- 
+<script>
+  fetch('https://ipapi.co/json/')
+    .then(response => response.json())
+    .then(data => {
+      const euCountries = ['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'];
+      if (euCountries.includes(data.country_code)) {
+        // Redirect the user or hide the page content
+        window.location.href = "/eu-blocked.html";
+        // Or hide the body
+        // document.body.innerHTML = '<h1>Access from your region is not permitted.</h1>';
+      }
+    })
+    .catch(error => console.error('Error fetching location:', error));
+</script>
+-->
     <!-- Header -->
     <header class="container mx-auto px-6 py-5 flex justify-between items-center">
         <div class="text-2xl font-bold font-mono text-teal-300 text-glow">jdBasic</div>
@@ -230,6 +245,9 @@ c = <span class="keyword">TENSOR.MATMUL</span>(a, b)
                 <p class="text-lg text-gray-400 max-w-2xl mx-auto mb-10">
                     Ready to dive in? Try jdBasic in your browser, download the interpreter for your OS, or read the comprehensive documentation.
                 </p>
+                <p class="text-md text-amber-300 bg-amber-900/30 border border-amber-500/50 rounded-lg max-w-3xl mx-auto p-4 mb-10">
+                    <strong>Disclaimer:</strong> jdBasic is an experimental project intended for educational and hobbyist purposes. It is provided "as is" without warranty. Please do not use it for mission-critical applications.
+                </p>
                 <div class="flex flex-wrap justify-center items-center gap-4">
                     <a href="live/index.html" target="_blank" class="btn-primary">Try in Browser</a>
                     <a href="https://github.com/AtomiJD/jdBasic/blob/master/doc/manual.md" target="_blank" class="btn-secondary">Read the Manual</a>
@@ -249,7 +267,12 @@ c = <span class="keyword">TENSOR.MATMUL</span>(a, b)
 
     <!-- Footer -->
     <footer class="text-center py-8 border-t border-gray-800/50">
-        <p class="text-gray-500">&copy; 2025 jdBasic. A powerful, modern interpreter for creators.</p>
+        <p class="text-gray-500">&copy; 2025 Computerwelt AI Solutions LLC. A powerful, modern interpreter for creators.</p>
+        <div class="mt-4">
+            <a href="https://github.com/AtomiJD/jdBasic/blob/master/LICENSE.txt" target="_blank" class="text-teal-400/70 hover:text-teal-300 transition text-sm">MIT License</a>
+            <span class="text-gray-600 mx-2">|</span>
+            <span class="text-gray-500 text-sm">Use at your own risk.</span>
+        </div>        
     </footer>
 
 </body>

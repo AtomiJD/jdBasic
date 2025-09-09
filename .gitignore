@@ -363,6 +363,10 @@ MigrationBackup/
 FodyWeavers.xsd
 
 #Atomis ausschluss Zeug
+doc/graphis/
+doc/live/
+doc/live_new/
+doc/google*.*
 doc/*_old.*
 fluppi/
 jdb/_*.*
