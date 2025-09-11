@@ -85,7 +85,7 @@ PRINT A, B, C ' Output: 10 20 30
 
 Reactive variables needs to be created explicitly with `DIM`.
 
-**`DIM var AS REAC type]`**
+**`DIM var AS REACT type]`**
 Declares a reactive variable. The `AS REACT ` clause is used for specific types.
 
 **`DIM array[size1, size2, ...] AS REACT INTEGER`**
@@ -331,8 +331,8 @@ PRINT final_result$
 
 ```basic
 PRINT "--- Processing the Pipe / Lambda Way (with Pipe Operator) ---"
-PRINT SELECT(lambda i -> i + 1, iota(10))
-PRINT SELECT(lambda i -> i + 1, iota(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
+PRINT SELECT(lambda i -> i + 1, IOTA(10))
+PRINT SELECT(lambda i -> i + 1, IOTA(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
 ```
 
 ### Function as operators
@@ -347,7 +347,7 @@ FUNC JD(x,y)
     ENDIF
 ENDFUNC
 
-PRINT 10 JD@ 5, 10 JD@ 0, iota(10) jd@ 2, iota(10) jd@ iota(10)*2, 2 jd@ [1,2,4]
+PRINT 10 JD@ 5, 10 JD@ 0, IOTA(10) jd@ 2, IOTA(10) jd@ IOTA(10)*2, 2 jd@ [1,2,4]
 'Should return:
 '2       Infinity        [0.5 1 1.5 2 2.5 3 3.5 4 4.5 5] [2 2 2 2 2 2 2 2 2 2]   [2 1 0.5]
 ```
@@ -389,8 +389,8 @@ print apply(dec@,12) ' Should return 11
 * **`OPTION option$`**: Sets a VM option. `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
-* **`IMPORT [modul]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
-* **`EXPORT MODUL [module]`**: Marks a file as EXPORT for importing with IMPORT
+* **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
+* **`EXPORT MODULE [module]`**: Marks a file as EXPORT for importing with IMPORT
 * **`DLLIMPORT [funcfile]`**: Loads the funcfile.dll or funcfile.so as dynmaic library and register all included functions for jdBasic.
 
 ### SWITCH...CASE...ENDSWITCH
@@ -472,7 +472,7 @@ ENDTRY
 ### Development & Debugging
 
 * **`COMPILE`**: Compiles the source code currently in memory into p-code.
-* **`DUMP`**: Dumps the p-code of the main program or a loaded module to the console for debugging.
+* **`DUMP [arg]`**: Dumps the p-code of the main program. "GLOBAL" -> Dumps global vars, "LOCAL" -> Dumps local vars, "STACK" -> Dumps the call stack, "REACT", "VARNAME" -> Dumps the react graph., "A MODULE NAME" ->  Dumps the p-code of a loaded module
 * **`EDIT`**: Opens the integrated text editor with the current source code.
 * **`LIST`**: Lists the current source code in memory to the console.
 * **`LOAD "filename"`**: Loads a source file from disk into memory.
@@ -483,6 +483,7 @@ ENDTRY
 * **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
 * **`CLEARWS`**: Empties source code, p-code, and all global variables
 * **`NEW`**: Empties the source code, compiled p-code, and user-defined function tables.
+* **`UNREACT(name$)`**: Remove reactive variable. name$ can be a plain var (e.g., "A"), a dotted member (e.g., "PLAYER.X") or special "ALL"/"*" to clear the entire reactive graph.
 
 ### Filesystem
 
@@ -537,13 +538,14 @@ ENDTRY
 
 ### String Functions
 
-* **`LEFT$(str$, n)`**, **`RIGHT$(str$, n)`**, **`MID$(str$, start, [len])`**: Extracts parts of a string.
+* **`LEFT$(str$, n)`**, **`RIGHT$(str$, n)`**, **`MID$(str$, start, [len])`**: Extracts parts of a string. The start position is 0 - based.
 * **`LEN(expression)`**: Returns the length of the string representation of an expression.
 * **`LCASE$(str$)`**, **`UCASE$(str$)`**, **`TRIM$(str$)`**: Manipulates string case and whitespace.
 * **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings.
 * **`CHR$(ascii_code)`**, **`ASC(char$)`**: Converts between ASCII codes and characters.
-* **`INSTR$([start, ]haystack$, needle$)`**: Finds the position of one string within another.
+* **`INSTR$([start, ]haystack$, needle$)`**: Finds the position of one string within another. Positions are 0-based. Returns -1 if not found.
 * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
+* **`FRMV$(array, [format_string$]) -> string$`**: Formats a 1D or 2D array into a string. If format_string$ is provided, it's used to format each row. Otherwise, it creates a right-aligned string matrix.
 
 ### Math/Arithmetic/Round Functions
 
@@ -575,7 +577,7 @@ ENDTRY
 
 * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
 * **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
-* **`IOTA(N)`**: Generates a 1D array of numbers from 1 to N.
+* **`IOTA(N, [B=1]) -> vector`**: Generates a vector of N numbers starting from B. B defaults to 1 if not provided.
 * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
 * **`SCAN(operator, array) -> array`**: Performs a cumulative reduction (scan) along the last axis of an array.
 * **`SELECT(function@, array, [row_wise_bool]) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument. If the optional third argument 'row_wise_bool' is TRUE, it applies the function to each row of a 2D matrix instead. The result of a row-wise select is always a 1D array.
@@ -629,7 +631,6 @@ ENDTRY
 * **`HTTP.GET$(url$)`**: Performs an HTTP GET request and returns the response body as a string.
 * **`HTTP.POST$(url$, data$, contentType$)`**: Performs an HTTP POST request with the given data and content type, returning the response body.
 * **`HTTP.PUT$(url$, data$, contentType$)`**: Performs an HTTP PUT request.
-* **`HTTP.POST_ASYNC(url$, data$, contentType$)`**: Performs an HTTP POST request asynchronously, returning a task handle that can be used with `AWAIT`.
 * **`HTTP.SETHEADER(name$, value$)`**: Sets a custom header for subsequent HTTP requests.
 * **`HTTP.CLEARHEADERS()`**: Clears all custom HTTP headers.
 * **`HTTP.STATUSCODE()`**: Returns the HTTP status code from the last request.
@@ -760,18 +761,18 @@ HTTP.SERVER.STOP
 
 #### Turtle
   
-* **`TUERTLE.FORWARD distance`**: Moves the turte forward with the distance at the given angle.
-* **`TUERTLE.BACKWARD distance`**: Moves the turte backward with the distance at the given angle.
-* **`TUERTLE.LEFT degrees`**: Subtract degrees to the turles angle.
-* **`TUERTLE.RIGHT degrees`**: Adds degrees to the turles angle.
-* **`TUERTLE.PENUP`**: Stop drawing while moving.
-* **`TUERTLE.PENDOWN`**: Begins drawing while moving.
-* **`TUERTLE.SETPOS x, y`**: Set the turle position to x,y
-* **`TUERTLE.SETHEADING degrees`**: Set the turtles angle to the degres
-* **`TUERTLE.HOME`**: Move the turtles position to the center of the cancas
-* **`TUERTLE.DRAW`**: Redraws the entire path the turtle has taken so far.
-* **`TUERTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
-* **`TUERTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
+* **`TURTLE.FORWARD distance`**: Moves the turte forward with the distance at the given angle.
+* **`TURTLE.BACKWARD distance`**: Moves the turte backward with the distance at the given angle.
+* **`TURTLE.LEFT degrees`**: Subtract degrees to the turles angle.
+* **`TURTLE.RIGHT degrees`**: Adds degrees to the turles angle.
+* **`TURTLE.PENUP`**: Stop drawing while moving.
+* **`TURTLE.PENDOWN`**: Begins drawing while moving.
+* **`TURTLE.SETPOS x, y`**: Set the turle position to x,y
+* **`TURTLE.SETHEADING degrees`**: Set the turtles angle to the degrees
+* **`TURTLE.HOME`**: Move the turtles position to the center of the canVas
+* **`TURTLE.DRAW`**: Redraws the entire path the turtle has taken so far.
+* **`TURTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
+* **`TURTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
 
 ### Type Functions
 

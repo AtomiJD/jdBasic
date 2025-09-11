@@ -2516,6 +2516,82 @@ void Commands::do_dump(NeReLaBasic& vm) {
         BasicValue stack_trace = vm.get_stacktrace();
         TextIO::print(to_string(stack_trace));
     }
+    else if (arg_str == "REACT") {
+        // Optional: allow a second argument after a comma: DUMP REACT, "NAME"
+        std::string filter_name = "";
+        Tokens::ID maybe_comma = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+        if (maybe_comma == Tokens::ID::C_COMMA) {
+            vm.pcode++; // consume comma
+            BasicValue second = vm.evaluate_expression();
+            if (Error::get() != 0) return;
+            filter_name = to_upper(to_string(second));
+        }
+
+        TextIO::print("--- Reactive Graph ---"); TextIO::nl();
+        if (vm.reactive_graph.empty()) {
+            TextIO::print("(empty)"); TextIO::nl();
+            return;
+        }
+
+        auto dump_one = [&](const std::string& name) {
+            const auto& node = vm.reactive_graph.at(name);
+
+            TextIO::print("Node: " + name); TextIO::nl();
+            TextIO::print("  live-source: " + std::string(vm.react_variables.count(name) ? "YES" : "no")); TextIO::nl();
+
+            // best-effort peek at value
+            auto vit = vm.variables.find(name);
+            if (vit != vm.variables.end()) {
+                TextIO::print("  value: " + to_string(vit->second)); TextIO::nl();
+            }
+            else {
+                TextIO::print("  value: (n/a)"); TextIO::nl();
+            }
+
+            // expression p-code presence
+            TextIO::print("  expr_pcode_bytes: " + std::to_string(node.expression_pcode.size())); TextIO::nl();
+
+            // dependencies
+            TextIO::print("  depends on: ");
+            if (node.dependencies.empty()) TextIO::print("(none)");
+            else {
+                bool first = true;
+                for (const auto& d : node.dependencies) {
+                    if (!first) TextIO::print(", ");
+                    TextIO::print(d);
+                    first = false;
+                }
+            }
+            TextIO::nl();
+
+            // dependents
+            TextIO::print("  dependents: ");
+            if (node.dependents.empty()) TextIO::print("(none)");
+            else {
+                bool first = true;
+                for (const auto& d : node.dependents) {
+                    if (!first) TextIO::print(", ");
+                    TextIO::print(d);
+                    first = false;
+                }
+            }
+            TextIO::nl();
+            };
+
+        if (!filter_name.empty()) {
+            if (vm.reactive_graph.count(filter_name)) {
+                dump_one(filter_name);
+            }
+            else {
+                TextIO::print("No reactive node named '" + filter_name + "'."); TextIO::nl();
+            }
+        }
+        else {
+            for (const auto& kv : vm.reactive_graph) {
+                dump_one(kv.first);
+            }
+        }
+    }
     else {
         // Fallback to original behavior: dump p-code for a module.
         if (vm.compiled_modules.count(arg_str)) {

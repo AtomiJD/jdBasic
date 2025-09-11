@@ -2182,6 +2182,8 @@ BasicValue builtin_right_str(NeReLaBasic& vm, const std::vector<BasicValue>& arg
 }
 
 // MID$(string_or_array, start, [length]) -> string or array
+// Returns a substring or sub-array.
+// Start position is 0 - based.
 BasicValue builtin_mid_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() < 2 || args.size() > 3) {
         Error::set(8, vm.runtime_current_line, "MID$ requires 2 or 3 arguments.");
@@ -2189,7 +2191,7 @@ BasicValue builtin_mid_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     }
 
     const BasicValue& input = args[0];
-    int start = static_cast<int>(to_double(args[1])) - 1; // BASIC is 1-indexed
+    int start = static_cast<int>(to_double(args[1]));
     if (start < 0) start = 0;
 
     // Helper lambda to perform the core MID$ operation on a single string.
@@ -2296,9 +2298,14 @@ BasicValue builtin_trim_str(NeReLaBasic& vm, const std::vector<BasicValue>& args
     return apply_string_op(args[0], op);
 }
 
-// INSTR([start], haystack$, needle$) - Overloaded
+// INSTR([start], haystack$, needle$) -> number
+// Finds the starting position of needle$ in haystack$.
+// Positions are 0-based. Returns -1 if not found.
 BasicValue builtin_instr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 2 || args.size() > 3) return 0.0;
+    if (args.size() < 2 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "INSTR requires 2 or 3 arguments.");
+        return -1.0;
+    }
 
     size_t start_pos = 0;
     std::string haystack, needle;
@@ -2308,20 +2315,21 @@ BasicValue builtin_instr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         needle = to_string(args[1]);
     }
     else {
-        start_pos = static_cast<size_t>(to_double(args[0])) - 1;
+        // Start position is now 0-based
+        start_pos = static_cast<size_t>(to_double(args[0]));
         haystack = to_string(args[1]);
         needle = to_string(args[2]);
     }
 
-    if (start_pos >= haystack.length()) return 0.0;
+    if (start_pos > haystack.length()) return -1.0;
 
     size_t found_pos = haystack.find(needle, start_pos);
 
     if (found_pos == std::string::npos) {
-        return 0.0; // Not found
+        return -1.0; // Not found, return -1
     }
     else {
-        return static_cast<double>(found_pos + 1); // Return 1-indexed position
+        return static_cast<double>(found_pos); // Return 0-indexed position
     }
 }
 
@@ -4359,22 +4367,29 @@ BasicValue builtin_filter(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return result_ptr;
 }
 
-// IOTA(N) -> vector
-// Generates a vector of numbers from 1 to N.
+// IOTA(N, [B=1]) -> vector
+// Generates a vector of N numbers starting from B.
+// B defaults to 1 if not provided.
 BasicValue builtin_iota(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) {
+    if (args.size() < 1 || args.size() > 2) {
         Error::set(8, vm.runtime_current_line); // Wrong number of arguments
         return {}; // Return an empty BasicValue
     }
     int count = static_cast<int>(to_double(args[0]));
     if (count < 0) count = 0;
 
+    int base = 1; // Default base is 1
+    if (args.size() == 2) {
+        base = static_cast<int>(to_double(args[1]));
+    }
+
     auto new_array_ptr = std::make_shared<Array>();
     new_array_ptr->shape = { (size_t)count };
     new_array_ptr->data.reserve(count);
 
-    for (int i = 1; i <= count; ++i) {
-        new_array_ptr->data.push_back(static_cast<double>(i));
+    // Loop generates 'count' numbers starting from 'base'.
+    for (int i = 0; i < count; ++i) {
+        new_array_ptr->data.push_back(static_cast<double>(base + i));
     }
 
     return new_array_ptr;
@@ -5936,6 +5951,58 @@ BasicValue builtin_clearws(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     return false; // This is a procedure
 }
 
+
+// UNREACT(name$)
+//   name$ can be a plain var (e.g., "A"), a dotted member (e.g., "PLAYER.X"),
+//   or special "ALL"/"*" to clear the entire reactive graph.
+static BasicValue builtin_unreact(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "UNREACT requires exactly one string argument.");
+        return false; // procedure
+    }
+
+    std::string target = to_upper(to_string(args[0]));
+    if (target.empty()) return false;
+
+    // Clear entire graph: UNREACT "ALL" or UNREACT "*"
+    if (target == "ALL" || target == "*") {
+        vm.reactive_graph.clear();
+        // NOTE: we intentionally do NOT clear vm.react_variables here so sources
+        // still trigger propagation in case new reactive nodes are created later.
+        return false;
+    }
+
+    auto it = vm.reactive_graph.find(target);
+    if (it == vm.reactive_graph.end()) {
+        TextIO::print("UNREACT: no reactive expression for '" + target + "'."); TextIO::nl();
+        return false;
+    }
+
+    // 1) Remove back-links from each dependency's dependents[]
+    for (const auto& dep : it->second.dependencies) {
+        auto dIt = vm.reactive_graph.find(dep);
+        if (dIt != vm.reactive_graph.end()) {
+            auto& vec = dIt->second.dependents;
+            vec.erase(std::remove(vec.begin(), vec.end(), target), vec.end());
+        }
+    }
+
+    // 2) Remove forward-links from each dependent's dependencies[]
+    for (const auto& depd : it->second.dependents) {
+        auto ddIt = vm.reactive_graph.find(depd);
+        if (ddIt != vm.reactive_graph.end()) {
+            auto& vec = ddIt->second.dependencies;
+            vec.erase(std::remove(vec.begin(), vec.end(), target), vec.end());
+        }
+    }
+
+    // 3) Remove the node itself
+    vm.reactive_graph.erase(it);
+
+    return false;
+}
+
+
 // --- Filesystem ---
 // 
 // // DIR$(wildcard$) -> array
@@ -7137,6 +7204,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("ASC", 1, builtin_asc);
     register_func("CHR$", 1, builtin_chr_str);
     register_func("INSTR$", -1, builtin_instr); // -1 for variable args
+    register_func("INSTR", -1, builtin_instr); // -1 for variable args
     register_func("LCASE$", 1, builtin_lcase_str);
     register_func("UCASE$", 1, builtin_ucase_str);
     register_func("TRIM$", 1, builtin_trim_str);
@@ -7184,7 +7252,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SHR", 2, builtin_shr);
 
     // --- Register APL-style Array Functions ---
-    register_func("IOTA", 1, builtin_iota);
+    register_func("IOTA", -1, builtin_iota);
     register_func("RESHAPE", -1, builtin_reshape);
     register_func("REVERSE", 1, builtin_reverse);
     register_func("TRANSPOSE", 1, builtin_transpose);
@@ -7354,6 +7422,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("LOADWS", 1, builtin_loadws);
     register_proc("CLEARWS", 0, builtin_clearws);
     register_proc("NEW", 0, builtin_new);
+    register_proc("UNREACT", 1, builtin_unreact);
 
     register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
     register_func("DIR$", 1, builtin_dir_str);
