@@ -159,7 +159,6 @@ endif
 print "done"
 PRINT "--- String, Math and DATE Function Test COMPLETE ---"
 
-
 funci:
 Print "Functional tests"
 print

@@ -33,7 +33,7 @@ static double convert_double_literal(const std::string& s) {
     }
 }
 
-static int convert_numeric_literal(const std::string& s) {
+static long long convert_numeric_literal(const std::string& s) {
     if (s.empty()) return 0.0;
 
     char prefix = s[0];
@@ -41,17 +41,17 @@ static int convert_numeric_literal(const std::string& s) {
 
     try {
         if (prefix == '$') {
-            return static_cast<int>(std::stoll(value_str, nullptr, 16));
+            return static_cast<long long>(std::stoll(value_str, nullptr, 16));
         }
         if (prefix == '%') {
-            return static_cast<int>(std::stoll(value_str, nullptr, 2));
+            return static_cast<long long>(std::stoll(value_str, nullptr, 2));
         }
         // If no prefix, it's a standard decimal number.
-        return std::stoi(s);
+        return std::stoll(s);
     }
     catch (const std::exception&) {
         // Return 0.0 if conversion fails
-        return 0;
+        return 0LL;
     }
 }
 
@@ -356,6 +356,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     case '-': return Tokens::ID::C_MINUS;
     case '*': return Tokens::ID::C_ASTR;
     case '/': return Tokens::ID::C_SLASH;
+    case '\\': return Tokens::ID::C_BACKSLASH;
     case '(': return Tokens::ID::C_LEFTPAREN;
     case ')': return Tokens::ID::C_RIGHTPAREN;
     case '=': return Tokens::ID::C_EQ;
@@ -1385,10 +1386,10 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                         // It's an integer literal.
                         try {
                             out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::INTEGER_LITERAL));
-                            int value = convert_numeric_literal(vm.buffer);
-                            uint8_t int_bytes[sizeof(int)];
-                            memcpy(int_bytes, &value, sizeof(int));
-                            out_p_code.insert(out_p_code.end(), int_bytes, int_bytes + sizeof(int));
+                            long long value = convert_numeric_literal(vm.buffer);
+                            uint8_t int_bytes[sizeof(long long)];
+                            memcpy(int_bytes, &value, sizeof(long long));
+                            out_p_code.insert(out_p_code.end(), int_bytes, int_bytes + sizeof(long long));
                         }
                         catch (const std::out_of_range&) {
                             // The number is too big for an int, so fall back to double.

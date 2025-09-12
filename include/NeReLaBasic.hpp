@@ -342,6 +342,12 @@ public:
     // A simple, fast-lookup set of all variable names declared as REACT.
     std::unordered_set<std::string> react_variables;
 
+    // Lint and Pretty and Strict and explicit
+    bool pretty_keywords_vb = false;
+    int pretty_indent_width = 4;
+    bool option_explicit = false;
+    bool option_sctrict = false;
+
     NeReLaBasic(const NeReLaBasic& other);
 
     // --- Member Functions ---

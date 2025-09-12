@@ -147,6 +147,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="source\BetterCodeFunctions.cpp" />
     <ClCompile Include="source\BuiltinFunctions.cpp" />
     <ClCompile Include="source\Commands.cpp" />
     <ClCompile Include="source\Compiler.cpp" />
@@ -169,12 +170,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\AIFunctions.hpp" />
+    <ClInclude Include="include\BetterCodeFunctions.hpp" />
     <ClInclude Include="include\BuiltinFunctions.hpp" />
     <ClInclude Include="include\Commands.hpp" />
     <ClInclude Include="include\Compiler.hpp" />
     <ClInclude Include="include\DAPHandler.hpp" />
     <ClInclude Include="include\Error.hpp" />
     <ClInclude Include="include\Graphics.hpp" />
+    <ClInclude Include="include\KeywordRepository.hpp" />
     <ClInclude Include="include\LocaleManager.hpp" />
     <ClInclude Include="include\NeReLaBasic.hpp" />
     <ClInclude Include="include\SoundSystem.hpp" />

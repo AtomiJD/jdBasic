@@ -2373,9 +2373,10 @@ BasicValue NeReLaBasic::parse_primary() {
             current_value = value;
         }
         else if (token == Tokens::ID::INTEGER_LITERAL) {
-            pcode++; int value;
-            memcpy(&value, &(*active_p_code)[pcode], sizeof(int));
-            pcode += sizeof(int);
+            pcode++; 
+            long long value;
+            memcpy(&value, &(*active_p_code)[pcode], sizeof(long long));
+            pcode += sizeof(long long);
             current_value = value;
         }
         else if (token == Tokens::ID::STRING) {
@@ -2783,7 +2784,7 @@ BasicValue NeReLaBasic::parse_factor() {
     BasicValue left = parse_power();
     while (true) {
         Tokens::ID op = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::MOD || op == Tokens::ID::FUNCREF) {
+        if (op == Tokens::ID::C_ASTR || op == Tokens::ID::C_SLASH || op == Tokens::ID::C_BACKSLASH || op == Tokens::ID::MOD || op == Tokens::ID::FUNCREF) {
             pcode++;
 
             // --- Handle user-defined operators ---
@@ -2874,6 +2875,11 @@ BasicValue NeReLaBasic::parse_factor() {
                         if (std::holds_alternative<std::shared_ptr<Tensor>>(right)) { Error::set(1, runtime_current_line, "Tensor-by-Tensor division is not supported."); return {}; }
                         left = tensor_scalar_divide(*this, left, right);
                     }
+                    else if (op == Tokens::ID::C_BACKSLASH) {
+                        Error::set(1, runtime_current_line, "Integer division (\\) is not supported for Tensors.");
+                        return {};
+
+                    }
                     else { // MOD
                         Error::set(1, runtime_current_line, "MOD operator is not supported for Tensors."); return {};
                     }
@@ -2930,6 +2936,14 @@ BasicValue NeReLaBasic::parse_factor() {
                                     if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
                                     res = arr_is_left ? arr_val / scalar : scalar / arr_val;
                                 }
+                                else if (op == Tokens::ID::C_BACKSLASH) { // integer division, trunc toward 0
+                                    if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) {
+                                        Error::set(2, runtime_current_line, "Division by zero."); return false;
+                                    }
+                                    double q = arr_is_left ? (arr_val / scalar) : (scalar / arr_val);
+                                    // store as integer but Array holds doubles; keep numeric value integral
+                                    res = static_cast<double>(static_cast<long long>(q));
+                                }
                                 else { // MOD
                                     if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
                                     res = static_cast<double>(arr_is_left ? static_cast<long long>(arr_val) % static_cast<long long>(scalar) : static_cast<long long>(scalar) % static_cast<long long>(arr_val));
@@ -2946,6 +2960,7 @@ BasicValue NeReLaBasic::parse_factor() {
                                 double val_l = to_double(l->data[i]); double val_r = to_double(r->data[i]); double res = 0;
                                 if (op == Tokens::ID::C_ASTR) res = val_l * val_r;
                                 else if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; } res = val_l / val_r; }
+                                else if (op == Tokens::ID::C_BACKSLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; } res = static_cast<double>(static_cast<long long>(val_l / val_r)); }
                                 else { if (val_r == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; } res = static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
                                 result_ptr->data.push_back(res);
                             }
@@ -2958,6 +2973,7 @@ BasicValue NeReLaBasic::parse_factor() {
                                 double val_l = to_double(l); double val_r = to_double(r);
                                 if (op == Tokens::ID::C_ASTR) return val_l * val_r;
                                 if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
+                                if (op == Tokens::ID::C_BACKSLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } double q = val_l / val_r; return static_cast<long long>(q); }
                                 if (op == Tokens::ID::MOD) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
                             }
                             else {
@@ -2966,9 +2982,10 @@ BasicValue NeReLaBasic::parse_factor() {
                                     int right_i = to_int(r);
                                     return left_i * right_i;
                                 }
-                                double val_l = to_double(l); double val_r = to_double(r);
-                                if (op == Tokens::ID::C_SLASH) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
-                                if (op == Tokens::ID::MOD) { if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
+                                
+                                if (op == Tokens::ID::C_SLASH) { double val_l = to_double(l); double val_r = to_double(r); if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
+                                if (op == Tokens::ID::C_BACKSLASH) {long long val_l = to_int(l); long long val_r = to_int(r); if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
+                                if (op == Tokens::ID::MOD) { double val_l = to_double(l); double val_r = to_double(r); if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
                             }
                         }
                         return false;
@@ -3291,9 +3308,10 @@ BasicValue NeReLaBasic::parse_bitwise_and() {
         left = std::visit([](auto&& l, auto&& r) -> BasicValue {
             // Vectorized logic for bitwise operators
             auto bitwise_op = [](const BasicValue& v1, const BasicValue& v2) {
-                long long n1 = static_cast<long long>(to_double(v1));
-                long long n2 = static_cast<long long>(to_double(v2));
-                return static_cast<double>(n1 & n2);
+                //long long n1 = static_cast<long long>(to_double(v1));
+                //long long n2 = static_cast<long long>(to_double(v2));
+                //return static_cast<double>(n1 & n2);
+                return static_cast<long long>(to_int(v1) & to_int(v2));
                 };
             return apply_binary_op(l, r, bitwise_op);
             }, left, right);
@@ -3310,9 +3328,10 @@ BasicValue NeReLaBasic::parse_bitwise_xor() {
 
         left = std::visit([](auto&& l, auto&& r) -> BasicValue {
             auto bitwise_op = [](const BasicValue& v1, const BasicValue& v2) {
-                long long n1 = static_cast<long long>(to_double(v1));
-                long long n2 = static_cast<long long>(to_double(v2));
-                return static_cast<double>(n1 ^ n2);
+                //long long n1 = static_cast<long long>(to_double(v1));
+                //long long n2 = static_cast<long long>(to_double(v2));
+                //return static_cast<double>(n1 ^ n2);
+                return static_cast<long long>(to_int(v1) ^ to_int(v2));
                 };
             return apply_binary_op(l, r, bitwise_op);
             }, left, right);
@@ -3329,9 +3348,10 @@ BasicValue NeReLaBasic::parse_bitwise_or() {
 
         left = std::visit([](auto&& l, auto&& r) -> BasicValue {
             auto bitwise_op = [](const BasicValue& v1, const BasicValue& v2) {
-                long long n1 = static_cast<long long>(to_double(v1));
-                long long n2 = static_cast<long long>(to_double(v2));
-                return static_cast<double>(n1 | n2);
+                //long long n1 = static_cast<long long>(to_double(v1));
+                //long long n2 = static_cast<long long>(to_double(v2));
+                //return static_cast<double>(n1 | n2);
+                return static_cast<long long>(to_int(v1) | to_int(v2));
                 };
             return apply_binary_op(l, r, bitwise_op);
             }, left, right);
@@ -3355,7 +3375,7 @@ void NeReLaBasic::skip_primary() {
         pcode += sizeof(double); // Skip the 8-byte double literal
         break;
     case Tokens::ID::INTEGER_LITERAL:
-        pcode += sizeof(int); // Skip the 8-byte double literal
+        pcode += sizeof(long long); // Skip the long long literal
         break;
     case Tokens::ID::STRING:
     case Tokens::ID::VARIANT:
@@ -3466,7 +3486,7 @@ void NeReLaBasic::skip_binary_op_chain(std::function<void()> skip_higher_precede
 }
 
 void NeReLaBasic::skip_power() { skip_binary_op_chain([this] { skip_unary(); }, { Tokens::ID::C_CARET }); }
-void NeReLaBasic::skip_factor() { skip_binary_op_chain([this] { skip_power(); }, { Tokens::ID::C_ASTR, Tokens::ID::C_SLASH, Tokens::ID::MOD, Tokens::ID::FUNCREF }); }
+void NeReLaBasic::skip_factor() { skip_binary_op_chain([this] { skip_power(); }, { Tokens::ID::C_ASTR, Tokens::ID::C_SLASH, Tokens::ID::MOD, Tokens::ID::FUNCREF, Tokens::ID::C_BACKSLASH }); }
 void NeReLaBasic::skip_term() { skip_binary_op_chain([this] { skip_factor(); }, { Tokens::ID::C_PLUS, Tokens::ID::C_MINUS }); }
 void NeReLaBasic::skip_comparison() { skip_binary_op_chain([this] { skip_term(); }, { Tokens::ID::C_EQ, Tokens::ID::C_NE, Tokens::ID::C_LT, Tokens::ID::C_GT, Tokens::ID::C_LE, Tokens::ID::C_GE }); }
 void NeReLaBasic::skip_membership() { skip_binary_op_chain([this] { skip_comparison(); }, { Tokens::ID::IN_OPERATOR }); }

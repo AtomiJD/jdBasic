@@ -16,6 +16,83 @@ jdBasic supports a variety of data types. While variables are variants and can h
 * **JsonObject**: A special type returned by `JSON.PARSE$`, which can be accessed like a Map or Array.
 * **ComObject**: A special type returned by `CREATEOBJECT`, representing an instance of a COM Automation object.
 
+## Numeric Semantics
+
+jdBasic has two scalar numeric types:
+
+* **INTEGER** — signed 64-bit: `-9,223,372,036,854,775,808 … 9,223,372,036,854,775,807`
+* **DOUBLE** — IEEE-754 64-bit floating point
+
+### Literals
+
+* Plain digits (no decimal/exponent) → **INTEGER**: `0`, `42`, `9223372036854775807`
+* With decimal point → **DOUBLE**: `1.0`
+* Hex/bin: `$FF`, `%1010` → **INTEGER**
+
+### Conversions
+
+* **Promotion:** In mixed expressions, `INTEGER` promotes to `DOUBLE`.
+* **Narrowing:** `DOUBLE → INTEGER` occurs when assigning to an integer variable or when using integer-only operators; conversion **truncates toward zero**.
+* **Overflow:** If a result doesn’t fit in 64-bit signed range → DOUBLE.
+
+### Operators
+
+| Operator                              | Operands                   | Result  | Notes                                                                                           |
+| ------------------------------------- | -------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `+` `-` `*`                           | `INTEGER, INTEGER`         | INTEGER | Integer arithmetic (overflow policy applies).                                                   |
+| `+` `-` `*`                           | otherwise                  | DOUBLE  | If any side is DOUBLE, result is DOUBLE.                                                        |
+| `/`                                   | any                        | DOUBLE  | Floating division.                                                                              |
+| `\`                                   | numeric (integer division) | INTEGER | **Truncates toward zero**; division by zero is an error.                                        |
+| `MOD`                                 | numeric remainder          | INTEGER | `a - trunc(a/b) * b`; division by zero is an error.                                             |
+| `^`                                   | numeric                    | DOUBLE  | Power.                                                                                          |
+| `BAND` `BOR` `BXOR` `NOT` `SHL` `SHR` | numeric                    | INTEGER | Operands coerced to 64-bit integer (trunc toward 0 first). Shift counts are clamped to `0..63`. |
+
+**Arrays:** `+ - * / \ MOD` and bitwise ops apply **element-wise** for arrays of equal shape. Scalar–array operations broadcast the scalar.
+**Tensors:** `/` is supported; `\` (integer division) and `MOD` are **not supported** for tensors.
+
+### Comparisons
+
+* `INTEGER` vs `INTEGER` → integer comparison
+* `DOUBLE` vs `DOUBLE` → double comparison
+* Mixed → promote to **DOUBLE** for comparison
+
+### `TYPEOF`
+
+Returns `"INTEGER"` for 64-bit integers and `"DOUBLE"` for floating point values.
+
+### Interop (COM)
+
+* `VT_I8` maps to jdBasic **INTEGER**
+* `VT_UI8` maps to **INTEGER** when ≤ `2^63-1`, otherwise to **DOUBLE**
+* Other COM numeric types map to **DOUBLE**
+
+### Examples
+
+```basic
+' Basic arithmetic
+PRINT 5 / 2          ' 2.5   (DOUBLE)
+PRINT 5 \ 2          ' 2     (INTEGER, trunc toward 0)
+PRINT -5 \ 2         ' -2
+PRINT 5 MOD 2        ' 1
+
+' Mixed numeric types
+PRINT 2 * 3          ' 6     (INTEGER)
+PRINT 2 * 3.0        ' 6     (DOUBLE)
+PRINT TYPEOF(2 * 3), TYPEOF(2 * 3.0)  ' INTEGER, DOUBLE
+
+' Bitwise are integer-only
+PRINT 5 BAND 3       ' 1
+PRINT TYPEOF(5 BAND 3)  ' INTEGER
+PRINT SHL(1, 65)     ' shift count clamped to 63
+
+' Arrays (element-wise; scalar broadcast)
+PRINT [1,2,3] \ 2           ' [0 1 1]
+PRINT 10 \ [3,4]            ' [3 2]
+PRINT [5,6,7,8] MOD [2,3,2,3]  ' [1 0 1 2]
+```
+
+> **Notes for users coming from other BASICs:** `/` always returns a floating result; use `\` for integer division. Bitwise operators return **INTEGER** results and truncate floating operands to integers before operating.
+
 ## Variables and Assignment
 
 Variables are created on their first use or explicitly with `DIM`.
@@ -386,7 +463,14 @@ print apply(dec@,12) ' Should return 11
 * **`FOR EACH variable IN collection`**: This command provides a simple way to iterate over every element in a collection, such as an Array or a Map.
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
-* **`OPTION option$`**: Sets a VM option. `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
+* **`OPTION option$`**: Sets a VM option.
+  * `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
+  * `OPTION "EXPLICIT"` enforces declarations: variables **must** be introduced with `DIM` before first use (read or write). With **EXPLICITOFF** (default), variables are created on first use and default to `0` (numeric) or `""` (string).
+    * **Reads** of undeclared names: error 27 “Undeclared variable”.
+    * **Writes** to undeclared names: error 27.
+    * `DIM` always declares (even with EXPLICIT on).
+    * `FOR` / `FOR EACH` loop variables must be declared when EXPLICIT is on.
+    * Disable with `OPTION "NOEXPLICIT"` or `OPTION "EXPLICITOFF"`.
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
@@ -472,6 +556,8 @@ ENDTRY
 ### Development & Debugging
 
 * **`COMPILE`**: Compiles the source code currently in memory into p-code.
+* **`PRETTY [PREVIEW] [STYLE UPPER|VB] [WIDTH n]`**:  Formats loaded source code in-place (unless PREVIEW).
+* **`LINT`**: Check the loaded source code for extra LINT conditions like Unclosed block, unused parameter and unused variable.
 * **`DUMP [arg]`**: Dumps the p-code of the main program. "GLOBAL" -> Dumps global vars, "LOCAL" -> Dumps local vars, "STACK" -> Dumps the call stack, "REACT", "VARNAME" -> Dumps the react graph., "A MODULE NAME" ->  Dumps the p-code of a loaded module
 * **`EDIT`**: Opens the integrated text editor with the current source code.
 * **`LIST`**: Lists the current source code in memory to the console.
@@ -565,19 +651,19 @@ ENDTRY
 
 ### Regular Expression Functions
 
-* **`REGEX.MATCH(pattern$, text$)`**: Checks if the entire `text$` string matches the `pattern$`.
+* **`REGEX.MATCH(pattern$, text$) -> Boolean or Array`**: Checks if the entire `text$` string matches the `pattern$`.
   * Returns `TRUE` or `FALSE` if the pattern has no capture groups.
   * If the pattern contains capture groups `(...)`, it returns a 1D array of the captured substrings upon a successful match, otherwise `FALSE`.
-* **`REGEX.FINDALL(pattern$, text$)`**: Finds all non-overlapping occurrences of `pattern$` in `text$`.
+* **`REGEX.FINDALL(pattern$, text$) -> Array`**: Finds all non-overlapping occurrences of `pattern$` in `text$`.
   * Returns a 1D array of all matches found.
   * If the pattern contains capture groups, it returns a 2D array where each row contains the groups for a single match.
-* **`REGEX.REPLACE(pattern$, text$, replacement$)`**: Replaces all occurrences of `pattern$` in `text$` with `replacement$`. The replacement string can use backreferences like `$1`, `$2` to insert captured group content.
+* **`REGEX.REPLACE(pattern$, text$, replacement$) -> String`**: Replaces all occurrences of `pattern$` in `text$` with `replacement$`. The replacement string can use backreferences like `$1`, `$2` to insert captured group content.
 
 ### Array & Matrix Functions
 
 * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
 * **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
-* **`IOTA(N, [B=1]) -> vector`**: Generates a vector of N numbers starting from B. B defaults to 1 if not provided.
+* **`IOTA(N, [B=1], [S=1]) -> vector`**: Generates a vector of N numbers starting from B with step S. B,S defaults to 1 if not provided.
 * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
 * **`SCAN(operator, array) -> array`**: Performs a cumulative reduction (scan) along the last axis of an array.
 * **`SELECT(function@, array, [row_wise_bool]) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument. If the optional third argument 'row_wise_bool' is TRUE, it applies the function to each row of a 2D matrix instead. The result of a row-wise select is always a 1D array.

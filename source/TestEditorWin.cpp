@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include "TextEditor.hpp"
+#include "KeywordRepository.hpp"
 #include <windows.h>
 #include <vector>
 #include <string>
@@ -21,15 +22,6 @@ public:
 
         if (lines_ref.empty()) lines_ref.push_back("");
 
-        keywords = {
-            "PRINT", "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "NEXT", "STEP",
-            "GOTO", "FUNC", "ENDFUNC", "SUB", "ENDSUB", "RETURN", "STOP", "RESUME",
-            "DIM", "AS", "INTEGER", "STRING", "DOUBLE", "DATE", "LEFT$", "RIGHT$",
-            "MID$", "LEN", "ASC", "CHR$", "INSTR", "LCASE$", "UCASE$", "TRIM$",
-            "INKEY$", "VAL", "STR$", "SIN", "COS", "TAN", "SQR", "RND", "TICK",
-            "NOW", "DATE$", "TIME$", "DATEADD", "CVDATE", "CLS", "LOCATE", "SLEEP",
-            "CURSOR", "DIR", "CD", "PWD", "COLOR", "MKDIR", "KILL", "REM"
-        };
     }
 
     void run();
@@ -37,7 +29,6 @@ public:
 private:
     std::vector<std::string>& lines_ref;
     std::string filename;
-    std::unordered_set<std::string> keywords;
     HANDLE hOut;
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     int screen_cols, screen_rows;
@@ -326,7 +317,7 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
             std::wstring word = wline.substr(start, i - start);
             std::string ascii_word = wstring_to_string(word);
             std::transform(ascii_word.begin(), ascii_word.end(), ascii_word.begin(), ::toupper);
-            WORD kwAttr = keywords.count(ascii_word) ? (FOREGROUND_RED | FOREGROUND_INTENSITY) : attr;
+            WORD kwAttr = KeywordRepository::is_keyword(ascii_word) ? (FOREGROUND_RED | FOREGROUND_INTENSITY) : attr;
             for (size_t j = 0; j < word.length() && col < screen_cols; ++j, ++col) {
                 buffer[col].Char.UnicodeChar = word[j];
                 buffer[col].Attributes = kwAttr;

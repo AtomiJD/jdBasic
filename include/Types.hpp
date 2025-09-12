@@ -169,9 +169,9 @@ struct ThreadHandle {
 
 // --- Use a std::shared_ptr to break the circular dependency ---
 #ifdef JDCOM
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, long long, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, ComObject, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
 #else
-using BasicValue = std::variant<bool, double, std::string, FunctionRef, int, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
+using BasicValue = std::variant<bool, double, std::string, FunctionRef, long long, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
 #endif
 
 
@@ -251,17 +251,17 @@ struct Tensor {
 // multiple .cpp files without causing linker errors.
 //==============================================================================
 
-// Helper to convert a BasicValue to a int for math operations.
-inline int to_int(const BasicValue& val) {
-    if (std::holds_alternative<int>(val)) {
-        return std::get<int>(val);
+// Helper to convert a BasicValue to a long long for math operations.
+inline long long to_int(const BasicValue& val) {
+    if (std::holds_alternative<long long>(val)) {
+        return std::get<long long>(val);
     }
     if (std::holds_alternative<double>(val)) {
         // Truncate the double, as BASIC's INT function does.
-        return static_cast<int>(std::get<double>(val));
+        return static_cast<long long>(std::get<double>(val));
     }
     if (std::holds_alternative<bool>(val)) {
-        return std::get<bool>(val) ? 1 : 0;
+        return std::get<bool>(val) ? 1LL : 0LL;
     }
     if (std::holds_alternative<std::shared_ptr<Array>>(val)) {
         const auto& arr_ptr = std::get<std::shared_ptr<Array>>(val);
@@ -280,8 +280,8 @@ inline double to_double(const BasicValue& val) {
     if (std::holds_alternative<double>(val)) {
         return std::get<double>(val);
     }
-    if (std::holds_alternative<int>(val)) { 
-        return static_cast<double>(std::get<int>(val));
+    if (std::holds_alternative<long long>(val)) {
+        return static_cast<double>(std::get<long long>(val));
     }
     if (std::holds_alternative<bool>(val)) {
         return std::get<bool>(val) ? 1.0 : 0.0;

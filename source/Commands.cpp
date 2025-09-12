@@ -26,7 +26,6 @@
 #include "LocaleManager.hpp"
 #include "BuiltinFunctions.hpp"
 
-
 namespace { // Use an anonymous namespace to keep this helper local to this file
     // Forward declaration of the recursive part
     std::string array_to_string_recursive(
@@ -142,6 +141,17 @@ BasicValue& get_variable(NeReLaBasic& vm, const std::string& name) {
         }
     }
 
+    auto git = vm.variables.find(name);
+    if (git != vm.variables.end()) {
+        return git->second;
+    }
+
+    if (vm.option_explicit) {
+        static BasicValue dummy = 0.0; // harmless placeholder after error
+        Error::set(27, vm.runtime_current_line, "Undeclared variable '" + name + "'. Use DIM or turn OPTION EXPLICIT OFF.");
+        return dummy;
+    }
+
     // 2. If not found in any local scope, check the global scope.
     // Note: Using .at() would throw an error if the key doesn't exist.
     // Using operator[] will create it if it doesn't exist, which is the
@@ -168,14 +178,28 @@ void set_variable(NeReLaBasic& vm, const std::string& name, const BasicValue& va
             return;
         }
 
+        // new name
+        if (vm.option_explicit && !force) {
+            Error::set(27, vm.runtime_current_line, "Undeclared variable '" + name + "'. Use DIM first.");
+            return;
+        }
+
         // Finally, if it's not in the local scope and not in the global scope,
         // it is a brand new variable, which we will define as local to the subroutine.
         vm.call_stack.back().local_variables[name] = value;
+        return;
     }
-    else {
-        // Not in a subroutine, so it must be a global variable.
+
+    // Not in a subroutine, so it must be a global variable.
+    if (vm.variables.count(name)) {
         vm.variables[name] = value;
+        return;
     }
+    if (vm.option_explicit && !force) {
+        Error::set(27, vm.runtime_current_line, "Undeclared variable '" + name + "'. Use DIM first.");
+        return;
+    }
+    vm.variables[name] = value;
 }
 
 std::string to_string(const BasicValue& val) {
@@ -202,7 +226,7 @@ std::string to_string(const BasicValue& val) {
             }
             return s;
         }
-        else if constexpr (std::is_same_v<T, int>) {
+        else if constexpr (std::is_same_v<T, long long>) {
             std::stringstream ss;
             ss.imbue(LocaleManager::get_current_locale());
             ss << arg;
@@ -552,7 +576,7 @@ void Commands::do_dim(NeReLaBasic& vm) {
                 if (Error::get() != 0) return; // Stop if the type was invalid
                 new_array_ptr->data.push_back(default_instance);
             }
-            set_variable(vm, var_name, new_array_ptr);
+            set_variable(vm, var_name, new_array_ptr, true);
         }
         else {
             // --- This is for single variables (e.g., DIM N AS INTEGER) ---
@@ -561,7 +585,7 @@ void Commands::do_dim(NeReLaBasic& vm) {
             }
             BasicValue default_instance = create_default_instance(vm, type_name, var_name);
             if (Error::get() != 0) return;
-            set_variable(vm, var_name, default_instance);
+            set_variable(vm, var_name, default_instance, true);
         }
 
         // Part 4: Check for a comma to continue the list
@@ -1161,7 +1185,8 @@ void Commands::do_for(NeReLaBasic& vm) {
     BasicValue start_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
     // FOR always create a new local or global var!
-    set_variable(vm, var_name, start_val, true);
+    set_variable(vm, var_name, start_val, !vm.option_explicit);
+    if (Error::get() != 0) return;
 
     // 4. The 'TO' keyword was skipped by the tokenizer. Evaluate the end expression.
     BasicValue end_val = vm.evaluate_expression();

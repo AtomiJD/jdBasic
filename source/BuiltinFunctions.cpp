@@ -3,6 +3,7 @@
 #include "Compiler.hpp"
 #include "BuiltinFunctions.hpp"
 #include "AIFunctions.hpp"
+#include "BetterCodeFunctions.hpp"
 #include "TextIO.hpp"
 #include "Error.hpp"
 #include "Types.hpp"
@@ -68,8 +69,8 @@ _variant_t basic_value_to_variant_t(const BasicValue& val) {
         else if constexpr (std::is_same_v<T, double>) {
             return _variant_t(arg);
         }
-        else if constexpr (std::is_same_v<T, int>) { // If you still use int
-            return _variant_t(static_cast<long>(arg)); // Convert to long for VARIANT
+        else if constexpr (std::is_same_v<T, long long>) { // If you still use int
+            _variant_t v; v.vt = VT_I8; v.llVal = arg; return v;
         }
         else if constexpr (std::is_same_v<T, std::string>) {
             // Convert std::string to BSTR (Basic string)
@@ -109,8 +110,13 @@ BasicValue variant_t_to_basic_value(const _variant_t& vt, NeReLaBasic& vm) {
     case VT_UI2:      return (double)vt.uiVal;
     case VT_I4:       return (double)vt.lVal;
     case VT_UI4:      return (double)vt.ulVal;
-    case VT_I8:       return (double)vt.llVal;
-    case VT_UI8:      return (double)vt.ullVal;
+    case VT_I8:       return static_cast<long long>(vt.llVal);
+    case VT_UI8: {
+            // If it fits in signed 64-bit, preserve as INTEGER; otherwise fall back to double
+            unsigned long long u = vt.ullVal;
+            if (u <= static_cast<unsigned long long>(LLONG_MAX)) return static_cast<long long>(u);
+            return static_cast<double>(u);
+    }
     case VT_INT:      return (double)vt.intVal;
     case VT_UINT:     return (double)vt.uintVal;
     case VT_R4:       return (double)vt.fltVal;
@@ -4367,29 +4373,39 @@ BasicValue builtin_filter(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     return result_ptr;
 }
 
-// IOTA(N, [B=1]) -> vector
-// Generates a vector of N numbers starting from B.
-// B defaults to 1 if not provided.
+// IOTA(N, [B=1], [S=1]) -> vector
+// Generates a vector of N numbers starting from B with a step of S.
+// B defaults to 1, and S defaults to 1 if not provided.
 BasicValue builtin_iota(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 1 || args.size() > 2) {
+    // Allow 1, 2, or 3 arguments (N, Base, Step)
+    if (args.size() < 1 || args.size() > 3) {
         Error::set(8, vm.runtime_current_line); // Wrong number of arguments
         return {}; // Return an empty BasicValue
     }
+
     int count = static_cast<int>(to_double(args[0]));
     if (count < 0) count = 0;
 
-    int base = 1; // Default base is 1
-    if (args.size() == 2) {
-        base = static_cast<int>(to_double(args[1]));
+    // Set default values for base and step
+    double base = 1.0;
+    double step = 1.0;
+
+    // Read optional arguments if they are provided
+    if (args.size() >= 2) {
+        base = to_double(args[1]);
+    }
+    if (args.size() == 3) {
+        step = to_double(args[2]);
     }
 
     auto new_array_ptr = std::make_shared<Array>();
     new_array_ptr->shape = { (size_t)count };
     new_array_ptr->data.reserve(count);
 
-    // Loop generates 'count' numbers starting from 'base'.
+    // Modified loop: generates 'count' numbers using 'base' and 'step'.
+    // The formula is base + i * step
     for (int i = 0; i < count; ++i) {
-        new_array_ptr->data.push_back(static_cast<double>(base + i));
+        new_array_ptr->data.push_back(base + i * step);
     }
 
     return new_array_ptr;
@@ -5707,6 +5723,12 @@ BasicValue builtin_option(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         vm.nopause_active = false;
         TextIO::print("OPTION PAUSE is active. Break/Pause enabled."); TextIO::nl();
     }
+    else if (option_str == "EXPLICIT" || option_str == "EXPLICITON") {
+        vm.option_explicit = true;
+    }
+    else if (option_str == "NOEXPLICIT" || option_str == "EXPLICITOFF") {
+        vm.option_explicit = false;
+    }
     // Add more else if blocks here for future options, e.g.:
     // else if (option_str == "GRAPHICSON") {
     //     // vm.graphics_enabled = true;
@@ -6742,7 +6764,7 @@ BasicValue builtin_typeof(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         if constexpr (std::is_same_v<T, bool>) {
             return "BOOLEAN";
         }
-        else if constexpr (std::is_same_v<T, int>) {
+        else if constexpr (std::is_same_v<T, long long>) {
             return "INTEGER";
         }
         else if constexpr (std::is_same_v<T, double>) {
@@ -7195,6 +7217,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
     // 1. Register AI functions from the dedicated module
     register_ai_functions(vm, table_to_populate);
+    register_better_code_functions(vm, table_to_populate);
 
     // --- Register String Functions ---
     register_func("LEFT$", 2, builtin_left_str);

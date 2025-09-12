@@ -43,7 +43,8 @@ namespace {
             "RETURN without function call",     // 23
             "Bad array subscript",              // 24
             "Function or Sub is missing RETURN or END", // 25
-            "Incorrect number of arguments"     // 26
+            "Incorrect number of arguments",    // 26
+            "Undeclared variable."     // 26
     };
 }
 

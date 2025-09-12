@@ -138,6 +138,7 @@ namespace Tokens {
         REACT = 0x91,
         OP_SET_REACTIVE_DEPENDENCY = 0x92,
         DESTRUCTURE_ASSIGN = 0x93,
+        C_BACKSLASH = 0x94,
         GET = 0xBA,
         WAIT = 0xD1,
         BLOAD = 0xD2,

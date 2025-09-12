@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 #include "NeReLaBasic.hpp"
 #include "BuiltinFunctions.hpp" 
 #include <vector>

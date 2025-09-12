@@ -32,15 +32,6 @@ TextEditor::TextEditor(std::vector<std::string>& lines, const std::string& fname
     if (lines_ref.empty()) {
         lines_ref.push_back("");
     }
-    keywords = {
-        "PRINT", "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "NEXT", "STEP",
-        "GOTO", "FUNC", "ENDFUNC", "SUB", "ENDSUB", "RETURN", "STOP", "RESUME",
-        "DIM", "AS", "INTEGER", "STRING", "DOUBLE", "DATE", "LEFT$", "RIGHT$",
-        "MID$", "LEN", "ASC", "CHR$", "INSTR", "LCASE$", "UCASE$", "TRIM$",
-        "INKEY$", "VAL", "STR$", "SIN", "COS", "TAN", "SQR", "RND", "TICK",
-        "NOW", "DATE$", "TIME$", "DATEADD", "CVDATE", "CLS", "LOCATE", "SLEEP",
-        "CURSOR", "DIR", "CD", "PWD", "COLOR", "MKDIR", "KILL", "REM"
-    };
 }
 
 TextEditor::~TextEditor() {
@@ -96,7 +87,7 @@ void TextEditor::draw_line(int screen_row, const std::string& line) {
             std::transform(upper_word.begin(), upper_word.end(), upper_word.begin(), ::toupper);
 
             int current_pair = PAIR_DEFAULT;
-            if (keywords.count(upper_word)) {
+            if (KeywordRepository::is_keyword(upper_word)) {
                 if (upper_word == "REM") {
                     attron(COLOR_PAIR(PAIR_COMMENT));
                     addstr(line.substr(start_pos).c_str());
