@@ -1,0 +1,69 @@
+' ==========================================================
+' == Test Program for Integer-Returning Math Functions
+' ==========================================================
+' This program verifies the correct behavior of math functions
+' that have been updated to return the INTEGER (long long)
+' data type instead of DOUBLE.
+
+CLS
+PRINT "--- Testing Integer and Polymorphic Math Functions ---"
+PRINT
+
+' ==========================================================
+PRINT "--- 1. Scalar (Single Value) Tests ---"
+' ==========================================================
+
+PRINT "--- Testing INT, FLOOR, CEIL, TRUNC ---"
+TestValue = -3.7
+PRINT "For value:"; TestValue
+PRINT "INT("  ; TestValue; ")   = "; INT(TestValue)   ' Expected: -4 (Floor)
+PRINT "FLOOR("; TestValue; ") = "; FLOOR(TestValue) ' Expected: -4
+PRINT "CEIL(" ; TestValue; ")  = "; CEIL(TestValue)  ' Expected: -3
+PRINT "TRUNC("; TestValue; ") = "; TRUNC(TestValue) ' Expected: -3
+PRINT "TYPEOF(INT(..)) is "; TYPEOF(INT(TestValue)) ' Expected: INTEGER
+PRINT
+
+' --- Testing ABS (Polymorphic) ---
+PRINT "--- Testing ABS ---"
+DIM IntVal As INTEGER
+IntVal = -123
+DblVal = -456.789
+PRINT "ABS("  ; IntVal; ") = "; ABS(IntVal); ", Type: "; TYPEOF(ABS(IntVal)) ' Expected: 123, INTEGER
+PRINT "ABS("  ; DblVal; ") = "; ABS(DblVal); ", Type: "; TYPEOF(ABS(DblVal)) ' Expected: 456.789, DOUBLE
+PRINT
+
+' --- Testing Bitwise Shifts ---
+PRINT "--- Testing SHL and SHR ---"
+BaseNum = 5 ' Binary %101
+PRINT "Base Number ="; BaseNum
+PRINT "SHL("  ; BaseNum; ", 2) = "; SHL(BaseNum, 2) ' Expected: 20 (%10100)
+PRINT "SHR("  ; BaseNum; ", 1) = "; SHR(BaseNum, 1) ' Expected: 2  (%010)
+PRINT "TYPEOF(SHL(..)) is "; TYPEOF(SHL(BaseNum, 2)) ' Expected: INTEGER
+PRINT
+
+' ==========================================================
+PRINT "--- 2. Vectorized (Array) Tests ---"
+' ==========================================================
+
+DIM TestArray[4]
+TestArray = [3.7, -3.7, 0.5, -0.5]
+
+PRINT "Original Array: "; TestArray
+PRINT "----------------------------------"
+PRINT "INT(Array)   = "; INT(TestArray)
+PRINT "FLOOR(Array) = "; FLOOR(TestArray)
+PRINT "CEIL(Array)  = "; CEIL(TestArray)
+PRINT "TRUNC(Array) = "; TRUNC(TestArray)
+PRINT
+
+' --- Testing ABS on a mixed-type array ---
+DIM MixedArray[4]
+MixedArray = [-10, 20.5, -30, 40.5]
+AbsArray = ABS(MixedArray)
+PRINT "Original Mixed Array: "; MixedArray
+PRINT "ABS(Mixed Array)    : "; AbsArray
+PRINT "Type of first element: "; TYPEOF(AbsArray[0]) ' Expected: INTEGER
+PRINT "Type of second element: "; TYPEOF(AbsArray[1])' Expected: DOUBLE
+PRINT
+
+PRINT "--- Test Complete ---"

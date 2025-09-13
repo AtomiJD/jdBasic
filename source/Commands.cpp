@@ -1,4 +1,5 @@
 // Commands.cpp
+#include "NeReLaBasic.hpp" 
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -16,7 +17,6 @@
 #endif
 #include "Commands.hpp"
 #include "StringUtils.hpp"
-#include "NeReLaBasic.hpp" 
 #include "Compiler.hpp"
 #include "TextIO.hpp"
 #include "Tokens.hpp"

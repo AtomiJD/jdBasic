@@ -1,5 +1,6 @@
 #ifndef _WIN32
 #include "TextEditor.hpp"
+#include "KeywordRepository.hpp"
 #include <ncurses.h>
 #include <algorithm>
 #include <cctype>

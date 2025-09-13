@@ -157,6 +157,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
         // Otherwise, it was just a '$'. Backtrack so it can be parsed as a string variable.
         vm.prgptr = num_start_pos;
     }
+
     // Handle Binary: e.g., %1011, %0010
     else if (currentChar == '%') {
         size_t num_start_pos = vm.prgptr;

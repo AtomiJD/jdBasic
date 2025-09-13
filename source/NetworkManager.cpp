@@ -1,5 +1,5 @@
 // NetworkManager.cpp
-//#define CPPHTTPLIB_OPENSSL_SUPPORT
+#include "AppConfig.hpp"
 #ifdef HTTP
 #include "NetworkManager.hpp"
 #include "Error.hpp"

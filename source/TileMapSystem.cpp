@@ -1,3 +1,4 @@
+#include "AppConfig.hpp"
 #ifdef SDL3
 #if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
 #include "TileMapSystem.hpp"

@@ -1,4 +1,5 @@
 #ifdef _WIN32
+#include "NeReLaBasic.hpp"
 #include "TextEditor.hpp"
 #include "KeywordRepository.hpp"
 #include <windows.h>

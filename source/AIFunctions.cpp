@@ -11,7 +11,7 @@
 #include <limits>
 #include <algorithm>
 #include <memory>
-#ifndef __EMSCRIPTEN__
+#if !defined(__EMSCRIPTEN__) && !defined(__APPLE__)
 #include <omp.h>
 #endif
 

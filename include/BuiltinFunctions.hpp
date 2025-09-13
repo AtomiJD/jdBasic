@@ -1,9 +1,8 @@
 #pragma once
-
+#include "NeReLaBasic.hpp"
 #include <functional>
 #include <vector>
 #include <string>
-#include "NeReLaBasic.hpp"
 #include "json.hpp" // Include for nlohmann::json type
 
 // Forward-declare the main classes/structs to avoid circular dependencies

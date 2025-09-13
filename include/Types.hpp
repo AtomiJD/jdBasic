@@ -1,4 +1,5 @@
 #pragma once
+#include "AppConfig.hpp"
 #ifdef JDCOM
 // COM support
 #include <windows.h> // Basic Windows types, HRESULT
@@ -173,7 +174,6 @@ using BasicValue = std::variant<bool, double, std::string, FunctionRef, long lon
 #else
 using BasicValue = std::variant<bool, double, std::string, FunctionRef, long long, DateTime, std::shared_ptr<Array>, std::shared_ptr<Map>, std::shared_ptr<JsonObject>, std::shared_ptr<Tensor>, TaskRef, ThreadHandle, std::shared_ptr<OpaqueHandle> >;
 #endif
-
 
 // --- A structure to represent N-dimensional arrays ---
 struct Array {

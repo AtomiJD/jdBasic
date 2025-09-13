@@ -1,5 +1,6 @@
 // NeReLaBasic.hpp
 #pragma once
+#include "AppConfig.hpp"
 #include <vector>
 #include <string>
 #include <cstdint>

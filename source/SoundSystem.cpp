@@ -1,3 +1,4 @@
+#include "AppConfig.hpp"
 #ifdef SDL3
 #include "SoundSystem.hpp"
 #include "TextIO.hpp"

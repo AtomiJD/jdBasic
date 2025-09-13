@@ -114,7 +114,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);  JDCOM; SDL3; HTTP; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);  </PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
@@ -130,7 +130,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);  SDL3; HTTP; JDCOM; NOMINMAX; _WINSOCKAPI_; CPPHTTPLIB_OPENSSL_SUPPORT; </PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);  </PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
@@ -153,16 +153,24 @@
     <ClCompile Include="source\Compiler.cpp" />
     <ClCompile Include="source\DAPHandler.cpp" />
     <ClCompile Include="source\Error.cpp" />
+    <ClCompile Include="source\ExpressionParser.cpp" />
     <ClCompile Include="source\Graphics.cpp" />
+    <ClCompile Include="source\IOFunctions.cpp" />
     <ClCompile Include="source\LocaleManager.cpp" />
     <ClCompile Include="source\NeReLaBasic.cpp" />
     <ClCompile Include="source\NeReLaBasicInterpreter.cpp" />
     <ClCompile Include="source\NetworkManager.cpp" />
-    <ClCompile Include="source\AIFunctions.cpp" />
+    <ClCompile Include="source\AIFunctions.cpp">
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NDEBUG;_CONSOLE;%(PreprocessorDefinitions);  </PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">_DEBUG;_CONSOLE;%(PreprocessorDefinitions);  </PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="source\SDLFunctions.cpp" />
     <ClCompile Include="source\SoundSystem.cpp" />
+    <ClCompile Include="source\ArrayFunctions.cpp" />
     <ClCompile Include="source\SpriteSystem.cpp" />
     <ClCompile Include="source\Statements.cpp" />
     <ClCompile Include="source\StringUtils.cpp" />
+    <ClCompile Include="source\SystemFunctions.cpp" />
     <ClCompile Include="source\TestEditorWin.cpp" />
     <ClCompile Include="source\TextEditor.cpp" />
     <ClCompile Include="source\TextIO.cpp" />
@@ -170,6 +178,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\AIFunctions.hpp" />
+    <ClInclude Include="include\AppConfig.hpp" />
     <ClInclude Include="include\BetterCodeFunctions.hpp" />
     <ClInclude Include="include\BuiltinFunctions.hpp" />
     <ClInclude Include="include\Commands.hpp" />
@@ -177,9 +186,11 @@
     <ClInclude Include="include\DAPHandler.hpp" />
     <ClInclude Include="include\Error.hpp" />
     <ClInclude Include="include\Graphics.hpp" />
+    <ClInclude Include="include\ArrayFunctions.hpp" />
     <ClInclude Include="include\KeywordRepository.hpp" />
     <ClInclude Include="include\LocaleManager.hpp" />
     <ClInclude Include="include\NeReLaBasic.hpp" />
+    <ClInclude Include="include\SDLFunctions.hpp" />
     <ClInclude Include="include\SoundSystem.hpp" />
     <ClInclude Include="include\SpriteSystem.hpp" />
     <ClInclude Include="include\Statements.hpp" />
