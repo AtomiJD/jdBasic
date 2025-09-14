@@ -1,8 +1,8 @@
 #================================================================================
-# CMakeLists.txt for jdBasic and related projects
+# CMakeLists.txt for jdBasic (Cross-platform for Linux and macOS)
 #
 # This file was generated based on a Visual Studio solution.
-# It is configured for building on a Linux system with GCC/Clang.
+# It is configured for building on a Linux or macOS system with GCC/Clang.
 # Place this file in the root directory of your project.
 #================================================================================
 
@@ -29,17 +29,26 @@ message(STATUS "Build type is: ${CMAKE_BUILD_TYPE}")
 
 #================================================================================
 # Find Package Dependencies
-#
-# This section finds the libraries your project depends on.
-# On Linux, you'll need to install the development packages for these libraries.
-# For example, on Debian/Ubuntu:
-# sudo apt-get install libsdl3-dev libsdl3-image-dev libsdl3-ttf-dev libssl-dev
 #================================================================================
 
 find_package(PkgConfig REQUIRED)
 
-# Find OpenSSL
-find_package(OpenSSL)
+# macOS: Add hints for finding packages installed with Homebrew.
+if(APPLE)
+  # This makes CMake search Homebrew's default installation paths.
+  if(EXISTS "/opt/homebrew/bin/brew")
+    set(HOMEBREW_PREFIX "/opt/homebrew") # Apple Silicon
+  else()
+    set(HOMEBREW_PREFIX "/usr/local") # Intel
+  endif()
+  list(APPEND CMAKE_PREFIX_PATH "${HOMEBREW_PREFIX}")
+
+  # Provide a specific hint for OpenSSL, which is often keg-only.
+  find_package(OpenSSL REQUIRED HINTS "${HOMEBREW_PREFIX}/opt/openssl@3")
+else()
+  # Find OpenSSL on Linux
+  find_package(OpenSSL)
+endif()
 
 # Find SDL3 and its extension libraries
 find_package(SDL3 REQUIRED)
@@ -49,18 +58,14 @@ find_package(SDL3_ttf REQUIRED)
 # Find ncurses (for console I/O, replacing conio.h)
 find_package(Curses REQUIRED)
 
-# Find the {fmt} library to provide std::format functionality for older compilers
+# macOS: Find the readline library using pkg-config for better compatibility.
+pkg_check_modules(Readline REQUIRED readline)
+
+# Find the {fmt} library
 find_package(fmt REQUIRED)
 
-# Find the Threads library (pthreads on Linux) for std::thread support
+# Find the Threads library (pthreads on Linux/macOS) for std::thread support
 find_package(Threads REQUIRED)
-
-# Note on TensorFlow:
-# Finding TensorFlow can be complex. You need to have the TensorFlow C++ library
-# installed on your system. You might need to provide the path to your
-# TensorFlow installation by setting TENSORFLOW_DIR in your CMake configuration.
-# For now, we'll define a placeholder.
-# find_package(TensorFlow) # Uncomment when you have TensorFlow set up.
 
 #================================================================================
 # Define the main executable: jdBasic
@@ -69,16 +74,20 @@ find_package(Threads REQUIRED)
 # List all the source files for the jdBasic executable.
 set(JDBASIC_SOURCES
     source/AIFunctions.cpp
+    source/ArrayFunctions.cpp
     source/BuiltinFunctions.cpp
+    source/BetterCodeFunctions.cpp
     source/Commands.cpp
     source/Compiler.cpp
     source/DAPHandler.cpp
     source/Error.cpp
+    source/ExpressionParser.cpp
     source/Graphics.cpp
     source/LocaleManager.cpp
     source/NeReLaBasic.cpp
     source/NeReLaBasicInterpreter.cpp
     source/NetworkManager.cpp
+    source/SDLFunctions.cpp
     source/SoundSystem.cpp
     source/SpriteSystem.cpp
     source/Statements.cpp
@@ -109,14 +118,9 @@ target_include_directories(jdBasic PRIVATE
     ${SDL3_INCLUDE_DIRS}
     ${SDL3_IMAGE_INCLUDE_DIRS}
     ${SDL3_TTF_INCLUDE_DIRS}
-
+    ${Readline_INCLUDE_DIRS}
     ${FMT_INCLUDE_DIRS}
-
     ${CURSES_INCLUDE_DIR}
-    ${READLINE_INCLUDE_DIRS}
-
-    # TensorFlow include path (adjust if needed)
-    # "${CMAKE_CURRENT_SOURCE_DIR}/libs/tensorflow/include"
 )
 
 # --- Compile Definitions ---
@@ -125,18 +129,17 @@ target_compile_definitions(jdBasic PRIVATE
     # General flags
     SDL3
     HTTP
-    # JDCOM
     CPPHTTPLIB_OPENSSL_SUPPORT
     JDEDIT
-
-    # Flags for Linux (replacing Windows-specific ones like _WINSOCKAPI_)
+    # Flags for non-Windows builds
     $<$<NOT:$<CONFIG:Debug>>:NDEBUG> # Add NDEBUG for non-debug builds
     $<$<CONFIG:Debug>:_DEBUG>      # Add _DEBUG for debug builds
 )
 
 # --- Compiler Flags ---
 # Add platform-specific compiler flags.
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+# Enable OpenMP only for GNU GCC or standard LLVM Clang, but NOT AppleClang.
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU" OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT APPLE))
     # Enable OpenMP for Release builds, as in the vcxproj
     target_compile_options(jdBasic PRIVATE
         $<$<CONFIG:Release>:-fopenmp>
@@ -152,61 +155,19 @@ target_link_libraries(jdBasic PRIVATE
     SDL3::SDL3
     SDL3_image::SDL3_image
     SDL3_ttf::SDL3_ttf
-    # SDL2::SDL2_mixer
-
-    # TensorFlow library (adjust if needed)
-    # This assumes you have a 'tensorflow' target or library file.
-    # You might need to specify the full path to the .so file.
-    # "${CMAKE_CURRENT_SOURCE_DIR}/libs/tensorflow/lib/libtensorflow.so"
-
     ${CURSES_LIBRARIES}
-    
+    ${Readline_LIBRARIES} # Use the variable from pkg_check_modules
     fmt::fmt
     Threads::Threads
-
-    readline
-
-    # Add the dynamic linking library (libdl)
-    dl
 )
 
 #================================================================================
-# Plugin & Tester Projects (Placeholders)
+# Installation
 #
-# Your solution contains other projects. The best way to handle this in CMake
-# is to give each one its own CMakeLists.txt and add it here using
-# add_subdirectory().
-#
-# Example structure:
-# root/
-# |- CMakeLists.txt (this file)
-# |- jdBasic/
-# |  |- (source files)
-# |- plugins/
-# |  |- aifunc/
-# |  |  |- CMakeLists.txt
-# |  |  |- (source files)
-#
-# You would then uncomment the lines below.
+# This section defines what happens when 'make install' is run.
 #================================================================================
+install(TARGETS jdBasic
+    RUNTIME DESTINATION bin
+)
 
-# message(STATUS "Adding subdirectories for plugins and testers...")
-# add_subdirectory(plugins/aifunc)
-# add_subdirectory(plugins/sqlitefunc)
-# add_subdirectory(plugins/tffunc)
-# add_subdirectory(jdTester) # Assuming jdTester is moved into the project root
-
-
-#================================================================================
-# Installation (Optional)
-#
-# This section defines how to install the project.
-#================================================================================
-# install(TARGETS jdBasic
-#     RUNTIME DESTINATION bin
-#     LIBRARY DESTINATION lib
-#     ARCHIVE DESTINATION lib/static
-# )
-
-message(STATUS "Configuration of jdBasic is complete.")
-
+message(STATUS "Installation configured. Run 'make install' after building.")
