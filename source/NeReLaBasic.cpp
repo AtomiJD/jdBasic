@@ -166,11 +166,6 @@ NeReLaBasic::NeReLaBasic() {
     builtin_constants["VBNEWLINE"] = std::string("\n");
     builtin_constants["PI"] = 3.14159265358979323846;
     
-    // Initialize ERR and ERL as global variables
-    //builtin_constants["ERR"] = 0.0;
-    //builtin_constants["ERL"] = 0.0;
-    //builtin_constants["ERRMSG"] = "";
-
     debug_state = DebugState::RUNNING;
     step_over_stack_depth = 0;
     step_out_stack_depth = 0;

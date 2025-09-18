@@ -1,0 +1,74 @@
+' Subroutine to compare two arrays and report the test result
+SUB CheckEqual(result, expected, test_name$)
+    pass = TRUE ' Assume pass unless a check fails
+
+    ' First, check if both arguments are arrays
+    IF TYPEOF(result) <> "ARRAY" OR TYPEOF(expected) <> "ARRAY" THEN
+        pass = FALSE
+    ' Second, check if they have the same number of elements
+    ELSEIF LEN(result) <> LEN(expected) THEN
+        pass = FALSE
+    ELSE
+        ' Finally, check if all elements are equal
+        FOR i = 0 TO LEN(result) - 1
+            IF result[i] <> expected[i] THEN
+                pass = FALSE
+                EXITFOR ' No need to check further
+            ENDIF
+        NEXT i
+    ENDIF
+
+    IF pass THEN
+        PRINT "[PASS] " + test_name$
+        PRINT "  Expected: " + FRMV$(expected)
+        PRINT "  Got:      " + FRMV$(result)
+    ELSE
+        ' Use FRMV$ to nicely format the arrays for the failure message
+        PRINT "[FAIL] " + test_name$
+        PRINT "  Expected: " + FRMV$(expected)
+        PRINT "  Got:      " + FRMV$(result)
+    ENDIF
+    PRINT
+ENDSUB
+
+' --- Main Test Execution ---
+PRINT "--- Running tests for IOTA function ---"
+PRINT ""
+
+' Test 1: Default base (1) and step (1)
+Result1 = IOTA(5)
+Expected1 = [1.0, 2.0, 3.0, 4.0, 5.0]
+CheckEqual Result1, Expected1, "IOTA(5)"
+
+' Test 2: Custom base, default step
+Result2 = IOTA(4, 10)
+Expected2 = [10.0, 11.0, 12.0, 13.0]
+CheckEqual Result2, Expected2, "IOTA(4, 10)"
+
+' Test 3: Positive step
+Result3 = IOTA(5, 0, 2)
+Expected3 = [0.0, 2.0, 4.0, 6.0, 8.0]
+CheckEqual Result3, Expected3, "IOTA(5, 0, 2)"
+
+' Test 4: Negative step
+Result4 = IOTA(5, 10, -1)
+Expected4 = [10.0, 9.0, 8.0, 7.0, 6.0]
+CheckEqual Result4, Expected4, "IOTA(5, 10, -1)"
+
+' Test 5: Fractional step
+Result5 = IOTA(4, 0, 0.5)
+Expected5 = [0.0, 0.5, 1.0, 1.5]
+CheckEqual Result5, Expected5, "IOTA(4, 0, 0.5)"
+
+' Test 6: Zero step
+Result6 = IOTA(3, 7, 0)
+Expected6 = [7.0, 7.0, 7.0]
+CheckEqual Result6, Expected6, "IOTA(3, 7, 0)"
+
+' Test 7: Zero count
+Result7 = IOTA(0)
+Expected7 = []
+CheckEqual Result7, Expected7, "IOTA(0)"
+
+PRINT ""
+PRINT "--- Test execution finished ---"

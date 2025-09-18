@@ -4,6 +4,7 @@
 #include "Types.hpp"
 #include "Tokens.hpp"
 #include "BuiltinFunctions.hpp" // For tensor/array math functions
+#include "TextIO.hpp"
 
 // Forward declarations for tensor math from other files if needed
 BasicValue tensor_add(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b);
@@ -389,7 +390,6 @@ BasicValue NeReLaBasic::parse_primary() {
                     real_func_to_call = std::get<FunctionRef>(var).name;
                 }
             }
-
             if (active_function_table->count(real_func_to_call)) {
                 const auto& func_info = active_function_table->at(real_func_to_call);
 

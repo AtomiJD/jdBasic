@@ -29,13 +29,28 @@ jdBasic has two scalar numeric types:
 * With decimal point → **DOUBLE**: `1.0`
 * Hex/bin: `$FF`, `%1010` → **INTEGER**
 
+### Built-in Constants
+
+These are special keywords that hold predefined, constant values.
+
+* **`PI`**: A high-precision value of Pi ($\\pi \\approx 3.141592653589793$).
+* **`VBNEWLINE`**: A string representing the carriage return and line feed characters (`CHR$(13) + CHR$(10)`), commonly used for creating multi-line strings for Windows systems.
+
+```basic
+PRINT "The value of PI is: " + PI
+PRINT "Area of a circle with radius 5: " + (PI * 5^2)
+
+MultiLine$ = "First line." + VBNEWLINE + "Second line."
+PRINT MultiLine$
+```
+
 ### Conversions
 
 * **Promotion:** In mixed expressions, `INTEGER` promotes to `DOUBLE`.
 * **Narrowing:** `DOUBLE → INTEGER` occurs when assigning to an integer variable or when using integer-only operators; conversion **truncates toward zero**.
 * **Overflow:** If a result doesn’t fit in 64-bit signed range → DOUBLE.
 
-### Operators
+### Operators matrix
 
 | Operator                              | Operands                   | Result  | Notes                                                                                           |
 | ------------------------------------- | -------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
@@ -97,7 +112,7 @@ PRINT [5,6,7,8] MOD [2,3,2,3]  ' [1 0 1 2]
 
 Variables are created on their first use or explicitly with `DIM`.
 
-**`DIM var [AS type]`**
+**`DIM var [AS type] [=Initializer]`**
 Declares a variable. The `AS` clause is used for specific types.
 
 ```basic
@@ -107,6 +122,8 @@ DIM S AS STRING
 DIM D AS DATE
 DIM M AS MAP
 DIM T AS TENSOR
+DIM A AS INTEGER = 2
+DIM M AS MAP = {"Name":"Atomi"}
 ```
 
 **`DIM array[size1, size2, ...]`**
@@ -351,7 +368,7 @@ These operators are used in conditional logic, such as IF statements.
 IF MyMap <> NULL ANDALSO MAP.EXISTS(MyMap, "key") THEN ...
 ```
 
-**`IN`**:: Evaluates if the left hand value exists in the right hand expression.
+**`IN`**: Evaluates if the left hand value exists in the right hand expression.
 
 ```basic
 DIM MyMap As MAP 
@@ -452,17 +469,91 @@ print apply(dec@,12) ' Should return 11
 
 ## Commands
 
+### Console I/O Functions
+
+* **`INPUT [Prompt], variable`**: Prompts the user for a line input. Value is returned in variable
+* **`PRINT [Vairable,String,function,...] [;|,] ...`**: Prints the given arguments on screen "," places a tab between arguments ";" for direct concating or at the end of PRINT supresses the Newline
+
+#### `LOCATE row, col`
+
+Moves the text cursor to a specific position on the console screen. The top-left corner is position 1, 1. This is a procedure.
+
+* **`row`**: The row number (1-based).
+* **`col`**: The column number (1-based).
+
+```basic
+CLS
+LOCATE 5, 10
+PRINT "This text starts at row 5, column 10."
+LOCATE 20, 1
+```
+
+-----
+
+#### `GETX() -> Number` and `GETY() -> Number`
+
+These functions return the current horizontal (`GETX`) or vertical (`GETY`) position of the text cursor.
+
+* **Returns**: An integer representing the current column (`GETX`) or row (`GETY`).
+
+```basic
+CLS
+LOCATE 8, 12
+PRINT "Cursor is at: " + GETY() + ", " + GETX()
+' Output: Cursor is at: 8, 28
+' (The position is after the text has been printed)
+```
+
+-----
+
+### User Input Functions
+
+#### `INKEY$() -> String`
+
+Checks the keyboard buffer for a key press. This function is **non-blocking**; it returns immediately, whether a key has been pressed or not.
+
+* **Returns**: A single-character string if a key has been pressed since the last check, otherwise an empty string `""`.
+
+```basic
+PRINT "Press 'q' to quit..."
+DO
+    ' Your main program logic would go here
+    
+    KeyPressed$ = INKEY$()
+    IF KeyPressed$ <> "" THEN
+        PRINT "You pressed: " + KeyPressed$
+    ENDIF
+LOOP UNTIL LCASE$(KeyPressed$) = "q"
+```
+
+-----
+
+#### `WAITKEY$() -> String`
+
+Pauses program execution and waits for the user to press any key. This function is **blocking**.
+
+* **Returns**: A single-character string representing the key that was pressed.
+
+```basic
+PRINT "Press any key to continue..."
+AnyKey$ = WAITKEY$()
+PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
+```
+
+-----
+
 ### System & Flow Control
 
 * **`CLS`**: Clears the console screen.
 * **`COLOR fg, bg`**: Sets the foreground and background colors for text.
-* **`CURSOR state`**: Turns the cursor on (`1`) or off (`0`).
+* **`CURSOR state`**: Turns the cursor on (`TRUE`) or off (`FALSE`).
 * **`GOTO label`**: Jumps execution to a `label:`.
 * **`IF condition THEN ... [ELSE ...] ENDIF`**: Conditional execution block. Single-line `IF condition THEN statement` is also supported.
-* **`FOR ... TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
+* **`FOR variable TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
 * **`FOR EACH variable IN collection`**: This command provides a simple way to iterate over every element in a collection, such as an Array or a Map.
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
+* **`EXITFUNC`, `EXITDO`, `EXITFOR`**: Exiting functions and loops.
 * **`OPTION option$`**: Sets a VM option.
   * `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
   * `OPTION "EXPLICIT"` enforces declarations: variables **must** be introduced with `DIM` before first use (read or write). With **EXPLICITOFF** (default), variables are created on first use and default to `0` (numeric) or `""` (string).
@@ -541,6 +632,36 @@ FINALLY
 ENDTRY
 ```
 
+#### `THROW [error_message]`
+
+Manually triggers a runtime error that can be caught by a `TRY...CATCH` block. This is useful for creating custom error conditions in your own functions.
+
+* **`error_message`** (Optional): A string or number that will become the value of `ERRMSG$` in the `CATCH` block. If omitted, a default message is used.
+
+```basic
+SUB SetAge(age)
+    IF age < 0 THEN
+        THROW "Age cannot be negative."
+    ENDIF
+    ' ... set the age ...
+ENDSUB
+
+TRY
+    SetAge(-5)
+CATCH
+    PRINT "Error caught!"
+    PRINT "Message: " + ERRMSG$
+    PRINT "At line: " + ERL
+ENDTRY
+
+' Output:
+' Error caught!
+' Message: Age cannot be negative.
+' At line: 3
+```
+
+-----
+
 ### Dynamic Code Functions
 
 * **`EXECUTE(code_string$)`**: Compiles and executes a string of jdBasic code at runtime.
@@ -613,6 +734,181 @@ ENDTRY
 
 ## Functions
 
+### Map Functions
+
+This suite of functions provides powerful tools for manipulating `Map` data structures.
+
+#### `MAP.EXISTS(map, key$) -> Boolean`
+
+Checks if a given key exists within a map.
+
+* **`map`**: The Map variable to check.
+* **`key$`**: The string key to look for.
+* **Returns**: `TRUE` if the key is found, otherwise `FALSE`.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+
+PRINT MAP.EXISTS(MyMap, "Name")    ' Output: TRUE
+PRINT MAP.EXISTS(MyMap, "Version") ' Output: TRUE
+PRINT MAP.EXISTS(MyMap, "Author")  ' Output: FALSE
+```
+
+-----
+
+#### `MAP.KEYS(map) -> Array`
+
+Retrieves all of the keys from a map and returns them as a 1D array of strings.
+
+* **`map`**: The Map variable from which to extract keys.
+* **Returns**: A 1D array containing all the keys from the map. The order is not guaranteed.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2, "Active": TRUE}
+DIM KeysArray
+
+KeysArray = MAP.KEYS(MyMap)
+
+PRINT "Keys in the map:"
+FOR EACH Key IN KeysArray
+    PRINT "- " + Key
+NEXT
+' Possible Output:
+' Keys in the map:
+' - Active
+' - Name
+' - Version
+```
+
+-----
+
+#### `MAP.VALUES(map) -> Array`
+
+Retrieves all of the values from a map and returns them as a 1D array.
+
+* **`map`**: The Map variable from which to extract values.
+* **Returns**: A 1D array containing all the values from the map. The order corresponds to the order from `MAP.KEYS`.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2, "Active": TRUE}
+DIM ValuesArray
+
+ValuesArray = MAP.VALUES(MyMap)
+
+PRINT "Values in the map:"
+FOR EACH Value IN ValuesArray
+    PRINT "- " + Value
+NEXT
+' Possible Output:
+' Values in the map:
+' - TRUE
+' - Atomi
+' - 1.2
+```
+
+-----
+
+#### `MAP.ITEMS(map) -> Array`
+
+Retrieves all key-value pairs from a map and returns them as a 2D array.
+
+* **`map`**: The Map variable from which to extract items.
+* **Returns**: A 2D array where each row is a 2-element array of the form `[key, value]`.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+DIM ItemsArray, Item
+
+ItemsArray = MAP.ITEMS(MyMap)
+
+PRINT "Items in the map:"
+' ItemsArray is now a 2x2 matrix: [["Name", "Atomi"], ["Version", 1.2]]
+FOR EACH Item IN ItemsArray
+    PRINT "Key: " + Item[0] + ", Value: " + Item[1]
+NEXT
+' Output:
+' Items in the map:
+' Key: Name, Value: Atomi
+' Key: Version, Value: 1.2
+```
+
+-----
+
+#### `MAP.DELETE(map, key$)`
+
+Removes a key-value pair from a map. This is a procedure that modifies the map in place.
+
+* **`map`**: The Map variable to modify.
+* **`key$`**: The string key of the item to remove. If the key does not exist, nothing happens.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+PRINT "Map size before delete: " + MAP.SIZE(MyMap) ' Output: 2
+
+MAP.DELETE MyMap, "Version"
+
+PRINT "Map size after delete: " + MAP.SIZE(MyMap)  ' Output: 1
+PRINT MAP.EXISTS(MyMap, "Version")                 ' Output: FALSE
+```
+
+-----
+
+#### `MAP.CLEAR(map)`
+
+Removes all key-value pairs from a map, leaving it empty. This is a procedure.
+
+* **`map`**: The Map variable to clear.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+PRINT "Map size before clear: " + MAP.SIZE(MyMap) ' Output: 2
+
+MAP.CLEAR MyMap
+
+PRINT "Map size after clear: " + MAP.SIZE(MyMap)  ' Output: 0
+```
+
+-----
+
+#### `MAP.SIZE(map) -> Number`
+
+Returns the number of key-value pairs in a map.
+
+* **`map`**: The Map variable to measure.
+* **Returns**: The integer count of items in the map.
+
+```basic
+DIM MyMap AS MAP = {"A": 1, "B": 2, "C": 3}
+PRINT MAP.SIZE(MyMap) ' Output: 3
+
+DIM EmptyMap AS MAP
+PRINT MAP.SIZE(EmptyMap) ' Output: 0
+```
+
+-----
+
+#### `MAP.MERGE(destination_map, source_map)`
+
+Copies all key-value pairs from a source map into a destination map. This is a procedure. If a key from the source map already exists in the destination, its value will be overwritten.
+
+* **`destination_map`**: The Map variable to be modified.
+* **`source_map`**: The Map variable to copy items from.
+
+```basic
+DIM Map1 AS MAP = {"Name": "Atomi", "Version": 1.0}
+DIM Map2 AS MAP = {"Author": "JD", "Version": 1.2}
+
+PRINT "Merging Map2 into Map1..."
+MAP.MERGE Map1, Map2
+
+' Map1 is now {"Name": "Atomi", "Version": 1.2, "Author": "JD"}
+PRINT FRMV$(MAP.ITEMS(Map1))
+' Output:
+'    Name Atomi
+' Version 1.2
+'  Author JD
+```
+
 ### JSON Functions
 
 * **`JSON.PARSE$(json_string$)`**: Parses a JSON string and returns a special `JsonObject`. This object can be accessed like a `Map` or an `Array`.
@@ -632,6 +928,9 @@ ENDTRY
 * **`INSTR$([start, ]haystack$, needle$)`**: Finds the position of one string within another. Positions are 0-based. Returns -1 if not found.
 * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
 * **`FRMV$(array, [format_string$]) -> string$`**: Formats a 1D or 2D array into a string. If format_string$ is provided, it's used to format each row. Otherwise, it creates a right-aligned string matrix.
+* **`FORMAT$(format_string$, arg1, arg2, ...) -> string$`**: Formats a string using C++20-style format specifiers.
+* **`REPLACE$(source_string or array, find_string$, replace_with_string$) -> string or array)`**: Returs a string where all found find_string$ are preplaced with replace_with_string$.
+* **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
 
 ### Math/Arithmetic/Round Functions
 
@@ -647,7 +946,9 @@ ENDTRY
 * **`FLOOR(numeric expression or array)`**: Rounds down.
 * **`CEIL(numeric expression or array)`**: Rounds up.
 * **`ROUND(n, decimals)`**: Rounds the number `n` to the specified number of decimal places.
+* **`CLAMP(value_or_array, min, max) -> number or array`**: Clamps the value in the given range.
 * **`TRUNC(numeric expression or array)`**: Truncates toward zero.
+* **`ABS(numeric expression or array)`**: Standard absolute value function.
 
 ### Regular Expression Functions
 
@@ -711,6 +1012,29 @@ ENDTRY
 * **`DATEADD(part$, num, date)`**: Adds an interval to a `DateTime` object. Interval part$: D,H,N,S
 * **`DATEDIFF(part$, date1, date2) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S
 * **`CVDATE(date_string$)`**: Converts a string ("YYYY-MM-DD") to a `DateTime` object.
+
+#### `HELP [topic$]` and `HELP$()`
+
+Provides access to the built-in help system.
+
+* **`HELP`** (Procedure):
+  * Without arguments, `HELP` lists all available help topics.
+  * With a `topic$` argument, it prints the detailed help for that specific command or function.
+* **`HELP$()`** (Function):
+  * Returns a 1D array of strings, where each element is an available help topic.
+
+```basic
+' Example 1: List all topics
+HELP
+
+' Example 2: Get help for a specific command
+HELP "PRINT"
+
+' Example 3: Use HELP$() to get the list as data
+DIM Topics AS ARRAY
+Topics = HELP$()
+PRINT "There are " + LEN(Topics) + " help topics available."
+```
 
 ### HTTP Functions
 
@@ -817,7 +1141,7 @@ HTTP.SERVER.STOP
 * **`SOUND.RELEASE track`**: Starts the release phase of the note on the given track.
 * **`SOUND.STOP track`**: Immediately stops the note on the given track.
 * **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file to slot id.
-* **`FX.PLAY id`**: Plays a WAV file with slot id.
+* **`SFX.PLAY id`**: Plays a WAV file with slot id.
 * **`MUSIC.PLAY id`**: Plays a WAV file as background music in slot id.
 * **`MUSIC.STOP`**: Immediately stops the background music.
 

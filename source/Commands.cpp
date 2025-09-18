@@ -536,9 +536,9 @@ void Commands::do_dim(NeReLaBasic& vm) {
             case Tokens::ID::DATE:          type_name = "DATE";    break;
             case Tokens::ID::BOOL:          type_name = "BOOLEAN"; break;
             case Tokens::ID::MAP:           type_name = "MAP";     break;
-                // Add any other built-in types you have here.
+            // Add any other built-in types you have here.
 
-                // This case handles user-defined types, like T_Character.
+            // This case handles user-defined types, like T_Character.
             case Tokens::ID::VARIANT:
                 // Only if the token is VARIANT do we read a string name.
                 type_name = to_upper(read_string(vm));
@@ -567,25 +567,60 @@ void Commands::do_dim(NeReLaBasic& vm) {
                 type_name = "STRING";
             }
 
-            // Reserve memory for efficiency
-            new_array_ptr->data.reserve(total_size);
-
-            // Create a new, unique instance for each element in the array.
-            for (size_t i = 0; i < total_size; ++i) {
-                BasicValue default_instance = create_default_instance(vm, type_name, var_name);
-                if (Error::get() != 0) return; // Stop if the type was invalid
-                new_array_ptr->data.push_back(default_instance);
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_EQ) {
+                vm.pcode++; // Consume '='
+                BasicValue initializer_val = vm.evaluate_expression();
+                if (Error::get() != 0) return;
+                // Validate the initializer
+                if (!std::holds_alternative<std::shared_ptr<Array>>(initializer_val)) {
+                    Error::set(15, vm.runtime_current_line, "Array initializer must be an array literal.");
+                    return;
+                }
+                const auto& initializer_array = std::get<std::shared_ptr<Array>>(initializer_val);
+                if (initializer_array->data.size() != total_size) {
+                    Error::set(1, vm.runtime_current_line, "Initializer size does not match array dimensions.");
+                    return;
+                }
+                // Copy the data from the initializer
+                new_array_ptr->data = initializer_array->data;
+            }
+            else {
+                // Fill with default values ---
+                if (var_name.back() == '$') {
+                    type_name = "STRING";
+                }
+                // Reserve memory for efficiency
+                new_array_ptr->data.reserve(total_size);
+                // Create a new, unique instance for each element in the array.
+                for (size_t i = 0; i < total_size; ++i) {
+                    BasicValue default_instance = create_default_instance(vm, type_name, var_name);
+                    if (Error::get() != 0) return;
+                    new_array_ptr->data.push_back(default_instance);
+                }
             }
             set_variable(vm, var_name, new_array_ptr, true);
         }
         else {
             // --- This is for single variables (e.g., DIM N AS INTEGER) ---
-            if (!type_was_specified && var_name.back() == '$') {
-                type_name = "STRING";
+            BasicValue value_to_assign;
+
+            // Check if an initializer is present
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_EQ) {
+                vm.pcode++; // Consume the '=' token
+                value_to_assign = vm.evaluate_expression(); // Evaluate the expression on the right
+                if (Error::get() != 0) return;
             }
-            BasicValue default_instance = create_default_instance(vm, type_name, var_name);
-            if (Error::get() != 0) return;
-            set_variable(vm, var_name, default_instance, true);
+            else {
+                // No initializer, use the old logic to create a default value
+                if (!type_was_specified && var_name.back() == '$') {
+                    type_name = "STRING";
+                }
+                value_to_assign = create_default_instance(vm, type_name, var_name);
+                if (Error::get() != 0) return;
+            }
+
+            // Set the variable with either the initialized or default value
+            set_variable(vm, var_name, value_to_assign, true);
         }
 
         // Part 4: Check for a comma to continue the list
@@ -683,7 +718,7 @@ void Commands::do_input(NeReLaBasic& vm) {
     if (var_name.back() == '$') {
         // It's a string variable, do a direct assignment.
         set_variable(vm, var_name, user_input_line);
-        TextIO::print("Var: " + var_name + ", val: " + user_input_line);
+        // TextIO::print("Var: " + var_name + ", val: " + user_input_line);
     }
     else {
         // It's a numeric variable. Try to convert the input to a double.
@@ -1375,7 +1410,6 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
 
     // The first string is either a function name or an object/array name.
     std::string identifier_being_called = to_upper(read_string(vm));
-
     // --- 1. Initial Parsing for Array Access ---
     // Check if this is an array element method call, e.g., NPCS[0].GetName()
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);

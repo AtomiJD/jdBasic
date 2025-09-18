@@ -2013,12 +2013,14 @@ bool basic_value_less(const BasicValue& a, const BasicValue& b) {
     return false;
 }
 
-// XSORT(array, [dimension], [descending_bool]) -> array
-// A high-performance sort that can operate along a dimension of a 2D matrix.
+// XSORT(array, [sort_key_column], [descending_bool]) -> array
+// A high-performance sort.
+// - For 1D arrays, it sorts the elements.
+// - For 2D arrays, it sorts the rows based on the values in the 'sort_key_column'.
 BasicValue builtin_xsort(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // 1. --- Argument Validation ---
     if (args.empty() || args.size() > 3) {
-        Error::set(8, vm.runtime_current_line, "XSORT requires 1 to 3 arguments: array, [dimension], [descending_bool]");
+        Error::set(8, vm.runtime_current_line, "XSORT requires 1 to 3 arguments: array, [sort_column_index], [descending_bool]");
         return {};
     }
     if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
@@ -2031,62 +2033,73 @@ BasicValue builtin_xsort(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 
     // 2. --- Argument Parsing ---
-    bool has_dimension = args.size() > 1;
-    int dimension = has_dimension ? static_cast<int>(to_double(args[1])) : -1;
-    bool descending = (args.size() == 3) ? to_bool(args[2]) : false;
+    int sort_key_column = -1; // -1 indicates sorting a 1D array or no column specified
+    bool descending = false;
 
-    // Create a copy to sort
+    if (args.size() > 1) {
+        sort_key_column = static_cast<int>(to_double(args[1]));
+    }
+    if (args.size() > 2) {
+        descending = to_bool(args[2]);
+    }
+
+    // --- Create a copy of the source array to modify ---
     auto result_ptr = std::make_shared<Array>(*source_ptr);
 
-    // 3. --- Define Comparison Lambda ---
-    auto comparator = [&](const BasicValue& a, const BasicValue& b) {
-        return descending ? basic_value_less(b, a) : basic_value_less(a, b);
-        };
+    // 3. --- Sorting Logic ---
 
-    // 4. --- Sorting Logic ---
-    // Case A: 1D Array or no dimension specified
-    if (!has_dimension || source_ptr->shape.size() == 1) {
+    // --- CASE A: Sort a 1D Array (Backward Compatibility) ---
+    if (source_ptr->shape.size() == 1) {
+        auto comparator = [&](const BasicValue& a, const BasicValue& b) {
+            return descending ? basic_value_less(b, a) : basic_value_less(a, b);
+            };
         std::sort(result_ptr->data.begin(), result_ptr->data.end(), comparator);
         return result_ptr;
     }
 
-    // Case B: 2D Matrix with dimension specified
-    if (source_ptr->shape.size() != 2) {
-        Error::set(15, vm.runtime_current_line, "Dimensional sort in XSORT currently only supports 2D matrices.");
-        return {};
-    }
-    size_t rows = source_ptr->shape[0];
-    size_t cols = source_ptr->shape[1];
+    // --- CASE B: Sort a 2D Array by a Key Column ---
+    if (source_ptr->shape.size() == 2) {
+        size_t rows = source_ptr->shape[0];
+        size_t cols = source_ptr->shape[1];
 
-    if (dimension == 1) { // Sort each row independently
+        if (sort_key_column < 0 || (size_t)sort_key_column >= cols) {
+            Error::set(10, vm.runtime_current_line, "Sort column index is out of bounds for the matrix.");
+            return {};
+        }
+
+        // Create a temporary vector of row pointers (or iterators) to sort.
+        // This avoids copying all the data into a vector-of-vectors.
+        std::vector<std::vector<BasicValue>::iterator> row_iterators;
+        row_iterators.reserve(rows);
         for (size_t r = 0; r < rows; ++r) {
-            auto row_start = result_ptr->data.begin() + (r * cols);
-            auto row_end = row_start + cols;
-            std::sort(row_start, row_end, comparator);
+            row_iterators.push_back(result_ptr->data.begin() + (r * cols));
         }
-    }
-    else if (dimension == 0) { // Sort each column independently
-        // This is complex to do in-place. The easiest way is to transpose,
-        // sort the new rows, and then transpose back.
-        BasicValue transposed = builtin_transpose(vm, { result_ptr });
-        auto transposed_ptr = std::get<std::shared_ptr<Array>>(transposed);
-        size_t t_rows = transposed_ptr->shape[0];
-        size_t t_cols = transposed_ptr->shape[1];
 
-        for (size_t r = 0; r < t_rows; ++r) {
-            auto row_start = transposed_ptr->data.begin() + (r * t_cols);
-            auto row_end = row_start + t_cols;
-            std::sort(row_start, row_end, comparator);
+        // Define the custom comparator lambda for sorting rows.
+        auto row_comparator = [&](const auto& row_a_it, const auto& row_b_it) {
+            const BasicValue& val_a = *(row_a_it + sort_key_column);
+            const BasicValue& val_b = *(row_b_it + sort_key_column);
+            return descending ? basic_value_less(val_b, val_a) : basic_value_less(val_a, val_b);
+            };
+
+        // Sort the iterators. This changes their order but doesn't move the actual data yet.
+        std::sort(row_iterators.begin(), row_iterators.end(), row_comparator);
+
+        // Create a new array and reconstruct the data in the sorted order.
+        auto final_sorted_ptr = std::make_shared<Array>();
+        final_sorted_ptr->shape = source_ptr->shape;
+        final_sorted_ptr->data.reserve(source_ptr->data.size());
+
+        for (const auto& row_it : row_iterators) {
+            final_sorted_ptr->data.insert(final_sorted_ptr->data.end(), row_it, row_it + cols);
         }
-        // Transpose back to the original orientation
-        return builtin_transpose(vm, { transposed_ptr });
-    }
-    else {
-        Error::set(1, vm.runtime_current_line, "Invalid dimension for XSORT. Must be 0 or 1 for a matrix.");
-        return {};
+
+        return final_sorted_ptr;
     }
 
-    return result_ptr;
+    // Fallback for higher-dimensional arrays (currently unsupported)
+    Error::set(15, vm.runtime_current_line, "XSORT currently only supports 1D or 2D arrays.");
+    return {};
 }
 
 void register_array_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {

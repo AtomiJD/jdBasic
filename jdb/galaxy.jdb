@@ -1,0 +1,161 @@
+' jdBasic - N-Body Galaxy Simulation
+' ---------------------------------------
+' This program simulates the motion of 100 bodies in a galaxy-like disk.
+'
+' Method: Numerical integration using the Semi-Implicit Euler method.
+
+'=============================================================================
+' 1. SUBROUTINE TO CALCULATE ACCELERATIONS (No changes needed here)
+'=============================================================================
+SUB CalculateAccelerations()
+    ' This subroutine calculates the acceleration on each body
+    ' based on the gravitational pull from all other bodies.
+
+    ' First, reset all accelerations to zero.
+    FOR i = 0 TO NUM_BODIES - 1
+        Acc[i, 0] = 0
+        Acc[i, 1] = 0
+    NEXT i
+
+    ' Loop through each pair of bodies to calculate forces.
+    FOR i = 0 TO NUM_BODIES - 1
+        FOR j = 0 TO NUM_BODIES - 1
+            IF i <> j THEN
+                ' Calculate the vector from body i to body j
+                rx = Pos[j, 0] - Pos[i, 0]
+                ry = Pos[j, 1] - Pos[i, 1]
+
+                ' Calculate squared distance. Add a softening factor.
+                dist_sq = rx*rx + ry*ry + 0.1 ' Softening is important here
+
+                ' This is a small optimization to avoid two square roots.
+                ' F = G*m*r / r^3 instead of F = G*m*r / (r^2 * |r|)
+                inv_dist_cube = dist_sq ^ -1.5
+                
+                ' Calculate acceleration component and add to total for body i
+                accel_component = G * Mass[j] * inv_dist_cube
+                Acc[i, 0] = Acc[i, 0] + accel_component * rx
+                Acc[i, 1] = Acc[i, 1] + accel_component * ry
+            ENDIF
+        NEXT j
+    NEXT i
+ENDSUB
+
+'=============================================================================
+' 2. SETUP AND DEFINE SIMULATION CONSTANTS (MODIFIED)
+'=============================================================================
+PRINT "--- 1. Setting up Simulation Constants ---"
+
+' --- GRAPHICS CONSTANTS ---
+SCREEN_WIDTH = 900
+SCREEN_HEIGHT = 900
+VIEW_SCALE = 20    ' Zoom out to see the whole galaxy
+BODY_RADIUS = 2    ' Smaller bodies for less clutter
+TRAIL_LENGTH = 30  ' Shorter trails
+
+' --- SIMULATION CONSTANTS ---
+G = 1.0            ' Gravitational constant
+DT = 0.00005        ' Time step for the simulation.
+NUM_STEPS = 10000  ' Run for longer to see the evolution
+NUM_BODIES = 100
+DIMS = 2
+
+' --- GALAXY-SPECIFIC CONSTANTS ---
+CENTRAL_MASS = 20000.0 ' Mass of the central body
+GALAXY_RADIUS = 20.0   ' How far the stars will be spread out
+
+'=============================================================================
+' 3. INITIALIZE DATA STRUCTURES AND SET INITIAL CONDITIONS (MODIFIED)
+'=============================================================================
+PRINT "--- 2. Initializing Galaxy State ---"
+
+' --- Initialize Graphics Window ---
+SCREEN SCREEN_WIDTH, SCREEN_HEIGHT, "Galaxy Simulation"
+
+' --- MODIFIED: Dimension arrays for 100 bodies ---
+DIM Mass[NUM_BODIES]
+DIM Pos[NUM_BODIES, DIMS]
+DIM Vel[NUM_BODIES, DIMS]
+DIM Acc[NUM_BODIES, DIMS]
+DIM Trail[NUM_BODIES, TRAIL_LENGTH, DIMS]
+trail_idx = 0
+
+' --- MODIFIED: Generate the galaxy instead of figure-8 ---
+FOR i = 0 TO NUM_BODIES - 1
+    IF i = 0 THEN
+        ' Setup the central supermassive body
+        Mass[i] = CENTRAL_MASS
+        Pos[i, 0] = 0.0
+        Pos[i, 1] = 0.0
+        Vel[i, 0] = 0.0
+        Vel[i, 1] = 0.0
+    ELSE
+        ' Setup the orbiting "star" bodies
+        Mass[i] = RND(1) * 5 + 1 ' Random mass for stars
+
+        ' Position in a disk using polar coordinates
+        dist = GALAXY_RADIUS * SQR(RND(1)) ' SQR() bunches stars toward center
+        angle = RND(1) * 2 * PI
+        Pos[i, 0] = dist * COS(angle)
+        Pos[i, 1] = dist * SIN(angle)
+
+        ' Velocity for a circular orbit around the central mass
+        ' v = sqrt(G * M / r)
+        orbit_speed = SQR((G * CENTRAL_MASS) / dist)
+
+        ' Set velocity tangential to the position
+        Vel[i, 0] = -orbit_speed * SIN(angle) ' -y direction component
+        Vel[i, 1] = orbit_speed * COS(angle)  ' +x direction component
+    ENDIF
+NEXT i
+
+'=============================================================================
+' 4. THE MAIN SIMULATION LOOP
+'=============================================================================
+PRINT "--- 3. Starting Simulation ---"
+
+FOR A = 1 TO NUM_STEPS
+    ' Calculate all accelerations
+    CalculateAccelerations
+
+    ' Update velocity and position for all bodies using Semi-Implicit Euler
+    ' This is now a vectorized operation in NeReLa, which is fast!
+    Vel = Vel + Acc * DT
+    Pos = Pos + Vel * DT
+
+    ' --- Store trail data (loop is still needed for this part) ---
+    FOR i = 0 TO NUM_BODIES - 1
+        Trail[i, trail_idx, 0] = Pos[i, 0]
+        Trail[i, trail_idx, 1] = Pos[i, 1]
+    NEXT i
+    trail_idx = (trail_idx + 1) MOD TRAIL_LENGTH
+
+    ' --- DRAWING LOGIC (MODIFIED) ---
+    CLS 0, 0, 0 ' Clear screen to black
+
+    ' Draw the bodies (trails are too messy for 100 bodies)
+    FOR i = 0 TO NUM_BODIES - 1
+        ' Convert simulation coordinates to screen pixel coordinates
+        screen_x = (Pos[i, 0] * VIEW_SCALE) + (SCREEN_WIDTH / 2)
+        screen_y = (Pos[i, 1] * VIEW_SCALE) + (SCREEN_HEIGHT / 2)
+
+        ' Set color based on body type
+        IF i = 0 THEN
+            ' Central Body: Bright Yellow
+            r = 255: g = 255: b = 100
+            ' Make central body larger
+            CIRCLE screen_x, screen_y, BODY_RADIUS + 3, r, g, b
+        ELSE
+            ' Star Bodies: White/Light Blue
+            r = 200: g = 220: b = 255
+            CIRCLE screen_x, screen_y, BODY_RADIUS, r, g, b
+        ENDIF
+    NEXT i
+
+    ' Flip the screen to show what we've drawn
+    SCREENFLIP
+    SLEEP 1 ' A small delay to control speed
+NEXT A
+
+PRINT ""
+PRINT "--- Simulation Complete ---"

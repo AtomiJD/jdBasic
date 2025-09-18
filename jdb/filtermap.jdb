@@ -13,9 +13,9 @@ MyNumbers = IOTA(10)
 PRINT "Original Array: "; FRMV$(MyNumbers)
 PRINT
 
-' Use MAP to transform every element
+' Use SELECT to transform every element
 SquaredNumbers = SELECT(SQUARE@, MyNumbers)
-PRINT "After MAP(SQUARE@, ...) : "; FRMV$(SquaredNumbers)
+PRINT "After SELECT(SQUARE@, ...) : "; FRMV$(SquaredNumbers)
 PRINT
 
 ' Use FILTER to keep only the even numbers

@@ -1,4 +1,4 @@
-' NeReLaBasic - Three-Body Problem Simulation (Vectorized)
+' jdBasic - Three-Body Problem Simulation (Vectorized)
 ' --------------------------------------------------------
 ' This program simulates the motion of three bodies interacting
 ' under their mutual gravitational attraction. It uses initial
@@ -75,7 +75,7 @@ BODY_RADIUS = 5    ' Radius of the circle for each body in pixels
 TRAIL_LENGTH = 50  ' How many past positions to store for the trail effect
 
 G = 1.0           ' Gravitational constant
-DT = 0.001        ' Time step for the simulation
+DT = 0.0001        ' Time step for the simulation
 NUM_STEPS = 2000  ' Number of steps to simulate
 PRINT_EVERY = 200 ' How often to print the state
 NUM_BODIES = 3
