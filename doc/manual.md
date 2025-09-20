@@ -970,8 +970,6 @@ PRINT "Model loaded successfully."
   * `TENSOR.CONV2D(...)`: Performs a 2D convolution, applying filters (kernels) to an input image to detect features like edges or textures.
   * `TENSOR.MAXPOOL2D(...)`: A down-sampling operation that reduces the size of feature maps, making the network more efficient and robust.
 
-<!-- end list -->
-
 ```basic
 ' Example of a CNN forward pass
 ' Apply a Sobel edge detection kernel to an image

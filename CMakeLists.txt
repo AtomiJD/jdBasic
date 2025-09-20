@@ -20,12 +20,20 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Build option for the server version.
+option(BUILD_SERVER "Build the server-only version without GUI (SDL3)" OFF)
+
 # Add a message to display the build type.
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
   message(STATUS "Build type not specified, defaulting to 'Release'")
 endif()
 message(STATUS "Build type is: ${CMAKE_BUILD_TYPE}")
+if(BUILD_SERVER)
+    message(STATUS "Server build enabled: SDL3 components will be excluded.")
+else()
+    message(STATUS "Standard build enabled: Including SDL3 components.")
+endif()
 
 #================================================================================
 # Find Package Dependencies
@@ -51,9 +59,11 @@ else()
 endif()
 
 # Find SDL3 and its extension libraries
-find_package(SDL3 REQUIRED)
-find_package(SDL3_image REQUIRED)
-find_package(SDL3_ttf REQUIRED)
+if(NOT BUILD_SERVER)
+    find_package(SDL3 REQUIRED)
+    find_package(SDL3_image REQUIRED)
+    find_package(SDL3_ttf REQUIRED)
+endif()
 
 # Find ncurses (for console I/O, replacing conio.h)
 find_package(Curses REQUIRED)
@@ -115,13 +125,19 @@ target_include_directories(jdBasic PRIVATE
 
     # Include directories from found packages
     ${OPENSSL_INCLUDE_DIR}
-    ${SDL3_INCLUDE_DIRS}
-    ${SDL3_IMAGE_INCLUDE_DIRS}
-    ${SDL3_TTF_INCLUDE_DIRS}
     ${Readline_INCLUDE_DIRS}
     ${FMT_INCLUDE_DIRS}
     ${CURSES_INCLUDE_DIR}
 )
+
+# Add SDL include directories only if not a server build.
+if(NOT BUILD_SERVER)
+    target_include_directories(jdBasic PRIVATE
+        ${SDL3_INCLUDE_DIRS}
+        ${SDL3_IMAGE_INCLUDE_DIRS}
+        ${SDL3_TTF_INCLUDE_DIRS}
+    )
+endif()
 
 # --- Compile Definitions ---
 # These are equivalent to the PreprocessorDefinitions in the vcxproj.
@@ -131,6 +147,9 @@ target_compile_definitions(jdBasic PRIVATE
     HTTP
     CPPHTTPLIB_OPENSSL_SUPPORT
     JDEDIT
+    # Platform and build-type specific flags
+    $<$<NOT:$<BOOL:${BUILD_SERVER}>>:SDL3> # Define SDL3 only for non-server builds
+    $<$<BOOL:${BUILD_SERVER}>:SERVER>     # Define SERVER for server builds
     # Flags for non-Windows builds
     $<$<NOT:$<CONFIG:Debug>>:NDEBUG> # Add NDEBUG for non-debug builds
     $<$<CONFIG:Debug>:_DEBUG>      # Add _DEBUG for debug builds
@@ -152,14 +171,20 @@ target_link_libraries(jdBasic PRIVATE
     # Libraries found by find_package
     OpenSSL::SSL
     OpenSSL::Crypto
-    SDL3::SDL3
-    SDL3_image::SDL3_image
-    SDL3_ttf::SDL3_ttf
     ${CURSES_LIBRARIES}
     ${Readline_LIBRARIES} # Use the variable from pkg_check_modules
     fmt::fmt
     Threads::Threads
 )
+
+# Add SDL libraries only if not a server build.
+if(NOT BUILD_SERVER)
+    target_link_libraries(jdBasic PRIVATE
+        SDL3::SDL3
+        SDL3_image::SDL3_image
+        SDL3_ttf::SDL3_ttf
+    )
+endif()
 
 #================================================================================
 # Installation

@@ -732,6 +732,9 @@ ENDTRY
     PRINT Result{"output"}
     ```
 
+* **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
+* **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
+
 ## Functions
 
 ### Map Functions

@@ -9,33 +9,33 @@ Whether you're looking to relive the nostalgia of 8-bit coding with modern conve
 
 jdBasic is packed with features that bridge the gap between retro and modern programming:
 
-#### Classic BASIC Foundations
+### Classic BASIC Foundations
 
-  * Familiar control flow with `FOR...NEXT` loops, `GOTO`, and labels.
-  * Multi-line `IF...THEN...ELSE...ENDIF` blocks for conditional logic.
-  * Robust error handling with `TRY...CATCH...FINALLY` blocks.
+* Familiar control flow with `FOR...NEXT` loops, `GOTO`, and labels.
+* Multi-line `IF...THEN...ELSE...ENDIF` blocks for conditional logic.
+* Robust error handling with `TRY...CATCH...FINALLY` blocks.
 
-#### APL-Inspired Array Programming
+### APL-Inspired Array Programming
 
-  * **N-Dimensional Arrays**: First-class support for vectors, matrices, and higher-dimension arrays.
-  * **Element-Wise Operations**: Perform arithmetic on entire arrays at once (e.g., `My_Array * 2 + 5`). Most built-in functions (`SIN`, `SQR`, `RIGHT$`, etc.) are vectorized and apply to every element automatically.
+* **N-Dimensional Arrays**: First-class support for vectors, matrices, and higher-dimension arrays.
+* **Element-Wise Operations**: Perform arithmetic on entire arrays at once (e.g., `My_Array * 2 + 5`). Most built-in functions (`SIN`, `SQR`, `RIGHT$`, etc.) are vectorized and apply to every element automatically.
   * **Data Analysis & Reduction**: Instantly aggregate arrays with `SUM`, `PRODUCT`, `MIN`, `MAX`, and perform cumulative operations with `SCAN`.
   
   ![One liner Game of Life](demo.gif)
 
-#### Modern Enhancements
+### Modern Enhancements
 
-  * **Modular Programming**: Organize your code into reusable modules with `IMPORT`.
-  * **Rich Data Types**: Full support for `Date`/`Time` objects, `Map`s, and user-defined `TYPE`s.
-  * **Cross-Platform**: Run your code on both Windows and Linux.
-  * **Library Integration**: Connect to external libraries for databases (`SQLite`) and machine learning (`TensorFlow`).
+* **Modular Programming**: Organize your code into reusable modules with `IMPORT`.
+* **Rich Data Types**: Full support for `Date`/`Time` objects, `Map`s, and user-defined `TYPE`s.
+* **Cross-Platform**: Run your code on both Windows and Linux.
+* **Library Integration**: Connect to external libraries for databases (`SQLite`) and machine learning (`TensorFlow`).
 
-#### Functional Programming Core
+### Functional Programming Core
 
-  * **First-Class Functions**: Treat functions as values. Assign them to variables and pass them to other functions using the `@` handle.
-  * **Higher-Order Functions**: Use powerful functions like `SELECT` (map) and `FILTER` that take other functions as arguments.
-  * **Lambda Functions**: Define anonymous, inline functions for concise data manipulation (e.g., `lambda i -> i * 2`).
-  * **Pipe Operator (`|>`):** Chain function calls together into elegant, readable data pipelines.
+* **First-Class Functions**: Treat functions as values. Assign them to variables and pass them to other functions using the `@` handle.
+* **Higher-Order Functions**: Use powerful functions like `SELECT` (map) and `FILTER` that take other functions as arguments.
+* **Lambda Functions**: Define anonymous, inline functions for concise data manipulation (e.g., `lambda i -> i * 2`).
+* **Pipe Operator (`|>`):** Chain function calls together into elegant, readable data pipelines.
 
 ## Getting Started
 
@@ -55,6 +55,9 @@ To run a jdBasic program, simply pass the source file to the interpreter from yo
 ```basic
 ..\bin\jdBasic test.jdb
 ```
+
+Build from code:
+[https://github.com/AtomiJD/jdBasic/blob/development/doc/build_linux_macos.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/build_linux_macos.md)
 
 If you want to code in vs code take a look at:
 [https://github.com/AtomiJD/jdBasic/blob/development/vscode_extension/vscode_readme.md](https://github.com/AtomiJD/jdBasic/blob/development/vscode_extension/vscode_readme.md)
@@ -81,6 +84,7 @@ result = numbers |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 1
 PRINT "Result: "; result
 ' Expected Output: [60 70 80 90 100]
 ```
+
 ![One liner Biorythm](BioRythmOneLine.png)
 
 ### Object-Oriented Programming with `TYPE`
@@ -150,17 +154,17 @@ ENDIF
 
 jdBasic is an active project with many recent additions and exciting plans.
 
-#### What's New?
+### What's New?
 
-  * **Cross-Platform Support**: jdBasic is now available for both Windows and Linux\!
-  * **Robust Error Handling**: The `TRY...CATCH...FINALLY` structure is fully implemented for writing safer, more resilient code.
-  * **Advanced Array Operations**: Powerful APL functions like `SCAN` (cumulative reduce) and `ROTATE` (cyclical shift) have been added.
-  * **Library Integrations**: jdBasic can now interface with external libraries, with modules for `SQLite` and `TensorFlow` already available.
+* **Cross-Platform Support**: jdBasic is now available for both Windows and Linux\!
+* **Robust Error Handling**: The `TRY...CATCH...FINALLY` structure is fully implemented for writing safer, more resilient code.
+* **Advanced Array Operations**: Powerful APL functions like `SCAN` (cumulative reduce) and `ROTATE` (cyclical shift) have been added.
+* **Library Integrations**: jdBasic can now interface with external libraries, with modules for `SQLite` and `TensorFlow` already available.
 
 #### What's Next?
 
-  * **Enhanced Game Development**: Major improvements are planned for the `SPRITE` and `MAP` libraries to make game creation easier and more powerful.
-  * **GUI Toolkit Integration**: We are exploring the integration of a GUI library to enable the creation of applications with native graphical user interfaces.
-  * **Improved Linux Build**: The Linux version will be enhanced with libraries like SDL2 for better graphics and hardware support.
+* **Enhanced Game Development**: Major improvements are planned for the `SPRITE` and `MAP` libraries to make game creation easier and more powerful.
+* **GUI Toolkit Integration**: We are exploring the integration of a GUI library to enable the creation of applications with native graphical user interfaces.
+* **Improved Linux Build**: The Linux version will be enhanced with libraries like SDL3 for better graphics and hardware support.
 
 Contributions and feedback are welcome\!

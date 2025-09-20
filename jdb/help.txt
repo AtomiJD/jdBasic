@@ -1,418 +1,350 @@
-[CLS]
-Syntax: CLS
-Description: Clears the console screen.
+[ABS]
+Syntax: ABS(numeric_expression)
+Description: Returns the absolute value of a number or an array of numbers.
 
-[COLOR]
-Syntax: COLOR fg, bg
-Description: Sets the foreground and background colors for text.
+[ALL]
+Syntax: ALL(array)
+Description: Returns TRUE if all elements in an array are true, otherwise FALSE.
 
-[CURSOR]
-Syntax: CURSOR state
-Description: Turns the cursor on (1) or off (0).
+[AND]
+Syntax: expression AND expression
+Description: Performs a logical AND operation.
 
-[GOTO]
-Syntax: GOTO label
-Description: Jumps execution to a label:.
+[ANDALSO]
+Syntax: expression ANDALSO expression
+Description: Performs a short-circuiting logical AND operation.
 
-[IF]
-Syntax: IF condition THEN ... [ELSE ...] ENDIF
-Description: Conditional execution block. Single-line IF condition THEN statement is also supported.
+[ANY]
+Syntax: ANY(array)
+Description: Returns TRUE if any element in an array is true, otherwise FALSE.
 
-[FOR]
-Syntax: FOR ... TO ... STEP ... NEXT
-Description: Defines a loop that repeats a specific number of times.
+[APPEND]
+Syntax: APPEND(array, value)
+Description: Appends a value or another array to an array, returning a new flat 1D array.
 
-[FOR EACH]
-Syntax: FOR EACH variable IN collection
-Description: Iterates over every element in a collection, such as an Array or a Map.
+[AS]
+Syntax: DIM variable AS type
+Description: Specifies the data type of a variable in a DIM statement.
 
-[DO]
-Syntax: DO ... LOOP [WHILE/UNTIL condition]
-Description: Defines a loop that continues as long as a condition is met or until a condition is met.
+[ASC]
+Syntax: ASC(char$)
+Description: Returns the ASCII code of a character.
 
-[TRY]
-Syntax: TRY ... CATCH ... FINALLY ... ENDTRY
-Description: Structured error handling.
+[ASYNC]
+Syntax: ASYNC FUNC function_name(args)
+Description: Marks a function as asynchronous, allowing it to be used with AWAIT.
 
-[OPTION]
-Syntax: OPTION option$
-Description: Sets a VM option. OPTION "NOPAUSE" disables the ESC/Space break/pause functionality.
+[AWAIT]
+Syntax: AWAIT task_handle
+Description: Pauses execution until an asynchronous task is complete and retrieves its result.
 
-[SLEEP]
-Syntax: SLEEP milliseconds
-Description: Pauses execution for a specified duration.
+[BAND]
+Syntax: expression BAND expression
+Description: Performs a bitwise AND operation on two numeric expressions.
 
-[STOP]
-Syntax: STOP
-Description: Halts program execution and returns to the Ready prompt, preserving variable state. Execution can be continued with RESUME.
+[BOOL]
+Syntax: DIM variable AS BOOL
+Description: A synonym for BOOLEAN. Declares a variable that holds TRUE or FALSE.
 
-[EXECUTE]
-Syntax: EXECUTE(code_string$)
-Description: Compiles and executes a string of jdBasic code at runtime.
+[BOOLEAN]
+Syntax: DIM variable AS BOOLEAN
+Description: Declares a variable that holds TRUE or FALSE.
 
-[IMPORT]
-Syntax: IMPORT [modul]
-Description: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
+[BOR]
+Syntax: expression BOR expression
+Description: Performs a bitwise OR operation on two numeric expressions.
 
-[EXPORT]
-Syntax: EXPORT MODUL [module]
-Description: Marks a file as EXPORT for importing with IMPORT
+[BXOR]
+Syntax: expression BXOR expression
+Description: Performs a bitwise XOR operation on two numeric expressions.
 
-[IMPORTDLL]
-Syntax: IMPORTDLL [funcfile]
-Description: Loads the funcfile.dll as dynmaic library and register all included functions for jdBasic.
+[CALL]
+Syntax: CALL subroutine_name
+Description: Transfers control to a named SUB procedure.
 
-[COMPILE]
-Syntax: COMPILE
-Description: Compiles the source code currently in memory into p-code.
+[CASE]
+Syntax: CASE value
+Description: A block inside a SWITCH statement that executes if its value matches the SWITCH expression.
 
-[DUMP]
-Syntax: DUMP "GLOBAL" / "LOCAL" / "STACK"
-Description: Dumps the p-code (If no parameter is given) of the main program or a loaded module to the console for debugging. "GLOBAL" dumps global variables. "LOCAL" dumps local variables. "STACK" dumps call stack.
-
-[EDIT]
-Syntax: EDIT
-Description: Opens the integrated text editor with the current source code.
-
-[LIST]
-Syntax: LIST
-Description: Lists the current source code in memory to the console.
-
-[LOAD]
-Syntax: LOAD "filename"
-Description: Loads a source file from disk into memory.
-
-[RUN]
-Syntax: RUN
-Description: Compiles and runs the program currently in memory.
-
-[SAVE]
-Syntax: SAVE "filename"
-Description: Saves the source code in memory to a file on disk.
-
-[TRON]
-Syntax: TRON / TROFF
-Description: Turns instruction tracing on or off.
-
-[LOADWS]
-Syntax: LOADWS "workspacename"
-Description: Loads a source file and all variables of a saved workspace from disk into memory.
-
-[SAVEWS]
-Syntax: SAVEWS "workspacename"
-Description: Saves the source code and variables (Workspace) in memory to a file on disk.
-
-[CLEARWS]
-Syntax: CLEARWS
-Description: Empties source code, p-code, and all global variables.
-
-[NEW]
-Syntax: NEW
-Description: Empties the source code, compiled p-code, and user-defined function tables.
-
-[DIR]
-Syntax: DIR [path]
-Description: Lists files and directories. Supports wildcards like * and ?.
-
-[DIR$]
-Syntax: DIR$([path]) -> String
-Description: Lists files and directories and returns them as a string array. Supports wildcards like * and ?.
+[CATCH]
+Syntax: CATCH
+Description: The block of code that executes when an error occurs within a TRY block.
 
 [CD]
 Syntax: CD "path"
 Description: Changes the current working directory.
 
-[PWD]
-Syntax: PWD
-Description: Prints the current working directory.
-
-[MKDIR]
-Syntax: MKDIR "path"
-Description: Creates a new directory.
-
-[KILL]
-Syntax: KILL "filename"
-Description: Deletes a file.
-
-[JSON.PARSE$]
-Syntax: JSON.PARSE$(json_string$)
-Description: Parses a JSON string and returns a special JsonObject.
-
-[JSON.STRINGIFY$]
-Syntax: JSON.STRINGIFY$(map_or_array)
-Description: Takes a Map or Array variable and returns its compact JSON string representation.
-
-[CREATEOBJECT]
-Syntax: CREATEOBJECT(progID$)
-Description: Creates a COM Automation object (e.g., "Excel.Application") and returns a ComObject.
-
-[LEFT$]
-Syntax: LEFT$(str$, n)
-Description: Extracts parts of a string.
-
-[RIGHT$]
-Syntax: RIGHT$(str$, n)
-Description: Extracts parts of a string.
-
-[MID$]
-Syntax: MID$(str$, start, [len])
-Description: Extracts parts of a string.
-
-[LEN]
-Syntax: LEN(expression)
-Description: Returns the length of the string representation of an expression.
-
-[LCASE$]
-Syntax: LCASE$(str$)
-Description: Manipulates string case and whitespace.
-
-[UCASE$]
-Syntax: UCASE$(str$)
-Description: Manipulates string case and whitespace.
-
-[TRIM$]
-Syntax: TRIM$(str$)
-Description: Manipulates string case and whitespace.
-
-[STR$]
-Syntax: STR$(number)
-Description: Converts between numbers and strings.
-
-[VAL]
-Syntax: VAL(string$)
-Description: Converts between numbers and strings.
+[CEIL]
+Syntax: CEIL(numeric_expression)
+Description: Rounds a number up to the nearest integer.
 
 [CHR$]
 Syntax: CHR$(ascii_code)
-Description: Converts between ASCII codes and characters.
+Description: Returns the character corresponding to an ASCII code.
 
-[ASC]
-Syntax: ASC(char$)
-Description: Converts between ASCII codes and characters.
+[CIRCLE]
+Syntax: CIRCLE x, y, r, [fill], [r, g, b]
+Description: Draws a circle on the graphics screen.
 
-[INSTR]
-Syntax: INSTR$([start, ]haystack$, needle$)
-Description: Finds the position of one string within another.
+[CIRCLE_SECTOR]
+Syntax: CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b]
+Description: Draws a sector (a pie slice) of a circle.
 
-[SPLIT]
-Syntax: SPLIT(source$, delimiter$)
-Description: Splits a string by a delimiter and returns a 1D array of strings.
+[CLEARWS]
+Syntax: CLEARWS
+Description: Clears the current workspace, including all source code, variables, and compiled code.
 
-[SIN]
-Syntax: SIN(numeric expression or array)
-Description: Returns the Sinus.
+[CLS]
+Syntax: CLS
+Description: Clears the console screen.
 
-[COS]
-Syntax: COS(numeric expression or array)
-Description: Returns the Cosinus.
+[COLOR]
+Syntax: COLOR foreground, background
+Description: Sets the text colors for the console.
 
-[TAN]
-Syntax: TAN(numeric expression or array)
-Description: Returns the Tangens.
-
-[SQR]
-Syntax: SQR(numeric expression or array)
-Description: Returns the Square Root
-
-[RND]
-Syntax: RND(numeric expression or array)
-Description: Returns a random value
-
-[FAC]
-Syntax: FAC(numeric expression or array)
-Description: Factorial Function.
-
-[INT]
-Syntax: INT(numeric expression or array)
-Description: Traditional BASIC integer function (floor)
-
-[FLOOR]
-Syntax: FLOOR(numeric expression or array)
-Description: Rounds down.
-
-[CEIL]
-Syntax: CEIL(numeric expression or array)
-Description: Rounds up.
-
-[TRUNC]
-Syntax: TRUNC(numeric expression or array)
-Description: Truncates toward zero.
-
-[SHL]
-Syntax: SHL(value or array, bits_to_shift) -> number or array
-Description: Bit shift left.
-
-[SHR]
-Syntax: SHR(value or array, bits_to_shift) -> number or array
-Description: Bit shift right.
-
-[REGEX.MATCH]
-Syntax: REGEX.MATCH(pattern$, text$)
-Description: Checks if the entire text$ string matches the pattern$.
-
-[REGEX.FINDALL]
-Syntax: REGEX.FINDALL(pattern$, text$)
-Description: Finds all non-overlapping occurrences of pattern$ in text$.
-
-[REGEX.REPLACE]
-Syntax: REGEX.REPLACE(pattern$, text$, replacement$)
-Description: Replaces all occurrences of pattern$ in text$ with replacement$.
-
-[APPEND]
-Syntax: APPEND(array, value)
-Description: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
-
-[DIFF]
-Syntax: DIFF(array1, array2)
-Description: Returns a new array containing elements that are in array1 but not in array2.
-
-[IOTA]
-Syntax: IOTA(N)
-Description: Generates a 1D array of numbers from 1 to N.
-
-[REDUCTION]
-Syntax: SUM, PRODUCT, MIN, MAX, ANY, ALL
-Description: Functions that reduce an array to a single value (e.g., SUM(my_array)) or a vector (SUM(my_array, dimension)).
-
-[SCAN]
-Syntax: SCAN(operator, array) -> array
-Description: Performs a cumulative reduction (scan) along the last axis of an array.
-
-[SELECT]
-Syntax: SELECT(function@, array) -> array
-Description: Applies a user-defined function to each element of an array.
-
-[FILTER]
-Syntax: FILTER(function@, array) -> array
-Description: Filters an array by applying a user-defined predicate function to each element.
-
-[REDUCE]
-Syntax: REDUCE(function@, array, [initial_value]) -> value
-Description: Performs a cumulative reduction on an array using a user-provided function.
-
-[TAKE]
-Syntax: TAKE(N, array)
-Description: Takes or drops N elements from the beginning (or end if N is negative) of an array.
-
-[DROP]
-Syntax: DROP(N, array)
-Description: Takes or drops N elements from the beginning (or end if N is negative) of an array.
-
-[RESHAPE]
-Syntax: RESHAPE(array, shape_vector)
-Description: Creates a new array with new dimensions from the data of a source array.
-
-[REVERSE]
-Syntax: REVERSE(array)
-Description: Reverses the elements of an array.
-
-[TRANSPOSE]
-Syntax: TRANSPOSE(matrix)
-Description: Transposes a 2D matrix.
-
-[MATMUL]
-Syntax: MATMUL(matrixA, matrixB)
-Description: Performs matrix multiplication.
-
-[MVLET]
-Syntax: MVLET(matrix, dimension, index, vector) -> matrix
-Description: Replaces a row or column in a matrix with a vector, returning a new matrix.
-
-[INTEGRATE]
-Syntax: INTEGRATE(function@, limits, rule)
-Description: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
-
-[SOLVE]
-Syntax: SOLVE(matrix A, vextor b) -> vector_x
-Description: Solves the linear system Ax = b for the unknown vector x.
-
-[INVERT]
-Syntax: INVERT(matrix) -> matrix
-Description: Computes the inverse of a square matrix.
-
-[STACK]
-Syntax: STACK(dimension, array1, array2, ...) -> matrix
-Description: Stacks 1D vectors into a 2D matrix.
-
-[SLICE]
-Syntax: SLICE(matrix, dim, index)
-Description: Extracts a row (dim=0) or column (dim=1) from a 2D matrix.
-
-[GRADE]
-Syntax: GRADE(vector)
-Description: Returns the indices that would sort the vector.
-
-[OUTER]
-Syntax: OUTER(vecA, vecB, op$ or funcref)
-Description: Creates an outer product table using an operator (+, -, *, /, MOD, >, <, =, ^) or a reference to a function (srq@).
-
-[ROTATE]
-Syntax: ROTATE(array, shift_vector) -> array
-Description: Cyclically shifts an N-dimensional array.
-
-[SHIFT]
-Syntax: SHIFT(array, shift_vector, [fill_value]) -> array
-Description: Non-cyclically shifts an N-dimensional array.
+[COMPILE]
+Syntax: COMPILE
+Description: Compiles the source code currently in memory into bytecode.
 
 [CONVOLVE]
-Syntax: CONVOLVE(array, kernel, wrap_mode) -> array
-Description: Performs a 2D convolution of an array with a kernel.
+Syntax: CONVOLVE(array, kernel, wrap_mode)
+Description: Performs a 2D convolution operation on an array with a given kernel.
 
-[PLACE]
-Syntax: PLACE(destination_array, source_array, coordinates_vector) -> array
-Description: Places a source array into a destination array at a given coordinate.
+[COS]
+Syntax: COS(angle_in_radians)
+Description: Returns the cosine of an angle.
 
-[TXTREADER$]
-Syntax: TXTREADER$(filename$)
-Description: Reads an entire text file into a single string variable.
-
-[TXTWRITER]
-Syntax: TXTWRITER filename$, content$
-Description: Writes a string variable to a text file.
+[CREATEOBJECT]
+Syntax: CREATEOBJECT(progID$)
+Description: Creates an instance of a COM Automation object (Windows only).
 
 [CSVREADER]
 Syntax: CSVREADER(filename$, [delimiter$], [has_header])
-Description: Reads a CSV file into a 2D array of numbers.
+Description: Reads a CSV file into a 2D array.
 
 [CSVWRITER]
 Syntax: CSVWRITER filename$, array, [delimiter$], [header_array]
 Description: Writes a 2D array to a CSV file.
 
-[GETENV$]
-Syntax: GETENV$(var_name$)
-Description: Gets the value of a system environment variable.
+[CURSOR]
+Syntax: CURSOR state
+Description: Turns the console cursor on (1) or off (0).
 
-[SETLOCALE]
-Syntax: SETLOCALE("locale_string")
-Description: Sets the locale for number formatting (e.g., "en-US" or "de-DE").
-
-[TICK]
-Syntax: TICK()
-Description: Returns the number of milliseconds since the program started.
+[DATE]
+Syntax: DIM variable AS DATE
+Description: Declares a variable to hold date and time values.
 
 [DATE$]
-Syntax: DATE$ / TIME$
-Description: Returns the current system date/time as a string.
-
-[TIME$]
-Syntax: DATE$ / TIME$
-Description: Returns the current system date/time as a string.
-
-[NOW]
-Syntax: NOW()
-Description: Returns a DateTime object for the current moment.
+Syntax: DATE$
+Description: Returns the current system date as a string in "YYYY-MM-DD" format.
 
 [DATEADD]
-Syntax: DATEADD(part$, num, date)
-Description: Adds an interval to a DateTime object. Interval part$: D,H,N,S
+Syntax: DATEADD(part$, number, date)
+Description: Adds a specified time interval to a date.
 
 [DATEDIFF]
-Syntax: DATEDIFF(part$, date1, date2) -> number
-Description: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S
+Syntax: DATEDIFF(part$, date1, date2)
+Description: Returns the difference between two dates in a specified time unit.
 
-[CVDATE]
-Syntax: CVDATE(date_string$)
-Description: Converts a string ("YYYY-MM-DD") to a DateTime object.
+[DEFAULT]
+Syntax: DEFAULT
+Description: The block inside a SWITCH statement that executes if no CASE matches.
+
+[DIFF]
+Syntax: DIFF(array1, array2)
+Description: Returns a new array containing elements that are in the first array but not the second.
+
+[DIM]
+Syntax: DIM variable [AS type]
+Description: Declares a variable and optionally sets its type.
+
+[DIR]
+Syntax: DIR [path_with_wildcard]
+Description: Lists files and directories in the current or specified path.
+
+[DIR$]
+Syntax: DIR$([path_with_wildcard])
+Description: Returns a 1D array of strings containing files and directories that match the path.
+
+[DLLIMPORT]
+Syntax: DLLIMPORT "library_file"
+Description: Loads a dynamic link library (.dll or .so) and registers its functions.
+
+[DO]
+Syntax: DO ... LOOP [WHILE/UNTIL condition]
+Description: Creates a loop that continues until a condition is met.
+
+[DOUBLE]
+Syntax: DIM variable AS DOUBLE
+Description: Declares a variable to hold a 64-bit floating-point number.
+
+[DROP]
+Syntax: DROP(N, array)
+Description: Returns a new array with the first N (or last N if negative) elements removed.
+
+[DUMP]
+Syntax: DUMP ["GLOBAL" | "LOCAL" | "STACK" | "REACT" | module_name$]
+Description: Displays debugging information about the program's state.
+
+[EACH]
+Syntax: FOR EACH variable IN collection
+Description: Keyword used to begin a loop that iterates over a collection.
+
+[EDIT]
+Syntax: EDIT
+Description: Opens the built-in source code editor.
+
+[ELLIPSE]
+Syntax: ELLIPSE cx, cy, rx, ry, [fill], [r, g, b]
+Description: Draws an ellipse on the graphics screen.
+
+[ELSE]
+Syntax: IF condition THEN ... ELSE ...
+Description: The block of code that executes if an IF condition is false.
+
+[ELSEIF]
+Syntax: IF condition THEN ... ELSEIF condition THEN ...
+Description: A subsequent condition to test if a prior IF or ELSEIF was false.
+
+[ENDENUM]
+Syntax: ENUM ... ENDENUM
+Description: Marks the end of an ENUM block.
+
+[ENDFUNC]
+Syntax: FUNC ... ENDFUNC
+Description: Marks the end of a user-defined function.
+
+[ENDIF]
+Syntax: IF ... ENDIF
+Description: Marks the end of an IF...THEN...ELSE block.
+
+[ENDSUB]
+Syntax: SUB ... ENDSUB
+Description: Marks the end of a user-defined subroutine.
+
+[ENDSWITCH]
+Syntax: SWITCH ... ENDSWITCH
+Description: Marks the end of a SWITCH...CASE block.
+
+[ENDTRY]
+Syntax: TRY ... ENDTRY
+Description: Marks the end of a TRY...CATCH error handling block.
+
+[ENDTYPE]
+Syntax: TYPE ... ENDTYPE
+Description: Marks the end of a user-defined type block.
+
+[ENUM]
+Syntax: ENUM name ... ENDENUM
+Description: Begins a block that defines a set of named integer constants.
+
+[EVAL]
+Syntax: EVAL(expression_string$)
+Description: Evaluates a string as an expression and returns its result at runtime.
+
+[EXECUTE]
+Syntax: EXECUTE(code_string$)
+Description: Executes a string of jdBasic code at runtime.
+
+[EXIT]
+Syntax: EXIT
+Description: A generic command to exit the current structure (function, loop, etc.).
+
+[EXITDO]
+Syntax: EXIT DO
+Description: Exits the current DO...LOOP immediately.
+
+[EXITFOR]
+Syntax: EXIT FOR
+Description: Exits the current FOR...NEXT loop immediately.
+
+[EXITFUNC]
+Syntax: EXIT FUNC
+Description: Exits the current user-defined function immediately.
+
+[EXITSWITCH]
+Syntax: EXIT SWITCH
+Description: Exits the current SWITCH...CASE block immediately.
+
+[EXPORT]
+Syntax: EXPORT MODULE
+Description: Marks the current file as a module that can be imported by other files.
+
+[EXPLICIT]
+Syntax: OPTION EXPLICIT
+Description: Enforces that all variables must be declared with DIM before use.
+
+[FAC]
+Syntax: FAC(number)
+Description: Returns the factorial of a number.
+
+[FALSE]
+Syntax: FALSE
+Description: The boolean constant representing a false value.
+
+[FILTER]
+Syntax: FILTER(function@, array)
+Description: Creates a new 1D array containing only the elements for which the provided function returns TRUE.
+
+[FINALLY]
+Syntax: TRY ... CATCH ... FINALLY
+Description: A block of code that always executes after a TRY or CATCH block, regardless of errors.
+
+[FIND_IN_ARRAY]
+Syntax: FIND_IN_ARRAY(array, value)
+Description: Returns the 0-based index of the first occurrence of a value in an array, or -1 if not found.
+
+[FLOOR]
+Syntax: FLOOR(number)
+Description: Rounds a number down to the nearest integer.
+
+[FOR]
+Syntax: FOR counter = start TO end [STEP value] ... NEXT
+Description: Begins a loop that repeats a specific number of times.
+
+[FORMAT$]
+Syntax: FORMAT$(format_string$, arg1, ...)
+Description: Formats a string using C++20-style format specifiers.
+
+[FRMV$]
+Syntax: FRMV$(array, [format_string$])
+Description: Formats a 1D or 2D array into a display-friendly string grid.
+
+[FUNC]
+Syntax: FUNC name(parameters) ... ENDFUNC
+Description: Begins the definition of a user-defined function that returns a value.
+
+[GETENV$]
+Syntax: GETENV$(variable_name$)
+Description: Gets the value of a system environment variable.
+
+[GETX]
+Syntax: GETX()
+Description: Returns the current column (X) position of the console cursor.
+
+[GETY]
+Syntax: GETY()
+Description: Returns the current row (Y) position of the console cursor.
+
+[GOTO]
+Syntax: GOTO label
+Description: Unconditionally jumps program execution to a specified `label:`.
+
+[GRADE]
+Syntax: GRADE(vector)
+Description: Returns a vector of indices that would sort the input vector.
+
+[HELP]
+Syntax: HELP [topic$]
+Description: Displays help information. With no topic, lists all commands.
+
+[HELP$]
+Syntax: HELP$()
+Description: Returns a 1D array of strings containing all available help topics.
+
+[HTTP.CLEARHEADERS]
+Syntax: HTTP.CLEARHEADERS
+Description: Clears all custom headers set for subsequent HTTP requests.
 
 [HTTP.GET$]
 Syntax: HTTP.GET$(url$)
@@ -420,83 +352,879 @@ Description: Performs an HTTP GET request and returns the response body as a str
 
 [HTTP.POST$]
 Syntax: HTTP.POST$(url$, data$, contentType$)
-Description: Performs an HTTP POST request with the given data and content type, returning the response body.
+Description: Performs an HTTP POST request.
+
+[HTTP.POST_ASYNC]
+Syntax: HTTP.POST_ASYNC(url$, data$, contentType$)
+Description: Performs an asynchronous HTTP POST request, returning a task handle.
 
 [HTTP.PUT$]
 Syntax: HTTP.PUT$(url$, data$, contentType$)
 Description: Performs an HTTP PUT request.
 
-[HTTP.POST_ASYNC]
-Syntax: HTTP.POST_ASYNC(url$, data$, contentType$)
-Description: Performs an HTTP POST request asynchronously, returning a task handle that can be used with AWAIT.
+[HTTP.SERVER.ON_GET]
+Syntax: HTTP.SERVER.ON_GET(path$, function_name$)
+Description: Registers a function to handle incoming HTTP GET requests for the built-in server.
+
+[HTTP.SERVER.ON_POST]
+Syntax: HTTP.SERVER.ON_POST(path$, function_name$)
+Description: Registers a function to handle incoming HTTP POST requests for the built-in server.
+
+[HTTP.SERVER.START]
+Syntax: HTTP.SERVER.START(port)
+Description: Starts the built-in non-blocking HTTP server on a specified port.
+
+[HTTP.SERVER.STOP]
+Syntax: HTTP.SERVER.STOP
+Description: Stops the built-in HTTP server.
 
 [HTTP.SETHEADER]
 Syntax: HTTP.SETHEADER(name$, value$)
-Description: Sets a custom header for subsequent HTTP requests.
-
-[HTTP.CLEARHEADERS]
-Syntax: HTTP.CLEARHEADERS()
-Description: Clears all custom HTTP headers.
+Description: Sets a custom HTTP header for subsequent requests.
 
 [HTTP.STATUSCODE]
 Syntax: HTTP.STATUSCODE()
 Description: Returns the HTTP status code from the last request.
 
-[HTTP.SERVER.START]
-Syntax: HTTP.SERVER.START(port)
-Description: Starts a non-blocking HTTP server on the specified port.
+[IF]
+Syntax: IF condition THEN ...
+Description: Begins a block of code that executes conditionally.
 
-[HTTP.SERVER.STOP]
-Syntax: HTTP.SERVER.STOP
-Description: Stops the running HTTP server.
+[IMPORT]
+Syntax: IMPORT module_name
+Description: Loads a jdBasic module file.
 
-[HTTP.SERVER.ON_GET]
-Syntax: HTTP.SERVER.ON_GET(path$, function_name$)
-Description: Registers a function to handle incoming GET requests.
+[IN]
+Syntax: FOR EACH ... IN collection
+Description: Keyword used in a FOR EACH loop to specify the collection to iterate over.
 
-[HTTP.SERVER.ON_POST]
-Syntax: HTTP.SERVER.ON_POST(path$, function_name$)
-Description: Registers a function to handle incoming POST requests.
+[IN_OPERATOR]
+Syntax: value IN collection
+Description: An operator that returns TRUE if a value exists within an array or as a key in a map.
 
-[TYPEOF]
-Syntax: TYPEOF(AnyVar)
-Description: Returns the type of an object as string.
+[INKEY$]
+Syntax: INKEY$()
+Description: Non-blocking check for a key press. Returns the key or an empty string.
 
-[THREAD.ISDONE]
-Syntax: THREAD.ISDONE(handle)
-Description: Returns TRUE if the background thread associated with the handle has finished its execution.
+[INPUT]
+Syntax: INPUT [prompt$], variable
+Description: Pauses execution and waits for the user to enter data from the console.
+
+[INSTR$]
+Syntax: INSTR$([start_pos, ]haystack$, needle$)
+Description: Returns the 0-based starting position of a substring within a string.
+
+[INT]
+Syntax: INT(number)
+Description: Truncates a number to its integer part (classic floor behavior).
+
+[INTEGER]
+Syntax: DIM variable AS INTEGER
+Description: Declares a variable to hold a 64-bit signed integer.
+
+[INTEGRATE]
+Syntax: INTEGRATE(function@, limits_array, rule_order)
+Description: Numerically integrates a function over a given domain.
+
+[INVERT]
+Syntax: INVERT(matrix)
+Description: Computes the inverse of a square matrix.
+
+[IOTA]
+Syntax: IOTA(N, [base=1], [step=1])
+Description: Generates a 1D array of N numbers.
+
+[JSON]
+Syntax: DIM variable AS JSON
+Description: Declares a variable to hold a parsed JSON object.
+
+[JSON.PARSE$]
+Syntax: JSON.PARSE$(json_string$)
+Description: Parses a JSON string into a special JsonObject.
+
+[JSON.STRINGIFY$]
+Syntax: JSON.STRINGIFY$(map_or_array)
+Description: Converts a Map or Array into a JSON string representation.
+
+[KILL]
+Syntax: KILL "filename"
+Description: Deletes a file from the disk.
+
+[LAMBDA]
+Syntax: LAMBDA params -> expression
+Description: Defines a small, anonymous function.
+
+[LCASE$]
+Syntax: LCASE$(string$)
+Description: Converts a string to lowercase.
+
+[LEFT$]
+Syntax: LEFT$(string$, length)
+Description: Returns the specified number of characters from the beginning of a string.
+
+[LEN]
+Syntax: LEN(expression)
+Description: Returns the length of a string or the dimensions of an array.
+
+[LERP]
+Syntax: LERP(start, end, alpha)
+Description: Performs linear interpolation between two values or arrays.
+
+[LINT]
+Syntax: LINT
+Description: Analyzes the source code for potential issues like unused variables.
+
+[LIST]
+Syntax: LIST
+Description: Displays the current source code in the console.
+
+[LOAD]
+Syntax: LOAD "filename"
+Description: Loads a source code file into memory.
+
+[LOADWS]
+Syntax: LOADWS "workspacename"
+Description: Loads a source code and variable workspace from a file.
+
+[LOCATE]
+Syntax: LOCATE row, column
+Description: Moves the console cursor to a specified position.
+
+[LOG]
+Syntax: LOG(number)
+Description: Returns the natural logarithm of a number.
+
+[LOG10]
+Syntax: LOG10(number)
+Description: Returns the base-10 logarithm of a number.
+
+[LOOP]
+Syntax: DO ... LOOP
+Description: Marks the end of a DO loop.
+
+[MAP]
+Syntax: DIM variable AS MAP
+Description: Declares a variable as a key-value dictionary.
+
+[MAP.CLEAR]
+Syntax: MAP.CLEAR(map_variable)
+Description: Removes all items from a map.
+
+[MAP.DELETE]
+Syntax: MAP.DELETE(map_variable, key$)
+Description: Deletes a key-value pair from a map.
+
+[MAP.EXISTS]
+Syntax: MAP.EXISTS(map_variable, key$)
+Description: Checks if a key exists in a map.
+
+[MAP.ITEMS]
+Syntax: MAP.ITEMS(map_variable)
+Description: Returns a 2D array of key-value pairs from a map.
+
+[MAP.KEYS]
+Syntax: MAP.KEYS(map_variable)
+Description: Returns a 1D array of all keys in a map.
+
+[MAP.MERGE]
+Syntax: MAP.MERGE(destination_map, source_map)
+Description: Copies items from a source map to a destination map.
+
+[MAP.SIZE]
+Syntax: MAP.SIZE(map_variable)
+Description: Returns the number of items in a map.
+
+[MAP.VALUES]
+Syntax: MAP.VALUES(map_variable)
+Description: Returns a 1D array of all values in a map.
+
+[MATMUL]
+Syntax: MATMUL(matrixA, matrixB)
+Description: Performs matrix multiplication.
+
+[MAX]
+Syntax: MAX(array)
+Description: Returns the maximum value from an array.
+
+[MID$]
+Syntax: MID$(string$, start, [length])
+Description: Returns a substring from a string.
+
+[MIN]
+Syntax: MIN(array)
+Description: Returns the minimum value from an array.
+
+[MKDIR]
+Syntax: MKDIR "directory_name"
+Description: Creates a new directory.
+
+[MOD]
+Syntax: number MOD number
+Description: Returns the remainder of an integer division.
+
+[MODULE]
+Syntax: EXPORT MODULE
+Description: Keyword used in conjunction with EXPORT.
+
+[MOUSEB]
+Syntax: MOUSEB(button_index)
+Description: Returns TRUE if the specified mouse button (1=L, 2=M, 3=R) is pressed.
+
+[MOUSEX]
+Syntax: MOUSEX()
+Description: Returns the current X coordinate of the mouse in the graphics window.
+
+[MOUSEY]
+Syntax: MOUSEY()
+Description: Returns the current Y coordinate of the mouse in the graphics window.
+
+[MUSIC.PLAY]
+Syntax: MUSIC.PLAY(sound_id, [looping_bool])
+Description: Plays a loaded sound as looping background music.
+
+[MUSIC.STOP]
+Syntax: MUSIC.STOP
+Description: Stops the currently playing background music.
+
+[MVLET]
+Syntax: MVLET(matrix, dimension, index, vector)
+Description: Returns a new matrix with a specified row or column replaced by a vector.
+
+[NEW]
+Syntax: NEW
+Description: Clears the current source code from memory.
+
+[NEXT]
+Syntax: FOR ... NEXT
+Description: Marks the end of a FOR loop and increments the counter.
+
+[NORMALIZE]
+Syntax: NORMALIZE(array)
+Description: Scales the elements of a numeric array to the range [0.0, 1.0].
+
+[NOT]
+Syntax: NOT expression
+Description: Performs a logical NOT operation.
+
+[NOW]
+Syntax: NOW()
+Description: Returns a DateTime object representing the current moment.
+
+[ON]
+Syntax: ON "event" CALL subroutine
+Description: Registers an event handler (deprecated for error handling).
+
+[OPTION]
+Syntax: OPTION "option_name"
+Description: Sets a compiler or runtime option, such as "EXPLICIT".
+
+[OR]
+Syntax: expression OR expression
+Description: Performs a logical OR operation.
+
+[ORELSE]
+Syntax: expression ORELSE expression
+Description: Performs a short-circuiting logical OR operation.
+
+[OS.ARGS]
+Syntax: OS.ARGS()
+Description: Returns a 1D array of command-line arguments.
+
+[OS.EXEC]
+Syntax: OS.EXEC(command$, [args_array$])
+Description: Executes an external command and captures its output.
+
+[OS.GETOS]
+Syntax: OS.GETOS()
+Description: Returns a string identifying the operating system ("WINDOWS", "LINUX", "MACOS").
+
+[OUTER]
+Syntax: OUTER(vectorA, vectorB, operator)
+Description: Creates an outer product table from two vectors and an operator.
+
+[PI]
+Syntax: PI
+Description: A constant holding the value of Pi.
+
+[PLACE]
+Syntax: PLACE(destination_array, source_array, coordinates)
+Description: Places a source array into a destination array at a given location.
+
+[PLOTRAW]
+Syntax: PLOTRAW x, y, matrix, [scaleX, scaleY]
+Description: Draws a matrix of color values directly to the graphics screen.
+
+[PRETTY]
+Syntax: PRETTY [PREVIEW] [STYLE UPPER|VB] [WIDTH n]
+Description: Formats the current source code with standardized indentation and spacing.
+
+[PRINT]
+Syntax: PRINT expression
+Description: Outputs data to the console screen.
+
+[PRODUCT]
+Syntax: PRODUCT(array)
+Description: Returns the product of all elements in an array.
+
+[PSET]
+Syntax: PSET x, y, [r, g, b]
+Description: Draws a single pixel on the graphics screen.
+
+[PWD]
+Syntax: PWD
+Description: Prints the current working directory.
+
+[RAISEEVENT]
+Syntax: RAISEEVENT "event_name", data
+Description: Triggers a custom event that can be handled by an ON...CALL statement.
+
+[REACT]
+Syntax: DIM variable AS REACT type
+Description: Declares a reactive variable whose value automatically updates when its dependencies change.
+
+[RECT]
+Syntax: RECT x, y, w, h, [fill], [r, g, b]
+Description: Draws a rectangle on the graphics screen.
+
+[REDUCE]
+Syntax: REDUCE(function@, array, [initial_value])
+Description: Performs a cumulative reduction on an array using a custom function.
+
+[REGEX.FINDALL]
+Syntax: REGEX.FINDALL(pattern$, text$)
+Description: Finds all occurrences of a regular expression pattern in a string.
+
+[REGEX.MATCH]
+Syntax: REGEX.MATCH(pattern$, text$)
+Description: Checks if a string fully matches a regular expression pattern.
+
+[REGEX.REPLACE]
+Syntax: REGEX.REPLACE(pattern$, text$, replacement$)
+Description: Replaces all occurrences of a regular expression pattern in a string.
+
+[REM]
+Syntax: REM comment_text
+Description: Marks the rest of the line as a comment. An apostrophe (') is a shorthand.
+
+[RESHAPE]
+Syntax: RESHAPE(array, shape_vector)
+Description: Creates a new array with new dimensions from the data of a source array.
+
+[RESUME]
+Syntax: RESUME
+Description: Continues execution after a program has been halted with STOP.
+
+[RETURN]
+Syntax: RETURN [value]
+Description: Returns a value from a function or exits a subroutine.
+
+[REVERSE]
+Syntax: REVERSE(array)
+Description: Reverses the elements of an array.
+
+[REVERSE$]
+Syntax: REVERSE$(string$)
+Description: Reverses the characters in a string.
+
+[RIGHT$]
+Syntax: RIGHT$(string$, length)
+Description: Returns the specified number of characters from the end of a string.
+
+[RND]
+Syntax: RND(number)
+Description: Returns a random floating-point number between 0.0 and 1.0.
+
+[ROTATE]
+Syntax: ROTATE(array, shift_vector)
+Description: Cyclically shifts an N-dimensional array.
+
+[ROUND]
+Syntax: ROUND(number, decimals)
+Description: Rounds a number to a specified number of decimal places.
+
+[ROUNDED_RECT]
+Syntax: ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b]
+Description: Draws a rectangle with rounded corners.
+
+[RUN]
+Syntax: RUN
+Description: Compiles and runs the program currently in memory.
+
+[SAVE]
+Syntax: SAVE "filename"
+Description: Saves the current source code to a file.
+
+[SAVEWS]
+Syntax: SAVEWS "workspacename"
+Description: Saves the current source code and all variables to a workspace file.
+
+[SCAN]
+Syntax: SCAN(operator, array)
+Description: Performs a cumulative scan (prefix sum) operation on an array.
+
+[SCREEN]
+Syntax: SCREEN width, height, [title$]
+Description: Initializes a graphics window.
+
+[SCREENFLIP]
+Syntax: SCREENFLIP
+Description: Updates the graphics screen to show all drawing operations.
+
+[SCREENHEIGHT]
+Syntax: SCREENHEIGHT()
+Description: Returns the height of the current graphics screen in pixels.
+
+[SCREENWIDTH]
+Syntax: SCREENWIDTH()
+Description: Returns the width of the current graphics screen in pixels.
+
+[SELECT]
+Syntax: SELECT(function@, array)
+Description: Applies a function to each element of an array, returning a new array of the results.
+
+[SETFONT]
+Syntax: SETFONT filename$, size
+Description: Sets the font and size for subsequent TEXT drawing commands.
+
+[SETLOCALE]
+Syntax: SETLOCALE("locale_string")
+Description: Sets the locale for number and date formatting (e.g., "en-US").
+
+[SFX.LOAD]
+Syntax: SFX.LOAD(sound_id, "filepath.wav")
+Description: Loads a WAV sound file into a sound effect slot.
+
+[SFX.PLAY]
+Syntax: SFX.PLAY(sound_id)
+Description: Plays a loaded sound effect.
+
+[SHIFT]
+Syntax: SHIFT(array, shift_vector, [fill_value])
+Description: Non-cyclically shifts an N-dimensional array, filling empty spaces.
+
+[SHL]
+Syntax: value SHL bits
+Description: Performs a bitwise left shift.
+
+[SHR]
+Syntax: value SHR bits
+Description: Performs a bitwise right shift.
+
+[SIN]
+Syntax: SIN(angle_in_radians)
+Description: Returns the sine of an angle.
+
+[SLEEP]
+Syntax: SLEEP milliseconds
+Description: Pauses program execution for a specified duration.
+
+[SLICE]
+Syntax: SLICE(matrix, dimension, index)
+Description: Extracts a row (dim=0) or column (dim=1) from a 2D matrix.
+
+[SOLVE]
+Syntax: SOLVE(matrixA, vectorB)
+Description: Solves the linear system Ax = b for the unknown vector x.
+
+[SOUND.INIT]
+Syntax: SOUND.INIT()
+Description: Initializes the audio system for synthesized sound.
+
+[SOUND.PLAY]
+Syntax: SOUND.PLAY(track, frequency)
+Description: Plays a note at a specific frequency on a given synthesizer track.
+
+[SOUND.RELEASE]
+Syntax: SOUND.RELEASE(track)
+Description: Starts the release phase of the ADSR envelope for a note.
+
+[SOUND.STOP]
+Syntax: SOUND.STOP(track)
+Description: Immediately stops a note on a synthesizer track.
+
+[SOUND.VOICE]
+Syntax: SOUND.VOICE track, waveform$, attack, decay, sustain, release
+Description: Configures the ADSR envelope and waveform for a synthesizer track.
+
+[SPLIT]
+Syntax: SPLIT(source$, delimiter$)
+Description: Splits a string by a delimiter and returns a 1D array of strings.
+
+[SPRITE.ADD_TO_GROUP]
+Syntax: SPRITE.ADD_TO_GROUP(group_id, instance_id)
+Description: Adds a sprite instance to a collision group.
+
+[SPRITE.COLLISION]
+Syntax: SPRITE.COLLISION(id1, id2)
+Description: Checks if two sprite instances are colliding.
+
+[SPRITE.COLLISION_GROUP]
+Syntax: SPRITE.COLLISION_GROUP(instance_id, group_id)
+Description: Checks if a sprite is colliding with any sprite in a group.
+
+[SPRITE.COLLISION_GROUPS]
+Syntax: SPRITE.COLLISION_GROUPS(group_id1, group_id2)
+Description: Checks for collisions between two sprite groups.
+
+[SPRITE.CREATE]
+Syntax: SPRITE.CREATE(type_id, x, y)
+Description: Creates an instance of a sprite at a given position and returns its unique ID.
+
+[SPRITE.CREATE_GROUP]
+Syntax: SPRITE.CREATE_GROUP()
+Description: Creates a new, empty sprite collision group and returns its ID.
+
+[SPRITE.DELETE]
+Syntax: SPRITE.DELETE(instance_id)
+Description: Removes a sprite instance.
+
+[SPRITE.DRAW_ALL]
+Syntax: SPRITE.DRAW_ALL([world_x, world_y])
+Description: Draws all active sprite instances, optionally offsetting by a camera position.
+
+[SPRITE.GET_X]
+Syntax: SPRITE.GET_X(instance_id)
+Description: Returns the X coordinate of a sprite instance.
+
+[SPRITE.GET_Y]
+Syntax: SPRITE.GET_Y(instance_id)
+Description: Returns the Y coordinate of a sprite instance.
+
+[SPRITE.LOAD]
+Syntax: SPRITE.LOAD(type_id, "filename.png")
+Description: Loads a sprite image from a file and assigns it a type ID.
+
+[SPRITE.LOAD_ASEPRITE]
+Syntax: SPRITE.LOAD_ASEPRITE(type_id, "filename.json")
+Description: Loads a sprite sheet and animation data from an Aseprite export.
+
+[SPRITE.MOVE]
+Syntax: SPRITE.MOVE(instance_id, x, y)
+Description: Moves a sprite instance to a new position.
+
+[SPRITE.SET_ANIMATION]
+Syntax: SPRITE.SET_ANIMATION(instance_id, "animation_name$")
+Description: Sets the current animation for a sprite instance loaded from Aseprite.
+
+[SPRITE.SET_FLIP]
+Syntax: SPRITE.SET_FLIP(instance_id, flip_boolean)
+Description: Sets the horizontal flip state of a sprite.
+
+[SPRITE.SET_VELOCITY]
+Syntax: SPRITE.SET_VELOCITY(instance_id, vx, vy)
+Description: Sets the velocity for a sprite instance for use with SPRITE.UPDATE.
+
+[SPRITE.UPDATE]
+Syntax: SPRITE.UPDATE([delta_time])
+Description: Updates the positions and animations of all sprites based on their velocities.
+
+[SQR]
+Syntax: SQR(number)
+Description: Returns the square root of a number.
+
+[STACK]
+Syntax: STACK(dimension, array1, array2, ...)
+Description: Stacks 1D vectors along a new dimension to create a 2D matrix.
+
+[STEP]
+Syntax: FOR ... STEP value
+Description: Specifies the increment value for a FOR loop counter.
+
+[STOP]
+Syntax: STOP
+Description: Halts program execution and enters a break state.
+
+[STR$]
+Syntax: STR$(number)
+Description: Converts a number to its string representation.
+
+[STRICT]
+Syntax: OPTION STRICT
+Description: A placeholder for a stricter compilation mode.
+
+[STRING]
+Syntax: DIM variable AS STRING
+Description: Declares a variable to hold a string of text.
+
+[SUB]
+Syntax: SUB name(parameters) ... ENDSUB
+Description: Begins the definition of a user-defined subroutine.
+
+[SUM]
+Syntax: SUM(array)
+Description: Returns the sum of all elements in an array.
+
+[SWITCH]
+Syntax: SWITCH expression ... ENDSWITCH
+Description: Begins a block that executes different code based on the value of an expression.
+
+[TAKE]
+Syntax: TAKE(N, array)
+Description: Returns a new array with the first N (or last N if negative) elements.
+
+[TAN]
+Syntax: TAN(angle_in_radians)
+Description: Returns the tangent of an angle.
+
+[TENSOR]
+Syntax: DIM variable AS TENSOR
+Description: Declares a variable to hold a tensor for AI operations.
+
+[TENSOR.BACKWARD]
+Syntax: TENSOR.BACKWARD(loss_tensor)
+Description: Performs backpropagation to compute gradients for all tensors in the computational graph.
+
+[TENSOR.CONV2D]
+Syntax: TENSOR.CONV2D(input, kernel, bias, stride, padding)
+Description: Performs a 2D convolution operation, essential for CNNs.
+
+[TENSOR.CREATE_LAYER]
+Syntax: TENSOR.CREATE_LAYER(type$, options_map)
+Description: A factory for creating neural network layers (e.g., "DENSE").
+
+[TENSOR.CREATE_OPTIMIZER]
+Syntax: TENSOR.CREATE_OPTIMIZER(type$, options_map)
+Description: A factory for creating optimizers (e.g., "SGD", "ADAM").
+
+[TENSOR.CROSS_ENTROPY_LOSS]
+Syntax: TENSOR.CROSS_ENTROPY_LOSS(logits, actual_one_hot)
+Description: Calculates the cross-entropy loss for classification models.
+
+[TENSOR.FROM]
+Syntax: TENSOR.FROM(array)
+Description: Converts a standard Array into a Tensor.
+
+[TENSOR.LAYERNORM]
+Syntax: TENSOR.LAYERNORM(input, gain, bias)
+Description: Applies layer normalization to an input tensor.
+
+[TENSOR.LOADMODEL]
+Syntax: TENSOR.LOADMODEL("filename.json")
+Description: Loads a model's weights and biases from a JSON file.
+
+[TENSOR.MAXPOOL2D]
+Syntax: TENSOR.MAXPOOL2D(input, pool_size, stride)
+Description: Performs a 2D max pooling operation.
+
+[TENSOR.POSITIONAL_ENCODING]
+Syntax: TENSOR.POSITIONAL_ENCODING(seq_len, d_model)
+Description: Generates a sinusoidal positional encoding tensor for transformer models.
+
+[TENSOR.RELU]
+Syntax: TENSOR.RELU(tensor)
+Description: Applies the element-wise Rectified Linear Unit (ReLU) activation function.
+
+[TENSOR.SAVEMODEL]
+Syntax: TENSOR.SAVEMODEL(model_map, "filename.json")
+Description: Saves a model's weights and biases to a JSON file.
+
+[TENSOR.SIGMOID]
+Syntax: TENSOR.SIGMOID(tensor)
+Description: Applies the element-wise sigmoid activation function.
+
+[TENSOR.SOFTMAX]
+Syntax: TENSOR.SOFTMAX(tensor, [is_causal])
+Description: Applies the softmax function to the last dimension of a tensor.
+
+[TENSOR.TOARRAY]
+Syntax: TENSOR.TOARRAY(tensor)
+Description: Converts a Tensor back into a standard Array.
+
+[TENSOR.TOKENIZE]
+Syntax: TENSOR.TOKENIZE(text$, vocab_map)
+Description: Converts a string into an array of integer token IDs based on a vocabulary map.
+
+[TENSOR.UPDATE]
+Syntax: TENSOR.UPDATE(model_map, optimizer_map)
+Description: Updates the model's parameters using calculated gradients and an optimizer.
+
+[TEXT]
+Syntax: TEXT x, y, content$, [r, g, b]
+Description: Draws a string of text on the graphics screen.
+
+[THEN]
+Syntax: IF condition THEN ...
+Description: Keyword following an IF condition.
+
+[THREAD]
+Syntax: THREAD function_call()
+Description: Executes a function call in a separate, parallel background thread.
 
 [THREAD.GETRESULT]
 Syntax: THREAD.GETRESULT(handle)
-Description: Waits for the thread to complete and returns its result. This is a blocking call.
+Description: Waits for a background thread to finish and retrieves its return value.
 
-[ASYNC]
-Syntax: ASYNC FUNC FUNCTIONNAME(args)
-Description: Marks a function as asynchronius.
+[THREAD.ISDONE]
+Syntax: THREAD.ISDONE(handle)
+Description: Checks if a background thread has finished executing without blocking.
 
-[AWAIT]
-Syntax: AWAIT task
-Description: Waits for the given task to be completed and returns the result of the function.
+[THROW]
+Syntax: THROW [error_data]
+Description: Manually raises a user-defined error that can be caught by a TRY...CATCH block.
 
-[GRAPHICS COMMANDS]
-Syntax: SCREEN, SCREENFLIP, DRAWCOLOR, SETFONT, PSET, LINE, RECT, CIRCLE, TEXT, PLOTRAW
-Description: Functions for opening a graphics window and drawing shapes and text.
+[TICK]
+Syntax: TICK()
+Description: Returns the number of milliseconds elapsed since the program started.
 
-[SOUND COMMANDS]
-Syntax: SOUND.INIT, SOUND.VOICE, SOUND.PLAY, SOUND.RELEASE, SOUND.STOP, SFX.LOAD, FX.PLAY, MUSIC.PLAY, MUSIC.STOP
-Description: Functions for initializing the sound system, configuring voices, and playing notes and sound effects.
+[TILEMAP.COLLIDES]
+Syntax: TILEMAP.COLLIDES(sprite_id, "map_name", "layer_name")
+Description: Checks if a sprite is colliding with any solid tile on a given map layer.
 
-[SPRITE & MAP COMMANDS]
-Syntax: SPRITE., MAP.
-Description: A suite of commands for loading and managing sprites, animations, and tile maps from the Tiled editor. Includes functions for movement, collision detection, and drawing.
+[TILEMAP.DRAW_DEBUG_COLLISIONS]
+Syntax: TILEMAP.DRAW_DEBUG_COLLISIONS(sprite_id, "map_name", "layer_name")
+Description: Draws debug rectangles around collision tiles near a sprite.
 
-[TURTLE GRAPHICS]
-Syntax: TURTLE.*
-Description: A suite of commands for turtle graphics, allowing for path-based drawing. Includes functions for movement, pen control, and color.
+[TILEMAP.DRAW_LAYER]
+Syntax: TILEMAP.DRAW_LAYER("map_name", "layer_name", [world_x, world_y])
+Description: Draws a specific tile layer from a loaded Tiled map.
 
-[TENSOR & AI FUNCTIONS]
-Syntax: TENSOR.*
-Description: A comprehensive suite of functions for creating, training, and running neural networks. Includes core tensor operations, layer creation, optimizers, training loops (BACKWARD/UPDATE), and helpers for building LLMs and CNNs.
+[TILEMAP.GET_OBJECTS]
+Syntax: TILEMAP.GET_OBJECTS("map_name", "object_type")
+Description: Retrieves all objects of a certain type from a Tiled map's object layer.
+
+[TILEMAP.GET_TILE_ID]
+Syntax: TILEMAP.GET_TILE_ID("map_name", "layer_name", tileX, tileY)
+Description: Returns the tile ID at a specific coordinate on a map layer.
+
+[TILEMAP.LOAD]
+Syntax: TILEMAP.LOAD("map_name", "filename.json")
+Description: Loads a map file exported from the Tiled editor.
+
+[TIME$]
+Syntax: TIME$
+Description: Returns the current system time as a string in "HH:MM:SS" format.
+
+[TO]
+Syntax: FOR counter = start TO end
+Description: Specifies the ending value for a FOR loop counter.
+
+[TOGGLE_FULLSCREEN]
+Syntax: TOGGLE_FULLSCREEN
+Description: Toggles the graphics window between fullscreen and windowed mode.
+
+[TRANSPOSE]
+Syntax: TRANSPOSE(matrix)
+Description: Transposes a 2D matrix (swaps rows and columns).
+
+[TRIM$]
+Syntax: TRIM$(string$)
+Description: Removes leading and trailing whitespace from a string.
+
+[TROFF]
+Syntax: TROFF
+Description: Turns instruction tracing off.
+
+[TRON]
+Syntax: TRON
+Description: Turns instruction tracing on for debugging.
+
+[TRUE]
+Syntax: TRUE
+Description: The boolean constant representing a true value.
+
+[TRUNC]
+Syntax: TRUNC(number)
+Description: Truncates the decimal part of a number, rounding towards zero.
+
+[TRY]
+Syntax: TRY ... CATCH ... ENDTRY
+Description: Begins a block of code with structured error handling.
+
+[TURTLE.BACKWARD]
+Syntax: TURTLE.BACKWARD(distance)
+Description: Moves the turtle backward by a specified distance.
+
+[TURTLE.CLEAR]
+Syntax: TURTLE.CLEAR
+Description: Clears the turtle's drawn path memory without clearing the screen.
+
+[TURTLE.DRAW]
+Syntax: TURTLE.DRAW
+Description: Redraws the entire path the turtle has taken.
+
+[TURTLE.FORWARD]
+Syntax: TURTLE.FORWARD(distance)
+Description: Moves the turtle forward by a specified distance.
+
+[TURTLE.HOME]
+Syntax: TURTLE.HOME
+Description: Moves the turtle to the center of the screen without drawing.
+
+[TURTLE.LEFT]
+Syntax: TURTLE.LEFT(degrees)
+Description: Turns the turtle left by a specified number of degrees.
+
+[TURTLE.PENDOWN]
+Syntax: TURTLE.PENDOWN
+Description: Lowers the turtle's pen, causing it to draw when it moves.
+
+[TURTLE.PENUP]
+Syntax: TURTLE.PENUP
+Description: Lifts the turtle's pen, allowing it to move without drawing.
+
+[TURTLE.RIGHT]
+Syntax: TURTLE.RIGHT(degrees)
+Description: Turns the turtle right by a specified number of degrees.
+
+[TURTLE.SET_COLOR]
+Syntax: TURTLE.SET_COLOR(r, g, b)
+Description: Sets the drawing color for the turtle.
+
+[TURTLE.SETHEADING]
+Syntax: TURTLE.SETHEADING(degrees)
+Description: Sets the absolute heading of the turtle. 0 is right, 90 is up.
+
+[TURTLE.SETPOS]
+Syntax: TURTLE.SETPOS(x, y)
+Description: Moves the turtle to an absolute screen position without drawing.
+
+[TYPE]
+Syntax: TYPE name ... ENDTYPE
+Description: Begins the definition of a user-defined data type (struct).
+
+[TYPEOF]
+Syntax: TYPEOF(variable)
+Description: Returns a string representing the data type of a variable.
+
+[UCASE$]
+Syntax: UCASE$(string$)
+Description: Converts a string to uppercase.
+
+[UNIQUE]
+Syntax: UNIQUE(array)
+Description: Returns a new array containing only the unique elements from the source array.
+
+[UNREACT]
+Syntax: UNREACT(variable_name$)
+Description: Removes the reactive properties from a variable.
+
+[UNTIL]
+Syntax: DO ... LOOP UNTIL condition
+Description: Specifies the condition that will end a DO loop.
+
+[VAL]
+Syntax: VAL(string$)
+Description: Converts a string to a number.
+
+[VBNEWLINE]
+Syntax: VBNEWLINE
+Description: A constant representing the carriage return and line feed characters (CRLF).
+
+[WAITKEY$]
+Syntax: WAITKEY$()
+Description: Blocks execution and waits for a single key press, returning the key.
+
+[WHILE]
+Syntax: DO WHILE condition ... LOOP
+Description: Specifies the condition that must be true for a DO loop to continue.
+
+[XOR]
+Syntax: expression XOR expression
+Description: Performs a logical XOR operation.
+
+[XSORT]
+Syntax: XSORT(array, [dimension], [descending_bool])
+Description: A high-performance sort for 1D arrays or the rows of a 2D matrix.
 
 [CREDITS]
 Syntax: No Command :-)

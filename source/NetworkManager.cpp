@@ -44,54 +44,79 @@ namespace { // Keep this helper private to this file
 
         // Client setup - no changes needed here
         std::unique_ptr<httplib::SSLClient> cli;
+        std::unique_ptr<httplib::Client> cli_http;
+
         if (protocol == "https") {
             cli = std::make_unique<httplib::SSLClient>(host.c_str(), port);
         }
         else {
-            // Your current code doesn't support non-SSL, which is fine for modern APIs.
-            std::cerr << "NetworkManager Error: Only HTTPS is supported." << std::endl;
-            last_http_status_code = -1;
-            return "Error: Only HTTPS is supported.";
+            cli_http = std::make_unique<httplib::Client>(host.c_str(), port);
         }
 
-        if (!cli) {
+        if (cli) {
+            cli->set_connection_timeout(10); // Increased timeout for potentially larger payloads
+            cli->set_read_timeout(30);
+            cli->set_write_timeout(10);
+
+            httplib::Headers headers;
+            for (const auto& pair : custom_headers) {
+                headers.emplace(pair.first, pair.second);
+            }
+
+            // Use the verb to decide which httplib method to call
+            httplib::Result res;
+            if (verb == "POST") {
+                res = cli->Post(path.c_str(), headers, body, content_type.c_str());
+            }
+            else if (verb == "PUT") {
+                res = cli->Put(path.c_str(), headers, body, content_type.c_str());
+            }
+
+            if (res) {
+                last_http_status_code = res->status;
+                if (res->status >= 400) {
+                    // Return the error body from the server for better debugging
+                    return "Server error " + std::to_string(res->status) + ": " + res->body;
+                }
+                return res->body;
+            }
+            else {
+                last_http_status_code = -1;
+                return "HTTP request failed: " + httplib::to_string(res.error());
+            }
+        } else if (cli_http) {
+                cli_http->set_connection_timeout(10); // Increased timeout for potentially larger payloads
+                cli_http->set_read_timeout(30);
+                cli_http->set_write_timeout(10);
+
+                httplib::Headers headers;
+                for (const auto& pair : custom_headers) {
+                    headers.emplace(pair.first, pair.second);
+                }
+                // Use the verb to decide which httplib method to call
+                httplib::Result res;
+                if (verb == "POST") {
+                    res = cli_http->Post(path.c_str(), headers, body, content_type.c_str());
+                }
+                else if (verb == "PUT") {
+                    res = cli_http->Put(path.c_str(), headers, body, content_type.c_str());
+                }
+
+                if (res) {
+                    last_http_status_code = res->status;
+                    if (res->status >= 400) {
+                        // Return the error body from the server for better debugging
+                        return "Server error " + std::to_string(res->status) + ": " + res->body;
+                    }
+                    return res->body;
+                }
+                else {
+                    last_http_status_code = -1;
+                    return "HTTP request failed: " + httplib::to_string(res.error());
+                }
+        } else {
             last_http_status_code = -1;
             return "Error: Client creation failed.";
-        }
-
-        cli->set_connection_timeout(10); // Increased timeout for potentially larger payloads
-        cli->set_read_timeout(30);
-        cli->set_write_timeout(10);
-
-        httplib::Headers headers;
-        for (const auto& pair : custom_headers) {
-            headers.emplace(pair.first, pair.second);
-        }
-
-        //if (!content_type.empty()) {
-        //    headers.emplace("Content-Type", content_type);
-        //}
-
-        // Use the verb to decide which httplib method to call
-        httplib::Result res;
-        if (verb == "POST") {
-            res = cli->Post(path.c_str(), headers, body, content_type.c_str());
-        }
-        else if (verb == "PUT") {
-            res = cli->Put(path.c_str(), headers, body, content_type.c_str());
-        }
-
-        if (res) {
-            last_http_status_code = res->status;
-            if (res->status >= 400) {
-                // Return the error body from the server for better debugging
-                return "Server error " + std::to_string(res->status) + ": " + res->body;
-            }
-            return res->body;
-        }
-        else {
-            last_http_status_code = -1;
-            return "HTTP request failed: " + httplib::to_string(res.error());
         }
     }
 } // end anonymous namespace

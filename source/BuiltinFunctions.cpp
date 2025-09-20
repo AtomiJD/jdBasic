@@ -48,6 +48,11 @@
 #include <windows.h>
 #include <conio.h>
 #include <format>
+#include <winsock2.h> // For networking
+#include <ws2tcpip.h> // For networking
+#include <iphlpapi.h> // For enumerating network adapters
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 #elif defined(__EMSCRIPTEN__)
 #include <codecvt> // for std::wstring_convert
 #include <locale>  // for std::locale
@@ -58,6 +63,11 @@
 #include <codecvt> // for std::wstring_convert
 #include <locale>  // for std::locale
 #include <stdio.h>
+#include <unistd.h>      // For gethostname
+#include <sys/socket.h>  // For networking
+#include <arpa/inet.h>   // For networking
+#include <netdb.h>       // For networking
+#include <ifaddrs.h> // For enumerating network adapters
 #include <fmt/core.h>
 #include <fmt/format.h>
 #endif
@@ -3942,6 +3952,125 @@ BasicValue builtin_os_getos(NeReLaBasic& vm, const std::vector<BasicValue>& args
 #endif
 }
 
+// OS.HOSTNAME$() -> STRING
+// Returns the network hostname of the local machine.
+BasicValue builtin_os_hostname_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "OS.HOSTNAME$ does not accept arguments.");
+        return std::string("");
+    }
+
+    char hostname_buffer[256];
+
+#ifdef _WIN32
+    WSADATA wsaData;
+    // It's good practice to initialize Winsock, though GetComputerName doesn't strictly require it.
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        return std::string("WSAStartup failed");
+    }
+    DWORD size = sizeof(hostname_buffer);
+    bool success = GetComputerNameA(hostname_buffer, &size);
+    WSACleanup();
+    if (success) {
+        return std::string(hostname_buffer);
+    }
+#else // POSIX (Linux, macOS)
+    if (gethostname(hostname_buffer, sizeof(hostname_buffer)) == 0) {
+        return std::string(hostname_buffer);
+    }
+#endif
+
+    return std::string(""); // Return empty string on failure
+}
+
+// OS.IP$() -> STRING
+// Returns the primary local IPv4 address by iterating through network adapters.
+BasicValue builtin_os_ip_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "OS.IP$ does not accept arguments.");
+        return std::string("");
+    }
+
+#ifdef _WIN32
+    // Use GetAdaptersAddresses for a robust solution on Windows
+    std::string ip_address = "Not found";
+    ULONG buffer_size = 15000; // A reasonable starting buffer size
+    PIP_ADAPTER_ADDRESSES pAddresses = nullptr;
+    DWORD dwRetVal = 0;
+
+    // Allocate a buffer to hold the adapter information.
+    pAddresses = (IP_ADAPTER_ADDRESSES*)malloc(buffer_size);
+    if (pAddresses == nullptr) {
+        return "Memory allocation failed";
+    }
+
+    // Get the list of adapters
+    dwRetVal = GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, pAddresses, &buffer_size);
+
+    if (dwRetVal == NO_ERROR) {
+        // Iterate through all adapters
+        for (PIP_ADAPTER_ADDRESSES pCurrAddresses = pAddresses; pCurrAddresses != NULL; pCurrAddresses = pCurrAddresses->Next) {
+            // We're looking for an active, non-loopback, non-tunnel adapter.
+            if (pCurrAddresses->OperStatus == IfOperStatusUp &&
+                pCurrAddresses->IfType != IF_TYPE_SOFTWARE_LOOPBACK &&
+                pCurrAddresses->IfType != IF_TYPE_TUNNEL)
+            {
+                // Iterate through IP addresses for the adapter
+                for (PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pCurrAddresses->FirstUnicastAddress; pUnicast != NULL; pUnicast = pUnicast->Next) {
+                    if (pUnicast->Address.lpSockaddr->sa_family == AF_INET) {
+                        char ip_str[INET_ADDRSTRLEN];
+                        sockaddr_in* sockaddr_ipv4 = (sockaddr_in*)pUnicast->Address.lpSockaddr;
+                        inet_ntop(AF_INET, &(sockaddr_ipv4->sin_addr), ip_str, INET_ADDRSTRLEN);
+                        std::string current_ip = ip_str;
+
+                        // Prioritize private network ranges, which are most likely the main LAN IP.
+                        // This should find 192.168.0.37 and stop.
+                        if (current_ip.rfind("192.168.", 0) == 0) {
+                            ip_address = current_ip;
+                            goto end_loop; // Found the best candidate, so we can stop.
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+end_loop:
+    if (pAddresses) {
+        free(pAddresses);
+    }
+    return ip_address;
+
+#else // POSIX (Linux, macOS)
+    struct ifaddrs* ifAddrStruct = NULL;
+    std::string ip_address = "Not found";
+
+    getifaddrs(&ifAddrStruct);
+
+    for (struct ifaddrs* ifa = ifAddrStruct; ifa != NULL; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr) {
+            continue;
+        }
+        // Check for IPv4, and that the interface is up and not a loopback
+        if (ifa->ifa_addr->sa_family == AF_INET && (ifa->ifa_flags & IFF_UP) && !(ifa->ifa_flags & IFF_LOOPBACK)) {
+            char addressBuffer[INET_ADDRSTRLEN];
+            void* tmpAddrPtr = &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
+            inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
+
+            // On POSIX, interfaces like "en" (ethernet) or "wl" (wlan) are good indicators
+            std::string iface_name = ifa->ifa_name;
+            if (iface_name.rfind("en", 0) == 0 || iface_name.rfind("eth", 0) == 0 || iface_name.rfind("wl", 0) == 0) {
+                ip_address = addressBuffer;
+                break; // Found a likely candidate
+            }
+        }
+    }
+    if (ifAddrStruct != NULL) {
+        freeifaddrs(ifAddrStruct);
+    }
+    return ip_address;
+#endif
+}
 // --- System self coding functions ---
 // 
 // EXECUTE(code_string$)
@@ -4173,6 +4302,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("OS.ARGS", 0, builtin_os_args);
     register_func("OS.EXEC", -1, builtin_os_exec);
     register_func("OS.GETOS", 0, builtin_os_getos);
+    register_func("OS.HOSTNAME$", 0, builtin_os_hostname_str);
+    register_func("OS.IP$", 0, builtin_os_ip_str);
 
     register_proc("EXECUTE", 1, builtin_execute);
     register_func("EVAL", 1, builtin_eval);

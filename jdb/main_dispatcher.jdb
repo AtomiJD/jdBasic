@@ -1,0 +1,215 @@
+OPTION "EXPLICIT"
+
+' ==== config ====
+DIM CLUSTER_TOKEN$ AS STRING = GETENV$("JDB_CLUSTER_TOKEN")
+DIM DEFAULT_TIMEOUT_MS AS STRING = 20000
+
+' ==== registry ====
+DIM WORKERS AS MAP       ' id -> info map
+WORKERS = {}             ' info: {"url":..., "caps":[...], "last_seen":ms, "healthy":1/0, "load":0.0}
+
+FUNC NOWMS()
+    RETURN TICK()
+ENDFUNC
+
+' ---- helpers to upsert/mark ----
+SUB UPSERT_WORKER(id$, url$, caps)
+    DIM info
+    IF NOT MAP.EXISTS(WORKERS, id$) THEN 
+        WORKERS{id$} = {}
+    ENDIF
+    info = WORKERS{id$}
+    IF len(info) = 0 THEN info = {}
+    info{"url"} = url$
+    info{"caps"} = caps
+    info{"last_seen"} = NOWMS()
+    info{"healthy"} = 1
+    IF NOT MAP.EXISTS(info,"load") = 0 THEN info{"load"} = 0.0
+    WORKERS{id$} = info
+ENDSUB
+
+SUB UPDATE_HEARTBEAT(id$, load, healthy)
+    IF NOT MAP.EXISTS(WORKERS, id$) THEN RETURN
+    WORKERS{id$}{"last_seen"} = NOWMS()
+    WORKERS{id$}{"load"} = load
+    WORKERS{id$}{"healthy"} = healthy
+ENDSUB
+
+' ---- auth ----
+FUNC AUTH_OK(req)
+    DIM h, t$
+    h = req{"headers"}: 
+    IF len(h) = 0 THEN RETURN FALSE
+    PRINT "Header: "; h
+    IF MAP.EXISTS(h, "Authorization") THEN
+        t$ = h{"Authorization"}    
+    ELSE
+        RETURN FALSE
+    ENDIF
+    t$ = TRIM$(t$)
+    IF LEFT$(UCASE$(t$),7)="BEARER " THEN t$=MID$(t$,7)
+    RETURN t$ = CLUSTER_TOKEN$
+ENDFUNC
+
+FUNC UNAUTHORIZED$()
+    RETURN JSON.STRINGIFY$({"ok":0,"error":"unauthorized"})
+ENDFUNC
+
+' ---- endpoint: register ----
+FUNC HandleRegister(req)
+    PRINT "Request: "; req
+    IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
+    DIM jo, id$, url$, caps, sm$
+    TRY
+        jo = JSON.PARSE$(req{"body"})
+        PRINT "JO: "; JO
+        id$  = jo{"id"} : url$ = jo{"url"} : caps = jo{"caps"}
+        UPSERT_WORKER id$, url$, caps
+        sm$ = {"ok":1}
+        RETURN JSON.STRINGIFY$(sm$)
+    CATCH
+        sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
+        PRINT "CATCH: "; sm$
+        RETURN JSON.STRINGIFY$(sm$)
+    ENDTRY
+ENDFUNC
+
+' ---- endpoint: heartbeat ----
+FUNC HandleHeartbeat(req)
+    IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
+    DIM jo, id$, load, healthy, sm$
+    TRY
+        jo = JSON.PARSE$(req{"body"})
+        id$ = jo{"id"} : load = jo{"load"} : healthy = IIF(jo{"healthy"}="",1,jo{"healthy"})
+        UPDATE_HEARTBEAT(id$, load, healthy)
+        sm$ = {"ok":1}
+        RETURN JSON.STRINGIFY$(sm$)
+    CATCH
+        sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
+        RETURN JSON.STRINGIFY$(sm$)
+    ENDTRY
+ENDFUNC
+
+' ---- endpoint: inspect workers ----
+FUNC HandleWorkers(req)
+    IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
+    ' evict stale (no heartbeat for 30s)
+    DIM now_ms, ids, sm$
+    now_ms = NOWMS()
+    ids = MAP.KEYS(WORKERS)
+    FOR i=0 TO LEN(ids)-1
+        DIM wid$ = ids[i]
+        IF now_ms - WORKERS{wid$}{"last_seen"} > 30000 THEN WORKERS{wid$}{"healthy"} = 0
+    NEXT i
+    sm$ = {"ok":1,"workers":WORKERS}
+    RETURN JSON.STRINGIFY$(sm$)
+ENDFUNC
+
+' ---- selection: choose a worker for a tool ----
+FUNC SELECT_WORKER_URL$(tool_name$)
+    DIM want$ = CAP_FROM_TOOL$(tool_name$)
+    DIM best_url$, best_score
+    best_score = 1e9
+
+    DIM ids = MAP.KEYS(WORKERS)
+    FOR i=0 TO LEN(ids)-1
+        DIM w = WORKERS{ids[i]}
+        IF w{"healthy"} <> 1 THEN CONTINUE FOR
+        IF NOT HAS_CAP(w{"caps"}, want$) THEN CONTINUE FOR
+        ' score by (load + tiny round-robin jitter)
+        DIM score = w{"load"} + (NOWMS() MOD 7)/1000.0
+        IF score < best_score THEN
+            best_score = score
+            best_url$  = w{"url"}
+        ENDIF
+    NEXT i
+    RETURN best_url$
+ENDFUNC
+
+FUNC HAS_CAP(caps, want$)
+    IF want$ = "" THEN RETURN TRUE
+    FOR i=0 TO LEN(caps)-1
+        IF UCASE$(caps[i]) = UCASE$(want$) THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+' map tool names to capability labels
+FUNC CAP_FROM_TOOL$(tool$)
+    SWITCH CASE UCASE$(tool$)
+        CASE "SPEECH_TO_TEXT":   RETURN "STT"
+        CASE "OCR_IMAGE":        RETURN "OCR"
+        CASE "EXCEL_WRITE_CELL": RETURN "WINDOWS_COM"
+        CASE "HTTP_GET","SHELL_RUN","SQLITE_EXEC": RETURN "" ' any
+        CASE "LLM_GENERATE","EMBEDDINGS": RETURN "LLM"
+        DEFAULT RETURN "" ' default: any
+    ENDSWITCH
+ENDFUNC
+
+' ---- forwarder: POST to worker ----
+FUNC FORWARD_TOOL$(worker_url$, name$, args)
+    DIM payload$, res$, sm$
+    sm$ = {"name":name$, "args":args}
+    payload$ = JSON.STRINGIFY$(sm$)
+    res$ = POST_JSON$(worker_url$ + "/tool", payload$, CLUSTER_TOKEN$)
+    RETURN res$
+ENDFUNC
+
+FUNC POST_JSON$(url$, body$, token$)
+    ' try native
+    TRY
+        RETURN HTTP.POST$(url$, body$, {"Authorization":"Bearer "+token$, "Content-Type":"application/json", "X-Timeout":STR$(DEFAULT_TIMEOUT_MS)})
+    CATCH
+        DIM r
+        r = OS.EXEC("curl", ["-sS","--max-time","20","-H","Authorization: Bearer "+token$, "-H","Content-Type: application/json", "-X","POST","--data",body$, url$])
+        RETURN r{"output"}
+    ENDTRY
+ENDFUNC
+
+' ---- main /tool endpoint ----
+FUNC HandleTool(req)
+    IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
+
+    DIM jo, name$, args, url$, out$, sm$
+    TRY
+        jo = JSON.PARSE$(req{"body"})
+        name$ = jo{"name"} : args = jo{"args"} : IF len(args) = 0 THEN args = {}
+    CATCH
+        sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
+        RETURN JSON.STRINGIFY$(sm$)
+    ENDTRY
+
+    url$ = SELECT_WORKER_URL$(name$)
+    IF url$ = "" THEN
+        sm$ = {"ok":0,"error":"no_worker","msg":"No healthy worker for tool "+name$}
+        RETURN JSON.STRINGIFY$(sm$)
+    ENDIF
+
+    out$ = FORWARD_TOOL$(url$, name$, args)
+
+    ' try to parse; attach routing info
+    DIM resp
+    TRY
+        resp = JSON.PARSE$(out$)
+        resp{"routed_to"} = url$
+        RETURN JSON.STRINGIFY$(resp)
+    CATCH
+        sm$ = {"ok":0,"error":"bad_worker_response","raw":LEFT$(out$,300),"routed_to":url$}
+        RETURN JSON.STRINGIFY$(sm$)
+    ENDTRY
+ENDFUNC
+
+' ---- routes & server ----
+HTTP.SERVER.ON_POST "/register", "HandleRegister"
+HTTP.SERVER.ON_POST "/heartbeat","HandleHeartbeat"
+HTTP.SERVER.ON_POST "/tool",     "HandleTool"
+HTTP.SERVER.ON_GET  "/workers",  "HandleWorkers"
+
+IF HTTP.SERVER.START(8080) THEN
+    PRINT "Main dispatcher on :8080"
+    DO 
+        SLEEP 100 
+    LOOP UNTIL INKEY$()=CHR$(27)
+ELSE
+    PRINT "Failed to start main: "; ERRMSG$
+ENDIF

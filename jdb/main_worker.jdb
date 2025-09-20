@@ -1,0 +1,142 @@
+OPTION "EXPLICIT"
+' ==== worker config ====
+DIM WORKER_ID$ AS STRING = OS.HOSTNAME$()
+DIM WORKER_URL$ AS STRING = "http://" + OS.IP$() + ":9090"  ' public or ngrok URL if needed
+DIM MAIN_URL$   AS STRING = "http://" + OS.IP$() + ":8080"        ' <- set to your main server URL
+DIM CAPS AS STRING = ["llm","stt","ocr","gpu"]              ' tailor per machine (windows: add "windows_com","excel")
+DIM CLUSTER_TOKEN$ AS STRING = GETENV$("JDB_CLUSTER_TOKEN") ' same token on all nodes
+
+' ==== /tool handler (you likely already have this) ====
+FUNC CALL_TOOL$(name$, args)
+    SWITCH CASE UCASE$(name$)
+        CASE "SHELL_RUN":        RETURN TOOL_SHELL_RUN$(args)
+        CASE "HTTP_GET":         RETURN TOOL_HTTP_GET$(args)
+        CASE "OCR_IMAGE":        RETURN TOOL_OCR_IMAGE$(args)       ' example
+        CASE "SPEECH_TO_TEXT":   RETURN TOOL_STT$(args)             ' example local model
+        CASE "EXCEL_WRITE_CELL": RETURN TOOL_EXCEL_WRITE_CELL$(args) ' windows-cap only
+        DEFAULT RETURN JSON.STRINGIFY$("ok":0,"error":"unknown_tool","name":name$)
+    ENDSWITCH
+ENDFUNC
+
+FUNC HandleTool(req)
+    IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
+    DIM jo, name$, args, sm$
+    TRY
+        jo = JSON.PARSE$(req{"body"})
+        name$ = jo{"name"} : args = jo{"args"} : IF args = NULL THEN args = {}
+    CATCH
+        sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
+        RETURN JSON.STRINGIFY$(sm$)
+    ENDTRY
+    RETURN CALL_TOOL$(name$, args)
+ENDFUNC
+
+' ---- example tools (fill with your real ones) ----
+FUNC TOOL_SHELL_RUN$(args)
+    DIM cmd$, a, res, sm$
+    cmd$ = args{"cmd"} : a = args{"args"} : IF a = NULL THEN a = []
+    res = OS.EXEC(cmd$, a)
+    sm$ = {"ok":1,"exit_code":res{"exit_code"},"stdout":res{"output"}}
+    RETURN JSON.STRINGIFY$(sm$)
+ENDFUNC
+
+FUNC TOOL_HTTP_GET$(args)
+    DIM url$, body$, sm$
+    url$ = args{"url"}
+    TRY
+        body$ = HTTP.GET$(url$)
+        sm$ = {"ok":1,"body":body$}
+        RETURN JSON.STRINGIFY$(sm$)
+    CATCH
+        sm$ = {"ok":0,"error":"http_get_failed","msg":ERRMSG$}
+        RETURN JSON.STRINGIFY$(sm$)
+    ENDTRY
+ENDFUNC
+
+FUNC TOOL_OCR_IMAGE$(args)
+    ' example: call a local CLI model like tesseract or your OCR binary
+    DIM p, img$, res, sm$
+    img$ = args{"path"}
+    res = OS.EXEC("tesseract", [img$, "stdout"])
+    sm$ = {"ok":1,"text":res{"output"}}
+    RETURN JSON.STRINGIFY$(sm$)
+ENDFUNC
+
+' Windows only
+FUNC TOOL_EXCEL_WRITE_CELL$(args)
+    IF OS.GETOS() <> "WINDOWS" THEN _
+        RETURN JSON.STRINGIFY$("ok":0,"error":"platform")
+    ENDIF
+    DIM xl, wb, sh, sm$
+    xl = CREATEOBJECT("Excel.Application")
+    xl.Visible = FALSE
+    wb = xl.Workbooks.Add(): sh = xl.ActiveSheet
+    sh.Cells(args{"row"}, args{"col"}).Value = args{"value"}
+    wb.SaveAs("jd_worker.xlsx"): wb.Close(TRUE): xl.Quit()
+    sm$ = {"ok":1,"file":"jd_worker.xlsx"}
+    RETURN JSON.STRINGIFY$(sm$)
+ENDFUNC
+
+' ---- auth helpers ----
+FUNC AUTH_OK(req)
+    DIM h, t$
+    h = req{"headers"}: 
+    IF len(h) = 0 THEN RETURN FALSE
+    t$ = h{"Authorization"}: IF t$ = "" THEN RETURN FALSE
+    t$ = TRIM$(t$)
+    IF LEFT$(UCASE$(t$),7)="BEARER " THEN t$=MID$(t$,7)
+    RETURN t$ = CLUSTER_TOKEN$
+ENDFUNC
+
+FUNC UNAUTHORIZED$()
+    DIM payload$, resp$, sm$
+    sm$ = {"ok":0,"error":"unauthorized"}
+    RETURN JSON.STRINGIFY$(sm$)
+ENDFUNC
+
+' ---- register & heartbeat with main ----
+SUB REGISTER_WITH_MAIN()
+    DIM payload$, resp$, sm$
+    sm$ = {"id":WORKER_ID$,"url":WORKER_URL$,"caps":CAPS}
+    payload$ = JSON.STRINGIFY$(sm$)
+    PRINT "Payload: "; payload$
+    resp$ = POST_JSON$(MAIN_URL$ + "/register", payload$, CLUSTER_TOKEN$)
+    PRINT "Register resp: "; LEFT$(resp$,120)
+ENDSUB
+
+SUB HEARTBEAT(load)
+    DIM payload$, resp$, sm$
+    sm$ = {"id":WORKER_ID$,"load":load,"healthy":1}
+    payload$ = JSON.STRINGIFY$(sm$)
+    resp$ = POST_JSON$(MAIN_URL$ + "/heartbeat", payload$, CLUSTER_TOKEN$)
+ENDSUB
+
+' ---- HTTP.POST$ (native or curl fallback) ----
+FUNC POST_JSON$(url$, body$, token$)
+    TRY
+        RETURN HTTP.POST$(url$, body$, {"Authorization":"Bearer "+token$, "Content-Type":"application/json"})
+    CATCH
+        DIM r
+        r = OS.EXEC("curl", ["-sS","-H","Authorization: Bearer "+token$,"-H","Content-Type: application/json","-X","POST","--data",body$, url$])
+        RETURN r{"output"}
+    ENDTRY
+ENDFUNC
+
+' ---- server start ----
+DIM webhook_path$ AS STRING = "/tool"
+HTTP.SERVER.ON_POST webhook_path$, "HandleTool"
+
+IF HTTP.SERVER.START(9090) THEN
+    DIM A$ AS STRING
+    PRINT "Server is running at http://localhost:9090"
+    PRINT "Listening for webhooks. Press ESC to stop."
+    REGISTER_WITH_MAIN()
+    PRINT "Worker up at "; WORKER_URL$
+    DO
+        HEARTBEAT(OS.LOAD()) ' pretend you have a load probe; otherwise use a moving average of jobs
+        SLEEP 3000
+        A$ = INKEY$()
+    LOOP UNTIL A$=CHR$(27)
+ELSE
+    PRINT "Worker failed to start: "; ERRMSG$
+ENDIF
