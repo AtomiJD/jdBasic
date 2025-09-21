@@ -574,7 +574,7 @@ BasicValue builtin_map_keys(NeReLaBasic& vm, const std::vector<BasicValue>& args
 
     auto result_ptr = std::make_shared<Array>();
     result_ptr->data.reserve(map_ptr->data.size());
-
+    
     for (const auto& pair : map_ptr->data) {
         result_ptr->data.push_back(pair.first);
     }
@@ -728,6 +728,40 @@ BasicValue builtin_map_items(NeReLaBasic& vm, const std::vector<BasicValue>& arg
 
     result_ptr->shape = { map_ptr->data.size(), 2 };
     return result_ptr;
+}
+
+// MAP.FROM(json_object_string$) -> Map
+// Creates a Map from a string formatted as a JSON object.
+BasicValue builtin_map_from(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "MAP.FROM requires exactly one string argument.");
+        return {}; // Return empty BasicValue, results in a null map pointer
+    }
+
+    std::string json_string = to_string(args[0]);
+    if (json_string.empty()) {
+        // Return a new, empty map if the string is empty.
+        return std::make_shared<Map>();
+    }
+
+    try {
+        // 1. Parse the string into a nlohmann::json object.
+        nlohmann::json j = nlohmann::json::parse(json_string);
+
+        // 2. Validate that the top-level entity is an object.
+        if (!j.is_object()) {
+            Error::set(15, vm.runtime_current_line, "Input string for MAP.FROM must be a valid JSON object (e.g., {\"key\":\"value\"}).");
+            return {};
+        }
+
+        // 3. Use the existing helper to convert the JSON object to a BasicValue (which will be a Map).
+        return json_to_basic_value(j);
+    }
+    catch (const nlohmann::json::parse_error& e) {
+        // If parsing fails, set a BASIC error and return.
+        Error::set(1, vm.runtime_current_line, "Invalid JSON format in string for MAP.FROM: " + std::string(e.what()));
+        return {};
+    }
 }
 
 //=========================================================
@@ -2186,6 +2220,68 @@ BasicValue builtin_shr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         return 0LL;
     }
     return apply_binary_integer_op(args[0], args[1], [](long long val, long long bits) { return val >> bits; });
+}
+
+// IIF(condition, value_if_true, value_if_false) -> value or array
+// A vectorized version of the ternary operator.
+BasicValue builtin_iif(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "IIF requires 3 arguments: condition, value_if_true, value_if_false");
+        return {};
+    }
+
+    const BasicValue& cond_arg = args[0];
+    const BasicValue& true_arg = args[1];
+    const BasicValue& false_arg = args[2];
+
+    bool cond_is_array = std::holds_alternative<std::shared_ptr<Array>>(cond_arg);
+
+    // Case 1: The condition is a scalar value.
+    // The result is one of the two other arguments, returned as is.
+    if (!cond_is_array) {
+        return to_bool(cond_arg) ? true_arg : false_arg;
+    }
+
+    // Case 2: The condition is an array.
+    // The result will be a new array constructed element by element.
+    const auto& cond_arr = std::get<std::shared_ptr<Array>>(cond_arg);
+    if (!cond_arr) {
+        Error::set(15, vm.runtime_current_line, "Condition array for IIF cannot be null.");
+        return {};
+    }
+
+    bool true_is_array = std::holds_alternative<std::shared_ptr<Array>>(true_arg);
+    bool false_is_array = std::holds_alternative<std::shared_ptr<Array>>(false_arg);
+
+    const auto& true_arr = true_is_array ? std::get<std::shared_ptr<Array>>(true_arg) : nullptr;
+    const auto& false_arr = false_is_array ? std::get<std::shared_ptr<Array>>(false_arg) : nullptr;
+
+    // Validate shapes if the other arguments are also arrays
+    if (true_arr && true_arr->shape != cond_arr->shape) {
+        Error::set(15, vm.runtime_current_line, "Array shapes must match for IIF (condition and true_value).");
+        return {};
+    }
+    if (false_arr && false_arr->shape != cond_arr->shape) {
+        Error::set(15, vm.runtime_current_line, "Array shapes must match for IIF (condition and false_value).");
+        return {};
+    }
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = cond_arr->shape;
+    result_ptr->data.reserve(cond_arr->data.size());
+
+    for (size_t i = 0; i < cond_arr->data.size(); ++i) {
+        if (to_bool(cond_arr->data[i])) {
+            // If true_arg is an array, take the corresponding element. Otherwise, broadcast the scalar.
+            result_ptr->data.push_back(true_arr ? true_arr->data[i] : true_arg);
+        }
+        else {
+            // If false_arg is an array, take the corresponding element. Otherwise, broadcast the scalar.
+            result_ptr->data.push_back(false_arr ? false_arr->data[i] : false_arg);
+        }
+    }
+
+    return result_ptr;
 }
 
 // --- Date and Time Functions ---
@@ -4071,6 +4167,114 @@ end_loop:
     return ip_address;
 #endif
 }
+
+// OS.LOAD() -> DOUBLE
+// Returns the current system-wide CPU load as a percentage (0-100).
+// Note: This function's accuracy and behavior are OS-dependent.
+BasicValue builtin_os_load(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "OS.LOAD does not accept arguments.");
+        return 0.0;
+    }
+
+#ifdef _WIN32
+    // --- Windows Implementation ---
+    // This method takes two snapshots of system times with a short delay
+    // to calculate the CPU usage over that interval.
+
+    // Helper to convert FILETIME to a 64-bit integer
+    auto filetime_to_ull = [](const FILETIME& ft) {
+        ULARGE_INTEGER uli;
+        uli.LowPart = ft.dwLowDateTime;
+        uli.HighPart = ft.dwHighDateTime;
+        return uli.QuadPart;
+        };
+
+    FILETIME idleTime1, kernelTime1, userTime1;
+    if (!GetSystemTimes(&idleTime1, &kernelTime1, &userTime1)) {
+        Error::set(1, vm.runtime_current_line, "Failed to get system times.");
+        return 0.0;
+    }
+
+    // Wait for a short interval to get a meaningful delta
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    FILETIME idleTime2, kernelTime2, userTime2;
+    if (!GetSystemTimes(&idleTime2, &kernelTime2, &userTime2)) {
+        Error::set(1, vm.runtime_current_line, "Failed to get system times (second sample).");
+        return 0.0;
+    }
+
+    ULONGLONG idle_delta = filetime_to_ull(idleTime2) - filetime_to_ull(idleTime1);
+    ULONGLONG kernel_delta = filetime_to_ull(kernelTime2) - filetime_to_ull(kernelTime1);
+    ULONGLONG user_delta = filetime_to_ull(userTime2) - filetime_to_ull(userTime1);
+
+    // Total time is the sum of time spent in kernel and user modes.
+    ULONGLONG system_total = kernel_delta + user_delta;
+    // Busy time is the total time minus the time spent idle.
+    ULONGLONG busy_time = system_total - idle_delta;
+
+    if (system_total == 0) {
+        return 0.0; // Avoid division by zero if system is completely idle.
+    }
+
+    // Load is the percentage of time the system was busy.
+    double load = static_cast<double>(busy_time) * 100.0 / system_total;
+
+    // Clamp the value between 0 and 100 to handle potential timing anomalies.
+    return std::max(0.0, std::min(load, 100.0));
+
+#elif __linux__
+    // --- Linux Implementation ---
+    // This method reads /proc/stat at two different times (on subsequent calls)
+    // to calculate the average CPU load since the last call.
+    static long long prev_idle_time = 0;
+    static long long prev_total_time = 0;
+
+    std::ifstream stat_file("/proc/stat");
+    if (!stat_file) {
+        Error::set(1, vm.runtime_current_line, "Could not open /proc/stat to read CPU load.");
+        return 0.0;
+    }
+
+    std::string line;
+    std::getline(stat_file, line);
+    stat_file.close();
+
+    std::stringstream ss(line);
+    std::string cpu_label;
+    long long user, nice, system, idle, iowait, irq, softirq, steal;
+    ss >> cpu_label >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal;
+
+    long long current_idle_time = idle + iowait;
+    long long current_non_idle_time = user + nice + system + irq + softirq + steal;
+    long long current_total_time = current_idle_time + current_non_idle_time;
+
+    double cpu_load = 0.0;
+    // We can only calculate load if we have a previous measurement to compare against.
+    if (prev_total_time > 0) {
+        long long total_delta = current_total_time - prev_total_time;
+        long long idle_delta = current_idle_time - prev_idle_time;
+
+        if (total_delta > 0) {
+            cpu_load = (1.0 - static_cast<double>(idle_delta) / total_delta) * 100.0;
+        }
+    }
+
+    // Save current values for the next call.
+    prev_total_time = current_total_time;
+    prev_idle_time = current_idle_time;
+
+    // The first call will return 0.0, which is a reasonable starting point.
+    return std::max(0.0, std::min(cpu_load, 100.0));
+
+#else
+    // Fallback for other operating systems (like macOS, Emscripten, etc.)
+    TextIO::print("Warning: OS.LOAD is not implemented for this operating system."); TextIO::nl();
+    return 0.0;
+#endif
+}
+
 // --- System self coding functions ---
 // 
 // EXECUTE(code_string$)
@@ -4232,6 +4436,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("LERP", 3, builtin_lerp);
     register_func("SHL", 2, builtin_shl);
     register_func("SHR", 2, builtin_shr);
+    register_func("IIF", 3, builtin_iif);
 
     // --- Register Time Functions ---
     register_func("TICK", 0, builtin_tick);
@@ -4272,6 +4477,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("MAP.SIZE", 1, builtin_map_size);
     register_proc("MAP.MERGE", 2, builtin_map_merge);
     register_func("MAP.ITEMS", 1, builtin_map_items);
+    register_func("MAP.FROM", 1, builtin_map_from);
 
     register_proc("HELP", -1, builtin_help);
     register_func("HELP$", 0, builtin_help_str);
@@ -4304,6 +4510,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("OS.GETOS", 0, builtin_os_getos);
     register_func("OS.HOSTNAME$", 0, builtin_os_hostname_str);
     register_func("OS.IP$", 0, builtin_os_ip_str);
+    register_func("OS.LOAD", 0, builtin_os_load);
 
     register_proc("EXECUTE", 1, builtin_execute);
     register_func("EVAL", 1, builtin_eval);

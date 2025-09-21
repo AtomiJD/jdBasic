@@ -2,9 +2,9 @@ OPTION "EXPLICIT"
 ' ==== worker config ====
 DIM WORKER_ID$ AS STRING = OS.HOSTNAME$()
 DIM WORKER_URL$ AS STRING = "http://" + OS.IP$() + ":9090"  ' public or ngrok URL if needed
-DIM MAIN_URL$   AS STRING = "http://" + OS.IP$() + ":8080"        ' <- set to your main server URL
+DIM MAIN_URL$   AS STRING = "http://192.168.0.37:8080"        ' <- set to your main server URL
 DIM CAPS AS STRING = ["llm","stt","ocr","gpu"]              ' tailor per machine (windows: add "windows_com","excel")
-DIM CLUSTER_TOKEN$ AS STRING = GETENV$("JDB_CLUSTER_TOKEN") ' same token on all nodes
+DIM CLUSTER_TOKEN$ AS STRING = "supersecret" 'GETENV$("JDB_CLUSTER_TOKEN") ' same token on all nodes
 
 ' ==== /tool handler (you likely already have this) ====
 FUNC CALL_TOOL$(name$, args)
@@ -104,20 +104,27 @@ SUB REGISTER_WITH_MAIN()
     PRINT "Register resp: "; LEFT$(resp$,120)
 ENDSUB
 
-SUB HEARTBEAT(load)
+SUB HEARTBEAT(work_load)
     DIM payload$, resp$, sm$
-    sm$ = {"id":WORKER_ID$,"load":load,"healthy":1}
+    sm$ = {"id":WORKER_ID$,"load":work_load,"healthy":1.0}
     payload$ = JSON.STRINGIFY$(sm$)
+    PRINT "Heartbeat payload:"; payload$
     resp$ = POST_JSON$(MAIN_URL$ + "/heartbeat", payload$, CLUSTER_TOKEN$)
 ENDSUB
 
 ' ---- HTTP.POST$ (native or curl fallback) ----
 FUNC POST_JSON$(url$, body$, token$)
     TRY
-        RETURN HTTP.POST$(url$, body$, {"Authorization":"Bearer "+token$, "Content-Type":"application/json"})
+        HTTP.CLEARHEADERS
+        HTTP.SETHEADER "Authorization", "Bearer " + token$
+        HTTP.SETHEADER "Content-Type", "application/json"
+        RETURN HTTP.POST$(url$, body$, "application/json")
     CATCH
         DIM r
-        r = OS.EXEC("curl", ["-sS","-H","Authorization: Bearer "+token$,"-H","Content-Type: application/json","-X","POST","--data",body$, url$])
+        r = OS.EXEC("curl", ["-sS","--max-time","20",
+                             "-H","Authorization: Bearer "+token$,
+                             "-H","Content-Type: application/json",
+                             "-X","POST","--data",body$, url$])
         RETURN r{"output"}
     ENDTRY
 ENDFUNC
@@ -130,10 +137,10 @@ IF HTTP.SERVER.START(9090) THEN
     DIM A$ AS STRING
     PRINT "Server is running at http://localhost:9090"
     PRINT "Listening for webhooks. Press ESC to stop."
-    REGISTER_WITH_MAIN()
+    REGISTER_WITH_MAIN
     PRINT "Worker up at "; WORKER_URL$
     DO
-        HEARTBEAT(OS.LOAD()) ' pretend you have a load probe; otherwise use a moving average of jobs
+        HEARTBEAT OS.LOAD() 
         SLEEP 3000
         A$ = INKEY$()
     LOOP UNTIL A$=CHR$(27)

@@ -11,7 +11,7 @@
 #include <limits>
 #include <algorithm>
 #include <memory>
-#if !defined(__EMSCRIPTEN__) && !defined(__APPLE__)
+#if !defined(__EMSCRIPTEN__) && !defined(__APPLE__) && !defined(__linux__)
 #include <omp.h>
 #endif
 
@@ -82,7 +82,9 @@ namespace {
         auto result_ptr = std::make_shared<FloatArray>();
         result_ptr->shape = { rA, cB };
         result_ptr->data.assign(rA * cB, 0.0);
+#if !defined(__EMSCRIPTEN__) && !defined(__APPLE__) && !defined(__linux__)
 #pragma omp parallel for collapse(2)
+#endif
         for (auto r = 0; r < rA; ++r) {
             for (auto c = 0; c < cB; ++c) {
                 for (auto i = 0; i < cA; ++i) {

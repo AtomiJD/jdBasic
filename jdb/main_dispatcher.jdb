@@ -1,53 +1,80 @@
 OPTION "EXPLICIT"
 
-' ==== config ====
-DIM CLUSTER_TOKEN$ AS STRING = GETENV$("JDB_CLUSTER_TOKEN")
-DIM DEFAULT_TIMEOUT_MS AS STRING = 20000
+' ================================================================
+' jdTools Main Dispatcher (cluster head)
+' - Registry of workers
+' - /register, /heartbeat, /workers, /tool
+' - /status (HTML) and "/" redirect
+' Uses "work_load" everywhere (LOAD is reserved)
+' ================================================================
 
-' ==== registry ====
+' --- config ---
+DIM CLUSTER_TOKEN$ AS STRING = GETENV$("JDB_CLUSTER_TOKEN")
+DIM DEFAULT_TIMEOUT_MS AS INTEGER = 20000
+
+' --- registry ---
 DIM WORKERS AS MAP       ' id -> info map
-WORKERS = {}             ' info: {"url":..., "caps":[...], "last_seen":ms, "healthy":1/0, "load":0.0}
+WORKERS = {}             ' info: {"url":..., "caps":[...], "last_seen":ms, "healthy":1/0, "work_load":0.0}
 
 FUNC NOWMS()
     RETURN TICK()
 ENDFUNC
 
-' ---- helpers to upsert/mark ----
+' --- helpers: body parsing (Map or String) ---
+FUNC BODY_AS_JSON(req)
+    DIM b
+    b = req{"body"}
+    SWITCH TYPEOF(b)
+        CASE "STRING"
+            IF TRIM$(b) = "" THEN RETURN {}
+            PRINT "BODY_AS_JSON: STRING: "; b
+            RETURN JSON.PARSE$(b)
+        CASE "MAP","ARRAY"
+            RETURN b
+        DEFAULT
+            RETURN {}
+    ENDSWITCH
+ENDFUNC
+
+' --- helpers to upsert/mark ---
 SUB UPSERT_WORKER(id$, url$, caps)
     DIM info
-    IF NOT MAP.EXISTS(WORKERS, id$) THEN 
-        WORKERS{id$} = {}
-    ENDIF
+    IF NOT MAP.EXISTS(WORKERS, id$) THEN WORKERS{id$} = {}
     info = WORKERS{id$}
-    IF len(info) = 0 THEN info = {}
     info{"url"} = url$
     info{"caps"} = caps
     info{"last_seen"} = NOWMS()
     info{"healthy"} = 1
-    IF NOT MAP.EXISTS(info,"load") = 0 THEN info{"load"} = 0.0
+    IF NOT MAP.EXISTS(info,"work_load") THEN info{"work_load"} = 0.0
     WORKERS{id$} = info
+    PRINT "Worker " + id$ + " with url: " + url$ + " connected."
 ENDSUB
 
-SUB UPDATE_HEARTBEAT(id$, load, healthy)
+SUB UPDATE_HEARTBEAT(id$, work_load, healthy)
     IF NOT MAP.EXISTS(WORKERS, id$) THEN RETURN
     WORKERS{id$}{"last_seen"} = NOWMS()
-    WORKERS{id$}{"load"} = load
+    WORKERS{id$}{"work_load"} = work_load
     WORKERS{id$}{"healthy"} = healthy
 ENDSUB
 
-' ---- auth ----
+' --- auth (case-insensitive Authorization header) ---
 FUNC AUTH_OK(req)
-    DIM h, t$
-    h = req{"headers"}: 
-    IF len(h) = 0 THEN RETURN FALSE
-    PRINT "Header: "; h
-    IF MAP.EXISTS(h, "Authorization") THEN
-        t$ = h{"Authorization"}    
-    ELSE
-        RETURN FALSE
-    ENDIF
-    t$ = TRIM$(t$)
-    IF LEFT$(UCASE$(t$),7)="BEARER " THEN t$=MID$(t$,7)
+    DIM i, h, t$, keys, auth_key$
+    h = req{"headers"}
+    IF LEN(h) = 0 THEN RETURN FALSE
+
+    keys = MAP.KEYS(h)
+    auth_key$ = ""
+    FOR i = 0 TO LEN(keys) - 1
+        IF UCASE$(keys[i]) = "AUTHORIZATION" THEN
+            auth_key$ = keys[i]
+            EXITFOR
+        ENDIF
+    NEXT i
+    IF auth_key$ = "" THEN RETURN FALSE
+
+    t$ = TRIM$(h{auth_key$})
+    IF LEFT$(UCASE$(t$), 7) = "BEARER " THEN t$ = MID$(t$, 7)
     RETURN t$ = CLUSTER_TOKEN$
 ENDFUNC
 
@@ -55,33 +82,35 @@ FUNC UNAUTHORIZED$()
     RETURN JSON.STRINGIFY$({"ok":0,"error":"unauthorized"})
 ENDFUNC
 
-' ---- endpoint: register ----
+' --- endpoint: register ---
 FUNC HandleRegister(req)
-    PRINT "Request: "; req
     IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
     DIM jo, id$, url$, caps, sm$
     TRY
-        jo = JSON.PARSE$(req{"body"})
-        PRINT "JO: "; JO
+        jo = BODY_AS_JSON(req)
         id$  = jo{"id"} : url$ = jo{"url"} : caps = jo{"caps"}
         UPSERT_WORKER id$, url$, caps
         sm$ = {"ok":1}
         RETURN JSON.STRINGIFY$(sm$)
     CATCH
         sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
-        PRINT "CATCH: "; sm$
         RETURN JSON.STRINGIFY$(sm$)
     ENDTRY
 ENDFUNC
 
-' ---- endpoint: heartbeat ----
+' --- endpoint: heartbeat ---
 FUNC HandleHeartbeat(req)
     IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
-    DIM jo, id$, load, healthy, sm$
+    DIM jo, id$, work_load, healthy, sm$
     TRY
-        jo = JSON.PARSE$(req{"body"})
-        id$ = jo{"id"} : load = jo{"load"} : healthy = IIF(jo{"healthy"}="",1,jo{"healthy"})
-        UPDATE_HEARTBEAT(id$, load, healthy)
+        jo = BODY_AS_JSON(req)
+        id$ = jo{"id"} : work_load = jo{"work_load"} : 
+        IF jo{"healthy"}="" THEN
+            healthy = 1
+        ELSE
+            healthy = jo{"healthy"}
+        ENDIF
+        UPDATE_HEARTBEAT(id$, work_load, healthy)
         sm$ = {"ok":1}
         RETURN JSON.STRINGIFY$(sm$)
     CATCH
@@ -90,10 +119,10 @@ FUNC HandleHeartbeat(req)
     ENDTRY
 ENDFUNC
 
-' ---- endpoint: inspect workers ----
+' --- endpoint: inspect workers ---
 FUNC HandleWorkers(req)
     IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
-    ' evict stale (no heartbeat for 30s)
+    ' evict/mark stale (>30s) as unhealthy
     DIM now_ms, ids, sm$
     now_ms = NOWMS()
     ids = MAP.KEYS(WORKERS)
@@ -105,29 +134,10 @@ FUNC HandleWorkers(req)
     RETURN JSON.STRINGIFY$(sm$)
 ENDFUNC
 
-' ---- selection: choose a worker for a tool ----
-FUNC SELECT_WORKER_URL$(tool_name$)
-    DIM want$ = CAP_FROM_TOOL$(tool_name$)
-    DIM best_url$, best_score
-    best_score = 1e9
-
-    DIM ids = MAP.KEYS(WORKERS)
-    FOR i=0 TO LEN(ids)-1
-        DIM w = WORKERS{ids[i]}
-        IF w{"healthy"} <> 1 THEN CONTINUE FOR
-        IF NOT HAS_CAP(w{"caps"}, want$) THEN CONTINUE FOR
-        ' score by (load + tiny round-robin jitter)
-        DIM score = w{"load"} + (NOWMS() MOD 7)/1000.0
-        IF score < best_score THEN
-            best_score = score
-            best_url$  = w{"url"}
-        ENDIF
-    NEXT i
-    RETURN best_url$
-ENDFUNC
-
+' --- capability check ---
 FUNC HAS_CAP(caps, want$)
     IF want$ = "" THEN RETURN TRUE
+    DIM i
     FOR i=0 TO LEN(caps)-1
         IF UCASE$(caps[i]) = UCASE$(want$) THEN RETURN TRUE
     NEXT i
@@ -146,7 +156,49 @@ FUNC CAP_FROM_TOOL$(tool$)
     ENDSWITCH
 ENDFUNC
 
-' ---- forwarder: POST to worker ----
+' --- selection: choose a worker for a tool ---
+FUNC SELECT_WORKER_URL$(tool_name$)
+    DIM want$ = CAP_FROM_TOOL$(tool_name$)
+    DIM best_url$, best_score
+    best_score = 1e9
+
+    DIM ids = MAP.KEYS(WORKERS)
+    DIM i
+    FOR i=0 TO LEN(ids)-1
+        DIM w = WORKERS{ids[i]}
+        IF w{"healthy"} <> 1 THEN CONTINUE FOR
+        IF NOT HAS_CAP(w{"caps"}, want$) THEN CONTINUE FOR
+        ' score by (work_load + tiny jitter)
+        DIM score = w{"work_load"} + (NOWMS() MOD 7)/1000.0
+        IF score < best_score THEN
+            best_score = score
+            best_url$  = w{"url"}
+        ENDIF
+    NEXT i
+    RETURN best_url$
+ENDFUNC
+
+' --- HTTP POST (JSON) with headers set properly ---
+FUNC POST_JSON$(url$, body$, token$)
+    TRY
+        HTTP.CLEARHEADERS
+        HTTP.SETHEADER "Authorization", "Bearer " + token$
+        HTTP.SETHEADER "Content-Type", "application/json"
+        DIM res$
+        res$ = HTTP.POST$(url$, body$, "application/json")
+        RETURN res$
+    CATCH
+        ' curl fallback
+        DIM r
+        r = OS.EXEC("curl", ["-sS","--max-time","20",
+                             "-H","Authorization: Bearer "+token$,
+                             "-H","Content-Type: application/json",
+                             "-X","POST","--data",body$, url$])
+        RETURN r{"output"}
+    ENDTRY
+ENDFUNC
+
+' --- forwarder: POST to worker /tool ---
 FUNC FORWARD_TOOL$(worker_url$, name$, args)
     DIM payload$, res$, sm$
     sm$ = {"name":name$, "args":args}
@@ -155,25 +207,14 @@ FUNC FORWARD_TOOL$(worker_url$, name$, args)
     RETURN res$
 ENDFUNC
 
-FUNC POST_JSON$(url$, body$, token$)
-    ' try native
-    TRY
-        RETURN HTTP.POST$(url$, body$, {"Authorization":"Bearer "+token$, "Content-Type":"application/json", "X-Timeout":STR$(DEFAULT_TIMEOUT_MS)})
-    CATCH
-        DIM r
-        r = OS.EXEC("curl", ["-sS","--max-time","20","-H","Authorization: Bearer "+token$, "-H","Content-Type: application/json", "-X","POST","--data",body$, url$])
-        RETURN r{"output"}
-    ENDTRY
-ENDFUNC
-
-' ---- main /tool endpoint ----
+' --- main /tool endpoint ---
 FUNC HandleTool(req)
     IF NOT AUTH_OK(req) THEN RETURN UNAUTHORIZED$()
 
     DIM jo, name$, args, url$, out$, sm$
     TRY
-        jo = JSON.PARSE$(req{"body"})
-        name$ = jo{"name"} : args = jo{"args"} : IF len(args) = 0 THEN args = {}
+        jo = BODY_AS_JSON(req)
+        name$ = jo{"name"} : args = jo{"args"} : IF LEN(args) = 0 THEN args = {}
     CATCH
         sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
         RETURN JSON.STRINGIFY$(sm$)
@@ -199,14 +240,142 @@ FUNC HandleTool(req)
     ENDTRY
 ENDFUNC
 
-' ---- routes & server ----
+' ================================================================
+' STATUS PAGE (HTML)
+' ================================================================
+DIM START_TIME_MS = NOWMS()
+DIM STATUS_PUBLIC AS INTEGER = 1 'IIF(UCASE$(GETENV$("JDB_STATUS_PUBLIC"))="1", 1, 0)
+
+FUNC HTMLE$(s$)
+    s$ = REPLACE$(s$, "&", "&amp;")
+    s$ = REPLACE$(s$, "<", "&lt;")
+    s$ = REPLACE$(s$, ">", "&gt;")
+    s$ = REPLACE$(s$, """", "&quot;")
+    RETURN s$
+ENDFUNC
+
+FUNC JOIN$(arr, sep$)
+    DIM out$, i
+    IF LEN(arr)=0 THEN RETURN ""
+    out$ = STR$(arr[0]) ' works for strings too
+    FOR i = 1 TO LEN(arr)-1
+        out$ = out$ + sep$ + STR$(arr[i])
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC HUMAN_SECS$(ms)
+    DIM s = INT(ms/1000)
+    DIM m = INT(s/60)
+    DIM h = INT(m/60)
+    s = s - m*60
+    m = m - h*60
+    IF h>0 THEN RETURN STR$(h)+"h "+STR$(m)+"m "+STR$(s)+"s"
+    IF m>0 THEN RETURN STR$(m)+"m "+STR$(s)+"s"
+    RETURN STR$(s)+"s"
+ENDFUNC
+
+SUB MARK_STALE()
+    DIM nowms = NOWMS()
+    DIM ids = MAP.KEYS(WORKERS)
+    DIM i, wid$
+    FOR i = 0 TO LEN(ids)-1
+        wid$ = ids[i]
+        IF nowms - WORKERS{wid$}{"last_seen"} > 30000 THEN
+            DIM tempWorker = WORKERS{wid$}
+            tempWorker{"healthy"} = 0
+        ENDIF
+    NEXT i
+ENDSUB
+
+FUNC RENDER_STATUS$()
+    DIM now_ms = NOWMS()
+    CALL MARK_STALE()
+
+    DIM ids = MAP.KEYS(WORKERS)
+    DIM rows$ = ""
+    DIM i, wid$, w, age_ms, age$, healthy$, caps$
+
+    FOR i=0 TO LEN(ids)-1
+        wid$ = ids[i]
+        w = WORKERS{wid$}
+        age_ms = now_ms - w{"last_seen"}
+        age$ = HUMAN_SECS$(age_ms)
+        IF w{"healthy"}=1 THEN
+            healthy$ = "<span class=""ok"">●</span>"
+        ELSE
+            healthy$ = "<span class=""bad"">●</span>"
+        ENDIF
+        caps$ = ""
+        IF LEN(w{"caps"})>0 THEN caps$ = JOIN$(w{"caps"}, ", ")
+        rows$ = rows$ + _
+            "<tr>" + _
+              "<td class=""mono"">" + HTMLE$(wid$) + "</td>" + _
+              "<td class=""mono""><a href=""" + HTMLE$(w{"url"}) + """>" + HTMLE$(w{"url"}) + "</a></td>" + _
+              "<td class=""c"">" + healthy$ + "</td>" + _
+              "<td class=""r"">" + FORMAT$("{0:0.00}", w{"work_load"}) + "</td>" + _
+              "<td class=""r mono"">" + age$ + "</td>" + _
+              "<td>" + HTMLE$(caps$) + "</td>" + _
+            "</tr>"
+    NEXT i
+
+    IF rows$ = "" THEN
+        rows$ = "<tr><td colspan=""6"" class=""c dim"">No workers registered yet</td></tr>"
+    ENDIF
+
+    DIM uptime$ = HUMAN_SECS$(now_ms - START_TIME_MS)
+
+    DIM html$
+    html$ = "<!doctype html><html><head><meta charset=""utf-8"">"
+    html$ = html$ + "<meta http-equiv=""refresh"" content=""5"">"
+    html$ = html$ + "<title>jdTools Dispatcher Status</title>"
+    html$ = html$ + "<style>"
+    html$ = html$ + "body{font:14px system-ui,Segoe UI,Roboto,Arial;padding:20px;color:#111;background:#fafafa}"
+    html$ = html$ + "h1{margin:0 0 10px 0;font-size:20px}"
+    html$ = html$ + ".dim{color:#777}.mono{font-family:ui-monospace,Consolas,Menlo,monospace}"
+    html$ = html$ + "table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e5e7eb}"
+    html$ = html$ + "th,td{padding:8px 10px;border-bottom:1px solid #f1f5f9}"
+    html$ = html$ + "th{background:#f8fafc;text-align:left;font-weight:600}"
+    html$ = html$ + ".r{text-align:right}.c{text-align:center}"
+    html$ = html$ + ".ok{color:#16a34a}.bad{color:#dc2626}"
+    html$ = html$ + ".hdr{display:flex;gap:16px;align-items:baseline;justify-content:space-between;margin-bottom:8px}"
+    html$ = html$ + "</style></head><body>"
+
+    html$ = html$ + "<div class=""hdr""><h1>jdTools Dispatcher</h1>"
+    html$ = html$ + "<div class=""dim"">uptime: " + uptime$ + " &nbsp;•&nbsp; workers: " + STR$(LEN(ids)) + "</div></div>"
+    html$ = html$ + "<table><thead><tr>"
+    html$ = html$ + "<th>Worker ID</th><th>URL</th><th>OK</th><th>Work Load</th><th>Last Seen</th><th>Caps</th>"
+    html$ = html$ + "</tr></thead><tbody>" + rows$ + "</tbody></table>"
+    html$ = html$ + "<p class=""dim"">Auto-refresh every 5s. JSON: <code class=""mono"">/workers</code></p>"
+    html$ = html$ + "</body></html>"
+
+    RETURN html$
+ENDFUNC
+
+FUNC HandleStatus(req)
+    IF STATUS_PUBLIC = 0 AND NOT AUTH_OK(req) THEN
+        RETURN "<!doctype html><meta charset=""utf-8""><title>401</title><pre>401 unauthorized</pre>"
+    ENDIF
+    RETURN RENDER_STATUS$()
+ENDFUNC
+
+FUNC HandleRoot(req)
+    IF STATUS_PUBLIC = 0 AND NOT AUTH_OK(req) THEN
+        RETURN "<!doctype html><meta charset=""utf-8""><title>401</title><pre>401 unauthorized</pre>"
+    ENDIF
+    RETURN "<!doctype html><meta http-equiv=""refresh"" content=""0;url=/status""><title>jdTools</title>"
+ENDFUNC
+
+' --- routes & server ---
+HTTP.SERVER.ON_GET  "/",         "HandleRoot"
+HTTP.SERVER.ON_GET  "/status",   "HandleStatus"
 HTTP.SERVER.ON_POST "/register", "HandleRegister"
 HTTP.SERVER.ON_POST "/heartbeat","HandleHeartbeat"
 HTTP.SERVER.ON_POST "/tool",     "HandleTool"
 HTTP.SERVER.ON_GET  "/workers",  "HandleWorkers"
 
 IF HTTP.SERVER.START(8080) THEN
-    PRINT "Main dispatcher on :8080"
+    PRINT "Main dispatcher on http://" + OS.IP$() + ":8080"
     DO 
         SLEEP 100 
     LOOP UNTIL INKEY$()=CHR$(27)

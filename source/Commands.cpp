@@ -1670,6 +1670,11 @@ void Commands::do_return(NeReLaBasic& vm) {
         vm.for_each_stack.resize(frame.for_each_stack_size_on_entry);
     }
 
+    size_t current_stack_depth = vm.call_stack.size();
+    while (!vm.handler_stack.empty() && vm.handler_stack.back().call_stack_depth > current_stack_depth) {
+        vm.handler_stack.pop_back();
+    }
+
     // --- UNIFIED CONTEXT RESTORE ---
     // This fixes the bug where pcode was not restored for synchronous calls.
     if (vm.call_stack.empty() && frame.is_async_call) {

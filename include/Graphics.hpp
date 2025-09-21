@@ -1,4 +1,5 @@
 #pragma once
+#include "AppConfig.hpp"
 #ifdef SDL3
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>

@@ -20,6 +20,8 @@
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__EMSCRIPTEN__)
 #if !defined(SERVER)
 #define SDL3
+#else
+#undef SDL3
 #endif
 #endif
 

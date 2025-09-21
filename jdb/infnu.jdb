@@ -240,7 +240,7 @@ PRINT "--------------------------------------------------"
 
 NUM1$ = "1"
 NUM2$ = "1"
-for i = 1 to 1000
+for i = 1 to 100 step 5
     PRINT "Number 1: "; NUM1$
     PRINT "Number 2: "; NUM2$
     SUM$ = BIGNUM.ADD$(NUM1$, NUM2$)
