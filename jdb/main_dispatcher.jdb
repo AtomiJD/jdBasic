@@ -52,9 +52,10 @@ ENDSUB
 
 SUB UPDATE_HEARTBEAT(id$, work_load, healthy)
     IF NOT MAP.EXISTS(WORKERS, id$) THEN RETURN
-    WORKERS{id$}{"last_seen"} = NOWMS()
-    WORKERS{id$}{"work_load"} = work_load
-    WORKERS{id$}{"healthy"} = healthy
+    DIM tempWorker = WORKERS{id$}
+    tempWorker{"last_seen"} = NOWMS()
+    tempWorker{"work_load"} = work_load
+    tempWorker{"healthy"} = healthy
 ENDSUB
 
 ' --- auth (case-insensitive Authorization header) ---
@@ -94,6 +95,7 @@ FUNC HandleRegister(req)
         RETURN JSON.STRINGIFY$(sm$)
     CATCH
         sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
+        PRINT "Error HandleRegister: "; sm$
         RETURN JSON.STRINGIFY$(sm$)
     ENDTRY
 ENDFUNC
@@ -104,17 +106,19 @@ FUNC HandleHeartbeat(req)
     DIM jo, id$, work_load, healthy, sm$
     TRY
         jo = BODY_AS_JSON(req)
-        id$ = jo{"id"} : work_load = jo{"work_load"} : 
+        id$ = jo{"id"} 
+        work_load = jo{"work_load"} 
         IF jo{"healthy"}="" THEN
             healthy = 1
         ELSE
             healthy = jo{"healthy"}
         ENDIF
-        UPDATE_HEARTBEAT(id$, work_load, healthy)
+        UPDATE_HEARTBEAT id$, work_load, healthy
         sm$ = {"ok":1}
         RETURN JSON.STRINGIFY$(sm$)
     CATCH
         sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
+        PRINT "Error HandleHeartbeat: "; sm$
         RETURN JSON.STRINGIFY$(sm$)
     ENDTRY
 ENDFUNC
@@ -128,7 +132,9 @@ FUNC HandleWorkers(req)
     ids = MAP.KEYS(WORKERS)
     FOR i=0 TO LEN(ids)-1
         DIM wid$ = ids[i]
-        IF now_ms - WORKERS{wid$}{"last_seen"} > 30000 THEN WORKERS{wid$}{"healthy"} = 0
+        DIM tempWorker = WORKERS{wid$}
+        print "Last seen: "; tempWorker{"last_seen"}, "Now: "; now_ms
+        IF now_ms - tempWorker{"last_seen"} > 30000 THEN tempWorker{"healthy"} = 0
     NEXT i
     sm$ = {"ok":1,"workers":WORKERS}
     RETURN JSON.STRINGIFY$(sm$)
@@ -166,14 +172,15 @@ FUNC SELECT_WORKER_URL$(tool_name$)
     DIM i
     FOR i=0 TO LEN(ids)-1
         DIM w = WORKERS{ids[i]}
-        IF w{"healthy"} <> 1 THEN CONTINUE FOR
-        IF NOT HAS_CAP(w{"caps"}, want$) THEN CONTINUE FOR
+        IF w{"healthy"} <> 1 THEN GOTO CONTILI
+        IF NOT HAS_CAP(w{"caps"}, want$) THEN GOTO CONTILI
         ' score by (work_load + tiny jitter)
         DIM score = w{"work_load"} + (NOWMS() MOD 7)/1000.0
         IF score < best_score THEN
             best_score = score
             best_url$  = w{"url"}
         ENDIF
+CONTILI:        
     NEXT i
     RETURN best_url$
 ENDFUNC
@@ -189,6 +196,7 @@ FUNC POST_JSON$(url$, body$, token$)
         RETURN res$
     CATCH
         ' curl fallback
+        PRINT "Error POST_JSON$: ", url$, body$, token$
         DIM r
         r = OS.EXEC("curl", ["-sS","--max-time","20",
                              "-H","Authorization: Bearer "+token$,
@@ -217,6 +225,7 @@ FUNC HandleTool(req)
         name$ = jo{"name"} : args = jo{"args"} : IF LEN(args) = 0 THEN args = {}
     CATCH
         sm$ = {"ok":0,"error":"bad_request","msg":ERRMSG$}
+        PRINT "Error HandleTool: "; sm$
         RETURN JSON.STRINGIFY$(sm$)
     ENDTRY
 
@@ -236,6 +245,7 @@ FUNC HandleTool(req)
         RETURN JSON.STRINGIFY$(resp)
     CATCH
         sm$ = {"ok":0,"error":"bad_worker_response","raw":LEFT$(out$,300),"routed_to":url$}
+        PRINT "Error HandleTool 2: "; sm$
         RETURN JSON.STRINGIFY$(sm$)
     ENDTRY
 ENDFUNC
@@ -281,8 +291,8 @@ SUB MARK_STALE()
     DIM i, wid$
     FOR i = 0 TO LEN(ids)-1
         wid$ = ids[i]
-        IF nowms - WORKERS{wid$}{"last_seen"} > 30000 THEN
-            DIM tempWorker = WORKERS{wid$}
+        DIM tempWorker = WORKERS{wid$}
+        IF nowms - tempWorker{"last_seen"} > 30000 THEN
             tempWorker{"healthy"} = 0
         ENDIF
     NEXT i

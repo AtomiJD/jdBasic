@@ -106,7 +106,7 @@ ENDSUB
 
 SUB HEARTBEAT(work_load)
     DIM payload$, resp$, sm$
-    sm$ = {"id":WORKER_ID$,"load":work_load,"healthy":1.0}
+    sm$ = {"id":WORKER_ID$,"work_load":work_load,"healthy":1.0}
     payload$ = JSON.STRINGIFY$(sm$)
     PRINT "Heartbeat payload:"; payload$
     resp$ = POST_JSON$(MAIN_URL$ + "/heartbeat", payload$, CLUSTER_TOKEN$)

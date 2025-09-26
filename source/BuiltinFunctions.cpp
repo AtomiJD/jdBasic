@@ -79,7 +79,6 @@
 #include "json.hpp"
 
 #ifdef JDCOM
-#include <windows.h> // Basic Windows types, HRESULT
 #include <objbase.h> // CoInitializeEx, CoUninitialize, CoCreateInstance, CLSIDFromProgID
 #include <oaidl.h>   // <-- Contains definitions for IDispatch, VARIANT, SAFEARRAY, etc.
 #include <comdef.h>  // _com_ptr_t, _variant_t, _bstr_t, _com_error
