@@ -1617,6 +1617,8 @@ BasicValue builtin_lerp(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result_ptr;
 }
 
+#include <iostream> // Add this for std::cerr
+
 // FORMAT$(format_string$, arg1, arg2, ...) -> string$
 // Formats a string using C++20-style format specifiers.
 BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1691,73 +1693,52 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                 result << std::visit([&](auto&& value) -> std::string {
                     using T = std::decay_t<decltype(value)>;
 
+                    auto do_format = [&](auto val_to_format) -> std::string {
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+                        return std::vformat(format_specifier, std::make_format_args(val_to_format));
+#else
+                        return fmt::vformat(format_specifier, fmt::make_format_args(val_to_format));
+#endif
+                        };
+
                     if constexpr (std::is_same_v<T, double>) {
-                        // Check the format specifier to see if an integer type is requested.
                         size_t spec_end_pos = format_specifier.length() - 1;
-                        if (spec_end_pos > 0 && format_specifier[spec_end_pos] == '}') {
-                            char type_char = format_specifier[spec_end_pos - 1];
-                            // Check for integer-only types: d, x, X, b, B, o, c
-                            if (std::string("dxXbo").find(type_char) != std::string::npos) {
-                                // It's an integer format. Cast the double to a long long.
-#if defined(_WIN32)  
-                                return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<long long>(value)));
-#elif defined(__EMSCRIPTEN__)
-                                return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
-#else
-                                //return fmt::format(format_specifier, value);
-                                return fmt::vformat(format_specifier, fmt::make_format_args(value));
-#endif                                
+                        if (spec_end_pos > 2) {
+                            char potential_type = format_specifier[spec_end_pos - 1];
+                            if (std::string("dxXboB").find(potential_type) != std::string::npos) {
+                                return do_format(static_cast<long long>(value));
                             }
-                            if (type_char == 'c') {
-                                // Handle character case
-#if defined(_WIN32)  
-                                return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(static_cast<char>(static_cast<long long>(value))));
-#elif defined(__EMSCRIPTEN__)
-                                return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
-#else
-                                //return fmt::format(format_specifier, value);
-                                return fmt::vformat(format_specifier, fmt::make_format_args(value));
-#endif                                
+                            if (potential_type == 'c') {
+                                return do_format(static_cast<char>(static_cast<long long>(value)));
                             }
                         }
-                        // If it's not an integer type, format as a double.
-#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
-                        return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
-#else
-                        // return fmt::format(format_specifier, value);
-                        return fmt::vformat(format_specifier, fmt::make_format_args(value));
-#endif                                
+                        return do_format(value);
                     }
-                    else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
-                        // These types are fine as they are
-#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
-                        return std::vformat(LocaleManager::get_current_locale(), format_specifier, std::make_format_args(value));
-#else
-                        // return fmt::format(format_specifier, value);
-                        return fmt::vformat(format_specifier, fmt::make_format_args(value));
-#endif                                
+                    // THE FIX IS HERE: Added 'long long' to the list of handled types.
+                    else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, long long> || std::is_same_v<T, std::string>) {
+                        return do_format(value);
                     }
                     else {
-                        // Fallback for complex types (Array, Map, etc.)
                         return to_string(value);
                     }
                     }, arg);
             }
-#if defined(_WIN32)  || defined(__EMSCRIPTEN__)
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
             catch (const std::format_error& e) {
-#else                
+#else
             catch (const fmt::format_error& e) {
 #endif
                 result << "{FORMAT ERROR: " << e.what() << "}";
             }
-        }
+            }
         else {
             result << "{" << spec_content << "}";
         }
         last_pos = end_brace + 1;
-    }
+        }
     return result.str();
 }
+
 
 // FRMV$(array, [format_string$]) -> string$
 // Formats a 1D or 2D array into a string.
@@ -2709,6 +2690,26 @@ BasicValue builtin_sleep(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
     return false;
 }
+
+// YIELD
+// (Emscripten only) Pauses execution and yields to the browser event loop for one frame.
+BasicValue builtin_yield(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "YIELD does not accept arguments.");
+        return false;
+    }
+
+#ifdef __EMSCRIPTEN__
+    vm.yielded_for_frame = true;
+#else
+    // On non-web platforms, this command can be a no-op or print a warning.
+    // A short sleep is a reasonable behavior to avoid tight loops if used incorrectly.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#endif
+
+    return false; // This is a procedure.
+}
+
 
 // CURSOR state (0 for off, 1 for on)
 BasicValue builtin_cursor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -4486,6 +4487,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("GETX", 0, builtin_getx);
     register_func("GETY", 0, builtin_gety);
     register_proc("SLEEP", 1, builtin_sleep);
+    register_proc("YIELD", 0, builtin_yield);
     register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);
     register_func("GETENV$", 1, builtin_getenv_str);

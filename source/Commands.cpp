@@ -2122,8 +2122,8 @@ void Commands::do_loop(NeReLaBasic& vm) {
 
     if (should_jump_back) {
 #if defined(__EMSCRIPTEN__)
-        // in emscipten execution loop we need to jump at the beginning of tthe line!
-        vm.pcode = loop_start_pcode_addr - 2;
+        // OBSOLETE: In emscipten execution loop we need to jump at the beginning of tthe line!
+        vm.pcode = loop_start_pcode_addr;
 #else        
         vm.pcode = loop_start_pcode_addr; // Jump back to the start of the loop body
 #endif        

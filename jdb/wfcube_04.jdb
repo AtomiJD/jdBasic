@@ -70,6 +70,8 @@ ENDSUB
 
 CURSOR FALSE
 
+F = 0
+
 DO
     ' --- a) Rotate & Scale Vertices ---
     CombinedTransform = MATMUL(ScalingMatrix, MATMUL(CreateRotationY(AngleY), CreateRotationX(AngleX)))
@@ -98,11 +100,11 @@ DO
         face_y_coords = SLICE(ProjectedPoints, 1, 1)[v_indices]
         face_points = STACK(1, face_x_coords, face_y_coords)
         
-        CALL FillFace(face_points, FaceChars$[face_idx])
+        FillFace face_points, FaceChars$[face_idx]
         FOR p = 0 TO 3
             p1 = SLICE(face_points, 0, p)
             p2 = SLICE(face_points, 0, (p + 1) MOD 4)
-            CALL DrawLine(p1[0], p1[1], p2[0], p2[1], "*")
+            DrawLine p1[0], p1[1], p2[0], p2[1], "*"
         NEXT p
     NEXT i
     
@@ -110,8 +112,9 @@ DO
     CLS
     PRINT "Fully Optimized 3D Cube (Press any key)"
     PRINT FRMV$(ScreenBuffer)
+    YIELD
     AngleX = AngleX + 0.05 : AngleY = AngleY + 0.08
-    SLEEP 30
-LOOP UNTIL INKEY$() <> ""
+    F = F + 1
+LOOP UNTIL F > 200
 
 CURSOR TRUE

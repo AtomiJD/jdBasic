@@ -97,6 +97,9 @@ void run_repl_line(const char* cmd) {
             interpreter.pcode = 0;
             interpreter.active_p_code = &interpreter.program_p_code;
             interpreter.active_function_table = &interpreter.main_function_table;
+            interpreter.runtime_current_line = (*interpreter.active_p_code)[interpreter.pcode] | ((*interpreter.active_p_code)[interpreter.pcode + 1] << 8);
+            interpreter.pcode += 2;
+
             ems_state = VmState::RUNNING;
         }
         return; // Don't print a prompt, the loop will start

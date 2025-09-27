@@ -37,7 +37,7 @@ BasicValue tensor_scalar_divide(NeReLaBasic& vm, const BasicValue& a, const Basi
 std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
-const std::string NERELA_VERSION = "0.9.5";
+const std::string NERELA_VERSION = "0.9.6";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -589,88 +589,10 @@ void NeReLaBasic::assign_input_value(const std::string& value_str) {
 
 // Implement the frame-by-frame execution logic for Emscripten
 
-/*
-void NeReLaBasic::execute_one_frame() {
-    if (!active_p_code || pcode >= active_p_code->size()) {
-        // Program has finished, but the loop controller in main will catch this.
-        program_ended = true;
-        return;
-    }
-
-    yielded_for_frame = false;
-
-    // Execute statements until a yield is requested (by SCREENFLIP)
-    // or the program ends.
-    while (!yielded_for_frame && !program_ended ) {
-        if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
-            program_ended = true;
-            break;
-        }
-        runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
-        pcode += 2;
-        bool line_is_done = false;
-        while (!line_is_done && pcode < active_p_code->size()) {
-            if (static_cast<Tokens::ID>((*active_p_code)[pcode]) != Tokens::ID::C_CR) {
-                try
-                {
-                    statement();
-                }
-                catch (const std::exception& e)
-                {
-                    Error::set(1, 1, "Exception " + std::string(e.what()));
-                }
-            }
-            // --- Error Handling Logic ---
-            if (jump_to_catch_pending) {
-                pcode = pending_catch_address;
-                jump_to_catch_pending = false; // Reset flag
-                Error::clear(); // Clear error now that we've jumped
-                continue; // Continue execution in the CATCH/FINALLY block
-            }
-            if (Error::get() != 0) {
-                // The new Error::set function will have already jumped to a CATCH block if one exists.
-                // If we get here, it means the error was unhandled.
-                current_task->status = TaskStatus::ERRORED;
-                line_is_done = true;
-                continue;
-            }
-            // If the statement caused the task to complete (e.g. RETURN) or yield (AWAIT), stop processing this line.
-            if (current_task->status != TaskStatus::RUNNING || current_task->yielded_execution) {
-                line_is_done = true;
-                continue;
-            }
-
-            // Handle multi-statement lines
-            if (pcode < active_p_code->size()) {
-                Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
-                if (next_token == Tokens::ID::C_COLON) {
-                    pcode++;
-                }
-                else {
-                    if (next_token == Tokens::ID::C_CR || next_token == Tokens::ID::NOCMD) {
-                        line_is_done = true;
-                    }
-                }
-            }
-        }
-        if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
-            pcode++;
-        }
-
-        if (Error::get() != 0) {
-            Error::print();
-            program_ended = true; // Stop execution on error
-            break;
-        }
-    }
-}
-*/
-// In NeReLaBasic.cpp
-
 void NeReLaBasic::execute_one_frame() {
     // === 1. Pre-Execution Checks ===
     // If the program is already marked as ended, or the pcode is out of bounds, do nothing.
-    if (program_ended || !active_p_code || pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
+    if (program_ended || !active_p_code || pcode >= active_p_code->size() ) {
         program_ended = true;
         return;
     }
@@ -680,8 +602,8 @@ void NeReLaBasic::execute_one_frame() {
 
     // === 2. Execute a Single Statement ===
     // Read the line number for debugging and error reporting.
-    runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
-    pcode += 2;
+    //runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+    //pcode += 2;
 
 colon_case_handling:
     // Execute one statement. Skips empty lines (where the token is a carriage return).
@@ -727,6 +649,9 @@ colon_case_handling:
         // If it's a carriage return, consume it to move to the next line for the next frame.
         else if (next_token == Tokens::ID::C_CR) {
             pcode++;
+            // Read the line number for debugging and error reporting.
+            runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
+            pcode += 2;
         }
     }
 }
