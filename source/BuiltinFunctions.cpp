@@ -3796,7 +3796,7 @@ BasicValue builtin_regex_match(NeReLaBasic& vm, const std::vector<BasicValue>& a
     try {
         std::regex pattern(pattern_str);
 
-        if (std::regex_match(text_str, matches, pattern)) {
+        if (std::regex_search(text_str, matches, pattern)) {
             // If there are capture groups (...), return them as an array.
             if (matches.size() > 1) {
                 auto result_ptr = std::make_shared<Array>();

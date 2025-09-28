@@ -76,8 +76,8 @@ void Error::set(uint16_t errorCode, uint16_t lineNumber, const std::string& cust
         if (vm->call_stack.size() > handler.call_stack_depth) {
             vm->call_stack.resize(handler.call_stack_depth);
         }
-        if (vm->for_stack.size() > handler.for_stack_depth) {
-            vm->for_stack.resize(handler.for_stack_depth);
+        if (vm->loop_stack.size() > handler.loop_stack_depth) {
+            vm->loop_stack.resize(handler.loop_stack_depth);
         }
 
         // Set the pending jump flags for the main execution loop to handle.

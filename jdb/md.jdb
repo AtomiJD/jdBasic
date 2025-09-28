@@ -1,0 +1,153 @@
+' ==========================================================
+' == jdBasic Console Markdown Renderer
+' == Renders a subset of Markdown to the console using color.
+' ==========================================================
+
+' --- COLOR CONSTANTS ---
+COLOR_DEFAULT = 7  ' Light Gray
+COLOR_HEADING = 14 ' Yellow
+COLOR_BOLD = 15    ' Bright White
+COLOR_ITALIC = 11  ' Light Cyan
+COLOR_CODE = 13    ' Light Magenta
+COLOR_BLOCKQUOTE = 10 ' Light Green
+COLOR_LIST = 7     ' Light Gray
+COLOR_HR = 8       ' Dark Gray
+
+' ==========================================================
+' == HELPER SUB: PROCESSINLINES(line$)
+' == This sub handles inline formatting like bold and italic.
+' == It prints the line piece-by-piece, changing colors
+' == as it encounters formatting markers.
+' ==========================================================
+SUB ProcessInlines(line$)
+    ' This is a simplified parser. A full implementation would be a state machine.
+    ' This version handles basic cases well.
+
+    ' For simplicity, we'll use string replacement and then print.
+    ' A more advanced version would parse and print segments.
+    ' NOTE: jdBasic's REGEX.REPLACE is powerful for this.
+    ' We will replace markdown with placeholder characters and then color them.
+    
+    ' The order is important: process bold/italic first.
+    line$ = REGEX.REPLACE("\*\*\*([^*]+)\*\*\*", line$, CHR$(1) + "$1" + CHR$(1)) ' Bold+Italic
+    line$ = REGEX.REPLACE("\*\*([^*]+)\*\*", line$, CHR$(2) + "$1" + CHR$(2)) ' Bold
+    line$ = REGEX.REPLACE("\*([^*]+)\*", line$, CHR$(3) + "$1" + CHR$(3))     ' Italic
+    line$ = REGEX.REPLACE("`([^`]+)`", line$, CHR$(4) + "$1" + CHR$(4))       ' Inline Code
+
+    ' Now, print character by character, changing color based on our placeholders.
+    current_color = COLOR_DEFAULT
+    COLOR current_color, 0
+    
+    FOR i = 0 TO LEN(line$) -1
+        char$ = MID$(line$, i, 1)
+        
+        SWITCH ASC(char$)
+            CASE 1: ' Bold+Italic
+                current_color = IIF(current_color = COLOR_BOLD, COLOR_DEFAULT, COLOR_BOLD)
+                COLOR current_color, 0
+            CASE 2: ' Bold
+                current_color = IIF(current_color = COLOR_BOLD, COLOR_DEFAULT, COLOR_BOLD)
+                COLOR current_color, 0
+            CASE 3: ' Italic
+                current_color = IIF(current_color = COLOR_ITALIC, COLOR_DEFAULT, COLOR_ITALIC)
+                COLOR current_color, 0
+            CASE 4: ' Code
+                current_color = IIF(current_color = COLOR_CODE, COLOR_DEFAULT, COLOR_CODE)
+                COLOR current_color, 0
+            DEFAULT
+                PRINT char$;
+        ENDSWITCH
+    NEXT i
+    
+    COLOR COLOR_DEFAULT, 0
+    PRINT ' Print a newline at the end of the line.
+ENDSUB
+
+' ==========================================================
+' == MAIN SUB: RENDERMARKDOWN(markdown_text$)
+' == Takes a block of Markdown text and prints it formatted.
+' ==========================================================
+SUB RenderMarkdown(markdown_text$)
+    lines = SPLIT(markdown_text$, CHR$(10))
+    in_code_block = FALSE
+
+    FOR EACH line IN lines
+        trimmed_line$ = TRIM$(line)
+        ' --- 1. Handle Code Blocks (Stateful) ---
+        IF 3 / trimmed_line$ = "```" THEN
+            in_code_block = NOT in_code_block
+            GOTO outi
+        ENDIF
+
+        IF in_code_block THEN
+            COLOR COLOR_CODE, 0
+            PRINT "    "; line
+            COLOR COLOR_DEFAULT, 0
+            GOTO outi
+        ENDIF
+
+        ' --- 2. Handle Block-Level Elements ---
+
+        ' Headings (#, ##, ...)
+        IF 1 / trimmed_line$ = "#" THEN
+            level = 0
+            FOR i = 0 TO LEN(trimmed_line$) - 1
+                IF MID$(trimmed_line$, i, 1) = "#" THEN
+                    level = level + 1
+                ELSE
+                    EXITFOR
+                ENDIF
+            NEXT i
+            
+            heading_text$ = TRIM$(MID$(trimmed_line$, level))
+            COLOR COLOR_HEADING, 0
+            PRINT
+            ProcessInlines(heading_text$)
+            COLOR COLOR_HR, 0
+            PRINT "─" * LEN(heading_text$)
+            COLOR COLOR_DEFAULT, 0
+            PRINT
+        
+        ' Horizontal Rule (---, ***)
+        ELSEIF REGEX.MATCH("^-{3,}$", trimmed_line$) OR REGEX.MATCH("^\*{3,}$", trimmed_line$) THEN
+            COLOR COLOR_HR, 0
+            PRINT "─" * 80
+            COLOR COLOR_DEFAULT, 0
+        
+        ' Blockquote (>)
+        ELSEIF REGEX.MATCH("^>", trimmed_line$) THEN
+            quote_text$ = TRIM$(MID$(trimmed_line$, 2))
+            COLOR COLOR_BLOCKQUOTE, 0
+            PRINT " │  ";
+            ProcessInlines(quote_text$)
+            COLOR COLOR_DEFAULT, 0
+            
+        ' Unordered List (*, -, +)
+        ELSEIF REGEX.MATCH("^\s*[*+-]\s+", trimmed_line$) THEN
+            list_text$ = REGEX.REPLACE("^\s*[*+-]\s+", trimmed_line$, "")
+            COLOR COLOR_LIST, 0
+            PRINT "  • ";
+            ProcessInlines(list_text$)
+            COLOR COLOR_DEFAULT, 0
+        
+        ' Empty Line
+        ELSEIF trimmed_line$ = "" THEN
+            PRINT
+
+        ' Paragraph
+        ELSE
+            ProcessInlines(line)
+        ENDIF
+outi:        
+    
+    NEXT
+ENDSUB
+
+' ==========================================================
+' ==                 EXAMPLE USAGE
+' ==========================================================
+
+' --- Call the main subroutine to render the document ---
+CLS
+
+RenderMarkdown(txtreader$("test.md"))

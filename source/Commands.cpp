@@ -1197,41 +1197,32 @@ void Commands::do_else(NeReLaBasic& vm) {
 void Commands::do_for(NeReLaBasic& vm) {
     // FOR [variable] = [start_expr] TO [end_expr] STEP [step_expr]
 
-    // 1. --- Read the 2-byte jump address FIRST ---
     uint16_t pcode_after_next;
     memcpy(&pcode_after_next, &(*vm.active_p_code)[vm.pcode], sizeof(uint16_t));
-    vm.pcode += sizeof(uint16_t); // Advance the pointer past the address.
+    vm.pcode += sizeof(uint16_t);
 
     Tokens::ID var_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     if (var_token != Tokens::ID::VARIANT && var_token != Tokens::ID::INT) {
-        Error::set(1, vm.runtime_current_line); // Syntax Error
+        Error::set(1, vm.runtime_current_line);
         return;
     }
     vm.pcode++;
     std::string var_name = read_string(vm);
 
-    // 2. Expect an equals sign.
     if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode++]) != Tokens::ID::C_EQ) {
         Error::set(1, vm.runtime_current_line);
         return;
     }
 
-    // 3. Evaluate the start expression and assign it.
     BasicValue start_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
-    // FOR always create a new local or global var!
     set_variable(vm, var_name, start_val, !vm.option_explicit);
     if (Error::get() != 0) return;
 
-    // 4. The 'TO' keyword was skipped by the tokenizer. Evaluate the end expression.
     BasicValue end_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
 
-    // 5. --- LOGIC FOR STEP ---
-    double step_val = 1.0; // Default step is 1.
-
-    // The TO and STEP keywords were skipped by the tokenizer.
-    // If we are NOT at the end of the line, what's left must be the step expression.
+    double step_val = 1.0;
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
     if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::NOCMD && next_token != Tokens::ID::C_COLON)
     {
@@ -1252,143 +1243,129 @@ void Commands::do_for(NeReLaBasic& vm) {
     }
 
     if (skip_loop) {
-        // Jump the p-code pointer to the address we read in step 1.
         vm.pcode = pcode_after_next;
         return;
     }
 
-    // 6. Push all the loop info onto the FOR stack.
     NeReLaBasic::ForLoopInfo loop_info;
     loop_info.variable_name = var_name;
     loop_info.end_value = to_double(end_val);
     loop_info.step_value = step_val;
     loop_info.loop_start_pcode = vm.pcode;
 
-    vm.for_stack.push_back(loop_info);
+    vm.loop_stack.push_back({ loop_info }); // Push to the unified stack
 }
 
 void Commands::do_for_each(NeReLaBasic& vm) {
-    // 1. Read the data in the correct order
-
-    // Read the 2-byte jump address FIRST
     uint16_t pcode_after_next;
     memcpy(&pcode_after_next, &(*vm.active_p_code)[vm.pcode], sizeof(uint16_t));
     vm.pcode += sizeof(uint16_t);
 
-    // Read the variable name SECOND
-    vm.pcode++; // Consume the variable type token (e.g., VARIANT)
+    vm.pcode++;
     std::string var_name = read_string(vm);
 
-    // 2. Evaluate the expression to get the collection
     BasicValue collection_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
 
     NeReLaBasic::ForEachLoopInfo info;
     info.variable_name = var_name;
-    info.loop_body_pcode = vm.pcode; // Start of the loop body
+    info.loop_body_pcode = vm.pcode;
 
-    // 3. Check the collection type and prepare for iteration
     if (std::holds_alternative<std::shared_ptr<Array>>(collection_val)) {
         const auto& arr_ptr = std::get<std::shared_ptr<Array>>(collection_val);
         if (!arr_ptr || arr_ptr->data.empty()) {
-            vm.pcode = pcode_after_next; // Collection is empty, skip the loop
+            vm.pcode = pcode_after_next;
             return;
         }
         info.collection = arr_ptr;
-        set_variable(vm, var_name, arr_ptr->data[0]); // Assign first element
+        set_variable(vm, var_name, arr_ptr->data[0]);
     }
     else if (std::holds_alternative<std::shared_ptr<Map>>(collection_val)) {
         const auto& map_ptr = std::get<std::shared_ptr<Map>>(collection_val);
         if (!map_ptr || map_ptr->data.empty()) {
-            vm.pcode = pcode_after_next; // Collection is empty, skip the loop
+            vm.pcode = pcode_after_next;
             return;
         }
         info.collection = map_ptr;
-        // For maps, we iterate over the values. First, get the keys.
         for (const auto& pair : map_ptr->data) {
             info.map_keys.push_back(pair.first);
         }
-        set_variable(vm, var_name, map_ptr->data.at(info.map_keys[0])); // Assign first value
+        set_variable(vm, var_name, map_ptr->data.at(info.map_keys[0]));
     }
     else {
         Error::set(15, vm.runtime_current_line, "FOR EACH requires an Array or Map.");
         return;
     }
 
-    // 4. Push the state onto the stack to begin the loop
-    vm.for_each_stack.push_back(info);
+    vm.loop_stack.push_back({ info }); // Push to the unified stack
 }
 
 void Commands::do_next(NeReLaBasic& vm) {
-    // --- NEW: Check for an active FOR EACH loop first ---
-    if (!vm.for_each_stack.empty()) {
-        NeReLaBasic::ForEachLoopInfo info = vm.for_each_stack.back();
-        vm.for_each_stack.pop_back();
-
-        info.current_index++;
-
-        // Check if we are iterating an Array
-        if (auto* arr_ptr_variant = std::get_if<std::shared_ptr<Array>>(&info.collection)) {
-            const auto& arr_ptr = *arr_ptr_variant;
-            if (info.current_index < arr_ptr->data.size()) {
-                set_variable(vm, info.variable_name, arr_ptr->data[info.current_index]);
-                vm.pcode = info.loop_body_pcode; // Jump back to loop start
-                vm.for_each_stack.push_back(info); // Push updated state back
-            }
-            // If index is out of bounds, the loop is done. We just don't push back.
-        }
-        // Check if we are iterating a Map
-        else if (auto* map_ptr_variant = std::get_if<std::shared_ptr<Map>>(&info.collection)) {
-            const auto& map_ptr = *map_ptr_variant;
-            if (info.current_index < info.map_keys.size()) {
-                const std::string& key = info.map_keys[info.current_index];
-                set_variable(vm, info.variable_name, map_ptr->data.at(key));
-                vm.pcode = info.loop_body_pcode; // Jump back to loop start
-                vm.for_each_stack.push_back(info); // Push updated state back
-            }
-        }
-        return; // We have handled the NEXT statement for FOR EACH
-    }
-
-    // --- Logic for numeric FOR loops ---
-
-    // 1. Check if there is anything on the FOR stack.
-    if (vm.for_stack.empty()) {
-        Error::set(21, vm.runtime_current_line); // New Error: NEXT without FOR
+    if (vm.loop_stack.empty()) {
+        Error::set(21, vm.runtime_current_line); // Error: NEXT without FOR
         return;
     }
 
-    // 2. Get the info for the current (innermost) loop.
-    NeReLaBasic::ForLoopInfo& current_loop = vm.for_stack.back();
+    NeReLaBasic::LoopInfo& current_loop_info = vm.loop_stack.back();
 
-    // 3. Get the loop variable's current value and increment it by the step.
-    double current_val = to_double(get_variable(vm, current_loop.variable_name));
-    current_val += current_loop.step_value;
-    set_variable(vm, current_loop.variable_name, current_val);
-    //vm.variables[current_loop.variable_name] = current_val;
+    // Use std::visit to call the correct lambda based on the variant's type
+    std::visit([&](auto& loop_data) {
+        using T = std::decay_t<decltype(loop_data)>;
 
-    // 4. Check if the loop is finished.
-    bool loop_finished = false;
-    if (current_loop.step_value > 0) { // Positive step
-        if (current_val > current_loop.end_value) {
-            loop_finished = true;
+        if constexpr (std::is_same_v<T, NeReLaBasic::ForLoopInfo>) {
+            // --- Logic for numeric FOR loops ---
+            double current_val = to_double(get_variable(vm, loop_data.variable_name));
+            current_val += loop_data.step_value;
+            set_variable(vm, loop_data.variable_name, current_val);
+
+            bool loop_finished = false;
+            if (loop_data.step_value >= 0) { // Positive or zero step
+                if (current_val > loop_data.end_value) {
+                    loop_finished = true;
+                }
+            }
+            else { // Negative step
+                if (current_val < loop_data.end_value) {
+                    loop_finished = true;
+                }
+            }
+
+            if (loop_finished) {
+                vm.loop_stack.pop_back();
+            }
+            else {
+                vm.pcode = loop_data.loop_start_pcode;
+            }
         }
-    }
-    else { // Negative step
-        if (current_val < current_loop.end_value) {
-            loop_finished = true;
-        }
-    }
+        else if constexpr (std::is_same_v<T, NeReLaBasic::ForEachLoopInfo>) {
+            // --- Logic for FOR EACH loops ---
+            loop_data.current_index++;
 
-    // 5. Act on the check.
-    if (loop_finished) {
-        // The loop is over, pop it from the stack and continue execution.
-        vm.for_stack.pop_back();
-    }
-    else {
-        // The loop continues. Jump pcode back to the start of the loop.
-        vm.pcode = current_loop.loop_start_pcode;
-    }
+            bool loop_continues = false;
+            if (auto* arr_ptr_variant = std::get_if<std::shared_ptr<Array>>(&loop_data.collection)) {
+                const auto& arr_ptr = *arr_ptr_variant;
+                if (loop_data.current_index < arr_ptr->data.size()) {
+                    set_variable(vm, loop_data.variable_name, arr_ptr->data[loop_data.current_index]);
+                    loop_continues = true;
+                }
+            }
+            else if (auto* map_ptr_variant = std::get_if<std::shared_ptr<Map>>(&loop_data.collection)) {
+                const auto& map_ptr = *map_ptr_variant;
+                if (loop_data.current_index < loop_data.map_keys.size()) {
+                    const std::string& key = loop_data.map_keys[loop_data.current_index];
+                    set_variable(vm, loop_data.variable_name, map_ptr->data.at(key));
+                    loop_continues = true;
+                }
+            }
+
+            if (loop_continues) {
+                vm.pcode = loop_data.loop_body_pcode;
+            }
+            else {
+                vm.loop_stack.pop_back();
+            }
+        }
+        }, current_loop_info.data);
 }
 
 void Commands::do_func(NeReLaBasic& vm) {
@@ -1634,11 +1611,9 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
 
 // --- Implementation of do_return ---
 void Commands::do_return(NeReLaBasic& vm) {
-    // Evaluate the return value expression, if any.
-    BasicValue return_val = false; // Default return value for functions without an explicit return value.
+    BasicValue return_val = false;
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-    // Check if there is an expression to evaluate after the RETURN keyword.
     if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::C_COLON && next_token != Tokens::ID::ENDFUNC && next_token != Tokens::ID::ENDSUB) {
         return_val = vm.evaluate_expression();
         if (Error::get() != 0) {
@@ -1647,12 +1622,8 @@ void Commands::do_return(NeReLaBasic& vm) {
         }
     }
 
-    // For ALL returns (sync or async), set the global RETVAL.
-    // This ensures that synchronous calls get their return value correctly.
-    // The expression evaluator that called the function will read this value.
     vm.variables["RETVAL"] = return_val;
 
-    // Pop the stack frame for the returning function.
     if (vm.call_stack.empty()) {
         Error::set(25, vm.runtime_current_line, "RETURN without function call.");
         if (vm.current_task) vm.current_task->status = TaskStatus::ERRORED;
@@ -1661,13 +1632,9 @@ void Commands::do_return(NeReLaBasic& vm) {
     NeReLaBasic::StackFrame frame = vm.call_stack.back();
     vm.call_stack.pop_back();
 
-    // Restore the FOR loop stack to its state before the function call.
-    if (vm.for_stack.size() > frame.for_stack_size_on_entry) {
-        vm.for_stack.resize(frame.for_stack_size_on_entry);
-    }
-
-    if (vm.for_each_stack.size() > frame.for_each_stack_size_on_entry) {
-        vm.for_each_stack.resize(frame.for_each_stack_size_on_entry);
+    // Restore the unified loop stack to its state before the function call.
+    if (vm.loop_stack.size() > frame.loop_stack_size_on_entry) {
+        vm.loop_stack.resize(frame.loop_stack_size_on_entry);
     }
 
     size_t current_stack_depth = vm.call_stack.size();
@@ -1675,12 +1642,8 @@ void Commands::do_return(NeReLaBasic& vm) {
         vm.handler_stack.pop_back();
     }
 
-    // --- UNIFIED CONTEXT RESTORE ---
-    // This fixes the bug where pcode was not restored for synchronous calls.
     if (vm.call_stack.empty() && frame.is_async_call) {
         vm.current_task->status = TaskStatus::COMPLETED;
-        // By setting the status, we signal the main scheduler to stop
-        // executing this task. The scheduler will handle cleanup.
     }
     else {
         vm.pcode = frame.return_pcode;
@@ -1688,11 +1651,8 @@ void Commands::do_return(NeReLaBasic& vm) {
         vm.active_function_table = frame.previous_function_table_ptr;
     }
 
-    // --- TASK COMPLETION CHECK (Async-specific) ---
-    // Additionally, if this return causes a background task's call stack to become empty,
-    // mark that task as completed.
     if (vm.current_task != nullptr && frame.is_async_call && vm.call_stack.empty()) {
-        vm.current_task->result = return_val; // Store the final result in the task object.
+        vm.current_task->result = return_val;
         vm.current_task->status = TaskStatus::COMPLETED;
     }
 }
@@ -1978,8 +1938,6 @@ void Commands::do_endsub(NeReLaBasic& vm) {
 
 // ---  Commands for TRY/CATCH ---
 void Commands::do_push_handler(NeReLaBasic& vm) {
-    // Read the two 2-byte addresses from p-code.
-    // These were written by the compiler.
     uint8_t catch_lsb = (*vm.active_p_code)[vm.pcode++];
     uint8_t catch_msb = (*vm.active_p_code)[vm.pcode++];
     uint16_t catch_addr = (catch_msb << 8) | catch_lsb;
@@ -1988,12 +1946,11 @@ void Commands::do_push_handler(NeReLaBasic& vm) {
     uint8_t finally_msb = (*vm.active_p_code)[vm.pcode++];
     uint16_t finally_addr = (finally_msb << 8) | finally_lsb;
 
-    // Push the handler information onto the runtime stack.
     vm.handler_stack.push_back({
         catch_addr,
         finally_addr,
         vm.call_stack.size(),
-        vm.for_stack.size()
+        vm.loop_stack.size() // Use the new unified stack
         });
 }
 
@@ -2004,9 +1961,6 @@ void Commands::do_pop_handler(NeReLaBasic& vm) {
         vm.handler_stack.pop_back();
     }
 }
-
-
-
 
 void Commands::do_on(NeReLaBasic& vm) {
     std::string event_name = to_upper(read_string(vm));
@@ -2136,22 +2090,15 @@ void Commands::do_loop(NeReLaBasic& vm) {
 
 // Jumps execution to the address immediately following the corresponding NEXT statement.
 void Commands::do_exit_for(NeReLaBasic& vm) {
-    // Read the 2-byte jump address that was patched by the tokenizer.
     uint8_t lsb = (*vm.active_p_code)[vm.pcode++];
     uint8_t msb = (*vm.active_p_code)[vm.pcode++];
     uint16_t jump_target = (msb << 8) | lsb;
 
-    // Give precedence to FOR EACH loops, consistent with do_next.
-    if (!vm.for_each_stack.empty()) {
-        vm.for_each_stack.pop_back();
-    }
-    // Otherwise, assume it's a numeric FOR loop.
-    else if (!vm.for_stack.empty()) {
-        vm.for_stack.pop_back();
+    if (!vm.loop_stack.empty()) {
+        vm.loop_stack.pop_back();
     }
     else {
-        // This error is now more general.
-        Error::set(1, vm.runtime_current_line, "EXIT FOR without active FOR or FOR EACH loop.");
+        Error::set(1, vm.runtime_current_line, "EXITFOR without active FOR or FOR EACH loop.");
         return;
     }
 
@@ -2494,7 +2441,7 @@ void Commands::do_run(NeReLaBasic& vm) {
     // Clear variables and prepare for a clean run
     vm.variables.clear();
     vm.call_stack.clear();
-    vm.for_stack.clear();
+    vm.loop_stack.clear();
     vm.reactive_graph.clear();
     vm.react_variables.clear();
     Error::clear();

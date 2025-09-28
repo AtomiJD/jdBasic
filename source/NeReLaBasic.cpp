@@ -951,8 +951,7 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
     frame.return_p_code_ptr = this->active_p_code;
     frame.return_pcode = this->pcode;
     frame.previous_function_table_ptr = this->active_function_table;
-    frame.for_stack_size_on_entry = this->for_stack.size();
-    frame.for_each_stack_size_on_entry = this->for_each_stack.size();
+    frame.loop_stack_size_on_entry = this->loop_stack.size(); // Use the new unified stack
     frame.function_name = func_info.name;
     frame.linenr = runtime_current_line;
     frame.is_async_call = func_info.is_async;
@@ -967,12 +966,12 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
     // --- Context switch ---
     auto prev_active_func_table = this->active_function_table;
     auto prev_active_p_code = this->active_p_code;
-    //auto has_no_lambda = func_info.name.find("__lambda") == std::string::npos;
 
     if (func_info.module_name != "REPL" && !func_info.module_name.empty() && compiled_modules.count(func_info.module_name)) {
         this->active_p_code = &this->compiled_modules.at(func_info.module_name).p_code;
         this->active_function_table = &this->compiled_modules.at(func_info.module_name).function_table;
-    }  else {
+    }
+    else {
         if (func_info.module_name != "REPL")
             this->active_p_code = &this->program_p_code;
     }
@@ -980,7 +979,7 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
 
     // --- Execution Loop ---
     while (call_stack.size() > initial_stack_depth && !is_stopped) {
-        process_system_events(); 
+        process_system_events();
         if (program_ended) break;
 
         handle_debug_events();
@@ -1000,7 +999,6 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
         }
         catch (const std::exception& e)
         {
-            //TextIO::print("Exception " + std::string(e.what()));
             Error::set(1, 1, "Exception " + std::string(e.what()));
         }
         if (jump_to_catch_pending) {
@@ -1014,7 +1012,7 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
             static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_COLON) {
             pcode++; // Consume the colon and continue the loop
         }
-        
+
     }
 
     // --- Context restore ---
@@ -1048,13 +1046,10 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 #if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
     TextIO::initKey();
 #endif
-    //dap_handler->send_output_message("We are in execute main.\n");
 
-    if (dap_handler) { // Check if the debugger is attached
+    if (dap_handler) {
         debug_state = DebugState::PAUSED;
-        // Tell the client we are paused at the entry point. 1 because we dont have an active_p_code yet!
         dap_handler->send_stopped_message("entry", 1, this->program_to_debug);
-        // Wait for the first "continue" or "next" command from the client.
         pause_for_debugger();
     }
 
@@ -1074,9 +1069,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             bool task_removed = false;
 
             if (current_task->result_future.valid()) {
-                // Check if the future is ready without blocking the interpreter.
                 if (current_task->result_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                    // The C++ thread is done! Get the result and complete this task.
                     try {
                         current_task->result = current_task->result_future.get();
                         current_task->status = TaskStatus::COMPLETED;
@@ -1086,12 +1079,10 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                         task_removed = true;
                     }
                     catch (const std::exception& e) {
-                        // Handle exceptions from the background C++ thread.
                         current_task->result = "Error: " + std::string(e.what());
                         current_task->status = TaskStatus::ERRORED;
                     }
                 }
-                // If the future is not ready yet, we just skip to the next task.
                 if (!task_removed) ++it;
                 continue;
             }
@@ -1100,9 +1091,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             this->pcode = current_task->p_code_counter;
             this->active_p_code = current_task->p_code_ptr;
             this->call_stack = current_task->call_stack;
-            this->for_stack = current_task->for_stack;
-            this->for_each_stack = current_task->for_each_stack;
-            // Restore the correct function table for the current context
+            this->loop_stack = current_task->loop_stack; // Use the new unified stack
             if (!this->call_stack.empty()) {
                 this->active_function_table = this->call_stack.back().previous_function_table_ptr;
             }
@@ -1113,15 +1102,11 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
 
             // --- Task Execution Logic ---
             if (current_task->status == TaskStatus::RUNNING) {
-                // Check if the task's pcode is valid *before* executing
-                //if (pcode >= active_p_code->size() || static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::NOCMD) {
                 if (pcode >= active_p_code->size()) {
-                    // This can happen if a function ends without RETURN/ENDFUNC. Mark as complete.
                     current_task->status = TaskStatus::COMPLETED;
                     handle_debug_events();
                 }
                 else {
-                    // Execute one line of the task
                     runtime_current_line = (*active_p_code)[pcode] | ((*active_p_code)[pcode + 1] << 8);
                     pcode += 2;
 
@@ -1138,29 +1123,24 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                             {
                                 Error::set(1, 1, "Exception " + std::string(e.what()));
                             }
-                            
+
                         }
-                        // --- Error Handling Logic ---
                         if (jump_to_catch_pending) {
                             pcode = pending_catch_address;
-                            jump_to_catch_pending = false; // Reset flag
-                            Error::clear(); // Clear error now that we've jumped
-                            continue; // Continue execution in the CATCH/FINALLY block
+                            jump_to_catch_pending = false;
+                            Error::clear();
+                            continue;
                         }
                         if (Error::get() != 0) {
-                            // The new Error::set function will have already jumped to a CATCH block if one exists.
-                            // If we get here, it means the error was unhandled.
                             current_task->status = TaskStatus::ERRORED;
                             line_is_done = true;
                             continue;
                         }
-                        // If the statement caused the task to complete (e.g. RETURN) or yield (AWAIT), stop processing this line.
                         if (current_task->status != TaskStatus::RUNNING || current_task->yielded_execution) {
                             line_is_done = true;
                             continue;
                         }
 
-                        // Handle multi-statement lines
                         if (pcode < active_p_code->size()) {
                             Tokens::ID next_token = static_cast<Tokens::ID>((*active_p_code)[pcode]);
                             if (next_token == Tokens::ID::C_COLON) {
@@ -1176,7 +1156,6 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                     if (pcode < active_p_code->size() && static_cast<Tokens::ID>((*active_p_code)[pcode]) == Tokens::ID::C_CR) {
                         pcode++;
                     }
-
                 }
             }
             else if (current_task->status == TaskStatus::PAUSED_ON_AWAIT) {
@@ -1190,8 +1169,7 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
             // --- Context Switch: Save ---
             current_task->p_code_counter = this->pcode;
             current_task->call_stack = this->call_stack;
-            current_task->for_stack = this->for_stack;
-            current_task->for_each_stack = this->for_each_stack;
+            current_task->loop_stack = this->loop_stack; // Use the new unified stack
 
             if (current_task->status == TaskStatus::COMPLETED || current_task->status == TaskStatus::ERRORED) {
                 int task_id_to_delete = current_task->id;
@@ -1685,11 +1663,9 @@ NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
     network_manager(*this),
 #endif
     // --- 1. Copy Program Definition Data ---
-    // These members define the program itself and are safe to copy. They are read-only
-    // during execution in the new thread.
     source_lines(other.source_lines),
     program_p_code(other.program_p_code),
-    direct_p_code(), // A new, empty buffer for the new instance.
+    direct_p_code(),
     main_function_table(other.main_function_table),
     module_function_tables(other.module_function_tables),
     compiled_modules(other.compiled_modules),
@@ -1698,22 +1674,14 @@ NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
     nopause_active(other.nopause_active)
 {
     // --- 2. Initialize Runtime State to Defaults ---
-    // These members represent the execution state and MUST be reset to their
-    // default values to ensure the new instance is a clean slate.
-
-    // Pointers and counters
     pcode = 0;
     prgptr = 0;
     linenr = 0;
     runtime_current_line = 0;
     current_source_line = 0;
     current_statement_start_pcode = 0;
-
-    // State flags
     is_stopped = false;
     trace = 0;
-
-    // I/O and Graphics
     buffer.reserve(64);
     lineinput.reserve(160);
     filename.reserve(40);
@@ -1723,47 +1691,34 @@ NeReLaBasic::NeReLaBasic(const NeReLaBasic& other) :
 
     // Stacks (must be empty for the new thread)
     variables.clear();
-    for_stack.clear();
+    loop_stack.clear(); // Use the new unified stack
     call_stack.clear();
     func_stack.clear();
     handler_stack.clear();
-#if defined(__EMSCRIPTEN__)     
-    //global_input_queue.clear();
-#endif
-    // Asynchronous Task System (not used by BSYNC threads)
+
+    // Asynchronous Task System
     task_queue.clear();
     task_completed.clear();
     next_task_id = 0;
     current_task = nullptr;
 
-    // Error Handling State (must be reset)
+    // Error Handling State
     error_handler_active = false;
     jump_to_error_handler = false;
     error_handler_function_name = "";
     err_code = 0.0;
     erl_line = 0.0;
 
-    // Debugger State (the new thread is not being debugged)
+    // Debugger State
     dap_handler = nullptr;
     debug_state = DebugState::RUNNING;
     step_over_stack_depth = 0;
     breakpoints.clear();
 
     // --- 3. Handle Members Requiring Special Initialization ---
-
-    // The compiler is a unique_ptr and must be a new instance.
     compiler = std::make_unique<Compiler>();
-
-    // Set the active pointers to point to THIS instance's data, not the other's.
     active_p_code = &this->program_p_code;
     active_function_table = &this->main_function_table;
-
-    // The hardware abstractions (Graphics, Sound, Network) are default-constructed,
-    // which correctly gives the new instance its own non-initialized systems.
-
-    // Note: We don't need to re-run `register_builtin_functions` because the native
-    // function pointers within the `std::function` objects inside the copied
-    // FunctionInfo structs are already correct.
 }
 
 BasicValue NeReLaBasic::launch_bsync_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {

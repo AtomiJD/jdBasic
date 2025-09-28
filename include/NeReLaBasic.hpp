@@ -107,6 +107,11 @@ public:
         std::vector<std::string> map_keys;
     };
 
+    // --- A single struct to hold either type of loop info ---
+    struct LoopInfo {
+        std::variant<ForLoopInfo, ForEachLoopInfo> data;
+    };
+
     // A type alias for our native C++ function pointers.
     // All native functions will take a vector of arguments and return a single BasicValue.
     using NativeFunction = std::function<BasicValue(NeReLaBasic&, const std::vector<BasicValue>&)>;
@@ -138,8 +143,7 @@ public:
         uint16_t return_pcode = 0; // Where to jump back to after the function ends
         const std::vector<uint8_t>* return_p_code_ptr;
         FunctionTable* previous_function_table_ptr;
-        size_t for_stack_size_on_entry = 0;
-        size_t for_each_stack_size_on_entry = 0;
+        size_t loop_stack_size_on_entry = 0;
         bool is_async_call = false;
     };
 
@@ -165,8 +169,7 @@ public:
         const std::vector<uint8_t>* p_code_ptr = nullptr;
         uint16_t p_code_counter = 0;
         std::vector<StackFrame> call_stack;
-        std::vector<ForLoopInfo> for_stack;
-        std::vector<ForEachLoopInfo> for_each_stack;
+        std::vector<LoopInfo> loop_stack;
         bool yielded_execution = false; // Flag to signal a yield from AWAIT
         // --- Per-Task Error Handling State ---
         bool error_handler_active = false;
@@ -207,7 +210,7 @@ public:
         uint16_t catch_address;    // p-code address of the CATCH block
         uint16_t finally_address;  // p-code address of the FINALLY block
         size_t call_stack_depth;   // Stack depth at the moment TRY was entered
-        size_t for_stack_depth;    // FOR loop stack depth at the moment TRY was entered
+        size_t loop_stack_depth;
     };
     std::vector<ExceptionHandler> handler_stack;
 
@@ -244,8 +247,7 @@ public:
     std::vector<uint8_t> program_p_code;    // Stores the compiled bytecode for RUN/DUMP
     std::vector<uint8_t> direct_p_code;     // Temporary buffer for direct-mode commands
     const std::vector<uint8_t>* active_p_code = nullptr;    //Active P-Code Pointer
-    std::vector<ForLoopInfo> for_stack;
-    std::vector<ForEachLoopInfo> for_each_stack;
+    std::vector<LoopInfo> loop_stack;
 
     std::vector<StackFrame> call_stack;
     std::vector<uint16_t> func_stack;
