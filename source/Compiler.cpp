@@ -78,6 +78,12 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
     // --- Step 3: Check for each token type in order ---
     char currentChar = vm.lineinput[vm.prgptr];
 
+    // Handle '?' as PRINT shorthand at the start of a statement
+    if (is_start_of_statement && currentChar == '?') {
+        vm.prgptr++; //Sonsume the '?'
+        return Tokens::ID::PRINT;
+    }
+
     // Handle Comments
     if (currentChar == '\'') {
         //vm.prgptr = vm.lineinput.length(); // Skip to end of line

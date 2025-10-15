@@ -1798,7 +1798,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
                         args.push_back(vm.evaluate_expression());
                         if (Error::get() != 0) return;
                         Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-                        if (separator == Tokens::ID::C_CR) break;
+                        if (separator == Tokens::ID::C_CR || separator == Tokens::ID::C_COLON) break;
                         if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
                         vm.pcode++;
                     }
@@ -1890,7 +1890,7 @@ void Commands::do_callsub(NeReLaBasic& vm) {
                     args.push_back(vm.evaluate_expression());
                     if (Error::get() != 0) return;
                     Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-                    if (separator == Tokens::ID::C_CR) break;
+                    if (separator == Tokens::ID::C_CR || separator == Tokens::ID::C_COLON) break;
                     if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
                     vm.pcode++;
                 }

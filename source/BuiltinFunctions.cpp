@@ -1201,6 +1201,92 @@ BasicValue builtin_instr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 }
 
+// INSERT$(source$, text_to_insert$, position) -> string or array
+// Fully vectorized: any argument can be a scalar or an array.
+// If multiple arguments are arrays, their shapes must match.
+BasicValue builtin_insert_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "INSERT$ requires 3 arguments: source$, text_to_insert$, position.");
+        return std::string("");
+    }
+
+    const BasicValue& source_arg = args[0];
+    const BasicValue& insert_arg = args[1];
+    const BasicValue& pos_arg = args[2];
+
+    bool source_is_array = std::holds_alternative<std::shared_ptr<Array>>(source_arg);
+    bool insert_is_array = std::holds_alternative<std::shared_ptr<Array>>(insert_arg);
+    bool pos_is_array = std::holds_alternative<std::shared_ptr<Array>>(pos_arg);
+
+    // Helper lambda to perform the core insert operation on a single set of arguments.
+    auto perform_single_insert = [](const std::string& source, const std::string& text_to_insert, int position) -> std::string {
+        std::string result = source;
+        size_t pos = static_cast<size_t>(position);
+
+        // Clamp the position to be within the valid range [0, source.length()]
+        if (position < 0) {
+            pos = 0;
+        }
+        else if (pos > result.length()) {
+            pos = result.length();
+        }
+
+        result.insert(pos, text_to_insert);
+        return result;
+        };
+
+    // Case 1: All arguments are scalars.
+    if (!source_is_array && !insert_is_array && !pos_is_array) {
+        return perform_single_insert(to_string(source_arg), to_string(insert_arg), static_cast<int>(to_double(pos_arg)));
+    }
+
+    // Case 2: At least one argument is an array (vectorized operation).
+    std::vector<size_t> shape;
+    size_t total_size = 0;
+
+    const auto& source_arr = source_is_array ? std::get<std::shared_ptr<Array>>(source_arg) : nullptr;
+    const auto& insert_arr = insert_is_array ? std::get<std::shared_ptr<Array>>(insert_arg) : nullptr;
+    const auto& pos_arr = pos_is_array ? std::get<std::shared_ptr<Array>>(pos_arg) : nullptr;
+
+    // Determine the shape and size from the first available array.
+    if (source_is_array) {
+        if (!source_arr) { Error::set(15, vm.runtime_current_line, "Source array cannot be null."); return {}; }
+        shape = source_arr->shape;
+        total_size = source_arr->data.size();
+    }
+    else if (insert_is_array) {
+        if (!insert_arr) { Error::set(15, vm.runtime_current_line, "Insert array cannot be null."); return {}; }
+        shape = insert_arr->shape;
+        total_size = insert_arr->data.size();
+    }
+    else { // pos_is_array must be true
+        if (!pos_arr) { Error::set(15, vm.runtime_current_line, "Position array cannot be null."); return {}; }
+        shape = pos_arr->shape;
+        total_size = pos_arr->data.size();
+    }
+
+    // Validate that all provided arrays have the same shape.
+    if (source_arr && source_arr->shape != shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise INSERT$."); return {}; }
+    if (insert_arr && insert_arr->shape != shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise INSERT$."); return {}; }
+    if (pos_arr && pos_arr->shape != shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise INSERT$."); return {}; }
+
+    // Build the result array.
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = shape;
+    result_ptr->data.reserve(total_size);
+
+    for (size_t i = 0; i < total_size; ++i) {
+        // Get the appropriate value for each argument: either from the array or broadcast the scalar.
+        std::string current_source = source_is_array ? to_string(source_arr->data[i]) : to_string(source_arg);
+        std::string current_insert = insert_is_array ? to_string(insert_arr->data[i]) : to_string(insert_arg);
+        int current_pos = pos_is_array ? static_cast<int>(to_double(pos_arr->data[i])) : static_cast<int>(to_double(pos_arg));
+
+        result_ptr->data.push_back(perform_single_insert(current_source, current_insert, current_pos));
+    }
+
+    return result_ptr;
+}
+
 #ifdef __EMSCRIPTEN__
 extern "C" char* js_get_inkey();
 #endif
@@ -1309,53 +1395,136 @@ BasicValue builtin_reverse_str(NeReLaBasic& vm, const std::vector<BasicValue>& a
     return apply_string_op(args[0], op);
 }
 
-// REPLACE$(source_string_or_array, find_string$, replace_with_string$) -> string or array
+// REPLACE$(source, find, replace) -> string or array
+// Fully vectorized: any argument can be a scalar or an array.
+// If multiple arguments are arrays, their shapes must match.
 BasicValue builtin_replace_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 3) {
         Error::set(8, vm.runtime_current_line, "REPLACE$ requires 3 arguments.");
         return std::string("");
     }
 
-    const BasicValue& input = args[0];
-    std::string find_str = to_string(args[1]);
-    std::string replace_str = to_string(args[2]);
+    const BasicValue& source_arg = args[0];
+    const BasicValue& find_arg = args[1];
+    const BasicValue& replace_arg = args[2];
 
-    // Edge case: if find_str is empty, return the original string to avoid infinite loops.
-    if (find_str.empty()) {
-        return input;
-    }
+    bool source_is_array = std::holds_alternative<std::shared_ptr<Array>>(source_arg);
+    bool find_is_array = std::holds_alternative<std::shared_ptr<Array>>(find_arg);
+    bool replace_is_array = std::holds_alternative<std::shared_ptr<Array>>(replace_arg);
 
-    // Helper lambda to perform the core REPLACE$ operation on a single string.
-    auto perform_replace = [&](const std::string& source) -> std::string {
+    // Helper lambda to perform the core replace operation on a single set of strings.
+    auto perform_single_replace = [](const std::string& source, const std::string& find_str, const std::string& replace_str) -> std::string {
+        if (find_str.empty()) {
+            return source; // Avoid infinite loops on empty find string
+        }
         std::string result = source;
         size_t start_pos = 0;
         while ((start_pos = result.find(find_str, start_pos)) != std::string::npos) {
             result.replace(start_pos, find_str.length(), replace_str);
-            // Move past the replaced section to avoid re-matching parts of the replacement string.
             start_pos += replace_str.length();
         }
         return result;
         };
 
-    // Case 1: Input is an Array. Apply the operation to each element.
-    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
-        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
-        if (!arr_ptr) return {}; // Handle null array
-
-        auto result_ptr = std::make_shared<Array>();
-        result_ptr->shape = arr_ptr->shape; // Result has the same shape
-        result_ptr->data.reserve(arr_ptr->data.size());
-
-        for (const auto& val : arr_ptr->data) {
-            result_ptr->data.push_back(perform_replace(to_string(val)));
-        }
-        return result_ptr;
+    // Case 1: All arguments are scalars (the simplest case).
+    if (!source_is_array && !find_is_array && !replace_is_array) {
+        return perform_single_replace(to_string(source_arg), to_string(find_arg), to_string(replace_arg));
     }
-    // Case 2: Input is a scalar. Perform the operation directly.
-    else {
-        return perform_replace(to_string(input));
+
+    // Case 2: At least one argument is an array (vectorized operation).
+    std::vector<size_t> shape;
+    size_t total_size = 0;
+
+    const auto& source_arr = source_is_array ? std::get<std::shared_ptr<Array>>(source_arg) : nullptr;
+    const auto& find_arr = find_is_array ? std::get<std::shared_ptr<Array>>(find_arg) : nullptr;
+    const auto& replace_arr = replace_is_array ? std::get<std::shared_ptr<Array>>(replace_arg) : nullptr;
+
+    // Determine the shape and size from the first available array.
+    if (source_is_array) {
+        if (!source_arr) { Error::set(15, vm.runtime_current_line, "Source array cannot be null."); return {}; }
+        shape = source_arr->shape;
+        total_size = source_arr->data.size();
     }
+    else if (find_is_array) {
+        if (!find_arr) { Error::set(15, vm.runtime_current_line, "Find array cannot be null."); return {}; }
+        shape = find_arr->shape;
+        total_size = find_arr->data.size();
+    }
+    else { // replace_is_array must be true
+        if (!replace_arr) { Error::set(15, vm.runtime_current_line, "Replace array cannot be null."); return {}; }
+        shape = replace_arr->shape;
+        total_size = replace_arr->data.size();
+    }
+
+    // Validate that all provided arrays have the same shape.
+    if (source_arr && source_arr->shape != shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise REPLACE$."); return {}; }
+    if (find_arr && find_arr->shape != shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise REPLACE$."); return {}; }
+    if (replace_arr && replace_arr->shape != shape) { Error::set(15, vm.runtime_current_line, "Array shapes must match for element-wise REPLACE$."); return {}; }
+
+    // Build the result array.
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = shape;
+    result_ptr->data.reserve(total_size);
+
+    for (size_t i = 0; i < total_size; ++i) {
+        // Get the appropriate value for each argument: either from the array or broadcast the scalar.
+        std::string current_source = source_is_array ? to_string(source_arr->data[i]) : to_string(source_arg);
+        std::string current_find = find_is_array ? to_string(find_arr->data[i]) : to_string(find_arg);
+        std::string current_replace = replace_is_array ? to_string(replace_arr->data[i]) : to_string(replace_arg);
+
+        result_ptr->data.push_back(perform_single_replace(current_source, current_find, current_replace));
+    }
+
+    return result_ptr;
 }
+
+// REPLACE$(source_string_or_array, find_string$, replace_with_string$) -> string or array
+//BasicValue builtin_replace_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+//    if (args.size() != 3) {
+//        Error::set(8, vm.runtime_current_line, "REPLACE$ requires 3 arguments.");
+//        return std::string("");
+//    }
+//
+//    const BasicValue& input = args[0];
+//    std::string find_str = to_string(args[1]);
+//    std::string replace_str = to_string(args[2]);
+//
+//    // Edge case: if find_str is empty, return the original string to avoid infinite loops.
+//    if (find_str.empty()) {
+//        return input;
+//    }
+//
+//    // Helper lambda to perform the core REPLACE$ operation on a single string.
+//    auto perform_replace = [&](const std::string& source) -> std::string {
+//        std::string result = source;
+//        size_t start_pos = 0;
+//        while ((start_pos = result.find(find_str, start_pos)) != std::string::npos) {
+//            result.replace(start_pos, find_str.length(), replace_str);
+//            // Move past the replaced section to avoid re-matching parts of the replacement string.
+//            start_pos += replace_str.length();
+//        }
+//        return result;
+//        };
+//
+//    // Case 1: Input is an Array. Apply the operation to each element.
+//    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
+//        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
+//        if (!arr_ptr) return {}; // Handle null array
+//
+//        auto result_ptr = std::make_shared<Array>();
+//        result_ptr->shape = arr_ptr->shape; // Result has the same shape
+//        result_ptr->data.reserve(arr_ptr->data.size());
+//
+//        for (const auto& val : arr_ptr->data) {
+//            result_ptr->data.push_back(perform_replace(to_string(val)));
+//        }
+//        return result_ptr;
+//    }
+//    // Case 2: Input is a scalar. Perform the operation directly.
+//    else {
+//        return perform_replace(to_string(input));
+//    }
+//}
 
 // VAL(string_expression_or_array) -> number or array
 BasicValue builtin_val(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -4390,6 +4559,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("CHR$", 1, builtin_chr_str);
     register_func("INSTR$", -1, builtin_instr); // -1 for variable args
     register_func("INSTR", -1, builtin_instr); // -1 for variable args
+    register_func("INSERT$", 3, builtin_insert_str);
     register_func("LCASE$", 1, builtin_lcase_str);
     register_func("UCASE$", 1, builtin_ucase_str);
     register_func("TRIM$", 1, builtin_trim_str);

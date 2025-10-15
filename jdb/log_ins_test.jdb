@@ -1,0 +1,8 @@
+LogLines$ = SPLIT(TXTREADER$("logfile.txt"), VBNEWLINE)
+Timestamp$ = NOW() + " -- "
+
+' Insert the timestamp at the beginning of EVERY line in the array
+NewLogLines$ = INSERT$(LogLines$, Timestamp$, 0)
+
+print NewLogLines$
+

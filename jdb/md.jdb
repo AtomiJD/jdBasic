@@ -102,7 +102,7 @@ SUB RenderMarkdown(markdown_text$)
             heading_text$ = TRIM$(MID$(trimmed_line$, level))
             COLOR COLOR_HEADING, 0
             PRINT
-            ProcessInlines(heading_text$)
+            ProcessInlines heading_text$ 
             COLOR COLOR_HR, 0
             PRINT "─" * LEN(heading_text$)
             COLOR COLOR_DEFAULT, 0
@@ -151,3 +151,5 @@ ENDSUB
 CLS
 
 RenderMarkdown(txtreader$("test.md"))
+
+COLOR 5,0
