@@ -103,7 +103,10 @@ void TextEditorWinImpl::run() {
         if (input.EventType == KEY_EVENT && input.Event.KeyEvent.bKeyDown) {
             auto key = input.Event.KeyEvent;
 
-            if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) {
+            const bool ctrl_pressed = key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED);
+            const bool alt_pressed = key.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED);
+
+            if (ctrl_pressed && !alt_pressed) {
                 switch (key.wVirtualKeyCode) {
                 case 'X':
                     if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) goto dreckig;

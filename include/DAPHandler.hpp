@@ -44,6 +44,7 @@ private:
 
     // --- Handlers for Commands FROM the Client ---
     void on_start();
+    void on_recompile(int vs_code_current_line = -1);
     void on_set_breakpoint(const std::vector<std::string>& args);
     void on_clear_all_breakpoints();
     void on_get_stacktrace();
@@ -53,4 +54,5 @@ private:
     void send_message(const std::string& message);
 
     void on_repl(const std::string& inputLine);
+    void on_watch(const std::string& inputLine);
 };

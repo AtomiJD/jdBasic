@@ -232,12 +232,16 @@ public:
     // Breakpoints: line number -> BreakpointInfo (can be just bool for now)
     std::map<uint16_t, bool> breakpoints;
 
+    // This map stores the p-code address for the start of each source line.
+    std::map<uint16_t, uint16_t> line_to_pcode_map;
+
     void pause_for_debugger();
     void resume_from_debugger();
     void step_over();
     void step_in();
     void step_out();
     void handle_debug_events();
+    void recompile(int vs_code_current_line);
 
     // This table will hold our built-in constants like 'vbNewLine' and 'PI'
     std::map<std::string, BasicValue> builtin_constants;
@@ -360,7 +364,7 @@ public:
     void start();  // The main REPL
     //void execute(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     //void execute_t(const std::vector<uint8_t>& code_to_run, bool resume_mode);
-    bool loadSourceFromFile(const std::string& filename);
+    bool loadSourceFromFile(const std::string& filename, bool verbose = false);
     std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
 
     // --- Function to load a dynamic module ---

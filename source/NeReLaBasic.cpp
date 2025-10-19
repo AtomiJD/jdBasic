@@ -279,13 +279,14 @@ bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
 }
 #endif
 
-bool NeReLaBasic::loadSourceFromFile(const std::string& filename) {
+bool NeReLaBasic::loadSourceFromFile(const std::string& filename, bool verbose) {
     std::ifstream infile(filename);
     if (!infile) {
         TextIO::print("Error: File not found -> " + filename); TextIO::nl();
         return false;
     }
-    TextIO::print("LOADING " + filename); TextIO::nl();
+    if (!verbose)
+        TextIO::print("LOADING " + filename); TextIO::nl();
     // Read the entire file into the source_code string
     source_lines.clear();
     std::string line;
@@ -837,6 +838,51 @@ void NeReLaBasic::handle_debug_events() {
         debug_state = DebugState::PAUSED;
         dap_handler->send_stopped_message(pause_reason, runtime_current_line, this->program_to_debug);
         pause_for_debugger();
+    }
+}
+
+/**
+ * @brief Recompiles the program's source code "in-place" without resetting the runtime environment.
+ * Preserves variables and the call stack, and attempts to reposition the program counter.
+ */
+void NeReLaBasic::recompile(int vs_code_current_line) {
+    if (dap_handler) {
+        dap_handler->send_output_message("Recompiling...\n");
+    }
+
+    // 1. Remember the line number from VS Code, not our internal one.
+    uint16_t target_line = (vs_code_current_line > 0) ? static_cast<uint16_t>(vs_code_current_line) : 0;
+
+    // 2. Perform the recompilation. (This part is unchanged)
+    if (this->compiler->recompile_program(*this) != 0) {
+        if (dap_handler) {
+            dap_handler->send_output_message("? Recompilation failed. Execution halted.\n");
+        }
+        this->is_stopped = true;
+        return;
+    }
+
+    // --- THIS LOGIC IS MODIFIED ---
+    // 3. Try to find the new p-code address for our TARGET line.
+    if (target_line > 0 && this->line_to_pcode_map.count(target_line)) {
+        this->pcode = this->line_to_pcode_map[target_line];
+        if (dap_handler) {
+            dap_handler->send_output_message("Recompilation successful. Resuming at line " + std::to_string(target_line) + ".\n");
+        }
+    }
+    else {
+        // The line we were on was deleted or not found.
+        // A safe fallback is to go to the start of the program.
+        this->pcode = 0;
+        if (dap_handler) {
+            dap_handler->send_output_message("Recompilation successful. Target line not found, resuming at start.\n");
+        }
+    }
+
+    // Ensure we skip the initial line number bytes at the new pcode position.
+    if (this->pcode < this->program_p_code.size() - 2) {
+        this->runtime_current_line = this->program_p_code[pcode] | (this->program_p_code[pcode + 1] << 8);
+        this->pcode += 2;
     }
 }
 

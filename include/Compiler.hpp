@@ -24,9 +24,8 @@ public:
      * @param source The full source code as a single string.
      * @return 0 on success, non-zero on error.
      */
-    uint8_t tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source);
+    uint8_t tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source, bool recompile = false);
     uint8_t tokenize_lambda(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source, NeReLaBasic::FunctionTable& compilation_func_table, uint16_t start_line);
-
 
     // --- Compiler-Specific State ---
     // These members are now part of the Compiler, not the VM.
@@ -109,7 +108,7 @@ public:
     std::string current_type_context;
     bool in_method_block = false;
 
-    void compile_expression(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code);
+    //void compile_expression(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code);
     
     // Tokenizes a single line of source code into p-code.
     uint8_t tokenize(NeReLaBasic& vm, const std::string& line, uint16_t lineNumber, std::vector<uint8_t>& out_p_code, NeReLaBasic::FunctionTable& compilation_func_table, bool multiline=false, bool fromrepl = false);
@@ -128,6 +127,9 @@ public:
 
     //Snippet compiler for eval() and execute()
     uint8_t tokenize_snippet(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source_snippet);
+
+    uint8_t recompile_program(NeReLaBasic& vm);
+
 private:
 
 };

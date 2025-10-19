@@ -389,6 +389,10 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
     vm.lineinput = line;
     vm.prgptr = 0;
 
+    if (!multiline && !fromrepl) {
+        vm.line_to_pcode_map[lineNumber] = out_p_code.size();
+    }
+
     // Write the line number prefix for this line's bytecode.
     if (!multiline) {
         out_p_code.push_back(lineNumber & 0xFF);
@@ -1750,7 +1754,7 @@ uint8_t Compiler::tokenize_snippet(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
     return error_code;
 }
 
-uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source) {
+uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_code, const std::string& source, bool recompile) {
     out_p_code.clear();
     if_stack.clear();
     func_stack.clear();
@@ -2044,4 +2048,43 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
 
     vm.active_function_table = previous_active_table;
     return 0;
+}
+
+/**
+ * @brief A lightweight version of tokenize_program for JIT-style recompilation.
+ * It clears and repopulates the p-code and line map without touching the runtime state.
+ * @param vm The main VM instance.
+ * @return 0 on success, error code on failure.
+ */
+uint8_t Compiler::recompile_program(NeReLaBasic& vm) {
+
+    std::stringstream ss;
+    for (const auto& line : vm.source_lines) {
+        ss << line << '\n';
+    }
+    std::string source_to_compile = ss.str();
+
+    // Always compile modules!
+    vm.compiled_modules.clear();
+    Error::clear();
+    // Compile into the main program buffer
+    if (vm.compiler->tokenize_program(vm, vm.program_p_code, source_to_compile, true) == 0) {
+        if (!vm.compiler->if_stack.empty()) {
+            // There are unclosed IF blocks. Get the line number of the last one.
+            uint16_t error_line = vm.compiler->if_stack.back().source_line;
+            Error::set(4, error_line); // New Error: Missing ENDIF
+        }
+        if (!vm.compiler->do_loop_stack.empty()) {
+            // There are unclosed DO loops. Get the line number of the last one.
+            uint16_t error_line = vm.compiler->do_loop_stack.back().source_line;
+            Error::set(14, error_line); // Unclosed loop
+        }
+        return Error::get();
+    }
+    else {
+        // Error message is printed by tokenize_program
+        TextIO::print("Compilation failed.\n");
+    }
+
+    return 0; // Success
 }

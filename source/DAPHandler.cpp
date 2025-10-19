@@ -9,6 +9,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <algorithm> // Added for std::transform
+#include <cctype>    // Added for ::toupper
 
 // Platform-specific socket includes
 #ifdef _WIN32
@@ -156,6 +158,52 @@ void DAPHandler::process_command(const std::string& command_line) {
         //send_output_message("repl command: '" + arguments + "'\n");
         on_repl(arguments);
     }
+    else if (command == "watch") {
+        const std::string prefix = "watch ";
+        std::string arguments = command_line.substr(prefix.length());
+        //send_output_message("repl command: '" + arguments + "'\n");
+        on_watch(arguments);
+    }
+    else if (command == "recompile") {
+        int vs_code_current_line = -1; // Default to -1 (or 0) if no line is provided
+        send_output_message("recompile command: '" + args[0] + "'\n");
+        if (!args.empty()) {
+            try {
+                vs_code_current_line = std::stoi(args[0]);
+            }
+            catch (const std::exception&) {
+                // Failed to parse, will use the default
+            }
+        }
+        on_recompile(vs_code_current_line);
+    }
+    else if (command == "goto") {
+        const std::string prefix = "goto ";
+        std::string arguments = command_line.substr(prefix.length());
+        send_output_message("goto command: '" + arguments + "'\n");
+        int vs_code_current_line = -1; // Default to -1 (or 0) if no line is provided
+        if (!args.empty()) {
+            try {
+                vs_code_current_line = std::stoi(args[0]);
+            }
+            catch (const std::exception&) {
+                // Failed to parse, will use the default
+            }
+        }
+        if (vs_code_current_line > 0 && vm.line_to_pcode_map.count(vs_code_current_line)) {
+            vm.pcode = vm.line_to_pcode_map[vs_code_current_line];
+        }
+        else {
+            // The line we were on was deleted or not found.
+            // A safe fallback is to go to the start of the program.
+            vm.pcode = 0;
+        }
+        if (vm.pcode < vm.program_p_code.size() - 2) {
+            vm.runtime_current_line = vm.program_p_code[vm.pcode] | (vm.program_p_code[vm.pcode + 1] << 8);
+            vm.pcode += 2;
+        }
+        send_stopped_message("goto", vs_code_current_line, vm.program_to_debug);
+    }
     else if (command == "exit") {
         vm.is_stopped = true; // Tell interpreter to stop
         vm.resume_from_debugger(); // Unblock it so it can terminate
@@ -164,6 +212,17 @@ void DAPHandler::process_command(const std::string& command_line) {
 }
 
 // --- Handlers for Specific Commands ---
+
+void DAPHandler::on_recompile(int vs_code_current_line) {
+    if (!vm.loadSourceFromFile(vm.program_to_debug, true)) {
+        send_output_message("? DAP Error: Failed to load source file: " + vm.program_to_debug + "\n");
+        vm.dap_launch_promise.set_value(false); // Signal failure
+        send_message("exit");
+        return;
+    }
+    vm.recompile(vs_code_current_line);
+}
+
 void DAPHandler::on_start() {
 
     // 1. Load the source code from the file provided by the client
@@ -296,7 +355,47 @@ void DAPHandler::send_variable_message(const std::string& scope, const std::stri
     send_message("var: " + scope + name + " = " + value);
 }
 
-void DAPHandler::on_repl(const std::string& inputLine) {
+void DAPHandler::on_watch(const std::string& inputLine) {
+
+    std::stringstream ss(inputLine);
+    std::string var_name;
+    std::string extra_word;
+
+    ss >> var_name;     // Try to read the first word
+    ss >> extra_word;   // Try to read a second word
+
+    // Check if it's *exactly* one word
+    if (!var_name.empty() && extra_word.empty()) {
+        // It's a single word, now check if it's a variable.
+        // Convert to uppercase for case-insensitive lookup (assuming keys are uppercase)
+        std::string upper_var_name = var_name;
+        std::transform(upper_var_name.begin(), upper_var_name.end(), upper_var_name.begin(), ::toupper);
+
+        // 1. Check local variables (if in a function)
+        if (!vm.call_stack.empty()) {
+            const auto& locals = vm.call_stack.back().local_variables;
+            auto it = locals.find(upper_var_name);
+            if (it != locals.end()) {
+                // Found in locals
+                send_repl_message(to_string(it->second));
+                return; // Done
+            }
+        }
+
+        // 2. Check global variables
+        auto it = vm.variables.find(upper_var_name);
+        if (it != vm.variables.end()) {
+            // Found in globals
+            send_repl_message(to_string(it->second));
+            return; // Done
+        }
+
+        // If we are here, it was a single word, but not a known variable.
+        // We let it fall through to the original logic below.
+    }
+}
+
+void DAPHandler::on_repl(const std::string & inputLine) {
     std::string captured_output;
     Error::clear();
 
@@ -312,7 +411,7 @@ void DAPHandler::on_repl(const std::string& inputLine) {
             Error::print();
         }
         else {
-            // *** CALL THE NEW, SAFE REPL EXECUTION FUNCTION ***
+            // *** CALL THE REPL EXECUTION FUNCTION ***
             // This runs the command immediately without affecting the debugger's pause state.
             vm.execute_repl_command(vm.direct_p_code);
         }
@@ -329,8 +428,16 @@ void DAPHandler::on_repl(const std::string& inputLine) {
     // If the command produced no output (e.g., an assignment like 'a=1'),
     // provide a default response so the user knows it was processed.
     if (captured_output.empty()) {
-        captured_output = "Ready.\n";
+        captured_output = "Ready.";
     }
+    else {
+        // Trim trailing newline from output to prevent paste-execution
+        while (!captured_output.empty() && (captured_output.back() == '\n' || captured_output.back() == '\r')) {
+            captured_output.pop_back();
+        }
+    }
+
+    Error::clear();
 
     // Send the captured output back to the client.
     send_repl_message(captured_output);

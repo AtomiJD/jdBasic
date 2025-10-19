@@ -929,10 +929,11 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings.
 * **`CHR$(ascii_code)`**, **`ASC(char$)`**: Converts between ASCII codes and characters.
 * **`INSTR$([start, ]haystack$, needle$)`**: Finds the position of one string within another. Positions are 0-based. Returns -1 if not found.
+* **`INSERT$(target_string or array, text_to_insert$ string or array, position or array) -> string or array`**: Inserts a text_to_insert$ in target at position.
 * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
 * **`FRMV$(array, [format_string$]) -> string$`**: Formats a 1D or 2D array into a string. If format_string$ is provided, it's used to format each row. Otherwise, it creates a right-aligned string matrix.
 * **`FORMAT$(format_string$, arg1, arg2, ...) -> string$`**: Formats a string using C++20-style format specifiers.
-* **`REPLACE$(source_string or array, find_string$, replace_with_string$) -> string or array)`**: Returs a string where all found find_string$ are preplaced with replace_with_string$.
+* **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array)`**: Returs a string where all found find_string$ are preplaced with replace_with_string$.
 * **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
 
 ### Math/Arithmetic/Round Functions

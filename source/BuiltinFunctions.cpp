@@ -1201,7 +1201,7 @@ BasicValue builtin_instr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 }
 
-// INSERT$(source$, text_to_insert$, position) -> string or array
+// INSERT$(target$, text_to_insert$, position) -> string or array
 // Fully vectorized: any argument can be a scalar or an array.
 // If multiple arguments are arrays, their shapes must match.
 BasicValue builtin_insert_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -1477,54 +1477,6 @@ BasicValue builtin_replace_str(NeReLaBasic& vm, const std::vector<BasicValue>& a
 
     return result_ptr;
 }
-
-// REPLACE$(source_string_or_array, find_string$, replace_with_string$) -> string or array
-//BasicValue builtin_replace_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-//    if (args.size() != 3) {
-//        Error::set(8, vm.runtime_current_line, "REPLACE$ requires 3 arguments.");
-//        return std::string("");
-//    }
-//
-//    const BasicValue& input = args[0];
-//    std::string find_str = to_string(args[1]);
-//    std::string replace_str = to_string(args[2]);
-//
-//    // Edge case: if find_str is empty, return the original string to avoid infinite loops.
-//    if (find_str.empty()) {
-//        return input;
-//    }
-//
-//    // Helper lambda to perform the core REPLACE$ operation on a single string.
-//    auto perform_replace = [&](const std::string& source) -> std::string {
-//        std::string result = source;
-//        size_t start_pos = 0;
-//        while ((start_pos = result.find(find_str, start_pos)) != std::string::npos) {
-//            result.replace(start_pos, find_str.length(), replace_str);
-//            // Move past the replaced section to avoid re-matching parts of the replacement string.
-//            start_pos += replace_str.length();
-//        }
-//        return result;
-//        };
-//
-//    // Case 1: Input is an Array. Apply the operation to each element.
-//    if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
-//        const auto& arr_ptr = std::get<std::shared_ptr<Array>>(input);
-//        if (!arr_ptr) return {}; // Handle null array
-//
-//        auto result_ptr = std::make_shared<Array>();
-//        result_ptr->shape = arr_ptr->shape; // Result has the same shape
-//        result_ptr->data.reserve(arr_ptr->data.size());
-//
-//        for (const auto& val : arr_ptr->data) {
-//            result_ptr->data.push_back(perform_replace(to_string(val)));
-//        }
-//        return result_ptr;
-//    }
-//    // Case 2: Input is a scalar. Perform the operation directly.
-//    else {
-//        return perform_replace(to_string(input));
-//    }
-//}
 
 // VAL(string_expression_or_array) -> number or array
 BasicValue builtin_val(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
