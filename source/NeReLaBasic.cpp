@@ -37,7 +37,7 @@ BasicValue tensor_scalar_divide(NeReLaBasic& vm, const BasicValue& a, const Basi
 std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
-const std::string NERELA_VERSION = "0.9.6";
+const std::string NERELA_VERSION = "0.9.7";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -1178,9 +1178,18 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                             continue;
                         }
                         if (Error::get() != 0) {
-                            current_task->status = TaskStatus::ERRORED;
-                            line_is_done = true;
-                            continue;
+                            if (dap_handler) {
+                                Error::print();
+                                dap_handler->send_stopped_message("exception", runtime_current_line, this->program_to_debug);
+                                pause_for_debugger();
+                                Error::clear();
+                                continue;
+                            }
+                            else {
+                                current_task->status = TaskStatus::ERRORED;
+                                line_is_done = true;
+                                continue;
+                            }
                         }
                         if (current_task->status != TaskStatus::RUNNING || current_task->yielded_execution) {
                             line_is_done = true;

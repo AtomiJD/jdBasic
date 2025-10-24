@@ -968,71 +968,32 @@ BasicValue NeReLaBasic::parse_factor() {
                     left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
                         using LeftT = std::decay_t<decltype(l)>; using RightT = std::decay_t<decltype(r)>;
 
-                        if constexpr ((std::is_same_v<LeftT, std::string> && !std::is_same_v<RightT, std::string> && !std::is_same_v<RightT, std::shared_ptr<Array>>) ||
-                            (!std::is_same_v<LeftT, std::string> && !std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::string>)) {
-
-                            if (op == Tokens::ID::C_ASTR) { // String repetition
-                                std::string s;
-                                int count;
-                                if constexpr (std::is_same_v<LeftT, std::string>) {
-                                    s = l;
-                                    count = static_cast<int>(to_double(r));
-                                }
-                                else {
-                                    s = r;
-                                    count = static_cast<int>(to_double(l));
-                                }
-                                if (count < 0) count = 0;
-                                std::stringstream ss;
-                                for (int i = 0; i < count; ++i) {
-                                    ss << s;
-                                }
-                                return ss.str();
+                        // Helper function for string repetition
+                        auto repeat_string = [](const std::string& s, const BasicValue& count_val) {
+                            int count = static_cast<int>(to_double(count_val));
+                            if (count < 0) count = 0;
+                            std::stringstream ss;
+                            for (int i = 0; i < count; ++i) {
+                                ss << s;
                             }
-
-                            if (op == Tokens::ID::C_SLASH) { // String slicing
-                                if constexpr (std::is_same_v<LeftT, std::string>) { // e.g. "Atomi" / 2
-                                    std::string s = l;
-                                    int count = static_cast<int>(to_double(r));
-                                    if (count < 0) count = 0;
-                                    if (static_cast<size_t>(count) > s.length()) return s;
-                                    return s.substr(s.length() - count);
-                                }
-                                else { // e.g. 2 / "Atomi"
-                                    std::string s = r;
-                                    int count = static_cast<int>(to_double(l));
-                                    if (count < 0) count = 0;
-                                    return s.substr(0, count);
-                                }
-                            }
-                        }
-
-                        auto array_op = [op, this](const auto& arr, double scalar, bool arr_is_left) -> BasicValue {
-                            auto result_ptr = std::make_shared<Array>(); result_ptr->shape = arr->shape;
-                            for (const auto& elem : arr->data) {
-                                double arr_val = to_double(elem); double res = 0;
-                                if (op == Tokens::ID::C_ASTR) res = arr_is_left ? arr_val * scalar : scalar * arr_val;
-                                else if (op == Tokens::ID::C_SLASH) {
-                                    if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
-                                    res = arr_is_left ? arr_val / scalar : scalar / arr_val;
-                                }
-                                else if (op == Tokens::ID::C_BACKSLASH) { // integer division, trunc toward 0
-                                    if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) {
-                                        Error::set(2, runtime_current_line, "Division by zero."); return false;
-                                    }
-                                    double q = arr_is_left ? (arr_val / scalar) : (scalar / arr_val);
-                                    // store as integer but Array holds doubles; keep numeric value integral
-                                    res = static_cast<double>(static_cast<long long>(q));
-                                }
-                                else { // MOD
-                                    if ((arr_is_left && scalar == 0.0) || (!arr_is_left && arr_val == 0.0)) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
-                                    res = static_cast<double>(arr_is_left ? static_cast<long long>(arr_val) % static_cast<long long>(scalar) : static_cast<long long>(scalar) % static_cast<long long>(arr_val));
-                                }
-                                result_ptr->data.push_back(res);
-                            }
-                            return result_ptr;
+                            return ss.str();
                             };
 
+                        // Helper function for string slicing
+                        auto slice_string = [](const std::string& s, const BasicValue& count_val, bool from_left) {
+                            int count = static_cast<int>(to_double(count_val));
+                            if (count < 0) count = 0;
+                            if (from_left) { // e.g. 2 / "Atomi"
+                                return s.substr(0, count);
+                            }
+                            else { // e.g. "Atomi" / 2
+                                if (static_cast<size_t>(count) > s.length()) return s;
+                                return s.substr(s.length() - count);
+                            }
+                            };
+
+
+                        // Priority 1: Array - Array
                         if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
                             if (l->shape != r->shape) { Error::set(15, runtime_current_line, "Shape mismatch for element-wise operation."); return false; }
                             auto result_ptr = std::make_shared<Array>(); result_ptr->shape = l->shape;
@@ -1046,9 +1007,130 @@ BasicValue NeReLaBasic::parse_factor() {
                             }
                             return result_ptr;
                         }
-                        else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) { return array_op(l, to_double(r), true); }
-                        else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) { return array_op(r, to_double(l), false); }
-                        else { // scalar op
+
+                        // Priority 2: Array - Scalar
+                        else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
+                            if (!l) { Error::set(15, 0, "Operation on a null array."); return {}; }
+
+                            // Check if the scalar 'r' is a string (e.g. [2,3] * "atomi")
+                            if constexpr (std::is_same_v<RightT, std::string>) {
+                                const std::string& scalar_str = r;
+                                auto result_ptr = std::make_shared<Array>();
+                                result_ptr->shape = l->shape;
+                                result_ptr->data.reserve(l->data.size());
+
+                                for (const auto& elem : l->data) {
+                                    if (op == Tokens::ID::C_ASTR) {
+                                        result_ptr->data.push_back(repeat_string(scalar_str, elem));
+                                    }
+                                    else if (op == Tokens::ID::C_SLASH) { // e.g. [2,3] / "atomi"
+                                        result_ptr->data.push_back(slice_string(scalar_str, elem, true));
+                                    }
+                                    else {
+                                        Error::set(15, runtime_current_line, "This string/array operation is not supported."); return {};
+                                    }
+                                }
+                                return result_ptr;
+                            }
+                            else {
+                                // It's Array * Numeric Scalar
+                                auto result_ptr = std::make_shared<Array>(); result_ptr->shape = l->shape;
+                                double scalar = to_double(r);
+                                for (const auto& elem : l->data) {
+                                    double arr_val = to_double(elem); double res = 0;
+                                    if (op == Tokens::ID::C_ASTR) res = arr_val * scalar;
+                                    else if (op == Tokens::ID::C_SLASH) {
+                                        if (scalar == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                        res = arr_val / scalar;
+                                    }
+                                    else if (op == Tokens::ID::C_BACKSLASH) {
+                                        if (scalar == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                        res = static_cast<double>(static_cast<long long>(arr_val / scalar));
+                                    }
+                                    else { // MOD
+                                        if (scalar == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                        res = static_cast<double>(static_cast<long long>(arr_val) % static_cast<long long>(scalar));
+                                    }
+                                    result_ptr->data.push_back(res);
+                                }
+                                return result_ptr;
+                            }
+                        }
+
+                        // Priority 3: Scalar - Array (This is your case: "atomi" * [2,3])
+                        else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                            if (!r) { Error::set(15, 0, "Operation on a null array."); return {}; }
+
+                            // Check if the scalar 'l' is a string
+                            if constexpr (std::is_same_v<LeftT, std::string>) {
+                                const std::string& scalar_str = l;
+                                auto result_ptr = std::make_shared<Array>();
+                                result_ptr->shape = r->shape;
+                                result_ptr->data.reserve(r->data.size());
+
+                                for (const auto& elem : r->data) {
+                                    if (op == Tokens::ID::C_ASTR) { // "atomi" * [2,3]
+                                        result_ptr->data.push_back(repeat_string(scalar_str, elem));
+                                    }
+                                    else if (op == Tokens::ID::C_SLASH) { // "atomi" / [2,3]
+                                        result_ptr->data.push_back(slice_string(scalar_str, elem, false));
+                                    }
+                                    else {
+                                        Error::set(15, runtime_current_line, "This string/array operation is not supported."); return {};
+                                    }
+                                }
+                                return result_ptr;
+                            }
+                            else {
+                                // It's Numeric Scalar * Array
+                                auto result_ptr = std::make_shared<Array>(); result_ptr->shape = r->shape;
+                                double scalar = to_double(l);
+                                for (const auto& elem : r->data) {
+                                    double arr_val = to_double(elem); double res = 0;
+                                    if (op == Tokens::ID::C_ASTR) res = scalar * arr_val;
+                                    else if (op == Tokens::ID::C_SLASH) {
+                                        if (arr_val == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                        res = scalar / arr_val;
+                                    }
+                                    else if (op == Tokens::ID::C_BACKSLASH) {
+                                        if (arr_val == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                        res = static_cast<double>(static_cast<long long>(scalar / arr_val));
+                                    }
+                                    else { // MOD
+                                        if (arr_val == 0.0) { Error::set(2, runtime_current_line, "Division by zero."); return false; }
+                                        res = static_cast<double>(static_cast<long long>(scalar) % static_cast<long long>(arr_val));
+                                    }
+                                    result_ptr->data.push_back(res);
+                                }
+                                return result_ptr;
+                            }
+                        }
+
+                        // Priority 4: Scalar String ops (Now that all array cases are handled)
+                        else if constexpr ((std::is_same_v<LeftT, std::string> && !std::is_same_v<RightT, std::string>) ||
+                            (!std::is_same_v<LeftT, std::string> && std::is_same_v<RightT, std::string>)) {
+
+                            if (op == Tokens::ID::C_ASTR) { // String repetition
+                                if constexpr (std::is_same_v<LeftT, std::string>) {
+                                    return repeat_string(l, r);
+                                }
+                                else {
+                                    return repeat_string(r, l);
+                                }
+                            }
+
+                            if (op == Tokens::ID::C_SLASH) { // String slicing
+                                if constexpr (std::is_same_v<LeftT, std::string>) { // e.g. "Atomi" / 2
+                                    return slice_string(l, r, false);
+                                }
+                                else { // e.g. 2 / "Atomi"
+                                    return slice_string(r, l, true);
+                                }
+                            }
+                        }
+
+                        // Priority 5: Numeric - Numeric
+                        else {
                             if constexpr (std::is_same_v<LeftT, double> || std::is_same_v<RightT, double>) {
                                 double val_l = to_double(l); double val_r = to_double(r);
                                 if (op == Tokens::ID::C_ASTR) return val_l * val_r;
@@ -1058,17 +1140,16 @@ BasicValue NeReLaBasic::parse_factor() {
                             }
                             else {
                                 if (op == Tokens::ID::C_ASTR) {
-                                    int left_i = to_int(l);
-                                    int right_i = to_int(r);
+                                    long long left_i = to_int(l);
+                                    long long right_i = to_int(r);
                                     return left_i * right_i;
                                 }
 
                                 if (op == Tokens::ID::C_SLASH) { double val_l = to_double(l); double val_r = to_double(r); if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
                                 if (op == Tokens::ID::C_BACKSLASH) { long long val_l = to_int(l); long long val_r = to_int(r); if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l / val_r; }
-                                if (op == Tokens::ID::MOD) { double val_l = to_double(l); double val_r = to_double(r); if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return static_cast<double>(static_cast<long long>(val_l) % static_cast<long long>(val_r)); }
+                                if (op == Tokens::ID::MOD) { long long val_l = to_int(l); long long val_r = to_int(r); if (val_r == 0.0) { Error::set(2, runtime_current_line); return false; } return val_l % val_r; }
                             }
-                        }
-                        return false;
+                        }                        return false;
                         }, left, right);
                 }
             }
@@ -1096,7 +1177,92 @@ BasicValue NeReLaBasic::parse_term() {
             else {
                 left = std::visit([op, this](auto&& l, auto&& r) -> BasicValue {
                     using LeftT = std::decay_t<decltype(l)>; using RightT = std::decay_t<decltype(r)>;
-                    if constexpr (std::is_same_v<LeftT, std::string> || std::is_same_v<RightT, std::string>) {
+
+                    if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                        if (!l || !r) { Error::set(15, 0, "Operation on a null array."); return {}; }
+                        if (l->shape != r->shape) { Error::set(15, 0, "Array shapes must match for element-wise operation."); return {}; }
+
+                        // Safely check for string types
+                        bool is_string_op = false;
+                        if (!l->data.empty()) is_string_op = is_string_op || std::holds_alternative<std::string>(l->data[0]);
+                        if (!r->data.empty()) is_string_op = is_string_op || std::holds_alternative<std::string>(r->data[0]);
+
+                        if (op == Tokens::ID::C_PLUS && is_string_op) {
+                            // Perform element-wise string concatenation
+                            auto result_ptr = std::make_shared<Array>();
+                            result_ptr->shape = l->shape;
+                            result_ptr->data.reserve(l->data.size());
+                            for (size_t i = 0; i < l->data.size(); ++i) {
+                                result_ptr->data.push_back(to_string(l->data[i]) + to_string(r->data[i]));
+                            }
+                            return result_ptr;
+                        }
+                        else {
+                            // Fallback to existing numeric operations
+                            if (op == Tokens::ID::C_PLUS) return array_add(l, r); else return array_subtract(l, r);
+                        }
+                    }
+
+                    // Priority 2: Array + Scalar (This is your case: NewLogLines$ + VBNEWLINE)
+                    else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
+                        if (!l) { Error::set(15, 0, "Operation on a null array."); return {}; }
+
+                        // Check if the scalar 'r' is a string
+                        if constexpr (std::is_same_v<RightT, std::string>) {
+                            if (op == Tokens::ID::C_PLUS) {
+                                auto result_ptr = std::make_shared<Array>();
+                                result_ptr->shape = l->shape;
+                                result_ptr->data.reserve(l->data.size());
+                                const std::string& scalar_str = r;
+                                for (const auto& elem : l->data) {
+                                    result_ptr->data.push_back(to_string(elem) + scalar_str);
+                                }
+                                return result_ptr;
+                            }
+                            else {
+                                Error::set(15, runtime_current_line, "String subtraction (-) is not supported for array broadcast."); return {};
+                            }
+                        }
+                        else {
+                            // It's Array + Numeric Scalar
+                            auto result_ptr = std::make_shared<Array>(); result_ptr->shape = l->shape;
+                            double scalar = to_double(r);
+                            for (const auto& elem : l->data) { result_ptr->data.push_back(op == Tokens::ID::C_PLUS ? to_double(elem) + scalar : to_double(elem) - scalar); }
+                            return result_ptr;
+                        }
+                    }
+
+                    // Priority 3: Scalar + Array
+                    else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
+                        if (!r) { Error::set(15, 0, "Operation on a null array."); return {}; }
+
+                        // Check if the scalar 'l' is a string
+                        if constexpr (std::is_same_v<LeftT, std::string>) {
+                            if (op == Tokens::ID::C_PLUS) {
+                                auto result_ptr = std::make_shared<Array>();
+                                result_ptr->shape = r->shape;
+                                result_ptr->data.reserve(r->data.size());
+                                const std::string& scalar_str = l;
+                                for (const auto& elem : r->data) {
+                                    result_ptr->data.push_back(scalar_str + to_string(elem));
+                                }
+                                return result_ptr;
+                            }
+                            else {
+                                Error::set(15, runtime_current_line, "String subtraction (-) is not supported for array broadcast."); return {};
+                            }
+                        }
+                        else {
+                            // It's Numeric Scalar + Array
+                            auto result_ptr = std::make_shared<Array>(); result_ptr->shape = r->shape;
+                            double scalar = to_double(l);
+                            for (const auto& elem : r->data) { result_ptr->data.push_back(op == Tokens::ID::C_PLUS ? scalar + to_double(elem) : scalar - to_double(elem)); }
+                            return result_ptr;
+                        }
+                    }
+
+                    // Priority 4: Scalar String operations (Now that all array cases are handled)
+                    else if constexpr (std::is_same_v<LeftT, std::string> || std::is_same_v<RightT, std::string>) {
                         if (op == Tokens::ID::C_PLUS) {
                             return to_string(l) + to_string(r);
                         }
@@ -1112,43 +1278,8 @@ BasicValue NeReLaBasic::parse_term() {
                             return s_left;
                         }
                     }
-                    else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>> && std::is_same_v<RightT, std::shared_ptr<Array>>) {
-                        // This uses the same array_add/subtract helpers from BuiltinFunctions.cpp
-                        // Ensure they are globally accessible or duplicate the logic here.
-                        if (!l || !r || l->data.empty()) { // Handle null or empty arrays
-                            if (op == Tokens::ID::C_PLUS) return r; else return l;
-                        }
-                        // Check if either array contains strings to decide the operation type
-                        bool is_string_op = std::holds_alternative<std::string>(l->data[0]) || std::holds_alternative<std::string>(r->data[0]);
 
-                        if (op == Tokens::ID::C_PLUS && is_string_op) {
-                            // Perform element-wise string concatenation
-                            if (l->shape != r->shape) { Error::set(15, 0, "Array shapes must match for element-wise operation."); return {}; }
-                            auto result_ptr = std::make_shared<Array>();
-                            result_ptr->shape = l->shape;
-                            result_ptr->data.reserve(l->data.size());
-                            for (size_t i = 0; i < l->data.size(); ++i) {
-                                result_ptr->data.push_back(to_string(l->data[i]) + to_string(r->data[i]));
-                            }
-                            return result_ptr;
-                        }
-                        else {
-                            // Fallback to existing numeric operations
-                            if (op == Tokens::ID::C_PLUS) return array_add(l, r); else return array_subtract(l, r);
-                        }
-                    }
-                    else if constexpr (std::is_same_v<LeftT, std::shared_ptr<Array>>) {
-                        auto result_ptr = std::make_shared<Array>(); result_ptr->shape = l->shape;
-                        double scalar = to_double(r);
-                        for (const auto& elem : l->data) { result_ptr->data.push_back(op == Tokens::ID::C_PLUS ? to_double(elem) + scalar : to_double(elem) - scalar); }
-                        return result_ptr;
-                    }
-                    else if constexpr (std::is_same_v<RightT, std::shared_ptr<Array>>) {
-                        auto result_ptr = std::make_shared<Array>(); result_ptr->shape = r->shape;
-                        double scalar = to_double(l);
-                        for (const auto& elem : r->data) { result_ptr->data.push_back(op == Tokens::ID::C_PLUS ? scalar + to_double(elem) : scalar - to_double(elem)); }
-                        return result_ptr;
-                    }
+                    // Priority 5: Numeric + Numeric
                     else {
                         if constexpr (std::is_same_v<LeftT, double> || std::is_same_v<RightT, double>) {
                             double left_d = to_double(l);
@@ -1158,13 +1289,12 @@ BasicValue NeReLaBasic::parse_term() {
                         }
                         // Otherwise, perform integer math
                         else {
-                            int left_i = to_int(l);
-                            int right_i = to_int(r);
+                            long long left_i = to_int(l);
+                            long long right_i = to_int(r);
                             if (op == Tokens::ID::C_PLUS) return left_i + right_i;
                             else return left_i - right_i;
                         }
-                    }
-                    }, left, right);
+                    }                    }, left, right);
             }
         }
         else { break; }

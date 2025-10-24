@@ -234,7 +234,7 @@ int main() {
     return 0;
 }
 #else
-
+#ifndef XLSLIB
 int main(int argc, char* argv[]) {
     // Initialize COM for the current thread
     // COINIT_APARTMENTTHREADED for single-threaded apartment (most common for UI components like Excel)
@@ -314,15 +314,18 @@ int main(int argc, char* argv[]) {
             TextIO::print("? DAP Error: Launch failed. Shutting down."); TextIO::nl();
         }
 
-        dap_server.stop();
-
-        TextIO::print("\n--- ENDED (Press any key to exit) ---"); TextIO::nl();
+        TextIO::print("\n--- ENDED (Press any key to exit or 'i' to interpret) ---"); TextIO::nl();
 #if defined(_WIN32)      
-        _getch();
+        const char ch = _getch();
+        if (ch == 'i') 
+            interpreter.start();
 #elif defined(__EMSCRIPTEN__)        
 #else
-        getch();
+        const char ch = getch();
+        if (ch == 'i')
+            interpreter.start();
 #endif        
+        dap_server.stop();
     }
     else {
 
@@ -365,4 +368,5 @@ int main(int argc, char* argv[]) {
 #endif
     return 0;
 }
+#endif //  XLSLIB
 #endif

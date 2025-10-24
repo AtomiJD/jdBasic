@@ -166,7 +166,7 @@ void DAPHandler::process_command(const std::string& command_line) {
     }
     else if (command == "recompile") {
         int vs_code_current_line = -1; // Default to -1 (or 0) if no line is provided
-        send_output_message("recompile command: '" + args[0] + "'\n");
+        // send_output_message("recompile command: '" + args[0] + "'\n");
         if (!args.empty()) {
             try {
                 vs_code_current_line = std::stoi(args[0]);
@@ -176,11 +176,12 @@ void DAPHandler::process_command(const std::string& command_line) {
             }
         }
         on_recompile(vs_code_current_line);
+        send_stopped_message("goto", vm.runtime_current_line, vm.program_to_debug);
     }
     else if (command == "goto") {
         const std::string prefix = "goto ";
         std::string arguments = command_line.substr(prefix.length());
-        send_output_message("goto command: '" + arguments + "'\n");
+        // send_output_message("goto command: '" + arguments + "'\n");
         int vs_code_current_line = -1; // Default to -1 (or 0) if no line is provided
         if (!args.empty()) {
             try {
