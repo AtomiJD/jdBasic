@@ -86,8 +86,8 @@ namespace {
             else if (std::holds_alternative<double>(attr_value)) {
                 TF_SetAttrFloat(desc, attr_name.c_str(), static_cast<float>(to_double(attr_value)));
             }
-            else if (std::holds_alternative<int>(attr_value)) {
-                TF_SetAttrInt(desc, attr_name.c_str(), std::get<int>(attr_value));
+            else if (std::holds_alternative<long long>(attr_value)) {
+                TF_SetAttrInt(desc, attr_name.c_str(), std::get<long long>(attr_value));
             }
             // +++ NEW: HANDLE 'shape' ATTRIBUTE (as an Array) +++
             else if (std::holds_alternative<std::shared_ptr<Array>>(attr_value)) {
@@ -100,7 +100,7 @@ namespace {
                 }
                 TF_SetAttrShape(desc, attr_name.c_str(), dims.data(), dims.size());
             }
-            // +++ NEW: HANDLE 'value' ATTRIBUTE (as a Tensor Handle) for Const ops +++
+            // HANDLE 'value' ATTRIBUTE (as a Tensor Handle) for Const ops
             else if (std::holds_alternative<std::shared_ptr<OpaqueHandle>>(attr_value)) {
                 const auto& handle = std::get<std::shared_ptr<OpaqueHandle>>(attr_value);
                 if (handle && handle->type_name == "TF_TENSOR") {
@@ -130,7 +130,7 @@ TF_Tensor* BasicArrayToTensor(NeReLaBasic& vm, const std::shared_ptr<Array>& arr
         return nullptr;
     }
 
-    // --- FIX: Correctly use the shape from the jdBasic Array ---
+    // Correctly use the shape from the jdBasic Array
     std::vector<int64_t> dims;
     dims.reserve(arr_ptr->shape.size());
     for (size_t d : arr_ptr->shape) {
