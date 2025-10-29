@@ -1,5 +1,5 @@
 ' Integer literal width + TYPEOF
-x = 9223372036854775806
+x = 9223372036854775806 '
 PRINT TYPEOF(x), x
 
 ' Bitwise should stay integer everywhere

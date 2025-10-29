@@ -371,9 +371,12 @@ doc/*_old.*
 fluppi/
 jdb/_*.*
 libs/tf
+libs/libtorch
 jdb/fonts
 jdb/music
 jdb/intern
 plugins/numerics/eigen-3.4.0
 plugins/numerics/x65
+plugins/pytorchfunc
+.vscode
 

@@ -1,7 +1,7 @@
-' ==========================================================
+    ' ==========================================================
 ' == jdBasic Console Markdown Browser
 ' == Renders local or web markdown files and allows navigating
-' == between them via links. With jdBasic syntax highlighting.
+' == between them via links.
 ' ==========================================================
 
 ' --- ANSI STYLE ENUM ---
@@ -32,102 +32,18 @@ COLOR_CODE_BLOCK = 13
 COLOR_BLOCKQUOTE = 10
 COLOR_LIST = 7
 COLOR_HR = 8
-COLOR_LINK = 11        ' Changed for better visibility
-COLOR_LINK_SELECTED = 15 ' Bright White
-COLOR_LINKBG = 4       ' Dark Red for selected background
+COLOR_LINK = 4
+COLOR_LINK_SELECTED = 12
+COLOR_LINKBG = 8
 
-' --- SYNTAX HIGHLIGHTING COLORS ---
-COLOR_JDB_DEFAULT = 13 ' Light Magenta
-COLOR_JDB_KEYWORD = 11 ' Light Cyan
-COLOR_JDB_STRING = 10  ' Light Green
-COLOR_JDB_COMMENT = 8  ' Dark Gray
-COLOR_JDB_NUMBER = 9   ' Light Blue
-
-' --- GLOBAL VARIABLES ---
+' --- GLOBAL VARIABLES FOR INTERACTIVITY ---
 Links = []
 DIM current_link_index = -1
-DIM jdBasicKeywords AS MAP
-
-' ==========================================================
-' == HELPER SUB: INITKEYWORDMAP()
-' == Populates a map with jdBasic keywords for fast lookup.
-' ==========================================================
-SUB InitKeywordMap()
-    keywordList = SPLIT("IF,THEN,ELSE,ENDIF,FOR,TO,STEP,NEXT,EACH,IN,DO,LOOP,WHILE,SUB,ENDSUB,FUNC,ENDFUNC,RETURN,PRINT,INPUT,DIM,AS,STRING,INTEGER,DOUBLE,MAP,ARRAY,TRUE,FALSE,SWITCH,CASE,DEFAULT,ENDSWITCH,GOTO,CLS,COLOR", ",")
-    FOR EACH kw IN keywordList
-        jdBasicKeywords{TRIM$(kw)} = TRUE
-    NEXT
-ENDSUB
-
-' ==========================================================
-' == HELPER SUB: HIGHLIGHTJDBASIC(line$)
-' == A simple tokenizer to apply syntax highlighting to a line of jdBasic code.
-' ==========================================================
-SUB HighlightJdBasic(line$)
-    PRINT "    "; ' Indent the code block line
-    
-    buffer$ = ""
-    in_string = FALSE
-    
-    FOR i = 0 TO LEN(line$) - 1
-        char$ = MID$(line$, i, 1)
-
-        IF char$ = "'" AND NOT in_string THEN
-            PrintToken(buffer$)
-            buffer$ = ""
-            COLOR COLOR_JDB_COMMENT, 0
-            PRINT MID$(line$, i);
-            GOTO end_of_line
-        ENDIF
-
-        IF char$ = CHR$(34) THEN
-            PrintToken(buffer$)
-            buffer$ = ""
-            in_string = NOT in_string
-            COLOR COLOR_JDB_STRING, 0
-            PRINT CHR$(34);
-            CONTINUE
-        ENDIF
-
-        IF in_string THEN
-            PRINT char$;
-            CONTINUE
-        ENDIF
-
-        IF INSTR$("=+-*/\^()[]{},<> ", char$) >= 0 THEN
-            PrintToken(buffer$)
-            buffer$ = ""
-            COLOR COLOR_JDB_DEFAULT, 0
-            PRINT char$;
-        ELSE
-            buffer$ = buffer$ + char$
-        ENDIF
-    NEXT i
-
-    PrintToken(buffer$)
-
-end_of_line:
-    COLOR COLOR_DEFAULT, 0
-    PRINT
-ENDSUB
-
-' Helper sub for the highlighter
-SUB PrintToken(token$)
-    IF token$ = "" THEN RETURN
-    ucase_token$ = UCASE$(token$)
-    
-    IF MAP.EXISTS(jdBasicKeywords, ucase_token$) THEN
-        COLOR COLOR_JDB_KEYWORD, 0
-    ELSEIF VAL(token$) <> 0 OR token$ = "0" THEN
-        COLOR COLOR_JDB_NUMBER, 0
-    ELSE
-        COLOR COLOR_JDB_DEFAULT, 0
-    ENDIF
-    PRINT token$;
-ENDSUB
 
 ' ==========================================================
 ' == HELPER SUB: PROCESSINLINES(line$)
+' == This sub handles inline formatting. It returns a map containing
+' == the formatted string and an array of extracted link URLs.
 ' ==========================================================
 FUNC ProcessInlines(line$)
     local_links = []
@@ -165,6 +81,8 @@ ENDSUB
 
 ' ==========================================================
 ' == HELPER SUB: RENDERANDCOLLECT(line_info)
+' == Prints a formatted line character by character, collecting
+' == link positions as it goes.
 ' ==========================================================
 SUB RenderAndCollect(line_info)
     formatted_line$ = line_info{"text"}
@@ -201,11 +119,11 @@ ENDSUB
 
 ' ==========================================================
 ' == MAIN SUB: RENDERMARKDOWN(markdown_text$)
+' == Takes a block of Markdown text and prints it formatted.
 ' ==========================================================
 SUB RenderMarkdown(markdown_text$)
     lines = SPLIT(markdown_text$, CHR$(10))
     in_code_block = FALSE
-    highlight_jdbasic = FALSE
     Links = [] ' Clear links for the new page
     current_link_index = -1
 
@@ -213,27 +131,14 @@ SUB RenderMarkdown(markdown_text$)
         trimmed_line$ = TRIM$(line)
         
         IF 3 / trimmed_line$ = "```" THEN
-            IF in_code_block THEN ' Closing a block
-                in_code_block = FALSE
-                highlight_jdbasic = FALSE
-            ELSE ' Opening a new block
-                in_code_block = TRUE
-                lang$ = LCASE$(TRIM$(MID$(trimmed_line$, 3)))
-                IF lang$ = "jdbasic" OR lang$ = "basic" THEN
-                    highlight_jdbasic = TRUE
-                ENDIF
-            ENDIF
+            in_code_block = NOT in_code_block
             GOTO outi
         ENDIF
 
         IF in_code_block THEN
-            IF highlight_jdbasic THEN
-                HighlightJdBasic(line)
-            ELSE
-                COLOR COLOR_CODE_BLOCK, 0
-                PRINT "    "; line
-                COLOR COLOR_DEFAULT, 0
-            ENDIF
+            COLOR COLOR_CODE_BLOCK, 0
+            PRINT "    "; line
+            COLOR COLOR_DEFAULT, 0
             GOTO outi
         ENDIF
         
@@ -299,35 +204,41 @@ SUB SelectNextLink()
     HighlightLink current_link_index, TRUE 
 ENDSUB
 
+' Decides whether to browse to a new .md file or open an external link.
+' Returns the new .md file path, or "" if no navigation occurs.
 FUNC OpenSelectedLink()
     IF current_link_index < 0 OR LEN(Links) = 0 THEN RETURN ""
 
     url$ = Links[current_link_index][0]{"url"}
     
+    ' Check if it's a markdown file to browse internally
     IF LCASE$(RIGHT$(url$, 3)) = ".md" THEN
         RETURN url$
     ENDIF
 
+    ' It's an external link, open it with the system
     os$ = OS.GETOS()
     LOCATE GETY() + 2, 1
     PRINT "Opening external link: " + url$
     
-    TRY
-        IF os$ = "WINDOWS" THEN 
-            OS.EXEC("start", [url$])
-        ELSEIF os$ = "MACOS" THEN 
-            OS.EXEC("open", [url$])
-        ELSE 
-            OS.EXEC("xdg-open", [url$])
-        ENDIF
-    CATCH
-        PRINT "Failed to open link. Error: "; ERRMSG$
-        SLEEP 2000
-    ENDTRY
+    ' TRY
+    '     IF os$ = "WINDOWS" THEN 
+    '         OS.EXEC("start", [url$])
+    '     ELSEIF os$ = "MACOS" THEN 
+    '         OS.EXEC("open", [url$])
+    '     ELSE 
+    '         OS.EXEC("xdg-open", [url$])
+    '     ENDIF
+    ' CATCH
+    '     PRINT "Failed to open link. Error: "; ERRMSG$
+    '     SLEEP 2000 ' Show error for a moment
+    ' ENDTRY
     
-    RETURN ""
+    RETURN "" ' Indicate that no internal navigation should happen
 ENDFUNC
 
+' Handles the user input loop after a page is rendered.
+' Returns the next action: a new URL to browse, or "quit".
 FUNC InteractionLoop()
     IF LEN(Links) = 0 THEN
         PRINT "No links on this page. Press any key to quit."
@@ -338,7 +249,8 @@ FUNC InteractionLoop()
     orig_y = GETY()
     LOCATE orig_y + 1, 1
     PRINT "TAB: cycle links, ENTER: open, ESC/Q: quit."
-    SelectNextLink()
+    
+    SelectNextLink() ' Highlight the first link
     
     DO
         key$ = WAITKEY$()
@@ -349,7 +261,7 @@ FUNC InteractionLoop()
                 next_action$ = OpenSelectedLink()
                 IF next_action$ <> "" THEN
                     LOCATE orig_y + 1, 1: PRINT " " * 80
-                    RETURN next_action$
+                    RETURN next_action$ ' Return new .md file to browse
                 ENDIF
             CASE 27 ' ESC
                 RETURN "quit"
@@ -362,11 +274,10 @@ ENDFUNC
 ' ==                 MAIN BROWSER LOOP
 ' ==========================================================
 current_file$ = "test.md" ' Set your starting file here
-InitKeywordMap() ' Initialize the keyword map once
 CLS
-
 DO
     content$ = ""
+    ' --- 1. Load the content of the markdown file ---
     IF LEFT$(LCASE$(current_file$), 4) = "http" THEN
         TRY
             PRINT "Fetching "; current_file$; "..."
@@ -376,7 +287,7 @@ DO
             PRINT "Error fetching URL: "; current_file$
             PRINT ERRMSG$
             SLEEP 3000
-            current_file$ = "quit"
+            current_file$ = "quit" ' Exit on error
         ENDTRY
     ELSE
         TRY
@@ -386,18 +297,20 @@ DO
             PRINT "Error reading local file: "; current_file$
             PRINT ERRMSG$
             SLEEP 3000
-            current_file$ = "quit"
+            current_file$ = "quit" ' Exit on error
         ENDTRY
     ENDIF
 
+    ' --- 2. If content loaded, render it and start interaction ---
     IF current_file$ <> "quit" THEN
         CLS
         RenderMarkdown(content$)
         current_file$ = InteractionLoop()
     ENDIF
+
 LOOP UNTIL current_file$ = "quit"
 
-' --- Cleanup ---
+' --- 3. Cleanup ---
 CLS
 COLOR COLOR_DEFAULT, 0
 PRINT "Markdown browser closed."
