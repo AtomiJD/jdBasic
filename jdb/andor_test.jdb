@@ -17,7 +17,7 @@ MyMap = NULL
 
 ' ORELSE works on scalars and short-circuits to prevent an error
 ' This works because (2 > 1) is TRUE, so the right side is never checked.
-STOP
+
 IF (2 > 1) ORELSE MAP.EXISTS(MyMap, "key") THEN
     PRINT "ORELSE short-circuited correctly!"
 ENDIF

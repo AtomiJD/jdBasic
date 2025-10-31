@@ -321,7 +321,7 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
             std::wstring word = wline.substr(start, i - start);
             std::string ascii_word = wstring_to_string(word);
             std::transform(ascii_word.begin(), ascii_word.end(), ascii_word.begin(), ::toupper);
-            WORD kwAttr = KeywordRepository::is_keyword(ascii_word) ? (FOREGROUND_RED | FOREGROUND_INTENSITY) : attr;
+            WORD kwAttr = KeywordRepository::is_keyword(ascii_word) ? (FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY) : attr;
             for (size_t j = 0; j < word.length() && col < screen_cols; ++j, ++col) {
                 buffer[col].Char.UnicodeChar = word[j];
                 buffer[col].Attributes = kwAttr;
