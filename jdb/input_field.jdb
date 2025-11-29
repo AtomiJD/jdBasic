@@ -21,7 +21,7 @@ DIM G_INPUT_COMPLETE AS BOOLEAN
 
 FUNC JDINPUT$(X, Y, Mask$, Caption$)
     ' --- 1. Turn on the system cursor for the input operation ---
-    CURSOR 1
+    CURSOR TRUE
 
     ' --- 2. Parse the Mask and Initialize Global State ---
     MaskInfo = ParseMask(Mask$)
@@ -42,11 +42,11 @@ FUNC JDINPUT$(X, Y, Mask$, Caption$)
 
     ' --- 5. Wait for Completion ---
     DO
-        SLEEP 50 ' Yield CPU time
+        SLEEP 100 ' Yield CPU time
     LOOP UNTIL G_INPUT_COMPLETE
 
     ' --- 6. Cleanup and Return ---
-    CURSOR 0           ' Hide the cursor again
+    CURSOR FALSE           ' Hide the cursor again
     
     ' Erase the input field line from the screen
     LOCATE G_POS_Y, G_POS_X
@@ -92,8 +92,8 @@ SUB HandleKey(KeyData)
         IF LEN(G_BUFFER$) < G_MAX_LENGTH AND KeyAsc >= 32 AND KeyAsc <= 126 THEN
             MaskChar$ = MID$(G_MASK_CHARS$, G_CURSOR_POS + 1, 1)
             IsAllowed = FALSE
-            IF MaskChar$ = "@" AND INSTR$("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 ", UCASE$(KeyChar$)) > 0 THEN IsAllowed = TRUE
-            IF MaskChar$ = "#" AND INSTR$("0123456789", KeyChar$) > 0 THEN IsAllowed = TRUE
+            IF MaskChar$ = "@" AND INSTR$("ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 ", UCASE$(KeyChar$)) >= 0 THEN IsAllowed = TRUE
+            IF MaskChar$ = "#" AND INSTR$("0123456789", KeyChar$) >= 0 THEN IsAllowed = TRUE
             IF MaskChar$ = KeyChar$ THEN IsAllowed = TRUE
 
             IF IsAllowed THEN
@@ -112,12 +112,13 @@ SUB DrawInputField()
     ' It no longer draws a manual cursor.
     
     ' Go to the start of the line to redraw it
+    CURSOR FALSE
     LOCATE G_POS_Y, G_POS_X
     
     Display$ = G_CAPTION$ + "["
     FOR i = 0 TO G_MAX_LENGTH - 1
         IF i < LEN(G_BUFFER$) THEN
-            Display$ = Display$ + MID$(G_BUFFER$, i + 1, 1)
+            Display$ = Display$ + MID$(G_BUFFER$, i, 1)
         ELSE
             Display$ = Display$ + " " ' Use space for empty chars
         ENDIF
@@ -128,15 +129,16 @@ SUB DrawInputField()
     
     ' --- NEW: Position the actual system cursor ---
     ' Calculate the target column for the cursor
-    CursorCol = G_POS_X + LEN(G_CAPTION$) + 1 + G_CURSOR_POS
+    CursorCol = G_POS_X + LEN(G_CAPTION$) + G_CURSOR_POS + 1
     LOCATE G_POS_Y, CursorCol
+    CURSOR TRUE
 ENDSUB
 
 FUNC ParseMask(Mask$)
     ' This function analyzes the mask string and returns a Map.
     Result = {}
     
-    IF INSTR$(Mask$, ":") > 0 THEN
+    IF INSTR$(Mask$, ":") >= 0 THEN
         Parts = SPLIT(Mask$, ":")
         Length = VAL(Parts[1])
         CharType$ = Parts[0]

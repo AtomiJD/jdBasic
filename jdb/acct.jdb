@@ -1,0 +1,160 @@
+REM --- jdBasic MS Access SQL Executor ---
+REM This program prompts for a database path and an SQL query,
+REM executes the query, and displays the results.
+
+DIM data = []
+DIM fields = []
+
+
+CLS
+PRINT "--- jdBasic MS Access SQL Executor ---"
+PRINT
+PRINT "NOTE: Requires the 64-bit 'Microsoft Access Database Engine' driver."
+PRINT
+
+' --- 1. Get User Input ---
+DIM db_path$
+' INPUT "Enter path to Access DB (e.g., C:\Data\Orders.accdb): ", db_path$
+
+db_path$ = "U:\v-m-s\Geldlogistik\Geldlogistik.accdb"
+
+IF db_path$ = "" THEN
+    PRINT "No database path provided. Exiting."
+    END
+ENDIF
+
+PRINT
+PRINT "Enter your SQL query (end with a blank line):"
+DIM sql_query$
+sql_query$ = ""
+
+INPUT "> "; line$
+sql_query$ = line$
+
+IF TRIM$(sql_query$) = "" THEN
+    PRINT "No SQL query provided. Exiting."
+    END
+ENDIF
+
+PRINT
+PRINT "Executing..."
+
+' --- 2. Execute the Query ---
+' Call our helper function and get the result
+ExecuteSQL sql_query$
+
+' --- 3. Display the Result ---
+PRINT "----------------------------------------"
+
+SWITCH TYPEOF(data)
+    CASE "ARRAY"
+        ' This was a SELECT query that returned data
+        PRINT "--- Query Successful (SELECT) ---"
+        IF LEN(data) = 0 THEN
+            PRINT "(Query returned 0 rows)"
+        ELSE
+            PRINT "Found " + LEN(data) + " rows:"
+            ' FRMV$ is the best way to print an array of maps
+            PRINT FRMV$(data)
+        ENDIF
+        
+    CASE "MAP"
+        ' This was an action query (INSERT/UPDATE) or an error
+        IF MAP.EXISTS(data, "status") AND data{"status"} = "OK" THEN
+            PRINT "--- Query Successful (Action) ---"
+            PRINT "Records Affected: " + result{"records_affected"}
+        ELSEIF MAP.EXISTS(data, "status") AND data{"status"} = "Error"
+            PRINT "--- Query Failed ---"
+            PRINT "Line: " + data{"line"}
+            PRINT "Error: " + data{"message"}
+        ELSE
+            PRINT "--- Unknown Result ---"
+            PRINT data
+        ENDIF
+        
+    DEFAULT
+        PRINT "--- Unknown Error ---"
+        PRINT "Received unexpected result type: " + TYPEOF(data)
+ENDSWITCH
+PRINT "----------------------------------------"
+
+SUB ExecuteSQL(sql_query$)
+    DIM conn 
+    DIM rs 
+    DIM conn_str$
+    
+    TRY
+        ' 1. Create COM objects
+        conn = CREATEOBJECT("ADODB.Connection")
+        conn_str$ = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + db_path$
+        
+        ' 2. Open the connection
+        conn.Open(conn_str$)
+
+        ' 3. Check if it's a SELECT or an Action query
+        IF UCASE$(LEFT$(TRIM$(sql_query$), 6)) = "SELECT" THEN
+            ' --- This is a SELECT query ---
+            rs = CREATEOBJECT("ADODB.Recordset")
+            rs.Open(sql_query$, conn)
+
+            IF rs.EOF THEN
+                ' Valid query, but no results
+                RETURN []
+            ENDIF
+
+            ' Get field names (headers) from the recordset
+            FOR i = 0 TO rs.Fields.Count - 1
+                fields = APPEND(fields, rs.Fields(i).Name)
+            NEXT i
+
+            ' Loop through records 
+            data = []
+            rows = 0
+            DO WHILE NOT rs.EOF
+                row_map = []
+                FOR i = 0 TO LEN(fields) - 1
+                    row_map = APPEND(row_map, rs.Fields(fields[i]).Value)
+                NEXT i
+                ' Add the completed row map to our result array
+                data = APPEND(data, row_map)
+                rows = rows + 1
+                rs.MoveNext()
+            LOOP
+            data = reshape(data,[rows,rs.Fields.Count])
+
+            
+        ELSE
+            ' --- This is an Action query (INSERT, UPDATE, DELETE) ---
+            DIM records_affected
+            ' conn.Execute returns the number of records affected
+            conn.Execute(sql_query$, records_affected)
+            
+            ' For action queries, we'll return a status map
+            data = {"status": "OK", "records_affected": records_affected}
+        ENDIF
+
+    CATCH
+        ' If anything fails, return an error map
+        DIM error_map AS MAP
+        error_map{"status"} = "Error"
+        error_map{"line"} = ERL
+        error_map{"message"} = ERRMSG$
+        RETURN error_map
+        
+    FINALLY
+        ' This block *always* runs, ensuring we clean up COM objects
+        ' to prevent file locking and memory leaks.
+        
+        ' Check if the object was created before trying to close it
+        IF TYPEOF(rs) = "COMOBJECT" THEN
+            IF rs.State = 1 THEN rs.Close() ' 1 = adStateOpen
+        ENDIF
+        IF TYPEOF(conn) = "COMOBJECT" THEN
+            IF conn.State = 1 THEN conn.Close()
+        ENDIF
+        
+        ' Release the objects
+        rs = NULL
+        conn = NULL
+    ENDTRY
+ENDSUB

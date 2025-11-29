@@ -2,7 +2,7 @@
 
 #include "Types.hpp"
 #include <string>
-
+#include "NeReLaBasic.hpp"
 // Forward-declare the main interpreter class and BasicValue struct
 // to avoid including the full, heavy headers in this lightweight interface.
 class NeReLaBasic;
@@ -12,6 +12,7 @@ class NeReLaBasic;
 using ErrorSetFunc = void(*)(unsigned short, unsigned short, const std::string&);
 using ToUpperFunc = std::string(*)(std::string);
 using ToStringFunc = std::string(*)(const BasicValue&);
+using ExecSyncFunc = BasicValue(NeReLaBasic::*)(const NeReLaBasic::FunctionInfo&, const std::vector<BasicValue>&);
 
 using NativeDLLFunction = void(*)(NeReLaBasic&, const std::vector<BasicValue>&, BasicValue*);
 /**
@@ -24,5 +25,6 @@ struct ModuleServices {
     ErrorSetFunc error_set;
     ToUpperFunc to_upper;
     ToStringFunc to_string;
+    ExecSyncFunc exec_sync_func;
     // If you get more linker errors for other functions, add their pointer types here.
 };

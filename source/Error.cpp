@@ -135,8 +135,10 @@ void Error::print() {
         {
             message = "Unknown Error";
         }
-
-        TextIO::print("? Error #" + std::to_string(current_error_code) + "," + message);
+        TextIO::setColor(1, 0);
+        TextIO::print("Error #" + std::to_string(current_error_code) + ": ");
+        TextIO::setColor(2, 0);
+        TextIO::print(message);
         if (error_line_number > 0) {
             TextIO::print(" IN LINE " + std::to_string(error_line_number));
         }

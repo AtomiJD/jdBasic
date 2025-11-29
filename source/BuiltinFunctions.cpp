@@ -828,8 +828,8 @@ BasicValue builtin_help(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         TextIO::print("Available commands and functions. Use HELP \"command\" for details."); TextIO::nl(); TextIO::nl();
         std::string line;
         int command_count = 0;
-        const int commands_per_line = 5;
-        const int column_width = 24; // Width for each column
+        const int commands_per_line = 3;
+        const int column_width = 30; // Width for each column
 
         while (std::getline(help_file, line)) {
             if (!line.empty() && line[0] == '[') {

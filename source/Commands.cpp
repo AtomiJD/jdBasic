@@ -661,22 +661,29 @@ void Commands::do_input(NeReLaBasic& vm, const std::string& var_name) {
 #else
 
 void Commands::do_input(NeReLaBasic& vm) {
+
+    long start_pcode = vm.pcode;
+    bool has_prompt = false;
+    BasicValue prompt_val;
+
+    prompt_val = vm.evaluate_expression();
+
     // Peek at the next token to see if there is an optional prompt string.
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-    if (next_token == Tokens::ID::STRING) {
+    if (next_token == Tokens::ID::C_SEMICOLON || next_token == Tokens::ID::C_COMMA) {
         // --- Case 1: Handle a prompt string ---
-        BasicValue prompt = vm.evaluate_expression();
+
         if (Error::get() != 0) return;
-        TextIO::print(to_string(prompt));
+        TextIO::print(to_string(prompt_val));
 
         // After the prompt, there MUST be a separator (',' or ';').
-        Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-        if (separator == Tokens::ID::C_SEMICOLON) {
+
+        if (next_token == Tokens::ID::C_SEMICOLON) {
             vm.pcode++; // Consume the semicolon
             TextIO::print(" "); // Suppress the '?' and print a space
         }
-        else if (separator == Tokens::ID::C_COMMA) {
+        else if (next_token == Tokens::ID::C_COMMA) {
             vm.pcode++; // Consume the comma
             TextIO::print("? "); // Print the '?'
         }
@@ -687,7 +694,8 @@ void Commands::do_input(NeReLaBasic& vm) {
         }
     }
     else {
-        // --- Case 2: No prompt string ---l
+        // --- Case 2: No prompt string ---
+        vm.pcode = start_pcode;
         TextIO::print("? ");
     }
 
@@ -715,6 +723,7 @@ void Commands::do_input(NeReLaBasic& vm) {
 #endif
 
     // Store the value, converting type if necessary.
+    // JDTODO: Check the type of the var and handle string, date, map, array, etc.!
     if (var_name.back() == '$') {
         // It's a string variable, do a direct assignment.
         set_variable(vm, var_name, user_input_line);

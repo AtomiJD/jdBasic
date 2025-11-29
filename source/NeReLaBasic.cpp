@@ -269,6 +269,7 @@ bool NeReLaBasic::load_dynamic_module(const std::string& module_path) {
     services.error_set = &Error::set;
     services.to_upper = &to_upper; // This assumes to_upper is a free function.
     services.to_string = &to_string;
+    services.exec_sync_func = &NeReLaBasic::execute_synchronous_function;
 
     // --- Call the registration function, passing the services ---
     register_func(this, &services);

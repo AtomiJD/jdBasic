@@ -1,0 +1,423 @@
+' =================================================================
+' == jdBasic MS Access Tool (Interactive Shell)
+' =================================================================
+
+' --- Global Variables ---
+DIM CURRENT_DB$ = ""
+DIM DATA = []
+DIM FIELDS = []
+
+' =================================================================
+' == MAIN LOOP
+' =================================================================
+SUB REPL()
+    DO
+        PRINT
+        ' Show prompt with current DB name or "Disconnected"
+        prompt$ = "ACCT"
+        IF CURRENT_DB$ <> "" THEN 
+            ' Extract filename for shorter prompt
+            parts = SPLIT(CURRENT_DB$, "\")
+            prompt$ = parts[LEN(parts)-1]
+        ELSE
+            prompt$ = "(No DB)"
+        ENDIF
+        
+        INPUT prompt$ + "> ", input_line$
+        
+        input_line$ = TRIM$(input_line$)
+        IF input_line$ = "" THEN GOTO SKIP_LOOP
+
+        ' Parse Command
+        first_space = INSTR(input_line$, " ")
+        IF first_space > 0 THEN
+            cmd$ = LCASE$(LEFT$(input_line$, first_space))
+            arg$ = MID$(input_line$, first_space + 1)
+        ELSE
+            cmd$ = LCASE$(input_line$)
+            arg$ = ""
+        ENDIF
+
+        ' Command Dispatch
+        SWITCH cmd$
+            CASE "connect"
+                CONNECT arg$
+            CASE "help"
+                HELPME
+            CASE "tables"
+                CMD_GET_SCHEMA "TABLE"
+            CASE "queries"
+                CMD_GET_SCHEMA "VIEW"
+            CASE "showref"
+                SHOWREF
+            CASE "export"
+                EXPORT arg$
+            CASE "sql"
+                EXEC arg$
+            CASE "exec"
+                EXEC arg$
+            CASE "cls"
+                CLS
+                WELCOME
+            CASE "exit"
+                PRINT "Goodbye."
+                END
+            CASE "quit"
+                PRINT "Goodbye."
+                END
+            DEFAULT
+                ' Treat unknown commands as direct SQL if connected
+                IF CURRENT_DB$ <> "" THEN
+                    EXEC input_line$
+                ELSE
+                    PRINT "Unknown command: " + cmd$
+                    PRINT "Type 'help' for a list of commands."
+                ENDIF
+        ENDSWITCH
+
+        SKIP_LOOP:
+    LOOP UNTIL 1=2
+ENDSUB
+
+' =================================================================
+' == COMMAND SUBROUTINES
+' =================================================================
+
+SUB WELCOME()
+    PRINT "--------------------------------------------------------"
+    PRINT "  jdBasic Access Database Tool"
+    PRINT "--------------------------------------------------------"
+    PRINT "  Current Database: "; 
+    IF CURRENT_DB$ = "" THEN
+        PRINT "NONE" 
+    ELSE 
+        PRINT CURRENT_DB$
+    ENDIF
+    PRINT
+    PRINT "  Available Commands:"
+    PRINT "    repl           : Start the REPL"
+    PRINT "    connect <path> : Connect to an .accdb file"
+    PRINT "    tables         : List all user tables"
+    PRINT "    queries        : List all stored queries"
+    PRINT "    showref        : Show linked table references"
+    PRINT "    exec <query>   : Execute a SQL query (or just type the query)"
+    PRINT "    export <file>  : Export last result to CSV"
+    PRINT "    help           : Show this menu"
+    PRINT "    exit           : Quit program"
+    PRINT "--------------------------------------------------------"
+ENDSUB
+
+SUB HELPME()
+    PRINT_WELCOME
+ENDSUB
+
+SUB CONNECT(path$)
+    IF path$ = "" THEN
+        PRINT "Usage: connect <path_to_accdb>"
+        RETURN
+    ENDIF
+    
+    ' Check if file exists using DIR array check
+    ' files = DIR$(path$)
+    ' IF LEN(files) = 0 THEN
+    '     PRINT "Error: File not found: " + path$
+    '     RETURN
+    ' ENDIF
+
+    ' Test connection
+    TRY
+        conn = CREATEOBJECT("ADODB.Connection")
+        conn_str$ = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + path$
+        conn.Open(conn_str$)
+        conn.Close()
+        
+        CURRENT_DB$ = path$
+        PRINT "Connected successfully to: " + CURRENT_DB$
+    CATCH
+        PRINT "Connection failed!"
+        PRINT "Error: " + ERRMSG$
+    ENDTRY
+ENDSUB
+
+SUB TABLES()
+    CMD_GET_SCHEMA "TABLE"
+ENDSUB
+
+SUB QUERIES()
+    CMD_GET_SCHEMA "VIEW"
+ENDSUB
+
+SUB SHOWREF()
+    IF CURRENT_DB$ = "" THEN
+        PRINT "Not connected."
+        RETURN
+    ENDIF
+
+    DATA = []
+    FIELDS = ["NAME", "SOURCE_DB", "REMOTE_NAME"]
+
+    DIM conn 
+    DIM cat
+    DIM tbl
+
+    TRY
+        conn = CREATEOBJECT("ADODB.Connection")
+        conn_str$ = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + CURRENT_DB$
+        conn.Open(conn_str$)
+
+        PRINT "Analyzing table links via ADOX (this may take a moment)..."
+        
+        ' Create ADOX Catalog to access link properties
+        cat = CREATEOBJECT("ADOX.Catalog")
+        cat.ActiveConnection = conn
+        
+        count = cat.Tables.Count
+        
+        FOR i = 0 TO count - 1
+            tbl = cat.Tables(i)
+            tType$ = tbl.Type
+            
+            IF tType$ = "LINK" OR tType$ = "PASS-THROUGH" THEN
+                tName$ = tbl.Name
+                tSource$ = ""
+                tRemote$ = ""
+                
+                ' Access dynamic properties available on Linked Tables
+                TRY
+                    tSource$ = tbl.Properties("Jet OLEDB:Link Datasource").Value
+                    tRemote$ = tbl.Properties("Jet OLEDB:Remote Table Name").Value
+                CATCH
+                    tSource$ = "(ODBC/Complex Link)"
+                ENDTRY
+                
+                row = [tName$, tSource$, tRemote$]
+                DATA = APPEND(DATA, row)
+            ENDIF
+        NEXT i
+        
+        ' Clean up COM objects
+        cat = NULL
+        conn.Close()
+        conn = NULL
+
+        IF LEN(DATA)[0] > 0 THEN
+            ' Reshape flat array to 2D
+            rows = LEN(DATA)[0] / 3
+            DATA = RESHAPE(DATA, [rows, 3])
+            
+            PRINT "--------------------------------------------------------"
+            PRINT FORMAT$("{:<25} | {:<40} | {}", "LOCAL NAME", "SOURCE DB", "REMOTE TABLE")
+            PRINT "--------------------------------------------------------"
+            FOR r = 0 TO rows - 1
+                l_name$ = DATA[r, 0]
+                s_db$ = DATA[r, 1]
+                r_name$ = DATA[r, 2]
+                PRINT FORMAT$("{:<25} | {:<40} | {}", l_name$, s_db$, r_name$)
+            NEXT r
+            PRINT "--------------------------------------------------------"
+        ELSE
+            PRINT "No linked tables found."
+        ENDIF
+
+    CATCH
+        PRINT "ADOX Error: " + ERRMSG$
+    FINALLY
+        cat = NULL
+        conn = NULL
+    ENDTRY
+ENDSUB
+
+' =================================================================
+' == SCHEMA RETRIEVAL 
+' =================================================================
+SUB CMD_GET_SCHEMA(filter_type$)
+    IF CURRENT_DB$ = "" THEN
+        PRINT "Not connected."
+        RETURN
+    ENDIF
+
+    DATA = []
+    FIELDS = ["NAME", "TYPE", "DATE_CREATED", "DATE_MODIFIED"]
+
+    DIM conn 
+    DIM rs_schema
+
+    TRY
+        conn = CREATEOBJECT("ADODB.Connection")
+        conn_str$ = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + CURRENT_DB$
+        conn.Open(conn_str$)
+
+        PRINT "Fetching schema info (" + filter_type$ + ")..."
+        
+        ' OpenSchema(20) corresponds to adSchemaTables
+        rs_schema = conn.OpenSchema(20)
+
+        row_count = 0
+        
+        DO WHILE NOT rs_schema.EOF
+            tbl_name$ = rs_schema.Fields("TABLE_NAME").Value
+            tbl_type$ = rs_schema.Fields("TABLE_TYPE").Value
+            
+            should_add = FALSE
+            
+            IF filter_type$ = "TABLE" AND tbl_type$ = "TABLE" THEN should_add = TRUE
+            IF filter_type$ = "VIEW" AND tbl_type$ = "VIEW" THEN should_add = TRUE
+            IF filter_type$ = "LINK" AND (tbl_type$ = "LINK" OR tbl_type$ = "PASS-THROUGH") THEN should_add = TRUE
+            
+            IF should_add THEN
+                ' Note: Schema dates might be null depending on the driver
+                row_array = [tbl_name$, tbl_type$, "", ""]
+                DATA = APPEND(DATA, row_array)
+                row_count = row_count + 1
+            ENDIF
+            
+            rs_schema.MoveNext()
+        LOOP
+
+        rs_schema.Close()
+        conn.Close()
+
+        IF row_count > 0 THEN
+            DATA = RESHAPE(DATA, [row_count, 4])
+            PRINT "--------------------------------------------------------"
+            PRINT "NAME                 | TYPE"
+            PRINT "--------------------------------------------------------"
+            ' Simple print loop for immediate feedback
+            FOR i = 0 TO row_count - 1
+                name_val$ = DATA[i, 0]
+                type_val$ = DATA[i, 1]
+                PRINT FORMAT$("{:<20} | {}", name_val$, type_val$)
+            NEXT i
+            PRINT "--------------------------------------------------------"
+            PRINT row_count; " objects found."
+        ELSE
+            PRINT "No objects found matching type: " + filter_type$
+        ENDIF
+
+    CATCH
+        PRINT "Schema Error: " + ERRMSG$
+    FINALLY
+        conn = NULL
+        rs_schema = NULL
+    ENDTRY
+ENDSUB
+
+SUB EXPORT(filename$)
+    IF LEN(DATA) = 0 THEN
+        PRINT "No data to export. Run a query first."
+        RETURN
+    ENDIF
+    
+    IF filename$ = "" THEN
+        PRINT "Usage: export <filename.csv>"
+        RETURN
+    ENDIF
+
+    TRY
+        PRINT "Exporting " + LEN(DATA) + " rows to " + filename$ + "..."
+        CSVWRITER filename$, DATA, ";", FIELDS
+        PRINT "Export complete."
+    CATCH
+        PRINT "Export failed: " + ERRMSG$
+    ENDTRY
+ENDSUB
+
+SUB EXEC(query$)
+    IF CURRENT_DB$ = "" THEN
+        PRINT "Not connected. Use 'connect <path>' first."
+        RETURN
+    ENDIF
+
+    IF query$ = "" THEN RETURN
+
+    ' Reset global result buffers
+    DATA = []
+    FIELDS = []
+
+    DIM conn 
+    DIM rs 
+    
+    TRY
+        conn = CREATEOBJECT("ADODB.Connection")
+        conn_str$ = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + CURRENT_DB$
+        conn.Open(conn_str$)
+
+        IF UCASE$(LEFT$(query$, 6)) = "SELECT" THEN
+            rs = CREATEOBJECT("ADODB.Recordset")
+            rs.Open(query$, conn)
+
+            IF rs.EOF THEN
+                PRINT "(0 rows returned)"
+            ELSE
+                ' 1. Extract Headers
+                count = rs.Fields.Count
+                FOR i = 0 TO count - 1
+                    FIELDS = APPEND(FIELDS, rs.Fields(i).Name)
+                NEXT i
+
+                ' 2. Extract Data
+                row_counter = 0
+                
+                ' Optimization: Pre-calculate formatting string for display
+                ' Use a generic format based on column count
+                
+                PRINT "Fetching data..."
+                
+                DO WHILE NOT rs.EOF
+                    row_array = []
+                    FOR i = 0 TO count - 1
+                        val = rs.Fields(i).Value
+                        ' Handle nulls gracefully
+                        IF TYPEOF(val) = "NULL" THEN val = ""
+                        row_array = APPEND(row_array, val)
+                    NEXT i
+                    
+                    DATA = APPEND(DATA, row_array)
+                    row_counter = row_counter + 1
+                    rs.MoveNext()
+                LOOP
+                
+                ' Reshape flat array to 2D matrix
+                DATA = RESHAPE(DATA, [row_counter, count])
+
+                ' 3. Print Data
+                PRINT "--------------------------------------------------------"
+                ' Print Headers
+                header_line$ = ""
+                FOR i = 0 TO LEN(FIELDS) - 1
+                    header_line$ = header_line$ + FIELDS[i] + " | "
+                NEXT i
+                PRINT header_line$
+                PRINT "--------------------------------------------------------"
+                
+                ' Print formatted rows using FRMV$
+                PRINT FRMV$(DATA)
+                PRINT "--------------------------------------------------------"
+                PRINT row_counter; " rows selected."
+            ENDIF
+            rs.Close()
+        ELSE
+            ' ACTION QUERY (UPDATE, DELETE, INSERT)
+            DIM records_affected
+            conn.Execute(query$, records_affected)
+            PRINT "Query executed. Records affected: " + records_affected
+        ENDIF
+
+        conn.Close()
+
+    CATCH
+        PRINT "SQL Error: " + ERRMSG$
+    FINALLY
+        ' Cleanup COM objects
+        conn = NULL
+        rs = NULL
+    ENDTRY
+ENDSUB
+
+' --- Main Entry Point ---
+CLS
+WELCOME
+CD "U:\v-m-s\"
+'PRINT "Type: CONNECT ""U:\v-m-s\Geldlogistik\Geldlogistik.accdb"""
+CURRENT_DB$ = "U:\v-m-s\Geldlogistik\Geldlogistik.accdb"
+REPL
