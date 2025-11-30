@@ -417,7 +417,5 @@ ENDSUB
 ' --- Main Entry Point ---
 CLS
 WELCOME
-CD "U:\v-m-s\"
-'PRINT "Type: CONNECT ""U:\v-m-s\Geldlogistik\Geldlogistik.accdb"""
-CURRENT_DB$ = "U:\v-m-s\Geldlogistik\Geldlogistik.accdb"
+INPUT "Enter path to Access DB (e.g., C:\Data\Orders.accdb): ", CURRENT_DB$
 REPL

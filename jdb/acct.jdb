@@ -14,9 +14,7 @@ PRINT
 
 ' --- 1. Get User Input ---
 DIM db_path$
-' INPUT "Enter path to Access DB (e.g., C:\Data\Orders.accdb): ", db_path$
-
-db_path$ = "U:\v-m-s\Geldlogistik\Geldlogistik.accdb"
+INPUT "Enter path to Access DB (e.g., C:\Data\Orders.accdb): ", db_path$
 
 IF db_path$ = "" THEN
     PRINT "No database path provided. Exiting."
