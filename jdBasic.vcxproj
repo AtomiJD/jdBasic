@@ -99,7 +99,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <TargetName>jdBasic</TargetName>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include\;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include\;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include;D:\usr\dev\c\jdBasic\libs\imgui</IncludePath>
     <ReferencePath>$(VC_ReferencesPath_x64);</ReferencePath>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT;$(SolutionDir)libs\SDL3_image-3.2.4\lib\x64;$(SolutionDir)libs\SDL3_ttf-3.2.2\lib\x64;</LibraryPath>
   </PropertyGroup>
@@ -111,7 +111,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <TargetName>jdBasic</TargetName>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include;$(SolutionDir)libs\tensorflow\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include;$(SolutionDir)libs\imgui;$(SolutionDir)libs\tensorflow\include</IncludePath>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT;$(SolutionDir)libs\SDL3_image-3.2.4\lib\x64;$(SolutionDir)libs\SDL3_ttf-3.2.2\lib\x64;$(SolutionDir)libs\tensorflow\lib</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -205,6 +205,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="libs\imgui\backends\imgui_impl_sdl3.cpp" />
+    <ClCompile Include="libs\imgui\backends\imgui_impl_sdlrenderer3.cpp" />
+    <ClCompile Include="libs\imgui\imgui.cpp" />
+    <ClCompile Include="libs\imgui\imgui_draw.cpp" />
+    <ClCompile Include="libs\imgui\imgui_tables.cpp" />
+    <ClCompile Include="libs\imgui\imgui_widgets.cpp" />
     <ClCompile Include="source\BetterCodeFunctions.cpp" />
     <ClCompile Include="source\BuiltinFunctions.cpp" />
     <ClCompile Include="source\Commands.cpp" />
@@ -213,6 +219,7 @@
     <ClCompile Include="source\Error.cpp" />
     <ClCompile Include="source\ExpressionParser.cpp" />
     <ClCompile Include="source\Graphics.cpp" />
+    <ClCompile Include="source\ImGuiFunctions.cpp" />
     <ClCompile Include="source\IOFunctions.cpp" />
     <ClCompile Include="source\LocaleManager.cpp" />
     <ClCompile Include="source\NeReLaBasic.cpp" />

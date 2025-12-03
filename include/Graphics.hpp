@@ -10,6 +10,12 @@
 #include "SpriteSystem.hpp" 
 #include "TileMapSystem.hpp"
 
+#ifdef JD_IMGUI
+#include "imgui.h"
+#include "backends/imgui_impl_sdl3.h"
+#include "backends/imgui_impl_sdlrenderer3.h"
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -94,6 +100,15 @@ public:
     void turtle_draw_path();
     void turtle_clear_path();
 
+#ifdef JD_IMGUI
+    // ImGui specific methods
+    void init_imgui(float scale = 1.0f);
+    void shutdown_imgui();
+    void start_imgui_frame();
+    void render_imgui();
+    void process_imgui_event(const SDL_Event* event);
+#endif
+
     bool is_initialized = false;
     bool quit_event_received = false;
 
@@ -110,6 +125,7 @@ private:
     std::deque<char> key_buffer;
     float mouse_x = 0.0f;
     float mouse_y = 0.0f;
+    float render_scale = 1.0f;
     Uint32 mouse_button_state = 0;
     SDL_Color draw_color = { 255, 255, 255, 255 }; // Default to white
 

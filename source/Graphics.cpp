@@ -38,6 +38,7 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
     SDL_RaiseWindow(window);           // 1. Brings the window to the front.
 
     if (scale <= 0.0f) { scale = 1.0f; } // Prevent invalid scale values
+    this->render_scale = scale; // Store the scale
     SDL_SetRenderScale(renderer, scale, scale);
     
 #if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support    
@@ -60,6 +61,10 @@ bool Graphics::init(const std::string& title, int width, int height, float scale
 
     is_initialized = true;
 
+#ifdef JD_IMGUI
+    init_imgui();
+#endif
+
     int logical_width, logical_height;
     SDL_GetRenderOutputSize(renderer, &logical_width, &logical_height);
     turtle_home(logical_width, logical_height);
@@ -77,6 +82,10 @@ void Graphics::shutdown() {
 #if !defined(__EMSCRIPTEN__) // SDL3 is still experimental no LOADTEXTURE support
     sprite_system.shutdown();
     tilemap_system.shutdown();
+#endif
+
+#ifdef JD_IMGUI
+    shutdown_imgui();
 #endif
 
     if (font) {
@@ -117,10 +126,18 @@ void Graphics::clear_screen() {
     if (!renderer) return;
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // Black
     SDL_RenderClear(renderer);
+#ifdef JD_IMGUI
+    // We start the ImGui frame immediately after clearing the background
+    start_imgui_frame();
+#endif
 }
 
 void Graphics::update_screen() {
     if (!renderer) return;
+#ifdef JD_IMGUI
+    // Render ImGui geometry over the SDL content before flipping
+    render_imgui();
+#endif
     SDL_RenderPresent(renderer);
 }
 
@@ -131,6 +148,25 @@ bool Graphics::handle_events(NeReLaBasic& vm) {
     // Poll for all pending events
     while (SDL_PollEvent(&event) != 0) {
         // Check if the event is the user trying to close the window
+
+#ifdef JD_IMGUI
+        SDL_Event scaled_event = event;
+        if (render_scale != 1.0f) {
+            // Apply reverse scaling to mouse coordinates so ImGui sees logical coords
+            if (event.type == SDL_EVENT_MOUSE_MOTION) {
+                scaled_event.motion.x /= render_scale;
+                scaled_event.motion.y /= render_scale;
+                scaled_event.motion.xrel /= render_scale;
+                scaled_event.motion.yrel /= render_scale;
+            }
+            else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                scaled_event.button.x /= render_scale;
+                scaled_event.button.y /= render_scale;
+            }
+        }
+        process_imgui_event(&scaled_event);
+#endif
+
         switch (event.type) {
             case SDL_EVENT_QUIT:
                 quit_event_received = true;
@@ -173,35 +209,45 @@ bool Graphics::handle_events(NeReLaBasic& vm) {
             }
                 // --- Handle mouse events ---
             case SDL_EVENT_MOUSE_MOTION: {
+                // Keep your existing manual scaling for jdBasic internal events
+                float scaled_x = event.motion.x / render_scale;
+                float scaled_y = event.motion.y / render_scale;
+
                 auto mouse_data = std::make_shared<Map>();
-                mouse_data->data["x"] = static_cast<double>(event.motion.x);
-                mouse_data->data["y"] = static_cast<double>(event.motion.y);
-                mouse_data->data["xrel"] = static_cast<double>(event.motion.xrel);
-                mouse_data->data["yrel"] = static_cast<double>(event.motion.yrel);
+                mouse_data->data["x"] = static_cast<double>(scaled_x);
+                mouse_data->data["y"] = static_cast<double>(scaled_y);
+                mouse_data->data["xrel"] = static_cast<double>(event.motion.xrel / render_scale);
+                mouse_data->data["yrel"] = static_cast<double>(event.motion.yrel / render_scale);
                 vm.raise_event("MOUSEMOVE", mouse_data);
-                mouse_x = event.motion.x;
-                mouse_y = event.motion.y;
+                mouse_x = scaled_x;
+                mouse_y = scaled_y;
                 break;
             }
             case SDL_EVENT_MOUSE_BUTTON_DOWN: {
-                mouse_x = event.button.x;
-                mouse_y = event.button.y;
+                float scaled_x = event.button.x / render_scale;
+                float scaled_y = event.button.y / render_scale;
+
+                mouse_x = scaled_x;
+                mouse_y = scaled_y;
                 auto mouse_data = std::make_shared<Map>();
                 mouse_data->data["button"] = static_cast<double>(event.button.button);
-                mouse_data->data["x"] = static_cast<double>(event.button.x);
-                mouse_data->data["y"] = static_cast<double>(event.button.y);
+                mouse_data->data["x"] = static_cast<double>(scaled_x);
+                mouse_data->data["y"] = static_cast<double>(scaled_y);
                 mouse_data->data["clicks"] = static_cast<double>(event.button.clicks);
                 vm.raise_event("MOUSEDOWN", mouse_data);
                 mouse_button_state = SDL_GetMouseState(NULL, NULL);
                 break;
             }
             case SDL_EVENT_MOUSE_BUTTON_UP: {
-                mouse_x = event.button.x;
-                mouse_y = event.button.y;
+                float scaled_x = event.button.x / render_scale;
+                float scaled_y = event.button.y / render_scale;
+
+                mouse_x = scaled_x;
+                mouse_y = scaled_y;
                 auto mouse_data = std::make_shared<Map>();
                 mouse_data->data["button"] = static_cast<double>(event.button.button);
-                mouse_data->data["x"] = static_cast<double>(event.button.x);
-                mouse_data->data["y"] = static_cast<double>(event.button.y);
+                mouse_data->data["x"] = static_cast<double>(scaled_x);
+                mouse_data->data["y"] = static_cast<double>(scaled_y);
                 vm.raise_event("MOUSEUP", mouse_data);
                 mouse_button_state = SDL_GetMouseState(NULL, NULL);
                 break;
@@ -241,6 +287,10 @@ void Graphics::clear_screen(Uint8 r, Uint8 g, Uint8 b) {
     if (!renderer) return;
     SDL_SetRenderDrawColor(renderer, r, g, b, 255); // Use specified color
     SDL_RenderClear(renderer);
+#ifdef JD_IMGUI
+    // We start the ImGui frame immediately after clearing the background
+    start_imgui_frame();
+#endif
 }
 
 int Graphics::get_width() const {
@@ -852,5 +902,42 @@ void Graphics::turtle_set_color(Uint8 r, Uint8 g, Uint8 b) {
     pen_color = { r, g, b, 255 };
 }
 
+#ifdef JD_IMGUI
+void Graphics::init_imgui(float scale) {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    ImGui::StyleColorsDark();
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer3_Init(renderer);
+}
+
+void Graphics::shutdown_imgui() {
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+}
+
+void Graphics::start_imgui_frame() {
+    ImGui_ImplSDLRenderer3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize.x /= render_scale;
+    io.DisplaySize.y /= render_scale;
+}
+
+void Graphics::render_imgui() {
+    ImGui::Render();
+    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
+}
+
+void Graphics::process_imgui_event(const SDL_Event* event) {
+    ImGui_ImplSDL3_ProcessEvent(event);
+}
+#endif
 #endif

@@ -4474,6 +4474,10 @@ BasicValue builtin_eval(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result;
 }
 
+#ifdef JD_IMGUI
+void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table);
+#endif
+
 // --- The Registration Function ---
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
     // Helper lambda to make registration cleaner
@@ -4500,6 +4504,9 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_array_functions(vm, table_to_populate);
 #ifdef SDL3
     register_sdl_functions(vm, table_to_populate);
+#ifdef JD_IMGUI
+    register_imgui_functions(vm, table_to_populate);
+#endif
 #endif
 
     // --- Register String Functions ---
