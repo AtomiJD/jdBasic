@@ -1,0 +1,46 @@
+DIM Options[3]
+Options = ["Easy", "Medium", "Hard"]
+Difficulty = 0 ' 0 = Easy
+Progress = 0.01
+
+Mode = 1 ' 1 = Story, 2 = Arcade
+WindowOpen = TRUE
+SCREEN 1280, 720, "ImGui Demo", 2
+
+DO
+    CLS
+    WindowOpen = GUI.BEGIN("Game Settings", 50, 50, 300, 300, WindowOpen)
+        IF GUI.BEGIN_TAB_BAR("MyTabBar") THEN
+            IF GUI.BEGIN_TAB_ITEM("Settings") THEN
+                Difficulty = GUI.COMBO("Difficulty", Difficulty, Options)
+                
+                GUI.SEPARATOR
+                
+                GUI.TEXT "Game Mode:"
+                Mode = GUI.RADIO("Story Mode", Mode, 1)
+                GUI.SAME_LINE
+                Mode = GUI.RADIO("Arcade Mode", Mode, 2)
+                
+                GUI.SEPARATOR
+                
+                GUI.PROGRESS Progress, "Loading Assets..."
+                GUI.END_TAB_ITEM()
+            ENDIF
+            
+            IF GUI.BEGIN_TAB_ITEM("Tab 2") THEN
+                GUI.TEXT "This is Tab 2!"
+                GUI.BUTTON "A Button in Tab 2"
+                GUI.END_TAB_ITEM()
+            ENDIF
+            
+            GUI.END_TAB_BAR()
+        ENDIF        
+        
+    GUI.END
+    Progress = Progress + 0.01
+    IF Progress > 1 THEN
+        Progress = 0.001
+    ENDIF
+    SCREENFLIP
+    SLEEP 10
+LOOP UNTIL INKEY$() = CHR$(27)
