@@ -1123,7 +1123,7 @@ HTTP.SERVER.STOP
 
 #### Graphics
 
-* **`SCREEN width, height, [title$]`**: Initializes a graphics window of the specified size.
+* **`SCREEN width, height, [title$], scalefactor`**: Initializes a graphics window of the specified size.
 * **`SCREENFLIP`**: Updates the screen to show all drawing operations performed since the last flip.
 * **`DRAWCOLOR r, g, b`**: Sets the current drawing color using RGB values (0-255).
 * **`SETFONT filename$, size`**: Sets the current font to filename$ and size.
@@ -1136,6 +1136,88 @@ HTTP.SERVER.STOP
 * **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of circles.
 * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
 * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
+
+Here is the new section for your `languages.md` file, formatted to match the existing documentation style.
+
+### ImGui Functions
+
+This suite of functions provides immediate-mode GUI capabilities using the Dear ImGui library. These functions allow you to create windows, inputs, plots, and complex layouts directly from your code.
+
+#### Windows & Containers
+
+* **`GUI.BEGIN(title$, [x, y, w, h], [p_open], [flags]) -> boolean`**: Starts a new window. Returns `TRUE` if the window is visible (not collapsed). If a `p_open` variable is passed, it returns the new state of that variable (handling the close 'X' button).
+* **`GUI.END`**: Ends the current window. Must be called for every `GUI.BEGIN`.
+* **`GUI.BEGIN_CHILD(id$, [width, height], [border], [flags])`**: Starts a scrolling child region.
+* **`GUI.END_CHILD`**: Ends a child region.
+* **`GUI.COLLAPSING_HEADER(label$, [visible_bool]) -> boolean`**: Displays a collapsible header. Returns `TRUE` if the header is currently open.
+* **`GUI.TREE_NODE(label$) -> boolean`**: Displays a tree node. Returns `TRUE` if the node is open. If open, you must call `GUI.TREE_POP` after rendering children.
+* **`GUI.TREE_POP`**: Ends a tree node.
+
+#### Layout
+
+* **`GUI.SAME_LINE`**: Places the next widget on the same horizontal line as the previous one.
+* **`GUI.SEPARATOR`**: Draws a horizontal line separator.
+* **`GUI.SEPARATOR_TEXT(text$)`**: Draws a separator with centered text.
+* **`GUI.DUMMY(width, height)`**: Adds an invisible spacer of the specified size.
+
+#### Basic Widgets
+
+* **`GUI.TEXT(text$)`**: Displays text in the UI.
+* **`GUI.BUTTON(label$, [width, height]) -> boolean`**: Displays a button. Returns `TRUE` if clicked.
+* **`GUI.CHECKBOX(label$, checked_bool) -> boolean`**: Displays a checkbox. Returns the new boolean state.
+* **`GUI.RADIO(label$, current_value, button_value) -> value`**: Displays a radio button. Returns `button_value` if selected, otherwise returns `current_value`.
+* **`GUI.SLIDER(label$, value, min, max) -> number`**: Displays a slider. Returns the new value.
+* **`GUI.PROGRESS(fraction, [overlay_text$])`**: Displays a progress bar (0.0 to 1.0).
+* **`GUI.COLOR(label$, color_array) -> boolean`**: Displays a color picker. Updates the array (`[r, g, b, a]`) in place. Returns `TRUE` if the color changed.
+* **`GUI.HELPMARKER(text$)`**: Displays a `(?)` icon that shows a tooltip when hovered.
+* **`GUI.TOOLTIP(text$)`**: Sets a tooltip for the item immediately preceding this call.
+
+#### Input Widgets
+
+* **`GUI.INPUT(label$, current_value$) -> string$`**: Displays a text input field. Returns the new string value.
+* **`GUI.INPUT_INT(label$, value) -> number`**: Displays an integer input field. Returns the new value.
+* **`GUI.INPUT_DOUBLE(label$, value) -> number`**: Displays a double-precision input field. Returns the new value.
+* **`GUI.COMBO(label$, current_index, items_array) -> number`**: Displays a combo box (dropdown). Returns the new selected index.
+* **`GUI.LISTBOX(label$, current_index, items_array, [height]) -> number`**: Displays a selectable list box. Returns the new selected index.
+* **`GUI.SELECTABLE(label$, [selected], [flags], [w], [h]) -> boolean`**: Displays a selectable item (row), useful for custom lists. Returns `TRUE` if clicked.
+
+#### Menus
+
+* **`GUI.BEGIN_MAIN_MENU_BAR() -> boolean`**: Creates a full-screen menu bar at the top of the viewport.
+* **`GUI.END_MAIN_MENU_BAR`**: Ends the main menu bar.
+* **`GUI.BEGIN_MENU_BAR() -> boolean`**: Creates a menu bar attached to the current window.
+* **`GUI.END_MENU_BAR`**: Ends the window menu bar.
+* **`GUI.BEGIN_MENU(label$, [enabled]) -> boolean`**: Creates a sub-menu (e.g., "File"). Returns `TRUE` if open.
+* **`GUI.END_MENU`**: Ends a menu.
+* **`GUI.MENU_ITEM(label$, [shortcut], [selected], [enabled]) -> boolean`**: Creates a menu item. Returns `TRUE` if activated.
+
+#### Popups & Modals
+
+* **`GUI.OPEN_POPUP(str_id$)`**: Marks a popup identifier as open.
+* **`GUI.BEGIN_POPUP(str_id$) -> boolean`**: Starts a popup window. Returns `TRUE` if open.
+* **`GUI.BEGIN_POPUP_MODAL(name$, [p_open]) -> boolean`**: Starts a modal popup that blocks interaction behind it.
+* **`GUI.END_POPUP`**: Ends a popup.
+* **`GUI.CLOSE_CURRENT_POPUP`**: Manually closes the currently active popup.
+
+#### Tabs
+
+* **`GUI.BEGIN_TAB_BAR(str_id$, [flags]) -> boolean`**: Starts a tab bar container. Returns `TRUE` if successful.
+* **`GUI.END_TAB_BAR`**: Ends a tab bar.
+* **`GUI.BEGIN_TAB_ITEM(label$, [p_open], [flags]) -> boolean`**: Starts a tab item. Returns `TRUE` if the tab is currently selected/active.
+* **`GUI.END_TAB_ITEM`**: Ends a tab item.
+
+#### Plots & Data Visualization
+
+* **`GUI.PLOT_LINES(label$, values_array, [overlay], [min], [max])`**: Draws a simple line chart from an array of numbers.
+* **`GUI.PLOT_HISTOGRAM(label$, values_array, [overlay], [min], [max])`**: Draws a histogram chart from an array of numbers.
+
+#### Utilities & Styling
+
+* **`GUI.THEME(theme_name$)`**: Sets the global UI theme. Options: `"DARK"`, `"LIGHT"`, `"CLASSIC"`.
+* **`GUI.FLAG(flag_name$) -> number`**: Returns the integer value of an ImGui flag (e.g., `"MENUBAR"`, `"NO_RESIZE"`, `"NO_TITLEBAR"`).
+* **`GUI.PUSH_ID(id)`**: Pushes an integer or string ID to the stack to prevent ID collisions in loops.
+* **`GUI.POP_ID`**: Pops the last ID from the stack.
+* **`GUI.SHOW_FONT_ATLAS`**: Opens the built-in ImGui font visualizer for debugging.
 
 #### Sound
 

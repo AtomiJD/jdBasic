@@ -328,11 +328,207 @@ Description: Returns the current row (Y) position of the console cursor.
 
 [GOTO]
 Syntax: GOTO label
-Description: Unconditionally jumps program execution to a specified `label:`.
+Description: Unconditionally jumps program execution to a specified label:.
 
 [GRADE]
 Syntax: GRADE(vector)
 Description: Returns a vector of indices that would sort the input vector.
+
+[GUI.BEGIN]
+Syntax: GUI.BEGIN(title$, [x, y, w, h], [p_open], [flags])
+Description: Starts a new window. Returns TRUE if visible (or p_open state if close button used).
+
+[GUI.BEGIN_CHILD]
+Syntax: GUI.BEGIN_CHILD(id$, [width, height], [border], [flags])
+Description: Starts a scrolling child region.
+
+[GUI.BEGIN_MAIN_MENU_BAR]
+Syntax: GUI.BEGIN_MAIN_MENU_BAR()
+Description: Creates a full-screen menu bar at the top of the viewport.
+
+[GUI.BEGIN_MENU]
+Syntax: GUI.BEGIN_MENU(label$, [enabled])
+Description: Creates a sub-menu inside a menu bar.
+
+[GUI.BEGIN_MENU_BAR]
+Syntax: GUI.BEGIN_MENU_BAR()
+Description: Creates a menu bar attached to the current window.
+
+[GUI.BEGIN_POPUP]
+Syntax: GUI.BEGIN_POPUP(str_id$)
+Description: Starts a popup window.
+
+[GUI.BEGIN_POPUP_MODAL]
+Syntax: GUI.BEGIN_POPUP_MODAL(name$, [p_open])
+Description: Starts a modal popup that blocks interaction behind it.
+
+[GUI.BEGIN_TAB_BAR]
+Syntax: GUI.BEGIN_TAB_BAR(str_id$, [flags])
+Description: Starts a tab bar container.
+
+[GUI.BEGIN_TAB_ITEM]
+Syntax: GUI.BEGIN_TAB_ITEM(label$, [p_open], [flags])
+Description: Starts a tab item. Returns TRUE if the tab is currently selected.
+
+[GUI.BUTTON]
+Syntax: GUI.BUTTON(label$, [width, height])
+Description: Displays a button. Returns TRUE if clicked.
+
+[GUI.CHECKBOX]
+Syntax: GUI.CHECKBOX(label$, checked_bool)
+Description: Displays a checkbox. Returns the new boolean state.
+
+[GUI.CLOSE_CURRENT_POPUP]
+Syntax: GUI.CLOSE_CURRENT_POPUP
+Description: Closes the currently active popup.
+
+[GUI.COLLAPSING_HEADER]
+Syntax: GUI.COLLAPSING_HEADER(label$, [visible_bool])
+Description: Displays a collapsible header. Returns TRUE if open.
+
+[GUI.COLOR]
+Syntax: GUI.COLOR(label$, color_array)
+Description: Displays a color picker. Updates the array [r,g,b,a] in place. Returns TRUE if changed.
+
+[GUI.COMBO]
+Syntax: GUI.COMBO(label$, current_index, items_array)
+Description: Displays a combo box (dropdown). Returns the new selected index.
+
+[GUI.DUMMY]
+Syntax: GUI.DUMMY(width, height)
+Description: Adds invisible spacer of the specified size.
+
+[GUI.END]
+Syntax: GUI.END
+Description: Ends a window started with GUI.BEGIN.
+
+[GUI.END_CHILD]
+Syntax: GUI.END_CHILD
+Description: Ends a child region.
+
+[GUI.END_MAIN_MENU_BAR]
+Syntax: GUI.END_MAIN_MENU_BAR
+Description: Ends a main menu bar.
+
+[GUI.END_MENU]
+Syntax: GUI.END_MENU
+Description: Ends a menu.
+
+[GUI.END_MENU_BAR]
+Syntax: GUI.END_MENU_BAR
+Description: Ends a window menu bar.
+
+[GUI.END_POPUP]
+Syntax: GUI.END_POPUP
+Description: Ends a popup.
+
+[GUI.END_TAB_BAR]
+Syntax: GUI.END_TAB_BAR
+Description: Ends a tab bar.
+
+[GUI.END_TAB_ITEM]
+Syntax: GUI.END_TAB_ITEM
+Description: Ends a tab item.
+
+[GUI.FLAG]
+Syntax: GUI.FLAG(flag_name$)
+Description: Returns the integer value of an ImGui flag (e.g., "MENUBAR", "NO_RESIZE").
+
+[GUI.HELPMARKER]
+Syntax: GUI.HELPMARKER(text$)
+Description: Displays a (?) icon that shows a tooltip when hovered.
+
+[GUI.INPUT]
+Syntax: GUI.INPUT(label$, current_value$)
+Description: Displays a text input field. Returns the new string value.
+
+[GUI.INPUT_DOUBLE]
+Syntax: GUI.INPUT_DOUBLE(label$, value)
+Description: Displays a double precision input field. Returns the new value.
+
+[GUI.INPUT_INT]
+Syntax: GUI.INPUT_INT(label$, value)
+Description: Displays an integer input field. Returns the new value.
+
+[GUI.LISTBOX]
+Syntax: GUI.LISTBOX(label$, current_index, items_array, [height])
+Description: Displays a selectable list box. Returns the new selected index.
+
+[GUI.MENU_ITEM]
+Syntax: GUI.MENU_ITEM(label$, [shortcut], [selected], [enabled])
+Description: Creates a menu item. Returns TRUE if activated.
+
+[GUI.OPEN_POPUP]
+Syntax: GUI.OPEN_POPUP(str_id$)
+Description: Marks a popup as open.
+
+[GUI.PLOT_HISTOGRAM]
+Syntax: GUI.PLOT_HISTOGRAM(label$, values_array, [overlay], [min], [max])
+Description: Draws a histogram chart.
+
+[GUI.PLOT_LINES]
+Syntax: GUI.PLOT_LINES(label$, values_array, [overlay], [min], [max])
+Description: Draws a line chart.
+
+[GUI.POP_ID]
+Syntax: GUI.POP_ID
+Description: Pops the last ID pushed to the stack.
+
+[GUI.PROGRESS]
+Syntax: GUI.PROGRESS(fraction, [overlay_text$])
+Description: Displays a progress bar (0.0 to 1.0).
+
+[GUI.PUSH_ID]
+Syntax: GUI.PUSH_ID(id)
+Description: Pushes an integer or string ID to the stack to avoid collisions.
+
+[GUI.RADIO]
+Syntax: GUI.RADIO(label$, current_value, button_value)
+Description: Displays a radio button. Returns button_value if selected, else current_value.
+
+[GUI.SAME_LINE]
+Syntax: GUI.SAME_LINE
+Description: Places the next widget on the same line as the previous one.
+
+[GUI.SELECTABLE]
+Syntax: GUI.SELECTABLE(label$, [selected], [flags], [w], [h])
+Description: Displays a selectable item (row). Returns TRUE if clicked.
+
+[GUI.SEPARATOR]
+Syntax: GUI.SEPARATOR
+Description: Draws a horizontal line separator.
+
+[GUI.SEPARATOR_TEXT]
+Syntax: GUI.SEPARATOR_TEXT(text$)
+Description: Draws a separator with centered text.
+
+[GUI.SHOW_FONT_ATLAS]
+Syntax: GUI.SHOW_FONT_ATLAS
+Description: Opens the ImGui font visualizer for debugging.
+
+[GUI.SLIDER]
+Syntax: GUI.SLIDER(label$, value, min, max)
+Description: Displays a slider. Returns the new value.
+
+[GUI.TEXT]
+Syntax: GUI.TEXT(text$)
+Description: Displays text in the UI.
+
+[GUI.THEME]
+Syntax: GUI.THEME(theme_name$)
+Description: Sets the UI theme ("DARK", "LIGHT", "CLASSIC").
+
+[GUI.TOOLTIP]
+Syntax: GUI.TOOLTIP(text$)
+Description: Sets a tooltip for the previous item.
+
+[GUI.TREE_NODE]
+Syntax: GUI.TREE_NODE(label$)
+Description: Displays a tree node. Returns TRUE if open (must call TREE_POP).
+
+[GUI.TREE_POP]
+Syntax: GUI.TREE_POP
+Description: Ends a tree node.
 
 [HELP]
 Syntax: HELP [topic$]
@@ -1008,7 +1204,7 @@ Description: Performs a 2D max pooling operation.
 
 [TENSOR.POSITIONAL_ENCODING]
 Syntax: TENSOR.POSITIONAL_ENCODING(seq_len, d_model)
-Description: Generates a sinusoidal positional encoding tensor for transformer models.
+Description: Generates a sinusoidal positional encoding Tensor, used to give the model information about the position of tokens in a sequence.
 
 [TENSOR.RELU]
 Syntax: TENSOR.RELU(tensor)
@@ -1217,15 +1413,3 @@ Description: Blocks execution and waits for a single key press, returning the ke
 [WHILE]
 Syntax: DO WHILE condition ... LOOP
 Description: Specifies the condition that must be true for a DO loop to continue.
-
-[XOR]
-Syntax: expression XOR expression
-Description: Performs a logical XOR operation.
-
-[XSORT]
-Syntax: XSORT(array, [dimension], [descending_bool])
-Description: A high-performance sort for 1D arrays or the rows of a 2D matrix.
-
-[CREDITS]
-Syntax: No Command :-)
-Description: Thanks to Volker and Achim (aka Atomi) for developing this.
