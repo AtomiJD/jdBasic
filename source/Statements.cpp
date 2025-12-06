@@ -102,7 +102,15 @@ namespace {
         {"ENDSWITCH", Tokens::ID::ENDSWITCH},
         {"EXITSWITCH", Tokens::ID::EXIT_SWITCH},
         {"REACT",    Tokens::ID::REACT},
-        {"END",     Tokens::ID::END}
+        {"END",     Tokens::ID::END},
+        {"CD",     Tokens::ID::DOS_CD},
+        {"DIR",     Tokens::ID::DOS_DIR},
+        {"MKDIR",     Tokens::ID::DOS_MKDIR},
+        {"KILL",     Tokens::ID::DOS_KILL},
+        {"LOADWS",     Tokens::ID::DOS_LOADWS},
+        {"SAVEWS",     Tokens::ID::DOS_SAVEWS},
+        {"PRETTY",     Tokens::ID::DOS_PRETTY},
+        {"OPTION",     Tokens::ID::OPTION}
     };
 } // end anonymous namespace
 

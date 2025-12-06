@@ -591,7 +591,7 @@ namespace {
     }
 }
 
-static BasicValue builtin_pretty(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+BasicValue builtin_pretty(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     bool preview = false;
     bool style_set = false;
     bool style_vb = vm.pretty_keywords_vb;

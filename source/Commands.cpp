@@ -25,6 +25,7 @@
 #include "TextEditor.hpp"
 #include "LocaleManager.hpp"
 #include "BuiltinFunctions.hpp"
+#include "BetterCodeFunctions.hpp"
 
 namespace { // Use an anonymous namespace to keep this helper local to this file
     // Forward declaration of the recursive part
@@ -129,6 +130,150 @@ std::string read_string(NeReLaBasic& vm) {
     return s;
 }
 
+// Helper to determine if a token is part of a path sequence
+bool is_path_token(Tokens::ID token) {
+    return token == Tokens::ID::VARIANT ||
+        token == Tokens::ID::STRVAR ||
+        token == Tokens::ID::INT ||
+        token == Tokens::ID::C_DOT ||
+        token == Tokens::ID::C_SLASH ||
+        token == Tokens::ID::C_MINUS ||
+        token == Tokens::ID::C_PLUS ||
+        token == Tokens::ID::C_ASTR ||
+        token == Tokens::ID::C_UNDERLINE;
+    // Add C_BACKSLASH if it exists in your enum, otherwise DOS paths use /
+}
+
+// Helper to get string representation of a token for path building
+std::string get_token_string(NeReLaBasic& vm, Tokens::ID token) {
+    if (token == Tokens::ID::VARIANT || token == Tokens::ID::STRVAR) {
+        return read_string(vm);
+    }
+    if (token == Tokens::ID::INT) {
+        // INT token is usually followed by data, but here we treat it as part of a path? 
+        // Actually, pure integers in paths (like "folder/123") usually tokenized as INT.
+        // We need to read the value. BUT, read_string handles VARIANT string data.
+        // Numbers are usually encoded differently. 
+        // For simplicity in this "shell" mode, let's assume INT is not common 
+        // OR we'd need to peek the number.
+        // Let's skip INT complex handling and rely on evaluate for pure numbers.
+        // If it was just a name "123", it might be VARIANT depending on lexer.
+        return "";
+    }
+    if (token == Tokens::ID::C_DOT) return ".";
+    if (token == Tokens::ID::C_SLASH) return "/";
+    if (token == Tokens::ID::C_MINUS) return "-";
+    if (token == Tokens::ID::C_PLUS) return "+";
+    if (token == Tokens::ID::C_ASTR) return "*";
+    if (token == Tokens::ID::C_UNDERLINE) return "_";
+    return "";
+}
+
+// --------------------------------------------------------------------------------------------
+// Revised Helper: Resolve "DOS-style" arguments
+// Handles: CD .., CD folder/sub, CD "str", CD var
+std::string resolve_shell_like_argument(NeReLaBasic& vm) {
+    size_t start_pcode = vm.pcode;
+    Tokens::ID first_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+    // 1. Literal String -> Return immediately
+    if (first_token == Tokens::ID::STRING) {
+        vm.pcode++;
+        return read_string(vm);
+    }
+
+    // 2. Try to collect a path sequence (e.g., .., folder/file, a-b)
+    std::string path_acc = "";
+    int token_count = 0;
+    bool has_variable_chars = false;
+
+    // Create a temporary VM state cursor to verify the sequence
+    size_t temp_pcode = vm.pcode;
+
+    while (true) {
+        if (temp_pcode >= vm.active_p_code->size()) break;
+        Tokens::ID t = static_cast<Tokens::ID>((*vm.active_p_code)[temp_pcode]);
+
+        if (is_path_token(t)) {
+            // Advance temp cursor manually to read string data if needed
+            temp_pcode++;
+            if (t == Tokens::ID::VARIANT || t == Tokens::ID::STRVAR) {
+                // Determine length of string to skip
+                while ((*vm.active_p_code)[temp_pcode] != 0) temp_pcode++;
+                temp_pcode++; // skip null
+                has_variable_chars = true;
+            }
+            token_count++;
+        }
+        else {
+            break;
+        }
+    }
+
+    // 3. Logic Decision
+
+    // Case A: Multi-token path (e.g. "..", "a/b") -> Treat as literal string
+    if (token_count > 1) {
+        // Actually consume and build string
+        while (token_count > 0) {
+            Tokens::ID t = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            vm.pcode++;
+            if (t == Tokens::ID::VARIANT || t == Tokens::ID::STRVAR) {
+                path_acc += read_string(vm);
+            }
+            else {
+                path_acc += get_token_string(vm, t);
+            }
+            token_count--;
+        }
+        return path_acc;
+    }
+
+    // Case B: Single token Identifier -> Check for Variable or Function Call
+    if (token_count == 1 && has_variable_chars) {
+        // Check next token for '(' function call
+        Tokens::ID next = static_cast<Tokens::ID>((*vm.active_p_code)[temp_pcode]);
+        if (next == Tokens::ID::C_LEFTPAREN) {
+            // It's a function call, evaluate expression
+            vm.pcode = start_pcode;
+            return to_string(vm.evaluate_expression());
+        }
+
+        // Check if Variable Exists
+        vm.pcode = start_pcode; // Reset to read name
+        vm.pcode++; // skip token
+        std::string name = to_upper(read_string(vm));
+
+        bool exists = false;
+        if (!vm.call_stack.empty()) {
+            if (vm.call_stack.back().local_variables.count(name)) exists = true;
+        }
+        if (!exists && vm.variables.count(name)) exists = true;
+
+        if (exists) {
+            // Variable exists, evaluate it
+            vm.pcode = start_pcode;
+            return to_string(vm.evaluate_expression());
+        }
+        else {
+            // Variable does NOT exist, treat as literal folder name
+            return name;
+        }
+    }
+
+    // Case C: Single token Dot/Symbol (e.g. ".") or anything else -> Treat as literal or fallback
+    if (token_count == 1 && !has_variable_chars) {
+        // e.g. "."
+        Tokens::ID t = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+        vm.pcode++;
+        return get_token_string(vm, t);
+    }
+
+    // Case D: Expressions, Numbers, strings with operators (e.g. "A"+"B")
+    // Fallback to standard evaluator
+    vm.pcode = start_pcode;
+    return to_string(vm.evaluate_expression());
+}
 
 // Finds a variable by walking the call stack backwards, then checking globals.
 BasicValue& get_variable(NeReLaBasic& vm, const std::string& name) {
@@ -2298,12 +2443,12 @@ void Commands::do_list(NeReLaBasic& vm) {
 
 void Commands::do_load(NeReLaBasic& vm) {
     // LOAD expects a filename
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::STRING) {
-        Error::set(1, vm.runtime_current_line);
-        return;
+    std::string filename = resolve_shell_like_argument(vm);
+    if (Error::get() != 0 || filename.empty()) return;
+
+    if (filename.find('.') == std::string::npos) {
+        filename += ".jdb";
     }
-    vm.pcode++; // Consume STRING token
-    std::string filename = read_string(vm); // read_string now reads from (*vm.active_p_code)
 
     std::ifstream infile(filename); // Open in text mode
     if (!infile) {
@@ -2323,12 +2468,12 @@ void Commands::do_load(NeReLaBasic& vm) {
 }
 
 void Commands::do_save(NeReLaBasic& vm) {
-    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::STRING) {
-        Error::set(1, vm.runtime_current_line);
-        return;
+    std::string filename = resolve_shell_like_argument(vm);
+    if (Error::get() != 0 || filename.empty()) return;
+
+    if (filename.find('.') == std::string::npos) {
+        filename += ".jdb";
     }
-    vm.pcode++; // Consume STRING token
-    std::string filename = read_string(vm); // read_string now reads from (*vm.active_p_code)
 
     std::ofstream outfile(filename); // Open in text mode
     if (!outfile) {
@@ -2371,7 +2516,81 @@ void Commands::do_compile(NeReLaBasic& vm) {
     }
 }
 
-// Commands.cpp
+void Commands::do_cd(NeReLaBasic& vm) {
+    std::string path = resolve_shell_like_argument(vm);
+    if (Error::get() != 0) return;
+    if (path.empty()) { Error::set(1, vm.runtime_current_line, "Missing path argument"); return; }
+
+    std::vector<BasicValue> args = { path };
+    builtin_cd(vm, args);
+}
+
+void Commands::do_dir(NeReLaBasic& vm) {
+    std::string wildcard = "*";
+    // Check if there is an argument before EOL
+    Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (token != Tokens::ID::NOCMD && token != Tokens::ID::C_CR && token != Tokens::ID::C_COLON) {
+        wildcard = resolve_shell_like_argument(vm);
+    }
+
+    std::vector<BasicValue> args = { wildcard };
+    builtin_dir(vm, args);
+}
+
+void Commands::do_mkdir(NeReLaBasic& vm) {
+    std::string path = resolve_shell_like_argument(vm);
+    if (Error::get() != 0) return;
+    std::vector<BasicValue> args = { path };
+    builtin_mkdir(vm, args);
+}
+
+void Commands::do_kill(NeReLaBasic& vm) {
+    std::string path = resolve_shell_like_argument(vm);
+    if (Error::get() != 0) return;
+    std::vector<BasicValue> args = { path };
+    builtin_kill(vm, args);
+}
+
+void Commands::do_loadws(NeReLaBasic& vm) {
+    std::string filename = resolve_shell_like_argument(vm);
+    if (Error::get() != 0) return;
+    std::vector<BasicValue> args = { filename };
+    builtin_loadws(vm, args);
+}
+
+void Commands::do_savews(NeReLaBasic& vm) {
+    std::string filename = resolve_shell_like_argument(vm);
+    if (Error::get() != 0) return;
+    std::vector<BasicValue> args = { filename };
+    builtin_savews(vm, args);
+}
+
+void Commands::do_pretty(NeReLaBasic& vm) {
+    // PRETTY supports multiple args: [PREVIEW] [STYLE UPPER] ...
+    // We collect them all until EOL
+    std::vector<BasicValue> args;
+    while (true) {
+        Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+        if (token == Tokens::ID::NOCMD || token == Tokens::ID::C_CR || token == Tokens::ID::C_COLON) break;
+
+        std::string arg = resolve_shell_like_argument(vm);
+        if (Error::get() != 0) return;
+        args.push_back(arg);
+
+        // Handle optional comma if user types "PRETTY PREVIEW, WIDTH 4"
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::C_COMMA) {
+            vm.pcode++;
+        }
+    }
+    builtin_pretty(vm, args);
+}
+
+void Commands::do_option(NeReLaBasic& vm) {
+    std::string opt = resolve_shell_like_argument(vm);
+    if (Error::get() != 0) return;
+    std::vector<BasicValue> args = { opt };
+    builtin_option(vm, args);
+}
 
 void Commands::do_stop(NeReLaBasic& vm) {
     TextIO::print("\nBreak in line " + std::to_string(vm.runtime_current_line) + "\n");
@@ -2496,12 +2715,8 @@ void Commands::do_dump(NeReLaBasic& vm) {
         return;
     }
 
-    // An argument was provided. Evaluate it as an expression.
-    // This will handle `DUMP GLOBAL` where GLOBAL is parsed as a variable/identifier.
-    BasicValue arg_val = vm.evaluate_expression();
+    std::string arg_str = to_upper(resolve_shell_like_argument(vm));
     if (Error::get() != 0) return;
-
-    std::string arg_str = to_upper(to_string(arg_val));
 
     if (arg_str == "GLOBAL") {
         TextIO::print("--- Global Variables ---"); TextIO::nl();

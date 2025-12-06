@@ -57,6 +57,15 @@ namespace Commands {
     void do_troff(NeReLaBasic& vm);
     void do_dump(NeReLaBasic& vm);
     void do_stop(NeReLaBasic& vm);
+
+    void do_cd(NeReLaBasic& vm);
+    void do_dir(NeReLaBasic& vm);
+    void do_mkdir(NeReLaBasic& vm);
+    void do_kill(NeReLaBasic& vm);
+    void do_loadws(NeReLaBasic& vm);
+    void do_savews(NeReLaBasic& vm);
+    void do_pretty(NeReLaBasic& vm);
+    void do_option(NeReLaBasic& vm);
 }
 
 BasicValue& get_variable(NeReLaBasic& vm, const std::string& name);
@@ -64,6 +73,7 @@ void set_variable(NeReLaBasic& vm, const std::string& name, const BasicValue& va
 std::string to_string(const BasicValue& val);
 std::string to_upper(std::string s);
 std::string read_string(NeReLaBasic& vm);
+std::string resolve_shell_like_argument(NeReLaBasic& vm);
 
 void dump_p_code(const std::vector<uint8_t>& p_code_to_dump, const std::string& name);
 

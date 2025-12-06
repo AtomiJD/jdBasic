@@ -4617,23 +4617,16 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("GETY", 0, builtin_gety);
     register_proc("SLEEP", 1, builtin_sleep);
     register_proc("YIELD", 0, builtin_yield);
-    register_proc("OPTION", 1, builtin_option);
     register_proc("CURSOR", 1, builtin_cursor);
     register_func("GETENV$", 1, builtin_getenv_str);
     register_proc("THROW", -1, builtin_throw);
-    register_proc("SAVEWS", 1, builtin_savews);
-    register_proc("LOADWS", 1, builtin_loadws);
     register_proc("CLEARWS", 0, builtin_clearws);
     register_proc("NEW", 0, builtin_new);
     register_proc("UNREACT", 1, builtin_unreact);
 
-    register_proc("DIR", -1, builtin_dir);  // -1 for optional argument
     register_func("DIR$", 1, builtin_dir_str);
-    register_proc("CD", 1, builtin_cd);
     register_proc("PWD", 0, builtin_pwd);
     register_proc("COLOR", 2, builtin_color);
-    register_proc("MKDIR", 1, builtin_mkdir);
-    register_proc("KILL", 1, builtin_kill);
 
     register_func("OS.ARGS", 0, builtin_os_args);
     register_func("OS.EXEC", -1, builtin_os_exec);

@@ -1652,7 +1652,38 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_save(*this);
         break;
-
+    case Tokens::ID::DOS_CD:
+        pcode++;
+        Commands::do_cd(*this);
+        break;
+    case Tokens::ID::DOS_DIR:
+        pcode++;
+        Commands::do_dir(*this);
+        break;
+    case Tokens::ID::DOS_MKDIR:
+        pcode++;
+        Commands::do_mkdir(*this);
+        break;
+    case Tokens::ID::DOS_KILL:
+        pcode++;
+        Commands::do_kill(*this);
+        break;
+    case Tokens::ID::DOS_LOADWS:
+        pcode++;
+        Commands::do_loadws(*this);
+        break;
+    case Tokens::ID::DOS_SAVEWS:
+        pcode++;
+        Commands::do_savews(*this);
+        break;
+    case Tokens::ID::DOS_PRETTY:
+        pcode++;
+        Commands::do_pretty(*this);
+        break;
+    case Tokens::ID::OPTION:
+        pcode++;
+        Commands::do_option(*this);
+        break;
     case Tokens::ID::COMPILE:
         pcode++;
         Commands::do_compile(*this);
