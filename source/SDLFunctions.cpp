@@ -875,7 +875,7 @@ BasicValue builtin_sprite_update(NeReLaBasic& vm, const std::vector<BasicValue>&
 
 // SPRITE.DRAW_ALL [cam_x], [cam_y]
 BasicValue builtin_sprite_draw_all(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() > 2) { // Allow 0 or 2 arguments
+    if (args.size() > 2 || args.size() == 1) { // Allow 0 or 2 arguments
         Error::set(8, vm.runtime_current_line, "SPRITE.DRAW_ALL takes 0 or 2 arguments: [cam_x], [cam_y]");
         return false;
     }
@@ -1151,7 +1151,7 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
     register_proc("SPRITE.SET_VELOCITY", 3, builtin_sprite_set_velocity);
     register_proc("SPRITE.DELETE", 1, builtin_sprite_delete);
     register_proc("SPRITE.UPDATE", -1, builtin_sprite_update); // Now has optional arg
-    register_proc("SPRITE.DRAW_ALL", 2, builtin_sprite_draw_all);
+    register_proc("SPRITE.DRAW_ALL", -1, builtin_sprite_draw_all);
     register_proc("SPRITE.SET_ANIMATION", 2, builtin_sprite_set_animation);
     register_proc("SPRITE.SET_FLIP", 2, builtin_sprite_set_flip);
     register_proc("SPRITE.ADD_TO_GROUP", 2, builtin_sprite_add_to_group);

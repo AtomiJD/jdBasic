@@ -1,0 +1,520 @@
+' =================================================================
+' == jdBasic Sprite Editor (ImGui + SDL3)
+' =================================================================
+
+' --- 1. CONFIGURATION & GLOBALS ---
+OPTION "NOPAUSE"
+SCREEN_W = 1920
+SCREEN_H = 1080
+TITLE$ = "jdBasic Sprite Editor v1.0"
+
+' Canvas Settings
+CANVAS_W = 16
+CANVAS_H = 16
+ZOOM_LEVEL = 20.0 ' Pixels per sprite-pixel
+SCALE_LEVEL = 1.5 ' Scale of the whole viewport
+
+' Tools Enum
+ENUM TOOLS
+    PENCIL
+    ERASER
+    LINE
+    CIRCLE
+    FILL
+    PICKER
+    SELECT_TOOL
+ENDENUM
+
+CURRENT_TOOL = TOOLS.PENCIL
+SHOW_GRID = TRUE
+
+' Colors (RGBA [0-255])
+CURRENT_COLOR = [255, 255, 255, 255]
+BG_COLOR = [20, 20, 20, 255]
+
+' Selection State
+SEL_START_X = -1
+SEL_START_Y = -1
+SEL_END_X = -1
+SEL_END_Y = -1
+HAS_SELECTION = FALSE
+CLIPBOARD_DATA = []
+CLIPBOARD_W = 0
+CLIPBOARD_H = 0
+
+' Mouse State
+MOUSE_DOWN = FALSE
+LAST_X = -1
+LAST_Y = -1
+
+' Initialize Graphics
+SCREEN SCREEN_W, SCREEN_H, TITLE$, SCALE_LEVEL
+GUI.THEME "DARK"
+
+' --- 2. DATA STRUCTURES ---
+
+' The Sprite Data is a 1D array of RGBA arrays.
+' Index = y * Width + x
+' Value = [r, g, b, a]
+SPRITE_DATA = []
+
+SUB INIT_SPRITE(w, h)
+    CANVAS_W = w
+    CANVAS_H = h
+    TOTAL_PIXELS = w * h
+    SPRITE_DATA = []
+    ' Initialize with transparent black
+    FOR i = 0 TO TOTAL_PIXELS - 1
+        SPRITE_DATA = APPEND(SPRITE_DATA, [0, 0, 0, 0])
+    NEXT i
+    ' Reset selection
+    HAS_SELECTION = FALSE
+ENDSUB
+
+' Initialize default sprite
+INIT_SPRITE 16, 16
+
+' --- 3. PALETTES ---
+' Pico-8 Palette (16 colors)
+PALETTE_PICO8 = [ [0,0,0,255], [29,43,83,255], [126,37,83,255], [0,135,81,255], 
+    [171,82,54,255], [95,87,79,255], [194,195,199,255], [255,241,232,255], 
+    [255,0,77,255], [255,163,0,255], [255,236,39,255], [0,228,54,255], 
+    [41,173,255,255], [131,118,156,255], [255,119,168,255], [255,204,170,255] 
+]
+
+' Simple NES-ish (approximate)
+PALETTE_NES = [ [124,124,124,255], [0,0,252,255], [0,0,188,255], [68,40,188,255], 
+    [148,0,132,255], [168,0,32,255], [168,16,0,255], [136,20,0,255], 
+    [80,48,0,255], [0,120,0,255], [0,104,0,255], [0,88,0,255], 
+    [0,64,88,255], [0,0,0,255], [0,0,0,255], [0,0,0,255] 
+]
+
+' Grayscale
+PALETTE_GRAY = []
+FOR i = 0 TO 15
+    v = i * 17
+    PALETTE_GRAY = APPEND(PALETTE_GRAY, [v, v, v, 255])
+NEXT i
+
+ACTIVE_PALETTE = PALETTE_PICO8
+
+' --- 4. DRAWING FUNCTIONS ---
+
+SUB SET_PIXEL(x, y, color)
+    IF x >= 0 AND x < CANVAS_W AND y >= 0 AND y < CANVAS_H THEN
+        idx = y * CANVAS_W + x
+        SPRITE_DATA[idx] = color
+    ENDIF
+ENDSUB
+
+FUNC GET_PIXEL(x, y)
+    IF x >= 0 AND x < CANVAS_W AND y >= 0 AND y < CANVAS_H THEN
+        idx = y * CANVAS_W + x
+        RETURN SPRITE_DATA[idx]
+    ENDIF
+    RETURN [0,0,0,0]
+ENDFUNC
+
+SUB DRAW_LINE(x0, y0, x1, y1, color)
+    dx = ABS(x1 - x0)
+    dy = ABS(y1 - y0) * -1
+    sx = -1 : IF x0 < x1 THEN sx = 1
+    sy = -1 : IF y0 < y1 THEN sy = 1
+    err_val = dx + dy
+    
+    DO WHILE TRUE
+        SET_PIXEL x0, y0, color
+        IF x0 = x1 AND y0 = y1 THEN EXITDO
+        e2 = 2 * err_val
+        IF e2 >= dy THEN
+            err_val = err_val + dy
+            x0 = x0 + sx
+        ENDIF
+        IF e2 <= dx THEN
+            err_val = err_val + dx
+            y0 = y0 + sy
+        ENDIF
+    LOOP
+ENDSUB
+
+SUB DRAW_CIRCLE(cx, cy, r, color)
+    x = 0
+    y = r
+    d = 3 - 2 * r
+    DO WHILE y >= x
+        SET_PIXEL cx+x, cy+y, color
+        SET_PIXEL cx-x, cy+y, color
+        SET_PIXEL cx+x, cy-y, color
+        SET_PIXEL cx-x, cy-y, color
+        SET_PIXEL cx+y, cy+x, color
+        SET_PIXEL cx-y, cy+x, color
+        SET_PIXEL cx+y, cy-x, color
+        SET_PIXEL cx-y, cy-x, color
+        x = x + 1
+        IF d > 0 THEN
+            y = y - 1
+            d = d + 4 * (x - y) + 10
+        ELSE
+            d = d + 4 * x + 6
+        ENDIF
+    LOOP
+ENDSUB
+
+SUB FLOOD_FILL(x, y, target_color, fill_color)
+    ' Basic recursive fill (stack-based to avoid recursion depth limits)
+    ' Check if target matches fill
+    IF target_color[0] = fill_color[0] AND target_color[1] = fill_color[1] AND target_color[2] = fill_color[2] AND target_color[3] = fill_color[3] THEN RETURN
+
+    curr = GET_PIXEL(x, y)
+    IF curr[0] <> target_color[0] OR curr[1] <> target_color[1] OR curr[2] <> target_color[2] OR curr[3] <> target_color[3] THEN RETURN
+
+    stack = [[x, y]]
+    
+    DO WHILE LEN(stack)[0] > 0
+        ' Pop
+        idx = LEN(stack)[0] - 1
+        pt = stack[idx]
+        stack = TAKE(idx, stack) ' Remove last
+        
+        px = pt[0]
+        py = pt[1]
+        
+        curr_p = GET_PIXEL(px, py)
+        ' Check color match
+        IF curr_p[0] = target_color[0] AND curr_p[1] = target_color[1] AND _
+           curr_p[2] = target_color[2] AND curr_p[3] = target_color[3] THEN
+            
+            SET_PIXEL px, py, fill_color
+            
+            IF px > 0 THEN stack = APPEND(stack, [px - 1, py])
+            IF px < CANVAS_W - 1 THEN stack = APPEND(stack, [px + 1, py])
+            IF py > 0 THEN stack = APPEND(stack, [px, py - 1])
+            IF py < CANVAS_H - 1 THEN stack = APPEND(stack, [px, py + 1])
+        ENDIF
+    LOOP
+ENDSUB
+
+' --- 5. CLIPBOARD FUNCTIONS ---
+
+SUB COPY_SELECTION()
+    IF HAS_SELECTION THEN
+        CLIPBOARD_W = ABS(SEL_END_X - SEL_START_X) + 1
+        CLIPBOARD_H = ABS(SEL_END_Y - SEL_START_Y) + 1
+        CLIPBOARD_DATA = []
+        
+        sx = MIN([SEL_START_X, SEL_END_X])
+        sy = MIN([SEL_START_Y, SEL_END_Y])
+        
+        FOR y = 0 TO CLIPBOARD_H - 1
+            FOR x = 0 TO CLIPBOARD_W - 1
+                p = GET_PIXEL(sx + x, sy + y)
+                CLIPBOARD_DATA = APPEND(CLIPBOARD_DATA, p)
+            NEXT x
+        NEXT y
+    ENDIF
+ENDSUB
+
+SUB PASTE_SELECTION(dx, dy)
+    IF LEN(CLIPBOARD_DATA)[0] > 0 THEN
+        FOR y = 0 TO CLIPBOARD_H - 1
+            FOR x = 0 TO CLIPBOARD_W - 1
+                idx = y * CLIPBOARD_W + x
+                col = CLIPBOARD_DATA[idx]
+                ' Don't paste invisible pixels if alpha is 0
+                IF col[3] > 0 THEN
+                    SET_PIXEL dx + x, dy + y, col
+                ENDIF
+            NEXT x
+        NEXT y
+    ENDIF
+ENDSUB
+
+' --- 6. FILE I/O ---
+
+SUB SAVE_PROJECT(filename$)
+    ' Create a map to save
+    project = {}
+    project{"width"} = CANVAS_W
+    project{"height"} = CANVAS_H
+    project{"data"} = SPRITE_DATA
+    
+    json$ = JSON.STRINGIFY$(project)
+    TXTWRITER filename$, json$
+    PRINT "Saved to " + filename$
+ENDSUB
+
+SUB LOAD_PROJECT(filename$)
+    content$ = TXTREADER$(filename$)
+    IF content$ <> "" THEN
+        project = JSON.PARSE$(content$)
+        CANVAS_W = project{"width"}
+        CANVAS_H = project{"height"}
+        SPRITE_DATA = project{"data"}
+        PRINT "Loaded " + filename$
+    ENDIF
+ENDSUB
+
+' --- 7. MAIN UI LOOP ---
+
+DO
+    CLS BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]
+    
+' This allows the SDL Graphics (CLS and RECT) to be seen behind the UI.
+    ' ID 2 = ImGuiCol_WindowBg
+    GUI.PUSH_STYLE_COLOR 2, [0, 0, 0, 0]
+
+    ' Start Main Window
+    GUI.BEGIN "Sprite Editor", 0, 0, SCREEN_W, SCREEN_H, FALSE, GUI.FLAG("MENUBAR") + GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE")
+    
+    ' Pop the WindowBg style immediately so it doesn't affect child windows by default
+    GUI.POP_STYLE_COLOR 1
+    
+    ' --- MENU BAR ---
+    IF GUI.BEGIN_MENU_BAR() THEN
+        IF GUI.BEGIN_MENU("File") THEN
+            IF GUI.MENU_ITEM("New 16x16") THEN INIT_SPRITE 16, 16
+            IF GUI.MENU_ITEM("New 16x32") THEN INIT_SPRITE 16, 32
+            IF GUI.MENU_ITEM("New 32x16") THEN INIT_SPRITE 32, 16
+            IF GUI.MENU_ITEM("New 32x32") THEN INIT_SPRITE 32, 32
+            GUI.SEPARATOR
+            IF GUI.MENU_ITEM("Save Project") THEN SAVE_PROJECT "mysprite.json"
+            IF GUI.MENU_ITEM("Load Project") THEN LOAD_PROJECT "mysprite.json"
+            GUI.SEPARATOR
+            IF GUI.MENU_ITEM("Exit") THEN EXITDO
+            GUI.END_MENU
+        ENDIF
+        
+        IF GUI.BEGIN_MENU("Edit") THEN
+            IF GUI.MENU_ITEM("Copy", "Ctrl+C", FALSE, HAS_SELECTION) THEN COPY_SELECTION
+            IF GUI.MENU_ITEM("Paste", "Ctrl+V", FALSE, LEN(CLIPBOARD_DATA)[0] > 0) THEN 
+                ' Paste at top left for now, or center
+                PASTE_SELECTION 0, 0
+            ENDIF
+            GUI.END_MENU
+        ENDIF
+        
+        IF GUI.BEGIN_MENU("View") THEN
+            SHOW_GRID = GUI.CHECKBOX("Show Grid", SHOW_GRID)
+            GUI.END_MENU
+        ENDIF
+        
+        GUI.END_MENU_BAR
+    ENDIF
+
+    ' --- LAYOUT ---
+    ' Left Column: Tools & Palette
+    GUI.BEGIN_CHILD "ToolsPanel", 200, 0, TRUE
+        GUI.TEXT "TOOLS"
+        GUI.SEPARATOR
+        
+        CURRENT_TOOL = GUI.RADIO("Pencil", CURRENT_TOOL, TOOLS.PENCIL) 
+        CURRENT_TOOL =  GUI.RADIO("Eraser", CURRENT_TOOL, TOOLS.ERASER)
+        CURRENT_TOOL =  GUI.RADIO("Line", CURRENT_TOOL, TOOLS.LINE) 
+        CURRENT_TOOL =  GUI.RADIO("Circle", CURRENT_TOOL, TOOLS.CIRCLE)
+        CURRENT_TOOL = GUI.RADIO("Fill", CURRENT_TOOL, TOOLS.FILL) 
+        CURRENT_TOOL =  GUI.RADIO("Picker", CURRENT_TOOL, TOOLS.PICKER)
+        CURRENT_TOOL =  GUI.RADIO("Select", CURRENT_TOOL, TOOLS.SELECT_TOOL)
+        
+        GUI.DUMMY 0, 20
+        GUI.TEXT "COLOR"
+        GUI.SEPARATOR
+        GUI.COLOR "##CurrentColor", CURRENT_COLOR
+        
+        GUI.DUMMY 0, 20
+        GUI.TEXT "PALETTES"
+        GUI.SEPARATOR
+        IF GUI.BUTTON("Pico-8", 180, 25) THEN ACTIVE_PALETTE = PALETTE_PICO8
+        IF GUI.BUTTON("NES-ish", 180, 25) THEN ACTIVE_PALETTE = PALETTE_NES
+        IF GUI.BUTTON("Gray", 180, 25) THEN ACTIVE_PALETTE = PALETTE_GRAY
+        
+        GUI.DUMMY 0, 10
+        ' Draw Palette Swatches
+        NUM_COLORS = LEN(ACTIVE_PALETTE)[0]
+
+        ' Get ImGui Style Color IDs
+        ID_BTN = GUI.COL("BUTTON")
+        ID_HOV = GUI.COL("BUTTONHOVERED")
+        ID_ACT = GUI.COL("BUTTONACTIVE")
+
+        FOR i = 0 TO NUM_COLORS - 1
+            GUI.PUSH_ID i
+            
+            col = SLICE(ACTIVE_PALETTE, 0, i)
+            
+            ' Create variations for hover (lighter) and active (darker) states
+            ' We use CLAMP to ensure values stay within 0-255
+            col_hov = CLAMP(col * 1.3, 0, 255)
+            col_act = CLAMP(col * 0.7, 0, 255)
+            
+            ' Push the style colors for this button
+            GUI.PUSH_STYLE_COLOR ID_BTN, col
+            GUI.PUSH_STYLE_COLOR ID_HOV, col_hov
+            GUI.PUSH_STYLE_COLOR ID_ACT, col_act
+            
+            ' Draw the button
+            ' Using an empty label "" makes it look like a pure color swatch
+            IF GUI.BUTTON("", 40, 20) THEN 
+                CURRENT_COLOR = col
+            ENDIF
+            
+            ' Important: Remove the style colors to avoid affecting other widgets
+            GUI.POP_STYLE_COLOR 3
+            
+            ' Layout: 3 buttons per row
+            IF (i + 1) MOD 4 <> 0 THEN GUI.SAME_LINE
+            GUI.POP_ID
+        NEXT i
+        
+    GUI.END_CHILD
+
+    GUI.SAME_LINE
+
+    ' Middle: Canvas
+    COL_CHILDBG = 3 ' Hardcoded ImGuiCol_ChildBg (since "CHILDBG" isn't in GUI.COL yet)
+    GUI.PUSH_STYLE_COLOR COL_CHILDBG, [0, 0, 0, 0] ' Transparent
+
+    GUI.BEGIN_CHILD "CanvasPanel", 0, 0, TRUE
+        
+        ' 1. Handle Input Logic for Canvas
+        ' We need global mouse coords, offset by window pos.
+        ' ImGui cursor pos is relative to window content region.
+        ' Since we don't have GetCursorScreenPos exposed, we assume standard layout.
+        ' Let's use ImGui InvisibleButton to capture inputs over the area.
+        
+        CANVAS_PIXEL_W = CANVAS_W * ZOOM_LEVEL
+        CANVAS_PIXEL_H = CANVAS_H * ZOOM_LEVEL
+        
+        ' Draw the canvas pixels manually using the DrawList (if exposed) or RECTs
+        ' Since PLOTRAW is for the main screen, and ImGui overlays, we have to be clever.
+        ' We will use ImGui's drawing commands if available, OR
+        ' we assume the "Child" window background is transparent and we draw UNDER it using jdBasic commands?
+        ' No, jdBasic commands draw to the SDL renderer. ImGui draws on top.
+        ' We can use dlBasic graphics commands, but we need to know the offset.
+        
+        ' Let's calculate offset. 
+        ' Sidebar width ~ 200 + padding. Top ~ menu bar height.
+        OFFSET_X = 220
+        OFFSET_Y = 40
+        
+        ' --- RENDER SPRITE TO SCREEN (Under ImGui) ---
+        ' Draw checkerboard background
+        FOR y = 0 TO CANVAS_H - 1
+            FOR x = 0 TO CANVAS_W - 1
+                sx = OFFSET_X + x * ZOOM_LEVEL
+                sy = OFFSET_Y + y * ZOOM_LEVEL
+                
+                ' Checkerboard
+                IF (x + y) MOD 2 = 0 THEN 
+                    RECT sx, sy, ZOOM_LEVEL, ZOOM_LEVEL, 100, 100, 100, TRUE
+                ELSE
+                    RECT sx, sy, ZOOM_LEVEL, ZOOM_LEVEL, 150, 150, 150, TRUE
+                ENDIF
+                
+                ' Sprite Pixel
+                col = GET_PIXEL(x, y)
+                IF typeof(col) = "ARRAY" THEN
+                    RECT sx, sy, ZOOM_LEVEL, ZOOM_LEVEL, col[0], col[1], col[2], TRUE
+                ENDIF
+                
+                ' Grid
+                IF SHOW_GRID THEN
+                    RECT sx, sy, ZOOM_LEVEL, ZOOM_LEVEL, 50, 50, 50, FALSE
+                ENDIF
+                
+                ' Selection Highlight
+                IF HAS_SELECTION THEN
+                    sx_min = MIN([SEL_START_X, SEL_END_X])
+                    sx_max = MAX([SEL_START_X, SEL_END_X])
+                    sy_min = MIN([SEL_START_Y, SEL_END_Y])
+                    sy_max = MAX([SEL_START_Y, SEL_END_Y])
+                    
+                    IF x >= sx_min AND x <= sx_max AND y >= sy_min AND y <= sy_max THEN
+                        ' Draw a yellow border around selected pixels
+                        RECT sx, sy, ZOOM_LEVEL, ZOOM_LEVEL, 255, 255, 0, FALSE
+                    ENDIF
+                ENDIF
+                
+            NEXT x
+        NEXT y
+        
+        ' --- MOUSE INTERACTION ---
+        MX = MOUSEX()
+        MY = MOUSEY()
+        
+        ' Check if mouse is inside canvas
+        IF MX >= OFFSET_X AND MX < OFFSET_X + CANVAS_PIXEL_W AND MY >= OFFSET_Y AND MY < OFFSET_Y + CANVAS_PIXEL_H THEN
+           
+            GX = INT((MX - OFFSET_X) / ZOOM_LEVEL)
+            GY = INT((MY - OFFSET_Y) / ZOOM_LEVEL)
+            
+            ' Draw Hover Cursor
+            CX = OFFSET_X + GX * ZOOM_LEVEL
+            CY = OFFSET_Y + GY * ZOOM_LEVEL
+            RECT CX, CY, ZOOM_LEVEL, ZOOM_LEVEL, 255, 0, 0, FALSE
+            
+            IF MOUSEB(1) THEN ' Left Click
+                IF NOT MOUSE_DOWN THEN
+                    ' On Click Start
+                    MOUSE_DOWN = TRUE
+                    START_X = GX
+                    START_Y = GY
+                    
+                    IF CURRENT_TOOL = TOOLS.FILL THEN
+                        target = GET_PIXEL(GX, GY)
+                        IF typeof(col) <> "ARRAY" THEN 
+                            target = [0,0,0,0]
+                        ENDIF
+                        FLOOD_FILL GX, GY, target, CURRENT_COLOR
+                    ELSEIF CURRENT_TOOL = TOOLS.PICKER THEN
+                        CURRENT_COLOR = GET_PIXEL(GX, GY)
+                        CURRENT_TOOL = TOOLS.PENCIL ' Switch back
+                    ELSEIF CURRENT_TOOL = TOOLS.SELECT_TOOL THEN
+                        SEL_START_X = GX
+                        SEL_START_Y = GY
+                        SEL_END_X = GX
+                        SEL_END_Y = GY
+                        HAS_SELECTION = TRUE
+                    ENDIF
+                ELSE
+                    ' On Drag
+                    IF CURRENT_TOOL = TOOLS.PENCIL THEN
+                        SET_PIXEL GX, GY, CURRENT_COLOR
+                        ' Simple interpolation for fast mouse movement could go here
+                    ELSEIF CURRENT_TOOL = TOOLS.ERASER THEN
+                        SET_PIXEL GX, GY, [0,0,0,0]
+                    ELSEIF CURRENT_TOOL = TOOLS.SELECT_TOOL THEN
+                        SEL_END_X = GX
+                        SEL_END_Y = GY
+                    ENDIF
+                ENDIF
+                LAST_X = GX
+                LAST_Y = GY
+            ELSE
+                IF MOUSE_DOWN THEN
+                    ' On Release (For shapes)
+                    MOUSE_DOWN = FALSE
+                    IF CURRENT_TOOL = TOOLS.LINE THEN
+                        DRAW_LINE START_X, START_Y, GX, GY, CURRENT_COLOR
+                    ELSEIF CURRENT_TOOL = TOOLS.CIRCLE THEN
+                        R = SQR((GX - START_X)^2 + (GY - START_Y)^2)
+                        DRAW_CIRCLE START_X, START_Y, INT(R), CURRENT_COLOR
+                    ENDIF
+                ENDIF
+            ENDIF
+        ELSE
+            IF MOUSEB(1) = FALSE THEN MOUSE_DOWN = FALSE
+        ENDIF
+        
+        ' Dummy content to fill ImGui child so it doesn't collapse
+        GUI.TEXT "Canvas Area: " + STR$(CANVAS_W) + "x" + STR$(CANVAS_H)
+        GUI.TEXT "Mouse Grid: " + STR$(GX) + ", " + STR$(GY)
+        
+    GUI.END_CHILD
+    GUI.POP_STYLE_COLOR 1
+
+    GUI.END
+    SCREENFLIP
+    
+LOOP
+
+' --- End of File ---

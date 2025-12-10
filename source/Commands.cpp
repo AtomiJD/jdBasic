@@ -2649,6 +2649,40 @@ void Commands::do_stop(NeReLaBasic& vm) {
 }
 
 void Commands::do_run(NeReLaBasic& vm) {
+    if (vm.active_p_code == &vm.direct_p_code) {
+        vm.command_line_args.clear();
+
+        // Look at the next token after RUN
+        Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+        // Stop conditions: end-of-command markers (same pattern as DIR)
+        while (token != Tokens::ID::NOCMD &&
+            token != Tokens::ID::C_CR &&
+            token != Tokens::ID::C_COLON) {
+
+            // Use the existing helper that understands paths / variables / expressions
+            std::string arg = resolve_shell_like_argument(vm);
+            if (Error::get() != 0) return;
+
+            if (!arg.empty()) {
+                vm.command_line_args.push_back(arg);
+            }
+
+            // After consuming an argument, check what comes next
+            token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+            // Allow comma or semicolon between args: RUN a, b, c
+            if (token == Tokens::ID::C_COMMA || token == Tokens::ID::C_SEMICOLON) {
+                vm.pcode++;
+                token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            }
+            else {
+                // No separator -> we assume arg list is done
+                break;
+            }
+        }
+    }
+
     do_compile(vm);
     if (!vm.compiler->do_loop_stack.empty()) {
         // There are unclosed DO loops. Get the line number of the last one.
@@ -2673,6 +2707,10 @@ void Commands::do_run(NeReLaBasic& vm) {
     vm.reactive_graph.clear();
     vm.react_variables.clear();
     Error::clear();
+
+    // Check for aruments
+
+
     vm.is_stopped = false; // Reset the stopped state
 
 

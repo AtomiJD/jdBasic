@@ -61,6 +61,11 @@ struct ReactiveNode {
     BasicValue last_value;                      // Cached value to check if the variable actually changed after re-evaluation.
 };
 
+#ifdef _WIN32
+// Converts a std::string (UTF-8) to a std::wstring (UTF-16)
+std::wstring string_to_wstring(const std::string& str);
+#endif
+
 class NeReLaBasic {
 public:
     // --- Nested Types for Execution Machinery ---

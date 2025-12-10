@@ -98,7 +98,8 @@ _variant_t basic_value_to_variant_t(const BasicValue& val) {
         }
         else if constexpr (std::is_same_v<T, std::string>) {
             // Convert std::string to BSTR (Basic string)
-            return _variant_t(arg.c_str()); // BSTR is allocated internally by _variant_t
+            std::wstring ws = string_to_wstring(arg);
+            return _variant_t(ws.c_str()); // BSTR is allocated internally by _variant_t
         }
         else if constexpr (std::is_same_v<T, ComObject>) {
             // AddRef the IDispatch pointer and return it as a VARIANT of type VT_DISPATCH

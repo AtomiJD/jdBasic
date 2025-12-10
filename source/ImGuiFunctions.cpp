@@ -30,6 +30,62 @@ BasicValue gui_flag(NeReLaBasic & vm, const std::vector<BasicValue>&args) {
     return 0.0;
 }
 
+// GUI.COL(name$) -> integer value of ImGuiCol_ enum
+BasicValue gui_col(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return 0.0;
+    std::string name = to_upper(to_string(args[0]));
+
+    if (name == "TEXT") return (double)ImGuiCol_Text;
+    if (name == "WINDOWBG") return (double)ImGuiCol_WindowBg;
+    if (name == "BUTTON") return (double)ImGuiCol_Button;
+    if (name == "BUTTONHOVERED") return (double)ImGuiCol_ButtonHovered;
+    if (name == "BUTTONACTIVE") return (double)ImGuiCol_ButtonActive;
+    if (name == "HEADER") return (double)ImGuiCol_Header;
+    if (name == "HEADERHOVERED") return (double)ImGuiCol_HeaderHovered;
+    if (name == "HEADERACTIVE") return (double)ImGuiCol_HeaderActive;
+    if (name == "FRAMEBG") return (double)ImGuiCol_FrameBg;
+    if (name == "FRAMEBGHOVERED") return (double)ImGuiCol_FrameBgHovered;
+    if (name == "FRAMEBGACTIVE") return (double)ImGuiCol_FrameBgActive;
+    if (name == "TITLEBG") return (double)ImGuiCol_TitleBg;
+    if (name == "TITLEBGACTIVE") return (double)ImGuiCol_TitleBgActive;
+    if (name == "CHECKMARK") return (double)ImGuiCol_CheckMark;
+    if (name == "SLIDERGRAB") return (double)ImGuiCol_SliderGrab;
+    if (name == "SLIDERGRABACTIVE") return (double)ImGuiCol_SliderGrabActive;
+
+    return 0.0;
+}
+
+// GUI.PUSH_STYLE_COLOR(idx, color_array)
+// idx: The ID from GUI.COL
+// color_array: [r, g, b, a] (0-255)
+BasicValue gui_push_style_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return false;
+
+    int idx = (int)to_double(args[0]);
+
+    if (!std::holds_alternative<std::shared_ptr<Array>>(args[1])) return false;
+    auto arr_ptr = std::get<std::shared_ptr<Array>>(args[1]);
+    if (!arr_ptr || arr_ptr->data.size() < 3) return false;
+
+    float r = (float)to_double(arr_ptr->data[0]) / 255.0f;
+    float g = (float)to_double(arr_ptr->data[1]) / 255.0f;
+    float b = (float)to_double(arr_ptr->data[2]) / 255.0f;
+    float a = (arr_ptr->data.size() > 3) ? (float)to_double(arr_ptr->data[3]) / 255.0f : 1.0f;
+
+    ImGui::PushStyleColor(idx, ImVec4(r, g, b, a));
+    return false;
+}
+
+// GUI.POP_STYLE_COLOR([count])
+BasicValue gui_pop_style_color(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    int count = 1;
+    if (args.size() > 0) {
+        count = (int)to_double(args[0]);
+    }
+    ImGui::PopStyleColor(count);
+    return false;
+}
+
 // GUI.BEGIN(title$, [x, y, w, h], [p_open], [flags]) -> new_p_open_state (boolean)
 // Signatures:
 // 1. (Title)
@@ -710,6 +766,11 @@ void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table
 
     // Latest Additions
     reg("GUI.FLAG", 1, gui_flag);
+
+    reg("GUI.COL", 1, gui_col);
+    reg_proc("GUI.PUSH_STYLE_COLOR", 2, gui_push_style_color);
+    reg_proc("GUI.POP_STYLE_COLOR", -1, gui_pop_style_color);
+
     reg_proc("GUI.THEME", 1, gui_theme);
     reg_proc("GUI.TOOLTIP", 1, gui_tooltip);
     reg_proc("GUI.HELPMARKER", 1, gui_helpmarker);

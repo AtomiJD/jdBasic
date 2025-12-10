@@ -8,6 +8,7 @@ ENDFUNC
 
 ' Create an array of numbers to sum.
 my_numbers = [10, 20, 30, 40]
+PRINT "Reducing: "; my_numbers
 
 ' Use REDUCE to apply the MyAdd function to the array.
 ' The initial value for the accumulator is 0.
