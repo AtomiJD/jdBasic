@@ -125,7 +125,9 @@ FOR i = 0 TO LEN(lines) - 1
     ELSEIF LEFT$(tline$, 3) = "---" THEN
         sel.TypeParagraph()
         TRY
-            sel.ParagraphFormat.Borders.Item(wdBorderBottom).LineStyle = wdLineStyleSingle
+            pf = sel.ParagraphFormat
+            b = pf.Borders.Item(wdBorderBottom)
+            b.LineStyle = wdLineStyleSingle
         CATCH
             sel.TypeText "____________________"
         ENDTRY
@@ -168,7 +170,6 @@ IF InTable THEN
 ENDIF
 
 ' --- 6. Save ---
-PRINT "Saving..."
 FullPath$ = CurrentDir$ + "\" + OUTPUT_FILE$
 
 TRY
@@ -261,8 +262,6 @@ ENDSUB
 SUB ProcessTable(selObj, tableLines)
     rowCount = LEN(tableLines)
     IF rowCount = 0 THEN RETURN
-    
-    PRINT "Creating Table (" + rowCount + " rows)..."
     
     bulkText$ = ""
     
