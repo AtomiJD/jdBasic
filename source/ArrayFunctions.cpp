@@ -1225,6 +1225,7 @@ BasicValue builtin_scan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
             }
             else if (std::holds_alternative<FunctionRef>(op_arg)) {
                 const std::string func_name = to_upper(std::get<FunctionRef>(op_arg).name);
+                const auto& func_ref = std::get<FunctionRef>(args[0]);
                 if (!vm.active_function_table->count(func_name)) {
                     Error::set(22, vm.runtime_current_line, "Operator function '" + func_name + "' not found.");
                     return {};
@@ -1235,7 +1236,7 @@ BasicValue builtin_scan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
                     return {};
                 }
                 std::vector<BasicValue> func_args = { accumulator, current_val };
-                accumulator = vm.execute_function_for_value(func_info, func_args);
+                accumulator = vm.execute_function_for_value(func_info, func_args, func_ref.captured_env);
                 if (Error::get() != 0) return {}; // Propagate error
             }
             else {
@@ -1319,7 +1320,7 @@ BasicValue builtin_reduce(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
         std::vector<BasicValue> func_args = { accumulator, current_element };
 
         // Execute the user's function and update the accumulator with the result.
-        accumulator = vm.execute_function_for_value(func_info, func_args);
+        accumulator = vm.execute_function_for_value(func_info, func_args, func_ref.captured_env);
 
         // If the user's function caused an error, stop and propagate it.
         if (Error::get() != 0) {
@@ -1399,7 +1400,7 @@ BasicValue builtin_select(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
             row_as_array->data.assign(start_it, end_it);
 
             std::vector<BasicValue> func_args = { row_as_array };
-            BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args);
+            BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args, func_ref.captured_env);
             if (Error::get() != 0) return {};
 
             result_ptr->data.push_back(mapped_value);
@@ -1413,7 +1414,7 @@ BasicValue builtin_select(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
         for (const auto& element : source_ptr->data) {
             std::vector<BasicValue> func_args = { element };
-            BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args);
+            BasicValue mapped_value = vm.execute_function_for_value(func_info, func_args, func_ref.captured_env);
             if (Error::get() != 0) return {};
 
             result_ptr->data.push_back(mapped_value);
@@ -1465,7 +1466,9 @@ BasicValue builtin_filter(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
     for (const auto& element : source_ptr->data) {
         std::vector<BasicValue> func_args = { element };
-        BasicValue predicate_result = vm.execute_function_for_value(func_info, func_args);
+
+        // Pass the captured environment (backpack) from func_ref to the executor
+        BasicValue predicate_result = vm.execute_function_for_value(func_info, func_args, func_ref.captured_env);
 
         if (Error::get() != 0) {
             return {};
@@ -1613,6 +1616,7 @@ BasicValue builtin_outer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // 4. Check if the operator is a function reference
     else if (std::holds_alternative<FunctionRef>(op_arg)) {
         const std::string func_name = to_upper(std::get<FunctionRef>(op_arg).name);
+        const auto& func_ref = std::get<FunctionRef>(args[0]);
         if (!vm.active_function_table->count(func_name)) {
             Error::set(22, vm.runtime_current_line, "Operator function '" + func_name + "' not found.");
             return {};
@@ -1626,7 +1630,7 @@ BasicValue builtin_outer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         for (const auto& val_a : a_ptr->data) {
             for (const auto& val_b : b_ptr->data) {
                 std::vector<BasicValue> func_args = { val_a, val_b };
-                BasicValue result = vm.execute_function_for_value(func_info, func_args);
+                BasicValue result = vm.execute_function_for_value(func_info, func_args, func_ref.captured_env);
                 if (Error::get() != 0) return {}; // Propagate error from user function
                 result_ptr->data.push_back(result);
             }

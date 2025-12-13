@@ -1,0 +1,94 @@
+' ============================================================
+' jdBasic Closure Showcase
+' Demonstrating Modern Functional Programming Patterns
+' ============================================================
+
+PRINT "--- 1. Function Factories (The 'Adder' Pattern) ---"
+' Concept: Instead of writing Add5, Add10, etc., we write one function
+' that GENERATES these functions for us.
+
+FUNC MakeAdder(base_value)
+    ' The returned Lambda captures 'base_value' in its backpack.
+    ' Even after MakeAdder finishes, the lambda remembers it.
+    RETURN LAMBDA USE(base_value) x -> x + base_value
+ENDFUNC
+
+Add5 = MakeAdder(5)
+Add100 = MakeAdder(100)
+
+PRINT "5 + 10 = "; Add5(10)      ' Output: 15
+PRINT "100 + 10 = "; Add100(10)  ' Output: 110
+PRINT
+
+
+PRINT "--- 2. Context-Aware Filtering ---"
+' Concept: Passing logic to data. We want to filter an array,
+' but the criteria (the threshold) changes dynamically.
+
+FUNC MakeThresholdFilter(threshold)
+    ' We capture 'threshold' so FILTER can use it later.
+    RETURN LAMBDA USE(threshold) val -> val >= threshold
+ENDFUNC
+
+Data = [10, 5, 8, 20, 3, 15]
+PRINT "Raw Data: "; Data
+
+' Create a filter for numbers >= 10
+FilterHigh = MakeThresholdFilter(10)
+ResultsHigh = FILTER(FilterHigh, Data)
+PRINT "Filtered (>= 10): "; ResultsHigh
+
+' Create a filter for numbers >= 6 (Reusing the same logic!)
+ResultsMid = FILTER(MakeThresholdFilter(6), Data)
+PRINT "Filtered (>= 6):  "; ResultsMid
+PRINT
+
+
+PRINT "--- 3. State Encapsulation (The 'Private Counter') ---"
+' Concept: Hiding data. We want a counter variable that no one else
+' can mess with. We use a Map to hold mutable state by reference.
+
+' Helper to mutate map state (since lambdas are single expressions)
+FUNC IncrementState(container)
+    container{"val"} = container{"val"} + 1
+    RETURN container{"val"}
+ENDFUNC
+
+FUNC MakeCounter(start_val)
+    ' This Map is the "Private Scope". Only the lambda can see it.
+    DIM State = {"val": start_val}
+    
+    ' The lambda captures the State map.
+    RETURN LAMBDA USE(State) dummy -> IncrementState(State)
+ENDFUNC
+
+CountA = MakeCounter(0)
+CountB = MakeCounter(100)
+
+PRINT "Counter A (starts at 0): "; CountA(0) ' -> 1
+PRINT "Counter A (next step):   "; CountA(0) ' -> 2
+PRINT "Counter B (starts at 100): "; CountB(0) ' -> 101
+PRINT "Counter A (independent): "; CountA(0) ' -> 3
+PRINT
+
+
+PRINT "--- 4. Configurable Processing Pipelines ---"
+' Concept: Building complex logic blocks that carry their configuration.
+
+FUNC MakeProcessor(scale, label)
+    ' Captures both a number and a string
+    RETURN LAMBDA USE(scale, label) x -> label + ": " + STR$(x * scale)
+ENDFUNC
+
+ToEuros = MakeProcessor(0.95, "EUR")
+ToYen   = MakeProcessor(160,  "JPY")
+
+Prices = [10, 20, 50] ' USD Prices
+
+' Apply the processors to the data using SELECT (Map)
+EuroTags = SELECT(ToEuros, Prices)
+YenTags  = SELECT(ToYen, Prices)
+
+PRINT "USD Prices: "; Prices
+PRINT "In Euros:   "; EuroTags
+PRINT "In Yen:     "; YenTags

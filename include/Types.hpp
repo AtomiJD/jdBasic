@@ -144,9 +144,13 @@ struct OpaqueHandle {
 // We just store the function's name.
 struct FunctionRef {
     std::string name;
-    // This lets std::variant compare it if needed.
 
-    bool operator==(const FunctionRef&) const = default;
+    std::shared_ptr<Map> captured_env = nullptr;
+    
+    // Comparison
+    bool operator==(const FunctionRef& other) const {
+        return name == other.name && captured_env == other.captured_env;
+    }
 
 };
 

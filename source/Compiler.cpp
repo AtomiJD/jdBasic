@@ -1227,47 +1227,71 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
             }
 
             case Tokens::ID::LAMBDA: {
-                // 1. Generate a unique name for the anonymous function.
+                // 1. Generate unique name
                 lambda_counter++;
                 std::string hidden_name = "__LAMBDA_" + std::to_string(lambda_counter);
                 hidden_name = StringUtils::to_upper(hidden_name);
 
-                // 2. Parse the parameter list.
+                // 2. Parse CAPTURE LIST (USE)
+                std::vector<std::string> captures;
+                size_t use_pos = vm.lineinput.find("USE", vm.prgptr);
+                size_t arrow_pos = vm.lineinput.find("->", vm.prgptr);
+
+                // Check if USE exists and is actually before the arrow (part of this lambda)
+                if (use_pos != std::string::npos && (arrow_pos == std::string::npos || use_pos < arrow_pos)) {
+                    // Parse "USE (a, b, c)"
+                    size_t open_p = vm.lineinput.find('(', use_pos);
+                    size_t close_p = vm.lineinput.find(')', open_p);
+
+                    if (open_p != std::string::npos && close_p != std::string::npos) {
+                        std::string caps = vm.lineinput.substr(open_p + 1, close_p - (open_p + 1));
+                        std::stringstream ss(caps);
+                        std::string cap_var;
+                        while (std::getline(ss, cap_var, ',')) {
+                            StringUtils::trim(cap_var);
+                            if (!cap_var.empty()) captures.push_back(StringUtils::to_upper(cap_var));
+                        }
+                        // Advance parser past the USE block
+                        vm.prgptr = close_p + 1;
+                    }
+                }
+
+                // 3. Parse PARAMETERS
                 std::string param_list;
                 size_t start_of_params = vm.prgptr;
-                size_t arrow_pos = vm.lineinput.find("->", vm.prgptr);
+                // Re-find arrow based on new prgptr
+                arrow_pos = vm.lineinput.find("->", vm.prgptr);
+
                 if (arrow_pos == std::string::npos) {
                     Error::set(1, lineNumber, "Lambda missing '->' arrow.");
                     return 1;
                 }
-                param_list = vm.lineinput.substr(start_of_params, arrow_pos - start_of_params);
-                StringUtils::trim(param_list);
+
+                // If there is text before ->, it's params. 
+                if (arrow_pos > start_of_params) {
+                    param_list = vm.lineinput.substr(start_of_params, arrow_pos - start_of_params);
+                    StringUtils::trim(param_list);
+                }
 
                 vm.prgptr = arrow_pos + 2; // Move parser past '->'
                 std::string body_expression_full = vm.lineinput.substr(vm.prgptr);
 
-                // 3. *** Robustly parse the expression body by balancing brackets ***
+                // 4. Parse BODY (Balanced brackets logic - Kept from your original code)
                 size_t end_of_expr = 0;
                 int paren_level = 0;
                 int bracket_level = 0;
                 int brace_level = 0;
 
                 for (char c : body_expression_full) {
-                    // Check for the end condition ONLY if we are at the top level of nesting.
                     if (paren_level == 0 && bracket_level == 0 && brace_level == 0) {
-                        if (c == ',' || c == ')') {
-                            break; // Found the end of the expression.
-                        }
+                        if (c == ',' || c == ')') break;
                     }
-
-                    // Update nesting levels
                     if (c == '(') paren_level++;
                     else if (c == ')') paren_level--;
                     else if (c == '[') bracket_level++;
                     else if (c == ']') bracket_level--;
                     else if (c == '{') brace_level++;
                     else if (c == '}') brace_level--;
-
                     end_of_expr++;
                 }
 
@@ -1275,36 +1299,43 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 vm.prgptr += end_of_expr;
                 StringUtils::trim(body_expression);
 
-                // 4. Construct the synthetic function source code.
+                // 5. Construct synthetic source
                 std::string synthetic_func_source = "FUNC " + hidden_name + "(" + param_list + ")\n";
                 synthetic_func_source += "  RETURN " + body_expression + "\n";
                 synthetic_func_source += "ENDFUNC\n";
 
-                // 5. Create the placeholder FunctionInfo and parse parameter names.
+                // 6. Register Info
                 NeReLaBasic::FunctionInfo info;
                 info.name = hidden_name;
-
                 if (!param_list.empty()) {
                     std::stringstream pss(param_list);
                     std::string param;
                     while (std::getline(pss, param, ',')) {
                         StringUtils::trim(param);
-                        if (!param.empty()) {
-                            info.parameter_names.push_back(StringUtils::to_upper(param));
-                        }
+                        if (!param.empty()) info.parameter_names.push_back(StringUtils::to_upper(param));
                     }
                 }
                 info.arity = info.parameter_names.size();
-                info.start_pcode = 0xFFFF; // Mark as unpatched for Pass 2
+                info.start_pcode = 0xFFFF;
                 compilation_func_table[hidden_name] = info;
 
-                // 6. Add this lambda to the "pending work" list for Pass 2.
                 pending_lambdas.push_back({ hidden_name, synthetic_func_source, lineNumber });
 
-                // 7. Write ONLY the FUNCREF token to the main p-code stream.
-                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::FUNCREF));
+                // 7. EMIT BYTECODE: MAKE_CLOSURE instead of FUNCREF
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::MAKE_CLOSURE));
+
+                // Emit Function Name
                 for (char c : hidden_name) out_p_code.push_back(c);
                 out_p_code.push_back(0);
+
+                // Emit Capture Count
+                out_p_code.push_back(static_cast<uint8_t>(captures.size()));
+
+                // Emit Capture Variable Names
+                for (const auto& cv : captures) {
+                    for (char c : cv) out_p_code.push_back(c);
+                    out_p_code.push_back(0);
+                }
 
                 continue;
             }

@@ -408,10 +408,16 @@ BasicValue NeReLaBasic::parse_primary() {
             std::string identifier_being_called = to_upper(read_string(*this));
             std::string real_func_to_call = identifier_being_called;
 
+            // --- 1. DEFINE CLOSURE ENVIRONMENT ---
+            std::shared_ptr<Map> closure_env = nullptr;
+
             if (!active_function_table->count(real_func_to_call)) {
                 BasicValue& var = get_variable(*this, identifier_being_called);
                 if (std::holds_alternative<FunctionRef>(var)) {
-                    real_func_to_call = std::get<FunctionRef>(var).name;
+                    // --- 2. EXTRACT NAME AND ENVIRONMENT ---
+                    const auto& fref = std::get<FunctionRef>(var);
+                    real_func_to_call = fref.name;
+                    closure_env = fref.captured_env; // Capture the backpack!
                 }
             }
             if (active_function_table->count(real_func_to_call)) {
@@ -424,7 +430,17 @@ BasicValue NeReLaBasic::parse_primary() {
                     Error::set(26, runtime_current_line);
                     return {};
                 }
-                current_value = execute_function_for_value(func_info, args);
+                //current_value = execute_function_for_value(func_info, args);
+                // --- 3. PASS ENVIRONMENT TO EXECUTION ---
+                // If it is a native C++ function, call it normally.
+                // If it is a user function, use execute_synchronous_function and pass the env.
+                if (func_info.native_impl || func_info.native_dll_impl) {
+                    current_value = execute_function_for_value(func_info, args);
+                }
+                else {
+                    // This function overload accepts the closure_env
+                    current_value = execute_synchronous_function(func_info, args, closure_env);
+                }
             }
             else if (identifier_being_called.find('.') != std::string::npos) {
                 size_t dot_pos = identifier_being_called.find('.');
@@ -553,6 +569,31 @@ BasicValue NeReLaBasic::parse_primary() {
         else if (token == Tokens::ID::C_LEFTPAREN) {
             pcode++; current_value = evaluate_expression();
             if (static_cast<Tokens::ID>((*active_p_code)[pcode++]) != Tokens::ID::C_RIGHTPAREN) { Error::set(18, runtime_current_line); return {}; }
+        }
+        else if (token == Tokens::ID::MAKE_CLOSURE) {
+            pcode++; // Consume MAKE_CLOSURE
+
+            // 1. Read the template function name
+            std::string func_name = read_string(*this);
+
+            // 2. Read count of captures
+            uint8_t capture_count = (*active_p_code)[pcode++];
+
+            // 3. Create environment
+            auto env = std::make_shared<Map>();
+
+            // 4. Capture values from current scope
+            for (int i = 0; i < capture_count; ++i) {
+                std::string var_name = read_string(*this);
+                // get_variable searches local stack first, then global
+                env->data[var_name] = get_variable(*this, var_name);
+            }
+
+            // 5. Create and return the FunctionRef with the backpack
+            FunctionRef fref;
+            fref.name = func_name;
+            fref.captured_env = env;
+            current_value = fref;
         }
         else {
             Error::set(1, runtime_current_line);
@@ -1605,6 +1646,20 @@ void NeReLaBasic::skip_primary() {
     pcode++;
 
     switch (token) {
+    case Tokens::ID::MAKE_CLOSURE: {
+        // 1. Skip the template function name string
+        read_string(*this);
+
+        // 2. Read count of captures
+        if (pcode >= active_p_code->size()) break;
+        uint8_t capture_count = (*active_p_code)[pcode++];
+
+        // 3. Skip each captured variable name string
+        for (int i = 0; i < capture_count; ++i) {
+            read_string(*this);
+        }
+        break;
+        }
     case Tokens::ID::NUMBER:
         pcode += sizeof(double); // Skip the 8-byte double literal
         break;

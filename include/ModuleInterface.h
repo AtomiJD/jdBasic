@@ -12,7 +12,7 @@ class NeReLaBasic;
 using ErrorSetFunc = void(*)(unsigned short, unsigned short, const std::string&);
 using ToUpperFunc = std::string(*)(std::string);
 using ToStringFunc = std::string(*)(const BasicValue&);
-using ExecSyncFunc = BasicValue(NeReLaBasic::*)(const NeReLaBasic::FunctionInfo&, const std::vector<BasicValue>&);
+using ExecSyncFunc = BasicValue(NeReLaBasic::*)(const NeReLaBasic::FunctionInfo&, const std::vector<BasicValue>&, std::shared_ptr<Map>);
 
 using NativeDLLFunction = void(*)(NeReLaBasic&, const std::vector<BasicValue>&, BasicValue*);
 /**

@@ -922,7 +922,7 @@ void NeReLaBasic::process_event_queue() {
 }
 
 // Wrapper for synchronous function calls from the expression parser
-BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
+BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info, const std::vector<BasicValue>& args, std::shared_ptr<Map> closure_env) {
     // Priority 1: Check for the new ABI-safe DLL function pointer
     if (func_info.native_dll_impl != nullptr) {
         BasicValue result;
@@ -940,7 +940,7 @@ BasicValue NeReLaBasic::execute_function_for_value(const FunctionInfo& func_info
     }
     // Priority 3: If neither native pointer is set, it's a user-defined BASIC function
     else {
-        return execute_synchronous_function(func_info, args);
+        return execute_synchronous_function(func_info, args, closure_env);
     }
 }
 
@@ -991,7 +991,7 @@ void NeReLaBasic::execute_synchronous_block(const std::vector<uint8_t>& code_to_
 
 // New synchronous executor for user-defined functions
 // We should do a second for REPL and optimize this for speed!
-BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args) {
+BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args, std::shared_ptr<Map> closure_env) {
     size_t initial_stack_depth = call_stack.size();
     // --- Properly initialize the stack frame ---
     StackFrame frame;
@@ -1002,6 +1002,13 @@ BasicValue NeReLaBasic::execute_synchronous_function(const FunctionInfo& func_in
     frame.function_name = func_info.name;
     frame.linenr = runtime_current_line;
     frame.is_async_call = func_info.is_async;
+
+    // --- INJECT CLOSURE VARIABLES ---
+    if (closure_env) {
+        for (const auto& [key, val] : closure_env->data) {
+            frame.local_variables[key] = val;
+        }
+    }
 
     for (size_t i = 0; i < func_info.parameter_names.size(); ++i) {
         if (i < args.size()) {

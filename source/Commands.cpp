@@ -1556,6 +1556,7 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
 
     // The first string is either a function name or an object/array name.
     std::string identifier_being_called = to_upper(read_string(vm));
+
     // --- 1. Initial Parsing for Array Access ---
     // Check if this is an array element method call, e.g., NPCS[0].GetName()
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
@@ -1725,6 +1726,17 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         // --- Original Logic for standard jdbasic function calls ---
         std::string real_func_to_call = identifier_being_called;
 
+        // --- Closure handling ---
+        std::shared_ptr<Map> closure_env = nullptr;
+
+        // Check if it's a variable holding a FunctionRef
+        BasicValue& var = get_variable(vm, identifier_being_called);
+        if (std::holds_alternative<FunctionRef>(var)) {
+            const auto& ref = std::get<FunctionRef>(var);
+            real_func_to_call = ref.name;
+            closure_env = ref.captured_env; // Extract the backpack
+        }
+
         // Check for higher-order function calls (e.g., func_var(arg))
         if (!vm.active_function_table->count(real_func_to_call)) {
             BasicValue& var = get_variable(vm, identifier_being_called);
@@ -1773,7 +1785,8 @@ void Commands::do_callfunc(NeReLaBasic& vm) {
         else {
             // For a user-defined BASIC function, use the synchronous executor
             // and discard its return value.
-            vm.execute_synchronous_function(func_info, args);
+            //vm.execute_synchronous_function(func_info, args);
+            vm.execute_synchronous_function(func_info, args, closure_env); // Pass env
         }
     }
 }
