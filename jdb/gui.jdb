@@ -27,6 +27,12 @@ DO
                 PRINT "Saved: " + MyName$
             ENDIF
 
+            GUI.SEPARATOR
+
+            A = GUI.SELECTABLE("Atomi", selected, 0, 100, 10) 
+            GUI.SAME_LINE
+            A = GUI.SELECTABLE("Bert", selected, 0, 100, 10) 
+
             IF NewWindow = TRUE THEN
                 GUI.BEGIN "Lala", 250, 250, 200, 100
                 GUI.TEXT "Second Window"

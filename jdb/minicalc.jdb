@@ -1,0 +1,333 @@
+' ============================================================
+' jdBasic Mini Calc (3x10) - Values Grid + Formula Bar
+' ============================================================
+
+OPTION "NOPAUSE"
+
+' Consts
+ROWS = 10
+COLS = 3
+DECI = -1
+
+' State
+DIM Cell$[ROWS, COLS] AS STRING
+DIM Sheet[ROWS, COLS] AS DOUBLE
+
+' defaults
+FOR r = 0 TO ROWS - 1
+    FOR c = 0 TO COLS - 1
+        Cell$[r, c] = ""
+    NEXT c
+NEXT r
+
+' sample
+Cell$[0,0] = "10"
+Cell$[0,1] = "5"
+Cell$[0,2] = "=A1+B1"
+Cell$[1,0] = "3"
+Cell$[1,1] = "4"
+Cell$[1,2] = "=SQR(A2^2 + B2^2)"
+
+SelR = 0
+SelC = 0
+AutoRecalc = TRUE
+WindowOpen = TRUE
+
+EditActive = FALSE
+EditBuf$ = ""
+EditX = 0 : EditY = 0 : EditW = 0 : EditH = 0
+NeedFocus = FALSE
+EndMe = FALSE
+LastKey = 0
+
+' --- File dialog state ---
+FileDlgOpen = FALSE
+FileDlgMode$ = ""          ' "LOAD" or "SAVE"
+FileDlgName$ = ""          ' user input (without extension ok)
+FileDlgMsg$  = ""          ' status/error line
+
+SUB HandleKey(KeyData)
+    KeyCode = KeyData[0]{"keycode"}
+    LastKey = KeyCode
+    if KeyCode = 1073741891 THEN
+        TOGGLE_FULLSCREEN
+        ScreenW = ScreenWidth()
+        ScreenH = ScreenHeight()
+    ENDIF
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+
+FUNC JDC_FILE$(name$)
+    n$ = TRIM$(name$)
+    IF n$ = "" THEN RETURN ""
+    IF LCASE$(RIGHT$(n$, 4)) <> ".jdc" THEN n$ = n$ + ".jdc"
+    RETURN n$
+ENDFUNC
+
+SUB SAVE_JDC(name$, CELLTXT$)
+    fname$ = JDC_FILE$(name$)
+    IF fname$ = "" THEN RETURN
+    payload = {"rows": ROWS, "cols": COLS, "cell": CELLTXT$}
+    s = JSON.STRINGIFY$(payload)
+    TXTWRITER fname$, s
+ENDSUB
+
+SUB LOAD_JDC(name$)
+    fname$ = JDC_FILE$(name$)
+    IF fname$ = "" THEN RETURN
+
+    txt$ = TXTREADER$(fname$)
+    jo = JSON.PARSE$(txt$)
+
+    Cell$ = reshape(jo{"cell"},[jo{"rows"},jo{"cols"}])
+
+    Sheet = CALC_SHEET(Cell$)
+ENDSUB
+
+FUNC CELLNAME$(r, c)
+    RETURN MID$("ABC", c, 1) + STR$(r + 1)
+ENDFUNC
+
+' --- Core calculation (iterative so forward refs also work) ---
+FUNC CALC_SHEET(CELLTXT$)
+    DIM OUT[ROWS, COLS] AS DOUBLE
+
+    ' Pass 1: fill numbers (and blanks -> 0)
+    FOR r = 0 TO ROWS - 1
+        FOR c = 0 TO COLS - 1
+            raw$ = TRIM$(CELLTXT$[r, c])
+            IF raw$ = "" THEN
+                OUT[r, c] = 0
+            ELSEIF LEFT$(raw$, 1) <> "=" THEN
+                OUT[r, c] = VAL(raw$)
+            ELSE
+                OUT[r, c] = 0
+            ENDIF
+        NEXT c
+    NEXT r
+
+    ' Pass 2+: iterate formulas a few times (mini-excel style)
+    FOR iter = 1 TO 12
+        FOR r = 0 TO ROWS - 1
+            FOR c = 0 TO COLS - 1
+                raw$ = TRIM$(CELLTXT$[r, c])
+                IF raw$ <> "" AND LEFT$(raw$, 1) = "=" THEN
+                    expr$ = MID$(raw$, 1) ' strip "="
+
+                    ' Replace refs A10.. first, then A1.. (avoid A1 inside A10)
+                    FOR rr = ROWS - 1 TO 0 STEP DECI
+                        FOR cc = 0 TO COLS - 1
+                            ref$ = CELLNAME$(rr, cc)
+                            pat$ = "\b" + ref$ + "\b"
+                            expr$ = REGEX.REPLACE(pat$, expr$, STR$(OUT[rr, cc]))
+                        NEXT cc
+                    NEXT rr
+
+                    val = 0
+                    TRY
+                        val = EVAL("(" + expr$ + ")")
+                    CATCH
+                        val = 0
+                    ENDTRY
+
+                    OUT[r, c] = val
+                ENDIF
+            NEXT c
+        NEXT r
+    NEXT iter
+
+    RETURN OUT
+ENDFUNC
+
+' --- UI -------------------------------------------------------
+
+SCREEN 1920, 1080, "jdBasic Mini Calc (3x10)", 2
+GUI.THEME "DARK"
+
+' initial calc
+Sheet = CALC_SHEET(Cell$)
+
+FileDlg = FALSE
+
+DO
+    CLS
+
+    WindowOpen = GUI.BEGIN("Mini Calc", 0, 0, 560, 440, WindowOpen, GUI.FLAG("MENUBAR"))
+
+                ' --- Menu Bar ---
+        IF GUI.BEGIN_MENU_BAR() THEN
+            IF GUI.BEGIN_MENU("File") THEN
+                IF GUI.MENU_ITEM("Load...") THEN
+                    FileDlgMode$ = "LOAD"
+                    FileDlgName$ = ""
+                    FileDlgMsg$ = ""
+                    FileDlg = TRUE
+                ENDIF
+                IF GUI.MENU_ITEM("Save...") THEN
+                    FileDlgMode$ = "SAVE"
+                    FileDlgName$ = ""
+                    FileDlgMsg$ = ""
+                    FileDlg = TRUE
+                ENDIF
+                GUI.SEPARATOR
+                IF GUI.MENU_ITEM("Recalc") THEN 
+                     Sheet = CALC_SHEET(Cell$)
+                ENDIF
+                GUI.SEPARATOR
+                IF GUI.MENU_ITEM("Exit") THEN EndMe = TRUE
+                GUI.END_MENU()
+            ENDIF
+            IF GUI.BEGIN_MENU("HELP") THEN
+                IF GUI.MENU_ITEM("Show Help") THEN
+                    OpenHelpMe = TRUE
+                ENDIF
+                GUI.END_MENU()
+            ENDIF
+            
+            GUI.END_MENU_BAR()
+        ENDIF
+        IF FileDlg = TRUE THEN
+            GUI.OPEN_POPUP("FileDlg")
+            FileDlg = FALSE
+        ENDIF
+        IF GUI.BEGIN_POPUP_MODAL("FileDlg", TRUE, 0) THEN
+            GUI.TEXT(FileDlgMode$ + " sheet (.jdc)")
+            GUI.SEPARATOR
+            FileDlgName$ = GUI.INPUT("Filename", FileDlgName$)
+            GUI.TEXT("Will use: " + JDC_FILE$(FileDlgName$))
+            IF FileDlgMsg$ <> "" THEN
+                GUI.SEPARATOR
+                GUI.TEXT(FileDlgMsg$)
+            ENDIF
+            GUI.SEPARATOR
+            IF GUI.BUTTON("OK", 120, 0) THEN
+                TRY
+                    IF FileDlgMode$ = "SAVE" THEN
+                        SAVE_JDC FileDlgName$, Cell$
+                        FileDlgMsg$ = "Saved: " + JDC_FILE$(FileDlgName$)
+                    ELSEIF FileDlgMode$ = "LOAD" THEN
+                        LOAD_JDC FileDlgName$
+                        FileDlgMsg$ = "Loaded: " + JDC_FILE$(FileDlgName$)
+                    ENDIF
+                    GUI.CLOSE_CURRENT_POPUP
+                CATCH
+                    PRINT ERRMSG$
+                ENDTRY
+            ENDIF
+            GUI.SAME_LINE
+            IF GUI.BUTTON("Cancel", 120, 0) THEN
+                GUI.CLOSE_CURRENT_POPUP
+            ENDIF
+            GUI.END_POPUP()
+        ENDIF
+
+        GUI.TEXT "Click a cell to select. Edit content in the formula bar"
+        GUI.SEPARATOR
+
+        AutoRecalc = GUI.CHECKBOX("Auto recalc", AutoRecalc)
+        GUI.SAME_LINE
+        IF GUI.BUTTON("RECALC", 120, 0) THEN
+            Sheet = CALC_SHEET(Cell$)
+        ENDIF
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Clear All", 120, 0) THEN
+            FOR r = 0 TO ROWS - 1
+                FOR c = 0 TO COLS - 1
+                    Cell$[r, c] = ""
+                NEXT c
+            NEXT r
+            Sheet = CALC_SHEET(Cell$)
+        ENDIF
+
+        GUI.SEPARATOR
+
+        ' --- Formula bar (selected cell editor) ---
+        GUI.TEXT "Selected: " + CELLNAME$(SelR, SelC)
+        GUI.SAME_LINE
+        GUI.TEXT "Value: " + FORMAT$("{:.6g}", CDBL(Sheet[SelR, SelC]))
+
+        old$ = Cell$[SelR, SelC]
+        new$ = GUI.INPUT("Formula / Value", old$)
+        IF new$ <> old$ THEN
+            Cell$[SelR, SelC] = new$
+            IF AutoRecalc THEN
+                Sheet = CALC_SHEET(Cell$)
+            ENDIF
+        ENDIF
+
+        GUI.SEPARATOR
+
+        IF GUI.BEGIN_TABLE("sheet", 4, 0) THEN
+            GUI.TABLE_SETUP_COLUMN "", 0, 20 
+            GUI.TABLE_SETUP_COLUMN "A", 0, 100
+            GUI.TABLE_SETUP_COLUMN "B", 0, 100
+            GUI.TABLE_SETUP_COLUMN "C", 0, 100
+            GUI.TABLE_HEADERS_ROW
+
+            FOR r = 0 TO ROWS - 1
+                GUI.TABLE_NEXT_ROW
+
+                GUI.TABLE_SET_COLUMN_INDEX(0)
+                GUI.TEXT STR$(r+1)
+
+                FOR c = 0 TO COLS - 1
+                    GUI.TABLE_SET_COLUMN_INDEX c+1
+                    disp$ = FORMAT$("{:.6g}", CDBL(Sheet[r, c]))
+                    id$   = "##" + CELLNAME$(r, c)
+                    label$ = disp$ + id$
+                    IF GUI.SELECTABLE(label$, (r=SelR AND c=SelC), 0, 0, 0) THEN
+                        SelR = r : SelC = c                    
+                        IF r = SelR AND c = SelC THEN
+                            rc = GUI.ITEM_RECT()
+                            EditX = rc[0]
+                            EditY = rc[1]
+                            EditW = rc[2] - rc[0]
+                            EditH = rc[3] - rc[1]
+                            EditActive = TRUE
+                            EditBuf$ = Cell$[SelR, SelC]     ' raw formula/value
+                            NeedFocus = TRUE
+                        ENDIF                    
+                    ENDIF
+                NEXT c
+            NEXT r
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_SET_COLUMN_INDEX 0
+            GUI.TEXT "SUM"
+            FOR c = 0 TO COLS - 1
+                GUI.TABLE_SET_COLUMN_INDEX c+1
+                sumA = SUM(SLICE(Sheet, 1, c))
+                GUI.TEXT FORMAT$("{:.6g}", sumA)
+            NEXT c
+            GUI.END_TABLE
+        ENDIF
+
+        IF EditActive THEN
+            GUI.SET_CURSOR_SCREEN_POS EditX, EditY
+            GUI.SET_NEXT_ITEM_WIDTH EditW
+
+            IF NeedFocus THEN
+                GUI.SET_KEYBOARD_FOCUS
+                NeedFocus = FALSE
+            ENDIF
+
+            ' Hidden label so it doesn't show text, unique id so no collisions
+            EditBuf$ = GUI.INPUT("##cell_edit", EditBuf$)
+
+            ' Commit immediately (simple + works everywhere)
+            Cell$[SelR, SelC] = EditBuf$
+
+            IF GUI.ITEM_DEACTIVATED_AFTER_EDIT() THEN
+                EditActive = FALSE
+                Sheet = CALC_SHEET(Cell$)
+            ENDIF
+        ENDIF
+
+
+    GUI.END
+
+    SCREENFLIP
+    SLEEP 10
+LOOP UNTIL EndME
+
+END

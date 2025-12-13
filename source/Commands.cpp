@@ -1373,17 +1373,32 @@ void Commands::do_for(NeReLaBasic& vm) {
     set_variable(vm, var_name, start_val, !vm.option_explicit);
     if (Error::get() != 0) return;
 
+    if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::TO) {
+        vm.pcode++;
+    }
+    else {
+       Error::set(1, vm.runtime_current_line, "Expected TO"); return;
+    }
+
     BasicValue end_val = vm.evaluate_expression();
     if (Error::get() != 0) return;
 
     double step_val = 1.0;
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-    if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::NOCMD && next_token != Tokens::ID::C_COLON)
-    {
+
+    if (next_token == Tokens::ID::STEP) {
+        vm.pcode++; // Consume STEP
         BasicValue step_expr_val = vm.evaluate_expression();
         if (Error::get() != 0) return;
         step_val = to_double(step_expr_val);
     }
+
+    //if (next_token != Tokens::ID::C_CR && next_token != Tokens::ID::NOCMD && next_token != Tokens::ID::C_COLON)
+    //{
+    //    BasicValue step_expr_val = vm.evaluate_expression();
+    //    if (Error::get() != 0) return;
+    //    step_val = to_double(step_expr_val);
+    //}
 
     double d_start = to_double(start_val);
     double d_end = to_double(end_val);
@@ -2651,6 +2666,8 @@ void Commands::do_stop(NeReLaBasic& vm) {
 void Commands::do_run(NeReLaBasic& vm) {
     if (vm.active_p_code == &vm.direct_p_code) {
         vm.command_line_args.clear();
+        // Always put our filename as 1st argument
+        vm.command_line_args.push_back(vm.filename);
 
         // Look at the next token after RUN
         Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);

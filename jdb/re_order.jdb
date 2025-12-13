@@ -32,6 +32,8 @@ PRINT "Pos Description       Quantity     Price       Total"
 PRINT FRMV$(Order, "{:3d} {:<20} {:5d} {:>8.2f}$ {:>10.2f}$")
 PRINT
 
+DUMP "REACT"
+
 PRINT "Regular order:"
 PRINT FORMAT$("Subtotal: {:>10.2f}$", SumSubTotal)
 PRINT FORMAT$("VAT:      {:>10.2f}$", SumVAT)

@@ -1211,6 +1211,16 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 * **`GUI.PLOT_LINES(label$, values_array, [overlay], [min], [max])`**: Draws a simple line chart from an array of numbers.
 * **`GUI.PLOT_HISTOGRAM(label$, values_array, [overlay], [min], [max])`**: Draws a histogram chart from an array of numbers.
 
+#### Tables
+
+* **`GUI.BEGIN_TABLE(id$, columns, [flags], [outer_w], [outer_h]) -> bool`**: Starts an ImGui table. Returns `TRUE` if the table is visible and should be populated.
+* **`GUI.END_TABLE`**: Ends a table started with `GUI.BEGIN_TABLE`.
+* **`GUI.TABLE_SETUP_COLUMN(label$, [flags], [init_width_or_weight])`**: Declares a table column. Call once per column before `GUI.TABLE_HEADERS_ROW`.
+* **`GUI.TABLE_HEADERS_ROW`**: Submits a header row based on the columns configured with `GUI.TABLE_SETUP_COLUMN`.
+* **`GUI.TABLE_NEXT_ROW([row_flags], [min_row_height])`**: Advances to the next row in the current table.
+* **`GUI.TABLE_SET_COLUMN_INDEX(index) -> bool`**: Switches the current table column. Returns `TRUE` if the column is visible.
+* **`GUI.TABLE_NEXT_COLUMN() -> bool`**: Switches to the next column in the current table. Returns `TRUE` if the column is visible.
+
 #### Utilities & Styling
 
 * **`GUI.THEME(theme_name$)`**: Sets the global UI theme. Options: `"DARK"`, `"LIGHT"`, `"CLASSIC"`.
@@ -1218,6 +1228,11 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 * **`GUI.PUSH_ID(id)`**: Pushes an integer or string ID to the stack to prevent ID collisions in loops.
 * **`GUI.POP_ID`**: Pops the last ID from the stack.
 * **`GUI.SHOW_FONT_ATLAS`**: Opens the built-in ImGui font visualizer for debugging.
+* **`GUI.ITEM_RECT() -> array`**: Returns the rectangle of the last submitted GUI item as `[minx, miny, maxx, maxy]` in **screen coordinates**.
+* **`GUI.SET_CURSOR_SCREEN_POS(x, y)`**: Sets the cursor position in screen coordinates for the next widget (useful for overlay editors).
+* **`GUI.SET_NEXT_ITEM_WIDTH(width)`**: Sets the width of the next input widget.
+* **`GUI.SET_KEYBOARD_FOCUS`**: Gives keyboard focus to the next input widget that is created.
+* **`GUI.ITEM_DEACTIVATED_AFTER_EDIT() -> bool`**: Returns `TRUE` if the last item became inactive after an edit (e.g., user pressed Enter/Esc or focus moved away).
 
 #### Sound
 

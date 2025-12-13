@@ -450,6 +450,66 @@ Description: Displays a double precision input field. Returns the new value.
 Syntax: GUI.INPUT_INT(label$, value)
 Description: Displays an integer input field. Returns the new value.
 
+[GUI.ITEM_RECT]
+Syntax: GUI.ITEM_RECT()
+Description: Returns the rectangle of the last submitted GUI item as a 1D array: [minx, miny, maxx, maxy] in screen coordinates.
+
+
+[GUI.ITEM_DEACTIVATED_AFTER_EDIT]
+Syntax: GUI.ITEM_DEACTIVATED_AFTER_EDIT()
+Description: Returns TRUE if the last item became inactive after an edit (e.g., user pressed Enter/Esc or focus moved away). Useful to end in-cell editing.
+
+
+[GUI.SET_CURSOR_SCREEN_POS]
+Syntax: GUI.SET_CURSOR_SCREEN_POS(x, y)
+Description: Sets the cursor position in screen coordinates for the next widget (useful for overlay editors).
+
+
+[GUI.SET_NEXT_ITEM_WIDTH]
+Syntax: GUI.SET_NEXT_ITEM_WIDTH(width)
+Description: Sets the width of the next input widget.
+
+
+[GUI.SET_KEYBOARD_FOCUS]
+Syntax: GUI.SET_KEYBOARD_FOCUS
+Description: Gives keyboard focus to the next input widget that is created.
+
+
+[GUI.BEGIN_TABLE]
+Syntax: GUI.BEGIN_TABLE(id$, columns, [flags], [outer_w], [outer_h])
+Description: Starts an ImGui table. Returns TRUE if the table is visible and should be populated.
+
+
+[GUI.END_TABLE]
+Syntax: GUI.END_TABLE
+Description: Ends a table started with GUI.BEGIN_TABLE.
+
+
+[GUI.TABLE_SETUP_COLUMN]
+Syntax: GUI.TABLE_SETUP_COLUMN(label$, [flags], [init_width_or_weight])
+Description: Declares a table column. Call once per column before GUI.TABLE_HEADERS_ROW.
+
+
+[GUI.TABLE_HEADERS_ROW]
+Syntax: GUI.TABLE_HEADERS_ROW
+Description: Submits a header row based on the columns configured with GUI.TABLE_SETUP_COLUMN.
+
+
+[GUI.TABLE_NEXT_ROW]
+Syntax: GUI.TABLE_NEXT_ROW([row_flags], [min_row_height])
+Description: Advances to the next row in the current table.
+
+
+[GUI.TABLE_SET_COLUMN_INDEX]
+Syntax: GUI.TABLE_SET_COLUMN_INDEX(index)
+Description: Switches the current table column. Returns TRUE if the column is visible.
+
+
+[GUI.TABLE_NEXT_COLUMN]
+Syntax: GUI.TABLE_NEXT_COLUMN()
+Description: Switches to the next column in the current table. Returns TRUE if the column is visible.
+
+
 [GUI.LISTBOX]
 Syntax: GUI.LISTBOX(label$, current_index, items_array, [height])
 Description: Displays a selectable list box. Returns the new selected index.

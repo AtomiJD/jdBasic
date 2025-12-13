@@ -474,8 +474,10 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 // Keywords that are ignored at compile-time (they are just markers).
             case Tokens::ID::TO:
             case Tokens::ID::STEP:
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                continue; 
             case Tokens::ID::CALL:
-                continue; // Do nothing, just consume the token.
+                continue; // CALL can still be ignored if your syntax allows
 
                 // A comment token means we ignore the rest of the line.
             case Tokens::ID::REM:

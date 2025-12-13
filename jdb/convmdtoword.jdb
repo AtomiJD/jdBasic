@@ -23,10 +23,10 @@ INPUT_FILE$ = "README.md"
 OUTPUT_FILE$ = "README.docx"
 
 args = OS.ARGS()
-
-IF LEN(args) >= 1 THEN CurrentDir$  = args[0]
-IF LEN(args) >= 2 THEN INPUT_FILE$ =  args[1]
-IF LEN(args) = 3 THEN OUTPUT_FILE$ = args[2]
+'args[0] is always the program file name
+IF LEN(args) >= 2 THEN CurrentDir$  = args[1]
+IF LEN(args) >= 3 THEN INPUT_FILE$ =  args[2]
+IF LEN(args) = 4 THEN OUTPUT_FILE$ = args[3]
 
 ' --- 2. Setup ---
 TRY

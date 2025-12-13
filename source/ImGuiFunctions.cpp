@@ -237,6 +237,14 @@ BasicValue gui_separator(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
+// GUI.SET_NEXT_ITEM_WIDTH(width)
+BasicValue gui_set_next_item_width(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return false;
+    float w = (float)to_double(args[0]);
+    ImGui::SetNextItemWidth(w);
+    return false;
+}
+
 // GUI.RADIO(label$, current_value, this_button_value) -> new_value
 // Returns 'this_button_value' if selected, otherwise returns 'current_value'.
 BasicValue gui_radio(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
@@ -648,7 +656,7 @@ BasicValue gui_selectable(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     if (args.size() > 4) h = (float)to_double(args[4]);
 
     // Use a special span flag to make the whole row clickable if desired, mimicking table row selection
-    flags |= ImGuiSelectableFlags_SpanAllColumns;
+    // flags |= ImGuiSelectableFlags_SpanAllColumns;
 
     if (ImGui::Selectable(label.c_str(), selected, flags, ImVec2(w, h))) {
         return true;
@@ -725,6 +733,99 @@ BasicValue gui_end_tab_item(NeReLaBasic& vm, const std::vector<BasicValue>& args
     return false;
 }
 
+// GUI.BEGIN_TABLE(id$, columns, [flags], [outer_w, outer_h]) -> bool
+BasicValue gui_begin_table(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    CHECK_GUI_INIT(vm);
+    if (args.size() < 2) return false;
+
+    std::string id = to_string(args[0]);
+    int columns = (int)to_double(args[1]);
+    ImGuiTableFlags flags = (args.size() > 2) ? (ImGuiTableFlags)to_double(args[2]) : 0;
+
+    float outer_w = 0.0f;
+    float outer_h = 0.0f;
+    if (args.size() > 3) outer_w = (float)to_double(args[3]);
+    if (args.size() > 4) outer_h = (float)to_double(args[4]);
+
+    return ImGui::BeginTable(id.c_str(), columns, flags, ImVec2(outer_w, outer_h));
+}
+
+// GUI.END_TABLE
+BasicValue gui_end_table(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    ImGui::EndTable();
+    return false;
+}
+
+// GUI.TABLE_SETUP_COLUMN(label$, [flags], [init_width_or_weight])
+BasicValue gui_table_setup_column(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    CHECK_GUI_INIT(vm);
+    if (args.empty()) return false;
+
+    std::string label = to_string(args[0]);
+    ImGuiTableColumnFlags flags = (args.size() > 1) ? (ImGuiTableColumnFlags)to_double(args[1]) : 0;
+    float init_width_or_weight = (args.size() > 2) ? (float)to_double(args[2]) : 0.0f;
+
+    ImGui::TableSetupColumn(label.c_str(), flags, init_width_or_weight);
+    return false;
+}
+
+// GUI.TABLE_HEADERS_ROW
+BasicValue gui_table_headers_row(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    ImGui::TableHeadersRow();
+    return false;
+}
+
+// GUI.TABLE_NEXT_ROW([row_flags], [min_row_height])
+BasicValue gui_table_next_row(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    ImGuiTableRowFlags row_flags = (args.size() > 0) ? (ImGuiTableRowFlags)to_double(args[0]) : 0;
+    float min_row_height = (args.size() > 1) ? (float)to_double(args[1]) : 0.0f;
+    ImGui::TableNextRow(row_flags, min_row_height);
+    return false;
+}
+
+// GUI.TABLE_SET_COLUMN_INDEX(idx) -> bool
+BasicValue gui_table_set_column_index(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    CHECK_GUI_INIT(vm);
+    if (args.size() != 1) return false;
+    int idx = (int)to_double(args[0]);
+    return ImGui::TableSetColumnIndex(idx);
+}
+
+// GUI.TABLE_NEXT_COLUMN -> bool
+BasicValue gui_table_next_column(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    return ImGui::TableNextColumn();
+}
+
+// GUI.ITEM_RECT() -> [minx, miny, maxx, maxy]
+BasicValue gui_item_rect(NeReLaBasic&, const std::vector<BasicValue>&) {
+    ImVec2 min = ImGui::GetItemRectMin();
+    ImVec2 max = ImGui::GetItemRectMax();
+
+    auto result_ptr = std::make_shared<Array>();
+    result_ptr->shape = { 4 };
+    result_ptr->data.resize(4);
+    result_ptr->data[0] = min.x;
+    result_ptr->data[1] = min.y;
+    result_ptr->data[2] = max.x;
+    result_ptr->data[3] = max.y;
+
+    return result_ptr;
+}
+
+BasicValue gui_set_cursor_screen_pos(NeReLaBasic&, const std::vector<BasicValue>& args) {
+    if (args.size() < 2) return false;
+    ImGui::SetCursorScreenPos(ImVec2((float)to_double(args[0]), (float)to_double(args[1])));
+    return false;
+}
+
+BasicValue gui_set_keyboard_focus(NeReLaBasic&, const std::vector<BasicValue>&) {
+    ImGui::SetKeyboardFocusHere();
+    return false;
+}
+
+BasicValue gui_item_deactivated_after_edit(NeReLaBasic&, const std::vector<BasicValue>&) {
+    return ImGui::IsItemDeactivatedAfterEdit();
+}
 
 // Registration Function
 void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table) {
@@ -750,6 +851,11 @@ void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table
     reg_proc("GUI.TEXT", 1, gui_text);
     reg_proc("GUI.SAME_LINE", 0, gui_sameline);
     reg_proc("GUI.SEPARATOR", 0, gui_separator);
+    reg("GUI.ITEM_RECT", 0, gui_item_rect);
+    reg_proc("GUI.SET_NEXT_ITEM_WIDTH", 1, gui_set_next_item_width);
+    reg_proc("GUI.SET_CURSOR_SCREEN_POS", 2, gui_set_cursor_screen_pos);
+    reg_proc("GUI.SET_KEYBOARD_FOCUS", 0, gui_set_keyboard_focus);
+    reg("GUI.ITEM_DEACTIVATED_AFTER_EDIT", 0, gui_item_deactivated_after_edit);
 
     reg("GUI.BUTTON", -1, gui_button);
     reg("GUI.INPUT", 2, gui_input_text);
@@ -770,6 +876,16 @@ void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table
     reg("GUI.COL", 1, gui_col);
     reg_proc("GUI.PUSH_STYLE_COLOR", 2, gui_push_style_color);
     reg_proc("GUI.POP_STYLE_COLOR", -1, gui_pop_style_color);
+
+    // Tables
+    reg("GUI.BEGIN_TABLE", -1, gui_begin_table);
+    reg_proc("GUI.END_TABLE", 0, gui_end_table);
+
+    reg_proc("GUI.TABLE_SETUP_COLUMN", -1, gui_table_setup_column);
+    reg_proc("GUI.TABLE_HEADERS_ROW", 0, gui_table_headers_row);
+    reg_proc("GUI.TABLE_NEXT_ROW", -1, gui_table_next_row);
+    reg("GUI.TABLE_SET_COLUMN_INDEX", 1, gui_table_set_column_index);
+    reg("GUI.TABLE_NEXT_COLUMN", 0, gui_table_next_column);
 
     reg_proc("GUI.THEME", 1, gui_theme);
     reg_proc("GUI.TOOLTIP", 1, gui_tooltip);

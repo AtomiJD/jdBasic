@@ -362,7 +362,7 @@ nlohmann::json basic_to_json_value_for_serialize(const BasicValue& val) {
     return std::visit([](auto&& arg) -> nlohmann::json {
         using T = std::decay_t<decltype(arg)>;
 
-        if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, double> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
+        if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, double> || std::is_same_v<T, int> || std::is_same_v<T, long long> || std::is_same_v<T, std::string>) {
             return nlohmann::json(arg);
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
@@ -402,7 +402,7 @@ nlohmann::json basic_to_json_value(const BasicValue& val) {
     return std::visit([](auto&& arg) -> nlohmann::json {
         using T = std::decay_t<decltype(arg)>;
 
-        if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, double> || std::is_same_v<T, int> || std::is_same_v<T, std::string>) {
+        if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, double> || std::is_same_v<T, int> || std::is_same_v<T, long long> || std::is_same_v<T, std::string>) {
             return nlohmann::json(arg);
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Array>>) {
@@ -516,7 +516,7 @@ BasicValue builtin_json_stringify(NeReLaBasic& vm, const std::vector<BasicValue>
     const BasicValue& val_to_stringify = args[0];
 
     try {
-        nlohmann::json j = basic_to_json_value(val_to_stringify);
+        nlohmann::json j = basic_to_json_value_for_serialize(val_to_stringify);
         // dump() with no arguments creates a compact string, ideal for API calls.
         // For pretty-printing, you could use j.dump(4)
         //return j.dump();
@@ -1836,7 +1836,6 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
                         }
                         return do_format(value);
                     }
-                    // THE FIX IS HERE: Added 'long long' to the list of handled types.
                     else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int> || std::is_same_v<T, long long> || std::is_same_v<T, std::string>) {
                         return do_format(value);
                     }
@@ -1860,7 +1859,6 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
         }
     return result.str();
 }
-
 
 // FRMV$(array, [format_string$]) -> string$
 // Formats a 1D or 2D array into a string.

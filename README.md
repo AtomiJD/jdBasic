@@ -45,16 +45,8 @@ Read the language reference:
 Read the manual:
 [https://github.com/AtomiJD/jdBasic/blob/development/doc/manual.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/manual.md)
 
-Get the latest release at: [https://github.com/AtomiJD/jdBasic/releases/tag/jdbasic](https://github.com/AtomiJD/jdBasic/releases/tag/jdbasic)
-Download: release.zip
-Extract it wherever you want.
-Open a command window and change your directory to the "jdb" folder.
-
-To run a jdBasic program, simply pass the source file to the interpreter from your command line:
-
-```basic
-..\bin\jdBasic test.jdb
-```
+Online REPL:
+[Try it online](https://jdbasic.org/live/index.html)
 
 Build from code:
 [https://github.com/AtomiJD/jdBasic/blob/development/doc/build_linux_macos.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/build_linux_macos.md)

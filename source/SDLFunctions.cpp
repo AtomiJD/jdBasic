@@ -21,7 +21,7 @@ const std::map<std::string, Waveform> waveform_map = {
 
 extern const std::map<std::string, Waveform> waveform_map;
 
-// SCREEN width, height, [title$]
+// SCREEN width, height, [title$], scale
 // Initializes the graphics screen.
 BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() < 2 || args.size() > 4) {
@@ -34,7 +34,7 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
     std::string title = "jdBasic Graphics";
     float scale = 1.0f;
 
-    if (args.size() == 3) {
+    if (args.size() >= 3) {
         title = to_string(args[2]);
     }
 
