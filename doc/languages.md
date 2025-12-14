@@ -1246,6 +1246,100 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 * **`MUSIC.PLAY id`**: Plays a WAV file as background music in slot id.
 * **`MUSIC.STOP`**: Immediately stops the background music.
 
+### Live Coding Sequencer
+
+The live coding sequencer allows you to program rhythmic musical patterns and manipulate sound in real-time.
+
+#### `SOUND.SEQ layer_id, pattern$, waveform$`
+
+Programs a rhythmic musical pattern into the live-coding sequencer for a specific layer.
+
+* **`layer_id`** (Integer): The index of the sequencer layer to update. This usually corresponds to the synthesizer Track ID (e.g., Layer 0 plays on Track 0).
+* **`pattern$`** (String): A rhythm string using "mini-notation" to define notes, rests, and timing. (See **Pattern Syntax** below).
+* **`waveform$`** (String): Defines the sound source for this pattern.
+  * **Standard Types**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`. (Overrides any settings made with `SOUND.VOICE` for this track).
+    * **"VOICE"**: Tells the sequencer to use the existing sound design (ADSR envelope, filter, LFO, and waveform) currently set on the track via `SOUND.VOICE`.
+
+##### Pattern Syntax
+
+The sequencer divides time into "cycles". You can arrange events within a cycle using space-separated tokens.
+
+* **Notes**: Plays a musical note.
+  * **Frequency**: `"c3"`, `"f#4"`
+  * **Scale Degree**: `"0"`, `"1"`, `"-1"` (Requires `SOUND.SCALE` to be set).
+* **Rests** (`"~"`): A step of silence.
+* **Subdivision** (`"[... ...]" `): Groups multiple steps into the timespan of a single step. This allows you to create fast rhythms (tuplets).
+  * `"c4 c4"` = Two quarter notes (if cycle is 1 bar).
+  * `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
+  * `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
+
+##### Sequencer Examples
+
+```basic
+' 1. Basic 4-step techno kick (Square wave)
+SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE"
+
+' 2. Fast hi-hats using subdivision (White Noise)
+'    "[c4 c4]" fits two hits into one step
+SOUND.SEQ 1, "[c4 c4] [c4 c4] [c4 c4] [c4 c4]", "NOISE"
+
+' 3. Melodic pattern using custom Voice design
+'    First, design the sound:
+SOUND.VOICE 2, "SAW", 0.01, 0.2, 0.0, 0.2
+SOUND.FILTER 2, 800
+'    Then sequence it using "VOICE" to keep the filter/envelope settings:
+SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
+```
+
+#### Sound Design & Effects
+
+Beyond basic waveforms, you can shape your sound using these commands. Apply them to a specific track (0-7).
+
+* **`SOUND.GAIN track, volume`**: Sets the track volume (0.0 to 1.0+).
+* **`SOUND.PAN track, pan`**: Sets stereo panning. 0.0=Left, 0.5=Center, 1.0=Right.
+* **`SOUND.FILTER track, cutoff`**: Applies a Low-Pass Filter at the given frequency (Hz).
+* **`SOUND.LFO track, freq, depth`**: Applies Vibrato (pitch modulation).
+* **`SOUND.FM track, amount, ratio`**: Frequency Modulation. Creates metallic/bell tones.
+* **`SOUND.BITCRUSH track, bits, rate`**: Lo-Fi effect. Reduces bit depth (1-16) and sample rate (0.0-1.0).
+* **`SOUND.RINGMOD track, freq, mix`**: Ring Modulation. Multiplies signal by a sine wave for robotic/sci-fi tones.
+
+#### Global Effects
+
+These effects apply to the master output.
+
+* **`SOUND.DELAY active_bool, time_ms, feedback, mix`**: Stereo Echo/Delay.
+  * `feedback`: 0.0-0.9 (Repeats)
+  * `mix`: 0.0-1.0 (Dry/Wet balance)
+* **`SOUND.DISTORTION amount`**: Master overdrive/saturation.
+* **`SOUND.RESET`**: Immediately silences all audio, clears the sequencer, and resets all effects to default.
+* **`SOUND.SHUTDOWN`**: Completely closes the audio engine and releases the audio device.
+
+#### Scale Quantization
+
+You can use the **Scale Quantizer** to make musical programming easier. Instead of typing note names like "C\#4", you can type numbers like "0", "1", "2" in your pattern string. The system will automatically map them to the correct notes in your chosen scale.
+
+**`SOUND.SCALE root_note$, scale_mode$`**
+
+* **`root_note$`**: The base note of the key (e.g., "C3", "F\#2").
+* **`scale_mode$`**: The type of scale to use.
+
+##### Available Scales
+
+| Scale Mode | Description |
+| :--- | :--- |
+| `"CHROMATIC"` | All 12 semitones. |
+| `"MAJOR"` | The standard happy/bright scale. |
+| `"MINOR"` | The standard sad/emotional scale. |
+| `"DORIAN"` | Jazzy, sophisticated minor. |
+| `"PHRYGIAN"` | Dark, exotic, "Spanish" flavor. |
+| `"LYDIAN"` | Dreamy, sci-fi, "floaty" major. |
+| `"MIXOLYDIAN"` | Bluesy major (rock/pop). |
+| `"LOCRIAN"` | Tense, dissonant, unstable. |
+| `"PENT_MAJ"` | 5-note major scale (very safe, folk/pop). |
+| `"PENT_MIN"` | 5-note minor scale (blues/rock riffs). |
+| `"BLUES"` | Hexatonic blues scale. |
+| `"ARABIC"` | Hijaz scale (Middle-Eastern feel). |
+
 #### Sprites and Maps
 
 * **`SPRITE.LOAD type_id, "filename.png"`**: Loads a sprite image from a file and assigns it a type ID.

@@ -15,7 +15,8 @@ const std::map<std::string, Waveform> waveform_map = {
     {"SINE", Waveform::SINE},
     {"SQUARE", Waveform::SQUARE},
     {"SAW", Waveform::SAWTOOTH},
-    {"TRIANGLE", Waveform::TRIANGLE}
+    {"TRIANGLE", Waveform::TRIANGLE},
+    {"NOISE", Waveform::NOISE}
 };
 
 SoundSystem::SoundSystem() {}
@@ -32,12 +33,18 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
         return false;
     }
 
+    srand(static_cast<unsigned int>(time(nullptr)));
+    delay_buffer.resize(44100 * 2 * 2, 0.0f);
+
+#ifdef JD_IMGUI
+    vis_buffer.resize(1024, 0.0f);
+#endif
     // --- Modern SDL3 audio initialization ---
     SDL_AudioSpec desired_spec;
     SDL_zero(desired_spec);
     desired_spec.freq = 44100;
     desired_spec.format = SDL_AUDIO_F32;
-    desired_spec.channels = 1;
+    desired_spec.channels = 2;
 
     //// Open a stream with a callback. This is the new way to do it.
     audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec, &SoundSystem::audio_callback, this);
@@ -64,13 +71,21 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
 void SoundSystem::shutdown() {
     if (!is_initialized) return;
 
-    // --- Free all loaded sound chunks ---
+    // 1. Stop and Destroy the Audio Stream
+    if (audio_stream) {
+        // This stops the callback and unbinds from the device
+        SDL_DestroyAudioStream(audio_stream);
+        audio_stream = nullptr;
+    }
+
+    // 3. Clean up memory
     for (auto const& [id, chunk] : loaded_samples) {
-        if (chunk.buffer) {
-            SDL_free(chunk.buffer);
-        }
+        if (chunk.buffer) SDL_free(chunk.buffer);
     }
     loaded_samples.clear();
+
+    tracks.clear();
+    channels.clear();
 
     is_initialized = false;
 }
@@ -78,62 +93,334 @@ void SoundSystem::shutdown() {
 // --- The audio callback now mixes synth voices AND sample channels ---
 void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int additional_len, int total_len) {
     SoundSystem* self = static_cast<SoundSystem*>(userdata);
-    int num_samples = additional_len / sizeof(float);
-    if (num_samples == 0) return;
 
-    std::vector<float> buffer(num_samples);
+    // num_floats is total floats (Left + Right samples)
+    int num_floats = additional_len / sizeof(float);
+    if (num_floats == 0) return;
+    // We process Frames (1 Frame = 1 Left Sample + 1 Right Sample)
+    int num_frames = num_floats / 2;
+    std::vector<float> buffer(num_floats);
+    double seconds_per_sample = 1.0 / self->audio_spec.freq;
 
-    for (int i = 0; i < num_samples; ++i) {
-        float mixed_sample = 0.0f;
+    
+#ifdef SDLMIXER
+    // --- SEQUENCER LOGIC START ---
+    double phase_inc = seconds_per_sample * self->sequencer.cycles_per_second;
+
+    self->sequencer.current_phase += phase_inc;
+    if (self->sequencer.current_phase >= 1.0) {
+        self->sequencer.current_phase -= 1.0;
+        // Reset triggers for next cycle
+        for (auto& layer : self->sequencer.layers) {
+            for (auto& ev : layer.events) ev.triggered = false;
+        }
+    }
+
+    // Check for events to trigger
+    for (int L = 0; L < self->sequencer.layers.size(); ++L) {
+        auto& layer = self->sequencer.layers[L];
+        if (!layer.active) continue;
+
+        for (auto& ev : layer.events) {
+            // Trigger condition: We just passed the start time
+            if (!ev.triggered && self->sequencer.current_phase >= ev.start_phase && self->sequencer.current_phase < (ev.start_phase + ev.duration)) {
+
+                ev.triggered = true;
+                float freq = 0.0f;
+                // 1. Try treating token as a standard Note String (e.g., "c3")
+                freq = NoteMap::get(ev.token);
+
+                // 2. If that failed (returns 0), try treating it as a Scale Degree Number
+                if (freq == 0.0f) {
+                    try {
+                        size_t parsed_len = 0;
+                        int degree = std::stoi(ev.token, &parsed_len);
+                        // Ensure the whole string was a number (avoids partial matches)
+                        if (parsed_len == ev.token.length()) {
+                            freq = self->get_scale_freq(degree);
+                        }
+                    }
+                    catch (...) {
+                        // Not a number either (maybe sample name or garbage)
+                    }
+                }
+
+                if (freq > 0.0f) {
+                    // It's a synth note
+                    int track_idx = L % self->tracks.size();
+
+                    if (layer.synth_type != Waveform::SINE) {
+                        self->tracks[track_idx].waveform = layer.synth_type;
+                    }
+
+                    // Set properties
+                    //self->tracks[track_idx].waveform = layer.synth_type;
+                    self->tracks[track_idx].frequency = freq;
+                    self->tracks[track_idx].phase = 0.0;
+                    self->tracks[track_idx].adsr_state = ADSRState::ATTACK;
+                    self->tracks[track_idx].envelope_level = 0.0;
+
+                    // Adjust ADSR based on event duration
+                    //double dur_sec = ev.duration / self->sequencer.cycles_per_second;
+                    //self->tracks[track_idx].release_time = 0.1;
+                    //self->tracks[track_idx].decay_time = dur_sec * 0.8;
+                }
+                else {
+                    try {
+                        int sample_id = std::stoi(ev.token);
+                        // Sample triggering logic would go here
+                    }
+                    catch (...) {}
+                }
+            }
+        }
+    }
+    // --- SEQUENCER LOGIC END ---
+#endif
+    for (int i = 0; i < num_frames; ++i) {
+#ifdef SDLMIXER
+        // --- SEQUENCER LOGIC START ---
+        double phase_inc = seconds_per_sample * self->sequencer.cycles_per_second;
+
+        self->sequencer.current_phase += phase_inc;
+        if (self->sequencer.current_phase >= 1.0) {
+            self->sequencer.current_phase -= 1.0;
+            // Reset triggers for next cycle
+            for (auto& layer : self->sequencer.layers) {
+                for (auto& ev : layer.events) ev.triggered = false;
+            }
+        }
+
+        // Check for events to trigger
+        for (int L = 0; L < self->sequencer.layers.size(); ++L) {
+            auto& layer = self->sequencer.layers[L];
+            if (!layer.active) continue;
+
+            for (auto& ev : layer.events) {
+                // Trigger condition: We just passed the start time
+                if (!ev.triggered && self->sequencer.current_phase >= ev.start_phase && self->sequencer.current_phase < (ev.start_phase + ev.duration)) {
+                    ev.triggered = true;
+                    float freq = 0.0f;
+                    // 1. Try treating token as a standard Note String (e.g., "c3")
+                    freq = NoteMap::get(ev.token);
+
+                    // 2. If that failed (returns 0), try treating it as a Scale Degree Number
+                    if (freq == 0.0f) {
+                        try {
+                            size_t parsed_len = 0;
+                            int degree = std::stoi(ev.token, &parsed_len);
+                            // Ensure the whole string was a number (avoids partial matches)
+                            if (parsed_len == ev.token.length()) {
+                                freq = self->get_scale_freq(degree);
+                            }
+                        }
+                        catch (...) {
+                            // Not a number either (maybe sample name or garbage)
+                        }
+                    }
+
+                    if (freq > 0.0f) {
+                        // It's a synth note
+                        int track_idx = L % self->tracks.size();
+
+                        if (layer.synth_type != Waveform::SINE) {
+                            self->tracks[track_idx].waveform = layer.synth_type;
+                        }
+
+                        // Set properties
+                        self->tracks[track_idx].seq_duration_remaining = ev.duration;
+                        self->tracks[track_idx].controlled_by_sequencer = true;
+                        self->tracks[track_idx].frequency = freq;
+                        self->tracks[track_idx].phase = 0.0;
+                        self->tracks[track_idx].adsr_state = ADSRState::ATTACK;
+                        self->tracks[track_idx].envelope_level = 0.0;
+                    }
+                    else {
+                        try {
+                            int sample_id = std::stoi(ev.token);
+                            // Sample triggering logic would go here
+                        }
+                        catch (...) {}
+                    }
+                }
+            }
+        }
+        // --- 3. Gate Off Logic ---
+        for (auto& track : self->tracks) {
+            if (track.controlled_by_sequencer && track.adsr_state != ADSRState::OFF && track.adsr_state != ADSRState::RELEASE) {
+                // Count down
+                track.seq_duration_remaining -= phase_inc;
+                // If time is up, let go of the key!
+                if (track.seq_duration_remaining <= 0.0) {
+                    track.adsr_state = ADSRState::RELEASE;
+                    track.controlled_by_sequencer = false; // Reset flag
+                }
+            }
+        }
+        // --- SEQUENCER LOGIC END ---
+#endif
+
+        float mix_L = 0.0f;
+        float mix_R = 0.0f;
         int active_sources = 0;
 
-        // 1. Mix active synthesizer voices
+        // --- 1. Mix Synthesizer Voices ---
         for (auto& track : self->tracks) {
             if (track.adsr_state != ADSRState::OFF) {
-                mixed_sample += self->generate_sample(track);
+                float sample = self->generate_sample(track);
+
+                // Apply Gain
+                sample *= track.gain;
+
+                // Constant Power Panning (approximate for speed)
+                // Linear: L = (1-pan), R = pan creates a volume dip in center.
+                // Sqrt:   L = sqrt(1-pan), R = sqrt(pan) keeps power constant.
+                float pan_r = track.pan;
+                float pan_l = 1.0f - track.pan;
+
+                // You can use sqrt for better quality, or keep it linear for speed
+                // mix_L += sample * std::sqrt(pan_l);
+                // mix_R += sample * std::sqrt(pan_r);
+
+                // Simple Linear (easier on CPU)
+                mix_L += sample * pan_l * 2.0f; // *2 to keep volume consistent with mono code at center
+                mix_R += sample * pan_r * 2.0f;
+
                 active_sources++;
             }
         }
 
-        // 2. Mix active sound effect channels
+        // --- 2. Mix Sound Effects ---
+        // Note: load_sound converts samples to the device format (Stereo)
+        // So loaded_samples are already Interleaved (L, R, L, R...)
         for (auto& channel : self->channels) {
             if (channel.is_active) {
-                // Find the sound chunk data
                 auto it = self->loaded_samples.find(channel.sample_id);
                 if (it != self->loaded_samples.end()) {
                     SoundChunk& chunk = it->second;
-                    // Check if we are still within the sound's length
-                    if (channel.position < chunk.length) {
-                        // Get the sample value (buffer is float*, position is in bytes)
-                        mixed_sample += chunk.buffer[channel.position / sizeof(float)];
-                        channel.position += sizeof(float);
+                    // We read 2 floats (L, R) per frame
+                    if (channel.position + sizeof(float) * 2 <= chunk.length) {
+                        float* src = (float*)(chunk.buffer + (channel.position / sizeof(float))); // Pointer arith fix needed? 
+                        // Actually chunk.buffer is float*, so just index
+                        int float_idx = channel.position / sizeof(float);
+
+                        float s_l = chunk.buffer[float_idx];
+                        float s_r = chunk.buffer[float_idx + 1];
+
+                        // Apply Channel Panning (optional, usually SFX are pre-panned)
+                        // For now just pass through
+                        mix_L += s_l;
+                        mix_R += s_r;
+
+                        channel.position += sizeof(float) * 2;
                         active_sources++;
                     }
                     else {
-                        if (channel.is_looping) {
-                            channel.position = 0; // Loop back to the start
-                        }
-                        else {
-                            channel.is_active = false; // Sound has finished playing
-                        }
+                        if (channel.is_looping) channel.position = 0;
+                        else channel.is_active = false;
                     }
-                }
-                else {
-                    // Invalid ID, deactivate
-                    channel.is_active = false;
                 }
             }
         }
 
-        // Simple averaging to prevent clipping.
+        // Averaging
         if (active_sources > 1) {
-            mixed_sample /= active_sources;
+            mix_L /= std::sqrt((float)active_sources); // Soft averaging
+            mix_R /= std::sqrt((float)active_sources);
         }
 
-        buffer[i] = mixed_sample;
+        // --- 3. Stereo Delay ---
+        if (self->delay_active) {
+            size_t delay_frames = (size_t)((self->delay_time_ms / 1000.0) * self->audio_spec.freq);
+
+            // Circular Buffer Logic (Frames)
+            size_t read_pos = self->delay_head;
+            if (read_pos < delay_frames) read_pos += (self->delay_buffer.size() / 2); // size is total floats
+            read_pos -= delay_frames;
+
+            // Read Stereo From Buffer
+            float d_l = self->delay_buffer[read_pos * 2];
+            float d_r = self->delay_buffer[read_pos * 2 + 1];
+
+            // Feedback (Ping Pong or Stereo?)
+            // Let's do Simple Stereo Delay: L feeds L, R feeds R
+            self->delay_buffer[self->delay_head * 2] = mix_L + (d_l * self->delay_feedback);
+            self->delay_buffer[self->delay_head * 2 + 1] = mix_R + (d_r * self->delay_feedback);
+
+            // Advance Head
+            self->delay_head++;
+            if (self->delay_head >= (self->delay_buffer.size() / 2)) self->delay_head = 0;
+
+            // Mix Wet
+            mix_L += d_l * self->delay_mix;
+            mix_R += d_r * self->delay_mix;
+        }
+
+        // --- 4. Distortion ---
+        if (self->distortion_amount > 0.0) {
+            mix_L = std::tanh(mix_L * (1.0 + self->distortion_amount));
+            mix_R = std::tanh(mix_R * (1.0 + self->distortion_amount));
+        }
+
+        // --- 5. Visualization (Mono Sum) ---
+#ifdef JD_IMGUI
+        if (!self->vis_buffer.empty()) {
+            self->vis_buffer[self->vis_head] = (mix_L + mix_R) * 0.5f;
+            self->vis_head = (self->vis_head + 1) % self->vis_buffer.size();
+        }
+#endif
+
+        // Write to output buffer (Interleaved)
+        buffer[i * 2] = mix_L;
+        buffer[i * 2 + 1] = mix_R;
+    }
+    SDL_PutAudioStreamData(stream, buffer.data(), additional_len);
+}
+
+void SoundSystem::reset() {
+    if (!is_initialized) return;
+
+    SDL_LockAudioStream(audio_stream);
+
+    // 1. Silence Synth Tracks & Reset defaults
+    for (auto& track : tracks) {
+        track.adsr_state = ADSRState::OFF;
+        track.envelope_level = 0.0;
+        track.seq_duration_remaining = 0.0;
+        track.controlled_by_sequencer = false;
+
+        // Optional: Reset effects to clean state
+        track.filter_cutoff = 20000.0;
+        track.fm_amount = 0.0;
+        track.crush_bits = 0.0;
+        track.ring_mix = 0.0;
+        track.gain = 1.0;
+        track.pan = 0.5;
     }
 
-    SDL_PutAudioStreamData(stream, buffer.data(), additional_len);
+    // 2. Stop SFX Channels
+    for (auto& chan : channels) {
+        chan.is_active = false;
+    }
+
+    // 3. Clear Sequencer
+#ifdef SDLMIXER
+    for (auto& layer : sequencer.layers) {
+        layer.events.clear();
+        layer.pattern_source = "";
+        layer.active = false;
+    }
+    sequencer.current_phase = 0.0;
+#endif
+
+    // 4. Reset Global Effects
+    delay_active = false;
+    distortion_amount = 0.0;
+
+    // Clear delay buffer to stop echoes immediately
+    std::fill(delay_buffer.begin(), delay_buffer.end(), 0.0f);
+
+    SDL_UnlockAudioStream(audio_stream);
 }
 
 // --- Load a WAV file from disk ---
@@ -253,6 +540,21 @@ float SoundSystem::generate_sample(Voice& voice) {
     float sample = 0.0f;
     double time_per_sample = 1.0 / audio_spec.freq;
 
+    // --- 1. LFO Logic ---
+        // Update LFO phase
+    voice.lfo_phase += 2.0 * M_PI * voice.lfo_frequency * time_per_sample;
+    if (voice.lfo_phase >= 2.0 * M_PI) voice.lfo_phase -= 2.0 * M_PI;
+
+    // Calculate LFO output (-1.0 to 1.0)
+    float lfo_val = sin(voice.lfo_phase);
+
+    // Apply LFO to frequency (Vibrato)
+    // Depth determines how many Hz to shift
+    double modulated_frequency = voice.frequency + (lfo_val * voice.lfo_depth);
+
+    // Prevent negative frequency
+    if (modulated_frequency < 0) modulated_frequency = 0;
+
     // --- (ADSR logic remains the same) ---
     switch (voice.adsr_state) {
     case ADSRState::ATTACK:
@@ -271,18 +573,103 @@ float SoundSystem::generate_sample(Voice& voice) {
     case ADSRState::OFF: return 0.0f;
     }
 
-    // --- (Waveform generation remains the same) ---
+    // --- 3. Oscillator Generation (Use modulated_frequency) ---
+    float raw_sample = 0.0f;
+
+    // --- FM SYNTHESIS LOGIC ---
+    // 1. Update Modulator Phase
+    double mod_freq = modulated_frequency * voice.fm_ratio;
+    voice.mod_phase += 2.0 * M_PI * mod_freq * time_per_sample;
+    if (voice.mod_phase >= 2.0 * M_PI) voice.mod_phase -= 2.0 * M_PI;
+
+    // 2. Calculate Modulation Value (Sine wave modulator)
+    float mod_val = sin(voice.mod_phase) * voice.fm_amount;
+
+    // 3. Calculate Effective Phase (Carrier Phase + Modulation)
+    //    Phase Modulation is more stable than direct Frequency Modulation
+    double effective_phase = voice.phase + mod_val;
+
+    //    Wrap effective phase to 0..2PI range for wave functions
+    effective_phase = fmod(effective_phase, 2.0 * M_PI);
+    if (effective_phase < 0) effective_phase += 2.0 * M_PI;
+
+    // --- OSCILLATOR GENERATION ---
     switch (voice.waveform) {
-    case Waveform::SINE: sample = sin(voice.phase); break;
-    case Waveform::SQUARE: sample = (sin(voice.phase) >= 0) ? 1.0f : -1.0f; break;
-    case Waveform::SAWTOOTH: sample = (fmod(voice.phase, 2.0 * M_PI) / M_PI) - 1.0; break;
-    case Waveform::TRIANGLE: sample = 2.0f * (fabs(fmod(voice.phase, 2.0 * M_PI) / M_PI - 1.0f) - 0.5f); break;
+    case Waveform::SINE:
+        raw_sample = sin(effective_phase);
+        break;
+    case Waveform::SQUARE:
+        raw_sample = (sin(effective_phase) >= 0) ? 1.0f : -1.0f;
+        break;
+    case Waveform::SAWTOOTH:
+        raw_sample = (effective_phase / M_PI) - 1.0;
+        break;
+    case Waveform::TRIANGLE:
+        raw_sample = 2.0f * (fabs(effective_phase / M_PI - 1.0f) - 0.5f);
+        break;
+    case Waveform::NOISE:
+        // FM doesn't affect noise, it's just random
+        raw_sample = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+        break;
     }
 
-    voice.phase += 2.0 * M_PI * voice.frequency * time_per_sample;
+    // Update Carrier Phase (Standard increment)
+    voice.phase += 2.0 * M_PI * modulated_frequency * time_per_sample;
     if (voice.phase >= 2.0 * M_PI) { voice.phase -= 2.0 * M_PI; }
 
-    return sample * voice.envelope_level;
+    // --- 4. Filter Logic (Simple RC Low Pass) ---
+        // alpha = dt / (RC + dt)
+        // RC = 1 / (2 * pi * cutoff)
+        // Simplification for digital one-pole:
+        // output = prev_output + alpha * (input - prev_output)
+
+    double rc = 1.0 / (2.0 * M_PI * voice.filter_cutoff);
+    double alpha = time_per_sample / (rc + time_per_sample);
+
+    // Clamp alpha for stability
+    if (alpha > 1.0) alpha = 1.0;
+
+    // Apply filter
+    voice.filter_state = voice.filter_state + alpha * (raw_sample - voice.filter_state);
+
+    // Use the filtered sample
+    float final_sample = voice.filter_state;
+
+    // --- RING MODULATOR ---
+    if (voice.ring_mix > 0.0) {
+        // 1. Advance Ring Modulator Phase
+        voice.ring_phase += 2.0 * M_PI * voice.ring_freq * time_per_sample;
+        if (voice.ring_phase >= 2.0 * M_PI) voice.ring_phase -= 2.0 * M_PI;
+
+        // 2. Generate Carrier
+        float carrier = sin(voice.ring_phase);
+
+        // 3. Multiply (Ring Mod)
+        float ring_signal = final_sample * carrier;
+
+        // 4. Mix Dry/Wet
+        final_sample = (final_sample * (1.0 - voice.ring_mix)) + (ring_signal * voice.ring_mix);
+    }
+
+    // --- BITCRUSHER ---
+    if (voice.crush_bits > 0.0) {
+        // 1. Sample Rate Reduction (Sample & Hold)
+        voice.crush_counter += voice.crush_rate; // e.g. add 0.1 per real sample
+        if (voice.crush_counter >= 1.0) {
+            voice.crush_counter -= 1.0;
+
+            // 2. Bit Depth Reduction
+            // Steps = 2 ^ bits. e.g. 4 bits = 16 steps.
+            float steps = pow(2.0f, (float)voice.crush_bits);
+            // Quantize the sample to the nearest step
+            voice.crush_last_sample = floor(final_sample * steps) / steps;
+        }
+        // Use the held/quantized sample
+        final_sample = voice.crush_last_sample;
+    }
+
+    // Apply ADSR Volume
+    return final_sample * voice.envelope_level;
 }
 
 // --- All functions now lock the audio stream instead of the device ---
@@ -327,5 +714,141 @@ void SoundSystem::stop_note(int track_index) {
         SDL_UnlockAudioStream(audio_stream);
     }
 }
+
+void SoundSystem::set_gain(int track_index, double gain) {
+    if (track_index >= 0 && track_index < tracks.size() && audio_stream) {
+        SDL_LockAudioStream(audio_stream);
+        tracks[track_index].gain = gain;
+        SDL_UnlockAudioStream(audio_stream);
+    }
+}
+
+void SoundSystem::set_pan(int track_index, double pan) {
+    if (track_index >= 0 && track_index < tracks.size() && audio_stream) {
+        SDL_LockAudioStream(audio_stream);
+        // Clamp to 0.0 - 1.0
+        tracks[track_index].pan = (pan < 0.0) ? 0.0 : ((pan > 1.0) ? 1.0 : pan);
+        SDL_UnlockAudioStream(audio_stream);
+    }
+}
+
+void SoundSystem::set_delay(bool active, double time_ms, double feedback, double mix) {
+    SDL_LockAudioStream(audio_stream);
+    delay_active = active;
+    delay_time_ms = time_ms;
+    delay_feedback = feedback;
+    delay_mix = mix;
+    SDL_UnlockAudioStream(audio_stream);
+}
+
+void SoundSystem::set_fm(int track, double amount, double ratio) {
+    if (track >= 0 && track < tracks.size() && audio_stream) {
+        SDL_LockAudioStream(audio_stream);
+        tracks[track].fm_amount = amount;
+        tracks[track].fm_ratio = ratio;
+        SDL_UnlockAudioStream(audio_stream);
+    }
+}
+
+void SoundSystem::set_distortion(double amount) {
+    SDL_LockAudioStream(audio_stream);
+    distortion_amount = amount;
+    SDL_UnlockAudioStream(audio_stream);
+}
+
+void SoundSystem::set_bitcrusher(int track, double bits, double rate) {
+    if (track >= 0 && track < tracks.size() && audio_stream) {
+        SDL_LockAudioStream(audio_stream);
+        tracks[track].crush_bits = bits;
+        tracks[track].crush_rate = (rate > 1.0) ? 1.0 : (rate < 0.01 ? 0.01 : rate);
+        SDL_UnlockAudioStream(audio_stream);
+    }
+}
+
+void SoundSystem::set_ringmod(int track, double freq, double mix) {
+    if (track >= 0 && track < tracks.size() && audio_stream) {
+        SDL_LockAudioStream(audio_stream);
+        tracks[track].ring_freq = freq;
+        tracks[track].ring_mix = mix;
+        SDL_UnlockAudioStream(audio_stream);
+    }
+}
+
+#ifdef JD_IMGUI
+// Returns the buffer rotated so it looks like a continuous wave
+std::vector<float> SoundSystem::get_wave_data() {
+    std::vector<float> result;
+    if (vis_buffer.empty()) return result;
+
+    SDL_LockAudioStream(audio_stream);
+    result.resize(vis_buffer.size());
+    // Copy in two chunks to "unroll" the circular buffer
+    size_t head = vis_head;
+    size_t tail_len = vis_buffer.size() - head;
+
+    // Copy from head to end
+    std::copy(vis_buffer.begin() + head, vis_buffer.end(), result.begin());
+    // Copy from start to head
+    std::copy(vis_buffer.begin(), vis_buffer.begin() + head, result.begin() + tail_len);
+
+    SDL_UnlockAudioStream(audio_stream);
+    return result;
+}
+#endif
+
+#ifdef SDLMIXER
+void SoundSystem::update_sequence(int layer, const std::string& pattern, const std::string& waveform_str) {
+    SDL_LockAudioStream(audio_stream);
+    Waveform wf = Waveform::SINE;
+    if (waveform_map.count(waveform_str)) wf = waveform_map.at(waveform_str);
+    sequencer.parse_pattern(layer, pattern, wf);
+    SDL_UnlockAudioStream(audio_stream);
+}
+
+void SoundSystem::set_bpm(double bpm) {
+    SDL_LockAudioStream(audio_stream);
+    sequencer.set_cps(bpm / 60.0 / 4.0); // Assuming 4 beats per cycle
+    SDL_UnlockAudioStream(audio_stream);
+}
+
+void SoundSystem::set_scale(const std::string& root_note, const std::string& mode) {
+    SDL_LockAudioStream(audio_stream);
+
+    // 1. Convert Root Note String (e.g. "C3") to Frequency, then to MIDI Note
+    // NoteMap is defined in SoundSystem.hpp (ensure it is accessible or copy the logic)
+    float root_freq = NoteMap::get(root_note);
+    if (root_freq > 0.0f) {
+        // Frequency to MIDI formula: 69 + 12 * log2(freq / 440)
+        scale_root_midi = std::round(69 + 12 * std::log2(root_freq / 440.0));
+    }
+
+    // 2. Set Intervals
+    std::string m = mode;
+    // Manual to_upper if needed, assuming input is uppercase from BASIC
+    if (scale_library.count(m)) {
+        scale_intervals = scale_library.at(m);
+    }
+
+    SDL_UnlockAudioStream(audio_stream);
+}
+
+float SoundSystem::get_scale_freq(int degree) {
+    if (scale_intervals.empty()) return 0.0f;
+
+    int num_notes = scale_intervals.size();
+
+    // Calculate octave shift and index in the scale array
+    // Handling negative numbers correctly for C++ division/modulo
+    int octave_shift = (degree >= 0) ? (degree / num_notes) : ((degree - num_notes + 1) / num_notes);
+    int idx = (degree >= 0) ? (degree % num_notes) : ((degree % num_notes + num_notes) % num_notes);
+
+    int semitone_offset = scale_intervals[idx];
+    int target_midi = scale_root_midi + (octave_shift * 12) + semitone_offset;
+
+    // MIDI to Frequency: 440 * 2^((midi-69)/12)
+    return 440.0f * std::pow(2.0f, (target_midi - 69.0f) / 12.0f);
+}
+
+#endif
 
 #endif

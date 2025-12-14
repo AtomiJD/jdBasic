@@ -1102,6 +1102,73 @@ Description: Immediately stops a note on a synthesizer track.
 Syntax: SOUND.VOICE track, waveform$, attack, decay, sustain, release
 Description: Configures the ADSR envelope and waveform for a synthesizer track.
 
+[SOUND.BITCRUSH]
+Syntax: SOUND.BITCRUSH track, bits, rate
+Description: Applies a lo-fi bitcrusher effect to a track.
+Bits: 1-16 (Resolution). Rate: 0.0-1.0 (Sample Rate Reduction).
+
+[SOUND.BPM]
+Syntax: SOUND.BPM(beats_per_minute)
+Description: Sets the global tempo for the sequencer.
+
+[SOUND.DELAY]
+Syntax: SOUND.DELAY active_bool, time_ms, feedback, mix
+Description: Activates a global stereo delay (echo) effect.
+Feedback: 0.0-0.9. Mix: 0.0-1.0.
+
+[SOUND.DISTORTION]
+Syntax: SOUND.DISTORTION amount
+Description: Applies a master saturation/overdrive effect. Amount > 0.0.
+
+[SOUND.FILTER]
+Syntax: SOUND.FILTER track, cutoff_hz
+Description: Applies a Low-Pass Filter to a track at the specified cutoff frequency.
+
+[SOUND.FM]
+Syntax: SOUND.FM track, amount, ratio
+Description: Applies Frequency Modulation synthesis.
+Amount: Modulation depth. Ratio: Frequency multiplier relative to carrier.
+
+[SOUND.GAIN]
+Syntax: SOUND.GAIN track, volume
+Description: Sets the volume gain for a specific track (0.0 to 1.0+).
+
+[SOUND.GET_WAVE]
+Syntax: SOUND.GET_WAVE()
+Description: Returns an array of float values representing the current live audio waveform.
+
+[SOUND.LFO]
+Syntax: SOUND.LFO track, frequency_hz, depth
+Description: Applies a Low Frequency Oscillator to modulate pitch (Vibrato).
+
+[SOUND.PAN]
+Syntax: SOUND.PAN track, pan_value
+Description: Sets the stereo panning for a track.
+0.0 = Left, 0.5 = Center, 1.0 = Right.
+
+[SOUND.RESET]
+Syntax: SOUND.RESET
+Description: Immediately silences all tracks, clears the sequencer, and resets effects.
+
+[SOUND.RINGMOD]
+Syntax: SOUND.RINGMOD track, frequency_hz, mix
+Description: Applies Ring Modulation (multiplies signal by a sine wave).
+Mix: 0.0 (Dry) to 1.0 (Wet).
+
+[SOUND.SCALE]
+Syntax: SOUND.SCALE root_note$, scale_mode$
+Description: Sets the musical scale for the sequencer's number notation.
+Modes: MAJOR, MINOR, PENT_MIN, BLUES, ARABIC, etc.
+
+[SOUND.SEQ]
+Syntax: SOUND.SEQ layer, pattern$, waveform$
+Description: Programs a rhythmic pattern for the sequencer.
+Waveform can be "SINE", "SQUARE", "SAW", "TRIANGLE", "NOISE", or "VOICE".
+
+[SOUND.SHUTDOWN]
+Syntax: SOUND.SHUTDOWN
+Description: Closes the audio stream and releases the audio device.
+
 [SPLIT]
 Syntax: SPLIT(source$, delimiter$)
 Description: Splits a string by a delimiter and returns a 1D array of strings.

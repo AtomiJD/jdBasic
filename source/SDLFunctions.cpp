@@ -16,7 +16,8 @@ const std::map<std::string, Waveform> waveform_map = {
     {"SINE", Waveform::SINE},
     {"SQUARE", Waveform::SQUARE},
     {"SAW", Waveform::SAWTOOTH},
-    {"TRIANGLE", Waveform::TRIANGLE}
+    {"TRIANGLE", Waveform::TRIANGLE},
+    {"NOISE", Waveform::NOISE}
 };
 
 extern const std::map<std::string, Waveform> waveform_map;
@@ -712,6 +713,184 @@ BasicValue builtin_music_stop(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return false;
 }
 
+// SOUND.FILTER track, cutoff_hz
+BasicValue builtin_sound_filter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return false;
+    int track = (int)to_double(args[0]);
+    double cutoff = to_double(args[1]);
+
+    // Lock audio!
+    SDL_LockAudioStream(vm.sound_system.audio_stream);
+    // You'll need to update your SoundSystem::set_filter method or access tracks directly if public
+    vm.sound_system.tracks[track].filter_cutoff = cutoff;
+    SDL_UnlockAudioStream(vm.sound_system.audio_stream);
+    return false;
+}
+
+// SOUND.LFO track, speed_hz, depth
+BasicValue builtin_sound_lfo(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) return false;
+    int track = (int)to_double(args[0]);
+    double speed = to_double(args[1]);
+    double depth = to_double(args[2]);
+
+    SDL_LockAudioStream(vm.sound_system.audio_stream);
+    vm.sound_system.tracks[track].lfo_frequency = speed;
+    vm.sound_system.tracks[track].lfo_depth = depth;
+    SDL_UnlockAudioStream(vm.sound_system.audio_stream);
+    return false;
+}
+
+// SOUND.FM track, amount, ratio
+// amount: 0.0 to 10.0 (try 2.0 for bells, 5.0+ for noise)
+// ratio: 0.5, 1.0, 2.0, 1.414 (non-integers create metallic dissonance)
+BasicValue builtin_sound_fm(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) return false;
+    int track = (int)to_double(args[0]);
+    double amt = to_double(args[1]);
+    double ratio = to_double(args[2]);
+    vm.sound_system.set_fm(track, amt, ratio);
+    return false;
+}
+
+// SOUND.DISTORTION amount (0.0 to 5.0+)
+BasicValue builtin_sound_distortion(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return false;
+    double amt = to_double(args[0]);
+    vm.sound_system.set_distortion(amt);
+    return false;
+}
+
+// SOUND.BITCRUSH track, bits (1-16), rate (0.01-1.0)
+// bits: 0=Off, 4=Nintendo, 8=Sampler, 12=Clean
+// rate: 1.0=Normal, 0.1=Very low sample rate (aliasing)
+BasicValue builtin_sound_bitcrush(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) return false;
+    int track = (int)to_double(args[0]);
+    double bits = to_double(args[1]);
+    double rate = to_double(args[2]);
+    vm.sound_system.set_bitcrusher(track, bits, rate);
+    return false;
+}
+
+// SOUND.RINGMOD track, frequency, mix
+// freq: Try 50Hz for tremolo, 500Hz for metallic, 2000Hz for sci-fi
+BasicValue builtin_sound_ringmod(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) return false;
+    int track = (int)to_double(args[0]);
+    double freq = to_double(args[1]);
+    double mix = to_double(args[2]);
+    vm.sound_system.set_ringmod(track, freq, mix);
+    return false;
+}
+
+#ifdef SDLMIXER
+// SOUND.SEQ(layer_id, pattern_string, waveform_string)
+// Updates the sequence pattern for a specific layer.
+BasicValue builtin_sound_seq(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "SOUND.SEQ requires 3 arguments: layer_id, pattern$, waveform$.");
+        return false;
+    }
+
+    int layer = static_cast<int>(to_double(args[0]));
+    std::string pattern = to_string(args[1]);
+    std::string wave = to_upper(to_string(args[2]));
+
+    vm.sound_system.update_sequence(layer, pattern, wave);
+    return false; // Procedure
+}
+
+// SOUND.BPM(bpm_value)
+// Sets the global beats per minute for the sequencer.
+BasicValue builtin_sound_bpm(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "SOUND.BPM requires 1 argument: bpm_value.");
+        return false;
+    }
+
+    double bpm = to_double(args[0]);
+    vm.sound_system.set_bpm(bpm);
+    return false; // Procedure
+}
+
+// SOUND.SCALE root_note$, mode$
+// Example: SOUND.SCALE "C3", "PENT_MIN"
+BasicValue builtin_sound_scale(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return false;
+    std::string root = to_string(args[0]);
+    std::string mode = to_upper(to_string(args[1]));
+
+    vm.sound_system.set_scale(root, mode);
+    return false;
+}
+
+#endif
+
+// SOUND.GAIN track, volume (0.0 to 1.0+)
+BasicValue builtin_sound_gain(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return false;
+    int track = (int)to_double(args[0]);
+    double gain = to_double(args[1]);
+    vm.sound_system.set_gain(track, gain);
+    return false;
+}
+
+// SOUND.PAN track, value
+// value: 0.0 (Left), 0.5 (Center), 1.0 (Right)
+BasicValue builtin_sound_pan(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return false;
+    int track = (int)to_double(args[0]);
+    double pan = to_double(args[1]);
+    vm.sound_system.set_pan(track, pan);
+    return false;
+}
+
+// SOUND.DELAY active_bool, time_ms, feedback, mix
+BasicValue builtin_sound_delay(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 4) return false;
+    bool active = to_bool(args[0]);
+    double time = to_double(args[1]);
+    double fb = to_double(args[2]); // 0.0 to 0.9
+    double mix = to_double(args[3]); // 0.0 to 1.0
+
+    vm.sound_system.set_delay(active, time, fb, mix);
+    return false;
+}
+
+// SOUND.RESET
+// Immediately silences all audio, clears the sequencer, and resets effects.
+BasicValue builtin_sound_reset(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.sound_system.reset();
+    return false;
+}
+
+// SOUND.SHUTDOWN
+// Closes the SDL audio device and frees resources.
+BasicValue builtin_sound_shutdown(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+    vm.sound_system.shutdown();
+    return false;
+}
+
+#ifdef JD_IMGUI
+// SOUND.GET_WAVE() -> Array of numbers
+BasicValue builtin_sound_get_wave(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    std::vector<float> raw_data = vm.sound_system.get_wave_data();
+
+    // Convert to Basic Array (FloatArray is faster if your system supports it, otherwise generic)
+    auto result_array = std::make_shared<Array>();
+    result_array->shape = { raw_data.size() };
+    result_array->data.reserve(raw_data.size());
+
+    for (float f : raw_data) {
+        result_array->data.push_back((double)f);
+    }
+    return result_array;
+}
+#endif
+
 // MOUSEX() -> returns the current X coordinate of the mouse
 BasicValue builtin_mousex(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (!args.empty()) {
@@ -1133,11 +1312,31 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
     register_proc("SOUND.PLAY", 2, builtin_sound_play);
     register_proc("SOUND.RELEASE", 1, builtin_sound_release);
     register_proc("SOUND.STOP", 1, builtin_sound_stop);
+    register_proc("SOUND.FILTER", 2, builtin_sound_filter);
+    register_proc("SOUND.LFO", 3, builtin_sound_lfo);
+    register_proc("SOUND.GAIN", 2, builtin_sound_gain);
+    register_proc("SOUND.PAN", 2, builtin_sound_pan);
+    register_proc("SOUND.DELAY", 4, builtin_sound_delay);
+    register_proc("SOUND.FM", 3, builtin_sound_fm);
+    register_proc("SOUND.DISTORTION", 1, builtin_sound_distortion);
+    register_proc("SOUND.BITCRUSH", 3, builtin_sound_bitcrush);
+    register_proc("SOUND.RINGMOD", 3, builtin_sound_ringmod);
+#ifdef JD_IMGUI
+    register_func("SOUND.GET_WAVE", 0, builtin_sound_get_wave);
+#endif
+    register_proc("SOUND.RESET", 0, builtin_sound_reset);
+    register_proc("SOUND.SHUTDOWN", 0, builtin_sound_shutdown);
 
     register_proc("SFX.LOAD", 2, builtin_sfx_load);
     register_proc("SFX.PLAY", 1, builtin_sfx_play);
     register_proc("MUSIC.PLAY", -1, builtin_music_play);
     register_proc("MUSIC.STOP", 0, builtin_music_stop);
+
+#ifdef SDLMIXER
+    register_proc("SOUND.SEQ", 3, builtin_sound_seq);
+    register_proc("SOUND.BPM", 1, builtin_sound_bpm);
+    register_proc("SOUND.SCALE", 2, builtin_sound_scale);
+#endif
 
     register_func("MOUSEX", 0, builtin_mousex);
     register_func("MOUSEY", 0, builtin_mousey);

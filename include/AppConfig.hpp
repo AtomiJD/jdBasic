@@ -22,6 +22,7 @@
 #define SDL3
 // Uncomment this line to enable ImGui support
 #define JD_IMGUI 
+#define SDLMIXER 
 #else
 #undef SDL3
 #endif

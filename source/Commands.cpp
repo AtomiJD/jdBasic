@@ -2066,21 +2066,55 @@ void Commands::do_callsub(NeReLaBasic& vm) {
 
         Tokens::ID token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
 
-        if (token != Tokens::ID::C_CR && token != Tokens::ID::C_COLON) {
+        bool using_parens = false;
+        if (token == Tokens::ID::C_LEFTPAREN) {
+            vm.pcode++; // Consume '('
+            using_parens = true;
+            token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]); // Read next token
+        }
+
+        bool has_args = false;
+        if (using_parens) {
+            has_args = (token != Tokens::ID::C_RIGHTPAREN);
+        }
+        else {
+            has_args = (token != Tokens::ID::C_CR && token != Tokens::ID::C_COLON && token != Tokens::ID::NOCMD);
+        }
+
+        if (has_args) {
             if (proc_info.arity == -1 || proc_info.arity > 0) {
                 while (true) {
                     args.push_back(vm.evaluate_expression());
                     if (Error::get() != 0) return;
+
                     Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-                    if (separator == Tokens::ID::C_CR || separator == Tokens::ID::C_COLON) break;
-                    if (separator != Tokens::ID::C_COMMA) { Error::set(1, vm.runtime_current_line); return; }
-                    vm.pcode++;
+
+                    if (using_parens) {
+                        if (separator == Tokens::ID::C_RIGHTPAREN) break;
+                    }
+                    else {
+                        if (separator == Tokens::ID::C_CR || separator == Tokens::ID::C_COLON || separator == Tokens::ID::NOCMD) break;
+                    }
+
+                    if (separator != Tokens::ID::C_COMMA) {
+                        if (using_parens) Error::set(18, vm.runtime_current_line, "Expected ',' or ')'");
+                        else Error::set(1, vm.runtime_current_line);
+                        return;
+                    }
+                    vm.pcode++; // Consume comma
                 }
             }
             else {
                 vm.pcode++;
                 vm.pcode++;
             }
+        }
+
+        if (using_parens) {
+            if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+                Error::set(18, vm.runtime_current_line, "Expected ')'"); return;
+            }
+            vm.pcode++; // Consume ')'
         }
 
         if (proc_info.arity != -1 && args.size() != proc_info.arity) {
