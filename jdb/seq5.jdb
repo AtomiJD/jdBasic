@@ -1,0 +1,39 @@
+SOUND.INIT()
+SOUND.BPM(120)
+SOUND.DELAY TRUE, 300, 0.5, 0.3 ' Add echo for atmosphere
+
+' --- Track 0: Glitch Kick ---
+SOUND.VOICE 0, "SINE", 0.001, 0.1, 0.0, 0.1
+' 4 bits, 20% sample rate -> Very crunchy, digital kick
+SOUND.BITCRUSH 0, 4, 0.2 
+
+' --- Track 1: Alien Snare ---
+SOUND.VOICE 1, "NOISE", 0.001, 0.15, 0.0, 0.1
+' Ring modulating noise creates a weird tonal "clank"
+SOUND.RINGMOD 1, 800, 1.0 
+
+' --- Track 2: Broken Bass ---
+SOUND.VOICE 2, "SAW", 0.01, 0.2, 0.5, 0.2
+SOUND.FILTER 2, 500
+' 6 bits gives it a "fizz", 0.5 rate gives "aliasing"
+SOUND.BITCRUSH 2, 6, 0.5 
+
+' --- Pattern Generation ---
+' Complex, stuttery rhythms
+SOUND.SEQ 0, "c2 [c2 c2] ~ [c2 c2 c2]", "VOICE"
+SOUND.SEQ 1, "~ ~ c4 [c4 c4]", "VOICE"
+SOUND.SEQ 2, "c2 ~ c2 ~", "VOICE"
+
+PRINT "Playing Glitch/IDM Loop..."
+PRINT "Press 1 to randomize Bitcrusher."
+
+DO
+    k$ = INKEY$()
+    IF k$ = "1" THEN
+        ' Randomize the kick's sample rate for "glitch" fills
+        new_rate = 0.1 + (RND(1) * 0.9)
+        SOUND.BITCRUSH 0, 4, new_rate
+        PRINT "Kick Rate: " + new_rate
+    ENDIF
+    SLEEP 10
+LOOP

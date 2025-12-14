@@ -1,0 +1,74 @@
+SCREEN 1280, 720, "jdBasic Sequencer", 2
+
+SOUND.INIT()
+SOUND.BPM(120)
+
+' --- Setup a simple beat ---
+SOUND.VOICE 0, "SAW", 0.01, 0.2, 0.0, 0.1 ' Bass
+SOUND.FILTER 0, 400
+SOUND.VOICE 1, "NOISE", 0.01, 0.05, 0.0, 0.05 ' Hat
+SOUND.VOICE 2, "SQUARE", 0.01, 0.1, 0.5, 0.5 ' Lead
+
+SOUND.SEQ 0, "c2 [c2 c2] ~ c2", "VOICE"
+SOUND.SEQ 1, "[c4 c4] [c4 c4]", "VOICE"
+SOUND.SEQ 2, "~ ~ g4 ~", "VOICE"
+
+' --- GUI State Variables ---
+DIM SelectedTrack = 0
+DIM TrackGains[8] 
+' Initialize gains to 1.0
+FOR i = 0 TO 7
+    TrackGains[i] = 1.0
+NEXT
+
+' --- Main Loop ---
+DO
+    CLS
+    
+    ' Start the ImGui Window
+    IF GUI.BEGIN("Master Mixer", 0, 0, 400, 300) THEN
+        
+        ' 1. The Waveform Visualizer
+        ' Get audio data from C++
+        WaveData = SOUND.GET_WAVE() 
+        ' Plot it (Label, Data, OverlayText, Min, Max)
+        GUI.PLOT_LINES("Output", WaveData, "Live Audio", -1.0, 1.0)
+        
+        GUI.SEPARATOR()
+        
+        ' 2. Track Selector (Radio Buttons)
+        GUI.TEXT("Select Track:")
+        ' Create columns for better layout
+        IF GUI.BEGIN_TABLE("Tracks", 4) THEN
+            GUI.TABLE_NEXT_ROW()
+            FOR i = 0 TO 7
+                GUI.TABLE_NEXT_COLUMN()
+                ' Radio returns the ID of the selected button
+                SelectedTrack = GUI.RADIO("Trk " + i, SelectedTrack, i)
+            NEXT
+            GUI.END_TABLE()
+        ENDIF
+        
+        GUI.SEPARATOR()
+        
+        ' 3. Gain Slider for Selected Track
+        GUI.TEXT("Track " + SelectedTrack + " Settings")
+        
+        ' Slider returns the new value
+        OldGain = TrackGains[SelectedTrack]
+        TrackGains[SelectedTrack] = GUI.SLIDER("Gain", TrackGains[SelectedTrack], 0.0, 2.0)
+        
+        ' Only send command to C++ if value changed (optimization)
+        IF OldGain <> TrackGains[SelectedTrack] THEN
+            SOUND.GAIN SelectedTrack, TrackGains[SelectedTrack]
+        ENDIF
+        
+    ENDIF
+    GUI.END()
+    
+    ' Render the frame
+    SCREENFLIP
+    
+    ' Small sleep to save CPU (ImGui runs fast)
+    SLEEP 10
+LOOP

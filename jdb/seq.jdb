@@ -1,0 +1,112 @@
+' --- TECHNO / TRANCE GENERATOR ---
+SOUND.INIT()
+SOUND.BPM(138) ' Classic Trance Tempo
+
+PRINT "JD-BASIC TECHNO SYSTEM ONLINE"
+PRINT "Press 'Q' to Quit."
+PRINT "Press '1' to drop the Bass."
+PRINT "Press '2' to bring the Bass back."
+
+' ==========================================
+' SOUND DESIGN (The Synthesizer Patching)
+' ==========================================
+
+' --- TRACK 0: KICK DRUM ---
+' Using a low Triangle wave with a very snappy envelope
+SOUND.VOICE 0, "TRIANGLE", 0.001, 0.1, 0.0, 0.1
+SOUND.FILTER 0, 150 ' Low pass to make it thumpy
+
+' --- TRACK 1: OFFBEAT BASS ---
+' Sawtooth, filtered, short decay for that "rolling" feel
+SOUND.VOICE 1, "SAW", 0.01, 0.15, 0.0, 0.05
+SOUND.FILTER 1, 600
+' Slight LFO to detune/thicken it
+SOUND.LFO 1, 0.5, 2
+
+' --- TRACK 2: CLOSED HI-HATS ---
+' White Noise, extremely short decay
+SOUND.VOICE 2, "NOISE", 0.001, 0.04, 0.0, 0.05
+
+' --- TRACK 3: OPEN HI-HAT ---
+' White Noise, longer decay
+SOUND.VOICE 3, "NOISE", 0.005, 0.3, 0.0, 0.3
+
+' --- TRACK 4: CLAP / SNARE ---
+' Noise with a bit more punch
+SOUND.VOICE 4, "NOISE", 0.001, 0.2, 0.0, 0.2
+
+' --- TRACK 5: ARPEGGIO / PLUCK ---
+' Square wave, filtered plucky sound
+SOUND.VOICE 5, "SQUARE", 0.01, 0.1, 0.0, 0.1
+SOUND.FILTER 5, 1200
+
+' --- TRACK 6: ATMOSPHERIC PAD ---
+' Slow attack, long release, heavy vibrato for texture
+SOUND.VOICE 6, "SAW", 1.0, 1.0, 0.8, 2.0
+SOUND.FILTER 6, 800
+SOUND.LFO 6, 4, 10 ' Vibrato effect
+
+' --- TRACK 7: FM-STYLE FX ---
+' Sine wave with extremely fast LFO (FM Synthesis simulation)
+SOUND.VOICE 7, "SINE", 0.01, 0.5, 0.0, 0.5
+SOUND.LFO 7, 50, 200 ' 50Hz LFO creates metallic timbre
+
+' ==========================================
+' THE SEQUENCER (The Musical Data)
+' ==========================================
+
+' Note: We pass "VOICE" as the 3rd argument so the sequencer
+' does NOT overwrite our custom SOUND.VOICE settings.
+
+' 1. Kick: Four-on-the-floor
+SOUND.SEQ 0, "c1 ~ c1 ~", "VOICE"
+
+' 2. Bass: Offbeat gallop pattern [ ~ note ~ note ]
+SOUND.SEQ 1, "~ [c2 c2] ~ c2", "VOICE"
+
+' 3. Closed Hats: Running 16th notes
+SOUND.SEQ 2, "[c4 c4] [c4 c4] [c4 c4] [c4 c4]", "VOICE"
+
+' 4. Open Hat: On the off-beat
+SOUND.SEQ 3, "~ c4 ~ c4", "VOICE"
+
+' 5. Clap: Every 2nd and 4th beat
+SOUND.SEQ 4, "~ ~ c4 ~", "VOICE"
+
+' 6. Arp: Fast melody line
+SOUND.SEQ 5, "[c3 d#3] [g3 c4] [d#4 g3] [c3 d#3]", "VOICE"
+
+' 7. Pad: One long chord drone
+SOUND.SEQ 6, "c3 ~ ~ ~", "VOICE"
+
+' 8. FX: Sparse metallic hits
+SOUND.SEQ 7, "~ ~ ~ [c5 ~]", "VOICE"
+
+' ==========================================
+' LIVE LOOP
+' ==========================================
+
+DO
+    k$ = INKEY$()
+    
+    ' Live Performance Controls
+    IF k$ = "1" THEN 
+        PRINT "Bass Drop!"
+        SOUND.SEQ 1, "~ ~ ~ ~", "VOICE"
+    ENDIF
+    
+    IF k$ = "2" THEN 
+        PRINT "Bass Back!"
+        SOUND.SEQ 1, "~ [c2 c2] ~ c2", "VOICE"
+    ENDIF
+
+    ' Filter Sweep on the Arp (Track 5)
+    ' We use TICK() to create a slow sine wave modulation for the filter
+    t = TICK() / 1000
+    cutoff = 1000 + (SIN(t) * 800)
+    SOUND.FILTER 5, cutoff
+    
+    SLEEP 10
+LOOP UNTIL k$ = "q" OR k$ = "Q"
+
+PRINT "System Halted."
