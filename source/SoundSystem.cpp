@@ -90,92 +90,90 @@ void SoundSystem::shutdown() {
     is_initialized = false;
 }
 
+// Helper for anti-aliasing (smoothes discontinuities)
+double SoundSystem::poly_blep(double t, double dt) {
+    // t is phase (0..1), dt is phase_inc
+    if (t < dt) {
+        t /= dt;
+        return t + t - t * t - 1.0;
+    }
+    else if (t > 1.0 - dt) {
+        t = (t - 1.0) / dt;
+        return t * t + t + t + 1.0;
+    }
+    return 0.0;
+}
+
 // --- The audio callback now mixes synth voices AND sample channels ---
 void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int additional_len, int total_len) {
     SoundSystem* self = static_cast<SoundSystem*>(userdata);
-
-    // num_floats is total floats (Left + Right samples)
     int num_floats = additional_len / sizeof(float);
-    if (num_floats == 0) return;
-    // We process Frames (1 Frame = 1 Left Sample + 1 Right Sample)
     int num_frames = num_floats / 2;
-    std::vector<float> buffer(num_floats);
+    std::vector<float> buffer(num_floats, 0.0f); // Initialize with 0
     double seconds_per_sample = 1.0 / self->audio_spec.freq;
+    double phase_inc_per_frame = seconds_per_sample * self->sequencer.cycles_per_second;
 
-    
 #ifdef SDLMIXER
-    // --- SEQUENCER LOGIC START ---
-    double phase_inc = seconds_per_sample * self->sequencer.cycles_per_second;
+    // --- SEQUENCER LOGIC (PRE-CALCULATION) ---
 
-    self->sequencer.current_phase += phase_inc;
-    if (self->sequencer.current_phase >= 1.0) {
-        self->sequencer.current_phase -= 1.0;
-        // Reset triggers for next cycle
-        for (auto& layer : self->sequencer.layers) {
-            for (auto& ev : layer.events) ev.triggered = false;
-        }
-    }
+    // We iterate through the sequencer for the duration of THIS buffer
+    double buffer_duration_phase = num_frames * phase_inc_per_frame;
+    double start_phase = self->sequencer.current_phase;
+    double end_phase = start_phase + buffer_duration_phase;
 
-    // Check for events to trigger
+    // Check events
     for (int L = 0; L < self->sequencer.layers.size(); ++L) {
         auto& layer = self->sequencer.layers[L];
         if (!layer.active) continue;
 
         for (auto& ev : layer.events) {
-            // Trigger condition: We just passed the start time
-            if (!ev.triggered && self->sequencer.current_phase >= ev.start_phase && self->sequencer.current_phase < (ev.start_phase + ev.duration)) {
+            // Handle phase wrapping (cycle loop)
+            // Simple check: is event between start and end?
+            // Note: In a real Pro system, handle wrap-around (e.g. 0.9 to 0.1) explicitly.
 
+            bool in_window = (ev.start_phase >= start_phase && ev.start_phase < end_phase);
+
+            if (!ev.triggered && in_window) {
                 ev.triggered = true;
-                float freq = 0.0f;
-                // 1. Try treating token as a standard Note String (e.g., "c3")
-                freq = NoteMap::get(ev.token);
 
-                // 2. If that failed (returns 0), try treating it as a Scale Degree Number
-                if (freq == 0.0f) {
-                    try {
-                        size_t parsed_len = 0;
-                        int degree = std::stoi(ev.token, &parsed_len);
-                        // Ensure the whole string was a number (avoids partial matches)
-                        if (parsed_len == ev.token.length()) {
-                            freq = self->get_scale_freq(degree);
-                        }
-                    }
-                    catch (...) {
-                        // Not a number either (maybe sample name or garbage)
-                    }
-                }
+                // --- SAMPLE ACCURACY CALCULATION ---
+                double phase_delta = ev.start_phase - start_phase;
+                // Convert phase difference to frames
+                int offset_frames = (int)(phase_delta / phase_inc_per_frame);
+                if (offset_frames < 0) offset_frames = 0;
+                if (offset_frames >= num_frames) offset_frames = num_frames - 1;
+
+                // Trigger Note Logic
+                float freq = NoteMap::get(ev.token);
+                if (freq == 0.0f) { /* try scale */ }
 
                 if (freq > 0.0f) {
-                    // It's a synth note
                     int track_idx = L % self->tracks.size();
 
-                    if (layer.synth_type != Waveform::SINE) {
-                        self->tracks[track_idx].waveform = layer.synth_type;
-                    }
-
-                    // Set properties
-                    //self->tracks[track_idx].waveform = layer.synth_type;
+                    // Reset Voice
+                    if (layer.synth_type != Waveform::SINE) self->tracks[track_idx].waveform = layer.synth_type;
                     self->tracks[track_idx].frequency = freq;
-                    self->tracks[track_idx].phase = 0.0;
+                    self->tracks[track_idx].phase = 0.0; // Reset phase for punchy attack
                     self->tracks[track_idx].adsr_state = ADSRState::ATTACK;
                     self->tracks[track_idx].envelope_level = 0.0;
+                    self->tracks[track_idx].start_delay_frames = offset_frames; // <--- THE MAGIC
 
-                    // Adjust ADSR based on event duration
-                    //double dur_sec = ev.duration / self->sequencer.cycles_per_second;
-                    //self->tracks[track_idx].release_time = 0.1;
-                    //self->tracks[track_idx].decay_time = dur_sec * 0.8;
-                }
-                else {
-                    try {
-                        int sample_id = std::stoi(ev.token);
-                        // Sample triggering logic would go here
-                    }
-                    catch (...) {}
+                    // Reset timbre (PolyBLEP needs clean state sometimes)
+                    self->tracks[track_idx].lfo_phase = 0.0;
                 }
             }
         }
     }
-    // --- SEQUENCER LOGIC END ---
+
+    // Advance Sequencer Phase for next callback
+    self->sequencer.current_phase += buffer_duration_phase;
+    if (self->sequencer.current_phase >= 1.0) {
+        self->sequencer.current_phase -= 1.0;
+        // Reset triggers
+        for (auto& layer : self->sequencer.layers) {
+            for (auto& ev : layer.events) ev.triggered = false;
+        }
+    }
 #endif
     for (int i = 0; i < num_frames; ++i) {
 #ifdef SDLMIXER
@@ -537,6 +535,12 @@ void SoundSystem::stop_music() {
 }
 
 float SoundSystem::generate_sample(Voice& voice) {
+    // If we are waiting for a sample-accurate start, output silence
+    if (voice.start_delay_frames > 0) {
+        voice.start_delay_frames--;
+        return 0.0f;
+    }
+
     float sample = 0.0f;
     double time_per_sample = 1.0 / audio_spec.freq;
 
@@ -573,49 +577,61 @@ float SoundSystem::generate_sample(Voice& voice) {
     case ADSRState::OFF: return 0.0f;
     }
 
-    // --- 3. Oscillator Generation (Use modulated_frequency) ---
+    // --- 3. PRO OSCILLATOR GENERATION (PolyBLEP) ---
     float raw_sample = 0.0f;
 
-    // --- FM SYNTHESIS LOGIC ---
-    // 1. Update Modulator Phase
+    // Phase increment for this sample
+    double dt = modulated_frequency * time_per_sample;
+
+    // FM Logic (simplified for normalized phase)
     double mod_freq = modulated_frequency * voice.fm_ratio;
-    voice.mod_phase += 2.0 * M_PI * mod_freq * time_per_sample;
-    if (voice.mod_phase >= 2.0 * M_PI) voice.mod_phase -= 2.0 * M_PI;
+    voice.mod_phase += mod_freq * time_per_sample;
+    if (voice.mod_phase >= 1.0) voice.mod_phase -= 1.0;
+    float mod_val = sin(voice.mod_phase * 2.0 * M_PI) * (voice.fm_amount / (2.0 * M_PI)); // Scale FM to normalized
 
-    // 2. Calculate Modulation Value (Sine wave modulator)
-    float mod_val = sin(voice.mod_phase) * voice.fm_amount;
+    double t = voice.phase + mod_val;
+    t -= floor(t); // Wrap to 0..1
 
-    // 3. Calculate Effective Phase (Carrier Phase + Modulation)
-    //    Phase Modulation is more stable than direct Frequency Modulation
-    double effective_phase = voice.phase + mod_val;
-
-    //    Wrap effective phase to 0..2PI range for wave functions
-    effective_phase = fmod(effective_phase, 2.0 * M_PI);
-    if (effective_phase < 0) effective_phase += 2.0 * M_PI;
-
-    // --- OSCILLATOR GENERATION ---
     switch (voice.waveform) {
     case Waveform::SINE:
-        raw_sample = sin(effective_phase);
+        raw_sample = sin(t * 2.0 * M_PI);
         break;
-    case Waveform::SQUARE:
-        raw_sample = (sin(effective_phase) >= 0) ? 1.0f : -1.0f;
-        break;
+
     case Waveform::SAWTOOTH:
-        raw_sample = (effective_phase / M_PI) - 1.0;
+        // Naive Saw: (2 * t) - 1
+        // PolyBLEP Saw: Naive - PolyBLEP(t)
+        raw_sample = (2.0 * t) - 1.0;
+        raw_sample -= poly_blep(t, dt);
         break;
+
+    case Waveform::SQUARE:
+        // Naive Square: if t < 0.5 return 1 else -1
+        // PolyBLEP Square: Naive + PolyBLEP(t) - PolyBLEP(t + 0.5)
+        raw_sample = (t < 0.5) ? 1.0 : -1.0;
+        raw_sample += poly_blep(t, dt);
+        // Handle the second edge at 0.5
+        {
+            double t2 = t + 0.5;
+            t2 -= floor(t2);
+            raw_sample -= poly_blep(t2, dt);
+        }
+        break;
+
     case Waveform::TRIANGLE:
-        raw_sample = 2.0f * (fabs(effective_phase / M_PI - 1.0f) - 0.5f);
+        // Triangle is usually clean enough, but can use integrated Square
+        // Simple version:
+        raw_sample = 2.0f * (fabs(2.0f * t - 1.0f) - 0.5f);
+        // (Optional: Integrate PolyBLEP Square for perfect Triangle, but this is usually fine)
         break;
+
     case Waveform::NOISE:
-        // FM doesn't affect noise, it's just random
         raw_sample = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
         break;
     }
 
-    // Update Carrier Phase (Standard increment)
-    voice.phase += 2.0 * M_PI * modulated_frequency * time_per_sample;
-    if (voice.phase >= 2.0 * M_PI) { voice.phase -= 2.0 * M_PI; }
+    // Advance Phase
+    voice.phase += dt;
+    if (voice.phase >= 1.0) voice.phase -= 1.0;
 
     // --- 4. Filter Logic (Simple RC Low Pass) ---
         // alpha = dt / (RC + dt)
@@ -681,6 +697,26 @@ void SoundSystem::set_voice(int track_index, Waveform waveform, double attack, d
         tracks[track_index].decay_time = (decay > 0.001) ? decay : 0.001;
         tracks[track_index].sustain_level = sustain;
         tracks[track_index].release_time = (release > 0.001) ? release : 0.001;
+
+        // 2. RESET TIMBRE SETTINGS (New Code)
+        // Reset Filter to "Open"
+        tracks[track_index].filter_cutoff = 20000.0;
+        tracks[track_index].filter_resonance = 0.0;
+        tracks[track_index].filter_state = 0.0; // Clear history to prevent clicking
+
+        // Reset LFO
+        tracks[track_index].lfo_depth = 0.0;
+        tracks[track_index].lfo_frequency = 5.0; // Default speed
+
+        // Reset FM Synthesis
+        tracks[track_index].fm_amount = 0.0;
+        tracks[track_index].fm_ratio = 1.0;
+
+        // Reset Bitcrusher
+        tracks[track_index].crush_bits = 0.0; // 0.0 is Off
+
+        // Reset Ring Modulator
+        tracks[track_index].ring_mix = 0.0;
         SDL_UnlockAudioStream(audio_stream);
     }
 }

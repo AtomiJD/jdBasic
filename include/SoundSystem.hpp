@@ -43,6 +43,10 @@ struct Voice {
     double sustain_level = 0.8;
     double release_time = 0.2;
 
+
+    // For Sample-Accurate Scheduling
+    int start_delay_frames = 0; // How many frames to wait before starting this voice in the current buffer
+
     // 1. Low Pass Filter (Simple 1-pole for efficiency, or Biquad for quality)
     // We will use a state variable for a simple filter
     double filter_cutoff = 20000.0; // Hz, default open
@@ -320,7 +324,9 @@ private:
 
     // Helper to generate a sample for a given voice
     float generate_sample(Voice& voice);
-
+    // PolyBLEP Helper
+    // t: current phase (0..1), dt: phase increment per sample
+    double poly_blep(double t, double dt);
     SDL_AudioDeviceID audio_device_id = 0;
     SDL_AudioSpec audio_spec;
     int music_channel_id = -1;
