@@ -39,7 +39,7 @@ SOUND.FM 5, 2.0, 1.41 ' Metallic texture
 SOUND.PAN 5, 0.1      ' Far Left
 
 ' Setup Scale: C Minor Pentatonic for easy melodies
-SOUND.SCALE "C3", "PENT_MIN"
+SOUND.SCALE 4, "C3", "PENT_MIN"
 
 ' ======================================================
 ' 2. THE PERFORMANCE (Live Coding Simulation)

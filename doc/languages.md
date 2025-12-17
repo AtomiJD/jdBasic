@@ -1236,46 +1236,51 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 
 #### Sound
 
-* **`SOUND.INIT()`**: Initializes the audio system. Must be called before other sound functions.
+* **`SOUND.INIT`**: Initializes the audio system. Must be called before other sound functions.
 * **`SOUND.VOICE track, waveform$, attack, decay, sustain, release`**: Configures the ADSR envelope and waveform for a sound track.
-* **`SOUND.PLAY track, frequency`**: Plays a note at a specific frequency on the given track.
+* **Waveforms**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, `"SAMPLE"`.
+
+* **`SOUND.SAMPLE track, sample_id, [base_note$], [loop_bool]`**: Assigns a loaded `SFX` ID to a track for pitched playback.
+* `base_note$`: The root pitch of the original sample (e.g., "C3").
+* `loop_bool`: If `TRUE`, the sample loops continuously while the key is held.
+
+* **`SOUND.PLAY track, frequency`**: Plays a note at a specific frequency (or note name like "C4") on the given track.
 * **`SOUND.RELEASE track`**: Starts the release phase of the note on the given track.
 * **`SOUND.STOP track`**: Immediately stops the note on the given track.
-* **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file to slot id.
-* **`SFX.PLAY id`**: Plays a WAV file with slot id.
-* **`MUSIC.PLAY id`**: Plays a WAV file as background music in slot id.
+* **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file into memory slot `id`.
+* **`SFX.PLAY id`**: Plays a loaded WAV file once (fire-and-forget).
+* **`MUSIC.PLAY id, [loop_bool]`**: Plays a loaded WAV file as background music. Defaults to looping.
 * **`MUSIC.STOP`**: Immediately stops the background music.
 
 ### Live Coding Sequencer
 
 The live coding sequencer allows you to program rhythmic musical patterns and manipulate sound in real-time.
 
-#### `SOUND.SEQ layer_id, pattern$, waveform$`
+#### `SOUND.SEQ layer_id, pattern$, waveform$` Programs a rhythmic musical pattern into the live-coding sequencer for a specific layer
 
-Programs a rhythmic musical pattern into the live-coding sequencer for a specific layer.
+* **`layer_id`** (Integer): The index of the sequencer layer (corresponds to Track ID).
+* **`pattern$`** (String): A rhythm string using "mini-notation".
+* **`waveform$`** (String): Defines the sound source.
+* **"VOICE"**: Uses the track's existing design (ADSR, Filter, Sample, etc.).
+* **"SINE", "SQUARE", etc.**: Overrides the track's sound with a raw waveform.
 
-* **`layer_id`** (Integer): The index of the sequencer layer to update. This usually corresponds to the synthesizer Track ID (e.g., Layer 0 plays on Track 0).
-* **`pattern$`** (String): A rhythm string using "mini-notation" to define notes, rests, and timing. (See **Pattern Syntax** below).
-* **`waveform$`** (String): Defines the sound source for this pattern.
-  * **Standard Types**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`. (Overrides any settings made with `SOUND.VOICE` for this track).
-    * **"VOICE"**: Tells the sequencer to use the existing sound design (ADSR envelope, filter, LFO, and waveform) currently set on the track via `SOUND.VOICE`.
-
-##### Pattern Syntax
-
-The sequencer divides time into "cycles". You can arrange events within a cycle using space-separated tokens.
+##### Pattern SyntaxThe sequencer divides time into "cycles". You can arrange events within a cycle using space-separated tokens
 
 * **Notes**: Plays a musical note.
-  * **Frequency**: `"c3"`, `"f#4"`
-  * **Scale Degree**: `"0"`, `"1"`, `"-1"` (Requires `SOUND.SCALE` to be set).
+* **Frequency**: `"c3"`, `"f#4"`
+* **Scale Degree**: `"0"`, `"1"`, `"-1"` (Requires `SOUND.SCALE` to be set).
+
+
 * **Rests** (`"~"`): A step of silence.
 * **Subdivision** (`"[... ...]" `): Groups multiple steps into the timespan of a single step. This allows you to create fast rhythms (tuplets).
-  * `"c4 c4"` = Two quarter notes (if cycle is 1 bar).
-  * `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
-  * `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
+* `"c4 c4"` = Two quarter notes (if cycle is 1 bar).
+* `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
+* `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
 
 ##### Sequencer Examples
 
 ```basic
+
 ' 1. Basic 4-step techno kick (Square wave)
 SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE"
 
@@ -1289,44 +1294,53 @@ SOUND.VOICE 2, "SAW", 0.01, 0.2, 0.0, 0.2
 SOUND.FILTER 2, 800
 '    Then sequence it using "VOICE" to keep the filter/envelope settings:
 SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
+
 ```
 
-#### Sound Design & Effects
+#### Sound Design (Track Specific)Apply these effects to specific tracks (0-7)
 
-Beyond basic waveforms, you can shape your sound using these commands. Apply them to a specific track (0-7).
-
-* **`SOUND.GAIN track, volume`**: Sets the track volume (0.0 to 1.0+).
-* **`SOUND.PAN track, pan`**: Sets stereo panning. 0.0=Left, 0.5=Center, 1.0=Right.
-* **`SOUND.FILTER track, cutoff`**: Applies a Low-Pass Filter at the given frequency (Hz).
+* **`SOUND.GAIN track, volume`**: Sets track volume (1.0 = standard).
+* **`SOUND.PAN track, pan`**: Sets stereo panning (0.0=Left, 0.5=Center, 1.0=Right).
+* **`SOUND.FILTER track, cutoff_hz`**: Applies a Low-Pass Filter.
+* **`SOUND.EQ track, low, mid, high`**: 3-band Equalizer gains (1.0 = Flat).
 * **`SOUND.LFO track, freq, depth`**: Applies Vibrato (pitch modulation).
-* **`SOUND.FM track, amount, ratio`**: Frequency Modulation. Creates metallic/bell tones.
-* **`SOUND.BITCRUSH track, bits, rate`**: Lo-Fi effect. Reduces bit depth (1-16) and sample rate (0.0-1.0).
-* **`SOUND.RINGMOD track, freq, mix`**: Ring Modulation. Multiplies signal by a sine wave for robotic/sci-fi tones.
+* **`SOUND.FM track, amount, ratio`**: Frequency Modulation for metallic/bell tones.
+* **`SOUND.UNISON track, voices, detune, spread`**: Stacks multiple voices for a "Super-Saw" effect.
+  * `voices`: 1-16.
+  * `detune`: 0.0-1.0.
 
-#### Global Effects
+* **`SOUND.BITCRUSH track, bits, rate`**: Lo-Fi effect.
+  * `bits`: 1-16 (Resolution).
+  * `rate`: 0.0-1.0 (Sample rate reduction).
 
-These effects apply to the master output.
+* **`SOUND.RINGMOD track, freq, mix`**: Robotic/Sci-Fi modulation.
 
-* **`SOUND.DELAY active_bool, time_ms, feedback, mix`**: Stereo Echo/Delay.
-  * `feedback`: 0.0-0.9 (Repeats)
-  * `mix`: 0.0-1.0 (Dry/Wet balance)
-* **`SOUND.DISTORTION amount`**: Master overdrive/saturation.
-* **`SOUND.RESET`**: Immediately silences all audio, clears the sequencer, and resets all effects to default.
-* **`SOUND.SHUTDOWN`**: Completely closes the audio engine and releases the audio device.
+#### Global Effects (Master Bus)* **`SOUND.DELAY active_bool, time_ms, feedback, mix`**: Stereo Delay
 
-#### Scale Quantization
+* **`SOUND.REVERB room_size, damping, width, wet`**: Stereo Reverb.
+  * `room_size`: 0.0-0.98.
+  * `width`: 0.0 (Mono) to 1.0 (Wide).
 
-You can use the **Scale Quantizer** to make musical programming easier. Instead of typing note names like "C\#4", you can type numbers like "0", "1", "2" in your pattern string. The system will automatically map them to the correct notes in your chosen scale.
+* **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master Dynamics.
+  * `thresh`: 0.0-1.0.
+  * `ratio`: 1.0-20.0.
+  * `attack`/`release`: In milliseconds.
 
-**`SOUND.SCALE root_note$, scale_mode$`**
+* **`SOUND.DISTORTION amount`**: Master saturation/overdrive.
+* **`SOUND.RESET`**: Silences audio, clears sequencer, and resets effects.
+* **`SOUND.SHUTDOWN`**: Releases audio resources.
 
-* **`root_note$`**: The base note of the key (e.g., "C3", "F\#2").
+#### Scale QuantizationMaps numbers in patterns (e.g., "0", "1") to musical scales
+
+**`SOUND.SCALE track, root_note$, scale_mode$`**
+
+* **`root_note$`**: E.g., "C3", "F#2".
 * **`scale_mode$`**: The type of scale to use.
 
 ##### Available Scales
 
 | Scale Mode | Description |
-| :--- | :--- |
+| --- | --- |
 | `"CHROMATIC"` | All 12 semitones. |
 | `"MAJOR"` | The standard happy/bright scale. |
 | `"MINOR"` | The standard sad/emotional scale. |

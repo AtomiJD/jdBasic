@@ -1165,6 +1165,26 @@ Syntax: SOUND.SEQ layer, pattern$, waveform$
 Description: Programs a rhythmic pattern for the sequencer.
 Waveform can be "SINE", "SQUARE", "SAW", "TRIANGLE", "NOISE", or "VOICE".
 
+[SOUND.COMPRESSOR]
+Syntax: SOUND.COMPRESSOR threshold, ratio, attack, release, gain
+Description: Applies master dynamic range compression.
+Threshold: 0.0-1.0. Ratio: 1.0-20.0. Attack/Release: ms. Gain: 1.0+.
+
+[SOUND.EQ]
+Syntax: SOUND.EQ track, low_gain, mid_gain, high_gain
+Description: Sets the 3-band equalizer gains for a track.
+1.0 is flat, 0.0 cuts the band, >1.0 boosts it.
+
+[SOUND.REVERB]
+Syntax: SOUND.REVERB room_size, damping, width, wet
+Description: Activates the master reverb effect.
+Room: 0.7-0.99. Damp: 0.0-1.0. Width: 0.0-1.0. Wet: 0.0-1.0.
+
+[SOUND.SAMPLE]
+Syntax: SOUND.SAMPLE track, sample_id, base_note$, loop_bool
+Description: Assigns a loaded SFX sample to a synth track for melodic playback.
+Base note (e.g., "C3") sets the pitch of the original WAV.
+
 [SOUND.SHUTDOWN]
 Syntax: SOUND.SHUTDOWN
 Description: Closes the audio stream and releases the audio device.

@@ -3,7 +3,8 @@ SOUND.BPM(200) ' Fast tempo
 SOUND.DELAY TRUE, 300, 0.6, 0.4 ' Heavy delay
 
 ' Setup Scale: E Minor Pentatonic
-SOUND.SCALE "E3", "PENT_MIN"
+SOUND.SCALE 0, "E3", "PENT_MIN"
+SOUND.SCALE 1, "E3", "PENT_MIN"
 
 ' --- SOUND DESIGN ---
 ' Track 0: Random Melody (Pluck)

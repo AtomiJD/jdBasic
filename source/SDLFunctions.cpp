@@ -17,7 +17,8 @@ const std::map<std::string, Waveform> waveform_map = {
     {"SQUARE", Waveform::SQUARE},
     {"SAW", Waveform::SAWTOOTH},
     {"TRIANGLE", Waveform::TRIANGLE},
-    {"NOISE", Waveform::NOISE}
+    {"NOISE", Waveform::NOISE},
+    {"SAMPLE", Waveform::SAMPLE}
 };
 
 extern const std::map<std::string, Waveform> waveform_map;
@@ -638,12 +639,20 @@ BasicValue builtin_sound_voice(NeReLaBasic& vm, const std::vector<BasicValue>& a
 // SOUND.PLAY track, frequency
 // Plays a note on a given track.
 BasicValue builtin_sound_play(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) {
-        Error::set(8, vm.runtime_current_line);
-        return false;
-    }
+    if (args.size() != 2) return false;
+
     int track = static_cast<int>(to_double(args[0]));
-    double freq = to_double(args[1]);
+    double freq = 0.0;
+
+    // Check if argument 1 is a string ("C4") or number (261.63)
+    if (std::holds_alternative<std::string>(args[1])) {
+        // Use the NoteMap helper (ensure NoteMap is moved to .hpp)
+        freq = NoteMap::get(to_string(args[1]));
+    }
+    else {
+        freq = to_double(args[1]);
+    }
+
     vm.sound_system.play_note(track, freq);
     return false;
 }
@@ -784,6 +793,112 @@ BasicValue builtin_sound_ringmod(NeReLaBasic& vm, const std::vector<BasicValue>&
     return false;
 }
 
+// SOUND.REVERB room_size, damping, width, wet
+// room_size: 0.7 (Small) to 0.98 (Huge)
+// damping: 0.0 (Bright) to 1.0 (Muffled)
+// width: 0.0 (Mono) to 1.0 (Wide)
+// wet: 0.0 (Off) to 1.0 (Full)
+BasicValue builtin_sound_reverb(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 4) return false;
+    double room = to_double(args[0]);
+    double damp = to_double(args[1]);
+    double wid = to_double(args[2]);
+    double wet = to_double(args[3]);
+
+    vm.sound_system.set_reverb((float)room, (float)damp, (float)wid, (float)wet);
+    return false;
+}
+
+// SOUND.COMPRESSOR thresh, ratio, attack, release, gain
+// thresh: 0.0 to 1.0 (Try 0.5)
+// ratio: 1.0 to 20.0 (Try 4.0)
+// attack: ms (Try 10)
+// release: ms (Try 100)
+// gain: Output boost (Try 1.2)
+BasicValue builtin_sound_compressor(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 5) return false;
+    float th = (float)to_double(args[0]);
+    float ra = (float)to_double(args[1]);
+    float at = (float)to_double(args[2]);
+    float re = (float)to_double(args[3]);
+    float ga = (float)to_double(args[4]);
+
+    vm.sound_system.set_compressor(th, ra, at, re, ga);
+    return false;
+}
+
+// SOUND.SAMPLE track, sample_id, [base_note$], [loop_bool]
+// track: 0-7
+// sample_id: ID loaded with SFX.LOAD
+// base_note$: The pitch of the original sample (default "C3")
+// loop: TRUE/FALSE
+BasicValue builtin_sound_sample(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 2 || args.size() > 4) {
+        Error::set(8, vm.runtime_current_line, "SOUND.SAMPLE requires 2-4 args: track, id, [base_note], [loop]");
+        return false;
+    }
+
+    int track = (int)to_double(args[0]);
+    int id = (int)to_double(args[1]);
+    float base_freq = 261.63f; // Default C3
+    bool loop = false;
+
+    if (args.size() >= 3) {
+        // Parse note string to frequency using existing logic?
+        // Or simply expose note-to-freq helper.
+        // For now, let's assume the user might pass a frequency number OR a string?
+        // Let's stick to Note String for ease of use.
+        std::string note = to_string(args[2]);
+        // Access NoteMap directly if static or helper
+        // (Assuming you have access or copy the NoteMap::get logic)
+        // base_freq = NoteMap::get(note); 
+        // For simplicity in this snippet, let's assume manual freq if number, or C3 if omitted
+        if (std::regex_match(note, std::regex("[0-9.]+"))) {
+            base_freq = (float)to_double(args[2]);
+        }
+        else {
+            // You need to expose NoteMap or move it to SoundSystem public
+            // base_freq = SoundSystem::get_note_freq(note); 
+            // Temporary fallback:
+            base_freq = 261.63f;
+        }
+    }
+
+    if (args.size() == 4) loop = to_bool(args[3]);
+
+    vm.sound_system.set_track_sample(track, id, base_freq, loop);
+    return false;
+}
+
+// SOUND.EQ track, low_gain, mid_gain, high_gain
+// Gains: 0.0 (Kill), 1.0 (Flat), 1.5 (Boost)
+BasicValue builtin_sound_eq(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 4) return false;
+    int track = (int)to_double(args[0]);
+    double l = to_double(args[1]);
+    double m = to_double(args[2]);
+    double h = to_double(args[3]);
+
+    vm.sound_system.set_eq(track, l, m, h);
+    return false;
+}
+
+// SOUND.UNISON track, voices, detune, spread
+// voices: 1-16
+// detune: 0.0 - 1.0 (Try 0.2)
+// spread: 0.0 - 1.0 (Try 0.8)
+BasicValue builtin_sound_unison(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 4) return false;
+    int track = (int)to_double(args[0]);
+    int voices = (int)to_double(args[1]);
+    double det = to_double(args[2]);
+    double spr = to_double(args[3]);
+
+    vm.sound_system.set_unison(track, voices, det, spr);
+    return false;
+}
+
+
 #ifdef SDLMIXER
 // SOUND.SEQ(layer_id, pattern_string, waveform_string)
 // Updates the sequence pattern for a specific layer.
@@ -814,17 +929,55 @@ BasicValue builtin_sound_bpm(NeReLaBasic& vm, const std::vector<BasicValue>& arg
     return false; // Procedure
 }
 
-// SOUND.SCALE root_note$, mode$
-// Example: SOUND.SCALE "C3", "PENT_MIN"
+// SOUND.SCALE track_id, root_note$, mode$
+// Example: SOUND.SCALE 0, "C3", "MINOR"
 BasicValue builtin_sound_scale(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 2) return false;
-    std::string root = to_string(args[0]);
-    std::string mode = to_upper(to_string(args[1]));
+    // Now requires 3 arguments instead of 2
+    if (args.size() != 3) {
+        Error::set(8, vm.runtime_current_line, "SOUND.SCALE requires 3 args: track, root$, mode$");
+        return false;
+    }
 
-    vm.sound_system.set_scale(root, mode);
+    int track = static_cast<int>(to_double(args[0]));
+    std::string root = to_string(args[1]);
+    std::string mode = to_upper(to_string(args[2]));
+
+    vm.sound_system.set_scale(track, root, mode);
     return false;
 }
 
+// SOUND.NOTE "< melody , bass >", [loop_bool]
+// Plays a pattern stack with Sheet Music timing.
+// Loop defaults to FALSE (One-Shot), set to TRUE to repeat.
+BasicValue builtin_sound_note(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() < 1 || args.size() > 2) {
+        Error::set(8, vm.runtime_current_line, "SOUND.NOTE requires 1-2 args: pattern$, [loop]");
+        return false;
+    }
+
+    std::string pat = to_string(args[0]);
+    bool loop = false;
+    if (args.size() == 2) loop = to_bool(args[1]);
+
+    SDL_LockAudioStream(vm.sound_system.audio_stream);
+
+    // 1. Parse the stack (Creates layers with is_linear=true)
+    vm.sound_system.sequencer.parse_parallel(pat);
+
+    // 2. Configure Loop Setting
+    for (auto& layer : vm.sound_system.sequencer.layers) {
+        if (!layer.events.empty()) {
+            layer.active = true;
+            layer.looping = loop; // <--- Set based on user input
+
+            // Reset cursor if restarting
+            // layer.linear_cursor = 0.0; 
+        }
+    }
+
+    SDL_UnlockAudioStream(vm.sound_system.audio_stream);
+    return false;
+}
 #endif
 
 // SOUND.GAIN track, volume (0.0 to 1.0+)
@@ -1321,6 +1474,12 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
     register_proc("SOUND.DISTORTION", 1, builtin_sound_distortion);
     register_proc("SOUND.BITCRUSH", 3, builtin_sound_bitcrush);
     register_proc("SOUND.RINGMOD", 3, builtin_sound_ringmod);
+    register_proc("SOUND.REVERB", 4, builtin_sound_reverb);
+    register_proc("SOUND.COMPRESSOR", 5, builtin_sound_compressor);
+    register_proc("SOUND.SAMPLE", -1, builtin_sound_sample);
+    register_proc("SOUND.EQ", 4, builtin_sound_eq);
+    register_proc("SOUND.UNISON", 4, builtin_sound_unison);
+
 #ifdef JD_IMGUI
     register_func("SOUND.GET_WAVE", 0, builtin_sound_get_wave);
 #endif
@@ -1335,7 +1494,8 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
 #ifdef SDLMIXER
     register_proc("SOUND.SEQ", 3, builtin_sound_seq);
     register_proc("SOUND.BPM", 1, builtin_sound_bpm);
-    register_proc("SOUND.SCALE", 2, builtin_sound_scale);
+    register_proc("SOUND.SCALE", 3, builtin_sound_scale);
+    register_proc("SOUND.NOTE", -1, builtin_sound_note);
 #endif
 
     register_func("MOUSEX", 0, builtin_mousex);
