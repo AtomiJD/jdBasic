@@ -1,0 +1,728 @@
+{
+    "instruments": [
+        {
+            "id": 0,
+            "name": "Trance Pluck (Bright, snappy, classic EDM)",
+            "waveform": "SAW",
+            "adsr": [0.001, 0.3, 0.0, 0.2],
+            "filter": 2000,
+            "code": "TP",
+            "unison": [3, 0.1, 0.5]
+        },
+        {
+            "id": 1,
+            "name": "Soft Bell (Pure tone, long fade out)",
+            "waveform": "SINE",
+            "adsr": [0.001, 1.5, 0.0, 1.5],
+            "filter": 20000,
+            "code": "SB",
+            "fm": [3.5, 3.5]
+        },
+        {
+            "id": 2,
+            "name": "Marimba / Woodblock (Hollow, very short)",
+            "waveform": "TRIANGLE",
+            "adsr": [0.001, 0.1, 0.0, 0.05],
+            "filter": 800,
+            "code": "MW",
+            "fm": [1.0, 2.0]
+        },
+        {
+            "id": 3,
+            "name": "Electric Piano (Classic keys sound)",
+            "waveform": "TRIANGLE",
+            "adsr": [0.01, 0.8, 0.0, 0.4],
+            "lfo": [6.0, 5.0],
+            "code": "EP",
+            "eq": [1.5, 0.8, 1.2]
+        },
+        {
+            "id": 4,
+            "name": "Koto / Sitar-ish (Bright, metallic pluck)",
+            "waveform": "SAW",
+            "adsr": [0.001, 0.2, 0.0, 0.1],
+            "filter": 5000,
+            "lfo": [15.0, 5.0],
+            "code": "KS",
+            "ringmod": [200, 0.3]
+        },
+        {
+            "id": 5,
+            "name": "Chiptune / 8-Bit (Nintendo-style lead)",
+            "waveform": "SQUARE",
+            "adsr": [0.01, 0.1, 0.8, 0.1],
+            "filter": 20000,
+            "code": "CT",
+            "bitcrush": [8, 0.5]
+        },
+        {
+            "id": 6,
+            "name": "Violin / Strings (Slow attack, vibrato)",
+            "waveform": "SAW",
+            "adsr": [0.3, 0.2, 0.8, 0.5],
+            "filter": 1500,
+            "lfo": [6.0, 5.0],
+            "code": "VI",
+            "unison": [3, 0.05, 0.6]
+        },
+        {
+            "id": 7,
+            "name": "Flute (Hollow, soft attack)",
+            "waveform": "TRIANGLE",
+            "adsr": [0.1, 0.2, 0.9, 0.2],
+            "filter": 1200,
+            "lfo": [5.0, 5.0],
+            "code": "FL"
+        },
+        {
+            "id": 8,
+            "name": "Super Saw Lead (The Anthem sound)",
+            "waveform": "SAW",
+            "adsr": [0.01, 0.4, 0.6, 0.4],
+            "lfo": [3.0, 5.0],
+            "code": "SS",
+            "unison": [7, 0.3, 1.0],
+            "eq": [1.0, 1.0, 2.0]
+        },
+        {
+            "id": 9,
+            "name": "Cheap Organ (Hollow, constant volume)",
+            "waveform": "SQUARE",
+            "adsr": [0.05, 0.0, 1.0, 0.05],
+            "filter": 3000,
+            "code": "CO",
+            "lfo": [8.0, 10.0]
+        },
+        {
+            "id": 10,
+            "name": "Theremin / Whistle (Pure sliding sine)",
+            "waveform": "SINE",
+            "adsr": [0.1, 0.1, 1.0, 0.2],
+            "lfo": [7.0, 20.0],
+            "code": "TW"
+        },
+        {
+            "id": 11,
+            "name": "Brass / Horn (Punchy start, sustained)",
+            "waveform": "SAW",
+            "adsr": [0.08, 0.2, 0.7, 0.3],
+            "filter": 1000,
+            "code": "BH",
+            "fm": [2.0, 1.0]
+        },
+        {
+            "id": 12,
+            "name": "Reese Bass (Moving, dark bass)",
+            "waveform": "SAW",
+            "adsr": [0.05, 0.5, 0.8, 0.5],
+            "filter": 400,
+            "lfo": [1.0, 3.0],
+            "code": "RB",
+            "unison": [5, 0.2, 0.8],
+            "bitcrush": [12, 0.9]
+        },
+        {
+            "id": 13,
+            "name": "Slap Bass (Fast attack pluck)",
+            "waveform": "SQUARE",
+            "adsr": [0.001, 0.2, 0.0, 0.1],
+            "filter": 800,
+            "code": "SL",
+            "eq": [2.0, 0.8, 1.5]
+        },
+        {
+            "id": 14,
+            "name": "Sub Bass (Pure low end, felt more than heard)",
+            "waveform": "SINE",
+            "adsr": [0.05, 0.2, 1.0, 0.5],
+            "filter": 200,
+            "code": "SU",
+            "fm": [2.0, 0.5],
+            "eq": [3.0, 0.5, 0.5]
+        },
+        {
+            "id": 15,
+            "name": "Sci-Fi Siren (Pitch sweeping up and down)",
+            "waveform": "SINE",
+            "adsr": [0.5, 0.5, 1.0, 1.0],
+            "lfo": [2.0, 500.0],
+            "code": "SF"
+        },
+        {
+            "id": 16,
+            "name": "Telephone / Lo-Fi (Filtered Square)",
+            "waveform": "SQUARE",
+            "adsr": [0.01, 0.1, 0.8, 0.1],
+            "filter": 1000,
+            "code": "TL",
+            "bitcrush": [10, 0.6]
+        },
+        {
+            "id": 17,
+            "name": "Metallic FM (Fast LFO creates new harmonics)",
+            "waveform": "SINE",
+            "adsr": [0.01, 0.5, 0.0, 0.5],
+            "lfo": [50.0, 100.0],
+            "code": "MF",
+            "fm": [20.0, 1.414]
+        },
+        {
+            "id": 18,
+            "name": "Wind / Ocean (Atmospheric Noise)",
+            "waveform": "NOISE",
+            "adsr": [2.0, 2.0, 0.5, 4.0],
+            "filter": 400,
+            "code": "WO",
+            "lfo": [0.2, 100]
+        },
+        {
+            "id": 19,
+            "name": "Snare Drum (Short burst of bright noise)",
+            "waveform": "NOISE",
+            "adsr": [0.001, 0.15, 0.0, 0.1],
+            "filter": 5000,
+            "code": "SD",
+            "eq": [1.5, 0.8, 2.0],
+            "bitcrush": [12, 0.8]
+        },
+        {
+            "id": 20,
+            "name": "Kick Drum (Punchy sine)",
+            "waveform": "SINE",
+            "adsr": [0.001, 0.15, 0.0, 0.05],
+            "fm": [5.0, 0.5],
+            "code": "KD",
+            "eq": [2.5, 0.5, 1.0]
+        },
+        {
+            "id": 21,
+            "name": "Closed Hi-Hat (Tight, high noise)",
+            "waveform": "NOISE",
+            "adsr": [0.001, 0.05, 0.0, 0.05],
+            "code": "CH",
+            "eq": [0.5, 0.5, 2.5]
+        },
+        {
+            "id": 22,
+            "name": "Open Hi-Hat (Longer, sizzling)",
+            "waveform": "NOISE",
+            "adsr": [0.001, 0.3, 0.0, 0.1],
+            "code": "OH",
+            "eq": [0.5, 0.5, 2.5]
+        },
+        {
+            "id": 23,
+            "name": "Clap (Digital crunch)",
+            "waveform": "NOISE",
+            "adsr": [0.001, 0.15, 0.0, 0.1],
+            "bitcrush": [6, 0.8],
+            "code": "CP"
+        },
+        {
+            "id": 24,
+            "name": "Acid Bass (Aggressive Saw)",
+            "waveform": "SAW",
+            "adsr": [0.01, 0.3, 0.5, 0.2],
+            "filter": 1500,
+            "fm": [5.0, 2.0],
+            "code": "AB",
+            "bitcrush": [12, 0.9]
+        },
+        {
+            "id": 25,
+            "name": "Glitch Lead (Destroyed sound)",
+            "waveform": "TRIANGLE",
+            "adsr": [0.01, 0.1, 0.8, 0.1],
+            "bitcrush": [4, 0.4],
+            "code": "GL",
+            "ringmod": [50, 1.0]
+        },
+        {
+            "id": 26,
+            "name": "Industrial Metal (Ring Modulated)",
+            "waveform": "SINE",
+            "adsr": [0.01, 0.5, 0.6, 0.4],
+            "ringmod": [600, 0.8],
+            "code": "IM",
+            "bitcrush": [8, 0.6]
+        },
+        {
+            "id": 27,
+            "name": "Dirty Bass (Square with grit)",
+            "waveform": "SQUARE",
+            "adsr": [0.01, 0.4, 0.7, 0.3],
+            "bitcrush": [10, 0.8],
+            "filter": 600,
+            "code": "DB",
+            "unison": [3, 0.1, 0.5]
+        },
+        {
+            "id": 28,
+            "name": "Alien FX (High FM Modulation)",
+            "waveform": "SINE",
+            "adsr": [0.1, 0.5, 0.5, 1.0],
+            "fm": [20.0, 2.5],
+            "code": "FX",
+            "ringmod": [100, 0.5]
+        },
+        {
+            "id": 29,
+            "name": "Hardcore Kick (Gabba/Distorted)",
+            "waveform": "SQUARE",
+            "adsr": [0.001, 0.3, 0.0, 0.1],
+            "filter": 400,
+            "bitcrush": [4, 1.0],
+            "fm": [5.0, 0.5],
+            "code": "HK",
+            "eq": [3.0, 1.0, 1.0]
+        },
+        {
+            "id": 30,
+            "name": "Dub Pad (Chord optimized)",
+            "waveform": "SAW",
+            "adsr": [0.5, 0.5, 0.8, 1.0],
+            "filter": 600,
+            "unison": [5, 0.15, 1.0],
+            "code": "DP"
+        },
+        {
+            "id": 31,
+            "name": "Ghost / Texture (For Probability)",
+            "waveform": "NOISE",
+            "adsr": [0.1, 0.5, 0.0, 0.5],
+            "filter": 3000,
+            "ringmod": [50, 0.3],
+            "code": "GT"
+        },
+        {
+            "id": 32,
+            "name": "Ambient Swell",
+            "waveform": "TRIANGLE",
+            "adsr": [2.0, 2.0, 1.0, 2.0],
+            "code": "AM"
+        },
+        {
+            "id": 33,
+            "name": "Glitch Kick",
+            "waveform": "SINE",
+            "adsr": [0.001, 0.1, 0.0, 0.1],
+            "fm": [25.0, 1.5],
+            "bitcrush": [3, 0.5],
+            "code": "NZ"
+        },
+        {
+            "id": 34,
+            "name": "Glitch Snare",
+            "waveform": "NOISE",
+            "adsr": [0.001, 0.1, 0.0, 0.1],
+            "bitcrush": [2, 0.2],
+            "filter": 4000,
+            "code": "KD2",
+            "ringmod": [1000, 0.5]
+        },
+        {
+            "id": 35,
+            "name": "Data HiHat",
+            "waveform": "SQUARE",
+            "adsr": [0.001, 0.05, 0.0, 0.05],
+            "ringmod": [5000, 1.0],
+            "code": "SN2",
+            "bitcrush": [8, 0.1]
+        },
+        {
+            "id": 40,
+            "name": "Thunder Kick (FM & Distortion)",
+            "waveform": "SINE",
+            "adsr": [0.001, 0.2, 0.0, 0.1],
+            "fm": [15.0, 0.5],
+            "eq": [2.0, 0.5, 1.0],
+            "bitcrush": [12, 1.0],
+            "code": "TK"
+        },
+        {
+            "id": 41,
+            "name": "Bone Saw Bass (Unisono Saw)",
+            "waveform": "SAW",
+            "adsr": [0.01, 0.2, 0.6, 0.2],
+            "filter": 300,
+            "unison": [7, 0.25, 1.0],
+            "eq": [1.8, 1.0, 1.2],
+            "code": "BS"
+        },
+        {
+            "id": 42,
+            "name": "Industrial Snare",
+            "waveform": "NOISE",
+            "adsr": [0.001, 0.15, 0.0, 0.1],
+            "filter": 8000,
+            "ringmod": [200, 0.8],
+            "bitcrush": [8, 0.5],
+            "code": "IS"
+        },
+        {
+            "id": 43,
+            "name": "Rumble Hat (Short & Sharp)",
+            "waveform": "NOISE",
+            "adsr": [0.001, 0.05, 0.0, 0.05],
+            "eq": [0.0, 0.5, 2.0],
+            "code": "RH"
+        },
+        { "id": 100, "code": "BD8", "name": "TR-808 Kick (Standard)", "type": "TR808", "sample": "BD", "knobs": [50, 50] },
+        { "id": 101, "code": "BD8L", "name": "TR-808 Kick (Long)", "type": "TR808", "sample": "BD", "knobs": [50, 75] },
+        { "id": 102, "code": "SD8", "name": "TR-808 Snare (Standard)", "type": "TR808", "sample": "SD", "knobs": [50, 50] },
+        { "id": 103, "code": "SD8S", "name": "TR-808 Snare (Snappy)", "type": "TR808", "sample": "SD", "knobs": [50, 75] },
+        { "id": 104, "code": "LT8", "name": "TR-808 Low Tom", "type": "TR808", "sample": "LT", "knobs": [50] },
+        { "id": 105, "code": "MT8", "name": "TR-808 Mid Tom", "type": "TR808", "sample": "MT", "knobs": [50] },
+        { "id": 106, "code": "HT8", "name": "TR-808 Hi Tom", "type": "TR808", "sample": "HT", "knobs": [50] },
+        { "id": 107, "code": "LC8", "name": "TR-808 Low Conga", "type": "TR808", "sample": "LC", "knobs": [50] },
+        { "id": 108, "code": "MC8", "name": "TR-808 Mid Conga", "type": "TR808", "sample": "MC", "knobs": [50] },
+        { "id": 109, "code": "HC8", "name": "TR-808 Hi Conga", "type": "TR808", "sample": "HC", "knobs": [50] },
+        { "id": 110, "code": "RS8", "name": "TR-808 Rim Shot", "type": "TR808", "sample": "RS", "knobs": [] },
+        { "id": 111, "code": "CP8", "name": "TR-808 Clap", "type": "TR808", "sample": "CP", "knobs": [] },
+        { "id": 112, "code": "CB8", "name": "TR-808 Cowbell", "type": "TR808", "sample": "CB", "knobs": [] },
+        { "id": 113, "code": "CY8", "name": "TR-808 Cymbal", "type": "TR808", "sample": "CY", "knobs": [50, 50] },
+        { "id": 114, "code": "OH8", "name": "TR-808 Open Hat", "type": "TR808", "sample": "OH", "knobs": [50] },
+        { "id": 115, "code": "CH8", "name": "TR-808 Closed Hat", "type": "TR808", "sample": "CH", "knobs": [] }
+    ],
+    "effects": [
+        {
+            "id": 1,
+            "name": "Power on",
+            "type": "DELAY",
+            "active": 1,
+            "params": [120, 0.0, 0.5]
+        },
+        {
+            "id": 2,
+            "name": "More Power on",
+            "type": "DELAY",
+            "params": [300, 0.4, 0.3]
+        },
+        {
+            "id": 3,
+            "name": "Reggae Space Power on",
+            "type": "DELAY",
+            "params": [600, 0.7, 0.5]
+        },
+        {
+            "id": 4,
+            "name": "Robot Power on",
+            "type": "DELAY",
+            "params": [20, 0.6, 0.8]
+        },
+        {
+            "id": 5,
+            "name": "Reverb on",
+            "type": "REVERB",
+            "params": [0.9, 0.2, 1.0, 0.35]
+        },
+        {
+            "id": 6,
+            "name": "Compressor on",
+            "type": "COMPRESSOR",
+            "params": [0.5, 6.0, 5, 50, 1.4]
+        }
+    ],
+    "kits": {
+        "1": {
+            "name": "Standard",
+            "kick": 20,
+            "snare": 19,
+            "hat": 21
+        },
+        "2": {
+            "name": "Heavy",
+            "kick": 29,
+            "snare": 23,
+            "hat": 22
+        },
+        "3": {
+            "name": "Minimal",
+            "kick": 20,
+            "snare": 2,
+            "hat": 21
+        },
+        "5": {
+            "name": "Rumble",
+            "kick": 40,
+            "snare": 42,
+            "hat": 43
+        },
+        "8": { "name": "Roland TR-808", "kick": 100, "snare": 102, "hat": 115 }
+    },
+    "rhythms": {
+        "1": {
+            "name": "Techno",
+            "kick_pat": "c1 c1 c1 c1",
+            "snare_pat": "~ c1 ~ c1",
+            "hat_pat": "[c1 c1] [c1 c1] [c1 c1] [c1 c1]"
+        },
+        "2": {
+            "name": "Rock",
+            "kick_pat": "c1 ~ c1 [~ c1]",
+            "snare_pat": "~ c1 ~ c1",
+            "hat_pat": "c1 c1 c1 c1"
+        },
+        "3": {
+            "name": "Trap",
+            "kick_pat": "c1 ~ ~ [~ c1]",
+            "snare_pat": "~ c1 ~ c1",
+            "hat_pat": "c4 [c4 c4 c4] c4 [c4 c4 c4 c4]"
+        },
+        "4": {
+            "name": "DnB",
+            "kick_pat": "c1 ~ ~ [~ c1]",
+            "snare_pat": "~ c1 ~ c1",
+            "hat_pat": "[c1 c1] c1 [c1 c1] c1"
+        },
+        "5": {
+            "name": "Simple Metronome",
+            "kick_pat": "c1 ~ ~ ~",
+            "snare_pat": "~ ~ c1 ~",
+            "hat_pat": "c2 c2 c2 c2"
+        },
+        "8": { "name": "808 Break", "kick_pat": "c3 ~ ~ [~ c3]", "snare_pat": "~ c3 ~ c3", "hat_pat": "c3 c3 c3 c3" }
+    },
+    "sequences": [
+        {
+            "id": 1,
+            "code": "44",
+            "pattern": "c1(4,4)",
+            "name": "Classic Techno Kick"
+        },
+        {
+            "id": 2,
+            "code": "E3",
+            "pattern": "c1(3,8)",
+            "name": "Basic Rock Kick"
+        },
+        {
+            "id": 3,
+            "code": "E5",
+            "pattern": "c1(5,16)",
+            "name": "Boots and Cats"
+        },
+        {
+            "id": 4,
+            "code": "PO",
+            "pattern": "c1(2,3)",
+            "name": "Trap Hi-Hats"
+        },
+        {
+            "id": 5,
+            "code": "E7",
+            "pattern": "c1(7,12)",
+            "name": "Motorik Beat (Krautrock)"
+        },
+        {
+            "id": 6,
+            "code": "RG",
+            "pattern": "c1 [~ c1] ~ [~ c1]",
+            "name": "Reggaeton Kick"
+        },
+        {
+            "id": 7,
+            "code": "DB",
+            "pattern": "c1 ~ c2 [~ c1]",
+            "name": "Drum & Bass Break"
+        },
+        {
+            "id": 8,
+            "code": "OH",
+            "pattern": "~ c4 ~ c4",
+            "name": "Offbeat Open Hats"
+        },
+        {
+            "id": 9,
+            "code": "HS",
+            "pattern": "c1 ~ ~ [~ c1]",
+            "name": "Hip Hop Swing"
+        },
+        {
+            "id": 10,
+            "code": "DC",
+            "pattern": "~ c2 ~ c2",
+            "name": "Disco Claps"
+        },
+        {
+            "id": 11,
+            "code": "B3",
+            "pattern": "0(3,8)",
+            "name": "The Gallop"
+        },
+        {
+            "id": 12,
+            "code": "B4",
+            "pattern": "0 2 0 4",
+            "name": "Octave Jumper"
+        },
+        {
+            "id": 13,
+            "code": "OC",
+            "pattern": "0 [0 7] 0 [0 3]",
+            "name": "Acid House"
+        },
+        {
+            "id": 14,
+            "code": "WL",
+            "pattern": "0 2 4 5",
+            "name": "Walking Bass"
+        },
+        {
+            "id": 15,
+            "code": "SP",
+            "pattern": "0 ~ ~ 0",
+            "name": "Offbeat Bass"
+        },
+        {
+            "id": 16,
+            "code": "PD",
+            "pattern": "-1(4,4)",
+            "name": "Sub Drop"
+        },
+        {
+            "id": 17,
+            "code": "O2",
+            "pattern": "0 [0 12] 0 [0 12]",
+            "name": "Funk Groove"
+        },
+        {
+            "id": 18,
+            "code": "PL",
+            "pattern": "0 0 0 0",
+            "name": "Pedal Point"
+        },
+        {
+            "id": 19,
+            "code": "DR",
+            "pattern": "0 [~ 0] [0 0 0] ~",
+            "name": "Drop Rhythm"
+        },
+        {
+            "id": 20,
+            "code": "PB",
+            "pattern": "~ 0 0 0",
+            "name": "Pump Bass"
+        },
+        {
+            "id": 21,
+            "code": "C1",
+            "pattern": "0,2,4",
+            "name": "Major Triad Arp"
+        },
+        {
+            "id": 22,
+            "code": "C2",
+            "pattern": "0,2,4 0,2,4 0,3,5 0,3,5",
+            "name": "Minor Arp Up"
+        },
+        {
+            "id": 23,
+            "code": "EC",
+            "pattern": "0,4,7(3,8)",
+            "name": "Fast Bubbles"
+        },
+        {
+            "id": 24,
+            "code": "C3",
+            "pattern": "0,2,4 ~ 2,4,6 ~",
+            "name": "Alberti Bass"
+        },
+        {
+            "id": 25,
+            "code": "MJ",
+            "pattern": "0,4,7,11",
+            "name": "Power Chords"
+        },
+        {
+            "id": 26,
+            "code": "ST",
+            "pattern": "0,2,4 [~ 0,2,4] ~ ~",
+            "name": "Sus4 Resolution"
+        },
+        {
+            "id": 27,
+            "code": "CR",
+            "pattern": "0,4,7 4,7,11",
+            "name": "Video Game Rise"
+        },
+        {
+            "id": 28,
+            "code": "AR",
+            "pattern": "0 2 4 7 4 2 0",
+            "name": "Descending Bell"
+        },
+        {
+            "id": 29,
+            "code": "PR",
+            "pattern": "0,3,5?0.8",
+            "name": "Stranger Things Style"
+        },
+        {
+            "id": 30,
+            "code": "P7",
+            "pattern": "0,4,7,11(2,3)",
+            "name": "Strum"
+        },
+        {
+            "id": 31,
+            "code": "BL",
+            "pattern": "c3 d#3 f3 [f#3 g3]",
+            "name": "Blues Lick"
+        },
+        {
+            "id": 32,
+            "code": "SA",
+            "pattern": "[c4 c4 c4 c4] [~ c4 c4 ~]",
+            "name": "The Sandstorm Rhythm"
+        },
+        {
+            "id": 33,
+            "code": "CR",
+            "pattern": "[c4 e4] ~ [d4 f4] ~",
+            "name": "Call and Response"
+        },
+        {
+            "id": 34,
+            "code": "CS",
+            "pattern": "[c3 c#3] [d3 d#3] e3 ~",
+            "name": "Chromatic slide"
+        },
+        {
+            "id": 35,
+            "code": "WH",
+            "pattern": "c4 ~ e4 [d4 c4]",
+            "name": "Simple Whistle"
+        },
+        {
+            "id": 36,
+            "code": "TR",
+            "pattern": "[c4 d4] [c4 d4] [c4 d4] [c4 d4]",
+            "name": "Trill"
+        },
+        {
+            "id": 37,
+            "code": "SI",
+            "pattern": "c4 ~ c5 ~",
+            "name": "Siren"
+        },
+        {
+            "id": 38,
+            "code": "PH",
+            "pattern": "e4 [d4 c4] e4 g4",
+            "name": "Pop Hook"
+        },
+        {
+            "id": 39,
+            "code": "QA",
+            "pattern": "[c5 c5] ~ [c3 c3] ~",
+            "name": "Question & Answer"
+        },
+        {
+            "id": 40,
+            "code": "EU",
+            "pattern": "c4 [~ c4] c4 ~",
+            "name": "Euclidean-style"
+        }
+    ]
+}

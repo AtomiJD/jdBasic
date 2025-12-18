@@ -1238,11 +1238,11 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 
 * **`SOUND.INIT`**: Initializes the audio system. Must be called before other sound functions.
 * **`SOUND.VOICE track, waveform$, attack, decay, sustain, release`**: Configures the ADSR envelope and waveform for a sound track.
-* **Waveforms**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, `"SAMPLE"`.
+  * **Waveforms**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, `"SAMPLE"`.
 
 * **`SOUND.SAMPLE track, sample_id, [base_note$], [loop_bool]`**: Assigns a loaded `SFX` ID to a track for pitched playback.
-* `base_note$`: The root pitch of the original sample (e.g., "C3").
-* `loop_bool`: If `TRUE`, the sample loops continuously while the key is held.
+  * `base_note$`: The root pitch of the original sample (e.g., "C3").
+  * `loop_bool`: If `TRUE`, the sample loops continuously while the key is held.
 
 * **`SOUND.PLAY track, frequency`**: Plays a note at a specific frequency (or note name like "C4") on the given track.
 * **`SOUND.RELEASE track`**: Starts the release phase of the note on the given track.
@@ -1315,7 +1315,23 @@ SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
 
 * **`SOUND.RINGMOD track, freq, mix`**: Robotic/Sci-Fi modulation.
 
-#### Global Effects (Master Bus)* **`SOUND.DELAY active_bool, time_ms, feedback, mix`**: Stereo Delay
+### Sound Design (Track Specific)
+
+These commands allow you to control how individual tracks interact with global effects and other tracks.
+
+* **`SOUND.REVERBSEND track, amount`**: Sets the amount of the track's signal sent to the global reverb bus.
+* `amount`: 0.0 (Dry) to 1.0 (Full Wet).
+
+* **`SOUND.DELAYSEND track, amount`**: Sets the amount of the track's signal sent to the global delay bus.
+* `amount`: 0.0 (Dry) to 1.0 (Full Wet).
+
+* **`SOUND.SIDECHAIN target_track, source_track, amount`**: Dynamically "ducks" the volume of the `target_track` based on the volume of the `source_track`.
+* `amount`: 0.0 (No ducking) to 1.0 (Full silence when source plays).
+* *Example*: `SOUND.SIDECHAIN 1, 0, 0.8` (Makes a synth on track 1 duck when the kick on track 0 hits).
+
+#### Global Effects (Master Bus)
+
+* **`SOUND.DELAY active_bool, time_ms, feedback, mix`**: Stereo Delay
 
 * **`SOUND.REVERB room_size, damping, width, wet`**: Stereo Reverb.
   * `room_size`: 0.0-0.98.
@@ -1353,6 +1369,55 @@ SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
 | `"PENT_MIN"` | 5-note minor scale (blues/rock riffs). |
 | `"BLUES"` | Hexatonic blues scale. |
 | `"ARABIC"` | Hijaz scale (Middle-Eastern feel). |
+
+### Visualization & Analysis
+
+Use these functions to retrieve audio data for custom ImGui oscilloscopes or debug monitors.
+
+* **`SOUND.GET_WAVE() -> Array`**: Returns a 1D array of the current master stereo mix (averaged to mono).
+* **`SOUND.GET_BUS_WAVE(bus_id) -> Array`**: Returns a 1D array of the audio data currently residing in a specific effect bus.
+* `bus_id`: `0` for Reverb, `1` for Delay.
+
+### Example: Custom Studio Monitor
+
+You can combine these new features with **ImGui** to create a live dashboard.
+
+```basic
+SCREEN 1280, 720, "jdBasic Sequencer", 2
+SOUND.INIT
+SOUND.BPM 120
+' Setup a pulsing synth with sidechain
+SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE"       ' Kick
+SOUND.SEQ 1, "c4 c4 c4 c4", "SAW"        ' Synth
+SOUND.SIDECHAIN 1, 0, 0.7               ' Duck synth to kick
+
+' Send synth to reverb
+SOUND.REVERB 0.8, 0.5, 1.0, 0.4
+SOUND.REVERBSEND 1, 0.6
+
+DO
+    CLS
+    IF GUI.BEGIN("Master Mixer", 0, 0, 400, 300) THEN
+        ' 1. Master Output
+        WaveData = SOUND.GET_WAVE()
+        GUI.TEXT "Master Output (Stereo Mix)"
+        GUI.PLOT_LINES("Output", WaveData, "Live Audio", -1.0, 1.0)
+        
+        GUI.SEPARATOR()
+        
+        ' 2. Reverb Bus (Bus ID 0)
+        ReverbWave = SOUND.GET_BUS_WAVE(0)
+        GUI.PLOT_LINES "Reverb", ReverbWave, "", -0.5, 0.5
+    ENDIF
+    GUI.END()
+
+    SCREENFLIP
+    
+    k$ = INKEY$()
+    SLEEP 16 
+LOOP  UNTIL k$ = "q" OR k$ = "Q"
+
+```
 
 #### Sprites and Maps
 

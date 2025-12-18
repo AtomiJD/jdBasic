@@ -54,6 +54,12 @@ struct VoiceParams {
     double gain = 1.0;
     double pan = 0.5;
 
+    double reverb_send = 0.0; // 0.0 (Dry) to 1.0 (Wet)
+    double delay_send = 0.0;  // 0.0 (Dry) to 1.0 (Wet)
+
+    int sidechain_source = -1; // -1 = No sidechain, 0-7 = Track ID to listen to
+    float sidechain_amount = 0.0f; // 0.0 = None, 1.0 = Full ducking
+
     // Sample Parameters
     int sample_id = -1;       
     float sample_base_freq = 261.63f; 
@@ -274,16 +280,16 @@ struct Compressor {
         alpha_release = exp(-1.0f / (0.001f * rel_ms * sample_rate));
     }
 
-    void process(float& L, float& R) {
-        // 1. Peak Detection (Link Stereo)
-        float input_abs = std::max(std::abs(L), std::abs(R));
+    void process(float& L, float& R, float sidechain_signal = 0.0f) {
+        // 1. Peak Detection: Use sidechain signal if provided, else use input
+        float detector = (sidechain_signal != 0.0f) ? std::abs(sidechain_signal) : std::max(std::abs(L), std::abs(R));
 
-        // 2. Envelope Follower (Smooth the detection)
-        if (input_abs > envelope) {
-            envelope = alpha_attack * envelope + (1.0f - alpha_attack) * input_abs;
+        // 2. Envelope Follower
+        if (detector > envelope) {
+            envelope = alpha_attack * envelope + (1.0f - alpha_attack) * detector;
         }
         else {
-            envelope = alpha_release * envelope + (1.0f - alpha_release) * input_abs;
+            envelope = alpha_release * envelope + (1.0f - alpha_release) * detector;
         }
 
         // 3. Calculate Gain Reduction
@@ -693,12 +699,16 @@ public:
     void set_track_sample(int track, int sample_id, float base_freq, bool loop);
     void set_eq(int track, double low, double mid, double high);
     void set_unison(int track, int voices, double detune, double spread);
+    void set_reverb_send(int track_index, double amount);
+    void set_delay_send(int track_index, double amount);
 
     void reset();
     int allocate_voice(int track_id);
 
 #ifdef JD_IMGUI
     std::vector<float> get_wave_data(); // Returns data for the GUI
+    std::vector<float> get_reverb_wave_data();
+    std::vector<float> get_delay_wave_data();
 #endif
     // Loads a WAV file and stores it with a given ID.
     // Returns true on success, false on failure.
@@ -721,6 +731,8 @@ public:
     std::vector<SoundChannel> channels;       // A pool of channels for playing sounds.
     std::vector<VoiceParams> tracks; // A vector to hold all our synthesizer tracks
     std::vector<ActiveVoice> voice_pool; // The 64 physical voices
+
+    std::vector<float> last_track_envelopes;
 
     SDL_AudioStream* audio_stream = nullptr;
 
@@ -755,6 +767,11 @@ private:
 #ifdef JD_IMGUI
     std::vector<float> vis_buffer;
     size_t vis_head = 0;
+    // Buffers for effect visualization
+    std::vector<float> vis_buffer_reverb;
+    size_t vis_head_reverb = 0;
+    std::vector<float> vis_buffer_delay;
+    size_t vis_head_delay = 0;
 #endif
 
 };

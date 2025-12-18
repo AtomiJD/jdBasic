@@ -898,6 +898,36 @@ BasicValue builtin_sound_unison(NeReLaBasic& vm, const std::vector<BasicValue>& 
     return false;
 }
 
+BasicValue builtin_sound_reverb_send(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return false; }
+    int track = (int)to_double(args[0]);
+    double amt = to_double(args[1]);
+    vm.sound_system.set_reverb_send(track, amt);
+    return false;
+}
+
+BasicValue builtin_sound_delay_send(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) { Error::set(8, vm.runtime_current_line); return false; }
+    int track = (int)to_double(args[0]);
+    double amt = to_double(args[1]);
+    vm.sound_system.set_delay_send(track, amt);
+    return false;
+}
+
+// SOUND.SIDECHAIN target_track, source_track, amount
+BasicValue builtin_sound_sidechain(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 3) { Error::set(8, vm.runtime_current_line); return false; }
+    int target = (int)to_double(args[0]);
+    int source = (int)to_double(args[1]);
+    double amount = to_double(args[2]);
+
+    SDL_LockAudioStream(vm.sound_system.audio_stream);
+    vm.sound_system.tracks[target].sidechain_source = source;
+    vm.sound_system.tracks[target].sidechain_amount = (float)amount;
+    SDL_UnlockAudioStream(vm.sound_system.audio_stream);
+    return false;
+}
+
 
 #ifdef SDLMIXER
 // SOUND.SEQ(layer_id, pattern_string, waveform_string)
@@ -1037,6 +1067,23 @@ BasicValue builtin_sound_get_wave(NeReLaBasic& vm, const std::vector<BasicValue>
     result_array->shape = { raw_data.size() };
     result_array->data.reserve(raw_data.size());
 
+    for (float f : raw_data) {
+        result_array->data.push_back((double)f);
+    }
+    return result_array;
+}
+// SOUND.GET_BUS_WAVE(bus_id) -> Array
+// bus_id: 0 = Reverb, 1 = Delay
+BasicValue builtin_sound_get_bus_wave(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty()) return false;
+    int bus = (int)to_double(args[0]);
+
+    std::vector<float> raw_data;
+    if (bus == 0) raw_data = vm.sound_system.get_reverb_wave_data();
+    else raw_data = vm.sound_system.get_delay_wave_data();
+
+    auto result_array = std::make_shared<Array>();
+    result_array->shape = { raw_data.size() };
     for (float f : raw_data) {
         result_array->data.push_back((double)f);
     }
@@ -1479,9 +1526,13 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
     register_proc("SOUND.SAMPLE", -1, builtin_sound_sample);
     register_proc("SOUND.EQ", 4, builtin_sound_eq);
     register_proc("SOUND.UNISON", 4, builtin_sound_unison);
+    register_proc("SOUND.REVERBSEND", 2, builtin_sound_reverb_send);
+    register_proc("SOUND.DELAYSEND", 2, builtin_sound_delay_send);
+    register_proc("SOUND.SIDECHAIN", 3, builtin_sound_sidechain);
 
 #ifdef JD_IMGUI
     register_func("SOUND.GET_WAVE", 0, builtin_sound_get_wave);
+    register_func("SOUND.GET_BUS_WAVE", 1, builtin_sound_get_bus_wave);
 #endif
     register_proc("SOUND.RESET", 0, builtin_sound_reset);
     register_proc("SOUND.SHUTDOWN", 0, builtin_sound_shutdown);

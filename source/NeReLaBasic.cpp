@@ -1248,8 +1248,11 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
     }
 
 #ifdef SDL3
+    if (sound_system.is_initialized) {
+        sound_system.shutdown();
+    }
+
     graphics_system.shutdown();
-    sound_system.shutdown();
 #endif
 #ifdef HTTP
     network_manager.stopServer();

@@ -39,7 +39,10 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
 
 #ifdef JD_IMGUI
     vis_buffer.resize(1024, 0.0f);
+    vis_buffer_reverb.resize(1024, 0.0f);
+    vis_buffer_delay.resize(1024, 0.0f);
 #endif
+
     // --- Modern SDL3 audio initialization ---
     SDL_AudioSpec desired_spec;
     SDL_zero(desired_spec);
@@ -70,6 +73,8 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
     // Standard "Punchy" settings
     master_compressor.set_params(0.6f, 4.0f, 10.0f, 100.0f, 1.2f, (float)audio_spec.freq);
 
+    last_track_envelopes.assign(num_tracks, 0.0f);
+
     // Start audio playback on the device.
     SDL_ResumeAudioDevice(audio_device_id);
 
@@ -80,9 +85,15 @@ bool SoundSystem::init(int num_tracks, int num_channels) {
 void SoundSystem::shutdown() {
     if (!is_initialized) return;
 
-    // 1. Stop and Destroy the Audio Stream
+    // 1. Pause the device first to stop the callback thread safely
+    if (audio_device_id != 0) {
+        SDL_PauseAudioDevice(audio_device_id);
+    }
+
+    // 2. Stop and Destroy the Audio Stream
     if (audio_stream) {
         // This stops the callback and unbinds from the device
+        SDL_ClearAudioStream(audio_stream);
         SDL_DestroyAudioStream(audio_stream);
         audio_stream = nullptr;
     }
@@ -239,7 +250,6 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
                 }
 
                 // Calculate Sample Offset
-                // FIX: Use start_window!
                 double phase_delta = 0.0;
 
                 if (layer.is_linear && layer_wrapped && ev.start_phase < start_window) {
@@ -256,8 +266,7 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
                 }
 
                 int offset_frames = (int)(phase_delta / phase_inc_per_frame);
-                if (offset_frames < 0) offset_frames = 0;
-                if (offset_frames >= num_frames) offset_frames = num_frames - 1;
+                offset_frames = std::clamp(offset_frames, 0, num_frames - 1);
 
                 // Resolve Frequency
                 float freq = NoteMap::get(ev.token);
@@ -349,7 +358,14 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
     for (int i = 0; i < num_frames; ++i) {
         float mix_L = 0.0f;
         float mix_R = 0.0f;
+        float rev_bus_L = 0.0f, rev_bus_R = 0.0f; // Reverb send bus
+        float del_bus_L = 0.0f, del_bus_R = 0.0f; // Delay send bus
         int active_sources = 0;
+
+        float final_wet_L = 0.0f, final_wet_R = 0.0f;
+        float d_l = 0.0f, d_r = 0.0f;
+
+        std::vector<float> track_envelopes(self->tracks.size(), 0.0f);
 
         // 1. Mix Synthesizer Voices
         for (auto& voice : self->voice_pool) {
@@ -358,9 +374,10 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
 
             const auto& params = self->tracks[voice.source_track_id];
 
-            float v_left, v_right;
+            float v_l, v_r;
+            
             // Call new stereo generator
-            self->generate_sample(voice, params, v_left, v_right);
+            self->generate_sample(voice, params, v_l, v_r);
 
             if (voice.adsr_state == ADSRState::OFF) {
                 voice.active = false;
@@ -368,11 +385,17 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
             }
 
             // Apply Track Pan (Master Pan for the whole unison stack)
-            float trk_pan_l = 1.0f - params.pan;
-            float trk_pan_r = params.pan;
+            // Dry Path
+            mix_L += v_l * (1.0f - params.pan) * params.gain;
+            mix_R += v_r * params.pan * params.gain;
 
-            mix_L += v_left * trk_pan_l * params.gain;
-            mix_R += v_right * trk_pan_r * params.gain;
+            // Send Paths (Use the new parameters)
+            rev_bus_L += v_l * (float)params.reverb_send;
+            rev_bus_R += v_r * (float)params.reverb_send;
+            del_bus_L += v_l * (float)params.delay_send;
+            del_bus_R += v_r * (float)params.delay_send;
+
+            track_envelopes[voice.source_track_id] = std::max(track_envelopes[voice.source_track_id], std::abs(v_l + v_r));
         }
 
         // 2. Mix Sound Effects (SFX)
@@ -399,69 +422,72 @@ void SoundSystem::audio_callback(void* userdata, SDL_AudioStream* stream, int ad
             }
         }
 
-        // Soft Averaging
+        // 3. Soft Averaging
         if (active_sources > 1) {
             mix_L /= std::sqrt((float)active_sources);
             mix_R /= std::sqrt((float)active_sources);
         }
 
-        // 3. Stereo Delay
+        // 4. Process Stereo Delay (using del_bus)
         if (self->delay_active) {
             size_t delay_frames = (size_t)((self->delay_time_ms / 1000.0) * self->audio_spec.freq);
-            size_t read_pos = self->delay_head;
-            if (read_pos < delay_frames) read_pos += (self->delay_buffer.size() / 2);
-            read_pos -= delay_frames;
+            size_t read_pos = (self->delay_head < delay_frames) ?
+                (self->delay_head + (self->delay_buffer.size() / 2) - delay_frames) :
+                (self->delay_head - delay_frames);
 
-            float d_l = self->delay_buffer[read_pos * 2];
-            float d_r = self->delay_buffer[read_pos * 2 + 1];
+            d_l = self->delay_buffer[read_pos * 2];
+            d_r = self->delay_buffer[read_pos * 2 + 1];
 
-            self->delay_buffer[self->delay_head * 2] = mix_L + (d_l * self->delay_feedback);
-            self->delay_buffer[self->delay_head * 2 + 1] = mix_R + (d_r * self->delay_feedback);
+            // Feed the delay line with the delay bus + feedback
+            self->delay_buffer[self->delay_head * 2] = del_bus_L + (d_l * (float)self->delay_feedback);
+            self->delay_buffer[self->delay_head * 2 + 1] = del_bus_R + (d_r * (float)self->delay_feedback);
 
-            self->delay_head++;
-            if (self->delay_head >= (self->delay_buffer.size() / 2)) self->delay_head = 0;
+            self->delay_head = (self->delay_head + 1) % (self->delay_buffer.size() / 2);
 
-            mix_L += d_l * self->delay_mix;
-            mix_R += d_r * self->delay_mix;
+            mix_L += d_l * (float)self->delay_mix;
+            mix_R += d_r * (float)self->delay_mix;
         }
 
-        // 4. Distortion
+        // 5. Distortion
         if (self->distortion_amount > 0.0) {
             mix_L = std::tanh(mix_L * (1.0 + self->distortion_amount));
             mix_R = std::tanh(mix_R * (1.0 + self->distortion_amount));
         }
 
-        // 5. REVERB ---
+        // 6. REVERB ---
         // (Assuming reverb_L.wet_mix > 0.0)
+        // Process Reverb (using rev_bus)
         if (self->reverb_L.wet_mix > 0.0f) {
-            float mono_in = (mix_L + mix_R) * 0.5f;
-
+            float mono_in = (rev_bus_L + rev_bus_R) * 0.5f;
             float wet_L = self->reverb_L.process(mono_in);
             float wet_R = self->reverb_R.process(mono_in);
 
-            // Apply Width (Spread)
-            // If width=0, wet_L and wet_R are panned center.
-            // If width=1, they are hard L/R.
+            float w = self->reverb_L.width;
+            final_wet_L = wet_L * (1.0f + w) + wet_R * (1.0f - w);
+            final_wet_R = wet_R * (1.0f + w) + wet_L * (1.0f - w);
 
-            float w = self->reverb_L.width; // Shared param
-            float final_wet_L = wet_L * (1.0f + w) + wet_R * (1.0f - w);
-            float final_wet_R = wet_R * (1.0f + w) + wet_L * (1.0f - w);
-
-            // Mix Dry/Wet
-            mix_L = (mix_L * self->reverb_L.dry_mix) + (final_wet_L * self->reverb_L.wet_mix * 0.2f); // *0.2 to tame gain
-            mix_R = (mix_R * self->reverb_R.dry_mix) + (final_wet_R * self->reverb_R.wet_mix * 0.2f);
+            mix_L += final_wet_L * self->reverb_L.wet_mix * 0.2f;
+            mix_R += final_wet_R * self->reverb_R.wet_mix * 0.2f;
         }
 
-        // 6. Visualization
+        // 7. MASTER COMPRESSOR ---
+        self->master_compressor.process(mix_L, mix_R);
+
+        // 8. Visualization
 #ifdef JD_IMGUI
         if (!self->vis_buffer.empty()) {
             self->vis_buffer[self->vis_head] = (mix_L + mix_R) * 0.5f;
             self->vis_head = (self->vis_head + 1) % self->vis_buffer.size();
         }
+        if (!self->vis_buffer_reverb.empty()) {
+            self->vis_buffer_reverb[self->vis_head_reverb] = (final_wet_L + final_wet_R) * 0.5f;
+            self->vis_head_reverb = (self->vis_head_reverb + 1) % self->vis_buffer_reverb.size();
+        }
+        if (!self->vis_buffer_delay.empty()) {
+            self->vis_buffer_delay[self->vis_head_delay] = (d_l + d_r) * 0.5f;
+            self->vis_head_delay = (self->vis_head_delay + 1) % self->vis_buffer_delay.size();
+        }
 #endif
-
-        // --- 7. MASTER COMPRESSOR ---
-        self->master_compressor.process(mix_L, mix_R);
 
         buffer[i * 2] = mix_L;
         buffer[i * 2 + 1] = mix_R;
@@ -850,6 +876,13 @@ void SoundSystem::generate_sample(ActiveVoice& voice, const VoiceParams& params,
     accum_l *= norm;
     accum_r *= norm;
 
+    // --- Sidechain Ducking ---
+    if (params.sidechain_source != -1 && params.sidechain_source < (int)this->tracks.size()) {
+        float ducking = this->last_track_envelopes[params.sidechain_source] * params.sidechain_amount;
+        accum_l *= (1.0f - ducking);
+        accum_r *= (1.0f - ducking);
+    }
+
     // --- STEREO EFFECTS CHAIN ---
 
     // 1. Filter (Low Pass) - Independent L/R
@@ -1091,6 +1124,22 @@ void SoundSystem::set_unison(int track, int voices, double detune, double spread
     }
 }
 
+void SoundSystem::set_reverb_send(int track_index, double amount) {
+    if (track_index >= 0 && track_index < tracks.size()) {
+        SDL_LockAudioStream(audio_stream);
+        tracks[track_index].reverb_send = std::clamp(amount, 0.0, 1.0);
+        SDL_UnlockAudioStream(audio_stream);
+    }
+}
+
+void SoundSystem::set_delay_send(int track_index, double amount) {
+    if (track_index >= 0 && track_index < tracks.size()) {
+        SDL_LockAudioStream(audio_stream);
+        tracks[track_index].delay_send = std::clamp(amount, 0.0, 1.0);
+        SDL_UnlockAudioStream(audio_stream);
+    }
+}
+
 #ifdef JD_IMGUI
 // Returns the buffer rotated so it looks like a continuous wave
 std::vector<float> SoundSystem::get_wave_data() {
@@ -1108,6 +1157,25 @@ std::vector<float> SoundSystem::get_wave_data() {
     // Copy from start to head
     std::copy(vis_buffer.begin(), vis_buffer.begin() + head, result.begin() + tail_len);
 
+    SDL_UnlockAudioStream(audio_stream);
+    return result;
+}
+std::vector<float> SoundSystem::get_reverb_wave_data() {
+    std::vector<float> result(vis_buffer_reverb.size());
+    SDL_LockAudioStream(audio_stream);
+    for (size_t i = 0; i < vis_buffer_reverb.size(); ++i) {
+        result[i] = vis_buffer_reverb[(vis_head_reverb + i) % vis_buffer_reverb.size()];
+    }
+    SDL_UnlockAudioStream(audio_stream);
+    return result;
+}
+
+std::vector<float> SoundSystem::get_delay_wave_data() {
+    std::vector<float> result(vis_buffer_delay.size());
+    SDL_LockAudioStream(audio_stream);
+    for (size_t i = 0; i < vis_buffer_delay.size(); ++i) {
+        result[i] = vis_buffer_delay[(vis_head_delay + i) % vis_buffer_delay.size()];
+    }
     SDL_UnlockAudioStream(audio_stream);
     return result;
 }
