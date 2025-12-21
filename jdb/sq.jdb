@@ -1,0 +1,389 @@
+EXPORT MODULE SQ
+
+'DIM CONFIG AS MAP must be defined in the calling module!
+
+' --- INIT ---
+EXPORT SUB START()
+    SOUND.INIT
+    SOUND.BPM 120
+    
+    ' Try to load existing data, otherwise create defaults
+    TRY
+        json$ = TXTREADER$("sq_data.json")
+        CONFIG = JSON.PARSE$(json$)
+        PRINT "Loaded sq_data.json"
+    CATCH
+        PRINT "No config found. Loading defaults..."
+        INIT_DEFAULTS()
+    ENDTRY
+    
+    PRINT "Sequencer Ready."
+ENDSUB
+
+EXPORT SUB STOP()
+    SOUND.RESET
+    PRINT "Sequencer stopped."
+ENDSUB
+
+' --- HELP SYSTEM (Dynamic) ---
+EXPORT SUB H(more$)
+    more$ = UCASE$(more$)
+    
+    IF more$ = "" THEN
+        PRINT "--- SEQUENCER COMMANDS ---"
+        PRINT "START : Init Sound & BPM"
+        PRINT "V tr, id/code : Set Instrument (e.g. V 0, ""TP"")"
+        PRINT "S tr, id/code : Set Sequence (e.g. S 0, ""44"")"
+        PRINT "D rhy, kit    : Start Drums (Rhythm: 1-5, Kit: 1-5)"
+        PRINT "P id          : Global Effects (1=Delay, 5=Reverb, etc.)"
+        PRINT "SC root, mode : Set Scale (e.g. SC ""C3"", ""DORIAN"")"
+        PRINT "EUCLID(...)   : Generate Euclidean Rhythm string"
+        PRINT "STOP          : Stop Sound"
+        PRINT ""
+        PRINT "H ""I"" : List Instruments"
+        PRINT "H ""S"" : List Sequences"
+        PRINT "H ""D"" : List Drum Kits & Rhythms"
+        PRINT "H ""P"" : List Global Effects"
+    ENDIF
+
+    IF more$ = "I" THEN
+        PRINT "--- INSTRUMENTS ---"
+        PRINT "ID   CODE   NAME"
+        FOR EACH inst IN CONFIG{"instruments"}
+            ' Build details string showing active effects
+            details$ = ""
+            IF MAP.EXISTS(inst, "filter") THEN details$ = details$ + "FLT "
+            IF MAP.EXISTS(inst, "fm") THEN details$ = details$ + "FM "
+            IF MAP.EXISTS(inst, "bitcrush") THEN details$ = details$ + "BIT "
+            
+            ' Use FORMAT$ for alignment
+            PRINT FORMAT$("{:<4} {:<6} {} ({})", inst{"id"}, inst{"code"}, inst{"name"}, TRIM$(details$))
+        NEXT
+    ENDIF
+
+    IF more$ = "S" THEN
+        PRINT "--- SEQUENCES ---"
+        PRINT "ID   CODE   PATTERN"
+        FOR EACH seq IN CONFIG{"sequences"}
+            PRINT FORMAT$("{:<4} {:<6} {:<20} {}", seq{"id"}, seq{"code"}, left$(seq{"name"},20), seq{"pattern"})
+        NEXT
+    ENDIF
+
+    IF more$ = "D" THEN
+        PRINT "--- DRUM KITS ---"
+        FOR EACH key IN MAP.KEYS(CONFIG{"kits"})
+            kit = CONFIG{"kits"}{key}
+            PRINT "Kit " + key + ": " + kit{"name"} + " (K:" + kit{"kick"} + " S:" + kit{"snare"} + " H:" + kit{"hat"} + ")"
+        NEXT
+        
+        PRINT ""
+        PRINT "--- RHYTHMS ---"
+        FOR EACH key IN MAP.KEYS(CONFIG{"rhythms"})
+            rhy = CONFIG{"rhythms"}{key}
+            PRINT "Rhy " + key + ": " + rhy{"name"}
+        NEXT
+    ENDIF
+
+    IF more$ = "P" THEN
+        PRINT "--- GLOBAL EFFECTS ---"
+        TRY
+            FOR EACH fx IN CONFIG{"effects"}
+                PRINT FORMAT$("{:<4} {:<10} {}", fx{"id"}, fx{"type"}, fx{"name"})
+            NEXT
+        CATCH
+            PRINT "No effects loaded."
+        ENDTRY
+    ENDIF
+ENDSUB
+
+' --- GLOBAL EFFECTS (P) ---
+EXPORT SUB P(effect_id)
+    ' 1. Check for Reset/Off command (usually 0 or invalid ID)
+    IF effect_id <= 0 THEN
+        SOUND.DELAY FALSE, 0, 0, 0
+        PRINT "Global effects off."
+        RETURN
+    ENDIF
+
+    ' 2. Find the effect in the JSON list
+    selected_fx = {}
+    FOR EACH fx IN CONFIG{"effects"}
+        IF fx{"id"} = effect_id THEN selected_fx = fx
+    NEXT
+    IF len(selected_fx) = 2 THEN
+        SOUND.DELAY FALSE, 0, 0, 0
+        PRINT "Effect ID " + effect_id + " not found. Effects off."
+        RETURN
+    ENDIF
+
+    ' 3. Apply based on Type
+    type$ = selected_fx{"type"}
+    par = selected_fx{"params"}
+    IF MAP.EXISTs(selected_fx,"active") THEN
+        isactive = selected_fx{"active"}
+    ENDIF
+    
+    SWITCH type$
+        CASE "DELAY"
+            ' Delay expects: TRUE, time, feedback, mix
+            SOUND.DELAY isactive, par[0], par[1], par[2]
+            
+        CASE "REVERB"
+            ' Reverb expects: mix, room_size, damp, width (based on SQ_old usage)
+            SOUND.REVERB par[0], par[1], par[2], par[3]
+            
+        CASE "COMPRESSOR"
+            ' Compressor params from SQ_old: threshold, ratio, attack, release, gain
+            SOUND.COMPRESSOR par[0], par[1], par[2], par[3], par[4]
+            
+        DEFAULT
+            PRINT "Unknown effect type: " + type$
+    ENDSWITCH
+
+    PRINT selected_fx{"name"}
+ENDSUB
+
+' --- FILE I/O ---
+EXPORT SUB LOAD(filename$)
+    TRY
+        CONFIG = JSON.PARSE$(TXTREADER$(filename$))
+        PRINT "Configuration loaded from " + filename$
+    CATCH
+        PRINT "Error loading file: " + ERRMSG$
+    ENDTRY
+ENDSUB
+
+EXPORT SUB SAVE(filename$)
+    TRY
+        json$ = JSON.STRINGIFY$(CONFIG)
+        TXTWRITER filename$, json$
+        PRINT "Configuration saved to " + filename$
+    CATCH
+        PRINT "Error saving file: " + ERRMSG$
+    ENDTRY
+ENDSUB
+
+' --- HELPER: Find Item in List by "id" or "code" ---
+FUNC FIND_ITEM(clist, key$)
+    key$ = UCASE$(key$)
+    ' Is it a numeric ID?
+    IF REGEX.MATCH("^\d+$", key$) THEN
+        id = VAL(key$)
+        FOR EACH item IN clist
+            IF item{"id"} = id THEN RETURN item
+        NEXT
+    ELSE
+        ' It is a string code (e.g. "TP")
+        FOR EACH item IN clist
+            IF UCASE$(item{"code"}) = key$ THEN RETURN item
+        NEXT
+    ENDIF
+    RETURN {}
+ENDFUNC
+
+' --- INSTRUMENTS (V) ---
+EXPORT SUB V(track, name$)
+    inst = FIND_ITEM(CONFIG{"instruments"}, STR$(name$))
+    
+    IF typeof(inst) <> "MAP" THEN
+        PRINT "Instrument not found: " + name$
+        RETURN
+    ENDIF
+    
+    PRINT "Track " + track + ": " + inst{"name"}
+
+    ' --- TR-808 SAMPLE HANDLING ---
+    IF MAP.EXISTS(inst, "type") ANDALSO inst{"type"} = "TR808" THEN
+        sfx_id = LOAD_TR808_SAMPLE(inst)
+        IF sfx_id > 0 THEN
+            SOUND.SAMPLE track, sfx_id, "C3", FALSE 
+            SOUND.VOICE track, "SAMPLE", 0.001, 0.1, 2.0, 0.1
+        ELSE
+            PRINT "Error loading 808 sample."
+        ENDIF
+        RETURN
+    ENDIF    
+    
+    ' Apply Base Voice Params
+    ' JSON format: "adsr": [0.01, 0.1, 0.8, 0.2]
+    adsr = inst{"adsr"}
+    SOUND.VOICE track, inst{"waveform"}, adsr[0], adsr[1], adsr[2], adsr[3]
+    
+    ' Apply Optional Effects if they exist in the map
+    IF MAP.EXISTS(inst, "filter") THEN SOUND.FILTER track, inst{"filter"}
+    IF MAP.EXISTS(inst, "lfo") THEN 
+        lfo = inst{"lfo"}
+        SOUND.LFO track, lfo[0], lfo[1]
+    ENDIF
+    IF MAP.EXISTS(inst, "fm") THEN 
+        fm = inst{"fm"}
+        SOUND.FM track, fm[0], fm[1]
+    ENDIF
+    IF MAP.EXISTS(inst, "bitcrush") THEN 
+        bc = inst{"bitcrush"}
+        SOUND.BITCRUSH track, bc[0], bc[1]
+    ENDIF
+    IF MAP.EXISTS(inst, "ringmod") THEN 
+        rm = inst{"ringmod"}
+        SOUND.RINGMOD track, rm[0], rm[1]
+    ENDIF
+    IF MAP.EXISTS(inst, "eq") THEN 
+        eq = inst{"eq"}
+        SOUND.EQ track, eq[0], eq[1], eq[2]
+    ENDIF
+    IF MAP.EXISTS(inst, "unison") THEN 
+        un = inst{"unison"}
+        SOUND.UNISON track, un[0], un[1], un[2]
+    ENDIF
+    IF MAP.EXISTS(inst, "delay") THEN 
+        dl = inst{"delay"}
+        SOUND.DELAY TRUE, dl[0], dl[1], dl[2]
+    ENDIF
+    IF MAP.EXISTS(inst, "reverb") THEN 
+        rv = inst{"reverb"}
+        SOUND.REVERB rv[0], rv[1], rv[2], rv[3]
+    ENDIF
+ENDSUB
+
+' --- SEQUENCES (S) ---
+EXPORT SUB S(track, p$)
+    ' Try to find it in the config list
+    seq = FIND_ITEM(CONFIG{"sequences"}, STR$(p$))
+    pattern$ = ""
+    
+    IF len(seq) > 2 THEN
+        pattern$ = seq{"pattern"}
+        PRINT "Seq " + seq{"id"} + " (" + seq{"code"} + "): " + pattern$
+    ELSE
+        ' Assume raw string input
+        pattern$ = p$
+        PRINT "Custom Seq: " + pattern$
+    ENDIF
+    
+    SOUND.SEQ track, pattern$, "VOICE"
+ENDSUB
+
+' --- HELPER: Load 808 Sample ---
+FUNC LOAD_TR808_SAMPLE(inst)
+    code$ = inst{"sample"} ' e.g. "BD"
+    knobs = inst{"knobs"}  ' e.g. [50, 50] or [25]
+    
+    ' Construct Filename based on knob count (See TR808.TXT)
+    fname$ = code$
+    
+    ' 0 Knobs: CB, CH, CL, CP, MA, RS
+    IF code$ = "CB" OR code$ = "CH" OR code$ = "CL" OR code$ = "CP" OR code$ = "MA" OR code$ = "RS" THEN
+        fname$ = fname$ + ".WAV"
+    ' 2 Knobs: BD, CY, SD (Tone+Decay/Snappy)
+    ELSEIF code$ = "BD" OR code$ = "CY" OR code$ = "SD" THEN
+        ' Pad to 2 digits (e.g. 0 -> "00", 50 -> "50")
+        t$ = STR$(knobs[0]) : IF LEN(t$) < 2 THEN t$ = "00" + t$
+        d$ = STR$(knobs[1]) : IF LEN(d$) < 2 THEN d$ = "00" + d$
+        fname$ = fname$ + t$ + d$ + ".WAV"
+    ' 1 Knob: All others (HC, HT, LC, etc)
+    ELSE
+        k$ = STR$(knobs[0]) : IF LEN(k$) < 2 THEN k$ = "00" + k$
+        fname$ = fname$ + k$ + ".WAV"
+    ENDIF
+    
+    path$ = "D:/usr/dev/c/jdBasic/jdb/intern/Roland TR-808/" + code$ + "/" + fname$
+    
+    ' Check Cache
+    IF MAP.EXISTS(SFX_CACHE, path$) THEN
+        RETURN SFX_CACHE{path$}
+    ENDIF
+    
+    ' Load New
+    PRINT "Loading 808: " + fname$
+    id = NEXT_SFX_ID
+    TRY
+        SFX.LOAD id, path$
+        SFX_CACHE{path$} = id
+        NEXT_SFX_ID = NEXT_SFX_ID + 1
+        RETURN id
+    CATCH
+        PRINT "Failed to load: " + path$
+        RETURN -1
+    ENDTRY
+ENDFUNC
+
+' --- DRUMS (D) ---
+EXPORT SUB D(rhythm_id, kit_id)
+    ' 1. Load Kit
+    kit_key$ = STR$(kit_id)
+    kits_map = CONFIG{"kits"}
+    
+    IF NOT MAP.EXISTS(kits_map, kit_key$) THEN
+        PRINT "Kit not found: " + kit_id
+        RETURN
+    ENDIF
+    
+    kit = kits_map{kit_key$}
+    PRINT "Loading Kit " + kit{"name"} + "..."
+    
+    V 0, STR$(kit{"kick"})
+    V 1, STR$(kit{"snare"})
+    V 2, STR$(kit{"hat"})
+    
+    ' 2. Load Rhythm
+    rhy_key$ = STR$(rhythm_id)
+    rhy_map = CONFIG{"rhythms"}
+    
+    IF NOT MAP.EXISTS(rhy_map, rhy_key$) THEN
+        PRINT "Rhythm not found: " + rhythm_id
+        RETURN
+    ENDIF
+    
+    rhy = rhy_map{rhy_key$}
+    PRINT "Playing " + rhy{"name"}
+    
+    SOUND.SEQ 0, rhy{"kick_pat"}, "VOICE"
+    SOUND.SEQ 1, rhy{"snare_pat"}, "VOICE"
+    SOUND.SEQ 2, rhy{"hat_pat"}, "VOICE"
+ENDSUB
+
+' --- UTILITIES ---
+EXPORT SUB SC(track, root$, mode$)
+    SOUND.SCALE track, root$, mode$
+    PRINT "Scale set: " + root$ + " " + mode$
+ENDSUB
+
+EXPORT FUNC EUCLID(hits, steps, note$)
+    ' Bjorklund algorithm wrapper
+    pat$ = ""
+    IF hits > steps THEN hits = steps
+    bucket = 0
+    FOR i = 0 TO steps - 1
+        bucket = bucket + hits
+        IF bucket >= steps THEN
+            bucket = bucket - steps
+            pat$ = pat$ + note$ + " "
+        ELSE
+            pat$ = pat$ + "~ "
+        ENDIF
+    NEXT
+    RETURN "[" + TRIM$(pat$) + "]"
+ENDFUNC
+
+' --- DEFAULT DATA GENERATOR (Fallback) ---
+SUB INIT_DEFAULTS()
+    instruments = []
+    instruments = APPEND(instruments, {"id":0, "code":"TP", "name":"Trance Pluck", "waveform":"SAW", "adsr":[0.001, 0.3, 0.0, 0.2], "filter":2000})
+    
+    sequences = []
+    sequences = APPEND(sequences, {"id":1, "code":"44", "pattern":"c1(4,4)"})
+
+    kits = {
+        "1": {"name":"Standard", "kick":20, "snare":19, "hat":21}
+    }
+
+    rhythms = {
+        "1": {"name":"Techno", "kick_pat":"c1 c1 c1 c1", "snare_pat":"~ c1 ~ c1", "hat_pat":"[c1 c1] [c1 c1] [c1 c1] [c1 c1]"}
+    }
+    
+    effects = [
+        { "id": 1, "name": "Power on", "type": "DELAY", "params": [120, 0.0, 0.5] }
+    ]
+
+    CONFIG = {"instruments": instruments, "sequences": sequences, "kits": kits, "rhythms": rhythms, "effects": effects}
+ENDSUB
