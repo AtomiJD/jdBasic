@@ -1,92 +1,152 @@
-### SOUND.SEQ
 
-**`SOUND.SEQ layer_id, pattern$, waveform$`**
+# Sequencer Help
 
-Programs a rhythmic musical pattern into the live-coding sequencer for a specific layer.
+This document provides a detailed reference for the `SOUND` and `SFX` modules in jdBasic. It covers the live-coding sequencer, track-level sound design, global effects, visualization, and custom sample handling.
 
-  * **`layer_id`** (Integer): The index of the sequencer layer to update. This usually corresponds to the synthesizer Track ID (e.g., Layer 0 plays on Track 0).
-  * **`pattern$`** (String): A rhythm string using "mini-notation" to define notes, rests, and timing. (See **Pattern Syntax** below).
-  * **`waveform$`** (String): Defines the sound source for this pattern.
-      * **Standard Types**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`. (Overrides any settings made with `SOUND.VOICE` for this track).
-      * **"VOICE"**: Tells the sequencer to use the existing sound design (ADSR envelope, filter, LFO, and waveform) currently set on the track via `SOUND.VOICE`.
+## 1. Core Sound System
 
-#### Pattern Syntax
+* **`SOUND.INIT`**: Initializes the audio engine. Must be called before any other sound commands.
+* **`SOUND.BPM value`**: Sets the tempo for the sequencer in Beats Per Minute.
+* **`SOUND.RESET`**: Silences all audio, clears all sequencer layers, and resets effects to default.
+* **`SOUND.SHUTDOWN`**: Safely stops the audio device and releases memory.
+
+## 2. Live Coding Sequencer
+
+The sequencer programs rhythmic patterns into 8 available tracks (0-7).
+
+* **`SOUND.SEQ track, pattern$, waveform$`**: Programs a rhythmic pattern into a specific track.
+* **`pattern$`**: Space-separated tokens using mini-notation. Use `~` for rests and `[...]` for subdivisions.
+* **`waveform$`**: Options include `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, or `"VOICE"`.
+
+* **`SOUND.SCALE track, root$, scale_mode$`**: Maps integer pattern tokens (e.g., "0", "1") to a musical scale.
+
+* **`SOUND.NOTE pattern$, looping`**: Plays pattern parts as melody (not part of the sequencer bar). pattern$ = "<c4 c4, e2 e4>" plays a melody on track 0 and the bass on track 1
+
+### Pattern Syntax
 
 The sequencer divides time into "cycles". You can arrange events within a cycle using space-separated tokens.
 
-  * **Notes**: Plays a musical note.
-      * **Frequency**: `"c3"`, `"f#4"`
-      * **Scale Degree**: `"0"`, `"1"`, `"-1"` (Requires `SOUND.SCALE` to be set).
+* **Notes**: Plays a musical note.
+  * **Frequency**: `"c3"`, `"f#4"`
+  * **Scale Degree**: `"0"`, `"1"`, `"-1"` (Requires `SOUND.SCALE` to be set).
   * **Rests** (`"~"`): A step of silence.
   * **Subdivision** (` "[... ...]"  `): Groups multiple steps into the timespan of a single step. This allows you to create fast rhythms (tuplets).
-      * `"c4 c4"` = Two quarter notes (if cycle is 1 bar).
-      * `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
-      * `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
+  * `"c4 c4"` = Two quarter notes (if cycle is 1 bar).
+  * `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
+  * `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
 
-#### Examples
+### Available Scale Modes
+
+| Scale Mode | Musical Character |
+| --- | --- |
+| `"MAJOR"` | Bright, happy |
+| `"MINOR"` | Sad, emotional |
+| `"DORIAN"` | Jazzy, sophisticated |
+| `"PHRYGIAN"` | Dark, exotic, Spanish-style |
+| `"LYDIAN"` | Dreamy, sci-fi |
+| `"MIXOLYDIAN"` | Bluesy, classic rock |
+| `"PENT_MIN"` | Rock and Blues riffs |
+| `"ARABIC"` | Middle-Eastern Hijaz flavor |
+
+## 3. Track-Specific Sound Design
+
+These commands allow you to design the unique "Voice" of each track.
+
+* **`SOUND.VOICE track, wave$, a, d, s, r`**: Sets the waveform and ADSR envelope.
+* **`SOUND.GAIN track, volume`**: Sets the track volume (default 1.0).
+* **`SOUND.PAN track, pos`**: Sets stereo panning (0.0 Left, 0.5 Center, 1.0 Right).
+* **`SOUND.FILTER track, cutoff_hz`**: Sets a per-track low-pass filter frequency.
+* **`SOUND.REVERBSEND track, amount`**: Sets the signal level sent to the global Reverb (0.0–1.0).
+* **`SOUND.DELAYSEND track, amount`**: Sets the signal level sent to the global Delay (0.0–1.0).
+* **`SOUND.SIDECHAIN target, source, amount`**: Ducks the volume of the `target` when the `source` plays.
+
+## 4. PCM Samples and SFX
+
+jdBasic allows you to load and play high-quality WAV files.
+
+### Global SFX and Music
+
+* **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file into memory slot `id`.
+* **`SFX.PLAY id`**: Plays a loaded WAV file once (fire-and-forget).
+* **`MUSIC.PLAY id, [loop_bool]`**: Plays a loaded WAV file as background music.
+* **`MUSIC.STOP`**: Immediately stops the background music.
+
+### Samples as Sequencer Instruments
+
+You can use a loaded sample as a sound source for a sequencer track.
+
+* **`SOUND.SAMPLE track, sfx_id, [base_note$], [loop_bool]`**: Assigns a loaded `SFX` ID to a track for pitched playback.
+* `base_note$`: The root pitch of the original sample (e.g., "C3").
+* `loop_bool`: If `TRUE`, the sample loops continuously while the note is active.
+
+## 5. Global Effects (Master Bus)
+
+* **`SOUND.REVERB size, damp, width, wet`**: Configures the global reverb room.
+* **`SOUND.DELAY active, time_ms, feedback, mix`**: Configures the global stereo delay.
+* **`SOUND.DISTORTION amount`**: Applies master saturation/overdrive.
+
+## 6. Visualization
+
+* **`SOUND.GET_WAVE()`**: Returns an array of the master mix for oscilloscopes.
+* **`SOUND.GET_BUS_WAVE(id)`**: Returns the "wet-only" signal from a bus (`0` for Reverb, `1` for Delay).
+
+---
+
+## Comprehensive Command Table
+
+| Category | Command | Parameters | Description |
+| --- | --- | --- | --- |
+| **System** | `SOUND.INIT` | none | Start audio engine |
+|  | `SOUND.BPM` | `bpm` | Set sequencer speed |
+|  | `SOUND.RESET` | none | Clear all sound/patterns |
+| **Sequencer** | `SOUND.SEQ` | `track, pattern$, wave$` | Define rhythmic pattern |
+|  | `SOUND.SCALE` | `track, root$, mode$` | Quantize pattern notes to scale |
+| **Track FX** | `SOUND.GAIN` | `track, volume` | Per-track volume |
+|  | `SOUND.PAN` | `track, position` | Per-track stereo position |
+|  | `SOUND.FILTER` | `track, frequency` | Per-track low-pass filter |
+|  | `SOUND.REVERBSEND` | `track, amount` | Reverb send level |
+|  | `SOUND.DELAYSEND` | `track, amount` | Delay send level |
+|  | `SOUND.SIDECHAIN` | `target, source, amt` | Ducking (Drums vs Bass) |
+| **Samples** | `SFX.LOAD` | `id, "file.wav"` | Load WAV into memory |
+|  | `SOUND.SAMPLE` | `track, id, base$, loop` | Use WAV as track instrument |
+| **Global FX** | `SOUND.REVERB` | `size, damp, width, wet` | Set master reverb room |
+|  | `SOUND.DELAY` | `on, time, feed, mix` | Set master delay settings |
+|  | `SOUND.DISTORTION` | `amount` | Master saturation |
+| **Analysis** | `SOUND.GET_WAVE` | none | Get master waveform array |
+|  | `SOUND.GET_BUS_WAVE` | `bus_id` | Get wet-only waveform |
+
+---
+
+## 7. Examples
+
+### Sidechain Pumping
 
 ```basic
-' 1. Basic 4-step techno kick (Square wave)
-SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE"
+SOUND.INIT
+SOUND.BPM 124
 
-' 2. Fast hi-hats using subdivision (White Noise)
-'    "[c4 c4]" fits two hits into one step
-SOUND.SEQ 1, "[c4 c4] [c4 c4] [c4 c4] [c4 c4]", "NOISE"
+' Track 0: Kick
+SOUND.VOICE 0, "SQUARE", 0.01, 0.1, 0.0, 0.1
+SOUND.SEQ 0, "c2 ~ c2 ~", "VOICE"
 
-' 3. Melodic pattern using custom Voice design
-'    First, design the sound:
-SOUND.VOICE 2, "SAW", 0.01, 0.2, 0.0, 0.2
-SOUND.FILTER 2, 800
-'    Then sequence it using "VOICE" to keep the filter/envelope settings:
-SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
+' Track 1: Bass Pad
+SOUND.VOICE 1, "SAW", 0.2, 0.5, 0.4, 0.5
+SOUND.SEQ 1, "c3 c3 c3 c3", "VOICE"
+
+' Apply Ducking: Synth pumps when kick hits
+SOUND.SIDECHAIN 1, 0, 0.8
+
 ```
 
-## Sound Design & Effects
+### Using Custom Samples
 
-Beyond basic waveforms, you can shape your sound using these commands. Apply them to a specific track (0-7).
+```basic
+' Load a drum loop and play it as an instrument
+SFX.LOAD 10, "samples/amen_break.wav"
+SOUND.SAMPLE 2, 10, "C3", TRUE
+SOUND.SEQ 2, "c3 ~ ~ ~", "VOICE"
 
-  * **`SOUND.GAIN track, volume`**: Sets the track volume (0.0 to 1.0+).
-  * **`SOUND.PAN track, pan`**: Sets stereo panning. 0.0=Left, 0.5=Center, 1.0=Right.
-  * **`SOUND.FILTER track, cutoff`**: Applies a Low-Pass Filter at the given frequency (Hz).
-  * **`SOUND.LFO track, freq, depth`**: Applies Vibrato (pitch modulation).
-  * **`SOUND.FM track, amount, ratio`**: Frequency Modulation. Creates metallic/bell tones.
-  * **`SOUND.BITCRUSH track, bits, rate`**: Lo-Fi effect. Reduces bit depth (1-16) and sample rate (0.0-1.0).
-  * **`SOUND.RINGMOD track, freq, mix`**: Ring Modulation. Multiplies signal by a sine wave for robotic/sci-fi tones.
-
-## Global Effects
-
-These effects apply to the master output.
-
-  * **`SOUND.DELAY active_bool, time_ms, feedback, mix`**: Stereo Echo/Delay.
-      * `feedback`: 0.0-0.9 (Repeats)
-      * `mix`: 0.0-1.0 (Dry/Wet balance)
-  * **`SOUND.DISTORTION amount`**: Master overdrive/saturation.
-
-## Scale Quantization
-
-You can use the **Scale Quantizer** to make musical programming easier. Instead of typing note names like "C\#4", you can type numbers like "0", "1", "2" in your pattern string. The system will automatically map them to the correct notes in your chosen scale.
-
-**`SOUND.SCALE root_note$, scale_mode$`**
-
-  * **`root_note$`**: The base note of the key (e.g., "C3", "F\#2").
-  * **`scale_mode$`**: The type of scale to use.
-
-### Available Scales
-
-| Scale Mode | Description |
-| :--- | :--- |
-| `"CHROMATIC"` | All 12 semitones. |
-| `"MAJOR"` | The standard happy/bright scale. |
-| `"MINOR"` | The standard sad/emotional scale. |
-| `"DORIAN"` | Jazzy, sophisticated minor. |
-| `"PHRYGIAN"` | Dark, exotic, "Spanish" flavor. |
-| `"LYDIAN"` | Dreamy, sci-fi, "floaty" major. |
-| `"MIXOLYDIAN"` | Bluesy major (rock/pop). |
-| `"LOCRIAN"` | Tense, dissonant, unstable. |
-| `"PENT_MAJ"` | 5-note major scale (very safe, folk/pop). |
-| `"PENT_MIN"` | 5-note minor scale (blues/rock riffs). |
-| `"BLUES"` | Hexatonic blues scale. |
-| `"ARABIC"` | Hijaz scale (Middle-Eastern feel). |
+```
 
 ## Instrument Presets
 

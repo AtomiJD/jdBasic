@@ -976,32 +976,36 @@ BasicValue builtin_sound_scale(NeReLaBasic& vm, const std::vector<BasicValue>& a
     return false;
 }
 
-// SOUND.NOTE "< melody , bass >", [loop_bool]
+BasicValue builtin_sound_get_phase(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    return (double)vm.sound_system.sequencer.current_phase;
+}
+
+// SOUND.NOTE "< melody , bass >", [loop_bool], [start_track]
 // Plays a pattern stack with Sheet Music timing.
 // Loop defaults to FALSE (One-Shot), set to TRUE to repeat.
 BasicValue builtin_sound_note(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() < 1 || args.size() > 2) {
-        Error::set(8, vm.runtime_current_line, "SOUND.NOTE requires 1-2 args: pattern$, [loop]");
+    if (args.size() < 1 || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "SOUND.NOTE requires 1-3 args: pattern$, [loop], [start_track]");
         return false;
     }
 
     std::string pat = to_string(args[0]);
     bool loop = false;
-    if (args.size() == 2) loop = to_bool(args[1]);
+    int start_track = 0;
+
+    if (args.size() >= 2) loop = to_bool(args[1]);
+    if (args.size() == 3) start_track = static_cast<int>(to_double(args[2]));
 
     SDL_LockAudioStream(vm.sound_system.audio_stream);
 
-    // 1. Parse the stack (Creates layers with is_linear=true)
-    vm.sound_system.sequencer.parse_parallel(pat);
+    // Call updated pattern player with the offset
+    vm.sound_system.play_note_pattern(pat, start_track);
 
-    // 2. Configure Loop Setting
-    for (auto& layer : vm.sound_system.sequencer.layers) {
-        if (!layer.events.empty()) {
-            layer.active = true;
-            layer.looping = loop; // <--- Set based on user input
-
-            // Reset cursor if restarting
-            // layer.linear_cursor = 0.0; 
+    // Configure specific layer settings
+    for (int i = 0; i < vm.sound_system.sequencer.layers.size(); ++i) {
+        auto& layer = vm.sound_system.sequencer.layers[i];
+        if (layer.active) {
+            layer.looping = loop;
         }
     }
 
@@ -1547,6 +1551,7 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
     register_proc("SOUND.BPM", 1, builtin_sound_bpm);
     register_proc("SOUND.SCALE", 3, builtin_sound_scale);
     register_proc("SOUND.NOTE", -1, builtin_sound_note);
+    register_func("SOUND.GET_PHASE", 0, builtin_sound_get_phase);
 #endif
 
     register_func("MOUSEX", 0, builtin_mousex);

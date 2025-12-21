@@ -722,7 +722,8 @@ public:
     void set_bpm(double bpm);
     void set_scale(int track_id, const std::string& root_note, const std::string& mode);
     float get_scale_freq(int degree, int track_id);
-    void play_note_pattern(const std::string& pattern);
+    void play_note_pattern(const std::string& pattern, int track_offset = 0);
+    float get_global_phase() { return (float)sequencer.current_phase; }
 #endif
     bool is_initialized = false;
 

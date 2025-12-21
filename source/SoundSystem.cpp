@@ -1256,26 +1256,44 @@ void SoundSystem::set_scale(int track_id, const std::string& root_note, const st
 //    return 440.0f * std::pow(2.0f, (target_midi - 69.0f) / 12.0f);
 //}
 
-void SoundSystem::play_note_pattern(const std::string& pattern) {
+void SoundSystem::play_note_pattern(const std::string& pattern, int track_offset) {
     SDL_LockAudioStream(audio_stream);
 
-    // We assume the user wants to use their existing Voice settings.
-    // The parser separates the string into layers.
-    sequencer.parse_parallel(pattern);
+    // 1. Use a temporary sequencer object so we don't overwrite current tracks
+    MusicSequencer temp_seq;
+    temp_seq.parse_parallel(pattern);
 
-    // Ensure all used layers are marked active and use "VOICE" mode
-    for (int i = 0; i < sequencer.layers.size(); ++i) {
-        if (!sequencer.layers[i].events.empty()) {
-            sequencer.layers[i].active = true;
-            // Force the layer to NOT override the track's sound
-            // (assuming you added logic to treat SINE or a specific flag as "don't change synth")
-            sequencer.layers[i].synth_type = Waveform::SINE; // Placeholder
+    // 2. Ensure our main sequencer has enough layers for the offset
+    int required_layers = (int)temp_seq.layers.size() + track_offset;
+    if ((int)sequencer.layers.size() < required_layers) {
+        sequencer.layers.resize(required_layers);
+    }
+
+    // 3. Carefully copy only the new events into the target tracks
+    for (int i = 0; i < (int)temp_seq.layers.size(); ++i) {
+        int target_idx = i + track_offset;
+
+        if (target_idx < (int)sequencer.layers.size()) {
+            auto& target = sequencer.layers[target_idx];
+            auto& source = temp_seq.layers[i];
+
+            if (!source.events.empty()) {
+                target.active = true;
+                target.synth_type = Waveform::SINE; // Keep track voice
+                target.is_linear = true;
+                target.events = source.events;
+
+                target.total_length = source.total_length;
+                target.linear_cursor = sequencer.current_phase;
+
+                // Reset trigger state so notes play immediately
+                for (auto& ev : target.events) ev.triggered = false;
+            }
         }
     }
 
     SDL_UnlockAudioStream(audio_stream);
 }
-
 #endif
 
 #endif

@@ -1,0 +1,94 @@
+SCREEN 1280, 720, "jdBasic Sequencer", 2
+
+IMPORT SQ
+
+DIM CONFIG AS MAP 
+
+SQ.START()
+SOUND.BPM 117 
+
+' --- 1. INSTRUMENTS ---
+' Percussion (0-2)
+SQ.V 0, "KD" : SQ.V 1, "SD" : SQ.V 2, "CH"
+
+' Bass (3)
+SOUND.VOICE 3, "SAW", 0.01, 0.1, 0.5, 0.1 
+SOUND.FILTER 3, 500 
+SOUND.GAIN 3, 1.2
+
+' Chords (4) 
+SOUND.VOICE 4, "SAW", 0.05, 0.4, 0.2, 0.1
+SOUND.FILTER 4, 1200
+SOUND.REVERBSEND 4, 0.9
+
+' --- 2. PATTERNS ---
+KICK$  = "c1 ~ ~ ~ c1 ~ ~ ~"
+SNARE$ = "~ ~ c1 ~ ~ ~ c1 ~"
+HATS$  = "[c1 c1] [c1 c1] [c1 c1] [c1 c1]"
+BASS$  = "f#2 c#3 e3 f#3 e3 c#3 b2 c#3"
+
+' --- CHORDS (2-Bar Loop) ---
+' F#m ... G#m | A ... G#m
+C_BAR1$ = "[[f#3,a3,c#4] ~ ~ [g#3,b3,d#4] ~ ~ ~ ~]"
+C_BAR2$ = "[[a3,c#4,e4] ~ ~ [g#3,b3,d#4] ~ ~ ~ ~]"
+CHORDS$ = C_BAR1$ + " " + C_BAR2$
+
+' --- 3. PERFORMANCE ---
+CLS
+PRINT ">>> Building Groove..."
+SOUND.SEQ 0, KICK$, "VOICE" 
+PRINT "Kick:  "; KICK$
+SOUND.SEQ 1, SNARE$, "VOICE"
+PRINT "Snare: "; SNARE$
+
+SLEEP 2000
+DO : SLEEP 1 : LOOP UNTIL SOUND.GET_PHASE() < 0.05
+
+PRINT ">>> Adding Bass..."
+SOUND.SEQ 3, BASS$, "VOICE"
+PRINT "Bass:  "; BASS$
+
+SLEEP 2000
+DO : SLEEP 1 : LOOP UNTIL SOUND.GET_PHASE() < 0.05
+PRINT ">>> Adding Hats..."
+SOUND.SEQ 2, HATS$, "VOICE"
+PRINT "Hats:  "; HATS$
+
+SLEEP 2000
+DO : SLEEP 1 : LOOP UNTIL SOUND.GET_PHASE() < 0.05
+
+' Turn on Reverb
+SQ.P 5
+
+PRINT ">>> Playing Chords (Trk 4)..."
+SOUND.NOTE "<" + CHORDS$ + ">", TRUE, 4
+PRINT "Chords: "; CHORDS$
+
+PRINT "Press ESC to stop"
+
+SCREENFLIP 
+
+' --- 5. VISUALIZER LOOP ---
+DO
+    CLS
+    
+    IF GUI.BEGIN("Master Mixer", 0, 0, 400, 300) THEN
+        WaveData = SOUND.GET_WAVE() 
+        GUI.PLOT_LINES("Output", WaveData, "Live Audio", -1.0, 1.0)
+        
+        GUI.SEPARATOR()
+        
+        Phase = SOUND.GET_PHASE()
+        GUI.TEXT "Global Phase: " + ROUND(Phase, 2)
+        GUI.PROGRESS Phase, "Bar Progress"
+        
+        GUI.SEPARATOR()
+        GUI.TEXT "Playing: 10-Bar Loop"
+    ENDIF
+    GUI.END()
+
+    SCREENFLIP
+    SLEEP 16
+LOOP UNTIL INKEY$() = CHR$(27)
+
+SQ.STOP()
