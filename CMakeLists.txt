@@ -83,6 +83,12 @@ find_package(Threads REQUIRED)
 
 # List all the source files for the jdBasic executable.
 set(JDBASIC_SOURCES
+    libs/imgui/backends/imgui_impl_sdl3.cpp
+    libs/imgui/backends/imgui_impl_sdlrenderer3.cpp
+    libs/imgui/imgui.cpp
+    libs/imgui/imgui_draw.cpp
+    libs/imgui/imgui_tables.cpp
+    libs/imgui/imgui_widgets.cpp
     source/AIFunctions.cpp
     source/ArrayFunctions.cpp
     source/BuiltinFunctions.cpp
@@ -93,6 +99,8 @@ set(JDBASIC_SOURCES
     source/Error.cpp
     source/ExpressionParser.cpp
     source/Graphics.cpp
+    source/ImGuiFunctions.cpp
+    source/IOFunctions.cpp
     source/LocaleManager.cpp
     source/NeReLaBasic.cpp
     source/NeReLaBasicInterpreter.cpp
@@ -122,6 +130,7 @@ target_include_directories(jdBasic PRIVATE
 
     # Header-only libraries included in the project source tree
     "${CMAKE_CURRENT_SOURCE_DIR}/libs/cpp-httplib"
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs/imgui"
 
     # Include directories from found packages
     ${OPENSSL_INCLUDE_DIR}

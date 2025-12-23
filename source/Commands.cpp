@@ -140,7 +140,8 @@ bool is_path_token(Tokens::ID token) {
         token == Tokens::ID::C_MINUS ||
         token == Tokens::ID::C_PLUS ||
         token == Tokens::ID::C_ASTR ||
-        token == Tokens::ID::C_UNDERLINE;
+        token == Tokens::ID::C_UNDERLINE ||
+        token == Tokens::ID::C_BACKSLASH;
     // Add C_BACKSLASH if it exists in your enum, otherwise DOS paths use /
 }
 
@@ -162,6 +163,7 @@ std::string get_token_string(NeReLaBasic& vm, Tokens::ID token) {
     }
     if (token == Tokens::ID::C_DOT) return ".";
     if (token == Tokens::ID::C_SLASH) return "/";
+    if (token == Tokens::ID::C_BACKSLASH) return "\\";
     if (token == Tokens::ID::C_MINUS) return "-";
     if (token == Tokens::ID::C_PLUS) return "+";
     if (token == Tokens::ID::C_ASTR) return "*";
@@ -197,7 +199,7 @@ std::string resolve_shell_like_argument(NeReLaBasic& vm) {
         if (is_path_token(t)) {
             // Advance temp cursor manually to read string data if needed
             temp_pcode++;
-            if (t == Tokens::ID::VARIANT || t == Tokens::ID::STRVAR) {
+            if (t == Tokens::ID::VARIANT || t == Tokens::ID::STRVAR || t == Tokens::ID::INT) {
                 // Determine length of string to skip
                 while ((*vm.active_p_code)[temp_pcode] != 0) temp_pcode++;
                 temp_pcode++; // skip null
@@ -218,7 +220,7 @@ std::string resolve_shell_like_argument(NeReLaBasic& vm) {
         while (token_count > 0) {
             Tokens::ID t = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
             vm.pcode++;
-            if (t == Tokens::ID::VARIANT || t == Tokens::ID::STRVAR) {
+            if (t == Tokens::ID::VARIANT || t == Tokens::ID::STRVAR || t == Tokens::ID::INT) {
                 path_acc += read_string(vm);
             }
             else {
@@ -242,22 +244,29 @@ std::string resolve_shell_like_argument(NeReLaBasic& vm) {
         // Check if Variable Exists
         vm.pcode = start_pcode; // Reset to read name
         vm.pcode++; // skip token
-        std::string name = to_upper(read_string(vm));
+        // 1. Read the RAW name (preserves case, e.g., "Usr")
+        std::string raw_name = read_string(vm);
+
+        // 2. Create UPPERCASE version for variable lookup (e.g., "USR")
+        std::string lookup_name = to_upper(raw_name);
 
         bool exists = false;
         if (!vm.call_stack.empty()) {
-            if (vm.call_stack.back().local_variables.count(name)) exists = true;
+            if (vm.call_stack.back().local_variables.count(lookup_name)) exists = true;
         }
-        if (!exists && vm.variables.count(name)) exists = true;
+        if (!exists && vm.variables.count(lookup_name)) exists = true;
 
         if (exists) {
-            // Variable exists, evaluate it
+            // Variable exists! Evaluate it.
+            // (e.g., DIM D$ = "MyDir" -> CD D$)
             vm.pcode = start_pcode;
             return to_string(vm.evaluate_expression());
         }
         else {
-            // Variable does NOT exist, treat as literal folder name
-            return name;
+            // Variable does NOT exist.
+            // Return the RAW name to preserve Linux case sensitivity.
+            // (e.g., CD Usr -> returns "Usr", not "USR")
+            return raw_name;
         }
     }
 
