@@ -567,6 +567,8 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
 * **`EXPORT MODULE [module]`**: Marks a file as EXPORT for importing with IMPORT
 * **`DLLIMPORT [funcfile]`**: Loads the funcfile.dll or funcfile.so as dynmaic library and register all included functions for jdBasic.
+* **`CLIPBOARD.SET text$`**: Sets the system clipboard text.
+* **`CLIPBOARD.GET$() -> string$`**: Returns the text currently in the system clipboard.
 
 ### SWITCH...CASE...ENDSWITCH
 
@@ -695,11 +697,24 @@ ENDTRY
 ### Filesystem
 
 * **`DIR [path]`**: Lists files and directories. Supports wildcards like `*` and `?`.
-* **`DIR$([path])->String`**: Lists files and directories and return them as string array. Supports wildcards like `*` and `?`.
+* **`DIR$(wildcard$, [extended_info]) -> Array`**: Lists files and directories matching the pattern.
+  * If `extended_info` is `FALSE` (default), it returns a **1D Array** of filenames.
+  * If `extended_info` is `TRUE`, it returns a **2D Matrix** (Nx5) containing details for each file:
+    * **Col 0**: Filename (String)
+    * **Col 1**: Size in bytes (Number)
+    * **Col 2**: Type ("FILE", "DIR", "LINK")
+    * **Col 3**: Date (YYYY-MM-DD HH:MM:SS)
+    * **Col 4**: Attributes ("R", "W", "X", etc.)
 * **`CD "path"`**: Changes the current working directory.
 * **`PWD`**: Prints the current working directory.
 * **`MKDIR "path"`**: Creates a new directory.
 * **`KILL "filename"`**: Deletes a file.
+
+#### Path Functions
+
+* **`PATH.JOIN$(part1$, part2$, ...) -> string$`**: Joins multiple file path components using the correct separator for the current OS (e.g., `\` on Windows, `/` on Linux).
+* **`PATH.BASENAME$(path$) -> string$`**: Returns the filename part of a path (e.g., `"file.txt"` from `"/dir/file.txt"`).
+* **`PATH.EXT$(path$) -> string$`**: Returns the file extension including the dot (e.g., `".txt"`).
 
 ### OS Functions
 
@@ -936,6 +951,9 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array)`**: Returs a string where all found find_string$ are preplaced with replace_with_string$.
 * **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
 * **`BYTEAT(str$, index) -> Integer`**: Returns the numeric byte value (0-255) at the specified 0-based index in a string. This provides fast O(1) access to raw string data, which is essential when processing binary data loaded via `BINREADER$`.
+* **`PACK$(format$, v1, v2, ...) -> string$`**: Packs numbers into a binary string based on a format.
+  * Format specifiers: `<` (Little Endian), `>` (Big Endian), `b` (Byte), `s` (Short), `i` (Integer), `l` (Long), `f` (Float), `d` (Double).
+* **`UNPACK(format$, binary_data$) -> Array`**: Unpacks a binary string into an Array of numbers based on the format string.
 
 ### Math/Arithmetic/Round Functions
 
@@ -1007,6 +1025,7 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`CSVREADER(filename$, [delimiter$], [has_header])`**: Reads a CSV file into a 2D array of numbers.
 * **`CSVWRITER filename$, array, [delimiter$], [header_array]`**: Writes a 2D array to a CSV file.
 * **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.
+* **`BINWRITER filename$, data$`**: Writes a raw string of bytes to a file, overwriting it.
 
 ### System and Time Functions
 
@@ -1054,6 +1073,13 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
 * **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.
 * **`HTTP.SERVER.ON_POST(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
+
+### Encoding & Hashing (CODEC)
+
+* **`CODEC.BASE64_ENCODE$(string$) -> string$`**: Encodes a string into Base64 format. Useful for API authentication headers.
+* **`CODEC.BASE64_DECODE$(string$) -> string$`**: Decodes a Base64 encoded string back to its original format.
+* **`CODEC.SHA256$(string$) -> string$`**: Calculates the SHA256 hash of a string and returns it as a 64-character hex string.
+* **`CODEC.UUID$() -> string$`**: Generates a random Version 4 UUID (e.g., `"550e8400-e29b-41d4-a716-446655440000"`).
 
 ### Building a Web Server & API
 

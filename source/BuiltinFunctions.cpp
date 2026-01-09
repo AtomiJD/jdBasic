@@ -3190,15 +3190,30 @@ static BasicValue builtin_unreact(NeReLaBasic& vm, const std::vector<BasicValue>
 
 // --- Filesystem ---
 // 
-// // DIR$(wildcard$) -> array
-// Returns an array of strings containing filenames that match the wildcard pattern.
+
+// DIR$(wildcard$, [extended_info_bool]) -> array
+// Returns an array of strings (or a 2D matrix) containing filenames that match the wildcard pattern.
 BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line, "DIR$ requires exactly one argument (e.g., \"*.txt\").");
+    if (args.size() < 1 || args.size() > 2) {
+        Error::set(8, vm.runtime_current_line, "DIR$ requires 1 or 2 arguments: wildcard$ [, extended_info]");
         return {};
     }
 
+    bool extended = false;
+    if (args.size() == 2) {
+        extended = to_bool(args[1]);
+    }
+
     auto result_ptr = std::make_shared<Array>();
+
+    // Default return is empty array (shape {0} or {0,5})
+    if (extended) {
+        result_ptr->shape = { 0, 5 };
+    }
+    else {
+        result_ptr->shape = { 0 };
+    }
+
     std::string full_pattern_str = to_string(args[0]);
     fs::path pattern_path(full_pattern_str);
 
@@ -3206,20 +3221,96 @@ BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
     fs::path target_dir = pattern_path.has_parent_path() ? pattern_path.parent_path() : ".";
     std::string wildcard = pattern_path.has_filename() ? pattern_path.filename().string() : "*";
 
+    // Handle case where the pattern is a specific file that exists (no wildcards)
+    // This allows DIR$("C:\file.txt") to work even without *
+    if (wildcard.find('*') == std::string::npos && wildcard.find('?') == std::string::npos) {
+        if (fs::exists(pattern_path) && !fs::is_directory(pattern_path)) {
+            target_dir = pattern_path.parent_path();
+            if (target_dir.empty()) target_dir = ".";
+        }
+    }
+
     if (!fs::exists(target_dir) || !fs::is_directory(target_dir)) {
-        //Error::set(6, vm.runtime_current_line, "Directory or file not found: " + target_dir.string());
-        return {};
+        // Return the empty array (matches user expectation of [])
+        return result_ptr;
     }
 
     try {
-        // Use the existing wildcard to regex converter
         std::regex pattern(wildcard_to_regex(wildcard), std::regex::icase);
 
         for (const auto& entry : fs::directory_iterator(target_dir)) {
             std::string filename_str = entry.path().filename().string();
-            if (std::regex_match(filename_str, pattern)) {
+
+            // Skip if it doesn't match
+            if (!std::regex_match(filename_str, pattern)) continue;
+
+            if (!extended) {
+                // Classic Mode: Just filenames
                 result_ptr->data.push_back(filename_str);
             }
+            else {
+                // Extended Mode: Matrix [Name, Size, Type, Date, Attributes]
+
+                // 1. Name
+                result_ptr->data.push_back(filename_str);
+
+                // 2. Size (Bytes)
+                double fsize = 0.0;
+                if (entry.is_regular_file()) {
+                    try { fsize = static_cast<double>(entry.file_size()); }
+                    catch (...) {}
+                }
+                result_ptr->data.push_back(fsize);
+
+                // 3. Type
+                std::string type = "FILE";
+                if (entry.is_directory()) type = "DIR";
+                else if (entry.is_symlink()) type = "LINK";
+                result_ptr->data.push_back(type);
+
+                // 4. Date (YYYY-MM-DD HH:MM:SS)
+                std::string date_str = "";
+                try {
+                    auto ftime = entry.last_write_time();
+                    // Portable-ish C++17 conversion to system time
+                    auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                        ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now()
+                    );
+                    std::time_t tt = std::chrono::system_clock::to_time_t(sctp);
+                    std::tm tm_struct;
+#if defined(_WIN32)
+                    localtime_s(&tm_struct, &tt);
+#else
+                    localtime_r(&tt, &tm_struct);
+#endif
+                    std::stringstream ss;
+                    ss << std::put_time(&tm_struct, "%Y-%m-%d %H:%M:%S");
+                    date_str = ss.str();
+                }
+                catch (...) {}
+                result_ptr->data.push_back(date_str);
+
+                // 5. Attributes (R=Read, W=Write, X=Exec)
+                std::string attrs = "";
+                try {
+                    auto p = entry.status().permissions();
+                    if ((p & fs::perms::owner_read) != fs::perms::none) attrs += "R";
+                    if ((p & fs::perms::owner_write) != fs::perms::none) attrs += "W";
+                    if ((p & fs::perms::owner_exec) != fs::perms::none) attrs += "X";
+                }
+                catch (...) {}
+                result_ptr->data.push_back(attrs);
+            }
+        }
+
+        if (extended) {
+            // Update shape to Nx5
+            size_t rows = result_ptr->data.size() / 5;
+            result_ptr->shape = { rows, 5 };
+        }
+        else {
+            // Update shape to N
+            result_ptr->shape = { result_ptr->data.size() };
         }
     }
     catch (const std::regex_error& e) {
@@ -3231,11 +3322,8 @@ BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
         return {};
     }
 
-    // Set the shape of the resulting 1D array
-    result_ptr->shape = { result_ptr->data.size() };
     return result_ptr;
 }
-
 // DIR [path_string]
 BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     try {
@@ -4975,6 +5063,201 @@ BasicValue builtin_eval(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return result;
 }
 
+// --- CODEC Helper Functions ---
+
+namespace CodecHelpers {
+
+    // --- Base64 Implementation ---
+    static const std::string base64_chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+
+    std::string base64_encode(const std::string& in) {
+        std::string out;
+        int val = 0, valb = -6;
+        for (unsigned char c : in) {
+            val = (val << 8) + c;
+            valb += 8;
+            while (valb >= 0) {
+                out.push_back(base64_chars[(val >> valb) & 0x3F]);
+                valb -= 6;
+            }
+        }
+        if (valb > -6) out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+        while (out.size() % 4) out.push_back('=');
+        return out;
+    }
+
+    std::string base64_decode(const std::string& in) {
+        std::string out;
+        std::vector<int> T(256, -1);
+        for (int i = 0; i < 64; i++) T[base64_chars[i]] = i;
+
+        int val = 0, valb = -8;
+        for (unsigned char c : in) {
+            if (T[c] == -1) break;
+            val = (val << 6) + T[c];
+            valb += 6;
+            if (valb >= 0) {
+                out.push_back(char((val >> valb) & 0xFF));
+                valb -= 8;
+            }
+        }
+        return out;
+    }
+
+    // --- SHA256 Implementation (Compact) ---
+    // Rotates right
+    inline uint32_t rotr(uint32_t x, uint32_t n) { return (x >> n) | (x << (32 - n)); }
+
+    std::string sha256(const std::string& input) {
+        // Initialize hash values (first 32 bits of the fractional parts of the square roots of the first 8 primes)
+        uint32_t h[8] = {
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+        };
+
+        // Constants (first 32 bits of the fractional parts of the cube roots of the first 64 primes)
+        const uint32_t k[64] = {
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+        };
+
+        // Pre-processing
+        std::vector<uint8_t> data(input.begin(), input.end());
+        uint64_t bit_len = data.size() * 8;
+        data.push_back(0x80);
+        while ((data.size() * 8 + 64) % 512 != 0) data.push_back(0x00);
+
+        // Append length as 64-bit big endian integer
+        for (int i = 7; i >= 0; --i) data.push_back((bit_len >> (i * 8)) & 0xff);
+
+        // Process chunks
+        for (size_t i = 0; i < data.size(); i += 64) {
+            uint32_t w[64];
+            for (int j = 0; j < 16; ++j) {
+                w[j] = (data[i + j * 4] << 24) | (data[i + j * 4 + 1] << 16) |
+                    (data[i + j * 4 + 2] << 8) | (data[i + j * 4 + 3]);
+            }
+            for (int j = 16; j < 64; ++j) {
+                uint32_t s0 = rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >> 3);
+                uint32_t s1 = rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >> 10);
+                w[j] = w[j - 16] + s0 + w[j - 7] + s1;
+            }
+
+            uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
+            uint32_t e = h[4], f = h[5], g = h[6], h_val = h[7]; // Renamed h to h_val to avoid conflict
+
+            for (int j = 0; j < 64; ++j) {
+                uint32_t S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+                uint32_t ch = (e & f) ^ (~e & g);
+                uint32_t temp1 = h_val + S1 + ch + k[j] + w[j];
+                uint32_t S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+                uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+                uint32_t temp2 = S0 + maj;
+
+                h_val = g; g = f; f = e; e = d + temp1;
+                d = c; c = b; b = a; a = temp1 + temp2;
+            }
+
+            h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+            h[4] += e; h[5] += f; h[6] += g; h[7] += h_val;
+        }
+
+        // Output to hex string
+        std::stringstream ss;
+        ss << std::hex << std::setfill('0');
+        for (int i = 0; i < 8; ++i) ss << std::setw(8) << h[i];
+        return ss.str();
+    }
+} // namespace CodecHelpers
+
+// --- Built-in CODEC Wrapper Functions ---
+
+// CODEC.BASE64_ENCODE$(string$) -> string$
+BasicValue builtin_codec_base64_encode(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "CODEC.BASE64_ENCODE$ requires 1 argument.");
+        return std::string("");
+    }
+    return CodecHelpers::base64_encode(to_string(args[0]));
+}
+
+// CODEC.BASE64_DECODE$(string$) -> string$
+BasicValue builtin_codec_base64_decode(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "CODEC.BASE64_DECODE$ requires 1 argument.");
+        return std::string("");
+    }
+    return CodecHelpers::base64_decode(to_string(args[0]));
+}
+
+// CODEC.SHA256$(string$) -> string$
+BasicValue builtin_codec_sha256(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "CODEC.SHA256$ requires 1 argument.");
+        return std::string("");
+    }
+    return CodecHelpers::sha256(to_string(args[0]));
+}
+
+// CODEC.UUID$() -> string$
+// Generates a version 4 UUID.
+BasicValue builtin_codec_uuid(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "CODEC.UUID$ does not accept arguments.");
+        return std::string("");
+    }
+
+    // --- Windows Implementation using COM ---
+#if defined(_WIN32)
+    GUID guid;
+    if (CoCreateGuid(&guid) == S_OK) {
+        // 36 characters + null terminator
+        char guid_cstr[39];
+        // Format: {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}
+        snprintf(guid_cstr, sizeof(guid_cstr),
+            "%08lX-%04hX-%04hX-%02X%02X-%02X%02X%02X%02X%02X%02X",
+            guid.Data1, guid.Data2, guid.Data3,
+            guid.Data4[0], guid.Data4[1], guid.Data4[2], guid.Data4[3],
+            guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7]);
+
+        return std::string(guid_cstr);
+    }
+    return std::string("00000000-0000-0000-0000-000000000000"); // Fallback on failure
+#else
+    // --- Cross-Platform C++11 Implementation ---
+    // Uses pseudo-random numbers (good enough for general usage)
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 15);
+    static std::uniform_int_distribution<> dis2(8, 11);
+
+    std::stringstream ss;
+    int i;
+    ss << std::hex;
+    for (i = 0; i < 8; i++) ss << dis(gen);
+    ss << "-";
+    for (i = 0; i < 4; i++) ss << dis(gen);
+    ss << "-4"; // UUID version 4
+    for (i = 0; i < 3; i++) ss << dis(gen);
+    ss << "-";
+    ss << dis2(gen); // Variant 10xx
+    for (i = 0; i < 3; i++) ss << dis(gen);
+    ss << "-";
+    for (i = 0; i < 12; i++) ss << dis(gen);
+
+    return ss.str();
+#endif
+}
+
 #ifdef JD_IMGUI
 void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table);
 #endif
@@ -5125,7 +5408,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("NEW", 0, builtin_new);
     register_proc("UNREACT", 1, builtin_unreact);
 
-    register_func("DIR$", 1, builtin_dir_str);
+    register_func("DIR$", -1, builtin_dir_str);
     register_proc("PWD", 0, builtin_pwd);
     register_proc("COLOR", 2, builtin_color);
     register_func("PATH.JOIN$", -1, builtin_path_join); // -1 for variable args
@@ -5154,5 +5437,9 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("PACK$", -1, builtin_pack); // Variable arguments
     register_func("UNPACK", 2, builtin_unpack);
 
-    // Task thing
+    register_func("CODEC.BASE64_ENCODE$", 1, builtin_codec_base64_encode);
+    register_func("CODEC.BASE64_DECODE$", 1, builtin_codec_base64_decode);
+    register_func("CODEC.SHA256$", 1, builtin_codec_sha256);
+    register_func("CODEC.UUID$", 0, builtin_codec_uuid);
+
 }

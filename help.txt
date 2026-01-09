@@ -42,6 +42,10 @@ Description: Pauses execution until an asynchronous task is complete and retriev
 Syntax: BINREADER$(filename$)
 Description: Reads the entire content of a binary file into a single string (raw bytes, no newline translation).
 
+[BINWRITER]
+Syntax: BINWRITER filename$, data$
+Description: Writes a raw string of bytes to a file, overwriting it.
+
 [BAND]
 Syntax: expression BAND expression
 Description: Performs a bitwise AND operation on two numeric expressions.
@@ -102,9 +106,33 @@ Description: Draws a sector (a pie slice) of a circle.
 Syntax: CLEARWS
 Description: Clears the current workspace, including all source code, variables, and compiled code.
 
+[CLIPBOARD.GET$]
+Syntax: CLIPBOARD.GET$()
+Description: Returns the text currently in the system clipboard.
+
+[CLIPBOARD.SET]
+Syntax: CLIPBOARD.SET text$
+Description: Sets the system clipboard text.
+
 [CLS]
 Syntax: CLS
 Description: Clears the console screen.
+
+[CODEC.BASE64_DECODE$]
+Syntax: CODEC.BASE64_DECODE$(string$)
+Description: Decodes a Base64 encoded string.
+
+[CODEC.BASE64_ENCODE$]
+Syntax: CODEC.BASE64_ENCODE$(string$)
+Description: Encodes a string into Base64 format.
+
+[CODEC.SHA256$]
+Syntax: CODEC.SHA256$(string$)
+Description: Returns the SHA256 hash of a string (64-char hex).
+
+[CODEC.UUID$]
+Syntax: CODEC.UUID$()
+Description: Generates a random Version 4 UUID.
 
 [COLOR]
 Syntax: COLOR foreground, background
@@ -171,8 +199,10 @@ Syntax: DIR [path_with_wildcard]
 Description: Lists files and directories in the current or specified path.
 
 [DIR$]
-Syntax: DIR$([path_with_wildcard])
-Description: Returns a 1D array of strings containing files and directories that match the path.
+Syntax: DIR$(wildcard$, [extended_info_bool])
+Description: Lists files matching a pattern.
+If extended_info is TRUE, returns a 2D matrix: [Name, Size, Type, Date, Attr].
+Otherwise, returns a 1D array of filenames.
 
 [DLLIMPORT]
 Syntax: DLLIMPORT "library_file"
@@ -910,6 +940,22 @@ Description: Returns a string identifying the operating system ("WINDOWS", "LINU
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.
 
+[PACK$]
+Syntax: PACK$(format$, v1, v2, ...)
+Description: Packs numbers into a binary string. Format: "<" (Little Endian), ">" (Big Endian), "b" (Byte), "i" (Int), "d" (Double), etc.
+
+[PATH.BASENAME$]
+Syntax: PATH.BASENAME$(path$)
+Description: Returns the filename part of a path (e.g., "file.txt" from "/dir/file.txt").
+
+[PATH.EXT$]
+Syntax: PATH.EXT$(path$)
+Description: Returns the file extension of a path (e.g., ".png").
+
+[PATH.JOIN$]
+Syntax: PATH.JOIN$(part1$, part2$, ...)
+Description: Joins path components using the operating system's separator.
+
 [PI]
 Syntax: PI
 Description: A constant holding the value of Pi.
@@ -1548,6 +1594,10 @@ Description: Converts a string to uppercase.
 [UNIQUE]
 Syntax: UNIQUE(array)
 Description: Returns a new array containing only the unique elements from the source array.
+
+[UNPACK]
+Syntax: UNPACK(format$, binary_data$)
+Description: Unpacks a binary string into an Array of numbers based on the format string.
 
 [UNREACT]
 Syntax: UNREACT(variable_name$)

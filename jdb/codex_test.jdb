@@ -1,0 +1,57 @@
+' --- CODEC Module Test ---
+' This program demonstrates the new encoding, hashing, and UUID functions.
+
+CLS
+PRINT "=== 1. Base64 Encoding & Decoding ==="
+
+OriginalText$ = "Hello jdBasic! This is a test."
+PRINT "Original: " + OriginalText$
+
+' Encode
+Encoded$ = CODEC.BASE64_ENCODE$(OriginalText$)
+PRINT "Encoded:  " + Encoded$
+
+' Decode
+Decoded$ = CODEC.BASE64_DECODE$(Encoded$)
+PRINT "Decoded:  " + Decoded$
+
+IF OriginalText$ = Decoded$ THEN
+    PRINT "-> Verification: SUCCESS"
+ELSE
+    PRINT "-> Verification: FAILED"
+ENDIF
+PRINT ""
+
+PRINT "=== 2. Hashing (SHA256) ==="
+' Useful for verifying file integrity or hashing passwords
+
+InputString$ = "password123"
+Hash$ = CODEC.SHA256$(InputString$)
+
+PRINT "Input: " + InputString$
+PRINT "SHA256 Hash: " + Hash$
+PRINT "Length: " + LEN(Hash$) + " chars" ' Should be 64 characters (hex)
+PRINT ""
+
+PRINT "=== 3. UUID Generation ==="
+' Useful for unique object IDs, session keys, or database records
+
+PRINT "Generated UUIDs:"
+FOR i = 1 TO 3
+    ID$ = CODEC.UUID$()
+    PRINT i + ": " + ID$
+NEXT
+PRINT ""
+
+PRINT "=== 4. Practical Example: Mock API Header ==="
+' Combining UUID and Base64 for a typical HTTP Authorization header
+
+API_KEY$ = CODEC.UUID$()
+API_SECRET$ = "my_secret_key"
+
+' Basic Auth format is usually "username:password" encoded in Base64
+AuthString$ = API_KEY$ + ":" + API_SECRET$
+AuthHeader$ = "Basic " + CODEC.BASE64_ENCODE$(AuthString$)
+
+PRINT "Generated API Key: " + API_KEY$
+PRINT "Auth Header: " + AuthHeader$

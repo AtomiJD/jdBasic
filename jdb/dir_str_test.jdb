@@ -1,0 +1,19 @@
+' 1. Classic Mode (List of strings)
+files = DIR$("*.txt")
+PRINT files
+
+' 2. Extended Matrix Mode
+' Columns: 0=Name, 1=Size, 2=Type, 3=Date, 4=Attributes
+file_matrix = DIR$("*.*", TRUE)
+
+PRINT "Found " + LEN(file_matrix)[0] + " items:"
+
+FOR i = 0 TO LEN(file_matrix)[0] - 1
+    name$ = file_matrix[i, 0]
+    size  = file_matrix[i, 1]
+    type$ = file_matrix[i, 2]
+    date$ = file_matrix[i, 3]
+    att$ = file_matrix[i, 4]
+    
+    PRINT name$ + " (" + type$ + ") - " + size + " bytes - " + date$ + " (" + att$ + ")"
+NEXT
