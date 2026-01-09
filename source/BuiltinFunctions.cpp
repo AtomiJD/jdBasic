@@ -3363,6 +3363,64 @@ BasicValue builtin_mkdir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return false;
 }
 
+// --- Path Utility Functions ---
+
+// PATH.JOIN$(part1$, part2$, ...) -> string$
+// Joins multiple path components using the OS-specific separator.
+BasicValue builtin_path_join(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty()) {
+        return std::string("");
+    }
+
+    fs::path result_path;
+
+    // First argument is the base
+    result_path = to_string(args[0]);
+
+    // Append subsequent arguments using the /= operator which handles separators correctly
+    for (size_t i = 1; i < args.size(); ++i) {
+        result_path /= to_string(args[i]);
+    }
+
+    return result_path.string();
+}
+
+// PATH.EXT$(filename$) -> string$
+// Returns the file extension (including the dot).
+BasicValue builtin_path_ext(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "PATH.EXT$ requires exactly one argument.");
+        return std::string("");
+    }
+
+    std::string path_str = to_string(args[0]);
+    if (path_str.empty()) return std::string("");
+
+    fs::path p(path_str);
+    if (p.has_extension()) {
+        return p.extension().string();
+    }
+    return std::string("");
+}
+
+// PATH.BASENAME$(filename$) -> string$
+// Returns the filename component from a path (e.g. "file.txt" from "/path/to/file.txt").
+BasicValue builtin_path_basename(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "PATH.BASENAME$ requires exactly one argument.");
+        return std::string("");
+    }
+
+    std::string path_str = to_string(args[0]);
+    if (path_str.empty()) return std::string("");
+
+    fs::path p(path_str);
+    if (p.has_filename()) {
+        return p.filename().string();
+    }
+    return std::string("");
+}
+
 // KILL path_string (deletes a file)
 BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
@@ -3382,6 +3440,82 @@ BasicValue builtin_kill(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         TextIO::print("Error deleting file: " + std::string(e.what())); TextIO::nl();
     }
     return false;
+}
+
+// --- Clipboard Functions ---
+
+// CLIPBOARD.SET(text$)
+// Sets the system clipboard text.
+BasicValue builtin_clipboard_set(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "CLIPBOARD.SET requires exactly one string argument.");
+        return false;
+    }
+
+    std::string text = to_string(args[0]);
+
+#ifdef SDL3
+    // Use SDL if available as it handles cross-platform details perfectly
+    if (SDL_SetClipboardText(text.c_str()) < 0) {
+        Error::set(12, vm.runtime_current_line, "Failed to set clipboard text via SDL.");
+    }
+#elif defined(_WIN32)
+    // Fallback to Win32 API
+    if (OpenClipboard(NULL)) {
+        EmptyClipboard();
+        HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
+        if (hg) {
+            memcpy(GlobalLock(hg), text.c_str(), text.size() + 1);
+            GlobalUnlock(hg);
+            SetClipboardData(CF_TEXT, hg);
+        }
+        CloseClipboard();
+    }
+    else {
+        Error::set(12, vm.runtime_current_line, "Failed to open Windows clipboard.");
+    }
+#else
+    Error::set(13, vm.runtime_current_line, "Clipboard not supported on this platform (SDL missing).");
+#endif
+
+    return false; // Procedure
+}
+
+// CLIPBOARD.GET$() -> string$
+// Gets the text currently in the system clipboard.
+BasicValue builtin_clipboard_get_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) {
+        Error::set(8, vm.runtime_current_line, "CLIPBOARD.GET$ does not accept arguments.");
+        return std::string("");
+    }
+
+#ifdef SDL3
+    if (SDL_HasClipboardText()) {
+        char* text = SDL_GetClipboardText();
+        if (text) {
+            std::string result(text);
+            SDL_free(text);
+            return result;
+        }
+    }
+    return std::string("");
+#elif defined(_WIN32)
+    std::string result = "";
+    if (OpenClipboard(NULL)) {
+        HANDLE hg = GetClipboardData(CF_TEXT);
+        if (hg) {
+            char* str = static_cast<char*>(GlobalLock(hg));
+            if (str) {
+                result = str; // Copies data into std::string
+                GlobalUnlock(hg);
+            }
+        }
+        CloseClipboard();
+    }
+    return result;
+#else
+    return std::string("");
+#endif
 }
 
 // --- High-Performance File I/O Functions ---
@@ -3669,6 +3803,279 @@ BasicValue builtin_byteat(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
     const unsigned char b = static_cast<unsigned char>(s[static_cast<size_t>(idx)]);
     return static_cast<long long>(b);
+}
+
+// --- Binary Data Construction & I/O ---
+
+// Helper for endian swapping (if needed)
+template <typename T>
+T swap_endian(T u) {
+    union {
+        T u;
+        unsigned char u8[sizeof(T)];
+    } source, dest;
+    source.u = u;
+    for (size_t k = 0; k < sizeof(T); k++)
+        dest.u8[k] = source.u8[sizeof(T) - k - 1];
+    return dest.u;
+}
+
+// PACK$(format$, v1, v2, ...) -> string$
+// Packs numeric values into a binary string based on a format string.
+// Format Specifiers:
+//   < : Little Endian (default)
+//   > : Big Endian
+//   b : Byte (8-bit)
+//   s : Short (16-bit)
+//   i : Integer (32-bit)
+//   l : Long (64-bit)
+//   f : Float (32-bit)
+//   d : Double (64-bit)
+BasicValue builtin_pack(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty()) {
+        Error::set(8, vm.runtime_current_line, "PACK$ requires at least a format string.");
+        return std::string("");
+    }
+
+    std::string format = to_string(args[0]);
+    std::string result;
+    size_t arg_idx = 1;
+
+    // Assume host is Little Endian (Standard for x86/ARM/WASM). 
+    // If you are on a Big Endian mainframe, flip this default!
+    bool big_endian_mode = false;
+
+    for (char c : format) {
+        if (c == ' ' || c == '\t') continue; // Ignore whitespace
+        if (c == '<') { big_endian_mode = false; continue; }
+        if (c == '>') { big_endian_mode = true; continue; }
+
+        if (arg_idx >= args.size()) {
+            Error::set(8, vm.runtime_current_line, "Not enough arguments for PACK$ format string.");
+            return std::string("");
+        }
+
+        BasicValue val = args[arg_idx++];
+
+        // Helper lambda to append value with correct endianness
+        auto append_val = [&](auto v) {
+            using T = decltype(v);
+            if (big_endian_mode) {
+                v = swap_endian(v);
+            }
+            const char* bytes = reinterpret_cast<const char*>(&v);
+            result.append(bytes, sizeof(T));
+            };
+
+        switch (c) {
+        case 'b': // Byte
+        case 'B':
+        {
+            unsigned char v = static_cast<unsigned char>(to_double(val));
+            result += (char)v;
+        }
+        break;
+        case 's': // Short
+        case 'S':
+        {
+            unsigned short v = static_cast<unsigned short>(to_double(val));
+            append_val(v);
+        }
+        break;
+        case 'i': // Integer (32-bit)
+        case 'I':
+        {
+            unsigned int v = static_cast<unsigned int>(to_double(val));
+            append_val(v);
+        }
+        break;
+        case 'l': // Long (64-bit)
+        case 'L':
+        {
+            // Ensure we cast to unsigned long long to strictly control bits
+            unsigned long long v = static_cast<unsigned long long>(to_double(val));
+            // If the input was actually a BasicValue Long Long, use it directly
+            if (std::holds_alternative<long long>(val)) {
+                v = static_cast<unsigned long long>(std::get<long long>(val));
+            }
+            append_val(v);
+        }
+        break;
+        case 'f': // Float
+        case 'F':
+        {
+            float v = static_cast<float>(to_double(val));
+            append_val(v);
+        }
+        break;
+        case 'd': // Double
+        case 'D':
+        {
+            double v = to_double(val);
+            append_val(v);
+        }
+        break;
+        default:
+            Error::set(1, vm.runtime_current_line, "Unknown PACK$ format specifier: " + std::string(1, c));
+            return std::string("");
+        }
+    }
+
+    return result;
+}
+
+// UNPACK(format$, binary_data$) -> Array
+// Unpacks a binary string into an array of values based on the format string.
+// Supported Format Specifiers:
+//   < : Little Endian (default)
+//   > : Big Endian
+//   b : Byte (1 byte) -> Returns Integer
+//   s : Short (2 bytes) -> Returns Integer
+//   i : Integer (4 bytes) -> Returns Integer
+//   l : Long (8 bytes) -> Returns Integer
+//   f : Float (4 bytes) -> Returns Double
+//   d : Double (8 bytes) -> Returns Double
+BasicValue builtin_unpack(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "UNPACK requires 2 arguments: format$, binary_data$");
+        return {};
+    }
+
+    std::string format = to_string(args[0]);
+    std::string data = to_string(args[1]);
+
+    // Create the result array
+    auto result_ptr = std::make_shared<Array>();
+
+    size_t data_offset = 0;
+    bool big_endian_mode = false;
+
+    for (char c : format) {
+        if (c == ' ' || c == '\t') continue;
+        if (c == '<') { big_endian_mode = false; continue; }
+        if (c == '>') { big_endian_mode = true; continue; }
+
+        // Helper to read types safely
+        auto read_val = [&](auto& temp_val) -> bool {
+            using T = std::decay_t<decltype(temp_val)>;
+            if (data_offset + sizeof(T) > data.size()) {
+                return false; // Not enough data left
+            }
+            // Copy bytes from string to temp variable
+            std::memcpy(&temp_val, data.data() + data_offset, sizeof(T));
+
+            // Handle Endianness
+            if (big_endian_mode) {
+                temp_val = swap_endian(temp_val);
+            }
+            data_offset += sizeof(T);
+            return true;
+            };
+
+        switch (c) {
+        case 'b': // Byte (unsigned char)
+        case 'B':
+        {
+            if (data_offset + 1 > data.size()) goto error_len;
+            unsigned char v = static_cast<unsigned char>(data[data_offset]);
+            data_offset += 1;
+            result_ptr->data.push_back(static_cast<long long>(v));
+        }
+        break;
+        case 's': // Short (16-bit)
+        case 'S':
+        {
+            unsigned short v;
+            if (!read_val(v)) goto error_len;
+            result_ptr->data.push_back(static_cast<long long>(v));
+        }
+        break;
+        case 'i': // Integer (32-bit)
+        case 'I':
+        {
+            unsigned int v;
+            if (!read_val(v)) goto error_len;
+            result_ptr->data.push_back(static_cast<long long>(v));
+        }
+        break;
+        case 'l': // Long (64-bit)
+        case 'L':
+        {
+            unsigned long long v;
+            if (!read_val(v)) goto error_len;
+            // Cast to signed long long for jdBasic INTEGER
+            result_ptr->data.push_back(static_cast<long long>(v));
+        }
+        break;
+        case 'f': // Float (32-bit)
+        case 'F':
+        {
+            float v;
+            // Endian swapping floats requires interpreting them as ints first
+            if (data_offset + sizeof(float) > data.size()) goto error_len;
+
+            uint32_t temp_int;
+            std::memcpy(&temp_int, data.data() + data_offset, sizeof(uint32_t));
+            if (big_endian_mode) temp_int = swap_endian(temp_int);
+
+            std::memcpy(&v, &temp_int, sizeof(float));
+            data_offset += sizeof(float);
+
+            result_ptr->data.push_back(static_cast<double>(v));
+        }
+        break;
+        case 'd': // Double (64-bit)
+        case 'D':
+        {
+            double v;
+            if (data_offset + sizeof(double) > data.size()) goto error_len;
+
+            uint64_t temp_int;
+            std::memcpy(&temp_int, data.data() + data_offset, sizeof(uint64_t));
+            if (big_endian_mode) temp_int = swap_endian(temp_int);
+
+            std::memcpy(&v, &temp_int, sizeof(double));
+            data_offset += sizeof(double);
+
+            result_ptr->data.push_back(v);
+        }
+        break;
+        default:
+            Error::set(1, vm.runtime_current_line, "Unknown UNPACK format specifier: " + std::string(1, c));
+            return {};
+        }
+    }
+
+    // Set array shape
+    result_ptr->shape = { result_ptr->data.size() };
+    return result_ptr;
+
+error_len:
+    Error::set(3, vm.runtime_current_line, "UNPACK: Not enough binary data for format string.");
+    return {};
+}
+
+// BINWRITER filename$, data$
+// Writes a raw string of bytes to a file, overwriting it.
+BasicValue builtin_binwriter(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "BINWRITER requires 2 arguments: filename$, data$");
+        return false;
+    }
+
+    std::string filename = to_string(args[0]);
+    std::string data = to_string(args[1]);
+
+    // Open in binary mode to prevent newline translation
+    std::ofstream outfile(filename, std::ios::binary);
+
+    if (!outfile) {
+        Error::set(12, vm.runtime_current_line, "Failed to open file for binary writing.");
+        return false;
+    }
+
+    outfile.write(data.data(), data.size());
+    return false; // Procedure
 }
 
 
@@ -4721,6 +5128,11 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("DIR$", 1, builtin_dir_str);
     register_proc("PWD", 0, builtin_pwd);
     register_proc("COLOR", 2, builtin_color);
+    register_func("PATH.JOIN$", -1, builtin_path_join); // -1 for variable args
+    register_func("PATH.EXT$", 1, builtin_path_ext);
+    register_func("PATH.BASENAME$", 1, builtin_path_basename);
+    register_proc("CLIPBOARD.SET", 1, builtin_clipboard_set);
+    register_func("CLIPBOARD.GET$", 0, builtin_clipboard_get_str);
 
     register_func("OS.ARGS", 0, builtin_os_args);
     register_func("OS.EXEC", -1, builtin_os_exec);
@@ -4737,7 +5149,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_proc("TXTWRITER", -1, builtin_txtwriter);
     register_proc("CSVWRITER", -1, builtin_csvwriter); // -1 for optional delimiter
     register_func("BINREADER$", 1, builtin_binreader_str);
+    register_proc("BINWRITER", 2, builtin_binwriter);
     register_func("BYTEAT", 2, builtin_byteat);
+    register_func("PACK$", -1, builtin_pack); // Variable arguments
+    register_func("UNPACK", 2, builtin_unpack);
 
     // Task thing
 }

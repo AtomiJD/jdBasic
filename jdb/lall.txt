@@ -1,7 +1,0 @@
-1.890,90; 02.04.2025 Volker Christ
-3.141,60; 03.04.2025 CIC
-2.670,40; 02.07.2025 Achim Christ
-1.053,17; 04.08.2025 Achim Christ
-3.169,45; 15.09.2025 Achim Christ
-5.620,68; 26.11.2025 Achim Christ
-      

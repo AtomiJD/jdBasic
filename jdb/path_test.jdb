@@ -1,0 +1,54 @@
+' --- Test Program for New PATH Functions ---
+
+' 1. PATH.JOIN$
+' intelligently joins parts using the correct separator for your OS (\ or /)
+PRINT "--- Testing PATH.JOIN$ ---"
+folder$ = "users"
+subfolder$ = "jdbasic"
+file$ = "project.save"
+
+full_path$ = PATH.JOIN$(folder$, subfolder$, file$)
+PRINT "Parts:       " + folder$ + ", " + subfolder$ + ", " + file$
+PRINT "Joined Path: " + full_path$
+PRINT ""
+
+' 2. PATH.BASENAME$
+' Extracts just the filename from a full path string
+PRINT "--- Testing PATH.BASENAME$ ---"
+' Let's use a hardcoded path to test (simulating a path from another source)
+test_path$ = "/var/www/html/index.html" 
+' Note: On Windows, / is treated as a valid separator by std::filesystem too.
+
+basename$ = PATH.BASENAME$(test_path$)
+PRINT "Full Path: " + test_path$
+PRINT "Basename:  " + basename$
+PRINT ""
+
+' 3. PATH.EXT$
+' Extracts the file extension (including the dot)
+PRINT "--- Testing PATH.EXT$ ---"
+ext$ = PATH.EXT$(basename$)
+PRINT "Filename:  " + basename$
+PRINT "Extension: " + ext$
+PRINT ""
+
+' 4. Practical Example: Batch Processing
+PRINT "--- Practical Example ---"
+' Imagine we got this array from DIR$ or a config file
+file_list = ["image.png", "script.jdb", "archive.tar.gz", "readme"]
+
+FOR EACH f IN file_list
+    e$ = PATH.EXT$(f)
+    
+    PRINT "File: " + f
+    
+    IF e$ = ".png" THEN
+        PRINT " -> Type: Image"
+    ELSEIF e$ = ".jdb" THEN
+        PRINT " -> Type: Source Code"
+    ELSEIF e$ = "" THEN
+        PRINT " -> Type: No Extension"
+    ELSE
+        PRINT " -> Type: Other (" + e$ + ")"
+    ENDIF
+NEXT

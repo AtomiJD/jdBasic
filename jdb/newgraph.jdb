@@ -7,7 +7,7 @@
 ScreenW = 800
 ScreenH = 600
 SCREEN ScreenW, ScreenH, "jdBasic Graphics Demo"
-SETFONT "C:/Windows/Fonts/arial.ttf", 16
+'SETFONT "C:/Windows/Fonts/arial.ttf", 16
 
 ' --- PART 1: Static Showcase of New Shapes ---
 
@@ -33,9 +33,9 @@ CIRCLE_SECTOR 680, 125, 60, 45, 315, TRUE, 255, 255, 0 ' Filled "Pac-Man"
 CIRCLE_SECTOR 680, 125, 60, 45, 315, FALSE, 0, 0, 0   ' Outline
 
 ' -- Vectorized Drawing Title --
-TEXT 280, 250, "Vectorized Drawing Demo", 255, 255, 255
-TEXT 280, 280, "(Drawing 500 circles per frame)", 200, 200, 200
-TEXT 300, 320, "Press any key to start...", 150, 150, 150
+TEXT 20, 250, "Vectorized Drawing Demo", 255, 255, 255
+TEXT 20, 280, "(Drawing 500 circles per frame)", 200, 200, 200
+TEXT 30, 320, "Press any key to start...", 150, 150, 150
 
 SCREENFLIP
 WAITKEY$ ' Wait for user to press a key

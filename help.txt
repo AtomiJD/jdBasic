@@ -38,6 +38,10 @@ Description: Marks a function as asynchronous, allowing it to be used with AWAIT
 Syntax: AWAIT task_handle
 Description: Pauses execution until an asynchronous task is complete and retrieves its result.
 
+[BINREADER$]
+Syntax: BINREADER$(filename$)
+Description: Reads the entire content of a binary file into a single string (raw bytes, no newline translation).
+
 [BAND]
 Syntax: expression BAND expression
 Description: Performs a bitwise AND operation on two numeric expressions.
@@ -57,6 +61,10 @@ Description: Performs a bitwise OR operation on two numeric expressions.
 [BXOR]
 Syntax: expression BXOR expression
 Description: Performs a bitwise XOR operation on two numeric expressions.
+
+[BYTEAT]
+Syntax: BYTEAT(str$, index)
+Description: Returns the numeric byte value (0-255) at the specified index.
 
 [CALL]
 Syntax: CALL subroutine_name
@@ -382,6 +390,10 @@ Description: Displays a checkbox. Returns the new boolean state.
 Syntax: GUI.CLOSE_CURRENT_POPUP
 Description: Closes the currently active popup.
 
+[GUI.COL]
+Syntax: GUI.COL(name$)
+Description: Returns the integer value of an ImGui color enum (e.g., "TEXT", "BUTTON", "WINDOWBG").
+
 [GUI.COLLAPSING_HEADER]
 Syntax: GUI.COLLAPSING_HEADER(label$, [visible_bool])
 Description: Displays a collapsible header. Returns TRUE if open.
@@ -432,7 +444,7 @@ Description: Ends a tab item.
 
 [GUI.FLAG]
 Syntax: GUI.FLAG(flag_name$)
-Description: Returns the integer value of an ImGui flag (e.g., "MENUBAR", "NO_RESIZE").
+Description: Returns the integer value of an ImGui flag (e.g., "MENUBAR", "NO_RESIZE", "NO_TITLEBAR").
 
 [GUI.HELPMARKER]
 Syntax: GUI.HELPMARKER(text$)

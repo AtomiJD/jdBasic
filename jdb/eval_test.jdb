@@ -16,4 +16,4 @@ ENDFUNC
 
 FunctionName$ = "AddTwo"
 Value = 9
-PRINT EVAL(FunctionName$ + "(" + Value + ")") ' Prints 10
+PRINT EVAL(FunctionName$ + "(" + Value + ")") ' Prints 11

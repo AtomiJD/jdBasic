@@ -328,7 +328,8 @@ void Graphics::text(int x, int y, const std::string& text_to_draw, Uint8 r, Uint
     SDL_Color color = { r, g, b, 255 };
 
     // Create a surface from the text using the loaded font
-    SDL_Surface* text_surface = TTF_RenderText_Blended(font, text_to_draw.c_str(), sizeof(text_to_draw.c_str()), color);
+    // SDL_Surface* text_surface = TTF_RenderText_Blended(font, text_to_draw.c_str(), sizeof(text_to_draw.c_str()), color);
+    SDL_Surface* text_surface = TTF_RenderText_Blended(font, text_to_draw.c_str(), 0, color);
     if (!text_surface) {
         std::cerr << "Unable to render text surface! SDL_Error: " << SDL_GetError() << std::endl;
         return;

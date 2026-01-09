@@ -935,6 +935,7 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`FORMAT$(format_string$, arg1, arg2, ...) -> string$`**: Formats a string using C++20-style format specifiers.
 * **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array)`**: Returs a string where all found find_string$ are preplaced with replace_with_string$.
 * **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
+* **`BYTEAT(str$, index) -> Integer`**: Returns the numeric byte value (0-255) at the specified 0-based index in a string. This provides fast O(1) access to raw string data, which is essential when processing binary data loaded via `BINREADER$`.
 
 ### Math/Arithmetic/Round Functions
 
@@ -1005,6 +1006,7 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`TXTWRITER filename$, content$`**: Writes a string variable to a text file.
 * **`CSVREADER(filename$, [delimiter$], [has_header])`**: Reads a CSV file into a 2D array of numbers.
 * **`CSVWRITER filename$, array, [delimiter$], [header_array]`**: Writes a 2D array to a CSV file.
+* **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.
 
 ### System and Time Functions
 
@@ -1224,7 +1226,10 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 #### Utilities & Styling
 
 * **`GUI.THEME(theme_name$)`**: Sets the global UI theme. Options: `"DARK"`, `"LIGHT"`, `"CLASSIC"`.
-* **`GUI.FLAG(flag_name$) -> number`**: Returns the integer value of an ImGui flag (e.g., `"MENUBAR"`, `"NO_RESIZE"`, `"NO_TITLEBAR"`).
+* **`GUI.FLAG(flag_name$) -> number`**: Returns the integer value of an ImGui configuration flag.
+  * Options: `"MENUBAR"`, `"NO_RESIZE"`, `"NO_TITLEBAR"`, `"NO_MOVE"`, `"NO_SCROLLBAR"`, `"NO_COLLAPSE"`, `"ALWAYS_AUTO_RESIZE"`, `"NO_SAVED_SETTINGS"`.
+* **`GUI.COL(color_name$) -> number`**: Returns the integer index for a specific ImGui interface color (ImGuiCol_ enum). This is used with style pushing functions to customize specific UI elements.
+  * Options: `"TEXT"`, `"WINDOWBG"`, `"BUTTON"`, `"BUTTONHOVERED"`, `"BUTTONACTIVE"`, `"HEADER"`, `"HEADERHOVERED"`, `"HEADERACTIVE"`, `"FRAMEBG"`, `"FRAMEBGHOVERED"`, `"FRAMEBGACTIVE"`, `"TITLEBG"`, `"TITLEBGACTIVE"`, `"CHECKMARK"`, `"SLIDERGRAB"`, `"SLIDERGRABACTIVE"`.
 * **`GUI.PUSH_ID(id)`**: Pushes an integer or string ID to the stack to prevent ID collisions in loops.
 * **`GUI.POP_ID`**: Pops the last ID from the stack.
 * **`GUI.SHOW_FONT_ATLAS`**: Opens the built-in ImGui font visualizer for debugging.
