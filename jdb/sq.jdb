@@ -324,6 +324,9 @@ EXPORT SUB D(rhythm_id, kit_id)
     V 0, STR$(kit{"kick"})
     V 1, STR$(kit{"snare"})
     V 2, STR$(kit{"hat"})
+    IF kit_id = 8 THEN
+        V 3, STR$(kit{"clap"})
+    ENDIF
     
     ' 2. Load Rhythm
     rhy_key$ = STR$(rhythm_id)

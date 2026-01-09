@@ -45,6 +45,7 @@ private:
     void save_file();
     void find_text();
     void go_to_line();
+    void paste_from_clipboard();
     std::wstring prompt(const std::wstring& msg);
 
     void clear_screen();
@@ -84,6 +85,77 @@ int TextEditorWinImpl::calculate_visual_cx(int line_idx, int char_pos) {
     return visual_pos;
 }
 
+// Helper to insert clipboard text as a block
+void TextEditorWinImpl::paste_from_clipboard() {
+    // 1. Get Text from Clipboard
+    if (!OpenClipboard(NULL)) return;
+    HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+    if (hData == NULL) { CloseClipboard(); return; }
+
+    wchar_t* pszText = static_cast<wchar_t*>(GlobalLock(hData));
+    if (pszText == NULL) { CloseClipboard(); return; }
+    std::wstring wtext(pszText);
+    GlobalUnlock(hData);
+    CloseClipboard();
+
+    // 2. Prepare text (Remove \r)
+    std::string text = wstring_to_string(wtext);
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    if (text.empty()) return;
+
+    // 3. Split into lines
+    std::vector<std::string> new_lines;
+    std::stringstream ss(text);
+    std::string segment;
+    while (std::getline(ss, segment, '\n')) {
+        new_lines.push_back(segment);
+    }
+    if (!text.empty() && text.back() == '\n') {
+        new_lines.push_back("");
+    }
+    if (new_lines.empty()) return;
+
+    // 4. Safety Checks
+    if (lines_ref.empty()) lines_ref.push_back("");
+    if (cy >= lines_ref.size()) cy = (int)lines_ref.size() - 1;
+    if (cy < 0) cy = 0;
+
+    if (cx > lines_ref[cy].length()) cx = (int)lines_ref[cy].length();
+
+    // 5. Split current line
+    std::string current_line = lines_ref[cy];
+    std::string prefix = current_line.substr(0, cx);
+    std::string suffix = current_line.substr(cx);
+
+    // 6. Perform the Paste
+    if (new_lines.size() == 1) {
+        lines_ref[cy] = prefix + new_lines[0] + suffix;
+        cx += (int)new_lines[0].length();
+    }
+    else {
+        lines_ref[cy] = prefix + new_lines[0];
+
+        lines_ref.insert(
+            lines_ref.begin() + cy + 1,
+            new_lines.begin() + 1,
+            new_lines.end()
+        );
+
+        int last_inserted_line_idx = cy + (int)new_lines.size() - 1;
+        lines_ref[last_inserted_line_idx] += suffix;
+
+        cy = last_inserted_line_idx;
+        cx = (int)new_lines.back().length();
+    }
+
+    // 7. Scroll the view if the cursor moved off screen
+    if (cy < top_row) top_row = cy;
+    if (cy >= top_row + screen_rows) top_row = cy - screen_rows + 1;
+
+    file_modified = true;
+
+}
+
 void TextEditorWinImpl::run() {
     DWORD original_mode;
     HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
@@ -119,6 +191,9 @@ void TextEditorWinImpl::run() {
                     break;
                 case 'G':
                     if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) go_to_line();
+                    break;
+                case 'P': // Handle Paste
+                    paste_from_clipboard();
                     break;
                 }
             }
@@ -194,7 +269,7 @@ void TextEditorWinImpl::run() {
                 }
                 default: {
                     wchar_t ch = key.uChar.UnicodeChar;
-                    if (iswprint(ch)) {
+                    if (iswprint(ch) && !ctrl_pressed) {
                         std::wstring wline = string_to_wstring(lines_ref[cy]);
                         if (overwrite_mode && cx < wline.length()) {
                             // Overwrite mode: replace character
@@ -370,7 +445,7 @@ void TextEditorWinImpl::draw_screen() {
         status += L" | INS";
     }
 
-    status += L" | ^S:Save ^F:Find ^G:GoTo ^X:Exit";
+    status += L" | ^P:Paste ^S:Save ^F:Find ^G:GoTo ^X:Exit";
     write_status(status);
 }
 

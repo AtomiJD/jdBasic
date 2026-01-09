@@ -24,13 +24,20 @@
 #include <stdlib.h>
 #include "Compiler.hpp"
 #include <emscripten.h>
+#include <vector>
 
 // A single interpreter instance for the web page
 NeReLaBasic interpreter;
 
 VmState ems_state = VmState::IDLE;
+std::vector<int> g_ems_key_buffer;
 
 extern "C" {
+
+EMSCRIPTEN_KEEPALIVE
+void send_key_to_vm(int key_code) {
+    g_ems_key_buffer.push_back(key_code);
+}
 
 EMSCRIPTEN_KEEPALIVE
 void run_repl_line(const char* cmd) {
@@ -89,7 +96,7 @@ void run_repl_line(const char* cmd) {
             // Clear variables and prepare for a clean run
             interpreter.variables.clear();
             interpreter.call_stack.clear();
-            interpreter.for_stack.clear();
+            //interpreter.for_stack.clear();
             interpreter.reactive_graph.clear();
             interpreter.react_variables.clear();
             Error::clear();
@@ -143,6 +150,9 @@ void main_loop_tick() {
     if (ems_state != VmState::RUNNING) {
         return;
     }
+
+    //interpreter.process_system_events();
+
     interpreter.yielded_for_frame = false;
     // --- High-Speed Execution Batch ---
     // Execute a large number of statements in a tight loop for performance.
@@ -175,14 +185,14 @@ void main_loop_tick() {
         ems_state = VmState::IDLE;
         interpreter.program_ended = false;
 #ifdef SDL3
-            interpreter.graphics_system.shutdown();
-            interpreter.sound_system.shutdown();
+        interpreter.graphics_system.shutdown();
+        interpreter.sound_system.shutdown();
 #endif
 #ifdef HTTP
-            interpreter.network_manager.stopServer();
+        interpreter.network_manager.stopServer();
 #endif            
-            emscripten_run_script("window.set_graphics_mode(false);");
-            interpreter.active_function_table = &interpreter.main_function_table;
+        emscripten_run_script("window.set_graphics_mode(false);");
+        interpreter.active_function_table = &interpreter.main_function_table;
         TextIO::print("\nReady\n> ");
     }
 }

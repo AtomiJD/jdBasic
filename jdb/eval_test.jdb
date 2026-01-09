@@ -15,5 +15,5 @@ FUNC AddTwo(n)
 ENDFUNC
 
 FunctionName$ = "AddTwo"
-Value = 8
+Value = 9
 PRINT EVAL(FunctionName$ + "(" + Value + ")") ' Prints 10

@@ -1115,6 +1115,11 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 out_p_code.push_back(0);
                 continue;
             }
+            case Tokens::ID::EXIT_SUB: {
+                // Just emit the opcode. logic is handled at runtime.
+                out_p_code.push_back(static_cast<uint8_t>(token));
+                continue;
+            }
             case Tokens::ID::FOR: {
                 // --- Lookahead to see if "EACH" follows "FOR" ---
                 size_t saved_prgptr = vm.prgptr;

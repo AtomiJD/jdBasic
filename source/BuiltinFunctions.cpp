@@ -59,6 +59,7 @@
 #include <stdio.h>
 #include <emscripten.h>
 #include <format>
+#include <deque>
 #else
 #include <codecvt> // for std::wstring_convert
 #include <locale>  // for std::locale
@@ -305,6 +306,10 @@ HRESULT invoke_com_method(
 
     return hr;
 }
+#endif
+
+#ifdef __EMSCRIPTEN__
+extern std::deque<int> g_inkey_buffer;
 #endif
 
 namespace fs = std::filesystem;
@@ -1292,7 +1297,7 @@ BasicValue builtin_insert_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 extern "C" char* js_get_inkey();
 #endif
 
-// INKEY$()
+// INKEY$() > string$
 BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (!args.empty()) {
         Error::set(8, vm.runtime_current_line);
@@ -1301,27 +1306,38 @@ BasicValue builtin_inkey(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     // --- Context-aware logic ---
 #ifdef SDL3
-    // If the graphics system is initialized, get input from SDL's event queue.
+    // If the graphics system is initialized, try to get input from SDL first.
     if (vm.graphics_system.is_initialized) {
-        // We need to process events to populate our buffer.
-        // The main execution loop already calls handle_events(),
-        // so we just need to read from our buffer here.
-        return vm.graphics_system.get_key_from_buffer();
+        std::string s = vm.graphics_system.get_key_from_buffer();
+        if (!s.empty()) return s;
+
+        // Fallback: If SDL didn't catch it (e.g. focus is on the HTML input, not canvas),
+        // check the global Emscripten buffer.
+#ifdef __EMSCRIPTEN__
+        if (!g_inkey_buffer.empty()) {
+            char c = static_cast<char>(g_inkey_buffer.front());
+            g_inkey_buffer.pop_front();
+            return std::string(1, c);
+        }
+#endif
+        return "";
     }
 #endif
 
     // --- Original console-based logic (fallback) ---
-    // If graphics are not active, use the old conio.h method.
 #ifdef _WIN32    
     if (_kbhit()) {
         char c = _getch();
         return std::string(1, c);
     }
 #elif defined(__EMSCRIPTEN__)
-    char* c_str = js_get_inkey();
-    std::string result(c_str);
-    free(c_str); // Free the memory allocated by EM_JS
-    return result;
+    // FIX: Read from the buffer populated by process_system_events
+    if (!g_inkey_buffer.empty()) {
+        char c = static_cast<char>(g_inkey_buffer.front());
+        g_inkey_buffer.pop_front();
+        return std::string(1, c);
+    }
+    return std::string("");
 #else
     char c = TextIO::jdgetch();
     if (c > 0) {
@@ -2303,23 +2319,37 @@ BasicValue builtin_distance(NeReLaBasic& vm, const std::vector<BasicValue>& args
     return std::sqrt(sum_of_squares);
 }
 
-// SHL(value, bits_to_shift) -> Returns a long long
+// SHL(value_or_array, bits_to_shift) -> Returns a long long or array
 BasicValue builtin_shl(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) {
         Error::set(8, vm.runtime_current_line, "SHL requires 2 arguments");
         return 0LL;
     }
-    // Use a specific binary helper for bitwise operations
-    return apply_binary_integer_op(args[0], args[1], [](long long val, long long bits) { return val << bits; });
+
+    // Use apply_bitwise_op to handle Scalar/Scalar, Array/Scalar, etc.
+    return apply_bitwise_op(args[0], args[1], [](long long val, long long bits) {
+        // Fix: Clamp bits to 0..63 as per documentation and C++ safety
+        if (bits < 0) bits = 0;
+        if (bits > 63) bits = 63;
+
+        return val << bits;
+        });
 }
 
-// SHR(value, bits_to_shift) -> Returns a long long
+// SHR(value_or_array, bits_to_shift) -> Returns a long long or array
 BasicValue builtin_shr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) {
         Error::set(8, vm.runtime_current_line, "SHR requires 2 arguments");
         return 0LL;
     }
-    return apply_binary_integer_op(args[0], args[1], [](long long val, long long bits) { return val >> bits; });
+
+    return apply_bitwise_op(args[0], args[1], [](long long val, long long bits) {
+        // Fix: Clamp bits to 0..63
+        if (bits < 0) bits = 0;
+        if (bits > 63) bits = 63;
+
+        return val >> bits;
+        });
 }
 
 // IIF(condition, value_if_true, value_if_false) -> value or array
@@ -3210,18 +3240,22 @@ BasicValue builtin_dir_str(NeReLaBasic& vm, const std::vector<BasicValue>& args)
 BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     try {
         fs::path target_path("."); // Default to current directory
-        std::string wildcard = "*.*";   // Default to all files
+
+        // On non-Windows platforms (like Emscripten), *.* only matches files with dots.
+        // We default to "*" to list everything.
+        std::string wildcard = "*";
 
         if (!args.empty()) {
             fs::path full_arg_path(to_string(args[0]));
             if (full_arg_path.has_filename() && full_arg_path.filename().string().find_first_of("*?") != std::string::npos) {
                 wildcard = full_arg_path.filename().string();
+                // Handle case where parent path is empty (meaning current dir)
                 target_path = full_arg_path.has_parent_path() ? full_arg_path.parent_path() : ".";
             }
             else {
                 target_path = full_arg_path;
             }
-        } 
+        }
 
         if (!fs::exists(target_path) || !fs::is_directory(target_path)) {
             TextIO::print("Directory not found: " + target_path.string()); TextIO::nl();
@@ -3229,7 +3263,7 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         }
 
         // Create the regex object from our wildcard pattern
-        std::regex pattern(wildcard_to_regex(wildcard), std::regex::icase); // std::regex::icase for case-insensitivity
+        std::regex pattern(wildcard_to_regex(wildcard), std::regex::icase);
 
         for (const auto& entry : fs::directory_iterator(target_path)) {
             std::string filename_str = entry.path().filename().string();
@@ -3237,22 +3271,29 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
             if (filename_str.length() > 0) {
                 if (std::regex_match(filename_str, pattern)) {
                     std::string size_str;
-                    if (!entry.is_directory()) {
+
+                    if (entry.is_directory()) {
+                        size_str = "<DIR>";
+                    }
+                    else if (entry.is_regular_file()) {
+                        // FIX: Only attempt file_size on regular files.
+                        // Calling file_size on devices (like /dev/tty) causes a hang in Emscripten.
                         try {
                             size_str = std::to_string(fs::file_size(entry));
                         }
-                        catch (fs::filesystem_error&) {
-                            size_str = "<ERR>";
+                        catch (const fs::filesystem_error&) {
+                            size_str = "???";
                         }
                     }
                     else {
-                        size_str = "<DIR>";
+                        // Symlinks, Character Devices, Sockets, etc.
+                        size_str = "<SYS>";
                     }
 
                     TextIO::print(filename_str);
-                    int padding_needed = 25 - static_cast<int>(filename_str.length());
 
-                    // Only print padding if the filename is shorter than the column width.
+                    // Simple padding logic
+                    int padding_needed = 25 - static_cast<int>(filename_str.length());
                     if (padding_needed > 0) {
                         for (int i = 0; i < padding_needed; ++i) {
                             TextIO::print(" ");
@@ -3272,7 +3313,6 @@ BasicValue builtin_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
 
     return false; // Procedures return a dummy value
 }
-
 // CD path_string
 BasicValue builtin_cd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
@@ -3580,6 +3620,57 @@ BasicValue builtin_csvwriter(NeReLaBasic& vm, const std::vector<BasicValue>& arg
 
     return false;
 }
+
+// BINREADER$(filename$) -> string$
+// Reads the entire content of a binary file into a single string (raw bytes, no newline translation).
+BasicValue builtin_binreader_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
+        return std::string("");
+    }
+
+    const std::string filename = to_string(args[0]);
+    std::ifstream infile(filename, std::ios::binary);
+
+    if (!infile) {
+        Error::set(6, vm.runtime_current_line); // File not found
+        return std::string("");
+    }
+
+    // Read all bytes (including 0x00) into a std::string
+    std::string data;
+    infile.seekg(0, std::ios::end);
+    std::streamoff size = infile.tellg();
+    infile.seekg(0, std::ios::beg);
+
+    if (size > 0) {
+        data.resize(static_cast<size_t>(size));
+        infile.read(data.data(), size);
+    }
+
+    return data;
+}
+
+// BYTEAT(str$, index) -> INTEGER (0..255)
+// Fast O(1) byte access into a string.
+BasicValue builtin_byteat(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "Wrong number of arguments");
+        return (long long)0;
+    }
+
+    const std::string s = to_string(args[0]);
+    const long long idx = to_int(args[1]);
+
+    if (idx < 0 || idx >= static_cast<long long>(s.size())) {
+        Error::set(8, vm.runtime_current_line, "BYTEAT: index out of range");
+        return (long long)0;
+    }
+
+    const unsigned char b = static_cast<unsigned char>(s[static_cast<size_t>(idx)]);
+    return static_cast<long long>(b);
+}
+
 
 // --- GUI and Graphic and more ---
 // Handles: COLOR fg, bg
@@ -4190,13 +4281,14 @@ BasicValue builtin_os_hostname_str(NeReLaBasic& vm, const std::vector<BasicValue
     if (success) {
         return std::string(hostname_buffer);
     }
-#else // POSIX (Linux, macOS)
+#elif __linux__ || __APPLE__
     if (gethostname(hostname_buffer, sizeof(hostname_buffer)) == 0) {
         return std::string(hostname_buffer);
     }
+       
 #endif
 
-    return std::string(""); // Return empty string on failure
+    return std::string("UNKNOWN"); // Return empty string on failure
 }
 
 // OS.IP$() -> STRING
@@ -4257,7 +4349,7 @@ end_loop:
     }
     return ip_address;
 
-#else // POSIX (Linux, macOS)
+#elif __linux__ || __APPLE__
     struct ifaddrs* ifAddrStruct = NULL;
     std::string ip_address = "Not found";
 
@@ -4284,6 +4376,9 @@ end_loop:
     if (ifAddrStruct != NULL) {
         freeifaddrs(ifAddrStruct);
     }
+    return ip_address;
+#else
+    std::string ip_address = "Not found";;    
     return ip_address;
 #endif
 }
@@ -4525,8 +4620,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("REVERSE$", 1, builtin_reverse_str);
     #ifndef __EMSCRIPTEN__
     register_func("WAITKEY$", 0, builtin_waitkey_str);
-    register_func("INKEY$", 0, builtin_inkey);    
     #endif
+    register_func("INKEY$", 0, builtin_inkey);    
     register_func("VAL", 1, builtin_val);
     register_func("STR$", 1, builtin_str_str);
     register_func("SPLIT", 2, builtin_split);
@@ -4641,7 +4736,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("TXTREADER$", 1, builtin_txtreader_str);
     register_proc("TXTWRITER", -1, builtin_txtwriter);
     register_proc("CSVWRITER", -1, builtin_csvwriter); // -1 for optional delimiter
+    register_func("BINREADER$", 1, builtin_binreader_str);
+    register_func("BYTEAT", 2, builtin_byteat);
 
     // Task thing
-
 }

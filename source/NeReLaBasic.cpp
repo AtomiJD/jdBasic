@@ -19,7 +19,8 @@
 #if defined(_WIN32)
 #include <conio.h>
 #elif defined(__EMSCRIPTEN__)
-
+extern std::vector<int> g_ems_key_buffer;
+std::deque<int> g_inkey_buffer;
 #else
 //#include <ncurses.h>
 #include <readline/readline.h> // For readline()
@@ -445,6 +446,22 @@ void NeReLaBasic::process_system_events() {
 #else
     //char c = TextIO::jdgetch();
     char c = 0;
+
+#ifdef __EMSCRIPTEN__
+    if (!g_ems_key_buffer.empty()) {
+        int val = g_ems_key_buffer.front();
+        g_ems_key_buffer.erase(g_ems_key_buffer.begin());
+        c = static_cast<char>(val);
+
+        // FIX: Also store it in the inkey buffer so INKEY$ can find it later.
+        // Cap the size to prevent infinite growth if INKEY$ is not used.
+        if (g_inkey_buffer.size() > 256) {
+            g_inkey_buffer.pop_front();
+        }
+        g_inkey_buffer.push_back(val);
+    }
+#endif
+
     if (c > 0) {
         char key = c;
 #endif
@@ -478,7 +495,7 @@ void NeReLaBasic::process_system_events() {
         raise_event("KEYDOWN", key_data);
     }
     //TextIO::cleanup();
-    return;
+    //return;
 #ifdef SDL3
     if (graphics_system.is_initialized) {
         if (!graphics_system.handle_events(*this)) {
@@ -1637,6 +1654,10 @@ void NeReLaBasic::statement() {
     case Tokens::ID::EXIT_DO:
         pcode++;
         Commands::do_exit_do(*this);
+        break;
+    case Tokens::ID::EXIT_SUB:
+        pcode++;
+        Commands::do_exitsub(*this);
         break;
     case Tokens::ID::EDIT:
         pcode++;

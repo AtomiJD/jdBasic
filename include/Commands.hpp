@@ -24,6 +24,7 @@ namespace Commands {
     void do_next(NeReLaBasic& vm);
     void do_exit_for(NeReLaBasic& vm);
     void do_exit_do(NeReLaBasic& vm);
+    void do_exitsub(NeReLaBasic& vm);
 
     void do_func(NeReLaBasic& vm);
     void do_callfunc(NeReLaBasic& vm);

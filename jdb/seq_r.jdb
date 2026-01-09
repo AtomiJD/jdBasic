@@ -1,0 +1,17 @@
+SCREEN 1280, 720, "jdBasic Sequencer", 2
+
+IMPORT SQ
+
+DIM CONFIG AS MAP
+DIM SFX_CACHE AS MAP ' Keeps track of loaded files: "path" -> id
+DIM NEXT_SFX_ID AS INTEGER = 100
+
+SQ.START()
+SOUND.BPM 117 
+
+SQ.D 0, 8
+
+' Bass (3)
+SOUND.VOICE 4, "SAW", 0.01, 0.1, 0.5, 0.1 
+SOUND.FILTER 4, 500 
+SOUND.GAIN 4, 1.2

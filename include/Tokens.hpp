@@ -140,6 +140,7 @@ namespace Tokens {
         DESTRUCTURE_ASSIGN = 0x93,
         C_BACKSLASH = 0x94,
         MAKE_CLOSURE = 0x95,
+        EXIT_SUB = 0x96,
         DOS_CD = 0xA0,
         DOS_DIR = 0xA1,
         DOS_MKDIR = 0xA2,

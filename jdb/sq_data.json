@@ -448,7 +448,7 @@
             "snare": 42,
             "hat": 43
         },
-        "8": { "name": "Roland TR-808", "kick": 100, "snare": 102, "hat": 115 }
+        "8": { "name": "Roland TR-808", "kick": 100, "snare": 102, "hat": 115, "clap":111 }
     },
     "rhythms": {
         "1": {

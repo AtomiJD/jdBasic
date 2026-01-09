@@ -151,14 +151,6 @@ std::string get_token_string(NeReLaBasic& vm, Tokens::ID token) {
         return read_string(vm);
     }
     if (token == Tokens::ID::INT) {
-        // INT token is usually followed by data, but here we treat it as part of a path? 
-        // Actually, pure integers in paths (like "folder/123") usually tokenized as INT.
-        // We need to read the value. BUT, read_string handles VARIANT string data.
-        // Numbers are usually encoded differently. 
-        // For simplicity in this "shell" mode, let's assume INT is not common 
-        // OR we'd need to peek the number.
-        // Let's skip INT complex handling and rely on evaluate for pure numbers.
-        // If it was just a name "123", it might be VARIANT depending on lexer.
         return "";
     }
     if (token == Tokens::ID::C_DOT) return ".";
@@ -172,7 +164,7 @@ std::string get_token_string(NeReLaBasic& vm, Tokens::ID token) {
 }
 
 // --------------------------------------------------------------------------------------------
-// Revised Helper: Resolve "DOS-style" arguments
+// Helper: Resolve "DOS-style" arguments
 // Handles: CD .., CD folder/sub, CD "str", CD var
 std::string resolve_shell_like_argument(NeReLaBasic& vm) {
     size_t start_pcode = vm.pcode;
@@ -212,6 +204,36 @@ std::string resolve_shell_like_argument(NeReLaBasic& vm) {
         }
     }
 
+    // Helper: Recover original case from raw input line and normalize separators
+    auto post_process_path = [&](std::string input_path) -> std::string {
+        std::string result = input_path;
+
+        // 1. Recover case from vm.lineinput (if available)
+        // The tokenizer converts to uppercase, so "..\lib" becomes "..\LIB".
+        // We match "..\LIB" against the raw line "cd ..\lib" case-insensitively to get "..\lib".
+        if (!vm.lineinput.empty()) {
+            std::string raw = vm.lineinput;
+            auto it = std::search(
+                raw.begin(), raw.end(),
+                input_path.begin(), input_path.end(),
+                [](char a, char b) {
+                    return std::toupper(static_cast<unsigned char>(a)) ==
+                        std::toupper(static_cast<unsigned char>(b));
+                }
+            );
+
+            if (it != raw.end()) {
+                result = std::string(it, it + input_path.length());
+            }
+        }
+
+        // 2. Normalize separators for non-Windows platforms (e.g., Linux/Emscripten)
+#if !defined(_WIN32)
+        std::replace(result.begin(), result.end(), '\\', '/');
+#endif
+        return result;
+        };
+
     // 3. Logic Decision
 
     // Case A: Multi-token path (e.g. "..", "a/b") -> Treat as literal string
@@ -228,7 +250,7 @@ std::string resolve_shell_like_argument(NeReLaBasic& vm) {
             }
             token_count--;
         }
-        return path_acc;
+        return post_process_path(path_acc);
     }
 
     // Case B: Single token Identifier -> Check for Variable or Function Call
@@ -264,9 +286,8 @@ std::string resolve_shell_like_argument(NeReLaBasic& vm) {
         }
         else {
             // Variable does NOT exist.
-            // Return the RAW name to preserve Linux case sensitivity.
-            // (e.g., CD Usr -> returns "Usr", not "USR")
-            return raw_name;
+            // Return the recovered name to preserve Linux case sensitivity.
+            return post_process_path(raw_name);
         }
     }
 
@@ -275,7 +296,7 @@ std::string resolve_shell_like_argument(NeReLaBasic& vm) {
         // e.g. "."
         Tokens::ID t = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
         vm.pcode++;
-        return get_token_string(vm, t);
+        return post_process_path(get_token_string(vm, t));
     }
 
     // Case D: Expressions, Numbers, strings with operators (e.g. "A"+"B")
@@ -2140,6 +2161,11 @@ void Commands::do_endsub(NeReLaBasic& vm) {
     do_return(vm);
 }
 
+void Commands::do_exitsub(NeReLaBasic& vm) {
+    // EXITSUB is semantically identical to a RETURN in a SUB
+    do_return(vm);
+}
+
 //// This command will expect a function name string directly after it.
 //void Commands::do_onerrorcall(NeReLaBasic& vm) {
 //    // Read the function name from bytecode
@@ -2380,6 +2406,8 @@ void Commands::do_case(NeReLaBasic& vm) {
         // Compare the CASE value with the value on the stack
         BasicValue switch_val = vm.switch_value_stack.back();
 
+        //TextIO::print("CV: " + to_string(case_val));
+
         // Using to_double for simple comparison; could be extended for strings.
         if (to_string(case_val) == to_string(switch_val)) {
             this_case_matches = true;
@@ -2591,7 +2619,6 @@ void Commands::do_cd(NeReLaBasic& vm) {
     std::string path = resolve_shell_like_argument(vm);
     if (Error::get() != 0) return;
     if (path.empty()) { Error::set(1, vm.runtime_current_line, "Missing path argument"); return; }
-
     std::vector<BasicValue> args = { path };
     builtin_cd(vm, args);
 }

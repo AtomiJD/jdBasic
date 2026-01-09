@@ -1,5 +1,8 @@
 #include "AppConfig.hpp"
 #ifdef SDL3
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include "Commands.hpp"
 #include "NeReLaBasic.hpp"
 #include "SDLFunctions.hpp"
@@ -54,6 +57,21 @@ BasicValue builtin_screen(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 #endif
 
     return false; // Procedures return a dummy value
+}
+
+// SYNC
+// Yields execution back to the browser/host for the remainder of the frame.
+// Useful for timing loops that don't need to redraw the screen (SCREENFLIP).
+BasicValue builtin_sync(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (!args.empty()) { Error::set(8, vm.runtime_current_line); return false; }
+#ifdef __EMSCRIPTEN__
+    vm.yielded_for_frame = true;
+#else
+    // On desktop, we can sleep a bit or just return to the main loop if managed there.
+    // For now, a small sleep mimics the behavior or simply doing nothing (fast execution).
+    SDL_Delay(1);
+#endif
+    return false;
 }
 
 // SCREENFLIP
@@ -1482,6 +1500,7 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
 
     register_proc("SCREEN", -1, builtin_screen);
     register_proc("SCREENFLIP", 0, builtin_screenflip);
+    register_proc("SFX.SYNC", 0, builtin_sync);
     register_func("SCREENWIDTH", 0, builtin_screenwidth);
     register_func("SCREENHEIGHT", 0, builtin_screenheight);
     register_proc("TOGGLE_FULLSCREEN", 0, builtin_toggle_fullscreen);
