@@ -1509,6 +1509,48 @@ LOOP  UNTIL k$ = "q" OR k$ = "Q"
 * **`TURTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
 * **`TURTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
 
+Here is the documentation extension for **`languages.md`** covering the new Joystick/Gamepad commands.
+
+### Joystick / Gamepad Input
+
+* **`JOY.COUNT() -> number`**: Returns the number of connected joysticks/gamepads.
+* **`JOY.NAME$(id) -> string$`**: Returns the name of the joystick at index `id` (0-based).
+* **`JOY.BUTTON(id, button_index) -> boolean`**: Returns `TRUE` if the specified button is pressed. Common mapping: 0=A, 1=B, 2=X, 3=Y (mappings vary by controller).
+* **`JOY.AXIS(id, axis_index) -> number`**: Returns the axis position value normalized between `-1.0` and `1.0`.
+* `0`: Left Stick X
+* `1`: Left Stick Y
+* `2`: Right Stick X
+* `3`: Right Stick Y
+* *Note: Mappings may vary slightly depending on the OS and controller driver.*
+
+* **`JOY.HAT(id, hat_index) -> number`**: Returns the hat (D-Pad) state as a bitmask.
+* `1`: Up
+* `2`: Right
+* `4`: Down
+* `8`: Left
+* *Example: `3` means Up-Right.*
+
+```basic
+' Simple Gamepad Loop
+PRINT "Connect a gamepad..."
+DO
+    IF JOY.COUNT() > 0 THEN
+        ' Read Left Stick (Axis 0 and 1)
+        X = JOY.AXIS(0, 0) 
+        Y = JOY.AXIS(0, 1)
+        
+        ' Read Button A (usually index 0)
+        IF JOY.BUTTON(0, 0) THEN PRINT "Fire!"
+        
+        ' Check D-Pad Up (Bitmask 1)
+        IF (JOY.HAT(0, 0) BAND 1) <> 0 THEN PRINT "Going Up!"
+
+        PRINT "Stick: "; X; ", "; Y
+    ENDIF
+    SLEEP 16
+LOOP
+```
+
 ### Type Functions
 
 * **`TYPEOF(AnyVar)`**: Returns the type of an object as string.

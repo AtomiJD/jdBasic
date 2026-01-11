@@ -744,6 +744,26 @@ Description: Parses a JSON string into a special JsonObject.
 Syntax: JSON.STRINGIFY$(map_or_array)
 Description: Converts a Map or Array into a JSON string representation.
 
+[JOY.AXIS]
+Syntax: JOY.AXIS(id, axis_index)
+Description: Returns the axis position value between -1.0 and 1.0.
+
+[JOY.BUTTON]
+Syntax: JOY.BUTTON(id, button_index)
+Description: Returns TRUE if the specified button is pressed.
+
+[JOY.COUNT]
+Syntax: JOY.COUNT()
+Description: Returns the number of connected joysticks.
+
+[JOY.HAT]
+Syntax: JOY.HAT(id, hat_index)
+Description: Returns the hat (D-Pad) state as a bitmask (1=Up, 2=Right, 4=Down, 8=Left).
+
+[JOY.NAME$]
+Syntax: JOY.NAME$(id)
+Description: Returns the name of the joystick at index id.
+
 [KILL]
 Syntax: KILL "filename"
 Description: Deletes a file from the disk.
@@ -1111,6 +1131,30 @@ Description: Sets the font and size for subsequent TEXT drawing commands.
 [SETLOCALE]
 Syntax: SETLOCALE("locale_string")
 Description: Sets the locale for number and date formatting (e.g., "en-US").
+
+[SERIAL.AVAILABLE]
+Syntax: SERIAL.AVAILABLE(handle)
+Description: Returns the number of bytes currently waiting in the input buffer.
+
+[SERIAL.CLOSE]
+Syntax: SERIAL.CLOSE(handle)
+Description: Closes an open serial port.
+
+[SERIAL.FLUSH]
+Syntax: SERIAL.FLUSH(handle)
+Description: Clears the input and output buffers.
+
+[SERIAL.OPEN]
+Syntax: SERIAL.OPEN(port$, baud_rate)
+Description: Opens a serial port (e.g., "COM3" on Windows, "/dev/ttyUSB0" on Linux) and returns a handle.
+
+[SERIAL.READ$]
+Syntax: SERIAL.READ$(handle, max_bytes)
+Description: Reads up to max_bytes from the port. Returns an empty string if no data is available (non-blocking).
+
+[SERIAL.WRITE]
+Syntax: SERIAL.WRITE(handle, data$)
+Description: Writes a string (or binary bytes) to the serial port.
 
 [SFX.LOAD]
 Syntax: SFX.LOAD(sound_id, "filepath.wav")

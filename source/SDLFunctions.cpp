@@ -12,6 +12,16 @@
 #include <vector>       // For std::vector
 #include <map>
 
+#ifdef USE_JOY
+#ifdef SDL3
+#include <SDL3/SDL.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
+#endif
+#endif
+
 // --- SDL Integration ---
 
 // This map is now defined directly in this file to resolve linker errors.
@@ -1479,6 +1489,130 @@ BasicValue builtin_map_draw_debug(NeReLaBasic& vm, const std::vector<BasicValue>
 }
 #endif // EMSCRIPTEN
 
+// =========================================================
+// JOYSTICK / GAMEPAD FUNCTIONS (USE_JOY)
+// =========================================================
+#ifdef USE_JOY
+void ensure_joy_init() {
+#ifdef SDL3
+    if (!SDL_WasInit(SDL_INIT_GAMEPAD)) SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+#endif
+}
+
+BasicValue builtin_joy_count(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    ensure_joy_init();
+#ifdef SDL3
+    int count = 0;
+    SDL_GetJoysticks(&count);
+    return (double)count;
+#elif defined(_WIN32)
+    JOYINFO joy;
+    int count = 0;
+    if (joyGetPos(JOYSTICKID1, &joy) == JOYERR_NOERROR) count++;
+    if (joyGetPos(JOYSTICKID2, &joy) == JOYERR_NOERROR) count++;
+    return (double)count;
+#else
+    return 0.0;
+#endif
+}
+
+BasicValue builtin_joy_name(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return std::string("");
+    int id = (int)to_double(args[0]);
+    ensure_joy_init();
+#ifdef SDL3
+    int count = 0;
+    SDL_JoystickID* joysticks = SDL_GetJoysticks(&count);
+    if (id >= 0 && id < count) {
+        const char* name = SDL_GetGamepadNameForID(joysticks[id]);
+        if (!name) name = SDL_GetJoystickNameForID(joysticks[id]);
+        std::string sName = name ? name : "Unknown";
+        SDL_free(joysticks);
+        return sName;
+    }
+    if (joysticks) SDL_free(joysticks);
+#endif
+    return std::string("Joystick " + std::to_string(id));
+}
+
+BasicValue builtin_joy_button(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return false;
+    int id = (int)to_double(args[0]);
+    int btn = (int)to_double(args[1]);
+    ensure_joy_init();
+#ifdef SDL3
+    int count = 0;
+    SDL_JoystickID* joysticks = SDL_GetJoysticks(&count);
+    if (id < 0 || id >= count) { SDL_free(joysticks); return false; }
+    SDL_Gamepad* gamepad = SDL_OpenGamepad(joysticks[id]);
+    bool pressed = false;
+    if (gamepad) {
+        pressed = SDL_GetGamepadButton(gamepad, (SDL_GamepadButton)btn);
+        SDL_CloseGamepad(gamepad);
+    }
+    else {
+        SDL_Joystick* joy = SDL_OpenJoystick(joysticks[id]);
+        if (joy) { pressed = SDL_GetJoystickButton(joy, btn); SDL_CloseJoystick(joy); }
+    }
+    SDL_free(joysticks);
+    return pressed;
+#elif defined(_WIN32)
+    JOYINFOEX jie; jie.dwSize = sizeof(jie); jie.dwFlags = JOY_RETURNBUTTONS;
+    if (joyGetPosEx(id == 0 ? JOYSTICKID1 : JOYSTICKID2, &jie) == JOYERR_NOERROR) return (jie.dwButtons & (1 << btn)) != 0;
+#endif
+    return false;
+}
+
+BasicValue builtin_joy_axis(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return 0.0;
+    int id = (int)to_double(args[0]);
+    int axis = (int)to_double(args[1]);
+    ensure_joy_init();
+#ifdef SDL3
+    int count = 0;
+    SDL_JoystickID* joysticks = SDL_GetJoysticks(&count);
+    if (id < 0 || id >= count) { SDL_free(joysticks); return 0.0; }
+    double val = 0.0;
+    SDL_Gamepad* gamepad = SDL_OpenGamepad(joysticks[id]);
+    if (gamepad) {
+        val = SDL_GetGamepadAxis(gamepad, (SDL_GamepadAxis)axis) / 32768.0;
+        SDL_CloseGamepad(gamepad);
+    }
+    else {
+        SDL_Joystick* joy = SDL_OpenJoystick(joysticks[id]);
+        if (joy) { val = SDL_GetJoystickAxis(joy, axis) / 32768.0; SDL_CloseJoystick(joy); }
+    }
+    SDL_free(joysticks);
+    return val;
+#elif defined(_WIN32)
+    JOYINFOEX jie; jie.dwSize = sizeof(jie); jie.dwFlags = JOY_RETURNX | JOY_RETURNY;
+    if (joyGetPosEx(id == 0 ? JOYSTICKID1 : JOYSTICKID2, &jie) == JOYERR_NOERROR) {
+        DWORD raw = (axis == 0) ? jie.dwXpos : jie.dwYpos;
+        return (static_cast<double>(raw) - 32768.0) / 32768.0;
+    }
+#endif
+    return 0.0;
+}
+
+BasicValue builtin_joy_hat(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return 0.0;
+    int id = (int)to_double(args[0]);
+    int hat = (int)to_double(args[1]);
+    ensure_joy_init();
+#ifdef SDL3
+    int count = 0;
+    SDL_JoystickID* joysticks = SDL_GetJoysticks(&count);
+    if (id < 0 || id >= count) { SDL_free(joysticks); return 0.0; }
+    int val = 0;
+    SDL_Joystick* joy = SDL_OpenJoystick(joysticks[id]);
+    if (joy) { val = SDL_GetJoystickHat(joy, hat); SDL_CloseJoystick(joy); }
+    SDL_free(joysticks);
+    return (double)val;
+#endif
+    return 0.0;
+}
+#endif
+
 void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate) {
     // Helper lambda to make registration cleaner
     auto register_func = [&](const std::string& name, int arity, NeReLaBasic::NativeFunction func_ptr) {
@@ -1604,6 +1738,14 @@ void register_sdl_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_t
     register_func("TILEMAP.COLLIDES", 3, builtin_map_collides);
     register_func("TILEMAP.GET_TILE_ID", 4, builtin_map_get_tile_id);
     register_proc("TILEMAP.DRAW_DEBUG_COLLISIONS", 3, builtin_map_draw_debug);
+#endif
+
+#ifdef USE_JOY
+    register_func("JOY.COUNT", 0, builtin_joy_count);
+    register_func("JOY.NAME$", 1, builtin_joy_name);
+    register_func("JOY.BUTTON", 2, builtin_joy_button);
+    register_func("JOY.AXIS", 2, builtin_joy_axis);
+    register_func("JOY.HAT", 2, builtin_joy_hat);
 #endif
     
 }
