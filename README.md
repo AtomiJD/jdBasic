@@ -1,162 +1,148 @@
+# jdBasic - A Modern Functional BASIC Interpreter
 
-# jdBasic - A modern functional BASIC Interpreter
+**jdBasic** is a modern BASIC interpreter that fuses the simplicity of retro coding with the power of APL-style array processing, functional programming patterns, and immediate-mode GUI creation.
 
-**jdBasic**: A modern BASIC interpreter with APL-style array processing and a built-in Tensor engine for building and training neural networks from scratch.
+Whether you're building data pipelines, creating dev tools with native UIs, live-coding music, or training neural networks from scratch, jdBasic offers a unique, cross-platform environment.
 
-Whether you're looking to relive the nostalgia of 8-bit coding with modern conveniences or explore powerful data processing paradigms in a simple syntax, jdBasic offers a unique and powerful environment. The language is designed to be easy to learn but capable enough to build complex, modular applications.
+**Try it right now in your browser:** [jdbasic.org/live](https://jdbasic.org/live/index.html)
 
-## Key Features
+## 🚀 Key Features
 
-jdBasic is packed with features that bridge the gap between retro and modern programming:
+### 🖥️ Immediate Mode GUI (ImGui)
 
-### Classic BASIC Foundations
+Create fully functional graphical user interfaces with just a few lines of code. No complex callbacks or event listeners—just logic.
 
-* Familiar control flow with `FOR...NEXT` loops, `GOTO`, and labels.
-* Multi-line `IF...THEN...ELSE...ENDIF` blocks for conditional logic.
-* Robust error handling with `TRY...CATCH...FINALLY` blocks.
+* Windows, inputs, sliders, plots, and tables.
+* Integrated **Live Coding Sequencer** and **Sprite Engine**.
 
-### APL-Inspired Array Programming
+### ⚡ Reactive Programming
 
-* **N-Dimensional Arrays**: First-class support for vectors, matrices, and higher-dimension arrays.
-* **Element-Wise Operations**: Perform arithmetic on entire arrays at once (e.g., `My_Array * 2 + 5`). Most built-in functions (`SIN`, `SQR`, `RIGHT$`, etc.) are vectorized and apply to every element automatically.
-  * **Data Analysis & Reduction**: Instantly aggregate arrays with `SUM`, `PRODUCT`, `MIN`, `MAX`, and perform cumulative operations with `SCAN`.
-  
-  ![One liner Game of Life](demo.gif)
+Bring the power of spreadsheet-style reactivity to your code.
 
-### Modern Enhancements
+* **Reactive Variables**: Define variables that automatically update when their dependencies change (e.g., `A -> B * 2`).
+* **Graph Propagation**: The interpreter handles the dependency graph for you.
 
-* **Modular Programming**: Organize your code into reusable modules with `IMPORT`.
-* **Rich Data Types**: Full support for `Date`/`Time` objects, `Map`s, and user-defined `TYPE`s.
-* **Cross-Platform**: Run your code on both Windows and Linux.
-* **Library Integration**: Connect to external libraries for databases (`SQLite`) and machine learning (`TensorFlow`).
+### 🔢 APL-Inspired Array Processing
 
-### Functional Programming Core
+* **N-Dimensional Arrays**: First-class support for vectors, matrices, and tensors.
+* **Vectorized Math**: Operations apply to entire arrays automatically (e.g., `MyArray * 2`). Most built-in functions (`SIN`, `SQR`, `RIGHT$`, etc.) are vectorized and apply to every element automatically.
+* **Data Analysis & Reduction**: Instantly aggregate arrays with `SUM`, `PRODUCT`, `MIN`, `MAX`, and perform cumulative operations with `SCAN`.
+* **Data Pipelines**: Chain functions using the Pipe Operator (`|>`) and Lambdas for elegant data transformation.
 
-* **First-Class Functions**: Treat functions as values. Assign them to variables and pass them to other functions using the `@` handle.
-* **Higher-Order Functions**: Use powerful functions like `SELECT` (map) and `FILTER` that take other functions as arguments.
-* **Lambda Functions**: Define anonymous, inline functions for concise data manipulation (e.g., `lambda i -> i * 2`).
-* **Pipe Operator (`|>`):** Chain function calls together into elegant, readable data pipelines.
+  ![One liner Biorythm](BioRythmOneLine.png)
+
+### 🔌 Hardware & System I/O
+
+* **Serial Communication**: Talk to Arduinos and embedded devices with `SERIAL` commands.
+* **Joystick/Gamepad**: Native support for game controllers via `JOY`.
+* **System Integration**: Clipboard access, extended Filesystem/Path utilities, and OS execution.
+
+### 🌐 Cross-Platform & Web Ready
+
+* Runs natively on **Windows**, **Linux**, and **macOS**.
+* Runs in the **Web Browser** via WebAssembly (Emscripten).
+
+---
+
+## Language Tour
+
+### 1. The Reactive Paradigm
+
+Forget manually updating variables. With `REACT`, state management becomes automatic.
+
+```basic
+DIM BaseValue AS INTEGER = 10
+DIM Multiplier AS INTEGER = 5
+
+' Define Result as a reactive variable dependent on BaseValue and Multiplier
+DIM Result AS REACT INTEGER
+Result -> BaseValue * Multiplier
+
+PRINT Result ' Outputs: 50
+
+' Update the dependency
+Multiplier = 10
+
+' Result updates automatically without reassignment
+PRINT Result ' Outputs: 100
+
+```
+
+### 2. Immediate Mode GUI
+
+Creating tools is incredibly fast using the built-in ImGui wrapper.
+
+```basic
+SCREEN 800, 600, "My Tool"
+
+DIM BgColor[4] = [0.2, 0.3, 0.3, 1.0]
+
+DO
+    CLS
+    
+    ' Start a window
+    IF GUI.BEGIN("Control Panel", 50, 50, 300, 200) THEN
+        GUI.TEXT "Welcome to jdBasic GUI"
+        GUI.SEPARATOR()
+        
+        ' A button that does something immediately
+        IF GUI.BUTTON("Click Me") THEN
+            PRINT "Button was clicked at " + TIME$
+        ENDIF
+        
+        ' Direct variable binding for color picker
+        GUI.COLOR("Background", BgColor)
+    ENDIF
+    GUI.END()
+    
+    SCREENFLIP
+    SLEEP 16
+LOOP UNTIL INKEY$() = "q"
+
+```
+
+### 3. Functional Pipelines
+
+Combine high-order functions with the pipe operator for clean data processing.
+
+```basic
+' Generate 10 numbers, filter > 5, multiply by 10, and format
+result = IOTA(10) |> FILTER(lambda x -> x > 5, ?) |> SELECT(lambda v -> v * 10, ?)
+
+PRINT result 
+' Output: [60 70 80 90 100]
+
+```
+
+---
+
+## 📦 What's New?
+
+jdBasic is evolving rapidly. Here are the latest additions:
+
+* **GUI & Graphics**: Full **ImGui** integration for building complex tools and debuggers.
+* **Platform Support**: Official support for **macOS** and **Web Browsers** (WASM).
+* **Reactive Engine**: New `REACT` keyword and `->` operator for automatic state propagation.
+* **Hardware Control**:
+* `SERIAL`: COM port communication for IoT/Embedded projects.
+* `JOY`: Full Joystick and Gamepad input support.
+
+* **Expanded Standard Library**:
+* **CODEC**: Base64, SHA256, and UUID generation.
+* **IO**: `DIR$()` (extended file lists), `PATH.*` helpers, and `CLIPBOARD` access.
+* **Audio**: A built-in **Live Coding Sequencer** (`SOUND.SEQ`) for algorithmic music.
+
+---
 
 ## Getting Started
 
-Read the language reference:
-[https://github.com/AtomiJD/jdBasic/blob/development/doc/languages.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/languages.md)
+* **Language Reference**: [View Documentation](https://github.com/AtomiJD/jdBasic/blob/master/doc/languages.md)
+* **Manual**: [Read Manual](https://github.com/AtomiJD/jdBasic/blob/master/doc/manual.md)
+* **Online REPL**: [Try it Online](https://jdbasic.org/live/index.html)
+* **VS Code Extension**: [Get the Plugin](https://github.com/AtomiJD/jdBasic/blob/master/vscode_extension/vscode_readme.md)
 
-Read the manual:
-[https://github.com/AtomiJD/jdBasic/blob/development/doc/manual.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/manual.md)
+### Building from Source
 
-Online REPL:
-[Try it online](https://jdbasic.org/live/index.html)
+See [build_linux_macos.md](https://github.com/AtomiJD/jdBasic/blob/master/doc/build_linux_macos.md) for instructions on compiling for Linux and macOS. Windows users can open the solution in Visual Studio 2022.
 
-Build from code:
-[https://github.com/AtomiJD/jdBasic/blob/development/doc/build_linux_macos.md](https://github.com/AtomiJD/jdBasic/blob/development/doc/build_linux_macos.md)
-
-If you want to code in vs code take a look at:
-[https://github.com/AtomiJD/jdBasic/blob/development/vscode_extension/vscode_readme.md](https://github.com/AtomiJD/jdBasic/blob/development/vscode_extension/vscode_readme.md)
-
-## Language Tour: A Look at the Syntax
-
-### Functional Pipelines with Lambdas and Pipes
-
-This is where jdBasic truly shines. You can combine higher-order functions (`SELECT`, `FILTER`), anonymous `lambda` functions, and the pipe operator (`|>`) to create powerful and declarative data processing pipelines.
-
-```basic
-' --- Functional Pipeline Example ---
-
-' Start with a sequence of numbers from 1 to 10
-numbers = IOTA(10)
-PRINT "Original numbers: "; numbers
-
-' This pipeline:
-' 1. Filters the numbers to keep only those greater than 5
-' 2. Multiplies each of the remaining numbers by 10
-' The '?' in the pipe sequence is a placeholder for the result of the previous step.
-result = numbers |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
-
-PRINT "Result: "; result
-' Expected Output: [60 70 80 90 100]
-```
-
-![One liner Biorythm](BioRythmOneLine.png)
-
-### Object-Oriented Programming with `TYPE`
-
-Define your own data structures using `TYPE`, which can contain methods (`FUNC` or `SUB`). This allows for an object-oriented style of programming.
-
-```basic
-' --- RPG Player TYPE Example ---
-
-TYPE Player
-    Name AS STRING
-    Health AS INTEGER
-    MaxHealth AS INTEGER
-    AttackPower AS INTEGER
-
-    ' Method to take damage
-    SUB TakeDamage(damage)
-        ' 'THIS' refers to the current object instance
-        THIS.Health = THIS.Health - damage
-        IF THIS.Health < 0 THEN THIS.Health = 0
-        PRINT THIS.Name; " takes "; damage; " damage! Health is now "; THIS.Health
-    ENDSUB
-
-    ' Method to check if the player is defeated
-    FUNC IsDefeated()
-        RETURN THIS.Health <= 0
-    ENDFUNC
-
-    ' Method to display status
-    SUB ShowStatus()
-        PRINT "--- Player: "; THIS.Name; " ---"
-        PRINT "  Health: "; THIS.Health; " / "; THIS.MaxHealth
-        PRINT "  Attack: "; THIS.AttackPower
-    ENDSUB
-ENDTYPE
-
-' Create a player instance
-DIM Hero AS Player
-Hero.Name = "Arion"
-Hero.Health = 100
-Hero.MaxHealth = 100
-Hero.AttackPower = 15
-
-' Create an enemy
-DIM Goblin AS Player
-Goblin.Name = "Goblin"
-Goblin.Health = 30
-Goblin.MaxHealth = 30
-Goblin.AttackPower = 5
-
-Hero.ShowStatus()
-Goblin.ShowStatus()
-
-PRINT
-PRINT "A wild Goblin appears! Battle starts!"
-Goblin.TakeDamage(Hero.AttackPower) ' Hero attacks Goblin
-IF NOT Goblin.IsDefeated() THEN
-    Hero.TakeDamage(Goblin.AttackPower)  ' Goblin attacks Hero
-ENDIF
-
-IF Goblin.IsDefeated() THEN
-    PRINT Goblin.Name; " has been defeated!"
-ENDIF
-```
-
-## What's New & What's Next?
-
-jdBasic is an active project with many recent additions and exciting plans.
-
-### What's New?
-
-* **Cross-Platform Support**: jdBasic is now available for both Windows and Linux\!
-* **Robust Error Handling**: The `TRY...CATCH...FINALLY` structure is fully implemented for writing safer, more resilient code.
-* **Advanced Array Operations**: Powerful APL functions like `SCAN` (cumulative reduce) and `ROTATE` (cyclical shift) have been added.
-* **Library Integrations**: jdBasic can now interface with external libraries, with modules for `SQLite` and `TensorFlow` already available.
-
-#### What's Next?
-
-* **Enhanced Game Development**: Major improvements are planned for the `SPRITE` and `MAP` libraries to make game creation easier and more powerful.
-* **GUI Toolkit Integration**: We are exploring the integration of a GUI library to enable the creation of applications with native graphical user interfaces.
-* **Improved Linux Build**: The Linux version will be enhanced with libraries like SDL3 for better graphics and hardware support.
-
-Contributions and feedback are welcome\!
+Contributions and feedback are welcome!
