@@ -1166,6 +1166,7 @@ IF TypeOf(hCom) <> "SERIAL_PORT" THEN
     PRINT "Arduino said: " + Response$
     SERIAL.CLOSE hCom
 ENDIF
+```
 
 ### Graphics and Multimedia Functions
 
@@ -1567,8 +1568,6 @@ This section describes functions for low-level, background-threaded tasks, disti
 * **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronius.
 * **`AWAIT task`**: Waits for the given task to be completed and returns the result of the function.
 
-<!-- end list -->
-
 ```basic
 ' This function simulates a "download" that takes some time.
 ASYNC FUNC DOWNLOADFILE(url$, duration)
@@ -1672,5 +1671,6 @@ The `EDIT` command launches a simple, built-in text editor.
 * **`Ctrl+X`**: Exit the editor.
 * **`Ctrl+S`**: Save the current file. If the file is unnamed, you will be prompted for a name.
 * **`Ctrl+F`**: Find text. You will be prompted for a search query.
+* **`Ctrl+P`**: Fast paste clipboard text.
 * **`F3`**: Find the next occurrence of the last search query.
 * **`Ctrl+G`**: Go to a specific line number.

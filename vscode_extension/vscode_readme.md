@@ -114,6 +114,6 @@ You can type commands here and press Enter to execute them. This is useful for:
     a = 5
     ```
 
-* **Executing other runtime commands**: The `jdBASIC.exe` interpreter might support special commands. You can try commands like `pwd` or `cd "cource"`. The entirely features of `jdBASIC.exe` can be found in [""language.md""](https://github.com/AtomiJD/NeReLaBasicInterpreter/blob/master/language.md).
+* **Executing other runtime commands**: The `jdBASIC.exe` interpreter might support special commands. You can try commands like `pwd` or `cd "cource"`. The entirely features of `jdBASIC.exe` can be found in [Language Reference](https://github.com/AtomiJD/jdBasic/blob/master/doc/languages.md).
 
 Happy Debugging!
