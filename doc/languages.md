@@ -1090,8 +1090,6 @@ Handler functions receive one argument: a `Map` containing details about the inc
 * If the function returns a `Map`, it is automatically converted to a JSON string with `Content-Type: application/json`.
 * If the function returns a `String`, it is sent with `Content-Type: text/html`.
 
-<!-- end list -->
-
 ```basic
 ' --- Web Server and API Example ---
 ExitMe = FALSE
@@ -1146,6 +1144,28 @@ ENDIF
 PRINT "Shutting down server..."
 HTTP.SERVER.STOP
 ```
+
+### Serial Communication (COM)
+
+Available when compiled with `USE_COM`.
+
+* **`SERIAL.OPEN(port$, baud_rate) -> Handle`**: Opens a serial port (e.g., "COM3" on Windows, "/dev/ttyUSB0" on Linux) and returns a handle.
+* **`SERIAL.CLOSE(handle)`**: Closes an open serial port.
+* **`SERIAL.WRITE(handle, data$)`**: Writes a string (or binary bytes) to the serial port.
+* **`SERIAL.READ$(handle, max_bytes) -> string$`**: Reads up to `max_bytes` from the port. Returns an empty string if no data is available (non-blocking).
+* **`SERIAL.AVAILABLE(handle) -> number`**: Returns the number of bytes currently waiting in the input buffer.
+* **`SERIAL.FLUSH(handle)`**: Clears the input and output buffers.
+
+```basic
+' Arduino Communication Example
+hCom = SERIAL.OPEN("COM3", 9600)
+IF TypeOf(hCom) <> "SERIAL_PORT" THEN
+    SERIAL.WRITE hCom, "LED_ON" + CHR$(10)
+    SLEEP 100
+    Response$ = SERIAL.READ$(hCom, 256)
+    PRINT "Arduino said: " + Response$
+    SERIAL.CLOSE hCom
+ENDIF
 
 ### Graphics and Multimedia Functions
 

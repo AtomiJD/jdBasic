@@ -1,0 +1,82 @@
+' =========================================================
+' jdBasic Serial Client
+' =========================================================
+
+' Configuration
+Port$ = "COM4"    ' Change this to your actual port
+BaudRate = 9600   ' Must match the Arduino sketch
+
+PRINT "Attempting to open " + Port$ + " at " + BaudRate + " baud..."
+
+' 1. Open the Serial Port
+hCom = SERIAL.OPEN(Port$, BaudRate)
+
+' Check if connection was successful
+IF TypeOf(hCom) <> "SERIAL_PORT" THEN
+    PRINT "Error: Could not open serial port."
+    STOP
+ENDIF
+
+PRINT "Connected successfully!"
+PRINT "Type 'on', 'off', 'tempon', 'tempoff', 'status', or 'quit'."
+PRINT "---------------------------------------"
+
+' Main Loop
+DO
+    STARTDO:
+
+    ' 2. Get User Input
+    INPUT "Command> ", userInput$
+    userInput$ = UCASE$(TRIM$(userInput$))
+
+    IF userInput$ = "QUIT" THEN 
+        EXITDO
+    ENDIF
+
+    ' 3. Prepare Protocol Command
+    ' We map user words to the specific protocol the Arduino expects
+    cmdToSend$ = ""
+    
+    SWITCH userInput$
+        CASE "ON"
+            cmdToSend$ = "LED_ON"
+        CASE "OFF"
+            cmdToSend$ = "LED_OFF"
+        CASE "STATUS"
+            cmdToSend$ = "STATUS"
+        CASE "TEMPON"
+            cmdToSend$ = "POLLON"
+        CASE "TEMPOFF"
+            cmdToSend$ = "POLLOFF"
+        DEFAULT
+            PRINT "Invalid command. Try 'on', 'off', or 'status'."
+            GOTO STARTDO
+    ENDSWITCH
+
+    ' 4. Send Command
+    ' We append CHR$(10) (Newline) because Arduino uses readStringUntil('\n')
+    SERIAL.WRITE hCom, cmdToSend$ + CHR$(10)
+    PRINT "-> Sent: " + cmdToSend$
+
+    ' 5. Wait for Response
+    ' Give the Arduino a moment to process (simple polling approach)
+    SLEEP 100 
+
+    ' 6. Read Response
+    bytesWaiting = SERIAL.AVAILABLE(hCom)
+    
+    IF bytesWaiting > 0 THEN
+        ' Read the data currently in the buffer
+        response$ = SERIAL.READ$(hCom, bytesWaiting)
+        PRINT "<- Received: " + TRIM$(response$)
+    ELSE
+        PRINT "<- (No response)"
+    ENDIF
+    
+    PRINT "" 
+LOOP UNTIL 1=2
+
+' 7. Clean up
+PRINT "Closing connection..."
+SERIAL.CLOSE hCom
+PRINT "Done."

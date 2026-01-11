@@ -71,6 +71,10 @@
 #include <ifaddrs.h> // For enumerating network adapters
 #include <fmt/core.h>
 #include <fmt/format.h>
+#ifdef USE_SERIAL
+#include <sys/ioctl.h>
+#include <errno.h>
+#endif
 #endif
 
 #ifdef HTTP
@@ -5258,6 +5262,270 @@ BasicValue builtin_codec_uuid(NeReLaBasic& vm, const std::vector<BasicValue>& ar
 #endif
 }
 
+// =========================================================
+// SERIAL COMMUNICATION FUNCTIONS (USE_SERIAL)
+// =========================================================
+#ifdef USE_SERIAL
+
+struct SerialHandle : public OpaqueHandle {
+#ifdef _WIN32
+    HANDLE hComm;
+#else
+    int fd;
+#endif
+    SerialHandle() : OpaqueHandle("SERIAL_PORT") {
+#ifdef _WIN32
+        hComm = INVALID_HANDLE_VALUE;
+#else
+        fd = -1;
+#endif
+    }
+
+    ~SerialHandle() {
+#ifdef _WIN32
+        if (hComm != INVALID_HANDLE_VALUE) CloseHandle(hComm);
+#else
+        if (fd >= 0) close(fd);
+#endif
+    }
+};
+
+// SERIAL.OPEN(port$, baud_rate) -> handle
+BasicValue builtin_serial_open(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "SERIAL.OPEN requires 2 arguments: port$, baud_rate");
+        return std::make_shared<OpaqueHandle>(); // Return null handle
+    }
+
+    std::string port = to_string(args[0]);
+    int baud = static_cast<int>(to_double(args[1]));
+
+    auto handle_ptr = std::make_shared<SerialHandle>();
+
+#ifdef _WIN32
+    // Windows Implementation
+    std::string full_port_name = "\\\\.\\" + port; // Handle COM10+ syntax
+    handle_ptr->hComm = CreateFileA(full_port_name.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0,    // No sharing
+        NULL, // No security
+        OPEN_EXISTING,
+        0,    // No Overlapped I/O
+        NULL);
+
+    if (handle_ptr->hComm == INVALID_HANDLE_VALUE) {
+        // Return null handle (or throw error if preferred, but silent failure + null check is often better in BASIC)
+        return std::make_shared<OpaqueHandle>();
+    }
+
+    DCB dcbSerialParams = { 0 };
+    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
+
+    if (!GetCommState(handle_ptr->hComm, &dcbSerialParams)) {
+        CloseHandle(handle_ptr->hComm);
+        return std::make_shared<OpaqueHandle>();
+    }
+
+    dcbSerialParams.BaudRate = baud;
+    dcbSerialParams.ByteSize = 8;
+    dcbSerialParams.StopBits = ONESTOPBIT;
+    dcbSerialParams.Parity = NOPARITY;
+
+    if (!SetCommState(handle_ptr->hComm, &dcbSerialParams)) {
+        CloseHandle(handle_ptr->hComm);
+        return std::make_shared<OpaqueHandle>();
+    }
+
+    // Set timeouts (Non-blocking read behavior is usually preferred for game loops)
+    COMMTIMEOUTS timeouts = { 0 };
+    timeouts.ReadIntervalTimeout = MAXDWORD;
+    timeouts.ReadTotalTimeoutConstant = 0;
+    timeouts.ReadTotalTimeoutMultiplier = 0;
+    timeouts.WriteTotalTimeoutConstant = 50;
+    timeouts.WriteTotalTimeoutMultiplier = 10;
+    SetCommTimeouts(handle_ptr->hComm, &timeouts);
+
+#else
+    // Linux/POSIX Implementation
+    handle_ptr->fd = open(port.c_str(), O_RDWR | O_NOCTTY | O_NDELAY);
+    if (handle_ptr->fd == -1) {
+        return std::make_shared<OpaqueHandle>();
+    }
+
+    // Clear flags
+    fcntl(handle_ptr->fd, F_SETFL, 0);
+
+    struct termios options;
+    tcgetattr(handle_ptr->fd, &options);
+
+    // Set Baud Rate
+    speed_t speed;
+    switch (baud) {
+    case 9600:   speed = B9600; break;
+    case 19200:  speed = B19200; break;
+    case 38400:  speed = B38400; break;
+    case 57600:  speed = B57600; break;
+    case 115200: speed = B115200; break;
+    default:     speed = B9600; break;
+    }
+    cfsetispeed(&options, speed);
+    cfsetospeed(&options, speed);
+
+    // 8N1
+    options.c_cflag &= ~PARENB;
+    options.c_cflag &= ~CSTOPB;
+    options.c_cflag &= ~CSIZE;
+    options.c_cflag |= CS8;
+
+    // No flow control
+    options.c_cflag &= ~CRTSCTS;
+
+    // Turn on READ & ignore ctrl lines
+    options.c_cflag |= (CLOCAL | CREAD);
+
+    // Raw input mode
+    options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+    options.c_oflag &= ~OPOST;
+
+    // Apply
+    tcsetattr(handle_ptr->fd, TCSANOW, &options);
+#endif
+
+    return std::static_pointer_cast<OpaqueHandle>(handle_ptr);
+}
+
+// SERIAL.CLOSE(handle)
+BasicValue builtin_serial_close(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return false;
+
+    // The shared_ptr destructor handles the actual closing.
+    // We just need to ensure the variable in VM lets go of the reference.
+    // In this specific C++ func, we don't modify the VM var directly, 
+    // but the user should assume the handle is invalid after calling this.
+    // Ideally, we'd explicitly close the internal handle here to be safe.
+
+    if (std::holds_alternative<std::shared_ptr<OpaqueHandle>>(args[0])) {
+        auto opaque = std::get<std::shared_ptr<OpaqueHandle>>(args[0]);
+        if (opaque && opaque->type_name == "SERIAL_PORT") {
+            auto serial = std::static_pointer_cast<SerialHandle>(opaque);
+#ifdef _WIN32
+            if (serial->hComm != INVALID_HANDLE_VALUE) {
+                CloseHandle(serial->hComm);
+                serial->hComm = INVALID_HANDLE_VALUE;
+            }
+#else
+            if (serial->fd >= 0) {
+                close(serial->fd);
+                serial->fd = -1;
+            }
+#endif
+        }
+    }
+    return false;
+}
+
+// SERIAL.WRITE(handle, data$)
+BasicValue builtin_serial_write(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return false;
+
+    if (!std::holds_alternative<std::shared_ptr<OpaqueHandle>>(args[0])) return false;
+    auto opaque = std::get<std::shared_ptr<OpaqueHandle>>(args[0]);
+    if (!opaque || opaque->type_name != "SERIAL_PORT") return false;
+
+    auto serial = std::static_pointer_cast<SerialHandle>(opaque);
+    std::string data = to_string(args[1]);
+
+#ifdef _WIN32
+    DWORD bytesWritten;
+    WriteFile(serial->hComm, data.c_str(), (DWORD)data.length(), &bytesWritten, NULL);
+#else
+    if (serial->fd >= 0) {
+        write(serial->fd, data.c_str(), data.length());
+    }
+#endif
+    return false;
+}
+
+// SERIAL.READ$(handle, max_bytes) -> string
+BasicValue builtin_serial_read(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) return std::string("");
+
+    if (!std::holds_alternative<std::shared_ptr<OpaqueHandle>>(args[0])) return std::string("");
+    auto opaque = std::get<std::shared_ptr<OpaqueHandle>>(args[0]);
+    if (!opaque || opaque->type_name != "SERIAL_PORT") return std::string("");
+
+    auto serial = std::static_pointer_cast<SerialHandle>(opaque);
+    int max_bytes = static_cast<int>(to_double(args[1]));
+    if (max_bytes <= 0) return std::string("");
+
+    std::string result;
+    result.resize(max_bytes);
+
+#ifdef _WIN32
+    DWORD bytesRead = 0;
+    if (ReadFile(serial->hComm, &result[0], max_bytes, &bytesRead, NULL)) {
+        result.resize(bytesRead);
+        return result;
+    }
+#else
+    if (serial->fd >= 0) {
+        // Non-blocking read
+        int flags = fcntl(serial->fd, F_GETFL, 0);
+        fcntl(serial->fd, F_SETFL, flags | O_NONBLOCK);
+
+        ssize_t bytesRead = read(serial->fd, &result[0], max_bytes);
+        if (bytesRead > 0) {
+            result.resize(bytesRead);
+            return result;
+        }
+    }
+#endif
+    return std::string("");
+}
+
+// SERIAL.AVAILABLE(handle) -> number
+BasicValue builtin_serial_available(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return 0.0;
+    if (!std::holds_alternative<std::shared_ptr<OpaqueHandle>>(args[0])) return 0.0;
+    auto opaque = std::get<std::shared_ptr<OpaqueHandle>>(args[0]);
+    if (!opaque || opaque->type_name != "SERIAL_PORT") return 0.0;
+    auto serial = std::static_pointer_cast<SerialHandle>(opaque);
+
+#ifdef _WIN32
+    COMSTAT status;
+    DWORD errors;
+    ClearCommError(serial->hComm, &errors, &status);
+    return (double)status.cbInQue;
+#else
+    if (serial->fd >= 0) {
+        int bytes = 0;
+        ioctl(serial->fd, FIONREAD, &bytes);
+        return (double)bytes;
+    }
+    return 0.0;
+#endif
+}
+
+// SERIAL.FLUSH(handle)
+BasicValue builtin_serial_flush(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) return false;
+    if (!std::holds_alternative<std::shared_ptr<OpaqueHandle>>(args[0])) return false;
+    auto opaque = std::get<std::shared_ptr<OpaqueHandle>>(args[0]);
+    if (!opaque || opaque->type_name != "SERIAL_PORT") return false;
+    auto serial = std::static_pointer_cast<SerialHandle>(opaque);
+
+#ifdef _WIN32
+    PurgeComm(serial->hComm, PURGE_RXCLEAR | PURGE_TXCLEAR);
+#else
+    if (serial->fd >= 0) {
+        tcflush(serial->fd, TCIOFLUSH);
+    }
+#endif
+    return false;
+}
+
+#endif // USE_SERIAL
+
 #ifdef JD_IMGUI
 void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table);
 #endif
@@ -5442,4 +5710,12 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("CODEC.SHA256$", 1, builtin_codec_sha256);
     register_func("CODEC.UUID$", 0, builtin_codec_uuid);
 
+#ifdef USE_SERIAL
+    register_func("SERIAL.OPEN", 2, builtin_serial_open);
+    register_proc("SERIAL.CLOSE", 1, builtin_serial_close);
+    register_proc("SERIAL.WRITE", 2, builtin_serial_write);
+    register_func("SERIAL.READ$", 2, builtin_serial_read);
+    register_func("SERIAL.AVAILABLE", 1, builtin_serial_available);
+    register_proc("SERIAL.FLUSH", 1, builtin_serial_flush);
+#endif
 }

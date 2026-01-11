@@ -23,10 +23,15 @@
 // Uncomment this line to enable ImGui support
 #define JD_IMGUI 
 #define SDLMIXER 
+// Enables Joystick/Gamepad support.
+#define USE_JOY
 #else
 #undef SDL3
 #endif
 #endif
+
+// Enables Serial Port (COM) communication features.
+#define USE_SERIAL
 
 // Enables the cpp-httplib networking features for HTTP client and server.
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)

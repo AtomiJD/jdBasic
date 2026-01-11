@@ -100,14 +100,27 @@ struct ComObject {
 };
 #endif
 
+// A generic handle for external resources (Serial ports, Joysticks, etc.)
 struct OpaqueHandle {
     void* ptr = nullptr;
     std::string type_name;
     std::function<void(void*)> deleter;
 
-    // Constructor
+    // 1. Default Constructor
+    // Essential for derived classes if they don't explicitly call another constructor.
+    OpaqueHandle() : ptr(nullptr), type_name("UNKNOWN"), deleter(nullptr) {}
+
+    // 2. Type-Only Constructor
+    // Used by SerialHandle/JoyHandle to set the type name while managing their own data.
+    OpaqueHandle(std::string t)
+        : ptr(nullptr), type_name(std::move(t)), deleter(nullptr) {
+    }
+
+    // 3. Full Constructor
+    // Used for handles that wrap a simple void* pointer.
     OpaqueHandle(void* p, std::string t, std::function<void(void*)> d)
-        : ptr(p), type_name(std::move(t)), deleter(std::move(d)) {}
+        : ptr(p), type_name(std::move(t)), deleter(std::move(d)) {
+    }
 
     // Destructor that calls the custom deleter
     ~OpaqueHandle() {

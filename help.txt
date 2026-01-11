@@ -936,6 +936,14 @@ Description: Executes an external command and captures its output.
 Syntax: OS.GETOS()
 Description: Returns a string identifying the operating system ("WINDOWS", "LINUX", "MACOS").
 
+[OS.HOSTNAME$]
+Syntax: OS.HOSTNAME$()
+Description: Returns the network hostname of the local machine.
+
+[OS.IP$]
+Syntax: OS.IP$()
+Description: Returns the primary local IPv4 address of the machine.
+
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.
