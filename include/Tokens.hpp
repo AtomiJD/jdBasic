@@ -141,6 +141,8 @@ namespace Tokens {
         C_BACKSLASH = 0x94,
         MAKE_CLOSURE = 0x95,
         EXIT_SUB = 0x96,
+        CONTINUE_DO = 0x97,
+        CONTINUE_FOR = 0x98,
         DOS_CD = 0xA0,
         DOS_DIR = 0xA1,
         DOS_MKDIR = 0xA2,

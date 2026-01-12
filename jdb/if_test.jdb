@@ -1,0 +1,75 @@
+PRINT "--- Testing IF Statements ---"
+DIM A, B
+A = 10
+B = 2
+
+' 1. Standard Block IF
+PRINT "1. Block IF check:"
+IF A = 10 THEN
+    PRINT "   [PASS] A is 10"
+ENDIF
+
+IF A = 20 THEN
+    PRINT "   [FAIL] A is not 20"
+ENDIF
+
+' 2. Block IF/ELSE
+PRINT "2. Block IF/ELSE check:"
+IF A = 5 THEN
+    PRINT "   [FAIL] A is 5"
+ELSE
+    PRINT "   [PASS] A is not 5 (True branch skipped, Else executed)"
+ENDIF
+
+' 3. Block IF/ELSEIF/ELSE Chain
+PRINT "3. IF/ELSEIF/ELSE check:"
+IF B = 1 THEN
+    PRINT "   [FAIL] B is 1"
+ELSEIF B = 2 THEN
+    PRINT "   [PASS] B is 2 (Correct ELSEIF executed)"
+ELSE
+    PRINT "   [FAIL] B is something else"
+ENDIF
+
+' Check ELSEIF fallthrough
+IF B = 99 THEN
+    PRINT "   [FAIL]"
+ELSEIF B = 100 THEN
+    PRINT "   [FAIL]"
+ELSE
+    PRINT "   [PASS] Fallthrough to ELSE works in chain"
+ENDIF
+
+' 4. Nested IF
+PRINT "4. Nested IF check:"
+IF A = 10 THEN
+    IF B = 2 THEN
+        PRINT "   [PASS] Nested condition met"
+    ELSE
+        PRINT "   [FAIL] Inner ELSE"
+    ENDIF
+ELSE
+    PRINT "   [FAIL] Outer ELSE"
+ENDIF
+
+' 5. Single Line IF (Classic)
+PRINT "5. Single Line IF check:"
+IF A = 10 THEN PRINT "   [PASS] One-liner executed"
+IF A = 20 THEN PRINT "   [FAIL] One-liner executed when it shouldn't"
+
+' 6. Single Line IF/ELSE (New Feature)
+' This relies on the recent Compiler.cpp change removing the block on ELSE in one-liners.
+PRINT "6. Single Line IF/ELSE check:"
+IF A = 10 THEN PRINT "   [PASS] True branch (One-Liner)" ELSE PRINT "   [FAIL] False branch executed"
+IF A = 20 THEN PRINT "   [FAIL] True branch executed" ELSE PRINT "   [PASS] False branch executed (One-Liner)"
+
+' 7. Complex Logic with Operators
+PRINT "7. Complex Logic check:"
+IF A = 10 AND B = 2 THEN
+    PRINT "   [PASS] AND works"
+ENDIF
+IF A = 10 OR B = 99 THEN
+    PRINT "   [PASS] OR works"
+ENDIF
+
+PRINT "--- End of Tests ---"

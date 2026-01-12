@@ -716,11 +716,11 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 break; // Continue to tokenize the condition expression.
             }
             case Tokens::ID::ELSE: {
-                // A single-line IF cannot have an ELSE clause.
-                if (is_one_liner_if) {
-                    Error::set(1, vm.current_source_line, "A single-line IF cannot have an ELSE clause."); // Syntax Error
-                    continue; // Stop processing this token
-                }
+                //// A single-line IF cannot have an ELSE clause.
+                //if (is_one_liner_if) {
+                //    Error::set(1, vm.current_source_line, "A single-line IF cannot have an ELSE clause."); // Syntax Error
+                //    continue; // Stop processing this token
+                //}
 
                 // Pop the IF's or a previous ELSEIF's placeholder address from the stack.
                 if (if_stack.empty()) { // Added check
@@ -1039,10 +1039,37 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 }
                 continue;
             }
-
+            case Tokens::ID::CONTINUE_DO: {
+                if (do_loop_stack.empty()) {
+                    Error::set(1, lineNumber, "CONTINUEDO without DO.");
+                    return 1;
+                }
+                // Emit an unconditional jump (using ELSE opcode as JMP)
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::ELSE));
+                // Store the location of the address bytes to patch later
+                do_loop_stack.back().continue_patch_locations.push_back(out_p_code.size());
+                out_p_code.push_back(0); // Placeholder
+                out_p_code.push_back(0);
+                continue;
+            }
+            case Tokens::ID::CONTINUE_FOR: {
+                if (compiler_for_stack.empty()) {
+                    Error::set(1, lineNumber, "CONTINUEFOR without FOR.");
+                    return 1;
+                }
+                // Emit an unconditional jump
+                out_p_code.push_back(static_cast<uint8_t>(Tokens::ID::ELSE));
+                compiler_for_stack.back().continue_patch_locations.push_back(out_p_code.size());
+                out_p_code.push_back(0); // Placeholder
+                out_p_code.push_back(0);
+                continue;
+            }
             case Tokens::ID::LOOP: {
                 // First, write the LOOP token.
                 out_p_code.push_back(static_cast<uint8_t>(token));
+
+                // Track address of the LOOP instruction for post-test jumps
+                uint16_t loop_token_addr = out_p_code.size() - 1;
 
                 // Set the pointer to the loop on the stack that needs patching later.
                 loop_to_patch_ptr = &do_loop_stack.back();
@@ -1073,6 +1100,25 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                     parse(vm, false); // Consume WHILE/UNTIL keyword
                 }
                 // If no condition, condition_type remains NOCMD.
+
+                // --- PATCH CONTINUE STATEMENTS ---
+                uint16_t continue_target;
+
+                if (current_do_loop_info.is_pre_test || current_do_loop_info.condition_type == Tokens::ID::NOCMD) {
+                    // Pre-test (DO WHILE) or Infinite (DO): Continue jumps to the TOP (DO)
+                    continue_target = current_do_loop_info.loop_start_pcode_addr;
+                }
+                else {
+                    // Post-test (DO ... LOOP WHILE): Continue jumps to the BOTTOM (LOOP check)
+                    // Note: We determined this was post-test if peek logic above set is_pre_test=false
+                    // For safety, re-evaluate target if we just found a condition
+                    continue_target = loop_token_addr;
+                }
+
+                for (uint16_t patch_addr : do_loop_stack.back().continue_patch_locations) {
+                    out_p_code[patch_addr] = continue_target & 0xFF;
+                    out_p_code[patch_addr + 1] = (continue_target >> 8) & 0xFF;
+                }
 
                 // Write the loop metadata for runtime (is_pre_test, condition_type, loop_start_pcode_addr)
                 out_p_code.push_back(static_cast<uint8_t>(current_do_loop_info.is_pre_test));
@@ -1214,6 +1260,16 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
 
                 // First, write the NEXT token to the bytecode.
                 out_p_code.push_back(static_cast<uint8_t>(token));
+
+                // The NEXT instruction starts 1 byte back
+                uint16_t next_instruction_addr = out_p_code.size() - 1;
+
+                // --- PATCH CONTINUE FOR STATEMENTS ---
+                // Continue jumps TO the NEXT instruction to perform increment and check
+                for (uint16_t patch_addr : loop_info.continue_patch_locations) {
+                    out_p_code[patch_addr] = next_instruction_addr & 0xFF;
+                    out_p_code[patch_addr + 1] = (next_instruction_addr >> 8) & 0xFF;
+                }
 
                 // Now, get the address AFTER the NEXT token. This is the correct jump target for EXITFOR.
                 uint16_t exit_jump_target = out_p_code.size();

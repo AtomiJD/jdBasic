@@ -142,6 +142,18 @@ Description: Sets the text colors for the console.
 Syntax: COMPILE
 Description: Compiles the source code currently in memory into bytecode.
 
+[CONTINUEDO]
+Syntax: CONTINUEDO
+Description: Skips the rest of the current DO loop iteration and jumps to the condition check.
+
+[CONTINUEFOR]
+Syntax: CONTINUEFOR
+Description: Skips the rest of the current FOR loop iteration and jumps to the NEXT statement.
+
+[CONTINUELOOP]
+Syntax: CONTINUELOOP
+Description: Synonym for CONTINUEDO. Skips the rest of the current DO loop iteration.
+
 [CONVOLVE]
 Syntax: CONVOLVE(array, kernel, wrap_mode)
 Description: Performs a 2D convolution operation on an array with a given kernel.

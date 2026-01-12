@@ -42,6 +42,7 @@ public:
         uint16_t source_line;
         uint16_t next_statement_patch_address = 0;
         std::vector<uint16_t> exit_patch_locations;
+        std::vector<uint16_t> continue_patch_locations;
     };
     std::vector<CompilerForLoopInfo> compiler_for_stack;
 
@@ -53,6 +54,7 @@ public:
         Tokens::ID condition_type;
         uint16_t source_line;
         std::vector<uint16_t> exit_patch_locations;
+        std::vector<uint16_t> continue_patch_locations;
     };
     std::vector<DoLoopInfo> do_loop_stack;
 

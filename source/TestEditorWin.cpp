@@ -269,7 +269,7 @@ void TextEditorWinImpl::run() {
                 }
                 default: {
                     wchar_t ch = key.uChar.UnicodeChar;
-                    if (iswprint(ch) && !ctrl_pressed) {
+                    if (iswprint(ch)) {
                         std::wstring wline = string_to_wstring(lines_ref[cy]);
                         if (overwrite_mode && cx < wline.length()) {
                             // Overwrite mode: replace character
