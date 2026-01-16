@@ -4421,6 +4421,9 @@ BasicValue builtin_typeof(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
             return "ARRAY";
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<Map>>) {
+            if (arg && !arg->type_name_if_udt.empty()) {
+                return arg->type_name_if_udt;
+            }
             return "MAP";
         }
         else if constexpr (std::is_same_v<T, std::shared_ptr<JsonObject>>) {

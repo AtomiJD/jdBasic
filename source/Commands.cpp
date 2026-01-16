@@ -1874,7 +1874,6 @@ void Commands::do_endfunc(NeReLaBasic& vm) {
     do_return(vm);
 }
 
-
 // At runtime, SUB just jumps over the procedure body.
 // This is identical to how FUNC works.
 void Commands::do_sub(NeReLaBasic& vm) {
@@ -2166,26 +2165,98 @@ void Commands::do_exitsub(NeReLaBasic& vm) {
     do_return(vm);
 }
 
-//// This command will expect a function name string directly after it.
-//void Commands::do_onerrorcall(NeReLaBasic& vm) {
-//    // Read the function name from bytecode
-//    if (!vm.current_task) {
-//        Error::set(1, vm.runtime_current_line, "ON ERROR can only be used in a running program.");
-//        return;
-//    }
-//    std::string func_name = to_upper(read_string(vm)); // read_string handles pcode increment
-//
-//    // Check if the function actually exists
-//    // (It must be a SUB, not a FUNC, as it's called as a procedure)
-//    if (vm.main_function_table.count(func_name) && vm.main_function_table.at(func_name).is_procedure) {
-//        vm.current_task->error_handler_function_name = func_name;
-//        vm.current_task->error_handler_active = true;
-//    }
-//    else {
-//        // Error if function not found or it's not a procedure (SUB)
-//        Error::set(22, vm.runtime_current_line); // Undefined function
-//    }
-//}
+void Commands::do_dot(NeReLaBasic& vm) {
+    // 1. Get the object to operate on (RETVAL)
+    if (!vm.variables.count("RETVAL")) {
+        Error::set(1, vm.runtime_current_line, "Cannot chain method: No return value available.");
+        return;
+    }
+    BasicValue retval_copy = vm.variables["RETVAL"];
+
+    // 2. Read the method name
+    // The compiler emits a VARIANT or CALLFUNC token for the method name
+    Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    if (next_token == Tokens::ID::VARIANT || next_token == Tokens::ID::CALLFUNC) {
+        vm.pcode++; // Consume token
+    }
+    std::string method_name = StringUtils::to_upper(read_string(vm));
+
+    // 3. Verify it is an object
+    if (!std::holds_alternative<std::shared_ptr<Map>>(retval_copy)) {
+        Error::set(15, vm.runtime_current_line, "Method chaining requires an object.");
+        return;
+    }
+    auto object_instance_ptr = std::get<std::shared_ptr<Map>>(retval_copy);
+    if (!object_instance_ptr) {
+        Error::set(1, vm.runtime_current_line, "Object instance is null.");
+        return;
+    }
+
+    // 4. Resolve Type and Method
+    std::string type_name = object_instance_ptr->type_name_if_udt;
+    if (type_name.empty() || !vm.user_defined_types.count(type_name)) {
+        Error::set(15, vm.runtime_current_line, "Object has no type information.");
+        return;
+    }
+    const auto& type_info = vm.user_defined_types.at(type_name);
+    if (!type_info.methods.count(method_name)) {
+        Error::set(22, vm.runtime_current_line, "Method '" + method_name + "' not found in type '" + type_name + "'.");
+        return;
+    }
+
+    std::string mangled_name = type_name + "." + method_name;
+    const auto& func_info = vm.active_function_table->at(mangled_name);
+
+    // 5. Parse Arguments (handle optional parens)
+    // Note: Compiler emits CALLFUNC args as tokens, or if parsed as VARIANT, just the name.
+    // We reuse the runtime argument parser.
+    std::vector<BasicValue> args;
+    Tokens::ID arg_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+
+    bool using_parens = false;
+    if (arg_token == Tokens::ID::C_LEFTPAREN) {
+        vm.pcode++; // Consume '('
+        using_parens = true;
+        arg_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+    }
+
+    bool has_args = using_parens ? (arg_token != Tokens::ID::C_RIGHTPAREN) :
+        (arg_token != Tokens::ID::C_CR && arg_token != Tokens::ID::C_COLON && arg_token != Tokens::ID::NOCMD && arg_token != Tokens::ID::C_DOT);
+
+    if (has_args) {
+        while (true) {
+            args.push_back(vm.evaluate_expression());
+            if (Error::get() != 0) return;
+            Tokens::ID separator = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
+            if (using_parens) {
+                if (separator == Tokens::ID::C_RIGHTPAREN) break;
+            }
+            else {
+                if (separator == Tokens::ID::C_CR || separator == Tokens::ID::C_COLON || separator == Tokens::ID::NOCMD || separator == Tokens::ID::C_DOT) break;
+            }
+            if (separator != Tokens::ID::C_COMMA) {
+                Error::set(1, vm.runtime_current_line, "Expected ','"); return;
+            }
+            vm.pcode++;
+        }
+    }
+
+    if (using_parens) {
+        if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) != Tokens::ID::C_RIGHTPAREN) {
+            Error::set(18, vm.runtime_current_line, "Expected ')'"); return;
+        }
+        vm.pcode++;
+    }
+
+    // 6. Execute
+    vm.this_stack.push_back(object_instance_ptr);
+    vm.execute_synchronous_function(func_info, args);
+    vm.this_stack.pop_back();
+
+    // 7. Important: The result of *this* call is now the new RETVAL for the *next* chain
+    // execute_synchronous_function logic usually relies on RETURN to set RETVAL. 
+    // If the method returns THIS, RETVAL is updated, allowing the chain to continue.
+}
 
 // ---  Commands for TRY/CATCH ---
 void Commands::do_push_handler(NeReLaBasic& vm) {

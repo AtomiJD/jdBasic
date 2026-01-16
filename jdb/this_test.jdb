@@ -1,0 +1,34 @@
+TYPE T_CALC
+    A AS INTEGER
+   
+    FUNC INIT(N)
+        THIS.A=N
+        Print "INIT: "; N
+        RETURN THIS
+    ENDFUNC
+
+    FUNC ADD(N)
+        THIS.A = THIS.A + N
+        Print "ADD:  "; N
+        RETURN THIS
+    ENDFUNC
+
+    FUNC MUL(N)
+        THIS.A = THIS.A * N
+        Print "MUL:  "; N
+        RETURN THIS
+    ENDFUNC
+
+    SUB PRINT_ME()
+        PRINT "A:    "; THIS.A
+    ENDSUB 
+
+
+ENDTYPE
+
+DIM calc as T_CALC
+
+calc.init(1) _
+    .add(2) _
+    .mul(3) _
+    .print_me()

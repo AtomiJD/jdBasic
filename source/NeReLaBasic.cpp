@@ -1744,6 +1744,17 @@ void NeReLaBasic::statement() {
         pcode++;
         Commands::do_dump(*this);
         break;
+        // NeReLaBasic.cpp
+
+        // ... inside void NeReLaBasic::statement() switch(token) ...
+
+    case Tokens::ID::C_DOT: {
+        // Handle Method Chaining: .method()
+        pcode++; // Consume '.'
+        Commands::do_dot(*this);
+        break;
+    }
+
     case Tokens::ID::C_UNDERLINE:
         pcode++; // Fall through and consume C_CR
     case Tokens::ID::C_CR:
