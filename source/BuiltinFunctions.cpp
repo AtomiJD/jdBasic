@@ -5527,6 +5527,48 @@ BasicValue builtin_serial_flush(NeReLaBasic& vm, const std::vector<BasicValue>& 
     return false;
 }
 
+// =========================================================
+// LPRINT (Line Printer Output)
+// =========================================================
+// Tries to write to the default printer device (PRN/LPT1/lp0).
+// If that fails (common with USB printers), it appends to "lprint.txt".
+BasicValue builtin_lprint(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    std::stringstream ss;
+    // Join arguments with tabs, similar to standard PRINT
+    for (size_t i = 0; i < args.size(); ++i) {
+        ss << to_string(args[i]);
+        if (i < args.size() - 1) ss << "\t";
+    }
+    ss << "\n"; // Always append newline for LPRINT
+    std::string text = ss.str();
+
+#ifdef _WIN32
+    // Windows: Try PRN (Default) then LPT1
+    std::ofstream printer("PRN", std::ios::binary);
+    if (!printer.is_open()) {
+        printer.open("LPT1", std::ios::binary);
+    }
+#else
+    // Linux/Unix: Try standard line printer device
+    std::ofstream printer("/dev/lp0");
+#endif
+
+    if (printer.is_open()) {
+        printer << text;
+        printer.flush();
+        printer.close();
+    }
+    else {
+        // Fallback: Append to a log file acting as a virtual paper roll
+        std::ofstream file("lprint.txt", std::ios::app);
+        if (file.is_open()) {
+            file << text;
+            file.close();
+        }
+    }
+    return false; // Procedures return void/false
+}
+
 #endif // USE_SERIAL
 
 #ifdef JD_IMGUI
@@ -5720,5 +5762,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("SERIAL.READ$", 2, builtin_serial_read);
     register_func("SERIAL.AVAILABLE", 1, builtin_serial_available);
     register_proc("SERIAL.FLUSH", 1, builtin_serial_flush);
+
+    register_proc("LPRINT", -1, builtin_lprint);
 #endif
 }

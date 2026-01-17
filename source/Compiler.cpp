@@ -1858,12 +1858,15 @@ uint8_t Compiler::tokenize_program(NeReLaBasic& vm, std::vector<uint8_t>& out_p_
 
     vm.source_code = source; // Store source for pre-scanning
 
+    if (vm.compiled_modules.empty()) {
+        vm.user_defined_types.clear();
+        vm.user_defined_enums.clear();
+    }
+
     //  Pre-scan for TYPE definitions
-    vm.user_defined_types.clear();
     this->pre_scan_and_parse_types(vm);
 
     // --- Pre-scan for ENUM definitions ---
-    vm.user_defined_enums.clear();
     this->pre_scan_and_parse_enums(vm);
 
     // 2. Pre-scan to find imports and determine if we are a module

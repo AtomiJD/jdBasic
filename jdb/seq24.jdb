@@ -1,0 +1,131 @@
+' ==========================================================
+'  SEQ24.JDB - THE FLUENT INTERFACE DEMO
+'  Demonstrating Method Chaining in jdBasic
+' ==========================================================
+
+IMPORT SQ
+
+DIM CONFIG AS MAP
+DIM SFX_CACHE AS MAP ' Keeps track of loaded files: "path" -> id
+DIM NEXT_SFX_ID AS INTEGER = 100
+
+SQ.START
+
+SQ.D 8,8
+
+TYPE T_SEQUENCER
+    current_track AS INTEGER
+    current_wave$ AS STRING
+
+    ' Initialize Audio Engine
+    FUNC INIT()
+        SOUND.INIT
+        ' Default settings
+        THIS.current_track = 0
+        THIS.current_wave$ = "VOICE"
+        PRINT ">> Sequencer Initialized (Fluent Mode)"
+        RETURN THIS
+    ENDFUNC
+
+    ' Set Global BPM
+    FUNC BPM(beats)
+        SOUND.BPM beats
+        RETURN THIS
+    ENDFUNC
+
+    ' Select the active track for subsequent commands
+    FUNC TRACK(id)
+        THIS.current_track = id
+        RETURN THIS
+    ENDFUNC
+
+    ' Select Waveform (SAW, SQUARE, VOICE, etc)
+    FUNC USE(wave$)
+        THIS.current_wave$ = wave$
+        RETURN THIS
+    ENDFUNC
+
+    ' Assign a pattern string to the current track
+    FUNC PLAY(pattern$)
+        SOUND.SEQ THIS.current_track, pattern$, THIS.current_wave$
+        RETURN THIS
+    ENDFUNC
+
+    ' Set Volume/Gain for current track
+    FUNC GAIN(vol)
+        SOUND.GAIN THIS.current_track, vol
+        RETURN THIS
+    ENDFUNC
+
+    ' Set Lowpass Filter for current track
+    FUNC FILTER(cutoff)
+        SOUND.FILTER THIS.current_track, cutoff
+        RETURN THIS
+    ENDFUNC
+
+    ' Set Reverb Send for current track
+    FUNC REVERB(amount)
+        SOUND.REVERBSEND THIS.current_track, amount
+        RETURN THIS
+    ENDFUNC
+
+    ' Helper to sleep/wait
+    FUNC WAIT(ms)
+        SLEEP ms
+        RETURN THIS
+    ENDFUNC
+
+    ' Stop everything
+    FUNC STOP()
+        SOUND.RESET
+        RETURN THIS
+    ENDFUNC
+
+ENDTYPE
+
+' 1. Define Patterns (The Data)
+KICK$  = "c1 ~ c1 ~ c1 ~ c1 ~"
+SNARE$ = "~ ~ c1 ~ ~ ~ c1 ~"
+HATS$  = "[c1 c1] [c1 c1] [c1 c1] [c1 c1]"
+BASS$  = "e2 ~ e2 ~ g2 ~ e2 [e2 e2]"
+ARP$   = "[e4 g4 b4] [c4 e4 g4] [d4 f#4 a4] [b3 d4 f#4]"
+
+' 2. Instantiate the Fluent Sequencer
+DIM dj AS T_SEQUENCER
+
+
+' 3. The "Cinema" Setup 
+' We chain everything: Init -> BPM -> Track configuration
+dj.INIT().BPM(128) _
+  .TRACK(0).USE("VOICE").PLAY(KICK$).GAIN(2.0) _
+  .TRACK(1).USE("VOICE").PLAY(SNARE$).GAIN(1.5) _
+  .TRACK(2).USE("VOICE").PLAY(HATS$).GAIN(0.6)
+
+PRINT ">>> DROP THE BASS..."
+dj.WAIT(2000)
+
+' 4. Live Modification via Chaining
+' We can jump between tracks in one statement
+dj.TRACK(3).USE("SAW").PLAY(BASS$).FILTER(400).GAIN(1.2) _
+  .TRACK(0).GAIN(2.5) ' Boost the kick
+
+PRINT ">>> ADDING ARP..."
+dj.WAIT(2000)
+
+' 5. Complex Chain
+dj.TRACK(4).USE("SQUARE") _
+  .PLAY(ARP$) _
+  .FILTER(1500) _
+  .REVERB(0.5) _
+  .GAIN(0.8)
+
+' 6. Performance Loop (Filter Sweep)
+DIM cutoff AS INTEGER
+FOR cutoff = 400 TO 4000 STEP 50
+    dj.TRACK(3).FILTER(cutoff)
+    SLEEP 10
+NEXT
+
+PRINT ">>> DONE."
+SLEEP 2000
+dj.STOP()

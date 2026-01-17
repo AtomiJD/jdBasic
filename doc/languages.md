@@ -554,6 +554,7 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`EXITFUNC`, `EXITDO`, `EXITFOR`**: Exiting functions and loops.
+* **`CONTINUEFOR`, `CONTINUEDO`, `CONTINUELOOP**`: Skips the rest of the current loop iteration and continues with the next one.
 * **`OPTION option$`**: Sets a VM option.
   * `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
   * `OPTION "EXPLICIT"` enforces declarations: variables **must** be introduced with `DIM` before first use (read or write). With **EXPLICITOFF** (default), variables are created on first use and default to `0` (numeric) or `""` (string).
