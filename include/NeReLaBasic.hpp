@@ -1,4 +1,4 @@
-// NeReLaBasic.hpp
+﻿// NeReLaBasic.hpp
 #pragma once
 #include "AppConfig.hpp"
 #include <vector>
@@ -87,6 +87,7 @@ public:
     bool is_stopped = false;
     bool program_ended = false;
     bool nopause_active = false; // Set to true by OPTION "NOPAUSE", disables ESC/Spacebar break/pause
+    bool verbose_mode = false;
 
     uint16_t runtime_current_line = 0;
     uint16_t current_source_line = 0;

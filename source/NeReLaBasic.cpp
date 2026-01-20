@@ -287,7 +287,7 @@ bool NeReLaBasic::loadSourceFromFile(const std::string& filename, bool verbose) 
         TextIO::print("Error: File not found -> " + filename); TextIO::nl();
         return false;
     }
-    if (!verbose)
+    if (!verbose && !verbose_mode)
         TextIO::print("LOADING " + filename); TextIO::nl();
     // Read the entire file into the source_code string
     source_lines.clear();
@@ -300,6 +300,8 @@ bool NeReLaBasic::loadSourceFromFile(const std::string& filename, bool verbose) 
 }
 
 void NeReLaBasic::init_screen() {
+    if (verbose_mode == true) return;
+
     TextIO::setColor(fgcolor, bgcolor);
     TextIO::clearScreen();
 #if  defined(_WIN32)
@@ -338,6 +340,7 @@ void NeReLaBasic::init_system() {
 }
 
 void NeReLaBasic::init_basic() {
+    if (verbose_mode == true) return;
     TextIO::nl();
     //TextIO::print("Ready"); TextIO::nl();
 }
@@ -426,6 +429,14 @@ void NeReLaBasic::process_system_events() {
     
     process_event_queue();
 
+#ifdef SDL3
+    if (graphics_system.is_initialized) {
+        if (!graphics_system.handle_events(*this)) {
+            program_ended = true;
+        }
+    }
+#endif
+
     auto current_time = std::chrono::steady_clock::now();
     if (current_time - last_keyboard_check_time < keyboard_check_interval) {
         // Not enough time has passed, so skip the keyboard check for this loop iteration.
@@ -496,13 +507,7 @@ void NeReLaBasic::process_system_events() {
     }
     //TextIO::cleanup();
     //return;
-#ifdef SDL3
-    if (graphics_system.is_initialized) {
-        if (!graphics_system.handle_events(*this)) {
-            program_ended = true;
-        }
-    }
-#endif
+
 }
 
 // The main REPL
@@ -520,17 +525,20 @@ void NeReLaBasic::start() {
         linenr = 0;
         
 #if defined(_WIN32)
-        TextIO::print("Ready\n" + prompt);
+        if (verbose_mode == false) 
+            TextIO::print("Ready\n" + prompt);
         if (!std::getline(std::cin, inputLine) || inputLine.empty()) {
             std::cin.clear();
             continue;
         }
 #elif defined(__EMSCRIPTEN__)
-        TextIO::print("Ready\n" + prompt);
+        if (verbose_mode == false)
+            TextIO::print("Ready\n" + prompt);
         //inputLine = TextIO::jdgets();
         //TextIO::print("I got: " + inputLine);
 #else
-        std::string full_prompt = "Ready\n\r" + prompt;
+        if (verbose_mode == false)
+            std::string full_prompt = "Ready\n\r" + prompt;
         // Use readline() to get user input
         char* c_inputLine = readline(full_prompt.c_str());
         // Check for EOF (Ctrl+D), which returns NULL

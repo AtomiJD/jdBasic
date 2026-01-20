@@ -1616,7 +1616,7 @@ BasicValue builtin_outer(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // 4. Check if the operator is a function reference
     else if (std::holds_alternative<FunctionRef>(op_arg)) {
         const std::string func_name = to_upper(std::get<FunctionRef>(op_arg).name);
-        const auto& func_ref = std::get<FunctionRef>(args[0]);
+        const auto& func_ref = std::get<FunctionRef>(op_arg);
         if (!vm.active_function_table->count(func_name)) {
             Error::set(22, vm.runtime_current_line, "Operator function '" + func_name + "' not found.");
             return {};

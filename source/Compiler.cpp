@@ -305,6 +305,7 @@ Tokens::ID Compiler::parse(NeReLaBasic& vm, bool is_start_of_statement) {
             // Otherwise, it's a procedure-style call like `MySub` or `obj.Quit`.
             return Tokens::ID::CALLSUB;
         }
+
         // If not at the start of a statement, it's part of an expression.
         // The brackets will be tokenized separately as C_LEFTBRACKET / C_LEFTBRACE,
         // allowing the expression evaluator to handle chained calls.

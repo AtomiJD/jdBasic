@@ -1,0 +1,298 @@
+' ============================================================
+' == T E T R I S  (jdBasic Matrix Edition)
+' ============================================================
+
+' --- CONSTANTS ---
+ROWS = 20
+COLS = 10
+EMPTY = 0
+WALL = 8
+
+' --- GAME STATE ---
+DIM Board[ROWS, COLS]    ' The main grid
+DIM CurrentPiece         ' The 4x4 matrix of the active piece
+DIM PieceX, PieceY       ' Position of top-left of 4x4 box
+DIM PieceColor           ' Color of current piece
+DIM GameOver = FALSE
+DIM Score = 0
+DIM Level = 1
+DIM LinesCleared = 0
+
+' --- TIMING ---
+TickCounter = 0
+Speed = 20               ' Lower is faster (frames per drop)
+LastInputTime = 0
+
+' --- EVENT HANDLING ---
+' We map keys to actions using global flags that the main loop consumes
+ActionRotate = 0
+ActionMove = 0
+ActionDrop = 0
+
+SUB OnKeyDown(data)
+    code = data[0]{"scancode"}
+
+    ' Arrow Keys / WASD
+    IF code = 276 OR code = 97 THEN ActionMove = -1 ' Left / a 
+    IF code = 275 OR code = 100 THEN ActionMove = 1  ' Right / d
+    IF code = 119 THEN ActionRotate = 1 ' w (Rotate)
+    IF code = 115 THEN ActionDrop = 1   ' s (Soft Drop)
+    IF code = 27 THEN GameOver = TRUE              ' ESC
+ENDSUB
+
+ON "KEYDOWN" CALL OnKeyDown
+
+' ============================================================
+' == LOGIC SUBROUTINES
+' ============================================================
+
+SUB SpawnPiece()
+    t = INT(RND(1) * 7)
+    PieceX = 3
+    PieceY = 0
+    
+    ' Define Shapes as 4x4 Matrices
+    SWITCH t
+        CASE 0: ' I
+            CurrentPiece = [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]]
+            PieceColor = 11 ' Cyan
+        CASE 1: ' J
+            CurrentPiece = [[1,0,0,0], [1,1,1,0], [0,0,0,0], [0,0,0,0]]
+            PieceColor = 9  ' Blue
+        CASE 2: ' L
+            CurrentPiece = [[0,0,1,0], [1,1,1,0], [0,0,0,0], [0,0,0,0]]
+            PieceColor = 6  ' Orange/Brown
+        CASE 3: ' O
+            CurrentPiece = [[0,1,1,0], [0,1,1,0], [0,0,0,0], [0,0,0,0]]
+            PieceColor = 14 ' Yellow
+        CASE 4: ' S
+            CurrentPiece = [[0,1,1,0], [1,1,0,0], [0,0,0,0], [0,0,0,0]]
+            PieceColor = 10 ' Green
+        CASE 5: ' T
+            CurrentPiece = [[0,1,0,0], [1,1,1,0], [0,0,0,0], [0,0,0,0]]
+            PieceColor = 13 ' Magenta
+        CASE 6: ' Z
+            CurrentPiece = [[1,1,0,0], [0,1,1,0], [0,0,0,0], [0,0,0,0]]
+            PieceColor = 12 ' Red
+    ENDSWITCH
+ENDSUB
+
+FUNC CheckCollision(pMatrix, px, py)
+    FOR r = 0 TO 3
+        FOR c = 0 TO 3
+            IF pMatrix[r, c] <> 0 THEN
+                boardR = py + r
+                boardC = px + c
+                
+                ' Check Boundaries
+                IF boardC < 0 OR boardC >= COLS OR boardR >= ROWS THEN RETURN TRUE
+                
+                ' Check Board (only if row is non-negative)
+                IF boardR >= 0 THEN
+                    IF Board[boardR, boardC] <> EMPTY THEN RETURN TRUE
+                ENDIF
+            ENDIF
+        NEXT c
+    NEXT r
+    RETURN FALSE
+ENDFUNC
+
+SUB LockPiece()
+    FOR r = 0 TO 3
+        FOR c = 0 TO 3
+            IF CurrentPiece[r, c] <> 0 THEN
+                realR = PieceY + r
+                realC = PieceX + c
+                IF realR >= 0 AND realR < ROWS AND realC >= 0 AND realC < COLS THEN
+                    Board[realR, realC] = PieceColor
+                ENDIF
+            ENDIF
+        NEXT c
+    NEXT r
+ENDSUB
+
+SUB CheckLines()
+    LinesInTurn = 0
+    FOR r = 0 TO ROWS - 1
+        ' Vectorized check: Count non-empty cells in row
+        ' We slice the row (conceptually)
+        RowFilled = TRUE
+        FOR c = 0 TO COLS - 1
+            IF Board[r, c] = EMPTY THEN 
+                RowFilled = FALSE
+                EXITFOR 
+            ENDIF
+        NEXT c
+        
+        IF RowFilled THEN
+            LinesInTurn = LinesInTurn + 1
+            ' Move everything down
+            FOR downR = r TO 1 STEP -1
+                FOR k = 0 TO COLS - 1
+                    Board[downR, k] = Board[downR - 1, k]
+                NEXT k
+            NEXT downR
+            ' Clear top row
+            FOR k = 0 TO COLS - 1
+                Board[0, k] = EMPTY
+            NEXT k
+        ENDIF
+    NEXT r
+    
+    IF LinesInTurn > 0 THEN
+        LinesCleared = LinesCleared + LinesInTurn
+        Score = Score + (LinesInTurn * 100 * LinesInTurn)
+        Level = 1 + INT(LinesCleared / 10)
+        Speed = sMAX([1, 20 - Level])
+    ENDIF
+ENDSUB
+
+FUNC RotateMatrix(mat)
+    RETURN REVERSE(TRANSPOSE(mat))
+ENDFUNC
+
+' ============================================================
+' == RENDERING
+' ============================================================
+
+SUB DrawBorder()
+    COLOR 7, 0
+    FOR y = 1 TO ROWS
+        LOCATE y + 1, 10 : PRINT "│"
+        LOCATE y + 1, 10 + (COLS * 2) + 1 : PRINT "│"
+    NEXT y
+    LOCATE ROWS + 2, 10 : PRINT "└" + COLS * 2 * "─" + "┘"
+    
+    LOCATE 2, 35 : PRINT "SCORE: " 
+    LOCATE 4, 35 : PRINT "LEVEL: "
+    LOCATE 6, 35 : PRINT "LINES: "
+ENDSUB
+
+SUB DrawBoard()
+    ' Draw Static Board
+    FOR r = 0 TO ROWS - 1
+        LOCATE r + 2, 11
+        FOR c = 0 TO COLS - 1
+            val = Board[r, c]
+            IF val = EMPTY THEN
+                COLOR 0, 0 : PRINT " .";
+            ELSE
+                COLOR val, 0 : PRINT "[]";
+            ENDIF
+        NEXT c
+    NEXT r
+    
+    ' Draw Active Piece (Overlay)
+    IF GameOver = FALSE THEN
+        FOR r = 0 TO 3
+            FOR c = 0 TO 3
+                IF CurrentPiece[r, c] <> 0 THEN
+                    drawY = PieceY + r
+                    drawX = PieceX + c
+                    IF drawY >= 0 AND drawY < ROWS AND drawX >= 0 AND drawX < COLS THEN
+                        LOCATE drawY + 2, 11 + (drawX * 2)
+                        COLOR PieceColor, 0 : PRINT "[]";
+                    ENDIF
+                ENDIF
+            NEXT c
+        NEXT r
+    ENDIF
+    
+    ' Draw UI
+    COLOR 15, 0
+    LOCATE 2, 42 : PRINT Score
+    LOCATE 4, 42 : PRINT Level
+    LOCATE 6, 42 : PRINT LinesCleared
+ENDSUB
+
+FUNC sMAX(arr)
+    m = arr[0]
+    IF arr[1] > m THEN m = arr[1]
+    RETURN m
+ENDFUNC
+
+' --- INITIALIZATION ---
+RND(-1.0)
+CLS
+CURSOR FALSE
+DrawBorder
+
+
+' Spawn first piece
+SpawnPiece
+
+' ============================================================
+' == MAIN GAME LOOP
+' ============================================================
+DO
+    ' --- 1. Handle Input (Movement) ---
+    IF ActionMove <> 0 THEN
+        IF NOT CheckCollision(CurrentPiece, PieceX + ActionMove, PieceY) THEN
+            PieceX = PieceX + ActionMove
+            DrawBoard ' Redraw to show movement immediately
+        ENDIF
+        ActionMove = 0
+    ENDIF
+
+    ' --- 2. Handle Input (Rotation) ---
+    IF ActionRotate <> 0 THEN
+        RotatedPiece = RotateMatrix(CurrentPiece)
+        IF NOT CheckCollision(RotatedPiece, PieceX, PieceY) THEN
+            CurrentPiece = RotatedPiece
+            DrawBoard
+        ELSE
+            ' Wall kick: Try moving left/right if rotation fails
+            IF NOT CheckCollision(RotatedPiece, PieceX - 1, PieceY) THEN
+                PieceX = PieceX - 1
+                CurrentPiece = RotatedPiece
+                DrawBoard
+            ELSEIF NOT CheckCollision(RotatedPiece, PieceX + 1, PieceY) THEN
+                PieceX = PieceX + 1
+                CurrentPiece = RotatedPiece
+                DrawBoard
+            ENDIF
+        ENDIF
+        ActionRotate = 0
+    ENDIF
+
+    ' --- 3. Handle Gravity (Soft Drop or Auto Drop) ---
+    DropNow = FALSE
+    TickCounter = TickCounter + 1
+    
+    IF ActionDrop = 1 THEN 
+        DropNow = TRUE
+        ActionDrop = 0 ' Reset flag
+        Score = Score + 1 ' Bonus for soft drop
+    ELSEIF TickCounter >= Speed THEN
+        DropNow = TRUE
+        TickCounter = 0
+    ENDIF
+
+    IF DropNow = 1 THEN
+        IF NOT CheckCollision(CurrentPiece, PieceX, PieceY + 1) THEN
+            PieceY = PieceY + 1
+            DrawBoard
+        ELSE
+            ' Lock Piece
+            LockPiece
+            CheckLines
+            SpawnPiece
+            IF CheckCollision(CurrentPiece, PieceX, PieceY) THEN
+                GameOver = TRUE
+            ENDIF
+            DrawBoard
+        ENDIF
+    ENDIF
+
+    SLEEP 30 ' Game Speed
+LOOP UNTIL GameOver
+
+' --- GAME OVER ---
+LOCATE 10, 5
+COLOR 15, 4
+PRINT " GAME OVER "
+LOCATE 12, 4
+PRINT " Score: " + Score
+COLOR 7, 0
+CURSOR TRUE
+END

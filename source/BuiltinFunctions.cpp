@@ -60,6 +60,10 @@
 #include <emscripten.h>
 #include <format>
 #include <deque>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <sys/ioctl.h>
 #else
 #include <codecvt> // for std::wstring_convert
 #include <locale>  // for std::locale
@@ -74,6 +78,7 @@
 #ifdef USE_SERIAL
 #include <sys/ioctl.h>
 #include <errno.h>
+#include <fcntl.h>
 #endif
 #endif
 
@@ -2096,8 +2101,15 @@ BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
     // Case 2: Input is a scalar. Return a single random number.
     else {
-        // Classic BASIC RND(1) behavior
-        return static_cast<double>(rand()) / (RAND_MAX + 1.0);
+        // RND(-1.0) calls srand with seed now
+        if (to_double(input) == -1.0) {
+            srand(time(NULL));
+        }
+        else {
+            // Classic BASIC RND(1) behavior
+            return static_cast<double>(rand()) / (RAND_MAX + 1.0);
+        }
+        
     }
 }
 

@@ -15,7 +15,7 @@ FRAMES = 200
 ' --- Initialize Graphics ---
 PRINT "Initializing graphics screen..."
 SCREEN SCREEN_W, SCREEN_H, "Bouncing Rainbow Lines"
-CLS 0, 0, 0 ' Clear screen to black
+CLS 0,0,0
 
 ' --- Initialize Position & Velocity Matrices for ALL possible lines ---
 PRINT "Generating initial positions and velocities..."

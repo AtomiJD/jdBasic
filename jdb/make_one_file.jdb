@@ -3,7 +3,9 @@
 PRINT "Starting to combine all .jdb files..."
 
 ' 1. Get a list of all files with the .jdb extension
-jdb_files$ = DIR$("*.jdb")
+'jdb_files$ = DIR$("*.jdb")
+
+jdb_files$ = ["3body.jdb", "3body_graphic.jdb", "3body_vector.jdb", "3body_vector_graphics.jdb", "acct.jdb", "adamai.jdb", "adodb_access.jdb", "andor_test.jdb", "apl_func.jdb", "apl_prime.jdb", "arrtest.jdb", "artai.jdb", "async_test.jdb", "bin_test.jdb", "bitwiseop_test.jdb", "BT.jdb", "chart_graphic.jdb", "chatbot.jdb", "chess.jdb", "closure_demo.jdb", "closure_test.jdb", "cnn_test.jdb", "codex_test.jdb", "comtest.jdb", "cons.jdb", "continue.jdb", "convmdtoword.jdb", "copypaste.jdb", "custom_op_test.jdb", "data_analysis.jdb", "datediif_test.jdb", "destruct_sample.jdb", "dir_str_test.jdb", "dolooptest.jdb", "eigen.jdb", "elseif_test.jdb", "end_test.jdb", "enum_test.jdb", "equi.jdb", "error_test.jdb", "eval_test.jdb", "event_test.jdb", "execpipe.jdb", "exec_wf.jdb", "exmath.jdb", "fac_test.jdb", "fem_test.jdb", "fib_test.jdb", "fileio.jdb", "filtermap.jdb", "format_test.jdb", "fortest.jdb", "for_test.jdb", "frmv_test.jdb", "func_string.jdb", "galaxy.jdb", "game_of_life.jdb", "gol_graph.jdb", "guidemo.jdb", "hash.jdb", "http_test.jdb", "httpserver.jdb", "if_test.jdb", "lambda.jdb", "localized.jdb", "log_test.jdb", "loli.jdb", "loop.jdb", "mandelbrot.jdb", "mandelbrot_interactive.jdb", "mandelbrot_vectorized.jdb", "map_test.jdb", "math_import.jdb", "matlab.jdb", "matrix_v2.jdb", "md.jdb", "mine_joy.jdb", "minicalc.jdb", "MLAB.jdb", "mlab2_test.jdb", "moo.jdb", "mouse_test.jdb", "os_test.jdb", "outer_test.jdb", "PLOTTER.jdb", "reader_test.jdb", "reduce_test.jdb", "regex_test.jdb", "seq.jdb", "seq24.jdb", "snake_02.jdb", "sound_test.jdb", "invader_20.jdb", "sprite_test.jdb", "sqlite_test.jdb", "sqlite_test.jdb", "stock_chart.jdb", "switch_test.jdb", "test.jdb", "trycatch_test.jdb", "turtle_frac.jdb", "wflib.jdb", "exec_wf.jdb", "wf_03.jdb", "writer.jdb"]
 
 ' Check if any files were found
 IF LEN(jdb_files$) = 0 THEN
@@ -20,10 +22,17 @@ file_separator$ = CHR$(13) + CHR$(10) + "' --- End of File ---" + CHR$(13) + CHR
 ' 3. Loop through the list of files
 FOR i = 0 TO LEN(jdb_files$) - 1
     current_file$ = jdb_files$[i]
-    PRINT "Reading: "; current_file$
+
+    if len(dir$(current_file$))[0] > 0 THEN
+        PRINT "Reading: "; current_file$
+    else
+        PRINT "NOT FOUND: " ; current_file$
+        CONTINUEFOR
+    ENDIF
     
     ' Read the entire content of the current file
     file_content$ = TXTREADER$(current_file$)
+    file_content$ = "Filename: " + current_file$ + vbnewline + file_content$
     
     ' Append the content to our master string, followed by a separator
     combined_code$ = combined_code$ + file_content$ + file_separator$

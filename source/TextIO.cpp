@@ -18,13 +18,10 @@
 #include <errno.h>
 #endif
 
-// In TextIO.cpp
-
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
 #include <stdio.h>
 #include <stdlib.h>
-
 
 EM_JS(void, _flushstdout, (), {
     window._STDIO._flushstdout();

@@ -151,7 +151,7 @@ void main_loop_tick() {
         return;
     }
 
-    //interpreter.process_system_events();
+    interpreter.process_system_events();
 
     interpreter.yielded_for_frame = false;
     // --- High-Speed Execution Batch ---
@@ -282,6 +282,8 @@ int main(int argc, char* argv[]) {
             if (i + 1 < argc && isdigit(argv[i + 1][0])) {
                 dap_port = std::stoi(argv[++i]);
             }
+        } else if (arg == "--verbose") {
+            interpreter.verbose_mode = true;
         }
         else {
             // Capture the first non-flag argument as a potential filename
@@ -340,8 +342,8 @@ int main(int argc, char* argv[]) {
     else {
 
         // Check if a command-line argument (a filename) was provided
-        if (argc > 1) {
-            std::string filename = argv[1];
+        if ( interpreter.program_to_debug.length() > 0 ) {
+            std::string filename = interpreter.program_to_debug;
 
             // Use the new method to load the source file
             if (interpreter.loadSourceFromFile(filename)) {
@@ -351,13 +353,15 @@ int main(int argc, char* argv[]) {
                 interpreter.init_system();
                 interpreter.init_basic();
                 Commands::do_run(interpreter);
-
-                TextIO::print("\n--- ENDED (Press any key to exit) ---"); TextIO::nl();
-#if defined(_WIN32)      
-        _getch();
+                if (interpreter.verbose_mode == false)
+                    TextIO::print("\n--- ENDED (Press any key to exit) ---"); TextIO::nl();
+#if defined(_WIN32) 
+        if (interpreter.verbose_mode == false)
+            _getch();
 #elif defined(__EMSCRIPTEN__)        
 #else
-                getch();
+        if (interpreter.verbose_mode == false
+            getch();
 #endif     
             }
             // Note: If do_run encounters a runtime error, it is handled internally

@@ -1,0 +1,78 @@
+' ==========================================================
+' == MATRIX.JDB - Digital Rain
+' ==========================================================
+
+' --- Config ---
+COLS = 80
+ROWS = 25
+
+' --- Arrays ---
+' Y-positions of the "drops"
+DIM Drops[COLS] 
+' Length of each trail
+DIM Lengths[COLS]
+' Speed of each drop (counter)
+DIM Speeds[COLS]
+
+' --- Init ---
+CLS
+CURSOR FALSE
+
+' Initialize drops randomly off-screen
+FOR i = 0 TO COLS - 1
+    Drops[i] = -1 * INT(RND(1) * 20)
+    Lengths[i] = INT(RND(1) * 15) + 5
+    Speeds[i] = 0
+NEXT i
+
+' --- Main Loop ---
+DO
+    IF INKEY$() <> "" THEN EXITDO
+    
+    FOR c = 0 TO COLS - 1
+        ' Only update some columns per frame for varied speed effect
+        ' Or use a counter. Here we update every frame but use logic.
+        
+        y = Drops[c]
+        
+        ' 1. Draw the "Head" (White/Bright)
+        IF y >= 0 AND y < ROWS THEN
+            LOCATE y + 1, c + 1
+            COLOR 15, 0 ' Bright White
+            ' Print random char (Kata-kana style if font supports, otherwise obscure ASCII)
+            PRINT CHR$(INT(RND(1) * 50) + 33);
+        ENDIF
+        
+        ' 2. Draw the "Tail" (Green)
+        PrevY = y - 1
+        IF PrevY >= 0 AND PrevY < ROWS THEN
+            LOCATE PrevY + 1, c + 1
+            COLOR 10, 0 ' Bright Green
+            PRINT CHR$(INT(RND(1) * 50) + 33);
+        ENDIF
+
+        ' 3. Erase the end of the trail
+        EraseY = y - Lengths[c]
+        IF EraseY >= 0 AND EraseY < ROWS THEN
+            LOCATE EraseY + 1, c + 1
+            PRINT " ";
+        ENDIF
+        
+        ' 4. Move Drop
+        Drops[c] = Drops[c] + 1
+        
+        ' 5. Reset if off screen
+        IF (y - Lengths[c]) > ROWS THEN
+            Drops[c] = 0
+            Lengths[c] = INT(RND(1) * 15) + 5
+            ' Randomize start time slightly to break patterns
+            IF RND(1) > 0.8 THEN Drops[c] = -1 * INT(RND(1) * 10)
+        ENDIF
+    NEXT c
+    
+    SLEEP 30 ' Control global speed
+LOOP
+
+CURSOR TRUE
+COLOR 7, 0
+CLS

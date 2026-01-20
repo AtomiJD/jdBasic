@@ -136,5 +136,8 @@ private:
     bool pen_down = true;
     std::vector<TurtleLine> turtle_path;
     SDL_Color pen_color = { 255, 255, 255, 255 }; // Default to white
+
+    // ImGUI States
+    bool m_imgui_frame_active = false;
 };
 #endif

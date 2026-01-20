@@ -1283,7 +1283,26 @@ void Commands::do_let(NeReLaBasic& vm) {
             }
             BasicValue value_to_assign = vm.evaluate_expression();
             if (Error::get() != 0) return;
-            set_variable(vm, name, value_to_assign);
+
+            // Check COM
+            BasicValue& current_var = get_variable(vm, name);
+
+#ifdef JDCOM
+            if (std::holds_alternative<ComObject>(current_var)) {
+                // If assigning 0 (NULL) to a COM Object, create an empty COM Object.
+                // This ensures the IDispatchPtr is released properly while keeping the type information.
+                if (std::holds_alternative<double>(value_to_assign) && std::abs(std::get<double>(value_to_assign)) < 1e-9) {
+                    value_to_assign = ComObject{ nullptr };
+                }
+                else if (std::holds_alternative<long long>(value_to_assign) && std::get<long long>(value_to_assign) == 0) {
+                    value_to_assign = ComObject{ nullptr };
+                }
+            }
+#endif
+
+            //set_variable(vm, name, value_to_assign);
+            current_var = value_to_assign;
+
             // REACT IMPLEMENTATION: Trigger propagation if the base variable is REACT.
             if (vm.react_variables.count(name)) {
                 // For scalar values, we can check if the value actually changed to avoid needless updates.
@@ -2669,7 +2688,8 @@ void Commands::do_compile(NeReLaBasic& vm) {
     vm.compiled_modules.clear();
 
     // Compile into the main program buffer
-    TextIO::print("Compiling...\n");
+    if (!vm.verbose_mode)
+        TextIO::print("Compiling...\n");
     if (vm.compiler->tokenize_program(vm,vm.program_p_code, source_to_compile) == 0) {
         if (!vm.compiler->if_stack.empty()) {
             // There are unclosed IF blocks. Get the line number of the last one.
@@ -2677,7 +2697,8 @@ void Commands::do_compile(NeReLaBasic& vm) {
             Error::set(4, error_line); // New Error: Missing ENDIF
         }
         else {
-            TextIO::print("OK. Program compiled to " + std::to_string(vm.program_p_code.size()) + " bytes.\n");
+            if (!vm.verbose_mode)
+                TextIO::print("OK. Program compiled to " + std::to_string(vm.program_p_code.size()) + " bytes.\n");
         }
     }
     else {
@@ -2886,8 +2907,8 @@ void Commands::do_run(NeReLaBasic& vm) {
 
 
     vm.active_function_table = &vm.main_function_table;
-
-    TextIO::print("Running...\n");
+    if (!vm.verbose_mode)
+        TextIO::print("Running...\n");
     // Execute from the main program buffer
 #ifndef __EMSCRIPTEN__    
     vm.execute_main_program(vm.program_p_code, false);

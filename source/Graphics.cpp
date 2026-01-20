@@ -924,17 +924,22 @@ void Graphics::shutdown_imgui() {
 }
 
 void Graphics::start_imgui_frame() {
+    if (m_imgui_frame_active) {
+        return;
+    }
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize.x /= render_scale;
     io.DisplaySize.y /= render_scale;
+    m_imgui_frame_active = true;
 }
 
 void Graphics::render_imgui() {
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
+    m_imgui_frame_active = false;
 }
 
 void Graphics::process_imgui_event(const SDL_Event* event) {
