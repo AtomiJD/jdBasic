@@ -35,8 +35,8 @@ SUB OnKeyDown(data)
     ' Arrow Keys / WASD
     IF code = 276 OR code = 97 THEN ActionMove = -1 ' Left / a 
     IF code = 275 OR code = 100 THEN ActionMove = 1  ' Right / d
-    IF code = 119 THEN ActionRotate = 1 ' w (Rotate)
-    IF code = 115 THEN ActionDrop = 1   ' s (Soft Drop)
+    IF code = 273 OR code = 119 THEN ActionRotate = 1 ' w (Rotate)
+    IF code = 274 OR code = 115 THEN ActionDrop = 1   ' s (Soft Drop)
     IF code = 27 THEN GameOver = TRUE              ' ESC
 ENDSUB
 

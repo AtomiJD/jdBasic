@@ -106,7 +106,7 @@ void run_repl_line(const char* cmd) {
             interpreter.active_function_table = &interpreter.main_function_table;
             interpreter.runtime_current_line = (*interpreter.active_p_code)[interpreter.pcode] | ((*interpreter.active_p_code)[interpreter.pcode + 1] << 8);
             interpreter.pcode += 2;
-
+            emscripten_run_script("window.set_program_running(true);");
             ems_state = VmState::RUNNING;
         }
         return; // Don't print a prompt, the loop will start
@@ -182,7 +182,11 @@ void main_loop_tick() {
     // --- Post-Batch Cleanup ---
     // This code runs after the batch is finished (or was broken by an END command).
     if (interpreter.program_ended) {
+        if (Error::get() != 0) {
+            Error::print();
+        }
         ems_state = VmState::IDLE;
+        emscripten_run_script("window.set_program_running(false);");
         interpreter.program_ended = false;
 #ifdef SDL3
         interpreter.graphics_system.shutdown();

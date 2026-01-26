@@ -491,6 +491,8 @@ void NeReLaBasic::process_system_events() {
             int extended_code = getch();
 #endif           
             switch (extended_code) {
+            case 72: scancode = 273; break; // Up Arrow
+            case 80: scancode = 274; break; // Down Arrow
             case 75: scancode = 276; break; // Left Arrow
             case 77: scancode = 275; break; // Right Arrow
             case 71: scancode = 280; break; // Home
