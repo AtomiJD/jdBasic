@@ -114,8 +114,6 @@ ENDSUB
 SUB CheckLines()
     LinesInTurn = 0
     FOR r = 0 TO ROWS - 1
-        ' Vectorized check: Count non-empty cells in row
-        ' We slice the row (conceptually)
         RowFilled = TRUE
         FOR c = 0 TO COLS - 1
             IF Board[r, c] = EMPTY THEN 
@@ -158,10 +156,10 @@ ENDFUNC
 SUB DrawBorder()
     COLOR 7, 0
     FOR y = 1 TO ROWS
-        LOCATE y + 1, 10 : PRINT "│"
-        LOCATE y + 1, 10 + (COLS * 2) + 1 : PRINT "│"
+        LOCATE y + 1, 10 : PRINT "|"
+        LOCATE y + 1, 10 + (COLS * 2) + 1 : PRINT "|"
     NEXT y
-    LOCATE ROWS + 2, 10 : PRINT "└" + COLS * 2 * "─" + "┘"
+    LOCATE ROWS + 2, 10 : PRINT "+" + COLS * 2 * "-" + "+"
     
     LOCATE 2, 35 : PRINT "SCORE: " 
     LOCATE 4, 35 : PRINT "LEVEL: "
@@ -216,7 +214,6 @@ RND(-1.0)
 CLS
 CURSOR FALSE
 DrawBorder
-
 
 ' Spawn first piece
 SpawnPiece

@@ -110,14 +110,14 @@ namespace {
                     // --- a) Get Batch (Call back to jdBasic) ---
                     std::vector<BasicValue> get_batch_args = { train_data_, (double)i, (double)batch_size_ };
                     // FIX: Call the function using the stored pointer
-                    BasicValue batch_map = (vm_->*g_exec_sync_func)(get_batch_func_, get_batch_args);
+                    BasicValue batch_map = (vm_->*g_exec_sync_func)(get_batch_func_, get_batch_args, nullptr);
                     // FIX: Check the VM's public error flag
                     if (vm_->jump_to_catch_pending) return;
 
                     // --- b) Forward Pass (Call back to jdBasic) ---
                     const auto& batch_data = std::get<std::shared_ptr<Map>>(batch_map);
                     std::vector<BasicValue> forward_args = { model_map_, batch_data->data.at("input_ids"), batch_data->data.at("attention_mask") };
-                    BasicValue logits_tensor = (vm_->*g_exec_sync_func)(model_forward_func_, forward_args);
+                    BasicValue logits_tensor = (vm_->*g_exec_sync_func)(model_forward_func_, forward_args, nullptr);
                     if (vm_->jump_to_catch_pending) return;
 
                     // --- c) Zero Gradients (Call C++ function) ---
@@ -128,7 +128,7 @@ namespace {
 
                     // --- d) Calculate Loss (Call back to jdBasic) ---
                     std::vector<BasicValue> loss_args = { logits_tensor, batch_data->data.at("labels") };
-                    BasicValue loss_tensor = (vm_->*g_exec_sync_func)(loss_func_, loss_args);
+                    BasicValue loss_tensor = (vm_->*g_exec_sync_func)(loss_func_, loss_args, nullptr);
                     if (vm_->jump_to_catch_pending) return;
 
                     // --- e) Backward Pass (Call C++ function) ---
@@ -159,7 +159,7 @@ namespace {
 
                 // --- h) Evaluate (Call back to jdBasic) ---
                 std::vector<BasicValue> eval_args = { model_map_, val_data_ };
-                BasicValue accuracy_val = (vm_->*g_exec_sync_func)(eval_func_, eval_args);
+                BasicValue accuracy_val = (vm_->*g_exec_sync_func)(eval_func_, eval_args, nullptr);
                 if (vm_->jump_to_catch_pending) return;
 
                 std::cout << "Epoch " << (epoch + 1) << " Validation Accuracy: " << (to_double(accuracy_val) * 100.0) << "%" << std::endl;
