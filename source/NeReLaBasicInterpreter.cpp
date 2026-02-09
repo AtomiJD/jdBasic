@@ -263,6 +263,11 @@ int main(int argc, char* argv[]) {
 #endif
 
 #ifdef _WIN32
+    DWORD dwMode;
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    GetConsoleMode(hOut, &dwMode);
+    dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    SetConsoleMode(hOut, dwMode);
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #else

@@ -291,10 +291,15 @@ std::string NetworkManager::httpPut(const std::string& url, const std::string& b
 // This function is called by the httplib server thread.
 // It creates an event and pushes it onto the VM's queue.
 void NetworkManager::queue_request_for_vm(const httplib::Request& req, httplib::Response& res) {
-    std::string handler_function_name = getRouteHandler(req.method, req.path);
+    std::string lookupPath = req.path;
+    if (lookupPath.empty()) lookupPath = "/";
+    //std::string handler_function_name = getRouteHandler(req.method, req.path);
+    std::string handler_function_name = getRouteHandler(req.method, lookupPath);
     if (handler_function_name.empty()) {
+        std::cout << "HTTP Error: No handler for [" << req.method << "] " << lookupPath << std::endl;
         res.status = 404;
-        res.set_content("Not Found: No handler registered for " + req.path, "text/plain");
+        //res.set_content("Not Found: No handler registered for " + req.path, "text/plain");
+        res.set_content("Not Found: No handler registered for " + lookupPath, "text/plain");
         return;
     }
 
@@ -315,7 +320,7 @@ void NetworkManager::queue_request_for_vm(const httplib::Request& req, httplib::
     if (!event->cv->wait_for(lock, std::chrono::seconds(10), [&event] { return event->handled; })) {
         // If the handler in BASIC takes too long, send a timeout response
         res.status = 504; // Gateway Timeout
-        res.set_content("Request timed out in BASIC script.", "text/plain");
+        res.set_content("Request timed out in jdBasic script.", "text/plain");
         return;
     }
 
@@ -363,6 +368,7 @@ void NetworkManager::stopServer() {
 
 void NetworkManager::registerServerRoute(const std::string& method, const std::string& path, const std::string& function_name) {
     std::lock_guard<std::mutex> lock(route_mutex);
+    std::cout << "Registering: " << method << " " << path << " -> " << function_name << std::endl;
     if (method == "GET") {
         get_routes[path] = function_name;
     }

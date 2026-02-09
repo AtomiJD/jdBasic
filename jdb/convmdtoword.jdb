@@ -19,8 +19,8 @@ useHeaderNewline = FLASE
 ' actual folder but word will write to your documents folder
 ' ex. CurrentDir$ = "c:\temp" will read AND write to c:\temp
 CurrentDir$ = "."
-INPUT_FILE$ = "intern\Das+5Buch.md"
-OUTPUT_FILE$ = "Das+5Buch.docx"
+INPUT_FILE$ = "input.md"
+OUTPUT_FILE$ = "output.docx"
 
 args = OS.ARGS()
 'args[0] is always the program file name
