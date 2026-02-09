@@ -275,12 +275,9 @@
     <Image Include="jdBasic.ico" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="resources.rc" />
+    <ResourceCompile Include="resources\resources.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="help.txt">
-      <DeploymentContent>true</DeploymentContent>
-    </Text>
     <Text Include="readme.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

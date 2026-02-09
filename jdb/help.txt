@@ -142,6 +142,18 @@ Description: Sets the text colors for the console.
 Syntax: COMPILE
 Description: Compiles the source code currently in memory into bytecode.
 
+[CONTINUEDO]
+Syntax: CONTINUEDO
+Description: Skips the rest of the current DO loop iteration and jumps to the condition check.
+
+[CONTINUEFOR]
+Syntax: CONTINUEFOR
+Description: Skips the rest of the current FOR loop iteration and jumps to the NEXT statement.
+
+[CONTINUELOOP]
+Syntax: CONTINUELOOP
+Description: Synonym for CONTINUEDO. Skips the rest of the current DO loop iteration.
+
 [CONVOLVE]
 Syntax: CONVOLVE(array, kernel, wrap_mode)
 Description: Performs a 2D convolution operation on an array with a given kernel.
@@ -744,6 +756,26 @@ Description: Parses a JSON string into a special JsonObject.
 Syntax: JSON.STRINGIFY$(map_or_array)
 Description: Converts a Map or Array into a JSON string representation.
 
+[JOY.AXIS]
+Syntax: JOY.AXIS(id, axis_index)
+Description: Returns the axis position value between -1.0 and 1.0.
+
+[JOY.BUTTON]
+Syntax: JOY.BUTTON(id, button_index)
+Description: Returns TRUE if the specified button is pressed.
+
+[JOY.COUNT]
+Syntax: JOY.COUNT()
+Description: Returns the number of connected joysticks.
+
+[JOY.HAT]
+Syntax: JOY.HAT(id, hat_index)
+Description: Returns the hat (D-Pad) state as a bitmask (1=Up, 2=Right, 4=Down, 8=Left).
+
+[JOY.NAME$]
+Syntax: JOY.NAME$(id)
+Description: Returns the name of the joystick at index id.
+
 [KILL]
 Syntax: KILL "filename"
 Description: Deletes a file from the disk.
@@ -936,6 +968,14 @@ Description: Executes an external command and captures its output.
 Syntax: OS.GETOS()
 Description: Returns a string identifying the operating system ("WINDOWS", "LINUX", "MACOS").
 
+[OS.HOSTNAME$]
+Syntax: OS.HOSTNAME$()
+Description: Returns the network hostname of the local machine.
+
+[OS.IP$]
+Syntax: OS.IP$()
+Description: Returns the primary local IPv4 address of the machine.
+
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.
@@ -1103,6 +1143,30 @@ Description: Sets the font and size for subsequent TEXT drawing commands.
 [SETLOCALE]
 Syntax: SETLOCALE("locale_string")
 Description: Sets the locale for number and date formatting (e.g., "en-US").
+
+[SERIAL.AVAILABLE]
+Syntax: SERIAL.AVAILABLE(handle)
+Description: Returns the number of bytes currently waiting in the input buffer.
+
+[SERIAL.CLOSE]
+Syntax: SERIAL.CLOSE(handle)
+Description: Closes an open serial port.
+
+[SERIAL.FLUSH]
+Syntax: SERIAL.FLUSH(handle)
+Description: Clears the input and output buffers.
+
+[SERIAL.OPEN]
+Syntax: SERIAL.OPEN(port$, baud_rate)
+Description: Opens a serial port (e.g., "COM3" on Windows, "/dev/ttyUSB0" on Linux) and returns a handle.
+
+[SERIAL.READ$]
+Syntax: SERIAL.READ$(handle, max_bytes)
+Description: Reads up to max_bytes from the port. Returns an empty string if no data is available (non-blocking).
+
+[SERIAL.WRITE]
+Syntax: SERIAL.WRITE(handle, data$)
+Description: Writes a string (or binary bytes) to the serial port.
 
 [SFX.LOAD]
 Syntax: SFX.LOAD(sound_id, "filepath.wav")
