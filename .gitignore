@@ -370,6 +370,7 @@ doc/google*.*
 doc/*_old.*
 fluppi/
 jdb/_*.*
+jdBasic/x64
 libs/tf
 libs/libtorch
 jdb/fonts
@@ -379,4 +380,3 @@ plugins/numerics/eigen-3.4.0
 plugins/numerics/x65
 plugins/pytorchfunc
 .vscode
-

@@ -29,7 +29,7 @@ Bring the power of spreadsheet-style reactivity to your code.
 * **Data Analysis & Reduction**: Instantly aggregate arrays with `SUM`, `PRODUCT`, `MIN`, `MAX`, and perform cumulative operations with `SCAN`.
 * **Data Pipelines**: Chain functions using the Pipe Operator (`|>`) and Lambdas for elegant data transformation.
 
-  ![One liner Biorythm](BioRythmOneLine.png)
+  ![One liner Biorythm](https://github.com/AtomiJD/jdBasic/blob/master/resources/BioRythmOneLine.png)
 
 ### 🔌 Hardware & System I/O
 
