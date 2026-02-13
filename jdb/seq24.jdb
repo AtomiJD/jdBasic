@@ -120,6 +120,7 @@ dj.TRACK(4).USE("SQUARE") _
   .GAIN(0.8)
 
 ' 6. Performance Loop (Filter Sweep)
+PRINT ">>> CUTOFF..."
 DIM cutoff AS INTEGER
 FOR cutoff = 400 TO 4000 STEP 50
     dj.TRACK(3).FILTER(cutoff)

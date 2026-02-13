@@ -40,41 +40,44 @@ PRINT "Executing..."
 ' --- 2. Execute the Query ---
 ' Call our helper function and get the result
 ExecuteSQL sql_query$
+Display
 
-' --- 3. Display the Result ---
-PRINT "----------------------------------------"
+SUB Display()
+    ' --- 3. Display the Result ---
+    PRINT "----------------------------------------"
 
-SWITCH TYPEOF(data)
-    CASE "ARRAY"
-        ' This was a SELECT query that returned data
-        PRINT "--- Query Successful (SELECT) ---"
-        IF LEN(data) = 0 THEN
-            PRINT "(Query returned 0 rows)"
-        ELSE
-            PRINT "Found " + LEN(data) + " rows:"
-            ' FRMV$ is the best way to print an array of maps
-            PRINT FRMV$(data)
-        ENDIF
-        
-    CASE "MAP"
-        ' This was an action query (INSERT/UPDATE) or an error
-        IF MAP.EXISTS(data, "status") AND data{"status"} = "OK" THEN
-            PRINT "--- Query Successful (Action) ---"
-            PRINT "Records Affected: " + result{"records_affected"}
-        ELSEIF MAP.EXISTS(data, "status") AND data{"status"} = "Error"
-            PRINT "--- Query Failed ---"
-            PRINT "Line: " + data{"line"}
-            PRINT "Error: " + data{"message"}
-        ELSE
-            PRINT "--- Unknown Result ---"
-            PRINT data
-        ENDIF
-        
-    DEFAULT
-        PRINT "--- Unknown Error ---"
-        PRINT "Received unexpected result type: " + TYPEOF(data)
-ENDSWITCH
-PRINT "----------------------------------------"
+    SWITCH TYPEOF(data)
+        CASE "ARRAY"
+            ' This was a SELECT query that returned data
+            PRINT "--- Query Successful (SELECT) ---"
+            IF LEN(data) = 0 THEN
+                PRINT "(Query returned 0 rows)"
+            ELSE
+                PRINT "Found " + LEN(data) + " rows:"
+                ' FRMV$ is the best way to print an array of maps
+                PRINT FRMV$(data)
+            ENDIF
+            
+        CASE "MAP"
+            ' This was an action query (INSERT/UPDATE) or an error
+            IF MAP.EXISTS(data, "status") AND data{"status"} = "OK" THEN
+                PRINT "--- Query Successful (Action) ---"
+                PRINT "Records Affected: " + result{"records_affected"}
+            ELSEIF MAP.EXISTS(data, "status") AND data{"status"} = "Error"
+                PRINT "--- Query Failed ---"
+                PRINT "Line: " + data{"line"}
+                PRINT "Error: " + data{"message"}
+            ELSE
+                PRINT "--- Unknown Result ---"
+                PRINT data
+            ENDIF
+            
+        DEFAULT
+            PRINT "--- Unknown Error ---"
+            PRINT "Received unexpected result type: " + TYPEOF(data)
+    ENDSWITCH
+    PRINT "----------------------------------------"
+ENDSUB
 
 SUB ExecuteSQL(sql_query$)
     DIM conn 
@@ -87,7 +90,7 @@ SUB ExecuteSQL(sql_query$)
         conn_str$ = "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" + db_path$
         
         ' 2. Open the connection
-        conn.Open(conn_str$)
+        conn.Open conn_str$
 
         ' 3. Check if it's a SELECT or an Action query
         IF UCASE$(LEFT$(TRIM$(sql_query$), 6)) = "SELECT" THEN
@@ -97,9 +100,10 @@ SUB ExecuteSQL(sql_query$)
 
             IF rs.EOF THEN
                 ' Valid query, but no results
-                RETURN []
+                data = []
+                EXITSUB
             ENDIF
-
+            fields = []
             ' Get field names (headers) from the recordset
             FOR i = 0 TO rs.Fields.Count - 1
                 fields = APPEND(fields, rs.Fields(i).Name)
@@ -137,7 +141,9 @@ SUB ExecuteSQL(sql_query$)
         error_map{"status"} = "Error"
         error_map{"line"} = ERL
         error_map{"message"} = ERRMSG$
-        RETURN error_map
+        data = []
+        fields = []
+        PRINT error_map
         
     FINALLY
         ' This block *always* runs, ensuring we clean up COM objects

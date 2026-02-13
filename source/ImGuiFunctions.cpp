@@ -23,6 +23,7 @@ BasicValue gui_flag(NeReLaBasic & vm, const std::vector<BasicValue>&args) {
     if (name == "NO_TITLEBAR") return (double)ImGuiWindowFlags_NoTitleBar;
     if (name == "NO_MOVE") return (double)ImGuiWindowFlags_NoMove;
     if (name == "NO_SCROLLBAR") return (double)ImGuiWindowFlags_NoScrollbar;
+    if (name == "ALLWAYS_SCROLLBAR") return (double)ImGuiWindowFlags_AlwaysVerticalScrollbar;
     if (name == "NO_COLLAPSE") return (double)ImGuiWindowFlags_NoCollapse;
     if (name == "ALWAYS_AUTO_RESIZE") return (double)ImGuiWindowFlags_AlwaysAutoResize;
     if (name == "NO_SAVED_SETTINGS") return (double)ImGuiWindowFlags_NoSavedSettings;

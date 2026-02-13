@@ -46,10 +46,7 @@ struct DateTime {
     // Constructor from a time_point.
     DateTime(const std::chrono::system_clock::time_point& tp) : time_point(tp) {}
 
-
     bool operator==(const DateTime&) const = default;
-
-
 };
 
 #ifdef JDCOM
