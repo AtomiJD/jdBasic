@@ -82,7 +82,7 @@ DO
     COLOR 0, 7 ' Invert colors
     PRINT FORMAT$(" STATUS: ONLINE | IP: 192.168.X.X | UPTIME: {} | PRESS 'M' FOR MENU | 'Q' TO QUIT ", TIME$);
     ' Fill rest of line
-    PRINT SPACE$(SCREEN_W - 80);
+    PRINT (SCREEN_W - 80) * " ";
     COLOR C_MAIN, C_BACK
 
     ' --- Input Handling ---
@@ -176,7 +176,7 @@ SUB DrawGlobe(cx, cy, r, rot, satRot)
     COLOR C_DIM, C_BACK
     FOR i = -r TO r
         LOCATE cy + i, cx - (r*2)
-        PRINT SPACE$(r * 4);
+        PRINT (r * 4) * " ";
     NEXT
 
     ' Draw Globe Points
@@ -335,15 +335,14 @@ ENDSUB
 SUB DrawBox(x, y, w, h, title$)
     COLOR C_DIM, C_BACK
     ' Top
-    LOCATE y, x : PRINT "┌" + (STRING$(w-2, "─")) + "┐";
+    LOCATE y, x : PRINT "+" + (w-2) * "-" + "+";
     ' Sides
     FOR i = 1 TO h - 2
-        LOCATE y + i, x : PRINT "│";
-        LOCATE y + i, x + w - 1 : PRINT "│";
+        LOCATE y + i, x : PRINT "|";
+        LOCATE y + i, x + w - 1 : PRINT "|";
     NEXT
     ' Bottom
-    LOCATE y + h - 1, x : PRINT "└" + (STRING$(w-2, "─")) + "┘";
-    
+    LOCATE y + h - 1, x : PRINT "+" + (w-2) * "-" + "+";
     ' Title
     IF LEN(title$) > 0 THEN
         LOCATE y, x + 2 : COLOR C_HIGH, C_BACK : PRINT " " + title$ + " ";
@@ -357,21 +356,21 @@ SUB DrawMenu(x, y)
     ' Shadow
     FOR i = 1 TO h
         LOCATE y + i, x + 2
-        COLOR 8, 0 : PRINT SPACE$(w);
+        COLOR 8, 0 : PRINT w * " ";
     NEXT
     
     ' Box Background
     FOR i = 0 TO h - 1
         LOCATE y + i, x
-        COLOR 0, 7 : PRINT SPACE$(w);
+        COLOR 0, 7 : PRINT w * " ";
     NEXT
     
     ' Borders
-    LOCATE y, x : PRINT "╔" + (STRING$(w-2, "═")) + "╗";
-    LOCATE y + h - 1, x : PRINT "╚" + (STRING$(w-2, "═")) + "╝";
+    LOCATE y, x : PRINT "+" + (w-2) * "=" + "+";
+    LOCATE y + h - 1, x : PRINT "+" + (w-2) * "=" + "+";
     FOR i = 1 TO h - 2
-        LOCATE y + i, x : PRINT "║";
-        LOCATE y + i, x + w - 1 : PRINT "║";
+        LOCATE y + i, x : PRINT "|";
+        LOCATE y + i, x + w - 1 : PRINT "|";
     NEXT
     
     ' Items
@@ -379,16 +378,8 @@ SUB DrawMenu(x, y)
     LOCATE y + 4, x + 2 : PRINT "2. FLUSH DNS BUFFER";
     LOCATE y + 6, x + 2 : PRINT "3. OVERCLOCK CORES";
     LOCATE y + 8, x + 2 : PRINT "4. EXIT SYSTEM";
-    
     COLOR C_MAIN, C_BACK
 ENDSUB
 
-FUNC SPACE$(n)
-    RETURN STRING$(n, " ")
-ENDFUNC
 
-FUNC STRING$(n, c$)
-    s$ = ""
-    FOR i = 1 TO n : s$ = s$ + c$ : NEXT
-    RETURN s$
-ENDFUNC
+

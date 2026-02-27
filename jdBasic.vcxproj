@@ -102,6 +102,8 @@
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include;$(SolutionDir)libs\imgui;$(SolutionDir)libs\tensorflow\include</IncludePath>
     <ReferencePath>$(VC_ReferencesPath_x64);</ReferencePath>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT;$(SolutionDir)libs\SDL3_image-3.2.4\lib\x64;$(SolutionDir)libs\SDL3_ttf-3.2.2\lib\x64;</LibraryPath>
+    <EmbedManifest>false</EmbedManifest>
+    <GenerateManifest>false</GenerateManifest>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='jdBasicLib|x64'">
     <TargetName>jdBasic</TargetName>
@@ -113,6 +115,8 @@
     <TargetName>jdBasic</TargetName>
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)include;$(SolutionDir)libs\SDL3-3.2.16\include;$(SolutionDir)libs\cpp-httplib;C:\Program Files\OpenSSL-Win64\include;$(SolutionDir)\libs\SDL3_image-3.2.4\include;$(SolutionDir)libs\SDL3_ttf-3.2.2\include;$(SolutionDir)libs\imgui;$(SolutionDir)libs\tensorflow\include</IncludePath>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(SolutionDir)libs\SDL3-3.2.16\lib\x64;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT;$(SolutionDir)libs\SDL3_image-3.2.4\lib\x64;$(SolutionDir)libs\SDL3_ttf-3.2.2\lib\x64;$(SolutionDir)libs\tensorflow\lib</LibraryPath>
+    <GenerateManifest>false</GenerateManifest>
+    <EmbedManifest>false</EmbedManifest>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -167,6 +171,9 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); libssl.lib;libcrypto.lib; SDL3.lib; SDL3_ttf.lib; SDL3_image.lib; </AdditionalDependencies>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>app.manifest</AdditionalManifestFiles>
+    </Manifest>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='jdBasicLib|x64'">
     <ClCompile>
@@ -203,6 +210,9 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies); libssl.lib;libcrypto.lib; SDL3.lib; SDL3_ttf.lib; SDL3_image.lib; </AdditionalDependencies>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>app.manifest</AdditionalManifestFiles>
+    </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="libs\imgui\backends\imgui_impl_sdl3.cpp" />
@@ -266,19 +276,24 @@
     <ClInclude Include="include\TileMapSystem.hpp" />
     <ClInclude Include="include\Tokens.hpp" />
     <ClInclude Include="include\Types.hpp" />
+    <ClInclude Include="resources\resource.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
     <None Include="www\index.html" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="jdBasic.ico" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="resources\resources.rc" />
-  </ItemGroup>
-  <ItemGroup>
     <Text Include="readme.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="jdBasic.ico" />
+    <Image Include="resources\jdBasic.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\version.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="resources\app.manifest" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

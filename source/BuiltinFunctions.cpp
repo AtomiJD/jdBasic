@@ -4768,6 +4768,8 @@ BasicValue builtin_os_getos(NeReLaBasic& vm, const std::vector<BasicValue>& args
     return std::string("MACOS");
 #elif __linux__
     return std::string("LINUX");
+#elif __EMSCRIPTEN__
+    return std::string("WASM");
 #else
     return std::string("UNKNOWN");
 #endif
