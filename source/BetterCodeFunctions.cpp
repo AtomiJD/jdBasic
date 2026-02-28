@@ -41,24 +41,27 @@ namespace {
 
     // A comprehensive list to prevent misidentifying them as variables.
     const std::unordered_set<std::string> BUILTIN_FUNCTIONS = {
-        "SIN", "COS", "TAN", "SQR", "RND", "LOG", "LOG10", "FAC", "INT", "FLOOR", "CEIL", "ROUND", "TRUNC",
-        "LEFT$", "RIGHT$", "MID$", "LEN", "LCASE$", "UCASE$", "TRIM$", "STR$", "VAL", "CHR$", "ASC", "INSTR$", "SPLIT", "FRMV$",
-        "APPEND", "DIFF", "IOTA", "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL", "SCAN", "SELECT", "FILTER", "REDUCE",
-        "TAKE", "DROP", "RESHAPE", "REVERSE", "TRANSPOSE", "MATMUL", "MVLET", "INTEGRATE", "SOLVE", "INVERT",
-        "NORMALIZE", "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "DISTANCE", "STACK", "SLICE", "LERP", "GRADE", "OUTER",
-        "ROTATE", "SHIFT", "XSORT", "CONVOLVE", "PLACE",
-        "TXTREADER$", "CSVREADER",
-        "GETENV$", "TICK", "DATE$", "TIME$", "NOW", "DATEADD", "DATEDIFF", "CVDATE",
-        "TYPEOF",
-        "OS.GETOS", "OS.ARGS", "OS.EXEC",
-        "JSON.PARSE$", "JSON.STRINGIFY$", "CREATEOBJECT",
-        "HTTP.GET$", "HTTP.POST$", "HTTP.PUT$", "HTTP.STATUSCODE",
-        "TENSOR.FROM", "TENSOR.TOARRAY", "TENSOR.BACKWARD", "TENSOR.SIGMOID", "TENSOR.RELU", "TENSOR.SOFTMAX",
-        "TENSOR.CROSS_ENTROPY_LOSS", "TENSOR.TOKENIZE", "TENSOR.POSITIONAL_ENCODING", "TENSOR.LAYERNORM",
-        "TENSOR.CONV2D", "TENSOR.MAXPOOL2D",
-        "THREAD.ISDONE", "THREAD.GETRESULT",
-        "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE", "AWAIT",
-        "PI"
+            "SIN", "COS", "TAN", "SQR", "RND", "LOG", "LOG10", "FAC", "INT", "FLOOR", "CEIL", "ROUND", "TRUNC", "ABS", "CLAMP",
+            "LEFT$", "RIGHT$", "MID$", "LEN", "LCASE$", "UCASE$", "TRIM$", "STR$", "VAL", "CHR$", "ASC", "INSTR$", "SPLIT", "FRMV$", "FORMAT$", "REPLACE$", "REVERSE$", "INSERT$", "BYTEAT", "PACK$", "UNPACK",
+            "APPEND", "DIFF", "IOTA", "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL", "SCAN", "SELECT", "FILTER", "REDUCE",
+            "TAKE", "DROP", "RESHAPE", "REVERSE", "TRANSPOSE", "MATMUL", "MVLET", "INTEGRATE", "SOLVE", "INVERT",
+            "NORMALIZE", "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "DISTANCE", "STACK", "SLICE", "LERP", "GRADE", "OUTER",
+            "ROTATE", "SHIFT", "XSORT", "CONVOLVE", "PLACE",
+            "TXTREADER$", "CSVREADER", "BINREADER$", "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
+            "GETENV$", "TICK", "DATE$", "TIME$", "NOW", "DATEADD", "DATEDIFF", "CVDATE", "GETX", "GETY", "INKEY$", "WAITKEY$",
+            "TYPEOF", "CLIPBOARD.GET$",
+            "OS.GETOS", "OS.ARGS", "OS.EXEC", "OS.HOSTNAME$", "OS.IP$",
+            "JSON.PARSE$", "JSON.STRINGIFY$", "CREATEOBJECT",
+            "HTTP.GET$", "HTTP.POST$", "HTTP.PUT$", "HTTP.STATUSCODE",
+            "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$", "CODEC.SHA256$", "CODEC.UUID$",
+            "TENSOR.FROM", "TENSOR.TOARRAY", "TENSOR.BACKWARD", "TENSOR.SIGMOID", "TENSOR.RELU", "TENSOR.SOFTMAX",
+            "TENSOR.CROSS_ENTROPY_LOSS", "TENSOR.TOKENIZE", "TENSOR.POSITIONAL_ENCODING", "TENSOR.LAYERNORM",
+            "TENSOR.CONV2D", "TENSOR.MAXPOOL2D",
+            "THREAD.ISDONE", "THREAD.GETRESULT",
+            "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE", "AWAIT",
+            "JOY.COUNT", "JOY.NAME$", "JOY.BUTTON", "JOY.AXIS", "JOY.HAT",
+            "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
+            "PI", "VBNEWLINE", "NULL"
     };
 
     // Block keywords: affect indentation.
@@ -87,15 +90,17 @@ namespace {
             };
 
         static const std::unordered_map<std::string, std::string> overrides = {
-            {"ENDIF","EndIf"}, {"ELSEIF","ElseIf"}, {"ENDFUNC","EndFunc"},
-            {"ENDSUB","EndSub"}, {"ENDTYPE","End Type"}, {"ENDENUM","EndEnum"},
-            {"ENDTRY","EndTry"},  {"ENDSWITCH","EndSwitch"},
-            {"EXITFUNC","ExitFunc"},{"EXITFOR","ExitFor"},{"EXITDO","ExitDo"},
-            {"DEFAULT","Default"}, {"CASE","Case"}, {"SWITCH","Switch"},
-            {"FUNC","Func"}, {"DO","Do"}, {"LOOP","Loop"}, {"UNTIL","Until"},
-            {"SHL","Shl"}, {"SHR","Shr"}, {"BAND","Band"}, {"BOR","Bor"}, {"BXOR","Bxor"},
-            {"MOD","Mod"}, {"AND","And"}, {"OR","Or"}, {"XOR","Xor"}, {"NOT","Not"},
-            {"TRUE","True"}, {"FALSE","False"}, {"PRINT","Print"},
+                {"ENDIF","EndIf"}, {"ELSEIF","ElseIf"}, {"ENDFUNC","EndFunc"},
+                {"ENDSUB","EndSub"}, {"ENDTYPE","End Type"}, {"ENDENUM","EndEnum"},
+                {"ENDTRY","EndTry"},  {"ENDSWITCH","EndSwitch"}, {"ENDSELECT","EndSelect"},
+                {"EXITFUNC","ExitFunc"},{"EXITFOR","ExitFor"},{"EXITDO","ExitDo"},{"EXITSWITCH","ExitSwitch"},
+                {"DEFAULT","Default"}, {"CASE","Case"}, {"SWITCH","Switch"}, {"SELECT","Select"},
+                {"FUNC","Func"}, {"DO","Do"}, {"LOOP","Loop"}, {"UNTIL","Until"}, {"WHILE","While"},
+                {"SHL","Shl"}, {"SHR","Shr"}, {"BAND","Band"}, {"BOR","Bor"}, {"BXOR","Bxor"},
+                {"MOD","Mod"}, {"AND","And"}, {"OR","Or"}, {"XOR","Xor"}, {"NOT","Not"},
+                {"ANDALSO","AndAlso"}, {"ORELSE","OrElse"},
+                {"TRUE","True"}, {"FALSE","False"}, {"PRINT","Print"}, {"INPUT","Input"},
+                {"DIM","Dim"}, {"AS","As"}, {"REACT","React"}, {"TYPE","Type"}, {"ENUM","Enum"}
         };
 
         auto it = overrides.find(upper);
@@ -368,6 +373,28 @@ namespace {
                 }
                 if (hasTHEN && !hasColonAfterThen) d.after++;
             }
+            else if (firstKW == "FOR") {
+                bool hasNEXT = false;
+                // Check if NEXT exists on the same line to avoid indenting single-line loops
+                for (size_t j = i + 1; j < toks.size(); ++j) {
+                    if (toks[j].kind == TK::Ident && toks[j].upper == "NEXT") {
+                        hasNEXT = true;
+                        break;
+                    }
+                }
+                if (!hasNEXT) d.after++;
+            }
+            else if (firstKW == "DO") {
+                // Check if LOOP exists on the same logical line
+                bool hasLOOP = false;
+                for (size_t j = i + 1; j < toks.size(); ++j) {
+                    if (toks[j].kind == TK::Ident && toks[j].upper == "LOOP") {
+                        hasLOOP = true;
+                        break;
+                    }
+                }
+                if (!hasLOOP) d.after++;
+            }
             else {
                 d.after++;
             }
@@ -486,8 +513,23 @@ namespace {
 
             static const std::unordered_map<std::string, std::string> block_pairs = { {"IF", "ENDIF"}, {"FOR", "NEXT"}, {"DO", "LOOP"}, {"SUB", "ENDSUB"}, {"FUNC", "ENDFUNC"}, {"TYPE", "ENDTYPE"}, {"SWITCH", "ENDSWITCH"} };
             if (block_pairs.count(first_kw_upper)) {
-                if (first_kw_upper == "IF" && is_single_line_if(vm, linter_compiler, line)) {}
+                bool is_single_line = false;
+
+                if (first_kw_upper == "IF") {
+                    is_single_line = is_single_line_if(vm, linter_compiler, line);
+                }
                 else {
+                    // Check if the matching closer exists later in the same line's tokens
+                    std::string closer_target = block_pairs.at(first_kw_upper);
+                    for (size_t j = 1; j < line_tokens.size(); ++j) {
+                        if (to_upper(line_tokens[j].second) == closer_target) {
+                            is_single_line = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!is_single_line) {
                     block_stack.push_back({ first_kw_upper, line_num });
                 }
             }

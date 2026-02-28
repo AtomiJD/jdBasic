@@ -37,15 +37,15 @@ public:
 
             // --- Math Operators & Constants ---
             "MOD", "SHL", "SHR",
-            "TRUE", "FALSE", "PI", "VBNEWLINE",
+            "TRUE", "FALSE", "PI", "VBNEWLINE", "NULL",
 
             // --- IDE & System Commands ---
-            "PRINT", "INPUT", "CLS", "COLOR", "LOCATE", "CURSOR",
-            "REM", "STOP", "RESUME", "SLEEP", "OPTION", "EXPLICIT",
+            "PRINT", "INPUT", "CLS", "COLOR", "LOCATE", "CURSOR", "GETX", "GETY",
+            "REM", "STOP", "RESUME", "SLEEP", "OPTION", "EXPLICIT", "EXPLICITOFF", "NOEXPLICIT",
             "LIST", "RUN", "EDIT", "SAVE", "LOAD", "NEW",
             "COMPILE", "DUMP", "TRON", "TROFF",
             "SAVEWS", "LOADWS", "CLEARWS", "UNREACT",
-            "LINT", "PRETTY",
+            "LINT", "PRETTY", "CLIPBOARD.SET", "CLIPBOARD.GET$",
 
             // --- Module & Dynamic Code ---
             "IMPORT", "EXPORT", "MODULE", "DLLIMPORT",
@@ -58,7 +58,7 @@ public:
             // --- String Functions ---
             "LEFT$", "RIGHT$", "MID$", "LEN", "LCASE$", "UCASE$", "TRIM$",
             "STR$", "VAL", "CHR$", "ASC", "INSTR$", "SPLIT", "FRMV$", "FORMAT$",
-            "REPLACE$", "REVERSE$", "INKEY$", "WAITKEY$",
+            "REPLACE$", "REVERSE$", "INKEY$", "WAITKEY$", "INSERT$", "BYTEAT", "PACK$", "UNPACK",
 
             // --- Math Functions ---
             "SIN", "COS", "TAN", "SQR", "RND", "LOG", "LOG10", "FAC",
@@ -73,7 +73,8 @@ public:
 
             // --- Filesystem Commands & Functions ---
             "DIR", "DIR$", "CD", "PWD", "MKDIR", "KILL",
-            "TXTREADER$", "CSVREADER", "TXTWRITER", "CSVWRITER",
+            "TXTREADER$", "CSVREADER", "TXTWRITER", "CSVWRITER", "BINREADER$", "BINWRITER",
+            "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
 
             // --- Map Functions ---
             "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.DELETE", "MAP.CLEAR", "MAP.SIZE", "MAP.MERGE", "MAP.ITEMS",
@@ -82,7 +83,10 @@ public:
             "JSON.PARSE$", "JSON.STRINGIFY$", "CREATEOBJECT",
 
             // --- OS Functions ---
-            "OS.ARGS", "OS.EXEC", "OS.GETOS",
+            "OS.ARGS", "OS.EXEC", "OS.GETOS", "OS.HOSTNAME$", "OS.IP$",
+
+            // --- CODEC Functions ---
+            "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$", "CODEC.SHA256$", "CODEC.UUID$",
 
             // --- HTTP Functions ---
             "HTTP.GET$", "HTTP.POST$", "HTTP.PUT$", "HTTP.STATUSCODE", "HTTP.SETHEADER", "HTTP.CLEARHEADERS", "HTTP.POST_ASYNC",
@@ -100,12 +104,25 @@ public:
             "TENSOR.LAYERNORM", "TENSOR.CONV2D", "TENSOR.MAXPOOL2D", "TENSOR.CREATE_LAYER",
             "TENSOR.CREATE_OPTIMIZER", "TENSOR.SAVEMODEL", "TENSOR.LOADMODEL", "TENSOR.UPDATE", "TENSOR.MATMUL",
 
-            // --- Graphics, Sound & Input ---
+            // --- Serial Communication ---
+            "SERIAL.OPEN", "SERIAL.CLOSE", "SERIAL.WRITE", "SERIAL.READ$", "SERIAL.AVAILABLE", "SERIAL.FLUSH",
+
+            // --- Joystick / Gamepad ---
+            "JOY.COUNT", "JOY.NAME$", "JOY.BUTTON", "JOY.AXIS", "JOY.HAT",
+
+            // --- Audio Sound Design & Sequencer ---
+            "SOUND.INIT", "SOUND.VOICE", "SOUND.PLAY", "SOUND.RELEASE", "SOUND.STOP", "SOUND.BPM",
+            "SOUND.SEQ", "SOUND.GAIN", "SOUND.PAN", "SOUND.FILTER", "SOUND.EQ", "SOUND.LFO",
+            "SOUND.FM", "SOUND.UNISON", "SOUND.BITCRUSH", "SOUND.RINGMOD", "SOUND.SAMPLE",
+            "SOUND.REVERBSEND", "SOUND.DELAYSEND", "SOUND.SIDECHAIN", "SOUND.DELAY", "SOUND.REVERB",
+            "SOUND.COMPRESSOR", "SOUND.DISTORTION", "SOUND.RESET", "SOUND.SHUTDOWN", "SOUND.SCALE",
+            "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
+            "SFX.LOAD", "SFX.PLAY", "MUSIC.PLAY", "MUSIC.STOP",
+
+            // --- Graphics & Input ---
             "SCREEN", "SCREENFLIP", "DRAWCOLOR", "SETFONT", "PSET", "LINE", "RECT", "CIRCLE", "ELLIPSE",
             "ROUNDED_RECT", "CIRCLE_SECTOR", "TEXT", "PLOTRAW", "TOGGLE_FULLSCREEN",
             "SCREENWIDTH", "SCREENHEIGHT", "MOUSEX", "MOUSEY", "MOUSEB",
-            "SOUND.INIT", "SOUND.VOICE", "SOUND.PLAY", "SOUND.RELEASE", "SOUND.STOP",
-            "SFX.LOAD", "SFX.PLAY", "MUSIC.PLAY", "MUSIC.STOP",
 
             // --- Turtle Graphics ---
             "TURTLE.FORWARD", "TURTLE.BACKWARD", "TURTLE.LEFT", "TURTLE.RIGHT", "TURTLE.PENUP",
