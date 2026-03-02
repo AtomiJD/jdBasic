@@ -6,7 +6,6 @@
 RND(-1.0)
 
 A=INT(RND(1)*2) + 1 '1=moo, 2=hop
-A=INT(RND(1)*2) + 1 '1=moo, 2=hop
 
 IF A = 1 THEN
     Message$ = "Moo! (Run with arguments to say something)"

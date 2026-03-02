@@ -38,8 +38,8 @@ FUNC CalculateAccelerations(Pos, Mass, G, softening)
 
     ' 5. Calculate the final acceleration components for X and Y.
     '    This is the acceleration magnitude multiplied by the direction vector (rx, ry).
-    AccX_components = accel_mag_matrix * rx_matrix
-    AccY_components = accel_mag_matrix * ry_matrix
+    AccX_components = (accel_mag_matrix * rx_matrix) * -1
+    AccY_components = (accel_mag_matrix * ry_matrix) * -1
 
     ' 6. Sum the forces.
     '    To get the total acceleration on each body, we sum the influences from all
