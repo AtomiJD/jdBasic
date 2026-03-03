@@ -5,6 +5,7 @@
 ' --- Configuration Section ---
 SCREEN_WIDTH = 40
 SCREEN_HEIGHT = 20
+CLS
 
 ' --- 1. Define Vertices, Faces, and Transformations ---
 DIM Vertices[8, 3]
@@ -109,10 +110,10 @@ DO
     NEXT i
     
     ' --- e) Render and Update ---
-    CLS
+    LOCATE 0,0
     PRINT "Fully Optimized 3D Cube (Press any key)"
     PRINT FRMV$(ScreenBuffer)
-    YIELD
+    'YIELD
     AngleX = AngleX + 0.05 : AngleY = AngleY + 0.08
     F = F + 1
 LOOP UNTIL F > 200

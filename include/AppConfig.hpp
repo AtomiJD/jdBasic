@@ -38,6 +38,11 @@
 #define HTTP
 #endif
 
+// The new jd REPL
+#if defined(_WIN32) 
+#define JDREPL
+#endif
+
 // --- Windows-Specific Compatibility Macros ---
 
 // Enables COM/ActiveX support for interacting with Windows objects (e.g., Excel).

@@ -1,6 +1,7 @@
 // NeReLaBasic.cpp
 #include <sstream>     
 #include "Commands.hpp"
+#include "jdConsole.hpp"
 #include "BuiltinFunctions.hpp" 
 #include "Statements.hpp"
 #include "NeReLaBasic.hpp"
@@ -447,6 +448,8 @@ void NeReLaBasic::process_system_events() {
     process_http_requests();
 #endif
 
+    evaluate_recurring_tasks();
+
     // --- It's time to check the keyboard; reset the timer for the next interval ---
     last_keyboard_check_time = current_time;
 
@@ -518,6 +521,11 @@ void NeReLaBasic::start() {
     init_system();
     init_basic();
 
+
+#ifdef  JDREPL
+    jdConsole console(*this);
+    console.run();
+#else
     std::string inputLine;
 
     while (true) {
@@ -595,6 +603,7 @@ void NeReLaBasic::start() {
             Error::print();
         }
     }
+#endif
 }
 
 #ifdef __EMSCRIPTEN__
@@ -946,6 +955,67 @@ void NeReLaBasic::process_event_queue() {
         }
     }
     is_processing_event = false;
+}
+
+int NeReLaBasic::add_recur_task(int interval_ms, const std::string& code) {
+    RecurTask task;
+    task.id = next_recur_id++; // Assign unique ID and increment
+    task.interval_ms = interval_ms;
+    task.last_run = std::chrono::steady_clock::now();
+
+    if (this->compiler->tokenize(*this, code, 0, task.pcode, this->main_function_table, false, true) != 0) {
+        return -1;
+    }
+
+    recurring_tasks.push_back(task);
+    return task.id; // Return the explicit ID
+}
+
+void NeReLaBasic::remove_recur_task(int id) {
+    // We only mark it as inactive here. Erasing it directly while the vector 
+    // is potentially being iterated over in the background would cause a crash.
+    for (auto& task : recurring_tasks) {
+        if (task.id == id) {
+            task.active = false;
+            break;
+        }
+    }
+}
+
+void NeReLaBasic::evaluate_recurring_tasks() {
+    if (recurring_tasks.empty()) return;
+
+    // 1. Safely garbage collect any tasks marked as inactive
+    recurring_tasks.erase(
+        std::remove_if(recurring_tasks.begin(), recurring_tasks.end(),
+            [](const RecurTask& t) { return !t.active; }),
+        recurring_tasks.end()
+    );
+
+    auto now = std::chrono::steady_clock::now();
+
+    for (auto& task : recurring_tasks) {
+        if (!task.active) continue; // Skip if it was marked dead during this exact loop
+
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - task.last_run).count();
+        if (elapsed >= task.interval_ms) {
+            task.last_run = now;
+
+            int saved_linenr = this->linenr;
+            bool saved_ended = this->program_ended;
+            auto* saved_table = this->active_function_table;
+
+            this->execute_synchronous_block(task.pcode);
+
+            if (Error::get() != 0) {
+                Error::clear();
+            }
+
+            this->linenr = saved_linenr;
+            this->program_ended = saved_ended;
+            this->active_function_table = saved_table;
+        }
+    }
 }
 
 // Wrapper for synchronous function calls from the expression parser

@@ -192,6 +192,17 @@ public:
         std::future<BasicValue>  result_future; // For C++ background tasks like HTTP
     };
 
+    struct RecurTask {
+        int id; // <-- New explicit ID
+        int interval_ms;
+        std::chrono::steady_clock::time_point last_run;
+        std::vector<uint8_t> pcode;
+        bool active = true;
+    };
+
+    std::vector<RecurTask> recurring_tasks;
+    int next_recur_id = 1; // Unique ID generator
+
     struct BasicModule {
         std::string name;
         std::vector<uint8_t> p_code;
@@ -425,12 +436,15 @@ public:
     void execute_repl_command(const std::vector<uint8_t>& repl_p_code);
     void execute_synchronous_block(const std::vector<uint8_t>& code_to_run, int multiline = false);
     BasicValue execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args, std::shared_ptr<Map> closure_env = nullptr);
-    //BasicValue execute_synchronous_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     void execute_main_program(const std::vector<uint8_t>& code_to_run, bool resume_mode);
     void raise_event(const std::string& event_name, BasicValue data);
     void process_event_queue();
-    //BasicValue execute_function_for_value_t(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
     BasicValue launch_bsync_function(const FunctionInfo& func_info, const std::vector<BasicValue>& args);
+
+    int add_recur_task(int interval_ms, const std::string& code);
+    void remove_recur_task(int id); 
+    void evaluate_recurring_tasks();
+
     void init_basic();
     void init_system();
     void init_screen();

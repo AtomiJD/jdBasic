@@ -232,6 +232,7 @@
     <ClCompile Include="source\ImGuiFunctions.cpp" />
     <ClCompile Include="source\IOFunctions.cpp" />
     <ClCompile Include="source\LocaleManager.cpp" />
+    <ClCompile Include="source\jdConsole.cpp" />    
     <ClCompile Include="source\NeReLaBasic.cpp" />
     <ClCompile Include="source\NeReLaBasicInterpreter.cpp" />
     <ClCompile Include="source\NetworkManager.cpp" />
@@ -276,6 +277,7 @@
     <ClInclude Include="include\TileMapSystem.hpp" />
     <ClInclude Include="include\Tokens.hpp" />
     <ClInclude Include="include\Types.hpp" />
+    <ClInclude Include="include\jdConsole.hpp" />
     <ClInclude Include="resources\resource.h" />
   </ItemGroup>
   <ItemGroup>

@@ -5585,6 +5585,36 @@ BasicValue builtin_lprint(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
 #endif // USE_SERIAL
 
+BasicValue builtin_recur(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "RECUR expects 2 arguments: interval_ms, code_string$");
+        return BasicValue(false);
+    }
+
+    int interval = static_cast<int>(to_double(args[0]));
+    std::string code = to_string(args[1]);
+
+    int id = vm.add_recur_task(interval, code);
+
+    if (id == -1) {
+        // Error::set is already handled by the tokenizer inside add_recur_task
+        return BasicValue(false);
+    }
+
+    return BasicValue(static_cast<int64_t>(id));
+}
+
+BasicValue builtin_clear_recur(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "CLEAR_RECUR expects 1 argument: task_id");
+        return BasicValue(false);
+    }
+    int id = static_cast<int>(to_double(args[0]));
+    vm.remove_recur_task(id);
+
+    return BasicValue(true);
+}
+
 #ifdef JD_IMGUI
 void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table);
 #endif
@@ -5779,4 +5809,8 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
     register_proc("LPRINT", -1, builtin_lprint);
 #endif
+
+    register_func("RECUR", 2, builtin_recur);
+    register_proc("CLEAR_RECUR", 1, builtin_clear_recur);
+
 }
