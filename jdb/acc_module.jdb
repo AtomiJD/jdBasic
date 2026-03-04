@@ -18,12 +18,12 @@ SUB REPL()
         IF CURRENT_DB$ <> "" THEN 
             ' Extract filename for shorter prompt
             parts = SPLIT(CURRENT_DB$, "\")
-            prompt$ = parts[LEN(parts)-1]
+            prompt$ = parts[LEN(parts)[0]-1]
         ELSE
             prompt$ = "(No DB)"
         ENDIF
         
-        INPUT prompt$ + "> ", input_line$
+        INPUT prompt$ + "> "; input_line$
         
         input_line$ = TRIM$(input_line$)
         IF input_line$ = "" THEN GOTO SKIP_LOOP

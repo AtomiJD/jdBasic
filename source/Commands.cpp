@@ -1,4 +1,5 @@
 // Commands.cpp
+#include "AppConfig.hpp"
 #include "NeReLaBasic.hpp" 
 #include <fstream>
 #include <sstream>
@@ -845,7 +846,6 @@ void Commands::do_input(NeReLaBasic& vm) {
 
     // Peek at the next token to see if there is an optional prompt string.
     Tokens::ID next_token = static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]);
-
     if (next_token == Tokens::ID::C_SEMICOLON || next_token == Tokens::ID::C_COMMA) {
         // --- Case 1: Handle a prompt string ---
 
@@ -2591,8 +2591,8 @@ void Commands::do_edit(NeReLaBasic& vm) {
     // 3. Create the JavaScript call and execute it
     std::string script = "window.show_monaco_editor(\"" + escaped_code + "\");";
     emscripten_run_script(script.c_str());
+#else
 
-#else     
     std::string filename_to_edit;
 
     if (static_cast<Tokens::ID>((*vm.active_p_code)[vm.pcode]) == Tokens::ID::STRING) {
@@ -2615,6 +2615,9 @@ void Commands::do_edit(NeReLaBasic& vm) {
         }
     }
 
+    if (filename_to_edit.length() == 0 && vm.program_to_debug.length() > 0) {
+        filename_to_edit = vm.program_to_debug;
+    }
     
     // Pass the filename to the editor's constructor
     TextEditor editor(vm.source_lines, filename_to_edit);

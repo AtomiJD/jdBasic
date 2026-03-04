@@ -88,6 +88,21 @@
 
 #include "json.hpp"
 
+#if defined(PYTHON)
+#ifdef _DEBUG
+#define JDBASIC_RESTORE_DEBUG
+#undef _DEBUG
+#endif
+
+#include <Python.h>
+
+// --- Restore _DEBUG for the rest of your C++ project ---
+#ifdef JDBASIC_RESTORE_DEBUG
+#define _DEBUG
+#undef JDBASIC_RESTORE_DEBUG
+#endif
+#endif
+
 #ifdef JDCOM
 #include <objbase.h> // CoInitializeEx, CoUninitialize, CoCreateInstance, CLSIDFromProgID
 #include <oaidl.h>   // <-- Contains definitions for IDispatch, VARIANT, SAFEARRAY, etc.
@@ -5615,6 +5630,379 @@ BasicValue builtin_clear_recur(NeReLaBasic& vm, const std::vector<BasicValue>& a
     return BasicValue(true);
 }
 
+#if defined(PYTHON)
+// --- Recursive Converter: jdBasic -> Python ---
+PyObject* BasicValueToPyObject(const BasicValue& val) {
+    if (std::holds_alternative<bool>(val)) {
+        return PyBool_FromLong(std::get<bool>(val) ? 1 : 0);
+    }
+    else if (std::holds_alternative<double>(val)) {
+        return PyFloat_FromDouble(std::get<double>(val));
+    }
+    else if (std::holds_alternative<long long>(val)) { // Adjusted to match your __int64 / long long typedef
+        return PyLong_FromLongLong(std::get<long long>(val));
+    }
+    else if (std::holds_alternative<std::string>(val)) {
+        return PyUnicode_FromString(std::get<std::string>(val).c_str());
+    }
+    else if (std::holds_alternative<std::shared_ptr<Array>>(val)) {
+        // Convert jdBasic Array to Python List
+        auto arr = std::get<std::shared_ptr<Array>>(val);
+        if (!arr) Py_RETURN_NONE;
+
+        // FIX: Use 'data' instead of 'elements' based on your Types.hpp
+        PyObject* pList = PyList_New(arr->data.size());
+        for (size_t i = 0; i < arr->data.size(); ++i) {
+            PyList_SetItem(pList, i, BasicValueToPyObject(arr->data[i]));
+        }
+        return pList;
+    }
+    else if (std::holds_alternative<std::shared_ptr<Map>>(val)) {
+        // Convert jdBasic Map to Python Dictionary
+        auto map = std::get<std::shared_ptr<Map>>(val);
+        if (!map) Py_RETURN_NONE;
+
+        PyObject* pDict = PyDict_New();
+        for (const auto& pair : map->data) {
+            PyObject* pItem = BasicValueToPyObject(pair.second);
+            PyDict_SetItemString(pDict, pair.first.c_str(), pItem);
+            // PyDict_SetItemString increments ref count, so release ours
+            Py_DECREF(pItem);
+        }
+        return pDict;
+    }
+    else if (std::holds_alternative<std::shared_ptr<Tensor>>(val)) {
+        auto tensor = std::get<std::shared_ptr<Tensor>>(val);
+        if (!tensor || !tensor->data) Py_RETURN_NONE;
+
+        auto& float_arr = tensor->data;
+
+        // 1. Create a zero-copy memory view of the raw double data
+        // PyBUF_WRITE allows Python/NumPy to modify the C++ memory directly!
+        PyObject* pMemView = PyMemoryView_FromMemory(
+            reinterpret_cast<char*>(float_arr->data.data()),
+            float_arr->data.size() * sizeof(double),
+            PyBUF_WRITE
+        );
+
+        // 2. Package the memory view and the shape into a Python Dictionary
+        PyObject* pDict = PyDict_New();
+        PyDict_SetItemString(pDict, "buffer", pMemView);
+        Py_DECREF(pMemView);
+
+        // 3. Convert the C++ shape vector to a Python Tuple
+        PyObject* pShape = PyTuple_New(float_arr->shape.size());
+        for (size_t i = 0; i < float_arr->shape.size(); ++i) {
+            PyTuple_SetItem(pShape, i, PyLong_FromSize_t(float_arr->shape[i]));
+        }
+        PyDict_SetItemString(pDict, "shape", pShape);
+        Py_DECREF(pShape);
+
+        return pDict;
+    }
+
+    // Fallback for unsupported types (Null)
+    Py_RETURN_NONE;
+}
+
+// --- Recursive Converter: Python -> jdBasic ---
+BasicValue PyObjectToBasicValue(PyObject* pObj) {
+    if (pObj == nullptr || pObj == Py_None) {
+        return BasicValue(0LL); // Default null/none fallback
+    }
+
+    if (PyBool_Check(pObj)) {
+        return BasicValue(pObj == Py_True);
+    }
+    else if (PyLong_Check(pObj)) {
+        return BasicValue(static_cast<long long>(PyLong_AsLongLong(pObj)));
+    }
+    else if (PyFloat_Check(pObj)) {
+        return BasicValue(PyFloat_AsDouble(pObj));
+    }
+    else if (PyUnicode_Check(pObj)) {
+        return BasicValue(std::string(PyUnicode_AsUTF8(pObj)));
+    }
+    else if (PyList_Check(pObj)) {
+        // Convert Python List to jdBasic Array
+        auto arr = std::make_shared<Array>();
+        Py_ssize_t size = PyList_Size(pObj);
+
+        for (Py_ssize_t i = 0; i < size; ++i) {
+            // PyList_GetItem returns a borrowed reference; no need to Py_DECREF it
+            PyObject* item = PyList_GetItem(pObj, i);
+            arr->data.push_back(PyObjectToBasicValue(item));
+        }
+
+        arr->shape = { arr->data.size() }; // Set 1D shape
+        return BasicValue(arr);
+    }
+    else if (PyDict_Check(pObj)) {
+        // Convert Python Dictionary to jdBasic Map
+        auto map = std::make_shared<Map>();
+        PyObject* pKey, * pValue;
+        Py_ssize_t pos = 0;
+
+        while (PyDict_Next(pObj, &pos, &pKey, &pValue)) {
+            std::string key_str;
+            if (PyUnicode_Check(pKey)) {
+                key_str = PyUnicode_AsUTF8(pKey);
+            }
+            else {
+                // Force key to string if it isn't one
+                PyObject* pStr = PyObject_Str(pKey);
+                key_str = PyUnicode_AsUTF8(pStr);
+                Py_DECREF(pStr);
+            }
+            map->data[key_str] = PyObjectToBasicValue(pValue);
+        }
+        return BasicValue(map);
+    }
+    else if (PyObject_CheckBuffer(pObj)) {
+        Py_buffer view;
+        // Request a multi-dimensional, C-contiguous buffer of format types
+        if (PyObject_GetBuffer(pObj, &view, PyBUF_ND | PyBUF_FORMAT | PyBUF_C_CONTIGUOUS) == 0) {
+
+            // Check if Python's data format is 'd' (standard 64-bit double)
+            if (view.format != nullptr && strcmp(view.format, "d") == 0) {
+
+                auto tensor = std::make_shared<Tensor>();
+                tensor->data = std::make_shared<FloatArray>();
+
+                // Extract dimensions from Python/NumPy's shape
+                for (int i = 0; i < view.ndim; ++i) {
+                    tensor->data->shape.push_back(view.shape[i]);
+                }
+
+                // Allocate C++ memory and perform a high-speed block copy
+                size_t total_elements = view.len / sizeof(double);
+                tensor->data->data.resize(total_elements);
+                std::memcpy(tensor->data->data.data(), view.buf, view.len);
+
+                PyBuffer_Release(&view);
+                return BasicValue(tensor);
+            }
+            PyBuffer_Release(&view); // Release if it wasn't a double array
+        }
+    }
+
+    return BasicValue(0LL); // Fallback for unsupported types
+}
+
+BasicValue builtin_py_set(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 2) {
+        Error::set(8, vm.runtime_current_line, "PY.SET expects 2 arguments: python_var_name$, jdbasic_value");
+        return BasicValue(false);
+    }
+
+    std::string var_name = to_string(args[0]);
+
+    // 1. Convert the jdBasic value to a Python object
+    PyObject* pValue = BasicValueToPyObject(args[1]);
+
+    // 2. Inject it into Python's global namespace
+    std::string mod_name = "__ws" + std::to_string(vm.current_workspace) + "__";
+    PyObject* module = PyImport_AddModule(mod_name.c_str());
+    PyObject* dict = PyModule_GetDict(module);
+
+    if (PyDict_SetItemString(dict, var_name.c_str(), pValue) != 0) {
+        Error::set(1, vm.runtime_current_line, "Failed to inject variable into Python environment.");
+        Py_DECREF(pValue);
+        return BasicValue(false);
+    }
+
+    // Clean up our reference (the dictionary now owns a reference to it)
+    Py_DECREF(pValue);
+
+    return BasicValue(true);
+}
+
+BasicValue builtin_py_get(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.size() != 1) {
+        Error::set(8, vm.runtime_current_line, "PY.GET expects 1 argument: python_var_name$");
+        return BasicValue(false);
+    }
+
+    std::string var_name = to_string(args[0]);
+
+    // Look up the variable in Python's global '__main__' namespace
+    std::string mod_name = "__ws" + std::to_string(vm.current_workspace) + "__";
+    PyObject* module = PyImport_AddModule(mod_name.c_str());
+    PyObject* dict = PyModule_GetDict(module);
+
+    // PyDict_GetItemString returns a borrowed reference
+    PyObject* pValue = PyDict_GetItemString(dict, var_name.c_str());
+
+    if (pValue == nullptr) {
+        Error::set(1, vm.runtime_current_line, "Python variable '" + var_name + "' not found.");
+        return BasicValue(0LL);
+    }
+
+    // Convert and return the native jdBasic variant
+    return PyObjectToBasicValue(pValue);
+}
+
+// --- The Native Evaluator (Returns BasicValue) ---
+BasicValue builtin_py_eval(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty()) return BasicValue("");
+    std::string expr = to_string(args[0]);
+
+    std::string mod_name = "__ws" + std::to_string(vm.current_workspace) + "__";
+    PyObject* module = PyImport_AddModule(mod_name.c_str());
+    PyObject* dict = PyModule_GetDict(module);
+
+    // Py_eval_input expects an expression (like "math.pi * 2") and RETURNS the result!
+    PyObject* result = PyRun_String(expr.c_str(), Py_eval_input, dict, dict);
+
+    if (result == nullptr) {
+        PyErr_Print(); // Print error to our stderr buffer
+        // ... (Optional: You can copy your stderr extraction logic here if you want full tracebacks) ...
+        return BasicValue("");
+    }
+
+    // Convert the Python result directly into a native jdBasic variant!
+    BasicValue native_val = PyObjectToBasicValue(result);
+    Py_DECREF(result);
+    return native_val;
+}
+
+// --- The Environment Explorer ---
+BasicValue builtin_py_dir(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    std::string target = args.empty() ? "" : to_string(args[0]);
+
+    std::string mod_name = "__ws" + std::to_string(vm.current_workspace) + "__";
+    PyObject* module = PyImport_AddModule(mod_name.c_str());
+    PyObject* dict = PyModule_GetDict(module);
+
+    std::string py_cmd = "import builtins\n";
+    if (target.empty()) {
+        // List local workspace variables, ignoring Python's internal __dunder__ stuff
+        py_cmd += "result_str = ', '.join([k for k in locals().keys() if not k.startswith('__')])";
+    }
+    else {
+        // List methods available on a specific object/module
+        py_cmd += "try:\n"
+            "    result_str = ', '.join([k for k in dir(" + target + ") if not k.startswith('_')])\n"
+            "except Exception as e:\n"
+            "    result_str = 'Error: ' + str(e)\n";
+    }
+
+    PyObject* run_res = PyRun_String(py_cmd.c_str(), Py_file_input, dict, dict);
+    if (run_res) Py_DECREF(run_res);
+
+    PyObject* pResult = PyDict_GetItemString(dict, "result_str");
+    if (pResult && PyUnicode_Check(pResult)) {
+        return BasicValue(std::string(PyUnicode_AsUTF8(pResult)));
+    }
+    return BasicValue("No output.");
+}
+
+// --- The Instant Manual ---
+BasicValue builtin_py_help(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty()) return BasicValue("Specify a module or function (e.g., 'math.cos').");
+    std::string target = to_string(args[0]);
+
+    std::string mod_name = "__ws" + std::to_string(vm.current_workspace) + "__";
+    PyObject* module = PyImport_AddModule(mod_name.c_str());
+    PyObject* dict = PyModule_GetDict(module);
+
+    std::string py_cmd = "import inspect\n"
+        "try:\n"
+        "    doc = inspect.getdoc(" + target + ")\n"
+        "    result_str = doc if doc else 'No documentation found.'\n"
+        "except Exception as e:\n"
+        "    result_str = 'Error: ' + str(e)\n";
+
+    PyObject* run_res = PyRun_String(py_cmd.c_str(), Py_file_input, dict, dict);
+    if (run_res) Py_DECREF(run_res);
+
+    PyObject* pResult = PyDict_GetItemString(dict, "result_str");
+    if (pResult && PyUnicode_Check(pResult)) {
+        return BasicValue(std::string(PyUnicode_AsUTF8(pResult)));
+    }
+    return BasicValue("Help failed.");
+}
+
+// --- The Python Execution Bridge ---
+BasicValue builtin_python(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
+    if (args.empty()) {
+        Error::set(8, vm.runtime_current_line, "PYTHON$ expects 1 argument: python_code$");
+        return BasicValue("");
+    }
+
+    std::string py_code = to_string(args[0]);
+
+    size_t pos = 0;
+    while ((pos = py_code.find("\\n", pos)) != std::string::npos) {
+        if (pos > 0 && py_code[pos - 1] == '\\') {
+            pos += 2; // It's escaped, leave it alone for Python's internal strings
+        }
+        else {
+            py_code.replace(pos, 2, "\n");
+            pos += 1;
+        }
+    }
+
+    // 1. Redirect Python's stdout and stderr to an internal string buffer
+    PyRun_SimpleString(
+        "import sys, io\n"
+        "old_stdout = sys.stdout\n"
+        "old_stderr = sys.stderr\n"
+        "sys.stdout = mystdout = io.StringIO()\n"
+        "sys.stderr = mystderr = io.StringIO()\n"
+    );
+
+    // ISOLATION: Get the dictionary for the current workspace
+    std::string mod_name = "__ws" + std::to_string(vm.current_workspace) + "__";
+    PyObject* module = PyImport_AddModule(mod_name.c_str());
+    PyObject* dict = PyModule_GetDict(module);
+
+    // A new module dictionary doesn't have Python's built-in functions (like print, len, max). 
+    // We must manually inject __builtins__ so standard Python commands work inside our sandbox.
+    PyObject* builtins = PyImport_AddModule("builtins");
+    PyDict_SetItemString(dict, "__builtins__", builtins);
+
+    // Execute the code IN the isolated dictionary, not in __main__!
+    PyObject* result = PyRun_String(py_code.c_str(), Py_file_input, dict, dict);
+
+    PyObject* main_module = PyImport_AddModule("__main__");
+    PyObject* main_dict = PyModule_GetDict(main_module);
+
+    std::string cpp_result = "";
+
+    if (result == nullptr) {
+        // Handle Error using the stderr buffer
+        PyErr_Print();
+        std::string err_msg = "Python Crash:\n";
+        PyObject* mystderr = PyDict_GetItemString(main_dict, "mystderr");
+        if (mystderr != nullptr) {
+            PyObject* value = PyObject_CallMethod(mystderr, "getvalue", NULL);
+            if (value) { err_msg += PyUnicode_AsUTF8(value); Py_DECREF(value); }
+        }
+        PyRun_SimpleString("sys.stdout = old_stdout\nsys.stderr = old_stderr\n");
+        Error::set(1, vm.runtime_current_line, err_msg);
+        return BasicValue("");
+    }
+    else {
+        // Success: Extract stdout
+        Py_DECREF(result);
+        PyObject* mystdout = PyDict_GetItemString(main_dict, "mystdout");
+        if (mystdout != nullptr) {
+            PyObject* value = PyObject_CallMethod(mystdout, "getvalue", NULL);
+            if (value) { cpp_result = PyUnicode_AsUTF8(value); Py_DECREF(value); }
+        }
+    }
+
+    PyRun_SimpleString("sys.stdout = old_stdout\nsys.stderr = old_stderr\n");
+
+    if (!cpp_result.empty() && cpp_result.back() == '\n') {
+        cpp_result.pop_back();
+    }
+
+    return BasicValue(cpp_result);
+}
+#endif
+
 #ifdef JD_IMGUI
 void register_imgui_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table);
 #endif
@@ -5812,5 +6200,10 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
     register_func("RECUR", 2, builtin_recur);
     register_proc("CLEAR_RECUR", 1, builtin_clear_recur);
-
+    register_func("PYTHON$", 1, builtin_python);
+    register_func("PY.SET", 2, builtin_py_set);
+    register_func("PY.GET", 1, builtin_py_get);
+    register_func("PY.EVAL", 1, builtin_py_eval);
+    register_func("PY.DIR$", -1, builtin_py_dir); // -1 allows optional arguments
+    register_func("PY.HELP$", 1, builtin_py_help);
 }

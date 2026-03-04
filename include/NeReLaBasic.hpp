@@ -160,7 +160,6 @@ public:
         STEP_IN,
         STEP_OUT
     };
-
     
     DebugState debug_state = DebugState::RUNNING;
     // For 'next' (step over) functionality
@@ -379,8 +378,9 @@ public:
     ~NeReLaBasic(); //Destructor
 
     void start();  // The main REPL
-    //void execute(const std::vector<uint8_t>& code_to_run, bool resume_mode);
-    //void execute_t(const std::vector<uint8_t>& code_to_run, bool resume_mode);
+
+    int current_workspace = 0;
+
     bool loadSourceFromFile(const std::string& filename, bool verbose = false);
     std::pair<BasicValue, std::string> resolve_dot_chain(const std::string& chain_string);
 

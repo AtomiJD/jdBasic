@@ -23,6 +23,13 @@ public:
 
         if (lines_ref.empty()) lines_ref.push_back("");
 
+#ifdef PYTHON
+        // Detect Python extension
+        if (filename.length() >= 3 && filename.substr(filename.length() - 3) == ".py") {
+            is_python = true;
+        }
+#endif
+
     }
 
     void run();
@@ -33,14 +40,18 @@ private:
     HANDLE hOut;
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     int screen_cols, screen_rows;
-    int cx = 0, cy = 0, top_row = 0;
+    int cx = 0, cy = 0, top_row = 0, left_col = 0;;
     int visual_cx = 0;
     bool file_modified = false;
     bool overwrite_mode = false;
     std::wstring last_search_query;
 
+#ifdef PYTHON
+    bool is_python = false;
+#endif
+
     void draw_screen();
-    void draw_line(const std::string& line, int row);
+    void draw_line(const std::string& line, int row, int line_index);
     void move_cursor(int dx, int dy);
     void save_file();
     void find_text();
@@ -68,14 +79,33 @@ private:
         strTo.pop_back();
         return strTo;
     }
+    struct EditorState {
+        std::vector<std::string> lines;
+        int cx, cy;
+    };
+
+    std::vector<EditorState> undo_stack;
+    std::vector<EditorState> redo_stack;
+
+    void save_state();
+    void undo();
+    void redo();
+
+    bool is_selecting = false;
+    int sel_cx = 0, sel_cy = 0;
+
+    bool has_selection() const;
+    void get_normalized_selection(int& start_x, int& start_y, int& end_x, int& end_y) const;
+    void delete_selection();
+    void copy_to_clipboard();
 };
 
 int TextEditorWinImpl::calculate_visual_cx(int line_idx, int char_pos) {
     if (line_idx >= lines_ref.size()) return 0;
     int visual_pos = 0;
-    const std::string& line = lines_ref[line_idx];
-    for (int i = 0; i < char_pos; ++i) {
-        if (line[i] == '\t') {
+    std::wstring wline = string_to_wstring(lines_ref[line_idx]);
+    for (int i = 0; i < char_pos && i < wline.length(); ++i) {
+        if (wline[i] == L'\t') {
             visual_pos += 4 - (visual_pos % 4);
         }
         else {
@@ -89,6 +119,7 @@ int TextEditorWinImpl::calculate_visual_cx(int line_idx, int char_pos) {
 void TextEditorWinImpl::paste_from_clipboard() {
     // 1. Get Text from Clipboard
     if (!OpenClipboard(NULL)) return;
+    save_state();
     HANDLE hData = GetClipboardData(CF_UNICODETEXT);
     if (hData == NULL) { CloseClipboard(); return; }
 
@@ -120,12 +151,16 @@ void TextEditorWinImpl::paste_from_clipboard() {
     if (cy >= lines_ref.size()) cy = (int)lines_ref.size() - 1;
     if (cy < 0) cy = 0;
 
-    if (cx > lines_ref[cy].length()) cx = (int)lines_ref[cy].length();
+    // Use wstring for boundary check
+    std::wstring current_wline = string_to_wstring(lines_ref[cy]);
+    if (cx > current_wline.length()) cx = (int)current_wline.length();
 
-    // 5. Split current line
-    std::string current_line = lines_ref[cy];
-    std::string prefix = current_line.substr(0, cx);
-    std::string suffix = current_line.substr(cx);
+    // 5. Split current line using wide characters
+    std::wstring wprefix = current_wline.substr(0, cx);
+    std::wstring wsuffix = current_wline.substr(cx);
+
+    std::string prefix = wstring_to_string(wprefix);
+    std::string suffix = wstring_to_string(wsuffix);
 
     // 6. Perform the Paste
     if (new_lines.size() == 1) {
@@ -163,9 +198,11 @@ void TextEditorWinImpl::run() {
 
     clear_screen();
     draw_screen();
-    set_cursor(cy - top_row, visual_cx);
+    visual_cx = calculate_visual_cx(cy, cx);         
+    set_cursor(cy - top_row, visual_cx - left_col);  
 
-    SetConsoleMode(hIn, ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT | ENABLE_PROCESSED_INPUT);
+    //SetConsoleMode(hIn, ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT | ENABLE_PROCESSED_INPUT);
+    SetConsoleMode(hIn, ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS);
 
     while (true) {
         INPUT_RECORD input;
@@ -175,12 +212,46 @@ void TextEditorWinImpl::run() {
         if (input.EventType == KEY_EVENT && input.Event.KeyEvent.bKeyDown) {
             auto key = input.Event.KeyEvent;
 
+            const bool shift_pressed = key.dwControlKeyState & SHIFT_PRESSED;
             const bool ctrl_pressed = key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED);
             const bool alt_pressed = key.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED);
 
-            if (ctrl_pressed && !alt_pressed) {
+            bool is_movement_key = (key.wVirtualKeyCode == VK_LEFT || key.wVirtualKeyCode == VK_RIGHT ||
+                key.wVirtualKeyCode == VK_UP || key.wVirtualKeyCode == VK_DOWN ||
+                key.wVirtualKeyCode == VK_HOME || key.wVirtualKeyCode == VK_END ||
+                key.wVirtualKeyCode == VK_PRIOR || key.wVirtualKeyCode == VK_NEXT);
+
+            if (is_movement_key) {
+                if (shift_pressed) {
+                    if (!is_selecting) {
+                        is_selecting = true;
+                        sel_cx = cx;
+                        sel_cy = cy;
+                    }
+                }
+                else {
+                    is_selecting = false;
+                }
+            }
+
+            if (ctrl_pressed && shift_pressed && !alt_pressed) {
                 switch (key.wVirtualKeyCode) {
-                case 'X':
+                case 'C': 
+                    copy_to_clipboard(); 
+                    break;
+                case 'X': 
+                    copy_to_clipboard(); 
+                    delete_selection(); 
+                    break;
+                case 'V':
+                    if (has_selection()) delete_selection();
+                    paste_from_clipboard();
+                    break;
+                }
+            }
+            else if (ctrl_pressed && !alt_pressed) {
+                switch (key.wVirtualKeyCode) {
+                case 'Q':
                     if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) goto dreckig;
                     break;
                 case 'S':
@@ -192,9 +263,40 @@ void TextEditorWinImpl::run() {
                 case 'G':
                     if (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) go_to_line();
                     break;
-                case 'P': // Handle Paste
+                case 'C':
+                    copy_to_clipboard();
+                    break;
+                case 'X':
+                    copy_to_clipboard();
+                    delete_selection();
+                    break;
+                case 'V':
+                    if (has_selection()) delete_selection();
                     paste_from_clipboard();
                     break;
+                case 'P': // Handle Paste
+                    if (has_selection()) delete_selection();
+                    paste_from_clipboard();
+                    break;
+                case 'Z':
+                    undo();
+                    break;
+                case 'Y':
+                    redo();
+                    break;
+                case 37: { // handle ctrl+left
+                    std::wstring wline = string_to_wstring(lines_ref[cy]);
+                    while (cx > 0 && iswspace(wline[cx - 1])) move_cursor(-1, 0);
+                    while (cx > 0 && !iswspace(wline[cx - 1])) move_cursor(-1, 0);
+                    break;
+                }
+                case 39: { // handle ctrl+right
+                    std::wstring wline = string_to_wstring(lines_ref[cy]);
+                    int len = (int)wline.length();
+                    while (cx < len && !iswspace(wline[cx])) move_cursor(1, 0);
+                    while (cx < len && iswspace(wline[cx])) move_cursor(1, 0);
+                    break;
+                }
                 }
             }
             else {
@@ -207,7 +309,7 @@ void TextEditorWinImpl::run() {
                     cx = 0;
                     break;
                 case VK_END: // End key
-                    cx = (int)lines_ref[cy].length();
+                    cx = (int)string_to_wstring(lines_ref[cy]).length();
                     break;
                 case VK_PRIOR: // PageUp key
                     cy = std::max(0, cy - screen_rows);
@@ -222,44 +324,68 @@ void TextEditorWinImpl::run() {
                     overwrite_mode = !overwrite_mode;
                     break;
                 case VK_DELETE: // Del key
-                    if (cx < lines_ref[cy].length()) {
-                        lines_ref[cy].erase(cx, 1);
-                        file_modified = true;
+                    save_state();
+                    if (has_selection()) {
+                        delete_selection();
                     }
-                    else if (cy < lines_ref.size() - 1) {
-                        // If at the end of the line, merge with the next line
-                        lines_ref[cy] += lines_ref[cy + 1];
-                        lines_ref.erase(lines_ref.begin() + cy + 1);
-                        file_modified = true;
+                    else {
+                        std::wstring wline = string_to_wstring(lines_ref[cy]);
+                        if (cx < wline.length()) {
+                            wline.erase(cx, 1);
+                            lines_ref[cy] = wstring_to_string(wline);
+                            file_modified = true;
+                        }
+                        else if (cy < lines_ref.size() - 1) {
+                            lines_ref[cy] += lines_ref[cy + 1];
+                            lines_ref.erase(lines_ref.begin() + cy + 1);
+                            file_modified = true;
+                        }
                     }
                     break;
                 case VK_RETURN: {
-                    std::string remain = lines_ref[cy].substr(cx);
-                    std::string indent;
-                    for (char c : lines_ref[cy]) {
-                        if (c == ' ' || c == '\t') indent += c;
+                    if (has_selection()) delete_selection();
+                    save_state();
+                    std::wstring wline = string_to_wstring(lines_ref[cy]);
+                    std::wstring wremain = wline.substr(cx);
+                    std::wstring windent;
+                    for (wchar_t c : wline) {
+                        if (c == L' ' || c == L'\t') windent += c;
                         else break;
                     }
-                    lines_ref[cy] = lines_ref[cy].substr(0, cx);
-                    lines_ref.insert(lines_ref.begin() + cy + 1, indent + remain);
-                    cy++; cx = (int)indent.length();
+                    wline = wline.substr(0, cx);
+                    lines_ref[cy] = wstring_to_string(wline);
+                    lines_ref.insert(lines_ref.begin() + cy + 1, wstring_to_string(windent + wremain));
+                    cy++; cx = (int)windent.length();
                     file_modified = true;
                     break;
                 }
                 case VK_BACK: {
-                    if (cx > 0) {
-                        lines_ref[cy].erase(cx - 1, 1);
-                        cx--; file_modified = true;
+                    save_state();
+                    if (has_selection()) {
+                        delete_selection();
                     }
-                    else if (cy > 0) {
-                        cx = (int)lines_ref[cy - 1].length();
-                        lines_ref[cy - 1] += lines_ref[cy];
-                        lines_ref.erase(lines_ref.begin() + cy);
-                        cy--; file_modified = true;
+                    else {
+                        if (cx > 0) {
+                            std::wstring wline = string_to_wstring(lines_ref[cy]);
+                            wline.erase(cx - 1, 1);
+                            lines_ref[cy] = wstring_to_string(wline);
+                            cx--; file_modified = true;
+                        }
+                        else if (cy > 0) {
+                            std::wstring wprev = string_to_wstring(lines_ref[cy - 1]);
+                            std::wstring wcurr = string_to_wstring(lines_ref[cy]);
+                            cx = (int)wprev.length();
+                            wprev += wcurr;
+                            lines_ref[cy - 1] = wstring_to_string(wprev);
+                            lines_ref.erase(lines_ref.begin() + cy);
+                            cy--; file_modified = true;
+                        }
                     }
                     break;
                 }
                 case VK_TAB: {
+                    if (has_selection()) delete_selection();
+                    save_state();
                     std::wstring wline = string_to_wstring(lines_ref[cy]);
                     wline.insert(cx, 1, L'\t');
                     lines_ref[cy] = wstring_to_string(wline);
@@ -268,8 +394,10 @@ void TextEditorWinImpl::run() {
                     break;
                 }
                 default: {
+                    save_state();
                     wchar_t ch = key.uChar.UnicodeChar;
                     if (iswprint(ch)) {
+                        if (has_selection()) delete_selection();
                         std::wstring wline = string_to_wstring(lines_ref[cy]);
                         if (overwrite_mode && cx < wline.length()) {
                             // Overwrite mode: replace character
@@ -287,12 +415,31 @@ void TextEditorWinImpl::run() {
                 }
             }
             // Ensure cursor doesn't go past the end of the line after a move
-            if (cx > lines_ref[cy].length()) {
-                cx = (int)lines_ref[cy].length();
+            std::wstring current_wline = string_to_wstring(lines_ref[cy]);
+            if (cx > current_wline.length()) {
+                cx = (int)current_wline.length();
             }
+
+            visual_cx = calculate_visual_cx(cy, cx); // Calculate visual_cx first
+
+            // Adjust top_row to keep the cursor visible vertically 
+            if (cy < top_row) {
+                top_row = cy;
+            }
+            if (cy >= top_row + screen_rows) {
+                top_row = cy - screen_rows + 1;
+            }
+
+            // Adjust left_col to keep the cursor visible horizontally
+            if (visual_cx < left_col) {
+                left_col = visual_cx;
+            }
+            if (visual_cx >= left_col + screen_cols) {
+                left_col = visual_cx - screen_cols + 1;
+            }
+
             draw_screen();
-            visual_cx = calculate_visual_cx(cy, cx);
-            set_cursor(cy - top_row, visual_cx);
+            set_cursor(cy - top_row, visual_cx - left_col);
         }
     }
 dreckig:
@@ -322,59 +469,95 @@ void TextEditorWinImpl::write_status(const std::wstring& msg) {
     WriteConsoleW(hOut, blank.c_str(), (DWORD)blank.length(), &written, nullptr);
 }
 
-void TextEditorWinImpl::draw_line(const std::string& line, int row) {
-    //visual_cx = 0;
+void TextEditorWinImpl::draw_line(const std::string& line, int row, int line_index) {
     std::wstring wline = string_to_wstring(line);
-    std::vector<CHAR_INFO> buffer(screen_cols);
+
+    // We parse characters up to the edge of the scrolled view
+    int max_visual_cols = left_col + screen_cols;
+    std::vector<CHAR_INFO> full_buffer(max_visual_cols);
+
+    // Pre-fill with spaces
+    for (auto& c : full_buffer) {
+        c.Char.UnicodeChar = L' ';
+        c.Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+    }
+
     COORD bufferSize = { (SHORT)screen_cols, 1 };
     COORD bufferCoord = { 0, 0 };
     SMALL_RECT writeRegion = { 0, (SHORT)row, (SHORT)(screen_cols - 1), (SHORT)row };
 
+    int sx = 0, sy = 0, ex = 0, ey = 0;
+    bool has_sel = has_selection();
+    if (has_sel) get_normalized_selection(sx, sy, ex, ey);
+
+    auto apply_selection = [&](size_t char_idx, WORD& attr) {
+        if (has_sel) {
+            if (line_index > sy && line_index < ey) attr = BACKGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+            else if (line_index == sy && line_index == ey && char_idx >= sx && char_idx < ex) attr = BACKGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+            else if (line_index == sy && line_index != ey && char_idx >= sx) attr = BACKGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+            else if (line_index == ey && line_index != sy && char_idx < ex) attr = BACKGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+        }
+        };
+
     int col = 0;
     size_t i = 0;
-    while (i < wline.size() && col < screen_cols) {
+    // NOTE: All loop limits below use max_visual_cols instead of screen_cols
+    while (i < wline.size() && col < max_visual_cols) {
         if (wline[i] == L'\t') {
             int spaces = 4 - (col % 4);
-            for (int s = 0; s < spaces && col < screen_cols; ++s, ++col) {
-                buffer[col].Char.UnicodeChar = L' ';
-                buffer[col].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
-                //visual_cx++;
+            for (int s = 0; s < spaces && col < max_visual_cols; ++s, ++col) {
+                full_buffer[col].Char.UnicodeChar = L' ';
+                WORD attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+                apply_selection(i, attr);
+                full_buffer[col].Attributes = attr;
             }
             ++i;
             continue;
         }
+
         wchar_t ch = wline[i];
-        WORD attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+        WORD base_attr = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
 
         if (ch == L'"') {
-            // This is the corrected block
             const WORD string_attr = FOREGROUND_RED | FOREGROUND_GREEN;
 
-            // Color the opening quote
-            buffer[col].Char.UnicodeChar = wline[i];
-            buffer[col].Attributes = string_attr;
+            WORD attr = string_attr;
+            apply_selection(i, attr);
+            full_buffer[col].Char.UnicodeChar = wline[i];
+            full_buffer[col].Attributes = attr;
             i++; col++;
 
-            // Loop until we find the closing quote or the end of the line
-            while (i < wline.size() && col < screen_cols) {
-                buffer[col].Char.UnicodeChar = wline[i];
-                buffer[col].Attributes = string_attr;
+            while (i < wline.size() && col < max_visual_cols) {
+                WORD inner_attr = string_attr;
+                apply_selection(i, inner_attr);
+                full_buffer[col].Char.UnicodeChar = wline[i];
+                full_buffer[col].Attributes = inner_attr;
 
-                // If this character was the closing quote, break out
                 if (wline[i] == L'"') {
                     i++; col++;
                     break;
                 }
                 i++; col++;
             }
-            continue; // Continue the main parsing loop
+            continue;
         }
-
+#ifdef PYTHON
+        if (is_python && wline[i] == L'#') {
+            while (i < wline.size() && col < max_visual_cols) {
+                WORD attr = FOREGROUND_GREEN;
+                apply_selection(i, attr);
+                full_buffer[col].Char.UnicodeChar = wline[i++];
+                full_buffer[col++].Attributes = attr;
+            }
+            break;
+        }
+#endif
         if (ch == L'\'') {
-            while (i < wline.size() && col < screen_cols) {
-                buffer[col].Char.UnicodeChar = wline[i++];
-                buffer[col++].Attributes = FOREGROUND_GREEN;
-                //visual_cx++;
+            while (i < wline.size() && col < max_visual_cols) {
+                WORD attr = FOREGROUND_GREEN;
+                apply_selection(i, attr);
+                full_buffer[col].Char.UnicodeChar = wline[i++];
+                full_buffer[col++].Attributes = attr;
             }
             break;
         }
@@ -382,50 +565,75 @@ void TextEditorWinImpl::draw_line(const std::string& line, int row) {
         if (iswdigit(ch)) {
             size_t start = i;
             while (i < wline.size() && (iswdigit(wline[i]) || wline[i] == L'.')) ++i;
-            for (size_t j = start; j < i && col < screen_cols; ++j, ++col) {
-                buffer[col].Char.UnicodeChar = wline[j];
-                buffer[col].Attributes = FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
-                //visual_cx++;
+            for (size_t j = start; j < i && col < max_visual_cols; ++j, ++col) {
+                WORD attr = FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
+                apply_selection(j, attr);
+                full_buffer[col].Char.UnicodeChar = wline[j];
+                full_buffer[col].Attributes = attr;
             }
             continue;
         }
 
-        if (iswalpha(ch)) {
+        if (iswalpha(ch) || ch == L'_') {
             size_t start = i;
-            while (i < wline.size() && (iswalnum(wline[i]) || wline[i] == L'$')) ++i;
+            while (i < wline.size() && (iswalnum(wline[i]) || wline[i] == L'$' || wline[i] == L'_')) ++i;
             std::wstring word = wline.substr(start, i - start);
             std::string ascii_word = wstring_to_string(word);
-            std::transform(ascii_word.begin(), ascii_word.end(), ascii_word.begin(), ::toupper);
-            WORD kwAttr = KeywordRepository::is_keyword(ascii_word) ? (FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY) : attr;
-            for (size_t j = 0; j < word.length() && col < screen_cols; ++j, ++col) {
-                buffer[col].Char.UnicodeChar = word[j];
-                buffer[col].Attributes = kwAttr;
-                //visual_cx++;
+
+            WORD kwAttr = base_attr;
+#ifdef PYTHON
+            if (is_python) {
+                static const std::unordered_set<std::string> py_keywords = {
+                    "False", "None", "True", "and", "as", "assert", "async", "await",
+                    "break", "class", "continue", "def", "del", "elif", "else",
+                    "except", "finally", "for", "from", "global", "if", "import",
+                    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise",
+                    "return", "try", "while", "with", "yield", "print"
+                };
+                if (py_keywords.count(ascii_word)) {
+                    kwAttr = FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+                }
+            }
+            else
+#endif
+            {
+                std::transform(ascii_word.begin(), ascii_word.end(), ascii_word.begin(), ::toupper);
+                if (KeywordRepository::is_keyword(ascii_word)) {
+                    kwAttr = FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+                }
+            }
+
+            for (size_t j = 0; j < word.length() && col < max_visual_cols; ++j, ++col) {
+                WORD attr = kwAttr;
+                apply_selection(start + j, attr);
+                full_buffer[col].Char.UnicodeChar = word[j];
+                full_buffer[col].Attributes = attr;
             }
             continue;
         }
 
-        buffer[col].Char.UnicodeChar = ch;
-        buffer[col].Attributes = attr;
+        WORD final_attr = base_attr;
+        apply_selection(i, final_attr);
+        full_buffer[col].Char.UnicodeChar = ch;
+        full_buffer[col].Attributes = final_attr;
         ++i;
         ++col;
-        //visual_cx++;
     }
 
-    for (; col < screen_cols; ++col) {
-        buffer[col].Char.UnicodeChar = L' ';
-        buffer[col].Attributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+    // Extract the exact portion of the line based on our horizontal scroll position
+    std::vector<CHAR_INFO> screen_buffer(screen_cols);
+    for (int c = 0; c < screen_cols; ++c) {
+        screen_buffer[c] = full_buffer[left_col + c];
     }
 
-    WriteConsoleOutputW(hOut, buffer.data(), bufferSize, bufferCoord, &writeRegion);
+    WriteConsoleOutputW(hOut, screen_buffer.data(), bufferSize, bufferCoord, &writeRegion);
 }
-
 
 void TextEditorWinImpl::draw_screen() {
     for (int row = 0; row < screen_rows; ++row) {
         int line_index = top_row + row;
         if (line_index < lines_ref.size()) {
-            draw_line(lines_ref[line_index], row);
+            draw_line(lines_ref[line_index], row, line_index);
         }
         else {
             set_cursor(row, 0);
@@ -445,13 +653,14 @@ void TextEditorWinImpl::draw_screen() {
         status += L" | INS";
     }
 
-    status += L" | ^P:Paste ^S:Save ^F:Find ^G:GoTo ^X:Exit";
+    status += L" | ^S:Save ^F:Find ^G:GoTo ^Q:Exit";
     write_status(status);
 }
 
 void TextEditorWinImpl::move_cursor(int dx, int dy) {
     cy = std::clamp(cy + dy, 0, (int)lines_ref.size() - 1);
-    cx = std::clamp(cx + dx, 0, (int)lines_ref[cy].length());
+    std::wstring wline = string_to_wstring(lines_ref[cy]);
+    cx = std::clamp(cx + dx, 0, (int)wline.length());
     if (cy < top_row) top_row = cy;
     if (cy >= top_row + screen_rows) top_row = cy - screen_rows + 1;
 }
@@ -508,6 +717,122 @@ void TextEditorWinImpl::go_to_line() {
     }
     catch (...) {
         write_status(L"Invalid input.");
+    }
+}
+
+void TextEditorWinImpl::save_state() {
+    undo_stack.push_back({ lines_ref, cx, cy });
+    redo_stack.clear(); // Any new action invalidates the redo history
+
+    // Optional: Limit stack size to prevent excessive memory usage
+    if (undo_stack.size() > 100) {
+        undo_stack.erase(undo_stack.begin());
+    }
+}
+
+void TextEditorWinImpl::undo() {
+    if (!undo_stack.empty()) {
+        // Save current state to redo stack
+        redo_stack.push_back({ lines_ref, cx, cy });
+
+        // Restore last state from undo stack
+        EditorState state = undo_stack.back();
+        undo_stack.pop_back();
+
+        lines_ref = state.lines;
+        cx = state.cx;
+        cy = state.cy;
+        file_modified = true;
+
+        // Ensure cursor remains visible
+        if (cy < top_row) top_row = cy;
+        if (cy >= top_row + screen_rows) top_row = std::max(0, cy - screen_rows + 1);
+    }
+}
+
+void TextEditorWinImpl::redo() {
+    if (!redo_stack.empty()) {
+        // Save current state to undo stack
+        undo_stack.push_back({ lines_ref, cx, cy });
+
+        // Restore next state from redo stack
+        EditorState state = redo_stack.back();
+        redo_stack.pop_back();
+
+        lines_ref = state.lines;
+        cx = state.cx;
+        cy = state.cy;
+        file_modified = true;
+
+        // Ensure cursor remains visible
+        if (cy < top_row) top_row = cy;
+        if (cy >= top_row + screen_rows) top_row = std::max(0, cy - screen_rows + 1);
+    }
+}
+
+bool TextEditorWinImpl::has_selection() const {
+    return is_selecting && (sel_cy != cy || sel_cx != cx);
+}
+
+void TextEditorWinImpl::get_normalized_selection(int& start_x, int& start_y, int& end_x, int& end_y) const {
+    if (sel_cy < cy || (sel_cy == cy && sel_cx < cx)) {
+        start_x = sel_cx; start_y = sel_cy;
+        end_x = cx; end_y = cy;
+    }
+    else {
+        start_x = cx; start_y = cy;
+        end_x = sel_cx; end_y = sel_cy;
+    }
+}
+
+void TextEditorWinImpl::delete_selection() {
+    if (!has_selection()) return;
+    save_state();
+    int sx, sy, ex, ey;
+    get_normalized_selection(sx, sy, ex, ey);
+
+    // Perform exact character cuts via wstring
+    std::wstring wey = string_to_wstring(lines_ref[ey]);
+    std::wstring wremain = wey.substr(ex);
+
+    std::wstring wsy = string_to_wstring(lines_ref[sy]);
+    wsy = wsy.substr(0, sx) + wremain;
+    lines_ref[sy] = wstring_to_string(wsy);
+
+    if (ey > sy) {
+        lines_ref.erase(lines_ref.begin() + sy + 1, lines_ref.begin() + ey + 1);
+    }
+
+    cx = sx;
+    cy = sy;
+    is_selecting = false;
+    file_modified = true;
+}
+
+void TextEditorWinImpl::copy_to_clipboard() {
+    if (!has_selection()) return;
+    int sx, sy, ex, ey;
+    get_normalized_selection(sx, sy, ex, ey);
+
+    // Build the selection buffer entirely in wstring
+    std::wstring wselected_text;
+    for (int i = sy; i <= ey; ++i) {
+        std::wstring wline = string_to_wstring(lines_ref[i]);
+        int line_start = (i == sy) ? sx : 0;
+        int line_end = (i == ey) ? ex : (int)wline.length();
+        wselected_text += wline.substr(line_start, line_end - line_start);
+        if (i < ey) wselected_text += L"\r\n";
+    }
+
+    if (OpenClipboard(NULL)) {
+        EmptyClipboard();
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, (wselected_text.length() + 1) * sizeof(wchar_t));
+        if (hMem) {
+            memcpy(GlobalLock(hMem), wselected_text.c_str(), (wselected_text.length() + 1) * sizeof(wchar_t));
+            GlobalUnlock(hMem);
+            SetClipboardData(CF_UNICODETEXT, hMem);
+        }
+        CloseClipboard();
     }
 }
 

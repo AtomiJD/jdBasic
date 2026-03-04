@@ -8,6 +8,10 @@ Player = {"Name": "Gordon", "Health": 100, "Armor": 50, "Ammo": 255}
 print player{"Ammo"}
 cls
 cls
+load wf_cube
+edit
+load lall.py
+edit
 [WS1_HISTORY]
 [WS2_HISTORY]
 [WS3_HISTORY]

@@ -43,6 +43,12 @@
 #define JDREPL
 #endif
 
+// Enable Python integration
+#define PYTHON
+
+// Enable Scintilla Editor integration
+#define SCIEDIT
+
 // --- Windows-Specific Compatibility Macros ---
 
 // Enables COM/ActiveX support for interacting with Windows objects (e.g., Excel).

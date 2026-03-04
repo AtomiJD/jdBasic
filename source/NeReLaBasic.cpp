@@ -30,6 +30,21 @@ std::deque<int> g_inkey_buffer;
 #include <algorithm> // for std::transform, std::find_if
 #include <cctype>    // for std::isspace, std::toupper
 
+#if defined(PYTHON)
+#ifdef _DEBUG
+#define JDBASIC_RESTORE_DEBUG
+#undef _DEBUG
+#endif
+
+#include <Python.h>
+
+// --- Restore _DEBUG for the rest of your C++ project ---
+#ifdef JDBASIC_RESTORE_DEBUG
+#define _DEBUG
+#undef JDBASIC_RESTORE_DEBUG
+#endif
+#endif
+
 // Forward declarations for tensor math functions from AIFunctions.cpp
 BasicValue tensor_add(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b);
 BasicValue tensor_subtract(NeReLaBasic& vm, const BasicValue& a, const BasicValue& b);
@@ -39,7 +54,7 @@ BasicValue tensor_scalar_divide(NeReLaBasic& vm, const BasicValue& a, const Basi
 std::shared_ptr<Array> array_add(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 std::shared_ptr<Array> array_subtract(const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b);
 
-const std::string NERELA_VERSION = "1.0.0";
+const std::string NERELA_VERSION = "1.0.1";
 
 void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& table_to_populate);
 
@@ -172,7 +187,30 @@ NeReLaBasic::NeReLaBasic() {
     step_over_stack_depth = 0;
     step_out_stack_depth = 0;
     last_keyboard_check_time = std::chrono::steady_clock::now();
+#if defined(PYTHON)
+    PyConfig config;
+    PyConfig_InitPythonConfig(&config);
 
+    // Set the path to your Python installation
+#if defined(_WIN32)
+    PyStatus status = PyConfig_SetString(&config, &config.home, L"C:\\Users\\atomi\\AppData\\Local\\python\\pythoncore-3.14-64");
+    if (PyStatus_Exception(status)) {
+        // Fallback or error handling if the path is bad
+        PyConfig_Clear(&config);
+    }
+#endif
+
+    // Boot up the interpreter using the config
+    status = Py_InitializeFromConfig(&config);
+
+    // Clean up the config struct (Python has already copied what it needs)
+    PyConfig_Clear(&config);
+
+    if (PyStatus_Exception(status)) {
+        // Handle fatal initialization error
+        // (e.g., print a warning to the console that Python isn't available)
+    }
+#endif
 }
 
 NeReLaBasic::~NeReLaBasic() {
@@ -185,6 +223,9 @@ NeReLaBasic::~NeReLaBasic() {
         dlclose(lib_handle);
 #endif
     }
+#if defined(PYTHON)
+    Py_Finalize();
+#endif
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     endwin(); // Add this to restore the terminal
 #endif
@@ -315,7 +356,7 @@ void NeReLaBasic::init_screen() {
         std::string sos = "linux";
 #endif    
     TextIO::print("jdBasic v " + NERELA_VERSION + ", OS: " + sos ); TextIO::nl();
-    TextIO::print("Copyright (c) 2025 Computerwelt AI Solutions LLC."); TextIO::nl();
+    TextIO::print("Copyright (c) 2025-2026 Computerwelt AI Solutions LLC."); TextIO::nl();
     TextIO::print("All Rights Reserved."); TextIO::nl();
     TextIO::print("Type HELP for more infos."); TextIO::nl();
     TextIO::nl();

@@ -14,10 +14,13 @@
 #if defined(_WIN32)
 #include <conio.h>
 #include <windows.h>
+#include <queue> // ADD THIS
 #ifdef JDCOM
-#include <comdef.h> // Required for _bstr_t string conversions in COM
+#include <comdef.h> 
 #endif
 static DWORD g_original_console_mode = 0;
+static std::queue<int> g_utf8_buffer; // ADD THIS: Buffers multi-byte characters
+static WCHAR g_high_surrogate = 0;    // ADD THIS: Tracks the first half of an emoji
 #else
 #include <termios.h>
 #include <unistd.h>
@@ -42,14 +45,10 @@ void jdConsole::enable_raw_mode() {
     if (GetConsoleMode(hStdin, &g_original_console_mode)) {
         DWORD mode = g_original_console_mode;
 
-        // DISABLE:
-        // - PROCESSED_INPUT: Stops Windows from hijacking Ctrl+C and Ctrl+V
-        // - QUICK_EDIT_MODE: Stops mouse clicks from pausing the console
-        // - LINE_INPUT & ECHO_INPUT: Standard raw mode
         mode &= ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
 
-        // QuickEdit requires ENABLE_EXTENDED_FLAGS to be active to modify it
         mode |= ENABLE_EXTENDED_FLAGS;
+        mode |= ENABLE_WINDOW_INPUT; // <--- ADD THIS LINE
         mode &= ~ENABLE_QUICK_EDIT_MODE;
 
         SetConsoleMode(hStdin, mode);
@@ -76,33 +75,104 @@ void jdConsole::disable_raw_mode() {
 
 int jdConsole::read_raw_key() {
 #if defined(_WIN32)
-    if (!_kbhit()) {
-        return 0;
+    // 1. Drain any waiting UTF-8 bytes from multi-byte characters
+    if (!g_utf8_buffer.empty()) {
+        int c = g_utf8_buffer.front();
+        g_utf8_buffer.pop();
+        return c;
     }
-    int ch = _getch();
-    if (ch == 0 || ch == 224) { // Extended keys
-        int ext = _getch();
-        switch (ext) {
-        case 72: return KEY_UP;
-        case 80: return KEY_DOWN;
-        case 75: return KEY_LEFT;
-        case 77: return KEY_RIGHT;
-        case 71: return KEY_HOME;       // Pos1
-        case 79: return KEY_END;        
-        case 83: return KEY_DELETE;     
-        case 115: return KEY_CTRL_LEFT; 
-        case 116: return KEY_CTRL_RIGHT;
-        case 59: return KEY_F1;
-        case 60: return KEY_F2;
-        case 61: return KEY_F3;
-        case 62: return KEY_F4;
-        case 63: return KEY_F5;
-        case 65: return KEY_F7;
-        case 66: return KEY_F8;
-        default: return 0;
+
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    INPUT_RECORD ir;
+    DWORD read;
+
+    // 2. Poll for console input events
+    if (PeekConsoleInputW(hStdin, &ir, 1, &read) && read > 0) {
+        ReadConsoleInputW(hStdin, &ir, 1, &read); // Actually consume the event
+
+        if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
+            auto& ke = ir.Event.KeyEvent;
+
+            // Check for Ctrl modifiers
+            bool ctrl = (ke.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+            if (ctrl) {
+                switch (ke.wVirtualKeyCode) {
+                case 'C': return KEY_CTRL_C;
+                case 'V': return KEY_CTRL_V;
+                case VK_LEFT: return KEY_CTRL_LEFT;
+                case VK_RIGHT: return KEY_CTRL_RIGHT;
+                }
+            }
+
+            // Map standard Virtual Keys to your REPL's KEY_* constants
+            switch (ke.wVirtualKeyCode) {
+            case VK_UP: return KEY_UP;
+            case VK_DOWN: return KEY_DOWN;
+            case VK_LEFT: return KEY_LEFT;
+            case VK_RIGHT: return KEY_RIGHT;
+            case VK_HOME: return KEY_HOME;
+            case VK_END: return KEY_END;
+            case VK_DELETE: return KEY_DELETE;
+            case VK_BACK: return KEY_BACKSPACE;
+            case VK_RETURN: return KEY_ENTER;
+            case VK_TAB: return KEY_TAB;
+            case VK_F1: return KEY_F1;
+            case VK_F2: return KEY_F2;
+            case VK_F3: return KEY_F3;
+            case VK_F4: return KEY_F4;
+            case VK_F5: return KEY_F5;
+            case VK_F7: return KEY_F7;
+            case VK_F8: return KEY_F8;
+            case VK_ESCAPE: return KEY_ESC;
+            }
+
+            // 3. Handle Unicode Characters (UTF-16 -> UTF-8)
+            WCHAR wch = ke.uChar.UnicodeChar;
+            if (wch != 0) {
+                std::wstring utf16_str;
+
+                if (wch >= 0xD800 && wch <= 0xDBFF) {
+                    // It's the first half of an emoji (High Surrogate). Wait for the next event.
+                    g_high_surrogate = wch;
+                    return 0;
+                }
+                else if (wch >= 0xDC00 && wch <= 0xDFFF) {
+                    // It's the second half of an emoji (Low Surrogate). Combine them!
+                    if (g_high_surrogate != 0) {
+                        utf16_str += g_high_surrogate;
+                        utf16_str += wch;
+                        g_high_surrogate = 0;
+                    }
+                    else {
+                        return 0; // Orphaned low surrogate, ignore.
+                    }
+                }
+                else {
+                    // Normal single-WCHAR character (ASCII, ÄÖÜ, etc)
+                    utf16_str += wch;
+                    g_high_surrogate = 0;
+                }
+
+                // Convert the assembled UTF-16 string into pure UTF-8 bytes
+                int size_needed = WideCharToMultiByte(CP_UTF8, 0, utf16_str.c_str(), (int)utf16_str.length(), NULL, 0, NULL, NULL);
+                std::string utf8_str(size_needed, 0);
+                WideCharToMultiByte(CP_UTF8, 0, utf16_str.c_str(), (int)utf16_str.length(), &utf8_str[0], size_needed, NULL, NULL);
+
+                // Push bytes into the buffer
+                for (char c : utf8_str) {
+                    g_utf8_buffer.push(static_cast<unsigned char>(c));
+                }
+
+                // Pop the very first byte to return immediately
+                if (!g_utf8_buffer.empty()) {
+                    int c = g_utf8_buffer.front();
+                    g_utf8_buffer.pop();
+                    return c;
+                }
+            }
         }
     }
-    return ch;
+    return 0; // Nothing to process on this tick
 #else
     // POSIX escape sequence parsing (Simplified for brevity)
     char ch;
@@ -118,7 +188,6 @@ int jdConsole::read_raw_key() {
             case 'B': return KEY_DOWN;
             case 'C': return KEY_RIGHT;
             case 'D': return KEY_LEFT;
-                // Add F-keys parsing depending on terminal emulator
             }
         }
         return KEY_ESC;
@@ -220,15 +289,35 @@ void jdConsole::process_key(int key) {
     }
     else if (key == KEY_BACKSPACE) {
         if (ws.cursor_pos > 0) {
-            ws.current_input.erase(--ws.cursor_pos, 1);
+            int start = ws.cursor_pos - 1;
+            // Step back over UTF-8 continuation bytes (10xxxxxx -> 0x80 to 0xBF)
+            while (start > 0 && (static_cast<unsigned char>(ws.current_input[start]) & 0xC0) == 0x80) {
+                start--;
+            }
+            ws.current_input.erase(start, ws.cursor_pos - start);
+            ws.cursor_pos = start;
             render_prompt();
         }
     }
     else if (key == KEY_LEFT) {
-        if (ws.cursor_pos > 0) { ws.cursor_pos--; render_prompt(); }
+        if (ws.cursor_pos > 0) {
+            ws.cursor_pos--;
+            // Step back over UTF-8 continuation bytes
+            while (ws.cursor_pos > 0 && (static_cast<unsigned char>(ws.current_input[ws.cursor_pos]) & 0xC0) == 0x80) {
+                ws.cursor_pos--;
+            }
+            render_prompt();
+        }
     }
     else if (key == KEY_RIGHT) {
-        if (ws.cursor_pos < ws.current_input.length()) { ws.cursor_pos++; render_prompt(); }
+        if (ws.cursor_pos < ws.current_input.length()) {
+            ws.cursor_pos++;
+            // Step forward over UTF-8 continuation bytes
+            while (ws.cursor_pos < ws.current_input.length() && (static_cast<unsigned char>(ws.current_input[ws.cursor_pos]) & 0xC0) == 0x80) {
+                ws.cursor_pos++;
+            }
+            render_prompt();
+        }
     }
     else if (key == KEY_HOME) {
         ws.cursor_pos = 0;
@@ -240,36 +329,48 @@ void jdConsole::process_key(int key) {
     }
     else if (key == KEY_DELETE) {
         if (ws.cursor_pos < ws.current_input.length()) {
-            ws.current_input.erase(ws.cursor_pos, 1);
+            int end = ws.cursor_pos + 1;
+            // Step forward over UTF-8 continuation bytes
+            while (end < ws.current_input.length() && (static_cast<unsigned char>(ws.current_input[end]) & 0xC0) == 0x80) {
+                end++;
+            }
+            ws.current_input.erase(ws.cursor_pos, end - ws.cursor_pos);
             render_prompt();
         }
     }
     else if (key == KEY_CTRL_LEFT) {
+        auto move_left = [&]() {
+            if (ws.cursor_pos > 0) {
+                ws.cursor_pos--;
+                while (ws.cursor_pos > 0 && (static_cast<unsigned char>(ws.current_input[ws.cursor_pos]) & 0xC0) == 0x80) ws.cursor_pos--;
+            }
+            };
         // Skip spaces backwards
-        while (ws.cursor_pos > 0 && std::isspace(ws.current_input[ws.cursor_pos - 1])) {
-            ws.cursor_pos--;
-        }
-        // Skip characters backwards until we hit a space
-        while (ws.cursor_pos > 0 && !std::isspace(ws.current_input[ws.cursor_pos - 1])) {
-            ws.cursor_pos--;
-        }
+        while (ws.cursor_pos > 0 && std::isspace((unsigned char)ws.current_input[ws.cursor_pos - 1])) move_left();
+        // Skip characters backwards
+        while (ws.cursor_pos > 0 && !std::isspace((unsigned char)ws.current_input[ws.cursor_pos - 1])) move_left();
         render_prompt();
-    }
+        }
     else if (key == KEY_CTRL_RIGHT) {
-        int len = ws.current_input.length();
-        // Skip characters forwards until we hit a space
-        while (ws.cursor_pos < len && !std::isspace(ws.current_input[ws.cursor_pos])) {
-            ws.cursor_pos++;
+            auto move_right = [&]() {
+                if (ws.cursor_pos < ws.current_input.length()) {
+                    ws.cursor_pos++;
+                    while (ws.cursor_pos < ws.current_input.length() && (static_cast<unsigned char>(ws.current_input[ws.cursor_pos]) & 0xC0) == 0x80) ws.cursor_pos++;
+                }
+                };
+            // Skip characters forwards
+            while (ws.cursor_pos < ws.current_input.length() && !std::isspace((unsigned char)ws.current_input[ws.cursor_pos])) move_right();
+            // Skip spaces forwards
+            while (ws.cursor_pos < ws.current_input.length() && std::isspace((unsigned char)ws.current_input[ws.cursor_pos])) move_right();
+            render_prompt();
         }
-        // Skip spaces forwards
-        while (ws.cursor_pos < len && std::isspace(ws.current_input[ws.cursor_pos])) {
-            ws.cursor_pos++;
-        }
-        render_prompt();
-    }
-    else if (key >= 32 && key <= 126) { // Printable characters
+    else if (key >= 32 && key <= 255) { // Allow extended ASCII and UTF-8 byte segments
         ws.current_input.insert(ws.cursor_pos++, 1, static_cast<char>(key));
+#if defined(_WIN32)
+        if (g_utf8_buffer.empty()) render_prompt();
+#else
         render_prompt();
+#endif
     }
 }
 
@@ -308,6 +409,7 @@ void jdConsole::switch_workspace(int index) {
 
     // 2. Switch the active ID
     active_ws = index;
+    vm.current_workspace = active_ws;
     ConsoleWorkspace& new_ws = workspaces[active_ws];
 
     // 3. RESTORE the new workspace's screen
@@ -462,7 +564,6 @@ void jdConsole::show_history_f7() {
     render_prompt();
 }
 
-
 void jdConsole::search_history_f8() {
     ConsoleWorkspace& ws = workspaces[active_ws];
     if (ws.history.empty()) return;
@@ -561,7 +662,7 @@ void jdConsole::handle_autocomplete() {
     // 1. Extract the word behind the cursor. 
     // NEW: Allow '{' and '"' to be part of the token for Map syntax!
     int start = ws.cursor_pos - 1;
-    while (start >= 0 && (std::isalnum(ws.current_input[start]) ||
+    while (start >= 0 && (std::isalnum((unsigned char)ws.current_input[start]) ||
         ws.current_input[start] == '.' ||
         ws.current_input[start] == '_' ||
         ws.current_input[start] == '{' ||
@@ -769,95 +870,123 @@ std::string jdConsole::get_from_clipboard() {
 }
 
 void jdConsole::render_prompt() {
+    std::cout.clear(); // Clear any fail states caused by console flushing
     ConsoleWorkspace& ws = workspaces[active_ws];
     static int last_drawn_len = 0;
 
     std::string prompt = "WS" + std::to_string(active_ws + 1) + "> ";
     std::string full_line = prompt + ws.current_input;
 
-    // 1. Return to start of line
-    TextIO::print("\r");
+#if defined(_WIN32)
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO csbi_start;
+    GetConsoleScreenBufferInfo(hOut, &csbi_start);
 
-    // 2. Draw Prompt in Green
+    // Move physical cursor to column 0 (replaces \r)
+    COORD startPos = { 0, csbi_start.dwCursorPosition.Y };
+    SetConsoleCursorPosition(hOut, startPos);
+#else
+    TextIO::print("\r");
+#endif
+
+    // 1. Draw Prompt
     TextIO::setColor(10, 0);
     TextIO::print(prompt);
 
-    // 3. Mini-Lexer for Real-Time Syntax Highlighting
+    // 2. Draw Input Text (Mini-Lexer)
     std::string input = ws.current_input;
     for (size_t i = 0; i < input.length(); ) {
-        char c = input[i];
+        unsigned char c = static_cast<unsigned char>(input[i]);
 
         if (c == '"') {
-            // --- STRINGS (Yellow) ---
             std::string token(1, c);
             i++;
-            while (i < input.length() && input[i] != '"') {
-                token += input[i++];
-            }
-            if (i < input.length()) token += input[i++]; // Include closing quote
-
+            while (i < input.length() && input[i] != '"') token += input[i++];
+            if (i < input.length()) token += input[i++];
             TextIO::setColor(3, 0);
             TextIO::print(token);
         }
         else if (std::isdigit(c)) {
-            // --- NUMBERS (Magenta) ---
             std::string token;
-            while (i < input.length() && (std::isdigit(input[i]) || input[i] == '.')) {
-                token += input[i++];
-            }
-
+            while (i < input.length() && (std::isdigit((unsigned char)input[i]) || input[i] == '.')) token += input[i++];
             TextIO::setColor(6, 0);
             TextIO::print(token);
         }
-        else if (std::isalpha(c) || c == '_') {
-            // --- WORDS (Keywords & Variables) ---
+        else if (std::isalpha(c) || c == '_' || c >= 128) {
             std::string token;
-            // Allow dots for modular keywords like "SPRITE.LOAD"
-            while (i < input.length() && (std::isalnum(input[i]) || input[i] == '_' || input[i] == '.')) {
+            while (i < input.length() && (std::isalnum((unsigned char)input[i]) || input[i] == '_' || input[i] == '.' || static_cast<unsigned char>(input[i]) >= 128)) {
                 token += input[i++];
             }
-
-            // Check against your Keyword Repository
-            if (KeywordRepository::is_keyword(token)) {
-                TextIO::setColor(5, 0); // Cyan for Keywords
-            }
-            else {
-                TextIO::setColor(2, 0);  // Standard Gray/White for Variables
-            }
+            if (KeywordRepository::is_keyword(token)) TextIO::setColor(5, 0);
+            else TextIO::setColor(2, 0);
             TextIO::print(token);
         }
         else {
-            // --- SYMBOLS & WHITESPACE (Dark Gray / Default) ---
             std::string s(1, c);
-            if (std::isspace(c)) {
-                TextIO::setColor(7, 0);
-            }
-            else {
-                TextIO::setColor(2, 0); // Dark Gray for operators like =, +, ( )
-            }
+            if (std::isspace(c)) TextIO::setColor(7, 0);
+            else TextIO::setColor(2, 0);
             TextIO::print(s);
             i++;
         }
     }
 
-    // Reset to default color
     TextIO::setColor(2, 0);
 
-    // 4. Erase trailing leftover characters ONLY if the line shrank (Backspace handling)
-    int current_len = full_line.length();
-    if (last_drawn_len > current_len) {
-        int diff = last_drawn_len - current_len;
-        TextIO::print(std::string(diff, ' '));
-        TextIO::print(std::string(diff, '\b'));
+    // 3. Erase trailing characters safely
+    int current_visual_len = 0;
+    for (char c : full_line) {
+        if (static_cast<unsigned char>(c) <= 0x7F || static_cast<unsigned char>(c) >= 0xC0) {
+            current_visual_len++;
+        }
     }
-    last_drawn_len = current_len;
 
-    // 5. Move cursor left to the correct logical editing position
+    if (last_drawn_len > current_visual_len) {
+        int diff = last_drawn_len - current_visual_len;
+        TextIO::print(std::string(diff, ' '));
+
+#if !defined(_WIN32)
+        // POSIX fallback needs to step back over the spaces manually
+        TextIO::print(std::string(diff, '\b'));
+#endif
+    }
+    last_drawn_len = current_visual_len;
+
+    // 4. Move cursor to actual visual position
+#if defined(_WIN32)
+    // Calculate visual characters strictly from start of input to the cursor index
+    int visual_offset = 0;
+    for (size_t i = 0; i < ws.cursor_pos && i < ws.current_input.length(); i++) {
+        unsigned char c = ws.current_input[i];
+        if (c <= 0x7F || c >= 0xC0) visual_offset++;
+    }
+
+    int new_x = startPos.X + prompt.length() + visual_offset;
+    int new_y = startPos.Y;
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi_current;
+    GetConsoleScreenBufferInfo(hOut, &csbi_current);
+
+    // Handle line wrapping in the console
+    while (new_x >= csbi_current.dwSize.X) {
+        new_x -= csbi_current.dwSize.X;
+        new_y++;
+    }
+
+    COORD newPos = { (SHORT)new_x, (SHORT)new_y };
+    SetConsoleCursorPosition(hOut, newPos);
+#else
+    // POSIX fallback using \b
     if (ws.cursor_pos < ws.current_input.length()) {
-        int move_back = ws.current_input.length() - ws.cursor_pos;
+        int move_back = 0;
+        for (size_t i = ws.cursor_pos; i < ws.current_input.length(); i++) {
+            unsigned char c = ws.current_input[i];
+            if (c <= 0x7F || c >= 0xC0) move_back++;
+        }
         TextIO::print(std::string(move_back, '\b'));
     }
+#endif
 }
+
 void jdConsole::execute_current_line() {
     //is_running = false;
     ConsoleWorkspace& ws = workspaces[active_ws];
@@ -877,7 +1006,9 @@ void jdConsole::execute_current_line() {
             if (vm.is_stopped) {
                 TextIO::print("Resuming..."); TextIO::nl();
                 vm.is_stopped = false;
+                disable_raw_mode();
                 vm.execute_main_program(vm.program_p_code, true);
+                enable_raw_mode();
                 if (Error::get() != 0) Error::print();
             }
             else {
@@ -901,8 +1032,9 @@ void jdConsole::execute_current_line() {
 
         // Pass to the VM for compilation and execution
         if (vm.compiler->tokenize(vm, cmd, 0, vm.direct_p_code, *vm.active_function_table, false, true) == 0) {
+            disable_raw_mode();
             vm.execute_synchronous_block(vm.direct_p_code);
-
+            enable_raw_mode();
             if (vm.program_ended) {
                 Error::clear();
                 vm.program_ended = false;
