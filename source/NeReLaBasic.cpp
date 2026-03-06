@@ -19,6 +19,27 @@
 #include <cstring>
 #if defined(_WIN32)
 #include <conio.h>
+// Helper to convert UTF-8 from JSON to std::wstring for Python Config
+std::wstring Utf8ToWstring(const std::string& str) {
+    if (str.empty()) return std::wstring();
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
+    std::wstring wstrTo(size_needed, 0);
+    MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
+    return wstrTo;
+}
+// Helper to expand Windows environment variables like % LOCALAPPDATA %
+std::wstring ExpandEnvVars(const std::wstring & input) {
+    DWORD size_needed = ExpandEnvironmentStringsW(input.c_str(), NULL, 0);
+    if (size_needed == 0) return input; // Return original if expansion fails
+
+    std::wstring expanded(size_needed, L'\0');
+    ExpandEnvironmentStringsW(input.c_str(), &expanded[0], size_needed);
+
+    // Remove the trailing null character included in size_needed
+    expanded.pop_back();
+    return expanded;
+}
+
 #elif defined(__EMSCRIPTEN__)
 extern std::vector<int> g_ems_key_buffer;
 std::deque<int> g_inkey_buffer;
@@ -187,13 +208,60 @@ NeReLaBasic::NeReLaBasic() {
     step_over_stack_depth = 0;
     step_out_stack_depth = 0;
     last_keyboard_check_time = std::chrono::steady_clock::now();
+
 #if defined(PYTHON)
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
 
-    // Set the path to your Python installation
 #if defined(_WIN32)
-    PyStatus status = PyConfig_SetString(&config, &config.home, L"C:\\Users\\atomi\\AppData\\Local\\python\\pythoncore-3.14-64");
+    // 1. Get the path of the current executable
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+
+    // 2. Strip the executable name to get the directory
+    wchar_t* lastSlash = wcsrchr(exePath, L'\\');
+    if (lastSlash != nullptr) {
+        *lastSlash = L'\0';
+    }
+
+    // 3. Construct the path to the jdbasic.config file
+    std::wstring configFilePath = std::wstring(exePath) + L"\\jdbasic.config";
+    std::wstring pythonHome;
+
+    // 4. Read and parse the JSON config file
+    std::ifstream configFile(configFilePath);
+    if (configFile.is_open()) {
+        try {
+            nlohmann::json j;
+            configFile >> j;
+
+            // Extract and expand the python path
+            if (j.contains("python_home") && j["python_home"].is_string()) {
+                std::string utf8Path = j["python_home"];
+                pythonHome = ExpandEnvVars(Utf8ToWstring(utf8Path));
+            }
+
+            // Future config values can be read here...
+
+        }
+        catch (const nlohmann::json::exception& e) {
+            // Handle JSON parsing errors if needed
+        }
+        configFile.close();
+    }
+
+    // 5. Apply the path from config, or use a fallback
+    PyStatus status;
+    if (!pythonHome.empty()) {
+        status = PyConfig_SetString(&config, &config.home, pythonHome.c_str());
+    }
+    else {
+        // Fallback if config file is missing, invalid, or lacks the key
+        // Also expanding the fallback just in case
+        std::wstring fallback = ExpandEnvVars(L"%LOCALAPPDATA%\\python\\pythoncore-3.14-64");
+        status = PyConfig_SetString(&config, &config.home, fallback.c_str());
+    }
+
     if (PyStatus_Exception(status)) {
         // Fallback or error handling if the path is bad
         PyConfig_Clear(&config);
@@ -208,7 +276,6 @@ NeReLaBasic::NeReLaBasic() {
 
     if (PyStatus_Exception(status)) {
         // Handle fatal initialization error
-        // (e.g., print a warning to the console that Python isn't available)
     }
 #endif
 }
