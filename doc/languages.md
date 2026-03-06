@@ -429,6 +429,23 @@ PRINT SELECT(lambda i -> i + 1, IOTA(10))
 PRINT SELECT(lambda i -> i + 1, IOTA(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
 ```
 
+**Lambda Function Closures with USE()**
+
+```basic
+FUNC MakeAdder(base_value)
+    ' The returned Lambda captures 'base_value' in its backpack.
+    ' Even after MakeAdder finishes, the lambda remembers it.
+    RETURN LAMBDA USE(base_value) x -> x + base_value
+ENDFUNC
+
+Add5 = MakeAdder(5)
+Add100 = MakeAdder(100)
+
+PRINT "5 + 10 = "; Add5(10)      ' Output: 15
+PRINT "100 + 10 = "; Add100(10)  ' Output: 110
+PRINT
+```
+
 ### Function as operators
 
 ```basic
@@ -1186,8 +1203,7 @@ ENDIF
 * **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of circles.
 * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
 * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
-
-Here is the new section for your `languages.md` file, formatted to match the existing documentation style.
+* **`TOGGLE_FULLSCREEN`**: Toggles the graphics window between fullscreen and windowed mode.
 
 ### ImGui Functions
 
@@ -1489,12 +1505,12 @@ LOOP  UNTIL k$ = "q" OR k$ = "Q"
 * **`SPRITE.CREATE_GROUP() -> group_id`**: Creates a new, empty sprite group.
 * **`SPRITE.COLLISION_GROUPS(group_id1, group_id2) -> array[hit_id1, hit_id2]`**: Checks for collision between two groups of sprites.
 * **`SPRITE.COLLISION_GROUP(instance_id, group_id) -> hit_instance_id`**: Checks for collision between a single sprite and a group.
-* **`MAP.LOAD "map_name", "filename.json"`**: Loads a Tiled map file.
-* **`MAP.DRAW_LAYER "map_name", "layer_name", [world_offset_x], [world_offset_y]`**: Draws a specific tile layer from a loaded map.
-* **`MAP.GET_OBJECTS("map_name", "object_type") -> Array of Objects`**: Retrieves all objects of a certain type from an object layer.
-* **`MAP.COLLIDES(sprite_id, "map_name", "layer_name") -> boolean`**: Checks if a sprite is colliding with any solid tile on a given layer.
-* **`MAP.GET_TILE_ID "mapname", "layername", tileX, tileY`**: Returns the tile id from the given position.
-* **`MAP.DRAW_DEBUG_COLLISIONS player_id, "map", "layer"`**: For debug purpose. Draws a rect around the tile near x,y. CAM_X and CAM_Y must be set.
+* **`TILEMAP.LOAD "map_name", "filename.json"`**: Loads a Tiled map file.
+* **`TILEMAP.DRAW_LAYER "map_name", "layer_name", [world_offset_x], [world_offset_y]`**: Draws a specific tile layer from a loaded map.
+* **`TILEMAP.GET_OBJECTS("map_name", "object_type") -> Array of Objects`**: Retrieves all objects of a certain type from an object layer.
+* **`TILEMAP.COLLIDES(sprite_id, "map_name", "layer_name") -> boolean`**: Checks if a sprite is colliding with any solid tile on a given layer.
+* **`TILEMAP.GET_TILE_ID "mapname", "layername", tileX, tileY`**: Returns the tile id from the given position.
+* **`TILEMAP.DRAW_DEBUG_COLLISIONS player_id, "map", "layer"`**: For debug purpose. Draws a rect around the tile near x,y. CAM_X and CAM_Y must be set.
 
 #### Turtle
   
@@ -1513,7 +1529,11 @@ LOOP  UNTIL k$ = "q" OR k$ = "Q"
 
 Here is the documentation extension for **`languages.md`** covering the new Joystick/Gamepad commands.
 
-### Joystick / Gamepad Input
+### Mouse / Joystick / Gamepad Input
+
+* **`MOUSEX -> number`**: Returns the current X coordinate of the mouse in the graphics window.
+* **`MOUSEY -> number`**: Returns the current Y coordinate of the mouse in the graphics window.
+* **`MOUSEB(button_index)-> number`**: Returns TRUE if the specified mouse button (1=L, 2=M, 3=R) is pressed.
 
 * **`JOY.COUNT() -> number`**: Returns the number of connected joysticks/gamepads.
 * **`JOY.NAME$(id) -> string$`**: Returns the name of the joystick at index `id` (0-based).
@@ -1668,10 +1688,13 @@ The `EDIT` command launches a simple, built-in text editor.
 
 ### Keyboard Shortcuts
 
-* **Arrow Keys, PageUp, PageDown**: Navigate text.
-* **`Ctrl+X`**: Exit the editor.
+* **Arrow Keys, PageUp, PageDown**: Navigate text. Holding SHIFT for marking the text.
+* **`Ctrl+Q`**: Exit the editor.
 * **`Ctrl+S`**: Save the current file. If the file is unnamed, you will be prompted for a name.
 * **`Ctrl+F`**: Find text. You will be prompted for a search query.
-* **`Ctrl+P`**: Fast paste clipboard text.
+* **`Ctrl+P`**: Fast paste clipboard text (preserves formatting!)
+* **`Ctrl+C`**: Copy selected test
+* **`Ctrl+X`**: Cut selected test
+* **`Ctrl+V`**: Paste selected test
 * **`F3`**: Find the next occurrence of the last search query.
 * **`Ctrl+G`**: Go to a specific line number.

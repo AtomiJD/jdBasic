@@ -296,10 +296,6 @@ Description: Evaluates a string as an expression and returns its result at runti
 Syntax: EXECUTE(code_string$)
 Description: Executes a string of jdBasic code at runtime.
 
-[EXIT]
-Syntax: EXIT
-Description: A generic command to exit the current structure (function, loop, etc.).
-
 [EXITDO]
 Syntax: EXIT DO
 Description: Exits the current DO...LOOP immediately.
@@ -663,10 +659,6 @@ Description: Performs an HTTP GET request and returns the response body as a str
 [HTTP.POST$]
 Syntax: HTTP.POST$(url$, data$, contentType$)
 Description: Performs an HTTP POST request.
-
-[HTTP.POST_ASYNC]
-Syntax: HTTP.POST_ASYNC(url$, data$, contentType$)
-Description: Performs an asynchronous HTTP POST request, returning a task handle.
 
 [HTTP.PUT$]
 Syntax: HTTP.PUT$(url$, data$, contentType$)

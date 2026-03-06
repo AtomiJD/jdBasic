@@ -1,10 +1,31 @@
-# jdBasic - A Modern Functional BASIC Interpreter
+# jdBasic - A Persistent Experimental BASIC Environment
 
-**jdBasic** is a modern BASIC interpreter that fuses the simplicity of retro coding with the power of APL-style array processing, functional programming patterns, and immediate-mode GUI creation.
+**jdBasic** is a modern cross-platform BASIC interpreter designed for **experimentation, scripting, and rapid development without friction**.
 
-Whether you're building data pipelines, creating dev tools with native UIs, live-coding music, or training neural networks from scratch, jdBasic offers a unique, cross-platform environment.
+It combines the immediacy of classic BASIC with powerful built-in capabilities such as array programming, automation tools, graphics, sound, and a persistent REPL workspace.
 
-**Try it right now in your browser:** [jdbasic.org/live](https://jdbasic.org/live/index.html)
+Instead of constantly restarting environments, importing libraries, or rebuilding context, jdBasic lets you keep a computing session alive and evolving.
+
+You can:
+
+- explore ideas in a powerful interactive REPL
+- save entire sessions with `SAVEWS`
+- restore them instantly with `LOADWS`
+- build automation tools and data pipelines
+- prototype graphics, games, and experiments
+- extend the language with native DLL modules
+
+The goal of jdBasic is simple:
+
+> **Reduce friction between thinking and running code.**
+
+## Try jdBasic in your browser
+
+You can try the language immediately:
+
+[jdbasic.org/live](https://jdbasic.org/live/index.html)
+
+(No installation required.)
 
 ## 🚀 Key Features
 
