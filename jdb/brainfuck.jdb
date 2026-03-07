@@ -1,0 +1,77 @@
+' jdBasic Brainfuck Interpreter
+
+t=tick()
+code$ = "++++++++++[>++++++++++>++++++>+++<<<-]>>+++++>++<<++++++.------.>+.<---.++++++++++++++++++.----------.------.>>.<<-.+++++++++++++++++++++++.>>.<-.<-----.-----.--.----."
+'code$ = "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++." ' Hello World
+'code$ = ",>++++++[<-------->-],[<+>-]<." 'Single Addition
+'code$ = "++++++[>++++++++++<-]>+++++.>+++++++++++++++++++++++++[<+.>-]" ' Print Alphabet
+'code$ = ",[.,]" 'Simple console
+
+TapeSize = 30000
+
+' Ggenerate vector and broadcast multiply to zero it out
+Tape = IOTA(TapeSize) * 0
+
+' Stack and Map for fast O(1) jump lookups
+Jumps = {}
+LoopStack = []
+codeLen = LEN(code$)
+
+' Pre-compute loop jumps
+FOR i = 0 TO codeLen - 1
+    cmd = BYTEAT(code$, i)
+    IF cmd = 91 THEN ' '['
+        LoopStack = APPEND(LoopStack, i)
+    ELSEIF cmd = 93 THEN ' ']'
+        stackLen = LEN(LoopStack)[0]
+        startPos = LoopStack[stackLen - 1]
+        LoopStack = TAKE(stackLen - 1, LoopStack) ' Pop last element
+        
+        Jumps{STR$(startPos)} = i
+        Jumps{STR$(i)} = startPos
+    ENDIF
+NEXT
+
+ip = 0
+dp = 0
+
+CLS
+PRINT "Code:"
+PRINT code$
+PRINT "Output:"
+
+' Main execution loop
+DO 
+    IF ip >= codeLen THEN EXITDO
+    
+    ' Fast O(1) byte access
+    cmd = BYTEAT(code$, ip)
+
+    SWITCH cmd
+        CASE 62 ' >
+            dp = dp + 1
+            IF dp >= TapeSize THEN dp = 0
+        CASE 60 ' <
+            dp = dp - 1
+            IF dp < 0 THEN dp = TapeSize - 1
+        CASE 43 ' +
+            Tape[dp] = (Tape[dp] + 1) MOD 256
+        CASE 45 ' -
+            Tape[dp] = Tape[dp] - 1
+            IF Tape[dp] < 0 THEN Tape[dp] = 255
+        CASE 46 ' .
+            PRINT CHR$(Tape[dp]);
+        CASE 44 ' ,
+            in$ = WAITKEY$()
+            IF LEN(in$) > 0 THEN Tape[dp] = ASC(in$)
+        CASE 91 ' [
+            IF Tape[dp] = 0 THEN ip = Jumps{STR$(ip)}
+        CASE 93 ' ]
+            IF Tape[dp] <> 0 THEN ip = Jumps{STR$(ip)}
+    ENDSWITCH
+
+    ip = ip + 1
+LOOP
+
+PRINT ""
+PRINT "Execution complete in " + (tick()-t) + " milliseconds."

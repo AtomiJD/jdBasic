@@ -841,6 +841,7 @@ void Commands::do_input(NeReLaBasic& vm) {
     long start_pcode = vm.pcode;
     bool has_prompt = false;
     BasicValue prompt_val;
+    std::string prompt_string = "";
 
     prompt_val = vm.evaluate_expression();
 
@@ -850,17 +851,17 @@ void Commands::do_input(NeReLaBasic& vm) {
         // --- Case 1: Handle a prompt string ---
 
         if (Error::get() != 0) return;
-        TextIO::print(to_string(prompt_val));
+        prompt_string += to_string(prompt_val);
 
         // After the prompt, there MUST be a separator (',' or ';').
 
         if (next_token == Tokens::ID::C_SEMICOLON) {
             vm.pcode++; // Consume the semicolon
-            TextIO::print(" "); // Suppress the '?' and print a space
+            prompt_string += " "; // Suppress the '?' and print a space
         }
         else if (next_token == Tokens::ID::C_COMMA) {
             vm.pcode++; // Consume the comma
-            TextIO::print("? "); // Print the '?'
+            prompt_string += "? "; // Print the '?'
         }
         else {
             // No separator after the prompt is a syntax error
@@ -871,7 +872,7 @@ void Commands::do_input(NeReLaBasic& vm) {
     else {
         // --- Case 2: No prompt string ---
         vm.pcode = start_pcode;
-        TextIO::print("? ");
+        prompt_string = "? ";
     }
 
     // Now, we are past the prompt and separator, so we can get the variable name.
@@ -886,14 +887,20 @@ void Commands::do_input(NeReLaBasic& vm) {
     // Read a full line of input from the user.
     std::string user_input_line;
 #if defined(_WIN32)
+    TextIO::print(prompt_string);
+    std::cout << std::flush;
     std::getline(std::cin, user_input_line);
 #else
     TextIO::deinitKey();
-    char* c_inputLine = readline("");
+    // Pass the prompt string directly to readline so it knows the cursor offset
+    char* c_inputLine = readline(prompt_string.c_str());
     if (c_inputLine == NULL) {
         TextIO::nl();
     }
-    user_input_line = c_inputLine;
+    else {
+        user_input_line = c_inputLine;
+        free(c_inputLine); // readline allocates with malloc, so we must free it
+    }
     TextIO::initKey();
 #endif
 

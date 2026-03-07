@@ -19,6 +19,9 @@ SUB REPL()
             ' Extract filename for shorter prompt
             parts = SPLIT(CURRENT_DB$, "\")
             prompt$ = parts[LEN(parts)[0]-1]
+            IF ASC(RIGHT$(prompt$,1)) = 13 THEN
+                prompt$=LEFT$(prompt$,LEN(prompt$)-1)
+            ENDIF
         ELSE
             prompt$ = "(No DB)"
         ENDIF
@@ -111,6 +114,26 @@ SUB HELPME()
     WELCOME
 ENDSUB
 
+FUNC CHECK(db_name$)
+    IF LEN(db_name$) = 0 THEN
+        PRINT "Error: File not found: " + path$
+        RETURN "(nodb)"
+    ENDIF
+    IF ASC(RIGHT$(db_name$,1)) = 13 THEN
+        db_name$=LEFT$(db_name$,LEN(db_name$)-1)
+    ENDIF    
+    IF LCASE$(RIGHT$(db_name$,6)) = ".accdb" THEN
+        RETURN db_nam$
+    ELSE
+        IF INSTR$(db_name$,".") > 0 THEN
+            db_name$ = LEFT$(db_name$,INSTR$(db_name$,".")) + ".accdb"
+        ELSE
+            db_name$ = db_name$ + ".accdb"
+        ENDIF
+    ENDIF 
+    RETURN db_name$ 
+ENDFUNC
+
 SUB CONNECT(path$)
     IF path$ = "" THEN
         PRINT "Usage: connect <path_to_accdb>"
@@ -118,11 +141,11 @@ SUB CONNECT(path$)
     ENDIF
     
     ' Check if file exists using DIR array check
-    ' files = DIR$(path$)
-    ' IF LEN(files) = 0 THEN
-    '     PRINT "Error: File not found: " + path$
-    '     RETURN
-    ' ENDIF
+    files = DIR$(path$)
+    IF LEN(files)[0] = 0 THEN
+        PRINT "Error: File not found: " + path$
+        RETURN
+    ENDIF
 
     ' Test connection
     TRY
@@ -418,4 +441,5 @@ ENDSUB
 CLS
 WELCOME
 INPUT "Enter path to Access DB (e.g., C:\Data\Orders.accdb): ", CURRENT_DB$
+CURRENT_DB$ = CHECK(CURRENT_DB$)
 REPL

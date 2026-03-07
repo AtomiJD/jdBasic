@@ -1900,18 +1900,19 @@ BasicValue builtin_format_str(NeReLaBasic& vm, const std::vector<BasicValue>& ar
     return result.str();
 }
 
-// FRMV$(array, [format_string$]) -> string$
+// FRMV$(array, [format_string$], [color_matrix]) -> string$
 // Formats a 1D or 2D array into a string.
-// If format_string$ is provided, it's used to format each row.
+// If format_string$ is provided (and not ""), it's used to format each row.
 // Otherwise, it creates a right-aligned string matrix.
+// An optional color_matrix of the same shape applies ANSI 256 colors per cell.
 BasicValue builtin_frmv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     // 1. Argument Validation
-    if (args.empty() || args.size() > 2) {
-        Error::set(8, vm.runtime_current_line, "FRMV$ requires 1 or 2 arguments: array, [format_string$]");
+    if (args.empty() || args.size() > 3) {
+        Error::set(8, vm.runtime_current_line, "FRMV$ requires 1 to 3 arguments: array, [format_string$], [color_matrix]");
         return std::string("");
     }
     if (!std::holds_alternative<std::shared_ptr<Array>>(args[0])) {
-        Error::set(15, vm.runtime_current_line, "Argument to FRMV$ must be an array.");
+        Error::set(15, vm.runtime_current_line, "First argument to FRMV$ must be an array.");
         return std::string("");
     }
     const auto& arr_ptr = std::get<std::shared_ptr<Array>>(args[0]);
@@ -1938,16 +1939,40 @@ BasicValue builtin_frmv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args
         return std::string(""); // No columns to format
     }
 
+    // 3. Optional Color Matrix Validation
+    std::shared_ptr<Array> color_arr_ptr = nullptr;
+    if (args.size() == 3) {
+        if (!std::holds_alternative<std::shared_ptr<Array>>(args[2])) {
+            Error::set(15, vm.runtime_current_line, "Third argument to FRMV$ (color_matrix) must be an array.");
+            return std::string("");
+        }
+        color_arr_ptr = std::get<std::shared_ptr<Array>>(args[2]);
+        if (color_arr_ptr->shape != arr_ptr->shape) {
+            Error::set(15, vm.runtime_current_line, "FRMV$: color_matrix shape must match data array shape.");
+            return std::string("");
+        }
+    }
+
     std::stringstream ss;
+    bool has_format_string = (args.size() >= 2 && to_string(args[1]) != "");
 
     // --- Handle optional format string ---
-    if (args.size() == 2) {
+    if (has_format_string) {
         std::string format_string = to_string(args[1]);
         for (size_t r = 0; r < rows; ++r) {
             std::vector<BasicValue> format_args;
-            format_args.push_back(format_string); // The format string itself is the first argument to builtin_format_str
+            format_args.push_back(format_string);
             for (size_t c = 0; c < cols; ++c) {
-                format_args.push_back(arr_ptr->data[r * cols + c]);
+                size_t idx = r * cols + c;
+                if (color_arr_ptr) {
+                    // Wrap the value in ANSI color codes before formatting
+                    int color_code = std::abs(static_cast<int>(to_double(color_arr_ptr->data[idx]))) % 256;
+                    std::string colored_val = "\033[38;5;" + std::to_string(color_code) + "m" + to_string(arr_ptr->data[idx]) + "\033[0m";
+                    format_args.push_back(colored_val);
+                }
+                else {
+                    format_args.push_back(arr_ptr->data[idx]);
+                }
             }
             // Call the existing format function's logic for each row
             ss << std::get<std::string>(builtin_format_str(vm, format_args));
@@ -1958,7 +1983,7 @@ BasicValue builtin_frmv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args
     }
     else {
         // --- Right-aligned grid ---
-        // 3. Calculate Maximum Width for Each Column
+        // Calculate Maximum Width for Each Column (Ignoring ANSI color codes)
         std::vector<size_t> col_widths(cols, 0);
         for (size_t r = 0; r < rows; ++r) {
             for (size_t c = 0; c < cols; ++c) {
@@ -1969,10 +1994,24 @@ BasicValue builtin_frmv_str(NeReLaBasic& vm, const std::vector<BasicValue>& args
             }
         }
 
-        // 4. Build the Formatted String
+        // Build the Formatted String with alignment applied BEFORE injecting colors
         for (size_t r = 0; r < rows; ++r) {
             for (size_t c = 0; c < cols; ++c) {
-                ss << std::right << std::setw(col_widths[c]) << to_string(arr_ptr->data[r * cols + c]);
+                size_t idx = r * cols + c;
+
+                // Align the raw text first
+                std::stringstream cell_ss;
+                cell_ss << std::right << std::setw(col_widths[c]) << to_string(arr_ptr->data[idx]);
+
+                // Then wrap the aligned text in the color code
+                if (color_arr_ptr) {
+                    int color_code = std::abs(static_cast<int>(to_double(color_arr_ptr->data[idx]))) % 256;
+                    ss << "\033[38;5;" << color_code << "m" << cell_ss.str() << "\033[0m";
+                }
+                else {
+                    ss << cell_ss.str();
+                }
+
                 if (c < cols - 1) {
                     ss << " "; // Separator between columns
                 }

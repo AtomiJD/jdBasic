@@ -42,6 +42,7 @@ jdConsole::~jdConsole() {
 void jdConsole::enable_raw_mode() {
 #if defined(_WIN32)
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
     if (GetConsoleMode(hStdin, &g_original_console_mode)) {
         DWORD mode = g_original_console_mode;
 
@@ -52,6 +53,11 @@ void jdConsole::enable_raw_mode() {
         mode &= ~ENABLE_QUICK_EDIT_MODE;
 
         SetConsoleMode(hStdin, mode);
+    }
+    DWORD out_mode = 0;
+    if (GetConsoleMode(hStdout, &out_mode)) {
+        out_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        SetConsoleMode(hStdout, out_mode);
     }
 #else
     struct termios raw;
