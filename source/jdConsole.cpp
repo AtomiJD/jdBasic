@@ -49,8 +49,8 @@ void jdConsole::enable_raw_mode() {
         mode &= ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
 
         mode |= ENABLE_EXTENDED_FLAGS;
-        mode |= ENABLE_WINDOW_INPUT; // <--- ADD THIS LINE
-        mode &= ~ENABLE_QUICK_EDIT_MODE;
+        mode |= ENABLE_WINDOW_INPUT; 
+        mode |= ENABLE_QUICK_EDIT_MODE;
 
         SetConsoleMode(hStdin, mode);
     }
@@ -1041,6 +1041,9 @@ void jdConsole::execute_current_line() {
             disable_raw_mode();
             vm.execute_synchronous_block(vm.direct_p_code);
             enable_raw_mode();
+            FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+            while (!g_utf8_buffer.empty()) g_utf8_buffer.pop();
+            g_high_surrogate = 0;
             if (vm.program_ended) {
                 Error::clear();
                 vm.program_ended = false;

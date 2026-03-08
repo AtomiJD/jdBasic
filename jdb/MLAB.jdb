@@ -276,54 +276,51 @@ FUNC FADE(t)
     RETURN t * t * t * (t * (t * 6 - 15) + 10)
 ENDFUNC
 
-' ' --- Helper function for linear interpolation ---
-' FUNC LERP(t, a, b)
-'     RETURN a + t * (b - a)
-' ENDFUNC
-
 EXPORT FUNC PERLIN_NOISE(width, height, scale)
-
-    ' --- Main Noise Generation ---
-    ' Determine the size of the smaller random grid based on the scale
     grid_w = CEIL(width / scale) + 1
     grid_h = CEIL(height / scale) + 1
 
-    ' Create a grid of random values between 0 and 1
     random_grid = RND(ONES([grid_h, grid_w]))
-
     noise_map = ZEROS([height, width])
 
+    ' --- 1D Vectorization for X-Axis ---
+    ' Pre-calculate X coordinates once instead of every row
+    x_vec = IOTA(width, 0, 1)
+    gx_vec = x_vec / scale
+    g_x0_vec = INT(gx_vec)
+    fx_vec = gx_vec - g_x0_vec
+    ufx_vec = FADE(fx_vec)
+    
+    ' Pre-calculate the +1 offset vector
+    g_x1_vec = g_x0_vec + 1
+
+    ' Process row by row to leverage jdBasic array commands
     FOR y = 0 TO height - 1
-        FOR x = 0 TO width - 1
-            ' Calculate the corresponding coordinates in the random grid
-            gx = x / scale
-            gy = y / scale
+        gy = y / scale
+        g_y0 = INT(gy)
+        fy = gy - g_y0
+        ufy = FADE(fy)
 
-            ' Get the integer coordinates of the grid cell's top-left corner
-            g_x0 = INT(gx)
-            g_y0 = INT(gy)
+        ' Slice out the entire 1D rows from the 2D random_grid (dim=0 is row)
+        row_top = SLICE(random_grid, 0, g_y0)
+        row_bottom = SLICE(random_grid, 0, g_y0 + 1)
 
-            ' Get the fractional coordinates within that cell (0.0 to 1.0)
-            fx = gx - g_x0
-            fy = gy - g_y0
+        ' Use array indexing to extract the entire vector of corner values at once
+        v00 = row_top[g_x0_vec]
+        v10 = row_top[g_x1_vec]
+        v01 = row_bottom[g_x0_vec]
+        v11 = row_bottom[g_x1_vec]
 
-            ' Apply the fade function for smoother transitions
-            ufx = FADE(fx)
-            ufy = FADE(fy)
+        ' Interpolate across the X vectors 
+        ' (Note: LERP signature is LERP(start, end, alpha) per the jdBasic docs)
+        x_interp1 = LERP(v00, v10, ufx_vec)
+        x_interp2 = LERP(v01, v11, ufx_vec)
+        
+        ' Interpolate across the Y scalar
+        final_row_vec = LERP(x_interp1, x_interp2, ufy)
 
-            ' Get the random values from the four corners of the cell
-            v00 = random_grid[g_y0, g_x0]
-            v10 = random_grid[g_y0, g_x0 + 1]
-            v01 = random_grid[g_y0 + 1, g_x0]
-            v11 = random_grid[g_y0 + 1, g_x0 + 1]
-
-            ' Interpolate between the corner values
-            x_interp1 = LERP(ufx, v00, v10)
-            x_interp2 = LERP(ufx, v01, v11)
-            final_val = LERP(ufy, x_interp1, x_interp2)
-
-            noise_map[y, x] = final_val
-        NEXT x
+        ' Replace the entire row in the noise_map at once using MVLET
+        noise_map = MVLET(noise_map, 0, y, final_row_vec)
     NEXT y
 
     RETURN noise_map
