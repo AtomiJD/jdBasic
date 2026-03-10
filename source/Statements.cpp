@@ -114,7 +114,10 @@ namespace {
         {"LOADWS",     Tokens::ID::DOS_LOADWS},
         {"SAVEWS",     Tokens::ID::DOS_SAVEWS},
         {"PRETTY",     Tokens::ID::DOS_PRETTY},
-        {"OPTION",     Tokens::ID::OPTION}
+        {"OPTION",     Tokens::ID::OPTION},
+        {"DECLARE", Tokens::ID::DECLARE},
+        {"ALIAS", Tokens::ID::ALIAS},
+        {"LIB", Tokens::ID::LIB}
     };
 } // end anonymous namespace
 

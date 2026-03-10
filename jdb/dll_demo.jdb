@@ -1,0 +1,100 @@
+' =========================================================
+' jdBasic Win32 FFI: The "Ghost Console" Matrix Demo
+' =========================================================
+
+PRINT "Initiating system override..."
+SLEEP(1000)
+
+' --- WIN32 DECLARATIONS ---
+' 1. Grab the handle to the actual jdBasic console window
+DECLARE FUNC GetForegroundWindow LIB "user32.dll" ALIAS "GetForegroundWindow" () AS INTEGER
+
+' 2. Window Text functions (Testing AS RETURN array destructuring!)
+DECLARE FUNC GetWindowText LIB "user32.dll" ALIAS "GetWindowTextA" (hwnd AS INTEGER, outText AS RETURN, maxCount AS INTEGER) AS ARRAY
+DECLARE FUNC SetConsoleTitle LIB "kernel32.dll" ALIAS "SetConsoleTitleA" (title AS STRING) AS INTEGER
+
+' 3. Window rendering/styling functions for transparency
+DECLARE FUNC GetWindowLong LIB "user32.dll" ALIAS "GetWindowLongA" (hwnd AS INTEGER, nIndex AS INTEGER) AS INTEGER
+DECLARE FUNC SetWindowLong LIB "user32.dll" ALIAS "SetWindowLongA" (hwnd AS INTEGER, nIndex AS INTEGER, dwNewLong AS INTEGER) AS INTEGER
+DECLARE FUNC SetLayeredWindowAttributes LIB "user32.dll" ALIAS "SetLayeredWindowAttributes" (hwnd AS INTEGER, crKey AS INTEGER, bAlpha AS INTEGER, dwFlags AS INTEGER) AS INTEGER
+
+' 4. Window physical manipulation
+DECLARE FUNC MoveWindow LIB "user32.dll" ALIAS "MoveWindow" (hwnd AS INTEGER, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, repaint AS INTEGER) AS INTEGER
+
+' --- WIN32 CONSTANTS ---
+GWL_EXSTYLE = -20
+WS_EX_LAYERED = 524288 ' This translates to 0x80000 in hex
+LWA_ALPHA = 2
+
+' --- MAIN EXECUTION ---
+
+' Step 1: Lock onto our own window
+hwnd = GetForegroundWindow()
+IF hwnd = 0 THEN
+    PRINT "Could not find the console window."
+    END
+ENDIF
+
+' Step 2: Read the original title using your new array destructuring!
+[textLength, origTitle] = GetWindowText(hwnd, 0, 2048)
+PRINT "Original Console Title: " + origTitle
+SLEEP(1000)
+
+' Step 3: Hijack the title bar
+dummy = SetConsoleTitle("jdBasic: SYSTEM OVERRIDE INITIATED")
+PRINT "Title bar hijacked."
+SLEEP(1000)
+
+' Step 4: Apply the Cloaking Field (Transparency)
+PRINT "Applying translucent cloaking field..."
+currentStyle = GetWindowLong(hwnd, GWL_EXSTYLE)
+
+' We add the WS_EX_LAYERED flag to the window's memory so Windows knows it can be transparent
+SetWindowLong(hwnd, GWL_EXSTYLE, currentStyle + WS_EX_LAYERED) 
+
+' Fade the window out beautifully!
+FOR alpha = 255 TO 80 STEP -5
+    SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)
+    SLEEP(20)
+NEXT
+
+PRINT "We are now a ghost."
+SLEEP(1000)
+
+' Step 5: The Orbiting Window Effect
+PRINT "Assuming manual trajectory control..."
+SLEEP(500)
+
+centerX = 600
+centerY = 300
+radius = 400
+
+' Make the console literally orbit the user's screen using trigonometry
+FOR angle = 0 TO 360 STEP 4
+    rad = angle * 3.14159 / 180.0
+    
+    x = centerX + (COS(rad) * radius)
+    y = centerY + (SIN(rad) * (radius / 2)) ' Squashed orbit
+    
+    ' Teleport the window
+    MoveWindow(hwnd, x, y, 800, 600, 1)
+    
+    SLEEP(10)
+NEXT
+
+' Step 6: Restore Reality
+PRINT "Restoring timeline..."
+
+' Fade back in
+FOR alpha = 80 TO 255 STEP 5
+    SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)
+    SLEEP(20)
+NEXT
+
+' Put the original title back
+dummy = SetConsoleTitle(origTitle)
+
+' Strip the layered style so it behaves normally again
+SetWindowLong(hwnd, GWL_EXSTYLE, currentStyle)
+
+PRINT "Demo complete! jdBasic FFI is fully operational."

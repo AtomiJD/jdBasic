@@ -55,6 +55,101 @@ static long long convert_numeric_literal(const std::string& s) {
     }
 }
 
+#ifdef _WIN32
+// Creates a lambda that acts as a bridge between jdBasic and the Windows API
+std::string to_string(const BasicValue& val);
+
+static NeReLaBasic::NativeFunction create_dll_dispatcher(
+    const std::string& lib_name,
+    const std::string& func_alias,
+    const std::vector<DataType>& arg_types,
+    bool is_func,
+    DataType return_type)
+{
+    return [lib_name, func_alias, arg_types, is_func, return_type](NeReLaBasic& vm, const std::vector<BasicValue>& args) -> BasicValue {
+        static std::unordered_map<std::string, HMODULE> dll_cache;
+
+        HMODULE hLib = dll_cache[lib_name];
+        if (!hLib) {
+            hLib = LoadLibraryA(lib_name.c_str());
+            if (!hLib) { Error::set(12, vm.runtime_current_line, "Could not load DLL: " + lib_name); return 0.0; }
+            dll_cache[lib_name] = hLib;
+        }
+
+        FARPROC proc = GetProcAddress(hLib, func_alias.c_str());
+        if (!proc) { Error::set(12, vm.runtime_current_line, "Function not found in DLL."); return 0.0; }
+
+        std::vector<intptr_t> raw_args;
+        std::vector<std::string> string_keepers;
+        string_keepers.reserve(args.size());
+        raw_args.reserve(args.size());
+        std::vector<int> out_buffer_indices; // Tracks which strings are OUT buffers
+
+        // 1. Pack the arguments
+        for (size_t i = 0; i < arg_types.size(); i++) {
+            if (arg_types[i] == DataType::STRING) {
+                // Standard IN string
+                string_keepers.push_back(to_string(args[i]));
+                raw_args.push_back(reinterpret_cast<intptr_t>(string_keepers.back().c_str()));
+            }
+            else if (arg_types[i] == DataType::OUT_BUFFER) {
+                // Pre-allocate a 2048-byte buffer for Windows to write into
+                string_keepers.push_back(std::string(2048, '\0'));
+                raw_args.push_back(reinterpret_cast<intptr_t>(&string_keepers.back()[0]));
+                out_buffer_indices.push_back(string_keepers.size() - 1);
+            }
+            else {
+                // Integer / Handle
+                // If it's an OUT_BUFFER placeholder, the user might pass 0, which is fine.
+                raw_args.push_back(static_cast<intptr_t>(to_double(i < args.size() ? args[i] : BasicValue(0.0))));
+            }
+        }
+
+        // 2. Call the Windows API
+        intptr_t result = 0;
+        switch (raw_args.size()) {
+        case 0: result = ((intptr_t(__stdcall*)())proc)(); break;
+        case 1: result = ((intptr_t(__stdcall*)(intptr_t))proc)(raw_args[0]); break;
+        case 2: result = ((intptr_t(__stdcall*)(intptr_t, intptr_t))proc)(raw_args[0], raw_args[1]); break;
+        case 3: result = ((intptr_t(__stdcall*)(intptr_t, intptr_t, intptr_t))proc)(raw_args[0], raw_args[1], raw_args[2]); break;
+        case 4: result = ((intptr_t(__stdcall*)(intptr_t, intptr_t, intptr_t, intptr_t))proc)(raw_args[0], raw_args[1], raw_args[2], raw_args[3]); break;
+        case 5: result = ((intptr_t(__stdcall*)(intptr_t, intptr_t, intptr_t, intptr_t, intptr_t))proc)(raw_args[0], raw_args[1], raw_args[2], raw_args[3], raw_args[4]); break;
+        case 6: result = ((intptr_t(__stdcall*)(intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t))proc)(raw_args[0], raw_args[1], raw_args[2], raw_args[3], raw_args[4], raw_args[5]); break;
+        default: Error::set(8, vm.runtime_current_line, "Too many arguments."); return 0.0;
+        }
+
+        if (!is_func) return 0.0;
+
+        // 3. Handle Returns
+        if (return_type == DataType::ARRAY_TYPE) {
+            auto return_array = std::make_shared<Array>();
+
+            // Index 0: The actual native return value (e.g., text length or success code)
+            return_array->data.push_back(static_cast<double>(result));
+
+            // Index 1 to N: The populated out-buffers!
+            for (int idx : out_buffer_indices) {
+                std::string& buf = string_keepers[idx];
+                // Strip the trailing null characters that Windows left behind
+                size_t null_pos = buf.find('\0');
+                if (null_pos != std::string::npos) {
+                    buf.resize(null_pos);
+                }
+                return_array->data.push_back(buf);
+            }
+            return_array->shape = { return_array->data.size() };
+            return return_array;
+        }
+        else if (return_type == DataType::STRING) {
+            const char* str_ptr = reinterpret_cast<const char*>(result);
+            return str_ptr ? std::string(str_ptr) : std::string("");
+        }
+
+        return static_cast<double>(result);
+        };
+}
+#endif
+
 Compiler::Compiler() {
     // Constructor can be used to initialize any specific compiler state if needed.
     std::string current_type_context;
@@ -642,6 +737,109 @@ uint8_t Compiler::tokenize(NeReLaBasic& vm, const std::string& line, uint16_t li
                 // Arguments that follow will be tokenized normally.
                 continue;
             }
+#ifdef _WIN32
+            std::string to_string(const BasicValue& val);
+            case Tokens::ID::DECLARE: {
+                // 1. Get SUB or FUNC
+                Tokens::ID type_tok = parse(vm, false);
+                if (type_tok != Tokens::ID::FUNC && type_tok != Tokens::ID::SUB) {
+                    Error::set(1, vm.current_source_line, "DECLARE must be followed by FUNC or SUB.");
+                    vm.prgptr = vm.lineinput.length(); continue;
+                }
+                bool is_func = (type_tok == Tokens::ID::FUNC);
+
+                // 2. Get Function Name
+                Tokens::ID name_tok = parse(vm, false);
+                if (vm.buffer.empty() || (name_tok != Tokens::ID::VARIANT && name_tok != Tokens::ID::STRVAR)) {
+                    Error::set(1, vm.current_source_line, "Expected a valid identifier for the function name.");
+                    vm.prgptr = vm.lineinput.length(); continue;
+                }
+                std::string func_name = StringUtils::to_upper(vm.buffer);
+
+                // 3. Get LIB keyword
+                Tokens::ID lib_tok = parse(vm, false);
+                if (lib_tok != Tokens::ID::LIB) { // Ensure Tokens::ID::LIB is in your lexer/Tokens.hpp!
+                    Error::set(1, vm.current_source_line, "Expected 'LIB' keyword in DECLARE statement.");
+                    vm.prgptr = vm.lineinput.length(); continue;
+                }
+
+                // 4. Get "dllname.dll"
+                Tokens::ID dll_str_tok = parse(vm, false);
+                if (dll_str_tok != Tokens::ID::STRING) {
+                    Error::set(1, vm.current_source_line, "Expected string literal for DLL name after LIB.");
+                    vm.prgptr = vm.lineinput.length(); continue;
+                }
+                std::string lib_name = vm.buffer;
+
+                // 5. Check for optional ALIAS
+                std::string alias_name = func_name;
+                Tokens::ID next_tok = parse(vm, false);
+
+                if (next_tok == Tokens::ID::ALIAS) { // Ensure Tokens::ID::ALIAS is in your lexer!
+                    Tokens::ID alias_str_tok = parse(vm, false);
+                    if (alias_str_tok != Tokens::ID::STRING) {
+                        Error::set(1, vm.current_source_line, "Expected string literal after ALIAS.");
+                        vm.prgptr = vm.lineinput.length(); continue;
+                    }
+                    alias_name = vm.buffer;
+                    next_tok = parse(vm, false); // Move to the '(' or end of statement
+                }
+
+                // 6. Parse Arguments: (name AS type, name AS type)
+                std::vector<DataType> arg_types;
+                if (next_tok == Tokens::ID::C_LEFTPAREN) {
+                    while (true) {
+                        Tokens::ID arg_tok = parse(vm, false);
+
+                        if (arg_tok == Tokens::ID::C_RIGHTPAREN) {
+                            next_tok = parse(vm, false);
+                            break;
+                        }
+                        if (arg_tok == Tokens::ID::NOCMD) break;
+                        if (arg_tok == Tokens::ID::C_COMMA) continue;
+
+                        if (arg_tok == Tokens::ID::DOUBLE || arg_tok == Tokens::ID::INT || arg_tok == Tokens::ID::VARIANT || arg_tok == Tokens::ID::STRVAR) {
+                            Tokens::ID as_tok = parse(vm, false);
+                            if (as_tok == Tokens::ID::AS) {
+                                parse(vm, false); // Get Type String
+                                std::string type_str = StringUtils::to_upper(vm.buffer);
+
+                                if (type_str == "STRING") arg_types.push_back(DataType::STRING);
+                                else if (type_str == "RETURN") arg_types.push_back(DataType::OUT_BUFFER);
+                                else arg_types.push_back(DataType::INTEGER);
+
+                            }
+                            else {
+                                Error::set(1, vm.current_source_line, "Expected 'AS <TYPE>'."); break;
+                            }
+                        }
+                    }
+                }
+
+                // 7. Check for optional AS <ReturnType> for FUNC
+                DataType return_type = DataType::INTEGER;
+
+                if (is_func && next_tok == Tokens::ID::AS) {
+                    parse(vm, false);
+                    std::string ret_str = StringUtils::to_upper(vm.buffer);
+
+                    if (ret_str == "STRING") return_type = DataType::STRING;
+                    else if (ret_str == "ARRAY") return_type = DataType::ARRAY_TYPE;
+                    else return_type = DataType::INTEGER;
+                }
+
+                // 8. Register Native Function
+                NeReLaBasic::FunctionInfo info;
+                info.name = func_name;
+                info.arity = arg_types.size();
+                info.is_procedure = !is_func;
+                info.native_impl = create_dll_dispatcher(lib_name, alias_name, arg_types, is_func, return_type);
+
+                compilation_func_table[func_name] = info;
+                vm.prgptr = vm.lineinput.length();
+                continue;
+            }
+#endif            
             case Tokens::ID::GOTO: {
                 // Write the GOTO command token itself
                 out_p_code.push_back(static_cast<uint8_t>(token));

@@ -33,7 +33,9 @@ enum class DataType {
     STRING,
     DATETIME,
     MAP,
-    JSON 
+    JSON,
+    OUT_BUFFER,
+    ARRAY_TYPE
 };
 
 // A struct to hold our date/time value, based on std::chrono.

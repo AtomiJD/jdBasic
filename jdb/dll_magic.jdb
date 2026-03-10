@@ -1,0 +1,74 @@
+' ==========================================
+' jdBasic Win32 API Magic Demo
+' ==========================================
+
+PRINT "Loading Windows APIs via jdBasic..."
+
+' --- WIN32 API DECLARATIONS ---
+' MessageBoxA: Pops a native UI dialog
+DECLARE FUNC MessageBox LIB "user32.dll" ALIAS "MessageBoxA" (hwnd AS INTEGER, xtext AS STRING, title AS STRING, xtype AS INTEGER) AS INTEGER
+
+' GetSystemMetrics: Gets Windows system dimensions (like screen width/height)
+DECLARE FUNC GetSystemMetrics LIB "user32.dll" ALIAS "GetSystemMetrics" (nIndex AS INTEGER) AS INTEGER
+
+' SetCursorPos: Teleports the Windows mouse cursor
+DECLARE FUNC SetCursorPos LIB "user32.dll" ALIAS "SetCursorPos" (X AS INTEGER, Y AS INTEGER) AS INTEGER
+
+' MessageBeep: Plays a native Windows system sound
+DECLARE FUNC MessageBeep LIB "user32.dll" ALIAS "MessageBeep" (uType AS INTEGER) AS INTEGER
+
+' --- WIN32 CONSTANTS ---
+MB_OK = 0
+MB_YESNO = 4
+MB_ICONQUESTION = 32
+MB_ICONASTERISK = 64
+IDYES = 6
+SM_CXSCREEN = 0
+SM_CYSCREEN = 1
+
+' --- MAIN PROGRAM ---
+' 1. Grab the screen resolution dynamically!
+screenWidth = GetSystemMetrics(SM_CXSCREEN)
+screenHeight = GetSystemMetrics(SM_CYSCREEN)
+
+PRINT "Your screen resolution is: " + STR$(screenWidth) + "x" + STR$(screenHeight)
+SLEEP(500)
+
+' 2. Play a system sound to get attention
+MessageBeep(MB_ICONASTERISK) 
+
+' 3. Ask the user a question via native Windows dialog
+msgType = MB_YESNO + MB_ICONQUESTION
+result = MessageBox(0, "Do you want to see a magic mouse trick?", "jdBasic Win32 FFI", msgType)
+
+IF result = IDYES THEN
+    PRINT "Hold onto your mouse..."
+    SLEEP(500)
+    
+    ' 4. Teleport the mouse in a circle!
+    centerX = screenWidth / 2
+    centerY = screenHeight / 2
+    radius = 300
+    
+    FOR i = 0 TO 360 STEP 8
+        ' Convert degrees to radians for jdBasic's built-in SIN/COS
+        rad = i * 3.14159 / 180.0
+        
+        x = centerX + (COS(rad) * radius)
+        y = centerY + (SIN(rad) * radius)
+        
+        ' Call the Windows API to move the cursor
+        SetCursorPos(x, y)
+        
+        ' Small delay so the user can see the animation
+        SLEEP(20) 
+    NEXT
+    
+    MessageBox(0, "Magic complete! Native DLL calls are working perfectly.", "Tada!", MB_OK)
+ELSE
+    PRINT "Aww, maybe next time."
+    MessageBox(0, "Okay, goodbye from jdBasic!", "Exiting", MB_OK)
+ENDIF
+
+PRINT "Demo finished."
+
