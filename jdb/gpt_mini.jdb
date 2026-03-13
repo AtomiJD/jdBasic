@@ -1,11 +1,11 @@
 FUNC CHAT$(USER_PROMPT$)
-    API_KEY$ = GETENV$("OPENAI_API_KEY")
+    API_KEY$ = GETENV$("OPENAI_API_KEY") 
     URL$ = "https://api.openai.com/v1/chat/completions"
 
     HTTP.SETHEADER "Authorization", "Bearer " + API_KEY$
 
     ' Create the JSON body as a map
-    BODY_MAP = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": USER_PROMPT$}]}
+    BODY_MAP = {"model": "gpt-5-mini", "messages": [{"role": "user", "content": USER_PROMPT$}]}
 
     ' Convert the map to a JSON string
     BODY$ = JSON.STRINGIFY$(BODY_MAP)

@@ -638,7 +638,8 @@ void TextEditorWinImpl::draw_screen() {
         else {
             set_cursor(row, 0);
             DWORD written;
-            WriteConsoleW(hOut, L"~", 1, &written, nullptr);
+            std::wstring empty_line = L"~" + std::wstring(screen_cols - 1, L' ');
+            WriteConsoleW(hOut, empty_line.c_str(), (DWORD)empty_line.length(), &written, nullptr);
         }
     }
     std::wstring status = L" " + string_to_wstring(filename);

@@ -23,7 +23,7 @@ DECLARE FUNC MoveWindow LIB "user32.dll" ALIAS "MoveWindow" (hwnd AS INTEGER, x 
 
 ' --- WIN32 CONSTANTS ---
 GWL_EXSTYLE = -20
-WS_EX_LAYERED = 524288 ' This translates to 0x80000 in hex
+WS_EX_LAYERED = $80000
 LWA_ALPHA = 2
 
 ' --- MAIN EXECUTION ---
