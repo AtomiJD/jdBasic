@@ -2361,8 +2361,7 @@ BasicValue builtin_clamp(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     }
 }
 
-// DISTANCE(point1_array, point2_array) -> number
-// Calculates the Euclidean distance between two points.
+// DISTANCE(point1_array, point2_array) -> number or array
 BasicValue builtin_distance(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) {
         Error::set(8, vm.runtime_current_line, "DISTANCE requires 2 array arguments.");
@@ -2375,18 +2374,37 @@ BasicValue builtin_distance(NeReLaBasic& vm, const std::vector<BasicValue>& args
     const auto& p1_ptr = std::get<std::shared_ptr<Array>>(args[0]);
     const auto& p2_ptr = std::get<std::shared_ptr<Array>>(args[1]);
 
-    if (!p1_ptr || !p2_ptr || p1_ptr->data.size() != p2_ptr->data.size()) {
-        Error::set(15, vm.runtime_current_line, "Point arrays for DISTANCE must have the same number of elements.");
+    if (!p1_ptr || !p2_ptr || p1_ptr->shape != p2_ptr->shape) {
+        Error::set(15, vm.runtime_current_line, "Arrays for DISTANCE must have the same shape.");
         return 0.0;
     }
 
-    double sum_of_squares = 0.0;
-    for (size_t i = 0; i < p1_ptr->data.size(); ++i) {
-        double diff = to_double(p1_ptr->data[i]) - to_double(p2_ptr->data[i]);
-        sum_of_squares += diff * diff;
+    // --- Helper for Euclidean Distance of a flat segment ---
+    auto calc_dist = [](const std::vector<BasicValue>& d1, const std::vector<BasicValue>& d2, size_t start, size_t len) {
+        double sum_of_squares = 0.0;
+        for (size_t i = 0; i < len; ++i) {
+            double diff = to_double(d1[start + i]) - to_double(d2[start + i]);
+            sum_of_squares += diff * diff;
+        }
+        return std::sqrt(sum_of_squares);
+        };
+
+    // --- Case 1: 2D Matrices (Vectorized Row-wise Distance) ---
+    if (p1_ptr->shape.size() == 2) {
+        size_t rows = p1_ptr->shape[0];
+        size_t cols = p1_ptr->shape[1];
+        auto result_ptr = std::make_shared<Array>();
+        result_ptr->shape = { rows };
+        result_ptr->data.reserve(rows);
+
+        for (size_t r = 0; r < rows; ++r) {
+            result_ptr->data.push_back(calc_dist(p1_ptr->data, p2_ptr->data, r * cols, cols));
+        }
+        return result_ptr;
     }
 
-    return std::sqrt(sum_of_squares);
+    // --- Case 2: 1D Vectors (Single Scalar Distance) ---
+    return calc_dist(p1_ptr->data, p2_ptr->data, 0, p1_ptr->data.size());
 }
 
 // SHL(value_or_array, bits_to_shift) -> Returns a long long or array

@@ -389,13 +389,14 @@ void Graphics::pset(const std::shared_ptr<Array>& points, const std::shared_ptr<
     }
 
     for (size_t i = 0; i < num_items; ++i) {
-        float x = static_cast<float>(std::get<double>(points->data[i * point_stride + 0]));
-        float y = static_cast<float>(std::get<double>(points->data[i * point_stride + 1]));
+        // Use to_double() instead of std::get<double> to prevent bad variant access
+        float x = static_cast<float>(to_double(points->data[i * point_stride + 0]));
+        float y = static_cast<float>(to_double(points->data[i * point_stride + 1]));
 
         if (has_colors) {
-            Uint8 r = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 0]));
-            Uint8 g = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 1]));
-            Uint8 b = static_cast<Uint8>(std::get<double>(colors->data[i * color_stride + 2]));
+            Uint8 r = static_cast<Uint8>(to_double(colors->data[i * color_stride + 0]));
+            Uint8 g = static_cast<Uint8>(to_double(colors->data[i * color_stride + 1]));
+            Uint8 b = static_cast<Uint8>(to_double(colors->data[i * color_stride + 2]));
             SDL_SetRenderDrawColor(renderer, r, g, b, 255);
         }
         SDL_RenderPoint(renderer, x, y);

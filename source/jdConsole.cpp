@@ -876,51 +876,73 @@ std::string jdConsole::get_from_clipboard() {
 }
 
 void jdConsole::render_prompt() {
-    std::cout.clear(); // Clear any fail states caused by console flushing
+    std::cout.clear();
     ConsoleWorkspace& ws = workspaces[active_ws];
-    static int last_drawn_len = 0;
+    static int last_drawn_total_visual_len = 0;
 
-    std::string prompt = "WS" + std::to_string(active_ws + 1) + "> ";
-    std::string full_line = prompt + ws.current_input;
+    std::string prompt_str = "WS" + std::to_string(active_ws + 1) + "> ";
+    int prompt_len = (int)prompt_str.length();
 
-#if defined(_WIN32)
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    CONSOLE_SCREEN_BUFFER_INFO csbi_start;
-    GetConsoleScreenBufferInfo(hOut, &csbi_start);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (!GetConsoleScreenBufferInfo(hOut, &csbi)) return;
 
-    // Move physical cursor to column 0 (replaces \r)
-    COORD startPos = { 0, csbi_start.dwCursorPosition.Y };
+    // 1. Calculate how many rows the PREVIOUS content occupied
+    int cols = csbi.dwSize.X;
+    int last_rows = (last_drawn_total_visual_len + cols - 1) / cols;
+    if (last_rows < 1) last_rows = 1;
+
+    // 2. Determine the true starting Y coordinate
+    // We move up from the current Y by the number of extra rows used last time
+    COORD startPos = { 0, (SHORT)(csbi.dwCursorPosition.Y - (last_rows - 1)) };
+    if (startPos.Y < 0) startPos.Y = 0;
+
+    // 3. WIPE THE ENTIRE AREA
+    // Clear enough cells to cover the old content completely
+    DWORD written;
+    DWORD cells_to_clear = (DWORD)(last_rows * cols);
+    FillConsoleOutputCharacter(hOut, ' ', cells_to_clear, startPos, &written);
+    FillConsoleOutputAttribute(hOut, csbi.wAttributes, cells_to_clear, startPos, &written);
+
+    // Move cursor back to origin for redrawing
     SetConsoleCursorPosition(hOut, startPos);
-#else
-    TextIO::print("\r");
-#endif
 
-    // 1. Draw Prompt
+    // 4. Redraw Prompt
     TextIO::setColor(10, 0);
-    TextIO::print(prompt);
+    TextIO::print(prompt_str);
 
-    // 2. Draw Input Text (Mini-Lexer)
+    // 5. Draw Input Text (Mini-Lexer)
     std::string input = ws.current_input;
+    int input_visual_len = 0;
+
     for (size_t i = 0; i < input.length(); ) {
         unsigned char c = static_cast<unsigned char>(input[i]);
+        if (c <= 0x7F || c >= 0xC0) input_visual_len++;
 
         if (c == '"') {
-            std::string token(1, c);
-            i++;
-            while (i < input.length() && input[i] != '"') token += input[i++];
-            if (i < input.length()) token += input[i++];
-            TextIO::setColor(3, 0);
-            TextIO::print(token);
+            std::string token(1, c); i++;
+            while (i < input.length() && input[i] != '"') {
+                if (static_cast<unsigned char>(input[i]) <= 0x7F || static_cast<unsigned char>(input[i]) >= 0xC0) input_visual_len++;
+                token += input[i++];
+            }
+            if (i < input.length()) {
+                if (static_cast<unsigned char>(input[i]) <= 0x7F || static_cast<unsigned char>(input[i]) >= 0xC0) input_visual_len++;
+                token += input[i++];
+            }
+            TextIO::setColor(3, 0); TextIO::print(token);
         }
         else if (std::isdigit(c)) {
             std::string token;
-            while (i < input.length() && (std::isdigit((unsigned char)input[i]) || input[i] == '.')) token += input[i++];
-            TextIO::setColor(6, 0);
-            TextIO::print(token);
+            while (i < input.length() && (std::isdigit((unsigned char)input[i]) || input[i] == '.')) {
+                if (static_cast<unsigned char>(input[i]) <= 0x7F || static_cast<unsigned char>(input[i]) >= 0xC0) input_visual_len++;
+                token += input[i++];
+            }
+            TextIO::setColor(6, 0); TextIO::print(token);
         }
         else if (std::isalpha(c) || c == '_' || c >= 128) {
             std::string token;
             while (i < input.length() && (std::isalnum((unsigned char)input[i]) || input[i] == '_' || input[i] == '.' || static_cast<unsigned char>(input[i]) >= 128)) {
+                if (static_cast<unsigned char>(input[i]) <= 0x7F || static_cast<unsigned char>(input[i]) >= 0xC0) input_visual_len++;
                 token += input[i++];
             }
             if (KeywordRepository::is_keyword(token)) TextIO::setColor(5, 0);
@@ -928,69 +950,33 @@ void jdConsole::render_prompt() {
             TextIO::print(token);
         }
         else {
-            std::string s(1, c);
             if (std::isspace(c)) TextIO::setColor(7, 0);
             else TextIO::setColor(2, 0);
-            TextIO::print(s);
+            TextIO::print(std::string(1, (char)c));
             i++;
         }
     }
 
-    TextIO::setColor(2, 0);
+    // Update the static tracker for the next call
+    last_drawn_total_visual_len = prompt_len + input_visual_len;
 
-    // 3. Erase trailing characters safely
-    int current_visual_len = 0;
-    for (char c : full_line) {
-        if (static_cast<unsigned char>(c) <= 0x7F || static_cast<unsigned char>(c) >= 0xC0) {
-            current_visual_len++;
-        }
-    }
-
-    if (last_drawn_len > current_visual_len) {
-        int diff = last_drawn_len - current_visual_len;
-        TextIO::print(std::string(diff, ' '));
-
-#if !defined(_WIN32)
-        // POSIX fallback needs to step back over the spaces manually
-        TextIO::print(std::string(diff, '\b'));
-#endif
-    }
-    last_drawn_len = current_visual_len;
-
-    // 4. Move cursor to actual visual position
-#if defined(_WIN32)
-    // Calculate visual characters strictly from start of input to the cursor index
-    int visual_offset = 0;
+    // 6. Calculate and Set Final Cursor Position
+    int cursor_visual_offset = 0;
     for (size_t i = 0; i < ws.cursor_pos && i < ws.current_input.length(); i++) {
-        unsigned char c = ws.current_input[i];
-        if (c <= 0x7F || c >= 0xC0) visual_offset++;
+        unsigned char c = (unsigned char)ws.current_input[i];
+        if (c <= 0x7F || c >= 0xC0) cursor_visual_offset++;
     }
 
-    int new_x = startPos.X + prompt.length() + visual_offset;
-    int new_y = startPos.Y;
+    int total_cursor_pos = prompt_len + cursor_visual_offset;
+    COORD finalPos;
+    finalPos.X = (SHORT)(total_cursor_pos % cols);
+    finalPos.Y = (SHORT)(startPos.Y + (total_cursor_pos / cols));
 
-    CONSOLE_SCREEN_BUFFER_INFO csbi_current;
-    GetConsoleScreenBufferInfo(hOut, &csbi_current);
+    // Ensure we don't exceed buffer height
+    if (finalPos.Y >= csbi.dwSize.Y) finalPos.Y = csbi.dwSize.Y - 1;
 
-    // Handle line wrapping in the console
-    while (new_x >= csbi_current.dwSize.X) {
-        new_x -= csbi_current.dwSize.X;
-        new_y++;
-    }
-
-    COORD newPos = { (SHORT)new_x, (SHORT)new_y };
-    SetConsoleCursorPosition(hOut, newPos);
-#else
-    // POSIX fallback using \b
-    if (ws.cursor_pos < ws.current_input.length()) {
-        int move_back = 0;
-        for (size_t i = ws.cursor_pos; i < ws.current_input.length(); i++) {
-            unsigned char c = ws.current_input[i];
-            if (c <= 0x7F || c >= 0xC0) move_back++;
-        }
-        TextIO::print(std::string(move_back, '\b'));
-    }
-#endif
+    SetConsoleCursorPosition(hOut, finalPos);
+    TextIO::setColor(7, 0);
 }
 
 void jdConsole::execute_current_line() {
