@@ -1050,7 +1050,7 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`GETENV$(var_name$)`**: Gets the value of a system environment variable.
 * **`SETLOCALE("locale_string")`**: Sets the locale for number formatting (e.g., "en-US" or "de-DE").
 * **`TICK()`**: Returns the number of milliseconds since the program started.
-* **`DATE$` / `TIME$`**: Returns the current system date/time as a string.
+* **`DATE$()` / `TIME$()`**: Returns the current system date/time as a string.
 * **`NOW()`**: Returns a `DateTime` object for the current moment.
 * **`DATEADD(part$, num, date)`**: Adds an interval to a `DateTime` object. Interval part$: D,H,N,S
 * **`DATEDIFF(part$, date1, date2) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S

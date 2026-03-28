@@ -4,6 +4,7 @@
 #include "Types.hpp"
 #include "Tokens.hpp"
 #include "BuiltinFunctions.hpp" // For tensor/array math functions
+#include "ArrayFunctions.hpp"
 #include "TextIO.hpp"
 
 // Forward declarations for tensor math from other files if needed
@@ -634,7 +635,7 @@ BasicValue NeReLaBasic::parse_primary() {
                 const auto& arr_ptr = std::get<std::shared_ptr<Array>>(current_value);
                 if (!arr_ptr) { Error::set(15, runtime_current_line, "Attempt to index a null array."); return {}; }
 
-                // NEW: Check if this is a vectorized or scalar read operation
+                // Check if this is a vectorized or scalar read operation
                 bool is_vectorized_read = false;
                 for (const auto& expr : index_expressions) {
                     if (std::holds_alternative<std::shared_ptr<Array>>(expr)) {
@@ -643,7 +644,17 @@ BasicValue NeReLaBasic::parse_primary() {
                     }
                 }
 
-                if (is_vectorized_read) {
+                if (!is_vectorized_read && index_expressions.size() < arr_ptr->shape.size()) {
+                    BasicValue current_slice = current_value;
+                    for (size_t i = 0; i < index_expressions.size(); ++i) {
+                        // Slicing dimension 0 repeatedly because the rank drops by 1 each time
+                        std::vector<BasicValue> slice_args = { current_slice, 0.0, index_expressions[i] };
+                        current_slice = builtin_slice(*this, slice_args);
+                        if (Error::get() != 0) return {};
+                    }
+                    current_value = current_slice;
+                }
+                else if (is_vectorized_read) {
                     // Vectorized Read Logic
                     long long num_reads = -1;
                     for (const auto& expr : index_expressions) {

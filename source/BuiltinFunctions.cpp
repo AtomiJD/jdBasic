@@ -2129,14 +2129,13 @@ BasicValue builtin_sqr(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return apply_math_op(args[0], [](double d) { return (d < 0) ? 0.0 : std::sqrt(d); });
 }
 
-// RND(numeric_expression or array)
+// RND([numeric_expression or array])
 BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
-    if (args.size() != 1) {
-        Error::set(8, vm.runtime_current_line);
-        return 0.0;
+    // If no arguments are provided, default to 0.0 behavior (return a random number)
+    BasicValue input = 0.0;
+    if (!args.empty()) {
+        input = args[0];
     }
-
-    const BasicValue& input = args[0];
 
     // Case 1: Input is an Array. Return an array of the same shape with random numbers.
     if (std::holds_alternative<std::shared_ptr<Array>>(input)) {
@@ -2153,17 +2152,18 @@ BasicValue builtin_rnd(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
         }
         return result_ptr;
     }
-    // Case 2: Input is a scalar. Return a single random number.
+    // Case 2: Input is a scalar.
     else {
+        double val = to_double(input);
         // RND(-1.0) calls srand with seed now
-        if (to_double(input) == -1.0) {
-            srand(time(NULL));
+        if (val == -1.0) {
+            srand(static_cast<unsigned int>(time(NULL)));
+            return 0.0;
         }
         else {
-            // Classic BASIC RND(1) behavior
+            // Classic BASIC behavior: return a random double in range [0, 1)
             return static_cast<double>(rand()) / (RAND_MAX + 1.0);
         }
-        
     }
 }
 
@@ -6135,7 +6135,7 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
     register_func("COS", 1, builtin_cos);
     register_func("TAN", 1, builtin_tan);
     register_func("SQR", 1, builtin_sqr);
-    register_func("RND", 1, builtin_rnd);
+    register_func("RND", -1, builtin_rnd);
     register_func("LOG", 1, builtin_log);
     register_func("LOG10", 1, builtin_log10);
     register_func("FAC", 1, builtin_fac);

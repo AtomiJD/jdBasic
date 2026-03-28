@@ -1,0 +1,36 @@
+' --- Test 1: Deep Slicing ---
+print "--- Original 3D Array ---"
+A = RESHAPE(IOTA(8), [2,2,2])
+print A
+
+print "--- 2D Slice A[1] ---"
+print A[1]
+
+print "--- 1D Slice A[1][0] ---"
+print A[1][0]
+
+print "--- Scalar A[1][0][1] ---"
+print A[1][0][1]
+
+' --- Test 2: Scalar Broadcast ---
+print "--- Original 3D Array ---"
+B = RESHAPE(IOTA(8), [2,2,2])
+print B
+
+print "--- Assigning B[0] = 99 ---"
+B[0] = 99
+print B
+
+' --- Test 3: Array Cyclic Assignment ---
+print "--- Original 3D Array ---"
+C = RESHAPE(IOTA(8), [2,2,2])
+print C
+
+print "--- Assigning C[1] = [42, 84] ---"
+C[1] = [42, 84]
+print C
+
+print "--- Assigning C[0][0] = [7, 7] ---"
+C[0,0] = [7, 7]
+print C
+

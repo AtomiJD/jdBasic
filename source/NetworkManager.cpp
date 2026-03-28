@@ -55,7 +55,7 @@ namespace { // Keep this helper private to this file
 
         if (cli) {
             cli->set_connection_timeout(10); // Increased timeout for potentially larger payloads
-            cli->set_read_timeout(30);
+            cli->set_read_timeout(120);
             cli->set_write_timeout(10);
 
             httplib::Headers headers;
@@ -86,7 +86,7 @@ namespace { // Keep this helper private to this file
             }
         } else if (cli_http) {
                 cli_http->set_connection_timeout(10); // Increased timeout for potentially larger payloads
-                cli_http->set_read_timeout(30);
+                cli_http->set_read_timeout(120);
                 cli_http->set_write_timeout(10);
 
                 httplib::Headers headers;

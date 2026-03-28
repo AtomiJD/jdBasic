@@ -206,23 +206,32 @@ struct Array {
         return std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<size_t>());
     }
 
-    // Helper to get the index into the flat 'data' vector from dimensional indices
     size_t get_flat_index(const std::vector<size_t>& indices) const {
-        if (indices.size() != shape.size()) {
-            // This indicates a programmer error or a runtime error that should be caught
-            throw std::runtime_error("Mismatched number of dimensions for indexing.");
+        // 1. Basic rank validation
+        if (indices.empty()) return 0;
+        if (indices.size() > shape.size()) {
+            throw std::out_of_range("Too many indices provided for array rank.");
         }
-        size_t flat_index = 0;
-        size_t multiplier = 1;
-        for (int i = shape.size() - 1; i >= 0; --i) {
+
+        size_t flat = 0;
+
+        // 2. Standard row-major mapping logic
+        for (size_t i = 0; i < indices.size(); ++i) {
+            // Bounds check for the current dimension
             if (indices[i] >= shape[i]) {
-                // This is a runtime error (Index out of bounds)
                 throw std::out_of_range("Array index out of bounds.");
             }
-            flat_index += indices[i] * multiplier;
-            multiplier *= shape[i];
+
+            // Calculate the stride for the current dimension
+            size_t stride = 1;
+            for (size_t j = i + 1; j < shape.size(); ++j) {
+                stride *= shape[j];
+            }
+
+            flat += indices[i] * stride;
         }
-        return flat_index;
+
+        return flat;
     }
 
     // This lets std::variant compare it if needed.
