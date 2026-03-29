@@ -180,7 +180,7 @@ PRINT A, B, C ' Output: 10 20 30
 Reactive variables needs to be created explicitly with `DIM`.
 
 **`DIM var AS REACT type]`**
-Declares a reactive variable. The `AS REACT ` clause is used for specific types.
+Declares a reactive variable. The `AS REACT` clause is used for specific types.
 
 **`DIM array[size1, size2, ...] AS REACT INTEGER`**
 Declares an N-dimensional array with given sizes as reactive integer variable.
@@ -197,6 +197,24 @@ PRINT A 'Prints 4
 B = 4
 
 PRINT A 'Prints 8, A is automatically recalculated when B changes
+```
+
+## Array Slicing and Vectorized Assignment
+
+jdBasic supports powerful slicing and vectorized assignments for arrays and matrices, allowing you to manipulate sub-sections or broadcast scalars across dimensions.
+
+```basic
+DIM A = RESHAPE(IOTA(8), [2,2,2])
+
+' 1. Deep Slicing
+PRINT A[1]       ' Extracts a 2D slice
+PRINT A[1][0]    ' Extracts a 1D slice (vector)
+
+' 2. Scalar Broadcasting
+A[0] = 99        ' Replaces all elements in the first 2D slice with 99
+
+' 3. Cyclic Vectorized Assignment
+A[1] = [42, 84]  ' Assigns the vector [42, 84] cyclically across the target slice
 ```
 
 ## Enumerations
@@ -587,6 +605,10 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`DLLIMPORT [funcfile]`**: Loads the funcfile.dll or funcfile.so as dynmaic library and register all included functions for jdBasic.
 * **`CLIPBOARD.SET text$`**: Sets the system clipboard text.
 * **`CLIPBOARD.GET$() -> string$`**: Returns the text currently in the system clipboard.
+* **`END`**: Immediately terminates the program execution (unlike `STOP` which pauses for debugging).
+* **`YIELD`**: Pauses execution and yields to the host environment's event loop for one frame (critical for Web/WASM environments to prevent freezing).
+* **`ON event_name$ func_name$`**: Registers a subroutine to handle system or custom events. The handler must be a `SUB`. For `ON "ERROR"`, the function must accept exactly one argument.
+* **`RAISEEVENT event_name$, [event_data]`**: Triggers a custom event, passing optional data to the registered event handler.
 
 ### SWITCH...CASE...ENDSWITCH
 
@@ -767,6 +789,18 @@ ENDTRY
 
 * **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
 * **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
+* **`OS.LOAD() -> Number`**: Returns the current system-wide CPU load as a percentage (0.0 to 100.0). Accuracy and behavior are OS-dependent.
+
+### Python Integration (FFI)
+
+Available when the interpreter is compiled with `PYTHON` support. These functions allow seamless data exchange and code execution between jdBasic and a sandboxed Python environment.
+
+* **`PYTHON$(python_code$) -> string$`**: Executes a block of Python code in an isolated workspace dictionary and returns the captured standard output (`stdout`) as a string.
+* **`PY.SET("python_var_name", jdbasic_value)`**: Injects a jdBasic value (scalar, Array, Map, Tensor) directly into the Python environment's memory.
+* **`PY.GET("python_var_name") -> value`**: Retrieves a variable from the Python environment and converts it back to native jdBasic types.
+* **`PY.EVAL("expression_string") -> value`**: Evaluates a Python expression and returns the result directly as a jdBasic variant.
+* **`PY.DIR$([target$]) -> string$`**: Returns a comma-separated string listing the local workspace variables, or methods available on a specific Python object if `target$` is provided.
+* **`PY.HELP$("target") -> string$`**: Returns the Python documentation (docstring) for a specified module or function (e.g., `"math.cos"`).
 
 ## Functions
 
@@ -945,6 +979,13 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 '  Author JD
 ```
 
+#### `MAP.FROM(json_object_string$) -> Map`
+
+Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"value"}`).
+
+* **`json_object_string$`**: The JSON-formatted string to parse.
+* **Returns**: A new Map containing the parsed key-value pairs.
+
 ### JSON Functions
 
 * **`JSON.PARSE$(json_string$)`**: Parses a JSON string and returns a special `JsonObject`. This object can be accessed like a `Map` or an `Array`.
@@ -961,7 +1002,7 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`LCASE$(str$)`**, **`UCASE$(str$)`**, **`TRIM$(str$)`**: Manipulates string case and whitespace.
 * **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings.
 * **`CHR$(ascii_code)`**, **`ASC(char$)`**: Converts between ASCII codes and characters.
-* **`INSTR$([start, ]haystack$, needle$)`**: Finds the position of one string within another. Positions are 0-based. Returns -1 if not found.
+* **`INSTR([start, ]haystack$, needle$)` / `INSTR$()`**: Finds the position of one string within another. Positions are 0-based. Returns -1 if not found. *(Both variants are supported)*.
 * **`INSERT$(target_string or array, text_to_insert$ string or array, position or array) -> string or array`**: Inserts a text_to_insert$ in target at position.
 * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
 * **`FRMV$(array, [format_string$]) -> string$`**: Formats a 1D or 2D array into a string. If format_string$ is provided, it's used to format each row. Otherwise, it creates a right-aligned string matrix.
@@ -990,6 +1031,8 @@ PRINT FRMV$(MAP.ITEMS(Map1))
 * **`CLAMP(value_or_array, min, max) -> number or array`**: Clamps the value in the given range.
 * **`TRUNC(numeric expression or array)`**: Truncates toward zero.
 * **`ABS(numeric expression or array)`**: Standard absolute value function.
+* **`CDBL(numeric expression or array)`**: Converts a value explicitly to a double-precision floating-point number.
+* **`IIF(condition, value_if_true, value_if_false) -> value or array`**: A vectorized ternary operator. Evaluates a condition (scalar or array) and returns the corresponding true/false value element-wise.
 
 ### Regular Expression Functions
 
@@ -1583,6 +1626,11 @@ This section describes functions for low-level, background-threaded tasks, disti
 
 * **`THREAD.ISDONE(handle)`**: Returns `TRUE` if the background thread associated with the handle has finished its execution.
 * **`THREAD.GETRESULT(handle)`**: Waits for the thread to complete and returns its result. This is a blocking call.
+
+### Background Tasks & Timers
+
+* **`RECUR(interval_ms, code_string$) -> task_id`**: Starts a recursive background task that evaluates and executes a string of jdBasic code every `interval_ms` milliseconds. Returns an integer `task_id`.
+* **`CLEAR_RECUR(task_id)`**: Stops and removes an active recursive background task by its ID.
 
 ### Async Functions
 

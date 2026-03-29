@@ -256,6 +256,10 @@ Description: The block of code that executes if an IF condition is false.
 Syntax: IF condition THEN ... ELSEIF condition THEN ...
 Description: A subsequent condition to test if a prior IF or ELSEIF was false.
 
+[END]
+END
+Immediately terminates the program execution.
+
 [ENDENUM]
 Syntax: ENUM ... ENDENUM
 Description: Marks the end of an ENUM block.
@@ -709,7 +713,7 @@ Syntax: INKEY$()
 Description: Non-blocking check for a key press. Returns the key or an empty string.
 
 [INPUT]
-Syntax: INPUT [prompt$], variable
+Syntax: INPUT [prompt$] [,|;] variable
 Description: Pauses execution and waits for the user to enter data from the console.
 
 [INSTR$]
@@ -840,6 +844,10 @@ Description: Deletes a key-value pair from a map.
 Syntax: MAP.EXISTS(map_variable, key$)
 Description: Checks if a key exists in a map.
 
+[MAP.FROM]
+MAP.FROM(json_string$) -> map
+Creates a Map directly from a JSON object formatted string.
+
 [MAP.ITEMS]
 Syntax: MAP.ITEMS(map_variable)
 Description: Returns a 2D array of key-value pairs from a map.
@@ -968,6 +976,10 @@ Description: Returns the network hostname of the local machine.
 Syntax: OS.IP$()
 Description: Returns the primary local IPv4 address of the machine.
 
+[OS.LOAD]
+OS.LOAD() -> number
+Returns the current system-wide CPU load percentage (0.0 - 100.0).
+
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.
@@ -1005,8 +1017,8 @@ Syntax: PRETTY [PREVIEW] [STYLE UPPER|VB] [WIDTH n]
 Description: Formats the current source code with standardized indentation and spacing.
 
 [PRINT]
-Syntax: PRINT expression
-Description: Outputs data to the console screen.
+PRINT [expressionlist] [{; | ,}]
+Outputs text or variable values to the console.
 
 [PRODUCT]
 Syntax: PRODUCT(array)
@@ -1019,6 +1031,30 @@ Description: Draws a single pixel on the graphics screen.
 [PWD]
 Syntax: PWD
 Description: Prints the current working directory.
+
+[PYTHON$]
+PYTHON$(python_code$) -> string$
+Executes Python code in a sandbox and returns the stdout result.
+
+[PY.SET]
+PY.SET(var_name$, jdbasic_value)
+Injects a jdBasic value into the Python environment.
+
+[PY.GET]
+PY.GET(var_name$) -> value
+Retrieves a value from the Python environment.
+
+[PY.EVAL]
+PY.EVAL(expression$) -> value
+Evaluates a Python expression and returns the result as a jdBasic variant.
+
+[PY.DIR$]
+PY.DIR$([target$]) -> string$
+Lists local variables or methods available on a specific Python object.
+
+[PY.HELP$]
+PY.HELP$(target$) -> string$
+Returns the Python docstring for a given module or function.
 
 [RAISEEVENT]
 Syntax: RAISEEVENT "event_name", data
@@ -1051,6 +1087,10 @@ Description: Replaces all occurrences of a regular expression pattern in a strin
 [REM]
 Syntax: REM comment_text
 Description: Marks the rest of the line as a comment. An apostrophe (') is a shorthand.
+
+[REPLACE$]
+REPLACE$(source$, find$, replace$) -> string_or_array
+Replaces all occurrences of find$ with replace$.
 
 [RESHAPE]
 Syntax: RESHAPE(array, shape_vector)
@@ -1635,6 +1675,14 @@ Description: Sets the absolute heading of the turtle. 0 is right, 90 is up.
 Syntax: TURTLE.SETPOS(x, y)
 Description: Moves the turtle to an absolute screen position without drawing.
 
+[TXTREADER$]
+TXTREADER$(filename$) -> string$
+Reads the entire contents of a text file into a string.
+
+[TXTWRITER]
+TXTWRITER filename$, content$, ["APPEND"]
+Writes a string to a text file, optionally appending it.
+
 [TYPE]
 Syntax: TYPE name ... ENDTYPE
 Description: Begins the definition of a user-defined data type (struct).
@@ -1678,3 +1726,7 @@ Description: Blocks execution and waits for a single key press, returning the ke
 [WHILE]
 Syntax: DO WHILE condition ... LOOP
 Description: Specifies the condition that must be true for a DO loop to continue.
+
+[YIELD]
+YIELD
+Pauses execution and yields to the host environment's event loop for one frame.

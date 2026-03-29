@@ -365,6 +365,7 @@ FodyWeavers.xsd
 #Atomis ausschluss Zeug
 doc/graphis/
 doc/live/
+doc/_newdocs/
 doc/live_new/
 doc/google*.*
 doc/*_old.*

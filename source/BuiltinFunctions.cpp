@@ -5657,6 +5657,7 @@ BasicValue builtin_lprint(NeReLaBasic& vm, const std::vector<BasicValue>& args) 
 
 #endif // USE_SERIAL
 
+// RECUR(recur_time_ms, code_string) -> task_id
 BasicValue builtin_recur(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 2) {
         Error::set(8, vm.runtime_current_line, "RECUR expects 2 arguments: interval_ms, code_string$");
@@ -5676,6 +5677,7 @@ BasicValue builtin_recur(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     return BasicValue(static_cast<int64_t>(id));
 }
 
+// CLEAR_RECUR(task_id) 
 BasicValue builtin_clear_recur(NeReLaBasic& vm, const std::vector<BasicValue>& args) {
     if (args.size() != 1) {
         Error::set(8, vm.runtime_current_line, "CLEAR_RECUR expects 1 argument: task_id");
