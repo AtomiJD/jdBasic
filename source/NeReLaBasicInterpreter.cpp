@@ -161,6 +161,7 @@ void main_loop_tick() {
         interpreter.execute_one_frame();
 
         if (interpreter.yielded_for_frame==true) {
+            emscripten_sleep(0);
             break;
         }
 
