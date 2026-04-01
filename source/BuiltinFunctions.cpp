@@ -40,6 +40,7 @@
 #include <unordered_set>
 #include <functional>
 #include <future>
+#include <random>
 
 // For OS-specific console I/O (like INKEY$) and environment variables
 #include "AppConfig.hpp"
@@ -79,6 +80,7 @@
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <termios.h>
 #endif
 #endif
 

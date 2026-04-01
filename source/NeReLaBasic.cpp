@@ -655,6 +655,7 @@ void NeReLaBasic::start() {
         //inputLine = TextIO::jdgets();
         //TextIO::print("I got: " + inputLine);
 #else
+        std::string full_prompt = prompt;
         if (verbose_mode == false)
             std::string full_prompt = "Ready\n\r" + prompt;
         // Use readline() to get user input
@@ -1383,6 +1384,10 @@ void NeReLaBasic::execute_main_program(const std::vector<uint8_t>& code_to_run, 
                                 Error::set(1, 1, "Exception " + std::string(e.what()));
                             }
 
+                        }
+                        if (program_ended) {
+                            line_is_done = true;
+                            break;
                         }
                         if (jump_to_catch_pending) {
                             pcode = pending_catch_address;
