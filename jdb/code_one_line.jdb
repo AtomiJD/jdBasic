@@ -1,3 +1,5 @@
+CLS
+PRINT
 PRINT "Simple Lambda Addtion of 1 to 10"
 PRINT SELECT(lambda i -> i + 1, iota(10))
 INPUT "Next sample -> Press <enter>"; A$
@@ -12,3 +14,6 @@ BD="1967-10-21":W=41:H=21:D=DATEDIFF("D",CVDATE(BD),NOW()):X=D-W/2+IOTA(W):C=RES
 INPUT "Next sample -> Press <enter>"; A$
 PRINT "ASCII Table"
 i=224:j=32: print frmv$(reshape(str$(iota(i)-1+j) + chr$(iota(i)*0+58) + chr$(iota(i)+j),[i^0.5,i^0.5]))
+INPUT "Next sample -> Press <enter>"; A$
+PRINT "Dir"
+PRINT FRMV$(DIR$("*.jdb", TRUE),"{:<25} {:>8} {} {} {}")

@@ -33,7 +33,7 @@ These are foundational libraries used across various scripts.
 | `clip_tool.jdb` | Utility | System clipboard interaction and path parsing. |
 | `cnn_edges.jdb` | AI/ML | Forward pass test for edge detection kernels. |
 | `codec_tools.jdb` | System | Base64, hashing, and UUID generation functions. |
-| `code_golf.jdb` | Language | Complex operations in a single line. |
+| `code_one_line.jdb` | Language | Complex operations in a single line. |
 | `cowsay.jdb` | Utility | Console-based "Cowsay" clone. |
 | `csv_stats.jdb` | Data | CSV loading and statistical data slicing. |
 | `custom_ops.jdb` | Language | Implementing user-defined infix operators. |
