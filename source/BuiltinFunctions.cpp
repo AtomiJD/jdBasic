@@ -6261,10 +6261,12 @@ void register_builtin_functions(NeReLaBasic& vm, NeReLaBasic::FunctionTable& tab
 
     register_func("RECUR", 2, builtin_recur);
     register_proc("CLEAR_RECUR", 1, builtin_clear_recur);
+#ifdef PYTHON
     register_func("PYTHON$", 1, builtin_python);
     register_func("PY.SET", 2, builtin_py_set);
     register_func("PY.GET", 1, builtin_py_get);
     register_func("PY.EVAL", 1, builtin_py_eval);
     register_func("PY.DIR$", -1, builtin_py_dir); // -1 allows optional arguments
     register_func("PY.HELP$", 1, builtin_py_help);
+#endif
 }

@@ -1,5 +1,6 @@
 ' =========================================================
 ' jdBasic Serial Client
+' See below for Arduino Code
 ' =========================================================
 
 ' Configuration
@@ -80,3 +81,104 @@ LOOP UNTIL 1=2
 PRINT "Closing connection..."
 SERIAL.CLOSE hCom
 PRINT "Done."
+
+' ----------------------- ARDUINO Code ---------------------------
+' // Arduino Sketch for jdBasic Communication
+
+' #include <DHT.h>
+' #include <DHT_U.h>
+
+' // Use the built-in LED pin (Pin 13 on most Unos)
+' const int ledPin = LED_BUILTIN;
+
+' #include <dht_nonblocking.h>
+' #define DHT_SENSOR_TYPE DHT_TYPE_11
+
+' static const int DHT_SENSOR_PIN = 2;
+' DHT_nonblocking dht_sensor( DHT_SENSOR_PIN, DHT_SENSOR_TYPE );
+
+' /*
+'  * Poll for a measurement, keeping the state machine alive.  Returns
+'  * true if a measurement is available.
+'  */
+' static bool measure_environment( float *temperature, float *humidity )
+' {
+'   static unsigned long measurement_timestamp = millis( );
+
+'   /* Measure once every four seconds. */
+'   if( millis( ) - measurement_timestamp > 3000ul )
+'   {
+'     if( dht_sensor.measure( temperature, humidity ) == true )
+'     {
+'       measurement_timestamp = millis( );
+'       return( true );
+'     }
+'   }
+
+'   return( false );
+' }
+
+' void setup() {
+'   // Initialize serial communication at 9600 bits per second
+'   Serial.begin(9600);
+  
+'   pinMode(ledPin, OUTPUT);
+'   digitalWrite(ledPin, LOW); // Start with LED off
+  
+'   // Wait a moment for serial to stabilize
+'   delay(100);
+' }
+
+' static bool polling = false;
+
+' void loop() {
+'   float temperature;
+'   float humidity;  
+  
+'   if (polling) {
+'   if( measure_environment( &temperature, &humidity ) == true )
+'     {
+'       Serial.print( temperature, 1 );
+'       Serial.print( ";" );
+'       Serial.println( humidity, 1 );
+'     }    
+'   }
+'   // Check if data is available to read
+'   if (Serial.available() > 0) {
+    
+'     // Read the incoming string until a newline character
+'     String command = Serial.readStringUntil('\n');
+    
+'     // Remove any whitespace (like carriage returns \r)
+'     command.trim();
+
+'     // Process the command
+'     if (command == "LED_ON") {
+'       digitalWrite(ledPin, HIGH);
+'       Serial.println("OK: LED turned ON"); // Send response
+      
+'     } else if (command == "LED_OFF") {
+'       digitalWrite(ledPin, LOW);
+'       Serial.println("OK: LED turned OFF"); // Send response
+      
+'     } else if (command == "STATUS") {
+'       // Just check if we are alive
+'       Serial.println("READY: Waiting for commands...");
+      
+'     } else if (command == "POLLON") {
+'       // Just check if we are alive
+'       Serial.println("OK: Temperature polling is ON");
+'       polling = true;
+      
+'     } else if (command == "POLLOFF") {
+'       // Just check if we are alive
+'       Serial.println("OK: Temperature polling is OFF");
+'       polling = false;
+'     } else {
+'       // Handle unknown commands
+'       Serial.print("ERROR: Unknown command '");
+'       Serial.print(command);
+'       Serial.println("'");
+'     }
+'   }
+' }

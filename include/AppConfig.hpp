@@ -44,7 +44,7 @@
 #endif
 
 // Enable Python integration
-#define PYTHON
+//#define PYTHON
 
 // Enable Scintilla Editor integration
 #define SCIEDIT
