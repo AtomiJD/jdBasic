@@ -1,0 +1,10 @@
+DIM C = RESHAPE([" "], [3, 5])
+PRINT "shape:", LEN(C), "x", LEN(C[0])
+PRINT "C=", C
+C[0, 0] = "X"
+PRINT "After:"
+PRINT "shape:", LEN(C), "x", LEN(C[0])
+PRINT "C=", C
+PRINT "C[0]=", C[0]
+PRINT "C[1]=", C[1]
+PRINT "C[2]=", C[2]

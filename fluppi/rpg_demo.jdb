@@ -1,0 +1,40 @@
+' ===================================================================
+' == Vallys Reise - Pirate Island RPG
+' == Built on the Tiled Map engine
+' ===================================================================
+
+IMPORT RPG_ENGINE
+
+config$ = "D:/usr/dev/cc/fluppi/rpg_data/game.json"
+
+' ── Title Screen ──────────────────────────────────────────────
+menu_choice = RPG_ENGINE.SHOW_TITLE(config$)
+IF menu_choice = 2 THEN END
+
+' ── Initialize Game ───────────────────────────────────────────
+RPG_ENGINE.INIT config$
+
+' ── Load Game (if selected) ───────────────────────────────────
+IF menu_choice = 1 THEN
+    IF RPG_ENGINE.LOAD_GAME() THEN
+        PRINT "Spielstand geladen!"
+    ELSE
+        PRINT "Kein Spielstand gefunden, starte neues Spiel."
+    ENDIF
+ENDIF
+
+GFX.FADE 1, 0.5
+
+' ── Game Loop ─────────────────────────────────────────────────
+DO
+    RPG_ENGINE.UPDATE
+    IF RPG_ENGINE.quit_flag THEN EXITDO
+    RPG_ENGINE.DRAW
+    SCREENFLIP
+    SLEEP 16
+LOOP
+
+' ── Auto-save on exit ─────────────────────────────────────────
+RPG_ENGINE.SAVE_GAME
+RPG_ENGINE.SHUTDOWN
+END

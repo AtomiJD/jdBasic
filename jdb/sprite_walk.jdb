@@ -1,0 +1,113 @@
+' ===================================================================
+' == Sprite Animation Demo
+' == Uses the AI-generated spritesheet (3 cols x 4 rows)
+' == Row 0: Down  (frames 0,1,2)
+' == Row 1: Left  (frames 3,4,5)
+' == Row 2: Right (frames 6,7,8)
+' == Row 3: Up    (frames 9,10,11)
+' ===================================================================
+
+SPRITE_FILE$ = "D:/usr/dev/cc/fluppi/generated_sprites/spritesheet.png"
+FRAME_SIZE = 64
+
+SCREEN 800, 600, "Sprite Animation Demo"
+SETFONT "C:/Windows/Fonts/arial.ttf", 16
+
+' --- Load spritesheet ---
+TRY
+    hero = SPRITE.LOAD(SPRITE_FILE$, FRAME_SIZE, FRAME_SIZE)
+CATCH
+    PRINT "Could not load spritesheet: "; ERRMSG$
+    PRINT "Run sprite_gen.jdb first to generate one!"
+    END
+ENDTRY
+
+' --- Define animations ---
+' Spritesheet layout: 3 cols x 4 rows
+' Col 0=idle, Col 1=walk-A, Col 2=walk-B (flipped A)
+' Row 0=down, Row 1=left, Row 2=right, Row 3=up
+
+' Idle: just the standing frame (col 0), subtle bob
+SPRITE.ANIM hero, "idle_down",  [0], 1
+SPRITE.ANIM hero, "idle_left",  [3], 1
+SPRITE.ANIM hero, "idle_right", [6], 1
+SPRITE.ANIM hero, "idle_up",    [9], 1
+
+' Walk: idle → walk-A → idle → walk-B cycle
+SPRITE.ANIM hero, "walk_down",  [0, 1, 0, 2], 6
+SPRITE.ANIM hero, "walk_left",  [3, 4, 3, 5], 6
+SPRITE.ANIM hero, "walk_right", [6, 7, 6, 8], 6
+SPRITE.ANIM hero, "walk_up",    [9, 10, 9, 11], 6
+
+' --- Initial position and state ---
+SPRITE.POS hero, 368, 268
+SPRITE.SCALE hero, 2
+SPRITE.PLAY hero, "idle_down"
+
+speed = 3
+direction$ = "down"
+moving = FALSE
+
+DO
+    CLS 40, 60, 40  ' dark green "grass"
+
+    ' --- Draw some ground tiles (simple colored rects) ---
+    FOR ty = 0 TO 9
+        FOR tx = 0 TO 12
+            c = 35 + ((tx + ty) MOD 2) * 10
+            RECT tx * 64, ty * 64, 64, 64, c, c + 20, c, TRUE
+        NEXT tx
+    NEXT ty
+
+    ' --- Input ---
+    ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
+
+    old_moving = moving
+    old_dir$ = direction$
+    moving = FALSE
+
+    IF GFX.KEYSTATE("Right") THEN
+        SPRITE.MOVE hero, speed, 0
+        direction$ = "right"
+        moving = TRUE
+    ENDIF
+    IF GFX.KEYSTATE("Left") THEN
+        SPRITE.MOVE hero, -speed, 0
+        direction$ = "left"
+        moving = TRUE
+    ENDIF
+    IF GFX.KEYSTATE("Down") THEN
+        SPRITE.MOVE hero, 0, speed
+        direction$ = "down"
+        moving = TRUE
+    ENDIF
+    IF GFX.KEYSTATE("Up") THEN
+        SPRITE.MOVE hero, 0, -speed
+        direction$ = "up"
+        moving = TRUE
+    ENDIF
+
+    ' --- Switch animation based on movement ---
+    IF moving AND (NOT old_moving OR direction$ <> old_dir$) THEN
+        SPRITE.PLAY hero, "walk_" + direction$
+    ENDIF
+    IF NOT moving AND old_moving THEN
+        SPRITE.PLAY hero, "idle_" + direction$
+    ENDIF
+
+    ' --- Update and draw ---
+    SPRITE.UPDATE
+    SPRITE.DRAW_ALL
+
+    ' --- HUD ---
+    TEXT 10, 10, "Arrow keys: walk | ESC: quit", 220, 220, 220
+    TEXT 10, 35, "Direction: " + direction$ + _
+        "  Frame: " + STR$(INT(SPRITE.GET_X(hero))) + "," + _
+        STR$(INT(SPRITE.GET_Y(hero))), 180, 180, 180
+
+    SCREENFLIP
+    SLEEP 16
+LOOP
+
+END

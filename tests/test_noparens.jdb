@@ -1,0 +1,34 @@
+' ── No-parens style calls ──────────────────────────
+PRINT "=== Classic BASIC style ==="
+
+' File I/O without parens
+TXTWRITER "test_np.txt", "Hello from classic BASIC!\nLine 2"
+DIM content = TXTREADER$("test_np.txt")
+PRINT content
+
+' CSVWRITER without parens
+DIM data = [[1, "A"], [2, "B"]]
+CSVWRITER "test_np.csv", data
+
+' BINWRITER without parens
+BINWRITER "test_np.bin", PACK$("<ii", 42, 99)
+
+' SLEEP without parens
+SLEEP 50
+
+' Mixed: parens and no-parens
+TXTWRITER "test_np2.txt", "Test " + STR$(42)
+PRINT TXTREADER$("test_np2.txt")
+
+' ── Verify everything still works with parens too ──
+PRINT ""
+TXTWRITER("test_np3.txt", "Parens style")
+PRINT TXTREADER$("test_np3.txt")
+
+' ── Regression: normal expressions still work ──────
+LET X = 10
+PRINT "X = "; X
+PRINT "X + 5 = "; X + 5
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

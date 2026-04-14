@@ -1,0 +1,25 @@
+DIM M = RESHAPE(IOTA(6), [2,3])
+
+' Without format: right-aligned columns
+PRINT "=== No format ==="
+PRINT FRMV$(M)
+
+' With format "{}" * 3: compact, no spacing
+PRINT "=== {} * 3 ==="
+PRINT FRMV$(M, "{}" * 3)
+
+' With formatted columns
+PRINT "=== {:>5} * 3 ==="
+PRINT FRMV$(M, "{:>5}" * 3)
+
+' With separator
+PRINT "=== | format ==="
+PRINT FRMV$(M, "{} | {} | {}")
+
+' Aligned with fill
+PRINT "=== Padded ==="
+PRINT FRMV$(M, "{:0>3} {:0>3} {:0>3}")
+
+' 1D with format
+PRINT "=== 1D format ==="
+PRINT FRMV$(IOTA(5), "[{:>4}]")

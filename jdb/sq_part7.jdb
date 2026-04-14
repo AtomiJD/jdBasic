@@ -1,0 +1,72 @@
+SOUND.INIT()
+SOUND.BPM(200) ' Fast tempo
+SOUND.DELAY TRUE, 300, 0.6, 0.4 ' Heavy delay
+
+' Setup Scale: E Minor Pentatonic
+SOUND.SCALE 0, "E3", "PENT_MIN"
+SOUND.SCALE 1, "E3", "PENT_MIN"
+
+' --- SOUND DESIGN ---
+' Track 0: Random Melody (Pluck)
+SOUND.VOICE 0, "SQUARE", 0.01, 0.1, 0.0, 0.1
+SOUND.FILTER 0, 800
+
+' Track 1: Bass Root (Saw)
+SOUND.VOICE 1, "SAW", 0.01, 0.3, 0.5, 0.2
+SOUND.FILTER 1, 300
+
+' --- ALGORITHMIC PATTERNS ---
+' We generate a string of numbers.
+' 0 = Root (E3), 1 = G3, 2 = A3, etc.
+' -1 = D3 (Lower octave)
+
+Pat1$ = ""
+FOR i = 1 TO 8
+    ' Pick random scale degree between -2 and 5
+    degree = INT(RND(1) * 8) - 2
+    Pat1$ = Pat1$ + STR$(degree) + " "
+NEXT
+' Result might look like: "0 3 1 -1 4 2 0 5"
+
+' Bassline: Just roots and octaves
+Pat2$ = "0 ~ -5 ~ 0 ~ -5 ~"
+PRINT "0 "; Pat1$
+PRINT "1 "; Pat2$
+
+
+SOUND.SEQ 0, Pat1$, "VOICE"
+SOUND.SEQ 1, Pat2$, "VOICE"
+
+PRINT "Generating E Minor Pentatonic music..."
+PRINT "Pattern: " + Pat1$
+
+CHANGEMOOD = 0
+SCALE$ = ["CHROMATIC", "MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN", "MIXOLYDIAN", "LOCRIAN", "PENT_MAJ", "PENT_MIN", "BLUES", "ARABIC"]
+numMoods = len(SCALE$)[0]-1
+cntMood = 0
+
+DO
+    A$ = INKEY$()
+    CHANGEMOOD = CHANGEMOOD + 1
+    IF CHANGEMOOD > 3 THEN
+        CHANGEMOOD = 0
+        cntMood = cntMood + 1
+        IF cntMood > numMoods THEN cntMood = 0
+        SOUND.SCALE "E3", SCALE$[cntMood]
+        PRINT "Mood: "; SCALE$[cntMood]
+    ENDIF
+    SLEEP 1000
+    ' Regenerate melody every second for endless variation
+    Pat1$ = ""
+    FOR i = 1 TO 8
+        d = INT(RND(1) * 8) - 2
+        ' Occasionally add a rest
+        IF RND(1) > 0.8 THEN
+            Pat1$ = Pat1$ + "~ "
+        ELSE
+            Pat1$ = Pat1$ + STR$(d) + " "
+        ENDIF
+    NEXT
+    SOUND.SEQ 0, Pat1$, "VOICE"
+    PRINT "New Pattern: " + Pat1$
+LOOP UNTIL A$=chr$(27)

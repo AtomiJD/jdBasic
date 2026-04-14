@@ -1,0 +1,9 @@
+DIM MyMap As MAP 
+MyMap = {"name": "jd", "value": 100}
+IF "Lall" IN MyMap THEN PRINT "Key exists!"
+
+MyArray = [10, 20, 30]
+IF 20 IN MyArray THEN PRINT "Value exists!"
+
+MyString$ = "Hello jdBasic"
+IF "Basic" IN MyString$ THEN PRINT "Substring exists!"

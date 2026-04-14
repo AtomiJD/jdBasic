@@ -1,0 +1,58 @@
+' TensorFlow Tier 1 Test Script
+' Requires tffunc.dll and model.pb
+
+DLLIMPORT "tffunc"
+PRINT "TensorFlow Version: "; TENSORFLOW.VERSION()
+PRINT
+
+' 1. Create Graph and Session
+GraphHandle = TENSORFLOW.NEW_GRAPH()
+TENSORFLOW.LOAD_GRAPH_FROM_FILE(GraphHandle, "model.pb")
+SessionHandle = TENSORFLOW.NEW_SESSION(GraphHandle)
+
+PRINT "Handles created:"
+PRINT "Graph: "; GraphHandle
+PRINT "Session: "; SessionHandle
+PRINT
+
+' 2. Prepare input data with the correct 2D shape
+DIM InputData[1, 4]
+InputData[0, 0] = 1.0
+InputData[0, 1] = 2.0
+InputData[0, 2] = 3.0
+InputData[0, 3] = 4.0
+
+' 3. Create a tensor using the default FLOAT type
+InputTensor = TENSORFLOW.NEW_TENSOR_FROM_ARRAY(InputData)
+
+PRINT "Input Tensor Info:"
+PRINT "  Handle: "; InputTensor
+PRINT "  Shape: "; FRMV$(TENSORFLOW.GET_TENSOR_SHAPE(InputTensor))
+PRINT "  DType: "; TENSORFLOW.GET_TENSOR_DTYPE(InputTensor)
+PRINT
+
+' 4. Run Inference
+DIM Inputs AS MAP
+Inputs{"input:0"} = InputTensor
+
+DIM Outputs[1]
+Outputs[0] = "output:0"
+    
+ResultMap = TENSORFLOW.SESSION_RUN(SessionHandle, GraphHandle, Inputs, Outputs,[])
+
+' 5. Process and inspect the results
+IF TYPEOF(ResultMap) = "MAP" THEN
+  ResultTensor = ResultMap{"output:0"}
+  ResultArray = TENSORFLOW.NEW_ARRAY_FROM_TENSOR(ResultTensor)
+  
+  PRINT "Inference Result:"
+  PRINT "  Tensor Handle: "; ResultTensor
+  PRINT "  Result Shape: "; FRMV$(TENSORFLOW.GET_TENSOR_SHAPE(ResultTensor))
+  PRINT "  Result DType: "; TENSORFLOW.GET_TENSOR_DTYPE(ResultTensor)
+  PRINT "  Result Array: "; FRMV$(ResultArray)
+ELSE
+  PRINT "Inference failed."
+ENDIF
+
+PRINT
+PRINT "Done."

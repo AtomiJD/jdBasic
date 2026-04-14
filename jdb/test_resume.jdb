@@ -1,0 +1,6 @@
+LET X = 10
+PRINT "Before STOP: X ="; X
+STOP
+PRINT "After RESUME: X ="; X
+LET X = X + 1
+PRINT "X is now:"; X

@@ -1,0 +1,7 @@
+FOR I = 1 TO 10: PRINT I; : NEXT I
+PRINT ""
+FOR I = 1 TO 5: PRINT I, : NEXT I
+PRINT ""
+PRINT "A"; "B"; "C"
+PRINT "X",
+PRINT "Y"

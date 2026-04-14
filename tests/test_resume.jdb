@@ -1,0 +1,10 @@
+PRINT "Resume Tester"
+
+FUNC Lall(i)
+     DIM A As INTEGER = 5
+     PRINT A
+     STOP
+     RETURN A
+ENDFUNC
+
+PRINT lall(5)

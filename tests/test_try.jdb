@@ -1,0 +1,91 @@
+' ── Basic TRY/CATCH ────────────────────────────────
+PRINT "=== Test 1: Division by zero ==="
+TRY
+    PRINT "Before error"
+    LET A = 10 / 0
+    PRINT "This should NOT print"
+CATCH
+    PRINT "Caught! ERR ="; ERR; " ERL ="; ERL
+    PRINT "ERRMSG$ = "; ERRMSG$
+ENDTRY
+PRINT "Continued after try/catch"
+
+' ── TRY/CATCH/FINALLY ─────────────────────────────
+PRINT ""
+PRINT "=== Test 2: FINALLY always runs ==="
+TRY
+    PRINT "TRY body"
+    LET X = [1, 2, 3]
+    PRINT X[99]
+CATCH
+    PRINT "Caught: "; ERRMSG$
+FINALLY
+    PRINT "FINALLY: cleanup (always runs)"
+ENDTRY
+
+' ── FINALLY without error ─────────────────────────
+PRINT ""
+PRINT "=== Test 3: FINALLY without error ==="
+TRY
+    PRINT "No error here"
+    LET Y = 42
+CATCH
+    PRINT "This should NOT print"
+FINALLY
+    PRINT "FINALLY runs anyway"
+ENDTRY
+PRINT "Y ="; Y
+
+' ── THROW ─────────────────────────────────────────
+PRINT ""
+PRINT "=== Test 4: THROW ==="
+SUB SetAge(age)
+    IF age < 0 THEN
+        THROW "Age cannot be negative"
+    END IF
+    PRINT "Age set to "; age
+END SUB
+
+TRY
+    SetAge(25)
+    SetAge(-5)
+CATCH
+    PRINT "Error caught!"
+    PRINT "Message: "; ERRMSG$
+ENDTRY
+
+' ── Nested TRY ────────────────────────────────────
+PRINT ""
+PRINT "=== Test 5: Nested TRY ==="
+TRY
+    PRINT "Outer TRY"
+    TRY
+        PRINT "Inner TRY"
+        THROW "inner error"
+    CATCH
+        PRINT "Inner CATCH: "; ERRMSG$
+    ENDTRY
+    PRINT "Back in outer TRY (no error here)"
+CATCH
+    PRINT "Outer CATCH - should NOT print"
+ENDTRY
+PRINT "Done"
+
+' ── THROW in function ─────────────────────────────
+PRINT ""
+PRINT "=== Test 6: Error in function ==="
+FUNCTION Divide(a, b)
+    IF b = 0 THEN
+        THROW "Division by zero in Divide()"
+    END IF
+    RETURN a / b
+END FUNCTION
+
+TRY
+    PRINT "10 / 3 = "; Divide(10, 3)
+    PRINT "10 / 0 = "; Divide(10, 0)
+CATCH
+    PRINT "Caught: "; ERRMSG$
+FINALLY
+    PRINT "Divide test complete"
+ENDTRY

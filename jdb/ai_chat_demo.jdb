@@ -1,0 +1,273 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic AI Chat Studio - Local LLM with GPU Acceleration
+'  Powered by: llama.cpp + CUDA + ImGui + SDL3
+' ══════════════════════════════════════════════════════════════════
+
+SCREEN 1400, 800, "jdBasic AI Chat Studio", 2
+GUI.THEME "DARK"
+
+' ── State ────────────────────────────────────────────────────────
+DIM llm_id = 0
+DIM llm_loaded = FALSE
+DIM llm_status = "Not loaded"
+DIM model_path = "models\Phi-3-mini-4k-instruct-q4.gguf"
+
+' Chat
+DIM chat_input = ""
+DIM chat_output = ""
+DIM is_generating = FALSE
+DIM total_tokens = 0
+
+' Messages display
+DIM messages AS ARRAY
+DIM msg_count = 0
+
+' Settings
+DIM temperature = 0.7
+DIM top_p = 0.95
+DIM top_k = 40
+DIM max_tokens = 300
+DIM sys_prompt = "You are a helpful, concise AI assistant. Answer in 1-3 sentences unless asked for more detail."
+DIM show_settings = FALSE
+DIM show_tokenizer = FALSE
+DIM show_history = FALSE
+
+' Streaming
+DIM stream_buffer = ""
+DIM stream_active = FALSE
+
+FUNC PrintToken(t)
+  stream_buffer = stream_buffer + t
+  RETURN TRUE
+ENDFUNC
+
+' ── Load Model ───────────────────────────────────────────────────
+TRY
+  llm_id = AI.LOAD_LLM(model_path, 2048, 99)
+  llm_loaded = TRUE
+  llm_status = "Phi-3-mini (CUDA)"
+  AI.SET llm_id, "system", sys_prompt
+  AI.SET llm_id, "temperature", temperature
+  AI.SET llm_id, "max_tokens", max_tokens
+
+  ' Welcome message
+  PUSH messages, {"role": "assistant", "content": "Hello! I am running locally on your GPU via jdBasic + llama.cpp. Ask me anything!"}
+  msg_count = 1
+CATCH
+  llm_status = "Failed: " + ERRMSG$
+ENDTRY
+
+' ── Main Loop ────────────────────────────────────────────────────
+DIM running = TRUE
+DIM frame = 0
+
+DO WHILE running
+  CLS 20, 22, 30
+  frame = frame + 1
+
+  ' ── Menu Bar ───────────────────────────────────────────────
+  IF GUI.BEGIN_MAIN_MENU_BAR() THEN
+    IF GUI.BEGIN_MENU("Chat") THEN
+      IF GUI.MENU_ITEM("Clear History") THEN
+        messages = []
+        msg_count = 0
+        IF llm_loaded THEN AI.CLEAR_HISTORY llm_id
+      ENDIF
+      GUI.SEPARATOR
+      IF GUI.MENU_ITEM("Exit") THEN running = FALSE
+      GUI.END_MENU()
+    ENDIF
+    IF GUI.BEGIN_MENU("View") THEN
+      show_settings = GUI.CHECKBOX("Settings Panel", show_settings)
+      show_tokenizer = GUI.CHECKBOX("Tokenizer Tool", show_tokenizer)
+      show_history = GUI.CHECKBOX("Raw History", show_history)
+      GUI.END_MENU()
+    ENDIF
+    IF GUI.BEGIN_MENU("Theme") THEN
+      IF GUI.MENU_ITEM("Dark") THEN GUI.THEME "DARK"
+      IF GUI.MENU_ITEM("Light") THEN GUI.THEME "LIGHT"
+      IF GUI.MENU_ITEM("Classic") THEN GUI.THEME "CLASSIC"
+      GUI.END_MENU()
+    ENDIF
+    GUI.END_MAIN_MENU_BAR()
+  ENDIF
+
+  ' ── Chat Window ────────────────────────────────────────────
+  DIM chat_w = 900
+  IF show_settings THEN chat_w = 900 ELSE chat_w = 1050
+  DIM sf_no = GUI.FLAG("NO_SCROLLBAR")
+
+  IF GUI.BEGIN("Chat", 10, 35, chat_w, 720) THEN
+    ' Messages area
+    IF GUI.BEGIN_CHILD("messages", chat_w - 30, 570, TRUE) THEN
+      FOR mi = 0 TO msg_count - 1
+        DIM msg = messages[mi]
+        DIM role = msg{"role"}
+        DIM content = msg{"content"}
+
+        IF role = "user" THEN
+          GUI.SEPARATOR_TEXT "You"
+          GUI.TEXT content
+        ELSE
+          GUI.SEPARATOR_TEXT "AI"
+          GUI.TEXT content
+        ENDIF
+      NEXT mi
+
+      ' Show streaming buffer if active
+      IF LEN(stream_buffer) > 0 AND stream_active THEN
+        GUI.SEPARATOR_TEXT "AI (generating...)"
+        GUI.TEXT stream_buffer
+      ENDIF
+    ENDIF
+    GUI.END_CHILD
+
+    GUI.SEPARATOR
+
+    ' Input area
+    GUI.SET_NEXT_ITEM_WIDTH chat_w - 120
+    chat_input = GUI.INPUT("##input", chat_input)
+    GUI.SAME_LINE
+
+    DIM can_send = llm_loaded AND LEN(chat_input) > 0 AND NOT is_generating
+    IF GUI.BUTTON("Send", 70, 0) AND can_send THEN
+      ' Add user message
+      PUSH messages, {"role": "user", "content": chat_input}
+      msg_count = msg_count + 1
+
+      ' Generate response
+      is_generating = TRUE
+      stream_buffer = ""
+      stream_active = TRUE
+
+      AI.SET llm_id, "temperature", temperature
+      AI.SET llm_id, "max_tokens", max_tokens
+
+      DIM t0 = GFX.TICKS()
+      DIM response = AI.CHAT_STREAM(llm_id, chat_input, PrintToken@)
+      DIM elapsed = GFX.TICKS() - t0
+
+      ' Count tokens
+      IF llm_loaded THEN
+        DIM resp_tokens = AI.TOKEN_COUNT(llm_id, response)
+        total_tokens = total_tokens + resp_tokens
+      ENDIF
+
+      ' Add AI response
+      PUSH messages, {"role": "assistant", "content": response}
+      msg_count = msg_count + 1
+
+      stream_active = FALSE
+      stream_buffer = ""
+      is_generating = FALSE
+      chat_input = ""
+    ENDIF
+
+    ' Status line
+    IF is_generating THEN
+      GUI.TEXT "Generating..."
+    ELSE
+      DIM tok_info = ""
+      IF llm_loaded AND LEN(chat_input) > 0 THEN
+        DIM input_toks = AI.TOKEN_COUNT(llm_id, chat_input)
+        tok_info = "Input: " + STR(input_toks) + " tokens | "
+      ENDIF
+      GUI.TEXT tok_info + "Total: " + STR(total_tokens) + " tokens | Messages: " + STR(msg_count)
+    ENDIF
+  ENDIF
+  GUI.END
+
+  ' ── Settings Panel ─────────────────────────────────────────
+  IF show_settings THEN
+    IF GUI.BEGIN("Settings", chat_w + 20, 35, 350, 400) THEN
+      GUI.TEXT "Model: " + llm_status
+
+      GUI.SEPARATOR_TEXT "Generation"
+      temperature = GUI.SLIDER("Temperature", temperature, 0.0, 2.0)
+      top_p = GUI.SLIDER("Top-P", top_p, 0.0, 1.0)
+      top_k = GUI.SLIDER("Top-K", top_k, 1, 100)
+      max_tokens = GUI.SLIDER("Max Tokens", max_tokens, 50, 2000)
+
+      GUI.SEPARATOR_TEXT "System Prompt"
+      sys_prompt = GUI.INPUT("##sysprompt", sys_prompt)
+      IF GUI.BUTTON("Apply System Prompt") AND llm_loaded THEN
+        AI.SET llm_id, "system", sys_prompt
+      ENDIF
+
+      IF llm_loaded THEN
+        GUI.SEPARATOR_TEXT "Model Info"
+        DIM info = AI.LLM_INFO(llm_id)
+        GUI.TEXT "Context: " + STR(info{"n_ctx"})
+        GUI.TEXT "Vocab: " + STR(info{"n_vocab"})
+      ENDIF
+    ENDIF
+    GUI.END
+  ENDIF
+
+  ' ── Tokenizer Tool ─────────────────────────────────────────
+  IF show_tokenizer AND llm_loaded THEN
+    IF GUI.BEGIN("Tokenizer", chat_w + 20, 445, 350, 310) THEN
+      GUI.TEXT "Enter text to tokenize:"
+      DIM tok_text = GUI.INPUT("##toktext", "Hello, World!")
+      DIM toks = AI.TOKENIZE(llm_id, tok_text)
+      GUI.TEXT "Tokens (" + STR(LEN(toks)) + "):"
+      DIM tok_str = ""
+      FOR ti = 0 TO LEN(toks) - 1
+        IF ti > 0 THEN tok_str = tok_str + ", "
+        tok_str = tok_str + STR(toks[ti])
+        IF LEN(tok_str) > 200 THEN
+          tok_str = tok_str + "..."
+          EXITFOR
+        ENDIF
+      NEXT ti
+      GUI.TEXT tok_str
+
+      GUI.SEPARATOR
+      GUI.TEXT "Detokenized:"
+      GUI.TEXT AI.DETOKENIZE(llm_id, toks)
+
+      GUI.SEPARATOR_TEXT "Vector Tools"
+      DIM v1 = [1.0, 0.0, 0.0]
+      DIM v2 = [0.7, 0.7, 0.0]
+      DIM sim = AI.COSINE_SIM(v1, v2)
+      GUI.TEXT "cos([1,0,0], [.7,.7,0]) = " + STR(ROUND(sim, 4))
+    ENDIF
+    GUI.END
+  ENDIF
+
+  ' ── Raw History ────────────────────────────────────────────
+  IF show_history AND llm_loaded THEN
+    IF GUI.BEGIN("Chat History", chat_w + 20, 445, 350, 310) THEN
+      DIM hist = AI.GET_HISTORY(llm_id)
+      IF GUI.BEGIN_TABLE("hist", 2) THEN
+        GUI.TABLE_SETUP_COLUMN "Role"
+        GUI.TABLE_SETUP_COLUMN "Content"
+        GUI.TABLE_HEADERS_ROW
+        FOR hi = 0 TO LEN(hist) - 1
+          GUI.TABLE_NEXT_ROW
+          GUI.TABLE_NEXT_COLUMN
+          GUI.TEXT hist[hi]{"role"}
+          GUI.TABLE_NEXT_COLUMN
+          GUI.TEXT LEFT(hist[hi]{"content"}, 60)
+        NEXT hi
+        GUI.END_TABLE
+      ENDIF
+    ENDIF
+    GUI.END
+  ENDIF
+
+  ' ── Status Bar ─────────────────────────────────────────────
+  DIM sbf = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_SCROLLBAR")
+  IF GUI.BEGIN("##sb", 0, 775, 1400, 25, TRUE, sbf) THEN
+    GUI.TEXT llm_status + "  |  GPU: CUDA  |  Frame: " + STR(frame)
+  ENDIF
+  GUI.END
+
+  SCREENFLIP
+  SLEEP 10
+  IF INKEY$() = CHR(27) THEN running = FALSE
+LOOP
+
+IF llm_loaded THEN AI.FREE_LLM llm_id
+GFX.CLOSE
+PRINT "AI Chat Studio closed."

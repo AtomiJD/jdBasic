@@ -1,0 +1,13 @@
+X = IOTA(8)
+PRINT "X:", X
+PRINT "X/2:", X/2
+PRINT "SIN(X):", SIN(X)
+PRINT "SIN(X/2):", SIN(X/2)
+PRINT "2*PI*X:", 2 * PI * X
+PRINT "SIN(2*PI*X/23):", SIN(2 * PI * X / 23)
+
+' Now with a big offset
+DIM D = 20550
+Y = D - 4 + IOTA(8)
+PRINT "Y:", Y
+PRINT "SIN(2*PI*Y/23):", SIN(2 * PI * Y / 23)

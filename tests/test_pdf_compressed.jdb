@@ -1,0 +1,8 @@
+DIM r = AI.RAG_CREATE(0)
+AI.RAG_ADD_FILE r, "tests/test_compressed.pdf"
+DIM h = AI.RAG_SEARCH(r, "FlateDecode komprimiert", 2)
+FOR i = 0 TO LEN(h) - 1
+  PRINT "score=", h[i]{"score"}
+  PRINT "text= ", h[i]{"text"}
+  PRINT ""
+NEXT i

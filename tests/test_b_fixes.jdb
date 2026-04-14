@@ -1,0 +1,75 @@
+' ══════════════════════════════════════════
+'  Test: B-Fixes (Pipe, HOF, CALL, Errors)
+' ══════════════════════════════════════════
+DIM P = 0
+DIM F = 0
+SUB Assert(cond, msg)
+  IF cond THEN P = P + 1 ELSE F = F + 1
+  IF NOT cond THEN PRINT "  FAIL: "; msg
+ENDSUB
+
+' ── 1. Pipe Operator ─────────────────────
+PRINT "-- Pipe Operator --"
+LET r1 = 5 |> LAMBDA x -> x * 3
+Assert(r1 = 15, "pipe with lambda")
+
+FUNC Triple(x)
+  RETURN x * 3
+ENDFUNC
+LET r2 = 7 |> Triple@
+Assert(r2 = 21, "pipe with funcref")
+
+LET r3 = 10 |> LAMBDA x -> x + 1 |> LAMBDA x -> x * 2
+Assert(r3 = 22, "pipe chain")
+
+' ── 2. REDUCE ────────────────────────────
+PRINT "-- REDUCE --"
+LET sum = REDUCE([1,2,3,4,5], LAMBDA a, b -> a + b, 0)
+Assert(sum = 15, "reduce sum")
+
+LET product = REDUCE([1,2,3,4], LAMBDA a, b -> a * b, 1)
+Assert(product = 24, "reduce product")
+
+' ── 3. FILTER ────────────────────────────
+PRINT "-- FILTER --"
+LET evens = FILTER([1,2,3,4,5,6], LAMBDA x -> x MOD 2 = 0)
+Assert(LEN(evens) = 3, "filter count")
+Assert(evens[0] = 2, "filter first")
+Assert(evens[2] = 6, "filter last")
+
+' ── 4. SELECT (MAP) ──────────────────────
+PRINT "-- SELECT --"
+LET doubled = SELECT([1,2,3], LAMBDA x -> x * 2)
+Assert(doubled[0] = 2, "select first")
+Assert(doubled[1] = 4, "select second")
+Assert(doubled[2] = 6, "select third")
+
+' ── 5. CALL Statement ────────────────────
+PRINT "-- CALL Statement --"
+DIM call_result = ""
+SUB SetResult(val)
+  call_result = val
+ENDSUB
+CALL SetResult("it works!")
+Assert(call_result = "it works!", "call statement")
+
+CALL SetResult("again")
+Assert(call_result = "again", "call statement 2")
+
+' ── 6. Error Messages with Line Numbers ──
+PRINT "-- Error Line Numbers --"
+DIM err_line = 0
+TRY
+  LET bad = NONEXISTENT(42)
+CATCH
+  ' Check if error message exists
+  Assert(LEN(ERRMSG$) > 0, "error has message")
+ENDTRY
+
+' ── Results ──────────────────────────────
+PRINT ""
+PRINT "════════════════════════"
+PRINT " B-FIXES TEST RESULTS"
+PRINT " PASS: "; P; "  FAIL: "; F
+IF F = 0 THEN PRINT " ALL B-FIXES PASSED!"
+PRINT "════════════════════════"

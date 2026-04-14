@@ -1,0 +1,40 @@
+{
+    "characters": {
+        "vally": {
+            "name": "Vally",
+            "class": "Piratin",
+            "desc": "Ein tapferes kleines Häschen, das davon träumt, Piratenkapitänin zu werden.",
+            "sprite": "vally.png",
+            "base_stats": {"hp": 100, "max_hp": 100, "atk": 12, "def": 6, "spd": 10, "mp": 30, "max_mp": 30},
+            "growth": {"hp": 12, "atk": 3, "def": 1, "spd": 2, "mp": 5},
+            "skill_tree": "vally_skills"
+        },
+        "hasi": {
+            "name": "Hasi",
+            "class": "Prinzessin",
+            "desc": "Die oberste Prinzessin mit mächtigen Heil- und Zauberkräften.",
+            "sprite": "hasi.png",
+            "base_stats": {"hp": 80, "max_hp": 80, "atk": 6, "def": 5, "spd": 7, "mp": 60, "max_mp": 60},
+            "growth": {"hp": 8, "atk": 1, "def": 2, "spd": 1, "mp": 10},
+            "skill_tree": "hasi_skills"
+        },
+        "moehrchen": {
+            "name": "Möhrchen",
+            "class": "Beamtin",
+            "desc": "Eine Beamtin, deren Papierkram härter zuschlägt als man denkt.",
+            "sprite": "moehrchen.png",
+            "base_stats": {"hp": 120, "max_hp": 120, "atk": 8, "def": 12, "spd": 5, "mp": 40, "max_mp": 40},
+            "growth": {"hp": 15, "atk": 2, "def": 3, "spd": 1, "mp": 6},
+            "skill_tree": "moehrchen_skills"
+        },
+        "kraki": {
+            "name": "Kraki",
+            "class": "Tintenfisch",
+            "desc": "Eine tollpatschige kleine blaue Krake, die klüger ist als sie aussieht.",
+            "sprite": "kraki.png",
+            "base_stats": {"hp": 70, "max_hp": 70, "atk": 14, "def": 4, "spd": 12, "mp": 50, "max_mp": 50},
+            "growth": {"hp": 7, "atk": 4, "def": 1, "spd": 3, "mp": 8},
+            "skill_tree": "kraki_skills"
+        }
+    }
+}

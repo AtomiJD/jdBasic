@@ -1,0 +1,17 @@
+FUNC Calc(expression)
+  DIM r AS STRING = EVAL(expression)
+  RETURN STR(r)
+ENDFUNC
+
+FUNC Outer(x)
+  PRINT "Outer entered, x="; x
+  DIM y AS STRING = EVAL("100 + " + STR(x))
+  PRINT "Outer y="; y
+  RETURN y
+ENDFUNC
+
+PRINT "first call:"
+PRINT Calc("42 * 17")
+
+PRINT "second call:"
+PRINT Outer(5)

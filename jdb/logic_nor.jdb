@@ -1,0 +1,10 @@
+func nor(x,y)
+   return ((not x) and (not y))
+endfunc
+
+print FALSE nor@ FALSE
+print TRUE nor@ FALSE
+print FALSE nor@ TRUE
+print TRUE nor@ TRUE
+
+

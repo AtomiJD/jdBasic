@@ -1,0 +1,39 @@
+' ── BASE64 ─────────────────────────────────────────
+PRINT "=== Base64 ==="
+DIM encoded = CODEC.BASE64_ENCODE$("Hello, jdBasic!")
+PRINT "Encoded: "; encoded
+DIM decoded = CODEC.BASE64_DECODE$(encoded)
+PRINT "Decoded: "; decoded
+PRINT "Roundtrip OK: "; decoded = "Hello, jdBasic!"
+
+' Edge cases
+PRINT "Empty: '"; CODEC.BASE64_ENCODE$(""); "'"
+PRINT "1 char: "; CODEC.BASE64_ENCODE$("A")
+PRINT "2 chars: "; CODEC.BASE64_ENCODE$("AB")
+PRINT "3 chars: "; CODEC.BASE64_ENCODE$("ABC")
+
+' ── SHA256 ─────────────────────────────────────────
+PRINT ""
+PRINT "=== SHA256 ==="
+' Known test vectors
+PRINT "SHA256('') = "; CODEC.SHA256$("")
+PRINT "Expected:    e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+PRINT ""
+PRINT "SHA256('abc') = "; CODEC.SHA256$("abc")
+PRINT "Expected:       ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+PRINT ""
+PRINT "Match empty: "; CODEC.SHA256$("") = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+PRINT "Match abc: "; CODEC.SHA256$("abc") = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+' ── UUID ───────────────────────────────────────────
+PRINT ""
+PRINT "=== UUID ==="
+DIM id1 = CODEC.UUID$()
+DIM id2 = CODEC.UUID$()
+PRINT "UUID 1: "; id1
+PRINT "UUID 2: "; id2
+PRINT "Length: "; LEN(id1)
+PRINT "Unique: "; id1 <> id2
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

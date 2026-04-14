@@ -1,0 +1,20 @@
+BD = "1967-10-21"
+W = 41 : H = 21
+D = DATEDIFF("D", CVDATE(BD), NOW())
+PRINT "D=", D
+
+X = D - W/2 + IOTA(W)
+PRINT "LEN(X)=", LEN(X)
+
+DIM C = RESHAPE([" "], [H, W])
+PRINT "shape C=", LEN(C), "x", LEN(C[0])
+
+DIM PY = INT((SIN(2*PI*X/23) + 1) * ((H-1)/2))
+PRINT "LEN(PY)=", LEN(PY)
+PRINT "PY first 5:", PY[0], PY[1], PY[2], PY[3], PY[4]
+
+DIM EY = INT((SIN(2*PI*X/28) + 1) * ((H-1)/2))
+PRINT "EY first 5:", EY[0], EY[1], EY[2], EY[3], EY[4]
+
+DIM IY = INT((SIN(2*PI*X/33) + 1) * ((H-1)/2))
+PRINT "IY first 5:", IY[0], IY[1], IY[2], IY[3], IY[4]

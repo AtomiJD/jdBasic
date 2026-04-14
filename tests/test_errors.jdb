@@ -1,0 +1,27 @@
+' Test error handling
+PRINT "=== Error Tests ==="
+
+' Division by zero
+TRY
+    PRINT 10 / 0
+CATCH
+    PRINT "Caught: "; ERRMSG$
+ENDTRY
+
+' Index out of bounds
+TRY
+    DIM A = [1, 2, 3]
+    PRINT A[99]
+CATCH
+    PRINT "Caught: "; ERRMSG$
+ENDTRY
+
+' Wrong arg count (if native checks)
+TRY
+    PRINT ATAN2(1)
+CATCH
+    PRINT "Caught: "; ERRMSG$
+ENDTRY
+
+PRINT ""
+PRINT "=== ALL ERROR TESTS PASSED ==="

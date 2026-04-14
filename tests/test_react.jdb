@@ -1,0 +1,56 @@
+' ── Basic Reactive ─────────────────────────────────
+PRINT "=== Basic Reactive ==="
+DIM A = 0
+DIM B = 2
+A -> B * 2
+
+PRINT "B ="; B; " A ="; A
+
+B = 4
+PRINT "B ="; B; " A ="; A
+
+B = 10
+PRINT "B ="; B; " A ="; A
+
+' ── Chained Reactive ──────────────────────────────
+PRINT ""
+PRINT "=== Chained Reactive ==="
+DIM X = 5
+DIM Y = 0
+DIM Z = 0
+
+Y -> X * 2
+Z -> Y + 100
+
+PRINT "X="; X; " Y="; Y; " Z="; Z
+
+X = 10
+PRINT "X="; X; " Y="; Y; " Z="; Z
+
+X = 0
+PRINT "X="; X; " Y="; Y; " Z="; Z
+
+' ── Vector Reactive ───────────────────────────────
+PRINT ""
+PRINT "=== Vector Reactive ==="
+DIM PRICES = [10, 20, 30]
+DIM QTY = [2, 3, 1]
+DIM TOTALS = []
+DIM GRAND = 0
+
+TOTALS -> PRICES * QTY
+GRAND -> SUM(TOTALS)
+
+PRINT "Prices: "; PRICES
+PRINT "Qty:    "; QTY
+PRINT "Totals: "; TOTALS
+PRINT "Grand:  "; GRAND
+
+PRINT ""
+PRINT "Price increase 50%:"
+PRICES = PRICES * 1.5
+PRINT "Totals: "; TOTALS
+PRINT "Grand:  "; GRAND
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

@@ -1,0 +1,492 @@
+' ===================================================================
+' == RPG Battle Module v2
+' == Party-based turn combat with skills
+' ===================================================================
+
+EXPORT MODULE RPG_BATTLE
+
+IMPORT RPG_DIALOG
+IMPORT RPG_INVENTORY
+IMPORT RPG_COMBAT
+IMPORT RPG_PARTY
+IMPORT RPG_MUSIC
+
+EXPORT DIM battle_bg = -1
+EXPORT DIM encounter_steps = 0
+EXPORT DIM encounter_rate = 30
+
+' ══════════════════════════════════════════════════════════════
+' ══ MAIN BATTLE ══════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT FUNC FIGHT$(enemy_id$)
+    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
+
+    ' Spawn enemy
+    enemy = RPG_COMBAT.SPAWN_ENEMY(enemy_id$)
+    e_name$ = enemy{"name"}
+    e_hp = INT(enemy{"hp"}) : e_max_hp = INT(enemy{"max_hp"})
+    e_atk = INT(enemy{"atk"}) : e_def = INT(enemy{"def"})
+    e_xp = INT(enemy{"xp"}) : e_gold = INT(enemy{"gold"})
+    e_drop$ = enemy{"drop_item"} : e_drop_chance = enemy{"drop_chance"}
+
+    ' Load enemy sprite
+    enemy_sprite = -1
+    TRY
+        sf$ = enemy{"sprite_file"}
+        IF sf$ <> "" THEN
+            fw = INT(enemy{"frame_w"}) : fh = INT(enemy{"frame_h"})
+            enemy_sprite = SPRITE.LOAD(sf$, fw, fh)
+            SPRITE.POS enemy_sprite, sw/2 + 40, 50
+            SPRITE.SCALE enemy_sprite, 2
+            af = enemy{"anim_frames"}
+            af_len = LEN(af)
+            IF TYPEOF(af_len) = "ARRAY" THEN af_len = af_len[0]
+            IF af_len > 0 THEN
+                SPRITE.ANIM enemy_sprite, "idle", af, INT(enemy{"anim_fps"})
+                SPRITE.PLAY enemy_sprite, "idle"
+            ENDIF
+        ENDIF
+    CATCH
+    ENDTRY
+
+    ' Load player sprites for battle
+    DIM p_sprites[3]
+    FOR pidx = 0 TO RPG_PARTY.member_count - 1
+        p_sprites[pidx] = -1
+        pm = RPG_PARTY.GET_MEMBER(pidx)
+        TRY
+            sprite_path$ = "D:/usr/dev/cc/fluppi/generated_sprites/" + pm{"sprite"}
+            ' All party members use 64x64 spritesheets
+            ps = SPRITE.LOAD(sprite_path$, 64, 64)
+            SPRITE.FRAME ps, 6  ' facing right
+            SPRITE.SCALE ps, 1.5
+            SPRITE.POS ps, 30, 50 + pidx * 55
+            p_sprites[pidx] = ps
+        CATCH
+        ENDTRY
+    NEXT pidx
+
+    battle_msg$ = "Ein " + e_name$ + " erscheint!"
+    prev_music$ = RPG_MUSIC.current_theme$
+    RPG_MUSIC.PLAY "battle"
+    result$ = ""
+    cur_member = 0  ' which party member is choosing
+    selected = 0
+    shake_x = 0 : shake_y = 0
+    turn$ = "player"
+    anim_timer = 0
+    player_defending = []
+    FOR pidx = 0 TO RPG_PARTY.member_count - 1
+        PUSH player_defending, FALSE
+    NEXT pidx
+
+    DO
+        ' ── DRAW BATTLE SCREEN ───────────────────────────────
+        CLS 15, 10, 25
+
+        ' Arena
+        RECT 10, 10, sw - 20, sh/2 - 20, 25, 20, 40, TRUE
+        RECT 10, 10, sw - 20, sh/2 - 20, 60, 50, 90, FALSE
+        LINE 10, sh/2 - 30, sw - 10, sh/2 - 30, 40, 35, 55
+
+        ' Player party sprites (left side)
+        FOR pidx = 0 TO RPG_PARTY.member_count - 1
+            IF p_sprites[pidx] > 0 THEN
+                pm = RPG_PARTY.GET_MEMBER(pidx)
+                IF pm{"hp"} <= 0 THEN
+                    SPRITE.ALPHA p_sprites[pidx], 80
+                ELSEIF pidx = cur_member AND turn$ = "player" THEN
+                    SPRITE.ALPHA p_sprites[pidx], 255
+                ELSE
+                    SPRITE.ALPHA p_sprites[pidx], 180
+                ENDIF
+                SPRITE.DRAW p_sprites[pidx]
+            ENDIF
+        NEXT pidx
+
+        ' Enemy sprite (right side with shake)
+        IF enemy_sprite > 0 THEN
+            SPRITE.POS enemy_sprite, sw/2 + 40 + shake_x, 50 + shake_y
+            SPRITE.DRAW enemy_sprite
+        ELSE
+            RECT sw/2 + 40 + shake_x, 70 + shake_y, 60, 60, 200, 50, 50, TRUE
+        ENDIF
+
+        ' Enemy HP
+        TEXT sw/2 + 20, 20, e_name$, 255, 200, 200
+        RECT sw/2 + 100, 22, 100, 10, 60, 30, 30, TRUE
+        efill = 0
+        IF e_max_hp > 0 THEN efill = INT((e_hp / e_max_hp) * 100)
+        IF efill > 0 THEN RECT sw/2 + 100, 22, efill, 10, 200, 60, 60, TRUE
+        RECT sw/2 + 100, 22, 100, 10, 120, 80, 80, FALSE
+        TEXT sw/2 + 205, 20, STR$(INT(e_hp)) + "/" + STR$(INT(e_max_hp)), 160, 130, 130
+
+        ' ── Bottom Panel ─────────────────────────────────────
+        panel_y = sh/2 + 10
+        RECT 10, panel_y, sw - 20, sh/2 - 20, 20, 20, 50, TRUE
+        RECT 10, panel_y, sw - 20, sh/2 - 20, 80, 80, 140, FALSE
+
+        ' Party stats (left side)
+        FOR pidx = 0 TO RPG_PARTY.member_count - 1
+            pm = RPG_PARTY.GET_MEMBER(pidx)
+            py = panel_y + 10 + pidx * 40
+            ' Highlight active member
+            IF pidx = cur_member AND turn$ = "player" THEN
+                RECT 15, py - 3, 220, 36, 40, 40, 70, TRUE
+            ENDIF
+            nm$ = LEFT$(pm{"name"}, 8)
+            TEXT 20, py, nm$, 200, 200, 240
+            ' HP
+            RECT 80, py + 2, 80, 8, 60, 30, 30, TRUE
+            IF pm{"max_hp"} > 0 THEN
+                hf = INT((pm{"hp"} / pm{"max_hp"}) * 80)
+                IF hf > 0 THEN RECT 80, py + 2, hf, 8, 80, 200, 80, TRUE
+            ENDIF
+            TEXT 165, py, STR$(INT(pm{"hp"})), 180, 200, 180
+            ' MP
+            TEXT 20, py + 14, "MP", 120, 120, 180
+            RECT 80, py + 16, 80, 8, 30, 30, 60, TRUE
+            IF pm{"max_mp"} > 0 THEN
+                mf = INT((pm{"mp"} / pm{"max_mp"}) * 80)
+                IF mf > 0 THEN RECT 80, py + 16, mf, 8, 80, 80, 200, TRUE
+            ENDIF
+            TEXT 165, py + 14, STR$(INT(pm{"mp"})), 130, 130, 200
+        NEXT pidx
+
+        ' Battle menu (right side) — only during player turn
+        IF turn$ = "player" THEN
+            mx = sw - 180 : my = panel_y + 10
+            pm = RPG_PARTY.GET_MEMBER(cur_member)
+
+            ' Build menu: Attack, Skill, Item, Defend, Flee
+            menu_items = ["Angriff", "Fähigkeit", "Gegenstand", "Verteidigen", "Fliehen"]
+            num_menu = 5
+
+            RECT mx - 10, my - 5, 170, num_menu * 24 + 10, 30, 25, 55, TRUE
+            RECT mx - 10, my - 5, 170, num_menu * 24 + 10, 80, 80, 140, FALSE
+
+            FOR mi = 0 TO num_menu - 1
+                iy = my + mi * 24
+                IF mi = selected THEN
+                    RECT mx - 5, iy - 2, 160, 20, 60, 50, 100, TRUE
+                    TEXT mx + 10, iy, "> " + menu_items[mi], 255, 255, 255
+                ELSE
+                    TEXT mx + 15, iy, menu_items[mi], 140, 140, 170
+                ENDIF
+            NEXT mi
+        ENDIF
+
+        ' Message
+        TEXT 25, sh - 25, battle_msg$, 255, 255, 200
+
+        ' Shake decay
+        shake_x = shake_x * 0.8 : shake_y = shake_y * 0.8
+        IF ABS(shake_x) < 0.5 THEN shake_x = 0
+        IF ABS(shake_y) < 0.5 THEN shake_y = 0
+
+        SPRITE.UPDATE
+        PARTICLE.DRAW
+        SCREENFLIP : SLEEP 16
+
+        ' ── INPUT ────────────────────────────────────────────
+        IF turn$ = "player" THEN
+            ' Skip dead members automatically
+            skip_count = 0
+            DO WHILE skip_count < RPG_PARTY.member_count
+                pm = RPG_PARTY.GET_MEMBER(cur_member)
+                IF pm{"hp"} > 0 THEN EXITDO
+                cur_member = cur_member + 1
+                IF cur_member >= RPG_PARTY.member_count THEN
+                    cur_member = 0 : turn$ = "enemy" : anim_timer = 15 : battle_msg$ = e_name$ + " bereitet einen Angriff vor..."
+                    EXITDO
+                ENDIF
+                skip_count = skip_count + 1
+            LOOP
+            pm = RPG_PARTY.GET_MEMBER(cur_member)
+
+            ev$ = GFX.POLLEVENT()
+            IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_menu
+            IF ev$ = "KEYDOWN:Up" THEN
+                selected = selected - 1
+                IF selected < 0 THEN selected = num_menu - 1
+            ENDIF
+
+            IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+                player_defending[cur_member] = FALSE
+
+                IF selected = 0 THEN
+                    ' ── ATTACK ──
+                    patk = INT(pm{"atk"})
+                    dmg = INT(patk * (0.8 + RND(1) * 0.4)) - e_def
+                    IF dmg < 1 THEN dmg = 1
+                    e_hp = e_hp - dmg
+                    IF e_hp < 0 THEN e_hp = 0
+                    battle_msg$ = pm{"name"} + " greift an und macht " + STR$(dmg) + " Schaden!"
+                    shake_x = (RND(1) - 0.5) * 20 : shake_y = (RND(1) - 0.5) * 10
+                    PARTICLE.EMIT sw/2 + 70, 100, 8, 255, 100, 50, 60, 0.3, 0, 3
+
+                ELSEIF selected = 1 THEN
+                    ' ── SKILL MENU ──
+                    skills = RPG_PARTY.GET_LEARNED_SKILLS(cur_member)
+                    sk_count = LEN(skills)
+                    IF sk_count = 0 THEN
+                        battle_msg$ = "Noch keine Fähigkeiten erlernt!"
+                    ELSE
+                        ' Show skill selection sub-menu
+                        sk_sel = 0
+                        sk_chosen = FALSE
+                        DO
+                            CLS 15, 10, 25
+                            RECT 10, 10, sw-20, sh/2-20, 25, 20, 40, TRUE
+                            IF enemy_sprite > 0 THEN SPRITE.DRAW enemy_sprite
+                            RECT 10, sh/2+10, sw-20, sh/2-20, 20, 20, 50, TRUE
+                            ' Skill list
+                            RECT sw-200, sh/2+15, 185, sk_count*24+30, 30, 25, 60, TRUE
+                            RECT sw-200, sh/2+15, 185, sk_count*24+30, 100, 100, 180, FALSE
+                            TEXT sw-190, sh/2+18, "Fähigkeit wählen:", 200, 200, 255
+                            FOR ski = 0 TO sk_count - 1
+                                sk = skills[ski]
+                                sky = sh/2 + 40 + ski * 24
+                                can_use = (pm{"mp"} >= INT(sk{"mp_cost"}))
+                                IF ski = sk_sel THEN
+                                    RECT sw-195, sky-2, 175, 20, 60, 50, 100, TRUE
+                                    IF can_use THEN
+                                        TEXT sw-185, sky, "> " + sk{"name"}, 255, 255, 255
+                                    ELSE
+                                        TEXT sw-185, sky, "> " + sk{"name"}, 150, 80, 80
+                                    ENDIF
+                                ELSE
+                                    IF can_use THEN
+                                        TEXT sw-180, sky, sk{"name"}, 180, 180, 200
+                                    ELSE
+                                        TEXT sw-180, sky, sk{"name"}, 100, 80, 80
+                                    ENDIF
+                                ENDIF
+                                TEXT sw-60, sky, STR$(INT(sk{"mp_cost"})) + "MP", 120, 120, 200
+                            NEXT ski
+                            ' Desc of selected skill
+                            TEXT 20, sh-25, skills[sk_sel]{"desc"}, 200, 200, 230
+                            SPRITE.UPDATE : SCREENFLIP : SLEEP 16
+                            sev$ = GFX.POLLEVENT()
+                            IF sev$ = "KEYDOWN:Down" THEN sk_sel = (sk_sel + 1) MOD sk_count
+                            IF sev$ = "KEYDOWN:Up" THEN
+                                sk_sel = sk_sel - 1
+                                IF sk_sel < 0 THEN sk_sel = sk_count - 1
+                            ENDIF
+                            IF sev$ = "KEYDOWN:Escape" THEN EXITDO
+                            IF sev$ = "KEYDOWN:Return" OR sev$ = "KEYDOWN:Space" THEN
+                                sk = skills[sk_sel]
+                                mp_cost = INT(sk{"mp_cost"})
+                                IF pm{"mp"} >= mp_cost THEN
+                                    sk_chosen = TRUE
+                                    EXITDO
+                                ELSE
+                                    battle_msg$ = "Nicht genug MP!"
+                                ENDIF
+                            ENDIF
+                        LOOP
+
+                        IF sk_chosen THEN
+                            sk = skills[sk_sel]
+                            mp_cost = INT(sk{"mp_cost"})
+                            pm{"mp"} = pm{"mp"} - mp_cost
+                            RPG_PARTY.UPDATE_MEMBER cur_member, pm
+                            stype$ = sk{"type"}
+                            IF stype$ = "attack" OR stype$ = "attack_all" THEN
+                                power = INT(sk{"power"})
+                                hits = 1
+                                IF MAP.EXISTS(sk, "hits") THEN hits = INT(sk{"hits"})
+                                total_dmg = 0
+                                FOR hi = 0 TO hits - 1
+                                    d = INT(power * (0.8 + RND(1) * 0.4)) - e_def
+                                    IF d < 1 THEN d = 1
+                                    total_dmg = total_dmg + d
+                                NEXT hi
+                                e_hp = e_hp - total_dmg
+                                IF e_hp < 0 THEN e_hp = 0
+                                battle_msg$ = pm{"name"} + " setzt " + sk{"name"} + " ein! " + STR$(total_dmg) + " Schaden!"
+                                shake_x = (RND(1) - 0.5) * 25
+                                PARTICLE.EMIT sw/2+70, 100, 12, 100, 150, 255, 80, 0.4, 0, 3
+                            ELSEIF stype$ = "heal" OR stype$ = "heal_all" THEN
+                                RPG_PARTY.HEAL_ALL INT(sk{"power"})
+                                battle_msg$ = pm{"name"} + " setzt " + sk{"name"} + " ein! Gruppe geheilt!"
+                                PARTICLE.EMIT 80, sh/2, 12, 80, 255, 80, 50, 0.5, -30, 3
+                            ELSEIF stype$ = "buff_atk" THEN
+                                battle_msg$ = pm{"name"} + " setzt " + sk{"name"} + " ein! ATK erhöht!"
+                            ELSEIF stype$ = "buff_def" OR stype$ = "buff_def_all" THEN
+                                battle_msg$ = pm{"name"} + " setzt " + sk{"name"} + " ein! DEF erhöht!"
+                            ELSEIF stype$ = "restore_mp" THEN
+                                pm{"mp"} = pm{"mp"} + INT(sk{"power"})
+                                IF pm{"mp"} > pm{"max_mp"} THEN pm{"mp"} = pm{"max_mp"}
+                                RPG_PARTY.UPDATE_MEMBER cur_member, pm
+                                battle_msg$ = pm{"name"} + " setzt " + sk{"name"} + " ein! MP wiederhergestellt!"
+                            ELSE
+                                battle_msg$ = pm{"name"} + " setzt " + sk{"name"} + " ein!"
+                            ENDIF
+                        ENDIF
+                    ENDIF
+
+                ELSEIF selected = 2 THEN
+                    ' ── ITEM ──
+                    IF RPG_INVENTORY.HAS_ITEM("Health Potion") THEN
+                        RPG_PARTY.HEAL_MEMBER cur_member, 30
+                        RPG_INVENTORY.REMOVE_ITEM "Health Potion", 1
+                        battle_msg$ = pm{"name"} + " benutzt Health Potion! HP +30"
+                        PARTICLE.EMIT 80, sh/2 + 40, 10, 80, 255, 80, 40, 0.5, -30, 2
+                    ELSEIF RPG_INVENTORY.HAS_ITEM("Mega Potion") THEN
+                        RPG_PARTY.HEAL_MEMBER cur_member, 80
+                        RPG_INVENTORY.REMOVE_ITEM "Mega Potion", 1
+                        battle_msg$ = pm{"name"} + " benutzt Mega Potion! HP +80"
+                    ELSE
+                        battle_msg$ = "Keine Heilitems!"
+                        CONTINUEFOR
+                    ENDIF
+
+                ELSEIF selected = 3 THEN
+                    ' ── DEFEND ──
+                    player_defending[cur_member] = TRUE
+                    battle_msg$ = pm{"name"} + " verteidigt sich!"
+
+                ELSEIF selected = 4 THEN
+                    ' ── FLEE ──
+                    IF RND(1) > 0.3 THEN
+                        result$ = "flee" : battle_msg$ = "Erfolgreich geflohen!"
+                    ELSE
+                        battle_msg$ = "Flucht gescheitert!"
+                    ENDIF
+                ENDIF
+
+                ' Check if enemy died from this attack
+                IF e_hp <= 0 THEN
+                    result$ = "win"
+                ENDIF
+                ' Next member or enemy turn
+                IF result$ = "" THEN
+                    cur_member = cur_member + 1
+                    IF cur_member >= RPG_PARTY.member_count THEN
+                        cur_member = 0 : turn$ = "enemy" : anim_timer = 15 : battle_msg$ = e_name$ + " bereitet einen Angriff vor..."
+                    ENDIF
+                    selected = 0
+                ENDIF
+            ENDIF
+
+        ELSEIF turn$ = "enemy" THEN
+            ev$ = GFX.POLLEVENT()
+            anim_timer = anim_timer - 1
+            IF anim_timer <= 0 THEN
+                IF e_hp > 0 THEN
+                    ' Pick random alive party member to attack
+                    target = -1
+                    FOR try_t = 0 TO 10
+                        t = INT(RND(1) * RPG_PARTY.member_count)
+                        pm = RPG_PARTY.GET_MEMBER(t)
+                        IF pm{"hp"} > 0 THEN target = t : EXITFOR
+                    NEXT try_t
+
+                    IF target >= 0 THEN
+                        pm = RPG_PARTY.GET_MEMBER(target)
+                        edef = INT(pm{"def"})
+                        IF player_defending[target] THEN edef = edef * 2
+                        edmg = INT(e_atk * (0.8 + RND(1) * 0.4)) - edef
+                        IF edmg < 1 THEN edmg = 1
+                        new_hp = INT(pm{"hp"}) - edmg
+                        IF new_hp < 0 THEN new_hp = 0
+                        pm{"hp"} = new_hp
+                        RPG_PARTY.UPDATE_MEMBER target, pm
+                        battle_msg$ = e_name$ + " greift " + pm{"name"} + " an und macht " + STR$(edmg) + " Schaden!"
+                        PARTICLE.EMIT 80, 60 + target * 55, 6, 255, 50, 50, 50, 0.3, 0, 2
+                    ENDIF
+
+                    ' Check all dead
+                    all_dead = TRUE
+                    FOR cd = 0 TO RPG_PARTY.member_count - 1
+                        cpm = RPG_PARTY.GET_MEMBER(cd)
+                        IF cpm{"hp"} > 0 THEN all_dead = FALSE
+                    NEXT cd
+                    IF all_dead THEN result$ = "dead"
+                ELSE
+                    result$ = "win"
+                ENDIF
+                turn$ = "player" : cur_member = 0 : selected = 0
+                ' Reset defending
+                FOR pd = 0 TO RPG_PARTY.member_count - 1
+                    player_defending[pd] = FALSE
+                NEXT pd
+            ENDIF
+        ENDIF
+
+        ' ── BATTLE END ───────────────────────────────────────
+        IF result$ <> "" THEN
+            IF result$ = "win" THEN
+                battle_msg$ = "Sieg! +" + STR$(INT(e_xp)) + " XP, +" + STR$(INT(e_gold)) + " Gold"
+                RPG_COMBAT.ADD_XP e_xp
+                RPG_PARTY.ADD_XP_ALL e_xp
+                RPG_INVENTORY.ADD_GOLD e_gold
+                IF e_drop$ <> "" AND RND(1) < e_drop_chance THEN
+                    battle_msg$ = battle_msg$ + ", " + e_drop$ + " erhalten!"
+                    RPG_INVENTORY.ADD_ITEM e_drop$, "Monster drop", 1
+                ENDIF
+                PARTICLE.EMIT sw/2, 100, 20, 255, 215, 0, 80, 1.0, -40, 3
+            ELSEIF result$ = "dead" THEN
+                battle_msg$ = "Deine Gruppe wurde besiegt..."
+            ENDIF
+
+            ' Show result
+            FOR wi = 0 TO 90
+                GFX.POLLEVENT()
+                CLS 15, 10, 25
+                RECT 10, 10, sw-20, sh/2-20, 25, 20, 40, TRUE
+                IF enemy_sprite > 0 AND result$ = "win" THEN
+                    a = 255 - wi * 3 : IF a < 0 THEN a = 0
+                    SPRITE.ALPHA enemy_sprite, a
+                    SPRITE.DRAW enemy_sprite
+                ENDIF
+                RECT 10, sh/2+10, sw-20, sh/2-20, 20, 20, 50, TRUE
+                TEXT 25, sh-30, battle_msg$, 255, 255, 200
+                PARTICLE.DRAW : SPRITE.UPDATE
+                SCREENFLIP : SLEEP 16
+            NEXT wi
+
+            ' Wait for confirm
+            DO : ev$ = GFX.POLLEVENT() : LOOP UNTIL ev$ = "NONE"
+            SLEEP 200
+            DO
+                ev$ = GFX.POLLEVENT()
+                CLS 15, 10, 25
+                RECT 10, sh/2+10, sw-20, sh/2-20, 20, 20, 50, TRUE
+                TEXT 25, sh-30, battle_msg$, 255, 255, 200
+                blink = (INT(TICK() / 400) MOD 2) = 0
+                IF blink THEN TEXT sw/2-80, sh/2+20, "Leertaste zum Fortfahren", 200, 200, 255
+                SCREENFLIP : SLEEP 16
+            LOOP UNTIL ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Escape"
+
+            ' Cleanup
+            IF enemy_sprite > 0 THEN SPRITE.DELETE enemy_sprite
+            FOR pidx = 0 TO RPG_PARTY.member_count - 1
+                IF p_sprites[pidx] > 0 THEN SPRITE.DELETE p_sprites[pidx]
+            NEXT pidx
+            ' Restore previous music
+            RPG_MUSIC.PLAY prev_music$
+            RETURN result$
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ══════════════════════════════════════════════════════════════
+' ══ ENCOUNTER ════════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT SUB RESET_ENCOUNTER()
+    encounter_steps = 0
+ENDSUB
+
+EXPORT FUNC CHECK_ENCOUNTER$(room$)
+    IF room$ <> "overworld" THEN RETURN ""
+    encounter_steps = encounter_steps + 1
+    IF encounter_steps > encounter_rate THEN
+        IF RND(1) < 0.05 THEN
+            encounter_steps = 0
+            RETURN RPG_COMBAT.RANDOM_ENEMY_ID$()
+        ENDIF
+    ENDIF
+    RETURN ""
+ENDFUNC

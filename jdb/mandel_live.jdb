@@ -1,0 +1,142 @@
+' Mandelbrot Set Generator for jdBasic (Optimized Reactive Zoom)
+' --------------------------------------------------------------------
+' This version uses a single REACT MAP as a trigger to prevent
+' multiple recalculations during a single zoom operation, ensuring
+' high performance and responsiveness.
+' --------------------------------------------------------------------
+
+' Load the DLL with the fast Mandelbrot function
+DLLIMPORT "numerics.dll"
+
+' --- 1. Global Configuration and Setup ---
+SCREEN_W = 1920
+SCREEN_H = 1080
+CALC_W = 1920 / 2
+CALC_H = 1080 / 2
+DX = SCREEN_W / CALC_W
+DY = SCREEN_H / CALC_H
+
+DREH_ENDE = TRUE
+DREH = "|/-\-"
+
+ASYNC FUNC DREHDING(DREHI)
+    DREH_ENDE = FALSE
+    DO
+        TRY
+            DREHI = DREHI + 1
+            DREHY = GETY()
+            LOCATE DREHY, 1
+            PRINT MID$(DREH, DREHI MOD 5, 1); 
+        CATCH
+            PRINT "Error: ", ERRMSG$
+        ENDTRY
+    LOOP UNTIL DREH_ENDE
+    RETURN "Ausgedreht!"
+ENDFUNC
+
+' --- Define the reactive trigger map ---
+' This is the ONLY variable the main loop will modify to trigger updates.
+DIM VIEW_PARAMS AS REACT MAP
+
+' Set the initial view parameters in the map
+VIEW_PARAMS = {
+    "x_min": -2.0,
+    "x_max": 1.0,
+    "y_min": -1.5,
+    "y_max": 1.5,
+    "max_iter": 100
+}
+
+' --- 2. Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Interactive Mandelbrot Set in jdBasic (Optimized)"
+CLS 0, 0, 0
+
+' ====================================================================
+' ==  REACTIVE CALCULATION AND DRAWING CHAIN
+' ====================================================================
+
+' --- 3. Reactive Coordinate Setup ---
+' These variables now depend on the values within the VIEW_PARAMS map.
+DIM C_REAL[1] AS REACT DOUBLE
+DIM C_IMAG[1] AS REACT DOUBLE
+
+' --- These intermediate variables are not strictly necessary but improve clarity ---
+DIM PX_VEC, PY_VEC
+PX_VEC = (IOTA(CALC_W) - 1) / (CALC_W - 1)
+PY_VEC = (IOTA(CALC_H) - 1) / (CALC_H - 1)
+
+' The reactive chain now starts from the VIEW_PARAMS map.
+C_REAL -> OUTER(PY_VEC*0, PX_VEC, "+") * (VIEW_PARAMS{"x_max"} - VIEW_PARAMS{"x_min"}) + VIEW_PARAMS{"x_min"}
+C_IMAG -> OUTER(PY_VEC, PX_VEC*0, "+") * (VIEW_PARAMS{"y_max"} - VIEW_PARAMS{"y_min"}) + VIEW_PARAMS{"y_min"}
+
+' --- 4. High-Performance Calculation ---
+DIM ITERATIONS[1] AS REACT DOUBLE
+ITERATIONS -> MANDELBROT(C_REAL, C_IMAG, VIEW_PARAMS{"max_iter"})
+
+' --- 5. Vectorized Coloring ---
+DIM COLOR_MATRIX[1] AS REACT DOUBLE
+COLOR_MATRIX -> ( ( (ITERATIONS * 8) MOD 255) * (1 - (ITERATIONS >= VIEW_PARAMS{"max_iter"})) ) * 65536 + ( ( (ITERATIONS * 5) MOD 255) * (1 - (ITERATIONS >= VIEW_PARAMS{"max_iter"})) ) * 256 + ( ( (ITERATIONS * 12) MOD 255) * (1 - (ITERATIONS >= VIEW_PARAMS{"max_iter"})) )
+
+' ====================================================================
+' ==  MAIN INTERACTIVE LOOP
+' ====================================================================
+
+FIRSTTIME = TRUE: FOREVER = FALSE
+
+PRINT "Ready. Click to zoom or press ESC to exit."
+DO
+    IF MOUSEB(1) OR FIRSTTIME THEN
+    
+        dreh_task = DREHDING(0)
+
+        MX = MOUSEX() : MY = MOUSEY()
+
+        IF FIRSTTIME THEN MX = SCREEN_W / 2 : MY = SCREEN_H / 2: FIRSTTIME = FALSE
+
+        ' Get the current view parameters from the REACT map for calculation
+        current_x_min = VIEW_PARAMS{"x_min"}
+        current_x_max = VIEW_PARAMS{"x_max"}
+        current_y_min = VIEW_PARAMS{"y_min"}
+        current_y_max = VIEW_PARAMS{"y_max"}
+
+        ' Calculate the new center based on the mouse click
+        CLICK_REAL = current_x_min + (MX / SCREEN_W) * (current_x_max - current_x_min)
+        CLICK_IMAG = current_y_min + (MY / SCREEN_H) * (current_y_max - current_y_min)
+
+        ZOOM_FACTOR = 2.0
+        NEW_WIDTH = (current_x_max - current_x_min) / ZOOM_FACTOR
+        NEW_HEIGHT = (current_y_max - current_y_min) / ZOOM_FACTOR
+
+        ' Calculate the new view boundaries
+        new_x_min = CLICK_REAL - NEW_WIDTH / 2
+        new_x_max = CLICK_REAL + NEW_WIDTH / 2
+        new_y_min = CLICK_IMAG - NEW_HEIGHT / 2
+        new_y_max = CLICK_IMAG + NEW_HEIGHT / 2
+
+        ' Update the REACT map in a single assignment. This triggers the
+        ' entire reactive recalculation and redraw chain exactly ONCE.
+        VIEW_PARAMS = {
+            "x_min": new_x_min,
+            "x_max": new_x_max,
+            "y_min": new_y_min,
+            "y_max": new_y_max,
+            "max_iter": VIEW_PARAMS{"max_iter"} ' Keep the old iteration count
+        }
+
+        PLOTRAW 0, 0, COLOR_MATRIX, DX, DY
+        SCREENFLIP
+        DREH_ENDE = TRUE
+        drehresult = AWAIT dreh_task
+        PRINT
+        PRINT "New X range: "; new_x_min; " to "; new_x_max
+        PRINT "Ready. Click to zoom or press ESC to exit."
+        
+    ENDIF
+
+    KEY$ = INKEY$()
+    IF KEY$ <> "" AND ASC(KEY$) = 27 THEN EXITDO
+    SLEEP 20
+LOOP UNTIL FOREVER
+
+PRINT "Program finished."

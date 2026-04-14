@@ -1,0 +1,285 @@
+' ==========================================================
+' == Minesweeper for jdBasic
+' ==
+' == Controls:
+' ==   W, A, S, D   : Move Cursor
+' ==   SPACE / E    : Reveal Cell
+' ==   F            : Flag Cell
+' ==   Q            : Quit
+' ==========================================================
+
+' --- Configuration ---
+ROWS = 10
+COLS = 15
+NUM_MINES = 20
+
+' --- State Constants ---
+STATE_HIDDEN = 0
+STATE_REVEALED = 1
+STATE_FLAGGED = 2
+
+' --- Grid Values ---
+CELL_EMPTY = 0
+CELL_MINE = 9
+
+' --- Initialize Globals ---
+DIM Grid[ROWS, COLS] AS INTEGER      ' Holds the numbers and mines
+DIM State[ROWS, COLS] AS INTEGER     ' Holds hidden/revealed/flagged status
+CursorX = 0
+CursorY = 0
+GameOver = FALSE
+GameWon = FALSE
+FirstMove = TRUE
+
+DIM K$ AS STRING
+
+SUB HandleKeys(data)
+    K$ = chr$(data[0]{"scancode"})
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKeys
+
+' ==========================================================
+' == SUB: Initialize Game
+' ==========================================================
+SUB InitGame()
+    Grid = reshape([CELL_EMPTY],[rows,cols])
+    State = reshape([STATE_HIDDEN],[rows,cols])
+
+    CursorX = INT(COLS / 2)
+    CursorY = INT(ROWS / 2)
+    GameOver = FALSE
+    GameWon = FALSE
+    FirstMove = TRUE
+    COLOR 8, 0
+    CLS
+    PRINT "Generating Minefield..."
+ENDSUB
+
+' ==========================================================
+' == SUB: Place Mines
+' == We do this after the first move to ensure the first
+' == click is never a mine.
+' ==========================================================
+SUB PlaceMines(safe_r, safe_c)
+    mines_placed = 0
+    
+    DO WHILE mines_placed < NUM_MINES
+        r = INT(RND(1) * ROWS)
+        c = INT(RND(1) * COLS)
+        
+        ' Place mine if empty and not the safe starting spot
+        IF Grid[r, c] <> CELL_MINE THEN
+            ' Ensure we don't place it on the start or immediate neighbors (optional, simple check here)
+            IF r <> safe_r OR c <> safe_c THEN
+                Grid[r, c] = CELL_MINE
+                mines_placed = mines_placed + 1
+            ENDIF
+        ENDIF
+    
+    LOOP 
+
+    ' Calculate numbers for non-mine cells
+    FOR r = 0 TO ROWS - 1
+        FOR c = 0 TO COLS - 1
+            IF Grid[r, c] <> CELL_MINE THEN
+                count = 0
+                ' Check all 8 neighbors
+                FOR dr = -1 TO 1
+                    FOR dc = -1 TO 1
+                        nr = r + dr
+                        nc = c + dc
+                        IF nr >= 0 AND nr < ROWS AND nc >= 0 AND nc < COLS THEN
+                            IF Grid[nr, nc] = CELL_MINE THEN count = count + 1
+                        ENDIF
+                    NEXT dc
+                NEXT dr
+                Grid[r, c] = count
+            ENDIF
+        NEXT c
+    NEXT r
+ENDSUB
+
+' ==========================================================
+' == SUB: Reveal Cell (Recursive Flood Fill)
+' ==========================================================
+SUB Reveal(r, c)
+    ' Bounds check
+    IF r < 0 OR r >= ROWS OR c < 0 OR c >= COLS THEN RETURN
+    
+    ' Only reveal hidden cells
+    IF State[r, c] <> STATE_HIDDEN THEN RETURN
+
+    ' Reveal it
+    State[r, c] = STATE_REVEALED
+
+    ' If we hit a mine, game over
+    IF Grid[r, c] = CELL_MINE THEN
+        GameOver = TRUE
+        RETURN
+    ENDIF
+
+    ' If it's empty (0), recursively reveal neighbors
+    IF Grid[r, c] = CELL_EMPTY THEN
+        FOR dr = -1 TO 1
+            FOR dc = -1 TO 1
+                IF dr <> 0 OR dc <> 0 THEN
+                    Reveal(r + dr, c + dc)
+                ENDIF
+            NEXT dc
+        NEXT dr
+    ENDIF
+ENDSUB
+
+' ==========================================================
+' == SUB: Check Win Condition
+' ==========================================================
+SUB CheckWin()
+    revealed_cells = SUM(ABS(State = STATE_REVEALED))
+    ' If all non-mine cells are revealed, you win
+    total_safe_cells = (ROWS * COLS) - NUM_MINES
+    IF revealed_cells = total_safe_cells THEN
+        GameWon = TRUE
+        GameOver = TRUE
+    ENDIF
+ENDSUB
+
+' ==========================================================
+' == SUB: Draw Board
+' ==========================================================
+SUB DrawBoard()
+    LOCATE 1, 1
+    PRINT "-" * 5;  " jdBasic Minesweeper "; "-" * 5
+    PRINT "Arrow/WASD: Move | Space: Reveal"
+    PRINT "F: Flag | R: Restart | Q: Quit"
+    PRINT "Mines: "; NUM_MINES
+    PRINT "-" * 31
+
+    ' Board offset
+    off_y = 6
+    off_x = 3
+
+    FOR r = 0 TO ROWS - 1
+        LOCATE off_y + r, off_x
+        
+        FOR c = 0 TO COLS - 1
+            ' Determine what to draw
+            cell_char$ = "?"
+            fg_col = 7  ' Default Gray
+            bg_col = 0  ' Black
+
+            curr_state = State[r, c]
+            curr_val = Grid[r, c]
+
+            IF curr_state = STATE_HIDDEN THEN
+                cell_char$ = "."
+                fg_col = 8 ' Dark Gray
+                IF GameOver AND curr_val = CELL_MINE THEN
+                    cell_char$ = "*" ' Show mines on loss
+                    fg_col = 9 ' Light Red
+                ENDIF
+            ELSEIF curr_state = STATE_FLAGGED THEN
+                cell_char$ = "F"
+                fg_col = 9 ' Light Red
+                IF GameOver AND curr_val <> CELL_MINE THEN
+                    cell_char$ = "X" ' Wrong flag
+                    fg_col = 5 ' Magenta
+                ENDIF
+            ELSEIF curr_state = STATE_REVEALED THEN
+                IF curr_val = CELL_MINE THEN
+                    cell_char$ = "*"
+                    fg_col = 1 ' Red
+                    bg_col = 4  ' Dark Red background
+                ELSEIF curr_val = 0 THEN
+                    cell_char$ = " "
+                ELSE
+                    cell_char$ = STR$(curr_val)
+                    ' Color numbers
+                    IF curr_val = 1 THEN fg_col = 4  ' Blue
+                    IF curr_val = 2 THEN fg_col = 10 ' Green
+                    IF curr_val = 3 THEN fg_col = 1 ' Red
+                    IF curr_val >= 4 THEN fg_col = 5 ' Magenta
+                ENDIF
+            ENDIF
+
+            ' Highlight Cursor
+            IF r = CursorY AND c = CursorX THEN
+                bg_col = 8 ' Dark Gray background for cursor
+            ENDIF
+
+            COLOR fg_col, bg_col
+            PRINT cell_char$; " ";
+        NEXT c
+    NEXT r
+    
+    ' Reset colors
+    COLOR 15, 0
+    PRINT "" 
+    PRINT ""
+    IF GameWon THEN
+        COLOR 10, 0
+        PRINT "CONGRATULATIONS! YOU CLEARED THE MINEFIELD!"
+    ELSEIF GameOver THEN
+        COLOR 12, 0
+        PRINT "BOOM! GAME OVER."
+    ELSE
+        PRINT "                     " ' Clear status line
+    ENDIF
+    COLOR 7, 0
+ENDSUB
+
+' ==========================================================
+' == Main Loop
+' ==========================================================
+
+InitGame()
+
+DO
+    DrawBoard()
+    
+    ' Simple input loop
+    k$ = ""
+    DO 
+        SLEEP 10
+    LOOP UNTIL k$ > ""
+
+    k$ = LCASE$(k$)
+
+    ' Only process input if game is not over
+    IF NOT GameOver THEN
+        ' Movement
+        IF k$ = "w" AND CursorY > 0 THEN CursorY = CursorY - 1
+        IF k$ = "s" AND CursorY < ROWS - 1 THEN CursorY = CursorY + 1
+        IF k$ = "a" AND CursorX > 0 THEN CursorX = CursorX - 1
+        IF k$ = "d" AND CursorX < COLS - 1 THEN CursorX = CursorX + 1
+        
+        ' Reveal (Space or E)
+        IF k$ = " " OR k$ = "e" THEN
+            IF State[CursorY, CursorX] = STATE_HIDDEN THEN
+                IF FirstMove THEN
+                    PlaceMines(CursorY, CursorX)
+                    FirstMove = FALSE
+                ENDIF
+                Reveal(CursorY, CursorX)
+                CheckWin()
+            ENDIF
+        ENDIF
+        
+        ' Flag (F)
+        IF k$ = "f" THEN
+            IF State[CursorY, CursorX] = STATE_HIDDEN THEN
+                State[CursorY, CursorX] = STATE_FLAGGED
+            ELSEIF State[CursorY, CursorX] = STATE_FLAGGED THEN
+                State[CursorY, CursorX] = STATE_HIDDEN
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' Quit or Reset
+    IF k$ = "q" THEN EXITDO
+    IF k$ = "r" THEN InitGame()
+
+LOOP
+
+CLS
+PRINT "Thanks for playing!"

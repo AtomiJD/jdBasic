@@ -1,0 +1,84 @@
+' ── Basic string functions ──────────────────────────
+PRINT "=== Basic ==="
+PRINT "LEFT$: "; LEFT$("Hello World", 5)
+PRINT "RIGHT$: "; RIGHT$("Hello World", 5)
+PRINT "MID$: "; MID$("Hello World", 6, 5)
+PRINT "LEN: "; LEN("Hello")
+PRINT "UCASE$: "; UCASE$("hello")
+PRINT "LCASE$: "; LCASE$("HELLO")
+PRINT "TRIM$: "; TRIM$("  hello  "); "."
+PRINT "STR$: "; STR$(42)
+PRINT "VAL: "; VAL("3.14")
+PRINT "CHR$: "; CHR$(65)
+PRINT "ASC: "; ASC("A")
+
+' ── INSTR ──────────────────────────────────────────
+PRINT ""
+PRINT "=== INSTR ==="
+PRINT "INSTR: "; INSTR("Hello World", "World")
+PRINT "INSTR(start): "; INSTR(6, "Hello Hello", "Hello")
+PRINT "INSTR not found: "; INSTR("Hello", "xyz")
+
+' ── INSERT$ ────────────────────────────────────────
+PRINT ""
+PRINT "=== INSERT$ ==="
+PRINT INSERT$("HelloWorld", " ", 5)
+PRINT INSERT$([1,2,3], 99, 1)
+
+' ── SPLIT ──────────────────────────────────────────
+PRINT ""
+PRINT "=== SPLIT ==="
+DIM parts = SPLIT("one,two,three", ",")
+PRINT parts
+PRINT "Parts: "; LEN(parts)
+
+' ── REPLACE$ ───────────────────────────────────────
+PRINT ""
+PRINT "=== REPLACE$ ==="
+PRINT REPLACE$("Hello World", "World", "jdBasic")
+PRINT REPLACE$(["cat", "bat", "hat"], "at", "og")
+
+' ── REVERSE$ ───────────────────────────────────────
+PRINT ""
+PRINT "=== REVERSE$ ==="
+PRINT REVERSE$("Hello")
+PRINT REVERSE$([1, 2, 3])
+
+' ── BYTEAT ─────────────────────────────────────────
+PRINT ""
+PRINT "=== BYTEAT ==="
+PRINT "BYTEAT('A', 0) = "; BYTEAT("A", 0)
+PRINT "BYTEAT('AB', 1) = "; BYTEAT("AB", 1)
+
+' ── FORMAT$ ────────────────────────────────────────
+PRINT ""
+PRINT "=== FORMAT$ ==="
+PRINT FORMAT$("Hello, {}! Welcome to {}!", "World", "jdBasic")
+PRINT FORMAT$("Second: {1}, First: {0}", "Alpha", "Beta")
+PRINT FORMAT$("Pi: {:0.4f}", 3.14159)
+PRINT FORMAT$("Hex: {:#x}", 255)
+PRINT FORMAT$("|{:<20}|", "left")
+PRINT FORMAT$("|{:>20}|", "right")
+PRINT FORMAT$("|{:^20}|", "center")
+PRINT FORMAT$("{:*<15}", "Hello")
+PRINT FORMAT$("{:->15}", "Hello")
+PRINT FORMAT$("{:.^15}", "Hello")
+PRINT FORMAT$("[{:>10}]", 123)
+PRINT FORMAT$("[{:0>10}]", 123)
+PRINT FORMAT$("[{:>12.2f}]", 45.678)
+
+' ── FRMV$ ──────────────────────────────────────────
+PRINT ""
+PRINT "=== FRMV$ ==="
+DIM M = RESHAPE(IOTA(6), [2, 3])
+PRINT FRMV$(M)
+
+' ── PACK$ / UNPACK ─────────────────────────────────
+PRINT "=== PACK$/UNPACK ==="
+DIM packed = PACK$("<iif", 42, 100, 3.14)
+PRINT "Packed length: "; LEN(packed)
+DIM unpacked = UNPACK("<iif", packed)
+PRINT "Unpacked: "; unpacked
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

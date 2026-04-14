@@ -1,0 +1,1 @@
+i=224:j=32: print frmv$(reshape(str$(iota(i)-1+j) + chr$(iota(i)*0+58) + chr$(iota(i)+j),[i^0.5,i^0.5]))

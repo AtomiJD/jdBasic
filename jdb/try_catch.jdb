@@ -1,0 +1,71 @@
+' Comprehensive Test for TRY...CATCH...FINALLY
+
+PRINT "--- TEST 1: Simple Error Catching ---"
+TRY
+    PRINT "Inside TRY block. An error is about to occur..."
+    A = 10 / 0
+    PRINT "This line should NOT be printed."
+CATCH
+    PRINT "SUCCESS: Caught the error!"
+    PRINT "Error Code: "; ERR
+    PRINT "Error Line: "; ERL
+    PRINT "Error Message: "; ERRMSG$
+ENDTRY
+PRINT "Test 1 finished. Execution continued normally."
+PRINT "-----------------------------------------"
+PRINT
+
+' ---
+
+PRINT "--- TEST 2: No Error Occurs ---"
+TRY
+    PRINT "Inside TRY block. No error will occur here."
+    A = 10 / 2
+CATCH
+    PRINT "FAILURE: This CATCH block should NOT run."
+FINALLY
+    PRINT "SUCCESS: FINALLY block ran, as expected."
+ENDTRY
+PRINT "Test 2 finished."
+PRINT "-----------------------------------------"
+PRINT
+
+' ---
+
+PRINT "--- TEST 3: Nested TRY...CATCH ---"
+TRY
+    PRINT "Outer TRY: Entering..."
+    TRY
+        PRINT "Inner TRY: Entering... about to cause an inner error."
+        DIM B[1]
+        B[5] = 10 ' Array out of bounds error
+        PRINT "Inner TRY: This line should not be reached."
+    CATCH
+        PRINT "SUCCESS: Inner CATCH handled the error."
+        PRINT "ERR: "; ERR; ", ERL: "; ERL
+    ENDTRY
+    PRINT "Outer TRY: Inner block finished. Now causing an outer error."
+    C = 10 / 0 ' Division by zero
+    PRINT "Outer TRY: This line should not be reached."
+CATCH
+    PRINT "SUCCESS: Outer CATCH handled the error."
+    PRINT "ERR: "; ERR; ", ERL: "; ERL
+ENDTRY
+PRINT "Test 3 finished."
+PRINT "-----------------------------------------"
+PRINT
+
+' ---
+
+PRINT "--- TEST 4: Unhandled Error with FINALLY ---"
+PRINT "The program should print the FINALLY message and then halt."
+TRY
+    PRINT "Inside TRY. An unhandled error is next."
+    ' This error will not be caught, but FINALLY should still run.
+    X = 1/0
+FINALLY
+    PRINT "SUCCESS: FINALLY block ran before program halted."
+    END
+ENDTRY
+PRINT "FAILURE: This line should NEVER be printed."
+

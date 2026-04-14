@@ -1,0 +1,329 @@
+' ===================================================================
+' == RPG Inventory Module
+' == Item management + bag display + shop system
+' ===================================================================
+
+EXPORT MODULE RPG_INVENTORY
+
+IMPORT RPG_DIALOG
+
+' ── Inventory ────────────────────────────────────────────────
+EXPORT DIM items = []
+EXPORT DIM item_count = 0
+EXPORT DIM gold = 0
+EXPORT DIM asset_path$ = "D:/usr/dev/cc/fluppi/generated_sprites/"
+
+' ── Item Database (loaded from items.json) ───────────────────
+EXPORT DIM item_db = {}
+
+EXPORT SUB SET_ASSET_PATH(path$)
+    asset_path$ = path$
+ENDSUB
+
+EXPORT SUB LOAD_ITEM_DB(json_file$)
+    data = JSON.PARSE$(TXTREADER$(json_file$))
+    item_db = data{"items"}
+ENDSUB
+
+' Look up item data by ID
+EXPORT FUNC GET_ITEM_DATA(item_id$)
+    IF MAP.EXISTS(item_db, item_id$) THEN RETURN item_db{item_id$}
+    RETURN {}
+ENDFUNC
+
+' Resolve shop item IDs to full item data array
+EXPORT FUNC RESOLVE_SHOP_ITEMS(id_list)
+    result = []
+    FOR i = 0 TO LEN(id_list) - 1
+        id$ = id_list[i]
+        IF MAP.EXISTS(item_db, id$) THEN
+            itm = item_db{id$}
+            PUSH result, itm
+        ENDIF
+    NEXT i
+    RETURN result
+ENDFUNC
+
+' Get item effects by name (for combat)
+EXPORT FUNC GET_EFFECTS(item_name$)
+    keys = MAP.KEYS(item_db)
+    FOR i = 0 TO LEN(keys) - 1
+        itm = item_db{keys[i]}
+        IF itm{"name"} = item_name$ THEN
+            IF MAP.EXISTS(itm, "effects") THEN RETURN itm{"effects"}
+        ENDIF
+    NEXT i
+    RETURN {}
+ENDFUNC
+
+' Get item type by name
+EXPORT FUNC GET_TYPE$(item_name$)
+    keys = MAP.KEYS(item_db)
+    FOR i = 0 TO LEN(keys) - 1
+        itm = item_db{keys[i]}
+        IF itm{"name"} = item_name$ THEN RETURN itm{"type"}
+    NEXT i
+    RETURN "unknown"
+ENDFUNC
+
+' ── Add item to inventory ────────────────────────────────────
+EXPORT SUB ADD_ITEM(name$, desc$, qty)
+    ' Check if item already exists — update via copy-back
+    FOR i = 0 TO item_count - 1
+        itm = items[i]
+        IF itm{"name"} = name$ THEN
+            itm{"qty"} = itm{"qty"} + qty
+            items[i] = itm
+            RETURN
+        ENDIF
+    NEXT i
+    ' New item
+    itm = {}
+    itm{"name"} = name$
+    itm{"desc"} = desc$
+    itm{"qty"} = qty
+    PUSH items, itm
+    item_count = item_count + 1
+ENDSUB
+
+' ── Remove item (returns TRUE if successful) ─────────────────
+EXPORT FUNC REMOVE_ITEM(name$, qty)
+    FOR i = 0 TO item_count - 1
+        itm = items[i]
+        IF itm{"name"} = name$ THEN
+            IF itm{"qty"} >= qty THEN
+                itm{"qty"} = itm{"qty"} - qty
+                items[i] = itm
+                RETURN TRUE
+            ELSE
+                RETURN FALSE
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+' ── Check if player has item ─────────────────────────────────
+EXPORT FUNC HAS_ITEM(name$)
+    FOR i = 0 TO item_count - 1
+        IF items[i]{"name"} = name$ AND items[i]{"qty"} > 0 THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+' ── Get item count ───────────────────────────────────────────
+EXPORT FUNC GET_QTY(name$)
+    FOR i = 0 TO item_count - 1
+        IF items[i]{"name"} = name$ THEN RETURN items[i]{"qty"}
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+' ── Get all items (for equipment scanning) ───────────────────
+EXPORT FUNC GET_ALL_ITEMS()
+    RETURN items
+ENDFUNC
+
+' ── Gold management ──────────────────────────────────────────
+EXPORT SUB ADD_GOLD(amount)
+    gold = gold + INT(amount)
+ENDSUB
+
+EXPORT FUNC GET_GOLD()
+    RETURN gold
+ENDFUNC
+
+EXPORT FUNC SPEND_GOLD(amount)
+    IF gold >= amount THEN
+        gold = gold - amount
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+' ══════════════════════════════════════════════════════════════
+' ══ BAG DISPLAY (Tab key) ════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT SUB SHOW_BAG()
+    bag_bg = GFX.CAPTURE()
+    sw = SCREENWIDTH()
+    sh = SCREENHEIGHT()
+
+    DO
+        GFX.DRAW_CAPTURE bag_bg
+
+        ' Semi-transparent overlay
+        RECT 0, 0, sw, sh, 0, 0, 0, TRUE
+
+        ' Bag window
+        bx = 80 : by = 40
+        bw = sw - 160 : bh = sh - 80
+
+        RECT bx, by, bw, bh, 20, 20, 50, TRUE
+        RECT bx, by, bw, bh, 100, 120, 180, FALSE
+
+        ' Title
+        TEXT bx + bw/2 - 40, by + 10, "INVENTAR", 255, 220, 80
+        RECT bx + 10, by + 32, bw - 20, 2, 80, 80, 140, TRUE
+
+        ' Gold
+        TEXT bx + 20, by + 42, "Gold: " + STR$(INT(gold)), 255, 215, 0
+
+        ' Items
+        iy = by + 70
+        IF item_count = 0 THEN
+            TEXT bx + 20, iy, "(leer)", 120, 120, 150
+        ELSE
+            FOR i = 0 TO item_count - 1
+                itm = items[i]
+                IF itm{"qty"} > 0 THEN
+                    ' Try to draw item icon
+                    TRY
+                        icon_name$ = LCASE$(REPLACE$(itm{"name"}, " ", "_"))
+                        icon = GFX.LOADIMAGE(asset_path$ + "item_" + icon_name$ + ".png")
+                        GFX.DRAWIMAGE icon, bx + 20, iy, 16, 16
+                        GFX.FREEIMAGE icon
+                    CATCH
+                    ENDTRY
+                    TEXT bx + 42, iy, itm{"name"}, 220, 220, 240
+                    TEXT bx + 200, iy, "x" + STR$(INT(itm{"qty"})), 180, 180, 200
+                    ' Show item type tag
+                    itype$ = GET_TYPE$(itm{"name"})
+                    IF itype$ = "weapon" THEN TEXT bx + 240, iy, "[WAF]", 255, 120, 120
+                    IF itype$ = "armor" THEN TEXT bx + 240, iy, "[RÜS]", 120, 120, 255
+                    IF itype$ = "consumable" THEN TEXT bx + 240, iy, "[VER]", 120, 255, 120
+                    IF itype$ = "accessory" THEN TEXT bx + 240, iy, "[ZUB]", 255, 200, 100
+                    IF itype$ = "key" THEN TEXT bx + 240, iy, "[SCH]", 255, 255, 150
+                    TEXT bx + 290, iy, itm{"desc"}, 140, 140, 170
+                    iy = iy + 24
+                ENDIF
+            NEXT i
+        ENDIF
+
+        ' Footer
+        TEXT bx + bw/2 - 60, by + bh - 25, "Tab zum Schließen", 100, 100, 140
+
+        SCREENFLIP
+        SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:Tab" OR ev$ = "KEYDOWN:Escape" OR _
+           ev$ = "KEYDOWN:Space" OR ev$ = "QUIT" THEN EXITDO
+    LOOP
+
+    GFX.FREEIMAGE bag_bg
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ SHOP DIALOG ══════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+' shop_items: array of {"name", "desc", "price"}
+EXPORT DIM shop_purchases = 0
+
+EXPORT FUNC OPEN_SHOP(shop_name$, shop_items)
+    shop_bg = GFX.CAPTURE()
+    sw = SCREENWIDTH()
+    sh = SCREENHEIGHT()
+    num_items = LEN(shop_items)
+    selected = 0
+
+    DO
+        GFX.DRAW_CAPTURE shop_bg
+
+        ' Shop window
+        bx = 60 : by = 30
+        bw = sw - 120 : bh = sh - 60
+        RECT bx, by, bw, bh, 25, 20, 45, TRUE
+        RECT bx, by, bw, bh, 120, 100, 60, FALSE
+
+        ' Title
+        TEXT bx + bw/2 - 40, by + 10, shop_name$, 255, 220, 80
+        RECT bx + 10, by + 32, bw - 20, 2, 100, 80, 40, TRUE
+
+        ' Gold display
+        TEXT bx + bw - 120, by + 10, "Gold: " + STR$(INT(gold)), 255, 215, 0
+
+        ' Items
+        FOR i = 0 TO num_items - 1
+            itm = shop_items[i]
+            iy = by + 50 + i * 30
+            IF i = selected THEN
+                RECT bx + 10, iy - 4, bw - 20, 28, 50, 40, 70, TRUE
+                TEXT bx + 40, iy, "> " + itm{"name"}, 255, 255, 255
+            ELSE
+                TEXT bx + 50, iy, itm{"name"}, 180, 180, 200
+            ENDIF
+            ' Item icon
+            TRY
+                icon_name$ = LCASE$(REPLACE$(itm{"name"}, " ", "_"))
+                icon = GFX.LOADIMAGE(asset_path$ + "item_" + icon_name$ + ".png")
+                GFX.DRAWIMAGE icon, bx + 20, iy, 16, 16
+                GFX.FREEIMAGE icon
+            CATCH
+            ENDTRY
+            TEXT bx + 240, iy, itm{"desc"}, 140, 140, 170
+            TEXT bx + bw - 80, iy, STR$(INT(itm{"price"})) + "g", 255, 215, 0
+        NEXT i
+
+        ' Leave option
+        leave_y = by + 50 + num_items * 30
+        IF selected = num_items THEN
+            RECT bx + 10, leave_y - 4, bw - 20, 28, 50, 40, 70, TRUE
+            TEXT bx + 20, leave_y, "> Verlassen", 255, 200, 200
+        ELSE
+            TEXT bx + 30, leave_y, "Verlassen", 150, 120, 120
+        ENDIF
+
+        ' Footer
+        TEXT bx + 10, by + bh - 25, "Hoch/Runter: Blättern  Enter: Kaufen  Esc: Verlassen", 100, 100, 130
+
+        SCREENFLIP
+        SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD (num_items + 1)
+        IF ev$ = "KEYDOWN:Up" THEN
+            selected = selected - 1
+            IF selected < 0 THEN selected = num_items
+        ENDIF
+        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+            IF selected = num_items THEN
+                EXITDO  ' Leave shop
+            ELSE
+                itm = shop_items[selected]
+                IF gold >= itm{"price"} THEN
+                    gold = gold - itm{"price"}
+                    ADD_ITEM itm{"name"}, itm{"desc"}, 1
+                    shop_purchases = shop_purchases + 1
+                    RPG_DIALOG.SAY shop_name$, "Danke! Hier ist dein " + itm{"name"} + "."
+                    GFX.DRAW_CAPTURE shop_bg
+                ELSE
+                    RPG_DIALOG.SAY shop_name$, "Dafür hast du nicht genug Gold!"
+                    GFX.DRAW_CAPTURE shop_bg
+                ENDIF
+            ENDIF
+        ENDIF
+        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
+    LOOP
+
+    GFX.FREEIMAGE shop_bg
+    result = shop_purchases
+    shop_purchases = 0
+    RETURN result
+ENDFUNC
+
+' ── Save/Load helpers ────────────────────────────────────────
+EXPORT FUNC GET_SAVE_DATA()
+    sg = {}
+    sg{"gold"} = gold
+    sg{"items"} = items
+    RETURN sg
+ENDFUNC
+
+EXPORT SUB LOAD_SAVE_DATA(sg)
+    IF MAP.EXISTS(sg, "gold") THEN gold = sg{"gold"}
+    IF MAP.EXISTS(sg, "items") THEN
+        items = sg{"items"}
+        item_count = LEN(items)
+    ENDIF
+ENDSUB

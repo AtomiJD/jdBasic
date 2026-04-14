@@ -1,0 +1,38 @@
+' jdBasic Lines and Dots (Vectorized)
+' 1. Vars
+
+SCREEN_W = 1920
+SCREEN_H = 1080
+
+SIZE = 500
+
+FUNC RANDI(x,y)
+    return rnd(1)
+ENDFUNC
+
+' 2. Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Lines (Vectorized)"
+CLS 0, 0, 0 ' Clear screen to black
+
+PRINT "Building line matrix..."
+X = RESHAPE(OUTER([0],iota(SIZE),randi@)*SCREEN_W,[SIZE])
+Y = RESHAPE(OUTER([0],iota(SIZE),randi@)*SCREEN_H,[SIZE])
+X1  = RESHAPE(OUTER([0],iota(SIZE),randi@)*SCREEN_W,[SIZE])
+Y1  = RESHAPE(OUTER([0],iota(SIZE),randi@)*SCREEN_H,[SIZE])
+m = STACK(1,X,Y,X1,Y1)
+
+PRINT "Building color matrix..."
+r = RESHAPE(OUTER([0],iota(SIZE),randi@)*255,[SIZE])
+g = RESHAPE(OUTER([0],iota(SIZE),randi@)*255,[SIZE])
+b = RESHAPE(OUTER([0],iota(SIZE),randi@)*255,[SIZE])
+c = STACK(1,r,g,b)
+
+line m, c
+
+SCREENFLIP
+
+do
+    SLEEP 100
+    a$ = inkey$()
+loop until a$ > ""

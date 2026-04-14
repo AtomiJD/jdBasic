@@ -1,0 +1,28 @@
+' RAG_QUERY_FULL Test mit Quellenangaben
+PRINT "Loading LLM..."
+llm = AI.LOAD_LLM("models\Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
+AI.SET llm, "max_tokens", 150
+AI.SET llm, "temperature", 0.2
+
+PRINT "Building RAG store..."
+DIM rag = AI.RAG_CREATE(llm, 300, 30)
+
+AI.RAG_ADD rag, "Berlin ist die Hauptstadt von Deutschland und hat etwa 3.7 Millionen Einwohner.", "wiki_berlin"
+AI.RAG_ADD rag, "Paris ist die Hauptstadt von Frankreich und hat etwa 2.1 Millionen Einwohner.", "wiki_paris"
+AI.RAG_ADD rag, "Tokyo ist die Hauptstadt von Japan und hat etwa 14 Millionen Einwohner.", "wiki_tokyo"
+AI.RAG_ADD rag, "Wien ist die Hauptstadt von Oesterreich und hat etwa 1.9 Millionen Einwohner.", "wiki_wien"
+
+PRINT ""
+PRINT "=== Frage: Wie viele Einwohner hat Berlin? ==="
+DIM result = AI.RAG_QUERY_FULL(rag, "Wie viele Einwohner hat Berlin?", 2)
+PRINT "Antwort: "; result{"answer"}
+PRINT ""
+PRINT "Quellen:"
+DIM srcs = result{"sources"}
+FOR i = 0 TO LEN(srcs) - 1
+  PRINT "  - "; srcs[i]{"source"}; " (score="; srcs[i]{"score"}; ")"
+NEXT i
+
+AI.FREE_LLM llm
+PRINT ""
+PRINT "Done."

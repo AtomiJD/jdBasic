@@ -1,0 +1,52 @@
+SOUND.INIT
+SOUND.BPM 110
+
+' --- 1. SOUND DESIGN ---
+
+' Track 0: Melody (Pluck)
+SOUND.VOICE 0, "SQUARE", 0.01, 0.2, 0.0, 0.2
+SOUND.FILTER 0, 1500
+SOUND.UNISON 0, 3, 0.3, 1.0
+
+' Track 1: Bass (Saw)
+SOUND.VOICE 1, "SAW", 0.01, 0.1, 0.4, 0.1
+SOUND.FILTER 1, 400 ' Deep bass
+SOUND.UNISON 1, 7, 0.3, 1.0
+
+SOUND.REVERB 0.9, 0.2, 1.0, 0.35
+
+' --- 2. THE PATTERN ---
+
+' Melody Part (Top line of your code)
+M$ = "[e5 [b4 c5] d5 [c5 b4]]"
+M$ = M$ + " [a4 [a4 c5] e5 [d5 c5]]"
+M$ = M$ + " [b4 [~ c5] d5 e5]"
+M$ = M$ + " [c5 a4 a4 ~]"
+M$ = M$ + " [[~ d5] [~ f5] a5 [g5 f5]]"
+M$ = M$ + " [e5 [~ c5] e5 [d5 c5]]"
+M$ = M$ + " [b4 [b4 c5] d5 e5]"
+M$ = M$ + " [c5 a4 a4 ~]"
+
+' Bass Part (Bottom line of your code)
+' Uses the *4 syntax for rapid bass pulses
+B$ = "[[e2 e3]*4]"
+B$ = B$ + " [[a2 a3]*4]"
+B$ = B$ + " [[g#2 g#3]*2 [e2 e3]*2]"
+B$ = B$ + " [a2 a3 a2 a3 a2 a3 b1 c2]"
+B$ = B$ + " [[d2 d3]*4]"
+B$ = B$ + " [[c2 c3]*4]"
+B$ = B$ + " [[b1 b2]*2 [e2 e3]*2]"
+B$ = B$ + " [[a1 a2]*4]"
+
+' --- 3. PLAY IT (Parallel Stacking) ---
+' We wrap the two parts in < ... , ... >
+' Part 1 goes to Track 0, Part 2 goes to Track 1
+PRINT "Playing Tetris..."
+SOUND.NOTE "< " + M$ + " , " + B$ + " >",TRUE
+'SOUND.NOTE "< " + M$ + " >",TRUE
+
+' Loop forever
+DO
+    SLEEP 10
+LOOP UNTIL INKEY$() = CHR$(27)
+SOUND.RESET

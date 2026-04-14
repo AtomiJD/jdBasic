@@ -1,0 +1,334 @@
+' ==========================================================
+' == Minesweeper for jdBasic (Color, Joystick, Restart)
+' ==========================================================
+
+' --- Configuration ---
+ROWS = 10
+COLS = 15
+NUM_MINES = 20
+
+' --- State Constants ---
+STATE_HIDDEN = 0
+STATE_REVEALED = 1
+STATE_FLAGGED = 2
+
+' --- Grid Values ---
+CELL_EMPTY = 0
+CELL_MINE = 9
+
+' --- Initialize Globals ---
+DIM Grid[ROWS, COLS] AS INTEGER      
+DIM State[ROWS, COLS] AS INTEGER     
+DIM RenderedState[ROWS, COLS] AS INTEGER 
+
+CursorX = 0
+CursorY = 0
+GameOver = FALSE
+GameWon = FALSE
+FirstMove = TRUE
+BoardDirty = TRUE 
+GameOverDrawn = FALSE
+
+DIM K$ AS STRING
+K$ = ""
+
+' Callback for Keyboard Input
+SUB HandleKeys(data)
+    K$ = chr$(data[0]{"scancode"})
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKeys
+
+' ==========================================================
+' == SUB: Initialize Game
+' ==========================================================
+SUB InitGame()
+    Grid = reshape([CELL_EMPTY],[rows,cols])
+    State = reshape([STATE_HIDDEN],[rows,cols])
+    
+    ' Force redraw of all cells
+    RenderedState = reshape([-1],[rows,cols])
+
+    CursorX = INT(COLS / 2)
+    CursorY = INT(ROWS / 2)
+    GameOver = FALSE
+    GameWon = FALSE
+    FirstMove = TRUE
+    GameOverDrawn = FALSE
+    
+    K$ = "" 
+    
+    DrawStaticUI()
+    BoardDirty = TRUE
+ENDSUB
+
+' ==========================================================
+' == SUB: Draw Static UI (Borders, Text)
+' ==========================================================
+SUB DrawStaticUI()
+    CLS
+    COLOR 15, 0 
+    PRINT "   MINESWEEPER (" + NUM_MINES + " Mines)"
+    COLOR 7, 0  
+    PRINT "   [WASD] Move [Space] Reveal [F] Flag [R] Restart"
+    PRINT ""
+    
+    ' Top Border using string multiplication
+    line$ = "   +" + ("---" * COLS) + "+"
+    PRINT line$
+    
+    ' Rows placeholders 
+    row_space$ = " " * (COLS * 3)
+    FOR r = 0 TO ROWS - 1
+        PRINT "   |" + row_space$ + "|"
+    NEXT r
+    
+    ' Bottom Border
+    PRINT line$
+ENDSUB
+
+' ==========================================================
+' == SUB: Update Screen (Smart Redraw)
+' ==========================================================
+SUB UpdateScreen()
+    StartRow = 5
+    StartCol = 5
+
+    FOR r = 0 TO ROWS - 1
+        FOR c = 0 TO COLS - 1
+            
+            visVal = Grid[r, c]
+            visState = State[r, c]
+            isCursor = 0
+            IF r = CursorY AND c = CursorX THEN isCursor = 1
+            
+            ' Hash: 1000*Cursor + 100*State + Value
+            currentHash = (isCursor * 1000) + (visState * 100) + visVal
+            
+            ' Only redraw if visual state has changed
+            IF currentHash <> RenderedState[r, c] THEN
+                
+                cellContent$ = " "
+                fg = 7  
+                bg = 0  
+
+                IF visState = STATE_FLAGGED THEN
+                    cellContent$ = "F"
+                    fg = 12 
+                ELSEIF visState = STATE_REVEALED THEN
+                    IF visVal = CELL_MINE THEN 
+                        cellContent$ = "*" 
+                        bg = 4  
+                        fg = 15 
+                    ELSEIF visVal = 0 THEN
+                        cellContent$ = " "
+                    ELSE
+                        cellContent$ = str$(visVal)
+                        IF visVal = 1 THEN fg = 9 
+                        IF visVal = 2 THEN fg = 10 
+                        IF visVal = 3 THEN fg = 12 
+                        IF visVal = 4 THEN fg = 1 
+                        IF visVal = 5 THEN fg = 4 
+                        IF visVal = 6 THEN fg = 3 
+                        IF visVal = 7 THEN fg = 8 
+                        IF visVal = 8 THEN fg = 7 
+                    ENDIF
+                ELSE
+                    cellContent$ = "."
+                    fg = 8 
+                ENDIF
+                
+                finalStr$ = IIF(isCursor=1, "[" + cellContent$ + "]", " " + cellContent$ + " ")
+                
+                LOCATE StartRow + r, StartCol + (c * 3)
+                COLOR fg, bg
+                PRINT finalStr$;
+                
+                RenderedState[r, c] = currentHash
+            ENDIF
+        NEXT c
+    NEXT r
+    
+    COLOR 7, 0
+
+    ' Draw Game Over / Win Message ONCE
+    IF GameOver AND NOT GameOverDrawn THEN
+        LOCATE StartRow + ROWS + 1, 4
+        IF GameWon THEN 
+            COLOR 10, 0
+            PRINT "YOU WIN!                    " 
+        ELSE 
+            COLOR 12, 0
+            PRINT "GAME OVER!                  " 
+        ENDIF
+        
+        LOCATE StartRow + ROWS + 2, 4
+        COLOR 7, 0
+        PRINT "Press R to Restart, Q to Quit."
+        GameOverDrawn = TRUE
+    ENDIF
+ENDSUB
+
+' ==========================================================
+' == SUB: Place Mines
+' ==========================================================
+SUB PlaceMines(safeX, safeY)
+    placed = 0
+    DO WHILE placed < NUM_MINES
+        r = INT(RND(1) * ROWS)
+        c = INT(RND(1) * COLS)
+        
+        IF Grid[r, c] <> CELL_MINE AND (r <> safeY OR c <> safeX) THEN
+            Grid[r, c] = CELL_MINE
+            placed = placed + 1
+            
+            FOR dr = -1 TO 1
+                FOR dc = -1 TO 1
+                    nr = r + dr
+                    nc = c + dc
+                    IF nr >= 0 AND nr < ROWS AND nc >= 0 AND nc < COLS THEN
+                        IF Grid[nr, nc] <> CELL_MINE THEN Grid[nr, nc] = Grid[nr, nc] + 1
+                    ENDIF
+                NEXT dc
+            NEXT dr
+        ENDIF
+    LOOP
+ENDSUB
+
+SUB Reveal(r, c)
+    IF r < 0 OR r >= ROWS OR c < 0 OR c >= COLS THEN EXITSUB
+    IF State[r, c] <> STATE_HIDDEN THEN EXITSUB
+    
+    State[r, c] = STATE_REVEALED
+    BoardDirty = TRUE
+    
+    IF Grid[r, c] = CELL_MINE THEN
+        GameOver = TRUE
+        FOR rr = 0 TO ROWS-1
+            FOR cc = 0 TO COLS-1
+                IF Grid[rr,cc] = CELL_MINE THEN 
+                    State[rr,cc] = STATE_REVEALED
+                    RenderedState[rr,cc] = -1 
+                ENDIF
+            NEXT cc
+        NEXT rr
+    ELSEIF Grid[r, c] = CELL_EMPTY THEN
+        FOR dr = -1 TO 1
+            FOR dc = -1 TO 1
+                IF dr <> 0 OR dc <> 0 THEN Reveal(r + dr, c + dc)
+            NEXT dc
+        NEXT dr
+    ENDIF
+ENDSUB
+
+SUB CheckWin()
+    hidden_count = 0
+    FOR r = 0 TO ROWS - 1
+        FOR c = 0 TO COLS - 1
+            IF State[r, c] <> STATE_REVEALED THEN hidden_count = hidden_count + 1
+        NEXT c
+    NEXT r
+    
+    IF hidden_count = NUM_MINES THEN
+        GameWon = TRUE
+        GameOver = TRUE
+        BoardDirty = TRUE
+    ENDIF
+ENDSUB
+
+' ==========================================================
+' == Main Loop
+' ==========================================================
+
+InitGame()
+
+DO
+    UpdateScreen()
+    
+    MoveX_Dir = 0
+    MoveY_Dir = 0
+    DoReveal = FALSE
+    DoFlag = FALSE
+    DoQuit = FALSE
+    DoRestart = FALSE
+    ActionTaken = FALSE
+
+    ' --- 1. Keyboard Input ---
+    IF K$ > "" THEN
+        k_lower$ = LCASE$(K$)
+        IF k_lower$ = "w" THEN MoveY_Dir = -1
+        IF k_lower$ = "s" THEN MoveY_Dir = 1
+        IF k_lower$ = "a" THEN MoveX_Dir = -1
+        IF k_lower$ = "d" THEN MoveX_Dir = 1
+        IF k_lower$ = " " OR k_lower$ = "e" THEN DoReveal = TRUE
+        IF k_lower$ = "f" THEN DoFlag = TRUE
+        IF k_lower$ = "q" THEN DoQuit = TRUE
+        IF k_lower$ = "r" THEN DoRestart = TRUE
+        K$ = ""
+        ActionTaken = TRUE
+    ENDIF
+
+    ' --- 2. Joystick Input ---
+    IF JOY.COUNT() > 0 THEN
+        joyID = 0
+        
+        AX = JOY.AXIS(joyID, 0)
+        AY = JOY.AXIS(joyID, 1)
+        
+        IF AY < -0.5 THEN MoveY_Dir = -1
+        IF AY > 0.5 THEN MoveY_Dir = 1
+        IF AX < -0.5 THEN MoveX_Dir = -1
+        IF AX > 0.5 THEN MoveX_Dir = 1
+        
+        Hat = JOY.HAT(joyID, 0)
+        IF (Hat BAND 1) THEN MoveY_Dir = -1
+        IF (Hat BAND 4) THEN MoveY_Dir = 1
+        IF (Hat BAND 8) THEN MoveX_Dir = -1
+        IF (Hat BAND 2) THEN MoveX_Dir = 1
+        
+        IF JOY.BUTTON(joyID, 0) THEN DoReveal = TRUE
+        IF JOY.BUTTON(joyID, 1) OR JOY.BUTTON(joyID, 2) THEN DoFlag = TRUE
+        IF JOY.BUTTON(joyID, 6) THEN DoQuit = TRUE
+        IF JOY.BUTTON(joyID, 4) THEN DoRestart = TRUE ' Select/Back button for Restart
+        
+        IF MoveX_Dir <> 0 OR MoveY_Dir <> 0 OR DoReveal OR DoFlag OR DoRestart THEN ActionTaken = TRUE
+    ENDIF
+
+    IF DoQuit THEN EXITDO
+
+    IF DoRestart THEN
+        InitGame()
+        ActionTaken = FALSE ' Skip move logic
+    ENDIF
+
+    IF NOT GameOver AND ActionTaken THEN
+        IF MoveY_Dir = -1 AND CursorY > 0 THEN CursorY = CursorY - 1
+        IF MoveY_Dir = 1 AND CursorY < ROWS - 1 THEN CursorY = CursorY + 1
+        IF MoveX_Dir = -1 AND CursorX > 0 THEN CursorX = CursorX - 1
+        IF MoveX_Dir = 1 AND CursorX < COLS - 1 THEN CursorX = CursorX + 1
+        
+        IF DoReveal THEN
+            IF State[CursorY, CursorX] = STATE_HIDDEN THEN
+                IF FirstMove THEN
+                    PlaceMines(CursorY, CursorX)
+                    FirstMove = FALSE
+                ENDIF
+                Reveal(CursorY, CursorX)
+                CheckWin()
+            ENDIF
+        ENDIF
+        
+        IF DoFlag THEN
+            IF State[CursorY, CursorX] = STATE_HIDDEN THEN
+                State[CursorY, CursorX] = STATE_FLAGGED
+            ELSEIF State[CursorY, CursorX] = STATE_FLAGGED THEN
+                State[CursorY, CursorX] = STATE_HIDDEN
+            ENDIF
+        ENDIF
+    ENDIF
+
+    SLEEP 100
+LOOP
+
+CLS
+PRINT "Thanks for playing!"

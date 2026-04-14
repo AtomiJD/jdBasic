@@ -1,0 +1,72 @@
+' ===============================================
+' == jdBasic Turtle Graphics Demo (Animation-Ready)
+' ===============================================
+
+' --- 1. Initialization ---
+SCREEN 800, 600, "Turtle Graphics Demo"
+
+' --- 2. Draw a colored square (Static Drawing) ---
+PRINT "Drawing a red square..."
+TURTLE.CLEAR ' Ensure path is empty before starting a new drawing
+TURTLE.SET_COLOR 255, 50, 50
+
+FOR i = 1 TO 4
+    TURTLE.FORWARD 100 ' This now just adds to the path memory
+    TURTLE.RIGHT 90
+NEXT i
+
+CLS           ' Clear the screen buffer
+TURTLE.DRAW   ' Render the entire path we just created
+SCREENFLIP    ' Show the result
+SLEEP 2000
+
+' --- 3. Draw a star (Static Drawing) ---
+PRINT "Drawing a star..."
+TURTLE.CLEAR
+TURTLE.PENUP
+TURTLE.HOME
+TURTLE.PENDOWN
+TURTLE.SET_COLOR 200, 200, 255
+
+FOR i = 1 TO 5
+    TURTLE.FORWARD 150
+    TURTLE.RIGHT 144
+NEXT i
+
+CLS
+TURTLE.DRAW
+SCREENFLIP
+SLEEP 2000
+
+' --- 4. Animate drawing a colorful spiral ---
+PRINT "Animating a spiral..."
+TURTLE.CLEAR
+TURTLE.HOME
+TURTLE.SETHEADING -90
+
+FOR i = 1 TO 300
+    ' --- Animation Loop ---
+
+    ' a) Update State: Change color and move the turtle one step
+    ' This adds ONE new segment to the turtle's path memory.
+    r = (i * 20) MOD 255
+    g = 255 - ((i * 10) MOD 255)
+    b = 128
+    TURTLE.SET_COLOR r, g, b
+    TURTLE.FORWARD i * 0.5
+    TURTLE.RIGHT 5
+
+    ' b) Render Frame
+    CLS           ' Clear the screen's backbuffer
+    TURTLE.DRAW   ' Redraw the ENTIRE path, including the new segment
+    SCREENFLIP    ' Show the updated frame
+
+    ' c) Check for Quit and Delay
+    IF INKEY$() = CHR$(27) THEN EXITFOR
+    SLEEP 5 ' Short delay for smooth animation
+NEXT i
+
+PRINT "Demo complete. Press ESC to quit."
+DO WHILE INKEY$() <> CHR$(27)
+    SLEEP 20
+LOOP

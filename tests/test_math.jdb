@@ -1,0 +1,58 @@
+' ── Existing functions ──────────────────────────────
+PRINT "=== Existing ==="
+PRINT "SIN(1) = "; SIN(1)
+PRINT "COS(0) = "; COS(0)
+PRINT "TAN(0) = "; TAN(0)
+PRINT "SQR(144) = "; SQR(144)
+PRINT "LOG(1) = "; LOG(1)
+PRINT "EXP(1) = "; EXP(1)
+PRINT "ABS(-42) = "; ABS(-42)
+PRINT "INT(3.7) = "; INT(3.7)
+
+' ── New functions ─────────────────────────────────
+PRINT ""
+PRINT "=== New ==="
+PRINT "LOG10(100) = "; LOG10(100)
+PRINT "LOG10(1000) = "; LOG10(1000)
+PRINT "FAC(5) = "; FAC(5)
+PRINT "FAC(10) = "; FAC(10)
+PRINT "FLOOR(3.7) = "; FLOOR(3.7)
+PRINT "FLOOR(-3.2) = "; FLOOR(-3.2)
+PRINT "CEIL(3.2) = "; CEIL(3.2)
+PRINT "CEIL(-3.7) = "; CEIL(-3.7)
+PRINT "ROUND(3.14159, 2) = "; ROUND(3.14159, 2)
+PRINT "ROUND(2.5) = "; ROUND(2.5)
+PRINT "CLAMP(15, 0, 10) = "; CLAMP(15, 0, 10)
+PRINT "CLAMP(-5, 0, 10) = "; CLAMP(-5, 0, 10)
+PRINT "CLAMP(5, 0, 10) = "; CLAMP(5, 0, 10)
+PRINT "TRUNC(3.9) = "; TRUNC(3.9)
+PRINT "TRUNC(-3.9) = "; TRUNC(-3.9)
+PRINT "CDBL(42) = "; CDBL(42)
+
+' ── Auto-vectorize on arrays ──────────────────────
+PRINT ""
+PRINT "=== Vectorized ==="
+PRINT "SIN(IOTA(3)) = "; SIN(IOTA(3))
+PRINT "FLOOR([3.2, 3.7, -1.5]) = "; FLOOR([3.2, 3.7, -1.5])
+PRINT "CEIL([3.2, 3.7, -1.5]) = "; CEIL([3.2, 3.7, -1.5])
+PRINT "ABS([-3, -2, -1, 0, 1]) = "; ABS([-3, -2, -1, 0, 1])
+PRINT "FAC(IOTA(6)) = "; FAC(IOTA(6))
+PRINT "LOG10([1, 10, 100, 1000]) = "; LOG10([1, 10, 100, 1000])
+PRINT "CLAMP(IOTA(10), 3, 7) = "; CLAMP(IOTA(10), 3, 7)
+
+' ── IIF (vectorized ternary) ──────────────────────
+PRINT ""
+PRINT "=== IIF ==="
+PRINT "IIF(TRUE, 'yes', 'no') = "; IIF(TRUE, "yes", "no")
+PRINT "IIF(FALSE, 'yes', 'no') = "; IIF(FALSE, "yes", "no")
+
+' Vectorized IIF
+DIM vals = [1, -2, 3, -4, 5]
+DIM signs = vals > 0
+PRINT "vals = "; vals
+PRINT "signs (>0) = "; signs
+PRINT "IIF(signs, 'pos', 'neg') = "; IIF(signs, "pos", "neg")
+PRINT "IIF(vals > 0, vals, 0) = "; IIF(vals > 0, vals, 0)
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

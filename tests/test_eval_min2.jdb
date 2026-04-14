@@ -1,0 +1,9 @@
+FUNC F(x)
+  DIM expr AS STRING = "100 + " + STR(x)
+  PRINT "expr="; expr
+  DIM y AS STRING = EVAL(expr)
+  PRINT "y="; y
+  RETURN y
+ENDFUNC
+
+PRINT F(7)

@@ -1,0 +1,42 @@
+' Automatic values (0, 1, 2)
+ENUM VehicleType
+    Car
+    Truck
+    Boat
+ENDENUM
+
+PRINT "Car ="; VehicleType.Car
+PRINT "Truck ="; VehicleType.Truck
+PRINT "Boat ="; VehicleType.Boat
+
+' Explicit values
+ENUM WebStatus
+    OK = 200
+    NotFound = 404
+    Error = 500
+ENDENUM
+
+PRINT "OK ="; WebStatus.OK
+PRINT "NotFound ="; WebStatus.NotFound
+PRINT "Error ="; WebStatus.Error
+
+' Use in variables and conditions
+LET CurrentVehicle = VehicleType.Truck
+IF CurrentVehicle = VehicleType.Truck THEN
+    PRINT "It's a truck!"
+END IF
+
+' Mixed auto + explicit
+ENUM Color
+    Red
+    Green
+    Blue
+    Custom = 100
+    Special
+ENDENUM
+
+PRINT "Red ="; Color.Red
+PRINT "Green ="; Color.Green
+PRINT "Blue ="; Color.Blue
+PRINT "Custom ="; Color.Custom
+PRINT "Special ="; Color.Special

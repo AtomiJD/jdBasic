@@ -1,0 +1,66 @@
+' ── HTTP GET (HTTPS) ───────────────────────────────
+PRINT "=== HTTP GET ==="
+TRY
+    DIM body = HTTP.GET$("https://httpbin.org/get")
+    PRINT "Status: "; HTTP.STATUSCODE()
+    PRINT "Body length: "; LEN(body)
+    PRINT "Contains 'origin': "; "origin" IN body
+CATCH
+    PRINT "HTTP Error: "; ERRMSG$
+ENDTRY
+
+' ── HTTP POST ─────────────────────────────────────
+PRINT ""
+PRINT "=== HTTP POST ==="
+TRY
+    DIM resp = HTTP.POST$("https://httpbin.org/post", "{\"test\": 42}", "application/json")
+    PRINT "Status: "; HTTP.STATUSCODE()
+    PRINT "Contains 'test': "; "test" IN resp
+CATCH
+    PRINT "HTTP Error: "; ERRMSG$
+ENDTRY
+
+' ── Custom Headers ────────────────────────────────
+PRINT ""
+PRINT "=== Custom Headers ==="
+HTTP.SETHEADER("X-Custom", "jdBasic-Test")
+TRY
+    DIM resp2 = HTTP.GET$("https://httpbin.org/headers")
+    PRINT "Has custom header: "; "jdBasic-Test" IN resp2
+CATCH
+    PRINT "HTTP Error: "; ERRMSG$
+ENDTRY
+HTTP.CLEARHEADERS()
+
+PRINT ""
+PRINT "=== HTTP Server Test ==="
+' Start a simple server
+FUNC HandleRoot(request)
+    RETURN "<h1>Hello from jdBasic!</h1>"
+ENDFUNC
+
+FUNC HandleApi(request)
+    RETURN {"status": "ok", "time": FORMAT_DATE(NOW())}
+ENDFUNC
+
+HTTP.SERVER.ON_GET("/", "HANDLEROOT")
+HTTP.SERVER.ON_GET("/api", "HANDLEAPI")
+
+IF HTTP.SERVER.START(9999) THEN
+    PRINT "Server running on port 9999"
+
+    ' Self-test: GET from own server
+    DIM page = HTTP.GET$("http://localhost:9999/")
+    PRINT "Self-test HTML: "; "Hello from jdBasic" IN page
+
+    DIM api = HTTP.GET$("http://localhost:9999/api")
+    PRINT "Self-test API: "; "ok" IN api
+
+    HTTP.SERVER.STOP()
+    PRINT "Server stopped."
+ELSE
+    PRINT "Server failed to start"
+ENDIF
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

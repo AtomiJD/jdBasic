@@ -1,0 +1,6 @@
+DIM C = RESHAPE([" "], [3, 4])
+' Read with multi-dim index
+PRINT C[1, 2]
+' Write with multi-dim index
+C[1, 2] = "*"
+PRINT FRMV$(C)

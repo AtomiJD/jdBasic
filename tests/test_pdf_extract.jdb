@@ -1,0 +1,24 @@
+' Test: PDF-Datei in RAG laden
+DIM rag = AI.RAG_CREATE(0, 200, 20)
+PRINT "RAG id: "; rag
+
+PRINT ""
+PRINT "Lade tests/test_simple.pdf ..."
+AI.RAG_ADD_FILE rag, "tests/test_simple.pdf"
+
+PRINT ""
+PRINT "=== Suche: 'Hallo Welt' ==="
+DIM hits = AI.RAG_SEARCH(rag, "Hallo Welt jdBasic", 3)
+FOR i = 0 TO LEN(hits) - 1
+  PRINT "  score=", hits[i]{"score"}
+  PRINT "  text= ", hits[i]{"text"}
+  PRINT ""
+NEXT i
+
+PRINT "=== Suche: 'PDF Test' ==="
+DIM hits2 = AI.RAG_SEARCH(rag, "PDF unkomprimiert", 3)
+FOR i = 0 TO LEN(hits2) - 1
+  PRINT "  score=", hits2[i]{"score"}
+  PRINT "  text= ", hits2[i]{"text"}
+  PRINT ""
+NEXT i

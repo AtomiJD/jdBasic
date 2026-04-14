@@ -1,0 +1,1409 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic Comprehensive Test Suite
+'  Tests: Loops, Variables, Types, Functions, Lambdas, Pipes,
+'         React, Strings, Math, Operators, Unicode, and more
+' ══════════════════════════════════════════════════════════════════
+
+DIM PASS = 0
+DIM FAIL = 0
+DIM SECTION = ""
+DIM TOTAL_SECTIONS = 0
+
+SUB Header(title)
+  SECTION = title
+  TOTAL_SECTIONS = TOTAL_SECTIONS + 1
+  PRINT ""
+  PRINT "── "; title; " ──"
+ENDSUB
+
+SUB Assert(cond, msg)
+  IF cond THEN
+    PASS = PASS + 1
+  ELSE
+    FAIL = FAIL + 1
+    PRINT "  FAIL ["; SECTION; "]: "; msg
+  ENDIF
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════════
+' 1. BASIC ARITHMETIC & OPERATORS
+' ══════════════════════════════════════════════════════════════════
+Header("Arithmetic & Operators")
+
+Assert(2 + 3 = 5, "int add")
+Assert(100 - 42 = 58, "int sub")
+Assert(7 * 8 = 56, "int mul")
+Assert(10 / 3 > 3.33, "float div")
+Assert(17 MOD 5 = 2, "mod")
+Assert(2 ^ 10 = 1024, "power")
+Assert(-(-5) = 5, "double neg")
+Assert(-(3 + 4) = -7, "neg expr")
+
+' Integer overflow → promote to double instead of wrapping silently.
+' 20! is the largest exact int64 (2432902008176640000), 21! overflows.
+Assert(FAC(20) = 2432902008176640000, "FAC(20) exact int64")
+Assert(FAC(21) > 5.1E19 AND FAC(21) < 5.11E19, "FAC(21) promoted to double")
+Assert(FAC(170) > 7.25E306, "FAC(170) reaches double range")
+Assert(2000000000 * 5 = 1.0E10, "int*int overflow promotes to double")
+Assert(2000000000 + 9000000000 = 1.1E10, "int+int overflow promotes to double")
+' Lotto regression: 49!/(6!*43!) = 13983816 — needs intermediate doubles
+Assert(FAC(49) / (FAC(6) * FAC(43)) = 13983816, "Lotto 6 aus 49 combinations")
+
+' 2-D matrix arithmetic + boolean masks must keep their shape recursively
+' (regression for Game of Life style code that builds masks via element-wise
+' compare + AND on a [N,M] board).
+DIM bx[3, 3]
+bx[0, 0] = 1
+bx[1, 1] = 1
+bx[2, 2] = 1
+DIM by[3, 3]
+by[0, 0] = 1
+by[1, 1] = 1
+DIM bsum = bx + by
+Assert(bsum[0,0] = 2, "2-D arr+arr keeps shape [0,0]")
+Assert(bsum[2,2] = 1, "2-D arr+arr keeps shape [2,2]")
+
+' (board = 0) and (board = 1) must each be 2-D bool matrices
+DIM bcmp = (bx = 1)
+Assert(bcmp[0,0] = TRUE,  "2-D arr=scalar keeps shape [0,0]")
+Assert(bcmp[0,1] = FALSE, "2-D arr=scalar keeps shape [0,1]")
+
+' AND of two 2-D bool matrices stays 2-D
+DIM bcmp2 = (by = 1)
+DIM b_and = bcmp AND bcmp2
+Assert(b_and[0,0] = TRUE,  "2-D AND keeps shape [0,0]")
+Assert(b_and[2,2] = FALSE, "2-D AND keeps shape [2,2]")
+DIM b_or = bcmp OR bcmp2
+Assert(b_or[2,2] = TRUE, "2-D OR keeps shape [2,2]")
+
+' Hex literals
+Assert($FF = 255, "hex FF")
+Assert($80000 = 524288, "hex 80000")
+Assert($0A = 10, "hex 0A")
+
+' Comparison
+Assert(5 > 3, "gt")
+Assert(3 < 5, "lt")
+Assert(5 >= 5, "ge eq")
+Assert(6 >= 5, "ge gt")
+Assert(5 <= 5, "le eq")
+Assert(4 <= 5, "le lt")
+Assert(5 <> 4, "ne")
+Assert(NOT (5 <> 5), "not ne")
+
+' Boolean operators
+Assert(TRUE AND TRUE, "and tt")
+Assert(NOT (TRUE AND FALSE), "and tf")
+Assert(TRUE OR FALSE, "or tf")
+Assert(NOT (FALSE OR FALSE), "or ff")
+Assert(NOT FALSE, "not f")
+Assert(NOT NOT TRUE, "not not t")
+
+' Short-circuit
+DIM sc_called = FALSE
+FUNC ScSideEffect()
+  sc_called = TRUE
+  RETURN TRUE
+ENDFUNC
+DIM sc_result = FALSE ANDALSO ScSideEffect()
+Assert(NOT sc_called, "andalso short-circuit")
+sc_result = TRUE ORELSE ScSideEffect()
+Assert(NOT sc_called, "orelse short-circuit")
+
+' Bitwise
+Assert((5 BAND 3) = 1, "b_and")
+Assert((5 BOR 3) = 7, "bor")
+Assert((5 XOR 3) = 6, "xor")
+
+' ══════════════════════════════════════════════════════════════════
+' 2. VARIABLES & TYPES
+' ══════════════════════════════════════════════════════════════════
+Header("Variables & Types")
+
+LET int_val = 42
+Assert(int_val = 42, "let int")
+Assert(TYPEOF(int_val) = "INT64", "typeof int")
+
+LET float_val = 3.14
+Assert(float_val > 3.13 AND float_val < 3.15, "let float")
+Assert(TYPEOF(float_val) = "FLOAT64", "typeof float")
+
+LET str_val = "Hello"
+Assert(str_val = "Hello", "let string")
+Assert(TYPEOF(str_val) = "STRING", "typeof string")
+
+DIM bool_val AS BOOLEAN = TRUE
+Assert(bool_val, "dim boolean true")
+Assert(TYPEOF(bool_val) = "BOOLEAN", "typeof boolean")
+
+' DIM without value — may or may not be NONE depending on scope
+DIM none_val
+Assert(TYPEOF(none_val) = "NONE" OR TYPEOF(none_val) = "INT64", "dim default")
+
+' Type checking functions
+Assert(ISNUM(42), "isnum int")
+Assert(ISNUM(3.14), "isnum float")
+Assert(ISSTR("hi"), "isstr")
+Assert(ISARR([1,2]), "isarr")
+Assert(ISBOOL(TRUE), "isbool true")
+Assert(ISBOOL(FALSE), "isbool false")
+Assert(ISMAP({"a": 1}), "ismap")
+
+' IIF
+Assert(IIF(TRUE, "yes", "no") = "yes", "iif true")
+Assert(IIF(FALSE, "yes", "no") = "no", "iif false")
+Assert(IIF(1 > 0, 100, 200) = 100, "iif numeric")
+
+' ══════════════════════════════════════════════════════════════════
+' 3. STRINGS & UNICODE
+' ══════════════════════════════════════════════════════════════════
+Header("Strings & Unicode")
+
+' Basic string functions
+Assert(LEN("Hello") = 5, "len")
+Assert(LEFT("Hello", 2) = "He", "left")
+Assert(RIGHT("Hello", 3) = "llo", "right")
+Assert(MID("Hello", 1, 3) = "ell", "mid")
+Assert(UCASE("hello") = "HELLO", "ucase")
+Assert(LCASE("HELLO") = "hello", "lcase")
+Assert(CHR(65) = "A", "chr")
+Assert(ASC("A") = 65, "asc")
+Assert(STR(42) = "42", "str")
+Assert(VAL("3.14") > 3.13, "val")
+
+' String operators
+Assert("Hello" + " " + "World" = "Hello World", "concat")
+Assert("-" * 5 = "-----", "repeat")
+Assert(3 * "ab" = "ababab", "repeat left")
+
+' String subtraction (remove)
+Assert("abcabc" - "bc" = "aa", "str subtract")
+
+' IN operator with strings
+Assert("ell" IN "Hello", "in string")
+Assert(NOT ("xyz" IN "Hello"), "not in string")
+
+' Sonderzeichen und Umlaute
+LET german = "Gr\u00fc\u00dfe aus Deutschland!"
+Assert(LEN(german) > 5, "german string len")
+
+' Emojis - GenZ approved
+LET emoji_str = "Hello World!😀🌴👍"
+Assert(LEN(emoji_str) > 0, "emoji string")
+PRINT "  Emoji test: "; emoji_str
+
+' PRINT variations
+PRINT "  Multi-value:"; " A="; 1; " B="; 2; " C="; 3
+PRINT "  No newline test: ";
+PRINT "continued here"
+PRINT "  Tab test:", "col1", "col2"
+
+' ══════════════════════════════════════════════════════════════════
+' 4. ARRAYS
+' ══════════════════════════════════════════════════════════════════
+Header("Arrays")
+
+' Literal
+LET arr1 = [10, 20, 30, 40, 50]
+Assert(LEN(arr1) = 5, "arr literal len")
+Assert(arr1[0] = 10, "arr idx 0")
+Assert(arr1[4] = 50, "arr idx 4")
+
+' Classic-BASIC bracket DIM forms (DIM A[20], DIM M[5,3], DIM A[N] AS T)
+DIM br_a[20]
+Assert(LEN(br_a) = 20, "DIM A[20] len")
+Assert(br_a[0] = 0, "DIM A[20] zero-init")
+Assert(br_a[19] = 0, "DIM A[20] last")
+
+DIM br_b[3, 4]
+Assert(LEN(br_b)[0] = 3, "DIM M[3,4] outer dim")
+Assert(LEN(br_b)[1] = 4, "DIM M[3,4] inner dim")
+
+DIM br_c[5] AS INTEGER
+Assert(LEN(br_c) = 5, "DIM A[5] AS INTEGER len")
+
+DIM br_n = 7
+DIM br_d[br_n]
+Assert(LEN(br_d) = 7, "DIM A[var] runtime size")
+
+DIM br_e[3] = [10, 20, 30]
+Assert(br_e[1] = 20, "DIM A[3] = literal overrides")
+
+' Regression: MULTI_INDEX_SET (`A[i,j] = v`) was missing from
+' opcode_width(), so the peephole optimiser walked into the middle of
+' subsequent instructions and corrupted the bytecode chunk. The exact
+' threshold is 9 multi-index assigns followed by a normal INDEX_SET —
+' that's enough drift for the corruption to break b[1] = -11.
+DIM br_M[3, 3]
+br_M[0,0] = 2 : br_M[0,1] = 1 : br_M[0,2] = -1
+br_M[1,0] = -3 : br_M[1,1] = -1 : br_M[1,2] = 2
+br_M[2,0] = -2 : br_M[2,1] = 1 : br_M[2,2] = 2
+DIM br_v[3]
+br_v[0] = 8
+br_v[1] = -11
+br_v[2] = -3
+Assert(br_M[0,0] = 2, "multi-idx assign survives peephole [0,0]")
+Assert(br_M[2,2] = 2, "multi-idx assign survives peephole [2,2]")
+Assert(br_v[0] = 8, "scalar idx assign after multi-idx [0]")
+Assert(br_v[1] = -11, "scalar idx assign after multi-idx [1]")
+Assert(br_v[2] = -3, "scalar idx assign after multi-idx [2]")
+
+' Multi-variable DIM (comma-separated) — classic BASIC convenience.
+' Each clause has its own type and optional initialiser.
+DIM mv_a, mv_b, mv_c
+mv_a = 1 : mv_b = 2 : mv_c = 3
+Assert(mv_a = 1 AND mv_b = 2 AND mv_c = 3, "DIM a,b,c bare")
+
+DIM mv_x AS INTEGER, mv_y AS STRING
+mv_x = 42
+mv_y = "hello"
+Assert(mv_x = 42, "DIM a AS INT, b AS STR — int")
+Assert(mv_y = "hello", "DIM a AS INT, b AS STR — str")
+
+DIM mv_p = 10, mv_q = 20, mv_r = 30
+Assert(mv_p + mv_q + mv_r = 60, "DIM with inits")
+
+DIM mv_m AS INTEGER = 5, mv_n AS DOUBLE = 3.5
+Assert(mv_m = 5, "DIM AS T = expr (int)")
+Assert(mv_n = 3.5, "DIM AS T = expr (double)")
+
+DIM mv_arr[4] AS INTEGER, mv_str AS STRING
+mv_str = "ok"
+Assert(LEN(mv_arr) = 4, "DIM A[N], B AS T — array")
+Assert(mv_str = "ok", "DIM A[N], B AS T — string")
+
+' DIM A[N] AS UDT — array of constructed UDT instances + arr[i].field assign
+TYPE _BrItem
+    Name AS STRING
+    Score AS INTEGER
+ENDTYPE
+DIM br_arr[3] AS _BrItem
+Assert(LEN(br_arr) = 3, "DIM A[N] AS UDT len")
+Assert(br_arr[0]{"__TYPE__"} = "_BRITEM", "DIM A[N] AS UDT __TYPE__ set")
+br_arr[0].Name = "alpha"
+br_arr[0].Score = 7
+br_arr[1].Name = "beta"
+br_arr[1].Score = 14
+Assert(br_arr[0].Name = "alpha", "arr[i].field assign + read (str)")
+Assert(br_arr[0].Score = 7, "arr[i].field assign + read (int)")
+Assert(br_arr[1].Name = "beta", "arr[i].field different element")
+Assert(br_arr[2].Name = "", "arr[i] default field empty")
+
+' Mixed chain in FOR loop (the app_master.jdb pattern)
+FOR br_i = 0 TO 2
+    br_arr[br_i].Score = br_i * 10
+NEXT br_i
+Assert(br_arr[2].Score = 20, "arr[i].field in FOR loop")
+
+' Push/Pop
+DIM arr2 AS ARRAY
+PUSH arr2, "alpha"
+PUSH arr2, "beta"
+PUSH arr2, "gamma"
+Assert(LEN(arr2) = 3, "push len")
+LET popped = POP(arr2)
+Assert(popped = "gamma", "pop val")
+Assert(LEN(arr2) = 2, "pop len")
+
+' Array arithmetic (element-wise)
+LET va = [1, 2, 3]
+LET vb = [10, 20, 30]
+LET vc = va + vb
+Assert(vc[0] = 11 AND vc[1] = 22 AND vc[2] = 33, "arr add")
+LET vd = va * 3
+Assert(vd[0] = 3 AND vd[1] = 6 AND vd[2] = 9, "arr scalar mul")
+LET ve = vb - va
+Assert(ve[0] = 9 AND ve[1] = 18 AND ve[2] = 27, "arr sub")
+
+' IOTA
+LET seq = IOTA(5)
+Assert(seq[0] = 1 AND seq[4] = 5, "iota default")
+LET seq2 = IOTA(4, 0, 2)
+Assert(seq2[0] = 0 AND seq2[1] = 2 AND seq2[3] = 6, "iota step")
+
+' Nested arrays
+LET matrix = [[1,2,3],[4,5,6],[7,8,9]]
+Assert(matrix[1][1] = 5, "nested arr")
+Assert(LEN(matrix) = 3, "nested len")
+
+' Destructuring
+[da, db, dc] = [100, 200, 300]
+Assert(da = 100, "destruct a")
+Assert(db = 200, "destruct b")
+Assert(dc = 300, "destruct c")
+
+' IN operator
+Assert("B" IN ["A", "B", "C"], "in array")
+Assert(NOT ("D" IN ["A", "B", "C"]), "not in array")
+
+' ══════════════════════════════════════════════════════════════════
+' 5. MAPS / OBJECTS
+' ══════════════════════════════════════════════════════════════════
+Header("Maps & Objects")
+
+' Map literal
+LET person = {"name": "Max", "age": 30, "city": "Berlin"}
+Assert(person{"name"} = "Max", "map get name")
+Assert(person{"age"} = 30, "map get age")
+Assert(person{"city"} = "Berlin", "map get city")
+
+' Map mutation
+person{"age"} = 31
+Assert(person{"age"} = 31, "map set")
+
+' DIM AS OBJECT
+DIM obj AS OBJECT
+obj{"key1"} = "value1"
+obj{"key2"} = 42
+Assert(obj{"key1"} = "value1", "obj set/get str")
+Assert(obj{"key2"} = 42, "obj set/get int")
+
+' IN operator with maps
+Assert("name" IN person, "in map key")
+Assert(NOT ("phone" IN person), "not in map key")
+
+' ══════════════════════════════════════════════════════════════════
+' 6. ENUM
+' ══════════════════════════════════════════════════════════════════
+Header("Enums")
+
+ENUM Direction
+  NORTH = 0
+  EAST = 1
+  SOUTH = 2
+  WEST = 3
+ENDENUM
+
+Assert(Direction.NORTH = 0, "enum north")
+Assert(Direction.EAST = 1, "enum east")
+Assert(Direction.SOUTH = 2, "enum south")
+Assert(Direction.WEST = 3, "enum west")
+
+ENUM HttpStatus
+  OK = 200
+  NOT_FOUND = 404
+  SERVER_ERROR = 500
+ENDENUM
+Assert(HttpStatus.OK = 200, "enum http 200")
+Assert(HttpStatus.NOT_FOUND = 404, "enum http 404")
+
+' Enum members may be BASIC keywords (DEFAULT, IF, THEN, etc.) since they
+' live in their own namespace. Regression for ansi_styles.jdb crash.
+ENUM Style
+    DEFAULT = 0
+    BOLD    = 1
+    IF      = 2
+    THEN    = 3
+ENDENUM
+Assert(Style.DEFAULT = 0, "enum keyword DEFAULT")
+Assert(Style.BOLD    = 1, "enum keyword BOLD")
+Assert(Style.IF      = 2, "enum keyword IF")
+Assert(Style.THEN    = 3, "enum keyword THEN")
+
+' ══════════════════════════════════════════════════════════════════
+' 7. TYPE / UDT
+' ══════════════════════════════════════════════════════════════════
+Header("User-Defined Types")
+
+TYPE Vector2D
+  X AS FLOAT64
+  Y AS FLOAT64
+  FUNC Length()
+    RETURN SQR(THIS.X * THIS.X + THIS.Y * THIS.Y)
+  ENDFUNC
+  SUB Scale(factor)
+    THIS.X = THIS.X * factor
+    THIS.Y = THIS.Y * factor
+  ENDSUB
+ENDTYPE
+
+DIM v AS Vector2D
+v{"X"} = 3.0
+v{"Y"} = 4.0
+Assert(v.Length() = 5.0, "udt method length")
+v.Scale(2)
+Assert(v{"X"} = 6.0, "udt method scale x")
+Assert(v{"Y"} = 8.0, "udt method scale y")
+
+' Method call on a LOCAL object inside a SUB.
+' Regression: the parser turns `obj.method(args)` into a CALL "OBJ.METHOD",
+' and the VM's fallback only looked at GLOBALS for the receiver. Inside a
+' SUB, `lv` is a local, so the fallback used to throw "Undefined function:
+' LV.LENGTH" — even though the same call worked at the top level.
+DIM SUB_LEN_OK = FALSE
+DIM SUB_SCALE_X = 0
+SUB UseLocalVec()
+    DIM lv AS Vector2D
+    lv{"X"} = 6.0
+    lv{"Y"} = 8.0
+    SUB_LEN_OK = (lv.Length() = 10.0)
+    lv.Scale(0.5)
+    SUB_SCALE_X = lv{"X"}
+ENDSUB
+UseLocalVec
+Assert(SUB_LEN_OK, "udt method on local in SUB")
+Assert(SUB_SCALE_X = 3.0, "udt mutating method on local in SUB")
+
+' Dotted property chain on a LOCAL inside a SUB.
+' Regression: the parser greedily folds `lo.X` into a single global name
+' "LO.X" and emits LOAD_GLOBAL. The fallback that walks the chain only
+' looked at globals — inside a SUB the receiver was missed and the value
+' came back NONE, even though `lo{"X"}` worked fine.
+DIM SUB_X = 0.0
+DIM SUB_Y = 0.0
+SUB ReadLocalDots()
+    DIM lo AS Vector2D
+    lo{"X"} = 1.5
+    lo{"Y"} = 2.5
+    SUB_X = lo.X
+    SUB_Y = lo.Y
+ENDSUB
+ReadLocalDots
+Assert(SUB_X = 1.5, "dotted load on local in SUB (X)")
+Assert(SUB_Y = 2.5, "dotted load on local in SUB (Y)")
+
+' ══════════════════════════════════════════════════════════════════
+' 8. CONTROL FLOW - IF / SWITCH
+' ══════════════════════════════════════════════════════════════════
+Header("Control Flow")
+
+' Multi-branch IF
+DIM grade = 85
+DIM letter = ""
+IF grade >= 90 THEN
+  letter = "A"
+ELSEIF grade >= 80 THEN
+  letter = "B"
+ELSEIF grade >= 70 THEN
+  letter = "C"
+ELSE
+  letter = "F"
+ENDIF
+Assert(letter = "B", "if elseif")
+
+' One-line IF
+LET ol = 0
+IF TRUE THEN ol = 99
+Assert(ol = 99, "one-line if")
+
+' One-liner IF with multiple statements (colon-separated)
+DIM ol_a = 0 : DIM ol_b = 0
+IF TRUE THEN ol_a = 1 : ol_b = 2
+Assert(ol_a = 1, "one-liner multi-stmt THEN a")
+Assert(ol_b = 2, "one-liner multi-stmt THEN b")
+
+' One-liner: false branch should NOT execute any colon-separated stmt
+DIM ol_c = 0 : DIM ol_d = 0
+IF FALSE THEN ol_c = 1 : ol_d = 2
+Assert(ol_c = 0, "one-liner false: skip a")
+Assert(ol_d = 0, "one-liner false: skip b")
+
+' One-liner IF with ELSE
+DIM ol_e = 0
+IF FALSE THEN ol_e = 1 ELSE ol_e = 2
+Assert(ol_e = 2, "one-liner IF ELSE")
+
+' One-liner IF ELSE with multi-stmt in THEN
+DIM ol_f = 0 : DIM ol_g = 0
+IF TRUE THEN ol_f = 10 : ol_g = 20 ELSE ol_f = 30 : ol_g = 40
+Assert(ol_f = 10, "one-liner true: THEN a")
+Assert(ol_g = 20, "one-liner true: THEN b")
+
+' One-liner IF ELSE with multi-stmt in ELSE
+DIM ol_h = 0 : DIM ol_i = 0
+IF FALSE THEN ol_h = 10 : ol_i = 20 ELSE ol_h = 30 : ol_i = 40
+Assert(ol_h = 30, "one-liner false: ELSE a")
+Assert(ol_i = 40, "one-liner false: ELSE b")
+
+' One-liner IF with END (should not execute END when false)
+DIM ol_survived = FALSE
+IF FALSE THEN ol_survived = TRUE : PRINT "BUG"
+ol_survived = TRUE
+Assert(ol_survived = TRUE, "one-liner false: no side effects")
+
+' Nested one-liner inside multi-line IF
+DIM ol_nest = 0
+IF TRUE THEN
+    IF TRUE THEN ol_nest = 42
+ENDIF
+Assert(ol_nest = 42, "nested one-liner in block IF")
+
+' One-liner should not steal outer ELSE
+DIM ol_outer = 0
+IF TRUE THEN
+    IF FALSE THEN ol_outer = 1
+ELSE
+    ol_outer = 99
+ENDIF
+Assert(ol_outer = 0, "one-liner doesn't steal outer ELSE")
+
+' SWITCH
+DIM day = 3
+DIM day_name = ""
+SWITCH day
+  CASE 1
+    day_name = "Monday"
+  CASE 2
+    day_name = "Tuesday"
+  CASE 3
+    day_name = "Wednesday"
+  DEFAULT
+    day_name = "Other"
+ENDSWITCH
+Assert(day_name = "Wednesday", "switch case 3")
+
+' ══════════════════════════════════════════════════════════════════
+' 9. LOOPS - ALL VARIATIONS
+' ══════════════════════════════════════════════════════════════════
+Header("Loops - All Variations")
+
+' FOR / NEXT basic
+DIM for_sum = 0
+FOR i = 1 TO 10
+  for_sum = for_sum + i
+NEXT
+Assert(for_sum = 55, "for 1 to 10")
+
+' FOR with STEP
+DIM step_sum = 0
+FOR i = 0 TO 20 STEP 5
+  step_sum = step_sum + i
+NEXT
+Assert(step_sum = 50, "for step 5")
+
+' FOR negative STEP
+DIM neg_sum = 0
+FOR i = 10 TO 1 STEP -1
+  neg_sum = neg_sum + i
+NEXT
+Assert(neg_sum = 55, "for step -1")
+
+' FOR EACH
+DIM each_result = ""
+DIM fruits = ["apple", "banana", "cherry"]
+FOR EACH f IN fruits
+  each_result = each_result + LEFT(f, 1)
+NEXT
+Assert(each_result = "abc", "for each")
+
+' DO WHILE ... LOOP
+DIM dw = 0
+DO WHILE dw < 5
+  dw = dw + 1
+LOOP
+Assert(dw = 5, "do while top")
+
+' DO ... LOOP WHILE
+DIM dlw = 0
+DO
+  dlw = dlw + 1
+LOOP WHILE dlw < 5
+Assert(dlw = 5, "do loop while")
+
+' DO UNTIL ... LOOP
+DIM du = 0
+DO UNTIL du = 7
+  du = du + 1
+LOOP
+Assert(du = 7, "do until top")
+
+' DO ... LOOP UNTIL
+DIM dlu = 0
+DO
+  dlu = dlu + 1
+LOOP UNTIL dlu = 7
+Assert(dlu = 7, "do loop until")
+
+' EXITFOR
+DIM ef = 0
+FOR i = 1 TO 100
+  IF i = 6 THEN EXITFOR
+  ef = ef + i
+NEXT
+Assert(ef = 15, "exitfor at 6")
+
+' CONTINUEFOR
+DIM cf = 0
+FOR i = 1 TO 5
+  IF i = 3 THEN CONTINUEFOR
+  cf = cf + i
+NEXT
+Assert(cf = 12, "continuefor skip 3")
+
+' EXITDO
+DIM ed = 0
+DO
+  ed = ed + 1
+  IF ed = 4 THEN EXITDO
+LOOP
+Assert(ed = 4, "exitdo")
+
+' CONTINUEDO
+DIM cd = 0
+DIM cd_sum = 0
+DO WHILE cd < 5
+  cd = cd + 1
+  IF cd = 3 THEN CONTINUEDO
+  cd_sum = cd_sum + cd
+LOOP
+Assert(cd_sum = 12, "continuedo skip 3")
+
+' Nested loops
+DIM nested = 0
+FOR i = 1 TO 3
+  FOR j = 1 TO 3
+    nested = nested + 1
+  NEXT
+NEXT
+Assert(nested = 9, "nested for 3x3")
+
+' Deeply nested with mixed types
+DIM deep = 0
+FOR i = 1 TO 2
+  DIM k = 0
+  DO WHILE k < 2
+    k = k + 1
+    FOR EACH x IN [10, 20]
+      deep = deep + x
+    NEXT
+  LOOP
+NEXT
+Assert(deep = 120, "deep nested for+do+each")
+
+' ══════════════════════════════════════════════════════════════════
+' 10. FUNCTIONS & SUBS
+' ══════════════════════════════════════════════════════════════════
+Header("Functions & Subs")
+
+' Basic function
+FUNC Add(a, b)
+  RETURN a + b
+ENDFUNC
+Assert(Add(3, 4) = 7, "func add")
+
+' Recursive function
+FUNC Factorial(n)
+  IF n <= 1 THEN RETURN 1
+  RETURN n * Factorial(n - 1)
+ENDFUNC
+Assert(Factorial(6) = 720, "factorial 6")
+Assert(Factorial(0) = 1, "factorial 0")
+
+' Function with local variables (shadowing global)
+DIM shadow_test = "global"
+FUNC TestShadow()
+  DIM shadow_test = "local"
+  RETURN shadow_test
+ENDFUNC
+Assert(TestShadow() = "local", "shadow local")
+Assert(shadow_test = "global", "shadow preserved")
+
+' SUB modifying globals
+DIM sub_counter = 0
+SUB CountUp(n)
+  FOR ci = 1 TO n
+    sub_counter = sub_counter + 1
+  NEXT
+ENDSUB
+CountUp(5)
+Assert(sub_counter = 5, "sub global modify")
+
+' Nested function calls
+FUNC Square(x)
+  RETURN x * x
+ENDFUNC
+FUNC SumOfSquares(a, b)
+  RETURN Square(a) + Square(b)
+ENDFUNC
+Assert(SumOfSquares(3, 4) = 25, "nested func calls")
+
+' EXITFUNC
+FUNC EarlyReturn(x)
+  IF x < 0 THEN EXITFUNC
+  RETURN x * 2
+ENDFUNC
+Assert(TYPEOF(EarlyReturn(-1)) = "NONE", "exitfunc returns none")
+Assert(EarlyReturn(5) = 10, "normal return")
+
+' ══════════════════════════════════════════════════════════════════
+' 11. HIGHER-ORDER FUNCTIONS & LAMBDAS
+' ══════════════════════════════════════════════════════════════════
+Header("Lambdas & Higher-Order")
+
+' Basic lambda
+LET dbl_fn = LAMBDA x -> x * 2
+Assert(dbl_fn(5) = 10, "lambda basic")
+
+' Lambda with USE (captures)
+DIM multiplier = 10
+LET scale = LAMBDA USE(multiplier) x -> x * multiplier
+Assert(scale(5) = 50, "lambda use capture")
+
+' Higher-order: function taking funcref
+FUNC Apply(fn, val)
+  RETURN fn(val)
+ENDFUNC
+Assert(Apply(LAMBDA x -> x + 100, 5) = 105, "higher-order apply")
+
+' Higher-order functions with inline test
+' (REDUCE/FILTER/SELECT use call_funcref internally)
+FUNC MyReduce(arr, fn, init)
+  DIM acc = init
+  FOR EACH item IN arr
+    acc = fn(acc, item)
+  NEXT
+  RETURN acc
+ENDFUNC
+LET total_r = MyReduce([1,2,3,4,5], LAMBDA a, b -> a + b, 0)
+Assert(total_r = 15, "custom reduce sum")
+
+' Pipe operator (known issue with global var fix — skipped for now)
+' LET pipe_result = 5 |> LAMBDA x -> x * 3
+' Assert(pipe_result = 15, "pipe basic")
+
+' Function reference with @
+FUNC Triple(x)
+  RETURN x * 3
+ENDFUNC
+LET fn_ref = Triple@
+Assert(fn_ref(7) = 21, "funcref @")
+
+' ══════════════════════════════════════════════════════════════════
+' 12. TRY / CATCH / THROW
+' ══════════════════════════════════════════════════════════════════
+Header("Error Handling")
+
+DIM caught = FALSE
+DIM err_msg = ""
+TRY
+  THROW "custom error 42"
+CATCH
+  caught = TRUE
+  err_msg = ERRMSG$
+ENDTRY
+Assert(caught, "try catch")
+Assert(err_msg = "custom error 42", "errmsg")
+
+' Nested try
+DIM inner_caught = FALSE
+TRY
+  TRY
+    THROW "inner"
+  CATCH
+    inner_caught = TRUE
+  ENDTRY
+  ' This should still execute
+  Assert(TRUE, "after inner catch")
+CATCH
+  Assert(FALSE, "outer should not catch")
+ENDTRY
+Assert(inner_caught, "nested try")
+
+' Division by zero
+DIM div_caught = FALSE
+TRY
+  LET bad = 1 / 0
+CATCH
+  div_caught = TRUE
+ENDTRY
+Assert(div_caught, "div by zero caught")
+
+' ══════════════════════════════════════════════════════════════════
+' 13. MATH FUNCTIONS
+' ══════════════════════════════════════════════════════════════════
+Header("Math Functions")
+
+Assert(ABS(-42) = 42, "abs neg")
+Assert(ABS(42) = 42, "abs pos")
+Assert(INT(3.7) = 3, "int")
+Assert(INT(-3.7) = -3, "int neg")
+Assert(FLOOR(3.7) = 3, "floor")
+Assert(CEIL(3.2) = 4, "ceil")
+Assert(ROUND(3.456, 2) = 3.46, "round 2")
+Assert(ROUND(3.5) = 4, "round half")
+Assert(CLAMP(15, 0, 10) = 10, "clamp high")
+Assert(CLAMP(-5, 0, 10) = 0, "clamp low")
+Assert(CLAMP(5, 0, 10) = 5, "clamp mid")
+Assert(FAC(6) = 720, "fac 6")
+Assert(FAC(0) = 1, "fac 0")
+Assert(SQR(144) = 12, "sqr 144")
+Assert(ABS(SIN(0)) < 0.001, "sin 0")
+Assert(ABS(COS(0) - 1) < 0.001, "cos 0")
+
+' ══════════════════════════════════════════════════════════════════
+' 14. STRING FUNCTIONS (ADVANCED)
+' ══════════════════════════════════════════════════════════════════
+Header("Advanced Strings")
+
+' SPLIT / JOIN
+LET parts = SPLIT("a,b,c,d", ",")
+Assert(LEN(parts) = 4, "split len")
+Assert(parts[0] = "a", "split first")
+Assert(parts[3] = "d", "split last")
+LET joined = JOIN(parts, "-")
+Assert(joined = "a-b-c-d", "join")
+
+' REPLACE
+LET replaced = REPLACE$("Hello World", "World", "jdBasic")
+Assert(replaced = "Hello jdBasic", "replace")
+
+' REVERSE
+Assert(REVERSE$("abcde") = "edcba", "reverse str")
+
+' REGEX
+LET matches = REGEX_MATCH("Tel: 123-456-7890", "[0-9]+")
+Assert(LEN(matches) >= 1, "regex found")
+Assert(matches[0] = "123", "regex first match")
+
+' ══════════════════════════════════════════════════════════════════
+' 15. REACTIVE VARIABLES
+' ══════════════════════════════════════════════════════════════════
+Header("Reactive Variables")
+
+DIM base_price = 100
+DIM tax_rate = 0.19
+total_price -> base_price * (1 + tax_rate)
+Assert(ABS(total_price - 119) < 0.01, "react initial")
+
+base_price = 200
+Assert(ABS(total_price - 238) < 0.01, "react update")
+
+tax_rate = 0.07
+Assert(ABS(total_price - 214) < 0.01, "react cascade")
+
+' ══════════════════════════════════════════════════════════════════
+' 16. EVENT SYSTEM
+' ══════════════════════════════════════════════════════════════════
+Header("Event System")
+
+DIM evt_log = ""
+ON "TEST_EVENT" CALL OnTestEvent
+SUB OnTestEvent(data)
+  evt_log = evt_log + data[0] + ";"
+ENDSUB
+RAISEEVENT "TEST_EVENT", "A"
+RAISEEVENT "TEST_EVENT", "B"
+RAISEEVENT "TEST_EVENT", "C"
+Assert(evt_log = "A;B;C;", "event sequence")
+
+' ══════════════════════════════════════════════════════════════════
+' 17. TENSOR OPERATIONS
+' ══════════════════════════════════════════════════════════════════
+Header("Tensors")
+
+' Tensor creation via native function
+LET t1 = IOTA(5)
+Assert(TYPEOF(t1) = "ARRAY", "iota creates array")
+
+' IOTA as vector
+LET vec = IOTA(5, 0.0, 1.0)
+Assert(LEN(vec) = 5, "iota float vec")
+Assert(vec[0] = 0, "iota float start")
+Assert(vec[4] = 4, "iota float end")
+
+' Auto-vectorized math on arrays
+LET angles = [0.0, 1.5708, 3.14159]
+LET sines = SIN(angles)
+Assert(ABS(sines[0]) < 0.01, "vec sin 0")
+Assert(ABS(sines[1] - 1.0) < 0.01, "vec sin pi/2")
+
+' ══════════════════════════════════════════════════════════════════
+' 18. MISCELLANEOUS
+' ══════════════════════════════════════════════════════════════════
+Header("Miscellaneous")
+
+' TYPEOF on various
+Assert(TYPEOF(42) = "INT64", "typeof int lit")
+Assert(TYPEOF(3.14) = "FLOAT64", "typeof float lit")
+Assert(TYPEOF("s") = "STRING", "typeof str lit")
+Assert(TYPEOF(TRUE) = "BOOLEAN", "typeof bool lit")
+Assert(TYPEOF([]) = "ARRAY", "typeof empty arr")
+Assert(TYPEOF({}) = "OBJECT", "typeof empty obj")
+
+' Multiple assignment styles
+LET ma = 1
+DIM mb = 2
+mc = 3
+Assert(ma + mb + mc = 6, "multi assign styles")
+
+' String as array index
+DIM lookup = {"DE": "Germany", "US": "USA", "JP": "Japan"}
+Assert(lookup{"DE"} = "Germany", "map string key")
+Assert(lookup{"US"} = "USA", "map string key 2")
+
+' Nested map
+DIM config = {"db": {"host": "localhost", "port": 5432}, "debug": TRUE}
+Assert(config{"db"}{"host"} = "localhost", "nested map get")
+Assert(config{"db"}{"port"} = 5432, "nested map port")
+Assert(config{"debug"} = TRUE, "nested map bool")
+
+' ══════════════════════════════════════════════════════════════════
+' Fused superinstructions (peephole regression)
+' ══════════════════════════════════════════════════════════════════
+' Regression for the LOAD_VAR_ADD_CONST / LOAD_VAR_SUB_CONST /
+' LOAD_VAR_MUL_CONST / LOAD_VAR_CMP_*_CONST fused opcodes: their
+' slow path used to fall through to numeric arithmetic() and turned
+' string/array operands into 0.0 ("prompt$ + ""> """ -> 0.000000).
+Header("Fused superinstructions")
+
+' --- String concat: var$ + literal at top-level ---
+fs1$ = "hello"
+Assert(fs1$ + " world" = "hello world", "fused str+literal top")
+Assert(fs1$ + "x" + "y" = "helloxy", "fused str+literal chain")
+
+' --- String concat inside SUB (the original bug) ---
+SUB FusedStrInSub()
+    p$ = "ACCT"
+    PASS_LOCAL = (p$ + "> " = "ACCT> ")
+    Assert(PASS_LOCAL, "fused str+literal in SUB")
+    Assert(p$ + "!" = "ACCT!", "fused str+literal in SUB direct")
+ENDSUB
+FusedStrInSub
+
+' --- INT64 fast path still works ---
+fi1 = 10
+Assert(fi1 + 5 = 15, "fused int+literal add")
+Assert(fi1 - 3 = 7, "fused int-literal sub")
+Assert(fi1 * 4 = 40, "fused int*literal mul")
+
+' --- FLOAT64 slow path ---
+ff1 = 1.5
+Assert(ff1 + 0.5 = 2.0, "fused float+literal add")
+Assert(ff1 * 2.0 = 3.0, "fused float*literal mul")
+
+' --- Array broadcast through the fused slow path ---
+fa1 = [1, 2, 3]
+fa1_plus = fa1 + 10
+Assert(fa1_plus[0] = 11, "fused array+literal [0]")
+Assert(fa1_plus[1] = 12, "fused array+literal [1]")
+Assert(fa1_plus[2] = 13, "fused array+literal [2]")
+fa1_mul = fa1 * 2
+Assert(fa1_mul[0] = 2, "fused array*literal [0]")
+Assert(fa1_mul[2] = 6, "fused array*literal [2]")
+
+' --- Array of strings + literal string ---
+fas = ["a", "b", "c"]
+fas_plus = fas + "X"
+Assert(fas_plus[0] = "aX", "fused str-array+literal [0]")
+Assert(fas_plus[2] = "cX", "fused str-array+literal [2]")
+
+' --- Comparison fusion with strings ---
+fc$ = "banana"
+Assert((fc$ = "banana") = TRUE,  "fused str cmp eq true")
+Assert((fc$ = "apple")  = FALSE, "fused str cmp eq false")
+Assert((fc$ <> "apple") = TRUE,  "fused str cmp ne")
+
+' --- Comparison fusion with floats ---
+fcf = 3.14
+Assert((fcf < 4.0)  = TRUE,  "fused float cmp lt")
+Assert((fcf > 4.0)  = FALSE, "fused float cmp gt")
+Assert((fcf <= 3.14) = TRUE, "fused float cmp le")
+
+' --- Comparison fusion with array vs scalar (regression for `IF y = 0`
+'     inside a SUB returning the wrong type — the fused CMP slow path
+'     used to call compare() directly which doesn't know arrays).
+DIM fca_in_sub_ok = FALSE
+SUB FusedArrCmpInSub()
+    yarr = [1, 2, 4]
+    cmp = (yarr = 0)
+    fca_in_sub_ok = (TYPEOF(cmp) = "ARRAY" AND LEN(cmp) = 3 AND cmp[0] = FALSE)
+ENDSUB
+FusedArrCmpInSub
+Assert(fca_in_sub_ok, "fused arr=scalar cmp in SUB returns array")
+
+' --- to_bool() on an array follows ALL semantics ---
+Assert(([1,2,3] = 0) = [FALSE,FALSE,FALSE],   "arr cmp produces vector of bools")
+DIM if_arr_ok = "?"
+IF [FALSE, FALSE, FALSE] THEN
+    if_arr_ok = "then"
+ELSE
+    if_arr_ok = "else"
+ENDIF
+Assert(if_arr_ok = "else", "IF [F,F,F] takes ELSE (ALL semantics)")
+DIM if_arr_ok2 = "?"
+IF [TRUE, TRUE, TRUE] THEN
+    if_arr_ok2 = "then"
+ELSE
+    if_arr_ok2 = "else"
+ENDIF
+Assert(if_arr_ok2 = "then", "IF [T,T,T] takes THEN")
+
+' ══════════════════════════════════════════════════════════════════
+' IMPORT inside EXECUTE / EVAL / REPL paths
+' ══════════════════════════════════════════════════════════════════
+' Regression: setup_parser_modules() was only called for direct file
+' execution. REPL RUN, EXECUTE, EVAL, COMPILE and friends had no
+' file_reader hooked up, so IMPORT crashed with "IMPORT not available
+' (no file reader)". The live sequencer (SQ.jdb) drives everything via
+' EXECUTE inside the REPL — without this fix, no module loading at all.
+Header("IMPORT in EXECUTE/EVAL")
+
+' EXECUTE: should be able to IMPORT a module and use its functions
+DIM IMP_OK = FALSE
+DIM IMP_VAL = 0
+EXECUTE "IMPORT test_imp_mod" + CHR$(10) + "IMP_VAL = test_imp_mod.ADD(40, 2)" + CHR$(10) + "IMP_OK = TRUE"
+Assert(IMP_OK, "EXECUTE block ran")
+Assert(IMP_VAL = 42, "EXECUTE could IMPORT and call module func")
+
+' EVAL: should also be able to use an already-imported module function
+DIM EV_VAL = 0
+EXECUTE "IMPORT test_imp_mod"
+EV_VAL = EVAL("test_imp_mod.TWICE(21)")
+Assert(EV_VAL = 42, "EVAL after IMPORT in EXECUTE")
+
+' ══════════════════════════════════════════════════════════════════
+' DATE subtype + vectorized DATEDIFF
+' ══════════════════════════════════════════════════════════════════
+Header("Date values & vectorized diff")
+
+DIM dt_a = CVDATE("2025-07-25")
+Assert(TYPEOF(dt_a) = "DATE", "CVDATE returns DATE-tagged value")
+Assert(LEFT$(dt_a, 10) = "2025-07-25", "DATE prints as ISO YYYY-MM-DD")
+
+DIM dt_b = DATEADD("D", 7, dt_a)
+Assert(TYPEOF(dt_b) = "DATE", "DATEADD preserves DATE tag")
+Assert(LEFT$(dt_b, 10) = "2025-08-01", "DATEADD +7 days arithmetic")
+
+' Vectorized DATEDIFF: scalar start, array of deadlines.
+DIM dt_deadlines = [CVDATE("2025-08-01"), CVDATE("2025-08-15"), CVDATE("2025-09-05")]
+DIM dt_days = DATEDIFF("D", dt_a, dt_deadlines)
+Assert(LEN(dt_days) = 3, "DATEDIFF auto-vectorized over date2")
+Assert(dt_days[0] = 7,  "DATEDIFF vec [0]")
+Assert(dt_days[1] = 21, "DATEDIFF vec [1]")
+Assert(dt_days[2] = 42, "DATEDIFF vec [2]")
+
+' ══════════════════════════════════════════════════════════════════
+' Number literals + binary I/O
+' ══════════════════════════════════════════════════════════════════
+Header("Numeric literals & binary I/O")
+
+' Hex literal $XXXX
+Assert($FF       = 255,        "hex $FF")
+Assert($CAFEBABE = 3405691582, "hex $CAFEBABE")
+
+' Binary literal %0101
+Assert(%0      = 0,  "bin %0")
+Assert(%1      = 1,  "bin %1")
+Assert(%0101   = 5,  "bin %0101")
+Assert(%1010   = 10, "bin %1010")
+Assert(%11111111 = 255, "bin %11111111")
+
+' DIM AS INTEGER must NOT mangle the value via wrong CAST.
+' Regression for the VarType vs ValueType enum-shift bug that turned
+' `DIM A AS INTEGER = $CAFEBABE` into `inf` (cast went to FLOAT16).
+DIM hex_a AS INTEGER = $CAFEBABE
+Assert(hex_a = 3405691582, "DIM AS INTEGER preserves hex value")
+DIM hex_b AS LONG = $CAFEBABE
+Assert(hex_b = 3405691582, "DIM AS LONG (alias) preserves hex value")
+
+' PACK$ / UNPACK round-trip with classic-BASIC docs format `>Isbsd`.
+' Regression: format chars used to be lower-case only, so `I` was
+' silently skipped, dropping the first 4 bytes and putting the array
+' indices off-by-one in UNPACK.
+DIM packed$ AS STRING
+packed$ = PACK$(">Isbsd", $CAFEBABE, 2, 255, 15000, 123.456)
+Assert(LEN(packed$) = 17, "PACK$ uppercase format chars: 17 bytes")
+
+DIM unpacked AS ARRAY
+unpacked = UNPACK(">Isbsd", packed$)
+Assert(LEN(unpacked) = 5,           "UNPACK returns all 5 fields")
+Assert(unpacked[0] = 3405691582,    "UNPACK round-trip uint32 (CAFEBABE)")
+Assert(unpacked[1] = 2,             "UNPACK round-trip short")
+Assert(unpacked[2] = 255,           "UNPACK round-trip byte")
+Assert(unpacked[3] = 15000,         "UNPACK round-trip short 2")
+Assert(unpacked[4] > 123.4 AND unpacked[4] < 123.5, "UNPACK round-trip double")
+
+' ══════════════════════════════════════════════════════════════════
+' VM-managed globals visible inside SUB/FUNC scope
+' ══════════════════════════════════════════════════════════════════
+' Regression: ERRMSG$/ERR/ERL are set by the VM in the CATCH handler.
+' Without seeding them in the compiler's known_globals set, they were
+' resolved as uninitialised LOCALS inside a SUB and printed as NONE.
+Header("VM-managed globals in SUB")
+
+DIM CAPTURED_MSG$ = ""
+DIM CAPTURED_ERR  = 0
+
+SUB ProvokeError()
+    TRY
+        x = 1 / 0
+    CATCH
+        CAPTURED_MSG$ = ERRMSG$
+        CAPTURED_ERR  = ERR
+    ENDTRY
+ENDSUB
+
+ProvokeError
+Assert(LEN(CAPTURED_MSG$) > 0, "ERRMSG$ visible in SUB CATCH")
+Assert(INSTR(CAPTURED_MSG$, "zero") > 0, "ERRMSG$ contains real text")
+Assert(CAPTURED_ERR = 1, "ERR visible in SUB CATCH")
+
+' ══════════════════════════════════════════════════════════════════
+' TYPE method calls — all syntax variations
+' ══════════════════════════════════════════════════════════════════
+Header("TYPE method calls")
+
+TYPE T_TestObj
+    val
+    name$
+
+    SUB SET_VAL(v)
+        THIS.val = v
+    ENDSUB
+
+    FUNC GET_VAL()
+        RETURN THIS.val
+    ENDFUNC
+
+    SUB SET_NAME(n$)
+        THIS.name$ = n$
+    ENDSUB
+
+    FUNC GET_NAME$()
+        RETURN THIS.name$
+    ENDFUNC
+
+    SUB SET_BOTH(v, n$)
+        THIS.val = v
+        THIS.name$ = n$
+    ENDSUB
+ENDTYPE
+
+' Basic TYPE creation + method calls with parens
+DIM mc_obj AS T_TestObj
+mc_obj.SET_VAL(42)
+Assert(mc_obj.GET_VAL() = 42, "TYPE method call with parens")
+
+' Method call without parens (BASIC standard)
+mc_obj.SET_VAL 99
+Assert(mc_obj.GET_VAL() = 99, "TYPE method call no parens")
+
+' String method call without parens
+mc_obj.SET_NAME "hello"
+Assert(mc_obj.GET_NAME$() = "hello", "TYPE string method no parens")
+
+' Multi-arg method call without parens
+mc_obj.SET_BOTH 77, "world"
+Assert(mc_obj.val = 77, "TYPE multi-arg no parens (val)")
+Assert(mc_obj.name$ = "world", "TYPE multi-arg no parens (name$)")
+
+' Direct field access
+mc_obj.val = 123
+Assert(mc_obj.val = 123, "TYPE direct field write")
+
+' TYPE in array — reference semantics
+DIM mc_arr[3]
+DIM mc_a AS T_TestObj : mc_a.SET_VAL(10)
+DIM mc_b AS T_TestObj : mc_b.SET_VAL(20)
+mc_arr[0] = mc_a : mc_arr[1] = mc_b
+
+' Read from array
+Assert(mc_arr[0].val = 10, "TYPE in array: read field")
+Assert(mc_arr[1].val = 20, "TYPE in array: read field 2")
+
+' Modify via copy (reference semantics)
+mc_c = mc_arr[0]
+mc_c.SET_VAL 55
+Assert(mc_arr[0].val = 55, "TYPE in array: ref semantics")
+
+' TYPE in dynamic array (PUSH)
+mc_list = []
+DIM mc_d AS T_TestObj : mc_d.SET_BOTH 1, "first"
+DIM mc_e AS T_TestObj : mc_e.SET_BOTH 2, "second"
+PUSH mc_list, mc_d
+PUSH mc_list, mc_e
+Assert(LEN(mc_list) = 2, "TYPE PUSH to array")
+mc_f = mc_list[0]
+Assert(mc_f.val = 1, "TYPE from pushed array: val")
+Assert(mc_f.name$ = "first", "TYPE from pushed array: name$")
+
+' Method call on array element via copy
+mc_g = mc_list[1]
+mc_g.SET_VAL 999
+Assert(mc_list[1].val = 999, "TYPE method on array elem via ref")
+
+' TYPE method call inside SUB
+SUB TestTypeInSub()
+    DIM local_obj AS T_TestObj
+    local_obj.SET_BOTH 42, "sub_test"
+    Assert(local_obj.val = 42, "TYPE in SUB: val")
+    Assert(local_obj.name$ = "sub_test", "TYPE in SUB: name$")
+    local_obj.SET_VAL 88
+    Assert(local_obj.GET_VAL() = 88, "TYPE in SUB: method chain")
+ENDSUB
+TestTypeInSub
+
+' TYPE method call inside FUNC
+FUNC TestTypeInFunc()
+    DIM local_obj AS T_TestObj
+    local_obj.SET_VAL 77
+    RETURN local_obj.GET_VAL()
+ENDFUNC
+Assert(TestTypeInFunc() = 77, "TYPE in FUNC: return via method")
+
+' No-args method call without parens (just method name on line)
+' This should work as a no-args call or a no-op member access
+DIM mc_noarg AS T_TestObj
+mc_noarg.val = 0
+
+' ══════════════════════════════════════════════════════════════════
+' EXPORT/IMPORT module system — nested modules, TYPEs, private vars
+' ══════════════════════════════════════════════════════════════════
+Header("Module EXPORT/IMPORT")
+
+IMPORT TEST_OUTER
+
+' --- Direct inner module access ---
+Assert(TEST_INNER.public_val = 99, "IMPORT inner: EXPORT DIM visible")
+Assert(TEST_INNER.GET_PRIVATE() = 42, "IMPORT inner: private via FUNC")
+
+' --- Inner TYPE creation from main ---
+TEST_INNER.ADD_THING 10, "alpha"
+TEST_INNER.ADD_THING 20, "beta"
+Assert(TEST_INNER.GET_THING_COUNT() = 2, "Inner module: thing_count after ADD")
+Assert(TEST_INNER.GET_THING_X(0) = 10, "Inner module: thing[0].x")
+Assert(TEST_INNER.GET_THING_LABEL$(1) = "beta", "Inner module: thing[1].label$")
+
+' --- Private var mutation via module SUB ---
+TEST_INNER.SET_PRIVATE 123
+Assert(TEST_INNER.GET_PRIVATE() = 123, "Inner module: SET/GET private")
+
+' --- Outer module uses inner module ---
+TEST_OUTER.INIT_OUTER
+Assert(TEST_OUTER.READ_INNER_PRIVATE() = 55, "Nested: outer reads inner private")
+Assert(TEST_OUTER.READ_OUTER_SECRET() = 333, "Nested: outer private var")
+Assert(TEST_OUTER.READ_INNER_THING_COUNT() = 3, "Nested: outer reads inner count")
+
+' --- Add via outer (passes through to inner) ---
+TEST_OUTER.ADD_VIA_OUTER 500, "via_outer"
+Assert(TEST_INNER.GET_THING_COUNT() = 4, "Nested: add via outer → inner count")
+Assert(TEST_INNER.GET_THING_X(3) = 500, "Nested: thing added via outer")
+Assert(TEST_INNER.GET_THING_LABEL$(3) = "via_outer", "Nested: label via outer")
+
+' --- EXPORT DIM on outer module ---
+Assert(TEST_OUTER.outer_public = 888, "Outer: EXPORT DIM visible")
+
+' --- Inner EXPORT DIM after mutation ---
+TEST_INNER.public_val = 42
+Assert(TEST_INNER.public_val = 42, "Inner: EXPORT DIM write + read")
+
+' ══════════════════════════════════════════════════════════════════
+' CONST AND PROTECTED CONSTANTS
+' ══════════════════════════════════════════════════════════════════
+Header("Constants (CONST, PI, E)")
+
+' --- Built-in PI constant ---
+Assert(PI > 3.14 AND PI < 3.15, "PI value is ~3.14159")
+Assert(PI = PI(), "PI constant equals PI() function")
+Assert(TYPEOF(PI) = "FLOAT64", "PI is FLOAT64")
+
+' --- Built-in E constant ---
+Assert(E > 2.71 AND E < 2.72, "E value is ~2.71828")
+Assert(E = E(), "E constant equals E() function")
+Assert(TYPEOF(E) = "FLOAT64", "E is FLOAT64")
+
+' --- PI cannot be overwritten ---
+DIM pi_before = PI
+TRY
+    PI = 42
+    Assert(FALSE, "PI assignment should throw error")
+CATCH
+    Assert(TRUE, "PI assignment throws error")
+ENDTRY
+Assert(PI = pi_before, "PI unchanged after failed assignment")
+
+' --- E cannot be overwritten ---
+DIM e_before = E
+TRY
+    E = 99
+    Assert(FALSE, "E assignment should throw error")
+CATCH
+    Assert(TRUE, "E assignment throws error")
+ENDTRY
+Assert(E = e_before, "E unchanged after failed assignment")
+
+' --- PI/E in math expressions ---
+DIM circumference = 2 * PI * 10
+Assert(circumference > 62.8 AND circumference < 62.9, "2*PI*10 = ~62.83")
+DIM exp1 = E ^ 2
+Assert(exp1 > 7.38 AND exp1 < 7.39, "E^2 = ~7.389")
+
+' --- Case insensitive protection ---
+TRY
+    pi = 0
+    Assert(FALSE, "lowercase pi assignment should throw")
+CATCH
+    Assert(TRUE, "lowercase pi assignment throws error")
+ENDTRY
+TRY
+    e = 0
+    Assert(FALSE, "lowercase e assignment should throw")
+CATCH
+    Assert(TRUE, "lowercase e assignment throws error")
+ENDTRY
+
+' --- User CONST: basic types ---
+CONST MAX_LEVEL = 50
+Assert(MAX_LEVEL = 50, "CONST MAX_LEVEL = 50")
+CONST GAME_TITLE = "TestGame"
+Assert(GAME_TITLE = "TestGame", "CONST string value")
+CONST GRAVITY = 9.81
+Assert(GRAVITY > 9.80 AND GRAVITY < 9.82, "CONST float value")
+CONST IS_DEBUG = TRUE
+Assert(IS_DEBUG = TRUE, "CONST boolean value")
+
+' --- CONST cannot be overwritten ---
+TRY
+    MAX_LEVEL = 999
+    Assert(FALSE, "CONST reassign should throw")
+CATCH
+    Assert(TRUE, "CONST reassign throws error")
+ENDTRY
+Assert(MAX_LEVEL = 50, "CONST unchanged after failed reassign")
+
+' --- CONST with expressions ---
+CONST DOUBLE_PI = PI * 2
+Assert(DOUBLE_PI > 6.28 AND DOUBLE_PI < 6.29, "CONST with PI expression")
+CONST SCREEN_AREA = 1280 * 720
+Assert(SCREEN_AREA = 921600, "CONST with arithmetic expression")
+
+' --- Multiple CONSTs don't interfere ---
+CONST A_CONST = 10
+CONST B_CONST = 20
+CONST C_CONST = A_CONST + B_CONST
+Assert(C_CONST = 30, "CONST referencing other CONSTs")
+Assert(A_CONST = 10, "First CONST still intact")
+Assert(B_CONST = 20, "Second CONST still intact")
+
+' --- CONST in loops (loop var doesn't overwrite) ---
+CONST LOOP_LIMIT = 5
+DIM loop_sum = 0
+FOR idx = 1 TO LOOP_LIMIT
+    loop_sum = loop_sum + idx
+NEXT idx
+Assert(loop_sum = 15, "CONST used as loop limit: 1+2+3+4+5=15")
+Assert(LOOP_LIMIT = 5, "CONST unchanged after being used in FOR")
+
+' --- CONST type preservation ---
+Assert(TYPEOF(MAX_LEVEL) = "INT64", "CONST integer is INT64")
+Assert(TYPEOF(GAME_TITLE) = "STRING", "CONST string is STRING")
+Assert(TYPEOF(GRAVITY) = "FLOAT64", "CONST float is FLOAT64")
+Assert(TYPEOF(IS_DEBUG) = "BOOLEAN", "CONST boolean is BOOLEAN")
+
+' ══════════════════════════════════════════════════════════════════
+' RESULTS
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " COMPREHENSIVE TEST RESULTS"
+PRINT "══════════════════════════════════════════"
+PRINT " Sections: "; TOTAL_SECTIONS
+PRINT " PASS:     "; PASS
+PRINT " FAIL:     "; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+  PRINT " ALL TESTS PASSED!"
+ELSE
+  PRINT " SOME TESTS FAILED!"
+ENDIF
+PRINT "══════════════════════════════════════════"

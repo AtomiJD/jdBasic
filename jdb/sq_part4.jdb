@@ -1,0 +1,33 @@
+SOUND.INIT()
+SOUND.BPM(120)
+
+' Turn on master distortion for grit
+SOUND.DISTORTION 1.5
+SOUND.DELAY TRUE, 200, 0.4, 0.3
+
+' --- Track 0: FM Bass (Growling) ---
+' Sine wave base + FM makes it sound like a "Reese" bass
+SOUND.VOICE 0, "SINE", 0.01, 0.3, 0.5, 0.2
+SOUND.FM 0, 3.0, 0.5 ' High amount, Sub-octave ratio
+SOUND.FILTER 0, 800
+
+' --- Track 1: Metallic Bell (FM) ---
+' FM Ratio 1.41 creates discordant, non-musical harmonics (bells)
+SOUND.VOICE 1, "SINE", 0.01, 0.5, 0.0, 1.0
+SOUND.FM 1, 2.0, 1.41 
+
+' --- Track 2: Laser Zaps ---
+SOUND.VOICE 2, "SAW", 0.001, 0.1, 0.0, 0.1
+SOUND.FILTER 2, 2000
+
+' Sequence
+SOUND.SEQ 0, "c2 ~ c2 [c2 c2]", "VOICE"
+SOUND.SEQ 1, "~ ~ g4 ~", "VOICE"
+SOUND.SEQ 2, "c5 ~ c5 ~", "VOICE"
+
+PRINT "Playing Industrial FM..."
+
+DO
+    k$ = INKEY$()
+    SLEEP 100
+LOOP  UNTIL k$ = "q" OR k$ = "Q"

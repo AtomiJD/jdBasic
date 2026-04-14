@@ -1,0 +1,86 @@
+PRINT "Loading embedding model..."
+emb = AI.LOAD_EMBEDDINGS("models\Phi-3-mini-4k-instruct-q4.gguf", 512, 99)
+PRINT "Embedding-Modell geladen, dim=3072"
+
+PRINT ""
+PRINT "Building dense RAG store with 200 chunks..."
+DIM rag = AI.RAG_CREATE(0, 100, 10, emb)
+
+' 200 verschiedene Sätze erzeugen
+DIM topics = ["Berlin", "Paris", "Tokyo", "Moskau", "Wien", "Bern", "Madrid", "Rom", "London", "Athen"]
+DIM verbs = ["ist", "war", "wird", "bleibt"]
+DIM rest = ["eine alte Stadt", "ein Verkehrsknoten", "die Hauptstadt", "ein Touristenziel", "ein Wirtschaftszentrum"]
+
+DIM start = TICK()
+FOR i = 0 TO 199
+  DIM city = topics[i MOD 10]
+  DIM v = verbs[i MOD 4]
+  DIM r = rest[i MOD 5]
+  DIM s = city + " " + v + " " + r + " (Variante " + STR$(i) + ")"
+  AI.RAG_ADD rag, s, "doc_" + STR$(i)
+NEXT i
+DIM build_ms = TICK() - start
+PRINT "  Indexierung: "; build_ms; "ms (200 chunks)"
+
+DIM info = AI.RAG_INFO(rag)
+PRINT "  chunks="; info{"chunks"}; " mode="; info{"mode"}; " index="; info{"index"}
+
+PRINT ""
+PRINT "=== Linear search timing ==="
+DIM q AS STRING = "Hauptstadt von Frankreich"
+DIM t1 = TICK()
+FOR i = 0 TO 9
+  DIM h_lin = AI.RAG_SEARCH(rag, q, 5)
+NEXT i
+DIM linear_ms = TICK() - t1
+PRINT "  10 queries: "; linear_ms; "ms"
+PRINT "  Top result: "; h_lin[0]{"source"}; " (score="; h_lin[0]{"score"}; ")"
+
+PRINT ""
+PRINT "=== HNSW build ==="
+DIM tb = TICK()
+AI.RAG_BUILD_INDEX rag, 16, 200
+DIM hnsw_build_ms = TICK() - tb
+PRINT "  HNSW build: "; hnsw_build_ms; "ms"
+
+DIM info2 = AI.RAG_INFO(rag)
+PRINT "  index nach build: "; info2{"index"}
+
+PRINT ""
+PRINT "=== HNSW search timing ==="
+DIM t2 = TICK()
+FOR i = 0 TO 9
+  DIM h_hnsw = AI.RAG_SEARCH(rag, q, 5)
+NEXT i
+DIM hnsw_ms = TICK() - t2
+PRINT "  10 queries: "; hnsw_ms; "ms"
+PRINT "  Top result: "; h_hnsw[0]{"source"}; " (score="; h_hnsw[0]{"score"}; ")"
+
+PRINT ""
+PRINT "=== Recall check (Top-5 ueberlappung) ==="
+DIM hits_l = AI.RAG_SEARCH(rag, q, 5)
+' Tatsaechlich nochmal mit linear vergleichen — dazu HNSW abwerfen
+' (kann ich nicht direkt, also vergleiche ich Sources)
+PRINT "Linear top-5:"
+FOR i = 0 TO LEN(h_lin) - 1
+  PRINT "  "; h_lin[i]{"source"}; " (score="; h_lin[i]{"score"}; ")"
+NEXT i
+PRINT ""
+PRINT "HNSW top-5:"
+FOR i = 0 TO LEN(h_hnsw) - 1
+  PRINT "  "; h_hnsw[i]{"source"}; " (score="; h_hnsw[i]{"score"}; ")"
+NEXT i
+
+PRINT ""
+PRINT "=== Save with HNSW + Reload ==="
+AI.RAG_SAVE rag, "tests/test_rag_hnsw.bin"
+DIM rag2 = AI.RAG_LOAD("tests/test_rag_hnsw.bin", 0, emb)
+DIM info3 = AI.RAG_INFO(rag2)
+PRINT "  Nach Reload: chunks="; info3{"chunks"}; " index="; info3{"index"}
+
+DIM h2 = AI.RAG_SEARCH(rag2, q, 3)
+PRINT "  Reloaded HNSW top-1: "; h2[0]{"source"}; " (score="; h2[0]{"score"}; ")"
+
+AI.FREE_LLM emb
+PRINT ""
+PRINT "Done."

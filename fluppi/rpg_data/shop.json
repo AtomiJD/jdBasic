@@ -1,0 +1,21 @@
+{
+    "name": "shop",
+    "width": 12,
+    "height": 10,
+    "bg": [25, 20, 15],
+    "camera_fixed": true,
+    "floor_tile": 9,
+    "wall_tile": 10,
+    "npcs": [
+        {"name": "Merchant", "x": 160, "y": 96,
+         "dialog": "Welcome to my shop! Would you like to browse my wares?",
+         "is_shop": true,
+         "shop_items": ["health_potion", "iron_sword", "wooden_shield", "magic_ring", "torch"],
+         "patrol": false}
+    ],
+    "objects": [],
+    "coins": [],
+    "doors": [
+        {"col": 5, "row": 9, "target": "overworld", "spawn_x": 320, "spawn_y": 576}
+    ]
+}

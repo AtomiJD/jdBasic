@@ -1,0 +1,66 @@
+' Destructuring Assignment Sample for jdBasic
+' This program demonstrates how to use the new destructuring syntax.
+
+PRINT "--- Destructuring Assignment Demo ---"
+PRINT
+
+' --- 1. Basic Assignment from a Literal Array ---
+PRINT "1. Simple assignment from an array literal"
+PRINT "[a, b] = [10, 20]"
+DIM a, b
+[a, b] = [10, 20]
+PRINT "a is: "; a
+PRINT "b is: "; b
+PRINT "---"
+
+' --- 2. Swapping Two Variables ---
+PRINT "2. Swapping two variables without a temporary variable"
+PRINT "[b, a] = [a, b]"
+PRINT "Before swap, a is "; a; " and b is "; b
+[b, a] = [a, b]
+PRINT "After swap, a is "; a; " and b is "; b
+PRINT "---"
+
+' --- 3. Unpacking the Result of a Function ---
+PRINT "3. Unpacking the return value of a function"
+
+FUNC GetPlayerStats()
+    ' This function simulates returning an array of stats.
+    RETURN ["jd", 99, 1000]
+ENDFUNC
+
+DIM name$, level, score
+[name$, level, score] = GetPlayerStats()
+PRINT "Player Name: "; name$
+PRINT "Player Level: "; level
+PRINT "Player Score: "; score
+PRINT "---"
+
+' --- 4. Unpacking with Extra Variables (Leftover values) ---
+PRINT "4. Unpacking with more variables than the array has"
+DIM x, y, z
+TRY
+    [x, y, z] = [1, 2] ' This will throw an error
+    PRINT "Array: [1, 2]"
+    PRINT "x is: "; x
+    PRINT "y is: "; y
+    PRINT "z is: "; z 
+    PRINT "---"
+CATCH   
+    PRINT ERRMSG$
+ENDTRY
+
+' --- 5. Unpacking with fewer variables (Ignoring values) ---
+PRINT "5. Unpacking with fewer variables than the array has"
+DIM val1, val2
+TRY
+    [val1, val2] = [100, 200, 300, 400]
+    PRINT "Array: [100, 200, 300, 400]"
+    PRINT "val1 is: "; val1 ' Takes the first value
+    PRINT "val2 is: "; val2 ' Takes the second value
+    PRINT "---"
+CATCH
+    PRINT ERRMSG$
+ENDTRY
+
+PRINT "--- Demo Complete ---"

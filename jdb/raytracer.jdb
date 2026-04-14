@@ -1,0 +1,293 @@
+' ===================================================================
+' == Fully Vectorized Raytracer for jdBasic (With Shadows)
+' ===================================================================
+'
+' This program renders a 3D scene by processing all pixels on the
+' screen simultaneously using jdBasic's array-oriented functions.
+'
+' --- FEATURES SHOWCASED ---
+' - Fully vectorized main loop, eliminating pixel-by-pixel iteration.
+' - Array-based vector math for high performance.
+' - Struct of Arrays (SoA) data layout for vectorized lookups.
+' - Vectorized shadow calculation.
+' - High-performance rendering with a single PLOTRAW command.
+'
+' -------------------------------------------------------------------
+
+' ===================================================================
+' 1. VECTOR MATH HELPERS (USING ARRAYS)
+' ===================================================================
+
+FUNC Dot(vecA, vecB)
+    RETURN SUM(vecA * vecB)
+ENDFUNC
+
+FUNC LengthSquared(vec)
+    RETURN SUM(vec * vec)
+ENDFUNC
+
+' ===================================================================
+' 2. CONFIGURATION AND SCENE SETUP (STRUCT OF ARRAYS)
+' ===================================================================
+' --- Graphics and Calculation Resolution ---
+SCREEN_W = 1280
+SCREEN_H = 720
+CALC_W = 320 ' Lower resolution for calculation speeds things up
+CALC_H = 180
+DX = SCREEN_W / CALC_W ' Scaling factor for PLOTRAW
+DY = SCREEN_H / CALC_H
+
+' --- Raytracing Parameters ---
+MAX_DEPTH = 3 ' How many times a ray can reflect
+NUM_SPHERES = 4
+AMBIENT_INTENSITY = 0.1 ' Added for more realistic lighting
+
+' --- Scene Objects ---
+Camera = [0, 0, 1]
+Light = [2, 2, 3]
+
+' --- Struct of Arrays (SoA) Data Layout ---
+' Instead of an array of Sphere objects, we have one array per property.
+' This allows for fully vectorized lookups using an index matrix.
+DIM SphereCenterX[NUM_SPHERES], SphereCenterY[NUM_SPHERES], SphereCenterZ[NUM_SPHERES]
+DIM SphereRadius[NUM_SPHERES]
+DIM SphereColorR[NUM_SPHERES], SphereColorG[NUM_SPHERES], SphereColorB[NUM_SPHERES]
+DIM SphereSpecular[NUM_SPHERES], SphereReflectivity[NUM_SPHERES]
+
+' Sphere 1: Big red sphere
+SphereCenterX[0] = 0    : SphereCenterY[0] = -0.6   : SphereCenterZ[0] = -2
+SphereRadius[0] = 0.5
+SphereColorR[0] = 255   : SphereColorG[0] = 0     : SphereColorB[0] = 0
+SphereSpecular[0] = 500 : SphereReflectivity[0] = 0.4
+
+' Sphere 2: Small blue sphere
+SphereCenterX[1] = -0.6 : SphereCenterY[1] = -0.4   : SphereCenterZ[1] = -1.5
+SphereRadius[1] = 0.2
+SphereColorR[1] = 0     : SphereColorG[1] = 0     : SphereColorB[1] = 255
+SphereSpecular[1] = 500 : SphereReflectivity[1] = 0.5
+
+' Sphere 3: Shiny green sphere
+SphereCenterX[2] = 0.5  : SphereCenterY[2] = -0.3   : SphereCenterZ[2] = -1.2
+SphereRadius[2] = 0.3
+SphereColorR[2] = 0     : SphereColorG[2] = 255   : SphereColorB[2] = 0
+SphereSpecular[2] = 10  : SphereReflectivity[2] = 0.6
+
+' Sphere 4: Giant "floor" sphere
+SphereCenterX[3] = 0    : SphereCenterY[3] = -100.8 : SphereCenterZ[3] = -2
+SphereRadius[3] = 100
+SphereColorR[3] = 200   : SphereColorG[3] = 200   : SphereColorB[3] = 200
+SphereSpecular[3] = 1000: SphereReflectivity[3] = 0.2
+
+
+' ===================================================================
+' 3. MAIN PROGRAM: FULLY VECTORIZED RENDER
+' ===================================================================
+
+PRINT "Initializing graphics..."
+SCREEN SCREEN_W, SCREEN_H, "jdBasic Fully Vectorized Raytracer"
+CLS 0, 0, 0
+
+PRINT "Preparing coordinate matrices..."
+' --- Vectorized Ray Generation ---
+PX_VEC = ((IOTA(CALC_W) - 1) / (CALC_W - 1)) * 2 - 1
+PY_VEC = ((IOTA(CALC_H) - 1) / (CALC_H - 1)) * 2 - 1
+PX_VEC = PX_VEC * (SCREEN_W / SCREEN_H)
+
+ScreenX = OUTER(PY_VEC * 0, PX_VEC, "+")
+ScreenY = OUTER(PY_VEC, PX_VEC * 0, "+") * -1
+
+' --- Create matrices for each component of the ray direction vectors ---
+RayDirX = ScreenX - Camera[0]
+RayDirY = ScreenY - Camera[1]
+RayDirZ = (ScreenX * 0) - Camera[2]
+
+' --- Normalize all ray direction vectors at once ---
+RayDirMag = SQR(RayDirX^2 + RayDirY^2 + RayDirZ^2)
+RayDirX = RayDirX / RayDirMag
+RayDirY = RayDirY / RayDirMag
+RayDirZ = RayDirZ / RayDirMag
+
+' --- Initialize matrices for the ray origin ---
+RayOriginX = RESHAPE([Camera[0]], [CALC_H, CALC_W])
+RayOriginY = RESHAPE([Camera[1]], [CALC_H, CALC_W])
+RayOriginZ = RESHAPE([Camera[2]], [CALC_H, CALC_W])
+
+' --- Initialize the final color matrices ---
+FinalColorR = RESHAPE([0], [CALC_H, CALC_W])
+FinalColorG = RESHAPE([0], [CALC_H, CALC_W])
+FinalColorB = RESHAPE([0], [CALC_H, CALC_W])
+ReflectivityMatrix = RESHAPE([1], [CALC_H, CALC_W])
+
+PRINT "Rendering scene with vectorized loop..."
+T_START = TICK()
+
+' --- Main Reflection Loop ---
+FOR Depth = 0 TO MAX_DEPTH - 1
+    ' --- Initialize matrices to find the closest sphere for each pixel ---
+    ClosestT = RESHAPE([99999.0], [CALC_H, CALC_W])
+    HitIndexMatrix = RESHAPE([-1], [CALC_H, CALC_W])
+
+    ' --- Vectorized Intersection Test for ALL spheres ---
+    FOR i = 0 TO NUM_SPHERES - 1
+        OC_X = RayOriginX - SphereCenterX[i]
+        OC_Y = RayOriginY - SphereCenterY[i]
+        OC_Z = RayOriginZ - SphereCenterZ[i]
+        
+        B = 2 * (OC_X * RayDirX + OC_Y * RayDirY + OC_Z * RayDirZ)
+        C = (OC_X^2 + OC_Y^2 + OC_Z^2) - SphereRadius[i]^2
+        Discriminant = B^2 - 4*C
+        
+        HitsMask = (Discriminant >= 0)
+        root = SQR(Discriminant * HitsMask)
+        t1 = (-B - root) / 2.0
+        t2 = (-B + root) / 2.0
+        
+        ' --- Robustly find the smallest positive intersection distance 't' ---
+        t = t1 * (t1 > 0.001)
+        UseT2Mask = (t <= 0.001) AND (t2 > 0.001)
+        t = t + (t2 * UseT2Mask)
+        
+        IsHitThisSphereMask = (t > 0.001) AND HitsMask
+        
+        ' Update the closest hit information for each pixel
+        IsCloserMask = IsHitThisSphereMask AND (t < ClosestT)
+        ClosestT = IsCloserMask * t + (1-IsCloserMask) * ClosestT
+        HitIndexMatrix = IsCloserMask * i + (1-IsCloserMask) * HitIndexMatrix
+    NEXT i
+
+    ' --- Vectorized Shading and Reflection ---
+    IsHitMask = (HitIndexMatrix > -1)
+    
+    ' --- Add background color for rays that missed everything in this pass ---
+    MissMask = (1 - IsHitMask)
+    FinalColorR = FinalColorR + MissMask * 20 * ReflectivityMatrix
+    FinalColorG = FinalColorG + MissMask * 20 * ReflectivityMatrix
+    FinalColorB = FinalColorB + MissMask * 40 * ReflectivityMatrix
+
+    IF NOT ANY(IsHitMask) THEN EXITFOR ' No remaining rays hit anything, we can stop
+
+    ' --- Create a "safe" index matrix to prevent out-of-bounds errors ---
+    SafeHitIndexMatrix = HitIndexMatrix * IsHitMask
+
+    ' Calculate properties for all hit points at once
+    HitPointX = RayOriginX + RayDirX * ClosestT
+    HitPointY = RayOriginY + RayDirY * ClosestT
+    HitPointZ = RayOriginZ + RayDirZ * ClosestT
+    
+    ' --- Gather sphere properties using vectorized indexing ---
+    GatheredColorR = RESHAPE(SphereColorR[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    GatheredColorG = RESHAPE(SphereColorG[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    GatheredColorB = RESHAPE(SphereColorB[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    GatheredSpecular = RESHAPE(SphereSpecular[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    GatheredReflectivity = RESHAPE(SphereReflectivity[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    GatheredCenterX = RESHAPE(SphereCenterX[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    GatheredCenterY = RESHAPE(SphereCenterY[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    GatheredCenterZ = RESHAPE(SphereCenterZ[SafeHitIndexMatrix], [CALC_H, CALC_W])
+    
+    NormalX = HitPointX - GatheredCenterX
+    NormalY = HitPointY - GatheredCenterY
+    NormalZ = HitPointZ - GatheredCenterZ
+    NormalMag = SQR(NormalX^2 + NormalY^2 + NormalZ^2)
+    NormalMag = NormalMag + (NormalMag = 0) ' Avoid division by zero
+    NormalX = NormalX / NormalMag
+    NormalY = NormalY / NormalMag
+    NormalZ = NormalZ / NormalMag
+    
+    ' --- Vectorized Normalization of View Vectors ---
+    TempViewX = Camera[0] - HitPointX
+    TempViewY = Camera[1] - HitPointY
+    TempViewZ = Camera[2] - HitPointZ
+    ViewMag = SQR(TempViewX^2 + TempViewY^2 + TempViewZ^2)
+    ViewMag = ViewMag + (ViewMag = 0) 
+    ViewDirX = TempViewX / ViewMag
+    ViewDirY = TempViewY / ViewMag
+    ViewDirZ = TempViewZ / ViewMag
+
+    ' --- Vectorized Normalization of Light Vectors ---
+    TempLightX = Light[0] - HitPointX
+    TempLightY = Light[1] - HitPointY
+    TempLightZ = Light[2] - HitPointZ
+    LightMag = SQR(TempLightX^2 + TempLightY^2 + TempLightZ^2)
+    LightMag = LightMag + (LightMag = 0)
+    LightDirX = TempLightX / LightMag
+    LightDirY = TempLightY / LightMag
+    LightDirZ = TempLightZ / LightMag
+
+    ' --- SHADOW CALCULATION ---
+    InShadowMask = RESHAPE([0], [CALC_H, CALC_W]) ' 0 = not in shadow, 1 = in shadow
+    FOR j = 0 TO NUM_SPHERES - 1
+        OC_X = HitPointX - SphereCenterX[j]
+        OC_Y = HitPointY - SphereCenterY[j]
+        OC_Z = HitPointZ - SphereCenterZ[j]
+        
+        B = 2 * (OC_X * LightDirX + OC_Y * LightDirY + OC_Z * LightDirZ)
+        C = (OC_X^2 + OC_Y^2 + OC_Z^2) - SphereRadius[j]^2
+        Discriminant = B^2 - 4*C
+        
+        HitsMask = (Discriminant >= 0)
+        root = SQR(Discriminant * HitsMask)
+        t = (-B - root) / 2.0
+        
+        ' A point is in shadow if it intersects an object between the point and the light
+        IsShadowedByThisSphere = (t > 0.001) AND (t < LightMag) AND HitsMask
+        InShadowMask = InShadowMask OR IsShadowedByThisSphere
+    NEXT j
+    
+    ' --- LIGHTING CALCULATION (with shadows) ---
+    Dot_Normal_Light = NormalX * LightDirX + NormalY * LightDirY + NormalZ * LightDirZ
+    DiffuseIntensity = (Dot_Normal_Light > 0) * Dot_Normal_Light
+    
+    ReflectedDirX = NormalX * (2 * Dot_Normal_Light) - LightDirX
+    ReflectedDirY = NormalY * (2 * Dot_Normal_Light) - LightDirY
+    ReflectedDirZ = NormalZ * (2 * Dot_Normal_Light) - LightDirZ
+    
+    Dot_Reflected_View = ReflectedDirX * ViewDirX + ReflectedDirY * ViewDirY + ReflectedDirZ * ViewDirZ
+    SpecularIntensity = ((Dot_Reflected_View > 0) * Dot_Reflected_View) ^ GatheredSpecular
+    
+    ' Calculate the color contribution for this reflection level
+    ' Apply the shadow mask to the diffuse and specular components
+    LightFactor = (1 - InShadowMask) * (DiffuseIntensity + SpecularIntensity) + AMBIENT_INTENSITY
+    ColorAtHitR = GatheredColorR * LightFactor
+    ColorAtHitG = GatheredColorG * LightFactor
+    ColorAtHitB = GatheredColorB * LightFactor
+    
+    ' --- Add the color component for rays that hit something ---
+    FinalColorR = FinalColorR + ColorAtHitR * ReflectivityMatrix * (1 - GatheredReflectivity) * IsHitMask
+    FinalColorG = FinalColorG + ColorAtHitG * ReflectivityMatrix * (1 - GatheredReflectivity) * IsHitMask
+    FinalColorB = FinalColorB + ColorAtHitB * ReflectivityMatrix * (1 - GatheredReflectivity) * IsHitMask
+    
+    ' --- Prepare for the next reflection pass ---
+    ReflectivityMatrix = ReflectivityMatrix * GatheredReflectivity * IsHitMask
+    
+    RayOriginX = HitPointX
+    RayOriginY = HitPointY
+    RayOriginZ = HitPointZ
+    
+    Dot_View_Normal = ViewDirX * NormalX + ViewDirY * NormalY + ViewDirZ * NormalZ
+    RayDirX = (ViewDirX * -1) + NormalX * (2 * Dot_View_Normal)
+    RayDirY = (ViewDirY * -1) + NormalY * (2 * Dot_View_Normal)
+    RayDirZ = (ViewDirZ * -1) + NormalZ * (2 * Dot_View_Normal)
+NEXT Depth
+
+T_END = TICK()
+PRINT "Render complete in "; (T_END - T_START) / 1000.0; " seconds."
+
+' --- Finalize and Display ---
+PRINT "Drawing final image with PLOTRAW..."
+' Clamp color values to the 0-255 range
+R = (FinalColorR > 255) * 255 + (FinalColorR <= 255) * FinalColorR
+G = (FinalColorG > 255) * 255 + (FinalColorG <= 255) * FinalColorG
+B = (FinalColorB > 255) * 255 + (FinalColorB <= 255) * FinalColorB
+
+' Pack RGB into a single integer matrix for PLOTRAW
+ColorMatrix = R * 65536 + G * 256 + B
+
+PLOTRAW 0, 0, ColorMatrix, DX, DY
+SCREENFLIP
+
+' --- Wait for user to exit ---
+PRINT "Press any key to exit."
+DO
+    A$ = INKEY$()
+    SLEEP 20
+LOOP UNTIL A$ > ""

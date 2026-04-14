@@ -1,0 +1,5 @@
+MyNumbers = IOTA(10)
+
+result = SELECT(lambda i -> i + 1, MyNumbers) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
+
+PRINT "Piped lambda result:   "; FRMV$(result)

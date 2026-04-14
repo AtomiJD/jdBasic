@@ -1,0 +1,55 @@
+' ── DIR$ (simple) ──────────────────────────────────
+PRINT "=== DIR$ ==="
+DIM files = DIR$("*.jdb")
+PRINT "JDB files: "; LEN(files)
+PRINT "First 3: "; TAKE(3, files)
+
+' ── DIR$ (extended) ───────────────────────────────
+PRINT ""
+PRINT "=== DIR$ extended ==="
+DIM info = DIR$("*.jdb", TRUE)
+PRINT "Columns: name, size, type, date, attr"
+FOR I = 0 TO 2
+    PRINT info[I]
+NEXT I
+
+' ── DIR (formatted listing) ───────────────────────
+PRINT ""
+PRINT "=== DIR ==="
+DIR "*.bat"
+
+' ── PWD ───────────────────────────────────────────
+PRINT ""
+PRINT "=== PWD ==="
+PRINT "CWD: "; PWD()
+
+' ── MKDIR / CD ────────────────────────────────────
+PRINT ""
+PRINT "=== MKDIR/CD ==="
+MKDIR "__test_dir__"
+CD "__test_dir__"
+PRINT "In: "; PWD()
+CD ".."
+PRINT "Back: "; PWD()
+
+' Clean up test dir
+DIM r = OS.EXEC("rmdir __test_dir__")
+
+' ── PATH functions ────────────────────────────────
+PRINT ""
+PRINT "=== PATH ==="
+PRINT "JOIN: "; PATH.JOIN$("C:", "Users", "test", "file.txt")
+PRINT "BASENAME: "; PATH.BASENAME$("C:\Users\test\file.txt")
+PRINT "EXT: "; PATH.EXT$("document.tar.gz")
+PRINT "EXT(no ext): "; PATH.EXT$("Makefile")
+
+' ── KILL ──────────────────────────────────────────
+PRINT ""
+PRINT "=== KILL ==="
+TXTWRITER "test_kill.tmp", "delete me"
+PRINT "Created: "; LEN(DIR$("test_kill.tmp")); " file"
+KILL "test_kill.tmp"
+PRINT "After kill: "; LEN(DIR$("test_kill.tmp")); " files"
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

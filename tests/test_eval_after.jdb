@@ -1,0 +1,8 @@
+FUNC Calc(expression)
+  DIM r AS STRING = EVAL(expression)
+  RETURN STR(r)
+ENDFUNC
+
+PRINT Calc("42 * 17")
+PRINT "after"
+PRINT 1 + 1

@@ -1,0 +1,47 @@
+' ═══ Lambda ════════════════════════════════════════
+PRINT "=== Lambda ==="
+PRINT SELECT(LAMBDA I -> I + 1, IOTA(5))
+PRINT SELECT(LAMBDA I -> I * I, IOTA(5))
+PRINT FILTER(LAMBDA V -> V > 3, IOTA(10))
+PRINT REDUCE(LAMBDA A, B -> A + B, IOTA(10))
+
+' ═══ Pipe Operator ════════════════════════════════
+PRINT ""
+PRINT "=== Pipe Operator ==="
+PRINT SELECT(LAMBDA I -> I + 1, IOTA(10)) |> FILTER(LAMBDA V -> V > 5, ?) |> SELECT(LAMBDA V -> V * 10, ?)
+
+' Simple pipe
+PRINT IOTA(5) |> SUM(?)
+PRINT IOTA(5) |> REVERSE(?)
+
+' ═══ Lambda Closures with USE ═════════════════════
+PRINT ""
+PRINT "=== Closures ==="
+FUNC MakeAdder(base_value)
+    RETURN LAMBDA USE(base_value) x -> x + base_value
+ENDFUNC
+
+Add5 = MakeAdder(5)
+Add100 = MakeAdder(100)
+PRINT "5 + 10 = "; Add5(10)
+PRINT "100 + 10 = "; Add100(10)
+
+' ═══ Function-as-Operator ═════════════════════════
+PRINT ""
+PRINT "=== Function-as-Operator ==="
+FUNC JD(x, y)
+    IF y = 0 THEN
+        RETURN "Infinity"
+    ELSE
+        RETURN x / y
+    ENDIF
+ENDFUNC
+
+PRINT "10 JD@ 5 = "; 10 JD@ 5
+PRINT "10 JD@ 0 = "; 10 JD@ 0
+PRINT "IOTA(5) JD@ 2 = "; IOTA(5) JD@ 2
+
+' Combined: lambda + pipe + func-as-op
+PRINT ""
+PRINT "=== Combined ==="
+PRINT IOTA(10) |> SELECT(LAMBDA X -> X * 2, ?) |> FILTER(LAMBDA X -> X > 10, ?)

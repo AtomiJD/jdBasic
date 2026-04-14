@@ -1,0 +1,3 @@
+A = 1
+PRINT A
+PRINT "done"

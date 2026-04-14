@@ -1,0 +1,41 @@
+' RAG: Verzeichnis indizieren + Suche (ohne LLM-Generierung,
+' nur die TF-IDF-Engine — kein .gguf Modell nötig)
+
+PRINT "Lade Mini-LLM-Stub für Embeddings..."
+' AI.RAG_CREATE braucht eine LLM-ID, aber für reine Suche
+' benutzen wir nur die TF-IDF-Engine.
+
+' Wir bauen einen Test ohne llama.cpp: nutze llm_id = 0 (kein echtes Modell)
+DIM rag = AI.RAG_CREATE(0, 400, 40)
+PRINT "RAG erstellt: id="; rag
+
+PRINT ""
+PRINT "Indiziere src/ Verzeichnis (.cpp/.h Dateien)..."
+DIM stats = AI.RAG_ADD_DIR(rag, "src", "*.{cpp,h}", 0)
+PRINT "  files_added:  "; stats{"files_added"}
+PRINT "  files_failed: "; stats{"files_failed"}
+PRINT "  total_chunks: "; stats{"total_chunks"}
+
+PRINT ""
+PRINT "=== Suche: 'inflate huffman' ==="
+DIM hits = AI.RAG_SEARCH(rag, "inflate huffman decoder", 3)
+FOR i = 0 TO LEN(hits) - 1
+  PRINT "  ["; i; "] score="; hits[i]{"score"}; "  src=", hits[i]{"source"}
+NEXT i
+
+PRINT ""
+PRINT "=== Suche: 'OpCode HALT' ==="
+DIM hits2 = AI.RAG_SEARCH(rag, "OpCode HALT subrun_depth", 3)
+FOR i = 0 TO LEN(hits2) - 1
+  PRINT "  ["; i; "] score="; hits2[i]{"score"}; "  src=", hits2[i]{"source"}
+NEXT i
+
+PRINT ""
+PRINT "=== Suche: 'PDF FlateDecode' ==="
+DIM hits3 = AI.RAG_SEARCH(rag, "PDF FlateDecode stream parse", 3)
+FOR i = 0 TO LEN(hits3) - 1
+  PRINT "  ["; i; "] score="; hits3[i]{"score"}; "  src=", hits3[i]{"source"}
+NEXT i
+
+PRINT ""
+PRINT "Done."

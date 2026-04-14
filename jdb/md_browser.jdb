@@ -1,0 +1,316 @@
+    ' ==========================================================
+' == jdBasic Console Markdown Browser
+' == Renders local or web markdown files and allows navigating
+' == between them via links.
+' ==========================================================
+
+' --- ANSI STYLE ENUM ---
+ENUM Style
+    Default = 0
+    Bold = 1
+    Italic = 3
+    NoItalic = 23
+    NoBold = 22
+    Underline = 4
+    NoUnderline = 24
+    Negative = 7
+    Positive  = 27
+ENDENUM
+
+' --- ANSI HELPER FUNCTION ---
+FUNC cesc_m(EscapeCode)
+    IF TYPEOF(EscapeCode) <> "STRING" THEN
+        EscapeCode = STR$(EscapeCode)
+    ENDIF
+    RETURN CHR$(27) + "[" + EscapeCode + "m"
+ENDFUNC
+
+' --- COLOR CONSTANTS ---
+COLOR_DEFAULT = 7
+COLOR_HEADING = 14
+COLOR_CODE_BLOCK = 13
+COLOR_BLOCKQUOTE = 10
+COLOR_LIST = 7
+COLOR_HR = 8
+COLOR_LINK = 4
+COLOR_LINK_SELECTED = 12
+COLOR_LINKBG = 8
+
+' --- GLOBAL VARIABLES FOR INTERACTIVITY ---
+Links = []
+DIM current_link_index = -1
+
+' ==========================================================
+' == HELPER SUB: PROCESSINLINES(line$)
+' == This sub handles inline formatting. It returns a map containing
+' == the formatted string and an array of extracted link URLs.
+' ==========================================================
+FUNC ProcessInlines(line$)
+    local_links = []
+    temp_line$ = line$
+    
+    DO WHILE INSTR$(temp_line$, "[") >= 0 AND INSTR$(temp_line$, "](") > INSTR$(temp_line$, "[")
+        match = REGEX.MATCH("\[([^\]]+)\]\(([^)]+)\)", temp_line$)
+        IF TYPEOF(match) = "ARRAY" THEN
+            link_text$ = match[0]
+            link_url$ = match[1]
+            local_links = APPEND(local_links, link_url$)
+            temp_line$ = REPLACE$(temp_line$, "[" + link_text$ + "](" + link_url$ + ")", CHR$(1) + link_text$ + CHR$(1))
+        ELSE
+            EXITLOOP
+        ENDIF
+    LOOP
+    line$ = temp_line$
+
+    bold_start$ = cesc_m(Style.Bold)
+    bold_end$ = cesc_m(Style.NoBold)
+    italic_start$ = cesc_m(Style.Italic)
+    italic_end$ = cesc_m(Style.NoItalic)
+    bold_italic_start$ = bold_start$ + italic_start$
+    bold_italic_end$ = bold_end$ + italic_end$
+    code_start$ = cesc_m(Style.Negative)
+    code_end$ = cesc_m(Style.Positive)
+
+    line$ = REGEX.REPLACE("\*\*\*([^*]+)\*\*\*", line$, bold_italic_start$ + "$1" + bold_italic_end$)
+    line$ = REGEX.REPLACE("\*\*([^*]+)\*\*", line$, bold_start$ + "$1" + bold_end$)
+    line$ = REGEX.REPLACE("\*([^*]+)\*", line$, italic_start$ + "$1" + italic_end$)
+    line$ = REGEX.REPLACE("`([^`]+)`", line$, code_start$ + "$1" + code_end$)
+
+    RETURN {"text": line$, "links": local_links}
+ENDFUNC
+
+' ==========================================================
+' == HELPER SUB: RENDERANDCOLLECT(line_info)
+' == Prints a formatted line character by character, collecting
+' == link positions as it goes.
+' ==========================================================
+SUB RenderAndCollect(line_info)
+    formatted_line$ = line_info{"text"}
+    local_links = line_info{"links"}
+    link_counter = 0
+    in_link = FALSE
+    link_text_buffer$ = ""
+
+    FOR i = 0 TO LEN(formatted_line$) - 1
+        char$ = MID$(formatted_line$, i, 1)
+
+        IF ASC(char$) = 1 THEN ' Our link placeholder
+            in_link = NOT in_link
+            IF in_link THEN
+                link_x = GETX()
+                link_y = GETY()
+                COLOR COLOR_LINK, 0
+            ELSE
+                link_map = { "url": local_links[link_counter], "text": link_text_buffer$, "x": link_x, "y": link_y }
+                Links = APPEND(Links, link_map)
+                link_text_buffer$ = ""
+                link_counter = link_counter + 1
+                COLOR COLOR_DEFAULT, 0
+            ENDIF
+        ELSEIF in_link THEN
+            link_text_buffer$ = link_text_buffer$ + char$
+            PRINT char$;
+        ELSE
+            PRINT char$;
+        ENDIF
+    NEXT
+    PRINT
+ENDSUB
+
+' ==========================================================
+' == MAIN SUB: RENDERMARKDOWN(markdown_text$)
+' == Takes a block of Markdown text and prints it formatted.
+' ==========================================================
+SUB RenderMarkdown(markdown_text$)
+    lines = SPLIT(markdown_text$, CHR$(10))
+    in_code_block = FALSE
+    Links = [] ' Clear links for the new page
+    current_link_index = -1
+
+    FOR EACH aline IN lines
+        trimmed_line$ = TRIM$(aline)
+        
+        IF 3 / trimmed_line$ = "```" THEN
+            in_code_block = NOT in_code_block
+            GOTO outi
+        ENDIF
+
+        IF in_code_block THEN
+            COLOR COLOR_CODE_BLOCK, 0
+            PRINT "    "; aline
+            COLOR COLOR_DEFAULT, 0
+            GOTO outi
+        ENDIF
+        
+        IF 1 / trimmed_line$ = "#" THEN
+            level = INSTR$(trimmed_line$, " ")
+            heading_text$ = TRIM$(MID$(trimmed_line$, level))
+            COLOR COLOR_HEADING, 0
+            PRINT
+            RenderAndCollect(ProcessInlines(heading_text$))
+            COLOR COLOR_HR, 0
+            PRINT "─" * LEN(heading_text$)
+            COLOR COLOR_DEFAULT, 0
+            PRINT
+        
+        ELSEIF REGEX.MATCH("^-{3,}$", trimmed_line$) OR REGEX.MATCH("^\*{3,}$", trimmed_line$) THEN
+            COLOR COLOR_HR, 0
+            PRINT "─" * 80
+            COLOR COLOR_DEFAULT, 0
+        
+        ELSEIF REGEX.MATCH("^>", trimmed_line$) THEN
+            quote_text$ = TRIM$(MID$(trimmed_line$, 2))
+            COLOR COLOR_BLOCKQUOTE, 0
+            PRINT " │  ";
+            RenderAndCollect(ProcessInlines(quote_text$))
+            COLOR COLOR_DEFAULT, 0
+            
+        ELSEIF REGEX.MATCH("^\s*[*+-]\s+", trimmed_line$) THEN
+            list_text$ = REGEX.REPLACE("^\s*[*+-]\s+", trimmed_line$, "")
+            COLOR COLOR_LIST, 0
+            PRINT "  • ";
+            RenderAndCollect(ProcessInlines(list_text$))
+            COLOR COLOR_DEFAULT, 0
+        
+        ELSEIF trimmed_line$ = "" THEN
+            PRINT
+
+        ELSE ' Paragraph
+            RenderAndCollect(ProcessInlines(aline))
+        ENDIF
+outi:       
+    NEXT
+ENDSUB
+
+' ==========================================================
+' == INTERACTION FUNCTIONS
+' ==========================================================
+SUB HighlightLink(index, selected)
+    IF index < 0 OR index >= LEN(Links) THEN RETURN
+    link = Links[index]
+    LOCATE link[0]{"y"}, link[0]{"x"}
+    IF selected THEN
+        COLOR COLOR_LINK, COLOR_LINKBG
+    ELSE
+        COLOR COLOR_LINK_SELECTED, 0
+    ENDIF
+    PRINT cesc_m(Style.Underline); link[0]{"text"}; cesc_m(Style.NoUnderline);
+    COLOR COLOR_DEFAULT, 0
+ENDSUB
+
+SUB SelectNextLink()
+    HighlightLink current_link_index, FALSE
+    current_link_index = (current_link_index + 1) MOD LEN(Links)
+    HighlightLink current_link_index, TRUE 
+ENDSUB
+
+' Decides whether to browse to a new .md file or open an external link.
+' Returns the new .md file path, or "" if no navigation occurs.
+FUNC OpenSelectedLink()
+    IF current_link_index < 0 OR LEN(Links) = 0 THEN RETURN ""
+
+    url$ = Links[current_link_index][0]{"url"}
+    
+    ' Check if it's a markdown file to browse internally
+    IF LCASE$(RIGHT$(url$, 3)) = ".md" THEN
+        RETURN url$
+    ENDIF
+
+    ' It's an external link, open it with the system
+    os$ = OS.GETOS()
+    LOCATE GETY() + 2, 1
+    PRINT "Opening external link: " + url$
+    
+    ' TRY
+    '     IF os$ = "WINDOWS" THEN 
+    '         OS.EXEC("start", [url$])
+    '     ELSEIF os$ = "MACOS" THEN 
+    '         OS.EXEC("open", [url$])
+    '     ELSE 
+    '         OS.EXEC("xdg-open", [url$])
+    '     ENDIF
+    ' CATCH
+    '     PRINT "Failed to open link. Error: "; ERRMSG$
+    '     SLEEP 2000 ' Show error for a moment
+    ' ENDTRY
+    
+    RETURN "" ' Indicate that no internal navigation should happen
+ENDFUNC
+
+' Handles the user input loop after a page is rendered.
+' Returns the next action: a new URL to browse, or "quit".
+FUNC InteractionLoop()
+    IF LEN(Links) = 0 THEN
+        PRINT "No links on this page. Press any key to quit."
+        WAITKEY$()
+        RETURN "quit"
+    ENDIF
+    
+    orig_y = GETY()
+    LOCATE orig_y + 1, 1
+    PRINT "TAB: cycle links, ENTER: open, ESC/Q: quit."
+    
+    SelectNextLink() ' Highlight the first link
+    
+    DO
+        key$ = WAITKEY$()
+        SWITCH ASC(key$)
+            CASE 9 ' TAB
+                SelectNextLink()
+            CASE 13 ' Enter
+                next_action$ = OpenSelectedLink()
+                IF next_action$ <> "" THEN
+                    LOCATE orig_y + 1, 1: PRINT " " * 80
+                    RETURN next_action$ ' Return new .md file to browse
+                ENDIF
+            CASE 27 ' ESC
+                RETURN "quit"
+        ENDSWITCH
+        IF LCASE$(key$) = "q" THEN RETURN "quit"
+    LOOP
+ENDFUNC
+
+' ==========================================================
+' ==                 MAIN BROWSER LOOP
+' ==========================================================
+current_file$ = "test.md" ' Set your starting file here
+CLS
+DO
+    content$ = ""
+    ' --- 1. Load the content of the markdown file ---
+    IF LEFT$(LCASE$(current_file$), 4) = "http" THEN
+        TRY
+            PRINT "Fetching "; current_file$; "..."
+            content$ = HTTP.GET$(current_file$)
+        CATCH
+            CLS
+            PRINT "Error fetching URL: "; current_file$
+            PRINT ERRMSG$
+            SLEEP 3000
+            current_file$ = "quit" ' Exit on error
+        ENDTRY
+    ELSE
+        TRY
+            content$ = TXTREADER$(current_file$)
+        CATCH
+            CLS
+            PRINT "Error reading local file: "; current_file$
+            PRINT ERRMSG$
+            SLEEP 3000
+            current_file$ = "quit" ' Exit on error
+        ENDTRY
+    ENDIF
+
+    ' --- 2. If content loaded, render it and start interaction ---
+    IF current_file$ <> "quit" THEN
+        CLS
+        RenderMarkdown(content$)
+        current_file$ = InteractionLoop()
+    ENDIF
+
+LOOP UNTIL current_file$ = "quit"
+
+' --- 3. Cleanup ---
+CLS
+COLOR COLOR_DEFAULT, 0
+PRINT "Markdown browser closed."

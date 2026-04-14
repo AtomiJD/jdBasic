@@ -1,0 +1,19 @@
+' 1. Datei einlesen
+content$ = TXTREADER$("lall.jdb")
+
+' 2. Auf vbnewline in ein Array splitten
+lines = SPLIT(content$, VBNEWLINE)
+
+' 3. Führende Zeilennummern mittels Regex über das gesamte Array entfernen
+clean_lines = SELECT(LAMBDA l -> REGEX.REPLACE("^\s*\d+\s*", l, ""), lines)
+
+' 4. Array wieder zu einem sauberen String zusammenbauen
+result$ = ""
+FOR EACH l IN clean_lines
+    result$ = result$ + l + VBNEWLINE
+NEXT
+
+' 5. Bereinigte Datei speichern
+TXTWRITER "lall_clean.jdb", result$
+
+PRINT "Führende Zahlen entfernt und in lall_clean.js gespeichert."

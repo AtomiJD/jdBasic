@@ -1,0 +1,385 @@
+' ============================================================
+' == HOLLYWOOD SYSTEM MONITOR v2.0 (The "Matrix" Edition)
+' == 250x70 TUI Dashboard for jdBasic
+' ============================================================
+
+' --- CONFIGURATION ---
+' Ensure your terminal window is large enough!
+
+' Screen optimized for 4k display and full screen console
+SCREEN_W = 240
+SCREEN_H = 65
+DELAY_MS = 30
+
+' --- THEME COLORS ---
+C_BACK = 0   ' Black
+C_MAIN = 2   ' Green (Matrix style)
+C_HIGH = 10  ' Bright Green
+C_WARN = 12  ' Red
+C_INFO = 11  ' Cyan
+C_DIM  = 8   ' Dark Gray
+
+' --- GLOBAL ARRAYS & STATE ---
+DIM MatrixDrops[60]    ' Rain drops for left panel
+DIM MatrixLen[60]      ' Length of trails
+DIM GraphCPU[40]       ' CPU History
+DIM GlobePoints[200,3] ' [x, y, z] for 3D globe points
+DIM SatPos[3]          ' Satellite [x, y, z]
+DIM Logs[15]           ' Rolling log messages
+
+' Initialize Random Seed
+dummy = RND(-1)
+
+' --- SETUP ---
+CLS
+CURSOR FALSE
+COLOR C_MAIN, C_BACK
+
+' --- INITIALIZATION ---
+InitMatrix 60
+InitGlobe 200
+InitGraph 40
+InitLogs 15
+
+' Global Rotation Angle
+GlobeAngle = 0.0
+SatAngle = 0.0
+MenuOpen = 0
+
+' ============================================================
+' == MAIN LOOP
+' ============================================================
+DO
+    ' --- 1. Left Panel: Matrix Rain (Cols 1-60) ---
+    UpdateMatrixRain 2, 2, 58, SCREEN_H - 4
+    DrawBox 1, 1, 60, SCREEN_H - 2, "SECURE UPLINK"
+
+    ' --- 2. Center Panel: The Globe (Cols 62-180) ---
+    DrawBox 62, 1, 118, 40, "GEO-SPATIAL TRACKING"
+    DrawGlobe 121, 20, 18, GlobeAngle, SatAngle
+    GlobeAngle = GlobeAngle + 0.05
+    SatAngle = SatAngle + 0.1
+    
+    ' --- 2b. Center Bottom: Neural Net Training ---
+    DrawBox 62, 41, 118, 24, "NEURAL NETWORK OPTIMIZER"
+    UpdateNeuralNet 64, 43, 114, 20
+
+    ' --- 3. Right Panel: System Stats (Cols 182-249) ---
+    DrawBox 182, 1, 68, 20, "CPU / MEMORY LOAD"
+    UpdateGraph 184, 3, 64, 16
+    
+    DrawBox 182, 22, 68, 20, "DECRYPTION ENGINE"
+    UpdateDecryption 184, 24, 64, 16
+    
+    DrawBox 182, 43, 68, 20, "SYSTEM EVENT LOG"
+    UpdateLog 184, 45, 64, 18
+
+    ' --- 4. Menu Overlay ---
+    IF MenuOpen THEN DrawMenu 100, 20
+
+    ' --- 5. Status Bar ---
+    LOCATE SCREEN_H, 1
+    COLOR 0, 7 ' Invert colors
+    PRINT FORMAT$(" STATUS: ONLINE | IP: 192.168.X.X | UPTIME: {} | PRESS 'M' FOR MENU | 'Q' TO QUIT ", TIME$);
+    ' Fill rest of line
+    PRINT (SCREEN_W - 80) * " ";
+    COLOR C_MAIN, C_BACK
+
+    ' --- Input Handling ---
+    SLEEP DELAY_MS
+    
+    k$ = UCASE$(INKEY$())
+    IF k$ = "M" THEN MenuOpen = NOT MenuOpen
+    IF k$ = "R" THEN InitMatrix 60 : InitGlobe 200 ' Reset
+    
+LOOP UNTIL k$ = CHR$(27) OR k$ = "Q"
+
+CURSOR TRUE
+COLOR 7, 0
+CLS
+PRINT "System Halted."
+END
+
+' ============================================================
+' == SUBROUTINES: WIDGETS
+' ============================================================
+
+SUB InitMatrix(cols)
+    FOR i = 0 TO cols - 1
+        MatrixDrops[i] = INT(RND(1) * SCREEN_H) * -1
+        MatrixLen[i] = INT(RND(1) * 15) + 5
+    NEXT
+ENDSUB
+
+SUB UpdateMatrixRain(x, y, w, h)
+    FOR c = 0 TO w - 1 STEP 2 ' Skip every other column for style
+        colIdx = INT(c/2)
+        dropY = MatrixDrops[colIdx]
+        
+        ' Draw Head (White)
+        realY = y + dropY
+        IF realY >= y AND realY < y + h THEN
+            LOCATE realY, x + c
+            COLOR 15, 0 : PRINT CHR$(INT(RND(1)*93)+33);
+        ENDIF
+        
+        ' Draw Tail (Green)
+        prevY = realY - 1
+        IF prevY >= y AND prevY < y + h THEN
+            LOCATE prevY, x + c
+            COLOR 2, 0 : PRINT CHR$(INT(RND(1)*93)+33);
+        ENDIF
+        
+        ' Erase End
+        eraseY = realY - MatrixLen[colIdx]
+        IF eraseY >= y AND eraseY < y + h THEN
+            LOCATE eraseY, x + c
+            PRINT " ";
+        ENDIF
+        
+        ' Move & Reset
+        MatrixDrops[colIdx] = MatrixDrops[colIdx] + 1
+        IF (dropY - MatrixLen[colIdx]) > h THEN
+            MatrixDrops[colIdx] = INT(RND(1) * 10) * -1
+        ENDIF
+    NEXT
+    COLOR C_MAIN, C_BACK
+ENDSUB
+
+SUB InitGlobe(numPoints)
+    ' Generate random points on a sphere using Marsaglia method
+    ' This creates a uniform distribution without needing ACOS or PI
+    FOR i = 0 TO numPoints - 1
+        u = 0.0 : v = 0.0 : s = 0.0
+        
+        ' 1. Pick a random point inside the unit circle (u, v)
+        DO
+            u = 2.0 * RND(1) - 1.0
+            v = 2.0 * RND(1) - 1.0
+            s = u*u + v*v
+        LOOP UNTIL s < 1.0 AND s > 0.0
+        
+        ' 2. Project onto the sphere
+        ' Formulas: x=2u*sqrt(1-s), y=2v*sqrt(1-s), z=1-2s
+        root = SQR(1.0 - s)
+        r = 15 ' Radius
+        
+        GlobePoints[i, 0] = r * (2.0 * u * root)
+        GlobePoints[i, 1] = r * (2.0 * v * root)
+        GlobePoints[i, 2] = r * (1.0 - 2.0 * s)
+    NEXT
+ENDSUB
+
+SUB DrawGlobe(cx, cy, r, rot, satRot)
+    ' Clear Globe Area (Quickly)
+    COLOR C_DIM, C_BACK
+    FOR i = -r TO r
+        LOCATE cy + i, cx - (r*2)
+        PRINT (r * 4) * " ";
+    NEXT
+
+    ' Draw Globe Points
+    COLOR C_INFO, C_BACK
+    FOR i = 0 TO 199
+        ' 3D Rotation (around Y axis)
+        x = GlobePoints[i, 0]
+        y = GlobePoints[i, 1]
+        z = GlobePoints[i, 2]
+        
+        rotX = x * COS(rot) - z * SIN(rot)
+        rotZ = x * SIN(rot) + z * COS(rot)
+        
+        ' Project to 2D (Perspective)
+        scale = 1.0 / (1 + rotZ / 100)
+        sx = INT(cx + (rotX * scale * 2)) ' *2 for aspect ratio correction
+        sy = INT(cy + (y * scale))
+        
+        LOCATE sy, sx
+        IF rotZ > 0 THEN 
+            PRINT "."; 
+        ELSE 
+            PRINT "o";
+        ENDIF
+    NEXT
+    
+    ' Draw Satellite
+    satX = (r + 5) * COS(satRot)
+    satZ = (r + 5) * SIN(satRot)
+    
+    ' Tilt orbit
+    satY = satX * 0.5 
+    satX = satX * 0.8
+    
+    LOCATE cy + INT(satY), cx + INT(satX * 2)
+    COLOR C_WARN, C_BACK
+    PRINT "*";
+    LOCATE cy + INT(satY) + 1, cx + INT(satX * 2)
+    PRINT "SAT_UPLINK";
+    COLOR C_MAIN, C_BACK
+ENDSUB
+
+SUB InitGraph(size)
+    FOR i = 0 TO size - 1 : GraphCPU[i] = 1 : NEXT
+ENDSUB
+
+SUB UpdateGraph(x, y, w, h)
+    ' Shift Data
+    FOR i = 0 TO 38 : GraphCPU[i] = GraphCPU[i+1] : NEXT
+    
+    ' New random load with some smoothing
+    prev = GraphCPU[38]
+    nextVal = prev + INT(RND(1)*6) - 3
+    IF nextVal < 1 THEN nextVal = 1
+    IF nextVal > (h-2) THEN nextVal = h-2
+    GraphCPU[39] = nextVal
+    
+    ' Draw
+    FOR col = 0 TO 39
+        val = GraphCPU[col]
+        realX = x + col
+        
+        ' Clear Col
+        FOR r = 0 TO h-1
+            LOCATE y + r, realX : PRINT " ";
+        NEXT
+        
+        ' Draw Bar
+        FOR r = 0 TO val
+            LOCATE y + h - 1 - r, realX
+            IF r > (h * 0.8) THEN 
+                COLOR C_WARN, C_BACK 
+            ELSE 
+                COLOR C_HIGH, C_BACK
+            ENDIF
+            PRINT "|";
+        NEXT
+    NEXT
+    COLOR C_MAIN, C_BACK
+ENDSUB
+
+SUB UpdateDecryption(x, y, w, h)
+    LOCATE y, x + 1 : PRINT "TARGET: 192.168.0.1 [SSH]";
+    LOCATE y + 2, x + 1 : PRINT "CIPHER: AES-256-GCM";
+    
+    ' Random rolling hex
+    FOR r = 4 TO h - 2
+        LOCATE y + r, x + 1
+        l$ = ""
+        FOR c = 1 TO (w / 3)
+            val = INT(RND(1) * 255)
+            IF val > 200 THEN 
+                COLOR 15, 0 
+            ELSE 
+                COLOR 2, 0
+            ENDIF
+            l$ = l$ + FORMAT$("{:02X} ", val)
+        NEXT
+        PRINT l$;
+    NEXT
+ENDSUB
+
+SUB InitLogs(size)
+    FOR i = 0 TO size - 1 : Logs[i] = "" : NEXT
+ENDSUB
+
+SUB UpdateLog(x, y, w, h)
+    IF RND(1) > 0.85 THEN
+        ' Generate Log
+        msg$ = "[" + TIME$ + "] "
+        a = INT(RND(1) * 4)
+        IF a=0 THEN msg$ = msg$ + "Packet blocked from 10.0.0." + INT(RND(1)*255)
+        IF a=1 THEN msg$ = msg$ + "Service DAEMON_" + INT(RND(1)*99) + " restarted."
+        IF a=2 THEN msg$ = msg$ + "Port " + INT(RND(1)*65000) + " handshake SYN/ACK."
+        IF a=3 THEN msg$ = msg$ + "WARN: High latency on node " + INT(RND(1)*5)
+        
+        ' Shift Logs
+        FOR i = 0 TO 13 : Logs[i] = Logs[i+1] : NEXT
+        Logs[14] = LEFT$(msg$, w-2)
+        
+        ' Redraw
+        FOR i = 0 TO 14
+            LOCATE y + i, x + 1
+            IF INSTR(Logs[i], "WARN") > 0 THEN 
+                COLOR C_WARN, C_BACK 
+            ELSE 
+                COLOR C_DIM, C_BACK
+            ENDIF
+            PRINT FORMAT$("{:<" + STR$(w-2) + "}", Logs[i]);
+        NEXT
+    ENDIF
+ENDSUB
+
+SUB UpdateNeuralNet(x, y, w, h)
+    ' Simulate training process
+    LOCATE y, x : PRINT "EPOCH: " + INT(TIME) + " | LOSS: " + FORMAT$("{:.6f}", RND(1)*0.5);
+    
+    ' Draw "weights" visualization (random grid)
+    FOR r = 2 TO h - 1
+        LOCATE y + r, x
+        l$ = ""
+        FOR c = 1 TO (w / 6)
+            v = RND(1)
+            IF v > 0.9 THEN 
+                tval$ = "[#]" 
+            ELSEIF v > 0.5 THEN 
+                tval$ = "[+]" 
+            ELSE 
+                tval$ = " . "
+            ENDIF
+            l$ = l$ + tval$ + " "
+        NEXT
+        PRINT l$;
+    NEXT
+ENDSUB
+
+SUB DrawBox(x, y, w, h, title$)
+    COLOR C_DIM, C_BACK
+    ' Top
+    LOCATE y, x : PRINT "+" + (w-2) * "-" + "+";
+    ' Sides
+    FOR i = 1 TO h - 2
+        LOCATE y + i, x : PRINT "|";
+        LOCATE y + i, x + w - 1 : PRINT "|";
+    NEXT
+    ' Bottom
+    LOCATE y + h - 1, x : PRINT "+" + (w-2) * "-" + "+";
+    ' Title
+    IF LEN(title$) > 0 THEN
+        LOCATE y, x + 2 : COLOR C_HIGH, C_BACK : PRINT " " + title$ + " ";
+    ENDIF
+ENDSUB
+
+SUB DrawMenu(x, y)
+    w = 40 : h = 12
+    COLOR 0, 7 ' Invert
+    
+    ' Shadow
+    FOR i = 1 TO h
+        LOCATE y + i, x + 2
+        COLOR 8, 0 : PRINT w * " ";
+    NEXT
+    
+    ' Box Background
+    FOR i = 0 TO h - 1
+        LOCATE y + i, x
+        COLOR 0, 7 : PRINT w * " ";
+    NEXT
+    
+    ' Borders
+    LOCATE y, x : PRINT "+" + (w-2) * "=" + "+";
+    LOCATE y + h - 1, x : PRINT "+" + (w-2) * "=" + "+";
+    FOR i = 1 TO h - 2
+        LOCATE y + i, x : PRINT "|";
+        LOCATE y + i, x + w - 1 : PRINT "|";
+    NEXT
+    
+    ' Items
+    LOCATE y + 2, x + 2 : PRINT "1. INITIATE PROTOCOL 66";
+    LOCATE y + 4, x + 2 : PRINT "2. FLUSH DNS BUFFER";
+    LOCATE y + 6, x + 2 : PRINT "3. OVERCLOCK CORES";
+    LOCATE y + 8, x + 2 : PRINT "4. EXIT SYSTEM";
+    COLOR C_MAIN, C_BACK
+ENDSUB
+
+
+

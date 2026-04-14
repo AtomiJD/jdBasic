@@ -1,0 +1,63 @@
+' ===============================================
+' == Recursive Fractal Tree in jdBasic
+' ===============================================
+
+SUB Update()
+    CLS 10, 20, 30
+    TURTLE.DRAW
+    SCREENFLIP
+    SLEEP 10
+ENDSUB
+
+SUB TREE(branch_len)
+    ' Base Case: If the branch is too short, stop the recursion.
+    IF branch_len < 3 THEN RETURN
+
+    ' --- Draw the current branch ---
+    ' Change color based on branch length for a nice effect
+    IF branch_len > 50 THEN
+        TURTLE.SET_COLOR 139, 69, 19 ' Brown for the trunk
+    ELSE
+        TURTLE.SET_COLOR 34, 139, 34 ' Green for the leaves
+    ENDIF
+    TURTLE.FORWARD branch_len
+
+    ' --- Recursive Step ---
+    ' 1. Turn left for the first sub-branch
+    TURTLE.RIGHT 20
+    TREE(branch_len * 0.7) ' Call self with a shorter branch
+
+    ' 2. Turn right for the second sub-branch
+    TURTLE.LEFT 40
+    TREE(branch_len * 0.7) ' Call self again
+
+    ' 3. Return to the starting point of this branch
+    ' This is crucial for the other branches to draw correctly.
+    TURTLE.RIGHT 20
+    ' Set pen to brown to draw back down the branch
+    TURTLE.SET_COLOR 139, 69, 19
+    TURTLE.BACKWARD branch_len
+    Update
+ENDSUB
+
+
+' --- Main Program ---
+SCREEN 800, 600, "Fractal Tree"
+CLS 135, 206, 250 ' Sky blue background
+
+' Setup the turtle at the bottom of the screen
+TURTLE.PENUP
+TURTLE.SETPOS 400, 550
+TURTLE.SETHEADING -90 ' Point straight up
+TURTLE.PENDOWN
+
+' Start the recursion with an initial branch length
+TREE(100)
+
+' Draw the final path and keep the window open
+TURTLE.DRAW
+SCREENFLIP
+PRINT "Fractal Tree drawing complete. Press ESC to quit."
+DO WHILE INKEY$() <> CHR$(27)
+    SLEEP 20
+LOOP

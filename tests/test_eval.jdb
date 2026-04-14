@@ -1,0 +1,31 @@
+' ── EXECUTE ────────────────────────────────────────
+PRINT "=== EXECUTE ==="
+EXECUTE("PRINT 42 * 2")
+EXECUTE("FOR I = 1 TO 5: PRINT I;: NEXT I")
+PRINT ""
+
+' EXECUTE can define functions
+EXECUTE("FUNC DYNFUNC(X): RETURN X * 100: ENDFUNC")
+PRINT "DYNFUNC(3) = "; DYNFUNC(3)
+
+' ── EVAL ──────────────────────────────────────────
+PRINT ""
+PRINT "=== EVAL ==="
+PRINT "EVAL(2+3) = "; EVAL("2 + 3")
+PRINT "EVAL(SQR(144)) = "; EVAL("SQR(144)")
+
+' EVAL with current variables
+X = 10
+Y = 20
+FORMULA$ = "SQR(X^2 + Y^2)"
+PRINT "X="; X; " Y="; Y
+PRINT "EVAL("; FORMULA$; ") = "; EVAL(FORMULA$)
+
+' EVAL with arrays
+PRINT "EVAL(SUM(IOTA(100))) = "; EVAL("SUM(IOTA(100))")
+
+' Dynamic formula
+FOR I = 1 TO 5
+    X = I
+    PRINT "X="; X; " -> "; EVAL("X^3 + X^2 + X + 1")
+NEXT I

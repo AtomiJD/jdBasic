@@ -1,0 +1,59 @@
+' --- 1. Define the custom data type ---
+TYPE Character
+    Name AS STRING
+    Health AS INT32
+    Position AS MAP
+
+    SUB PrintInfo()
+        PRINT "Name: "; THIS.Name
+        PRINT "Health: "; THIS.Health
+        PRINT "Position: "; THIS.Position
+    ENDSUB
+
+    SUB TakeDamage(amount)
+        THIS.Health = THIS.Health - amount
+        IF THIS.Health < 0 THEN
+            THIS.Health = 0
+        ENDIF
+    ENDSUB
+
+    FUNC GetName()
+        RETURN THIS.Name
+    ENDFUNC
+ENDTYPE
+
+' --- 2. Create instances ---
+DIM Player1 AS Character
+DIM Enemy AS Character
+
+' --- 3. Assign values ---
+Player1.Name = "Hero"
+Player1.Health = 100
+Player1.Position = {"x": 10, "y": 20}
+
+Enemy.Name = "Goblin"
+Enemy.Health = 30
+Enemy.Position = {"x": 50, "y": 60}
+
+' --- 4. Call methods ---
+PRINT "=== Player ==="
+Player1.PrintInfo()
+
+PRINT ""
+PRINT "=== Enemy ==="
+Enemy.PrintInfo()
+
+' --- 5. Deal damage ---
+PRINT ""
+PRINT Enemy.Name; " takes 12 damage!"
+Enemy.TakeDamage(12)
+Enemy.PrintInfo()
+
+' --- 6. Use function method ---
+PRINT ""
+PRINT "Player name via method: "; Player1.GetName()
+
+' --- 7. Read fields ---
+PRINT ""
+PRINT "Player health: "; Player1.Health
+PRINT "Enemy position: "; Enemy.Position

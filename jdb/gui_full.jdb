@@ -1,0 +1,190 @@
+' --- ImGui Full Feature Demo ---
+' This demo covers:
+' - Basic Window Management
+' - Menus & Popups
+' - Inputs (Text, Int, Double)
+' - Selection (Radio, Combo, Listbox)
+' - Plots (Lines, Histogram)
+' - Layout (TreeNodes, Collapsing Headers)
+' - Themes
+
+SCREEN 1920, 1080, "jdBasic ImGui Demo", 2
+
+' --- State Variables ---
+WindowOpen = TRUE
+ShowDemo = TRUE
+ThemeIndex = 0 ' 0=Dark, 1=Light, 2=Classic
+
+' Input Variables
+Name$ = "Developer"
+Age = 25
+Height = 1.75
+Bio$ = "Write something here..."
+
+' Selection Variables
+RadioSelection = 1
+ComboSelection = 0
+ComboItems = ["Apple", "Banana", "Cherry", "Date"]
+ThemeItems = ["DARK", "LIGHT", "CLASSIC"]
+ListSelection = 0
+
+' Color Variable (RGBA 0-255)
+MyColor = [100, 150, 250, 255]
+
+' Plot Data
+PlotData = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+FOR i = 0 TO 9
+    PlotData[i] = SIN(i) + 1.0
+NEXT i
+
+' Progress
+ProgressVal = 0.0
+
+' --- Main Loop ---
+DO
+    CLS
+    
+    IF GUI.BEGIN_MAIN_MENU_BAR() THEN
+        IF GUI.BEGIN_MENU("File") THEN
+            IF GUI.MENU_ITEM("Exit") THEN
+                PRINT "Exit pressed in main menu"
+                END
+            ENDIF 
+            GUI.END_MENU()
+        ENDIF
+        GUI.END_MAIN_MENU_BAR()
+    ENDIF
+
+    IF WindowOpen THEN
+        ' Pass WindowOpen to handle the close [X] button
+        WindowOpen = GUI.BEGIN("Dashboard", 0, 30, 600, 400, WindowOpen, GUI.FLAG("MENUBAR"))
+        
+            ' --- Menus ---
+            IF GUI.BEGIN_MENU_BAR() THEN
+                IF GUI.BEGIN_MENU("File") THEN
+                    IF GUI.MENU_ITEM("New") THEN PRINT "Clicked New"
+                    IF GUI.MENU_ITEM("Open") THEN PRINT "Clicked Open"
+                    GUI.SEPARATOR
+                    IF GUI.MENU_ITEM("Exit") THEN WindowOpen = FALSE
+                    GUI.END_MENU()
+                ENDIF
+                
+                IF GUI.BEGIN_MENU("View") THEN
+                    IF GUI.MENU_ITEM("Theme: Dark") THEN GUI.THEME("DARK")
+                    IF GUI.MENU_ITEM("Theme: Light") THEN GUI.THEME("LIGHT")
+                    IF GUI.MENU_ITEM("Theme: Classic") THEN GUI.THEME("CLASSIC")
+                    GUI.END_MENU()
+                ENDIF
+                GUI.END_MENU_BAR()
+            ENDIF
+
+            ' --- Basic Inputs ---
+            GUI.SEPARATOR_TEXT("User Profile")
+            
+            Name$ = GUI.INPUT("Name", Name$)
+            GUI.SAME_LINE
+            GUI.HELPMARKER("Enter your full name here.")
+            
+            Age = GUI.INPUT_INT("Age", Age)
+            Height = GUI.INPUT_DOUBLE("Height (m)", Height)
+            
+            ' --- Selection Widgets ---
+            GUI.SEPARATOR_TEXT("Preferences")
+            
+            GUI.TEXT "Favorite Fruit:"
+            ComboSelection = GUI.COMBO("Fruits", ComboSelection, ComboItems)
+            
+            GUI.TEXT "Preferred OS:"
+            RadioSelection = GUI.RADIO("Windows", RadioSelection, 1)
+            GUI.SAME_LINE
+            RadioSelection = GUI.RADIO("Linux", RadioSelection, 2)
+            GUI.SAME_LINE
+            RadioSelection = GUI.RADIO("macOS", RadioSelection, 3)
+            
+            ' --- Sliders & Colors ---
+            GUI.SEPARATOR_TEXT("Appearance")
+            
+            IF GUI.COLOR("Accent Color", MyColor) THEN
+                ' Color changed!
+            ENDIF
+            
+            ' --- Layout & Containers ---
+            GUI.SEPARATOR_TEXT("Advanced Layout")
+            
+            IF GUI.COLLAPSING_HEADER("Detailed Stats") THEN
+                GUI.TEXT "This section is collapsible."
+                GUI.TEXT "Random ID: " + INT(RND(1)*1000)
+            ENDIF
+            
+            IF GUI.TREE_NODE("Hierarchy Example") THEN
+                GUI.TEXT "Child Node 1"
+                IF GUI.TREE_NODE("Sub-Node") THEN
+                    GUI.TEXT "Deepest Level"
+                    GUI.TREE_POP()
+                ENDIF
+                GUI.TEXT "Child Node 2"
+                GUI.TREE_POP()
+            ENDIF
+            
+            ' --- Plots ---
+            GUI.SEPARATOR_TEXT("Analytics")
+            
+            ' Update fake data
+            FOR i = 0 TO 8
+                PlotData[i] = PlotData[i+1]
+            NEXT i
+            PlotData[9] = (SIN(TICK() / 200.0) + 1.0) * 0.5
+            
+            GUI.PLOT_LINES "Live Signal", PlotData, "Signal", 0.0, 1.5
+            GUI.PLOT_HISTOGRAM "Distribution", PlotData, "", 0.0, 1.5
+            
+            ' --- Popups ---
+            GUI.SEPARATOR_TEXT("Actions")
+            
+            IF GUI.BUTTON("Open Modal Popup") THEN
+                GUI.OPEN_POPUP("MyModal")
+            ENDIF
+            
+            GUI.SAME_LINE
+            
+            ' Define the Popup content (must be called every frame, handles visibility internally)
+            IF GUI.BEGIN_POPUP_MODAL("MyModal", TRUE) THEN
+                GUI.TEXT "This is a modal popup."
+                GUI.TEXT "You cannot click behind me."
+                GUI.SEPARATOR
+                
+                IF GUI.BUTTON("OK") THEN
+                    GUI.CLOSE_CURRENT_POPUP()
+                ENDIF
+                GUI.END_POPUP()
+            ENDIF
+            
+            ' --- Progress Bar ---
+            ProgressVal = (ProgressVal + 0.005) 
+            IF ProgressVal > 1.0 THEN ProgressVal = 0.0
+            GUI.PROGRESS ProgressVal, "Processing..."
+
+        GUI.END
+    
+    ELSE
+        ' Window closed state
+        GUI.BEGIN "App Launcher", 100, 100, 200, 100
+            GUI.TEXT "Main window is closed."
+            IF GUI.BUTTON("Re-open") THEN
+                WindowOpen = TRUE
+            ENDIF
+        GUI.END
+    ENDIF
+
+    SCREENFLIP
+    SLEEP 10
+
+    A$ = INKEY$()
+    IF UCASE$(A$) = "F" THEN
+        TOGGLE_FULLSCREEN
+        A$ = ""
+        ScreenW = ScreenWidth()
+        ScreenH = ScreenHeight()
+    ENDIF
+
+LOOP UNTIL A$ = CHR$(27)

@@ -1,0 +1,21 @@
+' Using automatic values (Car = 0, Truck = 1, Boat = 2)
+ENUM VehicleType
+    Car
+    Truck
+    Boat
+ENDENUM
+
+' Using explicit values
+ENUM WebStatus
+    OK = 200
+    NotFound = 404
+    Error = 500
+ENDENUM
+
+PRINT "Vehicle: ", VehicleType.Car  ' Prints 0
+PRINT "Status: ", WebStatus.NotFound ' Prints 404
+
+CurrentVehicle = VehicleType.Truck
+IF CurrentVehicle = VehicleType.Truck THEN
+    PRINT "It's a truck!"
+ENDIF

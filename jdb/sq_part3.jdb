@@ -1,0 +1,52 @@
+' Generates a Euclidean Rhythm String
+' k = pulses (hits), n = steps (total length)
+' sound_token$ = the note to play (e.g., "c2")
+FUNC EUCLID$(k, n, sound_token$)
+    result$ = ""
+    
+    ' Bresenham-like algorithm for even distribution
+    bucket = 0
+    FOR i = 0 TO n - 1
+        bucket = bucket + k
+        IF bucket >= n THEN
+            bucket = bucket - n
+            ' HIT: Add the note
+            result$ = result$ + sound_token$ + " "
+        ELSE
+            ' MISS: Add a rest
+            result$ = result$ + "~ "
+        ENDIF
+    NEXT
+    
+    ' Wrap in brackets to make it a single cycle subdivision
+    RETURN "[" + TRIM$(result$) + "]"
+ENDFUNC
+
+SOUND.INIT()
+SOUND.BPM(130)
+
+' 1. Enable the new Delay (Time=350ms, Feedback=0.6, Mix=0.4)
+SOUND.DELAY TRUE, 350, 0.6, 0.4
+
+' 2. Design a plucky synth
+SOUND.VOICE 0, "SQUARE", 0.01, 0.1, 0.0, 0.1
+SOUND.FILTER 0, 1500
+
+' 3. Design a noise hat
+SOUND.VOICE 1, "NOISE", 0.001, 0.05, 0.0, 0.05
+
+' 4. LIVE CODING PATTERNS
+' Use the EUCLID function to generate complex polyrhythms
+
+' Track 0: 3 hits in 8 steps (Tresillo rhythm)
+' String becomes: "[c3 ~ ~ c3 ~ ~ c3 ~]"
+SOUND.SEQ 0, EUCLID$(3, 8, "c3"), "VOICE"
+
+' Track 1: 5 hits in 16 steps (Complex syncopation)
+' String becomes: "[c4 ~ ~ c4 ~ ~ c4 ~ ~ c4 ~ c4 ~ ~ ~]"
+SOUND.SEQ 1, EUCLID$(5, 16, "c4"), "VOICE"
+
+DO
+    k$ = INKEY$()
+    SLEEP 100
+LOOP  UNTIL k$ = "q" OR k$ = "Q"

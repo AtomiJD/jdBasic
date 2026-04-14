@@ -1,0 +1,280 @@
+' ===================================================================
+' == RPG Dialog Module
+' == Typewriter-style dialog boxes for jdBasic RPG
+' ==
+' == Usage: IMPORT RPG_DIALOG
+' ==   RPG_DIALOG.SAY "Name", "Message text here"
+' ==   choice = RPG_DIALOG.CHOICE("Yes|No|Maybe")
+' ===================================================================
+
+EXPORT MODULE RPG_DIALOG
+
+' --- Configuration (can be changed before calling SAY) ---
+EXPORT DIM DLG_SPEED = 2          ' characters per frame
+EXPORT DIM DLG_BOX_H = 120        ' dialog box height
+EXPORT DIM DLG_MARGIN = 16        ' text margin inside box
+EXPORT DIM DLG_COLOR_R = 20       ' box background color
+EXPORT DIM DLG_COLOR_G = 20
+EXPORT DIM DLG_COLOR_B = 60
+EXPORT DIM DLG_BORDER_R = 120     ' border color
+EXPORT DIM DLG_BORDER_G = 140
+EXPORT DIM DLG_BORDER_B = 200
+
+' --- Internal state ---
+EXPORT DIM dlg_active = FALSE
+
+' ===================================================================
+' SAY name$, text$ — Show a dialog box with typewriter effect
+' Pauses game until player presses Space/Enter
+' ===================================================================
+EXPORT SUB SAY(name$, text$)
+    dlg_active = TRUE
+    char_idx = 0
+    total_chars = LEN(text$)
+    done_typing = FALSE
+
+    ' Capture the current scene as background
+    bg_capture = GFX.CAPTURE()
+
+    DO
+        ' Redraw the frozen scene as background (prevents flicker)
+        GFX.DRAW_CAPTURE bg_capture
+
+        ' Draw semi-transparent dialog box at bottom of screen
+        sw = SCREENWIDTH()
+        sh = SCREENHEIGHT()
+        box_y = sh - DLG_BOX_H - 10
+        box_x = 10
+        box_w = sw - 20
+
+        ' Box background (dark, semi-transparent)
+        DRAWCOLOR DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B
+        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
+
+        ' Box border
+        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
+
+        ' Speaker name
+        IF name$ <> "" THEN
+            ' Name tag background
+            name_w = LEN(name$) * 10 + 20
+            RECT box_x + 10, box_y - 14, name_w, 20, _
+                DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
+            TEXT box_x + 20, box_y - 12, name$, 255, 255, 255
+        ENDIF
+
+        ' Typewriter text
+        IF NOT done_typing THEN
+            char_idx = char_idx + DLG_SPEED
+            IF char_idx >= total_chars THEN
+                char_idx = total_chars
+                done_typing = TRUE
+            ENDIF
+        ENDIF
+
+        visible_text$ = LEFT$(text$, char_idx)
+
+        ' Word-wrap and draw text
+        tx = box_x + DLG_MARGIN
+        ty = box_y + DLG_MARGIN
+        max_w = box_w - DLG_MARGIN * 2
+        chars_per_line = INT(max_w / 9)
+        IF chars_per_line < 10 THEN chars_per_line = 40
+
+        line_start = 0
+        line_num = 0
+        DO WHILE line_start < LEN(visible_text$)
+            remaining = LEN(visible_text$) - line_start
+            IF remaining <= chars_per_line THEN
+                line$ = MID$(visible_text$, line_start, remaining)
+                line_start = LEN(visible_text$)
+            ELSE
+                ' Find last space before chars_per_line
+                cut = chars_per_line
+                FOR j = line_start + chars_per_line TO line_start STEP -1
+                    IF MID$(text$, j, 1) = " " THEN
+                        cut = j - line_start
+                        EXITFOR
+                    ENDIF
+                NEXT j
+                line$ = MID$(visible_text$, line_start, cut)
+                line_start = line_start + cut + 1
+            ENDIF
+            TEXT tx, ty + line_num * 22, line$, 230, 230, 230
+            line_num = line_num + 1
+        LOOP
+
+        ' Prompt indicator
+        IF done_typing THEN
+            blink = (INT(TICK() / 400) MOD 2) = 0
+            IF blink THEN
+                TEXT box_x + box_w - 40, box_y + DLG_BOX_H - 22, ">>>", _
+                    DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B
+            ENDIF
+        ENDIF
+
+        SCREENFLIP
+        SLEEP 16
+
+        ' Input: Space/Enter to advance, or skip typing
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" THEN
+            IF done_typing THEN
+                EXITDO
+            ELSE
+                char_idx = total_chars
+                done_typing = TRUE
+            ENDIF
+        ENDIF
+        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
+    LOOP
+
+    GFX.FREEIMAGE bg_capture
+    dlg_active = FALSE
+ENDSUB
+
+' ===================================================================
+' CHOICE(options$) — Show choices separated by |, returns 0-based index
+' Example: idx = RPG_DIALOG.CHOICE("Yes|No|Cancel")
+' ===================================================================
+EXPORT FUNC CHOICE(options$)
+    items = SPLIT(options$, "|")
+    num_items = LEN(items)
+    selected = 0
+    choice_bg = GFX.CAPTURE()
+
+    DO
+        GFX.DRAW_CAPTURE choice_bg
+        sw = SCREENWIDTH()
+        sh = SCREENHEIGHT()
+        box_h = num_items * 28 + 20
+        box_y = sh - box_h - 10
+        box_x = sw - 200
+
+        ' Box
+        RECT box_x, box_y, 190, box_h, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
+        RECT box_x, box_y, 190, box_h, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
+
+        ' Items
+        FOR i = 0 TO num_items - 1
+            iy = box_y + 10 + i * 28
+            IF i = selected THEN
+                RECT box_x + 4, iy - 2, 182, 24, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
+                TEXT box_x + 24, iy, "> " + items[i], 255, 255, 255
+            ELSE
+                TEXT box_x + 24, iy, "  " + items[i], 180, 180, 180
+            ENDIF
+        NEXT i
+
+        SCREENFLIP
+        SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:Down" THEN
+            selected = (selected + 1) MOD num_items
+        ENDIF
+        IF ev$ = "KEYDOWN:Up" THEN
+            selected = selected - 1
+            IF selected < 0 THEN selected = num_items - 1
+        ENDIF
+        IF ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" THEN
+            GFX.FREEIMAGE choice_bg
+            RETURN selected
+        ENDIF
+        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN
+            GFX.FREEIMAGE choice_bg
+            RETURN -1
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ===================================================================
+' ASK(name$, question$) — Text input dialog, returns typed string
+' ===================================================================
+EXPORT FUNC ASK$(name$, question$)
+    dlg_active = TRUE
+    input$ = ""
+    cursor_blink = 0
+    ask_bg = GFX.CAPTURE()
+
+    DO
+        GFX.DRAW_CAPTURE ask_bg
+        sw = SCREENWIDTH()
+        sh = SCREENHEIGHT()
+        box_y = sh - DLG_BOX_H - 10
+        box_x = 10
+        box_w = sw - 20
+
+        ' Box
+        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
+        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
+
+        ' Name tag
+        IF name$ <> "" THEN
+            name_w = LEN(name$) * 10 + 20
+            RECT box_x + 10, box_y - 14, name_w, 20, _
+                DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
+            TEXT box_x + 20, box_y - 12, name$, 255, 255, 255
+        ENDIF
+
+        ' Question
+        TEXT box_x + DLG_MARGIN, box_y + DLG_MARGIN, question$, 230, 230, 230
+
+        ' Input field
+        input_y = box_y + DLG_MARGIN + 30
+        RECT box_x + DLG_MARGIN, input_y, box_w - DLG_MARGIN*2, 28, 10, 10, 40, TRUE
+        RECT box_x + DLG_MARGIN, input_y, box_w - DLG_MARGIN*2, 28, _
+            DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
+
+        ' Typed text + cursor
+        cursor_blink = cursor_blink + 1
+        cursor$ = ""
+        IF (cursor_blink MOD 40) < 20 THEN cursor$ = "_"
+        TEXT box_x + DLG_MARGIN + 6, input_y + 5, input$ + cursor$, 255, 255, 255
+
+        ' Hint
+        TEXT box_x + box_w - 140, box_y + DLG_BOX_H - 22, "Enter to confirm", _
+            DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B
+
+        SCREENFLIP
+        SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN
+            GFX.FREEIMAGE ask_bg
+            dlg_active = FALSE
+            RETURN ""
+        ENDIF
+        IF ev$ = "KEYDOWN:Return" THEN
+            GFX.FREEIMAGE ask_bg
+            dlg_active = FALSE
+            RETURN input$
+        ENDIF
+        IF ev$ = "KEYDOWN:Backspace" THEN
+            IF LEN(input$) > 0 THEN input$ = LEFT$(input$, LEN(input$) - 1)
+        ENDIF
+        ' Regular key input
+        IF LEFT$(ev$, 8) = "KEYDOWN:" THEN
+            key$ = MID$(ev$, 8)
+            IF LEN(key$) = 1 THEN
+                ch$ = key$
+                ' Check shift for uppercase (simplified)
+                IF GFX.KEYSTATE("Left Shift") OR GFX.KEYSTATE("Right Shift") THEN
+                    ch$ = UCASE$(ch$)
+                ELSE
+                    ch$ = LCASE$(ch$)
+                ENDIF
+                IF LEN(input$) < 30 THEN input$ = input$ + ch$
+            ELSEIF key$ = "Space" THEN
+                IF LEN(input$) < 30 THEN input$ = input$ + " "
+            ENDIF
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ===================================================================
+' IS_ACTIVE() — Returns TRUE if a dialog is currently showing
+' ===================================================================
+EXPORT FUNC IS_ACTIVE()
+    RETURN dlg_active
+ENDFUNC

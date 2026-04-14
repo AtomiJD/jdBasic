@@ -1,0 +1,27 @@
+DIM City AS STRING = "Allmendfeld, Germany"
+DIM WeatherData AS MAP
+DIM APIkey AS STRING = "YOUR_API_KEY"  ' Replace with your actual API key
+DIM Response AS STRING
+
+' Fetch weather data
+Response = HTTP.GET$("https://api.openweathermap.org/data/2.5/weather?q=" + City + "&appid=" + APIkey + "&units=metric")
+
+IF Response <> "" THEN
+    WeatherData = JSON.PARSE$(Response)
+    PRINT WeatherData
+
+    IF MAP.EXISTS(WeatherData, "main") THEN
+        DIM Temperature AS DOUBLE = WeatherData{"main"}{"temp"}
+        DIM Humidity AS INTEGER = WeatherData{"main"}{"humidity"}
+        DIM WeatherDescription AS STRING = WeatherData{"weather"}[0]{"description"}
+
+        PRINT "Weather in "; City
+        PRINT "Temperature: "; Temperature; " °C"
+        PRINT "Humidity: "; Humidity; "%"
+        PRINT "Description: "; WeatherDescription
+    ELSE
+        PRINT "Could not find weather data for: "; City
+    ENDIF
+ELSE
+    PRINT "Error fetching data. Please check your API key and internet connection."
+ENDIF

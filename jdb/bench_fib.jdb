@@ -1,0 +1,10 @@
+FUNC fib(n)
+  IF n < 2 THEN RETURN n
+  RETURN fib(n - 1) + fib(n - 2)
+ENDFUNC
+
+start = TICK()
+FOR i = 0 TO 5
+  PRINT fib(26 + i)
+NEXT i
+PRINT "elapsed: " + STR$((TICK() - start) / 1000)

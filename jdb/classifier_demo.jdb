@@ -1,0 +1,221 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic Ticket Classifier Studio
+'  Lädt einen vortrainierten Classifier und klassifiziert neue Tickets
+'  in Echtzeit — zeigt Top-k Nachbarn mit Scores und Votes.
+' ══════════════════════════════════════════════════════════════════
+
+SCREEN 1500, 900, "jdBasic Classifier Studio", 2
+GUI.THEME "DARK"
+
+' ── State ────────────────────────────────────────────────────────
+DIM emb_id = 0
+DIM clf_id = 0
+
+DIM emb_path = "models/bge-m3-Q4_K_M.gguf"
+DIM index_path = "luli.clf"
+
+DIM emb_status = "Not loaded"
+DIM clf_status = "Not loaded"
+
+DIM stat_samples = 0
+DIM stat_labels = 0
+DIM stat_dim = 0
+DIM stat_index = "linear"
+
+DIM ticket_input = "Scanner geht nicht. Zustand der grünen LED aus."
+DIM top_k = 7
+
+DIM current_label = ""
+DIM current_conf = 0
+DIM current_neighbors AS ARRAY
+DIM current_votes AS ARRAY
+DIM neighbor_count = 0
+DIM vote_count = 0
+DIM last_time_ms = 0
+DIM is_predicting = FALSE
+
+DIM running = TRUE
+DIM frame = 0
+DIM status_msg = "Ready."
+
+' ── Init ──────────────────────────────────────────────────────────
+PRINT "Loading bge-m3 embedding model..."
+TRY
+  emb_id = AI.LOAD_EMBEDDINGS(emb_path, 2048, 99)
+  emb_status = "bge-m3 (CUDA)"
+CATCH
+  emb_status = "FAILED: " + ERRMSG$
+ENDTRY
+
+PRINT "Loading classifier index..."
+TRY
+  clf_id = AI.CLASSIFIER_LOAD(index_path, emb_id)
+  clf_status = "Loaded"
+  DIM info = AI.CLASSIFIER_INFO(clf_id)
+  stat_samples = info{"samples"}
+  stat_labels  = info{"num_labels"}
+  stat_dim     = info{"embed_dim"}
+  stat_index   = info{"index"}
+  status_msg   = STR(stat_samples) + " samples, " + STR(stat_labels) + " classes"
+CATCH
+  clf_status = "FAILED: " + ERRMSG$
+  status_msg = clf_status
+ENDTRY
+
+' ── Main Loop ─────────────────────────────────────────────────────
+DO WHILE running
+  CLS 18, 20, 28
+  frame = frame + 1
+
+  ' Menu
+  IF GUI.BEGIN_MAIN_MENU_BAR() THEN
+    IF GUI.BEGIN_MENU("File") THEN
+      IF GUI.MENU_ITEM("Reload index") THEN
+        TRY
+          IF clf_id <> 0 THEN AI.CLASSIFIER_FREE clf_id
+          clf_id = AI.CLASSIFIER_LOAD(index_path, emb_id)
+          DIM info = AI.CLASSIFIER_INFO(clf_id)
+          stat_samples = info{"samples"}
+          stat_labels  = info{"num_labels"}
+          stat_dim     = info{"embed_dim"}
+          stat_index   = info{"index"}
+          status_msg = "Reloaded"
+        CATCH
+          status_msg = "Reload failed: " + ERRMSG$
+        ENDTRY
+      ENDIF
+      GUI.SEPARATOR
+      IF GUI.MENU_ITEM("Exit") THEN running = FALSE
+      GUI.END_MENU()
+    ENDIF
+    IF GUI.BEGIN_MENU("Theme") THEN
+      IF GUI.MENU_ITEM("Dark") THEN GUI.THEME "DARK"
+      IF GUI.MENU_ITEM("Light") THEN GUI.THEME "LIGHT"
+      IF GUI.MENU_ITEM("Classic") THEN GUI.THEME "CLASSIC"
+      GUI.END_MENU()
+    ENDIF
+    GUI.END_MAIN_MENU_BAR()
+  ENDIF
+
+  ' ── Top Panel: Ticket input + Classify ─────────────────────
+  IF GUI.BEGIN("Ticket Classification", 10, 35, 1000, 350) THEN
+    DIM w = GUI.AVAIL_WIDTH() - 10
+
+    GUI.SEPARATOR_TEXT "Model Info"
+    GUI.TEXT_WRAPPED "Embedding: " + emb_status
+    GUI.TEXT_WRAPPED "Classifier: " + clf_status + "  |  " + STR(stat_samples) + " samples  |  " + STR(stat_labels) + " classes  |  dim=" + STR(stat_dim) + "  |  index=" + stat_index
+
+    GUI.SEPARATOR_TEXT "Ticket Text"
+    GUI.SET_NEXT_ITEM_WIDTH w
+    ticket_input = GUI.INPUT("##tk", ticket_input)
+
+    GUI.SET_NEXT_ITEM_WIDTH w - 250
+    top_k = GUI.SLIDER("Top-K neighbors", top_k, 1, 20)
+
+    DIM can_predict = (emb_id <> 0) AND (clf_id <> 0) AND (LEN(ticket_input) > 0) AND NOT is_predicting
+    IF GUI.BUTTON("Classify", 150, 32) AND can_predict THEN
+      is_predicting = TRUE
+      status_msg = "Predicting..."
+      DIM t0 = GFX.TICKS()
+      TRY
+        DIM p = AI.CLASSIFIER_PREDICT(clf_id, ticket_input, top_k)
+        current_label = p{"label"}
+        current_conf = p{"confidence"}
+        current_neighbors = p{"neighbors"}
+        current_votes = p{"votes"}
+        neighbor_count = LEN(current_neighbors)
+        vote_count = LEN(current_votes)
+        last_time_ms = INT(GFX.TICKS() - t0)
+        status_msg = "Predicted in " + STR(last_time_ms) + "ms"
+      CATCH
+        current_label = "Error: " + ERRMSG$
+        neighbor_count = 0
+        vote_count = 0
+        status_msg = "Error: " + ERRMSG$
+      ENDTRY
+      is_predicting = FALSE
+    ENDIF
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Clear", 100, 32) THEN
+      ticket_input = ""
+      current_label = ""
+      neighbor_count = 0
+      vote_count = 0
+    ENDIF
+
+    ' Result
+    IF LEN(current_label) > 0 THEN
+      GUI.SEPARATOR_TEXT "Prediction"
+      GUI.TEXT "Label:      " + current_label
+      GUI.TEXT "Confidence: " + STR(INT(current_conf * 100)) + "%   (over " + STR(top_k) + " neighbors, " + STR(last_time_ms) + "ms)"
+    ENDIF
+  ENDIF
+  GUI.END
+
+  ' ── Left Panel: Neighbors ──────────────────────────────────
+  IF GUI.BEGIN("Top-K Neighbors", 10, 365, 1000, 520) THEN
+    IF neighbor_count = 0 THEN
+      GUI.TEXT "(no prediction yet)"
+    ELSE
+      DIM nw = GUI.AVAIL_WIDTH()
+      DIM nh = GUI.AVAIL_HEIGHT() - 5
+      IF GUI.BEGIN_CHILD("nblist", nw, nh, TRUE) THEN
+        FOR ni = 0 TO neighbor_count - 1
+          DIM nb = current_neighbors[ni]
+          DIM score = nb{"score"}
+          DIM nlabel = nb{"label"}
+          DIM ntext = nb{"text"}
+          DIM pct = INT(score * 100)
+
+          GUI.SEPARATOR_TEXT "[" + STR(pct) + "%] " + nlabel
+
+          ' Excerpt (gekürzt)
+          IF LEN(ntext) > 300 THEN
+            GUI.TEXT_WRAPPED LEFT(ntext, 300) + "..."
+          ELSE
+            GUI.TEXT_WRAPPED ntext
+          ENDIF
+        NEXT ni
+      ENDIF
+      GUI.END_CHILD
+    ENDIF
+  ENDIF
+  GUI.END
+
+  ' ── Right Panel: Votes ─────────────────────────────────────
+  IF GUI.BEGIN("Vote Distribution", 1020, 35, 470, 850) THEN
+    IF vote_count = 0 THEN
+      GUI.TEXT "(no votes yet)"
+    ELSE
+      GUI.SEPARATOR_TEXT "Votes (Top-K = " + STR(top_k) + ")"
+      FOR vi = 0 TO vote_count - 1
+        DIM v = current_votes[vi]
+        DIM vlabel = v{"label"}
+        DIM vcount = v{"count"}
+        DIM bar_pct = vcount / top_k
+        DIM bar_w = bar_pct * (GUI.AVAIL_WIDTH() - 20)
+
+        GUI.TEXT_WRAPPED vlabel
+        GUI.TEXT "  " + STR(vcount) + " / " + STR(top_k)
+        GUI.SEPARATOR
+      NEXT vi
+    ENDIF
+  ENDIF
+  GUI.END
+
+  ' Status bar
+  DIM sbf = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_SCROLLBAR")
+  IF GUI.BEGIN("##sb", 0, 875, 1500, 25, TRUE, sbf) THEN
+    GUI.TEXT status_msg + "  |  Frame: " + STR(frame)
+  ENDIF
+  GUI.END
+
+  SCREENFLIP
+  SLEEP 10
+  IF INKEY$() = CHR(27) THEN running = FALSE
+LOOP
+
+IF clf_id <> 0 THEN AI.CLASSIFIER_FREE clf_id
+IF emb_id <> 0 THEN AI.FREE_LLM emb_id
+GFX.CLOSE
+PRINT "Classifier Studio closed."

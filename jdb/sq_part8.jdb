@@ -1,0 +1,140 @@
+' --- JD-BASIC SEQUENCER SHOWCASE ---
+' A musical journey through Synthesis, Sequencing, and Effects.
+
+SOUND.INIT()
+SOUND.BPM(128) ' Classic EDM/House Tempo
+
+' ======================================================
+' 1. SETUP & SOUND DESIGN
+' ======================================================
+PRINT "Initializing Audio Engine..."
+
+' --- TRACK 0: KICK DRUM (Solid Foundation) ---
+SOUND.VOICE 0, "TRIANGLE", 0.001, 0.1, 0.0, 0.1
+SOUND.FILTER 0, 120 ' Deep low-pass for thud
+SOUND.PAN 0, 0.5    ' Center
+
+' --- TRACK 1: BASSLINE (Evolving) ---
+SOUND.VOICE 1, "SAW", 0.01, 0.2, 0.4, 0.1
+SOUND.FILTER 1, 400
+SOUND.PAN 1, 0.5
+
+' --- TRACK 2: HI-HATS (Stereo Spread) ---
+SOUND.VOICE 2, "NOISE", 0.001, 0.05, 0.0, 0.05
+SOUND.PAN 2, 0.3 ' Slightly Left
+
+' --- TRACK 3: CLAP / SNARE ---
+SOUND.VOICE 3, "NOISE", 0.001, 0.2, 0.0, 0.15
+SOUND.FILTER 3, 5000
+SOUND.PAN 3, 0.7 ' Slightly Right
+
+' --- TRACK 4: PLUCK MELODY (Scale Quantized) ---
+SOUND.VOICE 4, "SQUARE", 0.01, 0.15, 0.0, 0.2
+SOUND.FILTER 4, 1500
+SOUND.DELAY TRUE, 350, 0.5, 0.0 ' Delay setup, but mix 0 for now
+
+' --- TRACK 5: ATMOSPHERE / FX ---
+SOUND.VOICE 5, "SINE", 1.0, 2.0, 0.8, 3.0
+SOUND.FM 5, 2.0, 1.41 ' Metallic texture
+SOUND.PAN 5, 0.1      ' Far Left
+
+' Setup Scale: C Minor Pentatonic for easy melodies
+SOUND.SCALE 4, "C3", "PENT_MIN"
+
+' ======================================================
+' 2. THE PERFORMANCE (Live Coding Simulation)
+' ======================================================
+
+PRINT ">>> PHASE 1: The Foundation"
+' Basic 4-on-the-floor Kick
+SOUND.SEQ 0, "c1 ~ c1 ~", "VOICE"
+' Simple Offbeat Bass
+SOUND.SEQ 1, "~ c2 ~ c2", "VOICE"
+
+SLEEP 4000 
+
+PRINT ">>> PHASE 2: Building Rhythm"
+' Add Hats (16th notes) and Clap
+SOUND.SEQ 2, "[c4 c4] [c4 c4] [c4 c4] [c4 c4]", "VOICE"
+SOUND.SEQ 3, "~ ~ c4 ~", "VOICE"
+
+SLEEP 4000
+
+' Modulate Bass Filter for movement
+FOR i = 1 TO 20
+    cutoff = 400 + (i * 50)
+    SOUND.FILTER 1, cutoff
+    SLEEP 100
+NEXT
+
+PRINT ">>> PHASE 3: Melody & Scale Quantizer"
+' More complex Bass pattern using subdivision
+SOUND.SEQ 1, "~ [c2 c2] ~ c2", "VOICE"
+
+' Introduce Pluck Melody using Scale Degrees (0, 2, 4...)
+' "0" is Root (C3), "2" is the third note in the scale, etc.
+' "[0 2]" plays two notes in one step
+SOUND.SEQ 4, "4 [2 0] 2 [0 -1]", "VOICE"
+
+' Bring in the Delay on the melody
+SOUND.DELAY TRUE, 350, 0.5, 0.4 
+
+SLEEP 4000
+
+PRINT ">>> PHASE 4: FM Synthesis Transformation"
+' Change Bass (Track 1) to FM Growl
+' We switch the waveform to SINE and add heavy FM
+SOUND.VOICE 1, "SINE", 0.05, 0.3, 0.6, 0.2
+' FM Amount 5.0, Ratio 0.5 (Sub-octave modulation) = Growl
+SOUND.FM 1, 5.0, 0.5 
+SOUND.FILTER 1, 2000 ' Open filter to hear the fizz
+
+' Change Pluck (Track 4) to weird Ring Mod sound
+SOUND.RINGMOD 4, 200, 0.8
+
+SLEEP 4000
+
+PRINT ">>> PHASE 5: Glitch & Chaos (Bitcrusher)"
+' Bitcrush the Drums
+SOUND.BITCRUSH 0, 4, 0.5 ' Kick becomes 4-bit garbage
+SOUND.BITCRUSH 2, 8, 0.2 ' Hats become digital hiss
+
+' Fast Rhythm on FX using Manual Pattern Construction
+' This simulates a complex pattern: [c4 ~ ~ c4 ~ ~ c4 ~]
+SOUND.SEQ 5, "[c4 ~ ~ c4 ~ ~ c4 ~ ~ c4 ~ c4 ~ ~ ~]", "VOICE"
+
+' Pan the hats wildly left and right
+FOR i = 1 TO 20
+    pan = 0.5 + (SIN(i) * 0.5)
+    SOUND.PAN 2, pan
+    SLEEP 200
+NEXT
+
+PRINT ">>> PHASE 6: The Breakdown (Filter Sweep)"
+' Kill the drums by clearing their patterns
+SOUND.SEQ 0, "~", "SINE"
+SOUND.SEQ 2, "~", "SINE"
+SOUND.SEQ 3, "~", "SINE"
+
+' Sweep melody filter down to silence
+FOR i = 20 TO 1 STEP -1
+    SOUND.FILTER 4, i * 100
+    SLEEP 100
+NEXT
+
+PRINT ">>> PHASE 7: Outro"
+' Turn off everything
+SOUND.SEQ 1, "~", "SINE"
+SOUND.SEQ 4, "~", "SINE"
+SOUND.SEQ 5, "~", "SINE"
+
+'Disable effects
+SOUND.DELAY FALSE, 0, 0, 0
+SOUND.BITCRUSH 0, 0, 0
+
+SLEEP 2000
+
+PRINT "Performance Complete."
+
+SOUND.RESET 
+'SOUND.SHUTDOWN

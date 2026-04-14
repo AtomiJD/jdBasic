@@ -1,0 +1,6 @@
+DIM C = RESHAPE([" "], [3, 5])
+PRINT "Before:"
+PRINT FRMV$(C)
+C[0, 0] = "X"
+PRINT "After C[0,0] = X:"
+PRINT FRMV$(C)

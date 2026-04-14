@@ -1,0 +1,50 @@
+' ── REGEX.MATCH ────────────────────────────────────
+PRINT "=== REGEX.MATCH ==="
+
+' Simple match (no groups) → TRUE/FALSE
+PRINT "Full match: "; REGEX.MATCH("^[0-9]+$", "12345")
+PRINT "No match: "; REGEX.MATCH("^[0-9]+$", "abc123")
+
+' With capture groups → array of captures
+PRINT "Captures: "; REGEX.MATCH("(\w+)@(\w+)\.(\w+)", "user@example.com")
+
+' Date capture
+PRINT "Date: "; REGEX.MATCH("(\d{4})-(\d{2})-(\d{2})", "2026-04-05")
+
+' No match with groups → FALSE
+PRINT "No match: "; REGEX.MATCH("(\d+)-(\d+)", "hello")
+
+' ── REGEX.FINDALL ─────────────────────────────────
+PRINT ""
+PRINT "=== REGEX.FINDALL ==="
+
+' Find all numbers
+PRINT "Numbers: "; REGEX.FINDALL("[0-9]+", "abc 123 def 456 ghi 789")
+
+' Find all words
+PRINT "Words: "; REGEX.FINDALL("[a-zA-Z]+", "Hello World 123 Foo")
+
+' Find with groups → 2D array
+PRINT "Key=Val: "; REGEX.FINDALL("(\w+)=(\w+)", "name=John age=30 city=Berlin")
+
+' Empty result
+PRINT "No match: "; REGEX.FINDALL("[0-9]+", "no numbers here")
+
+' ── REGEX.REPLACE ─────────────────────────────────
+PRINT ""
+PRINT "=== REGEX.REPLACE ==="
+
+' Simple replace
+PRINT REGEX.REPLACE("[0-9]+", "abc 123 def 456", "NUM")
+
+' Backreference: swap first and last name
+PRINT REGEX.REPLACE("(\w+) (\w+)", "John Doe", "$2, $1")
+
+' Remove HTML tags
+PRINT REGEX.REPLACE("<[^>]+>", "<b>bold</b> and <i>italic</i>", "")
+
+' Replace dates: DD.MM.YYYY → YYYY-MM-DD
+PRINT REGEX.REPLACE("(\d{2})\.(\d{2})\.(\d{4})", "05.04.2026", "$3-$2-$1")
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

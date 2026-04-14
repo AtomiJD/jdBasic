@@ -1,0 +1,3 @@
+PRINT EVAL("42 * 17")
+PRINT EVAL("3 + 4")
+PRINT "done"

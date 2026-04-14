@@ -1,0 +1,43 @@
+{
+    "title": "Vallys Reise",
+    "screen_w": 1280,
+    "screen_h": 720,
+    "start_map": "maps/village.tmx",
+    "sprite_path": "sprites/",
+    "font": "D:/usr/dev/cc/fluppi/fonts/yoster.ttf",
+    "font_size": 16,
+    "welcome_bg": "generated_sprites/welcome.png",
+    "player_sprite": "vally.png",
+    "sprite_frame_w": 64,
+    "sprite_frame_h": 64,
+    "sprite_scale": 0.75,
+    "player_stats": {
+        "hp": 100, "max_hp": 100,
+        "atk": 10, "def": 5,
+        "level": 1, "xp": 0, "xp_next": 50
+    },
+    "equipment_effects": {
+        "Iron Sword":     {"atk": 8},
+        "Wooden Shield":  {"def": 5},
+        "Magic Ring":     {"atk": 3, "def": 3},
+        "Health Potion":  {"heal": 30},
+        "Lucky Charm":    {"xp_bonus": 1.5}
+    },
+    "colors": {
+        "text":        [230, 230, 240],
+        "text_dim":    [140, 140, 160],
+        "text_bright": [255, 255, 255],
+        "title":       [255, 220, 80],
+        "gold":        [255, 215, 0],
+        "hint":        [200, 255, 200],
+        "msg":         [255, 255, 100],
+        "hud":         [130, 130, 150],
+        "box_bg":      [20, 20, 55],
+        "box_border":  [100, 120, 180],
+        "menu_sel":    [60, 60, 120],
+        "menu_text":   [140, 140, 180],
+        "hp_bar":      [80, 200, 80],
+        "hp_bg":       [60, 30, 30],
+        "enemy_hp":    [200, 60, 60]
+    }
+}

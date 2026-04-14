@@ -1,0 +1,31 @@
+'Simple Scalar Insertion
+Source$ = "Hello World"
+ToInsert$ = " beautiful"
+Position = 5 ' Insert after "Hello"
+
+Result$ = INSERT$(Source$, ToInsert$, Position)
+PRINT Result$ ' Output: Hello beautiful World
+
+' Vectorized Text Insertion
+Source$ = "My friend is ."
+Names$ = ["Atomi", "Vally", "Heinz"]
+Position = 13 ' Insert before the period
+
+ResultArray = INSERT$(Source$, Names$, Position)
+PRINT ResultArray ' Output: [My friend is Atomi. My friend is Vally. My friend is Heinz.]
+
+' Vectorized Position Insertion
+Source$ = "agent"
+ToInsert$ = "X"
+Positions = [0, 1, 5] ' Insert "X" at the beginning, after 'a', and after 't'
+
+ResultArray = INSERT$(Source$, ToInsert$, Positions)
+PRINT ResultArray ' Output: [Xagent aXgent agXent]
+
+' Fully Vectorized Insertion
+Sources$ = ["car", "bus", "plane"]
+Inserts$ = ["s", "es", "s"]
+Positions = SELECT(LEN@, Sources$)
+
+ResultArray = INSERT$(Sources$, Inserts$, Positions)
+PRINT ResultArray ' Output: [cars buses planes]

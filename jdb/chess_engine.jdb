@@ -1,0 +1,1024 @@
+' chess.jdb - A Simple Chess Engine for jdBasic
+' Author: Gemini & jd
+' Date: 2025-09-07
+' Version: 1.9.1 (Endgame Pawn Push Fix)
+
+' --- Global Constants and Data Structures ---
+DIM Board[8, 8] AS INTEGER
+DIM MoveHistory[1] AS STRING
+DIM PieceChars AS MAP
+DIM PieceValues AS MAP
+
+' Player constants
+WHITE = 1
+BLACK = -1
+CurrentPlayer = WHITE
+
+' Piece constants
+EMPTY = 0
+PAWN = 1
+KNIGHT = 2
+BISHOP = 3
+ROOK = 4
+QUEEN = 5
+KING = 6
+
+' Game constants
+SEARCH_DEPTH = 3
+OpeningBonus = 40
+DIM PawnPST_Middlegame[8, 8] AS INTEGER
+DIM KingPST_Middlegame[8, 8] AS INTEGER
+DIM KingPST_Endgame[8, 8] AS INTEGER
+DIM PawnPST_Endgame[8, 8] AS INTEGER
+DIM KnightPST[8, 8] AS INTEGER
+DIM BishopPST[8, 8] AS INTEGER
+DIM RookPST[8, 8] AS INTEGER
+DIM QueenPST[8, 8] AS INTEGER
+DIM WhiteCanCastleKS AS BOOLEAN
+DIM WhiteCanCastleQS AS BOOLEAN
+DIM BlackCanCastleKS AS BOOLEAN
+DIM BlackCanCastleQS AS BOOLEAN
+DIM EnPassantTargetSquare[2] AS INTEGER
+DIM PassedPawnBonus[8] AS INTEGER
+
+' --- Game Logic ---
+
+SUB PlayerTurn(LegalMoves)
+    DIM ValidMove AS BOOLEAN
+    ValidMove = FALSE
+    DIM MoveInput$, ParsedMove, i, current_move
+    
+    DO
+        PRINT ""
+        PRINT "Your move (e.g., e2e4). Type 'quit' to quit."
+        INPUT "> "; MoveInput$
+        
+        IF UCASE$(MoveInput$) = "QUIT" THEN END
+        
+        ParsedMove = ParseMove(MoveInput$)
+        IF len(ParsedMove) > 0 THEN
+            FOR i = 0 TO LEN(LegalMoves)[0] - 1
+                current_move = SLICE(LegalMoves, 0, i)
+                IF current_move[0] = ParsedMove[0] AND current_move[1] = ParsedMove[1] AND current_move[2] = ParsedMove[2] AND current_move[3] = ParsedMove[3] THEN
+                    Board = MakeMove(Board, ParsedMove)
+                    ValidMove = TRUE
+                    EXITFOR
+                ENDIF
+            NEXT i
+        ENDIF
+        
+        IF NOT ValidMove THEN PRINT "Invalid or illegal move. Try again."
+    LOOP UNTIL ValidMove = TRUE
+    MoveHistory = APPEND(MoveHistory, FormatMove$(ParsedMove))
+ENDSUB
+
+SUB ComputerTurn(LegalMoves, player)
+    PRINT ""
+    PRINT "Computer is thinking..."
+    
+    DIM BestMove
+    ' Call the new N-Ply search function
+    BestMove = FindBestMove_N_Ply(Board, LegalMoves, player) 
+    
+    PRINT "Computer moves: "; FormatMove$(BestMove)
+    Board = MakeMove(Board, BestMove)
+    MoveHistory = APPEND(MoveHistory, FormatMove$(BestMove))
+ENDSUB
+
+' This is the top-level function that starts the search.
+' It calls the recursive Minimax function for each legal move.
+FUNC FindBestMove_N_Ply(currentBoard, available_moves, player)
+    DIM BestMove, BestScore, i, current_move, Score
+    
+    alpha = -99999
+    beta = 99999
+
+    IF player = WHITE THEN
+        BestScore = -99999
+    ELSE
+        BestScore = 99999
+    ENDIF
+
+    FOR i = 0 TO LEN(available_moves)[0] - 1
+        current_move = SLICE(available_moves, 0, i)
+        TempBoard = MakeMove(currentBoard, current_move)
+        Score = Minimax_AlphaBeta(TempBoard, SEARCH_DEPTH - 1, -player, alpha, beta)
+
+        IF player = WHITE THEN
+            IF Score > BestScore OR (Score = BestScore AND RND(1) > 0.5) THEN
+                BestScore = Score
+                BestMove = current_move
+                alpha = MAX([alpha, BestScore])
+            ENDIF
+        ELSE ' player is BLACK
+            IF Score < BestScore OR (Score = BestScore AND RND(1) > 0.5) THEN
+                BestScore = Score
+                BestMove = current_move
+                beta = MIN([beta, BestScore])
+            ENDIF
+        ENDIF
+    NEXT i
+    
+    IF len(BestMove)[0] = 0 AND LEN(available_moves) > 0 THEN
+        rand_index = INT(RND(1) * LEN(available_moves)[0])
+        BestMove = SLICE(available_moves, 0, rand_index)
+    ENDIF
+    
+    RETURN BestMove
+ENDFUNC
+
+FUNC GenerateCaptureMoves(b, player)
+    ' This is a simplified move generator that ONLY finds captures.
+    ' A full implementation would be more robust. This is an example.
+    DIM Moves, LegalMoves_flat, i, current_move
+    Moves = GeneratePseudoMoves(b, player)
+    LegalMoves_flat = []
+
+    FOR i = 0 TO LEN(Moves)[0] - 1
+        current_move = SLICE(Moves, 0, i)
+        ' Check if the destination square is occupied by an opponent
+        IF b[current_move[2], current_move[3]] <> EMPTY THEN
+             LegalMoves_flat = APPEND(LegalMoves_flat, current_move)
+        ENDIF
+    NEXT i
+
+    IF LEN(LegalMoves_flat) > 0 THEN
+        RETURN RESHAPE(LegalMoves_flat, [LEN(LegalMoves_flat)[0] / 4, 4])
+    ELSE
+        RETURN []
+    ENDIF
+ENDFUNC
+
+FUNC QuiescenceSearch(b, alpha, beta)
+    ' Start with the static evaluation of the current "quiet" board
+    stand_pat_score = EvaluateBoard(b)
+
+    ' If this score is already better than what the opponent can achieve,
+    ' we can prune immediately.
+    IF stand_pat_score >= beta THEN
+        RETURN beta
+    ENDIF
+    alpha = MAX([alpha, stand_pat_score])
+
+    ' Generate only capture moves
+    CaptureMoves = GenerateCaptureMoves(b, CurrentPlayer)
+
+    FOR i = 0 TO LEN(CaptureMoves)[0] - 1
+        move = SLICE(CaptureMoves, 0, i)
+        TempBoard = MakeMove(b, move)
+        ' Recursively call QuiescenceSearch for the opponent
+        score = QuiescenceSearch(TempBoard, -beta, -alpha)
+
+        ' This is the core of the minimax logic for this node
+        IF score >= beta THEN
+            RETURN beta ' Prune
+        ENDIF
+        alpha = MAX([alpha, score])
+    NEXT i
+    
+    RETURN alpha
+ENDFUNC
+
+FUNC ScoreMove(b, current_move)
+    score = 0
+    pieceType = ABS(b[current_move[0], current_move[1]])
+    capturedPieceType = ABS(b[current_move[2], current_move[3]])
+
+    IF capturedPieceType <> EMPTY THEN
+        score = 10000 + (PieceValues{capturedPieceType} - PieceValues{pieceType})
+    ENDIF
+    
+    RETURN score
+ENDFUNC
+
+FUNC Minimax_AlphaBeta(b, depth, player, alpha, beta)
+    IF depth <= 0 THEN
+        RETURN EvaluateBoard(b)
+    ENDIF
+
+    LegalMoves = GenerateLegalMoves(b, player)
+    IF LEN(LegalMoves)[0] = 0 THEN
+        IF IsInCheck(b, player) THEN RETURN -99999 ' Checkmate
+        RETURN 0 ' Stalemate
+    ENDIF
+
+    ' --- Move Ordering Logic ---
+    DIM ScoredMoves[LEN(LegalMoves)[0], 5] ' [r1,c1,r2,c2, score]
+
+        FOR i = 0 TO LEN(LegalMoves)[0] - 1
+        move = SLICE(LegalMoves, 0, i)
+        ' Manually assign the 4 move coordinates
+        ScoredMoves[i, 0] = move[0]
+        ScoredMoves[i, 1] = move[1]
+        ScoredMoves[i, 2] = move[2]
+        ScoredMoves[i, 3] = move[3]
+        ' Assign the score to the 5th column
+        ScoredMoves[i, 4] = ScoreMove(b, move)
+    NEXT i
+    
+    ' Sort moves by score (column 4) in descending order (TRUE).
+    ScoredMoves = XSORT(ScoredMoves, 4, TRUE)
+
+    ' --- Search the sorted moves ---
+IF player = WHITE THEN
+    maxEval = -99999
+    FOR i = 0 TO LEN(ScoredMoves)[0] - 1
+        move_to_make = TAKE(4, SLICE(ScoredMoves, 0, i))
+        evaluation = Minimax_AlphaBeta(MakeMove(b, move_to_make), depth - 1, -player, alpha, beta)
+        
+        maxEval = MAX([maxEval, evaluation])
+        alpha = MAX([alpha, evaluation])
+        IF beta <= alpha THEN EXITFOR
+    NEXT i
+    RETURN maxEval
+ELSE ' player is BLACK
+    minEval = 99999
+    FOR i = 0 TO LEN(ScoredMoves)[0] - 1
+        move_to_make = TAKE(4, SLICE(ScoredMoves, 0, i))
+        evaluation = Minimax_AlphaBeta(MakeMove(b, move_to_make), depth - 1, -player, alpha, beta)
+
+        minEval = MIN([minEval, evaluation])
+        beta = MIN([beta, evaluation])
+        IF beta <= alpha THEN EXITFOR
+    NEXT i
+    RETURN minEval
+ENDIF
+ENDFUNC
+
+' This is the recursive "thinking" function with Alpha-Beta Pruning.
+FUNC Minimax_AlphaBetaO(b, depth, player, alpha, beta)
+    DIM LegalMoves
+    IF depth <= 0 THEN
+        RETURN QuiescenceSearch(b, alpha, beta)
+    ENDIF
+
+    LegalMoves = GenerateLegalMoves(b, player)
+    IF depth <= 0 LEN(LegalMoves)[0] = 0 THEN
+        RETURN EvaluateBoard(b)
+    ENDIF
+
+    ' If it's White's turn (Maximizer)
+    IF player = WHITE THEN
+        maxEval = -99999
+        FOR i = 0 TO LEN(LegalMoves)[0] - 1
+            DIM current_move, TempBoard, evaluation
+            current_move = SLICE(LegalMoves, 0, i)
+            TempBoard = MakeMove(b, current_move)
+            evaluation = Minimax_AlphaBeta(TempBoard, depth - 1, -player, alpha, beta)
+            maxEval = MAX([maxEval, evaluation])
+            alpha = MAX([alpha, evaluation])
+            ' --- The Pruning Step ---
+            IF beta <= alpha THEN
+                EXITFOR ' Prune the rest of the branches
+            ENDIF
+        NEXT i
+        RETURN maxEval
+    
+    ' If it's Black's turn (Minimizer)
+    ELSE
+        minEval = 99999
+        FOR i = 0 TO LEN(LegalMoves)[0] - 1
+            DIM current_move, TempBoard, evaluation
+            current_move = SLICE(LegalMoves, 0, i)
+            TempBoard = MakeMove(b, current_move)
+            evaluation = Minimax_AlphaBeta(TempBoard, depth - 1, -player, alpha, beta)
+            minEval = MIN([minEval, evaluation])
+            beta = MIN([beta, evaluation])
+            ' --- The Pruning Step ---
+            IF beta <= alpha THEN
+                EXITFOR ' Prune the rest of the branches
+            ENDIF
+        NEXT i
+        RETURN minEval
+    ENDIF
+ENDFUNC
+
+' ===================================================================
+' == HEURISTIC EVALUATION FUNCTIONS
+' ===================================================================
+
+FUNC EvaluateRook(b, r, c)
+' Bonus for rooks on open or semi-open files.
+friendly_pawns = 0
+enemy_pawns = 0
+FOR i = 0 TO 7
+piece = ABS(b[i, c])
+IF piece = PAWN THEN
+IF Sign(b[i,c]) = Sign(b[r,c]) THEN
+friendly_pawns = friendly_pawns + 1
+ELSE
+enemy_pawns = enemy_pawns + 1
+ENDIF
+ENDIF
+NEXT i
+
+IF friendly_pawns = 0 THEN
+    IF enemy_pawns = 0 THEN RETURN 15 ' Open file bonus
+    RETURN 10 ' Semi-open file bonus
+ENDIF
+RETURN 0
+
+ENDFUNC
+
+FUNC EvaluatePassedPawn(b, r, c)
+    ' Bonus for pawns with no opposing pawns to stop them.
+    player = Sign(b[r, c])
+
+    FOR file_offset = -1 TO 1
+        check_col = c + file_offset
+        IF check_col >= 0 AND check_col <= 7 THEN
+            IF player = WHITE THEN
+                FOR check_row = 0 TO r - 1
+                    IF b[check_row, check_col] = PAWN * BLACK THEN RETURN 0
+                NEXT check_row
+            ELSE 
+                FOR check_row = r + 1 TO 7
+                    IF b[check_row, check_col] = PAWN * WHITE THEN RETURN 0
+                NEXT check_row
+            ENDIF
+        ENDIF
+    NEXT file_offset
+
+    ' If we get here, it's a passed pawn. Get the massive bonus from the table.
+    IF player = WHITE THEN
+        RETURN PassedPawnBonus[r]
+    ELSE ' player is BLACK
+        RETURN PassedPawnBonus[7-r] ' Flip the rank for black
+    ENDIF
+
+ENDFUNC
+
+FUNC EvaluateKingSafety(b, player)
+' Penalizes missing pawns in front of the king.
+    DIM r, c
+    king_pos = []
+    FOR r = 0 TO 7
+        FOR c = 0 TO 7
+            IF b[r,c] = KING * player THEN king_pos = [r, c]: EXITFOR
+        NEXT
+        IF len(king_pos)[0] <> 0 THEN EXITFOR
+    NEXT
+
+    IF len(king_pos)[0] = 0 THEN RETURN 0
+    kr = king_pos[0]: kc = king_pos[1]
+
+    penalty = 0
+    FOR file_offset = -1 TO 1
+        pawn_found = FALSE
+        check_col = kc + file_offset
+        IF check_col >= 0 AND check_col <= 7 THEN
+            IF player = WHITE THEN
+                IF kr > 0 AND b[kr - 1, check_col] = PAWN * WHITE THEN pawn_found = TRUE
+            ELSE 
+                IF kr < 7 AND b[kr + 1, check_col] = PAWN * BLACK THEN pawn_found = TRUE
+            ENDIF
+        ENDIF
+        IF NOT pawn_found THEN penalty = penalty - 10
+    NEXT file_offset
+    RETURN penalty
+
+ENDFUNC
+
+FUNC EvaluateBoard(b)
+    mg_score = 0
+    eg_score = 0
+    non_pawn_material = 0
+    
+    KingSafetyScore = 0
+    PassedPawnScore = 0
+    RookPlacementScore = 0
+
+    FOR r = 0 TO 7
+        FOR c = 0 TO 7
+            Piece = b[r, c]
+            IF Piece <> EMPTY THEN
+                PieceType = ABS(Piece)
+                PieceVal = PieceValues{PieceType}
+                player = Sign(Piece)
+                
+                IF PieceType > PAWN AND PieceType < KING THEN
+                    non_pawn_material = non_pawn_material + PieceVal
+                ENDIF
+                
+                IF player = WHITE THEN
+                    SWITCH PieceType
+                        CASE PAWN: PstValue_mg = PawnPST_Middlegame[r, c]: PstValue_eg = PawnPST_Endgame[r, c]
+                        CASE KNIGHT: PstValue_mg = KnightPST[r, c]: PstValue_eg = KnightPST[r, c]
+                        CASE BISHOP: PstValue_mg = BishopPST[r, c]: PstValue_eg = BishopPST[r, c]
+                        CASE ROOK: PstValue_mg = RookPST[r, c]: PstValue_eg = RookPST[r, c]
+                        CASE QUEEN: PstValue_mg = QueenPST[r, c]: PstValue_eg = QueenPST[r, c]
+                        CASE KING: PstValue_mg = KingPST_Middlegame[r, c]: PstValue_eg = KingPST_Endgame[r, c]
+                        DEFAULT: PstValue_mg = 0: PstValue_eg = 0
+                    ENDSWITCH
+                    mg_score = mg_score + PieceVal + PstValue_mg
+                    eg_score = eg_score + PieceVal + PstValue_eg
+                ELSE 
+                    SWITCH PieceType
+                        CASE PAWN: PstValue_mg = PawnPST_Middlegame[7-r, c]: PstValue_eg = PawnPST_Endgame[7-r, c]
+                        CASE KNIGHT: PstValue_mg = KnightPST[7-r, c]: PstValue_eg = KnightPST[7-r, c]
+                        CASE BISHOP: PstValue_mg = BishopPST[7-r, c]: PstValue_eg = BishopPST[7-r, c]
+                        CASE ROOK: PstValue_mg = RookPST[7-r, c]: PstValue_eg = RookPST[7-r, c]
+                        CASE QUEEN: PstValue_mg = QueenPST[7-r, c]: PstValue_eg = QueenPST[7-r, c]
+                        CASE KING: PstValue_mg = KingPST_Middlegame[7-r, c]: PstValue_eg = KingPST_Endgame[7-r, c]
+                        DEFAULT: PstValue_mg = 0: PstValue_eg = 0
+                    ENDSWITCH
+                    mg_score = mg_score - (PieceVal + PstValue_mg)
+                    eg_score = eg_score - (PieceVal + PstValue_eg)
+                ENDIF
+
+                IF PieceType = ROOK THEN RookPlacementScore = RookPlacementScore + EvaluateRook(b, r, c) * player
+                IF PieceType = PAWN THEN PassedPawnScore = PassedPawnScore + EvaluatePassedPawn(b, r, c) * player
+            ENDIF
+        NEXT
+    NEXT
+
+    KingSafetyScore = KingSafetyScore + EvaluateKingSafety(b, WHITE)
+    KingSafetyScore = KingSafetyScore + EvaluateKingSafety(b, BLACK)
+
+    starting_material = 7800.0 
+    game_phase = non_pawn_material / starting_material
+    IF game_phase > 1.0 THEN game_phase = 1.0
+
+    final_score = (mg_score * game_phase) + (eg_score * (1.0 - game_phase))
+    
+    bonus = 0
+    ' --- MODIFIED: Rebalanced opening bonuses to encourage variety ---
+    ' White development bonuses
+    IF b[4, 4] = PAWN * WHITE THEN bonus = bonus + 50 ' e4 (Increased)
+    IF b[4, 3] = PAWN * WHITE THEN bonus = bonus + 50 ' d4 (Increased)
+    IF b[4, 2] = PAWN * WHITE THEN bonus = bonus + 12 ' c4 (English)
+    IF b[5, 5] = KNIGHT * WHITE THEN bonus = bonus + 10 ' Nf3 (Decreased)
+    IF b[5, 2] = KNIGHT * WHITE THEN bonus = bonus + 10 ' Nc3 (Decreased)
+    IF b[5, 6] = PAWN * WHITE THEN bonus = bonus + 10 ' g3 (Fianchetto prep)
+    IF b[5, 1] = PAWN * WHITE THEN bonus = bonus + 10 ' b3 (Fianchetto prep)
+    IF b[4, 5] = BISHOP * WHITE THEN bonus = bonus + 12 ' Bc4
+    IF b[3, 1] = BISHOP * WHITE THEN bonus = bonus + 12 ' Bb5
+
+    ' Black development bonuses
+    IF b[3, 4] = PAWN * BLACK THEN bonus = bonus - 50 ' e5 (Increased)
+    IF b[3, 3] = PAWN * BLACK THEN bonus = bonus - 50 ' d5 (Increased)
+    IF b[3, 2] = PAWN * BLACK THEN bonus = bonus - 12 ' c5 (Sicilian)
+    IF b[2, 5] = KNIGHT * BLACK THEN bonus = bonus - 10 ' Nf6 (Decreased)
+    IF b[2, 2] = KNIGHT * BLACK THEN bonus = bonus - 10 ' Nc6 (Decreased)
+    IF b[2, 6] = PAWN * BLACK THEN bonus = bonus - 10 ' g6 (Fianchetto prep)
+    IF b[2, 1] = PAWN * BLACK THEN bonus = bonus - 10 ' b6 (Fianchetto prep)
+    IF b[3, 5] = BISHOP * BLACK THEN bonus = bonus - 12 ' Bc5
+    IF b[4, 1] = BISHOP * BLACK THEN bonus = bonus - 12 ' Bb4
+    
+    final_score = final_score + (bonus * game_phase)
+    final_score = final_score + (KingSafetyScore * game_phase) ' King safety is more important in middlegame
+    final_score = final_score + PassedPawnScore
+    final_score = final_score + RookPlacementScore
+    
+    RETURN final_score
+ENDFUNC
+
+
+' --- Move Generation ---
+FUNC GenerateLegalMoves(b, player)
+    DIM PseudoMoves, LegalMoves_flat, i, current_move
+    PseudoMoves = GeneratePseudoMoves(b, player)
+    LegalMoves_flat = []
+    
+    IF LEN(PseudoMoves) = 0 THEN RETURN []
+    
+    FOR i = 0 TO LEN(PseudoMoves)[0] - 1
+        current_move = SLICE(PseudoMoves, 0, i)
+        DIM TempBoard
+        TempBoard = MakeMove(b, current_move)
+        IF NOT IsInCheck(TempBoard, player) THEN
+            LegalMoves_flat = APPEND(LegalMoves_flat, current_move)
+        ENDIF
+    NEXT i
+
+    IF LEN(LegalMoves_flat) > 0 THEN
+        RETURN RESHAPE(LegalMoves_flat, [LEN(LegalMoves_flat)[0] / 4, 4])
+    ELSE
+        RETURN []
+    ENDIF
+ENDFUNC
+
+FUNC GeneratePseudoMoves(b, player)
+    DIM Moves_flat, r, c
+    Moves_flat = []
+    FOR r = 0 TO 7
+        FOR c = 0 TO 7
+            IF Sign(b[r,c]) = player THEN
+                PieceMoves = []
+                PieceType = ABS(b[r,c])
+                'PRINT "PT:"; PieceType, r,c,b[r,c]
+                SWITCH PieceType
+                    CASE PAWN: PieceMoves = GetPawnMoves(b, player, r, c)
+                    CASE ROOK: PieceMoves = GetSlidingMoves(b, player, r, c, [[-1,0],[1,0],[0,-1],[0,1]])
+                    CASE KNIGHT: PieceMoves = GetKnightMoves(b, player, r, c)
+                    CASE BISHOP: PieceMoves = GetSlidingMoves(b, player, r, c, [[-1,-1],[-1,1],[1,-1],[1,1]])
+                    CASE QUEEN: PieceMoves = GetSlidingMoves(b, player, r, c, [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]])
+                    CASE KING: PieceMoves = GetKingMoves(b, player, r, c)
+                ENDSWITCH
+                IF LEN(PieceMoves)[0] > 0 THEN Moves_flat = APPEND(Moves_flat, PieceMoves)
+            ENDIF
+        NEXT
+    NEXT
+    
+    IF LEN(Moves_flat) > 0 THEN
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0] / 4, 4])
+    ELSE
+        RETURN []
+    ENDIF
+ENDFUNC
+
+' --- Piece-Specific Move Logic ---
+
+FUNC GetPawnMoves(b, player, r, c)
+    DIM Moves_flat, r1, c1
+    Moves_flat = []
+    r1 = r - player
+    IF r1 >= 0 AND r1 <= 7 AND b[r1,c] = EMPTY THEN
+        Moves_flat = APPEND(Moves_flat, [r,c,r1,c])
+        IF (player = WHITE AND r = 6) OR (player = BLACK AND r = 1) THEN
+            DIM r2
+            r2 = r - (2 * player)
+            IF b[r2,c] = EMPTY THEN
+                Moves_flat = APPEND(Moves_flat, [r,c,r2,c])
+            ENDIF
+        ENDIF
+    ENDIF
+    DIM capture_cols
+    capture_cols = [c-1, c+1]
+    FOR EACH c1 IN capture_cols
+        IF r1 >=0 AND r1 <=7 AND c1 >= 0 AND c1 <= 7 THEN
+            IF Sign(b[r1,c1]) = -player THEN
+                Moves_flat = APPEND(Moves_flat, [r,c,r1,c1])
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' --- En Passant Capture Generation ---
+    IF EnPassantTargetSquare[0] <> -1 THEN
+        IF r = 3 AND player = WHITE THEN ' White pawn on 5th rank
+            IF EnPassantTargetSquare[0] = r-1 AND ABS(EnPassantTargetSquare[1] - c) = 1 THEN
+                Moves_flat = APPEND(Moves_flat, [r, c, EnPassantTargetSquare[0], EnPassantTargetSquare[1]])
+            ENDIF
+        ELSEIF r = 4 AND player = BLACK THEN ' Black pawn on 4th rank
+            IF EnPassantTargetSquare[0] = r+1 AND ABS(EnPassantTargetSquare[1] - c) = 1 THEN
+                Moves_flat = APPEND(Moves_flat, [r, c, EnPassantTargetSquare[0], EnPassantTargetSquare[1]])
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF LEN(Moves_flat) > 0 THEN 
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4])     
+    ELSE 
+        RETURN []
+    ENDIF
+ENDFUNC
+
+FUNC GetKnightMoves(b, player, r, c)
+    DIM Moves_flat, Dirs, i
+    Moves_flat = []
+    Dirs = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]
+    FOR i = 0 TO LEN(Dirs)[0] - 1
+        DIM direction_vec, r1, c1
+        direction_vec = SLICE(Dirs, 0, i)
+        r1 = r + direction_vec[0]
+        c1 = c + direction_vec[1]
+        IF r1 >= 0 AND r1 <= 7 AND c1 >= 0 AND c1 <= 7 THEN
+            IF Sign(b[r1,c1]) <> player THEN
+                Moves_flat = APPEND(Moves_flat, [r,c,r1,c1])
+            ENDIF
+        ENDIF
+    NEXT i
+    IF LEN(Moves_flat) > 0 THEN 
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4]) 
+    ELSE 
+        RETURN []
+    ENDIF
+ENDFUNC
+
+FUNC GetKingMoves(b, player, r, c)
+    DIM Moves_flat, Dirs, i
+    Moves_flat = []
+    Dirs = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]]
+    FOR i = 0 TO LEN(Dirs)[0] - 1
+        DIM direction_vec, r1, c1
+        direction_vec = SLICE(Dirs, 0, i)
+        r1 = r + direction_vec[0]
+        c1 = c + direction_vec[1]
+        IF r1 >= 0 AND r1 <= 7 AND c1 >= 0 AND c1 <= 7 THEN
+            IF Sign(b[r1,c1]) <> player THEN
+                Moves_flat = APPEND(Moves_flat, [r,c,r1,c1])
+            ENDIF
+        ENDIF
+    NEXT i
+
+    ' --- Castling Logic ---
+    IF NOT IsInCheck(b, player) THEN
+        IF player = WHITE THEN
+            ' White Kingside (O-O)
+            IF WhiteCanCastleKS AND b[7,5]=EMPTY AND b[7,6]=EMPTY THEN
+                IF NOT IsSquareAttacked(b, 7, 5, BLACK) AND NOT IsSquareAttacked(b, 7, 6, BLACK) THEN
+                    Moves_flat = APPEND(Moves_flat, [r,c,7,6])
+                ENDIF
+            ENDIF
+            ' White Queenside (O-O-O)
+            IF WhiteCanCastleQS AND b[7,3]=EMPTY AND b[7,2]=EMPTY AND b[7,1]=EMPTY THEN
+                IF NOT IsSquareAttacked(b, 7, 3, BLACK) AND NOT IsSquareAttacked(b, 7, 2, BLACK) THEN
+                    Moves_flat = APPEND(Moves_flat, [r,c,7,2])
+                ENDIF
+            ENDIF
+        ELSE ' player is BLACK
+            ' Black Kingside (O-O)
+            IF BlackCanCastleKS AND b[0,5]=EMPTY AND b[0,6]=EMPTY THEN
+                IF NOT IsSquareAttacked(b, 0, 5, WHITE) AND NOT IsSquareAttacked(b, 0, 6, WHITE) THEN
+                    Moves_flat = APPEND(Moves_flat, [r,c,0,6])
+                ENDIF
+            ENDIF
+            ' Black Queenside (O-O-O)
+            IF BlackCanCastleQS AND b[0,3]=EMPTY AND b[0,2]=EMPTY AND b[0,1]=EMPTY THEN
+                IF NOT IsSquareAttacked(b, 0, 3, WHITE) AND NOT IsSquareAttacked(b, 0, 2, WHITE) THEN
+                    Moves_flat = APPEND(Moves_flat, [r,c,0,2])
+                ENDIF
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF LEN(Moves_flat) > 0 THEN 
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4])
+    ELSE 
+        RETURN []
+    ENDIF        
+ENDFUNC
+
+FUNC GetSlidingMoves(b, player, r, c, Dirs)
+    DIM Moves_flat, i
+    Moves_flat = []
+    FOR i = 0 TO LEN(Dirs)[0] - 1
+        DIM direction_vec, r1, c1
+        direction_vec = SLICE(Dirs, 0, i)
+        r1 = r
+        c1 = c
+        DO
+            r1 = r1 + direction_vec[0]
+            c1 = c1 + direction_vec[1]
+            IF r1 < 0 OR r1 > 7 OR c1 < 0 OR c1 > 7 THEN EXITDO
+            IF b[r1,c1] = EMPTY THEN
+                Moves_flat = APPEND(Moves_flat, [r,c,r1,c1])
+            ELSE
+                IF Sign(b[r1,c1]) = -player THEN
+                    Moves_flat = APPEND(Moves_flat, [r,c,r1,c1])
+                ENDIF
+                EXITDO
+            ENDIF
+        LOOP
+    NEXT i
+    IF LEN(Moves_flat) > 0 THEN 
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4]) 
+    ELSE 
+        RETURN []
+    ENDIF
+ENDFUNC
+
+' --- Utility and Helper Functions ---
+
+FUNC IsSquareAttacked(b, r, c, attacker_player)
+    DIM dr, dc, i, r1, c1, piece, pieceType
+
+    ' --- Check for Pawn attacks ---
+    dc = IIF(attacker_player = WHITE, 1, -1)
+    IF r+dc >=0 AND r+dc <= 7 THEN
+        try
+            IF c-1 > 0 ANDALSO b[r+dc, c-1] = PAWN * attacker_player THEN RETURN TRUE
+            IF c+1 < 7 ANDALSO b[r+dc, c+1] = PAWN * attacker_player THEN RETURN TRUE
+        catch
+            print c, r, dc, b
+        endtry
+    ENDIF
+
+    ' --- Check for Knight attacks ---
+    KnightDirs = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]
+    FOR i = 0 TO 7
+        r1 = r + KnightDirs[i,0] : c1 = c + KnightDirs[i,1]
+        IF r1 >= 0 AND r1 <= 7 AND c1 >= 0 AND c1 <= 7 THEN
+            IF b[r1, c1] = KNIGHT * attacker_player THEN RETURN TRUE
+        ENDIF
+    NEXT i
+    
+    ' --- Check for Sliding attacks (Rook, Bishop, Queen) ---
+    SlidingDirs = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]]
+    FOR i = 0 TO 7
+        dr = SlidingDirs[i,0] : dc = SlidingDirs[i,1]
+        r1 = r + dr : c1 = c + dc
+        DO WHILE r1 >= 0 AND r1 <= 7 AND c1 >= 0 AND c1 <= 7
+            piece = b[r1, c1]
+            IF piece <> EMPTY THEN
+                pieceType = ABS(piece)
+                IF Sign(piece) = attacker_player THEN
+                    ' Diagonal attack?
+                    IF i > 3 AND (pieceType = BISHOP OR pieceType = QUEEN) THEN RETURN TRUE
+                    ' Straight attack?
+                    IF i <= 3 AND (pieceType = ROOK OR pieceType = QUEEN) THEN RETURN TRUE
+                ENDIF
+                EXITDO ' Path is blocked by another piece
+            ENDIF
+            r1 = r1 + dr : c1 = c1 + dc
+        LOOP
+    NEXT i
+    
+    ' --- Check for King attacks ---
+    FOR i = 0 TO 7
+        r1 = r + SlidingDirs[i,0] : c1 = c + SlidingDirs[i,1]
+        IF r1 >= 0 AND r1 <= 7 AND c1 >= 0 AND c1 <= 7 THEN
+            IF b[r1, c1] = KING * attacker_player THEN RETURN TRUE
+        ENDIF
+    NEXT i
+
+    RETURN FALSE
+ENDFUNC
+
+FUNC IsInCheck(b, player)
+    ' Find the player's king
+    DIM  r, c
+    king_pos = []
+    FOR r = 0 TO 7
+        FOR c = 0 TO 7
+            IF b[r,c] = KING * player THEN
+                king_pos = [r, c]
+                EXITFOR
+            ENDIF
+        NEXT
+        IF len(king_pos)[0] > 0 THEN EXITFOR
+    NEXT
+    
+    IF len(king_pos)[0] = 0 THEN RETURN TRUE ' Should not happen
+    
+    ' Check if that square is attacked by the opponent
+    RETURN IsSquareAttacked(b, king_pos[0], king_pos[1], -player)
+ENDFUNC
+
+FUNC MakeMove(b, current_move)
+    DIM newBoard[8, 8] AS INTEGER
+    DIM r, c
+    FOR r = 0 TO 7
+        FOR c = 0 TO 7
+            newBoard[r, c] = b[r, c]
+        NEXT
+    NEXT
+
+    DIM r1, c1, r2, c2
+    [r1, c1, r2, c2] = current_move
+    
+    piece = newBoard[r1, c1]
+    pieceType = ABS(piece)
+    
+    ' --- Reset En Passant State at the start of every move ---
+    EnPassantTargetSquare = [-1, -1]
+    
+    ' --- Special Handling for En Passant Capture ---
+    IF pieceType = PAWN AND c1 <> c2 AND newBoard[r2, c2] = EMPTY THEN
+        ' A pawn is moving diagonally to an empty square: it MUST be en passant.
+        ' Remove the captured pawn, which is on the 'from' row and the 'to' column.
+        newBoard[r1, c2] = EMPTY
+    ENDIF
+
+    
+    ' --- Main Move Logic ---
+    newBoard[r2, c2] = piece
+    newBoard[r1, c1] = EMPTY
+
+    ' --- Set En Passant State if a pawn made a double move ---
+    IF pieceType = PAWN AND ABS(r1 - r2) = 2 THEN
+        IF piece > 0 THEN ' White Pawn
+            EnPassantTargetSquare = [r1 - 1, c1]
+        ELSE ' Black Pawn
+            EnPassantTargetSquare = [r1 + 1, c1]
+        ENDIF
+    ENDIF
+    
+    ' --- Special Handling for Castling ---
+    IF ABS(piece) = KING AND ABS(c1 - c2) = 2 THEN
+        ' King moved two squares, so this is castling. Move the rook.
+        IF c2 > c1 THEN ' Kingside (O-O)
+            newBoard[r1, 5] = newBoard[r1, 7]
+            newBoard[r1, 7] = EMPTY
+        ELSE ' Queenside (O-O-O)
+            newBoard[r1, 3] = newBoard[r1, 0]
+            newBoard[r1, 0] = EMPTY
+        ENDIF
+    ENDIF
+    
+    ' --- Update Castling Rights ---
+    IF piece = KING * WHITE THEN WhiteCanCastleKS = FALSE: WhiteCanCastleQS = FALSE
+    IF piece = KING * BLACK THEN BlackCanCastleKS = FALSE: BlackCanCastleQS = FALSE
+    IF r1 = 7 AND c1 = 0 THEN WhiteCanCastleQS = FALSE ' a1 rook moved
+    IF r1 = 7 AND c1 = 7 THEN WhiteCanCastleKS = FALSE ' h1 rook moved
+    IF r1 = 0 AND c1 = 0 THEN BlackCanCastleQS = FALSE ' a8 rook moved
+    IF r1 = 0 AND c1 = 7 THEN BlackCanCastleKS = FALSE ' h8 rook moved
+    
+    ' Pawn promotion logic
+    IF ABS(newBoard[r2, c2]) = PAWN AND (r2 = 0 OR r2 = 7) THEN
+        newBoard[r2, c2] = QUEEN * Sign(newBoard[r2,c2])
+    ENDIF
+    
+    RETURN newBoard
+ENDFUNC
+
+FUNC ParseMove(move_str$)
+    IF LEN(move_str$) <> 4 THEN RETURN []
+    
+    DIM c1, r1, c2, r2
+    c1 = ASC(LCASE$(LEFT$(move_str$,1))) - ASC("a")
+    r1 = 8 - VAL(MID$(move_str$, 1, 1))
+    c2 = ASC(LCASE$(MID$(move_str$,2,1))) - ASC("a")
+    r2 = 8 - VAL(RIGHT$(move_str$, 1))
+    
+    IF c1<0 OR c1>7 OR r1<0 OR r1>7 OR c2<0 OR c2>7 OR r2<0 OR r2>7 THEN RETURN []
+    
+    RETURN [r1, c1, r2, c2]
+ENDFUNC
+
+FUNC FormatMove$(current_move)
+    DIM r1, c1, r2, c2, T$
+    [r1, c1, r2, c2] = current_move
+    T$ = CHR$(ASC("a") + c1) + STR$(8 - r1)
+    T$ = T$ + CHR$(ASC("a") + c2) + STR$(8 - r2)
+    RETURN T$
+ENDFUNC
+
+SUB PrintBoardO()
+    DIM r, c
+    PRINT "   a  b  c  d  e  f  g  h"
+    FOR r = 0 TO 7
+        COLOR 15, 0
+        PRINT 8 - r; " ";
+        FOR c = 0 TO 7
+            DIM BgColor, FgColor
+            BgColor = IIF((r + c) MOD 2 = 0, 8, 0)
+            
+            DIM Piece
+            Piece = Board[r,c]
+            FgColor = IIF(Sign(Piece) = WHITE, 15, 12)
+            IF Piece = EMPTY THEN FgColor = BgColor
+            
+            COLOR FgColor, BgColor
+            PRINT " "; PieceChars{ABS(Piece)}; " ";
+        NEXT
+        COLOR 15, 0
+        PRINT " "; 8 - r
+    NEXT
+    COLOR 15, 0
+    PRINT "   a  b  c  d  e  f  g  h"
+    PRINT "---------------------------------"
+    PRINT "Turn: "; IIF(CurrentPlayer = WHITE, "White (You)", "Black (Computer)")
+ENDSUB
+
+SUB PrintBoard()
+    DIM r, c, i, T$
+    
+    PRINT " ╔═════════════════════════════════╗ ───────────────"
+    FOR r = 0 TO 7
+        COLOR 15, 0
+        PRINT 8 - r; "║";
+        FOR c = 0 TO 7
+            DIM BgColor, FgColor, Piece
+            BgColor = IIF((r + c) MOD 2 = 0, 8, 0)
+            Piece = Board[r,c]
+            FgColor = IIF(Sign(Piece) = WHITE, 15, 12)
+            IF Piece = EMPTY THEN FgColor = BgColor
+            
+            COLOR FgColor, BgColor
+            PRINT " "; PieceChars{ABS(Piece)}; " ";
+        NEXT
+        COLOR 15, 0
+        
+        ' --- Move History Display Logic ---
+        T$ = "         ║ "
+        last_move_count = 16 ' Display last 8 full moves
+        start_idx = MAX([0, LEN(MoveHistory)[0] - last_move_count])
+
+        IF r = 0 THEN
+            T$ = T$ + "MOVE HISTORY"
+        ELSEIF r > 0 THEN
+             move_idx = start_idx + ((r-1) * 2)
+             IF move_idx < LEN(MoveHistory)[0] THEN
+                ' --- THIS IS THE FIX ---
+                move_num = INT(move_idx / 2) + 1
+                T$ = T$ + move_num + ". " + MoveHistory[move_idx]
+                IF move_idx + 1 < LEN(MoveHistory)[0] THEN
+                    T$ = T$ + "   " + MoveHistory[move_idx + 1]
+                ENDIF
+             ENDIF
+        ENDIF
+        PRINT T$
+    NEXT
+    COLOR 15, 0
+    PRINT " ╚═════════════════════════════════╝ ───────────────"
+    PRINT "   a  b  c  d  e  f  g  h"
+    PRINT "---------------------------------"
+    PRINT "Turn: "; IIF(CurrentPlayer = WHITE, "White", "Black")
+ENDSUB
+
+' --- Initialization and Main Entry ---
+
+SUB InitBoard()
+    DIM BackRow
+    BackRow = [ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK]
+    
+    DIM r, c
+    FOR c = 0 TO 7
+        Board[0,c] = -BackRow[c]
+        Board[1,c] = -PAWN
+        Board[6,c] = PAWN
+        Board[7,c] = BackRow[c]
+    NEXT
+ENDSUB
+
+SUB InitData()
+    PieceChars = {EMPTY: " ", PAWN: "P", KNIGHT: "N", BISHOP: "B", ROOK: "R", QUEEN: "Q", KING: "K"}
+    PieceValues = {PAWN: 1, KNIGHT: 3, BISHOP: 3, ROOK: 5, QUEEN: 9, KING: 1000}
+
+    ' --- MIDDLEGAME Piece-Square Tables ---
+    ' Pawns are best in the center and advancing
+    PawnPST_Middlegame = RESHAPE([  0,  0,  0,  0,  0,  0,  0,  0,  5, 10, 10,-20,-20, 10, 10,  5,  5, -5,-10,  0,  0,-10, -5,  5,  0,  0,  0, 20, 20,  0,  0,  0,  5,  5, 10, 25, 25, 10,  5,  5, 10, 10, 20, 30, 30, 20, 10, 10, 50, 50, 50, 50, 50, 50, 50, 50,  0,  0,  0,  0,  0,  0,  0,  0], [8,8])
+    ' King should stay safe and castle
+    KingPST_Middlegame = RESHAPE([ 20, 30, 10,  0,  0, 10, 30, 20, 20, 20,  0,  0,  0,  0, 20, 20,-10,-20,-20,-20,-20,-20,-20,-10,-20,-30,-30,-40,-40,-30,-30,-20,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30], [8,8])
+
+    ' Knights are best in the center, away from the edges
+    KnightPST = RESHAPE([-50,-40,-30,-30,-30,-30,-40,-50, -40,-20,  0,  5,  5,  0,-20,-40, -30,  5, 10, 15, 15, 10,  5,-30, -30,  0, 15, 20, 20, 15,  0,-30, -30,  5, 15, 20, 20, 15,  5,-30, -30,  0, 10, 15, 15, 10,  0,-30, -40,-20,  0,  0,  0,  0,-20,-40, -50,-40,-30,-30,-30,-30,-40,-50], [8,8])
+    ' Bishops are strong on long diagonals
+    BishopPST = RESHAPE([-20,-10,-10,-10,-10,-10,-10,-20, -10,  5,  0,  0,  0,  0,  5,-10, -10, 10, 10, 10, 10, 10, 10,-10, -10,  0, 10, 10, 10, 10,  0,-10, -10,  5,  5, 10, 10,  5,  5,-10, -10,  0,  5, 10, 10,  5,  0,-10, -10,  0,  0,  0,  0,  0,  0,-10, -20,-10,-10,-10,-10,-10,-10,-20], [8,8])
+    ' Rooks belong on open files and the 7th rank
+    RookPST = RESHAPE([  0,  0,  0,  5,  5,  0,  0,  0, -5,  0,  0,  0,  0,  0,  0, -5, -5,  0,  0,  0,  0,  0,  0, -5, -5,  0,  0,  0,  0,  0,  0, -5, -5,  0,  0,  0,  0,  0,  0, -5, -5,  0,  0,  0,  0,  0,  0, -5,  5, 10, 10, 10, 10, 10, 10,  5,  0,  0,  0,  0,  0,  0,  0,  0], [8,8])
+    ' Queen combines power of Rook and Bishop
+    QueenPST = RESHAPE([-20,-10,-10, -5, -5,-10,-10,-20, -10,  0,  5,  0,  0,  0,  0,-10, -10,  5,  5,  5,  5,  5,  0,-10,   0,  0,  5,  5,  5,  5,  0, -5,  -5,  0,  5,  5,  5,  5,  0, -5, -10,  0,  5,  0,  0,  0,  0,-10, -10,  0,  0,  0,  0,  0,  0,-10, -20,-10,-10, -5, -5,-10,-10,-20], [8,8])
+
+    ' --- ENDGAME Piece-Square Tables ---
+    ' Exponential bonus for passed pawns based on rank (from White's perspective)
+    PassedPawnBonus = [0, 750, 350, 150, 50, 20, 10, 0]
+    ' King should move to the center
+    KingPST_Endgame = RESHAPE([-50,-30,-30,-30,-30,-30,-30,-50, -30,-20,-10,  0,  0,-10,-20,-30, -30,-10, 20, 30, 30, 20,-10,-30, -30,-10, 30, 40, 40, 30,-10,-30, -30,-10, 30, 40, 40, 30,-10,-30, -30,-10, 20, 30, 30, 20,-10,-30, -30,-20,-10,  0,  0,-10,-20,-30, -50,-30,-30,-30,-30,-30,-30,-50], [8,8])
+    ' Pawns are all about promotion
+    PawnPST_Endgame = RESHAPE([  0,  0,  0,  0,  0,  0,  0,  0,  80, 80, 80, 80, 80, 80, 80, 80,  50, 50, 50, 50, 50, 50, 50, 50,  30, 30, 30, 30, 30, 30, 30, 30,  20, 20, 20, 20, 20, 20, 20, 20,  10, 10, 10, 10, 10, 10, 10, 10,   5,  5,  5,  5,  5,  5,  5,  5,   0,  0,  0,  0,  0,  0,  0,  0], [8,8])
+
+    WhiteCanCastleKS = TRUE
+    WhiteCanCastleQS = TRUE
+    BlackCanCastleKS = TRUE
+    BlackCanCastleQS = TRUE
+
+    EnPassantTargetSquare = [-1, -1]
+
+ENDSUB
+
+FUNC Sign(n)
+    IF n > 0 THEN RETURN 1
+    IF n < 0 THEN RETURN -1
+    RETURN 0
+ENDFUNC
+
+FUNC IIF(condition, true_val, false_val)
+    IF condition THEN
+        RETURN true_val
+    ELSE
+        RETURN false_val
+    ENDIF
+ENDFUNC
+
+SUB GameLoop()
+    DIM GameOver AS BOOLEAN
+    GameOver = FALSE
+    
+    DO
+        CLS
+        PrintBoard()
+        
+        DIM LegalMoves
+        LegalMoves = GenerateLegalMoves(Board, CurrentPlayer)
+        
+        IF LEN(LegalMoves) = 0 THEN
+            IF IsInCheck(Board, CurrentPlayer) THEN
+                PRINT "Checkmate! Player "; -CurrentPlayer; " wins."
+            ELSE
+                PRINT "Stalemate! It's a draw."
+            ENDIF
+            GameOver = TRUE
+        ELSE
+            IF CurrentPlayer = WHITE THEN
+                PlayerTurn LegalMoves
+                'ComputerTurn LegalMoves, CurrentPlayer 
+            ELSE
+                ComputerTurn LegalMoves, CurrentPlayer
+            ENDIF
+            CurrentPlayer = -CurrentPlayer
+        ENDIF
+    LOOP UNTIL GameOver = TRUE
+    
+    PRINT "Game Over."
+ENDSUB
+
+' --- Main Program Execution ---
+SUB Main()
+    InitData()
+    InitBoard()
+    GameLoop()
+ENDSUB
+
+Main()

@@ -1,0 +1,11 @@
+' Test 1: No prompt (default "? ")
+INPUT X
+PRINT "Got: "; X
+
+' Test 2: Prompt with comma → "Enter name? "
+INPUT "Enter name", NAME
+PRINT "Name: "; NAME
+
+' Test 3: Prompt with semicolon → "Enter age: " (no ? appended)
+INPUT "Enter age: "; AGE
+PRINT "Age: "; AGE

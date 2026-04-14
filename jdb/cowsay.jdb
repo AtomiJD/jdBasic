@@ -1,0 +1,52 @@
+' ==========================================================
+' == MOO.JDB - A Cowsay Clone with bunny and cow
+' ==========================================================
+
+'Randomize with seed now
+RND(-1.0)
+
+A=INT(RND(1)*2) + 1 '1=moo, 2=hop
+
+IF A = 1 THEN
+    Message$ = "Moo! (Run with arguments to say something)"
+ELSE
+    Message$ = "Hop! (Run with arguments to say something)"
+ENDIF
+
+' 1. Get Arguments
+Args = OS.ARGS()
+IF LEN(Args) > 1 THEN
+    IF Args[0] = "--debug" or Args[0] = "--verbose" THEN 
+        Message$ = Args[2]
+    ELSE
+        Message$ = Args[1]
+    ENDIF
+ENDIF
+
+Message$ = TRIM$(Message$)
+MsgLen = LEN(Message$)
+
+' 2. Build the Bubble
+TopBar$    = " " + ("_" * (MsgLen + 2))
+BottomBar$ = " " + ("-" * (MsgLen + 2))
+Content$   = "< " + Message$ + " >"
+
+' 3. Print the output
+PRINT TopBar$
+PRINT Content$
+PRINT BottomBar$
+IF A = 1 THEN
+    PRINT "        \   ^__^"
+    PRINT "         \  (oo)\_______"
+    PRINT "            (__)\       )\/\"
+    PRINT "                ||----w |"
+    PRINT "                ||     ||"
+    PRINT ""
+ELSE
+    PRINT "       \   / /"
+    PRINT "        \ / /"
+    PRINT "       ( . .)"
+    PRINT "       (  | )"
+    PRINT "       ^^ ^^"
+    PRINT ""
+ENDIF

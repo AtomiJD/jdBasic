@@ -1,0 +1,98 @@
+' =========================================================
+' jdBasic Joystick/Gamepad Tester
+' =========================================================
+' This script continuously polls the first connected gamepad
+' and displays the state of axes, buttons, and hats.
+' =========================================================
+
+CLS
+PRINT "Waiting for Gamepad..."
+
+' Main Loop
+DO
+    ' 1. Check for connected devices
+    Count = JOY.COUNT()
+    
+    ' Move cursor to top to update display without scrolling
+    LOCATE 1, 1
+    PRINT "Connected Gamepads: " + Count + "     "
+
+    IF Count > 0 THEN
+        ' We will test the first gamepad (Index 0)
+        JoyID = 0
+        
+        ' 2. Display Name
+        PRINT "Name: " + JOY.NAME$(JoyID) + "                         "
+        PRINT "-"*50
+
+        ' 3. Test Axes (Standard gamepads usually have 4-6 axes)
+        ' Axis 0/1: Left Stick
+        ' Axis 2/3: Right Stick (or Triggers on some OSs)
+        ' Axis 4/5: Triggers (on other OSs)
+        PRINT "--- AXES ---"
+        FOR i = 0 TO 5
+            val = JOY.AXIS(JoyID, i)
+            ' Using FORMAT$ to keep the display clean
+            PRINT "Axis " + i + ": " + FORMAT$("{: .2f}", val) + "   "
+        NEXT i
+        PRINT "" 
+
+        ' 4. Test Buttons (Check first 16 buttons)
+        PRINT "--- BUTTONS ---"
+        PRINT "Pressed: ";
+        
+        AnyPressed = FALSE
+        FOR b = 0 TO 15
+            IF JOY.BUTTON(JoyID, b) THEN
+                ' Print the button index if pressed
+                COLOR 10, 0 ' Green text (if supported)
+                PRINT "[" + b + "] ";
+                COLOR 7, 0  ' Reset color
+                AnyPressed = TRUE
+            ELSE
+                ' Print a dot placeholder if not pressed
+                PRINT ". ";
+            ENDIF
+        NEXT b
+        
+        ' Clear remaining line if buttons were released
+        IF NOT AnyPressed THEN PRINT "None           ";
+        PRINT "                              " 
+
+        ' 5. Test Hat (D-Pad)
+        ' Returns a bitmask: 1=Up, 2=Right, 4=Down, 8=Left
+        PRINT ""
+        PRINT "--- HAT / D-PAD ---"
+        HatState = JOY.HAT(JoyID, 0)
+        
+        Msg$ = "Center"
+        IF (HatState BAND 1) THEN Msg$ = "UP"
+        IF (HatState BAND 2) THEN Msg$ = "RIGHT"
+        IF (HatState BAND 4) THEN Msg$ = "DOWN"
+        IF (HatState BAND 8) THEN Msg$ = "LEFT"
+        
+        ' Check diagonals
+        IF HatState = 3 THEN Msg$ = "UP-RIGHT"
+        IF HatState = 6 THEN Msg$ = "DOWN-RIGHT"
+        IF HatState = 12 THEN Msg$ = "DOWN-LEFT"
+        IF HatState = 9 THEN Msg$ = "UP-LEFT"
+
+        PRINT "State: " + HatState + " (" + Msg$ + ")          "
+
+    ELSE
+        PRINT "Please connect a joystick or gamepad...      "
+        ' Clear lines below to remove old data if controller is unplugged
+        FOR k = 1 TO 15
+            PRINT "                                                  "
+        NEXT
+    ENDIF
+
+    ' Small delay to prevent high CPU usage
+    SLEEP 50
+    
+    ' Allow user to quit
+    IF INKEY$() = "q" THEN EXITDO
+LOOP
+
+PRINT ""
+PRINT "Test Finished."

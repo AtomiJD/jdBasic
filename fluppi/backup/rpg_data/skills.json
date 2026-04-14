@@ -1,0 +1,88 @@
+{
+    "skill_trees": {
+        "vally_skills": {
+            "branches": [
+                {
+                    "name": "Swordplay",
+                    "skills": [
+                        {"id": "slash", "name": "Slash", "desc": "Quick sword attack", "type": "attack", "power": 15, "mp_cost": 5, "level_req": 1},
+                        {"id": "double_strike", "name": "Double Strike", "desc": "Hit twice in a row", "type": "attack", "power": 12, "hits": 2, "mp_cost": 10, "level_req": 3, "requires": "slash"},
+                        {"id": "blade_storm", "name": "Blade Storm", "desc": "Devastating multi-hit combo", "type": "attack", "power": 10, "hits": 4, "mp_cost": 20, "level_req": 7, "requires": "double_strike"}
+                    ]
+                },
+                {
+                    "name": "Pirate Tricks",
+                    "skills": [
+                        {"id": "steal", "name": "Steal", "desc": "Attempt to steal an item", "type": "special", "power": 0, "mp_cost": 8, "level_req": 2},
+                        {"id": "smoke_bomb", "name": "Smoke Bomb", "desc": "Guaranteed escape from battle", "type": "special", "power": 0, "mp_cost": 12, "level_req": 4, "requires": "steal"},
+                        {"id": "cannon_blast", "name": "Cannon Blast", "desc": "Massive damage to all enemies", "type": "attack_all", "power": 25, "mp_cost": 25, "level_req": 8, "requires": "smoke_bomb"}
+                    ]
+                },
+                {
+                    "name": "Captain",
+                    "skills": [
+                        {"id": "rally", "name": "Rally Cry", "desc": "Boost party ATK for 3 turns", "type": "buff_atk", "power": 5, "mp_cost": 10, "level_req": 3},
+                        {"id": "treasure_sense", "name": "Treasure Sense", "desc": "More gold from battles", "type": "passive", "power": 0, "mp_cost": 0, "level_req": 5, "requires": "rally"},
+                        {"id": "captains_order", "name": "Captain's Order", "desc": "All party members attack at once", "type": "party_attack", "power": 8, "mp_cost": 30, "level_req": 10, "requires": "treasure_sense"}
+                    ]
+                }
+            ]
+        },
+        "hasi_skills": {
+            "branches": [
+                {
+                    "name": "Healing",
+                    "skills": [
+                        {"id": "heal", "name": "Heal", "desc": "Restore HP to one ally", "type": "heal", "power": 30, "mp_cost": 8, "level_req": 1},
+                        {"id": "group_heal", "name": "Group Heal", "desc": "Heal all party members", "type": "heal_all", "power": 20, "mp_cost": 18, "level_req": 4, "requires": "heal"},
+                        {"id": "revive", "name": "Revive", "desc": "Revive a fallen ally with 50% HP", "type": "revive", "power": 50, "mp_cost": 30, "level_req": 8, "requires": "group_heal"}
+                    ]
+                },
+                {
+                    "name": "Protection",
+                    "skills": [
+                        {"id": "barrier", "name": "Barrier", "desc": "Boost one ally's DEF for 3 turns", "type": "buff_def", "power": 8, "mp_cost": 6, "level_req": 2},
+                        {"id": "magic_shield", "name": "Magic Shield", "desc": "Absorb next hit for one ally", "type": "shield", "power": 0, "mp_cost": 15, "level_req": 5, "requires": "barrier"},
+                        {"id": "holy_aura", "name": "Holy Aura", "desc": "Regen HP each turn for party", "type": "regen", "power": 10, "mp_cost": 25, "level_req": 9, "requires": "magic_shield"}
+                    ]
+                },
+                {
+                    "name": "Elemental",
+                    "skills": [
+                        {"id": "sparkle", "name": "Sparkle", "desc": "Light damage to one enemy", "type": "attack", "power": 18, "mp_cost": 10, "level_req": 2},
+                        {"id": "star_rain", "name": "Star Rain", "desc": "Light damage to all enemies", "type": "attack_all", "power": 14, "mp_cost": 20, "level_req": 5, "requires": "sparkle"},
+                        {"id": "divine_judgment", "name": "Divine Judgment", "desc": "Massive holy damage", "type": "attack", "power": 40, "mp_cost": 35, "level_req": 10, "requires": "star_rain"}
+                    ]
+                }
+            ]
+        },
+        "moehrchen_skills": {
+            "branches": [
+                {
+                    "name": "Bureaucracy",
+                    "skills": [
+                        {"id": "stamp", "name": "Stamp Attack", "desc": "Smack with official stamp", "type": "attack", "power": 14, "mp_cost": 5, "level_req": 1},
+                        {"id": "red_tape", "name": "Red Tape", "desc": "Slow enemy speed for 3 turns", "type": "debuff_spd", "power": 5, "mp_cost": 10, "level_req": 3, "requires": "stamp"},
+                        {"id": "audit", "name": "Audit", "desc": "Steal enemy buffs", "type": "special", "power": 0, "mp_cost": 15, "level_req": 6, "requires": "red_tape"}
+                    ]
+                },
+                {
+                    "name": "Regulations",
+                    "skills": [
+                        {"id": "fine", "name": "Fine!", "desc": "Deal damage based on enemy gold", "type": "attack", "power": 20, "mp_cost": 8, "level_req": 2},
+                        {"id": "tax_shield", "name": "Tax Shield", "desc": "Boost party DEF", "type": "buff_def_all", "power": 4, "mp_cost": 15, "level_req": 4, "requires": "fine"},
+                        {"id": "decree", "name": "Royal Decree", "desc": "Massive damage + stun", "type": "attack", "power": 35, "mp_cost": 28, "level_req": 9, "requires": "tax_shield"}
+                    ]
+                },
+                {
+                    "name": "Administration",
+                    "skills": [
+                        {"id": "organize", "name": "Organize", "desc": "Restore MP to self", "type": "restore_mp", "power": 15, "mp_cost": 0, "level_req": 2},
+                        {"id": "delegate", "name": "Delegate", "desc": "Give one ally an extra turn", "type": "special", "power": 0, "mp_cost": 20, "level_req": 5, "requires": "organize"},
+                        {"id": "martial_law", "name": "Martial Law", "desc": "All party members DEF way up", "type": "buff_def_all", "power": 10, "mp_cost": 30, "level_req": 10, "requires": "delegate"}
+                    ]
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,12 @@
+' This tests that resume works by directly using the VM API via EXECUTE
+' We can't test console RESUME from a file, but we can verify the mechanism
+
+PRINT "=== STOP/RESUME test ==="
+PRINT "Step 1"
+PRINT "Step 2"
+PRINT "Done (no STOP in this test)"
+
+' Verify variables persist after STOP
+LET TESTVAR = 42
+STOP
+PRINT "After RESUME: TESTVAR ="; TESTVAR

@@ -1,0 +1,18 @@
+' Create an array of DateTime objects for project deadlines
+deadlines = [CVDATE("2025-08-01"), CVDATE("2025-08-15"), CVDATE("2025-09-05")]
+
+' Define the single project start date
+start_date = CVDATE("2025-07-25")
+
+' Use the vectorized DATEDIFF to calculate days remaining for each deadline
+days_remaining = DATEDIFF("D", start_date, deadlines)
+
+' Print the results
+PRINT "Project Start Date: " + start_date
+PRINT "Days remaining for deadlines:"
+PRINT days_remaining
+
+' Expected Output:
+' Project Start Date: 2025-07-25 00:00:00
+' Days remaining for deadlines:
+' [7 21 42]

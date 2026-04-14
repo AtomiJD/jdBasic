@@ -1,0 +1,127 @@
+' ==========================================================
+' == Fibonacci Spiral Fractal in jdBasic
+' == Translated from a Python Turtle example.
+' ==========================================================
+
+' --- Configuration and Setup ---
+' This factor scales the entire drawing up or down.
+
+SUB Update()
+    CLS 10, 20, 30
+    TURTLE.DRAW
+    SCREENFLIP
+    SLEEP 200
+ENDSUB
+
+FACTOR = 5
+SCREEN_W = 1920
+SCREEN_H = 1080
+
+' Initialize the graphics screen and sound (for fun)
+SCREEN SCREEN_W, SCREEN_H, "jdBASIC Fibonacci Spiral"
+
+N=12
+
+IF N <= 1 THEN
+    PRINT "Number of iterations must be > 1."
+    END
+ENDIF
+
+' --- Main Drawing Logic ---
+CLS 10, 20, 30 ' Clear screen to a dark background
+TURTLE.HOME ' Start turtle in the center
+
+' --- 1. Draw the Fibonacci Squares ---
+' Initialize Fibonacci sequence variables
+A = 0
+B = 1
+SQUARE_A = A
+SQUARE_B = B
+
+PRINT "Drawing squares..."
+TURTLE.SET_COLOR 0, 100, 200 ' Set pen to blue for the squares
+
+' Drawing the first square (size 1 * FACTOR)
+TURTLE.FORWARD B * FACTOR
+TURTLE.LEFT 90
+TURTLE.FORWARD B * FACTOR
+TURTLE.LEFT 90
+TURTLE.FORWARD B * FACTOR
+TURTLE.LEFT 90
+TURTLE.FORWARD B * FACTOR
+
+Update
+
+' Update Fibonacci numbers for the next square
+TEMP = SQUARE_B
+SQUARE_B = SQUARE_B + SQUARE_A
+SQUARE_A = TEMP
+
+' Drawing the rest of the squares
+FOR i = 1 TO N - 1
+    TURTLE.BACKWARD SQUARE_A * FACTOR
+    TURTLE.RIGHT 90
+    TURTLE.FORWARD SQUARE_B * FACTOR
+    TURTLE.LEFT 90
+    TURTLE.FORWARD SQUARE_B * FACTOR
+    TURTLE.LEFT 90
+    TURTLE.FORWARD SQUARE_B * FACTOR
+
+    ' Update Fibonacci numbers for the next square
+    TEMP = SQUARE_B
+    SQUARE_B = SQUARE_B + SQUARE_A
+    SQUARE_A = TEMP
+    Update
+NEXT i
+
+' --- 2. Draw the Spiral Arc ---
+PRINT "Drawing spiral..."
+
+' Lift pen and move to the starting point of the spiral.
+' In jdBasic, SETPOS uses absolute screen coordinates, so we calculate
+' the position relative to the center of the screen.
+TURTLE.PENUP
+TURTLE.SETPOS (SCREEN_W / 2) + FACTOR, (SCREEN_H / 2)
+TURTLE.SETHEADING 0
+TURTLE.PENDOWN
+
+' Set pen to red for the spiral
+TURTLE.SET_COLOR 255, 100, 80
+
+' Reset Fibonacci numbers for the spiral calculation
+A = 0
+B = 1
+
+' Draw a 90-degree arc for each Fibonacci number
+TURTLE.LEFT 90
+FOR i = 0 TO N - 1
+    ' Calculate the length of the arc for this segment
+    ARC_LENGTH = PI * B * FACTOR / 2
+    
+    ' The arc is drawn as 90 small straight lines
+    STEP_LENGTH = ARC_LENGTH / 90
+    
+    FOR j = 1 TO 90
+        TURTLE.FORWARD STEP_LENGTH
+        TURTLE.LEFT 1
+    NEXT j
+    
+    ' Update Fibonacci numbers for the next arc
+    TEMP = A
+    A = B
+    B = TEMP + B
+    Update
+NEXT i
+
+' --- 3. Finalize and Display ---
+PRINT "Drawing complete."
+TURTLE.PENUP
+TURTLE.HOME
+
+' Wait for user to press ESC to quit
+PRINT "Press ESC to quit."
+DO
+    k$ = INKEY$()
+    IF k$ = CHR$(27) THEN EXITDO
+    SLEEP 20
+LOOP

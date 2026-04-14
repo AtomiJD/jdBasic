@@ -1,0 +1,286 @@
+' --- ImGui SQLite Demo ---
+' A simple CRUD application for managing users in a SQLite database.
+
+' 1. Initialize Screen and Libraries
+SCREEN 1920, 1080, "User Database Manager", 2
+DLLIMPORT "sqlitefunc" ' Ensure sqlitefunc.dll/so is available
+
+SUB HandleKey(KeyData)
+    KeyCode = KeyData[0]{"keycode"}
+    if KeyCode = 1073741891 THEN
+        TOGGLE_FULLSCREEN
+        ScreenW = ScreenWidth()
+        ScreenH = ScreenHeight()
+    ENDIF
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+
+' 2. Database Setup
+DB_FILE$ = "users.db"
+DB = SQLITE.OPEN(DB_FILE$)
+
+IF TYPEOF(DB) <> "SQLITEDB" THEN
+    PRINT "Failed to open database: " + SQLITE.ERROR$()
+    SLEEP 2000
+    END
+ENDIF
+
+' Create table if it doesn't exist
+SQL_CREATE$ = "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, role TEXT, score INTEGER);"
+IF NOT SQLITE.EXEC(DB, SQL_CREATE$) THEN
+    PRINT "Error creating table: " + SQLITE.ERROR$()
+    SQLITE.CLOSE DB
+    SLEEP 2000
+    END
+ENDIF
+
+' 3. Application State Variables
+WindowOpen = TRUE
+SelectedID = -1
+StatusMessage$ = "Ready."
+
+' Input Buffers for New/Edit User
+InputName$ = ""
+InputRole$ = ""
+InputScore = 0
+RoleOptions = ["Admin", "User", "Guest"]
+RoleSelection = 1 ' Default to User
+
+' Edit State Variables
+IsEditing = FALSE
+EditID = -1
+EditName$ = ""
+EditRoleSelection = 0
+EditScore = 0
+
+' 4. Helper Function to Refresh Data
+FUNC RefreshData(db_handle)
+    query$ = "SELECT * FROM users ORDER BY id DESC;"
+    RETURN SQLITE.QUERY(db_handle, query$)
+ENDFUNC
+
+' Initial Data Load
+UserList = RefreshData(DB)
+
+' --- Main Loop ---
+DO
+    CLS
+    
+    IF WindowOpen THEN
+        WindowOpen = GUI.BEGIN("Database Manager", 0, 0, 900, 600, WindowOpen, GUI.FLAG("MENUBAR"))
+            
+            ' --- Menu Bar ---
+            IF GUI.BEGIN_MENU_BAR() THEN
+                IF GUI.BEGIN_MENU("Database") THEN
+                    IF GUI.MENU_ITEM("Refresh") THEN 
+                        UserList = RefreshData(DB)
+                        StatusMessage$ = "Data refreshed."
+                    ENDIF
+                    GUI.SEPARATOR
+                    IF GUI.MENU_ITEM("Exit") THEN WindowOpen = FALSE
+                    GUI.END_MENU()
+                ENDIF
+                IF GUI.BEGIN_MENU("HELP") THEN
+                    IF GUI.MENU_ITEM("Show Help") THEN
+                        OpenHelpMe = TRUE
+                    ENDIF
+                    GUI.END_MENU()
+                ENDIF
+                
+                GUI.END_MENU_BAR()
+            ENDIF
+
+            ' --- Top Panel: Add New User ---
+            IF GUI.COLLAPSING_HEADER("Add New User", TRUE) THEN
+                GUI.TEXT "Name:"
+                GUI.SAME_LINE
+                InputName$ = GUI.INPUT("##Name", InputName$)
+                
+                GUI.TEXT "Role:"
+                GUI.SAME_LINE
+                RoleSelection = GUI.COMBO("##Role", RoleSelection, RoleOptions)
+                InputRole$ = RoleOptions[RoleSelection]
+                
+                GUI.TEXT "Score:"
+                GUI.SAME_LINE
+                InputScore = GUI.INPUT_INT("##Score", InputScore)
+                
+                IF GUI.BUTTON("Add User") THEN
+                    IF LEN(InputName$) > 0 THEN
+                        ' Construct SQL Insert
+                        sql$ = "INSERT INTO users (name, role, score) VALUES ('" + InputName$ + "', '" + InputRole$ + "', " + STR$(InputScore) + ");"
+                        IF SQLITE.EXEC(DB, sql$) THEN
+                            StatusMessage$ = "Added user: " + InputName$
+                            ' Clear inputs
+                            InputName$ = ""
+                            InputScore = 0
+                            ' Refresh list
+                            UserList = RefreshData(DB)
+                        ELSE
+                            StatusMessage$ = "Error adding user: " + SQLITE.ERROR$()
+                        ENDIF
+                    ELSE
+                        StatusMessage$ = "Error: Name cannot be empty."
+                    ENDIF
+                ENDIF
+            ENDIF
+            
+            GUI.SEPARATOR
+            
+            ' --- Main Panel: User List ---
+            GUI.TEXT "Existing Users (" + STR$(LEN(UserList)) + ")"
+            
+            ' Table Header (Simulated with Columns/Text)
+            GUI.SEPARATOR
+            GUI.TEXT "ID   | Name                 | Role       | Score | Actions"
+            GUI.SEPARATOR
+            
+            ' Scrollable List Area
+            GUI.BEGIN_CHILD("ScrollingRegion", 0, 300, TRUE)
+                FOR i = 0 TO LEN(UserList)[0] - 1
+                    'If we delete a row, the i can be to high
+                    TRY
+                        row = UserList[i]
+                    CATCH
+                        EXITFOR
+                    ENDTRY
+                    
+                    id = row{"id"}
+                    name$ = row{"name"}
+                    role$ = row{"role"}
+                    score = row{"score"}
+                    
+                    ' Format Row Display
+                    line$ = FORMAT$("{:3} | {:20} | {:10} | {:5}", id, name$, role$, score)
+                    
+                    ' Selectable Row
+                    isSelected = (SelectedID = id)
+                    IF GUI.SELECTABLE(line$, isSelected, 0, 340, 0) 
+                        SelectedID = id
+                    ENDIF
+                    
+                    GUI.SAME_LINE
+                    
+                    GUI.PUSH_ID(i) ' Unique ID scope for buttons
+                    
+                    ' --- EDIT BUTTON ---
+                    IF GUI.BUTTON("Edit") THEN
+                        ' Load data into edit buffers
+                        EditID = id
+                        EditName$ = name$
+                        EditScore = score
+                        ' Find role index
+                        EditRoleSelection = 0
+                        FOR r = 0 TO LEN(RoleOptions)-1
+                            IF RoleOptions[r] = role$ THEN EditRoleSelection = r
+                        NEXT r
+                        OpenEditPopup = TRUE
+                    ENDIF
+                    
+                    GUI.SAME_LINE
+                    
+                    ' --- DELETE BUTTON ---
+                    IF GUI.BUTTON("Delete") THEN
+                        sql$ = "DELETE FROM users WHERE id = " + STR$(id) + ";"
+                        IF SQLITE.EXEC(DB, sql$) THEN
+                            StatusMessage$ = "Deleted user ID: " + STR$(id)
+                            UserList = RefreshData(DB)
+                        ELSE
+                            StatusMessage$ = "Delete failed: " + SQLITE.ERROR$()
+                        ENDIF
+                    ENDIF
+                    GUI.POP_ID()
+                NEXT i
+            GUI.END_CHILD()
+            
+            GUI.SEPARATOR
+            
+            ' --- Status Bar ---
+            GUI.TEXT "Status: " + StatusMessage$
+
+            IF OpenHelpMe THEN
+                GUI.OPEN_POPUP("HelpMe")
+                OpenHelpMe = FALSE
+            ENDIF   
+            IF GUI.BEGIN_POPUP_MODAL("HelpMe", TRUE) THEN
+                GUI.TEXT "Press F10 for Fullscreen."
+                GUI.TEXT "Dont press ESC."
+                GUI.SEPARATOR
+                IF GUI.BUTTON("OK") THEN
+                    GUI.CLOSE_CURRENT_POPUP()
+                ENDIF
+                GUI.END_POPUP()
+            ENDIF
+
+            ' --- EDIT MODAL POPUP ---
+            ' 1. Trigger Open Popup if requested
+            IF OpenEditPopup THEN
+                GUI.OPEN_POPUP("Edit User")
+                OpenEditPopup = FALSE
+            ENDIF            
+            ' This code runs regardless of where the button was clicked, 
+            ' but the popup only shows when GUI.OPEN_POPUP is called.
+            IF GUI.BEGIN_POPUP_MODAL("Edit User", TRUE) THEN
+                GUI.TEXT "Editing User ID: " + STR$(EditID)
+                GUI.SEPARATOR
+                
+                GUI.TEXT "Name:"
+                EditName$ = GUI.INPUT("##EditName", EditName$)
+                
+                GUI.TEXT "Role:"
+                EditRoleSelection = GUI.COMBO("##EditRole", EditRoleSelection, RoleOptions)
+                
+                GUI.TEXT "Score:"
+                EditScore = GUI.INPUT_INT("##EditScore", EditScore)
+                
+                GUI.SEPARATOR
+                
+                IF GUI.BUTTON("Save Changes") THEN
+                    newRole$ = RoleOptions[EditRoleSelection]
+                    sql$ = "UPDATE users SET name='" + EditName$ + "', role='" + newRole$ + "', score=" + STR$(EditScore) + " WHERE id=" + STR$(EditID) + ";"
+                    
+                    IF SQLITE.EXEC(DB, sql$) THEN
+                        StatusMessage$ = "Updated User ID: " + STR$(EditID)
+                        UserList = RefreshData(DB)
+                        GUI.CLOSE_CURRENT_POPUP()
+                    ELSE
+                        StatusMessage$ = "Update failed: " + SQLITE.ERROR$()
+                    ENDIF
+                ENDIF
+                
+                GUI.SAME_LINE
+                
+                IF GUI.BUTTON("Cancel") THEN
+                    GUI.CLOSE_CURRENT_POPUP()
+                ENDIF
+                
+                GUI.END_POPUP()
+            ENDIF            
+
+        GUI.END
+    ELSE
+        ' Re-open button if closed
+        GUI.BEGIN("Launcher", 100, 100, 200, 100)
+            IF GUI.BUTTON("Open Database Manager") THEN WindowOpen = TRUE
+        GUI.END
+    ENDIF
+
+  MX = MOUSEX()
+  MY = MOUSEY()
+
+  ' Check if the left mouse button is held down
+  IF MOUSEB(1) THEN
+    ' Draw a small circle at the mouse position
+    CIRCLE MX, MY, 3, FALSE ,255, 200, 100
+  ENDIF
+
+    SCREENFLIP
+    SLEEP 10
+
+    A$ = INKEY$()
+    
+LOOP UNTIL A$ = CHR$(27)
+
+' Cleanup
+SQLITE.CLOSE DB

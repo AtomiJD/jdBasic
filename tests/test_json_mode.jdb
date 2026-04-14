@@ -1,0 +1,46 @@
+PRINT "Loading LLM..."
+llm = AI.LOAD_LLM("models\Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
+AI.SET llm, "max_tokens", 200
+AI.SET llm, "temperature", 0.2
+
+PRINT ""
+PRINT "=== Test 1: AI.CHAT_JSON liefert valides Objekt ==="
+DIM result = AI.CHAT_JSON(llm, "Gib mir Berlin als JSON-Objekt mit den Feldern name, country und population. Nichts anderes ausgeben.")
+PRINT "Type des Ergebnis: "; TYPEOF(result)
+PRINT "name:       "; result{"name"}
+PRINT "country:    "; result{"country"}
+PRINT "population: "; result{"population"}
+
+PRINT ""
+PRINT "=== Test 2: Liste als JSON ==="
+AI.CLEAR_HISTORY llm
+DIM result2 = AI.CHAT_JSON(llm, "Gib mir die drei groessten deutschen Staedte als JSON-Array. Jedes Element soll {name, einwohner} enthalten. Nur das Array, nichts sonst.")
+PRINT "Type: "; TYPEOF(result2)
+PRINT "Anzahl: "; LEN(result2)
+FOR i = 0 TO LEN(result2) - 1
+  PRINT "  "; i; ": "; result2[i]{"name"}; " ("; result2[i]{"einwohner"}; ")"
+NEXT i
+
+PRINT ""
+PRINT "=== Test 3: SET_GRAMMAR direkt mit eigener GBNF ==="
+AI.CLEAR_HISTORY llm
+' Eine triviale Grammar: nur ja oder nein
+DIM grammar AS STRING = "root ::= (\"ja\" | \"nein\")"
+AI.SET_GRAMMAR llm, grammar
+DIM r3 = AI.CHAT(llm, "Ist Berlin die Hauptstadt von Deutschland? Nur ja oder nein.")
+PRINT "Antwort (constrained): "; r3
+AI.CLEAR_GRAMMAR llm
+
+PRINT ""
+PRINT "=== Test 4: SET_JSON_MODE und CHAT statt CHAT_JSON ==="
+AI.CLEAR_HISTORY llm
+AI.SET_JSON_MODE llm
+DIM r4 = AI.CHAT(llm, "Gib eine Antwort als JSON mit einem Feld 'antwort' und Wert 'hallo'. Sonst nichts.")
+PRINT "Raw JSON: "; r4
+DIM parsed = JSON.PARSE$(r4)
+PRINT "Geparst, Feld antwort: "; parsed{"antwort"}
+AI.CLEAR_GRAMMAR llm
+
+AI.FREE_LLM llm
+PRINT ""
+PRINT "Done."

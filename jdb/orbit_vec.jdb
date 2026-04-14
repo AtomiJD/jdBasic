@@ -1,0 +1,117 @@
+' NeReLaBasic - Three-Body Problem Simulation (Vectorized)
+' --------------------------------------------------------
+' This program simulates the motion of three bodies interacting
+' under their mutual gravitational attraction. It uses initial
+' conditions that lead to a stable "figure-8" choreography.
+'
+' Method: Vectorized calculation of forces and numerical
+' integration using the Semi-Implicit Euler method.
+
+'=============================================================================
+' 1. FUNCTION TO CALCULATE ACCELERATIONS (VECTORIZED)
+'=============================================================================
+FUNC CalculateAccelerations(Pos, Mass, G, softening)
+    ' This function calculates the acceleration on each body using matrix operations,
+    ' completely replacing the need for nested loops.
+
+    ' Extract X and Y position vectors from the main Position matrix.
+    PosX = SLICE(Pos, 1, 0) ' Get column 0 (all x-positions)
+    PosY = SLICE(Pos, 1, 1) ' Get column 1 (all y-positions)
+
+    ' 1. Calculate matrices of relative positions (rx, ry) for all pairs.
+    '    The OUTER(A, B, "-") creates a matrix where M(i,j) = B(j) - A(i).
+    rx_matrix = OUTER(PosX, PosX, "-")
+    ry_matrix = OUTER(PosY, PosY, "-")
+
+    ' 2. Calculate the matrix of squared distances between all pairs.
+    '    The softening factor prevents division by zero if bodies get too close.
+    dist_sq_matrix = rx_matrix^2 + ry_matrix^2 + softening
+
+    ' 3. Calculate the matrix of inverse cube distances.
+    '    This is a common optimization: F = G*m*r / r^3 instead of F = G*m*r / (r^2 * r)
+    inv_dist_cube = dist_sq_matrix ^ -1.5
+
+    ' 4. Create a matrix of the influencing masses for each interaction.
+    '    M(i,j) will contain Mass[j].
+    Mass_j_matrix = OUTER(Mass * 0, Mass, "+")
+
+    ' 5. Calculate the full matrix of acceleration components for X and Y.
+    '    The formula for the acceleration on body 'i' from body 'j' is:
+    '    a_ij = G * Mass_j * (Pos_j - Pos_i) / |Pos_j - Pos_i|^3
+    '    This is now calculated for all pairs at once.
+    AccX_components = G * Mass_j_matrix * rx_matrix * inv_dist_cube
+    AccY_components = G * Mass_j_matrix * ry_matrix * inv_dist_cube
+
+    ' 6. Sum the forces.
+    '    To get the total acceleration on each body, we sum the influences from all
+    '    other bodies. This is equivalent to summing along the rows of our component matrices.
+    '    The dimension parameter '1' tells SUM to reduce along the rows, giving a column vector.
+    '    We explicitly set the diagonal (self-interaction) to 0 before summing.
+    AccX_total = SUM(AccX_components * ((OUTER(IOTA(3)-1, IOTA(3)-1, "=")*-1)+1), 1)
+    AccY_total = SUM(AccY_components * ((OUTER(IOTA(3)-1, IOTA(3)-1, "=")*-1)+1), 1)
+
+    ' 7. Combine the final X and Y acceleration vectors back into one matrix.
+    '    SUM returns a column matrix (e.g., 3x1), but MVLET expects a 1D vector.
+    '    We must flatten the result of SUM into a 1D vector before using it.
+    AccX_flat = RESHAPE(AccX_total, [NUM_BODIES])
+    AccY_flat = RESHAPE(AccY_total, [NUM_BODIES])
+
+    ' Create the final 3x2 acceleration matrix by inserting the flat vectors.
+    FinalAcc = RESHAPE([0], [NUM_BODIES, DIMS])
+    FinalAcc = MVLET(FinalAcc, 1, 0, AccX_flat)
+    FinalAcc = MVLET(FinalAcc, 1, 1, AccY_flat)
+    
+    RETURN FinalAcc
+ENDFUNC
+
+'=============================================================================
+' 2. SETUP AND DEFINE SIMULATION CONSTANTS
+'=============================================================================
+PRINT "--- 1. Setting up Simulation Constants ---"
+G = 1.0           ' Gravitational constant
+DT = 0.001        ' Time step for the simulation
+NUM_STEPS = 2000  ' Number of steps to simulate
+PRINT_EVERY = 200 ' How often to print the state
+NUM_BODIES = 3
+DIMS = 2          ' 2D simulation (x, y)
+SOFTENING = 0.001 ' Softening factor to prevent division by zero
+
+'=============================================================================
+' 3. INITIALIZE DATA STRUCTURES AND SET INITIAL CONDITIONS
+'=============================================================================
+PRINT "--- 2. Initializing Body States (Mass, Position, Velocity) ---"
+
+' Set masses (equal mass system)
+Mass = [1, 1, 1]
+
+' Set initial positions for the "figure-8" orbit using direct array assignment.
+Pos = RESHAPE([0.97000436, -0.24308753, -0.97000436, 0.24308753, 0.0, 0.0], [3, 2])
+
+' Set initial velocities for the "figure-8" orbit
+Vel = RESHAPE([0.466203685, 0.43236573, 0.466203685, 0.43236573, -0.93240737, -0.86473146], [3, 2])
+
+'=============================================================================
+' 4. THE MAIN SIMULATION LOOP
+'=============================================================================
+PRINT "--- 3. Starting Simulation ---"
+PRINT "Step, Body, PosX, PosY" ' CSV Header for easy plotting
+
+FOR A = 1 TO NUM_STEPS
+    ' First, calculate the accelerations on all bodies based on their current positions.
+    Acc = CalculateAccelerations(Pos, Mass, G, SOFTENING)
+
+    ' Next, update the velocity and position for each body.
+    ' These operations are inherently vectorized.
+    Vel = Vel + Acc * DT
+    Pos = Pos + Vel * DT
+
+    ' Periodically print the state of the system
+    IF A MOD PRINT_EVERY = 0 THEN
+        FOR i = 0 TO NUM_BODIES - 1
+            PRINT A; ","; i; ","; Pos[i, 0]; ","; Pos[i, 1]
+        NEXT i
+    ENDIF
+NEXT A
+
+PRINT
+PRINT "--- Simulation Complete ---"

@@ -1,0 +1,26 @@
+' Test reactive cache: no re-evaluation when value unchanged
+DIM COUNTER = 0
+
+FUNC Spy(x)
+    COUNTER = COUNTER + 1
+    PRINT "  Spy called (#"; COUNTER; "), x="; x
+    RETURN x * 10
+ENDFUNC
+
+DIM A = 0
+DIM B = 0
+B -> Spy(A)
+
+PRINT "Set A = 5:"
+A = 5
+PRINT "B ="; B
+
+PRINT "Set A = 5 again (should NOT trigger):"
+A = 5
+PRINT "B ="; B
+
+PRINT "Set A = 10 (SHOULD trigger):"
+A = 10
+PRINT "B ="; B
+
+PRINT "Total Spy calls: "; COUNTER; " (expected: 3 = init + 2 changes)"

@@ -1,0 +1,73 @@
+' ── Basic SWITCH with strings ──────────────────────
+LET cmd = "STOP"
+
+SWITCH UCASE(cmd)
+    CASE "START"
+        PRINT "Starting process..."
+
+    CASE "STOP"
+        PRINT "Stopping process..."
+
+    CASE "PAUSE"
+        PRINT "Pausing process."
+
+    DEFAULT
+        PRINT "Unknown command: "; cmd
+ENDSWITCH
+
+PRINT "Switch block finished."
+
+' ── SWITCH with numbers ───────────────────────────
+PRINT ""
+FOR i = 1 TO 5
+    SWITCH i
+        CASE 1
+            PRINT i; " = one"
+        CASE 2
+            PRINT i; " = two"
+        CASE 3
+            PRINT i; " = three"
+        DEFAULT
+            PRINT i; " = other"
+    ENDSWITCH
+NEXT i
+
+' ── SWITCH with expressions ───────────────────────
+PRINT ""
+LET x = 42
+SWITCH x MOD 3
+    CASE 0
+        PRINT x; " is divisible by 3"
+    CASE 1
+        PRINT x; " mod 3 = 1"
+    CASE 2
+        PRINT x; " mod 3 = 2"
+ENDSWITCH
+
+' ── SWITCH with enum ──────────────────────────────
+PRINT ""
+ENUM Status
+    OK = 200
+    NotFound = 404
+    Error = 500
+ENDENUM
+
+LET code = Status.NotFound
+SWITCH code
+    CASE Status.OK
+        PRINT "All good!"
+    CASE Status.NotFound
+        PRINT "Page not found (404)"
+    CASE Status.Error
+        PRINT "Server error (500)"
+ENDSWITCH
+
+' ── No match, no DEFAULT ─────────────────────────
+PRINT ""
+SWITCH 999
+    CASE 1
+        PRINT "This should not print"
+    CASE 2
+        PRINT "Neither should this"
+ENDSWITCH
+PRINT "No match - continued normally"

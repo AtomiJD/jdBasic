@@ -1,0 +1,47 @@
+' Mixed workload: arrays, strings, dicts — tests where heap objects matter
+PRINT "=== fib recursion ==="
+FUNC fib(n)
+  IF n < 2 THEN RETURN n
+  RETURN fib(n - 1) + fib(n - 2)
+ENDFUNC
+start = TICK()
+FOR i = 0 TO 5
+  DIM r = fib(26 + i)
+NEXT i
+PRINT "  " + STR$((TICK() - start) / 1000) + "s"
+
+PRINT ""
+PRINT "=== string concat ==="
+start = TICK()
+DIM s AS STRING = ""
+FOR i = 0 TO 19999
+  s = s + "x"
+NEXT i
+PRINT "  length=" + STR$(LEN(s)) + " time=" + STR$((TICK() - start) / 1000) + "s"
+
+PRINT ""
+PRINT "=== array building ==="
+start = TICK()
+DIM arr AS ARRAY
+FOR i = 0 TO 99999
+  PUSH arr, i * 2
+NEXT i
+PRINT "  len=" + STR$(LEN(arr)) + " time=" + STR$((TICK() - start) / 1000) + "s"
+
+PRINT ""
+PRINT "=== array read/write ==="
+start = TICK()
+DIM total = 0
+FOR i = 0 TO 99999
+  total = total + arr[i]
+NEXT i
+PRINT "  sum=" + STR$(total) + " time=" + STR$((TICK() - start) / 1000) + "s"
+
+PRINT ""
+PRINT "=== map insert ==="
+start = TICK()
+DIM m = {}
+FOR i = 0 TO 9999
+  m{"key" + STR$(i)} = i
+NEXT i
+PRINT "  time=" + STR$((TICK() - start) / 1000) + "s"

@@ -1,0 +1,23 @@
+' Simple destructuring
+[A, B] = [1, 2]
+PRINT "A ="; A, "B ="; B
+
+' Swap
+[B, A] = [A, B]
+PRINT "After swap: A ="; A, "B ="; B
+
+' Unpack from function
+FUNCTION GetValues()
+    RETURN [10, 20, 30]
+END FUNCTION
+
+[X, Y, Z] = GetValues()
+PRINT "X ="; X, "Y ="; Y, "Z ="; Z
+
+' Unpack from expression
+[P, Q, R] = IOTA(3) * 100
+PRINT "P ="; P, "Q ="; Q, "R ="; R
+
+' Partial unpack (fewer vars than array elements)
+[M, N] = [100, 200, 300]
+PRINT "M ="; M, "N ="; N

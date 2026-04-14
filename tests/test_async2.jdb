@@ -1,0 +1,10 @@
+ASYNC FUNC SimpleTest()
+    RETURN 42
+ENDFUNC
+
+PRINT "Calling SimpleTest..."
+DIM t = SimpleTest()
+PRINT "Task ID: "; t
+PRINT "Waiting..."
+DIM r = AWAIT t
+PRINT "Result: "; r

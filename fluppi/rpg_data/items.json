@@ -1,0 +1,88 @@
+{
+    "items": {
+        "health_potion": {
+            "name": "Heiltrank",
+            "desc": "Stellt 30 HP wieder her",
+            "type": "consumable",
+            "price": 15,
+            "effects": {"heal": 30}
+        },
+        "mega_potion": {
+            "name": "Mega-Heiltrank",
+            "desc": "Stellt 80 HP wieder her",
+            "type": "consumable",
+            "price": 40,
+            "effects": {"heal": 80}
+        },
+        "wooden_sword": {
+            "name": "Holzschwert",
+            "desc": "Besser als nichts",
+            "type": "weapon",
+            "price": 10,
+            "effects": {"atk": 4}
+        },
+        "iron_sword": {
+            "name": "Eisenschwert",
+            "desc": "Eine solide Klinge",
+            "type": "weapon",
+            "price": 30,
+            "effects": {"atk": 8}
+        },
+        "steel_sword": {
+            "name": "Stahlschwert",
+            "desc": "Scharf und zuverlässig",
+            "type": "weapon",
+            "price": 75,
+            "effects": {"atk": 15}
+        },
+        "wooden_shield": {
+            "name": "Holzschild",
+            "desc": "Einfacher Schutz",
+            "type": "armor",
+            "price": 12,
+            "effects": {"def": 3}
+        },
+        "iron_shield": {
+            "name": "Eisenschild",
+            "desc": "Solider Schutz",
+            "type": "armor",
+            "price": 25,
+            "effects": {"def": 5}
+        },
+        "chain_armor": {
+            "name": "Kettenrüstung",
+            "desc": "Robuster Schutz",
+            "type": "armor",
+            "price": 60,
+            "effects": {"def": 10}
+        },
+        "magic_ring": {
+            "name": "Magischer Ring",
+            "desc": "Geheimnisvolles Leuchten",
+            "type": "accessory",
+            "price": 50,
+            "effects": {"atk": 3, "def": 3}
+        },
+        "lucky_charm": {
+            "name": "Glücksbringer",
+            "desc": "Bringt Glück im Kampf",
+            "type": "accessory",
+            "price": 0,
+            "effects": {"xp_bonus": 1.5}
+        },
+        "torch": {
+            "name": "Fackel",
+            "desc": "Erhellt dunkle Orte",
+            "type": "tool",
+            "price": 5,
+            "effects": {}
+        },
+        "slime_gel": {
+            "name": "Schleim-Gel",
+            "desc": "Klebriger Monster-Drop",
+            "type": "material",
+            "price": 3,
+            "effects": {}
+        }
+    }
+}

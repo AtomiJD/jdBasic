@@ -1,0 +1,16 @@
+' 1. Setup a Python environment to simulate live data (or use real libraries like 'psutil' / 'yfinance')
+py_setup$ = "import random\n"
+py_setup$ = py_setup$ + "def get_market_data():\n"
+py_setup$ = py_setup$ + "    return {'symbol': 'BTC', 'price': round(random.uniform(50000, 52000), 2)}\n"
+PRINT PYTHON$(py_setup$)
+
+' 2. Create the background jdBasic script
+' It triggers Python, fetches the dict, and prints it at the top of the screen
+bg_task$ = "PYTHON$(""live_data = get_market_data()""): "
+bg_task$ = bg_task$ + "ticker = PY.GET(""live_data""): "
+bg_task$ = bg_task$ + "LOCATE 0, 50: PRINT ticker{""symbol""}; "" Price: $""; ticker{""price""}; ""   "";"
+
+' 3. Start the background loop (Updates every 2 seconds)
+TickerID = RECUR(2000, bg_task$)
+
+PRINT "Live ticker started! You can keep typing and running commands..."

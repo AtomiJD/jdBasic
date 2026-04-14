@@ -1,0 +1,64 @@
+' ── FOR EACH ───────────────────────────────────────
+PRINT "=== FOR EACH ==="
+DIM fruits = ["Apple", "Banana", "Cherry"]
+FOR EACH f IN fruits
+    PRINT "  "; f
+NEXT
+
+' FOR EACH with Map items
+DIM m = {"a": 1, "b": 2, "c": 3}
+FOR EACH item IN MAP.ITEMS(m)
+    PRINT "  "; item[0]; " = "; item[1]
+NEXT
+
+' ── EXITFOR / CONTINUEFOR ─────────────────────────
+PRINT ""
+PRINT "=== EXITFOR ==="
+FOR i = 1 TO 100
+    IF i > 5 THEN
+        EXITFOR
+    ENDIF
+    PRINT i;
+NEXT i
+PRINT ""
+
+PRINT "=== CONTINUEFOR ==="
+FOR i = 1 TO 10
+    IF i MOD 2 = 0 THEN
+        CONTINUEFOR
+    ENDIF
+    PRINT i;
+NEXT i
+PRINT ""
+
+' ── EXITDO ────────────────────────────────────────
+PRINT ""
+PRINT "=== EXITDO ==="
+LET count = 0
+DO
+    count = count + 1
+    IF count > 3 THEN
+        EXITDO
+    ENDIF
+    PRINT count;
+LOOP
+PRINT ""
+
+' ── SLEEP / COLOR / LOCATE ────────────────────────
+PRINT ""
+PRINT "=== SLEEP ==="
+PRINT "Waiting 100ms..."
+SLEEP 100
+PRINT "Done!"
+
+' ── CURSOR position ───────────────────────────────
+PRINT "Cursor Y: "; GETY(); " X: "; GETX()
+
+' ── LCASE$ ────────────────────────────────────────
+PRINT "LCASE$(HELLO) = "; LCASE$("HELLO")
+
+' ── END (terminate) ───────────────────────────────
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="
+END
+PRINT "This should NOT print"

@@ -1,0 +1,28 @@
+' ===================================================================
+' == jdBASIC THROW test
+' ===================================================================
+
+SUB ValidateAge(age)
+    IF age < 18 THEN
+        ' Call the THROW procedure to raise a custom error
+        THROW "User is underage."
+    ELSEIF age > 120 THEN
+        THROW "Age is not valid."
+    ENDIF
+ENDSUB
+
+TRY
+    ValidateAge(25)
+    PRINT "Validation successful for age 25."
+    
+    ValidateAge(15) ' This will throw an error
+    
+    PRINT "This line will not be printed."
+CATCH
+    ' The CATCH block will execute when THROW is called.
+    PRINT "Caught an exception!"
+    PRINT "  Error Message: " + ERRMSG$
+    PRINT "  Error Code: "; ERR
+ENDTRY
+
+PRINT "Execution continues after the TRY block."

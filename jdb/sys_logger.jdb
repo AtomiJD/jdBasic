@@ -1,0 +1,13 @@
+PRINT "Writing log, please wait"
+PRINT
+TXTWRITER "lall.log", str$(now()) + " Hallo" + VBNEWLINE, "APPEND"
+sleep 1000
+TXTWRITER "lall.log", str$(now()) + " 2. Log entry" + VBNEWLINE, "APPEND"
+
+PRINT "Reading log: "
+a$ = TXTREADER$("lall.log")
+PRINT a$
+
+PRINT
+PRINT "Log test finished"
+

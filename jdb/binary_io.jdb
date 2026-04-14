@@ -1,0 +1,89 @@
+' --- Binary Data Construction Example ---
+
+' 1. Define values using standard INTEGER (long long)
+' Even though 'Level' is a byte (0-255), we store it in an INTEGER.
+DIM MagicNum AS INTEGER = $CAFEBABE ' Hex literal (32-bit value)
+DIM Version AS INTEGER = 2          ' Short value (16-bit)
+DIM Level AS INTEGER = 255          ' Byte value (8-bit)
+DIM Score AS INTEGER = 15000        ' Short value (16-bit)
+
+' 2. Define a high-precision value (DOUBLE)
+DIM PlayerX AS DOUBLE = 123.456
+
+' 3. Use PACK$ to squash them into a binary string
+' > = Big Endian (Standard for network/files)
+' I = Integer (4 bytes) for MagicNum
+' s = Short   (2 bytes) for Version
+' b = Byte    (1 byte)  for Level
+' s = Short   (2 bytes) for Score
+' d = Double  (8 bytes) for PlayerX
+
+BinaryData$ = PACK$(">Isbsd", MagicNum, Version, Level, Score, PlayerX)
+
+PRINT "Constructed " + LEN(BinaryData$) + " bytes of binary data."
+
+' 4. Verify the bytes (Hex Dump)
+PRINT "Hex Dump:"
+FOR i = 0 TO LEN(BinaryData$) - 1
+    val = BYTEAT(BinaryData$, i)
+    PRINT FORMAT$("{:02X} ", val);
+NEXT
+PRINT ""
+
+' 5. Save to disk
+BINWRITER "savegame.bin", BinaryData$
+PRINT "Saved to savegame.bin"
+
+' --- Binary Data Reading Example ---
+
+filename$ = "savegame.bin"
+
+' 1. Read the raw bytes from disk
+RawData$ = BINREADER$(filename$)
+
+IF LEN(RawData$) = 0 THEN
+    PRINT "Error reading file!"
+    STOP
+ENDIF
+
+PRINT "Read " + LEN(RawData$) + " bytes."
+
+' 2. Unpack the numeric header
+' Format matches the PACK$ example:
+' > = Big Endian
+' I = MagicNum (4 bytes)
+' s = Version  (2 bytes)
+' b = Level    (1 byte)
+' s = Score    (2 bytes)
+' d = PlayerX  (8 bytes)
+' Total header size = 17 bytes
+
+HeaderValues = UNPACK(">Isbsd", RawData$)
+
+' 3. Extract variables from the resulting array
+' Note: Arrays are 0-based
+MagicNum = HeaderValues[0]
+Version  = HeaderValues[1]
+Level    = HeaderValues[2]
+Score    = HeaderValues[3]
+PlayerX  = HeaderValues[4]
+
+PRINT "--- Header Info ---"
+PRINT "Magic:   " + FORMAT$("{:X}", MagicNum) ' Should be CAFEBABE
+PRINT "Version: " + Version
+PRINT "Level:   " + Level
+PRINT "Score:   " + Score
+PRINT "PlayerX: " + PlayerX
+
+' 4. Handling Strings (Manual Unpacking)
+' Since UNPACK only handles numbers, we handle dynamic strings manually.
+' We know the header is 17 bytes long.
+HeaderSize = 17
+
+' Check if there is extra data for the name
+IF LEN(RawData$) > HeaderSize THEN
+    ' Read the string from the rest of the file
+    ' (Assuming the rest of the file is just the string)
+    Name$ = MID$(RawData$, HeaderSize)
+    PRINT "Name:    " + Name$
+ENDIF

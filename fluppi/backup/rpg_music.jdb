@@ -1,0 +1,63 @@
+' ===================================================================
+' == RPG Music Module v3
+' == Data-driven: all themes loaded from music.json
+' ===================================================================
+
+EXPORT MODULE RPG_MUSIC
+
+EXPORT DIM current_theme$ = ""
+EXPORT DIM themes = {}
+EXPORT DIM music_path$ = "D:/usr/dev/cc/fluppi/rpg_data/music.json"
+
+EXPORT SUB SETUP()
+    SOUND.INIT
+    ' Load music data
+    TRY
+        data = JSON.PARSE$(TXTREADER$(music_path$))
+        themes = data{"themes"}
+    CATCH
+    ENDTRY
+ENDSUB
+
+EXPORT SUB SET_PATH(path$)
+    music_path$ = path$
+ENDSUB
+
+' ── Play a theme by name (only switches if different) ────────
+EXPORT SUB PLAY(theme$)
+    IF theme$ = current_theme$ THEN RETURN
+    current_theme$ = theme$
+    SOUND.RESET
+    SOUND.INIT
+
+    IF NOT MAP.EXISTS(themes, theme$) THEN RETURN
+    t = themes{theme$}
+
+    ' Configure voices from JSON
+    SOUND.BPM t{"bpm"}
+
+    mv = t{"melody_voice"}
+    SOUND.VOICE 0, mv[0], mv[1], mv[2], mv[3], mv[4]
+    SOUND.FILTER 0, t{"melody_filter"}
+    SOUND.GAIN 0, t{"melody_gain"}
+
+    bv = t{"bass_voice"}
+    SOUND.VOICE 1, bv[0], bv[1], bv[2], bv[3], bv[4]
+    SOUND.FILTER 1, t{"bass_filter"}
+    SOUND.GAIN 1, t{"bass_gain"}
+
+    rv = t{"reverb"}
+    SOUND.REVERB rv[0], rv[1], rv[2], rv[3]
+    SOUND.REVERBSEND 0, t{"reverb_send"}
+
+    ' Play pattern
+    melody$ = t{"melody"}
+    bass$ = t{"bass"}
+    SOUND.NOTE "< " + melody$ + " , " + bass$ + " >", TRUE
+ENDSUB
+
+' ── Stop all music ───────────────────────────────────────────
+EXPORT SUB SILENCE()
+    SOUND.RESET
+    current_theme$ = ""
+ENDSUB

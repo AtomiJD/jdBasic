@@ -1,0 +1,7 @@
+HELP UNTIL
+PRINT "---"
+HELP "PRINT"
+PRINT "---"
+HELP FOR
+PRINT "---"
+PRINT LEN(HELP$()); " topics"

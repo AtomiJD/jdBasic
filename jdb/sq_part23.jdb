@@ -1,0 +1,103 @@
+SCREEN 1280, 720, "Maniac Sequencer v2", 2
+
+IMPORT SQ
+
+DIM CONFIG AS MAP
+DIM SFX_CACHE AS MAP ' Keeps track of loaded files: "path" -> id
+DIM NEXT_SFX_ID AS INTEGER = 100
+
+SQ.START()
+SOUND.BPM 158 
+
+' --- 1. INSTRUMENTS ---
+' Percussion
+' SQ.V 0, "KD" : SQ.V 1, "SD" : SQ.V 2, "CH"
+SQ.D 8,8
+
+' Bass (3) - Tight Saw
+SOUND.VOICE 6, "SAW", 0.01, 0.1, 0.4, 0.05 
+SOUND.FILTER 6, 800 
+SOUND.GAIN 6, 1.3
+
+' Chords (4) - Brassy Synth
+SOUND.VOICE 4, "SAW", 0.02, 0.2, 0.6, 0.2
+SOUND.FILTER 4, 3000
+SOUND.REVERBSEND 4, 0.5
+
+' --- 2. PATTERNS ---
+' Driving Beat (8th note resolution)
+KICK$  = "c1 ~ c1 ~ c1 ~ c1 ~"
+SNARE$ = "~ ~ c1 ~ ~ ~ c1 ~"
+HATS$  = "[c1 c1] [c1 c1] [c1 c1] [c1 c1]"
+
+' The Iconic Fill: Rapid 64th notes on the last step
+' Base step is 1/8. [c1 c1 c1 c1] splits the step into four 1/32s.
+' To get 64ths effectively, we double the density or use short bursts.
+' Here we use a burst of 4 hits in the last slot.
+CLAP$  = "~ ~ ~ ~ ~ ~ ~ [c1 c1 c1 c1]"
+
+' Bass Riff
+BASS$  = "e2 e2 g2 e2 a2 g2 d3 b2"
+
+' Chord Stabs
+C_BAR1$ = "[~ ~ ~ [e3,g#3,b3] ~ ~ ~ [e3,g#3,b3]]"
+C_BAR2$ = "[~ ~ ~ [c3,e3,g3] ~ ~ ~ [d3,f#3,a3]]"
+CHORDS$ = C_BAR1$ + " " + C_BAR2$
+
+' --- 3. PERFORMANCE ---
+CLS
+PRINT ">>> INTRO: Drums + Clap Fill..."
+SOUND.SEQ 0, KICK$, "VOICE" 
+SOUND.SEQ 2, HATS$, "VOICE"
+SOUND.SEQ 1, SNARE$, "VOICE"
+SOUND.SEQ 3, CLAP$, "VOICE"
+SOUND.GAIN 0, 3.0
+SOUND.GAIN 1, 3.0
+SOUND.GAIN 2, 0.6
+SOUND.GAIN 3, 3.0
+
+SLEEP 2000
+DO : SLEEP 1 : LOOP UNTIL SOUND.GET_PHASE() < 0.05
+
+PRINT ">>> Adding Bass..."
+SOUND.SEQ 6, BASS$, "VOICE"
+PRINT "Bass:  "; BASS$
+
+SLEEP 2000
+DO : SLEEP 1 : LOOP UNTIL SOUND.GET_PHASE() < 0.05
+
+' Turn on Reverb
+SQ.P 5
+
+PRINT ">>> Synth Stabs..."
+SOUND.NOTE "<" + CHORDS$ + ">", TRUE, 4
+PRINT "Chords: "; CHORDS$
+
+PRINT "Press ESC to stop"
+
+SCREENFLIP 
+
+' --- 5. VISUALIZER LOOP ---
+DO
+    CLS
+    
+    IF GUI.BEGIN("Maniac Mixer", 0, 0, 400, 300) THEN
+        WaveData = SOUND.GET_WAVE() 
+        GUI.PLOT_LINES("Output", WaveData, "Live Audio", -1.0, 1.0)
+        
+        GUI.SEPARATOR()
+        
+        Phase = SOUND.GET_PHASE()
+        GUI.TEXT "Global Phase: " + ROUND(Phase, 2)
+        GUI.PROGRESS Phase, "Bar Progress"
+        
+        GUI.SEPARATOR()
+        GUI.TEXT "Active: 64th Note Clap Fill"
+    ENDIF
+    GUI.END()
+
+    SCREENFLIP
+    SLEEP 16
+LOOP UNTIL INKEY$() = CHR$(27)
+
+SQ.STOP()

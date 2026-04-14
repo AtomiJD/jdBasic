@@ -1,0 +1,121 @@
+' jdBasic Regex Replacement Examples
+' This file demonstrates 20 common use cases for the REGEX.REPLACE function.
+
+PRINT "--- 1. Remove leading 2 characters ---"
+' Before: "Hello World" -> After: "llo World"
+PRINT REGEX.REPLACE("^.{2}", "Hello World", "")
+
+PRINT "--- 2. Remove trailing 3 characters ---"
+' Before: "Hello World" -> After: "Hello Wo"
+PRINT REGEX.REPLACE(".{3}$", "Hello World", "")
+
+PRINT "--- 3. Remove leading whitespace ---"
+' Before: "   Hello World" -> After: "Hello World"
+PRINT REGEX.REPLACE("^\s+", "   Hello World", "")
+
+PRINT "--- 4. Remove trailing whitespace ---"
+' Before: "Hello World   " -> After: "Hello World"
+PRINT REGEX.REPLACE("\s+$", "Hello World   ", "")
+
+PRINT "--- 5. Trim both leading and trailing whitespace ---"
+' Before: "  Hello World  " -> After: "Hello World"
+' Uses two nested calls to achieve this.
+PRINT REGEX.REPLACE("^\s+", REGEX.REPLACE("\s+$", "  Hello World  ", ""), "")
+
+PRINT "--- 6. Replace a specific word (case-sensitive) ---"
+' Before: "The quick brown fox jumps over the lazy fox." -> After: "The quick brown dog jumps over the lazy dog."
+PRINT REGEX.REPLACE("\bfox\b", "The quick brown fox jumps over the lazy fox.", "dog")
+
+PRINT "--- 7. Replace a specific word (case-insensitive) ---"
+' Before: "The cat is named Cat." -> After: "The feline is named feline."
+PRINT REGEX.REPLACE("\bcat\b", "The cat is named Cat.", "feline")
+
+PRINT "--- 8. Remove all punctuation ---"
+' Before: "Hello, World! Ready-to-go?" -> After: "Hello World Readytogo"
+' [^\w\s] matches any character that is NOT a word character or whitespace.
+PRINT REGEX.REPLACE("[^\w\s]", "Hello, World! Ready-to-go?", "")
+
+PRINT "--- 9. Remove all digits from a string ---"
+' Before: "Order 5 items for $25.99 in 2024." -> After: "Order  items for $. in ."
+PRINT REGEX.REPLACE("\d", "Order 5 items for $25.99 in 2024.", "")
+
+PRINT "--- 10. Add quotes around every word ---"
+' Before: "one two three" -> After: ""one" "two" "three""
+' (\w+) captures a sequence of word characters. $1 is the backreference.
+PRINT REGEX.REPLACE("(\w+)", "one two three", """$1""")
+
+PRINT "--- 11. Swap the first two words of a string ---"
+' Before: "John Doe" -> After: "Doe, John"
+' Captures the first word, the space, and the second word into groups.
+PRINT REGEX.REPLACE("^(\w+)\s+(\w+)", "John Doe", "$2, $1")
+
+PRINT "--- 12. Reformat a date from YYYY-MM-DD to MM/DD/YYYY ---"
+' Before: "2025-09-12" -> After: "09/12/2025"
+' Captures year, month, and day into groups $1, $2, $3 respectively.
+PRINT REGEX.REPLACE("(\d{4})-(\d{2})-(\d{2})", "2025-09-12", "$2/$3/$1")
+
+PRINT "--- 13. Extract username from an email address ---"
+' Before: "test.user@example.com" -> After: "Username: test.user"
+' Captures the part before the @ sign.
+PRINT REGEX.REPLACE("^([^@]+)@.*$", "test.user@example.com", "Username: $1")
+
+PRINT "--- 14. Mask all but the last 4 digits of a number ---"
+' Before: "1234567890123456" -> After: "************3456"
+' (\d{4}$) captures the last 4 digits. .* matches everything before it.
+PRINT REGEX.REPLACE(".+(\d{4}$)", "1234567890123456", "************$1")
+
+PRINT "--- 15. Find a key-value pair and reformat it ---"
+' Before: "user_id=123&status=active" -> After: "user_id: 123, status=active"
+PRINT REGEX.REPLACE("user_id=(\d+)", "user_id=123&status=active", "user_id: $1,")
+
+PRINT "--- 16. Remove all blank lines from a multi-line string ---"
+MULTI_LINE_TEXT$ = "Line 1" + CHR$(10) + CHR$(10) + "Line 3" + CHR$(10) + "  " + CHR$(10) + "Line 5"
+' Before:
+' Line 1
+'
+' Line 3
+'
+' Line 5
+' After:
+' Line 1
+' Line 3
+' Line 5
+PRINT REGEX.REPLACE("^\s*$\r?\n", MULTI_LINE_TEXT$, "")
+
+PRINT "--- 17. Add a line number to the beginning of each line ---"
+' This one is tricky in pure regex replace. It's often better to split and loop.
+' But we can simulate it by replacing the start of each non-empty line.
+' For a real implementation, a loop is better.
+' Here we'll just demonstrate commenting instead, which is more practical.
+
+PRINT "--- 17. (Alternative) Comment out every line ---"
+'^ matches the start of each line.
+COMMENT_TEXT$ = "First line." + CHR$(10) + "Second line."
+' Before:
+' First line.
+' Second line.
+' After:
+' # First line.
+' # Second line.
+PRINT REGEX.REPLACE("^", COMMENT_TEXT$, "# ")
+
+PRINT "--- 18. Remove leading indentation from all lines ---"
+' ^\s+ matches one or more spaces at the start of any line.
+INDENTED_TEXT$ = "  Indented 1" + CHR$(10) + "    Indented 2"
+' Before:
+'   Indented 1
+'     Indented 2
+' After:
+' Indented 1
+' Indented 2
+PRINT REGEX.REPLACE("^\s+", INDENTED_TEXT$, "")
+
+PRINT "--- 19. Replace multiple spaces with a single space ---"
+' Before: "Too   many    spaces   here." -> After: "Too many spaces here."
+' \s{2,} matches two or more whitespace characters.
+PRINT REGEX.REPLACE("\s{2,}", "Too   many    spaces   here.", " ")
+
+PRINT "--- 20. Normalize all line endings to LF (\n) ---"
+' Before: "Line1\r\nLine2\r\nLine3" -> After: "Line1\nLine2\nLine3"
+' \r\n matches the Windows CRLF line ending.
+PRINT REGEX.REPLACE("\r\n", "Line1\r\nLine2\r\nLine3", CHR$(10))

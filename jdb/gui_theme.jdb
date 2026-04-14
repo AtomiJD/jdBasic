@@ -1,0 +1,94 @@
+' =========================================================
+' == jdBasic Colored Buttons Demo
+' == Demonstrates GUI.PUSH_STYLE_COLOR
+' =========================================================
+
+SCREEN 800, 600, "Colored Buttons"
+GUI.THEME "DARK"
+
+' --- Helper: Convert HSV (0-360, 0-1, 0-1) to RGB (0-255) ---
+FUNC HSV_TO_RGB(h, s, v)
+    c = v * s
+    h_prime = h / 60
+    x = c * (1 - ABS(h_prime MOD 2 - 1))
+    m = v - c
+    
+    r = 0 : g = 0 : b = 0
+    
+    IF h_prime >= 0 AND h_prime < 1 THEN
+        r = c : g = x : b = 0
+    ELSEIF h_prime >= 1 AND h_prime < 2 THEN
+        r = x : g = c : b = 0
+    ELSEIF h_prime >= 2 AND h_prime < 3 THEN
+        r = 0 : g = c : b = x
+    ELSEIF h_prime >= 3 AND h_prime < 4 THEN
+        r = 0 : g = x : b = c
+    ELSEIF h_prime >= 4 AND h_prime < 5 THEN
+        r = x : g = 0 : b = c
+    ELSE
+        r = c : g = 0 : b = x
+    ENDIF
+    
+    ' Return [R, G, B, A] scaled to 0-255
+    RETURN [(r + m) * 255, (g + m) * 255, (b + m) * 255, 255]
+ENDFUNC
+
+' --- Main Loop ---
+hue_offset = 0
+
+DO
+    CLS 20, 20, 20
+    
+    GUI.BEGIN "Colorful UI"
+    
+    GUI.TEXT "Standard Button:"
+    GUI.BUTTON "I am boring", 120, 30
+    
+    GUI.SEPARATOR
+    GUI.TEXT "Styled Buttons:"
+    
+    ' Get the IDs for the style colors we want to change
+    id_btn = GUI.COL("BUTTON")
+    id_hov = GUI.COL("BUTTONHOVERED")
+    id_act = GUI.COL("BUTTONACTIVE")
+    
+    FOR i = 0 TO 5
+        ' Calculate Hue based on index and time
+        hue = (hue_offset + (i * 30)) MOD 360
+        
+        ' Generate colors for Normal, Hover, and Active states
+        col_normal = HSV_TO_RGB(hue, 0.6, 0.6)
+        col_hover  = HSV_TO_RGB(hue, 0.7, 0.7)
+        col_active = HSV_TO_RGB(hue, 0.8, 0.8)
+        
+        ' 1. Push Styles
+        GUI.PUSH_STYLE_COLOR id_btn, col_normal
+        GUI.PUSH_STYLE_COLOR id_hov, col_hover
+        GUI.PUSH_STYLE_COLOR id_act, col_active
+        
+        ' 2. Draw Button
+        GUI.PUSH_ID i ' Ensure unique ID for loop
+        
+        ' Optional: Animate width using SIN
+        width = 100 '+ SIN((hue_offset + i*20) * 0.05) * 20
+        
+        IF GUI.BUTTON("Click Me!", width, 40) THEN
+            PRINT "Clicked button "; i
+        ENDIF
+        
+        GUI.POP_ID
+        
+        ' 3. Pop Styles (We pushed 3 colors, so we pop 3)
+        GUI.POP_STYLE_COLOR 3
+        
+        ' Layout
+        IF i < 5 THEN GUI.SAME_LINE
+    NEXT i
+    
+    GUI.END
+    
+    SCREENFLIP
+    hue_offset = (hue_offset + 1) MOD 360
+    
+    'SLEEP 10
+LOOP UNTIL INKEY$() = CHR$(27)    

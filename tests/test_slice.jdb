@@ -1,0 +1,38 @@
+DIM A = RESHAPE(IOTA(8), [2,2,2])
+PRINT "A = "; A
+
+' 1. Deep Slicing
+PRINT ""
+PRINT "--- Deep Slicing ---"
+PRINT "A[0] = "; A[0]
+PRINT "A[1] = "; A[1]
+PRINT "A[1][0] = "; A[1][0]
+PRINT "A[1][1] = "; A[1][1]
+PRINT "A[0][1][0] = "; A[0][1][0]
+
+' 2. Scalar Broadcasting
+PRINT ""
+PRINT "--- Scalar Broadcasting ---"
+A[0] = 99
+PRINT "After A[0] = 99:  A = "; A
+
+' 3. Cyclic Vectorized Assignment
+PRINT ""
+PRINT "--- Cyclic Assignment ---"
+A[1] = [42, 84]
+PRINT "After A[1] = [42, 84]:  A = "; A
+
+' 4. Deep assignment
+PRINT ""
+PRINT "--- Deep Assignment ---"
+DIM B = RESHAPE(IOTA(12), [3,4])
+PRINT "B = "; B
+B[1][2] = 999
+PRINT "After B[1][2] = 999:  B = "; B
+
+' 5. Broadcast into a 2D slice
+DIM C = RESHAPE(IOTA(12), [3,2,2])
+PRINT ""
+PRINT "C = "; C
+C[2] = 0
+PRINT "After C[2] = 0:  C = "; C

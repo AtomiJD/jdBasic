@@ -1,0 +1,52 @@
+' ===============================================
+' == Koch Snowflake Fractal in jdBasic
+' ===============================================
+SUB Update()
+    CLS 10, 20, 30
+    TURTLE.DRAW
+    SCREENFLIP
+    SLEEP 10
+ENDSUB
+
+SUB KOCH(len)
+    ' Base Case: If the segment is small enough, just draw a line.
+    IF len < 4 THEN
+        TURTLE.FORWARD len
+        RETURN
+    ENDIF
+
+    ' Recursive Step: Replace the line with the Koch pattern
+    KOCH(len / 3)
+    TURTLE.LEFT 60
+    KOCH(len / 3)
+    TURTLE.RIGHT 120
+    KOCH(len / 3)
+    TURTLE.LEFT 60
+    KOCH(len / 3)
+    Update
+ENDSUB
+
+' --- Main Program ---
+SCREEN 800, 800, "Koch Snowflake"
+CLS 10, 20, 40 ' Dark blue background
+
+TURTLE.SET_COLOR 220, 220, 255 ' Icy white/blue color
+
+' Position the turtle to start the snowflake
+TURTLE.PENUP
+TURTLE.SETPOS 200, 450
+TURTLE.PENDOWN
+
+' A snowflake is made of three Koch curves forming a triangle
+FOR i = 1 TO 3
+    KOCH(400)
+    TURTLE.RIGHT 120
+NEXT i
+
+' Draw the final path and keep window open
+TURTLE.DRAW
+SCREENFLIP
+PRINT "Koch Snowflake drawing complete. Press ESC to quit."
+DO WHILE INKEY$() <> CHR$(27)
+    SLEEP 20
+LOOP

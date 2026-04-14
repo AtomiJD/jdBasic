@@ -1,0 +1,18 @@
+PRINT "--- TRON/TROFF ---"
+TRON
+TROFF
+
+PRINT ""
+PRINT "--- DUMP GLOBAL ---"
+LET myVar = 42
+DUMP "GLOBAL"
+
+PRINT ""
+PRINT "--- MKDIR / DIR / KILL ---"
+MKDIR "tmp_test_dir"
+PRINT "Created"
+DIR "*"
+PRINT "Listed"
+
+PRINT ""
+PRINT "Done."

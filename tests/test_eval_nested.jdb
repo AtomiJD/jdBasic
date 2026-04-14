@@ -1,0 +1,30 @@
+' Verify EVAL inside a function doesn't clobber locals
+FUNC Calc(expression)
+  PRINT "Expression: "; expression
+  DIM r AS STRING = EVAL(expression)
+  PRINT "Result: "; r
+  PRINT "Expression after EVAL: "; expression
+  RETURN STR(r)
+ENDFUNC
+
+PRINT "--- Test EVAL preserves caller locals ---"
+LET out = Calc("42 * 17")
+PRINT "Returned: "; out
+
+PRINT ""
+PRINT "--- Test nested EVAL with concat ---"
+FUNC Plus100(x)
+  DIM y AS STRING = EVAL("100 + " + STR(x))
+  PRINT "Plus100 x="; x; " y="; y
+  RETURN y
+ENDFUNC
+PRINT Plus100(5)
+
+PRINT ""
+PRINT "--- Test EVAL via funcref ---"
+LET fr = Calc@
+LET v = fr("3 + 4")
+PRINT "fr returned: "; v
+
+PRINT ""
+PRINT "All EVAL nesting tests OK"

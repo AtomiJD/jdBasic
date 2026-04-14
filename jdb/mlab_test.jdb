@@ -1,0 +1,27 @@
+IMPORT MLAB
+
+PRINT "--- Testing new MLAB functions ---"
+PRINT
+
+PRINT "--- Array Creation ---"
+PRINT "5x5 Identity Matrix (EYE):"
+PRINT FRMV$(MLAB.EYE(5))
+PRINT
+PRINT "3x4 Matrix of Zeros:"
+PRINT FRMV$(MLAB.ZEROS([3, 4]))
+PRINT
+
+PRINT "--- Combinatorics ---"
+PRINT "Ways to choose 6 from 49 (Lotto): "; MLAB.COMBINATIONS(49, 6)
+PRINT
+
+PRINT "--- Financial ---"
+' Calculate mortgage payment: 5% annual rate (0.05/12 monthly) for 30 years (360 months) on a 300,000 loan
+PRINT "Calculate mortgage payment: 5% annual rate (0.05/12 monthly) for 30 years (360 months) on a 300,000 loan"
+MonthlyPayment = MLAB.PMT(0.05/12, 360, 300000)
+PRINT "Monthly Mortgage Payment: "; MonthlyPayment
+PRINT
+
+PRINT "--- String Algorithms ---"
+Dist = MLAB.LEVENSHTEIN("Saturday", "Sunday")
+PRINT "Levenshtein distance between 'Saturday' and 'Sunday' is: "; Dist ' Should be 3

@@ -1,0 +1,240 @@
+' ===================================================================
+' == RPG Quest Module v3
+' == Data-driven quest system using MAPs (reliable with arrays)
+' ===================================================================
+
+EXPORT MODULE RPG_QUEST
+
+IMPORT RPG_DIALOG
+IMPORT RPG_INVENTORY
+
+' ── Quest Registry ───────────────────────────────────────────
+EXPORT DIM quests = []
+EXPORT DIM quest_count = 0
+
+' ── Load all quests from JSON ────────────────────────────────
+EXPORT SUB LOAD_QUESTS(json_file$)
+    data = JSON.PARSE$(TXTREADER$(json_file$))
+    quest_list = data{"quests"}
+    FOR i = 0 TO LEN(quest_list) - 1
+        qd = quest_list[i]
+        q = {}
+        q{"id"} = qd{"id"}
+        q{"title"} = qd{"title"}
+        q{"desc"} = qd{"desc"}
+        q{"giver"} = qd{"giver"}
+        q{"turn_in"} = qd{"turn_in"}
+        q{"goal"} = qd{"goal"}
+        q{"goal_count"} = INT(qd{"goal_count"})
+        q{"progress"} = 0
+        q{"state"} = "inactive"
+        q{"room"} = qd{"room"}
+        q{"prereq_quest"} = qd{"prereq_quest"}
+        q{"prereq_item"} = qd{"prereq_item"}
+        q{"reward_gold"} = INT(qd{"reward_gold"})
+        q{"reward_item"} = qd{"reward_item"}
+        q{"dialog_offer"} = qd{"dialog_offer"}
+        q{"dialog_active"} = ""
+        IF MAP.EXISTS(qd, "dialog_active") THEN q{"dialog_active"} = qd{"dialog_active"}
+        q{"dialog_complete"} = qd{"dialog_complete"}
+        q{"on_start"} = "" : q{"on_complete"} = "" : q{"on_reward"} = ""
+        IF MAP.EXISTS(qd, "on_start") THEN q{"on_start"} = qd{"on_start"}
+        IF MAP.EXISTS(qd, "on_complete") THEN q{"on_complete"} = qd{"on_complete"}
+        IF MAP.EXISTS(qd, "on_reward") THEN q{"on_reward"} = qd{"on_reward"}
+        PUSH quests, q
+        quest_count = quest_count + 1
+    NEXT i
+ENDSUB
+
+' ── Get quest state by ID ────────────────────────────────────
+EXPORT FUNC GET_STATE$(id$)
+    FOR i = 0 TO quest_count - 1
+        q = quests[i]
+        IF q{"id"} = id$ THEN RETURN q{"state"}
+    NEXT i
+    RETURN "unknown"
+ENDFUNC
+
+' ── Report progress on a goal type ───────────────────────────
+EXPORT SUB PROGRESS(goal$, amount)
+    FOR i = 0 TO quest_count - 1
+        q = quests[i]
+        IF q{"state"} = "active" AND q{"goal"} = goal$ THEN
+            q{"progress"} = q{"progress"} + INT(amount)
+            IF q{"progress"} >= q{"goal_count"} THEN
+                q{"state"} = "complete"
+                IF q{"on_complete"} <> "" THEN
+                    code$ = q{"on_complete"}
+                    TRY : EXECUTE code$ : CATCH : ENDTRY
+                ENDIF
+            ENDIF
+            quests[i] = q
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ── Check if quest is available ──────────────────────────────
+FUNC IS_AVAILABLE(q)
+    IF q{"state"} <> "inactive" THEN RETURN FALSE
+    IF q{"prereq_quest"} <> "" THEN
+        IF GET_STATE$(q{"prereq_quest"}) <> "rewarded" THEN RETURN FALSE
+    ENDIF
+    IF q{"prereq_item"} <> "" THEN
+        IF NOT RPG_INVENTORY.HAS_ITEM(q{"prereq_item"}) THEN RETURN FALSE
+    ENDIF
+    RETURN TRUE
+ENDFUNC
+
+' ── NPC interaction: handle all quests for this NPC ──────────
+EXPORT FUNC HANDLE_NPC(npc_name$, player_name$)
+    ' Priority 1: Turn in completed quests
+    FOR i = 0 TO quest_count - 1
+        q = quests[i]
+        IF q{"state"} = "complete" AND q{"turn_in"} = npc_name$ THEN
+            dlg$ = REPLACE$(q{"dialog_complete"}, "{PLAYER}", player_name$)
+            RPG_DIALOG.SAY npc_name$, dlg$
+            IF q{"reward_gold"} > 0 THEN RPG_INVENTORY.ADD_GOLD q{"reward_gold"}
+            IF q{"reward_item"} <> "" THEN RPG_INVENTORY.ADD_ITEM q{"reward_item"}, "Quest reward", 1
+            q{"state"} = "rewarded"
+            IF q{"on_reward"} <> "" THEN
+                code$ = q{"on_reward"}
+                TRY : EXECUTE code$ : CATCH : ENDTRY
+            ENDIF
+            quests[i] = q
+            RETURN TRUE
+        ENDIF
+    NEXT i
+
+    ' Priority 2: Show progress on active quests from this giver
+    FOR i = 0 TO quest_count - 1
+        q = quests[i]
+        IF q{"state"} = "active" AND q{"giver"} = npc_name$ THEN
+            dlg$ = q{"dialog_active"}
+            IF dlg$ = "" THEN dlg$ = "Progress: " + STR$(INT(q{"progress"})) + "/" + STR$(INT(q{"goal_count"}))
+            dlg$ = REPLACE$(dlg$, "{PLAYER}", player_name$)
+            RPG_DIALOG.SAY npc_name$, dlg$
+            RETURN TRUE
+        ENDIF
+    NEXT i
+
+    ' Priority 3: Offer new available quests
+    FOR i = 0 TO quest_count - 1
+        q = quests[i]
+        IF q{"giver"} = npc_name$ AND IS_AVAILABLE(q) THEN
+            dlg$ = REPLACE$(q{"dialog_offer"}, "{PLAYER}", player_name$)
+            RPG_DIALOG.SAY npc_name$, dlg$
+            choice = RPG_DIALOG.CHOICE("Quest annehmen|Nicht jetzt")
+            IF choice = 0 THEN
+                q{"state"} = "active"
+                IF q{"on_start"} <> "" THEN
+                    code$ = q{"on_start"}
+                    TRY : EXECUTE code$ : CATCH : ENDTRY
+                ENDIF
+                quests[i] = q
+            ENDIF
+            RETURN TRUE
+        ENDIF
+    NEXT i
+
+    RETURN FALSE
+ENDFUNC
+
+' ── Count active/complete quests ─────────────────────────────
+EXPORT FUNC ACTIVE_COUNT()
+    c = 0
+    FOR i = 0 TO quest_count - 1
+        q = quests[i]
+        s$ = q{"state"}
+        IF s$ = "active" OR s$ = "complete" THEN c = c + 1
+    NEXT i
+    RETURN c
+ENDFUNC
+
+' ══════════════════════════════════════════════════════════════
+' ══ QUEST LOG (Q key) ════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT SUB SHOW_LOG()
+    log_bg = GFX.CAPTURE()
+    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
+
+    DO
+        GFX.DRAW_CAPTURE log_bg
+        RECT 0, 0, sw, sh, 0, 0, 0, TRUE
+
+        bx = 60 : by = 30
+        bw = sw - 120 : bh = sh - 60
+        RECT bx, by, bw, bh, 20, 20, 45, TRUE
+        RECT bx, by, bw, bh, 100, 120, 180, FALSE
+
+        TEXT bx + bw/2 - 40, by + 10, "QUEST LOG", 255, 220, 80
+        RECT bx + 10, by + 32, bw - 20, 2, 80, 80, 140, TRUE
+
+        iy = by + 45 : shown = 0
+        FOR i = 0 TO quest_count - 1
+            q = quests[i]
+            qs$ = q{"state"}
+            IF qs$ <> "inactive" THEN
+                IF qs$ = "complete" THEN
+                    TEXT bx + 20, iy, "[DONE] " + q{"title"}, 100, 255, 100
+                ELSEIF qs$ = "rewarded" THEN
+                    TEXT bx + 20, iy, "[CLAIMED] " + q{"title"}, 100, 100, 100
+                ELSE
+                    TEXT bx + 20, iy, q{"title"}, 220, 220, 255
+                ENDIF
+                iy = iy + 20
+                TEXT bx + 30, iy, q{"desc"}, 160, 160, 190
+                iy = iy + 20
+                IF qs$ = "active" THEN
+                    bar_w = 150
+                    gc = q{"goal_count"}
+                    IF gc > 0 THEN
+                        fill_w = INT((q{"progress"} / gc) * bar_w)
+                    ELSE
+                        fill_w = 0
+                    ENDIF
+                    IF fill_w > bar_w THEN fill_w = bar_w
+                    RECT bx + 30, iy, bar_w, 12, 40, 40, 60, TRUE
+                    IF fill_w > 0 THEN RECT bx + 30, iy, fill_w, 12, 80, 180, 80, TRUE
+                    TEXT bx + 190, iy, STR$(INT(q{"progress"})) + "/" + STR$(INT(gc)), 180, 180, 200
+                    iy = iy + 18
+                ENDIF
+                iy = iy + 8
+                shown = shown + 1
+            ENDIF
+        NEXT i
+
+        IF shown = 0 THEN TEXT bx + 20, iy, "No active quests.", 120, 120, 150
+
+        TEXT bx + 10, by + bh - 25, "Press Q to close", 100, 100, 140
+        SCREENFLIP : SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:Q" OR ev$ = "KEYDOWN:Escape" OR ev$ = "QUIT" THEN EXITDO
+    LOOP
+    GFX.FREEIMAGE log_bg
+ENDSUB
+
+' ── Save/Load ────────────────────────────────────────────────
+EXPORT FUNC GET_SAVE_DATA()
+    save = []
+    FOR i = 0 TO quest_count - 1
+        q = quests[i]
+        qs = {"id": q{"id"}, "state": q{"state"}, "progress": q{"progress"}}
+        PUSH save, qs
+    NEXT i
+    RETURN save
+ENDFUNC
+
+EXPORT SUB LOAD_SAVE_DATA(data)
+    FOR i = 0 TO LEN(data) - 1
+        sd = data[i]
+        FOR j = 0 TO quest_count - 1
+            q = quests[j]
+            IF q{"id"} = sd{"id"} THEN
+                q{"state"} = sd{"state"}
+                q{"progress"} = sd{"progress"}
+                quests[j] = q
+            ENDIF
+        NEXT j
+    NEXT i
+ENDSUB

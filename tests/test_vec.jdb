@@ -1,0 +1,18 @@
+LET a = [1, 2, 3, 4]
+PRINT "a = "; a
+
+PRINT "a * 2 = "; a * 2
+PRINT "a + 10 = "; a + 10
+PRINT "a / 2 = "; a / 2
+PRINT "a - 1 = "; a - 1
+PRINT "a ^ 2 = "; a ^ 2
+PRINT "a MOD 3 = "; a MOD 3
+
+PRINT "10 - a = "; 10 - a
+PRINT "2 * a = "; 2 * a
+
+LET b = [10, 20, 30, 40]
+PRINT "a + b = "; a + b
+PRINT "a * b = "; a * b
+
+PRINT "-a = "; -a

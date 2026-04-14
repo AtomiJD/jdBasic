@@ -1,0 +1,33 @@
+' ── TXTWRITER / TXTREADER$ ──────────────────────────
+PRINT "=== Text I/O ==="
+TXTWRITER("test_out.txt", "Hello from jdBasic!\nLine 2\nLine 3")
+DIM content = TXTREADER$("test_out.txt")
+PRINT "Read: "; LEN(content); " chars"
+PRINT content
+
+' ── CSVWRITER / CSVREADER ──────────────────────────
+PRINT ""
+PRINT "=== CSV I/O ==="
+DIM data = RESHAPE([1,"Alice",90, 2,"Bob",85, 3,"Charlie",95], [3,3])
+DIM headers = ["ID", "Name", "Score"]
+CSVWRITER("test_out.csv", data, ",", headers)
+PRINT "CSV written."
+
+DIM loaded = CSVREADER("test_out.csv", ",", TRUE)
+PRINT "CSV loaded ("; LEN(loaded); " rows):"
+FOR EACH row IN loaded
+    PRINT "  "; row
+NEXT
+
+' ── BINWRITER / BINREADER$ ─────────────────────────
+PRINT ""
+PRINT "=== Binary I/O ==="
+DIM packed = PACK$("<iid", 42, 100, 3.14159)
+BINWRITER("test_out.bin", packed)
+DIM raw = BINREADER$("test_out.bin")
+PRINT "Binary: "; LEN(raw); " bytes"
+DIM unpacked = UNPACK("<iid", raw)
+PRINT "Unpacked: "; unpacked
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

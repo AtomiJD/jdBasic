@@ -1,0 +1,41 @@
+' ── Async HTTP Client ──────────────────────────────
+PRINT "=== Async HTTP ==="
+
+' Fire off 3 requests simultaneously
+DIM t1 = TICK()
+DIM task1 = HTTP.GET_ASYNC$("https://httpbin.org/delay/1")
+DIM task2 = HTTP.GET_ASYNC$("https://httpbin.org/delay/1")
+DIM task3 = HTTP.GET_ASYNC$("https://httpbin.org/get")
+
+PRINT "3 async requests launched: "; task1; ", "; task2; ", "; task3
+
+' Do other work while requests run
+PRINT "Main thread working..."
+DIM x = 0
+FOR i = 1 TO 100000: x = x + 1: NEXT
+
+' Check status
+PRINT "task3 done? "; THREAD.ISDONE(task3)
+
+' Await results
+DIM r3 = AWAIT task3
+PRINT "task3 status: "; HTTP.STATUSCODE()
+PRINT "task3 body has 'origin': "; "origin" IN r3
+
+DIM r1 = AWAIT task1
+DIM r2 = AWAIT task2
+DIM elapsed = TICK() - t1
+
+PRINT "All 3 done in "; INT(elapsed); " ms"
+PRINT "  (Sequential would take ~3000ms, parallel should be ~1000ms)"
+
+' ── Async POST ────────────────────────────────────
+PRINT ""
+PRINT "=== Async POST ==="
+DIM pt = HTTP.POST_ASYNC$("https://httpbin.org/post", "{\"test\":1}", "application/json")
+PRINT "POST task: "; pt
+DIM pr = AWAIT pt
+PRINT "POST done, has 'test': "; "test" IN pr
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

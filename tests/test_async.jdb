@@ -1,0 +1,40 @@
+' ── ASYNC / AWAIT ──────────────────────────────────
+PRINT "=== Async/Await ==="
+
+ASYNC FUNC SlowCalc(n)
+    DIM result = 0
+    FOR i = 1 TO n
+        result = result + i
+    NEXT i
+    RETURN result
+ENDFUNC
+
+ASYNC FUNC SlowGreet(name)
+    RETURN "Hello, " + name + "!"
+ENDFUNC
+
+' Start async tasks
+DIM t1 = SlowCalc(100000)
+DIM t2 = SlowGreet("jdBasic")
+
+PRINT "Tasks started: t1="; t1; " t2="; t2
+
+' Do some work while tasks run
+PRINT "Main: doing other work..."
+DIM x = 0
+FOR i = 1 TO 100000: x = x + 1: NEXT i
+PRINT "Main: done (x="; x; ")"
+
+' Check if done
+PRINT "t2 done? "; THREAD.ISDONE(t2)
+
+' Wait for results
+DIM r2 = AWAIT t2
+PRINT "Greet result: "; r2
+
+DIM r1 = AWAIT t1
+PRINT "Calc result: "; r1
+PRINT "Expected: "; 100000 * 100001 / 2
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

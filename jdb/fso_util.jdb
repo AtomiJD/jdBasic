@@ -1,0 +1,19 @@
+export MODULE FSO
+
+fs = 0
+
+export sub init()
+    fs = CreateObject("Scripting.FileSystemObject")
+endsub
+
+export func FileExists(name)
+    if fs = 0 then
+        init
+    endif
+    return fs.FileExists(name)
+endfunc
+
+export sub deinit()
+    fs = ""
+endsub
+

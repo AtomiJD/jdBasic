@@ -1,0 +1,135 @@
+OPTION "EXPLICIT"
+
+' ──────────────────────────────────────────────────────────────────
+' Bubble Universe in jdBasic — APL/vectorized version
+'
+' Each shape now has its own (x, y) trail (200 parallel state vectors).
+' The inner loop becomes 350 vector operations over 200 elements
+' instead of 70.000 scalar iterations.
+'
+' All pixels of one frame are submitted in a single GPU upload via
+' GFX.PLOT_POINTS_TEX (streaming texture).
+' ──────────────────────────────────────────────────────────────────
+
+DIM HPIXELS AS INTEGER : HPIXELS = 900
+DIM VPIXELS AS INTEGER : VPIXELS = 670
+DIM FPS AS INTEGER : FPS = 60
+DIM MAXY AS DOUBLE : MAXY = 2.0
+
+DIM Nshapes AS INTEGER : Nshapes = 200
+DIM Npoints AS INTEGER : Npoints = 350
+DIM DT AS DOUBLE : DT = 2E-3
+
+DIM R AS DOUBLE : R = 2 * PI / Nshapes
+DIM MAXX AS DOUBLE : MAXX = MAXY * HPIXELS / VPIXELS
+DIM Fhue AS DOUBLE : Fhue = 360 / Nshapes
+
+DIM SCALEX AS DOUBLE : SCALEX = (HPIXELS - 1) / (2 * MAXX)
+DIM SCALEY AS DOUBLE : SCALEY = (VPIXELS - 1) / (2 * MAXY)
+
+DIM N AS INTEGER : N = Nshapes * Npoints
+
+' ── Pre-compute shape indices and per-shape constants ────────────
+DIM shape_idx = IOTA(Nshapes) - 1     ' [0, 1, ..., Nshapes-1]
+DIM R_shape = R * shape_idx           ' [0, R, 2R, ..., (Nshapes-1)R]
+
+' ── Build colour LUT once: pnt-major flat layout to match the
+'    write order of the inner loop (we plot Nshapes points per pnt).
+'    For point at (pnt, shape): rgb_lut[(pnt*Nshapes + shape)*3 .. +2]
+PRINT "Building colour LUT (" + STR$(N) + " entries)..."
+DIM startBuild AS DOUBLE : startBuild = TICK()
+DIM rgb_lut AS ARRAY
+DIM hue AS DOUBLE
+DIM sat AS DOUBLE
+DIM bri AS DOUBLE
+DIM rgb AS ARRAY
+DIM shape AS INTEGER
+DIM pnt AS INTEGER
+
+FOR pnt = 0 TO Npoints - 1
+    sat = pnt + 20
+    bri = pnt + 25
+    IF sat > 100 THEN sat = 100
+    IF bri > 100 THEN bri = 100
+    DIM s_norm AS DOUBLE : s_norm = sat / 100.0
+    DIM v_norm AS DOUBLE : v_norm = bri / 100.0
+    FOR shape = 0 TO Nshapes - 1
+        hue = shape * Fhue
+        rgb = GFX.HSV_RGB(hue, s_norm, v_norm)
+        PUSH rgb_lut, rgb[0]
+        PUSH rgb_lut, rgb[1]
+        PUSH rgb_lut, rgb[2]
+    NEXT shape
+NEXT pnt
+PRINT "LUT done in " + STR$(INT(TICK() - startBuild)) + " ms"
+
+' ── Animation state ──────────────────────────────────────────────
+DIM xst = ZEROS([Nshapes])     ' x state per shape
+DIM yst = ZEROS([Nshapes])     ' y state per shape
+DIM t AS DOUBLE : t = 0
+
+' Pre-allocate output buffers
+DIM xs = ZEROS([N])
+DIM ys = ZEROS([N])
+
+DIM key$ AS STRING
+DIM frameStart AS DOUBLE
+DIM frameTime AS DOUBLE
+DIM waitMs AS INTEGER
+DIM fcount AS INTEGER : fcount = 0
+DIM tStart AS DOUBLE : tStart = TICK()
+
+SCREEN HPIXELS, VPIXELS, "Bubble Universe", 2
+
+DO
+    frameStart = GFX.TICKS()
+
+    ComputeFrame xst, yst, xs, ys, t, R_shape, shape_idx, MAXX, MAXY, SCALEX, SCALEY, Nshapes, Npoints
+
+    GFX.PLOT_POINTS_TEX xs, ys, rgb_lut, [0, 0, 0]
+
+    SCREENFLIP
+    t = t + DT
+    fcount = fcount + 1
+
+    IF fcount MOD 30 = 0 THEN
+        DIM elapsed AS DOUBLE : elapsed = (TICK() - tStart) / 1000
+        IF elapsed > 0 THEN
+            PRINT "fps=" + STR$(INT(fcount / elapsed * 10) / 10)
+        ENDIF
+    ENDIF
+
+    key$ = INKEY$()
+    frameTime = GFX.TICKS() - frameStart
+    waitMs = 1000 / FPS - frameTime
+    IF waitMs > 0 THEN GFX.DELAY(waitMs)
+LOOP UNTIL key$ = CHR$(27)
+
+GFX.CLOSE
+END
+
+
+' ── Vectorized inner loop ────────────────────────────────────────
+' Each shape carries its own (x, y) state. SIN/COS/+/* are vectorized
+' over the Nshapes-element state vectors. We do Npoints (350) loop
+' iterations with vector ops instead of 70.000 scalar iterations.
+SUB ComputeFrame(xst, yst, xs, ys, tt, R_shape, shape_idx, MAXX, MAXY, SX, SY, NS, NP)
+    DIM pn AS INTEGER
+    DIM ang_y
+    DIM ang_x
+    DIM shape_t
+    DIM target
+
+    FOR pn = 0 TO NP - 1
+        shape_t = R_shape + tt              ' vector add
+        ang_y = shape_idx + yst             ' vector add
+        ang_x = shape_t + xst               ' vector add
+        xst = SIN(ang_y) + SIN(ang_x)       ' vector SIN + add
+        yst = COS(ang_y) + COS(ang_x)       ' vector COS + add
+
+        ' Scatter into the flat output arrays at offsets pn*NS..pn*NS+NS-1
+        target = pn * NS + shape_idx        ' index vector
+        xs[target] = (xst + MAXX) * SX
+        ys[target] = (MAXY - yst) * SY
+    NEXT pn
+ENDSUB

@@ -1,0 +1,47 @@
+' PI Day - Magic Dartboard in jdBasic
+SCREEN 1920, 1080, "jdBasic Magic Dartboard", 2
+BATCH_SIZE = 3000
+TOTAL_HITS = 0
+TOTAL_DARTS = 0
+CX = 480  
+CY = 270  
+RADIUS = 250 
+CLS
+SCREENFLIP
+DO
+    CLS 
+    X_NORM = RND(IOTA(BATCH_SIZE)) * 2 - 1
+    Y_NORM = RND(IOTA(BATCH_SIZE)) * 2 - 1
+    X_VEC = (X_NORM * RADIUS) + CX
+    Y_VEC = (Y_NORM * RADIUS) + CY
+    PTS_SCREEN = STACK(1, X_VEC, Y_VEC)
+    DISTS = SQR((X_VEC - CX)^2 + (Y_VEC - CY)^2)
+    HITS_MASK = DISTS <= RADIUS
+    TOTAL_HITS = TOTAL_HITS + SUM(HITS_MASK) 
+    TOTAL_DARTS = TOTAL_DARTS + BATCH_SIZE
+    R_VEC = iif(HITS_MASK, 0.0, 150.0)
+    G_VEC = iif(HITS_MASK, 200.0, 0.0)
+    B_VEC = iif(HITS_MASK, 255.0, 200.0)
+    COLORS = STACK(1, R_VEC, G_VEC, B_VEC)
+    PSET PTS_SCREEN, COLORS
+    CIRCLE CX, CY, RADIUS, FALSE, 255.0, 255.0, 255.0
+    EST_PI = (TOTAL_HITS / TOTAL_DARTS) * 4
+    IF GUI.BEGIN("Pi Matrix Control", 0, 0, 320, 260) THEN
+        GUI.TEXT "Real PI: " + PI
+        GUI.TEXT "Est. PI: " + ROUND(EST_PI, 8)
+        GUI.SEPARATOR()
+        BATCH_SIZE = GUI.SLIDER("Darts/Frame", BATCH_SIZE, 100, 60000)
+        GUI.TEXT "Total Darts: " + TOTAL_DARTS
+        ACC = 1 - ABS(PI - EST_PI)/PI
+        GUI.PROGRESS ACC, "Accuracy: " + ROUND(ACC * 100, 5) + "%"
+        IF GUI.BUTTON("Reset Simulation") THEN
+            TOTAL_HITS = 0
+            TOTAL_DARTS = 0
+            CLS
+        ENDIF
+    ENDIF
+    GUI.END()
+    SCREENFLIP
+    SLEEP 1
+LOOP UNTIL INKEY$() = CHR$(27)
+END

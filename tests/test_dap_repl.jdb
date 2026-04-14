@@ -1,0 +1,4 @@
+PRINT "Program started"
+LET a = 42
+STOP
+PRINT "After stop"

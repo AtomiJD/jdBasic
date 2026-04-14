@@ -1,0 +1,59 @@
+' Reiner Search-Speedtest: gleiche Query oft, damit Embedding-Cache greift?
+' (Embedding wird zwar nicht gecached, aber wir messen die TOTALEN Kosten —
+' der Unterschied wird mit groesserem Index sichtbar)
+
+PRINT "Loading embedding model..."
+emb = AI.LOAD_EMBEDDINGS("models\Phi-3-mini-4k-instruct-q4.gguf", 512, 99)
+
+PRINT ""
+PRINT "Building 1000 dense chunks..."
+DIM rag = AI.RAG_CREATE(0, 80, 8, emb)
+
+DIM t0 = TICK()
+FOR i = 0 TO 999
+  DIM s = "Dokument Nummer " + STR$(i) + " mit zufaelligem Inhalt " + STR$(i * 7 MOD 1000)
+  AI.RAG_ADD rag, s, "doc_" + STR$(i)
+NEXT i
+PRINT "  Build: "; TICK() - t0; "ms"
+
+DIM info = AI.RAG_INFO(rag)
+PRINT "  chunks="; info{"chunks"}; " index="; info{"index"}
+
+PRINT ""
+PRINT "=== Linear search: 5 verschiedene Queries ==="
+DIM tl = TICK()
+DIM r1 = AI.RAG_SEARCH(rag, "Dokument 100", 5)
+DIM r2 = AI.RAG_SEARCH(rag, "Dokument 500", 5)
+DIM r3 = AI.RAG_SEARCH(rag, "Dokument 999", 5)
+DIM r4 = AI.RAG_SEARCH(rag, "zufaelliger Inhalt", 5)
+DIM r5 = AI.RAG_SEARCH(rag, "Nummer 250", 5)
+PRINT "  Linear total: "; TICK() - tl; "ms"
+PRINT "  Top-1 fuer 'Dokument 999': "; r3[0]{"source"}
+
+PRINT ""
+PRINT "=== HNSW Build ==="
+DIM tb = TICK()
+AI.RAG_BUILD_INDEX rag, 16, 200
+PRINT "  Build: "; TICK() - tb; "ms"
+
+PRINT ""
+PRINT "=== HNSW search: gleiche 5 Queries ==="
+DIM th = TICK()
+DIM h1 = AI.RAG_SEARCH(rag, "Dokument 100", 5)
+DIM h2 = AI.RAG_SEARCH(rag, "Dokument 500", 5)
+DIM h3 = AI.RAG_SEARCH(rag, "Dokument 999", 5)
+DIM h4 = AI.RAG_SEARCH(rag, "zufaelliger Inhalt", 5)
+DIM h5 = AI.RAG_SEARCH(rag, "Nummer 250", 5)
+PRINT "  HNSW total: "; TICK() - th; "ms"
+PRINT "  Top-1 fuer 'Dokument 999': "; h3[0]{"source"}
+
+PRINT ""
+PRINT "Recall check Top-1:"
+PRINT "  Q1: linear="; r1[0]{"source"}; " hnsw="; h1[0]{"source"}; IIF(r1[0]{"source"} = h1[0]{"source"}, " OK", " DIFF")
+PRINT "  Q2: linear="; r2[0]{"source"}; " hnsw="; h2[0]{"source"}; IIF(r2[0]{"source"} = h2[0]{"source"}, " OK", " DIFF")
+PRINT "  Q3: linear="; r3[0]{"source"}; " hnsw="; h3[0]{"source"}; IIF(r3[0]{"source"} = h3[0]{"source"}, " OK", " DIFF")
+PRINT "  Q4: linear="; r4[0]{"source"}; " hnsw="; h4[0]{"source"}; IIF(r4[0]{"source"} = h4[0]{"source"}, " OK", " DIFF")
+PRINT "  Q5: linear="; r5[0]{"source"}; " hnsw="; h5[0]{"source"}; IIF(r5[0]{"source"} = h5[0]{"source"}, " OK", " DIFF")
+
+AI.FREE_LLM emb
+PRINT "Done."

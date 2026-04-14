@@ -1,0 +1,8 @@
+app = CREATEOBJECT("Word.Application")
+app.Visible = TRUE
+doc = app.Documents.Add()
+sel = app.Selection
+'sel.Style = app.ActiveDocument.Styles("Intense Quote")
+sel.Style = "Intensives Zitat"
+sel.TypeText "Hallo :-)"
+

@@ -1,0 +1,17 @@
+IMPORT RPG_QUEST
+SCREEN 400, 300, "Test"
+SETFONT "C:/Windows/Fonts/arial.ttf", 14
+RPG_QUEST.LOAD_QUESTS "D:/usr/dev/cc/fluppi/rpg_data/quests.json"
+PRINT "Loaded: "; RPG_QUEST.quest_count; " quests"
+PRINT "State before: "; RPG_QUEST.GET_STATE$("lost_key")
+
+' Directly start the quest
+RPG_QUEST.quests[0].state$ = "active"
+PRINT "State after set: "; RPG_QUEST.GET_STATE$("lost_key")
+PRINT "State from array: "; RPG_QUEST.quests[0].state$
+
+' Try progress
+RPG_QUEST.PROGRESS "find:key", 1
+PRINT "After progress: "; RPG_QUEST.GET_STATE$("lost_key")
+PRINT "Active: "; RPG_QUEST.ACTIVE_COUNT()
+END

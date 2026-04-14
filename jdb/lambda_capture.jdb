@@ -1,0 +1,20 @@
+' Closure Tests
+
+FUNC MakeAdder(x)
+    ' Capture 'x' from this scope
+    RETURN LAMBDA USE(x) -> x + 10
+ENDFUNC
+
+Add10 = MakeAdder(10)
+Add20 = MakeAdder(20)
+
+PRINT "Function test"
+PRINT Add10() ' Output: 20
+PRINT Add20() ' Output: 30
+
+FUNC MakeFilter(limit)
+    RETURN LAMBDA USE(limit) v -> v > limit
+ENDFUNC
+
+Result = FILTER(MakeFilter(5), [1, 6, 2, 8])
+PRINT Result

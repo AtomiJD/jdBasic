@@ -1,0 +1,136 @@
+OPTION "EXPLICIT"
+
+' Bubble Universe in jdBasic — original naive version (for benchmark comparison)
+
+HPIXELS = 900
+VPIXELS = 670
+FPS = 1000  ' uncapped
+MAXY = 2.0
+
+Nshapes = 200
+Npoints = 350
+DT = 2E-3
+
+R = 2 * PI / Nshapes
+MAXX = MAXY * HPIXELS / VPIXELS
+Fhue = 360 / Nshapes
+
+DIM x AS DOUBLE
+DIM y AS DOUBLE
+DIM t AS DOUBLE
+DIM ang_y AS DOUBLE
+DIM shape_t AS DOUBLE
+DIM ang_x AS DOUBLE
+
+DIM px AS INTEGER
+DIM py AS INTEGER
+
+DIM shape AS INTEGER
+DIM pnt AS INTEGER
+
+DIM hue AS DOUBLE
+DIM sat AS DOUBLE
+DIM bri AS DOUBLE
+
+DIM key$ AS STRING
+DIM frameStart AS DOUBLE
+DIM frameTime AS DOUBLE
+DIM waitMs AS INTEGER
+
+DIM rgb
+DIM rr AS INTEGER
+DIM gg AS INTEGER
+DIM bb AS INTEGER
+
+DIM fcount AS INTEGER : fcount = 0
+DIM tStart AS DOUBLE : tStart = TICK()
+
+SCREEN HPIXELS, VPIXELS, "Bubble Universe (naive)", 1
+
+t = 0
+x = 0
+y = 0
+
+DO
+    frameStart = GFX.TICKS()
+    RECT 0, 0, HPIXELS, VPIXELS, TRUE, 0, 0, 0
+
+    FOR shape = 0 TO Nshapes - 1
+        shape_t = R * shape + t
+        FOR pnt = 0 TO Npoints - 1
+            ang_y = shape + y
+            ang_x = shape_t + x
+            x = SIN(ang_y) + SIN(ang_x)
+            y = COS(ang_y) + COS(ang_x)
+            px = WorldToScreenX(x)
+            py = WorldToScreenY(y)
+            hue = shape * Fhue
+            sat = pnt + 20
+            bri = pnt + 25
+            IF sat > 100 THEN sat = 100
+            IF bri > 100 THEN bri = 100
+            rgb = HSVtoRGB(hue, sat / 100.0, bri / 100.0)
+            rr = rgb[0]
+            gg = rgb[1]
+            bb = rgb[2]
+            IF px >= 0 AND px < HPIXELS AND py >= 0 AND py < VPIXELS THEN
+                PSET px, py, rr, gg, bb
+            ENDIF
+        NEXT
+    NEXT
+
+    SCREENFLIP
+    t = t + DT
+    fcount = fcount + 1
+    IF fcount MOD 5 = 0 THEN
+        PRINT "naive fps=" + STR$(INT(fcount / ((TICK() - tStart) / 1000) * 10) / 10)
+    ENDIF
+    key$ = INKEY$()
+LOOP UNTIL key$ <> ""
+
+GFX.CLOSE
+END
+
+FUNC WorldToScreenX(wx)
+    RETURN (wx + MAXX) * (HPIXELS - 1) / (2 * MAXX)
+ENDFUNC
+
+FUNC WorldToScreenY(wy)
+    RETURN (MAXY - wy) * (VPIXELS - 1) / (2 * MAXY)
+ENDFUNC
+
+FUNC HSVtoRGB(h, s, v)
+    DIM c AS DOUBLE
+    DIM x AS DOUBLE
+    DIM m AS DOUBLE
+    DIM rp AS DOUBLE
+    DIM gp AS DOUBLE
+    DIM bp AS DOUBLE
+    DIM hh AS DOUBLE
+    DIM r AS INTEGER
+    DIM g AS INTEGER
+    DIM b AS INTEGER
+    h = h - 360 * INT(h / 360)
+    c = v * s
+    hh = h / 60.0
+    x = c * (1 - ABS((hh - 2 * INT(hh / 2)) - 1))
+    m = v - c
+    rp = 0 : gp = 0 : bp = 0
+    IF hh >= 0 AND hh < 1 THEN
+        rp = c: gp = x: bp = 0
+    ELSEIF hh >= 1 AND hh < 2 THEN
+        rp = x: gp = c: bp = 0
+    ELSEIF hh >= 2 AND hh < 3 THEN
+        rp = 0: gp = c: bp = x
+    ELSEIF hh >= 3 AND hh < 4 THEN
+        rp = 0: gp = x: bp = c
+    ELSEIF hh >= 4 AND hh < 5 THEN
+        rp = x: gp = 0: bp = c
+    ELSE
+        rp = c: gp = 0: bp = x
+    ENDIF
+    r = (rp + m) * 255
+    g = (gp + m) * 255
+    b = (bp + m) * 255
+    RETURN [r, g, b]
+ENDFUNC

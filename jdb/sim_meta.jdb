@@ -1,0 +1,307 @@
+OPTION "EXPLICIT"
+
+' --- CONFIGURATION ---
+' Global Scale Factor: 2.0 (1 Logical Pixel = 2 Physical Pixels)
+DIM GlobalScale = 2.0
+
+' Map Resolution
+DIM MapW = 240
+DIM MapH = 135
+
+' GUI Layout (Logical Units)
+DIM ToolBarW = 250
+
+' --- STATE VARIABLES ---
+DIM WinW_Log = 0       
+DIM WinH_Log = 0       
+DIM DrawScale_Log = 1.0 
+DIM MapX_Offset_Log = 0
+
+' --- TILE & FACTION DEFINITIONS ---
+DIM T_DEEP_WATER = 0 : DIM T_WATER = 1 : DIM T_SAND = 2 : DIM T_GRASS = 3
+DIM T_FOREST = 4 : DIM T_MOUNTAIN = 5 : DIM T_HUMAN = 10 : DIM T_VILLAGE = 11
+DIM T_FIRE = 20 : DIM T_ASH = 21
+
+DIM F_NEUTRAL = 0 : DIM F_RED = 1 : DIM F_BLUE = 2 : DIM F_GREEN = 3 : DIM F_YELLOW = 4
+
+' --- PALETTE & TRAITS ---
+DIM C_DEEP = 1315860 : DIM C_WATER = 3302650 : DIM C_SAND = 15781938
+DIM C_GRASS = 4423680 : DIM C_FOREST = 1326080 : DIM C_MOUNT = 7895160
+DIM C_FIRE = 16737280 : DIM C_ASH = 2631720
+
+DIM C_F_RED = 16711680 : DIM C_F_BLUE = 255 : DIM C_F_GREEN = 65280 : DIM C_F_YELLOW = 16776960
+
+DIM TraitWar  = [0.0, 0.4, 0.4, 0.4, 0.4] 
+DIM TraitGrow = [0.0, 0.95, 0.95, 0.95, 0.95]
+DIM TraitDef  = [0.0, 0.1, 0.1, 0.1, 0.1]
+
+' --- SIMULATION STATE ---
+DIM MapGrid[MapH, MapW]      
+DIM FacGrid[MapH, MapW]      
+DIM RenderGrid[MapH, MapW]   
+DIM SelectedTool = 3         
+DIM SelectedFac = 0          
+DIM BrushSize = 3
+DIM IsPaused = FALSE
+DIM ClearMap = TRUE          
+DIM StatRed = 0 : DIM StatBlue = 0 : DIM StatGreen = 0 : DIM StatYellow = 0
+DIM SimFrame = 0
+
+' --- INPUT HELPERS ---
+DIM MX_Log = 0 : DIM MY_Log = 0 : DIM MBtn = 0
+DIM MapX = 0 : DIM MapY = 0
+DIM BrushBlob : DIM BlobZero : DIM FacBlob
+DIM BY1 = 0 : DIM BY2 = 0 : DIM BX1 = 0 : DIM BX2 = 0 : DIM BH = 0 : DIM BW = 0
+DIM Key$ = ""
+DIM SimResult 
+DIM DebugMsg$ = ""
+
+' --- INITIALIZE SCREEN ---
+' 1920x1080 Physical, Scale 2 -> 960x540 Logical Space
+SCREEN 1920, 1080, "jdBasic: God Simulator (ElseIf Fixed)", GlobalScale
+GUI.THEME "DARK"
+
+' ==========================================================
+' ==  LAYOUT ENGINE (LOGICAL UNITS)
+' ==========================================================
+SUB RecalcLayout()
+    ' Get Physical dimensions and convert to LOGICAL
+    WinW_Log = SCREENWIDTH() / GlobalScale
+    WinH_Log = SCREENHEIGHT() / GlobalScale
+    
+    ' Toolbar width is fixed in Logical units
+    MapX_Offset_Log = ToolBarW
+    
+    ' Calculate available Logical Space for Map
+    DIM AvailW = WinW_Log - ToolBarW
+    DIM AvailH = WinH_Log
+    
+    ' Calculate Zoom to fit Map into Logical Space
+    DIM ScaleX = CEIL(AvailW / MapW)
+    DIM ScaleY = CEIL(AvailH / MapH)
+    
+    IF ScaleX < ScaleY THEN
+        DrawScale_Log = ScaleX
+    ELSE
+        DrawScale_Log = ScaleY
+    ENDIF
+    
+    IF DrawScale_Log < 1.0 THEN DrawScale_Log = 1.0
+ENDSUB
+
+RecalcLayout()
+
+' ==========================================================
+' ==  GOD SIMULATION KERNEL
+' ==========================================================
+FUNC UpdateWorld(Grid, Factions, T_War, T_Grow, T_Def)
+    DIM DirX = 0 : DIM DirY = 0 
+    DIM RDir = RND(1)
+    
+    ' --- UPDATED ELSEIF BLOCK ---
+    IF RDir < 0.25 THEN
+        DirX = 1
+    ELSEIF RDir < 0.50 THEN
+        DirX = -1
+    ELSEIF RDir < 0.75 THEN
+        DirY = 1
+    ELSE
+        DirY = -1
+    ENDIF
+
+    DIM RndGrid = RND(Grid)
+    
+    DIM IsVillage = (Grid = T_VILLAGE) : DIM IsWater = (Grid = T_WATER) : DIM IsFire = (Grid = T_FIRE)
+    DIM NeighborVil = SHIFT(IsVillage, [DirY, DirX]) : DIM NeighborWat = SHIFT(IsWater, [DirY, DirX])
+    DIM NeighborFire = SHIFT(IsFire, [DirY, DirX]) : DIM NeighborFac = SHIFT(Factions, [DirY, DirX])
+
+    ' ASH
+    DIM IsAsh = (Grid = T_ASH) : DIM AshDecay = IsAsh AND (RndGrid > 0.98)
+    Grid = Grid - (AshDecay * T_ASH) + (AshDecay * T_GRASS) : Factions = Factions * (1 - AshDecay)
+
+    ' TERRAFORM
+    DIM IsSand = (Grid = T_SAND) : DIM TransformSand = IsSand AND NeighborVil AND NeighborWat AND (RndGrid > 0.95)
+    Grid = Grid - (TransformSand * T_SAND) + (TransformSand * T_GRASS)
+    DIM IsMount = (Grid = T_MOUNTAIN) : DIM MineMount = IsMount AND NeighborVil AND (RndGrid > 0.99)
+    Grid = Grid - (MineMount * T_MOUNTAIN) + (MineMount * T_GRASS)
+
+    ' FIRE
+    DIM Extinguish = IsFire AND (RndGrid < 0.2)
+    Grid = Grid - (Extinguish * T_FIRE) + (Extinguish * T_ASH)
+    DIM Flammable = (Grid = T_GRASS) OR (Grid = T_FOREST) OR (Grid = T_VILLAGE) OR (Grid = T_HUMAN)
+    DIM Ignite = Flammable AND NeighborFire AND (RndGrid > 0.5)
+    Grid = Grid - (Ignite * Grid) + (Ignite * T_FIRE) : Factions = Factions * (1 - Ignite) 
+
+    ' NATURE
+    DIM IsGrass = (Grid = T_GRASS) : DIM GrowTree = IsGrass AND NeighborWat AND (RndGrid > 0.98)
+    Grid = Grid - (GrowTree * T_GRASS) + (GrowTree * T_FOREST)
+
+    ' EXPANSION
+    DIM IsHuman = (Grid = T_HUMAN) : DIM BuildHouse = IsHuman AND (RndGrid > 0.95)
+    Grid = Grid - (BuildHouse * T_HUMAN) + (BuildHouse * T_VILLAGE)
+    IsGrass = (Grid = T_GRASS)
+    DIM SpawnThreshold = (NeighborFac=1)*T_Grow[1] + (NeighborFac=2)*T_Grow[2] + (NeighborFac=3)*T_Grow[3] + (NeighborFac=4)*T_Grow[4]
+    DIM SpawnUnit = IsGrass AND NeighborVil AND (RndGrid > SpawnThreshold) AND (SpawnThreshold > 0)
+    Grid = Grid - (SpawnUnit * T_GRASS) + (SpawnUnit * T_HUMAN) : Factions = Factions + (SpawnUnit * NeighborFac)
+
+    ' WAR
+    DIM IsTarget = (Grid = T_HUMAN) OR (Grid = T_VILLAGE)
+    DIM UnderAttack = IsTarget AND (Factions > 0) AND (NeighborFac > 0) AND (Factions <> NeighborFac)
+    DIM AtkChance = (NeighborFac=1)*T_War[1] + (NeighborFac=2)*T_War[2] + (NeighborFac=3)*T_War[3] + (NeighborFac=4)*T_War[4]
+    DIM DefChance = (Factions=1)*T_Def[1] + (Factions=2)*T_Def[2] + (Factions=3)*T_Def[3] + (Factions=4)*T_Def[4]
+    DIM Converted = UnderAttack AND (RndGrid > AtkChance) AND (AtkChance > 0)
+    DIM Killed = UnderAttack AND ( (NOT Converted) OR (RndGrid < DefChance) )
+    Converted = Converted AND (NOT Killed)
+    Factions = Factions - (Converted * Factions) + (Converted * NeighborFac)
+    Grid = Grid - (Killed * Grid) + (Killed * T_ASH) : Factions = Factions * (1 - Killed)
+
+    DIM OutMap : OutMap = {"grid": Grid, "fac": Factions}
+    RETURN OutMap 
+ENDFUNC
+
+' ==========================================================
+' ==  MAIN LOOP
+' ==========================================================
+DO
+    CLS
+    
+    ' --- 1. SIDEBAR (LOGICAL COORDS) ---
+    GUI.BEGIN "Control Panel", 0, 0, ToolBarW, WinH_Log, TRUE, GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("ALLWAYS_SCROLLBAR")
+        
+        GUI.TEXT "Stats"
+        GUI.TEXT "Red: " + STR$(StatRed) + " | Blue: " + STR$(StatBlue)
+        GUI.TEXT "Green: " + STR$(StatGreen) + " | Yellow:  " + STR$(StatYellow)
+        GUI.SEPARATOR
+        
+        GUI.PUSH_ID(1)
+        IF GUI.COLLAPSING_HEADER("Red Kingdom", TRUE) THEN
+            TraitWar[1] = GUI.SLIDER("Aggro", TraitWar[1], 0.05, 0.95)
+            TraitGrow[1] = GUI.SLIDER("Spawn", TraitGrow[1], 0.80, 0.99)
+            TraitDef[1] = GUI.SLIDER("Defense", TraitDef[1], 0.0, 0.8)
+        ENDIF
+        GUI.POP_ID()
+
+        GUI.PUSH_ID(2)
+        IF GUI.COLLAPSING_HEADER("Blue Kingdom", TRUE) THEN
+            TraitWar[2] = GUI.SLIDER("Aggro", TraitWar[2], 0.05, 0.95)
+            TraitGrow[2] = GUI.SLIDER("Spawn", TraitGrow[2], 0.80, 0.99)
+            TraitDef[2] = GUI.SLIDER("Defense", TraitDef[2], 0.0, 0.8)
+        ENDIF
+        GUI.POP_ID()
+        
+        GUI.PUSH_ID(3)
+        IF GUI.COLLAPSING_HEADER("Green Kingdom", TRUE) THEN
+            TraitWar[3] = GUI.SLIDER("Aggro", TraitWar[3], 0.05, 0.95)
+            TraitGrow[3] = GUI.SLIDER("Spawn", TraitGrow[3], 0.80, 0.99)
+            TraitDef[3] = GUI.SLIDER("Defense", TraitDef[3], 0.0, 0.8)
+        ENDIF
+        GUI.POP_ID()
+        
+        GUI.PUSH_ID(4)
+        IF GUI.COLLAPSING_HEADER("Yellow Kingdom", TRUE) THEN
+            TraitWar[4] = GUI.SLIDER("Aggro", TraitWar[4], 0.05, 0.95)
+            TraitGrow[4] = GUI.SLIDER("Spawn", TraitGrow[4], 0.80, 0.99)
+            TraitDef[4] = GUI.SLIDER("Defense", TraitDef[4], 0.0, 0.8)
+        ENDIF
+        GUI.POP_ID()
+
+        GUI.SEPARATOR
+        IF GUI.BUTTON("Red", 50, 25)    THEN SelectedTool = T_VILLAGE : SelectedFac = F_RED
+        GUI.SAME_LINE : IF GUI.BUTTON("Blue", 50, 25)   THEN SelectedTool = T_VILLAGE : SelectedFac = F_BLUE
+        GUI.SAME_LINE : IF GUI.BUTTON("Green", 50, 25)  THEN SelectedTool = T_VILLAGE : SelectedFac = F_GREEN
+        GUI.SAME_LINE : IF GUI.BUTTON("Yellow", 50, 25)    THEN SelectedTool = T_VILLAGE : SelectedFac = F_YELLOW
+
+        GUI.SEPARATOR
+        IF GUI.BUTTON("Ocean", 70, 20) THEN SelectedTool = T_DEEP_WATER : SelectedFac = 0
+        GUI.SAME_LINE : IF GUI.BUTTON("Water", 70, 20) THEN SelectedTool = T_WATER      : SelectedFac = 0
+        GUI.SAME_LINE : IF GUI.BUTTON("Sand", 70, 20)  THEN SelectedTool = T_SAND       : SelectedFac = 0
+        IF GUI.BUTTON("Grass", 70, 20) THEN SelectedTool = T_GRASS      : SelectedFac = 0
+        GUI.SAME_LINE : IF GUI.BUTTON("Forrest", 70, 20) THEN SelectedTool = T_FOREST    : SelectedFac = 0
+        GUI.SAME_LINE : IF GUI.BUTTON("Mountain", 70, 20)   THEN SelectedTool = T_MOUNTAIN   : SelectedFac = 0
+
+        GUI.SEPARATOR
+        IF GUI.BUTTON("Fire", 100, 25) THEN SelectedTool = T_FIRE : SelectedFac = 0
+        GUI.SAME_LINE : IF GUI.BUTTON("NUKE", 100, 25) THEN SelectedTool = 99     : SelectedFac = 0
+        
+        GUI.SEPARATOR
+        BrushSize = GUI.SLIDER("Size", BrushSize, 1, 10)
+        IF GUI.BUTTON("RESET", 220, 30) THEN ClearMap = TRUE
+        
+    GUI.END
+    
+    ' --- 2. INPUT (CONVERT PHYSICAL TO LOGICAL) ---
+    MX_Log = MOUSEX()
+    MY_Log = MOUSEY()
+    MBtn = MOUSEB(1)
+    
+    MapX = INT((MX_Log - MapX_Offset_Log) / DrawScale_Log)
+    MapY = INT(MY_Log / DrawScale_Log)
+    
+    IF ClearMap THEN
+        MapGrid = RESHAPE([0], [MapH, MapW]) + T_DEEP_WATER
+        FacGrid = RESHAPE([0], [MapH, MapW]) 
+        ClearMap = FALSE
+    ENDIF
+    
+    IF MBtn AND (MX_Log > MapX_Offset_Log) THEN
+        IF MapX >= 0 AND MapX < MapW AND MapY >= 0 AND MapY < MapH THEN
+            BY1 = CLAMP(MapY - BrushSize, 0, MapH - 1)
+            BY2 = CLAMP(MapY + BrushSize, 0, MapH - 1)
+            BX1 = CLAMP(MapX - BrushSize, 0, MapW - 1)
+            BX2 = CLAMP(MapX + BrushSize, 0, MapW - 1)
+            BH = BY2 - BY1 + 1 : BW = BX2 - BX1 + 1
+            
+            IF SelectedTool = 99 THEN
+                BrushBlob = RESHAPE([0], [BH, BW]) + T_SAND
+                MapGrid = PLACE(MapGrid, BrushBlob, [BY1, BX1])
+                FacGrid = PLACE(FacGrid, RESHAPE([0], [BH, BW]), [BY1, BX1]) 
+            ELSE
+                BrushBlob = RESHAPE([0], [BH, BW]) + SelectedTool
+                MapGrid = PLACE(MapGrid, BrushBlob, [BY1, BX1])
+                FacBlob = RESHAPE([0], [BH, BW]) + SelectedFac
+                FacGrid = PLACE(FacGrid, FacBlob, [BY1, BX1])
+            ENDIF
+        ENDIF
+    ENDIF
+    
+    ' --- 3. SIMULATION ---
+    IF NOT IsPaused THEN
+        SimResult = UpdateWorld(MapGrid, FacGrid, TraitWar, TraitGrow, TraitDef)
+        MapGrid = SimResult{"grid"} : FacGrid = SimResult{"fac"}
+        SimFrame = SimFrame + 1
+        IF SimFrame > 10 THEN
+            StatRed = SUM(FacGrid = F_RED) : StatBlue = SUM(FacGrid = F_BLUE)
+            StatGreen = SUM(FacGrid = F_GREEN) : StatYellow = SUM(FacGrid = F_YELLOW)
+            SimFrame = 0
+        ENDIF
+    ENDIF
+    
+    ' --- 4. RENDER ---
+    RenderGrid = (MapGrid=T_DEEP_WATER)*C_DEEP + (MapGrid=T_WATER)*C_WATER + (MapGrid=T_SAND)*C_SAND
+    RenderGrid = RenderGrid + (MapGrid=T_GRASS)*C_GRASS + (MapGrid=T_FOREST)*C_FOREST + (MapGrid=T_MOUNTAIN)*C_MOUNT
+    RenderGrid = RenderGrid + (MapGrid=T_FIRE)*C_FIRE + (MapGrid=T_ASH)*C_ASH
+    
+    DIM IsUnit = (MapGrid = T_HUMAN) OR (MapGrid = T_VILLAGE)
+    RenderGrid = RenderGrid + (IsUnit*(FacGrid=F_RED)*C_F_RED) + (IsUnit*(FacGrid=F_BLUE)*C_F_BLUE)
+    RenderGrid = RenderGrid + (IsUnit*(FacGrid=F_GREEN)*C_F_GREEN) + (IsUnit*(FacGrid=F_YELLOW)*C_F_YELLOW)
+    DIM IsNeutral = IsUnit AND (FacGrid = 0)
+    RenderGrid = RenderGrid + (IsNeutral * 16777215) 
+
+    ' PLOTRAW (LOGICAL COORDINATES)
+    PLOTRAW MapX_Offset_Log / DrawScale_Log, 0, RenderGrid, DrawScale_Log, DrawScale_Log
+    
+    ' --- DEBUG OVERLAY (NATIVE TEXT) ---
+    DebugMsg$ = "MX: " + STR$(INT(MX_Log)) + " MapX: " + STR$(MapX) + " Scale: " + STR$(DrawScale_Log) + " MapOffsetX: " + STR$(MapX_Offset_Log)
+    TEXT MapX_Offset_Log + 10, 10, DebugMsg$, 255, 255, 255
+
+    SCREENFLIP
+    SLEEP 10
+    
+    Key$ = INKEY$()
+    IF UCASE$(Key$) = "F" THEN
+        TOGGLE_FULLSCREEN
+        Key$ = ""
+        RecalcLayout()
+    ENDIF
+
+LOOP UNTIL Key$ = CHR$(27)

@@ -1,0 +1,42 @@
+' A secure function using the SHA-256 algorithm.
+Func SHA256(s)
+    ' --- 1. Setup objects and create a temporary file path ---
+    oShell = CreateObject("WScript.Shell")
+    oFSO = CreateObject("Scripting.FileSystemObject")
+    sTempFile = oFSO.BuildPath(oShell.ExpandEnvironmentStrings("%TEMP%"), oFSO.GetTempName())
+
+    ' --- 2. Write the input string to the temp file as UTF-8 ---
+    oStream = CreateObject("ADODB.Stream")
+    oStream.Type = 2 ' adTypeText
+    oStream.Charset = "UTF-8"
+    oStream.Open
+    oStream.WriteText s
+    oStream.SaveToFile sTempFile, 2  ' adSaveCreateOverWrite
+    oStream.Close
+
+    ' --- 3. Execute certutil to hash the file and capture output ---
+    oExec = oShell.Exec("certutil -hashfile """ + sTempFile + """ SHA256")
+    sOutput = oExec.StdOut.ReadAll()
+        ' --- 4. Clean up the temp file immediately ---
+    oFSO.DeleteFile sTempFile, True 
+
+    ' --- 5. Parse the output to get the hash ---
+    aLines = Split(sOutput, chr$(13)+chr$(10))
+    If Len(aLines)[0] >= 1 Then
+        ' The hash is on the second line of the certutil output
+        sHash = aLines[1]
+        ' Remove spaces from the result
+        sHash = Replace$(sHash, " ", "")
+    Else
+        sHash = "Error: certutil command failed."
+    EndIf
+
+    Return sHash
+EndFunc
+
+CLS
+PRINT "--- SHA 256 Hash generation ---"
+PRINT
+PRINT "The Hash of ""Atomi"" is:"
+PRINT SHA256("Atomi")
+

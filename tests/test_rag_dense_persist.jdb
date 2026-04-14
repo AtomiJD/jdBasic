@@ -1,0 +1,57 @@
+' Vollstaendiger Dense-RAG mit Persistierung
+PRINT "Loading embedding model..."
+emb = AI.LOAD_EMBEDDINGS("models\Phi-3-mini-4k-instruct-q4.gguf", 512, 99)
+
+PRINT "Creating dense RAG store (embed_llm_id="; emb; ")..."
+DIM rag = AI.RAG_CREATE(0, 200, 20, emb)
+
+DIM info1 = AI.RAG_INFO(rag)
+PRINT "  mode="; info1{"mode"}; " embed_llm_id="; info1{"embed_llm_id"}
+
+PRINT ""
+PRINT "Adding documents..."
+AI.RAG_ADD rag, "jdBasic ist ein modernes BASIC mit AI Features.", "intro"
+AI.RAG_ADD rag, "Der Stack-basierte VM nutzt Bytecode-Compilation.", "vm_arch"
+AI.RAG_ADD rag, "RAG nutzt TF-IDF oder dichte Embeddings via llama.cpp.", "rag_doc"
+AI.RAG_ADD rag, "PDF Text wird via FlateDecode dekomprimiert.", "pdf_doc"
+
+DIM info2 = AI.RAG_INFO(rag)
+PRINT "  chunks="; info2{"chunks"}; " embed_dim="; info2{"embed_dim"}
+
+PRINT ""
+PRINT "=== Suche: 'wie funktioniert der interpreter' ==="
+DIM hits = AI.RAG_SEARCH(rag, "wie funktioniert der interpreter", 3)
+FOR i = 0 TO LEN(hits) - 1
+  PRINT "  ["; i; "] score="; hits[i]{"score"}; " src="; hits[i]{"source"}
+NEXT i
+
+PRINT ""
+PRINT "Speichere Dense-Index..."
+AI.RAG_SAVE rag, "tests/test_rag_dense.bin"
+
+PRINT ""
+PRINT "Lade Index zurueck (mit gleichem embedding model)..."
+DIM rag2 = AI.RAG_LOAD("tests/test_rag_dense.bin", 0, emb)
+DIM info3 = AI.RAG_INFO(rag2)
+PRINT "  mode="; info3{"mode"}; " chunks="; info3{"chunks"}; " embed_dim="; info3{"embed_dim"}
+
+PRINT ""
+PRINT "=== Suche im geladenen Index: 'wie funktioniert der interpreter' ==="
+DIM hits2 = AI.RAG_SEARCH(rag2, "wie funktioniert der interpreter", 3)
+FOR i = 0 TO LEN(hits2) - 1
+  PRINT "  ["; i; "] score="; hits2[i]{"score"}; " src="; hits2[i]{"source"}
+NEXT i
+
+DIM ok = 1
+FOR i = 0 TO LEN(hits) - 1
+  IF hits[i]{"source"} <> hits2[i]{"source"} THEN ok = 0
+NEXT i
+PRINT ""
+IF ok = 1 THEN
+  PRINT "OK: Dense-Index Roundtrip identisch"
+ELSE
+  PRINT "FAIL: Dense-Index Roundtrip unterschiedlich"
+ENDIF
+
+AI.FREE_LLM emb
+PRINT "Done."

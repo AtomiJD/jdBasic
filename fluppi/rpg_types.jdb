@@ -1,0 +1,87 @@
+' ===================================================================
+' == RPG Types Module
+' == EXPORT TYPEs for game entities
+' ===================================================================
+
+EXPORT MODULE RPG_TYPES
+
+' ── NPC ──────────────────────────────────────────────────────
+EXPORT TYPE T_NPC
+    sprite_id
+    name$
+    dialog$
+    visible
+    can_recruit
+    recruit_id$
+    dialog_joined$
+    recruited
+    is_shop
+    shop_items$
+
+    SUB INIT(data, asset_path$)
+        THIS.name$ = data{"name"}
+        THIS.dialog$ = ""
+        IF MAP.EXISTS(data, "dialog") THEN THIS.dialog$ = data{"dialog"}
+        THIS.visible = TRUE
+        THIS.can_recruit = FALSE : THIS.recruited = FALSE
+        THIS.is_shop = FALSE : THIS.shop_items$ = ""
+        IF MAP.EXISTS(data, "can_recruit") THEN THIS.can_recruit = data{"can_recruit"}
+        IF MAP.EXISTS(data, "recruit_id") THEN THIS.recruit_id$ = data{"recruit_id"}
+        IF MAP.EXISTS(data, "dialog_joined") THEN THIS.dialog_joined$ = data{"dialog_joined"}
+        IF MAP.EXISTS(data, "is_shop") THEN THIS.is_shop = data{"is_shop"}
+        IF MAP.EXISTS(data, "shop_items") THEN THIS.shop_items$ = data{"shop_items"}
+
+        npc_file$ = asset_path$ + "npc.png"
+        IF MAP.EXISTS(data, "sprite") THEN npc_file$ = asset_path$ + data{"sprite"}
+
+        ' Load sprite: check if it's a spritesheet (>= 192x256 for 3x4 @ 64x64)
+        TRY
+            test_id = SPRITE.LOAD(npc_file$)
+            img_w = SPRITE.WIDTH(test_id)
+            img_h = SPRITE.HEIGHT(test_id)
+            SPRITE.DELETE test_id
+
+            fw = 64 : fh = 64 : sc = 1.0
+            IF MAP.EXISTS(data, "frame_w") THEN fw = INT(data{"frame_w"})
+            IF MAP.EXISTS(data, "frame_h") THEN fh = INT(data{"frame_h"})
+            IF MAP.EXISTS(data, "scale") THEN sc = data{"scale"}
+
+            IF img_w >= fw * 3 AND img_h >= fh * 4 THEN
+                THIS.sprite_id = SPRITE.LOAD(npc_file$, fw, fh)
+                SPRITE.ANIM THIS.sprite_id, "idle_down",  [0, 1, 0, 2], 3
+                SPRITE.ANIM THIS.sprite_id, "idle_left",  [3, 4, 3, 5], 3
+                SPRITE.ANIM THIS.sprite_id, "idle_right", [6, 7, 6, 8], 3
+                SPRITE.ANIM THIS.sprite_id, "idle_up",    [9, 10, 9, 11], 3
+                SPRITE.ANIM THIS.sprite_id, "walk_down",  [0, 1, 0, 2], 6
+                SPRITE.ANIM THIS.sprite_id, "walk_left",  [3, 4, 3, 5], 6
+                SPRITE.ANIM THIS.sprite_id, "walk_right", [6, 7, 6, 8], 6
+                SPRITE.ANIM THIS.sprite_id, "walk_up",    [9, 10, 9, 11], 6
+                SPRITE.PLAY THIS.sprite_id, "idle_down"
+                SPRITE.SCALE THIS.sprite_id, sc
+            ELSE
+                THIS.sprite_id = SPRITE.LOAD(npc_file$)
+            ENDIF
+        CATCH
+            THIS.sprite_id = SPRITE.LOAD(asset_path$ + "npc.png")
+        ENDTRY
+        SPRITE.POS THIS.sprite_id, data{"x"}, data{"y"}
+        SPRITE.ZORDER THIS.sprite_id, 10
+        SPRITE.GROUP THIS.sprite_id, "npc"
+    ENDSUB
+
+    SUB INTERACT(player_name$, is_recruited)
+        dlg$ = THIS.dialog$
+        IF is_recruited AND THIS.dialog_joined$ <> "" THEN
+            dlg$ = THIS.dialog_joined$
+        ENDIF
+        IF player_name$ <> "" THEN
+            dlg$ = REPLACE$(dlg$, "{PLAYER}", player_name$)
+        ENDIF
+        IF dlg$ <> "" THEN RPG_DIALOG.SAY THIS.name$, dlg$
+    ENDSUB
+
+    SUB SET_VISIBLE(v)
+        THIS.visible = v
+        SPRITE.VISIBLE THIS.sprite_id, v
+    ENDSUB
+ENDTYPE

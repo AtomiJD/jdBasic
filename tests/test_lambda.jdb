@@ -1,0 +1,14 @@
+' Simpler
+PRINT "1:"
+DIM a = IOTA(5)
+PRINT a
+
+PRINT "2: lambda"
+DIM l = LAMBDA i -> i + 1
+PRINT l
+
+PRINT "3: SELECT"
+PRINT SELECT(LAMBDA i -> i + 1, IOTA(5))
+
+PRINT "4: direct call"
+PRINT SELECT(LAMBDA i -> i * 2, [10, 20, 30])

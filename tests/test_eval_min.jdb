@@ -1,0 +1,8 @@
+FUNC F(x)
+  PRINT "x="; x
+  DIM y AS STRING = EVAL("100 + 5")
+  PRINT "y="; y
+  RETURN y
+ENDFUNC
+
+PRINT F(7)

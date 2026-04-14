@@ -1,0 +1,9 @@
+PRINT "---- Module Test Program ----"
+LET X = 42
+PRINT "X = "; X
+
+FUNC Double(n)
+    RETURN n * 2
+ENDFUNC
+
+PRINT Double(X)

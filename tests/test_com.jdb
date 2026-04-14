@@ -1,0 +1,11 @@
+' COM Test - creates Scripting.Dictionary (always available on Windows)
+TRY
+    DIM dict = CREATEOBJECT("Scripting.Dictionary")
+    dict.Add("Key1", "Value1")
+    dict.Add("Key2", "Value2")
+    PRINT "Count: "; dict.Count()
+    PRINT "Key1 exists: "; dict.Exists("Key1")
+    PRINT "Item: "; dict.Item("Key1")
+CATCH
+    PRINT "COM Error: "; ERRMSG$
+ENDTRY

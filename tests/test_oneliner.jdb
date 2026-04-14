@@ -1,0 +1,34 @@
+' ── One-liner IF ───────────────────────────────────
+PRINT "=== One-liner IF ==="
+
+' IF THEN (no else)
+LET X = 5
+IF X > 3 THEN PRINT "X > 3"
+IF X < 0 THEN PRINT "should not print"
+
+' IF THEN ELSE
+IF X > 10 THEN PRINT "big" ELSE PRINT "small"
+IF X = 5 THEN PRINT "five!" ELSE PRINT "not five"
+
+' With RETURN in function
+FUNC Check(val)
+    IF val = 0 THEN RETURN "zero"
+    IF val > 0 THEN RETURN "positive" ELSE RETURN "negative"
+ENDFUNC
+
+PRINT "Check(0) = "; Check(0)
+PRINT "Check(5) = "; Check(5)
+PRINT "Check(-3) = "; Check(-3)
+
+' One-liner with assignment
+LET Y = 0
+IF TRUE THEN Y = 42
+PRINT "Y = "; Y
+
+' Regular multi-line IF still works
+IF X = 5 THEN
+    PRINT "multi-line works too"
+ENDIF
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="10" height="8" tilewidth="32" tileheight="32" infinite="0" nextlayerid="6" nextobjectid="8">
+ <properties>
+  <property name="camera_fixed" type="bool" value="true"/>
+  <property name="display_name" value="Zu Hause"/>
+  <property name="map_id" value="vally_house"/>
+  <property name="music" value="overworld"/>
+ </properties>
+ <tileset firstgid="1" source="../tiled/tilesets/interiors_tilesets.tsx"/>
+ <tileset firstgid="3393" source="../tiled/tilesets/Furniture_and_props.tsx"/>
+ <tileset firstgid="5070" source="../tiled/tilesets/collision.tsx"/>
+ <layer id="2" name="ground_base" width="10" height="8">
+  <data encoding="csv">
+136,137,138,139,140,141,142,143,144,145,
+200,201,202,203,204,205,206,207,208,209,
+264,265,266,267,268,269,270,271,272,273,
+328,329,202,203,204,205,206,207,336,337,
+392,393,266,267,268,269,270,271,400,401,
+456,457,202,203,204,205,206,207,464,465,
+520,521,266,267,268,269,270,271,528,529,
+584,585,586,587,267,589,590,591,592,593
+</data>
+ </layer>
+ <layer id="1" name="collision" width="10" height="8" visible="0">
+  <data encoding="csv">
+0,5070,5070,5070,5070,5070,5070,5070,5070,0,
+0,5070,0,0,0,0,0,0,5070,0,
+0,5070,0,0,0,0,0,0,5070,0,
+5070,5070,0,0,0,0,0,0,5070,5070,
+5070,0,0,0,5070,5070,0,0,0,5070,
+5070,0,0,0,0,0,0,0,0,5070,
+5070,5070,0,0,0,0,0,0,5070,5070,
+0,5070,5070,5070,0,5070,5070,5070,5070,0
+</data>
+ </layer>
+ <objectgroup id="4" name="entities">
+  <object id="1" name="default_spawn" type="player_spawn" x="85.9997" y="140.333">
+   <properties>
+    <property name="direction" value="down"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="6" name="chest_vally_house_01" type="chest" x="219" y="59">
+   <properties>
+    <property name="content_amount" value="15"/>
+    <property name="content_type" value="gold"/>
+   </properties>
+   <point/>
+  </object>
+ </objectgroup>
+ <objectgroup id="5" name="portals">
+  <object id="5" name="exit_door" type="portal" x="128" y="224" width="32" height="32">
+   <properties>
+    <property name="target_map" value="village.tmx"/>
+    <property name="target_spawn" value="from_vally_house"/>
+   </properties>
+  </object>
+ </objectgroup>
+ <layer id="3" name="decor_objects" width="10" height="8">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,145,
+0,0,0,0,0,0,0,0,0,209,
+0,0,0,0,0,0,0,0,0,273,
+0,0,0,3747,3748,3749,3750,0,0,0,
+0,0,0,3790,3791,3792,3793,0,0,0,
+0,0,0,3833,3834,3835,3836,0,0,0,
+0,0,0,0,0,0,0,0,0,0,
+584,0,0,0,0,0,0,0,0,0
+</data>
+ </layer>
+</map>

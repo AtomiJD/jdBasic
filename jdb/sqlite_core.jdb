@@ -1,0 +1,67 @@
+' sqlite_test.jdb
+
+' Load the new SQLite module
+DLLIMPORT "sqlitefunc"
+
+PRINT "SQLite Test Program"
+PRINT "-------------------"
+
+PRINT "Current Directory: ";
+PWD
+
+' Try to open a database.
+db = SQLITE.OPEN("test.db")
+
+' Check if the handle is valid
+IF TYPEOF(db) <> "SQLITEDB" THEN
+    PRINT
+    PRINT "--- DATABASE OPEN FAILED! ---"
+    PRINT "Reason: " + SQLITE.ERROR$() ' <-- ADD THIS LINE
+    PRINT "-----------------------------"
+    GOTO Ende
+ENDIF
+
+
+PRINT "Database opened successfully."
+
+' Create a table. Use EXEC for commands that don't return rows.
+sql_create$ = "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, score REAL);"
+success = SQLITE.EXEC(db, sql_create$)
+IF NOT success THEN
+    PRINT "Error creating table: " + SQLITE.ERROR$()
+    SQLITE.CLOSE db
+    GOTO Ende
+ENDIF
+
+' Insert some data
+SQLITE.EXEC(db, "INSERT INTO users (name, score) VALUES ('Alice', 100.5);")
+SQLITE.EXEC(db, "INSERT INTO users (name, score) VALUES ('Bob', 95.2);")
+SQLITE.EXEC(db, "INSERT INTO users (name, score) VALUES ('Charlie', 110.0);")
+
+PRINT "Data inserted."
+
+' Query the data back
+sql_query$ = "SELECT id, name, score FROM users WHERE score > 100;"
+results = SQLITE.QUERY(db, sql_query$)
+
+IF TYPEOF(results) = "ARRAY" THEN
+    PRINT
+    PRINT "Query Results (score > 100):"
+    FOR i = 0 TO LEN(results)[0] - 1
+        user_row = results[i]
+        PRINT "ID: " + user_row{"id"} + ", Name: " + user_row{"name"} + ", Score: " + user_row{"score"}
+    NEXT i
+ELSE
+    PRINT "Query failed: " + SQLITE.ERROR$()
+ENDIF
+
+' Close the database connection
+SQLITE.CLOSE db
+PRINT
+PRINT "Database closed."
+goto out
+
+ende:
+PRINT "An error occured"
+out:
+PRINT "Program finished"

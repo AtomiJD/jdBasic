@@ -1,0 +1,31 @@
+SCREEN 1280, 720, "Debug Recruit"
+TILED.LOAD "world", "tiled/pirat/TiledMap Editor/vally_home.tmx"
+
+IMPORT RPG_TYPES
+IMPORT RPG_DIALOG
+
+game = JSON.PARSE$(TXTREADER$("D:/usr/dev/cc/fluppi/rpg_data/game.json"))
+OUT$ = game{"asset_path"}
+
+npc_list = game{"npcs"}
+PRINT "NPC count: "; LEN(npc_list)
+
+FOR i = 0 TO LEN(npc_list) - 1
+    d = npc_list[i]
+    PRINT ""
+    PRINT "NPC "; i; ": "; d{"name"}
+    PRINT "  can_recruit raw: "; d{"can_recruit"}; " type: "; TYPEOF(d{"can_recruit"})
+    PRINT "  recruit_id: "; d{"recruit_id"}
+    PRINT "  MAP.EXISTS can_recruit: "; MAP.EXISTS(d, "can_recruit")
+
+    DIM npc AS RPG_TYPES.T_NPC
+    npc.INIT d, OUT$
+    PRINT "  After INIT:"
+    PRINT "    npc.can_recruit = "; npc.can_recruit; " type: "; TYPEOF(npc.can_recruit)
+    PRINT "    npc.recruit_id$ = "; npc.recruit_id$
+    PRINT "    npc.recruited = "; npc.recruited
+    PRINT "    Test IF: "; (npc.can_recruit AND NOT npc.recruited)
+NEXT
+
+TILED.FREE "world"
+END

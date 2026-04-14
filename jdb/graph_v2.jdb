@@ -1,0 +1,112 @@
+' --- jdBasic New Graphics Features Showcase ---
+' This program demonstrates the new drawing commands:
+' filled circles, ellipses, rounded rectangles, circle sectors,
+' TOGGLE_FULLSCREEN, ScreenWidth() and ScreenHeight().
+' It also shows the power of vectorized drawing for animations.
+
+ScreenW = 800
+ScreenH = 600
+SCREEN ScreenW, ScreenH, "jdBasic Graphics Demo"
+SETFONT "C:/Windows/Fonts/arial.ttf", 16
+
+' --- PART 1: Static Showcase of New Shapes ---
+
+CLS 20, 20, 40 ' Clear screen to a dark blue
+
+' -- Rounded Rectangle (as a background panel) --
+' Syntax: ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b]
+TEXT 40, 20, "ROUNDED_RECT", 200, 200, 200
+ROUNDED_RECT 40, 50, 200, 150, 20, TRUE, 50, 50, 80  ' Filled
+ROUNDED_RECT 40, 50, 200, 150, 20, FALSE, 150, 150, 255 ' Outline
+
+' -- Filled Circle & Ellipse --
+' Syntax: CIRCLE x, y, r, [fill], [r, g, b]
+' Syntax: ELLIPSE x, y, rx, ry, [fill], [r, g, b]
+TEXT 300, 20, "FILLED CIRCLE & ELLIPSE", 200, 200, 200
+ELLIPSE 400, 125, 120, 70, TRUE, 180, 50, 50   ' Red filled ellipse
+CIRCLE 400, 125, 50, TRUE, 255, 200, 100 ' Yellow filled circle on top
+
+' -- Circle Sector (like Pac-Man) --
+' Syntax: CIRCLE_SECTOR cx, cy, r, start_angle, end_angle, [fill], [r, g, b]
+TEXT 600, 20, "CIRCLE_SECTOR", 200, 200, 200
+CIRCLE_SECTOR 680, 125, 60, 45, 315, TRUE, 255, 255, 0 ' Filled "Pac-Man"
+CIRCLE_SECTOR 680, 125, 60, 45, 315, FALSE, 0, 0, 0   ' Outline
+
+' -- Vectorized Drawing Title --
+TEXT 20, 250, "Vectorized Drawing Demo", 255, 255, 255
+TEXT 20, 280, "(Drawing 500 circles per frame)", 200, 200, 200
+TEXT 30, 320, "Press any key to start...", 150, 150, 150
+
+SCREENFLIP
+WAITKEY$ ' Wait for user to press a key
+
+' --- PART 2: Vectorized Animation ---
+
+' -- Setup arrays for 500 raindrops --
+NUM_DROPS = 5000
+
+' -- Vectorized Initialization (No Loops!) --
+' Create 1D arrays for each property of the drops
+X_POS = RND(IOTA(NUM_DROPS)) * 800
+Y_POS = RND(IOTA(NUM_DROPS)) * 600
+
+Speeds = 2 + RND(IOTA(NUM_DROPS)) * 4
+Radii = 2 + RND(IOTA(NUM_DROPS)) * 2 ' Random radii between 2 and 4
+
+' Use STACK to combine the 1D arrays into a single 2D [NUM_DROPS, 3] matrix
+Drops = STACK(1, X_POS, Y_POS, Radii)
+
+' Do the same for the colors
+R_COLOR = 150 + RND(IOTA(NUM_DROPS)) * 50
+G_COLOR = 180 + RND(IOTA(NUM_DROPS)) * 50
+' Use RESHAPE to create an array of 500 '255.0' values for the blue component
+B_COLOR = RESHAPE([255.0], [NUM_DROPS])
+
+Colors = STACK(1, R_COLOR, G_COLOR, B_COLOR)
+
+' -- Animation Loop --
+DO
+    CLS 20, 20, 40 ' Clear screen
+
+    ' -- Vectorized Update Logic --
+    ' 1. Extract column for Y position
+    Y_POS = SLICE(Drops, 1, 1)
+    
+    ' 2. Update all Y positions at once using the separate Speeds vector
+    Y_POS = Y_POS + Speeds
+    
+    ' 3. Create a boolean mask for drops that are off-screen
+    ResetMask = Y_POS > ScreenH
+    
+    ' 4. Calculate new Y positions using the mask
+    '    (Y_POS * NOT ResetMask) keeps the old position if mask is FALSE (0)
+    '    (-10 * ResetMask) sets the new position if mask is TRUE (1)
+    Y_POS = (Y_POS * (1 - ResetMask)) + (-10 * ResetMask)
+    
+    ' 5. Do the same for X positions, generating new random values only for those being reset
+    X_POS = SLICE(Drops, 1, 0)
+    New_X_Random = RND(IOTA(NUM_DROPS)) * ScreenW
+    X_POS = (X_POS * (1 - ResetMask)) + (New_X_Random * ResetMask)
+    
+    ' 6. Update the main Drops matrix with the new columns
+    Drops = MVLET(Drops, 1, 0, X_POS)
+    Drops = MVLET(Drops, 1, 1, Y_POS)
+    
+    ' -- Draw all 500 circles with one command --
+    CIRCLE Drops, TRUE, Colors
+
+    SCREENFLIP
+    SLEEP 16 ' ~60 FPS
+
+    A$ = INKEY$()
+
+    if UCASE$(A$) = "F" THEN
+        TOGGLE_FULLSCREEN
+        A$ = ""
+        ScreenW = ScreenWidth()
+        ScreenH = ScreenHeight()
+    endif
+
+LOOP UNTIL A$ > ""
+
+END

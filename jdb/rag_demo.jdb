@@ -1,0 +1,363 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic RAG Studio — Document Q&A with HNSW + JSON Mode
+'  Powered by: llama.cpp + nomic-embed + CUDA + ImGui + SDL3
+' ══════════════════════════════════════════════════════════════════
+
+SCREEN 1500, 850, "jdBasic RAG Studio", 2
+GUI.THEME "DARK"
+
+' ── State ────────────────────────────────────────────────────────
+DIM llm_id = 0
+DIM emb_id = 0
+DIM rag_id = 0
+
+DIM llm_path = "models/Phi-3-mini-4k-instruct-q4.gguf"
+DIM emb_path = "models/nomic-embed-text-v1.5.Q4_K_M.gguf"
+
+DIM llm_status = "Not loaded"
+DIM emb_status = "Not loaded"
+DIM rag_status = "Empty"
+
+' Index-Konfiguration
+DIM dir_input = "src"
+DIM pattern_input = "*.{cpp,h}"
+DIM chunk_size = 500
+DIM chunk_overlap = 50
+DIM index_path = "demo.idx"
+DIM use_dense_embeddings = TRUE
+
+' Statistiken
+DIM stat_files = 0
+DIM stat_chunks = 0
+DIM stat_index_mode = "linear"
+DIM stat_embed_dim = 0
+DIM last_action = ""
+
+' Query
+DIM query_input = "Wie funktioniert die PRINT Befehl?"
+DIM use_json_mode = FALSE
+DIM top_k = 4
+DIM max_tokens = 250
+DIM temperature = 0.2
+
+' System-Prompt fuer das LLM. Editierbar in der GUI — wird jedes Mal neu gesetzt
+' bevor eine Query laeuft. Der RAG-Code im C++ haengt nur Context + User-Frage dran,
+' die inhaltliche Anweisung kommt komplett von hier.
+DIM sys_prompt = "You are a helpful assistant that answers questions using the provided context. The context contains excerpts from real source files and documents. Use the context as your primary source and quote or paraphrase relevant parts. You may also use your general knowledge if the context is incomplete or unrelated. Be concise and direct."
+DIM show_prompt_editor = FALSE
+
+DIM current_answer = ""
+DIM current_sources AS ARRAY
+DIM source_count = 0
+DIM is_querying = FALSE
+DIM query_time_ms = 0
+
+' UI
+DIM running = TRUE
+DIM frame = 0
+DIM status_msg = "Ready. Configure index, then ask questions."
+
+' ── Helper-Funktionen ────────────────────────────────────────────
+
+FUNC RefreshStats()
+  IF rag_id <> 0 THEN
+    DIM info = AI.RAG_INFO(rag_id)
+    stat_chunks = info{"chunks"}
+    stat_index_mode = info{"index"}
+    stat_embed_dim = info{"embed_dim"}
+  ENDIF
+ENDFUNC
+
+' ── Modelle laden ────────────────────────────────────────────────
+PRINT "Loading LLM..."
+TRY
+  llm_id = AI.LOAD_LLM(llm_path, 4096, 99)
+  llm_status = "Phi-3-mini (CUDA)"
+  AI.SET llm_id, "temperature", temperature
+  AI.SET llm_id, "max_tokens", max_tokens
+  AI.SET llm_id, "system", sys_prompt
+CATCH
+  llm_status = "FAILED: " + ERRMSG$
+ENDTRY
+
+PRINT "Loading embedding model..."
+TRY
+  ' n_ctx = 2048 passt zum training context von nomic-embed-text-v1.5
+  ' (groesser hiesse "training context overflow" und schlechtere Embeddings)
+  emb_id = AI.LOAD_EMBEDDINGS(emb_path, 2048, 99)
+  emb_status = "nomic-embed-text-v1.5 (CUDA)"
+CATCH
+  emb_status = "FAILED: " + ERRMSG$
+  use_dense_embeddings = FALSE
+ENDTRY
+
+' RAG-Store erstellen (dense oder TF-IDF je nach embedding-Status)
+IF use_dense_embeddings AND emb_id <> 0 THEN
+  rag_id = AI.RAG_CREATE(llm_id, chunk_size, chunk_overlap, emb_id)
+ELSE
+  rag_id = AI.RAG_CREATE(llm_id, chunk_size, chunk_overlap)
+ENDIF
+RefreshStats()
+
+' ── Main Loop ────────────────────────────────────────────────────
+DO WHILE running
+  CLS 18, 20, 28
+  frame = frame + 1
+
+  ' ── Menu Bar ───────────────────────────────────────────────
+  IF GUI.BEGIN_MAIN_MENU_BAR() THEN
+    IF GUI.BEGIN_MENU("Index") THEN
+      IF GUI.MENU_ITEM("Clear Index") THEN
+        AI.RAG_CLEAR rag_id
+        stat_files = 0
+        RefreshStats()
+        last_action = "Index cleared"
+        current_answer = ""
+        source_count = 0
+      ENDIF
+      GUI.SEPARATOR
+      IF GUI.MENU_ITEM("Exit") THEN running = FALSE
+      GUI.END_MENU()
+    ENDIF
+    IF GUI.BEGIN_MENU("Theme") THEN
+      IF GUI.MENU_ITEM("Dark") THEN GUI.THEME "DARK"
+      IF GUI.MENU_ITEM("Light") THEN GUI.THEME "LIGHT"
+      IF GUI.MENU_ITEM("Classic") THEN GUI.THEME "CLASSIC"
+      GUI.END_MENU()
+    ENDIF
+    GUI.END_MAIN_MENU_BAR()
+  ENDIF
+
+  ' ── Left Panel: Index Management ───────────────────────────
+  IF GUI.BEGIN("Index Management", 10, 35, 420, 800) THEN
+
+    DIM idx_w = GUI.AVAIL_WIDTH()
+    IF idx_w < 200 THEN idx_w = 200
+
+    GUI.SEPARATOR_TEXT "Models"
+    GUI.TEXT_WRAPPED "LLM:        " + llm_status
+    GUI.TEXT_WRAPPED "Embedding:  " + emb_status
+
+    GUI.SEPARATOR_TEXT "Index a Directory"
+    GUI.TEXT "Path:"
+    GUI.SET_NEXT_ITEM_WIDTH idx_w
+    dir_input = GUI.INPUT("##dir", dir_input)
+    GUI.TEXT "Pattern (e.g. *.{md,txt,pdf,cpp}):"
+    GUI.SET_NEXT_ITEM_WIDTH idx_w
+    pattern_input = GUI.INPUT("##pat", pattern_input)
+
+    DIM can_index = (rag_id <> 0) AND (LEN(dir_input) > 0) AND NOT is_querying
+    IF GUI.BUTTON("Index Directory", 200, 30) AND can_index THEN
+      status_msg = "Indexing " + dir_input + " ..."
+      DIM t0 = GFX.TICKS()
+      TRY
+        DIM stats = AI.RAG_ADD_DIR(rag_id, dir_input, pattern_input, 1)
+        DIM dt = GFX.TICKS() - t0
+        stat_files = stats{"files_added"}
+        last_action = "Indexed " + STR(stats{"files_added"}) + " files in " + STR(INT(dt)) + "ms"
+        RefreshStats()
+        status_msg = last_action
+      CATCH
+        status_msg = "Error: " + ERRMSG$
+      ENDTRY
+    ENDIF
+
+    GUI.SEPARATOR_TEXT "Statistics"
+    GUI.TEXT "Files added:  " + STR(stat_files)
+    GUI.TEXT "Chunks:       " + STR(stat_chunks)
+    GUI.TEXT "Embed dim:    " + STR(stat_embed_dim)
+    GUI.TEXT "Index mode:   " + stat_index_mode
+    IF use_dense_embeddings THEN
+      GUI.TEXT "Embed mode:   dense (nomic)"
+    ELSE
+      GUI.TEXT "Embed mode:   TF-IDF (fallback)"
+    ENDIF
+
+    GUI.SEPARATOR_TEXT "HNSW (fast search)"
+    DIM can_hnsw = (stat_chunks > 0) AND use_dense_embeddings
+    IF GUI.BUTTON("Build HNSW Index", 200, 28) AND can_hnsw THEN
+      DIM tb = GFX.TICKS()
+      TRY
+        AI.RAG_BUILD_INDEX rag_id, 16, 200
+        DIM dt2 = GFX.TICKS() - tb
+        last_action = "HNSW built in " + STR(INT(dt2)) + "ms"
+        RefreshStats()
+        status_msg = last_action
+      CATCH
+        status_msg = "HNSW error: " + ERRMSG$
+      ENDTRY
+    ENDIF
+
+    GUI.SEPARATOR_TEXT "Persistence"
+    GUI.TEXT "File:"
+    GUI.SET_NEXT_ITEM_WIDTH idx_w
+    index_path = GUI.INPUT("##idx", index_path)
+
+    IF GUI.BUTTON("Save Index", 120, 28) THEN
+      TRY
+        AI.RAG_SAVE rag_id, index_path
+        last_action = "Saved to " + index_path
+        status_msg = last_action
+      CATCH
+        status_msg = "Save error: " + ERRMSG$
+      ENDTRY
+    ENDIF
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Load Index", 120, 28) THEN
+      TRY
+        IF use_dense_embeddings AND emb_id <> 0 THEN
+          rag_id = AI.RAG_LOAD(index_path, llm_id, emb_id)
+        ELSE
+          rag_id = AI.RAG_LOAD(index_path, llm_id)
+        ENDIF
+        RefreshStats()
+        last_action = "Loaded " + STR(stat_chunks) + " chunks from " + index_path
+        status_msg = last_action
+      CATCH
+        status_msg = "Load error: " + ERRMSG$
+      ENDTRY
+    ENDIF
+
+    GUI.SEPARATOR_TEXT "Last Action"
+    GUI.TEXT_WRAPPED last_action
+  ENDIF
+  GUI.END
+
+  ' ── Center Panel: Query ────────────────────────────────────
+  IF GUI.BEGIN("RAG Query", 440, 35, 700, 800) THEN
+
+    ' Dynamische Breite: nutze den verfügbaren Platz im aktuellen Window
+    DIM avail_w = GUI.AVAIL_WIDTH()
+    DIM input_w = avail_w - 20
+    IF input_w < 200 THEN input_w = 200
+
+    GUI.SEPARATOR_TEXT "Question"
+    GUI.SET_NEXT_ITEM_WIDTH input_w
+    query_input = GUI.INPUT("##q", query_input)
+
+    use_json_mode = GUI.CHECKBOX("JSON Mode (force structured output)", use_json_mode)
+    GUI.SAME_LINE
+    show_prompt_editor = GUI.CHECKBOX("Edit System Prompt", show_prompt_editor)
+    GUI.SET_NEXT_ITEM_WIDTH input_w - 250
+    top_k = GUI.SLIDER("Top-K chunks", top_k, 1, 10)
+    GUI.SET_NEXT_ITEM_WIDTH input_w - 250
+    temperature = GUI.SLIDER("Temperature", temperature, 0.0, 1.5)
+    GUI.SET_NEXT_ITEM_WIDTH input_w - 250
+    max_tokens = GUI.SLIDER("Max tokens", max_tokens, 50, 800)
+
+    ' Optional: System-Prompt bearbeiten
+    IF show_prompt_editor THEN
+      GUI.SEPARATOR_TEXT "System Prompt (RAG instruction)"
+      GUI.SET_NEXT_ITEM_WIDTH input_w
+      sys_prompt = GUI.INPUT("##sys", sys_prompt)
+    ENDIF
+
+    DIM can_ask = (llm_id <> 0) AND (rag_id <> 0) AND (stat_chunks > 0) AND (LEN(query_input) > 0) AND NOT is_querying
+    IF GUI.BUTTON("Ask", 100, 32) AND can_ask THEN
+      is_querying = TRUE
+      status_msg = "Generating..."
+      AI.SET llm_id, "temperature", temperature
+      AI.SET llm_id, "max_tokens", max_tokens
+      AI.SET llm_id, "system", sys_prompt
+
+      DIM tq = GFX.TICKS()
+      TRY
+        IF use_json_mode THEN
+          ' JSON-Modus: erzwingt valides JSON, zeigt sources separat
+          DIM full = AI.RAG_QUERY_FULL(rag_id, query_input + " Antworte als JSON mit den Feldern 'antwort' und 'kurzfassung'.", top_k)
+          current_answer = full{"answer"}
+          current_sources = full{"sources"}
+          source_count = LEN(current_sources)
+        ELSE
+          DIM full = AI.RAG_QUERY_FULL(rag_id, query_input, top_k)
+          current_answer = full{"answer"}
+          current_sources = full{"sources"}
+          source_count = LEN(current_sources)
+        ENDIF
+        query_time_ms = INT(GFX.TICKS() - tq)
+        status_msg = "Answered in " + STR(query_time_ms) + "ms"
+      CATCH
+        current_answer = "Error: " + ERRMSG$
+        source_count = 0
+        status_msg = "Query failed"
+      ENDTRY
+      is_querying = FALSE
+    ENDIF
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Clear", 80, 32) THEN
+      current_answer = ""
+      source_count = 0
+      query_input = ""
+    ENDIF
+
+    GUI.SEPARATOR_TEXT "Answer"
+    DIM ans_w = GUI.AVAIL_WIDTH()
+    DIM ans_h = GUI.AVAIL_HEIGHT() - 5
+    IF ans_h < 100 THEN ans_h = 100
+    IF GUI.BEGIN_CHILD("answer", ans_w, ans_h, TRUE) THEN
+      IF LEN(current_answer) = 0 THEN
+        GUI.TEXT_WRAPPED "(no answer yet — index a directory and ask a question)"
+      ELSE
+        GUI.TEXT_WRAPPED current_answer
+      ENDIF
+
+      IF source_count > 0 THEN
+        GUI.SEPARATOR_TEXT "Used " + STR(source_count) + " context chunk(s) — see right panel"
+      ENDIF
+    ENDIF
+    GUI.END_CHILD
+  ENDIF
+  GUI.END
+
+  ' ── Right Panel: Sources ───────────────────────────────────
+  IF GUI.BEGIN("Sources", 1150, 35, 340, 800) THEN
+    GUI.SEPARATOR_TEXT "Retrieved Chunks"
+    IF source_count = 0 THEN
+      GUI.TEXT "(no sources yet)"
+    ELSE
+      DIM src_w = GUI.AVAIL_WIDTH()
+      DIM src_h = GUI.AVAIL_HEIGHT() - 5
+      IF src_h < 100 THEN src_h = 100
+      IF GUI.BEGIN_CHILD("srclist", src_w, src_h, TRUE) THEN
+        FOR si = 0 TO source_count - 1
+          DIM src = current_sources[si]
+          DIM score = src{"score"}
+          DIM source_name = src{"source"}
+          DIM excerpt = src{"text"}
+
+          ' Score als Prozent darstellen
+          DIM pct = INT(score * 100)
+          GUI.SEPARATOR_TEXT "[" + STR(pct) + "%] " + source_name
+
+          ' Excerpt verkürzt, mit automatischem Zeilenumbruch
+          IF LEN(excerpt) > 240 THEN
+            GUI.TEXT_WRAPPED LEFT(excerpt, 240) + "..."
+          ELSE
+            GUI.TEXT_WRAPPED excerpt
+          ENDIF
+        NEXT si
+      ENDIF
+      GUI.END_CHILD
+    ENDIF
+  ENDIF
+  GUI.END
+
+  ' ── Status Bar ─────────────────────────────────────────────
+  DIM sbf = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_SCROLLBAR")
+  IF GUI.BEGIN("##sb", 0, 825, 1500, 25, TRUE, sbf) THEN
+    DIM mode = "linear"
+    IF rag_id <> 0 THEN mode = stat_index_mode
+    GUI.TEXT status_msg + "  |  Index: " + mode + "  |  Chunks: " + STR(stat_chunks) + "  |  Frame: " + STR(frame)
+  ENDIF
+  GUI.END
+
+  SCREENFLIP
+  SLEEP 10
+  IF INKEY$() = CHR(27) THEN running = FALSE
+LOOP
+
+' Cleanup
+IF llm_id <> 0 THEN AI.FREE_LLM llm_id
+IF emb_id <> 0 THEN AI.FREE_LLM emb_id
+GFX.CLOSE
+PRINT "RAG Studio closed."

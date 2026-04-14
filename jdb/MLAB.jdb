@@ -1,0 +1,392 @@
+' ==========================================================
+' ==  A General-Purpose Function Library for jdBasic (MLAB)
+' ==========================================================
+' This module provides a collection of high-level functions
+' for statistics, array manipulation, string utilities, and more,
+' building upon the core features of the jdBasic language.
+'
+' To use these functions in another program, add the line:
+' IMPORT MLAB
+'
+' Then call functions with: MLAB.SORT(my_array)
+' ==========================================================
+
+EXPORT MODULE MLAB
+
+' ==========================================================
+' == STATISTICS & DATA ANALYSIS
+' ==========================================================
+
+' Sorts a 1D array in ascending order.
+' It uses the APL-style GRADE function, which returns the indices
+' that *would* sort the array. We then use those indices to
+' reorder the original array.
+
+EXPORT FUNC SORT(A)
+  RETURN A[GRADE(A)]
+ENDFUNC
+
+' Sorts a 1D array in descending order.
+EXPORT FUNC SORT_DESC(A)
+  ' We reverse the grade indices to get descending order.
+  RETURN A[REVERSE(GRADE(A))]
+ENDFUNC
+
+' Calculates the Mean (average) of a 1D array.
+EXPORT FUNC MEAN(A)
+  ' The [0] is used to get the scalar length from the shape vector
+  RETURN SUM(A) / LEN(A)
+ENDFUNC
+
+' Calculates the Median of a 1D array.
+EXPORT FUNC MEDIAN(A)
+  SORTED_A = SORT(A)
+  N = LEN(SORTED_A)
+  MID = INT(N / 2) 
+  IF N MOD 2 = 0 THEN
+    ' Even number of elements, average the middle two
+    PRINT SORTED_A[MID - 1] , SORTED_A[MID]
+    RETURN (SORTED_A[MID - 1] + SORTED_A[MID]) / 2
+  ELSE
+    ' Odd number of elements, return the middle one
+    RETURN SORTED_A[MID]
+  ENDIF
+ENDFUNC
+
+' Creates a Map counting the occurrences of each unique item in an array.
+EXPORT FUNC FREQUENCY_MAP(A)
+    DIM FreqMap AS MAP
+    FOR i = 0 TO LEN(A) - 1
+        key$ = STR$(A[i]) ' Map keys must be strings
+        IF MAP.EXISTS(FreqMap, key$) THEN
+            FreqMap{key$} = FreqMap{key$} + 1
+        ELSE
+            FreqMap{key$} = 1
+        ENDIF
+    NEXT i
+    RETURN FreqMap
+ENDFUNC
+
+' Calculates the Mode (most common value) of a 1D array.
+EXPORT FUNC MODE(A)
+    FreqMap = FREQUENCY_MAP(A)
+    IF LEN(MAP.KEYS(FreqMap)) = 0 THEN RETURN NULL ' Handle empty array
+    
+    MaxCount = 0
+    ModeValue = NULL
+    
+    Keys = MAP.KEYS(FreqMap)
+    FOR i = 0 TO LEN(Keys) - 1
+        key$ = Keys[i]
+        Count = FreqMap{key$}
+        IF Count > MaxCount THEN
+            MaxCount = Count
+            ModeValue = VAL(key$) ' Convert string key back to number
+        ENDIF
+    NEXT i
+    RETURN ModeValue
+ENDFUNC
+
+' Calculates the Population Standard Deviation of a 1D array.
+EXPORT FUNC STDDEV(A)
+  AVG = MEAN(A)
+  VAR = (A - AVG) ^ 2
+  RETURN SQR(SUM(VAR) / LEN(A))
+ENDFUNC
+
+' Calculates the Population Variance of a 1D array.
+EXPORT FUNC VARIANCE(A)
+    AVG = MEAN(A)
+    VAR_SUM = SUM((A - AVG) ^ 2)
+    RETURN VAR_SUM / LEN(A)
+ENDFUNC
+
+' Finds the common elements between two 1D arrays.
+EXPORT FUNC INTERSECT(A1, A2)
+    ' Convert arrays to maps for efficient lookup
+    DIM Map1 AS MAP
+    FOR i = 0 TO LEN(A1) - 1 : Map1{STR$(A1[i])} = TRUE : NEXT i
+    
+    Intersection = []
+    FOR i = 0 TO LEN(A2) - 1
+        val = A2[i]
+        IF MAP.EXISTS(Map1, STR$(val)) THEN
+            ' To avoid duplicates, check if it's already in the result
+            is_in_result = FALSE
+            FOR j = 0 TO LEN(Intersection) - 1
+                IF Intersection[j] = val THEN is_in_result = TRUE : EXITFOR
+            NEXT j
+            IF NOT is_in_result THEN Intersection = APPEND(Intersection, val)
+        ENDIF
+    NEXT i
+    RETURN Intersection
+ENDFUNC
+
+' ==========================================================
+' == ARRAY & MATRIX CREATION
+' ==========================================================
+
+' NEW: Creates an array of a given shape filled with zeros.
+EXPORT FUNC ZEROS(ShapeVector)
+    RETURN RESHAPE([0], ShapeVector)
+ENDFUNC
+
+' NEW: Creates an array of a given shape filled with ones.
+EXPORT FUNC ONES(ShapeVector)
+    RETURN RESHAPE([1], ShapeVector)
+ENDFUNC
+
+' NEW: Creates an N x N identity matrix.
+EXPORT FUNC EYE(N)
+    ' Creates a boolean matrix where M[i,j] is TRUE if i=j,
+    ' then multiplies by 1 to convert TRUE/FALSE to 1/0.
+    RETURN OUTER(IOTA(N), IOTA(N), "=") * 1
+ENDFUNC
+
+' ==========================================================
+' == COMBINATORICS & FINANCIAL
+' ==========================================================
+
+' Calculates Combinations ("n choose k").
+EXPORT FUNC COMBINATIONS(n, k)
+    IF k < 0 OR n < k THEN RETURN 0
+    RETURN FAC(n) / (FAC(k) * FAC(n - k))
+ENDFUNC
+
+' Calculates Permutations.
+EXPORT FUNC PERMUTATIONS(n, k)
+    IF k < 0 OR n < k THEN RETURN 0
+    RETURN FAC(n) / FAC(n - k)
+ENDFUNC
+
+' Calculates the periodic payment for a loan.
+' rate: The interest rate per period.
+' nper: The total number of payment periods.
+' pv: The present value, or the total amount of the loan.
+EXPORT FUNC PMT(rate, nper, pv)
+    IF rate = 0 THEN RETURN pv / nper
+    RETURN (rate * pv) / (1 - (1 + rate) ^ -nper)
+ENDFUNC
+
+' Calculates the future value of an investment.
+' pmt: The payment made each period.
+' pv: The present value (optional, use 0 if none).
+EXPORT FUNC FV(rate, nper, pmt, pv)
+    IF rate = 0 THEN RETURN pv + (pmt * nper)
+    fv_pv = pv * (1 + rate) ^ nper
+    fv_pmt = pmt * (((1 + rate) ^ nper - 1) / rate)
+    RETURN fv_pv + fv_pmt
+ENDFUNC
+
+' ==========================================================
+' == STRING UTILITIES
+' ==========================================================
+
+' Joins elements of an array into a single string with a delimiter.
+EXPORT FUNC JOIN$(StringArray, Delimiter$)
+    Result$ = ""
+    NumElements = LEN(StringArray)
+    FOR i = 0 TO NumElements - 1
+        Result$ = Result$ + StringArray[i]
+        IF i < NumElements - 1 THEN
+            Result$ = Result$ + Delimiter$
+        ENDIF
+    NEXT i
+    RETURN Result$
+ENDFUNC
+
+' Pads a string on the left.
+EXPORT FUNC PAD_LEFT$(original$, total_length, pad_char$)
+  padding_needed = total_length - LEN(original$)
+  IF padding_needed <= 0 THEN RETURN original$
+  RETURN (pad_char$ * padding_needed) + original$
+ENDFUNC
+
+' Pads a string on the right.
+EXPORT FUNC PAD_RIGHT$(original$, total_length, pad_char$)
+  padding_needed = total_length - LEN(original$)
+  IF padding_needed <= 0 THEN RETURN original$
+  RETURN original$ + (pad_char$ * padding_needed)
+ENDFUNC
+
+' Pads a string on both sides to center it.
+EXPORT FUNC PAD_CENTER$(original$, total_length, pad_char$)
+    padding_needed = total_length - LEN(original$)
+    IF padding_needed <= 0 THEN RETURN original$
+    left_pad = INT(padding_needed / 2)
+    right_pad = total_length - LEN(original$) - left_pad
+    RETURN (pad_char$ * left_pad) + original$ + (pad_char$ * right_pad)
+ENDFUNC
+
+' Calculates the Levenshtein (edit) distance between two strings.
+EXPORT FUNC LEVENSHTEIN(s1$, s2$)
+    m = LEN(s1$)
+    n = LEN(s2$)
+
+    ' Create and initialize the distance matrix
+    D = ZEROS([m + 1, n + 1])
+    FOR i = 0 TO m : D[i, 0] = i : NEXT i
+    FOR j = 0 TO n : D[0, j] = j : NEXT j
+
+    ' Fill the rest of the matrix
+    FOR j = 1 TO n
+        FOR i = 1 TO m
+            IF MID$(s1$, i, 1) = MID$(s2$, j, 1) THEN
+                cost = 0
+            ELSE
+                cost = 1
+            ENDIF
+            
+            ' Core calculation using the MIN reduction on a temporary array
+            values = [D[i-1, j] + 1, D[i, j-1] + 1, D[i-1, j-1] + cost]
+            D[i, j] = MIN(values)
+        NEXT i
+    NEXT j
+    
+    ' The final distance is in the bottom-right cell
+    RETURN D[m, n]
+ENDFUNC
+
+' A simple word-wrap function.
+EXPORT FUNC WORD_WRAP$(text$, max_width)
+    words = SPLIT(text$, " ")
+    result$ = ""
+    current_line$ = ""
+    FOR i = 0 TO LEN(words) - 1
+        word$ = words[i]
+        IF LEN(current_line$ + " " + word$) > max_width THEN
+            result$ = result$ + TRIM$(current_line$) + CHR$(10) ' CHR$(10) is newline
+            current_line$ = word$ + " "
+        ELSE
+            current_line$ = current_line$ + word$ + " "
+        ENDIF
+    NEXT i
+    result$ = result$ + TRIM$(current_line$)
+    RETURN result$
+ENDFUNC
+
+' ==========================================================
+' == PROCEDURAL GENERATION
+' ==========================================================
+
+' Generates a 2D array of value noise (a simple form of Perlin noise).
+' width, height: Dimensions of the output noise map.
+' scale: The "zoom" level of the noise. Larger scale = larger features.
+' --- Helper function for smooth interpolation (Smoothstep) ---
+FUNC FADE(t)
+    RETURN t * t * t * (t * (t * 6 - 15) + 10)
+ENDFUNC
+
+EXPORT FUNC PERLIN_NOISE(width, height, scale)
+    grid_w = CEIL(width / scale) + 1
+    grid_h = CEIL(height / scale) + 1
+
+    random_grid = RND(ONES([grid_h, grid_w]))
+    noise_map = ZEROS([height, width])
+
+    ' --- 1D Vectorization for X-Axis ---
+    ' Pre-calculate X coordinates once instead of every row
+    x_vec = IOTA(width, 0, 1)
+    gx_vec = x_vec / scale
+    g_x0_vec = INT(gx_vec)
+    fx_vec = gx_vec - g_x0_vec
+    ufx_vec = FADE(fx_vec)
+    
+    ' Pre-calculate the +1 offset vector
+    g_x1_vec = g_x0_vec + 1
+
+    ' Process row by row to leverage jdBasic array commands
+    FOR y = 0 TO height - 1
+        gy = y / scale
+        g_y0 = INT(gy)
+        fy = gy - g_y0
+        ufy = FADE(fy)
+
+        ' Slice out the entire 1D rows from the 2D random_grid (dim=0 is row)
+        row_top = SLICE(random_grid, 0, g_y0)
+        row_bottom = SLICE(random_grid, 0, g_y0 + 1)
+
+        ' Use array indexing to extract the entire vector of corner values at once
+        v00 = row_top[g_x0_vec]
+        v10 = row_top[g_x1_vec]
+        v01 = row_bottom[g_x0_vec]
+        v11 = row_bottom[g_x1_vec]
+
+        ' Interpolate across the X vectors 
+        ' (Note: LERP signature is LERP(start, end, alpha) per the jdBasic docs)
+        x_interp1 = LERP(v00, v10, ufx_vec)
+        x_interp2 = LERP(v01, v11, ufx_vec)
+        
+        ' Interpolate across the Y scalar
+        final_row_vec = LERP(x_interp1, x_interp2, ufy)
+
+        ' Replace the entire row in the noise_map at once using MVLET
+        noise_map = MVLET(noise_map, 0, y, final_row_vec)
+    NEXT y
+
+    RETURN noise_map
+ENDFUNC
+
+' Generates a perfect maze using the Recursive Backtracking algorithm.
+' Returns a 2D array where 0 represents a path and 1 represents a wall.
+EXPORT FUNC CREATE_MAZE(width, height)
+    ' Ensure width and height are odd numbers for a proper maze structure
+    w = INT(width / 2) * 2 + 1
+    h = INT(height / 2) * 2 + 1
+
+    maze = ONES([h, w])
+    ' The stack will store coordinate pairs sequentially: [x1, y1, x2, y2, ...]
+    stack_flat = []
+
+    ' Start at a random odd-numbered cell
+    start_x = INT(RND(1) * (w / 2)) * 2 + 1
+    start_y = INT(RND(1) * (h / 2)) * 2 + 1
+    
+    maze[start_y, start_x] = 0 ' Mark start as path
+    stack_flat = APPEND(stack_flat, [start_x, start_y])
+
+    DO WHILE LEN(stack_flat) > 0
+        len_flat = LEN(stack_flat)
+        cx = stack_flat[len_flat - 2]
+        cy = stack_flat[len_flat - 1]
+
+        ' Find all unvisited neighbors
+        neighbors_flat = []
+        ' --- FIX: Use short-circuiting ANDALSO to prevent out-of-bounds access ---
+        ' Check North (Y-2)
+        IF cy - 2 >= 0 ANDALSO maze[cy - 2, cx] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx, cy - 2, 0]) ' 0=N
+        ' Check East (X+2)
+        IF cx + 2 < w ANDALSO maze[cy, cx + 2] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx + 2, cy, 1]) ' 1=E
+        ' Check South (Y+2)
+        IF cy + 2 < h ANDALSO maze[cy + 2, cx] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx, cy + 2, 2]) ' 2=S
+        ' Check West (X-2)
+        IF cx - 2 >= 0 ANDALSO maze[cy, cx - 2] = 1 THEN neighbors_flat = APPEND(neighbors_flat, [cx - 2, cy, 3]) ' 3=W
+
+        num_neighbors = LEN(neighbors_flat) / 3
+        IF num_neighbors > 0 THEN
+            ' Manually extract the chosen neighbor from the flat array
+            rand_idx = INT(RND(1) * num_neighbors)
+            start_idx = rand_idx * 3
+            nx = neighbors_flat[start_idx]
+            ny = neighbors_flat[start_idx + 1]
+            direction = neighbors_flat[start_idx + 2]
+            
+            ' Carve a path between the current cell and the chosen neighbor
+            maze[ny, nx] = 0
+            IF direction = 0 THEN maze[cy - 1, cx] = 0 ' Path North
+            IF direction = 1 THEN maze[cy, cx + 1] = 0 ' Path East
+            IF direction = 2 THEN maze[cy + 1, cx] = 0 ' Path South
+            IF direction = 3 THEN maze[cy, cx - 1] = 0 ' Path West
+
+            ' Push the new cell coordinates to the flat stack
+            stack_flat = APPEND(stack_flat, [nx, ny])
+        ELSE
+            ' Backtrack by dropping the last coordinate pair
+            stack_flat = TAKE(len_flat - 2, stack_flat)
+        ENDIF
+    LOOP
+
+    RETURN maze
+ENDFUNC
+
+

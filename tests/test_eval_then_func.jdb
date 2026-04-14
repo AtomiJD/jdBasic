@@ -1,0 +1,14 @@
+FUNC Calc(expression)
+  DIM r AS STRING = EVAL(expression)
+  RETURN STR(r)
+ENDFUNC
+
+FUNC Plain(x)
+  PRINT "Plain x="; x
+  RETURN x * 2
+ENDFUNC
+
+PRINT "first:"
+PRINT Calc("42 * 17")
+PRINT "second:"
+PRINT Plain(5)

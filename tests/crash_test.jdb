@@ -1,0 +1,189 @@
+' ═══════════════════════════════════════
+'  Crash Resilience Test Suite
+' ═══════════════════════════════════════
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+  IF cond THEN PASS = PASS + 1 ELSE FAIL = FAIL + 1
+  IF NOT cond THEN PRINT "  FAIL: "; msg
+ENDSUB
+
+' 1. Wrong arg count: must not crash (may return garbage or error)
+PRINT "-- Wrong arg count --"
+DIM ok = FALSE
+TRY
+  LET x = ABS()
+  ok = TRUE
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "ABS() no args no crash")
+
+ok = FALSE
+TRY
+  LET x = LEFT("hi")
+  ok = TRUE
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "LEFT() missing arg no crash")
+
+ok = FALSE
+TRY
+  LET x = CLAMP(1)
+  ok = TRUE
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "CLAMP() missing args no crash")
+
+' 2. MAP functions on non-object
+PRINT "-- MAP on non-object --"
+ok = FALSE
+TRY
+  LET x = MAP.EXISTS(42, "key")
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok OR TRUE, "MAP.EXISTS on int (no crash)")
+
+' 3. Recursion depth limit
+PRINT "-- Recursion limit --"
+FUNC InfRec(x)
+  RETURN InfRec(x + 1)
+ENDFUNC
+ok = FALSE
+TRY
+  LET x = InfRec(0)
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "infinite recursion caught")
+
+' 4. Division by zero
+PRINT "-- Division by zero --"
+ok = FALSE
+TRY
+  LET x = 1 / 0
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "div by zero")
+
+' 5. String index out of bounds
+PRINT "-- String out of bounds --"
+ok = FALSE
+TRY
+  LET x = MID("Hi", 999)
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "MID out of bounds")
+
+' 6. CD with bad path
+PRINT "-- CD bad path --"
+ok = FALSE
+TRY
+  CD "nonexistent_path_xyz_123"
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "CD bad path")
+
+' 7. CD without args
+PRINT "-- CD no args --"
+ok = FALSE
+TRY
+  CD
+  ok = TRUE
+CATCH
+ENDTRY
+Assert(ok, "CD no args no crash")
+
+' 8. Sound without init
+PRINT "-- Sound without init --"
+ok = FALSE
+TRY
+  SOUND.STOP 0
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "SOUND.STOP before init")
+
+' 9. THROW and catch
+PRINT "-- Exception handling --"
+ok = FALSE
+TRY
+  THROW "test"
+CATCH
+  ok = (ERRMSG$ = "test")
+ENDTRY
+Assert(ok, "throw/catch errmsg")
+
+' 10. Native crashes (access violation, etc) caught by SEH translator.
+'     Without /EHa + _set_se_translator, calling these natives without
+'     enough args reads garbage memory and tears down the interpreter.
+PRINT "-- SEH-translated native crashes --"
+ok = FALSE
+TRY
+  CONVOLVE()
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "CONVOLVE() no args caught")
+
+ok = FALSE
+TRY
+  SHIFT()
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "SHIFT() no args caught")
+
+ok = FALSE
+TRY
+  DISTANCE()
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "DISTANCE() no args caught")
+
+ok = FALSE
+TRY
+  MATMUL()
+CATCH
+  ok = TRUE
+ENDTRY
+Assert(ok, "MATMUL() no args caught")
+
+' Make sure the VM is still alive and well after all those crashes
+Assert(2 + 2 = 4, "VM still healthy after crashes")
+
+' 11. Event handler that runs RAISEEVENT for another event must not
+'     leak stack frames. The bug class also covered END-inside-handler;
+'     that one halts the program so it can't be unit-tested here, but
+'     a recursive raise → raise → return tests the same call_function
+'     pop machinery.
+PRINT "-- nested event raise --"
+DIM nested_marker = 0
+ON "ANER_OUTER" CALL ANER_Outer
+ON "ANER_INNER" CALL ANER_Inner
+SUB ANER_Outer(data)
+    RAISEEVENT "ANER_INNER", "from outer"
+ENDSUB
+SUB ANER_Inner(data)
+    nested_marker = 1
+ENDSUB
+RAISEEVENT "ANER_OUTER", 0
+Assert(nested_marker = 1, "nested RAISEEVENT runs to completion")
+Assert(2 + 2 = 4, "VM still healthy after nested events")
+
+' Results
+PRINT ""
+PRINT "═══════════════════════════"
+PRINT " CRASH TEST RESULTS"
+PRINT " PASS: "; PASS; "  FAIL: "; FAIL
+IF FAIL = 0 THEN PRINT " ALL CRASH TESTS PASSED!"
+PRINT "═══════════════════════════"

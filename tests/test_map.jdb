@@ -1,0 +1,60 @@
+' ── Map Literal ────────────────────────────────────
+DIM MyMap = {"Name": "Atomi", "Version": 1.2, "Active": TRUE}
+PRINT "MyMap = "; MyMap
+
+' ── Map Access ────────────────────────────────────
+PRINT "Name = "; MyMap{"Name"}
+PRINT "Version = "; MyMap["Version"]
+
+' ── Map Assignment ────────────────────────────────
+MyMap{"Language"} = "jdBasic"
+PRINT "After adding Language: "; MyMap
+
+' ── MAP.EXISTS ────────────────────────────────────
+PRINT "EXISTS Name: "; MAP.EXISTS(MyMap, "Name")
+PRINT "EXISTS Author: "; MAP.EXISTS(MyMap, "Author")
+
+' ── MAP.KEYS / VALUES / ITEMS ─────────────────────
+PRINT "KEYS: "; MAP.KEYS(MyMap)
+PRINT "VALUES: "; MAP.VALUES(MyMap)
+PRINT "ITEMS: "; MAP.ITEMS(MyMap)
+
+' ── MAP.SIZE ──────────────────────────────────────
+PRINT "SIZE: "; MAP.SIZE(MyMap)
+
+' ── MAP.DELETE ────────────────────────────────────
+MAP.DELETE(MyMap, "Active")
+PRINT "After DELETE Active: "; MyMap
+PRINT "SIZE after delete: "; MAP.SIZE(MyMap)
+
+' ── MAP.MERGE ─────────────────────────────────────
+DIM Map2 = {"Author": "JD", "Version": 2.0}
+MAP.MERGE(MyMap, Map2)
+PRINT "After MERGE: "; MyMap
+
+' ── MAP.CLEAR ─────────────────────────────────────
+DIM Temp = {"A": 1, "B": 2}
+MAP.CLEAR(Temp)
+PRINT "After CLEAR: "; Temp; " SIZE: "; MAP.SIZE(Temp)
+
+' ── MAP.FROM ──────────────────────────────────────
+DIM Parsed = MAP.FROM("{\"city\": \"Berlin\", \"pop\": 3645000}")
+PRINT "FROM JSON: "; Parsed
+
+' ── JSON.PARSE$ ───────────────────────────────────
+DIM Data = JSON.PARSE$("{\"name\": \"test\", \"values\": [1,2,3], \"nested\": {\"x\": true}}")
+PRINT "JSON.PARSE$: "; Data
+PRINT "  name = "; Data{"name"}
+PRINT "  values = "; Data{"values"}
+PRINT "  nested.x = "; Data{"nested"}{"x"}
+
+' ── JSON.STRINGIFY$ ───────────────────────────────
+DIM Obj = {"greeting": "hello", "nums": [1,2,3], "flag": TRUE}
+PRINT "JSON.STRINGIFY$: "; JSON.STRINGIFY$(Obj)
+
+' Array to JSON
+PRINT "Array JSON: "; JSON.STRINGIFY$([1, "two", TRUE, [3,4]])
+
+' ── DIM AS MAP ────────────────────────────────────
+DIM EmptyMap AS MAP
+PRINT "Empty MAP: "; EmptyMap; " SIZE: "; MAP.SIZE(EmptyMap)

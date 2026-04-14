@@ -1,0 +1,153 @@
+' --- jdBasic Process Pipe (Workflow) Engine ---
+' A proof-of-concept implementation of an n8n-style workflow executor.
+
+' =================================================================
+' SECTION 1: THE WORKFLOW DEFINITION
+' =================================================================
+' We define our workflow as an array of maps.
+' This workflow will:
+' 1. Make an HTTP GET request to a public API to get user data.
+' 2. Take the JSON response and extract the user's name.
+
+DIM WORKFLOW[2]
+DIM INPUT_DATA
+DIM GLOBAL_RETURN
+
+' --- Node 1: HTTP Request ---
+' This node fetches data from a URL.
+WORKFLOW[0] = {
+    "id": "fetch_user_data",
+    "type": "HTTP_REQUEST",
+    "parameters": {
+        "method": "GET",
+        "url": "https://jsonplaceholder.typicode.com/users/1"
+    },
+    "connections": {
+        "output": "extract_user_name" ' The ID of the next node to run
+    }
+}
+
+' --- Node 2: Set Data ---
+' This node runs a piece of code to transform the incoming data.
+WORKFLOW[1] = {
+    "id": "extract_user_name",
+    "type": "SET_DATA",
+    "parameters": {
+        ' The code to execute. The special variable 'INPUT_DATA' will hold
+        ' the output from the previously executed node.
+        '
+        ' *** SYNTAX FIX HERE: Use "" to escape a quote inside a string ***
+        "code": "GLOBAL_RETURN = INPUT_DATA{""name""}"
+    },
+    "connections": {} ' An empty connections map signifies the end of this path
+}
+
+
+' =================================================================
+' SECTION 2: THE EXECUTION ENGINE
+' =================================================================
+
+' The main function that runs the workflow.
+FUNC RUN_WORKFLOW(workflow_array, start_node_id$, initial_data)
+    DIM workflow_map AS MAP
+    DIM node_outputs AS MAP
+    current_node_id$ = start_node_id$
+    
+    ' For easy lookup, convert the workflow array into a map keyed by node ID.
+    FOR EACH node IN workflow_array
+        workflow_map{node{"id"}} = node
+    NEXT
+    
+    ' The main execution loop
+    previous_node_id$ = ""
+    DO
+        PRINT "--- Executing Node: '"; current_node_id$; "' ---"
+        current_node = workflow_map{current_node_id$}
+        
+        ' Determine the input for the current node.
+        ' If there was a previous node, its output is the input for this one.
+
+        IF previous_node_id$ > "" THEN
+            input_for_this_node = node_outputs{previous_node_id$}
+        ELSE
+            input_for_this_node = initial_data
+        ENDIF
+
+        ' Execute the node based on its type
+        node_result = EXECUTE_NODE(current_node, input_for_this_node)
+        
+        ' Store the result of the execution
+        node_outputs{current_node_id$} = node_result
+        PRINT "Output: "; node_result
+        PRINT
+        
+        ' Find the next node to execute
+        previous_node_id$ = current_node_id$
+        IF MAP.EXISTS(current_node{"connections"}, "output") THEN
+            current_node_id$ = current_node{"connections"}{"output"}
+        ELSE
+            ' No more connections, the workflow is done.
+            current_node_id$ = ""
+        ENDIF
+        
+    LOOP WHILE current_node_id$ <> ""
+    
+    ' Return the output of the very last node that ran
+    RETURN node_outputs{previous_node_id$}
+ENDFUNC
+
+
+' This function handles the logic for each specific node type.
+' You would add more cases here for "IF", "FOR_EACH", etc.
+FUNC EXECUTE_NODE(node, rdata)
+    DIM result
+
+    INPUT_DATA = rdata
+
+    ' *** REPLACED SELECT CASE WITH IF/ELSE IF/ELSE ***
+    node_type$ = node{"type"}
+
+    IF node_type$ = "HTTP_REQUEST" THEN
+        PRINT "  Type: HTTP Request"
+        PRINT "  URL: "; node{"parameters"}{"url"}
+        response$ = HTTP.GET$(node{"parameters"}{"url"})
+        IF HTTP.STATUSCODE() = 200 THEN
+            result = JSON.PARSE$(response$)
+        ELSE
+            result = {"error": "HTTP Failed", "status": HTTP.STATUSCODE()}
+        ENDIF
+    ELSE
+        IF node_type$ = "SET_DATA" THEN
+            PRINT "  Type: Set Data"
+            ' The EXECUTE command runs the code string. Because INPUT_DATA is global,
+            ' the code inside the string can access it.
+            code_to_run$ = node{"parameters"}{"code"}
+            PRINT "  Executing code: "; code_to_run$
+            EXECUTE(code_to_run$)
+            result = GLOBAL_RETURN
+        ELSE
+            PRINT "  Type: Unknown ('"; node{"type"}; "')"
+            result = {"error": "Unknown node type"}
+        ENDIF
+    ENDIF
+    
+    RETURN result
+ENDFUNC
+
+
+' =================================================================
+' SECTION 3: RUN THE WORKFLOW
+' =================================================================
+PRINT "Starting workflow..."
+PRINT
+
+' We kick off the workflow by calling RUN_WORKFLOW.
+' The first node to run has the ID "fetch_user_data".
+final_result = RUN_WORKFLOW(WORKFLOW, "fetch_user_data", "")
+
+PRINT "----------------------------------------"
+PRINT "Workflow finished!"
+PRINT "Final Result: "; final_result
+PRINT "----------------------------------------"
+
+' Expected output: Leanne Graham

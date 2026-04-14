@@ -1,0 +1,58 @@
+' ===================================================================
+' == AI Sprite Generator for RPG Characters
+' == Generates a character sprite + spritesheet using DALL-E 3
+' ==
+' == Usage: Set OPENAI_API_KEY environment variable, then run.
+' ==        Enter a character description when prompted.
+' ==
+' == Output: character.png       (single front view)
+' ==         spritesheet.png     (4-direction RPG spritesheet)
+' ===================================================================
+
+' --- Configuration ---
+SPRITE_SIZE = 64                    ' 32 or 64
+' Use absolute path based on script location
+OUTPUT_DIR$ = "D:/usr/dev/cc/fluppi/generated_sprites"
+
+PRINT "=== Building Spritesheet ==="
+
+' --- Build 3x4 spritesheet (RPG Maker format) ---
+' Rows: Down(front), Left, Right, Up(back)
+' Cols: idle, walk1, walk2
+S = SPRITE_SIZE
+' Use a large screen for loading/processing (COLOR_TO_ALPHA needs adequate renderer)
+SCREEN 1024, 1024, "Spritesheet Builder"
+CLS 0, 0, 0
+
+' --- Load all images and remove magenta background ---
+PRINT "Loading sprites and removing backgrounds..."
+sprite_file$ = OUTPUT_DIR$ + "/spritesheet.png"
+tmp_file$ = OUTPUT_DIR$ + "/spritesheet._tmp.png"
+
+' Reload, flood-fill remove black background, save with transparency
+sheet_img_tmp = GFX.LOADIMAGE(sprite_file$)
+GFX.COLOR_TO_ALPHA sheet_img_tmp, 15
+GFX.SAVE_IMAGE sheet_img_tmp, tmp_file$
+GFX.FREEIMAGE sheet_img_tmp
+PRINT "Spritesheet saved: "; tmp_file$
+
+' --- Show the result ---
+PRINT
+PRINT "=== Preview ==="
+SETFONT "C:/Windows/Fonts/arial.ttf", 14
+preview_scale = 4
+
+SCREEN S * 3 * preview_scale + 20, S * 4 * preview_scale + 60, "Generated Spritesheet Preview"
+CLS 40, 40, 60
+
+sheet_img = GFX.LOADIMAGE(tmp_file$)
+GFX.DRAWIMAGE sheet_img, 10, 40, _
+    S * 3 * preview_scale, _
+    S * 4 * preview_scale
+
+TEXT 10, 10, "Character: " + char_desc$, 255, 255, 255
+TEXT 10, S * 4 * preview_scale + 45, "Press any key to exit", 180, 180, 180
+
+SCREENFLIP
+WAITKEY$()
+END

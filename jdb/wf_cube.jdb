@@ -1,0 +1,121 @@
+' ==========================================================
+' == Fully Optimized ASCII 3D Cube
+' ==========================================================
+
+' --- Configuration Section ---
+SCREEN_WIDTH = 40
+SCREEN_HEIGHT = 20
+CLS
+
+' --- 1. Define Vertices, Faces, and Transformations ---
+DIM Vertices[8, 3]
+Vertices = RESHAPE([-1,-1,-1,  1,-1,-1,  1, 1,-1, -1, 1,-1, -1,-1, 1,  1,-1, 1,  1, 1, 1, -1, 1, 1], [8, 3])
+
+DIM Faces[6, 4]
+Faces = RESHAPE([4,5,6,7, 0,3,2,1, 0,1,5,4, 2,3,7,6, 1,2,6,5, 3,0,4,7], [6, 4])
+
+DIM FaceChars$[6]
+FaceChars$ = ["#", "O", "+", "=", "*", "."]
+
+DIM ScalingMatrix[3, 3]
+ScalingMatrix = [[1,0,0], [0,2,0], [0,0,1]]
+
+' --- 2. Main Animation Loop ---
+DIM ScreenBuffer[SCREEN_HEIGHT, SCREEN_WIDTH]
+DIM ProjectedPoints[8, 2]
+AngleX = 0 : AngleY = 0
+FocalLength = 5
+
+' --- 3. Functions for Rotation and drawing---
+FUNC CreateRotationX(angle)
+    RETURN [[1, 0, 0], [0, COS(angle), -SIN(angle)], [0, SIN(angle), COS(angle)]]
+ENDFUNC
+
+FUNC CreateRotationY(angle)
+    RETURN [[COS(angle), 0, SIN(angle)], [0, 1, 0], [-SIN(angle), 0, COS(angle)]]
+ENDFUNC
+
+SUB DrawLine(x1, y1, x2, y2, char$)
+    dx = ABS(x2 - x1) : dy = -ABS(y2 - y1)
+    sx = -1: IF x1 < x2 THEN sx = 1
+    sy = -1: IF y1 < y2 THEN sy = 1
+    err = dx + dy
+    DO
+        IF x1 >= 0 AND x1 < SCREEN_WIDTH AND y1 >= 0 AND y1 < SCREEN_HEIGHT THEN ScreenBuffer[y1, x1] = char$
+        IF x1 = x2 AND y1 = y2 THEN EXITDO
+        e2 = 2 * err
+        IF e2 >= dy THEN err = err + dy : x1 = x1 + sx
+        IF e2 <= dx THEN err = err + dx : y1 = y1 + sy
+    LOOP
+ENDSUB
+
+SUB FillFace(points, char$)
+    y_min = MAX([0, MIN(SLICE(points, 1, 1))])
+    y_max = MIN([SCREEN_HEIGHT - 1, MAX(SLICE(points, 1, 1))])
+    FOR y = y_min TO y_max
+        intersections = []
+        FOR i = 0 TO 3
+            p1 = SLICE(points, 0, i)
+            p2 = SLICE(points, 0, (i + 1) MOD 4)
+            IF p1[1] <> p2[1] AND ((y >= p1[1] AND y < p2[1]) OR (y >= p2[1] AND y < p1[1])) THEN
+                intersections = APPEND(intersections, p1[0] + (y - p1[1]) * (p2[0] - p1[0]) / (p2[1] - p1[1]))
+            ENDIF
+        NEXT i
+        IF LEN(intersections) >= 2 THEN
+            FOR x = MAX([0, MIN(intersections)]) TO MIN([SCREEN_WIDTH - 1, MAX(intersections)])
+                ScreenBuffer[y, x] = char$
+            NEXT x
+        ENDIF
+    NEXT y
+ENDSUB
+
+CURSOR FALSE
+
+F = 0
+
+DO
+    ' --- a) Rotate & Scale Vertices ---
+    CombinedTransform = MATMUL(ScalingMatrix, MATMUL(CreateRotationY(AngleY), CreateRotationX(AngleX)))
+    RotatedVertices = MATMUL(Vertices, CombinedTransform)
+
+    ' --- b) Vectorized Perspective Projection ---
+    X_col = SLICE(RotatedVertices, 1, 0)
+    Y_col = SLICE(RotatedVertices, 1, 1)
+    Z_col = SLICE(RotatedVertices, 1, 2)
+    Perspective = FocalLength / (FocalLength - Z_col)
+    ScreenX = (X_col * Perspective) * (SCREEN_WIDTH / 8) + (SCREEN_WIDTH / 2)
+    ScreenY = (Y_col * Perspective) * (SCREEN_HEIGHT / 8) + (SCREEN_HEIGHT / 2)
+    ProjectedPoints = STACK(1, INT(ScreenX), INT(ScreenY))
+
+    ' --- c) Vectorized Painter's Algorithm ---
+    FaceZCoords = RESHAPE(Z_col[Faces], [6, 4])
+    FaceDepths = SUM(FaceZCoords, 1) / 4
+    DrawOrder = GRADE(FaceDepths)
+
+    ' --- d) Draw Faces from Back to Front ---
+    ScreenBuffer = RESHAPE([" "], [SCREEN_HEIGHT, SCREEN_WIDTH])
+    FOR i = 0 TO 5
+        face_idx = DrawOrder[i,0]
+        v_indices = SLICE(Faces, 0, face_idx)
+        face_x_coords = SLICE(ProjectedPoints, 1, 0)[v_indices]
+        face_y_coords = SLICE(ProjectedPoints, 1, 1)[v_indices]
+        face_points = STACK(1, face_x_coords, face_y_coords)
+        
+        FillFace face_points, FaceChars$[face_idx]
+        FOR p = 0 TO 3
+            p1 = SLICE(face_points, 0, p)
+            p2 = SLICE(face_points, 0, (p + 1) MOD 4)
+            DrawLine p1[0], p1[1], p2[0], p2[1], "*"
+        NEXT p
+    NEXT i
+    
+    ' --- e) Render and Update ---
+    LOCATE 0,0
+    PRINT "Fully Optimized 3D Cube (Press any key)"
+    PRINT FRMV$(ScreenBuffer)
+    'YIELD
+    AngleX = AngleX + 0.05 : AngleY = AngleY + 0.08
+    F = F + 1
+LOOP UNTIL F > 200
+
+CURSOR TRUE

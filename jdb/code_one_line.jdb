@@ -1,0 +1,19 @@
+CLS
+PRINT
+PRINT "Simple Lambda Addtion of 1 to 10"
+PRINT SELECT(lambda i -> i + 1, iota(10))
+INPUT "Next sample -> Press <enter>"; A$
+PRINT "Simple Lambda chained functions"
+PRINT SELECT(lambda i -> i + 1, iota(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
+INPUT "Next sample -> Press <enter>"; A$
+PRINT "Sine wave as matrix"
+W=40:H=20:F=6:C=RESHAPE([" "],[H,W]):X=IOTA(W)-1:Y=INT((SIN(X/F)+1)*((H-1)/2)):C[Y,X]="*":c[h/2,iota(w)-1] = "-":PRINT FRMV$(c)
+INPUT "Next sample -> Press <enter>"; A$
+PRINT "Bio rythm"
+BD="1967-10-21":W=41:H=21:D=DATEDIFF("D",CVDATE(BD),NOW()):X=D-W/2+IOTA(W):C=RESHAPE([" "],[H,W]):PY=INT((SIN(2*PI*X/23)+1)*((H-1)/2)):EY=INT((SIN(2*PI*X/28)+1)*((H-1)/2)):IY=INT((SIN(2*PI*X/33)+1)*((H-1)/2)):C[H/2,IOTA(W)-1]="-":C[IOTA(H)-1,INT(W/2)]="|":C[PY,IOTA(W)-1]="P":C[EY,IOTA(W)-1]="E":C[IY,IOTA(W)-1]="I":PRINT "Biorhythm for " + BD + " | P=Physical(23) E=Emotional(28) I=Intellectual(33)":PRINT FRMV$(C)
+INPUT "Next sample -> Press <enter>"; A$
+PRINT "ASCII Table"
+i=224:j=32: print frmv$(reshape(str$(iota(i)-1+j) + chr$(iota(i)*0+58) + chr$(iota(i)+j),[i^0.5,i^0.5]))
+INPUT "Next sample -> Press <enter>"; A$
+PRINT "Dir"
+PRINT FRMV$(DIR$("*.jdb", TRUE),"{:<25} {:>8} {} {} {}")

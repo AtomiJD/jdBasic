@@ -1,0 +1,15 @@
+TRY
+    objXL = CREATEOBJECT("Excel.Application")
+    objXL.Visible = TRUE
+    wb = objXL.Workbooks.Add()
+    objXL.ActiveSheet.Cells(1, 1).Value = "Hello from jdBasic!"
+    PRINT "Excel opened and cell set!"
+    SLEEP 3000
+    wb.Close(FALSE)
+    objXL.Quit()
+    ' Release ALL COM references so Excel.exe fully exits
+    RELEASEALL()
+    PRINT "Excel closed and all COM refs released."
+CATCH
+    PRINT "COM Error: "; ERRMSG$
+ENDTRY

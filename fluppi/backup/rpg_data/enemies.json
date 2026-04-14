@@ -1,0 +1,52 @@
+{
+    "enemies": [
+        {
+            "id": "blobb",
+            "name": "Blobb",
+            "sprite": "blobb.png",
+            "frame_w": 64,
+            "frame_h": 64,
+            "anim_frames": [0, 1, 2],
+            "anim_fps": 4,
+            "hp": 30,
+            "atk": 12,
+            "def": 3,
+            "xp": 10,
+            "gold": 8,
+            "drop_item": "Slime Gel",
+            "drop_chance": 0.5
+        },
+        {
+            "id": "bat",
+            "name": "Shadow Bat",
+            "sprite": "",
+            "frame_w": 32,
+            "frame_h": 32,
+            "anim_frames": [0, 1],
+            "anim_fps": 6,
+            "hp": 15,
+            "atk": 8,
+            "def": 1,
+            "xp": 12,
+            "gold": 5,
+            "drop_item": "Bat Wing",
+            "drop_chance": 0.3
+        },
+        {
+            "id": "skeleton",
+            "name": "Skeleton",
+            "sprite": "",
+            "frame_w": 32,
+            "frame_h": 32,
+            "anim_frames": [0, 1, 2],
+            "anim_fps": 3,
+            "hp": 35,
+            "atk": 10,
+            "def": 5,
+            "xp": 25,
+            "gold": 15,
+            "drop_item": "Bone Shard",
+            "drop_chance": 0.4
+        }
+    ]
+}

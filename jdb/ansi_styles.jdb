@@ -1,0 +1,25 @@
+
+ENUM Style
+    Default = 0
+    Bold = 1
+    Italic = 3
+    NoItalic = 23
+    NoBold = 22
+    Underline = 4
+    NoUnderline = 24
+    Negative = 7
+    Positive  = 27
+ENDENUM
+
+func cesc_m(EscapeCode)
+    IF TypeOf(EscapeCode) = "DOUBLE" THEN
+        EscapeCode = str$(EscapeCode)
+    ENDIF
+    return chr$(27) + "[" + EscapeCode + "m"
+endfunc
+
+print "Atomi"
+print 
+print cesc_m(Style.Bold); "Bold text"; cesc_m(Style.NoBold)
+print cesc_m(Style.Underline); "Underline text"; cesc_m(Style.NoUnderline)
+print cesc_m(Style.Italic); "Italic text"; cesc_m(Style.NoItalic)

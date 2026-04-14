@@ -1,0 +1,22 @@
+' IOTA basics
+PRINT "IOTA(5) = "; IOTA(5)
+PRINT "IOTA(5, 0) = "; IOTA(5, 0)
+PRINT "IOTA(5, 0, 2) = "; IOTA(5, 0, 2)
+PRINT "IOTA(4, 10, -1) = "; IOTA(4, 10, -1)
+
+' IOTA with vector math
+PRINT "IOTA(5) * 3 = "; IOTA(5) * 3
+PRINT "IOTA(5) ^ 2 = "; IOTA(5) ^ 2
+
+' RESHAPE
+DIM A = RESHAPE(IOTA(8), [2,2,2])
+PRINT "RESHAPE(IOTA(8), [2,2,2]) = "; A
+
+DIM B = RESHAPE(IOTA(6), [2,3])
+PRINT "RESHAPE(IOTA(6), [2,3]) = "; B
+
+DIM C = RESHAPE(IOTA(12), [3,4])
+PRINT "RESHAPE(IOTA(12), [3,4]) = "; C
+
+' Reshape with cycling (source smaller than target)
+PRINT "RESHAPE([1,0], [2,4]) = "; RESHAPE([1,0], [2,4])

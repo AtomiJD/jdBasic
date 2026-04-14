@@ -1,0 +1,177 @@
+' ==========================================================
+' == SNAKE.JDB - Classic Snake Clone
+' ==========================================================
+
+' --- Configuration ---
+WIDTH = 40
+HEIGHT = 20
+SPEED = 100 ' Delay in ms
+
+' --- Globals ---
+DIM SnakeX, SnakeY ' Arrays to hold body coordinates
+FoodX = 0
+FoodY = 0
+DirX = 1
+DirY = 0
+Score = 0
+GameOver = FALSE
+Paused = FALSE
+
+DIM K$ AS STRING
+K$ = ""
+
+' Callback for Keyboard Input
+SUB HandleKeys(data)
+    K$ = chr$(data[0]{"scancode"})
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKeys
+
+' --- Initialization ---
+SUB InitGame()
+    ' Reverse order so [Tail, Body, Head]
+    ' Index 0 is Tail, Last Index is Head
+    SnakeX = [INT(WIDTH/2)-2, INT(WIDTH/2)-1, INT(WIDTH/2)]
+    SnakeY = [INT(HEIGHT/2), INT(HEIGHT/2), INT(HEIGHT/2)]
+    DirX = 1
+    DirY = 0
+    Score = 0
+    GameOver = FALSE
+
+    CURSOR FALSE
+  
+    DrawBorder()
+    PlaceFood()
+ENDSUB
+
+SUB DrawBorder()
+    CLS
+    COLOR 7, 0
+    PRINT "+" + ("-" * WIDTH) + "+"
+    FOR y = 1 TO HEIGHT
+        PRINT "|" + (" " * WIDTH) + "|"
+    NEXT y
+    PRINT "+" + ("-" * WIDTH) + "+"
+    LOCATE HEIGHT + 3, 1
+    PRINT "WASD / Arrows to Move. Q to Quit."
+ENDSUB
+
+SUB PlaceFood()
+    ' Simple random placement
+    FoodX = INT(RND(1) * WIDTH) + 1
+    FoodY = INT(RND(1) * HEIGHT) + 1
+    
+    LOCATE FoodY + 1, FoodX + 1
+    COLOR 12, 0 ' Red Food
+    PRINT "@";
+ENDSUB
+
+' --- Main Loop ---
+InitGame()
+
+DO
+    ' 1. Input Handling (Keyboard + Joystick)
+    if K$ > "" then
+        k_lower$ = LCASE$(k$)
+    Endif
+
+    ' Keyboard
+    IF k_lower$ = "w" AND DirY = 0 THEN 
+        DirX = 0 : DirY = -1
+    ELSEIF k_lower$ = "s" AND DirY = 0 THEN 
+        DirX = 0 : DirY = 1
+    ELSEIF k_lower$ = "a" AND DirX = 0 THEN 
+        DirX = -1 : DirY = 0
+    ELSEIF k_lower$ = "d" AND DirX = 0 THEN 
+        DirX = 1 : DirY = 0
+    ELSEIF k_lower$ = "q" THEN 
+        EXITDO
+    ENDIF
+
+    ' Joystick
+    IF JOY.COUNT() > 0 THEN
+        joyID = 0
+        Hat = JOY.HAT(joyID, 0)
+         
+        ' D-Pad logic preventing 180 turns
+        IF (Hat BAND 1) AND DirY = 0 THEN DirX = 0 : DirY = -1
+        IF (Hat BAND 4) AND DirY = 0 THEN DirX = 0 : DirY = 1
+        IF (Hat BAND 8) AND DirX = 0 THEN DirX = -1 : DirY = 0
+        IF (Hat BAND 2) AND DirX = 0 THEN DirX = 1 : DirY = 0
+    ENDIF
+
+    ' 2. Logic
+    IF NOT GameOver THEN
+        Dims = LEN(SnakeX)
+        Count = Dims[0]
+        
+        ' FIX: Head is now at the END of the array
+        HeadIdx = Count - 1
+        CurrHeadX = SnakeX[HeadIdx]
+        CurrHeadY = SnakeY[HeadIdx]
+
+        ' Calculate new Head
+        NewHeadX = CurrHeadX + DirX
+        NewHeadY = CurrHeadY + DirY
+
+        ' Collision: Walls
+        IF NewHeadX < 1 OR NewHeadX > WIDTH OR NewHeadY < 1 OR NewHeadY > HEIGHT THEN
+            GameOver = TRUE
+        ENDIF
+
+        ' Collision: Self
+        ' Check all body parts (0 to HeadIdx - 1)
+        FOR i = 0 TO HeadIdx - 1
+            IF SnakeX[i] = NewHeadX AND SnakeY[i] = NewHeadY THEN GameOver = TRUE
+        NEXT i
+
+        IF NOT GameOver THEN
+            ' FIX: Append new head to the END
+            SnakeX = APPEND(SnakeX, NewHeadX)
+            SnakeY = APPEND(SnakeY, NewHeadY)
+
+            ' Draw Head
+            LOCATE NewHeadY + 1, NewHeadX + 1
+            COLOR 10, 0 ' Green Snake
+            PRINT "O";
+
+            ' Check Food
+            IF NewHeadX = FoodX AND NewHeadY = FoodY THEN
+                Score = Score + 10
+                PlaceFood()
+                ' Don't drop tail -> Snake grows
+            ELSE
+                ' FIX: Erase Tail (Index 0 is Tail)
+                TailX = SnakeX[0]
+                TailY = SnakeY[0]
+                
+                LOCATE TailY + 1, TailX + 1
+                PRINT " ";
+                
+                ' FIX: Remove Tail (Drop index 0)
+                SnakeX = DROP(1, SnakeX)
+                SnakeY = DROP(1, SnakeY)
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' 3. UI Update
+    LOCATE HEIGHT + 2, 2
+    COLOR 14, 0
+    PRINT "Score: " + Score;
+    
+    IF GameOver THEN
+        LOCATE HEIGHT / 2, (WIDTH / 2) - 4
+        COLOR 15, 4
+        PRINT " GAME OVER "
+        LOCATE((HEIGHT / 2) + 1, (WIDTH / 2) - 8)
+        COLOR 7, 0
+        PRINT "Press Q to Quit"
+    ENDIF
+
+    SLEEP SPEED
+LOOP
+
+CURSOR TRUE
+COLOR 2,0
+CLS

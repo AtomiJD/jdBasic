@@ -1,0 +1,50 @@
+' Load the new numerical functions from the DLL
+DLLIMPORT "numerics.dll"
+
+SCREEN 800, 600, "FFT Visualizer"
+SOUND.INIT
+SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE" ' Play a beat to visualize
+SOUND.SEQ 1, "~ c3 ~ c3", "TRIANGLE" ' Play a beat to visualize
+SOUND.VOICE 2, "SAW", 0.1, 0.1, 0.1, 0.1
+SOUND.SEQ 2, "c5 c5 c5 c5", "VOICE" ' Play a beat to visualize
+
+DIM WaveData, Spectrum, Mag
+DIM RealPart, ImagPart
+DIM BarHeight
+
+DO
+    CLS
+    
+    ' 1. Get raw audio (Time Domain)
+    WaveData = SOUND.GET_WAVE()
+    
+    ' 2. Perform FFT (Frequency Domain)
+    ' Returns a 2D array: [Frequency_Index, 2] 
+    ' Column 0 = Real, Column 1 = Imaginary
+    Spectrum = FFT(WaveData)
+    
+    ' 3. Draw the Spectrum (The first half is the useful part)
+    ' We step by 2 or 4 to fit bars on screen
+    count = LEN(Spectrum)[0] / 2 
+
+    FOR i = 0 TO count - 1 STEP 4
+        ' Extract Complex Numbers
+        RealPart = Spectrum[i, 0]
+        ImagPart = Spectrum[i, 1]
+        
+        ' Calculate Magnitude (Pythagoras)
+        ' Mag = SQR(Real^2 + Imag^2)
+        Mag = SQR(RealPart^2 + ImagPart^2)
+        
+        ' Normalize/Scale for screen (Logarithmic scaling looks best for audio)
+        BarHeight = LOG(Mag + 1) * 50 
+        
+        ' Draw Bar
+        RECT i * 2, 600 - BarHeight, 6, BarHeight, TRUE, [0, 100, 0]
+    NEXT
+    
+    SCREENFLIP
+    SLEEP 16
+    K$ = INKEY$()
+
+LOOP UNTIL K$ = CHR$(27)

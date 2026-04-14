@@ -1,0 +1,70 @@
+' ===================================================================
+' == Sprite API Test - Tests all SPRITE.* functions
+' ===================================================================
+
+SCREEN 800, 600, "Sprite API Test"
+SETFONT "C:/Windows/Fonts/arial.ttf", 16
+
+TRY
+    player = SPRITE.LOAD("D:\usr\dev\cc\fluppi\test_sprite.png")
+CATCH
+    CLS 30, 30, 50
+    TEXT 10, 10, "No test_sprite.png found.", 255, 100, 100
+    TEXT 10, 40, "Place a small PNG in the fluppi directory.", 200, 200, 200
+    TEXT 10, 80, "Sprite Phase 1 API:", 255, 255, 255
+    TEXT 10, 110, "SPRITE.LOAD, .POS, .MOVE, .DRAW, .DRAW_ALL", 180, 180, 180
+    TEXT 10, 135, "SPRITE.SCALE, .FLIP, .ALPHA, .VISIBLE, .ROTATE", 180, 180, 180
+    TEXT 10, 160, "SPRITE.COLLISION, .WIDTH, .HEIGHT, .DELETE", 180, 180, 180
+    TEXT 10, 200, "Press any key in this window to exit.", 255, 255, 0
+    SCREENFLIP
+    WAITKEY$()
+    END
+ENDTRY
+
+' --- Image loaded! ---
+SPRITE.POS player, 100, 250
+
+enemy = SPRITE.LOAD("D:\usr\dev\cc\fluppi\test_sprite.png")
+SPRITE.POS enemy, 500, 250
+SPRITE.SCALE enemy, 1.5
+
+speed = 3
+angle = 0
+
+DO
+    CLS 30, 30, 50
+
+    ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" THEN EXITDO
+    IF ev$ = "KEYDOWN:Escape" THEN EXITDO
+
+    ' Movement with string-based keystate
+    IF GFX.KEYSTATE("Right") THEN SPRITE.MOVE player, speed, 0 : SPRITE.FLIP player, FALSE
+    IF GFX.KEYSTATE("Left")  THEN SPRITE.MOVE player, -speed, 0 : SPRITE.FLIP player, TRUE
+    IF GFX.KEYSTATE("Down")  THEN SPRITE.MOVE player, 0, speed
+    IF GFX.KEYSTATE("Up")    THEN SPRITE.MOVE player, 0, -speed
+
+    ' Rotate enemy
+    angle = angle + 1
+    SPRITE.ROTATE enemy, angle
+    SPRITE.SET_ORIGIN enemy, SPRITE.WIDTH(enemy)/3, SPRITE.HEIGHT(enemy)/3
+
+    ' Collision
+    hit = SPRITE.COLLISION(player, enemy)
+
+    ' Draw all sprites
+    SPRITE.DRAW_ALL
+
+    ' HUD
+    TEXT 10, 10, "Arrow keys: move | ESC: quit", 200, 200, 200
+    px = SPRITE.GET_X(player) : py = SPRITE.GET_Y(player)
+    TEXT 10, 35, "Pos: " + STR$(INT(px)) + ", " + STR$(INT(py)), 180, 180, 180
+    IF hit THEN TEXT 10, 60, "COLLISION!", 255, 255, 0
+
+    SCREENFLIP
+    SLEEP 16
+LOOP
+
+SPRITE.DELETE player
+SPRITE.DELETE enemy
+END

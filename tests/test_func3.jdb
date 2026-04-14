@@ -1,0 +1,8 @@
+FUNCTION F()
+    PRINT "inside F"
+    RETURN 42
+END FUNCTION
+
+PRINT "calling F"
+PRINT F()
+PRINT "after F"

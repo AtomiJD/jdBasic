@@ -1,0 +1,4 @@
+FUNCTION F()
+    RETURN "hi"
+END FUNCTION
+PRINT F()

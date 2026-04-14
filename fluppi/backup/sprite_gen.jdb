@@ -1,0 +1,307 @@
+' ===================================================================
+' == AI Sprite Generator for RPG Characters
+' == Generates a character sprite + spritesheet using DALL-E 3
+' ==
+' == Usage: Set OPENAI_API_KEY environment variable, then run.
+' ==        Enter a character description when prompted.
+' ==
+' == Output: character.png       (single front view)
+' ==         spritesheet.png     (4-direction RPG spritesheet)
+' ===================================================================
+
+' --- Configuration ---
+SPRITE_SIZE = 64                    ' 32 or 64
+' Use absolute path based on script location
+OUTPUT_DIR$ = "D:/usr/dev/cc/fluppi/generated_sprites"
+API_URL$ = "https://api.openai.com/v1/images/generations"
+
+' --- Get API Key from environment ---
+API_KEY$ = GETENV$("OPENAI_API_KEY")
+IF API_KEY$ = "" THEN
+    PRINT "ERROR: Set the OPENAI_API_KEY environment variable first."
+    PRINT "  e.g.:  set OPENAI_API_KEY=sk-..."
+    END
+ENDIF
+
+' --- Setup output directory ---
+TRY : MKDIR(OUTPUT_DIR$) : CATCH : ENDTRY
+
+' --- Get character description from user ---
+PRINT "╔══════════════════════════════════════════════════╗"
+PRINT "║     AI RPG Sprite Generator (gpt-image-1)       ║"
+PRINT "╠══════════════════════════════════════════════════╣"
+PRINT "║  Describe your character:                       ║"
+PRINT "║  Examples:                                      ║"
+PRINT "║   - warrior with blue armor and sword           ║"
+PRINT "║   - female mage with purple robes               ║"
+PRINT "║   - skeleton archer                             ║"
+PRINT "║   - green slime monster                         ║"
+PRINT "╚══════════════════════════════════════════════════╝"
+PRINT
+INPUT "Character> ", char_desc$
+skip_gen = FALSE
+IF char_desc$ = "" THEN
+    filepath$ = OUTPUT_DIR$
+    front_file$ = filepath$ + "/char_front.png"
+    side_file$ = filepath$ + "/char_side.png"
+    back_file$ = filepath$ + "/char_back.png"
+    front_walk_file$ = filepath$ + "/char_front_walk.png"
+    side_walk_file$ = filepath$ + "/char_side_walk.png"
+    back_walk_file$ = filepath$ + "/char_back_walk.png"
+    skip_gen = TRUE
+ENDIF
+' --- Prompt template (no background tricks needed - gpt-image-1 has native transparency) ---
+FUNC MakePrompt$(desc$, direction$)
+    base$ = "A single pixel art RPG character sprite: " + desc$ + ". " + _
+            direction$ + ". " + _
+            "The character is centered, fills about 80% of the canvas. " + _
+            "The entire background is flat solid bright magenta (#FF00FF). " + _
+            "No ground, no floor, no scenery, character is floating on magenta. " + _
+            "Style: 16-bit SNES RPG sprite with bold dark outlines and clean blocky pixels. " + _
+            "Just ONE character, not a sprite sheet, not a reference."
+    RETURN base$
+ENDFUNC
+
+' --- Call DALL-E API ---
+FUNC GenerateSprite$(prompt$, filename$)
+    PRINT "  Generating: "; filename$; "..."
+    PRINT "  Prompt: "; LEFT$(prompt$, 80); "..."
+
+    ' Build JSON request for gpt-image-1
+    ' Use opaque background — we do our own flood-fill removal later,
+    ' because "transparent" mode also removes white/bright character parts.
+    request$ = "{" + _
+        """model"": ""gpt-image-1""," + _
+        """prompt"": """ + REPLACE$(prompt$, """", "\""") + """," + _
+        """n"": 1," + _
+        """size"": ""1024x1024""," + _
+        """background"": ""opaque""," + _
+        """output_format"": ""png""," + _
+        """quality"": ""medium""" + _
+    "}"
+
+    ' Set auth header (Content-Type is set by HTTP.POST$ 3rd arg)
+    HTTP.CLEARHEADERS
+    HTTP.SETHEADER "Authorization", "Bearer " + API_KEY$
+
+    ' Make API call with retry on 500 errors
+    response$ = ""
+    FOR attempt = 1 TO 3
+        TRY
+            response$ = HTTP.POST$(API_URL$, request$)
+        CATCH
+            PRINT "  ERROR: API call failed: "; ERRMSG$
+            IF attempt < 3 THEN PRINT "  Retrying..." : SLEEP 2000 : CONTINUE
+            RETURN ""
+        ENDTRY
+        status = HTTP.STATUSCODE()
+        IF status = 200 THEN EXITFOR
+        IF status >= 500 AND attempt < 3 THEN
+            PRINT "  Server error ("; status; "), retrying..."
+            SLEEP 2000
+        ELSE
+            PRINT "  ERROR: API returned status "; status
+            PRINT "  "; LEFT$(response$, 200)
+            RETURN ""
+        ENDIF
+    NEXT attempt
+
+    ' Parse JSON response to get base64 image data
+    json = JSON.PARSE$(response$)
+    TRY
+        b64_data$ = json{"data"}[0]{"b64_json"}
+    CATCH
+        PRINT "  ERROR: Could not parse response"
+        PRINT "  "; LEFT$(response$, 300)
+        RETURN ""
+    ENDTRY
+
+    ' Decode base64 to binary
+    bin_data$ = CODEC.BASE64_DECODE$(b64_data$)
+
+    ' Save to file
+    filepath$ = OUTPUT_DIR$ + "/" + filename$
+    BINWRITER filepath$, bin_data$
+
+    PRINT "  Saved: "; filepath$; " ("; LEN(bin_data$); " bytes)"
+    RETURN filepath$
+ENDFUNC
+
+IF NOT skip_gen THEN
+    ' --- Generate the views ---
+    PRINT
+    PRINT "=== Generating Character Sprites ==="
+    PRINT
+
+    PRINT "--- Idle Poses ---"
+    front_prompt$ = MakePrompt$(char_desc$, _
+        "Standing still, facing the viewer, front view, arms at sides, feet together")
+    front_file$ = GenerateSprite$(front_prompt$, "char_front.png")
+    IF front_file$ = "" THEN PRINT "Failed to generate front view." : END
+
+    side_prompt$ = MakePrompt$(char_desc$, _
+        "Side profile facing right, standing still, arms at sides")
+    side_file$ = GenerateSprite$(side_prompt$, "char_side.png")
+
+    back_prompt$ = MakePrompt$(char_desc$, _
+        "Rear view, facing AWAY from camera, standing still. " + _
+        "We see the back of the head and all clothing from behind")
+    back_file$ = GenerateSprite$(back_prompt$, "char_back.png")
+
+    PRINT "--- Walk Poses ---"
+    front_walk$ = MakePrompt$(char_desc$, _
+        "Walking forward, facing the viewer, LEFT foot stepping forward, " + _
+        "slight lean, arms swinging naturally mid-stride")
+    front_walk_file$ = GenerateSprite$(front_walk$, "char_front_walk.png")
+
+    side_walk$ = MakePrompt$(char_desc$, _
+        "Side profile facing right, mid-stride walking pose, " + _
+        "left leg forward right leg back, arms swinging")
+    side_walk_file$ = GenerateSprite$(side_walk$, "char_side_walk.png")
+
+    back_walk$ = MakePrompt$(char_desc$, _
+        "Rear view walking away from camera, LEFT foot stepping forward, " + _
+        "arms swinging, we see the back of the head and clothing")
+    back_walk_file$ = GenerateSprite$(back_walk$, "char_back_walk.png")
+ENDIF
+PRINT
+PRINT "=== Building Spritesheet ==="
+
+' --- Build 3x4 spritesheet (RPG Maker format) ---
+' Rows: Down(front), Left, Right, Up(back)
+' Cols: idle, walk1, walk2
+S = SPRITE_SIZE
+' Use a large screen for loading/processing (COLOR_TO_ALPHA needs adequate renderer)
+SCREEN 1024, 1024, "Spritesheet Builder"
+CLS 0, 0, 0
+
+' --- Load all images and remove magenta background ---
+PRINT "Loading sprites and removing backgrounds..."
+
+front_img = -1
+TRY
+    front_img = GFX.LOADIMAGE(front_file$)
+    GFX.COLOR_TO_ALPHA front_img, 50
+    PRINT "  Front OK"
+CATCH
+    PRINT "  Front FAIL: "; ERRMSG$
+ENDTRY
+IF front_img < 0 THEN
+    PRINT "Front image required!"
+    END
+ENDIF
+
+side_img = -1
+TRY
+    side_img = GFX.LOADIMAGE(side_file$)
+    GFX.COLOR_TO_ALPHA side_img, 50
+    PRINT "  Side OK"
+CATCH
+    PRINT "  Side skip: "; ERRMSG$
+ENDTRY
+
+back_img = -1
+TRY
+    back_img = GFX.LOADIMAGE(back_file$)
+    GFX.COLOR_TO_ALPHA back_img, 50
+    PRINT "  Back OK"
+CATCH
+    PRINT "  Back skip: "; ERRMSG$
+ENDTRY
+
+front_walk_img = -1
+TRY
+    front_walk_img = GFX.LOADIMAGE(front_walk_file$)
+    GFX.COLOR_TO_ALPHA front_walk_img, 50
+    PRINT "  Front-walk OK"
+CATCH
+    PRINT "  Front-walk skip: "; ERRMSG$
+ENDTRY
+
+side_walk_img = -1
+TRY
+    side_walk_img = GFX.LOADIMAGE(side_walk_file$)
+    GFX.COLOR_TO_ALPHA side_walk_img, 50
+    PRINT "  Side-walk OK"
+CATCH
+    PRINT "  Side-walk skip: "; ERRMSG$
+ENDTRY
+
+back_walk_img = -1
+TRY
+    back_walk_img = GFX.LOADIMAGE(back_walk_file$)
+    GFX.COLOR_TO_ALPHA back_walk_img, 50
+    PRINT "  Back-walk OK"
+CATCH
+    PRINT "  Back-walk skip: "; ERRMSG$
+ENDTRY
+
+' Stay on the 1024x1024 screen — switching SCREEN destroys loaded textures!
+CLS 0, 0, 0
+
+' Fallbacks: if walk frame missing, use idle
+IF front_walk_img < 0 THEN front_walk_img = front_img
+IF side_walk_img < 0 THEN side_walk_img = side_img
+IF back_img < 0 THEN back_img = front_img
+IF back_walk_img < 0 THEN back_walk_img = back_img
+
+' --- Draw spritesheet ---
+' Layout: 3 cols (idle, walk-A, walk-B) x 4 rows (down, left, right, up)
+' walk-B = walk-A flipped horizontally (simulates opposite foot)
+
+' Row 0: Down (front view)
+GFX.DRAWIMAGE front_img, 0, 0, S, S
+GFX.DRAWIMAGE front_walk_img, S, 0, S, S
+GFX.DRAWIMAGE_EX front_walk_img, S*2, 0, S, S, 0, TRUE
+
+' Row 1: Left (side flipped)
+use_side = side_img : use_side_walk = side_walk_img
+IF use_side < 0 THEN use_side = front_img : use_side_walk = front_walk_img
+GFX.DRAWIMAGE_EX use_side, 0, S, S, S, 0, TRUE
+GFX.DRAWIMAGE_EX use_side_walk, S, S, S, S, 0, TRUE
+GFX.DRAWIMAGE_EX use_side, S*2, S, S, S, 0, TRUE
+
+' Row 2: Right (side as-is)
+GFX.DRAWIMAGE use_side, 0, S*2, S, S
+GFX.DRAWIMAGE use_side_walk, S, S*2, S, S
+GFX.DRAWIMAGE use_side, S*2, S*2, S, S
+
+' Row 3: Up (back view)
+GFX.DRAWIMAGE back_img, 0, S*3, S, S
+GFX.DRAWIMAGE back_walk_img, S, S*3, S, S
+GFX.DRAWIMAGE_EX back_walk_img, S*2, S*3, S, S, 0, TRUE
+
+' Save: screenshot the spritesheet region only (top-left S*3 x S*4)
+INPUT "Give a filename:", sheetname$
+sheet_path$ = OUTPUT_DIR$ + "/"+ sheetname$ + ".png"
+temp_path$ = OUTPUT_DIR$ + "/"+ sheetname$ + "_tmp.png"
+GFX.SAVE_SCREENSHOT temp_path$, 0, 0, S * 3, S * 4
+SCREENFLIP
+
+' Reload, flood-fill remove black background, save with transparency
+sheet_img_tmp = GFX.LOADIMAGE(temp_path$)
+GFX.COLOR_TO_ALPHA sheet_img_tmp, 0, 0, 0, 15
+GFX.SAVE_IMAGE sheet_img_tmp, sheet_path$
+GFX.FREEIMAGE sheet_img_tmp
+PRINT "Spritesheet saved: "; sheet_path$
+
+' --- Show the result ---
+PRINT
+PRINT "=== Preview ==="
+SETFONT "C:/Windows/Fonts/arial.ttf", 14
+preview_scale = 4
+
+SCREEN S * 3 * preview_scale + 20, S * 4 * preview_scale + 60, "Generated Spritesheet Preview"
+CLS 40, 40, 60
+
+sheet_img = GFX.LOADIMAGE(sheet_path$)
+GFX.DRAWIMAGE sheet_img, 10, 40, _
+    S * 3 * preview_scale, _
+    S * 4 * preview_scale
+
+TEXT 10, 10, "Character: " + char_desc$, 255, 255, 255
+TEXT 10, S * 4 * preview_scale + 45, "Press any key to exit", 180, 180, 180
+
+SCREENFLIP
+WAITKEY$()
+END

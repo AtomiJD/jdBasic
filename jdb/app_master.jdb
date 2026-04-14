@@ -1,0 +1,389 @@
+' ==============================================================================
+'  JD-BASIC SEQUENCER STUDIO
+' ==============================================================================
+'  A full GUI environment for live coding music.
+' ==============================================================================
+
+' --- FILE I/O ---
+EXPORT SUB LOADCONFIG(filename$)
+    TRY
+        CONFIG = JSON.PARSE$(TXTREADER$(filename$))
+        PRINT "Configuration loaded from " + filename$
+    CATCH
+        PRINT "Error loading file: " + ERRMSG$
+    ENDTRY
+ENDSUB
+
+FUNC FIND_ITEM(clist, key$)
+    key$ = UCASE$(key$)
+    ' Is it a numeric ID?
+    IF REGEX.MATCH("^\d+$", key$) THEN
+        id = VAL(key$)
+        FOR EACH item IN clist
+            IF item{"id"} = id THEN RETURN item
+        NEXT
+    ELSE
+        FOR EACH item IN clist
+            IF UCASE$(item{"name"}) = key$ THEN RETURN item
+        NEXT        
+    ENDIF
+    RETURN {}
+ENDFUNC
+
+DIM CONFIG AS MAP
+
+SCREEN 1920, 1080, "Mixme", 1.2
+SOUND.INIT()
+SOUND.BPM(120)
+SOUND.RESET 
+LOADCONFIG "sq_data.json"
+
+' ==============================================================================
+'  DATA DEFINITIONS & PRESETS
+' ==============================================================================
+
+' --- 1. Instrument Presets ---
+DIM InstPresets AS MAP 
+InstPresets = CONFIG{"instruments"}
+InstNames = []
+FOR EACH inst in InstPresets
+    InstNames = APPEND(InstNames, inst{"name"})
+NEXT
+
+' --- 2. Pattern Presets ---
+PatPresets = CONFIG{"sequences"}
+PatNames = []
+FOR EACH inst in PatPresets
+    PatNames = APPEND(PatNames, inst{"name"})
+NEXT
+
+' --- 3. Track State Initialization ---
+TYPE TrackState
+    Name AS STRING
+    Mute AS INTEGER
+    Gain AS DOUBLE
+    Pan AS DOUBLE
+    Pattern AS STRING
+    
+    ' Voice Settings
+    Wave AS STRING
+    Att AS DOUBLE
+    Dec AS DOUBLE
+    Sus AS DOUBLE
+    Rel AS DOUBLE
+    Cutoff AS DOUBLE
+    
+    ' FX Settings
+    LFOSpeed As DOUBLE
+    LFODepth As DOUBLE
+    FMAmt AS DOUBLE
+    FMRat AS DOUBLE
+    BitDepth AS DOUBLE
+    BitRate AS DOUBLE
+    RingFreq AS DOUBLE
+    RingMix AS DOUBLE
+    EQLow AS DOUBLE
+    EQMid AS DOUBLE
+    EQHigh AS DOUBLE
+    UnisonVoices AS DOUBLE
+    UnisonDetune AS DOUBLE
+    UnisonSpread AS DOUBLE
+
+    ' UI State
+    SelectedInst AS INTEGER
+    SelectedPat AS INTEGER
+ENDTYPE
+
+DIM Tracks[8] AS TrackState
+
+FOR i = 0 TO 7
+    Tracks[i].Name = "Track " + STR$(i)
+    Tracks[i].Mute = FALSE
+    Tracks[i].Gain = 1.0
+    Tracks[i].Pan = 0.5
+    Tracks[i].Pattern = "~"
+    
+    ' Default Synth Settings
+    Tracks[i].Wave = "SINE"
+    Tracks[i].Att = 0.01
+    Tracks[i].Dec = 0.1
+    Tracks[i].Sus = 0.8
+    Tracks[i].Rel = 0.1
+    Tracks[i].Cutoff = 20000
+    
+    ' FX Defaults
+    Tracks[i].FMRat = 1.0
+    Tracks[i].BitRate = 1.0
+NEXT
+
+' --- 4. Global State ---
+DIM MasterBPM = 120
+DIM DelayActive = FALSE
+DIM DelayTime = 300
+DIM DelayFeed = 0.4
+DIM DelayMix = 0.3
+DIM GlobalDist = 0.0
+
+' ==============================================================================
+'  HELPER SUBROUTINES
+' ==============================================================================
+
+SUB ApplyTrack(id)
+    ' 1. Voice
+    SOUND.VOICE id, Tracks[id].Wave, Tracks[id].Att, Tracks[id].Dec, Tracks[id].Sus, Tracks[id].Rel
+    
+    ' 2. Basic FX
+    SOUND.FILTER id, Tracks[id].Cutoff
+    SOUND.PAN id, Tracks[id].Pan
+    
+    ' 3. Mute Logic (Gain 0 if muted)
+    finalGain = Tracks[id].Gain
+    IF Tracks[id].Mute THEN finalGain = 0.0
+    SOUND.GAIN id, finalGain
+    
+    ' 4. Advanced FX
+    SOUND.FM id, Tracks[id].FMAmt, Tracks[id].FMRat
+    SOUND.BITCRUSH id, Tracks[id].BitDepth, Tracks[id].BitRate
+    SOUND.RINGMOD id, Tracks[id].RingFreq, Tracks[id].RingMix
+    
+    ' 5. Sequencer
+    ' Use "VOICE" so it respects the settings above
+    SOUND.SEQ id, Tracks[id].Pattern, "VOICE"
+ENDSUB
+
+SUB LoadInstrument(trackId, instName$)
+    data = FIND_ITEM(InstPresets, instName$)
+    Tracks[trackId].Wave = data{"waveform"}
+    Tracks[trackId].Att  = data{"adsr"}[0]
+    Tracks[trackId].Dec  = data{"adsr"}[1]
+    Tracks[trackId].Sus  = data{"adsr"}[2]
+    Tracks[trackId].Rel  = data{"adsr"}[3]
+    Tracks[trackId].Cutoff = data{"filter"}
+    
+    ' Reset FX
+    Tracks[trackId].FMAmt = 0
+    Tracks[trackId].BitDepth = 0
+    
+    ' Load optional FX if present
+    IF MAP.EXISTS(data, "FM_Amt") THEN 
+        Tracks[trackId].FMAmt = data{"fm"}[0]
+        Tracks[trackId].FMRat = data{"fm"}[1]
+    ENDIF
+    IF MAP.EXISTS(data, "Bit") THEN 
+        Tracks[trackId].BitDepth = data{"bitcrush"}[0]
+        Tracks[trackId].BitRate = data{"bitcrush"}[1]
+    ENDIF
+    
+    ApplyTrack(trackId)
+ENDSUB
+
+' ==============================================================================
+'  MAIN LOOP
+' ==============================================================================
+
+DO
+    CLS
+   
+    ' --- Start Main Window ---
+    GUI.BEGIN "Sequencer Studio", 0, 0, 1920, 1080
+    
+    ' --- Top Bar: Transport & Master FX ---
+    GUI.TEXT "MASTER CONTROL"
+    GUI.SAME_LINE
+    IF GUI.BUTTON("STOP / RESET") THEN
+        SOUND.RESET
+        SOUND.BPM MasterBPM ' Re-apply BPM after reset
+    ENDIF
+    
+    GUI.SEPARATOR
+    
+    ' Global Controls
+    GUI.BEGIN_TABLE "MasterTable", 5
+        GUI.TABLE_NEXT_ROW
+        
+        GUI.TABLE_NEXT_COLUMN
+        OldBPM = MasterBPM
+        MasterBPM = GUI.SLIDER("BPM", MasterBPM, 60, 240)
+        IF OldBPM <> MasterBPM THEN SOUND.BPM MasterBPM
+        
+        GUI.TABLE_NEXT_COLUMN
+        OldDist = GlobalDist
+        GlobalDist = GUI.SLIDER("Distortion", GlobalDist, 0.0, 5.0)
+        IF OldDist <> GlobalDist THEN SOUND.DISTORTION GlobalDist
+        
+        GUI.TABLE_NEXT_COLUMN
+        OldDActive = DelayActive
+        DelayActive = GUI.CHECKBOX("Delay On", DelayActive)
+        
+        GUI.TABLE_NEXT_COLUMN
+        DelayTime = GUI.SLIDER("D.Time", DelayTime, 10, 1000)
+        
+        GUI.TABLE_NEXT_COLUMN
+        DelayMix = GUI.SLIDER("D.Mix", DelayMix, 0.0, 1.0)
+        
+        ' Update Delay if any param changed
+        IF OldDActive <> DelayActive OR TRUE THEN ' Optimization skipped for brevity
+            SOUND.DELAY DelayActive, DelayTime, 0.5, DelayMix
+        ENDIF
+    GUI.END_TABLE
+    
+    GUI.SEPARATOR
+    'GUI.SPACING
+    
+    ' --- Waveform Visualizer ---
+    WaveData = SOUND.GET_WAVE()
+    GUI.PLOT_LINES("", WaveData, "Master Output", -1.0, 1.0)
+    
+    GUI.SEPARATOR
+    'GUI.SPACING
+    
+    ' --- The Tracks Table ---
+    ' Columns: Controls, Instrument, Pattern, Voice Config, Effects
+    IF GUI.BEGIN_TABLE("TracksTable", 5, GUI.FLAG("BORDERS"), 0, 0) THEN
+        
+        ' Setup Columns
+        GUI.TABLE_SETUP_COLUMN "Track / Mix", 0, 100
+        GUI.TABLE_SETUP_COLUMN "Presets", 0, 150
+        GUI.TABLE_SETUP_COLUMN "Pattern Editor", 0, 200
+        GUI.TABLE_SETUP_COLUMN "Voice Design (ADSR/Filter)", 0, 250
+        GUI.TABLE_SETUP_COLUMN "FX Rack", 0, 200
+        GUI.TABLE_HEADERS_ROW
+        
+        FOR i = 0 TO 7
+            GUI.PUSH_ID i ' Unique ID for each row
+            GUI.TABLE_NEXT_ROW
+            
+            ' --- COL 1: Mix ---
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT "Track " + i
+            
+            ' Mute Button (Toggle)
+            oldMute = Tracks[i].Mute
+            Tracks[i].Mute = GUI.CHECKBOX("Mute", Tracks[i].Mute)
+            
+            ' Gain Slider
+            GUI.SET_NEXT_ITEM_WIDTH 80
+            oldGain = Tracks[i].Gain
+            Tracks[i].Gain = GUI.SLIDER("Vol", Tracks[i].Gain, 0.0, 2.0)
+            
+            ' Pan Slider
+            GUI.SET_NEXT_ITEM_WIDTH 80
+            oldPan = Tracks[i].Pan
+            Tracks[i].Pan = GUI.SLIDER("Pan", Tracks[i].Pan, 0.0, 1.0)
+            
+            ' Apply updates if mix changed
+            IF oldMute <> Tracks[i].Mute OR oldGain <> Tracks[i].Gain OR oldPan <> Tracks[i].Pan THEN
+                ApplyTrack(i)
+            ENDIF
+            
+            ' --- COL 2: Presets ---
+            GUI.TABLE_NEXT_COLUMN
+            GUI.SET_NEXT_ITEM_WIDTH 130
+            
+            ' Instrument Dropdown
+            prevInst = Tracks[i].SelectedInst
+            Tracks[i].SelectedInst = GUI.COMBO("Sound", Tracks[i].SelectedInst, InstNames)
+            IF prevInst <> Tracks[i].SelectedInst THEN
+                LoadInstrument(i, InstNames[Tracks[i].SelectedInst])
+            ENDIF
+            
+            'GUI.SPACING
+            
+            ' Pattern Dropdown
+            prevPat = Tracks[i].SelectedPat
+            Tracks[i].SelectedPat = GUI.COMBO("Rhythm", Tracks[i].SelectedPat, PatNames)
+            IF prevPat <> Tracks[i].SelectedPat THEN
+                Tracks[i].Pattern = PatPresets{PatNames[Tracks[i].SelectedPat]}
+                ApplyTrack(i)
+            ENDIF
+            
+            ' --- COL 3: Pattern Editor ---
+            GUI.TABLE_NEXT_COLUMN
+            GUI.SET_NEXT_ITEM_WIDTH 180
+            oldPat$ = Tracks[i].Pattern
+            Tracks[i].Pattern = GUI.INPUT("##Pat", Tracks[i].Pattern)
+            ' Apply if user pressed Enter or clicked away
+            IF GUI.ITEM_DEACTIVATED_AFTER_EDIT() THEN
+                ApplyTrack(i)
+            ENDIF
+            GUI.TEXT "Current: " + Tracks[i].Pattern
+            
+            ' --- COL 4: Voice Design ---
+            GUI.TABLE_NEXT_COLUMN
+            needUpdate = FALSE
+            
+            ' Waveform Selector (Manual)
+            waves = ["SINE", "SQUARE", "SAW", "TRIANGLE", "NOISE"]
+            ' Simple cycle button for wave
+            IF GUI.BUTTON(Tracks[i].Wave) THEN
+                ' Cycle logic here would be complex without index lookup, keeping simple
+            ENDIF
+            GUI.SAME_LINE
+            GUI.TEXT "Wave"
+            
+            GUI.SET_NEXT_ITEM_WIDTH 60
+            oldCut = Tracks[i].Cutoff
+            Tracks[i].Cutoff = GUI.SLIDER("Cutoff", Tracks[i].Cutoff, 100, 20000)
+            IF oldCut <> Tracks[i].Cutoff THEN needUpdate = TRUE
+            
+            ' ADSR sliders (compact)
+            GUI.SET_NEXT_ITEM_WIDTH 50
+            oldA = Tracks[i].Att
+            Tracks[i].Att = GUI.SLIDER("A", Tracks[i].Att, 0.001, 1.0)
+            GUI.SAME_LINE
+            oldD = Tracks[i].Dec
+            Tracks[i].Dec = GUI.SLIDER("D", Tracks[i].Dec, 0.001, 1.0)
+            
+            GUI.SET_NEXT_ITEM_WIDTH 50
+            oldS = Tracks[i].Sus
+            Tracks[i].Sus = GUI.SLIDER("S", Tracks[i].Sus, 0.0, 1.0)
+            GUI.SAME_LINE
+            oldR = Tracks[i].Rel
+            Tracks[i].Rel = GUI.SLIDER("R", Tracks[i].Rel, 0.001, 2.0)
+            
+            IF oldA <> Tracks[i].Att OR oldD <> Tracks[i].Dec OR oldS <> Tracks[i].Sus OR oldR <> Tracks[i].Rel THEN
+                needUpdate = TRUE
+            ENDIF
+            
+            ' --- COL 5: FX Rack ---
+            GUI.TABLE_NEXT_COLUMN
+            
+            ' FM
+            GUI.TEXT "FM:"
+            GUI.SAME_LINE
+            GUI.SET_NEXT_ITEM_WIDTH 60
+            oldFM = Tracks[i].FMAmt
+            Tracks[i].FMAmt = GUI.SLIDER("##fm", Tracks[i].FMAmt, 0.0, 5.0)
+            
+            ' Bitcrush
+            GUI.TEXT "Bit:"
+            GUI.SAME_LINE
+            GUI.SET_NEXT_ITEM_WIDTH 60
+            oldBit = Tracks[i].BitDepth
+            Tracks[i].BitDepth = GUI.SLIDER("##bit", Tracks[i].BitDepth, 0.0, 16.0)
+            
+            ' Ring Mod
+            GUI.TEXT "Ring:"
+            GUI.SAME_LINE
+            GUI.SET_NEXT_ITEM_WIDTH 60
+            oldRing = Tracks[i].RingMix
+            Tracks[i].RingMix = GUI.SLIDER("##rng", Tracks[i].RingMix, 0.0, 1.0)
+            
+            IF oldFM <> Tracks[i].FMAmt OR oldBit <> Tracks[i].BitDepth OR oldRing <> Tracks[i].RingMix THEN
+                needUpdate = TRUE
+            ENDIF
+            
+            ' Apply updates if any slider moved
+            IF needUpdate THEN ApplyTrack(i)
+            
+            GUI.POP_ID
+        NEXT
+        
+        GUI.END_TABLE
+    ENDIF
+    
+    GUI.END ' End Main Window
+    SCREENFLIP
+    
+    SLEEP 10 ' CPU Saver
+LOOP

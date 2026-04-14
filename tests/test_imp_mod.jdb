@@ -1,0 +1,11 @@
+' Tiny module used by comprehensive_test.jdb to verify that
+' IMPORT works in EXECUTE/EVAL/REPL contexts.
+EXPORT MODULE TEST_IMP_MOD
+
+EXPORT FUNC ADD(a, b)
+    RETURN a + b
+ENDFUNC
+
+EXPORT FUNC TWICE(x)
+    RETURN x * 2
+ENDFUNC

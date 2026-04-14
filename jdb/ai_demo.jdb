@@ -1,0 +1,320 @@
+' ================================================================
+'  jdBasic AI Studio - Interactive Digit Recognition
+' ================================================================
+
+SCREEN 1280, 720, "jdBasic AI Studio"
+GUI.THEME "DARK"
+
+' ── Canvas (28x28) ───────────────────────────────────────────────
+DIM CS = 28
+DIM canvas AS ARRAY
+FOR row = 0 TO CS - 1
+  LET cr = []
+  FOR col = 0 TO CS - 1
+    PUSH cr, 0.0
+  NEXT col
+  PUSH canvas, cr
+NEXT row
+
+' ── Predictions ──────────────────────────────────────────────────
+DIM preds = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+DIM pred_digit = -1
+DIM pred_conf = 0.0
+DIM inf_ms = 0.0
+
+' ── State ────────────────────────────────────────────────────────
+DIM brush = 2
+DIM auto_cls = TRUE
+DIM need_cls = FALSE
+DIM need_run = FALSE
+DIM show_tensor = TRUE
+DIM show_about = FALSE
+DIM frame = 0
+
+' ── ONNX Model ───────────────────────────────────────────────────
+DIM model_id = 0
+DIM model_ok = FALSE
+DIM status_text = "Simulation mode"
+TRY
+  model_id = AI.LOAD("models\mnist.onnx")
+  model_ok = TRUE
+  status_text = "ONNX: mnist.onnx"
+CATCH
+  model_ok = FALSE
+ENDTRY
+
+' ── Main Loop ────────────────────────────────────────────────────
+DIM running = TRUE
+DO WHILE running
+  CLS 25, 25, 35
+  frame = frame + 1
+
+  ' ── Menu Bar ───────────────────────────────────────────────
+  IF GUI.BEGIN_MAIN_MENU_BAR() THEN
+    IF GUI.BEGIN_MENU("File") THEN
+      IF GUI.MENU_ITEM("Clear Canvas") THEN need_cls = TRUE
+      GUI.SEPARATOR
+      IF GUI.MENU_ITEM("Exit") THEN running = FALSE
+      GUI.END_MENU()
+    ENDIF
+    IF GUI.BEGIN_MENU("Theme") THEN
+      IF GUI.MENU_ITEM("Dark") THEN GUI.THEME "DARK"
+      IF GUI.MENU_ITEM("Light") THEN GUI.THEME "LIGHT"
+      IF GUI.MENU_ITEM("Classic") THEN GUI.THEME "CLASSIC"
+      GUI.END_MENU()
+    ENDIF
+    IF GUI.BEGIN_MENU("Help") THEN
+      IF GUI.MENU_ITEM("About") THEN show_about = TRUE
+      GUI.END_MENU()
+    ENDIF
+    GUI.END_MAIN_MENU_BAR()
+  ENDIF
+
+  ' ── Drawing Window ─────────────────────────────────────────
+  DIM cell = 11
+  DIM cpx = CS * cell
+  IF GUI.BEGIN("Draw a Digit", 10, 40, cpx + 50, cpx + 140) THEN
+    GUI.TEXT "Left: draw  |  Right: erase"
+
+    DIM bx = 20
+    DIM by = 90
+
+    ' Render canvas
+    FOR r = 0 TO CS - 1
+      FOR c = 0 TO CS - 1
+        DIM v = canvas[r][c]
+        IF v > 0.01 THEN
+          DIM g = INT(v * 255)
+          DRAWCOLOR g, g, g
+          RECT bx + c * cell, by + r * cell, cell - 1, cell - 1, TRUE
+        ENDIF
+      NEXT c
+    NEXT r
+    DRAWCOLOR 60, 60, 80
+    RECT bx, by, cpx, cpx, FALSE
+
+    ' Mouse drawing (inline for global access)
+    DIM mx = MOUSEX() - bx
+    DIM my = MOUSEY() - by
+    IF mx >= 0 AND mx < cpx AND my >= 0 AND my < cpx THEN
+      DIM cx = mx / cell
+      DIM cy = my / cell
+      IF MOUSEB(1) THEN
+        FOR dr = 0 TO CS - 1
+          FOR dc = 0 TO CS - 1
+            DIM dx = dc - cx
+            DIM dy = dr - cy
+            DIM dd = SQR(dx * dx + dy * dy)
+            IF dd < brush THEN
+              DIM ii = 1.0 - dd / brush
+              IF ii > canvas[dr][dc] THEN canvas[dr][dc] = ii
+            ENDIF
+          NEXT dc
+        NEXT dr
+        IF auto_cls THEN need_run = TRUE
+      ENDIF
+      IF MOUSEB(3) THEN
+        FOR er = INT(cy) - 2 TO INT(cy) + 2
+          FOR ec = INT(cx) - 2 TO INT(cx) + 2
+            IF er >= 0 AND er < CS AND ec >= 0 AND ec < CS THEN
+              canvas[er][ec] = 0.0
+            ENDIF
+          NEXT ec
+        NEXT er
+        IF auto_cls THEN need_run = TRUE
+      ENDIF
+      DRAWCOLOR 255, 255, 0
+      CIRCLE bx + cx * cell, by + cy * cell, brush * cell, FALSE
+    ENDIF
+
+    GUI.SEPARATOR
+    brush = GUI.SLIDER("Brush", brush, 1, 4)
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Clear") THEN need_cls = TRUE
+    GUI.SAME_LINE
+    IF GUI.BUTTON("Classify!") THEN need_run = TRUE
+    auto_cls = GUI.CHECKBOX("Auto-classify", auto_cls)
+  ENDIF
+  GUI.END
+
+  ' ── Results Window ─────────────────────────────────────────
+  IF GUI.BEGIN("Classification", cpx + 70, 40, 350, 440) THEN
+    IF pred_digit >= 0 THEN
+      GUI.SEPARATOR_TEXT "Prediction"
+      GUI.TEXT "Digit: " + STR(pred_digit)
+      GUI.TEXT "Confidence: " + STR(INT(pred_conf * 1000) / 10) + "%"
+      GUI.TEXT "Time: " + STR(inf_ms) + " ms"
+    ELSE
+      GUI.TEXT "Draw a digit to classify..."
+    ENDIF
+    IF model_ok THEN
+      GUI.TEXT "Engine: ONNX Runtime"
+    ELSE
+      GUI.TEXT "Engine: Heuristic"
+    ENDIF
+
+    GUI.SEPARATOR_TEXT "Probabilities"
+    FOR d = 0 TO 9
+      DIM p = preds[d]
+      GUI.PROGRESS p, STR(d) + ": " + STR(INT(p * 1000) / 10) + "%"
+    NEXT d
+
+    IF pred_digit >= 0 THEN
+      GUI.SEPARATOR_TEXT "Top 3"
+      DIM top = AI.TOPK(preds, 3)
+      IF GUI.BEGIN_TABLE("top", 3) THEN
+        GUI.TABLE_SETUP_COLUMN "Rank"
+        GUI.TABLE_SETUP_COLUMN "Digit"
+        GUI.TABLE_SETUP_COLUMN "Score"
+        GUI.TABLE_HEADERS_ROW
+        FOR ti = 0 TO 2
+          GUI.TABLE_NEXT_ROW
+          GUI.TABLE_NEXT_COLUMN
+          GUI.TEXT "#" + STR(ti + 1)
+          GUI.TABLE_NEXT_COLUMN
+          GUI.TEXT STR(INT(top[ti][0]))
+          GUI.TABLE_NEXT_COLUMN
+          GUI.TEXT STR(INT(top[ti][1] * 1000) / 10) + "%"
+        NEXT ti
+        GUI.END_TABLE
+      ENDIF
+    ENDIF
+  ENDIF
+  GUI.END
+
+  ' ── Tensor View ────────────────────────────────────────────
+  IF show_tensor THEN
+    IF GUI.BEGIN("Tensor Inspector", cpx + 70, 490, 350, 210) THEN
+      GUI.TEXT "Shape: [1, 1, 28, 28] = 784 values"
+      DIM fv AS ARRAY
+      DIM psum = 0.0
+      DIM pmax = 0.0
+      DIM pcnt = 0
+      FOR si = 0 TO CS - 1
+        FOR sj = 0 TO CS - 1
+          DIM sv = canvas[si][sj]
+          PUSH fv, sv
+          psum = psum + sv
+          IF sv > pmax THEN pmax = sv
+          IF sv > 0.1 THEN pcnt = pcnt + 1
+        NEXT sj
+      NEXT si
+      DIM pd AS ARRAY
+      FOR pi = 0 TO LEN(fv) - 1 STEP 4
+        PUSH pd, fv[pi]
+      NEXT pi
+      GUI.PLOT_LINES "Pixels", pd, "Tensor", 0.0, 1.0
+      GUI.TEXT "Active: " + STR(pcnt) + "/784  Energy: " + STR(INT(psum * 10) / 10)
+    ENDIF
+    GUI.END
+  ENDIF
+
+  ' ── Status Bar ─────────────────────────────────────────────
+  DIM sf = GUI.FLAG("NO_TITLEBAR") + GUI.FLAG("NO_RESIZE") + GUI.FLAG("NO_MOVE") + GUI.FLAG("NO_SCROLLBAR")
+  IF GUI.BEGIN("##status", 0, 695, 1280, 25, TRUE, sf) THEN
+    GUI.TEXT status_text + "  |  Frame: " + STR(frame)
+  ENDIF
+  GUI.END
+
+  ' ── About Popup ────────────────────────────────────────────
+  IF show_about THEN GUI.OPEN_POPUP("About")
+  IF GUI.BEGIN_POPUP_MODAL("About", TRUE) THEN
+    GUI.TEXT "jdBasic AI Studio v1.0"
+    GUI.SEPARATOR
+    GUI.TEXT "Interactive Digit Recognition"
+    GUI.TEXT "Draw digits 0-9 and watch AI classify."
+    GUI.TEXT ""
+    GUI.TEXT "Place mnist.onnx for real inference."
+    GUI.SEPARATOR
+    IF GUI.BUTTON("OK") THEN
+      GUI.CLOSE_CURRENT_POPUP
+      show_about = FALSE
+    ENDIF
+    GUI.END_POPUP
+  ENDIF
+
+  ' ── Process actions (after GUI) ────────────────────────────
+  IF need_cls THEN
+    FOR cr2 = 0 TO CS - 1
+      FOR cc2 = 0 TO CS - 1
+        canvas[cr2][cc2] = 0.0
+      NEXT cc2
+    NEXT cr2
+    FOR ci = 0 TO 9
+      preds[ci] = 0.0
+    NEXT ci
+    pred_digit = -1
+    pred_conf = 0.0
+    need_cls = FALSE
+  ENDIF
+
+  IF need_run THEN
+    DIM t0 = GFX.TICKS()
+    IF model_ok THEN
+      ' Real ONNX inference — flatten canvas, model knows shape [1,1,28,28]
+      DIM flat AS ARRAY
+      FOR fr = 0 TO CS - 1
+        FOR fc = 0 TO CS - 1
+          PUSH flat, canvas[fr][fc]
+        NEXT fc
+      NEXT fr
+      DIM raw = AI.RUN(model_id, flat)
+      DIM out AS ARRAY
+      IF TYPEOF(raw[0]) = "ARRAY" THEN
+        out = raw[0]
+      ELSE
+        out = raw
+      ENDIF
+      preds = AI.SOFTMAX(out)
+    ELSE
+      ' Heuristic simulation
+      DIM logits = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      DIM tot = 0.0
+      DIM tp2 = 0.0
+      DIM bp2 = 0.0
+      DIM lp2 = 0.0
+      DIM rp2 = 0.0
+      DIM cp2 = 0.0
+      FOR hr = 0 TO CS - 1
+        FOR hc = 0 TO CS - 1
+          DIM hv = canvas[hr][hc]
+          tot = tot + hv
+          IF hr < 14 THEN tp2 = tp2 + hv
+          IF hr >= 14 THEN bp2 = bp2 + hv
+          IF hc < 14 THEN lp2 = lp2 + hv
+          IF hc >= 14 THEN rp2 = rp2 + hv
+          IF hr >= 8 AND hr < 20 AND hc >= 8 AND hc < 20 THEN cp2 = cp2 + hv
+        NEXT hc
+      NEXT hr
+      IF tot > 3 THEN
+        DIM nn = tot + 0.001
+        DIM sh = 1.0 - ABS(lp2 / nn - rp2 / nn)
+        DIM sv2 = 1.0 - ABS(tp2 / nn - bp2 / nn)
+        DIM cn = cp2 / nn
+        logits[0] = sh * 2 + cn * 3 + sv2
+        logits[1] = (rp2 / nn) * 3 - cn * 2
+        logits[2] = (tp2 / nn) * 2 + (rp2 / nn)
+        logits[3] = (rp2 / nn) * 3
+        logits[4] = (tp2 / nn) * 3 - bp2 / nn
+        logits[5] = (lp2 / nn) * 2 + (bp2 / nn)
+        logits[6] = (lp2 / nn) * 2 + cn
+        logits[7] = (tp2 / nn) * 4 - bp2 / nn
+        logits[8] = sh * 3 + sv2 * 2 + cn
+        logits[9] = (tp2 / nn) * 2 + rp2 / nn
+      ENDIF
+      preds = AI.SOFTMAX(logits)
+    ENDIF
+    pred_digit = AI.ARGMAX(preds)
+    pred_conf = preds[pred_digit]
+    inf_ms = GFX.TICKS() - t0
+    need_run = FALSE
+  ENDIF
+
+  SCREENFLIP
+  SLEEP 10
+  IF INKEY$() = CHR(27) THEN running = FALSE
+LOOP
+
+IF model_ok THEN AI.FREE model_id
+GFX.CLOSE
+PRINT "AI Studio closed."

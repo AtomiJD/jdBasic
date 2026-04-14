@@ -1,0 +1,239 @@
+' TensorFlow Tier 2 Training Test (FINAL SCALAR VERSION)
+
+DLLIMPORT "tffunc"
+
+PRINT "--- Building and Training a Graph (FINAL SCALAR VERSION) ---"
+
+PRINT
+
+' 1. Create a Graph
+
+G = TENSORFLOW.NEW_GRAPH()
+
+DIM empty_attrs AS MAP
+
+
+
+' 2. Define Placeholders
+
+DIM X_shape[2] : X_shape[0] = -1 : X_shape[1] = 1
+
+X = TENSORFLOW.PLACEHOLDER(G, "FLOAT", X_shape, "X_input")
+
+DIM Y_shape[2] : Y_shape[0] = -1 : Y_shape[1] = 1
+
+Y_ = TENSORFLOW.PLACEHOLDER(G, "FLOAT", Y_shape, "Y_label")
+
+
+
+' 3. Define trainable Variable HANDLES
+
+' W is now a scalar stored as shape [1]
+
+DIM W_shape[1] : W_shape[0] = 1
+
+DIM W_attrs AS MAP
+
+W_attrs{"shape"} = W_shape
+
+W_attrs{"dtype"} = "DT_FLOAT"
+
+W = TENSORFLOW.ADD_OPERATION(G, "VarHandleOp", "Weight", [], W_attrs)
+
+
+
+' Bias also as scalar
+
+DIM B_shape[1] : B_shape[0] = 1
+
+DIM B_attrs AS MAP
+
+B_attrs{"shape"} = B_shape
+
+B_attrs{"dtype"} = "DT_FLOAT"
+
+B = TENSORFLOW.ADD_OPERATION(G, "VarHandleOp", "Bias", [], B_attrs)
+
+
+
+' 4. Build the Forward Pass
+
+DIM read_attrs AS MAP
+
+read_attrs{"dtype"} = "DT_FLOAT"
+
+W_val = TENSORFLOW.ADD_OPERATION(G, "ReadVariableOp", "read_W", [W], read_attrs)
+
+B_val = TENSORFLOW.ADD_OPERATION(G, "ReadVariableOp", "read_B", [B], read_attrs)
+
+
+
+' *** Use Mul instead of MatMul ***
+
+MulOp = TENSORFLOW.ADD_OPERATION(G, "Mul", "mul", [X, W_val], empty_attrs)
+
+Y = TENSORFLOW.ADD_OPERATION(G, "Add", "add", [MulOp, B_val], empty_attrs)
+
+
+
+' 5. Build the Loss function
+
+SubOp = TENSORFLOW.ADD_OPERATION(G, "Sub", "sub", [Y, Y_], empty_attrs)
+
+SquareOp = TENSORFLOW.ADD_OPERATION(G, "Square", "square", [SubOp], empty_attrs)
+
+DIM reduction_indices_data[2]: reduction_indices_data[0]=0: reduction_indices_data[1]=1
+
+ReductionIndices = TENSORFLOW.CONSTANT(G, reduction_indices_data, "INT32", "reduction_indices")
+
+Loss = TENSORFLOW.ADD_OPERATION(G, "Mean", "loss", [SquareOp, ReductionIndices], empty_attrs)
+
+
+
+' Reshape the loss scalar to a [1] vector so we can read it as an array.
+
+DIM reshape_shape[1] : reshape_shape[0] = 1
+
+ShapeConst = TENSORFLOW.CONSTANT(G, reshape_shape, "INT32", "reshape_shape")
+
+LossReshaped = TENSORFLOW.ADD_OPERATION(G, "Reshape", "loss_out", [Loss, ShapeConst], empty_attrs)
+
+
+
+' 6. Get Gradients and define the Training Step
+
+GradW_array = TENSORFLOW.ADD_GRADIENTS(G, Loss, [W])
+
+GradB_array = TENSORFLOW.ADD_GRADIENTS(G, Loss, [B])
+
+
+
+' No reshape needed for scalars
+
+LearningRate = TENSORFLOW.CONSTANT(G, 0.001, "FLOAT", "learning_rate")
+
+
+
+TrainW = TENSORFLOW.ADD_OPERATION(G, "ResourceApplyGradientDescent", "train_w", [W, LearningRate, GradW_array[0]], empty_attrs)
+
+TrainB = TENSORFLOW.ADD_OPERATION(G, "ResourceApplyGradientDescent", "train_b", [B, LearningRate, GradB_array[0]], empty_attrs)
+
+
+
+' 7. Explicit Variable Initialization
+
+DIM W_init_data[1] : W_init_data[0] = 0.0
+
+W_init_const = TENSORFLOW.CONSTANT(G, W_init_data, "FLOAT", "W_init_const")
+
+
+
+DIM B_init_data[1] : B_init_data[0] = 0.0
+
+B_init_const = TENSORFLOW.CONSTANT(G, B_init_data, "FLOAT", "B_init_const")
+
+
+
+W_assign = TENSORFLOW.ADD_OPERATION(G, "AssignVariableOp", "W_assign", [W, W_init_const], empty_attrs)
+
+B_assign = TENSORFLOW.ADD_OPERATION(G, "AssignVariableOp", "B_assign", [B, B_init_const], empty_attrs)
+
+DIM init_attrs AS MAP
+
+init_attrs{"control_inputs"} = [W_assign, B_assign]
+
+InitOp = TENSORFLOW.ADD_OPERATION(G, "NoOp", "init", [], init_attrs)
+
+
+
+' 8. Setup Session and Run Initializer
+
+S = TENSORFLOW.NEW_SESSION(G)
+
+TENSORFLOW.SESSION_RUN(S, G, {}, [], [InitOp])
+
+
+
+' 9. Prepare full training data
+
+PRINT "Preparing training data..."
+
+DIM train_x[500,1]
+
+DIM train_y[500,1]
+
+
+
+FOR I = 1 TO 500
+    train_x[I-1,0] = (I / 100.0) / 5.0
+    train_y[I-1,0] = 3.0 * train_x[I-1,0] + 1.0
+NEXT I
+
+
+
+
+x_tensor = TENSORFLOW.NEW_TENSOR_FROM_ARRAY(train_x, "FLOAT")
+
+y_tensor = TENSORFLOW.NEW_TENSOR_FROM_ARRAY(train_y, "FLOAT")
+
+
+
+DIM feed_dict AS MAP
+
+feed_dict{"X_input:0"} = x_tensor
+
+feed_dict{"Y_label:0"} = y_tensor
+
+
+
+' 10. Training Loop over epochs
+
+PRINT "Starting training..."
+
+DIM nodes_to_fetch[1]
+
+nodes_to_fetch[0] = "loss_out:0"
+
+
+
+FOR epoch = 1 TO 500
+
+ ResultMap = TENSORFLOW.SESSION_RUN(S, G, feed_dict, nodes_to_fetch, [TrainW, TrainB])
+
+ LossValue = TENSORFLOW.NEW_ARRAY_FROM_TENSOR(ResultMap{"loss_out:0"})
+
+ PRINT "Loss after epoch "; epoch; " = "; LossValue[0]
+
+NEXT epoch
+
+
+
+PRINT "Training finished."
+
+PRINT
+
+
+
+' 11. Fetch and print the final learned weights
+
+DIM nodes_to_fetch_final[2]
+
+nodes_to_fetch_final[0] = "read_W:0"
+
+nodes_to_fetch_final[1] = "read_B:0"
+
+
+
+ResultMap = TENSORFLOW.SESSION_RUN(S, G, {}, nodes_to_fetch_final, [])
+
+
+
+FinalW = TENSORFLOW.NEW_ARRAY_FROM_TENSOR(ResultMap{"read_W:0"})
+
+FinalB = TENSORFLOW.NEW_ARRAY_FROM_TENSOR(ResultMap{"read_B:0"})
+
+
+
+PRINT "Learned Weight (should be ~3.0): "; FinalW[0]
+
+PRINT "Learned Bias (should be ~1.0): "; FinalB[0]

@@ -1,0 +1,33 @@
+print "Using higher order functions"
+print ""
+
+func inc(ab)
+    return ab+1
+endfunc
+
+func dec(ac)
+    return ac-1
+endfunc
+
+func apply(fa, cc)
+    return fa(cc)
+endfunc
+
+print "apply(inc@, 10) = "; apply(inc@, 10)
+print "apply(dec@, 12) = "; apply(dec@, 12)
+
+' Also test with ENDSUB and ENDIF
+sub greet(name)
+    if name = "WORLD" then
+        print "Hello, "; name; "!"
+    endif
+endsub
+
+greet("World")
+
+' Test indirect call with global variable
+let myfunc = sqr@
+print "myfunc(144) = "; myfunc(144)
+
+' Higher-order with built-in
+print "select(inc@, iota(5)) = "; select(inc@, iota(5))

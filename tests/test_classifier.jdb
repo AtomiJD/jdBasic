@@ -1,0 +1,81 @@
+' Test der AI.CLASSIFIER_* API mit einem kleinen Mini-Datensatz.
+' Drei Klassen: Hardware, Software, Netzwerk — 12 Trainingsbeispiele.
+' Danach werden 5 neue Tickets klassifiziert.
+
+PRINT "Loading embedding model (bge-m3 für deutsche Texte)..."
+emb = AI.LOAD_EMBEDDINGS("models/bge-m3-Q4_K_M.gguf", 2048, 99)
+PRINT ""
+
+PRINT "Erstelle Classifier..."
+clf = AI.CLASSIFIER_CREATE(emb)
+
+PRINT ""
+PRINT "=== Training: 12 Tickets zu 3 Klassen ==="
+
+' --- Hardware ---
+AI.CLASSIFIER_ADD clf, "Der Drucker druckt keine Seiten mehr und das rote Licht blinkt.", "Hardware"
+AI.CLASSIFIER_ADD clf, "Mein Monitor zeigt keine Bildausgabe beim Starten des Rechners.", "Hardware"
+AI.CLASSIFIER_ADD clf, "Die Tastatur reagiert nicht, einige Tasten sind defekt.", "Hardware"
+AI.CLASSIFIER_ADD clf, "Die Festplatte macht seltsame Klickgeräusche.", "Hardware"
+
+' --- Software ---
+AI.CLASSIFIER_ADD clf, "Excel stürzt beim Öffnen einer großen Datei ab.", "Software"
+AI.CLASSIFIER_ADD clf, "Windows Update schlägt immer mit Fehlercode 80070005 fehl.", "Software"
+AI.CLASSIFIER_ADD clf, "Outlook kann keine Mails mehr senden, Server-Fehler.", "Software"
+AI.CLASSIFIER_ADD clf, "Das Programm hängt beim Speichern einer Datei.", "Software"
+
+' --- Netzwerk ---
+AI.CLASSIFIER_ADD clf, "VPN Verbindung bricht alle paar Minuten ab.", "Netzwerk"
+AI.CLASSIFIER_ADD clf, "Keine Internetverbindung, aber WLAN zeigt voll an.", "Netzwerk"
+AI.CLASSIFIER_ADD clf, "Der Netzwerkdrucker ist im Netz nicht erreichbar.", "Netzwerk"
+AI.CLASSIFIER_ADD clf, "DNS-Auflösung funktioniert für manche Seiten nicht.", "Netzwerk"
+
+DIM info = AI.CLASSIFIER_INFO(clf)
+PRINT "Trainiert: "; info{"samples"}; " samples, "; info{"num_labels"}; " Klassen, embed_dim="; info{"embed_dim"}
+DIM label_list = info{"labels"}
+FOR i = 0 TO LEN(label_list) - 1
+  PRINT "  "; label_list[i]{"label"}; ": "; label_list[i]{"count"}; " samples"
+NEXT i
+
+PRINT ""
+PRINT "=== Prediction auf 5 neuen Tickets ==="
+
+DIM test_tickets = [ "Mein Laptop-Bildschirm flackert und ist manchmal schwarz.", "Word öffnet keine docx-Dateien mehr, Zugriffsverletzung.", "Kann mich nicht mehr am VPN anmelden, Zeitüberschreitung.", "Die Maus scrollt nicht mehr richtig, nur noch ruckelig.", "Microsoft Teams verbindet sich nicht zum Meeting-Server." ]
+
+DIM expected = [ "Hardware", "Software", "Netzwerk", "Hardware", "Netzwerk" ]
+
+DIM correct = 0
+FOR i = 0 TO LEN(test_tickets) - 1
+  DIM p = AI.CLASSIFIER_PREDICT(clf, test_tickets[i], 3)
+  DIM predicted = p{"label"}
+  DIM conf = p{"confidence"}
+  DIM ok = IIF(predicted = expected[i], "OK ", "FAIL")
+  IF predicted = expected[i] THEN correct = correct + 1
+  PRINT ""
+  PRINT ok; " [" ; INT(conf * 100); "%] "; predicted; "  (erwartet: "; expected[i]; ")"
+  PRINT "     Ticket: "; test_tickets[i]
+  PRINT "     Votes: ";
+  DIM vts = p{"votes"}
+  FOR v = 0 TO LEN(vts) - 1
+    IF v > 0 THEN PRINT ", ";
+    PRINT vts[v]{"label"}; "="; vts[v]{"count"};
+  NEXT v
+  PRINT ""
+NEXT i
+
+PRINT ""
+PRINT "Accuracy: "; correct; "/"; LEN(test_tickets); " ("; INT(correct * 100 / LEN(test_tickets)); "%)"
+
+PRINT ""
+PRINT "=== Save / Load Roundtrip ==="
+AI.CLASSIFIER_SAVE clf, "tests/test_classifier.bin"
+DIM clf2 = AI.CLASSIFIER_LOAD("tests/test_classifier.bin", emb)
+DIM info2 = AI.CLASSIFIER_INFO(clf2)
+PRINT "Nach Load: "; info2{"samples"}; " samples, "; info2{"num_labels"}; " Klassen"
+
+DIM p2 = AI.CLASSIFIER_PREDICT(clf2, test_tickets[0], 3)
+PRINT "Re-loaded prediction: "; p2{"label"}; " ("; INT(p2{"confidence"} * 100); "%)"
+
+AI.FREE_LLM emb
+PRINT ""
+PRINT "Done."

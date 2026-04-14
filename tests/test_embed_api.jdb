@@ -1,0 +1,45 @@
+' Test der Embedding API mit dem vorhandenen Phi-3 Modell
+' (Phi-3 ist ein Generation-Modell, also sind die Embeddings nicht
+' so gut wie z.B. nomic-embed-text — die API soll aber funktionieren)
+PRINT "Loading embedding model (Phi-3 im Embedding-Modus)..."
+emb = AI.LOAD_EMBEDDINGS("models\Phi-3-mini-4k-instruct-q4.gguf", 512, 99)
+PRINT "Loaded: id="; emb
+
+PRINT ""
+PRINT "Berechne Embedding fuer 'Hallo Welt'..."
+DIM v1 = AI.EMBED_LLM(emb, "Hallo Welt")
+PRINT "  dim="; LEN(v1); " first 5: "; v1[0]; " "; v1[1]; " "; v1[2]; " "; v1[3]; " "; v1[4]
+
+PRINT ""
+PRINT "Berechne Embedding fuer 'Berlin ist die Hauptstadt von Deutschland'..."
+DIM v2 = AI.EMBED_LLM(emb, "Berlin ist die Hauptstadt von Deutschland")
+PRINT "  dim="; LEN(v2)
+
+PRINT ""
+PRINT "Berechne Embedding fuer 'Paris ist die Hauptstadt von Frankreich'..."
+DIM v3 = AI.EMBED_LLM(emb, "Paris ist die Hauptstadt von Frankreich")
+
+' Cosine sim manuell:  v1.v2 / (|v1|*|v2|)
+FUNC cosine(a, b)
+  DIM dot AS DOUBLE = 0
+  DIM na  AS DOUBLE = 0
+  DIM nb  AS DOUBLE = 0
+  FOR i = 0 TO LEN(a) - 1
+    dot = dot + a[i] * b[i]
+    na = na + a[i] * a[i]
+    nb = nb + b[i] * b[i]
+  NEXT i
+  IF na = 0 OR nb = 0 THEN RETURN 0
+  RETURN dot / (SQR(na) * SQR(nb))
+ENDFUNC
+
+PRINT ""
+PRINT "Cosine similarities:"
+PRINT "  v1 (Hallo Welt) <-> v2 (Berlin):  "; cosine(v1, v2)
+PRINT "  v1 (Hallo Welt) <-> v3 (Paris):   "; cosine(v1, v3)
+PRINT "  v2 (Berlin)     <-> v3 (Paris):   "; cosine(v2, v3)
+PRINT "  -> Berlin und Paris sollten aehnlicher sein als Berlin und 'Hallo Welt'"
+
+AI.FREE_LLM emb
+PRINT ""
+PRINT "Done."

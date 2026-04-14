@@ -1,0 +1,19 @@
+L=VBNEWLINE: B=RESHAPE([" "*40+L],[19]): P=20: R=2
+CLS
+CURSOR FALSE 
+DO
+    B=SHIFT(B,[-1],LEFT$(" "*FLOOR(RND(0)*39)+"*"+" "*40,40)+L)
+    LOCATE 1,1
+    PRINT FRMV$(B)
+    K$=INKEY$()
+    P=CLAMP(P-(K$="1")+(K$="9"),0,39)
+    R=R+((P+40)\40)-1
+    P=P MOD 40
+    C$=MID$(B[R],P,1): B[R]=LEFT$(B[R],P)+"V"+MID$(B[R],P+1)
+    SWITCH C$="*" OR R=14
+        CASE 1: PRINT ["WIN!","DIED"][C$="*"]
+                CURSOR TRUE
+                END
+    ENDSWITCH
+    SLEEP 50
+LOOP

@@ -1,0 +1,56 @@
+SCREEN 1280, 720, "ImGui Demo", 2
+
+MyName$ = "Developer"
+Volume = 50.0
+NewWindow = FALSE
+WindowOpen = TRUE
+
+DO
+    CLS
+    
+    ' --- ImGui Logic ---
+    IF WindowOpen THEN
+        WindowOpen = GUI.BEGIN("Settings", 50, 50, 300, 200, WindowOpen)
+            GUI.TEXT "Welcome to jdBasic GUI"
+            GUI.SEPARATOR
+            
+            ' Input Text (Functional style)
+            MyName$ = GUI.INPUT("Your Name", MyName$)
+            
+            ' Slider
+            Volume = GUI.SLIDER("Volume", Volume, 0, 100)
+            
+            ' Checkbox
+            NewWindow = GUI.CHECKBOX("New Window", NewWindow)
+            
+            IF GUI.BUTTON("Save Settings") THEN
+                PRINT "Saved: " + MyName$
+            ENDIF
+
+            GUI.SEPARATOR
+
+            A = GUI.SELECTABLE("Atomi", selected, 0, 100, 10) 
+            GUI.SAME_LINE
+            A = GUI.SELECTABLE("Bert", selected, 0, 100, 10) 
+
+            IF NewWindow = TRUE THEN
+                GUI.BEGIN "Lala", 250, 250, 200, 100
+                GUI.TEXT "Second Window"
+                IF GUI.BUTTON("Close me") THEN
+                    NewWindow = FALSE
+                ENDIF
+                GUI.END
+            ENDIF
+        GUI.END
+    ELSE
+        GUI.BEGIN "Main Menu", 10, 10, 200, 100
+            IF GUI.BUTTON("Re-open Window") THEN
+                WindowOpen = TRUE
+            ENDIF
+        GUI.END            
+    ENDIF    
+    ' Render everything
+    SCREENFLIP
+    
+    SLEEP 10
+LOOP UNTIL INKEY$() = CHR$(27)

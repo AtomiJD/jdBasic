@@ -1,0 +1,56 @@
+EXPORT MODULE TEST_INNER
+
+DIM private_val = 42
+EXPORT DIM public_val = 99
+
+EXPORT TYPE T_Thing
+    x
+    label$
+    SUB INIT(v, l$)
+        THIS.x = v
+        THIS.label$ = l$
+    ENDSUB
+    FUNC GET_X()
+        RETURN THIS.x
+    ENDFUNC
+ENDTYPE
+
+EXPORT DIM things = []
+EXPORT DIM thing_count = 0
+
+EXPORT SUB ADD_THING(v, l$)
+    DIM t AS TEST_INNER.T_Thing
+    t.INIT v, l$
+    PUSH things, t
+    thing_count = thing_count + 1
+ENDSUB
+
+EXPORT FUNC GET_THING_COUNT()
+    RETURN thing_count
+ENDFUNC
+
+EXPORT FUNC GET_PRIVATE()
+    RETURN private_val
+ENDFUNC
+
+EXPORT SUB SET_PRIVATE(v)
+    private_val = v
+ENDSUB
+
+EXPORT FUNC GET_THING_X(idx)
+    IF idx < 0 OR idx >= thing_count THEN RETURN -1
+    t = things[idx]
+    RETURN t.x
+ENDFUNC
+
+EXPORT FUNC GET_THING_LABEL$(idx)
+    IF idx < 0 OR idx >= thing_count THEN RETURN ""
+    t = things[idx]
+    RETURN t.label$
+ENDFUNC
+
+EXPORT SUB MODIFY_THING(idx, new_val)
+    IF idx < 0 OR idx >= thing_count THEN RETURN
+    t = things[idx]
+    t.x = new_val
+ENDSUB

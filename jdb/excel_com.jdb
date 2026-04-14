@@ -1,0 +1,30 @@
+' ==========================================================
+' == COM Object test
+' == Goal: Use CREATEOBJECT to create a com object
+' ==========================================================
+
+TRY
+    ' Initialize a COM object
+    objXL = CREATEOBJECT("Excel.Application")
+
+    ' Access a property
+    objXL.Visible = TRUE
+
+    ' Call a method
+    wb = objXL.Workbooks.Add()
+
+    ' Set a cell value
+    objcell = objXL.ActiveSheet.Cells(1, 1)
+    objcell.Value = "Hello from jdBasic!"
+
+    ' Quit Excel
+    objXL.Quit()
+CATCH
+    PRINT "COM Error!"
+    PRINT "Error Code: "; ERR
+    PRINT "Error Line: "; ERL
+    PRINT "Error Message: "; ERRMSG$
+    PRINT "Stack: "; STACK$
+ENDTRY
+
+PRINT "Excel automation complete."

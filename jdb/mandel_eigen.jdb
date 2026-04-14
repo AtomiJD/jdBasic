@@ -1,0 +1,81 @@
+' Mandelbrot Set Generator for jdBasic (Interactive Zoom)
+' --------------------------------------------------------------------
+' This version delegates the main calculation to a high-performance
+' C++ function from an external DLL for maximum speed.
+' --------------------------------------------------------------------
+
+' Load the DLL with the fast Mandelbrot function
+DLLIMPORT "numerics.dll"
+
+' --- 1. Global Configuration and Setup ---
+SCREEN_W = 1920
+SCREEN_H = 1080
+MAX_ITERATIONS = 100
+CALC_W = 1920 / 2
+CALC_H = 1080 / 2
+DX = SCREEN_W / CALC_W
+DY = SCREEN_H / CALC_H
+X_MIN = -2.0
+X_MAX = 1.0
+Y_MIN = -1.5
+Y_MAX = 1.5
+
+' --- 2. Initialize Graphics ---
+PRINT "Initializing graphics screen..."
+SCREEN SCREEN_W, SCREEN_H, "Interactive Mandelbrot Set in jdBasic"
+CLS 0, 0, 0
+
+' ====================================================================
+' ==  SUBROUTINE TO CALCULATE AND DRAW THE FRACTAL
+' ====================================================================
+SUB CalculateAndDrawMandelbrot()
+    ' --- 3. Vectorized Coordinate Setup  ---
+    PRINT "Creating coordinate matrices for the current view..."
+    PX_VEC = (IOTA(CALC_W) - 1) / (CALC_W - 1)
+    PY_VEC = (IOTA(CALC_H) - 1) / (CALC_H - 1)
+    C_REAL = OUTER(PY_VEC*0, PX_VEC, "+") * (X_MAX - X_MIN) + X_MIN
+    C_IMAG = OUTER(PY_VEC, PX_VEC*0, "+") * (Y_MAX - Y_MIN) + Y_MIN
+
+    ' --- 4. High-Performance Calculation  ---
+    PRINT "Calculating Mandelbrot set with C++ core function..."
+    ' The entire slow FOR...NEXT loop is replaced by this single, fast call.
+    ITERATIONS = MANDELBROT(C_REAL, C_IMAG, MAX_ITERATIONS)
+
+    ' --- 5. Vectorized Coloring  ---
+    PRINT "Calculating final color matrix..."
+    INSIDE_SET_MASK = (ITERATIONS >= MAX_ITERATIONS)
+    R = ((ITERATIONS * 8) MOD 255) * (1 - INSIDE_SET_MASK)
+    G = ((ITERATIONS * 5) MOD 255) * (1 - INSIDE_SET_MASK)
+    B = ((ITERATIONS * 12) MOD 255) * (1 - INSIDE_SET_MASK)
+    COLOR_MATRIX = R * 65536 + G * 256 + B
+
+    ' --- 6. Draw the Final Image  ---
+    PRINT "Drawing final image with PLOTRAW..."
+    PLOTRAW 0, 0, COLOR_MATRIX, DX, DY
+    SCREENFLIP
+    PRINT "Ready. Click to zoom or press ESC to exit."
+ENDSUB
+
+' ====================================================================
+' ==  MAIN INTERACTIVE LOOP 
+' ====================================================================
+CalculateAndDrawMandelbrot
+DO
+    IF MOUSEB(1) THEN
+        MX = MOUSEX() : MY = MOUSEY()
+        CLICK_REAL = X_MIN + (MX / SCREEN_W) * (X_MAX - X_MIN)
+        CLICK_IMAG = Y_MIN + (MY / SCREEN_H) * (Y_MAX - Y_MIN)
+        ZOOM_FACTOR = 2.0
+        NEW_WIDTH = (X_MAX - X_MIN) / ZOOM_FACTOR
+        NEW_HEIGHT = (Y_MAX - Y_MIN) / ZOOM_FACTOR
+        X_MIN = CLICK_REAL - NEW_WIDTH / 2
+        X_MAX = CLICK_REAL + NEW_WIDTH / 2
+        Y_MIN = CLICK_IMAG - NEW_HEIGHT / 2
+        Y_MAX = CLICK_IMAG + NEW_HEIGHT / 2
+        CalculateAndDrawMandelbrot
+    ENDIF
+    KEY$ = INKEY$()
+    IF KEY$ <> "" AND ASC(KEY$) = 27 THEN EXITDO
+    SLEEP 20
+LOOP
+PRINT "Program finished."

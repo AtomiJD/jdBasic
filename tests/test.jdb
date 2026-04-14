@@ -1,0 +1,110 @@
+PRINT "=== BASIC Interpreter Test ==="
+
+' Variables and types
+LET x AS INT32 = 42
+LET name AS STRING = "World"
+LET pi AS FLOAT64 = 3.14159
+PRINT "x = "; x
+PRINT "name = "; name
+PRINT "pi = "; pi
+
+' Arithmetic
+LET result = (x * 2 + 10) / 3
+PRINT "(x * 2 + 10) / 3 = "; result
+
+' Power
+PRINT "2 ^ 10 = "; 2 ^ 10
+
+' MOD
+PRINT "17 MOD 5 = "; 17 MOD 5
+
+' Boolean and logic
+LET a = TRUE
+LET b = FALSE
+PRINT "TRUE AND FALSE = "; a AND b
+PRINT "TRUE OR FALSE = "; a OR b
+PRINT "NOT TRUE = "; NOT a
+
+' Bitwise
+PRINT "12 BAND 10 = "; 12 BAND 10
+PRINT "12 BOR 10 = "; 12 BOR 10
+PRINT "12 XOR 10 = "; 12 XOR 10
+
+' Comparison
+PRINT "42 > 10 = "; 42 > 10
+PRINT "42 < 10 = "; 42 < 10
+PRINT "42 >= 42 = "; 42 >= 42
+PRINT "42 <> 10 = "; 42 <> 10
+
+' IF/ELSEIF/ELSE
+IF x > 100 THEN
+    PRINT "big"
+ELSEIF x > 20 THEN
+    PRINT "medium"
+ELSE
+    PRINT "small"
+END IF
+
+' DO WHILE loop
+LET i = 0
+LET sum = 0
+DO WHILE i < 10
+    LET sum = sum + i
+    LET i = i + 1
+LOOP
+PRINT "Sum 0..9 = "; sum
+
+' DO UNTIL loop
+LET count = 0
+DO
+    LET count = count + 1
+LOOP UNTIL count >= 5
+PRINT "Count = "; count
+
+' Array
+LET arr = [10, 20, 30, 40, 50]
+PRINT "arr[2] = "; arr[2]
+PRINT "LEN(arr) = "; LEN(arr)
+
+' FUNCTION
+FUNCTION Factorial(n AS INT64) AS INT64
+    IF n <= 1 THEN
+        RETURN 1
+    END IF
+    RETURN n * Factorial(n - 1)
+END FUNCTION
+
+PRINT "10! = "; Factorial(10)
+
+' SUB
+SUB Greet(who AS STRING)
+    PRINT "Hello, "; who; "!"
+END SUB
+
+Greet("BASIC")
+
+' GOTO
+GOTO skip
+PRINT "This should NOT print"
+skip:
+PRINT "GOTO works!"
+
+' Built-in math
+PRINT "SQR(144) = "; SQR(144)
+PRINT "ABS(-42) = "; ABS(-42)
+
+' String functions
+PRINT "LEN(Hello) = "; LEN("Hello")
+PRINT "LEFT(Hello, 3) = "; LEFT("Hello", 3)
+PRINT "UCASE(hello) = "; UCASE("hello")
+
+' Performance: sum 1..1000000
+LET n = 0
+LET big_sum = 0
+DO WHILE n <= 1000000
+    LET big_sum = big_sum + n
+    LET n = n + 1
+LOOP
+PRINT "Sum 1..1000000 = "; big_sum
+
+PRINT "=== ALL TESTS PASSED ==="

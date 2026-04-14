@@ -1,0 +1,52 @@
+{
+    "name": "overworld",
+    "width": 30,
+    "height": 20,
+    "bg": [30, 50, 30],
+    "camera_fixed": false,
+    "npcs": [
+        {"name": "Old Man", "x": 320, "y": 320,
+         "dialog": "{PLAYER}, explore the buildings to the south. There might be treasure and a shop!",
+         "patrol": false},
+        {"name": "Guard", "x": 640, "y": 256,
+         "dialog": "I patrol this area day and night. Nothing escapes my watch!",
+         "patrol_speed": 40, "path_wait": 60,
+         "path": [[640,256],[640,416],[480,416],[480,256]]},
+        {"name": "Hasi", "x": 288, "y": 224,
+         "dialog": "I am Princess Hasi! I've been looking for brave adventurers. May I join you, {PLAYER}?",
+         "dialog_joined": "Let's go on an adventure together!",
+         "can_recruit": true, "recruit_id": "hasi",
+         "patrol": false},
+        {"name": "Möhrchen", "x": 736, "y": 384,
+         "dialog": "I'm Möhrchen, government official. I heard you need help. Shall I join your party, {PLAYER}?",
+         "dialog_joined": "My paperwork skills will be invaluable!",
+         "can_recruit": true, "recruit_id": "moehrchen",
+         "patrol": false}
+    ],
+    "objects": [
+        {"type": "chest", "x": 384, "y": 192, "content": "gold:20"}
+    ],
+    "coins": [
+        {"x": 192, "y": 256, "value": 10},
+        {"x": 320, "y": 384, "value": 10},
+        {"x": 480, "y": 192, "value": 10},
+        {"x": 112, "y": 512, "value": 10},
+        {"x": 576, "y": 320, "value": 10}
+    ],
+    "doors": [
+        {"col": 20, "row": 17, "target": "house", "spawn_x": 160, "spawn_y": 224},
+        {"col": 10, "row": 17, "target": "shop", "spawn_x": 160, "spawn_y": 224}
+    ],
+    "monsters": [
+        {"id": "blobb", "x": 256, "y": 192},
+        {"id": "blobb", "x": 544, "y": 416},
+        {"id": "blobb", "x": 768, "y": 320}
+    ],
+    "trees": [[4,4],[4,8],[6,3],[6,7],[14,5],[14,22],[8,25],[12,25]],
+    "flowers": [[2,2],[3,6],[7,12],[11,8],[13,18],[5,20]],
+    "water": {"r1": 3, "r2": 5, "c1": 20, "c2": 24},
+    "path_h": {"row": 10, "c1": 3, "c2": 26},
+    "path_v": {"col": 15, "r1": 5, "r2": 15},
+    "building": {"r1": 14, "r2": 17, "c1": 18, "c2": 22, "door_col": 20},
+    "shop_building": {"r1": 14, "r2": 17, "c1": 8, "c2": 12, "door_col": 10}
+}

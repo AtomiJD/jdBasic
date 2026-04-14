@@ -1,0 +1,276 @@
+' ===================================================================
+' == jdBasic Arbitrary-Precision Arithmetic (Bignum)
+' == Version 2.1 (Corrected)
+' ===================================================================
+'
+' This program implements basic arithmetic operations (+, -, *, /)
+' for integers of virtually unlimited size.
+'
+' Version 2.1 Fixes:
+' - Rewrote BIGNUM_ADD$ and BIGNUM_SUB$ to be more robust.
+' - They now build the result array dynamically using APPEND,
+'   which resolves the calculation errors.
+'
+' Version 2.0 Optimizations:
+' - Uses REGEX.REPLACE for efficient stripping of leading zeros.
+' - Converts input strings to integer arrays for much faster
+'   internal calculations, avoiding repeated string manipulation.
+'
+' ===================================================================
+
+' --- Helper to convert a number string to an array of integer digits
+FUNC STRING_TO_NUM_ARRAY(S$)
+    IF S$ = "" THEN RETURN []
+    ' The unary '-' operator splits the string into an array of single-character strings.
+    CHAR_ARRAY = -S$
+    ' The SELECT function applies a lambda to each element.
+    ' ASC(c) gets the ASCII value, and subtracting 48 (the ASCII value of '0')
+    ' converts the character digit to its integer equivalent.
+    RETURN SELECT(lambda c -> ASC(c) - 48, CHAR_ARRAY)
+ENDFUNC
+
+' --- Helper to convert an array of digits back to a string
+FUNC NUM_ARRAY_TO_STRING$(ARR)
+    Result$ = ""
+    FOR i = 0 TO LEN(ARR) - 1
+        Result$ = Result$ + STR$(ARR[i])
+    NEXT i
+    RETURN Result$
+ENDFUNC
+
+' --- Helper function to remove leading zeros from a number string using Regex
+FUNC STRIP_LEADING_ZEROS$(N$)
+    ' The pattern "^0+" matches one or more zeros at the start of the string.
+    ' We replace them with an empty string.
+    Cleaned$ = REGEX.REPLACE("^0+", N$, "")
+    ' If the result is an empty string (e.g., input was "000"), return "0".
+    IF Cleaned$ = "" THEN RETURN "0"
+    RETURN Cleaned$
+ENDFUNC
+
+' --- Helper function to compare two number strings
+' Returns: 1 if A$ > B$, -1 if A$ < B$, 0 if A$ = B$
+FUNC COMPARE_BIGNUM$(A$, B$)
+    A$ = STRIP_LEADING_ZEROS$(A$)
+    B$ = STRIP_LEADING_ZEROS$(B$)
+    IF LEN(A$) > LEN(B$) THEN RETURN 1
+    IF LEN(A$) < LEN(B$) THEN RETURN -1
+    IF A$ > B$ THEN RETURN 1
+    IF A$ < B$ THEN RETURN -1
+    RETURN 0
+ENDFUNC
+
+' ===================================================================
+' == ADDITION: BIGNUM_ADD(A$, B$)
+' ===================================================================
+FUNC BIGNUM_ADD$(A$, B$)
+    ' Reverse the input arrays to process from least-significant digit first
+    ArrA = REVERSE(STRING_TO_NUM_ARRAY(A$))
+    ArrB = REVERSE(STRING_TO_NUM_ARRAY(B$))
+    lenA = LEN(ArrA)
+    lenB = LEN(ArrB)
+    maxLen = MAX([lenA, lenB])
+
+    ResultArr = []
+    Carry = 0
+    FOR i = 0 TO maxLen - 1
+        digitA = 0
+        IF i < lenA THEN digitA = ArrA[i]
+        
+        digitB = 0
+        IF i < lenB THEN digitB = ArrB[i]
+
+        Sum = digitA + digitB + Carry
+        ' Append the current digit to the result array
+        ResultArr = APPEND(ResultArr, Sum MOD 10)
+        Carry = INT(Sum / 10)
+    NEXT i
+
+    IF Carry > 0 THEN ResultArr = APPEND(ResultArr, Carry)
+
+    ' Reverse the final array to get the correct order and convert to string
+    RETURN STRIP_LEADING_ZEROS$(NUM_ARRAY_TO_STRING$(REVERSE(ResultArr)))
+ENDFUNC
+
+' ===================================================================
+' == SUBTRACTION: BIGNUM_SUB(A$, B$)
+' ===================================================================
+FUNC BIGNUM_SUB$(A$, B$)
+    IF COMPARE_BIGNUM$(A$, B$) < 0 THEN
+        RETURN "-" + BIGNUM_SUB$(B$, A$)
+    ENDIF
+
+    ' Reverse inputs to process from least-significant digit
+    ArrA = REVERSE(STRING_TO_NUM_ARRAY(A$))
+    ArrB = REVERSE(STRING_TO_NUM_ARRAY(B$))
+    lenA = LEN(ArrA)
+    lenB = LEN(ArrB)
+
+    ResultArr = []
+    Borrow = 0
+    FOR i = 0 TO lenA - 1
+        digitA = ArrA[i] - Borrow
+        Borrow = 0
+        
+        digitB = 0
+        IF i < lenB THEN digitB = ArrB[i]
+
+        IF digitA < digitB THEN
+            digitA = digitA + 10
+            Borrow = 1
+        ENDIF
+        
+        ResultArr = APPEND(ResultArr, digitA - digitB)
+    NEXT i
+
+    ' Reverse the final array to get the correct order and convert to string
+    RETURN STRIP_LEADING_ZEROS$(NUM_ARRAY_TO_STRING$(REVERSE(ResultArr)))
+ENDFUNC
+
+' ===================================================================
+' == MULTIPLICATION: BIGNUM_MUL(A$, B$)
+' ===================================================================
+FUNC BIGNUM_MUL$(A$, B$)
+    IF A$ = "0" OR B$ = "0" THEN RETURN "0"
+    
+    ArrA = REVERSE(STRING_TO_NUM_ARRAY(A$))
+    ArrB = REVERSE(STRING_TO_NUM_ARRAY(B$))
+    lenA = LEN(ArrA)
+    lenB = LEN(ArrB)
+    
+    ' Result can have at most lenA + lenB digits
+    ResultArr = []
+    DIM ResultArr[lenA + lenB]
+    FOR k = 0 TO lenA + lenB - 1 : ResultArr[k] = 0 : NEXT k
+
+
+    FOR i = 0 TO lenA - 1
+        FOR j = 0 TO lenB - 1
+            ResultArr[i + j] = ResultArr[i + j] + ArrA[i] * ArrB[j]
+        NEXT j
+    NEXT i
+
+    ' Handle the carries
+    Carry = 0
+    FOR i = 0 TO LEN(ResultArr) - 1
+        Sum = ResultArr[i] + Carry
+        ResultArr[i] = Sum MOD 10
+        Carry = INT(Sum / 10)
+    NEXT i
+
+    RETURN STRIP_LEADING_ZEROS$(NUM_ARRAY_TO_STRING$(REVERSE(ResultArr)))
+ENDFUNC
+
+' ===================================================================
+' == DIVISION: BIGNUM_DIV(A$, B$)
+' ===================================================================
+FUNC BIGNUM_DIV$(A$, B$)
+    IF B$ = "0" THEN
+        PRINT "Error: Division by zero."
+        RETURN "Error"
+    ENDIF
+    IF COMPARE_BIGNUM$(A$, B$) < 0 THEN
+        RETURN "0"
+    ENDIF
+    IF A$ = B$ THEN
+        RETURN "1"
+    ENDIF
+
+    Quotient$ = ""
+    CurrentDividend$ = ""
+
+    FOR i = 1 TO LEN(A$)
+        CurrentDividend$ = CurrentDividend$ + MID$(A$, i, 1)
+        CurrentDividend$ = STRIP_LEADING_ZEROS$(CurrentDividend$)
+        
+        count = 0
+        DO WHILE COMPARE_BIGNUM$(CurrentDividend$, B$) >= 0
+            CurrentDividend$ = BIGNUM_SUB$(CurrentDividend$, B$)
+            count = count + 1
+        LOOP
+        Quotient$ = Quotient$ + STR$(count)
+    NEXT i
+
+    RETURN STRIP_LEADING_ZEROS$(Quotient$)
+ENDFUNC
+
+
+' ===================================================================
+' ==                       EXAMPLE USAGE
+' ===================================================================
+CLS
+PRINT "--- jdBasic Bignum Calculator (Optimized) ---"
+PRINT
+
+' --- Addition Example ---
+NUM1$ = "123456789012345678901234567890"
+NUM2$ = "987654321098765432109876543210"
+PRINT "Number 1: "; NUM1$
+PRINT "Number 2: "; NUM2$
+SUM$ = BIGNUM_ADD$(NUM1$, NUM2$)
+PRINT "Sum:      "; SUM$
+PRINT "--------------------------------------------------"
+
+' --- Subtraction Example ---
+NUM3$ = "100000000000000000000"
+NUM4$ = "1"
+PRINT "Number 3: "; NUM3$
+PRINT "Number 4: "; NUM4$
+DIFF$ = BIGNUM_SUB$(NUM3$, NUM4$)
+PRINT "Difference:"; DIFF$
+PRINT "--------------------------------------------------"
+
+' --- Multiplication Example ---
+NUM5$ = "11111111111111111"
+NUM6$ = "999999999"
+PRINT "Number 5: "; NUM5$
+PRINT "Number 6: "; NUM6$
+PROD$ = BIGNUM_MUL$(NUM5$, NUM6$)
+PRINT "Product:  "; PROD$
+PRINT "--------------------------------------------------"
+
+' --- Division Example ---
+NUM7$ = "123456789123456789123456789"
+NUM8$ = "111111111"
+PRINT "Number 7: "; NUM7$
+PRINT "Number 8: "; NUM8$
+QUOT$ = BIGNUM_DIV$(NUM7$, NUM8$)
+PRINT "Quotient: "; QUOT$
+PRINT "--------------------------------------------------"
+
+NUM1$ = "1"
+NUM2$ = "1"
+for i = 1 to 100 step 5
+    PRINT "Number 1: "; NUM1$
+    PRINT "Number 2: "; NUM2$
+    SUM$ = BIGNUM_ADD$(NUM1$, NUM2$)
+    PRINT "Sum:      "; SUM$
+    PRINT "--------------------------------------------------"
+    NUM1$ = NUM1$ + MID$("0123456789", i MOD 10, 1)
+    NUM2$ = NUM2$ + MID$("9876543210", i MOD 10, 1)
+next i
+
+' --- Interactive Calculator ---
+DO
+    PRINT
+    INPUT "Enter first number : "; N1$
+    INPUT "Enter operator (+,-,*,/): "; OP$
+    INPUT "Enter second number: "; N2$
+
+    IF OP$ = "+" THEN
+        PRINT "Result: "; BIGNUM_ADD$(N1$, N2$)
+    ELSEIF OP$ = "-" THEN
+        PRINT "Result: "; BIGNUM_SUB$(N1$, N2$)
+    ELSEIF OP$ = "*" THEN
+        PRINT "Result: "; BIGNUM_MUL$(N1$, N2$)
+    ELSEIF OP$ = "/" THEN
+        PRINT "Result: "; BIGNUM_DIV$(N1$, N2$)
+    ELSE
+        PRINT "Invalid operator."
+    ENDIF
+
+    INPUT "Another calculation? (y/n): "; AGAIN$
+LOOP WHILE LCASE$(AGAIN$) = "y"
+
+PRINT
+PRINT "--- Program Finished ---"

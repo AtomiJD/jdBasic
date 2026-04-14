@@ -1,0 +1,27 @@
+' --- Part 1: A Single Neuron ---
+
+PRINT "--- Simulating a Single Neuron ---"
+PRINT
+
+' Our neuron has 3 inputs. Let's define them.
+INPUTS = [0.5, -1.2, 0.8]
+
+' Every input has a corresponding weight.
+WEIGHTS = [0.8, 0.1, -0.4]
+
+' The neuron also has a single bias value.
+BIAS = 0.5
+
+PRINT "Inputs: "; INPUTS
+PRINT "Weights: "; WEIGHTS
+PRINT "Bias: "; BIAS
+PRINT
+
+' The core calculation: (input * weight) summed up, plus the bias.
+' In jdBasic, we can do this elegantly with element-wise multiplication
+' followed by a SUM reduction.
+WEIGHTED_SUM = SUM(INPUTS * WEIGHTS)
+OUTPUT = WEIGHTED_SUM + BIAS
+
+PRINT "Weighted Sum of Inputs: "; WEIGHTED_SUM
+PRINT "Final Neuron Output: "; OUTPUT

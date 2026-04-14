@@ -1,0 +1,15 @@
+
+        prompt$ = "ACCT"
+        IF CURRENT_DB$ <> "" THEN 
+            ' Extract filename for shorter prompt
+            parts = SPLIT(CURRENT_DB$, "\")
+            prompt$ = parts[LEN(parts)[0]-1]
+            IF ASC(RIGHT$(prompt$,1)) = 13 THEN
+                prompt$=LEFT$(prompt$,LEN(prompt$)-1)
+            ENDIF
+        ELSE
+            prompt$ = "(No DB)"
+        ENDIF
+        
+        PRINT prompt$
+        

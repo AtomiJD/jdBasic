@@ -1,0 +1,75 @@
+' ==========================================================
+' ==  The jdBasic Math & Statistics Lab
+' ==  Demonstrates: IMPORT, array math, user functions
+' ==========================================================
+'
+' Import our library of statistical functions
+IMPORT MLAB
+
+' Initialize a sample dataset
+DATASET = INT(RND(IOTA(100)) * 100 + 1)
+DATASET = MLAB.SORT(DATASET) ' Use the imported SORT function
+
+DO
+  ' --- Main Menu ---
+  CLS
+  PRINT "--- jdBasic Math & Statistics Lab ---"
+  PRINT
+  PRINT "Current Dataset: "; DATASET
+  PRINT
+  PRINT "--- Analysis ---"
+  PRINT "1. Show Descriptive Statistics"
+  PRINT "2. Plot a Histogram"
+  PRINT "9. Exit"
+  PRINT
+  INPUT "Choose an option: "; choice
+
+  ' --- Handle User Choice ---
+  IF choice = 1 THEN
+    ' Calculate and display all statistics
+    PRINT
+    PRINT "--- Descriptive Statistics ---"
+    PRINT "Count:          "; LEN(DATASET)
+    PRINT "Mean (Average): "; MLAB.MEAN(DATASET)      ' From funclib
+    PRINT "Median:         "; MLAB.MEDIAN(DATASET)     ' From funclib
+    PRINT "Std. Deviation: "; MLAB.STDDEV(DATASET)     ' From funclib
+    PRINT "Minimum:        "; MIN(DATASET)        ' Built-in
+    PRINT "Maximum:        "; MAX(DATASET)        ' Built-in
+    PRINT "Sum:            "; SUM(DATASET)        ' Built-in
+    PRINT
+    INPUT "Press Enter to continue..."; pause$
+
+  ELSEIF choice = 2 THEN
+    ' Generate and plot a simple histogram
+    PRINT
+    PRINT "--- Histogram ---"
+    num_bins = 5
+    min_val = MIN(DATASET)
+    max_val = MAX(DATASET)
+    bin_width = (max_val - min_val) / num_bins
+
+    bins = iota(num_bins)*0
+
+    FOR i = 0 to LEN(DATASET) - 1
+      val = DATASET[i]
+      bin_index = INT((val - min_val) / bin_width)
+      IF bin_index >= num_bins THEN bin_index = num_bins - 1
+      bins[bin_index] = bins[bin_index] + 1
+    NEXT i
+
+    FOR i = 0 to num_bins - 1
+        bin_start = min_val + (i * bin_width)
+        bin_end = bin_start + bin_width
+        label$ = STR$(INT(bin_start)) + "-" + STR$(INT(bin_end))
+        bar$ = "█" * bins[i]
+        PRINT MLAB.PAD_LEFT$(label$, 10, " "); " | "; bar$
+    NEXT i
+    PRINT
+    INPUT "Press Enter to continue..."; pause$
+
+  ELSEIF choice = 9 THEN
+    EXITDO ' Exit the main loop
+  ENDIF
+LOOP
+
+PRINT "Exiting Math Lab. Goodbye!"

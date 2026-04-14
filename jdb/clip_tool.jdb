@@ -1,0 +1,71 @@
+' --- Clipboard & Path Test ---
+' This tool allows you to read/write to the system clipboard
+' and test the path functions interactively.
+
+SCREEN 600, 400, "Utility Tester"
+
+DIM CurrentClip$ = ""
+DIM PathInput$ = ""
+DIM PathResult$ = ""
+
+DO
+    CLS
+    
+    ' --- Start ImGui Window ---
+    IF GUI.BEGIN("Clipboard & Path Tool", 0, 0, 600, 400) THEN
+        
+        ' --- Section 1: Clipboard ---
+        GUI.TEXT "--- Clipboard Operations ---"
+        
+        ' Button to read FROM system clipboard
+        IF GUI.BUTTON("Paste from System") THEN
+            CurrentClip$ = CLIPBOARD.GET$()
+        ENDIF
+        
+        GUI.SAME_LINE
+        
+        ' Button to write TO system clipboard
+        IF GUI.BUTTON("Copy 'Hello World' to System") THEN
+            CLIPBOARD.SET "Hello World from jdBasic!"
+            CurrentClip$ = "Hello World from jdBasic!"
+        ENDIF
+        
+        GUI.SEPARATOR
+        
+        ' Show what we think the clipboard is
+        GUI.TEXT "Internal Variable Content:"
+        GUI.INPUT "##clip_content", CurrentClip$
+        
+        ' Button to copy the MANUAL input above to system
+        IF GUI.BUTTON("Copy Input Field to System") THEN
+            CLIPBOARD.SET CurrentClip$
+        ENDIF
+        
+        GUI.DUMMY 0, 20
+        
+        ' --- Section 2: Path Utils ---
+        GUI.TEXT "--- Path Operations ---"
+        GUI.TEXT "Enter a full file path (e.g. /home/user/data.txt):"
+        
+        PathInput$ = GUI.INPUT("##path_in", PathInput$)
+        
+        IF GUI.BUTTON("Analyze Path") THEN
+            ' Use the new PATH functions
+            base$ = PATH.BASENAME$(PathInput$)
+            ext$ = PATH.EXT$(PathInput$)
+            
+            ' Construct a new path using JOIN
+            ' (Simulates moving the file to a 'backup' folder)
+            joined$ = PATH.JOIN$("backup", base$)
+            
+            PathResult$ = "Basename: " + base$ + CHR$(10) + "Extension: " + ext$ + CHR$(10) + "Joined (backup): " + joined$
+        ENDIF
+        
+        GUI.TEXT PathResult$
+        
+    ENDIF
+    GUI.END
+    
+    SCREENFLIP
+    SLEEP 16
+LOOP

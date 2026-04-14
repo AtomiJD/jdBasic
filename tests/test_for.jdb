@@ -1,0 +1,15 @@
+FOR i = 1 TO 10: PRINT i; " ": NEXT i
+PRINT ""
+
+FOR j = 10 TO 1 STEP -1: PRINT j; " ": NEXT j
+PRINT ""
+
+FOR k = 1 TO 100
+  IF k MOD 15 = 0 THEN
+    PRINT "FizzBuzz"
+  ELSEIF k MOD 3 = 0 THEN
+    PRINT "Fizz"
+  ELSEIF k MOD 5 = 0 THEN
+    PRINT "Buzz"
+  END IF
+NEXT k

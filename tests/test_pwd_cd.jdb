@@ -1,0 +1,38 @@
+' Test PWD/CD at runtime (script mode)
+PRINT "=== Script Mode PWD/CD Test ==="
+PRINT ""
+
+' PWD as expression
+PRINT "1. PWD() returns: "; PWD()
+
+' CD with path - should be SILENT in script mode
+PRINT ""
+PRINT "2. CD to tests (should be silent):"
+LET p1 = CD("tests")
+PRINT "   New path: "; p1
+
+' PWD after CD
+PRINT ""
+PRINT "3. PWD() after CD: "; PWD()
+
+' CD back
+PRINT ""
+PRINT "4. CD back (should be silent):"
+LET p2 = CD("..")
+PRINT "   New path: "; p2
+
+' CD without args
+PRINT ""
+PRINT "5. CD() returns: "; CD()
+
+' Error handling
+PRINT ""
+PRINT "6. CD bad path (should be caught):"
+TRY
+  CD "nonexistent_dir_xyz"
+CATCH
+  PRINT "   Error caught: "; ERRMSG$
+ENDTRY
+
+PRINT ""
+PRINT "All PWD/CD runtime tests done!"

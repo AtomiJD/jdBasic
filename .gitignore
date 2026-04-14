@@ -1,0 +1,74 @@
+# ──────────────────────────────────────────────────────────────────
+# jdBasic .gitignore
+# ──────────────────────────────────────────────────────────────────
+
+# ── User convention: anything starting with "_" is private ────────
+_*
+
+# ── Personal scratch / current tests (not for git) ────────────────
+fluppi/tiled/
+
+# ── Build outputs ─────────────────────────────────────────────────
+build/
+dist/
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.res
+*.idb
+*.map
+build_number.txt
+
+# ── Third-party libraries (too large for git, install manually) ───
+# These are needed to build but must be downloaded separately.
+# See doc/BUILD.md for download links and install instructions.
+libs/llama/
+libs/onnxruntime/
+libs/SDL3-3.2.16/
+libs/SDL3_ttf-3.2.2/
+libs/SDL3_image-3.2.4/
+libs/SDL2_mixer-2.8.1/
+libs/imgui/
+
+# ── LLM models (huge binary blobs) ────────────────────────────────
+models/
+*.gguf
+*.onnx
+*.clf
+
+# ── Runtime / interpreter state ───────────────────────────────────
+imgui.ini
+*_history.txt
+basic_history.txt
+jdbasic_history.txt
+
+# ── Editor / IDE ──────────────────────────────────────────────────
+.vscode/
+.vs/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Claude Code workspace ─────────────────────────────────────────
+.claude/
+
+# ── OS junk ───────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── Large data files (training sets, indexes, etc.) ──────────────
+*.csv
+*.idx
+!tests/**/*.csv
+!jdb/**/*.csv
+
+# ── Temporary / scratch files ─────────────────────────────────────
+*.tmp
+*.bak
+*.log

@@ -1,0 +1,128 @@
+{
+    "skill_trees": {
+        "vally_skills": {
+            "branches": [
+                {
+                    "name": "Schwertkunst",
+                    "skills": [
+                        {"id": "slash", "name": "Hieb", "desc": "Schneller Schwertangriff", "type": "attack", "power": 15, "mp_cost": 5, "level_req": 1},
+                        {"id": "double_strike", "name": "Doppelschlag", "desc": "Trifft zweimal hintereinander", "type": "attack", "power": 12, "hits": 2, "mp_cost": 10, "level_req": 3, "requires": "slash"},
+                        {"id": "blade_fury", "name": "Klingenwut", "desc": "Wilder Dreifach-Angriff", "type": "attack", "power": 11, "hits": 3, "mp_cost": 16, "level_req": 5, "requires": "double_strike"},
+                        {"id": "blade_storm", "name": "Klingensturm", "desc": "Verheerender Vierfach-Kombo", "type": "attack", "power": 10, "hits": 4, "mp_cost": 22, "level_req": 8, "requires": "blade_fury"}
+                    ]
+                },
+                {
+                    "name": "Piratentricks",
+                    "skills": [
+                        {"id": "steal", "name": "Klauen", "desc": "Versucht einen Gegenstand zu stehlen", "type": "special", "power": 0, "mp_cost": 8, "level_req": 2},
+                        {"id": "smoke_bomb", "name": "Rauchbombe", "desc": "Garantierte Flucht aus dem Kampf", "type": "special", "power": 0, "mp_cost": 12, "level_req": 4, "requires": "steal"},
+                        {"id": "dirty_trick", "name": "Fieser Trick", "desc": "Schwächt Gegner-Verteidigung", "type": "debuff_def", "power": 6, "mp_cost": 14, "level_req": 6, "requires": "smoke_bomb"},
+                        {"id": "cannon_blast", "name": "Kanonenschuss", "desc": "Massiver Schaden an allen Gegnern", "type": "attack_all", "power": 25, "mp_cost": 28, "level_req": 9, "requires": "dirty_trick"}
+                    ]
+                },
+                {
+                    "name": "Kapitänin",
+                    "skills": [
+                        {"id": "rally", "name": "Schlachtruf", "desc": "Erhöht ATK der Gruppe", "type": "buff_atk", "power": 5, "mp_cost": 10, "level_req": 3},
+                        {"id": "inspire", "name": "Inspirieren", "desc": "Stellt MP eines Verbündeten wieder her", "type": "restore_mp", "power": 15, "mp_cost": 0, "level_req": 5, "requires": "rally"},
+                        {"id": "treasure_sense", "name": "Schatzspürnase", "desc": "Mehr Gold aus Kämpfen", "type": "passive", "power": 0, "mp_cost": 0, "level_req": 7, "requires": "inspire"},
+                        {"id": "captains_order", "name": "Kapitänsbefehl", "desc": "Alle Gruppenmitglieder greifen an", "type": "party_attack", "power": 8, "mp_cost": 30, "level_req": 10, "requires": "treasure_sense"}
+                    ]
+                }
+            ]
+        },
+        "hasi_skills": {
+            "branches": [
+                {
+                    "name": "Heilkunst",
+                    "skills": [
+                        {"id": "heal", "name": "Heilung", "desc": "Stellt HP eines Verbündeten wieder her", "type": "heal", "power": 30, "mp_cost": 8, "level_req": 1},
+                        {"id": "cure", "name": "Reinigung", "desc": "Entfernt negative Effekte", "type": "special", "power": 0, "mp_cost": 6, "level_req": 3, "requires": "heal"},
+                        {"id": "group_heal", "name": "Gruppenheilung", "desc": "Heilt alle Gruppenmitglieder", "type": "heal_all", "power": 20, "mp_cost": 18, "level_req": 5, "requires": "cure"},
+                        {"id": "revive", "name": "Wiederbelebung", "desc": "Erweckt einen gefallenen Verbündeten", "type": "revive", "power": 50, "mp_cost": 30, "level_req": 8, "requires": "group_heal"}
+                    ]
+                },
+                {
+                    "name": "Schutzmagie",
+                    "skills": [
+                        {"id": "barrier", "name": "Barriere", "desc": "Erhöht DEF eines Verbündeten", "type": "buff_def", "power": 8, "mp_cost": 6, "level_req": 2},
+                        {"id": "magic_shield", "name": "Magischer Schild", "desc": "Absorbiert den nächsten Treffer", "type": "shield", "power": 0, "mp_cost": 15, "level_req": 4, "requires": "barrier"},
+                        {"id": "reflect", "name": "Reflektieren", "desc": "Gibt Schaden an Angreifer zurück", "type": "special", "power": 0, "mp_cost": 18, "level_req": 7, "requires": "magic_shield"},
+                        {"id": "holy_aura", "name": "Heilige Aura", "desc": "Regeneriert HP der Gruppe jede Runde", "type": "regen", "power": 10, "mp_cost": 25, "level_req": 9, "requires": "reflect"}
+                    ]
+                },
+                {
+                    "name": "Sternenzauber",
+                    "skills": [
+                        {"id": "sparkle", "name": "Funkenregen", "desc": "Lichtschaden an einem Gegner", "type": "attack", "power": 18, "mp_cost": 10, "level_req": 2},
+                        {"id": "moonbeam", "name": "Mondstrahl", "desc": "Heilt und schadet gleichzeitig", "type": "attack", "power": 22, "mp_cost": 14, "level_req": 4, "requires": "sparkle"},
+                        {"id": "star_rain", "name": "Sternenregen", "desc": "Lichtschaden an allen Gegnern", "type": "attack_all", "power": 14, "mp_cost": 20, "level_req": 6, "requires": "moonbeam"},
+                        {"id": "divine_judgment", "name": "Göttliches Urteil", "desc": "Massiver heiliger Schaden", "type": "attack", "power": 40, "mp_cost": 35, "level_req": 10, "requires": "star_rain"}
+                    ]
+                }
+            ]
+        },
+        "moehrchen_skills": {
+            "branches": [
+                {
+                    "name": "Bürokratie",
+                    "skills": [
+                        {"id": "stamp", "name": "Stempelattacke", "desc": "Schlägt mit dem Amtsstempel zu", "type": "attack", "power": 14, "mp_cost": 5, "level_req": 1},
+                        {"id": "red_tape", "name": "Amtsschimmel", "desc": "Verlangsamt Gegner-Geschwindigkeit", "type": "debuff_spd", "power": 5, "mp_cost": 10, "level_req": 3, "requires": "stamp"},
+                        {"id": "papercut", "name": "Papierschnitt", "desc": "Scharfer Schnitt mit Aktenblatt", "type": "attack", "power": 22, "mp_cost": 12, "level_req": 5, "requires": "red_tape"},
+                        {"id": "audit", "name": "Steuerprüfung", "desc": "Stiehlt Gegner-Boni", "type": "special", "power": 0, "mp_cost": 15, "level_req": 7, "requires": "papercut"}
+                    ]
+                },
+                {
+                    "name": "Vorschriften",
+                    "skills": [
+                        {"id": "fine", "name": "Bußgeld!", "desc": "Schaden basiert auf Gegner-Gold", "type": "attack", "power": 20, "mp_cost": 8, "level_req": 2},
+                        {"id": "tax_shield", "name": "Steuerschild", "desc": "Erhöht DEF der Gruppe", "type": "buff_def_all", "power": 4, "mp_cost": 15, "level_req": 4, "requires": "fine"},
+                        {"id": "regulation", "name": "Regulierung", "desc": "Schwächt alle Gegner-Stats", "type": "debuff_all", "power": 3, "mp_cost": 20, "level_req": 7, "requires": "tax_shield"},
+                        {"id": "decree", "name": "Königliches Dekret", "desc": "Massiver Schaden + Betäubung", "type": "attack", "power": 35, "mp_cost": 28, "level_req": 9, "requires": "regulation"}
+                    ]
+                },
+                {
+                    "name": "Verwaltung",
+                    "skills": [
+                        {"id": "organize", "name": "Ordnung", "desc": "Stellt eigene MP wieder her", "type": "restore_mp", "power": 15, "mp_cost": 0, "level_req": 2},
+                        {"id": "delegate", "name": "Delegieren", "desc": "Gibt einem Verbündeten Extra-Zug", "type": "special", "power": 0, "mp_cost": 20, "level_req": 5, "requires": "organize"},
+                        {"id": "efficiency", "name": "Effizienz", "desc": "Halbiert MP-Kosten für 3 Runden", "type": "special", "power": 0, "mp_cost": 12, "level_req": 7, "requires": "delegate"},
+                        {"id": "martial_law", "name": "Ausnahmezustand", "desc": "DEF der Gruppe massiv erhöht", "type": "buff_def_all", "power": 10, "mp_cost": 30, "level_req": 10, "requires": "efficiency"}
+                    ]
+                }
+            ]
+        },
+        "kraki_skills": {
+            "branches": [
+                {
+                    "name": "Tentakelangriff",
+                    "skills": [
+                        {"id": "ink_splash", "name": "Tintenwurf", "desc": "Blendet Gegner mit Tinte", "type": "attack", "power": 12, "mp_cost": 4, "level_req": 1},
+                        {"id": "tentacle_slap", "name": "Tentakelklaps", "desc": "Schlägt mit allen 8 Armen zu", "type": "attack", "power": 6, "hits": 4, "mp_cost": 10, "level_req": 3, "requires": "ink_splash"},
+                        {"id": "ink_storm", "name": "Tintensturm", "desc": "Tintenschaden an allen Gegnern", "type": "attack_all", "power": 16, "mp_cost": 18, "level_req": 6, "requires": "tentacle_slap"},
+                        {"id": "kraken_fury", "name": "Krakenwut", "desc": "Entfesselt den inneren Kraken", "type": "attack", "power": 8, "hits": 6, "mp_cost": 28, "level_req": 9, "requires": "ink_storm"}
+                    ]
+                },
+                {
+                    "name": "Meeresmagie",
+                    "skills": [
+                        {"id": "bubble", "name": "Blubberblasen", "desc": "Schützende Blase um Verbündeten", "type": "buff_def", "power": 6, "mp_cost": 6, "level_req": 1},
+                        {"id": "water_jet", "name": "Wasserstrahl", "desc": "Druckvoller Wasserangriff", "type": "attack", "power": 20, "mp_cost": 10, "level_req": 3, "requires": "bubble"},
+                        {"id": "tidal_wave", "name": "Flutwelle", "desc": "Wasser-Schaden an allen Gegnern", "type": "attack_all", "power": 18, "mp_cost": 22, "level_req": 6, "requires": "water_jet"},
+                        {"id": "ocean_call", "name": "Ruf des Ozeans", "desc": "Heilt Gruppe + schadet allen Gegnern", "type": "heal_all", "power": 25, "mp_cost": 32, "level_req": 9, "requires": "tidal_wave"}
+                    ]
+                },
+                {
+                    "name": "Tollpatschigkeit",
+                    "skills": [
+                        {"id": "trip", "name": "Stolpern", "desc": "Fällt auf den Gegner drauf (Zufall!)", "type": "attack", "power": 25, "mp_cost": 3, "level_req": 1},
+                        {"id": "confuse", "name": "Verwirren", "desc": "Gegner greift sich selbst an", "type": "special", "power": 0, "mp_cost": 8, "level_req": 3, "requires": "trip"},
+                        {"id": "lucky_dodge", "name": "Glückstreffer", "desc": "Weicht nächstem Angriff aus + kontert", "type": "special", "power": 0, "mp_cost": 12, "level_req": 5, "requires": "confuse"},
+                        {"id": "chaos_splash", "name": "Chaosplantscher", "desc": "Zufälliger massiver Effekt auf alle", "type": "attack_all", "power": 30, "mp_cost": 25, "level_req": 8, "requires": "lucky_dodge"}
+                    ]
+                }
+            ]
+        }
+    }
+}

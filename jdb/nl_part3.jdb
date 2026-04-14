@@ -1,0 +1,43 @@
+' --- Part 3: Activation Functions ---
+PRINT "--- Applying Activation Functions ---"
+PRINT
+
+' Our raw layer outputs from the previous step.
+LAYER_OUTPUTS = [[0.04, 0.1, 0.77, 0.6]]
+
+PRINT "Raw Layer Outputs:"
+PRINT FRMV$(LAYER_OUTPUTS)
+PRINT
+
+' --- 1. The Sigmoid Function ---
+' Sigmoid squashes any number into a range between 0 and 1.
+' It's often used for binary classification output layers.
+' The formula is: 1 / (1 + e^-x)
+FUNC SIGMOID(X)
+  RETURN 1 / (1 + 2 ^ x*-1)
+ENDFUNC
+
+' Apply Sigmoid to the entire output array element-wise.
+ACTIVATED_SIGMOID = SIGMOID(LAYER_OUTPUTS)
+
+PRINT "Outputs after Sigmoid Activation:"
+PRINT ACTIVATED_SIGMOID
+PRINT
+
+
+' --- 2. The ReLU (Rectified Linear Unit) Function ---
+' ReLU is the most popular activation function for hidden layers.
+' It's very simple: if x is negative, it becomes 0. Otherwise, it stays x.
+' Formula: MAX(0, x)
+FUNC RELU(X)
+  ' We can implement this cleverly with array comparisons.
+  ' (X > 0) creates a boolean array [FALSE, TRUE, TRUE, TRUE]
+  ' which acts like [0, 1, 1, 1] in math.
+  RETURN X * (X > 0)
+ENDFUNC
+
+' Apply ReLU to the entire output array element-wise.
+ACTIVATED_RELU = RELU(LAYER_OUTPUTS)
+
+PRINT "Outputs after ReLU Activation:"
+PRINT FRMV$(ACTIVATED_RELU)

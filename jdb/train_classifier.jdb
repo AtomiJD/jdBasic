@@ -1,0 +1,164 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic Text Classifier — Training auf echten Ticket-Daten
+'  CSV-Format: "label";"text" mit Semikolon-Delimiter, keine Header
+'  Nutzt bge-m3 Embeddings + k-NN statt fein-getuntem BERT.
+' ══════════════════════════════════════════════════════════════════
+
+DIM csv_path = "luli.csv"
+DIM index_path = "luli.clf"
+
+' Maximale Anzahl Samples zum Trainieren (0 = alle ~7075)
+DIM max_samples = 0
+DIM train_ratio = 0.8
+DIM top_k = 5
+
+PRINT "══════════════════════════════════════════════════════"
+PRINT "  jdBasic Text Classifier Training"
+PRINT "══════════════════════════════════════════════════════"
+
+PRINT ""
+PRINT "Loading bge-m3 embedding model..."
+emb = AI.LOAD_EMBEDDINGS("models/bge-m3-Q4_K_M.gguf", 2048, 99)
+
+PRINT ""
+PRINT "Reading CSV: "; csv_path
+DIM rows = CSVREADER(csv_path, ";", 0)
+PRINT "Loaded "; LEN(rows); " rows"
+
+IF LEN(rows) = 0 THEN
+  PRINT "ERROR: empty CSV"
+  AI.FREE_LLM emb
+  END
+ENDIF
+
+' Sample-Groesse bestimmen
+DIM n_total = LEN(rows)
+DIM n_use = n_total
+IF max_samples > 0 AND max_samples < n_total THEN n_use = max_samples
+
+PRINT ""
+PRINT "Using "; n_use; " of "; n_total; " rows"
+
+' Shuffle (Fisher-Yates mit fest gesetztem Seed fuer reproduzierbare Splits)
+RANDOMSEED 42
+DIM indices AS ARRAY
+FOR i = 0 TO n_total - 1
+  PUSH indices, i
+NEXT i
+FOR i = n_total - 1 TO 1 STEP -1
+  DIM j = INT(RND() * (i + 1))
+  DIM tmp = indices[i]
+  indices[i] = indices[j]
+  indices[j] = tmp
+NEXT i
+
+' Split
+DIM n_train = INT(n_use * train_ratio)
+DIM n_val = n_use - n_train
+PRINT "Train: "; n_train; "  Val: "; n_val
+
+' Label-Distribution anzeigen (nur Train)
+PRINT ""
+PRINT "Extrahiere Train- und Val-Sets..."
+DIM train_texts AS ARRAY
+DIM train_labels AS ARRAY
+DIM val_texts AS ARRAY
+DIM val_labels AS ARRAY
+
+FOR i = 0 TO n_train - 1
+  DIM row = rows[indices[i]]
+  IF LEN(row) >= 2 THEN
+    PUSH train_labels, row[0]
+    PUSH train_texts, row[1]
+  ENDIF
+NEXT i
+
+FOR i = n_train TO n_use - 1
+  DIM row = rows[indices[i]]
+  IF LEN(row) >= 2 THEN
+    PUSH val_labels, row[0]
+    PUSH val_texts, row[1]
+  ENDIF
+NEXT i
+
+PRINT "Train samples: "; LEN(train_texts)
+PRINT "Val samples:   "; LEN(val_texts)
+
+PRINT ""
+PRINT "Creating classifier..."
+clf = AI.CLASSIFIER_CREATE(emb)
+
+PRINT ""
+PRINT "Training (jeder Sample wird embedded, bitte warten)..."
+DIM t0 = TICK()
+AI.CLASSIFIER_ADD_BATCH clf, train_texts, train_labels
+DIM dt = TICK() - t0
+PRINT "Training fertig in "; INT(dt / 1000); "s"
+
+DIM info = AI.CLASSIFIER_INFO(clf)
+PRINT ""
+PRINT "Classifier: "; info{"samples"}; " samples, "; info{"num_labels"}; " Klassen, embed_dim="; info{"embed_dim"}
+
+' Baue HNSW fuer schnellere Inferenz
+PRINT ""
+PRINT "Building HNSW index..."
+DIM tb = TICK()
+AI.CLASSIFIER_BUILD_INDEX clf, 16, 200
+PRINT "HNSW built in "; INT(TICK() - tb); "ms"
+
+' ── Evaluation auf Val-Set ──
+PRINT ""
+PRINT "══════════════════════════════════════════════════════"
+PRINT "  Evaluation on "; LEN(val_texts); " val samples"
+PRINT "══════════════════════════════════════════════════════"
+
+DIM correct = 0
+DIM correct_top_level = 0  ' Nur erste Ebene (vor " | ")
+DIM t_eval = TICK()
+
+FOR i = 0 TO LEN(val_texts) - 1
+  DIM p = AI.CLASSIFIER_PREDICT(clf, val_texts[i], top_k)
+  DIM pred = p{"label"}
+  DIM expected = val_labels[i]
+
+  IF pred = expected THEN correct = correct + 1
+
+  ' Top-Level nur die erste Kategorie vor " | "
+  DIM dash1 = INSTR(pred, " | ")
+  DIM dash2 = INSTR(expected, " | ")
+  DIM p_top = pred
+  DIM e_top = expected
+  IF dash1 > 0 THEN p_top = LEFT(pred, dash1 - 1)
+  IF dash2 > 0 THEN e_top = LEFT(expected, dash2 - 1)
+  IF p_top = e_top THEN correct_top_level = correct_top_level + 1
+NEXT i
+
+DIM dt_eval = TICK() - t_eval
+DIM acc = correct * 100 / LEN(val_texts)
+DIM acc_top = correct_top_level * 100 / LEN(val_texts)
+
+PRINT ""
+PRINT "Exact match:       "; correct; "/"; LEN(val_texts); "  ("; INT(acc * 100) / 100; "%)"
+PRINT "Top-level match:   "; correct_top_level; "/"; LEN(val_texts); "  ("; INT(acc_top * 100) / 100; "%)"
+PRINT "Eval time:         "; INT(dt_eval / 1000); "s  ("; INT(dt_eval / LEN(val_texts)); "ms/sample)"
+
+' Ein paar Beispiele zeigen
+PRINT ""
+PRINT "── Beispiel-Predictions ──"
+FOR i = 0 TO 4
+  DIM p = AI.CLASSIFIER_PREDICT(clf, val_texts[i], top_k)
+  PRINT ""
+  PRINT "Ticket[" ; i; "]: "; LEFT(val_texts[i], 120); "..."
+  PRINT "  Expected:  "; val_labels[i]
+  PRINT "  Predicted: "; p{"label"}; "  (conf="; INT(p{"confidence"} * 100); "%)"
+NEXT i
+
+' Index speichern
+PRINT ""
+PRINT "Saving index..."
+AI.CLASSIFIER_SAVE clf, index_path
+PRINT "Saved to "; index_path
+
+AI.FREE_LLM emb
+PRINT ""
+PRINT "Done."

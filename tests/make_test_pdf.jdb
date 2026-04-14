@@ -1,0 +1,26 @@
+' Erzeugt ein minimales gültiges PDF mit unkomprimiertem Text
+' (kein FlateDecode) zum Testen des PDF-Extraktors.
+
+DIM pdf AS STRING = ""
+pdf = pdf + "%PDF-1.4" + CHR$(10)
+pdf = pdf + "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj" + CHR$(10)
+pdf = pdf + "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj" + CHR$(10)
+pdf = pdf + "3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 5 0 R >> >> /MediaBox [0 0 595 842] /Contents 4 0 R >> endobj" + CHR$(10)
+
+DIM stream AS STRING = ""
+stream = stream + "BT /F1 12 Tf 50 800 Td (Hallo Welt aus jdBasic!) Tj " + CHR$(10)
+stream = stream + "0 -20 Td (Dies ist ein PDF Test mit unkomprimiertem Text.) Tj " + CHR$(10)
+stream = stream + "0 -20 Td (RAG indiziert auch PDFs jetzt.) Tj ET" + CHR$(10)
+
+pdf = pdf + "4 0 obj << /Length " + STR$(LEN(stream)) + " >> stream" + CHR$(10)
+pdf = pdf + stream
+pdf = pdf + "endstream endobj" + CHR$(10)
+pdf = pdf + "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj" + CHR$(10)
+pdf = pdf + "xref" + CHR$(10) + "0 6" + CHR$(10)
+pdf = pdf + "0000000000 65535 f " + CHR$(10)
+pdf = pdf + "trailer << /Size 6 /Root 1 0 R >>" + CHR$(10)
+pdf = pdf + "startxref" + CHR$(10) + "0" + CHR$(10) + "%%EOF" + CHR$(10)
+
+' Schreiben (binär)
+BINWRITER "tests/test_simple.pdf", pdf
+PRINT "PDF written: tests/test_simple.pdf ("; LEN(pdf); " bytes)"

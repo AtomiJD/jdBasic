@@ -1,0 +1,7 @@
+Print "FRMV$ Test"
+
+A = IOTA(12)
+A = RESHAPE(A, [3,4])
+
+Print FRMV$(A)
+

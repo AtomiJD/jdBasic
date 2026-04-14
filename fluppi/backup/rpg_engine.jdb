@@ -1,0 +1,1138 @@
+' ===================================================================
+' == RPG Engine Module
+' == Handles: Init, Update, Draw, Room Switching, Interaction
+' ===================================================================
+
+EXPORT MODULE RPG_ENGINE
+
+IMPORT RPG_TYPES
+IMPORT RPG_DIALOG
+IMPORT RPG_MUSIC
+IMPORT RPG_INVENTORY
+IMPORT RPG_QUEST
+IMPORT RPG_BATTLE
+IMPORT RPG_PARTY
+
+' ── Game State ───────────────────────────────────────────────
+EXPORT DIM current_room$ = ""
+EXPORT DIM score = 0
+EXPORT DIM has_key = FALSE
+EXPORT DIM quit_flag = FALSE
+EXPORT DIM player_name$ = ""
+
+EXPORT DIM hero = -1
+EXPORT DIM has_sheet = FALSE
+EXPORT DIM direction$ = "down"
+EXPORT DIM moving = FALSE
+EXPORT DIM speed = 3
+EXPORT DIM msg$ = ""
+EXPORT DIM msg_timer = 0
+EXPORT DIM hint$ = ""
+EXPORT DIM quest_handled = FALSE
+
+' Monster sprites on map
+EXPORT DIM monsters = []
+EXPORT DIM monster_count = 0
+
+' Recruitment data (separate from NPC TYPE to avoid copy issues)
+EXPORT DIM recruit_data = {}
+
+' Party following sprites on map
+EXPORT DIM follow_sprites = []
+EXPORT DIM follow_count = 0
+EXPORT DIM path_trail = []      ' Array of [x, y] breadcrumbs dropped every T pixels
+EXPORT DIM last_trail_x = -999
+EXPORT DIM last_trail_y = -999
+EXPORT DIM T = 32
+EXPORT DIM SW = 640
+EXPORT DIM SH = 480
+EXPORT DIM door_tile_id = 8
+EXPORT DIM tileset = -1
+EXPORT DIM OUT$ = ""
+EXPORT DIM data_dir$ = ""
+EXPORT DIM coins_collected = 0
+
+' Entity arrays (variant arrays — can hold any type)
+EXPORT DIM npcs = []
+EXPORT DIM npc_count = 0
+EXPORT DIM chests = []
+EXPORT DIM chest_count = 0
+EXPORT DIM coins = []
+EXPORT DIM coin_count = 0
+EXPORT DIM doors = []
+EXPORT DIM door_count = 0
+EXPORT DIM total_coin_value = 0
+
+' Room data cache
+EXPORT DIM room_data = []
+EXPORT DIM room_names = []
+EXPORT DIM room_count = 0
+
+' ══════════════════════════════════════════════════════════════
+' ══ INIT ═════════════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT FUNC SHOW_TITLE(config_file$)
+    game = JSON.PARSE$(TXTREADER$(config_file$))
+    SW = game{"screen_w"} : SH = game{"screen_h"}
+    SCREEN SW, SH, game{"title"}
+
+    ' Load font from config
+    font$ = "C:/Windows/Fonts/arial.ttf"
+    font_size = 16
+    IF MAP.EXISTS(game, "font") THEN font$ = game{"font"}
+    IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
+    TRY
+        SETFONT font$, font_size
+    CATCH
+        SETFONT "C:/Windows/Fonts/arial.ttf", 14
+    ENDTRY
+
+    ' Load color scheme
+    c = game{"colors"}
+    ct = c{"title"} : cb = c{"text_bright"} : cm = c{"menu_text"}
+    cs = c{"menu_sel"} : cbd = c{"box_border"} : cd = c{"text_dim"}
+
+    RPG_MUSIC.SETUP
+    RPG_MUSIC.PLAY "title"
+
+    ' Try to load welcome background
+    welcome_bg = -1
+    TRY
+        welcome_bg = GFX.LOADIMAGE(game{"asset_path"} + game{"welcome_bg"})
+    CATCH
+    ENDTRY
+
+    selected = 0
+    num_items = 3
+    items = ["New Game", "Load Game", "Quit"]
+
+    DO
+        CLS 10, 10, 30
+        IF welcome_bg > 0 THEN GFX.DRAWIMAGE welcome_bg, 0, 0, SW, SH
+
+        ' Menu items (centered, lower part of screen)
+        menu_y = SH / 2 + 20
+        FOR i = 0 TO num_items - 1
+            iy = menu_y + i * 44
+            IF i = selected THEN
+                RECT SW/2 - 100, iy - 6, 200, 36, cs[0], cs[1], cs[2], TRUE
+                RECT SW/2 - 100, iy - 6, 200, 36, cbd[0], cbd[1], cbd[2], FALSE
+                TEXT SW/2 - 50, iy, "> " + items[i], cb[0], cb[1], cb[2]
+            ELSE
+                TEXT SW/2 - 40, iy, items[i], cm[0], cm[1], cm[2]
+            ENDIF
+        NEXT i
+
+        ' Footer
+        TEXT SW/2 - 80, SH - 30, "Arrow Keys + Enter", cd[0], cd[1], cd[2]
+
+        SCREENFLIP
+        SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:F11" THEN TOGGLE_FULLSCREEN
+        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_items
+        IF ev$ = "KEYDOWN:Up" THEN
+            selected = selected - 1
+            IF selected < 0 THEN selected = num_items - 1
+        ENDIF
+        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+            GFX.FADE 0, 0.5
+            RETURN selected
+        ENDIF
+        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN
+            RETURN 2
+        ENDIF
+    LOOP
+ENDFUNC
+
+EXPORT SUB INIT(config_file$)
+    data_dir$ = "D:/usr/dev/cc/fluppi/rpg_data/"
+
+    ' Load game config
+    game = JSON.PARSE$(TXTREADER$(config_file$))
+    SW = game{"screen_w"} : SH = game{"screen_h"} : T = game{"tile_size"}
+    OUT$ = game{"asset_path"}
+    door_tile_id = game{"door_tile_id"}
+
+    ' Font (in case SHOW_TITLE wasn't called)
+    IF SCREENWIDTH() = 0 THEN
+        SCREEN SW, SH, game{"title"}
+        font$ = "C:/Windows/Fonts/arial.ttf"
+        IF MAP.EXISTS(game, "font") THEN font$ = game{"font"}
+        font_size = 16
+        IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
+        TRY : SETFONT font$, font_size
+        CATCH : SETFONT "C:/Windows/Fonts/arial.ttf", 14 : ENDTRY
+        RPG_MUSIC.SETUP
+    ENDIF
+
+    ' Load tileset
+    tileset = GFX.LOADIMAGE(OUT$ + game{"tileset"})
+    RPG_INVENTORY.SET_ASSET_PATH OUT$
+    RPG_INVENTORY.LOAD_ITEM_DB data_dir$ + "items.json"
+
+    ' Load rooms
+    LOAD_ROOM data_dir$ + "overworld.json"
+    LOAD_ROOM data_dir$ + "house.json"
+    LOAD_ROOM data_dir$ + "shop.json"
+
+    ' Load quests from JSON
+    RPG_QUEST.LOAD_QUESTS data_dir$ + "quests.json"
+
+    ' Load player stats + enemies
+    IF MAP.EXISTS(game, "player_stats") THEN
+        RPG_COMBAT.INIT_PLAYER game{"player_stats"}
+    ENDIF
+    RPG_COMBAT.LOAD_ENEMIES data_dir$ + "enemies.json", OUT$
+
+    ' Load party data and add Vally as starter
+    RPG_PARTY.LOAD_DATA data_dir$ + "characters.json", data_dir$ + "skills.json", OUT$
+    RPG_PARTY.ADD_MEMBER "vally"
+
+    ' Player
+    TRY
+        hero = SPRITE.LOAD(OUT$ + game{"player_sprite"}, 64, 64)
+        SPRITE.SCALE hero, game{"player_scale"}
+        has_sheet = TRUE
+    CATCH
+        TRY
+            hero = SPRITE.LOAD("D:/usr/dev/cc/fluppi/test_sprite.png")
+            SPRITE.SCALE hero, 0.8
+        CATCH
+            PRINT "No sprite! Run sprite_gen.jdb first." : END
+        ENDTRY
+    ENDTRY
+
+    SPRITE.POS hero, game{"start_x"}, game{"start_y"}
+    SPRITE.ZORDER hero, 10 : SPRITE.GROUP hero, "player"
+
+    IF has_sheet THEN
+        SPRITE.ANIM hero, "idle_down",  [0], 1
+        SPRITE.ANIM hero, "idle_left",  [3], 1
+        SPRITE.ANIM hero, "idle_right", [6], 1
+        SPRITE.ANIM hero, "idle_up",    [9], 1
+        SPRITE.ANIM hero, "walk_down",  [0, 1, 0, 2], 6
+        SPRITE.ANIM hero, "walk_left",  [3, 4, 3, 5], 6
+        SPRITE.ANIM hero, "walk_right", [6, 7, 6, 8], 6
+        SPRITE.ANIM hero, "walk_up",    [9, 10, 9, 11], 6
+        SPRITE.PLAY hero, "idle_down"
+    ENDIF
+
+    current_room$ = game{"start_room"}
+    CAM.FOLLOW hero, 0.15
+    CAM.BOUNDS 0, 0, 30*T, 20*T
+    SET_VISIBILITY current_room$
+    RPG_MUSIC.PLAY "overworld"
+    last_trail_x = game{"start_x"} : last_trail_y = game{"start_y"}
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ ROOM LOADING ═════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+SUB LOAD_ROOM(json_file$)
+    rd = JSON.PARSE$(TXTREADER$(json_file$))
+    rname$ = rd{"name"}
+    W = rd{"width"} : H = rd{"height"}
+
+    ' Store room data
+    PUSH room_data, rd
+    PUSH room_names, rname$
+    room_count = room_count + 1
+
+    ' Build tilemap
+    BUILD_MAP rd
+    SPAWN_ENTITIES rd
+ENDSUB
+
+SUB BUILD_MAP(rd)
+    rname$ = rd{"name"}
+    W = rd{"width"} : H = rd{"height"}
+    DIM tmap[H, W] : DIM cmap[H, W]
+
+    IF rname$ = "overworld" THEN
+        FOR r = 0 TO H-1 : FOR c = 0 TO W-1
+            IF r = 0 OR r = H-1 OR c = 0 OR c = W-1 THEN
+                tmap[r,c] = 2 : cmap[r,c] = 1
+            ELSE
+                tmap[r,c] = 1
+            ENDIF
+        NEXT c : NEXT r
+        ph = rd{"path_h"}
+        FOR c = ph{"c1"} TO ph{"c2"} : tmap[ph{"row"},c] = 4 : NEXT c
+        pv = rd{"path_v"}
+        FOR r = pv{"r1"} TO pv{"r2"} : tmap[r, pv{"col"}] = 4 : NEXT r
+        wt = rd{"water"}
+        FOR r = wt{"r1"} TO wt{"r2"} : FOR c = wt{"c1"} TO wt{"c2"}
+            tmap[r,c] = 3 : cmap[r,c] = 1
+        NEXT c : NEXT r
+        trees = rd{"trees"}
+        FOR i = 0 TO LEN(trees)[0]-1
+            tr = trees[i][0] : tc = trees[i][1]
+            tmap[tr,tc] = 6 : cmap[tr,tc] = 1
+            IF tr > 0 THEN tmap[tr-1,tc] = 7 : cmap[tr-1,tc] = 1
+        NEXT i
+        flowers = rd{"flowers"}
+        FOR i = 0 TO LEN(flowers)[0]-1 : tmap[flowers[i][0], flowers[i][1]] = 5 : NEXT i
+        b = rd{"building"}
+        FOR r = b{"r1"} TO b{"r2"} : FOR c = b{"c1"} TO b{"c2"}
+            IF r = b{"r1"} OR r = b{"r2"} OR c = b{"c1"} OR c = b{"c2"} THEN
+                tmap[r,c] = 2 : cmap[r,c] = 1
+            ELSE : tmap[r,c] = 4
+            ENDIF
+        NEXT c : NEXT r
+        ' Shop building
+        IF MAP.EXISTS(rd, "shop_building") THEN
+            sb = rd{"shop_building"}
+            FOR r = sb{"r1"} TO sb{"r2"} : FOR c = sb{"c1"} TO sb{"c2"}
+                IF r = sb{"r1"} OR r = sb{"r2"} OR c = sb{"c1"} OR c = sb{"c2"} THEN
+                    tmap[r,c] = 2 : cmap[r,c] = 1
+                ELSE : tmap[r,c] = 4
+                ENDIF
+            NEXT c : NEXT r
+        ENDIF
+    ELSEIF rname$ = "house" OR rname$ = "shop" THEN
+        ft = rd{"floor_tile"} : wl = rd{"wall_tile"}
+        FOR r = 0 TO H-1 : FOR c = 0 TO W-1
+            IF r = 0 OR r = H-1 OR c = 0 OR c = W-1 THEN
+                tmap[r,c] = wl : cmap[r,c] = 1
+            ELSE : tmap[r,c] = ft
+            ENDIF
+        NEXT c : NEXT r
+    ENDIF
+
+    ' Doors are solid
+    door_list = rd{"doors"}
+    FOR i = 0 TO LEN(door_list)-1
+        tmap[door_list[i]{"row"}, door_list[i]{"col"}] = door_tile_id
+        cmap[door_list[i]{"row"}, door_list[i]{"col"}] = 1
+    NEXT i
+
+    TILEMAP.CREATE rname$, tileset, tmap, T, T
+    TILEMAP.CREATE rname$ + "_col", tileset, cmap, T, T
+ENDSUB
+
+SUB SPAWN_ENTITIES(rd)
+    rname$ = rd{"name"}
+
+    npc_list = rd{"npcs"}
+    FOR i = 0 TO LEN(npc_list)-1
+        nd = npc_list[i]
+        DIM n AS RPG_TYPES.T_NPC
+        n.INIT nd, OUT$, rname$
+        PUSH npcs, n
+        npc_count = npc_count + 1
+        ' Store recruitment data separately
+        IF MAP.EXISTS(nd, "can_recruit") AND nd{"can_recruit"} THEN
+            rd_entry = {}
+            rd_entry{"id"} = nd{"recruit_id"}
+            rd_entry{"joined"} = FALSE
+            rd_entry{"dialog_joined"} = ""
+            IF MAP.EXISTS(nd, "dialog_joined") THEN rd_entry{"dialog_joined"} = nd{"dialog_joined"}
+            recruit_data{nd{"name"}} = rd_entry
+        ENDIF
+    NEXT i
+
+    obj_list = rd{"objects"}
+    FOR i = 0 TO LEN(obj_list)-1
+        DIM c AS RPG_TYPES.T_CHEST
+        c.INIT obj_list[i], OUT$, rname$
+        PUSH chests, c
+        chest_count = chest_count + 1
+    NEXT i
+
+    coin_list = rd{"coins"}
+    FOR i = 0 TO LEN(coin_list)-1
+        DIM cn AS RPG_TYPES.T_COIN
+        cn.INIT coin_list[i], OUT$, rname$
+        total_coin_value = total_coin_value + cn.value
+        PUSH coins, cn
+        coin_count = coin_count + 1
+    NEXT i
+
+    door_list = rd{"doors"}
+    FOR i = 0 TO LEN(door_list)-1
+        DIM d AS RPG_TYPES.T_DOOR
+        d.INIT door_list[i], rname$
+        PUSH doors, d
+        door_count = door_count + 1
+    NEXT i
+
+    ' Monsters (visible on map)
+    IF MAP.EXISTS(rd, "monsters") THEN
+        mon_list = rd{"monsters"}
+        FOR i = 0 TO LEN(mon_list) - 1
+            md = mon_list[i]
+            m = {}
+            m{"id"} = md{"id"}
+            m{"room"} = rname$
+            m{"defeated"} = FALSE
+            ' Load sprite directly from enemies.json data
+            m{"sprite_id"} = -1
+            TRY
+                edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
+                elist = edata{"enemies"}
+                FOR ei = 0 TO LEN(elist) - 1
+                    IF elist[ei]{"id"} = md{"id"} AND elist[ei]{"sprite"} <> "" THEN
+                        sf$ = OUT$ + elist[ei]{"sprite"}
+                        fw = INT(elist[ei]{"frame_w"})
+                        fh = INT(elist[ei]{"frame_h"})
+                        sid = SPRITE.LOAD(sf$, fw, fh)
+                        SPRITE.POS sid, INT(md{"x"}), INT(md{"y"})
+                        SPRITE.SCALE sid, 0.5
+                        SPRITE.ZORDER sid, 6
+                        SPRITE.GROUP sid, "monster"
+                        af = elist[ei]{"anim_frames"}
+                        af_len = LEN(af)
+                        IF TYPEOF(af_len) = "ARRAY" THEN af_len = af_len[0]
+                        IF af_len > 0 THEN
+                            SPRITE.ANIM sid, "idle", af, INT(elist[ei]{"anim_fps"})
+                            SPRITE.PLAY sid, "idle"
+                        ENDIF
+                        m{"sprite_id"} = sid
+                        EXITFOR
+                    ENDIF
+                NEXT ei
+            CATCH
+            ENDTRY
+            PUSH monsters, m
+            monster_count = monster_count + 1
+        NEXT i
+    ENDIF
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ VISIBILITY & ROOM SWITCH ═════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+SUB SET_VISIBILITY(room$)
+    FOR i = 0 TO npc_count-1
+        n = npcs[i]
+        v = (n.room$ = room$)
+        ' Hide recruited NPCs (they follow as party members now)
+        IF MAP.EXISTS(recruit_data, n.name$) THEN
+            rd_info = recruit_data{n.name$}
+            IF rd_info{"joined"} THEN v = FALSE
+        ENDIF
+        n.SET_VISIBLE(v)
+    NEXT i
+    FOR i = 0 TO chest_count-1
+        v = (chests[i].room$ = room$)
+        c = chests[i] : c.SET_VISIBLE(v)
+    NEXT i
+    FOR i = 0 TO coin_count-1
+        c = coins[i]
+        IF c.collected OR c.sprite_id < 0 THEN CONTINUEFOR
+        v = (c.room$ = room$)
+        TRY : c.SET_VISIBLE(v) : CATCH : ENDTRY
+    NEXT i
+    FOR i = 0 TO monster_count-1
+        m = monsters[i]
+        show = (m{"room"} = room$) AND NOT m{"defeated"}
+        IF m{"sprite_id"} > 0 THEN SPRITE.VISIBLE m{"sprite_id"}, show
+    NEXT i
+    ' Show/hide follow sprites
+    FOR i = 0 TO follow_count - 1
+        IF follow_sprites[i] > 0 THEN SPRITE.VISIBLE follow_sprites[i], TRUE
+    NEXT i
+ENDSUB
+
+SUB SWITCH_TO(room$, sx, sy)
+    ' Fade out music
+    FOR fade_i = 10 TO 0 STEP -1
+        vol = fade_i / 10.0
+        SOUND.GAIN 0, vol * 0.6
+        SOUND.GAIN 1, vol * 0.7
+        SLEEP 30
+    NEXT fade_i
+
+    GFX.FADE 0, 0.3
+    current_room$ = room$
+    SPRITE.POS hero, sx, sy
+    SET_VISIBILITY room$
+
+    ' Teleport followers near spawn point and reset trail
+    path_trail = []
+    last_trail_x = sx : last_trail_y = sy
+    FOR fi = 0 TO follow_count - 1
+        IF follow_sprites[fi] > 0 THEN
+            SPRITE.POS follow_sprites[fi], sx, sy + T * (fi + 1)
+        ENDIF
+    NEXT fi
+
+    ' Switch music theme
+    IF room$ = "overworld" THEN RPG_MUSIC.PLAY "overworld"
+    IF room$ = "shop" THEN RPG_MUSIC.PLAY "shop"
+    IF room$ = "house" THEN RPG_MUSIC.PLAY "indoor"
+
+    ' Camera
+    rd = GET_ROOM_DATA(room$)
+    IF rd{"camera_fixed"} THEN
+        CAM.SET 0, 0
+    ELSE
+        CAM.FOLLOW hero, 0.15
+        CAM.BOUNDS 0, 0, rd{"width"}*T, rd{"height"}*T
+    ENDIF
+
+    bg = rd{"bg"}
+    CLS bg[0], bg[1], bg[2]
+    SPRITE.UPDATE : TILEMAP.DRAW current_room$ : SPRITE.DRAW_ALL
+    GFX.FADE 1, 0.3
+
+    ' Fade in music
+    FOR fade_i = 0 TO 10
+        vol = fade_i / 10.0
+        SOUND.GAIN 0, vol * 0.6
+        SOUND.GAIN 1, vol * 0.7
+        SLEEP 30
+    NEXT fade_i
+
+    IF NOT rd{"camera_fixed"} THEN CAM.FOLLOW hero, 0.15
+ENDSUB
+
+FUNC GET_ROOM_DATA(room$)
+    FOR i = 0 TO room_count-1
+        IF room_names[i] = room$ THEN RETURN room_data[i]
+    NEXT i
+    RETURN {}
+ENDFUNC
+
+' ══════════════════════════════════════════════════════════════
+' ══ HELPERS ══════════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+FUNC FACING_TILE_CHECK(dir$, room$)
+    cx = SPRITE.GET_X(hero) + SPRITE.WIDTH(hero)/2
+    cy = SPRITE.GET_Y(hero) + SPRITE.HEIGHT(hero)/2
+    IF dir$ = "up"    THEN cy = cy - T
+    IF dir$ = "down"  THEN cy = cy + T
+    IF dir$ = "left"  THEN cx = cx - T
+    IF dir$ = "right" THEN cx = cx + T
+    RETURN TILEMAP.TILE_AT(room$, cx, cy)
+ENDFUNC
+
+FUNC FACING_SPRITE_CHECK(dir$, group$)
+    ' Temporarily move hero one tile in facing direction, check collision
+    cx = SPRITE.GET_X(hero)
+    cy = SPRITE.GET_Y(hero)
+    IF dir$ = "up"    THEN cy = cy - T
+    IF dir$ = "down"  THEN cy = cy + T
+    IF dir$ = "left"  THEN cx = cx - T
+    IF dir$ = "right" THEN cx = cx + T
+    ox = SPRITE.GET_X(hero) : oy = SPRITE.GET_Y(hero)
+    SPRITE.POS hero, cx, cy
+    result = SPRITE.COLLISION_FIRST(hero, group$)
+    SPRITE.POS hero, ox, oy
+    RETURN result
+ENDFUNC
+
+SUB UPDATE_FOLLOW_SPRITES()
+    ' Create follow sprites for each party member after Vally (index 0)
+    FOR fi = 1 TO RPG_PARTY.member_count - 1
+        IF fi - 1 >= follow_count THEN
+            pm = RPG_PARTY.GET_MEMBER(fi)
+            TRY
+                fs = SPRITE.LOAD(OUT$ + pm{"sprite"})
+                SPRITE.SCALE fs, 1.0
+                SPRITE.ZORDER fs, 9
+                ' Start at the NPC's original position
+                pm_name$ = pm{"name"}
+                FOR ni = 0 TO npc_count - 1
+                    n = npcs[ni]
+                    IF n.name$ = pm_name$ THEN
+                        SPRITE.POS fs, SPRITE.GET_X(n.sprite_id), SPRITE.GET_Y(n.sprite_id)
+                    ENDIF
+                NEXT ni
+                PUSH follow_sprites, fs
+                follow_count = follow_count + 1
+            CATCH
+                PUSH follow_sprites, -1
+                follow_count = follow_count + 1
+            ENDTRY
+
+            ' Hide the original NPC sprite on the map
+            pm_name$ = pm{"name"}
+            FOR ni = 0 TO npc_count - 1
+                n = npcs[ni]
+                IF n.name$ = pm_name$ THEN
+                    SPRITE.VISIBLE n.sprite_id, FALSE
+                ENDIF
+            NEXT ni
+        ENDIF
+    NEXT fi
+ENDSUB
+
+SUB UPDATE_FOLLOW_POSITIONS()
+    IF follow_count = 0 THEN RETURN
+
+    ' Drop breadcrumb of the PREVIOUS position when hero has moved a full tile away
+    hx = SPRITE.GET_X(hero) : hy = SPRITE.GET_Y(hero)
+    dx = hx - last_trail_x : dy = hy - last_trail_y
+    dist = SQR(dx*dx + dy*dy)
+
+    IF dist >= T THEN
+        ' Record where we WERE, not where we ARE — this keeps followers one tile behind
+        PUSH path_trail, [last_trail_x, last_trail_y]
+        last_trail_x = hx : last_trail_y = hy
+        ' Trim trail
+        DO WHILE LEN(path_trail) > 50
+            new_trail = []
+            tl = LEN(path_trail)
+            FOR ti = 1 TO tl - 1
+                PUSH new_trail, path_trail[ti]
+            NEXT ti
+            path_trail = new_trail
+        LOOP
+    ENDIF
+
+    ' Each follower walks toward its target breadcrumb independently
+    tl = LEN(path_trail)
+    IF TYPEOF(tl) = "ARRAY" THEN tl = tl[0]
+
+    FOR fi = 0 TO follow_count - 1
+        IF follow_sprites[fi] < 0 THEN CONTINUEFOR
+
+        ' Target = breadcrumb N steps behind the newest
+        crumb_idx = tl - (fi + 1)
+        IF crumb_idx < 0 THEN crumb_idx = 0
+
+        cur_x = SPRITE.GET_X(follow_sprites[fi])
+        cur_y = SPRITE.GET_Y(follow_sprites[fi])
+
+        IF crumb_idx < tl THEN
+            target = path_trail[crumb_idx]
+            tx = target[0] : ty = target[1]
+        ELSE
+            tx = cur_x : ty = cur_y
+        ENDIF
+
+        ' Distance to target
+        fdx = tx - cur_x : fdy = ty - cur_y
+        fdist = SQR(fdx*fdx + fdy*fdy)
+
+        ' Only move if far enough from target
+        IF fdist > 2 THEN
+            ' Cardinal movement only: move on the axis with bigger difference
+            fspeed = 2.5
+            new_x = cur_x : new_y = cur_y
+            IF ABS(fdx) >= ABS(fdy) THEN
+                ' Move horizontally
+                IF ABS(fdx) < fspeed THEN new_x = tx ELSE new_x = cur_x + SGN(fdx) * fspeed
+            ELSE
+                ' Move vertically
+                IF ABS(fdy) < fspeed THEN new_y = ty ELSE new_y = cur_y + SGN(fdy) * fspeed
+            ENDIF
+
+            ' Don't get closer than T to hero
+            hdx = new_x - hx : hdy = new_y - hy
+            hdist = SQR(hdx*hdx + hdy*hdy)
+            IF hdist >= T THEN
+                SPRITE.POS follow_sprites[fi], new_x, new_y
+            ENDIF
+        ENDIF
+    NEXT fi
+ENDSUB
+
+SUB SPAWN_NEW_MONSTER(enemy_id$)
+    ' Find a random grass tile (tile ID 1) far from hero
+    hx = SPRITE.GET_X(hero) : hy = SPRITE.GET_Y(hero)
+    attempts = 0
+    DO WHILE attempts < 50
+        rx = INT(RND(1) * 28 + 1) * T  ' cols 1-28
+        ry = INT(RND(1) * 18 + 1) * T  ' rows 1-18
+        ' Check tile is grass (1) or flowers (5) or path (4)
+        tid = TILEMAP.TILE_AT("overworld", rx + T/2, ry + T/2)
+        IF tid = 1 OR tid = 5 THEN
+            ' Must be far enough from hero
+            ddx = rx - hx : ddy = ry - hy
+            IF SQR(ddx*ddx + ddy*ddy) > T * 6 THEN
+                ' Spawn monster
+                TRY
+                    edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
+                    elist = edata{"enemies"}
+                    FOR ei = 0 TO LEN(elist) - 1
+                        IF elist[ei]{"id"} = enemy_id$ AND elist[ei]{"sprite"} <> "" THEN
+                            sf$ = OUT$ + elist[ei]{"sprite"}
+                            fw = INT(elist[ei]{"frame_w"}) : fh = INT(elist[ei]{"frame_h"})
+                            sid = SPRITE.LOAD(sf$, fw, fh)
+                            SPRITE.POS sid, rx, ry
+                            SPRITE.SCALE sid, 0.5
+                            SPRITE.ZORDER sid, 6
+                            SPRITE.GROUP sid, "monster"
+                            af = elist[ei]{"anim_frames"}
+                            af_len = LEN(af)
+                            IF TYPEOF(af_len) = "ARRAY" THEN af_len = af_len[0]
+                            IF af_len > 0 THEN
+                                SPRITE.ANIM sid, "idle", af, INT(elist[ei]{"anim_fps"})
+                                SPRITE.PLAY sid, "idle"
+                            ENDIF
+                            nm = {}
+                            nm{"id"} = enemy_id$ : nm{"room"} = "overworld"
+                            nm{"defeated"} = FALSE : nm{"sprite_id"} = sid
+                            PUSH monsters, nm
+                            monster_count = monster_count + 1
+                            EXITFOR
+                        ENDIF
+                    NEXT ei
+                CATCH
+                ENDTRY
+                RETURN
+            ENDIF
+        ENDIF
+        attempts = attempts + 1
+    LOOP
+ENDSUB
+
+SUB HANDLE_NPC_QUEST(npc_name$)
+    ' Auto-progress talk quests when speaking to this NPC
+    RPG_QUEST.PROGRESS "talk:" + npc_name$, 1
+    ' Auto-progress deliver quests if player has the item
+    IF npc_name$ = "Hermit" AND has_key THEN
+        RPG_QUEST.PROGRESS "find:key", 1
+    ENDIF
+
+    ' Let the quest system handle everything (turn-in, status, offer)
+    DRAW_SCENE
+    quest_handled = RPG_QUEST.HANDLE_NPC(npc_name$, player_name$)
+
+    ' Retroactively apply progress for coins already collected
+    IF RPG_QUEST.GET_STATE$("coin_collector") = "active" AND coins_collected > 0 THEN
+        RPG_QUEST.PROGRESS "collect:coin", coins_collected
+        coins_collected = 0  ' don't double-count
+    ENDIF
+ENDSUB
+
+SUB DRAW_SCENE()
+    rd = GET_ROOM_DATA(current_room$)
+    bg = rd{"bg"}
+    CLS bg[0], bg[1], bg[2]
+    SPRITE.UPDATE : TILEMAP.DRAW current_room$ : SPRITE.DRAW_ALL : PARTICLE.DRAW
+    hud_y = 10
+    IF player_name$ <> "" THEN
+        TEXT 10, hud_y, player_name$, 200, 220, 255
+        hud_y = hud_y + 16
+    ENDIF
+    TEXT 10, hud_y, "Gold: " + STR$(INT(RPG_INVENTORY.GET_GOLD())), 255, 215, 0
+    hud_y = hud_y + 16
+    ' Show party member HP bars
+    FOR pi = 0 TO RPG_PARTY.member_count - 1
+        pm = RPG_PARTY.GET_MEMBER(pi)
+        TEXT 10, hud_y, LEFT$(pm{"name"}, 5), 180, 180, 220
+        RECT 45, hud_y + 2, 60, 8, 60, 30, 30, TRUE
+        IF pm{"max_hp"} > 0 THEN
+            hfill = INT((pm{"hp"} / pm{"max_hp"}) * 60)
+            IF hfill > 0 THEN RECT 45, hud_y + 2, hfill, 8, 80, 200, 80, TRUE
+        ENDIF
+        RECT 45, hud_y + 2, 60, 8, 80, 80, 100, FALSE
+        TEXT 110, hud_y, STR$(INT(pm{"hp"})), 180, 200, 180
+        hud_y = hud_y + 14
+    NEXT pi
+    IF has_key THEN TEXT 10, hud_y, "[Key]", 255, 200, 50
+    ' Show skill point notification
+    total_sp = 0
+    FOR spi = 0 TO RPG_PARTY.member_count - 1
+        spm = RPG_PARTY.GET_MEMBER(spi)
+        total_sp = total_sp + INT(spm{"skill_points"})
+    NEXT spi
+    IF total_sp > 0 THEN TEXT 10, hud_y + 14, "SP:" + STR$(total_sp) + " (S)", 255, 200, 100
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ UPDATE (called every frame) ══════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT SUB UPDATE()
+    ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN quit_flag = TRUE : RETURN
+    IF ev$ = "KEYDOWN:F11" THEN TOGGLE_FULLSCREEN
+    IF ev$ = "KEYDOWN:Tab" THEN
+        DRAW_SCENE
+        RPG_INVENTORY.SHOW_BAG
+    ENDIF
+    IF ev$ = "KEYDOWN:Q" THEN
+        DRAW_SCENE
+        RPG_QUEST.SHOW_LOG
+    ENDIF
+    IF ev$ = "KEYDOWN:P" THEN
+        DRAW_SCENE
+        RPG_PARTY.SHOW_PARTY
+    ENDIF
+    IF ev$ = "KEYDOWN:S" THEN
+        DRAW_SCENE
+        RPG_PARTY.SHOW_SKILL_TREE 0
+    ENDIF
+
+    ' --- Movement ---
+    old_x = SPRITE.GET_X(hero) : old_y = SPRITE.GET_Y(hero)
+    moving = FALSE
+    IF GFX.KEYSTATE("Right") THEN SPRITE.MOVE hero, speed, 0 : direction$ = "right" : moving = TRUE
+    IF GFX.KEYSTATE("Left")  THEN SPRITE.MOVE hero, -speed, 0 : direction$ = "left" : moving = TRUE
+    IF GFX.KEYSTATE("Down")  THEN SPRITE.MOVE hero, 0, speed : direction$ = "down" : moving = TRUE
+    IF GFX.KEYSTATE("Up")    THEN SPRITE.MOVE hero, 0, -speed : direction$ = "up" : moving = TRUE
+
+    blocked = TILEMAP.COLLIDES(hero, current_room$ + "_col")
+    IF NOT blocked THEN blocked = (SPRITE.COLLISION_FIRST(hero, "npc") > 0)
+    IF NOT blocked THEN blocked = (SPRITE.COLLISION_FIRST(hero, "chest") > 0)
+    IF blocked THEN SPRITE.POS hero, old_x, old_y
+
+    IF has_sheet THEN
+        IF moving THEN SPRITE.PLAY hero, "walk_" + direction$
+        IF NOT moving THEN SPRITE.PLAY hero, "idle_" + direction$
+    ENDIF
+
+    ' --- Party Following (runs every frame, not just when moving) ---
+    UPDATE_FOLLOW_POSITIONS
+
+    ' --- Monster Contact Battle ---
+    monster_hit = SPRITE.COLLISION_FIRST(hero, "monster")
+    IF monster_hit > 0 THEN
+        ' Find which monster
+        FOR mi = 0 TO monster_count - 1
+            m = monsters[mi]
+            IF m{"sprite_id"} = monster_hit AND NOT m{"defeated"} THEN
+                GFX.FADE 0, 0.3
+                battle_result$ = RPG_BATTLE.FIGHT$(m{"id"})
+                GFX.FADE 1, 0.3
+                IF battle_result$ = "win" THEN
+                    ' Remove defeated monster from map
+                    SPRITE.DELETE monster_hit
+                    m{"defeated"} = TRUE
+                    m{"sprite_id"} = -1
+                    monsters[mi] = m
+                    ' Respawn a new monster on a random grass tile
+                    SPAWN_NEW_MONSTER m{"id"}
+                ELSEIF battle_result$ = "dead" THEN
+                    RPG_DIALOG.SAY "System", "You fell in battle... A mysterious force revives you."
+                    RPG_COMBAT.HEAL_PLAYER INT(RPG_COMBAT.player{"max_hp"} / 2)
+                    ' Push player away from monster
+                    SPRITE.POS hero, old_x, old_y
+                ENDIF
+                EXITFOR
+            ENDIF
+        NEXT mi
+    ENDIF
+
+    ' --- Detect facing ---
+    facing = FACING_TILE_CHECK(direction$, current_room$)
+    npc_hit = FACING_SPRITE_CHECK(direction$, "npc")
+    chest_hit = FACING_SPRITE_CHECK(direction$, "chest")
+    hint$ = ""
+    IF facing = door_tile_id THEN hint$ = "[Space] Enter"
+    IF npc_hit > 0 THEN hint$ = "[Space] Talk"
+    IF chest_hit > 0 THEN hint$ = "[Space] Open"
+
+    ' --- NPC Update + collision with player ---
+    FOR i = 0 TO npc_count-1
+        n = npcs[i]
+        IF n.room$ = current_room$ THEN
+            n.UPDATE()
+            ' NPC stops when touching player (so player can interact)
+            IF SPRITE.COLLISION(hero, n.sprite_id) THEN
+                SPRITE.VELOCITY n.sprite_id, 0, 0
+            ELSEIF n.patrol AND SPRITE.GET_VX(n.sprite_id) = 0 THEN
+                ' Resume patrol when player walks away
+                SPRITE.VELOCITY n.sprite_id, n.patrol_speed, 0
+            ENDIF
+        ENDIF
+    NEXT i
+
+    ' --- Coin Collection ---
+    coin_hit = SPRITE.COLLISION_FIRST(hero, "coin")
+    IF coin_hit > 0 THEN
+        FOR i = 0 TO coin_count-1
+            IF coins[i].sprite_id = coin_hit AND NOT coins[i].collected THEN
+                ' Particle effect
+                PARTICLE.EMIT SPRITE.GET_X(coin_hit)+8, _
+                    SPRITE.GET_Y(coin_hit)+8, _
+                    15, 255, 215, 0, 80, 0.5, -50, 3
+                ' Update array directly (not a copy!)
+                v = coins[i].value
+                RPG_INVENTORY.ADD_GOLD v
+                score = score + v
+                msg$ = "+" + STR$(INT(v)) + " gold!" : msg_timer = 60
+                coins_collected = coins_collected + 1
+                RPG_QUEST.PROGRESS "collect:coin", 1
+                SPRITE.DELETE coin_hit
+                coins[i].collected = TRUE
+                coins[i].sprite_id = -1
+                EXITFOR
+            ENDIF
+        NEXT i
+    ENDIF
+
+    ' --- Space Interaction ---
+    IF ev$ = "KEYDOWN:Space" AND msg_timer <= 0 THEN
+        IF facing = door_tile_id THEN
+            ' Find which door the player is facing
+            fcx = SPRITE.GET_X(hero) + SPRITE.WIDTH(hero)/2
+            fcy = SPRITE.GET_Y(hero) + SPRITE.HEIGHT(hero)/2
+            IF direction$ = "up"    THEN fcy = fcy - T
+            IF direction$ = "down"  THEN fcy = fcy + T
+            IF direction$ = "left"  THEN fcx = fcx - T
+            IF direction$ = "right" THEN fcx = fcx + T
+            face_col = INT(fcx / T)
+            face_row = INT(fcy / T)
+            FOR i = 0 TO door_count-1
+                d = doors[i]
+                IF d.room$ = current_room$ AND d.col = face_col AND d.row = face_row THEN
+                    SWITCH_TO d.target$, d.spawn_x, d.spawn_y
+                    EXITFOR
+                ENDIF
+            NEXT i
+        ELSEIF chest_hit > 0 THEN
+            DRAW_SCENE
+            FOR i = 0 TO chest_count-1
+                c = chests[i]
+                IF c.sprite_id = chest_hit THEN
+                    reward$ = c.OPEN$()
+                    IF LEFT$(reward$, 5) = "gold:" THEN
+                        g = VAL(MID$(reward$, 5))
+                        RPG_INVENTORY.ADD_GOLD g
+                        score = score + g
+                    ELSEIF reward$ = "key" THEN
+                        has_key = TRUE
+                        RPG_INVENTORY.ADD_ITEM "Rusty Key", "Opens something...", 1
+                    ELSE
+                        RPG_INVENTORY.ADD_ITEM reward$, "Found in chest", 1
+                    ENDIF
+                ENDIF
+            NEXT i
+            msg_timer = 30
+        ELSEIF npc_hit > 0 THEN
+            DRAW_SCENE
+            FOR i = 0 TO npc_count-1
+                n = npcs[i]
+                IF n.sprite_id = npc_hit THEN
+                    ' Ask for player name on first interaction
+                    IF player_name$ = "" THEN
+                        RPG_DIALOG.SAY n.name$, "Hello there, stranger! What is your name?"
+                        DRAW_SCENE
+                        player_name$ = RPG_DIALOG.ASK$(n.name$, "Enter your name:")
+                        IF player_name$ <> "" THEN
+                            DRAW_SCENE
+                            RPG_DIALOG.SAY n.name$, _
+                                "Welcome, " + player_name$ + "! Nice to meet you."
+                        ENDIF
+                        DRAW_SCENE
+                    ENDIF
+                    ' Quest logic first, then fallback to normal dialog
+                    HANDLE_NPC_QUEST n.name$
+                    IF NOT quest_handled THEN
+                        ' Recruitment check (uses separate recruit_data MAP)
+                        nname$ = n.name$
+                        IF MAP.EXISTS(recruit_data, nname$) THEN
+                            rd_info = recruit_data{nname$}
+                            IF NOT rd_info{"joined"} THEN
+                                n.INTERACT has_key, player_name$
+                                DRAW_SCENE
+                                choice = RPG_DIALOG.CHOICE("Welcome aboard!|Maybe later")
+                                IF choice = 0 THEN
+                                    RPG_PARTY.ADD_MEMBER rd_info{"id"}
+                                    rd_info{"joined"} = TRUE
+                                    recruit_data{nname$} = rd_info
+                                    ' Seed trail with hero's current position so follower walks to us
+                                    hx_now = SPRITE.GET_X(hero)
+                                    hy_now = SPRITE.GET_Y(hero)
+                                    last_trail_x = hx_now : last_trail_y = hy_now
+                                    path_trail = []
+                                    PUSH path_trail, [hx_now, hy_now]
+                                    UPDATE_FOLLOW_SPRITES
+                                    jdlg$ = rd_info{"dialog_joined"}
+                                    IF jdlg$ <> "" THEN
+                                        DRAW_SCENE
+                                        jdlg$ = REPLACE$(jdlg$, "{PLAYER}", player_name$)
+                                        RPG_DIALOG.SAY nname$, jdlg$
+                                    ENDIF
+                                ENDIF
+                            ELSE
+                                ' Already joined
+                                jdlg$ = rd_info{"dialog_joined"}
+                                IF jdlg$ <> "" THEN
+                                    jdlg$ = REPLACE$(jdlg$, "{PLAYER}", player_name$)
+                                    RPG_DIALOG.SAY nname$, jdlg$
+                                ELSE
+                                    n.INTERACT has_key, player_name$
+                                ENDIF
+                            ENDIF
+                        ELSE
+                            n.INTERACT has_key, player_name$
+                        ENDIF
+                    ENDIF
+                    ' Then shop if applicable
+                    IF n.is_shop THEN
+                        DRAW_SCENE
+                        resolved_items = RPG_INVENTORY.RESOLVE_SHOP_ITEMS(n.shop_items)
+                        purchases = RPG_INVENTORY.OPEN_SHOP(n.name$, resolved_items)
+                        IF purchases > 0 THEN
+                            RPG_QUEST.PROGRESS "buy:item", purchases
+                        ENDIF
+                    ENDIF
+                ENDIF
+            NEXT i
+            msg_timer = 30
+        ENDIF
+    ENDIF
+
+    ' --- Coin Milestone ---
+    IF total_coin_value > 0 AND score >= total_coin_value AND msg$ <> "All coins!" THEN
+        msg$ = "All coins!" : msg_timer = 120
+    ENDIF
+
+    IF msg_timer > 0 THEN msg_timer = msg_timer - 1
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ DRAW (called every frame) ════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT SUB DRAW()
+    DRAW_SCENE
+    qc = RPG_QUEST.ACTIVE_COUNT()
+    IF qc > 0 THEN TEXT SW-280, 28, "Quests: " + STR$(qc) + " (Q)", 180, 180, 100
+    TEXT SW-280, 10, "Move:Arrows Act:Space Bag:Tab FS:F11", 130, 130, 150
+    IF current_room$ = "house" THEN TEXT SW/2-60, 10, "~ House Interior ~", 200, 180, 140
+    IF hint$ <> "" THEN TEXT SW/2-40, SH-30, hint$, 200, 255, 200
+    IF msg_timer > 0 THEN TEXT SW/2-80, SH-50, msg$, 255, 255, 100
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ SHUTDOWN ═════════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+' ══ SAVE / LOAD ══════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+EXPORT DIM save_file$ = "D:/usr/dev/cc/fluppi/rpg_data/savegame.json"
+
+EXPORT SUB SAVE_GAME()
+    sg = {}
+    sg{"score"} = score
+    sg{"has_key"} = has_key
+    sg{"coins_collected"} = coins_collected
+    sg{"player_name"} = player_name$
+    sg{"room"} = current_room$
+    sg{"player_x"} = SPRITE.GET_X(hero)
+    sg{"player_y"} = SPRITE.GET_Y(hero)
+    sg{"direction"} = direction$
+    ' Save opened chests
+    opened = []
+    FOR i = 0 TO chest_count - 1
+        c = chests[i]
+        IF c.opened THEN PUSH opened, i
+    NEXT i
+    sg{"opened_chests"} = opened
+    ' Save collected coins
+    collected = []
+    FOR i = 0 TO coin_count - 1
+        c = coins[i]
+        IF c.collected THEN PUSH collected, i
+    NEXT i
+    sg{"collected_coins"} = collected
+    ' Save defeated monsters
+    defeated_mons = []
+    FOR i = 0 TO monster_count - 1
+        m = monsters[i]
+        IF m{"defeated"} THEN PUSH defeated_mons, i
+    NEXT i
+    sg{"defeated_monsters"} = defeated_mons
+    sg{"inventory"} = RPG_INVENTORY.GET_SAVE_DATA()
+    sg{"quests"} = RPG_QUEST.GET_SAVE_DATA()
+    sg{"player_combat"} = RPG_COMBAT.GET_SAVE_DATA()
+    sg{"party"} = RPG_PARTY.GET_SAVE_DATA()
+    sg{"recruit_data"} = recruit_data
+    json$ = JSON.STRINGIFY$(sg)
+    TXTWRITER save_file$, json$
+ENDSUB
+
+EXPORT FUNC LOAD_GAME()
+    TRY
+        json$ = TXTREADER$(save_file$)
+        sg = JSON.PARSE$(json$)
+        score = sg{"score"}
+        has_key = sg{"has_key"}
+        IF MAP.EXISTS(sg, "coins_collected") THEN coins_collected = sg{"coins_collected"}
+        direction$ = sg{"direction"}
+        IF MAP.EXISTS(sg, "player_name") THEN player_name$ = sg{"player_name"}
+        IF MAP.EXISTS(sg, "inventory") THEN RPG_INVENTORY.LOAD_SAVE_DATA sg{"inventory"}
+        IF MAP.EXISTS(sg, "quests") THEN RPG_QUEST.LOAD_SAVE_DATA sg{"quests"}
+        IF MAP.EXISTS(sg, "player_combat") THEN RPG_COMBAT.LOAD_SAVE_DATA sg{"player_combat"}
+        ' Restore recruit data FIRST, then add recruited members to party
+        IF MAP.EXISTS(sg, "recruit_data") THEN
+            recruit_data = sg{"recruit_data"}
+            ' Re-add recruited members to party
+            rkeys = MAP.KEYS(recruit_data)
+            FOR ri = 0 TO LEN(rkeys) - 1
+                rd_info = recruit_data{rkeys[ri]}
+                IF rd_info{"joined"} THEN
+                    RPG_PARTY.ADD_MEMBER rd_info{"id"}
+                ENDIF
+            NEXT ri
+        ENDIF
+        ' Now load party stats (members exist now)
+        IF MAP.EXISTS(sg, "party") THEN RPG_PARTY.LOAD_SAVE_DATA sg{"party"}
+        UPDATE_FOLLOW_SPRITES
+        ' Restore opened chests
+        IF MAP.EXISTS(sg, "opened_chests") THEN
+            opened = sg{"opened_chests"}
+            FOR i = 0 TO LEN(opened) - 1
+                idx = INT(opened[i])
+                IF idx < chest_count THEN
+                    c = chests[idx]
+                    c.opened = TRUE
+                    TRY
+                        SPRITE.FRAME c.sprite_id, 1
+                        SPRITE.GROUP c.sprite_id, "opened"
+                    CATCH
+                    ENDTRY
+                    chests[idx] = c
+                ENDIF
+            NEXT i
+        ENDIF
+        ' Restore collected coins
+        IF MAP.EXISTS(sg, "collected_coins") THEN
+            collected = sg{"collected_coins"}
+            FOR i = 0 TO LEN(collected) - 1
+                idx = INT(collected[i])
+                IF idx < coin_count THEN
+                    c = coins[idx]
+                    IF NOT c.collected THEN
+                        c.collected = TRUE
+                        TRY
+                            IF c.sprite_id > 0 THEN SPRITE.DELETE c.sprite_id
+                        CATCH
+                        ENDTRY
+                        c.sprite_id = -1
+                        coins[idx] = c
+                    ENDIF
+                ENDIF
+            NEXT i
+        ENDIF
+        ' Restore defeated monsters
+        IF MAP.EXISTS(sg, "defeated_monsters") THEN
+            dmons = sg{"defeated_monsters"}
+            FOR i = 0 TO LEN(dmons) - 1
+                idx = INT(dmons[i])
+                IF idx < monster_count THEN
+                    m = monsters[idx]
+                    IF m{"sprite_id"} > 0 THEN SPRITE.DELETE m{"sprite_id"}
+                    m{"defeated"} = TRUE
+                    m{"sprite_id"} = -1
+                    monsters[idx] = m
+                ENDIF
+            NEXT i
+        ENDIF
+        ' Switch to saved room
+        room$ = sg{"room"}
+        px = sg{"player_x"}
+        py = sg{"player_y"}
+        IF room$ <> current_room$ THEN
+            SWITCH_TO room$, px, py
+        ELSE
+            SPRITE.POS hero, px, py
+            SET_VISIBILITY room$
+        ENDIF
+        RETURN TRUE
+    CATCH
+        PRINT "Load error: "; ERRMSG$
+        RETURN FALSE
+    ENDTRY
+ENDFUNC
+
+EXPORT SUB SHUTDOWN()
+    RPG_MUSIC.SILENCE
+ENDSUB

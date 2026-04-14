@@ -1,0 +1,38 @@
+' test_mlab.jdb
+IMPORT MLAB
+
+PRINT "--- Testing MLAB Library ---"
+PRINT
+
+' --- Test Statistics ---
+MyData = [1, 5, 2, 8, 7, 5, 4, 5, 9]
+PRINT "Original Data: "; MyData
+PRINT "Mean: "; MLAB.MEAN(MyData)
+PRINT "Median: "; MLAB.MEDIAN(MyData)
+PRINT "Mode: "; MLAB.MODE(MyData) ' Should be 5
+PRINT "Std Dev: "; MLAB.STDDEV(MyData)
+PRINT "Frequency Map: "; MLAB.FREQUENCY_MAP(MyData)
+PRINT "Normalized Data: "; NORMALIZE(MyData)
+PRINT
+
+' --- Test Array Utils ---
+ShuffledData = SHUFFLE(MyData)
+PRINT "Shuffled Data: "; ShuffledData
+PRINT "Unique Values: "; UNIQUE(ShuffledData)
+PRINT "Index of value 7 is: "; FIND_IN_ARRAY(MyData, 7) ' Should be 4
+PRINT
+
+' --- Test String Utils ---
+MyWords$ = ["jdBasic", "is", "powerful"]
+Joined$ = MLAB.JOIN$(MyWords$, " ")
+PRINT "Joined String: '"; Joined$; "'"
+PRINT "Centered Pad: '"; MLAB.PAD_CENTER$("Test", 10, "="); "'"
+PRINT
+
+' --- Test Geometry Utils ---
+PointA = [0, 0]
+PointB = [3, 4]
+PRINT "Distance between "; PointA; " and "; PointB; " is: "; DISTANCE(PointA, PointB) ' Should be 5
+
+InterpolatedPoint = LERP(PointA, PointB, 0.5)
+PRINT "Midpoint is: "; InterpolatedPoint ' Should be [1.5, 2]

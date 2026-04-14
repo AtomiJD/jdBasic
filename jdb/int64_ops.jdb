@@ -1,0 +1,41 @@
+' Integer literal width + TYPEOF
+x = 9223372036854775806 '
+PRINT TYPEOF(x), x
+
+' Bitwise should stay integer everywhere
+PRINT TYPEOF(5 BAND 3), 5 BAND 3
+PRINT TYPEOF( [1,2,3] BOR 8 ), [1,2,3] BOR 8
+
+' Mixed numeric rules
+PRINT TYPEOF(1/2), 1/2      ' DOUBLE, 0.5
+PRINT TYPEOF(2*3), 2*3      ' INTEGER, 6
+PRINT TYPEOF(2*3.0), 2*3.0  ' DOUBLE, 6
+
+' Shifts clamped 0..63
+PRINT SHL(1, -5)  ' 1
+PRINT SHL(1, 100) ' 0 (since 1 << 63 then clamp; sign depends on 64-bit shift)
+
+PRINT 5 \ 2          ' 2 (INTEGER)
+PRINT -5 \ 2         ' -2
+PRINT 5 \ -2         ' -2
+PRINT -5 \ -2        ' 2
+PRINT 5.9 \ 2        ' 2
+PRINT 7 \ 2.9        ' 2
+
+DIM I AS INTEGER 
+DIM J AS INTEGER
+
+I = 5 : J = 2
+PRINT I \ J          ' 2 (INTEGER)
+
+PRINT [1,2,3] \ 2          ' [0 1 1]
+PRINT 10 \ [3,4]           ' [3 2]
+PRINT [5,6,7,8] \ [2,3,2,3] ' [2 2 3 2]
+
+PRINT i / j      ' 2.5 (DOUBLE)
+PRINT i \ j      ' 2   (INTEGER)
+PRINT i MOD j    ' 1   (INTEGER)
+PRINT 5.9 BAND 3 ' 1   (5 BAND 3)  — double truncated to int
+PRINT TYPEOF(5 BAND 3)   ' "INTEGER"
+PRINT -5 MOD 3   ' -2   (since trunc(-1.666..) = -1; -5 - (-1*3) = -2)
+

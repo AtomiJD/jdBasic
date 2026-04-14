@@ -1,0 +1,34 @@
+' --- Time Ticker Background Task ---
+
+' 1. Define the background function
+FUNC DisplayWorldClock()
+    ' Get current system time (Assuming system is set to Central European Time/Berlin)
+    DIM baseTime = NOW()
+    
+    ' Calculate offsets (Adjust these values if your system clock is not in CET)
+    ' Berlin is baseTime (CET)
+    ' New York is usually -6 hours from Berlin
+    ' Las Vegas is usually -9 hours from Berlin
+    DIM nyTime = DATEADD("H", -6, baseTime)
+    DIM lvTime = DATEADD("H", -9, baseTime)
+
+    ' Save current cursor position so we don't interrupt the main program typing
+    DIM oldX = GETX()
+    DIM oldY = GETY()
+
+    ' Draw the clock at the top of the screen
+    LOCATE 1, 1
+    COLOR 14, 0 ' Yellow text
+    PRINT "FRA: " + baseTime;
+    PRINT " / NY: " + nyTime;
+    PRINT " / LAX: " + lvTime
+
+    
+    ' Restore cursor and color
+    COLOR 7, 0
+    LOCATE oldY, oldX
+ENDFUNC
+
+' 2. Start the recursive background task (2000ms = 2 seconds)
+TickerID = RECUR(2000, "DisplayWorldClock")
+

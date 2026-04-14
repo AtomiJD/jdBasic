@@ -1,0 +1,70 @@
+' ══════════════════════════════════════════
+'  jdBasic Tool Calling Test
+'  LLM calls jdBasic functions as tools!
+' ══════════════════════════════════════════
+
+PRINT "Loading LLM..."
+
+llm = AI.LOAD_LLM("models\Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
+AI.SET llm, "temperature", 0.3
+AI.SET llm, "max_tokens", 200
+
+' ── Define Tools (jdBasic functions) ─────────────────────────────
+
+FUNC GetWeather(city)
+  ' Simulated weather API
+  IF city = "Berlin" THEN RETURN "15C, cloudy"
+  IF city = "Miami" THEN RETURN "32C, sunny"
+  IF city = "Tokyo" THEN RETURN "22C, rainy"
+  RETURN "Unknown city"
+ENDFUNC
+
+FUNC Calculate(expression)
+  ' Simple calculator
+  TRY
+    PRINT "Expression: ", expression
+    DIM R AS STRING = EVAL(expression)
+    PRINT "Result: ", R
+  CATCH
+    PRINT "Error: "; ERRMSG$
+    R = ""
+  ENDTRY
+  RETURN STR(R)
+ENDFUNC
+
+FUNC GetTime()
+  RETURN TIME$()
+ENDFUNC
+
+' ── Register Tools ───────────────────────────────────────────────
+
+AI.TOOL_ADD llm, "WEATHER", "city_name", "Get current weather for a city", GetWeather@
+AI.TOOL_ADD llm, "CALC", "math_expression", "Calculate a math expression", Calculate@
+AI.TOOL_ADD llm, "TIME", "", "Get the current time", GetTime@
+
+PRINT "Tools registered:"
+DIM tools = AI.TOOL_LIST(llm)
+FOR i = 0 TO LEN(tools) - 1
+  PRINT "  - "; tools[i]{"name"}; "("; tools[i]{"params"}; "): "; tools[i]{"description"}
+NEXT i
+
+' ── Test Tool Calling ────────────────────────────────────────────
+
+PRINT ""
+PRINT "=== Test 1: Weather ==="
+PRINT "Q: What is the weather in Berlin?"
+PRINT "A: "; AI.TOOL_CHAT(llm, "What is the weather in Berlin right now?")
+
+PRINT ""
+PRINT "=== Test 2: Calculator ==="
+PRINT "Q: What is 42 * 17?"
+PRINT "A: "; AI.TOOL_CHAT(llm, "Calculate 42 * 17 for me.")
+
+PRINT ""
+PRINT "=== Test 3: Time ==="
+PRINT "Q: What time is it?"
+PRINT "A: "; AI.TOOL_CHAT(llm, "What is the current time?")
+
+AI.FREE_LLM llm
+PRINT ""
+PRINT "Tool calling test complete!"

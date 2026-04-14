@@ -1,0 +1,3 @@
+' Test: STOP and RESUME should work via EXECUTE
+' First define a program that stops
+EXECUTE("LET A = 1: PRINT A: STOP: PRINT 2: PRINT 3")

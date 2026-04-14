@@ -1,0 +1,57 @@
+' ══════════════════════════════════════════
+'  jdBasic RAG Test - Knowledge Base Q&A
+' ══════════════════════════════════════════
+
+PRINT "=== Text Similarity Test ==="
+PRINT "Similarity (same topic): "; AI.SIMILARITY("The cat sat on the mat", "A kitten was sitting on the carpet")
+PRINT "Similarity (different): "; AI.SIMILARITY("The cat sat on the mat", "Stock market rose 5 percent")
+
+PRINT ""
+PRINT "=== RAG Test with LLM ==="
+PRINT "Loading LLM..."
+llm = AI.LOAD_LLM("models\Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
+AI.SET llm, "max_tokens", 150
+AI.SET llm, "temperature", 0.3
+
+PRINT "Creating knowledge base..."
+rag = AI.RAG_CREATE(llm, 400, 50)
+
+' Add knowledge
+AI.RAG_ADD rag, "jdBasic is a modern BASIC interpreter created by Computerwelt AI Solutions LLC. It supports SDL3 graphics, ImGui, ONNX Runtime for AI inference, and llama.cpp for local LLM execution. It runs on Windows and is written in C++.", "about"
+
+AI.RAG_ADD rag, "jdBasic supports the following graphics commands: SCREEN to create a window, LINE to draw lines, RECT for rectangles, CIRCLE for circles, and TEXT for rendering text with TrueType fonts. It also supports TURTLE graphics for educational purposes.", "graphics"
+
+AI.RAG_ADD rag, "The AI features of jdBasic include: AI.LOAD for ONNX models, AI.LOAD_LLM for loading GGUF language models with CUDA GPU acceleration, AI.CHAT for conversations, AI.CHAT_STREAM for token-by-token streaming, and AI.RAG_QUERY for retrieval-augmented generation.", "ai_features"
+
+AI.RAG_ADD rag, "jdBasic was designed to be easy to use while being powerful. It features a module system with IMPORT/EXPORT, event handling with ON/RAISEEVENT, reactive variables, lambda functions with closures, and a pipe operator for functional programming.", "language"
+
+AI.RAG_ADD rag, "The sound system in jdBasic provides a complete synthesizer with ADSR envelopes, multiple waveforms including sine, square, saw, and triangle waves. It includes a live-coding sequencer, effects like reverb, delay, and compression, and supports WAV file playback.", "sound"
+
+info = AI.RAG_INFO(rag)
+PRINT "Knowledge base: "; info{"chunks"}; " chunks, "; info{"vocab"}; " vocab terms"
+
+PRINT ""
+PRINT "=== Search Test ==="
+results = AI.RAG_SEARCH(rag, "What graphics can jdBasic do?", 2)
+FOR i = 0 TO LEN(results) - 1
+  PRINT "  ["; ROUND(results[i]{"score"}, 3); "] "; LEFT(results[i]{"text"}, 80); "..."
+NEXT i
+
+PRINT ""
+PRINT "=== RAG Q&A ==="
+
+PRINT "Q: What company created jdBasic?"
+PRINT "A: "; AI.RAG_QUERY(rag, "What company created jdBasic?")
+
+PRINT ""
+PRINT "Q: What AI features does jdBasic have?"
+PRINT "A: "; AI.RAG_QUERY(rag, "What AI features does jdBasic support?")
+
+PRINT ""
+PRINT "Q: Can jdBasic play sound?"
+PRINT "A: "; AI.RAG_QUERY(rag, "Can jdBasic play sound and music?")
+
+AI.RAG_FREE rag
+AI.FREE_LLM llm
+PRINT ""
+PRINT "RAG test complete!"

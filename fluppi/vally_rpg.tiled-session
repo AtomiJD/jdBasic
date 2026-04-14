@@ -1,0 +1,113 @@
+{
+    "Map/SizeTest": {
+        "height": 4300,
+        "width": 2
+    },
+    "activeFile": "maps/vally_house.tmx",
+    "expandedProjectPaths": [
+        ".",
+        "tiled",
+        "maps",
+        "tiled/tilesets"
+    ],
+    "file.lastUsedOpenFilter": "All Files (*)",
+    "fileStates": {
+        "maps/vally_house.tmx": {
+            "expandedObjectLayers": [
+                5,
+                4
+            ],
+            "scale": 3,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 345.99999999999994,
+                "y": 152.16666666666666
+            }
+        },
+        "maps/village.tmx": {
+            "expandedObjectLayers": [
+                5,
+                6
+            ],
+            "scale": 1.3666145833333332,
+            "selectedLayer": 4,
+            "viewCenter": {
+                "x": 484.4087046000229,
+                "y": 596.730058310149
+            }
+        },
+        "tiled/pirat/TiledMap Editor/Tilesets/Atlas-props-sprites.tsx": {
+            "dynamicWrapping": true
+        },
+        "tiled/pirat/TiledMap Editor/Tilesets/Atlas-props.tsx": {
+            "dynamicWrapping": false
+        },
+        "tiled/pirat/TiledMap Editor/Tilesets/Beach-transition tiles between coast platform and beach.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/pirat/TiledMap Editor/sample map.tmx": {
+            "scale": 1.156328125,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 959.9351395176001,
+                "y": 640.3891628943991
+            }
+        },
+        "tiled/tilesets/Furniture_and_props.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/tilesets/collision.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/tilesets/interiors_tilesets.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/tilesets/tilesets_village.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/tilesets/windows_and_doors.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/village/TiledMap Editor/tilesets/Free_Premade_houses.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/village/TiledMap Editor/tilesets/tilesets-village.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        }
+    },
+    "last.imagePath": "D:/usr/dev/cc/fluppi/tiled/village/tilesets and props",
+    "map.height": 30,
+    "map.lastUsedFormat": "tmx",
+    "map.width": 30,
+    "openFiles": [
+        "maps/vally_house.tmx",
+        "tiled/tilesets/interiors_tilesets.tsx",
+        "tiled/tilesets/Furniture_and_props.tsx",
+        "tiled/tilesets/collision.tsx"
+    ],
+    "project": "vally_rpg.tiled-project",
+    "property.type": "string",
+    "recentFiles": [
+        "tiled/pirat/TiledMap Editor/Tilesets/Beach-transition tiles between coast platform and beach.tsx",
+        "tiled/village/TiledMap Editor/tilesets/Free_Premade_houses.tsx",
+        "tiled/village/TiledMap Editor/tilesets/tilesets-village.tsx",
+        "tiled/tilesets/collision.tsx",
+        "tiled/tilesets/Furniture_and_props.tsx",
+        "tiled/tilesets/interiors_tilesets.tsx",
+        "maps/vally_house.tmx",
+        "tiled/tilesets/windows_and_doors.tsx",
+        "tiled/tilesets/tilesets_village.tsx",
+        "maps/village.tmx"
+    ],
+    "tileset.lastUsedFormat": "tsx",
+    "tileset.transparentColor": "#000000",
+    "tileset.useTransparentColor": false
+}

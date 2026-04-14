@@ -1,0 +1,158 @@
+' ===================================================================
+' == Tilemap + Sprite Demo
+' == A simple RPG-style room with walls and a walking character.
+' == Uses programmatic colored tiles (no external tileset needed).
+' ===================================================================
+
+SCREEN 640, 480, "Tilemap Demo"
+SETFONT "C:/Windows/Fonts/arial.ttf", 14
+
+' --- Create a simple tileset image programmatically ---
+' We'll draw colored 16x16 tiles onto the screen, save as image, then use it.
+' Tile 1 = green grass, Tile 2 = brown wall, Tile 3 = blue water
+T = 16
+SCREEN T * 4, T, "Tileset Builder"
+CLS 0, 0, 0
+RECT 0,   0, T, T, 50, 140, 50, TRUE   ' Tile 1: grass
+RECT T,   0, T, T, 120, 80, 40, TRUE   ' Tile 2: wall
+RECT T*2, 0, T, T, 40, 80, 180, TRUE   ' Tile 3: water
+RECT T*3, 0, T, T, 180, 160, 80, TRUE  ' Tile 4: sand/path
+temp_ts$ = "D:/usr/dev/cc/fluppi/generated_sprites/demo_tileset.png"
+GFX.SAVE_SCREENSHOT temp_ts$
+
+' --- Now create the actual game screen ---
+SCREEN 640, 480, "RPG Tilemap Demo"
+SETFONT "C:/Windows/Fonts/arial.ttf", 14
+
+' Load tileset
+tileset = GFX.LOADIMAGE(temp_ts$)
+
+' --- Define the map (20x15 tiles = 320x240 pixels at 16x16) ---
+' 0=empty, 1=grass, 2=wall, 3=water, 4=path
+map_data = [ _
+    [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2], _
+    [2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2], _
+    [2,1,1,1,1,1,1,1,4,4,1,1,1,1,1,1,1,1,1,2], _
+    [2,1,1,3,3,1,1,1,4,4,1,1,1,1,3,3,3,1,1,2], _
+    [2,1,1,3,3,1,1,1,4,4,1,1,1,1,3,3,3,1,1,2], _
+    [2,1,1,1,1,1,1,4,4,4,4,1,1,1,1,1,1,1,1,2], _
+    [2,1,1,1,1,1,4,4,1,1,4,4,1,1,1,1,1,1,1,2], _
+    [2,1,1,1,1,4,4,1,1,1,1,4,4,1,1,1,1,1,1,2], _
+    [2,1,1,1,1,4,1,1,1,1,1,1,4,1,1,1,1,1,1,2], _
+    [2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,1,1,2], _
+    [2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,1,1,2], _
+    [2,1,1,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,2], _
+    [2,1,1,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,2], _
+    [2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2], _
+    [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]  _
+]
+
+' Create the tilemap
+TILEMAP.CREATE "room", tileset, map_data, T, T
+PRINT "Map size: "; TILEMAP.SIZE("room")
+
+' --- Create collision map (walls + water = solid) ---
+' We'll use the same map and check tile IDs 2 and 3 as solid
+' TILEMAP.COLLIDES checks for any non-zero tile, so we need a separate
+' collision layer with only the solid tiles
+
+collision_data = [ _
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,1,1,0,0,0,0,0,0,0,0,0,1,1,1,0,0,1], _
+    [1,0,0,1,1,0,0,0,0,0,0,0,0,0,1,1,1,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,1], _
+    [1,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1], _
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]  _
+]
+TILEMAP.CREATE "walls", tileset, collision_data, T, T
+
+' --- Load or create player sprite ---
+' Try the AI-generated spritesheet, fall back to a simple colored rect
+SPRITE_FILE$ = "D:/usr/dev/cc/fluppi/generated_sprites/spritesheet.png"
+TRY
+    hero = SPRITE.LOAD(SPRITE_FILE$, 64, 64)
+    SPRITE.SCALE hero, 0.4  ' Scale down 64px to ~26px to fit 16px tiles
+CATCH
+    ' No spritesheet - create a simple placeholder
+    hero = SPRITE.LOAD("D:/usr/dev/cc/fluppi/test_sprite.png")
+    SPRITE.SCALE hero, 0.5
+ENDTRY
+
+SPRITE.POS hero, T * 5, T * 5
+SPRITE.GROUP hero, "player"
+
+' Define walk animations (if spritesheet loaded)
+TRY
+    SPRITE.ANIM hero, "idle_down",  [0], 1
+    SPRITE.ANIM hero, "idle_left",  [3], 1
+    SPRITE.ANIM hero, "idle_right", [6], 1
+    SPRITE.ANIM hero, "idle_up",    [9], 1
+    SPRITE.ANIM hero, "walk_down",  [0, 1, 0, 2], 6
+    SPRITE.ANIM hero, "walk_left",  [3, 4, 3, 5], 6
+    SPRITE.ANIM hero, "walk_right", [6, 7, 6, 8], 6
+    SPRITE.ANIM hero, "walk_up",    [9, 10, 9, 11], 6
+    SPRITE.PLAY hero, "idle_down"
+    has_anims = TRUE
+CATCH
+    has_anims = FALSE
+ENDTRY
+
+speed = 2
+direction$ = "down"
+
+' --- Game Loop ---
+DO
+    CLS 0, 0, 0
+
+    ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
+
+    ' Save position for collision rollback
+    old_x = SPRITE.GET_X(hero)
+    old_y = SPRITE.GET_Y(hero)
+    moving = FALSE
+
+    IF GFX.KEYSTATE("Right") THEN SPRITE.MOVE hero, speed, 0 : direction$ = "right" : moving = TRUE
+    IF GFX.KEYSTATE("Left")  THEN SPRITE.MOVE hero, -speed, 0 : direction$ = "left" : moving = TRUE
+    IF GFX.KEYSTATE("Down")  THEN SPRITE.MOVE hero, 0, speed : direction$ = "down" : moving = TRUE
+    IF GFX.KEYSTATE("Up")    THEN SPRITE.MOVE hero, 0, -speed : direction$ = "up" : moving = TRUE
+
+    ' Collision check — rollback if hitting a wall
+    IF TILEMAP.COLLIDES(hero, "walls") THEN
+        SPRITE.POS hero, old_x, old_y
+    ENDIF
+
+    ' Animation
+    IF has_anims THEN
+        IF moving THEN
+            SPRITE.PLAY hero, "walk_" + direction$
+        ELSE
+            SPRITE.PLAY hero, "idle_" + direction$
+        ENDIF
+    ENDIF
+
+    ' Draw
+    TILEMAP.DRAW "room"
+    SPRITE.UPDATE
+    SPRITE.DRAW_ALL
+
+    ' HUD
+    TEXT 10, 320, "Arrow keys: move | ESC: quit", 200, 200, 200
+    tile_x = INT(SPRITE.GET_X(hero) / T)
+    tile_y = INT(SPRITE.GET_Y(hero) / T)
+    TEXT 10, 340, "Tile: " + STR$(tile_x) + "," + STR$(tile_y), 180, 180, 180
+
+    SCREENFLIP
+    SLEEP 16
+LOOP
+
+END

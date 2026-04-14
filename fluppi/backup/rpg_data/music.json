@@ -1,0 +1,70 @@
+{
+    "themes": {
+        "title": {
+            "bpm": 138,
+            "melody_voice": ["SQUARE", 0.01, 0.25, 0.4, 0.3],
+            "melody_filter": 2500,
+            "melody_gain": 0.6,
+            "bass_voice": ["SAW", 0.005, 0.1, 0.5, 0.1],
+            "bass_filter": 600,
+            "bass_gain": 0.7,
+            "reverb": [0.8, 0.2, 0.9, 0.3],
+            "reverb_send": 0.5,
+            "melody": "[d5 [f5 a5] d6 ~] [c5 [e5 g5] c6 ~] [b4 [d5 g5] b5 [a5 g5]] [a4 ~ [d5 f5] ~] [g5 [f5 e5] d5 [e5 f5]] [a5 [g5 f5] e5 c5] [d5 [f5 a5] d6 [c6 b5]] [a5 ~ ~ ~]",
+            "bass": "[[d2 d3]*4] [[c2 c3]*4] [[g1 g2]*2 [b1 b2]*2] [[a1 a2]*2 [d2 d3]*2] [[g2 g3]*4] [[a2 a3]*2 [c2 c3]*2] [[d2 d3]*2 [f2 f3]*2] [[a1 a2]*4]"
+        },
+        "overworld": {
+            "bpm": 125,
+            "melody_voice": ["SQUARE", 0.01, 0.15, 0.3, 0.25],
+            "melody_filter": 2000,
+            "melody_gain": 0.6,
+            "bass_voice": ["SAW", 0.005, 0.08, 0.5, 0.08],
+            "bass_filter": 500,
+            "bass_gain": 0.7,
+            "reverb": [0.7, 0.3, 0.8, 0.25],
+            "reverb_send": 0.4,
+            "melody": "[c5 e5 g5 e5] [a4 c5 e5 c5] [f4 a4 c5 [d5 c5]] [g4 b4 d5 ~] [e5 g5 [a5 g5] e5] [d5 f5 [e5 d5] c5] [c5 [b4 c5] d5 e5] [c5 ~ ~ ~]",
+            "bass": "[[c2 c3]*4] [[a1 a2]*4] [[f1 f2]*4] [[g1 g2]*4] [[c2 c3]*4] [[d2 d3]*2 [f1 f2]*2] [[g1 g2]*2 [g1 b1]*2] [[c2 c3]*4]"
+        },
+        "shop": {
+            "bpm": 135,
+            "melody_voice": ["SQUARE", 0.01, 0.1, 0.2, 0.15],
+            "melody_filter": 2200,
+            "melody_gain": 0.5,
+            "bass_voice": ["SAW", 0.005, 0.06, 0.4, 0.06],
+            "bass_filter": 450,
+            "bass_gain": 0.6,
+            "reverb": [0.5, 0.4, 0.6, 0.2],
+            "reverb_send": 0.3,
+            "melody": "[e5 [g5 e5] c5 d5] [e5 g5 a5 g5] [f5 [e5 d5] c5 d5] [e5 ~ c5 ~] [d5 [f5 d5] b4 c5] [d5 f5 g5 f5] [e5 [d5 c5] b4 c5] [c5 ~ ~ ~]",
+            "bass": "[[c2 e2]*4] [[c2 g2]*4] [[f2 a2]*4] [[c2 e2]*4] [[g1 b1]*4] [[g1 d2]*4] [[c2 e2]*2 [g1 b1]*2] [[c2 c3]*4]"
+        },
+        "indoor": {
+            "bpm": 90,
+            "melody_voice": ["SQUARE", 0.02, 0.3, 0.2, 0.4],
+            "melody_filter": 1500,
+            "melody_gain": 0.4,
+            "bass_voice": ["SAW", 0.01, 0.15, 0.3, 0.15],
+            "bass_filter": 350,
+            "bass_gain": 0.5,
+            "reverb": [0.9, 0.2, 1.0, 0.4],
+            "reverb_send": 0.6,
+            "melody": "[a4 ~ c5 ~] [e4 ~ g4 ~] [f4 ~ a4 [g4 f4]] [e4 ~ ~ ~] [a4 ~ [b4 c5] ~] [d5 ~ c5 a4] [b4 ~ [a4 g4] ~] [a4 ~ ~ ~]",
+            "bass": "[[a1 a2]*2 [a1 e2]*2] [[e1 e2]*2 [e1 b1]*2] [[f1 f2]*2 [f1 c2]*2] [[e1 e2]*4] [[a1 a2]*2 [a1 e2]*2] [[d2 d3]*2 [d2 a2]*2] [[e1 e2]*2 [e1 b1]*2] [[a1 a2]*4]"
+        }
+    },
+        "battle": {
+            "bpm": 160,
+            "melody_voice": ["SQUARE", 0.005, 0.1, 0.3, 0.15],
+            "melody_filter": 2800,
+            "melody_gain": 0.7,
+            "bass_voice": ["SAW", 0.003, 0.06, 0.5, 0.06],
+            "bass_filter": 700,
+            "bass_gain": 0.8,
+            "reverb": [0.4, 0.3, 0.5, 0.15],
+            "reverb_send": 0.2,
+            "melody": "[e5 e5 [f5 e5] d5] [e5 g5 a5 ~] [g5 [f5 e5] d5 e5] [f5 d5 ~ ~] [a4 [c5 d5] e5 e5] [f5 [e5 d5] c5 d5] [e5 [g5 a5] g5 [f5 e5]] [d5 ~ ~ ~]",
+            "bass": "[[a2 a3]*4] [[a2 e3]*4] [[g2 g3]*2 [a2 a3]*2] [[d2 d3]*4] [[a2 a3]*4] [[f2 f3]*2 [g2 g3]*2] [[a2 a3]*2 [c3 e3]*2] [[d2 d3]*4]"
+        }
+    }
+}

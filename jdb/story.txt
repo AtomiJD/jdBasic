@@ -1,0 +1,3 @@
+This is a short story for jdBasic.
+It has multiple lines.
+The TXTREADER$ function should read all of it.

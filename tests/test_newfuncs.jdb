@@ -1,0 +1,83 @@
+' ══ 1. Math ════════════════════════════════════════
+PRINT "=== Math ==="
+PRINT "ASIN(1) = "; ASIN(1)
+PRINT "ACOS(0) = "; ACOS(0)
+PRINT "ATAN(1) = "; ATAN(1)
+PRINT "ATAN2(1,1) = "; ATAN2(1, 1)
+PRINT "SINH(1) = "; SINH(1)
+PRINT "COSH(0) = "; COSH(0)
+PRINT "TANH(0) = "; TANH(0)
+PRINT "SGN(-5) = "; SGN(-5); " SGN(0) = "; SGN(0); " SGN(3) = "; SGN(3)
+PRINT "PI() = "; PI()
+PRINT "E() = "; E()
+PRINT "RANDOM(1,10) is a number: "; RANDOM(1, 10) > 0
+RANDOMSEED 42
+PRINT "SGN([-3,0,5]) = "; SGN([-3, 0, 5])
+
+' ══ 2. String ═════════════════════════════════════
+PRINT ""
+PRINT "=== String ==="
+PRINT "JOIN: "; JOIN(["a","b","c"], ", ")
+PRINT "STARTSWITH: "; STARTSWITH("Hello World", "Hello")
+PRINT "ENDSWITH: "; ENDSWITH("test.jdb", ".jdb")
+PRINT "LTRIM$: '"; LTRIM$("  hello  "); "'"
+PRINT "RTRIM$: '"; RTRIM$("  hello  "); "'"
+PRINT "SPACE$(5): '"; SPACE$(5); "'"
+PRINT "HEX$(255) = "; HEX$(255)
+PRINT "BIN$(42) = "; BIN$(42)
+PRINT "OCT$(8) = "; OCT$(8)
+PRINT "REGEX_MATCH: "; REGEX_MATCH("abc 123 def 456", "[0-9]+")
+PRINT "REGEX_REPLACE$: "; REGEX_REPLACE$("Hello World", "[aeiou]", "*")
+
+' ══ 3. Statistics ═════════════════════════════════
+PRINT ""
+PRINT "=== Statistics ==="
+DIM data = [2, 4, 4, 4, 5, 5, 7, 9]
+PRINT "data = "; data
+PRINT "MEAN = "; MEAN(data)
+PRINT "MEDIAN = "; MEDIAN(data)
+PRINT "VARIANCE = "; VARIANCE(data)
+PRINT "STDEV = "; STDEV(data)
+PRINT "DOT([1,2,3],[4,5,6]) = "; DOT([1,2,3], [4,5,6])
+PRINT "CROSS([1,0,0],[0,1,0]) = "; CROSS([1,0,0], [0,1,0])
+PRINT "CUMSUM(IOTA(5)) = "; CUMSUM(IOTA(5))
+PRINT "CUMPROD(IOTA(5)) = "; CUMPROD(IOTA(5))
+PRINT "LINSPACE(0,1,5) = "; LINSPACE(0, 1, 5)
+PRINT "HISTOGRAM([1,2,2,3,3,3,4],4) = "; HISTOGRAM([1,2,2,3,3,3,4], 4)
+
+' ══ 4. Array Utilities ════════════════════════════
+PRINT ""
+PRINT "=== Array ==="
+PRINT "FLATTEN([[1,2],[3,[4,5]]]) = "; FLATTEN([[1,2],[3,[4,5]]])
+PRINT "ZIP([1,2,3],[a,b,c]) = "; ZIP([1,2,3], ["a","b","c"])
+PRINT "ZEROS(5) = "; ZEROS(5)
+PRINT "ONES(5) = "; ONES(5)
+PRINT "RANGE(0,10,2) = "; RANGE(0, 10, 2)
+PRINT "RANGE(5,0) = "; RANGE(5, 0)
+PRINT "COUNT([1,2,2,3,2],2) = "; COUNT([1,2,2,3,2], 2)
+PRINT "INDEXOF([10,20,30],20) = "; INDEXOF([10,20,30], 20)
+
+' ══ 5. Type Checking ═════════════════════════════
+PRINT ""
+PRINT "=== Type Check ==="
+PRINT "ISNUM(42) = "; ISNUM(42)
+PRINT "ISSTR('hi') = "; ISSTR("hi")
+PRINT "ISARR([1]) = "; ISARR([1])
+PRINT "ISMAP({}) = "; ISMAP({"a":1})
+PRINT "ISBOOL(TRUE) = "; ISBOOL(TRUE)
+PRINT "ISNONE(0) = "; ISNONE(0)
+
+' ══ 8. DateTime ══════════════════════════════════
+PRINT ""
+PRINT "=== DateTime ==="
+DIM N = NOW()
+PRINT "YEAR = "; YEAR(N)
+PRINT "MONTH = "; MONTH(N)
+PRINT "DAY = "; DAY(N)
+PRINT "HOUR = "; HOUR(N)
+PRINT "MINUTE = "; MINUTE(N)
+PRINT "SECOND = "; SECOND(N)
+PRINT "WEEKDAY = "; WEEKDAY(N); " (0=Sun)"
+
+PRINT ""
+PRINT "=== ALL TESTS PASSED ==="

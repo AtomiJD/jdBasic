@@ -1,0 +1,55 @@
+{
+    "quests": [
+        {
+            "id": "moehrchen_recruit",
+            "title": "Möhrchens Papierkram",
+            "desc": "Sprich mit Möhrchen und überzeuge sie, mitzukommen.",
+            "giver": "Möhrchen",
+            "turn_in": "Möhrchen",
+            "goal": "talk:Möhrchen",
+            "goal_count": 1,
+            "room": "",
+            "prereq_quest": "",
+            "prereq_item": "",
+            "reward_gold": 10,
+            "reward_item": "",
+            "dialog_offer": "Ich hab so viel Papierkram... Wenn du mir hilfst, komm ich vielleicht mit, {PLAYER}!",
+            "dialog_active": "Rede nochmal mit mir, wenn du bereit bist.",
+            "dialog_complete": "Danke {PLAYER}! Hier, nimm etwas Gold für deine Hilfe."
+        },
+        {
+            "id": "first_shopping",
+            "title": "Erste Einkäufe",
+            "desc": "Kaufe 2 Gegenstände bei der Händlerin.",
+            "giver": "Händlerin",
+            "turn_in": "Händlerin",
+            "goal": "buy:item",
+            "goal_count": 2,
+            "room": "",
+            "prereq_quest": "",
+            "prereq_item": "",
+            "reward_gold": 20,
+            "reward_item": "",
+            "dialog_offer": "Kauf 2 Sachen und ich geb dir 20 Gold zurück! Deal, {PLAYER}?",
+            "dialog_active": "Immer weiter einkaufen!",
+            "dialog_complete": "Eine treue Kundin! Hier sind 20 Gold zurück, {PLAYER}!"
+        },
+        {
+            "id": "blobb_hunter",
+            "title": "Blobb-Jägerin",
+            "desc": "Besiege 3 Blobbs im Dorf.",
+            "giver": "Händlerin",
+            "turn_in": "Händlerin",
+            "goal": "defeat:blobb",
+            "goal_count": 3,
+            "room": "",
+            "prereq_quest": "",
+            "prereq_item": "",
+            "reward_gold": 30,
+            "reward_item": "magic_ring",
+            "dialog_offer": "Die Blobbs bedrohen mein Geschäft! Besiege 3 von ihnen, {PLAYER}!",
+            "dialog_active": "Immer weiter, du schaffst das!",
+            "dialog_complete": "Meine Heldin! Nimm diesen magischen Ring als Dank, {PLAYER}!"
+        }
+    ]
+}

@@ -1,0 +1,24 @@
+SOUND.INIT()
+SOUND.BPM(120)
+
+' Left Track
+SOUND.VOICE 0, "SQUARE", 0.01, 0.1, 0.0, 0.1
+SOUND.PAN 0, 0.0 ' Hard Left
+
+' Right Track
+SOUND.VOICE 1, "SQUARE", 0.01, 0.1, 0.0, 0.1
+SOUND.PAN 1, 1.0 ' Hard Right
+
+' Center Track
+SOUND.VOICE 2, "NOISE", 0.01, 0.05, 0.0, 0.05
+SOUND.PAN 2, 0.5
+
+SOUND.SEQ 0, "c3 ~ ~ ~", "VOICE"
+SOUND.SEQ 1, "~ ~ c3 ~", "VOICE"
+SOUND.SEQ 2, "c4 c4 c4 c4", "VOICE"
+
+PRINT "Stereo Test: Left... Right..."
+
+DO
+    SLEEP 100
+LOOP
