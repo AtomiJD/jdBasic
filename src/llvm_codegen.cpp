@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <unordered_set>
+#include <functional>
 
 // ── Constructor / Destructor ────────────────────────────────
 
@@ -356,35 +357,107 @@ void LLVMCodegen::create_main_function() {
 // ── Pre-pass: declare all FUNC/SUB signatures ───────────────
 
 void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
+    // Phase 1: collect function signatures with initial param types from name convention
+    struct FuncDecl {
+        const Stmt* stmt;
+        std::vector<int> tags;  // per-param: 1=f64, 2=string
+        int return_tag;
+    };
+    std::unordered_map<std::string, FuncDecl> decls;
+
     for (auto& stmt : program) {
         if (!stmt) continue;
         if (stmt->kind != StmtKind::FUNCTION && stmt->kind != StmtKind::SUB) continue;
-
         bool is_sub = (stmt->kind == StmtKind::SUB);
-        // FUNC returns f64 by default, but FUNC$ returns ptr (string)
         bool returns_string = (!is_sub && !stmt->func_name.empty() &&
                                stmt->func_name.back() == '$');
-        int return_tag = is_sub ? -1 : (returns_string ? 2 : 1);
-
-        // Params: f64 for numbers, ptr for strings (detected by $ suffix)
-        std::vector<LLVMTypeRef> param_types;
-        std::vector<int> param_tags;
-        for (size_t i = 0; i < stmt->params.size(); i++) {
-            bool is_str_param = (!stmt->params[i].name.empty() &&
-                                 stmt->params[i].name.back() == '$');
-            param_types.push_back(is_str_param ? i8_ptr_type : f64_type);
-            param_tags.push_back(is_str_param ? 2 : 1);  // 2=string, 1=f64
+        int ret_tag = is_sub ? -1 : (returns_string ? 2 : 1);
+        std::vector<int> tags;
+        for (auto& p : stmt->params) {
+            bool sp = (!p.name.empty() && p.name.back() == '$');
+            tags.push_back(sp ? 2 : 1);
         }
+        decls[stmt->func_name] = { stmt.get(), tags, ret_tag };
+    }
 
-        LLVMTypeRef ret_type = is_sub ? void_type : (returns_string ? i8_ptr_type : f64_type);
+    // Phase 2: scan all call sites to infer string params from arguments
+    // An arg is string if it's a LITERAL_STRING, a VARIABLE ending in $, or a CALL ending in $
+    std::function<bool(const Expr&)> is_str_expr = [&](const Expr& e) -> bool {
+        if (e.kind == ExprKind::LITERAL_STRING) return true;
+        if (e.kind == ExprKind::VARIABLE && !e.str_val.empty() && e.str_val.back() == '$') return true;
+        if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') return true;
+        // String concat (any + with a string operand)
+        if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) {
+            if ((e.left && is_str_expr(*e.left)) || (e.right && is_str_expr(*e.right)))
+                return true;
+        }
+        return false;
+    };
+
+    std::function<void(const Expr&)> scan_expr = [&](const Expr& e) {
+        if (e.kind == ExprKind::CALL) {
+            auto it = decls.find(e.func_name);
+            if (it != decls.end()) {
+                for (size_t i = 0; i < e.args.size() && i < it->second.tags.size(); i++) {
+                    if (it->second.tags[i] != 2 && e.args[i] && is_str_expr(*e.args[i]))
+                        it->second.tags[i] = 2;
+                }
+            }
+        }
+        if (e.left) scan_expr(*e.left);
+        if (e.right) scan_expr(*e.right);
+        for (auto& a : e.args) if (a) scan_expr(*a);
+    };
+
+    std::function<void(const Stmt&)> scan_stmt = [&](const Stmt& s) {
+        if (s.expr) scan_expr(*s.expr);
+        if (s.loop_cond) scan_expr(*s.loop_cond);
+        if (s.end_expr) scan_expr(*s.end_expr);
+        if (s.step_expr) scan_expr(*s.step_expr);
+        for (auto& pe : s.print_exprs) if (pe) scan_expr(*pe);
+        for (auto& ic : s.index_chain) if (ic) scan_expr(*ic);
+        for (auto& b : s.body) if (b) scan_stmt(*b);
+        for (auto& br : s.branches) {
+            if (br.condition) scan_expr(*br.condition);
+            for (auto& b : br.body) if (b) scan_stmt(*b);
+        }
+        for (auto& c : s.catch_body) if (c) scan_stmt(*c);
+        for (auto& f : s.finally_body) if (f) scan_stmt(*f);
+    };
+
+    for (auto& stmt : program) {
+        if (stmt) scan_stmt(*stmt);
+    }
+
+    // Phase 3: also infer return types from body if not indicated by name
+    for (auto& [name, decl] : decls) {
+        if (decl.return_tag == 1 && decl.stmt) {
+            // Check if body involves string operations (like method return type inference)
+            for (auto& s : decl.stmt->body) {
+                if (s && s->expr && expr_involves_strings(*s->expr)) {
+                    decl.return_tag = 2;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Phase 4: create LLVM functions with inferred types
+    for (auto& [name, decl] : decls) {
+        std::vector<LLVMTypeRef> param_types;
+        for (int t : decl.tags)
+            param_types.push_back(t == 2 ? i8_ptr_type : f64_type);
+
+        LLVMTypeRef ret_type;
+        if (decl.return_tag == -1) ret_type = void_type;
+        else if (decl.return_tag == 2) ret_type = i8_ptr_type;
+        else ret_type = f64_type;
+
         LLVMTypeRef fn_type = LLVMFunctionType(ret_type,
             param_types.empty() ? nullptr : param_types.data(),
             (unsigned)param_types.size(), 0);
-
-        std::string fn_name = stmt->func_name;
-
-        LLVMValueRef fn = LLVMAddFunction(module, fn_name.c_str(), fn_type);
-        user_functions[fn_name] = { fn, return_tag, param_tags };
+        LLVMValueRef fn = LLVMAddFunction(module, name.c_str(), fn_type);
+        user_functions[name] = { fn, decl.return_tag, decl.tags };
     }
 }
 
@@ -1776,6 +1849,143 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { result, 1 };
     }
 
+    // Array/ptr operands: dispatch via VM bridge (array arithmetic, string*int, etc.)
+    if (lhs.tag == 3 || rhs.tag == 3) {
+        // Encode both operands as i64 with type tags and call through VM bridge
+        LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
+            LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
+
+        // Map binary op to VM function name
+        std::string op_name;
+        switch (expr.op) {
+            case TokenType::PLUS:  op_name = "__ARRAY_ADD"; break;
+            case TokenType::MINUS: op_name = "__ARRAY_SUB"; break;
+            case TokenType::STAR:  op_name = "__ARRAY_MUL"; break;
+            case TokenType::SLASH: op_name = "__ARRAY_DIV"; break;
+            case TokenType::EQ:
+            case TokenType::ASSIGN: op_name = "__ARRAY_EQ"; break;
+            case TokenType::NE:    op_name = "__ARRAY_NE"; break;
+            case TokenType::AND:   op_name = "__ARRAY_AND"; break;
+            case TokenType::OR:    op_name = "__ARRAY_OR"; break;
+            default:               op_name = "__ARRAY_ADD"; break;
+        }
+
+        // Encode args for VM bridge
+        LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
+            LLVMConstInt(i32_type, 2, 0), "args");
+        LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
+            LLVMConstInt(i32_type, 2, 0), "tags");
+
+        auto encode = [&](TypedValue tv, int idx) {
+            LLVMValueRef encoded;
+            int32_t tag;
+            if (tv.tag == 3) {
+                encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
+                tag = 3;
+            } else if (tv.tag == 2) {
+                encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "stoi");
+                tag = 2;
+            } else if (tv.tag == 1) {
+                encoded = pun_f64_to_i64(tv.val);
+                tag = 1;
+            } else {
+                LLVMValueRef as_f64 = LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
+                encoded = pun_f64_to_i64(as_f64);
+                tag = 0;
+            }
+            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, idx, 0) };
+            LLVMBuildStore(builder, encoded,
+                LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "arg"));
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0),
+                LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "tag"));
+        };
+        encode(lhs, 0);
+        encode(rhs, 1);
+
+        LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, op_name.c_str(), ".op");
+
+        // Check if comparison op (returns scalar) vs arithmetic (returns array)
+        bool is_cmp = (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN ||
+                       expr.op == TokenType::NE || expr.op == TokenType::AND ||
+                       expr.op == TokenType::OR);
+        if (is_cmp) {
+            auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
+            LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
+                LLVMConstInt(i32_type, 2, 0) };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
+            // Returns f64 which may encode an array ptr
+            LLVMValueRef as_i64 = pun_f64_to_i64(result);
+            LLVMValueRef ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "atoptr");
+            return { ptr, 3 };
+        } else {
+            auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
+            LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
+                LLVMConstInt(i32_type, 2, 0) };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
+            LLVMValueRef as_i64 = pun_f64_to_i64(result);
+            LLVMValueRef ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "atoptr");
+            return { ptr, 3 };
+        }
+    }
+
+    // String multiplication: "abc" * 3 or 3 * "abc"
+    if (expr.op == TokenType::STAR && (lhs.tag == 2 || rhs.tag == 2)) {
+        // Dispatch via VM bridge
+        LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
+            LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
+        LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
+            LLVMConstInt(i32_type, 2, 0), "args");
+        LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
+            LLVMConstInt(i32_type, 2, 0), "tags");
+
+        auto encode_val = [&](TypedValue tv, int idx) {
+            LLVMValueRef encoded;
+            int32_t tag;
+            if (tv.tag == 2) { encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "stoi"); tag = 2; }
+            else if (tv.tag == 1) { encoded = pun_f64_to_i64(tv.val); tag = 1; }
+            else { LLVMValueRef f = LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"); encoded = pun_f64_to_i64(f); tag = 0; }
+            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, idx, 0) };
+            LLVMBuildStore(builder, encoded, LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "arg"));
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "tag"));
+        };
+        encode_val(lhs, 0);
+        encode_val(rhs, 1);
+
+        LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, "REPEAT$", ".op");
+        auto& fn = runtime_funcs["__jdrt_call_typed_str"];
+        LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
+            LLVMConstInt(i32_type, 2, 0) };
+        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
+        return { result, 2 };
+    }
+
+    // String comparison: str = other, str <> other (when one side might not be str)
+    if ((lhs.tag == 2 || rhs.tag == 2) &&
+        (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN || expr.op == TokenType::NE)) {
+        // Convert both to strings if needed
+        auto to_str2 = [&](TypedValue tv) -> LLVMValueRef {
+            if (tv.tag == 2) return tv.val;
+            if (tv.tag == 0) {
+                auto& fn = runtime_funcs["__int_to_str"];
+                LLVMValueRef args[] = { tv.val };
+                return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
+            } else {
+                auto& fn = runtime_funcs["__double_to_str"];
+                LLVMValueRef args[] = { tv.val };
+                return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ftostr");
+            }
+        };
+        if (expr.op == TokenType::NE) {
+            auto& fn = runtime_funcs["__str_ne"];
+            LLVMValueRef args[] = { to_str2(lhs), to_str2(rhs) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), 0 };
+        } else {
+            auto& fn = runtime_funcs["__str_eq"];
+            LLVMValueRef args[] = { to_str2(lhs), to_str2(rhs) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), 0 };
+        }
+    }
+
     bool use_float = (lhs.tag == 1 || rhs.tag == 1);
     if (use_float) {
         lhs = promote_to_f64(lhs);
@@ -2239,6 +2449,12 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
     if (tv.tag == 1)
         return LLVMBuildFCmp(builder, LLVMRealONE, tv.val,
                              LLVMConstReal(f64_type, 0.0), "tobool");
+    if (tv.tag == 2 || tv.tag == 3) {
+        // ptr types: non-null = true
+        LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
+        return LLVMBuildICmp(builder, LLVMIntNE, as_i64,
+                             LLVMConstInt(i64_type, 0, 0), "tobool");
+    }
     return LLVMBuildICmp(builder, LLVMIntNE, tv.val,
                          LLVMConstInt(i64_type, 0, 0), "tobool");
 }
