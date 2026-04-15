@@ -1148,15 +1148,84 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             TypedValue left_val = codegen_expr(*expr.left);
 
             if (expr.right->kind == ExprKind::LAMBDA_EXPR) {
-                // value |> lambda x -> body  →  compile lambda, call it with left_val
-                TypedValue lambda = codegen_expr(*expr.right);
-                // Call the lambda with left_val as argument
-                LLVMTypeRef call_ft = LLVMFunctionType(f64_type, &f64_type, 1, 0);
-                LLVMValueRef arg = left_val.val;
-                if (left_val.tag == 0) arg = LLVMBuildSIToFP(builder, arg, f64_type, "itof");
-                LLVMValueRef args[] = { arg };
-                LLVMValueRef result = LLVMBuildCall2(builder, call_ft, lambda.val, args, 1, "pipe");
-                return { result, 1 };
+                // value |> lambda x -> body
+                // Determine lambda signature based on input type
+                bool array_input = (left_val.tag == 3);
+
+                if (array_input) {
+                    // Array PIPE: compile lambda body first to determine return type,
+                    // then create function with correct signature
+                    static int arr_lambda_counter = 0;
+                    std::string name = "__arr_lambda_" + std::to_string(arr_lambda_counter++);
+                    auto& lam = *expr.right;
+                    int arity = (int)lam.lambda_params.size();
+
+                    // Step 1: Create a preliminary ptr(ptr) function to compile body
+                    std::vector<LLVMTypeRef> ptypes(arity, i8_ptr_type);
+                    // We'll determine return type from body
+                    LLVMTypeRef fn_type_ptr = LLVMFunctionType(i8_ptr_type, ptypes.data(), arity, 0);
+                    LLVMTypeRef fn_type_f64 = LLVMFunctionType(f64_type, ptypes.data(), arity, 0);
+
+                    LLVMValueRef saved_fn = current_fn;
+                    LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+
+                    // Probe: compile body in a temp scope to determine return tag
+                    scopes.push_back(Scope{});
+                    // Create temp params as array (tag=3)
+                    for (int i = 0; i < arity; i++) {
+                        // Don't emit LLVM — just register in scope for type tracking
+                        scopes.back().vars[lam.lambda_params[i]] = { nullptr, 3 };
+                    }
+                    // We can't compile the body without a proper function context,
+                    // so use a heuristic: check if the body is a CALL to a known
+                    // scalar-returning function (SUM, MEAN, PRODUCT, etc.)
+                    bool returns_scalar = false;
+                    if (lam.right->kind == ExprKind::CALL) {
+                        std::string fn = lam.right->func_name;
+                        std::transform(fn.begin(), fn.end(), fn.begin(), ::toupper);
+                        if (fn == "SUM" || fn == "PRODUCT" || fn == "MEAN" ||
+                            fn == "STDEV" || fn == "MEDIAN" || fn == "VARIANCE" ||
+                            fn == "MIN" || fn == "MAX" || fn == "LEN" ||
+                            fn == "ANY" || fn == "ALL" || fn == "COUNT")
+                            returns_scalar = true;
+                    }
+                    scopes.pop_back();
+
+                    LLVMTypeRef fn_type = returns_scalar ? fn_type_f64 : fn_type_ptr;
+                    LLVMValueRef lambda_fn = LLVMAddFunction(module, name.c_str(), fn_type);
+
+                    current_fn = lambda_fn;
+                    scopes.push_back(Scope{});
+
+                    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, lambda_fn, "entry");
+                    LLVMPositionBuilderAtEnd(builder, entry);
+
+                    for (int i = 0; i < arity; i++) {
+                        VarInfo& vi = create_var(lam.lambda_params[i], 3);
+                        LLVMBuildStore(builder, LLVMGetParam(lambda_fn, i), vi.alloca_val);
+                    }
+
+                    TypedValue body = codegen_expr(*lam.right);
+                    LLVMBuildRet(builder, body.val);
+
+                    scopes.pop_back();
+                    current_fn = saved_fn;
+                    LLVMPositionBuilderAtEnd(builder, saved_bb);
+
+                    // Call the array lambda
+                    LLVMValueRef args[] = { left_val.val };
+                    LLVMValueRef result = LLVMBuildCall2(builder, fn_type, lambda_fn, args, 1, "apipe");
+                    return { result, returns_scalar ? 1 : 3 };
+                } else {
+                    // Scalar PIPE: standard double(double) lambda
+                    TypedValue lambda = codegen_expr(*expr.right);
+                    LLVMTypeRef call_ft = LLVMFunctionType(f64_type, &f64_type, 1, 0);
+                    LLVMValueRef arg = left_val.val;
+                    if (left_val.tag == 0) arg = LLVMBuildSIToFP(builder, arg, f64_type, "itof");
+                    LLVMValueRef args[] = { arg };
+                    LLVMValueRef result = LLVMBuildCall2(builder, call_ft, lambda.val, args, 1, "pipe");
+                    return { result, 1 };
+                }
             } else if (expr.right->kind == ExprKind::VARIABLE) {
                 // value |> FuncName  →  FuncName(value)
                 std::string fn_name = expr.right->str_val;
