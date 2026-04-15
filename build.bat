@@ -69,6 +69,15 @@ for %%A in (%*) do (
         set EXTRA_LIB=!EXTRA_LIB! onnxruntime.lib
         echo [+] ONNX Runtime - AI Inference
     )
+    if /I "%%A"=="NATIVEC" (
+        set DEFS=!DEFS! /DLLVM_CODEGEN
+        set EXTRA_SRC=!EXTRA_SRC! src\llvm_codegen.cpp src\jdb_runtime.cpp
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\LLVM\include
+        set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\LLVM\lib
+        set EXTRA_LIB=!EXTRA_LIB! LLVM-C.lib
+        set COPY_LLVM=1
+        echo [+] LLVM Native Compiler
+    )
     if /I "%%A"=="RELEASE" (
         REM Increment build number
         set /p BNUM=< %BUILD_NUM_FILE%
@@ -126,6 +135,13 @@ if %ERRORLEVEL%==0 (
         copy /Y libs\onnxruntime\lib\onnxruntime.dll build\ >nul 2>&1
         copy /Y libs\onnxruntime\lib\onnxruntime_providers_shared.dll build\ >nul 2>&1
         echo ONNX Runtime DLL copied to build\
+    )
+    if defined COPY_LLVM (
+        copy /Y libs\LLVM\bin\LLVM-C.dll build\ >nul 2>&1
+        echo LLVM DLL copied to build\
+        REM Pre-compile jdb_runtime.obj for linking into generated executables
+        "%CC%" /std:c++17 /O2 /EHsc /c src\jdb_runtime.cpp /Fo:build\jdb_runtime.obj >nul 2>&1
+        echo jdb_runtime.obj compiled for native linking
     )
     if exist libs\llama\llama.dll (
         copy /Y libs\llama\llama.dll build\ >nul 2>&1

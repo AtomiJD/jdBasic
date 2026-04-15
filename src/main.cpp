@@ -40,6 +40,9 @@
 #include "ai.h"
 #include "llm.h"
 #include "version.h"
+#ifdef LLVM_CODEGEN
+#include "llvm_codegen.h"
+#endif
 
 static std::string read_file(const std::string& path) {
     std::ifstream file(path);
@@ -958,27 +961,65 @@ int main(int argc, char* argv[]) {
     std::string filename;
     bool timing = false;
     int debug_port = 0;
+    bool compile_native = false;
+    bool emit_ir_only = false;
+    std::string compile_output;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--time" || a == "-t") { timing = true; continue; }
         if (a == "--verbose" || a == "-v") { /* old-style flag, ignore */ continue; }
         if (a == "--debug" || a == "-d") {
             debug_port = 4711;
-            // Check if next arg is a port number
             if (i + 1 < argc) {
                 try { int p = std::stoi(argv[i + 1]); debug_port = p; i++; } catch (...) {}
             }
             continue;
         }
-        // First non-recognised argument: this is the script filename. Stop
-        // parsing here so the script's own arguments (which may also start
-        // with `--`) flow through to OS.ARGS untouched.
+        if (a == "--compile" || a == "-c") { compile_native = true; continue; }
+        if (a == "--emit-ir") { emit_ir_only = true; continue; }
+        if ((a == "-o" || a == "--output") && i + 1 < argc) { compile_output = argv[++i]; continue; }
         filename = a;
         break;
     }
     if (filename.empty()) {
         std::cerr << "Error: no input file specified." << std::endl;
         return 1;
+    }
+
+    // ── Native compilation (LLVM) ────────────────────────────────
+    if (compile_native || emit_ir_only) {
+#ifdef LLVM_CODEGEN
+        std::string source = read_file(filename);
+        Lexer lexer(source);
+        auto tokens = lexer.tokenize();
+        Parser parser(tokens);
+        setup_parser_modules(parser);
+        auto ast = parser.parse();
+
+        LLVMCodegen codegen;
+
+        if (emit_ir_only) {
+            codegen.emit_ir(ast);
+            return 0;
+        }
+
+        if (compile_output.empty()) {
+            compile_output = filename;
+            auto dot = compile_output.rfind('.');
+            if (dot != std::string::npos) compile_output = compile_output.substr(0, dot);
+            compile_output += ".exe";
+        }
+
+        if (!codegen.compile(ast, compile_output)) {
+            std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
+            return 1;
+        }
+        std::cout << "Compiled: " << compile_output << std::endl;
+        return 0;
+#else
+        std::cerr << "Native compilation not available (build with NATIVEC flag)." << std::endl;
+        return 1;
+#endif
     }
 
     // ── Debug mode ──────────────────────────────────────────────

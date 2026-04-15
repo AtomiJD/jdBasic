@@ -1,0 +1,1857 @@
+#ifdef LLVM_CODEGEN
+#include "llvm_codegen.h"
+#include "llvm-c/Core.h"
+#include "llvm-c/Target.h"
+#include "llvm-c/TargetMachine.h"
+#include "llvm-c/Analysis.h"
+#include <iostream>
+#include <cstdlib>
+#include <cstdio>
+#include <filesystem>
+#include <algorithm>
+
+// ── Constructor / Destructor ────────────────────────────────
+
+LLVMCodegen::LLVMCodegen()
+    : ctx(nullptr), module(nullptr), builder(nullptr), current_fn(nullptr) {}
+
+LLVMCodegen::~LLVMCodegen() {
+    if (builder) LLVMDisposeBuilder(builder);
+    if (module) LLVMDisposeModule(module);
+    if (ctx) LLVMContextDispose(ctx);
+}
+
+// ── Scope / Variable Management ─────────────────────────────
+
+LLVMCodegen::VarInfo* LLVMCodegen::lookup_var(const std::string& name) {
+    // Search from innermost scope outward
+    for (int i = (int)scopes.size() - 1; i >= 0; i--) {
+        auto it = scopes[i].vars.find(name);
+        if (it != scopes[i].vars.end()) return &it->second;
+    }
+    return nullptr;
+}
+
+LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) {
+    LLVMTypeRef var_type = (tag == 1) ? f64_type :
+                           (tag == 2) ? i8_ptr_type :
+                           (tag == 3) ? i8_ptr_type : i64_type;
+
+    LLVMValueRef storage;
+
+    if (scopes.size() <= 1) {
+        // Global scope — use LLVM module-level global variable
+        storage = LLVMAddGlobal(module, var_type, name.c_str());
+        LLVMSetInitializer(storage, LLVMConstNull(var_type));
+        LLVMSetLinkage(storage, LLVMInternalLinkage);
+    } else {
+        // Local scope — use alloca in entry block of current function
+        LLVMBasicBlockRef current_block = LLVMGetInsertBlock(builder);
+        LLVMBasicBlockRef entry_block = LLVMGetEntryBasicBlock(current_fn);
+
+        LLVMValueRef first_instr = LLVMGetFirstInstruction(entry_block);
+        if (first_instr)
+            LLVMPositionBuilderBefore(builder, first_instr);
+        else
+            LLVMPositionBuilderAtEnd(builder, entry_block);
+
+        storage = LLVMBuildAlloca(builder, var_type, name.c_str());
+
+        LLVMPositionBuilderAtEnd(builder, current_block);
+    }
+
+    auto& vi = scopes.back().vars[name];
+    vi = { storage, tag };
+    return vi;
+}
+
+// ── Setup ───────────────────────────────────────────────────
+
+void LLVMCodegen::init_module() {
+    ctx = LLVMContextCreate();
+    module = LLVMModuleCreateWithNameInContext("jdbasic", ctx);
+    builder = LLVMCreateBuilderInContext(ctx);
+    LLVMSetTarget(module, "x86_64-pc-windows-msvc");
+
+    i64_type = LLVMInt64TypeInContext(ctx);
+    f64_type = LLVMDoubleTypeInContext(ctx);
+    i32_type = LLVMInt32TypeInContext(ctx);
+    i8_ptr_type = LLVMPointerTypeInContext(ctx, 0);
+    void_type = LLVMVoidTypeInContext(ctx);
+}
+
+void LLVMCodegen::declare_runtime_functions() {
+    // Helper to register a runtime function
+    // Reuses existing LLVM function declaration if the C name was already added
+    std::unordered_map<std::string, std::pair<LLVMValueRef, LLVMTypeRef>> declared;
+    auto reg = [&](const std::string& name, const std::string& jdb_name,
+                   LLVMTypeRef ret, std::vector<LLVMTypeRef> params, int ret_tag) {
+        LLVMTypeRef ft = LLVMFunctionType(ret, params.empty() ? nullptr : params.data(),
+                                           (unsigned)params.size(), 0);
+        LLVMValueRef fn;
+        auto it = declared.find(name);
+        if (it != declared.end()) {
+            fn = it->second.first;
+            ft = it->second.second;
+        } else {
+            fn = LLVMAddFunction(module, name.c_str(), ft);
+            declared[name] = {fn, ft};
+        }
+        runtime_funcs[jdb_name] = { fn, ft, ret_tag };
+    };
+
+    // I/O
+    reg("jdb_print_int",    "__print_int",    void_type, {i64_type}, -1);
+    reg("jdb_print_double", "__print_double",  void_type, {f64_type}, -1);
+    reg("jdb_print_str",    "__print_str",     void_type, {i8_ptr_type}, -1);
+    reg("jdb_print_nl",     "__print_nl",      void_type, {}, -1);
+    reg("jdb_print_space",  "__print_space",   void_type, {}, -1);
+
+    // String operations
+    reg("jdb_str_concat",   "__str_concat",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_int_to_str",   "__int_to_str",    i8_ptr_type, {i64_type}, 2);
+    reg("jdb_double_to_str","__double_to_str", i8_ptr_type, {f64_type}, 2);
+
+    // Math (double -> double)
+    reg("jdb_abs",    "ABS",    f64_type, {f64_type}, 1);
+    reg("jdb_sqr",    "SQR",    f64_type, {f64_type}, 1);
+    reg("jdb_sin",    "SIN",    f64_type, {f64_type}, 1);
+    reg("jdb_cos",    "COS",    f64_type, {f64_type}, 1);
+    reg("jdb_tan",    "TAN",    f64_type, {f64_type}, 1);
+    reg("jdb_asin",   "ASIN",   f64_type, {f64_type}, 1);
+    reg("jdb_acos",   "ACOS",   f64_type, {f64_type}, 1);
+    reg("jdb_atan",   "ATAN",   f64_type, {f64_type}, 1);
+    reg("jdb_log",    "LOG",    f64_type, {f64_type}, 1);
+    reg("jdb_log10",  "LOG10",  f64_type, {f64_type}, 1);
+    reg("jdb_exp",    "EXP",    f64_type, {f64_type}, 1);
+    reg("jdb_floor",  "FLOOR",  f64_type, {f64_type}, 1);
+    reg("jdb_ceil",   "CEIL",   f64_type, {f64_type}, 1);
+    reg("jdb_pow",    "__pow",  f64_type, {f64_type, f64_type}, 1);
+
+    // Math extended
+    reg("jdb_sinh",   "SINH",   f64_type, {f64_type}, 1);
+    reg("jdb_cosh",   "COSH",   f64_type, {f64_type}, 1);
+    reg("jdb_tanh",   "TANH",   f64_type, {f64_type}, 1);
+    reg("jdb_atan2",  "ATAN2",  f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_round",  "ROUND",  f64_type, {f64_type}, 1);
+    reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, 1);
+    reg("jdb_sign",   "SIGN",   f64_type, {f64_type}, 1);
+    reg("jdb_sign",   "SGN",    f64_type, {f64_type}, 1);
+    reg("jdb_clamp",  "CLAMP",  f64_type, {f64_type, f64_type, f64_type}, 1);
+    reg("jdb_fac",    "FAC",    f64_type, {f64_type}, 1);
+    reg("jdb_fmod",   "FMOD",   f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_min2",   "MIN",    f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_max2",   "MAX",    f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_pi",     "PI",     f64_type, {}, 1);
+    reg("jdb_e",      "E",      f64_type, {}, 1);
+
+    // Math (special)
+    reg("jdb_int",    "INT",    i64_type, {f64_type}, 0);
+    reg("jdb_val",    "VAL",    f64_type, {i8_ptr_type}, 1);
+    reg("jdb_rnd",    "RND",    f64_type, {}, 1);
+    reg("jdb_rnd",    "RANDOM", f64_type, {}, 1);
+
+    // System
+    reg("jdb_tick",       "TICK",       f64_type, {}, 1);
+    reg("jdb_sleep",      "SLEEP",      void_type, {i64_type}, -1);
+    reg("jdb_randomseed", "RANDOMSEED", void_type, {i64_type}, -1);
+
+    // Arrays (JdbArray* is opaque pointer = i8_ptr_type)
+    reg("jdb_array_new",  "__array_new",  i8_ptr_type, {i64_type}, 3);
+    reg("jdb_array_set",  "__array_set",  void_type, {i8_ptr_type, i64_type, f64_type}, -1);
+    reg("jdb_array_get",  "__array_get",  f64_type, {i8_ptr_type, i64_type}, 1);
+    reg("jdb_array_len",  "LEN",          i64_type, {i8_ptr_type}, 0);
+    reg("jdb_iota",       "IOTA",         i8_ptr_type, {i64_type}, 3);
+    reg("jdb_zeros",      "ZEROS",        i8_ptr_type, {i64_type}, 3);
+    reg("jdb_ones",       "ONES",         i8_ptr_type, {i64_type}, 3);
+    reg("jdb_mean",       "MEAN",         f64_type, {i8_ptr_type}, 1);
+    reg("jdb_stdev",      "STDEV",        f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_median","MEDIAN",      f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_variance","VARIANCE",  f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_sum",  "SUM",          f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_product","PRODUCT",    f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_min",  "__arr_min",    f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_max",  "__arr_max",    f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_any",  "ANY",          i64_type, {i8_ptr_type}, 0);
+    reg("jdb_array_all",  "ALL",          i64_type, {i8_ptr_type}, 0);
+    reg("jdb_array_reverse","REVERSE",    i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
+    reg("jdb_array_count","COUNT",        i64_type, {i8_ptr_type, f64_type}, 0);
+    reg("jdb_array_indexof","INDEXOF",    i64_type, {i8_ptr_type, f64_type}, 0);
+    reg("jdb_array_unique","UNIQUE",      i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_cumsum","CUMSUM",      i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_cumprod","CUMPROD",    i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_take", "TAKE",         i8_ptr_type, {i8_ptr_type, i64_type}, 3);
+    reg("jdb_array_drop", "DROP",         i8_ptr_type, {i8_ptr_type, i64_type}, 3);
+    reg("jdb_array_diff", "DIFF",         i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_array_flatten","FLATTEN",    i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_shuffle","SHUFFLE",    i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_linspace",   "LINSPACE",     i8_ptr_type, {f64_type, f64_type, i64_type}, 3);
+    reg("jdb_range",      "RANGE",        i8_ptr_type, {i64_type, i64_type, i64_type}, 3);
+    reg("jdb_grade",      "GRADE",        i8_ptr_type, {i8_ptr_type}, 3);
+
+    // OS
+    reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
+    reg("jdb_os_args",    "OS.ARGS",      i8_ptr_type, {}, 3);
+    reg("jdb_array_get_str", "__array_get_str", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_val_ptr",    "__val_ptr",    f64_type, {f64_type}, 1);
+
+    // FORMAT$ (1-4 args)
+    reg("jdb_format1", "__format1", i8_ptr_type, {i8_ptr_type, f64_type}, 2);
+    reg("jdb_format2", "__format2", i8_ptr_type, {i8_ptr_type, f64_type, f64_type}, 2);
+    reg("jdb_format3", "__format3", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type}, 2);
+    reg("jdb_format4", "__format4", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type, f64_type}, 2);
+
+    // String builtins
+    reg("jdb_len_str",  "LEN$",     i64_type, {i8_ptr_type}, 0);
+    reg("jdb_mid",      "MID$",     i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
+    reg("jdb_left",     "LEFT$",    i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_right",    "RIGHT$",   i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_upper",    "UPPER$",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_lower",    "LOWER$",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_trim",     "TRIM$",    i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_chr",      "CHR$",     i8_ptr_type, {i64_type}, 2);
+    reg("jdb_asc",      "ASC",      i64_type, {i8_ptr_type}, 0);
+    reg("jdb_instr",    "INSTR",    i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_replace",  "REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_str",      "STR$",     i8_ptr_type, {f64_type}, 2);
+    reg("jdb_space",    "SPACE$",   i8_ptr_type, {i64_type}, 2);
+    reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_startswith","STARTSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_endswith", "ENDSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_hex",      "HEX$",    i8_ptr_type, {i64_type}, 2);
+    reg("jdb_bin",      "BIN$",    i8_ptr_type, {i64_type}, 2);
+    reg("jdb_oct",      "OCT$",    i8_ptr_type, {i64_type}, 2);
+    reg("jdb_insert_str","INSERT$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type}, 2);
+    // Aliases
+    reg("jdb_upper",    "UCASE$",  i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_upper",    "UCASE",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_lower",    "LCASE$",  i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_lower",    "LCASE",   i8_ptr_type, {i8_ptr_type}, 2);
+
+    // File I/O
+    reg("jdb_txtreader",       "TXTREADER$",  i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_txtwriter",       "TXTWRITER",   void_type, {i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_txtwriter_append","TXTWRITER_APPEND", void_type, {i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_pwd",             "PWD",         i8_ptr_type, {}, 2);
+    reg("jdb_cd",              "CD",          void_type, {i8_ptr_type}, -1);
+    reg("jdb_mkdir_native",    "MKDIR",       void_type, {i8_ptr_type}, -1);
+    reg("jdb_kill",            "KILL",        void_type, {i8_ptr_type}, -1);
+    reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, 0);
+
+    // Date/Time
+    reg("jdb_now",         "NOW",         f64_type, {}, 1);
+    reg("jdb_date_str",    "DATE$",       i8_ptr_type, {f64_type}, 2);
+    reg("jdb_time_str",    "TIME$",       i8_ptr_type, {f64_type}, 2);
+    reg("jdb_year",        "YEAR",        i64_type, {f64_type}, 0);
+    reg("jdb_month",       "MONTH",       i64_type, {f64_type}, 0);
+    reg("jdb_day",         "DAY",         i64_type, {f64_type}, 0);
+    reg("jdb_hour",        "HOUR",        i64_type, {f64_type}, 0);
+    reg("jdb_minute",      "MINUTE",      i64_type, {f64_type}, 0);
+    reg("jdb_second",      "SECOND",      i64_type, {f64_type}, 0);
+    reg("jdb_weekday",     "WEEKDAY",     i64_type, {f64_type}, 0);
+    reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {f64_type, i8_ptr_type}, 2);
+
+    // System
+    reg("jdb_getenv",  "GETENV$",  i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_iif",     "IIF",      f64_type, {i64_type, f64_type, f64_type}, 1);
+    reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, 0);
+
+    // Codec
+    reg("jdb_base64_encode", "CODEC.BASE64_ENCODE$", i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_base64_decode", "CODEC.BASE64_DECODE$", i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_uuid",          "CODEC.UUID$",          i8_ptr_type, {}, 2);
+    reg("jdb_sha256",        "CODEC.SHA256$",        i8_ptr_type, {i8_ptr_type}, 2);
+
+    // Higher-order functions (take function pointers)
+    // jdb_select_fn(fn_ptr, array) -> array
+    reg("jdb_select_fn", "__select_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    // jdb_filter_fn(fn_ptr, array) -> array
+    reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    // jdb_reduce_fn(fn_ptr, array, init) -> double
+    reg("jdb_reduce_fn", "__reduce_fn", f64_type, {i8_ptr_type, i8_ptr_type, f64_type}, 1);
+
+    // VM Bridge (for builtins not in the static runtime)
+    reg("jdrt_init",     "__jdrt_init",     i8_ptr_type, {}, -1);
+    reg("jdrt_shutdown", "__jdrt_shutdown", void_type, {i8_ptr_type}, -1);
+    // Typed calls: args as i64[], tags as i32[]
+    reg("jdrt_call_typed_f64",  "__jdrt_call_typed_f64",  f64_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 1);
+    reg("jdrt_call_typed_str",  "__jdrt_call_typed_str",  i8_ptr_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 2);
+    reg("jdrt_call_typed_void", "__jdrt_call_typed_void", void_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, -1);
+    reg("jdrt_call_typed_obj",  "__jdrt_call_typed_obj",  i64_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 0);
+
+    // Date Add/Diff
+    reg("jdb_dateadd",  "DATEADD",  f64_type, {i8_ptr_type, f64_type, f64_type}, 1);
+    reg("jdb_datediff", "DATEDIFF", f64_type, {i8_ptr_type, f64_type, f64_type}, 1);
+    reg("jdb_cvdate",   "CVDATE",   f64_type, {i8_ptr_type}, 1);
+
+    // Regex
+    reg("jdb_regex_match",   "REGEX.MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_regex_match",   "REGEX_MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_regex_replace", "REGEX.REPLACE",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_regex_replace", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_regex_findall", "REGEX.FINDALL",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+
+    // TYPEOF (compile-time tag)
+    reg("jdb_typeof_tag", "__typeof_tag", i8_ptr_type, {i64_type}, 2);
+
+    // FRMV$ (format array)
+    reg("jdb_frmv", "FRMV$", i8_ptr_type, {i8_ptr_type}, 2);
+
+    // Misc
+    reg("jdb_cdbl",     "CDBL",       f64_type, {f64_type}, 1);
+    reg("jdb_tostr",    "TOSTR",      i8_ptr_type, {f64_type}, 2);
+    reg("jdb_tonum",    "TONUM",      f64_type, {i8_ptr_type}, 1);
+    reg("jdb_byteat",   "BYTEAT",     i64_type, {i8_ptr_type, i64_type}, 0);
+    reg("jdb_os_getos", "OS.GETOS",   i8_ptr_type, {}, 2);
+    reg("jdb_os_getos", "OS.GETOS$",  i8_ptr_type, {}, 2);
+    reg("jdb_os_hostname","OS.HOSTNAME$", i8_ptr_type, {}, 2);
+}
+
+void LLVMCodegen::create_main_function() {
+    // int main(int argc, char** argv)
+    LLVMTypeRef main_params[] = { i32_type, i8_ptr_type };  // argv is char** = ptr
+    LLVMTypeRef main_ft = LLVMFunctionType(i32_type, main_params, 2, 0);
+    current_fn = LLVMAddFunction(module, "main", main_ft);
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, current_fn, "entry");
+    LLVMPositionBuilderAtEnd(builder, entry);
+    scopes.push_back(Scope{});  // global scope
+
+    // Call jdb_set_args(argc, argv) at program start
+    auto set_args_it = runtime_funcs.find("__set_args");
+    if (set_args_it != runtime_funcs.end()) {
+        LLVMValueRef args[] = { LLVMGetParam(current_fn, 0), LLVMGetParam(current_fn, 1) };
+        LLVMBuildCall2(builder, set_args_it->second.fn_type, set_args_it->second.fn, args, 2, "");
+    }
+
+    // Initialize VM bridge: g_jdrt_handle = jdrt_init()
+    LLVMValueRef jdrt_global = LLVMAddGlobal(module, i8_ptr_type, "__jdrt_handle");
+    LLVMSetInitializer(jdrt_global, LLVMConstNull(i8_ptr_type));
+    LLVMSetLinkage(jdrt_global, LLVMInternalLinkage);
+
+    auto init_it = runtime_funcs.find("__jdrt_init");
+    if (init_it != runtime_funcs.end()) {
+        LLVMValueRef handle = LLVMBuildCall2(builder, init_it->second.fn_type,
+                                              init_it->second.fn, nullptr, 0, "jdrt");
+        LLVMBuildStore(builder, handle, jdrt_global);
+    }
+}
+
+// ── Pre-pass: declare all FUNC/SUB signatures ───────────────
+
+void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind != StmtKind::FUNCTION && stmt->kind != StmtKind::SUB) continue;
+
+        bool is_sub = (stmt->kind == StmtKind::SUB);
+        // FUNC returns f64 by default, but FUNC$ returns ptr (string)
+        bool returns_string = (!is_sub && !stmt->func_name.empty() &&
+                               stmt->func_name.back() == '$');
+        int return_tag = is_sub ? -1 : (returns_string ? 2 : 1);
+
+        // Params: f64 for numbers, ptr for strings (detected by $ suffix)
+        std::vector<LLVMTypeRef> param_types;
+        std::vector<int> param_tags;
+        for (size_t i = 0; i < stmt->params.size(); i++) {
+            bool is_str_param = (!stmt->params[i].name.empty() &&
+                                 stmt->params[i].name.back() == '$');
+            param_types.push_back(is_str_param ? i8_ptr_type : f64_type);
+            param_tags.push_back(is_str_param ? 2 : 1);  // 2=string, 1=f64
+        }
+
+        LLVMTypeRef ret_type = is_sub ? void_type : (returns_string ? i8_ptr_type : f64_type);
+        LLVMTypeRef fn_type = LLVMFunctionType(ret_type,
+            param_types.empty() ? nullptr : param_types.data(),
+            (unsigned)param_types.size(), 0);
+
+        std::string fn_name = stmt->func_name;
+
+        LLVMValueRef fn = LLVMAddFunction(module, fn_name.c_str(), fn_type);
+        user_functions[fn_name] = { fn, return_tag, param_tags };
+    }
+}
+
+// ── Main Entry Points ───────────────────────────────────────
+
+bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
+                           const std::string& output_exe) {
+    init_module();
+    declare_runtime_functions();
+    create_main_function();
+    declare_functions(program);
+    codegen_program(program);
+
+    // Shutdown VM bridge before exit
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+        auto shut_it = runtime_funcs.find("__jdrt_shutdown");
+        if (shut_it != runtime_funcs.end()) {
+            LLVMValueRef handle_global = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            if (handle_global) {
+                LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type, handle_global, "rt");
+                LLVMValueRef args[] = { handle };
+                LLVMBuildCall2(builder, shut_it->second.fn_type, shut_it->second.fn, args, 1, "");
+            }
+        }
+        LLVMBuildRet(builder, LLVMConstInt(i32_type, 0, 0));
+    }
+
+    // Verify module
+    char* err = nullptr;
+    if (LLVMVerifyModule(module, LLVMReturnStatusAction, &err)) {
+        error_msg = "LLVM IR verification failed: " + std::string(err);
+        // Dump IR for debugging
+        char* ir = LLVMPrintModuleToString(module);
+        std::cerr << ir << std::endl;
+        LLVMDisposeMessage(ir);
+        LLVMDisposeMessage(err);
+        return false;
+    }
+    if (err) LLVMDisposeMessage(err);
+
+    // Emit object file
+    std::string obj_path = output_exe;
+    auto dot = obj_path.rfind('.');
+    if (dot != std::string::npos) obj_path = obj_path.substr(0, dot);
+    obj_path += ".obj";
+
+    if (!emit_object_file(obj_path)) return false;
+    if (!link_executable(obj_path, output_exe)) return false;
+
+    std::remove(obj_path.c_str());
+    return true;
+}
+
+bool LLVMCodegen::emit_ir(const std::vector<StmtPtr>& program) {
+    init_module();
+    declare_runtime_functions();
+    create_main_function();
+    declare_functions(program);
+    codegen_program(program);
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+        LLVMBuildRet(builder, LLVMConstInt(i32_type, 0, 0));
+
+    char* ir = LLVMPrintModuleToString(module);
+    std::cout << ir << std::endl;
+    LLVMDisposeMessage(ir);
+    return true;
+}
+
+// ── Program / Statement Codegen ─────────────────────────────
+
+void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
+    // Pre-scan: declare all global variables used in top-level code
+    // so that FUNC/SUB bodies can reference them
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
+        // LET/DIM/ASSIGN at top level → declare global variable
+        if ((stmt->kind == StmtKind::LET || stmt->kind == StmtKind::ASSIGN ||
+             stmt->kind == StmtKind::DIM) && !stmt->var_name.empty()) {
+            if (!lookup_var(stmt->var_name)) {
+                // Determine type from initial expression
+                int tag = 0;  // default i64
+                if (stmt->kind == StmtKind::DIM && stmt->expr &&
+                    stmt->expr->kind == ExprKind::CALL && stmt->expr->func_name == "ZEROS")
+                    tag = 3;  // array
+                else if (stmt->expr && stmt->expr->kind == ExprKind::LITERAL_FLOAT)
+                    tag = 1;  // f64
+                else if (stmt->expr && stmt->expr->kind == ExprKind::LITERAL_STRING)
+                    tag = 2;  // string
+                // Variables ending with $ are strings by convention
+                else if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$')
+                    tag = 2;  // string
+                create_var(stmt->var_name, tag);
+            }
+        }
+    }
+
+    // First pass: compile all FUNC/SUB bodies
+    for (auto& stmt : program) {
+        if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
+            codegen_function(*stmt);
+    }
+
+    // Second pass: compile top-level statements (skip FUNC/SUB)
+    for (auto& stmt : program) {
+        if (stmt && stmt->kind != StmtKind::FUNCTION && stmt->kind != StmtKind::SUB)
+            codegen_stmt(*stmt);
+    }
+}
+
+void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
+    switch (stmt.kind) {
+        case StmtKind::LET:
+        case StmtKind::ASSIGN:
+            codegen_let_or_assign(stmt);
+            break;
+        case StmtKind::DIM:
+            codegen_dim(stmt);
+            break;
+        case StmtKind::INDEX_ASSIGN:
+            codegen_index_assign(stmt);
+            break;
+        case StmtKind::PRINT:
+            codegen_print(stmt);
+            break;
+        case StmtKind::FOR_LOOP:
+            codegen_for(stmt);
+            break;
+        case StmtKind::DO_LOOP:
+            codegen_do_loop(stmt);
+            break;
+        case StmtKind::IF:
+            codegen_if(stmt);
+            break;
+        case StmtKind::FUNCTION:
+        case StmtKind::SUB:
+            // Already compiled in first pass
+            break;
+        case StmtKind::RETURN:
+            codegen_return(stmt);
+            break;
+        case StmtKind::EXPR_STMT:
+            if (stmt.expr) codegen_expr(*stmt.expr);
+            break;
+        case StmtKind::SWITCH_STMT:
+            codegen_switch(stmt);
+            break;
+        case StmtKind::FOR_EACH:
+            codegen_for_each(stmt);
+            break;
+        case StmtKind::TRY_CATCH:
+            // TRY/CATCH: just execute the TRY body, skip catch for now
+            for (auto& s : stmt.body) { if (s) codegen_stmt(*s); }
+            break;
+        case StmtKind::ENUM_DECL:
+            codegen_enum(stmt);
+            break;
+        case StmtKind::THROW_STMT:
+            // TODO: proper exception throwing
+            break;
+        case StmtKind::SLEEP_STMT:
+            if (stmt.expr) {
+                TypedValue sv = codegen_expr(*stmt.expr);
+                if (sv.tag == 1) sv.val = LLVMBuildFPToSI(builder, sv.val, i64_type, "ftoi");
+                auto& fn = runtime_funcs["SLEEP"];
+                LLVMValueRef args[] = { sv.val };
+                LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "");
+            }
+            break;
+        case StmtKind::END_STMT:
+            LLVMBuildRet(builder, LLVMConstInt(i32_type, 0, 0));
+            break;
+        case StmtKind::EXIT_LOOP:
+            if (!loop_stack.empty())
+                LLVMBuildBr(builder, loop_stack.top().break_bb);
+            break;
+        case StmtKind::CONTINUE_LOOP:
+            if (!loop_stack.empty())
+                LLVMBuildBr(builder, loop_stack.top().continue_bb);
+            break;
+        default:
+            break;
+    }
+}
+
+// ── FUNC / SUB ──────────────────────────────────────────────
+
+void LLVMCodegen::codegen_function(const Stmt& stmt) {
+    std::string fn_name = stmt.func_name;
+    auto fit = user_functions.find(fn_name);
+    if (fit == user_functions.end()) return;
+
+    // Save current state
+    LLVMValueRef saved_fn = current_fn;
+    current_fn = fit->second.fn;
+
+    // Push function scope
+    scopes.push_back(Scope{});
+
+    // Create entry block
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, current_fn, "entry");
+    LLVMPositionBuilderAtEnd(builder, entry);
+
+    // Create allocas for parameters — f64 for numbers, ptr for strings ($)
+    for (size_t i = 0; i < stmt.params.size(); i++) {
+        int ptag = fit->second.param_tags[i];  // 1=f64, 2=string(ptr)
+        VarInfo& vi = create_var(stmt.params[i].name, ptag);
+        LLVMBuildStore(builder, LLVMGetParam(current_fn, (unsigned)i), vi.alloca_val);
+    }
+
+    // Compile body
+    for (auto& s : stmt.body) {
+        if (s) codegen_stmt(*s);
+    }
+
+    // If no terminator yet, add implicit return
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+        if (stmt.kind == StmtKind::SUB) {
+            LLVMBuildRetVoid(builder);
+        } else {
+            auto fit2 = user_functions.find(stmt.func_name);
+            if (fit2 != user_functions.end() && fit2->second.return_tag == 2)
+                LLVMBuildRet(builder, LLVMConstNull(i8_ptr_type));  // return empty string
+            else
+                LLVMBuildRet(builder, LLVMConstReal(f64_type, 0.0));
+        }
+    }
+
+    // Pop scope and restore
+    scopes.pop_back();
+    current_fn = saved_fn;
+
+    // Position builder back at the end of the saved function's last block
+    LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
+    LLVMPositionBuilderAtEnd(builder, last_bb);
+}
+
+// ── RETURN ──────────────────────────────────────────────────
+
+void LLVMCodegen::codegen_return(const Stmt& stmt) {
+    if (stmt.expr) {
+        TypedValue rv = codegen_expr(*stmt.expr);
+
+        // Check what this function returns
+        std::string fn_name = LLVMGetValueName(current_fn);
+        auto fit = user_functions.find(fn_name);
+        int expected_tag = (fit != user_functions.end()) ? fit->second.return_tag : 1;
+
+        if (expected_tag == 2) {
+            // String-returning function — return ptr
+            LLVMBuildRet(builder, rv.val);
+        } else {
+            // Numeric function — return f64
+            if (rv.tag == 0) rv.val = LLVMBuildSIToFP(builder, rv.val, f64_type, "itof");
+            LLVMBuildRet(builder, rv.val);
+        }
+    } else {
+        LLVMBuildRetVoid(builder);
+    }
+}
+
+// ── LET / DIM / ASSIGN ─────────────────────────────────────
+
+void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
+    if (!stmt.expr) return;
+    TypedValue rhs = codegen_expr(*stmt.expr);
+
+    VarInfo* vi = lookup_var(stmt.var_name);
+    if (vi) {
+        if (vi->tag != rhs.tag) {
+            if (vi->tag == 1 && rhs.tag == 0) {
+                // Variable is f64, value is int → promote value
+                rhs.val = LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof");
+                rhs.tag = 1;
+            } else if (vi->tag == 0 && rhs.tag == 1) {
+                // Variable was int, value is float → truncate to int for storage
+                rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
+                rhs.tag = 0;
+            } else if ((rhs.tag == 3 || rhs.tag == 4) && vi->tag != rhs.tag) {
+                // Array or VM-object handle — update variable tag
+                if (rhs.tag == 4) {
+                    // VM object handle is i64 — store directly
+                    vi->tag = 4;
+                    LLVMBuildStore(builder, rhs.val, vi->alloca_val);
+                    return;
+                }
+                VarInfo& nv = create_var(stmt.var_name, 3);
+                LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+                return;
+            }
+        }
+        LLVMBuildStore(builder, rhs.val, vi->alloca_val);
+    } else {
+        // In functions, promote new numeric variables to f64 to avoid
+        // type-upgrade issues when int vars later receive float values
+        int var_tag = rhs.tag;
+        if (var_tag == 0 && scopes.size() > 1) {
+            rhs.val = LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof");
+            var_tag = 1;
+        }
+        VarInfo& nv = create_var(stmt.var_name, var_tag);
+        LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+    }
+}
+
+// ── DIM (array allocation) ──────────────────────────────────
+
+void LLVMCodegen::codegen_dim(const Stmt& stmt) {
+    if (!stmt.expr) {
+        // DIM without value — create default var
+        codegen_let_or_assign(stmt);
+        return;
+    }
+
+    // DIM arr[N] → parser generates CALL("ZEROS", [ARRAY_LITERAL([N])])
+    // Detect this pattern and use jdb_array_new instead
+    if (stmt.expr->kind == ExprKind::CALL && stmt.expr->func_name == "ZEROS" &&
+        !stmt.expr->args.empty() && stmt.expr->args[0]->kind == ExprKind::ARRAY_LITERAL) {
+        // Extract size from the array literal [N] or [N, M] (1D only for now)
+        auto& shape_args = stmt.expr->args[0]->args;
+        if (!shape_args.empty()) {
+            TypedValue size_val = codegen_expr(*shape_args[0]);
+            LLVMValueRef size_i64 = size_val.tag == 1
+                ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi")
+                : size_val.val;
+
+            auto& arr_new = runtime_funcs["__array_new"];
+            LLVMValueRef args[] = { size_i64 };
+            LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr");
+
+            VarInfo* vi = lookup_var(stmt.var_name);
+            if (vi) {
+                LLVMBuildStore(builder, arr, vi->alloca_val);
+                vi->tag = 3;
+            } else {
+                VarInfo& nv = create_var(stmt.var_name, 3);
+                LLVMBuildStore(builder, arr, nv.alloca_val);
+            }
+            return;
+        }
+    }
+
+    // Check if the expression produces an array (e.g. IOTA)
+    TypedValue rhs = codegen_expr(*stmt.expr);
+    if (rhs.tag == 3) {
+        VarInfo* vi = lookup_var(stmt.var_name);
+        if (vi) {
+            LLVMBuildStore(builder, rhs.val, vi->alloca_val);
+            vi->tag = 3;
+        } else {
+            VarInfo& nv = create_var(stmt.var_name, 3);
+            LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+        }
+        return;
+    }
+
+    // Fallback: treat like LET for scalar DIM
+    VarInfo* vi = lookup_var(stmt.var_name);
+    if (vi) {
+        LLVMBuildStore(builder, rhs.val, vi->alloca_val);
+    } else {
+        VarInfo& nv = create_var(stmt.var_name, rhs.tag);
+        LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+    }
+}
+
+// ── INDEX_ASSIGN: arr[i] = val ──────────────────────────────
+
+void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
+    VarInfo* vi = lookup_var(stmt.var_name);
+    if (!vi || vi->tag != 3) return;  // not an array
+
+    // Load array pointer
+    LLVMValueRef arr_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "arr");
+
+    // Evaluate index (first in chain)
+    if (stmt.index_chain.empty()) return;
+    TypedValue idx_tv = codegen_expr(*stmt.index_chain[0]);
+    LLVMValueRef idx = idx_tv.tag == 1
+        ? LLVMBuildFPToSI(builder, idx_tv.val, i64_type, "ftoi") : idx_tv.val;
+
+    // Evaluate value
+    TypedValue val_tv = codegen_expr(*stmt.expr);
+    LLVMValueRef val = val_tv.tag == 0
+        ? LLVMBuildSIToFP(builder, val_tv.val, f64_type, "itof") : val_tv.val;
+
+    auto& arr_set = runtime_funcs["__array_set"];
+    LLVMValueRef args[] = { arr_ptr, idx, val };
+    LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, args, 3, "");
+}
+
+// ── PRINT ───────────────────────────────────────────────────
+
+void LLVMCodegen::codegen_print(const Stmt& stmt) {
+    auto& pr_int    = runtime_funcs["__print_int"];
+    auto& pr_double = runtime_funcs["__print_double"];
+    auto& pr_str    = runtime_funcs["__print_str"];
+    auto& pr_nl     = runtime_funcs["__print_nl"];
+    auto& pr_space  = runtime_funcs["__print_space"];
+
+    for (size_t i = 0; i < stmt.print_exprs.size(); i++) {
+        if (i > 0 && i - 1 < stmt.print_seps.size()) {
+            if (stmt.print_seps[i - 1] == 1)
+                LLVMBuildCall2(builder, pr_space.fn_type, pr_space.fn, nullptr, 0, "");
+        }
+
+        TypedValue tv = codegen_expr(*stmt.print_exprs[i]);
+        if (tv.tag == 0 || tv.tag == 4) {
+            LLVMValueRef args[] = { tv.val };
+            LLVMBuildCall2(builder, pr_int.fn_type, pr_int.fn, args, 1, "");
+        } else if (tv.tag == 1) {
+            LLVMValueRef args[] = { tv.val };
+            LLVMBuildCall2(builder, pr_double.fn_type, pr_double.fn, args, 1, "");
+        } else {
+            LLVMValueRef args[] = { tv.val };
+            LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+        }
+    }
+
+    if (stmt.print_newline)
+        LLVMBuildCall2(builder, pr_nl.fn_type, pr_nl.fn, nullptr, 0, "");
+}
+
+// ── FOR Loop ────────────────────────────────────────────────
+
+void LLVMCodegen::codegen_for(const Stmt& stmt) {
+    TypedValue start_val = codegen_expr(*stmt.expr);
+    TypedValue end_val = codegen_expr(*stmt.end_expr);
+
+    LLVMValueRef step_val;
+    if (stmt.step_expr) {
+        TypedValue sv = codegen_expr(*stmt.step_expr);
+        step_val = sv.val;
+    } else {
+        step_val = LLVMConstInt(i64_type, 1, 0);
+    }
+
+    VarInfo* vi = lookup_var(stmt.var_name);
+    LLVMValueRef var_alloca;
+    if (vi) {
+        var_alloca = vi->alloca_val;
+    } else {
+        VarInfo& nv = create_var(stmt.var_name, 0);
+        var_alloca = nv.alloca_val;
+    }
+
+    LLVMBuildStore(builder, start_val.val, var_alloca);
+
+    LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.cond");
+    LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.body");
+    LLVMBasicBlockRef inc_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.inc");
+    LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.end");
+
+    loop_stack.push({ end_bb, inc_bb });
+
+    LLVMBuildBr(builder, cond_bb);
+
+    LLVMPositionBuilderAtEnd(builder, cond_bb);
+    LLVMValueRef cur_val = LLVMBuildLoad2(builder, i64_type, var_alloca, "i");
+    LLVMValueRef end_i64 = end_val.tag == 1
+        ? LLVMBuildFPToSI(builder, end_val.val, i64_type, "endtoi") : end_val.val;
+
+    // Determine comparison direction based on step sign
+    // If step is a known negative constant, use >= instead of <=
+    bool negative_step = false;
+    if (stmt.step_expr && stmt.step_expr->kind == ExprKind::LITERAL_INT && stmt.step_expr->int_val < 0)
+        negative_step = true;
+    if (stmt.step_expr && stmt.step_expr->kind == ExprKind::UNARY && stmt.step_expr->op == TokenType::MINUS)
+        negative_step = true;
+
+    LLVMValueRef cmp = LLVMBuildICmp(builder,
+        negative_step ? LLVMIntSGE : LLVMIntSLE, cur_val, end_i64, "cmp");
+    LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+
+    LLVMPositionBuilderAtEnd(builder, body_bb);
+    for (auto& s : stmt.body) {
+        if (s) codegen_stmt(*s);
+    }
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+        LLVMBuildBr(builder, inc_bb);
+
+    LLVMPositionBuilderAtEnd(builder, inc_bb);
+    LLVMValueRef cur_val2 = LLVMBuildLoad2(builder, i64_type, var_alloca, "i.load");
+    LLVMValueRef next_val = LLVMBuildAdd(builder, cur_val2, step_val, "i.next");
+    LLVMBuildStore(builder, next_val, var_alloca);
+    LLVMBuildBr(builder, cond_bb);
+
+    loop_stack.pop();
+    LLVMPositionBuilderAtEnd(builder, end_bb);
+}
+
+// ── DO...LOOP ───────────────────────────────────────────────
+
+void LLVMCodegen::codegen_do_loop(const Stmt& stmt) {
+    LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.body");
+    LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.end");
+
+    if (stmt.cond_at_top && stmt.loop_cond) {
+        // DO WHILE/UNTIL ... LOOP — condition checked before body
+        LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.cond");
+        loop_stack.push({ end_bb, cond_bb });
+
+        LLVMBuildBr(builder, cond_bb);
+
+        LLVMPositionBuilderAtEnd(builder, cond_bb);
+        TypedValue cond = codegen_expr(*stmt.loop_cond);
+        LLVMValueRef cond_i1 = to_i1(cond);
+        if (stmt.is_while)
+            LLVMBuildCondBr(builder, cond_i1, body_bb, end_bb);
+        else
+            LLVMBuildCondBr(builder, cond_i1, end_bb, body_bb);
+
+        LLVMPositionBuilderAtEnd(builder, body_bb);
+        for (auto& s : stmt.body) {
+            if (s) codegen_stmt(*s);
+        }
+        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+            LLVMBuildBr(builder, cond_bb);
+
+        loop_stack.pop();
+    } else {
+        // DO ... LOOP [WHILE/UNTIL] — body runs at least once
+        loop_stack.push({ end_bb, body_bb });
+
+        LLVMBuildBr(builder, body_bb);
+
+        LLVMPositionBuilderAtEnd(builder, body_bb);
+        for (auto& s : stmt.body) {
+            if (s) codegen_stmt(*s);
+        }
+
+        if (stmt.loop_cond) {
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+                TypedValue cond = codegen_expr(*stmt.loop_cond);
+                LLVMValueRef cond_i1 = to_i1(cond);
+                if (stmt.is_while)
+                    LLVMBuildCondBr(builder, cond_i1, body_bb, end_bb);
+                else
+                    LLVMBuildCondBr(builder, cond_i1, end_bb, body_bb);
+            }
+        } else {
+            // Infinite loop: DO ... LOOP (exits only via EXITDO)
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+                LLVMBuildBr(builder, body_bb);
+        }
+
+        loop_stack.pop();
+    }
+
+    LLVMPositionBuilderAtEnd(builder, end_bb);
+}
+
+// ── IF ──────────────────────────────────────────────────────
+
+void LLVMCodegen::codegen_if(const Stmt& stmt) {
+    LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "if.end");
+
+    for (size_t i = 0; i < stmt.branches.size(); i++) {
+        auto& branch = stmt.branches[i];
+
+        if (!branch.condition) {
+            for (auto& s : branch.body) {
+                if (s) codegen_stmt(*s);
+            }
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+                LLVMBuildBr(builder, merge_bb);
+        } else {
+            TypedValue cond = codegen_expr(*branch.condition);
+            LLVMValueRef cond_i1 = to_i1(cond);
+
+            LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "if.then");
+            LLVMBasicBlockRef else_bb = (i + 1 < stmt.branches.size())
+                ? LLVMAppendBasicBlockInContext(ctx, current_fn, "if.else")
+                : merge_bb;
+
+            LLVMBuildCondBr(builder, cond_i1, then_bb, else_bb);
+
+            LLVMPositionBuilderAtEnd(builder, then_bb);
+            for (auto& s : branch.body) {
+                if (s) codegen_stmt(*s);
+            }
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+                LLVMBuildBr(builder, merge_bb);
+
+            if (else_bb != merge_bb)
+                LLVMPositionBuilderAtEnd(builder, else_bb);
+        }
+    }
+
+    LLVMPositionBuilderAtEnd(builder, merge_bb);
+}
+
+// ── SWITCH ──────────────────────────────────────────────────
+
+void LLVMCodegen::codegen_switch(const Stmt& stmt) {
+    // SWITCH expr / CASE val / ... / DEFAULT / ENDSWITCH
+    // Reuse IF-like structure: compare switch_expr against each case condition
+    TypedValue switch_val = codegen_expr(*stmt.expr);
+    LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.end");
+
+    for (size_t i = 0; i < stmt.branches.size(); i++) {
+        auto& branch = stmt.branches[i];
+
+        if (!branch.condition) {
+            // DEFAULT
+            for (auto& s : branch.body) { if (s) codegen_stmt(*s); }
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+                LLVMBuildBr(builder, merge_bb);
+        } else {
+            // CASE: compare switch_val == case_val
+            TypedValue case_val = codegen_expr(*branch.condition);
+
+            LLVMValueRef cmp;
+            if (switch_val.tag == 2 && case_val.tag == 2) {
+                auto& fn = runtime_funcs["__str_eq"];
+                LLVMValueRef args[] = { switch_val.val, case_val.val };
+                cmp = LLVMBuildICmp(builder, LLVMIntNE,
+                    LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "eq"),
+                    LLVMConstInt(i64_type, 0, 0), "cmp");
+            } else if (switch_val.tag == 1 || case_val.tag == 1) {
+                TypedValue sv = promote_to_f64(switch_val);
+                TypedValue cv = promote_to_f64(case_val);
+                cmp = LLVMBuildFCmp(builder, LLVMRealOEQ, sv.val, cv.val, "cmp");
+            } else {
+                cmp = LLVMBuildICmp(builder, LLVMIntEQ, switch_val.val, case_val.val, "cmp");
+            }
+
+            LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.case");
+            LLVMBasicBlockRef next_bb = (i + 1 < stmt.branches.size())
+                ? LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.next")
+                : merge_bb;
+
+            LLVMBuildCondBr(builder, cmp, then_bb, next_bb);
+
+            LLVMPositionBuilderAtEnd(builder, then_bb);
+            for (auto& s : branch.body) { if (s) codegen_stmt(*s); }
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+                LLVMBuildBr(builder, merge_bb);
+
+            if (next_bb != merge_bb)
+                LLVMPositionBuilderAtEnd(builder, next_bb);
+        }
+    }
+    LLVMPositionBuilderAtEnd(builder, merge_bb);
+}
+
+// ── FOR EACH ────────────────────────────────────────────────
+
+void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
+    // FOR EACH var IN collection ... NEXT
+    TypedValue coll = codegen_expr(*stmt.expr);
+
+    // Get collection pointer (may need conversion from f64 param encoding)
+    LLVMValueRef arr_ptr = coll.val;
+    if (coll.tag == 1) {
+        LLVMValueRef as_i64 = pun_f64_to_i64(coll.val);
+        arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+    }
+
+    // Get length
+    auto& len_fn = runtime_funcs["LEN"];
+    LLVMValueRef len_args[] = { arr_ptr };
+    LLVMValueRef len = LLVMBuildCall2(builder, len_fn.fn_type, len_fn.fn, len_args, 1, "len");
+
+    // Index variable (hidden, unique name to avoid collisions)
+    static int foreach_counter = 0;
+    std::string idx_name = "__foreach_idx_" + std::to_string(foreach_counter++);
+    VarInfo& idx_vi = create_var(idx_name, 0);
+    LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_vi.alloca_val);
+
+    // Loop variable
+    VarInfo* var_vi = lookup_var(stmt.var_name);
+    if (!var_vi) {
+        VarInfo& nv = create_var(stmt.var_name, 1);  // f64 (array elements)
+        var_vi = &nv;
+    }
+
+    LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.cond");
+    LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.body");
+    LLVMBasicBlockRef inc_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.inc");
+    LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.end");
+
+    loop_stack.push({ end_bb, inc_bb });
+    LLVMBuildBr(builder, cond_bb);
+
+    // Condition: idx < len
+    LLVMPositionBuilderAtEnd(builder, cond_bb);
+    LLVMValueRef idx = LLVMBuildLoad2(builder, i64_type, idx_vi.alloca_val, "idx");
+    LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, idx, len, "cmp");
+    LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+
+    // Body: var = arr[idx]
+    LLVMPositionBuilderAtEnd(builder, body_bb);
+    auto& get_fn = runtime_funcs["__array_get"];
+    LLVMValueRef get_args[] = { arr_ptr, idx };
+    LLVMValueRef elem = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, get_args, 2, "elem");
+    LLVMBuildStore(builder, elem, var_vi->alloca_val);
+
+    for (auto& s : stmt.body) { if (s) codegen_stmt(*s); }
+    if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+        LLVMBuildBr(builder, inc_bb);
+
+    // Increment
+    LLVMPositionBuilderAtEnd(builder, inc_bb);
+    LLVMValueRef idx2 = LLVMBuildLoad2(builder, i64_type, idx_vi.alloca_val, "idx");
+    LLVMBuildStore(builder, LLVMBuildAdd(builder, idx2, LLVMConstInt(i64_type, 1, 0), "inc"), idx_vi.alloca_val);
+    LLVMBuildBr(builder, cond_bb);
+
+    loop_stack.pop();
+    LLVMPositionBuilderAtEnd(builder, end_bb);
+}
+
+// ── ENUM ────────────────────────────────────────────────────
+
+void LLVMCodegen::codegen_enum(const Stmt& stmt) {
+    // Register each enum member as a global constant
+    for (auto& [name, value] : stmt.enum_members) {
+        // Check if global already exists (avoid duplicate)
+        LLVMValueRef existing = LLVMGetNamedGlobal(module, name.c_str());
+        if (!existing) {
+            existing = LLVMAddGlobal(module, i64_type, name.c_str());
+            LLVMSetLinkage(existing, LLVMInternalLinkage);
+        }
+        LLVMSetInitializer(existing, LLVMConstInt(i64_type, (uint64_t)value, 1));
+        scopes[0].vars[name] = { existing, 0 };
+    }
+}
+
+// ── Expression Codegen ──────────────────────────────────────
+
+LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
+    switch (expr.kind) {
+        case ExprKind::LITERAL_INT:
+            return { LLVMConstInt(i64_type, (uint64_t)expr.int_val, 1), 0 };
+
+        case ExprKind::LITERAL_FLOAT:
+            return { LLVMConstReal(f64_type, expr.float_val), 1 };
+
+        case ExprKind::LITERAL_STRING:
+            return { LLVMBuildGlobalStringPtr(builder, expr.str_val.c_str(), ".str"), 2 };
+
+        case ExprKind::LITERAL_BOOL:
+            return { LLVMConstInt(i64_type, expr.bool_val ? 1 : 0, 0), 0 };
+
+        case ExprKind::VARIABLE: {
+            VarInfo* vi = lookup_var(expr.str_val);
+            if (!vi) return { LLVMConstInt(i64_type, 0, 0), 0 };
+            LLVMTypeRef load_type;
+            int tag = vi->tag;
+            if (tag == 1)       load_type = f64_type;
+            else if (tag == 2)  load_type = i8_ptr_type;
+            else if (tag == 3)  load_type = i8_ptr_type;
+            else                load_type = i64_type;  // covers 0 and -2 (universal)
+            return { LLVMBuildLoad2(builder, load_type, vi->alloca_val,
+                                    expr.str_val.c_str()), tag };
+        }
+
+        case ExprKind::BINARY:
+            return codegen_binary(expr);
+
+        case ExprKind::UNARY:
+            return codegen_unary(expr);
+
+        case ExprKind::CALL:
+            return codegen_call(expr);
+
+        case ExprKind::PIPE_EXPR: {
+            // value |> func  or  value |> expr(?)
+            TypedValue left_val = codegen_expr(*expr.left);
+
+            if (expr.right->kind == ExprKind::LAMBDA_EXPR) {
+                // value |> lambda x -> body  →  compile lambda, call it with left_val
+                TypedValue lambda = codegen_expr(*expr.right);
+                // Call the lambda with left_val as argument
+                LLVMTypeRef call_ft = LLVMFunctionType(f64_type, &f64_type, 1, 0);
+                LLVMValueRef arg = left_val.val;
+                if (left_val.tag == 0) arg = LLVMBuildSIToFP(builder, arg, f64_type, "itof");
+                LLVMValueRef args[] = { arg };
+                LLVMValueRef result = LLVMBuildCall2(builder, call_ft, lambda.val, args, 1, "pipe");
+                return { result, 1 };
+            } else if (expr.right->kind == ExprKind::VARIABLE) {
+                // value |> FuncName  →  FuncName(value)
+                std::string fn_name = expr.right->str_val;
+                auto uit = user_functions.find(fn_name);
+                if (uit != user_functions.end()) {
+                    auto& fi = uit->second;
+                    LLVMValueRef arg = left_val.val;
+                    if (left_val.tag == 0) arg = LLVMBuildSIToFP(builder, arg, f64_type, "itof");
+                    LLVMValueRef args[] = { arg };
+                    LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
+                    LLVMValueRef result = LLVMBuildCall2(builder, fn_type, fi.fn, args, 1, "pipe");
+                    return { result, fi.return_tag };
+                }
+            } else if (expr.right->kind == ExprKind::CALL) {
+                // value |> FUNC(?, other_args)  →  store value in temp, compile FUNC call
+                // The ? placeholder in the call args should be replaced with left_val
+                // For now: store left_val as __PIPE_TMP, then compile the call
+                // (the PLACEHOLDER_EXPR will load __PIPE_TMP)
+                VarInfo* pipe_var = lookup_var("__PIPE_TMP__");
+                if (!pipe_var) {
+                    VarInfo& nv = create_var("__PIPE_TMP__", left_val.tag);
+                    pipe_var = &nv;
+                }
+                LLVMValueRef store_val = left_val.val;
+                if (left_val.tag == 0 && pipe_var->tag == 1)
+                    store_val = LLVMBuildSIToFP(builder, store_val, f64_type, "itof");
+                LLVMBuildStore(builder, store_val, pipe_var->alloca_val);
+                return codegen_expr(*expr.right);
+            }
+
+            // Fallback: just return left value
+            return left_val;
+        }
+
+        case ExprKind::PLACEHOLDER_EXPR: {
+            // ? in pipe context → load __PIPE_TMP__
+            VarInfo* vi = lookup_var("__PIPE_TMP__");
+            if (vi) {
+                LLVMTypeRef load_type = (vi->tag == 1) ? f64_type :
+                                        (vi->tag == 2) ? i8_ptr_type :
+                                        (vi->tag == 3) ? i8_ptr_type : i64_type;
+                return { LLVMBuildLoad2(builder, load_type, vi->alloca_val, "pipe_val"), vi->tag };
+            }
+            return { LLVMConstReal(f64_type, 0.0), 1 };
+        }
+
+        case ExprKind::LAMBDA_EXPR: {
+            // Generate anonymous LLVM function for the lambda
+            static int lambda_counter = 0;
+            std::string lambda_name = "__lambda_" + std::to_string(lambda_counter++);
+
+            int arity = (int)expr.lambda_params.size();
+
+            // Create function type: (double, ...) -> double
+            std::vector<LLVMTypeRef> param_types(arity, f64_type);
+            LLVMTypeRef fn_type = LLVMFunctionType(f64_type,
+                param_types.empty() ? nullptr : param_types.data(), arity, 0);
+            LLVMValueRef lambda_fn = LLVMAddFunction(module, lambda_name.c_str(), fn_type);
+
+            // Save current state
+            LLVMValueRef saved_fn = current_fn;
+            current_fn = lambda_fn;
+
+            // Push lambda scope — captures are visible through parent scope lookup
+            // (lookup_var searches from innermost to outermost, so globals are found)
+            scopes.push_back(Scope{});
+
+            // Create entry block
+            LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, lambda_fn, "entry");
+            LLVMPositionBuilderAtEnd(builder, entry);
+
+            // Create allocas for parameters
+            for (int i = 0; i < arity; i++) {
+                VarInfo& vi = create_var(expr.lambda_params[i], 1);  // f64
+                LLVMBuildStore(builder, LLVMGetParam(lambda_fn, i), vi.alloca_val);
+            }
+
+            // Compile body expression
+            // Captures work automatically — the lambda body references variables
+            // from outer scopes which are resolved via lookup_var (searches parent scopes).
+            // For global variables, these are LLVM module-level globals accessible from any function.
+            TypedValue body = codegen_expr(*expr.right);
+
+            // Return the result
+            LLVMValueRef ret_val = body.val;
+            if (body.tag == 0) ret_val = LLVMBuildSIToFP(builder, ret_val, f64_type, "itof");
+            LLVMBuildRet(builder, ret_val);
+
+            // Restore state
+            scopes.pop_back();
+            current_fn = saved_fn;
+            LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
+            LLVMPositionBuilderAtEnd(builder, last_bb);
+
+            // Return function pointer (tag=5 = function pointer)
+            return { lambda_fn, 5 };
+        }
+
+        case ExprKind::INDEX: {
+            // arr[i] — array element access
+            TypedValue arr_tv = codegen_expr(*expr.left);
+            TypedValue idx_tv = codegen_expr(*expr.right);
+
+            // Get array pointer — may need to convert from encoded param
+            LLVMValueRef arr_ptr = arr_tv.val;
+            if (arr_tv.tag == 1) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
+                arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+            } else if (arr_tv.tag == 0) {
+                // i64 → inttoptr
+                arr_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
+            }
+            // tag == 3: already a pointer
+
+            // Convert index to i64
+            LLVMValueRef idx = idx_tv.val;
+            if (idx_tv.tag == 1)
+                idx = LLVMBuildFPToSI(builder, idx, i64_type, "ftoi");
+
+            auto& arr_get = runtime_funcs["__array_get"];
+            LLVMValueRef args[] = { arr_ptr, idx };
+            LLVMValueRef result = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, args, 2, "elem");
+            return { result, 1 };  // array elements are f64
+        }
+
+        default:
+            return { LLVMConstInt(i64_type, 0, 0), 0 };
+    }
+}
+
+LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
+    // Handle AND/OR with short-circuit semantics
+    if (expr.op == TokenType::AND || expr.op == TokenType::OR ||
+        expr.op == TokenType::ANDALSO || expr.op == TokenType::ORELSE) {
+        // ANDALSO/ORELSE are aliases for AND/OR with short-circuit (which we already do)
+        TypedValue lhs = codegen_expr(*expr.left);
+        LLVMValueRef lhs_bool = to_i1(lhs);
+
+        LLVMBasicBlockRef rhs_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "logic.rhs");
+        LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "logic.merge");
+        LLVMBasicBlockRef lhs_bb = LLVMGetInsertBlock(builder);
+
+        if (expr.op == TokenType::AND || expr.op == TokenType::ANDALSO)
+            LLVMBuildCondBr(builder, lhs_bool, rhs_bb, merge_bb);
+        else  // OR / ORELSE
+            LLVMBuildCondBr(builder, lhs_bool, merge_bb, rhs_bb);
+
+        LLVMPositionBuilderAtEnd(builder, rhs_bb);
+        TypedValue rhs = codegen_expr(*expr.right);
+        LLVMValueRef rhs_bool = to_i1(rhs);
+        LLVMValueRef rhs_i64 = LLVMBuildZExt(builder, rhs_bool, i64_type, "ext");
+        LLVMBasicBlockRef rhs_end_bb = LLVMGetInsertBlock(builder);
+        LLVMBuildBr(builder, merge_bb);
+
+        LLVMPositionBuilderAtEnd(builder, merge_bb);
+        LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "logic");
+        LLVMValueRef incoming_vals[2];
+        LLVMBasicBlockRef incoming_bbs[2];
+        if (expr.op == TokenType::AND || expr.op == TokenType::ANDALSO) {
+            incoming_vals[0] = LLVMConstInt(i64_type, 0, 0);
+            incoming_bbs[0] = lhs_bb;
+        } else {
+            incoming_vals[0] = LLVMConstInt(i64_type, 1, 0);
+            incoming_bbs[0] = lhs_bb;
+        }
+        incoming_vals[1] = rhs_i64;
+        incoming_bbs[1] = rhs_end_bb;
+        LLVMAddIncoming(phi, incoming_vals, incoming_bbs, 2);
+
+        return { phi, 0 };
+    }
+
+    TypedValue lhs = codegen_expr(*expr.left);
+    TypedValue rhs = codegen_expr(*expr.right);
+
+    // String concatenation: str + str, str + int, int + str, str + float, etc.
+    if (expr.op == TokenType::PLUS && (lhs.tag == 2 || rhs.tag == 2)) {
+        // Convert non-string operand to string
+        auto to_str = [&](TypedValue tv) -> LLVMValueRef {
+            if (tv.tag == 2) return tv.val;
+            if (tv.tag == 0) {
+                auto& fn = runtime_funcs["__int_to_str"];
+                LLVMValueRef args[] = { tv.val };
+                return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
+            } else {
+                auto& fn = runtime_funcs["__double_to_str"];
+                LLVMValueRef args[] = { tv.val };
+                return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ftostr");
+            }
+        };
+        auto& concat = runtime_funcs["__str_concat"];
+        LLVMValueRef args[] = { to_str(lhs), to_str(rhs) };
+        LLVMValueRef result = LLVMBuildCall2(builder, concat.fn_type, concat.fn, args, 2, "concat");
+        return { result, 2 };
+    }
+
+    // String comparison: str = str, str <> str
+    if ((lhs.tag == 2 && rhs.tag == 2) &&
+        (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN || expr.op == TokenType::NE)) {
+        if (expr.op == TokenType::NE) {
+            auto& fn = runtime_funcs["__str_ne"];
+            LLVMValueRef args[] = { lhs.val, rhs.val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne");
+            return { result, 0 };
+        } else {
+            auto& fn = runtime_funcs["__str_eq"];
+            LLVMValueRef args[] = { lhs.val, rhs.val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq");
+            return { result, 0 };
+        }
+    }
+
+    // Power operator (^)
+    if (expr.op == TokenType::CARET) {
+        lhs = promote_to_f64(lhs);
+        rhs = promote_to_f64(rhs);
+        auto& fn = runtime_funcs["__pow"];
+        LLVMValueRef args[] = { lhs.val, rhs.val };
+        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "pow");
+        return { result, 1 };
+    }
+
+    bool use_float = (lhs.tag == 1 || rhs.tag == 1);
+    if (use_float) {
+        lhs = promote_to_f64(lhs);
+        rhs = promote_to_f64(rhs);
+    }
+
+    if (use_float) {
+        switch (expr.op) {
+            case TokenType::PLUS:  return { LLVMBuildFAdd(builder, lhs.val, rhs.val, "fadd"), 1 };
+            case TokenType::MINUS: return { LLVMBuildFSub(builder, lhs.val, rhs.val, "fsub"), 1 };
+            case TokenType::STAR:  return { LLVMBuildFMul(builder, lhs.val, rhs.val, "fmul"), 1 };
+            case TokenType::SLASH: return { LLVMBuildFDiv(builder, lhs.val, rhs.val, "fdiv"), 1 };
+            case TokenType::MOD:   return { LLVMBuildFRem(builder, lhs.val, rhs.val, "fmod"), 1 };
+            case TokenType::LT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::GT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::LE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::GE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::EQ:
+            case TokenType::ASSIGN: return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOEQ, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::NE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealONE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            default: break;
+        }
+    } else {
+        switch (expr.op) {
+            case TokenType::PLUS:      return { LLVMBuildAdd(builder, lhs.val, rhs.val, "add"), 0 };
+            case TokenType::MINUS:     return { LLVMBuildSub(builder, lhs.val, rhs.val, "sub"), 0 };
+            case TokenType::STAR:      return { LLVMBuildMul(builder, lhs.val, rhs.val, "mul"), 0 };
+            case TokenType::SLASH:     return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "div"), 0 };
+            case TokenType::BACKSLASH: return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "idiv"), 0 };
+            case TokenType::MOD:       return { LLVMBuildSRem(builder, lhs.val, rhs.val, "mod"), 0 };
+            case TokenType::LT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::GT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::LE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::GE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::EQ:
+            case TokenType::ASSIGN:    return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntEQ, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::NE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntNE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
+            case TokenType::BAND:      return { LLVMBuildAnd(builder, lhs.val, rhs.val, "band"), 0 };
+            case TokenType::BOR:       return { LLVMBuildOr(builder, lhs.val, rhs.val, "bor"), 0 };
+            case TokenType::XOR:
+            case TokenType::BXOR:      return { LLVMBuildXor(builder, lhs.val, rhs.val, "bxor"), 0 };
+            default: break;
+        }
+    }
+    return { LLVMConstInt(i64_type, 0, 0), 0 };
+}
+
+LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
+    TypedValue operand = codegen_expr(*expr.right);
+    if (expr.op == TokenType::MINUS) {
+        if (operand.tag == 1)
+            return { LLVMBuildFNeg(builder, operand.val, "fneg"), 1 };
+        else
+            return { LLVMBuildNeg(builder, operand.val, "neg"), 0 };
+    }
+    if (expr.op == TokenType::NOT) {
+        LLVMValueRef b = to_i1(operand);
+        LLVMValueRef notb = LLVMBuildNot(builder, b, "not");
+        return { LLVMBuildZExt(builder, notb, i64_type, "ext"), 0 };
+    }
+    return operand;
+}
+
+// ── CALL ────────────────────────────────────────────────────
+
+LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
+    std::string name = expr.func_name;
+
+    // 1. Try user-defined function
+    auto uit = user_functions.find(name);
+    if (uit != user_functions.end()) {
+        auto& fi = uit->second;
+        std::vector<LLVMValueRef> args;
+        for (size_t i = 0; i < expr.args.size(); i++) {
+            TypedValue av = codegen_expr(*expr.args[i]);
+            int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
+
+            LLVMValueRef arg_val;
+            if (expected_tag == 2) {
+                // String parameter (ptr) — pass pointer directly
+                arg_val = av.val;  // tag=2 is already ptr
+            } else {
+                // Numeric parameter (f64) — promote to f64
+                if (av.tag == 0) {
+                    arg_val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                } else if (av.tag == 3) {
+                    // Array pointer → encode as f64 for passing through numeric param
+                    LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
+                    arg_val = pun_i64_to_f64(as_i64);
+                } else {
+                    arg_val = av.val;  // already f64
+                }
+            }
+            args.push_back(arg_val);
+        }
+        LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
+        if (fi.return_tag == -1) {
+            LLVMBuildCall2(builder, fn_type, fi.fn,
+                           args.empty() ? nullptr : args.data(),
+                           (unsigned)args.size(), "");
+            return { LLVMConstInt(i64_type, 0, 0), 0 };
+        } else {
+            LLVMValueRef result = LLVMBuildCall2(builder, fn_type, fi.fn,
+                                                  args.empty() ? nullptr : args.data(),
+                                                  (unsigned)args.size(), "call");
+            return { result, fi.return_tag };
+        }
+    }
+
+    // 2. Handle FORMAT$ specially (variable number of args)
+    std::string upper = name;
+    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+    if (upper == "FORMAT$" && expr.args.size() >= 2) {
+        // FORMAT$(fmt_string, arg1, [arg2, [arg3, [arg4]]])
+        TypedValue fmt_tv = codegen_expr(*expr.args[0]);
+        int nargs = (int)expr.args.size() - 1;
+        if (nargs > 4) nargs = 4;
+
+        std::string fn_name = "__format" + std::to_string(nargs);
+        auto fit2 = runtime_funcs.find(fn_name);
+        if (fit2 != runtime_funcs.end()) {
+            std::vector<LLVMValueRef> args;
+            args.push_back(fmt_tv.val);
+            for (int i = 0; i < nargs; i++) {
+                TypedValue av = codegen_expr(*expr.args[i + 1]);
+                if (av.tag == 0) av.val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                args.push_back(av.val);
+            }
+            LLVMValueRef result = LLVMBuildCall2(builder, fit2->second.fn_type, fit2->second.fn,
+                                                  args.data(), (unsigned)args.size(), "fmt");
+            return { result, 2 };
+        }
+    }
+
+    // Handle SELECT/FILTER/REDUCE with lambda function pointers
+    if ((upper == "SELECT" || upper == "FILTER") && expr.args.size() >= 2) {
+        TypedValue fn_val = codegen_expr(*expr.args[0]);
+        TypedValue arr_val = codegen_expr(*expr.args[1]);
+        if (fn_val.tag == 5) {
+            // Lambda function pointer + array
+            LLVMValueRef arr_ptr = arr_val.val;
+            if (arr_val.tag == 1) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(arr_val.val);
+                arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+            }
+            std::string rt_name = (upper == "SELECT") ? "__select_fn" : "__filter_fn";
+            auto& fn = runtime_funcs[rt_name];
+            LLVMValueRef args[] = { fn_val.val, arr_ptr };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "hof");
+            return { result, 3 };  // returns array
+        }
+    }
+    if (upper == "REDUCE" && expr.args.size() >= 2) {
+        TypedValue fn_val = codegen_expr(*expr.args[0]);
+        TypedValue arr_val = codegen_expr(*expr.args[1]);
+        double init = 0.0;
+        if (fn_val.tag == 5) {
+            LLVMValueRef arr_ptr = arr_val.val;
+            if (arr_val.tag == 1) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(arr_val.val);
+                arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+            }
+            LLVMValueRef init_val = (expr.args.size() >= 3)
+                ? codegen_expr(*expr.args[2]).val
+                : LLVMConstReal(f64_type, 0.0);
+            if (expr.args.size() >= 3) {
+                TypedValue iv = codegen_expr(*expr.args[2]);
+                init_val = iv.tag == 0 ? LLVMBuildSIToFP(builder, iv.val, f64_type, "itof") : iv.val;
+            }
+            auto& fn = runtime_funcs["__reduce_fn"];
+            LLVMValueRef args[] = { fn_val.val, arr_ptr, init_val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "red");
+            return { result, 1 };
+        }
+    }
+
+    // Handle LEN — dispatch based on argument type (string vs array)
+    if (upper == "LEN" && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == 2) {
+            // String length
+            auto& fn = runtime_funcs["LEN$"];
+            LLVMValueRef args[] = { av.val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "slen");
+            return { result, 0 };
+        }
+        // Array length (default path via runtime lookup)
+    }
+
+    // Handle TYPEOF — resolve type tag at compile time
+    if (upper == "TYPEOF" && !expr.args.empty()) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        auto& fn = runtime_funcs["__typeof_tag"];
+        LLVMValueRef args[] = { LLVMConstInt(i64_type, av.tag, 0) };
+        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "typeof");
+        return { result, 2 };
+    }
+
+    // Handle MIN/MAX — scalar (2 args) or array (1 arg)
+    if ((upper == "MIN" || upper == "MAX") && expr.args.size() == 1) {
+        // Array version
+        std::string fn_name = (upper == "MIN") ? "__arr_min" : "__arr_max";
+        auto ait = runtime_funcs.find(fn_name);
+        if (ait != runtime_funcs.end()) {
+            TypedValue av = codegen_expr(*expr.args[0]);
+            LLVMValueRef arr_ptr = av.val;
+            if (av.tag == 1) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(av.val);
+                arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+            }
+            LLVMValueRef args[] = { arr_ptr };
+            LLVMValueRef result = LLVMBuildCall2(builder, ait->second.fn_type, ait->second.fn, args, 1, "call");
+            return { result, ait->second.return_tag };
+        }
+    }
+
+    // Handle VAL with pointer-encoded doubles (from OS.ARGS array elements)
+    if (upper == "VAL" && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == 1) {
+            // f64 value — might be a pointer-encoded string from OS.ARGS
+            auto& fn = runtime_funcs["__val_ptr"];
+            LLVMValueRef args[] = { av.val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "val");
+            return { result, 1 };
+        }
+    }
+
+    // 3. Try runtime builtin (uppercase lookup)
+    auto rit = runtime_funcs.find(upper);
+    if (rit != runtime_funcs.end()) {
+        auto& rf = rit->second;
+        std::vector<LLVMValueRef> args;
+        // Get param types from function type
+        unsigned param_count = LLVMCountParamTypes(rf.fn_type);
+        std::vector<LLVMTypeRef> param_types(param_count);
+        if (param_count > 0) LLVMGetParamTypes(rf.fn_type, param_types.data());
+
+        for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
+            TypedValue av = codegen_expr(*expr.args[i]);
+            // Auto-convert to match expected param type
+            if (param_types[i] == f64_type && av.tag == 0)
+                av.val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+            else if (param_types[i] == i64_type && av.tag == 1)
+                av.val = LLVMBuildFPToSI(builder, av.val, i64_type, "ftoi");
+            args.push_back(av.val);
+        }
+
+        if (rf.return_tag == -1) {
+            LLVMBuildCall2(builder, rf.fn_type, rf.fn,
+                           args.empty() ? nullptr : args.data(),
+                           (unsigned)args.size(), "");
+            return { LLVMConstInt(i64_type, 0, 0), 0 };
+        } else {
+            LLVMValueRef result = LLVMBuildCall2(builder, rf.fn_type, rf.fn,
+                                                  args.empty() ? nullptr : args.data(),
+                                                  (unsigned)args.size(), "call");
+            return { result, rf.return_tag };
+        }
+    }
+
+    // 3. Fallback: call through VM bridge DLL with type tags
+    {
+        LLVMValueRef handle_global = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        if (handle_global) {
+            LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type, handle_global, "rt");
+            LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, upper.c_str(), ".fn");
+
+            int nargs = (int)expr.args.size();
+            LLVMValueRef args_ptr, tags_ptr;
+
+            if (nargs > 0) {
+                // Allocate i64[] for args and i32[] for type tags
+                args_ptr = LLVMBuildArrayAlloca(builder, i64_type,
+                    LLVMConstInt(i32_type, nargs, 0), "args");
+                tags_ptr = LLVMBuildArrayAlloca(builder, i32_type,
+                    LLVMConstInt(i32_type, nargs, 0), "tags");
+
+                for (int i = 0; i < nargs; i++) {
+                    TypedValue av = codegen_expr(*expr.args[i]);
+
+                    // Convert value to i64 encoding and determine tag
+                    LLVMValueRef encoded;
+                    int32_t tag;
+
+                    if (av.tag == 2) {
+                        // String: pointer → intptr → i64
+                        encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "stoi");
+                        tag = 2;
+                    } else if (av.tag == 3) {
+                        // Array pointer → i64
+                        encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "atoi");
+                        tag = 3;
+                    } else if (av.tag == 4) {
+                        // VM object handle — already i64
+                        encoded = av.val;
+                        tag = 4;
+                    } else if (av.tag == 1) {
+                        encoded = pun_f64_to_i64(av.val);
+                        tag = 1;
+                    } else {
+                        // i64 → promote to f64 → bitcast to i64 (for VM compatibility)
+                        LLVMValueRef as_f64 = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                        encoded = pun_f64_to_i64(as_f64);
+                        tag = 0;
+                    }
+
+                    // Store arg value
+                    LLVMValueRef aidx[] = { LLVMConstInt(i32_type, i, 0) };
+                    LLVMValueRef aptr = LLVMBuildGEP2(builder, i64_type, args_ptr, aidx, 1, "arg");
+                    LLVMBuildStore(builder, encoded, aptr);
+
+                    // Store type tag
+                    LLVMValueRef tidx[] = { LLVMConstInt(i32_type, i, 0) };
+                    LLVMValueRef tptr = LLVMBuildGEP2(builder, i32_type, tags_ptr, tidx, 1, "tag");
+                    LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), tptr);
+                }
+            } else {
+                args_ptr = LLVMConstNull(i8_ptr_type);
+                tags_ptr = LLVMConstNull(i8_ptr_type);
+            }
+
+            bool is_string_fn = !upper.empty() && upper.back() == '$';
+            // Functions that return objects (MAP, JSON.PARSE, etc.)
+            bool is_object_fn = (upper.substr(0, 4) == "MAP." &&
+                                 upper != "MAP.SIZE" && upper != "MAP.EXISTS") ||
+                                upper == "JSON.PARSE$";
+
+            LLVMValueRef call_args[] = { handle, name_str, args_ptr, tags_ptr,
+                LLVMConstInt(i32_type, nargs, 0) };
+
+            if (is_object_fn) {
+                // Returns an opaque VM value handle (stored as i64)
+                auto& fn = runtime_funcs["__jdrt_call_typed_obj"];
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmobj");
+                return { result, 4 };  // tag=4 = VM object handle
+            } else if (is_string_fn) {
+                auto& fn = runtime_funcs["__jdrt_call_typed_str"];
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
+                return { result, 2 };
+            } else {
+                auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
+                return { result, 1 };
+            }
+        }
+    }
+
+    return { LLVMConstInt(i64_type, 0, 0), 0 };
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+
+LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
+    if (tv.tag == 1)
+        return LLVMBuildFCmp(builder, LLVMRealONE, tv.val,
+                             LLVMConstReal(f64_type, 0.0), "tobool");
+    return LLVMBuildICmp(builder, LLVMIntNE, tv.val,
+                         LLVMConstInt(i64_type, 0, 0), "tobool");
+}
+
+LLVMCodegen::TypedValue LLVMCodegen::promote_to_f64(TypedValue tv) {
+    if (tv.tag == 1) return tv;
+    if (tv.tag == 0)
+        return { LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"), 1 };
+    return { LLVMConstReal(f64_type, 0.0), 1 };
+}
+
+LLVMValueRef LLVMCodegen::pun_i64_to_f64(LLVMValueRef i64_val) {
+    // Type-pun via entry-block alloca (always i64-typed, load as f64 through opaque ptr)
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+    LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(current_fn);
+    // Insert alloca at start of entry block
+    LLVMValueRef first = LLVMGetFirstInstruction(entry);
+    if (first) LLVMPositionBuilderBefore(builder, first);
+    else LLVMPositionBuilderAtEnd(builder, entry);
+    LLVMValueRef alloca = LLVMBuildAlloca(builder, i64_type, "pun");
+    LLVMPositionBuilderAtEnd(builder, cur);
+    // Store i64, load as f64 (LLVM opaque ptr allows mismatched load type)
+    LLVMBuildStore(builder, i64_val, alloca);
+    return LLVMBuildLoad2(builder, f64_type, alloca, "pf");
+}
+
+LLVMValueRef LLVMCodegen::pun_f64_to_i64(LLVMValueRef f64_val) {
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+    LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(current_fn);
+    LLVMValueRef first = LLVMGetFirstInstruction(entry);
+    if (first) LLVMPositionBuilderBefore(builder, first);
+    else LLVMPositionBuilderAtEnd(builder, entry);
+    LLVMValueRef alloca = LLVMBuildAlloca(builder, f64_type, "pun");
+    LLVMPositionBuilderAtEnd(builder, cur);
+    LLVMBuildStore(builder, f64_val, alloca);
+    return LLVMBuildLoad2(builder, i64_type, alloca, "pi");
+}
+
+// ── Object File Emission ────────────────────────────────────
+
+bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmPrinter();
+
+    char* triple = LLVMGetDefaultTargetTriple();
+    LLVMTargetRef target;
+    char* err = nullptr;
+
+    if (LLVMGetTargetFromTriple(triple, &target, &err)) {
+        error_msg = "Failed to get target: " + std::string(err);
+        LLVMDisposeMessage(err);
+        LLVMDisposeMessage(triple);
+        return false;
+    }
+
+    LLVMTargetMachineRef machine = LLVMCreateTargetMachine(
+        target, triple, "generic", "",
+        LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
+
+    LLVMSetModuleDataLayout(module, LLVMCreateTargetDataLayout(machine));
+
+    if (LLVMTargetMachineEmitToFile(machine, module, (char*)obj_path.c_str(),
+                                     LLVMObjectFile, &err)) {
+        error_msg = "Failed to emit object file: " + std::string(err);
+        LLVMDisposeMessage(err);
+        LLVMDisposeTargetMachine(machine);
+        LLVMDisposeMessage(triple);
+        return false;
+    }
+
+    LLVMDisposeTargetMachine(machine);
+    LLVMDisposeMessage(triple);
+    return true;
+}
+
+// ── Linking ─────────────────────────────────────────────────
+
+bool LLVMCodegen::link_executable(const std::string& obj_path,
+                                   const std::string& exe_path) {
+    std::string runtime_obj;
+    for (auto& candidate : {"build\\jdb_runtime.obj", "jdb_runtime.obj"}) {
+        if (std::filesystem::exists(candidate)) {
+            runtime_obj = candidate;
+            break;
+        }
+    }
+    if (runtime_obj.empty()) {
+        error_msg = "Cannot find jdb_runtime.obj. Build with NATIVEC flag first.";
+        return false;
+    }
+
+    std::string msvc = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207";
+    std::string sdk = "C:\\Program Files (x86)\\Windows Kits\\10";
+    std::string sdkv = "10.0.26100.0";
+
+    std::string link_cmd =
+        "cmd /c \"\"" + msvc + "\\bin\\Hostx64\\x64\\link.exe\" "
+        "/NOLOGO /OUT:\"" + exe_path + "\" "
+        "/SUBSYSTEM:CONSOLE "
+        "\"" + obj_path + "\" "
+        "\"" + runtime_obj + "\" "
+        "/LIBPATH:\"" + msvc + "\\lib\\x64\" "
+        "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\ucrt\\x64\" "
+        "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\um\\x64\" "
+        "libcmt.lib libucrt.lib kernel32.lib legacy_stdio_definitions.lib "
+        "\"build\\jdbrt.lib\"\"";
+
+    int ret = std::system(link_cmd.c_str());
+    if (ret != 0) {
+        error_msg = "Linker failed (exit code " + std::to_string(ret) + ")";
+        return false;
+    }
+    return true;
+}
+
+#endif // LLVM_CODEGEN

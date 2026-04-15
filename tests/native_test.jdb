@@ -1,0 +1,478 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic Native Compiler Test Suite
+'  Tests the features supported by the LLVM native compiler
+' ══════════════════════════════════════════════════════════════════
+
+DIM PASS = 0
+DIM FAIL = 0
+
+test_num = 0
+SUB Assert(cond)
+    test_num = test_num + 1
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL test #"; test_num
+    ENDIF
+ENDSUB
+
+' ── 1. ARITHMETIC ────────────────────────────────────────────
+PRINT "── Arithmetic ──"
+Assert(2 + 3 = 5)
+Assert(10 - 4 = 6)
+Assert(3 * 7 = 21)
+Assert(15 / 3 = 5)
+Assert(17 MOD 5 = 2)
+Assert(2 ^ 10 = 1024)
+Assert(-5 + 10 = 5)
+
+' ── 2. COMPARISONS ───────────────────────────────────────────
+PRINT "── Comparisons ──"
+Assert(5 > 3)
+Assert(3 < 5)
+Assert(5 >= 5)
+Assert(5 <= 5)
+Assert(5 = 5)
+Assert(5 <> 3)
+
+' ── 3. LOGIC ─────────────────────────────────────────────────
+PRINT "── Logic ──"
+Assert(1 AND 1)
+Assert(1 OR 0)
+Assert(NOT 0)
+Assert(NOT (1 AND 0))
+
+' ── 4. VARIABLES ─────────────────────────────────────────────
+PRINT "── Variables ──"
+x = 42
+Assert(x = 42)
+x = x + 1
+Assert(x = 43)
+y = 3.14
+Assert(y > 3)
+
+' ── 5. IF/ELSEIF/ELSE ────────────────────────────────────────
+PRINT "── IF/ELSE ──"
+a = 10
+IF a > 5 THEN
+    Assert(1)
+ELSE
+    Assert(0)
+ENDIF
+
+IF a > 100 THEN
+    Assert(0)
+ELSEIF a > 5 THEN
+    Assert(1)
+ELSE
+    Assert(0)
+ENDIF
+
+' ── 6. FOR LOOP ──────────────────────────────────────────────
+PRINT "── FOR Loop ──"
+s = 0
+FOR i = 1 TO 10
+    s = s + i
+NEXT i
+Assert(s = 55)
+
+s2 = 0
+FOR i = 0 TO 10 STEP 2
+    s2 = s2 + i
+NEXT i
+Assert(s2 = 30)
+
+' ── 7. DO LOOP ───────────────────────────────────────────────
+PRINT "── DO Loop ──"
+c = 0
+DO WHILE c < 5
+    c = c + 1
+LOOP
+Assert(c = 5)
+
+d = 10
+DO
+    d = d - 1
+LOOP UNTIL d = 5
+Assert(d = 5)
+
+' ── 8. FUNC/SUB ──────────────────────────────────────────────
+PRINT "── FUNC/SUB ──"
+
+FUNC Add(a, b)
+    RETURN a + b
+ENDFUNC
+
+FUNC Factorial(n)
+    IF n <= 1 THEN RETURN 1
+    RETURN n * Factorial(n - 1)
+ENDFUNC
+
+Assert(Add(3, 7) = 10)
+Assert(Factorial(5) = 120)
+Assert(Factorial(10) = 3628800)
+
+' ── 9. GLOBAL VARS IN FUNC ──────────────────────────────────
+PRINT "── Globals in FUNC ──"
+counter = 0
+SUB Increment()
+    counter = counter + 1
+ENDSUB
+Increment
+Increment
+Increment
+Assert(counter = 3)
+
+' ── 10. ARRAYS ───────────────────────────────────────────────
+PRINT "── Arrays ──"
+DIM arr[5]
+FOR i = 0 TO 4
+    arr[i] = (i + 1) * 10
+NEXT i
+Assert(arr[0] = 10)
+Assert(arr[4] = 50)
+Assert(LEN(arr) = 5)
+
+b = IOTA(5)
+Assert(b[0] = 1)
+Assert(b[4] = 5)
+Assert(SUM(b) = 15)
+
+' ── 11. MATH BUILTINS ────────────────────────────────────────
+PRINT "── Math ──"
+Assert(ABS(-42) = 42)
+Assert(SQR(144) = 12)
+Assert(SIN(0) = 0)
+Assert(COS(0) = 1)
+Assert(INT(3.7) = 3)
+Assert(ROUND(3.5) = 4)
+Assert(FAC(7) = 5040)
+Assert(SIGN(-5) = -1)
+
+' ── 12. STRING OPS ───────────────────────────────────────────
+PRINT "── Strings ──"
+Assert(UPPER$("hello") = "HELLO")
+Assert(LOWER$("WORLD") = "world")
+Assert(LEFT$("Hello", 3) = "Hel")
+Assert(RIGHT$("Hello", 3) = "llo")
+Assert(MID$("Hello World", 6, 5) = "World")
+Assert(LEN("test") = 4)
+Assert(CHR$(65) = "A")
+Assert(ASC("A") = 65)
+Assert(INSTR("Hello World", "World") = 6)
+
+' ── 13. STRING CONCAT ────────────────────────────────────────
+PRINT "── String Concat ──"
+Assert("Hello" + " " + "World" = "Hello World")
+Assert("x=" + "42" = "x=42")
+
+' ── 14. DATE/TIME ────────────────────────────────────────────
+PRINT "── Date/Time ──"
+n = NOW()
+Assert(YEAR(n) >= 2025)
+Assert(MONTH(n) >= 1 AND MONTH(n) <= 12)
+
+' ── 15. ARRAY OPS ────────────────────────────────────────────
+PRINT "── Array Ops ──"
+v = IOTA(5)
+Assert(MIN(v) = 1)
+Assert(MAX(v) = 5)
+Assert(MEAN(v) = 3)
+Assert(PRODUCT(v) = 120)
+
+rv = REVERSE(v)
+Assert(rv[0] = 5)
+Assert(rv[4] = 1)
+
+' ── 16. CODEC ────────────────────────────────────────────────
+PRINT "── Codec ──"
+enc$ = CODEC.BASE64_ENCODE$("Hello")
+Assert(enc$ = "SGVsbG8=")
+dec$ = CODEC.BASE64_DECODE$(enc$)
+Assert(dec$ = "Hello")
+
+' ── 17. EXITDO ───────────────────────────────────────────────
+PRINT "── EXITDO ──"
+z = 0
+DO
+    z = z + 1
+    IF z = 5 THEN EXITDO
+LOOP
+Assert(z = 5)
+
+' ── 18. TYPEOF ───────────────────────────────────────────────
+PRINT "── TYPEOF ──"
+Assert(TYPEOF(42) = "INT64")
+Assert(TYPEOF(3.14) = "FLOAT64")
+Assert(TYPEOF("hi") = "STRING")
+
+' ── 19. NEGATIVE STEP FOR ─────────────────────────────────────
+PRINT "── Negative Step FOR ──"
+ns = 0
+FOR i = 10 TO 1 STEP -1
+    ns = ns + i
+NEXT i
+Assert(ns = 55)
+
+' ── 20. EXITFOR ──────────────────────────────────────────────
+PRINT "── EXITFOR ──"
+ef = 0
+FOR i = 1 TO 100
+    IF i = 6 THEN EXITFOR
+    ef = ef + i
+NEXT i
+Assert(ef = 15)
+
+' ── 21. CONTINUEFOR ──────────────────────────────────────────
+PRINT "── CONTINUEFOR ──"
+cf = 0
+FOR i = 1 TO 5
+    IF i = 3 THEN CONTINUEFOR
+    cf = cf + i
+NEXT i
+Assert(cf = 12)
+
+' ── 22. DO UNTIL (top) ───────────────────────────────────────
+PRINT "── DO UNTIL top ──"
+du = 0
+DO UNTIL du = 7
+    du = du + 1
+LOOP
+Assert(du = 7)
+
+' ── 23. DO LOOP WHILE ────────────────────────────────────────
+PRINT "── DO LOOP WHILE ──"
+dlw = 0
+DO
+    dlw = dlw + 1
+LOOP WHILE dlw < 5
+Assert(dlw = 5)
+
+' ── 24. CONTINUEDO ───────────────────────────────────────────
+PRINT "── CONTINUEDO ──"
+cd = 0
+cd_sum = 0
+DO WHILE cd < 5
+    cd = cd + 1
+    IF cd = 3 THEN CONTINUEDO
+    cd_sum = cd_sum + cd
+LOOP
+Assert(cd_sum = 12)
+
+' ── 25. NESTED LOOPS ─────────────────────────────────────────
+PRINT "── Nested Loops ──"
+nested = 0
+FOR i = 1 TO 3
+    FOR j = 1 TO 3
+        nested = nested + 1
+    NEXT j
+NEXT i
+Assert(nested = 9)
+
+' ── 26. FUNCTIONS ADVANCED ───────────────────────────────────
+PRINT "── Functions Advanced ──"
+
+FUNC Square(x)
+    RETURN x * x
+ENDFUNC
+
+FUNC SumOfSquares(a, b)
+    RETURN Square(a) + Square(b)
+ENDFUNC
+
+Assert(SumOfSquares(3, 4) = 25)
+
+' SUB modifying globals
+sub_counter = 0
+SUB CountUp(n)
+    FOR ci = 1 TO n
+        sub_counter = sub_counter + 1
+    NEXT ci
+ENDSUB
+CountUp 5
+Assert(sub_counter = 5)
+
+' ── 27. MATH ADVANCED ────────────────────────────────────────
+PRINT "── Math Advanced ──"
+Assert(ABS(-42) = 42)
+Assert(ABS(42) = 42)
+Assert(INT(-3.7) = -3)
+Assert(FLOOR(3.7) = 3)
+Assert(CEIL(3.2) = 4)
+Assert(FAC(6) = 720)
+Assert(FAC(0) = 1)
+Assert(SQR(144) = 12)
+Assert(ABS(SIN(0)) < 0.001)
+Assert(ABS(COS(0) - 1) < 0.001)
+Assert(CLAMP(15, 0, 10) = 10)
+Assert(CLAMP(-5, 0, 10) = 0)
+Assert(CLAMP(5, 0, 10) = 5)
+
+' ── 28. STRING ADVANCED ──────────────────────────────────────
+PRINT "── String Advanced ──"
+Assert(REPLACE$("Hello World", "World", "jdBasic") = "Hello jdBasic")
+Assert(TRIM$("  hi  ") = "hi")
+Assert(LTRIM$("  hi") = "hi")
+Assert(RTRIM$("hi  ") = "hi")
+Assert(STARTSWITH("Hello", "He"))
+Assert(ENDSWITH("Hello", "lo"))
+Assert(NOT STARTSWITH("Hello", "lo"))
+
+' ── 29. FORMAT$ ──────────────────────────────────────────────
+PRINT "── FORMAT$ ──"
+Assert(FORMAT$("{:.2f}", 3.14159) = "3.14")
+Assert(FORMAT$("{}", 42) = "42")
+
+' ── 30. FILE I/O ─────────────────────────────────────────────
+PRINT "── File I/O ──"
+TXTWRITER "native_test_tmp.txt", "test data 123"
+tmp$ = TXTREADER$("native_test_tmp.txt")
+Assert(tmp$ = "test data 123")
+Assert(FILE.EXISTS("native_test_tmp.txt"))
+KILL "native_test_tmp.txt"
+Assert(NOT FILE.EXISTS("native_test_tmp.txt"))
+
+' ── 31. DATE/TIME ────────────────────────────────────────────
+PRINT "── Date/Time ──"
+now_val = NOW()
+Assert(YEAR(now_val) >= 2025)
+Assert(MONTH(now_val) >= 1 AND MONTH(now_val) <= 12)
+Assert(DAY(now_val) >= 1 AND DAY(now_val) <= 31)
+tomorrow = DATEADD("D", 1, now_val)
+Assert(DATEDIFF("D", now_val, tomorrow) = 1)
+
+' ── 32. CODEC ────────────────────────────────────────────────
+PRINT "── Codec ──"
+Assert(CODEC.BASE64_ENCODE$("Hello") = "SGVsbG8=")
+Assert(CODEC.BASE64_DECODE$("SGVsbG8=") = "Hello")
+Assert(LEN(CODEC.UUID$()) > 30)
+Assert(LEN(CODEC.SHA256$("test")) = 64)
+
+' ── 33. ARRAY ADVANCED ───────────────────────────────────────
+PRINT "── Array Advanced ──"
+va = IOTA(10)
+Assert(SUM(va) = 55)
+Assert(PRODUCT(IOTA(5)) = 120)
+Assert(MEAN(IOTA(5)) = 3)
+Assert(MEDIAN(IOTA(5)) = 3)
+Assert(MIN(va) = 1)
+Assert(MAX(va) = 10)
+Assert(INDEXOF(va, 5) = 4)
+Assert(COUNT(va, 5) = 1)
+Assert(ANY(va))
+Assert(ALL(va))
+
+sorted = SORT(REVERSE(IOTA(5)))
+Assert(sorted[0] = 1)
+Assert(sorted[4] = 5)
+
+cs = CUMSUM(IOTA(4))
+Assert(cs[0] = 1)
+Assert(cs[3] = 10)
+
+' ── 34. REGEX ────────────────────────────────────────────────
+PRINT "── Regex ──"
+Assert(REGEX.MATCH("abc123", "[0-9]+"))
+Assert(NOT REGEX.MATCH("abcdef", "^[0-9]+$"))
+Assert(REGEX.REPLACE("Hello 2026", "[0-9]+", "XXXX") = "Hello XXXX")
+
+' ── 35. SYSTEM ───────────────────────────────────────────────
+PRINT "── System ──"
+Assert(LEN(PWD()) > 0)
+Assert(LEN(GETENV$("PATH")) > 0)
+Assert(OS.GETOS$() = "win32")
+Assert(TICK() > 0)
+
+' ── 36. POWER & SPECIAL OPS ──────────────────────────────────
+PRINT "── Power & Special ──"
+Assert(2 ^ 0 = 1)
+Assert(2 ^ 1 = 2)
+Assert(2 ^ 16 = 65536)
+Assert(IIF(1, 42, 99) = 42)
+Assert(IIF(0, 42, 99) = 99)
+
+' ── 37. SWITCH ────────────────────────────────────────────────
+PRINT "── SWITCH ──"
+sw_val = 2
+sw_result = 0
+SWITCH sw_val
+CASE 1
+    sw_result = 10
+CASE 2
+    sw_result = 20
+CASE 3
+    sw_result = 30
+DEFAULT
+    sw_result = -1
+ENDSWITCH
+Assert(sw_result = 20)
+
+sw_val = 99
+SWITCH sw_val
+CASE 1
+    sw_result = 10
+DEFAULT
+    sw_result = -1
+ENDSWITCH
+Assert(sw_result = -1)
+
+' ── 38. BITWISE ───────────────────────────────────────────────
+PRINT "── Bitwise ──"
+Assert((5 BAND 3) = 1)
+Assert((5 BOR 3) = 7)
+Assert((5 XOR 3) = 6)
+
+' ── 40. ANDALSO/ORELSE ───────────────────────────────────────
+PRINT "── ANDALSO/ORELSE ──"
+Assert(1 ANDALSO 1)
+Assert(NOT (1 ANDALSO 0))
+Assert(1 ORELSE 0)
+Assert(NOT (0 ORELSE 0))
+
+' ── 41. FOR EACH ─────────────────────────────────────────────
+PRINT "── FOR EACH ──"
+nums = IOTA(5)
+each_sum = 0.0
+FOR EACH fe_val IN nums
+    each_sum = each_sum + fe_val
+NEXT fe_val
+Assert(each_sum = 15)
+
+' ── 42. HEX LITERALS ────────────────────────────────────────
+PRINT "── Hex Literals ──"
+Assert($FF = 255)
+Assert($0A = 10)
+Assert($80000 = 524288)
+
+' ── 43. NESTED IF/SWITCH ─────────────────────────────────────
+PRINT "── Nested IF/SWITCH ──"
+grade = 85
+result$ = ""
+IF grade >= 90 THEN
+    result$ = "A"
+ELSEIF grade >= 80 THEN
+    result$ = "B"
+ELSEIF grade >= 70 THEN
+    result$ = "C"
+ELSE
+    result$ = "F"
+ENDIF
+Assert(result$ = "B")
+
+' ══════════════════════════════════════════════════════════════════
+' RESULTS
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " NATIVE COMPILER TEST RESULTS"
+PRINT "══════════════════════════════════════════"
+PRINT " PASS:     "; PASS
+PRINT " FAIL:     "; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED!"
+ELSE
+    PRINT " SOME TESTS FAILED!"
+ENDIF
+PRINT "══════════════════════════════════════════"
