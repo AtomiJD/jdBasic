@@ -2021,6 +2021,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         }
     }
 
+    // IN operator: "ell" IN "Hello" → INSTR(haystack, needle) > 0
+    if (expr.op == TokenType::IN) {
+        if (lhs.tag == 2 && rhs.tag == 2) {
+            auto& fn = runtime_funcs["INSTR"];
+            LLVMValueRef args[] = { rhs.val, lhs.val };
+            LLVMValueRef pos = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "instr");
+            LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSGT, pos,
+                                              LLVMConstInt(i64_type, 0, 0), "in");
+            return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), 0 };
+        }
+        return { LLVMConstInt(i64_type, 0, 0), 0 };
+    }
+
     // Power operator (^)
     if (expr.op == TokenType::CARET) {
         lhs = promote_to_f64(lhs);
@@ -2515,6 +2528,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
+    // Handle PUSH: PUSH arr, val → arr = APPEND(arr, val)
+    if (upper == "PUSH" && expr.args.size() >= 2) {
+        TypedValue arr_tv = codegen_expr(*expr.args[0]);
+        TypedValue val_tv = codegen_expr(*expr.args[1]);
+        LLVMValueRef fval = val_tv.val;
+        if (val_tv.tag == 0) fval = LLVMBuildSIToFP(builder, fval, f64_type, "itof");
+        else if (val_tv.tag == 2 || val_tv.tag == 3) {
+            LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, fval, i64_type, "ptoi");
+            fval = pun_i64_to_f64(as_i64);
+        }
+        auto& append_fn = runtime_funcs["APPEND"];
+        LLVMValueRef args[] = { arr_tv.val, fval };
+        LLVMValueRef result = LLVMBuildCall2(builder, append_fn.fn_type, append_fn.fn, args, 2, "push");
+        if (expr.args[0]->kind == ExprKind::VARIABLE) {
+            VarInfo* vi = lookup_var(expr.args[0]->str_val);
+            if (vi) LLVMBuildStore(builder, result, vi->alloca_val);
+        }
+        return { result, 3 };
+    }
+
     // Handle LEN — dispatch based on argument type (string vs array)
     if (upper == "LEN" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
@@ -2525,7 +2558,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "slen");
             return { result, 0 };
         }
-        // Array length (default path via runtime lookup)
+        if (av.tag == 3) {
+            // Array length — native jdb_array_len returns outer dimension count
+            auto& fn = runtime_funcs["LEN"];
+            LLVMValueRef args[] = { av.val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "alen");
+            return { result, 0 };
+        }
+        // Fallback
     }
 
     // Handle TYPEOF — resolve type tag at compile time
