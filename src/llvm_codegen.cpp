@@ -1204,54 +1204,41 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
         }
 
         case ExprKind::LAMBDA_EXPR: {
-            // Generate anonymous LLVM function for the lambda
             static int lambda_counter = 0;
             std::string lambda_name = "__lambda_" + std::to_string(lambda_counter++);
-
             int arity = (int)expr.lambda_params.size();
 
-            // Create function type: (double, ...) -> double
             std::vector<LLVMTypeRef> param_types(arity, f64_type);
             LLVMTypeRef fn_type = LLVMFunctionType(f64_type,
                 param_types.empty() ? nullptr : param_types.data(), arity, 0);
             LLVMValueRef lambda_fn = LLVMAddFunction(module, lambda_name.c_str(), fn_type);
 
-            // Save current state
+            // Save current state — including the exact insert block
             LLVMValueRef saved_fn = current_fn;
-            current_fn = lambda_fn;
+            LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
 
-            // Push lambda scope — captures are visible through parent scope lookup
-            // (lookup_var searches from innermost to outermost, so globals are found)
+            current_fn = lambda_fn;
             scopes.push_back(Scope{});
 
-            // Create entry block
             LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, lambda_fn, "entry");
             LLVMPositionBuilderAtEnd(builder, entry);
 
-            // Create allocas for parameters
             for (int i = 0; i < arity; i++) {
-                VarInfo& vi = create_var(expr.lambda_params[i], 1);  // f64
+                VarInfo& vi = create_var(expr.lambda_params[i], 1);
                 LLVMBuildStore(builder, LLVMGetParam(lambda_fn, i), vi.alloca_val);
             }
 
-            // Compile body expression
-            // Captures work automatically — the lambda body references variables
-            // from outer scopes which are resolved via lookup_var (searches parent scopes).
-            // For global variables, these are LLVM module-level globals accessible from any function.
             TypedValue body = codegen_expr(*expr.right);
 
-            // Return the result
             LLVMValueRef ret_val = body.val;
             if (body.tag == 0) ret_val = LLVMBuildSIToFP(builder, ret_val, f64_type, "itof");
             LLVMBuildRet(builder, ret_val);
 
-            // Restore state
+            // Restore state — position builder back at the EXACT block we were in
             scopes.pop_back();
             current_fn = saved_fn;
-            LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
-            LLVMPositionBuilderAtEnd(builder, last_bb);
+            LLVMPositionBuilderAtEnd(builder, saved_bb);
 
-            // Return function pointer (tag=5 = function pointer)
             return { lambda_fn, 5 };
         }
 

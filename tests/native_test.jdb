@@ -417,7 +417,20 @@ DEFAULT
 ENDSWITCH
 Assert(sw_result = -1)
 
-' ── 38. BITWISE ───────────────────────────────────────────────
+' ── 38. ENUM ──────────────────────────────────────────────────
+PRINT "── ENUM ──"
+ENUM Directions
+    NORTH = 0
+    EAST = 1
+    SOUTH = 2
+    WEST = 3
+ENDENUM
+Assert(NORTH = 0)
+Assert(EAST = 1)
+Assert(SOUTH = 2)
+Assert(WEST = 3)
+
+' ── 39. BITWISE ──────────────────────────────────────────────
 PRINT "── Bitwise ──"
 Assert((5 BAND 3) = 1)
 Assert((5 BOR 3) = 7)
@@ -459,6 +472,61 @@ ELSE
     result$ = "F"
 ENDIF
 Assert(result$ = "B")
+
+' ── 44. LAMBDA + SELECT ───────────────────────────────────────
+PRINT "── Lambda + SELECT ──"
+la_doubled = SELECT(lambda x -> x * 2, IOTA(5))
+Assert(la_doubled[0] = 2)
+Assert(la_doubled[4] = 10)
+Assert(SUM(la_doubled) = 30)
+
+' ── 45. LAMBDA + FILTER ──────────────────────────────────────
+PRINT "── Lambda + FILTER ──"
+la_evens = FILTER(lambda x -> (x MOD 2) = 0, IOTA(10))
+Assert(la_evens[0] = 2)
+Assert(la_evens[4] = 10)
+Assert(LEN(la_evens) = 5)
+
+' ── 46. LAMBDA + REDUCE ──────────────────────────────────────
+PRINT "── Lambda + REDUCE ──"
+la_sum = REDUCE(lambda acc, x -> acc + x, IOTA(10), 0)
+Assert(la_sum = 55)
+la_prod = REDUCE(lambda acc, x -> acc * x, IOTA(5), 1)
+Assert(la_prod = 120)
+
+' ── 47. LAMBDA CAPTURES (globals) ────────────────────────────
+PRINT "── Lambda Captures ──"
+la_offset = 1000
+la_result = SELECT(lambda x -> x + la_offset, IOTA(3))
+Assert(la_result[0] = 1001)
+Assert(la_result[2] = 1003)
+
+la_min_val = 5
+la_filtered = FILTER(lambda x -> x >= la_min_val, IOTA(10))
+Assert(LEN(la_filtered) = 6)
+Assert(la_filtered[0] = 5)
+
+' ── 48. PIPE OPERATOR ────────────────────────────────────────
+PRINT "── PIPE ──"
+pipe_r1 = 21 |> lambda x -> x * 2
+Assert(pipe_r1 = 42)
+
+FUNC PipeDouble(x)
+    RETURN x * 2
+ENDFUNC
+pipe_r2 = 25 |> PipeDouble
+Assert(pipe_r2 = 50)
+
+pipe_r3 = IOTA(5) |> FILTER(lambda x -> x > 3, ?)
+Assert(LEN(pipe_r3) = 2)
+Assert(pipe_r3[0] = 4)
+
+' ── 49. LAMBDA SQUARES + CHAIN ───────────────────────────────
+PRINT "── Lambda Chain ──"
+la_chain = FILTER(lambda x -> x > 10, SELECT(lambda x -> x ^ 2, IOTA(5)))
+Assert(la_chain[0] = 16)
+Assert(la_chain[1] = 25)
+Assert(LEN(la_chain) = 2)
 
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
