@@ -267,6 +267,13 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_uuid",          "CODEC.UUID$",          i8_ptr_type, {}, 2);
     reg("jdb_sha256",        "CODEC.SHA256$",        i8_ptr_type, {i8_ptr_type}, 2);
 
+    // UDT (User-Defined Types)
+    reg("jdb_udt_new",     "__udt_new",     i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_udt_set_f64", "__udt_set_f64", void_type, {i8_ptr_type, i8_ptr_type, f64_type}, -1);
+    reg("jdb_udt_get_f64", "__udt_get_f64", f64_type, {i8_ptr_type, i8_ptr_type}, 1);
+    reg("jdb_udt_set_str", "__udt_set_str", void_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_udt_get_str", "__udt_get_str", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+
     // Higher-order functions (take function pointers)
     // jdb_select_fn(fn_ptr, array) -> array
     reg("jdb_select_fn", "__select_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -474,15 +481,22 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         }
     }
 
-    // First pass: compile all FUNC/SUB bodies
+    // First pass: compile TYPE declarations (constructors + methods)
+    for (auto& stmt : program) {
+        if (stmt && stmt->kind == StmtKind::TYPE_DECL)
+            codegen_type_decl(*stmt);
+    }
+
+    // Second pass: compile all FUNC/SUB bodies
     for (auto& stmt : program) {
         if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
             codegen_function(*stmt);
     }
 
-    // Second pass: compile top-level statements (skip FUNC/SUB)
+    // Third pass: compile top-level statements (skip FUNC/SUB/TYPE)
     for (auto& stmt : program) {
-        if (stmt && stmt->kind != StmtKind::FUNCTION && stmt->kind != StmtKind::SUB)
+        if (stmt && stmt->kind != StmtKind::FUNCTION &&
+            stmt->kind != StmtKind::SUB && stmt->kind != StmtKind::TYPE_DECL)
             codegen_stmt(*stmt);
     }
 }
@@ -533,6 +547,9 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             break;
         case StmtKind::ENUM_DECL:
             codegen_enum(stmt);
+            break;
+        case StmtKind::TYPE_DECL:
+            codegen_type_decl(stmt);
             break;
         case StmtKind::THROW_STMT:
             // TODO: proper exception throwing
@@ -746,6 +763,26 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
 // ── INDEX_ASSIGN: arr[i] = val ──────────────────────────────
 
 void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
+    // UDT field assignment: obj.field = val (print_exprs[0] = obj, label = field)
+    if (!stmt.print_exprs.empty() && !stmt.label.empty()) {
+        TypedValue obj = codegen_expr(*stmt.print_exprs[0]);
+        TypedValue val = codegen_expr(*stmt.expr);
+        LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, stmt.label.c_str(), ".fld");
+        bool is_str = (!stmt.label.empty() && stmt.label.back() == '$') || val.tag == 2;
+
+        if (is_str) {
+            auto& set_fn = runtime_funcs["__udt_set_str"];
+            LLVMValueRef args[] = { obj.val, field_str, val.val };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+        } else {
+            LLVMValueRef fval = val.tag == 0 ? LLVMBuildSIToFP(builder, val.val, f64_type, "itof") : val.val;
+            auto& set_fn = runtime_funcs["__udt_set_f64"];
+            LLVMValueRef args[] = { obj.val, field_str, fval };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+        }
+        return;
+    }
+
     VarInfo* vi = lookup_var(stmt.var_name);
     if (!vi || vi->tag != 3) return;  // not an array
 
@@ -1103,6 +1140,89 @@ void LLVMCodegen::codegen_enum(const Stmt& stmt) {
     }
 }
 
+// ── TYPE_DECL ───────────────────────────────────────────────
+
+void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
+    // Register type fields for member access resolution
+    std::vector<UDTField> fields;
+    for (auto& mem : stmt.type_members) {
+        bool is_str = (mem.type == VarType::STRING);
+        fields.push_back({ mem.name, is_str });
+    }
+    udt_types[stmt.func_name] = fields;
+
+    // Create constructor function: TYPENAME() → returns new object (ptr)
+    std::string ctor_name = stmt.func_name;
+    LLVMTypeRef ctor_ft = LLVMFunctionType(i8_ptr_type, nullptr, 0, 0);
+    LLVMValueRef ctor_fn = LLVMAddFunction(module, ctor_name.c_str(), ctor_ft);
+
+    LLVMValueRef saved_fn = current_fn;
+    LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+    current_fn = ctor_fn;
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, ctor_fn, "entry");
+    LLVMPositionBuilderAtEnd(builder, entry);
+
+    // Create new object: jdb_udt_new("TypeName")
+    auto& new_fn = runtime_funcs["__udt_new"];
+    LLVMValueRef type_str = LLVMBuildGlobalStringPtr(builder, stmt.func_name.c_str(), ".type");
+    LLVMValueRef new_args[] = { type_str };
+    LLVMValueRef obj = LLVMBuildCall2(builder, new_fn.fn_type, new_fn.fn, new_args, 1, "obj");
+
+    // Set default values for each field
+    for (auto& mem : stmt.type_members) {
+        LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, mem.name.c_str(), ".field");
+        bool is_str = (mem.type == VarType::STRING);
+
+        if (is_str) {
+            auto& set_fn = runtime_funcs["__udt_set_str"];
+            LLVMValueRef empty = LLVMBuildGlobalStringPtr(builder, "", ".empty");
+            LLVMValueRef args[] = { obj, field_str, empty };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+        } else {
+            auto& set_fn = runtime_funcs["__udt_set_f64"];
+            LLVMValueRef args[] = { obj, field_str, LLVMConstReal(f64_type, 0.0) };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+        }
+    }
+
+    LLVMBuildRet(builder, obj);
+
+    current_fn = saved_fn;
+    LLVMPositionBuilderAtEnd(builder, saved_bb);
+
+    // Register as user function (returns ptr, tag=3 for object)
+    user_functions[ctor_name] = { ctor_fn, 3, {} };
+
+    // Compile methods (SUB/FUNCTION in body)
+    for (auto& method : stmt.body) {
+        if (method && (method->kind == StmtKind::FUNCTION || method->kind == StmtKind::SUB)) {
+            // Rename method: TYPENAME.METHOD
+            method->func_name = stmt.func_name + "." + method->func_name;
+            // Declare and compile
+            // First declare in user_functions
+            bool is_sub = (method->kind == StmtKind::SUB);
+            bool returns_str = (!is_sub && !method->func_name.empty() && method->func_name.back() == '$');
+            int ret_tag = is_sub ? -1 : (returns_str ? 2 : 1);
+
+            std::vector<LLVMTypeRef> ptypes;
+            std::vector<int> ptags;
+            for (auto& p : method->params) {
+                bool sp = (!p.name.empty() && p.name.back() == '$');
+                ptypes.push_back(sp ? i8_ptr_type : f64_type);
+                ptags.push_back(sp ? 2 : 1);
+            }
+            LLVMTypeRef mft = LLVMFunctionType(
+                is_sub ? void_type : (returns_str ? i8_ptr_type : f64_type),
+                ptypes.empty() ? nullptr : ptypes.data(), (unsigned)ptypes.size(), 0);
+            LLVMValueRef mfn = LLVMAddFunction(module, method->func_name.c_str(), mft);
+            user_functions[method->func_name] = { mfn, ret_tag, ptags };
+
+            codegen_function(*method);
+        }
+    }
+}
+
 // ── Expression Codegen ──────────────────────────────────────
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
@@ -1137,6 +1257,30 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
 
         case ExprKind::UNARY:
             return codegen_unary(expr);
+
+        case ExprKind::MEMBER_ACCESS: {
+            // obj.field — get field from UDT object
+            TypedValue obj = codegen_expr(*expr.left);
+            std::string field_name = expr.str_val;
+            LLVMValueRef obj_ptr = obj.val;
+
+            // Determine if field is string-typed
+            bool is_str_field = (!field_name.empty() && field_name.back() == '$');
+
+            LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
+
+            if (is_str_field) {
+                auto& get_fn = runtime_funcs["__udt_get_str"];
+                LLVMValueRef args[] = { obj_ptr, field_str };
+                LLVMValueRef result = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, args, 2, "fget");
+                return { result, 2 };
+            } else {
+                auto& get_fn = runtime_funcs["__udt_get_f64"];
+                LLVMValueRef args[] = { obj_ptr, field_str };
+                LLVMValueRef result = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, args, 2, "fget");
+                return { result, 1 };
+            }
+        }
 
         case ExprKind::CALL:
             return codegen_call(expr);

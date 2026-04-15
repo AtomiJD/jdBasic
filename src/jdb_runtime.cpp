@@ -1171,6 +1171,49 @@ char* jdb_os_hostname() {
     return _strdup(buf);
 }
 
+} // end extern "C" for UDT section
+
+// ── UDT (User-Defined Types) ────────────────────────────────
+#include <unordered_map>
+
+struct JdbObject {
+    std::unordered_map<std::string, double> num_fields;
+    std::unordered_map<std::string, char*> str_fields;
+    char* type_name;
+};
+
+extern "C" {
+
+JdbObject* jdb_udt_new(const char* type_name) {
+    auto* obj = new JdbObject();
+    obj->type_name = _strdup(type_name ? type_name : "");
+    return obj;
+}
+
+void jdb_udt_set_f64(JdbObject* obj, const char* field, double val) {
+    if (obj) obj->num_fields[field] = val;
+}
+
+double jdb_udt_get_f64(JdbObject* obj, const char* field) {
+    if (obj) {
+        auto it = obj->num_fields.find(field);
+        if (it != obj->num_fields.end()) return it->second;
+    }
+    return 0.0;
+}
+
+void jdb_udt_set_str(JdbObject* obj, const char* field, const char* val) {
+    if (obj) obj->str_fields[field] = _strdup(val ? val : "");
+}
+
+const char* jdb_udt_get_str(JdbObject* obj, const char* field) {
+    if (obj) {
+        auto it = obj->str_fields.find(field);
+        if (it != obj->str_fields.end()) return it->second;
+    }
+    return "";
+}
+
 // ── Higher-order Array Functions (with native function pointers) ─
 
 // Function pointer type: double fn(double)

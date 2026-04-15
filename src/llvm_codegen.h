@@ -104,6 +104,11 @@ private:
     void codegen_switch(const Stmt& stmt);
     void codegen_for_each(const Stmt& stmt);
     void codegen_enum(const Stmt& stmt);
+    void codegen_type_decl(const Stmt& stmt);
+
+    // UDT type registry: type_name → list of {field_name, is_string}
+    struct UDTField { std::string name; bool is_string; };
+    std::unordered_map<std::string, std::vector<UDTField>> udt_types;
 
     TypedValue codegen_expr(const Expr& expr);
     TypedValue codegen_binary(const Expr& expr);
