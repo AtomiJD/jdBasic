@@ -134,12 +134,14 @@ void jdb_randomseed(int64_t seed) {
 struct JdbArray {
     double* data;
     int64_t length;
+    int32_t flags;  // bit 0: elements are nested array ptrs (2D+)
 };
 
 JdbArray* jdb_array_new(int64_t size) {
     auto* arr = (JdbArray*)malloc(sizeof(JdbArray));
     arr->data = (double*)calloc(size, sizeof(double));
     arr->length = size;
+    arr->flags = 0;
     return arr;
 }
 
@@ -413,71 +415,109 @@ JdbArray* jdb_grade(JdbArray* arr) {
     return r;
 }
 
-// ── Array Arithmetic (element-wise, flat operations) ──
-// For 2D arrays, the LLVM codegen generates nested calls — the runtime
-// only needs to handle 1D element-wise operations here.
+// ── Array Arithmetic (element-wise, recursive for 2D+) ──
+// Uses flags bit 0 to know if elements are nested array pointers.
+// Mirrors the interpreter's array_arithmetic: recurse on nested arrays,
+// scalar_binop on leaf elements. Supports broadcasting.
 
+static inline JdbArray* decode_inner(double val) {
+    union { double d; int64_t i; } u; u.d = val;
+    return (JdbArray*)(intptr_t)u.i;
+}
+static inline double encode_inner(JdbArray* arr) {
+    union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)arr;
+    return u.d;
+}
+
+static inline double scalar_op(double a, double b, int op) {
+    switch (op) {
+        case 0: return a + b;
+        case 1: return a - b;
+        case 2: return a * b;
+        case 3: return b != 0 ? a / b : 0;
+        default: return 0;
+    }
+}
+static inline double scalar_cmp(double a, double b, int op) {
+    switch (op) {
+        case 0: return a == b ? 1.0 : 0.0;
+        case 1: return a != b ? 1.0 : 0.0;
+        case 2: return (a && b) ? 1.0 : 0.0;
+        case 3: return (a || b) ? 1.0 : 0.0;
+        default: return 0;
+    }
+}
+
+// arr OP arr (recursive for nested arrays)
 static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
     if (!a || !b) return jdb_array_new(0);
     int64_t n = a->length < b->length ? a->length : b->length;
     auto* r = jdb_array_new(n);
-    for (int64_t i = 0; i < n; i++) {
-        switch (op) {
-            case 0: r->data[i] = a->data[i] + b->data[i]; break;
-            case 1: r->data[i] = a->data[i] - b->data[i]; break;
-            case 2: r->data[i] = a->data[i] * b->data[i]; break;
-            case 3: r->data[i] = b->data[i] != 0 ? a->data[i] / b->data[i] : 0; break;
+    bool nested = (a->flags & 1) || (b->flags & 1);
+    if (nested) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < n; i++) {
+            auto* inner = arr_binop(decode_inner(a->data[i]), decode_inner(b->data[i]), op);
+            r->data[i] = encode_inner(inner);
         }
+    } else {
+        for (int64_t i = 0; i < n; i++)
+            r->data[i] = scalar_op(a->data[i], b->data[i], op);
     }
     return r;
 }
 
+// arr OP scalar (recursive for nested arrays, broadcasts scalar to all leaves)
 static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) {
     if (!a) return jdb_array_new(0);
     auto* r = jdb_array_new(a->length);
-    for (int64_t i = 0; i < a->length; i++) {
-        double av = a->data[i];
-        switch (op) {
-            case 0: r->data[i] = av + s; break;
-            case 1: r->data[i] = scalar_left ? s - av : av - s; break;
-            case 2: r->data[i] = av * s; break;
-            case 3: r->data[i] = scalar_left ? (av != 0 ? s / av : 0) : (s != 0 ? av / s : 0); break;
+    if (a->flags & 1) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < a->length; i++) {
+            auto* inner = arr_scalar_op(decode_inner(a->data[i]), s, op, scalar_left);
+            r->data[i] = encode_inner(inner);
+        }
+    } else {
+        for (int64_t i = 0; i < a->length; i++) {
+            double av = a->data[i];
+            r->data[i] = scalar_left ? scalar_op(s, av, op) : scalar_op(av, s, op);
         }
     }
     return r;
 }
 
+// arr CMP scalar (recursive)
 static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op) {
     if (!a) return jdb_array_new(0);
     auto* r = jdb_array_new(a->length);
-    for (int64_t i = 0; i < a->length; i++) {
-        bool result;
-        switch (op) {
-            case 0: result = a->data[i] == s; break;
-            case 1: result = a->data[i] != s; break;
-            case 2: result = a->data[i] && s; break;
-            case 3: result = a->data[i] || s; break;
-            default: result = false;
+    if (a->flags & 1) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < a->length; i++) {
+            auto* inner = arr_cmp_scalar(decode_inner(a->data[i]), s, op);
+            r->data[i] = encode_inner(inner);
         }
-        r->data[i] = result ? 1.0 : 0.0;
+    } else {
+        for (int64_t i = 0; i < a->length; i++)
+            r->data[i] = scalar_cmp(a->data[i], s, op);
     }
     return r;
 }
 
+// arr CMP arr (recursive)
 static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
     if (!a || !b) return jdb_array_new(0);
     int64_t n = a->length < b->length ? a->length : b->length;
     auto* r = jdb_array_new(n);
-    for (int64_t i = 0; i < n; i++) {
-        bool result;
-        switch (op) {
-            case 0: result = a->data[i] == b->data[i]; break;
-            case 1: result = a->data[i] != b->data[i]; break;
-            case 2: result = a->data[i] && b->data[i]; break;
-            case 3: result = a->data[i] || b->data[i]; break;
-            default: result = false;
+    bool nested = (a->flags & 1) || (b->flags & 1);
+    if (nested) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < n; i++) {
+            auto* inner = arr_cmp_arr(decode_inner(a->data[i]), decode_inner(b->data[i]), op);
+            r->data[i] = encode_inner(inner);
         }
-        r->data[i] = result ? 1.0 : 0.0;
+    } else {
+        for (int64_t i = 0; i < n; i++)
+            r->data[i] = scalar_cmp(a->data[i], b->data[i], op);
     }
     return r;
 }
@@ -494,6 +534,11 @@ JdbArray* jdb_array_cmp_scalar(JdbArray* a, double s, int32_t op) {
 }
 JdbArray* jdb_array_cmp_arr(JdbArray* a, JdbArray* b, int32_t op) {
     return arr_cmp_arr(a, b, op);
+}
+
+// Mark array as containing nested array pointers (2D+)
+void jdb_array_set_nested(JdbArray* arr) {
+    if (arr) arr->flags |= 1;
 }
 
 // ── OS.ARGS ─────────────────────────────────────────────────

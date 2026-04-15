@@ -198,6 +198,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_scalar_op",   "__arr_scalar_op",   i8_ptr_type, {i8_ptr_type, f64_type, i32_type, i32_type}, 3);
     reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
+    reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
 
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
@@ -963,6 +964,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
 
                 LLVMPositionBuilderAtEnd(builder, end_bb);
                 LLVMValueRef final_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "arr2d");
+                // Mark as nested (2D) so array arithmetic recurses correctly
+                auto& set_nested = runtime_funcs["__arr_set_nested"];
+                LLVMValueRef sn_args[] = { final_outer };
+                LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn_args, 1, "");
+
                 VarInfo* vi = lookup_var(stmt.var_name);
                 if (vi) { LLVMBuildStore(builder, final_outer, vi->alloca_val); vi->tag = 3; }
                 else { VarInfo& nv = create_var(stmt.var_name, 3); LLVMBuildStore(builder, final_outer, nv.alloca_val); }
@@ -1912,12 +1918,31 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
 }
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
-    // Handle AND/OR with short-circuit semantics
+    // Handle AND/OR with short-circuit semantics (scalar only)
+    // For arrays, fall through to the array arithmetic path below
     if (expr.op == TokenType::AND || expr.op == TokenType::OR ||
         expr.op == TokenType::ANDALSO || expr.op == TokenType::ORELSE) {
-        // ANDALSO/ORELSE are aliases for AND/OR with short-circuit (which we already do)
-        TypedValue lhs = codegen_expr(*expr.left);
-        LLVMValueRef lhs_bool = to_i1(lhs);
+        // Quick check: if left operand is likely an array, skip short-circuit
+        // We evaluate lhs first; if it's an array, use element-wise path
+        TypedValue lhs_check = codegen_expr(*expr.left);
+        if (lhs_check.tag == 3) {
+            TypedValue rhs_check = codegen_expr(*expr.right);
+            int32_t cmp_op = (expr.op == TokenType::AND || expr.op == TokenType::ANDALSO) ? 2 : 3;
+            if (rhs_check.tag == 3) {
+                auto& fn = runtime_funcs["__arr_cmp_arr"];
+                LLVMValueRef args[] = { lhs_check.val, rhs_check.val, LLVMConstInt(i32_type, cmp_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), 3 };
+            } else {
+                LLVMValueRef scalar = rhs_check.tag == 0
+                    ? LLVMBuildSIToFP(builder, rhs_check.val, f64_type, "itof") : rhs_check.val;
+                auto& fn = runtime_funcs["__arr_cmp_scalar"];
+                LLVMValueRef args[] = { lhs_check.val, scalar, LLVMConstInt(i32_type, cmp_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), 3 };
+            }
+        }
+        // Scalar short-circuit path (lhs already evaluated as lhs_check)
+        {
+        LLVMValueRef lhs_bool = to_i1(lhs_check);
 
         LLVMBasicBlockRef rhs_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "logic.rhs");
         LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "logic.merge");
@@ -1951,6 +1976,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         LLVMAddIncoming(phi, incoming_vals, incoming_bbs, 2);
 
         return { phi, 0 };
+        } // end scalar short-circuit block
     }
 
     TypedValue lhs = codegen_expr(*expr.left);
@@ -2003,6 +2029,39 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         LLVMValueRef args[] = { lhs.val, rhs.val };
         LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "pow");
         return { result, 1 };
+    }
+
+    // Array + String or String + Array: dispatch via VM bridge (element-wise string concat)
+    if ((lhs.tag == 3 && rhs.tag == 2) || (lhs.tag == 2 && rhs.tag == 3)) {
+        LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
+            LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
+        LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
+            LLVMConstInt(i32_type, 2, 0), "args");
+        LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
+            LLVMConstInt(i32_type, 2, 0), "tags");
+        auto enc_vm = [&](TypedValue tv, int idx) {
+            LLVMValueRef encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
+            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, idx, 0) };
+            LLVMBuildStore(builder, encoded, LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "a"));
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, tv.tag, 0),
+                LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "t"));
+        };
+        enc_vm(lhs, 0); enc_vm(rhs, 1);
+        std::string op_name;
+        switch (expr.op) {
+            case TokenType::PLUS: op_name = "__ARRAY_STR_ADD"; break;
+            case TokenType::MINUS: op_name = "__ARRAY_STR_SUB"; break;
+            case TokenType::STAR: op_name = "__ARRAY_STR_MUL"; break;
+            default: op_name = "__ARRAY_STR_ADD"; break;
+        }
+        LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, op_name.c_str(), ".op");
+        auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
+        LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
+            LLVMConstInt(i32_type, 2, 0) };
+        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
+        LLVMValueRef as_i64 = pun_f64_to_i64(result);
+        LLVMValueRef ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "atoptr");
+        return { ptr, 3 };
     }
 
     // Array/ptr operands: use native array arithmetic functions
