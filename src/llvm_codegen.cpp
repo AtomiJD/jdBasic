@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <algorithm>
+#include <unordered_set>
 
 // ── Constructor / Destructor ────────────────────────────────
 
@@ -457,18 +458,46 @@ bool LLVMCodegen::emit_ir(const std::vector<StmtPtr>& program) {
 void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     // Pre-scan: declare all global variables used in top-level code
     // so that FUNC/SUB bodies can reference them
+    // Pre-scan TYPE_DECL names so we can recognize DIM x AS TypeName
+    std::unordered_set<std::string> type_names;
+    for (auto& stmt : program) {
+        if (stmt && stmt->kind == StmtKind::TYPE_DECL)
+            type_names.insert(stmt->func_name);
+    }
+
+    // Pre-scan DIM AS TypeName to know which variables are UDT objects
+    std::unordered_set<std::string> udt_var_names;
+    for (auto& stmt : program) {
+        if (stmt && stmt->kind == StmtKind::DIM && !stmt->label.empty() &&
+            type_names.count(stmt->label)) {
+            udt_var_names.insert(stmt->var_name);
+            var_udt_type[stmt->var_name] = stmt->label;
+        }
+    }
+
     for (auto& stmt : program) {
         if (!stmt) continue;
         if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
         // LET/DIM/ASSIGN at top level → declare global variable
         if ((stmt->kind == StmtKind::LET || stmt->kind == StmtKind::ASSIGN ||
              stmt->kind == StmtKind::DIM) && !stmt->var_name.empty()) {
+            // Skip dotted names that are UDT field assignments (e.g. PLAYER1.NAME)
+            size_t dp = stmt->var_name.find('.');
+            if (dp != std::string::npos) {
+                std::string prefix = stmt->var_name.substr(0, dp);
+                if (udt_var_names.count(prefix)) continue;
+            }
             if (!lookup_var(stmt->var_name)) {
                 // Determine type from initial expression
                 int tag = 0;  // default i64
-                if (stmt->kind == StmtKind::DIM && stmt->expr &&
+                if (stmt->kind == StmtKind::DIM && !stmt->label.empty() &&
+                    type_names.count(stmt->label))
+                    tag = 3;  // UDT object (ptr)
+                else if (stmt->kind == StmtKind::DIM && stmt->expr &&
                     stmt->expr->kind == ExprKind::CALL && stmt->expr->func_name == "ZEROS")
                     tag = 3;  // array
+                else if (stmt->expr && stmt->expr->kind == ExprKind::ARRAY_LITERAL)
+                    tag = 3;  // array (e.g. Party = [])
                 else if (stmt->expr && stmt->expr->kind == ExprKind::LITERAL_FLOAT)
                     tag = 1;  // f64
                 else if (stmt->expr && stmt->expr->kind == ExprKind::LITERAL_STRING)
@@ -597,9 +626,9 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, current_fn, "entry");
     LLVMPositionBuilderAtEnd(builder, entry);
 
-    // Create allocas for parameters — f64 for numbers, ptr for strings ($)
-    for (size_t i = 0; i < stmt.params.size(); i++) {
-        int ptag = fit->second.param_tags[i];  // 1=f64, 2=string(ptr)
+    // Create allocas for parameters — use param_tags for types
+    for (size_t i = 0; i < stmt.params.size() && i < fit->second.param_tags.size(); i++) {
+        int ptag = fit->second.param_tags[i];
         VarInfo& vi = create_var(stmt.params[i].name, ptag);
         LLVMBuildStore(builder, LLVMGetParam(current_fn, (unsigned)i), vi.alloca_val);
     }
@@ -659,6 +688,36 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
 
 void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     if (!stmt.expr) return;
+
+    // Check for dotted UDT field assignment: Player1.Name = "Atomi"
+    size_t dot_pos = stmt.var_name.find('.');
+    if (dot_pos != std::string::npos) {
+        std::string obj_name = stmt.var_name.substr(0, dot_pos);
+        std::string field_name = stmt.var_name.substr(dot_pos + 1);
+        auto tit = var_udt_type.find(obj_name);
+        if (tit != var_udt_type.end()) {
+            VarInfo* vi = lookup_var(obj_name);
+            if (vi) {
+                LLVMValueRef obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "obj");
+                LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
+                TypedValue val = codegen_expr(*stmt.expr);
+                bool is_str = val.tag == 2 || is_udt_string_field(obj_name, field_name);
+                if (is_str) {
+                    auto& set_fn = runtime_funcs["__udt_set_str"];
+                    LLVMValueRef args[] = { obj_ptr, field_str, val.val };
+                    LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+                } else {
+                    LLVMValueRef fval = val.tag == 0
+                        ? LLVMBuildSIToFP(builder, val.val, f64_type, "itof") : val.val;
+                    auto& set_fn = runtime_funcs["__udt_set_f64"];
+                    LLVMValueRef args[] = { obj_ptr, field_str, fval };
+                    LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+                }
+                return;
+            }
+        }
+    }
+
     TypedValue rhs = codegen_expr(*stmt.expr);
 
     VarInfo* vi = lookup_var(stmt.var_name);
@@ -702,6 +761,26 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
 // ── DIM (array allocation) ──────────────────────────────────
 
 void LLVMCodegen::codegen_dim(const Stmt& stmt) {
+    // DIM x AS TypeName → call UDT constructor
+    if (!stmt.label.empty()) {
+        auto uit = user_functions.find(stmt.label);
+        if (uit != user_functions.end()) {
+            LLVMTypeRef fn_type = LLVMGlobalGetValueType(uit->second.fn);
+            LLVMValueRef obj = LLVMBuildCall2(builder, fn_type, uit->second.fn,
+                                               nullptr, 0, "obj");
+            VarInfo* vi = lookup_var(stmt.var_name);
+            if (vi) {
+                LLVMBuildStore(builder, obj, vi->alloca_val);
+                vi->tag = 3;
+            } else {
+                VarInfo& nv = create_var(stmt.var_name, 3);
+                LLVMBuildStore(builder, obj, nv.alloca_val);
+            }
+            var_udt_type[stmt.var_name] = stmt.label;
+            return;
+        }
+    }
+
     if (!stmt.expr) {
         // DIM without value — create default var
         codegen_let_or_assign(stmt);
@@ -784,7 +863,33 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     }
 
     VarInfo* vi = lookup_var(stmt.var_name);
-    if (!vi || vi->tag != 3) return;  // not an array
+    if (!vi || vi->tag != 3) return;  // not an array/UDT
+
+    // Check if this is a UDT field assignment via index_chain with string key
+    // (e.g. THIS.HitPoints = 150 parsed as INDEX_ASSIGN with string key)
+    if (!stmt.index_chain.empty() && stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING) {
+        std::string field_name = stmt.index_chain[0]->str_val;
+        LLVMValueRef obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "obj");
+        LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
+        TypedValue val_tv = codegen_expr(*stmt.expr);
+
+        bool is_str = (!field_name.empty() && field_name.back() == '$') || val_tv.tag == 2;
+        if (!is_str)
+            is_str = is_udt_string_field(stmt.var_name, field_name);
+
+        if (is_str) {
+            auto& set_fn = runtime_funcs["__udt_set_str"];
+            LLVMValueRef args[] = { obj_ptr, field_str, val_tv.val };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+        } else {
+            LLVMValueRef fval = val_tv.tag == 0
+                ? LLVMBuildSIToFP(builder, val_tv.val, f64_type, "itof") : val_tv.val;
+            auto& set_fn = runtime_funcs["__udt_set_f64"];
+            LLVMValueRef args[] = { obj_ptr, field_str, fval };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+        }
+        return;
+    }
 
     // Load array pointer
     LLVMValueRef arr_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "arr");
@@ -1195,30 +1300,46 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
     user_functions[ctor_name] = { ctor_fn, 3, {} };
 
     // Compile methods (SUB/FUNCTION in body)
+    // Parser already renamed methods to TYPENAME.METHOD and inserted THIS as first param
     for (auto& method : stmt.body) {
         if (method && (method->kind == StmtKind::FUNCTION || method->kind == StmtKind::SUB)) {
-            // Rename method: TYPENAME.METHOD
-            method->func_name = stmt.func_name + "." + method->func_name;
-            // Declare and compile
-            // First declare in user_functions
             bool is_sub = (method->kind == StmtKind::SUB);
             bool returns_str = (!is_sub && !method->func_name.empty() && method->func_name.back() == '$');
+            // Infer string return from body if name convention doesn't indicate it
+            if (!returns_str && !is_sub) {
+                for (auto& s : method->body) {
+                    if (s && s->expr && expr_involves_strings(*s->expr)) {
+                        returns_str = true;
+                        break;
+                    }
+                }
+            }
             int ret_tag = is_sub ? -1 : (returns_str ? 2 : 1);
 
+            // Build parameter types from declared params
+            // Parser already added THIS as first param with type OBJECT
             std::vector<LLVMTypeRef> ptypes;
             std::vector<int> ptags;
             for (auto& p : method->params) {
-                bool sp = (!p.name.empty() && p.name.back() == '$');
-                ptypes.push_back(sp ? i8_ptr_type : f64_type);
-                ptags.push_back(sp ? 2 : 1);
+                if (p.name == "THIS" || p.type == VarType::OBJECT) {
+                    ptypes.push_back(i8_ptr_type);
+                    ptags.push_back(3);  // ptr for UDT object
+                } else {
+                    bool sp = (!p.name.empty() && p.name.back() == '$');
+                    ptypes.push_back(sp ? i8_ptr_type : f64_type);
+                    ptags.push_back(sp ? 2 : 1);
+                }
             }
             LLVMTypeRef mft = LLVMFunctionType(
                 is_sub ? void_type : (returns_str ? i8_ptr_type : f64_type),
-                ptypes.empty() ? nullptr : ptypes.data(), (unsigned)ptypes.size(), 0);
+                ptypes.data(), (unsigned)ptypes.size(), 0);
             LLVMValueRef mfn = LLVMAddFunction(module, method->func_name.c_str(), mft);
             user_functions[method->func_name] = { mfn, ret_tag, ptags };
 
+            // Set THIS UDT type mapping for the method body
+            var_udt_type["THIS"] = stmt.func_name;
             codegen_function(*method);
+            var_udt_type.erase("THIS");
         }
     }
 }
@@ -1239,9 +1360,60 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
         case ExprKind::LITERAL_BOOL:
             return { LLVMConstInt(i64_type, expr.bool_val ? 1 : 0, 0), 0 };
 
+        case ExprKind::ARRAY_LITERAL: {
+            // [] or [a, b, c] → create array
+            auto& arr_new = runtime_funcs["__array_new"];
+            LLVMValueRef size_arg[] = { LLVMConstInt(i64_type, 0, 0) };
+            LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, size_arg, 1, "arr");
+            if (!expr.args.empty()) {
+                auto& arr_append = runtime_funcs["APPEND"];
+                for (size_t i = 0; i < expr.args.size(); i++) {
+                    TypedValue elem = codegen_expr(*expr.args[i]);
+                    LLVMValueRef fval = elem.val;
+                    if (elem.tag == 0) fval = LLVMBuildSIToFP(builder, fval, f64_type, "itof");
+                    else if (elem.tag == 3) {
+                        LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, fval, i64_type, "ptoi");
+                        fval = pun_i64_to_f64(as_i64);
+                    }
+                    LLVMValueRef append_args[] = { arr, fval };
+                    arr = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "arr");
+                }
+            }
+            return { arr, 3 };
+        }
+
         case ExprKind::VARIABLE: {
             VarInfo* vi = lookup_var(expr.str_val);
-            if (!vi) return { LLVMConstInt(i64_type, 0, 0), 0 };
+            if (!vi) {
+                // Check if this is a dotted UDT field access (e.g. PLAYER1.NAME)
+                size_t dp = expr.str_val.find('.');
+                if (dp != std::string::npos) {
+                    std::string obj_name = expr.str_val.substr(0, dp);
+                    std::string field_name = expr.str_val.substr(dp + 1);
+                    VarInfo* obj_vi = lookup_var(obj_name);
+                    if (obj_vi && var_udt_type.count(obj_name)) {
+                        LLVMValueRef obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type,
+                                                               obj_vi->alloca_val, "obj");
+                        LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder,
+                                                    field_name.c_str(), ".fld");
+                        bool is_str = is_udt_string_field(obj_name, field_name);
+                        if (is_str) {
+                            auto& get_fn = runtime_funcs["__udt_get_str"];
+                            LLVMValueRef args[] = { obj_ptr, field_str };
+                            LLVMValueRef result = LLVMBuildCall2(builder, get_fn.fn_type,
+                                                    get_fn.fn, args, 2, "fget");
+                            return { result, 2 };
+                        } else {
+                            auto& get_fn = runtime_funcs["__udt_get_f64"];
+                            LLVMValueRef args[] = { obj_ptr, field_str };
+                            LLVMValueRef result = LLVMBuildCall2(builder, get_fn.fn_type,
+                                                    get_fn.fn, args, 2, "fget");
+                            return { result, 1 };
+                        }
+                    }
+                }
+                return { LLVMConstInt(i64_type, 0, 0), 0 };
+            }
             LLVMTypeRef load_type;
             int tag = vi->tag;
             if (tag == 1)       load_type = f64_type;
@@ -1264,8 +1436,35 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             std::string field_name = expr.str_val;
             LLVMValueRef obj_ptr = obj.val;
 
-            // Determine if field is string-typed
+            // Decode ptr from f64/i64 if needed (e.g. array element)
+            if (obj.tag == 1) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(obj.val);
+                obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+            } else if (obj.tag == 0) {
+                obj_ptr = LLVMBuildIntToPtr(builder, obj.val, i8_ptr_type, "itoptr");
+            }
+
+            // Determine if field is string-typed: check name convention AND UDT registry
             bool is_str_field = (!field_name.empty() && field_name.back() == '$');
+            if (!is_str_field && expr.left) {
+                std::string var_name;
+                if (expr.left->kind == ExprKind::VARIABLE)
+                    var_name = expr.left->str_val;
+                if (!var_name.empty())
+                    is_str_field = is_udt_string_field(var_name, field_name);
+            }
+            // Fallback: search all UDT types for this field name
+            if (!is_str_field) {
+                for (auto& [tn, flds] : udt_types) {
+                    for (auto& f : flds) {
+                        if (f.name == field_name && f.is_string) {
+                            is_str_field = true;
+                            break;
+                        }
+                    }
+                    if (is_str_field) break;
+                }
+            }
 
             LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
 
@@ -1645,6 +1844,104 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
 
+    // Handle __METHOD__ calls: obj.method() or obj.method(args)
+    if (name == "__METHOD__" && expr.left && expr.left->kind == ExprKind::MEMBER_ACCESS) {
+        auto& member = *expr.left;
+        std::string method_name = member.str_val;
+        // Uppercase for matching
+        std::string upper_method = method_name;
+        std::transform(upper_method.begin(), upper_method.end(), upper_method.begin(), ::toupper);
+
+        // Evaluate the object expression
+        TypedValue obj = codegen_expr(*member.left);
+        LLVMValueRef obj_ptr = obj.val;
+        // Decode ptr from f64/i64 if needed (e.g. array element)
+        if (obj.tag == 1) {
+            LLVMValueRef as_i64 = pun_f64_to_i64(obj.val);
+            obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+        } else if (obj.tag == 0) {
+            obj_ptr = LLVMBuildIntToPtr(builder, obj.val, i8_ptr_type, "itoptr");
+        }
+
+        // Try to resolve the UDT type from the variable
+        std::string type_name;
+        if (member.left->kind == ExprKind::VARIABLE) {
+            auto tit = var_udt_type.find(member.left->str_val);
+            if (tit != var_udt_type.end()) type_name = tit->second;
+        }
+        // Fallback: search all UDT types for a method with this name
+        if (type_name.empty()) {
+            for (auto& [tn, flds] : udt_types) {
+                if (user_functions.count(tn + "." + upper_method)) {
+                    type_name = tn;
+                    break;
+                }
+            }
+        }
+
+        if (!type_name.empty()) {
+            std::string full_name = type_name + "." + upper_method;
+            auto fit = user_functions.find(full_name);
+            if (fit != user_functions.end()) {
+                std::vector<LLVMValueRef> args;
+                args.push_back(obj_ptr); // THIS
+                for (auto& a : expr.args) {
+                    TypedValue av = codegen_expr(*a);
+                    args.push_back(av.val);
+                }
+                LLVMTypeRef fn_type = LLVMGlobalGetValueType(fit->second.fn);
+                if (fit->second.return_tag == -1) {
+                    LLVMBuildCall2(builder, fn_type, fit->second.fn,
+                                   args.data(), (unsigned)args.size(), "");
+                    return { LLVMConstInt(i64_type, 0, 0), 0 };
+                } else {
+                    LLVMValueRef result = LLVMBuildCall2(builder, fn_type, fit->second.fn,
+                                                          args.data(), (unsigned)args.size(), "mcall");
+                    return { result, fit->second.return_tag };
+                }
+            }
+        }
+        // Fall through to VM bridge if method not found natively
+    }
+
+    // Handle dotted calls like PLAYER1.INIT → resolve to T_CHARACTER.INIT
+    {
+        size_t dot_pos = name.find('.');
+        if (dot_pos != std::string::npos && name != "__METHOD__") {
+            std::string var_part = name.substr(0, dot_pos);
+            std::string method_part = name.substr(dot_pos + 1);
+            auto tit = var_udt_type.find(var_part);
+            if (tit != var_udt_type.end()) {
+                std::string resolved = tit->second + "." + method_part;
+                auto fit = user_functions.find(resolved);
+                if (fit != user_functions.end()) {
+                    // Load the object and pass as THIS
+                    VarInfo* vi = lookup_var(var_part);
+                    if (vi) {
+                        LLVMValueRef obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type,
+                                                               vi->alloca_val, "this");
+                        std::vector<LLVMValueRef> args;
+                        args.push_back(obj_ptr); // THIS
+                        for (auto& a : expr.args) {
+                            TypedValue av = codegen_expr(*a);
+                            args.push_back(av.val);
+                        }
+                        LLVMTypeRef fn_type = LLVMGlobalGetValueType(fit->second.fn);
+                        if (fit->second.return_tag == -1) {
+                            LLVMBuildCall2(builder, fn_type, fit->second.fn,
+                                           args.data(), (unsigned)args.size(), "");
+                            return { LLVMConstInt(i64_type, 0, 0), 0 };
+                        } else {
+                            LLVMValueRef result = LLVMBuildCall2(builder, fn_type, fit->second.fn,
+                                                                  args.data(), (unsigned)args.size(), "mcall");
+                            return { result, fit->second.return_tag };
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // 1. Try user-defined function
     auto uit = user_functions.find(name);
     if (uit != user_functions.end()) {
@@ -1821,8 +2118,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // Auto-convert to match expected param type
             if (param_types[i] == f64_type && av.tag == 0)
                 av.val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+            else if (param_types[i] == f64_type && av.tag == 3) {
+                // ptr → encode as f64 (for storing UDT objects in arrays via APPEND etc.)
+                LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
+                av.val = pun_i64_to_f64(as_i64);
+            }
             else if (param_types[i] == i64_type && av.tag == 1)
                 av.val = LLVMBuildFPToSI(builder, av.val, i64_type, "ftoi");
+            else if (param_types[i] == i8_ptr_type && av.tag == 0)
+                av.val = LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "itoptr");
             args.push_back(av.val);
         }
 
@@ -1971,6 +2275,26 @@ LLVMValueRef LLVMCodegen::pun_f64_to_i64(LLVMValueRef f64_val) {
     LLVMPositionBuilderAtEnd(builder, cur);
     LLVMBuildStore(builder, f64_val, alloca);
     return LLVMBuildLoad2(builder, i64_type, alloca, "pi");
+}
+
+bool LLVMCodegen::is_udt_string_field(const std::string& var_name, const std::string& field_name) {
+    auto tit = var_udt_type.find(var_name);
+    if (tit == var_udt_type.end()) return false;
+    auto uit = udt_types.find(tit->second);
+    if (uit == udt_types.end()) return false;
+    for (auto& f : uit->second) {
+        if (f.name == field_name && f.is_string) return true;
+    }
+    return false;
+}
+
+bool LLVMCodegen::expr_involves_strings(const Expr& e) {
+    if (e.kind == ExprKind::LITERAL_STRING) return true;
+    if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') return true;
+    if (e.left && expr_involves_strings(*e.left)) return true;
+    if (e.right && expr_involves_strings(*e.right)) return true;
+    for (auto& a : e.args) if (a && expr_involves_strings(*a)) return true;
+    return false;
 }
 
 // ── Object File Emission ────────────────────────────────────
