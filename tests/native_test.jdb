@@ -447,9 +447,9 @@ Assert(NOT (0 ORELSE 0))
 PRINT "── FOR EACH ──"
 nums = IOTA(5)
 each_sum = 0.0
-FOR EACH fe_val IN nums
-    each_sum = each_sum + fe_val
-NEXT fe_val
+FOR EACH n IN nums
+    each_sum = each_sum + n
+NEXT n
 Assert(each_sum = 15)
 
 ' ── 42. HEX LITERALS ────────────────────────────────────────

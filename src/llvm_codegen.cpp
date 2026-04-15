@@ -1047,12 +1047,10 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     VarInfo& idx_vi = create_var(idx_name, 0);
     LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_vi.alloca_val);
 
-    // Loop variable
-    VarInfo* var_vi = lookup_var(stmt.var_name);
-    if (!var_vi) {
-        VarInfo& nv = create_var(stmt.var_name, 1);  // f64 (array elements)
-        var_vi = &nv;
-    }
+    // Loop variable — always create a fresh f64 local in current scope
+    // to avoid collisions with existing globals of the same name
+    VarInfo& fe_var = create_var(stmt.var_name, 1);  // f64 (array elements)
+    VarInfo* var_vi = &fe_var;
 
     LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.cond");
     LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.body");
