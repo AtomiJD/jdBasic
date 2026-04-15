@@ -171,11 +171,20 @@ EXPORT FUNC HAS_SKILL(char_idx, skill_id$)
 ENDFUNC
 
 ' Learn a skill (costs 1 skill point)
+EXPORT DIM learn_fail_reason$ = ""
+
 EXPORT FUNC LEARN_SKILL(char_idx, skill_id$)
+    learn_fail_reason$ = ""
     IF char_idx < 0 OR char_idx >= member_count THEN RETURN FALSE
     m = members[char_idx]
-    IF m{"skill_points"} <= 0 THEN RETURN FALSE
-    IF HAS_SKILL(char_idx, skill_id$) THEN RETURN FALSE
+    IF m{"skill_points"} <= 0 THEN
+        learn_fail_reason$ = "Keine Fähigkeitspunkte!"
+        RETURN FALSE
+    ENDIF
+    IF HAS_SKILL(char_idx, skill_id$) THEN
+        learn_fail_reason$ = "Bereits erlernt!"
+        RETURN FALSE
+    ENDIF
 
     ' Find the skill in the tree and check requirements
     tree_id$ = m{"skill_tree_id"}
@@ -189,10 +198,19 @@ EXPORT FUNC LEARN_SKILL(char_idx, skill_id$)
             sk = skills[si]
             IF sk{"id"} = skill_id$ THEN
                 ' Check level requirement
-                IF m{"level"} < INT(sk{"level_req"}) THEN RETURN FALSE
+                IF m{"level"} < INT(sk{"level_req"}) THEN
+                    learn_fail_reason$ = "Benötigt Level " + STR$(INT(sk{"level_req"})) + "!"
+                    RETURN FALSE
+                ENDIF
                 ' Check prerequisite
                 IF MAP.EXISTS(sk, "requires") THEN
-                    IF NOT HAS_SKILL(char_idx, sk{"requires"}) THEN RETURN FALSE
+                    IF NOT HAS_SKILL(char_idx, sk{"requires"}) THEN
+                        req_sk = GET_SKILL(sk{"requires"})
+                        req_name$ = sk{"requires"}
+                        IF MAP.EXISTS(req_sk, "name") THEN req_name$ = req_sk{"name"}
+                        learn_fail_reason$ = "Benötigt zuerst: " + req_name$
+                        RETURN FALSE
+                    ENDIF
                 ENDIF
                 ' Learn it!
                 m{"skill_points"} = m{"skill_points"} - 1
@@ -343,8 +361,13 @@ EXPORT SUB SHOW_SKILL_TREE(char_idx)
             sel_skill_id$ = sel_skills[sel_s]{"id"}
             IF LEARN_SKILL(char_idx, sel_skill_id$) THEN
                 m = members[char_idx]  ' refresh
-                RPG_DIALOG.SAY "System", m{"name"} + " hat " + sel_skills[sel_s]{"name"} + " erlernt!"
+                RPG_DIALOG.SAY m{"name"}, m{"name"} + " hat " + sel_skills[sel_s]{"name"} + " erlernt!"
                 GFX.DRAW_CAPTURE bg
+            ELSE
+                IF learn_fail_reason$ <> "" THEN
+                    RPG_DIALOG.SAY m{"name"}, learn_fail_reason$
+                    GFX.DRAW_CAPTURE bg
+                ENDIF
             ENDIF
         ENDIF
     LOOP

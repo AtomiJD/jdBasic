@@ -77,7 +77,16 @@ std::vector<StmtPtr> Parser::parse() {
             auto imported = parse_import();
             for (auto& s : imported) stmts.push_back(std::move(s));
         } else {
-            stmts.push_back(parse_statement());
+            auto s = parse_statement();
+            // Tag with current source file if not already set (imports set their own)
+            if (s && s->source_file.empty() && !current_source_file.empty()) {
+                s->source_file = current_source_file;
+                for (auto& child : s->body) {
+                    if (child && child->source_file.empty())
+                        child->source_file = current_source_file;
+                }
+            }
+            stmts.push_back(std::move(s));
         }
         skip_newlines();
     }
@@ -1934,7 +1943,7 @@ std::vector<StmtPtr> Parser::parse_import() {
         throw std::runtime_error("Parse error at line " + std::to_string(ln) +
             ": IMPORT not available (no file reader)");
     }
-    std::string source = file_reader(module_name);
+    auto [source, module_file_path] = file_reader(module_name);
     if (source.empty()) {
         throw std::runtime_error("Parse error at line " + std::to_string(ln) +
             ": cannot load module '" + module_name + "'");
@@ -1946,6 +1955,7 @@ std::vector<StmtPtr> Parser::parse_import() {
     Parser mod_parser(mod_tokens);
     mod_parser.file_reader = file_reader;
     mod_parser.imported_modules = imported_modules; // share import set
+    mod_parser.current_source_file = module_file_path; // propagate file path
     auto mod_stmts = mod_parser.parse();
     // Propagate any new imports back
     imported_modules = mod_parser.imported_modules;
@@ -2034,6 +2044,15 @@ std::vector<StmtPtr> Parser::parse_import() {
         }
         if (!is_subimport) {
             module_rename_stmt(*s, func_map, var_map);
+            // Tag with module source file if not already set by a sub-import
+            if (s->source_file.empty()) {
+                s->source_file = module_file_path;
+                // Also tag child statements (methods inside TYPE_DECL, body of SUB/FUNC)
+                for (auto& child : s->body) {
+                    if (child && child->source_file.empty())
+                        child->source_file = module_file_path;
+                }
+            }
         }
     }
 

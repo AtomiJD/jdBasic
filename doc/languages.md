@@ -149,6 +149,42 @@ MyArray = [1, 2, 3, 4] ' Creates an array
 EmptyArray = []
 ```
 
+## Constants
+
+The `CONST` statement declares a named constant whose value cannot be changed after initialization. Constants are always global, even when declared inside a function.
+
+**`CONST name = expression`**
+
+```basic
+CONST MAX_HEALTH = 100
+CONST GREETING$ = "Hello, World!"
+CONST TAX_RATE = 0.19
+CONST GRID_SIZE = 8 * 8
+```
+
+Any attempt to reassign a constant will cause a runtime error:
+
+```basic
+CONST SPEED = 5
+SPEED = 10          ' Runtime error: Cannot assign to constant 'SPEED'
+```
+
+Constants are case-insensitive, just like all jdBasic variables:
+
+```basic
+CONST myVal = 42
+myval = 99          ' Runtime error: Cannot assign to constant 'MYVAL'
+```
+
+Constants can reference other constants and use any valid expression:
+
+```basic
+CONST RADIUS = 10
+CONST AREA = PI * RADIUS ^ 2
+```
+
+> **Note:** The built-in constants `PI`, `E`, and `VBNEWLINE` (see [Built-in Constants](#built-in-constants)) are also protected against reassignment using the same mechanism.
+
 ## Destructuring Assignment
 
 Destructuring allows you to unpack values from an array into individual variables in a single statement. It is a concise way to assign multiple variables at once.

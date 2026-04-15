@@ -114,6 +114,7 @@ struct Chunk {
     std::vector<Value> constants;
     std::vector<std::string> var_names;      // slot -> name mapping
     std::vector<int> line_info;              // bytecode offset -> source line
+    std::string source_file;                 // originating source file path (for debugger)
 
     // Per-chunk inline cache for CALL dispatch. Each entry packs a 32-bit
     // generation counter (high) and a 32-bit resolved user-function index

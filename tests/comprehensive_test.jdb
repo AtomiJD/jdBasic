@@ -1391,6 +1391,43 @@ Assert(TYPEOF(GRAVITY) = "FLOAT64", "CONST float is FLOAT64")
 Assert(TYPEOF(IS_DEBUG) = "BOOLEAN", "CONST boolean is BOOLEAN")
 
 ' ══════════════════════════════════════════════════════════════════
+' 27. LOCALE / NUMBER FORMATTING
+' ══════════════════════════════════════════════════════════════════
+Header "Locale / Number Formatting"
+
+' --- Default locale (C): no thousand separators, dot as decimal ---
+DIM loc_int$ = "" + 1234567
+Assert(loc_int$ = "1234567", "C locale: integer has no thousand separators")
+DIM loc_flt$ = "" + 1.5
+Assert(loc_flt$ = "1.5", "C locale: float uses dot as decimal point")
+
+' --- German locale: dot as thousand separator, comma as decimal ---
+SETLOCALE "de_DE"
+DIM de_int$ = "" + 1234567
+Assert(INSTR(de_int$, ".") >= 0, "de_DE locale: integer has dot thousand separators")
+Assert(de_int$ = "1.234.567", "de_DE locale: 1234567 -> 1.234.567")
+
+DIM de_flt$ = "" + 1.5
+Assert(de_flt$ = "1,5", "de_DE locale: float uses comma as decimal point")
+
+' --- FAC with locale formatting ---
+DIM de_fac$ = "" + FAC(10)
+Assert(de_fac$ = "3.628.800", "de_DE locale: FAC(10) -> 3.628.800")
+
+' --- Trailing zero removal ---
+DIM de_whole$ = "" + 42.0
+Assert(de_whole$ = "42", "de_DE locale: 42.0 -> 42 (no trailing zeros)")
+
+' --- FORMAT$ still works with locale ---
+DIM fmt_res$ = FORMAT$("{:.2f}", 1234.5)
+Assert(LEN(fmt_res$) > 0, "FORMAT$ works under de_DE locale")
+
+' --- Restore C locale for any subsequent tests ---
+SETLOCALE "C"
+DIM restored$ = "" + 1234567
+Assert(restored$ = "1234567", "Restored C locale: no thousand separators")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

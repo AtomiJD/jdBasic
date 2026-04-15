@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <iostream>
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -69,6 +70,16 @@ public:
     CompileAndRunFunc on_execute;
     CompileAndEvalFunc on_eval;
 
+    // Output callback — if set, all VM output goes here instead of std::cout.
+    // The host (Console) sets this to route output to the workspace buffer.
+    std::function<void(const std::string&)> on_output;
+
+    // Helper: write to on_output if set, else std::cout
+    void emit(const std::string& s) {
+        if (on_output) on_output(s);
+        else std::cout << s;
+    }
+
     // Periodic tick during execution (for RECUR tasks)
     std::function<void()> on_tick;
     int tick_counter = 0;
@@ -85,9 +96,12 @@ public:
     std::unique_ptr<DebugInfo> debug;
     void debug_check(int line);                    // called in run loop on line change
     int debug_current_line() const;                // current source line
+    std::string debug_current_file() const;        // current source file path
     size_t debug_call_depth() const;               // current call stack depth
     bool debug_goto_line(int target_line);         // move IP to source line
-    std::vector<std::pair<int, std::string>> debug_get_stack_frames() const; // line, func_name
+    // Returns {line, func_name, source_file} per stack frame
+    struct DebugFrame { int line; std::string name; std::string file; };
+    std::vector<DebugFrame> debug_get_stack_frames() const;
     std::vector<std::pair<std::string, std::string>> debug_get_globals() const;  // name, value_str
     std::vector<std::pair<std::string, std::string>> debug_get_locals() const;   // name, value_str
 
@@ -135,6 +149,7 @@ private:
     // from the empty stack ("Stack underflow").
 public:
     bool is_halted = false;
+    std::atomic<bool> is_waiting_input{false};  // true while blocking on INPUT/std::cin
 private:
 
     // STOP/RESUME state

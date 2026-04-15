@@ -212,6 +212,15 @@ void DAPHandler::process_command(const std::string& command_line) {
     else if (command == "clear_all_breakpoints") {
         on_clear_all_breakpoints();
     }
+    else if (command == "clear_breakpoints") {
+        // clear_breakpoints <file_path>
+        if (!args.empty()) {
+            // Rejoin args in case file path has spaces
+            std::string file = args[0];
+            for (size_t i = 1; i < args.size(); i++) file += " " + args[i];
+            on_clear_breakpoints(file);
+        }
+    }
     else if (command == "get_stacktrace") {
         on_get_stacktrace();
     }
@@ -276,10 +285,17 @@ void DAPHandler::on_start() {
 }
 
 void DAPHandler::on_set_breakpoint(const std::vector<std::string>& args) {
+    // Format: set_breakpoint <file_path> <line>
     if (args.size() < 2) return;
     try {
-        int line = std::stoi(args[1]);
-        if (line > 0) vm.debug->breakpoints[line] = true;
+        // Last arg is the line number, everything before is the file path
+        int line = std::stoi(args.back());
+        std::string file;
+        for (size_t i = 0; i < args.size() - 1; i++) {
+            if (!file.empty()) file += " ";
+            file += args[i];
+        }
+        if (line > 0) vm.debug->breakpoints[normalize_path(file)].insert(line);
     } catch (...) {}
 }
 
@@ -287,15 +303,22 @@ void DAPHandler::on_clear_all_breakpoints() {
     vm.debug->breakpoints.clear();
 }
 
+void DAPHandler::on_clear_breakpoints(const std::string& file) {
+    vm.debug->breakpoints.erase(normalize_path(file));
+}
+
 void DAPHandler::on_get_stacktrace() {
-    // Get call frames from VM
+    // Get call frames from VM — each has {line, func_name, source_file}
     auto frames = vm.debug_get_stack_frames();
     int total = (int)frames.size();
     for (int i = total - 1; i >= 0; i--) {
-        send_stack_frame_message(i + 1, total, frames[i].first, frames[i].second, program_path);
+        const std::string& file = frames[i].file.empty() ? program_path : frames[i].file;
+        send_stack_frame_message(i + 1, total, frames[i].line, frames[i].name, file);
     }
-    // Add global scope as last frame
-    send_stack_frame_message(0, total, vm.debug_current_line(), "[Global]", program_path);
+    // Add global scope as last frame — use current frame's file
+    std::string cur_file = vm.debug_current_file();
+    send_stack_frame_message(0, total, vm.debug_current_line(), "[Global]",
+        cur_file.empty() ? program_path : cur_file);
 }
 
 void DAPHandler::on_get_vars(const std::vector<std::string>& args) {

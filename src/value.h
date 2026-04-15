@@ -7,7 +7,12 @@
 #include <cmath>
 #include <ctime>
 #include <sstream>
+#include <iomanip>
+#include <locale>
 #include <stdexcept>
+
+// Global locale for number formatting (set by SETLOCALE)
+inline std::locale g_jd_locale("C");
 
 enum class ValueType : uint8_t {
     NONE, BOOLEAN, BYTE, INT16, INT32, INT64,
@@ -307,26 +312,49 @@ struct Value {
         }
     }
 
+    // Format a floating-point number with locale-aware thousand separators,
+    // fixed precision 6, trailing zeros and trailing decimal point removed.
+    static std::string format_float_locale(double val) {
+        std::ostringstream ss;
+        ss.imbue(g_jd_locale);
+        ss << std::fixed << std::setprecision(6) << val;
+        std::string s = ss.str();
+        // Remove trailing zeros
+        s.erase(s.find_last_not_of('0') + 1, std::string::npos);
+        // Remove trailing decimal point
+        char dp = std::use_facet<std::numpunct<char>>(g_jd_locale).decimal_point();
+        if (!s.empty() && s.back() == dp) s.pop_back();
+        return s;
+    }
+
+    // Format an integer with locale-aware thousand separators.
+    static std::string format_int_locale(int64_t val) {
+        std::ostringstream ss;
+        ss.imbue(g_jd_locale);
+        ss << val;
+        return ss.str();
+    }
+
     std::string to_string() const {
         switch (type) {
             case ValueType::NONE:    return "NONE";
             case ValueType::BOOLEAN: return boolean ? "TRUE" : "FALSE";
-            case ValueType::BYTE:    return std::to_string(byte_val);
-            case ValueType::INT16:   return std::to_string(i16);
-            case ValueType::INT32:   return std::to_string(i32);
-            case ValueType::INT64:   return std::to_string(i64);
-            case ValueType::FLOAT16: return std::to_string(half_to_float(f16_bits));
-            case ValueType::FLOAT32: return std::to_string(f32);
+            case ValueType::BYTE:    return format_int_locale(byte_val);
+            case ValueType::INT16:   return format_int_locale(i16);
+            case ValueType::INT32:   return format_int_locale(i32);
+            case ValueType::INT64:   return format_int_locale(i64);
+            case ValueType::FLOAT16: return format_float_locale(half_to_float(f16_bits));
+            case ValueType::FLOAT32: return format_float_locale(f32);
             case ValueType::FLOAT64:
                 if (subtype == ValueSubtype::DATE) {
                     std::time_t t = static_cast<std::time_t>(f64);
                     auto* tm = std::localtime(&t);
-                    if (!tm) return std::to_string(f64);
+                    if (!tm) return format_float_locale(f64);
                     char buf[32];
                     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
                     return std::string(buf);
                 }
-                return std::to_string(f64);
+                return format_float_locale(f64);
             case ValueType::STRING:  return as_string() ? as_string()->data : "";
             case ValueType::ARRAY: {
                 std::ostringstream os;

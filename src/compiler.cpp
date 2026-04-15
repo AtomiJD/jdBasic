@@ -170,7 +170,10 @@ void Compiler::collect_globals_expr(const Expr& expr) {
 
 // ── Compile program ──────────────────────────────────────────
 
-void Compiler::compile(const std::vector<StmtPtr>& program) {
+void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& main_source_file) {
+    // Set source file on main chunk for debugger
+    current_chunk().source_file = main_source_file;
+
     // Pass 0: collect all global variable names from main code
     collect_globals(program);
 
@@ -891,6 +894,9 @@ void Compiler::compile_sub(const Stmt& stmt) {
     // Push a new scope for the function body
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
+    // Propagate source file for debugger (module file, or inherit from main chunk)
+    current_chunk().source_file = !stmt.source_file.empty()
+        ? stmt.source_file : scopes[0].chunk.source_file;
 
     // Register parameters as local variables (always local, even if name matches a global)
     for (auto& p : stmt.params) {
@@ -919,6 +925,9 @@ void Compiler::compile_function(const Stmt& stmt) {
 
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
+    // Propagate source file for debugger (module file, or inherit from main chunk)
+    current_chunk().source_file = !stmt.source_file.empty()
+        ? stmt.source_file : scopes[0].chunk.source_file;
 
     // Register parameters as local variables (always local, even if name matches a global)
     for (auto& p : stmt.params) {

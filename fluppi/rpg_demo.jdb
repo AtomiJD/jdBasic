@@ -4,7 +4,7 @@
 ' ===================================================================
 
 IMPORT RPG_ENGINE
-
+CD "D:\usr\dev\cc\fluppi"
 config$ = "D:/usr/dev/cc/fluppi/rpg_data/game.json"
 
 ' ── Title Screen ──────────────────────────────────────────────
@@ -34,7 +34,6 @@ DO
     SLEEP 16
 LOOP
 
-' ── Auto-save on exit ─────────────────────────────────────────
-RPG_ENGINE.SAVE_GAME
+' ── Shutdown (no auto-save — player saves manually via ESC menu) ──
 RPG_ENGINE.SHUTDOWN
 END

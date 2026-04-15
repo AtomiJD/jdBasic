@@ -1,6 +1,6 @@
 ' ===================================================================
 ' == RPG Inventory Module
-' == Item management + bag display + shop system
+' == Item management + bag display + shop system (buy & sell)
 ' ===================================================================
 
 EXPORT MODULE RPG_INVENTORY
@@ -64,6 +64,18 @@ EXPORT FUNC GET_TYPE$(item_name$)
         IF itm{"name"} = item_name$ THEN RETURN itm{"type"}
     NEXT i
     RETURN "unknown"
+ENDFUNC
+
+' Get item sell price by name (50% of buy price)
+EXPORT FUNC GET_SELL_PRICE(item_name$)
+    keys = MAP.KEYS(item_db)
+    FOR i = 0 TO LEN(keys) - 1
+        itm = item_db{keys[i]}
+        IF itm{"name"} = item_name$ THEN
+            IF MAP.EXISTS(itm, "price") THEN RETURN INT(itm{"price"} / 2)
+        ENDIF
+    NEXT i
+    RETURN 1
 ENDFUNC
 
 ' ── Add item to inventory ────────────────────────────────────
@@ -148,6 +160,14 @@ EXPORT SUB SHOW_BAG()
     bag_bg = GFX.CAPTURE()
     sw = SCREENWIDTH()
     sh = SCREENHEIGHT()
+    fs = RPG_DIALOG.FS
+    lh = INT(fs * 2.4)   ' 2 lines per item: name+type, then description
+
+    ' Color palette
+    cbg = RPG_DIALOG.C_BOX_BG : cbd = RPG_DIALOG.C_BOX_BD
+    ctx = RPG_DIALOG.C_TEXT : ctd = RPG_DIALOG.C_TEXT_DIM
+    ctb = RPG_DIALOG.C_TEXT_BR : ctl = RPG_DIALOG.C_TITLE
+    cgl = RPG_DIALOG.C_GOLD
 
     DO
         GFX.DRAW_CAPTURE bag_bg
@@ -156,52 +176,52 @@ EXPORT SUB SHOW_BAG()
         RECT 0, 0, sw, sh, 0, 0, 0, TRUE
 
         ' Bag window
-        bx = 80 : by = 40
-        bw = sw - 160 : bh = sh - 80
+        bx = INT(fs * 4) : by = INT(fs * 2)
+        bw = sw - bx * 2 : bh = sh - by * 2
 
-        RECT bx, by, bw, bh, 20, 20, 50, TRUE
-        RECT bx, by, bw, bh, 100, 120, 180, FALSE
+        RECT bx, by, bw, bh, cbg[0], cbg[1], cbg[2], TRUE
+        RECT bx, by, bw, bh, cbd[0], cbd[1], cbd[2], FALSE
 
         ' Title
-        TEXT bx + bw/2 - 40, by + 10, "INVENTAR", 255, 220, 80
-        RECT bx + 10, by + 32, bw - 20, 2, 80, 80, 140, TRUE
+        TEXT bx + bw/2 - INT(fs*3), by + INT(fs*0.5), "INVENTAR", ctl[0], ctl[1], ctl[2]
+        RECT bx + 10, by + INT(fs*1.8), bw - 20, 2, cbd[0]-20, cbd[1]-40, cbd[2]-40, TRUE
 
         ' Gold
-        TEXT bx + 20, by + 42, "Gold: " + STR$(INT(gold)), 255, 215, 0
+        TEXT bx + INT(fs*1.2), by + INT(fs*2.2), "Gold: " + STR$(INT(gold)), cgl[0], cgl[1], cgl[2]
 
         ' Items
-        iy = by + 70
+        iy = by + INT(fs * 3.5)
         IF item_count = 0 THEN
-            TEXT bx + 20, iy, "(leer)", 120, 120, 150
+            TEXT bx + INT(fs*1.2), iy, "(leer)", ctd[0]-20, ctd[1]-20, ctd[2]-10
         ELSE
             FOR i = 0 TO item_count - 1
                 itm = items[i]
                 IF itm{"qty"} > 0 THEN
-                    ' Try to draw item icon
                     TRY
                         icon_name$ = LCASE$(REPLACE$(itm{"name"}, " ", "_"))
                         icon = GFX.LOADIMAGE(asset_path$ + "item_" + icon_name$ + ".png")
-                        GFX.DRAWIMAGE icon, bx + 20, iy, 16, 16
+                        GFX.DRAWIMAGE icon, bx + INT(fs*1.2), iy, 16, 16
                         GFX.FREEIMAGE icon
                     CATCH
                     ENDTRY
-                    TEXT bx + 42, iy, itm{"name"}, 220, 220, 240
-                    TEXT bx + 200, iy, "x" + STR$(INT(itm{"qty"})), 180, 180, 200
-                    ' Show item type tag
+                    TEXT bx + INT(fs*2.5), iy, itm{"name"}, ctx[0]-10, ctx[1]-10, ctx[2]
+                    TEXT bx + INT(fs*12), iy, "x" + STR$(INT(itm{"qty"})), ctd[0]+40, ctd[1]+40, ctd[2]+40
                     itype$ = GET_TYPE$(itm{"name"})
-                    IF itype$ = "weapon" THEN TEXT bx + 240, iy, "[WAF]", 255, 120, 120
-                    IF itype$ = "armor" THEN TEXT bx + 240, iy, "[RÜS]", 120, 120, 255
-                    IF itype$ = "consumable" THEN TEXT bx + 240, iy, "[VER]", 120, 255, 120
-                    IF itype$ = "accessory" THEN TEXT bx + 240, iy, "[ZUB]", 255, 200, 100
-                    IF itype$ = "key" THEN TEXT bx + 240, iy, "[SCH]", 255, 255, 150
-                    TEXT bx + 290, iy, itm{"desc"}, 140, 140, 170
-                    iy = iy + 24
+                    type_x = bx + INT(fs*15)
+                    IF itype$ = "weapon" THEN TEXT type_x, iy, "[WAF]", 255, 120, 120
+                    IF itype$ = "armor" THEN TEXT type_x, iy, "[RÜS]", 120, 120, 255
+                    IF itype$ = "consumable" THEN TEXT type_x, iy, "[VER]", 120, 255, 120
+                    IF itype$ = "accessory" THEN TEXT type_x, iy, "[ZUB]", 255, 200, 100
+                    IF itype$ = "key" THEN TEXT type_x, iy, "[SCH]", 255, 255, 150
+                    ' Description on second line
+                    TEXT bx + INT(fs*2.5), iy + INT(fs*1.2), itm{"desc"}, ctd[0], ctd[1], ctd[2]+10
+                    iy = iy + lh
                 ENDIF
             NEXT i
         ENDIF
 
         ' Footer
-        TEXT bx + bw/2 - 60, by + bh - 25, "Tab zum Schließen", 100, 100, 140
+        TEXT bx + bw/2 - INT(fs*5), by + bh - INT(fs*1.5), "Tab zum Schließen", ctd[0]-40, ctd[1]-40, ctd[2]-20
 
         SCREENFLIP
         SLEEP 16
@@ -215,91 +235,183 @@ EXPORT SUB SHOW_BAG()
 ENDSUB
 
 ' ══════════════════════════════════════════════════════════════
-' ══ SHOP DIALOG ══════════════════════════════════════════════
+' ══ SHOP DIALOG (Buy & Sell) ═════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
-' shop_items: array of {"name", "desc", "price"}
 EXPORT DIM shop_purchases = 0
 
 EXPORT FUNC OPEN_SHOP(shop_name$, shop_items)
     shop_bg = GFX.CAPTURE()
     sw = SCREENWIDTH()
     sh = SCREENHEIGHT()
+    fs = RPG_DIALOG.FS
+    lh = INT(fs * 1.6)
     num_items = LEN(shop_items)
+    ' Color palette
+    cbg = RPG_DIALOG.C_BOX_BG : cbd = RPG_DIALOG.C_BOX_BD
+    ctx = RPG_DIALOG.C_TEXT : ctd = RPG_DIALOG.C_TEXT_DIM
+    ctb = RPG_DIALOG.C_TEXT_BR : ctl = RPG_DIALOG.C_TITLE
+    cgl = RPG_DIALOG.C_GOLD : cms = RPG_DIALOG.C_MENU_SEL
+    cmt = RPG_DIALOG.C_MENU_TXT
     selected = 0
+    mode$ = "buy"   ' "buy" or "sell"
 
     DO
         GFX.DRAW_CAPTURE shop_bg
 
         ' Shop window
-        bx = 60 : by = 30
-        bw = sw - 120 : bh = sh - 60
-        RECT bx, by, bw, bh, 25, 20, 45, TRUE
-        RECT bx, by, bw, bh, 120, 100, 60, FALSE
+        bx = INT(fs*3) : by = INT(fs*1.5)
+        bw = sw - bx*2 : bh = sh - by*2
+        RECT bx, by, bw, bh, cbg[0]+5, cbg[1], cbg[2]-10, TRUE
+        RECT bx, by, bw, bh, cbd[0]+20, cbd[1]-20, cbd[2]-120, FALSE
 
-        ' Title
-        TEXT bx + bw/2 - 40, by + 10, shop_name$, 255, 220, 80
-        RECT bx + 10, by + 32, bw - 20, 2, 100, 80, 40, TRUE
+        ' Title + Gold
+        TEXT bx + INT(fs*1), by + INT(fs*0.5), shop_name$, ctl[0], ctl[1], ctl[2]
+        TEXT bx + bw - INT(fs*8), by + INT(fs*0.5), "Gold: " + STR$(INT(gold)), cgl[0], cgl[1], cgl[2]
 
-        ' Gold display
-        TEXT bx + bw - 120, by + 10, "Gold: " + STR$(INT(gold)), 255, 215, 0
-
-        ' Items
-        FOR i = 0 TO num_items - 1
-            itm = shop_items[i]
-            iy = by + 50 + i * 30
-            IF i = selected THEN
-                RECT bx + 10, iy - 4, bw - 20, 28, 50, 40, 70, TRUE
-                TEXT bx + 40, iy, "> " + itm{"name"}, 255, 255, 255
-            ELSE
-                TEXT bx + 50, iy, itm{"name"}, 180, 180, 200
-            ENDIF
-            ' Item icon
-            TRY
-                icon_name$ = LCASE$(REPLACE$(itm{"name"}, " ", "_"))
-                icon = GFX.LOADIMAGE(asset_path$ + "item_" + icon_name$ + ".png")
-                GFX.DRAWIMAGE icon, bx + 20, iy, 16, 16
-                GFX.FREEIMAGE icon
-            CATCH
-            ENDTRY
-            TEXT bx + 240, iy, itm{"desc"}, 140, 140, 170
-            TEXT bx + bw - 80, iy, STR$(INT(itm{"price"})) + "g", 255, 215, 0
-        NEXT i
-
-        ' Leave option
-        leave_y = by + 50 + num_items * 30
-        IF selected = num_items THEN
-            RECT bx + 10, leave_y - 4, bw - 20, 28, 50, 40, 70, TRUE
-            TEXT bx + 20, leave_y, "> Verlassen", 255, 200, 200
+        ' Tabs: Buy / Sell
+        tab_y = by + INT(fs * 2)
+        tab_w = INT(fs * 6)
+        IF mode$ = "buy" THEN
+            RECT bx + 10, tab_y, tab_w, INT(fs*1.4), cms[0], cms[1]-10, cms[2]-40, TRUE
+            TEXT bx + 10 + INT(fs*1), tab_y + INT(fs*0.15), "Kaufen", ctb[0], ctb[1], ctb[2]
+            TEXT bx + 10 + tab_w + INT(fs*1.5), tab_y + INT(fs*0.15), "Verkaufen", cmt[0], cmt[1], cmt[2]
         ELSE
-            TEXT bx + 30, leave_y, "Verlassen", 150, 120, 120
+            TEXT bx + 10 + INT(fs*1), tab_y + INT(fs*0.15), "Kaufen", cmt[0], cmt[1], cmt[2]
+            RECT bx + 10 + tab_w + INT(fs*0.5), tab_y, tab_w + INT(fs*2), INT(fs*1.4), cms[0], cms[1]-10, cms[2]-40, TRUE
+            TEXT bx + 10 + tab_w + INT(fs*1.5), tab_y + INT(fs*0.15), "Verkaufen", ctb[0], ctb[1], ctb[2]
+        ENDIF
+        RECT bx + 10, tab_y + INT(fs*1.4), bw - 20, 2, cbd[0], cbd[1]-40, cbd[2]-140, TRUE
+
+        ' Content area
+        content_y = tab_y + INT(fs * 2)
+
+        IF mode$ = "buy" THEN
+            ' ── BUY MODE ──
+            FOR i = 0 TO num_items - 1
+                itm = shop_items[i]
+                iy = content_y + i * lh
+                IF i = selected THEN
+                    RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*1.4), cms[0]-10, cms[1]-20, cms[2]-50, TRUE
+                    TEXT bx + INT(fs*2.5), iy, "> " + itm{"name"}, ctb[0], ctb[1], ctb[2]
+                ELSE
+                    TEXT bx + INT(fs*3), iy, itm{"name"}, cmt[0]+40, cmt[1]+40, cmt[2]+20
+                ENDIF
+                TRY
+                    icon_name$ = LCASE$(REPLACE$(itm{"name"}, " ", "_"))
+                    icon = GFX.LOADIMAGE(asset_path$ + "item_" + icon_name$ + ".png")
+                    GFX.DRAWIMAGE icon, bx + INT(fs*1.2), iy, 16, 16
+                    GFX.FREEIMAGE icon
+                CATCH
+                ENDTRY
+                TEXT bx + INT(fs*15), iy, itm{"desc"}, ctd[0], ctd[1], ctd[2]+10
+                TEXT bx + bw - INT(fs*5), iy, STR$(INT(itm{"price"})) + "g", cgl[0], cgl[1], cgl[2]
+            NEXT i
+
+            ' Leave option
+            leave_y = content_y + num_items * lh
+            IF selected = num_items THEN
+                RECT bx + 10, leave_y - INT(fs*0.2), bw - 20, INT(fs*1.4), cms[0]-10, cms[1]-20, cms[2]-50, TRUE
+                TEXT bx + INT(fs*1.2), leave_y, "> Verlassen", ctb[0], ctb[1]-55, ctb[2]-55
+            ELSE
+                TEXT bx + INT(fs*1.8), leave_y, "Verlassen", ctd[0]+10, ctd[1]-20, ctd[2]-40
+            ENDIF
+
+            max_sel = num_items
+
+        ELSE
+            ' ── SELL MODE ──
+            sell_list = []
+            FOR i = 0 TO item_count - 1
+                IF items[i]{"qty"} > 0 THEN PUSH sell_list, items[i]
+            NEXT i
+            sell_count = LEN(sell_list)
+
+            IF sell_count = 0 THEN
+                TEXT bx + INT(fs*2), content_y, "Keine Gegenstände zum Verkaufen.", ctd[0]+10, ctd[1]+10, ctd[2]+20
+            ELSE
+                FOR i = 0 TO sell_count - 1
+                    sitm = sell_list[i]
+                    iy = content_y + i * lh
+                    sell_price = GET_SELL_PRICE(sitm{"name"})
+                    IF i = selected THEN
+                        RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*1.4), cms[0]-10, cms[1]-20, cms[2]-50, TRUE
+                        TEXT bx + INT(fs*2.5), iy, "> " + sitm{"name"}, ctb[0], ctb[1], ctb[2]
+                    ELSE
+                        TEXT bx + INT(fs*3), iy, sitm{"name"}, cmt[0]+40, cmt[1]+40, cmt[2]+20
+                    ENDIF
+                    TEXT bx + INT(fs*13), iy, "x" + STR$(INT(sitm{"qty"})), ctd[0]+40, ctd[1]+40, ctd[2]+40
+                    TEXT bx + bw - INT(fs*5), iy, STR$(sell_price) + "g", 120, 255, 120
+                NEXT i
+            ENDIF
+
+            ' Leave option
+            leave_y = content_y + sell_count * lh
+            IF selected = sell_count THEN
+                RECT bx + 10, leave_y - INT(fs*0.2), bw - 20, INT(fs*1.4), cms[0]-10, cms[1]-20, cms[2]-50, TRUE
+                TEXT bx + INT(fs*1.2), leave_y, "> Zurück", ctb[0], ctb[1]-55, ctb[2]-55
+            ELSE
+                TEXT bx + INT(fs*1.8), leave_y, "Zurück", ctd[0]+10, ctd[1]-20, ctd[2]-40
+            ENDIF
+
+            max_sel = sell_count
         ENDIF
 
         ' Footer
-        TEXT bx + 10, by + bh - 25, "Hoch/Runter: Blättern  Enter: Kaufen  Esc: Verlassen", 100, 100, 130
+        IF mode$ = "buy" THEN
+            TEXT bx + 10, by + bh - INT(fs*1.5), "Hoch/Runter  Enter:Kaufen  S:Verkaufen  Esc:Verlassen", ctd[0]-40, ctd[1]-40, ctd[2]-30
+        ELSE
+            TEXT bx + 10, by + bh - INT(fs*1.5), "Hoch/Runter  Enter:Verkaufen  K:Kaufen  Esc:Verlassen", ctd[0]-40, ctd[1]-40, ctd[2]-30
+        ENDIF
 
         SCREENFLIP
         SLEEP 16
 
         ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD (num_items + 1)
+        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD (max_sel + 1)
         IF ev$ = "KEYDOWN:Up" THEN
             selected = selected - 1
-            IF selected < 0 THEN selected = num_items
+            IF selected < 0 THEN selected = max_sel
         ENDIF
+
+        ' Tab switching: S for sell, K for buy
+        IF ev$ = "KEYDOWN:S" AND mode$ = "buy" THEN
+            mode$ = "sell" : selected = 0
+        ENDIF
+        IF ev$ = "KEYDOWN:K" AND mode$ = "sell" THEN
+            mode$ = "buy" : selected = 0
+        ENDIF
+
         IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
-            IF selected = num_items THEN
-                EXITDO  ' Leave shop
-            ELSE
-                itm = shop_items[selected]
-                IF gold >= itm{"price"} THEN
-                    gold = gold - itm{"price"}
-                    ADD_ITEM itm{"name"}, itm{"desc"}, 1
-                    shop_purchases = shop_purchases + 1
-                    RPG_DIALOG.SAY shop_name$, "Danke! Hier ist dein " + itm{"name"} + "."
-                    GFX.DRAW_CAPTURE shop_bg
+            IF mode$ = "buy" THEN
+                IF selected = num_items THEN
+                    EXITDO  ' Leave shop
                 ELSE
-                    RPG_DIALOG.SAY shop_name$, "Dafür hast du nicht genug Gold!"
-                    GFX.DRAW_CAPTURE shop_bg
+                    itm = shop_items[selected]
+                    IF gold >= itm{"price"} THEN
+                        gold = gold - itm{"price"}
+                        ADD_ITEM itm{"name"}, itm{"desc"}, 1
+                        shop_purchases = shop_purchases + 1
+                        RPG_DIALOG.SAY shop_name$, "Danke! Hier ist dein " + itm{"name"} + "."
+                        GFX.DRAW_CAPTURE shop_bg
+                    ELSE
+                        RPG_DIALOG.SAY shop_name$, "Dafür hast du nicht genug Gold!"
+                        GFX.DRAW_CAPTURE shop_bg
+                    ENDIF
+                ENDIF
+            ELSE
+                ' SELL MODE
+                IF selected = sell_count THEN
+                    mode$ = "buy" : selected = 0  ' Back to buy
+                ELSE
+                    sitm = sell_list[selected]
+                    sell_price = GET_SELL_PRICE(sitm{"name"})
+                    IF REMOVE_ITEM(sitm{"name"}, 1) THEN
+                        gold = gold + sell_price
+                        RPG_DIALOG.SAY shop_name$, sitm{"name"} + " für " + STR$(sell_price) + " Gold verkauft!"
+                        GFX.DRAW_CAPTURE shop_bg
+                        ' Reset selection if list shrunk
+                        IF selected > 0 THEN selected = selected - 1
+                    ENDIF
                 ENDIF
             ENDIF
         ENDIF

@@ -13,7 +13,7 @@
             "def": 3,
             "xp": 10,
             "gold": 8,
-            "drop_item": "Slime Gel",
+            "drop_item": "slime_gel",
             "drop_chance": 0.5
         }
     ]

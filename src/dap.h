@@ -6,9 +6,24 @@
 #include <condition_variable>
 #include <atomic>
 #include <map>
+#include <set>
 #include <functional>
+#include <algorithm>
 
 class VM;
+
+// Normalize a file path for case-insensitive comparison on Windows.
+// Lowercases the string and converts all separators to backslash.
+inline std::string normalize_path(const std::string& p) {
+    std::string r = p;
+#ifdef _WIN32
+    for (auto& c : r) {
+        if (c == '/') c = '\\';
+        c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+    }
+#endif
+    return r;
+}
 
 // Debug state for stepping
 enum class DebugState {
@@ -70,6 +85,7 @@ private:
     void on_start();
     void on_set_breakpoint(const std::vector<std::string>& args);
     void on_clear_all_breakpoints();
+    void on_clear_breakpoints(const std::string& file);
     void on_get_stacktrace();
     void on_get_vars(const std::vector<std::string>& args);
     void on_watch(const std::string& input);
@@ -81,7 +97,8 @@ private:
 struct DebugInfo {
     DAPHandler* dap = nullptr;
     DebugState state = DebugState::RUNNING;
-    std::map<int, bool> breakpoints;
+    // Breakpoints keyed by file path → set of line numbers
+    std::map<std::string, std::set<int>> breakpoints;
     std::string program_path;
 
     // Stepping

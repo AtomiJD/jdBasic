@@ -3,12 +3,18 @@
         "height": 4300,
         "width": 2
     },
-    "activeFile": "maps/vally_house.tmx",
+    "activeFile": "maps/village.tmx",
     "expandedProjectPaths": [
-        ".",
-        "tiled",
         "maps",
-        "tiled/tilesets"
+        "tiled/tilesets",
+        "tiled/pirat/TiledMap Editor/Tilesets",
+        "tiled/pirat/TiledMap Editor",
+        "tiled/village/TiledMap Editor",
+        "tiled/village",
+        "tiled",
+        "tiled/pirat",
+        ".",
+        "tiled/village/TiledMap Editor/tilesets"
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
@@ -26,32 +32,58 @@
         },
         "maps/village.tmx": {
             "expandedObjectLayers": [
-                5,
-                6
+                5
             ],
-            "scale": 1.3666145833333332,
-            "selectedLayer": 4,
+            "scale": 2,
+            "selectedLayer": 1,
             "viewCenter": {
-                "x": 484.4087046000229,
-                "y": 596.730058310149
+                "x": 597.5,
+                "y": 543.25
             }
         },
         "tiled/pirat/TiledMap Editor/Tilesets/Atlas-props-sprites.tsx": {
-            "dynamicWrapping": true
+            "dynamicWrapping": true,
+            "scaleInDock": 1
         },
         "tiled/pirat/TiledMap Editor/Tilesets/Atlas-props.tsx": {
-            "dynamicWrapping": false
+            "dynamicWrapping": false,
+            "scaleInDock": 1
         },
         "tiled/pirat/TiledMap Editor/Tilesets/Beach-transition tiles between coast platform and beach.tsx": {
             "scaleInDock": 1,
             "scaleInEditor": 1
         },
+        "tiled/pirat/TiledMap Editor/Tilesets/Tilesets-GL2SA.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/pirat/TiledMap Editor/Tilesets/beach - with thick foam.tsx": {
+            "scaleInDock": 1
+        },
+        "tiled/pirat/TiledMap Editor/Tilesets/deep sea.tsx": {
+            "scaleInDock": 1
+        },
+        "tiled/pirat/TiledMap Editor/Tilesets/platform - grass - coast.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/pirat/TiledMap Editor/Tilesets/platform - grass(transparency) - coast.tsx": {
+            "scaleInDock": 1
+        },
         "tiled/pirat/TiledMap Editor/sample map.tmx": {
             "scale": 1.156328125,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 959.9351395176001,
+                "x": 876.0489156138099,
                 "y": 640.3891628943991
+            }
+        },
+        "tiled/pirat/TiledMap Editor/testing map.tmx": {
+            "scale": 1.8683333333333332,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.107047279215,
+                "y": 479.83942908117757
             }
         },
         "tiled/tilesets/Furniture_and_props.tsx": {
@@ -74,7 +106,34 @@
             "scaleInDock": 1,
             "scaleInEditor": 1
         },
+        "tiled/village/TiledMap Editor/sample map.tmx": {
+            "scale": 0.9341666666666666,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 960.21409455843,
+                "y": 661.0169491525425
+            }
+        },
         "tiled/village/TiledMap Editor/tilesets/Free_Premade_houses.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses2.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses3.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "tiled/village/TiledMap Editor/tilesets/props(as sprites).tsx": {
+            "scaleInDock": 1
+        },
+        "tiled/village/TiledMap Editor/tilesets/props.tsx": {
             "scaleInDock": 1,
             "scaleInEditor": 1
         },
@@ -91,20 +150,30 @@
         "maps/vally_house.tmx",
         "tiled/tilesets/interiors_tilesets.tsx",
         "tiled/tilesets/Furniture_and_props.tsx",
-        "tiled/tilesets/collision.tsx"
+        "tiled/tilesets/collision.tsx",
+        "maps/village.tmx",
+        "tiled/village/TiledMap Editor/tilesets/tilesets-village.tsx",
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses.tsx",
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses2.tsx",
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses3.tsx",
+        "tiled/village/TiledMap Editor/tilesets/props.tsx",
+        "tiled/pirat/TiledMap Editor/Tilesets/Tilesets-GL2SA.tsx",
+        "tiled/pirat/TiledMap Editor/Tilesets/platform - grass - coast.tsx"
     ],
     "project": "vally_rpg.tiled-project",
     "property.type": "string",
     "recentFiles": [
-        "tiled/pirat/TiledMap Editor/Tilesets/Beach-transition tiles between coast platform and beach.tsx",
-        "tiled/village/TiledMap Editor/tilesets/Free_Premade_houses.tsx",
-        "tiled/village/TiledMap Editor/tilesets/tilesets-village.tsx",
-        "tiled/tilesets/collision.tsx",
-        "tiled/tilesets/Furniture_and_props.tsx",
-        "tiled/tilesets/interiors_tilesets.tsx",
         "maps/vally_house.tmx",
-        "tiled/tilesets/windows_and_doors.tsx",
-        "tiled/tilesets/tilesets_village.tsx",
+        "tiled/tilesets/interiors_tilesets.tsx",
+        "tiled/tilesets/Furniture_and_props.tsx",
+        "tiled/tilesets/collision.tsx",
+        "tiled/pirat/TiledMap Editor/Tilesets/platform - grass - coast.tsx",
+        "tiled/pirat/TiledMap Editor/Tilesets/Tilesets-GL2SA.tsx",
+        "tiled/village/TiledMap Editor/tilesets/props.tsx",
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses3.tsx",
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses2.tsx",
+        "tiled/village/TiledMap Editor/tilesets/Premade_houses.tsx",
+        "tiled/village/TiledMap Editor/tilesets/tilesets-village.tsx",
         "maps/village.tmx"
     ],
     "tileset.lastUsedFormat": "tsx",

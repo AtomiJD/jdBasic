@@ -3,8 +3,8 @@
 
 // Version info — updated by release builds
 #define JDBASIC_VERSION    "1.0"
-#define JDBASIC_BUILD_NUM  "1"
-#define JDBASIC_BUILD_DATE "dev"
+#define JDBASIC_BUILD_NUM  "2"
+#define JDBASIC_BUILD_DATE "2026/04/15"
 
 // Feature flags (set by compiler directives)
 inline std::string jdbasic_features() {

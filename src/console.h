@@ -47,6 +47,42 @@ struct ConsoleState {
     std::string program_buffer;
 };
 
+// Screen buffer for workspace output (ring buffer of lines)
+static const size_t MAX_SCREEN_LINES = 2000;
+
+struct ScreenBuffer {
+    std::mutex mtx;
+    std::string pending;            // unflushed output (accumulated by VM)
+    std::deque<std::string> lines;  // completed lines for replay on WS switch
+
+    void write(const std::string& text) {
+        std::lock_guard<std::mutex> lock(mtx);
+        pending += text;
+        // Split completed lines into the ring buffer
+        size_t pos;
+        while ((pos = pending.find('\n')) != std::string::npos) {
+            lines.push_back(pending.substr(0, pos));
+            pending.erase(0, pos + 1);
+            if (lines.size() > MAX_SCREEN_LINES) lines.pop_front();
+        }
+    }
+
+    // Drain pending output for display (called from main thread for active WS)
+    std::string drain() {
+        std::lock_guard<std::mutex> lock(mtx);
+        std::string result;
+        result.swap(pending);
+        return result;
+    }
+
+    // Get full replay buffer for workspace switch
+    std::string replay() const {
+        std::string result;
+        for (auto& l : lines) { result += l; result += '\n'; }
+        return result;
+    }
+};
+
 class VM;
 struct VMState;
 
@@ -60,7 +96,12 @@ public:
 
     void set_executor(ExecuteFunc fn) { executor = std::move(fn); }
     VM& active_vm();
+    VM& workspace_vm(int ws) { return *workspaces[ws].vm; }
     ConsoleState& active_state();
+    // Apply a function to all workspace VMs (for bulk registration)
+    void for_each_vm(const std::function<void(VM&)>& fn) {
+        for (int i = 0; i < MAX_WORKSPACES; i++) fn(*workspaces[i].vm);
+    }
     void run();
     void print(const std::string& text);
     void println(const std::string& text);
@@ -68,7 +109,10 @@ public:
 private:
     struct Workspace {
         ConsoleState console;
-        std::unique_ptr<VMState> vm_state;
+        std::unique_ptr<VM> vm;       // each workspace owns its own VM
+        ScreenBuffer screen;          // per-workspace output buffer
+        std::thread worker;           // execution thread (joinable when running)
+        std::atomic<bool> executing{false}; // true while a program runs
     };
 
     Workspace workspaces[MAX_WORKSPACES];
@@ -76,9 +120,6 @@ private:
     bool is_running = true;
     bool dirty_prompt = false; // set by key handlers; main loop re-renders once per batch
     ExecuteFunc executor;
-
-    // Shared VM (state is swapped per workspace)
-    std::unique_ptr<VM> vm_instance;
 
 #if defined(_WIN32)
     uint32_t original_console_mode = 0;

@@ -733,10 +733,20 @@ void VM::run() {
             uint16_t name_idx = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip += 2;
             const std::string& full = cf.chunk->var_names[name_idx];
-            // Check if this is a protected constant
+            // Check if this is a protected constant — but allow if this is
+            // a CONST re-declaration (next opcode is MARK_CONST for same name).
+            // This makes CONST idempotent across repeated module loads.
             if (const_globals.count(full) > 0) {
-                throw jdError(ErrCode::RUNTIME_ERROR,
-                    "Cannot assign to constant '" + full + "'");
+                bool is_const_init = false;
+                if (cf.ip < cf.chunk->code.size() &&
+                    (OpCode)cf.chunk->code[cf.ip] == OpCode::MARK_CONST) {
+                    uint16_t mc_idx = cf.chunk->code[cf.ip + 1] | (cf.chunk->code[cf.ip + 2] << 8);
+                    if (cf.chunk->var_names[mc_idx] == full) is_const_init = true;
+                }
+                if (!is_const_init) {
+                    throw jdError(ErrCode::RUNTIME_ERROR,
+                        "Cannot assign to constant '" + full + "'");
+                }
             }
             // Dotted name fallback: "OBJ.FIELD" → load OBJ, set FIELD
             size_t dot = full.find('.');
@@ -1773,24 +1783,26 @@ void VM::run() {
 
         case OpCode::PRINT: {
             Value v = pop();
-            std::cout << v.to_string();
+            emit(v.to_string());
             break;
         }
 
         case OpCode::PRINT_NL: {
-            std::cout << std::endl;
+            emit("\n");
             break;
         }
 
         case OpCode::PRINT_SPACE: {
-            std::cout << ' ';
+            emit(" ");
             break;
         }
 
         case OpCode::INPUT_VAR: {
             uint16_t name_idx = read_u16();
             std::string input;
+            is_waiting_input = true;
             std::getline(std::cin, input);
+            is_waiting_input = false;
 
             Value val;
             // Try to parse as number
@@ -2105,7 +2117,7 @@ void VM::run() {
             int stop_line = 0;
             if (frame().ip > 0 && frame().ip - 1 < frame().chunk->line_info.size())
                 stop_line = frame().chunk->line_info[frame().ip - 1];
-            std::cout << "STOP at line " << stop_line << ". Type RESUME to continue." << std::endl;
+            emit("STOP at line " + std::to_string(stop_line) + ". Type RESUME to continue.\n");
             is_stopped = true;
             return;
         }
@@ -2753,16 +2765,31 @@ void VM::debug_check(int line) {
     if (line == debug->last_debug_line) return;
     debug->last_debug_line = line;
 
+    // Determine current source file from the active chunk
+    std::string cur_file = debug_current_file();
+    std::string cur_file_norm = normalize_path(cur_file);
+
     bool should_pause = false;
     std::string pause_reason = "step";
 
-    // 1. Breakpoint check (highest priority)
-    if (debug->breakpoints.count(line)) {
-        should_pause = true;
-        pause_reason = "breakpoint";
+    // 1. Breakpoint check (highest priority) — match normalized file + line
+    {
+        auto it = debug->breakpoints.find(cur_file_norm);
+        if (it != debug->breakpoints.end() && it->second.count(line)) {
+            should_pause = true;
+            pause_reason = "breakpoint";
+        }
+        // Also check by line-only for backward compat (breakpoints set without file)
+        if (!should_pause) {
+            auto it2 = debug->breakpoints.find("");
+            if (it2 != debug->breakpoints.end() && it2->second.count(line)) {
+                should_pause = true;
+                pause_reason = "breakpoint";
+            }
+        }
     }
     // 2. Stepping
-    else {
+    if (!should_pause) {
         switch (debug->state) {
             case DebugState::PAUSED:
                 should_pause = true;
@@ -2794,7 +2821,8 @@ void VM::debug_check(int line) {
             pause_reason = "entry";
             debug->is_entry = false;
         }
-        debug->dap->send_stopped_message(pause_reason, line, debug->program_path);
+        debug->dap->send_stopped_message(pause_reason, line,
+            cur_file.empty() ? debug->program_path : cur_file);
         debug->pause();
     }
 }
@@ -2805,6 +2833,11 @@ int VM::debug_current_line() const {
     size_t ip = f.ip > 0 ? f.ip - 1 : 0;
     if (ip < f.chunk->line_info.size()) return f.chunk->line_info[ip];
     return 0;
+}
+
+std::string VM::debug_current_file() const {
+    if (frames.empty()) return "";
+    return frames.back().chunk->source_file;
 }
 
 size_t VM::debug_call_depth() const {
@@ -2833,8 +2866,8 @@ bool VM::debug_goto_line(int target_line) {
     return false;
 }
 
-std::vector<std::pair<int, std::string>> VM::debug_get_stack_frames() const {
-    std::vector<std::pair<int, std::string>> result;
+std::vector<VM::DebugFrame> VM::debug_get_stack_frames() const {
+    std::vector<DebugFrame> result;
     // Skip main frame (index 0), iterate user function frames
     for (size_t i = 1; i < frames.size(); i++) {
         int line = 0;
@@ -2848,7 +2881,8 @@ std::vector<std::pair<int, std::string>> VM::debug_get_stack_frames() const {
                 if (&fp.chunk == frames[i].chunk) { name = fp.name; break; }
             }
         }
-        result.push_back({line, name});
+        std::string file = frames[i].chunk->source_file;
+        result.push_back({line, name, file});
     }
     return result;
 }
@@ -3062,11 +3096,10 @@ void VM::register_builtins() {
     });
 
     // Type checking
-    register_native("TYPEOF", 1, 1, [](const std::vector<Value>& args) -> Value {
-        // DATE-tagged FLOAT64 reports as "DATE" so user code can branch on it
-        if (args[0].type == ValueType::FLOAT64 && args[0].subtype == ValueSubtype::DATE)
+    auto typeof_one = [](const Value& v) -> Value {
+        if (v.type == ValueType::FLOAT64 && v.subtype == ValueSubtype::DATE)
             return Value::make_string("DATE");
-        switch (args[0].type) {
+        switch (v.type) {
             case ValueType::NONE:    return Value::make_string("NONE");
             case ValueType::BOOLEAN: return Value::make_string("BOOLEAN");
             case ValueType::BYTE:    return Value::make_string("BYTE");
@@ -3082,6 +3115,13 @@ void VM::register_builtins() {
             case ValueType::ARRAY:   return Value::make_string("ARRAY");
         }
         return Value::make_string("UNKNOWN");
+    };
+    register_native("TYPEOF", 1, -1, [typeof_one](const std::vector<Value>& args) -> Value {
+        if (args.size() == 1) return typeof_one(args[0]);
+        // Multiple args: return array of type strings
+        Value result = Value::make_array();
+        for (auto& a : args) result.as_array()->elements.push_back(typeof_one(a));
+        return result;
     });
 
     // Tensor creation
@@ -3784,7 +3824,14 @@ void VM::register_builtins() {
     });
 
     register_native("SETLOCALE", [](const std::vector<Value>& args) -> Value {
-        std::setlocale(LC_ALL, args[0].as_string()->data.c_str());
+        std::string loc_name = args[0].as_string()->data;
+        std::setlocale(LC_ALL, loc_name.c_str());
+        try {
+            g_jd_locale = std::locale(loc_name.c_str());
+            std::cout.imbue(g_jd_locale);
+        } catch (const std::runtime_error&) {
+            // If the C++ locale fails, keep the previous one
+        }
         return Value::make_none();
     });
 
@@ -4120,7 +4167,7 @@ void VM::register_builtins() {
 
     // ── Console I/O ──────────────────────────────────────────
 
-    register_native("CLS", 0, 3, [](const std::vector<Value>& args) -> Value {
+    register_native("CLS", 0, 3, [this](const std::vector<Value>& args) -> Value {
         uint8_t r = 0, g = 0, b = 0;
         bool has_color = (args.size() >= 3);
         if (has_color) {
@@ -4135,15 +4182,15 @@ void VM::register_builtins() {
         }
 #endif
         if (has_color)
-            std::cout << "\033[48;2;" << (int)r << ";" << (int)g << ";" << (int)b << "m";
-        std::cout << "\033[2J\033[H"; std::cout.flush();
+            emit("\033[48;2;" + std::to_string((int)r) + ";" + std::to_string((int)g) + ";" + std::to_string((int)b) + "m");
+        emit("\033[2J\033[H");
         return Value::make_none();
     });
 
-    register_native("LOCATE", [](const std::vector<Value>& args) -> Value {
+    register_native("LOCATE", [this](const std::vector<Value>& args) -> Value {
         int row = (int)args[0].to_int();
         int col = (int)args[1].to_int();
-        std::cout << "\033[" << row << ";" << col << "H"; std::cout.flush();
+        emit("\033[" + std::to_string(row) + ";" + std::to_string(col) + "H");
         return Value::make_none();
     });
 
@@ -4157,12 +4204,11 @@ void VM::register_builtins() {
         return Value::make_none();
     });
 
-    register_native("CURSOR", [](const std::vector<Value>& args) -> Value {
+    register_native("CURSOR", [this](const std::vector<Value>& args) -> Value {
         if (args[0].to_bool())
-            std::cout << "\033[?25h";
+            emit("\033[?25h");
         else
-            std::cout << "\033[?25l";
-        std::cout.flush();
+            emit("\033[?25l");
         return Value::make_none();
     });
 
@@ -5637,13 +5683,13 @@ void VM::register_builtins() {
             std::string size_s = (r->elements.size() > 1) ? r->elements[1].to_string() : "";
             std::string date_s = (r->elements.size() > 3) ? r->elements[3].to_string() : "";
             if (type == "DIR") {
-                std::cout << date_s << "    <DIR>          " << name << std::endl;
+                emit(date_s + "    <DIR>          " + name + "\n");
             } else {
                 char buf[16]; snprintf(buf, sizeof(buf), "%12s", size_s.c_str());
-                std::cout << date_s << " " << buf << " " << name << std::endl;
+                emit(date_s + " " + std::string(buf) + " " + name + "\n");
             }
         }
-        std::cout << "  " << arr->elements.size() << " item(s)" << std::endl;
+        emit("  " + std::to_string(arr->elements.size()) + " item(s)\n");
         return Value::make_none();
     });
 
@@ -5713,14 +5759,14 @@ void VM::register_builtins() {
     register_native("TRON", 0, 0, [this](const std::vector<Value>& args) -> Value {
         (void)args;
         trace_enabled = true;
-        std::cout << "Trace ON" << std::endl;
+        emit("Trace ON\n");
         return Value::make_none();
     });
 
     register_native("TROFF", 0, 0, [this](const std::vector<Value>& args) -> Value {
         (void)args;
         trace_enabled = false;
-        std::cout << "Trace OFF" << std::endl;
+        emit("Trace OFF\n");
         return Value::make_none();
     });
 
@@ -5730,36 +5776,37 @@ void VM::register_builtins() {
 
         if (what == "REACT") {
             if (reactive_bindings.empty()) {
-                std::cout << "No reactive bindings." << std::endl;
+                emit("No reactive bindings.\n");
             } else {
-                std::cout << "--- Reactive Graph (" << reactive_bindings.size() << " bindings) ---" << std::endl;
+                emit("--- Reactive Graph (" + std::to_string(reactive_bindings.size()) + " bindings) ---\n");
                 for (auto& [name, b] : reactive_bindings) {
-                    std::cout << "  " << name << " -> " << b.formula << "  [deps: ";
+                    std::string line = "  " + name + " -> " + b.formula + "  [deps: ";
                     for (size_t i = 0; i < b.dependencies.size(); i++) {
-                        if (i > 0) std::cout << ", ";
-                        std::cout << b.dependencies[i];
+                        if (i > 0) line += ", ";
+                        line += b.dependencies[i];
                     }
-                    std::cout << "]" << std::endl;
+                    line += "]\n";
+                    emit(line);
                 }
             }
         } else if (what == "STACK") {
-            std::cout << "--- Call Stack (" << frames.size() << " frames) ---" << std::endl;
+            emit("--- Call Stack (" + std::to_string(frames.size()) + " frames) ---\n");
             for (size_t i = 0; i < frames.size(); i++) {
                 int line = 0;
                 if (frames[i].chunk && frames[i].ip > 0 &&
                     frames[i].ip - 1 < frames[i].chunk->line_info.size())
                     line = frames[i].chunk->line_info[frames[i].ip - 1];
-                std::cout << "  #" << i << " line " << line << std::endl;
+                emit("  #" + std::to_string(i) + " line " + std::to_string(line) + "\n");
             }
         } else if (what == "FUNCS" || what == "FUNCTIONS") {
-            std::cout << "--- Functions (" << owned_funcs.size() << ") ---" << std::endl;
+            emit("--- Functions (" + std::to_string(owned_funcs.size()) + ") ---\n");
             for (auto& f : owned_funcs)
-                std::cout << "  " << f.name << " (" << f.arity << " params)" << std::endl;
+                emit("  " + f.name + " (" + std::to_string(f.arity) + " params)\n");
         } else { // GLOBAL or VARS (default)
-            std::cout << "--- Global Variables (" << global_names.size() << ") ---" << std::endl;
+            emit("--- Global Variables (" + std::to_string(global_names.size()) + ") ---\n");
             for (auto& [name, slot] : global_names) {
                 if (slot < globals.size() && name.substr(0, 2) != "__")
-                    std::cout << "  " << name << " = " << globals[slot].to_string() << std::endl;
+                    emit("  " + name + " = " + globals[slot].to_string() + "\n");
             }
         }
         return Value::make_none();

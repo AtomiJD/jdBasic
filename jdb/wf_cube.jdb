@@ -95,7 +95,7 @@ DO
     ' --- d) Draw Faces from Back to Front ---
     ScreenBuffer = RESHAPE([" "], [SCREEN_HEIGHT, SCREEN_WIDTH])
     FOR i = 0 TO 5
-        face_idx = DrawOrder[i,0]
+        face_idx = DrawOrder[i]
         v_indices = SLICE(Faces, 0, face_idx)
         face_x_coords = SLICE(ProjectedPoints, 1, 0)[v_indices]
         face_y_coords = SLICE(ProjectedPoints, 1, 1)[v_indices]

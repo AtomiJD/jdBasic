@@ -13,9 +13,13 @@ public:
     explicit Parser(const std::vector<Token>& tokens);
     std::vector<StmtPtr> parse();
 
-    // Module support: callback to read a file, returns source code
-    using FileReader = std::function<std::string(const std::string& module_name)>;
+    // Module support: callback to read a file
+    // Returns {source_code, resolved_file_path}
+    using FileReader = std::function<std::pair<std::string, std::string>(const std::string& module_name)>;
     FileReader file_reader;
+
+    // Source file path for the current parse context (set by caller for main file)
+    std::string current_source_file;
 
     // Tracks already-imported modules to prevent circular imports
     std::unordered_set<std::string> imported_modules;

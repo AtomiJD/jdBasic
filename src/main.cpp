@@ -58,7 +58,7 @@ static void setup_dynamic_code(VM& vm);
 static std::string g_base_dir; // directory of main source file
 
 static Parser::FileReader make_module_reader() {
-    return [](const std::string& module_name) -> std::string {
+    return [](const std::string& module_name) -> std::pair<std::string, std::string> {
         // Try: base_dir/MODULE.jdb, base_dir/module.jdb, ./MODULE.jdb, ./module.jdb
         std::string upper = module_name;
         std::string lower = module_name;
@@ -74,20 +74,29 @@ static Parser::FileReader make_module_reader() {
         candidates.push_back(upper + ".jdb");
         candidates.push_back(lower + ".jdb");
 
-        for (auto& path : candidates) {
-            std::ifstream f(path);
+        for (auto& cand : candidates) {
+            std::ifstream f(cand);
             if (f.is_open()) {
                 std::stringstream ss;
                 ss << f.rdbuf();
-                return ss.str();
+                // Resolve to absolute path for debugger file matching
+                char abs_buf[4096];
+#ifdef _WIN32
+                DWORD len = GetFullPathNameA(cand.c_str(), sizeof(abs_buf), abs_buf, nullptr);
+                std::string resolved = (len > 0 && len < sizeof(abs_buf)) ? std::string(abs_buf) : cand;
+#else
+                std::string resolved = realpath(cand.c_str(), abs_buf) ? std::string(abs_buf) : cand;
+#endif
+                return {ss.str(), resolved};
             }
         }
-        return ""; // not found
+        return {"", ""}; // not found
     };
 }
 
-static void setup_parser_modules(Parser& parser) {
+static void setup_parser_modules(Parser& parser, const std::string& source_file = "") {
     parser.file_reader = make_module_reader();
+    parser.current_source_file = source_file;
 }
 static void set_os_args(VM& vm, int argc, char* argv[]);
 static int g_argc = 0;
@@ -199,7 +208,7 @@ static void setup_dynamic_code(VM& vm) {
     register_llm_builtins(vm);
 
     // HELP (available in both file and console mode)
-    vm.register_native("HELP", [](const std::vector<Value>& args) -> Value {
+    vm.register_native("HELP", [&vm](const std::vector<Value>& args) -> Value {
         if (g_help_topics.empty()) load_help_file();
         if (args.empty() || args[0].type == ValueType::NONE ||
             (args[0].type == ValueType::STRING && args[0].as_string()->data.empty())) {
@@ -208,20 +217,21 @@ static void setup_dynamic_code(VM& vm) {
             std::sort(sorted.begin(), sorted.end());
             int col = 0;
             for (auto& t : sorted) {
-                printf("%-18s", t.c_str());
-                if (++col % 4 == 0) std::cout << std::endl;
+                char buf[20]; snprintf(buf, sizeof(buf), "%-18s", t.c_str());
+                vm.emit(buf);
+                if (++col % 4 == 0) vm.emit("\n");
             }
-            if (col % 4 != 0) std::cout << std::endl;
-            std::cout << sorted.size() << " topics. Type HELP \"topic\" for details." << std::endl;
+            if (col % 4 != 0) vm.emit("\n");
+            vm.emit(std::to_string(sorted.size()) + " topics. Type HELP \"topic\" for details.\n");
         } else {
             std::string topic = args[0].as_string()->data;
             std::transform(topic.begin(), topic.end(), topic.begin(), ::toupper);
             auto it = g_help_topics.find(topic);
             if (it != g_help_topics.end()) {
-                std::cout << "[" << topic << "]" << std::endl;
-                std::cout << it->second;
+                vm.emit("[" + topic + "]\n");
+                vm.emit(it->second);
             } else {
-                std::cout << "No help for: " << topic << std::endl;
+                vm.emit("No help for: " + topic + "\n");
             }
         }
         return Value::make_none();
@@ -276,7 +286,7 @@ static void save_workspace(VM& vm, const std::string& program_buffer, const std:
     if (!program_buffer.empty() && program_buffer.back() != '\n') out << "\n";
 
     out.close();
-    std::cout << "Workspace saved: " << filename << std::endl;
+    vm.emit("Workspace saved: " + filename + "\n");
 }
 
 static void load_workspace(VM& vm, std::string& program_buffer, const std::string& name) {
@@ -363,7 +373,7 @@ static void load_workspace(VM& vm, std::string& program_buffer, const std::strin
         }
     }
 
-    std::cout << "Workspace loaded: " << filename << std::endl;
+    vm.emit("Workspace loaded: " + filename + "\n");
 }
 
 // ── Console executor ─────────────────────────────────────────
@@ -415,7 +425,7 @@ static void register_console_builtins(VM& vm) {
     auto& pbuf = g_program_buffer_ptr;
 
     // LOAD
-    vm.register_native("LOAD", 1, 1, [&pbuf](const std::vector<Value>& args) -> Value {
+    vm.register_native("LOAD", 1, 1, [&pbuf, &vm](const std::vector<Value>& args) -> Value {
         if (args[0].type != ValueType::STRING)
             throw std::runtime_error("LOAD: filename must be a string");
         std::string filename = args[0].as_string()->data;
@@ -427,12 +437,12 @@ static void register_console_builtins(VM& vm) {
         std::ostringstream ss; ss << f.rdbuf();
         if (pbuf) *pbuf = ss.str();
         int lines = (int)std::count(pbuf->begin(), pbuf->end(), '\n') + 1;
-        std::cout << "Loaded: " << filename << " (" << lines << " lines)" << std::endl;
+        vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
         return Value::make_none();
     });
 
     // SAVE
-    vm.register_native("SAVE", 1, 1, [&pbuf](const std::vector<Value>& args) -> Value {
+    vm.register_native("SAVE", 1, 1, [&pbuf, &vm](const std::vector<Value>& args) -> Value {
         if (args[0].type != ValueType::STRING)
             throw std::runtime_error("SAVE: filename must be a string");
         std::string filename = args[0].as_string()->data;
@@ -443,17 +453,17 @@ static void register_console_builtins(VM& vm) {
         std::ofstream out(filename);
         if (!out) throw std::runtime_error("Cannot write: " + filename);
         out << *pbuf;
-        std::cout << "Saved: " << filename << std::endl;
+        vm.emit("Saved: " + filename + "\n");
         return Value::make_none();
     });
 
     // LIST
-    vm.register_native("LIST", [&pbuf](const std::vector<Value>& args) -> Value {
+    vm.register_native("LIST", [&pbuf, &vm](const std::vector<Value>& args) -> Value {
         (void)args;
-        if (!pbuf || pbuf->empty()) { std::cout << "No program loaded." << std::endl; return Value::make_none(); }
+        if (!pbuf || pbuf->empty()) { vm.emit("No program loaded.\n"); return Value::make_none(); }
         std::istringstream ss(*pbuf);
         std::string line; int ln = 1;
-        while (std::getline(ss, line)) std::cout << ln++ << "  " << line << std::endl;
+        while (std::getline(ss, line)) vm.emit(std::to_string(ln++) + "  " + line + "\n");
         return Value::make_none();
     });
 
@@ -464,11 +474,11 @@ static void register_console_builtins(VM& vm) {
         (void)args;
         auto& names = vm.get_global_names();
         auto& globals = vm.get_globals();
-        if (names.empty()) { std::cout << "No variables defined." << std::endl; }
+        if (names.empty()) { vm.emit("No variables defined.\n"); }
         else {
             for (auto& [name, slot] : names)
                 if (slot < globals.size() && name.substr(0,2) != "__")
-                    std::cout << "  " << name << " = " << globals[slot].to_string() << std::endl;
+                    vm.emit("  " + name + " = " + globals[slot].to_string() + "\n");
         }
         return Value::make_none();
     });
@@ -491,11 +501,11 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
     // it fall through to expression parsing (where it would invoke LOAD()
     // with no args and rely on arity-check throwing).
     if (cmd_upper == "LOAD") {
-        std::cout << "Usage: LOAD <filename>" << std::endl;
+        vm.emit("Usage: LOAD <filename>\n");
         return;
     }
     if (cmd_upper == "SAVE") {
-        std::cout << "Usage: SAVE <filename>" << std::endl;
+        vm.emit("Usage: SAVE <filename>\n");
         return;
     }
     if (cmd_upper.substr(0, 5) == "LOAD " && cmd_upper != "LOAD") {
@@ -507,18 +517,18 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             std::ostringstream ss; ss << f.rdbuf();
             program_buffer = ss.str();
             int lines = (int)std::count(program_buffer.begin(), program_buffer.end(), '\n') + 1;
-            std::cout << "Loaded: " << filename << " (" << lines << " lines)" << std::endl;
+            vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
         } catch (const std::exception& e) { print_error(ErrCode::FILE_NOT_FOUND, e.what()); }
         return;
     }
     if (cmd_upper.substr(0, 5) == "SAVE " && cmd_upper != "SAVE") {
         std::string filename = cmd_arg(cmd);
         if (filename.find('.') == std::string::npos) filename += ".jdb";
-        if (program_buffer.empty()) { std::cout << "No program to save." << std::endl; return; }
+        if (program_buffer.empty()) { vm.emit("No program to save.\n"); return; }
         std::ofstream out(filename);
         if (!out) { print_error(ErrCode::FILE_WRITE_ERROR, "Cannot write: " + filename); return; }
         out << program_buffer;
-        std::cout << "Saved: " << filename << std::endl;
+        vm.emit("Saved: " + filename + "\n");
         return;
     }
 
@@ -569,13 +579,13 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             try { run_on_vm(vm, program_buffer); }
             catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
             vm.is_halted = false;
-        } else { std::cout << "No program loaded." << std::endl; }
+        } else { vm.emit("No program loaded.\n"); }
         return;
     }
 
     // ── COMPILE (compile only, no run) ───────────────────────
     if (cmd_upper == "COMPILE") {
-        if (program_buffer.empty()) { std::cout << "No program to compile." << std::endl; return; }
+        if (program_buffer.empty()) { vm.emit("No program to compile.\n"); return; }
         try {
             Lexer lexer(program_buffer);
             auto tokens = lexer.tokenize();
@@ -588,7 +598,7 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             Chunk empty; empty.emit(OpCode::HALT, 0);
             auto& funcs = compiler.functions();
             vm.run_code(empty, funcs);
-            std::cout << "Compiled OK. " << funcs.size() << " function(s) registered." << std::endl;
+            vm.emit("Compiled OK. " + std::to_string(funcs.size()) + " function(s) registered.\n");
         } catch (const std::exception& e) { std::cerr << "Compile error: " << e.what() << std::endl; }
         return;
     }
@@ -598,7 +608,7 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
     // ── NEW (clear source + functions, keep globals) ─────────
     if (cmd_upper == "NEW") {
         program_buffer.clear();
-        std::cout << "Program cleared." << std::endl;
+        vm.emit("Program cleared.\n");
         return;
     }
 
@@ -615,19 +625,19 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
 #ifdef GFX
         gfx_shutdown();
 #endif
-        std::cout << "Workspace cleared (source + variables + functions)." << std::endl;
+        vm.emit("Workspace cleared (source + variables + functions).\n");
         return;
     }
 
     // ── RESUME ───────────────────────────────────────────────
     if (cmd_upper == "RESUME") {
-        if (!vm.resume()) std::cout << "Nothing to resume." << std::endl;
+        if (!vm.resume()) vm.emit("Nothing to resume.\n");
         return;
     }
 
     // ── TRON / TROFF ─────────────────────────────────────────
-    if (cmd_upper == "TRON") { vm.trace_enabled = true; std::cout << "Trace ON" << std::endl; return; }
-    if (cmd_upper == "TROFF") { vm.trace_enabled = false; std::cout << "Trace OFF" << std::endl; return; }
+    if (cmd_upper == "TRON") { vm.trace_enabled = true; vm.emit("Trace ON\n"); return; }
+    if (cmd_upper == "TROFF") { vm.trace_enabled = false; vm.emit("Trace OFF\n"); return; }
 
     // ── PWD (bare command prints, PWD() in code returns silently) ─
     if (cmd_upper == "PWD") {
@@ -669,17 +679,17 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
 
         if (arg_upper == "REACT") {
             auto& bindings = vm.reactive_bindings;
-            if (bindings.empty()) { std::cout << "No reactive bindings." << std::endl; }
+            if (bindings.empty()) { vm.emit("No reactive bindings.\n"); }
             else {
-                std::cout << "--- Reactive Graph (" << bindings.size() << " bindings) ---" << std::endl;
+                vm.emit("--- Reactive Graph (" + std::to_string(bindings.size()) + " bindings) ---\n");
                 for (auto& [name, b] : bindings) {
-                    std::cout << "  " << name << " -> " << b.formula;
-                    std::cout << "  [deps: ";
+                    std::string line = "  " + name + " -> " + b.formula + "  [deps: ";
                     for (size_t i = 0; i < b.dependencies.size(); i++) {
-                        if (i > 0) std::cout << ", ";
-                        std::cout << b.dependencies[i];
+                        if (i > 0) line += ", ";
+                        line += b.dependencies[i];
                     }
-                    std::cout << "]" << std::endl;
+                    line += "]\n";
+                    vm.emit(line);
                 }
             }
             return;
@@ -687,17 +697,17 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
         if (arg_upper == "GLOBAL" || arg_upper == "VARS") {
             auto& names = vm.get_global_names();
             auto& globals = vm.get_globals();
-            std::cout << "--- Global Variables (" << names.size() << ") ---" << std::endl;
+            vm.emit("--- Global Variables (" + std::to_string(names.size()) + ") ---\n");
             for (auto& [name, slot] : names) {
                 if (slot < globals.size() && name.substr(0,2) != "__")
-                    std::cout << "  " << name << " = " << globals[slot].to_string() << std::endl;
+                    vm.emit("  " + name + " = " + globals[slot].to_string() + "\n");
             }
         } else if (arg_upper == "STACK") {
-            std::cout << "--- Call Stack ---" << std::endl;
-            std::cout << "  (not in active execution)" << std::endl;
+            vm.emit("--- Call Stack ---\n");
+            vm.emit("  (not in active execution)\n");
         } else {
             // Dump bytecode hex
-            if (program_buffer.empty()) { std::cout << "No program compiled." << std::endl; return; }
+            if (program_buffer.empty()) { vm.emit("No program compiled.\n"); return; }
             try {
                 Lexer lexer(program_buffer);
                 auto tokens = lexer.tokenize();
@@ -707,29 +717,28 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
                 Compiler compiler;
                 compiler.compile(ast);
 
-                auto hex_dump = [](const std::string& label, const std::vector<uint8_t>& code) {
-                    std::cout << "Dumping p_code for '" << label << "' (" << code.size() << " bytes):" << std::endl;
+                auto hex_dump = [&vm](const std::string& label, const std::vector<uint8_t>& code) {
+                    vm.emit("Dumping p_code for '" + label + "' (" + std::to_string(code.size()) + " bytes):\n");
                     for (size_t i = 0; i < code.size(); i += 16) {
-                        // Address
-                        printf("0x%04X : ", (unsigned)i);
-                        // Hex bytes
+                        char buf[128];
+                        int pos = snprintf(buf, sizeof(buf), "0x%04X : ", (unsigned)i);
                         for (size_t j = 0; j < 16; j++) {
-                            if (i + j < code.size()) printf("%02X ", code[i + j]);
-                            else printf("   ");
+                            if (i + j < code.size()) pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X ", code[i + j]);
+                            else pos += snprintf(buf + pos, sizeof(buf) - pos, "   ");
                         }
-                        printf(": ");
-                        // ASCII
+                        pos += snprintf(buf + pos, sizeof(buf) - pos, ": ");
                         for (size_t j = 0; j < 16 && i + j < code.size(); j++) {
                             uint8_t c = code[i + j];
-                            printf("%c", (c >= 32 && c < 127) ? c : '.');
+                            buf[pos++] = (c >= 32 && c < 127) ? c : '.';
                         }
-                        printf("\n");
+                        buf[pos++] = '\n'; buf[pos] = '\0';
+                        vm.emit(buf);
                     }
                 };
 
                 hex_dump("main program", compiler.main_chunk().code);
                 for (auto& f : compiler.functions()) {
-                    std::cout << std::endl;
+                    vm.emit("\n");
                     hex_dump(f.name + " (" + std::to_string(f.arity) + " params)", f.chunk.code);
                 }
             } catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
@@ -739,7 +748,7 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
 
     // ── PRETTY ───────────────────────────────────────────────
     if (cmd_upper.substr(0, 6) == "PRETTY") {
-        if (program_buffer.empty()) { std::cout << "No program loaded." << std::endl; return; }
+        if (program_buffer.empty()) { vm.emit("No program loaded.\n"); return; }
         bool preview = (cmd_upper.find("PREVIEW") != std::string::npos);
         bool vb_style = (cmd_upper.find("VB") != std::string::npos);
 
@@ -795,17 +804,17 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
         }
 
         if (preview) {
-            std::cout << result;
+            vm.emit(result);
         } else {
             program_buffer = result;
-            std::cout << "Source formatted." << std::endl;
+            vm.emit("Source formatted.\n");
         }
         return;
     }
 
     // ── LINT ─────────────────────────────────────────────────
     if (cmd_upper == "LINT") {
-        if (program_buffer.empty()) { std::cout << "No program loaded." << std::endl; return; }
+        if (program_buffer.empty()) { vm.emit("No program loaded.\n"); return; }
         try {
             Lexer lexer(program_buffer);
             auto tokens = lexer.tokenize();
@@ -814,19 +823,16 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             auto ast = parser.parse();
 
             int warnings = 0;
-            // Check for common issues
             std::vector<std::string> defined_funcs, called_funcs;
             for (auto& stmt : ast) {
                 if (stmt->kind == StmtKind::SUB || stmt->kind == StmtKind::FUNCTION) {
                     defined_funcs.push_back(stmt->func_name);
-                    // Check unused parameters
-                    // (simplified: just report param count)
                 }
             }
-            std::cout << "LINT: Compiled OK." << std::endl;
-            std::cout << "  " << ast.size() << " top-level statements" << std::endl;
-            std::cout << "  " << defined_funcs.size() << " function/sub definitions" << std::endl;
-            if (warnings == 0) std::cout << "  No warnings." << std::endl;
+            vm.emit("LINT: Compiled OK.\n");
+            vm.emit("  " + std::to_string(ast.size()) + " top-level statements\n");
+            vm.emit("  " + std::to_string(defined_funcs.size()) + " function/sub definitions\n");
+            if (warnings == 0) vm.emit("  No warnings.\n");
         } catch (const std::exception& e) {
             std::cerr << "LINT error: " << e.what() << std::endl;
         }
@@ -899,42 +905,46 @@ int main(int argc, char* argv[]) {
         std::cout << jdbasic_banner() << std::endl;
 
         Console console;
-        setup_dynamic_code(console.active_vm());
-        register_console_builtins(console.active_vm());
-        set_os_args(console.active_vm(), argc, argv);
-
-        // RECUR task natives
         Console* pCon = &console;
-        console.active_vm().register_native("RECUR", 2, 2, [pCon](const std::vector<Value>& args) -> Value {
-            if (args[1].type != ValueType::STRING)
-                throw std::runtime_error("RECUR: code must be a string");
-            int interval = (int)args[0].to_int();
-            std::string code = args[1].as_string()->data;
-            int id = pCon->add_recur_task(interval, code);
-            return Value::make_i64(id);
-        });
-        console.active_vm().register_native("CLEAR_RECUR", 1, 1, [pCon](const std::vector<Value>& args) -> Value {
-            pCon->clear_recur_task((int)args[0].to_int());
-            return Value::make_none();
-        });
-        console.active_vm().register_native("LIST_RECUR", [pCon](const std::vector<Value>& args) -> Value {
-            (void)args;
-            pCon->list_recur_tasks();
-            return Value::make_none();
-        });
 
-        // on_tick: process RECUR tasks during program execution
-        console.active_vm().on_tick = [pCon]() {
-            pCon->process_recur_tasks();
-            if (!pCon->pending_executions.empty()) {
-                std::vector<std::string> to_run;
-                { std::lock_guard<std::mutex> lock(pCon->recur_mutex);
-                  to_run.swap(pCon->pending_executions); }
-                for (auto& code : to_run) {
-                    try { run_on_vm(pCon->active_vm(), code + "\n"); } catch (...) {}
+        // Setup all workspace VMs
+        console.for_each_vm([&](VM& vm) {
+            setup_dynamic_code(vm);
+            register_console_builtins(vm);
+            set_os_args(vm, argc, argv);
+
+            // RECUR task natives
+            vm.register_native("RECUR", 2, 2, [pCon](const std::vector<Value>& args) -> Value {
+                if (args[1].type != ValueType::STRING)
+                    throw std::runtime_error("RECUR: code must be a string");
+                int interval = (int)args[0].to_int();
+                std::string code = args[1].as_string()->data;
+                int id = pCon->add_recur_task(interval, code);
+                return Value::make_i64(id);
+            });
+            vm.register_native("CLEAR_RECUR", 1, 1, [pCon](const std::vector<Value>& args) -> Value {
+                pCon->clear_recur_task((int)args[0].to_int());
+                return Value::make_none();
+            });
+            vm.register_native("LIST_RECUR", [pCon](const std::vector<Value>& args) -> Value {
+                (void)args;
+                pCon->list_recur_tasks();
+                return Value::make_none();
+            });
+
+            // on_tick: process RECUR tasks during program execution
+            vm.on_tick = [pCon]() {
+                pCon->process_recur_tasks();
+                if (!pCon->pending_executions.empty()) {
+                    std::vector<std::string> to_run;
+                    { std::lock_guard<std::mutex> lock(pCon->recur_mutex);
+                      to_run.swap(pCon->pending_executions); }
+                    for (auto& code : to_run) {
+                        try { run_on_vm(pCon->active_vm(), code + "\n"); } catch (...) {}
+                    }
                 }
-            }
-        };
+            };
+        });
 
         console.set_executor(console_execute);
         console.run();
@@ -976,6 +986,18 @@ int main(int argc, char* argv[]) {
     {
         size_t sep = filename.find_last_of("/\\");
         g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
+    }
+
+    // Resolve filename to absolute path for debugger source mapping
+    std::string abs_filename = filename;
+    {
+        char abs_buf[4096];
+#ifdef _WIN32
+        DWORD len = GetFullPathNameA(filename.c_str(), sizeof(abs_buf), abs_buf, nullptr);
+        if (len > 0 && len < sizeof(abs_buf)) abs_filename = std::string(abs_buf);
+#else
+        if (realpath(filename.c_str(), abs_buf)) abs_filename = std::string(abs_buf);
+#endif
     }
 
     if (debug_port > 0) {
@@ -1040,9 +1062,9 @@ int main(int argc, char* argv[]) {
             Lexer lexer(source);
             auto tokens = lexer.tokenize();
             Parser parser(tokens);
-            setup_parser_modules(parser);
+            setup_parser_modules(parser, abs_filename);
             auto ast = parser.parse();
-            compiler.compile(ast);
+            compiler.compile(ast, abs_filename);
             vm.load(compiler.main_chunk(), compiler.functions());
             ok = true;
         } catch (const std::exception& e) {
@@ -1091,11 +1113,6 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Normal file execution ───────────────────────────────────
-    // Set base directory for module imports
-    {
-        size_t sep = filename.find_last_of("/\\");
-        g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
-    }
     try {
         std::string source = read_file(filename);
         run_source(source, timing);

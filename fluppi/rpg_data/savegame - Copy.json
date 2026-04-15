@@ -1,0 +1,59 @@
+{
+    "player_name": "Vally",
+    "player_x": 480,
+    "player_y": 320,
+    "direction": "down",
+    "current_map_file": "maps/village.tmx",
+    "map_states": {},
+    "recruit_data": {
+        "moehrchen": true,
+        "hasi": true
+    },
+    "inventory": {
+        "gold": 250,
+        "items": [
+            {"name": "Heiltrank", "desc": "Stellt 30 HP wieder her", "qty": 5},
+            {"name": "Mega-Heiltrank", "desc": "Stellt 80 HP wieder her", "qty": 2},
+            {"name": "Eisenschwert", "desc": "Eine solide Klinge", "qty": 1},
+            {"name": "Holzschild", "desc": "Einfacher Schutz", "qty": 1},
+            {"name": "Magischer Ring", "desc": "Geheimnisvolles Leuchten", "qty": 1},
+            {"name": "Fackel", "desc": "Erhellt dunkle Orte", "qty": 3},
+            {"name": "Schleim-Gel", "desc": "Klebriger Monster-Drop", "qty": 4}
+        ]
+    },
+    "player_combat": {
+        "hp": 148, "max_hp": 148, "atk": 21, "def": 11,
+        "level": 5, "xp": 20, "xp_next": 192
+    },
+    "party": [
+        {
+            "id": "vally",
+            "level": 5, "xp": 20, "xp_next": 192,
+            "hp": 148, "max_hp": 148, "mp": 50, "max_mp": 50,
+            "atk": 24, "def": 10, "spd": 18,
+            "skill_points": 3,
+            "learned_skills": ["slash", "double_strike"]
+        },
+        {
+            "id": "moehrchen",
+            "level": 5, "xp": 20, "xp_next": 192,
+            "hp": 180, "max_hp": 180, "mp": 64, "max_mp": 64,
+            "atk": 16, "def": 24, "spd": 9,
+            "skill_points": 3,
+            "learned_skills": ["stamp", "fine"]
+        },
+        {
+            "id": "hasi",
+            "level": 5, "xp": 20, "xp_next": 192,
+            "hp": 112, "max_hp": 112, "mp": 100, "max_mp": 100,
+            "atk": 10, "def": 13, "spd": 11,
+            "skill_points": 3,
+            "learned_skills": ["heal", "barrier", "sparkle"]
+        }
+    ],
+    "quests": [
+        {"id": "moehrchen_recruit", "state": "rewarded", "progress": 1},
+        {"id": "first_shopping", "state": "rewarded", "progress": 2},
+        {"id": "blobb_hunter", "state": "active", "progress": 1}
+    ]
+}

@@ -94,7 +94,15 @@ EXPORT FUNC HANDLE_NPC(npc_name$, player_name$)
             dlg$ = REPLACE$(q{"dialog_complete"}, "{PLAYER}", player_name$)
             RPG_DIALOG.SAY npc_name$, dlg$
             IF q{"reward_gold"} > 0 THEN RPG_INVENTORY.ADD_GOLD q{"reward_gold"}
-            IF q{"reward_item"} <> "" THEN RPG_INVENTORY.ADD_ITEM q{"reward_item"}, "Quest reward", 1
+            IF q{"reward_item"} <> "" THEN
+                ' Look up real item name from item database
+                ri_data = RPG_INVENTORY.GET_ITEM_DATA(q{"reward_item"})
+                ri_name$ = q{"reward_item"}
+                ri_desc$ = "Quest reward"
+                IF MAP.EXISTS(ri_data, "name") THEN ri_name$ = ri_data{"name"}
+                IF MAP.EXISTS(ri_data, "desc") THEN ri_desc$ = ri_data{"desc"}
+                RPG_INVENTORY.ADD_ITEM ri_name$, ri_desc$, 1
+            ENDIF
             q{"state"} = "rewarded"
             IF q{"on_reward"} <> "" THEN
                 code$ = q{"on_reward"}

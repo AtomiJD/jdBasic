@@ -17,7 +17,8 @@ public:
     Compiler();
 
     // Compile a program: returns the main chunk and function prototypes
-    void compile(const std::vector<StmtPtr>& program);
+    // main_source_file is set on the main chunk for debugger source mapping
+    void compile(const std::vector<StmtPtr>& program, const std::string& main_source_file = "");
 
     Chunk& main_chunk() { return scopes[0].chunk; }
     std::vector<FuncProto>& functions() { return funcs; }

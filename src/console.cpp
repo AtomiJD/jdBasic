@@ -19,7 +19,20 @@
 // ── Constructor / Destructor ─────────────────────────────────
 
 Console::Console() {
-    vm_instance = std::make_unique<VM>();
+    // Create a VM for each workspace
+    for (int i = 0; i < MAX_WORKSPACES; i++) {
+        workspaces[i].vm = std::make_unique<VM>();
+        // Wire VM output to the workspace's screen buffer
+        auto* screen = &workspaces[i].screen;
+        workspaces[i].vm->on_output = [this, i, screen](const std::string& text) {
+            screen->write(text);
+            // If this workspace is active, flush to real console immediately
+            if (i == active_ws) {
+                std::cout << text;
+                std::cout.flush();
+            }
+        };
+    }
     load_history();
     enable_raw_mode();
 }
@@ -29,7 +42,7 @@ Console::~Console() {
     disable_raw_mode();
 }
 
-VM& Console::active_vm() { return *vm_instance; }
+VM& Console::active_vm() { return *workspaces[active_ws].vm; }
 ConsoleState& Console::active_state() { return workspaces[active_ws].console; }
 
 // ── Raw mode ─────────────────────────────────────────────────
@@ -169,31 +182,83 @@ void Console::run() {
               to_run.swap(pending_executions); }
             for (auto& code : to_run) {
                 if (executor) {
-                    disable_raw_mode();
-                    executor(code, *vm_instance, workspaces[active_ws].console.program_buffer);
-                    enable_raw_mode();
+                    auto& ws = workspaces[active_ws];
+                    if (!ws.executing) {
+                        disable_raw_mode();
+                        executor(code, *ws.vm, ws.console.program_buffer);
+                        enable_raw_mode();
+                    }
                 }
             }
             render_prompt();
         }
 
-        int key = read_raw_key();
-        if (key > 0) {
-            process_key(key);
-            // Drain any further keys queued up (e.g. when pasting multi-char text
-            // or when the user types faster than the render loop) — batch them
-            // so we re-render the prompt exactly once for the whole batch.
-            for (int i = 0; i < 4096; i++) {
-                int k2 = read_raw_key();
-                if (k2 <= 0) break;
-                process_key(k2);
-            }
-            if (dirty_prompt) {
-                render_prompt();
-                dirty_prompt = false;
+        // Check if active workspace's worker thread has finished
+        auto& aws = workspaces[active_ws];
+        if (aws.worker.joinable() && !aws.executing) {
+            aws.worker.join();
+            // Re-enable raw mode and re-render prompt
+            enable_raw_mode();
+#if defined(_WIN32)
+            FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+            while (!utf8_buffer.empty()) utf8_buffer.pop();
+            high_surrogate = 0;
+#endif
+            render_prompt();
+        }
+
+        if (workspaces[active_ws].executing) {
+            // Program is running in worker thread.
+            if (workspaces[active_ws].vm->is_waiting_input) {
+                // VM is blocking on INPUT/std::cin — do NOT touch console buffer
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            } else {
+                // VM is running normally (INKEY$ polls non-blocking) —
+                // peek for F1-F4 workspace switch, leave everything else
+#if defined(_WIN32)
+                HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+                INPUT_RECORD ir;
+                DWORD peeked;
+                if (PeekConsoleInputW(hStdin, &ir, 1, &peeked) && peeked > 0) {
+                    if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
+                        WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+                        if (vk >= VK_F1 && vk <= VK_F4) {
+                            ReadConsoleInputW(hStdin, &ir, 1, &peeked);
+                            switch_workspace(vk - VK_F1);
+                        }
+                        // Other keys: leave for INKEY$/WAITKEY$
+                    } else {
+                        // Non-key events (mouse, focus): discard
+                        ReadConsoleInputW(hStdin, &ir, 1, &peeked);
+                    }
+                }
+#endif
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            int key = read_raw_key();
+            if (key > 0) {
+                process_key(key);
+                for (int i = 0; i < 4096; i++) {
+                    int k2 = read_raw_key();
+                    if (k2 <= 0) break;
+                    process_key(k2);
+                }
+                if (dirty_prompt) {
+                    render_prompt();
+                    dirty_prompt = false;
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    }
+
+    // Join any running worker threads on exit
+    for (int i = 0; i < MAX_WORKSPACES; i++) {
+        if (workspaces[i].worker.joinable()) {
+            workspaces[i].vm->is_halted = true;  // signal stop
+            workspaces[i].worker.join();
         }
     }
 }
@@ -203,20 +268,14 @@ void Console::run() {
 void Console::switch_workspace(int target) {
     if (target == active_ws) return;
 
-    // Save current VM state into current workspace
-    workspaces[active_ws].vm_state = std::make_unique<VMState>(vm_instance->save_state());
-
-    // Switch
+    // Each workspace has its own VM — no state swap needed
     active_ws = target;
 
-    // Restore target workspace VM state (or reset if fresh)
-    if (workspaces[active_ws].vm_state) {
-        vm_instance->restore_state(*workspaces[active_ws].vm_state);
-    } else {
-        vm_instance->reset();
-    }
+    // Clear screen and replay target workspace's output buffer
+    std::cout << "\033[2J\033[H";
+    std::cout << workspaces[active_ws].screen.replay();
+    std::cout.flush();
 
-    print("\r\n");
     set_color(14, 0);
     print("--- Workspace " + std::to_string(active_ws + 1) + " ---");
     set_color(7, 0);
@@ -358,8 +417,16 @@ void Console::process_key(int key) {
 
 // ── Execute ──────────────────────────────────────────────────
 
+// Check if a command should run asynchronously in a worker thread
+static bool is_async_command(const std::string& upper) {
+    return (upper == "RUN" ||
+            upper.substr(0, 4) == "RUN " ||
+            upper == "RESUME");
+}
+
 void Console::execute_current_line() {
     auto& state = active_state();
+    auto& ws = workspaces[active_ws];
     std::string cmd = state.current_input;
 
     // Trim
@@ -379,24 +446,56 @@ void Console::execute_current_line() {
             return;
         }
 
+        // If this workspace is already executing, reject new commands
+        if (ws.executing) {
+            print("Program running. Press F1-F4 to switch workspace.\r\n");
+            state.current_input.clear();
+            state.cursor_pos = 0;
+            state.history_idx = -1;
+            render_prompt();
+            return;
+        }
+
         state.history.push_front(cmd);
         if (state.history.size() > 500) state.history.pop_back();
 
         if (executor) {
-            disable_raw_mode();
-            executor(cmd, *vm_instance, state.program_buffer);
-            enable_raw_mode();
+            if (is_async_command(upper)) {
+                // Run asynchronously in worker thread
+                // Join any previous worker first
+                if (ws.worker.joinable()) ws.worker.join();
+
+                int ws_idx = active_ws;
+                ws.executing = true;
+                // Disable raw mode so _kbhit()/_getch() in INKEY$/WAITKEY$ work
+                disable_raw_mode();
+                ws.worker = std::thread([this, cmd, ws_idx]() {
+                    auto& w = workspaces[ws_idx];
+                    executor(cmd, *w.vm, w.console.program_buffer);
+                    w.executing = false;
+                });
+
+                // Don't render prompt — it will be rendered when worker finishes
+                state.current_input.clear();
+                state.cursor_pos = 0;
+                state.history_idx = -1;
+                return;
+            } else {
+                // Run synchronously (simple commands: PRINT x, x = 5, LOAD, etc.)
+                disable_raw_mode();
+                executor(cmd, *ws.vm, state.program_buffer);
+                enable_raw_mode();
 #if defined(_WIN32)
-            // If output didn't end with a newline, add one so prompt doesn't overwrite it
-            HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-            CONSOLE_SCREEN_BUFFER_INFO cInfo;
-            if (GetConsoleScreenBufferInfo(hOut, &cInfo) && cInfo.dwCursorPosition.X > 0) {
-                print("\r\n");
-            }
-            FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
-            while (!utf8_buffer.empty()) utf8_buffer.pop();
-            high_surrogate = 0;
+                HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+                CONSOLE_SCREEN_BUFFER_INFO cInfo;
+                if (GetConsoleScreenBufferInfo(hOut, &cInfo) && cInfo.dwCursorPosition.X > 0) {
+                    print("\r\n");
+                }
+                FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+                while (!utf8_buffer.empty()) utf8_buffer.pop();
+                high_surrogate = 0;
 #endif
+            }
         }
     }
 

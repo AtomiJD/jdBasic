@@ -15,6 +15,8 @@ IMPORT RPG_PARTY
 
 ' ── Global State ─────────────────────────────────────────────
 EXPORT DIM quit_flag = FALSE
+EXPORT DIM has_save_data = FALSE    ' TRUE once a game is properly initialized
+EXPORT DIM load_slot = -1           ' slot chosen on title screen (-1 = none)
 EXPORT DIM player_name$ = ""
 EXPORT DIM hero = -1
 EXPORT DIM has_sheet = FALSE
@@ -35,11 +37,15 @@ EXPORT DIM map_h = 0
 EXPORT DIM T = 32
 EXPORT DIM SW = 1280
 EXPORT DIM SH = 720
-EXPORT DIM sprite_path$ = ""
+EXPORT DIM base_dir$ = ""           ' root directory (from config file location)
+EXPORT DIM sprite_path$ = ""        ' base_dir + paths.sprites
+EXPORT DIM item_path$ = ""          ' base_dir + paths.items (icons)
+EXPORT DIM data_dir$ = ""           ' base_dir + paths.data
+EXPORT DIM save_file$ = ""          ' base_dir + paths.save_file
+EXPORT DIM default_battle_bg$ = ""  ' base_dir + paths.battle_bg
 EXPORT DIM sprite_scale = 1.0
 EXPORT DIM sprite_frame_w = 64
 EXPORT DIM sprite_frame_h = 64
-EXPORT DIM data_dir$ = "D:/usr/dev/cc/fluppi/rpg_data/"
 EXPORT DIM game = {}
 
 ' Ground layers (auto-detected from map)
@@ -64,6 +70,7 @@ EXPORT DIM follow_count = 0
 EXPORT DIM path_trail = []
 EXPORT DIM last_trail_x = -999
 EXPORT DIM last_trail_y = -999
+EXPORT DIM follow_dirs = []        ' last committed direction per follower ("h" or "v")
 
 ' Per-map saved state: map_states{map_id} = {chests_opened:[], monsters_defeated:[]}
 EXPORT DIM map_states = {}
@@ -76,12 +83,40 @@ EXPORT FUNC SHOW_TITLE(config_file$)
     SW = game{"screen_w"} : SH = game{"screen_h"}
     SCREEN SW, SH, game{"title"}
 
+    ' Derive base_dir from config file location
+    sep_pos = 0
+    FOR ci = LEN(config_file$) - 1 TO 0 STEP -1
+        ch$ = MID$(config_file$, ci, 1)
+        IF ch$ = "/" OR ch$ = "\" THEN sep_pos = ci : EXITFOR
+    NEXT ci
+    IF sep_pos > 0 THEN
+        ' Go up one more level (config is in rpg_data/)
+        tmp$ = LEFT$(config_file$, sep_pos)
+        sep2 = 0
+        FOR ci = LEN(tmp$) - 1 TO 0 STEP -1
+            ch$ = MID$(tmp$, ci, 1)
+            IF ch$ = "/" OR ch$ = "\" THEN sep2 = ci : EXITFOR
+        NEXT ci
+        IF sep2 > 0 THEN base_dir$ = LEFT$(config_file$, sep2) + "/"
+    ENDIF
+
+    ' Build paths from config
+    IF MAP.EXISTS(game, "paths") THEN
+        p = game{"paths"}
+        IF MAP.EXISTS(p, "sprites") THEN sprite_path$ = base_dir$ + p{"sprites"}
+        IF MAP.EXISTS(p, "items") THEN item_path$ = base_dir$ + p{"items"}
+        IF MAP.EXISTS(p, "data") THEN data_dir$ = base_dir$ + p{"data"}
+        IF MAP.EXISTS(p, "save_file") THEN save_file$ = base_dir$ + p{"save_file"}
+        IF MAP.EXISTS(p, "battle_bg") THEN default_battle_bg$ = base_dir$ + p{"battle_bg"}
+    ENDIF
+
     font$ = "C:/Windows/Fonts/arial.ttf"
-    IF MAP.EXISTS(game, "font") THEN font$ = game{"font"}
+    IF MAP.EXISTS(game, "font") THEN font$ = base_dir$ + game{"font"}
     font_size = 16
     IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
     TRY : SETFONT font$, font_size
     CATCH : SETFONT "C:/Windows/Fonts/arial.ttf", 14 : ENDTRY
+    RPG_DIALOG.FS = font_size
 
     c = game{"colors"}
     cb = c{"text_bright"} : cm = c{"menu_text"}
@@ -91,7 +126,7 @@ EXPORT FUNC SHOW_TITLE(config_file$)
     RPG_MUSIC.PLAY "title"
 
     welcome_bg = -1
-    TRY : welcome_bg = GFX.LOADIMAGE(game{"welcome_bg"}) : CATCH : ENDTRY
+    TRY : welcome_bg = GFX.LOADIMAGE(base_dir$ + game{"welcome_bg"}) : CATCH : ENDTRY
 
     selected = 0
     num_items = 3
@@ -101,18 +136,22 @@ EXPORT FUNC SHOW_TITLE(config_file$)
         CLS 10, 10, 30
         IF welcome_bg > 0 THEN GFX.DRAWIMAGE welcome_bg, 0, 0, SW, SH
 
-        menu_y = SH / 2 + 20
+        fs = font_size
+        item_h = INT(fs * 2.2)
+        btn_w = INT(fs * 12)
+        btn_h = INT(fs * 1.8)
+        menu_y = SH / 2 + INT(fs * 1.2)
         FOR i = 0 TO num_items - 1
-            iy = menu_y + i * 44
+            iy = menu_y + i * item_h
             IF i = selected THEN
-                RECT SW/2 - 100, iy - 6, 200, 36, cs[0], cs[1], cs[2], TRUE
-                RECT SW/2 - 100, iy - 6, 200, 36, cbd[0], cbd[1], cbd[2], FALSE
-                TEXT SW/2 - 50, iy, "> " + items[i], cb[0], cb[1], cb[2]
+                RECT SW/2 - btn_w/2, iy - INT(fs*0.3), btn_w, btn_h, cs[0], cs[1], cs[2], TRUE
+                RECT SW/2 - btn_w/2, iy - INT(fs*0.3), btn_w, btn_h, cbd[0], cbd[1], cbd[2], FALSE
+                TEXT SW/2 - INT(fs*3), iy, "> " + items[i], cb[0], cb[1], cb[2]
             ELSE
-                TEXT SW/2 - 40, iy, items[i], cm[0], cm[1], cm[2]
+                TEXT SW/2 - INT(fs*2.5), iy, items[i], cm[0], cm[1], cm[2]
             ENDIF
         NEXT i
-        TEXT SW/2 - 80, SH - 30, "Pfeiltasten + Enter", cd[0], cd[1], cd[2]
+        TEXT SW/2 - INT(fs*5), SH - INT(fs*1.8), "Pfeiltasten + Enter", cd[0], cd[1], cd[2]
         SCREENFLIP : SLEEP 16
 
         ev$ = GFX.POLLEVENT()
@@ -124,6 +163,18 @@ EXPORT FUNC SHOW_TITLE(config_file$)
         ENDIF
         IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
             IF selected = 2 THEN RETURN 2
+            IF selected = 1 THEN
+                ' Laden — show slot picker on title screen
+                slot = SHOW_SLOT_PICKER("load")
+                IF slot >= 0 THEN
+                    ' Store chosen slot for LOAD_GAME to pick up
+                    load_slot = slot
+                    GFX.FADE 0, 0.5
+                    RETURN 1
+                ENDIF
+                ' User cancelled — stay on title
+                CONTINUELOOP
+            ENDIF
             GFX.FADE 0, 0.5
             RETURN selected
         ENDIF
@@ -137,35 +188,80 @@ ENDFUNC
 EXPORT SUB INIT(config_file$)
     game = JSON.PARSE$(TXTREADER$(config_file$))
     SW = game{"screen_w"} : SH = game{"screen_h"}
-    sprite_path$ = game{"sprite_path"}
     IF MAP.EXISTS(game, "sprite_scale") THEN sprite_scale = game{"sprite_scale"}
     IF MAP.EXISTS(game, "sprite_frame_w") THEN sprite_frame_w = INT(game{"sprite_frame_w"})
     IF MAP.EXISTS(game, "sprite_frame_h") THEN sprite_frame_h = INT(game{"sprite_frame_h"})
 
+    ' Build paths from config (if SHOW_TITLE wasn't called first)
+    IF base_dir$ = "" THEN
+        sep_pos = 0
+        FOR ci = LEN(config_file$) - 1 TO 0 STEP -1
+            ch$ = MID$(config_file$, ci, 1)
+            IF ch$ = "/" OR ch$ = "\" THEN sep_pos = ci : EXITFOR
+        NEXT ci
+        IF sep_pos > 0 THEN
+            tmp$ = LEFT$(config_file$, sep_pos)
+            sep2 = 0
+            FOR ci = LEN(tmp$) - 1 TO 0 STEP -1
+                ch$ = MID$(tmp$, ci, 1)
+                IF ch$ = "/" OR ch$ = "\" THEN sep2 = ci : EXITFOR
+            NEXT ci
+            IF sep2 > 0 THEN base_dir$ = LEFT$(config_file$, sep2) + "/"
+        ENDIF
+        IF MAP.EXISTS(game, "paths") THEN
+            p = game{"paths"}
+            IF MAP.EXISTS(p, "sprites") THEN sprite_path$ = base_dir$ + p{"sprites"}
+            IF MAP.EXISTS(p, "items") THEN item_path$ = base_dir$ + p{"items"}
+            IF MAP.EXISTS(p, "data") THEN data_dir$ = base_dir$ + p{"data"}
+            IF MAP.EXISTS(p, "save_file") THEN save_file$ = base_dir$ + p{"save_file"}
+            IF MAP.EXISTS(p, "battle_bg") THEN default_battle_bg$ = base_dir$ + p{"battle_bg"}
+        ENDIF
+    ENDIF
+
     IF SCREENWIDTH() = 0 THEN
         SCREEN SW, SH, game{"title"}
-        TRY : SETFONT game{"font"}, game{"font_size"}
+        TRY : SETFONT base_dir$ + game{"font"}, game{"font_size"}
         CATCH : SETFONT "C:/Windows/Fonts/arial.ttf", 14 : ENDTRY
         RPG_MUSIC.SETUP
     ENDIF
 
-    RPG_INVENTORY.SET_ASSET_PATH "generated_sprites/"
+    RPG_INVENTORY.SET_ASSET_PATH item_path$
+    ' Propagate paths to shared module
+    RPG_DIALOG.SPRITE_PATH$ = sprite_path$
+    RPG_DIALOG.ITEM_PATH$ = item_path$
+    RPG_DIALOG.BATTLE_BG$ = default_battle_bg$
+    RPG_DIALOG.FRAME_W = sprite_frame_w
+    RPG_DIALOG.FRAME_H = sprite_frame_h
 
-    ' Apply colors from config to dialog system
+    ' Propagate font size to all UI modules
+    font_size = 16
+    IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
+    RPG_DIALOG.FS = font_size
+
+    ' Apply full color palette to shared dialog module
     IF MAP.EXISTS(game, "colors") THEN
         c = game{"colors"}
-        IF MAP.EXISTS(c, "box_bg") THEN
-            bg = c{"box_bg"}
-            RPG_DIALOG.DLG_COLOR_R = bg[0]
-            RPG_DIALOG.DLG_COLOR_G = bg[1]
-            RPG_DIALOG.DLG_COLOR_B = bg[2]
-        ENDIF
-        IF MAP.EXISTS(c, "box_border") THEN
-            bd = c{"box_border"}
-            RPG_DIALOG.DLG_BORDER_R = bd[0]
-            RPG_DIALOG.DLG_BORDER_G = bd[1]
-            RPG_DIALOG.DLG_BORDER_B = bd[2]
-        ENDIF
+        IF MAP.EXISTS(c, "box_bg") THEN RPG_DIALOG.C_BOX_BG = c{"box_bg"}
+        IF MAP.EXISTS(c, "box_border") THEN RPG_DIALOG.C_BOX_BD = c{"box_border"}
+        IF MAP.EXISTS(c, "text") THEN RPG_DIALOG.C_TEXT = c{"text"}
+        IF MAP.EXISTS(c, "text_dim") THEN RPG_DIALOG.C_TEXT_DIM = c{"text_dim"}
+        IF MAP.EXISTS(c, "text_bright") THEN RPG_DIALOG.C_TEXT_BR = c{"text_bright"}
+        IF MAP.EXISTS(c, "title") THEN RPG_DIALOG.C_TITLE = c{"title"}
+        IF MAP.EXISTS(c, "gold") THEN RPG_DIALOG.C_GOLD = c{"gold"}
+        IF MAP.EXISTS(c, "menu_sel") THEN RPG_DIALOG.C_MENU_SEL = c{"menu_sel"}
+        IF MAP.EXISTS(c, "menu_text") THEN RPG_DIALOG.C_MENU_TXT = c{"menu_text"}
+        IF MAP.EXISTS(c, "hp_bar") THEN RPG_DIALOG.C_HP_BAR = c{"hp_bar"}
+        IF MAP.EXISTS(c, "hp_bg") THEN RPG_DIALOG.C_HP_BG = c{"hp_bg"}
+        IF MAP.EXISTS(c, "enemy_hp") THEN RPG_DIALOG.C_ENEMY_HP = c{"enemy_hp"}
+        IF MAP.EXISTS(c, "hint") THEN RPG_DIALOG.C_HINT = c{"hint"}
+        IF MAP.EXISTS(c, "msg") THEN RPG_DIALOG.C_MSG = c{"msg"}
+        ' Legacy aliases for dialog box rendering
+        RPG_DIALOG.DLG_COLOR_R = RPG_DIALOG.C_BOX_BG[0]
+        RPG_DIALOG.DLG_COLOR_G = RPG_DIALOG.C_BOX_BG[1]
+        RPG_DIALOG.DLG_COLOR_B = RPG_DIALOG.C_BOX_BG[2]
+        RPG_DIALOG.DLG_BORDER_R = RPG_DIALOG.C_BOX_BD[0]
+        RPG_DIALOG.DLG_BORDER_G = RPG_DIALOG.C_BOX_BD[1]
+        RPG_DIALOG.DLG_BORDER_B = RPG_DIALOG.C_BOX_BD[2]
     ENDIF
     RPG_INVENTORY.LOAD_ITEM_DB data_dir$ + "items.json"
 
@@ -231,6 +327,12 @@ EXPORT SUB ENTER_MAP(map_file$, spawn_name$)
     map_id$ = ""
     IF MAP.EXISTS(map_props, "map_id") THEN map_id$ = map_props{"map_id"}
     IF MAP.EXISTS(map_props, "music") THEN RPG_MUSIC.PLAY map_props{"music"}
+
+    ' Per-map battle background (optional TMX property "battle_bg")
+    RPG_DIALOG.MAP_BATTLE_BG$ = ""
+    IF MAP.EXISTS(map_props, "battle_bg") THEN
+        RPG_DIALOG.MAP_BATTLE_BG$ = base_dir$ + map_props{"battle_bg"}
+    ENDIF
 
     ' Detect ground layers
     ground_layers = []
@@ -632,9 +734,11 @@ SUB UPDATE_FOLLOW_SPRITES()
                     ENDIF
                 NEXT ni
                 PUSH follow_sprites, fs
+                PUSH follow_dirs, ""
                 follow_count = follow_count + 1
             CATCH
                 PUSH follow_sprites, -1
+                PUSH follow_dirs, ""
                 follow_count = follow_count + 1
             ENDTRY
         ENDIF
@@ -676,17 +780,36 @@ SUB UPDATE_FOLLOW_POSITIONS()
         fdist = SQR(fdx*fdx + fdy*fdy)
         IF fdist > 2 THEN
             fspeed = 2.5
+            ' Direction hysteresis: stick to current axis unless the
+            ' other axis is clearly dominant (1.5x ratio). This prevents
+            ' rapid animation switching when moving diagonally.
+            last_dir$ = follow_dirs[fi]
+            use_h = TRUE
+            IF last_dir$ = "h" THEN
+                ' Currently horizontal — only switch to vertical if fdy >> fdx
+                IF ABS(fdy) > ABS(fdx) * 1.5 THEN use_h = FALSE
+            ELSEIF last_dir$ = "v" THEN
+                ' Currently vertical — only switch to horizontal if fdx >> fdy
+                IF ABS(fdx) > ABS(fdy) * 1.5 THEN use_h = TRUE ELSE use_h = FALSE
+            ELSE
+                ' No previous direction — pick the dominant axis
+                IF ABS(fdx) >= ABS(fdy) THEN use_h = TRUE ELSE use_h = FALSE
+            ENDIF
+
             new_x = cur_x : new_y = cur_y
-            IF ABS(fdx) >= ABS(fdy) THEN
+            IF use_h THEN
                 IF ABS(fdx) < fspeed THEN new_x = tx ELSE new_x = cur_x + SGN(fdx) * fspeed
+                follow_dirs[fi] = "h"
             ELSE
                 IF ABS(fdy) < fspeed THEN new_y = ty ELSE new_y = cur_y + SGN(fdy) * fspeed
+                follow_dirs[fi] = "v"
             ENDIF
+
             hdx = new_x - hx : hdy = new_y - hy
             hdist = SQR(hdx*hdx + hdy*hdy)
             IF hdist >= T THEN
                 SPRITE.POS follow_sprites[fi], new_x, new_y
-                IF ABS(fdx) >= ABS(fdy) THEN
+                IF use_h THEN
                     IF fdx > 0 THEN SPRITE.PLAY follow_sprites[fi], "walk_right"
                     IF fdx < 0 THEN SPRITE.PLAY follow_sprites[fi], "walk_left"
                 ELSE
@@ -696,6 +819,7 @@ SUB UPDATE_FOLLOW_POSITIONS()
             ENDIF
         ELSE
             SPRITE.PLAY follow_sprites[fi], "idle_down"
+            follow_dirs[fi] = ""
         ENDIF
     NEXT fi
 ENDSUB
@@ -707,7 +831,12 @@ EXPORT SUB UPDATE()
     TILED.UPDATE 0.016
 
     ev$ = GFX.POLLEVENT()
-    IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN quit_flag = TRUE : RETURN
+    IF ev$ = "QUIT" THEN quit_flag = TRUE : RETURN
+    IF ev$ = "KEYDOWN:Escape" THEN
+        DRAW_SCENE
+        SHOW_PAUSE_MENU
+        RETURN
+    ENDIF
     IF ev$ = "KEYDOWN:F11" THEN TOGGLE_FULLSCREEN
     IF ev$ = "KEYDOWN:Tab" THEN DRAW_SCENE : RPG_INVENTORY.SHOW_BAG
     IF ev$ = "KEYDOWN:P" THEN DRAW_SCENE : RPG_PARTY.SHOW_PARTY
@@ -793,6 +922,14 @@ EXPORT SUB UPDATE()
                     m{"respawn_at"} = TICK() + 10000
                     monsters[mi] = m
                     RPG_QUEST.PROGRESS "defeat:" + m{"id"}, 1
+                ELSEIF battle_result$ = "flee" THEN
+                    ' Hide monster temporarily so we don't re-trigger combat
+                    SPRITE.DELETE monster_hit
+                    m{"defeated"} = TRUE : m{"sprite_id"} = -1
+                    m{"respawn_at"} = TICK() + 5000
+                    monsters[mi] = m
+                    ' Step player back to avoid immediate re-collision
+                    SPRITE.POS hero, old_x, old_y
                 ELSEIF battle_result$ = "dead" THEN
                     RPG_DIALOG.SAY "System", "Du bist gefallen... Eine geheimnisvolle Kraft erweckt dich."
                     RPG_COMBAT.HEAL_PLAYER INT(RPG_COMBAT.player{"max_hp"} / 2)
@@ -876,6 +1013,10 @@ EXPORT SUB UPDATE()
                                 jdlg$ = REPLACE$(n.dialog_joined$, "{PLAYER}", player_name$)
                                 DRAW_SCENE : RPG_DIALOG.SAY n.name$, jdlg$
                             ENDIF
+                            ' Auto-complete talk quests for this NPC (can't talk after joining party)
+                            RPG_QUEST.PROGRESS "talk:" + n.name$, 1
+                            ' Also auto-turn-in if quest is now complete (NPC is no longer on map)
+                            RPG_QUEST.HANDLE_NPC n.name$, player_name$
                         ENDIF
                     ENDIF
 
@@ -933,45 +1074,266 @@ SUB DRAW_SCENE()
         ENDIF
     NEXT
 
-    ' HUD (screen-space, top-left)
+    ' HUD (screen-space, top-left) — font-relative layout
+    fs = RPG_DIALOG.FS
+    hud_lh = INT(fs * 1.1)
     hud_x = 10 : hud_y = 10
     IF player_name$ <> "" THEN
         TEXT hud_x, hud_y, player_name$, 255, 220, 80
-        hud_y = hud_y + 18
+        hud_y = hud_y + hud_lh
     ENDIF
     gold = RPG_INVENTORY.GET_GOLD()
     IF gold > 0 THEN
         TEXT hud_x, hud_y, "Gold: " + STR$(INT(gold)), 255, 215, 0
-        hud_y = hud_y + 18
+        hud_y = hud_y + hud_lh
     ENDIF
+    bar_w = INT(fs * 4)
+    bar_h = INT(fs * 0.5)
+    name_w = INT(fs * 5)
     FOR pidx = 0 TO RPG_PARTY.member_count - 1
         pm = RPG_PARTY.GET_MEMBER(pidx)
         TEXT hud_x, hud_y, LEFT$(pm{"name"}, 8), 180, 180, 220
-        bar_x = hud_x + 70 : bar_w = 60
+        bar_x = hud_x + name_w
         hp_pct = pm{"hp"} / pm{"max_hp"}
-        RECT bar_x, hud_y + 2, bar_w, 10, 60, 30, 30, TRUE
-        RECT bar_x, hud_y + 2, INT(bar_w * hp_pct), 10, 80, 200, 80, TRUE
+        RECT bar_x, hud_y + INT(fs*0.15), bar_w, bar_h, 60, 30, 30, TRUE
+        RECT bar_x, hud_y + INT(fs*0.15), INT(bar_w * hp_pct), bar_h, 80, 200, 80, TRUE
         TEXT bar_x + bar_w + 4, hud_y, STR$(INT(pm{"hp"})), 180, 200, 180
-        hud_y = hud_y + 16
+        hud_y = hud_y + hud_lh
     NEXT pidx
 ENDSUB
 
 EXPORT SUB DRAW()
     DRAW_SCENE
     scrw = SCREENWIDTH() : scrh = SCREENHEIGHT()
-    TEXT scrw-420, 10, "Pfeile:Laufen Space:Aktion Tab:Inventar P:Gruppe Q:Quests", 130, 130, 150
+    fs = RPG_DIALOG.FS
+    lh = INT(fs * 1.1)
+    TEXT scrw - INT(fs * 27), 10, "Pfeile:Laufen Space:Aktion Tab:Inventar P:Gruppe Q:Quests", 130, 130, 150
     qc = RPG_QUEST.ACTIVE_COUNT()
-    IF qc > 0 THEN TEXT scrw-150, 28, "Quests: " + STR$(qc) + " (Q)", 180, 180, 100
-    IF hint$ <> "" THEN TEXT scrw/2-60, scrh-30, hint$, 200, 255, 200
-    IF msg_timer > 0 THEN TEXT scrw/2-100, scrh-55, msg$, 255, 255, 100
+    IF qc > 0 THEN TEXT scrw - INT(fs * 10), 10 + lh, "Quests: " + STR$(qc) + " (Q)", 180, 180, 100
+    IF hint$ <> "" THEN TEXT scrw/2 - INT(fs*4), scrh - INT(fs*1.8), hint$, 200, 255, 200
+    IF msg_timer > 0 THEN TEXT scrw/2 - INT(fs*6), scrh - INT(fs*3.5), msg$, 255, 255, 100
 ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ PAUSE MENU ═══════════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+SUB SHOW_PAUSE_MENU()
+    pause_bg = GFX.CAPTURE()
+    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
+    fs = RPG_DIALOG.FS
+    cbg = RPG_DIALOG.C_BOX_BG : cbd = RPG_DIALOG.C_BOX_BD
+    ctb = RPG_DIALOG.C_TEXT_BR : cmt = RPG_DIALOG.C_MENU_TXT
+    cms = RPG_DIALOG.C_MENU_SEL : ctl = RPG_DIALOG.C_TITLE
+    ctd = RPG_DIALOG.C_TEXT_DIM
+    item_h = INT(fs * 2.0)
+    selected = 0
+    saved_this_session = FALSE
+    menu = ["Weiterspielen", "Speichern", "Laden", "Beenden"]
+    num_items = 4
+
+    DO
+        GFX.DRAW_CAPTURE pause_bg
+        ' Darken
+        RECT 0, 0, sw, sh, 0, 0, 0, TRUE
+
+        ' Menu box
+        bw = INT(fs * 14) : bh = num_items * item_h + INT(fs * 4)
+        bx = INT((sw - bw) / 2) : by = INT((sh - bh) / 2)
+        RECT bx, by, bw, bh, cbg[0], cbg[1], cbg[2], TRUE
+        RECT bx, by, bw, bh, cbd[0], cbd[1], cbd[2], FALSE
+
+        ' Title
+        TEXT bx + bw/2 - INT(fs*2.5), by + INT(fs*0.6), "PAUSE", ctl[0], ctl[1], ctl[2]
+        RECT bx + 10, by + INT(fs*2), bw - 20, 2, cbd[0]-20, cbd[1]-40, cbd[2]-40, TRUE
+
+        ' Items
+        FOR i = 0 TO num_items - 1
+            iy = by + INT(fs*2.5) + i * item_h
+            IF i = selected THEN
+                RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*1.5), cms[0], cms[1]-10, cms[2]-20, TRUE
+                TEXT bx + INT(fs*2), iy, "> " + menu[i], ctb[0], ctb[1], ctb[2]
+            ELSE
+                TEXT bx + INT(fs*2.5), iy, menu[i], cmt[0], cmt[1], cmt[2]
+            ENDIF
+        NEXT i
+
+        ' Info
+        IF player_name$ <> "" THEN
+            TEXT bx + 10, by + bh - INT(fs*1.3), player_name$ + " - " + current_map$, ctd[0]-40, ctd[1]-40, ctd[2]-20
+        ENDIF
+
+        SCREENFLIP : SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:Escape" THEN EXITDO
+        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_items
+        IF ev$ = "KEYDOWN:Up" THEN
+            selected = selected - 1
+            IF selected < 0 THEN selected = num_items - 1
+        ENDIF
+        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+            IF selected = 0 THEN
+                ' Weiterspielen
+                EXITDO
+            ELSEIF selected = 1 THEN
+                ' Speichern — show slot picker
+                slot = SHOW_SLOT_PICKER("save")
+                IF slot >= 0 THEN
+                    SAVE_TO_SLOT slot
+                    saved_this_session = TRUE
+                    RPG_DIALOG.SAY "System", "Spiel in Slot " + STR$(slot + 1) + " gespeichert!"
+                ENDIF
+                GFX.DRAW_CAPTURE pause_bg
+            ELSEIF selected = 2 THEN
+                ' Laden — show slot picker
+                slot = SHOW_SLOT_PICKER("load")
+                IF slot >= 0 THEN
+                    GFX.FREEIMAGE pause_bg
+                    LOAD_FROM_SLOT slot
+                    RPG_DIALOG.SAY "System", "Spielstand geladen!"
+                    RETURN
+                ENDIF
+                GFX.DRAW_CAPTURE pause_bg
+            ELSEIF selected = 3 THEN
+                ' Beenden — skip confirmation if saved during this pause
+                IF saved_this_session THEN
+                    quit_flag = TRUE
+                    GFX.FREEIMAGE pause_bg
+                    RETURN
+                ENDIF
+                RPG_DIALOG.SAY "System", "Spiel wird beendet. Ungespeicherter Fortschritt geht verloren!"
+                GFX.DRAW_CAPTURE pause_bg
+                confirm = RPG_DIALOG.CHOICE("Trotzdem beenden|Zurück")
+                IF confirm = 0 THEN
+                    quit_flag = TRUE
+                    GFX.FREEIMAGE pause_bg
+                    RETURN
+                ENDIF
+                GFX.DRAW_CAPTURE pause_bg
+            ENDIF
+        ENDIF
+    LOOP
+    GFX.FREEIMAGE pause_bg
+ENDSUB
+
+' ══════════════════════════════════════════════════════════════
+' ══ SAVE SLOT SYSTEM ═════════════════════════════════════════
+' ══════════════════════════════════════════════════════════════
+CONST SLOT_COUNT = 3
+
+FUNC GET_SLOT_FILE$(slot)
+    RETURN base_dir$ + "rpg_data/save_slot" + STR$(slot + 1) + ".json"
+ENDFUNC
+
+' Read slot preview info (name, level, map) without loading
+FUNC GET_SLOT_INFO$(slot)
+    TRY
+        sf$ = GET_SLOT_FILE$(slot)
+        sg = JSON.PARSE$(TXTREADER$(sf$))
+        name$ = sg{"player_name"}
+        map$ = sg{"current_map_file"}
+        map$ = mid$(map$,instr$(map$,"/")+1)
+        map$ = left$(map$,instr$(map$,"."))
+        lv = 1
+        IF MAP.EXISTS(sg, "party") THEN
+            p = sg{"party"}
+            IF LEN(p) > 0 THEN lv = INT(p[0]{"level"})
+        ENDIF
+        pc = 1
+        IF MAP.EXISTS(sg, "party") THEN pc = LEN(sg{"party"})
+        RETURN name$ + "  Lv." + STR$(lv) + "  Party:" + STR$(pc) + "  " + map$
+    CATCH
+        RETURN ""
+    ENDTRY
+ENDFUNC
+
+FUNC SHOW_SLOT_PICKER(mode$)
+    slot_bg = GFX.CAPTURE()
+    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
+    fs = RPG_DIALOG.FS
+    cbg = RPG_DIALOG.C_BOX_BG : cbd = RPG_DIALOG.C_BOX_BD
+    ctb = RPG_DIALOG.C_TEXT_BR : cmt = RPG_DIALOG.C_MENU_TXT
+    cms = RPG_DIALOG.C_MENU_SEL : ctl = RPG_DIALOG.C_TITLE
+    ctd = RPG_DIALOG.C_TEXT_DIM : cgl = RPG_DIALOG.C_GOLD
+    slot_h = INT(fs * 3.0)
+    selected = 0
+
+    ' Read all slot infos
+    DIM slot_infos[SLOT_COUNT]
+    FOR si = 0 TO SLOT_COUNT - 1
+        slot_infos[si] = GET_SLOT_INFO$(si)
+    NEXT si
+
+    IF mode$ = "save" THEN
+        title$ = "SPEICHERN"
+    ELSE
+        title$ = "LADEN"
+    ENDIF
+
+    DO
+        GFX.DRAW_CAPTURE slot_bg
+        RECT 0, 0, sw, sh, 0, 0, 0, TRUE
+
+        bw = INT(fs * 28) : bh = SLOT_COUNT * slot_h + INT(fs * 5)
+        bx = INT((sw - bw) / 2) : by = INT((sh - bh) / 2)
+        RECT bx, by, bw, bh, cbg[0], cbg[1], cbg[2], TRUE
+        RECT bx, by, bw, bh, cbd[0], cbd[1], cbd[2], FALSE
+
+        TEXT bx + bw/2 - INT(fs*3), by + INT(fs*0.6), title$, ctl[0], ctl[1], ctl[2]
+        RECT bx + 10, by + INT(fs*2), bw - 20, 2, cbd[0]-20, cbd[1]-40, cbd[2]-40, TRUE
+
+        FOR si = 0 TO SLOT_COUNT - 1
+            iy = by + INT(fs*2.8) + si * slot_h
+            info$ = slot_infos[si]
+            IF si = selected THEN
+                RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*2.4), cms[0], cms[1]-10, cms[2]-20, TRUE
+                RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*2.4), cbd[0], cbd[1], cbd[2], FALSE
+            ENDIF
+            TEXT bx + INT(fs*1.5), iy, "Slot " + STR$(si + 1), cgl[0], cgl[1], cgl[2]
+            IF info$ <> "" THEN
+                TEXT bx + INT(fs*5), iy, info$, ctb[0]-20, ctb[1]-20, ctb[2]-20
+            ELSE
+                TEXT bx + INT(fs*5), iy, "- Leer -", ctd[0]-40, ctd[1]-40, ctd[2]-20
+            ENDIF
+            ' Second line: mode hint
+            IF si = selected THEN
+                IF mode$ = "load" AND info$ = "" THEN
+                    TEXT bx + INT(fs*5), iy + INT(fs*1.2), "Kein Spielstand vorhanden", ctd[0], ctd[1]-20, ctd[2]-40
+                ELSEIF mode$ = "save" AND info$ <> "" THEN
+                    TEXT bx + INT(fs*5), iy + INT(fs*1.2), "Überschreibt vorhandenen Stand!", ctd[0]+60, ctd[1]-40, ctd[2]-40
+                ENDIF
+            ENDIF
+        NEXT si
+
+        TEXT bx + bw/2 - INT(fs*6), by + bh - INT(fs*1.3), "Hoch/Runter  Enter:Wählen  Esc:Zurück", ctd[0]-40, ctd[1]-40, ctd[2]-20
+        SCREENFLIP : SLEEP 16
+
+        ev$ = GFX.POLLEVENT()
+        IF ev$ = "KEYDOWN:Escape" THEN
+            GFX.FREEIMAGE slot_bg
+            RETURN -1
+        ENDIF
+        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD SLOT_COUNT
+        IF ev$ = "KEYDOWN:Up" THEN
+            selected = selected - 1
+            IF selected < 0 THEN selected = SLOT_COUNT - 1
+        ENDIF
+        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+            ' For load mode, don't allow empty slots
+            IF mode$ = "load" AND slot_infos[selected] = "" THEN
+                CONTINUELOOP
+            ENDIF
+            GFX.FREEIMAGE slot_bg
+            RETURN selected
+        ENDIF
+    LOOP
+ENDFUNC
 
 ' ══════════════════════════════════════════════════════════════
 ' ══ SAVE / LOAD ══════════════════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
-EXPORT DIM save_file$ = "D:/usr/dev/cc/fluppi/rpg_data/savegame.json"
 
-EXPORT SUB SAVE_GAME()
+FUNC BUILD_SAVE_DATA()
     SAVE_MAP_STATE
     sg = {}
     sg{"player_name"} = player_name$
@@ -985,39 +1347,107 @@ EXPORT SUB SAVE_GAME()
     sg{"player_combat"} = RPG_COMBAT.GET_SAVE_DATA()
     sg{"party"} = RPG_PARTY.GET_SAVE_DATA()
     sg{"quests"} = RPG_QUEST.GET_SAVE_DATA()
-    TXTWRITER save_file$, JSON.STRINGIFY$(sg)
-    PRINT "Spiel gespeichert."
+    ' Save follower positions
+    fpos = []
+    FOR fi = 0 TO follow_count - 1
+        IF follow_sprites[fi] >= 0 THEN
+            PUSH fpos, [SPRITE.GET_X(follow_sprites[fi]), SPRITE.GET_Y(follow_sprites[fi])]
+        ELSE
+            PUSH fpos, [SPRITE.GET_X(hero), SPRITE.GET_Y(hero)]
+        ENDIF
+    NEXT fi
+    sg{"follow_pos"} = fpos
+    RETURN sg
+ENDFUNC
+
+SUB SAVE_TO_SLOT(slot)
+    sg = BUILD_SAVE_DATA()
+    sf$ = GET_SLOT_FILE$(slot)
+    TXTWRITER sf$, JSON.STRINGIFY$(sg)
+    has_save_data = TRUE
+    msg$ = "Slot " + STR$(slot + 1) + " gespeichert" : msg_timer = 90
+ENDSUB
+
+SUB APPLY_SAVE_DATA(sg)
+    IF MAP.EXISTS(sg, "player_name") THEN player_name$ = sg{"player_name"}
+    IF MAP.EXISTS(sg, "direction") THEN direction$ = sg{"direction"}
+    IF MAP.EXISTS(sg, "map_states") THEN map_states = sg{"map_states"}
+    IF MAP.EXISTS(sg, "inventory") THEN RPG_INVENTORY.LOAD_SAVE_DATA sg{"inventory"}
+    IF MAP.EXISTS(sg, "player_combat") THEN RPG_COMBAT.LOAD_SAVE_DATA sg{"player_combat"}
+    IF MAP.EXISTS(sg, "quests") THEN RPG_QUEST.LOAD_SAVE_DATA sg{"quests"}
+
+    ' Restore recruits
+    IF MAP.EXISTS(sg, "recruit_data") THEN
+        recruit_data = sg{"recruit_data"}
+        rkeys = MAP.KEYS(recruit_data)
+        FOR ri = 0 TO LEN(rkeys) - 1
+            IF recruit_data{rkeys[ri]} THEN RPG_PARTY.ADD_MEMBER rkeys[ri]
+        NEXT ri
+    ENDIF
+    IF MAP.EXISTS(sg, "party") THEN RPG_PARTY.LOAD_SAVE_DATA sg{"party"}
+
+    ' Load saved map
+    IF MAP.EXISTS(sg, "current_map_file") THEN
+        ENTER_MAP sg{"current_map_file"}, "default_spawn"
+        IF MAP.EXISTS(sg, "player_x") THEN
+            hx = sg{"player_x"} : hy = sg{"player_y"}
+            SPRITE.POS hero, hx, hy
+            last_trail_x = hx : last_trail_y = hy
+            path_trail = [] : PUSH path_trail, [hx, hy]
+
+            ' Restore follower positions from save
+            IF MAP.EXISTS(sg, "follow_pos") THEN
+                fpos = sg{"follow_pos"}
+                FOR fi = 0 TO follow_count - 1
+                    IF follow_sprites[fi] >= 0 AND fi < LEN(fpos) THEN
+                        SPRITE.POS follow_sprites[fi], fpos[fi][0], fpos[fi][1]
+                        ' Seed trail with follower positions so movement continues smoothly
+                        PUSH path_trail, [fpos[fi][0], fpos[fi][1]]
+                    ENDIF
+                NEXT fi
+            ENDIF
+        ENDIF
+    ENDIF
+    has_save_data = TRUE
+ENDSUB
+
+SUB LOAD_FROM_SLOT(slot)
+    TRY
+        sf$ = GET_SLOT_FILE$(slot)
+        sg = JSON.PARSE$(TXTREADER$(sf$))
+        APPLY_SAVE_DATA sg
+    CATCH
+    ENDTRY
+ENDSUB
+
+' Legacy SAVE/LOAD for backward compat (used by title screen "Laden")
+EXPORT SUB SAVE_GAME()
+    SAVE_TO_SLOT 0
 ENDSUB
 
 EXPORT FUNC LOAD_GAME()
+    ' If a slot was chosen on title screen, load that
+    IF load_slot >= 0 THEN
+        TRY
+            LOAD_FROM_SLOT load_slot
+            load_slot = -1
+            RETURN TRUE
+        CATCH
+            load_slot = -1
+            RETURN FALSE
+        ENDTRY
+    ENDIF
+    ' Fallback: try slot 1, then legacy save file
+    TRY
+        sf$ = GET_SLOT_FILE$(0)
+        sg = JSON.PARSE$(TXTREADER$(sf$))
+        APPLY_SAVE_DATA sg
+        RETURN TRUE
+    CATCH
+    ENDTRY
     TRY
         sg = JSON.PARSE$(TXTREADER$(save_file$))
-        IF MAP.EXISTS(sg, "player_name") THEN player_name$ = sg{"player_name"}
-        IF MAP.EXISTS(sg, "direction") THEN direction$ = sg{"direction"}
-        IF MAP.EXISTS(sg, "map_states") THEN map_states = sg{"map_states"}
-        IF MAP.EXISTS(sg, "inventory") THEN RPG_INVENTORY.LOAD_SAVE_DATA sg{"inventory"}
-        IF MAP.EXISTS(sg, "player_combat") THEN RPG_COMBAT.LOAD_SAVE_DATA sg{"player_combat"}
-        IF MAP.EXISTS(sg, "quests") THEN RPG_QUEST.LOAD_SAVE_DATA sg{"quests"}
-
-        ' Restore recruits
-        IF MAP.EXISTS(sg, "recruit_data") THEN
-            recruit_data = sg{"recruit_data"}
-            rkeys = MAP.KEYS(recruit_data)
-            FOR ri = 0 TO LEN(rkeys) - 1
-                IF recruit_data{rkeys[ri]} THEN RPG_PARTY.ADD_MEMBER rkeys[ri]
-            NEXT ri
-        ENDIF
-        IF MAP.EXISTS(sg, "party") THEN RPG_PARTY.LOAD_SAVE_DATA sg{"party"}
-
-        ' Load saved map
-        IF MAP.EXISTS(sg, "current_map_file") THEN
-            ENTER_MAP sg{"current_map_file"}, "default_spawn"
-            IF MAP.EXISTS(sg, "player_x") THEN
-                SPRITE.POS hero, sg{"player_x"}, sg{"player_y"}
-                last_trail_x = sg{"player_x"} : last_trail_y = sg{"player_y"}
-            ENDIF
-        ENDIF
-        PRINT "Spielstand geladen."
+        APPLY_SAVE_DATA sg
         RETURN TRUE
     CATCH
         RETURN FALSE

@@ -154,6 +154,11 @@ Description: Skips the rest of the current FOR loop iteration and jumps to the N
 Syntax: CONTINUELOOP
 Description: Synonym for CONTINUEDO. Skips the rest of the current DO loop iteration.
 
+[CONST]
+Syntax: CONST name = expression
+Description: Declares a global constant. The value is set once and cannot be reassigned. Any attempt to change a CONST variable will cause a runtime error. Constants are always global, even when declared inside a function. The built-in constants PI and E are also protected this way.
+Example: CONST MAX_HEALTH = 100
+
 [CONVOLVE]
 Syntax: CONVOLVE(array, kernel, wrap_mode)
 Description: Performs a 2D convolution operation on an array with a given kernel.

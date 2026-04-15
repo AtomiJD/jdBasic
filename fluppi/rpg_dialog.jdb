@@ -9,14 +9,42 @@
 
 EXPORT MODULE RPG_DIALOG
 
+' --- Font metric (set by engine after SETFONT) ---
+EXPORT DIM FS = 16             ' font size — all layout derives from this
+
+' --- Shared paths (set by engine from game.json) ---
+EXPORT DIM SPRITE_PATH$ = ""   ' path to sprite assets
+EXPORT DIM ITEM_PATH$ = ""     ' path to item icon assets
+EXPORT DIM BATTLE_BG$ = ""     ' default battle background path
+EXPORT DIM MAP_BATTLE_BG$ = "" ' per-map battle background (set by engine on map change)
+
+' --- Shared sprite config (set by engine from game.json) ---
+EXPORT DIM FRAME_W = 64        ' sprite sheet frame width
+EXPORT DIM FRAME_H = 64        ' sprite sheet frame height
+
+' --- Color palette (set by engine from game.json colors) ---
+EXPORT DIM C_BOX_BG    = [20, 20, 55]
+EXPORT DIM C_BOX_BD    = [100, 120, 180]
+EXPORT DIM C_TEXT      = [230, 230, 240]
+EXPORT DIM C_TEXT_DIM  = [140, 140, 160]
+EXPORT DIM C_TEXT_BR   = [255, 255, 255]
+EXPORT DIM C_TITLE     = [255, 220, 80]
+EXPORT DIM C_GOLD      = [255, 215, 0]
+EXPORT DIM C_MENU_SEL  = [60, 60, 120]
+EXPORT DIM C_MENU_TXT  = [140, 140, 180]
+EXPORT DIM C_HP_BAR    = [80, 200, 80]
+EXPORT DIM C_HP_BG     = [60, 30, 30]
+EXPORT DIM C_ENEMY_HP  = [200, 60, 60]
+EXPORT DIM C_HINT      = [200, 255, 200]
+EXPORT DIM C_MSG       = [255, 255, 100]
+
 ' --- Configuration (can be changed before calling SAY) ---
 EXPORT DIM DLG_SPEED = 2          ' characters per frame
-EXPORT DIM DLG_BOX_H = 120        ' dialog box height
-EXPORT DIM DLG_MARGIN = 16        ' text margin inside box
-EXPORT DIM DLG_COLOR_R = 20       ' box background color
+' Legacy aliases (kept for backward compat, derived from C_BOX_*)
+EXPORT DIM DLG_COLOR_R = 20
 EXPORT DIM DLG_COLOR_G = 20
 EXPORT DIM DLG_COLOR_B = 60
-EXPORT DIM DLG_BORDER_R = 120     ' border color
+EXPORT DIM DLG_BORDER_R = 120
 EXPORT DIM DLG_BORDER_G = 140
 EXPORT DIM DLG_BORDER_B = 200
 
@@ -33,6 +61,13 @@ EXPORT SUB SAY(name$, text$)
     total_chars = LEN(text$)
     done_typing = FALSE
 
+    ' Font-relative layout
+    line_h = INT(FS * 1.3)
+    char_w = INT(FS * 0.65)
+    margin = INT(FS * 1.0)
+    box_h = INT(FS * 6)
+    name_h = INT(FS * 1.4)
+
     ' Capture the current scene as background
     bg_capture = GFX.CAPTURE()
 
@@ -45,22 +80,21 @@ EXPORT SUB SAY(name$, text$)
         sh = SCREENHEIGHT()
         box_w = INT(sw * 3 / 4)
         box_x = INT((sw - box_w) / 2)
-        box_y = sh - DLG_BOX_H - 10
+        box_y = sh - box_h - 10
 
         ' Box background (dark, semi-transparent)
         DRAWCOLOR DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B
-        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
+        RECT box_x, box_y, box_w, box_h, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
 
         ' Box border
-        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
+        RECT box_x, box_y, box_w, box_h, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
 
         ' Speaker name
         IF name$ <> "" THEN
-            ' Name tag background
-            name_w = LEN(name$) * 10 + 20
-            RECT box_x + 10, box_y - 14, name_w, 20, _
+            name_w = LEN(name$) * char_w + INT(FS * 1.2)
+            RECT box_x + 10, box_y - INT(name_h * 0.7), name_w, name_h, _
                 DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
-            TEXT box_x + 20, box_y - 12, name$, 255, 255, 255
+            TEXT box_x + 10 + INT(FS * 0.6), box_y - INT(name_h * 0.55), name$, 255, 255, 255
         ENDIF
 
         ' Typewriter text
@@ -75,10 +109,10 @@ EXPORT SUB SAY(name$, text$)
         visible_text$ = LEFT$(text$, char_idx)
 
         ' Word-wrap and draw text
-        tx = box_x + DLG_MARGIN
-        ty = box_y + DLG_MARGIN
-        max_w = box_w - DLG_MARGIN * 2
-        chars_per_line = INT(max_w / 9)
+        tx = box_x + margin
+        ty = box_y + margin
+        max_w = box_w - margin * 2
+        chars_per_line = INT(max_w / char_w)
         IF chars_per_line < 10 THEN chars_per_line = 40
 
         line_start = 0
@@ -100,7 +134,7 @@ EXPORT SUB SAY(name$, text$)
                 line$ = MID$(visible_text$, line_start, cut)
                 line_start = line_start + cut + 1
             ENDIF
-            TEXT tx, ty + line_num * 22, line$, 230, 230, 230
+            TEXT tx, ty + line_num * line_h, line$, 230, 230, 230
             line_num = line_num + 1
         LOOP
 
@@ -108,7 +142,7 @@ EXPORT SUB SAY(name$, text$)
         IF done_typing THEN
             blink = (INT(TICK() / 400) MOD 2) = 0
             IF blink THEN
-                TEXT box_x + box_w - 40, box_y + DLG_BOX_H - 22, ">>>", _
+                TEXT box_x + box_w - INT(FS * 2.5), box_y + box_h - line_h, ">>>", _
                     DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B
             ENDIF
         ENDIF
@@ -143,26 +177,29 @@ EXPORT FUNC CHOICE(options$)
     selected = 0
     choice_bg = GFX.CAPTURE()
 
+    item_h = INT(FS * 1.6)
+    box_w = INT(FS * 12)
+
     DO
         GFX.DRAW_CAPTURE choice_bg
         sw = SCREENWIDTH()
         sh = SCREENHEIGHT()
-        box_h = num_items * 28 + 20
+        box_h = num_items * item_h + INT(FS * 1.2)
         box_y = sh - box_h - 10
-        box_x = sw - 200
+        box_x = sw - box_w - 10
 
         ' Box
-        RECT box_x, box_y, 190, box_h, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
-        RECT box_x, box_y, 190, box_h, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
+        RECT box_x, box_y, box_w, box_h, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
+        RECT box_x, box_y, box_w, box_h, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
 
         ' Items
         FOR i = 0 TO num_items - 1
-            iy = box_y + 10 + i * 28
+            iy = box_y + INT(FS * 0.6) + i * item_h
             IF i = selected THEN
-                RECT box_x + 4, iy - 2, 182, 24, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
-                TEXT box_x + 24, iy, "> " + items[i], 255, 255, 255
+                RECT box_x + 4, iy - 2, box_w - 8, INT(FS * 1.3), DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
+                TEXT box_x + INT(FS * 1.5), iy, "> " + items[i], 255, 255, 255
             ELSE
-                TEXT box_x + 24, iy, "  " + items[i], 180, 180, 180
+                TEXT box_x + INT(FS * 1.5), iy, "  " + items[i], 180, 180, 180
             ENDIF
         NEXT i
 
@@ -197,43 +234,50 @@ EXPORT FUNC ASK$(name$, question$)
     cursor_blink = 0
     ask_bg = GFX.CAPTURE()
 
+    line_h = INT(FS * 1.3)
+    char_w = INT(FS * 0.65)
+    margin = INT(FS * 1.0)
+    box_h = INT(FS * 6)
+    name_h = INT(FS * 1.4)
+    input_h = INT(FS * 1.6)
+
     DO
         GFX.DRAW_CAPTURE ask_bg
         sw = SCREENWIDTH()
         sh = SCREENHEIGHT()
         box_w = INT(sw * 3 / 4)
         box_x = INT((sw - box_w) / 2)
-        box_y = sh - DLG_BOX_H - 10
+        box_y = sh - box_h - 10
 
         ' Box
-        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
-        RECT box_x, box_y, box_w, DLG_BOX_H, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
+        RECT box_x, box_y, box_w, box_h, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
+        RECT box_x, box_y, box_w, box_h, DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
 
         ' Name tag
         IF name$ <> "" THEN
-            name_w = LEN(name$) * 10 + 20
-            RECT box_x + 10, box_y - 14, name_w, 20, _
+            name_w = LEN(name$) * char_w + INT(FS * 1.2)
+            RECT box_x + 10, box_y - INT(name_h * 0.7), name_w, name_h, _
                 DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
-            TEXT box_x + 20, box_y - 12, name$, 255, 255, 255
+            TEXT box_x + 10 + INT(FS * 0.6), box_y - INT(name_h * 0.55), name$, 255, 255, 255
         ENDIF
 
         ' Question
-        TEXT box_x + DLG_MARGIN, box_y + DLG_MARGIN, question$, 230, 230, 230
+        TEXT box_x + margin, box_y + margin, question$, 230, 230, 230
 
         ' Input field
-        input_y = box_y + DLG_MARGIN + 30
-        RECT box_x + DLG_MARGIN, input_y, box_w - DLG_MARGIN*2, 28, 10, 10, 40, TRUE
-        RECT box_x + DLG_MARGIN, input_y, box_w - DLG_MARGIN*2, 28, _
+        input_y = box_y + margin + line_h + INT(FS * 0.4)
+        RECT box_x + margin, input_y, box_w - margin*2, input_h, 10, 10, 40, TRUE
+        RECT box_x + margin, input_y, box_w - margin*2, input_h, _
             DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
 
         ' Typed text + cursor
         cursor_blink = cursor_blink + 1
         cursor$ = ""
         IF (cursor_blink MOD 40) < 20 THEN cursor$ = "_"
-        TEXT box_x + DLG_MARGIN + 6, input_y + 5, input$ + cursor$, 255, 255, 255
+        TEXT box_x + margin + INT(FS * 0.4), input_y + INT(FS * 0.3), input$ + cursor$, 255, 255, 255
 
         ' Hint
-        TEXT box_x + box_w - 140, box_y + DLG_BOX_H - 22, "Enter to confirm", _
+        TEXT box_x + box_w - INT(FS * 10), box_y + box_h - line_h, "Enter to confirm", _
             DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B
 
         SCREENFLIP

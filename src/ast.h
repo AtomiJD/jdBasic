@@ -220,6 +220,7 @@ struct IfBranch {
 struct Stmt {
     StmtKind kind;
     int line = 0;
+    std::string source_file;   // originating source file (set by parse_import)
 
     // LET / DIM / ASSIGN / CONST
     std::string var_name;
