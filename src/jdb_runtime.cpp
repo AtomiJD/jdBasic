@@ -413,6 +413,89 @@ JdbArray* jdb_grade(JdbArray* arr) {
     return r;
 }
 
+// ── Array Arithmetic (element-wise, flat operations) ──
+// For 2D arrays, the LLVM codegen generates nested calls — the runtime
+// only needs to handle 1D element-wise operations here.
+
+static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
+    if (!a || !b) return jdb_array_new(0);
+    int64_t n = a->length < b->length ? a->length : b->length;
+    auto* r = jdb_array_new(n);
+    for (int64_t i = 0; i < n; i++) {
+        switch (op) {
+            case 0: r->data[i] = a->data[i] + b->data[i]; break;
+            case 1: r->data[i] = a->data[i] - b->data[i]; break;
+            case 2: r->data[i] = a->data[i] * b->data[i]; break;
+            case 3: r->data[i] = b->data[i] != 0 ? a->data[i] / b->data[i] : 0; break;
+        }
+    }
+    return r;
+}
+
+static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) {
+    if (!a) return jdb_array_new(0);
+    auto* r = jdb_array_new(a->length);
+    for (int64_t i = 0; i < a->length; i++) {
+        double av = a->data[i];
+        switch (op) {
+            case 0: r->data[i] = av + s; break;
+            case 1: r->data[i] = scalar_left ? s - av : av - s; break;
+            case 2: r->data[i] = av * s; break;
+            case 3: r->data[i] = scalar_left ? (av != 0 ? s / av : 0) : (s != 0 ? av / s : 0); break;
+        }
+    }
+    return r;
+}
+
+static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op) {
+    if (!a) return jdb_array_new(0);
+    auto* r = jdb_array_new(a->length);
+    for (int64_t i = 0; i < a->length; i++) {
+        bool result;
+        switch (op) {
+            case 0: result = a->data[i] == s; break;
+            case 1: result = a->data[i] != s; break;
+            case 2: result = a->data[i] && s; break;
+            case 3: result = a->data[i] || s; break;
+            default: result = false;
+        }
+        r->data[i] = result ? 1.0 : 0.0;
+    }
+    return r;
+}
+
+static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
+    if (!a || !b) return jdb_array_new(0);
+    int64_t n = a->length < b->length ? a->length : b->length;
+    auto* r = jdb_array_new(n);
+    for (int64_t i = 0; i < n; i++) {
+        bool result;
+        switch (op) {
+            case 0: result = a->data[i] == b->data[i]; break;
+            case 1: result = a->data[i] != b->data[i]; break;
+            case 2: result = a->data[i] && b->data[i]; break;
+            case 3: result = a->data[i] || b->data[i]; break;
+            default: result = false;
+        }
+        r->data[i] = result ? 1.0 : 0.0;
+    }
+    return r;
+}
+
+// op: 0=add,1=sub,2=mul,3=div; is_arr_b: whether b is an array
+JdbArray* jdb_array_binop(JdbArray* a, JdbArray* b, int32_t op) {
+    return arr_binop(a, b, op);
+}
+JdbArray* jdb_array_scalar_op(JdbArray* a, double s, int32_t op, int32_t scalar_left) {
+    return arr_scalar_op(a, s, op, scalar_left != 0);
+}
+JdbArray* jdb_array_cmp_scalar(JdbArray* a, double s, int32_t op) {
+    return arr_cmp_scalar(a, s, op);
+}
+JdbArray* jdb_array_cmp_arr(JdbArray* a, JdbArray* b, int32_t op) {
+    return arr_cmp_arr(a, b, op);
+}
+
 // ── OS.ARGS ─────────────────────────────────────────────────
 
 static int g_argc = 0;

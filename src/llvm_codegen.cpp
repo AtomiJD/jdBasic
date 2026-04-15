@@ -193,6 +193,12 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_range",      "RANGE",        i8_ptr_type, {i64_type, i64_type, i64_type}, 3);
     reg("jdb_grade",      "GRADE",        i8_ptr_type, {i8_ptr_type}, 3);
 
+    // Array arithmetic (native, no VM bridge needed)
+    reg("jdb_array_binop",       "__arr_binop",       i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
+    reg("jdb_array_scalar_op",   "__arr_scalar_op",   i8_ptr_type, {i8_ptr_type, f64_type, i32_type, i32_type}, 3);
+    reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
+    reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
+
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
     reg("jdb_os_args",    "OS.ARGS",      i8_ptr_type, {}, 3);
@@ -562,21 +568,47 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             }
             if (!lookup_var(stmt->var_name)) {
                 // Determine type from initial expression
-                int tag = 0;  // default i64
+                // Recursive helper to infer expression result type
+                std::function<int(const Expr*)> infer_tag = [&](const Expr* e) -> int {
+                    if (!e) return 0;
+                    if (e->kind == ExprKind::LITERAL_INT) return 0;
+                    if (e->kind == ExprKind::LITERAL_FLOAT) return 1;
+                    if (e->kind == ExprKind::LITERAL_STRING) return 2;
+                    if (e->kind == ExprKind::ARRAY_LITERAL) return 3;
+                    if (e->kind == ExprKind::CALL) {
+                        if (e->func_name == "ZEROS" || e->func_name == "ONES" ||
+                            e->func_name == "IOTA" || e->func_name == "RANGE" ||
+                            e->func_name == "LINSPACE") return 3;
+                        if (!e->func_name.empty() && e->func_name.back() == '$') return 2;
+                        return -1; // unknown
+                    }
+                    if (e->kind == ExprKind::VARIABLE) {
+                        VarInfo* v = lookup_var(e->str_val);
+                        if (v) return v->tag;
+                        if (!e->str_val.empty() && e->str_val.back() == '$') return 2;
+                        return -1;
+                    }
+                    if (e->kind == ExprKind::BINARY) {
+                        int lt = infer_tag(e->left.get());
+                        int rt = infer_tag(e->right.get());
+                        if (lt == 3 || rt == 3) return 3; // array op → array
+                        if (lt == 2 || rt == 2) return 2; // string op → string
+                        if (lt == 1 || rt == 1) return 1;
+                        return 0;
+                    }
+                    if (e->kind == ExprKind::UNARY) return infer_tag(e->right.get());
+                    return -1;
+                };
+                int tag = 0;
                 if (stmt->kind == StmtKind::DIM && !stmt->label.empty() &&
                     type_names.count(stmt->label))
                     tag = 3;  // UDT object (ptr)
-                else if (stmt->kind == StmtKind::DIM && stmt->expr &&
-                    stmt->expr->kind == ExprKind::CALL && stmt->expr->func_name == "ZEROS")
-                    tag = 3;  // array
-                else if (stmt->expr && stmt->expr->kind == ExprKind::ARRAY_LITERAL)
-                    tag = 3;  // array (e.g. Party = [])
-                else if (stmt->expr && stmt->expr->kind == ExprKind::LITERAL_FLOAT)
-                    tag = 1;  // f64
-                else if (stmt->expr && stmt->expr->kind == ExprKind::LITERAL_STRING)
-                    tag = 2;  // string
+                else if (stmt->expr) {
+                    int inferred = infer_tag(stmt->expr.get());
+                    if (inferred >= 0) tag = inferred;
+                }
                 // Variables ending with $ are strings by convention
-                else if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$')
+                if (tag == 0 && stmt->var_name.size() > 1 && stmt->var_name.back() == '$')
                     tag = 2;  // string
                 create_var(stmt->var_name, tag);
             }
@@ -861,28 +893,79 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     }
 
     // DIM arr[N] → parser generates CALL("ZEROS", [ARRAY_LITERAL([N])])
-    // Detect this pattern and use jdb_array_new instead
+    // DIM arr[N, M] → CALL("ZEROS", [ARRAY_LITERAL([N, M])]) → 2D array
     if (stmt.expr->kind == ExprKind::CALL && stmt.expr->func_name == "ZEROS" &&
         !stmt.expr->args.empty() && stmt.expr->args[0]->kind == ExprKind::ARRAY_LITERAL) {
-        // Extract size from the array literal [N] or [N, M] (1D only for now)
         auto& shape_args = stmt.expr->args[0]->args;
         if (!shape_args.empty()) {
-            TypedValue size_val = codegen_expr(*shape_args[0]);
-            LLVMValueRef size_i64 = size_val.tag == 1
-                ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi")
-                : size_val.val;
-
             auto& arr_new = runtime_funcs["__array_new"];
-            LLVMValueRef args[] = { size_i64 };
-            LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr");
+            auto& arr_append = runtime_funcs["APPEND"];
 
-            VarInfo* vi = lookup_var(stmt.var_name);
-            if (vi) {
-                LLVMBuildStore(builder, arr, vi->alloca_val);
-                vi->tag = 3;
+            if (shape_args.size() == 1) {
+                // 1D: jdb_array_new(N)
+                TypedValue size_val = codegen_expr(*shape_args[0]);
+                LLVMValueRef size_i64 = size_val.tag == 1
+                    ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi")
+                    : size_val.val;
+                LLVMValueRef args[] = { size_i64 };
+                LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr");
+                VarInfo* vi = lookup_var(stmt.var_name);
+                if (vi) { LLVMBuildStore(builder, arr, vi->alloca_val); vi->tag = 3; }
+                else { VarInfo& nv = create_var(stmt.var_name, 3); LLVMBuildStore(builder, arr, nv.alloca_val); }
             } else {
-                VarInfo& nv = create_var(stmt.var_name, 3);
-                LLVMBuildStore(builder, arr, nv.alloca_val);
+                // 2D+: build array of arrays
+                // Outer array with shape_args[0] elements, each is an inner array of shape_args[1] elements
+                TypedValue rows_val = codegen_expr(*shape_args[0]);
+                TypedValue cols_val = codegen_expr(*shape_args[1]);
+                LLVMValueRef rows = rows_val.tag == 1
+                    ? LLVMBuildFPToSI(builder, rows_val.val, i64_type, "ftoi") : rows_val.val;
+                LLVMValueRef cols = cols_val.tag == 1
+                    ? LLVMBuildFPToSI(builder, cols_val.val, i64_type, "ftoi") : cols_val.val;
+
+                // Create outer array (empty, will be filled with inner arrays)
+                LLVMValueRef zero_args[] = { LLVMConstInt(i64_type, 0, 0) };
+                LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, zero_args, 1, "outer");
+
+                // Loop: create inner arrays and append to outer
+                LLVMBasicBlockRef pre_bb = LLVMGetInsertBlock(builder);
+                LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dim2d.loop");
+                LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dim2d.end");
+
+                // Alloca for loop var and outer array accumulator
+                LLVMValueRef idx_alloca = LLVMBuildAlloca(builder, i64_type, "dim_i");
+                LLVMValueRef outer_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "dim_outer");
+                LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
+                LLVMBuildStore(builder, outer, outer_alloca);
+                LLVMBuildBr(builder, loop_bb);
+
+                LLVMPositionBuilderAtEnd(builder, loop_bb);
+                LLVMValueRef cur_idx = LLVMBuildLoad2(builder, i64_type, idx_alloca, "i");
+                LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, cur_idx, rows, "cmp");
+                LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dim2d.body");
+                LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+
+                LLVMPositionBuilderAtEnd(builder, body_bb);
+                // Create inner array
+                LLVMValueRef inner_args[] = { cols };
+                LLVMValueRef inner = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, inner_args, 1, "inner");
+                // Encode inner ptr as f64 for append
+                LLVMValueRef inner_i64 = LLVMBuildPtrToInt(builder, inner, i64_type, "ptoi");
+                LLVMValueRef inner_f64 = pun_i64_to_f64(inner_i64);
+                // Append to outer
+                LLVMValueRef cur_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "out");
+                LLVMValueRef append_args[] = { cur_outer, inner_f64 };
+                LLVMValueRef new_outer = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "out");
+                LLVMBuildStore(builder, new_outer, outer_alloca);
+                // Increment
+                LLVMValueRef next_idx = LLVMBuildAdd(builder, cur_idx, LLVMConstInt(i64_type, 1, 0), "next");
+                LLVMBuildStore(builder, next_idx, idx_alloca);
+                LLVMBuildBr(builder, loop_bb);
+
+                LLVMPositionBuilderAtEnd(builder, end_bb);
+                LLVMValueRef final_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "arr2d");
+                VarInfo* vi = lookup_var(stmt.var_name);
+                if (vi) { LLVMBuildStore(builder, final_outer, vi->alloca_val); vi->tag = 3; }
+                else { VarInfo& nv = create_var(stmt.var_name, 3); LLVMBuildStore(builder, final_outer, nv.alloca_val); }
             }
             return;
         }
@@ -987,9 +1070,24 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // Load array pointer
     LLVMValueRef arr_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "arr");
 
-    // Evaluate index (first in chain)
     if (stmt.index_chain.empty()) return;
-    TypedValue idx_tv = codegen_expr(*stmt.index_chain[0]);
+
+    // For multi-dimensional access (arr[i][j] = val), traverse the chain:
+    // each index except the last does array_get + ptr decode
+    auto& arr_get = runtime_funcs["__array_get"];
+    for (size_t ic = 0; ic + 1 < stmt.index_chain.size(); ic++) {
+        TypedValue idx_tv = codegen_expr(*stmt.index_chain[ic]);
+        LLVMValueRef idx = idx_tv.tag == 1
+            ? LLVMBuildFPToSI(builder, idx_tv.val, i64_type, "ftoi") : idx_tv.val;
+        LLVMValueRef get_args[] = { arr_ptr, idx };
+        LLVMValueRef elem = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, get_args, 2, "elem");
+        // Decode f64 → ptr (inner array)
+        LLVMValueRef as_i64 = pun_f64_to_i64(elem);
+        arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "inner");
+    }
+
+    // Last index: array_set
+    TypedValue idx_tv = codegen_expr(*stmt.index_chain.back());
     LLVMValueRef idx = idx_tv.tag == 1
         ? LLVMBuildFPToSI(builder, idx_tv.val, i64_type, "ftoi") : idx_tv.val;
 
@@ -999,7 +1097,6 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     if (val_tv.tag == 0)
         val = LLVMBuildSIToFP(builder, val_tv.val, f64_type, "itof");
     else if (val_tv.tag == 2 || val_tv.tag == 3) {
-        // ptr (string/UDT) → encode as f64
         LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, val_tv.val, i64_type, "ptoi");
         val = pun_i64_to_f64(as_i64);
     } else
@@ -1908,83 +2005,73 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { result, 1 };
     }
 
-    // Array/ptr operands: dispatch via VM bridge (array arithmetic, string*int, etc.)
+    // Array/ptr operands: use native array arithmetic functions
     if (lhs.tag == 3 || rhs.tag == 3) {
-        // Encode both operands as i64 with type tags and call through VM bridge
-        LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
-            LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
-
-        // Map binary op to VM function name
-        std::string op_name;
+        // Determine op code: 0=add, 1=sub, 2=mul, 3=div
+        int32_t arith_op = -1;
         switch (expr.op) {
-            case TokenType::PLUS:  op_name = "__ARRAY_ADD"; break;
-            case TokenType::MINUS: op_name = "__ARRAY_SUB"; break;
-            case TokenType::STAR:  op_name = "__ARRAY_MUL"; break;
-            case TokenType::SLASH: op_name = "__ARRAY_DIV"; break;
+            case TokenType::PLUS:  arith_op = 0; break;
+            case TokenType::MINUS: arith_op = 1; break;
+            case TokenType::STAR:  arith_op = 2; break;
+            case TokenType::SLASH: arith_op = 3; break;
+            default: break;
+        }
+        // Comparison ops: 0=eq, 1=ne, 2=and, 3=or
+        int32_t cmp_op = -1;
+        switch (expr.op) {
             case TokenType::EQ:
-            case TokenType::ASSIGN: op_name = "__ARRAY_EQ"; break;
-            case TokenType::NE:    op_name = "__ARRAY_NE"; break;
-            case TokenType::AND:   op_name = "__ARRAY_AND"; break;
-            case TokenType::OR:    op_name = "__ARRAY_OR"; break;
-            default:               op_name = "__ARRAY_ADD"; break;
+            case TokenType::ASSIGN: cmp_op = 0; break;
+            case TokenType::NE:     cmp_op = 1; break;
+            case TokenType::AND:    cmp_op = 2; break;
+            case TokenType::OR:     cmp_op = 3; break;
+            default: break;
         }
 
-        // Encode args for VM bridge
-        LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
-            LLVMConstInt(i32_type, 2, 0), "args");
-        LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
-            LLVMConstInt(i32_type, 2, 0), "tags");
-
-        auto encode = [&](TypedValue tv, int idx) {
-            LLVMValueRef encoded;
-            int32_t tag;
-            if (tv.tag == 3) {
-                encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
-                tag = 3;
-            } else if (tv.tag == 2) {
-                encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "stoi");
-                tag = 2;
-            } else if (tv.tag == 1) {
-                encoded = pun_f64_to_i64(tv.val);
-                tag = 1;
-            } else {
-                LLVMValueRef as_f64 = LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
-                encoded = pun_f64_to_i64(as_f64);
-                tag = 0;
+        if (lhs.tag == 3 && rhs.tag == 3) {
+            // arr OP arr
+            if (arith_op >= 0) {
+                auto& fn = runtime_funcs["__arr_binop"];
+                LLVMValueRef args[] = { lhs.val, rhs.val, LLVMConstInt(i32_type, arith_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "aop"), 3 };
             }
-            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, idx, 0) };
-            LLVMBuildStore(builder, encoded,
-                LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "arg"));
-            LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0),
-                LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "tag"));
-        };
-        encode(lhs, 0);
-        encode(rhs, 1);
-
-        LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, op_name.c_str(), ".op");
-
-        // Check if comparison op (returns scalar) vs arithmetic (returns array)
-        bool is_cmp = (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN ||
-                       expr.op == TokenType::NE || expr.op == TokenType::AND ||
-                       expr.op == TokenType::OR);
-        if (is_cmp) {
-            auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-            LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
-                LLVMConstInt(i32_type, 2, 0) };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-            // Returns f64 which may encode an array ptr
-            LLVMValueRef as_i64 = pun_f64_to_i64(result);
-            LLVMValueRef ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "atoptr");
-            return { ptr, 3 };
+            if (cmp_op >= 0) {
+                auto& fn = runtime_funcs["__arr_cmp_arr"];
+                LLVMValueRef args[] = { lhs.val, rhs.val, LLVMConstInt(i32_type, cmp_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), 3 };
+            }
+        } else if (lhs.tag == 3) {
+            // arr OP scalar
+            LLVMValueRef scalar = rhs.tag == 0
+                ? LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof") : rhs.val;
+            if (arith_op >= 0) {
+                auto& fn = runtime_funcs["__arr_scalar_op"];
+                LLVMValueRef args[] = { lhs.val, scalar, LLVMConstInt(i32_type, arith_op, 0),
+                                         LLVMConstInt(i32_type, 0, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "asop"), 3 };
+            }
+            if (cmp_op >= 0) {
+                auto& fn = runtime_funcs["__arr_cmp_scalar"];
+                LLVMValueRef args[] = { lhs.val, scalar, LLVMConstInt(i32_type, cmp_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), 3 };
+            }
         } else {
-            auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-            LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
-                LLVMConstInt(i32_type, 2, 0) };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-            LLVMValueRef as_i64 = pun_f64_to_i64(result);
-            LLVMValueRef ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "atoptr");
-            return { ptr, 3 };
+            // scalar OP arr
+            LLVMValueRef scalar = lhs.tag == 0
+                ? LLVMBuildSIToFP(builder, lhs.val, f64_type, "itof") : lhs.val;
+            if (arith_op >= 0) {
+                auto& fn = runtime_funcs["__arr_scalar_op"];
+                LLVMValueRef args[] = { rhs.val, scalar, LLVMConstInt(i32_type, arith_op, 0),
+                                         LLVMConstInt(i32_type, 1, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "asop"), 3 };
+            }
+            if (cmp_op >= 0) {
+                auto& fn = runtime_funcs["__arr_cmp_scalar"];
+                LLVMValueRef args[] = { rhs.val, scalar, LLVMConstInt(i32_type, cmp_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), 3 };
+            }
         }
+        // Fallback for unsupported array ops
+        return { LLVMConstInt(i64_type, 0, 0), 0 };
     }
 
     // String multiplication: "abc" * 3 or 3 * "abc"
