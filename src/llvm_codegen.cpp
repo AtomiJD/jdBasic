@@ -713,6 +713,16 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         return 0;
                     }
                     if (e->kind == ExprKind::UNARY) return infer_tag(e->right.get());
+                    if (e->kind == ExprKind::INDEX) {
+                        // arr[i]: if arr's elements are UDT objects we know
+                        // (registered as `name[]`), result is a UDT ptr (3).
+                        if (e->left && e->left->kind == ExprKind::VARIABLE) {
+                            if (var_udt_type.count(e->left->str_val + "[]"))
+                                return 3;
+                        }
+                        // Otherwise default to f64 (numeric array element).
+                        return 1;
+                    }
                     return -1;
                 };
                 int tag = 0;
@@ -1118,6 +1128,23 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
+    // Propagate UDT type through `lhs = arr[i]` when the array's element
+    // type is known (registered as `arr[]` in var_udt_type). Same for
+    // `lhs = other_udt_var`. Without this, `mc_c.SET_VAL` can't resolve
+    // the method since mc_c has no UDT type binding.
+    if (stmt.expr) {
+        if (stmt.expr->kind == ExprKind::INDEX && stmt.expr->left &&
+            stmt.expr->left->kind == ExprKind::VARIABLE) {
+            auto it = var_udt_type.find(stmt.expr->left->str_val + "[]");
+            if (it != var_udt_type.end())
+                var_udt_type[stmt.var_name] = it->second;
+        } else if (stmt.expr->kind == ExprKind::VARIABLE) {
+            auto it = var_udt_type.find(stmt.expr->str_val);
+            if (it != var_udt_type.end())
+                var_udt_type[stmt.var_name] = it->second;
+        }
+    }
+
     // Funcref via `name@` — the parser flattens it to a LITERAL_STRING
     // holding the target name. Detect the match against a known user
     // function and bind the RHS to the LLVM function pointer (tag=5)
@@ -1458,6 +1485,17 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
 // ── INDEX_ASSIGN: arr[i] = val ──────────────────────────────
 
 void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
+    // Propagate UDT element type when assigning a UDT object into an array
+    // slot: `mc_arr[i] = mc_a` records var_udt_type["mc_arr[]"] = T_TestObj
+    // so subsequent `mc_arr[j].field` and method calls can resolve the type.
+    if (!stmt.var_name.empty() && stmt.expr &&
+        stmt.expr->kind == ExprKind::VARIABLE) {
+        auto src_it = var_udt_type.find(stmt.expr->str_val);
+        if (src_it != var_udt_type.end()) {
+            var_udt_type[stmt.var_name + "[]"] = src_it->second;
+        }
+    }
+
     // UDT field assignment: obj.field = val (print_exprs[0] = obj, label = field)
     if (!stmt.print_exprs.empty() && !stmt.label.empty()) {
         TypedValue obj = codegen_expr(*stmt.print_exprs[0]);
@@ -2479,6 +2517,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 bool is_str_field = false;
                 if (expr.right->kind == ExprKind::LITERAL_STRING) {
                     const std::string& fname = expr.right->str_val;
+                    if (fname == "__TYPE__") is_str_field = true;
                     if (!fname.empty() && fname.back() == '$') is_str_field = true;
                     if (!is_str_field) {
                         // Search all UDT registries
@@ -3140,6 +3179,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (vi) {
                 LLVMBuildStore(builder, result, vi->alloca_val);
                 vi->tag = 3;  // ensure var is tracked as array
+            }
+            // Propagate UDT element type if pushed value was a known UDT.
+            if (expr.args[1]->kind == ExprKind::VARIABLE) {
+                auto it = var_udt_type.find(expr.args[1]->str_val);
+                if (it != var_udt_type.end())
+                    var_udt_type[expr.args[0]->str_val + "[]"] = it->second;
             }
         }
         return { result, 3 };

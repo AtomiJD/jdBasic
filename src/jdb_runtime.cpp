@@ -1985,7 +1985,19 @@ void jdb_udt_set_str(JdbObject* obj, const char* field, const char* val) {
 }
 
 const char* jdb_udt_get_str(JdbObject* obj, const char* field) {
-    if (obj) {
+    if (obj && field) {
+        if (strcmp(field, "__TYPE__") == 0) {
+            // Return uppercase copy of the stored type name (interpreter-compat).
+            const char* tn = obj->type_name ? obj->type_name : "";
+            size_t n = strlen(tn);
+            char* out = (char*)malloc(n + 1);
+            for (size_t i = 0; i < n; i++) {
+                char c = tn[i];
+                out[i] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A') : c;
+            }
+            out[n] = '\0';
+            return out;
+        }
         auto it = obj->str_fields.find(field);
         if (it != obj->str_fields.end()) return it->second;
     }
