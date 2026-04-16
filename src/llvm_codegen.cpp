@@ -4022,7 +4022,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "atoi");
                         tag = 3;
                     } else if (av.tag == 4) {
-                        // VM object handle — already i64
+                        // Native JdbMap* — no bridge tag for this; fall
+                        // back to tag=0 (opaque i64) so the old behaviour
+                        // is preserved (no regression vs. pre-tag-6 code).
+                        encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "mptoi");
+                        tag = 0;
+                    } else if (av.tag == 6) {
+                        // VM Value handle — bridge tag 4 means "look me up
+                        // in value_store" which is exactly what we want.
                         encoded = av.val;
                         tag = 4;
                     } else if (av.tag == 1) {
