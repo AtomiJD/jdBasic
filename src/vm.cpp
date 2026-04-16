@@ -3934,21 +3934,38 @@ void VM::register_builtins() {
     });
 
     register_native("CVDATE", [](const std::vector<Value>& args) -> Value {
-        // Parse "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
-        std::string s = args[0].as_string()->data;
-        std::tm tm = {};
-        std::istringstream ss(s);
-        ss >> std::get_time(&tm, "%Y-%m-%d");
-        if (ss.fail()) return Value::make_date(0);
-        // Try to parse time part
-        char c;
-        if (ss >> c) {
-            std::istringstream ts(s.substr(ss.tellg()));
-            ts >> std::get_time(&tm, "%H:%M:%S");
-        }
-        tm.tm_isdst = -1;
-        auto t = std::mktime(&tm);
-        return Value::make_date(static_cast<double>(t));
+        // Helper: convert one Value to a DATE (epoch seconds wrapped in DATE tag).
+        std::function<Value(const Value&)> one = [&](const Value& v) -> Value {
+            // Numeric input → treat as Unix epoch seconds.
+            if (v.type == ValueType::INT64 || v.type == ValueType::INT32 ||
+                v.type == ValueType::INT16 || v.type == ValueType::BYTE ||
+                v.type == ValueType::FLOAT64 || v.type == ValueType::FLOAT32 ||
+                v.type == ValueType::FLOAT16 || v.type == ValueType::BOOLEAN) {
+                return Value::make_date(v.to_double());
+            }
+            // Array input → vectorize element-wise.
+            if (v.type == ValueType::ARRAY) {
+                Value arr = Value::make_array();
+                auto* out = arr.as_array();
+                for (auto& e : v.as_array()->elements)
+                    out->elements.push_back(one(e));
+                return arr;
+            }
+            // String input → parse ISO "YYYY-MM-DD[ HH:MM:SS]".
+            std::string s = v.as_string()->data;
+            std::tm tm = {};
+            std::istringstream ss(s);
+            ss >> std::get_time(&tm, "%Y-%m-%d");
+            if (ss.fail()) return Value::make_date(0);
+            char c;
+            if (ss >> c) {
+                std::istringstream ts(s.substr(ss.tellg()));
+                ts >> std::get_time(&tm, "%H:%M:%S");
+            }
+            tm.tm_isdst = -1;
+            return Value::make_date(static_cast<double>(std::mktime(&tm)));
+        };
+        return one(args[0]);
     });
 
     register_native("DATEADD", [](const std::vector<Value>& args) -> Value {

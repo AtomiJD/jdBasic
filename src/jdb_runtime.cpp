@@ -1023,7 +1023,8 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     double val = arr->data[idx];
     bool has_ptr = (arr->flags & 1) != 0;
     bool has_string = (arr->flags & 2) != 0;
-    if (has_ptr && has_string) {
+    if (has_string) {
+        // String-flag alone is enough — element is a ptr-encoded char*.
         union { double d; int64_t i; } u; u.d = val;
         const char* s = (const char*)(intptr_t)u.i;
         if (s) printf("%s", s);
@@ -1759,6 +1760,42 @@ char* jdb_cvdate(const char* datestr) {
     return format_iso_date(&t, true);
 }
 
+// CVDATE for numeric input — interpret as Unix epoch seconds and format
+// as a local-time ISO string (matches the interpreter's behaviour).
+char* jdb_cvdate_num(double epoch_secs) {
+    time_t t = (time_t)epoch_secs;
+    struct tm tm;
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return format_iso_date(&tm, true);
+}
+
+// CVDATE on an array — element-wise. Numeric elements use jdb_cvdate_num,
+// existing string elements pass through jdb_cvdate. Returns a string-flagged
+// JdbArray so existing print / index paths Just Work.
+JdbArray* jdb_cvdate_arr(JdbArray* in) {
+    if (!in) return jdb_array_new(0);
+    bool src_is_str = (in->flags & 2) != 0;
+    auto* out = jdb_array_new(in->length);
+    out->flags |= 2;  // marks element storage as string ptrs
+    for (int64_t i = 0; i < in->length; i++) {
+        char* s;
+        if (src_is_str) {
+            union { double d; int64_t i; } u; u.d = in->data[i];
+            const char* in_s = (const char*)(intptr_t)u.i;
+            s = jdb_cvdate(in_s);
+        } else {
+            s = jdb_cvdate_num(in->data[i]);
+        }
+        union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)s;
+        out->data[i] = u.d;
+    }
+    return out;
+}
+
 // DATEADD: add num units of part ("Y","M","D","H","N","S") to an ISO date string.
 // Returns a new ISO date string.
 char* jdb_dateadd(const char* part, double amount, const char* date_str) {
@@ -1925,11 +1962,18 @@ char* jdb_typeof_tag(int64_t tag) {
 
 char* jdb_frmv(JdbArray* arr) {
     if (!arr || arr->length == 0) return _strdup("[]");
+    bool is_str = (arr->flags & 2) != 0;
     char buf[8192] = "[";
     int pos = 1;
     for (int64_t i = 0; i < arr->length && pos < 8180; i++) {
         if (i > 0) { buf[pos++] = ','; buf[pos++] = ' '; }
-        pos += snprintf(buf + pos, 8190 - pos, "%g", arr->data[i]);
+        if (is_str) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            const char* s = (const char*)(intptr_t)u.i;
+            pos += snprintf(buf + pos, 8190 - pos, "%s", s ? s : "");
+        } else {
+            pos += snprintf(buf + pos, 8190 - pos, "%g", arr->data[i]);
+        }
     }
     buf[pos++] = ']'; buf[pos] = '\0';
     return _strdup(buf);

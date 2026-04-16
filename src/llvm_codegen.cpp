@@ -371,7 +371,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_dateadd",  "DATEADD",  i8_ptr_type, {i8_ptr_type, f64_type, i8_ptr_type}, 2);
     reg("jdb_datediff", "DATEDIFF", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_datediff_vec", "__datediff_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_cvdate",   "CVDATE",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_cvdate",     "CVDATE",       i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_cvdate_num", "__cvdate_num", i8_ptr_type, {f64_type},    2);
+    reg("jdb_cvdate_arr", "__cvdate_arr", i8_ptr_type, {i8_ptr_type}, 3);
 
     // Regex
     reg("jdb_regex_match",   "REGEX.MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
@@ -1700,6 +1702,15 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
         } else if (tv.tag == 1) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_double.fn_type, pr_double.fn, args, 1, "");
+        } else if (tv.tag == 3) {
+            // Array → format via FRMV$ ("[a, b, c]") and print as string.
+            auto* fmt = get_runtime_func("FRMV$");
+            if (fmt) {
+                LLVMValueRef fargs[] = { tv.val };
+                LLVMValueRef fs = LLVMBuildCall2(builder, fmt->fn_type, fmt->fn, fargs, 1, "afmt");
+                LLVMValueRef args[] = { fs };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+            }
         } else {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
@@ -3266,6 +3277,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         };
         LLVMBuildCall2(builder, evfn.fn_type, evfn.fn, args, 2, "");
         return { LLVMConstInt(i64_type, 0, 0), 0 };
+    }
+
+    // CVDATE — dispatch by argument type (string parses ISO, number is
+    // epoch seconds, array is element-wise vectorized).
+    if (upper == "CVDATE" && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == 3) {
+            auto& fn = runtime_funcs["__cvdate_arr"];
+            LLVMValueRef args[] = { av.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvda"), 3 };
+        }
+        if (av.tag == 0 || av.tag == 1) {
+            auto& fn = runtime_funcs["__cvdate_num"];
+            LLVMValueRef args[] = { coerce_to(av, f64_type) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvdn"), 2 };
+        }
+        // String / fallback
+        auto& fn = runtime_funcs["CVDATE"];
+        LLVMValueRef args[] = { coerce_to(av, i8_ptr_type) };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "cvds"), 2 };
     }
 
     // ROUND(x, places) → native 2-arg form
