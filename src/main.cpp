@@ -977,6 +977,7 @@ int main(int argc, char* argv[]) {
         }
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--emit-ir") { emit_ir_only = true; continue; }
+        if (a == "--trace") { compile_native = true; /* set debug_log below */ continue; }
         if ((a == "-o" || a == "--output") && i + 1 < argc) { compile_output = argv[++i]; continue; }
         filename = a;
         break;
@@ -997,6 +998,11 @@ int main(int argc, char* argv[]) {
         auto ast = parser.parse();
 
         LLVMCodegen codegen;
+
+        // Check if --trace was used
+        for (int j = 1; j < argc; j++) {
+            if (std::string(argv[j]) == "--trace") { codegen.debug_log = true; break; }
+        }
 
         if (emit_ir_only) {
             codegen.emit_ir(ast);

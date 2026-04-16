@@ -21,6 +21,7 @@ public:
     bool emit_ir(const std::vector<StmtPtr>& program);
 
     std::string error_msg;
+    bool debug_log = false;  // emit line-by-line runtime trace
 
 private:
     LLVMContextRef ctx;
@@ -123,6 +124,11 @@ private:
     TypedValue promote_to_f64(TypedValue tv);
     bool is_udt_string_field(const std::string& var_name, const std::string& field_name);
     static bool expr_involves_strings(const Expr& e);
+    void emit_trace(int line);
+    RuntimeFunc* get_runtime_func(const std::string& name);
+    // Coerce a TypedValue to the expected LLVM type (prevents type mismatches)
+    LLVMValueRef coerce_to(TypedValue tv, LLVMTypeRef target);
+    TypedValue coerce_to_tag(TypedValue tv, int target_tag);
     // Type-pun between i64 and f64 (avoids LLVM bitcast restrictions on newer versions)
     LLVMValueRef pun_i64_to_f64(LLVMValueRef i64_val);
     LLVMValueRef pun_f64_to_i64(LLVMValueRef f64_val);

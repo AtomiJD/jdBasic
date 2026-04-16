@@ -12,6 +12,7 @@
 #include <unordered_set>
 #include <functional>
 
+
 // ── Constructor / Destructor ────────────────────────────────
 
 LLVMCodegen::LLVMCodegen()
@@ -199,6 +200,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
+    reg("jdb_trace",             "__trace",           void_type, {i64_type}, -1);
 
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
@@ -637,6 +639,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
 }
 
 void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
+    // Skip if current block already has a terminator (unreachable code)
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+        return;
+
+    // Emit runtime trace if enabled (--trace flag)
+    if (stmt.line > 0)
+        emit_trace(stmt.line);
+
+    try {
     switch (stmt.kind) {
         case StmtKind::LET:
         case StmtKind::ASSIGN:
@@ -711,6 +722,12 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             break;
         default:
             break;
+    }
+    } catch (const std::exception& e) {
+        std::cerr << "[NATIVE] Warning: codegen error at line " << stmt.line
+                  << ": " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "[NATIVE] Warning: unknown codegen error at line " << stmt.line << std::endl;
     }
 }
 
@@ -2346,15 +2363,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 for (size_t ai = 0; ai < expr.args.size(); ai++) {
                     TypedValue av = codegen_expr(*expr.args[ai]);
                     int expected = (ai + 1 < fi.param_tags.size()) ? fi.param_tags[ai + 1] : 1;
-                    if (expected == 2) {
-                        args.push_back(av.val);
-                    } else {
-                        if (av.tag == 0) args.push_back(LLVMBuildSIToFP(builder, av.val, f64_type, "itof"));
-                        else if (av.tag == 3 || av.tag == 2) {
-                            LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
-                            args.push_back(pun_i64_to_f64(as_i64));
-                        } else args.push_back(av.val);
-                    }
+                    args.push_back(coerce_to(av, expected == 2 ? i8_ptr_type : f64_type));
                 }
                 LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
                 if (fi.return_tag == -1) {
@@ -2393,15 +2402,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         for (size_t ai = 0; ai < expr.args.size(); ai++) {
                             TypedValue av = codegen_expr(*expr.args[ai]);
                             int expected = (ai + 1 < fi.param_tags.size()) ? fi.param_tags[ai + 1] : 1;
-                            if (expected == 2) {
-                                args.push_back(av.val);
-                            } else {
-                                if (av.tag == 0) args.push_back(LLVMBuildSIToFP(builder, av.val, f64_type, "itof"));
-                                else if (av.tag == 3 || av.tag == 2) {
-                                    LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
-                                    args.push_back(pun_i64_to_f64(as_i64));
-                                } else args.push_back(av.val);
-                            }
+                            args.push_back(coerce_to(av, expected == 2 ? i8_ptr_type : f64_type));
                         }
                         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
                         if (fi.return_tag == -1) {
@@ -2427,24 +2428,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         for (size_t i = 0; i < expr.args.size(); i++) {
             TypedValue av = codegen_expr(*expr.args[i]);
             int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
-
-            LLVMValueRef arg_val;
-            if (expected_tag == 2) {
-                // String parameter (ptr) — pass pointer directly
-                arg_val = av.val;  // tag=2 is already ptr
-            } else {
-                // Numeric parameter (f64) — promote to f64
-                if (av.tag == 0) {
-                    arg_val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
-                } else if (av.tag == 3 || av.tag == 5 || av.tag == 2) {
-                    // ptr (array/lambda/string) → encode as f64 for passing through numeric param
-                    LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
-                    arg_val = pun_i64_to_f64(as_i64);
-                } else {
-                    arg_val = av.val;  // already f64
-                }
-            }
-            args.push_back(arg_val);
+            args.push_back(coerce_to(av, expected_tag == 2 ? i8_ptr_type : f64_type));
         }
         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
         if (fi.return_tag == -1) {
@@ -2645,25 +2629,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
         for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
             TypedValue av = codegen_expr(*expr.args[i]);
-            // Auto-convert to match expected param type
-            if (param_types[i] == f64_type && av.tag == 0)
-                av.val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
-            else if (param_types[i] == f64_type && (av.tag == 3 || av.tag == 2)) {
-                // ptr → encode as f64
-                LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
-                av.val = pun_i64_to_f64(as_i64);
-            }
-            else if (param_types[i] == i64_type && av.tag == 1)
-                av.val = LLVMBuildFPToSI(builder, av.val, i64_type, "ftoi");
-            else if (param_types[i] == i64_type && (av.tag == 2 || av.tag == 3))
-                av.val = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
-            else if (param_types[i] == i8_ptr_type && av.tag == 0)
-                av.val = LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "itoptr");
-            else if (param_types[i] == i8_ptr_type && av.tag == 1) {
-                LLVMValueRef as_i64 = pun_f64_to_i64(av.val);
-                av.val = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");
-            }
-            args.push_back(av.val);
+            args.push_back(coerce_to(av, param_types[i]));
         }
 
         if (rf.return_tag == -1) {
@@ -2837,6 +2803,55 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
     if (e.right && expr_involves_strings(*e.right)) return true;
     for (auto& a : e.args) if (a && expr_involves_strings(*a)) return true;
     return false;
+}
+
+LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
+    if (target == f64_type) {
+        if (tv.tag == 0) return LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
+        if (tv.tag == 2 || tv.tag == 3 || tv.tag == 5) {
+            LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
+            return pun_i64_to_f64(as_i64);
+        }
+        return tv.val;
+    }
+    if (target == i64_type) {
+        if (tv.tag == 1) return LLVMBuildFPToSI(builder, tv.val, i64_type, "ftoi");
+        if (tv.tag == 2 || tv.tag == 3 || tv.tag == 5)
+            return LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
+        return tv.val;
+    }
+    if (target == i8_ptr_type) {
+        if (tv.tag == 0) return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
+        if (tv.tag == 1) {
+            LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
+            return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");
+        }
+        return tv.val;
+    }
+    return tv.val;
+}
+
+LLVMCodegen::TypedValue LLVMCodegen::coerce_to_tag(TypedValue tv, int target_tag) {
+    if (tv.tag == target_tag) return tv;
+    if (target_tag == 1) return { coerce_to(tv, f64_type), 1 };
+    if (target_tag == 0) return { coerce_to(tv, i64_type), 0 };
+    if (target_tag == 2 || target_tag == 3) return { coerce_to(tv, i8_ptr_type), target_tag };
+    return tv;
+}
+
+void LLVMCodegen::emit_trace(int line) {
+    if (!debug_log) return;
+    auto* tr = get_runtime_func("__trace");
+    if (!tr) return;
+    LLVMValueRef args[] = { LLVMConstInt(i64_type, line, 0) };
+    LLVMBuildCall2(builder, tr->fn_type, tr->fn, args, 1, "");
+}
+
+LLVMCodegen::RuntimeFunc* LLVMCodegen::get_runtime_func(const std::string& name) {
+    auto it = runtime_funcs.find(name);
+    if (it == runtime_funcs.end()) return nullptr;
+    if (!it->second.fn) return nullptr;
+    return &it->second;
 }
 
 // ── Object File Emission ────────────────────────────────────
