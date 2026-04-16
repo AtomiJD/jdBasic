@@ -547,6 +547,41 @@ void jdb_array_set_nested(JdbArray* arr) {
     if (arr) arr->flags |= 1;
 }
 
+// Returns 1 if array flags indicate nested/ptr elements, else 0
+int32_t jdb_array_is_nested(JdbArray* arr) {
+    return (arr && (arr->flags & 1)) ? 1 : 0;
+}
+
+// Element-wise concat: each string in arr + scalar suffix (or prefix if scalar_left).
+// Array elements are ptr-encoded strings (from SPLIT/etc.) or will be encoded.
+JdbArray* jdb_array_str_concat(JdbArray* arr, const char* s, int32_t scalar_left) {
+    if (!arr || !s) return jdb_array_new(0);
+    auto* r = jdb_array_new(arr->length);
+    r->flags |= 1; // contains ptr elements (strings)
+    for (int64_t i = 0; i < arr->length; i++) {
+        // Decode element as string ptr
+        union { double d; int64_t i; } u; u.d = arr->data[i];
+        const char* elem = (const char*)(intptr_t)u.i;
+        if (!elem) elem = "";
+        size_t ls = strlen(s), le = strlen(elem);
+        char* out = (char*)malloc(ls + le + 1);
+        if (scalar_left) { memcpy(out, s, ls); memcpy(out + ls, elem, le); }
+        else             { memcpy(out, elem, le); memcpy(out + le, s, ls); }
+        out[ls + le] = 0;
+        union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)out;
+        r->data[i] = ur.d;
+    }
+    return r;
+}
+
+// Get array element as a pointer (decodes f64-encoded ptr back).
+// Used when array has flags bit 0 set (contains pointers/strings).
+void* jdb_array_get_ptr(JdbArray* arr, int64_t idx) {
+    if (!arr || idx < 0 || idx >= arr->length) return nullptr;
+    union { double d; int64_t i; } u; u.d = arr->data[idx];
+    return (void*)(intptr_t)u.i;
+}
+
 // LEN that returns shape array for nested (2D+) arrays, otherwise scalar length.
 // Mirrors interpreter behavior: LEN(2d_arr) returns [rows, cols, ...].
 // For 1D arrays returns a scalar-wrapped value (caller decodes).

@@ -201,6 +201,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_trace",             "__trace",           void_type, {i64_type}, -1);
 
     // OS
@@ -316,7 +317,8 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // Regex
     reg("jdb_regex_match",   "REGEX.MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_regex_match",   "REGEX_MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    // Note: REGEX_MATCH (legacy name) returns an array in the VM, so it must
+    // go through the VM bridge — don't register it as the boolean native fn.
     reg("jdb_regex_replace", "REGEX.REPLACE",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_regex_replace", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_regex_findall", "REGEX.FINDALL",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -2120,6 +2122,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { result, 2 };
     }
 
+    // String comparison with array element: arr[i] = "str" means arr[i]
+    // is a ptr-encoded string. Decode the f64 back to ptr, then compare.
+    if ((expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN || expr.op == TokenType::NE) &&
+        ((lhs.tag == 1 && rhs.tag == 2) || (lhs.tag == 2 && rhs.tag == 1))) {
+        // Decode the f64 side as ptr (it's likely a ptr-encoded string from an array)
+        auto decode_ptr = [&](TypedValue tv) -> LLVMValueRef {
+            if (tv.tag == 2) return tv.val;
+            LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
+            return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");
+        };
+        LLVMValueRef l = decode_ptr(lhs);
+        LLVMValueRef r = decode_ptr(rhs);
+        if (expr.op == TokenType::NE) {
+            auto& fn = runtime_funcs["__str_ne"];
+            LLVMValueRef args[] = { l, r };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), 0 };
+        }
+        auto& fn = runtime_funcs["__str_eq"];
+        LLVMValueRef args[] = { l, r };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), 0 };
+    }
+
     // String comparison: str = str, str <> str
     if ((lhs.tag == 2 && rhs.tag == 2) &&
         (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN || expr.op == TokenType::NE)) {
@@ -2159,37 +2183,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { result, 1 };
     }
 
-    // Array + String or String + Array: dispatch via VM bridge (element-wise string concat)
-    if ((lhs.tag == 3 && rhs.tag == 2) || (lhs.tag == 2 && rhs.tag == 3)) {
-        LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
-            LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
-        LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
-            LLVMConstInt(i32_type, 2, 0), "args");
-        LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
-            LLVMConstInt(i32_type, 2, 0), "tags");
-        auto enc_vm = [&](TypedValue tv, int idx) {
-            LLVMValueRef encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
-            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, idx, 0) };
-            LLVMBuildStore(builder, encoded, LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "a"));
-            LLVMBuildStore(builder, LLVMConstInt(i32_type, tv.tag, 0),
-                LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "t"));
-        };
-        enc_vm(lhs, 0); enc_vm(rhs, 1);
-        std::string op_name;
-        switch (expr.op) {
-            case TokenType::PLUS: op_name = "__ARRAY_STR_ADD"; break;
-            case TokenType::MINUS: op_name = "__ARRAY_STR_SUB"; break;
-            case TokenType::STAR: op_name = "__ARRAY_STR_MUL"; break;
-            default: op_name = "__ARRAY_STR_ADD"; break;
-        }
-        LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, op_name.c_str(), ".op");
-        auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-        LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
-            LLVMConstInt(i32_type, 2, 0) };
-        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-        LLVMValueRef as_i64 = pun_f64_to_i64(result);
-        LLVMValueRef ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "atoptr");
-        return { ptr, 3 };
+    // Array + String or String + Array: native element-wise string concat
+    if (expr.op == TokenType::PLUS &&
+        ((lhs.tag == 3 && rhs.tag == 2) || (lhs.tag == 2 && rhs.tag == 3))) {
+        bool scalar_left = (lhs.tag == 2);
+        LLVMValueRef arr_ptr = scalar_left ? rhs.val : lhs.val;
+        LLVMValueRef str_ptr = scalar_left ? lhs.val : rhs.val;
+        auto& fn = runtime_funcs["__arr_str_concat"];
+        LLVMValueRef args[] = { arr_ptr, str_ptr, LLVMConstInt(i32_type, scalar_left ? 1 : 0, 0) };
+        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "asc");
+        return { result, 3 };
     }
 
     // Array/ptr operands: use native array arithmetic functions
@@ -2664,6 +2667,37 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { result, 2 };
     }
 
+    // Handle vectorized math: SIN(arr), COS(arr), etc. map over array elements.
+    // Detect when a scalar math fn is called with an array and dispatch via VM.
+    static const std::unordered_set<std::string> vectorizable = {
+        "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "SINH", "COSH", "TANH",
+        "EXP", "LOG", "LOG10", "SQR", "ABS", "FLOOR", "CEIL", "ROUND", "TRUNC",
+        "SIGN", "FAC", "INT"
+    };
+    if (vectorizable.count(upper) && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == 3) {
+            // Array arg → dispatch via VM bridge for vectorized apply
+            LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
+                LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
+            LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
+                LLVMConstInt(i32_type, 1, 0), "args");
+            LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
+                LLVMConstInt(i32_type, 1, 0), "tags");
+            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, 0, 0) };
+            LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi"),
+                LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "a"));
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, 3, 0),
+                LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "t"));
+            LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, upper.c_str(), ".fn");
+            auto& fn = runtime_funcs["__jdrt_call_typed_arr"];
+            LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
+                LLVMConstInt(i32_type, 1, 0) };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
+            return { result, 3 };
+        }
+    }
+
     // Handle IIF with strings: IIF(cond, str1, str2) → VM bridge
     if (upper == "IIF" && expr.args.size() == 3) {
         TypedValue cond = codegen_expr(*expr.args[0]);
@@ -2817,6 +2851,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // Functions that return arrays (decoded as ptr/tag=3)
             bool is_array_fn = (upper == "SPLIT" || upper == "KEYS" || upper == "VALUES" ||
                                 upper == "SORTBY" || upper == "GROUPBY" || upper == "REGEX.FINDALL" ||
+                                upper == "REGEX_MATCH" || upper == "REGEX_FINDALL" ||
                                 upper == "OS.LIST" || upper == "OS.ARGS" || upper == "JSON.STRINGIFY$" ||
                                 upper == "MAP.KEYS" || upper == "MAP.VALUES" ||
                                 upper == "LINES" || upper == "WORDS" || upper == "CHARS");
