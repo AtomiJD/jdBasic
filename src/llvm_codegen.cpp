@@ -228,16 +228,21 @@ void LLVMCodegen::declare_runtime_functions() {
     // String builtins
     reg("jdb_len_str",  "LEN$",     i64_type, {i8_ptr_type}, 0);
     reg("jdb_mid",      "MID$",     i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
+    reg("jdb_mid",      "MID",      i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
     reg("jdb_left",     "LEFT$",    i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_left",     "LEFT",     i8_ptr_type, {i8_ptr_type, i64_type}, 2);
     reg("jdb_right",    "RIGHT$",   i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_right",    "RIGHT",    i8_ptr_type, {i8_ptr_type, i64_type}, 2);
     reg("jdb_upper",    "UPPER$",   i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_lower",    "LOWER$",   i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_trim",     "TRIM$",    i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_chr",      "CHR$",     i8_ptr_type, {i64_type}, 2);
+    reg("jdb_chr",      "CHR",      i8_ptr_type, {i64_type}, 2);
     reg("jdb_asc",      "ASC",      i64_type, {i8_ptr_type}, 0);
     reg("jdb_instr",    "INSTR",    i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_replace",  "REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_str",      "STR$",     i8_ptr_type, {f64_type}, 2);
+    reg("jdb_str",      "STR",      i8_ptr_type, {f64_type}, 2);
     reg("jdb_space",    "SPACE$",   i8_ptr_type, {i64_type}, 2);
     reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
@@ -688,6 +693,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         }
     }
 
+    // Pre-pass: register ENUM constants so functions can reference them.
+    for (auto& stmt : program) {
+        if (stmt && stmt->kind == StmtKind::ENUM_DECL)
+            codegen_enum(*stmt);
+    }
+
     // First pass: compile TYPE declarations (constructors + methods)
     for (auto& stmt : program) {
         if (stmt && stmt->kind == StmtKind::TYPE_DECL)
@@ -762,7 +773,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             for (auto& s : stmt.body) { if (s) codegen_stmt(*s); }
             break;
         case StmtKind::ENUM_DECL:
-            codegen_enum(stmt);
+            // Already registered in the pre-pass — no-op here.
             break;
         case StmtKind::TYPE_DECL:
             codegen_type_decl(stmt);
@@ -1618,16 +1629,31 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
 // ── ENUM ────────────────────────────────────────────────────
 
 void LLVMCodegen::codegen_enum(const Stmt& stmt) {
-    // Register each enum member as a global constant
+    // Register each enum member as TWO globals: bare name AND ENUM.name.
+    // Interpreter exposes both: ENUM Direction { NORTH=0 } makes both
+    // 'NORTH' and 'Direction.NORTH' resolve to 0.
+    const std::string& enum_name = stmt.func_name;
     for (auto& [name, value] : stmt.enum_members) {
-        // Check if global already exists (avoid duplicate)
-        LLVMValueRef existing = LLVMGetNamedGlobal(module, name.c_str());
-        if (!existing) {
-            existing = LLVMAddGlobal(module, i64_type, name.c_str());
-            LLVMSetLinkage(existing, LLVMInternalLinkage);
+        // Bare name
+        LLVMValueRef bare = LLVMGetNamedGlobal(module, name.c_str());
+        if (!bare) {
+            bare = LLVMAddGlobal(module, i64_type, name.c_str());
+            LLVMSetLinkage(bare, LLVMInternalLinkage);
         }
-        LLVMSetInitializer(existing, LLVMConstInt(i64_type, (uint64_t)value, 1));
-        scopes[0].vars[name] = { existing, 0 };
+        LLVMSetInitializer(bare, LLVMConstInt(i64_type, (uint64_t)value, 1));
+        scopes[0].vars[name] = { bare, 0 };
+
+        // Dotted name: Direction.NORTH
+        if (!enum_name.empty()) {
+            std::string dotted = enum_name + "." + name;
+            LLVMValueRef dot = LLVMGetNamedGlobal(module, dotted.c_str());
+            if (!dot) {
+                dot = LLVMAddGlobal(module, i64_type, dotted.c_str());
+                LLVMSetLinkage(dot, LLVMInternalLinkage);
+            }
+            LLVMSetInitializer(dot, LLVMConstInt(i64_type, (uint64_t)value, 1));
+            scopes[0].vars[dotted] = { dot, 0 };
+        }
     }
 }
 
