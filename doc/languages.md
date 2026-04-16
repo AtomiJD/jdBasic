@@ -832,6 +832,13 @@ ENDTRY
 * **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
 * **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
 * **`OS.LOAD() -> Number`**: Returns the current system-wide CPU load as a percentage (0.0 to 100.0). Accuracy and behavior are OS-dependent.
+* **`OS.FEATURE(name$) -> BOOLEAN`**: Returns `TRUE` when the running binary advertises the named build feature, `FALSE` otherwise. Useful to gate code paths the current backend cannot run — for example, programs that should skip reactive variables or `EXECUTE`/`EVAL` blocks when running from a natively compiled `.exe`. Recognised feature names: `"NATIVEC"` (running from `--compile` output), `"INTERPRETER"` (running in the VM), `"COM"`, `"HTTP"`, `"SERIAL"`, `"GFX"`, `"IMGUI"`, `"LLM"`, `"ONNX"`, `"LLVMC"` (compiler available). Unknown names return `FALSE`.
+
+    ```basic
+    IF NOT OS.FEATURE("NATIVEC") THEN
+        ' VM-only features go here (REACTIVE bindings, EXECUTE, EVAL, ...)
+    ENDIF
+    ```
 
 ### Python Integration (FFI)
 

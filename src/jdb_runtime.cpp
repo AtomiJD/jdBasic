@@ -91,6 +91,26 @@ void jdb_throw_uncaught() {
     exit(1);
 }
 
+// OS.FEATURE for the native-compiled runtime. Mirrors the VM-side
+// function: returns 1 for capabilities the current binary advertises.
+// Always reports NATIVEC=1 (we are running compiled code) and the
+// inverse for INTERPRETER. Optional features are off here because
+// jdb_runtime.cpp is built without those headers.
+int64_t jdb_os_feature(const char* name) {
+    if (!name) return 0;
+    char up[64]; size_t n = strlen(name);
+    if (n >= sizeof(up)) n = sizeof(up) - 1;
+    for (size_t i = 0; i < n; i++) {
+        char c = name[i];
+        up[i] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A') : c;
+    }
+    up[n] = '\0';
+    if (strcmp(up, "NATIVEC")     == 0) return 1;
+    if (strcmp(up, "INTERPRETER") == 0) return 0;
+    if (strcmp(up, "LLVMC")       == 0) return 1;
+    return 0;
+}
+
 // ── String operations ───────────────────────────────────────
 
 char* jdb_str_concat(const char* a, const char* b) {

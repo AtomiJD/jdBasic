@@ -244,6 +244,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_event_on",       "__event_on",      void_type, {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_event_raise_str","__event_raise_s", void_type, {i8_ptr_type, i8_ptr_type}, -1);
 
+    // OS.FEATURE — query whether a build feature is present in this binary
+    reg("jdb_os_feature",     "OS.FEATURE",      i64_type, {i8_ptr_type}, 0);
+
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
     reg("jdb_os_args",    "OS.ARGS",      i8_ptr_type, {}, 3);

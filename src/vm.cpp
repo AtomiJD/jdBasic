@@ -1358,7 +1358,7 @@ void VM::run() {
                     {"CODEC.BASE64_ENCODE$",1}, {"CODEC.BASE64_DECODE$",1},
                     {"CODEC.SHA256$",1}, {"CODEC.UUID$",1},
                     {"OS.GETOS",1}, {"OS.GETOS$",1}, {"OS.ARGS",1}, {"OS.EXEC",1},
-                    {"OS.HOSTNAME$",1}, {"OS.IP$",1}, {"OS.LOAD",1},
+                    {"OS.HOSTNAME$",1}, {"OS.IP$",1}, {"OS.LOAD",1}, {"OS.FEATURE",1},
                     {"DIR$",1}, {"DIR",1}, {"CD",1}, {"PWD",1}, {"MKDIR",1}, {"KILL",1},
                     {"PATH.JOIN$",1}, {"PATH.BASENAME$",1}, {"PATH.EXT$",1},
                     {"RECUR",1}, {"CLEAR_RECUR",1}, {"LIST_RECUR",1},
@@ -5605,6 +5605,48 @@ void VM::register_builtins() {
         }
 #endif
         return Value::make_string(ip);
+    });
+
+    register_native("OS.FEATURE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        // Reports whether the running binary advertises a given build feature.
+        // Used by tests/programs that need to skip work the current backend
+        // doesn't support — e.g. `IF NOT OS.FEATURE("NATIVEC") THEN ...`.
+        if (args.empty() || args[0].type != ValueType::STRING)
+            return Value::make_bool(false);
+        std::string name = args[0].as_string()->data;
+        for (auto& c : name) c = (char)std::toupper((unsigned char)c);
+
+        // Interpreter never reports NATIVEC. INTERPRETER is its inverse.
+        if (name == "NATIVEC")     return Value::make_bool(false);
+        if (name == "INTERPRETER") return Value::make_bool(true);
+
+        // Optional build flags — true iff this jdBasic.exe was built with them.
+        bool on = false;
+#ifdef COM
+        if (name == "COM") on = true;
+#endif
+#ifdef HTTP
+        if (name == "HTTP") on = true;
+#endif
+#ifdef USE_SERIAL
+        if (name == "SERIAL") on = true;
+#endif
+#ifdef GFX
+        if (name == "GFX") on = true;
+#endif
+#ifdef IMGUI
+        if (name == "IMGUI") on = true;
+#endif
+#ifdef LLM
+        if (name == "LLM") on = true;
+#endif
+#ifdef ONNX
+        if (name == "ONNX") on = true;
+#endif
+#ifdef LLVM_CODEGEN
+        if (name == "LLVMC") on = true;  // compiler available (--compile)
+#endif
+        return Value::make_bool(on);
     });
 
     register_native("OS.LOAD", 0, -1, [](const std::vector<Value>& args) -> Value {

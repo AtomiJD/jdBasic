@@ -858,18 +858,23 @@ Assert(matches[0] = "123", "regex first match")
 ' ══════════════════════════════════════════════════════════════════
 ' 15. REACTIVE VARIABLES
 ' ══════════════════════════════════════════════════════════════════
-Header("Reactive Variables")
+' Reactive bindings need VM-managed dependency tracking; the
+' native compiler cannot synthesise that yet, so skip when running
+' from a compiled .exe.
+IF NOT OS.FEATURE("NATIVEC") THEN
+    Header("Reactive Variables")
 
-DIM base_price = 100
-DIM tax_rate = 0.19
-total_price -> base_price * (1 + tax_rate)
-Assert(ABS(total_price - 119) < 0.01, "react initial")
+    DIM base_price = 100
+    DIM tax_rate = 0.19
+    total_price -> base_price * (1 + tax_rate)
+    Assert(ABS(total_price - 119) < 0.01, "react initial")
 
-base_price = 200
-Assert(ABS(total_price - 238) < 0.01, "react update")
+    base_price = 200
+    Assert(ABS(total_price - 238) < 0.01, "react update")
 
-tax_rate = 0.07
-Assert(ABS(total_price - 214) < 0.01, "react cascade")
+    tax_rate = 0.07
+    Assert(ABS(total_price - 214) < 0.01, "react cascade")
+ENDIF
 
 ' ══════════════════════════════════════════════════════════════════
 ' 16. EVENT SYSTEM
@@ -1036,20 +1041,25 @@ Assert(if_arr_ok2 = "then", "IF [T,T,T] takes THEN")
 ' file_reader hooked up, so IMPORT crashed with "IMPORT not available
 ' (no file reader)". The live sequencer (SQ.jdb) drives everything via
 ' EXECUTE inside the REPL — without this fix, no module loading at all.
-Header("IMPORT in EXECUTE/EVAL")
+' EXECUTE / EVAL run BASIC source at runtime, which would require
+' the full parser+interpreter inside jdbrt.dll — out of scope for
+' the native compiler. Skip when running compiled.
+IF NOT OS.FEATURE("NATIVEC") THEN
+    Header("IMPORT in EXECUTE/EVAL")
 
-' EXECUTE: should be able to IMPORT a module and use its functions
-DIM IMP_OK = FALSE
-DIM IMP_VAL = 0
-EXECUTE "IMPORT test_imp_mod" + CHR$(10) + "IMP_VAL = test_imp_mod.ADD(40, 2)" + CHR$(10) + "IMP_OK = TRUE"
-Assert(IMP_OK, "EXECUTE block ran")
-Assert(IMP_VAL = 42, "EXECUTE could IMPORT and call module func")
+    ' EXECUTE: should be able to IMPORT a module and use its functions
+    DIM IMP_OK = FALSE
+    DIM IMP_VAL = 0
+    EXECUTE "IMPORT test_imp_mod" + CHR$(10) + "IMP_VAL = test_imp_mod.ADD(40, 2)" + CHR$(10) + "IMP_OK = TRUE"
+    Assert(IMP_OK, "EXECUTE block ran")
+    Assert(IMP_VAL = 42, "EXECUTE could IMPORT and call module func")
 
-' EVAL: should also be able to use an already-imported module function
-DIM EV_VAL = 0
-EXECUTE "IMPORT test_imp_mod"
-EV_VAL = EVAL("test_imp_mod.TWICE(21)")
-Assert(EV_VAL = 42, "EVAL after IMPORT in EXECUTE")
+    ' EVAL: should also be able to use an already-imported module function
+    DIM EV_VAL = 0
+    EXECUTE "IMPORT test_imp_mod"
+    EV_VAL = EVAL("test_imp_mod.TWICE(21)")
+    Assert(EV_VAL = 42, "EVAL after IMPORT in EXECUTE")
+ENDIF
 
 ' ══════════════════════════════════════════════════════════════════
 ' DATE subtype + vectorized DATEDIFF

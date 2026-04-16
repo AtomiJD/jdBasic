@@ -985,6 +985,13 @@ Description: Returns the primary local IPv4 address of the machine.
 OS.LOAD() -> number
 Returns the current system-wide CPU load percentage (0.0 - 100.0).
 
+[OS.FEATURE]
+Syntax: OS.FEATURE(name$) -> BOOLEAN
+Description: TRUE iff the running binary advertises the named build feature.
+Use to gate VM-only paths in programs that may run from a --compile'd .exe.
+Names: NATIVEC, INTERPRETER, COM, HTTP, SERIAL, GFX, IMGUI, LLM, ONNX, LLVMC.
+Example: IF NOT OS.FEATURE("NATIVEC") THEN ... ENDIF
+
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.
