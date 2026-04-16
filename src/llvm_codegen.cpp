@@ -1246,6 +1246,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             m_want_leaf_tag = dest->tag;
         else if (!stmt.var_name.empty() && stmt.var_name.back() == '$')
             m_want_leaf_tag = 2;
+        else
+            m_want_leaf_tag = 1;  // untyped new var: default to numeric (BASIC convention)
     }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
@@ -1287,8 +1289,12 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 // Variable was int, value is float → truncate to int for storage
                 rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
                 rhs.tag = 0;
-            } else if ((rhs.tag == 3 || rhs.tag == 4 || rhs.tag == 5) && vi->tag != rhs.tag) {
-                // Array (3), map (4), or funcref/lambda (5) — update tag and store ptr.
+            } else if ((rhs.tag == 3 || rhs.tag == 4 || rhs.tag == 5 || rhs.tag == 6) &&
+                       vi->tag != rhs.tag) {
+                // Array (3), map (4), funcref (5), or VM handle (6) — replace
+                // the tag so subsequent INDEX/calls dispatch on the new kind.
+                // This is what makes `game = {}` (native map) + later
+                // `game = JSON.PARSE$(...)` (VM handle) Just Work.
                 vi->tag = rhs.tag;
                 LLVMBuildStore(builder, rhs.val, vi->alloca_val);
                 return;
@@ -3918,7 +3924,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (param_count > 0) LLVMGetParamTypes(rf.fn_type, param_types.data());
 
         for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
+            // Propagate the parameter's expected LLVM type as an INDEX-leaf
+            // hint so `SCREEN SW, SH, game{"title"}` asks the runtime for
+            // f64 / f64 / str instead of all-strings.
+            LLVMTypeRef pt = param_types[i];
+            if (pt == f64_type || pt == i64_type) m_want_leaf_tag = 1;
+            else if (pt == i8_ptr_type) m_want_leaf_tag = 2;
+            else m_want_leaf_tag = -1;
             TypedValue av = codegen_expr(*expr.args[i]);
+            m_want_leaf_tag = -1;
             args.push_back(coerce_to(av, param_types[i]));
         }
         // Pad any unsupplied parameters with type-appropriate defaults so the

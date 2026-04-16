@@ -81,6 +81,8 @@ EXPORT DIM map_states = {}
 EXPORT FUNC SHOW_TITLE(config_file$)
     game = JSON.PARSE$(TXTREADER$(config_file$))
     SW = game{"screen_w"} : SH = game{"screen_h"}
+    PRINT SW,SH
+    PRINT game{"title"}
     SCREEN SW, SH, game{"title"}
 
     ' Derive base_dir from config file location
