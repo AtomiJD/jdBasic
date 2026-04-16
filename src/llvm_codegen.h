@@ -23,6 +23,12 @@ public:
     std::string error_msg;
     bool debug_log = false;  // emit line-by-line runtime trace
 
+    // Transient codegen state: true while evaluating an expression whose
+    // result will be the LEFT of an INDEX chain (e.g. inner `a{"b"}` of
+    // `a{"b"}{"c"}`). Consumers return a raw map ptr (tag=4) instead of a
+    // formatted string so the outer INDEX can traverse further.
+    bool m_want_ptr_result = false;
+
 private:
     LLVMContextRef ctx;
     LLVMModuleRef  module;

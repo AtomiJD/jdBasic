@@ -2195,6 +2195,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
         }
 
         case ExprKind::INDEX: {
+            // Consume outer's "want ptr" hint (propagated through chains).
+            bool want_ptr = m_want_ptr_result;
+            m_want_ptr_result = false;
+
             // Special case: LEN(arr)[i] → return shape array's i-th element
             // Interpreter's LEN returns shape for 2D+ arrays; we emulate here.
             if (expr.left && expr.left->kind == ExprKind::CALL) {
@@ -2221,14 +2225,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 }
             }
 
-            // arr[i] — array element access or obj{"key"} map access
+            // arr[i] — array element access or obj{"key"} map access.
+            // Propagate "want ptr" to left subexpr so map chains return a
+            // raw JdbMap* for the intermediate access (tag=4).
+            m_want_ptr_result = true;
             TypedValue arr_tv = codegen_expr(*expr.left);
+            m_want_ptr_result = false;
             TypedValue idx_tv = codegen_expr(*expr.right);
 
             // String key → map (tag=4) or UDT (tag=3 / arr-element of UDTs).
             if (idx_tv.tag == 2) {
                 if (arr_tv.tag == 4) {
-                    // Native map access — always returns string (formats numbers)
+                    // Chain position: outer INDEX wants a raw map ptr back.
+                    if (want_ptr) {
+                        auto& gobj = runtime_funcs["__map_get_obj"];
+                        LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gobj.fn_type, gobj.fn, args, 2, "mgetobj"), 4 };
+                    }
+                    // Leaf position: return formatted string for comparison/print.
                     auto& gs = runtime_funcs["__map_get_str"];
                     LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
                     return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
