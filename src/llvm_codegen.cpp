@@ -139,6 +139,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_tanh",   "TANH",   f64_type, {f64_type}, 1);
     reg("jdb_atan2",  "ATAN2",  f64_type, {f64_type, f64_type}, 1);
     reg("jdb_round",  "ROUND",  f64_type, {f64_type}, 1);
+    reg("jdb_round_p","__round_p", f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, 1);
     reg("jdb_sign",   "SIGN",   f64_type, {f64_type}, 1);
     reg("jdb_sign",   "SGN",    f64_type, {f64_type}, 1);
@@ -167,6 +169,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_get",  "__array_get",  f64_type, {i8_ptr_type, i64_type}, 1);
     reg("jdb_array_len",  "LEN",          i64_type, {i8_ptr_type}, 0);
     reg("jdb_iota",       "IOTA",         i8_ptr_type, {i64_type}, 3);
+    reg("jdb_iota3",      "__iota3",      i8_ptr_type, {f64_type, f64_type, f64_type}, 3);
+    reg("jdb_array_pop",    "__arr_pop",     f64_type,    {i8_ptr_type}, 1);
+    reg("jdb_array_pop_str","__arr_pop_str", i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_zeros",      "ZEROS",        i8_ptr_type, {i64_type}, 3);
     reg("jdb_ones",       "ONES",         i8_ptr_type, {i64_type}, 3);
     reg("jdb_mean",       "MEAN",         f64_type, {i8_ptr_type}, 1);
@@ -184,6 +189,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
     reg("jdb_array_count","COUNT",        i64_type, {i8_ptr_type, f64_type}, 0);
     reg("jdb_array_indexof","INDEXOF",    i64_type, {i8_ptr_type, f64_type}, 0);
+    reg("jdb_array_has_str","__arr_has_str", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_array_has_num","__arr_has_num", i64_type, {i8_ptr_type, f64_type}, 0);
     reg("jdb_array_unique","UNIQUE",      i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumsum","CUMSUM",      i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumprod","CUMPROD",    i8_ptr_type, {i8_ptr_type}, 3);
@@ -637,6 +644,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (e->func_name == "ZEROS" || e->func_name == "ONES" ||
                             e->func_name == "IOTA" || e->func_name == "RANGE" ||
                             e->func_name == "LINSPACE") return 3;
+                        // POP returns a string-or-number-as-ptr (unified via tag=2)
+                        if (e->func_name == "POP") return 2;
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                         // If any arg is an array AND fn is not blocklisted → vectorized result (array)
@@ -995,6 +1004,10 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     {
         std::string up_name = stmt.var_name;
         std::transform(up_name.begin(), up_name.end(), up_name.begin(), ::toupper);
+        // Track BOOLEAN-typed vars so TYPEOF reports "BOOLEAN" (storage is i64).
+        if (stmt.var_type == VarType::BOOLEAN) bool_vars.insert(up_name);
+        else if (stmt.expr && stmt.expr->kind == ExprKind::LITERAL_BOOL)
+            bool_vars.insert(up_name);
         if (stmt.is_const) {
             const_vars.insert(up_name);
             // Fall through to normal LET codegen so the value is stored.
@@ -1107,6 +1120,17 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
 // ── DIM (array allocation) ──────────────────────────────────
 
 void LLVMCodegen::codegen_dim(const Stmt& stmt) {
+    // Track DIM ... AS BOOLEAN for TYPEOF.
+    if (stmt.var_type == VarType::BOOLEAN) {
+        std::string up = stmt.var_name;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        bool_vars.insert(up);
+    } else if (stmt.expr && stmt.expr->kind == ExprKind::LITERAL_BOOL) {
+        std::string up = stmt.var_name;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        bool_vars.insert(up);
+    }
+
     // DIM x AS OBJECT (or MAP) → empty native map
     if (stmt.var_type == VarType::OBJECT && stmt.label.empty() && !stmt.expr) {
         auto& map_new = runtime_funcs["__map_new"];
@@ -1311,8 +1335,18 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         return;
     }
 
-    // Fallback: treat like LET for scalar DIM
-    VarInfo* vi = lookup_var(stmt.var_name);
+    // Fallback: treat like LET for scalar DIM.
+    // BASIC DIM always creates in the current scope — a DIM inside a FUNC
+    // shadows any enclosing global of the same name, so we only reuse an
+    // existing binding if it lives in this scope.
+    bool in_local = scopes.size() > 1;
+    VarInfo* vi = nullptr;
+    if (in_local) {
+        auto it = scopes.back().vars.find(stmt.var_name);
+        if (it != scopes.back().vars.end()) vi = &it->second;
+    } else {
+        vi = lookup_var(stmt.var_name);
+    }
     if (vi) {
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
@@ -2533,6 +2567,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMValueRef args[] = { rhs.val, lhs.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "mhas"), 0 };
         }
+        // String in array: element-wise strcmp
+        if (lhs.tag == 2 && rhs.tag == 3) {
+            auto& fn = runtime_funcs["__arr_has_str"];
+            LLVMValueRef args[] = { rhs.val, lhs.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahs"), 0 };
+        }
+        // Number in array
+        if ((lhs.tag == 0 || lhs.tag == 1) && rhs.tag == 3) {
+            auto& fn = runtime_funcs["__arr_has_num"];
+            LLVMValueRef num = coerce_to(lhs, f64_type);
+            LLVMValueRef args[] = { rhs.val, num };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahn"), 0 };
+        }
         return { LLVMConstInt(i64_type, 0, 0), 0 };
     }
 
@@ -2674,6 +2721,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     }
 
     bool use_float = (lhs.tag == 1 || rhs.tag == 1);
+    // BASIC `/` is always float division (vs `\` which is integer);
+    // `^` (power) also returns float even on integer inputs.
+    if (expr.op == TokenType::SLASH || expr.op == TokenType::CARET) {
+        use_float = true;
+    }
     if (use_float) {
         lhs = promote_to_f64(lhs);
         rhs = promote_to_f64(rhs);
@@ -2959,6 +3011,80 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { result, 3 };
     }
 
+    // ROUND(x, places) → native 2-arg form
+    if (upper == "ROUND" && expr.args.size() == 2) {
+        TypedValue x = codegen_expr(*expr.args[0]);
+        TypedValue p = codegen_expr(*expr.args[1]);
+        auto& fn = runtime_funcs["__round_p"];
+        LLVMValueRef args[] = {
+            coerce_to(x, f64_type),
+            coerce_to(p, f64_type),
+        };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "rnd"), 1 };
+    }
+
+    // IOTA(count, start, step) → native 3-arg form
+    if (upper == "IOTA" && expr.args.size() == 3) {
+        TypedValue n  = codegen_expr(*expr.args[0]);
+        TypedValue st = codegen_expr(*expr.args[1]);
+        TypedValue sp = codegen_expr(*expr.args[2]);
+        auto& fn = runtime_funcs["__iota3"];
+        LLVMValueRef args[] = {
+            coerce_to(n,  f64_type),
+            coerce_to(st, f64_type),
+            coerce_to(sp, f64_type),
+        };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "iota3"), 3 };
+    }
+
+    // POP(arr) — remove last element; return type follows the array's
+    // string-flag (bit 1 of JdbArray::flags). We branch at runtime.
+    if (upper == "POP" && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == 3) {
+            auto& fn_str = runtime_funcs["__arr_pop_str"];
+            auto& fn_num = runtime_funcs["__arr_pop"];
+            LLVMValueRef arr_ptr = av.val;
+            // JdbArray layout: double* data (8) | int64 length (8) | int32 flags (4)
+            LLVMValueRef off = LLVMConstInt(i64_type, 16, 0);
+            LLVMTypeRef i8_ty = LLVMInt8TypeInContext(ctx);
+            LLVMValueRef flags_ptr = LLVMBuildGEP2(builder, i8_ty, arr_ptr, &off, 1, "flagsp");
+            LLVMValueRef flags = LLVMBuildLoad2(builder, i32_type, flags_ptr, "flags");
+            LLVMValueRef two = LLVMConstInt(i32_type, 2, 0);
+            LLVMValueRef masked = LLVMBuildAnd(builder, flags, two, "mask");
+            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, masked, two, "issf");
+
+            LLVMBasicBlockRef str_bb  = LLVMAppendBasicBlock(current_fn, "pop_str");
+            LLVMBasicBlockRef num_bb  = LLVMAppendBasicBlock(current_fn, "pop_num");
+            LLVMBasicBlockRef done_bb = LLVMAppendBasicBlock(current_fn, "pop_done");
+            LLVMBuildCondBr(builder, is_str, str_bb, num_bb);
+
+            LLVMPositionBuilderAtEnd(builder, str_bb);
+            LLVMValueRef s_args[] = { arr_ptr };
+            LLVMValueRef sres = LLVMBuildCall2(builder, fn_str.fn_type, fn_str.fn, s_args, 1, "pops");
+            LLVMBuildBr(builder, done_bb);
+            LLVMBasicBlockRef str_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, num_bb);
+            LLVMValueRef n_args[] = { arr_ptr };
+            LLVMValueRef nres = LLVMBuildCall2(builder, fn_num.fn_type, fn_num.fn, n_args, 1, "popn");
+            // Convert f64 → i8* here so the value dominates done_bb from this path.
+            LLVMValueRef nrep = LLVMBuildIntToPtr(builder,
+                pun_f64_to_i64(nres), i8_ptr_type, "n2p");
+            LLVMBuildBr(builder, done_bb);
+            LLVMBasicBlockRef num_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, done_bb);
+            // Unify via i8*: string is already a char*, number was punned above.
+            // Consumers read tag=2; compare-as-number paths still coerce back.
+            LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "popv");
+            LLVMValueRef vals[] = { sres, nrep };
+            LLVMBasicBlockRef bbs[] = { str_end, num_end };
+            LLVMAddIncoming(phi, vals, bbs, 2);
+            return { phi, 2 };
+        }
+    }
+
     // Handle LEN — dispatch based on argument type (string vs array)
     if (upper == "LEN" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
@@ -3009,8 +3135,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 VarInfo* v = lookup_var(arg.str_val);
                 if (v && v->tag == 3) result = true;
             }
+        } else if (upper == "ISMAP") {
+            if (arg.kind == ExprKind::MAP_LITERAL) result = true;
+            else if (arg.kind == ExprKind::VARIABLE) {
+                VarInfo* v = lookup_var(arg.str_val);
+                if (v && v->tag == 4) result = true;
+            }
         }
-        // ISMAP / ISNONE / ISNULL: not natively supported, default to false
+        // ISNONE / ISNULL: not natively supported, default to false
         return { LLVMConstInt(i64_type, result ? 1 : 0, 0), 0 };
     }
 
@@ -3018,6 +3150,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Special-case BOOL literals at compile time
         if (expr.args[0]->kind == ExprKind::LITERAL_BOOL) {
             return { LLVMBuildGlobalStringPtr(builder, "BOOLEAN", ".tof"), 2 };
+        }
+        // Variables declared AS BOOLEAN or bound to a bool literal
+        if (expr.args[0]->kind == ExprKind::VARIABLE) {
+            std::string up = expr.args[0]->str_val;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            if (bool_vars.count(up)) {
+                return { LLVMBuildGlobalStringPtr(builder, "BOOLEAN", ".tof"), 2 };
+            }
         }
         // DATE values: variables typed via CVDATE/DATEADD return strings
         // tagged as DATE. Check if expr is a known date-producing call:

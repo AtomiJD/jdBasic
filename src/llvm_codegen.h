@@ -76,6 +76,10 @@ private:
     // Subsequent assignments throw at runtime.
     std::unordered_set<std::string> const_vars;
 
+    // Booleans are stored as i64 in codegen, but TYPEOF must still report
+    // "BOOLEAN" for vars declared AS BOOLEAN or initialized with TRUE/FALSE.
+    std::unordered_set<std::string> bool_vars;
+
     // LLVM types
     LLVMTypeRef i64_type;
     LLVMTypeRef f64_type;

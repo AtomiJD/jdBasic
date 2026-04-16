@@ -177,6 +177,10 @@ double jdb_cosh(double x)      { return cosh(x); }
 double jdb_tanh(double x)      { return tanh(x); }
 double jdb_atan2(double y, double x) { return atan2(y, x); }
 double jdb_round(double x)     { return round(x); }
+double jdb_round_p(double x, double places) {
+    double m = pow(10.0, places);
+    return round(x * m) / m;
+}
 double jdb_trunc(double x)     { return trunc(x); }
 double jdb_sign(double x)      { return (x > 0) ? 1.0 : (x < 0) ? -1.0 : 0.0; }
 double jdb_clamp(double x, double lo, double hi) { return x < lo ? lo : (x > hi ? hi : x); }
@@ -248,6 +252,35 @@ JdbArray* jdb_iota(int64_t n) {
     for (int64_t i = 0; i < n; i++)
         arr->data[i] = (double)(i + 1);  // IOTA starts at 1
     return arr;
+}
+
+// IOTA(n, start, step) — n elements starting at `start` stepping by `step`.
+JdbArray* jdb_iota3(double n, double start, double step) {
+    int64_t cnt = (int64_t)n;
+    if (cnt < 0) cnt = 0;
+    auto* arr = jdb_array_new(cnt);
+    for (int64_t i = 0; i < cnt; i++)
+        arr->data[i] = start + step * (double)i;
+    return arr;
+}
+
+// POP: remove last element, return its value (numeric as double, string as ptr
+// via union). Caller knows the type via array flags. Returns 0 on empty.
+double jdb_array_pop(JdbArray* arr) {
+    if (!arr || arr->length == 0) return 0.0;
+    double v = arr->data[arr->length - 1];
+    arr->length--;
+    return v;
+}
+
+// POP returning a string-typed element (array flags indicate string storage).
+char* jdb_array_pop_str(JdbArray* arr) {
+    if (!arr || arr->length == 0) return _strdup("");
+    union { double d; int64_t i; } u;
+    u.d = arr->data[arr->length - 1];
+    arr->length--;
+    const char* s = (const char*)(intptr_t)u.i;
+    return _strdup(s ? s : "");
 }
 
 double jdb_mean(JdbArray* arr) {
@@ -352,6 +385,23 @@ int64_t jdb_array_indexof(JdbArray* arr, double val) {
     if (!arr) return -1;
     for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == val) return i;
     return -1;
+}
+
+// IN operator on arrays: returns 1 if needle is a member, else 0.
+int64_t jdb_array_has_str(JdbArray* arr, const char* needle) {
+    if (!arr || !needle) return 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        union { double d; int64_t i; } u; u.d = arr->data[i];
+        const char* s = (const char*)(intptr_t)u.i;
+        if (s && strcmp(s, needle) == 0) return 1;
+    }
+    return 0;
+}
+
+int64_t jdb_array_has_num(JdbArray* arr, double val) {
+    if (!arr) return 0;
+    for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == val) return 1;
+    return 0;
 }
 
 JdbArray* jdb_array_unique(JdbArray* arr) {
@@ -1305,14 +1355,36 @@ char* jdb_oct(int64_t val) {
 
 char* jdb_join_arr(JdbArray* arr, const char* delim) {
     if (!arr || arr->length == 0) return _strdup("");
-    // Join numeric array as strings
-    char buf[4096] = {0};
-    int pos = 0;
-    for (int64_t i = 0; i < arr->length && pos < 4080; i++) {
-        if (i > 0 && delim) { int dl = (int)strlen(delim); memcpy(buf+pos, delim, dl); pos += dl; }
-        pos += snprintf(buf+pos, 4090-pos, "%g", arr->data[i]);
+    bool is_str = (arr->flags & 2) != 0;
+    size_t dlen = delim ? strlen(delim) : 0;
+    // First pass: compute needed length
+    size_t total = 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (i > 0) total += dlen;
+        if (is_str) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            const char* s = (const char*)(intptr_t)u.i;
+            total += s ? strlen(s) : 0;
+        } else {
+            total += 32;  // upper bound for a formatted number
+        }
     }
-    return _strdup(buf);
+    char* out = (char*)malloc(total + 1);
+    size_t pos = 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (i > 0 && delim) { memcpy(out + pos, delim, dlen); pos += dlen; }
+        if (is_str) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            const char* s = (const char*)(intptr_t)u.i;
+            size_t sl = s ? strlen(s) : 0;
+            if (sl) memcpy(out + pos, s, sl);
+            pos += sl;
+        } else {
+            pos += snprintf(out + pos, total + 1 - pos, "%g", arr->data[i]);
+        }
+    }
+    out[pos] = '\0';
+    return out;
 }
 
 // SPLIT returns array of doubles (each is a pointer-encoded string)
@@ -1785,6 +1857,8 @@ char* jdb_typeof_tag(int64_t tag) {
         case 1: return _strdup("FLOAT64");
         case 2: return _strdup("STRING");
         case 3: return _strdup("ARRAY");
+        case 4: return _strdup("OBJECT");
+        case 5: return _strdup("FUNCREF");
         default: return _strdup("UNKNOWN");
     }
 }
