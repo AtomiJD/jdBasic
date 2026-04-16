@@ -39,7 +39,8 @@ LLVMCodegen::VarInfo* LLVMCodegen::lookup_var(const std::string& name) {
 LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) {
     LLVMTypeRef var_type = (tag == 1) ? f64_type :
                            (tag == 2) ? i8_ptr_type :
-                           (tag == 3) ? i8_ptr_type : i64_type;
+                           (tag == 3) ? i8_ptr_type :
+                           (tag == 4) ? i8_ptr_type : i64_type;
 
     LLVMValueRef storage;
 
@@ -204,6 +205,13 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
     reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
     reg("jdb_setlocale",  "SETLOCALE",    void_type, {i8_ptr_type}, -1);
+    // Maps / Objects
+    reg("jdb_map_new",    "__map_new",    i8_ptr_type, {}, 4);
+    reg("jdb_map_set_f64","__map_set_f64",void_type,   {i8_ptr_type, i8_ptr_type, f64_type}, -1);
+    reg("jdb_map_set_str","__map_set_str",void_type,   {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_map_get_f64","__map_get_f64",f64_type,    {i8_ptr_type, i8_ptr_type}, 1);
+    reg("jdb_map_get_str","__map_get_str",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     // Native generic vectorization helpers (avoid VM bridge overhead)
     reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -616,6 +624,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if (e->kind == ExprKind::LITERAL_FLOAT) return 1;
                     if (e->kind == ExprKind::LITERAL_STRING) return 2;
                     if (e->kind == ExprKind::ARRAY_LITERAL) return 3;
+                    if (e->kind == ExprKind::MAP_LITERAL) return 4;
                     if (e->kind == ExprKind::CALL) {
                         if (e->func_name == "ZEROS" || e->func_name == "ONES" ||
                             e->func_name == "IOTA" || e->func_name == "RANGE" ||
@@ -684,6 +693,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 if (stmt->kind == StmtKind::DIM && !stmt->label.empty() &&
                     type_names.count(stmt->label))
                     tag = 3;  // UDT object (ptr)
+                else if (stmt->kind == StmtKind::DIM && stmt->var_type == VarType::OBJECT)
+                    tag = 4;  // map/object
                 else if (stmt->expr) {
                     int inferred = infer_tag(stmt->expr.get());
                     if (inferred >= 0) tag = inferred;
@@ -986,15 +997,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
                 rhs.tag = 0;
             } else if ((rhs.tag == 3 || rhs.tag == 4) && vi->tag != rhs.tag) {
-                // Array or VM-object handle — update variable tag
-                if (rhs.tag == 4) {
-                    // VM object handle is i64 — store directly
-                    vi->tag = 4;
-                    LLVMBuildStore(builder, rhs.val, vi->alloca_val);
-                    return;
-                }
-                VarInfo& nv = create_var(stmt.var_name, 3);
-                LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+                // Array (3) or Map/object (4) — update variable tag and store ptr.
+                vi->tag = rhs.tag;
+                LLVMBuildStore(builder, rhs.val, vi->alloca_val);
                 return;
             }
         }
@@ -1015,6 +1020,20 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
 // ── DIM (array allocation) ──────────────────────────────────
 
 void LLVMCodegen::codegen_dim(const Stmt& stmt) {
+    // DIM x AS OBJECT (or MAP) → empty native map
+    if (stmt.var_type == VarType::OBJECT && stmt.label.empty() && !stmt.expr) {
+        auto& map_new = runtime_funcs["__map_new"];
+        LLVMValueRef m = LLVMBuildCall2(builder, map_new.fn_type, map_new.fn,
+                                         nullptr, 0, "obj");
+        VarInfo* vi = lookup_var(stmt.var_name);
+        if (vi) { LLVMBuildStore(builder, m, vi->alloca_val); vi->tag = 4; }
+        else {
+            VarInfo& nv = create_var(stmt.var_name, 4);
+            LLVMBuildStore(builder, m, nv.alloca_val);
+        }
+        return;
+    }
+
     // DIM x AS TypeName (scalar) → call UDT constructor
     // But NOT if stmt.expr is __MAKE_UDT_ARRAY__ — that's handled below.
     bool is_udt_array = stmt.expr && stmt.expr->kind == ExprKind::CALL &&
@@ -1259,16 +1278,31 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     }
 
     VarInfo* vi = lookup_var(stmt.var_name);
-    if (!vi || vi->tag != 3) return;  // not an array/UDT
+    if (!vi || (vi->tag != 3 && vi->tag != 4)) return;  // not an array/UDT/map
 
-    // Check if this is a UDT field assignment via index_chain with string key
-    // (e.g. THIS.HitPoints = 150 parsed as INDEX_ASSIGN with string key)
+    // String-keyed assignment via index_chain (UDT field OR map entry)
     if (!stmt.index_chain.empty() && stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING) {
         std::string field_name = stmt.index_chain[0]->str_val;
         LLVMValueRef obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "obj");
         LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
         TypedValue val_tv = codegen_expr(*stmt.expr);
 
+        if (vi->tag == 4) {
+            // Map: route to native __map_set_*
+            if (val_tv.tag == 2) {
+                auto& set_fn = runtime_funcs["__map_set_str"];
+                LLVMValueRef args[] = { obj_ptr, field_str, val_tv.val };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+            } else {
+                LLVMValueRef fval = coerce_to(val_tv, f64_type);
+                auto& set_fn = runtime_funcs["__map_set_f64"];
+                LLVMValueRef args[] = { obj_ptr, field_str, fval };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+            }
+            return;
+        }
+
+        // UDT field assignment
         bool is_str = (!field_name.empty() && field_name.back() == '$') || val_tv.tag == 2;
         if (!is_str)
             is_str = is_udt_string_field(stmt.var_name, field_name);
@@ -1852,6 +1886,29 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             return { arr, 3 };
         }
 
+        case ExprKind::MAP_LITERAL: {
+            // {"k1": v1, "k2": v2, ...} → __map_new() then __map_set_*
+            auto& map_new = runtime_funcs["__map_new"];
+            LLVMValueRef m = LLVMBuildCall2(builder, map_new.fn_type, map_new.fn,
+                                             nullptr, 0, "map");
+            for (size_t i = 0; i < expr.map_keys.size() && i < expr.args.size(); i++) {
+                LLVMValueRef key = LLVMBuildGlobalStringPtr(builder,
+                    expr.map_keys[i].c_str(), ".mk");
+                TypedValue v = codegen_expr(*expr.args[i]);
+                if (v.tag == 2) {
+                    auto& set_str = runtime_funcs["__map_set_str"];
+                    LLVMValueRef args[] = { m, key, v.val };
+                    LLVMBuildCall2(builder, set_str.fn_type, set_str.fn, args, 3, "");
+                } else {
+                    LLVMValueRef fv = coerce_to(v, f64_type);
+                    auto& set_f64 = runtime_funcs["__map_set_f64"];
+                    LLVMValueRef args[] = { m, key, fv };
+                    LLVMBuildCall2(builder, set_f64.fn_type, set_f64.fn, args, 3, "");
+                }
+            }
+            return { m, 4 };  // tag=4 means map/object
+        }
+
         case ExprKind::VARIABLE: {
             VarInfo* vi = lookup_var(expr.str_val);
             if (!vi) {
@@ -1901,6 +1958,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             if (tag == 1)       load_type = f64_type;
             else if (tag == 2)  load_type = i8_ptr_type;
             else if (tag == 3)  load_type = i8_ptr_type;
+            else if (tag == 4)  load_type = i8_ptr_type;  // map ptr
             else                load_type = i64_type;  // covers 0 and -2 (universal)
             return { LLVMBuildLoad2(builder, load_type, vi->alloca_val,
                                     expr.str_val.c_str()), tag };
@@ -2165,35 +2223,25 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             TypedValue arr_tv = codegen_expr(*expr.left);
             TypedValue idx_tv = codegen_expr(*expr.right);
 
-            // String key → map/object access via VM bridge
+            // String key → map (tag=4) or UDT (tag=3 / arr-element of UDTs).
             if (idx_tv.tag == 2) {
-                LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
-                    LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
-                LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
-                    LLVMConstInt(i32_type, 2, 0), "args");
-                LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
-                    LLVMConstInt(i32_type, 2, 0), "tags");
-                // Arg 0: object
-                LLVMValueRef enc0 = (arr_tv.tag == 3 || arr_tv.tag == 2)
-                    ? LLVMBuildPtrToInt(builder, arr_tv.val, i64_type, "ptoi")
-                    : (arr_tv.tag == 1 ? pun_f64_to_i64(arr_tv.val) : arr_tv.val);
-                LLVMValueRef aidx0[] = { LLVMConstInt(i32_type, 0, 0) };
-                LLVMBuildStore(builder, enc0, LLVMBuildGEP2(builder, i64_type, args_arr, aidx0, 1, "a"));
-                LLVMBuildStore(builder, LLVMConstInt(i32_type, arr_tv.tag == 4 ? 4 : 3, 0),
-                    LLVMBuildGEP2(builder, i32_type, tags_arr, aidx0, 1, "t"));
-                // Arg 1: string key
-                LLVMValueRef aidx1[] = { LLVMConstInt(i32_type, 1, 0) };
-                LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, idx_tv.val, i64_type, "stoi"),
-                    LLVMBuildGEP2(builder, i64_type, args_arr, aidx1, 1, "a"));
-                LLVMBuildStore(builder, LLVMConstInt(i32_type, 2, 0),
-                    LLVMBuildGEP2(builder, i32_type, tags_arr, aidx1, 1, "t"));
-                // Call MAP.GET or generic index via VM
-                LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, "MAP.GET", ".fn");
-                auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
-                LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
-                    LLVMConstInt(i32_type, 2, 0) };
-                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "mapget");
-                return { result, 1 };
+                if (arr_tv.tag == 4) {
+                    // Native map access
+                    auto& gs = runtime_funcs["__map_get_str"];
+                    LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
+                    return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
+                }
+                // UDT field access — decode ptr from f64 if needed (array elem)
+                LLVMValueRef obj_ptr = arr_tv.val;
+                if (arr_tv.tag == 1) {
+                    LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
+                    obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+                } else if (arr_tv.tag == 0) {
+                    obj_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
+                }
+                auto& gs = runtime_funcs["__udt_get_str"];
+                LLVMValueRef args[] = { obj_ptr, idx_tv.val };
+                return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "uget"), 2 };
             }
 
             // Get array pointer — may need to convert from encoded param
@@ -2347,8 +2395,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         }
     }
 
-    // IN operator: "ell" IN "Hello" → INSTR(haystack, needle) > 0
+    // IN operator
     if (expr.op == TokenType::IN) {
+        // String in string: substring search
         if (lhs.tag == 2 && rhs.tag == 2) {
             auto& fn = runtime_funcs["INSTR"];
             LLVMValueRef args[] = { rhs.val, lhs.val };
@@ -2356,6 +2405,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSGT, pos,
                                               LLVMConstInt(i64_type, 0, 0), "in");
             return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), 0 };
+        }
+        // String in map: key lookup
+        if (lhs.tag == 2 && rhs.tag == 4) {
+            auto& fn = runtime_funcs["__map_has"];
+            LLVMValueRef args[] = { rhs.val, lhs.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "mhas"), 0 };
         }
         return { LLVMConstInt(i64_type, 0, 0), 0 };
     }

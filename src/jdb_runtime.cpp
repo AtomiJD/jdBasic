@@ -600,6 +600,99 @@ char* jdb_str_repeat(const char* s, int64_t n) {
     return out;
 }
 
+// ── Maps / Objects (string-keyed) ──────────────────────────────
+// Simple linear-scan map; fine for the small maps used in tests.
+// Layout: { count, capacity, char** keys, double* values, int32* tags }
+// tag 0 = i64, 1 = f64, 2 = string ptr, 3 = array ptr.
+
+struct JdbMap {
+    int64_t count;
+    int64_t capacity;
+    char** keys;
+    double* values;
+    int32_t* tags;
+};
+
+JdbMap* jdb_map_new() {
+    auto* m = (JdbMap*)malloc(sizeof(JdbMap));
+    m->count = 0;
+    m->capacity = 0;
+    m->keys = nullptr;
+    m->values = nullptr;
+    m->tags = nullptr;
+    return m;
+}
+
+static void map_grow(JdbMap* m) {
+    int64_t newcap = m->capacity ? m->capacity * 2 : 8;
+    m->keys = (char**)realloc(m->keys, newcap * sizeof(char*));
+    m->values = (double*)realloc(m->values, newcap * sizeof(double));
+    m->tags = (int32_t*)realloc(m->tags, newcap * sizeof(int32_t));
+    m->capacity = newcap;
+}
+
+static int64_t map_find(JdbMap* m, const char* key) {
+    if (!m || !key) return -1;
+    for (int64_t i = 0; i < m->count; i++) {
+        if (m->keys[i] && strcmp(m->keys[i], key) == 0) return i;
+    }
+    return -1;
+}
+
+void jdb_map_set_f64(JdbMap* m, const char* key, double val) {
+    if (!m || !key) return;
+    int64_t idx = map_find(m, key);
+    if (idx < 0) {
+        if (m->count == m->capacity) map_grow(m);
+        idx = m->count++;
+        m->keys[idx] = _strdup(key);
+    }
+    m->values[idx] = val;
+    m->tags[idx] = 1;
+}
+
+void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
+    if (!m || !key) return;
+    int64_t idx = map_find(m, key);
+    if (idx < 0) {
+        if (m->count == m->capacity) map_grow(m);
+        idx = m->count++;
+        m->keys[idx] = _strdup(key);
+    }
+    union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)_strdup(val ? val : "");
+    m->values[idx] = u.d;
+    m->tags[idx] = 2;
+}
+
+double jdb_map_get_f64(JdbMap* m, const char* key) {
+    int64_t idx = map_find(m, key);
+    if (idx < 0) return 0;
+    if (m->tags[idx] == 2) {
+        // value is a string ptr — caller likely wants its address but we
+        // return 0 to signal type mismatch. Use jdb_map_get_str instead.
+        return 0;
+    }
+    return m->values[idx];
+}
+
+char* jdb_map_get_str(JdbMap* m, const char* key) {
+    int64_t idx = map_find(m, key);
+    if (idx < 0) return _strdup("");
+    if (m->tags[idx] == 2) {
+        union { double d; int64_t i; } u; u.d = m->values[idx];
+        const char* s = (const char*)(intptr_t)u.i;
+        return _strdup(s ? s : "");
+    }
+    // Numeric → format
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%g", m->values[idx]);
+    return _strdup(buf);
+}
+
+int64_t jdb_map_has(JdbMap* m, const char* key) {
+    return map_find(m, key) >= 0 ? 1 : 0;
+}
+
 // String - String → remove all occurrences: "abcabc" - "bc" → "aa"
 char* jdb_str_sub(const char* a, const char* b) {
     if (!a) return _strdup("");
