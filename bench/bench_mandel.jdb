@@ -1,0 +1,44 @@
+' Mandelbrot escape iterations: 800x600 grid, max_iter=1000.
+' Sums total iterations as a checksum.
+DIM W AS INTEGER
+DIM H AS INTEGER
+DIM MAXITER AS INTEGER
+DIM px AS INTEGER
+DIM py AS INTEGER
+DIM iter AS INTEGER
+DIM total AS LONG
+DIM cx AS DOUBLE
+DIM cy AS DOUBLE
+DIM x AS DOUBLE
+DIM y AS DOUBLE
+DIM x2 AS DOUBLE
+DIM y2 AS DOUBLE
+DIM tmp AS DOUBLE
+
+W = 800
+H = 600
+MAXITER = 1000
+total = 0
+
+FOR py = 0 TO H - 1
+    cy = -1.5 + 3.0 * py / H
+    FOR px = 0 TO W - 1
+        cx = -2.0 + 3.0 * px / W
+        x = 0.0
+        y = 0.0
+        iter = 0
+        x2 = 0.0
+        y2 = 0.0
+        DO WHILE (x2 + y2) < 4.0 AND iter < MAXITER
+            tmp = x2 - y2 + cx
+            y = 2.0 * x * y + cy
+            x = tmp
+            x2 = x * x
+            y2 = y * y
+            iter = iter + 1
+        LOOP
+        total = total + iter
+    NEXT
+NEXT
+
+PRINT "total iterations = "; total

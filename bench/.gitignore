@@ -1,0 +1,6 @@
+*.exe
+*.obj
+*.res
+*.rc
+jdbrt.dll
+__pycache__/
