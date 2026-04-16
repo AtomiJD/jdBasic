@@ -40,7 +40,8 @@ LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) 
     LLVMTypeRef var_type = (tag == 1) ? f64_type :
                            (tag == 2) ? i8_ptr_type :
                            (tag == 3) ? i8_ptr_type :
-                           (tag == 4) ? i8_ptr_type : i64_type;
+                           (tag == 4) ? i8_ptr_type :
+                           (tag == 5) ? i8_ptr_type : i64_type;
 
     LLVMValueRef storage;
 
@@ -640,12 +641,19 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if (e->kind == ExprKind::LITERAL_STRING) return 2;
                     if (e->kind == ExprKind::ARRAY_LITERAL) return 3;
                     if (e->kind == ExprKind::MAP_LITERAL) return 4;
+                    if (e->kind == ExprKind::LAMBDA_EXPR) return 5;
                     if (e->kind == ExprKind::CALL) {
                         if (e->func_name == "ZEROS" || e->func_name == "ONES" ||
                             e->func_name == "IOTA" || e->func_name == "RANGE" ||
                             e->func_name == "LINSPACE") return 3;
                         // POP returns a string-or-number-as-ptr (unified via tag=2)
                         if (e->func_name == "POP") return 2;
+                        // User-defined functions: trust their declared return tag.
+                        // (They aren't auto-vectorized.)
+                        auto uit_pre = user_functions.find(e->func_name);
+                        if (uit_pre != user_functions.end()) {
+                            return uit_pre->second.return_tag;
+                        }
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                         // If any arg is an array AND fn is not blocklisted → vectorized result (array)
@@ -1083,7 +1091,21 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
-    TypedValue rhs = codegen_expr(*stmt.expr);
+    // Funcref via `name@` — the parser flattens it to a LITERAL_STRING
+    // holding the target name. Detect the match against a known user
+    // function and bind the RHS to the LLVM function pointer (tag=5)
+    // so later `fn_ref(args)` lands in the indirect-call path.
+    TypedValue rhs;
+    if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
+        auto fit = user_functions.find(stmt.expr->str_val);
+        if (fit != user_functions.end()) {
+            rhs = { fit->second.fn, 5 };
+        } else {
+            rhs = codegen_expr(*stmt.expr);
+        }
+    } else {
+        rhs = codegen_expr(*stmt.expr);
+    }
 
     VarInfo* vi = lookup_var(stmt.var_name);
     if (vi) {
@@ -1096,8 +1118,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 // Variable was int, value is float → truncate to int for storage
                 rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
                 rhs.tag = 0;
-            } else if ((rhs.tag == 3 || rhs.tag == 4) && vi->tag != rhs.tag) {
-                // Array (3) or Map/object (4) — update variable tag and store ptr.
+            } else if ((rhs.tag == 3 || rhs.tag == 4 || rhs.tag == 5) && vi->tag != rhs.tag) {
+                // Array (3), map (4), or funcref/lambda (5) — update tag and store ptr.
                 vi->tag = rhs.tag;
                 LLVMBuildStore(builder, rhs.val, vi->alloca_val);
                 return;
@@ -2892,6 +2914,40 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     }
                 }
             }
+        }
+    }
+
+    // Indirect call: name refers to a variable holding a lambda/funcref.
+    // Lambdas and `name@` funcrefs live in vars with tag=5 (ptr storage);
+    // a FUNC parameter without type info is tag=1 (f64) and we pun its
+    // bits back to a ptr. Uniform signature is (double, double, ...) → double.
+    if (!user_functions.count(name) && !runtime_funcs.count(name)) {
+        VarInfo* vi_fn = lookup_var(name);
+        if (vi_fn && (vi_fn->tag == 5 || vi_fn->tag == 1)) {
+            LLVMValueRef fn_ptr;
+            if (vi_fn->tag == 5) {
+                fn_ptr = LLVMBuildLoad2(builder, i8_ptr_type,
+                                         vi_fn->alloca_val, name.c_str());
+            } else {
+                LLVMValueRef f64v = LLVMBuildLoad2(builder, f64_type,
+                                                    vi_fn->alloca_val, name.c_str());
+                LLVMValueRef i64v = pun_f64_to_i64(f64v);
+                fn_ptr = LLVMBuildIntToPtr(builder, i64v, i8_ptr_type, "fn_as_ptr");
+            }
+            std::vector<LLVMValueRef> args;
+            std::vector<LLVMTypeRef> arg_types;
+            for (auto& a : expr.args) {
+                TypedValue av = codegen_expr(*a);
+                args.push_back(coerce_to(av, f64_type));
+                arg_types.push_back(f64_type);
+            }
+            LLVMTypeRef fn_ty = LLVMFunctionType(f64_type,
+                arg_types.empty() ? nullptr : arg_types.data(),
+                (unsigned)arg_types.size(), 0);
+            LLVMValueRef result = LLVMBuildCall2(builder, fn_ty, fn_ptr,
+                args.empty() ? nullptr : args.data(),
+                (unsigned)args.size(), "icall");
+            return { result, 1 };
         }
     }
 
