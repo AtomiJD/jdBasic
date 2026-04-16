@@ -202,6 +202,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
+    reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     // Native generic vectorization helpers (avoid VM bridge overhead)
     reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_array_apply_ss",   "__arr_apply_ss",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -2413,36 +2415,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { LLVMConstInt(i64_type, 0, 0), 0 };
     }
 
-    // String multiplication: "abc" * 3 or 3 * "abc"
-    if (expr.op == TokenType::STAR && (lhs.tag == 2 || rhs.tag == 2)) {
-        // Dispatch via VM bridge
-        LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
-            LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
-        LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
-            LLVMConstInt(i32_type, 2, 0), "args");
-        LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
-            LLVMConstInt(i32_type, 2, 0), "tags");
-
-        auto encode_val = [&](TypedValue tv, int idx) {
-            LLVMValueRef encoded;
-            int32_t tag;
-            if (tv.tag == 2) { encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "stoi"); tag = 2; }
-            else if (tv.tag == 1) { encoded = pun_f64_to_i64(tv.val); tag = 1; }
-            else { LLVMValueRef f = LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"); encoded = pun_f64_to_i64(f); tag = 0; }
-            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, idx, 0) };
-            LLVMBuildStore(builder, encoded, LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "arg"));
-            LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "tag"));
-        };
-        encode_val(lhs, 0);
-        encode_val(rhs, 1);
-
-        LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, "REPEAT$", ".op");
-        auto& fn = runtime_funcs["__jdrt_call_typed_str"];
-        LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
-            LLVMConstInt(i32_type, 2, 0) };
-        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-        return { result, 2 };
-    }
+    // (String repeat is now handled below via native jdb_str_repeat)
 
     // String comparison: str = other, str <> other (when one side might not be str)
     if ((lhs.tag == 2 || rhs.tag == 2) &&
@@ -2471,33 +2444,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         }
     }
 
-    // String operations beyond concat/compare: dispatch via VM bridge
-    if ((lhs.tag == 2 || rhs.tag == 2) &&
-        (expr.op == TokenType::MINUS || expr.op == TokenType::STAR)) {
-        // String subtraction or multiplication → VM bridge
-        LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
-            LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
-        LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
-            LLVMConstInt(i32_type, 2, 0), "args");
-        LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
-            LLVMConstInt(i32_type, 2, 0), "tags");
-        auto enc2 = [&](TypedValue tv, int idx) {
-            LLVMValueRef encoded; int32_t tag;
-            if (tv.tag == 2) { encoded = LLVMBuildPtrToInt(builder, tv.val, i64_type, "stoi"); tag = 2; }
-            else if (tv.tag == 1) { encoded = pun_f64_to_i64(tv.val); tag = 1; }
-            else { LLVMValueRef f = LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"); encoded = pun_f64_to_i64(f); tag = 0; }
-            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, idx, 0) };
-            LLVMBuildStore(builder, encoded, LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "arg"));
-            LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "tag"));
-        };
-        enc2(lhs, 0); enc2(rhs, 1);
-        std::string op = (expr.op == TokenType::STAR) ? "REPEAT$" : "__STR_SUB";
-        LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, op.c_str(), ".op");
-        auto& fn = runtime_funcs["__jdrt_call_typed_str"];
-        LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
-            LLVMConstInt(i32_type, 2, 0) };
-        LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-        return { result, 2 };
+    // String * int → repeat ("-" * 5 → "-----"), native fast path
+    if (expr.op == TokenType::STAR && (lhs.tag == 2 || rhs.tag == 2)) {
+        LLVMValueRef str_v = (lhs.tag == 2) ? lhs.val : rhs.val;
+        TypedValue n_tv = (lhs.tag == 2) ? rhs : lhs;
+        LLVMValueRef n = coerce_to(n_tv, i64_type);
+        auto& fn = runtime_funcs["__str_repeat"];
+        LLVMValueRef args[] = { str_v, n };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "rep"), 2 };
+    }
+
+    // String - String → remove all occurrences ("abcabc" - "bc" → "aa")
+    if (expr.op == TokenType::MINUS && lhs.tag == 2 && rhs.tag == 2) {
+        auto& fn = runtime_funcs["__str_sub"];
+        LLVMValueRef args[] = { lhs.val, rhs.val };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ssub"), 2 };
     }
 
     bool use_float = (lhs.tag == 1 || rhs.tag == 1);
@@ -2809,6 +2770,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // Handle TYPEOF — resolve type tag at compile time
     if (upper == "TYPEOF" && !expr.args.empty()) {
+        // Special-case BOOL literals at compile time
+        if (expr.args[0]->kind == ExprKind::LITERAL_BOOL) {
+            return { LLVMBuildGlobalStringPtr(builder, "BOOLEAN", ".tof"), 2 };
+        }
+        // DATE values: variables typed via CVDATE/DATEADD return strings
+        // tagged as DATE. Check if expr is a known date-producing call:
+        if (expr.args[0]->kind == ExprKind::CALL || expr.args[0]->kind == ExprKind::VARIABLE) {
+            std::string fn_or_var;
+            if (expr.args[0]->kind == ExprKind::CALL) fn_or_var = expr.args[0]->func_name;
+            std::transform(fn_or_var.begin(), fn_or_var.end(), fn_or_var.begin(), ::toupper);
+            if (fn_or_var == "CVDATE" || fn_or_var == "DATEADD" || fn_or_var == "NOW")
+                return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), 2 };
+        }
         TypedValue av = codegen_expr(*expr.args[0]);
         auto& fn = runtime_funcs["__typeof_tag"];
         LLVMValueRef args[] = { LLVMConstInt(i64_type, av.tag, 0) };

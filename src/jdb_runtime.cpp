@@ -552,6 +552,34 @@ void jdb_array_set_string_elems(JdbArray* arr) {
     if (arr) arr->flags |= 3;  // bit 0 (ptr) + bit 1 (string)
 }
 
+// String * int → repeat: "-" * 5 → "-----"
+char* jdb_str_repeat(const char* s, int64_t n) {
+    if (!s || n <= 0) return _strdup("");
+    size_t slen = strlen(s);
+    char* out = (char*)malloc(slen * (size_t)n + 1);
+    for (int64_t i = 0; i < n; i++) memcpy(out + i * slen, s, slen);
+    out[slen * n] = '\0';
+    return out;
+}
+
+// String - String → remove all occurrences: "abcabc" - "bc" → "aa"
+char* jdb_str_sub(const char* a, const char* b) {
+    if (!a) return _strdup("");
+    if (!b || !*b) return _strdup(a);
+    size_t alen = strlen(a), blen = strlen(b);
+    char* out = (char*)malloc(alen + 1);
+    size_t oi = 0;
+    for (size_t i = 0; i < alen; ) {
+        if (i + blen <= alen && memcmp(a + i, b, blen) == 0) {
+            i += blen;
+        } else {
+            out[oi++] = a[i++];
+        }
+    }
+    out[oi] = '\0';
+    return out;
+}
+
 // ── Generic native vectorization ──────────────────────────────
 //
 // Native array_apply: apply a scalar fn to each element of an array.
