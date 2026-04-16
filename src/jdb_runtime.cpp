@@ -1962,6 +1962,7 @@ char* jdb_typeof_tag(int64_t tag) {
         case 3: return _strdup("ARRAY");
         case 4: return _strdup("OBJECT");
         case 5: return _strdup("FUNCREF");
+        case 6: return _strdup("OBJECT");  // VM Value handle — shows as OBJECT
         default: return _strdup("UNKNOWN");
     }
 }

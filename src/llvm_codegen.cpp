@@ -797,6 +797,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (e->left && e->left->kind == ExprKind::VARIABLE) {
                             if (var_udt_type.count(e->left->str_val + "[]"))
                                 return 3;
+                            // INDEX on a VM-Value handle returns another
+                            // handle (tag 6). Lets `th = g{"themes"}` keep
+                            // the VM-object flavour instead of collapsing
+                            // to a numeric 0 at the pre-pass.
+                            VarInfo* lv = lookup_var(e->left->str_val);
+                            if (lv && lv->tag == 6) return 6;
                         }
                         // Otherwise default to f64 (numeric array element).
                         return 1;
