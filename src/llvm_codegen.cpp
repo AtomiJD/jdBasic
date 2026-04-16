@@ -257,7 +257,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, 0);
 
     // Date/Time
-    reg("jdb_now",         "NOW",         f64_type, {}, 1);
+    reg("jdb_now",         "NOW",         i8_ptr_type, {}, 2);
+    reg("jdb_now_epoch",   "NOW_EPOCH",   f64_type, {}, 1);
     reg("jdb_date_str",    "DATE$",       i8_ptr_type, {f64_type}, 2);
     reg("jdb_time_str",    "TIME$",       i8_ptr_type, {f64_type}, 2);
     reg("jdb_year",        "YEAR",        i64_type, {f64_type}, 0);
@@ -267,6 +268,13 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_minute",      "MINUTE",      i64_type, {f64_type}, 0);
     reg("jdb_second",      "SECOND",      i64_type, {f64_type}, 0);
     reg("jdb_weekday",     "WEEKDAY",     i64_type, {f64_type}, 0);
+    // String-based date accessors (for ISO strings from CVDATE/DATEADD)
+    reg("jdb_year_str",    "__year_str",   i64_type, {i8_ptr_type}, 0);
+    reg("jdb_month_str",   "__month_str",  i64_type, {i8_ptr_type}, 0);
+    reg("jdb_day_str",     "__day_str",    i64_type, {i8_ptr_type}, 0);
+    reg("jdb_hour_str",    "__hour_str",   i64_type, {i8_ptr_type}, 0);
+    reg("jdb_minute_str",  "__minute_str", i64_type, {i8_ptr_type}, 0);
+    reg("jdb_second_str",  "__second_str", i64_type, {i8_ptr_type}, 0);
     reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {f64_type, i8_ptr_type}, 2);
 
     // System
@@ -311,9 +319,10 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 3);
 
     // Date Add/Diff
-    reg("jdb_dateadd",  "DATEADD",  f64_type, {i8_ptr_type, f64_type, f64_type}, 1);
-    reg("jdb_datediff", "DATEDIFF", f64_type, {i8_ptr_type, f64_type, f64_type}, 1);
-    reg("jdb_cvdate",   "CVDATE",   f64_type, {i8_ptr_type}, 1);
+    // Dates are ISO strings in the native runtime (not epochs like the VM).
+    reg("jdb_dateadd",  "DATEADD",  i8_ptr_type, {i8_ptr_type, f64_type, i8_ptr_type}, 2);
+    reg("jdb_datediff", "DATEDIFF", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 1);
+    reg("jdb_cvdate",   "CVDATE",   i8_ptr_type, {i8_ptr_type}, 2);
 
     // Regex
     reg("jdb_regex_match",   "REGEX.MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
@@ -588,6 +597,14 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             e->func_name == "IOTA" || e->func_name == "RANGE" ||
                             e->func_name == "LINSPACE") return 3;
                         if (!e->func_name.empty() && e->func_name.back() == '$') return 2;
+                        // Check registered runtime functions for their return tag
+                        std::string upper = e->func_name;
+                        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                        auto rit = runtime_funcs.find(upper);
+                        if (rit != runtime_funcs.end()) return rit->second.return_tag;
+                        // Check user-defined functions
+                        auto uit = user_functions.find(e->func_name);
+                        if (uit != user_functions.end()) return uit->second.return_tag;
                         return -1; // unknown
                     }
                     if (e->kind == ExprKind::VARIABLE) {
@@ -2696,6 +2713,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
             return { result, 3 };
         }
+    }
+
+    // Handle YEAR/MONTH/DAY/HOUR/MINUTE/SECOND: dispatch to _str variant if arg is a string.
+    static const std::unordered_map<std::string, std::string> date_accessors = {
+        {"YEAR", "__year_str"}, {"MONTH", "__month_str"}, {"DAY", "__day_str"},
+        {"HOUR", "__hour_str"}, {"MINUTE", "__minute_str"}, {"SECOND", "__second_str"}
+    };
+    auto dit = date_accessors.find(upper);
+    if (dit != date_accessors.end() && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == 2) {  // string arg → use _str variant
+            auto sit = runtime_funcs.find(dit->second);
+            if (sit != runtime_funcs.end()) {
+                LLVMValueRef args[] = { av.val };
+                LLVMValueRef result = LLVMBuildCall2(builder, sit->second.fn_type,
+                    sit->second.fn, args, 1, "dt");
+                return { result, 0 };
+            }
+        }
+        // Fall through to f64 variant via generic runtime lookup below
     }
 
     // Handle IIF with strings: IIF(cond, str1, str2) → VM bridge

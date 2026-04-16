@@ -1011,7 +1011,19 @@ int64_t jdb_file_exists(const char* path) {
 
 // ── Date/Time ───────────────────────────────────────────────
 
-double jdb_now() {
+// NOW returns current date/time as ISO string for consistency with CVDATE.
+char* jdb_now() {
+    time_t t = time(NULL);
+    struct tm* tm = localtime(&t);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+             tm->tm_hour, tm->tm_min, tm->tm_sec);
+    return _strdup(buf);
+}
+
+// Epoch version retained for legacy callers
+double jdb_now_epoch() {
     return (double)time(NULL);
 }
 
@@ -1031,39 +1043,69 @@ char* jdb_time_str(double epoch) {
     return _strdup(buf);
 }
 
+// Date accessors: accept either epoch (f64) or ISO string.
+// Since we can't overload in C, we use heuristic: very small values (< 10000)
+// are treated as invalid; otherwise treated as epoch. For strings, use
+// jdb_year_str etc. (called via string-tagged CVDATE result).
 int64_t jdb_year(double epoch) {
     time_t t = (time_t)epoch;
     return localtime(&t)->tm_year + 1900;
 }
-
 int64_t jdb_month(double epoch) {
     time_t t = (time_t)epoch;
     return localtime(&t)->tm_mon + 1;
 }
-
 int64_t jdb_day(double epoch) {
     time_t t = (time_t)epoch;
     return localtime(&t)->tm_mday;
 }
-
 int64_t jdb_hour(double epoch) {
     time_t t = (time_t)epoch;
     return localtime(&t)->tm_hour;
 }
-
 int64_t jdb_minute(double epoch) {
     time_t t = (time_t)epoch;
     return localtime(&t)->tm_min;
 }
-
 int64_t jdb_second(double epoch) {
     time_t t = (time_t)epoch;
     return localtime(&t)->tm_sec;
 }
-
 int64_t jdb_weekday(double epoch) {
     time_t t = (time_t)epoch;
     return localtime(&t)->tm_wday;
+}
+
+// String-based date accessors: take ISO date string
+int64_t jdb_year_str(const char* s) {
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    if (!s || sscanf(s, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc) < 3) return 0;
+    return y;
+}
+int64_t jdb_month_str(const char* s) {
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    if (!s || sscanf(s, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc) < 3) return 0;
+    return m;
+}
+int64_t jdb_day_str(const char* s) {
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    if (!s || sscanf(s, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc) < 3) return 0;
+    return d;
+}
+int64_t jdb_hour_str(const char* s) {
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    if (!s || sscanf(s, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc) < 4) return 0;
+    return hr;
+}
+int64_t jdb_minute_str(const char* s) {
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    if (!s || sscanf(s, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc) < 5) return 0;
+    return mn;
+}
+int64_t jdb_second_str(const char* s) {
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    if (!s || sscanf(s, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc) < 6) return 0;
+    return sc;
 }
 
 char* jdb_format_date(double epoch, const char* fmt) {
@@ -1150,28 +1192,70 @@ char* jdb_uuid() {
     return _strdup(buf);
 }
 
-// ── Date Add/Diff ───────────────────────────────────────────
+// ── Date Helpers ────────────────────────────────────────────
+// In the native runtime, dates are stored as ISO strings ("YYYY-MM-DD HH:MM:SS")
+// to match the interpreter's string-conversion behavior. Functions that receive
+// "date" arguments accept ISO strings; functions that return dates produce them.
 
-double jdb_dateadd(const char* part, double amount, double epoch) {
-    time_t t = (time_t)epoch;
-    struct tm* tm = localtime(&t);
-    if (!tm) return epoch;
-    struct tm copy = *tm;
+static bool parse_iso_date(const char* s, struct tm* out) {
+    if (!s) return false;
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    int n = sscanf(s, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc);
+    if (n < 3) return false;
+    out->tm_year = y - 1900;
+    out->tm_mon = m - 1;
+    out->tm_mday = d;
+    out->tm_hour = hr;
+    out->tm_min = mn;
+    out->tm_sec = sc;
+    out->tm_isdst = -1;
+    return true;
+}
+
+static char* format_iso_date(const struct tm* tm, bool include_time) {
+    char buf[32];
+    if (include_time) {
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                 tm->tm_hour, tm->tm_min, tm->tm_sec);
+    } else {
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+    }
+    return _strdup(buf);
+}
+
+// CVDATE: parse ISO string, return normalized ISO string (always with time).
+char* jdb_cvdate(const char* datestr) {
+    struct tm t = {0};
+    if (!parse_iso_date(datestr, &t)) return _strdup("");
+    return format_iso_date(&t, true);
+}
+
+// DATEADD: add num units of part ("Y","M","D","H","N","S") to an ISO date string.
+// Returns a new ISO date string.
+char* jdb_dateadd(const char* part, double amount, const char* date_str) {
+    struct tm tm = {0};
+    if (!parse_iso_date(date_str, &tm)) return _strdup("");
     int64_t n = (int64_t)amount;
     char p = part ? toupper((unsigned char)part[0]) : 'D';
     switch (p) {
-        case 'Y': copy.tm_year += (int)n; break;
-        case 'M': copy.tm_mon += (int)n; break;
-        case 'D': copy.tm_mday += (int)n; break;
-        case 'H': copy.tm_hour += (int)n; break;
-        case 'N': copy.tm_min += (int)n; break;  // N=minutes
-        case 'S': copy.tm_sec += (int)n; break;
+        case 'Y': tm.tm_year += (int)n; break;
+        case 'M': tm.tm_mon  += (int)n; break;
+        case 'D': tm.tm_mday += (int)n; break;
+        case 'H': tm.tm_hour += (int)n; break;
+        case 'N': tm.tm_min  += (int)n; break;
+        case 'S': tm.tm_sec  += (int)n; break;
     }
-    return (double)mktime(&copy);
+    mktime(&tm);  // normalize
+    return format_iso_date(&tm, true);
 }
 
-double jdb_datediff(const char* part, double epoch1, double epoch2) {
-    double diff = epoch2 - epoch1;
+// DATEDIFF: difference between two ISO date strings in units of part.
+double jdb_datediff(const char* part, const char* date1, const char* date2) {
+    struct tm tm1 = {0}, tm2 = {0};
+    if (!parse_iso_date(date1, &tm1) || !parse_iso_date(date2, &tm2)) return 0;
+    double diff = difftime(mktime(&tm2), mktime(&tm1));
     char p = part ? toupper((unsigned char)part[0]) : 'S';
     switch (p) {
         case 'S': return diff;
@@ -1180,19 +1264,6 @@ double jdb_datediff(const char* part, double epoch1, double epoch2) {
         case 'D': return diff / 86400.0;
     }
     return diff;
-}
-
-double jdb_cvdate(const char* datestr) {
-    // Parse YYYY-MM-DD [HH:MM:SS]
-    struct tm t = {0};
-    if (datestr) {
-        int y, m, d, hr = 0, mn = 0, sc = 0;
-        if (sscanf(datestr, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc) >= 3) {
-            t.tm_year = y - 1900; t.tm_mon = m - 1; t.tm_mday = d;
-            t.tm_hour = hr; t.tm_min = mn; t.tm_sec = sc;
-        }
-    }
-    return (double)mktime(&t);
 }
 
 } // end extern "C" — regex functions need C++ linkage internally
