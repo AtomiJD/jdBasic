@@ -200,6 +200,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
+    reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_trace",             "__trace",           void_type, {i64_type}, -1);
 
     // OS
@@ -305,6 +306,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, -1);
     reg("jdrt_call_typed_obj",  "__jdrt_call_typed_obj",  i64_type,
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 0);
+    reg("jdrt_call_typed_arr",  "__jdrt_call_typed_arr",  i8_ptr_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 3);
 
     // Date Add/Diff
     reg("jdb_dateadd",  "DATEADD",  f64_type, {i8_ptr_type, f64_type, f64_type}, 1);
@@ -884,8 +887,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
 // ── DIM (array allocation) ──────────────────────────────────
 
 void LLVMCodegen::codegen_dim(const Stmt& stmt) {
-    // DIM x AS TypeName → call UDT constructor
-    if (!stmt.label.empty()) {
+    // DIM x AS TypeName (scalar) → call UDT constructor
+    // But NOT if stmt.expr is __MAKE_UDT_ARRAY__ — that's handled below.
+    bool is_udt_array = stmt.expr && stmt.expr->kind == ExprKind::CALL &&
+                        stmt.expr->func_name == "__MAKE_UDT_ARRAY__";
+    if (!stmt.label.empty() && !is_udt_array) {
         auto uit = user_functions.find(stmt.label);
         if (uit != user_functions.end()) {
             LLVMTypeRef fn_type = LLVMGlobalGetValueType(uit->second.fn);
@@ -908,6 +914,69 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         // DIM without value — create default var
         codegen_let_or_assign(stmt);
         return;
+    }
+
+    // DIM arr[N] AS TypeName → CALL("__MAKE_UDT_ARRAY__", [shape, "TypeName"])
+    if (stmt.expr->kind == ExprKind::CALL && stmt.expr->func_name == "__MAKE_UDT_ARRAY__" &&
+        stmt.expr->args.size() >= 2 && stmt.expr->args[0]->kind == ExprKind::ARRAY_LITERAL &&
+        stmt.expr->args[1]->kind == ExprKind::LITERAL_STRING) {
+        auto& shape_args = stmt.expr->args[0]->args;
+        std::string type_name = stmt.expr->args[1]->str_val;
+        auto ctor_it = user_functions.find(type_name);
+        if (!shape_args.empty() && ctor_it != user_functions.end()) {
+            auto& arr_new = runtime_funcs["__array_new"];
+            auto& arr_append = runtime_funcs["APPEND"];
+            LLVMTypeRef ctor_ft = LLVMGlobalGetValueType(ctor_it->second.fn);
+
+            TypedValue size_val = codegen_expr(*shape_args[0]);
+            LLVMValueRef n = size_val.tag == 1
+                ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
+
+            LLVMValueRef zero_args[] = { LLVMConstInt(i64_type, 0, 0) };
+            LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, zero_args, 1, "outer");
+
+            LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt_arr.loop");
+            LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt_arr.end");
+            LLVMValueRef idx_alloca = LLVMBuildAlloca(builder, i64_type, "udt_i");
+            LLVMValueRef outer_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "udt_outer");
+            LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
+            LLVMBuildStore(builder, outer, outer_alloca);
+            LLVMBuildBr(builder, loop_bb);
+
+            LLVMPositionBuilderAtEnd(builder, loop_bb);
+            LLVMValueRef cur_idx = LLVMBuildLoad2(builder, i64_type, idx_alloca, "i");
+            LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, cur_idx, n, "cmp");
+            LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt_arr.body");
+            LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+
+            LLVMPositionBuilderAtEnd(builder, body_bb);
+            // Create new UDT instance
+            LLVMValueRef inst = LLVMBuildCall2(builder, ctor_ft, ctor_it->second.fn, nullptr, 0, "inst");
+            // Encode ptr as f64
+            LLVMValueRef inst_i64 = LLVMBuildPtrToInt(builder, inst, i64_type, "ptoi");
+            LLVMValueRef inst_f64 = pun_i64_to_f64(inst_i64);
+            LLVMValueRef cur_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "out");
+            LLVMValueRef app_args[] = { cur_outer, inst_f64 };
+            LLVMValueRef new_outer = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, app_args, 2, "out");
+            LLVMBuildStore(builder, new_outer, outer_alloca);
+            LLVMValueRef next_idx = LLVMBuildAdd(builder, cur_idx, LLVMConstInt(i64_type, 1, 0), "next");
+            LLVMBuildStore(builder, next_idx, idx_alloca);
+            LLVMBuildBr(builder, loop_bb);
+
+            LLVMPositionBuilderAtEnd(builder, end_bb);
+            LLVMValueRef final_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "udt_arr");
+            // Mark nested so array arithmetic handles correctly
+            auto& set_nested = runtime_funcs["__arr_set_nested"];
+            LLVMValueRef sn[] = { final_outer };
+            LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn, 1, "");
+
+            VarInfo* vi = lookup_var(stmt.var_name);
+            if (vi) { LLVMBuildStore(builder, final_outer, vi->alloca_val); vi->tag = 3; }
+            else { VarInfo& nv = create_var(stmt.var_name, 3); LLVMBuildStore(builder, final_outer, nv.alloca_val); }
+            // Track element type so arr[i].field access works
+            var_udt_type[stmt.var_name + "[]"] = type_name;
+            return;
+        }
     }
 
     // DIM arr[N] → parser generates CALL("ZEROS", [ARRAY_LITERAL([N])])
@@ -1877,6 +1946,32 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
         }
 
         case ExprKind::INDEX: {
+            // Special case: LEN(arr)[i] → return shape array's i-th element
+            // Interpreter's LEN returns shape for 2D+ arrays; we emulate here.
+            if (expr.left && expr.left->kind == ExprKind::CALL) {
+                std::string fn = expr.left->func_name;
+                std::transform(fn.begin(), fn.end(), fn.begin(), ::toupper);
+                if (fn == "LEN" && expr.left->args.size() == 1) {
+                    TypedValue av = codegen_expr(*expr.left->args[0]);
+                    if (av.tag == 3) {
+                        auto* shape_fn = get_runtime_func("__arr_len_shape");
+                        if (shape_fn) {
+                            LLVMValueRef shape_args[] = { av.val };
+                            LLVMValueRef shape = LLVMBuildCall2(builder, shape_fn->fn_type,
+                                shape_fn->fn, shape_args, 1, "shape");
+                            TypedValue idx_tv2 = codegen_expr(*expr.right);
+                            LLVMValueRef idx2 = idx_tv2.tag == 1
+                                ? LLVMBuildFPToSI(builder, idx_tv2.val, i64_type, "ftoi")
+                                : idx_tv2.val;
+                            auto& ag = runtime_funcs["__array_get"];
+                            LLVMValueRef g_args[] = { shape, idx2 };
+                            LLVMValueRef result = LLVMBuildCall2(builder, ag.fn_type, ag.fn, g_args, 2, "shape_i");
+                            return { result, 1 };
+                        }
+                    }
+                }
+            }
+
             // arr[i] — array element access or obj{"key"} map access
             TypedValue arr_tv = codegen_expr(*expr.left);
             TypedValue idx_tv = codegen_expr(*expr.right);
@@ -2526,11 +2621,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             fval = pun_i64_to_f64(as_i64);
         }
         auto& append_fn = runtime_funcs["APPEND"];
-        LLVMValueRef args[] = { arr_tv.val, fval };
+        LLVMValueRef arr_ptr = coerce_to(arr_tv, i8_ptr_type);
+        LLVMValueRef args[] = { arr_ptr, fval };
         LLVMValueRef result = LLVMBuildCall2(builder, append_fn.fn_type, append_fn.fn, args, 2, "push");
         if (expr.args[0]->kind == ExprKind::VARIABLE) {
             VarInfo* vi = lookup_var(expr.args[0]->str_val);
-            if (vi) LLVMBuildStore(builder, result, vi->alloca_val);
+            if (vi) {
+                LLVMBuildStore(builder, result, vi->alloca_val);
+                vi->tag = 3;  // ensure var is tracked as array
+            }
         }
         return { result, 3 };
     }
@@ -2546,7 +2645,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { result, 0 };
         }
         if (av.tag == 3) {
-            // Array length — native jdb_array_len returns outer dimension count
+            // Array length: returns outer dimension count (scalar i64).
+            // For 2D shape access LEN(arr)[i], see INDEX handling below.
             auto& fn = runtime_funcs["LEN"];
             LLVMValueRef args[] = { av.val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "alen");
@@ -2714,11 +2814,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             bool is_object_fn = (upper.substr(0, 4) == "MAP." &&
                                  upper != "MAP.SIZE" && upper != "MAP.EXISTS") ||
                                 upper == "JSON.PARSE$";
+            // Functions that return arrays (decoded as ptr/tag=3)
+            bool is_array_fn = (upper == "SPLIT" || upper == "KEYS" || upper == "VALUES" ||
+                                upper == "SORTBY" || upper == "GROUPBY" || upper == "REGEX.FINDALL" ||
+                                upper == "OS.LIST" || upper == "OS.ARGS" || upper == "JSON.STRINGIFY$" ||
+                                upper == "MAP.KEYS" || upper == "MAP.VALUES" ||
+                                upper == "LINES" || upper == "WORDS" || upper == "CHARS");
 
             LLVMValueRef call_args[] = { handle, name_str, args_ptr, tags_ptr,
                 LLVMConstInt(i32_type, nargs, 0) };
 
-            if (is_object_fn) {
+            if (is_array_fn) {
+                // Returns JdbArray* directly via dedicated bridge function
+                auto& fn = runtime_funcs["__jdrt_call_typed_arr"];
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
+                return { result, 3 };
+            } else if (is_object_fn) {
                 // Returns an opaque VM value handle (stored as i64)
                 auto& fn = runtime_funcs["__jdrt_call_typed_obj"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmobj");

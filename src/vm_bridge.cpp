@@ -313,6 +313,63 @@ JDRT_API void jdrt_release_value(JdRT handle, int64_t val_handle) {
     rt->value_store.erase(val_handle);
 }
 
+// JdbArray struct matching jdb_runtime.cpp (keep in sync!)
+struct JdbArray {
+    double* data;
+    int64_t length;
+    int32_t flags;
+};
+
+// Convert VM Value array to JdbArray (recursive for nested)
+static JdbArray* value_to_jdbarray(const Value& v) {
+    auto* r = (JdbArray*)malloc(sizeof(JdbArray));
+    r->data = nullptr;
+    r->length = 0;
+    r->flags = 0;
+    if (v.type != ValueType::ARRAY) return r;
+    auto* arr = v.as_array();
+    r->length = (int64_t)arr->elements.size();
+    r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
+    bool any_nested = false;
+    for (int64_t i = 0; i < r->length; i++) {
+        const auto& e = arr->elements[i];
+        if (e.type == ValueType::ARRAY) {
+            any_nested = true;
+            JdbArray* inner = value_to_jdbarray(e);
+            union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)inner;
+            r->data[i] = u.d;
+        } else if (e.type == ValueType::STRING) {
+            // Encode string pointer as f64 (caller must strdup if persistent)
+            const std::string& s = e.as_string()->data;
+            char* copy = _strdup(s.c_str());
+            union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)copy;
+            r->data[i] = u.d;
+            any_nested = true; // strings are also ptrs, mark as "nested" (flag indicates ptr elements)
+        } else {
+            r->data[i] = e.to_double();
+        }
+    }
+    if (any_nested) r->flags |= 1;
+    return r;
+}
+
+// Returns a JdbArray* for functions that return arrays (SPLIT, KEYS, etc.)
+JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
+                                    const int64_t* args, const int32_t* tags, int nargs) {
+    auto* rt = (JdRTImpl*)handle;
+    try {
+        auto vargs = typed_args_to_values(rt, args, tags, nargs);
+        Value result = rt->vm.call_function(name, vargs);
+        rt->last_error.clear();
+        return value_to_jdbarray(result);
+    } catch (const std::exception& e) {
+        rt->last_error = e.what();
+        auto* r = (JdbArray*)malloc(sizeof(JdbArray));
+        r->data = nullptr; r->length = 0; r->flags = 0;
+        return r;
+    }
+}
+
 JDRT_API const char* jdrt_last_error(JdRT handle) {
     auto* rt = (JdRTImpl*)handle;
     return rt->last_error.empty() ? nullptr : rt->last_error.c_str();

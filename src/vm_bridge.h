@@ -64,6 +64,10 @@ JDRT_API char*  jdrt_call_typed_str(JdRT rt, const char* name,
 JDRT_API void   jdrt_call_typed_void(JdRT rt, const char* name,
                                       const int64_t* args, const int32_t* tags, int nargs);
 
+// Call returning an array (JdbArray*) — for SPLIT, KEYS, VALUES, etc.
+JDRT_API void*  jdrt_call_typed_arr(JdRT rt, const char* name,
+                                     const int64_t* args, const int32_t* tags, int nargs);
+
 // Get last error message (NULL if no error)
 JDRT_API const char* jdrt_last_error(JdRT rt);
 

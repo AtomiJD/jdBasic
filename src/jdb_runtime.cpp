@@ -547,6 +547,45 @@ void jdb_array_set_nested(JdbArray* arr) {
     if (arr) arr->flags |= 1;
 }
 
+// LEN that returns shape array for nested (2D+) arrays, otherwise scalar length.
+// Mirrors interpreter behavior: LEN(2d_arr) returns [rows, cols, ...].
+// For 1D arrays returns a scalar-wrapped value (caller decodes).
+// Returns: ptr to JdbArray holding the shape, OR ptr encoding a single i64.
+// Caller uses flags to tell the difference: nested=shape array, non-nested=1D scalar wrap.
+JdbArray* jdb_array_len_shape(JdbArray* arr) {
+    if (!arr) return jdb_array_new(0);
+    // Non-nested: return a single-element array with the length
+    if (!(arr->flags & 1)) {
+        auto* r = jdb_array_new(1);
+        r->data[0] = (double)arr->length;
+        return r;
+    }
+    // Nested: walk structure to build shape
+    auto* r = jdb_array_new(0);
+    JdbArray* cur = arr;
+    while (cur && cur->length > 0) {
+        // Append current length
+        union { int64_t i; double d; } u; u.i = 0;
+        double val = (double)cur->length;
+        // grow
+        int64_t new_len = r->length + 1;
+        double* new_data = (double*)calloc(new_len, sizeof(double));
+        for (int64_t i = 0; i < r->length; i++) new_data[i] = r->data[i];
+        new_data[r->length] = val;
+        free(r->data);
+        r->data = new_data;
+        r->length = new_len;
+        // Descend if nested
+        if ((cur->flags & 1) && cur->length > 0) {
+            union { double d; int64_t i; } v; v.d = cur->data[0];
+            cur = (JdbArray*)(intptr_t)v.i;
+        } else {
+            cur = nullptr;
+        }
+    }
+    return r;
+}
+
 // ── OS.ARGS ─────────────────────────────────────────────────
 
 static int g_argc = 0;
