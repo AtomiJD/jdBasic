@@ -301,7 +301,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_txtwriter",       "TXTWRITER",   void_type, {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_txtwriter_append","TXTWRITER_APPEND", void_type, {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_pwd",             "PWD",         i8_ptr_type, {}, 2);
-    reg("jdb_cd",              "CD",          void_type, {i8_ptr_type}, -1);
+    reg("jdb_cd",              "CD",          i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_mkdir_native",    "MKDIR",       void_type, {i8_ptr_type}, -1);
     reg("jdb_kill",            "KILL",        void_type, {i8_ptr_type}, -1);
     reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, 0);

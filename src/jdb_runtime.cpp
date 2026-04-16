@@ -1511,11 +1511,19 @@ char* jdb_pwd() {
     return _strdup(buf);
 }
 
-void jdb_cd(const char* path) {
+// Return the resulting current directory as a fresh string. The parser
+// wraps `CD "..."` in a PRINT to show the path; matching that contract.
+char* jdb_cd(const char* path) {
 #ifdef _WIN32
-    SetCurrentDirectoryA(path);
+    if (path && *path) SetCurrentDirectoryA(path);
+    char buf[MAX_PATH];
+    DWORD n = GetCurrentDirectoryA(MAX_PATH, buf);
+    return _strdup(n > 0 ? buf : "");
 #else
-    chdir(path);
+    if (path && *path) chdir(path);
+    char buf[4096];
+    if (!getcwd(buf, sizeof(buf))) buf[0] = 0;
+    return strdup(buf);
 #endif
 }
 
