@@ -1,0 +1,8 @@
+# EXE file properties (consumed at --compile time)
+FileVersion     = 2.5.1.0
+ProductVersion  = 2.5.0.0
+CompanyName     = Computerwelt AI Solutions LLC.
+FileDescription = Props Sidecar Demo
+ProductName     = jdBasic Props Demo
+LegalCopyright  = Copyright (C) 2026 Computerwelt AI Solutions LLC.
+OriginalFilename= test_props.exe

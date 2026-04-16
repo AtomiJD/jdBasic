@@ -18,7 +18,8 @@ public:
     ~LLVMCodegen();
 
     bool compile(const std::vector<StmtPtr>& program,
-                 const std::string& output_exe);
+                 const std::string& output_exe,
+                 const std::string& source_path = "");
     bool emit_ir(const std::vector<StmtPtr>& program);
 
     std::string error_msg;
@@ -172,7 +173,14 @@ private:
     // Emit object file and link
     bool emit_object_file(const std::string& obj_path);
     bool link_executable(const std::string& obj_path,
-                         const std::string& exe_path);
+                         const std::string& exe_path,
+                         const std::string& res_path = "");
+
+    // If <source_path>.props exists, generate a Win32 .res with VERSIONINFO
+    // (and optionally an icon). Returns the .res path, or empty string if
+    // no props file was found / generation failed.
+    std::string generate_version_resource(const std::string& source_path,
+                                          const std::string& obj_path);
 };
 
 #endif // LLVM_CODEGEN

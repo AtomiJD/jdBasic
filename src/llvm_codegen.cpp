@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <map>
 #include <algorithm>
 #include <unordered_set>
 #include <functional>
@@ -565,7 +567,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 // ── Main Entry Points ───────────────────────────────────────
 
 bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
-                           const std::string& output_exe) {
+                           const std::string& output_exe,
+                           const std::string& source_path) {
     init_module();
     declare_runtime_functions();
     create_main_function();
@@ -606,9 +609,14 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     obj_path += ".obj";
 
     if (!emit_object_file(obj_path)) return false;
-    if (!link_executable(obj_path, output_exe)) return false;
+
+    // Optional: <source>.props -> .res with VERSIONINFO + icon.
+    std::string res_path = generate_version_resource(source_path, obj_path);
+
+    if (!link_executable(obj_path, output_exe, res_path)) return false;
 
     std::remove(obj_path.c_str());
+    if (!res_path.empty()) std::remove(res_path.c_str());
     return true;
 }
 
@@ -4117,7 +4125,8 @@ bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
 // ── Linking ─────────────────────────────────────────────────
 
 bool LLVMCodegen::link_executable(const std::string& obj_path,
-                                   const std::string& exe_path) {
+                                   const std::string& exe_path,
+                                   const std::string& res_path) {
     std::string runtime_obj;
     for (auto& candidate : {"build\\jdb_runtime.obj", "jdb_runtime.obj"}) {
         if (std::filesystem::exists(candidate)) {
@@ -4134,12 +4143,16 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     std::string sdk = "C:\\Program Files (x86)\\Windows Kits\\10";
     std::string sdkv = "10.0.26100.0";
 
+    std::string res_arg;
+    if (!res_path.empty()) res_arg = "\"" + res_path + "\" ";
+
     std::string link_cmd =
         "cmd /c \"\"" + msvc + "\\bin\\Hostx64\\x64\\link.exe\" "
         "/NOLOGO /OUT:\"" + exe_path + "\" "
         "/SUBSYSTEM:CONSOLE "
         "\"" + obj_path + "\" "
         "\"" + runtime_obj + "\" "
+        + res_arg +
         "/LIBPATH:\"" + msvc + "\\lib\\x64\" "
         "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\ucrt\\x64\" "
         "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\um\\x64\" "
@@ -4152,6 +4165,136 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         return false;
     }
     return true;
+}
+
+// Parse <source>.props (key=value, # for comments). If present, write a temp
+// .rc with VERSIONINFO + optional ICON, run rc.exe, return path to the .res.
+// Empty return = no props file or generation skipped (link continues without).
+std::string LLVMCodegen::generate_version_resource(const std::string& source_path,
+                                                    const std::string& obj_path) {
+    if (source_path.empty()) return "";
+    std::string props_path = source_path + ".props";
+    if (!std::filesystem::exists(props_path)) return "";
+
+    std::ifstream in(props_path);
+    if (!in) return "";
+
+    std::map<std::string, std::string> props;
+    std::string line;
+    while (std::getline(in, line)) {
+        // Strip CR, leading/trailing whitespace
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t s = line.find_first_not_of(" \t");
+        if (s == std::string::npos) continue;
+        if (line[s] == '#') continue;
+        size_t eq = line.find('=', s);
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(s, eq - s);
+        std::string val = line.substr(eq + 1);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        size_t vs = val.find_first_not_of(" \t");
+        if (vs != std::string::npos) val = val.substr(vs);
+        while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
+        // Allow optional surrounding quotes
+        if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
+            val = val.substr(1, val.size() - 2);
+        props[key] = val;
+    }
+
+    auto get = [&](const char* k, const char* def) -> std::string {
+        auto it = props.find(k);
+        return (it != props.end() && !it->second.empty()) ? it->second : def;
+    };
+
+    // Parse "1.2.3.4" → "1, 2, 3, 4" for FILEVERSION/PRODUCTVERSION (need 4 ints).
+    auto to_quad = [](std::string v) -> std::string {
+        int parts[4] = {0,0,0,0};
+        int i = 0;
+        size_t p = 0;
+        while (i < 4 && p <= v.size()) {
+            size_t dot = v.find('.', p);
+            std::string seg = v.substr(p, dot == std::string::npos ? std::string::npos : dot - p);
+            try { parts[i++] = std::stoi(seg); } catch (...) { parts[i++] = 0; }
+            if (dot == std::string::npos) break;
+            p = dot + 1;
+        }
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%d, %d, %d, %d", parts[0], parts[1], parts[2], parts[3]);
+        return buf;
+    };
+
+    std::string file_ver_str    = get("FileVersion",    "1.0.0.0");
+    std::string product_ver_str = get("ProductVersion", file_ver_str.c_str());
+    std::string company         = get("CompanyName",      "");
+    std::string description     = get("FileDescription",  "");
+    std::string product_name    = get("ProductName",      "");
+    std::string copyright       = get("LegalCopyright",   "");
+    std::string original_name   = get("OriginalFilename", "");
+    std::string internal_name   = get("InternalName",     original_name.c_str());
+    std::string icon_path       = get("Icon",             "");
+
+    // Escape backslashes for .rc string literals.
+    auto rc_escape = [](std::string s) {
+        std::string out;
+        out.reserve(s.size());
+        for (char c : s) {
+            if (c == '\\' || c == '"') { out.push_back('\\'); out.push_back(c); }
+            else out.push_back(c);
+        }
+        return out;
+    };
+
+    // Use obj_path's stem for temp files (same dir as the obj).
+    std::string base = obj_path;
+    auto dot = base.rfind('.');
+    if (dot != std::string::npos) base = base.substr(0, dot);
+    std::string rc_path  = base + ".jdb_props.rc";
+    std::string res_path = base + ".jdb_props.res";
+
+    {
+        std::ofstream rc(rc_path);
+        if (!rc) return "";
+        if (!icon_path.empty() && std::filesystem::exists(icon_path)) {
+            rc << "101 ICON \"" << rc_escape(icon_path) << "\"\n\n";
+        }
+        rc << "1 VERSIONINFO\n"
+           << "FILEVERSION "    << to_quad(file_ver_str)    << "\n"
+           << "PRODUCTVERSION " << to_quad(product_ver_str) << "\n"
+           << "FILEFLAGSMASK 0x3fL\nFILEFLAGS 0x0L\nFILEOS 0x40004L\n"
+           << "FILETYPE 0x1L\nFILESUBTYPE 0x0L\nBEGIN\n"
+           << "  BLOCK \"StringFileInfo\"\n  BEGIN\n"
+           << "    BLOCK \"040904b0\"\n    BEGIN\n";
+        auto emit = [&](const char* k, const std::string& v) {
+            if (!v.empty())
+                rc << "      VALUE \"" << k << "\", \"" << rc_escape(v) << "\"\n";
+        };
+        emit("CompanyName",      company);
+        emit("FileDescription",  description);
+        emit("FileVersion",      file_ver_str);
+        emit("InternalName",     internal_name);
+        emit("LegalCopyright",   copyright);
+        emit("OriginalFilename", original_name);
+        emit("ProductName",      product_name);
+        emit("ProductVersion",   product_ver_str);
+        rc << "    END\n  END\n  BLOCK \"VarFileInfo\"\n  BEGIN\n"
+           << "    VALUE \"Translation\", 0x409, 1200\n"
+           << "  END\nEND\n";
+    }
+
+    std::string sdk  = "C:\\Program Files (x86)\\Windows Kits\\10";
+    std::string sdkv = "10.0.26100.0";
+    std::string rc_cmd =
+        "cmd /c \"\"" + sdk + "\\bin\\" + sdkv + "\\x64\\rc.exe\" "
+        "/nologo /fo \"" + res_path + "\" \"" + rc_path + "\" >nul 2>&1\"";
+
+    int ret = std::system(rc_cmd.c_str());
+    std::remove(rc_path.c_str());
+    if (ret != 0 || !std::filesystem::exists(res_path)) {
+        std::cerr << "Warning: rc.exe failed for " << props_path
+                  << " (exit " << ret << ") — linking without version info." << std::endl;
+        return "";
+    }
+    return res_path;
 }
 
 #endif // LLVM_CODEGEN

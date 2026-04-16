@@ -1021,7 +1021,7 @@ int main(int argc, char* argv[]) {
             compile_output += ".exe";
         }
 
-        if (!codegen.compile(ast, compile_output)) {
+        if (!codegen.compile(ast, compile_output, filename)) {
             std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
             return 1;
         }
