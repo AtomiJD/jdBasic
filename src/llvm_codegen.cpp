@@ -1469,9 +1469,11 @@ void LLVMCodegen::codegen_enum(const Stmt& stmt) {
 
 void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
     // Register type fields for member access resolution
+    // String if: explicitly AS STRING, or name ends with $ (convention)
     std::vector<UDTField> fields;
     for (auto& mem : stmt.type_members) {
-        bool is_str = (mem.type == VarType::STRING);
+        bool is_str = (mem.type == VarType::STRING) ||
+                      (!mem.name.empty() && mem.name.back() == '$');
         fields.push_back({ mem.name, is_str });
     }
     udt_types[stmt.func_name] = fields;
@@ -1497,7 +1499,8 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
     // Set default values for each field
     for (auto& mem : stmt.type_members) {
         LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, mem.name.c_str(), ".field");
-        bool is_str = (mem.type == VarType::STRING);
+        bool is_str = (mem.type == VarType::STRING) ||
+                      (!mem.name.empty() && mem.name.back() == '$');
 
         if (is_str) {
             auto& set_fn = runtime_funcs["__udt_set_str"];

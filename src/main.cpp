@@ -990,6 +990,11 @@ int main(int argc, char* argv[]) {
     // ── Native compilation (LLVM) ────────────────────────────────
     if (compile_native || emit_ir_only) {
 #ifdef LLVM_CODEGEN
+        // Set base dir for IMPORT module resolution
+        {
+            size_t sep = filename.find_last_of("/\\");
+            g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
+        }
         std::string source = read_file(filename);
         Lexer lexer(source);
         auto tokens = lexer.tokenize();
