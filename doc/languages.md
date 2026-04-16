@@ -840,6 +840,49 @@ ENDTRY
     ENDIF
     ```
 
+#### Setting EXE file properties (`.jdb.props` sidecar)
+
+When building a standalone `.exe` with `jdBasic --compile myprog.jdb`, the
+compiler looks for an optional sidecar file `myprog.jdb.props` next to the
+source. If present, its contents are baked into the produced `.exe` as a
+standard Win32 `VERSIONINFO` resource (visible in *Properties → Details* and
+queryable via `GetFileVersionInfo`). Without the sidecar, the `.exe` is built
+exactly as before — the file is purely additive.
+
+The format is one `key = value` per line; lines starting with `#` are
+comments, and surrounding double-quotes around values are stripped. Recognised
+keys:
+
+| Key                | Purpose                                                 |
+| ------------------ | ------------------------------------------------------- |
+| `FileVersion`      | "1.2.3.4"-style four-part version (the binary version). |
+| `ProductVersion`   | Product-level version. Defaults to `FileVersion`.       |
+| `CompanyName`      | Publisher / company.                                    |
+| `FileDescription`  | Short description shown in tooltips and Task Manager.   |
+| `ProductName`      | Marketing name of the product.                          |
+| `LegalCopyright`   | Copyright string.                                       |
+| `OriginalFilename` | Filename the binary was originally built as.            |
+| `InternalName`     | Internal name. Defaults to `OriginalFilename`.          |
+| `Icon`             | Path to a `.ico` file embedded as the EXE icon.         |
+
+Example `myprog.jdb.props`:
+
+```
+# EXE properties for myprog.exe
+FileVersion     = 2.5.1.0
+ProductVersion  = 2.5.0.0
+CompanyName     = Acme Industries
+FileDescription = Widget Builder
+ProductName     = Acme Widget Builder
+LegalCopyright  = Copyright (C) 2026 Acme Industries
+OriginalFilename= myprog.exe
+Icon            = resources/myprog.ico
+```
+
+If `rc.exe` (the Windows resource compiler) is unavailable or fails, the
+linker continues without the version resource and a warning is printed to
+stderr — compilation never fails because of a bad props file.
+
 ### Python Integration (FFI)
 
 Available when the interpreter is compiled with `PYTHON` support. These functions allow seamless data exchange and code execution between jdBasic and a sandboxed Python environment.
