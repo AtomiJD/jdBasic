@@ -552,6 +552,24 @@ int32_t jdb_array_is_nested(JdbArray* arr) {
     return (arr && (arr->flags & 1)) ? 1 : 0;
 }
 
+// Print an element of an array: auto-detects ptr (string) vs double.
+// If the array has flags bit 0, treats the element as a ptr-encoded string.
+void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
+    if (!arr || idx < 0 || idx >= arr->length) return;
+    double val = arr->data[idx];
+    if (arr->flags & 1) {
+        union { double d; int64_t i; } u; u.d = val;
+        const char* s = (const char*)(intptr_t)u.i;
+        if (s) printf("%s", s);
+    } else {
+        // Numeric
+        if (val == (int64_t)val)
+            printf("%lld", (long long)(int64_t)val);
+        else
+            printf("%g", val);
+    }
+}
+
 // Element-wise concat: each string in arr + scalar suffix (or prefix if scalar_left).
 // Array elements are ptr-encoded strings (from SPLIT/etc.) or will be encoded.
 JdbArray* jdb_array_str_concat(JdbArray* arr, const char* s, int32_t scalar_left) {

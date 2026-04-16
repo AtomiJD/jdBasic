@@ -204,6 +204,40 @@ JDRT_API void jdrt_free(void* ptr) {
     free(ptr);
 }
 
+// Forward decl of JdbArray (matches jdb_runtime.cpp)
+struct JdbArrayFwd { double* data; int64_t length; int32_t flags; };
+
+// Convert a JdbArray* to a VM Value (recursive for nested).
+// Elements marked with flags bit 0 are ptr-encoded (string or nested array).
+static Value jdbarray_to_value(JdbArrayFwd* arr) {
+    if (!arr) return Value::make_array();
+    Value r = Value::make_array();
+    auto* out = r.as_array();
+    out->elements.reserve(arr->length);
+    bool nested = (arr->flags & 1) != 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        double d = arr->data[i];
+        if (nested) {
+            // Element is a ptr (could be string or nested array)
+            union { double d; int64_t i; } u; u.d = d;
+            void* p = (void*)(intptr_t)u.i;
+            if (!p) {
+                out->elements.push_back(Value::make_none());
+                continue;
+            }
+            // Heuristic: if flags bit 0 was set because of nested arrays vs strings,
+            // we can't tell at this level. Treat as string (most common case from
+            // VM-bridge output, which is SPLIT, REGEX_MATCH etc.).
+            // For nested array, a JdbArray has a specific layout we could try to
+            // validate, but that's fragile. Use string for now.
+            out->elements.push_back(Value::make_string((const char*)p));
+        } else {
+            out->elements.push_back(Value::make_f64(d));
+        }
+    }
+    return r;
+}
+
 // Helper: convert typed args to Value vector
 static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args, const int32_t* tags, int nargs) {
     std::vector<Value> vargs;
@@ -227,11 +261,9 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                 vargs.push_back(Value::make_string(s ? s : ""));
                 break;
             }
-            case 3: { // array (JdbArray* — not directly compatible, wrap as Value array)
-                // For now, pass as f64 (opaque pointer)
-                double d;
-                memcpy(&d, &args[i], sizeof(double));
-                vargs.push_back(Value::make_f64(d));
+            case 3: { // array (JdbArray*) — convert to VM Value array
+                JdbArrayFwd* arr = (JdbArrayFwd*)(intptr_t)args[i];
+                vargs.push_back(jdbarray_to_value(arr));
                 break;
             }
             case 4: { // VM object handle — look up in value_store

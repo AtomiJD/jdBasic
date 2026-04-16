@@ -472,7 +472,70 @@ Value VM::call_funcref(const Value& ref, const std::vector<Value>& args) {
 Value VM::call_function(const std::string& name, const std::vector<Value>& args) {
     // Native?
     auto nit = natives.find(name);
-    if (nit != natives.end()) return nit->second(args);
+    if (nit != natives.end()) {
+        // Auto-vectorize: mirror OpCode::CALL behaviour so external callers
+        // (e.g. the native-compiler VM bridge) also get vectorized results.
+        // Blocklist must match the one in OpCode::CALL (line ~1261).
+        static const std::unordered_set<std::string> no_vec = {
+            "ZEROS","ONES","__MAKE_UDT_ARRAY__","IOTA","RESHAPE","LEN","PUSH","POP",
+            "TENSOR","TYPEOF","APPEND","DIFF",
+            "SUM","PRODUCT","MIN","MAX","ANY","ALL",
+            "SCAN","SELECT","FILTER","REDUCE",
+            "TAKE","DROP","REVERSE","UNIQUE","SHUFFLE",
+            "FIND_IN_ARRAY","NORMALIZE","DISTANCE","GRADE",
+            "TRANSPOSE","MATMUL","MVLET","STACK","SLICE",
+            "SOLVE","INVERT","CONVOLVE","PLACE",
+            "OUTER","ROTATE","SHIFT","XSORT","INTEGRATE",
+            "GETENV$","SETLOCALE","TICK","NOW",
+            "DATE$","TIME$","CVDATE",
+            "MAP.EXISTS","MAP.KEYS","MAP.VALUES","MAP.ITEMS","MAP.SIZE",
+            "MAP.DELETE","MAP.CLEAR","MAP.MERGE","MAP.FROM",
+            "JSON.PARSE$","JSON.STRINGIFY$",
+            "SPLIT","FORMAT$","FRMV$","INSERT$","REPLACE$","REVERSE$",
+            "PACK$","UNPACK","JOIN",
+            "REGEX_MATCH","REGEX_REPLACE$","REGEX.MATCH","REGEX.FINDALL","REGEX.REPLACE",
+            "MEAN","MEDIAN","VARIANCE","STDEV","DOT","CROSS","CUMSUM","CUMPROD",
+            "HISTOGRAM","LINSPACE","FLATTEN","ZIP","RANGE","COUNT","INDEXOF",
+            "ISNUM","ISSTR","ISARR","ISMAP","ISBOOL","ISNONE","ISNULL","RANDOMSEED",
+            "IIF","EXECUTE","EVAL","LOAD","SAVE","LIST","HELP","HELP$","VARS"
+        };
+        bool has_arr = false;
+        if (!no_vec.count(name)) {
+            for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
+        }
+        if (has_arr) {
+            std::function<Value(const std::vector<Value>&)> vec =
+                [&](const std::vector<Value>& cur) -> Value {
+                size_t alen = 0;
+                bool any = false;
+                for (auto& a : cur) {
+                    if (a.type == ValueType::ARRAY) {
+                        any = true;
+                        size_t n = a.as_array()->elements.size();
+                        if (n > alen) alen = n;
+                    }
+                }
+                if (!any) return nit->second(cur);
+                Value r = Value::make_array();
+                r.as_array()->elements.reserve(alen);
+                for (size_t i = 0; i < alen; i++) {
+                    std::vector<Value> ea(cur.size());
+                    for (size_t j = 0; j < cur.size(); j++) {
+                        if (cur[j].type == ValueType::ARRAY) {
+                            auto* ar = cur[j].as_array();
+                            ea[j] = ar->elements[i % ar->elements.size()];
+                        } else {
+                            ea[j] = cur[j];
+                        }
+                    }
+                    r.as_array()->elements.push_back(vec(ea));
+                }
+                return r;
+            };
+            return vec(args);
+        }
+        return nit->second(args);
+    }
 
     // User-defined?
     auto fit = func_map.find(name);

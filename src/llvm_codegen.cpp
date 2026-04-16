@@ -201,6 +201,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_print_array_elem",  "__print_arr_elem",  void_type, {i8_ptr_type, i64_type}, -1);
     reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_trace",             "__trace",           void_type, {i64_type}, -1);
 
@@ -597,16 +598,32 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (e->func_name == "ZEROS" || e->func_name == "ONES" ||
                             e->func_name == "IOTA" || e->func_name == "RANGE" ||
                             e->func_name == "LINSPACE") return 3;
-                        if (!e->func_name.empty() && e->func_name.back() == '$') return 2;
-                        // Check registered runtime functions for their return tag
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                        // If any arg is an array AND fn is not blocklisted → vectorized result (array)
+                        // (Keep in sync with no_vectorize in codegen_call.)
+                        static const std::unordered_set<std::string> no_vec_infer = {
+                            "LEN","SUM","PRODUCT","MEAN","STDEV","MEDIAN","VARIANCE",
+                            "MIN","MAX","ANY","ALL","COUNT","INDEXOF","REVERSE","SORT",
+                            "TAKE","DROP","UNIQUE","APPEND","PUSH","POP","FLATTEN",
+                            "TRANSPOSE","MATMUL","DOT","CROSS","CUMSUM","CUMPROD",
+                            "SCAN","SELECT","FILTER","REDUCE","TYPEOF","IIF",
+                            "ZEROS","ONES","IOTA","RANGE","LINSPACE","TENSOR","RESHAPE",
+                            "SPLIT","JOIN","FORMAT$","FRMV$","PACK$","UNPACK",
+                            "REGEX_MATCH","REGEX.MATCH","REGEX.FINDALL",
+                            "NOW","CVDATE","DATE$","TIME$","TICK"
+                        };
+                        for (auto& a : e->args) {
+                            if (a && infer_tag(a.get()) == 3 && !no_vec_infer.count(upper)) {
+                                return 3;
+                            }
+                        }
+                        if (!e->func_name.empty() && e->func_name.back() == '$') return 2;
                         auto rit = runtime_funcs.find(upper);
                         if (rit != runtime_funcs.end()) return rit->second.return_tag;
-                        // Check user-defined functions
                         auto uit = user_functions.find(e->func_name);
                         if (uit != user_functions.end()) return uit->second.return_tag;
-                        return -1; // unknown
+                        return -1;
                     }
                     if (e->kind == ExprKind::VARIABLE) {
                         VarInfo* v = lookup_var(e->str_val);
@@ -1234,6 +1251,24 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildCall2(builder, pr_space.fn_type, pr_space.fn, nullptr, 0, "");
         }
 
+        // Special case: PRINT arr[idx] — use runtime-aware printer that
+        // handles ptr-encoded strings in nested arrays (e.g. SPLIT results).
+        const Expr& pe = *stmt.print_exprs[i];
+        if (pe.kind == ExprKind::INDEX && pe.left && pe.right) {
+            TypedValue arr = codegen_expr(*pe.left);
+            if (arr.tag == 3) {
+                TypedValue idx = codegen_expr(*pe.right);
+                LLVMValueRef idx_i64 = idx.tag == 1
+                    ? LLVMBuildFPToSI(builder, idx.val, i64_type, "ftoi") : idx.val;
+                auto* fn = get_runtime_func("__print_arr_elem");
+                if (fn) {
+                    LLVMValueRef args[] = { arr.val, idx_i64 };
+                    LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "");
+                    continue;
+                }
+            }
+        }
+
         TypedValue tv = codegen_expr(*stmt.print_exprs[i]);
         if (tv.tag == 0 || tv.tag == 4) {
             LLVMValueRef args[] = { tv.val };
@@ -1677,6 +1712,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             auto& arr_new = runtime_funcs["__array_new"];
             LLVMValueRef size_arg[] = { LLVMConstInt(i64_type, 0, 0) };
             LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, size_arg, 1, "arr");
+            bool has_ptr_elems = false;
             if (!expr.args.empty()) {
                 auto& arr_append = runtime_funcs["APPEND"];
                 for (size_t i = 0; i < expr.args.size(); i++) {
@@ -1687,9 +1723,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         // ptr (string or array) → encode as f64
                         LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, fval, i64_type, "ptoi");
                         fval = pun_i64_to_f64(as_i64);
+                        has_ptr_elems = true;
                     }
                     LLVMValueRef append_args[] = { arr, fval };
                     arr = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "arr");
+                }
+                // Mark array as containing ptr elements (strings/arrays)
+                // so element-wise operations (print, compare, etc.) handle them correctly.
+                if (has_ptr_elems) {
+                    auto& set_nested = runtime_funcs["__arr_set_nested"];
+                    LLVMValueRef sn[] = { arr };
+                    LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn, 1, "");
                 }
             }
             return { arr, 3 };
@@ -2702,20 +2746,72 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Handle vectorized math: SIN(arr), COS(arr), etc. map over array elements.
-    // Also DATEDIFF with array arg (dates vector).
-    static const std::unordered_set<std::string> vectorizable_unary = {
-        "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "SINH", "COSH", "TANH",
-        "EXP", "LOG", "LOG10", "SQR", "ABS", "FLOOR", "CEIL", "ROUND", "TRUNC",
-        "SIGN", "FAC", "INT"
+    // Universal auto-vectorization (mirrors VM's no_vectorize blocklist pattern):
+    // Any function not in the blocklist vectorizes element-wise when ANY arg
+    // is an array. Example: RIGHT$(["Atomi","Bert"], 2) → ["mi","rt"].
+    //
+    // This blocklist must stay in sync with vm.cpp's no_vectorize map.
+    // Kept alphabetically-ish by module for maintenance.
+    static const std::unordered_set<std::string> no_vectorize = {
+        // Array producers
+        "ZEROS", "ONES", "__MAKE_UDT_ARRAY__", "IOTA", "RESHAPE", "TENSOR",
+        "RANGE", "LINSPACE",
+        // Array/matrix operations that consume arrays as a whole
+        "LEN", "PUSH", "POP", "APPEND", "DIFF", "TAKE", "DROP", "REVERSE",
+        "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE",
+        "GRADE", "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE", "SOLVE",
+        "INVERT", "CONVOLVE", "PLACE", "OUTER", "ROTATE", "SHIFT", "XSORT",
+        "INTEGRATE", "FLATTEN", "ZIP", "DOT", "CROSS", "CUMSUM", "CUMPROD",
+        "HISTOGRAM", "COUNT", "INDEXOF", "SORT",
+        // Aggregations
+        "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL",
+        "MEAN", "MEDIAN", "VARIANCE", "STDEV",
+        // Higher-order
+        "SCAN", "SELECT", "FILTER", "REDUCE",
+        // Meta/type
+        "TYPEOF", "IIF", "ISNUM", "ISSTR", "ISARR", "ISMAP", "ISBOOL",
+        "ISNONE", "ISNULL",
+        // Scalar-returning date/time (note: DATEADD/DATEDIFF/FORMAT_DATE DO vectorize)
+        "GETENV$", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
+        "DATE$", "TIME$", "CVDATE", "RANDOMSEED",
+        // Collections
+        "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
+        "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",
+        "JSON.PARSE$", "JSON.STRINGIFY$",
+        // String/codec (produce from string)
+        "SPLIT", "FORMAT$", "FRMV$", "INSERT$", "REPLACE$", "REVERSE$",
+        "PACK$", "UNPACK", "JOIN",
+        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
+        "CODEC.SHA256$", "CODEC.UUID$",
+        // Regex (produce arrays)
+        "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
+        // File I/O
+        "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
+        "CSVREADER", "CSVWRITER",
+        // System/console
+        "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
+        "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",
+        "CLIPBOARD.SET", "CLIPBOARD.GET$",
+        "OS.GETOS", "OS.GETOS$", "OS.ARGS", "OS.EXEC",
+        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD",
+        "DIR$", "DIR", "CD", "PWD", "MKDIR", "KILL",
+        "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
+        // Execution
+        "EXECUTE", "EVAL", "LOAD", "SAVE", "LIST", "HELP", "HELP$", "VARS",
+        "RECUR", "CLEAR_RECUR", "LIST_RECUR",
+        // Threads/async/react
+        "AWAIT", "THREAD.ISDONE", "THREAD.GETRESULT",
+        "REACT_BIND", "UNREACT",
+        // FFI/internals
+        "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
+        // Assert is a user SUB but if used as native:
     };
-    // Functions that vectorize when ANY argument is an array (multi-arg)
-    static const std::unordered_set<std::string> vectorizable_any = {
-        "DATEDIFF", "DATEADD", "FORMAT_DATE", "POW", "MIN", "MAX", "ATAN2"
-    };
-    if (vectorizable_any.count(upper)) {
-        // Evaluate all args, check if any is an array
+
+    // Check if any argument is an array AND the function is not blocklisted.
+    if (!no_vectorize.count(upper) && !expr.args.empty()) {
+        // Evaluate args first
         std::vector<TypedValue> vals;
+        vals.reserve(expr.args.size());
         bool has_array = false;
         for (auto& a : expr.args) {
             TypedValue v = codegen_expr(*a);
@@ -2723,6 +2819,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (v.tag == 3) has_array = true;
         }
         if (has_array) {
+            // Special case: DATEDIFF vectorization has a native fast path
+            if (upper == "DATEDIFF" && vals.size() == 3 && vals[2].tag == 3 && vals[1].tag != 3) {
+                auto& fn = runtime_funcs["__datediff_vec"];
+                LLVMValueRef a0 = coerce_to(vals[0], i8_ptr_type);
+                LLVMValueRef a1 = coerce_to(vals[1], i8_ptr_type);
+                LLVMValueRef args[] = { a0, a1, vals[2].val };
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "ddv");
+                return { result, 3 };
+            }
+            // Generic: dispatch via VM bridge for vectorized apply
             LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
                 LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
             int nargs = (int)vals.size();
@@ -2752,30 +2858,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef call_args[] = { handle, name_str, args_p, tags_p,
                 LLVMConstInt(i32_type, nargs, 0) };
             LLVMValueRef result = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec");
-            return { result, 3 };
-        }
-        // No array args — fall through to normal path
-    }
-    if (vectorizable_unary.count(upper) && expr.args.size() == 1) {
-        TypedValue av = codegen_expr(*expr.args[0]);
-        if (av.tag == 3) {
-            // Array arg → dispatch via VM bridge for vectorized apply
-            LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
-                LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
-            LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
-                LLVMConstInt(i32_type, 1, 0), "args");
-            LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
-                LLVMConstInt(i32_type, 1, 0), "tags");
-            LLVMValueRef aidx[] = { LLVMConstInt(i32_type, 0, 0) };
-            LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi"),
-                LLVMBuildGEP2(builder, i64_type, args_arr, aidx, 1, "a"));
-            LLVMBuildStore(builder, LLVMConstInt(i32_type, 3, 0),
-                LLVMBuildGEP2(builder, i32_type, tags_arr, aidx, 1, "t"));
-            LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, upper.c_str(), ".fn");
-            auto& fn = runtime_funcs["__jdrt_call_typed_arr"];
-            LLVMValueRef call_args[] = { handle, name_str, args_arr, tags_arr,
-                LLVMConstInt(i32_type, 1, 0) };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
             return { result, 3 };
         }
     }
@@ -2857,66 +2939,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // 3. Try runtime builtin (uppercase lookup)
+    // (Vectorization for array args was handled in the block above.)
     auto rit = runtime_funcs.find(upper);
     if (rit != runtime_funcs.end()) {
         auto& rf = rit->second;
         std::vector<LLVMValueRef> args;
-        // Get param types from function type
         unsigned param_count = LLVMCountParamTypes(rf.fn_type);
         std::vector<LLVMTypeRef> param_types(param_count);
         if (param_count > 0) LLVMGetParamTypes(rf.fn_type, param_types.data());
 
-        // Evaluate args first so we can detect array-type mismatches
-        std::vector<TypedValue> arg_vals;
-        bool has_unexpected_array = false;
         for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
             TypedValue av = codegen_expr(*expr.args[i]);
-            arg_vals.push_back(av);
-            // Detect vectorization case: array passed to scalar parameter.
-            // Skip if the function itself expects arrays (i8_ptr_type).
-            if (av.tag == 3 && param_types[i] != i8_ptr_type) {
-                has_unexpected_array = true;
-            }
-        }
-
-        if (has_unexpected_array) {
-            // Dispatch via VM bridge for vectorized application
-            LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
-                LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
-            int nargs = (int)arg_vals.size();
-            LLVMValueRef args_p = LLVMBuildArrayAlloca(builder, i64_type,
-                LLVMConstInt(i32_type, nargs, 0), "args");
-            LLVMValueRef tags_p = LLVMBuildArrayAlloca(builder, i32_type,
-                LLVMConstInt(i32_type, nargs, 0), "tags");
-            for (int i = 0; i < nargs; i++) {
-                TypedValue av = arg_vals[i];
-                LLVMValueRef encoded; int32_t tg;
-                if (av.tag == 2 || av.tag == 3) {
-                    encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
-                    tg = av.tag;
-                } else if (av.tag == 1) {
-                    encoded = pun_f64_to_i64(av.val); tg = 1;
-                } else {
-                    LLVMValueRef f = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
-                    encoded = pun_f64_to_i64(f); tg = 0;
-                }
-                LLVMValueRef aidx[] = { LLVMConstInt(i32_type, i, 0) };
-                LLVMBuildStore(builder, encoded,
-                    LLVMBuildGEP2(builder, i64_type, args_p, aidx, 1, "a"));
-                LLVMBuildStore(builder, LLVMConstInt(i32_type, tg, 0),
-                    LLVMBuildGEP2(builder, i32_type, tags_p, aidx, 1, "t"));
-            }
-            LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, upper.c_str(), ".fn");
-            // Result is expected to be an array (vectorized → array out)
-            auto& vfn = runtime_funcs["__jdrt_call_typed_arr"];
-            LLVMValueRef call_args[] = { handle, name_str, args_p, tags_p,
-                LLVMConstInt(i32_type, nargs, 0) };
-            LLVMValueRef result = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec");
-            return { result, 3 };
-        }
-
-        for (size_t i = 0; i < arg_vals.size(); i++) {
-            args.push_back(coerce_to(arg_vals[i], param_types[i]));
+            args.push_back(coerce_to(av, param_types[i]));
         }
 
         if (rf.return_tag == -1) {
