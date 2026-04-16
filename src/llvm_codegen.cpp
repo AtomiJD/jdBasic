@@ -593,6 +593,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 std::string prefix = stmt->var_name.substr(0, dp);
                 if (udt_var_names.count(prefix)) continue;
             }
+            // Don't shadow built-in constants PI/E
+            {
+                std::string up = stmt->var_name;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                if (up == "PI" || up == "E") continue;
+            }
             if (!lookup_var(stmt->var_name)) {
                 // Determine type from initial expression
                 // Recursive helper to infer expression result type
@@ -645,6 +651,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if (e->kind == ExprKind::VARIABLE) {
                         VarInfo* v = lookup_var(e->str_val);
                         if (v) return v->tag;
+                        // Bare-identifier constants like PI, E
+                        std::string up = e->str_val;
+                        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                        auto rrit = runtime_funcs.find(up);
+                        if (rrit != runtime_funcs.end() &&
+                            LLVMCountParamTypes(rrit->second.fn_type) == 0)
+                            return rrit->second.return_tag;
                         if (!e->str_val.empty() && e->str_val.back() == '$') return 2;
                         return -1;
                     }
@@ -868,6 +881,18 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
 
 void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     if (!stmt.expr) return;
+
+    // Protect built-in constants: assignments to PI/E (case-insensitive) are
+    // silent no-ops in the native compiler. The interpreter throws; we don't
+    // have THROW yet, so this prevents shadowing the constant.
+    {
+        std::string up = stmt.var_name;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        if (up == "PI" || up == "E") {
+            // Skip — keeps the runtime constant accessible via bare-identifier path.
+            return;
+        }
+    }
 
     // Check for dotted UDT field assignment: Player1.Name = "Atomi"
     size_t dot_pos = stmt.var_name.find('.');
@@ -1791,6 +1816,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                                                     get_fn.fn, args, 2, "fget");
                             return { result, 1 };
                         }
+                    }
+                }
+                // Bare-identifier constants like PI, E — call the 0-arg native fn.
+                std::string upper = expr.str_val;
+                std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                auto rit = runtime_funcs.find(upper);
+                if (rit != runtime_funcs.end()) {
+                    unsigned pc = LLVMCountParamTypes(rit->second.fn_type);
+                    if (pc == 0) {
+                        LLVMValueRef result = LLVMBuildCall2(builder, rit->second.fn_type,
+                            rit->second.fn, nullptr, 0, expr.str_val.c_str());
+                        return { result, rit->second.return_tag };
                     }
                 }
                 return { LLVMConstInt(i64_type, 0, 0), 0 };
