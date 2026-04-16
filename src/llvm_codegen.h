@@ -80,6 +80,9 @@ private:
     // "BOOLEAN" for vars declared AS BOOLEAN or initialized with TRUE/FALSE.
     std::unordered_set<std::string> bool_vars;
 
+    // Variables initialised from CVDATE/DATEADD/NOW are tagged DATE for TYPEOF.
+    std::unordered_set<std::string> date_vars;
+
     // LLVM types
     LLVMTypeRef i64_type;
     LLVMTypeRef f64_type;

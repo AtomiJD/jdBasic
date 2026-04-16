@@ -1851,6 +1851,13 @@ char* jdb_sha256(const char* input) {
 // ── TYPEOF ──────────────────────────────────────────────────
 // In native compiled code, types are known at compile time.
 // These are placeholder functions called with a type tag.
+// TYPEOF on an f64 — returns "NONE" for NaN (used as the EXITFUNC sentinel),
+// otherwise "FLOAT64".
+char* jdb_typeof_f64(double v) {
+    if (v != v) return _strdup("NONE");
+    return _strdup("FLOAT64");
+}
+
 char* jdb_typeof_tag(int64_t tag) {
     switch (tag) {
         case 0: return _strdup("INT64");

@@ -376,6 +376,7 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // TYPEOF (compile-time tag)
     reg("jdb_typeof_tag", "__typeof_tag", i8_ptr_type, {i64_type}, 2);
+    reg("jdb_typeof_f64", "__typeof_f64", i8_ptr_type, {f64_type}, 2);
 
     // FRMV$ (format array)
     reg("jdb_frmv", "FRMV$", i8_ptr_type, {i8_ptr_type}, 2);
@@ -909,8 +910,27 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             LLVMBuildRet(builder, LLVMConstInt(i32_type, 0, 0));
             break;
         case StmtKind::EXIT_LOOP:
-            if (!loop_stack.empty())
+            // Parser overloads is_while=true to mean EXITFUNC (early return).
+            if (stmt.is_while) {
+                // Return a default value matching the function's return type.
+                LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
+                if (ret_ty == void_type) {
+                    LLVMBuildRetVoid(builder);
+                } else if (ret_ty == f64_type) {
+                    // 0/0 = NaN, signalling NONE for TYPEOF(EarlyReturn(-1)).
+                    union { uint64_t i; double d; } nan_bits;
+                    nan_bits.i = 0xFFF8000000000000ULL;  // canonical quiet NaN
+                    LLVMBuildRet(builder, LLVMConstReal(f64_type, nan_bits.d));
+                } else if (ret_ty == i8_ptr_type) {
+                    LLVMBuildRet(builder, LLVMConstNull(i8_ptr_type));
+                } else {
+                    LLVMBuildRet(builder, LLVMConstNull(ret_ty));
+                }
+                LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_exitfunc");
+                LLVMPositionBuilderAtEnd(builder, dead);
+            } else if (!loop_stack.empty()) {
                 LLVMBuildBr(builder, loop_stack.top().break_bb);
+            }
             break;
         case StmtKind::CONTINUE_LOOP:
             if (!loop_stack.empty())
@@ -1016,6 +1036,13 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (stmt.var_type == VarType::BOOLEAN) bool_vars.insert(up_name);
         else if (stmt.expr && stmt.expr->kind == ExprKind::LITERAL_BOOL)
             bool_vars.insert(up_name);
+        // Track date-producing initializers so TYPEOF reports "DATE".
+        if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
+            std::string fn_up = stmt.expr->func_name;
+            std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
+            if (fn_up == "CVDATE" || fn_up == "DATEADD" || fn_up == "NOW")
+                date_vars.insert(up_name);
+        }
         if (stmt.is_const) {
             const_vars.insert(up_name);
             // Fall through to normal LET codegen so the value is stored.
@@ -1151,6 +1178,57 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         std::string up = stmt.var_name;
         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
         bool_vars.insert(up);
+    }
+    // Track date-producing initializers so TYPEOF reports "DATE".
+    if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
+        std::string fn_up = stmt.expr->func_name;
+        std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
+        if (fn_up == "CVDATE" || fn_up == "DATEADD" || fn_up == "NOW") {
+            std::string up = stmt.var_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            date_vars.insert(up);
+        }
+    }
+
+    // DIM x AS <type> with no initializer — create a default-valued binding
+    // (covers `DIM mv_y AS STRING` in multi-var DIM clauses).
+    if (!stmt.expr && stmt.label.empty()) {
+        int tag = 0;  // i64 default
+        LLVMValueRef init = nullptr;
+        switch (stmt.var_type) {
+            case VarType::STRING:
+                tag = 2;
+                init = LLVMBuildGlobalStringPtr(builder, "", ".dim_s");
+                break;
+            case VarType::FLOAT16:
+            case VarType::FLOAT32:
+            case VarType::FLOAT64:
+                tag = 1;
+                init = LLVMConstReal(f64_type, 0.0);
+                break;
+            case VarType::BOOLEAN:
+            case VarType::BYTE:
+            case VarType::CHAR:
+            case VarType::INT16:
+            case VarType::INT32:
+            case VarType::INT64:
+                tag = 0;
+                init = LLVMConstInt(i64_type, 0, 0);
+                break;
+            default:
+                break;  // unknown — fall through to existing paths
+        }
+        if (init) {
+            VarInfo* vi = lookup_var(stmt.var_name);
+            if (vi) {
+                vi->tag = tag;
+                LLVMBuildStore(builder, init, vi->alloca_val);
+            } else {
+                VarInfo& nv = create_var(stmt.var_name, tag);
+                LLVMBuildStore(builder, init, nv.alloca_val);
+            }
+            return;
+        }
     }
 
     // DIM x AS OBJECT (or MAP) → empty native map
@@ -3214,6 +3292,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (bool_vars.count(up)) {
                 return { LLVMBuildGlobalStringPtr(builder, "BOOLEAN", ".tof"), 2 };
             }
+            if (date_vars.count(up)) {
+                return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), 2 };
+            }
         }
         // DATE values: variables typed via CVDATE/DATEADD return strings
         // tagged as DATE. Check if expr is a known date-producing call:
@@ -3225,6 +3306,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), 2 };
         }
         TypedValue av = codegen_expr(*expr.args[0]);
+        // f64 values may be the NaN sentinel from EXITFUNC — dispatch at runtime.
+        if (av.tag == 1) {
+            auto& fn = runtime_funcs["__typeof_f64"];
+            LLVMValueRef args[] = { av.val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "tof_f");
+            return { result, 2 };
+        }
         auto& fn = runtime_funcs["__typeof_tag"];
         LLVMValueRef args[] = { LLVMConstInt(i64_type, av.tag, 0) };
         LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "typeof");
@@ -3675,8 +3763,19 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
     if (tv.tag == 1)
         return LLVMBuildFCmp(builder, LLVMRealONE, tv.val,
                              LLVMConstReal(f64_type, 0.0), "tobool");
-    if (tv.tag == 2 || tv.tag == 3) {
-        // ptr types: non-null = true
+    if (tv.tag == 3) {
+        // Array → ALL semantics: true iff every element is non-zero.
+        auto it = runtime_funcs.find("ALL");
+        if (it != runtime_funcs.end()) {
+            LLVMValueRef args[] = { tv.val };
+            LLVMValueRef all = LLVMBuildCall2(builder, it->second.fn_type,
+                                               it->second.fn, args, 1, "all");
+            return LLVMBuildICmp(builder, LLVMIntNE, all,
+                                  LLVMConstInt(i64_type, 0, 0), "tobool");
+        }
+    }
+    if (tv.tag == 2) {
+        // Strings: non-null and non-empty = true
         LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
         return LLVMBuildICmp(builder, LLVMIntNE, as_i64,
                              LLVMConstInt(i64_type, 0, 0), "tobool");
@@ -3803,7 +3902,7 @@ void LLVMCodegen::emit_div_zero_check(TypedValue rhs) {
     LLVMPositionBuilderAtEnd(builder, zero_bb);
     LLVMValueRef msg = LLVMBuildGlobalStringPtr(builder, "Division by zero", ".dzmsg");
     auto& es = runtime_funcs["__err_set"];
-    LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 11, 0) };
+    LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 1, 0) };
     LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
     if (!try_stack.empty()) {
         LLVMBuildBr(builder, try_stack.back());
