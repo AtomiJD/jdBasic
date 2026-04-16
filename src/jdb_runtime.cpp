@@ -1266,6 +1266,20 @@ double jdb_datediff(const char* part, const char* date1, const char* date2) {
     return diff;
 }
 
+// Vectorized DATEDIFF: scalar start, array of end-dates (ISO strings).
+// Returns a JdbArray of f64 differences.
+JdbArray* jdb_datediff_vec(const char* part, const char* date1, JdbArray* dates) {
+    if (!dates) return jdb_array_new(0);
+    auto* r = jdb_array_new(dates->length);
+    for (int64_t i = 0; i < dates->length; i++) {
+        // dates->data[i] is a ptr-encoded string
+        union { double d; int64_t i; } u; u.d = dates->data[i];
+        const char* date2 = (const char*)(intptr_t)u.i;
+        r->data[i] = jdb_datediff(part, date1, date2);
+    }
+    return r;
+}
+
 } // end extern "C" — regex functions need C++ linkage internally
 
 // ── Regex (C++ internally, extern "C" interface) ────────────

@@ -322,6 +322,7 @@ void LLVMCodegen::declare_runtime_functions() {
     // Dates are ISO strings in the native runtime (not epochs like the VM).
     reg("jdb_dateadd",  "DATEADD",  i8_ptr_type, {i8_ptr_type, f64_type, i8_ptr_type}, 2);
     reg("jdb_datediff", "DATEDIFF", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 1);
+    reg("jdb_datediff_vec", "__datediff_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_cvdate",   "CVDATE",   i8_ptr_type, {i8_ptr_type}, 2);
 
     // Regex
@@ -2684,14 +2685,78 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { result, 2 };
     }
 
+    // Special case: DATEDIFF with array arg → native jdb_datediff_vec
+    if (upper == "DATEDIFF" && expr.args.size() == 3) {
+        TypedValue p = codegen_expr(*expr.args[0]);
+        TypedValue d1 = codegen_expr(*expr.args[1]);
+        TypedValue d2 = codegen_expr(*expr.args[2]);
+        if (d2.tag == 3) {
+            auto& fn = runtime_funcs["__datediff_vec"];
+            LLVMValueRef args[] = {
+                coerce_to(p, i8_ptr_type),
+                coerce_to(d1, i8_ptr_type),
+                d2.val
+            };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "ddv");
+            return { result, 3 };
+        }
+    }
+
     // Handle vectorized math: SIN(arr), COS(arr), etc. map over array elements.
-    // Detect when a scalar math fn is called with an array and dispatch via VM.
-    static const std::unordered_set<std::string> vectorizable = {
+    // Also DATEDIFF with array arg (dates vector).
+    static const std::unordered_set<std::string> vectorizable_unary = {
         "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "SINH", "COSH", "TANH",
         "EXP", "LOG", "LOG10", "SQR", "ABS", "FLOOR", "CEIL", "ROUND", "TRUNC",
         "SIGN", "FAC", "INT"
     };
-    if (vectorizable.count(upper) && expr.args.size() == 1) {
+    // Functions that vectorize when ANY argument is an array (multi-arg)
+    static const std::unordered_set<std::string> vectorizable_any = {
+        "DATEDIFF", "DATEADD", "FORMAT_DATE", "POW", "MIN", "MAX", "ATAN2"
+    };
+    if (vectorizable_any.count(upper)) {
+        // Evaluate all args, check if any is an array
+        std::vector<TypedValue> vals;
+        bool has_array = false;
+        for (auto& a : expr.args) {
+            TypedValue v = codegen_expr(*a);
+            vals.push_back(v);
+            if (v.tag == 3) has_array = true;
+        }
+        if (has_array) {
+            LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
+                LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
+            int nargs = (int)vals.size();
+            LLVMValueRef args_p = LLVMBuildArrayAlloca(builder, i64_type,
+                LLVMConstInt(i32_type, nargs, 0), "args");
+            LLVMValueRef tags_p = LLVMBuildArrayAlloca(builder, i32_type,
+                LLVMConstInt(i32_type, nargs, 0), "tags");
+            for (int i = 0; i < nargs; i++) {
+                TypedValue av = vals[i];
+                LLVMValueRef encoded; int32_t tg;
+                if (av.tag == 2 || av.tag == 3) {
+                    encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi"); tg = av.tag;
+                } else if (av.tag == 1) {
+                    encoded = pun_f64_to_i64(av.val); tg = 1;
+                } else {
+                    LLVMValueRef f = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                    encoded = pun_f64_to_i64(f); tg = 0;
+                }
+                LLVMValueRef aidx[] = { LLVMConstInt(i32_type, i, 0) };
+                LLVMBuildStore(builder, encoded,
+                    LLVMBuildGEP2(builder, i64_type, args_p, aidx, 1, "a"));
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, tg, 0),
+                    LLVMBuildGEP2(builder, i32_type, tags_p, aidx, 1, "t"));
+            }
+            LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, upper.c_str(), ".fn");
+            auto& vfn = runtime_funcs["__jdrt_call_typed_arr"];
+            LLVMValueRef call_args[] = { handle, name_str, args_p, tags_p,
+                LLVMConstInt(i32_type, nargs, 0) };
+            LLVMValueRef result = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec");
+            return { result, 3 };
+        }
+        // No array args — fall through to normal path
+    }
+    if (vectorizable_unary.count(upper) && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
         if (av.tag == 3) {
             // Array arg → dispatch via VM bridge for vectorized apply
@@ -2801,9 +2866,57 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         std::vector<LLVMTypeRef> param_types(param_count);
         if (param_count > 0) LLVMGetParamTypes(rf.fn_type, param_types.data());
 
+        // Evaluate args first so we can detect array-type mismatches
+        std::vector<TypedValue> arg_vals;
+        bool has_unexpected_array = false;
         for (size_t i = 0; i < expr.args.size() && i < param_count; i++) {
             TypedValue av = codegen_expr(*expr.args[i]);
-            args.push_back(coerce_to(av, param_types[i]));
+            arg_vals.push_back(av);
+            // Detect vectorization case: array passed to scalar parameter.
+            // Skip if the function itself expects arrays (i8_ptr_type).
+            if (av.tag == 3 && param_types[i] != i8_ptr_type) {
+                has_unexpected_array = true;
+            }
+        }
+
+        if (has_unexpected_array) {
+            // Dispatch via VM bridge for vectorized application
+            LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
+                LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
+            int nargs = (int)arg_vals.size();
+            LLVMValueRef args_p = LLVMBuildArrayAlloca(builder, i64_type,
+                LLVMConstInt(i32_type, nargs, 0), "args");
+            LLVMValueRef tags_p = LLVMBuildArrayAlloca(builder, i32_type,
+                LLVMConstInt(i32_type, nargs, 0), "tags");
+            for (int i = 0; i < nargs; i++) {
+                TypedValue av = arg_vals[i];
+                LLVMValueRef encoded; int32_t tg;
+                if (av.tag == 2 || av.tag == 3) {
+                    encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
+                    tg = av.tag;
+                } else if (av.tag == 1) {
+                    encoded = pun_f64_to_i64(av.val); tg = 1;
+                } else {
+                    LLVMValueRef f = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                    encoded = pun_f64_to_i64(f); tg = 0;
+                }
+                LLVMValueRef aidx[] = { LLVMConstInt(i32_type, i, 0) };
+                LLVMBuildStore(builder, encoded,
+                    LLVMBuildGEP2(builder, i64_type, args_p, aidx, 1, "a"));
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, tg, 0),
+                    LLVMBuildGEP2(builder, i32_type, tags_p, aidx, 1, "t"));
+            }
+            LLVMValueRef name_str = LLVMBuildGlobalStringPtr(builder, upper.c_str(), ".fn");
+            // Result is expected to be an array (vectorized → array out)
+            auto& vfn = runtime_funcs["__jdrt_call_typed_arr"];
+            LLVMValueRef call_args[] = { handle, name_str, args_p, tags_p,
+                LLVMConstInt(i32_type, nargs, 0) };
+            LLVMValueRef result = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec");
+            return { result, 3 };
+        }
+
+        for (size_t i = 0; i < arg_vals.size(); i++) {
+            args.push_back(coerce_to(arg_vals[i], param_types[i]));
         }
 
         if (rf.return_tag == -1) {
