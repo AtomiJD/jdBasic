@@ -400,6 +400,53 @@ JDRT_API void jdrt_release_value(JdRT handle, int64_t val_handle) {
     rt->value_store.erase(val_handle);
 }
 
+// ── Field access on opaque VM Value handles (Maps / JSON objects) ──
+// All return a sentinel/empty value if the handle is unknown or the field
+// is missing — never crash the compiled binary on a typo.
+
+static const Value* obj_field(JdRTImpl* rt, int64_t h, const char* key) {
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
+        return nullptr;
+    auto* m = it->second.as_object();
+    Value* found = m->get(std::string(key ? key : ""));
+    return found;
+}
+
+JDRT_API double jdrt_obj_get_f64(JdRT handle, int64_t h, const char* key) {
+    auto* rt = (JdRTImpl*)handle;
+    const Value* v = obj_field(rt, h, key);
+    return v ? v->to_double() : 0.0;
+}
+
+JDRT_API const char* jdrt_obj_get_str(JdRT handle, int64_t h, const char* key) {
+    auto* rt = (JdRTImpl*)handle;
+    const Value* v = obj_field(rt, h, key);
+    if (!v) return _strdup("");
+    if (v->type == ValueType::STRING) return _strdup(v->as_string()->data.c_str());
+    return _strdup(v->to_string().c_str());
+}
+
+JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
+    auto* rt = (JdRTImpl*)handle;
+    const Value* v = obj_field(rt, h, key);
+    if (!v || (v->type != ValueType::OBJECT && v->type != ValueType::ARRAY))
+        return 0;
+    return rt->store_value(*v);  // copy into store, return new handle
+}
+
+// jdrt_obj_get_arr is defined below where JdbArray / value_to_jdbarray
+// are in scope (right after value_to_jdbarray's definition).
+
+JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
+    auto* rt = (JdRTImpl*)handle;
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
+        return 0;
+    auto* m = it->second.as_object();
+    return m->get(std::string(key ? key : "")) ? 1 : 0;
+}
+
 // JdbArray struct matching jdb_runtime.cpp (keep in sync!)
 struct JdbArray {
     double* data;
@@ -442,6 +489,19 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     if (has_ptr) r->flags |= 1;
     if (has_string) r->flags |= 2;
     return r;
+}
+
+// Field-access companion to obj_get_*: pull an array-typed field out of
+// a stored Value handle and convert it to the native JdbArray shape.
+JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
+    auto* rt = (JdRTImpl*)handle;
+    const Value* v = obj_field(rt, h, key);
+    if (!v) {
+        auto* r = (JdbArray*)malloc(sizeof(JdbArray));
+        r->data = nullptr; r->length = 0; r->flags = 0;
+        return r;
+    }
+    return value_to_jdbarray(*v);
 }
 
 // Returns a JdbArray* for functions that return arrays (SPLIT, KEYS, etc.)

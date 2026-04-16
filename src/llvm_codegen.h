@@ -31,6 +31,12 @@ public:
     // formatted string so the outer INDEX can traverse further.
     bool m_want_ptr_result = false;
 
+    // Transient: when set to 0/1/2, an INDEX leaf on a Map (native tag=4 or
+    // VM handle tag=6) picks the matching get_* runtime function so the
+    // value comes back with the right type instead of always-stringified.
+    // -1 = no preference (default = stringify, matches legacy behavior).
+    int m_want_leaf_tag = -1;
+
 private:
     LLVMContextRef ctx;
     LLVMModuleRef  module;
@@ -42,7 +48,8 @@ private:
     // Variable storage per scope: name -> {alloca, tag}
     struct VarInfo {
         LLVMValueRef alloca_val;
-        int tag;  // 0=i64, 1=f64, 2=string(i8*), 3=array(JdbArray*)
+        int tag;  // 0=i64, 1=f64, 2=string(i8*), 3=array(JdbArray*),
+                  // 4=native map(i8*), 5=funcref, 6=VM-Value handle (i64)
     };
 
     // Scope stack for local variables (functions push/pop scopes)

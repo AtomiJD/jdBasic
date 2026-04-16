@@ -52,6 +52,15 @@ JDRT_API int64_t jdrt_call_typed_obj(JdRT rt, const char* name,
 // Release a VM value handle returned by jdrt_call_typed_obj
 JDRT_API void jdrt_release_value(JdRT rt, int64_t handle);
 
+// Field access on a VM Value handle (Map / JSON object). The handle was
+// returned by jdrt_call_typed_obj or jdrt_obj_get_obj. All return safe
+// defaults (0 / "" / 0-handle / empty array) if the key is missing.
+JDRT_API double      jdrt_obj_get_f64(JdRT rt, int64_t h, const char* key);
+JDRT_API const char* jdrt_obj_get_str(JdRT rt, int64_t h, const char* key);
+JDRT_API int64_t     jdrt_obj_get_obj(JdRT rt, int64_t h, const char* key);
+JDRT_API void*       jdrt_obj_get_arr(JdRT rt, int64_t h, const char* key);
+JDRT_API int64_t     jdrt_obj_exists (JdRT rt, int64_t h, const char* key);
+
 // Type-aware call: each arg has a type tag.
 // Tags: 0=i64(as double), 1=f64, 2=string(char*), 3=array(JdbArray*)
 // Args are passed as i64 values (doubles bitcast, pointers as intptr).

@@ -367,6 +367,17 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 0);
     reg("jdrt_call_typed_arr",  "__jdrt_call_typed_arr",  i8_ptr_type,
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 3);
+    // Field access on VM Value handles (objects from JSON.PARSE$, MAP.* etc.)
+    reg("jdrt_obj_get_f64", "__jdrt_obj_get_f64", f64_type,
+        {i8_ptr_type, i64_type, i8_ptr_type}, 1);
+    reg("jdrt_obj_get_str", "__jdrt_obj_get_str", i8_ptr_type,
+        {i8_ptr_type, i64_type, i8_ptr_type}, 2);
+    reg("jdrt_obj_get_obj", "__jdrt_obj_get_obj", i64_type,
+        {i8_ptr_type, i64_type, i8_ptr_type}, 0);
+    reg("jdrt_obj_get_arr", "__jdrt_obj_get_arr", i8_ptr_type,
+        {i8_ptr_type, i64_type, i8_ptr_type}, 3);
+    reg("jdrt_obj_exists",  "__jdrt_obj_exists",  i64_type,
+        {i8_ptr_type, i64_type, i8_ptr_type}, 0);
 
     // Date Add/Diff
     // Dates are ISO strings in the native runtime (not epochs like the VM).
@@ -736,6 +747,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "UNPACK"
                         };
                         if (arr_returners.count(upper)) return 3;
+                        // VM-Value-handle returners (objects parsed from JSON,
+                        // MAP.* helpers that produce maps): tag=6.
+                        if (upper == "JSON.PARSE$" ||
+                            (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
+                             upper != "MAP.SIZE" && upper != "MAP.EXISTS" &&
+                             upper != "MAP.KEYS" && upper != "MAP.VALUES"))
+                            return 6;
                         if (!e->func_name.empty() && e->func_name.back() == '$') return 2;
                         auto rit = runtime_funcs.find(upper);
                         if (rit != runtime_funcs.end()) return rit->second.return_tag;
@@ -787,9 +805,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     int inferred = infer_tag(stmt->expr.get());
                     if (inferred >= 0) tag = inferred;
                 }
-                // Variables ending with $ are strings by convention
-                if (tag == 0 && stmt->var_name.size() > 1 && stmt->var_name.back() == '$')
-                    tag = 2;  // string
+                // Variables ending with $ are strings by convention,
+                // regardless of what infer_tag picked up from the RHS.
+                if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$')
+                    tag = 2;
                 create_var(stmt->var_name, tag);
             }
         }
@@ -1218,6 +1237,16 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // holding the target name. Detect the match against a known user
     // function and bind the RHS to the LLVM function pointer (tag=5)
     // so later `fn_ref(args)` lands in the indirect-call path.
+    // Hint: if the destination var has a known type, propagate it so an
+    // INDEX leaf on a Map / VM object returns a value of the right type
+    // instead of a stringified one (broken on numeric assignments).
+    {
+        VarInfo* dest = lookup_var(stmt.var_name);
+        if (dest && (dest->tag == 0 || dest->tag == 1 || dest->tag == 2 || dest->tag == 3))
+            m_want_leaf_tag = dest->tag;
+        else if (!stmt.var_name.empty() && stmt.var_name.back() == '$')
+            m_want_leaf_tag = 2;
+    }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
         auto fit = user_functions.find(stmt.expr->str_val);
@@ -1229,6 +1258,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     } else {
         rhs = codegen_expr(*stmt.expr);
     }
+    m_want_leaf_tag = -1;
 
     VarInfo* vi = lookup_var(stmt.var_name);
     // Inside a function, a bare-name assignment (`x = ...`, no module prefix)
@@ -2597,19 +2627,56 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             m_want_ptr_result = false;
             TypedValue idx_tv = codegen_expr(*expr.right);
 
-            // String key → map (tag=4) or UDT (tag=3 / arr-element of UDTs).
+            // String key → map (tag=4 native, tag=6 VM handle) or UDT.
             if (idx_tv.tag == 2) {
+                // Snapshot the leaf-type hint and clear it for nested calls.
+                int leaf_hint = m_want_leaf_tag;
+                m_want_leaf_tag = -1;
                 if (arr_tv.tag == 4) {
-                    // Chain position: outer INDEX wants a raw map ptr back.
                     if (want_ptr) {
                         auto& gobj = runtime_funcs["__map_get_obj"];
                         LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
                         return { LLVMBuildCall2(builder, gobj.fn_type, gobj.fn, args, 2, "mgetobj"), 4 };
                     }
-                    // Leaf position: return formatted string for comparison/print.
+                    // Leaf: pick get_f64 or get_str based on caller's hint.
+                    if (leaf_hint == 0 || leaf_hint == 1) {
+                        auto& gf = runtime_funcs["__map_get_f64"];
+                        LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "mgetf"), 1 };
+                    }
                     auto& gs = runtime_funcs["__map_get_str"];
                     LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
                     return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
+                }
+                if (arr_tv.tag == 6) {
+                    // VM-Value handle: route to bridge.
+                    if (want_ptr) {
+                        auto& go = runtime_funcs["__jdrt_obj_get_obj"];
+                        LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                        LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
+                        return { LLVMBuildCall2(builder, go.fn_type, go.fn, args, 3, "ogetobj"), 6 };
+                    }
+                    if (leaf_hint == 3) {
+                        auto& ga = runtime_funcs["__jdrt_obj_get_arr"];
+                        LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                        LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
+                        return { LLVMBuildCall2(builder, ga.fn_type, ga.fn, args, 3, "ogetarr"), 3 };
+                    }
+                    if (leaf_hint == 0 || leaf_hint == 1) {
+                        auto& gf = runtime_funcs["__jdrt_obj_get_f64"];
+                        LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                        LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 3, "ogetf"), 1 };
+                    }
+                    // Default = string (works for PRINT and most string args).
+                    auto& gs = runtime_funcs["__jdrt_obj_get_str"];
+                    LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                    LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
+                    return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 3, "ogets"), 2 };
                 }
                 // UDT field access — decode ptr from f64 if needed (array elem)
                 LLVMValueRef obj_ptr = arr_tv.val;
@@ -3961,10 +4028,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
                 return { result, 3 };
             } else if (is_object_fn) {
-                // Returns an opaque VM value handle (stored as i64)
+                // Returns an opaque VM value handle (stored as i64).
+                // tag=6 distinguishes a VM-managed handle from a native
+                // JdbMap* (tag=4) — they look the same in LLVM (i64/ptr)
+                // but need different runtime functions for field access.
                 auto& fn = runtime_funcs["__jdrt_call_typed_obj"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmobj");
-                return { result, 4 };  // tag=4 = VM object handle
+                return { result, 6 };
             } else if (is_string_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
@@ -4069,13 +4139,15 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
             return pun_i64_to_f64(as_i64);
         }
+        // tag 6 (VM Value handle) is already i64 — bit-pun to f64.
+        if (tv.tag == 6) return pun_i64_to_f64(tv.val);
         return tv.val;
     }
     if (target == i64_type) {
         if (tv.tag == 1) return LLVMBuildFPToSI(builder, tv.val, i64_type, "ftoi");
         if (tv.tag == 2 || tv.tag == 3 || tv.tag == 4 || tv.tag == 5)
             return LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
-        return tv.val;
+        return tv.val;  // tag 0 and tag 6 are already i64
     }
     if (target == i8_ptr_type) {
         if (tv.tag == 0) return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
@@ -4083,6 +4155,8 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
             return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");
         }
+        if (tv.tag == 6)
+            return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "h2ptr");
         return tv.val;
     }
     return tv.val;
