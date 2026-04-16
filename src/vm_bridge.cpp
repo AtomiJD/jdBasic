@@ -11,6 +11,17 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <unordered_map>
+#include <mutex>
+
+// Binary-string length registry — stored here so typed_args_to_values,
+// jdrt_strlen and jdrt_call_typed_str can all share the state.
+// (Moved above typed_args_to_values so the lookup path works.)
+static std::unordered_map<const void*, size_t>& bin_lens() {
+    static std::unordered_map<const void*, size_t> m;
+    return m;
+}
+static std::mutex& bin_mx() { static std::mutex m; return m; }
 
 // Forward declarations for module registrations
 extern void register_sound_builtins(VM& vm);
@@ -248,10 +259,8 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
     vargs.reserve(nargs);
     for (int i = 0; i < nargs; i++) {
         switch (tags[i]) {
-            case 0: { // i64 (stored as double bits)
-                double d;
-                memcpy(&d, &args[i], sizeof(double));
-                vargs.push_back(Value::make_f64(d));
+            case 0: { // i64 — preserved exactly by the native caller
+                vargs.push_back(Value::make_i64(args[i]));
                 break;
             }
             case 1: { // f64
@@ -260,9 +269,20 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                 vargs.push_back(Value::make_f64(d));
                 break;
             }
-            case 2: { // string (char* as intptr)
+            case 2: { // string (char* as intptr) — may be binary with embedded nulls
                 const char* s = (const char*)(intptr_t)args[i];
-                vargs.push_back(Value::make_string(s ? s : ""));
+                if (!s) { vargs.push_back(Value::make_string("")); break; }
+                // Use registered binary length if present, else strlen.
+                int64_t blen;
+                {
+                    std::lock_guard<std::mutex> lk(bin_mx());
+                    auto it = bin_lens().find((const void*)s);
+                    blen = (it != bin_lens().end()) ? (int64_t)it->second : -1;
+                }
+                if (blen >= 0)
+                    vargs.push_back(Value::make_string(std::string(s, (size_t)blen)));
+                else
+                    vargs.push_back(Value::make_string(s));
                 break;
             }
             case 3: { // array (JdbArray*) — convert to VM Value array
@@ -303,6 +323,28 @@ JDRT_API double jdrt_call_typed_f64(JdRT handle, const char* name,
     }
 }
 
+// Binary-string length registry — lets LEN$ recover the true byte length
+// for strings with embedded nulls (from PACK$, binary I/O).
+// (bin_lens() and bin_mx() are defined near the top of this file.)
+
+static void register_binary_string(const char* s, size_t n) {
+    if (!s || n == 0) return;
+    // Only bother if the string actually has embedded nulls
+    if (strlen(s) == n) return;
+    std::lock_guard<std::mutex> lk(bin_mx());
+    bin_lens()[(const void*)s] = n;
+}
+
+// Exported: native runtime's jdb_len_str calls this first.
+// Returns -1 if the string isn't in our binary registry (use strlen).
+JDRT_API int64_t jdrt_strlen(const char* s) {
+    if (!s) return 0;
+    std::lock_guard<std::mutex> lk(bin_mx());
+    auto it = bin_lens().find((const void*)s);
+    if (it != bin_lens().end()) return (int64_t)it->second;
+    return -1;
+}
+
 JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
                                     const int64_t* args, const int32_t* tags, int nargs) {
     auto* rt = (JdRTImpl*)handle;
@@ -310,6 +352,15 @@ JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
         rt->last_error.clear();
+        // For STRING values, preserve embedded nulls (binary data from PACK$).
+        if (result.type == ValueType::STRING) {
+            const std::string& s = result.as_string()->data;
+            char* buf = (char*)malloc(s.size() + 1);
+            memcpy(buf, s.data(), s.size());
+            buf[s.size()] = '\0';
+            register_binary_string(buf, s.size());
+            return buf;
+        }
         return _strdup(result.to_string().c_str());
     } catch (const std::exception& e) {
         rt->last_error = e.what();

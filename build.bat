@@ -71,7 +71,7 @@ for %%A in (%*) do (
     )
     if /I "%%A"=="NATIVEC" (
         set DEFS=!DEFS! /DLLVM_CODEGEN
-        set EXTRA_SRC=!EXTRA_SRC! src\llvm_codegen.cpp src\jdb_runtime.cpp
+        set EXTRA_SRC=!EXTRA_SRC! src\llvm_codegen.cpp
         set EXTRA_INC=!EXTRA_INC! /Ilibs\LLVM\include
         set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\LLVM\lib
         set EXTRA_LIB=!EXTRA_LIB! LLVM-C.lib

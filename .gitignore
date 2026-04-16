@@ -33,6 +33,7 @@ libs/SDL3_ttf-3.2.2/
 libs/SDL3_image-3.2.4/
 libs/SDL2_mixer-2.8.1/
 libs/imgui/
+libs/llvm/
 
 # ── LLM models (huge binary blobs) ────────────────────────────────
 models/

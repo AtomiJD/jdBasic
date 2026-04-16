@@ -626,6 +626,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                                 return 3;
                             }
                         }
+                        // Known array-returning functions
+                        static const std::unordered_set<std::string> arr_returners = {
+                            "SPLIT", "KEYS", "VALUES", "SORTBY", "GROUPBY",
+                            "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
+                            "OS.LIST", "OS.ARGS",
+                            "MAP.KEYS", "MAP.VALUES", "LINES", "WORDS", "CHARS",
+                            "UNPACK"
+                        };
+                        if (arr_returners.count(upper)) return 3;
                         if (!e->func_name.empty() && e->func_name.back() == '$') return 2;
                         auto rit = runtime_funcs.find(upper);
                         if (rit != runtime_funcs.end()) return rit->second.return_tag;
@@ -3116,12 +3125,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         encoded = av.val;
                         tag = 4;
                     } else if (av.tag == 1) {
+                        // f64 → bitcast to i64 so bridge can recover double
                         encoded = pun_f64_to_i64(av.val);
                         tag = 1;
                     } else {
-                        // i64 → promote to f64 → bitcast to i64 (for VM compatibility)
-                        LLVMValueRef as_f64 = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
-                        encoded = pun_f64_to_i64(as_f64);
+                        // i64 direct — no conversion (preserves exact value for large ints)
+                        encoded = av.val;
                         tag = 0;
                     }
 
@@ -3151,7 +3160,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                 upper == "REGEX_MATCH" || upper == "REGEX_FINDALL" ||
                                 upper == "OS.LIST" || upper == "OS.ARGS" || upper == "JSON.STRINGIFY$" ||
                                 upper == "MAP.KEYS" || upper == "MAP.VALUES" ||
-                                upper == "LINES" || upper == "WORDS" || upper == "CHARS");
+                                upper == "LINES" || upper == "WORDS" || upper == "CHARS" ||
+                                upper == "UNPACK");
 
             LLVMValueRef call_args[] = { handle, name_str, args_ptr, tags_ptr,
                 LLVMConstInt(i32_type, nargs, 0) };

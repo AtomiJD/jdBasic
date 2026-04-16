@@ -916,8 +916,19 @@ char* jdb_format4(const char* fmt, double a1, double a2, double a3, double a4) {
 
 // ── String Builtins ─────────────────────────────────────────
 
+// Forward decl: resolved against jdbrt.dll at link time.
+// Returns the true byte length of binary strings (with embedded nulls),
+// or -1 if the string isn't registered as binary (then use strlen).
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+int64_t jdrt_strlen(const char* s);
+
 int64_t jdb_len_str(const char* s) {
-    return s ? (int64_t)strlen(s) : 0;
+    if (!s) return 0;
+    int64_t blen = jdrt_strlen(s);
+    if (blen >= 0) return blen;
+    return (int64_t)strlen(s);
 }
 
 char* jdb_mid(const char* s, int64_t start, int64_t length) {
