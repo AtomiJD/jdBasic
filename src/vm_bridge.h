@@ -61,6 +61,14 @@ JDRT_API int64_t     jdrt_obj_get_obj(JdRT rt, int64_t h, const char* key);
 JDRT_API void*       jdrt_obj_get_arr(JdRT rt, int64_t h, const char* key);
 JDRT_API int64_t     jdrt_obj_exists (JdRT rt, int64_t h, const char* key);
 
+// Dereference a VM Value handle — used when compiled code needs a
+// concrete scalar (passing to a runtime function expecting f64/str).
+JDRT_API double      jdrt_val_to_f64 (JdRT rt, int64_t h);
+JDRT_API const char* jdrt_val_to_str (JdRT rt, int64_t h);
+JDRT_API int64_t     jdrt_val_length (JdRT rt, int64_t h);
+// Integer-indexed access on an array-typed handle; returns a fresh handle.
+JDRT_API int64_t     jdrt_val_arr_get(JdRT rt, int64_t h, int64_t idx);
+
 // Type-aware call: each arg has a type tag.
 // Tags: 0=i64(as double), 1=f64, 2=string(char*), 3=array(JdbArray*)
 // Args are passed as i64 values (doubles bitcast, pointers as intptr).

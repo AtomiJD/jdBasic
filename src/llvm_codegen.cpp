@@ -378,6 +378,14 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i8_ptr_type}, 3);
     reg("jdrt_obj_exists",  "__jdrt_obj_exists",  i64_type,
         {i8_ptr_type, i64_type, i8_ptr_type}, 0);
+    reg("jdrt_val_to_f64",  "__jdrt_val_to_f64",  f64_type,
+        {i8_ptr_type, i64_type}, 1);
+    reg("jdrt_val_to_str",  "__jdrt_val_to_str",  i8_ptr_type,
+        {i8_ptr_type, i64_type}, 2);
+    reg("jdrt_val_arr_get", "__jdrt_val_arr_get", i64_type,
+        {i8_ptr_type, i64_type, i64_type}, 0);
+    reg("jdrt_val_length",  "__jdrt_val_length",  i64_type,
+        {i8_ptr_type, i64_type}, 0);
 
     // Date Add/Diff
     // Dates are ISO strings in the native runtime (not epochs like the VM).
@@ -1246,8 +1254,10 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             m_want_leaf_tag = dest->tag;
         else if (!stmt.var_name.empty() && stmt.var_name.back() == '$')
             m_want_leaf_tag = 2;
-        else
-            m_want_leaf_tag = 1;  // untyped new var: default to numeric (BASIC convention)
+        // Untyped new var: no hint → INDEX-on-VM-handle returns another
+        // handle (tag 6). coerce_to materialises on use. This lets the
+        // same `x = a{"k"}` work whether the value is a number, string,
+        // array, or nested object.
     }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
@@ -1802,6 +1812,10 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMValueRef args[] = { fs };
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
             }
+        } else if (tv.tag == 6) {
+            // VM handle → materialise to string via bridge.
+            LLVMValueRef args[] = { to_string_ptr(tv) };
+            LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
         } else {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
@@ -2655,34 +2669,30 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
                 }
                 if (arr_tv.tag == 6) {
-                    // VM-Value handle: route to bridge.
-                    if (want_ptr) {
-                        auto& go = runtime_funcs["__jdrt_obj_get_obj"];
-                        LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
-                        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
-                        LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
-                        return { LLVMBuildCall2(builder, go.fn_type, go.fn, args, 3, "ogetobj"), 6 };
-                    }
+                    LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
                     if (leaf_hint == 3) {
                         auto& ga = runtime_funcs["__jdrt_obj_get_arr"];
-                        LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
-                        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
                         LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
                         return { LLVMBuildCall2(builder, ga.fn_type, ga.fn, args, 3, "ogetarr"), 3 };
                     }
                     if (leaf_hint == 0 || leaf_hint == 1) {
                         auto& gf = runtime_funcs["__jdrt_obj_get_f64"];
-                        LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
-                        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
                         LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
                         return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 3, "ogetf"), 1 };
                     }
-                    // Default = string (works for PRINT and most string args).
-                    auto& gs = runtime_funcs["__jdrt_obj_get_str"];
-                    LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
-                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                    if (leaf_hint == 2) {
+                        auto& gs = runtime_funcs["__jdrt_obj_get_str"];
+                        LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 3, "ogets"), 2 };
+                    }
+                    // No hint: return another handle so subsequent INDEX /
+                    // field access keep their real VM type (arrays, nested
+                    // objects, numbers). coerce_to on this handle materialises
+                    // to the right concrete type when finally consumed.
+                    auto& go = runtime_funcs["__jdrt_obj_get_obj"];
                     LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
-                    return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 3, "ogets"), 2 };
+                    return { LLVMBuildCall2(builder, go.fn_type, go.fn, args, 3, "ogetobj"), 6 };
                 }
                 // UDT field access — decode ptr from f64 if needed (array elem)
                 LLVMValueRef obj_ptr = arr_tv.val;
@@ -2715,6 +2725,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 auto& gf = runtime_funcs["__udt_get_f64"];
                 LLVMValueRef args[] = { obj_ptr, idx_tv.val };
                 return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "ugetf"), 1 };
+            }
+
+            // Int-indexed access on a VM Value handle (lazy array/map element).
+            // Returns a fresh handle so subsequent coerce/INDEX knows the type.
+            if (arr_tv.tag == 6) {
+                LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                LLVMValueRef idx = idx_tv.val;
+                if (idx_tv.tag == 1) idx = LLVMBuildFPToSI(builder, idx, i64_type, "ftoi");
+                auto& fn = runtime_funcs["__jdrt_val_arr_get"];
+                LLVMValueRef args[] = { rt, arr_tv.val, idx };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "vget"), 6 };
             }
 
             // Get array pointer — may need to convert from encoded param
@@ -2820,18 +2842,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // But NOT if one side is an array (tag=3) — that goes to array arithmetic
     if (expr.op == TokenType::PLUS && (lhs.tag == 2 || rhs.tag == 2) &&
         lhs.tag != 3 && rhs.tag != 3) {
-        // Convert non-string operand to string
+        // Convert non-string operand to string. Use to_string_ptr for
+        // ptr/handle-typed operands (tag 3/4/6) so they materialise via
+        // the appropriate bridge instead of bit-punning into an f64.
         auto to_str = [&](TypedValue tv) -> LLVMValueRef {
             if (tv.tag == 2) return tv.val;
             if (tv.tag == 0) {
                 auto& fn = runtime_funcs["__int_to_str"];
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
-            } else {
+            }
+            if (tv.tag == 1) {
                 auto& fn = runtime_funcs["__double_to_str"];
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ftostr");
             }
+            return to_string_ptr(tv);
         };
         auto& concat = runtime_funcs["__str_concat"];
         LLVMValueRef args[] = { to_str(lhs), to_str(rhs) };
@@ -3013,11 +3039,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 auto& fn = runtime_funcs["__int_to_str"];
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
-            } else {
+            }
+            if (tv.tag == 1) {
                 auto& fn = runtime_funcs["__double_to_str"];
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ftostr");
             }
+            return to_string_ptr(tv);
         };
         if (expr.op == TokenType::NE) {
             auto& fn = runtime_funcs["__str_ne"];
@@ -3873,9 +3901,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     LLVMValueRef a[] = { tv.val };
                     return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "itostr");
                 }
-                auto& fn = runtime_funcs["__double_to_str"];
-                LLVMValueRef a[] = { tv.val };
-                return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "ftostr");
+                if (tv.tag == 1) {
+                    auto& fn = runtime_funcs["__double_to_str"];
+                    LLVMValueRef a[] = { tv.val };
+                    return LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "ftostr");
+                }
+                return to_string_ptr(tv);
             };
             LLVMValueRef result = LLVMBuildSelect(builder, cond_i1,
                 to_str_iif(val1), to_str_iif(val2), "iif");
@@ -4148,20 +4179,41 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     if (target == f64_type) {
         if (tv.tag == 0) return LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
-        // All ptr-typed values (string, array, lambda, map) → encode as f64
         if (tv.tag == 2 || tv.tag == 3 || tv.tag == 4 || tv.tag == 5) {
             LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
             return pun_i64_to_f64(as_i64);
         }
-        // tag 6 (VM Value handle) is already i64 — bit-pun to f64.
-        if (tv.tag == 6) return pun_i64_to_f64(tv.val);
+        // VM Value handle (tag 6) → call bridge to get the scalar the VM
+        // sees. This materialises the real Value as double (0.0 if the
+        // underlying Value isn't numeric).
+        if (tv.tag == 6) {
+            auto* fn = get_runtime_func("__jdrt_val_to_f64");
+            if (fn) {
+                LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                LLVMValueRef args[] = { rt, tv.val };
+                return LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "h2f");
+            }
+            return pun_i64_to_f64(tv.val);
+        }
         return tv.val;
     }
     if (target == i64_type) {
         if (tv.tag == 1) return LLVMBuildFPToSI(builder, tv.val, i64_type, "ftoi");
         if (tv.tag == 2 || tv.tag == 3 || tv.tag == 4 || tv.tag == 5)
             return LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
-        return tv.val;  // tag 0 and tag 6 are already i64
+        if (tv.tag == 6) {
+            auto* fn = get_runtime_func("__jdrt_val_to_f64");
+            if (fn) {
+                LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                LLVMValueRef args[] = { rt, tv.val };
+                LLVMValueRef d = LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "h2f");
+                return LLVMBuildFPToSI(builder, d, i64_type, "h2i");
+            }
+            return tv.val;  // raw handle (last resort)
+        }
+        return tv.val;
     }
     if (target == i8_ptr_type) {
         if (tv.tag == 0) return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
@@ -4169,8 +4221,16 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
             return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");
         }
-        if (tv.tag == 6)
+        if (tv.tag == 6) {
+            auto* fn = get_runtime_func("__jdrt_val_to_str");
+            if (fn) {
+                LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
+                LLVMValueRef args[] = { rt, tv.val };
+                return LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "h2s");
+            }
             return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "h2ptr");
+        }
         return tv.val;
     }
     return tv.val;

@@ -491,6 +491,45 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     return r;
 }
 
+// Convert a stored VM Value handle to a scalar. For numeric Values this
+// is to_double / to_string of the Value; for Maps/Arrays the fallback of
+// to_double() is 0 and to_string() is a formatted dump.
+JDRT_API double jdrt_val_to_f64(JdRT handle, int64_t h) {
+    auto* rt = (JdRTImpl*)handle;
+    auto it = rt->value_store.find(h);
+    return (it != rt->value_store.end()) ? it->second.to_double() : 0.0;
+}
+
+JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
+    auto* rt = (JdRTImpl*)handle;
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end()) return _strdup("");
+    if (it->second.type == ValueType::STRING)
+        return _strdup(it->second.as_string()->data.c_str());
+    return _strdup(it->second.to_string().c_str());
+}
+
+// Integer-indexed access on a stored Array Value — returns a fresh
+// handle for the element so subsequent ops see the element's real type.
+JDRT_API int64_t jdrt_val_arr_get(JdRT handle, int64_t h, int64_t idx) {
+    auto* rt = (JdRTImpl*)handle;
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return 0;
+    auto* arr = it->second.as_array();
+    if (idx < 0 || (size_t)idx >= arr->elements.size()) return 0;
+    return rt->store_value(arr->elements[(size_t)idx]);
+}
+
+JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
+    auto* rt = (JdRTImpl*)handle;
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end()) return 0;
+    if (it->second.type == ValueType::ARRAY) return (int64_t)it->second.as_array()->elements.size();
+    if (it->second.type == ValueType::STRING) return (int64_t)it->second.as_string()->data.size();
+    if (it->second.type == ValueType::OBJECT) return (int64_t)it->second.as_object()->fields.size();
+    return 0;
+}
+
 // Field-access companion to obj_get_*: pull an array-typed field out of
 // a stored Value handle and convert it to the native JdbArray shape.
 JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
