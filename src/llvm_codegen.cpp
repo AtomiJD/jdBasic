@@ -532,17 +532,26 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (stmt) scan_stmt(*stmt);
     }
 
-    // Phase 3: also infer return types from body if not indicated by name
+    // Phase 3: infer return types from RETURN statements in the body.
+    // (Function name suffix `$` already forces tag=2 in Phase 1; this catches
+    // the case where the suffix was omitted but a RETURN expression is a
+    // string. Only RETURN exprs count — string locals or string-typed sub
+    // calls inside the body do NOT make the function string-returning.)
+    std::function<bool(const Stmt&)> any_return_returns_string =
+        [&](const Stmt& s) -> bool {
+        if (s.kind == StmtKind::RETURN && s.expr && expr_involves_strings(*s.expr))
+            return true;
+        for (auto& b : s.body) if (b && any_return_returns_string(*b)) return true;
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b && any_return_returns_string(*b)) return true;
+        for (auto& c : s.catch_body) if (c && any_return_returns_string(*c)) return true;
+        for (auto& f : s.finally_body) if (f && any_return_returns_string(*f)) return true;
+        return false;
+    };
     for (auto& [name, decl] : decls) {
-        if (decl.return_tag == 1 && decl.stmt) {
-            // Check if body involves string operations (like method return type inference)
-            for (auto& s : decl.stmt->body) {
-                if (s && s->expr && expr_involves_strings(*s->expr)) {
-                    decl.return_tag = 2;
-                    break;
-                }
-            }
-        }
+        if (decl.return_tag == 1 && decl.stmt &&
+            any_return_returns_string(*decl.stmt))
+            decl.return_tag = 2;
     }
 
     // Phase 4: create LLVM functions with inferred types
@@ -1222,6 +1231,22 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     }
 
     VarInfo* vi = lookup_var(stmt.var_name);
+    // Inside a function, a bare-name assignment (`x = ...`, no module prefix)
+    // must never write to a top-level main global of the same name. The two
+    // are semantically separate variables — main's `result` and a function's
+    // local `result` should not alias. Module globals are always referenced
+    // with a `MODULE.NAME` prefix (containing a dot), so this check leaves
+    // those alone. If `vi` is only found in scope[0] (global), force a fresh
+    // local alloca by clearing it.
+    if (vi && scopes.size() > 1 && stmt.var_name.find('.') == std::string::npos) {
+        bool in_local_scope = false;
+        for (int i = (int)scopes.size() - 1; i >= 1; i--) {
+            if (scopes[i].vars.find(stmt.var_name) != scopes[i].vars.end()) {
+                in_local_scope = true; break;
+            }
+        }
+        if (!in_local_scope) vi = nullptr;
+    }
     if (vi) {
         if (vi->tag != rhs.tag) {
             if (vi->tag == 1 && rhs.tag == 0) {
