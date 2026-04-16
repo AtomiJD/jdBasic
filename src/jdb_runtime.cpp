@@ -547,22 +547,190 @@ void jdb_array_set_nested(JdbArray* arr) {
     if (arr) arr->flags |= 1;
 }
 
+// Mark array as containing string elements (ptr + bit 1 so print/cmp know)
+void jdb_array_set_string_elems(JdbArray* arr) {
+    if (arr) arr->flags |= 3;  // bit 0 (ptr) + bit 1 (string)
+}
+
+// ── Generic native vectorization ──────────────────────────────
+//
+// Native array_apply: apply a scalar fn to each element of an array.
+// Used for SIN(arr), ABS(arr), UCASE$(arr), LEFT$(arr, n), etc. instead
+// of dispatching via VM bridge. The fn pointer type is encoded by suffix:
+//   _ff:  double(double)                 — SIN, COS, ABS, SQR, etc.
+//   _ii:  int64(int64)                   — (rare, but e.g. BITNOT)
+//   _ss:  char*(const char*)             — UCASE$, LCASE$, TRIM$, REVERSE$
+//   _sfi: char*(const char*, int64)      — LEFT$, RIGHT$
+//   _sfii: char*(const char*, int64, int64) — MID$
+//   _ifs: int64(const char*)             — LEN$, ASC
+//   _ffi: double(double, int64)          — ROUND(x, decimals)
+
+typedef double (*fn_ff)(double);
+typedef int64_t (*fn_ii)(int64_t);
+typedef char* (*fn_ss)(const char*);
+typedef char* (*fn_sfi)(const char*, int64_t);
+typedef char* (*fn_sfii)(const char*, int64_t, int64_t);
+typedef int64_t (*fn_ifs)(const char*);
+
+// Numeric → numeric element-wise. Handles nested arrays recursively.
+JdbArray* jdb_array_apply_ff(JdbArray* arr, void* fnp) {
+    if (!arr) return jdb_array_new(0);
+    fn_ff fn = (fn_ff)fnp;
+    auto* r = jdb_array_new(arr->length);
+    if (arr->flags & 1) {
+        // ptr elements (nested arrays)
+        r->flags |= 1;
+        for (int64_t i = 0; i < arr->length; i++) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            JdbArray* inner = (JdbArray*)(intptr_t)u.i;
+            JdbArray* res = jdb_array_apply_ff(inner, fnp);
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
+            r->data[i] = ur.d;
+        }
+    } else {
+        for (int64_t i = 0; i < arr->length; i++)
+            r->data[i] = fn(arr->data[i]);
+    }
+    return r;
+}
+
+// String → string element-wise. Array must have bit 1 set (string elems).
+JdbArray* jdb_array_apply_ss(JdbArray* arr, void* fnp) {
+    if (!arr) return jdb_array_new(0);
+    fn_ss fn = (fn_ss)fnp;
+    auto* r = jdb_array_new(arr->length);
+    r->flags |= 3;  // ptr + string
+    bool has_string = (arr->flags & 2) != 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (has_string) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            const char* elem = (const char*)(intptr_t)u.i;
+            char* res = fn(elem ? elem : "");
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
+            r->data[i] = ur.d;
+        } else {
+            // Element is numeric, caller mistake — return empty string
+            char* empty = _strdup("");
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)empty;
+            r->data[i] = ur.d;
+        }
+    }
+    return r;
+}
+
+// String → int element-wise (LEN$, ASC).
+JdbArray* jdb_array_apply_ifs(JdbArray* arr, void* fnp) {
+    if (!arr) return jdb_array_new(0);
+    fn_ifs fn = (fn_ifs)fnp;
+    auto* r = jdb_array_new(arr->length);
+    bool has_string = (arr->flags & 2) != 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (has_string) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            const char* elem = (const char*)(intptr_t)u.i;
+            r->data[i] = (double)fn(elem ? elem : "");
+        } else {
+            r->data[i] = 0;
+        }
+    }
+    return r;
+}
+
+// String + int → string element-wise (LEFT$, RIGHT$ with scalar count).
+JdbArray* jdb_array_apply_sfi(JdbArray* arr, int64_t n, void* fnp) {
+    if (!arr) return jdb_array_new(0);
+    fn_sfi fn = (fn_sfi)fnp;
+    auto* r = jdb_array_new(arr->length);
+    r->flags |= 3;
+    bool has_string = (arr->flags & 2) != 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (has_string) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            const char* elem = (const char*)(intptr_t)u.i;
+            char* res = fn(elem ? elem : "", n);
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
+            r->data[i] = ur.d;
+        } else {
+            char* empty = _strdup("");
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)empty;
+            r->data[i] = ur.d;
+        }
+    }
+    return r;
+}
+
+// String + int + int → string element-wise (MID$).
+JdbArray* jdb_array_apply_sfii(JdbArray* arr, int64_t a, int64_t b, void* fnp) {
+    if (!arr) return jdb_array_new(0);
+    fn_sfii fn = (fn_sfii)fnp;
+    auto* r = jdb_array_new(arr->length);
+    r->flags |= 3;
+    bool has_string = (arr->flags & 2) != 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (has_string) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            const char* elem = (const char*)(intptr_t)u.i;
+            char* res = fn(elem ? elem : "", a, b);
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
+            r->data[i] = ur.d;
+        } else {
+            char* empty = _strdup("");
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)empty;
+            r->data[i] = ur.d;
+        }
+    }
+    return r;
+}
+
+// double + int → double (ROUND(arr, 2))
+JdbArray* jdb_array_apply_ffi(JdbArray* arr, int64_t n, void* fnp) {
+    if (!arr) return jdb_array_new(0);
+    double (*fn)(double, int64_t) = (double(*)(double, int64_t))fnp;
+    auto* r = jdb_array_new(arr->length);
+    if (arr->flags & 1) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < arr->length; i++) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            JdbArray* inner = (JdbArray*)(intptr_t)u.i;
+            JdbArray* res = jdb_array_apply_ffi(inner, n, fnp);
+            union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
+            r->data[i] = ur.d;
+        }
+    } else {
+        for (int64_t i = 0; i < arr->length; i++)
+            r->data[i] = fn(arr->data[i], n);
+    }
+    return r;
+}
+
 // Returns 1 if array flags indicate nested/ptr elements, else 0
 int32_t jdb_array_is_nested(JdbArray* arr) {
     return (arr && (arr->flags & 1)) ? 1 : 0;
 }
 
-// Print an element of an array: auto-detects ptr (string) vs double.
-// If the array has flags bit 0, treats the element as a ptr-encoded string.
+// Print an element of an array: uses flags bits to decide format.
+// Bit 0: ptr element. Bit 1: element is a string (vs nested array).
 void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length) return;
     double val = arr->data[idx];
-    if (arr->flags & 1) {
+    bool has_ptr = (arr->flags & 1) != 0;
+    bool has_string = (arr->flags & 2) != 0;
+    if (has_ptr && has_string) {
         union { double d; int64_t i; } u; u.d = val;
         const char* s = (const char*)(intptr_t)u.i;
         if (s) printf("%s", s);
+    } else if (has_ptr) {
+        // Nested array — print as [e0, e1, ...]
+        union { double d; int64_t i; } u; u.d = val;
+        JdbArray* inner = (JdbArray*)(intptr_t)u.i;
+        if (!inner) return;
+        printf("[");
+        for (int64_t i = 0; i < inner->length; i++) {
+            if (i > 0) printf(", ");
+            jdb_print_array_elem(inner, i);
+        }
+        printf("]");
     } else {
-        // Numeric
         if (val == (int64_t)val)
             printf("%lld", (long long)(int64_t)val);
         else

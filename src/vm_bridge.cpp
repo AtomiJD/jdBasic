@@ -214,23 +214,27 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
     Value r = Value::make_array();
     auto* out = r.as_array();
     out->elements.reserve(arr->length);
-    bool nested = (arr->flags & 1) != 0;
+    bool has_ptr = (arr->flags & 1) != 0;
+    bool has_string = (arr->flags & 2) != 0;
+    // bit 1 set → all ptr elements are strings.
+    // bit 0 without bit 1 → all ptr elements are nested JdbArrays.
+    // (Mixed arrays would need per-element tagging; jdBasic doesn't allow that
+    // at the language level for uniform arrays, so we rely on the bit meaning.)
     for (int64_t i = 0; i < arr->length; i++) {
         double d = arr->data[i];
-        if (nested) {
-            // Element is a ptr (could be string or nested array)
+        if (has_ptr) {
             union { double d; int64_t i; } u; u.d = d;
             void* p = (void*)(intptr_t)u.i;
             if (!p) {
                 out->elements.push_back(Value::make_none());
                 continue;
             }
-            // Heuristic: if flags bit 0 was set because of nested arrays vs strings,
-            // we can't tell at this level. Treat as string (most common case from
-            // VM-bridge output, which is SPLIT, REGEX_MATCH etc.).
-            // For nested array, a JdbArray has a specific layout we could try to
-            // validate, but that's fragile. Use string for now.
-            out->elements.push_back(Value::make_string((const char*)p));
+            if (has_string) {
+                out->elements.push_back(Value::make_string((const char*)p));
+            } else {
+                // Nested array: recurse
+                out->elements.push_back(jdbarray_to_value((JdbArrayFwd*)p));
+            }
         } else {
             out->elements.push_back(Value::make_f64(d));
         }
@@ -362,26 +366,30 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     auto* arr = v.as_array();
     r->length = (int64_t)arr->elements.size();
     r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
-    bool any_nested = false;
+    // flags bit 0: elements are ptrs (strings OR nested arrays — both need decoding)
+    // flags bit 1: elements are strings (so decoder knows to treat ptr as char*)
+    // If an array mixes strings and sub-arrays, both bits set; caller inspects
+    // each element via helpers.
+    bool has_ptr = false, has_string = false;
     for (int64_t i = 0; i < r->length; i++) {
         const auto& e = arr->elements[i];
         if (e.type == ValueType::ARRAY) {
-            any_nested = true;
+            has_ptr = true;
             JdbArray* inner = value_to_jdbarray(e);
             union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)inner;
             r->data[i] = u.d;
         } else if (e.type == ValueType::STRING) {
-            // Encode string pointer as f64 (caller must strdup if persistent)
+            has_ptr = true; has_string = true;
             const std::string& s = e.as_string()->data;
             char* copy = _strdup(s.c_str());
             union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)copy;
             r->data[i] = u.d;
-            any_nested = true; // strings are also ptrs, mark as "nested" (flag indicates ptr elements)
         } else {
             r->data[i] = e.to_double();
         }
     }
-    if (any_nested) r->flags |= 1;
+    if (has_ptr) r->flags |= 1;
+    if (has_string) r->flags |= 2;
     return r;
 }
 

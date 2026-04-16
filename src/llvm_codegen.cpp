@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <unordered_set>
 #include <functional>
+#include <cstring>
 
 
 // ── Constructor / Destructor ────────────────────────────────
@@ -200,6 +201,13 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
+    reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
+    // Native generic vectorization helpers (avoid VM bridge overhead)
+    reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_array_apply_ss",   "__arr_apply_ss",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_array_apply_ifs",  "__arr_apply_ifs",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_array_apply_sfi",  "__arr_apply_sfi",  i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, 3);
+    reg("jdb_array_apply_sfii", "__arr_apply_sfii", i8_ptr_type, {i8_ptr_type, i64_type, i64_type, i8_ptr_type}, 3);
     reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_print_array_elem",  "__print_arr_elem",  void_type, {i8_ptr_type, i64_type}, -1);
     reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
@@ -1713,6 +1721,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             LLVMValueRef size_arg[] = { LLVMConstInt(i64_type, 0, 0) };
             LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, size_arg, 1, "arr");
             bool has_ptr_elems = false;
+            bool has_string_elems = false;
             if (!expr.args.empty()) {
                 auto& arr_append = runtime_funcs["APPEND"];
                 for (size_t i = 0; i < expr.args.size(); i++) {
@@ -1724,16 +1733,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, fval, i64_type, "ptoi");
                         fval = pun_i64_to_f64(as_i64);
                         has_ptr_elems = true;
+                        if (elem.tag == 2) has_string_elems = true;
                     }
                     LLVMValueRef append_args[] = { arr, fval };
                     arr = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "arr");
                 }
-                // Mark array as containing ptr elements (strings/arrays)
-                // so element-wise operations (print, compare, etc.) handle them correctly.
                 if (has_ptr_elems) {
                     auto& set_nested = runtime_funcs["__arr_set_nested"];
                     LLVMValueRef sn[] = { arr };
                     LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn, 1, "");
+                    if (has_string_elems) {
+                        auto* set_str = get_runtime_func("__arr_set_string_elems");
+                        if (set_str) {
+                            LLVMValueRef ss[] = { arr };
+                            LLVMBuildCall2(builder, set_str->fn_type, set_str->fn, ss, 1, "");
+                        }
+                    }
                 }
             }
             return { arr, 3 };
@@ -2806,6 +2821,104 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
         // Assert is a user SUB but if used as native:
     };
+
+    // Native vectorization table: funcname → (applier, scalar runtime fn, sig).
+    // sig: "ff" = double(double), "ss" = str(str), "ifs" = int(str),
+    //      "sfi" = str(str, int), "sfii" = str(str, int, int).
+    struct VecSpec { const char* applier; const char* scalar; const char* sig; };
+    static const std::unordered_map<std::string, VecSpec> native_vec = {
+        // Numeric unary: all return double(double)
+        {"SIN",  {"__arr_apply_ff", "jdb_sin",  "ff"}},
+        {"COS",  {"__arr_apply_ff", "jdb_cos",  "ff"}},
+        {"TAN",  {"__arr_apply_ff", "jdb_tan",  "ff"}},
+        {"ASIN", {"__arr_apply_ff", "jdb_asin", "ff"}},
+        {"ACOS", {"__arr_apply_ff", "jdb_acos", "ff"}},
+        {"ATAN", {"__arr_apply_ff", "jdb_atan", "ff"}},
+        {"SINH", {"__arr_apply_ff", "jdb_sinh", "ff"}},
+        {"COSH", {"__arr_apply_ff", "jdb_cosh", "ff"}},
+        {"TANH", {"__arr_apply_ff", "jdb_tanh", "ff"}},
+        {"EXP",  {"__arr_apply_ff", "jdb_exp",  "ff"}},
+        {"LOG",  {"__arr_apply_ff", "jdb_log",  "ff"}},
+        {"LOG10",{"__arr_apply_ff", "jdb_log10","ff"}},
+        {"SQR",  {"__arr_apply_ff", "jdb_sqr",  "ff"}},
+        {"ABS",  {"__arr_apply_ff", "jdb_abs",  "ff"}},
+        {"FLOOR",{"__arr_apply_ff", "jdb_floor","ff"}},
+        {"CEIL", {"__arr_apply_ff", "jdb_ceil", "ff"}},
+        {"ROUND",{"__arr_apply_ff", "jdb_round","ff"}},
+        {"TRUNC",{"__arr_apply_ff", "jdb_trunc","ff"}},
+        {"SIGN", {"__arr_apply_ff", "jdb_sign", "ff"}},
+        {"FAC",  {"__arr_apply_ff", "jdb_fac",  "ff"}},
+        // String unary: str(str)
+        {"UCASE$", {"__arr_apply_ss", "jdb_upper", "ss"}},
+        {"LCASE$", {"__arr_apply_ss", "jdb_lower", "ss"}},
+        {"UPPER$", {"__arr_apply_ss", "jdb_upper", "ss"}},
+        {"LOWER$", {"__arr_apply_ss", "jdb_lower", "ss"}},
+        {"TRIM$",  {"__arr_apply_ss", "jdb_trim",  "ss"}},
+        {"TRIM",   {"__arr_apply_ss", "jdb_trim",  "ss"}},
+        {"LTRIM$", {"__arr_apply_ss", "jdb_ltrim", "ss"}},
+        {"RTRIM$", {"__arr_apply_ss", "jdb_rtrim", "ss"}},
+        // String + int: str(str, int)
+        {"LEFT$",  {"__arr_apply_sfi", "jdb_left",  "sfi"}},
+        {"RIGHT$", {"__arr_apply_sfi", "jdb_right", "sfi"}},
+        // String + int + int: str(str, int, int)
+        {"MID$",   {"__arr_apply_sfii", "jdb_mid",  "sfii"}},
+        // String → int: int(str)
+        {"LEN$",   {"__arr_apply_ifs", "jdb_len_str", "ifs"}},
+        {"ASC",    {"__arr_apply_ifs", "jdb_asc",     "ifs"}},
+    };
+
+    // Try native vectorization first — avoids VM bridge overhead.
+    {
+        auto vit = native_vec.find(upper);
+        if (vit != native_vec.end() && !expr.args.empty()) {
+            TypedValue av = codegen_expr(*expr.args[0]);
+            if (av.tag == 3) {
+                const VecSpec& spec = vit->second;
+                // Look up the scalar runtime function's LLVMValueRef (by name via runtime_funcs)
+                // We need to find it by the jdb_* C name — scan all registered runtimes.
+                LLVMValueRef scalar_fn = nullptr;
+                for (auto& [k, rf] : runtime_funcs) {
+                    // Compare via the C function name (LLVMValueRef name)
+                    const char* ln = LLVMGetValueName(rf.fn);
+                    if (ln && strcmp(ln, spec.scalar) == 0) {
+                        scalar_fn = rf.fn;
+                        break;
+                    }
+                }
+                if (!scalar_fn) goto no_native_vec;  // fall through
+
+                auto* applier = get_runtime_func(spec.applier);
+                if (!applier) goto no_native_vec;
+
+                if (strcmp(spec.sig, "ff") == 0 || strcmp(spec.sig, "ss") == 0 ||
+                    strcmp(spec.sig, "ifs") == 0) {
+                    LLVMValueRef args[] = { av.val, scalar_fn };
+                    LLVMValueRef result = LLVMBuildCall2(builder, applier->fn_type,
+                        applier->fn, args, 2, "vec");
+                    return { result, 3 };
+                }
+                if (strcmp(spec.sig, "sfi") == 0 && expr.args.size() == 2) {
+                    TypedValue nv = codegen_expr(*expr.args[1]);
+                    LLVMValueRef n = coerce_to(nv, i64_type);
+                    LLVMValueRef args[] = { av.val, n, scalar_fn };
+                    LLVMValueRef result = LLVMBuildCall2(builder, applier->fn_type,
+                        applier->fn, args, 3, "vec");
+                    return { result, 3 };
+                }
+                if (strcmp(spec.sig, "sfii") == 0 && expr.args.size() == 3) {
+                    TypedValue av2 = codegen_expr(*expr.args[1]);
+                    TypedValue av3 = codegen_expr(*expr.args[2]);
+                    LLVMValueRef a2 = coerce_to(av2, i64_type);
+                    LLVMValueRef a3 = coerce_to(av3, i64_type);
+                    LLVMValueRef args[] = { av.val, a2, a3, scalar_fn };
+                    LLVMValueRef result = LLVMBuildCall2(builder, applier->fn_type,
+                        applier->fn, args, 4, "vec");
+                    return { result, 3 };
+                }
+            }
+        }
+        no_native_vec:;
+    }
 
     // Check if any argument is an array AND the function is not blocklisted.
     if (!no_vectorize.count(upper) && !expr.args.empty()) {
