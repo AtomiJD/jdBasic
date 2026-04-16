@@ -430,9 +430,12 @@ JDRT_API const char* jdrt_obj_get_str(JdRT handle, int64_t h, const char* key) {
 JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
     auto* rt = (JdRTImpl*)handle;
     const Value* v = obj_field(rt, h, key);
-    if (!v || (v->type != ValueType::OBJECT && v->type != ValueType::ARRAY))
-        return 0;
-    return rt->store_value(*v);  // copy into store, return new handle
+    if (!v) return 0;
+    // Store *any* non-missing field so the caller always receives a valid
+    // handle. Scalars (STRING, numbers) materialise later via coerce paths;
+    // Objects/Arrays can be further indexed. Returning 0 for scalars broke
+    // 'title = g{"title"}' where the field's a string.
+    return rt->store_value(*v);
 }
 
 // jdrt_obj_get_arr is defined below where JdbArray / value_to_jdbarray
