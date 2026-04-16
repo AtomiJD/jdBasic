@@ -166,6 +166,10 @@ private:
     // Coerce a TypedValue to the expected LLVM type (prevents type mismatches)
     LLVMValueRef coerce_to(TypedValue tv, LLVMTypeRef target);
     TypedValue coerce_to_tag(TypedValue tv, int target_tag);
+    // Convert any TypedValue to a real char* string ptr. For numeric tags
+    // this calls __double_to_str (formatted text), not a bitcast — use this
+    // when a runtime expects an actual string, not a punned ptr.
+    LLVMValueRef to_string_ptr(TypedValue tv);
     // Type-pun between i64 and f64 (avoids LLVM bitcast restrictions on newer versions)
     LLVMValueRef pun_i64_to_f64(LLVMValueRef i64_val);
     LLVMValueRef pun_f64_to_i64(LLVMValueRef f64_val);
