@@ -52,6 +52,45 @@ void jdb_print_space() {
     printf(" ");
 }
 
+// ── Exception state (THROW/TRY/CATCH) ───────────────────────
+// Generated code branches to its catch-block on throw; we only
+// store the message/code here so ERRMSG$/ERR can read them in
+// the CATCH body.
+
+static char    g_err_msg[512] = "";
+static int64_t g_err_code     = 0;
+
+void jdb_err_set(const char* msg, int64_t code) {
+    if (msg) {
+        strncpy(g_err_msg, msg, sizeof(g_err_msg) - 1);
+        g_err_msg[sizeof(g_err_msg) - 1] = '\0';
+    } else {
+        g_err_msg[0] = '\0';
+    }
+    g_err_code = code;
+}
+
+void jdb_err_clear() {
+    g_err_msg[0] = '\0';
+    g_err_code = 0;
+}
+
+const char* jdb_err_msg() {
+    return _strdup(g_err_msg);
+}
+
+int64_t jdb_err_code() {
+    return g_err_code;
+}
+
+// Called when a THROW escapes all TRY handlers — mirrors the
+// interpreter's unhandled exception behavior.
+void jdb_throw_uncaught() {
+    fprintf(stderr, "Unhandled exception: %s\n", g_err_msg);
+    fflush(stderr);
+    exit(1);
+}
+
 // ── String operations ───────────────────────────────────────
 
 char* jdb_str_concat(const char* a, const char* b) {

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <stack>
 #include "ast.h"
 #include "llvm-c/Core.h"
@@ -66,6 +67,14 @@ private:
         LLVMBasicBlockRef continue_bb;
     };
     std::stack<LoopCtx> loop_stack;
+
+    // TRY/CATCH: stack of catch-block labels. THROW and guarded div-by-zero
+    // branch to try_stack.back() when non-empty, else call jdb_throw_uncaught.
+    std::vector<LLVMBasicBlockRef> try_stack;
+
+    // CONST tracking: names (upper-cased) bound to user-declared constants.
+    // Subsequent assignments throw at runtime.
+    std::unordered_set<std::string> const_vars;
 
     // LLVM types
     LLVMTypeRef i64_type;
@@ -131,6 +140,10 @@ private:
     bool is_udt_string_field(const std::string& var_name, const std::string& field_name);
     static bool expr_involves_strings(const Expr& e);
     void emit_trace(int line);
+    // Emit a divisor-zero check: if rhs == 0, record "Division by zero"
+    // and branch to the top-of-stack catch block (or abort if none).
+    // Caller positions the builder in the normal-path block afterwards.
+    void emit_div_zero_check(TypedValue rhs);
     RuntimeFunc* get_runtime_func(const std::string& name);
     // Coerce a TypedValue to the expected LLVM type (prevents type mismatches)
     LLVMValueRef coerce_to(TypedValue tv, LLVMTypeRef target);

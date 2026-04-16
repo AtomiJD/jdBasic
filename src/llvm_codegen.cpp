@@ -225,6 +225,13 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_trace",             "__trace",           void_type, {i64_type}, -1);
 
+    // Exception state — THROW stores msg/code, CATCH reads via ERRMSG$/ERR.
+    reg("jdb_err_set",       "__err_set",   void_type,   {i8_ptr_type, i64_type}, -1);
+    reg("jdb_err_clear",     "__err_clear", void_type,   {}, -1);
+    reg("jdb_err_msg",       "ERRMSG$",     i8_ptr_type, {}, 2);
+    reg("jdb_err_code",      "ERR",         i64_type,    {}, 0);
+    reg("jdb_throw_uncaught","__throw_uncaught", void_type, {}, -1);
+
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
     reg("jdb_os_args",    "OS.ARGS",      i8_ptr_type, {}, 3);
@@ -789,10 +796,27 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
         case StmtKind::FOR_EACH:
             codegen_for_each(stmt);
             break;
-        case StmtKind::TRY_CATCH:
-            // TRY/CATCH: just execute the TRY body, skip catch for now
+        case StmtKind::TRY_CATCH: {
+            // TRY body: if a THROW fires (or guarded div-by-zero), control
+            // branches to catch_bb. On normal completion, skip catch.
+            LLVMBasicBlockRef try_bb    = LLVMAppendBasicBlock(current_fn, "try_body");
+            LLVMBasicBlockRef catch_bb  = LLVMAppendBasicBlock(current_fn, "catch");
+            LLVMBasicBlockRef after_bb  = LLVMAppendBasicBlock(current_fn, "after_try");
+
+            LLVMBuildBr(builder, try_bb);
+            LLVMPositionBuilderAtEnd(builder, try_bb);
+            try_stack.push_back(catch_bb);
             for (auto& s : stmt.body) { if (s) codegen_stmt(*s); }
+            try_stack.pop_back();
+            LLVMBuildBr(builder, after_bb);
+
+            LLVMPositionBuilderAtEnd(builder, catch_bb);
+            for (auto& s : stmt.catch_body) { if (s) codegen_stmt(*s); }
+            LLVMBuildBr(builder, after_bb);
+
+            LLVMPositionBuilderAtEnd(builder, after_bb);
             break;
+        }
         case StmtKind::ENUM_DECL:
             // Already registered in the pre-pass — no-op here.
             break;
@@ -828,9 +852,33 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
         case StmtKind::TYPE_DECL:
             codegen_type_decl(stmt);
             break;
-        case StmtKind::THROW_STMT:
-            // TODO: proper exception throwing
+        case StmtKind::THROW_STMT: {
+            // Evaluate the error message (coerce to string), then either
+            // jump to the enclosing catch or abort via jdb_throw_uncaught.
+            LLVMValueRef msg_str;
+            if (stmt.expr) {
+                TypedValue mv = codegen_expr(*stmt.expr);
+                msg_str = coerce_to(mv, i8_ptr_type);
+            } else {
+                msg_str = LLVMBuildGlobalStringPtr(builder, "", ".emsg");
+            }
+            auto& es = runtime_funcs["__err_set"];
+            LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
+            LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
+
+            if (!try_stack.empty()) {
+                LLVMBuildBr(builder, try_stack.back());
+            } else {
+                auto& uc = runtime_funcs["__throw_uncaught"];
+                LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
+                LLVMBuildUnreachable(builder);
+            }
+            // Any statements after a THROW are dead; give them a landing block
+            // so subsequent codegen doesn't produce blocks with two terminators.
+            LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_throw");
+            LLVMPositionBuilderAtEnd(builder, dead);
             break;
+        }
         case StmtKind::SLEEP_STMT:
             if (stmt.expr) {
                 TypedValue sv = codegen_expr(*stmt.expr);
@@ -943,14 +991,52 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
 void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     if (!stmt.expr) return;
 
-    // Protect built-in constants: assignments to PI/E (case-insensitive) are
-    // silent no-ops in the native compiler. The interpreter throws; we don't
-    // have THROW yet, so this prevents shadowing the constant.
+    // User-declared CONST: first LET registers; later assignments throw.
+    {
+        std::string up_name = stmt.var_name;
+        std::transform(up_name.begin(), up_name.end(), up_name.begin(), ::toupper);
+        if (stmt.is_const) {
+            const_vars.insert(up_name);
+            // Fall through to normal LET codegen so the value is stored.
+        } else if (const_vars.count(up_name)) {
+            std::string msg = "Cannot assign to constant '" + stmt.var_name + "'";
+            LLVMValueRef msg_str = LLVMBuildGlobalStringPtr(builder, msg.c_str(), ".const_err");
+            auto& es = runtime_funcs["__err_set"];
+            LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
+            LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
+            if (!try_stack.empty()) {
+                LLVMBuildBr(builder, try_stack.back());
+            } else {
+                auto& uc = runtime_funcs["__throw_uncaught"];
+                LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
+                LLVMBuildUnreachable(builder);
+            }
+            LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_const_throw");
+            LLVMPositionBuilderAtEnd(builder, dead);
+            return;
+        }
+    }
+
+    // Protect built-in constants: assignments to PI/E (case-insensitive)
+    // throw at runtime (matches interpreter) so TRY/CATCH can observe them.
     {
         std::string up = stmt.var_name;
         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
         if (up == "PI" || up == "E") {
-            // Skip — keeps the runtime constant accessible via bare-identifier path.
+            std::string msg = "Cannot assign to constant '" + stmt.var_name + "'";
+            LLVMValueRef msg_str = LLVMBuildGlobalStringPtr(builder, msg.c_str(), ".const_err");
+            auto& es = runtime_funcs["__err_set"];
+            LLVMValueRef args[] = { msg_str, LLVMConstInt(i64_type, 1, 0) };
+            LLVMBuildCall2(builder, es.fn_type, es.fn, args, 2, "");
+            if (!try_stack.empty()) {
+                LLVMBuildBr(builder, try_stack.back());
+            } else {
+                auto& uc = runtime_funcs["__throw_uncaught"];
+                LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
+                LLVMBuildUnreachable(builder);
+            }
+            LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_const_throw");
+            LLVMPositionBuilderAtEnd(builder, dead);
             return;
         }
     }
@@ -2598,8 +2684,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::PLUS:  return { LLVMBuildFAdd(builder, lhs.val, rhs.val, "fadd"), 1 };
             case TokenType::MINUS: return { LLVMBuildFSub(builder, lhs.val, rhs.val, "fsub"), 1 };
             case TokenType::STAR:  return { LLVMBuildFMul(builder, lhs.val, rhs.val, "fmul"), 1 };
-            case TokenType::SLASH: return { LLVMBuildFDiv(builder, lhs.val, rhs.val, "fdiv"), 1 };
-            case TokenType::MOD:   return { LLVMBuildFRem(builder, lhs.val, rhs.val, "fmod"), 1 };
+            case TokenType::SLASH: emit_div_zero_check(rhs); return { LLVMBuildFDiv(builder, lhs.val, rhs.val, "fdiv"), 1 };
+            case TokenType::MOD:   emit_div_zero_check(rhs); return { LLVMBuildFRem(builder, lhs.val, rhs.val, "fmod"), 1 };
             case TokenType::LT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
             case TokenType::GT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
             case TokenType::LE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
@@ -2614,9 +2700,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::PLUS:      return { LLVMBuildAdd(builder, lhs.val, rhs.val, "add"), 0 };
             case TokenType::MINUS:     return { LLVMBuildSub(builder, lhs.val, rhs.val, "sub"), 0 };
             case TokenType::STAR:      return { LLVMBuildMul(builder, lhs.val, rhs.val, "mul"), 0 };
-            case TokenType::SLASH:     return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "div"), 0 };
-            case TokenType::BACKSLASH: return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "idiv"), 0 };
-            case TokenType::MOD:       return { LLVMBuildSRem(builder, lhs.val, rhs.val, "mod"), 0 };
+            case TokenType::SLASH:     emit_div_zero_check(rhs); return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "div"), 0 };
+            case TokenType::BACKSLASH: emit_div_zero_check(rhs); return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "idiv"), 0 };
+            case TokenType::MOD:       emit_div_zero_check(rhs); return { LLVMBuildSRem(builder, lhs.val, rhs.val, "mod"), 0 };
             case TokenType::LT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
             case TokenType::GT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
             case TokenType::LE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), 0 };
@@ -3498,6 +3584,39 @@ void LLVMCodegen::emit_trace(int line) {
     if (!tr) return;
     LLVMValueRef args[] = { LLVMConstInt(i64_type, line, 0) };
     LLVMBuildCall2(builder, tr->fn_type, tr->fn, args, 1, "");
+}
+
+void LLVMCodegen::emit_div_zero_check(TypedValue rhs) {
+    LLVMValueRef is_zero;
+    if (rhs.tag == 1) {
+        is_zero = LLVMBuildFCmp(builder, LLVMRealOEQ, rhs.val,
+                                LLVMConstReal(f64_type, 0.0), "iszero");
+    } else {
+        LLVMValueRef rv = rhs.val;
+        if (rhs.tag == 2 || rhs.tag == 3 || rhs.tag == 4) {
+            // Shouldn't happen for division but guard against ptr args
+            return;
+        }
+        is_zero = LLVMBuildICmp(builder, LLVMIntEQ, rv,
+                                LLVMConstInt(i64_type, 0, 0), "iszero");
+    }
+    LLVMBasicBlockRef zero_bb = LLVMAppendBasicBlock(current_fn, "divzero");
+    LLVMBasicBlockRef ok_bb   = LLVMAppendBasicBlock(current_fn, "divok");
+    LLVMBuildCondBr(builder, is_zero, zero_bb, ok_bb);
+
+    LLVMPositionBuilderAtEnd(builder, zero_bb);
+    LLVMValueRef msg = LLVMBuildGlobalStringPtr(builder, "Division by zero", ".dzmsg");
+    auto& es = runtime_funcs["__err_set"];
+    LLVMValueRef eargs[] = { msg, LLVMConstInt(i64_type, 11, 0) };
+    LLVMBuildCall2(builder, es.fn_type, es.fn, eargs, 2, "");
+    if (!try_stack.empty()) {
+        LLVMBuildBr(builder, try_stack.back());
+    } else {
+        auto& uc = runtime_funcs["__throw_uncaught"];
+        LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
+        LLVMBuildUnreachable(builder);
+    }
+    LLVMPositionBuilderAtEnd(builder, ok_bb);
 }
 
 LLVMCodegen::RuntimeFunc* LLVMCodegen::get_runtime_func(const std::string& name) {
