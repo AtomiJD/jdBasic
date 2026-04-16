@@ -712,6 +712,37 @@ JdbMap* jdb_map_new() {
     return m;
 }
 
+// ── Event System (ON / RAISEEVENT) ──────────────────────────
+// Handlers have signature void (*)(JdbArray*). RAISEEVENT packs
+// the supplied scalar arg into a fresh one-element string array
+// and invokes the registered handler synchronously.
+
+}  // close extern "C" so we can use std::unordered_map below
+
+#include <unordered_map>
+
+typedef void (*JdbEventHandler)(JdbArray*);
+static std::unordered_map<std::string, JdbEventHandler> g_event_handlers;
+
+extern "C" {
+
+void jdb_event_on(const char* name, void* handler) {
+    if (!name || !handler) return;
+    g_event_handlers[name] = (JdbEventHandler)handler;
+}
+
+void jdb_event_raise_str(const char* name, const char* arg) {
+    if (!name) return;
+    auto it = g_event_handlers.find(name);
+    if (it == g_event_handlers.end() || !it->second) return;
+    auto* arr = jdb_array_new(1);
+    arr->flags |= 2;  // string-flag
+    union { double d; int64_t i; } u;
+    u.i = (int64_t)(intptr_t)_strdup(arg ? arg : "");
+    arr->data[0] = u.d;
+    it->second(arr);
+}
+
 static void map_grow(JdbMap* m) {
     int64_t newcap = m->capacity ? m->capacity * 2 : 8;
     m->keys = (char**)realloc(m->keys, newcap * sizeof(char*));

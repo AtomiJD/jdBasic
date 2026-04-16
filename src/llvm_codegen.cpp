@@ -240,6 +240,10 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_err_code",      "ERR",         i64_type,    {}, 0);
     reg("jdb_throw_uncaught","__throw_uncaught", void_type, {}, -1);
 
+    // Event system
+    reg("jdb_event_on",       "__event_on",      void_type, {i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_event_raise_str","__event_raise_s", void_type, {i8_ptr_type, i8_ptr_type}, -1);
+
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
     reg("jdb_os_args",    "OS.ARGS",      i8_ptr_type, {}, 3);
@@ -431,6 +435,28 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     };
     std::unordered_map<std::string, FuncDecl> decls;
 
+    // Pre-pre-pass: walk the program collecting names of SUBs registered
+    // as event handlers (`ON "X" CALL Handler` becomes a CALL to
+    // __EVENT_ON("X", "Handler")). Their first param will be forced to
+    // tag=3 (JdbArray*) so RAISEEVENT can pass packed args.
+    std::function<void(const Expr&)> scan_event = [&](const Expr& e) {
+        if (e.kind == ExprKind::CALL && e.func_name == "__EVENT_ON" &&
+            e.args.size() >= 2 && e.args[1] &&
+            e.args[1]->kind == ExprKind::LITERAL_STRING) {
+            event_handler_subs.insert(e.args[1]->str_val);
+        }
+        if (e.left) scan_event(*e.left);
+        if (e.right) scan_event(*e.right);
+        for (auto& a : e.args) if (a) scan_event(*a);
+    };
+    std::function<void(const Stmt&)> scan_stmt_event = [&](const Stmt& s) {
+        if (s.expr) scan_event(*s.expr);
+        for (auto& b : s.body) if (b) scan_stmt_event(*b);
+        for (auto& br : s.branches) for (auto& b : br.body) if (b) scan_stmt_event(*b);
+        for (auto& c : s.catch_body) if (c) scan_stmt_event(*c);
+    };
+    for (auto& stmt : program) if (stmt) scan_stmt_event(*stmt);
+
     for (auto& stmt : program) {
         if (!stmt) continue;
         if (stmt->kind != StmtKind::FUNCTION && stmt->kind != StmtKind::SUB) continue;
@@ -439,9 +465,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                stmt->func_name.back() == '$');
         int ret_tag = is_sub ? -1 : (returns_string ? 2 : 1);
         std::vector<int> tags;
-        for (auto& p : stmt->params) {
+        bool is_event_handler = is_sub && event_handler_subs.count(stmt->func_name);
+        for (size_t pi = 0; pi < stmt->params.size(); pi++) {
+            auto& p = stmt->params[pi];
             bool sp = (!p.name.empty() && p.name.back() == '$');
-            tags.push_back(sp ? 2 : 1);
+            int t = sp ? 2 : 1;
+            if (is_event_handler && pi == 0) t = 3;  // event data: JdbArray*
+            tags.push_back(t);
         }
         decls[stmt->func_name] = { stmt.get(), tags, ret_tag };
     }
@@ -512,7 +542,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     for (auto& [name, decl] : decls) {
         std::vector<LLVMTypeRef> param_types;
         for (int t : decl.tags)
-            param_types.push_back(t == 2 ? i8_ptr_type : f64_type);
+            param_types.push_back((t == 2 || t == 3) ? i8_ptr_type : f64_type);
 
         LLVMTypeRef ret_type;
         if (decl.return_tag == -1) ret_type = void_type;
@@ -976,10 +1006,17 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     LLVMPositionBuilderAtEnd(builder, entry);
 
     // Create allocas for parameters — use param_tags for types
+    bool is_evt_handler = (stmt.kind == StmtKind::SUB) &&
+                          event_handler_subs.count(stmt.func_name);
     for (size_t i = 0; i < stmt.params.size() && i < fit->second.param_tags.size(); i++) {
         int ptag = fit->second.param_tags[i];
         VarInfo& vi = create_var(stmt.params[i].name, ptag);
         LLVMBuildStore(builder, LLVMGetParam(current_fn, (unsigned)i), vi.alloca_val);
+        // The data param of an event handler holds string elements (RAISEEVENT
+        // packs strings). INDEX over it should return tag=2 char*.
+        if (is_evt_handler && i == 0) {
+            string_array_vars.insert(stmt.params[i].name);
+        }
     }
 
     // Compile body
@@ -2555,6 +2592,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             auto& arr_get = runtime_funcs["__array_get"];
             LLVMValueRef args[] = { arr_ptr, idx };
             LLVMValueRef result = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, args, 2, "elem");
+            // If the source array is known to hold strings (e.g. event handler
+            // data param), pun the f64-encoded ptr back to char* and tag as
+            // string so concat / string-compare paths see it correctly.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                string_array_vars.count(expr.left->str_val)) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_s");
+                return { as_ptr, 2 };
+            }
             return { result, 1 };  // array elements are f64
         }
 
@@ -3188,6 +3234,35 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
         }
         return { result, 3 };
+    }
+
+    // __EVENT_ON("name", "handler") → register handler at runtime
+    if (name == "__EVENT_ON" && expr.args.size() >= 2 &&
+        expr.args[0] && expr.args[1] &&
+        expr.args[1]->kind == ExprKind::LITERAL_STRING) {
+        TypedValue ev_name = codegen_expr(*expr.args[0]);
+        auto fit = user_functions.find(expr.args[1]->str_val);
+        if (fit != user_functions.end()) {
+            LLVMValueRef handler = LLVMBuildBitCast(builder, fit->second.fn,
+                                                     i8_ptr_type, "h_as_ptr");
+            auto& evfn = runtime_funcs["__event_on"];
+            LLVMValueRef args[] = { coerce_to(ev_name, i8_ptr_type), handler };
+            LLVMBuildCall2(builder, evfn.fn_type, evfn.fn, args, 2, "");
+            return { LLVMConstInt(i64_type, 0, 0), 0 };
+        }
+    }
+
+    // __EVENT_RAISE("name", arg) → call jdb_event_raise_str (one string arg)
+    if (name == "__EVENT_RAISE" && expr.args.size() >= 2) {
+        TypedValue ev_name = codegen_expr(*expr.args[0]);
+        TypedValue arg = codegen_expr(*expr.args[1]);
+        auto& evfn = runtime_funcs["__event_raise_s"];
+        LLVMValueRef args[] = {
+            coerce_to(ev_name, i8_ptr_type),
+            coerce_to(arg, i8_ptr_type),
+        };
+        LLVMBuildCall2(builder, evfn.fn_type, evfn.fn, args, 2, "");
+        return { LLVMConstInt(i64_type, 0, 0), 0 };
     }
 
     // ROUND(x, places) → native 2-arg form

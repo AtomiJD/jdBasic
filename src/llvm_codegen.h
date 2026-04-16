@@ -83,6 +83,16 @@ private:
     // Variables initialised from CVDATE/DATEADD/NOW are tagged DATE for TYPEOF.
     std::unordered_set<std::string> date_vars;
 
+    // SUBs registered as event handlers via `ON "X" CALL Handler` — their
+    // first parameter is forced to tag=3 (JdbArray*) so RAISEEVENT can
+    // pass a packed args array.
+    std::unordered_set<std::string> event_handler_subs;
+
+    // Vars whose array elements are known to be strings — INDEX returns tag=2
+    // (decoded char*) for these. Currently populated for the data param of
+    // event handler SUBs.
+    std::unordered_set<std::string> string_array_vars;
+
     // LLVM types
     LLVMTypeRef i64_type;
     LLVMTypeRef f64_type;
