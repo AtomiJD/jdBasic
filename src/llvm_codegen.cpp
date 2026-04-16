@@ -212,6 +212,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_get_f64","__map_get_f64",f64_type,    {i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_map_get_str","__map_get_str",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_map_get_obj","__map_get_obj",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 4);
     reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     // Native generic vectorization helpers (avoid VM bridge overhead)
     reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -1900,6 +1901,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef args[] = { m, key, v.val };
                     LLVMBuildCall2(builder, set_str.fn_type, set_str.fn, args, 3, "");
                 } else {
+                    // Nested ptrs (map/array) get encoded as f64-bits via coerce_to
                     LLVMValueRef fv = coerce_to(v, f64_type);
                     auto& set_f64 = runtime_funcs["__map_set_f64"];
                     LLVMValueRef args[] = { m, key, fv };
@@ -2226,7 +2228,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // String key → map (tag=4) or UDT (tag=3 / arr-element of UDTs).
             if (idx_tv.tag == 2) {
                 if (arr_tv.tag == 4) {
-                    // Native map access
+                    // Native map access — always returns string (formats numbers)
                     auto& gs = runtime_funcs["__map_get_str"];
                     LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
                     return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
@@ -2239,9 +2241,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 } else if (arr_tv.tag == 0) {
                     obj_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
                 }
-                auto& gs = runtime_funcs["__udt_get_str"];
+                // Check UDT registry for whether field is string-typed.
+                bool is_str_field = false;
+                if (expr.right->kind == ExprKind::LITERAL_STRING) {
+                    const std::string& fname = expr.right->str_val;
+                    if (!fname.empty() && fname.back() == '$') is_str_field = true;
+                    if (!is_str_field) {
+                        // Search all UDT registries
+                        for (auto& [tn, flds] : udt_types) {
+                            for (auto& f : flds) {
+                                if (f.name == fname) { is_str_field = f.is_string; break; }
+                            }
+                        }
+                    }
+                }
+                if (is_str_field) {
+                    auto& gs = runtime_funcs["__udt_get_str"];
+                    LLVMValueRef args[] = { obj_ptr, idx_tv.val };
+                    return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "uget"), 2 };
+                }
+                auto& gf = runtime_funcs["__udt_get_f64"];
                 LLVMValueRef args[] = { obj_ptr, idx_tv.val };
-                return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "uget"), 2 };
+                return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "ugetf"), 1 };
             }
 
             // Get array pointer — may need to convert from encoded param
@@ -3425,7 +3446,8 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     if (target == f64_type) {
         if (tv.tag == 0) return LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
-        if (tv.tag == 2 || tv.tag == 3 || tv.tag == 5) {
+        // All ptr-typed values (string, array, lambda, map) → encode as f64
+        if (tv.tag == 2 || tv.tag == 3 || tv.tag == 4 || tv.tag == 5) {
             LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
             return pun_i64_to_f64(as_i64);
         }
@@ -3433,7 +3455,7 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     }
     if (target == i64_type) {
         if (tv.tag == 1) return LLVMBuildFPToSI(builder, tv.val, i64_type, "ftoi");
-        if (tv.tag == 2 || tv.tag == 3 || tv.tag == 5)
+        if (tv.tag == 2 || tv.tag == 3 || tv.tag == 4 || tv.tag == 5)
             return LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
         return tv.val;
     }

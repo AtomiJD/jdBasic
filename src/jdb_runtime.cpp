@@ -693,6 +693,15 @@ int64_t jdb_map_has(JdbMap* m, const char* key) {
     return map_find(m, key) >= 0 ? 1 : 0;
 }
 
+// Return raw value (for ptr-typed values like nested maps/arrays).
+// Caller must know the type.
+void* jdb_map_get_obj(JdbMap* m, const char* key) {
+    int64_t idx = map_find(m, key);
+    if (idx < 0) return nullptr;
+    union { double d; int64_t i; } u; u.d = m->values[idx];
+    return (void*)(intptr_t)u.i;
+}
+
 // String - String → remove all occurrences: "abcabc" - "bc" → "aa"
 char* jdb_str_sub(const char* a, const char* b) {
     if (!a) return _strdup("");
