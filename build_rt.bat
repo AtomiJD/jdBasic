@@ -38,6 +38,17 @@ for %%A in (%*) do (
         set EXTRA_LIB=!EXTRA_LIB! SDL3.lib SDL3_ttf.lib SDL3_image.lib SDL2_mixer.lib
         echo [+] GFX
     )
+    if /I "%%A"=="IMGUI" (
+        set DEFS=!DEFS! /DIMGUI
+        set EXTRA_SRC=!EXTRA_SRC! libs\imgui\imgui.cpp libs\imgui\imgui_draw.cpp libs\imgui\imgui_tables.cpp libs\imgui\imgui_widgets.cpp libs\imgui\backends\imgui_impl_sdl3.cpp libs\imgui\backends\imgui_impl_sdlrenderer3.cpp
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\imgui /Ilibs\imgui\backends
+        echo [+] ImGui
+    )
+    if /I "%%A"=="SERIAL" (
+        set DEFS=!DEFS! /DUSE_SERIAL
+        set EXTRA_SRC=!EXTRA_SRC! src\serial.cpp
+        echo [+] Serial
+    )
 )
 
 echo Building jdbrt.dll ...
