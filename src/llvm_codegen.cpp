@@ -2769,6 +2769,39 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // Handle TYPEOF — resolve type tag at compile time
+    // ISBOOL/ISNUM/ISSTR/ISARR/ISMAP/ISNONE — compile-time type tests
+    if ((upper == "ISBOOL" || upper == "ISNUM" || upper == "ISSTR" ||
+         upper == "ISARR" || upper == "ISMAP" || upper == "ISNONE" ||
+         upper == "ISNULL") && expr.args.size() == 1) {
+        const Expr& arg = *expr.args[0];
+        bool result = false;
+        if (upper == "ISBOOL") {
+            result = (arg.kind == ExprKind::LITERAL_BOOL);
+        } else if (upper == "ISNUM") {
+            // Bool literals are also numeric in jdBasic
+            if (arg.kind == ExprKind::LITERAL_INT || arg.kind == ExprKind::LITERAL_FLOAT
+                || arg.kind == ExprKind::LITERAL_BOOL) result = true;
+            else if (arg.kind == ExprKind::VARIABLE) {
+                VarInfo* v = lookup_var(arg.str_val);
+                if (v && (v->tag == 0 || v->tag == 1)) result = true;
+            }
+        } else if (upper == "ISSTR") {
+            if (arg.kind == ExprKind::LITERAL_STRING) result = true;
+            else if (arg.kind == ExprKind::VARIABLE) {
+                VarInfo* v = lookup_var(arg.str_val);
+                if (v && v->tag == 2) result = true;
+            }
+        } else if (upper == "ISARR") {
+            if (arg.kind == ExprKind::ARRAY_LITERAL) result = true;
+            else if (arg.kind == ExprKind::VARIABLE) {
+                VarInfo* v = lookup_var(arg.str_val);
+                if (v && v->tag == 3) result = true;
+            }
+        }
+        // ISMAP / ISNONE / ISNULL: not natively supported, default to false
+        return { LLVMConstInt(i64_type, result ? 1 : 0, 0), 0 };
+    }
+
     if (upper == "TYPEOF" && !expr.args.empty()) {
         // Special-case BOOL literals at compile time
         if (expr.args[0]->kind == ExprKind::LITERAL_BOOL) {
