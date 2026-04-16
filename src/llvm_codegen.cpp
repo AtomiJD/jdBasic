@@ -203,6 +203,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
     reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_setlocale",  "SETLOCALE",    void_type, {i8_ptr_type}, -1);
     reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     // Native generic vectorization helpers (avoid VM bridge overhead)
     reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -693,6 +694,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 create_var(stmt->var_name, tag);
             }
         }
+        // Also register destruct vars: [a, b, c] = expr
+        if (stmt->kind == StmtKind::DESTRUCTURE) {
+            for (auto& vn : stmt->destruct_vars) {
+                if (!lookup_var(vn)) create_var(vn, 1);  // f64 from array_get
+            }
+        }
     }
 
     // Pre-pass: register ENUM constants so functions can reference them.
@@ -777,6 +784,35 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
         case StmtKind::ENUM_DECL:
             // Already registered in the pre-pass — no-op here.
             break;
+        case StmtKind::DESTRUCTURE: {
+            // [a, b, c] = expr — evaluate expr, then assign each element.
+            if (!stmt.expr) break;
+            TypedValue arr = codegen_expr(*stmt.expr);
+            if (arr.tag != 3) break;  // not an array, can't destructure
+            auto& get_fn = runtime_funcs["__array_get"];
+            for (size_t i = 0; i < stmt.destruct_vars.size(); i++) {
+                LLVMValueRef idx = LLVMConstInt(i64_type, i, 0);
+                LLVMValueRef args[] = { arr.val, idx };
+                LLVMValueRef elem = LLVMBuildCall2(builder, get_fn.fn_type,
+                    get_fn.fn, args, 2, "delem");
+                // Store into variable (create if needed)
+                const std::string& vn = stmt.destruct_vars[i];
+                VarInfo* vi = lookup_var(vn);
+                if (!vi) {
+                    VarInfo& nv = create_var(vn, 1);  // f64 from array_get
+                    LLVMBuildStore(builder, elem, nv.alloca_val);
+                } else {
+                    // Coerce to existing var's type
+                    if (vi->tag == 0) {
+                        LLVMValueRef as_i = LLVMBuildFPToSI(builder, elem, i64_type, "ftoi");
+                        LLVMBuildStore(builder, as_i, vi->alloca_val);
+                    } else {
+                        LLVMBuildStore(builder, elem, vi->alloca_val);
+                    }
+                }
+            }
+            break;
+        }
         case StmtKind::TYPE_DECL:
             codegen_type_decl(stmt);
             break;

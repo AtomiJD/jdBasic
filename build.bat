@@ -140,8 +140,15 @@ if %ERRORLEVEL%==0 (
         copy /Y libs\LLVM\bin\LLVM-C.dll build\ >nul 2>&1
         echo LLVM DLL copied to build\
         REM Pre-compile jdb_runtime.obj for linking into generated executables
-        "%CC%" /std:c++17 /O2 /EHsc /c src\jdb_runtime.cpp /Fo:build\jdb_runtime.obj >nul 2>&1
-        echo jdb_runtime.obj compiled for native linking
+        "%CC%" /std:c++17 /O2 /EHsc /c src\jdb_runtime.cpp ^
+            "/I%MSVC%\include" "/I%SDK%\Include\%SDKV%\ucrt" ^
+            "/I%SDK%\Include\%SDKV%\um" "/I%SDK%\Include\%SDKV%\shared" ^
+            /Isrc /Fo:build\jdb_runtime.obj
+        if errorlevel 1 (
+            echo BUILD FAILED: jdb_runtime.obj
+        ) else (
+            echo jdb_runtime.obj compiled for native linking
+        )
     )
     if exist libs\llama\llama.dll (
         copy /Y libs\llama\llama.dll build\ >nul 2>&1

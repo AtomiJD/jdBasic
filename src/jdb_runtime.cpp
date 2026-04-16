@@ -62,15 +62,53 @@ char* jdb_str_concat(const char* a, const char* b) {
     return r;
 }
 
-char* jdb_int_to_str(int64_t val) {
+// Locale state: 0 = C (default), 1 = de_DE (dot thousand sep, comma decimal)
+static int g_locale = 0;
+
+void jdb_setlocale(const char* name) {
+    if (!name) { g_locale = 0; return; }
+    if (strstr(name, "de") || strstr(name, "DE")) g_locale = 1;
+    else g_locale = 0;
+}
+
+// Format integer with thousand separators based on locale.
+static void format_int_grouped(int64_t val, char sep, char* out, size_t out_size) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    bool neg = (buf[0] == '-');
+    const char* digits = neg ? buf + 1 : buf;
+    size_t dlen = strlen(digits);
+    size_t oi = 0;
+    if (neg && oi < out_size - 1) out[oi++] = '-';
+    for (size_t i = 0; i < dlen && oi < out_size - 1; i++) {
+        if (i > 0 && (dlen - i) % 3 == 0) {
+            if (oi < out_size - 1) out[oi++] = sep;
+        }
+        out[oi++] = digits[i];
+    }
+    out[oi] = '\0';
+}
+
+char* jdb_int_to_str(int64_t val) {
+    char buf[64];
+    if (g_locale == 1) format_int_grouped(val, '.', buf, sizeof(buf));
+    else snprintf(buf, sizeof(buf), "%lld", (long long)val);
     return _strdup(buf);
 }
 
 char* jdb_double_to_str(double val) {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%g", val);
+    char buf[128];
+    // Whole-number doubles print without decimals (matches interpreter).
+    if (val == (int64_t)val && fabs(val) < 1e15) {
+        if (g_locale == 1) format_int_grouped((int64_t)val, '.', buf, sizeof(buf));
+        else snprintf(buf, sizeof(buf), "%lld", (long long)(int64_t)val);
+    } else {
+        snprintf(buf, sizeof(buf), "%g", val);
+        if (g_locale == 1) {
+            // Replace dot decimal with comma
+            for (char* p = buf; *p; p++) if (*p == '.') { *p = ','; break; }
+        }
+    }
     return _strdup(buf);
 }
 
