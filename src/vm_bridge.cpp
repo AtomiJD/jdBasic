@@ -400,6 +400,27 @@ JDRT_API void jdrt_release_value(JdRT handle, int64_t val_handle) {
     rt->value_store.erase(val_handle);
 }
 
+// ── Frame-based handle cleanup ──────────────────────────────────
+// Compiled programs allocate many VM handles per frame iteration
+// (nested map/array access, bridge call results). A frame-begin
+// snapshot + frame-end sweep keeps the store bounded.
+
+JDRT_API int64_t jdrt_frame_begin(JdRT handle) {
+    auto* rt = (JdRTImpl*)handle;
+    return rt->next_handle;  // watermark: all handles < this survive
+}
+
+JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
+    auto* rt = (JdRTImpl*)handle;
+    // Erase all entries with key >= watermark (allocated during this frame).
+    for (auto it = rt->value_store.begin(); it != rt->value_store.end(); ) {
+        if (it->first >= watermark)
+            it = rt->value_store.erase(it);
+        else
+            ++it;
+    }
+}
+
 // ── Field access on opaque VM Value handles (Maps / JSON objects) ──
 // All return a sentinel/empty value if the handle is unknown or the field
 // is missing — never crash the compiled binary on a typo.

@@ -233,7 +233,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_print_array_elem",  "__print_arr_elem",  void_type, {i8_ptr_type, i64_type}, -1);
     reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
-    reg("jdb_trace",             "__trace",           void_type, {i64_type}, -1);
+    reg("jdb_trace",             "__trace",           void_type, {i8_ptr_type, i64_type}, -1);
 
     // Exception state — THROW stores msg/code, CATCH reads via ERRMSG$/ERR.
     reg("jdb_err_set",       "__err_set",   void_type,   {i8_ptr_type, i64_type}, -1);
@@ -386,6 +386,10 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i64_type}, 0);
     reg("jdrt_val_length",  "__jdrt_val_length",  i64_type,
         {i8_ptr_type, i64_type}, 0);
+    reg("jdrt_frame_begin", "__jdrt_frame_begin", i64_type,
+        {i8_ptr_type}, 0);
+    reg("jdrt_frame_end",   "__jdrt_frame_end",   void_type,
+        {i8_ptr_type, i64_type}, -1);
 
     // Date Add/Diff
     // Dates are ISO strings in the native runtime (not epochs like the VM).
@@ -752,12 +756,16 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
                             "OS.LIST", "OS.ARGS",
                             "MAP.KEYS", "MAP.VALUES", "LINES", "WORDS", "CHARS",
-                            "UNPACK"
+                            "UNPACK",
+                            "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$"
                         };
                         if (arr_returners.count(upper)) return 3;
                         // VM-Value-handle returners (objects parsed from JSON,
-                        // MAP.* helpers that produce maps): tag=6.
-                        if (upper == "JSON.PARSE$" ||
+                        // MAP.* helpers that produce maps, TILED object access).
+                        static const std::unordered_set<std::string> obj_returners = {
+                            "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS"
+                        };
+                        if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
                              upper != "MAP.SIZE" && upper != "MAP.EXISTS" &&
                              upper != "MAP.KEYS" && upper != "MAP.VALUES"))
@@ -867,7 +875,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
 
     // Emit runtime trace if enabled (--trace flag)
     if (stmt.line > 0)
-        emit_trace(stmt.line);
+        emit_trace(stmt.line, stmt.source_file);
 
     try {
     switch (stmt.kind) {
@@ -1266,6 +1274,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // array, or nested object.
     }
     // If the RHS is an array literal that contains any string element,
+    // or a $-suffixed function call known to return an array of strings,
     // mark the LHS variable as string-holding so later INDEX access
     // returns tag=2 (string) instead of the default tag=1 (f64 punned).
     if (stmt.expr && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
@@ -1275,6 +1284,14 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 break;
             }
         }
+    }
+    if (stmt.expr && stmt.expr->kind == ExprKind::CALL &&
+        !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$') {
+        std::string u = stmt.expr->func_name;
+        std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+        if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
+            u == "WORDS" || u == "CHARS")
+            string_array_vars.insert(stmt.var_name);
     }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
@@ -1917,8 +1934,31 @@ void LLVMCodegen::codegen_do_loop(const Stmt& stmt) {
     LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.body");
     LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.end");
 
+    // Frame-based VM handle cleanup: save a watermark at loop-body start
+    // and sweep all handles >= watermark at the end of each iteration.
+    // This keeps value_store bounded without affecting long-lived handles
+    // (those allocated before the loop — e.g. JSON.PARSE results at init).
+    auto emit_frame_begin = [&]() -> LLVMValueRef {
+        auto* fb = get_runtime_func("__jdrt_frame_begin");
+        if (!fb) return nullptr;
+        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        if (!hg) return nullptr;
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef args[] = { rt };
+        return LLVMBuildCall2(builder, fb->fn_type, fb->fn, args, 1, "wm");
+    };
+    auto emit_frame_end = [&](LLVMValueRef wm) {
+        if (!wm) return;
+        auto* fe = get_runtime_func("__jdrt_frame_end");
+        if (!fe) return;
+        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        if (!hg) return;
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef args[] = { rt, wm };
+        LLVMBuildCall2(builder, fe->fn_type, fe->fn, args, 2, "");
+    };
+
     if (stmt.cond_at_top && stmt.loop_cond) {
-        // DO WHILE/UNTIL ... LOOP — condition checked before body
         LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "do.cond");
         loop_stack.push({ end_bb, cond_bb });
 
@@ -1933,26 +1973,30 @@ void LLVMCodegen::codegen_do_loop(const Stmt& stmt) {
             LLVMBuildCondBr(builder, cond_i1, end_bb, body_bb);
 
         LLVMPositionBuilderAtEnd(builder, body_bb);
+        LLVMValueRef wm = emit_frame_begin();
         for (auto& s : stmt.body) {
             if (s) codegen_stmt(*s);
         }
-        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+            emit_frame_end(wm);
             LLVMBuildBr(builder, cond_bb);
+        }
 
         loop_stack.pop();
     } else {
-        // DO ... LOOP [WHILE/UNTIL] — body runs at least once
         loop_stack.push({ end_bb, body_bb });
 
         LLVMBuildBr(builder, body_bb);
 
         LLVMPositionBuilderAtEnd(builder, body_bb);
+        LLVMValueRef wm = emit_frame_begin();
         for (auto& s : stmt.body) {
             if (s) codegen_stmt(*s);
         }
 
         if (stmt.loop_cond) {
             if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+                emit_frame_end(wm);
                 TypedValue cond = codegen_expr(*stmt.loop_cond);
                 LLVMValueRef cond_i1 = to_i1(cond);
                 if (stmt.is_while)
@@ -1962,8 +2006,10 @@ void LLVMCodegen::codegen_do_loop(const Stmt& stmt) {
             }
         } else {
             // Infinite loop: DO ... LOOP (exits only via EXITDO)
-            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+                emit_frame_end(wm);
                 LLVMBuildBr(builder, body_bb);
+            }
         }
 
         loop_stack.pop();
@@ -4085,7 +4131,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // Functions that return objects (MAP, JSON.PARSE, etc.)
             bool is_object_fn = (upper.substr(0, 4) == "MAP." &&
                                  upper != "MAP.SIZE" && upper != "MAP.EXISTS") ||
-                                upper == "JSON.PARSE$";
+                                upper == "JSON.PARSE$" ||
+                                upper == "TILED.PROPERTIES" ||
+                                upper == "TILED.OBJECTS";
             // Functions that return arrays (decoded as ptr/tag=3)
             bool is_array_fn = (upper == "SPLIT" || upper == "KEYS" || upper == "VALUES" ||
                                 upper == "SORTBY" || upper == "GROUPBY" || upper == "REGEX.FINDALL" ||
@@ -4093,7 +4141,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                 upper == "OS.LIST" || upper == "OS.ARGS" || upper == "JSON.STRINGIFY$" ||
                                 upper == "MAP.KEYS" || upper == "MAP.VALUES" ||
                                 upper == "LINES" || upper == "WORDS" || upper == "CHARS" ||
-                                upper == "UNPACK");
+                                upper == "UNPACK" ||
+                                upper == "TILED.SIZE" || upper == "TILED.TILE_SIZE" ||
+                                upper == "TILED.LAYERS$");
 
             LLVMValueRef call_args[] = { handle, name_str, args_ptr, tags_ptr,
                 LLVMConstInt(i32_type, nargs, 0) };
@@ -4290,12 +4340,21 @@ LLVMValueRef LLVMCodegen::to_string_ptr(TypedValue tv) {
     return coerce_to(tv, i8_ptr_type);
 }
 
-void LLVMCodegen::emit_trace(int line) {
+void LLVMCodegen::emit_trace(int line, const std::string& source_file) {
     if (!debug_log) return;
     auto* tr = get_runtime_func("__trace");
     if (!tr) return;
-    LLVMValueRef args[] = { LLVMConstInt(i64_type, line, 0) };
-    LLVMBuildCall2(builder, tr->fn_type, tr->fn, args, 1, "");
+    // Extract basename for compact trace output.
+    std::string label;
+    if (!source_file.empty()) {
+        size_t sep = source_file.find_last_of("/\\");
+        label = (sep != std::string::npos) ? source_file.substr(sep + 1) : source_file;
+        auto dot = label.rfind('.');
+        if (dot != std::string::npos) label = label.substr(0, dot);
+    }
+    LLVMValueRef file_str = LLVMBuildGlobalStringPtr(builder, label.c_str(), ".trf");
+    LLVMValueRef args[] = { file_str, LLVMConstInt(i64_type, line, 0) };
+    LLVMBuildCall2(builder, tr->fn_type, tr->fn, args, 2, "");
 }
 
 void LLVMCodegen::emit_div_zero_check(TypedValue rhs) {

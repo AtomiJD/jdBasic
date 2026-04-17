@@ -164,7 +164,7 @@ private:
     TypedValue promote_to_f64(TypedValue tv);
     bool is_udt_string_field(const std::string& var_name, const std::string& field_name);
     static bool expr_involves_strings(const Expr& e);
-    void emit_trace(int line);
+    void emit_trace(int line, const std::string& source_file = "");
     // Emit a divisor-zero check: if rhs == 0, record "Division by zero"
     // and branch to the top-of-stack catch block (or abort if none).
     // Caller positions the builder in the normal-path block afterwards.

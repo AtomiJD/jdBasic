@@ -43,8 +43,11 @@ void jdb_print_nl() {
 }
 
 // Trace logging: writes to stderr with immediate flush so we can find crash sites.
-void jdb_trace(int64_t line) {
-    fprintf(stderr, "[TRACE] line %lld\n", (long long)line);
+void jdb_trace(const char* file, int64_t line) {
+    if (file && *file)
+        fprintf(stderr, "[TRACE] %s:%lld\n", file, (long long)line);
+    else
+        fprintf(stderr, "[TRACE] line %lld\n", (long long)line);
     fflush(stderr);
 }
 

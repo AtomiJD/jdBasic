@@ -69,6 +69,10 @@ JDRT_API int64_t     jdrt_val_length (JdRT rt, int64_t h);
 // Integer-indexed access on an array-typed handle; returns a fresh handle.
 JDRT_API int64_t     jdrt_val_arr_get(JdRT rt, int64_t h, int64_t idx);
 
+// Frame-based cleanup: save watermark at loop start, sweep at loop end.
+JDRT_API int64_t     jdrt_frame_begin(JdRT rt);
+JDRT_API void        jdrt_frame_end  (JdRT rt, int64_t watermark);
+
 // Type-aware call: each arg has a type tag.
 // Tags: 0=i64(as double), 1=f64, 2=string(char*), 3=array(JdbArray*)
 // Args are passed as i64 values (doubles bitcast, pointers as intptr).
