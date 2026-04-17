@@ -1347,31 +1347,68 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
         if (!in_local_scope) vi = nullptr;
     }
-    // Tag 7 (runtime-tagged): store raw i64 bits + companion i32 tag alloca.
-    // The runtime tag is preserved so subsequent INDEX dispatches correctly.
+    // Tag 7 (runtime-tagged): ALWAYS store as tag 7 with companion alloca.
+    // Never coerce to a concrete type — the runtime tag carries the truth
+    // about what the value IS (could be f64, string, array, VM handle).
+    // Subsequent INDEX and coerce_to dispatch based on the runtime tag.
     if (rhs.tag == 7 && rhs.runtime_tag) {
         if (vi && vi->tag == 7 && vi->runtime_tag_alloca) {
-            // Existing tag-7 var: update both allocas.
             LLVMBuildStore(builder, rhs.val, vi->alloca_val);
             LLVMBuildStore(builder, rhs.runtime_tag, vi->runtime_tag_alloca);
             return;
         }
-        if (vi && vi->tag != 7) {
-            // Existing concrete-typed var: coerce tag-7 → var's type.
-            LLVMTypeRef lt = (vi->tag == 1) ? f64_type :
-                             (vi->tag == 2 || vi->tag == 3 || vi->tag == 4) ? i8_ptr_type : i64_type;
-            rhs.val = coerce_to(rhs, lt);
-            rhs.tag = vi->tag;
-            // Fall through to normal store below.
-        } else if (!vi) {
-            // New var: create with tag 7 + companion alloca.
-            VarInfo& nv = create_var(stmt.var_name, 7);
-            LLVMBuildStore(builder, rhs.val, nv.alloca_val);
-            nv.runtime_tag_alloca = LLVMBuildAlloca(builder, i32_type,
-                (stmt.var_name + ".rtag").c_str());
-            LLVMBuildStore(builder, rhs.runtime_tag, nv.runtime_tag_alloca);
+        if (vi) {
+            vi->tag = 7;
+            if (!vi->runtime_tag_alloca) {
+                // Determine if vi lives in global scope (scopes[0]).
+                std::string rtag_name = stmt.var_name + ".rtag";
+                bool is_global = false;
+                if (!scopes.empty() && scopes[0].vars.count(stmt.var_name))
+                    is_global = true;
+                if (is_global) {
+                    LLVMValueRef g = LLVMAddGlobal(module, i32_type, rtag_name.c_str());
+                    LLVMSetInitializer(g, LLVMConstInt(i32_type, 0, 0));
+                    LLVMSetLinkage(g, LLVMInternalLinkage);
+                    vi->runtime_tag_alloca = g;
+                } else {
+                    // Alloca in entry block for dominance.
+                    LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+                    LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(current_fn);
+                    LLVMValueRef first = LLVMGetFirstInstruction(entry);
+                    if (first) LLVMPositionBuilderBefore(builder, first);
+                    else LLVMPositionBuilderAtEnd(builder, entry);
+                    vi->runtime_tag_alloca = LLVMBuildAlloca(builder, i32_type, rtag_name.c_str());
+                    LLVMPositionBuilderAtEnd(builder, cur);
+                }
+            }
+            LLVMBuildStore(builder, rhs.val, vi->alloca_val);
+            LLVMBuildStore(builder, rhs.runtime_tag, vi->runtime_tag_alloca);
             return;
         }
+        // New var — create_var already puts the val alloca in the entry block.
+        // The companion rtag alloca is created right next to it.
+        VarInfo& nv = create_var(stmt.var_name, 7);
+        LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+        // create_var for locals already positioned alloca in entry block;
+        // runtime_tag_alloca is also created there by create_var's scope logic.
+        // For globals, use a module-level global.
+        std::string rtag_name = stmt.var_name + ".rtag";
+        if (scopes.size() <= 1) {
+            LLVMValueRef g = LLVMAddGlobal(module, i32_type, rtag_name.c_str());
+            LLVMSetInitializer(g, LLVMConstInt(i32_type, 0, 0));
+            LLVMSetLinkage(g, LLVMInternalLinkage);
+            nv.runtime_tag_alloca = g;
+        } else {
+            LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+            LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(current_fn);
+            LLVMValueRef first = LLVMGetFirstInstruction(entry);
+            if (first) LLVMPositionBuilderBefore(builder, first);
+            else LLVMPositionBuilderAtEnd(builder, entry);
+            nv.runtime_tag_alloca = LLVMBuildAlloca(builder, i32_type, rtag_name.c_str());
+            LLVMPositionBuilderAtEnd(builder, cur);
+        }
+        LLVMBuildStore(builder, rhs.runtime_tag, nv.runtime_tag_alloca);
+        return;
     }
     if (vi) {
         if (vi->tag != rhs.tag) {
