@@ -2771,7 +2771,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
                     return { LLVMBuildCall2(builder, go.fn_type, go.fn, args, 3, "ogetobj"), 6 };
                 }
-                // UDT field access — decode ptr from f64 if needed (array elem)
+                // Decode ptr from f64 if needed
                 LLVMValueRef obj_ptr = arr_tv.val;
                 if (arr_tv.tag == 1) {
                     LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
@@ -2779,14 +2779,40 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 } else if (arr_tv.tag == 0) {
                     obj_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
                 }
-                // Check UDT registry for whether field is string-typed.
+
+                // Decide UDT vs native-map access. If the left side is a
+                // known UDT variable, use udt_get_*; otherwise assume the
+                // punned ptr is a JdbMap* and use map_get_*. This handles
+                // the case where a function receives a map param typed as
+                // f64 (because Phase 2 couldn't resolve the method call).
+                bool is_udt = false;
+                if (expr.left && expr.left->kind == ExprKind::VARIABLE)
+                    is_udt = var_udt_type.count(expr.left->str_val) > 0;
+
+                if (!is_udt) {
+                    // Native map access (tag-4-like via punned f64).
+                    if (want_ptr) {
+                        auto& gobj = runtime_funcs["__map_get_obj"];
+                        LLVMValueRef args[] = { obj_ptr, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gobj.fn_type, gobj.fn, args, 2, "mgetobj"), 4 };
+                    }
+                    if (leaf_hint == 0 || leaf_hint == 1) {
+                        auto& gf = runtime_funcs["__map_get_f64"];
+                        LLVMValueRef args[] = { obj_ptr, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "mgetf"), 1 };
+                    }
+                    auto& gs = runtime_funcs["__map_get_str"];
+                    LLVMValueRef args[] = { obj_ptr, idx_tv.val };
+                    return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
+                }
+
+                // UDT field access
                 bool is_str_field = false;
                 if (expr.right->kind == ExprKind::LITERAL_STRING) {
                     const std::string& fname = expr.right->str_val;
                     if (fname == "__TYPE__") is_str_field = true;
                     if (!fname.empty() && fname.back() == '$') is_str_field = true;
                     if (!is_str_field) {
-                        // Search all UDT registries
                         for (auto& [tn, flds] : udt_types) {
                             for (auto& f : flds) {
                                 if (f.name == fname) { is_str_field = f.is_string; break; }
