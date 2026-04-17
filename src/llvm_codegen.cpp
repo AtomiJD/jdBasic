@@ -3601,19 +3601,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "LEN" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
         if (av.tag == 2) {
-            // String length
             auto& fn = runtime_funcs["LEN$"];
             LLVMValueRef args[] = { av.val };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "slen");
-            return { result, 0 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "slen"), 0 };
         }
         if (av.tag == 3) {
-            // Array length: returns outer dimension count (scalar i64).
-            // For 2D shape access LEN(arr)[i], see INDEX handling below.
             auto& fn = runtime_funcs["LEN"];
             LLVMValueRef args[] = { av.val };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "alen");
-            return { result, 0 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "alen"), 0 };
+        }
+        if (av.tag == 6) {
+            // VM Value handle — ask the bridge for its length.
+            auto* fn = get_runtime_func("__jdrt_val_length");
+            if (fn) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef args[] = { rt, av.val };
+                return { LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "hlen"), 0 };
+            }
         }
         // Fallback
     }
