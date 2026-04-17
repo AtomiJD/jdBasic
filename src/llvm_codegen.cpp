@@ -1,5 +1,6 @@
 #ifdef LLVM_CODEGEN
 #include "llvm_codegen.h"
+#include "jdb_tags.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
@@ -39,11 +40,11 @@ LLVMCodegen::VarInfo* LLVMCodegen::lookup_var(const std::string& name) {
 }
 
 LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) {
-    LLVMTypeRef var_type = (tag == 1) ? f64_type :
-                           (tag == 2) ? i8_ptr_type :
-                           (tag == 3) ? i8_ptr_type :
-                           (tag == 4) ? i8_ptr_type :
-                           (tag == 5) ? i8_ptr_type : i64_type;
+    LLVMTypeRef var_type = (tag == JD_TAG_F64)        ? f64_type :
+                           (tag == JD_TAG_STR)        ? i8_ptr_type :
+                           (tag == JD_TAG_ARR)        ? i8_ptr_type :
+                           (tag == JD_TAG_NATIVE_MAP) ? i8_ptr_type :
+                           (tag == JD_TAG_FUNCREF)    ? i8_ptr_type : i64_type;
 
     LLVMValueRef storage;
 
@@ -535,25 +536,30 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             auto it = decls.find(e.func_name);
             if (it != decls.end()) {
                 for (size_t i = 0; i < e.args.size() && i < it->second.tags.size(); i++) {
-                    if (it->second.tags[i] != 2 && e.args[i] && is_str_expr(*e.args[i]))
-                        it->second.tags[i] = 2;
-                    // Detect map/object/array args so the param is declared
-                    // with the right LLVM type (ptr/i64) and INDEX on it
-                    // dispatches correctly inside the function body.
-                    if (e.args[i] && it->second.tags[i] == 1) {
+                    if (it->second.tags[i] != JD_TAG_STR && e.args[i] && is_str_expr(*e.args[i]))
+                        it->second.tags[i] = JD_TAG_STR;
+                    // Promote param types from the call-site so the callee's
+                    // LLVM signature matches and INDEX inside the body
+                    // dispatches against the right kind of value.
+                    if (e.args[i] && it->second.tags[i] == JD_TAG_F64) {
                         auto& a = *e.args[i];
-                        if (a.kind == ExprKind::ARRAY_LITERAL) it->second.tags[i] = 3;
-                        else if (a.kind == ExprKind::MAP_LITERAL) it->second.tags[i] = 4;
+                        if (a.kind == ExprKind::ARRAY_LITERAL) it->second.tags[i] = JD_TAG_ARR;
+                        else if (a.kind == ExprKind::MAP_LITERAL) it->second.tags[i] = JD_TAG_NATIVE_MAP;
                         else if (a.kind == ExprKind::VARIABLE) {
                             VarInfo* v = lookup_var(a.str_val);
-                            if (v && (v->tag == 3 || v->tag == 4 || v->tag == 6 || v->tag == 7))
-                                it->second.tags[i] = (v->tag == 7) ? 6 : v->tag;
+                            if (v && (v->tag == JD_TAG_ARR || v->tag == JD_TAG_NATIVE_MAP ||
+                                      v->tag == JD_TAG_VM_HANDLE || v->tag == JD_TAG_RUNTIME))
+                                // Callee expects a concrete kind, not RUNTIME —
+                                // pass tagged values as VM_HANDLE so the
+                                // callee's INDEX dispatch works uniformly.
+                                it->second.tags[i] = (v->tag == JD_TAG_RUNTIME) ? JD_TAG_VM_HANDLE : v->tag;
                         }
-                        // Any INDEX expression (string-keyed like game{"stats"}
-                        // or int-keyed like elist[i]) may return a VM object
-                        // or tagged value → param should accept i64.
+                        // INDEX (string-keyed like game{"stats"} or
+                        // int-keyed like elist[i]) can return any boxed
+                        // type — accept VM_HANDLE so the caller can drill
+                        // further with the tagged-access helpers.
                         else if (a.kind == ExprKind::INDEX) {
-                            it->second.tags[i] = 6;
+                            it->second.tags[i] = JD_TAG_VM_HANDLE;
                         }
                     }
                 }
@@ -4298,54 +4304,44 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 for (int i = 0; i < nargs; i++) {
                     TypedValue av = codegen_expr(*expr.args[i]);
 
-                    // Convert value to i64 encoding and determine tag
+                    // Encode every arg into an i64 slot and pick a wire
+                    // tag. Only tags the bridge decodes are emitted here;
+                    // tag 4 (native JdbMap*) and tag 5 (funcref) have no
+                    // wire representation and fall back to raw i64 bits.
                     LLVMValueRef encoded;
                     int32_t tag;
 
-                    if (av.tag == 2) {
-                        // String: pointer → intptr → i64
+                    if (av.tag == JD_TAG_STR) {
                         encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "stoi");
-                        tag = 2;
-                    } else if (av.tag == 3) {
-                        // Array pointer → i64
+                        tag = JD_TAG_STR;
+                    } else if (av.tag == JD_TAG_ARR) {
                         encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "atoi");
-                        tag = 3;
-                    } else if (av.tag == 4) {
-                        // Native JdbMap* — no bridge tag for this; fall
-                        // back to tag=0 (opaque i64) so the old behaviour
-                        // is preserved (no regression vs. pre-tag-6 code).
+                        tag = JD_TAG_ARR;
+                    } else if (av.tag == JD_TAG_NATIVE_MAP) {
+                        // Downgrade to I64 — bridge has no NATIVE_MAP path.
                         encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "mptoi");
-                        tag = 0;
-                    } else if (av.tag == 6) {
-                        // VM Value handle — bridge also uses tag 6.
+                        tag = JD_TAG_I64;
+                    } else if (av.tag == JD_TAG_VM_HANDLE) {
                         encoded = av.val;
-                        tag = 6;
-                    } else if (av.tag == 1) {
-                        // f64 → bitcast to i64 so bridge can recover double
+                        tag = JD_TAG_VM_HANDLE;
+                    } else if (av.tag == JD_TAG_F64) {
                         encoded = pun_f64_to_i64(av.val);
-                        tag = 1;
-                    } else if (av.tag == 7 && av.runtime_tag) {
-                        // Runtime-tagged: pass raw i64 bits. The runtime tag
-                        // must be translated from codegen space (6 = VM handle)
-                        // to bridge space (4 = value_store lookup).
+                        tag = JD_TAG_F64;
+                    } else if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
                         encoded = av.val;
-                        // tag is runtime — stored with translation below.
+                        // Wire tag comes from the runtime_tag alloca below.
                     } else {
-                        // i64 direct
                         encoded = av.val;
-                        tag = 0;
+                        tag = JD_TAG_I64;
                     }
 
-                    // Store arg value
                     LLVMValueRef aidx[] = { LLVMConstInt(i32_type, i, 0) };
                     LLVMValueRef aptr = LLVMBuildGEP2(builder, i64_type, args_ptr, aidx, 1, "arg");
                     LLVMBuildStore(builder, encoded, aptr);
 
-                    // Store type tag (runtime for tag 7, compile-time otherwise)
                     LLVMValueRef tidx[] = { LLVMConstInt(i32_type, i, 0) };
                     LLVMValueRef tptr = LLVMBuildGEP2(builder, i32_type, tags_ptr, tidx, 1, "tag");
-                    if (av.tag == 7 && av.runtime_tag) {
-                        // Tags unified — pass runtime_tag directly.
+                    if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
                         LLVMBuildStore(builder, av.runtime_tag, tptr);
                     } else {
                         LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), tptr);
@@ -4356,17 +4352,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 tags_ptr = LLVMConstNull(i8_ptr_type);
             }
 
-            // String-returning functions — $-suffix by convention, plus a
-            // few bridged GFX helpers whose names don't carry the suffix.
-            // ── Bridge return-type classification ──────────────────
-            // Each bridged function must be classified so the codegen
-            // calls the right __jdrt_call_typed_* variant. Checked:
-            //   is_array_fn  → __jdrt_call_typed_arr (tag 3)
-            //   is_object_fn → __jdrt_call_typed_obj (tag 6, VM handle)
-            //   is_string_fn → __jdrt_call_typed_str (tag 2)
-            //   default      → __jdrt_call_typed_f64 (tag 1)
-
-            // String: $-suffix convention + explicit non-$ helpers.
+            // Each bridged function routes to a __jdrt_call_typed_*
+            // variant based on its return shape. Wrong classification
+            // here silently corrupts values (e.g. a str returner fed to
+            // _typed_f64 would get to_double()'d), so the name sets below
+            // are the authoritative source.
             static const std::unordered_set<std::string> string_returners = {
                 "GFX.POLLEVENT", "GFX.WAITEVENT", "INKEY$", "CLIPBOARD.GET$",
                 "INPUT$", "INPUTKEY$", "SOUND.STATS"
@@ -4374,13 +4364,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
                                 string_returners.count(upper);
 
-            // Object (VM handle): only genuine object-returners.
             static const std::unordered_set<std::string> object_returners = {
                 "JSON.PARSE$", "TILED.PROPERTIES", "MAP.FROM", "MAP.COPY"
             };
             bool is_object_fn = object_returners.count(upper);
 
-            // Array: returns a native JdbArray*.
             static const std::unordered_set<std::string> array_returners = {
                 "SPLIT", "KEYS", "VALUES", "SORTBY", "GROUPBY",
                 "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
@@ -4398,31 +4386,29 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMConstInt(i32_type, nargs, 0) };
 
             if (is_array_fn) {
-                // Returns JdbArray* directly via dedicated bridge function
                 auto& fn = runtime_funcs["__jdrt_call_typed_arr"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
-                return { result, 3 };
+                return { result, JD_TAG_ARR };
             } else if (is_object_fn) {
-                // Returns an opaque VM value handle (stored as i64).
-                // tag=6 distinguishes a VM-managed handle from a native
-                // JdbMap* (tag=4) — they look the same in LLVM (i64/ptr)
-                // but need different runtime functions for field access.
+                // Returned i64 looks identical to a native JdbMap* but is
+                // a value_store handle — the VM_HANDLE tag routes field
+                // access through jdrt_obj_* instead of jdb_map_*.
                 auto& fn = runtime_funcs["__jdrt_call_typed_obj"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmobj");
-                return { result, 6 };
+                return { result, JD_TAG_VM_HANDLE };
             } else if (is_string_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-                return { result, 2 };
+                return { result, JD_TAG_STR };
             } else {
                 auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
-                return { result, 1 };
+                return { result, JD_TAG_F64 };
             }
         }
     }
 
-    return { LLVMConstInt(i64_type, 0, 0), 0 };
+    return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
 }
 
 // ── Helpers ─────────────────────────────────────────────────

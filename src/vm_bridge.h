@@ -81,9 +81,10 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT rt, int64_t val, int32_t val_tag,
 JDRT_API int64_t     jdrt_frame_begin(JdRT rt);
 JDRT_API void        jdrt_frame_end  (JdRT rt, int64_t watermark);
 
-// Type-aware call: each arg has a type tag.
-// Tags: 0=i64(as double), 1=f64, 2=string(char*), 3=array(JdbArray*)
-// Args are passed as i64 values (doubles bitcast, pointers as intptr).
+// Type-aware call: each arg has a JdTag (see jdb_tags.h). The wire only
+// carries I64 / F64 / STR / ARR / VM_HANDLE; NATIVE_MAP and FUNCREF have
+// no wire representation. Values are passed as i64 (f64 bitcast, char*
+// and JdbArray* as intptr).
 JDRT_API double jdrt_call_typed_f64(JdRT rt, const char* name,
                                      const int64_t* args, const int32_t* tags, int nargs);
 

@@ -3,6 +3,7 @@
 
 #include "vm.h"
 #include "vm_bridge.h"
+#include "jdb_tags.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -14,9 +15,9 @@
 #include <unordered_map>
 #include <mutex>
 
-// Binary-string length registry — stored here so typed_args_to_values,
-// jdrt_strlen and jdrt_call_typed_str can all share the state.
-// (Moved above typed_args_to_values so the lookup path works.)
+// Map of char* buffers that came out of PACK$/binary I/O and may contain
+// embedded nulls. jdrt_strlen consults this registry before falling back
+// to strlen() so LEN$ reports the true byte length.
 static std::unordered_map<const void*, size_t>& bin_lens() {
     static std::unordered_map<const void*, size_t> m;
     return m;
@@ -117,11 +118,12 @@ static void setup_all_builtins(VM& vm) {
     register_llm_builtins(vm);
 }
 
-// Per-RT error storage
+// One VM instance per jdrt_init() caller, plus the side tables used to
+// translate between VM Values and the integer handles the native-compiled
+// code can store in i64 variables.
 struct JdRTImpl {
     VM vm;
     std::string last_error;
-    // Store VM Value objects for opaque handles (MAP, JSON objects)
     std::unordered_map<int64_t, Value> value_store;
     int64_t next_handle = 1;
 
@@ -188,8 +190,7 @@ JDRT_API void* jdrt_call_arr(JdRT handle, const char* name,
         auto vargs = args_to_values(args, nargs);
         Value result = rt->vm.call_function(name, vargs);
         rt->last_error.clear();
-        // Return the Value's array object as opaque pointer
-        // (caller must not free — managed by VM GC)
+        // Borrow the ArrayObj* — owned by the VM, caller must not free.
         if (result.type == ValueType::ARRAY && result.as_array())
             return (void*)result.as_array();
         return nullptr;
@@ -215,11 +216,14 @@ JDRT_API void jdrt_free(void* ptr) {
     free(ptr);
 }
 
-// Forward decl of JdbArray (matches jdb_runtime.cpp)
+// Must stay layout-compatible with JdbArray in jdb_runtime.cpp; duplicated
+// so the bridge does not pull the whole runtime header in.
 struct JdbArrayFwd { double* data; int64_t length; int32_t flags; };
 
-// Convert a JdbArray* to a VM Value (recursive for nested).
-// Elements marked with flags bit 0 are ptr-encoded (string or nested array).
+// flags bit 0: element doubles are pointers punned as f64.
+// flags bit 1: those pointers are char* strings (else JdbArray* nested).
+// jdBasic's uniform-array rule means one of these encodings applies to
+// every element — no per-element tag is needed.
 static Value jdbarray_to_value(JdbArrayFwd* arr) {
     if (!arr) return Value::make_array();
     Value r = Value::make_array();
@@ -227,10 +231,6 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
     out->elements.reserve(arr->length);
     bool has_ptr = (arr->flags & 1) != 0;
     bool has_string = (arr->flags & 2) != 0;
-    // bit 1 set → all ptr elements are strings.
-    // bit 0 without bit 1 → all ptr elements are nested JdbArrays.
-    // (Mixed arrays would need per-element tagging; jdBasic doesn't allow that
-    // at the language level for uniform arrays, so we rely on the bit meaning.)
     for (int64_t i = 0; i < arr->length; i++) {
         double d = arr->data[i];
         if (has_ptr) {
@@ -253,26 +253,28 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
     return r;
 }
 
-// Helper: convert typed args to Value vector
+// Decode the {args, tags} wire format into VM Values. Only the tags that
+// appear on the wire are handled here — NATIVE_MAP never crosses the
+// bridge (codegen downgrades it to I64) and RUNTIME is unpacked by the
+// caller into one of the concrete tags below.
 static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args, const int32_t* tags, int nargs) {
     std::vector<Value> vargs;
     vargs.reserve(nargs);
     for (int i = 0; i < nargs; i++) {
-        switch (tags[i]) {
-            case 0: { // i64 — preserved exactly by the native caller
+        switch (static_cast<JdTag>(tags[i])) {
+            case JdTag::I64: {
                 vargs.push_back(Value::make_i64(args[i]));
                 break;
             }
-            case 1: { // f64
+            case JdTag::F64: {
                 double d;
                 memcpy(&d, &args[i], sizeof(double));
                 vargs.push_back(Value::make_f64(d));
                 break;
             }
-            case 2: { // string (char* as intptr) — may be binary with embedded nulls
+            case JdTag::STR: {
                 const char* s = (const char*)(intptr_t)args[i];
                 if (!s) { vargs.push_back(Value::make_string("")); break; }
-                // Use registered binary length if present, else strlen.
                 int64_t blen;
                 {
                     std::lock_guard<std::mutex> lk(bin_mx());
@@ -285,13 +287,19 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                     vargs.push_back(Value::make_string(s));
                 break;
             }
-            case 3: { // array (JdbArray*) — convert to VM Value array
+            case JdTag::ARR: {
                 JdbArrayFwd* arr = (JdbArrayFwd*)(intptr_t)args[i];
                 vargs.push_back(jdbarray_to_value(arr));
                 break;
             }
-            case 4: // legacy alias — fall through
-            case 6: { // VM object handle — look up in value_store
+            case JdTag::NATIVE_MAP:
+                // Wire isn't supposed to carry NATIVE_MAP — codegen
+                // downgrades it to I64 on the way out. A runtime-tagged
+                // value produced by jdrt_tagged_get off a native JdbMap*
+                // can still leak one through, so fall through to VM_HANDLE
+                // lookup: miss→NONE keeps the call surviving instead of
+                // punning a pointer through make_f64.
+            case JdTag::VM_HANDLE: {
                 auto it = rt->value_store.find(args[i]);
                 if (it != rt->value_store.end())
                     vargs.push_back(it->second);
@@ -299,6 +307,8 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                     vargs.push_back(Value::make_none());
                 break;
             }
+            case JdTag::FUNCREF:
+            case JdTag::RUNTIME:
             default: {
                 double d;
                 memcpy(&d, &args[i], sizeof(double));
@@ -324,20 +334,16 @@ JDRT_API double jdrt_call_typed_f64(JdRT handle, const char* name,
     }
 }
 
-// Binary-string length registry — lets LEN$ recover the true byte length
-// for strings with embedded nulls (from PACK$, binary I/O).
-// (bin_lens() and bin_mx() are defined near the top of this file.)
-
 static void register_binary_string(const char* s, size_t n) {
     if (!s || n == 0) return;
-    // Only bother if the string actually has embedded nulls
+    // Plain C strings don't need an entry — strlen already gets it right.
     if (strlen(s) == n) return;
     std::lock_guard<std::mutex> lk(bin_mx());
     bin_lens()[(const void*)s] = n;
 }
 
-// Exported: native runtime's jdb_len_str calls this first.
-// Returns -1 if the string isn't in our binary registry (use strlen).
+// Called by the native runtime's jdb_len_str before it falls back to
+// strlen. Returns -1 for unregistered buffers.
 JDRT_API int64_t jdrt_strlen(const char* s) {
     if (!s) return 0;
     std::lock_guard<std::mutex> lk(bin_mx());
@@ -353,8 +359,10 @@ JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
         rt->last_error.clear();
-        // For STRING values, preserve embedded nulls (binary data from PACK$).
         if (result.type == ValueType::STRING) {
+            // memcpy preserves embedded nulls (PACK$, binary I/O) that
+            // strcpy would truncate; register the length so LEN$ can
+            // recover it later.
             const std::string& s = result.as_string()->data;
             char* buf = (char*)malloc(s.size() + 1);
             memcpy(buf, s.data(), s.size());
@@ -388,7 +396,6 @@ JDRT_API int64_t jdrt_call_typed_obj(JdRT handle, const char* name,
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
         rt->last_error.clear();
-        // Store the result and return a handle
         return rt->store_value(std::move(result));
     } catch (const std::exception& e) {
         rt->last_error = e.what();
@@ -401,19 +408,16 @@ JDRT_API void jdrt_release_value(JdRT handle, int64_t val_handle) {
     rt->value_store.erase(val_handle);
 }
 
-// ── Frame-based handle cleanup ──────────────────────────────────
-// Compiled programs allocate many VM handles per frame iteration
-// (nested map/array access, bridge call results). A frame-begin
-// snapshot + frame-end sweep keeps the store bounded.
-
+// Snapshot next_handle at loop start; anything allocated between begin
+// and end is a frame-local temporary and gets swept at end so
+// value_store doesn't grow unbounded across frames.
 JDRT_API int64_t jdrt_frame_begin(JdRT handle) {
     auto* rt = (JdRTImpl*)handle;
-    return rt->next_handle;  // watermark: all handles < this survive
+    return rt->next_handle;
 }
 
 JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
     auto* rt = (JdRTImpl*)handle;
-    // Erase all entries with key >= watermark (allocated during this frame).
     for (auto it = rt->value_store.begin(); it != rt->value_store.end(); ) {
         if (it->first >= watermark)
             it = rt->value_store.erase(it);
@@ -422,10 +426,8 @@ JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
     }
 }
 
-// ── Field access on opaque VM Value handles (Maps / JSON objects) ──
-// All return a sentinel/empty value if the handle is unknown or the field
-// is missing — never crash the compiled binary on a typo.
-
+// Every obj_get_* returns a safe default on unknown-handle or missing-key
+// so a typo in compiled code never crashes the exe.
 static const Value* obj_field(JdRTImpl* rt, int64_t h, const char* key) {
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
@@ -453,15 +455,12 @@ JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
     auto* rt = (JdRTImpl*)handle;
     const Value* v = obj_field(rt, h, key);
     if (!v) return 0;
-    // Store *any* non-missing field so the caller always receives a valid
-    // handle. Scalars (STRING, numbers) materialise later via coerce paths;
-    // Objects/Arrays can be further indexed. Returning 0 for scalars broke
-    // 'title = g{"title"}' where the field's a string.
+    // Store every non-missing field — including scalars — so the caller
+    // always gets a live handle. Scalars materialise via the val_to_*
+    // coerce paths; returning 0 for a string-typed scalar would break
+    // patterns like `title = g{"title"}`.
     return rt->store_value(*v);
 }
-
-// jdrt_obj_get_arr is defined below where JdbArray / value_to_jdbarray
-// are in scope (right after value_to_jdbarray's definition).
 
 JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
     auto* rt = (JdRTImpl*)handle;
@@ -472,14 +471,16 @@ JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
     return m->get(std::string(key ? key : "")) ? 1 : 0;
 }
 
-// JdbArray struct matching jdb_runtime.cpp (keep in sync!)
+// Must stay layout-compatible with JdbArray in jdb_runtime.cpp.
 struct JdbArray {
     double* data;
     int64_t length;
     int32_t flags;
 };
 
-// Convert VM Value array to JdbArray (recursive for nested)
+// Inverse of jdbarray_to_value: walk a VM array, copy its numeric cells
+// verbatim and pun inner strings/arrays as pointers into the data[]
+// slots. flags records which punning the decoder should do.
 static JdbArray* value_to_jdbarray(const Value& v) {
     auto* r = (JdbArray*)malloc(sizeof(JdbArray));
     r->data = nullptr;
@@ -489,10 +490,6 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     auto* arr = v.as_array();
     r->length = (int64_t)arr->elements.size();
     r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
-    // flags bit 0: elements are ptrs (strings OR nested arrays — both need decoding)
-    // flags bit 1: elements are strings (so decoder knows to treat ptr as char*)
-    // If an array mixes strings and sub-arrays, both bits set; caller inspects
-    // each element via helpers.
     bool has_ptr = false, has_string = false;
     for (int64_t i = 0; i < r->length; i++) {
         const auto& e = arr->elements[i];
@@ -516,9 +513,9 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     return r;
 }
 
-// Convert a stored VM Value handle to a scalar. For numeric Values this
-// is to_double / to_string of the Value; for Maps/Arrays the fallback of
-// to_double() is 0 and to_string() is a formatted dump.
+// Materialise a handle as a concrete scalar. Numeric values round-trip
+// exactly; Maps/Arrays fall back to to_double()==0 and to_string()'s
+// formatted dump — callers that care must check the type first.
 JDRT_API double jdrt_val_to_f64(JdRT handle, int64_t h) {
     auto* rt = (JdRTImpl*)handle;
     auto it = rt->value_store.find(h);
@@ -534,8 +531,8 @@ JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
     return _strdup(it->second.to_string().c_str());
 }
 
-// Integer-indexed access on a stored Array Value — returns a fresh
-// handle for the element so subsequent ops see the element's real type.
+// Returns a fresh handle for the element so the caller sees the real
+// element type on subsequent ops (needed for arrays of mixed types).
 JDRT_API int64_t jdrt_val_arr_get(JdRT handle, int64_t h, int64_t idx) {
     auto* rt = (JdRTImpl*)handle;
     auto it = rt->value_store.find(h);
@@ -555,8 +552,8 @@ JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
     return 0;
 }
 
-// ── Tagged field access: returns JdTaggedVal with runtime type tag ──
-
+// Pull `key` out of the VM Value stored at handle `h` and return it as a
+// (tag, bits) pair. Used by the tag-7 dispatch path in compiled code.
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, int64_t* out_val) {
     *out_val = 0;
     auto* rt = (JdRTImpl*)handle;
@@ -566,11 +563,10 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
     switch (v->type) {
         case ValueType::STRING:
             *out_val = (int64_t)(intptr_t)_strdup(v->as_string()->data.c_str());
-            return 2;
+            return jd_tag(JdTag::STR);
         case ValueType::ARRAY: {
-            // Pure-numeric arrays → native JdbArray (fast). Mixed arrays
-            // (containing strings/objects) → VM handle so per-element
-            // typed access via jdrt_val_arr_get works correctly.
+            // Pure-numeric arrays convert cheaply to a flat JdbArray; mixed
+            // arrays need a VM handle so per-element typed access works.
             auto* arr = v->as_array();
             bool pure_numeric = true;
             for (auto& e : arr->elements) {
@@ -581,22 +577,22 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
             }
             if (pure_numeric) {
                 *out_val = (int64_t)(intptr_t)value_to_jdbarray(*v);
-                return 3;
+                return jd_tag(JdTag::ARR);
             }
             *out_val = rt->store_value(*v);
-            return 6;
+            return jd_tag(JdTag::VM_HANDLE);
         }
         case ValueType::OBJECT:
             *out_val = rt->store_value(*v);
-            return 6;  // codegen-internal tag for VM handles
+            return jd_tag(JdTag::VM_HANDLE);
         default:
             u.d = v->to_double();
             *out_val = u.i;
-            return 1;
+            return jd_tag(JdTag::F64);
     }
 }
 
-// Forward-declare JdbMap (matches jdb_runtime.cpp layout).
+// Must stay layout-compatible with JdbMap in jdb_runtime.cpp.
 struct JdbMap {
     int64_t count, capacity;
     char** keys;
@@ -604,21 +600,19 @@ struct JdbMap {
     int32_t* tags;
 };
 
-// ── Unified tagged field getter ──────────────────────────────
-// Single entry point for tag-7 INDEX dispatch. val_bits is the raw i64;
-// val_tag is the runtime tag (4 = native JdbMap*, 6 = VM handle, 3 = array).
-// Returns field tag, writes val to *out_val.
+// Entry point for tag-7 INDEX dispatch on a key. val_bits is either a VM
+// value_store key or a native JdbMap* depending on val_tag; this function
+// dispatches to the right getter and returns the field's runtime tag.
+// Duplicates jdb_map_get_tagged's read-path rather than cross-linking
+// (bridge and native runtime are separate DLLs).
 JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
                                   const char* key, int64_t* out_val) {
     *out_val = 0;
-    if (val_tag == 6) {
+    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
         return jdrt_obj_get_tagged(handle, val_bits, key, out_val);
     }
-    // Tag 4 or other pointer-like: interpret as native JdbMap*
     auto* m = (JdbMap*)(intptr_t)val_bits;
     if (!m) return 0;
-    // Use the same logic as jdb_map_get_tagged in jdb_runtime.cpp
-    // (duplicated here to avoid cross-module linkage issues).
     int64_t idx = -1;
     for (int64_t i = 0; i < m->count; i++) {
         if (m->keys[i] && strcmp(m->keys[i], key) == 0) { idx = i; break; }
@@ -627,37 +621,37 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
     union { double d; int64_t i; } u;
     u.d = m->values[idx];
     int32_t t = m->tags[idx];
-    if (t == 2) {
+    if (t == jd_tag(JdTag::STR)) {
         const char* s = (const char*)(intptr_t)u.i;
         *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
-        return 2;
+        return jd_tag(JdTag::STR);
     }
     *out_val = u.i;
-    return (t == 3 || t == 4) ? t : 1;
+    // Preserve pointer-ish tags; anything else is treated as f64-in-bits.
+    return (t == jd_tag(JdTag::ARR) || t == jd_tag(JdTag::NATIVE_MAP))
+               ? t : jd_tag(JdTag::F64);
 }
 
-// ── Unified int-indexed getter ──────────────────────────────
-// For tag-7 values: if VM handle → jdrt_val_arr_get, else native array.
+// Entry point for tag-7 INDEX dispatch on an integer index. For VM arrays
+// the result is itself a VM handle (so the caller can keep drilling with
+// typed access); for native arrays every element is f64.
 JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_tag,
                                       int64_t idx, int64_t* out_val) {
     *out_val = 0;
-    if (val_tag == 6) {
+    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
         *out_val = jdrt_val_arr_get(handle, val_bits, idx);
-        return (*out_val != 0) ? 6 : 0;
+        return (*out_val != 0) ? jd_tag(JdTag::VM_HANDLE) : 0;
     }
-    // Native array
     auto* arr = (JdbArray*)(intptr_t)val_bits;
     if (!arr || idx < 0 || idx >= arr->length) return 0;
     union { double d; int64_t i; } u;
     u.d = arr->data[idx];
     *out_val = u.i;
-    return 1;  // native array elements are always f64
+    return jd_tag(JdTag::F64);
 }
 
-// (JdbMap is forward-declared above)
-
-// Field-access companion to obj_get_*: pull an array-typed field out of
-// a stored Value handle and convert it to the native JdbArray shape.
+// Deferred from the obj_get_* block because value_to_jdbarray and the
+// JdbArray layout aren't in scope up there.
 JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
     auto* rt = (JdRTImpl*)handle;
     const Value* v = obj_field(rt, h, key);

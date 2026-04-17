@@ -12,6 +12,8 @@
 #include <regex>
 #include <vector>
 
+#include "jdb_tags.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -791,7 +793,7 @@ void jdb_map_set_f64(JdbMap* m, const char* key, double val) {
         m->keys[idx] = _strdup(key);
     }
     m->values[idx] = val;
-    m->tags[idx] = 1;
+    m->tags[idx] = JD_TAG_F64;
 }
 
 void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
@@ -804,15 +806,15 @@ void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
     }
     union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)_strdup(val ? val : "");
     m->values[idx] = u.d;
-    m->tags[idx] = 2;
+    m->tags[idx] = JD_TAG_STR;
 }
 
 double jdb_map_get_f64(JdbMap* m, const char* key) {
     int64_t idx = map_find(m, key);
     if (idx < 0) return 0;
-    if (m->tags[idx] == 2) {
-        // value is a string ptr — caller likely wants its address but we
-        // return 0 to signal type mismatch. Use jdb_map_get_str instead.
+    // String value: caller asked for an f64, so we refuse rather than
+    // pun the pointer bits. Use jdb_map_get_str when the field is a string.
+    if (m->tags[idx] == JD_TAG_STR) {
         return 0;
     }
     return m->values[idx];
@@ -821,12 +823,11 @@ double jdb_map_get_f64(JdbMap* m, const char* key) {
 char* jdb_map_get_str(JdbMap* m, const char* key) {
     int64_t idx = map_find(m, key);
     if (idx < 0) return _strdup("");
-    if (m->tags[idx] == 2) {
+    if (m->tags[idx] == JD_TAG_STR) {
         union { double d; int64_t i; } u; u.d = m->values[idx];
         const char* s = (const char*)(intptr_t)u.i;
         return _strdup(s ? s : "");
     }
-    // Numeric → format
     char buf[64];
     snprintf(buf, sizeof(buf), "%g", m->values[idx]);
     return _strdup(buf);
@@ -836,8 +837,9 @@ int64_t jdb_map_has(JdbMap* m, const char* key) {
     return map_find(m, key) >= 0 ? 1 : 0;
 }
 
-// Return raw value (for ptr-typed values like nested maps/arrays).
-// Caller must know the type.
+// Used by the codegen for nested-map / array-typed fields. The caller is
+// responsible for knowing the real type — the map itself doesn't expose
+// per-field tags through this entry point.
 void* jdb_map_get_obj(JdbMap* m, const char* key) {
     int64_t idx = map_find(m, key);
     if (idx < 0) return nullptr;
@@ -845,13 +847,13 @@ void* jdb_map_get_obj(JdbMap* m, const char* key) {
     return (void*)(intptr_t)u.i;
 }
 
-// ── Tagged Value: runtime-typed field access ─────────────────
-// Unified dispatcher: val_bits holds the map/handle, val_tag tells us
-// what kind (4 = native JdbMap*, 6 = VM handle, anything else → try map).
-// Returns the field's tag, writes raw val bits to *out_val.
+// Forward decl — the unified dispatcher that picks between this and
+// jdrt_obj_get_tagged based on val_tag.
 int32_t jdb_tagged_get(int64_t val_bits, int32_t val_tag, const char* key, int64_t* out_val);
 
-// Native map tagged get (called by jdb_tagged_get for tag 4).
+// Tag-aware counterpart of jdb_map_get_* — returns (tag, bits) so the
+// caller can handle numbers, strings, and pointer-punned sub-maps/arrays
+// without knowing the field's type in advance.
 int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
     *out_val = 0;
     int64_t idx = map_find(m, key);
@@ -859,13 +861,13 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
     union { double d; int64_t i; } u;
     u.d = m->values[idx];
     int32_t t = m->tags[idx];
-    if (t == 2) {
+    if (t == JD_TAG_STR) {
         const char* s = (const char*)(intptr_t)u.i;
         *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
-        return 2;
+        return JD_TAG_STR;
     }
     *out_val = u.i;
-    return (t == 3 || t == 4) ? t : 1;
+    return (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP) ? t : JD_TAG_F64;
 }
 
 // String - String → remove all occurrences: "abcabc" - "bc" → "aa"
@@ -1970,26 +1972,27 @@ char* jdb_sha256(const char* input) {
     return result;
 }
 
-// ── TYPEOF ──────────────────────────────────────────────────
-// In native compiled code, types are known at compile time.
-// These are placeholder functions called with a type tag.
-// TYPEOF on an f64 — returns "NONE" for NaN (used as the EXITFUNC sentinel),
-// otherwise "FLOAT64".
+// TYPEOF on compiled code: the type is usually known at compile time and
+// codegen picks the matching stub. NaN on an f64 means the EXITFUNC
+// sentinel was returned, which surfaces as "NONE".
 char* jdb_typeof_f64(double v) {
     if (v != v) return _strdup("NONE");
     return _strdup("FLOAT64");
 }
 
+// Both NATIVE_MAP and VM_HANDLE surface as "OBJECT" — user-facing type
+// language doesn't distinguish native-runtime maps from VM Values.
 char* jdb_typeof_tag(int64_t tag) {
-    switch (tag) {
-        case 0: return _strdup("INT64");
-        case 1: return _strdup("FLOAT64");
-        case 2: return _strdup("STRING");
-        case 3: return _strdup("ARRAY");
-        case 4: return _strdup("OBJECT");
-        case 5: return _strdup("FUNCREF");
-        case 6: return _strdup("OBJECT");  // VM Value handle — shows as OBJECT
-        default: return _strdup("UNKNOWN");
+    switch ((JdTag)tag) {
+        case JdTag::I64:        return _strdup("INT64");
+        case JdTag::F64:        return _strdup("FLOAT64");
+        case JdTag::STR:        return _strdup("STRING");
+        case JdTag::ARR:        return _strdup("ARRAY");
+        case JdTag::NATIVE_MAP: return _strdup("OBJECT");
+        case JdTag::FUNCREF:    return _strdup("FUNCREF");
+        case JdTag::VM_HANDLE:  return _strdup("OBJECT");
+        case JdTag::RUNTIME:
+        default:                return _strdup("UNKNOWN");
     }
 }
 
