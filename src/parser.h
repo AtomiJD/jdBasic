@@ -87,6 +87,7 @@ private:
     static void module_rename_expr(Expr& expr,
         const std::unordered_map<std::string, std::string>& func_map,
         const std::unordered_map<std::string, std::string>& var_map);
+    static void module_set_source_file(Stmt& stmt, const std::string& path);
     static void module_rename_stmt(Stmt& stmt,
         const std::unordered_map<std::string, std::string>& func_map,
         const std::unordered_map<std::string, std::string>& var_map);

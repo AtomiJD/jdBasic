@@ -2044,15 +2044,9 @@ std::vector<StmtPtr> Parser::parse_import() {
         }
         if (!is_subimport) {
             module_rename_stmt(*s, func_map, var_map);
-            // Tag with module source file if not already set by a sub-import
-            if (s->source_file.empty()) {
-                s->source_file = module_file_path;
-                // Also tag child statements (methods inside TYPE_DECL, body of SUB/FUNC)
-                for (auto& child : s->body) {
-                    if (child && child->source_file.empty())
-                        child->source_file = module_file_path;
-                }
-            }
+            // Tag with module source file recursively (module_rename_stmt
+            // already visits every descendant — no separate loop needed).
+            module_set_source_file(*s, module_file_path);
         }
     }
 
@@ -2106,6 +2100,16 @@ void Parser::module_rename_expr(Expr& expr,
             break;
         default: break;
     }
+}
+
+// Recursively tag every statement and its descendants with a source file.
+void Parser::module_set_source_file(Stmt& stmt, const std::string& path) {
+    if (stmt.source_file.empty()) stmt.source_file = path;
+    for (auto& s : stmt.body)         if (s) module_set_source_file(*s, path);
+    for (auto& s : stmt.catch_body)   if (s) module_set_source_file(*s, path);
+    for (auto& s : stmt.finally_body) if (s) module_set_source_file(*s, path);
+    for (auto& br : stmt.branches)
+        for (auto& s : br.body) if (s) module_set_source_file(*s, path);
 }
 
 void Parser::module_rename_stmt(Stmt& stmt,
