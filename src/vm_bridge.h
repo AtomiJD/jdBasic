@@ -69,6 +69,9 @@ JDRT_API int64_t     jdrt_val_length (JdRT rt, int64_t h);
 // Integer-indexed access on an array-typed handle; returns a fresh handle.
 JDRT_API int64_t     jdrt_val_arr_get(JdRT rt, int64_t h, int64_t idx);
 
+// Tagged field access: writes val to *out_val, returns tag.
+JDRT_API int32_t jdrt_obj_get_tagged(JdRT rt, int64_t h, const char* key, int64_t* out_val);
+
 // Frame-based cleanup: save watermark at loop start, sweep at loop end.
 JDRT_API int64_t     jdrt_frame_begin(JdRT rt);
 JDRT_API void        jdrt_frame_end  (JdRT rt, int64_t watermark);

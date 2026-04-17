@@ -105,6 +105,7 @@ private:
     LLVMTypeRef i64_type;
     LLVMTypeRef f64_type;
     LLVMTypeRef i8_ptr_type;
+    LLVMTypeRef tagged_val_type;  // {i64, i32} — JdTaggedVal
     LLVMTypeRef i32_type;
     LLVMTypeRef void_type;
 
@@ -119,7 +120,8 @@ private:
     // Typed value returned by expression codegen
     struct TypedValue {
         LLVMValueRef val;
-        int tag;  // 0=i64, 1=f64, 2=string(i8*)
+        int tag;  // 0=i64, 1=f64, 2=string(i8*), 7=runtime-tagged
+        LLVMValueRef runtime_tag = nullptr;  // i32 runtime type when tag==7
     };
 
     // Setup

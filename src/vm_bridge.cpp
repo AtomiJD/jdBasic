@@ -554,6 +554,31 @@ JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
     return 0;
 }
 
+// ── Tagged field access: returns JdTaggedVal with runtime type tag ──
+
+JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, int64_t* out_val) {
+    *out_val = 0;
+    auto* rt = (JdRTImpl*)handle;
+    const Value* v = obj_field(rt, h, key);
+    if (!v) return 0;
+    union { double d; int64_t i; } u;
+    switch (v->type) {
+        case ValueType::STRING:
+            *out_val = (int64_t)(intptr_t)_strdup(v->as_string()->data.c_str());
+            return 2;
+        case ValueType::ARRAY:
+            *out_val = (int64_t)(intptr_t)value_to_jdbarray(*v);
+            return 3;
+        case ValueType::OBJECT:
+            *out_val = rt->store_value(*v);
+            return 6;
+        default:
+            u.d = v->to_double();
+            *out_val = u.i;
+            return 1;
+    }
+}
+
 // Field-access companion to obj_get_*: pull an array-typed field out of
 // a stored Value handle and convert it to the native JdbArray shape.
 JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {

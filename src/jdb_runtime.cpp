@@ -845,6 +845,25 @@ void* jdb_map_get_obj(JdbMap* m, const char* key) {
     return (void*)(intptr_t)u.i;
 }
 
+// ── Tagged Value: runtime-typed field access for maps ────────
+// Returns tag (0=i64, 1=f64, 2=str, 3=arr, 4=map), writes raw val bits
+// to *out_val. Uses output param to avoid struct-return ABI mismatches.
+int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
+    *out_val = 0;
+    int64_t idx = map_find(m, key);
+    if (idx < 0) return 0;
+    union { double d; int64_t i; } u;
+    u.d = m->values[idx];
+    int32_t t = m->tags[idx];
+    if (t == 2) {
+        const char* s = (const char*)(intptr_t)u.i;
+        *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
+        return 2;
+    }
+    *out_val = u.i;
+    return (t == 3 || t == 4) ? t : 1;
+}
+
 // String - String → remove all occurrences: "abcabc" - "bc" → "aa"
 char* jdb_str_sub(const char* a, const char* b) {
     if (!a) return _strdup("");

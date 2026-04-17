@@ -386,6 +386,11 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i64_type}, 0);
     reg("jdrt_val_length",  "__jdrt_val_length",  i64_type,
         {i8_ptr_type, i64_type}, 0);
+    // Tagged value getters: return tag (i32), write val to i64* out param.
+    reg("jdb_map_get_tagged",  "__map_get_tagged",  i32_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdrt_obj_get_tagged", "__jdrt_obj_get_tagged", i32_type,
+        {i8_ptr_type, i64_type, i8_ptr_type, i8_ptr_type}, 0);
     reg("jdrt_frame_begin", "__jdrt_frame_begin", i64_type,
         {i8_ptr_type}, 0);
     reg("jdrt_frame_end",   "__jdrt_frame_end",   void_type,
@@ -1861,8 +1866,11 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
             }
         } else if (tv.tag == 6) {
-            // VM handle → materialise to string via bridge.
             LLVMValueRef args[] = { to_string_ptr(tv) };
+            LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+        } else if (tv.tag == 7) {
+            // Runtime-tagged: coerce to string for printing.
+            LLVMValueRef args[] = { coerce_to(tv, i8_ptr_type) };
             LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
         } else {
             LLVMValueRef args[] = { tv.val };
@@ -2735,24 +2743,36 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
                         return { LLVMBuildCall2(builder, gobj.fn_type, gobj.fn, args, 2, "mgetobj"), 4 };
                     }
-                    // Leaf: pick get_f64 or get_str based on caller's hint.
+                    // Known-type fast paths (when ASSIGN / call-arg set the hint).
                     if (leaf_hint == 0 || leaf_hint == 1) {
                         auto& gf = runtime_funcs["__map_get_f64"];
                         LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
                         return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "mgetf"), 1 };
                     }
-                    auto& gs = runtime_funcs["__map_get_str"];
-                    LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
-                    return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
+                    if (leaf_hint == 2) {
+                        auto& gs = runtime_funcs["__map_get_str"];
+                        LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
+                    }
+                    // No hint → TAGGED getter. Runtime tells us the type.
+                    {
+                        auto& gtag = runtime_funcs["__map_get_tagged"];
+                        LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                        LLVMValueRef targs[] = { arr_tv.val, idx_tv.val, out };
+                        LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, targs, 3, "mtag");
+                        LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
+                        TypedValue r; r.val = tv_val; r.tag = 7; r.runtime_tag = tv_tag; return r;
+                    }
                 }
                 if (arr_tv.tag == 6) {
-                    LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
-                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");
-                    if (leaf_hint == 3) {
-                        auto& ga = runtime_funcs["__jdrt_obj_get_arr"];
+                    LLVMValueRef handle_g = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle_g, "rt");
+                    if (want_ptr) {
+                        auto& go = runtime_funcs["__jdrt_obj_get_obj"];
                         LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
-                        return { LLVMBuildCall2(builder, ga.fn_type, ga.fn, args, 3, "ogetarr"), 3 };
+                        return { LLVMBuildCall2(builder, go.fn_type, go.fn, args, 3, "ogetobj"), 6 };
                     }
+                    // Known-type fast paths.
                     if (leaf_hint == 0 || leaf_hint == 1) {
                         auto& gf = runtime_funcs["__jdrt_obj_get_f64"];
                         LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
@@ -2763,13 +2783,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
                         return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 3, "ogets"), 2 };
                     }
-                    // No hint: return another handle so subsequent INDEX /
-                    // field access keep their real VM type (arrays, nested
-                    // objects, numbers). coerce_to on this handle materialises
-                    // to the right concrete type when finally consumed.
-                    auto& go = runtime_funcs["__jdrt_obj_get_obj"];
-                    LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
-                    return { LLVMBuildCall2(builder, go.fn_type, go.fn, args, 3, "ogetobj"), 6 };
+                    // No hint → TAGGED getter.
+                    {
+                        auto& gtag = runtime_funcs["__jdrt_obj_get_tagged"];
+                        LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                        LLVMValueRef targs[] = { rt, arr_tv.val, idx_tv.val, out };
+                        LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, targs, 4, "otag");
+                        LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
+                        TypedValue r; r.val = tv_val; r.tag = 7; r.runtime_tag = tv_tag; return r;
+                    }
                 }
                 // Decode ptr from f64 if needed
                 LLVMValueRef obj_ptr = arr_tv.val;
@@ -4234,6 +4256,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 // ── Helpers ─────────────────────────────────────────────────
 
 LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
+    if (tv.tag == 7) {
+        // Runtime-tagged: coerce to f64, then compare != 0
+        LLVMValueRef f = coerce_to(tv, f64_type);
+        return LLVMBuildFCmp(builder, LLVMRealONE, f,
+                             LLVMConstReal(f64_type, 0.0), "dyn_tobool");
+    }
     if (tv.tag == 1)
         return LLVMBuildFCmp(builder, LLVMRealONE, tv.val,
                              LLVMConstReal(f64_type, 0.0), "tobool");
@@ -4313,6 +4341,68 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
 }
 
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
+    // Runtime-tagged value (tag 7): branch on runtime tag to pick the
+    // right conversion. The common case is f64 (tag 1) or string (tag 2).
+    if (tv.tag == 7 && tv.runtime_tag) {
+        LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+            LLVMConstInt(i32_type, 2, 0), "dyn_isstr");
+        LLVMBasicBlockRef bb_str = LLVMAppendBasicBlock(current_fn, "dyn.str");
+        LLVMBasicBlockRef bb_other = LLVMAppendBasicBlock(current_fn, "dyn.other");
+        LLVMBasicBlockRef bb_merge = LLVMAppendBasicBlock(current_fn, "dyn.merge");
+        LLVMBuildCondBr(builder, is_str, bb_str, bb_other);
+
+        if (target == f64_type) {
+            LLVMPositionBuilderAtEnd(builder, bb_str);
+            // String → parse to double via VAL
+            LLVMValueRef sptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "sptr");
+            auto* vfn = get_runtime_func("VAL");
+            LLVMValueRef s2f = vfn
+                ? LLVMBuildCall2(builder, vfn->fn_type, vfn->fn, &sptr, 1, "s2f")
+                : LLVMConstReal(f64_type, 0.0);
+            LLVMBuildBr(builder, bb_merge);
+            LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_other);
+            LLVMValueRef punned = pun_i64_to_f64(tv.val);
+            LLVMBuildBr(builder, bb_merge);
+            LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_merge);
+            LLVMValueRef phi = LLVMBuildPhi(builder, f64_type, "dyn_f64");
+            LLVMValueRef vals[] = { s2f, punned };
+            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_other_end };
+            LLVMAddIncoming(phi, vals, bbs, 2);
+            return phi;
+        }
+        if (target == i8_ptr_type) {
+            LLVMPositionBuilderAtEnd(builder, bb_str);
+            LLVMValueRef sptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "sptr");
+            LLVMBuildBr(builder, bb_merge);
+            LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_other);
+            LLVMValueRef f = pun_i64_to_f64(tv.val);
+            auto& d2s = runtime_funcs["__double_to_str"];
+            LLVMValueRef fstr = LLVMBuildCall2(builder, d2s.fn_type, d2s.fn, &f, 1, "f2s");
+            LLVMBuildBr(builder, bb_merge);
+            LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_merge);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "dyn_str");
+            LLVMValueRef vals[] = { sptr, fstr };
+            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_other_end };
+            LLVMAddIncoming(phi, vals, bbs, 2);
+            return phi;
+        }
+        if (target == i64_type) {
+            LLVMPositionBuilderAtEnd(builder, bb_str);
+            LLVMBuildBr(builder, bb_merge);
+            LLVMPositionBuilderAtEnd(builder, bb_other);
+            LLVMBuildBr(builder, bb_merge);
+            LLVMPositionBuilderAtEnd(builder, bb_merge);
+            return tv.val;  // raw i64 bits either way
+        }
+    }
     if (target == f64_type) {
         if (tv.tag == 0) return LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
         if (tv.tag == 2 || tv.tag == 3 || tv.tag == 4 || tv.tag == 5) {
