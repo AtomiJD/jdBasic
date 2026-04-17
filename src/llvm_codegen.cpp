@@ -723,6 +723,18 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             udt_var_names.insert(stmt->var_name);
             var_udt_type[stmt->var_name] = stmt->label;
         }
+        // Same for DIM arr[N] AS TypeName — register the element type so
+        // infer_tag sees `arr[i]` as UDT (tag 3) during the var-type
+        // inference pass. Without this, the LET of `arr[0]` below gets
+        // stamped as f64, and later map INDEX on it stores a ptr into
+        // an f64 slot (silent type punning → garbage on read).
+        if (stmt && stmt->kind == StmtKind::DIM && stmt->expr &&
+            stmt->expr->kind == ExprKind::CALL &&
+            stmt->expr->func_name == "__MAKE_UDT_ARRAY__" &&
+            stmt->expr->args.size() >= 2 &&
+            stmt->expr->args[1]->kind == ExprKind::LITERAL_STRING) {
+            var_udt_type[stmt->var_name + "[]"] = stmt->expr->args[1]->str_val;
+        }
     }
 
     for (auto& stmt : program) {
@@ -838,19 +850,46 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     }
                     if (e->kind == ExprKind::UNARY) return infer_tag(e->right.get());
                     if (e->kind == ExprKind::INDEX) {
-                        // arr[i]: if arr's elements are UDT objects we know
-                        // (registered as `name[]`), result is a UDT ptr (3).
+                        // Resolve the UDT type driving this INDEX, if any,
+                        // so a string-keyed access can pick the right tag
+                        // from the field schema. Two shapes:
+                        //   v{"k"}       — v is a UDT instance
+                        //   arr[i]{"k"}  — arr[] has known UDT element type
+                        // Also catches `__TYPE__` which is always a string.
+                        auto lookup_field_tag = [&](const std::string& type_name,
+                                                    const Expr* key) -> int {
+                            if (!key || key->kind != ExprKind::LITERAL_STRING) return -1;
+                            const std::string& fname = key->str_val;
+                            if (fname == "__TYPE__") return 2;
+                            if (!fname.empty() && fname.back() == '$') return 2;
+                            auto tit = udt_types.find(type_name);
+                            if (tit == udt_types.end()) return -1;
+                            for (auto& f : tit->second)
+                                if (f.name == fname) return f.is_string ? 2 : 1;
+                            return -1;
+                        };
                         if (e->left && e->left->kind == ExprKind::VARIABLE) {
                             if (var_udt_type.count(e->left->str_val + "[]"))
                                 return 3;
-                            // INDEX on a VM-Value handle returns another
-                            // handle (tag 6). Lets `th = g{"themes"}` keep
-                            // the VM-object flavour instead of collapsing
-                            // to a numeric 0 at the pre-pass.
                             VarInfo* lv = lookup_var(e->left->str_val);
                             if (lv && lv->tag == 6) return 6;
+                            // UDT instance with string key — consult schema.
+                            auto uit = var_udt_type.find(e->left->str_val);
+                            if (uit != var_udt_type.end()) {
+                                int ft = lookup_field_tag(uit->second, e->right.get());
+                                if (ft >= 0) return ft;
+                            }
                         }
-                        // Otherwise default to f64 (numeric array element).
+                        // Nested INDEX: arr[i]{"key"} — drill into the
+                        // inner INDEX and use the UDT-array's element type.
+                        if (e->left && e->left->kind == ExprKind::INDEX &&
+                            e->left->left && e->left->left->kind == ExprKind::VARIABLE) {
+                            auto ait = var_udt_type.find(e->left->left->str_val + "[]");
+                            if (ait != var_udt_type.end()) {
+                                int ft = lookup_field_tag(ait->second, e->right.get());
+                                if (ft >= 0) return ft;
+                            }
+                        }
                         return 1;
                     }
                     return -1;
@@ -2905,14 +2944,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     obj_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
                 }
 
-                // Decide UDT vs native-map access. If the left side is a
-                // known UDT variable, use udt_get_*; otherwise assume the
-                // punned ptr is a JdbMap* and use map_get_*. This handles
-                // the case where a function receives a map param typed as
-                // f64 (because Phase 2 couldn't resolve the method call).
+                // Decide UDT vs native-map access. The punned ptr could be
+                // a UDT instance or a JdbMap — same struct, different
+                // registered getter names. Check both:
+                //   v{"k"}       — v is a UDT variable
+                //   arr[i]{"k"}  — arr[] has a UDT element type
                 bool is_udt = false;
                 if (expr.left && expr.left->kind == ExprKind::VARIABLE)
                     is_udt = var_udt_type.count(expr.left->str_val) > 0;
+                else if (expr.left && expr.left->kind == ExprKind::INDEX &&
+                         expr.left->left && expr.left->left->kind == ExprKind::VARIABLE)
+                    is_udt = var_udt_type.count(expr.left->left->str_val + "[]") > 0;
 
                 if (!is_udt) {
                     // Native map access (tag-4-like via punned f64).

@@ -1,0 +1,28 @@
+' Minimal repro for native compile crash on UDT array + map INDEX
+' Expected: works both in VM and native
+
+TYPE _Item
+    Name AS STRING
+    Score AS INTEGER
+ENDTYPE
+
+DIM arr[3] AS _Item
+
+PRINT "step 1: array len = "; LEN(arr)
+
+' Access __TYPE__ field of first element (map-index on UDT instance)
+PRINT "step 2: typeof arr[0] field via {} "
+name0 = arr[0]{"__TYPE__"}
+PRINT "  __TYPE__ = "; name0
+
+' Assign UDT fields via dot
+arr[0].Name = "alpha"
+arr[0].Score = 7
+PRINT "step 3: arr[0].Name = "; arr[0].Name
+PRINT "step 4: arr[0].Score = "; arr[0].Score
+
+' Different element
+arr[1].Name = "beta"
+PRINT "step 5: arr[1].Name = "; arr[1].Name
+
+PRINT "DONE"
