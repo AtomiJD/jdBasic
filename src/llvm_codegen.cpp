@@ -1342,14 +1342,27 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
         if (!in_local_scope) vi = nullptr;
     }
+    // Tag 7 (runtime-tagged) must be materialised before storage. When
+    // assigning to an existing var, coerce to its type. For a new var,
+    // default to i64 (raw bits) with tag 6 (VM handle) — the most common
+    // source of tag-7 values is JSON/Map field access.
+    if (rhs.tag == 7) {
+        if (vi) {
+            LLVMTypeRef lt = (vi->tag == 1) ? f64_type :
+                             (vi->tag == 2 || vi->tag == 3 || vi->tag == 4) ? i8_ptr_type : i64_type;
+            rhs.val = coerce_to(rhs, lt);
+            rhs.tag = vi->tag;
+        } else {
+            // New var: keep raw i64 bits, treat as VM handle.
+            rhs.tag = 6;
+        }
+    }
     if (vi) {
         if (vi->tag != rhs.tag) {
             if (vi->tag == 1 && rhs.tag == 0) {
-                // Variable is f64, value is int → promote value
                 rhs.val = LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof");
                 rhs.tag = 1;
             } else if (vi->tag == 0 && rhs.tag == 1) {
-                // Variable was int, value is float → truncate to int for storage
                 rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
                 rhs.tag = 0;
             } else if ((rhs.tag == 3 || rhs.tag == 4 || rhs.tag == 5 || rhs.tag == 6) &&
