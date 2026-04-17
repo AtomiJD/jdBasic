@@ -101,6 +101,11 @@ JDRT_API void*  jdrt_call_typed_arr(JdRT rt, const char* name,
 // Get last error message (NULL if no error)
 JDRT_API const char* jdrt_last_error(JdRT rt);
 
+// Clear the bridge's last-error slot. Called by generated code once it
+// has pulled the message into the native runtime's g_err_msg, so the
+// next per-stmt propagation check doesn't re-read the same error.
+JDRT_API void jdrt_clear_last_error(JdRT rt);
+
 #ifdef __cplusplus
 }
 #endif

@@ -239,9 +239,24 @@ void LLVMCodegen::declare_runtime_functions() {
     // Exception state — THROW stores msg/code, CATCH reads via ERRMSG$/ERR.
     reg("jdb_err_set",       "__err_set",   void_type,   {i8_ptr_type, i64_type}, -1);
     reg("jdb_err_clear",     "__err_clear", void_type,   {}, -1);
-    reg("jdb_err_msg",       "ERRMSG$",     i8_ptr_type, {}, 2);
-    reg("jdb_err_code",      "ERR",         i64_type,    {}, 0);
+    reg("jdb_err_msg",          "ERRMSG$",  i8_ptr_type, {}, 2);
+    // ERR → user-visible reader (with shadow fallback). The raw-code
+    // getter below is what emit_err_check's propagation loop calls.
+    reg("jdb_err_code_visible", "ERR",      i64_type,    {}, 0);
+    reg("jdb_err_code",         "__err_rc", i64_type,    {}, 0);
     reg("jdb_throw_uncaught","__throw_uncaught", void_type, {}, -1);
+    // Clears only g_err_code, leaves g_err_msg alone (so ERRMSG$ still
+    // works inside a catch body).
+    reg("jdb_err_code_clear","__err_code_clear", void_type, {}, -1);
+
+    // Recursion guard — one enter at each user FUNC/SUB entry, one leave
+    // on the common exit path. __rec_depth snapshots the counter on TRY
+    // entry so CATCH can restore it after an error unwinds through
+    // missed leaves.
+    reg("jdb_recursion_enter",    "__rec_enter",   i32_type, {}, -1);
+    reg("jdb_recursion_leave",    "__rec_leave",   void_type, {}, -1);
+    reg("jdb_recursion_reset_to", "__rec_reset",   void_type, {i64_type}, -1);
+    reg("jdb_recursion_depth",    "__rec_depth",   i64_type, {}, 0);
 
     // Event system
     reg("jdb_event_on",       "__event_on",      void_type, {i8_ptr_type, i8_ptr_type}, -1);
@@ -401,6 +416,10 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type}, 0);
     reg("jdrt_frame_end",   "__jdrt_frame_end",   void_type,
         {i8_ptr_type, i64_type}, -1);
+    reg("jdrt_last_error",  "__jdrt_last_error",  i8_ptr_type,
+        {i8_ptr_type}, 2);
+    reg("jdrt_clear_last_error", "__jdrt_clear_last_error", void_type,
+        {i8_ptr_type}, -1);
 
     // Date Add/Diff
     // Dates are ISO strings in the native runtime (not epochs like the VM).
@@ -1005,6 +1024,20 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             LLVMBasicBlockRef catch_bb  = LLVMAppendBasicBlock(current_fn, "catch");
             LLVMBasicBlockRef after_bb  = LLVMAppendBasicBlock(current_fn, "after_try");
 
+            // Snapshot the current recursion depth so the catch block can
+            // restore it — the error-unwind path skips paired __rec_leave
+            // calls, and we don't want that drift to leak out of the TRY.
+            LLVMValueRef saved_depth = nullptr;
+            {
+                auto rd = runtime_funcs.find("__rec_depth");
+                if (rd != runtime_funcs.end()) {
+                    LLVMValueRef cur = LLVMBuildCall2(builder, rd->second.fn_type,
+                                                     rd->second.fn, nullptr, 0, "rdepth");
+                    saved_depth = LLVMBuildAlloca(builder, i64_type, "saved_depth");
+                    LLVMBuildStore(builder, cur, saved_depth);
+                }
+            }
+
             LLVMBuildBr(builder, try_bb);
             LLVMPositionBuilderAtEnd(builder, try_bb);
             try_stack.push_back(catch_bb);
@@ -1015,9 +1048,29 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                 LLVMBuildBr(builder, after_bb);
 
             LLVMPositionBuilderAtEnd(builder, catch_bb);
+            // Soft-clear: drop err_code only, so per-stmt checks inside
+            // the catch body don't re-trip, but ERRMSG$ can still see the
+            // caught message. Rewind the recursion counter in the same
+            // spot — the unwind may have skipped paired __rec_leave calls.
+            {
+                auto& ec = runtime_funcs["__err_code_clear"];
+                LLVMBuildCall2(builder, ec.fn_type, ec.fn, nullptr, 0, "");
+                if (saved_depth) {
+                    auto& rr = runtime_funcs["__rec_reset"];
+                    LLVMValueRef d = LLVMBuildLoad2(builder, i64_type, saved_depth, "d");
+                    LLVMValueRef args[] = { d };
+                    LLVMBuildCall2(builder, rr.fn_type, rr.fn, args, 1, "");
+                }
+            }
             for (auto& s : stmt.catch_body) { if (s) codegen_stmt(*s); }
-            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+                // Hard-clear g_err_msg when leaving the catch body — a
+                // THROW outside this TRY mustn't see the previously-caught
+                // message leaking through ERRMSG$.
+                auto& ec = runtime_funcs["__err_clear"];
+                LLVMBuildCall2(builder, ec.fn_type, ec.fn, nullptr, 0, "");
                 LLVMBuildBr(builder, after_bb);
+            }
 
             LLVMPositionBuilderAtEnd(builder, after_bb);
             break;
@@ -1094,33 +1147,24 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             }
             break;
         case StmtKind::END_STMT: {
-            // END exits the program — but inside a SUB/FUNC it just returns.
-            // Pick the right return inst based on the enclosing function's
-            // declared return type (i32 only for main).
-            LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
-            if (ret_ty == void_type) LLVMBuildRetVoid(builder);
-            else if (ret_ty == i32_type) LLVMBuildRet(builder, LLVMConstInt(i32_type, 0, 0));
-            else if (ret_ty == f64_type) LLVMBuildRet(builder, LLVMConstReal(f64_type, 0.0));
-            else LLVMBuildRet(builder, LLVMConstNull(ret_ty));
+            // END exits the program — in main that's a real exit; inside a
+            // SUB/FUNC it returns a default value. emit_fn_return chooses
+            // the common exit block (user FUNC) or a direct ret (main).
+            emit_fn_return(nullptr);
             break;
         }
         case StmtKind::EXIT_LOOP:
             // Parser overloads is_while=true to mean EXITFUNC (early return).
             if (stmt.is_while) {
-                // Return a default value matching the function's return type.
                 LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
-                if (ret_ty == void_type) {
-                    LLVMBuildRetVoid(builder);
-                } else if (ret_ty == f64_type) {
+                LLVMValueRef rv = nullptr;
+                if (ret_ty == f64_type) {
                     // 0/0 = NaN, signalling NONE for TYPEOF(EarlyReturn(-1)).
                     union { uint64_t i; double d; } nan_bits;
-                    nan_bits.i = 0xFFF8000000000000ULL;  // canonical quiet NaN
-                    LLVMBuildRet(builder, LLVMConstReal(f64_type, nan_bits.d));
-                } else if (ret_ty == i8_ptr_type) {
-                    LLVMBuildRet(builder, LLVMConstNull(i8_ptr_type));
-                } else {
-                    LLVMBuildRet(builder, LLVMConstNull(ret_ty));
+                    nan_bits.i = 0xFFF8000000000000ULL;
+                    rv = LLVMConstReal(f64_type, nan_bits.d);
                 }
+                emit_fn_return(rv);
                 LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_exitfunc");
                 LLVMPositionBuilderAtEnd(builder, dead);
             } else if (!loop_stack.empty()) {
@@ -1140,9 +1184,90 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
     } catch (...) {
         std::cerr << "[NATIVE] Warning: unknown codegen error at line " << stmt.line << std::endl;
     }
+    // After every completed statement, check whether an err was raised
+    // during the statement's calls. Branches out to the enclosing TRY or
+    // propagates up the call chain — this is the native analogue of the
+    // VM's C++ exception unwinding.
+    emit_err_check();
 }
 
 // ── FUNC / SUB ──────────────────────────────────────────────
+
+void LLVMCodegen::emit_err_check() {
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) return;
+    auto ec_it = runtime_funcs.find("__err_rc");
+    if (ec_it == runtime_funcs.end()) return;
+
+    // Pull bridge-side errors (set inside jdrt_call_typed_* via VM
+    // exception handling) into g_err_msg so the per-stmt check can see
+    // them uniformly with native-runtime errors. Clear the bridge slot
+    // right after so the next stmt doesn't re-read the same error.
+    auto le_it = runtime_funcs.find("__jdrt_last_error");
+    auto cle_it = runtime_funcs.find("__jdrt_clear_last_error");
+    auto es_it = runtime_funcs.find("__err_set");
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    if (le_it != runtime_funcs.end() && es_it != runtime_funcs.end() && hg) {
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef le_args[] = { rt };
+        LLVMValueRef bmsg = LLVMBuildCall2(builder, le_it->second.fn_type,
+                                           le_it->second.fn, le_args, 1, "blast");
+        LLVMValueRef has_bmsg = LLVMBuildICmp(builder, LLVMIntNE, bmsg,
+                                              LLVMConstNull(i8_ptr_type), "has_bmsg");
+        LLVMBasicBlockRef pull_bb = LLVMAppendBasicBlock(current_fn, "bmsg_pull");
+        LLVMBasicBlockRef post_bb = LLVMAppendBasicBlock(current_fn, "bmsg_post");
+        LLVMBuildCondBr(builder, has_bmsg, pull_bb, post_bb);
+
+        LLVMPositionBuilderAtEnd(builder, pull_bb);
+        LLVMValueRef es_args[] = { bmsg, LLVMConstInt(i64_type, 1, 0) };
+        LLVMBuildCall2(builder, es_it->second.fn_type, es_it->second.fn, es_args, 2, "");
+        if (cle_it != runtime_funcs.end()) {
+            LLVMBuildCall2(builder, cle_it->second.fn_type, cle_it->second.fn, le_args, 1, "");
+        }
+        LLVMBuildBr(builder, post_bb);
+
+        LLVMPositionBuilderAtEnd(builder, post_bb);
+    }
+
+    LLVMValueRef err = LLVMBuildCall2(builder, ec_it->second.fn_type,
+                                      ec_it->second.fn, nullptr, 0, "err_rc");
+    LLVMValueRef has_err = LLVMBuildICmp(builder, LLVMIntNE, err,
+                                         LLVMConstInt(i64_type, 0, 0), "has_err");
+    LLVMBasicBlockRef err_bb = LLVMAppendBasicBlock(current_fn, "call_err");
+    LLVMBasicBlockRef ok_bb = LLVMAppendBasicBlock(current_fn, "call_ok");
+    LLVMBuildCondBr(builder, has_err, err_bb, ok_bb);
+
+    LLVMPositionBuilderAtEnd(builder, err_bb);
+    if (!try_stack.empty()) {
+        LLVMBuildBr(builder, try_stack.back());
+    } else if (current_exit_bb) {
+        emit_fn_return(nullptr);
+    } else {
+        auto& uc = runtime_funcs["__throw_uncaught"];
+        LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
+        LLVMBuildUnreachable(builder);
+    }
+    LLVMPositionBuilderAtEnd(builder, ok_bb);
+}
+
+void LLVMCodegen::emit_fn_return(LLVMValueRef val) {
+    LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
+    bool is_void = (ret_ty == void_type);
+    if (current_exit_bb) {
+        if (!is_void && current_retval_alloca) {
+            LLVMValueRef v = val ? val : LLVMConstNull(ret_ty);
+            LLVMBuildStore(builder, v, current_retval_alloca);
+        }
+        LLVMBuildBr(builder, current_exit_bb);
+        return;
+    }
+    // Fallback for main / any frame without an exit block set up.
+    if (is_void) LLVMBuildRetVoid(builder);
+    else if (ret_ty == i32_type) LLVMBuildRet(builder,
+        val ? val : LLVMConstInt(i32_type, 0, 0));
+    else if (ret_ty == f64_type) LLVMBuildRet(builder,
+        val ? val : LLVMConstReal(f64_type, 0.0));
+    else LLVMBuildRet(builder, val ? val : LLVMConstNull(ret_ty));
+}
 
 void LLVMCodegen::codegen_function(const Stmt& stmt) {
     std::string fn_name = stmt.func_name;
@@ -1152,6 +1277,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     // Save current state
     LLVMValueRef saved_fn = current_fn;
     std::string saved_fn_src = current_fn_source_file;
+    LLVMBasicBlockRef saved_exit = current_exit_bb;
+    LLVMValueRef saved_retval = current_retval_alloca;
     current_fn = fit->second.fn;
     current_fn_source_file = stmt.source_file;
 
@@ -1161,6 +1288,33 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     // Create entry block
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, current_fn, "entry");
     LLVMPositionBuilderAtEnd(builder, entry);
+
+    // Retval alloca + common exit block — every RET site writes here and
+    // branches to exit_bb. The exit block is responsible for the single
+    // recursion_leave + ret.
+    LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
+    bool is_void_fn = (ret_ty == void_type);
+    current_retval_alloca = is_void_fn ? nullptr
+                                       : LLVMBuildAlloca(builder, ret_ty, "retval");
+    current_exit_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "fn.exit");
+
+    // Recursion guard — if over the limit, rec_enter has already set the
+    // error state. We branch straight to exit_bb (which will NOT emit
+    // leave when the error path reached it, but for simplicity always
+    // calls leave — counter reset on catch compensates for drift).
+    auto& re = runtime_funcs["__rec_enter"];
+    LLVMValueRef rc = LLVMBuildCall2(builder, re.fn_type, re.fn, nullptr, 0, "rec_rc");
+    LLVMValueRef too_deep = LLVMBuildICmp(builder, LLVMIntNE, rc,
+                                          LLVMConstInt(i32_type, 0, 0), "too_deep");
+    LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "fn.body");
+    LLVMBuildCondBr(builder, too_deep, current_exit_bb, body_bb);
+
+    LLVMPositionBuilderAtEnd(builder, body_bb);
+
+    // Zero-initialise retval so the overflow path returns a safe default.
+    if (current_retval_alloca) {
+        LLVMBuildStore(builder, LLVMConstNull(ret_ty), current_retval_alloca);
+    }
 
     // Create allocas for parameters — use param_tags for types
     bool is_evt_handler = (stmt.kind == StmtKind::SUB) &&
@@ -1181,23 +1335,34 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         if (s) codegen_stmt(*s);
     }
 
-    // If no terminator yet, add implicit return
+    // If no terminator yet, branch to the unified exit block. Implicit
+    // return value is zero for numeric funcs and nullptr for ptr funcs —
+    // matches the old behaviour.
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
-        if (stmt.kind == StmtKind::SUB) {
-            LLVMBuildRetVoid(builder);
-        } else {
-            auto fit2 = user_functions.find(stmt.func_name);
-            if (fit2 != user_functions.end() && fit2->second.return_tag == 2)
-                LLVMBuildRet(builder, LLVMConstNull(i8_ptr_type));  // return empty string
-            else
-                LLVMBuildRet(builder, LLVMConstReal(f64_type, 0.0));
+        if (current_retval_alloca) {
+            LLVMBuildStore(builder, LLVMConstNull(ret_ty), current_retval_alloca);
         }
+        LLVMBuildBr(builder, current_exit_bb);
+    }
+
+    // exit_bb: recursion_leave + ret (loading from retval_alloca for
+    // non-void functions).
+    LLVMPositionBuilderAtEnd(builder, current_exit_bb);
+    auto& rl = runtime_funcs["__rec_leave"];
+    LLVMBuildCall2(builder, rl.fn_type, rl.fn, nullptr, 0, "");
+    if (is_void_fn) {
+        LLVMBuildRetVoid(builder);
+    } else {
+        LLVMValueRef rv = LLVMBuildLoad2(builder, ret_ty, current_retval_alloca, "rv");
+        LLVMBuildRet(builder, rv);
     }
 
     // Pop scope and restore
     scopes.pop_back();
     current_fn = saved_fn;
     current_fn_source_file = saved_fn_src;
+    current_exit_bb = saved_exit;
+    current_retval_alloca = saved_retval;
 
     // Position builder back at the end of the saved function's last block
     LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
@@ -1207,23 +1372,12 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
 // ── RETURN ──────────────────────────────────────────────────
 
 void LLVMCodegen::codegen_return(const Stmt& stmt) {
-    if (stmt.expr) {
+    LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
+    if (stmt.expr && ret_ty != void_type) {
         TypedValue rv = codegen_expr(*stmt.expr);
-
-        // Coerce the returned value to the function's declared return type.
-        // user_functions records the return tag (2 = ptr/string/object,
-        // anything else = f64-numeric). The function's actual LLVM type is
-        // the source of truth — derive the target type from current_fn.
-        LLVMTypeRef fn_ty = LLVMGlobalGetValueType(current_fn);
-        LLVMTypeRef ret_ty = LLVMGetReturnType(fn_ty);
-
-        if (ret_ty == LLVMVoidTypeInContext(ctx)) {
-            LLVMBuildRetVoid(builder);
-            return;
-        }
-        LLVMBuildRet(builder, coerce_to(rv, ret_ty));
+        emit_fn_return(coerce_to(rv, ret_ty));
     } else {
-        LLVMBuildRetVoid(builder);
+        emit_fn_return(nullptr);
     }
 }
 

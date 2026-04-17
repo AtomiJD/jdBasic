@@ -113,6 +113,27 @@ private:
     // codegen runs over main-level statements.
     std::string current_fn_source_file;
 
+    // Unified exit block for the user FUNC/SUB currently being codegen'd.
+    // Every RET in the body branches here instead of emitting ret directly,
+    // so the recursion-guard leave can be placed in one spot and the error
+    // unwind path has a target to jump to. nullptr when codegen is in main.
+    LLVMBasicBlockRef current_exit_bb = nullptr;
+    LLVMValueRef      current_retval_alloca = nullptr; // null for void / main
+
+    // Emit either "store val→retval; br exit_bb" (inside a user FUNC/SUB,
+    // so the guard leave runs on the common exit path) or a plain ret
+    // (main). val is ignored for void functions; pass nullptr to return
+    // the function's default zero value.
+    void emit_fn_return(LLVMValueRef val);
+
+    // After a call that may have set g_err_code, check and branch:
+    //   - TRY active here → try_stack.back()
+    //   - inside a user FUNC → propagate by exiting the function with
+    //     the default retval (caller's per-stmt check picks it up)
+    //   - inside main with no TRY → __throw_uncaught + unreachable
+    // The builder is left positioned at the fall-through ok block.
+    void emit_err_check();
+
     // LLVM types
     LLVMTypeRef i64_type;
     LLVMTypeRef f64_type;

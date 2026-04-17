@@ -64,28 +64,50 @@ void jdb_print_space() {
 
 static char    g_err_msg[512] = "";
 static int64_t g_err_code     = 0;
+// Shadow copies that persist through a catch body. The per-statement err
+// check needs g_err_code to go to zero on catch entry or it would keep
+// re-tripping; user code inside the catch still expects ERR / ERRMSG$
+// to return the caught values. Reads fall back to these shadows.
+static char    g_last_msg[512] = "";
+static int64_t g_last_code     = 0;
 
 void jdb_err_set(const char* msg, int64_t code) {
     if (msg) {
         strncpy(g_err_msg, msg, sizeof(g_err_msg) - 1);
         g_err_msg[sizeof(g_err_msg) - 1] = '\0';
+        strncpy(g_last_msg, msg, sizeof(g_last_msg) - 1);
+        g_last_msg[sizeof(g_last_msg) - 1] = '\0';
     } else {
         g_err_msg[0] = '\0';
+        g_last_msg[0] = '\0';
     }
     g_err_code = code;
+    g_last_code = code;
 }
 
 void jdb_err_clear() {
     g_err_msg[0] = '\0';
     g_err_code = 0;
+    g_last_msg[0] = '\0';
+    g_last_code = 0;
 }
 
 const char* jdb_err_msg() {
-    return _strdup(g_err_msg);
+    const char* src = g_err_msg[0] ? g_err_msg : g_last_msg;
+    return _strdup(src);
 }
 
+// Raw err_code — used by the per-stmt propagation check in codegen,
+// which MUST read only the live value or it would loop forever on a
+// caught error (the shadow would keep it non-zero after soft-clear).
 int64_t jdb_err_code() {
     return g_err_code;
+}
+
+// User-visible err_code — falls back to the shadow so a catch body
+// sees the caught code even after the soft-clear has run.
+int64_t jdb_err_code_visible() {
+    return g_err_code ? g_err_code : g_last_code;
 }
 
 // Called when a THROW escapes all TRY handlers — mirrors the
@@ -94,6 +116,46 @@ void jdb_throw_uncaught() {
     fprintf(stderr, "Unhandled exception: %s\n", g_err_msg);
     fflush(stderr);
     exit(1);
+}
+
+// Recursion guard — each user FUNC/SUB bumps a thread-local depth
+// counter at entry and decrements it on normal return. Hitting the
+// limit sets the error state and returns 1 so the codegen branch can
+// propagate out instead of letting the OS stack overflow kill the exe.
+static thread_local int64_t g_rec_depth = 0;
+static const int64_t JDB_MAX_RECURSION = 256;
+
+int32_t jdb_recursion_enter() {
+    if (g_rec_depth >= JDB_MAX_RECURSION) {
+        jdb_err_set("Stack overflow: recursion too deep", 1);
+        return 1;
+    }
+    g_rec_depth++;
+    return 0;
+}
+
+// Soft clear used by a native catch block on entry: zeroes only the
+// error code so the per-statement propagation check inside the catch
+// body doesn't re-trip, while leaving g_err_msg intact so ERRMSG$ can
+// still return the caught message. The real err_clear runs when the
+// catch body finishes.
+void jdb_err_code_clear() {
+    g_err_code = 0;
+}
+
+void jdb_recursion_leave() {
+    if (g_rec_depth > 0) g_rec_depth--;
+}
+
+// After a caught error the counter may be stale because the unwind
+// path skipped the paired leaves. The catch block resets to the depth
+// the caller was at so later recursion can run to the full limit.
+void jdb_recursion_reset_to(int64_t depth) {
+    if (depth >= 0) g_rec_depth = depth;
+}
+
+int64_t jdb_recursion_depth() {
+    return g_rec_depth;
 }
 
 // OS.FEATURE for the native-compiled runtime. Mirrors the VM-side
@@ -1271,8 +1333,13 @@ int64_t jdb_len_str(const char* s) {
 char* jdb_mid(const char* s, int64_t start, int64_t length) {
     if (!s) return _strdup("");
     int64_t slen = (int64_t)strlen(s);
-    if (start < 0) start = 0;
-    if (start >= slen) return _strdup("");
+    // Matches the VM's substr-based MID: start past the end is an error,
+    // not a silent empty return. Without this, TRY/CATCH in compiled code
+    // can't observe out-of-range MID calls.
+    if (start < 0 || start > slen) {
+        jdb_err_set("MID: index out of range", 1);
+        return _strdup("");
+    }
     if (length < 0 || start + length > slen) length = slen - start;
     char* r = (char*)malloc(length + 1);
     memcpy(r, s + start, length);
@@ -1543,12 +1610,20 @@ char* jdb_pwd() {
 // wraps `CD "..."` in a PRINT to show the path; matching that contract.
 char* jdb_cd(const char* path) {
 #ifdef _WIN32
-    if (path && *path) SetCurrentDirectoryA(path);
+    if (path && *path) {
+        if (!SetCurrentDirectoryA(path)) {
+            jdb_err_set("CD: cannot change directory", 1);
+        }
+    }
     char buf[MAX_PATH];
     DWORD n = GetCurrentDirectoryA(MAX_PATH, buf);
     return _strdup(n > 0 ? buf : "");
 #else
-    if (path && *path) chdir(path);
+    if (path && *path) {
+        if (chdir(path) != 0) {
+            jdb_err_set("CD: cannot change directory", 1);
+        }
+    }
     char buf[4096];
     if (!getcwd(buf, sizeof(buf))) buf[0] = 0;
     return strdup(buf);

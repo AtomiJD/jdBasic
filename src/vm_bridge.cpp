@@ -685,4 +685,9 @@ JDRT_API const char* jdrt_last_error(JdRT handle) {
     return rt->last_error.empty() ? nullptr : rt->last_error.c_str();
 }
 
+JDRT_API void jdrt_clear_last_error(JdRT handle) {
+    auto* rt = (JdRTImpl*)handle;
+    rt->last_error.clear();
+}
+
 } // extern "C"
