@@ -2796,14 +2796,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         LLVMValueRef args[] = { obj_ptr, idx_tv.val };
                         return { LLVMBuildCall2(builder, gobj.fn_type, gobj.fn, args, 2, "mgetobj"), 4 };
                     }
-                    if (leaf_hint == 0 || leaf_hint == 1) {
-                        auto& gf = runtime_funcs["__map_get_f64"];
+                    if (leaf_hint == 2) {
+                        auto& gs = runtime_funcs["__map_get_str"];
                         LLVMValueRef args[] = { obj_ptr, idx_tv.val };
-                        return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "mgetf"), 1 };
+                        return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
                     }
-                    auto& gs = runtime_funcs["__map_get_str"];
+                    // Default to numeric — matches the common case for map
+                    // fields used in arithmetic, comparisons, function args.
+                    // Explicit string hint (from $-var assignment or string
+                    // param) triggers the str path above.
+                    auto& gf = runtime_funcs["__map_get_f64"];
                     LLVMValueRef args[] = { obj_ptr, idx_tv.val };
-                    return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
+                    return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "mgetf"), 1 };
                 }
 
                 // UDT field access
