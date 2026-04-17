@@ -527,6 +527,19 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 for (size_t i = 0; i < e.args.size() && i < it->second.tags.size(); i++) {
                     if (it->second.tags[i] != 2 && e.args[i] && is_str_expr(*e.args[i]))
                         it->second.tags[i] = 2;
+                    // Detect map/object/array args so the param is declared
+                    // with the right LLVM type (ptr/i64) and INDEX on it
+                    // dispatches correctly inside the function body.
+                    if (e.args[i] && it->second.tags[i] == 1) {
+                        auto& a = *e.args[i];
+                        if (a.kind == ExprKind::ARRAY_LITERAL) it->second.tags[i] = 3;
+                        else if (a.kind == ExprKind::MAP_LITERAL) it->second.tags[i] = 4;
+                        else if (a.kind == ExprKind::VARIABLE) {
+                            VarInfo* v = lookup_var(a.str_val);
+                            if (v && (v->tag == 3 || v->tag == 4 || v->tag == 6))
+                                it->second.tags[i] = v->tag;
+                        }
+                    }
                 }
             }
         }
@@ -581,7 +594,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     for (auto& [name, decl] : decls) {
         std::vector<LLVMTypeRef> param_types;
         for (int t : decl.tags)
-            param_types.push_back((t == 2 || t == 3) ? i8_ptr_type : f64_type);
+            param_types.push_back((t == 2 || t == 3 || t == 4) ? i8_ptr_type :
+                                  (t == 6) ? i64_type : f64_type);
 
         LLVMTypeRef ret_type;
         if (decl.return_tag == -1) ret_type = void_type;
@@ -3265,7 +3279,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 for (size_t ai = 0; ai < expr.args.size(); ai++) {
                     TypedValue av = codegen_expr(*expr.args[ai]);
                     int expected = (ai + 1 < fi.param_tags.size()) ? fi.param_tags[ai + 1] : 1;
-                    args.push_back(coerce_to(av, expected == 2 ? i8_ptr_type : f64_type));
+                    LLVMTypeRef pt = (expected == 2 || expected == 3 || expected == 4) ? i8_ptr_type :
+                                     (expected == 6) ? i64_type : f64_type;
+                    args.push_back(coerce_to(av, pt));
                 }
                 LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
                 if (fi.return_tag == -1) {
@@ -3304,7 +3320,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         for (size_t ai = 0; ai < expr.args.size(); ai++) {
                             TypedValue av = codegen_expr(*expr.args[ai]);
                             int expected = (ai + 1 < fi.param_tags.size()) ? fi.param_tags[ai + 1] : 1;
-                            args.push_back(coerce_to(av, expected == 2 ? i8_ptr_type : f64_type));
+                            LLVMTypeRef pt = (expected == 2 || expected == 3 || expected == 4) ? i8_ptr_type :
+                                             (expected == 6) ? i64_type : f64_type;
+                            args.push_back(coerce_to(av, pt));
                         }
                         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
                         if (fi.return_tag == -1) {
@@ -3364,7 +3382,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         for (size_t i = 0; i < expr.args.size(); i++) {
             TypedValue av = codegen_expr(*expr.args[i]);
             int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
-            args.push_back(coerce_to(av, expected_tag == 2 ? i8_ptr_type : f64_type));
+            LLVMTypeRef pt = (expected_tag == 2 || expected_tag == 3 || expected_tag == 4) ? i8_ptr_type :
+                             (expected_tag == 6) ? i64_type : f64_type;
+            args.push_back(coerce_to(av, pt));
         }
         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
         if (fi.return_tag == -1) {
