@@ -1,0 +1,92 @@
+' ══════════════════════════════════════════════════════════════
+' Comprehensive Map / Value / Tagged Access Test
+' Must produce IDENTICAL output in interpreter and compiled mode.
+' ══════════════════════════════════════════════════════════════
+DIM tp AS INTEGER = 0
+DIM tf AS INTEGER = 0
+
+FUNC CHK(desc$, actual$, expected$)
+    IF actual$ = expected$ THEN RETURN 1
+    PRINT "FAIL: "; desc$; " got '"; actual$; "' expected '"; expected$; "'"
+    RETURN 0
+ENDFUNC
+
+' ── 1. Native map literal ────────────────────────────────────
+m = {"a": 5, "b": "hello", "c": [10,20,30]}
+IF CHK("nat map f64",    STR$(m{"a"}), "5")     THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("nat map str",    m{"b"},       "hello")  THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 2. Native map array element ──────────────────────────────
+arr = m{"c"}
+IF CHK("nat arr[0]",     STR$(arr[0]), "10")     THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("nat arr[2]",     STR$(arr[2]), "30")     THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("nat arr LEN",    STR$(LEN(arr)),"3")     THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 3. JSON parse + field access ─────────────────────────────
+js$ = "{""x"": 42, ""name"": ""test"", ""items"": [1,2,3]}"
+g = JSON.PARSE$(js$)
+IF CHK("json f64",       STR$(g{"x"}),   "42")   THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("json str",       g{"name"},      "test")  THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 4. JSON nested object ────────────────────────────────────
+js2$ = "{""colors"": {""bg"": [20,20,55], ""fg"": ""white"", ""val"": 99}}"
+g2 = JSON.PARSE$(js2$)
+c = g2{"colors"}
+IF CHK("nested f64",     STR$(c{"val"}), "99")    THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("nested str",     c{"fg"},        "white") THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 5. Nested array from JSON ────────────────────────────────
+bg = c{"bg"}
+IF CHK("nested arr[0]",  STR$(bg[0]),    "20")    THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("nested arr[2]",  STR$(bg[2]),    "55")    THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("nested LEN",     STR$(LEN(bg)),  "3")     THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 6. MAP.EXISTS ────────────────────────────────────────────
+IF CHK("EXISTS true",    STR$(INT(MAP.EXISTS(g,"x"))),"1")   THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("EXISTS false",   STR$(INT(MAP.EXISTS(g,"zzz"))),"0") THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("EXISTS nested",  STR$(INT(MAP.EXISTS(c,"fg"))),"1")  THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 7. Arithmetic with map values ────────────────────────────
+result = g{"x"} * 2 + c{"val"}
+IF CHK("arithmetic",     STR$(result),   "183")   THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 8. String concat with map values ─────────────────────────
+msg$ = "Hello " + g{"name"} + "!"
+IF CHK("str concat",     msg$,           "Hello test!") THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 9. Function receiving map param ──────────────────────────
+FUNC GET_VAL(data, key$)
+    RETURN data{key$}
+ENDFUNC
+IF CHK("func map param", STR$(GET_VAL(m,"a")), "5") THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 10. Function receiving JSON field as param ───────────────
+FUNC SUM_ARR(arr_data)
+    s = 0
+    FOR i = 0 TO LEN(arr_data) - 1
+        s = s + arr_data[i]
+    NEXT i
+    RETURN s
+ENDFUNC
+items_arr = g{"items"}
+IF CHK("func json arr",  STR$(SUM_ARR(items_arr)),"6") THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 11. Deeply nested JSON ───────────────────────────────────
+js3$ = "{""a"": {""b"": {""c"": 777}}}"
+g3 = JSON.PARSE$(js3$)
+deep = g3{"a"}
+deeper = deep{"b"}
+IF CHK("deep nested",    STR$(deeper{"c"}), "777") THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── 12. String array literal ─────────────────────────────────
+names = ["Alice", "Bob", "Charlie"]
+IF CHK("str arr[0]",     names[0],       "Alice")   THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("str arr[2]",     names[2],       "Charlie") THEN tp = tp + 1 ELSE tf = tf + 1
+IF CHK("str arr LEN",    STR$(LEN(names)),"3")      THEN tp = tp + 1 ELSE tf = tf + 1
+
+' ── Results ──────────────────────────────────────────────────
+PRINT "══════════════════════════════════════════"
+PRINT " MAP/VALUE TEST: "; tp; " pass, "; tf; " fail"
+PRINT "══════════════════════════════════════════"
+IF tf = 0 THEN PRINT " ALL TESTS PASSED!"
+END

@@ -3313,6 +3313,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ssub"), 2 };
     }
 
+    // Tag 7 (runtime-tagged) must be materialised to f64 before arithmetic.
+    if (lhs.tag == 7) { lhs.val = coerce_to(lhs, f64_type); lhs.tag = 1; }
+    if (rhs.tag == 7) { rhs.val = coerce_to(rhs, f64_type); rhs.tag = 1; }
     bool use_float = (lhs.tag == 1 || rhs.tag == 1);
     // BASIC `/` is always float division (vs `\` which is integer);
     // `^` (power) also returns float even on integer inputs.
@@ -3792,7 +3795,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "alen"), 0 };
         }
         if (av.tag == 6) {
-            // VM Value handle — ask the bridge for its length.
             auto* fn = get_runtime_func("__jdrt_val_length");
             if (fn) {
                 LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
@@ -3800,6 +3802,42 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMValueRef args[] = { rt, av.val };
                 return { LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "hlen"), 0 };
             }
+        }
+        if (av.tag == 7 && av.runtime_tag) {
+            // Runtime-tagged: could be string, array, or VM handle.
+            // Branch: if runtime_tag == 3 (native array) → jdb_array_len
+            //         else → jdrt_val_length (handles strings + VM objects)
+            LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ,
+                av.runtime_tag, LLVMConstInt(i32_type, 3, 0), "is_arr");
+            LLVMBasicBlockRef bb_arr = LLVMAppendBasicBlock(current_fn, "len7.arr");
+            LLVMBasicBlockRef bb_vm = LLVMAppendBasicBlock(current_fn, "len7.vm");
+            LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "len7.join");
+            LLVMBuildCondBr(builder, is_arr, bb_arr, bb_vm);
+
+            LLVMPositionBuilderAtEnd(builder, bb_arr);
+            LLVMValueRef aptr = LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "aptr");
+            auto& fn_arr = runtime_funcs["LEN"];
+            LLVMValueRef alen = LLVMBuildCall2(builder, fn_arr.fn_type, fn_arr.fn, &aptr, 1, "alen");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_arr_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_vm);
+            auto* fn_vm = get_runtime_func("__jdrt_val_length");
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+            LLVMValueRef vargs[] = { rt, av.val };
+            LLVMValueRef vlen = fn_vm
+                ? LLVMBuildCall2(builder, fn_vm->fn_type, fn_vm->fn, vargs, 2, "vlen")
+                : LLVMConstInt(i64_type, 0, 0);
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_vm_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_join);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "len7");
+            LLVMValueRef vals[] = { alen, vlen };
+            LLVMBasicBlockRef bbs[] = { bb_arr_end, bb_vm_end };
+            LLVMAddIncoming(phi, vals, bbs, 2);
+            return { phi, 0 };
         }
         // Fallback
     }
