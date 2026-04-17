@@ -1265,6 +1265,17 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // same `x = a{"k"}` work whether the value is a number, string,
         // array, or nested object.
     }
+    // If the RHS is an array literal that contains any string element,
+    // mark the LHS variable as string-holding so later INDEX access
+    // returns tag=2 (string) instead of the default tag=1 (f64 punned).
+    if (stmt.expr && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        for (auto& a : stmt.expr->args) {
+            if (a && a->kind == ExprKind::LITERAL_STRING) {
+                string_array_vars.insert(stmt.var_name);
+                break;
+            }
+        }
+    }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
         auto fit = user_functions.find(stmt.expr->str_val);
@@ -4063,7 +4074,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 tags_ptr = LLVMConstNull(i8_ptr_type);
             }
 
-            bool is_string_fn = !upper.empty() && upper.back() == '$';
+            // String-returning functions — $-suffix by convention, plus a
+            // few bridged GFX helpers whose names don't carry the suffix.
+            static const std::unordered_set<std::string> string_returners = {
+                "GFX.POLLEVENT", "GFX.WAITEVENT", "INKEY$", "CLIPBOARD.GET$",
+                "INPUT$", "INPUTKEY$"
+            };
+            bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
+                                string_returners.count(upper);
             // Functions that return objects (MAP, JSON.PARSE, etc.)
             bool is_object_fn = (upper.substr(0, 4) == "MAP." &&
                                  upper != "MAP.SIZE" && upper != "MAP.EXISTS") ||
