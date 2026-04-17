@@ -780,20 +780,22 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                                 return 3;
                             }
                         }
-                        // Known array-returning functions
+                        // Known array-returning functions (sync with bridge)
                         static const std::unordered_set<std::string> arr_returners = {
                             "SPLIT", "KEYS", "VALUES", "SORTBY", "GROUPBY",
                             "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
                             "OS.LIST", "OS.ARGS",
-                            "MAP.KEYS", "MAP.VALUES", "LINES", "WORDS", "CHARS",
-                            "UNPACK",
-                            "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$"
+                            "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
+                            "LINES", "WORDS", "CHARS", "UNPACK",
+                            "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
+                            "TILED.OBJECTS",
+                            "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS"
                         };
                         if (arr_returners.count(upper)) return 3;
-                        // VM-Value-handle returners (objects parsed from JSON,
-                        // MAP.* helpers that produce maps, TILED object access).
+                        // VM-Value-handle returners (sync with bridge)
                         static const std::unordered_set<std::string> obj_returners = {
-                            "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS"
+                            "JSON.PARSE$", "TILED.PROPERTIES",
+                            "MAP.FROM", "MAP.COPY"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -4315,10 +4317,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "mptoi");
                         tag = 0;
                     } else if (av.tag == 6) {
-                        // VM Value handle — bridge tag 4 means "look me up
-                        // in value_store" which is exactly what we want.
+                        // VM Value handle — bridge also uses tag 6.
                         encoded = av.val;
-                        tag = 4;
+                        tag = 6;
                     } else if (av.tag == 1) {
                         // f64 → bitcast to i64 so bridge can recover double
                         encoded = pun_f64_to_i64(av.val);
@@ -4344,13 +4345,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     LLVMValueRef tidx[] = { LLVMConstInt(i32_type, i, 0) };
                     LLVMValueRef tptr = LLVMBuildGEP2(builder, i32_type, tags_ptr, tidx, 1, "tag");
                     if (av.tag == 7 && av.runtime_tag) {
-                        // Translate codegen tag 6 (VM handle) → bridge tag 4
-                        // (value_store lookup). Other tags pass through as-is.
-                        LLVMValueRef is6 = LLVMBuildICmp(builder, LLVMIntEQ,
-                            av.runtime_tag, LLVMConstInt(i32_type, 6, 0), "is6");
-                        LLVMValueRef bridged = LLVMBuildSelect(builder, is6,
-                            LLVMConstInt(i32_type, 4, 0), av.runtime_tag, "btag");
-                        LLVMBuildStore(builder, bridged, tptr);
+                        // Tags unified — pass runtime_tag directly.
+                        LLVMBuildStore(builder, av.runtime_tag, tptr);
                     } else {
                         LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), tptr);
                     }
@@ -4362,28 +4358,41 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             // String-returning functions — $-suffix by convention, plus a
             // few bridged GFX helpers whose names don't carry the suffix.
+            // ── Bridge return-type classification ──────────────────
+            // Each bridged function must be classified so the codegen
+            // calls the right __jdrt_call_typed_* variant. Checked:
+            //   is_array_fn  → __jdrt_call_typed_arr (tag 3)
+            //   is_object_fn → __jdrt_call_typed_obj (tag 6, VM handle)
+            //   is_string_fn → __jdrt_call_typed_str (tag 2)
+            //   default      → __jdrt_call_typed_f64 (tag 1)
+
+            // String: $-suffix convention + explicit non-$ helpers.
             static const std::unordered_set<std::string> string_returners = {
                 "GFX.POLLEVENT", "GFX.WAITEVENT", "INKEY$", "CLIPBOARD.GET$",
-                "INPUT$", "INPUTKEY$"
+                "INPUT$", "INPUTKEY$", "SOUND.STATS"
             };
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
                                 string_returners.count(upper);
-            // Functions that return objects (MAP, JSON.PARSE, etc.)
-            bool is_object_fn = (upper.substr(0, 4) == "MAP." &&
-                                 upper != "MAP.SIZE" && upper != "MAP.EXISTS") ||
-                                upper == "JSON.PARSE$" ||
-                                upper == "TILED.PROPERTIES" ||
-                                upper == "TILED.OBJECTS";
-            // Functions that return arrays (decoded as ptr/tag=3)
-            bool is_array_fn = (upper == "SPLIT" || upper == "KEYS" || upper == "VALUES" ||
-                                upper == "SORTBY" || upper == "GROUPBY" || upper == "REGEX.FINDALL" ||
-                                upper == "REGEX_MATCH" || upper == "REGEX_FINDALL" ||
-                                upper == "OS.LIST" || upper == "OS.ARGS" || upper == "JSON.STRINGIFY$" ||
-                                upper == "MAP.KEYS" || upper == "MAP.VALUES" ||
-                                upper == "LINES" || upper == "WORDS" || upper == "CHARS" ||
-                                upper == "UNPACK" ||
-                                upper == "TILED.SIZE" || upper == "TILED.TILE_SIZE" ||
-                                upper == "TILED.LAYERS$");
+
+            // Object (VM handle): only genuine object-returners.
+            static const std::unordered_set<std::string> object_returners = {
+                "JSON.PARSE$", "TILED.PROPERTIES", "MAP.FROM", "MAP.COPY"
+            };
+            bool is_object_fn = object_returners.count(upper);
+
+            // Array: returns a native JdbArray*.
+            static const std::unordered_set<std::string> array_returners = {
+                "SPLIT", "KEYS", "VALUES", "SORTBY", "GROUPBY",
+                "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
+                "OS.LIST", "OS.ARGS",
+                "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
+                "LINES", "WORDS", "CHARS", "UNPACK",
+                "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
+                "TILED.OBJECTS",
+                "GFX.HSV_RGB", "GFX.TEXTSIZE",
+                "SPRITE.COLLISIONS"
+            };
+            bool is_array_fn = array_returners.count(upper);
 
             LLVMValueRef call_args[] = { handle, name_str, args_ptr, tags_ptr,
                 LLVMConstInt(i32_type, nargs, 0) };

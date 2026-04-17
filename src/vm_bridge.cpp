@@ -290,7 +290,8 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                 vargs.push_back(jdbarray_to_value(arr));
                 break;
             }
-            case 4: { // VM object handle — look up in value_store
+            case 4: // legacy alias — fall through
+            case 6: { // VM object handle — look up in value_store
                 auto it = rt->value_store.find(args[i]);
                 if (it != rt->value_store.end())
                     vargs.push_back(it->second);
