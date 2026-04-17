@@ -103,6 +103,16 @@ private:
     // event handler SUBs.
     std::unordered_set<std::string> string_array_vars;
 
+    // Maps a top-level-DIM'd global name to the source file it came from.
+    // Used by codegen_let_or_assign to decide whether an implicit assignment
+    // inside a SUB should update that global (same file) or create a local
+    // alloca (different file / imported module).
+    std::unordered_map<std::string, std::string> global_source_file;
+
+    // source_file of the FUNC/SUB currently being codegen'd. Empty while
+    // codegen runs over main-level statements.
+    std::string current_fn_source_file;
+
     // LLVM types
     LLVMTypeRef i64_type;
     LLVMTypeRef f64_type;

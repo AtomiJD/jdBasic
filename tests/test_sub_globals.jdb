@@ -1,0 +1,28 @@
+' Minimal repro: globals modified inside SUB must persist
+DIM COUNTER = 0
+DIM TOTAL = 0
+DIM NAME$ = "x"
+
+SUB Bump()
+  COUNTER = COUNTER + 1
+  TOTAL = TOTAL + 10
+ENDSUB
+
+SUB SetName(n$)
+  NAME$ = n$
+ENDSUB
+
+Bump()
+Bump()
+Bump()
+SetName("hello")
+
+PRINT "COUNTER = "; COUNTER; " (expected 3)"
+PRINT "TOTAL   = "; TOTAL; " (expected 30)"
+PRINT "NAME$   = "; NAME$; " (expected hello)"
+
+IF COUNTER = 3 AND TOTAL = 30 AND NAME$ = "hello" THEN
+  PRINT "PASS"
+ELSE
+  PRINT "FAIL"
+ENDIF

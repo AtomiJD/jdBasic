@@ -909,6 +909,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$')
                     tag = 2;
                 create_var(stmt->var_name, tag);
+                // Remember which source file this top-level DIM came from
+                // so a SUB defined in the same file can write to the global
+                // (the isolation rule in codegen_let_or_assign consults this).
+                global_source_file[stmt->var_name] = stmt->source_file;
             }
         }
         // Also register destruct vars: [a, b, c] = expr
@@ -1147,7 +1151,9 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
 
     // Save current state
     LLVMValueRef saved_fn = current_fn;
+    std::string saved_fn_src = current_fn_source_file;
     current_fn = fit->second.fn;
+    current_fn_source_file = stmt.source_file;
 
     // Push function scope
     scopes.push_back(Scope{});
@@ -1191,6 +1197,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     // Pop scope and restore
     scopes.pop_back();
     current_fn = saved_fn;
+    current_fn_source_file = saved_fn_src;
 
     // Position builder back at the end of the saved function's last block
     LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
@@ -1384,13 +1391,17 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     m_want_leaf_tag = -1;
 
     VarInfo* vi = lookup_var(stmt.var_name);
-    // Inside a function, a bare-name assignment (`x = ...`, no module prefix)
-    // must never write to a top-level main global of the same name. The two
-    // are semantically separate variables — main's `result` and a function's
-    // local `result` should not alias. Module globals are always referenced
-    // with a `MODULE.NAME` prefix (containing a dot), so this check leaves
-    // those alone. If `vi` is only found in scope[0] (global), force a fresh
-    // local alloca by clearing it.
+    // Cross-module isolation: a bare-name assignment inside a SUB/FUNC
+    // imported from one file must not write to a same-named global DIM'd
+    // in another file — a module's local `result` and main's `result` are
+    // semantically separate. We force a fresh local in that case.
+    //
+    // Same-file writes DO pass through to the global though. The Assert
+    // SUB pattern (comprehensive_test) relies on this: top-level DIM PASS
+    // and an in-file SUB that does `PASS = PASS + 1` must share state.
+    //
+    // Module-prefixed names (containing a dot) always refer to the same
+    // global regardless of caller.
     if (vi && scopes.size() > 1 && stmt.var_name.find('.') == std::string::npos) {
         bool in_local_scope = false;
         for (int i = (int)scopes.size() - 1; i >= 1; i--) {
@@ -1398,7 +1409,12 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 in_local_scope = true; break;
             }
         }
-        if (!in_local_scope) vi = nullptr;
+        if (!in_local_scope) {
+            auto gs = global_source_file.find(stmt.var_name);
+            bool same_source = (gs != global_source_file.end() &&
+                                gs->second == current_fn_source_file);
+            if (!same_source) vi = nullptr;
+        }
     }
     // Tag 7 (runtime-tagged): ALWAYS store as tag 7 with companion alloca.
     // Never coerce to a concrete type — the runtime tag carries the truth
@@ -1765,13 +1781,15 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         return;
     }
 
-    // Fallback: treat like LET for scalar DIM.
-    // BASIC DIM always creates in the current scope — a DIM inside a FUNC
-    // shadows any enclosing global of the same name, so we only reuse an
-    // existing binding if it lives in this scope.
+    // DIM inside a FUNC/SUB explicitly shadows any outer binding, so
+    // DIM is restricted to the current scope. LET and plain ASSIGN
+    // (e.g. `PASS = PASS + 1` inside a SUB) must see outer scopes —
+    // that's the only way a SUB can touch a module-level global, and
+    // the VM already works this way.
+    bool dim_stmt = (stmt.kind == StmtKind::DIM);
     bool in_local = scopes.size() > 1;
     VarInfo* vi = nullptr;
-    if (in_local) {
+    if (dim_stmt && in_local) {
         auto it = scopes.back().vars.find(stmt.var_name);
         if (it != scopes.back().vars.end()) vi = &it->second;
     } else {
