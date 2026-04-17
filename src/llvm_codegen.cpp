@@ -549,10 +549,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             if (v && (v->tag == 3 || v->tag == 4 || v->tag == 6 || v->tag == 7))
                                 it->second.tags[i] = (v->tag == 7) ? 6 : v->tag;
                         }
-                        // Any string-keyed INDEX (like game{"stats"}) may
-                        // return a VM object → param should accept i64/VM handle.
-                        else if (a.kind == ExprKind::INDEX && a.right &&
-                                 a.right->kind == ExprKind::LITERAL_STRING) {
+                        // Any INDEX expression (string-keyed like game{"stats"}
+                        // or int-keyed like elist[i]) may return a VM object
+                        // or tagged value → param should accept i64.
+                        else if (a.kind == ExprKind::INDEX) {
                             it->second.tags[i] = 6;
                         }
                     }

@@ -856,7 +856,7 @@ EXPORT SUB UPDATE()
     hero_w = SPRITE.WIDTH(hero) : hero_h = SPRITE.HEIGHT(hero)
     blocked = NOT CAN_MOVE_TO(new_x, new_y, hero_w, hero_h)
     IF NOT blocked THEN blocked = (SPRITE.COLLISION_FIRST(hero, "npc") > 0)
-    IF NOT blocked THEN blocked = (SPRITE.COLLISION_FIRST(hero, "chest") > 0)
+    IF NOT blocked THEN blocked = FALSE ' (SPRITE.COLLISION_FIRST(hero, "chest") > 0)
     IF blocked THEN SPRITE.POS hero, old_x, old_y
 
     IF has_sheet THEN
