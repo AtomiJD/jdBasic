@@ -4286,11 +4286,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         encoded = pun_f64_to_i64(av.val);
                         tag = 1;
                     } else if (av.tag == 7 && av.runtime_tag) {
-                        // Runtime-tagged: pass raw i64 bits + the RUNTIME tag
-                        // so the bridge dispatches correctly (especially for
-                        // VM handles that need value_store lookup).
+                        // Runtime-tagged: pass raw i64 bits. The runtime tag
+                        // must be translated from codegen space (6 = VM handle)
+                        // to bridge space (4 = value_store lookup).
                         encoded = av.val;
-                        // tag is runtime — stored separately below.
+                        // tag is runtime — stored with translation below.
                     } else {
                         // i64 direct
                         encoded = av.val;
@@ -4305,10 +4305,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     // Store type tag (runtime for tag 7, compile-time otherwise)
                     LLVMValueRef tidx[] = { LLVMConstInt(i32_type, i, 0) };
                     LLVMValueRef tptr = LLVMBuildGEP2(builder, i32_type, tags_ptr, tidx, 1, "tag");
-                    if (av.tag == 7 && av.runtime_tag)
-                        LLVMBuildStore(builder, av.runtime_tag, tptr);
-                    else
+                    if (av.tag == 7 && av.runtime_tag) {
+                        // Translate codegen tag 6 (VM handle) → bridge tag 4
+                        // (value_store lookup). Other tags pass through as-is.
+                        LLVMValueRef is6 = LLVMBuildICmp(builder, LLVMIntEQ,
+                            av.runtime_tag, LLVMConstInt(i32_type, 6, 0), "is6");
+                        LLVMValueRef bridged = LLVMBuildSelect(builder, is6,
+                            LLVMConstInt(i32_type, 4, 0), av.runtime_tag, "btag");
+                        LLVMBuildStore(builder, bridged, tptr);
+                    } else {
                         LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), tptr);
+                    }
                 }
             } else {
                 args_ptr = LLVMConstNull(i8_ptr_type);

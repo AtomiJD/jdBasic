@@ -571,7 +571,7 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
             return 3;
         case ValueType::OBJECT:
             *out_val = rt->store_value(*v);
-            return 6;
+            return 6;  // codegen-internal tag for VM handles
         default:
             u.d = v->to_double();
             *out_val = u.i;
