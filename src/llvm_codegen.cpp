@@ -391,6 +391,11 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 0);
     reg("jdrt_obj_get_tagged", "__jdrt_obj_get_tagged", i32_type,
         {i8_ptr_type, i64_type, i8_ptr_type, i8_ptr_type}, 0);
+    // Unified tagged dispatchers (handle both native map + VM handles)
+    reg("jdrt_tagged_get",     "__jdrt_tagged_get",     i32_type,
+        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdrt_tagged_arr_get", "__jdrt_tagged_arr_get", i32_type,
+        {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, 0);
     reg("jdrt_frame_begin", "__jdrt_frame_begin", i64_type,
         {i8_ptr_type}, 0);
     reg("jdrt_frame_end",   "__jdrt_frame_end",   void_type,
@@ -1342,19 +1347,30 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
         if (!in_local_scope) vi = nullptr;
     }
-    // Tag 7 (runtime-tagged) must be materialised before storage. When
-    // assigning to an existing var, coerce to its type. For a new var,
-    // default to i64 (raw bits) with tag 6 (VM handle) — the most common
-    // source of tag-7 values is JSON/Map field access.
-    if (rhs.tag == 7) {
-        if (vi) {
+    // Tag 7 (runtime-tagged): store raw i64 bits + companion i32 tag alloca.
+    // The runtime tag is preserved so subsequent INDEX dispatches correctly.
+    if (rhs.tag == 7 && rhs.runtime_tag) {
+        if (vi && vi->tag == 7 && vi->runtime_tag_alloca) {
+            // Existing tag-7 var: update both allocas.
+            LLVMBuildStore(builder, rhs.val, vi->alloca_val);
+            LLVMBuildStore(builder, rhs.runtime_tag, vi->runtime_tag_alloca);
+            return;
+        }
+        if (vi && vi->tag != 7) {
+            // Existing concrete-typed var: coerce tag-7 → var's type.
             LLVMTypeRef lt = (vi->tag == 1) ? f64_type :
                              (vi->tag == 2 || vi->tag == 3 || vi->tag == 4) ? i8_ptr_type : i64_type;
             rhs.val = coerce_to(rhs, lt);
             rhs.tag = vi->tag;
-        } else {
-            // New var: keep raw i64 bits, treat as VM handle.
-            rhs.tag = 6;
+            // Fall through to normal store below.
+        } else if (!vi) {
+            // New var: create with tag 7 + companion alloca.
+            VarInfo& nv = create_var(stmt.var_name, 7);
+            LLVMBuildStore(builder, rhs.val, nv.alloca_val);
+            nv.runtime_tag_alloca = LLVMBuildAlloca(builder, i32_type,
+                (stmt.var_name + ".rtag").c_str());
+            LLVMBuildStore(builder, rhs.runtime_tag, nv.runtime_tag_alloca);
+            return;
         }
     }
     if (vi) {
@@ -2473,7 +2489,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             else if (tag == 2)  load_type = i8_ptr_type;
             else if (tag == 3)  load_type = i8_ptr_type;
             else if (tag == 4)  load_type = i8_ptr_type;  // map ptr
-            else                load_type = i64_type;  // covers 0 and -2 (universal)
+            else                load_type = i64_type;  // covers 0, 6, 7
+            if (tag == 7 && vi->runtime_tag_alloca) {
+                LLVMValueRef val = LLVMBuildLoad2(builder, load_type, vi->alloca_val,
+                                                   expr.str_val.c_str());
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i32_type,
+                                                  vi->runtime_tag_alloca, "rtag");
+                TypedValue r; r.val = val; r.tag = 7; r.runtime_tag = rt;
+                return r;
+            }
             return { LLVMBuildLoad2(builder, load_type, vi->alloca_val,
                                     expr.str_val.c_str()), tag };
         }
@@ -2750,6 +2774,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // Snapshot the leaf-type hint and clear it for nested calls.
                 int leaf_hint = m_want_leaf_tag;
                 m_want_leaf_tag = -1;
+                // Runtime-tagged (tag 7): dispatch via unified C function
+                // that handles both native map and VM handle.
+                if (arr_tv.tag == 7 && arr_tv.runtime_tag) {
+                    auto& gtag = runtime_funcs["__jdrt_tagged_get"];
+                    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv7out");
+                    LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag,
+                                             idx_tv.val, out };
+                    LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type,
+                        gtag.fn, targs, 5, "tv7tag");
+                    LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv7val");
+                    TypedValue r; r.val = tv_val; r.tag = 7; r.runtime_tag = tv_tag;
+                    return r;
+                }
                 if (arr_tv.tag == 4) {
                     if (want_ptr) {
                         auto& gobj = runtime_funcs["__map_get_obj"];
@@ -2869,8 +2908,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "ugetf"), 1 };
             }
 
+            // Int-indexed access on tag 7 via unified C dispatcher.
+            if (arr_tv.tag == 7 && arr_tv.runtime_tag) {
+                auto& ga = runtime_funcs["__jdrt_tagged_arr_get"];
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef idx = idx_tv.val;
+                if (idx_tv.tag == 1) idx = LLVMBuildFPToSI(builder, idx, i64_type, "ftoi");
+                LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "ia7out");
+                LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag, idx, out };
+                LLVMValueRef tv_tag = LLVMBuildCall2(builder, ga.fn_type, ga.fn, targs, 5, "ia7tag");
+                LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "ia7val");
+                TypedValue r; r.val = tv_val; r.tag = 7; r.runtime_tag = tv_tag;
+                return r;
+            }
+
             // Int-indexed access on a VM Value handle (lazy array/map element).
-            // Returns a fresh handle so subsequent coerce/INDEX knows the type.
             if (arr_tv.tag == 6) {
                 LLVMValueRef handle = LLVMGetNamedGlobal(module, "__jdrt_handle");
                 LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle, "rt");

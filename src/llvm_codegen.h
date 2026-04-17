@@ -49,7 +49,9 @@ private:
     struct VarInfo {
         LLVMValueRef alloca_val;
         int tag;  // 0=i64, 1=f64, 2=string(i8*), 3=array(JdbArray*),
-                  // 4=native map(i8*), 5=funcref, 6=VM-Value handle (i64)
+                  // 4=native map(i8*), 5=funcref, 6=VM-Value handle (i64),
+                  // 7=runtime-tagged (companion alloca stores i32 tag)
+        LLVMValueRef runtime_tag_alloca = nullptr;
     };
 
     // Scope stack for local variables (functions push/pop scopes)

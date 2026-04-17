@@ -579,6 +579,66 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
     }
 }
 
+// Forward-declare JdbMap (matches jdb_runtime.cpp layout).
+struct JdbMap {
+    int64_t count, capacity;
+    char** keys;
+    double* values;
+    int32_t* tags;
+};
+
+// ── Unified tagged field getter ──────────────────────────────
+// Single entry point for tag-7 INDEX dispatch. val_bits is the raw i64;
+// val_tag is the runtime tag (4 = native JdbMap*, 6 = VM handle, 3 = array).
+// Returns field tag, writes val to *out_val.
+JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
+                                  const char* key, int64_t* out_val) {
+    *out_val = 0;
+    if (val_tag == 6) {
+        return jdrt_obj_get_tagged(handle, val_bits, key, out_val);
+    }
+    // Tag 4 or other pointer-like: interpret as native JdbMap*
+    auto* m = (JdbMap*)(intptr_t)val_bits;
+    if (!m) return 0;
+    // Use the same logic as jdb_map_get_tagged in jdb_runtime.cpp
+    // (duplicated here to avoid cross-module linkage issues).
+    int64_t idx = -1;
+    for (int64_t i = 0; i < m->count; i++) {
+        if (m->keys[i] && strcmp(m->keys[i], key) == 0) { idx = i; break; }
+    }
+    if (idx < 0) return 0;
+    union { double d; int64_t i; } u;
+    u.d = m->values[idx];
+    int32_t t = m->tags[idx];
+    if (t == 2) {
+        const char* s = (const char*)(intptr_t)u.i;
+        *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
+        return 2;
+    }
+    *out_val = u.i;
+    return (t == 3 || t == 4) ? t : 1;
+}
+
+// ── Unified int-indexed getter ──────────────────────────────
+// For tag-7 values: if VM handle → jdrt_val_arr_get, else native array.
+JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_tag,
+                                      int64_t idx, int64_t* out_val) {
+    *out_val = 0;
+    if (val_tag == 6) {
+        *out_val = jdrt_val_arr_get(handle, val_bits, idx);
+        return (*out_val != 0) ? 6 : 0;
+    }
+    // Native array
+    auto* arr = (JdbArray*)(intptr_t)val_bits;
+    if (!arr || idx < 0 || idx >= arr->length) return 0;
+    union { double d; int64_t i; } u;
+    u.d = arr->data[idx];
+    *out_val = u.i;
+    return 1;  // native array elements are always f64
+}
+
+// (JdbMap is forward-declared above)
+
 // Field-access companion to obj_get_*: pull an array-typed field out of
 // a stored Value handle and convert it to the native JdbArray shape.
 JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {

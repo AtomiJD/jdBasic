@@ -845,9 +845,13 @@ void* jdb_map_get_obj(JdbMap* m, const char* key) {
     return (void*)(intptr_t)u.i;
 }
 
-// ── Tagged Value: runtime-typed field access for maps ────────
-// Returns tag (0=i64, 1=f64, 2=str, 3=arr, 4=map), writes raw val bits
-// to *out_val. Uses output param to avoid struct-return ABI mismatches.
+// ── Tagged Value: runtime-typed field access ─────────────────
+// Unified dispatcher: val_bits holds the map/handle, val_tag tells us
+// what kind (4 = native JdbMap*, 6 = VM handle, anything else → try map).
+// Returns the field's tag, writes raw val bits to *out_val.
+int32_t jdb_tagged_get(int64_t val_bits, int32_t val_tag, const char* key, int64_t* out_val);
+
+// Native map tagged get (called by jdb_tagged_get for tag 4).
 int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
     *out_val = 0;
     int64_t idx = map_find(m, key);

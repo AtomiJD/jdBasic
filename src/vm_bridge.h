@@ -71,6 +71,11 @@ JDRT_API int64_t     jdrt_val_arr_get(JdRT rt, int64_t h, int64_t idx);
 
 // Tagged field access: writes val to *out_val, returns tag.
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT rt, int64_t h, const char* key, int64_t* out_val);
+// Unified dispatchers: auto-detect native map vs VM handle from val_tag.
+JDRT_API int32_t jdrt_tagged_get(JdRT rt, int64_t val, int32_t val_tag,
+                                  const char* key, int64_t* out_val);
+JDRT_API int32_t jdrt_tagged_arr_get(JdRT rt, int64_t val, int32_t val_tag,
+                                      int64_t idx, int64_t* out_val);
 
 // Frame-based cleanup: save watermark at loop start, sweep at loop end.
 JDRT_API int64_t     jdrt_frame_begin(JdRT rt);
