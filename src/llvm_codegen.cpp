@@ -546,8 +546,16 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         else if (a.kind == ExprKind::MAP_LITERAL) it->second.tags[i] = 4;
                         else if (a.kind == ExprKind::VARIABLE) {
                             VarInfo* v = lookup_var(a.str_val);
-                            if (v && (v->tag == 3 || v->tag == 4 || v->tag == 6))
-                                it->second.tags[i] = v->tag;
+                            if (v && (v->tag == 3 || v->tag == 4 || v->tag == 6 || v->tag == 7))
+                                it->second.tags[i] = (v->tag == 7) ? 6 : v->tag;
+                        }
+                        // INDEX on a tag-6/7 var (like game{"stats"}): the
+                        // result is a VM object → param should be tag 6.
+                        else if (a.kind == ExprKind::INDEX && a.left &&
+                                 a.left->kind == ExprKind::VARIABLE) {
+                            VarInfo* v = lookup_var(a.left->str_val);
+                            if (v && (v->tag == 6 || v->tag == 7))
+                                it->second.tags[i] = 6;
                         }
                     }
                 }
