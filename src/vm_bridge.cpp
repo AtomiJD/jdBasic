@@ -567,9 +567,25 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
         case ValueType::STRING:
             *out_val = (int64_t)(intptr_t)_strdup(v->as_string()->data.c_str());
             return 2;
-        case ValueType::ARRAY:
-            *out_val = (int64_t)(intptr_t)value_to_jdbarray(*v);
-            return 3;
+        case ValueType::ARRAY: {
+            // Pure-numeric arrays → native JdbArray (fast). Mixed arrays
+            // (containing strings/objects) → VM handle so per-element
+            // typed access via jdrt_val_arr_get works correctly.
+            auto* arr = v->as_array();
+            bool pure_numeric = true;
+            for (auto& e : arr->elements) {
+                if (e.type == ValueType::STRING || e.type == ValueType::OBJECT ||
+                    e.type == ValueType::ARRAY) {
+                    pure_numeric = false; break;
+                }
+            }
+            if (pure_numeric) {
+                *out_val = (int64_t)(intptr_t)value_to_jdbarray(*v);
+                return 3;
+            }
+            *out_val = rt->store_value(*v);
+            return 6;
+        }
         case ValueType::OBJECT:
             *out_val = rt->store_value(*v);
             return 6;  // codegen-internal tag for VM handles
