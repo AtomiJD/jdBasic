@@ -4279,8 +4279,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         // f64 → bitcast to i64 so bridge can recover double
                         encoded = pun_f64_to_i64(av.val);
                         tag = 1;
+                    } else if (av.tag == 7 && av.runtime_tag) {
+                        // Runtime-tagged: pass raw i64 bits + the RUNTIME tag
+                        // so the bridge dispatches correctly (especially for
+                        // VM handles that need value_store lookup).
+                        encoded = av.val;
+                        // tag is runtime — stored separately below.
                     } else {
-                        // i64 direct — no conversion (preserves exact value for large ints)
+                        // i64 direct
                         encoded = av.val;
                         tag = 0;
                     }
@@ -4290,10 +4296,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     LLVMValueRef aptr = LLVMBuildGEP2(builder, i64_type, args_ptr, aidx, 1, "arg");
                     LLVMBuildStore(builder, encoded, aptr);
 
-                    // Store type tag
+                    // Store type tag (runtime for tag 7, compile-time otherwise)
                     LLVMValueRef tidx[] = { LLVMConstInt(i32_type, i, 0) };
                     LLVMValueRef tptr = LLVMBuildGEP2(builder, i32_type, tags_ptr, tidx, 1, "tag");
-                    LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), tptr);
+                    if (av.tag == 7 && av.runtime_tag)
+                        LLVMBuildStore(builder, av.runtime_tag, tptr);
+                    else
+                        LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), tptr);
                 }
             } else {
                 args_ptr = LLVMConstNull(i8_ptr_type);
