@@ -4351,13 +4351,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             for (int i = 0; i < nargs; i++) {
                 TypedValue av = vals[i];
                 LLVMValueRef encoded; int32_t tg;
-                if (av.tag == 2 || av.tag == 3) {
+                if (av.tag == JD_TAG_STR || av.tag == JD_TAG_ARR) {
                     encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi"); tg = av.tag;
-                } else if (av.tag == 1) {
-                    encoded = pun_f64_to_i64(av.val); tg = 1;
+                } else if (av.tag == JD_TAG_F64) {
+                    encoded = pun_f64_to_i64(av.val); tg = JD_TAG_F64;
                 } else {
-                    LLVMValueRef f = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
-                    encoded = pun_f64_to_i64(f); tg = 0;
+                    // I64 must reach the bridge as i64. The earlier code
+                    // sitofp+punned it but kept tag=I64, so the bridge
+                    // read f64 bits as a huge int that truncated to 0
+                    // in `(int)to_int()` casts (e.g. SPRITE.ANIM hero).
+                    encoded = av.val; tg = JD_TAG_I64;
                 }
                 LLVMValueRef aidx[] = { LLVMConstInt(i32_type, i, 0) };
                 LLVMBuildStore(builder, encoded,

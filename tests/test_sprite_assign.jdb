@@ -1,0 +1,22 @@
+' Repro for "invalid sprite id 0" — assignment from bridge i64 returner
+' to a global declared as int.
+
+EXPORT DIM hero = -1
+EXPORT DIM has_sheet = FALSE
+
+SCREEN 100, 100
+
+SUB Setup()
+    TRY
+        hero = SPRITE.LOAD("D:/usr/dev/cc/fluppi/sprites/vally.png", 32, 32)
+        has_sheet = TRUE
+    CATCH
+        PRINT "load failed: "; ERRMSG$
+        END
+    ENDTRY
+    PRINT "after assign, hero = "; hero
+ENDSUB
+
+Setup()
+PRINT "outside SUB, hero = "; hero
+PRINT "has_sheet = "; has_sheet
