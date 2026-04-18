@@ -1,0 +1,22 @@
+' Mirror T_NPC.INIT sprite-path pattern:
+' - Build map from another map's field
+' - Pass through TYPE method
+' - Concat inside method
+
+IMPORT RPG_TEST
+
+props = {}
+props{"sprite"} = "moehrchen.png"
+props{"dialog"} = "Hi"
+
+npc_data = {}
+IF MAP.EXISTS(props, "sprite") THEN npc_data{"sprite"} = props{"sprite"}
+IF MAP.EXISTS(props, "dialog") THEN npc_data{"dialog"} = props{"dialog"}
+
+PRINT "npc_data{sprite}='"; npc_data{"sprite"}; "'"
+
+DIM obj AS RPG_TEST.T_THING
+obj.INIT npc_data, "sprites/"
+
+IF obj.path$ <> "sprites/moehrchen.png" THEN PRINT "FAIL path$='"; obj.path$; "'" : END
+PRINT "ALL PASS"

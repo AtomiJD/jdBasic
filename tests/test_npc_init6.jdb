@@ -1,0 +1,29 @@
+props = {}
+props{"sprite"} = "moehrchen.png"
+
+' Variable condition, single-line
+ok = TRUE
+nd1 = {}
+IF ok THEN nd1{"sprite"} = props{"sprite"}
+PRINT "1 '"; nd1{"sprite"}; "'"
+
+' Number literal 1 as cond
+nd2 = {}
+IF 1 THEN nd2{"sprite"} = props{"sprite"}
+PRINT "2 '"; nd2{"sprite"}; "'"
+
+' Simple function call condition
+nd3 = {}
+IF LEN("x") > 0 THEN nd3{"sprite"} = props{"sprite"}
+PRINT "3 '"; nd3{"sprite"}; "'"
+
+' Function call with map involved in cond
+nd4 = {}
+IF LEN(props{"sprite"}) > 0 THEN nd4{"sprite"} = props{"sprite"}
+PRINT "4 '"; nd4{"sprite"}; "'"
+
+' Temp the sprite value in a var
+nd5 = {}
+t$ = props{"sprite"}
+IF LEN(t$) > 0 THEN nd5{"sprite"} = t$
+PRINT "5 '"; nd5{"sprite"}; "'"

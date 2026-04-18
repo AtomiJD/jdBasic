@@ -1,0 +1,20 @@
+' Isolate: props{"key"} → npc_data{"key"} re-assign
+
+props = {}
+props{"sprite"} = "moehrchen.png"
+PRINT "A props{sprite}='"; props{"sprite"}; "'"
+
+' Direct tag-7 assign
+npc_data = {}
+npc_data{"sprite"} = props{"sprite"}
+PRINT "B npc_data{sprite}='"; npc_data{"sprite"}; "'"
+
+' Via $-var intermediate (hinted)
+s$ = props{"sprite"}
+PRINT "C s$='"; s$; "'"
+npc_data{"sprite2"} = s$
+PRINT "D npc_data{sprite2}='"; npc_data{"sprite2"}; "'"
+
+' With guarded assign (mirrors IF MAP.EXISTS pattern)
+IF MAP.EXISTS(props, "sprite") THEN npc_data{"sprite3"} = props{"sprite"}
+PRINT "E npc_data{sprite3}='"; npc_data{"sprite3"}; "'"

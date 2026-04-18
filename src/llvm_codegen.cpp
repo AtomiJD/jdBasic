@@ -4546,6 +4546,33 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
+    // MAP.EXISTS(map, key$) — intercept to call __map_has directly.
+    // The bridge has no NATIVE_MAP path, so going through jdrt_call_typed_f64
+    // downgrades the map to I64, the VM's MAP.EXISTS does as_object() → empty,
+    // and every lookup returns false. That breaks `IF MAP.EXISTS(m, k) THEN
+    // m2{k}=m{k}` (classic JSON-to-map forwarding) — exactly the pattern
+    // rpg_engine.jdb uses to build per-NPC data from Tiled properties.
+    if (upper == "MAP.EXISTS" && expr.args.size() == 2) {
+        TypedValue mtv = codegen_expr(*expr.args[0]);
+        bool is_var = (expr.args[0]->kind == ExprKind::VARIABLE);
+        if (mtv.tag == 4 || (is_var && mtv.tag == 1) || (is_var && mtv.tag == 0)) {
+            TypedValue ktv = codegen_expr(*expr.args[1]);
+            LLVMValueRef kptr = coerce_to(ktv, i8_ptr_type);
+            LLVMValueRef mptr;
+            if (mtv.tag == 4) {
+                mptr = coerce_to(mtv, i8_ptr_type);
+            } else if (mtv.tag == 1) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(mtv.val);
+                mptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+            } else {
+                mptr = LLVMBuildIntToPtr(builder, mtv.val, i8_ptr_type, "itoptr");
+            }
+            auto& fn = runtime_funcs["__map_has"];
+            LLVMValueRef a[] = { mptr, kptr };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "mhas"), 0 };
+        }
+    }
+
     // Handle VAL with pointer-encoded doubles (from OS.ARGS array elements)
     if (upper == "VAL" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);

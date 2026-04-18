@@ -1,0 +1,31 @@
+props = {}
+props{"sprite"} = "moehrchen.png"
+
+' Case 1: Direct (works)
+nd1 = {}
+nd1{"sprite"} = props{"sprite"}
+PRINT "1 '"; nd1{"sprite"}; "'"
+
+' Case 2: IF-THEN one-liner with TRUE literal condition
+nd2 = {}
+IF TRUE THEN nd2{"sprite"} = props{"sprite"}
+PRINT "2 '"; nd2{"sprite"}; "'"
+
+' Case 3: IF-THEN-ENDIF block
+nd3 = {}
+IF TRUE THEN
+    nd3{"sprite"} = props{"sprite"}
+ENDIF
+PRINT "3 '"; nd3{"sprite"}; "'"
+
+' Case 4: IF MAP.EXISTS one-liner (reported fail)
+nd4 = {}
+IF MAP.EXISTS(props, "sprite") THEN nd4{"sprite"} = props{"sprite"}
+PRINT "4 '"; nd4{"sprite"}; "'"
+
+' Case 5: IF MAP.EXISTS block form
+nd5 = {}
+IF MAP.EXISTS(props, "sprite") THEN
+    nd5{"sprite"} = props{"sprite"}
+ENDIF
+PRINT "5 '"; nd5{"sprite"}; "'"

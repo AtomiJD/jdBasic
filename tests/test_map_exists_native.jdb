@@ -1,0 +1,5 @@
+m = {}
+m{"k"} = "v"
+
+IF MAP.EXISTS(m, "k") THEN PRINT "yes" ELSE PRINT "no"
+IF MAP.EXISTS(m, "absent") THEN PRINT "yes" ELSE PRINT "no"

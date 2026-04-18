@@ -1,0 +1,28 @@
+props = {}
+props{"sprite"} = "moehrchen.png"
+
+' Reading inside IF cond only — just print
+IF LEN(props{"sprite"}) > 0 THEN PRINT "X IF cond saw non-empty"
+PRINT "after: props{sprite}='"; props{"sprite"}; "'"
+
+' MAP.EXISTS only
+IF MAP.EXISTS(props, "sprite") THEN PRINT "Y MAP.EXISTS true"
+PRINT "after2: props{sprite}='"; props{"sprite"}; "'"
+
+' Chained IF MAP.EXISTS, then separate read
+IF MAP.EXISTS(props, "sprite") THEN
+ENDIF
+v$ = props{"sprite"}
+PRINT "post-block v$='"; v$; "'"
+
+' Map read post-IF, no lookup in body
+IF MAP.EXISTS(props, "sprite") THEN
+    PRINT "inside body"
+ENDIF
+v2$ = props{"sprite"}
+PRINT "post-body v2$='"; v2$; "'"
+
+' Same-line IF with PRINT body
+IF MAP.EXISTS(props, "sprite") THEN PRINT "inside one-liner"
+v3$ = props{"sprite"}
+PRINT "post-oneliner v3$='"; v3$; "'"

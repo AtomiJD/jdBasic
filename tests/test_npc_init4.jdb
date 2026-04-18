@@ -1,0 +1,29 @@
+props = {}
+props{"sprite"} = "moehrchen.png"
+props{"count"} = 5
+
+' Case A: other function as IF cond, then map assign
+nd_a = {}
+IF LEN(props{"sprite"}) > 0 THEN nd_a{"sprite"} = props{"sprite"}
+PRINT "A '"; nd_a{"sprite"}; "'"
+
+' Case B: direct number comparison
+nd_b = {}
+IF props{"count"} > 0 THEN nd_b{"sprite"} = props{"sprite"}
+PRINT "B '"; nd_b{"sprite"}; "'"
+
+' Case C: var check
+ok = TRUE
+nd_c = {}
+IF ok THEN nd_c{"sprite"} = props{"sprite"}
+PRINT "C '"; nd_c{"sprite"}; "'"
+
+' Case D: MAP.EXISTS only
+nd_d = {}
+IF MAP.EXISTS(props, "sprite") THEN nd_d{"sprite"} = props{"sprite"}
+PRINT "D '"; nd_d{"sprite"}; "'"
+
+' Case E: MAP.EXISTS then different assign (string var, not map)
+str$ = ""
+IF MAP.EXISTS(props, "sprite") THEN str$ = props{"sprite"}
+PRINT "E '"; str$; "'"
