@@ -1528,7 +1528,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
     if (stmt.expr && stmt.expr->kind == ExprKind::CALL &&
-        !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$') {
+        !stmt.expr->func_name.empty()) {
         std::string u = stmt.expr->func_name;
         std::transform(u.begin(), u.end(), u.begin(), ::toupper);
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
@@ -1790,7 +1790,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
     }
     if (stmt.expr->kind == ExprKind::CALL &&
-        !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$') {
+        !stmt.expr->func_name.empty()) {
         std::string u = stmt.expr->func_name;
         std::transform(u.begin(), u.end(), u.begin(), ::toupper);
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||

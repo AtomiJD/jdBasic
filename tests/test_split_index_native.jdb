@@ -1,0 +1,11 @@
+' Does indexing a SPLIT array return a proper string under native?
+options$ = "Trotzdem beenden|Zurück"
+items = SPLIT(options$, "|")
+num = LEN(items)
+PRINT "num="; num
+
+FOR i = 0 TO num - 1
+    PRINT "items["; i; "]="; items[i]
+    combined$ = "> " + items[i]
+    PRINT "combined$="; combined$
+NEXT i
