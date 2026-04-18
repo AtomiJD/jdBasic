@@ -2234,7 +2234,8 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
     LLVMValueRef step_val;
     if (stmt.step_expr) {
         TypedValue sv = codegen_expr(*stmt.step_expr);
-        step_val = sv.val;
+        step_val = sv.tag == 1
+            ? LLVMBuildFPToSI(builder, sv.val, i64_type, "ftoi") : sv.val;
     } else {
         step_val = LLVMConstInt(i64_type, 1, 0);
     }
@@ -2248,7 +2249,9 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
         var_alloca = nv.alloca_val;
     }
 
-    LLVMBuildStore(builder, start_val.val, var_alloca);
+    LLVMValueRef start_i64 = start_val.tag == 1
+        ? LLVMBuildFPToSI(builder, start_val.val, i64_type, "ftoi") : start_val.val;
+    LLVMBuildStore(builder, start_i64, var_alloca);
 
     LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.cond");
     LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.body");

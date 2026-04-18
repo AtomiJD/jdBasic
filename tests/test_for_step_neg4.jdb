@@ -1,0 +1,19 @@
+SUB MY_SAY()
+    chars_per_line = 56
+    line_start = 0
+    PRINT "cpl="; chars_per_line; " ls="; line_start
+    PRINT "sum="; line_start + chars_per_line
+
+    iter = 0
+    FOR j = line_start + chars_per_line TO line_start STEP -1
+        iter = iter + 1
+        IF iter <= 3 THEN PRINT "j="; j
+        IF iter > 10 THEN
+            PRINT "INFINITE j="; j
+            END
+        ENDIF
+    NEXT j
+    PRINT "DONE iter="; iter
+ENDSUB
+
+MY_SAY

@@ -1,0 +1,24 @@
+' Test FOR STEP -1 with EXITFOR and MID$ inside — same pattern as SAY wrap.
+text$ = "Spiel wird beendet. Ungespeicherter Fortschritt geht verloren!"
+PRINT "len="; LEN(text$)
+
+line_start = 0
+chars_per_line = 56
+
+iter = 0
+cut = chars_per_line
+FOR j = line_start + chars_per_line TO line_start STEP -1
+    iter = iter + 1
+    IF iter > 200 THEN
+        PRINT "INFINITE at j="; j
+        END
+    ENDIF
+    c$ = MID$(text$, j, 1)
+    IF c$ = " " THEN
+        cut = j - line_start
+        PRINT "found space at j="; j; " cut="; cut
+        EXITFOR
+    ENDIF
+NEXT j
+
+PRINT "DONE iter="; iter; " cut="; cut
