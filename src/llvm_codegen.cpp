@@ -1151,6 +1151,21 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                 LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "");
             }
             break;
+        case StmtKind::CLS_STMT: {
+            // CLS [r, g, b] — route through the VM bridge so graphics mode
+            // clears the framebuffer (without this the back buffer keeps
+            // old edge tiles between scrolls, producing flicker).
+            Expr call;
+            call.kind = ExprKind::CALL;
+            call.func_name = "CLS";
+            auto& exprs = const_cast<std::vector<ExprPtr>&>(stmt.print_exprs);
+            for (auto& e : exprs)
+                if (e) call.args.push_back(std::move(e));
+            codegen_expr(call);
+            for (size_t i = 0; i < call.args.size() && i < exprs.size(); i++)
+                exprs[i] = std::move(call.args[i]);
+            break;
+        }
         case StmtKind::END_STMT: {
             // END exits the program — in main that's a real exit; inside a
             // SUB/FUNC it returns a default value. emit_fn_return chooses

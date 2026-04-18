@@ -1,0 +1,9 @@
+' Verify CLS executes under native compilation.
+SCREEN 320, 240, "cls test"
+FOR i = 0 TO 5
+    CLS 255, 0, 0
+    SCREENFLIP
+    SLEEP 100
+NEXT
+' If CLS runs, screen was red for ~600ms.
+PRINT "done"
