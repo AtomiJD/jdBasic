@@ -1,0 +1,22 @@
+' Test direct list[0] access inside FUNC.
+TYPE T_X
+    n$
+    v
+    SUB INIT(a$, b)
+        THIS.n$ = a$
+        THIS.v = b
+    ENDSUB
+ENDTYPE
+
+DIM list = []
+DIM t AS T_X
+t.INIT "alpha", 7
+PUSH list, t
+
+FUNC LOOKUP()
+    PRINT "L: list[0].n$="; list[0].n$; " list[0].v="; list[0].v
+    RETURN 0
+ENDFUNC
+
+x = LOOKUP()
+PRINT "done"

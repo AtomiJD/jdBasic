@@ -1,0 +1,22 @@
+' v7: UDT array access, no FUNC — works in main?
+TYPE T_X
+    n$
+    v
+    SUB INIT(a$, b)
+        THIS.n$ = a$
+        THIS.v = b
+    ENDSUB
+ENDTYPE
+
+DIM list = []
+DIM t AS T_X
+t.INIT "alpha", 7
+PUSH list, t
+
+' Top-level (main) access:
+t2 = list[0]
+PRINT "main: t2.n$="; t2.n$; " t2.v="; t2.v
+PRINT "main: TYPEOF(t2)="; TYPEOF(t2)
+
+' Direct field access:
+PRINT "main: list[0].n$="; list[0].n$; " list[0].v="; list[0].v

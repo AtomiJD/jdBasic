@@ -1,0 +1,25 @@
+' Test LEN(list) and t2 = list[0] inside FUNC.
+TYPE T_X
+    n$
+    v
+    SUB INIT(a$, b)
+        THIS.n$ = a$
+        THIS.v = b
+    ENDSUB
+ENDTYPE
+
+DIM list = []
+DIM t AS T_X
+t.INIT "alpha", 7
+PUSH list, t
+
+FUNC LOOKUP()
+    PRINT "L1: LEN(list)="; LEN(list)
+    t2 = list[0]
+    PRINT "L2: TYPEOF(t2)="; TYPEOF(t2)
+    PRINT "L3: t2.n$="; t2.n$
+    PRINT "L4: t2.v="; t2.v
+    RETURN 0
+ENDFUNC
+
+x = LOOKUP()

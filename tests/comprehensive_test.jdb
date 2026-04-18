@@ -1438,6 +1438,86 @@ DIM restored$ = "" + 1234567
 Assert(restored$ = "1234567", "Restored C locale: no thousand separators")
 
 ' ══════════════════════════════════════════════════════════════════
+' FUNC returns map / UDT array access inside FUNC
+' (native codegen: Phase-3b return-type inference + top-level UDT
+'  propagation pre-pass so FUNC bodies see arr[] type)
+' ══════════════════════════════════════════════════════════════════
+Header("FUNC returns map/array + UDT in FUNC")
+
+TYPE T_X_COMP
+    n$
+    v
+    SUB INIT(a$, b)
+        THIS.n$ = a$
+        THIS.v = b
+    ENDSUB
+ENDTYPE
+
+DIM xlist = []
+DIM tx AS T_X_COMP
+tx.INIT "alpha", 7
+PUSH xlist, tx
+DIM tx2 AS T_X_COMP
+tx2.INIT "beta", 42
+PUSH xlist, tx2
+
+FUNC LOOKUP_REC(id$)
+    FOR i = 0 TO LEN(xlist) - 1
+        tmp = xlist[i]
+        IF tmp.n$ = id$ THEN
+            m = {}
+            m{"name"} = tmp.n$
+            m{"val"} = tmp.v
+            RETURN m
+        ENDIF
+    NEXT i
+    RETURN {}
+ENDFUNC
+
+FUNC LIST_ALL()
+    out = []
+    FOR i = 0 TO LEN(xlist) - 1
+        tmp = xlist[i]
+        r = {}
+        r{"name"} = tmp.n$
+        r{"val"} = tmp.v
+        PUSH out, r
+    NEXT i
+    RETURN out
+ENDFUNC
+
+r1 = LOOKUP_REC("alpha")
+Assert(r1{"name"} = "alpha", "FUNC returning map — string field")
+Assert(r1{"val"} = 7, "FUNC returning map — numeric field")
+Assert(TYPEOF(r1) = "OBJECT", "FUNC map return typed as OBJECT")
+
+r2 = LOOKUP_REC("beta")
+Assert(r2{"name"} = "beta", "FUNC returning map — second lookup")
+Assert(r2{"val"} = 42, "FUNC returning map — second numeric")
+
+all_rows = LIST_ALL()
+Assert(LEN(all_rows) = 2, "FUNC returning array of maps — length")
+Assert(TYPEOF(all_rows) = "ARRAY", "FUNC array return typed as ARRAY")
+itm0 = all_rows[0]
+Assert(itm0{"name"} = "alpha", "FUNC returning array of maps — [0].name")
+Assert(itm0{"val"} = 7, "FUNC returning array of maps — [0].val")
+itm1 = all_rows[1]
+Assert(itm1{"name"} = "beta", "FUNC returning array of maps — [1].name")
+
+' UDT field access on array element inside FUNC (needs UDT type propagation
+' pre-pass so FUNC body's `t = list[i]` resolves t.n$ and t.v).
+FUNC SUM_VALS()
+    total = 0
+    FOR i = 0 TO LEN(xlist) - 1
+        t = xlist[i]
+        total = total + t.v
+    NEXT i
+    RETURN total
+ENDFUNC
+
+Assert(SUM_VALS() = 49, "UDT field sum inside FUNC (7 + 42)")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

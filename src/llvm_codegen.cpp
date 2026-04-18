@@ -632,6 +632,70 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             decl.return_tag = 2;
     }
 
+    // Phase 3b: infer map/array returns. FUNC's returning maps or arrays
+    // must be typed as i8* (ptr) so callers don't truncate through f64 and
+    // lose the handle type. This tracks per-FUNC assignments `var = {}` /
+    // `var = []` and classifies RETURN expressions based on:
+    //   RETURN {}             — map literal, tag 4
+    //   RETURN []             — array literal, tag 3
+    //   RETURN var            — look up local's inferred kind from body
+    //   RETURN arr[i]         — inherits arr[]'s element kind (rare)
+    //   RETURN other_func()   — inherit callee's return_tag (after Phase 3)
+    std::function<int(const Stmt&, std::unordered_map<std::string,int>&)> classify_return =
+        [&](const Stmt& s, std::unordered_map<std::string,int>& local_kinds) -> int {
+        // Track `var = <literal>` so RETURN var can resolve.
+        if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) &&
+            !s.var_name.empty() && s.expr) {
+            if (s.expr->kind == ExprKind::MAP_LITERAL)
+                local_kinds[s.var_name] = 4;
+            else if (s.expr->kind == ExprKind::ARRAY_LITERAL)
+                local_kinds[s.var_name] = 3;
+            else if (s.expr->kind == ExprKind::CALL) {
+                auto cit = decls.find(s.expr->func_name);
+                if (cit != decls.end() &&
+                    (cit->second.return_tag == 3 || cit->second.return_tag == 4))
+                    local_kinds[s.var_name] = cit->second.return_tag;
+            } else if (s.expr->kind == ExprKind::VARIABLE) {
+                auto lit = local_kinds.find(s.expr->str_val);
+                if (lit != local_kinds.end()) local_kinds[s.var_name] = lit->second;
+            }
+        }
+        if (s.kind == StmtKind::RETURN && s.expr) {
+            const Expr& e = *s.expr;
+            if (e.kind == ExprKind::MAP_LITERAL) return 4;
+            if (e.kind == ExprKind::ARRAY_LITERAL) return 3;
+            if (e.kind == ExprKind::VARIABLE) {
+                auto lit = local_kinds.find(e.str_val);
+                if (lit != local_kinds.end()) return lit->second;
+            }
+            if (e.kind == ExprKind::CALL) {
+                auto cit = decls.find(e.func_name);
+                if (cit != decls.end() &&
+                    (cit->second.return_tag == 3 || cit->second.return_tag == 4))
+                    return cit->second.return_tag;
+            }
+        }
+        int kind = 0;
+        for (auto& b : s.body) if (b) { int k = classify_return(*b, local_kinds); if (k && !kind) kind = k; }
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) { int k = classify_return(*b, local_kinds); if (k && !kind) kind = k; }
+        for (auto& c : s.catch_body) if (c) { int k = classify_return(*c, local_kinds); if (k && !kind) kind = k; }
+        for (auto& f : s.finally_body) if (f) { int k = classify_return(*f, local_kinds); if (k && !kind) kind = k; }
+        return kind;
+    };
+    // Fixpoint: callee kinds may unlock caller kinds.
+    bool rt_changed = true;
+    int rt_guard = 0;
+    while (rt_changed && rt_guard++ < 4) {
+        rt_changed = false;
+        for (auto& [name, decl] : decls) {
+            if (decl.return_tag != 1 || !decl.stmt) continue;
+            std::unordered_map<std::string,int> local_kinds;
+            int k = classify_return(*decl.stmt, local_kinds);
+            if (k == 3 || k == 4) { decl.return_tag = k; rt_changed = true; }
+        }
+    }
+
     // Phase 4: create LLVM functions with inferred types
     for (auto& [name, decl] : decls) {
         std::vector<LLVMTypeRef> param_types;
@@ -641,7 +705,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 
         LLVMTypeRef ret_type;
         if (decl.return_tag == -1) ret_type = void_type;
-        else if (decl.return_tag == 2) ret_type = i8_ptr_type;
+        else if (decl.return_tag == 2 || decl.return_tag == 3 ||
+                 decl.return_tag == 4) ret_type = i8_ptr_type;
         else ret_type = f64_type;
 
         LLVMTypeRef fn_type = LLVMFunctionType(ret_type,
@@ -754,6 +819,66 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             stmt->expr->args.size() >= 2 &&
             stmt->expr->args[1]->kind == ExprKind::LITERAL_STRING) {
             var_udt_type[stmt->var_name + "[]"] = stmt->expr->args[1]->str_val;
+        }
+    }
+
+    // Pre-scan for UDT propagation: PUSH list, udt_var marks list[]; assignments
+    // propagate through `lhs = arr[i]` and `lhs = other_udt`. This must run
+    // BEFORE FUNC bodies are compiled so FUNCs that access globals populated
+    // in main still resolve field accesses (t2.n$) through the dotted-VARIABLE
+    // path, which needs var_udt_type[obj] set.
+    {
+        // Fixpoint walk: a propagation may unlock another (arr[]->lhs->arr2[]).
+        bool changed = true;
+        int guard = 0;
+        while (changed && guard++ < 8) {
+            changed = false;
+            std::function<void(const Stmt*)> scan = [&](const Stmt* s) {
+                if (!s) return;
+                // PUSH list, udt_var → var_udt_type[list[]] = type-of(udt_var)
+                if ((s->kind == StmtKind::EXPR_STMT || s->kind == StmtKind::LET) &&
+                    s->expr && s->expr->kind == ExprKind::CALL) {
+                    const Expr* e = s->expr.get();
+                    std::string up = e->func_name;
+                    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                    if (up == "PUSH" && e->args.size() >= 2 &&
+                        e->args[0]->kind == ExprKind::VARIABLE &&
+                        e->args[1]->kind == ExprKind::VARIABLE) {
+                        auto it = var_udt_type.find(e->args[1]->str_val);
+                        if (it != var_udt_type.end()) {
+                            std::string key = e->args[0]->str_val + "[]";
+                            auto& slot = var_udt_type[key];
+                            if (slot != it->second) { slot = it->second; changed = true; }
+                        }
+                    }
+                }
+                // LET/ASSIGN lhs = arr[i]  → var_udt_type[lhs] = var_udt_type[arr[]]
+                // LET/ASSIGN lhs = var     → var_udt_type[lhs] = var_udt_type[var]
+                if ((s->kind == StmtKind::LET || s->kind == StmtKind::ASSIGN) &&
+                    !s->var_name.empty() && s->expr) {
+                    if (s->expr->kind == ExprKind::INDEX && s->expr->left &&
+                        s->expr->left->kind == ExprKind::VARIABLE) {
+                        auto it = var_udt_type.find(s->expr->left->str_val + "[]");
+                        if (it != var_udt_type.end()) {
+                            auto& slot = var_udt_type[s->var_name];
+                            if (slot != it->second) { slot = it->second; changed = true; }
+                        }
+                    } else if (s->expr->kind == ExprKind::VARIABLE) {
+                        auto it = var_udt_type.find(s->expr->str_val);
+                        if (it != var_udt_type.end()) {
+                            auto& slot = var_udt_type[s->var_name];
+                            if (slot != it->second) { slot = it->second; changed = true; }
+                        }
+                    }
+                }
+                // Recurse into nested bodies (FUNC/SUB/FOR/DO/TRY/IF-branches).
+                for (auto& b : s->body) scan(b.get());
+                for (auto& b : s->catch_body) scan(b.get());
+                for (auto& b : s->finally_body) scan(b.get());
+                for (auto& br : s->branches)
+                    for (auto& bs : br.body) scan(bs.get());
+            };
+            for (auto& stmt : program) scan(stmt.get());
         }
     }
 

@@ -1,0 +1,60 @@
+' Regression: FUNC returns a map built from UDT array element.
+' Matches RPG_COMBAT.SPAWN_ENEMY pattern.
+TYPE T_ENEMY
+    id$
+    name$
+    sprite_file$
+    hp
+    max_hp
+    atk
+    SUB INIT(i$, n$, sf$, h, a)
+        THIS.id$ = i$
+        THIS.name$ = n$
+        THIS.sprite_file$ = sf$
+        THIS.hp = h
+        THIS.max_hp = h
+        THIS.atk = a
+    ENDSUB
+ENDTYPE
+
+DIM templates = []
+DIM e1 AS T_ENEMY
+e1.INIT "blob", "Blob", "blob.png", 10, 3
+PUSH templates, e1
+DIM e2 AS T_ENEMY
+e2.INIT "goblin", "Goblin", "goblin.png", 15, 5
+PUSH templates, e2
+
+FUNC SPAWN(id$)
+    tc = LEN(templates)
+    FOR i = 0 TO tc - 1
+        t = templates[i]
+        IF t.id$ = id$ THEN
+            en = {}
+            en{"id"} = t.id$
+            en{"name"} = t.name$
+            en{"sprite_file"} = t.sprite_file$
+            en{"hp"} = t.hp
+            en{"max_hp"} = t.max_hp
+            en{"atk"} = t.atk
+            RETURN en
+        ENDIF
+    NEXT i
+    RETURN {}
+ENDFUNC
+
+' Caller mirrors the battle's usage.
+enemy = SPAWN("blob")
+e_name$ = enemy{"name"}
+e_hp = INT(enemy{"hp"})
+e_atk = INT(enemy{"atk"})
+sf$ = enemy{"sprite_file"}
+PRINT "name="; e_name$
+PRINT "hp="; e_hp
+PRINT "atk="; e_atk
+PRINT "sprite="; sf$
+IF e_name$ = "Blob" AND e_hp = 10 AND e_atk = 3 AND sf$ = "blob.png" THEN
+    PRINT "PASS"
+ELSE
+    PRINT "FAIL"
+ENDIF

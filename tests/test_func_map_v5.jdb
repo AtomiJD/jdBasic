@@ -1,0 +1,30 @@
+' FUNC that reads UDT from array, returns map.
+TYPE T_X
+    n$
+    v
+    SUB INIT(a$, b)
+        THIS.n$ = a$
+        THIS.v = b
+    ENDSUB
+ENDTYPE
+
+DIM list = []
+DIM t AS T_X
+t.INIT "alpha", 7
+PUSH list, t
+
+FUNC LOOKUP()
+    t2 = list[0]
+    PRINT "  inside: t2.n$="; t2.n$; " t2.v="; t2.v
+    m = {}
+    m{"name"} = t2.n$
+    m{"val"} = t2.v
+    PRINT "  inside: m{name}="; m{"name"}; " m{val}="; m{"val"}
+    PRINT "  inside: type(m)="; TYPEOF(m)
+    RETURN m
+ENDFUNC
+
+r = LOOKUP()
+PRINT "type="; TYPEOF(r)
+PRINT "name="; r{"name"}
+PRINT "val="; r{"val"}
