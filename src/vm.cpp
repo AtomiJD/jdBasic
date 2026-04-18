@@ -497,7 +497,12 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             "MEAN","MEDIAN","VARIANCE","STDEV","DOT","CROSS","CUMSUM","CUMPROD",
             "HISTOGRAM","LINSPACE","FLATTEN","ZIP","RANGE","COUNT","INDEXOF",
             "ISNUM","ISSTR","ISARR","ISMAP","ISBOOL","ISNONE","ISNULL","RANDOMSEED",
-            "IIF","EXECUTE","EVAL","LOAD","SAVE","LIST","HELP","HELP$","VARS"
+            "IIF","EXECUTE","EVAL","LOAD","SAVE","LIST","HELP","HELP$","VARS",
+            // SPRITE.ANIM id, name$, frames[], fps, [loop] — frames[] is the payload,
+            // broadcasting would leave anim.frames empty and crash SPRITE.PLAY.
+            "SPRITE.ANIM",
+            // GFX.PLOT_POINTS points[], GFX.PLOT_POINTS_TEX points[] — array is the data.
+            "GFX.PLOT_POINTS","GFX.PLOT_POINTS_TEX"
         };
         bool has_arr = false;
         if (!no_vec.count(name)) {
