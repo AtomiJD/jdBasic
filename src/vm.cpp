@@ -475,7 +475,8 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
     if (nit != natives.end()) {
         // Auto-vectorize: mirror OpCode::CALL behaviour so external callers
         // (e.g. the native-compiler VM bridge) also get vectorized results.
-        // Blocklist must match the one in OpCode::CALL (line ~1261).
+        // This is a subset of OpCode::CALL's blocklist, focused on what
+        // the bridge actually hits — kept deliberately smaller.
         static const std::unordered_set<std::string> no_vec = {
             "ZEROS","ONES","__MAKE_UDT_ARRAY__","IOTA","RESHAPE","LEN","PUSH","POP",
             "TENSOR","TYPEOF","APPEND","DIFF",

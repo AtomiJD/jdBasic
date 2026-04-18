@@ -779,7 +779,7 @@ char* jdb_str_repeat(const char* s, int64_t n) {
 // ── Maps / Objects (string-keyed) ──────────────────────────────
 // Simple linear-scan map; fine for the small maps used in tests.
 // Layout: { count, capacity, char** keys, double* values, int32* tags }
-// tag 0 = i64, 1 = f64, 2 = string ptr, 3 = array ptr.
+// Tag values follow JdTag enum (jdb_tags.h): F64, STR, ARR, NATIVE_MAP.
 
 struct JdbMap {
     int64_t count;
