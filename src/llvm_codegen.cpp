@@ -279,7 +279,7 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // String builtins
     reg("jdb_len_str",  "LEN$",     i64_type, {i8_ptr_type}, 0);
-    reg("jdb_mid",      "MID$",     i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
+    reg("jdb_mid_lax",  "MID$",     i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
     reg("jdb_mid",      "MID",      i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
     reg("jdb_left",     "LEFT$",    i8_ptr_type, {i8_ptr_type, i64_type}, 2);
     reg("jdb_left",     "LEFT",     i8_ptr_type, {i8_ptr_type, i64_type}, 2);

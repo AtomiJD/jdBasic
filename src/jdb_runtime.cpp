@@ -1330,16 +1330,32 @@ int64_t jdb_len_str(const char* s) {
     return (int64_t)strlen(s);
 }
 
+// Strict MID — matches VM's substr-based register_native("MID", ...).
+// start past the end is an error so TRY/CATCH can observe it (the
+// crash_test relies on this).
 char* jdb_mid(const char* s, int64_t start, int64_t length) {
     if (!s) return _strdup("");
     int64_t slen = (int64_t)strlen(s);
-    // Matches the VM's substr-based MID: start past the end is an error,
-    // not a silent empty return. Without this, TRY/CATCH in compiled code
-    // can't observe out-of-range MID calls.
     if (start < 0 || start > slen) {
         jdb_err_set("MID: index out of range", 1);
         return _strdup("");
     }
+    if (length < 0 || start + length > slen) length = slen - start;
+    char* r = (char*)malloc(length + 1);
+    memcpy(r, s + start, length);
+    r[length] = '\0';
+    return r;
+}
+
+// Lenient MID$ — matches VM's register_native("MID$", ...). Out-of-range
+// start returns an empty string instead of erroring; lots of jdBasic
+// programs (dialog wrappers, parsers) rely on this to scan past the
+// end of a string without bounds-checking.
+char* jdb_mid_lax(const char* s, int64_t start, int64_t length) {
+    if (!s) return _strdup("");
+    int64_t slen = (int64_t)strlen(s);
+    if (start < 0) start = 0;
+    if (start > slen) return _strdup("");
     if (length < 0 || start + length > slen) length = slen - start;
     char* r = (char*)malloc(length + 1);
     memcpy(r, s + start, length);
