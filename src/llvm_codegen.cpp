@@ -799,8 +799,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         }
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-                        // If any arg is an array AND fn is not blocklisted → vectorized result (array)
-                        // (Keep in sync with no_vectorize in codegen_call.)
+                        // Type-inference blocklist: functions that return a scalar
+                        // even when given an array (SUM, LEN, …) — so infer_tag
+                        // should NOT widen the return type to array for these.
+                        // Distinct from the runtime auto-vec blocklist below.
                         static const std::unordered_set<std::string> no_vec_infer = {
                             "LEN","SUM","PRODUCT","MEAN","STDEV","MEDIAN","VARIANCE",
                             "MIN","MAX","ANY","ALL","COUNT","INDEXOF","REVERSE","SORT",
@@ -4160,12 +4162,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Universal auto-vectorization (mirrors VM's no_vectorize blocklist pattern):
-    // Any function not in the blocklist vectorizes element-wise when ANY arg
-    // is an array. Example: RIGHT$(["Atomi","Bert"], 2) → ["mi","rt"].
-    //
-    // This blocklist must stay in sync with vm.cpp's no_vectorize map.
-    // Kept alphabetically-ish by module for maintenance.
+    // Auto-vectorization blocklist for native codegen.
+    // Any function NOT listed here vectorizes element-wise when any arg is
+    // an array (e.g. RIGHT$(["Atomi","Bert"], 2) → ["mi","rt"]).
+    // This list is codegen-specific and does NOT mirror vm.cpp — the VM
+    // bridge has its own smaller list in vm.cpp (VM::call_function).
     static const std::unordered_set<std::string> no_vectorize = {
         // Array producers
         "ZEROS", "ONES", "__MAKE_UDT_ARRAY__", "IOTA", "RESHAPE", "TENSOR",
@@ -4356,10 +4357,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 } else if (av.tag == JD_TAG_F64) {
                     encoded = pun_f64_to_i64(av.val); tg = JD_TAG_F64;
                 } else {
-                    // I64 must reach the bridge as i64. The earlier code
-                    // sitofp+punned it but kept tag=I64, so the bridge
-                    // read f64 bits as a huge int that truncated to 0
-                    // in `(int)to_int()` casts (e.g. SPRITE.ANIM hero).
+                    // I64: pass through unchanged with tag I64.
                     encoded = av.val; tg = JD_TAG_I64;
                 }
                 LLVMValueRef aidx[] = { LLVMConstInt(i32_type, i, 0) };
