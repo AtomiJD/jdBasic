@@ -212,3 +212,9 @@ private:
 
     void register_builtins();
 };
+
+// Single source of truth for the auto-vectorization blocklist.
+// Used by OpCode::CALL (interpreter), VM::call_function (bridge from native
+// runtime), and LLVM codegen. Any function not in this list vectorizes
+// element-wise when any argument is an array.
+bool vm_is_no_vectorize(const std::string& name);
