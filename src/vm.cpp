@@ -78,195 +78,6 @@ void install_seh_translator_for_this_thread() {}
 
 static auto g_program_start = std::chrono::steady_clock::now();
 
-// ── Auto-vectorization blocklist (single source of truth) ────
-// Functions listed here are NOT auto-vectorized when called with array
-// arguments — they consume the array as a whole (e.g. SUM, MATMUL), or
-// they are subsystem APIs whose array argument IS the input payload
-// (e.g. SPRITE.ANIM frames, PLOT_POINTS coord list). Broadcasting over
-// those would call the underlying native with scalar elements, corrupting
-// subsystem state.
-//
-// This list is shared by the interpreter (OpCode::CALL), the VM bridge
-// (VM::call_function, called from native-compiled code via jdbrt.dll),
-// and the LLVM code generator (codegen_call). Keeping them in sync is
-// critical — prior divergence caused bugs like the RPG title-screen
-// RECT/TEXT drawing disappearing because the bridge broadcast them.
-bool vm_is_no_vectorize(const std::string& name) {
-    static const std::unordered_set<std::string> s = {
-        // Array producers / whole-array operations
-        "ZEROS", "ONES", "__MAKE_UDT_ARRAY__", "IOTA", "RESHAPE", "TENSOR",
-        "RANGE", "LINSPACE",
-        "LEN", "PUSH", "POP", "APPEND", "DIFF", "TAKE", "DROP", "REVERSE",
-        "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE",
-        "GRADE", "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE", "SOLVE",
-        "INVERT", "CONVOLVE", "PLACE", "OUTER", "ROTATE", "SHIFT", "XSORT",
-        "INTEGRATE", "FLATTEN", "ZIP", "DOT", "CROSS", "CUMSUM", "CUMPROD",
-        "HISTOGRAM", "COUNT", "INDEXOF", "SORT",
-        // Aggregations
-        "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL",
-        "MEAN", "MEDIAN", "VARIANCE", "STDEV",
-        // Higher-order
-        "SCAN", "SELECT", "FILTER", "REDUCE",
-        // Meta/type
-        "TYPEOF", "IIF", "ISNUM", "ISSTR", "ISARR", "ISMAP", "ISBOOL",
-        "ISNONE", "ISNULL",
-        // Scalar-returning date/time (DATEADD/DATEDIFF/FORMAT_DATE DO vectorize)
-        "GETENV$", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
-        "DATE$", "TIME$", "CVDATE", "RANDOMSEED",
-        // Collections
-        "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
-        "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",
-        "JSON.PARSE$", "JSON.STRINGIFY$",
-        // String/codec (string→array producers)
-        "SPLIT", "FORMAT$", "FRMV$", "INSERT$", "REPLACE$", "REVERSE$",
-        "PACK$", "UNPACK", "JOIN",
-        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
-        "CODEC.SHA256$", "CODEC.UUID$",
-        // Regex
-        "REGEX_MATCH", "REGEX_REPLACE$",
-        "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
-        // File I/O
-        "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
-        "CSVREADER", "CSVWRITER",
-        // System/console
-        "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
-        "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",
-        "CLIPBOARD.SET", "CLIPBOARD.GET$",
-        "OS.GETOS", "OS.GETOS$", "OS.ARGS", "OS.EXEC",
-        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD", "OS.FEATURE",
-        "DIR$", "DIR", "CD", "PWD", "MKDIR", "KILL",
-        "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
-        // Execution / shell / workspace
-        "EXECUTE", "EVAL", "LOAD", "SAVE", "LIST", "HELP", "HELP$", "VARS",
-        "RECUR", "CLEAR_RECUR", "LIST_RECUR",
-        // Threads / async / reactive
-        "AWAIT", "THREAD.ISDONE", "THREAD.GETRESULT",
-        "REACT_BIND", "UNREACT",
-        // FFI / events / internals
-        "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
-        // Graphics primitives (positional signatures — the subsystem IS the sink)
-        "SCREEN", "SCREENFLIP", "DRAWCOLOR", "SETFONT",
-        "PSET", "LINE", "RECT", "CIRCLE", "ELLIPSE",
-        "ROUNDED_RECT", "CIRCLE_SECTOR", "TEXT",
-        "PLOTRAW", "TOGGLE_FULLSCREEN",
-        // Audio
-        "AUDIO.INIT", "AUDIO.LOADWAV", "AUDIO.LOADMUS",
-        "AUDIO.PLAY", "AUDIO.PLAYMUS", "AUDIO.STOP",
-        "AUDIO.STOPMUS", "AUDIO.VOLUME", "AUDIO.VOLUMEMUS",
-        "AUDIO.PAUSE", "AUDIO.RESUME", "AUDIO.PAUSEMUS",
-        "AUDIO.RESUMEMUS", "AUDIO.FREE", "AUDIO.FREEMUS",
-        "AUDIO.CLOSE",
-        // GFX
-        "GFX.POLLEVENT", "GFX.KEYSTATE", "GFX.MOUSEX",
-        "GFX.MOUSEY", "GFX.MOUSEBUTTON", "GFX.DELAY",
-        "GFX.TICKS", "GFX.CLOSE", "GFX.LOADIMAGE",
-        "GFX.DRAWIMAGE", "GFX.FREEIMAGE", "GFX.TEXTSIZE",
-        "GFX.PLOT_POINTS", "GFX.PLOT_POINTS_TEX", "GFX.HSV_RGB",
-        "GFX.CAPTURE", "GFX.DRAW_CAPTURE",
-        "GFX.FADE", "GFX.SAVE_SCREENSHOT", "GFX.SAVE_IMAGE",
-        "GFX.DRAWIMAGE_REGION", "GFX.DRAWIMAGE_EX",
-        "GFX.COLOR_TO_ALPHA",
-        "MOUSEX", "MOUSEY", "MOUSEB",
-        // Turtle
-        "TURTLE.FORWARD", "TURTLE.BACKWARD",
-        "TURTLE.LEFT", "TURTLE.RIGHT",
-        "TURTLE.PENUP", "TURTLE.PENDOWN",
-        "TURTLE.SETPOS", "TURTLE.SETHEADING",
-        "TURTLE.HOME", "TURTLE.DRAW", "TURTLE.CLEAR",
-        "TURTLE.SET_COLOR",
-        // Joystick
-        "JOY.COUNT", "JOY.NAME$", "JOY.BUTTON",
-        "JOY.AXIS", "JOY.HAT",
-        // Sprite subsystem (positional signatures — arrays ARE the data, e.g. frames)
-        "SPRITE.LOAD", "SPRITE.POS", "SPRITE.MOVE",
-        "SPRITE.DRAW", "SPRITE.DRAW_ALL", "SPRITE.DELETE",
-        "SPRITE.GET_X", "SPRITE.GET_Y",
-        "SPRITE.SCALE", "SPRITE.FLIP", "SPRITE.ALPHA",
-        "SPRITE.VISIBLE", "SPRITE.ROTATE", "SPRITE.SET_ORIGIN",
-        "SPRITE.COLLISION", "SPRITE.WIDTH", "SPRITE.HEIGHT",
-        "SPRITE.ANIM", "SPRITE.PLAY", "SPRITE.STOP",
-        "SPRITE.FRAME", "SPRITE.UPDATE", "SPRITE.PLAYING",
-        "SPRITE.VELOCITY", "SPRITE.GET_VX", "SPRITE.GET_VY",
-        "SPRITE.GROUP", "SPRITE.COLLISIONS", "SPRITE.COLLISION_FIRST",
-        "SPRITE.ZORDER", "SPRITE.GRAVITY", "SPRITE.ON_GROUND", "SPRITE.LAND",
-        // Tilemap
-        "TILEMAP.CREATE", "TILEMAP.DRAW", "TILEMAP.SET",
-        "TILEMAP.GET", "TILEMAP.SIZE", "TILEMAP.COLLIDES",
-        "TILEMAP.TILE_AT",
-        // Camera
-        "CAM.FOLLOW", "CAM.SET", "CAM.BOUNDS", "CAM.SHAKE",
-        "CAM.X", "CAM.Y",
-        // Particles
-        "PARTICLE.EMIT", "PARTICLE.DRAW", "PARTICLE.CLEAR", "PARTICLE.COUNT",
-        // AI
-        "AI.LOAD", "AI.RUN", "AI.FREE", "AI.INFO",
-        "AI.LIST", "AI.TENSOR", "AI.SOFTMAX",
-        "AI.ARGMAX", "AI.TOPK",
-        "AI.LOAD_LLM", "AI.CHAT", "AI.CHAT_STREAM",
-        "AI.CHAT_RAW", "AI.SET", "AI.TOKENIZE",
-        "AI.DETOKENIZE", "AI.LLM_INFO", "AI.FREE_LLM",
-        "AI.TOOL_ADD", "AI.TOOL_REMOVE", "AI.TOOL_CHAT",
-        "AI.TOOL_LIST",
-        "AI.CLEAR_HISTORY", "AI.GET_HISTORY",
-        "AI.TOKEN_COUNT", "AI.COSINE_SIM", "AI.NORMALIZE",
-        "AI.RAG_CREATE", "AI.RAG_ADD", "AI.RAG_ADD_FILE",
-        "AI.RAG_ADD_DIR", "AI.RAG_SAVE", "AI.RAG_LOAD",
-        "AI.RAG_SEARCH", "AI.RAG_QUERY", "AI.RAG_QUERY_FULL",
-        "AI.RAG_QUERY_STREAM", "AI.RAG_BUILD_INDEX",
-        "AI.RAG_INFO", "AI.RAG_CLEAR", "AI.RAG_FREE",
-        "AI.EMBED", "AI.EMBED_LLM", "AI.SIMILARITY",
-        "AI.LOAD_EMBEDDINGS",
-        "AI.SET_GRAMMAR", "AI.CLEAR_GRAMMAR",
-        "AI.SET_JSON_MODE", "AI.CHAT_JSON",
-        "AI.CLASSIFIER_CREATE", "AI.CLASSIFIER_ADD",
-        "AI.CLASSIFIER_ADD_BATCH", "AI.CLASSIFIER_PREDICT",
-        "AI.CLASSIFIER_BUILD_INDEX",
-        "AI.CLASSIFIER_SAVE", "AI.CLASSIFIER_LOAD",
-        "AI.CLASSIFIER_INFO", "AI.CLASSIFIER_FREE",
-        // Sound / music
-        "SOUND.INIT", "SOUND.VOICE", "SOUND.SAMPLE",
-        "SOUND.PLAY", "SOUND.RELEASE", "SOUND.STOP",
-        "SOUND.SEQ", "SOUND.BPM",
-        "SOUND.NOTE",
-        "SOUND.GAIN", "SOUND.PAN", "SOUND.FILTER",
-        "SOUND.EQ", "SOUND.LFO", "SOUND.FM",
-        "SOUND.UNISON", "SOUND.BITCRUSH", "SOUND.RINGMOD",
-        "SOUND.REVERBSEND", "SOUND.DELAYSEND", "SOUND.SIDECHAIN",
-        "SOUND.SCALE", "SOUND.DELAY", "SOUND.REVERB",
-        "SOUND.COMPRESSOR", "SOUND.DISTORTION",
-        "SOUND.RESET", "SOUND.SHUTDOWN",
-        "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
-        "SFX.LOAD", "SFX.PLAY", "MUSIC.PLAY", "MUSIC.STOP",
-        // GUI
-        "GUI.BEGIN", "GUI.END", "GUI.BEGIN_CHILD", "GUI.END_CHILD",
-        "GUI.COLLAPSING_HEADER", "GUI.TREE_NODE", "GUI.TREE_POP",
-        "GUI.SAME_LINE", "GUI.SEPARATOR", "GUI.SEPARATOR_TEXT", "GUI.DUMMY",
-        "GUI.TEXT", "GUI.BUTTON", "GUI.CHECKBOX", "GUI.RADIO",
-        "GUI.SLIDER", "GUI.PROGRESS", "GUI.COLOR",
-        "GUI.HELPMARKER", "GUI.TOOLTIP",
-        "GUI.INPUT", "GUI.INPUT_INT", "GUI.INPUT_DOUBLE",
-        "GUI.COMBO", "GUI.LISTBOX", "GUI.SELECTABLE",
-        "GUI.BEGIN_MAIN_MENU_BAR", "GUI.END_MAIN_MENU_BAR",
-        "GUI.BEGIN_MENU_BAR", "GUI.END_MENU_BAR",
-        "GUI.BEGIN_MENU", "GUI.END_MENU", "GUI.MENU_ITEM",
-        "GUI.OPEN_POPUP", "GUI.BEGIN_POPUP", "GUI.BEGIN_POPUP_MODAL",
-        "GUI.END_POPUP", "GUI.CLOSE_CURRENT_POPUP",
-        "GUI.BEGIN_TAB_BAR", "GUI.END_TAB_BAR",
-        "GUI.BEGIN_TAB_ITEM", "GUI.END_TAB_ITEM",
-        "GUI.PLOT_LINES", "GUI.PLOT_HISTOGRAM",
-        "GUI.BEGIN_TABLE", "GUI.END_TABLE",
-        "GUI.TABLE_SETUP_COLUMN", "GUI.TABLE_HEADERS_ROW",
-        "GUI.TABLE_NEXT_ROW", "GUI.TABLE_SET_COLUMN_INDEX", "GUI.TABLE_NEXT_COLUMN",
-        "GUI.THEME", "GUI.FLAG", "GUI.COL",
-        "GUI.PUSH_STYLE_COLOR", "GUI.POP_STYLE_COLOR",
-        "GUI.PUSH_ID", "GUI.POP_ID", "GUI.SHOW_FONT_ATLAS",
-        "GUI.ITEM_RECT", "GUI.SET_CURSOR_SCREEN_POS",
-        "GUI.SET_NEXT_ITEM_WIDTH", "GUI.SET_KEYBOARD_FOCUS",
-        "GUI.ITEM_DEACTIVATED_AFTER_EDIT",
-    };
-    return s.count(name) > 0;
-}
-
 // ── Async task infrastructure ────────────────────────────────
 #include <mutex>
 #include <atomic>
@@ -664,9 +475,32 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
     if (nit != natives.end()) {
         // Auto-vectorize: mirror OpCode::CALL behaviour so external callers
         // (e.g. the native-compiler VM bridge) also get vectorized results.
-        // Single source of truth lives in vm_is_no_vectorize.
+        // Blocklist must match the one in OpCode::CALL (line ~1261).
+        static const std::unordered_set<std::string> no_vec = {
+            "ZEROS","ONES","__MAKE_UDT_ARRAY__","IOTA","RESHAPE","LEN","PUSH","POP",
+            "TENSOR","TYPEOF","APPEND","DIFF",
+            "SUM","PRODUCT","MIN","MAX","ANY","ALL",
+            "SCAN","SELECT","FILTER","REDUCE",
+            "TAKE","DROP","REVERSE","UNIQUE","SHUFFLE",
+            "FIND_IN_ARRAY","NORMALIZE","DISTANCE","GRADE",
+            "TRANSPOSE","MATMUL","MVLET","STACK","SLICE",
+            "SOLVE","INVERT","CONVOLVE","PLACE",
+            "OUTER","ROTATE","SHIFT","XSORT","INTEGRATE",
+            "GETENV$","SETLOCALE","TICK","NOW",
+            "DATE$","TIME$","CVDATE",
+            "MAP.EXISTS","MAP.KEYS","MAP.VALUES","MAP.ITEMS","MAP.SIZE",
+            "MAP.DELETE","MAP.CLEAR","MAP.MERGE","MAP.FROM",
+            "JSON.PARSE$","JSON.STRINGIFY$",
+            "SPLIT","FORMAT$","FRMV$","INSERT$","REPLACE$","REVERSE$",
+            "PACK$","UNPACK","JOIN",
+            "REGEX_MATCH","REGEX_REPLACE$","REGEX.MATCH","REGEX.FINDALL","REGEX.REPLACE",
+            "MEAN","MEDIAN","VARIANCE","STDEV","DOT","CROSS","CUMSUM","CUMPROD",
+            "HISTOGRAM","LINSPACE","FLATTEN","ZIP","RANGE","COUNT","INDEXOF",
+            "ISNUM","ISSTR","ISARR","ISMAP","ISBOOL","ISNONE","ISNULL","RANDOMSEED",
+            "IIF","EXECUTE","EVAL","LOAD","SAVE","LIST","HELP","HELP$","VARS"
+        };
         bool has_arr = false;
-        if (!vm_is_no_vectorize(name)) {
+        if (!no_vec.count(name)) {
             for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
         }
         if (has_arr) {
@@ -1486,12 +1320,8 @@ void VM::run() {
                 }
 
                 // Auto-vectorize: if any arg is an array and the function
-                // is not array-aware, apply element-wise automatically.
-                // Blocklist lives in vm_is_no_vectorize (vm.cpp top) — shared
-                // with VM::call_function (bridge path used by native-compiled
-                // code) and with LLVM codegen. Keep them in sync there.
-                #if 0  // REMOVED — see vm_is_no_vectorize
-                static const std::unordered_map<std::string, bool> DEAD_MAP_MARKER = {
+                // is not array-aware, apply element-wise automatically
+                static const std::unordered_map<std::string, bool> no_vectorize = {
                     {"ZEROS",1}, {"ONES",1}, {"__MAKE_UDT_ARRAY__",1},
                     {"IOTA",1}, {"RESHAPE",1}, {"LEN",1}, {"PUSH",1}, {"POP",1},
                     {"TENSOR",1}, {"TYPEOF",1}, {"APPEND",1}, {"DIFF",1},
@@ -1504,6 +1334,9 @@ void VM::run() {
                     {"OUTER",1}, {"ROTATE",1}, {"SHIFT",1}, {"XSORT",1}, {"INTEGRATE",1},
                     {"GETENV$",1}, {"SETLOCALE",1}, {"TICK",1}, {"NOW",1},
                     {"DATE$",1}, {"TIME$",1}, {"CVDATE",1},
+                    // DATEADD/DATEDIFF/FORMAT_DATE intentionally vectorize
+                    // so `DATEDIFF("D", scalar, [d1,d2,d3])` returns [d-d1,
+                    // d-d2, d-d3] element-wise.
                     {"MAP.EXISTS",1}, {"MAP.KEYS",1}, {"MAP.VALUES",1}, {"MAP.ITEMS",1},
                     {"MAP.SIZE",1}, {"MAP.DELETE",1}, {"MAP.CLEAR",1}, {"MAP.MERGE",1},
                     {"MAP.FROM",1}, {"JSON.PARSE$",1}, {"JSON.STRINGIFY$",1},
@@ -1643,11 +1476,10 @@ void VM::run() {
                     {"GUI.SET_NEXT_ITEM_WIDTH",1}, {"GUI.SET_KEYBOARD_FOCUS",1},
                     {"GUI.ITEM_DEACTIVATED_AFTER_EDIT",1}
                 };
-                #endif
 
                 bool has_array = false;
                 size_t arr_len = 0;
-                if (!vm_is_no_vectorize(func_name)) {
+                if (no_vectorize.find(func_name) == no_vectorize.end()) {
                     for (auto& a : args) {
                         if (a.type == ValueType::ARRAY) {
                             has_array = true;

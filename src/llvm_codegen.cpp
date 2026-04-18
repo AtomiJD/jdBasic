@@ -16,10 +16,6 @@
 #include <functional>
 #include <cstring>
 
-// Shared auto-vectorization blocklist (defined in vm.cpp). Keeps interpreter,
-// VM bridge, and native codegen in sync — prior divergence caused graphics
-// primitives to be incorrectly vectorized in the bridge path.
-bool vm_is_no_vectorize(const std::string& name);
 
 // ── Constructor / Destructor ────────────────────────────────
 
@@ -4164,10 +4160,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Universal auto-vectorization (mirrors interpreter behaviour).
-    // The blocklist is shared via vm_is_no_vectorize() declared in vm.h —
-    // this keeps interpreter, bridge, and native codegen in lockstep.
-    #if 0  // REMOVED — see vm_is_no_vectorize in vm.cpp
+    // Universal auto-vectorization (mirrors VM's no_vectorize blocklist pattern):
+    // Any function not in the blocklist vectorizes element-wise when ANY arg
+    // is an array. Example: RIGHT$(["Atomi","Bert"], 2) → ["mi","rt"].
+    //
+    // This blocklist must stay in sync with vm.cpp's no_vectorize map.
+    // Kept alphabetically-ish by module for maintenance.
     static const std::unordered_set<std::string> no_vectorize = {
         // Array producers
         "ZEROS", "ONES", "__MAKE_UDT_ARRAY__", "IOTA", "RESHAPE", "TENSOR",
@@ -4222,7 +4220,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
         // Assert is a user SUB but if used as native:
     };
-    #endif
 
     // Native vectorization table: funcname → (applier, scalar runtime fn, sig).
     // sig: "ff" = double(double), "ss" = str(str), "ifs" = int(str),
@@ -4323,9 +4320,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // Check if any argument is an array AND the function is not blocklisted.
-    // The blocklist lives in vm.cpp (vm_is_no_vectorize) — same list used
-    // by the interpreter so native and interp stay in sync.
-    if (!vm_is_no_vectorize(upper) && !expr.args.empty()) {
+    if (!no_vectorize.count(upper) && !expr.args.empty()) {
         // Evaluate args first
         std::vector<TypedValue> vals;
         vals.reserve(expr.args.size());
