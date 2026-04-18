@@ -1,0 +1,27 @@
+' Step-by-step isolation of the nested map string propagation
+
+DIM char_db = {}
+char_def = {}
+char_def{"name"} = "Vally"
+char_db{"vally"} = char_def
+
+PRINT "direct char_def{name}='"; char_def{"name"}; "'"
+PRINT "char_db{vally}{name}='"; char_db{"vally"}{"name"}; "'"
+
+def = char_db{"vally"}
+PRINT "def{name}='"; def{"name"}; "'"
+
+nm$ = def{"name"}
+PRINT "nm$='"; nm$; "'"
+
+' Now the m = {} + m{name} = def{name} path
+m = {}
+m{"name"} = def{"name"}
+PRINT "m{name}='"; m{"name"}; "'"
+
+' And via hint
+mn$ = m{"name"}
+PRINT "mn$='"; mn$; "'"
+
+IF mn$ <> "Vally" THEN PRINT "FAIL" : END
+PRINT "ALL PASS"

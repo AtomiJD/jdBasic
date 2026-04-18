@@ -1,0 +1,34 @@
+' Repro: RPG HUD shows "0" instead of party member name.
+' Pattern: PUSH map to array, GET returns map, LEFT$(m{"name"}, 8).
+
+DIM members = []
+DIM char_db = {}
+
+' Build char_db
+char_def = {}
+char_def{"name"} = "Vally"
+char_def{"class"} = "Fighter"
+char_db{"vally"} = char_def
+
+' Mirror ADD_MEMBER
+char_id$ = "vally"
+def = char_db{char_id$}
+m = {}
+m{"id"} = char_id$
+m{"name"} = def{"name"}
+m{"class"} = def{"class"}
+m{"hp"} = 10
+PUSH members, m
+member_count = 1
+
+' Mirror GET_MEMBER + HUD render
+PRINT "member_count = "; member_count
+FOR pidx = 0 TO member_count - 1
+    pm = members[pidx]
+    short$ = LEFT$(pm{"name"}, 8)
+    PRINT "pm{name}='"; pm{"name"}; "'"
+    PRINT "short$='"; short$; "'"
+NEXT
+
+IF short$ <> "Vally" THEN PRINT "FAIL" : END
+PRINT "ALL PASS"

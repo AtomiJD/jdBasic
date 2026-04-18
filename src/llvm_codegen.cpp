@@ -220,6 +220,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_new",    "__map_new",    i8_ptr_type, {}, 4);
     reg("jdb_map_set_f64","__map_set_f64",void_type,   {i8_ptr_type, i8_ptr_type, f64_type}, -1);
     reg("jdb_map_set_str","__map_set_str",void_type,   {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_map_set_tagged","__map_set_tagged",void_type, {i8_ptr_type, i8_ptr_type, f64_type, i32_type}, -1);
     reg("jdb_map_get_f64","__map_get_f64",f64_type,    {i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_map_get_str","__map_get_str",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, 0);
@@ -827,13 +828,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
                             "LINES", "WORDS", "CHARS", "UNPACK",
                             "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
-                            "TILED.OBJECTS",
                             "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS"
                         };
                         if (arr_returners.count(upper)) return 3;
-                        // VM-Value-handle returners (sync with bridge)
+                        // VM-Value-handle returners (sync with bridge).
+                        // TILED.OBJECTS returns an array of maps — the
+                        // flat-JdbArray path can't carry OBJECT elements,
+                        // so it goes through the VM-handle path instead.
                         static const std::unordered_set<std::string> obj_returners = {
-                            "JSON.PARSE$", "TILED.PROPERTIES",
+                            "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                             "MAP.FROM", "MAP.COPY"
                         };
                         if (obj_returners.count(upper) ||
@@ -1467,8 +1470,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     LLVMValueRef args[] = { obj_ptr, field_str, to_string_ptr(val) };
                     LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
                 } else {
-                    LLVMValueRef fval = val.tag == 0
-                        ? LLVMBuildSIToFP(builder, val.val, f64_type, "itof") : val.val;
+                    LLVMValueRef fval = coerce_to(val, f64_type);
                     auto& set_fn = runtime_funcs["__udt_set_f64"];
                     LLVMValueRef args[] = { obj_ptr, field_str, fval };
                     LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
@@ -1776,6 +1778,26 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         return;
     }
 
+    // Mirror codegen_let_or_assign: DIM with string-array-literal RHS or
+    // string-array-returning $-suffixed call marks the var as holding
+    // strings, so later `arr[i]` reads return tag=2 instead of punned f64.
+    if (stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        for (auto& a : stmt.expr->args) {
+            if (a && a->kind == ExprKind::LITERAL_STRING) {
+                string_array_vars.insert(stmt.var_name);
+                break;
+            }
+        }
+    }
+    if (stmt.expr->kind == ExprKind::CALL &&
+        !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$') {
+        std::string u = stmt.expr->func_name;
+        std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+        if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
+            u == "WORDS" || u == "CHARS")
+            string_array_vars.insert(stmt.var_name);
+    }
+
     // DIM arr[N] AS TypeName → CALL("__MAKE_UDT_ARRAY__", [shape, "TypeName"])
     if (stmt.expr->kind == ExprKind::CALL && stmt.expr->func_name == "__MAKE_UDT_ARRAY__" &&
         stmt.expr->args.size() >= 2 && stmt.expr->args[0]->kind == ExprKind::ARRAY_LITERAL &&
@@ -2005,7 +2027,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             LLVMValueRef args[] = { obj_ptr, field_str, to_string_ptr(val) };
             LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
         } else {
-            LLVMValueRef fval = val.tag == 0 ? LLVMBuildSIToFP(builder, val.val, f64_type, "itof") : val.val;
+            LLVMValueRef fval = coerce_to(val, f64_type);
             auto& set_fn = runtime_funcs["__udt_set_f64"];
             LLVMValueRef args[] = { obj_ptr, field_str, fval };
             LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
@@ -2029,6 +2051,24 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 auto& set_fn = runtime_funcs["__map_set_str"];
                 LLVMValueRef args[] = { obj_ptr, field_str, val_tv.val };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+            } else if (val_tv.tag == 3 || val_tv.tag == 4 || val_tv.tag == 6) {
+                // Preserve ptr-like tag (array, map, VM handle) so the
+                // tagged getter can return the right type identity.
+                LLVMValueRef fval = coerce_to(val_tv, f64_type);
+                auto& set_fn = runtime_funcs["__map_set_tagged"];
+                LLVMValueRef args[] = { obj_ptr, field_str, fval,
+                    LLVMConstInt(i32_type, val_tv.tag, 0) };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
+            } else if (val_tv.tag == 7 && val_tv.runtime_tag) {
+                // Runtime-tagged: pass the live runtime tag through so
+                // the stored entry carries its real type identity.
+                // Pun the raw i64 bits to f64 (do NOT coerce, which would
+                // turn a STR-tagged pointer into VAL()-of-the-string).
+                // __map_set_tagged strdups for STR to keep ownership sane.
+                LLVMValueRef fval = pun_i64_to_f64(val_tv.val);
+                auto& set_fn = runtime_funcs["__map_set_tagged"];
+                LLVMValueRef args[] = { obj_ptr, field_str, fval, val_tv.runtime_tag };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
             } else {
                 LLVMValueRef fval = coerce_to(val_tv, f64_type);
                 auto& set_fn = runtime_funcs["__map_set_f64"];
@@ -2048,8 +2088,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             LLVMValueRef args[] = { obj_ptr, field_str, to_string_ptr(val_tv) };
             LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
         } else {
-            LLVMValueRef fval = val_tv.tag == 0
-                ? LLVMBuildSIToFP(builder, val_tv.val, f64_type, "itof") : val_tv.val;
+            LLVMValueRef fval = coerce_to(val_tv, f64_type);
             auto& set_fn = runtime_funcs["__udt_set_f64"];
             LLVMValueRef args[] = { obj_ptr, field_str, fval };
             LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
@@ -2092,6 +2131,17 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             auto& fn = runtime_funcs["__map_set_str"];
             LLVMValueRef args[] = { arr_ptr, idx_tv.val, val_tv.val };
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "");
+        } else if (val_tv.tag == 3 || val_tv.tag == 4 || val_tv.tag == 6) {
+            auto& fn = runtime_funcs["__map_set_tagged"];
+            LLVMValueRef args[] = { arr_ptr, idx_tv.val,
+                coerce_to(val_tv, f64_type),
+                LLVMConstInt(i32_type, val_tv.tag, 0) };
+            LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
+        } else if (val_tv.tag == 7 && val_tv.runtime_tag) {
+            auto& fn = runtime_funcs["__map_set_tagged"];
+            LLVMValueRef args[] = { arr_ptr, idx_tv.val,
+                pun_i64_to_f64(val_tv.val), val_tv.runtime_tag };
+            LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
         } else {
             auto& fn = runtime_funcs["__map_set_f64"];
             LLVMValueRef args[] = { arr_ptr, idx_tv.val, coerce_to(val_tv, f64_type) };
@@ -2659,6 +2709,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         fval = pun_i64_to_f64(as_i64);
                         has_ptr_elems = true;
                         if (elem.tag == 2) has_string_elems = true;
+                    } else if (elem.tag == 4 || elem.tag == 6) {
+                        // Map / VM handle ptr → encode as f64 bits
+                        LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, fval, i64_type, "ptoi");
+                        fval = pun_i64_to_f64(as_i64);
+                        has_ptr_elems = true;
+                    } else if (elem.tag == 7) {
+                        // Runtime-tagged: preserve the raw bits (val is i64).
+                        fval = pun_i64_to_f64(elem.val);
+                        has_ptr_elems = true;
                     }
                     LLVMValueRef append_args[] = { arr, fval };
                     arr = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "arr");
@@ -2692,8 +2751,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     auto& set_str = runtime_funcs["__map_set_str"];
                     LLVMValueRef args[] = { m, key, v.val };
                     LLVMBuildCall2(builder, set_str.fn_type, set_str.fn, args, 3, "");
+                } else if (v.tag == 3 || v.tag == 4 || v.tag == 6) {
+                    // Nested ptrs — preserve tag so tagged getter
+                    // returns the right type identity.
+                    LLVMValueRef fv = coerce_to(v, f64_type);
+                    auto& set_tg = runtime_funcs["__map_set_tagged"];
+                    LLVMValueRef args[] = { m, key, fv,
+                        LLVMConstInt(i32_type, v.tag, 0) };
+                    LLVMBuildCall2(builder, set_tg.fn_type, set_tg.fn, args, 4, "");
+                } else if (v.tag == 7 && v.runtime_tag) {
+                    LLVMValueRef fv = pun_i64_to_f64(v.val);
+                    auto& set_tg = runtime_funcs["__map_set_tagged"];
+                    LLVMValueRef args[] = { m, key, fv, v.runtime_tag };
+                    LLVMBuildCall2(builder, set_tg.fn_type, set_tg.fn, args, 4, "");
                 } else {
-                    // Nested ptrs (map/array) get encoded as f64-bits via coerce_to
                     LLVMValueRef fv = coerce_to(v, f64_type);
                     auto& set_f64 = runtime_funcs["__map_set_f64"];
                     LLVMValueRef args[] = { m, key, fv };
@@ -3051,6 +3122,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         gtag.fn, targs, 5, "tv7tag");
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv7val");
                     TypedValue r; r.val = tv_val; r.tag = 7; r.runtime_tag = tv_tag;
+                    // Honour leaf_hint from the dest var so a $-var stays
+                    // tag=2 (string) instead of being promoted to tag=7 by
+                    // assignment — a conditionally-skipped write would then
+                    // leave the runtime_tag slot at 0 and turn later reads
+                    // into garbage-formatted doubles.
+                    if (leaf_hint == 2) return { coerce_to(r, i8_ptr_type), 2 };
+                    if (leaf_hint == 1) return { coerce_to(r, f64_type), 1 };
+                    if (leaf_hint == 0) {
+                        LLVMValueRef d = coerce_to(r, f64_type);
+                        return { LLVMBuildFPToSI(builder, d, i64_type, "7toi"), 0 };
+                    }
                     return r;
                 }
                 if (arr_tv.tag == 4) {
@@ -3142,13 +3224,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         LLVMValueRef args[] = { obj_ptr, idx_tv.val };
                         return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), 2 };
                     }
-                    // Default to numeric — matches the common case for map
-                    // fields used in arithmetic, comparisons, function args.
-                    // Explicit string hint (from $-var assignment or string
-                    // param) triggers the str path above.
-                    auto& gf = runtime_funcs["__map_get_f64"];
-                    LLVMValueRef args[] = { obj_ptr, idx_tv.val };
-                    return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "mgetf"), 1 };
+                    if (leaf_hint == 0 || leaf_hint == 1) {
+                        auto& gf = runtime_funcs["__map_get_f64"];
+                        LLVMValueRef args[] = { obj_ptr, idx_tv.val };
+                        return { LLVMBuildCall2(builder, gf.fn_type, gf.fn, args, 2, "mgetf"), 1 };
+                    }
+                    // No hint → TAGGED getter preserves type info so
+                    // PRINT and implicit string/number uses work without
+                    // an explicit $-var round-trip (matches the tag=4
+                    // and tag=6 default paths above).
+                    auto& gtag = runtime_funcs["__map_get_tagged"];
+                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                    LLVMValueRef targs[] = { obj_ptr, idx_tv.val, out };
+                    LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, targs, 3, "mtag");
+                    LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
+                    TypedValue r; r.val = tv_val; r.tag = 7; r.runtime_tag = tv_tag; return r;
                 }
 
                 // UDT field access
@@ -3878,6 +3968,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 if (it != var_udt_type.end())
                     var_udt_type[expr.args[0]->str_val + "[]"] = it->second;
             }
+            // Pushing a string (direct tag=2, or element of a known string
+            // array) marks the dest array as string-bearing so later
+            // `arr[i]` reads return tag=2 instead of the punned-f64 default.
+            bool pushing_str = (val_tv.tag == 2);
+            if (!pushing_str && expr.args[1]->kind == ExprKind::INDEX &&
+                expr.args[1]->left &&
+                expr.args[1]->left->kind == ExprKind::VARIABLE &&
+                string_array_vars.count(expr.args[1]->left->str_val))
+                pushing_str = true;
+            if (!pushing_str && expr.args[1]->kind == ExprKind::VARIABLE &&
+                string_array_vars.count(expr.args[1]->str_val))
+                pushing_str = true;
+            if (pushing_str)
+                string_array_vars.insert(expr.args[0]->str_val);
         }
         return { result, 3 };
     }
@@ -4580,7 +4684,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                 string_returners.count(upper);
 
             static const std::unordered_set<std::string> object_returners = {
-                "JSON.PARSE$", "TILED.PROPERTIES", "MAP.FROM", "MAP.COPY"
+                "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
+                "MAP.FROM", "MAP.COPY"
             };
             bool is_object_fn = object_returners.count(upper);
 
@@ -4591,7 +4696,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
                 "LINES", "WORDS", "CHARS", "UNPACK",
                 "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
-                "TILED.OBJECTS",
                 "GFX.HSV_RGB", "GFX.TEXTSIZE",
                 "SPRITE.COLLISIONS"
             };

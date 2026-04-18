@@ -1,0 +1,41 @@
+' Repro for native-codegen bug: conditional assignment of p{"k"}
+' (tag-7 runtime-tagged) to a $-typed var promoted the var's
+' tag to 7 and left runtime_tag at 0 on the skip-path, turning
+' subsequent reads into garbage-formatted doubles.
+' Uses JSON.PARSE$ to reliably produce a tag-7 VM-handle chain,
+' matching the TILED.OBJECTS → properties → direction pattern.
+
+DIM direction$ = "down"
+
+' Case 1: field exists and IS a string → direction$ = "up"
+json1$ = "{""properties"": {""direction"": ""up""}}"
+outer1 = JSON.PARSE$(json1$)
+p1 = outer1{"properties"}
+IF MAP.EXISTS(p1, "direction") THEN direction$ = p1{"direction"}
+PRINT "case1 direction$='"; direction$; "'"
+IF direction$ <> "up" THEN PRINT "FAIL case1" : END
+
+' Case 2: field missing → direction$ stays "up"
+json2$ = "{""properties"": {""other"": ""x""}}"
+outer2 = JSON.PARSE$(json2$)
+p2 = outer2{"properties"}
+IF MAP.EXISTS(p2, "direction") THEN direction$ = p2{"direction"}
+PRINT "case2 direction$='"; direction$; "'"
+IF direction$ <> "up" THEN PRINT "FAIL case2" : END
+
+' Case 3: the classic crash — concat after conditionally-skipped assign.
+anim$ = "idle_" + direction$
+PRINT "case3 anim$='"; anim$; "'"
+IF anim$ <> "idle_up" THEN PRINT "FAIL case3" : END
+
+' Case 4: inner field missing → direction$ from previous case stays "up",
+' then re-concat to simulate the per-frame RPG loop path.
+json3$ = "{""properties"": {""foo"": ""bar""}}"
+outer3 = JSON.PARSE$(json3$)
+p3 = outer3{"properties"}
+IF MAP.EXISTS(p3, "direction") THEN direction$ = p3{"direction"}
+anim2$ = "walk_" + direction$
+PRINT "case4 anim2$='"; anim2$; "'"
+IF anim2$ <> "walk_up" THEN PRINT "FAIL case4" : END
+
+PRINT "ALL PASS"

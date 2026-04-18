@@ -1,0 +1,21 @@
+' Repro for native codegen bug: PUSH of string elements onto an array
+' initialized as [] doesn't mark the dest array as string-bearing.
+' Later arr[i] reads return f64-punned pointers instead of tag=2 strings,
+' which then get passed to bridge functions as garbage doubles.
+
+DIM ground = []
+DIM layers$ = ["ground_base", "ground_path", "entities", "ground_foo"]
+
+FOR i = 0 TO LEN(layers$) - 1
+    IF LEFT$(layers$[i], 7) = "ground_" THEN PUSH ground, layers$[i]
+NEXT
+PRINT "ground count = "; LEN(ground)
+FOR i = 0 TO LEN(ground) - 1
+    s$ = ground[i]
+    PRINT "  ground["; i; "] = '"; s$; "'"
+NEXT
+IF LEN(ground) <> 3 THEN PRINT "FAIL count" : END
+IF ground[0] <> "ground_base" THEN PRINT "FAIL ground[0]" : END
+IF ground[1] <> "ground_path" THEN PRINT "FAIL ground[1]" : END
+IF ground[2] <> "ground_foo" THEN PRINT "FAIL ground[2]" : END
+PRINT "ALL PASS"

@@ -1,0 +1,6 @@
+EXPORT MODULE ASKMOD
+
+EXPORT FUNC GREET$(s$)
+    IF s$ = "" THEN RETURN ""
+    RETURN s$ + "-ok"
+ENDFUNC

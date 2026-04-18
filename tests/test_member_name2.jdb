@@ -1,0 +1,15 @@
+' Simpler repro: PUSH map to array, GET returns map, access field.
+
+DIM members = []
+m = {}
+m{"name"} = "Vally"
+PUSH members, m
+
+pm = members[0]
+PRINT "direct: pm{name}='"; pm{"name"}; "'"
+
+nm$ = pm{"name"}
+PRINT "via hint: nm$='"; nm$; "'"
+
+IF nm$ <> "Vally" THEN PRINT "FAIL hint" : END
+PRINT "ALL PASS"

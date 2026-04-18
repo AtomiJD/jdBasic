@@ -1,0 +1,27 @@
+' Repro: cross-module FUNC returning string assigned to $-var.
+' Mirrors: player_name$ = RPG_DIALOG.ASK$(...) pattern.
+
+IMPORT ASKMOD
+
+DIM player_name$ = ""
+
+' Case 1: bare assignment from cross-module $-FUNC
+player_name$ = ASKMOD.GREET$("hello")
+PRINT "case1 player_name$='"; player_name$; "'"
+IF player_name$ <> "hello-ok" THEN PRINT "FAIL case1" : END
+
+' Case 2: conditional assignment + fallback
+player_name$ = ""
+IF player_name$ = "" THEN
+    player_name$ = ASKMOD.GREET$("")
+    IF player_name$ = "" THEN player_name$ = "Vally"
+ENDIF
+PRINT "case2 player_name$='"; player_name$; "'"
+IF player_name$ <> "Vally" THEN PRINT "FAIL case2" : END
+
+' Case 3: concat after
+hud$ = "Name: " + player_name$
+PRINT "case3 hud$='"; hud$; "'"
+IF hud$ <> "Name: Vally" THEN PRINT "FAIL case3" : END
+
+PRINT "ALL PASS"

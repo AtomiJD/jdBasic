@@ -871,6 +871,32 @@ void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
     m->tags[idx] = JD_TAG_STR;
 }
 
+// Store an already-punned f64 value with an explicit tag. Used when the
+// setter knows the value is actually a map/array ptr punned as f64 — the
+// default f64 setter would stomp the tag back to F64 and lose the
+// type identity needed by the tagged getter.
+//
+// For tag=STR, `val` holds a punned char* (pointer bits). We strdup the
+// referenced string so the map owns its copy (matches jdb_map_set_str).
+void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag) {
+    if (!m || !key) return;
+    int64_t idx = map_find(m, key);
+    if (idx < 0) {
+        if (m->count == m->capacity) map_grow(m);
+        idx = m->count++;
+        m->keys[idx] = _strdup(key);
+    }
+    if (tag == JD_TAG_STR) {
+        union { double d; int64_t i; } u; u.d = val;
+        const char* s = (const char*)(intptr_t)u.i;
+        union { int64_t i; double d; } out; out.i = (int64_t)(intptr_t)_strdup(s ? s : "");
+        m->values[idx] = out.d;
+    } else {
+        m->values[idx] = val;
+    }
+    m->tags[idx] = tag;
+}
+
 double jdb_map_get_f64(JdbMap* m, const char* key) {
     int64_t idx = map_find(m, key);
     if (idx < 0) return 0;
@@ -929,7 +955,7 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
         return JD_TAG_STR;
     }
     *out_val = u.i;
-    return (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP) ? t : JD_TAG_F64;
+    return (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_VM_HANDLE) ? t : JD_TAG_F64;
 }
 
 // String - String → remove all occurrences: "abcabc" - "bc" → "aa"
