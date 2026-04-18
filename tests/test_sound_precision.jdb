@@ -1,0 +1,38 @@
+' Verify f64 values from JSON survive the tag-7 → bridge → builtin path.
+' Uses a stand-in builtin with the same shape as SOUND.FILTER —
+' second arg is the f64 we want to preserve. We compare the round-trip
+' value to the literal to detect precision loss.
+
+' Direct f64 literals (no tag-7 indirection)
+PRINT "direct: "; ABS(0.123456789) - 0.123456789
+
+' Through a JSON-parsed object
+json$ = "{ ""filter"": 1500.5, ""gain"": 0.7654321, ""bpm"": 110 }"
+data = JSON.PARSE$(json$)
+
+filter = data{"filter"}
+gain = data{"gain"}
+bpm = data{"bpm"}
+
+PRINT "filter = "; filter; " (expected 1500.5)"
+PRINT "gain   = "; gain; " (expected 0.7654321)"
+PRINT "bpm    = "; bpm; " (expected 110)"
+
+ok = TRUE
+IF ABS(filter - 1500.5) > 0.0001 THEN ok = FALSE
+IF ABS(gain - 0.7654321) > 0.0001 THEN ok = FALSE
+IF ABS(bpm - 110) > 0.0001 THEN ok = FALSE
+
+' Through a nested array — the bv pattern from rpg_music.jdb
+json2$ = "{ ""voice"": [ ""SAW"", 0.01, 0.1, 0.4, 0.1 ] }"
+d2 = JSON.PARSE$(json2$)
+voice = d2{"voice"}
+PRINT "voice[0] = "; voice[0]; " (expected SAW)"
+PRINT "voice[1] = "; voice[1]; " (expected 0.01)"
+PRINT "voice[2] = "; voice[2]; " (expected 0.1)"
+
+IF voice[0] <> "SAW" THEN ok = FALSE
+IF ABS(voice[1] - 0.01) > 0.0001 THEN ok = FALSE
+IF ABS(voice[2] - 0.1) > 0.0001 THEN ok = FALSE
+
+IF ok THEN PRINT "PASS" ELSE PRINT "FAIL"

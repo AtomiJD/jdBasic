@@ -4714,18 +4714,26 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
 
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     // Runtime-tagged value (tag 7): branch on runtime tag to pick the
-    // right conversion. The common case is f64 (tag 1) or string (tag 2).
+    // right conversion. Three cases matter:
+    //   STR (2)        — pun i64 back to char* (or VAL→f64)
+    //   VM_HANDLE (6)  — i64 is a value_store key; deref via jdrt_val_*
+    //   anything else  — i64 holds f64 bits (or numeric)
     if (tv.tag == 7 && tv.runtime_tag) {
         LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
             LLVMConstInt(i32_type, 2, 0), "dyn_isstr");
+        LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+            LLVMConstInt(i32_type, 6, 0), "dyn_isvmh");
         LLVMBasicBlockRef bb_str = LLVMAppendBasicBlock(current_fn, "dyn.str");
+        LLVMBasicBlockRef bb_chk_vmh = LLVMAppendBasicBlock(current_fn, "dyn.chk_vmh");
+        LLVMBasicBlockRef bb_vmh = LLVMAppendBasicBlock(current_fn, "dyn.vmh");
         LLVMBasicBlockRef bb_other = LLVMAppendBasicBlock(current_fn, "dyn.other");
         LLVMBasicBlockRef bb_merge = LLVMAppendBasicBlock(current_fn, "dyn.merge");
-        LLVMBuildCondBr(builder, is_str, bb_str, bb_other);
+        LLVMBuildCondBr(builder, is_str, bb_str, bb_chk_vmh);
+        LLVMPositionBuilderAtEnd(builder, bb_chk_vmh);
+        LLVMBuildCondBr(builder, is_vmh, bb_vmh, bb_other);
 
         if (target == f64_type) {
             LLVMPositionBuilderAtEnd(builder, bb_str);
-            // String → parse to double via VAL
             LLVMValueRef sptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "sptr");
             auto* vfn = get_runtime_func("VAL");
             LLVMValueRef s2f = vfn
@@ -4734,6 +4742,18 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
 
+            LLVMPositionBuilderAtEnd(builder, bb_vmh);
+            auto* vtf = get_runtime_func("__jdrt_val_to_f64");
+            LLVMValueRef vmh_f = LLVMConstReal(f64_type, 0.0);
+            if (vtf) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef args[] = { rt, tv.val };
+                vmh_f = LLVMBuildCall2(builder, vtf->fn_type, vtf->fn, args, 2, "vmh_f");
+            }
+            LLVMBuildBr(builder, bb_merge);
+            LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
+
             LLVMPositionBuilderAtEnd(builder, bb_other);
             LLVMValueRef punned = pun_i64_to_f64(tv.val);
             LLVMBuildBr(builder, bb_merge);
@@ -4741,9 +4761,9 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
 
             LLVMPositionBuilderAtEnd(builder, bb_merge);
             LLVMValueRef phi = LLVMBuildPhi(builder, f64_type, "dyn_f64");
-            LLVMValueRef vals[] = { s2f, punned };
-            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_other_end };
-            LLVMAddIncoming(phi, vals, bbs, 2);
+            LLVMValueRef vals[] = { s2f, vmh_f, punned };
+            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_vmh_end, bb_other_end };
+            LLVMAddIncoming(phi, vals, bbs, 3);
             return phi;
         }
         if (target == i8_ptr_type) {
@@ -4751,6 +4771,18 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMValueRef sptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "sptr");
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_vmh);
+            auto* vts = get_runtime_func("__jdrt_val_to_str");
+            LLVMValueRef vmh_s = LLVMConstNull(i8_ptr_type);
+            if (vts) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef args[] = { rt, tv.val };
+                vmh_s = LLVMBuildCall2(builder, vts->fn_type, vts->fn, args, 2, "vmh_s");
+            }
+            LLVMBuildBr(builder, bb_merge);
+            LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
 
             LLVMPositionBuilderAtEnd(builder, bb_other);
             LLVMValueRef f = pun_i64_to_f64(tv.val);
@@ -4761,13 +4793,15 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
 
             LLVMPositionBuilderAtEnd(builder, bb_merge);
             LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "dyn_str");
-            LLVMValueRef vals[] = { sptr, fstr };
-            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_other_end };
-            LLVMAddIncoming(phi, vals, bbs, 2);
+            LLVMValueRef vals[] = { sptr, vmh_s, fstr };
+            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_vmh_end, bb_other_end };
+            LLVMAddIncoming(phi, vals, bbs, 3);
             return phi;
         }
         if (target == i64_type) {
             LLVMPositionBuilderAtEnd(builder, bb_str);
+            LLVMBuildBr(builder, bb_merge);
+            LLVMPositionBuilderAtEnd(builder, bb_vmh);
             LLVMBuildBr(builder, bb_merge);
             LLVMPositionBuilderAtEnd(builder, bb_other);
             LLVMBuildBr(builder, bb_merge);
