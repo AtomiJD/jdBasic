@@ -758,6 +758,79 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     }
 }
 
+// ── Phase 2: StaticType + type environment ─────────────────
+
+std::string LLVMCodegen::StaticType::describe() const {
+    switch (kind) {
+        case Kind::UNKNOWN: return "UNKNOWN";
+        case Kind::ANY:     return "ANY";
+        case Kind::INTEGER: return "INTEGER";
+        case Kind::NUMBER:  return "NUMBER";
+        case Kind::STRING:  return "STRING";
+        case Kind::BOOLEAN: return "BOOLEAN";
+        case Kind::DATE:    return "DATE";
+        case Kind::MAP:     return "MAP";
+        case Kind::TENSOR:  return "TENSOR";
+        case Kind::FUNCREF: return "FUNCREF";
+        case Kind::UDT:     return name.empty() ? "UDT" : name;
+        case Kind::ARRAY: {
+            std::string inner = elem ? elem->describe() : "UNKNOWN";
+            return inner + "[]";
+        }
+    }
+    return "?";
+}
+
+LLVMCodegen::StaticType LLVMCodegen::StaticType::from_vartype(
+        VarType vt, VarType et, const std::string& udt_name) {
+    StaticType st;
+    auto bucket = [](VarType v, const std::string& n) -> StaticType {
+        StaticType r;
+        switch (v) {
+            case VarType::BOOLEAN:
+                r.kind = Kind::BOOLEAN; break;
+            case VarType::BYTE: case VarType::CHAR:
+            case VarType::INT16: case VarType::INT32: case VarType::INT64:
+                r.kind = Kind::INTEGER; break;
+            case VarType::FLOAT16: case VarType::FLOAT32: case VarType::FLOAT64:
+                r.kind = Kind::NUMBER; break;
+            case VarType::STRING:
+                r.kind = Kind::STRING; break;
+            case VarType::OBJECT:
+                if (!n.empty()) { r.kind = Kind::UDT; r.name = n; }
+                else r.kind = Kind::MAP;
+                break;
+            case VarType::TENSOR:
+                r.kind = Kind::TENSOR; break;
+            case VarType::ARRAY:
+            case VarType::NONE:
+            default:
+                r.kind = Kind::UNKNOWN; break;
+        }
+        return r;
+    };
+    if (vt == VarType::ARRAY) {
+        st.kind = Kind::ARRAY;
+        st.name = udt_name;  // UDT element name if the array holds UDT instances
+        // Element type: OBJECT+udt_name → UDT; otherwise scalar bucket.
+        StaticType inner = bucket(et, udt_name);
+        st.elem = std::make_shared<StaticType>(inner);
+    } else {
+        st = bucket(vt, udt_name);
+    }
+    return st;
+}
+
+void LLVMCodegen::populate_type_env(const std::vector<StmtPtr>& program) {
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::DIM) {
+            type_env[stmt->var_name] = StaticType::from_vartype(
+                stmt->var_type, stmt->elem_type, stmt->label);
+        }
+    }
+}
+
 // ── Main Entry Points ───────────────────────────────────────
 
 bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
@@ -767,6 +840,7 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     declare_runtime_functions();
     create_main_function();
     declare_functions(program);
+    populate_type_env(program);
     codegen_program(program);
 
     // STRICT/EXPLICIT diagnostics accumulated during codegen_program are

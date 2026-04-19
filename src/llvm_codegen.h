@@ -43,6 +43,34 @@ public:
         diagnostics.push_back({file, line, msg});
     }
 
+    // Phase 2: compile-time type label. Collapses the parser's width-specific
+    // VarType enum into coarse buckets — INTEGER covers all int widths,
+    // NUMBER covers all float widths. Width-strict checking can be layered
+    // on later if needed; for now the pivot only cares about ptr-vs-scalar
+    // mismatches (the class of bug that slipped past the LLVM verifier).
+    // STRICT uses this to validate assignments / calls / returns; EXPLICIT
+    // uses it to detect uses of undeclared variables (kind == UNKNOWN).
+    struct StaticType {
+        enum class Kind {
+            UNKNOWN,   // not declared — under EXPLICIT, a use is an error
+            ANY,       // explicit opt-out (reserved for AS ANY, future)
+            INTEGER, NUMBER, STRING, BOOLEAN, DATE,
+            ARRAY, MAP, UDT, TENSOR, FUNCREF
+        };
+        Kind kind = Kind::UNKNOWN;
+        std::string name;                    // UDT name (UDT / ARRAY[UDT])
+        std::shared_ptr<StaticType> elem;    // ARRAY element type when known
+
+        bool is_unknown() const { return kind == Kind::UNKNOWN; }
+        std::string describe() const;
+        static StaticType from_vartype(VarType vt, VarType et, const std::string& udt_name);
+    };
+
+    // name → declared type. Populated by populate_type_env() from the
+    // program's top-level DIMs. Phase 3/4 will extend to FUNC params/locals.
+    std::unordered_map<std::string, StaticType> type_env;
+    void populate_type_env(const std::vector<StmtPtr>& program);
+
     // Transient codegen state: true while evaluating an expression whose
     // result will be the LEFT of an INDEX chain (e.g. inner `a{"b"}` of
     // `a{"b"}{"c"}`). Consumers return a raw map ptr (tag=4) instead of a
