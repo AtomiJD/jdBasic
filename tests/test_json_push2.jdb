@@ -1,0 +1,11 @@
+data = JSON.PARSE$(TXTREADER$("tests/test_items.json"))
+item_db = data{"items"}
+PRINT "A"
+itm = item_db{"apple"}
+PRINT "B"
+result = []
+PRINT "C"
+PUSH result, itm
+PRINT "D"
+itm2 = result[0]
+PRINT "E typeof="; TYPEOF(itm2)

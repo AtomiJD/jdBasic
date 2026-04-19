@@ -1084,6 +1084,147 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             codegen_type_decl(*stmt);
     }
 
+    // Pre-pass: propagate VM-handle flow across FUNC boundaries.
+    //
+    // vm_array_vars (arrays holding VM-handle elements) is populated at
+    // codegen time by the PUSH path, but FUNCs are codegen'd BEFORE main, so
+    // a FUNC param that receives a vm_array from a call site isn't yet in
+    // the set when the FUNC body is compiled. Same for `x = f(...)` when f
+    // returns a vm_array. Static scan + fixed-point iteration seeds the sets
+    // so INDEX dispatch inside FUNC bodies routes through the VM bridge.
+    {
+        std::unordered_map<std::string, const Stmt*> func_stmt;
+        for (auto& stmt : program)
+            if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
+                func_stmt[stmt->func_name] = stmt.get();
+
+        std::unordered_set<std::string> vm_handle_vars;         // single VM-handle locals
+        std::unordered_set<std::string> vm_handle_return_funcs; // funcs returning a VM handle
+
+        auto is_vm_handle_call = [](const std::string& name) -> bool {
+            std::string u = name;
+            std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+            if (u == "JSON.PARSE$" || u == "MAP.FROM" || u == "MAP.COPY" ||
+                u == "TILED.PROPERTIES" || u == "TILED.OBJECTS") return true;
+            if (u.size() > 4 && u.substr(0, 4) == "MAP." &&
+                u != "MAP.SIZE" && u != "MAP.EXISTS" &&
+                u != "MAP.KEYS" && u != "MAP.VALUES") return true;
+            return false;
+        };
+
+        std::function<bool(const Expr*)> is_vm_handle_expr = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            if (e->kind == ExprKind::CALL) {
+                if (is_vm_handle_call(e->func_name)) return true;
+                if (vm_handle_return_funcs.count(e->func_name)) return true;
+                return false;
+            }
+            if (e->kind == ExprKind::VARIABLE)
+                return vm_handle_vars.count(e->str_val) > 0;
+            if (e->kind == ExprKind::INDEX && e->left) {
+                if (e->left->kind == ExprKind::VARIABLE) {
+                    if (vm_handle_vars.count(e->left->str_val)) return true;
+                    if (vm_array_vars.count(e->left->str_val)) return true;
+                }
+                if (is_vm_handle_expr(e->left.get())) return true;
+            }
+            return false;
+        };
+        auto is_vm_array_expr = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            if (e->kind == ExprKind::VARIABLE)
+                return vm_array_vars.count(e->str_val) > 0;
+            if (e->kind == ExprKind::CALL)
+                return vm_array_return_funcs.count(e->func_name) > 0;
+            return false;
+        };
+
+        bool changed = true;
+        int guard = 0;
+        while (changed && guard++ < 16) {
+            changed = false;
+
+            std::function<void(const Stmt*, const std::string&)> scan =
+                [&](const Stmt* s, const std::string& fname) {
+                if (!s) return;
+
+                // LET/ASSIGN/DIM var = expr → propagate kind to var
+                if ((s->kind == StmtKind::LET || s->kind == StmtKind::ASSIGN ||
+                     s->kind == StmtKind::DIM) && !s->var_name.empty() && s->expr) {
+                    if (is_vm_handle_expr(s->expr.get()))
+                        if (vm_handle_vars.insert(s->var_name).second) changed = true;
+                    if (is_vm_array_expr(s->expr.get()))
+                        if (vm_array_vars.insert(s->var_name).second) changed = true;
+                }
+
+                // PUSH arr, expr → arr is vm_array if expr is a VM handle
+                if ((s->kind == StmtKind::EXPR_STMT || s->kind == StmtKind::LET) &&
+                    s->expr && s->expr->kind == ExprKind::CALL) {
+                    std::string up = s->expr->func_name;
+                    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                    if (up == "PUSH" && s->expr->args.size() >= 2 &&
+                        s->expr->args[0] &&
+                        s->expr->args[0]->kind == ExprKind::VARIABLE &&
+                        s->expr->args[1] &&
+                        is_vm_handle_expr(s->expr->args[1].get())) {
+                        if (vm_array_vars.insert(s->expr->args[0]->str_val).second)
+                            changed = true;
+                    }
+                }
+
+                // RETURN expr inside a FUNC → mark the FUNC as returning that kind
+                if (s->kind == StmtKind::RETURN && s->expr && !fname.empty()) {
+                    if (is_vm_array_expr(s->expr.get()))
+                        if (vm_array_return_funcs.insert(fname).second) changed = true;
+                    if (is_vm_handle_expr(s->expr.get()))
+                        if (vm_handle_return_funcs.insert(fname).second) changed = true;
+                }
+
+                // Call sites: f(vm_array_arg) → param is vm_array in f's body
+                std::function<void(const Expr*)> scan_calls = [&](const Expr* e) {
+                    if (!e) return;
+                    if (e->kind == ExprKind::CALL) {
+                        auto fit = func_stmt.find(e->func_name);
+                        if (fit != func_stmt.end()) {
+                            const Stmt* f = fit->second;
+                            for (size_t i = 0; i < e->args.size() && i < f->params.size(); i++) {
+                                const Expr* a = e->args[i].get();
+                                if (!a) continue;
+                                if (is_vm_array_expr(a))
+                                    if (vm_array_vars.insert(f->params[i].name).second)
+                                        changed = true;
+                                if (is_vm_handle_expr(a))
+                                    if (vm_handle_vars.insert(f->params[i].name).second)
+                                        changed = true;
+                            }
+                        }
+                    }
+                    if (e->left) scan_calls(e->left.get());
+                    if (e->right) scan_calls(e->right.get());
+                    for (auto& a : e->args) if (a) scan_calls(a.get());
+                };
+                if (s->expr) scan_calls(s->expr.get());
+                if (s->loop_cond) scan_calls(s->loop_cond.get());
+                if (s->end_expr) scan_calls(s->end_expr.get());
+                if (s->step_expr) scan_calls(s->step_expr.get());
+                for (auto& pe : s->print_exprs) if (pe) scan_calls(pe.get());
+
+                for (auto& b : s->body) scan(b.get(), fname);
+                for (auto& c : s->catch_body) scan(c.get(), fname);
+                for (auto& f : s->finally_body) scan(f.get(), fname);
+                for (auto& br : s->branches)
+                    for (auto& b : br.body) scan(b.get(), fname);
+            };
+
+            for (auto& stmt : program) {
+                if (!stmt) continue;
+                std::string fn = (stmt->kind == StmtKind::FUNCTION ||
+                                  stmt->kind == StmtKind::SUB) ? stmt->func_name : "";
+                scan(stmt.get(), fn);
+            }
+        }
+    }
+
     // Second pass: compile all FUNC/SUB bodies
     for (auto& stmt : program) {
         if (stmt && (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB))
@@ -3434,6 +3575,38 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_s");
                 return { as_ptr, 2 };
             }
+            // Map-bearing array: decode the punned-f64 back to a JdbMap* and
+            // return tag=4 so subsequent `q{"k"} = v` mutates the shared map.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                map_array_vars.count(expr.left->str_val)) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_m");
+                return { as_ptr, 4 };
+            }
+            // VM-handle-bearing array (PUSH'd a tag=6 or tag=7 element):
+            // decode the punned-f64 back to an i64 handle and return tag=6
+            // so MAP_ACCESS routes through __jdrt_obj_get_* / __jdrt_obj_exists
+            // instead of treating the bits as a JdbMap*.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                vm_array_vars.count(expr.left->str_val)) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                return { as_i64, 6 };
+            }
+            // LHS type hint (e.g. `id$ = arr[i]` with $-suffixed target)
+            // lets us decode the punned-f64 element without needing the
+            // source array to be pre-tracked as string/map-bearing. Crucial
+            // when the source is a FUNC param whose element type we didn't
+            // propagate from the caller.
+            if (m_want_leaf_tag == 2) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_h_s");
+                return { as_ptr, 2 };
+            }
+            if (m_want_leaf_tag == 4) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_h_m");
+                return { as_ptr, 4 };
+            }
             return { result, 1 };  // array elements are f64
         }
 
@@ -4067,8 +4240,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "PUSH" && expr.args.size() >= 2) {
         TypedValue arr_tv = codegen_expr(*expr.args[0]);
         TypedValue val_tv = codegen_expr(*expr.args[1]);
-        // coerce_to(_, f64_type) handles all tags: int→fp, ptr→ptoi+pun.
-        LLVMValueRef fval = coerce_to(val_tv, f64_type);
+        // VM-handle / runtime-tagged pushes must preserve raw i64 bits —
+        // coerce_to(tag=7, f64) would CONVERT a VM handle via __jdrt_val_to_f64
+        // (yielding 0 for a map object), erasing the handle. Pun directly so
+        // the element round-trips through f64 storage.
+        LLVMValueRef fval;
+        bool pushing_handle = (val_tv.tag == JD_TAG_VM_HANDLE ||
+                               val_tv.tag == JD_TAG_RUNTIME);
+        if (pushing_handle) {
+            fval = pun_i64_to_f64(val_tv.val);
+        } else {
+            // coerce_to(_, f64_type) handles other tags: int→fp, ptr→ptoi+pun.
+            fval = coerce_to(val_tv, f64_type);
+        }
         auto& append_fn = runtime_funcs["APPEND"];
         LLVMValueRef arr_ptr = coerce_to(arr_tv, i8_ptr_type);
         LLVMValueRef args[] = { arr_ptr, fval };
@@ -4099,6 +4283,37 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 pushing_str = true;
             if (pushing_str)
                 string_array_vars.insert(expr.args[0]->str_val);
+            // Pushing a map (direct tag=4, element of known map array, or a
+            // MAP_LITERAL) marks dest as map-bearing so `q = arr[i]` returns
+            // tag=4 (ptr) instead of a scalar f64 that can't be mutated.
+            bool pushing_map = (val_tv.tag == 4);
+            if (!pushing_map && expr.args[1]->kind == ExprKind::MAP_LITERAL)
+                pushing_map = true;
+            if (!pushing_map && expr.args[1]->kind == ExprKind::VARIABLE &&
+                map_array_vars.count(expr.args[1]->str_val))
+                pushing_map = true;
+            if (!pushing_map && expr.args[1]->kind == ExprKind::INDEX &&
+                expr.args[1]->left &&
+                expr.args[1]->left->kind == ExprKind::VARIABLE &&
+                map_array_vars.count(expr.args[1]->left->str_val))
+                pushing_map = true;
+            if (pushing_map)
+                map_array_vars.insert(expr.args[0]->str_val);
+            // VM-handle pushes: tag=6 direct, tag=7 runtime-tagged (likely a
+            // nested map from a JSON-parsed object), or INDEX into an existing
+            // vm-array. Mark dest so reads come back as tag=6 handles that
+            // MAP_ACCESS routes through the VM bridge.
+            bool pushing_vm = pushing_handle;
+            if (!pushing_vm && expr.args[1]->kind == ExprKind::VARIABLE &&
+                vm_array_vars.count(expr.args[1]->str_val))
+                pushing_vm = true;
+            if (!pushing_vm && expr.args[1]->kind == ExprKind::INDEX &&
+                expr.args[1]->left &&
+                expr.args[1]->left->kind == ExprKind::VARIABLE &&
+                vm_array_vars.count(expr.args[1]->left->str_val))
+                pushing_vm = true;
+            if (pushing_vm)
+                vm_array_vars.insert(expr.args[0]->str_val);
         }
         return { result, 3 };
     }
@@ -4723,6 +4938,57 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs["__map_has"];
             LLVMValueRef a[] = { mptr, kptr };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "mhas"), 0 };
+        }
+        // VM handle (JSON.PARSE$, MAP.FROM, etc.): go direct to
+        // __jdrt_obj_exists. Routing through jdrt_call_typed_f64 works in
+        // principle but has been observed to return 0 for handles that
+        // resolve correctly via the direct getter — likely because the
+        // f64 bridge path runs MAP.EXISTS under the autovec guard, and
+        // the handle's tag mapping into the typed-args helper loses info.
+        if (mtv.tag == 6) {
+            TypedValue ktv = codegen_expr(*expr.args[1]);
+            LLVMValueRef kptr = coerce_to(ktv, i8_ptr_type);
+            LLVMValueRef handle_g = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle_g, "rt");
+            auto& fn = runtime_funcs["__jdrt_obj_exists"];
+            LLVMValueRef a[] = { rt, mtv.val, kptr };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "oex"), 0 };
+        }
+        // Runtime-tagged: branch on runtime_tag — if VM_HANDLE, use
+        // obj_exists; else fall to __map_has on the punned pointer.
+        if (mtv.tag == 7 && mtv.runtime_tag) {
+            TypedValue ktv = codegen_expr(*expr.args[1]);
+            LLVMValueRef kptr = coerce_to(ktv, i8_ptr_type);
+            LLVMValueRef is_vm = LLVMBuildICmp(builder, LLVMIntEQ, mtv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "isvm");
+            LLVMBasicBlockRef vm_bb  = LLVMAppendBasicBlock(current_fn, "mex_vm");
+            LLVMBasicBlockRef map_bb = LLVMAppendBasicBlock(current_fn, "mex_map");
+            LLVMBasicBlockRef join   = LLVMAppendBasicBlock(current_fn, "mex_join");
+            LLVMBuildCondBr(builder, is_vm, vm_bb, map_bb);
+
+            LLVMPositionBuilderAtEnd(builder, vm_bb);
+            LLVMValueRef handle_g = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle_g, "rt");
+            auto& oex = runtime_funcs["__jdrt_obj_exists"];
+            LLVMValueRef va[] = { rt, mtv.val, kptr };
+            LLVMValueRef vres = LLVMBuildCall2(builder, oex.fn_type, oex.fn, va, 3, "oex");
+            LLVMBuildBr(builder, join);
+            LLVMBasicBlockRef vm_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, map_bb);
+            LLVMValueRef mptr = LLVMBuildIntToPtr(builder, mtv.val, i8_ptr_type, "itoptr");
+            auto& mh = runtime_funcs["__map_has"];
+            LLVMValueRef ma[] = { mptr, kptr };
+            LLVMValueRef mres = LLVMBuildCall2(builder, mh.fn_type, mh.fn, ma, 2, "mhas");
+            LLVMBuildBr(builder, join);
+            LLVMBasicBlockRef map_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, join);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "exres");
+            LLVMValueRef vals[] = { vres, mres };
+            LLVMBasicBlockRef blks[] = { vm_end, map_end };
+            LLVMAddIncoming(phi, vals, blks, 2);
+            return { phi, 0 };
         }
     }
 

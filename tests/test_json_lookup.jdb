@@ -1,0 +1,16 @@
+' Simpler: load items.json, look up an item, print name
+data = JSON.PARSE$(TXTREADER$("tests/test_items.json"))
+item_db = data{"items"}
+PRINT "has apple="; MAP.EXISTS(item_db, "apple")
+itm = item_db{"apple"}
+PRINT "name="; itm{"name"}
+PRINT "price="; itm{"price"}
+
+nm$ = itm{"name"}
+pr = INT(itm{"price"})
+PRINT "nm$="; nm$; " pr="; pr
+IF nm$ = "Apple" AND pr = 5 THEN
+    PRINT "PASS"
+ELSE
+    PRINT "FAIL"
+ENDIF

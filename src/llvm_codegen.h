@@ -103,6 +103,23 @@ private:
     // event handler SUBs.
     std::unordered_set<std::string> string_array_vars;
 
+    // Vars whose array elements are known to hold map pointers — INDEX decodes
+    // the punned-f64 and returns tag=4 so `q = arr[i]; q{"k"} = v` mutates
+    // the shared map instead of silently bailing in INDEX_ASSIGN.
+    std::unordered_set<std::string> map_array_vars;
+
+    // Vars whose array elements are known to hold VM value handles (tag=6):
+    // JSON-parsed nested maps, MAP.* results, etc. PUSH stores the raw i64
+    // handle bits via pun_i64_to_f64; INDEX read puns back and returns tag=6
+    // so MAP_ACCESS routes through __jdrt_obj_get_* instead of the native
+    // JdbMap path (which would crash on a non-ptr handle).
+    std::unordered_set<std::string> vm_array_vars;
+
+    // FUNCs that RETURN a vm_array_vars-tracked array. Call sites propagate
+    // this to the LHS so `resolved = FUNC(...); resolved[i]{"k"}` keeps the
+    // VM handle chain intact across the call boundary.
+    std::unordered_set<std::string> vm_array_return_funcs;
+
     // Maps a top-level-DIM'd global name to the source file it came from.
     // Used by codegen_let_or_assign to decide whether an implicit assignment
     // inside a SUB should update that global (same file) or create a local
