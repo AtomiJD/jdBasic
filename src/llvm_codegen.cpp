@@ -1162,6 +1162,16 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             if (e->kind == ExprKind::VARIABLE)
                 return vm_handle_vars.count(e->str_val) > 0;
             if (e->kind == ExprKind::INDEX && e->left) {
+                // String-keyed INDEX into a map is ambiguous — the field could
+                // be ANY type (scalar, string, nested map). Don't assume handle
+                // statically, or `font_size = game{"font_size"}` over-propagates
+                // vm_handle to a numeric var and downstream PUSHes corrupt the
+                // destination array's element tag (regression: Möhrchen recruit
+                // crashed with SPRITE.GET_X getting a VM handle because `fs`
+                // got marked vm_handle through the unrelated font_size chain).
+                // Only integer-indexed INDEX into a vm_array propagates cleanly.
+                bool is_str_key = (e->right && e->right->kind == ExprKind::LITERAL_STRING);
+                if (is_str_key) return false;
                 if (e->left->kind == ExprKind::VARIABLE) {
                     if (vm_handle_vars.count(e->left->str_val)) return true;
                     if (vm_array_vars.count(e->left->str_val)) return true;
