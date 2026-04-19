@@ -1,0 +1,14 @@
+IMPORT TEST_COLOR_MOD2
+
+data = JSON.PARSE$(TXTREADER$("tests/test_colors.json"))
+c = data{"colors"}
+TEST_COLOR_MOD2.C_BOX_BG = c{"box_bg"}
+' Legacy alias chain (same pattern as rpg_engine.jdb)
+TEST_COLOR_MOD2.DLG_R = TEST_COLOR_MOD2.C_BOX_BG[0]
+TEST_COLOR_MOD2.DLG_G = TEST_COLOR_MOD2.C_BOX_BG[1]
+TEST_COLOR_MOD2.DLG_B = TEST_COLOR_MOD2.C_BOX_BG[2]
+PRINT "DLG R="; TEST_COLOR_MOD2.DLG_R; " G="; TEST_COLOR_MOD2.DLG_G; " B="; TEST_COLOR_MOD2.DLG_B
+' And via local alias like actual rendering code:
+cbg = TEST_COLOR_MOD2.C_BOX_BG
+PRINT "cbg[0]="; cbg[0]; " cbg[1]="; cbg[1]; " cbg[2]="; cbg[2]
+PRINT "cbg[0]+5="; cbg[0]+5; " cbg[2]-10="; cbg[2]-10

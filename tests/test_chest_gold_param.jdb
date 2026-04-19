@@ -1,0 +1,24 @@
+' Replicates the chest-gold add pattern from rpg_engine.jdb:
+'   chest{"content_amount"} = VAL(props{"content_amount"})  (where props is VM handle)
+'   later: c = chests[ci] ; ca = INT(c{"content_amount"})
+'   RPG_INVENTORY.ADD_GOLD ca
+
+data = JSON.PARSE$(TXTREADER$("tests/test_chest.json"))
+props = data{"properties"}
+PRINT "props typeof="; TYPEOF(props)
+
+' Build a native chest map with values drawn from the VM handle
+chests = []
+chest = {}
+chest{"name"} = "test_chest"
+chest{"content_type"} = "gold"
+chest{"content_amount"} = 1
+IF MAP.EXISTS(props, "content_amount") THEN chest{"content_amount"} = VAL(props{"content_amount"})
+PUSH chests, chest
+
+' Later retrieval
+c = chests[0]
+ct$ = c{"content_type"}
+ca = INT(c{"content_amount"})
+PRINT "ct$="; ct$; " ca="; ca
+IF ct$ = "gold" AND ca = 42 THEN PRINT "PASS" ELSE PRINT "FAIL"
