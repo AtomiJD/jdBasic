@@ -1,0 +1,30 @@
+' Mimic RPG pattern: three callers of ADD_GOLD across modules,
+' with one caller passing a map-value (q{"reward_gold"}).
+IMPORT TEST_GOLD_MOD
+
+' Caller 1: literal
+TEST_GOLD_MOD.ADD_GOLD 10
+PRINT "after literal 10: gold="; TEST_GOLD_MOD.GET_GOLD()
+
+' Caller 2: local int from INT(map-value)
+c = {}
+c{"content_amount"} = 15
+ca = INT(c{"content_amount"})
+TEST_GOLD_MOD.ADD_GOLD ca
+PRINT "after ca=15 (from map): gold="; TEST_GOLD_MOD.GET_GOLD()
+
+' Caller 3: direct map-value (like q{"reward_gold"} in rpg_quest)
+q = {}
+q{"reward_gold"} = 20
+TEST_GOLD_MOD.ADD_GOLD q{"reward_gold"}
+PRINT "after q{reward_gold}=20: gold="; TEST_GOLD_MOD.GET_GOLD()
+
+' Caller 4: from an array of maps (like chest loop)
+chests = []
+chest = {}
+chest{"content_amount"} = 7
+PUSH chests, chest
+c2 = chests[0]
+ca2 = INT(c2{"content_amount"})
+TEST_GOLD_MOD.ADD_GOLD ca2
+PRINT "after chest[0] ca=7: gold="; TEST_GOLD_MOD.GET_GOLD()

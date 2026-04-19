@@ -576,10 +576,50 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         }
                         // INDEX (string-keyed like game{"stats"} or
                         // int-keyed like elist[i]) can return any boxed
-                        // type — accept VM_HANDLE so the caller can drill
-                        // further with the tagged-access helpers.
+                        // type. Only promote to VM_HANDLE when the callee
+                        // actually drills into the param (uses it as INDEX
+                        // source). If the callee treats it as a scalar,
+                        // leave the signature as f64 and let call-site
+                        // coerce_to(tag 7 → f64) materialise the number;
+                        // otherwise a literal `ADD_GOLD 10` would get
+                        // coerced to i64 and mis-read as a VM handle ID.
                         else if (a.kind == ExprKind::INDEX) {
-                            it->second.tags[i] = JD_TAG_VM_HANDLE;
+                            const std::string& pname = it->second.stmt->params[i].name;
+                            std::function<bool(const Expr&)> param_used_as_index =
+                                [&](const Expr& x) -> bool {
+                                if (x.kind == ExprKind::INDEX && x.left &&
+                                    x.left->kind == ExprKind::VARIABLE &&
+                                    x.left->str_val == pname)
+                                    return true;
+                                if (x.left && param_used_as_index(*x.left)) return true;
+                                if (x.right && param_used_as_index(*x.right)) return true;
+                                for (auto& arg : x.args)
+                                    if (arg && param_used_as_index(*arg)) return true;
+                                return false;
+                            };
+                            std::function<bool(const Stmt&)> body_drills_param =
+                                [&](const Stmt& s) -> bool {
+                                if (s.expr && param_used_as_index(*s.expr)) return true;
+                                if (s.loop_cond && param_used_as_index(*s.loop_cond)) return true;
+                                if (s.end_expr && param_used_as_index(*s.end_expr)) return true;
+                                if (s.step_expr && param_used_as_index(*s.step_expr)) return true;
+                                for (auto& pe : s.print_exprs)
+                                    if (pe && param_used_as_index(*pe)) return true;
+                                for (auto& b : s.body)
+                                    if (b && body_drills_param(*b)) return true;
+                                for (auto& br : s.branches) {
+                                    if (br.condition && param_used_as_index(*br.condition)) return true;
+                                    for (auto& b : br.body)
+                                        if (b && body_drills_param(*b)) return true;
+                                }
+                                for (auto& c : s.catch_body)
+                                    if (c && body_drills_param(*c)) return true;
+                                for (auto& f : s.finally_body)
+                                    if (f && body_drills_param(*f)) return true;
+                                return false;
+                            };
+                            if (it->second.stmt && body_drills_param(*it->second.stmt))
+                                it->second.tags[i] = JD_TAG_VM_HANDLE;
                         }
                     }
                 }

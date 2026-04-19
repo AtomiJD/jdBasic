@@ -1,0 +1,7 @@
+IMPORT TEST_GOLD_MOD
+
+' Just map-value caller — isolated
+q = {}
+q{"reward_gold"} = 20
+TEST_GOLD_MOD.ADD_GOLD q{"reward_gold"}
+PRINT "after q{reward_gold}=20: gold="; TEST_GOLD_MOD.GET_GOLD()

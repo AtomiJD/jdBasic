@@ -1,0 +1,11 @@
+EXPORT MODULE TEST_GOLD_MOD
+
+EXPORT DIM gold = 0
+
+EXPORT SUB ADD_GOLD(amount)
+    gold = gold + INT(amount)
+ENDSUB
+
+EXPORT FUNC GET_GOLD()
+    RETURN gold
+ENDFUNC
