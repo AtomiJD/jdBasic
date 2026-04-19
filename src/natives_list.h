@@ -61,7 +61,7 @@ inline const std::unordered_set<std::string>& native_names() {
         "ITEM_RECT", "JOIN", "JOIN$", "JOY",
         "JSON", "KEYS", "KEYSTATE", "KILL",
         "LCASE", "LCASE$", "LEFT", "LEFT$",
-        "LEN", "LERP", "LFO", "LINE",
+        "LEN", "LENV", "LERP", "LFO", "LINE",
         "LINSPACE", "LIST", "LISTBOX", "LIST_RECUR",
         "LLM_INFO", "LOAD", "LOADIMAGE", "LOADMUS",
         "LOADWAV", "LOAD_EMBEDDINGS", "LOAD_LLM", "LOCATE",

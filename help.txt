@@ -795,7 +795,15 @@ Description: Returns the specified number of characters from the beginning of a 
 
 [LEN]
 Syntax: LEN(expression)
-Description: Returns the length of a string or the dimensions of an array.
+Description: Returns a scalar length. For strings: byte count. For arrays:
+element count of the outermost dimension. Use LENV for the full shape of a
+nested array.
+
+[LENV]
+Syntax: LENV(expression)
+Description: Returns a shape vector [dim0, dim1, ...] describing the full
+extent of a (possibly nested) array. For 1D arrays returns [n]; for strings
+returns [byte_count].
 
 [LERP]
 Syntax: LERP(start, end, alpha)

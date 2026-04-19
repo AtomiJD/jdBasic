@@ -216,8 +216,8 @@ Assert(br_a[0] = 0, "DIM A[20] zero-init")
 Assert(br_a[19] = 0, "DIM A[20] last")
 
 DIM br_b[3, 4]
-Assert(LEN(br_b)[0] = 3, "DIM M[3,4] outer dim")
-Assert(LEN(br_b)[1] = 4, "DIM M[3,4] inner dim")
+Assert(LENV(br_b)[0] = 3, "DIM M[3,4] outer dim")
+Assert(LENV(br_b)[1] = 4, "DIM M[3,4] inner dim")
 
 DIM br_c[5] AS INTEGER
 Assert(LEN(br_c) = 5, "DIM A[5] AS INTEGER len")

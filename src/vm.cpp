@@ -478,7 +478,7 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
         // This is a subset of OpCode::CALL's blocklist, focused on what
         // the bridge actually hits — kept deliberately smaller.
         static const std::unordered_set<std::string> no_vec = {
-            "ZEROS","ONES","__MAKE_UDT_ARRAY__","IOTA","RESHAPE","LEN","PUSH","POP",
+            "ZEROS","ONES","__MAKE_UDT_ARRAY__","IOTA","RESHAPE","LEN","LENV","PUSH","POP",
             "TENSOR","TYPEOF","APPEND","DIFF",
             "SUM","PRODUCT","MIN","MAX","ANY","ALL",
             "SCAN","SELECT","FILTER","REDUCE",
@@ -1329,7 +1329,7 @@ void VM::run() {
                 // is not array-aware, apply element-wise automatically
                 static const std::unordered_map<std::string, bool> no_vectorize = {
                     {"ZEROS",1}, {"ONES",1}, {"__MAKE_UDT_ARRAY__",1},
-                    {"IOTA",1}, {"RESHAPE",1}, {"LEN",1}, {"PUSH",1}, {"POP",1},
+                    {"IOTA",1}, {"RESHAPE",1}, {"LEN",1}, {"LENV",1}, {"PUSH",1}, {"POP",1},
                     {"TENSOR",1}, {"TYPEOF",1}, {"APPEND",1}, {"DIFF",1},
                     {"SUM",1}, {"PRODUCT",1}, {"MIN",1}, {"MAX",1}, {"ANY",1}, {"ALL",1},
                     {"SCAN",1}, {"SELECT",1}, {"FILTER",1}, {"REDUCE",1},
@@ -3086,27 +3086,36 @@ void VM::register_builtins() {
 
     // String functions
     register_native("LEN", 1, 1, [](const std::vector<Value>& args) -> Value {
+        // Always scalar: element count for arrays, byte count for strings.
+        // Use LENV for the shape vector of a nested array.
         if (args[0].type == ValueType::STRING)
             return Value::make_i64(args[0].as_string()->data.size());
-        if (args[0].type == ValueType::ARRAY) {
-            auto* arr = args[0].as_array();
-            // For 2D+ arrays (first element is also an array), return shape [rows, cols, ...]
-            if (!arr->elements.empty() && arr->elements[0].type == ValueType::ARRAY) {
-                Value shape = Value::make_array();
-                // Walk nested structure to build shape
-                const ArrayObj* cur = arr;
-                while (cur && !cur->elements.empty()) {
-                    shape.as_array()->elements.push_back(Value::make_i64(cur->elements.size()));
-                    if (cur->elements[0].type == ValueType::ARRAY)
-                        cur = cur->elements[0].as_array();
-                    else
-                        break;
-                }
-                return shape;
-            }
-            return Value::make_i64(arr->elements.size());
-        }
+        if (args[0].type == ValueType::ARRAY)
+            return Value::make_i64(args[0].as_array()->elements.size());
         return Value::make_i64(0);
+    });
+    register_native("LENV", 1, 1, [](const std::vector<Value>& args) -> Value {
+        // Shape vector: [dim0, dim1, …]. Non-nested arrays return [n];
+        // strings return [byte_count]; scalars return [0].
+        Value shape = Value::make_array();
+        auto& elems = shape.as_array()->elements;
+        if (args[0].type == ValueType::STRING) {
+            elems.push_back(Value::make_i64(args[0].as_string()->data.size()));
+            return shape;
+        }
+        if (args[0].type != ValueType::ARRAY) {
+            elems.push_back(Value::make_i64(0));
+            return shape;
+        }
+        const ArrayObj* cur = args[0].as_array();
+        while (cur) {
+            elems.push_back(Value::make_i64(cur->elements.size()));
+            if (!cur->elements.empty() && cur->elements[0].type == ValueType::ARRAY)
+                cur = cur->elements[0].as_array();
+            else
+                break;
+        }
+        return shape;
     });
     register_native("LEFT", 2, 2, [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data;

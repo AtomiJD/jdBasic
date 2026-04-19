@@ -763,7 +763,6 @@ SUB UPDATE_FOLLOW_POSITIONS()
         LOOP
     ENDIF
     tl = LEN(path_trail)
-    IF TYPEOF(tl) = "ARRAY" THEN tl = tl[0]
     FOR fi = 0 TO follow_count - 1
         IF follow_sprites[fi] < 0 THEN CONTINUEFOR
         crumb_idx = tl - (fi + 1)

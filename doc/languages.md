@@ -1092,7 +1092,8 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 ### String Functions
 
 * **`LEFT$(str$, n)`**, **`RIGHT$(str$, n)`**, **`MID$(str$, start, [len])`**: Extracts parts of a string. The start position is 0 - based. Also available as `LEFT`, `RIGHT`, `MID` without the `$`.
-* **`LEN(expression)`**: Returns the length of the string representation of an expression.
+* **`LEN(expression)`**: Returns a scalar length. For strings, the byte count; for arrays, the element count of the outermost dimension. Always returns a scalar — use `LENV` when you need the full shape of a nested array.
+* **`LENV(expression)`**: Returns a shape vector `[dim0, dim1, ...]` describing the full extent of a nested array. For a 1D array returns `[n]`; for a string returns `[byte_count]`.
 * **`LCASE$(str$)`**, **`UCASE$(str$)`**, **`TRIM$(str$)`**: Manipulates string case and whitespace. Also available as `LCASE`, `UCASE`, `TRIM`.
 * **`LTRIM$(str$)`** / **`RTRIM$(str$)`**: Trims whitespace from the left or right end only.
 * **`STARTSWITH(str$, prefix$) -> bool`** / **`ENDSWITH(str$, suffix$) -> bool`**: Returns `TRUE` if `str$` starts/ends with the given substring.

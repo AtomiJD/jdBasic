@@ -3213,32 +3213,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             bool want_ptr = m_want_ptr_result;
             m_want_ptr_result = false;
 
-            // Special case: LEN(arr)[i] → return shape array's i-th element
-            // Interpreter's LEN returns shape for 2D+ arrays; we emulate here.
-            if (expr.left && expr.left->kind == ExprKind::CALL) {
-                std::string fn = expr.left->func_name;
-                std::transform(fn.begin(), fn.end(), fn.begin(), ::toupper);
-                if (fn == "LEN" && expr.left->args.size() == 1) {
-                    TypedValue av = codegen_expr(*expr.left->args[0]);
-                    if (av.tag == 3) {
-                        auto* shape_fn = get_runtime_func("__arr_len_shape");
-                        if (shape_fn) {
-                            LLVMValueRef shape_args[] = { av.val };
-                            LLVMValueRef shape = LLVMBuildCall2(builder, shape_fn->fn_type,
-                                shape_fn->fn, shape_args, 1, "shape");
-                            TypedValue idx_tv2 = codegen_expr(*expr.right);
-                            LLVMValueRef idx2 = idx_tv2.tag == 1
-                                ? LLVMBuildFPToSI(builder, idx_tv2.val, i64_type, "ftoi")
-                                : idx_tv2.val;
-                            auto& ag = runtime_funcs["__array_get"];
-                            LLVMValueRef g_args[] = { shape, idx2 };
-                            LLVMValueRef result = LLVMBuildCall2(builder, ag.fn_type, ag.fn, g_args, 2, "shape_i");
-                            return { result, 1 };
-                        }
-                    }
-                }
-            }
-
             // arr[i] — array element access or obj{"key"} map access.
             // Propagate "want ptr" to left subexpr so map chains return a
             // raw JdbMap* for the intermediate access (tag=4).
@@ -4250,6 +4224,42 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMAddIncoming(phi, vals, bbs, 2);
             return { phi, 2 };
         }
+    }
+
+    // Handle LENV — shape vector: [dim0, dim1, …] for nested arrays,
+    // [n] for 1D arrays/strings. Always tag=3 (array) so callers can
+    // index it.
+    if (upper == "LENV" && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == 3) {
+            auto* shape_fn = get_runtime_func("__arr_len_shape");
+            if (shape_fn) {
+                LLVMValueRef args[] = { av.val };
+                return { LLVMBuildCall2(builder, shape_fn->fn_type,
+                    shape_fn->fn, args, 1, "lenv"), 3 };
+            }
+        }
+        // Non-array: wrap the scalar length in a 1-element array.
+        LLVMValueRef len_i64;
+        if (av.tag == 2) {
+            auto& fn = runtime_funcs["LEN$"];
+            LLVMValueRef a[] = { av.val };
+            len_i64 = LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 1, "slen");
+        } else {
+            len_i64 = LLVMConstInt(i64_type, 0, 0);
+        }
+        auto* new_fn = get_runtime_func("__array_new");
+        auto* set_fn = get_runtime_func("__array_set");
+        if (new_fn && set_fn) {
+            LLVMValueRef n_args[] = { LLVMConstInt(i64_type, 1, 0) };
+            LLVMValueRef arr = LLVMBuildCall2(builder, new_fn->fn_type,
+                new_fn->fn, n_args, 1, "lenv_one");
+            LLVMValueRef as_d = LLVMBuildSIToFP(builder, len_i64, f64_type, "lenv_d");
+            LLVMValueRef s_args[] = { arr, LLVMConstInt(i64_type, 0, 0), as_d };
+            LLVMBuildCall2(builder, set_fn->fn_type, set_fn->fn, s_args, 3, "");
+            return { arr, 3 };
+        }
+        return { LLVMConstPointerNull(i8_ptr_type), 3 };
     }
 
     // Handle LEN — dispatch based on argument type (string vs array)
