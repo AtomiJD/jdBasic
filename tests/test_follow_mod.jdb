@@ -1,0 +1,35 @@
+' Mimic UPDATE_FOLLOW_SPRITES + UPDATE_FOLLOW_POSITIONS pattern:
+' Module-level array, PUSH in one SUB, INDEX read in another SUB.
+EXPORT MODULE TEST_FOLLOW_MOD
+EXPORT DIM follow_sprites = []
+EXPORT DIM follow_count = 0
+EXPORT DIM hero = -1
+
+EXPORT SUB INIT()
+    hero = 42
+    follow_sprites = []
+    follow_count = 0
+ENDSUB
+
+EXPORT SUB ADD_FOLLOWER(sprite_id)
+    ' Like UPDATE_FOLLOW_SPRITES: PUSH an i64 sprite ID
+    PUSH follow_sprites, sprite_id
+    follow_count = follow_count + 1
+    PRINT "  [ADD] sid="; sprite_id; " count="; follow_count; " hero="; hero
+ENDSUB
+
+EXPORT SUB UPDATE_POSITIONS()
+    ' Like UPDATE_FOLLOW_POSITIONS: INDEX read from follow_sprites,
+    ' and compare with < 0, and use value with a "builtin" (fake)
+    PRINT "  [UPD] hero="; hero; " count="; follow_count
+    FOR fi = 0 TO follow_count - 1
+        v = follow_sprites[fi]
+        PRINT "  [UPD] follow_sprites["; fi; "]="; v
+        IF v < 0 THEN
+            PRINT "  [UPD] skip (negative)"
+        ELSE
+            ' Simulate SPRITE.GET_X(v) — must not be 0
+            IF v = 0 THEN PRINT "FAIL: follow_sprites["; fi; "] is 0, would crash SPRITE.GET_X"
+        ENDIF
+    NEXT fi
+ENDSUB

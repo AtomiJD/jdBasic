@@ -1,0 +1,47 @@
+IMPORT TEST_MOD_WRITEBACK_MOD
+
+' Direct mutation from outside: write to arr element (scalar)
+TEST_MOD_WRITEBACK_MOD.PUSH_SCALAR 10
+TEST_MOD_WRITEBACK_MOD.PUSH_SCALAR 20
+Assert(TEST_MOD_WRITEBACK_MOD.arr[0] = 10, "outside read scalar[0]")
+Assert(TEST_MOD_WRITEBACK_MOD.arr[1] = 20, "outside read scalar[1]")
+
+' Write scalar at index from inside sub (simple)
+TEST_MOD_WRITEBACK_MOD.SET_SCALAR 0, 99
+Assert(TEST_MOD_WRITEBACK_MOD.arr[0] = 99, "inside-sub set scalar[0]")
+
+' Now test map elements
+TEST_MOD_WRITEBACK_MOD.RESET_MAPS
+Assert(TEST_MOD_WRITEBACK_MOD.map_count = 2, "map count=2")
+
+' Read-only access
+m = TEST_MOD_WRITEBACK_MOD.maps[0]
+Assert(m{"v"} = 1, "outside read maps[0].v")
+
+' Variant A: no write-back, just mutate q (should work if q is a ref)
+TEST_MOD_WRITEBACK_MOD.MUTATE_MAP_NOWRITE 1, 77
+m1a = TEST_MOD_WRITEBACK_MOD.maps[1]
+PRINT "after NOWRITE, maps[1].v = "; m1a{"v"}
+
+' Variant B: direct indexed map mutation without q local
+TEST_MOD_WRITEBACK_MOD.RESET_MAPS
+TEST_MOD_WRITEBACK_MOD.MUTATE_MAP_DIRECT 1, 88
+m1b = TEST_MOD_WRITEBACK_MOD.maps[1]
+PRINT "after DIRECT, maps[1].v = "; m1b{"v"}
+
+' Variant C: full writeback pattern
+TEST_MOD_WRITEBACK_MOD.RESET_MAPS
+TEST_MOD_WRITEBACK_MOD.MUTATE_MAP 1, 99
+m0 = TEST_MOD_WRITEBACK_MOD.maps[0]
+m1 = TEST_MOD_WRITEBACK_MOD.maps[1]
+PRINT "after MUTATE_MAP, maps[0].v = "; m0{"v"}; " maps[1].v = "; m1{"v"}
+Assert(m0{"v"} = 1, "maps[0] unchanged")
+Assert(m1{"v"} = 99, "maps[1] mutated by sub")
+
+PRINT "All writeback tests passed"
+
+SUB Assert(cond, msg$)
+    IF NOT cond THEN
+        PRINT "FAIL: "; msg$
+    ENDIF
+ENDSUB

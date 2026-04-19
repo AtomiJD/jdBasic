@@ -1,0 +1,53 @@
+' Mimics RPG party-join crash pattern:
+' - module-level int "hero" DIM
+' - local array "followers" (ints)
+' - cross-module ADD_MEMBER call that mutates other module
+' - then read own hero and PUSH/INDEX into followers
+IMPORT TEST_PARTY_HERO_MOD
+
+DIM hero = -1
+DIM followers = []
+DIM follow_count = 0
+
+' Simulate SPRITE.LOAD giving hero a real id
+hero = 42
+
+' Initial member (startup "vally")
+TEST_PARTY_HERO_MOD.ADD_MEMBER "vally"
+
+PRINT "hero after startup ADD_MEMBER: "; hero
+IF hero <> 42 THEN PRINT "FAIL: hero changed after startup ADD_MEMBER"
+
+' Simulate recruit: add second member
+TEST_PARTY_HERO_MOD.ADD_MEMBER "mohrchen"
+
+PRINT "hero after recruit ADD_MEMBER: "; hero
+IF hero <> 42 THEN PRINT "FAIL: hero changed after recruit ADD_MEMBER"
+
+' Now mimic UPDATE_FOLLOW_SPRITES pattern:
+SUB UPDATE_FOLLOWERS()
+    FOR fi = 1 TO TEST_PARTY_HERO_MOD.member_count - 1
+        IF fi - 1 >= follow_count THEN
+            pm = TEST_PARTY_HERO_MOD.GET_MEMBER(fi)
+            PRINT "  fi="; fi; " pm.id="; pm{"id"}; " pm.name="; pm{"name"}
+            ' Simulate SPRITE.LOAD — here just a fake id
+            fs = 100 + fi
+            ' Position at hero — this is the crash pattern
+            PRINT "  inside SUB, hero="; hero; " fs="; fs
+            IF hero <> 42 THEN PRINT "FAIL: hero changed inside SUB (cross-module effect)"
+            PUSH followers, fs
+            follow_count = follow_count + 1
+        ENDIF
+    NEXT fi
+ENDSUB
+
+UPDATE_FOLLOWERS
+
+PRINT "final: hero="; hero; " follow_count="; follow_count
+FOR i = 0 TO follow_count - 1
+    PRINT "followers["; i; "]="; followers[i]
+NEXT i
+
+IF LEN(followers) <> 1 THEN PRINT "FAIL: followers should have 1 entry"
+IF followers[0] <> 101 THEN PRINT "FAIL: followers[0] should be 101"
+PRINT "DONE"

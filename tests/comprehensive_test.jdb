@@ -1518,6 +1518,46 @@ ENDFUNC
 Assert(SUM_VALS() = 49, "UDT field sum inside FUNC (7 + 42)")
 
 ' ══════════════════════════════════════════════════════════════════
+' MODULE WRITE-BACKS
+' (cross-module mutation: caller reads back module state after a SUB
+'  mutates its own array/map members — matches the RPG inventory +
+'  party recruit flow that was silently dropping writes in native)
+' ══════════════════════════════════════════════════════════════════
+Header("Module write-backs")
+
+IMPORT TEST_MOD_WRITEBACK_MOD
+
+' Scalar array PUSH from outside SUB
+TEST_MOD_WRITEBACK_MOD.arr = []
+TEST_MOD_WRITEBACK_MOD.PUSH_SCALAR 10
+TEST_MOD_WRITEBACK_MOD.PUSH_SCALAR 20
+Assert(TEST_MOD_WRITEBACK_MOD.arr[0] = 10, "module PUSH scalar[0]")
+Assert(TEST_MOD_WRITEBACK_MOD.arr[1] = 20, "module PUSH scalar[1]")
+
+' Indexed scalar write from inside module SUB
+TEST_MOD_WRITEBACK_MOD.SET_SCALAR 0, 99
+Assert(TEST_MOD_WRITEBACK_MOD.arr[0] = 99, "module SUB writes arr[i]")
+
+' Map-in-array write-back via copy/mutate/store pattern
+TEST_MOD_WRITEBACK_MOD.RESET_MAPS
+Assert(TEST_MOD_WRITEBACK_MOD.map_count = 2, "RESET_MAPS builds 2 maps")
+
+m_init = TEST_MOD_WRITEBACK_MOD.maps[0]
+Assert(m_init{"v"} = 1, "module read maps[0].v")
+
+TEST_MOD_WRITEBACK_MOD.MUTATE_MAP 1, 99
+m_after0 = TEST_MOD_WRITEBACK_MOD.maps[0]
+m_after1 = TEST_MOD_WRITEBACK_MOD.maps[1]
+Assert(m_after0{"v"} = 1, "MUTATE_MAP leaves maps[0] alone")
+Assert(m_after1{"v"} = 99, "MUTATE_MAP writes maps[1] (copy/mutate/store)")
+
+' Direct indexed map-write syntax: maps[idx]{"v"} = newv
+TEST_MOD_WRITEBACK_MOD.RESET_MAPS
+TEST_MOD_WRITEBACK_MOD.MUTATE_MAP_DIRECT 1, 88
+m_dir = TEST_MOD_WRITEBACK_MOD.maps[1]
+Assert(m_dir{"v"} = 88, "MUTATE_MAP_DIRECT maps[idx]{v}=newv")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

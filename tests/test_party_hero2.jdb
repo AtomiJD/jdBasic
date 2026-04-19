@@ -1,0 +1,16 @@
+' Closer mimic of RPG recruit pattern with EXPORT MODULE outer
+IMPORT TEST_PARTY_HERO_MOD2
+IMPORT TEST_PARTY_HERO_MOD
+
+TEST_PARTY_HERO_MOD2.INIT_HERO
+TEST_PARTY_HERO_MOD.ADD_MEMBER "vally"
+PRINT "initial hero="; TEST_PARTY_HERO_MOD2.hero
+
+' Simulate talking to Möhrchen and recruiting
+TEST_PARTY_HERO_MOD2.RECRUIT "mohrchen"
+
+PRINT "final hero="; TEST_PARTY_HERO_MOD2.hero
+PRINT "follow_count="; TEST_PARTY_HERO_MOD2.follow_count
+IF TEST_PARTY_HERO_MOD2.follow_count <> 1 THEN PRINT "FAIL: follow_count should be 1"
+IF TEST_PARTY_HERO_MOD2.hero <> 42 THEN PRINT "FAIL: hero should be 42"
+PRINT "DONE"

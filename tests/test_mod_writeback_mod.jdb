@@ -1,0 +1,35 @@
+EXPORT MODULE TEST_MOD_WRITEBACK_MOD
+
+EXPORT DIM arr = []
+EXPORT DIM maps = []
+EXPORT DIM map_count = 0
+
+EXPORT SUB PUSH_SCALAR(n)
+    PUSH arr, n
+ENDSUB
+
+EXPORT SUB SET_SCALAR(i, v)
+    arr[i] = v
+ENDSUB
+
+EXPORT SUB RESET_MAPS()
+    maps = []
+    map_count = 0
+    m1 = {} : m1{"v"} = 1 : PUSH maps, m1 : map_count = map_count + 1
+    m2 = {} : m2{"v"} = 2 : PUSH maps, m2 : map_count = map_count + 1
+ENDSUB
+
+EXPORT SUB MUTATE_MAP(idx, newv)
+    q = maps[idx]
+    q{"v"} = newv
+    maps[idx] = q
+ENDSUB
+
+EXPORT SUB MUTATE_MAP_NOWRITE(idx, newv)
+    q = maps[idx]
+    q{"v"} = newv
+ENDSUB
+
+EXPORT SUB MUTATE_MAP_DIRECT(idx, newv)
+    maps[idx]{"v"} = newv
+ENDSUB

@@ -1,0 +1,24 @@
+' Mimics RPG_PARTY cross-module mutation pattern
+EXPORT MODULE TEST_PARTY_HERO_MOD
+
+EXPORT DIM members = []
+EXPORT DIM member_count = 0
+
+EXPORT FUNC ADD_MEMBER(char_id$)
+    FOR i = 0 TO member_count - 1
+        IF members[i]{"id"} = char_id$ THEN RETURN FALSE
+    NEXT i
+    m = {}
+    m{"id"} = char_id$
+    m{"name"} = char_id$ + "_name"
+    m{"sprite_id"} = -1
+    m{"hp"} = 10
+    PUSH members, m
+    member_count = member_count + 1
+    RETURN TRUE
+ENDFUNC
+
+EXPORT FUNC GET_MEMBER(idx)
+    IF idx < 0 OR idx >= member_count THEN RETURN {}
+    RETURN members[idx]
+ENDFUNC
