@@ -1,0 +1,2 @@
+DIM items = []
+PRINT "len="; LEN(items)

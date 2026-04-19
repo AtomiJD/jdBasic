@@ -701,7 +701,46 @@ StmtPtr Parser::parse_dim_clause(int ln) {
             }
         }
         VarType type_after_as = parse_type();
-        if (vt == VarType::ARRAY && val) {
+        // STRICT-mode friendly syntax: `DIM arr AS T[]` declares a typed
+        // empty array. Element type is T (with udt_name if T is a UDT).
+        // Equivalent to `DIM arr[0] AS T` but without the size expression.
+        bool has_array_suffix = false;
+        if (check(TokenType::LBRACKET) && peek_at(1).type == TokenType::RBRACKET) {
+            advance(); // [
+            advance(); // ]
+            has_array_suffix = true;
+        }
+        if (has_array_suffix) {
+            et = type_after_as;
+            vt = VarType::ARRAY;
+            if (!val) {
+                if (et == VarType::OBJECT && !udt_name.empty()) {
+                    // UDT-typed empty array: route through __MAKE_UDT_ARRAY__
+                    // with shape [0] so native codegen sees the element type
+                    // and sets up a correctly-tagged empty JdbArray.
+                    auto shape = std::make_unique<Expr>();
+                    shape->kind = ExprKind::ARRAY_LITERAL;
+                    shape->line = ln;
+                    shape->args.push_back(make_int_lit(0, ln));
+
+                    auto call = std::make_unique<Expr>();
+                    call->kind = ExprKind::CALL;
+                    call->func_name = "__MAKE_UDT_ARRAY__";
+                    call->args.push_back(std::move(shape));
+                    call->args.push_back(make_string_lit(udt_name, ln));
+                    call->line = ln;
+                    val = std::move(call);
+                } else {
+                    // Non-UDT typed empty array: plain `[]` literal is fine —
+                    // JdbArray* of length 0, element type tracked statically
+                    // in codegen's type env (added in Phase 2).
+                    auto lit = std::make_unique<Expr>();
+                    lit->kind = ExprKind::ARRAY_LITERAL;
+                    lit->line = ln;
+                    val = std::move(lit);
+                }
+            }
+        } else if (vt == VarType::ARRAY && val) {
             et = type_after_as;
             if (et == VarType::OBJECT && !udt_name.empty()) {
                 if (val->kind == ExprKind::CALL && val->func_name == "ZEROS") {

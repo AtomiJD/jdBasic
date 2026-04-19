@@ -1,0 +1,14 @@
+' Phase 1 smoke test: new DIM AS T[] grammar should parse
+OPTION "STRICT"
+OPTION "EXPLICIT"
+
+TYPE T_ITEM
+    name$
+    price
+ENDTYPE
+
+DIM items AS T_ITEM[]
+DIM prices AS INTEGER[]
+DIM names AS STRING[]
+
+PRINT "parsed ok: items len="; LEN(items); " prices len="; LEN(prices); " names len="; LEN(names)

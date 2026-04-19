@@ -25,6 +25,24 @@ public:
     std::string error_msg;
     bool debug_log = false;  // emit line-by-line runtime trace
 
+    // STRICT/EXPLICIT compile mode. Hardcoded to true when compile()/-c runs;
+    // the interpreter (VM) keeps loose semantics by never constructing this
+    // codegen. Future: OPTION "EXPLICITOFF" / "NOSTRICT" inside a source file
+    // can toggle these per-translation-unit; for now they are compiler-wide.
+    //   explicit_mode: undeclared variable use is a compile error.
+    //   strict_mode:   every DIM needs a declared type, every assignment/call
+    //                  is type-checked, diagnostics include file:line.
+    bool explicit_mode = true;
+    bool strict_mode = true;
+
+    // Accumulated compile diagnostics under STRICT/EXPLICIT. Reported after
+    // the codegen pass so the user sees every mismatch, not just the first.
+    struct Diag { std::string file; int line; std::string msg; };
+    std::vector<Diag> diagnostics;
+    void report_error(const std::string& file, int line, const std::string& msg) {
+        diagnostics.push_back({file, line, msg});
+    }
+
     // Transient codegen state: true while evaluating an expression whose
     // result will be the LEFT of an INDEX chain (e.g. inner `a{"b"}` of
     // `a{"b"}{"c"}`). Consumers return a raw map ptr (tag=4) instead of a

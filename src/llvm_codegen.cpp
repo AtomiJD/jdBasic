@@ -6,6 +6,7 @@
 #include "llvm-c/TargetMachine.h"
 #include "llvm-c/Analysis.h"
 #include <iostream>
+#include <sstream>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -768,6 +769,22 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     declare_functions(program);
     codegen_program(program);
 
+    // STRICT/EXPLICIT diagnostics accumulated during codegen_program are
+    // fatal — print them all so the user sees every violation, not just
+    // the first one to trip a codegen assertion.
+    if (!diagnostics.empty()) {
+        std::ostringstream oss;
+        for (auto& d : diagnostics) {
+            oss << "error at ";
+            if (!d.file.empty()) oss << d.file << ":";
+            oss << d.line << ": " << d.msg << "\n";
+        }
+        oss << (int)diagnostics.size() << " error(s). Compilation aborted.";
+        error_msg = oss.str();
+        std::cerr << error_msg << std::endl;
+        return false;
+    }
+
     // Shutdown VM bridge before exit
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
         auto shut_it = runtime_funcs.find("__jdrt_shutdown");
@@ -1079,6 +1096,14 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                                 if (ft >= 0) return ft;
                             }
                         }
+                        // Unknown element type: return 1 (f64) to match the
+                        // legacy numeric-slot storage. Pointer-carrying
+                        // elements are passed as punned f64 bits; downstream
+                        // MAP_ACCESS / method-dispatch code pun-decodes back
+                        // to a ptr. Returning 7 here (runtime-tagged i64+.rtag)
+                        // would force method-dispatch sites to discover the
+                        // receiver's true type from rtag, which the existing
+                        // UDT call path doesn't do — breaking `nn.METHOD()`.
                         return 1;
                     }
                     return -1;
@@ -1511,6 +1536,24 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             if (!loop_stack.empty())
                 LLVMBuildBr(builder, loop_stack.top().continue_bb);
             break;
+        case StmtKind::OPTION_STMT: {
+            // Source directive: OPTION "NAME". The runtime VM handles colors
+            // and other knobs via the __OPTION runtime call (interpreter);
+            // here in native codegen we only intercept mode toggles that
+            // affect static checking. Everything else is a no-op so the
+            // statement compiles cleanly.
+            if (stmt.expr && stmt.expr->kind == ExprKind::LITERAL_STRING) {
+                std::string opt = stmt.expr->str_val;
+                std::transform(opt.begin(), opt.end(), opt.begin(), ::toupper);
+                if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT") explicit_mode = false;
+                else if (opt == "EXPLICIT") explicit_mode = true;
+                else if (opt == "NOSTRICT" || opt == "STRICTOFF") strict_mode = false;
+                else if (opt == "STRICT") strict_mode = true;
+                // Other options (NOCOLOR/NOPAUSE/...) are interpreter-only,
+                // silently ignored by the native compiler.
+            }
+            break;
+        }
         default:
             break;
     }
