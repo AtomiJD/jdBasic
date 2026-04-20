@@ -2118,6 +2118,7 @@ char* jdb_typeof_tag(int64_t tag) {
 char* jdb_frmv(JdbArray* arr) {
     if (!arr || arr->length == 0) return _strdup("[]");
     bool is_str = (arr->flags & 2) != 0;
+    bool is_nested = (arr->flags & 1) != 0 && !is_str;
     char buf[8192] = "[";
     int pos = 1;
     for (int64_t i = 0; i < arr->length && pos < 8180; i++) {
@@ -2126,6 +2127,12 @@ char* jdb_frmv(JdbArray* arr) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
             const char* s = (const char*)(intptr_t)u.i;
             pos += snprintf(buf + pos, 8190 - pos, "%s", s ? s : "");
+        } else if (is_nested) {
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            JdbArray* inner = (JdbArray*)(intptr_t)u.i;
+            char* sub = jdb_frmv(inner);
+            pos += snprintf(buf + pos, 8190 - pos, "%s", sub ? sub : "[]");
+            free(sub);
         } else {
             pos += snprintf(buf + pos, 8190 - pos, "%g", arr->data[i]);
         }

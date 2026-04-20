@@ -5058,6 +5058,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "MEAN", "MEDIAN", "VARIANCE", "STDEV",
         // Higher-order
         "SCAN", "SELECT", "FILTER", "REDUCE",
+        "TAKE_WHILE", "DROP_WHILE", "CHUNK", "ENUMERATE", "GROUPBY",
         // Meta/type
         "TYPEOF", "IIF", "ISNUM", "ISSTR", "ISARR", "ISMAP", "ISBOOL",
         "ISNONE", "ISNULL",
@@ -5534,19 +5535,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             static const std::unordered_set<std::string> object_returners = {
                 "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                "MAP.FROM", "MAP.COPY"
+                "MAP.FROM", "MAP.COPY", "GROUPBY"
             };
             bool is_object_fn = object_returners.count(upper);
 
             static const std::unordered_set<std::string> array_returners = {
-                "SPLIT", "KEYS", "VALUES", "SORTBY", "GROUPBY",
+                "SPLIT", "KEYS", "VALUES", "SORTBY",
                 "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
                 "OS.LIST", "OS.ARGS",
                 "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
                 "LINES", "WORDS", "CHARS", "UNPACK",
                 "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
                 "GFX.HSV_RGB", "GFX.TEXTSIZE",
-                "SPRITE.COLLISIONS"
+                "SPRITE.COLLISIONS",
+                "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE"
             };
             bool is_array_fn = array_returners.count(upper);
 

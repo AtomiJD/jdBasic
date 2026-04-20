@@ -106,6 +106,10 @@ Description: Rounds a number up to the nearest integer.
 Syntax: CHR$(ascii_code)
 Description: Returns the character corresponding to an ASCII code.
 
+[CHUNK]
+Syntax: CHUNK(array, size)
+Description: Splits array into sub-arrays of length 'size' (last chunk may be shorter). size >= 1.
+
 [CINT]
 Syntax: CINT(x)
 Description: Casts a value to a 32-bit integer, truncating toward zero. Overflow wraps.
@@ -265,6 +269,10 @@ Description: Declares a variable to hold a 64-bit floating-point number.
 Syntax: DROP(N, array)
 Description: Returns a new array with the first N (or last N if negative) elements removed.
 
+[DROP_WHILE]
+Syntax: DROP_WHILE(predicate@, array)
+Description: Drops the longest prefix where predicate(elem) is TRUE, returning the remainder. Interpreter only.
+
 [DUMP]
 Syntax: DUMP ["GLOBAL" | "LOCAL" | "STACK" | "REACT" | module_name$]
 Description: Displays debugging information about the program's state.
@@ -312,6 +320,10 @@ Description: Marks the end of a user-defined subroutine.
 [ENDSWITCH]
 Syntax: SWITCH ... ENDSWITCH
 Description: Marks the end of a SWITCH...CASE block.
+
+[ENUMERATE]
+Syntax: ENUMERATE(array)
+Description: Pairs each element with its 0-based index, returning [[0, a0], [1, a1], ...].
 
 [ENDTRY]
 Syntax: TRY ... ENDTRY
@@ -416,6 +428,10 @@ Description: Unconditionally jumps program execution to a specified label:.
 [GRADE]
 Syntax: GRADE(vector)
 Description: Returns a vector of indices that would sort the input vector.
+
+[GROUPBY]
+Syntax: GROUPBY(key_fn@, array)
+Description: Buckets elements into a map keyed by key_fn(elem) coerced to string. Interpreter only.
 
 [GUI.BEGIN]
 Syntax: GUI.BEGIN(title$, [x, y, w, h], [p_open], [flags])
@@ -1506,6 +1522,10 @@ Description: Begins a block that executes different code based on the value of a
 [TAKE]
 Syntax: TAKE(N, array)
 Description: Returns a new array with the first N (or last N if negative) elements.
+
+[TAKE_WHILE]
+Syntax: TAKE_WHILE(predicate@, array)
+Description: Returns the longest prefix of array for which predicate(elem) is TRUE. Stops at the first FALSE. Interpreter only.
 
 [TAN]
 Syntax: TAN(angle_in_radians)

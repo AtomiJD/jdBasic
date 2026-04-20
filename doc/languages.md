@@ -1192,6 +1192,11 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`FILTER(function@, array) -> array`**: Filters an array by applying a user-defined predicate function to each element. It returns a new 1D array containing only the elements for which the predicate function returned `TRUE`. The provided function must accept one argument and should return a boolean value.
 * **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
 * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
+* **`TAKE_WHILE(predicate@, array) -> array`**: Returns the longest prefix of `array` for which `predicate(element)` is true. Stops at the first false. (Interpreter only — not yet supported in native compile.)
+* **`DROP_WHILE(predicate@, array) -> array`**: Drops the longest prefix where `predicate(element)` is true, returning the remainder. (Interpreter only.)
+* **`CHUNK(array, size) -> array`**: Splits `array` into sub-arrays of length `size`; the last chunk may be shorter. `size >= 1`.
+* **`ENUMERATE(array) -> array`**: Pairs each element with its 0-based index, returning `[[0, a0], [1, a1], ...]`.
+* **`GROUPBY(key_fn@, array) -> map`**: Buckets elements into a map keyed by `key_fn(element)` (coerced to string). Each value is the list of matching elements. (Interpreter only.)
 * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
 * **`REVERSE(array)`**: Reverses the elements of an array.
 * **`TRANSPOSE(matrix)`**: Transposes a 2D matrix.

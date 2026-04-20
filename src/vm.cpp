@@ -482,6 +482,7 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             "TENSOR","TYPEOF","APPEND","DIFF",
             "SUM","PRODUCT","MIN","MAX","ANY","ALL",
             "SCAN","SELECT","FILTER","REDUCE",
+            "TAKE_WHILE","DROP_WHILE","CHUNK","ENUMERATE","GROUPBY",
             "TAKE","DROP","REVERSE","UNIQUE","SHUFFLE",
             "FIND_IN_ARRAY","NORMALIZE","DISTANCE","GRADE",
             "TRANSPOSE","MATMUL","MVLET","STACK","SLICE",
@@ -1333,6 +1334,8 @@ void VM::run() {
                     {"TENSOR",1}, {"TYPEOF",1}, {"APPEND",1}, {"DIFF",1},
                     {"SUM",1}, {"PRODUCT",1}, {"MIN",1}, {"MAX",1}, {"ANY",1}, {"ALL",1},
                     {"SCAN",1}, {"SELECT",1}, {"FILTER",1}, {"REDUCE",1},
+                    {"TAKE_WHILE",1}, {"DROP_WHILE",1},
+                    {"CHUNK",1}, {"ENUMERATE",1}, {"GROUPBY",1},
                     {"TAKE",1}, {"DROP",1}, {"REVERSE",1}, {"UNIQUE",1}, {"SHUFFLE",1},
                     {"FIND_IN_ARRAY",1}, {"NORMALIZE",1}, {"DISTANCE",1}, {"GRADE",1},
                     {"TRANSPOSE",1}, {"MATMUL",1}, {"MVLET",1}, {"STACK",1}, {"SLICE",1},
@@ -3849,6 +3852,96 @@ void VM::register_builtins() {
         for (auto& e : arr->elements) {
             Value res = call_funcref(fn, {e});
             if (res.to_bool()) r.as_array()->elements.push_back(e);
+        }
+        return r;
+    });
+
+    // ── TAKE_WHILE (higher-order) ────────────────────────────
+    register_native("TAKE_WHILE", [this](const std::vector<Value>& args) -> Value {
+        // TAKE_WHILE(func, array) — take elements from the front while
+        // predicate returns true; stop at first false.
+        Value fn = args[0];
+        auto* arr = args[1].as_array();
+        Value r = Value::make_array();
+        for (auto& e : arr->elements) {
+            if (!call_funcref(fn, {e}).to_bool()) break;
+            r.as_array()->elements.push_back(e);
+        }
+        return r;
+    });
+
+    // ── DROP_WHILE (higher-order) ────────────────────────────
+    register_native("DROP_WHILE", [this](const std::vector<Value>& args) -> Value {
+        // DROP_WHILE(func, array) — skip elements from the front while
+        // predicate returns true; keep everything from the first false on.
+        Value fn = args[0];
+        auto* arr = args[1].as_array();
+        Value r = Value::make_array();
+        bool dropping = true;
+        for (auto& e : arr->elements) {
+            if (dropping && call_funcref(fn, {e}).to_bool()) continue;
+            dropping = false;
+            r.as_array()->elements.push_back(e);
+        }
+        return r;
+    });
+
+    // ── CHUNK ────────────────────────────────────────────────
+    register_native("CHUNK", 2, 2, [](const std::vector<Value>& args) -> Value {
+        // CHUNK(array, size) — split into sub-arrays of given size.
+        // Last chunk may be smaller. Size must be >= 1.
+        auto* arr = args[0].as_array();
+        int64_t n = args[1].to_int();
+        Value r = Value::make_array();
+        if (n < 1) return r;
+        auto* out = r.as_array();
+        Value chunk = Value::make_array();
+        auto* cur = chunk.as_array();
+        for (auto& e : arr->elements) {
+            cur->elements.push_back(e);
+            if ((int64_t)cur->elements.size() == n) {
+                out->elements.push_back(std::move(chunk));
+                chunk = Value::make_array();
+                cur = chunk.as_array();
+            }
+        }
+        if (!cur->elements.empty()) out->elements.push_back(std::move(chunk));
+        return r;
+    });
+
+    // ── ENUMERATE ────────────────────────────────────────────
+    register_native("ENUMERATE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        // ENUMERATE(array) — returns [[0, elem0], [1, elem1], ...]
+        auto* arr = args[0].as_array();
+        Value r = Value::make_array();
+        auto* out = r.as_array();
+        for (size_t i = 0; i < arr->elements.size(); i++) {
+            Value pair = Value::make_array();
+            pair.as_array()->elements.push_back(Value::make_i64((int64_t)i));
+            pair.as_array()->elements.push_back(arr->elements[i]);
+            out->elements.push_back(std::move(pair));
+        }
+        return r;
+    });
+
+    // ── GROUPBY (higher-order) ───────────────────────────────
+    register_native("GROUPBY", [this](const std::vector<Value>& args) -> Value {
+        // GROUPBY(func, array) — bucket elements into a map keyed by
+        // the result of calling func on each element (coerced to string).
+        Value fn = args[0];
+        auto* arr = args[1].as_array();
+        Value r = Value::make_object();
+        auto* obj = r.as_object();
+        for (auto& e : arr->elements) {
+            std::string key = call_funcref(fn, {e}).to_string();
+            Value* bucket = obj->get(key);
+            if (bucket) {
+                bucket->as_array()->elements.push_back(e);
+            } else {
+                Value fresh = Value::make_array();
+                fresh.as_array()->elements.push_back(e);
+                obj->set(key, std::move(fresh));
+            }
         }
         return r;
     });
