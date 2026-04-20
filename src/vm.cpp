@@ -488,7 +488,7 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             "SOLVE","INVERT","CONVOLVE","PLACE",
             "OUTER","ROTATE","SHIFT","XSORT","INTEGRATE",
             "GETENV$","SETLOCALE","TICK","NOW",
-            "DATE$","TIME$","CVDATE",
+            "DATE$","TIME$","CVDATE","CDATE",
             "MAP.EXISTS","MAP.KEYS","MAP.VALUES","MAP.ITEMS","MAP.SIZE",
             "MAP.DELETE","MAP.CLEAR","MAP.MERGE","MAP.FROM",
             "JSON.PARSE$","JSON.STRINGIFY$",
@@ -1339,7 +1339,7 @@ void VM::run() {
                     {"SOLVE",1}, {"INVERT",1}, {"CONVOLVE",1}, {"PLACE",1},
                     {"OUTER",1}, {"ROTATE",1}, {"SHIFT",1}, {"XSORT",1}, {"INTEGRATE",1},
                     {"GETENV$",1}, {"SETLOCALE",1}, {"TICK",1}, {"NOW",1},
-                    {"DATE$",1}, {"TIME$",1}, {"CVDATE",1},
+                    {"DATE$",1}, {"TIME$",1}, {"CVDATE",1}, {"CDATE",1},
                     // DATEADD/DATEDIFF/FORMAT_DATE intentionally vectorize
                     // so `DATEDIFF("D", scalar, [d1,d2,d3])` returns [d-d1,
                     // d-d2, d-d3] element-wise.
@@ -5416,6 +5416,11 @@ void VM::register_builtins() {
         return Value::make_bool(args[0].type == ValueType::NONE);
     });
     register_native("TONUM", [](const std::vector<Value>& args) -> Value {
+        // Mirror VAL: strings go through stod so "1.5" → 1.5, not 0.
+        if (args[0].type == ValueType::STRING) {
+            try { return Value::make_f64(std::stod(args[0].as_string()->data)); }
+            catch (...) { return Value::make_f64(0); }
+        }
         return Value::make_f64(args[0].to_double());
     });
     register_native("TOSTR", [](const std::vector<Value>& args) -> Value {

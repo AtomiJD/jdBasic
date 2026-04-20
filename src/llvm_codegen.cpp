@@ -429,6 +429,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_datediff", "DATEDIFF", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_datediff_vec", "__datediff_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_cvdate",     "CVDATE",       i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_cvdate",     "CDATE",        i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_cvdate_num", "__cvdate_num", i8_ptr_type, {f64_type},    2);
     reg("jdb_cvdate_arr", "__cvdate_arr", i8_ptr_type, {i8_ptr_type}, 3);
 
@@ -1254,7 +1255,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "ZEROS","ONES","IOTA","RANGE","LINSPACE","TENSOR","RESHAPE",
                             "SPLIT","JOIN","FORMAT$","FRMV$","PACK$","UNPACK",
                             "REGEX_MATCH","REGEX.MATCH","REGEX.FINDALL",
-                            "NOW","CVDATE","DATE$","TIME$","TICK"
+                            "NOW","CVDATE","CDATE","DATE$","TIME$","TICK"
                         };
                         for (auto& a : e->args) {
                             if (a && infer_tag(a.get()) == JD_TAG_ARR && !no_vec_infer.count(upper)) {
@@ -1934,7 +1935,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
             std::string fn_up = stmt.expr->func_name;
             std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
-            if (fn_up == "CVDATE" || fn_up == "DATEADD" || fn_up == "NOW")
+            if (fn_up == "CVDATE" || fn_up == "CDATE" || fn_up == "DATEADD" || fn_up == "NOW")
                 date_vars.insert(up_name);
         }
         if (stmt.is_const) {
@@ -2237,7 +2238,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
         std::string fn_up = stmt.expr->func_name;
         std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
-        if (fn_up == "CVDATE" || fn_up == "DATEADD" || fn_up == "NOW") {
+        if (fn_up == "CVDATE" || fn_up == "CDATE" || fn_up == "DATEADD" || fn_up == "NOW") {
             std::string up = stmt.var_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
             date_vars.insert(up);
@@ -4627,7 +4628,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // CVDATE — dispatch by argument type (string parses ISO, number is
     // epoch seconds, array is element-wise vectorized).
-    if (upper == "CVDATE" && expr.args.size() == 1) {
+    if ((upper == "CVDATE" || upper == "CDATE") && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
         if (av.tag == JD_TAG_ARR) {
             auto& fn = runtime_funcs["__cvdate_arr"];
@@ -4878,7 +4879,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             std::string fn_or_var;
             if (expr.args[0]->kind == ExprKind::CALL) fn_or_var = expr.args[0]->func_name;
             std::transform(fn_or_var.begin(), fn_or_var.end(), fn_or_var.begin(), ::toupper);
-            if (fn_or_var == "CVDATE" || fn_or_var == "DATEADD" || fn_or_var == "NOW")
+            if (fn_or_var == "CVDATE" || fn_or_var == "CDATE" || fn_or_var == "DATEADD" || fn_or_var == "NOW")
                 return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), JD_TAG_STR };
         }
         TypedValue av = codegen_expr(*expr.args[0]);
@@ -4938,7 +4939,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "ISNONE", "ISNULL",
         // Scalar-returning date/time (note: DATEADD/DATEDIFF/FORMAT_DATE DO vectorize)
         "GETENV$", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
-        "DATE$", "TIME$", "CVDATE", "RANDOMSEED",
+        "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
         // Collections
         "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
         "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",

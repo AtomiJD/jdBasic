@@ -833,6 +833,67 @@ Assert(ABS(SIN(0)) < 0.001, "sin 0")
 Assert(ABS(COS(0) - 1) < 0.001, "cos 0")
 
 ' ══════════════════════════════════════════════════════════════════
+' 14a. CONVERSION FUNCTIONS — classic BASIC cast family, scalar + vector
+' ══════════════════════════════════════════════════════════════════
+Header("Conversion functions")
+
+' ── CINT: 32-bit truncating cast ──
+Assert(CINT(3.7) = 3, "cint pos trunc")
+Assert(CINT(-3.7) = -3, "cint neg trunc")
+Assert(CINT(42) = 42, "cint int pass")
+
+' ── CLNG: 64-bit truncating cast ──
+Assert(CLNG(99.9) = 99, "clng pos")
+Assert(CLNG(-100.5) = -100, "clng neg")
+
+' ── CSNG: float32 roundtrip ──
+Assert(CSNG(1.5) = 1.5, "csng exact")
+Assert(CSNG(0.0) = 0.0, "csng zero")
+
+' ── CDBL: to float64 ──
+Assert(CDBL(7) = 7.0, "cdbl int")
+Assert(CDBL(3.14) = 3.14, "cdbl float")
+
+' ── CBOOL: zero → 0, non-zero → 1 ──
+Assert(CBOOL(0) = 0, "cbool zero")
+Assert(CBOOL(1) = 1, "cbool one")
+Assert(CBOOL(-5) = 1, "cbool neg")
+Assert(CBOOL(0.0) = 0, "cbool zero float")
+Assert(CBOOL(3.14) = 1, "cbool nonzero float")
+
+' ── CSTR / TOSTR / STR: any value → string ──
+Assert(CSTR(42) = "42", "cstr int")
+Assert(CSTR(3.14) = "3.14", "cstr float")
+Assert(TOSTR(42) = "42", "tostr int")
+Assert(STR(42) = "42", "str int")
+
+' ── TONUM / VAL: string → number ──
+Assert(TONUM("1.5") = 1.5, "tonum float")
+Assert(TONUM("42") = 42, "tonum int")
+Assert(TONUM("abc") = 0, "tonum bad")
+Assert(VAL("2.718") = 2.718, "val float")
+
+' ── CDATE / CVDATE: string → DateTime ──
+DIM dt_a = CDATE("2025-01-15")
+DIM dt_b = CVDATE("2025-01-15")
+Assert(dt_a = dt_b, "cdate equals cvdate")
+Assert(YEAR(dt_a) = 2025, "cdate year")
+Assert(MONTH(dt_a) = 1, "cdate month")
+Assert(DAY(dt_a) = 15, "cdate day")
+
+' ── Vectorized forms — all cast functions fan over arrays ──
+Assert(CINT([1.5, 2.7, -3.9])[0] = 1, "cint arr [0]")
+Assert(CINT([1.5, 2.7, -3.9])[2] = -3, "cint arr [2]")
+Assert(CLNG([10.1, 20.9])[1] = 20, "clng arr")
+Assert(CSNG([1.0, 2.0])[1] = 2.0, "csng arr")
+Assert(CBOOL([0, 1, 2, 0, -5])[4] = 1, "cbool arr nonzero")
+Assert(CBOOL([0, 1, 2, 0, -5])[3] = 0, "cbool arr zero")
+Assert(CDBL([1, 2, 3])[1] = 2.0, "cdbl arr")
+Assert(CSTR([1, 2, 3])[0] = "1", "cstr arr")
+Assert(TOSTR([1, 2, 3])[2] = "3", "tostr arr")
+Assert(TONUM(["1.5", "2.7", "3.9"])[1] = 2.7, "tonum arr strings")
+
+' ══════════════════════════════════════════════════════════════════
 ' 14. STRING FUNCTIONS (ADVANCED)
 ' ══════════════════════════════════════════════════════════════════
 Header("Advanced Strings")
