@@ -16,6 +16,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 static auto g_start_time = std::chrono::steady_clock::now();
@@ -1638,6 +1641,13 @@ void jdb_txtwriter_append(const char* path, const char* content) {
     if (f) { fputs(content, f); fclose(f); }
 }
 
+// 3-arg form used by TXTWRITER with optional append flag — bridges
+// the codegen-default of padding the 3rd i64 arg with 0 to no-append.
+void jdb_txtwriter3(const char* path, const char* content, int64_t append) {
+    if (append) jdb_txtwriter_append(path, content);
+    else        jdb_txtwriter(path, content);
+}
+
 char* jdb_pwd() {
     char buf[4096];
 #ifdef _WIN32
@@ -1682,12 +1692,6 @@ void jdb_mkdir_native(const char* path) {
 
 void jdb_kill(const char* path) {
     remove(path);
-}
-
-int64_t jdb_file_exists(const char* path) {
-    FILE* f = fopen(path, "r");
-    if (f) { fclose(f); return 1; }
-    return 0;
 }
 
 // ── Date/Time ───────────────────────────────────────────────
@@ -1847,6 +1851,102 @@ void jdb_rmdir(const char* path) {
 #else
     rmdir(path);
 #endif
+}
+
+// ── File metadata ───────────────────────────────────────────
+int64_t jdb_file_exists(const char* path) {
+    if (!path) return 0;
+#ifdef _WIN32
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? 1 : 0;
+#else
+    struct stat st;
+    return stat(path, &st) == 0 ? 1 : 0;
+#endif
+}
+
+int64_t jdb_file_size(const char* path) {
+    if (!path) return -1;
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fad)) return -1;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return -1;
+    return ((int64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0 || S_ISDIR(st.st_mode)) return -1;
+    return (int64_t)st.st_size;
+#endif
+}
+
+int64_t jdb_file_isdir(const char* path) {
+    if (!path) return 0;
+#ifdef _WIN32
+    DWORD attr = GetFileAttributesA(path);
+    if (attr == INVALID_FILE_ATTRIBUTES) return 0;
+    return (attr & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode) ? 1 : 0;
+#endif
+}
+
+// ── Path helpers ────────────────────────────────────────────
+char* jdb_path_dirname(const char* p) {
+    if (!p) return _strdup("");
+    std::string s(p);
+    size_t pos = s.find_last_of("/\\");
+    if (pos == std::string::npos) return _strdup("");
+    if (pos == 0) return _strdup(s.substr(0, 1).c_str());
+    return _strdup(s.substr(0, pos).c_str());
+}
+
+char* jdb_path_normalize(const char* p) {
+    if (!p) return _strdup("");
+#ifdef _WIN32
+    const char sep = '\\';
+#else
+    const char sep = '/';
+#endif
+    std::string s; s.reserve(strlen(p));
+    for (const char* c = p; *c; c++)
+        s.push_back((*c == '/' || *c == '\\') ? sep : *c);
+    std::string prefix;
+    std::string body = s;
+#ifdef _WIN32
+    if (body.size() >= 2 && isalpha((unsigned char)body[0]) && body[1] == ':') {
+        prefix = body.substr(0, 2);
+        body = body.substr(2);
+    }
+#endif
+    bool rooted = !body.empty() && body[0] == sep;
+    std::vector<std::string> parts;
+    size_t i = 0;
+    while (i < body.size()) {
+        while (i < body.size() && body[i] == sep) i++;
+        size_t j = i;
+        while (j < body.size() && body[j] != sep) j++;
+        if (i < j) parts.push_back(body.substr(i, j - i));
+        i = j;
+    }
+    std::vector<std::string> out;
+    for (auto& part : parts) {
+        if (part == ".") continue;
+        if (part == "..") {
+            if (!out.empty() && out.back() != "..") out.pop_back();
+            else if (!rooted) out.push_back("..");
+        } else {
+            out.push_back(part);
+        }
+    }
+    std::string res = prefix;
+    if (rooted) res.push_back(sep);
+    for (size_t k = 0; k < out.size(); k++) {
+        if (k) res.push_back(sep);
+        res += out[k];
+    }
+    if (res.empty()) res = ".";
+    return _strdup(res.c_str());
 }
 
 // ── Bit rotation ────────────────────────────────────────────

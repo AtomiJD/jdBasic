@@ -4665,10 +4665,15 @@ void VM::register_builtins() {
         return Value::make_string(ss.str());
     });
 
-    register_native("TXTWRITER", [](const std::vector<Value>& args) -> Value {
+    register_native("TXTWRITER", 2, 3, [](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string content = args[1].as_string()->data;
-        std::ofstream f(fname);
+        bool append = (args.size() >= 3) ? args[2].to_bool() : false;
+        // Binary mode to match native jdb_txtwriter — avoids \r\n translation
+        // so FILE.SIZE returns the same byte count in both runtimes.
+        std::ios::openmode mode = std::ios::out | std::ios::binary |
+                                   (append ? std::ios::app : std::ios::trunc);
+        std::ofstream f(fname, mode);
         if (!f) throw std::runtime_error("Cannot write file: " + fname);
         f << content;
         return Value::make_none();
@@ -6233,6 +6238,150 @@ void VM::register_builtins() {
         if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
             return Value::make_string("");
         return Value::make_string(p.substr(dot));
+    });
+
+    register_native("PATH.DIRNAME$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+        size_t pos = p.find_last_of("/\\");
+        if (pos == std::string::npos) return Value::make_string("");
+        // Strip trailing separator unless it's the root.
+        if (pos == 0) return Value::make_string(p.substr(0, 1));
+        return Value::make_string(p.substr(0, pos));
+    });
+
+    register_native("PATH.NORMALIZE$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+#if defined(_WIN32)
+        const char sep = '\\';
+#else
+        const char sep = '/';
+#endif
+        // Normalize all separators to native
+        std::string s; s.reserve(p.size());
+        for (char c : p) s.push_back((c == '/' || c == '\\') ? sep : c);
+        // Detect drive prefix like "C:" so we don't mangle it
+        std::string prefix;
+        std::string body = s;
+#if defined(_WIN32)
+        if (body.size() >= 2 && isalpha((unsigned char)body[0]) && body[1] == ':') {
+            prefix = body.substr(0, 2);
+            body = body.substr(2);
+        }
+#endif
+        bool rooted = !body.empty() && body[0] == sep;
+        // Split into parts
+        std::vector<std::string> parts;
+        size_t i = 0;
+        while (i < body.size()) {
+            while (i < body.size() && body[i] == sep) i++;
+            size_t j = i;
+            while (j < body.size() && body[j] != sep) j++;
+            if (i < j) parts.push_back(body.substr(i, j - i));
+            i = j;
+        }
+        // Resolve . and ..
+        std::vector<std::string> out;
+        for (auto& part : parts) {
+            if (part == ".") continue;
+            if (part == "..") {
+                if (!out.empty() && out.back() != "..") out.pop_back();
+                else if (!rooted) out.push_back("..");
+            } else {
+                out.push_back(part);
+            }
+        }
+        std::string res = prefix;
+        if (rooted) res.push_back(sep);
+        for (size_t k = 0; k < out.size(); k++) {
+            if (k) res.push_back(sep);
+            res += out[k];
+        }
+        if (res.empty()) res = ".";
+        return Value::make_string(res);
+    });
+
+    // ── File metadata ───────────────────────────────────────────
+    register_native("FILE.EXISTS", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+#if defined(_WIN32)
+        DWORD attr = GetFileAttributesA(p.c_str());
+        return Value::make_bool(attr != INVALID_FILE_ATTRIBUTES);
+#else
+        struct stat st;
+        return Value::make_bool(stat(p.c_str(), &st) == 0);
+#endif
+    });
+
+    register_native("FILE.SIZE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+#if defined(_WIN32)
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        if (!GetFileAttributesExA(p.c_str(), GetFileExInfoStandard, &fad))
+            return Value::make_i64(-1);
+        if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return Value::make_i64(-1);
+        int64_t sz = ((int64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+        return Value::make_i64(sz);
+#else
+        struct stat st;
+        if (stat(p.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) return Value::make_i64(-1);
+        return Value::make_i64((int64_t)st.st_size);
+#endif
+    });
+
+    register_native("FILE.ISDIR", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+#if defined(_WIN32)
+        DWORD attr = GetFileAttributesA(p.c_str());
+        if (attr == INVALID_FILE_ATTRIBUTES) return Value::make_bool(false);
+        return Value::make_bool((attr & FILE_ATTRIBUTE_DIRECTORY) != 0);
+#else
+        struct stat st;
+        if (stat(p.c_str(), &st) != 0) return Value::make_bool(false);
+        return Value::make_bool(S_ISDIR(st.st_mode));
+#endif
+    });
+
+    register_native("FILE.STAT", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string p = args[0].as_string()->data;
+        Value m = Value::make_object();
+        auto* o = m.as_object();
+#if defined(_WIN32)
+        WIN32_FILE_ATTRIBUTE_DATA fad;
+        if (!GetFileAttributesExA(p.c_str(), GetFileExInfoStandard, &fad)) {
+            o->set("exists", Value::make_bool(false));
+            return m;
+        }
+        bool is_dir = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        int64_t sz = is_dir ? 0 : (((int64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow);
+        o->set("exists", Value::make_bool(true));
+        o->set("size", Value::make_i64(sz));
+        o->set("is_dir", Value::make_bool(is_dir));
+        o->set("readonly", Value::make_bool((fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0));
+        o->set("hidden", Value::make_bool((fad.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0));
+        SYSTEMTIME st; FileTimeToSystemTime(&fad.ftLastWriteTime, &st);
+        char dt[32]; snprintf(dt, sizeof(dt), "%04d-%02d-%02d %02d:%02d:%02d",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        o->set("mtime", Value::make_string(dt));
+#else
+        struct stat st;
+        if (stat(p.c_str(), &st) != 0) {
+            o->set("exists", Value::make_bool(false));
+            return m;
+        }
+        o->set("exists", Value::make_bool(true));
+        o->set("size", Value::make_i64((int64_t)st.st_size));
+        o->set("is_dir", Value::make_bool(S_ISDIR(st.st_mode)));
+        o->set("readonly", Value::make_bool((st.st_mode & S_IWUSR) == 0));
+        o->set("hidden", Value::make_bool(false));
+        char dt[32]; struct tm* tmv = localtime(&st.st_mtime);
+        if (tmv) {
+            snprintf(dt, sizeof(dt), "%04d-%02d-%02d %02d:%02d:%02d",
+                tmv->tm_year + 1900, tmv->tm_mon + 1, tmv->tm_mday,
+                tmv->tm_hour, tmv->tm_min, tmv->tm_sec);
+            o->set("mtime", Value::make_string(dt));
+        }
+#endif
+        return m;
     });
 
     // ── Dynamic code ─────────────────────────────────────────

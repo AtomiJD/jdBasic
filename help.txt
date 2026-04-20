@@ -377,6 +377,22 @@ Description: Returns the factorial of a number.
 Syntax: FALSE
 Description: The boolean constant representing a false value.
 
+[FILE.EXISTS]
+Syntax: FILE.EXISTS(path$) -> integer
+Description: Returns 1 if the file or directory at path$ exists, 0 otherwise.
+
+[FILE.ISDIR]
+Syntax: FILE.ISDIR(path$) -> integer
+Description: Returns 1 if path$ is an existing directory, 0 otherwise.
+
+[FILE.SIZE]
+Syntax: FILE.SIZE(path$) -> integer
+Description: Returns the size of the file in bytes, or -1 if the file does not exist.
+
+[FILE.STAT]
+Syntax: FILE.STAT(path$) -> map
+Description: Returns a map with fields "exists", "size", "is_dir", "readonly", "hidden", "mtime" (string YYYY-MM-DD HH:MM:SS). For missing files, "exists" is FALSE.
+
 [FILTER]
 Syntax: FILTER(function@, array)
 Description: Creates a new 1D array containing only the elements for which the provided function returns TRUE.
@@ -1072,6 +1088,10 @@ Description: Packs numbers into a binary string. Format: "<" (Little Endian), ">
 Syntax: PATH.BASENAME$(path$)
 Description: Returns the filename part of a path (e.g., "file.txt" from "/dir/file.txt").
 
+[PATH.DIRNAME$]
+Syntax: PATH.DIRNAME$(path$)
+Description: Returns the directory part of a path (e.g., "a/b" from "a/b/c.txt"). Returns "" for a bare filename and "/" for a root-level path like "/x".
+
 [PATH.EXT$]
 Syntax: PATH.EXT$(path$)
 Description: Returns the file extension of a path (e.g., ".png").
@@ -1079,6 +1099,10 @@ Description: Returns the file extension of a path (e.g., ".png").
 [PATH.JOIN$]
 Syntax: PATH.JOIN$(part1$, part2$, ...)
 Description: Joins path components using the operating system's separator.
+
+[PATH.NORMALIZE$]
+Syntax: PATH.NORMALIZE$(path$)
+Description: Normalizes a path by resolving "." and ".." segments and converting to the OS-native separator. Preserves drive prefixes on Windows.
 
 [PI]
 Syntax: PI
@@ -1796,8 +1820,8 @@ TXTREADER$(filename$) -> string$
 Reads the entire contents of a text file into a string.
 
 [TXTWRITER]
-TXTWRITER filename$, content$, ["APPEND"]
-Writes a string to a text file, optionally appending it.
+TXTWRITER filename$, content$, [append]
+Writes a string to a text file. If the optional third argument `append` is TRUE, content is appended to an existing file; otherwise the file is overwritten. The file is written in binary mode (no newline translation).
 
 [TYPE]
 Syntax: TYPE name ... ENDTYPE

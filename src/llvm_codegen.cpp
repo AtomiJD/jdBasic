@@ -316,7 +316,8 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // File I/O
     reg("jdb_txtreader",       "TXTREADER$",  i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_txtwriter",       "TXTWRITER",   void_type, {i8_ptr_type, i8_ptr_type}, -1);
+    // 3-arg TXTWRITER: 2-arg calls pad 0 → no append, 3-arg picks append
+    reg("jdb_txtwriter3",      "TXTWRITER",   void_type, {i8_ptr_type, i8_ptr_type, i64_type}, -1);
     reg("jdb_txtwriter_append","TXTWRITER_APPEND", void_type, {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_pwd",             "PWD",         i8_ptr_type, {}, 2);
     reg("jdb_cd",              "CD",          i8_ptr_type, {i8_ptr_type}, 2);
@@ -324,6 +325,10 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_rmdir",           "RMDIR",       void_type, {i8_ptr_type}, -1);
     reg("jdb_kill",            "KILL",        void_type, {i8_ptr_type}, -1);
     reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, 0);
+    reg("jdb_file_size",       "FILE.SIZE",   i64_type, {i8_ptr_type}, 0);
+    reg("jdb_file_isdir",      "FILE.ISDIR",  i64_type, {i8_ptr_type}, 0);
+    reg("jdb_path_dirname",    "PATH.DIRNAME$",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_path_normalize",  "PATH.NORMALIZE$", i8_ptr_type, {i8_ptr_type}, 2);
 
     // Date/Time
     reg("jdb_now",         "NOW",         i8_ptr_type, {}, 2);
@@ -1295,7 +1300,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
                             "LINES", "WORDS", "CHARS", "UNPACK",
                             "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
-                            "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS"
+                            "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS",
+                            "DIR$"
                         };
                         if (arr_returners.count(upper)) return JD_TAG_ARR;
                         // VM-Value-handle returners (sync with bridge).
@@ -1304,7 +1310,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         // so it goes through the VM-handle path instead.
                         static const std::unordered_set<std::string> obj_returners = {
                             "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                            "MAP.FROM", "MAP.COPY"
+                            "MAP.FROM", "MAP.COPY", "FILE.STAT"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -5103,7 +5109,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "OS.GETOS", "OS.GETOS$", "OS.ARGS", "OS.EXEC",
         "OS.HOSTNAME$", "OS.IP$", "OS.LOAD",
         "DIR$", "DIR", "CD", "PWD", "MKDIR", "KILL",
+        "FILE.EXISTS", "FILE.SIZE", "FILE.ISDIR", "FILE.STAT",
         "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
+        "PATH.DIRNAME$", "PATH.NORMALIZE$",
         // Execution
         "EXECUTE", "EVAL", "LOAD", "SAVE", "LIST", "HELP", "HELP$", "VARS",
         "RECUR", "CLEAR_RECUR", "LIST_RECUR",
@@ -5552,7 +5560,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             static const std::unordered_set<std::string> object_returners = {
                 "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                "MAP.FROM", "MAP.COPY", "GROUPBY"
+                "MAP.FROM", "MAP.COPY", "GROUPBY",
+                "FILE.STAT"
             };
             bool is_object_fn = object_returners.count(upper);
 
@@ -5565,7 +5574,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
                 "GFX.HSV_RGB", "GFX.TEXTSIZE",
                 "SPRITE.COLLISIONS",
-                "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE"
+                "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE",
+                "DIR$"
             };
             bool is_array_fn = array_returners.count(upper);
 

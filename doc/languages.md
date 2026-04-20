@@ -798,6 +798,16 @@ ENDTRY
 * **`PATH.JOIN$(part1$, part2$, ...) -> string$`**: Joins multiple file path components using the correct separator for the current OS (e.g., `\` on Windows, `/` on Linux).
 * **`PATH.BASENAME$(path$) -> string$`**: Returns the filename part of a path (e.g., `"file.txt"` from `"/dir/file.txt"`).
 * **`PATH.EXT$(path$) -> string$`**: Returns the file extension including the dot (e.g., `".txt"`).
+* **`PATH.DIRNAME$(path$) -> string$`**: Returns the directory part of a path (e.g., `"a/b"` from `"a/b/c.txt"`). Returns `""` for a bare filename and `"/"` for a root-level path like `"/x"`.
+* **`PATH.NORMALIZE$(path$) -> string$`**: Normalizes a path by resolving `.` and `..` segments and converting to the OS-native separator. Preserves drive prefixes on Windows (e.g., `"C:\"`).
+
+#### File Inspection Functions
+
+* **`FILE.EXISTS(path$) -> integer`**: Returns `1` if the file or directory at `path$` exists, `0` otherwise.
+* **`FILE.SIZE(path$) -> integer`**: Returns the size of the file in bytes, or `-1` if the file does not exist.
+* **`FILE.ISDIR(path$) -> integer`**: Returns `1` if `path$` is an existing directory, `0` otherwise.
+* **`FILE.STAT(path$) -> map`**: Returns a map describing the file with keys:
+  * `"exists"` (boolean), `"size"` (integer bytes), `"is_dir"` (boolean), `"readonly"` (boolean), `"hidden"` (boolean), `"mtime"` (string `YYYY-MM-DD HH:MM:SS`). For missing files, `exists` is `FALSE` and other fields are default values.
 
 ### OS Functions
 
@@ -1258,7 +1268,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 ### File I/O Functions
 
 * **`TXTREADER$(filename$)`**: Reads an entire text file into a single string variable.
-* **`TXTWRITER filename$, content$`**: Writes a string variable to a text file.
+* **`TXTWRITER filename$, content$, [append]`**: Writes a string variable to a text file. If the optional third argument `append` is `TRUE`, content is appended to the existing file; otherwise the file is overwritten (default). The file is written in binary mode, so no newline translation is performed.
 * **`CSVREADER(filename$, [delimiter$], [has_header])`**: Reads a CSV file into a 2D array of numbers.
 * **`CSVWRITER filename$, array, [delimiter$], [header_array]`**: Writes a 2D array to a CSV file.
 * **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.
