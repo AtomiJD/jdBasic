@@ -822,11 +822,32 @@ LLVMCodegen::StaticType LLVMCodegen::StaticType::from_vartype(
 }
 
 void LLVMCodegen::populate_type_env(const std::vector<StmtPtr>& program) {
+    // Built-in predeclared constants (EXPLICIT mode must not flag these).
+    {
+        StaticType num; num.kind = StaticType::Kind::NUMBER;
+        type_env["PI"] = num;
+        type_env["E"]  = num;
+    }
     for (auto& stmt : program) {
         if (!stmt) continue;
         if (stmt->kind == StmtKind::DIM) {
             type_env[stmt->var_name] = StaticType::from_vartype(
                 stmt->var_type, stmt->elem_type, stmt->label);
+        } else if (stmt->kind == StmtKind::LET && !stmt->var_name.empty()) {
+            // LET counts as a declaration under EXPLICIT (classical BASIC
+            // idiom; matches interpreter behavior). Use declared AS-type
+            // if present, else infer coarsely from RHS.
+            StaticType t;
+            if (stmt->var_type != VarType::NONE) {
+                t = StaticType::from_vartype(
+                    stmt->var_type, stmt->elem_type, stmt->label);
+            } else if (stmt->expr) {
+                t = infer_expr_type(*stmt->expr);
+            }
+            // Don't overwrite a prior DIM with a weaker LET inference.
+            auto it = type_env.find(stmt->var_name);
+            if (it == type_env.end() || it->second.is_unknown())
+                type_env[stmt->var_name] = t;
         }
     }
 }
@@ -969,15 +990,26 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     // are live before codegen_program's globals pre-pass runs (which emits
     // Phase 3 diagnostics conditional on explicit_mode). codegen_stmt still
     // handles OPTION at statement time so mid-program toggles work too.
+    // Options are file-scoped: a STRICT main file can IMPORT a loose module
+    // without forcing its migration. Group by stmt->source_file.
     for (auto& s : program) {
         if (s && s->kind == StmtKind::OPTION_STMT && s->expr &&
             s->expr->kind == ExprKind::LITERAL_STRING) {
             std::string opt = s->expr->str_val;
             std::transform(opt.begin(), opt.end(), opt.begin(), ::toupper);
-            if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT") explicit_mode = false;
-            else if (opt == "EXPLICIT") explicit_mode = true;
-            else if (opt == "NOSTRICT" || opt == "STRICTOFF") strict_mode = false;
-            else if (opt == "STRICT") strict_mode = true;
+            if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT") {
+                explicit_mode = false;
+                explicit_files.erase(s->source_file);
+            } else if (opt == "EXPLICIT") {
+                explicit_mode = true;
+                explicit_files.insert(s->source_file);
+            } else if (opt == "NOSTRICT" || opt == "STRICTOFF") {
+                strict_mode = false;
+                strict_files.erase(s->source_file);
+            } else if (opt == "STRICT") {
+                strict_mode = true;
+                strict_files.insert(s->source_file);
+            }
         }
     }
     codegen_program(program);
@@ -1172,11 +1204,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             }
             if (!lookup_var(stmt->var_name)) {
                 // Phase 3 EXPLICIT: a bare top-level `x = ...` where x was
-                // never DIM'd is an error. The pre-pass would otherwise
+                // never DIM'd/LET'd is an error. The pre-pass would otherwise
                 // auto-declare x globally (so codegen_let_or_assign's own
-                // check misses it). Keep create_var so downstream uses of
-                // the name don't cascade more errors for the same root.
-                if (explicit_mode && stmt->kind != StmtKind::DIM) {
+                // check misses it). DIM and LET both count as declarations;
+                // only bare ASSIGN (x = ...) without prior binding errors.
+                if (is_explicit_here(stmt->source_file) &&
+                    stmt->kind == StmtKind::ASSIGN) {
                     report_error(stmt->source_file, stmt->line,
                         "undeclared variable '" + stmt->var_name + "'");
                 }
@@ -1996,7 +2029,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // dotted module/UDT write) is a compile error. Skip when kind == DIM
     // (DIMs are declarations, routed here for DIM-without-init); skip
     // dotted names (module writes / UDT fields, handled elsewhere).
-    if (explicit_mode && stmt.kind != StmtKind::DIM &&
+    if (is_explicit_here(stmt.source_file) && stmt.kind == StmtKind::ASSIGN &&
         stmt.var_name.find('.') == std::string::npos) {
         VarInfo* prior = lookup_var(stmt.var_name);
         bool declared_global = type_env.count(stmt.var_name) > 0;
@@ -2013,8 +2046,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // Phase 4 STRICT: assignment to a declared global must have a
     // compatible RHS. Only checked when the LHS is a known global —
     // locals lack a StaticType table today (future phase extends).
-    if (strict_mode && stmt.kind != StmtKind::DIM && stmt.expr &&
-        stmt.var_name.find('.') == std::string::npos) {
+    if (is_strict_here(stmt.source_file) && stmt.kind != StmtKind::DIM &&
+        stmt.expr && stmt.var_name.find('.') == std::string::npos) {
         auto tit = type_env.find(stmt.var_name);
         if (tit != type_env.end() && !tit->second.is_unknown()) {
             StaticType actual = infer_expr_type(*stmt.expr);
@@ -2315,7 +2348,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     // ARRAY and multi-dim shape inits are exempt — the initializer shape
     // doesn't infer cleanly as a StaticType yet, so let the legacy path
     // handle them (Phase 4 extends later).
-    if (strict_mode && stmt.expr &&
+    if (is_strict_here(stmt.source_file) && stmt.expr &&
         stmt.var_type != VarType::NONE &&
         stmt.var_type != VarType::ARRAY) {
         StaticType declared = StaticType::from_vartype(
@@ -3479,7 +3512,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // compile error. Dotted names (module.var) are skipped —
                 // those land here when the module target isn't a known UDT
                 // and are better reported at their specific use site.
-                if (explicit_mode && expr.str_val.find('.') == std::string::npos) {
+                if (is_explicit_here(m_current_stmt_file) &&
+                    expr.str_val.find('.') == std::string::npos) {
                     report_error(m_current_stmt_file, expr.line,
                         "undeclared variable '" + expr.str_val + "'");
                 }

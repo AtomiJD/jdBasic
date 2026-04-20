@@ -39,18 +39,18 @@ ENDSUB
 
 EXPORT FUNC GET_THING_X(idx)
     IF idx < 0 OR idx >= thing_count THEN RETURN -1
-    t = things[idx]
+    LET t = things[idx]
     RETURN t.x
 ENDFUNC
 
 EXPORT FUNC GET_THING_LABEL$(idx)
     IF idx < 0 OR idx >= thing_count THEN RETURN ""
-    t = things[idx]
+    LET t = things[idx]
     RETURN t.label$
 ENDFUNC
 
 EXPORT SUB MODIFY_THING(idx, new_val)
     IF idx < 0 OR idx >= thing_count THEN RETURN
-    t = things[idx]
+    LET t = things[idx]
     t.x = new_val
 ENDSUB

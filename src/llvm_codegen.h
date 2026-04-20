@@ -72,6 +72,22 @@ public:
     std::unordered_map<std::string, StaticType> type_env;
     void populate_type_env(const std::vector<StmtPtr>& program);
 
+    // Per-file OPTION scope: each imported .jdb file sets its own flags.
+    // A strict program can IMPORT a loose module without cascading the
+    // strictness. The pre-scan builds these from top-level OPTION_STMTs
+    // grouped by their source_file; diagnostic sites consult them via
+    // is_explicit_here()/is_strict_here() instead of the global bools.
+    std::unordered_set<std::string> explicit_files;
+    std::unordered_set<std::string> strict_files;
+    bool is_explicit_here(const std::string& file) const {
+        if (explicit_files.count(file)) return true;
+        return explicit_mode && file.empty();  // inline toggles / main
+    }
+    bool is_strict_here(const std::string& file) const {
+        if (strict_files.count(file)) return true;
+        return strict_mode && file.empty();
+    }
+
     // Phase 4: infer the static type of an expression. Conservative —
     // returns UNKNOWN whenever the shape can't be determined without
     // running codegen. Callers treat UNKNOWN as "no check possible".

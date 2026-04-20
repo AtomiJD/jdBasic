@@ -2,13 +2,15 @@
 ' == Vallys Reise - Pirate Island RPG
 ' == Built on the Tiled Map engine
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 IMPORT RPG_ENGINE
 CD "D:\usr\dev\cc\fluppi"
-config$ = "D:/usr/dev/cc/fluppi/rpg_data/game.json"
+LET config$ = "D:/usr/dev/cc/fluppi/rpg_data/game.json"
 
 ' ── Title Screen ──────────────────────────────────────────────
-menu_choice = RPG_ENGINE.SHOW_TITLE(config$)
+LET menu_choice = RPG_ENGINE.SHOW_TITLE(config$)
 IF menu_choice = 2 THEN END
 
 ' ── Initialize Game ───────────────────────────────────────────

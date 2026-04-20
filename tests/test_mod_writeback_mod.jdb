@@ -15,18 +15,18 @@ ENDSUB
 EXPORT SUB RESET_MAPS()
     maps = []
     map_count = 0
-    m1 = {} : m1{"v"} = 1 : PUSH maps, m1 : map_count = map_count + 1
-    m2 = {} : m2{"v"} = 2 : PUSH maps, m2 : map_count = map_count + 1
+    LET m1 = {} : m1{"v"} = 1 : PUSH maps, m1 : map_count = map_count + 1
+    LET m2 = {} : m2{"v"} = 2 : PUSH maps, m2 : map_count = map_count + 1
 ENDSUB
 
 EXPORT SUB MUTATE_MAP(idx, newv)
-    q = maps[idx]
+    LET q = maps[idx]
     q{"v"} = newv
     maps[idx] = q
 ENDSUB
 
 EXPORT SUB MUTATE_MAP_NOWRITE(idx, newv)
-    q = maps[idx]
+    LET q = maps[idx]
     q{"v"} = newv
 ENDSUB
 

@@ -1,6 +1,8 @@
 ' ═══════════════════════════════════════
 '  Crash Resilience Test Suite
 ' ═══════════════════════════════════════
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 DIM PASS = 0
 DIM FAIL = 0

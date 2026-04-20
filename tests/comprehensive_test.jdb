@@ -3,6 +3,8 @@
 '  Tests: Loops, Variables, Types, Functions, Lambdas, Pipes,
 '         React, Strings, Math, Operators, Unicode, and more
 ' ══════════════════════════════════════════════════════════════════
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 DIM PASS = 0
 DIM FAIL = 0
@@ -866,6 +868,7 @@ IF NOT OS.FEATURE("NATIVEC") THEN
 
     DIM base_price = 100
     DIM tax_rate = 0.19
+    DIM total_price = 0
     total_price -> base_price * (1 + tax_rate)
     Assert(ABS(total_price - 119) < 0.01, "react initial")
 
@@ -928,7 +931,7 @@ Assert(TYPEOF({}) = "OBJECT", "typeof empty obj")
 ' Multiple assignment styles
 LET ma = 1
 DIM mb = 2
-mc = 3
+LET mc = 3
 Assert(ma + mb + mc = 6, "multi assign styles")
 
 ' String as array index
@@ -952,54 +955,54 @@ Assert(config{"debug"} = TRUE, "nested map bool")
 Header("Fused superinstructions")
 
 ' --- String concat: var$ + literal at top-level ---
-fs1$ = "hello"
+LET fs1$ = "hello"
 Assert(fs1$ + " world" = "hello world", "fused str+literal top")
 Assert(fs1$ + "x" + "y" = "helloxy", "fused str+literal chain")
 
 ' --- String concat inside SUB (the original bug) ---
 SUB FusedStrInSub()
-    p$ = "ACCT"
-    PASS_LOCAL = (p$ + "> " = "ACCT> ")
+    LET p$ = "ACCT"
+    LET PASS_LOCAL = (p$ + "> " = "ACCT> ")
     Assert(PASS_LOCAL, "fused str+literal in SUB")
     Assert(p$ + "!" = "ACCT!", "fused str+literal in SUB direct")
 ENDSUB
 FusedStrInSub
 
 ' --- INT64 fast path still works ---
-fi1 = 10
+LET fi1 = 10
 Assert(fi1 + 5 = 15, "fused int+literal add")
 Assert(fi1 - 3 = 7, "fused int-literal sub")
 Assert(fi1 * 4 = 40, "fused int*literal mul")
 
 ' --- FLOAT64 slow path ---
-ff1 = 1.5
+LET ff1 = 1.5
 Assert(ff1 + 0.5 = 2.0, "fused float+literal add")
 Assert(ff1 * 2.0 = 3.0, "fused float*literal mul")
 
 ' --- Array broadcast through the fused slow path ---
-fa1 = [1, 2, 3]
-fa1_plus = fa1 + 10
+LET fa1 = [1, 2, 3]
+LET fa1_plus = fa1 + 10
 Assert(fa1_plus[0] = 11, "fused array+literal [0]")
 Assert(fa1_plus[1] = 12, "fused array+literal [1]")
 Assert(fa1_plus[2] = 13, "fused array+literal [2]")
-fa1_mul = fa1 * 2
+LET fa1_mul = fa1 * 2
 Assert(fa1_mul[0] = 2, "fused array*literal [0]")
 Assert(fa1_mul[2] = 6, "fused array*literal [2]")
 
 ' --- Array of strings + literal string ---
-fas = ["a", "b", "c"]
-fas_plus = fas + "X"
+LET fas = ["a", "b", "c"]
+LET fas_plus = fas + "X"
 Assert(fas_plus[0] = "aX", "fused str-array+literal [0]")
 Assert(fas_plus[2] = "cX", "fused str-array+literal [2]")
 
 ' --- Comparison fusion with strings ---
-fc$ = "banana"
+LET fc$ = "banana"
 Assert((fc$ = "banana") = TRUE,  "fused str cmp eq true")
 Assert((fc$ = "apple")  = FALSE, "fused str cmp eq false")
 Assert((fc$ <> "apple") = TRUE,  "fused str cmp ne")
 
 ' --- Comparison fusion with floats ---
-fcf = 3.14
+LET fcf = 3.14
 Assert((fcf < 4.0)  = TRUE,  "fused float cmp lt")
 Assert((fcf > 4.0)  = FALSE, "fused float cmp gt")
 Assert((fcf <= 3.14) = TRUE, "fused float cmp le")
@@ -1009,8 +1012,8 @@ Assert((fcf <= 3.14) = TRUE, "fused float cmp le")
 '     used to call compare() directly which doesn't know arrays).
 DIM fca_in_sub_ok = FALSE
 SUB FusedArrCmpInSub()
-    yarr = [1, 2, 4]
-    cmp = (yarr = 0)
+    LET yarr = [1, 2, 4]
+    LET cmp = (yarr = 0)
     fca_in_sub_ok = (TYPEOF(cmp) = "ARRAY" AND LEN(cmp) = 3 AND cmp[0] = FALSE)
 ENDSUB
 FusedArrCmpInSub
@@ -1136,7 +1139,7 @@ DIM CAPTURED_ERR  = 0
 
 SUB ProvokeError()
     TRY
-        x = 1 / 0
+        LET x = 1 / 0
     CATCH
         CAPTURED_MSG$ = ERRMSG$
         CAPTURED_ERR  = ERR
@@ -1212,23 +1215,23 @@ Assert(mc_arr[0].val = 10, "TYPE in array: read field")
 Assert(mc_arr[1].val = 20, "TYPE in array: read field 2")
 
 ' Modify via copy (reference semantics)
-mc_c = mc_arr[0]
+LET mc_c = mc_arr[0]
 mc_c.SET_VAL 55
 Assert(mc_arr[0].val = 55, "TYPE in array: ref semantics")
 
 ' TYPE in dynamic array (PUSH)
-mc_list = []
+LET mc_list = []
 DIM mc_d AS T_TestObj : mc_d.SET_BOTH 1, "first"
 DIM mc_e AS T_TestObj : mc_e.SET_BOTH 2, "second"
 PUSH mc_list, mc_d
 PUSH mc_list, mc_e
 Assert(LEN(mc_list) = 2, "TYPE PUSH to array")
-mc_f = mc_list[0]
+LET mc_f = mc_list[0]
 Assert(mc_f.val = 1, "TYPE from pushed array: val")
 Assert(mc_f.name$ = "first", "TYPE from pushed array: name$")
 
 ' Method call on array element via copy
-mc_g = mc_list[1]
+LET mc_g = mc_list[1]
 mc_g.SET_VAL 999
 Assert(mc_list[1].val = 999, "TYPE method on array elem via ref")
 
@@ -1463,9 +1466,9 @@ PUSH xlist, tx2
 
 FUNC LOOKUP_REC(id$)
     FOR i = 0 TO LEN(xlist) - 1
-        tmp = xlist[i]
+        LET tmp = xlist[i]
         IF tmp.n$ = id$ THEN
-            m = {}
+            LET m = {}
             m{"name"} = tmp.n$
             m{"val"} = tmp.v
             RETURN m
@@ -1475,10 +1478,10 @@ FUNC LOOKUP_REC(id$)
 ENDFUNC
 
 FUNC LIST_ALL()
-    out = []
+    LET out = []
     FOR i = 0 TO LEN(xlist) - 1
-        tmp = xlist[i]
-        r = {}
+        LET tmp = xlist[i]
+        LET r = {}
         r{"name"} = tmp.n$
         r{"val"} = tmp.v
         PUSH out, r
@@ -1486,30 +1489,30 @@ FUNC LIST_ALL()
     RETURN out
 ENDFUNC
 
-r1 = LOOKUP_REC("alpha")
+LET r1 = LOOKUP_REC("alpha")
 Assert(r1{"name"} = "alpha", "FUNC returning map — string field")
 Assert(r1{"val"} = 7, "FUNC returning map — numeric field")
 Assert(TYPEOF(r1) = "OBJECT", "FUNC map return typed as OBJECT")
 
-r2 = LOOKUP_REC("beta")
+LET r2 = LOOKUP_REC("beta")
 Assert(r2{"name"} = "beta", "FUNC returning map — second lookup")
 Assert(r2{"val"} = 42, "FUNC returning map — second numeric")
 
-all_rows = LIST_ALL()
+LET all_rows = LIST_ALL()
 Assert(LEN(all_rows) = 2, "FUNC returning array of maps — length")
 Assert(TYPEOF(all_rows) = "ARRAY", "FUNC array return typed as ARRAY")
-itm0 = all_rows[0]
+LET itm0 = all_rows[0]
 Assert(itm0{"name"} = "alpha", "FUNC returning array of maps — [0].name")
 Assert(itm0{"val"} = 7, "FUNC returning array of maps — [0].val")
-itm1 = all_rows[1]
+LET itm1 = all_rows[1]
 Assert(itm1{"name"} = "beta", "FUNC returning array of maps — [1].name")
 
 ' UDT field access on array element inside FUNC (needs UDT type propagation
 ' pre-pass so FUNC body's `t = list[i]` resolves t.n$ and t.v).
 FUNC SUM_VALS()
-    total = 0
+    LET total = 0
     FOR i = 0 TO LEN(xlist) - 1
-        t = xlist[i]
+        LET t = xlist[i]
         total = total + t.v
     NEXT i
     RETURN total
@@ -1542,19 +1545,19 @@ Assert(TEST_MOD_WRITEBACK_MOD.arr[0] = 99, "module SUB writes arr[i]")
 TEST_MOD_WRITEBACK_MOD.RESET_MAPS
 Assert(TEST_MOD_WRITEBACK_MOD.map_count = 2, "RESET_MAPS builds 2 maps")
 
-m_init = TEST_MOD_WRITEBACK_MOD.maps[0]
+LET m_init = TEST_MOD_WRITEBACK_MOD.maps[0]
 Assert(m_init{"v"} = 1, "module read maps[0].v")
 
 TEST_MOD_WRITEBACK_MOD.MUTATE_MAP 1, 99
-m_after0 = TEST_MOD_WRITEBACK_MOD.maps[0]
-m_after1 = TEST_MOD_WRITEBACK_MOD.maps[1]
+LET m_after0 = TEST_MOD_WRITEBACK_MOD.maps[0]
+LET m_after1 = TEST_MOD_WRITEBACK_MOD.maps[1]
 Assert(m_after0{"v"} = 1, "MUTATE_MAP leaves maps[0] alone")
 Assert(m_after1{"v"} = 99, "MUTATE_MAP writes maps[1] (copy/mutate/store)")
 
 ' Direct indexed map-write syntax: maps[idx]{"v"} = newv
 TEST_MOD_WRITEBACK_MOD.RESET_MAPS
 TEST_MOD_WRITEBACK_MOD.MUTATE_MAP_DIRECT 1, 88
-m_dir = TEST_MOD_WRITEBACK_MOD.maps[1]
+LET m_dir = TEST_MOD_WRITEBACK_MOD.maps[1]
 Assert(m_dir{"v"} = 88, "MUTATE_MAP_DIRECT maps[idx]{v}=newv")
 
 ' ══════════════════════════════════════════════════════════════════
