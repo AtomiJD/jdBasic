@@ -1793,11 +1793,44 @@ int64_t jdb_second_str(const char* s) {
     return sc;
 }
 
-char* jdb_format_date(double epoch, const char* fmt) {
-    time_t t = (time_t)epoch;
-    struct tm* tm = localtime(&t);
+// Native dates are ISO strings in LOCAL time (matching NOW(), CVDATE(), etc.).
+// Parse the string as local wall-clock → convert to UTC epoch via mktime.
+// If tz_hours is NaN (2-arg form), use localtime for backward compatibility.
+// Otherwise shift the epoch by tz_hours and format via gmtime so the wall
+// clock reflects the chosen zone (tz_hours == 0 → UTC wall clock).
+char* jdb_format_date(const char* date_str, const char* fmt, double tz_hours) {
+    if (!date_str || !fmt) return _strdup("");
+    int y, m, d, hr = 0, mn = 0, sc = 0;
+    int n = sscanf(date_str, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc);
+    if (n < 3) return _strdup("");
+    struct tm local_tm = {0};
+    local_tm.tm_year = y - 1900;
+    local_tm.tm_mon  = m - 1;
+    local_tm.tm_mday = d;
+    local_tm.tm_hour = hr;
+    local_tm.tm_min  = mn;
+    local_tm.tm_sec  = sc;
+    local_tm.tm_isdst = -1;
+    time_t epoch = mktime(&local_tm);
+    struct tm out_tm;
+    if (tz_hours != tz_hours) {
+#ifdef _WIN32
+        localtime_s(&out_tm, &epoch);
+#else
+        struct tm* g = localtime(&epoch);
+        if (g) out_tm = *g; else memset(&out_tm, 0, sizeof(out_tm));
+#endif
+    } else {
+        epoch += (time_t)(tz_hours * 3600.0);
+#ifdef _WIN32
+        gmtime_s(&out_tm, &epoch);
+#else
+        struct tm* g = gmtime(&epoch);
+        if (g) out_tm = *g; else memset(&out_tm, 0, sizeof(out_tm));
+#endif
+    }
     char buf[256];
-    strftime(buf, sizeof(buf), fmt, tm);
+    strftime(buf, sizeof(buf), fmt, &out_tm);
     return _strdup(buf);
 }
 

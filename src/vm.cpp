@@ -1343,6 +1343,7 @@ void VM::run() {
                     {"OUTER",1}, {"ROTATE",1}, {"SHIFT",1}, {"XSORT",1}, {"INTEGRATE",1},
                     {"GETENV$",1}, {"SETLOCALE",1}, {"TICK",1}, {"NOW",1},
                     {"DATE$",1}, {"TIME$",1}, {"CVDATE",1}, {"CDATE",1},
+                    {"DATE.UTC",1}, {"DATE.PARTS",1},
                     // DATEADD/DATEDIFF/FORMAT_DATE intentionally vectorize
                     // so `DATEDIFF("D", scalar, [d1,d2,d3])` returns [d-d1,
                     // d-d2, d-d3] element-wise.
@@ -4148,10 +4149,45 @@ void VM::register_builtins() {
         return Value::make_f64(epoch);
     });
 
-    register_native("CVDATE", [](const std::vector<Value>& args) -> Value {
-        // Helper: convert one Value to a DATE (epoch seconds wrapped in DATE tag).
+    // Helper: portable UTC tm → epoch (seconds since 1970-01-01 UTC).
+    auto tm_to_utc_epoch = [](std::tm tm) -> double {
+    #ifdef _WIN32
+        return static_cast<double>(_mkgmtime(&tm));
+    #else
+        return static_cast<double>(timegm(&tm));
+    #endif
+    };
+
+    // Coerce a Value to an epoch double. Accepts DATE-tagged FLOAT64 (used by
+    // interpreter), ordinary numbers (treated as epoch seconds), and ISO
+    // strings like "YYYY-MM-DD[ HH:MM:SS]" — the native runtime stores dates
+    // as ISO strings, so VM-bridged calls see string inputs here.
+    auto value_to_epoch = [](const Value& v) -> double {
+        if (v.type == ValueType::STRING) {
+            const std::string& s = v.as_string()->data;
+            int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
+            int matched = std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d",
+                                      &y, &mo, &d, &h, &mi, &se);
+            if (matched < 3) {
+                matched = std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d",
+                                      &y, &mo, &d, &h, &mi, &se);
+            }
+            if (matched < 3) return 0.0;
+            std::tm tm = {};
+            tm.tm_year = y - 1900; tm.tm_mon = mo - 1; tm.tm_mday = d;
+            tm.tm_hour = h; tm.tm_min = mi; tm.tm_sec = se;
+            tm.tm_isdst = -1;
+            return static_cast<double>(std::mktime(&tm));
+        }
+        return v.to_double();
+    };
+
+    register_native("CVDATE", 1, 2, [tm_to_utc_epoch](const std::vector<Value>& args) -> Value {
+        // Optional tz_hours: when provided, strings are parsed as being in UTC+tz.
+        bool have_tz = (args.size() >= 2);
+        double tz_sec = have_tz ? args[1].to_double() * 3600.0 : 0.0;
         std::function<Value(const Value&)> one = [&](const Value& v) -> Value {
-            // Numeric input → treat as Unix epoch seconds.
+            // Numeric input → treat as Unix epoch seconds (tz irrelevant).
             if (v.type == ValueType::INT64 || v.type == ValueType::INT32 ||
                 v.type == ValueType::INT16 || v.type == ValueType::BYTE ||
                 v.type == ValueType::FLOAT64 || v.type == ValueType::FLOAT32 ||
@@ -4169,13 +4205,23 @@ void VM::register_builtins() {
             // String input → parse ISO "YYYY-MM-DD[ HH:MM:SS]".
             std::string s = v.as_string()->data;
             std::tm tm = {};
-            std::istringstream ss(s);
-            ss >> std::get_time(&tm, "%Y-%m-%d");
-            if (ss.fail()) return Value::make_date(0);
-            char c;
-            if (ss >> c) {
-                std::istringstream ts(s.substr(ss.tellg()));
-                ts >> std::get_time(&tm, "%H:%M:%S");
+            int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
+            int matched = std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d",
+                                      &y, &mo, &d, &h, &mi, &se);
+            if (matched < 3) {
+                matched = std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d",
+                                      &y, &mo, &d, &h, &mi, &se);
+            }
+            if (matched < 3) return Value::make_date(0);
+            tm.tm_year = y - 1900;
+            tm.tm_mon  = mo - 1;
+            tm.tm_mday = d;
+            tm.tm_hour = h;
+            tm.tm_min  = mi;
+            tm.tm_sec  = se;
+            if (have_tz) {
+                // Treat parsed components as being in UTC+tz → convert to real UTC epoch.
+                return Value::make_date(tm_to_utc_epoch(tm) - tz_sec);
             }
             tm.tm_isdst = -1;
             return Value::make_date(static_cast<double>(std::mktime(&tm)));
@@ -4184,23 +4230,24 @@ void VM::register_builtins() {
     });
     register_native("CDATE", natives["CVDATE"]);
 
-    register_native("DATEADD", [](const std::vector<Value>& args) -> Value {
-        // DATEADD(part$, num, date_epoch) — preserves the DATE subtype tag.
+    register_native("DATEADD", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
+        // DATEADD(part$, num, date_epoch, [tz]). TZ accepted for API symmetry
+        // but D/H/N/S arithmetic is TZ-invariant on epoch, so it's unused here.
         std::string part = args[0].as_string()->data;
         double num = args[1].to_double();
-        double epoch = args[2].to_double();
+        double epoch = value_to_epoch(args[2]);
         if (part == "D")      epoch += num * 86400;
         else if (part == "H") epoch += num * 3600;
-        else if (part == "N") epoch += num * 60;    // N = minutes
+        else if (part == "N") epoch += num * 60;
         else if (part == "S") epoch += num;
         return Value::make_date(epoch);
     });
 
-    register_native("DATEDIFF", [](const std::vector<Value>& args) -> Value {
-        // DATEDIFF(part$, date1, date2) -> number
+    register_native("DATEDIFF", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
+        // DATEDIFF(part$, date1, date2, [tz]) — tz unused (epoch diff is TZ-invariant).
         std::string part = args[0].as_string()->data;
-        double d1 = args[1].to_double();
-        double d2 = args[2].to_double();
+        double d1 = value_to_epoch(args[1]);
+        double d2 = value_to_epoch(args[2]);
         double diff = d2 - d1;
         if (part == "D")      return Value::make_f64(diff / 86400);
         else if (part == "H") return Value::make_f64(diff / 3600);
@@ -4209,15 +4256,78 @@ void VM::register_builtins() {
         return Value::make_f64(diff);
     });
 
-    // Format a DateTime epoch as string
-    register_native("FORMAT_DATE", [](const std::vector<Value>& args) -> Value {
-        double epoch = args[0].to_double();
+    register_native("FORMAT_DATE", 1, 3, [value_to_epoch](const std::vector<Value>& args) -> Value {
+        // FORMAT_DATE(epoch, [fmt], [tz_hours]) — when tz given, format the
+        // instant in UTC+tz instead of local time.
+        double epoch = value_to_epoch(args[0]);
         std::string fmt = (args.size() >= 2) ? args[1].as_string()->data : "%Y-%m-%d %H:%M:%S";
-        std::time_t t = static_cast<std::time_t>(epoch);
-        auto* tm = std::localtime(&t);
+        std::tm tm;
+        if (args.size() >= 3) {
+            double shifted = epoch + args[2].to_double() * 3600.0;
+            std::time_t t = static_cast<std::time_t>(shifted);
+        #ifdef _WIN32
+            gmtime_s(&tm, &t);
+        #else
+            gmtime_r(&t, &tm);
+        #endif
+        } else {
+            std::time_t t = static_cast<std::time_t>(epoch);
+        #ifdef _WIN32
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+        }
         char buf[128];
-        std::strftime(buf, sizeof(buf), fmt.c_str(), tm);
+        std::strftime(buf, sizeof(buf), fmt.c_str(), &tm);
         return Value::make_string(buf);
+    });
+
+    register_native("DATE.UTC", 3, 6, [tm_to_utc_epoch](const std::vector<Value>& args) -> Value {
+        // DATE.UTC(year, month, day, [hour=0, minute=0, second=0]) → DATE epoch.
+        std::tm tm = {};
+        tm.tm_year = static_cast<int>(args[0].to_double()) - 1900;
+        tm.tm_mon  = static_cast<int>(args[1].to_double()) - 1;
+        tm.tm_mday = static_cast<int>(args[2].to_double());
+        tm.tm_hour = (args.size() >= 4) ? static_cast<int>(args[3].to_double()) : 0;
+        tm.tm_min  = (args.size() >= 5) ? static_cast<int>(args[4].to_double()) : 0;
+        tm.tm_sec  = (args.size() >= 6) ? static_cast<int>(args[5].to_double()) : 0;
+        return Value::make_date(tm_to_utc_epoch(tm));
+    });
+
+    register_native("DATE.PARTS", 1, 2, [value_to_epoch](const std::vector<Value>& args) -> Value {
+        // DATE.PARTS(epoch, [tz_hours]) → map with year/month/day/hour/minute/
+        // second/weekday/yday. When tz given, components are in UTC+tz; otherwise
+        // they reflect local time.
+        double epoch = value_to_epoch(args[0]);
+        std::tm tm;
+        if (args.size() >= 2) {
+            double shifted = epoch + args[1].to_double() * 3600.0;
+            std::time_t t = static_cast<std::time_t>(shifted);
+        #ifdef _WIN32
+            gmtime_s(&tm, &t);
+        #else
+            gmtime_r(&t, &tm);
+        #endif
+        } else {
+            std::time_t t = static_cast<std::time_t>(epoch);
+        #ifdef _WIN32
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+        }
+        Value m = Value::make_object();
+        auto* o = m.as_object();
+        o->set("year",    Value::make_i64(tm.tm_year + 1900));
+        o->set("month",   Value::make_i64(tm.tm_mon + 1));
+        o->set("day",     Value::make_i64(tm.tm_mday));
+        o->set("hour",    Value::make_i64(tm.tm_hour));
+        o->set("minute",  Value::make_i64(tm.tm_min));
+        o->set("second",  Value::make_i64(tm.tm_sec));
+        o->set("weekday", Value::make_i64(tm.tm_wday));
+        o->set("yday",    Value::make_i64(tm.tm_yday));
+        return m;
     });
 
     // ── MAP functions ────────────────────────────────────────

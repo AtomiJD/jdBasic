@@ -91,8 +91,12 @@ Syntax: CD "path"
 Description: Changes the current working directory.
 
 [CDATE]
-Syntax: CDATE(date_string$)
-Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. Alias for CVDATE.
+Syntax: CDATE(date_string$ [, tz_hours])
+Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. Alias for CVDATE. With tz_hours, the string is interpreted as wall-clock time in that UTC offset.
+
+[CVDATE]
+Syntax: CVDATE(date_string$ [, tz_hours])
+Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. With tz_hours, the string is interpreted as wall-clock time in that UTC offset (e.g. CVDATE("2024-01-15 14:00:00", 2) yields the same instant as CVDATE("2024-01-15 12:00:00", 0)).
 
 [CDBL]
 Syntax: CDBL(x)
@@ -224,12 +228,20 @@ Syntax: DATE$
 Description: Returns the current system date as a string in "YYYY-MM-DD" format.
 
 [DATEADD]
-Syntax: DATEADD(part$, number, date)
-Description: Adds a specified time interval to a date.
+Syntax: DATEADD(part$, number, date [, tz_hours])
+Description: Adds a specified time interval to a date. Optional tz_hours (numeric UTC offset in hours) is accepted for symmetry but has no effect on the arithmetic.
 
 [DATEDIFF]
-Syntax: DATEDIFF(part$, date1, date2)
-Description: Returns the difference between two dates in a specified time unit.
+Syntax: DATEDIFF(part$, date1, date2 [, tz_hours])
+Description: Returns the difference between two dates in a specified time unit. Optional tz_hours accepted but has no effect (difference is TZ-independent).
+
+[DATE.UTC]
+Syntax: DATE.UTC(year, month, day [, hour [, minute [, second]]])
+Description: Builds a DateTime from UTC components. Month is 1-12, day is 1-31. Omitted time components default to zero.
+
+[DATE.PARTS]
+Syntax: DATE.PARTS(date [, tz_hours])
+Description: Breaks a DateTime into a map with keys year, month, day, hour, minute, second, weekday (0=Sunday..6=Saturday) and yday (1..366). If tz_hours is given, the wall-clock fields reflect that UTC offset (e.g. 2 for UTC+2, -5 for UTC-5, 5.5 for UTC+5:30).
 
 [DEFAULT]
 Syntax: DEFAULT
@@ -416,6 +428,10 @@ Description: Begins a loop that repeats a specific number of times.
 [FORMAT$]
 Syntax: FORMAT$(format_string$, arg1, ...)
 Description: Formats a string using C++20-style format specifiers.
+
+[FORMAT_DATE]
+Syntax: FORMAT_DATE(date, format_string$ [, tz_hours])
+Description: Formats a DateTime using C strftime specifiers (%Y, %m, %d, %H, %M, %S, ...). Without tz_hours the wall-clock is local time; with tz_hours the output reflects the chosen UTC offset (0 = UTC, 2 = UTC+2, -5 = UTC-5, 5.5 = UTC+5:30).
 
 [FRMV$]
 Syntax: FRMV$(array, [format_string$])

@@ -349,7 +349,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_hour_str",    "__hour_str",   i64_type, {i8_ptr_type}, 0);
     reg("jdb_minute_str",  "__minute_str", i64_type, {i8_ptr_type}, 0);
     reg("jdb_second_str",  "__second_str", i64_type, {i8_ptr_type}, 0);
-    reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {f64_type, i8_ptr_type}, 2);
+    reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, 2);
 
     // System
     reg("jdb_getenv",  "GETENV$",  i8_ptr_type, {i8_ptr_type}, 2);
@@ -1310,7 +1310,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         // so it goes through the VM-handle path instead.
                         static const std::unordered_set<std::string> obj_returners = {
                             "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                            "MAP.FROM", "MAP.COPY", "FILE.STAT"
+                            "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -1318,6 +1318,9 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                              upper != "MAP.KEYS" && upper != "MAP.VALUES"))
                             return JD_TAG_VM_HANDLE;
                         if (!e->func_name.empty() && e->func_name.back() == '$') return JD_TAG_STR;
+                        // VM-bridged functions whose result is stored as an
+                        // ISO string in native (dates without a $ suffix).
+                        if (upper == "DATE.UTC") return JD_TAG_STR;
                         auto rit = runtime_funcs.find(upper);
                         if (rit != runtime_funcs.end()) return rit->second.return_tag;
                         auto uit = user_functions.find(e->func_name);
@@ -5085,6 +5088,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Scalar-returning date/time (note: DATEADD/DATEDIFF/FORMAT_DATE DO vectorize)
         "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
         "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
+        "DATE.UTC", "DATE.PARTS",
         "MKTEMP$", "RMDIR", "MKDIR", "KILL",
         // Bitwise/math helpers (scalars-only)
         "ROTL", "ROTR", "GCD", "LCM",
@@ -5436,7 +5440,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // 3. Try runtime builtin (uppercase lookup)
     // (Vectorization for array args was handled in the block above.)
     auto rit = runtime_funcs.find(upper);
-    if (rit != runtime_funcs.end()) {
+    if (rit != runtime_funcs.end() &&
+        expr.args.size() <= LLVMCountParamTypes(rit->second.fn_type)) {
+        // If the user passed MORE args than the direct binding accepts, fall
+        // through to the VM bridge so optional tail args (e.g. an optional TZ
+        // on CVDATE/FORMAT_DATE) are honoured instead of silently dropped.
         auto& rf = rit->second;
         std::vector<LLVMValueRef> args;
         unsigned param_count = LLVMCountParamTypes(rf.fn_type);
@@ -5457,11 +5465,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         // Pad any unsupplied parameters with type-appropriate defaults so the
         // call is well-formed. -1 is the "rest of string / open length"
-        // sentinel honoured by jdb_mid/jdb_left/jdb_right etc.
+        // sentinel honoured by jdb_mid/jdb_left/jdb_right etc. FORMAT_DATE
+        // uses NaN on the tz arg to signal "no tz specified → use localtime",
+        // distinguishing it from an explicit tz=0 (UTC).
         for (size_t i = expr.args.size(); i < param_count; i++) {
             LLVMTypeRef t = param_types[i];
             if (t == i64_type) args.push_back(LLVMConstInt(i64_type, -1, 1));
-            else if (t == f64_type) args.push_back(LLVMConstReal(f64_type, 0.0));
+            else if (t == f64_type) {
+                if (upper == "FORMAT_DATE")
+                    args.push_back(LLVMConstReal(f64_type, std::nan("")));
+                else
+                    args.push_back(LLVMConstReal(f64_type, 0.0));
+            }
             else args.push_back(LLVMConstNull(t));
         }
 
@@ -5553,7 +5568,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // are the authoritative source.
             static const std::unordered_set<std::string> string_returners = {
                 "GFX.POLLEVENT", "GFX.WAITEVENT", "INKEY$", "CLIPBOARD.GET$",
-                "INPUT$", "INPUTKEY$", "SOUND.STATS"
+                "INPUT$", "INPUTKEY$", "SOUND.STATS",
+                "DATE.UTC",
+                // VM returns DATE Values which the bridge stringifies. These
+                // have direct bindings too, but the bridge path is taken when
+                // the user supplies the optional tz arg (n>direct arity).
+                "CVDATE", "CDATE", "DATEADD", "FORMAT_DATE"
             };
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
                                 string_returners.count(upper);
@@ -5561,7 +5581,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             static const std::unordered_set<std::string> object_returners = {
                 "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                 "MAP.FROM", "MAP.COPY", "GROUPBY",
-                "FILE.STAT"
+                "FILE.STAT", "DATE.PARTS"
             };
             bool is_object_fn = object_returners.count(upper);
 
