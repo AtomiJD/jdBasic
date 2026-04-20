@@ -82,9 +82,21 @@ Description: A block inside a SWITCH statement that executes if its value matche
 Syntax: CATCH
 Description: The block of code that executes when an error occurs within a TRY block.
 
+[CBOOL]
+Syntax: CBOOL(x)
+Description: Converts any value to a boolean integer — returns 0 for zero, 1 for any non-zero value.
+
 [CD]
 Syntax: CD "path"
 Description: Changes the current working directory.
+
+[CDATE]
+Syntax: CDATE(date_string$)
+Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. Alias for CVDATE.
+
+[CDBL]
+Syntax: CDBL(x)
+Description: Converts explicitly to a double-precision floating-point number.
 
 [CEIL]
 Syntax: CEIL(numeric_expression)
@@ -93,6 +105,10 @@ Description: Rounds a number up to the nearest integer.
 [CHR$]
 Syntax: CHR$(ascii_code)
 Description: Returns the character corresponding to an ASCII code.
+
+[CINT]
+Syntax: CINT(x)
+Description: Casts a value to a 32-bit integer, truncating toward zero. Overflow wraps.
 
 [CIRCLE]
 Syntax: CIRCLE x, y, r, [fill], [r, g, b]
@@ -113,6 +129,10 @@ Description: Returns the text currently in the system clipboard.
 [CLIPBOARD.SET]
 Syntax: CLIPBOARD.SET text$
 Description: Sets the system clipboard text.
+
+[CLNG]
+Syntax: CLNG(x)
+Description: Casts a value to a 64-bit integer, truncating toward zero.
 
 [CLS]
 Syntax: CLS
@@ -170,6 +190,14 @@ Description: Returns the cosine of an angle.
 [CREATEOBJECT]
 Syntax: CREATEOBJECT(progID$)
 Description: Creates an instance of a COM Automation object (Windows only).
+
+[CSNG]
+Syntax: CSNG(x)
+Description: Roundtrips a number through 32-bit float precision — useful for forcing single-precision loss on doubles.
+
+[CSTR]
+Syntax: CSTR(x)
+Description: Converts any value to its string representation. Alias for TOSTR / STR.
 
 [CSVREADER]
 Syntax: CSVREADER(filename$, [delimiter$], [has_header])
@@ -1618,6 +1646,14 @@ Description: Specifies the ending value for a FOR loop counter.
 [TOGGLE_FULLSCREEN]
 Syntax: TOGGLE_FULLSCREEN
 Description: Toggles the graphics window between fullscreen and windowed mode.
+
+[TONUM]
+Syntax: TONUM(string$)
+Description: Parses a string as a number. Synonym for VAL.
+
+[TOSTR]
+Syntax: TOSTR(value)
+Description: Converts any value to its string representation. Synonym for STR / CSTR.
 
 [TRANSPOSE]
 Syntax: TRANSPOSE(matrix)

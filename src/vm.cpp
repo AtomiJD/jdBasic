@@ -3994,7 +3994,7 @@ void VM::register_builtins() {
         };
         return one(args[0]);
     });
-    natives["CDATE"] = natives["CVDATE"];
+    register_native("CDATE", natives["CVDATE"]);
 
     register_native("DATEADD", [](const std::vector<Value>& args) -> Value {
         // DATEADD(part$, num, date_epoch) — preserves the DATE subtype tag.

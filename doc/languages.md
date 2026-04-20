@@ -1152,9 +1152,18 @@ All numeric functions are vectorized — they also accept arrays and apply eleme
 
 #### Conversion
 
-* **`CDBL(x)`**: Converts explicitly to a double-precision floating-point number.
-* **`STR(value) -> string$`** / **`TOSTR(value) -> string$`**: Converts any value to its string representation.
+Classic BASIC cast family — each takes any numeric/convertible value:
+
+* **`CINT(x)`**: Cast to 32-bit integer (truncates toward zero). Overflow wraps like C `int32_t`.
+* **`CLNG(x)`**: Cast to 64-bit integer (truncates toward zero).
+* **`CSNG(x)`**: Roundtrip through 32-bit float — useful to force single-precision loss on doubles.
+* **`CDBL(x)`**: Cast to double-precision float.
+* **`CBOOL(x)`**: Returns `0` for zero, `1` for any non-zero value.
+* **`CSTR(x) -> string$`** / **`TOSTR(x) -> string$`** / **`STR(x) -> string$`**: Converts any value to its string form.
+* **`CDATE(str$)`** / **`CVDATE(str$)`**: Parses `"YYYY-MM-DD"` (optionally with time) into a `DateTime`.
 * **`TONUM(str$) -> number`** / **`VAL(str$) -> number`**: Parses a string as a number.
+
+Integer-to-string formatting helpers live under **[Strings](#strings)**: `HEX$`, `BIN$`, `OCT$`, `FORMAT$`, `FORMAT_DATE$`.
 
 #### Utility
 
