@@ -449,7 +449,12 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // Misc
     reg("jdb_cdbl",     "CDBL",       f64_type, {f64_type}, 1);
+    reg("jdb_cint",     "CINT",       i64_type, {f64_type}, 0);
+    reg("jdb_clng",     "CLNG",       i64_type, {f64_type}, 0);
+    reg("jdb_csng",     "CSNG",       f64_type, {f64_type}, 1);
+    reg("jdb_cbool",    "CBOOL",      i64_type, {f64_type}, 0);
     reg("jdb_tostr",    "TOSTR",      i8_ptr_type, {f64_type}, 2);
+    reg("jdb_cstr",     "CSTR",       i8_ptr_type, {f64_type}, 2);
     reg("jdb_tonum",    "TONUM",      f64_type, {i8_ptr_type}, 1);
     reg("jdb_byteat",   "BYTEAT",     i64_type, {i8_ptr_type, i64_type}, 0);
     reg("jdb_os_getos", "OS.GETOS",   i8_ptr_type, {}, 2);

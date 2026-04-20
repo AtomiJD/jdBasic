@@ -2167,7 +2167,12 @@ char* jdb_pack(const char* fmt, JdbArray* values) {
 // ── Misc ────────────────────────────────────────────────────
 
 double jdb_cdbl(double x) { return x; }
+int64_t jdb_cint(double x) { return (int64_t)(int32_t)x; }
+int64_t jdb_clng(double x) { return (int64_t)x; }
+double jdb_csng(double x) { return (double)(float)x; }
+int64_t jdb_cbool(double x) { return x != 0.0 ? 1 : 0; }
 char* jdb_tostr(double x) { return jdb_str(x); }
+char* jdb_cstr(double x) { return jdb_str(x); }
 double jdb_tonum(const char* s) { return s ? atof(s) : 0.0; }
 
 int64_t jdb_byteat(const char* s, int64_t idx) {

@@ -3065,6 +3065,18 @@ void VM::register_builtins() {
     register_native("CDBL", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(args[0].to_double());
     });
+    register_native("CINT", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(static_cast<int32_t>(args[0].to_double()));
+    });
+    register_native("CLNG", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(static_cast<int64_t>(args[0].to_double()));
+    });
+    register_native("CSNG", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_f64(static_cast<double>(static_cast<float>(args[0].to_double())));
+    });
+    register_native("CBOOL", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_bool(args[0].to_bool());
+    });
     register_native("IIF", 3, 3, [](const std::vector<Value>& args) -> Value {
         // Vectorized: IIF(cond_array, true_val, false_val)
         if (args[0].type == ValueType::ARRAY) {
@@ -3982,6 +3994,7 @@ void VM::register_builtins() {
         };
         return one(args[0]);
     });
+    natives["CDATE"] = natives["CVDATE"];
 
     register_native("DATEADD", [](const std::vector<Value>& args) -> Value {
         // DATEADD(part$, num, date_epoch) — preserves the DATE subtype tag.
@@ -5406,6 +5419,9 @@ void VM::register_builtins() {
         return Value::make_f64(args[0].to_double());
     });
     register_native("TOSTR", [](const std::vector<Value>& args) -> Value {
+        return Value::make_string(args[0].to_string());
+    });
+    register_native("CSTR", [](const std::vector<Value>& args) -> Value {
         return Value::make_string(args[0].to_string());
     });
 
