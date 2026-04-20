@@ -192,11 +192,6 @@ private:
     // JdbMap path (which would crash on a non-ptr handle).
     std::unordered_set<std::string> vm_array_vars;
 
-    // FUNCs that RETURN a vm_array_vars-tracked array. Call sites propagate
-    // this to the LHS so `resolved = FUNC(...); resolved[i]{"k"}` keeps the
-    // VM handle chain intact across the call boundary.
-    std::unordered_set<std::string> vm_array_return_funcs;
-
     // Maps a top-level-DIM'd global name to the source file it came from.
     // Used by codegen_let_or_assign to decide whether an implicit assignment
     // inside a SUB should update that global (same file) or create a local
