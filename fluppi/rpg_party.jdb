@@ -2,6 +2,8 @@
 ' == RPG Party Module
 ' == Party management, character stats, skill trees
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 EXPORT MODULE RPG_PARTY
 
@@ -20,9 +22,9 @@ EXPORT DIM asset_path$ = ""
 
 EXPORT SUB LOAD_DATA(char_file$, skill_file$, apath$)
     asset_path$ = apath$
-    data = JSON.PARSE$(TXTREADER$(char_file$))
+    LET data = JSON.PARSE$(TXTREADER$(char_file$))
     char_db = data{"characters"}
-    sdata = JSON.PARSE$(TXTREADER$(skill_file$))
+    LET sdata = JSON.PARSE$(TXTREADER$(skill_file$))
     skill_db = sdata{"skill_trees"}
 ENDSUB
 
@@ -38,8 +40,8 @@ EXPORT FUNC ADD_MEMBER(char_id$)
         IF members[i]{"id"} = char_id$ THEN RETURN FALSE
     NEXT i
 
-    def = char_db{char_id$}
-    m = {}
+    LET def = char_db{char_id$}
+    LET m = {}
     m{"id"} = char_id$
     m{"name"} = def{"name"}
     m{"class"} = def{"class"}
@@ -54,7 +56,7 @@ EXPORT FUNC ADD_MEMBER(char_id$)
     m{"sprite_id"} = -1
 
     ' Copy base stats
-    bs = def{"base_stats"}
+    LET bs = def{"base_stats"}
     m{"hp"} = INT(bs{"hp"})
     m{"max_hp"} = INT(bs{"max_hp"})
     m{"atk"} = INT(bs{"atk"})
@@ -96,16 +98,16 @@ ENDSUB
 
 EXPORT SUB ADD_XP_TO(idx, amount)
     IF idx < 0 OR idx >= member_count THEN RETURN
-    m = members[idx]
+    LET m = members[idx]
     m{"xp"} = m{"xp"} + INT(amount)
-    leveled = FALSE
+    LET leveled = FALSE
     DO WHILE m{"xp"} >= m{"xp_next"}
         m{"xp"} = m{"xp"} - m{"xp_next"}
         m{"level"} = m{"level"} + 1
         m{"xp_next"} = INT(m{"xp_next"} * 1.4)
         m{"skill_points"} = m{"skill_points"} + 1
         ' Apply growth
-        g = m{"growth"}
+        LET g = m{"growth"}
         m{"max_hp"} = m{"max_hp"} + INT(g{"hp"})
         m{"hp"} = m{"max_hp"}
         m{"atk"} = m{"atk"} + INT(g{"atk"})
@@ -135,7 +137,7 @@ ENDSUB
 
 EXPORT SUB HEAL_MEMBER(idx, amount)
     IF idx < 0 OR idx >= member_count THEN RETURN
-    m = members[idx]
+    LET m = members[idx]
     m{"hp"} = m{"hp"} + INT(amount)
     IF m{"hp"} > m{"max_hp"} THEN m{"hp"} = m{"max_hp"}
     members[idx] = m
@@ -149,7 +151,7 @@ ENDSUB
 
 EXPORT SUB REST_ALL()
     FOR i = 0 TO member_count - 1
-        m = members[i]
+        LET m = members[i]
         m{"hp"} = m{"max_hp"}
         m{"mp"} = m{"max_mp"}
         members[i] = m
@@ -163,7 +165,7 @@ ENDSUB
 ' Check if a character has learned a skill
 EXPORT FUNC HAS_SKILL(char_idx, skill_id$)
     IF char_idx < 0 OR char_idx >= member_count THEN RETURN FALSE
-    learned = members[char_idx]{"learned_skills"}
+    LET learned = members[char_idx]{"learned_skills"}
     FOR i = 0 TO LEN(learned) - 1
         IF learned[i] = skill_id$ THEN RETURN TRUE
     NEXT i
@@ -176,7 +178,7 @@ EXPORT DIM learn_fail_reason$ = ""
 EXPORT FUNC LEARN_SKILL(char_idx, skill_id$)
     learn_fail_reason$ = ""
     IF char_idx < 0 OR char_idx >= member_count THEN RETURN FALSE
-    m = members[char_idx]
+    LET m = members[char_idx]
     IF m{"skill_points"} <= 0 THEN
         learn_fail_reason$ = "Keine Fähigkeitspunkte!"
         RETURN FALSE
@@ -187,15 +189,15 @@ EXPORT FUNC LEARN_SKILL(char_idx, skill_id$)
     ENDIF
 
     ' Find the skill in the tree and check requirements
-    tree_id$ = m{"skill_tree_id"}
+    LET tree_id$ = m{"skill_tree_id"}
     IF NOT MAP.EXISTS(skill_db, tree_id$) THEN RETURN FALSE
-    tree = skill_db{tree_id$}
-    branches = tree{"branches"}
+    LET tree = skill_db{tree_id$}
+    LET branches = tree{"branches"}
 
     FOR bi = 0 TO LEN(branches) - 1
-        skills = branches[bi]{"skills"}
+        LET skills = branches[bi]{"skills"}
         FOR si = 0 TO LEN(skills) - 1
-            sk = skills[si]
+            LET sk = skills[si]
             IF sk{"id"} = skill_id$ THEN
                 ' Check level requirement
                 IF m{"level"} < INT(sk{"level_req"}) THEN
@@ -205,8 +207,8 @@ EXPORT FUNC LEARN_SKILL(char_idx, skill_id$)
                 ' Check prerequisite
                 IF MAP.EXISTS(sk, "requires") THEN
                     IF NOT HAS_SKILL(char_idx, sk{"requires"}) THEN
-                        req_sk = GET_SKILL(sk{"requires"})
-                        req_name$ = sk{"requires"}
+                        LET req_sk = GET_SKILL(sk{"requires"})
+                        LET req_name$ = sk{"requires"}
                         IF MAP.EXISTS(req_sk, "name") THEN req_name$ = req_sk{"name"}
                         learn_fail_reason$ = "Benötigt zuerst: " + req_name$
                         RETURN FALSE
@@ -214,7 +216,7 @@ EXPORT FUNC LEARN_SKILL(char_idx, skill_id$)
                 ENDIF
                 ' Learn it!
                 m{"skill_points"} = m{"skill_points"} - 1
-                learned = m{"learned_skills"}
+                LET learned = m{"learned_skills"}
                 PUSH learned, skill_id$
                 m{"learned_skills"} = learned
                 members[char_idx] = m
@@ -227,12 +229,12 @@ ENDFUNC
 
 ' Get skill data by ID from any tree
 EXPORT FUNC GET_SKILL(skill_id$)
-    keys = MAP.KEYS(skill_db)
+    LET keys = MAP.KEYS(skill_db)
     FOR ki = 0 TO LEN(keys) - 1
-        tree = skill_db{keys[ki]}
-        branches = tree{"branches"}
+        LET tree = skill_db{keys[ki]}
+        LET branches = tree{"branches"}
         FOR bi = 0 TO LEN(branches) - 1
-            skills = branches[bi]{"skills"}
+            LET skills = branches[bi]{"skills"}
             FOR si = 0 TO LEN(skills) - 1
                 IF skills[si]{"id"} = skill_id$ THEN RETURN skills[si]
             NEXT si
@@ -244,10 +246,10 @@ ENDFUNC
 ' Get all learned skills for a character (as skill data array)
 EXPORT FUNC GET_LEARNED_SKILLS(char_idx)
     IF char_idx < 0 OR char_idx >= member_count THEN RETURN []
-    learned = members[char_idx]{"learned_skills"}
-    result = []
+    LET learned = members[char_idx]{"learned_skills"}
+    LET result = []
     FOR i = 0 TO LEN(learned) - 1
-        sk = GET_SKILL(learned[i])
+        LET sk = GET_SKILL(learned[i])
         IF MAP.EXISTS(sk, "id") THEN PUSH result, sk
     NEXT i
     RETURN result
@@ -259,22 +261,22 @@ ENDFUNC
 
 EXPORT SUB SHOW_SKILL_TREE(char_idx)
     IF char_idx < 0 OR char_idx >= member_count THEN RETURN
-    m = members[char_idx]
-    tree_id$ = m{"skill_tree_id"}
+    LET m = members[char_idx]
+    LET tree_id$ = m{"skill_tree_id"}
     IF NOT MAP.EXISTS(skill_db, tree_id$) THEN RETURN
-    tree = skill_db{tree_id$}
-    branches = tree{"branches"}
-    num_branches = LEN(branches)
+    LET tree = skill_db{tree_id$}
+    LET branches = tree{"branches"}
+    LET num_branches = LEN(branches)
 
-    bg = GFX.CAPTURE()
-    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
-    sel_b = 0 : sel_s = 0
+    LET bg = GFX.CAPTURE()
+    LET sw = SCREENWIDTH() : LET sh = SCREENHEIGHT()
+    LET sel_b = 0 : LET sel_s = 0
 
     DO
         GFX.DRAW_CAPTURE bg
         RECT 0, 0, sw, sh, 0, 0, 0, TRUE
 
-        bx = 20 : by = 20 : bw = sw - 40 : bh = sh - 40
+        LET bx = 20 : LET by = 20 : LET bw = sw - 40 : LET bh = sh - 40
         RECT bx, by, bw, bh, 20, 20, 50, TRUE
         RECT bx, by, bw, bh, 100, 120, 180, FALSE
 
@@ -285,24 +287,24 @@ EXPORT SUB SHOW_SKILL_TREE(char_idx)
             "  FP:" + STR$(INT(m{"skill_points"})), 200, 200, 255
 
         ' Branches side by side
-        col_w = INT((bw - 20) / num_branches)
+        LET col_w = INT((bw - 20) / num_branches)
         FOR bi = 0 TO num_branches - 1
-            br = branches[bi]
-            cx = bx + 10 + bi * col_w
-            cy = by + 35
+            LET br = branches[bi]
+            LET cx = bx + 10 + bi * col_w
+            LET cy = by + 35
 
             ' Branch header
             TEXT cx + 5, cy, br{"name"}, 180, 200, 255
             cy = cy + 22
 
-            skills = br{"skills"}
+            LET skills = br{"skills"}
             FOR si = 0 TO LEN(skills) - 1
-                sk = skills[si]
-                is_learned = HAS_SKILL(char_idx, sk{"id"})
-                is_selected = (bi = sel_b AND si = sel_s)
+                LET sk = skills[si]
+                LET is_learned = HAS_SKILL(char_idx, sk{"id"})
+                LET is_selected = (bi = sel_b AND si = sel_s)
 
                 ' Can learn?
-                can_learn = (m{"skill_points"} > 0) AND _
+                LET can_learn = (m{"skill_points"} > 0) AND _
                     (m{"level"} >= INT(sk{"level_req"})) AND _
                     (NOT is_learned)
                 IF MAP.EXISTS(sk, "requires") THEN
@@ -329,9 +331,9 @@ EXPORT SUB SHOW_SKILL_TREE(char_idx)
         NEXT bi
 
         ' Selected skill description
-        sel_skills = branches[sel_b]{"skills"}
+        LET sel_skills = branches[sel_b]{"skills"}
         IF sel_s < LEN(sel_skills) THEN
-            sel_sk = sel_skills[sel_s]
+            LET sel_sk = sel_skills[sel_s]
             TEXT bx + 10, by + bh - 30, sel_sk{"desc"}, 200, 200, 230
         ENDIF
 
@@ -339,11 +341,11 @@ EXPORT SUB SHOW_SKILL_TREE(char_idx)
 
         SCREENFLIP : SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:Escape" OR ev$ = "KEYDOWN:S" THEN EXITDO
         IF ev$ = "KEYDOWN:Down" THEN
             sel_s = sel_s + 1
-            max_s = LEN(branches[sel_b]{"skills"})
+            LET max_s = LEN(branches[sel_b]{"skills"})
             IF sel_s >= max_s THEN sel_s = 0
         ENDIF
         IF ev$ = "KEYDOWN:Up" THEN
@@ -358,7 +360,7 @@ EXPORT SUB SHOW_SKILL_TREE(char_idx)
             sel_b = (sel_b + 1) MOD num_branches : sel_s = 0
         ENDIF
         IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
-            sel_skill_id$ = sel_skills[sel_s]{"id"}
+            LET sel_skill_id$ = sel_skills[sel_s]{"id"}
             IF LEARN_SKILL(char_idx, sel_skill_id$) THEN
                 m = members[char_idx]  ' refresh
                 RPG_DIALOG.SAY m{"name"}, m{"name"} + " hat " + sel_skills[sel_s]{"name"} + " erlernt!"
@@ -379,23 +381,23 @@ ENDSUB
 ' ══════════════════════════════════════════════════════════════
 
 EXPORT SUB SHOW_PARTY()
-    bg = GFX.CAPTURE()
-    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
-    selected = 0
+    LET bg = GFX.CAPTURE()
+    LET sw = SCREENWIDTH() : LET sh = SCREENHEIGHT()
+    LET selected = 0
 
     DO
         GFX.DRAW_CAPTURE bg
         RECT 0, 0, sw, sh, 0, 0, 0, TRUE
 
-        bx = 30 : by = 20 : bw = sw - 60 : bh = sh - 40
+        LET bx = 30 : LET by = 20 : LET bw = sw - 60 : LET bh = sh - 40
         RECT bx, by, bw, bh, 20, 20, 50, TRUE
         RECT bx, by, bw, bh, 100, 120, 180, FALSE
 
         TEXT bx + bw/2 - 30, by + 8, "GRUPPE", 255, 220, 80
 
         FOR i = 0 TO member_count - 1
-            m = members[i]
-            cy = by + 40 + i * 90
+            LET m = members[i]
+            LET cy = by + 40 + i * 90
 
             IF i = selected THEN
                 RECT bx + 5, cy - 5, bw - 10, 80, 40, 40, 70, TRUE
@@ -410,7 +412,7 @@ EXPORT SUB SHOW_PARTY()
             TEXT bx + 20, cy + 22, "HP", 150, 150, 180
             RECT bx + 45, cy + 24, 120, 10, 60, 30, 30, TRUE
             IF m{"max_hp"} > 0 THEN
-                hfill = INT((m{"hp"} / m{"max_hp"}) * 120)
+                LET hfill = INT((m{"hp"} / m{"max_hp"}) * 120)
                 IF hfill > 0 THEN RECT bx + 45, cy + 24, hfill, 10, 80, 200, 80, TRUE
             ENDIF
             RECT bx + 45, cy + 24, 120, 10, 100, 100, 120, FALSE
@@ -420,7 +422,7 @@ EXPORT SUB SHOW_PARTY()
             TEXT bx + 20, cy + 38, "MP", 150, 150, 180
             RECT bx + 45, cy + 40, 120, 10, 30, 30, 60, TRUE
             IF m{"max_mp"} > 0 THEN
-                mfill = INT((m{"mp"} / m{"max_mp"}) * 120)
+                LET mfill = INT((m{"mp"} / m{"max_mp"}) * 120)
                 IF mfill > 0 THEN RECT bx + 45, cy + 40, mfill, 10, 80, 80, 200, TRUE
             ENDIF
             RECT bx + 45, cy + 40, 120, 10, 80, 80, 120, FALSE
@@ -433,7 +435,7 @@ EXPORT SUB SHOW_PARTY()
             TEXT bx + 370, cy + 38, "FP:" + STR$(INT(m{"skill_points"})), 255, 200, 100
 
             ' Skills count
-            ns = LEN(m{"learned_skills"})
+            LET ns = LEN(m{"learned_skills"})
             TEXT bx + 280, cy + 55, "Fähigkeiten: " + STR$(ns), 140, 140, 170
         NEXT i
 
@@ -441,7 +443,7 @@ EXPORT SUB SHOW_PARTY()
 
         SCREENFLIP : SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:Escape" OR ev$ = "KEYDOWN:P" THEN EXITDO
         IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD member_count
         IF ev$ = "KEYDOWN:Up" THEN
@@ -461,10 +463,10 @@ ENDSUB
 ' ══════════════════════════════════════════════════════════════
 
 EXPORT FUNC GET_SAVE_DATA()
-    save = []
+    LET save = []
     FOR i = 0 TO member_count - 1
-        m = members[i]
-        s = {}
+        LET m = members[i]
+        LET s = {}
         s{"id"} = m{"id"} : s{"level"} = m{"level"}
         s{"xp"} = m{"xp"} : s{"xp_next"} = m{"xp_next"}
         s{"hp"} = m{"hp"} : s{"max_hp"} = m{"max_hp"}
@@ -479,10 +481,10 @@ ENDFUNC
 
 EXPORT SUB LOAD_SAVE_DATA(data)
     FOR i = 0 TO LEN(data) - 1
-        sd = data[i]
+        LET sd = data[i]
         FOR j = 0 TO member_count - 1
             IF members[j]{"id"} = sd{"id"} THEN
-                m = members[j]
+                LET m = members[j]
                 m{"level"} = sd{"level"} : m{"xp"} = sd{"xp"}
                 m{"xp_next"} = sd{"xp_next"}
                 m{"hp"} = sd{"hp"} : m{"max_hp"} = sd{"max_hp"}

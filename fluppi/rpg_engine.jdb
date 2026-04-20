@@ -2,6 +2,8 @@
 ' == RPG Engine Module - Generic TiledMap System
 ' == Loads all entities from TMX objects, supports map transitions
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 EXPORT MODULE RPG_ENGINE
 
@@ -84,15 +86,15 @@ EXPORT FUNC SHOW_TITLE(config_file$)
     SCREEN SW, SH, game{"title"}
 
     ' Derive base_dir from config file location
-    sep_pos = 0
+    LET sep_pos = 0
     FOR ci = LEN(config_file$) - 1 TO 0 STEP -1
-        ch$ = MID$(config_file$, ci, 1)
+        LET ch$ = MID$(config_file$, ci, 1)
         IF ch$ = "/" OR ch$ = "\" THEN sep_pos = ci : EXITFOR
     NEXT ci
     IF sep_pos > 0 THEN
         ' Go up one more level (config is in rpg_data/)
-        tmp$ = LEFT$(config_file$, sep_pos)
-        sep2 = 0
+        LET tmp$ = LEFT$(config_file$, sep_pos)
+        LET sep2 = 0
         FOR ci = LEN(tmp$) - 1 TO 0 STEP -1
             ch$ = MID$(tmp$, ci, 1)
             IF ch$ = "/" OR ch$ = "\" THEN sep2 = ci : EXITFOR
@@ -102,7 +104,7 @@ EXPORT FUNC SHOW_TITLE(config_file$)
 
     ' Build paths from config
     IF MAP.EXISTS(game, "paths") THEN
-        p = game{"paths"}
+        LET p = game{"paths"}
         IF MAP.EXISTS(p, "sprites") THEN sprite_path$ = base_dir$ + p{"sprites"}
         IF MAP.EXISTS(p, "items") THEN item_path$ = base_dir$ + p{"items"}
         IF MAP.EXISTS(p, "data") THEN data_dir$ = base_dir$ + p{"data"}
@@ -110,39 +112,39 @@ EXPORT FUNC SHOW_TITLE(config_file$)
         IF MAP.EXISTS(p, "battle_bg") THEN default_battle_bg$ = base_dir$ + p{"battle_bg"}
     ENDIF
 
-    font$ = "C:/Windows/Fonts/arial.ttf"
+    LET font$ = "C:/Windows/Fonts/arial.ttf"
     IF MAP.EXISTS(game, "font") THEN font$ = base_dir$ + game{"font"}
-    font_size = 16
+    LET font_size = 16
     IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
     TRY : SETFONT font$, font_size
     CATCH : SETFONT "C:/Windows/Fonts/arial.ttf", 14 : ENDTRY
     RPG_DIALOG.FS = font_size
 
-    c = game{"colors"}
-    cb = c{"text_bright"} : cm = c{"menu_text"}
-    cs = c{"menu_sel"} : cbd = c{"box_border"} : cd = c{"text_dim"}
+    LET c = game{"colors"}
+    LET cb = c{"text_bright"} : LET cm = c{"menu_text"}
+    LET cs = c{"menu_sel"} : LET cbd = c{"box_border"} : LET cd = c{"text_dim"}
 
     RPG_MUSIC.SETUP
     RPG_MUSIC.PLAY "title"
 
-    welcome_bg = -1
+    LET welcome_bg = -1
     TRY : welcome_bg = GFX.LOADIMAGE(base_dir$ + game{"welcome_bg"}) : CATCH : ENDTRY
 
-    selected = 0
-    num_items = 3
-    items = ["Neues Spiel", "Laden", "Beenden"]
+    LET selected = 0
+    LET num_items = 3
+    LET items = ["Neues Spiel", "Laden", "Beenden"]
 
     DO
         CLS 10, 10, 30
         IF welcome_bg > 0 THEN GFX.DRAWIMAGE welcome_bg, 0, 0, SW, SH
 
-        fs = font_size
-        item_h = INT(fs * 2.2)
-        btn_w = INT(fs * 12)
-        btn_h = INT(fs * 1.8)
-        menu_y = SH / 2 + INT(fs * 1.2)
+        LET fs = font_size
+        LET item_h = INT(fs * 2.2)
+        LET btn_w = INT(fs * 12)
+        LET btn_h = INT(fs * 1.8)
+        LET menu_y = SH / 2 + INT(fs * 1.2)
         FOR i = 0 TO num_items - 1
-            iy = menu_y + i * item_h
+            LET iy = menu_y + i * item_h
             IF i = selected THEN
                 RECT SW/2 - btn_w/2, iy - INT(fs*0.3), btn_w, btn_h, cs[0], cs[1], cs[2], TRUE
                 RECT SW/2 - btn_w/2, iy - INT(fs*0.3), btn_w, btn_h, cbd[0], cbd[1], cbd[2], FALSE
@@ -154,7 +156,7 @@ EXPORT FUNC SHOW_TITLE(config_file$)
         TEXT SW/2 - INT(fs*5), SH - INT(fs*1.8), "Pfeiltasten + Enter", cd[0], cd[1], cd[2]
         SCREENFLIP : SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:F11" THEN TOGGLE_FULLSCREEN
         IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_items
         IF ev$ = "KEYDOWN:Up" THEN
@@ -165,7 +167,7 @@ EXPORT FUNC SHOW_TITLE(config_file$)
             IF selected = 2 THEN RETURN 2
             IF selected = 1 THEN
                 ' Laden — show slot picker on title screen
-                slot = SHOW_SLOT_PICKER("load")
+                LET slot = SHOW_SLOT_PICKER("load")
                 IF slot >= 0 THEN
                     ' Store chosen slot for LOAD_GAME to pick up
                     load_slot = slot
@@ -194,14 +196,14 @@ EXPORT SUB INIT(config_file$)
 
     ' Build paths from config (if SHOW_TITLE wasn't called first)
     IF base_dir$ = "" THEN
-        sep_pos = 0
+        LET sep_pos = 0
         FOR ci = LEN(config_file$) - 1 TO 0 STEP -1
-            ch$ = MID$(config_file$, ci, 1)
+            LET ch$ = MID$(config_file$, ci, 1)
             IF ch$ = "/" OR ch$ = "\" THEN sep_pos = ci : EXITFOR
         NEXT ci
         IF sep_pos > 0 THEN
-            tmp$ = LEFT$(config_file$, sep_pos)
-            sep2 = 0
+            LET tmp$ = LEFT$(config_file$, sep_pos)
+            LET sep2 = 0
             FOR ci = LEN(tmp$) - 1 TO 0 STEP -1
                 ch$ = MID$(tmp$, ci, 1)
                 IF ch$ = "/" OR ch$ = "\" THEN sep2 = ci : EXITFOR
@@ -209,7 +211,7 @@ EXPORT SUB INIT(config_file$)
             IF sep2 > 0 THEN base_dir$ = LEFT$(config_file$, sep2) + "/"
         ENDIF
         IF MAP.EXISTS(game, "paths") THEN
-            p = game{"paths"}
+            LET p = game{"paths"}
             IF MAP.EXISTS(p, "sprites") THEN sprite_path$ = base_dir$ + p{"sprites"}
             IF MAP.EXISTS(p, "items") THEN item_path$ = base_dir$ + p{"items"}
             IF MAP.EXISTS(p, "data") THEN data_dir$ = base_dir$ + p{"data"}
@@ -234,13 +236,13 @@ EXPORT SUB INIT(config_file$)
     RPG_DIALOG.FRAME_H = sprite_frame_h
 
     ' Propagate font size to all UI modules
-    font_size = 16
+    LET font_size = 16
     IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
     RPG_DIALOG.FS = font_size
 
     ' Apply full color palette to shared dialog module
     IF MAP.EXISTS(game, "colors") THEN
-        c = game{"colors"}
+        LET c = game{"colors"}
         IF MAP.EXISTS(c, "box_bg") THEN RPG_DIALOG.C_BOX_BG = c{"box_bg"}
         IF MAP.EXISTS(c, "box_border") THEN RPG_DIALOG.C_BOX_BD = c{"box_border"}
         IF MAP.EXISTS(c, "text") THEN RPG_DIALOG.C_TEXT = c{"text"}
@@ -312,19 +314,19 @@ EXPORT SUB ENTER_MAP(map_file$, spawn_name$)
 
     ' Load new map
     current_map_file$ = map_file$
-    ok = TILED.LOAD("world", map_file$)
+    LET ok = TILED.LOAD("world", map_file$)
     IF NOT ok THEN
         PRINT "FEHLER: Map nicht geladen: "; map_file$
         RETURN
     ENDIF
     current_map$ = "world"
 
-    sz = TILED.SIZE(current_map$)
+    LET sz = TILED.SIZE(current_map$)
     map_w = sz[0] : map_h = sz[1]
 
     ' Read map properties
-    map_props = TILED.PROPERTIES(current_map$)
-    map_id$ = ""
+    LET map_props = TILED.PROPERTIES(current_map$)
+    LET map_id$ = ""
     IF MAP.EXISTS(map_props, "map_id") THEN map_id$ = map_props{"map_id"}
     IF MAP.EXISTS(map_props, "music") THEN RPG_MUSIC.PLAY map_props{"music"}
 
@@ -336,13 +338,13 @@ EXPORT SUB ENTER_MAP(map_file$, spawn_name$)
 
     ' Detect ground layers
     ground_layers = []
-    layers = TILED.LAYERS$(current_map$)
+    LET layers = TILED.LAYERS$(current_map$)
     FOR i = 0 TO LEN(layers) - 1
         IF LEFT$(layers[i], 7) = "ground_" THEN PUSH ground_layers, layers[i]
     NEXT
 
     ' Camera
-    camera_fixed = FALSE
+    LET camera_fixed = FALSE
     IF MAP.EXISTS(map_props, "camera_fixed") THEN
         IF map_props{"camera_fixed"} = "true" THEN camera_fixed = TRUE
     ENDIF
@@ -371,17 +373,17 @@ EXPORT SUB ENTER_MAP(map_file$, spawn_name$)
     LOAD_MAP_ENTITIES
 
     ' Find spawn point and position player
-    spawn_x = 0 : spawn_y = 0
-    found_spawn = FALSE
+    LET spawn_x = 0 : LET spawn_y = 0
+    LET found_spawn = FALSE
     FOR i = 0 TO LEN(layers) - 1
-        objs = TILED.OBJECTS(current_map$, layers[i])
+        LET objs = TILED.OBJECTS(current_map$, layers[i])
         FOR j = 0 TO LEN(objs) - 1
-            o = objs[j]
+            LET o = objs[j]
             IF o{"type"} = "player_spawn" THEN
                 IF o{"name"} = spawn_name$ OR NOT found_spawn THEN
                     spawn_x = o{"x"} : spawn_y = o{"y"}
                     IF MAP.EXISTS(o, "properties") THEN
-                        p = o{"properties"}
+                        LET p = o{"properties"}
                         IF MAP.EXISTS(p, "direction") THEN direction$ = p{"direction"}
                     ENDIF
                     IF o{"name"} = spawn_name$ THEN found_spawn = TRUE
@@ -413,22 +415,22 @@ SUB LOAD_MAP_ENTITIES()
     portals = [] : portal_count = 0
     chests = [] : chest_count = 0
 
-    layers = TILED.LAYERS$(current_map$)
-    edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
-    elist = edata{"enemies"}
+    LET layers = TILED.LAYERS$(current_map$)
+    LET edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
+    LET elist = edata{"enemies"}
 
     FOR li = 0 TO LEN(layers) - 1
-        objs = TILED.OBJECTS(current_map$, layers[li])
+        LET objs = TILED.OBJECTS(current_map$, layers[li])
         FOR j = 0 TO LEN(objs) - 1
-            o = objs[j]
-            obj_type$ = o{"type"}
-            obj_name$ = o{"name"}
-            props = {}
+            LET o = objs[j]
+            LET obj_type$ = o{"type"}
+            LET obj_name$ = o{"name"}
+            LET props = {}
             IF MAP.EXISTS(o, "properties") THEN props = o{"properties"}
 
             IF obj_type$ = "npc" THEN
                 ' Build NPC data dict from TMX properties
-                npc_data = {}
+                LET npc_data = {}
                 npc_data{"name"} = obj_name$
                 npc_data{"x"} = o{"x"}
                 npc_data{"y"} = o{"y"}
@@ -449,7 +451,7 @@ SUB LOAD_MAP_ENTITIES()
                 DIM npc AS RPG_TYPES.T_NPC
                 npc.INIT npc_data, sprite_path$
                 ' Hide if already recruited
-                rpid$ = ""
+                LET rpid$ = ""
                 IF MAP.EXISTS(npc_data, "recruit_id") THEN rpid$ = npc_data{"recruit_id"}
                 IF rpid$ <> "" AND MAP.EXISTS(recruit_data, rpid$) THEN
                     npc.SET_VISIBLE FALSE
@@ -458,27 +460,27 @@ SUB LOAD_MAP_ENTITIES()
                 npc_count = npc_count + 1
 
             ELSEIF obj_type$ = "monster" THEN
-                eid$ = ""
+                LET eid$ = ""
                 IF MAP.EXISTS(props, "enemy_id") THEN eid$ = props{"enemy_id"}
                 IF eid$ = "" THEN CONTINUEFOR
                 FOR ei = 0 TO LEN(elist) - 1
                     IF elist[ei]{"id"} = eid$ AND elist[ei]{"sprite"} <> "" THEN
                         TRY
-                            sf$ = sprite_path$ + elist[ei]{"sprite"}
-                            fw = INT(elist[ei]{"frame_w"}) : fh = INT(elist[ei]{"frame_h"})
-                            sid = SPRITE.LOAD(sf$, fw, fh)
+                            LET sf$ = sprite_path$ + elist[ei]{"sprite"}
+                            LET fw = INT(elist[ei]{"frame_w"}) : LET fh = INT(elist[ei]{"frame_h"})
+                            LET sid = SPRITE.LOAD(sf$, fw, fh)
                             SPRITE.POS sid, o{"x"}, o{"y"}
                             SPRITE.SCALE sid, sprite_scale
                             SPRITE.ZORDER sid, 6
                             SPRITE.GROUP sid, "monster"
-                            af = elist[ei]{"anim_frames"}
-                            af_len = LEN(af)
+                            LET af = elist[ei]{"anim_frames"}
+                            LET af_len = LEN(af)
                             IF TYPEOF(af_len) = "ARRAY" THEN af_len = af_len[0]
                             IF af_len > 0 THEN
                                 SPRITE.ANIM sid, "idle", af, INT(elist[ei]{"anim_fps"})
                                 SPRITE.PLAY sid, "idle"
                             ENDIF
-                            nm = {}
+                            LET nm = {}
                             nm{"id"} = eid$ : nm{"name"} = obj_name$
                             nm{"defeated"} = FALSE : nm{"sprite_id"} = sid
                             nm{"orig_x"} = o{"x"} : nm{"orig_y"} = o{"y"}
@@ -491,7 +493,7 @@ SUB LOAD_MAP_ENTITIES()
                 NEXT ei
 
             ELSEIF obj_type$ = "portal" THEN
-                portal = {}
+                LET portal = {}
                 portal{"name"} = obj_name$
                 portal{"x"} = o{"x"} : portal{"y"} = o{"y"}
                 portal{"width"} = o{"width"} : portal{"height"} = o{"height"}
@@ -503,7 +505,7 @@ SUB LOAD_MAP_ENTITIES()
                 portal_count = portal_count + 1
 
             ELSEIF obj_type$ = "chest" THEN
-                chest = {}
+                LET chest = {}
                 chest{"name"} = obj_name$
                 chest{"x"} = o{"x"} : chest{"y"} = o{"y"}
                 chest{"opened"} = FALSE
@@ -514,7 +516,7 @@ SUB LOAD_MAP_ENTITIES()
                 IF MAP.EXISTS(props, "content_id") THEN chest{"content_id"} = props{"content_id"}
                 ' Create chest sprite (2 frames: closed/open)
                 TRY
-                    csid = SPRITE.LOAD(sprite_path$ + "chest.png", 32, 32)
+                    LET csid = SPRITE.LOAD(sprite_path$ + "chest.png", 32, 32)
                     SPRITE.POS csid, o{"x"}, o{"y"}
                     SPRITE.ZORDER csid, 8
                     SPRITE.GROUP csid, "chest"
@@ -533,17 +535,17 @@ ENDSUB
 ' ── Clear all entities (before map switch) ────────────────────
 SUB CLEAR_MAP_ENTITIES()
     FOR i = 0 TO npc_count - 1
-        n = npcs[i]
+        LET n = npcs[i]
         TRY : SPRITE.DELETE n.sprite_id : CATCH : ENDTRY
     NEXT
     FOR i = 0 TO monster_count - 1
-        m = monsters[i]
+        LET m = monsters[i]
         IF m{"sprite_id"} > 0 THEN
             TRY : SPRITE.DELETE m{"sprite_id"} : CATCH : ENDTRY
         ENDIF
     NEXT
     FOR i = 0 TO chest_count - 1
-        c = chests[i]
+        LET c = chests[i]
         IF c{"sprite_id"} > 0 THEN
             TRY : SPRITE.DELETE c{"sprite_id"} : CATCH : ENDTRY
         ENDIF
@@ -562,24 +564,24 @@ ENDSUB
 
 ' ── Save current map state ────────────────────────────────────
 SUB SAVE_MAP_STATE()
-    map_props = TILED.PROPERTIES(current_map$)
-    mid$ = ""
+    LET map_props = TILED.PROPERTIES(current_map$)
+    LET mid$ = ""
     IF MAP.EXISTS(map_props, "map_id") THEN mid$ = map_props{"map_id"}
     IF mid$ = "" THEN RETURN
 
-    state = {}
+    LET state = {}
     ' Defeated monsters
-    defeated = []
+    LET defeated = []
     FOR i = 0 TO monster_count - 1
-        m = monsters[i]
+        LET m = monsters[i]
         IF m{"defeated"} THEN PUSH defeated, m{"name"}
     NEXT
     state{"monsters_defeated"} = defeated
 
     ' Opened chests
-    opened = []
+    LET opened = []
     FOR i = 0 TO chest_count - 1
-        c = chests[i]
+        LET c = chests[i]
         IF c{"opened"} THEN PUSH opened, c{"name"}
     NEXT
     state{"chests_opened"} = opened
@@ -590,15 +592,15 @@ ENDSUB
 ' ── Restore saved map state ───────────────────────────────────
 SUB RESTORE_MAP_STATE(map_id$)
     IF NOT MAP.EXISTS(map_states, map_id$) THEN RETURN
-    state = map_states{map_id$}
+    LET state = map_states{map_id$}
 
     ' Restore defeated monsters
     IF MAP.EXISTS(state, "monsters_defeated") THEN
-        defeated = state{"monsters_defeated"}
+        LET defeated = state{"monsters_defeated"}
         FOR di = 0 TO LEN(defeated) - 1
-            dname$ = defeated[di]
+            LET dname$ = defeated[di]
             FOR mi = 0 TO monster_count - 1
-                m = monsters[mi]
+                LET m = monsters[mi]
                 IF m{"name"} = dname$ AND NOT m{"defeated"} THEN
                     IF m{"sprite_id"} > 0 THEN
                         TRY : SPRITE.DELETE m{"sprite_id"} : CATCH : ENDTRY
@@ -612,9 +614,9 @@ SUB RESTORE_MAP_STATE(map_id$)
 
     ' Restore opened chests
     IF MAP.EXISTS(state, "chests_opened") THEN
-        opened = state{"chests_opened"}
+        LET opened = state{"chests_opened"}
         FOR oi = 0 TO LEN(opened) - 1
-            oname$ = opened[oi]
+            LET oname$ = opened[oi]
             FOR ci = 0 TO chest_count - 1
                 IF chests[ci]{"name"} = oname$ THEN
                     chests[ci]{"opened"} = TRUE
@@ -639,10 +641,10 @@ FUNC IS_WALKABLE(px, py)
     IF px < 0 OR py < 0 OR px >= map_w OR py >= map_h THEN RETURN FALSE
     ' Ground check
     FOR li = 0 TO LEN(ground_layers) - 1
-        tid = TILED.TILE_AT(current_map$, ground_layers[li], px, py)
+        LET tid = TILED.TILE_AT(current_map$, ground_layers[li], px, py)
         IF tid > 0 THEN
             ' Collision layer check
-            ctid = TILED.TILE_AT(current_map$, "collision", px, py)
+            LET ctid = TILED.TILE_AT(current_map$, "collision", px, py)
             IF ctid > 0 THEN RETURN FALSE
             RETURN TRUE
         ENDIF
@@ -651,7 +653,7 @@ FUNC IS_WALKABLE(px, py)
 ENDFUNC
 
 FUNC CAN_MOVE_TO(x, y, w, h)
-    inset = 4
+    LET inset = 4
     IF NOT IS_WALKABLE(x + inset, y + inset) THEN RETURN FALSE
     IF NOT IS_WALKABLE(x + w - inset - 1, y + inset) THEN RETURN FALSE
     IF NOT IS_WALKABLE(x + inset, y + h - inset - 1) THEN RETURN FALSE
@@ -663,14 +665,14 @@ ENDFUNC
 ' ══ FACING / INTERACTION HELPERS ═════════════════════════════
 ' ══════════════════════════════════════════════════════════════
 FUNC FACING_SPRITE_CHECK(dir$, group$)
-    cx = SPRITE.GET_X(hero) : cy = SPRITE.GET_Y(hero)
+    LET cx = SPRITE.GET_X(hero) : LET cy = SPRITE.GET_Y(hero)
     IF dir$ = "up"    THEN cy = cy - T
     IF dir$ = "down"  THEN cy = cy + T
     IF dir$ = "left"  THEN cx = cx - T
     IF dir$ = "right" THEN cx = cx + T
-    ox = SPRITE.GET_X(hero) : oy = SPRITE.GET_Y(hero)
+    LET ox = SPRITE.GET_X(hero) : LET oy = SPRITE.GET_Y(hero)
     SPRITE.POS hero, cx, cy
-    result = SPRITE.COLLISION_FIRST(hero, group$)
+    LET result = SPRITE.COLLISION_FIRST(hero, group$)
     SPRITE.POS hero, ox, oy
     RETURN result
 ENDFUNC
@@ -679,21 +681,21 @@ ENDFUNC
 ' ══ PORTAL CHECK ═════════════════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
 SUB CHECK_PORTALS()
-    hx = SPRITE.GET_X(hero) : hy = SPRITE.GET_Y(hero)
-    hsw = SPRITE.WIDTH(hero) : hsh = SPRITE.HEIGHT(hero)
+    LET hx = SPRITE.GET_X(hero) : LET hy = SPRITE.GET_Y(hero)
+    LET hsw = SPRITE.WIDTH(hero) : LET hsh = SPRITE.HEIGHT(hero)
 
     FOR i = 0 TO portal_count - 1
-        p = portals[i]
-        px = p{"x"} : py = p{"y"}
-        pw = p{"width"} : ph = p{"height"}
+        LET p = portals[i]
+        LET px = p{"x"} : LET py = p{"y"}
+        LET pw = p{"width"} : LET ph = p{"height"}
         ' For tile-objects (with gid), y is bottom-left in Tiled
         IF MAP.EXISTS(p, "gid") AND p{"gid"} > 0 THEN py = py - ph
 
         ' Simple rectangle overlap
         IF hx + hsw > px AND hx < px + pw AND hy + hsh > py AND hy < py + ph THEN
             IF MAP.EXISTS(p, "target_map") THEN
-                target_map$ = p{"target_map"}
-                target_spawn$ = p{"target_spawn"}
+                LET target_map$ = p{"target_map"}
+                LET target_spawn$ = p{"target_spawn"}
                 ' Ensure .tmx extension
                 IF RIGHT$(target_map$, 4) <> ".tmx" THEN target_map$ = "maps/" + target_map$ + ".tmx"
                 IF LEFT$(target_map$, 5) <> "maps/" THEN target_map$ = "maps/" + target_map$
@@ -712,9 +714,9 @@ ENDSUB
 SUB UPDATE_FOLLOW_SPRITES()
     FOR fi = 1 TO RPG_PARTY.member_count - 1
         IF fi - 1 >= follow_count THEN
-            pm = RPG_PARTY.GET_MEMBER(fi)
+            LET pm = RPG_PARTY.GET_MEMBER(fi)
             TRY
-                fs = SPRITE.LOAD(sprite_path$ + pm{"sprite"}, sprite_frame_w, sprite_frame_h)
+                LET fs = SPRITE.LOAD(sprite_path$ + pm{"sprite"}, sprite_frame_w, sprite_frame_h)
                 SPRITE.SCALE fs, sprite_scale
                 SPRITE.ANIM fs, "idle_down",  [0, 1, 0, 2], 3
                 SPRITE.ANIM fs, "walk_down",  [0, 1, 0, 2], 6
@@ -726,9 +728,9 @@ SUB UPDATE_FOLLOW_SPRITES()
                 ' Position at hero
                 SPRITE.POS fs, SPRITE.GET_X(hero), SPRITE.GET_Y(hero)
                 ' Hide original NPC sprite
-                pm_name$ = pm{"name"}
+                LET pm_name$ = pm{"name"}
                 FOR ni = 0 TO npc_count - 1
-                    nn = npcs[ni]
+                    LET nn = npcs[ni]
                     IF nn.name$ = pm_name$ THEN
                         nn.SET_VISIBLE FALSE
                     ENDIF
@@ -747,15 +749,15 @@ ENDSUB
 
 SUB UPDATE_FOLLOW_POSITIONS()
     IF follow_count = 0 THEN RETURN
-    hx = SPRITE.GET_X(hero) : hy = SPRITE.GET_Y(hero)
-    dx = hx - last_trail_x : dy = hy - last_trail_y
-    dist = SQR(dx*dx + dy*dy)
+    LET hx = SPRITE.GET_X(hero) : LET hy = SPRITE.GET_Y(hero)
+    LET dx = hx - last_trail_x : LET dy = hy - last_trail_y
+    LET dist = SQR(dx*dx + dy*dy)
     IF dist >= T THEN
         PUSH path_trail, [last_trail_x, last_trail_y]
         last_trail_x = hx : last_trail_y = hy
         DO WHILE LEN(path_trail) > 50
-            new_trail = []
-            tl = LEN(path_trail)
+            LET new_trail = []
+            LET tl = LEN(path_trail)
             FOR ti = 1 TO tl - 1
                 PUSH new_trail, path_trail[ti]
             NEXT ti
@@ -765,25 +767,25 @@ SUB UPDATE_FOLLOW_POSITIONS()
     tl = LEN(path_trail)
     FOR fi = 0 TO follow_count - 1
         IF follow_sprites[fi] < 0 THEN CONTINUEFOR
-        crumb_idx = tl - (fi + 1)
+        LET crumb_idx = tl - (fi + 1)
         IF crumb_idx < 0 THEN crumb_idx = 0
-        cur_x = SPRITE.GET_X(follow_sprites[fi])
-        cur_y = SPRITE.GET_Y(follow_sprites[fi])
+        LET cur_x = SPRITE.GET_X(follow_sprites[fi])
+        LET cur_y = SPRITE.GET_Y(follow_sprites[fi])
         IF crumb_idx < tl THEN
-            target = path_trail[crumb_idx]
-            tx = target[0] : ty = target[1]
+            LET target = path_trail[crumb_idx]
+            LET tx = target[0] : LET ty = target[1]
         ELSE
             tx = cur_x : ty = cur_y
         ENDIF
-        fdx = tx - cur_x : fdy = ty - cur_y
-        fdist = SQR(fdx*fdx + fdy*fdy)
+        LET fdx = tx - cur_x : LET fdy = ty - cur_y
+        LET fdist = SQR(fdx*fdx + fdy*fdy)
         IF fdist > 2 THEN
-            fspeed = 2.5
+            LET fspeed = 2.5
             ' Direction hysteresis: stick to current axis unless the
             ' other axis is clearly dominant (1.5x ratio). This prevents
             ' rapid animation switching when moving diagonally.
-            last_dir$ = follow_dirs[fi]
-            use_h = TRUE
+            LET last_dir$ = follow_dirs[fi]
+            LET use_h = TRUE
             IF last_dir$ = "h" THEN
                 ' Currently horizontal — only switch to vertical if fdy >> fdx
                 IF ABS(fdy) > ABS(fdx) * 1.5 THEN use_h = FALSE
@@ -795,7 +797,7 @@ SUB UPDATE_FOLLOW_POSITIONS()
                 IF ABS(fdx) >= ABS(fdy) THEN use_h = TRUE ELSE use_h = FALSE
             ENDIF
 
-            new_x = cur_x : new_y = cur_y
+            LET new_x = cur_x : LET new_y = cur_y
             IF use_h THEN
                 IF ABS(fdx) < fspeed THEN new_x = tx ELSE new_x = cur_x + SGN(fdx) * fspeed
                 follow_dirs[fi] = "h"
@@ -804,8 +806,8 @@ SUB UPDATE_FOLLOW_POSITIONS()
                 follow_dirs[fi] = "v"
             ENDIF
 
-            hdx = new_x - hx : hdy = new_y - hy
-            hdist = SQR(hdx*hdx + hdy*hdy)
+            LET hdx = new_x - hx : LET hdy = new_y - hy
+            LET hdist = SQR(hdx*hdx + hdy*hdy)
             IF hdist >= T THEN
                 SPRITE.POS follow_sprites[fi], new_x, new_y
                 IF use_h THEN
@@ -829,7 +831,7 @@ ENDSUB
 EXPORT SUB UPDATE()
     TILED.UPDATE 0.016
 
-    ev$ = GFX.POLLEVENT()
+    LET ev$ = GFX.POLLEVENT()
     IF ev$ = "QUIT" THEN quit_flag = TRUE : RETURN
     IF ev$ = "KEYDOWN:Escape" THEN
         DRAW_SCENE
@@ -843,7 +845,7 @@ EXPORT SUB UPDATE()
     IF ev$ = "KEYDOWN:Q" THEN DRAW_SCENE : RPG_QUEST.SHOW_LOG
 
     ' Movement
-    old_x = SPRITE.GET_X(hero) : old_y = SPRITE.GET_Y(hero)
+    LET old_x = SPRITE.GET_X(hero) : LET old_y = SPRITE.GET_Y(hero)
     moving = FALSE
     IF GFX.KEYSTATE("Right") THEN SPRITE.MOVE hero, speed, 0 : direction$ = "right" : moving = TRUE
     IF GFX.KEYSTATE("Left")  THEN SPRITE.MOVE hero, -speed, 0 : direction$ = "left" : moving = TRUE
@@ -851,9 +853,9 @@ EXPORT SUB UPDATE()
     IF GFX.KEYSTATE("Up")    THEN SPRITE.MOVE hero, 0, -speed : direction$ = "up" : moving = TRUE
 
     ' Collision
-    new_x = SPRITE.GET_X(hero) : new_y = SPRITE.GET_Y(hero)
-    hero_w = SPRITE.WIDTH(hero) : hero_h = SPRITE.HEIGHT(hero)
-    blocked = NOT CAN_MOVE_TO(new_x, new_y, hero_w, hero_h)
+    LET new_x = SPRITE.GET_X(hero) : LET new_y = SPRITE.GET_Y(hero)
+    LET hero_w = SPRITE.WIDTH(hero) : LET hero_h = SPRITE.HEIGHT(hero)
+    LET blocked = NOT CAN_MOVE_TO(new_x, new_y, hero_w, hero_h)
     IF NOT blocked THEN blocked = (SPRITE.COLLISION_FIRST(hero, "npc") > 0)
     IF NOT blocked THEN blocked = FALSE ' (SPRITE.COLLISION_FIRST(hero, "chest") > 0)
     IF blocked THEN SPRITE.POS hero, old_x, old_y
@@ -871,7 +873,7 @@ EXPORT SUB UPDATE()
 
     ' Monster respawn check
     FOR mi = 0 TO monster_count - 1
-        m = monsters[mi]
+        LET m = monsters[mi]
         IF m{"defeated"} THEN
             IF NOT MAP.EXISTS(m, "respawn_at") THEN
                 m{"respawn_at"} = TICK() + 10000
@@ -880,16 +882,16 @@ EXPORT SUB UPDATE()
             IF MAP.EXISTS(m, "respawn_at") AND TICK() >= m{"respawn_at"} THEN
                 ' Respawn at original position
                 TRY
-                    edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
-                    elist = edata{"enemies"}
+                    LET edata = JSON.PARSE$(TXTREADER$(data_dir$ + "enemies.json"))
+                    LET elist = edata{"enemies"}
                     FOR ei = 0 TO LEN(elist) - 1
                         IF elist[ei]{"id"} = m{"id"} AND elist[ei]{"sprite"} <> "" THEN
-                            sid = SPRITE.LOAD(sprite_path$ + elist[ei]{"sprite"}, INT(elist[ei]{"frame_w"}), INT(elist[ei]{"frame_h"}))
+                            LET sid = SPRITE.LOAD(sprite_path$ + elist[ei]{"sprite"}, INT(elist[ei]{"frame_w"}), INT(elist[ei]{"frame_h"}))
                             SPRITE.POS sid, m{"orig_x"}, m{"orig_y"}
                             SPRITE.SCALE sid, sprite_scale
                             SPRITE.ZORDER sid, 6
                             SPRITE.GROUP sid, "monster"
-                            af = elist[ei]{"anim_frames"}
+                            LET af = elist[ei]{"anim_frames"}
                             IF LEN(af) > 0 THEN
                                 SPRITE.ANIM sid, "idle", af, INT(elist[ei]{"anim_fps"})
                                 SPRITE.PLAY sid, "idle"
@@ -907,13 +909,13 @@ EXPORT SUB UPDATE()
     NEXT mi
 
     ' Monster combat
-    monster_hit = SPRITE.COLLISION_FIRST(hero, "monster")
+    LET monster_hit = SPRITE.COLLISION_FIRST(hero, "monster")
     IF monster_hit > 0 THEN
         FOR mi = 0 TO monster_count - 1
             m = monsters[mi]
             IF m{"sprite_id"} = monster_hit AND NOT m{"defeated"} THEN
                 GFX.FADE 0, 0.3
-                battle_result$ = RPG_BATTLE.FIGHT$(m{"id"})
+                LET battle_result$ = RPG_BATTLE.FIGHT$(m{"id"})
                 GFX.FADE 1, 0.3
                 IF battle_result$ = "win" THEN
                     SPRITE.DELETE monster_hit
@@ -940,8 +942,8 @@ EXPORT SUB UPDATE()
     ENDIF
 
     ' Facing detection
-    npc_hit = FACING_SPRITE_CHECK(direction$, "npc")
-    chest_hit = FACING_SPRITE_CHECK(direction$, "chest")
+    LET npc_hit = FACING_SPRITE_CHECK(direction$, "npc")
+    LET chest_hit = FACING_SPRITE_CHECK(direction$, "chest")
     hint$ = ""
     IF npc_hit > 0 THEN hint$ = "[Leertaste] Reden"
     IF chest_hit > 0 THEN hint$ = "[Leertaste] Öffnen"
@@ -950,13 +952,13 @@ EXPORT SUB UPDATE()
         ' Chest interaction
         IF chest_hit > 0 THEN
             FOR ci = 0 TO chest_count - 1
-                c = chests[ci]
+                LET c = chests[ci]
                 IF c{"sprite_id"} = chest_hit AND NOT c{"opened"} THEN
                     c{"opened"} = TRUE
                     TRY : SPRITE.FRAME chest_hit, 1 : CATCH : ENDTRY
                     SPRITE.GROUP chest_hit, "opened"
-                    ct$ = c{"content_type"}
-                    ca = INT(c{"content_amount"})
+                    LET ct$ = c{"content_type"}
+                    LET ca = INT(c{"content_amount"})
                     IF ct$ = "gold" THEN
                         RPG_INVENTORY.ADD_GOLD ca
                         RPG_DIALOG.SAY "", "Du hast " + STR$(ca) + " Gold gefunden!"
@@ -975,19 +977,19 @@ EXPORT SUB UPDATE()
         ENDIF
         IF npc_hit > 0 THEN
             FOR i = 0 TO npc_count - 1
-                n = npcs[i]
+                LET n = npcs[i]
                 IF n.sprite_id = npc_hit THEN
                     IF player_name$ = "" THEN
                         DRAW_SCENE
                         player_name$ = RPG_DIALOG.ASK$("", "Wie heisst du, Abenteurerin?")
                         IF player_name$ = "" THEN player_name$ = "Vally"
                     ENDIF
-                    rpid$ = n.recruit_id$
-                    already = MAP.EXISTS(recruit_data, rpid$)
+                    LET rpid$ = n.recruit_id$
+                    LET already = MAP.EXISTS(recruit_data, rpid$)
 
                     ' Quest handling first (may show quest dialog instead)
                     DRAW_SCENE
-                    quest_handled = RPG_QUEST.HANDLE_NPC(n.name$, player_name$)
+                    LET quest_handled = RPG_QUEST.HANDLE_NPC(n.name$, player_name$)
 
                     ' If no quest handled, show normal dialog
                     IF NOT quest_handled THEN
@@ -999,17 +1001,17 @@ EXPORT SUB UPDATE()
                         DRAW_SCENE
                         RPG_DIALOG.SAY n.name$, n.name$ + " möchte sich deiner Gruppe anschließen!"
                         DRAW_SCENE
-                        recruit_choice = RPG_DIALOG.CHOICE("Ja, willkommen!|Vielleicht später")
+                        LET recruit_choice = RPG_DIALOG.CHOICE("Ja, willkommen!|Vielleicht später")
                         IF recruit_choice = 0 THEN
                             RPG_PARTY.ADD_MEMBER rpid$
                             recruit_data{rpid$} = TRUE
-                            hx_now = SPRITE.GET_X(hero) : hy_now = SPRITE.GET_Y(hero)
+                            LET hx_now = SPRITE.GET_X(hero) : LET hy_now = SPRITE.GET_Y(hero)
                             last_trail_x = hx_now : last_trail_y = hy_now
                             path_trail = [] : PUSH path_trail, [hx_now, hy_now]
                             UPDATE_FOLLOW_SPRITES
                             msg$ = n.name$ + " ist der Gruppe beigetreten!" : msg_timer = 90
                             IF n.dialog_joined$ <> "" THEN
-                                jdlg$ = REPLACE$(n.dialog_joined$, "{PLAYER}", player_name$)
+                                LET jdlg$ = REPLACE$(n.dialog_joined$, "{PLAYER}", player_name$)
                                 DRAW_SCENE : RPG_DIALOG.SAY n.name$, jdlg$
                             ENDIF
                             ' Auto-complete talk quests for this NPC (can't talk after joining party)
@@ -1021,10 +1023,10 @@ EXPORT SUB UPDATE()
 
                     ' Shop
                     IF n.is_shop AND n.shop_items$ <> "" THEN
-                        item_ids = SPLIT(n.shop_items$, ",")
+                        LET item_ids = SPLIT(n.shop_items$, ",")
                         DRAW_SCENE
-                        resolved = RPG_INVENTORY.RESOLVE_SHOP_ITEMS(item_ids)
-                        purchases = RPG_INVENTORY.OPEN_SHOP(n.name$, resolved)
+                        LET resolved = RPG_INVENTORY.RESOLVE_SHOP_ITEMS(item_ids)
+                        LET purchases = RPG_INVENTORY.OPEN_SHOP(n.name$, resolved)
                         IF purchases > 0 THEN
                             RPG_QUEST.PROGRESS "buy:item", purchases
                         ENDIF
@@ -1051,12 +1053,12 @@ SUB DRAW_SCENE()
     SPRITE.UPDATE
 
     ' Get current camera position for explicit draw calls
-    cx = CAM.X() : cy = CAM.Y()
+    LET cx = CAM.X() : LET cy = CAM.Y()
 
     ' Draw layers below sprites, then sprites, then layers above
-    layers = TILED.LAYERS$(current_map$)
+    LET layers = TILED.LAYERS$(current_map$)
     FOR li = 0 TO LEN(layers) - 1
-        ln$ = layers[li]
+        LET ln$ = layers[li]
         IF LEFT$(ln$, 11) <> "decor_above" THEN
             TILED.DRAW_LAYER current_map$, ln$, cx, cy
         ENDIF
@@ -1074,26 +1076,26 @@ SUB DRAW_SCENE()
     NEXT
 
     ' HUD (screen-space, top-left) — font-relative layout
-    fs = RPG_DIALOG.FS
-    hud_lh = INT(fs * 1.1)
-    hud_x = 10 : hud_y = 10
+    LET fs = RPG_DIALOG.FS
+    LET hud_lh = INT(fs * 1.1)
+    LET hud_x = 10 : LET hud_y = 10
     IF player_name$ <> "" THEN
         TEXT hud_x, hud_y, player_name$, 255, 220, 80
         hud_y = hud_y + hud_lh
     ENDIF
-    gold = RPG_INVENTORY.GET_GOLD()
+    LET gold = RPG_INVENTORY.GET_GOLD()
     IF gold > 0 THEN
         TEXT hud_x, hud_y, "Gold: " + STR$(INT(gold)), 255, 215, 0
         hud_y = hud_y + hud_lh
     ENDIF
-    bar_w = INT(fs * 4)
-    bar_h = INT(fs * 0.5)
-    name_w = INT(fs * 5)
+    LET bar_w = INT(fs * 4)
+    LET bar_h = INT(fs * 0.5)
+    LET name_w = INT(fs * 5)
     FOR pidx = 0 TO RPG_PARTY.member_count - 1
-        pm = RPG_PARTY.GET_MEMBER(pidx)
+        LET pm = RPG_PARTY.GET_MEMBER(pidx)
         TEXT hud_x, hud_y, LEFT$(pm{"name"}, 8), 180, 180, 220
-        bar_x = hud_x + name_w
-        hp_pct = pm{"hp"} / pm{"max_hp"}
+        LET bar_x = hud_x + name_w
+        LET hp_pct = pm{"hp"} / pm{"max_hp"}
         RECT bar_x, hud_y + INT(fs*0.15), bar_w, bar_h, 60, 30, 30, TRUE
         RECT bar_x, hud_y + INT(fs*0.15), INT(bar_w * hp_pct), bar_h, 80, 200, 80, TRUE
         TEXT bar_x + bar_w + 4, hud_y, STR$(INT(pm{"hp"})), 180, 200, 180
@@ -1103,11 +1105,11 @@ ENDSUB
 
 EXPORT SUB DRAW()
     DRAW_SCENE
-    scrw = SCREENWIDTH() : scrh = SCREENHEIGHT()
-    fs = RPG_DIALOG.FS
-    lh = INT(fs * 1.1)
+    LET scrw = SCREENWIDTH() : LET scrh = SCREENHEIGHT()
+    LET fs = RPG_DIALOG.FS
+    LET lh = INT(fs * 1.1)
     TEXT scrw - INT(fs * 27), 10, "Pfeile:Laufen Space:Aktion Tab:Inventar P:Gruppe Q:Quests", 130, 130, 150
-    qc = RPG_QUEST.ACTIVE_COUNT()
+    LET qc = RPG_QUEST.ACTIVE_COUNT()
     IF qc > 0 THEN TEXT scrw - INT(fs * 10), 10 + lh, "Quests: " + STR$(qc) + " (Q)", 180, 180, 100
     IF hint$ <> "" THEN TEXT scrw/2 - INT(fs*4), scrh - INT(fs*1.8), hint$, 200, 255, 200
     IF msg_timer > 0 THEN TEXT scrw/2 - INT(fs*6), scrh - INT(fs*3.5), msg$, 255, 255, 100
@@ -1117,18 +1119,18 @@ ENDSUB
 ' ══ PAUSE MENU ═══════════════════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
 SUB SHOW_PAUSE_MENU()
-    pause_bg = GFX.CAPTURE()
+    LET pause_bg = GFX.CAPTURE()
     sw = SCREENWIDTH() : sh = SCREENHEIGHT()
-    fs = RPG_DIALOG.FS
-    cbg = RPG_DIALOG.C_BOX_BG : cbd = RPG_DIALOG.C_BOX_BD
-    ctb = RPG_DIALOG.C_TEXT_BR : cmt = RPG_DIALOG.C_MENU_TXT
-    cms = RPG_DIALOG.C_MENU_SEL : ctl = RPG_DIALOG.C_TITLE
-    ctd = RPG_DIALOG.C_TEXT_DIM
-    item_h = INT(fs * 2.0)
-    selected = 0
-    saved_this_session = FALSE
-    menu = ["Weiterspielen", "Speichern", "Laden", "Beenden"]
-    num_items = 4
+    LET fs = RPG_DIALOG.FS
+    LET cbg = RPG_DIALOG.C_BOX_BG : LET cbd = RPG_DIALOG.C_BOX_BD
+    LET ctb = RPG_DIALOG.C_TEXT_BR : LET cmt = RPG_DIALOG.C_MENU_TXT
+    LET cms = RPG_DIALOG.C_MENU_SEL : LET ctl = RPG_DIALOG.C_TITLE
+    LET ctd = RPG_DIALOG.C_TEXT_DIM
+    LET item_h = INT(fs * 2.0)
+    LET selected = 0
+    LET saved_this_session = FALSE
+    LET menu = ["Weiterspielen", "Speichern", "Laden", "Beenden"]
+    LET num_items = 4
 
     DO
         GFX.DRAW_CAPTURE pause_bg
@@ -1136,8 +1138,8 @@ SUB SHOW_PAUSE_MENU()
         RECT 0, 0, sw, sh, 0, 0, 0, TRUE
 
         ' Menu box
-        bw = INT(fs * 14) : bh = num_items * item_h + INT(fs * 4)
-        bx = INT((sw - bw) / 2) : by = INT((sh - bh) / 2)
+        LET bw = INT(fs * 14) : LET bh = num_items * item_h + INT(fs * 4)
+        LET bx = INT((sw - bw) / 2) : LET by = INT((sh - bh) / 2)
         RECT bx, by, bw, bh, cbg[0], cbg[1], cbg[2], TRUE
         RECT bx, by, bw, bh, cbd[0], cbd[1], cbd[2], FALSE
 
@@ -1147,7 +1149,7 @@ SUB SHOW_PAUSE_MENU()
 
         ' Items
         FOR i = 0 TO num_items - 1
-            iy = by + INT(fs*2.5) + i * item_h
+            LET iy = by + INT(fs*2.5) + i * item_h
             IF i = selected THEN
                 RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*1.5), cms[0], cms[1]-10, cms[2]-20, TRUE
                 TEXT bx + INT(fs*2), iy, "> " + menu[i], ctb[0], ctb[1], ctb[2]
@@ -1163,7 +1165,7 @@ SUB SHOW_PAUSE_MENU()
 
         SCREENFLIP : SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:Escape" THEN EXITDO
         IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_items
         IF ev$ = "KEYDOWN:Up" THEN
@@ -1176,7 +1178,7 @@ SUB SHOW_PAUSE_MENU()
                 EXITDO
             ELSEIF selected = 1 THEN
                 ' Speichern — show slot picker
-                slot = SHOW_SLOT_PICKER("save")
+                LET slot = SHOW_SLOT_PICKER("save")
                 IF slot >= 0 THEN
                     SAVE_TO_SLOT slot
                     saved_this_session = TRUE
@@ -1202,7 +1204,7 @@ SUB SHOW_PAUSE_MENU()
                 ENDIF
                 RPG_DIALOG.SAY "System", "Spiel wird beendet. Ungespeicherter Fortschritt geht verloren!"
                 GFX.DRAW_CAPTURE pause_bg
-                confirm = RPG_DIALOG.CHOICE("Trotzdem beenden|Zurück")
+                LET confirm = RPG_DIALOG.CHOICE("Trotzdem beenden|Zurück")
                 IF confirm = 0 THEN
                     quit_flag = TRUE
                     GFX.FREEIMAGE pause_bg
@@ -1227,18 +1229,18 @@ ENDFUNC
 ' Read slot preview info (name, level, map) without loading
 FUNC GET_SLOT_INFO$(slot)
     TRY
-        sf$ = GET_SLOT_FILE$(slot)
-        sg = JSON.PARSE$(TXTREADER$(sf$))
-        name$ = sg{"player_name"}
-        map$ = sg{"current_map_file"}
+        LET sf$ = GET_SLOT_FILE$(slot)
+        LET sg = JSON.PARSE$(TXTREADER$(sf$))
+        LET name$ = sg{"player_name"}
+        LET map$ = sg{"current_map_file"}
         map$ = mid$(map$,instr$(map$,"/")+1)
         map$ = left$(map$,instr$(map$,"."))
-        lv = 1
+        LET lv = 1
         IF MAP.EXISTS(sg, "party") THEN
-            p = sg{"party"}
+            LET p = sg{"party"}
             IF LEN(p) > 0 THEN lv = INT(p[0]{"level"})
         ENDIF
-        pc = 1
+        LET pc = 1
         IF MAP.EXISTS(sg, "party") THEN pc = LEN(sg{"party"})
         RETURN name$ + "  Lv." + STR$(lv) + "  Party:" + STR$(pc) + "  " + map$
     CATCH
@@ -1247,15 +1249,15 @@ FUNC GET_SLOT_INFO$(slot)
 ENDFUNC
 
 FUNC SHOW_SLOT_PICKER(mode$)
-    slot_bg = GFX.CAPTURE()
+    LET slot_bg = GFX.CAPTURE()
     sw = SCREENWIDTH() : sh = SCREENHEIGHT()
-    fs = RPG_DIALOG.FS
-    cbg = RPG_DIALOG.C_BOX_BG : cbd = RPG_DIALOG.C_BOX_BD
-    ctb = RPG_DIALOG.C_TEXT_BR : cmt = RPG_DIALOG.C_MENU_TXT
-    cms = RPG_DIALOG.C_MENU_SEL : ctl = RPG_DIALOG.C_TITLE
-    ctd = RPG_DIALOG.C_TEXT_DIM : cgl = RPG_DIALOG.C_GOLD
-    slot_h = INT(fs * 3.0)
-    selected = 0
+    LET fs = RPG_DIALOG.FS
+    LET cbg = RPG_DIALOG.C_BOX_BG : LET cbd = RPG_DIALOG.C_BOX_BD
+    LET ctb = RPG_DIALOG.C_TEXT_BR : LET cmt = RPG_DIALOG.C_MENU_TXT
+    LET cms = RPG_DIALOG.C_MENU_SEL : LET ctl = RPG_DIALOG.C_TITLE
+    LET ctd = RPG_DIALOG.C_TEXT_DIM : LET cgl = RPG_DIALOG.C_GOLD
+    LET slot_h = INT(fs * 3.0)
+    LET selected = 0
 
     ' Read all slot infos
     DIM slot_infos[SLOT_COUNT]
@@ -1264,7 +1266,7 @@ FUNC SHOW_SLOT_PICKER(mode$)
     NEXT si
 
     IF mode$ = "save" THEN
-        title$ = "SPEICHERN"
+        LET title$ = "SPEICHERN"
     ELSE
         title$ = "LADEN"
     ENDIF
@@ -1273,8 +1275,8 @@ FUNC SHOW_SLOT_PICKER(mode$)
         GFX.DRAW_CAPTURE slot_bg
         RECT 0, 0, sw, sh, 0, 0, 0, TRUE
 
-        bw = INT(fs * 28) : bh = SLOT_COUNT * slot_h + INT(fs * 5)
-        bx = INT((sw - bw) / 2) : by = INT((sh - bh) / 2)
+        LET bw = INT(fs * 28) : LET bh = SLOT_COUNT * slot_h + INT(fs * 5)
+        LET bx = INT((sw - bw) / 2) : LET by = INT((sh - bh) / 2)
         RECT bx, by, bw, bh, cbg[0], cbg[1], cbg[2], TRUE
         RECT bx, by, bw, bh, cbd[0], cbd[1], cbd[2], FALSE
 
@@ -1282,8 +1284,8 @@ FUNC SHOW_SLOT_PICKER(mode$)
         RECT bx + 10, by + INT(fs*2), bw - 20, 2, cbd[0]-20, cbd[1]-40, cbd[2]-40, TRUE
 
         FOR si = 0 TO SLOT_COUNT - 1
-            iy = by + INT(fs*2.8) + si * slot_h
-            info$ = slot_infos[si]
+            LET iy = by + INT(fs*2.8) + si * slot_h
+            LET info$ = slot_infos[si]
             IF si = selected THEN
                 RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*2.4), cms[0], cms[1]-10, cms[2]-20, TRUE
                 RECT bx + 10, iy - INT(fs*0.2), bw - 20, INT(fs*2.4), cbd[0], cbd[1], cbd[2], FALSE
@@ -1307,7 +1309,7 @@ FUNC SHOW_SLOT_PICKER(mode$)
         TEXT bx + bw/2 - INT(fs*6), by + bh - INT(fs*1.3), "Hoch/Runter  Enter:Wählen  Esc:Zurück", ctd[0]-40, ctd[1]-40, ctd[2]-20
         SCREENFLIP : SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:Escape" THEN
             GFX.FREEIMAGE slot_bg
             RETURN -1
@@ -1334,7 +1336,7 @@ ENDFUNC
 
 FUNC BUILD_SAVE_DATA()
     SAVE_MAP_STATE
-    sg = {}
+    LET sg = {}
     sg{"player_name"} = player_name$
     sg{"player_x"} = SPRITE.GET_X(hero)
     sg{"player_y"} = SPRITE.GET_Y(hero)
@@ -1347,7 +1349,7 @@ FUNC BUILD_SAVE_DATA()
     sg{"party"} = RPG_PARTY.GET_SAVE_DATA()
     sg{"quests"} = RPG_QUEST.GET_SAVE_DATA()
     ' Save follower positions
-    fpos = []
+    LET fpos = []
     FOR fi = 0 TO follow_count - 1
         IF follow_sprites[fi] >= 0 THEN
             PUSH fpos, [SPRITE.GET_X(follow_sprites[fi]), SPRITE.GET_Y(follow_sprites[fi])]
@@ -1360,8 +1362,8 @@ FUNC BUILD_SAVE_DATA()
 ENDFUNC
 
 SUB SAVE_TO_SLOT(slot)
-    sg = BUILD_SAVE_DATA()
-    sf$ = GET_SLOT_FILE$(slot)
+    LET sg = BUILD_SAVE_DATA()
+    LET sf$ = GET_SLOT_FILE$(slot)
     TXTWRITER sf$, JSON.STRINGIFY$(sg)
     has_save_data = TRUE
     msg$ = "Slot " + STR$(slot + 1) + " gespeichert" : msg_timer = 90
@@ -1378,7 +1380,7 @@ SUB APPLY_SAVE_DATA(sg)
     ' Restore recruits
     IF MAP.EXISTS(sg, "recruit_data") THEN
         recruit_data = sg{"recruit_data"}
-        rkeys = MAP.KEYS(recruit_data)
+        LET rkeys = MAP.KEYS(recruit_data)
         FOR ri = 0 TO LEN(rkeys) - 1
             IF recruit_data{rkeys[ri]} THEN RPG_PARTY.ADD_MEMBER rkeys[ri]
         NEXT ri
@@ -1389,14 +1391,14 @@ SUB APPLY_SAVE_DATA(sg)
     IF MAP.EXISTS(sg, "current_map_file") THEN
         ENTER_MAP sg{"current_map_file"}, "default_spawn"
         IF MAP.EXISTS(sg, "player_x") THEN
-            hx = sg{"player_x"} : hy = sg{"player_y"}
+            LET hx = sg{"player_x"} : LET hy = sg{"player_y"}
             SPRITE.POS hero, hx, hy
             last_trail_x = hx : last_trail_y = hy
             path_trail = [] : PUSH path_trail, [hx, hy]
 
             ' Restore follower positions from save
             IF MAP.EXISTS(sg, "follow_pos") THEN
-                fpos = sg{"follow_pos"}
+                LET fpos = sg{"follow_pos"}
                 FOR fi = 0 TO follow_count - 1
                     IF follow_sprites[fi] >= 0 AND fi < LEN(fpos) THEN
                         SPRITE.POS follow_sprites[fi], fpos[fi][0], fpos[fi][1]
@@ -1412,8 +1414,8 @@ ENDSUB
 
 SUB LOAD_FROM_SLOT(slot)
     TRY
-        sf$ = GET_SLOT_FILE$(slot)
-        sg = JSON.PARSE$(TXTREADER$(sf$))
+        LET sf$ = GET_SLOT_FILE$(slot)
+        LET sg = JSON.PARSE$(TXTREADER$(sf$))
         APPLY_SAVE_DATA sg
     CATCH
     ENDTRY
@@ -1438,8 +1440,8 @@ EXPORT FUNC LOAD_GAME()
     ENDIF
     ' Fallback: try slot 1, then legacy save file
     TRY
-        sf$ = GET_SLOT_FILE$(0)
-        sg = JSON.PARSE$(TXTREADER$(sf$))
+        LET sf$ = GET_SLOT_FILE$(0)
+        LET sg = JSON.PARSE$(TXTREADER$(sf$))
         APPLY_SAVE_DATA sg
         RETURN TRUE
     CATCH

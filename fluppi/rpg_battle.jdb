@@ -2,6 +2,8 @@
 ' == RPG Battle Module v2
 ' == Party-based turn combat with skills
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 EXPORT MODULE RPG_BATTLE
 
@@ -19,51 +21,51 @@ EXPORT DIM encounter_rate = 30
 ' ══ MAIN BATTLE ══════════════════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
 EXPORT FUNC FIGHT$(enemy_id$)
-    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
-    fs = RPG_DIALOG.FS
-    lh = INT(fs * 1.3)
-    bar_h = INT(fs * 0.45)
-    bar_w = INT(fs * 5)
-    name_col_w = INT(fs * 4)
-    member_h = INT(fs * 3.0)
-    menu_item_h = INT(fs * 1.5)
+    LET sw = SCREENWIDTH() : LET sh = SCREENHEIGHT()
+    LET fs = RPG_DIALOG.FS
+    LET lh = INT(fs * 1.3)
+    LET bar_h = INT(fs * 0.45)
+    LET bar_w = INT(fs * 5)
+    LET name_col_w = INT(fs * 4)
+    LET member_h = INT(fs * 3.0)
+    LET menu_item_h = INT(fs * 1.5)
 
     ' Spawn enemy
-    enemy = RPG_COMBAT.SPAWN_ENEMY(enemy_id$)
-    e_name$ = enemy{"name"}
-    e_hp = INT(enemy{"hp"}) : e_max_hp = INT(enemy{"max_hp"})
-    e_atk = INT(enemy{"atk"}) : e_def = INT(enemy{"def"})
-    e_xp = INT(enemy{"xp"}) : e_gold = INT(enemy{"gold"})
-    e_drop$ = enemy{"drop_item"} : e_drop_chance = enemy{"drop_chance"}
+    LET enemy = RPG_COMBAT.SPAWN_ENEMY(enemy_id$)
+    LET e_name$ = enemy{"name"}
+    LET e_hp = INT(enemy{"hp"}) : LET e_max_hp = INT(enemy{"max_hp"})
+    LET e_atk = INT(enemy{"atk"}) : LET e_def = INT(enemy{"def"})
+    LET e_xp = INT(enemy{"xp"}) : LET e_gold = INT(enemy{"gold"})
+    LET e_drop$ = enemy{"drop_item"} : LET e_drop_chance = enemy{"drop_chance"}
 
     ' ── Calculate all positions FIRST, then load sprites ──
-    arena_bottom = sh/2 - 20        ' bottom edge of arena area
+    LET arena_bottom = sh/2 - 20        ' bottom edge of arena area
 
     ' Enemy position — right side, feet on arena floor
-    e_fw = INT(enemy{"frame_w"}) : e_fh = INT(enemy{"frame_h"})
-    e_scale = 2
-    e_sprite_h = INT(e_fh * e_scale)
-    e_x = sw/2 + 80
-    e_y = arena_bottom - e_sprite_h - 5
+    LET e_fw = INT(enemy{"frame_w"}) : LET e_fh = INT(enemy{"frame_h"})
+    LET e_scale = 2
+    LET e_sprite_h = INT(e_fh * e_scale)
+    LET e_x = sw/2 + 80
+    LET e_y = arena_bottom - e_sprite_h - 5
 
     ' Party position — side-by-side, feet on arena floor
-    sfw = RPG_DIALOG.FRAME_W : sfh = RPG_DIALOG.FRAME_H
-    p_scale = 1.5
-    p_sprite_h = INT(sfh * p_scale)
-    p_sprite_w = INT(sfw * p_scale)
-    p_y = arena_bottom - p_sprite_h - 5
-    p_gap = INT(p_sprite_w + fs * 0.5)    ' sprite width + small gap
+    LET sfw = RPG_DIALOG.FRAME_W : LET sfh = RPG_DIALOG.FRAME_H
+    LET p_scale = 1.5
+    LET p_sprite_h = INT(sfh * p_scale)
+    LET p_sprite_w = INT(sfw * p_scale)
+    LET p_y = arena_bottom - p_sprite_h - 5
+    LET p_gap = INT(p_sprite_w + fs * 0.5)    ' sprite width + small gap
 
     ' Load enemy sprite
-    enemy_sprite = -1
+    LET enemy_sprite = -1
     TRY
-        sf$ = enemy{"sprite_file"}
+        LET sf$ = enemy{"sprite_file"}
         IF sf$ <> "" THEN
             enemy_sprite = SPRITE.LOAD(sf$, e_fw, e_fh)
             SPRITE.POS enemy_sprite, e_x, e_y
             SPRITE.SCALE enemy_sprite, e_scale
-            af = enemy{"anim_frames"}
-            af_len = LEN(af)
+            LET af = enemy{"anim_frames"}
+            LET af_len = LEN(af)
             IF TYPEOF(af_len) = "ARRAY" THEN af_len = af_len[0]
             IF af_len > 0 THEN
                 SPRITE.ANIM enemy_sprite, "idle", af, INT(enemy{"anim_fps"})
@@ -77,10 +79,10 @@ EXPORT FUNC FIGHT$(enemy_id$)
     DIM p_sprites[3]
     FOR pidx = 0 TO RPG_PARTY.member_count - 1
         p_sprites[pidx] = -1
-        pm = RPG_PARTY.GET_MEMBER(pidx)
+        LET pm = RPG_PARTY.GET_MEMBER(pidx)
         TRY
-            sprite_path$ = RPG_DIALOG.SPRITE_PATH$ + pm{"sprite"}
-            ps = SPRITE.LOAD(sprite_path$, sfw, sfh)
+            LET sprite_path$ = RPG_DIALOG.SPRITE_PATH$ + pm{"sprite"}
+            LET ps = SPRITE.LOAD(sprite_path$, sfw, sfh)
             SPRITE.FRAME ps, 6
             SPRITE.SCALE ps, p_scale
             SPRITE.POS ps, 30 + pidx * p_gap, p_y
@@ -89,24 +91,24 @@ EXPORT FUNC FIGHT$(enemy_id$)
         ENDTRY
     NEXT pidx
 
-    battle_msg$ = "Ein " + e_name$ + " erscheint!"
-    prev_music$ = RPG_MUSIC.current_theme$
+    LET battle_msg$ = "Ein " + e_name$ + " erscheint!"
+    LET prev_music$ = RPG_MUSIC.current_theme$
     RPG_MUSIC.PLAY "battle"
-    result$ = ""
-    cur_member = 0
-    selected = 0
-    shake_x = 0 : shake_y = 0
-    turn$ = "player"
-    anim_timer = 0
-    action_delay = 0   ' frames to wait showing battle_msg before next turn
-    player_defending = []
+    LET result$ = ""
+    LET cur_member = 0
+    LET selected = 0
+    LET shake_x = 0 : LET shake_y = 0
+    LET turn$ = "player"
+    LET anim_timer = 0
+    LET action_delay = 0   ' frames to wait showing battle_msg before next turn
+    LET player_defending = []
     FOR pidx = 0 TO RPG_PARTY.member_count - 1
         PUSH player_defending, FALSE
     NEXT pidx
 
     ' Load battle background — per-map override or default
     IF battle_bg <= 0 THEN
-        bg_path$ = RPG_DIALOG.MAP_BATTLE_BG$
+        LET bg_path$ = RPG_DIALOG.MAP_BATTLE_BG$
         IF bg_path$ = "" THEN bg_path$ = RPG_DIALOG.BATTLE_BG$
         IF bg_path$ <> "" THEN
             TRY : battle_bg = GFX.LOADIMAGE(bg_path$) : CATCH : ENDTRY
@@ -114,12 +116,12 @@ EXPORT FUNC FIGHT$(enemy_id$)
     ENDIF
 
     ' Color aliases from palette
-    cbg = RPG_DIALOG.C_BOX_BG : cbd = RPG_DIALOG.C_BOX_BD
-    ctx = RPG_DIALOG.C_TEXT : ctd = RPG_DIALOG.C_TEXT_DIM
-    ctb = RPG_DIALOG.C_TEXT_BR : cms = RPG_DIALOG.C_MENU_SEL
-    cmt = RPG_DIALOG.C_MENU_TXT : chp = RPG_DIALOG.C_HP_BAR
-    chb = RPG_DIALOG.C_HP_BG : ceh = RPG_DIALOG.C_ENEMY_HP
-    cmsg = RPG_DIALOG.C_MSG
+    LET cbg = RPG_DIALOG.C_BOX_BG : LET cbd = RPG_DIALOG.C_BOX_BD
+    LET ctx = RPG_DIALOG.C_TEXT : LET ctd = RPG_DIALOG.C_TEXT_DIM
+    LET ctb = RPG_DIALOG.C_TEXT_BR : LET cms = RPG_DIALOG.C_MENU_SEL
+    LET cmt = RPG_DIALOG.C_MENU_TXT : LET chp = RPG_DIALOG.C_HP_BAR
+    LET chb = RPG_DIALOG.C_HP_BG : LET ceh = RPG_DIALOG.C_ENEMY_HP
+    LET cmsg = RPG_DIALOG.C_MSG
 
     DO
         ' ── DRAW BATTLE SCREEN ───────────────────────────────
@@ -158,38 +160,38 @@ EXPORT FUNC FIGHT$(enemy_id$)
         ENDIF
 
         ' Enemy HP bar (above enemy, inside arena)
-        e_bar_w = INT(fs * 6)
-        hp_label_y = e_y - INT(fs * 1.5)
+        LET e_bar_w = INT(fs * 6)
+        LET hp_label_y = e_y - INT(fs * 1.5)
         TEXT e_x - INT(fs*2), hp_label_y, e_name$, ceh[0], ceh[1]+140, ceh[2]+140
-        e_bar_x = e_x - INT(fs*2) + INT(fs * 5)
+        LET e_bar_x = e_x - INT(fs*2) + INT(fs * 5)
         RECT e_bar_x, hp_label_y + INT(fs*0.1), e_bar_w, bar_h, chb[0], chb[1], chb[2], TRUE
-        efill = 0
+        LET efill = 0
         IF e_max_hp > 0 THEN efill = INT((e_hp / e_max_hp) * e_bar_w)
         IF efill > 0 THEN RECT e_bar_x, hp_label_y + INT(fs*0.1), efill, bar_h, ceh[0], ceh[1], ceh[2], TRUE
         RECT e_bar_x, hp_label_y + INT(fs*0.1), e_bar_w, bar_h, cbd[0]+20, cbd[1]-40, cbd[2]-100, FALSE
         TEXT e_bar_x + e_bar_w + 5, hp_label_y, STR$(INT(e_hp)) + "/" + STR$(INT(e_max_hp)), ctd[0]+20, ctd[1]-10, ctd[2]-30
 
         ' ── Bottom Panel (sized to fit party + menu + message) ──
-        panel_y = sh/2 + 10
-        panel_h = sh - panel_y - 10
+        LET panel_y = sh/2 + 10
+        LET panel_h = sh - panel_y - 10
         RECT 10, panel_y, sw - 20, panel_h, cbg[0], cbg[1], cbg[2], TRUE
         RECT 10, panel_y, sw - 20, panel_h, cbd[0], cbd[1], cbd[2], FALSE
 
         ' Party stats (left side)
         FOR pidx = 0 TO RPG_PARTY.member_count - 1
             pm = RPG_PARTY.GET_MEMBER(pidx)
-            py = panel_y + INT(fs*0.5) + pidx * member_h
+            LET py = panel_y + INT(fs*0.5) + pidx * member_h
             ' Highlight active member
             IF pidx = cur_member AND turn$ = "player" THEN
                 RECT 15, py - 3, INT(fs * 14), INT(fs * 2.7), cms[0]-20, cms[1]-20, cms[2]-50, TRUE
             ENDIF
-            nm$ = LEFT$(pm{"name"}, 8)
+            LET nm$ = LEFT$(pm{"name"}, 8)
             TEXT 20, py, nm$, ctx[0]-30, ctx[1]-30, ctx[2]
             ' HP
-            hbar_x = 20 + name_col_w
+            LET hbar_x = 20 + name_col_w
             RECT hbar_x, py + INT(fs*0.15), bar_w, bar_h, chb[0], chb[1], chb[2], TRUE
             IF pm{"max_hp"} > 0 THEN
-                hf = INT((pm{"hp"} / pm{"max_hp"}) * bar_w)
+                LET hf = INT((pm{"hp"} / pm{"max_hp"}) * bar_w)
                 IF hf > 0 THEN RECT hbar_x, py + INT(fs*0.15), hf, bar_h, chp[0], chp[1], chp[2], TRUE
             ENDIF
             TEXT hbar_x + bar_w + 5, py, STR$(INT(pm{"hp"})), chp[0]+100, chp[1], chp[2]+100
@@ -197,7 +199,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
             TEXT 20, py + lh, "MP", cbd[0]+20, cbd[1], cbd[2]
             RECT hbar_x, py + lh + INT(fs*0.15), bar_w, bar_h, 30, 30, cbg[2]+5, TRUE
             IF pm{"max_mp"} > 0 THEN
-                mf = INT((pm{"mp"} / pm{"max_mp"}) * bar_w)
+                LET mf = INT((pm{"mp"} / pm{"max_mp"}) * bar_w)
                 IF mf > 0 THEN RECT hbar_x, py + lh + INT(fs*0.15), mf, bar_h, chp[0], chp[1]-120, chp[2]+120, TRUE
             ENDIF
             TEXT hbar_x + bar_w + 5, py + lh, STR$(INT(pm{"mp"})), cbd[0]+30, cbd[1]+10, cbd[2]+20
@@ -205,18 +207,18 @@ EXPORT FUNC FIGHT$(enemy_id$)
 
         ' Battle menu (right side) — only during player turn
         IF turn$ = "player" THEN
-            mx = sw - INT(fs * 12) : my = panel_y + INT(fs*0.5)
+            LET mx = sw - INT(fs * 12) : LET my = panel_y + INT(fs*0.5)
             pm = RPG_PARTY.GET_MEMBER(cur_member)
 
-            menu_items = ["Angriff", "Fähigkeit", "Gegenstand", "Verteidigen", "Fliehen"]
-            num_menu = 5
-            menu_w = INT(fs * 11)
+            LET menu_items = ["Angriff", "Fähigkeit", "Gegenstand", "Verteidigen", "Fliehen"]
+            LET num_menu = 5
+            LET menu_w = INT(fs * 11)
 
             RECT mx - INT(fs*0.6), my - INT(fs*0.3), menu_w, num_menu * menu_item_h + INT(fs*0.6), cbg[0]+10, cbg[1]+5, cbg[2], TRUE
             RECT mx - INT(fs*0.6), my - INT(fs*0.3), menu_w, num_menu * menu_item_h + INT(fs*0.6), cbd[0], cbd[1], cbd[2], FALSE
 
             FOR mi = 0 TO num_menu - 1
-                iy = my + mi * menu_item_h
+                LET iy = my + mi * menu_item_h
                 IF mi = selected THEN
                     RECT mx - INT(fs*0.3), iy - 2, menu_w - INT(fs*0.6), INT(fs*1.2), cms[0], cms[1]-10, cms[2]-20, TRUE
                     TEXT mx + INT(fs*0.6), iy, "> " + menu_items[mi], ctb[0], ctb[1], ctb[2]
@@ -248,7 +250,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
 
         IF turn$ = "player" THEN
             ' Skip dead members automatically
-            skip_count = 0
+            LET skip_count = 0
             DO WHILE skip_count < RPG_PARTY.member_count
                 pm = RPG_PARTY.GET_MEMBER(cur_member)
                 IF pm{"hp"} > 0 THEN EXITDO
@@ -261,7 +263,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
             LOOP
             pm = RPG_PARTY.GET_MEMBER(cur_member)
 
-            ev$ = GFX.POLLEVENT()
+            LET ev$ = GFX.POLLEVENT()
             IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_menu
             IF ev$ = "KEYDOWN:Up" THEN
                 selected = selected - 1
@@ -273,8 +275,8 @@ EXPORT FUNC FIGHT$(enemy_id$)
 
                 IF selected = 0 THEN
                     ' ── ATTACK ──
-                    patk = INT(pm{"atk"})
-                    dmg = INT(patk * (0.8 + RND(1) * 0.4)) - e_def
+                    LET patk = INT(pm{"atk"})
+                    LET dmg = INT(patk * (0.8 + RND(1) * 0.4)) - e_def
                     IF dmg < 1 THEN dmg = 1
                     e_hp = e_hp - dmg
                     IF e_hp < 0 THEN e_hp = 0
@@ -284,14 +286,14 @@ EXPORT FUNC FIGHT$(enemy_id$)
 
                 ELSEIF selected = 1 THEN
                     ' ── SKILL MENU ──
-                    skills = RPG_PARTY.GET_LEARNED_SKILLS(cur_member)
-                    sk_count = LEN(skills)
+                    LET skills = RPG_PARTY.GET_LEARNED_SKILLS(cur_member)
+                    LET sk_count = LEN(skills)
                     IF sk_count = 0 THEN
                         battle_msg$ = "Noch keine Fähigkeiten erlernt!"
                     ELSE
-                        sk_sel = 0
-                        sk_chosen = FALSE
-                        sk_box_w = INT(fs * 13)
+                        LET sk_sel = 0
+                        LET sk_chosen = FALSE
+                        LET sk_box_w = INT(fs * 13)
                         DO
                             CLS cbg[0], cbg[1], cbg[2]
                             IF battle_bg > 0 THEN GFX.DRAWIMAGE battle_bg, 10, 10, sw-20, sh/2-20 ELSE RECT 10, 10, sw-20, sh/2-20, cbg[0]+5, cbg[1], cbg[2]-15, TRUE
@@ -302,9 +304,9 @@ EXPORT FUNC FIGHT$(enemy_id$)
                             RECT sw - sk_box_w - 15, sh/2+15, sk_box_w, sk_count * menu_item_h + INT(fs*2), cbd[0], cbd[1], cbd[2], FALSE
                             TEXT sw - sk_box_w - 5, sh/2 + INT(fs*0.8), "Fähigkeit wählen:", ctx[0]-30, ctx[1]-30, ctx[2]+15
                             FOR ski = 0 TO sk_count - 1
-                                sk = skills[ski]
-                                sky = sh/2 + INT(fs*2) + ski * menu_item_h
-                                can_use = (pm{"mp"} >= INT(sk{"mp_cost"}))
+                                LET sk = skills[ski]
+                                LET sky = sh/2 + INT(fs*2) + ski * menu_item_h
+                                LET can_use = (pm{"mp"} >= INT(sk{"mp_cost"}))
                                 IF ski = sk_sel THEN
                                     RECT sw - sk_box_w - 10, sky-2, sk_box_w - 10, INT(fs*1.2), cms[0], cms[1]-10, cms[2]-20, TRUE
                                     IF can_use THEN
@@ -323,7 +325,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
                             NEXT ski
                             TEXT 20, sh - INT(fs*1.5), skills[sk_sel]{"desc"}, ctx[0]-30, ctx[1]-30, ctx[2]-10
                             SPRITE.UPDATE : SCREENFLIP : SLEEP 16
-                            sev$ = GFX.POLLEVENT()
+                            LET sev$ = GFX.POLLEVENT()
                             IF sev$ = "KEYDOWN:Down" THEN sk_sel = (sk_sel + 1) MOD sk_count
                             IF sev$ = "KEYDOWN:Up" THEN
                                 sk_sel = sk_sel - 1
@@ -332,7 +334,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
                             IF sev$ = "KEYDOWN:Escape" THEN EXITDO
                             IF sev$ = "KEYDOWN:Return" OR sev$ = "KEYDOWN:Space" THEN
                                 sk = skills[sk_sel]
-                                mp_cost = INT(sk{"mp_cost"})
+                                LET mp_cost = INT(sk{"mp_cost"})
                                 IF pm{"mp"} >= mp_cost THEN
                                     sk_chosen = TRUE
                                     EXITDO
@@ -347,14 +349,14 @@ EXPORT FUNC FIGHT$(enemy_id$)
                             mp_cost = INT(sk{"mp_cost"})
                             pm{"mp"} = pm{"mp"} - mp_cost
                             RPG_PARTY.UPDATE_MEMBER cur_member, pm
-                            stype$ = sk{"type"}
+                            LET stype$ = sk{"type"}
                             IF stype$ = "attack" OR stype$ = "attack_all" THEN
-                                power = INT(sk{"power"})
-                                hits = 1
+                                LET power = INT(sk{"power"})
+                                LET hits = 1
                                 IF MAP.EXISTS(sk, "hits") THEN hits = INT(sk{"hits"})
-                                total_dmg = 0
+                                LET total_dmg = 0
                                 FOR hi = 0 TO hits - 1
-                                    d = INT(power * (0.8 + RND(1) * 0.4)) - e_def
+                                    LET d = INT(power * (0.8 + RND(1) * 0.4)) - e_def
                                     IF d < 1 THEN d = 1
                                     total_dmg = total_dmg + d
                                 NEXT hi
@@ -385,35 +387,35 @@ EXPORT FUNC FIGHT$(enemy_id$)
                 ELSEIF selected = 2 THEN
                     ' ── ITEM (selection dialog) ──
                     ' Build list of usable consumables from inventory
-                    use_items = []
-                    all_inv = RPG_INVENTORY.GET_ALL_ITEMS()
+                    LET use_items = []
+                    LET all_inv = RPG_INVENTORY.GET_ALL_ITEMS()
                     FOR ui = 0 TO LEN(all_inv) - 1
-                        uitm = all_inv[ui]
+                        LET uitm = all_inv[ui]
                         IF uitm{"qty"} > 0 THEN
-                            utype$ = RPG_INVENTORY.GET_TYPE$(uitm{"name"})
+                            LET utype$ = RPG_INVENTORY.GET_TYPE$(uitm{"name"})
                             IF utype$ = "consumable" THEN PUSH use_items, uitm
                         ENDIF
                     NEXT ui
-                    use_count = LEN(use_items)
+                    LET use_count = LEN(use_items)
 
                     IF use_count = 0 THEN
                         battle_msg$ = "Keine Heilitems!"
                     ELSE
                         ' Build choice string: "Heiltrank x2|Mega-Heiltrank x1|Abbrechen"
-                        choice_str$ = ""
+                        LET choice_str$ = ""
                         FOR ui = 0 TO use_count - 1
                             IF ui > 0 THEN choice_str$ = choice_str$ + "|"
                             choice_str$ = choice_str$ + use_items[ui]{"name"} + " x" + STR$(INT(use_items[ui]{"qty"}))
                         NEXT ui
                         choice_str$ = choice_str$ + "|Abbrechen"
 
-                        item_choice = RPG_DIALOG.CHOICE(choice_str$)
+                        LET item_choice = RPG_DIALOG.CHOICE(choice_str$)
                         IF item_choice >= 0 AND item_choice < use_count THEN
-                            chosen_item = use_items[item_choice]
-                            chosen_name$ = chosen_item{"name"}
+                            LET chosen_item = use_items[item_choice]
+                            LET chosen_name$ = chosen_item{"name"}
                             ' Look up effects from item database
-                            effects = RPG_INVENTORY.GET_EFFECTS(chosen_name$)
-                            heal_amt = 0
+                            LET effects = RPG_INVENTORY.GET_EFFECTS(chosen_name$)
+                            LET heal_amt = 0
                             IF MAP.EXISTS(effects, "heal") THEN heal_amt = INT(effects{"heal"})
                             IF heal_amt > 0 THEN
                                 RPG_PARTY.HEAL_MEMBER cur_member, heal_amt
@@ -465,20 +467,20 @@ EXPORT FUNC FIGHT$(enemy_id$)
             anim_timer = anim_timer - 1
             IF anim_timer <= 0 THEN
                 IF e_hp > 0 THEN
-                    target = -1
+                    LET target = -1
                     FOR try_t = 0 TO 10
-                        t = INT(RND(1) * RPG_PARTY.member_count)
+                        LET t = INT(RND(1) * RPG_PARTY.member_count)
                         pm = RPG_PARTY.GET_MEMBER(t)
                         IF pm{"hp"} > 0 THEN target = t : EXITFOR
                     NEXT try_t
 
                     IF target >= 0 THEN
                         pm = RPG_PARTY.GET_MEMBER(target)
-                        edef = INT(pm{"def"})
+                        LET edef = INT(pm{"def"})
                         IF player_defending[target] THEN edef = edef * 2
-                        edmg = INT(e_atk * (0.8 + RND(1) * 0.4)) - edef
+                        LET edmg = INT(e_atk * (0.8 + RND(1) * 0.4)) - edef
                         IF edmg < 1 THEN edmg = 1
-                        new_hp = INT(pm{"hp"}) - edmg
+                        LET new_hp = INT(pm{"hp"}) - edmg
                         IF new_hp < 0 THEN new_hp = 0
                         pm{"hp"} = new_hp
                         RPG_PARTY.UPDATE_MEMBER target, pm
@@ -487,9 +489,9 @@ EXPORT FUNC FIGHT$(enemy_id$)
                     ENDIF
 
                     ' Check all dead
-                    all_dead = TRUE
+                    LET all_dead = TRUE
                     FOR cd = 0 TO RPG_PARTY.member_count - 1
-                        cpm = RPG_PARTY.GET_MEMBER(cd)
+                        LET cpm = RPG_PARTY.GET_MEMBER(cd)
                         IF cpm{"hp"} > 0 THEN all_dead = FALSE
                     NEXT cd
                     IF all_dead THEN result$ = "dead"
@@ -512,9 +514,9 @@ EXPORT FUNC FIGHT$(enemy_id$)
                 RPG_INVENTORY.ADD_GOLD e_gold
                 IF e_drop$ <> "" AND RND(1) < e_drop_chance THEN
                     ' Look up real item name from database
-                    drop_data = RPG_INVENTORY.GET_ITEM_DATA(e_drop$)
-                    drop_name$ = e_drop$
-                    drop_desc$ = "Monster drop"
+                    LET drop_data = RPG_INVENTORY.GET_ITEM_DATA(e_drop$)
+                    LET drop_name$ = e_drop$
+                    LET drop_desc$ = "Monster drop"
                     IF MAP.EXISTS(drop_data, "name") THEN drop_name$ = drop_data{"name"}
                     IF MAP.EXISTS(drop_data, "desc") THEN drop_desc$ = drop_data{"desc"}
                     battle_msg$ = battle_msg$ + ", " + drop_name$ + " erhalten!"
@@ -531,7 +533,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
                 CLS cbg[0], cbg[1], cbg[2]
                 RECT 10, 10, sw-20, sh/2-20, cbg[0]+5, cbg[1], cbg[2]-15, TRUE
                 IF enemy_sprite > 0 AND result$ = "win" THEN
-                    a = 255 - wi * 3 : IF a < 0 THEN a = 0
+                    LET a = 255 - wi * 3 : IF a < 0 THEN a = 0
                     SPRITE.ALPHA enemy_sprite, a
                     SPRITE.DRAW enemy_sprite
                 ENDIF
@@ -549,7 +551,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
                 CLS cbg[0], cbg[1], cbg[2]
                 RECT 10, sh/2+10, sw-20, sh/2-20, cbg[0], cbg[1], cbg[2], TRUE
                 TEXT 25, sh - INT(fs*1.8), battle_msg$, cmsg[0], cmsg[1], cmsg[2]
-                blink = (INT(TICK() / 400) MOD 2) = 0
+                LET blink = (INT(TICK() / 400) MOD 2) = 0
                 IF blink THEN TEXT sw/2 - INT(fs*8), sh/2 + INT(fs*1.2), "Leertaste zum Fortfahren", ctx[0]-30, ctx[1]-30, ctx[2]+15
                 SCREENFLIP : SLEEP 16
             LOOP UNTIL ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Escape"

@@ -2,6 +2,8 @@
 ' == RPG Quest Module v3
 ' == Data-driven quest system using MAPs (reliable with arrays)
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 EXPORT MODULE RPG_QUEST
 
@@ -14,11 +16,11 @@ EXPORT DIM quest_count = 0
 
 ' ── Load all quests from JSON ────────────────────────────────
 EXPORT SUB LOAD_QUESTS(json_file$)
-    data = JSON.PARSE$(TXTREADER$(json_file$))
-    quest_list = data{"quests"}
+    LET data = JSON.PARSE$(TXTREADER$(json_file$))
+    LET quest_list = data{"quests"}
     FOR i = 0 TO LEN(quest_list) - 1
-        qd = quest_list[i]
-        q = {}
+        LET qd = quest_list[i]
+        LET q = {}
         q{"id"} = qd{"id"}
         q{"title"} = qd{"title"}
         q{"desc"} = qd{"desc"}
@@ -49,7 +51,7 @@ ENDSUB
 ' ── Get quest state by ID ────────────────────────────────────
 EXPORT FUNC GET_STATE$(id$)
     FOR i = 0 TO quest_count - 1
-        q = quests[i]
+        LET q = quests[i]
         IF q{"id"} = id$ THEN RETURN q{"state"}
     NEXT i
     RETURN "unknown"
@@ -58,13 +60,13 @@ ENDFUNC
 ' ── Report progress on a goal type ───────────────────────────
 EXPORT SUB PROGRESS(goal$, amount)
     FOR i = 0 TO quest_count - 1
-        q = quests[i]
+        LET q = quests[i]
         IF q{"state"} = "active" AND q{"goal"} = goal$ THEN
             q{"progress"} = q{"progress"} + INT(amount)
             IF q{"progress"} >= q{"goal_count"} THEN
                 q{"state"} = "complete"
                 IF q{"on_complete"} <> "" THEN
-                    code$ = q{"on_complete"}
+                    LET code$ = q{"on_complete"}
                     TRY : EXECUTE code$ : CATCH : ENDTRY
                 ENDIF
             ENDIF
@@ -89,23 +91,23 @@ ENDFUNC
 EXPORT FUNC HANDLE_NPC(npc_name$, player_name$)
     ' Priority 1: Turn in completed quests
     FOR i = 0 TO quest_count - 1
-        q = quests[i]
+        LET q = quests[i]
         IF q{"state"} = "complete" AND q{"turn_in"} = npc_name$ THEN
-            dlg$ = REPLACE$(q{"dialog_complete"}, "{PLAYER}", player_name$)
+            LET dlg$ = REPLACE$(q{"dialog_complete"}, "{PLAYER}", player_name$)
             RPG_DIALOG.SAY npc_name$, dlg$
             IF q{"reward_gold"} > 0 THEN RPG_INVENTORY.ADD_GOLD q{"reward_gold"}
             IF q{"reward_item"} <> "" THEN
                 ' Look up real item name from item database
-                ri_data = RPG_INVENTORY.GET_ITEM_DATA(q{"reward_item"})
-                ri_name$ = q{"reward_item"}
-                ri_desc$ = "Quest reward"
+                LET ri_data = RPG_INVENTORY.GET_ITEM_DATA(q{"reward_item"})
+                LET ri_name$ = q{"reward_item"}
+                LET ri_desc$ = "Quest reward"
                 IF MAP.EXISTS(ri_data, "name") THEN ri_name$ = ri_data{"name"}
                 IF MAP.EXISTS(ri_data, "desc") THEN ri_desc$ = ri_data{"desc"}
                 RPG_INVENTORY.ADD_ITEM ri_name$, ri_desc$, 1
             ENDIF
             q{"state"} = "rewarded"
             IF q{"on_reward"} <> "" THEN
-                code$ = q{"on_reward"}
+                LET code$ = q{"on_reward"}
                 TRY : EXECUTE code$ : CATCH : ENDTRY
             ENDIF
             quests[i] = q
@@ -131,7 +133,7 @@ EXPORT FUNC HANDLE_NPC(npc_name$, player_name$)
         IF q{"giver"} = npc_name$ AND IS_AVAILABLE(q) THEN
             dlg$ = REPLACE$(q{"dialog_offer"}, "{PLAYER}", player_name$)
             RPG_DIALOG.SAY npc_name$, dlg$
-            choice = RPG_DIALOG.CHOICE("Quest annehmen|Nicht jetzt")
+            LET choice = RPG_DIALOG.CHOICE("Quest annehmen|Nicht jetzt")
             IF choice = 0 THEN
                 q{"state"} = "active"
                 IF q{"on_start"} <> "" THEN
@@ -149,10 +151,10 @@ ENDFUNC
 
 ' ── Count active/complete quests ─────────────────────────────
 EXPORT FUNC ACTIVE_COUNT()
-    c = 0
+    LET c = 0
     FOR i = 0 TO quest_count - 1
-        q = quests[i]
-        s$ = q{"state"}
+        LET q = quests[i]
+        LET s$ = q{"state"}
         IF s$ = "active" OR s$ = "complete" THEN c = c + 1
     NEXT i
     RETURN c
@@ -162,25 +164,25 @@ ENDFUNC
 ' ══ QUEST LOG (Q key) ════════════════════════════════════════
 ' ══════════════════════════════════════════════════════════════
 EXPORT SUB SHOW_LOG()
-    log_bg = GFX.CAPTURE()
-    sw = SCREENWIDTH() : sh = SCREENHEIGHT()
+    LET log_bg = GFX.CAPTURE()
+    LET sw = SCREENWIDTH() : LET sh = SCREENHEIGHT()
 
     DO
         GFX.DRAW_CAPTURE log_bg
         RECT 0, 0, sw, sh, 0, 0, 0, TRUE
 
-        bx = 60 : by = 30
-        bw = sw - 120 : bh = sh - 60
+        LET bx = 60 : LET by = 30
+        LET bw = sw - 120 : LET bh = sh - 60
         RECT bx, by, bw, bh, 20, 20, 45, TRUE
         RECT bx, by, bw, bh, 100, 120, 180, FALSE
 
         TEXT bx + bw/2 - 40, by + 10, "QUEST LOG", 255, 220, 80
         RECT bx + 10, by + 32, bw - 20, 2, 80, 80, 140, TRUE
 
-        iy = by + 45 : shown = 0
+        LET iy = by + 45 : LET shown = 0
         FOR i = 0 TO quest_count - 1
-            q = quests[i]
-            qs$ = q{"state"}
+            LET q = quests[i]
+            LET qs$ = q{"state"}
             IF qs$ <> "inactive" THEN
                 IF qs$ = "complete" THEN
                     TEXT bx + 20, iy, "[DONE] " + q{"title"}, 100, 255, 100
@@ -193,10 +195,10 @@ EXPORT SUB SHOW_LOG()
                 TEXT bx + 30, iy, q{"desc"}, 160, 160, 190
                 iy = iy + 20
                 IF qs$ = "active" THEN
-                    bar_w = 150
-                    gc = q{"goal_count"}
+                    LET bar_w = 150
+                    LET gc = q{"goal_count"}
                     IF gc > 0 THEN
-                        fill_w = INT((q{"progress"} / gc) * bar_w)
+                        LET fill_w = INT((q{"progress"} / gc) * bar_w)
                     ELSE
                         fill_w = 0
                     ENDIF
@@ -216,7 +218,7 @@ EXPORT SUB SHOW_LOG()
         TEXT bx + 10, by + bh - 25, "Press Q to close", 100, 100, 140
         SCREENFLIP : SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:Q" OR ev$ = "KEYDOWN:Escape" OR ev$ = "QUIT" THEN EXITDO
     LOOP
     GFX.FREEIMAGE log_bg
@@ -224,10 +226,10 @@ ENDSUB
 
 ' ── Save/Load ────────────────────────────────────────────────
 EXPORT FUNC GET_SAVE_DATA()
-    save = []
+    LET save = []
     FOR i = 0 TO quest_count - 1
-        q = quests[i]
-        qs = {"id": q{"id"}, "state": q{"state"}, "progress": q{"progress"}}
+        LET q = quests[i]
+        LET qs = {"id": q{"id"}, "state": q{"state"}, "progress": q{"progress"}}
         PUSH save, qs
     NEXT i
     RETURN save
@@ -235,9 +237,9 @@ ENDFUNC
 
 EXPORT SUB LOAD_SAVE_DATA(data)
     FOR i = 0 TO LEN(data) - 1
-        sd = data[i]
+        LET sd = data[i]
         FOR j = 0 TO quest_count - 1
-            q = quests[j]
+            LET q = quests[j]
             IF q{"id"} = sd{"id"} THEN
                 q{"state"} = sd{"state"}
                 q{"progress"} = sd{"progress"}

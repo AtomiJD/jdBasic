@@ -2,6 +2,8 @@
 ' == RPG Types Module
 ' == EXPORT TYPEs for game entities
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 EXPORT MODULE RPG_TYPES
 
@@ -31,17 +33,17 @@ EXPORT TYPE T_NPC
         IF MAP.EXISTS(data, "is_shop") THEN THIS.is_shop = data{"is_shop"}
         IF MAP.EXISTS(data, "shop_items") THEN THIS.shop_items$ = data{"shop_items"}
 
-        npc_file$ = asset_path$ + "npc.png"
+        LET npc_file$ = asset_path$ + "npc.png"
         IF MAP.EXISTS(data, "sprite") THEN npc_file$ = asset_path$ + data{"sprite"}
 
         ' Load sprite: check if it's a spritesheet (>= 192x256 for 3x4 @ 64x64)
         TRY
-            test_id = SPRITE.LOAD(npc_file$)
-            img_w = SPRITE.WIDTH(test_id)
-            img_h = SPRITE.HEIGHT(test_id)
+            LET test_id = SPRITE.LOAD(npc_file$)
+            LET img_w = SPRITE.WIDTH(test_id)
+            LET img_h = SPRITE.HEIGHT(test_id)
             SPRITE.DELETE test_id
 
-            fw = 64 : fh = 64 : sc = 1.0
+            LET fw = 64 : LET fh = 64 : LET sc = 1.0
             IF MAP.EXISTS(data, "frame_w") THEN fw = INT(data{"frame_w"})
             IF MAP.EXISTS(data, "frame_h") THEN fh = INT(data{"frame_h"})
             IF MAP.EXISTS(data, "scale") THEN sc = data{"scale"}
@@ -70,7 +72,7 @@ EXPORT TYPE T_NPC
     ENDSUB
 
     SUB INTERACT(player_name$, is_recruited)
-        dlg$ = THIS.dialog$
+        LET dlg$ = THIS.dialog$
         IF is_recruited AND THIS.dialog_joined$ <> "" THEN
             dlg$ = THIS.dialog_joined$
         ENDIF

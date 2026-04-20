@@ -6,6 +6,8 @@
 ' ==   RPG_DIALOG.SAY "Name", "Message text here"
 ' ==   choice = RPG_DIALOG.CHOICE("Yes|No|Maybe")
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 EXPORT MODULE RPG_DIALOG
 
@@ -57,30 +59,30 @@ EXPORT DIM dlg_active = FALSE
 ' ===================================================================
 EXPORT SUB SAY(name$, text$)
     dlg_active = TRUE
-    char_idx = 0
-    total_chars = LEN(text$)
-    done_typing = FALSE
+    LET char_idx = 0
+    LET total_chars = LEN(text$)
+    LET done_typing = FALSE
 
     ' Font-relative layout
-    line_h = INT(FS * 1.3)
-    char_w = INT(FS * 0.65)
-    margin = INT(FS * 1.0)
-    box_h = INT(FS * 6)
-    name_h = INT(FS * 1.4)
+    LET line_h = INT(FS * 1.3)
+    LET char_w = INT(FS * 0.65)
+    LET margin = INT(FS * 1.0)
+    LET box_h = INT(FS * 6)
+    LET name_h = INT(FS * 1.4)
 
     ' Capture the current scene as background
-    bg_capture = GFX.CAPTURE()
+    LET bg_capture = GFX.CAPTURE()
 
     DO
         ' Redraw the frozen scene as background (prevents flicker)
         GFX.DRAW_CAPTURE bg_capture
 
         ' Draw semi-transparent dialog box at bottom of screen
-        sw = SCREENWIDTH()
-        sh = SCREENHEIGHT()
-        box_w = INT(sw * 3 / 4)
-        box_x = INT((sw - box_w) / 2)
-        box_y = sh - box_h - 10
+        LET sw = SCREENWIDTH()
+        LET sh = SCREENHEIGHT()
+        LET box_w = INT(sw * 3 / 4)
+        LET box_x = INT((sw - box_w) / 2)
+        LET box_y = sh - box_h - 10
 
         ' Box background (dark, semi-transparent)
         DRAWCOLOR DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B
@@ -91,7 +93,7 @@ EXPORT SUB SAY(name$, text$)
 
         ' Speaker name
         IF name$ <> "" THEN
-            name_w = LEN(name$) * char_w + INT(FS * 1.2)
+            LET name_w = LEN(name$) * char_w + INT(FS * 1.2)
             RECT box_x + 10, box_y - INT(name_h * 0.7), name_w, name_h, _
                 DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
             TEXT box_x + 10 + INT(FS * 0.6), box_y - INT(name_h * 0.55), name$, 255, 255, 255
@@ -106,25 +108,25 @@ EXPORT SUB SAY(name$, text$)
             ENDIF
         ENDIF
 
-        visible_text$ = LEFT$(text$, char_idx)
+        LET visible_text$ = LEFT$(text$, char_idx)
 
         ' Word-wrap and draw text
-        tx = box_x + margin
-        ty = box_y + margin
-        max_w = box_w - margin * 2
-        chars_per_line = INT(max_w / char_w)
+        LET tx = box_x + margin
+        LET ty = box_y + margin
+        LET max_w = box_w - margin * 2
+        LET chars_per_line = INT(max_w / char_w)
         IF chars_per_line < 10 THEN chars_per_line = 40
 
-        line_start = 0
-        line_num = 0
+        LET line_start = 0
+        LET line_num = 0
         DO WHILE line_start < LEN(visible_text$)
-            remaining = LEN(visible_text$) - line_start
+            LET remaining = LEN(visible_text$) - line_start
             IF remaining <= chars_per_line THEN
-                line$ = MID$(visible_text$, line_start, remaining)
+                LET line$ = MID$(visible_text$, line_start, remaining)
                 line_start = LEN(visible_text$)
             ELSE
                 ' Find last space before chars_per_line
-                cut = chars_per_line
+                LET cut = chars_per_line
                 FOR j = line_start + chars_per_line TO line_start STEP -1
                     IF MID$(text$, j, 1) = " " THEN
                         cut = j - line_start
@@ -140,7 +142,7 @@ EXPORT SUB SAY(name$, text$)
 
         ' Prompt indicator
         IF done_typing THEN
-            blink = (INT(TICK() / 400) MOD 2) = 0
+            LET blink = (INT(TICK() / 400) MOD 2) = 0
             IF blink THEN
                 TEXT box_x + box_w - INT(FS * 2.5), box_y + box_h - line_h, ">>>", _
                     DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B
@@ -151,7 +153,7 @@ EXPORT SUB SAY(name$, text$)
         SLEEP 16
 
         ' Input: Space/Enter to advance, or skip typing
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" THEN
             IF done_typing THEN
                 EXITDO
@@ -172,21 +174,21 @@ ENDSUB
 ' Example: idx = RPG_DIALOG.CHOICE("Yes|No|Cancel")
 ' ===================================================================
 EXPORT FUNC CHOICE(options$)
-    items = SPLIT(options$, "|")
-    num_items = LEN(items)
-    selected = 0
-    choice_bg = GFX.CAPTURE()
+    LET items = SPLIT(options$, "|")
+    LET num_items = LEN(items)
+    LET selected = 0
+    LET choice_bg = GFX.CAPTURE()
 
-    item_h = INT(FS * 1.6)
-    box_w = INT(FS * 12)
+    LET item_h = INT(FS * 1.6)
+    LET box_w = INT(FS * 12)
 
     DO
         GFX.DRAW_CAPTURE choice_bg
-        sw = SCREENWIDTH()
-        sh = SCREENHEIGHT()
-        box_h = num_items * item_h + INT(FS * 1.2)
-        box_y = sh - box_h - 10
-        box_x = sw - box_w - 10
+        LET sw = SCREENWIDTH()
+        LET sh = SCREENHEIGHT()
+        LET box_h = num_items * item_h + INT(FS * 1.2)
+        LET box_y = sh - box_h - 10
+        LET box_x = sw - box_w - 10
 
         ' Box
         RECT box_x, box_y, box_w, box_h, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
@@ -194,7 +196,7 @@ EXPORT FUNC CHOICE(options$)
 
         ' Items
         FOR i = 0 TO num_items - 1
-            iy = box_y + INT(FS * 0.6) + i * item_h
+            LET iy = box_y + INT(FS * 0.6) + i * item_h
             IF i = selected THEN
                 RECT box_x + 4, iy - 2, box_w - 8, INT(FS * 1.3), DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
                 TEXT box_x + INT(FS * 1.5), iy, "> " + items[i], 255, 255, 255
@@ -206,7 +208,7 @@ EXPORT FUNC CHOICE(options$)
         SCREENFLIP
         SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "KEYDOWN:Down" THEN
             selected = (selected + 1) MOD num_items
         ENDIF
@@ -230,24 +232,24 @@ ENDFUNC
 ' ===================================================================
 EXPORT FUNC ASK$(name$, question$)
     dlg_active = TRUE
-    input$ = ""
-    cursor_blink = 0
-    ask_bg = GFX.CAPTURE()
+    LET input$ = ""
+    LET cursor_blink = 0
+    LET ask_bg = GFX.CAPTURE()
 
-    line_h = INT(FS * 1.3)
-    char_w = INT(FS * 0.65)
-    margin = INT(FS * 1.0)
-    box_h = INT(FS * 6)
-    name_h = INT(FS * 1.4)
-    input_h = INT(FS * 1.6)
+    LET line_h = INT(FS * 1.3)
+    LET char_w = INT(FS * 0.65)
+    LET margin = INT(FS * 1.0)
+    LET box_h = INT(FS * 6)
+    LET name_h = INT(FS * 1.4)
+    LET input_h = INT(FS * 1.6)
 
     DO
         GFX.DRAW_CAPTURE ask_bg
-        sw = SCREENWIDTH()
-        sh = SCREENHEIGHT()
-        box_w = INT(sw * 3 / 4)
-        box_x = INT((sw - box_w) / 2)
-        box_y = sh - box_h - 10
+        LET sw = SCREENWIDTH()
+        LET sh = SCREENHEIGHT()
+        LET box_w = INT(sw * 3 / 4)
+        LET box_x = INT((sw - box_w) / 2)
+        LET box_y = sh - box_h - 10
 
         ' Box
         RECT box_x, box_y, box_w, box_h, DLG_COLOR_R, DLG_COLOR_G, DLG_COLOR_B, TRUE
@@ -255,7 +257,7 @@ EXPORT FUNC ASK$(name$, question$)
 
         ' Name tag
         IF name$ <> "" THEN
-            name_w = LEN(name$) * char_w + INT(FS * 1.2)
+            LET name_w = LEN(name$) * char_w + INT(FS * 1.2)
             RECT box_x + 10, box_y - INT(name_h * 0.7), name_w, name_h, _
                 DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, TRUE
             TEXT box_x + 10 + INT(FS * 0.6), box_y - INT(name_h * 0.55), name$, 255, 255, 255
@@ -265,14 +267,14 @@ EXPORT FUNC ASK$(name$, question$)
         TEXT box_x + margin, box_y + margin, question$, 230, 230, 230
 
         ' Input field
-        input_y = box_y + margin + line_h + INT(FS * 0.4)
+        LET input_y = box_y + margin + line_h + INT(FS * 0.4)
         RECT box_x + margin, input_y, box_w - margin*2, input_h, 10, 10, 40, TRUE
         RECT box_x + margin, input_y, box_w - margin*2, input_h, _
             DLG_BORDER_R, DLG_BORDER_G, DLG_BORDER_B, FALSE
 
         ' Typed text + cursor
         cursor_blink = cursor_blink + 1
-        cursor$ = ""
+        LET cursor$ = ""
         IF (cursor_blink MOD 40) < 20 THEN cursor$ = "_"
         TEXT box_x + margin + INT(FS * 0.4), input_y + INT(FS * 0.3), input$ + cursor$, 255, 255, 255
 
@@ -283,7 +285,7 @@ EXPORT FUNC ASK$(name$, question$)
         SCREENFLIP
         SLEEP 16
 
-        ev$ = GFX.POLLEVENT()
+        LET ev$ = GFX.POLLEVENT()
         IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN
             GFX.FREEIMAGE ask_bg
             dlg_active = FALSE
@@ -299,9 +301,9 @@ EXPORT FUNC ASK$(name$, question$)
         ENDIF
         ' Regular key input
         IF LEFT$(ev$, 8) = "KEYDOWN:" THEN
-            key$ = MID$(ev$, 8)
+            LET key$ = MID$(ev$, 8)
             IF LEN(key$) = 1 THEN
-                ch$ = key$
+                LET ch$ = key$
                 ' Check shift for uppercase (simplified)
                 IF GFX.KEYSTATE("Left Shift") OR GFX.KEYSTATE("Right Shift") THEN
                     ch$ = UCASE$(ch$)

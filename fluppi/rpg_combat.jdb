@@ -2,6 +2,8 @@
 ' == RPG Combat Module
 ' == Player stats, enemy spawning, and encounter system
 ' ===================================================================
+OPTION "EXPLICIT"
+OPTION "STRICT"
 
 EXPORT MODULE RPG_COMBAT
 
@@ -34,12 +36,12 @@ EXPORT SUB ADD_XP(amount)
 ENDSUB
 
 EXPORT FUNC TOTAL_ATK()
-    total = player{"atk"}
-    inv = RPG_INVENTORY.GET_ALL_ITEMS()
+    LET total = player{"atk"}
+    LET inv = RPG_INVENTORY.GET_ALL_ITEMS()
     FOR i = 0 TO LEN(inv) - 1
-        itm = inv[i]
+        LET itm = inv[i]
         IF itm{"qty"} > 0 THEN
-            eff = RPG_INVENTORY.GET_EFFECTS(itm{"name"})
+            LET eff = RPG_INVENTORY.GET_EFFECTS(itm{"name"})
             IF MAP.EXISTS(eff, "atk") THEN total = total + INT(eff{"atk"})
         ENDIF
     NEXT i
@@ -47,12 +49,12 @@ EXPORT FUNC TOTAL_ATK()
 ENDFUNC
 
 EXPORT FUNC TOTAL_DEF()
-    total = player{"def"}
-    inv = RPG_INVENTORY.GET_ALL_ITEMS()
+    LET total = player{"def"}
+    LET inv = RPG_INVENTORY.GET_ALL_ITEMS()
     FOR i = 0 TO LEN(inv) - 1
-        itm = inv[i]
+        LET itm = inv[i]
         IF itm{"qty"} > 0 THEN
-            eff = RPG_INVENTORY.GET_EFFECTS(itm{"name"})
+            LET eff = RPG_INVENTORY.GET_EFFECTS(itm{"name"})
             IF MAP.EXISTS(eff, "def") THEN total = total + INT(eff{"def"})
         ENDIF
     NEXT i
@@ -107,7 +109,7 @@ EXPORT TYPE T_ENEMY
     FUNC LOAD_BATTLE_SPRITE()
         IF THIS.sprite_file$ = "" THEN RETURN -1
         TRY
-            sid = SPRITE.LOAD(THIS.sprite_file$, THIS.frame_w, THIS.frame_h)
+            LET sid = SPRITE.LOAD(THIS.sprite_file$, THIS.frame_w, THIS.frame_h)
             THIS.sprite_id = sid
             SPRITE.ANIM sid, "idle", THIS.anim_frames, THIS.anim_fps
             SPRITE.PLAY sid, "idle"
@@ -118,7 +120,7 @@ EXPORT TYPE T_ENEMY
     ENDFUNC
 
     SUB TAKE_DAMAGE(amount)
-        dmg = INT(amount) - THIS.def
+        LET dmg = INT(amount) - THIS.def
         IF dmg < 1 THEN dmg = 1
         THIS.hp = THIS.hp - dmg
         IF THIS.hp < 0 THEN THIS.hp = 0
@@ -139,8 +141,8 @@ EXPORT DIM asset_path$ = ""
 
 EXPORT SUB LOAD_ENEMIES(json_file$, apath$)
     asset_path$ = apath$
-    data = JSON.PARSE$(TXTREADER$(json_file$))
-    elist = data{"enemies"}
+    LET data = JSON.PARSE$(TXTREADER$(json_file$))
+    LET elist = data{"enemies"}
     FOR i = 0 TO LEN(elist) - 1
         DIM en AS RPG_COMBAT.T_ENEMY
         en.INIT_FROM_MAP elist[i], asset_path$
@@ -151,11 +153,11 @@ ENDSUB
 
 ' Create a fresh enemy MAP by ID (for battle)
 EXPORT FUNC SPAWN_ENEMY(id$)
-    tc = LEN(enemy_templates)
+    LET tc = LEN(enemy_templates)
     FOR i = 0 TO tc - 1
-        t = enemy_templates[i]
+        LET t = enemy_templates[i]
         IF t.id$ = id$ THEN
-            en = {}
+            LET en = {}
             en{"id"} = t.id$
             en{"name"} = t.name$
             en{"sprite_file"} = t.sprite_file$
@@ -179,9 +181,9 @@ ENDFUNC
 
 ' Get a random enemy ID
 EXPORT FUNC RANDOM_ENEMY_ID$()
-    tc = LEN(enemy_templates)
+    LET tc = LEN(enemy_templates)
     IF tc = 0 THEN RETURN ""
-    idx = INT(RND(1) * tc)
+    LET idx = INT(RND(1) * tc)
     IF idx >= tc THEN idx = tc - 1
     RETURN enemy_templates[idx].id$
 ENDFUNC
@@ -208,10 +210,10 @@ EXPORT SUB USE_ITEM(item_name$)
         RPG_DIALOG.SAY "", "Du hast diesen Gegenstand nicht!"
         RETURN
     ENDIF
-    eff = RPG_INVENTORY.GET_EFFECTS(item_name$)
-    itype$ = RPG_INVENTORY.GET_TYPE$(item_name$)
+    LET eff = RPG_INVENTORY.GET_EFFECTS(item_name$)
+    LET itype$ = RPG_INVENTORY.GET_TYPE$(item_name$)
     IF itype$ = "consumable" AND MAP.EXISTS(eff, "heal") THEN
-        heal_amt = INT(eff{"heal"})
+        LET heal_amt = INT(eff{"heal"})
         HEAL_PLAYER heal_amt
         RPG_INVENTORY.REMOVE_ITEM item_name$, 1
         RPG_DIALOG.SAY "", item_name$ + " benutzt! HP +" + STR$(heal_amt)
@@ -235,7 +237,7 @@ ENDSUB
 EXPORT SUB DRAW_HP_BAR(x, y, w, h)
     RECT x, y, w, h, 60, 30, 30, TRUE
     IF player{"max_hp"} > 0 THEN
-        fill = INT((player{"hp"} / player{"max_hp"}) * w)
+        LET fill = INT((player{"hp"} / player{"max_hp"}) * w)
         IF fill > w THEN fill = w
         IF fill > 0 THEN RECT x, y, fill, h, 80, 200, 80, TRUE
     ENDIF
