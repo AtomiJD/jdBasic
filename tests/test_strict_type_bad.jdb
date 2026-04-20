@@ -1,0 +1,19 @@
+' Phase 4: STRICT should reject these type mismatches.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' (1) STRING literal into INTEGER DIM
+DIM x AS INTEGER = "hello"
+
+' (2) INTEGER literal into STRING DIM
+DIM s AS STRING = 42
+
+' (3) Assignment swapping types
+DIM n AS INTEGER = 0
+n = "not a number"
+
+' (4) String-concat RHS into INTEGER LHS
+DIM m AS INTEGER = 0
+m = "a" + "b"
+
+PRINT "should not reach"

@@ -72,6 +72,15 @@ public:
     std::unordered_map<std::string, StaticType> type_env;
     void populate_type_env(const std::vector<StmtPtr>& program);
 
+    // Phase 4: infer the static type of an expression. Conservative —
+    // returns UNKNOWN whenever the shape can't be determined without
+    // running codegen. Callers treat UNKNOWN as "no check possible".
+    StaticType infer_expr_type(const Expr& e) const;
+    // Assignment / argument compatibility: can a value of type `src`
+    // be used where `dst` is expected? UNKNOWN on either side accepts
+    // (avoid false positives while coverage is still incomplete).
+    static bool types_compatible(const StaticType& src, const StaticType& dst);
+
     // Source file of the statement currently being codegen'd. Diagnostics
     // raised from deep inside codegen_expr use this for the file: prefix
     // (Expr itself doesn't carry source_file — only Stmt does).

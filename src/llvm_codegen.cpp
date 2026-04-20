@@ -831,6 +831,130 @@ void LLVMCodegen::populate_type_env(const std::vector<StmtPtr>& program) {
     }
 }
 
+LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
+    using K = StaticType::Kind;
+    auto make = [](K k) { StaticType t; t.kind = k; return t; };
+    switch (e.kind) {
+        case ExprKind::LITERAL_INT:    return make(K::INTEGER);
+        case ExprKind::LITERAL_FLOAT:  return make(K::NUMBER);
+        case ExprKind::LITERAL_STRING: return make(K::STRING);
+        case ExprKind::LITERAL_BOOL:   return make(K::BOOLEAN);
+        case ExprKind::MAP_LITERAL:    return make(K::MAP);
+        case ExprKind::LAMBDA_EXPR:    return make(K::FUNCREF);
+        case ExprKind::ARRAY_LITERAL: {
+            StaticType t = make(K::ARRAY);
+            // Peek at the first element if all elements share a coarse type.
+            if (!e.args.empty() && e.args[0]) {
+                StaticType first = infer_expr_type(*e.args[0]);
+                bool homogeneous = true;
+                for (size_t i = 1; i < e.args.size() && homogeneous; ++i) {
+                    if (!e.args[i]) continue;
+                    StaticType other = infer_expr_type(*e.args[i]);
+                    if (other.kind != first.kind) homogeneous = false;
+                }
+                if (homogeneous && first.kind != K::UNKNOWN)
+                    t.elem = std::make_shared<StaticType>(first);
+            }
+            return t;
+        }
+        case ExprKind::VARIABLE: {
+            // $-suffix is a string-by-convention hint even if not DIM'd.
+            if (!e.str_val.empty() && e.str_val.back() == '$')
+                return make(K::STRING);
+            auto it = type_env.find(e.str_val);
+            if (it != type_env.end()) return it->second;
+            return make(K::UNKNOWN);
+        }
+        case ExprKind::UNARY:
+            return e.right ? infer_expr_type(*e.right) : make(K::UNKNOWN);
+        case ExprKind::BINARY: {
+            // Arithmetic / comparison / string-concat rules. Comparisons
+            // yield BOOLEAN; concat with any string yields STRING; numeric
+            // mixes promote to NUMBER; anything else → UNKNOWN.
+            StaticType l = e.left  ? infer_expr_type(*e.left)  : make(K::UNKNOWN);
+            StaticType r = e.right ? infer_expr_type(*e.right) : make(K::UNKNOWN);
+            switch (e.op) {
+                case TokenType::EQ: case TokenType::NE:
+                case TokenType::LT: case TokenType::LE:
+                case TokenType::GT: case TokenType::GE:
+                case TokenType::AND: case TokenType::OR:
+                case TokenType::XOR: case TokenType::ANDALSO:
+                case TokenType::ORELSE:
+                    return make(K::BOOLEAN);
+                default: break;
+            }
+            if (l.kind == K::STRING || r.kind == K::STRING)
+                return make(K::STRING);
+            auto is_num = [](K k) {
+                return k == K::INTEGER || k == K::NUMBER ||
+                       k == K::BOOLEAN || k == K::DATE;
+            };
+            if (is_num(l.kind) && is_num(r.kind)) {
+                if (l.kind == K::NUMBER || r.kind == K::NUMBER) return make(K::NUMBER);
+                return make(K::INTEGER);
+            }
+            return make(K::UNKNOWN);
+        }
+        case ExprKind::INDEX: {
+            // Array-of-T indexed by int → T; everything else UNKNOWN.
+            if (!e.left) return make(K::UNKNOWN);
+            StaticType base = infer_expr_type(*e.left);
+            if (base.kind == K::ARRAY && base.elem)
+                return *base.elem;
+            return make(K::UNKNOWN);
+        }
+        case ExprKind::CALL: {
+            // User-defined functions: trust declared return tag.
+            auto uit = user_functions.find(e.func_name);
+            if (uit != user_functions.end()) {
+                switch (uit->second.return_tag) {
+                    case 0: return make(K::INTEGER);
+                    case 1: return make(K::NUMBER);
+                    case 2: return make(K::STRING);
+                    case 3: return make(K::ARRAY);
+                    case 4: return make(K::MAP);
+                    case 5: return make(K::FUNCREF);
+                    default: return make(K::UNKNOWN);
+                }
+            }
+            // $-suffixed builtins return strings (SPLIT$, LCASE$, etc).
+            if (!e.func_name.empty() && e.func_name.back() == '$')
+                return make(K::STRING);
+            return make(K::UNKNOWN);
+        }
+        default: return make(K::UNKNOWN);
+    }
+}
+
+bool LLVMCodegen::types_compatible(const StaticType& src, const StaticType& dst) {
+    using K = StaticType::Kind;
+    // Escape hatches: missing info → no verdict.
+    if (src.kind == K::UNKNOWN || dst.kind == K::UNKNOWN) return true;
+    if (src.kind == K::ANY     || dst.kind == K::ANY)     return true;
+    if (src.kind == dst.kind) {
+        if (dst.kind == K::UDT)   return src.name == dst.name;
+        // Element-level check for arrays is only when both sides have a
+        // declared element type; otherwise leniently accept.
+        if (dst.kind == K::ARRAY) {
+            if (!src.elem || !dst.elem) return true;
+            return types_compatible(*src.elem, *dst.elem);
+        }
+        return true;
+    }
+    // Numeric widening: INTEGER / BOOLEAN / DATE all fit into NUMBER, and
+    // vice versa under BASIC's auto-conversion rules.
+    auto is_num = [](K k) {
+        return k == K::INTEGER || k == K::NUMBER ||
+               k == K::BOOLEAN || k == K::DATE;
+    };
+    if (is_num(src.kind) && is_num(dst.kind)) return true;
+    // MAP / OBJECT — jdBasic maps and UDT instances both stringify to
+    // Object in user code, so a bare Object target accepts either.
+    if (dst.kind == K::MAP && src.kind == K::UDT) return true;
+    if (dst.kind == K::UDT && src.kind == K::MAP) return true;
+    return false;
+}
+
 // ── Main Entry Points ───────────────────────────────────────
 
 bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
@@ -1886,6 +2010,24 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
+    // Phase 4 STRICT: assignment to a declared global must have a
+    // compatible RHS. Only checked when the LHS is a known global —
+    // locals lack a StaticType table today (future phase extends).
+    if (strict_mode && stmt.kind != StmtKind::DIM && stmt.expr &&
+        stmt.var_name.find('.') == std::string::npos) {
+        auto tit = type_env.find(stmt.var_name);
+        if (tit != type_env.end() && !tit->second.is_unknown()) {
+            StaticType actual = infer_expr_type(*stmt.expr);
+            if (!actual.is_unknown() &&
+                !types_compatible(actual, tit->second)) {
+                report_error(stmt.source_file, stmt.line,
+                    "Type Mismatch in assignment to '" + stmt.var_name +
+                    "': expected " + tit->second.describe() +
+                    ", got " + actual.describe());
+            }
+        }
+    }
+
     // User-declared CONST: first LET registers; later assignments throw.
     {
         std::string up_name = stmt.var_name;
@@ -2168,6 +2310,25 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
 // ── DIM (array allocation) ──────────────────────────────────
 
 void LLVMCodegen::codegen_dim(const Stmt& stmt) {
+    // Phase 4 STRICT: DIM with declared type + initializer must match.
+    // `DIM x AS INTEGER = "hello"` is the canonical bug this catches.
+    // ARRAY and multi-dim shape inits are exempt — the initializer shape
+    // doesn't infer cleanly as a StaticType yet, so let the legacy path
+    // handle them (Phase 4 extends later).
+    if (strict_mode && stmt.expr &&
+        stmt.var_type != VarType::NONE &&
+        stmt.var_type != VarType::ARRAY) {
+        StaticType declared = StaticType::from_vartype(
+            stmt.var_type, stmt.elem_type, stmt.label);
+        StaticType actual = infer_expr_type(*stmt.expr);
+        if (!declared.is_unknown() && !actual.is_unknown() &&
+            !types_compatible(actual, declared)) {
+            report_error(stmt.source_file, stmt.line,
+                "Type Mismatch in DIM '" + stmt.var_name +
+                "': expected " + declared.describe() +
+                ", got " + actual.describe());
+        }
+    }
     // Track DIM ... AS BOOLEAN for TYPEOF.
     if (stmt.var_type == VarType::BOOLEAN) {
         std::string up = stmt.var_name;
