@@ -839,7 +839,7 @@ Description: Performs linear interpolation between two values or arrays.
 
 [LINT]
 Syntax: LINT
-Description: Analyzes the source code for potential issues like unused variables.
+Description: Static analysis over the loaded buffer. Reports parse stats, which files have OPTION "EXPLICIT"/"STRICT" active, and any assignment or reference to an undeclared name under EXPLICIT. Also usable from the command line via `jdBasic --lint file.jdb`.
 
 [LIST]
 Syntax: LIST

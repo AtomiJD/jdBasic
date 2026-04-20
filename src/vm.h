@@ -138,6 +138,14 @@ public:
     void event_raise(const std::string& event_name, const std::vector<Value>& data);
     void event_poll(); // called from tick — polls SDL/keyboard events
 
+    bool is_native(const std::string& name) const { return natives.count(name) > 0; }
+    std::vector<std::string> native_names() const {
+        std::vector<std::string> out;
+        out.reserve(natives.size());
+        for (auto& kv : natives) out.push_back(kv.first);
+        return out;
+    }
+
 private:
     // Sub-run depth: >0 means we're inside a nested run_code() (REPL/EXECUTE/EVAL)
     // so HALT must NOT signal program-ended to the DAP client.

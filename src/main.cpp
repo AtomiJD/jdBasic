@@ -4,6 +4,8 @@
 #include <string>
 #include <chrono>
 #include <algorithm>
+#include <set>
+#include <functional>
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -825,17 +827,174 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             setup_parser_modules(parser);
             auto ast = parser.parse();
 
-            int warnings = 0;
-            std::vector<std::string> defined_funcs, called_funcs;
-            for (auto& stmt : ast) {
-                if (stmt->kind == StmtKind::SUB || stmt->kind == StmtKind::FUNCTION) {
-                    defined_funcs.push_back(stmt->func_name);
+            // Per-file OPTION state mirrors the LLVM codegen pre-pass —
+            // EXPLICIT/STRICT are file-scoped, so an imported loose module
+            // stays lintable against a strict main file.
+            std::set<std::string> explicit_files, strict_files;
+            for (auto& s : ast) {
+                if (s && s->kind == StmtKind::OPTION_STMT && s->expr &&
+                    s->expr->kind == ExprKind::LITERAL_STRING) {
+                    std::string opt = s->expr->str_val;
+                    std::transform(opt.begin(), opt.end(), opt.begin(), ::toupper);
+                    if (opt == "EXPLICIT")        explicit_files.insert(s->source_file);
+                    else if (opt == "STRICT")     strict_files.insert(s->source_file);
+                    else if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT")
+                                                  explicit_files.erase(s->source_file);
+                    else if (opt == "NOSTRICT" || opt == "STRICTOFF")
+                                                  strict_files.erase(s->source_file);
                 }
             }
-            vm.emit("LINT: Compiled OK.\n");
+
+            // Pass 1: collect all declared names (globals + locals, flat scope).
+            // We do not model lexical scopes here — the LINT view is "would any
+            // name resolve somewhere?" which matches BASIC's mostly-flat
+            // visibility model and keeps false positives low.
+            std::set<std::string> declared;
+            std::vector<std::string> defined_funcs;
+            std::function<void(const std::vector<StmtPtr>&)> collect;
+            collect = [&](const std::vector<StmtPtr>& stmts) {
+                for (auto& s : stmts) {
+                    if (!s) continue;
+                    switch (s->kind) {
+                        case StmtKind::LET:
+                        case StmtKind::DIM:
+                            declared.insert(s->var_name);
+                            break;
+                        case StmtKind::SUB:
+                        case StmtKind::FUNCTION:
+                            declared.insert(s->func_name);
+                            defined_funcs.push_back(s->func_name);
+                            for (auto& p : s->params) declared.insert(p.name);
+                            collect(s->body);
+                            break;
+                        case StmtKind::FOR_LOOP:
+                        case StmtKind::FOR_EACH:
+                            declared.insert(s->var_name);
+                            collect(s->body);
+                            break;
+                        case StmtKind::DESTRUCTURE:
+                            for (auto& v : s->destruct_vars) declared.insert(v);
+                            break;
+                        case StmtKind::IF:
+                        case StmtKind::SWITCH_STMT:
+                            for (auto& br : s->branches) collect(br.body);
+                            break;
+                        case StmtKind::DO_LOOP:
+                            collect(s->body);
+                            break;
+                        case StmtKind::TRY_CATCH:
+                            collect(s->body);
+                            collect(s->catch_body);
+                            collect(s->finally_body);
+                            break;
+                        case StmtKind::TYPE_DECL:
+                            declared.insert(s->func_name);
+                            collect(s->body);
+                            break;
+                        case StmtKind::ENUM_DECL:
+                            declared.insert(s->func_name);
+                            for (auto& m : s->enum_members) declared.insert(m.first);
+                            break;
+                        default: break;
+                    }
+                }
+            };
+            collect(ast);
+
+            // Built-in natives + a few bare-word constants are always in scope.
+            for (auto& n : vm.native_names()) declared.insert(n);
+            for (const char* k : {"PI","E","TRUE","FALSE","NULL","VBNEWLINE","NOTHING",
+                                  "ERR","ERRMSG$","ERRLINE"})
+                declared.insert(k);
+
+            // Pass 2: walk every expression, collecting undeclared VARIABLE refs
+            // and (under STRICT) DIMs with no type annotation.
+            std::vector<std::string> undeclared;
+
+            auto head_name = [](const std::string& n) {
+                // Dotted lookups (enums, modules, UDTs) resolve via the head
+                // identifier — "Direction.NORTH" is OK if "Direction" is
+                // declared. We only need to prove the entry point exists.
+                auto dot = n.find('.');
+                return dot == std::string::npos ? n : n.substr(0, dot);
+            };
+            std::function<void(const Expr*)> walk_expr = [&](const Expr* e) {
+                if (!e) return;
+                if (e->kind == ExprKind::VARIABLE && !e->str_val.empty()) {
+                    std::string head = head_name(e->str_val);
+                    if (!declared.count(head) && !declared.count(e->str_val))
+                        undeclared.push_back(e->str_val + " (line " + std::to_string(e->line) + ")");
+                }
+                walk_expr(e->left.get());
+                walk_expr(e->right.get());
+                for (auto& a : e->args) walk_expr(a.get());
+            };
+
+            std::function<void(const std::vector<StmtPtr>&)> walk_stmts;
+            walk_stmts = [&](const std::vector<StmtPtr>& stmts) {
+                for (auto& s : stmts) {
+                    if (!s) continue;
+                    bool in_explicit = explicit_files.count(s->source_file) > 0;
+                    bool in_strict   = strict_files.count(s->source_file) > 0;
+                    if (in_explicit) {
+                        // Bare ASSIGN to an undeclared name is the classic
+                        // "OPTION EXPLICIT" violation the codegen errors on.
+                        if ((s->kind == StmtKind::ASSIGN || s->kind == StmtKind::INDEX_ASSIGN) &&
+                            !s->var_name.empty()) {
+                            std::string head = head_name(s->var_name);
+                            if (!declared.count(head) && !declared.count(s->var_name))
+                                undeclared.push_back(s->var_name + " (line " + std::to_string(s->line) + ")");
+                        }
+                        walk_expr(s->expr.get());
+                        for (auto& pe : s->print_exprs) walk_expr(pe.get());
+                        for (auto& ix : s->index_chain) walk_expr(ix.get());
+                        walk_expr(s->loop_cond.get());
+                        walk_expr(s->end_expr.get());
+                        walk_expr(s->step_expr.get());
+                        for (auto& br : s->branches) walk_expr(br.condition.get());
+                    }
+                    (void)in_strict; // STRICT type-mismatch checks live in the codegen
+                    walk_stmts(s->body);
+                    walk_stmts(s->catch_body);
+                    walk_stmts(s->finally_body);
+                    for (auto& br : s->branches) walk_stmts(br.body);
+                }
+            };
+            walk_stmts(ast);
+
+            vm.emit("LINT: Parsed OK.\n");
             vm.emit("  " + std::to_string(ast.size()) + " top-level statements\n");
             vm.emit("  " + std::to_string(defined_funcs.size()) + " function/sub definitions\n");
+
+            if (!explicit_files.empty() || !strict_files.empty()) {
+                vm.emit("  OPTION flags active:\n");
+                std::set<std::string> all_files = explicit_files;
+                for (auto& f : strict_files) all_files.insert(f);
+                for (auto& f : all_files) {
+                    std::string modes;
+                    if (explicit_files.count(f)) modes += "EXPLICIT ";
+                    if (strict_files.count(f))   modes += "STRICT";
+                    vm.emit("    " + (f.empty() ? std::string("(main)") : f) + ": " + modes + "\n");
+                }
+            } else {
+                vm.emit("  No OPTION EXPLICIT or STRICT detected.\n");
+            }
+
+            int warnings = 0;
+            if (!undeclared.empty()) {
+                warnings += (int)undeclared.size();
+                vm.emit("  EXPLICIT undeclared refs: " + std::to_string(undeclared.size()) + "\n");
+                int shown = 0;
+                for (auto& u : undeclared) {
+                    if (++shown > 10) {
+                        vm.emit("    ... (+" + std::to_string(undeclared.size() - 10) + " more)\n");
+                        break;
+                    }
+                    vm.emit("    " + u + "\n");
+                }
+            }
             if (warnings == 0) vm.emit("  No warnings.\n");
+            else vm.emit("  Total warnings: " + std::to_string(warnings) + "\n");
         } catch (const std::exception& e) {
             std::cerr << "LINT error: " << e.what() << std::endl;
         }
@@ -963,6 +1122,7 @@ int main(int argc, char* argv[]) {
     int debug_port = 0;
     bool compile_native = false;
     bool emit_ir_only = false;
+    bool lint_mode = false;
     std::string compile_output;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -976,6 +1136,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
+        if (a == "--lint") { lint_mode = true; continue; }
         if (a == "--emit-ir") { emit_ir_only = true; continue; }
         if (a == "--trace") { compile_native = true; /* set debug_log below */ continue; }
         if ((a == "-o" || a == "--output") && i + 1 < argc) { compile_output = argv[++i]; continue; }
@@ -985,6 +1146,19 @@ int main(int argc, char* argv[]) {
     if (filename.empty()) {
         std::cerr << "Error: no input file specified." << std::endl;
         return 1;
+    }
+
+    // ── LINT (static analysis only, no execution) ───────────────
+    if (lint_mode) {
+        {
+            size_t sep = filename.find_last_of("/\\");
+            g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
+        }
+        std::string program_buffer = read_file(filename);
+        VM vm;
+        setup_dynamic_code(vm);
+        console_execute("LINT", vm, program_buffer);
+        return 0;
     }
 
     // ── Native compilation (LLVM) ────────────────────────────────
