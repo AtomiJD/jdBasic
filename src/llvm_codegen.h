@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <stack>
 #include "ast.h"
+#include "jdb_tags.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
@@ -122,13 +123,10 @@ private:
     // Current function being built
     LLVMValueRef current_fn;
 
-    // Variable storage per scope: name -> {alloca, tag}
     struct VarInfo {
         LLVMValueRef alloca_val;
-        int tag;  // 0=i64, 1=f64, 2=string(i8*), 3=array(JdbArray*),
-                  // 4=native map(i8*), 5=funcref, 6=VM-Value handle (i64),
-                  // 7=runtime-tagged (companion alloca stores i32 tag)
-        LLVMValueRef runtime_tag_alloca = nullptr;
+        int tag;  // JdTag (see jdb_tags.h)
+        LLVMValueRef runtime_tag_alloca = nullptr;  // i32 runtime type; used when tag == JD_TAG_RUNTIME
     };
 
     // Scope stack for local variables (functions push/pop scopes)
@@ -242,8 +240,8 @@ private:
     // Typed value returned by expression codegen
     struct TypedValue {
         LLVMValueRef val;
-        int tag;  // 0=i64, 1=f64, 2=string(i8*), 7=runtime-tagged
-        LLVMValueRef runtime_tag = nullptr;  // i32 runtime type when tag==7
+        int tag;  // JdTag (see jdb_tags.h)
+        LLVMValueRef runtime_tag = nullptr;  // i32 runtime type when tag == JD_TAG_RUNTIME
     };
 
     // Setup
