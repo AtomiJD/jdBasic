@@ -3027,6 +3027,58 @@ void VM::register_builtins() {
     register_native("LOG10", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::log10(args[0].to_double()));
     });
+    register_native("GCD", 2, -1, [](const std::vector<Value>& args) -> Value {
+        // Variadic: GCD(a,b,c,...) via iterated Euclid.
+        auto gcd2 = [](int64_t a, int64_t b) {
+            if (a < 0) a = -a; if (b < 0) b = -b;
+            while (b) { int64_t t = a % b; a = b; b = t; }
+            return a;
+        };
+        int64_t r = args[0].to_int();
+        for (size_t i = 1; i < args.size(); i++) r = gcd2(r, args[i].to_int());
+        return Value::make_i64(r);
+    });
+    register_native("LCM", 2, -1, [](const std::vector<Value>& args) -> Value {
+        auto gcd2 = [](int64_t a, int64_t b) {
+            if (a < 0) a = -a; if (b < 0) b = -b;
+            while (b) { int64_t t = a % b; a = b; b = t; }
+            return a;
+        };
+        auto lcm2 = [&](int64_t a, int64_t b) -> int64_t {
+            if (a == 0 || b == 0) return 0;
+            int64_t g = gcd2(a, b);
+            if (a < 0) a = -a; if (b < 0) b = -b;
+            return (a / g) * b;
+        };
+        int64_t r = args[0].to_int();
+        for (size_t i = 1; i < args.size(); i++) r = lcm2(r, args[i].to_int());
+        return Value::make_i64(r);
+    });
+    register_native("ROTL", 2, 3, [](const std::vector<Value>& args) -> Value {
+        // ROTL(x, n, [bits=64]) — rotate-left on an integer width 'bits' (8/16/32/64).
+        uint64_t x = (uint64_t)args[0].to_int();
+        int64_t n = args[1].to_int();
+        int w = (args.size() >= 3) ? (int)args[2].to_int() : 64;
+        if (w != 8 && w != 16 && w != 32 && w != 64)
+            throw std::runtime_error("ROTL: bits must be 8, 16, 32 or 64");
+        uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
+        x &= mask;
+        n = ((n % w) + w) % w;
+        uint64_t r = ((x << n) | (x >> (w - n))) & mask;
+        return Value::make_i64((int64_t)r);
+    });
+    register_native("ROTR", 2, 3, [](const std::vector<Value>& args) -> Value {
+        uint64_t x = (uint64_t)args[0].to_int();
+        int64_t n = args[1].to_int();
+        int w = (args.size() >= 3) ? (int)args[2].to_int() : 64;
+        if (w != 8 && w != 16 && w != 32 && w != 64)
+            throw std::runtime_error("ROTR: bits must be 8, 16, 32 or 64");
+        uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
+        x &= mask;
+        n = ((n % w) + w) % w;
+        uint64_t r = ((x >> n) | (x << (w - n))) & mask;
+        return Value::make_i64((int64_t)r);
+    });
     register_native("FAC", 1, 1, [](const std::vector<Value>& args) -> Value {
         int64_t n = args[0].to_int();
         if (n < 0) return Value::make_i64(0);
@@ -4004,6 +4056,49 @@ void VM::register_builtins() {
     register_native("GETENV$", [](const std::vector<Value>& args) -> Value {
         const char* val = std::getenv(args[0].as_string()->data.c_str());
         return Value::make_string(val ? val : "");
+    });
+
+    register_native("SETENV", 1, 2, [](const std::vector<Value>& args) -> Value {
+        std::string name = args[0].as_string()->data;
+        std::string val = (args.size() >= 2) ? args[1].as_string()->data : "";
+#if defined(_WIN32)
+        // SetEnvironmentVariableA with NULL deletes; _putenv_s with "" on
+        // Windows updates the CRT view so subsequent getenv sees it.
+        _putenv_s(name.c_str(), val.c_str());
+        SetEnvironmentVariableA(name.c_str(), args.size() >= 2 ? val.c_str() : NULL);
+#else
+        if (args.size() >= 2) setenv(name.c_str(), val.c_str(), 1);
+        else unsetenv(name.c_str());
+#endif
+        return Value::make_none();
+    });
+
+    register_native("MKTEMP$", 0, 1, [](const std::vector<Value>& args) -> Value {
+        // Returns a unique path in the system temp dir; the file is NOT
+        // created. Caller is free to open it however they want.
+        std::string prefix = (args.size() >= 1) ? args[0].as_string()->data : "jdb";
+#if defined(_WIN32)
+        char tmp[MAX_PATH];
+        DWORD len = GetTempPathA(MAX_PATH, tmp);
+        if (len == 0) tmp[0] = '\0';
+        char name[MAX_PATH];
+        // GetTempFileNameA creates a 0-byte file; delete it so callers can
+        // open the path with whatever flags they need (append, binary, …).
+        if (GetTempFileNameA(tmp, prefix.c_str(), 0, name)) {
+            DeleteFileA(name);
+            return Value::make_string(name);
+        }
+        return Value::make_string("");
+#else
+        const char* tmp = getenv("TMPDIR");
+        if (!tmp) tmp = "/tmp";
+        std::string tmpl = std::string(tmp) + "/" + prefix + "XXXXXX";
+        std::vector<char> buf(tmpl.begin(), tmpl.end()); buf.push_back('\0');
+        int fd = mkstemp(buf.data());
+        if (fd < 0) return Value::make_string("");
+        close(fd); unlink(buf.data());
+        return Value::make_string(buf.data());
+#endif
     });
 
     register_native("SETLOCALE", [](const std::vector<Value>& args) -> Value {
@@ -5219,6 +5314,38 @@ void VM::register_builtins() {
     register_native("SPACE$", [](const std::vector<Value>& args) -> Value {
         return Value::make_string(std::string((size_t)args[0].to_int(), ' '));
     });
+    register_native("REPEAT$", 2, 2, [](const std::vector<Value>& args) -> Value {
+        std::string s = args[0].as_string()->data;
+        int64_t n = args[1].to_int();
+        if (n <= 0 || s.empty()) return Value::make_string("");
+        std::string r; r.reserve(s.size() * (size_t)n);
+        for (int64_t i = 0; i < n; i++) r += s;
+        return Value::make_string(r);
+    });
+    register_native("LPAD$", 2, 3, [](const std::vector<Value>& args) -> Value {
+        std::string s = args[0].as_string()->data;
+        int64_t n = args[1].to_int();
+        std::string pad = (args.size() >= 3) ? args[2].as_string()->data : " ";
+        if (pad.empty()) pad = " ";
+        if ((int64_t)s.size() >= n) return Value::make_string(s);
+        size_t need = (size_t)n - s.size();
+        std::string prefix; prefix.reserve(need);
+        while (prefix.size() < need) prefix += pad;
+        prefix.resize(need);
+        return Value::make_string(prefix + s);
+    });
+    register_native("RPAD$", 2, 3, [](const std::vector<Value>& args) -> Value {
+        std::string s = args[0].as_string()->data;
+        int64_t n = args[1].to_int();
+        std::string pad = (args.size() >= 3) ? args[2].as_string()->data : " ";
+        if (pad.empty()) pad = " ";
+        if ((int64_t)s.size() >= n) return Value::make_string(s);
+        size_t need = (size_t)n - s.size();
+        std::string suffix; suffix.reserve(need);
+        while (suffix.size() < need) suffix += pad;
+        suffix.resize(need);
+        return Value::make_string(s + suffix);
+    });
     register_native("HEX$", [](const std::vector<Value>& args) -> Value {
         char buf[32]; snprintf(buf, sizeof(buf), "%llX", (long long)args[0].to_int());
         return Value::make_string(buf);
@@ -5990,6 +6117,18 @@ void VM::register_builtins() {
 #if defined(_WIN32)
         if (!CreateDirectoryA(path.c_str(), NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
             throw std::runtime_error("Cannot create directory: " + path);
+#endif
+        return Value::make_none();
+    });
+
+    register_native("RMDIR", [](const std::vector<Value>& args) -> Value {
+        std::string path = args[0].as_string()->data;
+#if defined(_WIN32)
+        if (!RemoveDirectoryA(path.c_str()))
+            throw std::runtime_error("Cannot remove directory: " + path);
+#else
+        if (rmdir(path.c_str()) != 0)
+            throw std::runtime_error("Cannot remove directory: " + path);
 #endif
         return Value::make_none();
     });

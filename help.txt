@@ -409,6 +409,10 @@ Description: Formats a 1D or 2D array into a display-friendly string grid.
 Syntax: FUNC name(parameters) ... ENDFUNC
 Description: Begins the definition of a user-defined function that returns a value.
 
+[GCD]
+Syntax: GCD(a, b, ...)
+Description: Greatest common divisor of two or more integers.
+
 [GETENV$]
 Syntax: GETENV$(variable_name$)
 Description: Gets the value of a system environment variable.
@@ -833,6 +837,10 @@ Description: Defines a small, anonymous function.
 Syntax: LCASE$(string$)
 Description: Converts a string to lowercase.
 
+[LCM]
+Syntax: LCM(a, b, ...)
+Description: Least common multiple of two or more integers.
+
 [LEFT$]
 Syntax: LEFT$(string$, length)
 Description: Returns the specified number of characters from the beginning of a string.
@@ -864,6 +872,10 @@ Description: Displays the current source code in the console.
 [LOAD]
 Syntax: LOAD "filename"
 Description: Loads a source code file into memory.
+
+[LPAD$]
+Syntax: LPAD$(string$, width [, pad$])
+Description: Left-pads string$ to width characters using pad$ (default " "). Multi-character pad$ cycles.
 
 [LOADWS]
 Syntax: LOADWS "workspacename"
@@ -944,6 +956,10 @@ Description: Returns the minimum value from an array.
 [MKDIR]
 Syntax: MKDIR "directory_name"
 Description: Creates a new directory.
+
+[MKTEMP$]
+Syntax: MKTEMP$([prefix$])
+Description: Returns a unique file path in the OS temp directory. Default prefix is "jdb". The file is created-then-released so the caller can own the path.
 
 [MOD]
 Syntax: number MOD number
@@ -1176,9 +1192,17 @@ Description: Reverses the elements of an array.
 Syntax: REVERSE$(string$)
 Description: Reverses the characters in a string.
 
+[REPEAT$]
+Syntax: REPEAT$(string$, count)
+Description: Returns string$ concatenated count times. Returns "" for count <= 0 or empty input.
+
 [RIGHT$]
 Syntax: RIGHT$(string$, length)
 Description: Returns the specified number of characters from the end of a string.
+
+[RMDIR]
+Syntax: RMDIR "path"
+Description: Removes an empty directory.
 
 [RND]
 Syntax: RND(number)
@@ -1187,6 +1211,18 @@ Description: Returns a random floating-point number between 0.0 and 1.0.
 [ROTATE]
 Syntax: ROTATE(array, shift_vector)
 Description: Cyclically shifts an N-dimensional array.
+
+[ROTL]
+Syntax: ROTL(x, n [, bits])
+Description: Bit rotation left of integer x by n positions. Optional bits argument sets the width (default 64).
+
+[ROTR]
+Syntax: ROTR(x, n [, bits])
+Description: Bit rotation right of integer x by n positions. Optional bits argument sets the width (default 64).
+
+[RPAD$]
+Syntax: RPAD$(string$, width [, pad$])
+Description: Right-pads string$ to width characters using pad$ (default " "). Multi-character pad$ cycles.
 
 [ROUND]
 Syntax: ROUND(number, decimals)
@@ -1235,6 +1271,10 @@ Description: Applies a function to each element of an array, returning a new arr
 [SETFONT]
 Syntax: SETFONT filename$, size
 Description: Sets the font and size for subsequent TEXT drawing commands.
+
+[SETENV]
+Syntax: SETENV name$, value$
+Description: Sets an environment variable for the current process. An empty value$ removes the variable.
 
 [SETLOCALE]
 Syntax: SETLOCALE("locale_string")

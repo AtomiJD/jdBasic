@@ -321,6 +321,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_pwd",             "PWD",         i8_ptr_type, {}, 2);
     reg("jdb_cd",              "CD",          i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_mkdir_native",    "MKDIR",       void_type, {i8_ptr_type}, -1);
+    reg("jdb_rmdir",           "RMDIR",       void_type, {i8_ptr_type}, -1);
     reg("jdb_kill",            "KILL",        void_type, {i8_ptr_type}, -1);
     reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, 0);
 
@@ -347,8 +348,21 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // System
     reg("jdb_getenv",  "GETENV$",  i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_setenv",  "SETENV",   void_type,   {i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_mktemp",  "MKTEMP$",  i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_iif",     "IIF",      f64_type, {i64_type, f64_type, f64_type}, 1);
     reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, 0);
+
+    // Bit rotation (2-arg, implicit 64-bit width; 3-arg falls back to VM bridge)
+    reg("jdb_rotl2",   "ROTL",     i64_type, {i64_type, i64_type}, 0);
+    reg("jdb_rotr2",   "ROTR",     i64_type, {i64_type, i64_type}, 0);
+    // GCD/LCM — variadic in VM, 2-arg native form reachable via VM bridge
+
+    // String padding (jdb_str_repeat already declared above as __str_repeat)
+    reg("jdb_str_repeat", "REPEAT$",  i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    // 3-arg bindings; 2-arg calls pad null for pad and jdb_lpad treats null as " "
+    reg("jdb_lpad",       "LPAD$",    i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, 2);
+    reg("jdb_rpad",       "RPAD$",    i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, 2);
 
     // Codec
     reg("jdb_base64_encode", "CODEC.BASE64_ENCODE$", i8_ptr_type, {i8_ptr_type}, 2);
@@ -5063,8 +5077,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "TYPEOF", "IIF", "ISNUM", "ISSTR", "ISARR", "ISMAP", "ISBOOL",
         "ISNONE", "ISNULL",
         // Scalar-returning date/time (note: DATEADD/DATEDIFF/FORMAT_DATE DO vectorize)
-        "GETENV$", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
+        "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
         "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
+        "MKTEMP$", "RMDIR", "MKDIR", "KILL",
+        // Bitwise/math helpers (scalars-only)
+        "ROTL", "ROTR", "GCD", "LCM",
         // Collections
         "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
         "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",

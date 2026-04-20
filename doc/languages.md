@@ -790,6 +790,7 @@ ENDTRY
 * **`CD "path"`**: Changes the current working directory.
 * **`PWD`**: Prints the current working directory.
 * **`MKDIR "path"`**: Creates a new directory.
+* **`RMDIR "path"`**: Removes an empty directory.
 * **`KILL "filename"`**: Deletes a file.
 
 #### Path Functions
@@ -1098,6 +1099,8 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 * **`LTRIM$(str$)`** / **`RTRIM$(str$)`**: Trims whitespace from the left or right end only.
 * **`STARTSWITH(str$, prefix$) -> bool`** / **`ENDSWITH(str$, suffix$) -> bool`**: Returns `TRUE` if `str$` starts/ends with the given substring.
 * **`SPACE$(n) -> string$`**: Returns a string of `n` spaces — handy for padding.
+* **`REPEAT$(str$, n) -> string$`**: Returns `str$` concatenated `n` times. `n <= 0` or empty input returns `""`.
+* **`LPAD$(str$, width [, pad$]) -> string$`** / **`RPAD$(str$, width [, pad$]) -> string$`**: Left- or right-pads `str$` to `width` characters using `pad$` (default `" "`). Multi-character `pad$` cycles (e.g. `LPAD$("x", 5, "-=")` -> `"-=-=x"`). If `str$` is already `>= width`, it is returned unchanged.
 * **`BIN$(n)` / `HEX$(n)` / `OCT$(n)` -> string$**: Converts an integer into its binary, hexadecimal or octal string representation.
 * **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings.
 * **`CHR$(ascii_code)`**, **`ASC(char$)`**: Converts between ASCII codes and characters.
@@ -1133,6 +1136,9 @@ All numeric functions are vectorized — they also accept arrays and apply eleme
 * **`LOG10(x)`**: Base-10 logarithm.
 * **`POW(base, exp)`**: Power function. Also available as the `^` operator.
 * **`FAC(n)`**: Factorial.
+* **`GCD(a, b, ...)`**: Greatest common divisor of two or more integers. Any-zero input yields the non-zero operand's magnitude.
+* **`LCM(a, b, ...)`**: Least common multiple of two or more integers.
+* **`ROTL(x, n [, bits])`** / **`ROTR(x, n [, bits])`**: Bit rotation of integer `x` by `n` positions. Optional `bits` argument sets the width (defaults to 64). `ROTL(1,1) = 2`, `ROTR(16,4) = 1`.
 
 #### Rounding & Sign
 
@@ -1261,6 +1267,8 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 ### System and Time Functions
 
 * **`GETENV$(var_name$)`**: Gets the value of a system environment variable.
+* **`SETENV name$, value$`**: Sets an environment variable for the current process. Passing an empty `value$` (or omitting it) removes the variable.
+* **`MKTEMP$([prefix$])`**: Returns a unique, freshly created-and-released path in the OS temp directory. Default prefix is `"jdb"`.
 * **`SETLOCALE("locale_string")`**: Sets the locale for number formatting (e.g., "en-US" or "de-DE").
 * **`TICK()`**: Returns the number of milliseconds since the program started.
 * **`DATE$()` / `TIME$()`**: Returns the current system date/time as a string.

@@ -1804,6 +1804,112 @@ char* jdb_getenv(const char* name) {
     return _strdup(val ? val : "");
 }
 
+void jdb_setenv(const char* name, const char* val) {
+    if (!name) return;
+#ifdef _WIN32
+    _putenv_s(name, val ? val : "");
+    SetEnvironmentVariableA(name, val);
+#else
+    if (val) setenv(name, val, 1);
+    else unsetenv(name);
+#endif
+}
+
+char* jdb_mktemp(const char* prefix) {
+    const char* pfx = (prefix && *prefix) ? prefix : "jdb";
+#ifdef _WIN32
+    char tmp[MAX_PATH];
+    DWORD n = GetTempPathA(MAX_PATH, tmp);
+    if (n == 0) tmp[0] = '\0';
+    char name[MAX_PATH];
+    if (GetTempFileNameA(tmp, pfx, 0, name)) {
+        DeleteFileA(name);
+        return _strdup(name);
+    }
+    return _strdup("");
+#else
+    const char* tmp = getenv("TMPDIR");
+    if (!tmp) tmp = "/tmp";
+    size_t cap = strlen(tmp) + 1 + strlen(pfx) + 7;
+    char* tmpl = (char*)malloc(cap);
+    snprintf(tmpl, cap, "%s/%sXXXXXX", tmp, pfx);
+    int fd = mkstemp(tmpl);
+    if (fd < 0) { free(tmpl); return _strdup(""); }
+    close(fd); unlink(tmpl);
+    return tmpl;
+#endif
+}
+
+void jdb_rmdir(const char* path) {
+    if (!path) return;
+#ifdef _WIN32
+    RemoveDirectoryA(path);
+#else
+    rmdir(path);
+#endif
+}
+
+// ── Bit rotation ────────────────────────────────────────────
+int64_t jdb_rotl(int64_t x, int64_t n, int64_t bits) {
+    int w = (bits == 8 || bits == 16 || bits == 32 || bits == 64) ? (int)bits : 64;
+    uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
+    uint64_t u = ((uint64_t)x) & mask;
+    int64_t s = ((n % w) + w) % w;
+    return (int64_t)(((u << s) | (u >> (w - s))) & mask);
+}
+int64_t jdb_rotr(int64_t x, int64_t n, int64_t bits) {
+    int w = (bits == 8 || bits == 16 || bits == 32 || bits == 64) ? (int)bits : 64;
+    uint64_t mask = (w == 64) ? ~(uint64_t)0 : ((uint64_t)1 << w) - 1;
+    uint64_t u = ((uint64_t)x) & mask;
+    int64_t s = ((n % w) + w) % w;
+    return (int64_t)(((u >> s) | (u << (w - s))) & mask);
+}
+// 2-arg forms used by native codegen (implicit 64-bit width).
+int64_t jdb_rotl2(int64_t x, int64_t n) { return jdb_rotl(x, n, 64); }
+int64_t jdb_rotr2(int64_t x, int64_t n) { return jdb_rotr(x, n, 64); }
+
+// ── Math (GCD/LCM) — binary; variadic is expanded by codegen ─
+int64_t jdb_gcd(int64_t a, int64_t b) {
+    if (a < 0) a = -a; if (b < 0) b = -b;
+    while (b) { int64_t t = a % b; a = b; b = t; }
+    return a;
+}
+int64_t jdb_lcm(int64_t a, int64_t b) {
+    if (a == 0 || b == 0) return 0;
+    int64_t g = jdb_gcd(a, b);
+    if (a < 0) a = -a; if (b < 0) b = -b;
+    return (a / g) * b;
+}
+
+// ── String padding ──────────────────────────────────────────
+char* jdb_lpad(const char* s, int64_t n, const char* pad) {
+    const char* p = (pad && *pad) ? pad : " ";
+    size_t slen = s ? strlen(s) : 0;
+    if ((int64_t)slen >= n) return _strdup(s ? s : "");
+    size_t need = (size_t)n - slen;
+    size_t plen = strlen(p);
+    char* out = (char*)malloc(need + slen + 1);
+    for (size_t i = 0; i < need; i++) out[i] = p[i % plen];
+    memcpy(out + need, s ? s : "", slen);
+    out[need + slen] = '\0';
+    return out;
+}
+char* jdb_rpad(const char* s, int64_t n, const char* pad) {
+    const char* p = (pad && *pad) ? pad : " ";
+    size_t slen = s ? strlen(s) : 0;
+    if ((int64_t)slen >= n) return _strdup(s ? s : "");
+    size_t need = (size_t)n - slen;
+    size_t plen = strlen(p);
+    char* out = (char*)malloc(slen + need + 1);
+    memcpy(out, s ? s : "", slen);
+    for (size_t i = 0; i < need; i++) out[slen + i] = p[i % plen];
+    out[slen + need] = '\0';
+    return out;
+}
+// 2-arg forms used by native codegen (default pad = " ").
+char* jdb_lpad2(const char* s, int64_t n) { return jdb_lpad(s, n, " "); }
+char* jdb_rpad2(const char* s, int64_t n) { return jdb_rpad(s, n, " "); }
+
 // IIF (inline if): returns a or b based on condition
 double jdb_iif(int64_t cond, double a, double b) {
     return cond ? a : b;
