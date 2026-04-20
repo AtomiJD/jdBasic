@@ -1,0 +1,16 @@
+' Phase 3: EXPLICIT should accept a program that DIMs everything.
+OPTION "EXPLICIT"
+
+DIM a AS INTEGER = 10
+DIM b AS INTEGER = 20
+DIM sum AS INTEGER = 0
+
+sum = a + b
+PRINT "sum="; sum
+
+' FOR loop variable counts as declared
+DIM total AS INTEGER = 0
+FOR i = 1 TO 5
+    total = total + i
+NEXT i
+PRINT "total="; total

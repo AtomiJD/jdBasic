@@ -25,15 +25,16 @@ public:
     std::string error_msg;
     bool debug_log = false;  // emit line-by-line runtime trace
 
-    // STRICT/EXPLICIT compile mode. Hardcoded to true when compile()/-c runs;
-    // the interpreter (VM) keeps loose semantics by never constructing this
-    // codegen. Future: OPTION "EXPLICITOFF" / "NOSTRICT" inside a source file
-    // can toggle these per-translation-unit; for now they are compiler-wide.
+    // STRICT/EXPLICIT compile mode. Defaults are OFF during the staged
+    // rollout (Phases 3/4 add enforcement, Phase 6 migrates the stdlib
+    // + tests, then the defaults flip to true). Opt in per-translation-
+    // unit today via OPTION "EXPLICIT" / OPTION "STRICT" at the top of
+    // a source file. Opt out later via OPTION "EXPLICITOFF"/"NOSTRICT".
     //   explicit_mode: undeclared variable use is a compile error.
     //   strict_mode:   every DIM needs a declared type, every assignment/call
     //                  is type-checked, diagnostics include file:line.
-    bool explicit_mode = true;
-    bool strict_mode = true;
+    bool explicit_mode = false;
+    bool strict_mode = false;
 
     // Accumulated compile diagnostics under STRICT/EXPLICIT. Reported after
     // the codegen pass so the user sees every mismatch, not just the first.
@@ -70,6 +71,11 @@ public:
     // program's top-level DIMs. Phase 3/4 will extend to FUNC params/locals.
     std::unordered_map<std::string, StaticType> type_env;
     void populate_type_env(const std::vector<StmtPtr>& program);
+
+    // Source file of the statement currently being codegen'd. Diagnostics
+    // raised from deep inside codegen_expr use this for the file: prefix
+    // (Expr itself doesn't carry source_file — only Stmt does).
+    std::string m_current_stmt_file;
 
     // Transient codegen state: true while evaluating an expression whose
     // result will be the LEFT of an INDEX chain (e.g. inner `a{"b"}` of

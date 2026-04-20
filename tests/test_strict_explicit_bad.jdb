@@ -1,0 +1,16 @@
+' Phase 3: EXPLICIT should reject these three cases.
+OPTION "EXPLICIT"
+
+DIM declared AS INTEGER = 1
+
+' (1) bare assignment to undeclared name
+undeclared_lhs = 42
+
+' (2) read of an undeclared name
+PRINT mystery_var
+
+' (3) nested expression with undeclared name
+DIM total AS INTEGER = 0
+total = total + unseen_count
+
+PRINT "should not reach"; declared

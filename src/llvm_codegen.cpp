@@ -841,6 +841,21 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     create_main_function();
     declare_functions(program);
     populate_type_env(program);
+    // Pre-scan OPTION directives at top level so explicit_mode / strict_mode
+    // are live before codegen_program's globals pre-pass runs (which emits
+    // Phase 3 diagnostics conditional on explicit_mode). codegen_stmt still
+    // handles OPTION at statement time so mid-program toggles work too.
+    for (auto& s : program) {
+        if (s && s->kind == StmtKind::OPTION_STMT && s->expr &&
+            s->expr->kind == ExprKind::LITERAL_STRING) {
+            std::string opt = s->expr->str_val;
+            std::transform(opt.begin(), opt.end(), opt.begin(), ::toupper);
+            if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT") explicit_mode = false;
+            else if (opt == "EXPLICIT") explicit_mode = true;
+            else if (opt == "NOSTRICT" || opt == "STRICTOFF") strict_mode = false;
+            else if (opt == "STRICT") strict_mode = true;
+        }
+    }
     codegen_program(program);
 
     // STRICT/EXPLICIT diagnostics accumulated during codegen_program are
@@ -1032,6 +1047,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 if (up == "PI" || up == "E") continue;
             }
             if (!lookup_var(stmt->var_name)) {
+                // Phase 3 EXPLICIT: a bare top-level `x = ...` where x was
+                // never DIM'd is an error. The pre-pass would otherwise
+                // auto-declare x globally (so codegen_let_or_assign's own
+                // check misses it). Keep create_var so downstream uses of
+                // the name don't cascade more errors for the same root.
+                if (explicit_mode && stmt->kind != StmtKind::DIM) {
+                    report_error(stmt->source_file, stmt->line,
+                        "undeclared variable '" + stmt->var_name + "'");
+                }
                 // Determine type from initial expression
                 // Recursive helper to infer expression result type
                 std::function<int(const Expr*)> infer_tag = [&](const Expr* e) -> int {
@@ -1392,6 +1416,10 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
     // Skip if current block already has a terminator (unreachable code)
     if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
         return;
+
+    // Track the source file of the statement under codegen so diagnostics
+    // raised from nested expressions can attribute "error at file:line".
+    m_current_stmt_file = stmt.source_file;
 
     // Emit runtime trace if enabled (--trace flag)
     if (stmt.line > 0)
@@ -1838,6 +1866,25 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
 
 void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     if (!stmt.expr) return;
+
+    // Phase 3 EXPLICIT: under OPTION "EXPLICIT", a bare `x = ...` for a
+    // name that was never DIM'd (and isn't a FOR variable, parameter, or
+    // dotted module/UDT write) is a compile error. Skip when kind == DIM
+    // (DIMs are declarations, routed here for DIM-without-init); skip
+    // dotted names (module writes / UDT fields, handled elsewhere).
+    if (explicit_mode && stmt.kind != StmtKind::DIM &&
+        stmt.var_name.find('.') == std::string::npos) {
+        VarInfo* prior = lookup_var(stmt.var_name);
+        bool declared_global = type_env.count(stmt.var_name) > 0;
+        if (!prior && !declared_global) {
+            report_error(stmt.source_file, stmt.line,
+                "undeclared variable '" + stmt.var_name + "'");
+            // Fall through: let the normal codegen path run (auto-creates the
+            // var) so downstream uses of this name don't cascade more errors
+            // for the same root cause. The accumulated diagnostic still aborts
+            // the compile cleanly in compile()'s flush pass.
+        }
+    }
 
     // User-declared CONST: first LET registers; later assignments throw.
     {
@@ -3266,6 +3313,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                             rit->second.fn, nullptr, 0, expr.str_val.c_str());
                         return { result, rit->second.return_tag };
                     }
+                }
+                // Phase 3 EXPLICIT: a bare read of an undeclared name is a
+                // compile error. Dotted names (module.var) are skipped —
+                // those land here when the module target isn't a known UDT
+                // and are better reported at their specific use site.
+                if (explicit_mode && expr.str_val.find('.') == std::string::npos) {
+                    report_error(m_current_stmt_file, expr.line,
+                        "undeclared variable '" + expr.str_val + "'");
                 }
                 return { LLVMConstInt(i64_type, 0, 0), 0 };
             }
