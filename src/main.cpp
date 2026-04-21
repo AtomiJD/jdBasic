@@ -1126,6 +1126,48 @@ int main(int argc, char* argv[]) {
     std::string compile_output;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
+        if (a == "--help" || a == "-h" || a == "-?") {
+            std::cout <<
+              "jdBasic v" JDBASIC_VERSION " (Build " JDBASIC_BUILD_NUM ", " JDBASIC_BUILD_DATE ")\n"
+              "Features: " << jdbasic_features() << "   OS: " << jdbasic_os() << "\n"
+              "\n"
+              "USAGE\n"
+              "  jdbasic                        Start interactive REPL / workspace\n"
+              "  jdbasic <file.jdb> [args...]   Run a script in the interpreter\n"
+              "  jdbasic -c <file.jdb>          Compile to a native .exe (LLVM)\n"
+              "  jdbasic --lint <file.jdb>      Static analysis only (no execution)\n"
+              "  jdbasic -d [port] <file.jdb>   Run under the DAP debugger (default 4711)\n"
+              "\n"
+              "FLAGS\n"
+              "  -h, --help, -?           Show this help and exit\n"
+              "  -V, --version            Show version info and exit\n"
+              "  -t, --time               Print execution timing after the script\n"
+              "  -d, --debug [port]       Start the DAP debug server on <port> (default 4711)\n"
+              "  -c, --compile            Compile the script to native code (requires NATIVEC)\n"
+              "  -o, --output <file>      Write the compiled .exe to <file> (default: script name)\n"
+              "      --lint               Parse + typecheck only, do not run\n"
+              "      --emit-ir            Emit LLVM IR to stdout instead of an .exe\n"
+              "      --trace              Compile with codegen trace logging on\n"
+              "\n"
+              "EXAMPLES\n"
+              "  jdbasic my_script.jdb arg1 arg2        # interpret, args visible via OS.ARGS\n"
+              "  jdbasic -c my_script.jdb               # → my_script.exe + jdbrt.dll runtime\n"
+              "  jdbasic -c -o build/app.exe app.jdb    # named output\n"
+              "  jdbasic --lint module.jdb              # CI-friendly syntax check\n"
+              "  jdbasic -d 5678 my_script.jdb          # wait for DAP attach on :5678\n"
+              "\n"
+              "NOTES\n"
+              "  Compiled .exes need jdbrt.dll next to them at runtime — copy it from build/.\n"
+              "  Everything after the script filename is passed through to the script via OS.ARGS.\n"
+              "  Run without arguments to drop into the interactive workspace (see HELP inside).\n";
+            return 0;
+        }
+        if (a == "--version" || a == "-V") {
+            std::cout << "jdBasic v" JDBASIC_VERSION " (Build " JDBASIC_BUILD_NUM ", " JDBASIC_BUILD_DATE ")\n"
+                      << "Features: " << jdbasic_features() << "\n"
+                      << "OS:       " << jdbasic_os() << "\n";
+            return 0;
+        }
         if (a == "--time" || a == "-t") { timing = true; continue; }
         if (a == "--verbose" || a == "-v") { /* old-style flag, ignore */ continue; }
         if (a == "--debug" || a == "-d") {
@@ -1144,7 +1186,7 @@ int main(int argc, char* argv[]) {
         break;
     }
     if (filename.empty()) {
-        std::cerr << "Error: no input file specified." << std::endl;
+        std::cerr << "Error: no input file specified. Run `jdbasic --help` for usage." << std::endl;
         return 1;
     }
 
