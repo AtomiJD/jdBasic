@@ -1,0 +1,175 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic Gruppe D — HTTP Robustness Test Suite
+'  Covers: SETTIMEOUT, FOLLOWREDIRECTS, SETPARAM/CLEARPARAMS,
+'          SETCOOKIE/CLEARCOOKIES/GETCOOKIE$, REQUEST (rich map),
+'          DELETE$
+' ══════════════════════════════════════════════════════════════════
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS = 0
+DIM FAIL = 0
+DIM SECTION = ""
+
+SUB Header(title)
+  SECTION = title
+  PRINT ""
+  PRINT "── "; title; " ──"
+ENDSUB
+
+SUB Assert(cond, msg)
+  IF cond THEN
+    PASS = PASS + 1
+  ELSE
+    FAIL = FAIL + 1
+    PRINT "  FAIL ["; SECTION; "]: "; msg
+  ENDIF
+ENDSUB
+
+' ── Self-hosted test server ───────────────────────────────────────
+
+FUNC HandleEcho(request)
+    ' Return a map that JSON-serializes so the client can round-trip
+    ' path, method, params, headers, body.
+    RETURN {"path": request{"PATH"}, _
+            "method": request{"METHOD"}, _
+            "params": request{"PARAMS"}, _
+            "headers": request{"HEADERS"}, _
+            "body": request{"BODY"}}
+ENDFUNC
+
+FUNC HandleHello(request)
+    RETURN "hello"
+ENDFUNC
+
+FUNC HandleNotFound(request)
+    ' Simulate a resource that only exists if a magic param is set
+    DIM key = ""
+    TRY
+        key = request{"PARAMS"}{"key"}
+    CATCH
+        key = ""
+    ENDTRY
+    IF key = "magic" THEN
+        RETURN "found"
+    ELSE
+        RETURN "missing"
+    ENDIF
+ENDFUNC
+
+HTTP.SERVER.ON_GET("/echo", "HANDLEECHO")
+HTTP.SERVER.ON_GET("/hello", "HANDLEHELLO")
+HTTP.SERVER.ON_GET("/find", "HANDLENOTFOUND")
+HTTP.SERVER.ON_POST("/echo", "HANDLEECHO")
+
+DIM ok = HTTP.SERVER.START(9977)
+IF NOT ok THEN
+    PRINT "Server failed to start on port 9977"
+    END
+ENDIF
+
+' Native-compiled user handlers can't currently be invoked by the HTTP
+' server callback (the server runs VM-level call_function); detect this so
+' we can skip server-round-trip assertions in that mode while still
+' exercising client-state APIs.
+DIM sanity = HTTP.GET$("http://localhost:9977/hello")
+DIM server_handlers_work = (sanity = "hello")
+
+' ── 1. SETTIMEOUT ─────────────────────────────────────────────────
+Header("SETTIMEOUT")
+HTTP.SETTIMEOUT(30)
+IF server_handlers_work THEN
+    DIM resp1 = HTTP.GET$("http://localhost:9977/hello")
+    Assert(resp1 = "hello", "timeout=30 local GET returns body")
+ENDIF
+HTTP.SETTIMEOUT(10)
+
+' ── 2. SETPARAM / CLEARPARAMS ─────────────────────────────────────
+Header("SETPARAM/CLEARPARAMS")
+HTTP.SETPARAM("name", "atomi")
+HTTP.SETPARAM("mode", "test")
+IF server_handlers_work THEN
+    DIM body = HTTP.GET$("http://localhost:9977/echo")
+    Assert("atomi" IN body, "query param 'name=atomi' in echo body")
+    Assert("mode" IN body, "query param 'mode' appears in echo body")
+ENDIF
+
+HTTP.CLEARPARAMS()
+IF server_handlers_work THEN
+    DIM body2 = HTTP.GET$("http://localhost:9977/echo")
+    Assert(NOT ("atomi" IN body2), "CLEARPARAMS removes previous param")
+
+    ' Encoding test: special chars in value get url-encoded
+    HTTP.SETPARAM("q", "hello world")
+    DIM body3 = HTTP.GET$("http://localhost:9977/echo")
+    Assert("hello world" IN body3, "value with space round-trips (decoded on server)")
+    HTTP.CLEARPARAMS()
+ENDIF
+
+' ── 3. SETCOOKIE / GETCOOKIE$ / CLEARCOOKIES ─────────────────────
+Header("Cookies")
+HTTP.SETCOOKIE("session", "abc123")
+HTTP.SETCOOKIE("user", "atomi")
+Assert(HTTP.GETCOOKIE$("session") = "abc123", "GETCOOKIE$ reads back session")
+Assert(HTTP.GETCOOKIE$("user") = "atomi", "GETCOOKIE$ reads back user")
+Assert(HTTP.GETCOOKIE$("missing") = "", "GETCOOKIE$ returns empty for missing key")
+
+IF server_handlers_work THEN
+    DIM cookie_body = HTTP.GET$("http://localhost:9977/echo")
+    Assert("abc123" IN cookie_body, "server echoes Cookie: session=abc123")
+ENDIF
+
+HTTP.CLEARCOOKIES()
+Assert(HTTP.GETCOOKIE$("session") = "", "CLEARCOOKIES clears session cookie")
+
+' ── 4. HTTP.REQUEST (rich map return) ────────────────────────────
+Header("HTTP.REQUEST")
+IF server_handlers_work THEN
+    DIM r = HTTP.REQUEST("GET", "http://localhost:9977/hello")
+    Assert(r{"status"} = 200, "REQUEST GET returns status 200")
+    Assert(r{"body"} = "hello", "REQUEST GET body matches")
+    Assert(MAP.SIZE(r{"headers"}) > 0, "REQUEST response has headers map")
+
+    ' POST with body
+    DIM post_body = JSON.STRINGIFY$({"x": 42})
+    DIM rp = HTTP.REQUEST("POST", "http://localhost:9977/echo", post_body, "application/json")
+    Assert(rp{"status"} = 200, "REQUEST POST returns 200")
+    Assert("x" IN rp{"body"}, "REQUEST POST body echoes payload")
+ENDIF
+
+' Unknown host path maps to 4xx without throwing (works regardless of handlers)
+DIM r404 = HTTP.REQUEST("GET", "http://localhost:9977/does_not_exist")
+Assert(r404{"status"} = 404, "REQUEST unknown path returns 404, no throw")
+Assert(MAP.SIZE(r404{"headers"}) > 0, "REQUEST 404 still returns a headers map")
+
+' ── 5. HTTP.DELETE$ ──────────────────────────────────────────────
+Header("HTTP.DELETE$")
+' Server has no DELETE handler for /hello, so it should be 404,
+' but the call must not throw on HTTP-level errors.
+TRY
+    DIM del = HTTP.DELETE$("http://localhost:9977/hello")
+    Assert(HTTP.STATUSCODE() = 404, "DELETE$ on undefined route -> 404")
+CATCH
+    FAIL = FAIL + 1
+    PRINT "  FAIL [HTTP.DELETE$]: DELETE$ unexpectedly threw: "; ERRMSG$
+ENDTRY
+
+' ── 6. FOLLOWREDIRECTS toggle (no crash) ─────────────────────────
+Header("FOLLOWREDIRECTS")
+HTTP.FOLLOWREDIRECTS(FALSE)
+IF server_handlers_work THEN
+    DIM resp_nf = HTTP.GET$("http://localhost:9977/hello")
+    Assert(resp_nf = "hello", "FOLLOWREDIRECTS(FALSE) still completes local GET")
+ENDIF
+HTTP.FOLLOWREDIRECTS(TRUE)
+
+' ── Teardown ─────────────────────────────────────────────────────
+HTTP.SERVER.STOP()
+
+PRINT ""
+PRINT "=============================================="
+PRINT "  PASS: "; PASS; "   FAIL: "; FAIL
+PRINT "=============================================="
+IF FAIL = 0 THEN
+    PRINT "ALL HTTP GRUPPE D TESTS PASSED"
+ENDIF

@@ -1310,7 +1310,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         // so it goes through the VM-handle path instead.
                         static const std::unordered_set<std::string> obj_returners = {
                             "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                            "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS"
+                            "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
+                            "HTTP.REQUEST"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -5581,7 +5582,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             static const std::unordered_set<std::string> object_returners = {
                 "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                 "MAP.FROM", "MAP.COPY", "GROUPBY",
-                "FILE.STAT", "DATE.PARTS"
+                "FILE.STAT", "DATE.PARTS",
+                "HTTP.REQUEST"
             };
             bool is_object_fn = object_returners.count(upper);
 

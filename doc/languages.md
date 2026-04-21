@@ -1338,6 +1338,15 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.SETHEADER(name$, value$)`**: Sets a custom header for subsequent HTTP requests.
 * **`HTTP.CLEARHEADERS()`**: Clears all custom HTTP headers.
 * **`HTTP.STATUSCODE()`**: Returns the HTTP status code from the last request.
+* **`HTTP.SETTIMEOUT(seconds)`**: Sets the connection / read / write timeout (seconds) for subsequent client calls. Default is 10s.
+* **`HTTP.FOLLOWREDIRECTS(flag)`**: Enables (default) or disables automatic follow-redirect on client calls.
+* **`HTTP.SETPARAM(name$, value$)`**: Appends (or updates) a URL query parameter applied to all subsequent client calls. Values are url-encoded automatically.
+* **`HTTP.CLEARPARAMS()`**: Removes all query parameters set via `HTTP.SETPARAM`.
+* **`HTTP.SETCOOKIE(name$, value$)`**: Stores a cookie sent as a `Cookie:` header on subsequent requests.
+* **`HTTP.CLEARCOOKIES()`**: Removes all client-side cookies.
+* **`HTTP.GETCOOKIE$(name$)`**: Returns the stored cookie value, or empty string if the key is unknown.
+* **`HTTP.DELETE$(url$)`**: Performs an HTTP DELETE request and returns the response body. Status is available via `HTTP.STATUSCODE()`.
+* **`HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> map`**: Generic HTTP call. Returns a map with `status`, `body`, and `headers`. Unlike the shortcut forms this does not throw on HTTP-level errors (4xx/5xx) — only on transport failure. `method$` accepts `GET`, `DELETE`, `HEAD`, `POST`, `PUT`, `PATCH`.
 * **`HTTP.SERVER.START(port)`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success.
 * **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
 * **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.

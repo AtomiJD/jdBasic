@@ -25,7 +25,11 @@
 // ── Shared state ─────────────────────────────────────────────
 
 static std::unordered_map<std::string, std::string> g_http_headers;
+static std::unordered_map<std::string, std::string> g_http_cookies;
+static std::vector<std::pair<std::string, std::string>> g_http_params;
 static int g_http_last_status = 0;
+static int g_http_timeout_sec = 10;
+static bool g_http_follow = true;
 static std::mutex g_http_mutex;
 
 // Server state
@@ -38,11 +42,94 @@ static std::unordered_map<std::string, std::string> g_post_handlers;
 
 // ── Helpers ──────────────────────────────────────────────────
 
-static httplib::Headers get_custom_headers() {
-    httplib::Headers h;
+static std::string url_encode(const std::string& s) {
+    static const char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back((char)c);
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 0xF]);
+        }
+    }
+    return out;
+}
+
+struct HttpSnapshot {
+    httplib::Headers headers;     // custom headers + Cookie
+    std::vector<std::pair<std::string,std::string>> params;
+    int timeout_sec;
+    bool follow;
+};
+
+static HttpSnapshot snapshot_client_state() {
+    HttpSnapshot s;
     std::lock_guard<std::mutex> lock(g_http_mutex);
-    for (auto& [k, v] : g_http_headers) h.emplace(k, v);
-    return h;
+    for (auto& [k, v] : g_http_headers) s.headers.emplace(k, v);
+    if (!g_http_cookies.empty()) {
+        std::string cookie;
+        bool first = true;
+        for (auto& [k, v] : g_http_cookies) {
+            if (!first) cookie += "; ";
+            cookie += k + "=" + v;
+            first = false;
+        }
+        s.headers.emplace("Cookie", cookie);
+    }
+    s.params = g_http_params;
+    s.timeout_sec = g_http_timeout_sec;
+    s.follow = g_http_follow;
+    return s;
+}
+
+// Append g_http_params as a query string to path (combining with any existing ?).
+static std::string apply_query_params(const std::string& path,
+                                      const std::vector<std::pair<std::string,std::string>>& params) {
+    if (params.empty()) return path;
+    std::string out = path;
+    bool has_q = (out.find('?') != std::string::npos);
+    for (auto& [k, v] : params) {
+        out += (has_q ? '&' : '?');
+        out += url_encode(k) + "=" + url_encode(v);
+        has_q = true;
+    }
+    return out;
+}
+
+// Parse a URL into (use_ssl, host, path). Throws on malformed input.
+static void parse_url(const std::string& url, bool& use_ssl,
+                      std::string& host, std::string& path) {
+    use_ssl = (url.substr(0, 6) == "https:");
+    size_t scheme_end = url.find("://");
+    if (scheme_end == std::string::npos) throw std::runtime_error("HTTP: Invalid URL");
+    std::string host_part = url.substr(scheme_end + 3);
+    size_t path_start = host_part.find('/');
+    host = (path_start != std::string::npos) ? host_part.substr(0, path_start) : host_part;
+    path = (path_start != std::string::npos) ? host_part.substr(path_start) : "/";
+}
+
+template <typename ClientT>
+static void configure_client(ClientT& cli, const HttpSnapshot& s) {
+    cli.set_follow_location(s.follow);
+    cli.set_connection_timeout(s.timeout_sec, 0);
+    cli.set_read_timeout(s.timeout_sec, 0);
+    cli.set_write_timeout(s.timeout_sec, 0);
+}
+
+// Build a rich response map: { status, body, headers }.
+template <typename RespT>
+static Value response_to_map(const RespT& res) {
+    Value m = Value::make_object();
+    m.as_object()->set("status", Value::make_i64(res->status));
+    m.as_object()->set("body", Value::make_string(res->body));
+    Value hdrs = Value::make_object();
+    for (auto& [k, v] : res->headers) hdrs.as_object()->set(k, Value::make_string(v));
+    m.as_object()->set("headers", std::move(hdrs));
+    return m;
 }
 
 static Value request_to_map(const httplib::Request& req) {
@@ -75,122 +162,76 @@ void register_http_builtins(VM& vm) {
 
     vm.register_native("HTTP.GET$", [](const std::vector<Value>& args) -> Value {
         std::string url = args[0].as_string()->data;
+        bool use_ssl; std::string host, path;
+        parse_url(url, use_ssl, host, path);
+        HttpSnapshot s = snapshot_client_state();
+        path = apply_query_params(path, s.params);
 
-        // Parse URL: scheme://host[:port]/path
-        bool use_ssl = (url.substr(0, 5) == "https");
-        size_t scheme_end = url.find("://");
-        if (scheme_end == std::string::npos) throw std::runtime_error("HTTP: Invalid URL");
-        std::string host_part = url.substr(scheme_end + 3);
-        size_t path_start = host_part.find('/');
-        std::string host = (path_start != std::string::npos) ? host_part.substr(0, path_start) : host_part;
-        std::string path = (path_start != std::string::npos) ? host_part.substr(path_start) : "/";
-
-        auto headers = get_custom_headers();
-
-        if (use_ssl) {
-            httplib::SSLClient cli(host);
-            cli.set_follow_location(true);
-            cli.set_connection_timeout(10, 0);
-            httplib::Headers hdr_map(headers.begin(), headers.end());
-            auto res = cli.Get(path, hdr_map);
+        auto run = [&](auto& cli) -> Value {
+            configure_client(cli, s);
+            auto res = cli.Get(path, s.headers);
             if (res) {
                 std::lock_guard<std::mutex> lock(g_http_mutex);
                 g_http_last_status = res->status;
                 return Value::make_string(res->body);
             }
             throw std::runtime_error("HTTP GET failed: " + host + path);
-        } else {
-            httplib::Client cli(host);
-            cli.set_follow_location(true);
-            cli.set_connection_timeout(10, 0);
-            auto res = cli.Get(path, headers);
-            if (res) {
-                std::lock_guard<std::mutex> lock(g_http_mutex);
-                g_http_last_status = res->status;
-                return Value::make_string(res->body);
-            }
-            throw std::runtime_error("HTTP GET failed: " + host + path);
-        }
+        };
+        if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+        else         { httplib::Client    cli(host); return run(cli); }
     });
 
     vm.register_native("HTTP.POST$", [](const std::vector<Value>& args) -> Value {
         std::string url = args[0].as_string()->data;
         std::string data = args[1].as_string()->data;
         std::string content_type = (args.size() >= 3) ? args[2].as_string()->data : "application/json";
-
-        bool use_ssl = (url.substr(0, 5) == "https");
-        size_t scheme_end = url.find("://");
-        if (scheme_end == std::string::npos) throw std::runtime_error("HTTP: Invalid URL");
-        std::string host_part = url.substr(scheme_end + 3);
-        size_t path_start = host_part.find('/');
-        std::string host = (path_start != std::string::npos) ? host_part.substr(0, path_start) : host_part;
-        std::string path = (path_start != std::string::npos) ? host_part.substr(path_start) : "/";
-
-        auto headers = get_custom_headers();
-        // Remove Content-Type from custom headers — httplib sets it from the parameter
-        for (auto it = headers.begin(); it != headers.end(); ) {
+        bool use_ssl; std::string host, path;
+        parse_url(url, use_ssl, host, path);
+        HttpSnapshot s = snapshot_client_state();
+        path = apply_query_params(path, s.params);
+        // Content-Type is passed as an explicit argument to httplib::Post; strip any
+        // duplicate from the custom header set.
+        for (auto it = s.headers.begin(); it != s.headers.end(); ) {
             if (it->first == "Content-Type" || it->first == "content-type")
-                it = headers.erase(it);
+                it = s.headers.erase(it);
             else ++it;
         }
 
-        if (use_ssl) {
-            httplib::SSLClient cli(host);
-            cli.set_follow_location(true);
-            httplib::Headers hdr_map(headers.begin(), headers.end());
-            auto res = cli.Post(path, hdr_map, data, content_type);
+        auto run = [&](auto& cli) -> Value {
+            configure_client(cli, s);
+            auto res = cli.Post(path, s.headers, data, content_type);
             if (res) {
                 std::lock_guard<std::mutex> lock(g_http_mutex);
                 g_http_last_status = res->status;
                 return Value::make_string(res->body);
             }
-            throw std::runtime_error("HTTP POST failed");
-        } else {
-            httplib::Client cli(host);
-            cli.set_follow_location(true);
-            auto res = cli.Post(path, headers, data, content_type);
-            if (res) {
-                std::lock_guard<std::mutex> lock(g_http_mutex);
-                g_http_last_status = res->status;
-                return Value::make_string(res->body);
-            }
-            throw std::runtime_error("HTTP POST failed");
-        }
+            throw std::runtime_error("HTTP POST failed: " + host + path);
+        };
+        if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+        else         { httplib::Client    cli(host); return run(cli); }
     });
 
     vm.register_native("HTTP.PUT$", [](const std::vector<Value>& args) -> Value {
         std::string url = args[0].as_string()->data;
         std::string data = args[1].as_string()->data;
         std::string content_type = (args.size() >= 3) ? args[2].as_string()->data : "application/json";
+        bool use_ssl; std::string host, path;
+        parse_url(url, use_ssl, host, path);
+        HttpSnapshot s = snapshot_client_state();
+        path = apply_query_params(path, s.params);
 
-        bool use_ssl = (url.substr(0, 5) == "https");
-        size_t scheme_end = url.find("://");
-        if (scheme_end == std::string::npos) throw std::runtime_error("HTTP: Invalid URL");
-        std::string host_part = url.substr(scheme_end + 3);
-        size_t path_start = host_part.find('/');
-        std::string host = (path_start != std::string::npos) ? host_part.substr(0, path_start) : host_part;
-        std::string path = (path_start != std::string::npos) ? host_part.substr(path_start) : "/";
-
-        if (use_ssl) {
-            httplib::SSLClient cli(host);
-            cli.set_follow_location(true);
-            auto res = cli.Put(path, data, content_type);
+        auto run = [&](auto& cli) -> Value {
+            configure_client(cli, s);
+            auto res = cli.Put(path, s.headers, data, content_type);
             if (res) {
                 std::lock_guard<std::mutex> lock(g_http_mutex);
                 g_http_last_status = res->status;
                 return Value::make_string(res->body);
             }
-        } else {
-            httplib::Client cli(host);
-            cli.set_follow_location(true);
-            auto res = cli.Put(path, data, content_type);
-            if (res) {
-                std::lock_guard<std::mutex> lock(g_http_mutex);
-                g_http_last_status = res->status;
-                return Value::make_string(res->body);
-            }
-        }
-        throw std::runtime_error("HTTP PUT failed");
+            throw std::runtime_error("HTTP PUT failed: " + host + path);
+        };
+        if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+        else         { httplib::Client    cli(host); return run(cli); }
     });
 
     vm.register_native("HTTP.SETHEADER", [](const std::vector<Value>& args) -> Value {
@@ -210,6 +251,120 @@ void register_http_builtins(VM& vm) {
         (void)args;
         std::lock_guard<std::mutex> lock(g_http_mutex);
         return Value::make_i64(g_http_last_status);
+    });
+
+    // ── Client configuration ─────────────────────────────────
+
+    vm.register_native("HTTP.SETTIMEOUT", [](const std::vector<Value>& args) -> Value {
+        double sec = args[0].to_double();
+        if (sec < 0) sec = 0;
+        std::lock_guard<std::mutex> lock(g_http_mutex);
+        g_http_timeout_sec = (int)sec;
+        return Value::make_none();
+    });
+
+    vm.register_native("HTTP.FOLLOWREDIRECTS", [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lock(g_http_mutex);
+        g_http_follow = args[0].to_bool();
+        return Value::make_none();
+    });
+
+    vm.register_native("HTTP.SETPARAM", [](const std::vector<Value>& args) -> Value {
+        std::string name = args[0].as_string()->data;
+        std::string value = args[1].as_string()->data;
+        std::lock_guard<std::mutex> lock(g_http_mutex);
+        for (auto& [k, v] : g_http_params) {
+            if (k == name) { v = value; return Value::make_none(); }
+        }
+        g_http_params.emplace_back(name, value);
+        return Value::make_none();
+    });
+
+    vm.register_native("HTTP.CLEARPARAMS", [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        std::lock_guard<std::mutex> lock(g_http_mutex);
+        g_http_params.clear();
+        return Value::make_none();
+    });
+
+    vm.register_native("HTTP.SETCOOKIE", [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lock(g_http_mutex);
+        g_http_cookies[args[0].as_string()->data] = args[1].as_string()->data;
+        return Value::make_none();
+    });
+
+    vm.register_native("HTTP.CLEARCOOKIES", [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        std::lock_guard<std::mutex> lock(g_http_mutex);
+        g_http_cookies.clear();
+        return Value::make_none();
+    });
+
+    vm.register_native("HTTP.GETCOOKIE$", [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lock(g_http_mutex);
+        auto it = g_http_cookies.find(args[0].as_string()->data);
+        return Value::make_string(it != g_http_cookies.end() ? it->second : std::string());
+    });
+
+    // HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> object
+    // Rich response: { status, body, headers }. Never throws on HTTP-level
+    // errors (4xx/5xx) — those are surfaced via the `status` field. Transport
+    // failures still throw.
+    vm.register_native("HTTP.REQUEST", [](const std::vector<Value>& args) -> Value {
+        std::string method = args[0].as_string()->data;
+        std::string url    = args[1].as_string()->data;
+        std::string body   = (args.size() >= 3) ? args[2].as_string()->data : std::string();
+        std::string ct     = (args.size() >= 4) ? args[3].as_string()->data : std::string("application/json");
+        for (auto& c : method) c = (char)toupper((unsigned char)c);
+
+        bool use_ssl; std::string host, path;
+        parse_url(url, use_ssl, host, path);
+        HttpSnapshot s = snapshot_client_state();
+        path = apply_query_params(path, s.params);
+        for (auto it = s.headers.begin(); it != s.headers.end(); ) {
+            if (method != "GET" && method != "DELETE" && method != "HEAD" &&
+                (it->first == "Content-Type" || it->first == "content-type"))
+                it = s.headers.erase(it);
+            else ++it;
+        }
+
+        auto run = [&](auto& cli) -> Value {
+            configure_client(cli, s);
+            httplib::Result res(nullptr, httplib::Error::Unknown);
+            if (method == "GET")          res = cli.Get(path, s.headers);
+            else if (method == "DELETE")  res = cli.Delete(path, s.headers);
+            else if (method == "HEAD")    res = cli.Head(path, s.headers);
+            else if (method == "POST")    res = cli.Post(path, s.headers, body, ct.c_str());
+            else if (method == "PUT")     res = cli.Put(path, s.headers, body, ct.c_str());
+            else if (method == "PATCH")   res = cli.Patch(path, s.headers, body, ct.c_str());
+            else throw std::runtime_error("HTTP.REQUEST: unknown method " + method);
+            if (!res) throw std::runtime_error("HTTP.REQUEST transport failure: " + url);
+            { std::lock_guard<std::mutex> lock(g_http_mutex); g_http_last_status = res->status; }
+            return response_to_map(res);
+        };
+        if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+        else         { httplib::Client    cli(host); return run(cli); }
+    });
+
+    vm.register_native("HTTP.DELETE$", [](const std::vector<Value>& args) -> Value {
+        std::string url = args[0].as_string()->data;
+        bool use_ssl; std::string host, path;
+        parse_url(url, use_ssl, host, path);
+        HttpSnapshot s = snapshot_client_state();
+        path = apply_query_params(path, s.params);
+
+        auto run = [&](auto& cli) -> Value {
+            configure_client(cli, s);
+            auto res = cli.Delete(path, s.headers);
+            if (res) {
+                std::lock_guard<std::mutex> lock(g_http_mutex);
+                g_http_last_status = res->status;
+                return Value::make_string(res->body);
+            }
+            throw std::runtime_error("HTTP DELETE failed: " + host + path);
+        };
+        if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+        else         { httplib::Client    cli(host); return run(cli); }
     });
 
     // ── Async Client functions ──────────────────────────────
@@ -233,31 +388,22 @@ void register_http_builtins(VM& vm) {
 
     vm.register_native("HTTP.GET_ASYNC$", [launch_async](const std::vector<Value>& args) -> Value {
         std::string url = args[0].as_string()->data;
-        httplib::Headers hdrs = get_custom_headers();
-        return launch_async([url, hdrs]() -> Value {
-            bool use_ssl = (url.substr(0, 5) == "https");
-            size_t se = url.find("://"); if (se == std::string::npos) throw std::runtime_error("Invalid URL");
-            std::string hp = url.substr(se + 3);
-            size_t ps = hp.find('/');
-            std::string host = (ps != std::string::npos) ? hp.substr(0, ps) : hp;
-            std::string path = (ps != std::string::npos) ? hp.substr(ps) : "/";
-            if (use_ssl) {
-                httplib::SSLClient cli(host); cli.set_follow_location(true); cli.set_connection_timeout(30, 0);
-                httplib::Headers hm(hdrs.begin(), hdrs.end());
-                auto res = cli.Get(path, hm);
+        HttpSnapshot s = snapshot_client_state();
+        return launch_async([url, s]() -> Value {
+            bool use_ssl; std::string host, path;
+            parse_url(url, use_ssl, host, path);
+            std::string full_path = apply_query_params(path, s.params);
+            auto run = [&](auto& cli) -> Value {
+                configure_client(cli, s);
+                auto res = cli.Get(full_path, s.headers);
                 if (res) {
                     { std::lock_guard<std::mutex> lock(g_http_mutex); g_http_last_status = res->status; }
                     return Value::make_string(res->body);
                 }
-            } else {
-                httplib::Client cli(host); cli.set_follow_location(true); cli.set_connection_timeout(30, 0);
-                auto res = cli.Get(path, hdrs);
-                if (res) {
-                    { std::lock_guard<std::mutex> lock(g_http_mutex); g_http_last_status = res->status; }
-                    return Value::make_string(res->body);
-                }
-            }
-            throw std::runtime_error("HTTP GET failed: " + url);
+                throw std::runtime_error("HTTP GET failed: " + url);
+            };
+            if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+            else         { httplib::Client    cli(host); return run(cli); }
         });
     });
 
@@ -265,31 +411,27 @@ void register_http_builtins(VM& vm) {
         std::string url = args[0].as_string()->data;
         std::string data = args[1].as_string()->data;
         std::string ct = (args.size() >= 3) ? args[2].as_string()->data : "application/json";
-        httplib::Headers hdrs = get_custom_headers();
-        return launch_async([url, data, ct, hdrs]() -> Value {
-            bool use_ssl = (url.substr(0, 5) == "https");
-            size_t se = url.find("://"); if (se == std::string::npos) throw std::runtime_error("Invalid URL");
-            std::string hp = url.substr(se + 3);
-            size_t ps = hp.find('/');
-            std::string host = (ps != std::string::npos) ? hp.substr(0, ps) : hp;
-            std::string path = (ps != std::string::npos) ? hp.substr(ps) : "/";
-            if (use_ssl) {
-                httplib::SSLClient cli(host); cli.set_follow_location(true);
-                httplib::Headers hm(hdrs.begin(), hdrs.end());
-                auto res = cli.Post(path, hm, data, ct);
+        HttpSnapshot s = snapshot_client_state();
+        for (auto it = s.headers.begin(); it != s.headers.end(); ) {
+            if (it->first == "Content-Type" || it->first == "content-type")
+                it = s.headers.erase(it);
+            else ++it;
+        }
+        return launch_async([url, data, ct, s]() -> Value {
+            bool use_ssl; std::string host, path;
+            parse_url(url, use_ssl, host, path);
+            std::string full_path = apply_query_params(path, s.params);
+            auto run = [&](auto& cli) -> Value {
+                configure_client(cli, s);
+                auto res = cli.Post(full_path, s.headers, data, ct);
                 if (res) {
                     { std::lock_guard<std::mutex> lock(g_http_mutex); g_http_last_status = res->status; }
                     return Value::make_string(res->body);
                 }
-            } else {
-                httplib::Client cli(host); cli.set_follow_location(true);
-                auto res = cli.Post(path, hdrs, data, ct);
-                if (res) {
-                    { std::lock_guard<std::mutex> lock(g_http_mutex); g_http_last_status = res->status; }
-                    return Value::make_string(res->body);
-                }
-            }
-            throw std::runtime_error("HTTP POST failed: " + url);
+                throw std::runtime_error("HTTP POST failed: " + url);
+            };
+            if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+            else         { httplib::Client    cli(host); return run(cli); }
         });
     });
 
@@ -297,23 +439,22 @@ void register_http_builtins(VM& vm) {
         std::string url = args[0].as_string()->data;
         std::string data = args[1].as_string()->data;
         std::string ct = (args.size() >= 3) ? args[2].as_string()->data : "application/json";
-        return launch_async([url, data, ct]() -> Value {
-            bool use_ssl = (url.substr(0, 5) == "https");
-            size_t se = url.find("://"); if (se == std::string::npos) throw std::runtime_error("Invalid URL");
-            std::string hp = url.substr(se + 3);
-            size_t ps = hp.find('/');
-            std::string host = (ps != std::string::npos) ? hp.substr(0, ps) : hp;
-            std::string path = (ps != std::string::npos) ? hp.substr(ps) : "/";
-            if (use_ssl) {
-                httplib::SSLClient cli(host); cli.set_follow_location(true);
-                auto res = cli.Put(path, data, ct);
-                if (res) return Value::make_string(res->body);
-            } else {
-                httplib::Client cli(host); cli.set_follow_location(true);
-                auto res = cli.Put(path, data, ct);
-                if (res) return Value::make_string(res->body);
-            }
-            throw std::runtime_error("HTTP PUT failed: " + url);
+        HttpSnapshot s = snapshot_client_state();
+        return launch_async([url, data, ct, s]() -> Value {
+            bool use_ssl; std::string host, path;
+            parse_url(url, use_ssl, host, path);
+            std::string full_path = apply_query_params(path, s.params);
+            auto run = [&](auto& cli) -> Value {
+                configure_client(cli, s);
+                auto res = cli.Put(full_path, s.headers, data, ct);
+                if (res) {
+                    { std::lock_guard<std::mutex> lock(g_http_mutex); g_http_last_status = res->status; }
+                    return Value::make_string(res->body);
+                }
+                throw std::runtime_error("HTTP PUT failed: " + url);
+            };
+            if (use_ssl) { httplib::SSLClient cli(host); return run(cli); }
+            else         { httplib::Client    cli(host); return run(cli); }
         });
     });
 

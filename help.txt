@@ -737,13 +737,33 @@ Description: Displays help information. With no topic, lists all commands.
 Syntax: HELP$()
 Description: Returns a 1D array of strings containing all available help topics.
 
+[HTTP.CLEARCOOKIES]
+Syntax: HTTP.CLEARCOOKIES
+Description: Removes all stored client-side cookies.
+
 [HTTP.CLEARHEADERS]
 Syntax: HTTP.CLEARHEADERS
 Description: Clears all custom headers set for subsequent HTTP requests.
 
+[HTTP.CLEARPARAMS]
+Syntax: HTTP.CLEARPARAMS
+Description: Clears all URL query parameters set via HTTP.SETPARAM.
+
+[HTTP.DELETE$]
+Syntax: HTTP.DELETE$(url$)
+Description: Performs an HTTP DELETE request. Status is available via HTTP.STATUSCODE().
+
+[HTTP.FOLLOWREDIRECTS]
+Syntax: HTTP.FOLLOWREDIRECTS(flag)
+Description: Enables (default) or disables automatic redirect-following for subsequent HTTP client calls.
+
 [HTTP.GET$]
 Syntax: HTTP.GET$(url$)
 Description: Performs an HTTP GET request and returns the response body as a string.
+
+[HTTP.GETCOOKIE$]
+Syntax: HTTP.GETCOOKIE$(name$)
+Description: Returns the stored client-side cookie value for 'name$', or empty string if unknown.
 
 [HTTP.POST$]
 Syntax: HTTP.POST$(url$, data$, contentType$)
@@ -752,6 +772,10 @@ Description: Performs an HTTP POST request.
 [HTTP.PUT$]
 Syntax: HTTP.PUT$(url$, data$, contentType$)
 Description: Performs an HTTP PUT request.
+
+[HTTP.REQUEST]
+Syntax: HTTP.REQUEST(method$, url$ [, body$ [, content_type$]])
+Description: Generic HTTP call. Returns a map with 'status', 'body', 'headers'. Does NOT throw on HTTP-level 4xx/5xx; only transport failures throw. method$ is one of GET, DELETE, HEAD, POST, PUT, PATCH.
 
 [HTTP.SERVER.ON_GET]
 Syntax: HTTP.SERVER.ON_GET(path$, function_name$)
@@ -769,9 +793,21 @@ Description: Starts the built-in non-blocking HTTP server on a specified port.
 Syntax: HTTP.SERVER.STOP
 Description: Stops the built-in HTTP server.
 
+[HTTP.SETCOOKIE]
+Syntax: HTTP.SETCOOKIE(name$, value$)
+Description: Stores a client-side cookie that will be sent on subsequent requests.
+
 [HTTP.SETHEADER]
 Syntax: HTTP.SETHEADER(name$, value$)
 Description: Sets a custom HTTP header for subsequent requests.
+
+[HTTP.SETPARAM]
+Syntax: HTTP.SETPARAM(name$, value$)
+Description: Sets (or updates) a URL query parameter applied to all subsequent client calls. Values are url-encoded.
+
+[HTTP.SETTIMEOUT]
+Syntax: HTTP.SETTIMEOUT(seconds)
+Description: Sets the connection/read/write timeout in seconds for subsequent HTTP client calls. Default is 10.
 
 [HTTP.STATUSCODE]
 Syntax: HTTP.STATUSCODE()
