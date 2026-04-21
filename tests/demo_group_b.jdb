@@ -1,0 +1,100 @@
+' ══════════════════════════════════════════════════════════════════
+' Group B demo — Filesystem inspection and log building
+' ══════════════════════════════════════════════════════════════════
+' Showcases FILE.EXISTS/SIZE/ISDIR/STAT, PATH.NORMALIZE$/DIRNAME$,
+'           TXTWRITER append, DIR$ detailed
+
+OPTION "EXPLICIT"
+
+' ── 1. Build a scratch workspace ─────────────────────────────────
+DIM work = "jdb_demo_b"
+IF FILE.EXISTS(work) = 1 THEN
+    ' Previous run left leftovers — skip setup.
+    PRINT "Workspace "; work; " already exists, skipping create"
+ELSE
+    MKDIR work
+    PRINT "Created workspace: "; work
+ENDIF
+
+' Populate with sample files of different sizes
+TXTWRITER work + "/tiny.txt",    "hi"
+TXTWRITER work + "/middle.txt",  REPEAT$("x", 42)
+TXTWRITER work + "/large.txt",   REPEAT$("-", 512)
+PRINT ""
+
+' ── 2. Inspect each file's stat ──────────────────────────────────
+PRINT "FILE STATS"
+PRINT REPEAT$("─", 56)
+PRINT RPAD$("name", 22) + RPAD$("size", 10) + RPAD$("kind", 8) + "mtime"
+PRINT REPEAT$("─", 56)
+
+DIM file_a = work + "/tiny.txt"
+DIM file_b = work + "/middle.txt"
+DIM file_c = work + "/large.txt"
+
+SUB ShowStat(path$)
+    DIM stat = FILE.STAT(path$)
+    DIM kind$ = "?"
+    IF stat{"exists"} THEN
+        IF stat{"is_dir"} THEN
+            kind$ = "DIR"
+        ELSE
+            kind$ = "FILE"
+        ENDIF
+    ELSE
+        kind$ = "MISS"
+    ENDIF
+    PRINT RPAD$(path$, 22) + RPAD$(STR$(stat{"size"}), 10) + RPAD$(kind$, 8) + stat{"mtime"}
+END SUB
+
+ShowStat(file_a)
+ShowStat(file_b)
+ShowStat(file_c)
+ShowStat(work)
+PRINT ""
+
+' ── 3. PATH helpers ───────────────────────────────────────────────
+' NORMALIZE$ resolves . and .. and switches to the OS separator
+PRINT "PATH helpers"
+PRINT "NORMALIZE$(a/./b/../c)     → "; PATH.NORMALIZE$("a/./b/../c")
+PRINT "NORMALIZE$(./foo//bar)     → "; PATH.NORMALIZE$("./foo//bar")
+PRINT "DIRNAME$(logs/2026/app.log)→ "; PATH.DIRNAME$("logs/2026/app.log")
+PRINT "DIRNAME$(local.txt)        → ["; PATH.DIRNAME$("local.txt"); "]"
+PRINT ""
+
+' ── 4. TXTWRITER append: build a log across 'sessions' ──────────
+DIM logfile = work + "/session.log"
+DIM stamp$ = FORMAT_DATE(NOW(), "%H:%M:%S")
+
+' First session — overwrite
+TXTWRITER logfile, "[" + stamp$ + "] session-1 start" + CHR$(10)
+
+' Subsequent entries — append
+TXTWRITER logfile, "[" + stamp$ + "] session-1 event A" + CHR$(10), TRUE
+TXTWRITER logfile, "[" + stamp$ + "] session-1 event B" + CHR$(10), TRUE
+TXTWRITER logfile, "[" + stamp$ + "] session-1 end" + CHR$(10), TRUE
+
+' Simulate a second run appending further
+TXTWRITER logfile, "[" + stamp$ + "] session-2 start" + CHR$(10), TRUE
+TXTWRITER logfile, "[" + stamp$ + "] session-2 end"   + CHR$(10), TRUE
+
+DIM log_bytes = FILE.SIZE(logfile)
+PRINT "Log file grew to "; log_bytes; " bytes across appends"
+PRINT "---- log contents ----"
+PRINT TXTREADER$(logfile)
+PRINT "----------------------"
+PRINT ""
+
+' ── 5. DIR$ detailed listing ──────────────────────────────────────
+PRINT "Workspace listing:"
+DIM listing = DIR$(work + "/*", TRUE)
+PRINT "  Entries found: "; LEN(listing)
+
+' ── Cleanup ──────────────────────────────────────────────────────
+KILL file_a
+KILL file_b
+KILL file_c
+KILL logfile
+RMDIR work
+PRINT ""
+PRINT "Cleanup done: "; FILE.EXISTS(work) = 0

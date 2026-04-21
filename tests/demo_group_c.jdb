@@ -1,0 +1,78 @@
+' ══════════════════════════════════════════════════════════════════
+' Group C demo — Timezone-aware dates, DATE.UTC, DATE.PARTS
+' ══════════════════════════════════════════════════════════════════
+' Showcases CVDATE/FORMAT_DATE with tz, DATE.UTC, DATE.PARTS, DATEDIFF
+
+OPTION "EXPLICIT"
+
+' ── 1. "Team meeting" rendered across multiple timezones ─────────
+' Everyone agrees on an instant; each local displays its wall-clock.
+DIM instant = DATE.UTC(2026, 5, 14, 16, 30, 0)   ' 16:30 UTC
+
+DIM zones[6, 2]
+zones[0, 0] = "UTC"              : zones[0, 1] = 0
+zones[1, 0] = "London"           : zones[1, 1] = 1    ' BST in May
+zones[2, 0] = "Berlin"           : zones[2, 1] = 2
+zones[3, 0] = "Mumbai"           : zones[3, 1] = 5.5
+zones[4, 0] = "New York"         : zones[4, 1] = -4
+zones[5, 0] = "Tokyo"            : zones[5, 1] = 9
+
+PRINT "Global team meeting — one instant, many wall-clocks"
+PRINT REPEAT$("═", 48)
+PRINT RPAD$("Zone", 16) + RPAD$("Offset", 12) + "Local time"
+PRINT REPEAT$("─", 48)
+
+FOR z = 0 TO 5
+    DIM city$ = zones[z, 0]
+    DIM off = zones[z, 1]
+    DIM local$ = FORMAT_DATE(instant, "%a %Y-%m-%d %H:%M", off)
+    DIM off_disp$ = "UTC"
+    IF off > 0 THEN off_disp$ = "UTC+" + STR$(off)
+    IF off < 0 THEN off_disp$ = "UTC"  + STR$(off)
+    PRINT RPAD$(city$, 16) + RPAD$(off_disp$, 12) + local$
+NEXT z
+PRINT ""
+
+' ── 2. DATE.PARTS — decomposing an instant ───────────────────────
+DIM dp = DATE.PARTS(instant, 0)
+PRINT "DATE.PARTS of the UTC instant:"
+PRINT "  year    = "; dp{"year"}
+PRINT "  month   = "; dp{"month"}
+PRINT "  day     = "; dp{"day"}
+PRINT "  hour    = "; dp{"hour"}
+PRINT "  minute  = "; dp{"minute"}
+PRINT "  weekday = "; dp{"weekday"}; " (0=Sun)"
+PRINT "  yday    = "; dp{"yday"}
+PRINT ""
+
+' ── 3. Duration until year-end (in user's local zone) ────────────
+DIM year_end = DATE.UTC(2026, 12, 31, 23, 59, 59)
+DIM secs_to_eoy = DATEDIFF("S", instant, year_end)
+DIM days_to_eoy = DATEDIFF("D", instant, year_end)
+
+PRINT "Time from meeting to end-of-2026:"
+PRINT "  Days:    "; days_to_eoy
+PRINT "  Seconds: "; secs_to_eoy
+PRINT ""
+
+' ── 4. Countdown preview — add 7, 30, 90 days ────────────────────
+PRINT "Follow-up milestones:"
+DIM milestones[3]
+milestones[0] = 7
+milestones[1] = 30
+milestones[2] = 90
+FOR m = 0 TO 2
+    DIM offset_days = milestones[m]
+    DIM dt = DATEADD("D", offset_days, instant)
+    PRINT "  +"; RPAD$(STR$(offset_days), 3); " days → "; FORMAT_DATE(dt, "%a %Y-%m-%d %H:%M", 2); " (Berlin)"
+NEXT m
+PRINT ""
+
+' ── 5. Date parsing vs rebuilding ─────────────────────────────────
+' CVDATE with tz parses a wall-clock in that zone; DATE.UTC builds
+' directly from numeric UTC fields. Both must agree.
+DIM parsed = CVDATE("2026-05-14 18:30:00", 2)    ' 18:30 in Berlin
+DIM built  = DATE.UTC(2026, 5, 14, 16, 30, 0)    ' 16:30 UTC (same instant)
+PRINT "Parse vs build, delta seconds: "; DATEDIFF("S", parsed, built)
+PRINT ""
+PRINT "Done."

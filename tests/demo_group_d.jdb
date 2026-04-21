@@ -1,0 +1,76 @@
+' ══════════════════════════════════════════════════════════════════
+' Group D demo — HTTP client state: cookies, params, timeouts
+' ══════════════════════════════════════════════════════════════════
+' Showcases HTTP.SETTIMEOUT, FOLLOWREDIRECTS, SETPARAM/CLEARPARAMS,
+'           SETCOOKIE/CLEARCOOKIES/GETCOOKIE$, HTTP.REQUEST, HTTP.DELETE$
+'
+' Gated on OS.FEATURE("HTTP") so it's safe to include in builds without
+' HTTP support. When HTTP is enabled, the demo runs against httpbin.org
+' as a public echo server.
+
+OPTION "EXPLICIT"
+
+IF NOT OS.FEATURE("HTTP") THEN
+    PRINT "HTTP feature not available in this build — demo skipped."
+    END
+ENDIF
+
+DIM host$ = "https://httpbin.org"
+
+' ── 1. Client-state setup ─────────────────────────────────────────
+PRINT "── Client configuration ──"
+
+HTTP.SETTIMEOUT 5000
+PRINT "Timeout set to 5000 ms (httpbin is slow to wake)"
+
+HTTP.FOLLOWREDIRECTS TRUE
+PRINT "Redirects ENABLED"
+
+' Default params get appended to every query-string
+HTTP.SETPARAM "api_key", "demo-token"
+HTTP.SETPARAM "version", "1.2"
+PRINT "Default params: api_key=demo-token, version=1.2"
+
+' Cookies stick across calls until cleared
+HTTP.SETCOOKIE "client_id", "workstation-07"
+HTTP.SETCOOKIE "theme",     "dark"
+PRINT "Cookies staged:"
+PRINT "  client_id = "; HTTP.GETCOOKIE$("client_id")
+PRINT "  theme     = "; HTTP.GETCOOKIE$("theme")
+PRINT ""
+
+' ── 2. A real round-trip via httpbin /get ────────────────────────
+PRINT "── GET "; host$; "/get ──"
+DIM r = HTTP.REQUEST("GET", host$ + "/get", "", {})
+PRINT "status: "; r{"status"}
+
+' httpbin echoes args + headers back as JSON; peek at length
+DIM body$ = r{"body"}
+PRINT "echoed body length: "; LEN(body$); " bytes"
+
+' Verify our default params made it through
+IF "api_key" IN body$ THEN
+    PRINT "httpbin saw our api_key param ✓"
+ELSE
+    PRINT "httpbin did NOT echo api_key (maybe offline)"
+ENDIF
+PRINT ""
+
+' ── 3. DELETE round-trip ─────────────────────────────────────────
+PRINT "── DELETE "; host$; "/delete ──"
+DIM del_body$ = HTTP.DELETE$(host$ + "/delete")
+PRINT "delete body length: "; LEN(del_body$); " bytes"
+PRINT ""
+
+' ── 4. Teardown ──────────────────────────────────────────────────
+PRINT "── Teardown ──"
+HTTP.CLEARPARAMS
+PRINT "Params cleared"
+
+HTTP.CLEARCOOKIES
+PRINT "Cookies cleared — client_id now ["; HTTP.GETCOOKIE$("client_id"); "]"
+
+HTTP.FOLLOWREDIRECTS FALSE
+PRINT "Redirects disabled"
+PRINT ""
+PRINT "Done."

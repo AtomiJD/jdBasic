@@ -4179,7 +4179,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             auto& fn = runtime_funcs["INSTR"];
             LLVMValueRef args[] = { rhs.val, lhs.val };
             LLVMValueRef pos = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "instr");
-            LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSGT, pos,
+            LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSGE, pos,
                                               LLVMConstInt(i64_type, 0, 0), "in");
             return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), JD_TAG_I64 };
         }
@@ -4928,13 +4928,27 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
             // Runtime-tagged: could be string, array, or VM handle.
-            // Branch: if runtime_tag == 3 (native array) → jdb_array_len
-            //         else → jdrt_val_length (handles strings + VM objects)
+            // Branch by runtime_tag: 2=STR → jdb_len_str (C string),
+            // 3=ARR → jdb_array_len, else → jdrt_val_length (VM handle).
+            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ,
+                av.runtime_tag, LLVMConstInt(i32_type, 2, 0), "is_str");
             LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ,
                 av.runtime_tag, LLVMConstInt(i32_type, 3, 0), "is_arr");
+            LLVMBasicBlockRef bb_str = LLVMAppendBasicBlock(current_fn, "len7.str");
+            LLVMBasicBlockRef bb_not_str = LLVMAppendBasicBlock(current_fn, "len7.nstr");
             LLVMBasicBlockRef bb_arr = LLVMAppendBasicBlock(current_fn, "len7.arr");
             LLVMBasicBlockRef bb_vm = LLVMAppendBasicBlock(current_fn, "len7.vm");
             LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "len7.join");
+            LLVMBuildCondBr(builder, is_str, bb_str, bb_not_str);
+
+            LLVMPositionBuilderAtEnd(builder, bb_str);
+            LLVMValueRef sptr = LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "sptr");
+            auto& fn_str = runtime_funcs["LEN$"];
+            LLVMValueRef slen = LLVMBuildCall2(builder, fn_str.fn_type, fn_str.fn, &sptr, 1, "slen");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_not_str);
             LLVMBuildCondBr(builder, is_arr, bb_arr, bb_vm);
 
             LLVMPositionBuilderAtEnd(builder, bb_arr);
@@ -4957,9 +4971,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             LLVMPositionBuilderAtEnd(builder, bb_join);
             LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "len7");
-            LLVMValueRef vals[] = { alen, vlen };
-            LLVMBasicBlockRef bbs[] = { bb_arr_end, bb_vm_end };
-            LLVMAddIncoming(phi, vals, bbs, 2);
+            LLVMValueRef vals[] = { slen, alen, vlen };
+            LLVMBasicBlockRef bbs[] = { bb_str_end, bb_arr_end, bb_vm_end };
+            LLVMAddIncoming(phi, vals, bbs, 3);
             return { phi, JD_TAG_I64 };
         }
         // Fallback

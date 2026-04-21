@@ -163,9 +163,8 @@ int64_t jdb_recursion_depth() {
 
 // OS.FEATURE for the native-compiled runtime. Mirrors the VM-side
 // function: returns 1 for capabilities the current binary advertises.
-// Always reports NATIVEC=1 (we are running compiled code) and the
-// inverse for INTERPRETER. Optional features are off here because
-// jdb_runtime.cpp is built without those headers.
+// Optional build-time features (HTTP, GFX, IMGUI, ...) reflect the
+// macros passed when compiling this DLL via build_rt.bat.
 int64_t jdb_os_feature(const char* name) {
     if (!name) return 0;
     char up[64]; size_t n = strlen(name);
@@ -178,6 +177,21 @@ int64_t jdb_os_feature(const char* name) {
     if (strcmp(up, "NATIVEC")     == 0) return 1;
     if (strcmp(up, "INTERPRETER") == 0) return 0;
     if (strcmp(up, "LLVMC")       == 0) return 1;
+#ifdef HTTP
+    if (strcmp(up, "HTTP")        == 0) return 1;
+#endif
+#ifdef COM
+    if (strcmp(up, "COM")         == 0) return 1;
+#endif
+#ifdef GFX
+    if (strcmp(up, "GFX")         == 0) return 1;
+#endif
+#ifdef IMGUI
+    if (strcmp(up, "IMGUI")       == 0) return 1;
+#endif
+#ifdef USE_SERIAL
+    if (strcmp(up, "SERIAL")      == 0) return 1;
+#endif
     return 0;
 }
 
