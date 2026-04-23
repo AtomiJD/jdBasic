@@ -1,0 +1,78 @@
+' Subset-Sum: Loop O(2^N)  vs  DP O(N * target) — native-safe.
+' Beide Funktionen arbeiten element-weise ohne SHIFT-Vektor-Return
+' und ohne OUTER, daher im nativen Compiler voll lauffaehig.
+'
+' Die Eingabe-Arrays sind statisch (nicht ueber TAKE gebaut), weil
+' TAKE im nativen Backend aktuell nicht konsistent ein indexierbares
+' Array zurueckgibt — das ist ein separater Native-Gap.
+
+OPTION "EXPLICIT"
+
+FUNC HasSubsetSumLoop(xs, t)
+    DIM nn AS INTEGER = LEN(xs)
+    DIM mask AS INTEGER
+    DIM i AS INTEGER
+    DIM sm AS DOUBLE
+    FOR mask = 0 TO 2 ^ nn - 1
+        sm = 0
+        FOR i = 0 TO nn - 1
+            IF (mask SHR i) BAND 1 THEN sm = sm + xs[i]
+        NEXT
+        IF sm = t THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+FUNC HasSubsetSumDP(xs, t)
+    DIM reach = ZEROS(t + 1)
+    reach[0] = 1
+    DIM i AS INTEGER
+    DIM s AS INTEGER
+    DIM num AS INTEGER
+    FOR i = 0 TO LEN(xs) - 1
+        num = xs[i]
+        FOR s = t TO num STEP -1
+            IF reach[s - num] THEN reach[s] = 1
+        NEXT s
+    NEXT i
+    RETURN reach[t] = 1
+ENDFUNC
+
+' ── Fixed-size datasets — static arrays ─────────────────────────
+LET xs12 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47]
+LET xs14 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47, 173, 61]
+LET xs16 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47, 173, 61, 101, 29]
+LET xs18 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47, 173, 61, 101, 29, 151, 67]
+LET xs20 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47, 173, 61, 101, 29, 151, 67, 79, 97]
+LET xs25 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47, 173, 61, 101, 29, 151, 67, 79, 97, 11, 13, 19, 23, 37]
+LET xs30 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47, 173, 61, 101, 29, 151, 67, 79, 97, 11, 13, 19, 23, 37, 43, 53, 59, 67, 71]
+LET xs40 = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, 113, 47, 173, 61, 101, 29, 151, 67, 79, 97, 11, 13, 19, 23, 37, 43, 53, 59, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113]
+
+PRINT "── Bench: target=1234 ──"
+PRINT "  N         2^N       Loop[ms]       DP[ms]     speedup"
+
+LET t0 = TICK() : LET rl = HasSubsetSumLoop(xs12, 1234) : LET tl = TICK() - t0
+LET t1 = TICK() : LET rd = HasSubsetSumDP(xs12, 1234)   : LET td = TICK() - t1
+PRINT 12, 4096, tl, td, tl / td
+
+LET t0 = TICK() : LET rl = HasSubsetSumLoop(xs14, 1234) : LET tl = TICK() - t0
+LET t1 = TICK() : LET rd = HasSubsetSumDP(xs14, 1234)   : LET td = TICK() - t1
+PRINT 14, 16384, tl, td, tl / td
+
+LET t0 = TICK() : LET rl = HasSubsetSumLoop(xs16, 1234) : LET tl = TICK() - t0
+LET t1 = TICK() : LET rd = HasSubsetSumDP(xs16, 1234)   : LET td = TICK() - t1
+PRINT 16, 65536, tl, td, tl / td
+
+LET t0 = TICK() : LET rl = HasSubsetSumLoop(xs18, 1234) : LET tl = TICK() - t0
+LET t1 = TICK() : LET rd = HasSubsetSumDP(xs18, 1234)   : LET td = TICK() - t1
+PRINT 18, 262144, tl, td, tl / td
+
+LET t0 = TICK() : LET rl = HasSubsetSumLoop(xs20, 1234) : LET tl = TICK() - t0
+LET t1 = TICK() : LET rd = HasSubsetSumDP(xs20, 1234)   : LET td = TICK() - t1
+PRINT 20, 1048576, tl, td, tl / td
+
+PRINT
+PRINT "── Bench: DP only, N=25..40 — jenseits der brute-force-Grenze ──"
+LET t = TICK() : LET r = HasSubsetSumDP(xs25, 1234) : PRINT 25, TICK() - t
+LET t = TICK() : LET r = HasSubsetSumDP(xs30, 1234) : PRINT 30, TICK() - t
+LET t = TICK() : LET r = HasSubsetSumDP(xs40, 1234) : PRINT 40, TICK() - t
