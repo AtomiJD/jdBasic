@@ -1,0 +1,10 @@
+' Tracing helper module — exports a single LINE() sub used by the
+' demo's lifecycle hooks to show that exported functions are reachable
+' from inside INIT/DISPOSE.
+EXPORT MODULE LOG
+
+EXPORT DIM ENABLED = TRUE
+
+EXPORT SUB SAY(s AS STRING)
+    IF ENABLED THEN PRINT "[log] " + s
+ENDSUB

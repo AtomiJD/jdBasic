@@ -2205,6 +2205,15 @@ void Parser::module_rename_stmt(Stmt& stmt,
         if (it != var_map.end()) stmt.var_name = it->second;
     }
 
+    // DIM x AS TypeName — when TypeName is a module-internal type name
+    // referenced from within the same module's body, the rename pass
+    // would otherwise leave the label unmangled and compile_dim wouldn't
+    // recognise it (no entry in user_types under the bare name).
+    if (stmt.kind == StmtKind::DIM && !stmt.label.empty()) {
+        auto it = func_map.find(stmt.label);
+        if (it != func_map.end()) stmt.label = it->second;
+    }
+
     // Rename expressions
     if (stmt.expr) module_rename_expr(*stmt.expr, func_map, var_map);
     if (stmt.end_expr) module_rename_expr(*stmt.end_expr, func_map, var_map);
@@ -2212,6 +2221,7 @@ void Parser::module_rename_stmt(Stmt& stmt,
     if (stmt.loop_cond) module_rename_expr(*stmt.loop_cond, func_map, var_map);
     for (auto& e : stmt.print_exprs) module_rename_expr(*e, func_map, var_map);
     for (auto& e : stmt.index_chain) module_rename_expr(*e, func_map, var_map);
+    for (auto& e : stmt.ctor_args) module_rename_expr(*e, func_map, var_map);
 
     // Rename in branches (IF/SWITCH)
     for (auto& br : stmt.branches) {

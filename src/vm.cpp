@@ -1871,7 +1871,12 @@ void VM::run() {
         }
 
         case OpCode::RETURN_VOID: {
+            // Release every local in the popped frame so refcounted UDTs
+            // (and strings/arrays) don't outlive the SUB. Without this,
+            // SUB DISPOSE for nested locals never fires until their slot
+            // gets overwritten by a later push.
             size_t base = cf.stack_base;
+            for (size_t i = base; i < sp; ++i) stack[i] = Value();
             frames.pop_back();
             sp = base;
             push(Value::make_none());
@@ -1880,11 +1885,14 @@ void VM::run() {
         }
 
         case OpCode::RETURN_VAL: {
-            // Return value is currently at stack[sp-1]. After return we need
-            // it to sit at stack[frame_base], with sp = frame_base + 1 and the
-            // frame popped. Avoid the extra pop+push dance.
+            // Move the return value out, then release all other locals
+            // (slots [base+1 .. sp-1]) before placing the return at base.
+            // Same reason as RETURN_VOID — keep refcounted locals from
+            // outliving the call.
             size_t base = cf.stack_base;
-            stack[base] = std::move(stack[sp - 1]);
+            Value retval = std::move(stack[sp - 1]);
+            for (size_t i = base; i + 1 < sp; ++i) stack[i] = Value();
+            stack[base] = std::move(retval);
             sp = base + 1;
             frames.pop_back();
             // cf is now dangling — break so next iteration refetches

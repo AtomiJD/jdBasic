@@ -1,0 +1,78 @@
+' Inventory module — demonstrates:
+'   * EXPORT DIM (module-global counter mutated by lifecycle hooks)
+'   * EXPORT FUNC called from INIT
+'   * Nested UDT field within the same module (T_PACK has T_ITEM fields)
+'   * Cross-module call: INIT/DISPOSE call LOG.SAY
+'
+' Type matrix in this module:
+'   T_ITEM  — INIT only        (no DISPOSE)
+'   T_SLOT  — DISPOSE only     (no INIT)
+'   T_PACK  — INIT + DISPOSE   (full lifecycle, nested fields)
+
+EXPORT MODULE INV
+IMPORT LOG
+
+EXPORT DIM TOTAL_SPAWNED = 0
+EXPORT DIM TOTAL_DISPOSED = 0
+
+EXPORT FUNC NEXT_ID()
+    TOTAL_SPAWNED = TOTAL_SPAWNED + 1
+    RETURN TOTAL_SPAWNED
+ENDFUNC
+
+' ──────────────────────────────────────────────────────────────────
+' T_ITEM — INIT only. Touches the module-global counter via NEXT_ID()
+' and uses LOG.SAY from a different module.
+' ──────────────────────────────────────────────────────────────────
+EXPORT TYPE T_ITEM
+    Id   AS INTEGER
+    Name AS STRING
+
+    SUB INIT(n AS STRING)
+        THIS.Id   = NEXT_ID()
+        THIS.Name = n
+        LOG.SAY "  item +" + THIS.Name + " (#" + STR$(THIS.Id) + ")"
+    ENDSUB
+
+    FUNC LABEL$()
+        RETURN THIS.Name + "#" + STR$(THIS.Id)
+    ENDFUNC
+ENDTYPE
+
+' ──────────────────────────────────────────────────────────────────
+' T_SLOT — DISPOSE only. Constructed via plain DIM (no args), but
+' still cleans up when scope exits.
+' ──────────────────────────────────────────────────────────────────
+EXPORT TYPE T_SLOT
+    Tag AS STRING
+
+    SUB DISPOSE()
+        TOTAL_DISPOSED = TOTAL_DISPOSED + 1
+        LOG.SAY "  slot dispose tag=[" + THIS.Tag + "]"
+    ENDSUB
+ENDTYPE
+
+' ──────────────────────────────────────────────────────────────────
+' T_PACK — Full INIT + DISPOSE, plus nested UDT fields (Pri/Sec are
+' T_ITEM). The nested DIM inside INIT requires the cross-module-
+' internal type-name rename fix in parser.cpp.
+' ──────────────────────────────────────────────────────────────────
+EXPORT TYPE T_PACK
+    Pri AS T_ITEM
+    Sec AS T_ITEM
+    Tag AS STRING
+
+    SUB INIT(t AS STRING, p AS STRING, s AS STRING)
+        THIS.Tag = t
+        DIM a AS T_ITEM(p)
+        DIM b AS T_ITEM(s)
+        THIS.Pri = a
+        THIS.Sec = b
+        LOG.SAY "+pack(" + t + ") = {" + a.LABEL$() + ", " + b.LABEL$() + "}"
+    ENDSUB
+
+    SUB DISPOSE()
+        TOTAL_DISPOSED = TOTAL_DISPOSED + 1
+        LOG.SAY "-pack(" + THIS.Tag + ")"
+    ENDSUB
+ENDTYPE

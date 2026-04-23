@@ -1,0 +1,79 @@
+' UDT-Full-Demo: kombiniert alles, was INIT/DISPOSE in jdBasic kann.
+'
+' Demonstriert:
+'   1) Skalar-UDT + DIM x AS T(args)            -> SUB INIT
+'   2) Geschachtelte UDTs (T_PACK haelt T_ITEMs)-> nested INIT cascade
+'   3) UDTs aus EXPORT-Modul (INV) im main code -> module-internal types
+'   4) INIT + DISPOSE + INIT-only + DISPOSE-only + plain (alle 4 Varianten)
+'   5) Globale Variable / Funktion aus Export im INIT/DISPOSE
+'      (NEXT_ID(), TOTAL_SPAWNED, LOG.SAY)
+'   6) Array-DIM mit Vektor-Args                 -> DIM arr[N] AS T(vec)
+'
+' Hinweis: laeuft identisch im Interpreter und im Native-Compiler
+' (build\jdBasic.exe -c jdb\udt_full_demo\main.jdb).
+
+IMPORT LOG
+IMPORT INV
+
+' Ein eigener Type im Hauptmodul, der KEINEN INIT/DISPOSE-Hook hat
+' (Demonstriert: 4. Variante = "weder INIT noch DISPOSE").
+TYPE T_MARKER
+    Tag AS STRING
+ENDTYPE
+
+' ──────────────────────────────────────────────────────────────────
+' Szenario 1: einzelne Pack-Instanz im SUB-Scope
+' ──────────────────────────────────────────────────────────────────
+SUB scenario_one()
+    PRINT "--- scenario 1: single pack ---"
+    DIM warrior AS INV.T_PACK("warrior", "Sword", "Shield")
+    PRINT "(playing scenario 1)"
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' Szenario 2: Array von Packs mit Vektor-Konstruktor-Args
+' Pro Slot wird INIT(tag, pri, sec) aufgerufen, mit den drei Vektoren
+' element-weise indiziert.
+' ──────────────────────────────────────────────────────────────────
+SUB scenario_two()
+    PRINT "--- scenario 2: array of packs ---"
+    DIM party[3] AS INV.T_PACK( _
+        ["mage",   "rogue",    "cleric"], _
+        ["Staff",  "Dagger",   "Mace"   ], _
+        ["Tome",   "Cloak",    "Shield" ]  _
+    )
+    PRINT "(playing scenario 2)"
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' Szenario 3: Mischung aus DISPOSE-only und plain Type
+' ──────────────────────────────────────────────────────────────────
+SUB scenario_three()
+    PRINT "--- scenario 3: dispose-only + marker ---"
+    DIM s AS INV.T_SLOT
+    s.Tag = "scratch"
+    DIM m AS T_MARKER
+    m.Tag = "no-lifecycle"
+    LOG.SAY "in scenario 3, marker=" + m.Tag
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+PRINT "=== INV totals at start: spawned=" + STR$(INV.TOTAL_SPAWNED) + _
+      ", disposed=" + STR$(INV.TOTAL_DISPOSED) + " ==="
+PRINT
+
+scenario_one()
+PRINT "=== after S1: spawned=" + STR$(INV.TOTAL_SPAWNED) + _
+      ", disposed=" + STR$(INV.TOTAL_DISPOSED) + " ==="
+PRINT
+
+scenario_two()
+PRINT "=== after S2: spawned=" + STR$(INV.TOTAL_SPAWNED) + _
+      ", disposed=" + STR$(INV.TOTAL_DISPOSED) + " ==="
+PRINT
+
+scenario_three()
+PRINT "=== after S3: spawned=" + STR$(INV.TOTAL_SPAWNED) + _
+      ", disposed=" + STR$(INV.TOTAL_DISPOSED) + " ==="
+PRINT
+PRINT "=== end of program ==="
