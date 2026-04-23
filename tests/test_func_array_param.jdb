@@ -1,0 +1,49 @@
+' FUNC parameters that receive arrays via a top-level variable used to
+' be tagged f64 in native, so RESHAPE / MATMUL / SHIFT inside the func
+' returned garbage. The pre-pass in declare_functions now infers each
+' top-level DIM/LET tag and propagates it into call sites.
+
+OPTION "EXPLICIT"
+
+FUNC SumViaMatmul(xs)
+    DIM nn AS INTEGER = LEN(xs)
+    DIM col_xs = RESHAPE(xs, [nn, 1])
+    DIM ones_row = RESHAPE(ONES(nn), [1, nn])
+    DIM total = MATMUL(ones_row, col_xs)
+    RETURN FLATTEN(total)[0]
+ENDFUNC
+
+FUNC ApplyShift(xs, n)
+    RETURN SHIFT(xs, n)
+ENDFUNC
+
+FUNC SumPaired(a, b)
+    DIM col_a = RESHAPE(a, [LEN(a), 1])
+    RETURN FLATTEN(MATMUL(RESHAPE(b, [1, LEN(b)]), col_a))[0]
+ENDFUNC
+
+DIM nums = [3, 4, 5, 6, 7]
+DIM weights = [1, 2, 3, 4, 5]
+
+PRINT "── FUNC-param pipelines ──"
+PRINT "SumViaMatmul = "; SumViaMatmul(nums)              ' 3+4+5+6+7 = 25
+PRINT "ApplyShift   = "; ApplyShift(nums, 2)             ' [0,0,3,4,5]
+PRINT "SumPaired    = "; SumPaired(nums, weights)        ' 1*3+2*4+3*5+4*6+5*7 = 85
+
+PRINT
+PRINT "── APL Subset-Sum brute force inside FUNC ──"
+FUNC HasSubsetSumApl(xs, t)
+    DIM nn AS INTEGER = LEN(xs)
+    DIM Bits = OUTER(IOTA(2 ^ nn, 0), IOTA(nn, 0), "SHR") BAND 1
+    DIM Sums = FLATTEN(MATMUL(Bits, RESHAPE(xs, [nn, 1])))
+    RETURN ANY(Sums = t)
+ENDFUNC
+
+DIM demo = [3, 34, 4, 12, 5, 2]
+' Compare numerically (1/0) so interp's TRUE/FALSE and native's 1/0
+' format identically.
+PRINT "target=9  → "; INT(HasSubsetSumApl(demo, 9))      ' 1
+PRINT "target=11 → "; INT(HasSubsetSumApl(demo, 11))     ' 1
+PRINT "target=13 → "; INT(HasSubsetSumApl(demo, 13))     ' 0
+PRINT "target=60 → "; INT(HasSubsetSumApl(demo, 60))     ' 1
+PRINT "target=61 → "; INT(HasSubsetSumApl(demo, 61))     ' 0

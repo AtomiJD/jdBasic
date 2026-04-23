@@ -579,6 +579,70 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         return false;
     };
 
+    // Static pre-pass: derive a tag for each top-level global variable from
+    // its DIM/LET RHS. declare_functions runs BEFORE codegen_program, so
+    // lookup_var would otherwise return nullptr for globals on their first
+    // scan, leaving FUNC(xs) parameters stuck at f64 even when xs is a
+    // known array. Without this a callee's RESHAPE/MATMUL/SHIFT on the
+    // param returns garbage natively.
+    std::unordered_map<std::string, int> pre_var_tags;
+    std::function<int(const Expr&)> infer_expr_tag = [&](const Expr& e) -> int {
+        if (e.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
+        if (e.kind == ExprKind::MAP_LITERAL)   return JD_TAG_NATIVE_MAP;
+        if (e.kind == ExprKind::LITERAL_STRING) return JD_TAG_STR;
+        if (e.kind == ExprKind::VARIABLE) {
+            if (!e.str_val.empty() && e.str_val.back() == '$') return JD_TAG_STR;
+            auto it = pre_var_tags.find(e.str_val);
+            if (it != pre_var_tags.end()) return it->second;
+            return JD_TAG_F64;
+        }
+        if (e.kind == ExprKind::CALL) {
+            if (!e.func_name.empty() && e.func_name.back() == '$') return JD_TAG_STR;
+            auto rit = runtime_funcs.find(e.func_name);
+            if (rit != runtime_funcs.end()) return rit->second.return_tag;
+            auto fit = decls.find(e.func_name);
+            if (fit != decls.end()) return fit->second.return_tag;
+            // Names like ZEROS/IOTA/RANGE/SHIFT/OUTER etc. are array-returners
+            // known to the static native whitelist. Use the same list the
+            // call-site uses later to tag VM-bridge returns.
+            static const std::unordered_set<std::string> arr_fns = {
+                "ZEROS", "ONES", "IOTA", "RANGE", "LINSPACE",
+                "TAKE", "DROP", "UNIQUE", "REVERSE", "FLATTEN", "SHUFFLE",
+                "APPEND", "DIFF", "CUMSUM", "CUMPROD", "GRADE",
+                "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
+                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
+                "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+                "XSORT", "SPLIT", "LINES", "WORDS", "CHARS",
+                "KEYS", "VALUES", "CHUNK", "ENUMERATE",
+                "REGEX_FINDALL", "REGEX.FINDALL",
+                "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS"
+            };
+            if (arr_fns.count(e.func_name)) return JD_TAG_ARR;
+        }
+        return JD_TAG_F64;
+    };
+    std::function<void(const Stmt&)> scan_top_decls = [&](const Stmt& s) {
+        if ((s.kind == StmtKind::LET || s.kind == StmtKind::DIM ||
+             s.kind == StmtKind::ASSIGN) && !s.var_name.empty()) {
+            int t = JD_TAG_F64;
+            if (s.var_type == VarType::ARRAY || !s.label.empty()) t = JD_TAG_ARR;
+            else if (s.var_type == VarType::STRING) t = JD_TAG_STR;
+            else if (s.var_type == VarType::OBJECT) t = JD_TAG_NATIVE_MAP;
+            else if (s.expr) t = infer_expr_tag(*s.expr);
+            auto it = pre_var_tags.find(s.var_name);
+            // Promote only — don't downgrade from ARR to F64 via later
+            // scalar reassignment.
+            if (it == pre_var_tags.end() ||
+                (it->second == JD_TAG_F64 && t != JD_TAG_F64))
+                pre_var_tags[s.var_name] = t;
+        }
+    };
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
+        scan_top_decls(*stmt);
+    }
+
     std::function<void(const Expr&)> scan_expr = [&](const Expr& e) {
         if (e.kind == ExprKind::CALL) {
             auto it = decls.find(e.func_name);
@@ -601,6 +665,26 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 // pass tagged values as VM_HANDLE so the
                                 // callee's INDEX dispatch works uniformly.
                                 it->second.tags[i] = (v->tag == JD_TAG_RUNTIME) ? JD_TAG_VM_HANDLE : v->tag;
+                            else {
+                                // Fall back to the static pre-pass: if we
+                                // statically inferred the global as ARR/MAP,
+                                // propagate it into the callee's signature.
+                                auto pit = pre_var_tags.find(a.str_val);
+                                if (pit != pre_var_tags.end() &&
+                                    (pit->second == JD_TAG_ARR ||
+                                     pit->second == JD_TAG_NATIVE_MAP))
+                                    it->second.tags[i] = pit->second;
+                            }
+                        }
+                        // Array-returning calls at the call site → promote
+                        // the callee's param to match. Catches things like
+                        // FUNC f(xs) called as `f(IOTA(n))` or
+                        // `f(OUTER(a,b,"*"))`.
+                        else if (a.kind == ExprKind::CALL) {
+                            int rt = infer_expr_tag(a);
+                            if (rt == JD_TAG_ARR || rt == JD_TAG_NATIVE_MAP ||
+                                rt == JD_TAG_STR)
+                                it->second.tags[i] = rt;
                         }
                         // INDEX (string-keyed like game{"stats"} or
                         // int-keyed like elist[i]) can return any boxed
@@ -741,6 +825,21 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (cit != decls.end() &&
                     (cit->second.return_tag == JD_TAG_ARR || cit->second.return_tag == JD_TAG_NATIVE_MAP))
                     return cit->second.return_tag;
+                // Native runtime function — pick up its declared return tag.
+                auto rit = runtime_funcs.find(e.func_name);
+                if (rit != runtime_funcs.end() &&
+                    (rit->second.return_tag == JD_TAG_ARR ||
+                     rit->second.return_tag == JD_TAG_NATIVE_MAP))
+                    return rit->second.return_tag;
+                // VM-bridge array returners (no native runtime, but known
+                // to produce arrays): SHIFT, OUTER, MATMUL, etc.
+                static const std::unordered_set<std::string> arr_calls = {
+                    "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
+                    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
+                    "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+                    "XSORT"
+                };
+                if (arr_calls.count(e.func_name)) return JD_TAG_ARR;
             }
         }
         int kind = 0;
