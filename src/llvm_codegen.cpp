@@ -4515,6 +4515,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     if (expr.op == TokenType::SLASH || expr.op == TokenType::CARET) {
         use_float = true;
     }
+    // Bitwise / shift ops are integer-only — coerce float operands
+    // through an FPToSI so `1.0 SHL 2` matches the interpreter's
+    // `to_int() << to_int()` semantics.
+    if (expr.op == TokenType::SHL || expr.op == TokenType::SHR ||
+        expr.op == TokenType::BAND || expr.op == TokenType::BOR ||
+        expr.op == TokenType::XOR || expr.op == TokenType::BXOR) {
+        if (lhs.tag == JD_TAG_F64) { lhs.val = LLVMBuildFPToSI(builder, lhs.val, i64_type, "ftoi"); lhs.tag = JD_TAG_I64; }
+        if (rhs.tag == JD_TAG_F64) { rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi"); rhs.tag = JD_TAG_I64; }
+        use_float = false;
+    }
     if (use_float) {
         lhs = promote_to_f64(lhs);
         rhs = promote_to_f64(rhs);
@@ -4564,6 +4574,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::BOR:       return { LLVMBuildOr(builder, lhs.val, rhs.val, "bor"), JD_TAG_I64 };
             case TokenType::XOR:
             case TokenType::BXOR:      return { LLVMBuildXor(builder, lhs.val, rhs.val, "bxor"), JD_TAG_I64 };
+            case TokenType::SHL:       return { LLVMBuildShl(builder, lhs.val, rhs.val, "shl"), JD_TAG_I64 };
+            // Arithmetic right shift (sign-preserving) — matches the
+            // interpreter, which uses C++ `int64_t >> n` (impl-defined but
+            // arithmetic on every mainstream compiler).
+            case TokenType::SHR:       return { LLVMBuildAShr(builder, lhs.val, rhs.val, "shr"), JD_TAG_I64 };
             default: break;
         }
     }

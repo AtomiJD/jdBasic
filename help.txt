@@ -1393,12 +1393,17 @@ Syntax: SHIFT(array, shift_vector, [fill_value])
 Description: Non-cyclically shifts an N-dimensional array, filling empty spaces.
 
 [SHL]
-Syntax: value SHL bits
-Description: Performs a bitwise left shift.
+Syntax: value SHL bits         (infix)
+        SHL(value, bits)       (function form, also vectorises over arrays)
+Description: Bitwise left shift. Operands are coerced to 64-bit signed
+integers. Precedence is looser than +/- and tighter than comparison
+and BAND/BOR/BXOR.
 
 [SHR]
-Syntax: value SHR bits
-Description: Performs a bitwise right shift.
+Syntax: value SHR bits         (infix)
+        SHR(value, bits)       (function form, also vectorises over arrays)
+Description: Arithmetic (sign-preserving) bitwise right shift. Operands
+are coerced to 64-bit signed integers. Same precedence as SHL.
 
 [SIN]
 Syntax: SIN(angle_in_radians)

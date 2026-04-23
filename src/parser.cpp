@@ -1738,7 +1738,7 @@ ExprPtr Parser::parse_band() {
 }
 
 ExprPtr Parser::parse_comparison() {
-    auto left = parse_addition();
+    auto left = parse_shift();
     while (check(TokenType::GT) || check(TokenType::LT) || check(TokenType::GE) ||
            check(TokenType::LE) || check(TokenType::NE) || check(TokenType::ASSIGN) ||
            check(TokenType::IN) ||
@@ -1757,6 +1757,23 @@ ExprPtr Parser::parse_comparison() {
         // NOT → treat as <>
         if (op == TokenType::NOT) op = TokenType::NE;
         advance();
+        auto right = parse_shift();
+        left = make_binary(op, std::move(left), std::move(right), ln);
+    }
+    return left;
+}
+
+// SHL / SHR — C-style precedence: looser than additive, tighter than
+// comparison. So `1 + 2 SHL 3` is `(1+2) SHL 3` = 24 and
+// `5 BAND 3 SHL 1` is `5 BAND (3 SHL 1)` = 4. The function form
+// `SHL(x, n)` / `SHR(x, n)` still works (registered as natives in vm.cpp)
+// since the lexer matches keywords ahead of identifiers, but the call-site
+// parser only routes via natives when the token is not consumed here.
+ExprPtr Parser::parse_shift() {
+    auto left = parse_addition();
+    while (check(TokenType::SHL) || check(TokenType::SHR)) {
+        int ln = current().line;
+        TokenType op = advance().type;
         auto right = parse_addition();
         left = make_binary(op, std::move(left), std::move(right), ln);
     }
@@ -1915,6 +1932,24 @@ ExprPtr Parser::parse_primary() {
         advance();
         auto expr = make_var("THIS", ln);
         return parse_postfix(std::move(expr));
+    }
+
+    // SHL / SHR as function call — keeps the legacy `SHL(x, n)` syntax
+    // working alongside the new infix `x SHL n`. The lexer always emits
+    // a keyword token; here we route to the registered native if the next
+    // token is `(`.
+    if ((check(TokenType::SHL) || check(TokenType::SHR)) &&
+        peek_at(1).type == TokenType::LPAREN) {
+        std::string name = (current().type == TokenType::SHL) ? "SHL" : "SHR";
+        advance(); // SHL/SHR
+        advance(); // (
+        std::vector<ExprPtr> args;
+        if (!check(TokenType::RPAREN)) {
+            args.push_back(parse_expr());
+            while (match(TokenType::COMMA)) args.push_back(parse_expr());
+        }
+        expect(TokenType::RPAREN, "')'");
+        return make_call(name, std::move(args), ln);
     }
 
     // Map literal: {"key": value, ...}

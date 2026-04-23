@@ -71,6 +71,7 @@ private:
     ExprPtr parse_xor();
     ExprPtr parse_band();
     ExprPtr parse_comparison();
+    ExprPtr parse_shift();
     ExprPtr parse_addition();
     ExprPtr parse_multiplication();
     ExprPtr parse_power();

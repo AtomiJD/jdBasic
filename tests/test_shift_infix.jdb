@@ -1,0 +1,23 @@
+' Infix SHL / SHR — both function form and operator form must work.
+' Precedence: shift binds tighter than comparison, looser than addition
+' (C-style). So `1 + 2 SHL 3` is `1 SHL (2+3)`-no wait — addition is
+' tighter than shift, so `1 + 2 SHL 3` = `(1 + 2) SHL 3` ... actually
+' both interpretations are wrong; correct precedence parse: addition is
+' TIGHTER, so the addition completes first inside the shift's RHS:
+' `1 SHL 2 + 1` = `1 SHL (2 + 1)` = `1 SHL 3` = 8.
+
+PRINT "── infix ──"
+PRINT 1 SHL 2          ' 4
+PRINT 1 SHL 8          ' 256
+PRINT 256 SHR 4        ' 16
+PRINT -8 SHR 1         ' -4 (arithmetic shift right preserves sign)
+PRINT 1 SHL 2 + 1      ' 8   (addition tighter: 1 SHL 3)
+PRINT (1 SHL 2) + 1    ' 5
+PRINT 5 BAND 3 SHL 1   ' 4   (BAND looser than shift: 5 BAND 6)
+PRINT 7 SHL 0          ' 7
+PRINT 0 SHL 5          ' 0
+
+PRINT "── function ──"
+PRINT SHL(1, 2)        ' 4
+PRINT SHR(256, 4)      ' 16
+PRINT SHL(SHR(64, 2), 1)  ' 32

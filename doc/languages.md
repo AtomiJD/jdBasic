@@ -451,9 +451,16 @@ These operators perform bit-level calculations on numeric values, which are trea
 
 **`BXOR`**: (Bitwise XOR): 5 BXOR 3 -> 6 (%0101 ^ %0011 = %0110)
 
-**`SHL(value or array, bits to shift) -> number or array`**: Bitwise shift left
+**`SHL`** — Bitwise shift left. Both **infix** and **function** form work:
+* `1 SHL 8` -> 256
+* `SHL(1, 8)` -> 256 (also vectorises over arrays as the function form)
 
-**`SHR(value or array, bits to shift) -> number or array`**: Bitwise shift right
+**`SHR`** — Bitwise shift right (arithmetic, sign-preserving):
+* `256 SHR 4` -> 16
+* `-8 SHR 1` -> -4
+* `SHR(value, n)` — function form also accepts arrays
+
+Shift precedence is **looser than addition**, **tighter than comparison and BAND/BOR/BXOR**. So `1 SHL 2 + 1` parses as `1 SHL (2 + 1)` = 8, and `5 BAND 3 SHL 1` is `5 BAND (3 SHL 1)` = 4. Use parentheses if in doubt.
 
 ### Logical Operators
 

@@ -1242,6 +1242,8 @@ void Compiler::compile_binary(const Expr& expr) {
         case TokenType::BOR:    current_chunk().emit(OpCode::BIT_OR, expr.line); break;
         case TokenType::XOR:    current_chunk().emit(OpCode::BIT_XOR, expr.line); break;
         case TokenType::BXOR:   current_chunk().emit(OpCode::BIT_XOR, expr.line); break;
+        case TokenType::SHL:    current_chunk().emit(OpCode::BIT_SHL, expr.line); break;
+        case TokenType::SHR:    current_chunk().emit(OpCode::BIT_SHR, expr.line); break;
         case TokenType::IN:     current_chunk().emit(OpCode::OP_IN, expr.line); break;
         default:
             throw std::runtime_error("Unknown binary operator");

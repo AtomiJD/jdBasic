@@ -57,7 +57,7 @@
         },
         {
             "name": "keyword.operator.jdbasic",
-            "match": "(?i)(\\+|-|\\*|/|\\\\|MOD|<>|<=|>=|<|>|=|\\^|AND|OR|NOT|XOR|BAND|BOR|BXOR|ANDALSO|ORELSE|IN|->|@)\\b"
+            "match": "(?i)(\\+|-|\\*|/|\\\\|MOD|<>|<=|>=|<|>|=|\\^|AND|OR|NOT|XOR|BAND|BOR|BXOR|SHL|SHR|ANDALSO|ORELSE|IN|->|@)\\b"
         },
         {
             "name": "constant.numeric.jdbasic",
