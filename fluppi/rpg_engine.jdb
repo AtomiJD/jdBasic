@@ -534,9 +534,12 @@ ENDSUB
 
 ' ── Clear all entities (before map switch) ────────────────────
 SUB CLEAR_MAP_ENTITIES()
+    ' NPC cleanup goes through T_NPC.DISPOSE so handle freeing stays
+    ' co-located with the type. Monsters/chests/portals stay inline —
+    ' they are MAPs, not TYPEs, and their sprite_id is bare state.
     FOR i = 0 TO npc_count - 1
         LET n = npcs[i]
-        TRY : SPRITE.DELETE n.sprite_id : CATCH : ENDTRY
+        n.DISPOSE
     NEXT
     FOR i = 0 TO monster_count - 1
         LET m = monsters[i]

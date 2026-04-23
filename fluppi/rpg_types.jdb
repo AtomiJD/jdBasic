@@ -86,4 +86,15 @@ EXPORT TYPE T_NPC
         THIS.visible = v
         SPRITE.VISIBLE THIS.sprite_id, v
     ENDSUB
+
+    ' Centralised handle cleanup. Called explicitly by CLEAR_MAP_ENTITIES
+    ' and — in the interpreter — automatically when the npcs array is
+    ' reassigned (refcount cascade). Native still needs the explicit call
+    ' because compiled locals have no refcount.
+    SUB DISPOSE()
+        IF THIS.sprite_id >= 0 THEN
+            TRY : SPRITE.DELETE THIS.sprite_id : CATCH : ENDTRY
+            THIS.sprite_id = -1
+        ENDIF
+    ENDSUB
 ENDTYPE
