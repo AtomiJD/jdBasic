@@ -276,6 +276,17 @@ private:
     // Variable-to-UDT-type mapping: var_name → UDT type name
     std::unordered_map<std::string, std::string> var_udt_type;
 
+    // DISPOSE tracking: per function (current_fn), the list of locals whose
+    // type registers a SUB DISPOSE. codegen_function emits cleanup calls
+    // for each before any Ret. is_array=true means iterate the slot's array.
+    struct DisposeLocal { std::string var_name; std::string type_name; bool is_array; };
+    std::vector<DisposeLocal> dispose_locals;
+    void track_dispose_local(const std::string& var, const std::string& type_name, bool is_array) {
+        if (user_functions.count(type_name + ".DISPOSE"))
+            dispose_locals.push_back({ var, type_name, is_array });
+    }
+    void emit_dispose_cleanup(); // called before LLVMBuildRet/main-end
+
     TypedValue codegen_expr(const Expr& expr);
     TypedValue codegen_binary(const Expr& expr);
     TypedValue codegen_unary(const Expr& expr);

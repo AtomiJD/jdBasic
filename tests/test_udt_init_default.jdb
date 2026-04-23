@@ -1,0 +1,20 @@
+' Kein INIT deklariert — Verhalten wie bisher (Defaults aus __NEW__)
+TYPE Box
+    Width AS INTEGER
+    Height AS INTEGER
+    Label AS STRING
+
+    FUNC GETW()  : RETURN THIS.Width  : ENDFUNC
+    FUNC GETH()  : RETURN THIS.Height : ENDFUNC
+    FUNC GETL$() : RETURN THIS.Label  : ENDFUNC
+ENDTYPE
+
+DIM b AS Box
+PRINT b.GETW()
+PRINT b.GETH()
+PRINT "[" + b.GETL$() + "]"
+
+' Erwartet:
+' 0
+' 0
+' []

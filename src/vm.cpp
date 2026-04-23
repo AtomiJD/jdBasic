@@ -88,13 +88,48 @@ std::map<int, std::shared_ptr<AsyncTask>> g_async_tasks;
 std::mutex g_async_mutex;
 std::atomic<int> g_async_next_id{1};
 
+// Currently-executing VM, made available to free-standing callbacks
+// (in particular the heap_release dispose hook in value.h, which has
+// no VM context of its own). A stack-style save/restore in the VM
+// ctor/dtor lets nested VMs (REPL, EXECUTE) work correctly.
+thread_local VM* g_active_vm = nullptr;
+
+static void vm_heap_dispose_hook(HeapObject* o) {
+    if (!o || !g_active_vm) return;
+    auto* obj = dynamic_cast<ObjectObj*>(o);
+    if (!obj) return;
+    Value* tv = obj->get("__TYPE__");
+    if (!tv || tv->type != ValueType::STRING) return;
+    std::string type_name = tv->as_string()->data;
+    std::string dispose_name = type_name + ".DISPOSE";
+    if (!g_active_vm->function_exists(dispose_name)) return;
+    // Wrap the raw pointer as an OBJECT-typed Value. The hook parked the
+    // refcount at 1 for us, so the wrapped Value's destructor will balance
+    // out the fetch_sub afterwards in heap_release.
+    Value wrapped;
+    wrapped.type = ValueType::OBJECT;
+    wrapped.obj = obj;
+    heap_retain(obj); // for wrapped's eventual destructor
+    try {
+        g_active_vm->call_function(dispose_name, { wrapped });
+    } catch (...) {
+        // Swallow — DISPOSE failures must not corrupt the cleanup path.
+    }
+}
+
 VM::VM() {
     stack.resize(65536); // pre-allocate stack — avoids resize checks on hot paths
     frames.reserve(1024); // pre-allocate frame vector
+    prev_active_vm_ = g_active_vm;
+    g_active_vm = this;
+    g_heap_dispose_hook = &vm_heap_dispose_hook;
     register_builtins();
 }
 
-VM::~VM() = default;  // DebugInfo is complete here via dap.h include below
+VM::~VM() {
+    g_active_vm = static_cast<VM*>(prev_active_vm_);
+    if (!g_active_vm) g_heap_dispose_hook = nullptr;
+}  // DebugInfo is complete here via dap.h include below
 
 void VM::push(Value v) {
     if (sp >= stack.size()) stack.resize(stack.size() * 2);
@@ -504,7 +539,12 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             // broadcasting would leave anim.frames empty and crash SPRITE.PLAY.
             "SPRITE.ANIM",
             // GFX.PLOT_POINTS points[], GFX.PLOT_POINTS_TEX points[] — array is the data.
-            "GFX.PLOT_POINTS","GFX.PLOT_POINTS_TEX"
+            "GFX.PLOT_POINTS","GFX.PLOT_POINTS_TEX",
+            // Matrix-form drawing commands accept [[...]] as the payload
+            // and dispatch to SDL themselves — auto-vectorizing would
+            // destructure the matrix into scalar calls and lose the
+            // per-row colors.
+            "PSET","LINE","RECT","CIRCLE","ELLIPSE","ROUNDED_RECT","CIRCLE_SECTOR"
         };
         bool has_arr = false;
         if (!no_vec.count(name)) {
@@ -5681,23 +5721,57 @@ void VM::register_builtins() {
     register_native("ZEROS", [make_filled](const std::vector<Value>& args) -> Value {
         return make_filled(args[0], Value::make_i64(0));
     });
-    // __MAKE_UDT_ARRAY__(shape, "TypeName") — fill an array of the given
-    // shape with freshly-constructed UDT instances. Used by the parser to
-    // desugar `DIM A[N] AS UserType`. We can't use ZEROS here because each
-    // slot needs its own constructor result (with __TYPE__ + default fields)
-    // rather than a numeric zero.
-    register_native("__MAKE_UDT_ARRAY__", 2, 2, [this, make_filled](const std::vector<Value>& args) -> Value {
+    // __MAKE_UDT_ARRAY__(shape, "TypeName" [, vec1, vec2, ...]) — fill an
+    // array of the given shape with freshly-constructed UDT instances. Used
+    // by the parser to desugar `DIM A[N] AS UserType[(vec1, vec2)]`. We can't
+    // use ZEROS here because each slot needs its own constructor result.
+    // When vector args are present, they are spread element-wise across
+    // slots: slot i receives ctor args (vec1[i], vec2[i], ...) and INIT is
+    // called after __NEW__.
+    register_native("__MAKE_UDT_ARRAY__", 2, 32, [this, make_filled](const std::vector<Value>& args) -> Value {
         std::string type_name = args[1].to_string();
         std::string ctor_name = type_name + ".__NEW__";
+        std::string init_name = type_name + ".INIT";
+        bool has_init = function_exists(init_name);
+        // Collect ctor vectors (args[2..]). Each must be an array; we'll
+        // index into it per slot.
+        std::vector<const ArrayObj*> ctor_vecs;
+        for (size_t i = 2; i < args.size(); i++) {
+            if (args[i].type != ValueType::ARRAY) {
+                throw std::runtime_error("DIM " + type_name +
+                    "[]: constructor argument " + std::to_string(i - 1) +
+                    " must be an array (got " + args[i].to_string() + ")");
+            }
+            ctor_vecs.push_back(args[i].as_array());
+        }
+        if (!ctor_vecs.empty() && !has_init) {
+            throw std::runtime_error("Type '" + type_name +
+                "' has no SUB INIT — cannot pass constructor argument vectors");
+        }
         // First build a zeros-array of the right shape, then walk it and
-        // replace every leaf scalar with a fresh constructor result. This
-        // works for any number of dimensions for free.
+        // replace every leaf scalar with a fresh constructor result.
         Value arr = make_filled(args[0], Value::make_i64(0));
+        size_t leaf_idx = 0;
         std::function<void(Value&)> fill = [&](Value& v) {
             if (v.type == ValueType::ARRAY) {
                 for (auto& e : v.as_array()->elements) fill(e);
             } else {
                 v = call_function(ctor_name, {});
+                if (!ctor_vecs.empty()) {
+                    std::vector<Value> init_args;
+                    init_args.reserve(ctor_vecs.size() + 1);
+                    init_args.push_back(v); // THIS
+                    for (auto* vec : ctor_vecs) {
+                        if (leaf_idx >= vec->elements.size()) {
+                            throw std::runtime_error("DIM " + type_name +
+                                "[]: constructor vector shorter than array shape (slot " +
+                                std::to_string(leaf_idx) + ")");
+                        }
+                        init_args.push_back(vec->elements[leaf_idx]);
+                    }
+                    call_function(init_name, init_args);
+                }
+                leaf_idx++;
             }
         };
         fill(arr);

@@ -1,0 +1,29 @@
+' DISPOSE wird beim Verlassen des Funktions-Scopes gerufen
+TYPE Resource
+    Name AS STRING
+
+    SUB INIT(n AS STRING)
+        THIS.Name = n
+        PRINT "OPEN " + n
+    ENDSUB
+
+    SUB DISPOSE()
+        PRINT "CLOSE " + THIS.Name
+    ENDSUB
+ENDTYPE
+
+SUB use_it()
+    DIM r AS Resource("R1")
+    PRINT "in use_it"
+ENDSUB
+
+PRINT "before"
+use_it()
+PRINT "after"
+
+' Erwartet:
+' before
+' OPEN R1
+' in use_it
+' CLOSE R1
+' after

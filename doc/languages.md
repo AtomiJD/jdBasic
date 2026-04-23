@@ -296,11 +296,53 @@ You can create your own complex data structures, similar to a `struct` in C or a
 * **`TYPE TypeName`**: Begins the definition of a new custom type.
 * **`MemberName AS Type`**: Inside the block, you declare the data members (properties) of the type. Supported data types include `INTEGER`, `DOUBLE`, `STRING`, `BOOLEAN`, `DATE`, and `MAP`.
 * **`SUB` / `FUNC`**: You can define methods (procedures and functions) that operate on the type's data. Inside a method, use the **`THIS`** keyword to refer to the specific object instance the method was called on.
+* **`SUB INIT([params])`**: Optional **constructor**. Runs automatically after the implicit field defaults whenever the type is instantiated with `DIM x AS TypeName(args)`. If `INIT` takes no parameters, it also runs for the bare form `DIM x AS TypeName`. If `INIT` takes parameters, the bare form leaves the object default-initialised so legacy code that calls `obj.INIT(args)` manually keeps working.
+* **`SUB DISPOSE()`**: Optional **destructor**. Always parameter-less. The interpreter runs `DISPOSE` automatically when the object loses its last reference (going out of scope, being re-assigned, last copy released). The native compiler runs `DISPOSE` when a tracked local goes out of scope (function return / end of `main`); it does *not* fire on re-assignment, since native UDTs are not refcounted.
 * **`ENDTYPE`**: Ends the type definition.
 
 ### Instantiation and Usage
 
 You create an instance of your custom type using the `DIM` command. You can then access its members and call its methods using dot notation (`.`).
+
+For arrays of UDTs, constructor arguments are supplied as **vectors** of the same length as the array shape: each slot `i` receives `(vec1[i], vec2[i], …)` and `INIT` is invoked once per slot.
+
+```basic
+DIM hero AS Player("Hero", 100)                                  ' scalar
+DIM npc[3] AS T_NPC(["Monster", "Trader", "Quest"], [100, 20, 10]) ' array, vectorised
+```
+
+### Constructor / Destructor example
+
+```basic
+TYPE FileLogger
+    Path  AS STRING
+    Open  AS BOOLEAN
+
+    SUB INIT(p AS STRING)
+        THIS.Path = p
+        THIS.Open = TRUE
+        PRINT "open  " + p
+    ENDSUB
+
+    SUB DISPOSE()
+        IF THIS.Open THEN
+            PRINT "close " + THIS.Path
+            THIS.Open = FALSE
+        ENDIF
+    ENDSUB
+ENDTYPE
+
+SUB use_it()
+    DIM log AS FileLogger("trace.txt")
+    PRINT "doing work"
+ENDSUB
+
+use_it()
+' Output:
+'   open  trace.txt
+'   doing work
+'   close trace.txt
+```
 
 ### Example
 

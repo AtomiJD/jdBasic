@@ -39,8 +39,33 @@ inline void heap_retain(HeapObject* o) {
     if (o) o->refcount.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Optional dispose hook installed by the VM at startup. Invoked when a
+// HeapObject loses its last reference, *before* delete. The hook may
+// dispatch to a user-defined SUB DISPOSE for ObjectObj instances whose
+// type registered one. Kept as a function pointer (not std::function) so
+// value.h has no <functional> dependency.
+//
+// Reentrancy: heap_release temporarily restores refcount=1 around the hook
+// so user code that briefly retains+releases the object during DISPOSE
+// doesn't trigger a recursive delete.
+using HeapDisposeHook = void (*)(HeapObject*);
+inline HeapDisposeHook g_heap_dispose_hook = nullptr;
+
 inline void heap_release(HeapObject* o) {
-    if (o && o->refcount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    if (!o) return;
+    if (o->refcount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        if (g_heap_dispose_hook) {
+            // Park refcount at 1 for the hook duration. Any retain/release
+            // inside the hook stays positive; on hook exit we drop our
+            // own reference and only delete if it's truly the last one.
+            o->refcount.store(1, std::memory_order_relaxed);
+            g_heap_dispose_hook(o);
+            if (o->refcount.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+                // Hook handed the object out (e.g. stored it elsewhere).
+                // Whoever retained it now owns it.
+                return;
+            }
+        }
         delete o;
     }
 }

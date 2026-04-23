@@ -278,6 +278,10 @@ struct Stmt {
     struct TypeMember { std::string name; VarType type; };
     std::vector<TypeMember> type_members;
 
+    // DIM x AS T(arg1, arg2)            — scalar UDT constructor args
+    // DIM arr[N] AS T(vec1, vec2)       — vectorised: vecK[i] -> arg K of slot i
+    std::vector<ExprPtr> ctor_args;
+
     // TRY_CATCH: body=TRY block, catch_body, finally_body
     std::vector<StmtPtr> catch_body;
     std::vector<StmtPtr> finally_body;

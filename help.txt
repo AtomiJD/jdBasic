@@ -1878,6 +1878,26 @@ Writes a string to a text file. If the optional third argument `append` is TRUE,
 [TYPE]
 Syntax: TYPE name ... ENDTYPE
 Description: Begins the definition of a user-defined data type (struct).
+May contain field declarations, methods (SUB/FUNC), an optional
+SUB INIT(params) constructor, and an optional SUB DISPOSE() destructor.
+
+[INIT]
+Syntax: SUB INIT([params]) ... ENDSUB   (inside TYPE)
+Description: Optional constructor for a user-defined type. Runs after
+the implicit field defaults whenever an instance is created via
+DIM x AS TypeName(args). If INIT takes no parameters, the bare form
+DIM x AS TypeName also auto-calls it. For arrays:
+DIM arr[N] AS TypeName(vec1, vec2) — INIT runs once per slot with
+the vectors indexed element-wise.
+
+[DISPOSE]
+Syntax: SUB DISPOSE() ... ENDSUB   (inside TYPE)
+Description: Optional destructor for a user-defined type. Takes no
+parameters. The interpreter calls DISPOSE when the object loses its
+last reference (scope exit, reassignment, last copy released). The
+native compiler calls DISPOSE for locals at function return and
+program end; reassignment does not trigger DISPOSE in native (no
+refcount).
 
 [TYPEOF]
 Syntax: TYPEOF(variable)

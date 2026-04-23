@@ -1057,6 +1057,8 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
 
     // Shutdown VM bridge before exit
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
+        // Dispose top-level UDT locals (main scope) before VM teardown.
+        emit_dispose_cleanup();
         auto shut_it = runtime_funcs.find("__jdrt_shutdown");
         if (shut_it != runtime_funcs.end()) {
             LLVMValueRef handle_global = LLVMGetNamedGlobal(module, "__jdrt_handle");
@@ -1256,6 +1258,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if (e->kind == ExprKind::LITERAL_INT) return JD_TAG_I64;
                     if (e->kind == ExprKind::LITERAL_FLOAT) return JD_TAG_F64;
                     if (e->kind == ExprKind::LITERAL_STRING) return JD_TAG_STR;
+                    if (e->kind == ExprKind::LITERAL_BOOL) return JD_TAG_I64;
                     if (e->kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
                     if (e->kind == ExprKind::MAP_LITERAL) return JD_TAG_NATIVE_MAP;
                     if (e->kind == ExprKind::LAMBDA_EXPR) return JD_TAG_FUNCREF;
@@ -1403,6 +1406,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     return -1;
                 };
                 int tag = JD_TAG_I64;
+                bool tag_known = true;
                 if (stmt->kind == StmtKind::DIM && !stmt->label.empty() &&
                     type_names.count(stmt->label))
                     tag = JD_TAG_ARR;   // UDT object (ptr)
@@ -1411,12 +1415,30 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 else if (stmt->expr) {
                     int inferred = infer_tag(stmt->expr.get());
                     if (inferred >= 0) tag = inferred;
+                    // Only skip for CALL expressions whose return type we
+                    // couldn't resolve — these are typically VM-bridged
+                    // scalars (GCD, LCM, …) where guessing i64 produces
+                    // f64-bit-pun garbage. For other unknown RHS shapes
+                    // (complex BINARY, etc.), keep the i64 default: that
+                    // path is existing behavior and changing it here
+                    // risks breaking unrelated codegen.
+                    else if (stmt->expr->kind == ExprKind::CALL)
+                        tag_known = false;
                 }
                 // Variables ending with $ are strings by convention,
                 // regardless of what infer_tag picked up from the RHS.
-                if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$')
+                if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$') {
                     tag = JD_TAG_STR;
-                create_var(stmt->var_name, tag);
+                    tag_known = true;
+                }
+                // Skip pre-pass create_var when the type can't be inferred
+                // statically. codegen_dim will create the var at codegen
+                // time with the actual rhs.tag. Without this, VM-bridged
+                // scalar calls like GCD/LCM return f64 but the pre-created
+                // i64 slot caused the f64 bits to be read back as i64
+                // garbage (see memory: project_native_dim_gcd_bug).
+                if (tag_known)
+                    create_var(stmt->var_name, tag);
                 // Remember which source file this top-level DIM came from
                 // so a SUB defined in the same file can write to the global
                 // (the isolation rule in codegen_let_or_assign consults this).
@@ -1884,6 +1906,56 @@ void LLVMCodegen::emit_fn_return(LLVMValueRef val) {
     else LLVMBuildRet(builder, val ? val : LLVMConstNull(ret_ty));
 }
 
+// Emit `TypeName.DISPOSE(slot)` for each tracked local UDT in the current
+// function. For array-typed slots, iterate the array elements and dispose
+// every entry. Called from codegen_function's exit_bb just before
+// __rec_leave / Ret.
+void LLVMCodegen::emit_dispose_cleanup() {
+    for (auto& d : dispose_locals) {
+        VarInfo* vi = lookup_var(d.var_name);
+        if (!vi) continue;
+        auto dit = user_functions.find(d.type_name + ".DISPOSE");
+        if (dit == user_functions.end()) continue;
+        LLVMTypeRef dft = LLVMGlobalGetValueType(dit->second.fn);
+        LLVMValueRef slot = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "dsp.slot");
+        if (!d.is_array) {
+            LLVMValueRef dargs[] = { slot };
+            LLVMBuildCall2(builder, dft, dit->second.fn, dargs, 1, "");
+            continue;
+        }
+        // Array of UDTs: iterate slots and call DISPOSE on each.
+        auto& arr_len = runtime_funcs["LEN"];
+        auto& arr_get = runtime_funcs["__array_get"];
+        LLVMValueRef len_args[] = { slot };
+        LLVMValueRef len = LLVMBuildCall2(builder, arr_len.fn_type, arr_len.fn, len_args, 1, "dsp.len");
+
+        LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dsp.loop");
+        LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dsp.body");
+        LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "dsp.end");
+        LLVMValueRef i_alloca = LLVMBuildAlloca(builder, i64_type, "dsp.i");
+        LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), i_alloca);
+        LLVMBuildBr(builder, loop_bb);
+
+        LLVMPositionBuilderAtEnd(builder, loop_bb);
+        LLVMValueRef i = LLVMBuildLoad2(builder, i64_type, i_alloca, "i");
+        LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, i, len, "cmp");
+        LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+
+        LLVMPositionBuilderAtEnd(builder, body_bb);
+        LLVMValueRef ga[] = { slot, i };
+        LLVMValueRef elem_f = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, ga, 2, "elem.f");
+        LLVMValueRef elem_i = pun_f64_to_i64(elem_f);
+        LLVMValueRef elem_p = LLVMBuildIntToPtr(builder, elem_i, i8_ptr_type, "elem.p");
+        LLVMValueRef da[] = { elem_p };
+        LLVMBuildCall2(builder, dft, dit->second.fn, da, 1, "");
+        LLVMValueRef next = LLVMBuildAdd(builder, i, LLVMConstInt(i64_type, 1, 0), "next");
+        LLVMBuildStore(builder, next, i_alloca);
+        LLVMBuildBr(builder, loop_bb);
+
+        LLVMPositionBuilderAtEnd(builder, end_bb);
+    }
+}
+
 void LLVMCodegen::codegen_function(const Stmt& stmt) {
     std::string fn_name = stmt.func_name;
     auto fit = user_functions.find(fn_name);
@@ -1894,6 +1966,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     std::string saved_fn_src = current_fn_source_file;
     LLVMBasicBlockRef saved_exit = current_exit_bb;
     LLVMValueRef saved_retval = current_retval_alloca;
+    auto saved_dispose = std::move(dispose_locals);
+    dispose_locals.clear();
     current_fn = fit->second.fn;
     current_fn_source_file = stmt.source_file;
 
@@ -1960,9 +2034,9 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         LLVMBuildBr(builder, current_exit_bb);
     }
 
-    // exit_bb: recursion_leave + ret (loading from retval_alloca for
-    // non-void functions).
+    // exit_bb: dispose tracked UDT locals → recursion_leave → ret.
     LLVMPositionBuilderAtEnd(builder, current_exit_bb);
+    emit_dispose_cleanup();
     auto& rl = runtime_funcs["__rec_leave"];
     LLVMBuildCall2(builder, rl.fn_type, rl.fn, nullptr, 0, "");
     if (is_void_fn) {
@@ -1978,6 +2052,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     current_fn_source_file = saved_fn_src;
     current_exit_bb = saved_exit;
     current_retval_alloca = saved_retval;
+    dispose_locals = std::move(saved_dispose);
 
     // Position builder back at the end of the saved function's last block
     LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
@@ -2425,6 +2500,37 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             LLVMTypeRef fn_type = LLVMGlobalGetValueType(uit->second.fn);
             LLVMValueRef obj = LLVMBuildCall2(builder, fn_type, uit->second.fn,
                                                nullptr, 0, "obj");
+            // Optional user INIT: TypeName.INIT(THIS, args...). Same back-
+            // compat rules as the interpreter (compile_dim): only auto-call
+            // when ctor_args are provided OR INIT() takes no user params.
+            auto init_it = user_functions.find(stmt.label + ".INIT");
+            if (init_it != user_functions.end()) {
+                size_t expected = init_it->second.param_tags.size();
+                size_t got = stmt.ctor_args.size() + 1; // +THIS
+                bool emit_init = !stmt.ctor_args.empty() || expected == 1;
+                if (emit_init && got != expected) {
+                    report_error(stmt.source_file, stmt.line,
+                        "SUB " + stmt.label + ".INIT expects " +
+                        std::to_string(expected - 1) +
+                        " argument(s), got " + std::to_string(stmt.ctor_args.size()));
+                } else if (emit_init) {
+                    std::vector<LLVMValueRef> args;
+                    args.push_back(obj); // THIS as i8_ptr (param 0)
+                    for (size_t i = 0; i < stmt.ctor_args.size(); i++) {
+                        TypedValue av = codegen_expr(*stmt.ctor_args[i]);
+                        int want_tag = (i + 1 < init_it->second.param_tags.size())
+                            ? init_it->second.param_tags[i + 1] : JD_TAG_F64;
+                        args.push_back(coerce_to_tag(av, want_tag).val);
+                    }
+                    LLVMTypeRef init_ft = LLVMGlobalGetValueType(init_it->second.fn);
+                    LLVMBuildCall2(builder, init_ft, init_it->second.fn,
+                                   args.data(), (unsigned)args.size(), "");
+                }
+            } else if (!stmt.ctor_args.empty()) {
+                report_error(stmt.source_file, stmt.line,
+                    "Type '" + stmt.label +
+                    "' has no SUB INIT — cannot pass constructor arguments");
+            }
             VarInfo* vi = lookup_var(stmt.var_name);
             if (vi) {
                 LLVMBuildStore(builder, obj, vi->alloca_val);
@@ -2434,6 +2540,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 LLVMBuildStore(builder, obj, nv.alloca_val);
             }
             var_udt_type[stmt.var_name] = stmt.label;
+            track_dispose_local(stmt.var_name, stmt.label, /*is_array=*/false);
             return;
         }
     }
@@ -2464,7 +2571,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             string_array_vars.insert(stmt.var_name);
     }
 
-    // DIM arr[N] AS TypeName → CALL("__MAKE_UDT_ARRAY__", [shape, "TypeName"])
+    // DIM arr[N] AS TypeName → CALL("__MAKE_UDT_ARRAY__", [shape, "TypeName" [, vec1, vec2, ...]])
     if (stmt.expr->kind == ExprKind::CALL && stmt.expr->func_name == "__MAKE_UDT_ARRAY__" &&
         stmt.expr->args.size() >= 2 && stmt.expr->args[0]->kind == ExprKind::ARRAY_LITERAL &&
         stmt.expr->args[1]->kind == ExprKind::LITERAL_STRING) {
@@ -2475,6 +2582,29 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             auto& arr_new = runtime_funcs["__array_new"];
             auto& arr_append = runtime_funcs["APPEND"];
             LLVMTypeRef ctor_ft = LLVMGlobalGetValueType(ctor_it->second.fn);
+
+            // Resolve INIT target up front so we know its param tags. Vector
+            // ctor args (stmt.expr->args[2..]) are codegen'd once before the
+            // loop and stashed in alloca'd JdbArray*s; the loop body indexes
+            // each per slot and calls INIT(inst, vec1[i], vec2[i], ...).
+            auto init_it = user_functions.find(type_name + ".INIT");
+            std::vector<LLVMValueRef> ctor_vec_allocas;
+            std::vector<int> ctor_vec_tags;
+            for (size_t k = 2; k < stmt.expr->args.size(); k++) {
+                if (init_it == user_functions.end()) {
+                    report_error(stmt.source_file, stmt.line,
+                        "Type '" + type_name +
+                        "' has no SUB INIT — cannot pass constructor argument vectors");
+                    break;
+                }
+                TypedValue v = codegen_expr(*stmt.expr->args[k]);
+                LLVMValueRef vec_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "ctor_vec");
+                LLVMBuildStore(builder, v.val, vec_alloca);
+                ctor_vec_allocas.push_back(vec_alloca);
+                int want_tag = (k - 1 < init_it->second.param_tags.size())
+                    ? init_it->second.param_tags[k - 1] : JD_TAG_F64;
+                ctor_vec_tags.push_back(want_tag);
+            }
 
             TypedValue size_val = codegen_expr(*shape_args[0]);
             LLVMValueRef n = size_val.tag == JD_TAG_F64
@@ -2500,6 +2630,33 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             LLVMPositionBuilderAtEnd(builder, body_bb);
             // Create new UDT instance
             LLVMValueRef inst = LLVMBuildCall2(builder, ctor_ft, ctor_it->second.fn, nullptr, 0, "inst");
+            // If we have vector ctor args, run INIT(inst, vec0[i], vec1[i], ...)
+            if (!ctor_vec_allocas.empty() && init_it != user_functions.end()) {
+                std::vector<LLVMValueRef> init_args;
+                init_args.push_back(inst);
+                for (size_t k = 0; k < ctor_vec_allocas.size(); k++) {
+                    LLVMValueRef vec_ptr = LLVMBuildLoad2(builder, i8_ptr_type,
+                        ctor_vec_allocas[k], "vp");
+                    LLVMValueRef arg_val;
+                    if (ctor_vec_tags[k] == JD_TAG_STR) {
+                        auto& g = runtime_funcs["__array_get_str"];
+                        LLVMValueRef getargs[] = { vec_ptr, cur_idx };
+                        arg_val = LLVMBuildCall2(builder, g.fn_type, g.fn, getargs, 2, "vs");
+                    } else {
+                        auto& g = runtime_funcs["__array_get"];
+                        LLVMValueRef getargs[] = { vec_ptr, cur_idx };
+                        LLVMValueRef f = LLVMBuildCall2(builder, g.fn_type, g.fn, getargs, 2, "vn");
+                        if (ctor_vec_tags[k] == JD_TAG_I64)
+                            arg_val = LLVMBuildFPToSI(builder, f, i64_type, "ftoi");
+                        else
+                            arg_val = f;
+                    }
+                    init_args.push_back(arg_val);
+                }
+                LLVMTypeRef init_ft = LLVMGlobalGetValueType(init_it->second.fn);
+                LLVMBuildCall2(builder, init_ft, init_it->second.fn,
+                               init_args.data(), (unsigned)init_args.size(), "");
+            }
             // Encode ptr as f64
             LLVMValueRef inst_i64 = LLVMBuildPtrToInt(builder, inst, i64_type, "ptoi");
             LLVMValueRef inst_f64 = pun_i64_to_f64(inst_i64);
@@ -2523,6 +2680,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             else { VarInfo& nv = create_var(stmt.var_name, JD_TAG_ARR); LLVMBuildStore(builder, final_outer, nv.alloca_val); }
             // Track element type so arr[i].field access works
             var_udt_type[stmt.var_name + "[]"] = type_name;
+            track_dispose_local(stmt.var_name, type_name, /*is_array=*/true);
             return;
         }
     }
@@ -3349,7 +3507,10 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
             int ret_tag = is_sub ? -1 : (returns_str ? 2 : 1);
 
             // Build parameter types from declared params
-            // Parser already added THIS as first param with type OBJECT
+            // Parser already added THIS as first param with type OBJECT.
+            // For other params, honour AS STRING explicitly (was previously
+            // only inferred from the $-suffix convention — broke method
+            // params like `n AS STRING`).
             std::vector<LLVMTypeRef> ptypes;
             std::vector<int> ptags;
             for (auto& p : method->params) {
@@ -3357,7 +3518,8 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
                     ptypes.push_back(i8_ptr_type);
                     ptags.push_back(3);  // ptr for UDT object
                 } else {
-                    bool sp = (!p.name.empty() && p.name.back() == '$');
+                    bool sp = p.type == VarType::STRING ||
+                              (!p.name.empty() && p.name.back() == '$');
                     ptypes.push_back(sp ? i8_ptr_type : f64_type);
                     ptags.push_back(sp ? 2 : 1);
                 }
@@ -5265,10 +5427,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef handle = LLVMBuildLoad2(builder, i8_ptr_type,
                 LLVMGetNamedGlobal(module, "__jdrt_handle"), "rt");
             int nargs = (int)vals.size();
+            // Hoist args/tags allocas to entry block (see comment at the
+            // main jdrt_call_typed_* call site below for why).
+            LLVMBasicBlockRef cur_bb_v = LLVMGetInsertBlock(builder);
+            LLVMBasicBlockRef entry_bb_v = LLVMGetEntryBasicBlock(current_fn);
+            LLVMValueRef first_v = LLVMGetFirstInstruction(entry_bb_v);
+            if (first_v) LLVMPositionBuilderBefore(builder, first_v);
+            else         LLVMPositionBuilderAtEnd(builder, entry_bb_v);
             LLVMValueRef args_p = LLVMBuildArrayAlloca(builder, i64_type,
                 LLVMConstInt(i32_type, nargs, 0), "args");
             LLVMValueRef tags_p = LLVMBuildArrayAlloca(builder, i32_type,
                 LLVMConstInt(i32_type, nargs, 0), "tags");
+            LLVMPositionBuilderAtEnd(builder, cur_bb_v);
             for (int i = 0; i < nargs; i++) {
                 TypedValue av = vals[i];
                 LLVMValueRef encoded; int32_t tg;
@@ -5519,11 +5689,25 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args_ptr, tags_ptr;
 
             if (nargs > 0) {
-                // Allocate i64[] for args and i32[] for type tags
+                // Allocate i64[] for args and i32[] for type tags.
+                // Hoist these allocas to the function's entry block so
+                // they don't stack up when this call site sits inside a
+                // loop — a non-entry-block alloca allocates fresh stack
+                // every loop iteration and never releases until the
+                // function returns, which overflows the stack on long
+                // render loops (observed in gfx_native_storm.jdb).
+                LLVMBasicBlockRef cur_bb = LLVMGetInsertBlock(builder);
+                LLVMBasicBlockRef entry_bb = LLVMGetEntryBasicBlock(current_fn);
+                LLVMValueRef first_instr = LLVMGetFirstInstruction(entry_bb);
+                if (first_instr) LLVMPositionBuilderBefore(builder, first_instr);
+                else             LLVMPositionBuilderAtEnd(builder, entry_bb);
+
                 args_ptr = LLVMBuildArrayAlloca(builder, i64_type,
                     LLVMConstInt(i32_type, nargs, 0), "args");
                 tags_ptr = LLVMBuildArrayAlloca(builder, i32_type,
                     LLVMConstInt(i32_type, nargs, 0), "tags");
+
+                LLVMPositionBuilderAtEnd(builder, cur_bb);
 
                 for (int i = 0; i < nargs; i++) {
                     TypedValue av = codegen_expr(*expr.args[i]);

@@ -1,0 +1,31 @@
+' Array von UDTs: jeder Slot bekommt INIT, beim Scope-Exit jeder DISPOSE
+TYPE Slot
+    Tag AS STRING
+
+    SUB INIT(t AS STRING)
+        THIS.Tag = t
+        PRINT "init " + t
+    ENDSUB
+
+    SUB DISPOSE()
+        PRINT "drop " + THIS.Tag
+    ENDSUB
+ENDTYPE
+
+SUB build()
+    DIM s[3] AS Slot(["A","B","C"])
+    PRINT "use"
+ENDSUB
+
+build()
+PRINT "done"
+
+' Erwartet (DISPOSE-Reihenfolge ist nicht festgelegt — wir prueffen Praesenz):
+' init A
+' init B
+' init C
+' use
+' drop A
+' drop B
+' drop C
+' done

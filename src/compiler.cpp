@@ -185,6 +185,22 @@ void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& m
     for (auto& stmt : program) {
         if (stmt->kind == StmtKind::TYPE_DECL) {
             user_types.insert(stmt->func_name);
+            // Same reason for INIT / DISPOSE: a DIM in a SUB compiled in
+            // Pass 1 must already know whether the type has these methods.
+            // Track INIT()-zero-arg separately so we can preserve back-compat
+            // (auto-call only when INIT takes no user parameters).
+            for (auto& m : stmt->body) {
+                if (!m) continue;
+                if (m->func_name == stmt->func_name + ".INIT") {
+                    type_inits.insert(m->func_name);
+                    // Parser prepended THIS as param 0; user-param count is
+                    // params.size() - 1. Zero-arg INIT means params.size()==1.
+                    if (m->params.size() <= 1)
+                        type_init_zero_arg.insert(m->func_name);
+                } else if (m->func_name == stmt->func_name + ".DISPOSE") {
+                    type_disposes.insert(m->func_name);
+                }
+            }
         }
     }
 
@@ -289,6 +305,27 @@ void Compiler::compile_stmt(const Stmt& stmt) {
         case StmtKind::TYPE_DECL: {
             // Register type name
             user_types.insert(stmt.func_name);
+
+            // Discover INIT / DISPOSE before compiling methods so that the
+            // ctor-call lookup in compile_dim sees them even when the type's
+            // first DIM appears textually before the type body finishes.
+            // Method names were rewritten by the parser to TypeName.METHOD.
+            for (auto& method : stmt.body) {
+                if (!method) continue;
+                if (method->func_name == stmt.func_name + ".INIT") {
+                    type_inits.insert(method->func_name);
+                    if (method->params.size() <= 1)
+                        type_init_zero_arg.insert(method->func_name);
+                } else if (method->func_name == stmt.func_name + ".DISPOSE") {
+                    // DISPOSE must take only THIS — no user parameters.
+                    // Parser already prepended THIS, so params.size() must be 1.
+                    if (method->params.size() != 1) {
+                        throw std::runtime_error("Line " + std::to_string(method->line) +
+                            ": SUB DISPOSE must not take parameters");
+                    }
+                    type_disposes.insert(method->func_name);
+                }
+            }
 
             // Compile methods (they're stored in body as SUB/FUNCTION stmts)
             for (auto& method : stmt.body) compile_stmt(*method);
@@ -594,12 +631,41 @@ void Compiler::compile_dim(const Stmt& stmt) {
     if (stmt.expr) {
         compile_expr(*stmt.expr);
     } else if (!stmt.label.empty() && user_types.count(stmt.label)) {
-        // DIM x AS UserType → call constructor
+        // DIM x AS UserType [(args)] → call __NEW__ then optional INIT
         uint16_t ctor_idx = current_chunk().add_constant(
             Value::make_string(stmt.label + ".__NEW__"));
         current_chunk().emit(OpCode::CALL, stmt.line);
         current_chunk().emit_u16(ctor_idx, stmt.line);
         current_chunk().emit_u8(0, stmt.line); // 0 args
+        // Optional user-defined INIT(self, ...). Two trigger rules so we
+        // stay compatible with pre-existing code that DIMs first and calls
+        // obj.INIT(args) manually (type_id.jdb / RPG_ENGINE pattern):
+        //   * If the user passed ctor_args, INIT MUST exist — call it.
+        //   * If no ctor_args were passed, only auto-call INIT when it
+        //     declares no user parameters (i.e. SUB INIT()). Otherwise
+        //     leave the call to the user.
+        std::string init_name = stmt.label + ".INIT";
+        bool init_known = type_inits.count(init_name) > 0;
+        bool emit_init = false;
+        if (!stmt.ctor_args.empty()) {
+            if (!init_known) {
+                throw std::runtime_error("Line " + std::to_string(stmt.line) +
+                    ": type '" + stmt.label +
+                    "' has no SUB INIT — cannot pass constructor arguments");
+            }
+            emit_init = true;
+        } else if (init_known && type_init_zero_arg.count(init_name)) {
+            emit_init = true;
+        }
+        if (emit_init) {
+            current_chunk().emit(OpCode::DUP, stmt.line);
+            for (auto& a : stmt.ctor_args) compile_expr(*a);
+            uint16_t init_idx = current_chunk().add_constant(Value::make_string(init_name));
+            current_chunk().emit(OpCode::CALL, stmt.line);
+            current_chunk().emit_u16(init_idx, stmt.line);
+            current_chunk().emit_u8(static_cast<uint8_t>(stmt.ctor_args.size() + 1), stmt.line);
+            current_chunk().emit(OpCode::POP, stmt.line);
+        }
     } else {
         switch (stmt.var_type) {
             case VarType::ARRAY:  emit_constant(Value::make_array(), stmt.line); break;

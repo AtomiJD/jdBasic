@@ -48,6 +48,7 @@ public:
     void restore_state(const VMState& state);
     void reset();
     bool resume();  // continue after STOP
+    bool is_paused() const { return is_stopped; }  // true between STOP and RESUME
 
     // Access globals (for serialization)
     const std::vector<Value>& get_globals() const { return globals; }
@@ -139,6 +140,9 @@ public:
     void event_poll(); // called from tick — polls SDL/keyboard events
 
     bool is_native(const std::string& name) const { return natives.count(name) > 0; }
+    bool function_exists(const std::string& name) const {
+        return natives.count(name) > 0 || func_map.count(name) > 0;
+    }
     std::vector<std::string> native_names() const {
         std::vector<std::string> out;
         out.reserve(natives.size());
@@ -147,6 +151,11 @@ public:
     }
 
 private:
+    // Save the previous "active VM" pointer so nested VMs (REPL/EXECUTE)
+    // can restore it on destruction. Stored as void* to avoid leaking the
+    // implementation detail into the public API.
+    void* prev_active_vm_ = nullptr;
+
     // Sub-run depth: >0 means we're inside a nested run_code() (REPL/EXECUTE/EVAL)
     // so HALT must NOT signal program-ended to the DAP client.
     int subrun_depth = 0;

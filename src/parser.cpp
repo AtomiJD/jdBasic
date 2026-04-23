@@ -651,6 +651,11 @@ StmtPtr Parser::parse_dim_clause(int ln) {
     VarType et = VarType::NONE;
     std::string udt_name;
 
+    // Constructor args. Declared at the outer scope so the trailing
+    // `s->ctor_args = std::move(ctor_args)` sees them. Populated only
+    // inside the `if (match(AS))` branch when the type is a UDT.
+    std::vector<ExprPtr> ctor_args;
+
     // Classic-BASIC array form: DIM A[20], DIM M[5,3], DIM A[20] AS INTEGER
     ExprPtr val;
     if (check(TokenType::LBRACKET)) {
@@ -701,6 +706,18 @@ StmtPtr Parser::parse_dim_clause(int ln) {
             }
         }
         VarType type_after_as = parse_type();
+
+        // Constructor args: `DIM x AS T(a, b)` (scalar) or
+        // `DIM arr[N] AS T(vec1, vec2)` (per-element vectors).
+        // Only valid when the type is a UDT.
+        if (!udt_name.empty() && check(TokenType::LPAREN)) {
+            advance(); // (
+            if (!check(TokenType::RPAREN)) {
+                ctor_args.push_back(parse_expr());
+                while (match(TokenType::COMMA)) ctor_args.push_back(parse_expr());
+            }
+            expect(TokenType::RPAREN, "')' after constructor arguments");
+        }
         // STRICT-mode friendly syntax: `DIM arr AS T[]` declares a typed
         // empty array. Element type is T (with udt_name if T is a UDT).
         // Equivalent to `DIM arr[0] AS T` but without the size expression.
@@ -747,6 +764,10 @@ StmtPtr Parser::parse_dim_clause(int ln) {
                     val->func_name = "__MAKE_UDT_ARRAY__";
                     auto type_lit = make_string_lit(udt_name, ln);
                     val->args.push_back(std::move(type_lit));
+                    // Append per-element ctor vectors as additional args.
+                    // Runtime walks arr leaves and calls INIT(slot, vec1[i], vec2[i], ...).
+                    for (auto& a : ctor_args) val->args.push_back(std::move(a));
+                    ctor_args.clear();
                 }
             }
         } else {
@@ -768,6 +789,7 @@ StmtPtr Parser::parse_dim_clause(int ln) {
     s->elem_type = et;
     s->label = udt_name;
     s->expr = std::move(val);
+    s->ctor_args = std::move(ctor_args);
     s->line = ln;
     return s;
 }

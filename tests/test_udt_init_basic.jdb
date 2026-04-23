@@ -1,0 +1,26 @@
+' INIT mit Argumenten — Felder muessen vom User-Konstruktor gesetzt werden
+TYPE Player
+    Name AS STRING
+    Health AS INTEGER
+
+    SUB INIT(n AS STRING, hp AS INTEGER)
+        THIS.Name = n
+        THIS.Health = hp
+    ENDSUB
+
+    FUNC GETNAME$()
+        RETURN THIS.Name
+    ENDFUNC
+
+    FUNC GETHEALTH()
+        RETURN THIS.Health
+    ENDFUNC
+ENDTYPE
+
+DIM hero AS Player("Hero", 100)
+PRINT hero.GETNAME$()
+PRINT hero.GETHEALTH()
+
+' Erwartet:
+' Hero
+' 100

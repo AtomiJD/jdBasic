@@ -37,6 +37,17 @@ private:
     // Known user-defined type names (for DIM AS TypeName)
     std::unordered_set<std::string> user_types;
 
+    // Type method registries (qualified "TypeName.INIT" / "TypeName.DISPOSE").
+    // Used to decide whether DIM emits an INIT call and whether the runtime
+    // dispose hook should fire for a given object.
+    std::unordered_set<std::string> type_inits;
+    // Subset of type_inits where INIT takes no user parameters — i.e. SUB INIT().
+    // DIM auto-calls INIT only when this entry is present (or when the user
+    // passes constructor args explicitly), preserving back-compat for code
+    // that DIMs and then calls obj.INIT(args) manually.
+    std::unordered_set<std::string> type_init_zero_arg;
+    std::unordered_set<std::string> type_disposes;
+
     // Known global variable names (collected before function compilation)
     std::unordered_set<std::string> known_globals;
 

@@ -1,0 +1,21 @@
+' DIM arr[N] AS T(vec1, vec2) — Vektor-Args werden element-weise verteilt
+TYPE T_NPC
+    Name AS STRING
+    Health AS INTEGER
+
+    SUB INIT(n AS STRING, hp AS INTEGER)
+        THIS.Name = n
+        THIS.Health = hp
+    ENDSUB
+ENDTYPE
+
+DIM npc[3] AS T_NPC(["Monster","Haendler","Questi"], [100,20,10])
+
+PRINT npc[0].Name + " " + npc[0].Health
+PRINT npc[1].Name + " " + npc[1].Health
+PRINT npc[2].Name + " " + npc[2].Health
+
+' Erwartet:
+' Monster 100
+' Haendler 20
+' Questi 10

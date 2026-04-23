@@ -1,0 +1,22 @@
+' INIT ohne Argumente — wird auch bei "DIM x AS T" (ohne Klammern) gerufen
+TYPE Counter
+    Value AS INTEGER
+
+    SUB INIT()
+        THIS.Value = 42
+    ENDSUB
+
+    FUNC GETVALUE()
+        RETURN THIS.Value
+    ENDFUNC
+ENDTYPE
+
+DIM c AS Counter
+PRINT c.GETVALUE()
+
+DIM c2 AS Counter()
+PRINT c2.GETVALUE()
+
+' Erwartet:
+' 42
+' 42

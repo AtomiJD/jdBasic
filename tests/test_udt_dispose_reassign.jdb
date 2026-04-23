@@ -1,0 +1,35 @@
+' Wenn eine UDT-Variable neu zugewiesen wird, soll der alte Wert DISPOSE bekommen
+' (Interpreter only — native hat kein Refcount, dort wird nur am Funktionsende
+'  disposed; Reassign-DISPOSE ist eine dokumentierte native Limitation.)
+TYPE Tagged
+    Id AS INTEGER
+
+    SUB INIT(i AS INTEGER)
+        THIS.Id = i
+    ENDSUB
+
+    SUB DISPOSE()
+        PRINT "dispose " + THIS.Id
+    ENDSUB
+ENDTYPE
+
+FUNC NEWTAGGED(i)
+    DIM t AS Tagged(i)
+    RETURN t
+ENDFUNC
+
+SUB run()
+    DIM x AS Tagged(1)
+    x = NEWTAGGED(2)
+    PRINT "after reassign"
+ENDSUB
+
+run()
+PRINT "end"
+
+' Erwartet im Interpreter:
+'   dispose 1
+'   after reassign
+'   dispose 2
+'   end
+' Native (no refcount): die zwei DISPOSE laufen am Scope-Ende.
