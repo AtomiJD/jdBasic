@@ -1,0 +1,33 @@
+' Native gap fixes — verify each previously-broken function returns
+' the same result interp ↔ native.
+
+PRINT "── IOTA(N, start) ──"
+PRINT IOTA(8, 0)            ' [0..7]
+PRINT IOTA(5, 10)           ' [10..14]
+PRINT IOTA(4, 100, 5)       ' [100,105,110,115] (3-arg form)
+
+PRINT "── TAKE(n, arr) ──"
+LET full = [10, 20, 30, 40, 50, 60]
+LET t1 = TAKE(4, full)
+PRINT t1
+PRINT t1[0], t1[3]
+PRINT LEN(t1)
+
+PRINT "── DROP(n, arr) ──"
+PRINT DROP(2, full)
+PRINT LEN(DROP(2, full))
+
+PRINT "── SHIFT(arr, n[, fill]) ──"
+LET v = [1, 1, 1, 1, 0]
+PRINT SHIFT(v, 2)           ' [0,0,1,1,1]
+PRINT SHIFT(v, -1)          ' [1,1,1,0,0]
+PRINT SHIFT(v, 1, 9)        ' [9,1,1,1,1]
+
+PRINT "── OUTER(a, b, op) ──"
+LET M = OUTER([1,2,3,4], [10,20,30], "*")
+PRINT "row 0: "; M[0]       ' [10,20,30]
+PRINT "row 2: "; M[2]       ' [30,60,90]
+
+PRINT "── FLATTEN over 2D ──"
+PRINT FLATTEN([[1,2,3],[4,5,6]])     ' [1,2,3,4,5,6]
+PRINT FLATTEN([[10,20],[30,40],[50,60]])  ' [10,20,30,40,50,60]

@@ -199,8 +199,10 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_unique","UNIQUE",      i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumsum","CUMSUM",      i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumprod","CUMPROD",    i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_take", "TAKE",         i8_ptr_type, {i8_ptr_type, i64_type}, 3);
-    reg("jdb_array_drop", "DROP",         i8_ptr_type, {i8_ptr_type, i64_type}, 3);
+    // TAKE / DROP — interpreter signature is (n, arr); the (arr, n) variant
+    // jdb_array_take / jdb_array_drop stays for any internal callers.
+    reg("jdb_take_n",     "TAKE",         i8_ptr_type, {i64_type, i8_ptr_type}, 3);
+    reg("jdb_drop_n",     "DROP",         i8_ptr_type, {i64_type, i8_ptr_type}, 3);
     reg("jdb_array_diff", "DIFF",         i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_array_flatten","FLATTEN",    i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_shuffle","SHUFFLE",    i8_ptr_type, {i8_ptr_type}, 3);
@@ -4992,16 +4994,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "rnd"), JD_TAG_F64 };
     }
 
-    // IOTA(count, start, step) → native 3-arg form
-    if (upper == "IOTA" && expr.args.size() == 3) {
+    // IOTA(count, start, step) → native 3-arg form.
+    // IOTA(count, start) is the same with step=1 — without the explicit
+    // dispatch, the bridge fallback returned an empty array.
+    if (upper == "IOTA" && (expr.args.size() == 2 || expr.args.size() == 3)) {
         TypedValue n  = codegen_expr(*expr.args[0]);
         TypedValue st = codegen_expr(*expr.args[1]);
-        TypedValue sp = codegen_expr(*expr.args[2]);
+        LLVMValueRef sp_val = (expr.args.size() == 3)
+            ? coerce_to(codegen_expr(*expr.args[2]), f64_type)
+            : LLVMConstReal(f64_type, 1.0);
         auto& fn = runtime_funcs["__iota3"];
         LLVMValueRef args[] = {
             coerce_to(n,  f64_type),
             coerce_to(st, f64_type),
-            coerce_to(sp, f64_type),
+            sp_val,
         };
         return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "iota3"), JD_TAG_ARR };
     }
@@ -5819,7 +5825,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "GFX.HSV_RGB", "GFX.TEXTSIZE",
                 "SPRITE.COLLISIONS",
                 "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE",
-                "DIR$"
+                "DIR$",
+                // APL-style array primitives that lack a dedicated native
+                // runtime function and fall through to the VM bridge.
+                // Without a tag here, the bridge dispatch was treating
+                // them as f64-returning and the result came back as an
+                // empty / garbage array.
+                "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
+                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
+                "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+                "XSORT", "TAKE", "DROP",
+                // Array of strings from common helpers
+                "TILED.LAYERS", "FILE.LIST"
             };
             bool is_array_fn = array_returners.count(upper);
 

@@ -542,7 +542,15 @@ JdbArray* jdb_array_take(JdbArray* arr, int64_t n) {
     if (n > arr->length) n = arr->length;
     auto* r = jdb_array_new(n);
     memcpy(r->data, arr->data, n * sizeof(double));
+    r->flags = arr->flags;  // preserve nested/string flags
     return r;
+}
+
+// (n, arr) parameter order to match the interpreter's TAKE(n, arr).
+// Native codegen's TAKE entry points here so user-order args don't get
+// swapped silently when the optimizer skips the VM bridge.
+JdbArray* jdb_take_n(int64_t n, JdbArray* arr) {
+    return jdb_array_take(arr, n);
 }
 
 JdbArray* jdb_array_drop(JdbArray* arr, int64_t n) {
@@ -551,7 +559,13 @@ JdbArray* jdb_array_drop(JdbArray* arr, int64_t n) {
     int64_t newlen = arr->length - n;
     auto* r = jdb_array_new(newlen);
     memcpy(r->data, arr->data + n, newlen * sizeof(double));
+    r->flags = arr->flags;
     return r;
+}
+
+// (n, arr) ordering for the codegen entry-point — see jdb_take_n.
+JdbArray* jdb_drop_n(int64_t n, JdbArray* arr) {
+    return jdb_array_drop(arr, n);
 }
 
 JdbArray* jdb_array_diff(JdbArray* a, JdbArray* b) {
@@ -567,11 +581,36 @@ JdbArray* jdb_array_diff(JdbArray* a, JdbArray* b) {
     return r;
 }
 
+// Forward-declared; defined later alongside the arithmetic helpers.
+static inline JdbArray* decode_inner(double val);
+
+// Recursive helper: walk any-depth nested array, push all leaf values into out.
+static void flatten_into(JdbArray* arr, std::vector<double>& out) {
+    if (!arr) return;
+    if (arr->flags & 1) {
+        // Nested: each element is a pointer to an inner JdbArray
+        for (int64_t i = 0; i < arr->length; i++)
+            flatten_into(decode_inner(arr->data[i]), out);
+    } else {
+        for (int64_t i = 0; i < arr->length; i++)
+            out.push_back(arr->data[i]);
+    }
+}
+
 JdbArray* jdb_array_flatten(JdbArray* arr) {
-    // For 1D arrays, flatten is identity
     if (!arr) return jdb_array_new(0);
-    auto* r = jdb_array_new(arr->length);
-    memcpy(r->data, arr->data, arr->length * sizeof(double));
+    // Fast path: 1D is identity.
+    if (!(arr->flags & 1)) {
+        auto* r = jdb_array_new(arr->length);
+        memcpy(r->data, arr->data, arr->length * sizeof(double));
+        r->flags = arr->flags;
+        return r;
+    }
+    // 2D+: walk leaves, rebuild as flat 1D.
+    std::vector<double> flat;
+    flatten_into(arr, flat);
+    auto* r = jdb_array_new((int64_t)flat.size());
+    if (!flat.empty()) memcpy(r->data, flat.data(), flat.size() * sizeof(double));
     return r;
 }
 
