@@ -1,0 +1,73 @@
+' Mass-init benchmark: three ways to build an array of N UDT particles
+' with per-element x, y, vx, vy. Timed on N = 50000 to expose loop
+' overhead. Run in interp + native — the wins differ per backend.
+'
+'   A) Plain MAP per slot, manual field set + APPEND.
+'   B) UDT per slot, manual field set + APPEND in a FOR loop.
+'   C) DIM arr[N] AS T(vec1, vec2, vec3, vec4) — vector ctor args.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+CONST N = 50000
+
+TYPE T_PARTICLE
+    X  AS DOUBLE
+    Y  AS DOUBLE
+    VX AS DOUBLE
+    VY AS DOUBLE
+
+    SUB INIT(x AS DOUBLE, y AS DOUBLE, vx AS DOUBLE, vy AS DOUBLE)
+        THIS.X  = x
+        THIS.Y  = y
+        THIS.VX = vx
+        THIS.VY = vy
+    ENDSUB
+ENDTYPE
+
+' ── Vorberechnete Vektoren (gemeinsame Basis fuer alle drei Pfade) ─
+DIM xs  = LINSPACE(0, 1024, N)
+DIM ys  = LINSPACE(0, 768, N)
+DIM vxs = LINSPACE(-2, 2, N)
+DIM vys = LINSPACE(-2, 2, N)
+
+' ── A) MAP per slot ─────────────────────────────────────────────
+DIM t0 = TICK()
+DIM a = []
+FOR i = 0 TO N - 1
+    LET m = {}
+    m{"x"}  = xs[i]
+    m{"y"}  = ys[i]
+    m{"vx"} = vxs[i]
+    m{"vy"} = vys[i]
+    PUSH a, m
+NEXT i
+DIM ta = TICK() - t0
+
+' ── B) UDT per slot, FOR + DIM x AS T(...) + PUSH ──────────────
+DIM t1 = TICK()
+DIM b = []
+FOR i = 0 TO N - 1
+    DIM p AS T_PARTICLE(xs[i], ys[i], vxs[i], vys[i])
+    PUSH b, p
+NEXT i
+DIM tb = TICK() - t1
+
+' ── C) Vector-form UDT array (one statement) ────────────────────
+DIM t2 = TICK()
+DIM c[N] AS T_PARTICLE(xs, ys, vxs, vys)
+DIM tc = TICK() - t2
+
+PRINT "N            = "; N
+PRINT "A map+push   = "; ta; " ms"
+PRINT "B udt+push   = "; tb; " ms"
+PRINT "C vec init   = "; tc; " ms"
+PRINT "speedup C/B  = "; tb / tc; "x  (vector form vs manual UDT loop)"
+PRINT "speedup C/A  = "; ta / tc; "x  (vector form vs MAP+PUSH)"
+
+' Sanity: a few field reads via temp var (workaround for arr[i].field
+' display quirk in the interpreter).
+DIM probe AS T_PARTICLE
+probe = c[42]
+PRINT "c[42].X      = "; probe.X
+PRINT "c[42].VX     = "; probe.VX

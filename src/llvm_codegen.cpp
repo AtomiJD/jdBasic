@@ -2580,7 +2580,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         auto ctor_it = user_functions.find(type_name);
         if (!shape_args.empty() && ctor_it != user_functions.end()) {
             auto& arr_new = runtime_funcs["__array_new"];
-            auto& arr_append = runtime_funcs["APPEND"];
+            auto& arr_set = runtime_funcs["__array_set"];
             LLVMTypeRef ctor_ft = LLVMGlobalGetValueType(ctor_it->second.fn);
 
             // Resolve INIT target up front so we know its param tags. Vector
@@ -2610,15 +2610,17 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             LLVMValueRef n = size_val.tag == JD_TAG_F64
                 ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
 
-            LLVMValueRef zero_args[] = { LLVMConstInt(i64_type, 0, 0) };
-            LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, zero_args, 1, "outer");
+            // Pre-size the array to N. Previously this allocated size 0 and
+            // grew via APPEND per slot — APPEND is O(N) per call (full copy
+            // realloc) so the old path was O(N²). For N=50000 that meant
+            // ~2.5B copies; now we just write into a fixed-size buffer.
+            LLVMValueRef size_args[] = { n };
+            LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, size_args, 1, "outer");
 
             LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt_arr.loop");
             LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt_arr.end");
             LLVMValueRef idx_alloca = LLVMBuildAlloca(builder, i64_type, "udt_i");
-            LLVMValueRef outer_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "udt_outer");
             LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
-            LLVMBuildStore(builder, outer, outer_alloca);
             LLVMBuildBr(builder, loop_bb);
 
             LLVMPositionBuilderAtEnd(builder, loop_bb);
@@ -2657,19 +2659,17 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 LLVMBuildCall2(builder, init_ft, init_it->second.fn,
                                init_args.data(), (unsigned)init_args.size(), "");
             }
-            // Encode ptr as f64
+            // Encode ptr as f64 and store at slot i (no resize)
             LLVMValueRef inst_i64 = LLVMBuildPtrToInt(builder, inst, i64_type, "ptoi");
             LLVMValueRef inst_f64 = pun_i64_to_f64(inst_i64);
-            LLVMValueRef cur_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "out");
-            LLVMValueRef app_args[] = { cur_outer, inst_f64 };
-            LLVMValueRef new_outer = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, app_args, 2, "out");
-            LLVMBuildStore(builder, new_outer, outer_alloca);
+            LLVMValueRef set_args[] = { outer, cur_idx, inst_f64 };
+            LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, set_args, 3, "");
             LLVMValueRef next_idx = LLVMBuildAdd(builder, cur_idx, LLVMConstInt(i64_type, 1, 0), "next");
             LLVMBuildStore(builder, next_idx, idx_alloca);
             LLVMBuildBr(builder, loop_bb);
 
             LLVMPositionBuilderAtEnd(builder, end_bb);
-            LLVMValueRef final_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "udt_arr");
+            LLVMValueRef final_outer = outer;
             // Mark nested so array arithmetic handles correctly
             auto& set_nested = runtime_funcs["__arr_set_nested"];
             LLVMValueRef sn[] = { final_outer };
