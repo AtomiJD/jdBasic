@@ -1,0 +1,28 @@
+' Element-wise / broadcasting test for BAND BOR BXOR SHL SHR.
+' Phase 0 of Subset-Sum APL pipeline — verifies that bitops route
+' through the same array_arithmetic helper as +/-/*.
+
+PRINT "── 1D vector / scalar ──"
+PRINT IOTA(8) - 1               ' [0,1,2,3,4,5,6,7]
+PRINT (IOTA(8) - 1) BAND 1      ' [0,1,0,1,0,1,0,1]
+PRINT (IOTA(8) - 1) BOR 8       ' [8,9,10,11,12,13,14,15]
+PRINT (IOTA(8) - 1) BXOR 5      ' [5,4,7,6,1,0,3,2]
+PRINT (IOTA(5) - 1) SHL 1       ' [0,2,4,6,8]
+PRINT 32 SHR (IOTA(4) - 1)      ' [32,16,8,4]
+
+PRINT
+PRINT "── 1D vector OP 1D vector (gleiche Länge) ──"
+PRINT [12, 13, 14, 15] BAND [10, 10, 10, 10]   ' [8,8,10,10]
+PRINT [1, 2, 3] SHL [0, 1, 2]                  ' [1,4,12]
+PRINT [255, 255, 255] BXOR [1, 2, 4]           ' [254,253,251]
+
+PRINT
+PRINT "── 2D matrix / scalar (Subset-Sum-Kerntrick) ──"
+LET rows = IOTA(4) - 1                          ' [0,1,2,3]
+LET cols = IOTA(3) - 1                          ' [0,1,2]
+LET Masks = OUTER(rows, cols, "SHR")            ' 4x3 — row r, col c = r >> c
+PRINT "Masks row 0: "; Masks[0]                 ' [0,0,0]
+PRINT "Masks row 3: "; Masks[3]                 ' [3,1,0]
+LET Bits = Masks BAND 1
+PRINT "Bits row 3 : "; Bits[3]                  ' [1,1,0]   (binary of 3, LSB first)
+PRINT "Bits row 2 : "; Bits[2]                  ' [0,1,0]

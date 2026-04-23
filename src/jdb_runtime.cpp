@@ -672,6 +672,15 @@ static inline double scalar_op(double a, double b, int op) {
         case 1: return a - b;
         case 2: return a * b;
         case 3: return b != 0 ? a / b : 0;
+        // Bitwise / shift — coerce both sides through int64. Native arrays
+        // store doubles, so for elementwise BAND/SHL we round-trip via
+        // i64. Safe up to 2^53 magnitudes; that covers Subset-Sum-style
+        // bitmask use (N up to ~50) without precision loss.
+        case 4: return (double)((int64_t)a & (int64_t)b);   // BAND
+        case 5: return (double)((int64_t)a | (int64_t)b);   // BOR
+        case 6: return (double)((int64_t)a ^ (int64_t)b);   // BXOR
+        case 7: return (double)((int64_t)a << (int64_t)b);  // SHL
+        case 8: return (double)((int64_t)a >> (int64_t)b);  // SHR (arith)
         default: return 0;
     }
 }

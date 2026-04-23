@@ -4398,6 +4398,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::MINUS: arith_op = 1; break;
             case TokenType::STAR:  arith_op = 2; break;
             case TokenType::SLASH: arith_op = 3; break;
+            // Bitwise / shift — match the runtime's scalar_op codes 4-8
+            // so element-wise `Masks BAND 1`, `IOTA(N,0) SHL 1` etc.
+            // dispatch through the same array runtime as `+`/`-`.
+            case TokenType::BAND:  arith_op = 4; break;
+            case TokenType::BOR:   arith_op = 5; break;
+            case TokenType::XOR:
+            case TokenType::BXOR:  arith_op = 6; break;
+            case TokenType::SHL:   arith_op = 7; break;
+            case TokenType::SHR:   arith_op = 8; break;
             default: break;
         }
         // Comparison ops: 0=eq, 1=ne, 2=and, 3=or

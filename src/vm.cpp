@@ -1228,40 +1228,35 @@ void VM::run() {
         }
 
         // ── Bitwise ─────────────────────────────────────────
+        // Element-wise broadcast over arrays (incl. nested matrices) so
+        // APL-style pipelines like `Masks BAND 1` and `RowIdx SHR Cols`
+        // work the same as `+`/`-`/`*`. Scalar operands route through
+        // arithmetic() which now handles bitwise ops as integer-only.
 
-        case OpCode::BIT_AND: {
+        case OpCode::BIT_AND:
+        case OpCode::BIT_OR:
+        case OpCode::BIT_XOR:
+        case OpCode::BIT_SHL:
+        case OpCode::BIT_SHR: {
             Value b = pop(); Value a = pop();
-            push(Value::make_i64(a.to_int() & b.to_int()));
-            break;
-        }
-
-        case OpCode::BIT_OR: {
-            Value b = pop(); Value a = pop();
-            push(Value::make_i64(a.to_int() | b.to_int()));
-            break;
-        }
-
-        case OpCode::BIT_XOR: {
-            Value b = pop(); Value a = pop();
-            push(Value::make_i64(a.to_int() ^ b.to_int()));
+            if (a.type == ValueType::ARRAY || b.type == ValueType::ARRAY) {
+                push(array_arithmetic(a, b, op));
+            } else {
+                push(arithmetic(a, b, op));
+            }
             break;
         }
 
         case OpCode::BIT_NOT: {
             Value a = pop();
-            push(Value::make_i64(~a.to_int()));
-            break;
-        }
-
-        case OpCode::BIT_SHL: {
-            Value b = pop(); Value a = pop();
-            push(Value::make_i64(a.to_int() << b.to_int()));
-            break;
-        }
-
-        case OpCode::BIT_SHR: {
-            Value b = pop(); Value a = pop();
-            push(Value::make_i64(a.to_int() >> b.to_int()));
+            if (a.type == ValueType::ARRAY) {
+                // Element-wise ~. Reuse array_arithmetic by XORing with -1
+                // (all-bits-set sign-extended) — semantically identical
+                // and avoids a parallel codepath.
+                push(array_arithmetic(a, Value::make_i64(-1), OpCode::BIT_XOR));
+            } else {
+                push(Value::make_i64(~a.to_int()));
+            }
             break;
         }
 
@@ -2583,6 +2578,22 @@ void VM::run() {
 // ── Arithmetic helper ────────────────────────────────────────
 
 Value VM::arithmetic(const Value& a, const Value& b, OpCode op) {
+    // Bitwise / shift ops are integer-only: coerce both sides through
+    // to_int() and do the op directly. Float operands match the existing
+    // function-form (`SHL(1.5, 2)` → `int64_t(1) << int64_t(2)`).
+    if (op == OpCode::BIT_AND || op == OpCode::BIT_OR || op == OpCode::BIT_XOR ||
+        op == OpCode::BIT_SHL || op == OpCode::BIT_SHR) {
+        int64_t ia = a.to_int(), ib = b.to_int(), r;
+        switch (op) {
+            case OpCode::BIT_AND: r = ia & ib; break;
+            case OpCode::BIT_OR:  r = ia | ib; break;
+            case OpCode::BIT_XOR: r = ia ^ ib; break;
+            case OpCode::BIT_SHL: r = ia << ib; break;
+            case OpCode::BIT_SHR: r = ia >> ib; break;
+            default:              r = 0;
+        }
+        return Value::make_i64(r);
+    }
     // If both are integers, use integer arithmetic (also covers IDIV).
     // Detect overflow on +, -, * and promote to double rather than wrap.
     if (is_integer_type(a.type) && is_integer_type(b.type) && op != OpCode::DIV && op != OpCode::POW) {

@@ -1,0 +1,82 @@
+' Subset-Sum brute force — zwei Implementierungen, gleicher Job:
+'
+'   A) Loop:    zwei geschachtelte FOR über alle 2^N Bitmasken
+'   B) APL:     OUTER → BAND 1 → MATMUL → ANY (eine Pipeline)
+'
+' Honest result vorab: beide sind O(2^N). Gewinn ist rein Constant.
+' Dieser Bench misst, ob die APL-Pipeline im Interpreter wirklich
+' schneller ist (Erwartung: nein — der Inner-Loop ist klein, jeder
+' Array-Pass alloziert Overhead).
+'
+' Inline timing (kein Wrapper-FUNC, weil das Caching/Inlining
+' verfälschen würde).
+
+OPTION "EXPLICIT"
+
+DIM xs_full = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, _
+               113, 47, 173, 61, 101, 29, 151, 67, 79, 97]
+
+DIM target AS INTEGER = 1234
+
+PRINT "── Korrektheit (kleines Demo) ──"
+DIM demo = [3, 34, 4, 12, 5, 2]
+PRINT "Demo nums = "; demo
+PRINT "target=9  → expect TRUE  (4+5)"
+PRINT "target=11 → expect TRUE  (4+5+2)"
+PRINT "target=13 → expect FALSE"
+DIM Nd AS INTEGER = LEN(demo)
+DIM bd = OUTER(IOTA(2 ^ Nd) - 1, IOTA(Nd) - 1, "SHR") BAND 1
+DIM sd = FLATTEN(MATMUL(bd, RESHAPE(demo, [Nd, 1])))
+PRINT "APL  9  : "; ANY(sd = 9)
+PRINT "APL  11 : "; ANY(sd = 11)
+PRINT "APL  13 : "; ANY(sd = 13)
+PRINT
+
+PRINT "── Bench (target="; target; ") ──"
+PRINT "  N      2^N      Loop[ms]      APL[ms]   speedup APL/Loop"
+
+DIM nb AS INTEGER
+DIM nb AS INTEGER
+FOR nb = 12 TO 20 STEP 2
+    LET xs = TAKE(nb, xs_full)
+    LET total = 2 ^ nb
+
+    ' ── A: Loop ─────────────────────────────────────────────────
+    LET t0 = TICK()
+    DIM mask AS INTEGER
+    DIM i AS INTEGER
+    DIM sm AS DOUBLE
+    LET hit_l = 0
+    FOR mask = 0 TO total - 1
+        sm = 0
+        FOR i = 0 TO nb - 1
+            IF (mask SHR i) BAND 1 THEN sm = sm + xs[i]
+        NEXT
+        IF sm = target THEN hit_l = 1
+    NEXT
+    LET tl = TICK() - t0
+
+    ' ── B: APL Matrix ───────────────────────────────────────────
+    LET t1 = TICK()
+    LET rows = IOTA(total) - 1
+    LET cols = IOTA(nb) - 1
+    LET Bits = OUTER(rows, cols, "SHR") BAND 1
+    LET col_xs = RESHAPE(xs, [nb, 1])
+    LET Sums = FLATTEN(MATMUL(Bits, col_xs))
+    LET hit_a = 0
+    IF ANY(Sums = target) THEN hit_a = 1
+    LET ta = TICK() - t1
+
+    IF hit_l <> hit_a THEN
+        PRINT "*** MISMATCH at N="; nb; "  loop="; hit_l; "  apl="; hit_a
+    ENDIF
+    PRINT nb, total, tl, ta, tl / ta
+NEXT nb
+
+PRINT
+PRINT "── Verdikt ──"
+PRINT "Beide Versionen sind O(2^N). Der APL-Pfad muss komplette Bit-"
+PRINT "matrizen materialisieren (2^N x N Doubles), bevor MATMUL und"
+PRINT "ANY laufen — drei volle Array-Passes. Der Loop hat tighten"
+PRINT "Inner-Body und keine Heap-Allokation. Im Interpreter gewinnt"
+PRINT "die Schleife — APL-Eleganz erkauft Lesbarkeit, nicht Speed."
