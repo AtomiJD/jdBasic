@@ -1,0 +1,231 @@
+' Phase 3b — 3-SAT in jdBasic, brute force vs DPLL.
+'
+' 3-SAT ist NP-vollstaendig. V Variablen, M Klauseln, jede Klausel hat
+' 3 Literale (Variable oder Negation). Frage: gibt es eine Belegung
+' die alle Klauseln gleichzeitig wahr macht?
+'
+' DIMACS-Konvention: eine Klausel ist [a, b, c] mit signed ints.
+'   +k bedeutet "Variable k wahr"  (1-indexed)
+'   -k bedeutet "Variable k falsch"
+' Beispiel: [1, -2, 3]  →  x1 OR NOT x2 OR x3
+'
+' Phase Transition liegt bei M/V ≈ 4.2 — die hardesten Instanzen.
+
+OPTION "EXPLICIT"
+
+' ────────────────────────────────────────────────────────────────
+'  Brute force, APL-Stil — das ist warum wir Phase 0 brauchten
+' ────────────────────────────────────────────────────────────────
+'
+' Trick: Wir brauchen die Bitmatrix Bits[2^V, V] gar nicht zu materialisieren.
+' Bit v einer Belegung r ist `(r SHR v) BAND 1`. Mit vektorisiertem SHR/BAND
+' bekommen wir die ganze Spalte v in einer Operation:
+'   col_v = (IOTA(2^V, 0) SHR v) BAND 1
+'
+' Pro Klausel: drei Spalten extrahieren, je nach Polaritaet OR'en, dann
+' AND mit dem laufenden Satisfaction-Vektor. Am Ende ANY() — fertig.
+
+FUNC SAT_BRUTE(clauses, V)
+    LET N = 2 ^ V
+    LET assigns = IOTA(N, 0)
+    LET sat_all = ONES(N)
+
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO LEN(clauses) - 1
+        LET cl = clauses[i]
+        LET sat_clause = ZEROS(N)
+        FOR j = 0 TO 2
+            LET lit = cl[j]
+            LET v = ABS(lit) - 1
+            LET col_v = (assigns SHR v) BAND 1
+            IF lit > 0 THEN
+                sat_clause = sat_clause BOR col_v
+            ELSE
+                sat_clause = sat_clause BOR (1 - col_v)
+            ENDIF
+        NEXT j
+        sat_all = sat_all BAND sat_clause
+    NEXT i
+
+    RETURN ANY(sat_all)
+ENDFUNC
+
+' ────────────────────────────────────────────────────────────────
+'  DPLL — recursive backtracking with unit propagation
+' ────────────────────────────────────────────────────────────────
+'
+' assignment[k] = 0 (unset), 1 (true), -1 (false).
+' Returns TRUE iff there exists an extension that satisfies all clauses.
+
+FUNC DPLL_EVAL_CLAUSE(cl, assignment)
+    ' Returns 1 = clause satisfied, 0 = unsatisfied & all-set, -1 = open.
+    ' Note: avoid local `v` — it would shadow callers' `V` (variable count).
+    DIM has_open AS INTEGER = 0
+    DIM j AS INTEGER
+    FOR j = 0 TO 2
+        LET lit = cl[j]
+        LET vidx = INT(ABS(lit)) - 1
+        LET val = assignment[vidx]
+        IF val = 0 THEN
+            has_open = 1
+        ELSE
+            IF (lit > 0 AND val = 1) OR (lit < 0 AND val = -1) THEN
+                RETURN 1
+            ENDIF
+        ENDIF
+    NEXT j
+    IF has_open = 1 THEN RETURN -1
+    RETURN 0
+ENDFUNC
+
+FUNC DPLL_RUN(clauses, assignment, V)
+    DIM all_sat AS INTEGER = 1
+    DIM unit_var AS INTEGER = -1
+    DIM unit_pol AS INTEGER = 0
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM k AS INTEGER
+    DIM open_count AS INTEGER
+    DIM the_lit AS INTEGER
+    DIM lit AS INTEGER
+    DIM vidx AS INTEGER          ' avoid shadowing the V parameter
+    DIM state AS INTEGER
+
+    FOR i = 0 TO LEN(clauses) - 1
+        LET cl = clauses[i]
+        state = DPLL_EVAL_CLAUSE(cl, assignment)
+        IF state = 0 THEN RETURN 0
+        IF state = -1 THEN
+            all_sat = 0
+            open_count = 0
+            the_lit = 0
+            FOR j = 0 TO 2
+                lit = cl[j]
+                vidx = INT(ABS(lit)) - 1
+                IF assignment[vidx] = 0 THEN
+                    open_count = open_count + 1
+                    the_lit = lit
+                ENDIF
+            NEXT j
+            IF open_count = 1 AND unit_var = -1 THEN
+                unit_var = INT(ABS(the_lit)) - 1
+                IF the_lit > 0 THEN
+                    unit_pol = 1
+                ELSE
+                    unit_pol = -1
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT i
+
+    IF all_sat = 1 THEN RETURN 1
+
+    IF unit_var >= 0 THEN
+        LET new_assign = assignment * 1
+        new_assign[unit_var] = unit_pol
+        RETURN DPLL_RUN(clauses, new_assign, V)
+    ENDIF
+
+    DIM pick AS INTEGER = -1
+    FOR k = 0 TO V - 1
+        IF assignment[k] = 0 THEN
+            pick = k
+            EXITFOR
+        ENDIF
+    NEXT k
+    IF pick = -1 THEN RETURN 1
+
+    LET try_true = assignment * 1
+    try_true[pick] = 1
+    IF DPLL_RUN(clauses, try_true, V) = 1 THEN RETURN 1
+
+    LET try_false = assignment * 1
+    try_false[pick] = -1
+    RETURN DPLL_RUN(clauses, try_false, V)
+ENDFUNC
+
+FUNC SAT_DPLL(clauses, V)
+    LET assignment = ZEROS(V)
+    RETURN DPLL_RUN(clauses, assignment, V) = 1
+ENDFUNC
+
+' ────────────────────────────────────────────────────────────────
+'  Random 3-SAT instance generator
+' ────────────────────────────────────────────────────────────────
+FUNC MAKE_RANDOM_3SAT(V, M)
+    LET clauses = []
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM k AS INTEGER
+    DIM v_pick AS INTEGER
+    DIM picked AS INTEGER
+    DIM dup AS INTEGER
+    FOR i = 0 TO M - 1
+        DIM cl[3]
+        FOR j = 0 TO 2
+            picked = 0
+            DO WHILE picked = 0
+                v_pick = INT(RND(1) * V) + 1
+                dup = 0
+                FOR k = 0 TO j - 1
+                    IF cl[k] = v_pick OR cl[k] = -v_pick THEN dup = 1
+                NEXT k
+                IF dup = 0 THEN
+                    IF RND(1) < 0.5 THEN cl[j] = -v_pick ELSE cl[j] = v_pick
+                    picked = 1
+                ENDIF
+            LOOP
+        NEXT j
+        PUSH clauses, cl
+    NEXT i
+    RETURN clauses
+ENDFUNC
+
+' ────────────────────────────────────────────────────────────────
+'  Sanity checks with hand-crafted instances
+' ────────────────────────────────────────────────────────────────
+PRINT "── Sanity ──"
+
+' (x1 OR x2 OR x3) AND (NOT x1 OR NOT x2 OR NOT x3) — easily SAT
+LET easy_sat = [[1, 2, 3], [-1, -2, -3]]
+PRINT "easy SAT  brute="; SAT_BRUTE(easy_sat, 3); "  dpll="; SAT_DPLL(easy_sat, 3)
+
+' All 8 clauses fixing 3 vars — only 0 or all set — UNSAT
+LET unsat3 = [[1, 2, 3], [-1, 2, 3], [1, -2, 3], [1, 2, -3], _
+              [-1, -2, 3], [-1, 2, -3], [1, -2, -3], [-1, -2, -3]]
+PRINT "unsat3    brute="; SAT_BRUTE(unsat3, 3); "  dpll="; SAT_DPLL(unsat3, 3)
+
+PRINT
+PRINT "── Bench: random 3-SAT, M = INT(4.2 * V) (phase transition) ──"
+PRINT "  V    M     2^V        brute[ms]   dpll[ms]   brute_sat   dpll_sat"
+DIM v AS INTEGER
+RANDOMSEED 42
+FOR v = 6 TO 16 STEP 2
+    DIM m AS INTEGER = INT(4.2 * v)
+    LET inst = MAKE_RANDOM_3SAT(v, m)
+
+    LET t0 = TICK() : LET rb = SAT_BRUTE(inst, v) : LET tb = TICK() - t0
+    LET t1 = TICK() : LET rd = SAT_DPLL(inst, v)  : LET td = TICK() - t1
+
+    PRINT v, m, 2 ^ v, tb, td, rb, rd
+NEXT v
+
+PRINT
+PRINT "── DPLL alone, V = 18..30 (jenseits brute-force-Grenze) ──"
+PRINT "  V    M     2^V              dpll[ms]   sat"
+FOR v = 18 TO 30 STEP 2
+    DIM m AS INTEGER = INT(4.2 * v)
+    LET inst = MAKE_RANDOM_3SAT(v, m)
+    LET t = TICK() : LET r = SAT_DPLL(inst, v) : LET dt = TICK() - t
+    PRINT v, m, 2 ^ v, dt, r
+NEXT v
+
+PRINT
+PRINT "── Verdikt ──"
+PRINT "Brute force ist O(2^V * M) und materialisiert keine Bitmatrix —"
+PRINT "die Spalten werden per `(IOTA(2^V,0) SHR v) BAND 1` on-the-fly"
+PRINT "erzeugt. Schoenes APL-Idiom dank Phase-0-Bitop-Vektorisierung."
+PRINT "DPLL ist worst-case auch exponentiell, aber Unit-Propagation"
+PRINT "schneidet riesige Aeste weg. Bei 3-SAT mit M/V ≈ 4.2 (phase"
+PRINT "transition) zeigt sich der Win in der Praxis."

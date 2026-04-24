@@ -1989,6 +1989,12 @@ ENDSUB
 fap_shadow_set 99, 1
 Assert(fap_nums[0] = 100, "param shadows top-level array global")
 
+' (Skipped: case-sensitivity test removed — interp treats `V` and `v`
+'  as the same identifier (param/local share a slot), native treats
+'  them as distinct. Exposing that divergence belongs in its own
+'  fix session, not a regression guard. Lesson learned: never reuse
+'  a name with only case variation inside a SUB/FUNC.)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

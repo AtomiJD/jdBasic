@@ -1,0 +1,76 @@
+' Phase 3c — Boids (oder eher Particles) als ECHTE APL-Workload.
+'
+' 5000 Partikel mit Position (x,y) und Velocity (vx,vy). Pro Frame:
+'   1) pos += vel * dt
+'   2) am Rand wrap-around
+'   3) zeichnen via GFX.PLOT_POINTS (eine batched draw call)
+'
+' Alle Updates sind vektorisiert — keine FOR-Schleife durch 5000
+' Partikel. Das ist genau der Use-Case fuer den jdBasic schon eine
+' 'APL'-Architektur hat: dichte numerische Ops auf grossen Arrays.
+'
+' Setup: braucht GFX-Build (das hast Du eh).
+
+OPTION "EXPLICIT"
+
+CONST W = 1024
+CONST H = 768
+CONST N = 5000
+
+SCREEN W, H, "Boids APL"
+
+' ── Initial state, alles Vektoren der Laenge N ─────────────────
+DIM xs = ZEROS(N) : DIM ys = ZEROS(N)
+DIM vxs = ZEROS(N) : DIM vys = ZEROS(N)
+DIM rs = ZEROS(N) : DIM gs = ZEROS(N) : DIM bs = ZEROS(N)
+DIM i AS INTEGER
+RANDOMSEED 7
+FOR i = 0 TO N - 1
+    xs[i] = RND(1) * W
+    ys[i] = RND(1) * H
+    vxs[i] = (RND(1) - 0.5) * 4
+    vys[i] = (RND(1) - 0.5) * 4
+    LET hue = i * 360 / N
+    LET rgb = GFX.HSV_RGB(hue, 1, 1)
+    rs[i] = rgb[0] : gs[i] = rgb[1] : bs[i] = rgb[2]
+NEXT i
+
+' Wir nutzen die HSV-Farben nicht in PLOT_POINTS (akzeptiert nur
+' xs, ys + optional rgb), sondern setzen DRAWCOLOR vor jedem Frame
+' auf eine Animationsfarbe. Spart Per-Punkt Color State.
+
+DIM frame AS INTEGER = 0
+DIM t0 = TICK()
+
+DO
+    ' Update — vektorisiert.
+    xs = xs + vxs
+    ys = ys + vys
+
+    ' Wrap-around: x mod W, y mod H. Da MOD auf Float arbeitet:
+    xs = xs - (xs > W) * W
+    xs = xs + (xs < 0) * W
+    ys = ys - (ys > H) * H
+    ys = ys + (ys < 0) * H
+
+    ' Sanftes 'Stupsen' Richtung Bildmitte als simulierte Cohesion.
+    LET cx = W / 2
+    LET cy = H / 2
+    vxs = vxs + (cx - xs) * 0.0001
+    vys = vys + (cy - ys) * 0.0001
+
+    ' Render.
+    CLS 0, 0, 0
+    LET hue = (frame * 0.5) MOD 360
+    LET rgb = GFX.HSV_RGB(hue, 0.8, 1)
+    DRAWCOLOR INT(rgb[0]), INT(rgb[1]), INT(rgb[2])
+    GFX.PLOT_POINTS xs, ys
+    SCREENFLIP
+
+    frame = frame + 1
+    IF frame = 200 THEN
+        LET dt = TICK() - t0
+        PRINT "200 Frames in "; dt; " ms = "; 200 * 1000 / dt; " FPS"
+        EXITDO
+    ENDIF
+LOOP
