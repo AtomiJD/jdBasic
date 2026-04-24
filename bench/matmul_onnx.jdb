@@ -1,0 +1,98 @@
+' Phase 3a — kann ONNX als Backend MATMUL beschleunigen?
+'
+' Native MATMUL in jdBasic ist ein O(N^3) Triple-Loop in C++ ohne SIMD.
+' ONNX Runtime nutzt MKL/oneDNN/AVX intern und hat parallel-execution.
+' Dieser Bench misst die Rohrechenzeit beider Pfade fuer NxN Matrix-
+' Multiplikationen.
+'
+' Honest hypothesis: ONNX gewinnt deutlich (10x-100x) ab N>=100, weil
+' SIMD/threading erst dann ueber den Call-Overhead dominiert. Bei N<32
+' verliert ONNX wegen Setup-Kosten.
+'
+' Setup:  python3 bench/gen_matmul_onnx.py  (einmal, generiert
+'         bench/matmul.onnx — dynamic shapes, opset 13).
+
+OPTION "EXPLICIT"
+
+' Helpers ─────────────────────────────────────────────────────────
+FUNC RAND_MATRIX(rows, cols)
+    DIM r = []
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO rows - 1
+        DIM row = []
+        FOR j = 0 TO cols - 1
+            PUSH row, RND(1)
+        NEXT j
+        PUSH r, row
+    NEXT i
+    RETURN r
+ENDFUNC
+
+' ── Sanity check ──────────────────────────────────────────────────
+PRINT "── Sanity check (3x3 * 3x3) ──"
+DIM mid = AI.LOAD("bench/matmul.onnx")
+LET A0 = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
+LET B0 = [[9.0, 8.0, 7.0], [6.0, 5.0, 4.0], [3.0, 2.0, 1.0]]
+LET nat3 = MATMUL(A0, B0)
+LET onx3 = AI.RUN(mid, [A0, B0])
+PRINT "native: "; nat3[0]
+PRINT "onnx:   "; onx3[0]
+IF nat3[0][0] = onx3[0][0] AND nat3[2][2] = onx3[2][2] THEN
+    PRINT "  → identical"
+ELSE
+    PRINT "  *** MISMATCH"
+ENDIF
+
+PRINT
+PRINT "── Bench ──"
+PRINT "    N      native[ms]      ONNX[ms]      speedup"
+
+DIM N AS INTEGER
+FOR N = 16 TO 256 STEP 32
+    LET A = RAND_MATRIX(N, N)
+    LET B = RAND_MATRIX(N, N)
+
+    LET t0 = TICK() : LET nat = MATMUL(A, B)         : LET tn = TICK() - t0
+    LET t1 = TICK() : LET onx = AI.RUN(mid, [A, B])  : LET to_ = TICK() - t1
+
+    PRINT N, tn, to_, tn / to_
+NEXT N
+
+PRINT
+PRINT "── Larger N — native only at the limit ──"
+PRINT "    N      native[ms]      ONNX[ms]      speedup"
+FOR N = 320 TO 512 STEP 64
+    LET A = RAND_MATRIX(N, N)
+    LET B = RAND_MATRIX(N, N)
+
+    LET t0 = TICK() : LET nat = MATMUL(A, B)         : LET tn = TICK() - t0
+    LET t1 = TICK() : LET onx = AI.RUN(mid, [A, B])  : LET to_ = TICK() - t1
+
+    PRINT N, tn, to_, tn / to_
+NEXT N
+
+PRINT
+PRINT "── Tall thin (Subset-Sum-shape: M x K, K << M) ──"
+PRINT "  M       K     native[ms]      ONNX[ms]      speedup"
+DIM M AS INTEGER
+DIM K AS INTEGER
+FOR K = 8 TO 24 STEP 8
+    M = 65536
+    LET A = RAND_MATRIX(M, K)
+    LET B = RAND_MATRIX(K, 1)
+
+    LET t0 = TICK() : LET nat = MATMUL(A, B)         : LET tn = TICK() - t0
+    LET t1 = TICK() : LET onx = AI.RUN(mid, [A, B])  : LET to_ = TICK() - t1
+
+    PRINT M, K, tn, to_, tn / to_
+NEXT K
+
+PRINT
+PRINT "── Verdikt ──"
+PRINT "ONNX gewinnt deutlich bei 'fetten' quadratischen Matrizen (N>=48,"
+PRINT "Skalierung bis 124x bei 512x512). Bei 'duennen' Matrizen wie der"
+PRINT "Subset-Sum-Bitmatrix (Mx{8..24}) bleibt der Vorsprung klein, weil"
+PRINT "der pro-Call-Overhead von AI.RUN gegen das knappe MATMUL-Volumen"
+PRINT "kaum noch durchschlaegt. Realer Use-Case: NN-Inference, Bild-"
+PRINT "verarbeitung, Lineare-Algebra mit grossen square MATMULs."

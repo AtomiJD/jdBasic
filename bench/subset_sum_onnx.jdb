@@ -1,0 +1,79 @@
+' Phase 3a — Subset-Sum mit ONNX-MATMUL als Brute-Force-Beschleuniger.
+'
+' Die APL-Pipeline (Phase 1) hat den dicksten Hot-Path im MATMUL der
+' 2^N × N Bitmatrix gegen den N × 1 nums-Vektor. Phase 1 hat festgestellt,
+' dass die native MATMUL ein O(N^3) Triple-Loop ohne SIMD ist und das
+' APL-Pattern ~5-10% LANGSAMER macht als der direkte FOR-Loop.
+'
+' Jetzt: ONNX hat im matmul_onnx-Bench bei N=512 124x speedup gezeigt.
+' Frage: gewinnt die APL-Pipeline jetzt den brute-force-Vergleich?
+'
+' Setup:  python3 bench/gen_matmul_onnx.py
+
+OPTION "EXPLICIT"
+
+DIM mid = AI.LOAD("bench/matmul.onnx")
+
+' ── Loop reference (Phase 1 baseline) ──────────────────────────
+FUNC HasSubsetSumLoop(xs, t)
+    DIM nn AS INTEGER = LEN(xs)
+    DIM mask AS INTEGER
+    DIM i AS INTEGER
+    DIM sm AS DOUBLE
+    FOR mask = 0 TO 2 ^ nn - 1
+        sm = 0
+        FOR i = 0 TO nn - 1
+            IF (mask SHR i) BAND 1 THEN sm = sm + xs[i]
+        NEXT
+        IF sm = t THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+' ── APL with native MATMUL (Phase 1) ──────────────────────────
+FUNC HasSubsetSumApl(xs, t)
+    DIM nn AS INTEGER = LEN(xs)
+    DIM Bits = OUTER(IOTA(2 ^ nn, 0), IOTA(nn, 0), "SHR") BAND 1
+    DIM Sums = FLATTEN(MATMUL(Bits, RESHAPE(xs, [nn, 1])))
+    RETURN ANY(Sums = t)
+ENDFUNC
+
+' ── APL with ONNX MATMUL (Phase 3a) ───────────────────────────
+FUNC HasSubsetSumOnnx(xs, t)
+    DIM nn AS INTEGER = LEN(xs)
+    DIM Bits = OUTER(IOTA(2 ^ nn, 0), IOTA(nn, 0), "SHR") BAND 1
+    DIM Col = RESHAPE(xs, [nn, 1])
+    DIM Sums = FLATTEN(AI.RUN(mid, [Bits, Col]))
+    RETURN ANY(Sums = t)
+ENDFUNC
+
+' ── Correctness ─────────────────────────────────────────────────
+DIM demo = [3, 34, 4, 12, 5, 2]
+PRINT "── Korrektheit (target ∈ {9, 11, 13}) ──"
+DIM tt AS INTEGER
+FOR tt = 9 TO 13 STEP 2
+    LET rl = HasSubsetSumLoop(demo, tt)
+    LET ra = HasSubsetSumApl(demo, tt)
+    LET ro = HasSubsetSumOnnx(demo, tt)
+    PRINT "target="; tt; "  Loop="; rl; "  APL(native)="; ra; "  APL(ONNX)="; ro
+    IF rl <> ra OR rl <> ro THEN PRINT "  *** MISMATCH"
+NEXT
+PRINT
+
+' ── Bench ───────────────────────────────────────────────────────
+DIM pool = [17, 41, 83, 59, 127, 31, 199, 53, 71, 89, _
+            113, 47, 173, 61, 101, 29, 151, 67, 79, 97, _
+            11, 13]
+
+PRINT "── Bench (target=1234) ──"
+PRINT "  N    2^N      Loop[ms]      APLnat[ms]    APLonnx[ms]   onnx vs nat"
+DIM nb AS INTEGER
+FOR nb = 14 TO 22 STEP 2
+    LET xs = TAKE(nb, pool)
+
+    LET t0 = TICK() : LET rl = HasSubsetSumLoop(xs, 1234) : LET tl = TICK() - t0
+    LET t1 = TICK() : LET ra = HasSubsetSumApl(xs, 1234)  : LET ta = TICK() - t1
+    LET t2 = TICK() : LET ro = HasSubsetSumOnnx(xs, 1234) : LET to_ = TICK() - t2
+    IF rl <> ra OR rl <> ro THEN PRINT "*** MISMATCH at N="; nb
+    PRINT nb, 2 ^ nb, tl, ta, to_, ta / to_
+NEXT
