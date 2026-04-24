@@ -1812,6 +1812,184 @@ IF OS.FEATURE("HTTP") THEN
 ENDIF
 
 ' ══════════════════════════════════════════════════════════════════
+' Vectorised bitwise / shift ops (Phase 0 of subset-sum APL work).
+' Regression guard for: BAND/BOR/BXOR/SHL/SHR collapsing arrays to
+' a scalar via to_int() instead of broadcasting.
+' ══════════════════════════════════════════════════════════════════
+Header("Vectorised bitwise / shift")
+
+LET vbit_v = IOTA(8) - 1                              ' [0..7]
+Assert(LEN(vbit_v BAND 1) = 8, "vec BAND scalar keeps shape")
+Assert((vbit_v BAND 1)[1] = 1, "vec BAND: [1]=1")
+Assert((vbit_v BAND 1)[2] = 0, "vec BAND: [2]=0")
+Assert((vbit_v BOR 8)[3] = 11,  "vec BOR scalar")
+Assert((vbit_v BXOR 5)[2] = 7,  "vec BXOR scalar")
+Assert((vbit_v SHL 1)[3] = 6,   "vec SHL scalar (3<<1=6)")
+Assert((32 SHR vbit_v)[2] = 8,  "scalar SHR vec")
+
+' vec OP vec
+Assert(([12,13,14,15] BAND [10,10,10,10])[2] = 10, "vec BAND vec")
+Assert(([1,2,3] SHL [0,1,2])[2] = 12,              "vec SHL vec (3<<2=12)")
+
+' 2D matrix / scalar — Subset-Sum bitmask kernel
+LET vbit_M = OUTER(IOTA(4) - 1, IOTA(3) - 1, "SHR")  ' 4x3 matrix
+LET vbit_B = vbit_M BAND 1
+Assert(vbit_B[3][0] = 1, "2D BAND: row 3 col 0 = 1")
+Assert(vbit_B[3][1] = 1, "2D BAND: row 3 col 1 = 1")
+Assert(vbit_B[2][0] = 0, "2D BAND: row 2 col 0 = 0")
+
+' Infix SHL/SHR also work as operators (Phase 0 added these on top of
+' the function form), for both interpreter precedence and native codegen.
+Assert(1 SHL 2 = 4,             "infix 1 SHL 2")
+Assert(256 SHR 4 = 16,          "infix 256 SHR 4")
+Assert(-8 SHR 1 = -4,           "arith SHR preserves sign")
+Assert(1 SHL 2 + 1 = 8,         "shift below addition: 1 SHL (2+1)")
+' BAND has lower precedence than both shift and `=`, so `=` binds first.
+' Test the binding directly via parens to keep the intent visible.
+LET vbit_band_shift = 5 BAND (3 SHL 1)
+Assert(vbit_band_shift = 4,     "BAND below shift: 5 BAND (3 SHL 1)")
+Assert(SHL(1, 8) = 256,         "SHL function form still works")
+Assert(SHR(256, 4) = 16,        "SHR function form still works")
+
+' ══════════════════════════════════════════════════════════════════
+' Native gap regression guards: IOTA(N, start), TAKE(n, arr),
+' DROP(n, arr), SHIFT vector return, OUTER, FLATTEN over 2D.
+' Each was at one point native-broken (empty array / garbage). Asserts
+' here ensure interp ↔ native parity stays.
+' ══════════════════════════════════════════════════════════════════
+Header("Array primitives (native gap guards)")
+
+' IOTA 2-arg form
+LET ng_i = IOTA(5, 10)
+Assert(LEN(ng_i) = 5,  "IOTA(5,10) length")
+Assert(ng_i[0] = 10,   "IOTA(5,10)[0]")
+Assert(ng_i[4] = 14,   "IOTA(5,10)[4]")
+
+' TAKE / DROP — interp signature is (n, arr); native used to swap.
+LET ng_full = [10, 20, 30, 40, 50, 60]
+LET ng_t = TAKE(4, ng_full)
+Assert(LEN(ng_t) = 4,   "TAKE(4, arr) length")
+Assert(ng_t[0] = 10,    "TAKE(4, arr)[0]")
+Assert(ng_t[3] = 40,    "TAKE(4, arr)[3]")
+LET ng_d = DROP(2, ng_full)
+Assert(LEN(ng_d) = 4,   "DROP(2, arr) length")
+Assert(ng_d[0] = 30,    "DROP(2, arr)[0]")
+
+' SHIFT pad-with-zero (used in Subset-Sum DP)
+LET ng_sv = [1, 1, 1, 1, 0]
+LET ng_s2 = SHIFT(ng_sv, 2)
+Assert(LEN(ng_s2) = 5,  "SHIFT keeps shape")
+Assert(ng_s2[0] = 0,    "SHIFT right pads zero")
+Assert(ng_s2[2] = 1,    "SHIFT slides values")
+LET ng_s3 = SHIFT(ng_sv, 1, 9)
+Assert(ng_s3[0] = 9,    "SHIFT custom fill")
+
+' OUTER with a string operator — the call goes through the VM bridge.
+LET ng_M = OUTER([1,2,3,4], [10,20,30], "*")
+Assert(ng_M[0][1] = 20, "OUTER row 0 col 1")
+Assert(ng_M[2][2] = 90, "OUTER row 2 col 2")
+
+' FLATTEN over a 2D matrix (was a 1D-only stub natively).
+LET ng_F = FLATTEN([[1,2,3],[4,5,6]])
+Assert(LEN(ng_F) = 6,   "FLATTEN 2D length")
+Assert(ng_F[0] = 1,     "FLATTEN 2D first")
+Assert(ng_F[5] = 6,     "FLATTEN 2D last")
+
+' ══════════════════════════════════════════════════════════════════
+' UDT lifecycle — SUB INIT(args), SUB DISPOSE(), DIM x AS T(args)
+' and DIM arr[N] AS T(vec1, vec2, ...). Regression guards.
+' ══════════════════════════════════════════════════════════════════
+Header("UDT INIT / DISPOSE")
+
+TYPE T_LifecyclePoint
+    X
+    Y
+    SUB INIT(x, y)
+        THIS.X = x
+        THIS.Y = y
+    ENDSUB
+    FUNC SUM()
+        RETURN THIS.X + THIS.Y
+    ENDFUNC
+ENDTYPE
+
+' Scalar DIM with constructor args
+DIM lc_p AS T_LifecyclePoint(3, 4)
+Assert(lc_p.SUM() = 7, "INIT scalar args (3+4)")
+
+' Array form with vector-args — one INIT call per slot
+DIM lc_pts[3] AS T_LifecyclePoint([10, 20, 30], [1, 2, 3])
+LET lc_p0 = lc_pts[0] : Assert(lc_p0.SUM() = 11, "vec INIT slot 0 (10+1)")
+LET lc_p2 = lc_pts[2] : Assert(lc_p2.SUM() = 33, "vec INIT slot 2 (30+3)")
+
+' DISPOSE on scope exit increments a global counter — proves it ran.
+DIM lc_disp_count = 0
+TYPE T_LifecycleResource
+    Tag
+    SUB INIT(t)
+        THIS.Tag = t
+    ENDSUB
+    SUB DISPOSE()
+        lc_disp_count = lc_disp_count + 1
+    ENDSUB
+ENDTYPE
+SUB lc_use()
+    DIM lc_r1 AS T_LifecycleResource(1)
+    DIM lc_r2 AS T_LifecycleResource(2)
+ENDSUB
+lc_use
+Assert(lc_disp_count = 2, "DISPOSE fires for both locals on SUB return")
+
+' ══════════════════════════════════════════════════════════════════
+' FUNC array parameter pipelines — RESHAPE/MATMUL/SHIFT inside a FUNC
+' that receives an array via a top-level variable. Regression guard
+' for the tag-inference pre-pass that promotes the parameter to ARR.
+' ══════════════════════════════════════════════════════════════════
+Header("FUNC array param tag inference")
+
+FUNC fap_sum_via_matmul(xs)
+    LET col = RESHAPE(xs, [LEN(xs), 1])
+    LET ones_row = RESHAPE(ONES(LEN(xs)), [1, LEN(xs)])
+    RETURN FLATTEN(MATMUL(ones_row, col))[0]
+ENDFUNC
+
+FUNC fap_apply_shift(xs, n)
+    RETURN SHIFT(xs, n)
+ENDFUNC
+
+DIM fap_nums = [3, 4, 5, 6, 7]
+Assert(fap_sum_via_matmul(fap_nums) = 25, "FUNC param: MATMUL+RESHAPE")
+
+LET fap_shifted = fap_apply_shift(fap_nums, 2)
+Assert(LEN(fap_shifted) = 5,        "FUNC returning SHIFT keeps shape")
+Assert(fap_shifted[0] = 0,          "FUNC returning SHIFT zero-pad")
+Assert(fap_shifted[3] = 4,          "FUNC returning SHIFT slid value")
+
+' Subset-Sum APL pipeline — full circle: OUTER + BAND + MATMUL + ANY,
+' all inside a FUNC, on an array parameter.
+FUNC fap_subset_sum(xs, t)
+    LET nn = LEN(xs)
+    LET Bits = OUTER(IOTA(2 ^ nn, 0), IOTA(nn, 0), "SHR") BAND 1
+    LET Sums = FLATTEN(MATMUL(Bits, RESHAPE(xs, [nn, 1])))
+    RETURN ANY(Sums = t)
+ENDFUNC
+DIM fap_demo = [3, 34, 4, 12, 5, 2]
+Assert(fap_subset_sum(fap_demo, 9) = TRUE,   "APL subset-sum target=9 (4+5)")
+Assert(fap_subset_sum(fap_demo, 11) = TRUE,  "APL subset-sum target=11 (4+5+2)")
+Assert(fap_subset_sum(fap_demo, 13) = FALSE, "APL subset-sum target=13 (none)")
+
+' Regression for param-shadowing-globals: a top-level DIM with the same
+' name as a SUB parameter must NOT poison the parameter's tag.
+' (Was breaking TEST_INNER.ADD_THING via TEST_OUTER.ADD_VIA_OUTER.)
+DIM fap_shadow_v = [1, 2, 3, 4, 5]   ' top-level v is an array
+SUB fap_shadow_set(v, target)
+    ' here `v` is a scalar param, NOT the global array
+    fap_nums[0] = v + target
+ENDSUB
+fap_shadow_set 99, 1
+Assert(fap_nums[0] = 100, "param shadows top-level array global")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

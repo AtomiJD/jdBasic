@@ -53,7 +53,8 @@ for %%A in (%*) do (
 
 echo Building jdbrt.dll ...
 
-"%CC%" /std:c++17 /O2 /EHa %DEFS% /LD ^
+REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
+"%CC%" /std:c++17 /O2 /EHa /MP32 %DEFS% /LD ^
   /I"%MSVC%\include" ^
   /I"%SDK%\Include\%SDKV%\ucrt" ^
   /I"%SDK%\Include\%SDKV%\um" ^
