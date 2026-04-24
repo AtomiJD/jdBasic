@@ -1,0 +1,148 @@
+' Phase 4b — Mandelbrot: native vs APL.
+'
+' Pro Pixel: c = mapped point in complex plane, iteriere z = z² + c.
+' Wenn |z| > 2 entkommt das Pixel nach n Iterationen (Farb-Index).
+' Sonst gehoert es zur Menge (Iterations-Maximum).
+'
+' Honest framing: Mandelbrot ist iterativ — jede Zelle hat eigenen
+' Zustand und kann frueh escapen. ONNX hilft hier NICHT (kein
+' direkter Op fuer "iterate-with-mask"). Der Vergleich ist:
+'   native: O(W*H*max_iter) triple-loop
+'   APL:    pro Iteration EINE Vector-Op ueber das ganze Feld;
+'           early-escape-Optimierung geht verloren (rechnen alle
+'           Pixel die volle Iter-Zahl), aber das Vector-Loop ist
+'           viel guenstiger als 200000 mal die FOR-Iter-Schleife.
+
+OPTION "EXPLICIT"
+
+CONST W = 200
+CONST H = 150
+CONST MAX_ITER = 60
+
+' ── A: Native triple-loop, with early escape ──────────────────
+FUNC MANDEL_NATIVE(w, h, max_iter)
+    LET out = []
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM iter AS INTEGER
+    DIM cr AS DOUBLE
+    DIM ci AS DOUBLE
+    DIM zr AS DOUBLE
+    DIM zi AS DOUBLE
+    DIM zr2 AS DOUBLE
+    DIM zi2 AS DOUBLE
+    DIM result AS INTEGER
+    FOR i = 0 TO h - 1
+        DIM row = []
+        FOR j = 0 TO w - 1
+            cr = -2.0 + 3.0 * j / (w - 1)
+            ci = -1.5 + 3.0 * i / (h - 1)
+            zr = 0
+            zi = 0
+            result = max_iter
+            FOR iter = 0 TO max_iter - 1
+                zr2 = zr * zr
+                zi2 = zi * zi
+                IF zr2 + zi2 > 4 THEN
+                    result = iter
+                    EXITFOR
+                ENDIF
+                LET nzr = zr2 - zi2 + cr
+                zi = 2 * zr * zi + ci
+                zr = nzr
+            NEXT iter
+            PUSH row, result
+        NEXT j
+        PUSH out, row
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── B: APL vectorised — no early escape, full iter for every cell ─
+'
+' Workaround for an interpreter quirk: `LET row = ZR[r] ; ZR[r] = nzr`
+' corrupts the next slots of ZR (row aliasing followed by write-back).
+' We rebuild the row-list fresh each iteration via PUSH instead of
+' in-place index-assign — slower but correct.
+FUNC MANDEL_APL(w, h, max_iter)
+    LET xs = LINSPACE(-2, 1, w)
+    LET ys = LINSPACE(-1.5, 1.5, h)
+    LET CR = []
+    LET CI = []
+    DIM i AS INTEGER
+    FOR i = 0 TO h - 1
+        PUSH CR, xs
+        PUSH CI, xs * 0 + ys[i]
+    NEXT i
+
+    LET ZR = []
+    LET ZI = []
+    LET ITERS = []
+    LET ESCAPED = []
+    DIM zero_row = ZEROS(w)
+    LET max_row = zero_row + max_iter
+    FOR i = 0 TO h - 1
+        PUSH ZR, ZEROS(w)
+        PUSH ZI, ZEROS(w)
+        PUSH ITERS, max_row * 1
+        PUSH ESCAPED, ZEROS(w)
+    NEXT i
+
+    DIM iter AS INTEGER
+    DIM r AS INTEGER
+    FOR iter = 0 TO max_iter - 1
+        LET nextZR = []
+        LET nextZI = []
+        LET nextIters = []
+        LET nextEsc = []
+        FOR r = 0 TO h - 1
+            LET cur_zr = ZR[r]
+            LET cur_zi = ZI[r]
+            LET cur_zr2 = cur_zr * cur_zr
+            LET cur_zi2 = cur_zi * cur_zi
+            LET mag2 = cur_zr2 + cur_zi2
+            LET prev_esc = ESCAPED[r]
+            LET new_esc = (mag2 > 4) * (1 - prev_esc)
+            LET prev_iters = ITERS[r]
+            PUSH nextIters, prev_iters * (1 - new_esc) + iter * new_esc
+            PUSH nextEsc, prev_esc + new_esc
+            PUSH nextZR, cur_zr2 - cur_zi2 + CR[r]
+            PUSH nextZI, 2 * cur_zr * cur_zi + CI[r]
+        NEXT r
+        ZR = nextZR
+        ZI = nextZI
+        ITERS = nextIters
+        ESCAPED = nextEsc
+    NEXT iter
+
+    RETURN ITERS
+ENDFUNC
+
+' ── Sanity: small image, check a known cell ─────────────────
+PRINT "── Sanity (centre cell should be max_iter, near (-2,0) early escape) ──"
+LET tn = MANDEL_NATIVE(20, 15, 30)
+LET ta = MANDEL_APL(20, 15, 30)
+PRINT "native centre: "; tn[7][10]; "  apl centre: "; ta[7][10]
+PRINT "native edge:   "; tn[7][0];  "  apl edge:   "; ta[7][0]
+
+' ── Bench ─────────────────────────────────────────────────────
+PRINT
+PRINT "── Bench: "; W; "x"; H; ", max_iter="; MAX_ITER; " ──"
+PRINT "  impl              [ms]"
+LET t0 = TICK() : LET nb = MANDEL_NATIVE(W, H, MAX_ITER) : LET tn_ = TICK() - t0
+PRINT "  native loop      ", tn_
+LET t1 = TICK() : LET ab = MANDEL_APL(W, H, MAX_ITER)    : LET ta_ = TICK() - t1
+PRINT "  APL  vectorised  ", ta_
+PRINT
+PRINT "  speedup APL/native: "; tn_ / ta_
+
+PRINT
+PRINT "── Verdikt ──"
+PRINT "Mandelbrot ist eine Iteration mit per-Cell-Escape. APL-Form"
+PRINT "verzichtet auf early-out und rechnet alle Cells die volle Iter-"
+PRINT "Zahl. Das wuerde naiv MEHR Arbeit bedeuten — aber pro Iteration"
+PRINT "macht jdBasic im Vector-Modus eine Handvoll Array-Ops statt"
+PRINT "W*H einzelner Skalar-Steps. Bei dichten Mandelbrot-Bereichen"
+PRINT "(wenige escapen) ist APL deutlich schneller. Bei sparse-escape"
+PRINT "(meiste Pixel escapen frueh) gewinnt der Loop, weil EXITFOR die"
+PRINT "Arbeit kuerzt. Dieser Bench mittelt ueber das Standard-Fenster."

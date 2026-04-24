@@ -1,0 +1,94 @@
+' Phase 4c — APL-Stil Additive-Synthesis + Waveform-Visualisierung.
+'
+' Fundamental + harmonics, jede Frequenz als komplette Sinus-Welle
+' ueber den Sample-Buffer. Eine MULTIPLY + ADD pro Harmonic, dann
+' SCALE auf [-1, 1]. Keine FOR-Schleife durch die 4096 Samples.
+'
+' Kein Playback via SOUND-API (das wuerde nochmal Tracker-Logic
+' brauchen) — der Kern hier ist, dass der ganze Buffer in einer
+' Hand voll Vektor-Ops generiert wird. Visualisierung als oszillo-
+' graph-style waveform.
+
+OPTION "EXPLICIT"
+
+CONST W = 1024
+CONST H = 768
+CONST N_SAMPLES = 4096
+
+SCREEN W, H, "APL Additive Synth"
+SETFONT "tests/SuperVanilla.ttf", 18
+
+' ── Sample-Buffer als ein Vektor ───────────────────────────────
+LET t = LINSPACE(0, 1, N_SAMPLES)        ' 1 Sekunde 'logischer' Zeit
+LET pi2 = 6.283185307179586
+
+' Drei Harmonics-Sets — je nach Slot (g_set) wechseln wir live durch.
+' Format: [(freq, amplitude), ...]
+LET preset_organ = [[220, 1.0], [440, 0.6], [660, 0.4], [880, 0.2], [1320, 0.1]]
+LET preset_brass = [[110, 1.0], [220, 0.7], [330, 0.5], [440, 0.5], [550, 0.3], [660, 0.2]]
+LET preset_bell  = [[260, 1.0], [520, 0.5], [780, 0.25], [1040, 0.125], [1300, 0.06]]
+
+FUNC SYNTH(harmonics, t)
+    LET buf = ZEROS(LEN(t))
+    DIM i AS INTEGER
+    LET pi2 = 6.283185307179586
+    FOR i = 0 TO LEN(harmonics) - 1
+        LET h = harmonics[i]
+        LET freq = h[0]
+        LET amp = h[1]
+        ' One add per harmonic — SIN broadcasts over the whole t buffer.
+        buf = buf + amp * SIN(pi2 * freq * t)
+    NEXT i
+    ' Normalise to [-1, 1]
+    LET peak = MAX(buf)
+    IF peak > 0 THEN buf = buf / peak
+    RETURN buf
+ENDFUNC
+
+DIM presets = [preset_organ, preset_brass, preset_bell]
+DIM names$ = ["organ", "brass", "bell"]
+DIM g_set AS INTEGER = 0
+
+' Pre-compute a screen-row of x-coords for the waveform plot.
+LET draw_xs = LINSPACE(0, W - 1, W)
+
+DIM frame AS INTEGER = 0
+DIM t0 = TICK()
+DIM wave = SYNTH(presets[0], t)
+DIM cur_name$ AS STRING = names$[0]
+
+DO
+    IF (frame MOD 60) = 0 THEN
+        g_set = (g_set + 1) MOD 3
+        wave = SYNTH(presets[g_set], t)
+        cur_name$ = names$[g_set]
+    ENDIF
+
+    CLS 12, 16, 24
+
+    ' Sample 1 wave-value per screen pixel column. waveform: -1..1
+    ' Map each x in 0..W-1 to a sample index, then to y.
+    DIM ratio AS DOUBLE = N_SAMPLES / W
+    DIM ys = ZEROS(W)
+    DIM x AS INTEGER
+    FOR x = 0 TO W - 1
+        DIM idx AS INTEGER = INT(x * ratio)
+        ys[x] = H / 2 + wave[idx] * H * 0.4
+    NEXT x
+
+    DRAWCOLOR 100, 220, 255
+    GFX.PLOT_POINTS draw_xs, ys
+
+    DRAWCOLOR 200, 200, 200
+    TEXT 16, 16, "preset: " + cur_name$
+    TEXT 16, 36, "frame: " + STR$(frame)
+
+    SCREENFLIP
+
+    frame = frame + 1
+    IF frame = 240 THEN
+        LET dt = TICK() - t0
+        PRINT "240 Frames in "; dt; " ms = "; 240 * 1000 / dt; " FPS"
+        EXITDO
+    ENDIF
+LOOP

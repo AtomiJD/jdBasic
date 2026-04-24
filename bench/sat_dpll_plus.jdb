@@ -1,0 +1,278 @@
+' Phase 4d — Improved DPLL: pure-literal elimination + DLIS pick.
+'
+' Aufbauend auf bench/sat_brute_dpll.jdb (Phase 3b). Zwei zusaetzliche
+' Optimierungen:
+'   1) Pure-literal elimination: wenn eine Variable in allen offenen
+'      Klauseln nur positiv (oder nur negativ) vorkommt, kann sie
+'      sicher auf TRUE (oder FALSE) gesetzt werden — kein Branching.
+'   2) DLIS picking (Dynamic Largest Individual Sum): statt der ersten
+'      ungesetzten Variable die mit den MEISTEN offenen Vorkommen
+'      waehlen — branched zuerst auf der "wertvollsten" Stelle.
+'
+' Honest framing: beide sind klassische DPLL-Verbesserungen, keine
+' modernen CDCL-Tricks (kein learned clauses, kein backjumping).
+' Aber sie reichen, um an der Phase-Transition (M/V ≈ 4.2) deutlich
+' tiefer zu kommen als basic DPLL.
+
+OPTION "EXPLICIT"
+
+' ── Common: clause evaluation, no aliasing pitfalls ──────────
+' Avoid `v` as local — case-insensitive shadow with V parameter.
+FUNC EVAL_CLAUSE(cl, assignment)
+    DIM has_open AS INTEGER = 0
+    DIM j AS INTEGER
+    FOR j = 0 TO 2
+        LET lit = cl[j]
+        LET vidx = INT(ABS(lit)) - 1
+        LET val = assignment[vidx]
+        IF val = 0 THEN
+            has_open = 1
+        ELSE
+            IF (lit > 0 AND val = 1) OR (lit < 0 AND val = -1) THEN
+                RETURN 1
+            ENDIF
+        ENDIF
+    NEXT j
+    IF has_open = 1 THEN RETURN -1
+    RETURN 0
+ENDFUNC
+
+' ── Basic DPLL (Phase 3b version, repeated here for clean compare) ─
+FUNC BASIC_DPLL(clauses, assignment, V)
+    DIM all_sat AS INTEGER = 1
+    DIM unit_var AS INTEGER = -1
+    DIM unit_pol AS INTEGER = 0
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM open_count AS INTEGER
+    DIM the_lit AS INTEGER
+    DIM lit AS INTEGER
+    DIM vidx AS INTEGER
+    DIM state AS INTEGER
+
+    FOR i = 0 TO LEN(clauses) - 1
+        LET cl = clauses[i]
+        state = EVAL_CLAUSE(cl, assignment)
+        IF state = 0 THEN RETURN 0
+        IF state = -1 THEN
+            all_sat = 0
+            open_count = 0
+            the_lit = 0
+            FOR j = 0 TO 2
+                lit = cl[j]
+                vidx = INT(ABS(lit)) - 1
+                IF assignment[vidx] = 0 THEN
+                    open_count = open_count + 1
+                    the_lit = lit
+                ENDIF
+            NEXT j
+            IF open_count = 1 AND unit_var = -1 THEN
+                unit_var = INT(ABS(the_lit)) - 1
+                IF the_lit > 0 THEN unit_pol = 1 ELSE unit_pol = -1
+            ENDIF
+        ENDIF
+    NEXT i
+
+    IF all_sat = 1 THEN RETURN 1
+    IF unit_var >= 0 THEN
+        LET na = assignment * 1
+        na[unit_var] = unit_pol
+        RETURN BASIC_DPLL(clauses, na, V)
+    ENDIF
+
+    DIM pick AS INTEGER = -1
+    DIM k AS INTEGER
+    FOR k = 0 TO V - 1
+        IF assignment[k] = 0 THEN
+            pick = k
+            EXITFOR
+        ENDIF
+    NEXT k
+    IF pick = -1 THEN RETURN 1
+    LET tt = assignment * 1
+    tt[pick] = 1
+    IF BASIC_DPLL(clauses, tt, V) = 1 THEN RETURN 1
+    LET tf = assignment * 1
+    tf[pick] = -1
+    RETURN BASIC_DPLL(clauses, tf, V)
+ENDFUNC
+
+' ── Improved DPLL — pure literal + DLIS pick ────────────────
+'
+' For each open clause, count literal occurrences:
+'   pos_count[v] = clauses still-open with +v as a literal
+'   neg_count[v] = clauses still-open with -v as a literal
+' If pos_count[v] = 0 → all open mentions are negative → set v=-1
+' If neg_count[v] = 0 → set v=+1
+' Otherwise pick the v with highest pos+neg, branch on its higher-
+'   side polarity first (DLIS heuristic).
+
+FUNC PLUS_DPLL(clauses, assignment, V)
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM lit AS INTEGER
+    DIM vidx AS INTEGER
+    DIM state AS INTEGER
+
+    ' Single pass: detect contradiction, gather unit + occurrence counts
+    DIM all_sat AS INTEGER = 1
+    DIM unit_var AS INTEGER = -1
+    DIM unit_pol AS INTEGER = 0
+    LET pos_count = ZEROS(V)
+    LET neg_count = ZEROS(V)
+    DIM open_count AS INTEGER
+    DIM the_lit AS INTEGER
+
+    FOR i = 0 TO LEN(clauses) - 1
+        LET cl = clauses[i]
+        state = EVAL_CLAUSE(cl, assignment)
+        IF state = 0 THEN RETURN 0
+        IF state = 1 THEN
+            ' satisfied — nothing to track
+        ELSE
+            all_sat = 0
+            open_count = 0
+            the_lit = 0
+            FOR j = 0 TO 2
+                lit = cl[j]
+                vidx = INT(ABS(lit)) - 1
+                IF assignment[vidx] = 0 THEN
+                    open_count = open_count + 1
+                    the_lit = lit
+                    IF lit > 0 THEN
+                        pos_count[vidx] = pos_count[vidx] + 1
+                    ELSE
+                        neg_count[vidx] = neg_count[vidx] + 1
+                    ENDIF
+                ENDIF
+            NEXT j
+            IF open_count = 1 AND unit_var = -1 THEN
+                unit_var = INT(ABS(the_lit)) - 1
+                IF the_lit > 0 THEN unit_pol = 1 ELSE unit_pol = -1
+            ENDIF
+        ENDIF
+    NEXT i
+
+    IF all_sat = 1 THEN RETURN 1
+    IF unit_var >= 0 THEN
+        LET na = assignment * 1
+        na[unit_var] = unit_pol
+        RETURN PLUS_DPLL(clauses, na, V)
+    ENDIF
+
+    ' Pure literal elimination — set all pure vars in one pass
+    DIM pure_var AS INTEGER = -1
+    DIM pure_pol AS INTEGER = 0
+    DIM k AS INTEGER
+    FOR k = 0 TO V - 1
+        IF assignment[k] = 0 THEN
+            IF pos_count[k] > 0 AND neg_count[k] = 0 THEN
+                pure_var = k
+                pure_pol = 1
+                EXITFOR
+            ENDIF
+            IF neg_count[k] > 0 AND pos_count[k] = 0 THEN
+                pure_var = k
+                pure_pol = -1
+                EXITFOR
+            ENDIF
+        ENDIF
+    NEXT k
+    IF pure_var >= 0 THEN
+        LET na2 = assignment * 1
+        na2[pure_var] = pure_pol
+        RETURN PLUS_DPLL(clauses, na2, V)
+    ENDIF
+
+    ' DLIS pick — variable with highest total open-occurrence count
+    DIM best_v AS INTEGER = -1
+    DIM best_score AS INTEGER = -1
+    DIM best_pol AS INTEGER = 1
+    FOR k = 0 TO V - 1
+        IF assignment[k] = 0 THEN
+            DIM score AS INTEGER = pos_count[k] + neg_count[k]
+            IF score > best_score THEN
+                best_score = score
+                best_v = k
+                IF pos_count[k] >= neg_count[k] THEN
+                    best_pol = 1
+                ELSE
+                    best_pol = -1
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT k
+    IF best_v = -1 THEN RETURN 1
+
+    LET tt = assignment * 1
+    tt[best_v] = best_pol
+    IF PLUS_DPLL(clauses, tt, V) = 1 THEN RETURN 1
+    LET tf = assignment * 1
+    tf[best_v] = -best_pol
+    RETURN PLUS_DPLL(clauses, tf, V)
+ENDFUNC
+
+' ── Random 3-SAT generator (same as Phase 3b) ───────────────
+FUNC MAKE_RANDOM_3SAT(V, M)
+    LET clauses = []
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM k AS INTEGER
+    DIM v_pick AS INTEGER
+    DIM picked AS INTEGER
+    DIM dup AS INTEGER
+    FOR i = 0 TO M - 1
+        DIM cl[3]
+        FOR j = 0 TO 2
+            picked = 0
+            DO WHILE picked = 0
+                v_pick = INT(RND(1) * V) + 1
+                dup = 0
+                FOR k = 0 TO j - 1
+                    IF cl[k] = v_pick OR cl[k] = -v_pick THEN dup = 1
+                NEXT k
+                IF dup = 0 THEN
+                    IF RND(1) < 0.5 THEN cl[j] = -v_pick ELSE cl[j] = v_pick
+                    picked = 1
+                ENDIF
+            LOOP
+        NEXT j
+        PUSH clauses, cl
+    NEXT i
+    RETURN clauses
+ENDFUNC
+
+' ── Sanity ──────────────────────────────────────────────────
+LET unsat3 = [[1, 2, 3], [-1, 2, 3], [1, -2, 3], [1, 2, -3], _
+              [-1, -2, 3], [-1, 2, -3], [1, -2, -3], [-1, -2, -3]]
+PRINT "── Sanity ──"
+PRINT "unsat3  basic="; BASIC_DPLL(unsat3, ZEROS(3), 3); _
+              "  plus="; PLUS_DPLL(unsat3, ZEROS(3), 3)
+LET easy = [[1, 2, 3], [-1, -2, -3]]
+PRINT "easy    basic="; BASIC_DPLL(easy, ZEROS(3), 3); _
+              "  plus="; PLUS_DPLL(easy, ZEROS(3), 3)
+
+PRINT
+PRINT "── Bench: random 3-SAT, M = INT(4.2 * V) ──"
+PRINT "  V    M     basic[ms]   plus[ms]   speedup   match?"
+RANDOMSEED 42
+DIM v_n AS INTEGER
+FOR v_n = 14 TO 32 STEP 2
+    DIM m AS INTEGER = INT(4.2 * v_n)
+    LET inst = MAKE_RANDOM_3SAT(v_n, m)
+
+    LET t0 = TICK() : LET rb = BASIC_DPLL(inst, ZEROS(v_n), v_n) : LET tb = TICK() - t0
+    LET t1 = TICK() : LET rp = PLUS_DPLL(inst, ZEROS(v_n), v_n)  : LET tp = TICK() - t1
+    DIM mtch$ AS STRING
+    IF rb = rp THEN mtch$ = "OK" ELSE mtch$ = "MISMATCH"
+    PRINT v_n, m, tb, tp, tb / tp, mtch$
+NEXT v_n
+
+PRINT
+PRINT "── Plus alone, V = 34..50 ──"
+FOR v_n = 34 TO 50 STEP 2
+    DIM m AS INTEGER = INT(4.2 * v_n)
+    LET inst = MAKE_RANDOM_3SAT(v_n, m)
+    LET t = TICK() : LET r = PLUS_DPLL(inst, ZEROS(v_n), v_n) : LET dt = TICK() - t
+    PRINT v_n, m, dt, r
+NEXT v_n
