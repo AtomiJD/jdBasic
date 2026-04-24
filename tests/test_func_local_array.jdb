@@ -1,0 +1,13 @@
+' Repro: does DIM x AS ARRAY inside a FUNC create a fresh array each call,
+' or does it leak state between calls?
+
+FUNC MAKE_LIST(label$)
+    DIM xs = []
+    PUSH xs, label$
+    RETURN xs
+ENDFUNC
+
+PRINT "Call 1: "; MAKE_LIST("a")
+PRINT "Call 2: "; MAKE_LIST("b")
+PRINT "Call 3: "; MAKE_LIST("c")
+PRINT "Expected: each shows just one element."

@@ -1,0 +1,223 @@
+' jdBasic MCP server — Phase 2 skeleton.
+'
+' Spec: https://modelcontextprotocol.io
+' Transport: HTTP, JSON-RPC 2.0 over POST /mcp.
+' Bound to 127.0.0.1 only (localhost). Run as:
+'   build/jdBasic.exe mcp/server.jdb
+'
+' This skeleton implements the three required JSON-RPC methods:
+'   - initialize       : handshake, returns server capabilities
+'   - tools/list       : enumerates available tools (currently just `echo`)
+'   - tools/call       : invokes a tool by name with JSON args
+' Phase 3 will replace the `echo` placeholder with real eval/reset/vars
+' tools that exercise the persistent VM.
+
+OPTION "EXPLICIT"
+
+CONST MCP_PORT = 7321
+CONST MCP_VERSION$ = "2024-11-05"
+CONST SERVER_NAME$ = "jdbasic-mcp"
+CONST SERVER_VERSION$ = "0.1.0"
+
+' ── Tool descriptors (declared once, served by tools/list) ─────
+' Each entry: {"name", "description", "inputSchema"}.
+' inputSchema follows JSON Schema (draft-07) — clients use it to validate
+' arguments before calling.
+
+FUNC BUILD_TOOLS()
+    DIM tools = []
+
+    ' jdb_eval — execute jdBasic code on the persistent VM, capture
+    ' everything the snippet PRINTs, return it as text.
+    DIM eval_tool AS MAP = {                                           _
+        "name": "jdb_eval",                                            _
+        "description": "Execute jdBasic statements on the persistent VM and return any captured stdout. Variables defined here persist between calls.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "code": {                                              _
+                    "type": "string",                                  _
+                    "description": "jdBasic source to EXECUTE. Use PRINT to surface values." _
+                }                                                      _
+            },                                                         _
+            "required": ["code"]                                       _
+        }                                                              _
+    }
+    PUSH tools, eval_tool
+
+    ' jdb_vars — list all global variables on the persistent VM.
+    DIM vars_tool AS MAP = {                                           _
+        "name": "jdb_vars",                                            _
+        "description": "List all global variables currently defined on the persistent VM, including server internals (prefixed __ are hidden).", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {}                                           _
+        }                                                              _
+    }
+    PUSH tools, vars_tool
+
+    ' echo — kept as a connectivity smoke test.
+    DIM echo_tool AS MAP = {                                           _
+        "name": "echo",                                                _
+        "description": "Echo back the message you sent. Connectivity smoke test.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "message": {                                           _
+                    "type": "string",                                  _
+                    "description": "Text to echo back"                 _
+                }                                                      _
+            },                                                         _
+            "required": ["message"]                                    _
+        }                                                              _
+    }
+    PUSH tools, echo_tool
+
+    RETURN tools
+ENDFUNC
+
+DIM TOOLS = BUILD_TOOLS()
+
+' ── Tool dispatch ──────────────────────────────────────────────
+' Returns the JSON-RPC `result` payload for a tools/call response.
+' MCP convention: result has `content` (array of {type, text/...}) and
+' optionally `isError: true`.
+
+FUNC DISPATCH_TOOL(tool_name$, args)
+    SWITCH tool_name$
+        CASE "jdb_eval"
+            RETURN TOOL_JDB_EVAL(args)
+        CASE "jdb_vars"
+            RETURN TOOL_JDB_VARS(args)
+        CASE "echo"
+            RETURN TOOL_ECHO(args)
+        DEFAULT
+            RETURN MAKE_TEXT_RESULT("Unknown tool: " + tool_name$, TRUE)
+    ENDSWITCH
+ENDFUNC
+
+' ── Tool implementations ──────────────────────────────────────
+' All return a {content: [{type:"text", text}], isError?: bool} map.
+
+FUNC MAKE_TEXT_RESULT(text$, is_error)
+    DIM content = []
+    DIM block AS MAP = {"type": "text", "text": text$}
+    PUSH content, block
+    DIM r AS MAP = {"content": content}
+    IF is_error THEN r{"isError"} = TRUE
+    RETURN r
+ENDFUNC
+
+FUNC TOOL_ECHO(args)
+    RETURN MAKE_TEXT_RESULT("Echo: " + args{"message"}, FALSE)
+ENDFUNC
+
+' jdb_eval — captures everything the snippet PRINTs and returns it.
+' Errors are caught and surfaced as isError text, so a syntax error
+' in user code never tears down the server.
+FUNC TOOL_JDB_EVAL(args)
+    DIM code$ AS STRING = args{"code"}
+    DIM is_error AS BOOLEAN = FALSE
+    DIM err_text$ AS STRING = ""
+
+    OUTPUT.CAPTURE_BEGIN
+    TRY
+        EXECUTE code$
+    CATCH
+        is_error = TRUE
+        err_text$ = "[Error " + STR$(ERR) + " at line " + STR$(ERL) + "] " + ERRMSG$
+    ENDTRY
+    DIM out$ AS STRING = OUTPUT.CAPTURE_END$
+
+    DIM combined$ AS STRING = out$
+    IF is_error THEN
+        IF LEN(combined$) > 0 AND RIGHT$(combined$, 1) <> CHR$(10) THEN
+            combined$ = combined$ + CHR$(10)
+        ENDIF
+        combined$ = combined$ + err_text$
+    ENDIF
+
+    RETURN MAKE_TEXT_RESULT(combined$, is_error)
+ENDFUNC
+
+' jdb_vars — VARS is currently console-only; in script mode this falls
+' back to a stub. Phase 3+ will move VARS into setup_dynamic_code so it
+' works headless too, and add a proper structured listing.
+FUNC TOOL_JDB_VARS(args)
+    OUTPUT.CAPTURE_BEGIN
+    TRY
+        VARS()
+    CATCH
+        PRINT "[jdb_vars unavailable in script mode — VARS native is console-only.]"
+    ENDTRY
+    DIM out$ AS STRING = OUTPUT.CAPTURE_END$
+    RETURN MAKE_TEXT_RESULT(out$, FALSE)
+ENDFUNC
+
+' ── JSON-RPC dispatcher ────────────────────────────────────────
+FUNC HANDLE_RPC(rpc)
+    DIM resp AS MAP = {"jsonrpc": "2.0"}
+    ' MCP id can be any JSON value (or absent for notifications).
+    IF MAP.EXISTS(rpc, "id") THEN resp{"id"} = rpc{"id"}
+
+    DIM method$ AS STRING = rpc{"method"}
+
+    SWITCH method$
+        CASE "initialize"
+            DIM init_result AS MAP = {                                  _
+                "protocolVersion": MCP_VERSION$,                        _
+                "capabilities": {"tools": {}},                          _
+                "serverInfo": {                                         _
+                    "name": SERVER_NAME$,                               _
+                    "version": SERVER_VERSION$                          _
+                }                                                       _
+            }
+            resp{"result"} = init_result
+        CASE "notifications/initialized"
+            ' Notification — client signals it finished initializing.
+            ' Per JSON-RPC, notifications get no response. The HTTP
+            ' server will still send back our object, but the client
+            ' ignores responses lacking an id.
+            resp = {"jsonrpc": "2.0"}
+        CASE "tools/list"
+            resp{"result"} = {"tools": TOOLS}
+        CASE "tools/call"
+            DIM params = rpc{"params"}
+            DIM tool_name$ AS STRING = params{"name"}
+            DIM tool_args = params{"arguments"}
+            resp{"result"} = DISPATCH_TOOL(tool_name$, tool_args)
+        DEFAULT
+            DIM err AS MAP = {                                          _
+                "code": -32601,                                         _
+                "message": "Method not found: " + method$               _
+            }
+            resp{"error"} = err
+    ENDSWITCH
+
+    RETURN resp
+ENDFUNC
+
+' ── HTTP entrypoint ────────────────────────────────────────────
+' The HTTP server passes the request as a map with PATH/METHOD/BODY/
+' HEADERS/PARAMS keys (uppercased by request_to_map). We parse the
+' body as JSON-RPC, hand it to HANDLE_RPC, and return the response —
+' the server auto-stringifies map returns to application/json.
+
+FUNC MCP_POST(req)
+    DIM rpc = JSON.PARSE$(req.BODY)
+    RETURN HANDLE_RPC(rpc)
+ENDFUNC
+
+' ── Boot ───────────────────────────────────────────────────────
+PRINT "── jdBasic MCP server ──"
+PRINT "binding 127.0.0.1:"; MCP_PORT
+HTTP.SERVER.ON_POST "/mcp", "MCP_POST"
+IF HTTP.SERVER.START(MCP_PORT, "127.0.0.1") THEN
+    PRINT "ready. POST JSON-RPC to http://127.0.0.1:" + STR$(MCP_PORT) + "/mcp"
+    PRINT "Ctrl+C (or HTTP.SERVER.STOP from another VM) to stop."
+    DO
+        SLEEP 1000
+    LOOP
+ELSE
+    PRINT "FAILED to start server"
+ENDIF
