@@ -1,0 +1,7 @@
+PRINT "before TRY"
+TRY
+    PRINT 1/0
+CATCH
+    PRINT "caught: msg="; ERRMSG$
+ENDTRY
+PRINT "after ENDTRY"

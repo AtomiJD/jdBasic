@@ -1,0 +1,3 @@
+PRINT "before EXECUTE"
+EXECUTE "PRINT 1/0"
+PRINT "after EXECUTE — should not reach"

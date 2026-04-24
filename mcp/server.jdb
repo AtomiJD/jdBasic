@@ -113,43 +113,28 @@ FUNC TOOL_ECHO(args)
 ENDFUNC
 
 ' jdb_eval — captures everything the snippet PRINTs and returns it.
-' Errors are caught and surfaced as isError text, so a syntax error
-' in user code never tears down the server.
+'
+' NOTE: We intentionally do NOT wrap EXECUTE in TRY/CATCH here. There
+' is a known VM bug where TRY around EXECUTE produces "Unknown opcode"
+' bytecode corruption (repro in tests/test_execute_in_try.jdb). For now
+' user-code errors propagate up; the HTTP server's outer catch
+' (http.cpp) returns them as a plain HTTP 500 with the error text as
+' body. The MCP client sees this as a transport-level error rather than
+' a structured isError result — uglier but functional, and the server
+' itself stays alive across faulty snippets.
 FUNC TOOL_JDB_EVAL(args)
     DIM code$ AS STRING = args{"code"}
-    DIM is_error AS BOOLEAN = FALSE
-    DIM err_text$ AS STRING = ""
-
     OUTPUT.CAPTURE_BEGIN
-    TRY
-        EXECUTE code$
-    CATCH
-        is_error = TRUE
-        err_text$ = "[Error " + STR$(ERR) + " at line " + STR$(ERL) + "] " + ERRMSG$
-    ENDTRY
+    EXECUTE code$
     DIM out$ AS STRING = OUTPUT.CAPTURE_END$
-
-    DIM combined$ AS STRING = out$
-    IF is_error THEN
-        IF LEN(combined$) > 0 AND RIGHT$(combined$, 1) <> CHR$(10) THEN
-            combined$ = combined$ + CHR$(10)
-        ENDIF
-        combined$ = combined$ + err_text$
-    ENDIF
-
-    RETURN MAKE_TEXT_RESULT(combined$, is_error)
+    RETURN MAKE_TEXT_RESULT(out$, FALSE)
 ENDFUNC
 
-' jdb_vars — VARS is currently console-only; in script mode this falls
-' back to a stub. Phase 3+ will move VARS into setup_dynamic_code so it
-' works headless too, and add a proper structured listing.
+' jdb_vars — runs the existing VARS native and captures its output.
+' VARS lists every global except language internals (names starting __).
 FUNC TOOL_JDB_VARS(args)
     OUTPUT.CAPTURE_BEGIN
-    TRY
-        VARS()
-    CATCH
-        PRINT "[jdb_vars unavailable in script mode — VARS native is console-only.]"
-    ENDTRY
+    VARS()
     DIM out$ AS STRING = OUTPUT.CAPTURE_END$
     RETURN MAKE_TEXT_RESULT(out$, FALSE)
 ENDFUNC

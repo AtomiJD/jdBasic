@@ -173,6 +173,22 @@ static void setup_dynamic_code(VM& vm) {
         run_on_vm(v, code + "\n");
     };
 
+    // VARS — list global variables. Available in both console and script
+    // modes (the MCP server in mcp/server.jdb relies on it). Filters out
+    // names starting with __ which are language internals.
+    vm.register_native("VARS", [&vm](const std::vector<Value>& args) -> Value {
+        (void)args;
+        auto& names = vm.get_global_names();
+        auto& globals = vm.get_globals();
+        if (names.empty()) { vm.emit("No variables defined.\n"); }
+        else {
+            for (auto& [name, slot] : names)
+                if (slot < globals.size() && name.substr(0,2) != "__")
+                    vm.emit("  " + name + " = " + globals[slot].to_string() + "\n");
+        }
+        return Value::make_none();
+    });
+
     // EVAL: compile "PRINT expr" but intercept the PRINT to capture the value
     // Simpler: compile the expression, wrap in a tiny program that stores result
     vm.on_eval = [](VM& v, const std::string& expr) -> Value {
@@ -479,21 +495,7 @@ static void register_console_builtins(VM& vm) {
     });
 
     // HELP is registered in setup_dynamic_code (available in both modes)
-
-    // VARS
-    vm.register_native("VARS", [&vm](const std::vector<Value>& args) -> Value {
-        (void)args;
-        auto& names = vm.get_global_names();
-        auto& globals = vm.get_globals();
-        if (names.empty()) { vm.emit("No variables defined.\n"); }
-        else {
-            for (auto& [name, slot] : names)
-                if (slot < globals.size() && name.substr(0,2) != "__")
-                    vm.emit("  " + name + " = " + globals[slot].to_string() + "\n");
-        }
-        return Value::make_none();
-    });
-
+    // VARS is registered in setup_dynamic_code (so MCP server can use it)
     // HELP$ is registered in setup_dynamic_code
 }
 

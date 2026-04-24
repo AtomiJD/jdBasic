@@ -1,0 +1,8 @@
+' Standalone repro: does TRY around EXECUTE actually catch the error?
+PRINT "before TRY"
+TRY
+    EXECUTE "PRINT 1/0"
+CATCH
+    PRINT "caught: code="; ERR; " msg="; ERRMSG$
+ENDTRY
+PRINT "after ENDTRY — alive"

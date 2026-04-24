@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <deque>
 #include <string>
 #include <iostream>
 #include <unordered_map>
@@ -200,8 +201,13 @@ private:
     std::unordered_map<std::string, uint16_t> global_names;
     std::unordered_set<std::string> const_globals;  // protected constant names (uppercase)
 
-    // Functions (owned)
-    std::vector<FuncProto> owned_funcs;
+    // Functions (owned).
+    // std::deque (not vector) so push_back never invalidates pointers/refs
+    // to existing FuncProtos. Frames hold pointers to chunks living inside
+    // these FuncProtos; a vector reallocation during a re-entrant EXECUTE
+    // (HTTP-handler thread evaluates user code that adds funcs) would dangle
+    // those pointers and the next opcode read crashes with garbage data.
+    std::deque<FuncProto> owned_funcs;
     std::unordered_map<std::string, size_t> func_map;
     std::unordered_map<std::string, NativeFunc> natives;
 
@@ -210,7 +216,7 @@ private:
     uint32_t func_map_generation = 1;
 
     // Backwards compat pointer (used by run() internals)
-    std::vector<FuncProto>* func_protos = nullptr;
+    std::deque<FuncProto>* func_protos = nullptr;
 
     // Stack operations
     void push(Value v);

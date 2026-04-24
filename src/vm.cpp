@@ -271,7 +271,9 @@ VMState VM::save_state() const {
     VMState s;
     s.globals = globals;
     s.global_names = global_names;
-    s.functions = owned_funcs;
+    // VMState.functions is a std::vector for portability; owned_funcs is a
+    // std::deque (see vm.h for why). Copy-convert here.
+    s.functions.assign(owned_funcs.begin(), owned_funcs.end());
     s.func_map = func_map;
     return s;
 }
@@ -279,7 +281,7 @@ VMState VM::save_state() const {
 void VM::restore_state(const VMState& state) {
     globals = state.globals;
     global_names = state.global_names;
-    owned_funcs = state.functions;
+    owned_funcs.assign(state.functions.begin(), state.functions.end());
     func_map = state.func_map;
     func_protos = &owned_funcs;
     frames.clear();
@@ -1774,9 +1776,12 @@ void VM::run() {
                 int task_id = g_async_next_id++;
                 auto task = std::make_shared<AsyncTask>();
 
-                // Copy function registry and globals for the async VM
+                // Copy function registry and globals for the async VM.
+                // owned_funcs / func_protos is a std::deque so pointers stay
+                // stable; convert to vector for the worker via range copy.
+                auto& funcs_src = func_protos ? *func_protos : owned_funcs;
                 auto funcs_copy = std::make_shared<std::vector<FuncProto>>(
-                    func_protos ? *func_protos : owned_funcs);
+                    funcs_src.begin(), funcs_src.end());
                 auto globals_copy = std::make_shared<std::vector<Value>>(globals);
                 auto gnames_copy = std::make_shared<std::unordered_map<std::string, uint16_t>>(global_names);
                 auto fmap_copy = std::make_shared<std::unordered_map<std::string, size_t>>(func_map);
