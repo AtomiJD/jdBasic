@@ -17,8 +17,9 @@
 
 class EditorImpl {
 public:
-    EditorImpl(std::vector<std::string>& lines, const std::string& fname)
-        : lines_ref(lines), filename(fname) {
+    EditorImpl(std::vector<std::string>& lines, const std::string& fname,
+               bool* run_flag = nullptr)
+        : lines_ref(lines), filename(fname), run_requested_out(run_flag) {
         hOut = GetStdHandle(STD_OUTPUT_HANDLE);
         GetConsoleScreenBufferInfo(hOut, &csbi);
         screen_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
@@ -32,6 +33,7 @@ public:
 private:
     std::vector<std::string>& lines_ref;
     std::string filename;
+    bool* run_requested_out = nullptr;
     HANDLE hOut;
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     int screen_cols, screen_rows;
@@ -203,6 +205,14 @@ void EditorImpl::run() {
         // Normal keys
         else {
             switch (key.wVirtualKeyCode) {
+            case VK_F5:
+                // Compile + run the current buffer. Do NOT save: F5 just
+                // signals the host (main.cpp) to execute the in-memory text
+                // on the active VM. The buffer changes already live in
+                // lines_ref, which the host pushes into program_buffer when
+                // the editor exits.
+                if (run_requested_out) *run_requested_out = true;
+                goto exit_editor;
             case VK_LEFT:   move_cursor(-1, 0); break;
             case VK_RIGHT:  move_cursor(1, 0); break;
             case VK_UP:     move_cursor(0, -1); break;
@@ -689,6 +699,7 @@ Editor::Editor(std::vector<std::string>& lines, const std::string& filename)
     : lines_ref(lines), filename(filename) {}
 
 void Editor::run() {
-    EditorImpl impl(lines_ref, filename);
+    run_requested = false;
+    EditorImpl impl(lines_ref, filename, &run_requested);
     impl.run();
 }

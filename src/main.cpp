@@ -426,6 +426,10 @@ static void load_help_file() {
 // ── Register console commands as native functions ────────────
 
 static std::string* g_program_buffer_ptr = nullptr;
+// Last filename a console LOAD/RUN <file> brought in. The editor (EDIT
+// without an explicit filename) defaults to this so Ctrl+S writes back
+// to the same file instead of prompting again.
+static std::string g_loaded_filename;
 
 static void register_console_builtins(VM& vm) {
     auto& pbuf = g_program_buffer_ptr;
@@ -442,6 +446,7 @@ static void register_console_builtins(VM& vm) {
         if (!f) throw std::runtime_error("Cannot open: " + filename);
         std::ostringstream ss; ss << f.rdbuf();
         if (pbuf) *pbuf = ss.str();
+        g_loaded_filename = filename;
         int lines = (int)std::count(pbuf->begin(), pbuf->end(), '\n') + 1;
         vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
         return Value::make_none();
@@ -522,6 +527,7 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             if (!f) throw std::runtime_error("Cannot open: " + filename);
             std::ostringstream ss; ss << f.rdbuf();
             program_buffer = ss.str();
+            g_loaded_filename = filename;
             int lines = (int)std::count(program_buffer.begin(), program_buffer.end(), '\n') + 1;
             vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
         } catch (const std::exception& e) { print_error(ErrCode::FILE_NOT_FOUND, e.what()); }
@@ -1018,7 +1024,10 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             std::string l; while (std::getline(ss, l)) lines.push_back(l);
         }
         if (lines.empty()) lines.push_back("");
-        Editor editor(lines, edit_file);
+        // Default the editor's filename to the last LOAD'd file so Ctrl+S
+        // writes back to it instead of prompting.
+        std::string editor_filename = !edit_file.empty() ? edit_file : g_loaded_filename;
+        Editor editor(lines, editor_filename);
         editor.run();
         std::string new_buf;
         for (size_t i = 0; i < lines.size(); i++) {
@@ -1026,6 +1035,15 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             if (i + 1 < lines.size()) new_buf += "\n";
         }
         program_buffer = new_buf;
+        // F5 in the editor: compile + run the buffer (no save).
+        if (editor.wants_run()) {
+            try { run_on_vm(vm, program_buffer); }
+            catch (const jdError& e) { print_error(e.code, e.what(), e.line); }
+            catch (const std::exception& e) {
+                print_error(ErrCode::RUNTIME_ERROR, e.what());
+            }
+            vm.is_halted = false;
+        }
         return;
     }
 
