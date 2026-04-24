@@ -106,6 +106,17 @@ The [`jdb/universe.jdb`](jdb/universe.jdb) demo plots **70 000 coloured pixels p
 build\jdBasic.exe jdb\universe.jdb
 ```
 
+### 5. APL-style pipelines
+
+Vectorized arithmetic + bitops let you push real workloads — physics, cellular automata, SAT, DSP — through whole-array operations instead of per-cell loops. See **[doc/APL_pipeline.md](doc/APL_pipeline.md)** for a tutorial walking from "tight FOR loops" to "one line per update step" using the demos under `bench/` and `jdb/`. Highlights:
+
+- `jdb/life_demo.jdb` — live Conway 200 × 150 at 60 FPS via an ONNX 3×3-conv backend
+- `jdb/boids_apl.jdb` — 5 000 particles at ~630 FPS, all-vector update
+- `jdb/synth_apl.jdb` — additive synthesis, 4 096 samples/frame in five vector ops
+- `bench/life_bench.jdb` / `bench/mandelbrot_bench.jdb` — when APL form wins (Conway, 4–13×) and when it loses (Mandelbrot, ~4×)
+
+Numbers from the latest run: **[bench/Results.md](bench/Results.md)**.
+
 ---
 
 ## Getting started

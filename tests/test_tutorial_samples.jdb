@@ -1,0 +1,30 @@
+' Verify the snippets used in doc/APL_pipeline.md work.
+
+PRINT "── Section 1: broadcasting ──"
+LET xs = IOTA(5)
+LET ys = xs * 10 + 1
+PRINT "ys = "; ys
+LET a = [1, 2, 3]
+LET b = [10, 20, 30]
+LET c = a + b
+PRINT "c = "; c
+LET hit = xs > 3
+LET kept = xs * hit
+PRINT "kept = "; kept
+
+PRINT
+PRINT "── Section 1: SIN over LINSPACE ──"
+LET t = LINSPACE(0, 1, 8)
+LET wave = SIN(2 * PI * 1 * t)
+PRINT "wave = "; wave
+
+PRINT
+PRINT "── Section 2: bitops broadcast ──"
+LET vals = [1, 2, 4, 8]
+LET shifted = vals SHL 1
+PRINT "vals SHL 1 = "; shifted
+LET masked = vals BAND 3
+PRINT "vals BAND 3 = "; masked
+
+PRINT
+PRINT "── Done ──"
