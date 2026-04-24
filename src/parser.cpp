@@ -1567,7 +1567,27 @@ StmtPtr Parser::parse_ident_stmt() {
                 member->str_val = field;
                 member->left = std::move(chain_expr);
                 member->line = ln;
-                chain_expr = std::move(member);
+                // Method call: arr[i].method(args) — wrap the MEMBER_ACCESS in
+                // a __METHOD__ CALL. Mirrors parse_postfix's handling but at
+                // statement scope so `cs[1].BUMP(5)` parses as a statement.
+                if (check(TokenType::LPAREN)) {
+                    advance(); // (
+                    std::vector<ExprPtr> args;
+                    if (!check(TokenType::RPAREN)) {
+                        args.push_back(parse_expr());
+                        while (match(TokenType::COMMA)) args.push_back(parse_expr());
+                    }
+                    expect(TokenType::RPAREN, "')'");
+                    auto call = std::make_unique<Expr>();
+                    call->kind = ExprKind::CALL;
+                    call->func_name = "__METHOD__";
+                    call->left = std::move(member);
+                    call->args = std::move(args);
+                    call->line = ln;
+                    chain_expr = std::move(call);
+                } else {
+                    chain_expr = std::move(member);
+                }
             } else {
                 break;
             }

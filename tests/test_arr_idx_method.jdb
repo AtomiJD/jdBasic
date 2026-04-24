@@ -1,0 +1,21 @@
+' Repro for Tier 2e: arr[i].method(args) parser error.
+' Workaround was: tmp = arr[i] : tmp.method(args).
+
+TYPE Counter
+    n AS INTEGER
+    SUB INIT()
+        THIS.n = 0
+    ENDSUB
+    SUB BUMP(by AS INTEGER)
+        THIS.n = THIS.n + by
+    ENDSUB
+ENDTYPE
+
+DIM cs[3] AS Counter
+
+PRINT "Before: cs[1].n = "; cs[1].n
+
+' This is the failing pattern:
+cs[1].BUMP(5)
+
+PRINT "After:  cs[1].n = "; cs[1].n

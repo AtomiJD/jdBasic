@@ -1,0 +1,28 @@
+' Simpler — verify the parser fix handles common patterns.
+
+TYPE Counter
+    n AS INTEGER
+    SUB INIT()
+        THIS.n = 0
+    ENDSUB
+    SUB BUMP(by AS INTEGER)
+        THIS.n = THIS.n + by
+    ENDSUB
+    FUNC GET() AS INTEGER
+        RETURN THIS.n
+    ENDFUNC
+ENDTYPE
+
+DIM cs[3] AS Counter
+
+cs[0].BUMP(1)
+cs[1].BUMP(10)
+cs[2].BUMP(100)
+
+PRINT "cs[0]="; cs[0].GET()
+PRINT "cs[1]="; cs[1].GET()
+PRINT "cs[2]="; cs[2].GET()
+
+' Method-call argument is itself an indexed-method-call
+cs[0].BUMP(cs[1].GET())
+PRINT "After cs[0].BUMP(cs[1].GET()): cs[0]="; cs[0].GET()
