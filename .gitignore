@@ -69,7 +69,14 @@ desktop.ini
 !tests/**/*.csv
 !jdb/**/*.csv
 
+# ── Personal data files — must NEVER be committed (override above) ─
+# Re-block specific files even though jdb/**/*.csv is whitelisted.
+jdb/luli.csv
+jdb/luli.clf
+
 # ── Temporary / scratch files ─────────────────────────────────────
 *.tmp
 *.bak
 *.log
+tmp/
+tests/ablage/
