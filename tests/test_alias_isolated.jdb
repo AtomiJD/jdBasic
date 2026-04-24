@@ -1,0 +1,9 @@
+' Isolate the aliasing semantics.
+
+LET ZR = [[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]
+LET cur = ZR[0]
+PRINT "Before: cur="; cur; "  ZR[0]="; ZR[0]
+LET nzr = [99.0, 99.0, 99.0]
+ZR[0] = nzr
+PRINT "After:  cur="; cur; "  ZR[0]="; ZR[0]
+PRINT "Expected: cur=[1,2,3] (unchanged), ZR[0]=[99,99,99]"

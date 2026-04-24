@@ -9,6 +9,10 @@
 struct CompilerScope {
     Chunk chunk;
     std::unordered_map<std::string, uint16_t> locals;
+    // Names registered as FUNC/SUB parameters. Used to reject DIM that would
+    // silently alias a parameter (BASIC is case-insensitive, so `DIM v` inside
+    // FUNC F(V) overwrites the param — caught the user twice in 4d benches).
+    std::unordered_set<std::string> params;
     bool is_function = false;
 };
 

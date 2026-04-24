@@ -1,0 +1,38 @@
+' Repro for Tier 1c: scalar UDT field-read returning junk.
+' PRINT obj.field on fresh DIM'd UDT was reported as E=2.71828 (the math E?)
+
+TYPE Point
+    x AS DOUBLE
+    y AS DOUBLE
+ENDTYPE
+
+DIM p AS Point
+PRINT "Fresh DIM Point — fields should be 0.0"
+PRINT "p.x = "; p.x
+PRINT "p.y = "; p.y
+PRINT
+PRINT "After explicit set:"
+p.x = 3.14
+p.y = 2.71
+PRINT "p.x = "; p.x
+PRINT "p.y = "; p.y
+
+PRINT
+PRINT "── Integer field ──"
+TYPE Counter
+    n AS INTEGER
+ENDTYPE
+DIM c AS Counter
+PRINT "Fresh c.n = "; c.n
+c.n = 42
+PRINT "After set: c.n = "; c.n
+
+PRINT
+PRINT "── String field ──"
+TYPE Person
+    name AS STRING
+    age AS INTEGER
+ENDTYPE
+DIM p2 AS Person
+PRINT "Fresh p2.name = '"; p2.name; "'"
+PRINT "Fresh p2.age = "; p2.age

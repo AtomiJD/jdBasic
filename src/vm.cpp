@@ -179,10 +179,17 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     func_protos = &owned_funcs;
     func_map_generation++;
 
-    // Initialize globals storage
-    globals.resize(main_chunk.var_names.size());
+    // Allocate global slots for user variables — preserve any existing
+    // native registrations (PI, E, …) at their assigned slots. The
+    // previous code naively did `global_names[name] = i`, which made
+    // `global_names["A"]` point at slot 0 (held by PI). User code that
+    // referenced an undefined `A` then read PI's value (3.14159) and
+    // `obj.x` for any name `obj` whose slot collided returned junk.
     for (uint16_t i = 0; i < main_chunk.var_names.size(); i++) {
-        global_names[main_chunk.var_names[i]] = i;
+        const std::string& name = main_chunk.var_names[i];
+        if (global_names.count(name)) continue;
+        global_names[name] = static_cast<uint16_t>(globals.size());
+        globals.push_back(Value::make_none());
     }
 
     frames.push_back({&main_chunk, 0, 0});
@@ -2104,29 +2111,52 @@ void VM::run() {
                     };
                     broadcast(target, val);
                 } else if (target.type == ValueType::ARRAY && val.type == ValueType::ARRAY) {
-                    // Cyclic vectorized assignment: flatten source, cycle into leaf slots
-                    std::vector<Value> src_flat;
-                    std::function<void(const Value&)> flatten_src =
-                        [&](const Value& v) {
-                        if (v.type == ValueType::ARRAY)
-                            for (auto& e : v.as_array()->elements) flatten_src(e);
-                        else
-                            src_flat.push_back(v);
-                    };
-                    flatten_src(val);
-
-                    if (!src_flat.empty()) {
-                        size_t si = 0;
-                        std::function<void(Value&)> fill = [&](Value& node) {
-                            if (node.type == ValueType::ARRAY) {
-                                for (auto& elem : node.as_array()->elements)
-                                    fill(elem);
-                            } else {
-                                node = src_flat[si % src_flat.size()];
-                                si++;
-                            }
+                    // Slot replacement vs. cyclic broadcast: the historical
+                    // behaviour of `arr[i] = vec` was to flatten vec and cycle
+                    // its leaves into target's existing storage. That broadcasts
+                    // a row-vector into a multi-D slot (test_slice.jdb relies
+                    // on this), but it also silently mutates any alias of
+                    // arr[i] that the user captured with `LET row = arr[i]` —
+                    // a real bug-source in the Mandelbrot APL bench.
+                    //
+                    // Compromise: when target and val are both flat 1D arrays
+                    // of equal length, do a real slot-replacement (move). This
+                    // preserves the alias of the OLD row that LET captured.
+                    // Otherwise (multi-D target, or shape mismatch), keep the
+                    // cyclic-broadcast semantics.
+                    auto* tgt_arr = target.as_array();
+                    auto* val_arr = val.as_array();
+                    bool target_is_flat = !tgt_arr->elements.empty() &&
+                        tgt_arr->elements[0].type != ValueType::ARRAY;
+                    bool val_is_flat = !val_arr->elements.empty() &&
+                        val_arr->elements[0].type != ValueType::ARRAY;
+                    bool same_size = tgt_arr->elements.size() == val_arr->elements.size();
+                    if (target_is_flat && val_is_flat && same_size) {
+                        target = std::move(val);
+                    } else {
+                        std::vector<Value> src_flat;
+                        std::function<void(const Value&)> flatten_src =
+                            [&](const Value& v) {
+                            if (v.type == ValueType::ARRAY)
+                                for (auto& e : v.as_array()->elements) flatten_src(e);
+                            else
+                                src_flat.push_back(v);
                         };
-                        fill(target);
+                        flatten_src(val);
+
+                        if (!src_flat.empty()) {
+                            size_t si = 0;
+                            std::function<void(Value&)> fill = [&](Value& node) {
+                                if (node.type == ValueType::ARRAY) {
+                                    for (auto& elem : node.as_array()->elements)
+                                        fill(elem);
+                                } else {
+                                    node = src_flat[si % src_flat.size()];
+                                    si++;
+                                }
+                            };
+                            fill(target);
+                        }
                     }
                 } else {
                     // Simple assignment

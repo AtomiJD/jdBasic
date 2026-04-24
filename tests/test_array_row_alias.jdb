@@ -1,0 +1,22 @@
+' Repro for Tier 1b: array-row aliasing-then-writeback corruption.
+' Pattern from Mandelbrot APL bench:
+'   LET row = ZR[r]      ' alias outer row
+'   ... compute nzr ...  ' nzr is a fresh array
+'   ZR[r] = nzr           ' writeback corrupts neighbour rows
+
+PRINT "── Build a 4x3 array of arrays ──"
+LET ZR = []
+PUSH ZR, [1.0, 2.0, 3.0]
+PUSH ZR, [4.0, 5.0, 6.0]
+PUSH ZR, [7.0, 8.0, 9.0]
+PUSH ZR, [10.0, 11.0, 12.0]
+
+PRINT "Before: ZR[0]="; ZR[0]; " ZR[1]="; ZR[1]; " ZR[2]="; ZR[2]; " ZR[3]="; ZR[3]
+
+PRINT "── Alias ZR[0] then write back ──"
+LET row = ZR[0]
+LET nzr = row * 100   ' fresh array [100, 200, 300]
+ZR[0] = nzr
+
+PRINT "After:  ZR[0]="; ZR[0]; " ZR[1]="; ZR[1]; " ZR[2]="; ZR[2]; " ZR[3]="; ZR[3]
+PRINT "Expected ZR[1]=[4,5,6], ZR[2]=[7,8,9], ZR[3]=[10,11,12]."

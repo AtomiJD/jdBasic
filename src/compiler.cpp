@@ -680,6 +680,15 @@ void Compiler::compile_dim(const Stmt& stmt) {
     }
     // DIM always declares a LOCAL variable in function scope
     if (scopes.size() > 1) {
+        // Reject DIM-shadows-parameter: BASIC is case-insensitive, so
+        // `DIM v` inside `FUNC F(V)` aliases V and silently overwrites it
+        // when assigned. Caught us twice in the 4d benches.
+        if (current_scope().params.count(stmt.var_name)) {
+            throw std::runtime_error("Line " + std::to_string(stmt.line) +
+                ": DIM '" + stmt.var_name + "' shadows function parameter '" +
+                stmt.var_name + "' (BASIC identifiers are case-insensitive). " +
+                "Rename the local — assigning to it would silently overwrite the parameter.");
+        }
         uint16_t slot = resolve_local(stmt.var_name);
         current_chunk().emit(OpCode::STORE_VAR, stmt.line);
         current_chunk().emit_u16(slot, stmt.line);
@@ -967,6 +976,7 @@ void Compiler::compile_sub(const Stmt& stmt) {
     // Register parameters as local variables (always local, even if name matches a global)
     for (auto& p : stmt.params) {
         resolve_local(p.name);
+        current_scope().params.insert(p.name);
     }
 
     for (auto& s : stmt.body) compile_stmt(*s);
@@ -998,6 +1008,7 @@ void Compiler::compile_function(const Stmt& stmt) {
     // Register parameters as local variables (always local, even if name matches a global)
     for (auto& p : stmt.params) {
         resolve_local(p.name);
+        current_scope().params.insert(p.name);
     }
 
     for (auto& s : stmt.body) compile_stmt(*s);

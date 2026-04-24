@@ -1,0 +1,14 @@
+' Repro for Tier 1a: case-insensitive identifier slot-sharing.
+' DIM v silently aliases parameter V (BASIC is case-insensitive),
+' so v = 42 overwrites the parameter. No warning, silent corruption.
+
+FUNC F(V)
+    PRINT "Got V="; V
+    DIM v AS INTEGER = 42
+    PRINT "After DIM: V="; V
+    PRINT "After DIM: v="; v
+    RETURN V
+ENDFUNC
+
+PRINT "F(7) = "; F(7)
+PRINT "Expected: 7. Bug: 42."
