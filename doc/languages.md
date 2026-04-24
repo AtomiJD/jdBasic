@@ -1396,10 +1396,18 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.GETCOOKIE$(name$)`**: Returns the stored cookie value, or empty string if the key is unknown.
 * **`HTTP.DELETE$(url$)`**: Performs an HTTP DELETE request and returns the response body. Status is available via `HTTP.STATUSCODE()`.
 * **`HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> map`**: Generic HTTP call. Returns a map with `status`, `body`, and `headers`. Unlike the shortcut forms this does not throw on HTTP-level errors (4xx/5xx) — only on transport failure. `method$` accepts `GET`, `DELETE`, `HEAD`, `POST`, `PUT`, `PATCH`.
-* **`HTTP.SERVER.START(port)`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success.
+* **`HTTP.SERVER.START(port [, host$])`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success. `host$` defaults to `"127.0.0.1"` (loopback only); pass `"0.0.0.0"` to expose the server to the LAN.
 * **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
 * **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.
 * **`HTTP.SERVER.ON_POST(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
+
+### Output capture
+
+These three natives redirect `PRINT`/all script output to an in-memory string buffer instead of letting it leak to stdout. Captures are stacked: each `OUTPUT.CAPTURE_BEGIN` saves the previous output handler so nested captures and host-installed routers (e.g. the Console workspace buffer) restore correctly.
+
+* **`OUTPUT.CAPTURE_BEGIN`**: Begins capturing all subsequent output to a fresh buffer.
+* **`OUTPUT.CAPTURE_END$() -> string$`**: Stops the most recent capture and returns the buffered text. Errors if no capture is active.
+* **`OUTPUT.CAPTURE_PEEK$() -> string$`**: Returns the current buffer contents without stopping capture.
 
 ### Encoding & Hashing (CODEC)
 

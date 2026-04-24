@@ -1,0 +1,29 @@
+' Smoke test for OUTPUT.CAPTURE_BEGIN / END$ / PEEK$.
+
+PRINT "── before capture (this should be visible) ──"
+
+OUTPUT.CAPTURE_BEGIN
+PRINT "captured line 1"
+PRINT "captured line 2"
+LET peeked$ = OUTPUT.CAPTURE_PEEK$
+PRINT "captured line 3"
+LET captured$ = OUTPUT.CAPTURE_END$
+
+PRINT "── after capture ──"
+PRINT "PEEK at midpoint was: ["; peeked$; "]"
+PRINT "Final captured was: ["; captured$; "]"
+
+PRINT
+PRINT "── nested capture ──"
+OUTPUT.CAPTURE_BEGIN
+PRINT "outer 1"
+OUTPUT.CAPTURE_BEGIN
+PRINT "inner 1"
+PRINT "inner 2"
+LET inner$ = OUTPUT.CAPTURE_END$
+PRINT "outer 2 (after inner end)"
+LET outer$ = OUTPUT.CAPTURE_END$
+
+PRINT "inner = ["; inner$; "]"
+PRINT "outer = ["; outer$; "]"
+PRINT "expected: inner = [inner 1\\ninner 2\\n], outer = [outer 1\\nouter 2 (after inner end)\\n]"

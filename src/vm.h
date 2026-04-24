@@ -81,6 +81,12 @@ public:
         else std::cout << s;
     }
 
+    // OUTPUT.CAPTURE_BEGIN/END$/PEEK$ stack — saves the previous on_output
+    // handler when a capture starts so that nested captures and Console-host
+    // routing both restore correctly.
+    std::vector<std::function<void(const std::string&)>> output_capture_prev;
+    std::vector<std::shared_ptr<std::string>> output_capture_buffers;
+
     // Periodic tick during execution (for RECUR tasks)
     std::function<void()> on_tick;
     int tick_counter = 0;

@@ -786,8 +786,8 @@ Syntax: HTTP.SERVER.ON_POST(path$, function_name$)
 Description: Registers a function to handle incoming HTTP POST requests for the built-in server.
 
 [HTTP.SERVER.START]
-Syntax: HTTP.SERVER.START(port)
-Description: Starts the built-in non-blocking HTTP server on a specified port.
+Syntax: HTTP.SERVER.START(port [, host$])
+Description: Starts the built-in non-blocking HTTP server on a specified port. host$ defaults to "127.0.0.1" (loopback only); pass "0.0.0.0" to expose the server to the LAN.
 
 [HTTP.SERVER.STOP]
 Syntax: HTTP.SERVER.STOP
@@ -1131,6 +1131,18 @@ Example: IF NOT OS.FEATURE("NATIVEC") THEN ... ENDIF
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.
+
+[OUTPUT.CAPTURE_BEGIN]
+Syntax: OUTPUT.CAPTURE_BEGIN
+Description: Begins capturing all subsequent PRINT/script output to a fresh in-memory buffer. Captures stack: each BEGIN saves the previous output handler so nested captures restore correctly.
+
+[OUTPUT.CAPTURE_END$]
+Syntax: OUTPUT.CAPTURE_END$() -> string$
+Description: Stops the most recent capture and returns the buffered text. Errors if no capture is active.
+
+[OUTPUT.CAPTURE_PEEK$]
+Syntax: OUTPUT.CAPTURE_PEEK$() -> string$
+Description: Returns the current capture buffer's contents without stopping capture. Errors if no capture is active.
 
 [PACK$]
 Syntax: PACK$(format$, v1, v2, ...)

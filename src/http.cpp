@@ -473,7 +473,18 @@ void register_http_builtins(VM& vm) {
     });
 
     vm.register_native("HTTP.SERVER.START", [&vm](const std::vector<Value>& args) -> Value {
+        if (args.empty())
+            throw std::runtime_error("HTTP.SERVER.START: port required");
         int port = (int)args[0].to_int();
+        // Default bind: localhost only. Pass "0.0.0.0" explicitly to expose
+        // the server to the LAN. The default is loopback because anything
+        // less is a foot-gun for tools like the MCP server (was 0.0.0.0
+        // before — security-relevant default change).
+        std::string host = "127.0.0.1";
+        if (args.size() >= 2 && args[1].type == ValueType::STRING) {
+            host = args[1].as_string()->data;
+            if (host.empty()) host = "127.0.0.1";
+        }
 
         std::lock_guard<std::mutex> lock(g_server_mutex);
         if (g_server) throw std::runtime_error("Server already running");
@@ -525,8 +536,8 @@ void register_http_builtins(VM& vm) {
 
         // Start server in background thread
         auto* srv = g_server.get();
-        g_server_thread = std::thread([srv, port]() {
-            srv->listen("0.0.0.0", port);
+        g_server_thread = std::thread([srv, port, host]() {
+            srv->listen(host.c_str(), port);
         });
         g_server_thread.detach();
 

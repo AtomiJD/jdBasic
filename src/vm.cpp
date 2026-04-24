@@ -6631,6 +6631,42 @@ void VM::register_builtins() {
         return Value::make_none();
     });
 
+    // ── Output capture ─────────────────────────────────────────
+    // Redirects PRINT/EMIT output to a per-capture string buffer so that
+    // tools like the MCP server can return what a snippet printed instead
+    // of letting it leak to stdout. Stacked: each BEGIN saves the previous
+    // on_output handler (Console's workspace router etc.) and END$ restores it.
+
+    register_native("OUTPUT.CAPTURE_BEGIN", 0, 0,
+        [this](const std::vector<Value>& args) -> Value {
+        (void)args;
+        auto buf = std::make_shared<std::string>();
+        output_capture_buffers.push_back(buf);
+        output_capture_prev.push_back(on_output);
+        on_output = [buf](const std::string& s) { buf->append(s); };
+        return Value::make_none();
+    });
+
+    register_native("OUTPUT.CAPTURE_END$", 0, 0,
+        [this](const std::vector<Value>& args) -> Value {
+        (void)args;
+        if (output_capture_buffers.empty())
+            throw std::runtime_error("OUTPUT.CAPTURE_END$: no capture is active");
+        auto buf = output_capture_buffers.back();
+        output_capture_buffers.pop_back();
+        on_output = output_capture_prev.back();
+        output_capture_prev.pop_back();
+        return Value::make_string(*buf);
+    });
+
+    register_native("OUTPUT.CAPTURE_PEEK$", 0, 0,
+        [this](const std::vector<Value>& args) -> Value {
+        (void)args;
+        if (output_capture_buffers.empty())
+            throw std::runtime_error("OUTPUT.CAPTURE_PEEK$: no capture is active");
+        return Value::make_string(*output_capture_buffers.back());
+    });
+
     // ── Pipe apply (internal: calls funcref with value) ─────
     register_native("__PIPE_APPLY", 2, 2, [this](const std::vector<Value>& args) -> Value {
         return call_funcref(args[0], {args[1]});
