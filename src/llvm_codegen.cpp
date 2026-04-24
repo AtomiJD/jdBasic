@@ -625,7 +625,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if ((s.kind == StmtKind::LET || s.kind == StmtKind::DIM ||
              s.kind == StmtKind::ASSIGN) && !s.var_name.empty()) {
             int t = JD_TAG_F64;
-            if (s.var_type == VarType::ARRAY || !s.label.empty()) t = JD_TAG_ARR;
+            // s.label carries the UDT type name for `DIM x AS T` and
+            // also the `__EXPORT__` marker for top-level EXPORT DIMs;
+            // only treat it as a UDT when it's neither empty nor the
+            // export sentinel — otherwise `EXPORT DIM thing_count = 0`
+            // would be mis-tagged as JD_TAG_ARR.
+            bool is_udt_label = !s.label.empty() && s.label != "__EXPORT__";
+            if (s.var_type == VarType::ARRAY || is_udt_label) t = JD_TAG_ARR;
             else if (s.var_type == VarType::STRING) t = JD_TAG_STR;
             else if (s.var_type == VarType::OBJECT) t = JD_TAG_NATIVE_MAP;
             else if (s.expr) t = infer_expr_tag(*s.expr);
@@ -642,7 +648,6 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
         scan_top_decls(*stmt);
     }
-
     std::function<void(const Expr&)> scan_expr = [&](const Expr& e) {
         if (e.kind == ExprKind::CALL) {
             auto it = decls.find(e.func_name);
@@ -669,6 +674,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 // Fall back to the static pre-pass: if we
                                 // statically inferred the global as ARR/MAP,
                                 // propagate it into the callee's signature.
+                                // Param shadowing is handled by scan_stmt
+                                // hiding the names while inside SUB/FUNC.
                                 auto pit = pre_var_tags.find(a.str_val);
                                 if (pit != pre_var_tags.end() &&
                                     (pit->second == JD_TAG_ARR ||
@@ -743,6 +750,24 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     };
 
     std::function<void(const Stmt&)> scan_stmt = [&](const Stmt& s) {
+        // When entering a SUB/FUNC body, hide its parameter names from
+        // pre_var_tags lookup so a top-level `DIM v AS UDT` doesn't get
+        // misread as the local `v` parameter inside the function. The
+        // SUB/FUNC body has already been visited by Phase 1 — we need
+        // it again here only to walk inner CALL expressions.
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
+            std::vector<std::pair<std::string, int>> saved;
+            for (auto& p : s.params) {
+                auto it = pre_var_tags.find(p.name);
+                if (it != pre_var_tags.end()) {
+                    saved.push_back({p.name, it->second});
+                    pre_var_tags.erase(it);
+                }
+            }
+            for (auto& b : s.body) if (b) scan_stmt(*b);
+            for (auto& [n, t] : saved) pre_var_tags[n] = t;
+            return;
+        }
         if (s.expr) scan_expr(*s.expr);
         if (s.loop_cond) scan_expr(*s.loop_cond);
         if (s.end_expr) scan_expr(*s.end_expr);

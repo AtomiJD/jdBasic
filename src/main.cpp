@@ -494,7 +494,7 @@ static void register_console_builtins(VM& vm) {
 
 // ── Console executor (simplified) ────────────────────────────
 
-static void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer, std::string& current_filename) {
+static void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer) {
     g_program_buffer_ptr = &program_buffer;
     std::string upper = cmd;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
@@ -522,7 +522,6 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
             if (!f) throw std::runtime_error("Cannot open: " + filename);
             std::ostringstream ss; ss << f.rdbuf();
             program_buffer = ss.str();
-            current_filename = filename;
             int lines = (int)std::count(program_buffer.begin(), program_buffer.end(), '\n') + 1;
             vm.emit("Loaded: " + filename + " (" + std::to_string(lines) + " lines)\n");
         } catch (const std::exception& e) { print_error(ErrCode::FILE_NOT_FOUND, e.what()); }
@@ -535,7 +534,6 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
         std::ofstream out(filename);
         if (!out) { print_error(ErrCode::FILE_WRITE_ERROR, "Cannot write: " + filename); return; }
         out << program_buffer;
-        current_filename = filename;
         vm.emit("Saved: " + filename + "\n");
         return;
     }
@@ -568,9 +566,7 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
         save_workspace(vm, program_buffer, cmd_arg(cmd)); return;
     }
     if (cmd_upper.substr(0, 7) == "LOADWS ") {
-        load_workspace(vm, program_buffer, cmd_arg(cmd));
-        current_filename.clear();  // workspace is not a single .jdb file
-        return;
+        load_workspace(vm, program_buffer, cmd_arg(cmd)); return;
     }
 
     // ── RUN ──────────────────────────────────────────────────
@@ -618,7 +614,6 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
     // ── NEW (clear source + functions, keep globals) ─────────
     if (cmd_upper == "NEW") {
         program_buffer.clear();
-        current_filename.clear();
         vm.emit("Program cleared.\n");
         return;
     }
@@ -632,7 +627,6 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
 
     if (cmd_upper == "CLEARWS") {
         program_buffer.clear();
-        current_filename.clear();
         vm.reset();
 #ifdef GFX
         gfx_shutdown();
@@ -1014,38 +1008,24 @@ static void console_execute(const std::string& cmd, VM& vm, std::string& program
         if (cmd_upper.size() > 5) {
             edit_file = cmd_arg(cmd);
             if (edit_file.find('.') == std::string::npos) edit_file += ".jdb";
-        } else {
-            // No arg: re-edit the last LOAD'd/SAVE'd file so F5 can save+run silently
-            edit_file = current_filename;
         }
         std::vector<std::string> lines;
-        bool loaded_from_disk = false;
         if (!edit_file.empty()) {
             std::ifstream in(edit_file);
-            if (in.is_open()) {
-                std::string l; while (std::getline(in, l)) lines.push_back(l);
-                loaded_from_disk = true;
-            }
-        }
-        if (!loaded_from_disk && !program_buffer.empty()) {
+            if (in.is_open()) { std::string l; while (std::getline(in, l)) lines.push_back(l); }
+        } else if (!program_buffer.empty()) {
             std::istringstream ss(program_buffer);
             std::string l; while (std::getline(ss, l)) lines.push_back(l);
         }
         if (lines.empty()) lines.push_back("");
         Editor editor(lines, edit_file);
-        bool run_after = editor.run(edit_file);  // editor may learn new filename via prompt
+        editor.run();
         std::string new_buf;
         for (size_t i = 0; i < lines.size(); i++) {
             new_buf += lines[i];
             if (i + 1 < lines.size()) new_buf += "\n";
         }
         program_buffer = new_buf;
-        if (!edit_file.empty()) current_filename = edit_file;
-        if (run_after && !program_buffer.empty()) {
-            try { run_on_vm(vm, program_buffer); }
-            catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
-            vm.is_halted = false;
-        }
         return;
     }
 
@@ -1220,81 +1200,70 @@ int main(int argc, char* argv[]) {
         std::string program_buffer = read_file(filename);
         VM vm;
         setup_dynamic_code(vm);
-        console_execute("LINT", vm, program_buffer, filename);
+        console_execute("LINT", vm, program_buffer);
         return 0;
     }
 
     // ── Native compilation (LLVM) ────────────────────────────────
     if (compile_native || emit_ir_only) {
 #ifdef LLVM_CODEGEN
-        try {
-            // Set base dir for IMPORT module resolution
-            {
-                size_t sep = filename.find_last_of("/\\");
-                g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
-            }
-            std::string source = read_file(filename);
-            Lexer lexer(source);
-            auto tokens = lexer.tokenize();
-            Parser parser(tokens);
-            setup_parser_modules(parser);
-            auto ast = parser.parse();
+        // Set base dir for IMPORT module resolution
+        {
+            size_t sep = filename.find_last_of("/\\");
+            g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
+        }
+        std::string source = read_file(filename);
+        Lexer lexer(source);
+        auto tokens = lexer.tokenize();
+        Parser parser(tokens);
+        setup_parser_modules(parser);
+        auto ast = parser.parse();
 
-            LLVMCodegen codegen;
+        LLVMCodegen codegen;
 
-            // Check if --trace was used
-            for (int j = 1; j < argc; j++) {
-                if (std::string(argv[j]) == "--trace") { codegen.debug_log = true; break; }
-            }
+        // Check if --trace was used
+        for (int j = 1; j < argc; j++) {
+            if (std::string(argv[j]) == "--trace") { codegen.debug_log = true; break; }
+        }
 
-            if (emit_ir_only) {
-                codegen.emit_ir(ast);
-                return 0;
-            }
-
-            if (compile_output.empty()) {
-                compile_output = filename;
-                auto dot = compile_output.rfind('.');
-                if (dot != std::string::npos) compile_output = compile_output.substr(0, dot);
-                compile_output += ".exe";
-            }
-
-            if (!codegen.compile(ast, compile_output, filename)) {
-                std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
-                return 1;
-            }
-            // Auto-copy jdbrt.dll next to the produced .exe so the user
-            // doesn't have to. Without it the .exe exits silently on
-            // Windows when DLL load fails (Atomi-reported regression).
-            // Source: same dir as jdBasic.exe (argv[0]).
-            try {
-                std::string self = argv[0];
-                size_t s_sep = self.find_last_of("/\\");
-                std::string self_dir = (s_sep != std::string::npos)
-                    ? self.substr(0, s_sep) : ".";
-                size_t o_sep = compile_output.find_last_of("/\\");
-                std::string out_dir = (o_sep != std::string::npos)
-                    ? compile_output.substr(0, o_sep) : ".";
-                std::filesystem::path src_dll = self_dir + "/jdbrt.dll";
-                std::filesystem::path dst_dll = out_dir + "/jdbrt.dll";
-                // Skip if src is missing, or src and dst already point to
-                // the same file (compiling next to jdBasic.exe).
-                if (std::filesystem::exists(src_dll) &&
-                    (!std::filesystem::exists(dst_dll) ||
-                     !std::filesystem::equivalent(src_dll, dst_dll))) {
-                    std::filesystem::copy_file(src_dll, dst_dll,
-                        std::filesystem::copy_options::overwrite_existing);
-                }
-            } catch (...) { /* best-effort — do not fail the compile */ }
-            std::cout << "Compiled: " << compile_output << std::endl;
+        if (emit_ir_only) {
+            codegen.emit_ir(ast);
             return 0;
-        } catch (const jdError& e) {
-            print_error(e.code, e.what(), e.line);
-            return 1;
-        } catch (const std::exception& e) {
-            std::cerr << "Compile error: " << e.what() << std::endl;
+        }
+
+        if (compile_output.empty()) {
+            compile_output = filename;
+            auto dot = compile_output.rfind('.');
+            if (dot != std::string::npos) compile_output = compile_output.substr(0, dot);
+            compile_output += ".exe";
+        }
+
+        if (!codegen.compile(ast, compile_output, filename)) {
+            std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
             return 1;
         }
+        // Auto-copy jdbrt.dll next to the produced .exe so the user
+        // doesn't have to. Without it the .exe exits silently on
+        // Windows when DLL load fails. Source: same dir as jdBasic.exe.
+        try {
+            std::string self = argv[0];
+            size_t s_sep = self.find_last_of("/\\");
+            std::string self_dir = (s_sep != std::string::npos)
+                ? self.substr(0, s_sep) : ".";
+            size_t o_sep = compile_output.find_last_of("/\\");
+            std::string out_dir = (o_sep != std::string::npos)
+                ? compile_output.substr(0, o_sep) : ".";
+            std::filesystem::path src_dll = self_dir + "/jdbrt.dll";
+            std::filesystem::path dst_dll = out_dir + "/jdbrt.dll";
+            if (std::filesystem::exists(src_dll) &&
+                (!std::filesystem::exists(dst_dll) ||
+                 !std::filesystem::equivalent(src_dll, dst_dll))) {
+                std::filesystem::copy_file(src_dll, dst_dll,
+                    std::filesystem::copy_options::overwrite_existing);
+            }
+        } catch (...) { /* best-effort — do not fail the compile */ }
+        std::cout << "Compiled: " << compile_output << std::endl;
+        return 0;
 #else
         std::cerr << "Native compilation not available (build with NATIVEC flag)." << std::endl;
         return 1;
