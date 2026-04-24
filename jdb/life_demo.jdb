@@ -1,0 +1,98 @@
+' Phase 4 Demo — Conway's Game of Life live mit ONNX-Conv-Backend.
+'
+' 200 x 200 Zellen, jede berechnet als ONNX 3x3-Conv (Sum-Kernel)
+' fuer die Nachbarsumme, danach vektorisierte Update-Regel. Pro Frame
+' werden alle lebendigen Zellen via GFX.PLOT_POINTS in einer Batched-
+' Draw gezeichnet — keine Per-Pixel-Schleife in jdBasic.
+'
+' Setup: build mit COM HTTP SERIAL GFX IMGUI LLM ONNX NATIVEC
+'        + python3 bench/gen_conv_onnx.py einmal (fuer conv3x3.onnx)
+
+OPTION "EXPLICIT"
+
+CONST CELL = 4         ' pixel size per cell
+CONST GRID_W = 200
+CONST GRID_H = 150
+CONST SCREEN_W = GRID_W * CELL
+CONST SCREEN_H = GRID_H * CELL
+
+SCREEN SCREEN_W, SCREEN_H, "Game of Life — ONNX backend"
+
+' Random init, ~30% alive
+DIM field = []
+RANDOMSEED 42
+DIM i AS INTEGER
+DIM j AS INTEGER
+FOR i = 0 TO GRID_H - 1
+    DIM row = []
+    FOR j = 0 TO GRID_W - 1
+        IF RND(1) < 0.3 THEN PUSH row, 1 ELSE PUSH row, 0
+    NEXT j
+    PUSH field, row
+NEXT i
+
+DIM mid_conv = AI.LOAD("bench/conv3x3.onnx")
+LET SUM_KERNEL = [[1.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0]]
+LET KERNEL_4D = [[SUM_KERNEL]]
+
+' One step using ONNX Conv for the neighbour count
+FUNC LIFE_STEP(f)
+    LET h = LEN(f)
+    LET w = LEN(f[0])
+    LET x4d = [[f]]
+    LET out4d = AI.RUN(mid_conv, [x4d, KERNEL_4D])
+    LET nf = out4d[0][0]
+    LET out = []
+    DIM ii AS INTEGER
+    FOR ii = 0 TO h - 1
+        LET n_row = nf[ii]
+        LET a_row = f[ii]
+        LET stay = a_row * ((n_row = 2) + (n_row = 3))
+        LET born = (1 - a_row) * (n_row = 3)
+        PUSH out, (stay + born) > 0
+    NEXT ii
+    RETURN out
+ENDFUNC
+
+' Convert the bool field into xs[], ys[] of pixel coords for live cells.
+FUNC FIELD_TO_POINTS(f, cell)
+    LET xs = []
+    LET ys = []
+    DIM ii AS INTEGER
+    DIM jj AS INTEGER
+    FOR ii = 0 TO LEN(f) - 1
+        LET row = f[ii]
+        FOR jj = 0 TO LEN(row) - 1
+            IF row[jj] THEN
+                ' draw a CELLxCELL block as 4 corner points (cheap)
+                PUSH xs, jj * cell
+                PUSH ys, ii * cell
+                PUSH xs, jj * cell + cell - 1
+                PUSH ys, ii * cell
+                PUSH xs, jj * cell
+                PUSH ys, ii * cell + cell - 1
+                PUSH xs, jj * cell + cell - 1
+                PUSH ys, ii * cell + cell - 1
+            ENDIF
+        NEXT jj
+    NEXT ii
+    RETURN [xs, ys]
+ENDFUNC
+
+DIM frame AS INTEGER = 0
+DIM t0 = TICK()
+DO
+    LET pts = FIELD_TO_POINTS(field, CELL)
+    CLS 16, 24, 32
+    DRAWCOLOR 80, 240, 120
+    GFX.PLOT_POINTS pts[0], pts[1]
+    SCREENFLIP
+
+    field = LIFE_STEP(field)
+    frame = frame + 1
+    IF frame = 100 THEN
+        LET dt = TICK() - t0
+        PRINT "100 Frames in "; dt; " ms = "; 100 * 1000 / dt; " FPS  ("; GRID_W; "x"; GRID_H; " cells via ONNX Conv)"
+        EXITDO
+    ENDIF
+LOOP

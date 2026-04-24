@@ -1,0 +1,225 @@
+' Phase 4 — Conway's Game of Life, drei Implementierungen.
+'
+' Update-Regel: jede Zelle prueft die Summe ihrer 8 Nachbarn.
+'   alive  AND  (n=2 OR n=3)  → bleibt alive
+'   dead   AND  (n=3)         → wird alive
+'   sonst                     → dead
+'
+' Drei Pfade:
+'   A) Native triple-loop ueber jede Zelle, jede Nachbarschaft.
+'   B) APL: 8 SHIFT'd Kopien des Felds, vektorielles ADD, dann
+'      Update-Regel als element-weise BOR/BAND.
+'   C) ONNX: 3x3-Conv mit Sum-Kernel ueber das ganze Feld in einer
+'      Op (gleiche conv3x3.onnx aus Phase 3).
+'
+' Setup: python3 bench/gen_conv_onnx.py  (einmal, fuer C)
+'
+' Erwartung: A langsam (kubisch in size). B besser (lineare Anzahl
+' an Vector-Passes). C deutlich besser fuer grosse Felder (ONNX-Conv
+' ist SIMD).
+
+OPTION "EXPLICIT"
+
+CONST H = 64
+CONST W = 64
+
+' ── Random initial state — Glider + noise ──────────────────────
+FUNC INIT_FIELD(h, w)
+    LET f = []
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO h - 1
+        DIM row = []
+        FOR j = 0 TO w - 1
+            IF RND(1) < 0.3 THEN PUSH row, 1 ELSE PUSH row, 0
+        NEXT j
+        PUSH f, row
+    NEXT i
+    RETURN f
+ENDFUNC
+
+' ── A: Native triple-loop with toroidal wrap ─────────────────
+FUNC LIFE_NATIVE(field, h, w)
+    LET nf = []
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM di AS INTEGER
+    DIM dj AS INTEGER
+    DIM n AS INTEGER
+    DIM alive AS INTEGER
+    DIM next_alive AS INTEGER
+    FOR i = 0 TO h - 1
+        DIM row = []
+        FOR j = 0 TO w - 1
+            n = 0
+            FOR di = -1 TO 1
+                FOR dj = -1 TO 1
+                    IF di <> 0 OR dj <> 0 THEN
+                        LET ii = (i + di + h) MOD h
+                        LET jj = (j + dj + w) MOD w
+                        n = n + field[ii][jj]
+                    ENDIF
+                NEXT dj
+            NEXT di
+            alive = field[i][j]
+            IF alive = 1 AND (n = 2 OR n = 3) THEN
+                next_alive = 1
+            ELSE
+                IF alive = 0 AND n = 3 THEN
+                    next_alive = 1
+                ELSE
+                    next_alive = 0
+                ENDIF
+            ENDIF
+            PUSH row, next_alive
+        NEXT j
+        PUSH nf, row
+    NEXT i
+    RETURN nf
+ENDFUNC
+
+' ── B: APL — sum of 8 SHIFT'd copies, then vectorised rule ───
+'
+' SHIFT(field, dy, dx) needs to be done per-row first then per-col.
+' jdBasic's SHIFT is 1D; for 2D we shift each row, then re-stack.
+' Toroidal wrap is hard with SHIFT (which zero-fills), so this APL
+' version has zero-padded boundaries — the corners differ from the
+' native (toroidal) version. Honest caveat noted in the bench.
+FUNC SHIFT_2D_ROWS(field, dx)
+    LET out = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(field) - 1
+        PUSH out, SHIFT(field[i], dx)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC SHIFT_2D_COLS(field, dy)
+    LET h = LEN(field)
+    LET w = LEN(field[0])
+    LET zero_row = ZEROS(w)
+    LET out = []
+    DIM i AS INTEGER
+    FOR i = 0 TO h - 1
+        LET src = i - dy
+        IF src >= 0 AND src < h THEN
+            PUSH out, field[src]
+        ELSE
+            PUSH out, zero_row
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC ADD_2D(a, b)
+    LET out = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(a) - 1
+        PUSH out, a[i] + b[i]
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC LIFE_APL(field)
+    LET h = LEN(field)
+    LET w = LEN(field[0])
+    ' 8 neighbour shifts: (dy, dx) in {-1,0,1}^2 \ (0,0)
+    LET n_acc = ZEROS(w)
+    LET nf = []
+    DIM i AS INTEGER
+    FOR i = 0 TO h - 1
+        PUSH nf, ZEROS(w)
+    NEXT i
+    DIM dy AS INTEGER
+    DIM dx AS INTEGER
+    FOR dy = -1 TO 1
+        FOR dx = -1 TO 1
+            IF dy <> 0 OR dx <> 0 THEN
+                LET shifted = SHIFT_2D_COLS(SHIFT_2D_ROWS(field, dx), dy)
+                nf = ADD_2D(nf, shifted)
+            ENDIF
+        NEXT dx
+    NEXT dy
+    ' Now nf[i][j] = sum of 8 neighbours of field[i][j].
+    ' Update rule: alive AND (n=2 OR n=3) OR dead AND n=3
+    LET out = []
+    FOR i = 0 TO h - 1
+        LET n_row = nf[i]
+        LET a_row = field[i]
+        LET stay = a_row * ((n_row = 2) + (n_row = 3))
+        LET born = (1 - a_row) * (n_row = 3)
+        LET nxt = (stay + born) > 0
+        PUSH out, nxt
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── C: ONNX 3x3 Conv with sum-kernel ─────────────────────────
+DIM CONV_MID AS INTEGER = -1
+LET SUM_KERNEL = [[1.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0]]
+LET KERNEL_4D = [[SUM_KERNEL]]
+
+FUNC LIFE_ONNX(field)
+    LET h = LEN(field)
+    LET w = LEN(field[0])
+    LET x4d = [[field]]
+    LET out4d = AI.RUN(CONV_MID, [x4d, KERNEL_4D])
+    LET nf = out4d[0][0]
+    LET nxt_field = []
+    DIM i AS INTEGER
+    FOR i = 0 TO h - 1
+        LET n_row = nf[i]
+        LET a_row = field[i]
+        LET stay = a_row * ((n_row = 2) + (n_row = 3))
+        LET born = (1 - a_row) * (n_row = 3)
+        LET nxt = (stay + born) > 0
+        PUSH nxt_field, nxt
+    NEXT i
+    RETURN nxt_field
+ENDFUNC
+
+' ── Sanity: tiny known pattern (Blinker oscillates period 2) ─
+RANDOMSEED 1
+PRINT "── Sanity (3x3 Blinker, expect 90deg rotation) ──"
+LET blinker = [[0,0,0,0,0], _
+               [0,0,1,0,0], _
+               [0,0,1,0,0], _
+               [0,0,1,0,0], _
+               [0,0,0,0,0]]
+LET b_native = LIFE_NATIVE(blinker, 5, 5)
+LET b_apl = LIFE_APL(blinker)
+PRINT "native row 2: "; b_native[2]      ' [0,1,1,1,0]
+PRINT "APL    row 2: "; b_apl[2]         ' [0,1,1,1,0] (zero-padded outside, same in centre)
+
+CONV_MID = AI.LOAD("bench/conv3x3.onnx")
+LET b_onnx = LIFE_ONNX(blinker)
+PRINT "ONNX   row 2: "; b_onnx[2]
+
+PRINT
+PRINT "── Bench: 1 step on "; H; "x"; W; " random field ──"
+PRINT "  impl              [ms]"
+LET field = INIT_FIELD(H, W)
+
+LET t0 = TICK() : LET nb = LIFE_NATIVE(field, H, W) : LET tn = TICK() - t0
+PRINT "  native loop      ", tn
+LET t1 = TICK() : LET ab = LIFE_APL(field)          : LET ta = TICK() - t1
+PRINT "  APL (SHIFT+ADD)  ", ta
+LET t2 = TICK() : LET ob = LIFE_ONNX(field)         : LET to_ = TICK() - t2
+PRINT "  ONNX Conv        ", to_
+
+PRINT
+PRINT "  speedup APL/native  : "; tn / ta
+PRINT "  speedup ONNX/native : "; tn / to_
+PRINT "  speedup ONNX/APL    : "; ta / to_
+
+' Bigger field
+PRINT
+PRINT "── Bench: 1 step on 256x256 ──"
+LET big = INIT_FIELD(256, 256)
+LET tt0 = TICK() : LET nb2 = LIFE_NATIVE(big, 256, 256) : LET ttn = TICK() - tt0
+PRINT "  native loop  ", ttn
+LET tt1 = TICK() : LET ab2 = LIFE_APL(big)              : LET tta = TICK() - tt1
+PRINT "  APL          ", tta
+LET tt2 = TICK() : LET ob2 = LIFE_ONNX(big)             : LET tto = TICK() - tt2
+PRINT "  ONNX         ", tto
+PRINT "  speedup ONNX/native : "; ttn / tto
