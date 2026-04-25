@@ -81,6 +81,23 @@ FUNC BUILD_TOOLS()
     }
     PUSH tools, load_tool
 
+    ' jdb_doc — fuzzy-search doc/languages.md by symbol or topic.
+    DIM doc_tool AS MAP = {                                            _
+        "name": "jdb_doc",                                             _
+        "description": "Look up jdBasic syntax / built-in functions in doc/languages.md. Returns the bullet entry or section that contains the query string (case-insensitive). Matches against symbol bullets like '* **MAP.EXISTS(...)**' and against ## / ### / #### section headings. Up to 8 hits are concatenated. Faster and more focused than grepping the whole file.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "query": {                                             _
+                    "type": "string",                                  _
+                    "description": "Symbol name (e.g. MAP.EXISTS, CODEC.UUID$) or topic substring (e.g. random, json)." _
+                }                                                      _
+            },                                                         _
+            "required": ["query"]                                      _
+        }                                                              _
+    }
+    PUSH tools, doc_tool
+
     ' jdb_funcs — list user-defined FUNCs/SUBs (filters server internals).
     DIM funcs_tool AS MAP = {                                          _
         "name": "jdb_funcs",                                           _
@@ -148,6 +165,8 @@ FUNC DISPATCH_TOOL(tool_name$, args)
             RETURN TOOL_JDB_FUNCS(args)
         CASE "jdb_check"
             RETURN TOOL_JDB_CHECK(args)
+        CASE "jdb_doc"
+            RETURN TOOL_JDB_DOC(args)
         CASE "echo"
             RETURN TOOL_ECHO(args)
         DEFAULT
@@ -256,6 +275,73 @@ FUNC TOOL_JDB_FUNCS(args)
         out$ = JOIN(kept, CHR$(10))
     ENDIF
     RETURN MAKE_TEXT_RESULT(out$, FALSE)
+ENDFUNC
+
+' Anchor test — TRUE if `line$` starts a doc entry we want to match against
+' (a bullet-style symbol entry or a markdown heading).
+FUNC IS_DOC_ANCHOR(line$)
+    IF LEFT$(line$, 4) = "* **" THEN RETURN TRUE
+    IF LEFT$(line$, 1) = "#" THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+' jdb_doc — search doc/languages.md for the query (case-insensitive) on
+' bullet-symbol or heading lines. Returns up to 8 entries, each entry
+' being the matching anchor line plus its following body lines until the
+' next anchor.
+FUNC TOOL_JDB_DOC(args)
+    DIM query$ AS STRING = args{"query"}
+    IF query$ = "" THEN
+        RETURN MAKE_TEXT_RESULT("query is empty", TRUE)
+    ENDIF
+
+    DIM doc$ AS STRING = ""
+    TRY
+        doc$ = TXTREADER$("doc/languages.md")
+    CATCH
+        RETURN MAKE_TEXT_RESULT("Cannot read doc/languages.md: " + ERRMSG$, TRUE)
+    ENDTRY
+
+    DIM q_up$ AS STRING = UCASE$(query$)
+    DIM lines = SPLIT(doc$, CHR$(10))
+    DIM n AS INTEGER = LEN(lines)
+    DIM hits = []
+    DIM max_hits AS INTEGER = 8
+    DIM max_body AS INTEGER = 30
+
+    DIM i AS INTEGER = 0
+    DO WHILE i < n
+        DIM line$ AS STRING = lines[i]
+        IF NOT IS_DOC_ANCHOR(line$) THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        IF INSTR(UCASE$(line$), q_up$) < 0 THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM entry$ AS STRING = line$
+        DIM body AS INTEGER = 1
+        DIM j AS INTEGER = i + 1
+        DO WHILE j < n ANDALSO body < max_body
+            DIM nxt$ AS STRING = lines[j]
+            IF IS_DOC_ANCHOR(nxt$) THEN EXITDO
+            entry$ = entry$ + CHR$(10) + nxt$
+            body = body + 1
+            j = j + 1
+        LOOP
+        PUSH hits, entry$
+        IF LEN(hits) >= max_hits THEN EXITDO
+        i = j
+    LOOP
+
+    IF LEN(hits) = 0 THEN
+        RETURN MAKE_TEXT_RESULT("(no matches for: " + query$ + ")", TRUE)
+    ENDIF
+
+    DIM sep$ AS STRING = CHR$(10) + CHR$(10) + "---" + CHR$(10) + CHR$(10)
+    DIM result$ AS STRING = JOIN(hits, sep$)
+    RETURN MAKE_TEXT_RESULT(result$, FALSE)
 ENDFUNC
 
 ' jdb_check — Lex + Parse only. Returns "ok" or the parse error.
