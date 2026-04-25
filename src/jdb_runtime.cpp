@@ -987,6 +987,110 @@ void jdb_event_raise_str(const char* name, const char* arg) {
     it->second(arr);
 }
 
+// Forward decls — definitions are further down the file.
+JdbMap* jdb_map_new();
+void jdb_map_set_f64(JdbMap* m, const char* key, double val);
+void jdb_map_set_str(JdbMap* m, const char* key, const char* val);
+
+// ── SDL event-handler trampoline (native mode) ──────────────────
+//
+// In native mode the bridge in jdbrt.dll holds the event_handlers map
+// (set up via __EVENT_ON), but the handler bodies live as LLVM-IR in
+// the .exe. The bridge can't reach them with vm.call_function.
+//
+// Instead, the .exe registers user handlers in this trampoline and
+// installs jdrt_dispatch_event as the bridge's user_event_dispatch.
+// When an SDL event fires, the bridge marshals the info-Map fields
+// into (args, tags, nargs) and the trampoline rebuilds the
+// JdbArray + JdbMap that the LLVM-compiled handler expects.
+//
+// Schema mirrors VM::event_poll (vm.cpp):
+//   KEYDOWN/KEYUP: scancode (i64), keycode (i64), key (str), repeat (i64)
+//   MOUSEDOWN/UP : button (i64), x (i64), y (i64)
+//   MOUSEMOVE    : x (i64), y (i64)
+//   QUIT         : (no payload)
+
+typedef void (*JdbEventFn)(JdbArray*);
+
+static JdbEventFn g_h_keydown   = nullptr;
+static JdbEventFn g_h_keyup     = nullptr;
+static JdbEventFn g_h_quit      = nullptr;
+static JdbEventFn g_h_mousedown = nullptr;
+static JdbEventFn g_h_mouseup   = nullptr;
+static JdbEventFn g_h_mousemove = nullptr;
+
+void jdrt_register_event_handler(const char* name, void* fn) {
+    if (!name || !fn) return;
+    if (strcmp(name, "KEYDOWN") == 0)        g_h_keydown   = (JdbEventFn)fn;
+    else if (strcmp(name, "KEYUP") == 0)     g_h_keyup     = (JdbEventFn)fn;
+    else if (strcmp(name, "QUIT") == 0)      g_h_quit      = (JdbEventFn)fn;
+    else if (strcmp(name, "MOUSEDOWN") == 0) g_h_mousedown = (JdbEventFn)fn;
+    else if (strcmp(name, "MOUSEUP") == 0)   g_h_mouseup   = (JdbEventFn)fn;
+    else if (strcmp(name, "MOUSEMOVE") == 0) g_h_mousemove = (JdbEventFn)fn;
+}
+
+static const char* event_arg_str(const int64_t* args, int i, int nargs) {
+    if (i < 0 || i >= nargs) return "";
+    const char* s = (const char*)(intptr_t)args[i];
+    return s ? s : "";
+}
+
+// Wrap a JdbMap* in a length-1 JdbArray, encoding the pointer the same
+// way the LLVM-codegen ARRAY_LITERAL with a Map element does.
+static JdbArray* wrap_map_in_array(JdbMap* m) {
+    auto* a = jdb_array_new(1);
+    union { double d; intptr_t p; } u;
+    u.p = (intptr_t)m;
+    a->data[0] = u.d;
+    a->flags |= 1;  // bit 0 = ptr/nested element
+    return a;
+}
+
+void jdrt_dispatch_event(const char* event_name,
+                         const int64_t* args, const int32_t* tags, int nargs) {
+    (void)tags;  // schema is fixed per event name
+    if (!event_name) return;
+
+    if (strcmp(event_name, "QUIT") == 0) {
+        if (!g_h_quit) return;
+        auto* a = jdb_array_new(0);
+        g_h_quit(a);
+        return;
+    }
+
+    if (strcmp(event_name, "KEYDOWN") == 0 || strcmp(event_name, "KEYUP") == 0) {
+        JdbEventFn fn = (event_name[3] == 'D') ? g_h_keydown : g_h_keyup;
+        if (!fn) return;
+        JdbMap* m = jdb_map_new();
+        if (nargs >= 1) jdb_map_set_f64(m, "scancode", (double)args[0]);
+        if (nargs >= 2) jdb_map_set_f64(m, "keycode",  (double)args[1]);
+        if (nargs >= 3) jdb_map_set_str(m, "key",      event_arg_str(args, 2, nargs));
+        if (nargs >= 4) jdb_map_set_f64(m, "repeat",   (double)args[3]);
+        fn(wrap_map_in_array(m));
+        return;
+    }
+
+    if (strcmp(event_name, "MOUSEDOWN") == 0 || strcmp(event_name, "MOUSEUP") == 0) {
+        JdbEventFn fn = (event_name[5] == 'D') ? g_h_mousedown : g_h_mouseup;
+        if (!fn) return;
+        JdbMap* m = jdb_map_new();
+        if (nargs >= 1) jdb_map_set_f64(m, "button", (double)args[0]);
+        if (nargs >= 2) jdb_map_set_f64(m, "x",      (double)args[1]);
+        if (nargs >= 3) jdb_map_set_f64(m, "y",      (double)args[2]);
+        fn(wrap_map_in_array(m));
+        return;
+    }
+
+    if (strcmp(event_name, "MOUSEMOVE") == 0) {
+        if (!g_h_mousemove) return;
+        JdbMap* m = jdb_map_new();
+        if (nargs >= 1) jdb_map_set_f64(m, "x", (double)args[0]);
+        if (nargs >= 2) jdb_map_set_f64(m, "y", (double)args[1]);
+        g_h_mousemove(wrap_map_in_array(m));
+        return;
+    }
+}
+
 static void map_grow(JdbMap* m) {
     int64_t newcap = m->capacity ? m->capacity * 2 : 8;
     m->keys = (char**)realloc(m->keys, newcap * sizeof(char*));

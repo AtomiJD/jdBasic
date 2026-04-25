@@ -98,6 +98,13 @@ public:
     std::function<void()> on_tick;
     int tick_counter = 0;
 
+    // Native-mode event dispatch hook. The bridge installs this so
+    // that ON-handlers, whose bodies live as LLVM-IR in the .exe,
+    // get reached through a runtime-side trampoline. When set,
+    // event_raise calls this instead of vm.call_function.
+    std::function<void(const std::string&, const std::vector<Value>&)>
+        user_event_dispatch;
+
     // Call a function by name (native or user-defined) from within native code
     Value call_function(const std::string& name, const std::vector<Value>& args);
     // Call a funcref value (string or lambda array)

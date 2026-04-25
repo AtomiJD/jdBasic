@@ -6804,7 +6804,20 @@ void VM::event_raise(const std::string& event_name, const std::vector<Value>& da
     auto it = event_handlers.find(event_name);
     if (it == event_handlers.end()) return;
 
-    // Build data array argument
+    // Native-mode bridge: hand the event off to the .exe's dispatcher
+    // trampoline, which knows how to build the JdbArray/JdbMap and
+    // invoke the LLVM-compiled handler directly.
+    if (user_event_dispatch) {
+        try {
+            user_event_dispatch(event_name, data);
+        } catch (const std::exception& e) {
+            print_error(ErrCode::RUNTIME_ERROR,
+                "Event handler for '" + event_name + "': " + e.what());
+        }
+        return;
+    }
+
+    // Interpreter path: dispatch through the VM's own function table.
     Value data_arr = Value::make_array();
     for (auto& d : data) data_arr.as_array()->elements.push_back(d);
 

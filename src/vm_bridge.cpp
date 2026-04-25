@@ -126,6 +126,7 @@ struct JdRTImpl {
     std::string last_error;
     std::unordered_map<int64_t, Value> value_store;
     int64_t next_handle = 1;
+    JdrtEventDispatch user_event_dispatch = nullptr;
 
     int64_t store_value(Value v) {
         int64_t h = next_handle++;
@@ -326,6 +327,7 @@ JDRT_API double jdrt_call_typed_f64(JdRT handle, const char* name,
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
+        rt->vm.event_poll();
         rt->last_error.clear();
         return result.to_double();
     } catch (const std::exception& e) {
@@ -358,6 +360,7 @@ JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
+        rt->vm.event_poll();
         rt->last_error.clear();
         if (result.type == ValueType::STRING) {
             // memcpy preserves embedded nulls (PACK$, binary I/O) that
@@ -383,6 +386,7 @@ JDRT_API void jdrt_call_typed_void(JdRT handle, const char* name,
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         rt->vm.call_function(name, vargs);
+        rt->vm.event_poll();
         rt->last_error.clear();
     } catch (const std::exception& e) {
         rt->last_error = e.what();
@@ -683,6 +687,70 @@ JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
 JDRT_API const char* jdrt_last_error(JdRT handle) {
     auto* rt = (JdRTImpl*)handle;
     return rt->last_error.empty() ? nullptr : rt->last_error.c_str();
+}
+
+JDRT_API void jdrt_set_event_dispatcher(JdRT handle, JdrtEventDispatch fn) {
+    auto* rt = (JdRTImpl*)handle;
+    rt->user_event_dispatch = fn;
+    // Wire it into the VM so that event_raise in vm.cpp picks the
+    // user dispatcher whenever a handler is registered.
+    rt->vm.user_event_dispatch =
+        [fn, rt](const std::string& name, const std::vector<Value>& data) {
+            if (!fn) return;
+
+            // Flatten: scalar Values pass through as one slot; OBJECT
+            // values get expanded into one slot per field, in the order
+            // event_poll() built them. The .exe-side trampoline
+            // (jdrt_dispatch_event) reads slots positionally per event
+            // schema (KEYDOWN: scancode, keycode, key, repeat).
+            std::vector<int64_t> args;
+            std::vector<int32_t> tags;
+            args.reserve(8);
+            tags.reserve(8);
+
+            auto push_value = [&](const Value& v) {
+                switch (v.type) {
+                    case ValueType::INT64:
+                    case ValueType::INT32:
+                    case ValueType::INT16:
+                    case ValueType::BYTE:
+                    case ValueType::BOOLEAN:
+                        args.push_back(v.to_int());
+                        tags.push_back(JD_TAG_I64);
+                        break;
+                    case ValueType::FLOAT64:
+                    case ValueType::FLOAT32:
+                    case ValueType::FLOAT16: {
+                        double d = v.to_double();
+                        int64_t bits;
+                        memcpy(&bits, &d, sizeof(double));
+                        args.push_back(bits);
+                        tags.push_back(JD_TAG_F64);
+                        break;
+                    }
+                    case ValueType::STRING:
+                        args.push_back((int64_t)(intptr_t)
+                            (v.as_string() ? v.as_string()->data.c_str() : ""));
+                        tags.push_back(JD_TAG_STR);
+                        break;
+                    default:
+                        args.push_back(v.to_int());
+                        tags.push_back(JD_TAG_I64);
+                        break;
+                }
+            };
+
+            for (const Value& v : data) {
+                if (v.type == ValueType::OBJECT && v.as_object()) {
+                    for (auto& field : v.as_object()->fields) {
+                        push_value(field.second);
+                    }
+                } else {
+                    push_value(v);
+                }
+            }
+            fn(name.c_str(), args.data(), tags.data(), (int)args.size());
+        };
 }
 
 JDRT_API void jdrt_clear_last_error(JdRT handle) {

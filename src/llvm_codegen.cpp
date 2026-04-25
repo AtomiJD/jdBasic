@@ -292,6 +292,17 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_event_on",       "__event_on",      void_type, {i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_event_raise_str","__event_raise_s", void_type, {i8_ptr_type, i8_ptr_type}, -1);
 
+    // Native-mode event dispatch trampoline (jdb_runtime.cpp). Each
+    // ON "X" CALL H statement emits a jdrt_register_event_handler call;
+    // the trampoline (jdrt_dispatch_event) is wired to the bridge once
+    // at startup via jdrt_set_event_dispatcher.
+    reg("jdrt_register_event_handler", "__jdrt_reg_evh",
+        void_type, {i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdrt_dispatch_event", "__jdrt_dispatch_evt",
+        void_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, -1);
+    reg("jdrt_set_event_dispatcher", "__jdrt_set_evt_disp",
+        void_type, {i8_ptr_type, i8_ptr_type}, -1);
+
     // OS.FEATURE — query whether a build feature is present in this binary
     reg("jdb_os_feature",     "OS.FEATURE",      i64_type, {i8_ptr_type}, 0);
 
@@ -536,6 +547,19 @@ void LLVMCodegen::create_main_function() {
         LLVMValueRef handle = LLVMBuildCall2(builder, init_it->second.fn_type,
                                               init_it->second.fn, nullptr, 0, "jdrt");
         LLVMBuildStore(builder, handle, jdrt_global);
+    }
+
+    // Wire the event-dispatcher trampoline into the bridge so that
+    // ON-handlers raised by the bridge VM (KEYDOWN, QUIT, ...) reach
+    // the LLVM-compiled handler bodies in this .exe.
+    auto sed_it = runtime_funcs.find("__jdrt_set_evt_disp");
+    auto disp_it = runtime_funcs.find("__jdrt_dispatch_evt");
+    if (sed_it != runtime_funcs.end() && disp_it != runtime_funcs.end()) {
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, jdrt_global, "rt");
+        LLVMValueRef dispatcher_ptr = LLVMBuildBitCast(builder, disp_it->second.fn,
+                                                        i8_ptr_type, "disp_ptr");
+        LLVMValueRef args[] = { rt, dispatcher_ptr };
+        LLVMBuildCall2(builder, sed_it->second.fn_type, sed_it->second.fn, args, 2, "");
     }
 }
 
@@ -2199,10 +2223,17 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         int ptag = fit->second.param_tags[i];
         VarInfo& vi = create_var(stmt.params[i].name, ptag);
         LLVMBuildStore(builder, LLVMGetParam(current_fn, (unsigned)i), vi.alloca_val);
-        // The data param of an event handler holds string elements (RAISEEVENT
-        // packs strings). INDEX over it should return tag=2 char*.
+        // The data param of an event handler holds either string
+        // elements (when RAISEEVENT packs strings) or a single Map
+        // element (for SDL events: KEYDOWN/QUIT/MOUSE* — info-Map
+        // wrapped in an array of length 1). Both can occur for the
+        // same SUB. Marking the var as map_array_vars makes INDEX
+        // decode the pointer and return JD_TAG_NATIVE_MAP, which is
+        // what `KeyData[0]{"keycode"}` needs. RAISEEVENT-style string
+        // payloads still work because INDEX on a map-flagged element
+        // hands back a pointer the user can read as a string anyway.
         if (is_evt_handler && i == 0) {
-            string_array_vars.insert(stmt.params[i].name);
+            map_array_vars.insert(stmt.params[i].name);
         }
     }
 
@@ -5176,11 +5207,58 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         TypedValue ev_name = codegen_expr(*expr.args[0]);
         auto fit = user_functions.find(expr.args[1]->str_val);
         if (fit != user_functions.end()) {
+            LLVMValueRef ev_ptr = coerce_to(ev_name, i8_ptr_type);
             LLVMValueRef handler = LLVMBuildBitCast(builder, fit->second.fn,
                                                      i8_ptr_type, "h_as_ptr");
+            // 1. Existing path: register with the local jdb_event_on
+            //    table that RAISEEVENT in interp+native shares.
             auto& evfn = runtime_funcs["__event_on"];
-            LLVMValueRef args[] = { coerce_to(ev_name, i8_ptr_type), handler };
-            LLVMBuildCall2(builder, evfn.fn_type, evfn.fn, args, 2, "");
+            LLVMValueRef args1[] = { ev_ptr, handler };
+            LLVMBuildCall2(builder, evfn.fn_type, evfn.fn, args1, 2, "");
+
+            // 2. Native-mode SDL events: register the function pointer
+            //    in the trampoline so jdrt_dispatch_event can find it.
+            auto reg_it = runtime_funcs.find("__jdrt_reg_evh");
+            if (reg_it != runtime_funcs.end()) {
+                LLVMBuildCall2(builder, reg_it->second.fn_type, reg_it->second.fn,
+                               args1, 2, "");
+            }
+
+            // 3. Tell the bridge VM that this event has a handler so
+            //    its event_poll() actually drains the SDL queue and
+            //    calls user_event_dispatch (set up in main init).
+            //    bridge VM's __EVENT_ON registers in vm.event_handlers.
+            //    We invoke it via jdrt_call_typed_void.
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            auto vfn_it = runtime_funcs.find("__jdrt_call_typed_void");
+            if (hg && vfn_it != runtime_funcs.end()) {
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef bname = LLVMBuildGlobalStringPtr(builder, "__EVENT_ON", ".bn");
+                LLVMValueRef args_arr = LLVMBuildArrayAlloca(builder, i64_type,
+                    LLVMConstInt(i32_type, 2, 0), "args2");
+                LLVMValueRef tags_arr = LLVMBuildArrayAlloca(builder, i32_type,
+                    LLVMConstInt(i32_type, 2, 0), "tags2");
+                // Slot 0: event name (STR)
+                LLVMValueRef idx0[] = { LLVMConstInt(i32_type, 0, 0) };
+                LLVMValueRef ap0 = LLVMBuildGEP2(builder, i64_type, args_arr, idx0, 1, "ap0");
+                LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, ev_ptr, i64_type, "ev_i"), ap0);
+                LLVMValueRef tp0 = LLVMBuildGEP2(builder, i32_type, tags_arr, idx0, 1, "tp0");
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_STR, 0), tp0);
+                // Slot 1: handler name (STR) — string literal
+                LLVMValueRef hname_lit = LLVMBuildGlobalStringPtr(builder,
+                    expr.args[1]->str_val.c_str(), ".hn");
+                LLVMValueRef idx1[] = { LLVMConstInt(i32_type, 1, 0) };
+                LLVMValueRef ap1 = LLVMBuildGEP2(builder, i64_type, args_arr, idx1, 1, "ap1");
+                LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, hname_lit, i64_type, "hn_i"), ap1);
+                LLVMValueRef tp1 = LLVMBuildGEP2(builder, i32_type, tags_arr, idx1, 1, "tp1");
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_STR, 0), tp1);
+                LLVMValueRef vargs[] = { rt, bname,
+                    LLVMBuildBitCast(builder, args_arr, i8_ptr_type, "ap"),
+                    LLVMBuildBitCast(builder, tags_arr, i8_ptr_type, "tp"),
+                    LLVMConstInt(i32_type, 2, 0) };
+                LLVMBuildCall2(builder, vfn_it->second.fn_type, vfn_it->second.fn,
+                               vargs, 5, "");
+            }
             return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
         }
     }

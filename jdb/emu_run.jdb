@@ -31,7 +31,6 @@ DIM MODE$ = "boot"      ' "demo" or "boot"
 DIM CYCLES_PER_FRAME = 1500
 OPTION "NOPAUSE"        ' Skip the per-iteration ESC/Space break check.
 
-PWD
 ' ─── Initialise emulator + load program/ROM ────────────────────
 APPLE2.INIT()
 
@@ -63,57 +62,48 @@ ELSE
     PRINT "ROMs loaded (" + STR$(rom_n) + " bytes), reset to $" + HEX$(CPU6502.GET_PC())
 ENDIF
 
-' ─── Open the SCREEN window ───────────────────────────────────
-' Order matters: SCREEN before SETFONT — SDL_ttf needs the SDL
-' renderer to exist before TTF_OpenFont, otherwise it can crash on
-' some drivers.
-SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 2
-SETFONT "C:/Windows/Fonts/consola.ttf", 14
-
 DIM running = 1
 DIM frame_count = 0
 
 ' ─── Keyboard via ON handler (same as gui_sql.jdb) ─────────────
 '
-' GFX.POLLEVENT runs through the ImGui-capture filter and, in this
-' build, that filter swallows every key event. The ON "KEYDOWN" path
-' instead receives events from the VM's event_poll(), which drains a
-' shared queue that SCREENFLIP populates — bypassing the POLLEVENT
-' filter entirely.
+' GFX.POLLEVENT runs through the ImGui-capture filter. The
+' ON "KEYDOWN" path receives events from the VM's event_poll() which
+' drains a shared queue that SCREENFLIP populates — works reliably
+' in interpreter mode.
+'
 ' Translate one SDL keycode (raw, no shift applied yet) into the ASCII
 ' byte the Apple II expects. Honours the German QWERTZ layout: SDL
 ' returns the *unshifted* symbol on the key cap, so we have to shift
 ' it manually for things like  Shift-1 → "!"  or  Shift-ß → "?".
 FUNC german_to_appleii(kc, shift)
-    ' Shifted variants on a German keyboard — most of the punctuation
-    ' the Apple II actually cares about lives here.
+    ' Shifted variants on a German QWERTZ keyboard — IF/ELSEIF chain
+    ' instead of SWITCH because the native codegen doesn't seem to
+    ' evaluate non-literal CASE arms correctly. Use numeric ASCII
+    ' literals so each compares against a constant.
     IF shift THEN
-        SWITCH kc
-            CASE ASC("1") : RETURN ASC("!")
-            CASE ASC("2") : RETURN ASC(CHR$(34))     ' "
-            CASE ASC("3") : RETURN ASC("#")          ' shift-3 prints § on DE; map to # for Apple II
-            CASE ASC("4") : RETURN ASC("$")
-            CASE ASC("5") : RETURN ASC("%")
-            CASE ASC("6") : RETURN ASC("&")
-            CASE ASC("7") : RETURN ASC("/")
-            CASE ASC("8") : RETURN ASC("(")
-            CASE ASC("9") : RETURN ASC(")")
-            CASE ASC("0") : RETURN ASC("=")
-            CASE ASC("+") : RETURN ASC("*")          ' DE: + key shifts to *
-            CASE ASC(",") : RETURN ASC(";")
-            CASE ASC(".") : RETURN ASC(":")
-            CASE ASC("-") : RETURN ASC("_")
-            CASE ASC("<") : RETURN ASC(">")          ' DE has a separate < > key left of Y
-            CASE 223     : RETURN ASC("?")           ' shift-ß (DE) → ?
-            CASE ASC("'"): RETURN ASC(CHR$(34))      ' shift-' → "
-        ENDSWITCH
+        IF kc = 49 THEN RETURN 33               ' shift-1 → !
+        IF kc = 50 THEN RETURN 34               ' shift-2 → "
+        IF kc = 51 THEN RETURN 35               ' shift-3 → # (DE shows §)
+        IF kc = 52 THEN RETURN 36               ' shift-4 → $
+        IF kc = 53 THEN RETURN 37               ' shift-5 → %
+        IF kc = 54 THEN RETURN 38               ' shift-6 → &
+        IF kc = 55 THEN RETURN 47               ' shift-7 → /
+        IF kc = 56 THEN RETURN 40               ' shift-8 → (
+        IF kc = 57 THEN RETURN 41               ' shift-9 → )
+        IF kc = 48 THEN RETURN 61               ' shift-0 → =
+        IF kc = 43 THEN RETURN 42               ' shift-+ → *
+        IF kc = 44 THEN RETURN 59               ' shift-, → ;
+        IF kc = 46 THEN RETURN 58               ' shift-. → :
+        IF kc = 45 THEN RETURN 95               ' shift-- → _
+        IF kc = 60 THEN RETURN 62               ' shift-< → >
+        IF kc = 223 THEN RETURN 63              ' shift-ß → ?
+        IF kc = 39 THEN RETURN 34               ' shift-' → "
     ENDIF
-    ' Unshifted German keys we want to forward as-is.
-    SWITCH kc
-        CASE 223 : RETURN ASC(CHR$(39))              ' ß → '  (closest Apple II equivalent)
-    ENDSWITCH
-    ' Letters: Apple II is uppercase-only.
-    IF kc >= ASC("a") AND kc <= ASC("z") THEN RETURN kc - 32
+    ' Unshifted ß → '  (closest Apple II equivalent)
+    IF kc = 223 THEN RETURN 39
+    ' Letters: Apple II is uppercase-only.  'a'..'z' = 97..122
+    IF kc >= 97 AND kc <= 122 THEN RETURN kc - 32
     RETURN kc
 ENDFUNC
 
@@ -141,15 +131,25 @@ ENDSUB
 ON "KEYDOWN" CALL HandleKey
 ON "QUIT"    CALL HandleQuit
 
-DO WHILE running = 1
+' ─── Open the SCREEN window ───────────────────────────────────
+' Order matters: SCREEN before SETFONT — SDL_ttf needs the SDL
+' renderer to exist before TTF_OpenFont, otherwise it can crash on
+' some drivers.
+SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 2
+SETFONT "C:/Windows/Fonts/consola.ttf", 14
+
+DO 
     ' Run the CPU for one frame's worth of cycles.
     CPU6502.RUN(CYCLES_PER_FRAME)
 
-    ' Repaint.
-    CLS 0, 0, 0
-    APPLE2.RENDER_TEXT()
-    SCREENFLIP
+    ' Closing the window dispatches ON "QUIT" → running=0. SCREEN has
+    ' already been torn down; skip the paint to avoid TEXT-no-screen.
+    IF running = 1 THEN
+        CLS 0, 0, 0
+        APPLE2.RENDER_TEXT()
+        SCREENFLIP
+    ENDIF
     frame_count = frame_count + 1
-LOOP
+LOOP WHILE running = 1
 
 PRINT "Done. " + STR$(frame_count) + " frames. PC=$" + HEX$(CPU6502.GET_PC()) + " A=$" + HEX$(CPU6502.GET_A())

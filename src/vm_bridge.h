@@ -98,6 +98,24 @@ JDRT_API void   jdrt_call_typed_void(JdRT rt, const char* name,
 JDRT_API void*  jdrt_call_typed_arr(JdRT rt, const char* name,
                                      const int64_t* args, const int32_t* tags, int nargs);
 
+// Native-mode event dispatch. The bridge's VM holds the
+// event_handlers map (set up by __EVENT_ON), but in native mode the
+// handler bodies live as LLVM-IR in the .exe — the bridge VM has no
+// way to call them. Instead, the .exe-side runtime registers a
+// dispatcher function once at startup; whenever the bridge would have
+// called vm.call_function(handler_name, ...) for an event, it now
+// hands the event off to that dispatcher.
+//
+// args/tags use the same wire encoding as jdrt_call_typed_*:
+//   I64 → raw int64
+//   F64 → double bit-cast into int64
+//   STR → const char* cast to int64
+typedef void (*JdrtEventDispatch)(const char* event_name,
+                                   const int64_t* args,
+                                   const int32_t* tags,
+                                   int nargs);
+JDRT_API void jdrt_set_event_dispatcher(JdRT rt, JdrtEventDispatch fn);
+
 // Get last error message (NULL if no error)
 JDRT_API const char* jdrt_last_error(JdRT rt);
 
