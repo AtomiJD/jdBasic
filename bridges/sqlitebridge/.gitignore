@@ -1,0 +1,11 @@
+# SQLite amalgamation — fetch from https://sqlite.org/download.html
+sqlite3.c
+sqlite3.h
+sqlite3ext.h
+shell.c
+
+# Build artifacts
+*.dll
+*.lib
+*.exp
+*.obj

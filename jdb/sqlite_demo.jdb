@@ -1,0 +1,58 @@
+' sqlite_demo.jdb — minimal SQLite demo using the new DECLARE-FUNC
+' FFI plus the sqlite.jdb module wrapper.
+'
+' Prerequisite: bridges/sqlitebridge/build.bat must have been run so
+' sqlitebridge.dll sits next to jdBasic.exe.
+
+IMPORT SQLITE
+
+PRINT "SQLite demo via DECLARE FUNC bridge"
+PRINT "-----------------------------------"
+
+TRY
+    db = SQLITE.OPEN("sqlite_demo.db")
+CATCH
+    PRINT "Could not open database: " + ERRMSG$
+    PRINT
+    PRINT "Most likely sqlitebridge.dll is missing. Build it via:"
+    PRINT "    bridges\sqlitebridge\build.bat"
+    END
+ENDTRY
+
+PRINT "Opened sqlite_demo.db"
+
+' Reset and create
+SQLITE.EXEC(db, "DROP TABLE IF EXISTS users")
+SQLITE.EXEC(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL)")
+
+' Insert
+SQLITE.EXEC(db, "INSERT INTO users (name, score) VALUES ('Alice',   100.5)")
+SQLITE.EXEC(db, "INSERT INTO users (name, score) VALUES ('Bob',      95.2)")
+SQLITE.EXEC(db, "INSERT INTO users (name, score) VALUES ('Charlie', 110.0)")
+SQLITE.EXEC(db, "INSERT INTO users (name, score) VALUES ('Diana',    87.0)")
+
+PRINT "Inserted 4 rows."
+
+' Query and iterate
+rows = SQLITE.QUERY(db, "SELECT id, name, score FROM users WHERE score > 90 ORDER BY score DESC")
+
+PRINT
+PRINT "Users with score > 90:"
+FOR i = 0 TO LEN(rows) - 1
+    r = rows[i]
+    PRINT "  #" + STR$(r{"id"}) + "  " + r{"name"} + " — " + STR$(r{"score"})
+NEXT i
+
+' Aggregate
+total = SQLITE.QUERY(db, "SELECT COUNT(*) AS n, AVG(score) AS avg_score FROM users")
+PRINT
+PRINT "Total: " + STR$(total[0]{"n"}) + " users, avg score " + STR$(total[0]{"avg_score"})
+
+' Bigger result demo — show that the buffer scales
+SQLITE.QUERY_BUFSIZE(8 * 1024 * 1024)   ' 8 MB
+big_rows = SQLITE.QUERY(db, "SELECT * FROM users")
+PRINT "Re-fetched all " + STR$(LEN(big_rows)) + " rows with 8 MB buffer."
+
+SQLITE.CLOSE(db)
+PRINT
+PRINT "Done."
