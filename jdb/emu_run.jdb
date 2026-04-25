@@ -64,37 +64,84 @@ ELSE
 ENDIF
 
 ' ─── Open the SCREEN window ───────────────────────────────────
-SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 1
+' Order matters: SCREEN before SETFONT — SDL_ttf needs the SDL
+' renderer to exist before TTF_OpenFont, otherwise it can crash on
+' some drivers.
+SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 2
+SETFONT "C:/Windows/Fonts/consola.ttf", 14
+
 DIM running = 1
+DIM frame_count = 0
+
+' ─── Keyboard via ON handler (same as gui_sql.jdb) ─────────────
+'
+' GFX.POLLEVENT runs through the ImGui-capture filter and, in this
+' build, that filter swallows every key event. The ON "KEYDOWN" path
+' instead receives events from the VM's event_poll(), which drains a
+' shared queue that SCREENFLIP populates — bypassing the POLLEVENT
+' filter entirely.
+' Translate one SDL keycode (raw, no shift applied yet) into the ASCII
+' byte the Apple II expects. Honours the German QWERTZ layout: SDL
+' returns the *unshifted* symbol on the key cap, so we have to shift
+' it manually for things like  Shift-1 → "!"  or  Shift-ß → "?".
+FUNC german_to_appleii(kc, shift)
+    ' Shifted variants on a German keyboard — most of the punctuation
+    ' the Apple II actually cares about lives here.
+    IF shift THEN
+        SWITCH kc
+            CASE ASC("1") : RETURN ASC("!")
+            CASE ASC("2") : RETURN ASC(CHR$(34))     ' "
+            CASE ASC("3") : RETURN ASC("#")          ' shift-3 prints § on DE; map to # for Apple II
+            CASE ASC("4") : RETURN ASC("$")
+            CASE ASC("5") : RETURN ASC("%")
+            CASE ASC("6") : RETURN ASC("&")
+            CASE ASC("7") : RETURN ASC("/")
+            CASE ASC("8") : RETURN ASC("(")
+            CASE ASC("9") : RETURN ASC(")")
+            CASE ASC("0") : RETURN ASC("=")
+            CASE ASC("+") : RETURN ASC("*")          ' DE: + key shifts to *
+            CASE ASC(",") : RETURN ASC(";")
+            CASE ASC(".") : RETURN ASC(":")
+            CASE ASC("-") : RETURN ASC("_")
+            CASE ASC("<") : RETURN ASC(">")          ' DE has a separate < > key left of Y
+            CASE 223     : RETURN ASC("?")           ' shift-ß (DE) → ?
+            CASE ASC("'"): RETURN ASC(CHR$(34))      ' shift-' → "
+        ENDSWITCH
+    ENDIF
+    ' Unshifted German keys we want to forward as-is.
+    SWITCH kc
+        CASE 223 : RETURN ASC(CHR$(39))              ' ß → '  (closest Apple II equivalent)
+    ENDSWITCH
+    ' Letters: Apple II is uppercase-only.
+    IF kc >= ASC("a") AND kc <= ASC("z") THEN RETURN kc - 32
+    RETURN kc
+ENDFUNC
+
+SUB HandleKey(KeyData)
+    DIM kc = KeyData[0]{"keycode"}
+    DIM shift = GFX.KEYSTATE("Left Shift") OR GFX.KEYSTATE("Right Shift")
+    IF kc = 27 THEN
+        running = 0
+    ELSEIF kc = 13 THEN
+        APPLE2.PUSH_KEY($0D)
+    ELSEIF kc = 8 THEN
+        APPLE2.PUSH_KEY($08)
+    ELSE
+        DIM out = german_to_appleii(kc, shift)
+        IF out >= 32 AND out < 128 THEN
+            APPLE2.PUSH_KEY(out)
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB HandleQuit(QuitData)
+    running = 0
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+ON "QUIT"    CALL HandleQuit
 
 DO WHILE running = 1
-    ' Drain key events; map ASCII printable + Enter into the keyboard
-    ' buffer. ESC sets running=0 to break the loop.
-    DIM ev$
-    DO
-        ev$ = GFX.POLLEVENT()
-        ' POLLEVENT returns the string "NONE" when the queue is empty —
-        ' NOT an empty string. Checking for "" loops forever.
-        IF ev$ = "NONE" THEN EXITDO
-        IF ev$ = "QUIT" THEN
-            running = 0
-            EXITDO
-        ENDIF
-        ' Format observed in other demos: "KEYDOWN:<key>"
-        IF LEFT$(ev$, 8) = "KEYDOWN:" THEN
-            DIM kc$ = MID$(ev$, 9)
-            IF kc$ = "Escape" THEN
-                running = 0
-            ELSEIF kc$ = "Return" THEN
-                APPLE2.PUSH_KEY($0D)
-            ELSEIF kc$ = "Space" THEN
-                APPLE2.PUSH_KEY($20)
-            ELSEIF LEN(kc$) = 1 THEN
-                APPLE2.PUSH_KEY(ASC(UCASE$(kc$)))
-            ENDIF
-        ENDIF
-    LOOP
-
     ' Run the CPU for one frame's worth of cycles.
     CPU6502.RUN(CYCLES_PER_FRAME)
 
@@ -102,6 +149,7 @@ DO WHILE running = 1
     CLS 0, 0, 0
     APPLE2.RENDER_TEXT()
     SCREENFLIP
+    frame_count = frame_count + 1
 LOOP
 
-PRINT "Done. PC=$" + HEX$(CPU6502.GET_PC()) + " A=$" + HEX$(CPU6502.GET_A())
+PRINT "Done. " + STR$(frame_count) + " frames. PC=$" + HEX$(CPU6502.GET_PC()) + " A=$" + HEX$(CPU6502.GET_A())

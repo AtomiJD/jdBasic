@@ -1280,10 +1280,16 @@ void register_graphics_builtins(VM& vm) {
         while (SDL_PollEvent(&ev)) {
 #ifdef IMGUI
             if (gui_process_event(&ev)) {
-                ImGuiIO& io = ImGui::GetIO();
+                // Only swallow events when an ImGui widget is actually in
+                // use — NOT just because ImGui-Nav has implicit keyboard
+                // capture (which is on as soon as the window has focus).
+                // Otherwise GFX-only programs lose every key. See
+                // project_imgui_ate_keys.md.
+                bool kb_active    = ImGui::IsAnyItemActive() || ImGui::IsAnyItemFocused();
+                bool mouse_active = ImGui::IsAnyItemHovered() || ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
                 bool is_key = (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP || ev.type == SDL_EVENT_TEXT_INPUT);
                 bool is_mouse = (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_UP || ev.type == SDL_EVENT_MOUSE_MOTION || ev.type == SDL_EVENT_MOUSE_WHEEL);
-                if ((is_key && io.WantCaptureKeyboard) || (is_mouse && io.WantCaptureMouse))
+                if ((is_key && kb_active) || (is_mouse && mouse_active))
                     continue;
             }
 #endif

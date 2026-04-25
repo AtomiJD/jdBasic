@@ -243,7 +243,10 @@ EXPORT SUB RENDER_TEXT()
     FOR r = 0 TO TEXT_ROWS - 1
         FOR c = 0 TO TEXT_COLS - 1
             ch = TEXT_READ(c, r)
-            IF ch <> $20 AND ch <> 0 THEN
+            ' Only render printable ASCII. Skip blanks, NULs, and any
+            ' control bytes — feeding CHR$(0..0x1F) to SDL_ttf has crashed
+            ' the renderer on some drivers.
+            IF ch >= $21 AND ch <= $7E THEN
                 ch_str = CHR$(ch)
                 TEXT c * CHAR_W, r * CHAR_H, ch_str, 0, 255, 0
             ENDIF
