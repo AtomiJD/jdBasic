@@ -120,6 +120,62 @@ static void configure_client(ClientT& cli, const HttpSnapshot& s) {
     cli.set_write_timeout(s.timeout_sec, 0);
 }
 
+// If the handler returned a map carrying __http_status, copy its
+// status / __http_body / __http_headers / __http_content_type fields onto
+// the outgoing response and return true. Otherwise return false so the
+// caller can fall back to the legacy auto-JSON / auto-HTML path.
+template <typename RespT>
+static bool apply_rich_response(const Value& result, RespT& res) {
+    if (result.type != ValueType::OBJECT || !result.as_object()) return false;
+    auto* obj = result.as_object();
+    Value* status_v = obj->get("__http_status");
+    if (!status_v) return false;
+
+    res.status = (int)status_v->to_int();
+
+    if (Value* headers_v = obj->get("__http_headers")) {
+        if (headers_v->type == ValueType::OBJECT && headers_v->as_object()) {
+            for (auto& [k, v] : headers_v->as_object()->fields) {
+                res.set_header(k, v.type == ValueType::STRING
+                                       ? v.as_string()->data
+                                       : v.to_string());
+            }
+        }
+    }
+
+    Value* body_v = obj->get("__http_body");
+    Value* ct_v   = obj->get("__http_content_type");
+    std::string content_type = (ct_v && ct_v->type == ValueType::STRING)
+                                   ? ct_v->as_string()->data
+                                   : "application/json";
+    if (body_v) {
+        const std::string body_str = (body_v->type == ValueType::STRING)
+                                         ? body_v->as_string()->data
+                                         : body_v->to_string();
+        res.set_content(body_str, content_type.c_str());
+    } else if (ct_v) {
+        res.set_content("", content_type.c_str());
+    }
+    return true;
+}
+
+// Compact one-line console log for an incoming request — body is clipped to
+// keep the server console scannable. Pulls Mcp-Session-Id out separately
+// because that's the header we care about most for MCP debugging.
+static void log_request(const httplib::Request& req) {
+    constexpr size_t kMax = 240;
+    std::string body_short = req.body.size() <= kMax
+                                 ? req.body
+                                 : req.body.substr(0, kMax) + "...";
+    for (auto& c : body_short) if (c == '\n' || c == '\r') c = ' ';
+    std::string sid;
+    auto it = req.headers.find("Mcp-Session-Id");
+    if (it != req.headers.end()) sid = it->second;
+    std::cerr << "[" << req.method << " " << req.path << "]"
+              << (sid.empty() ? "" : (" sid=" + sid))
+              << " body=" << body_short << std::endl;
+}
+
 // Build a rich response map: { status, body, headers }.
 template <typename RespT>
 static Value response_to_map(const RespT& res) {
@@ -138,10 +194,16 @@ static Value request_to_map(const httplib::Request& req) {
     m.as_object()->set("METHOD", Value::make_string(req.method));
     m.as_object()->set("BODY", Value::make_string(req.body));
 
-    // Headers as map
+    // Headers as map — normalised to lowercase keys. HTTP header names are
+    // case-insensitive (RFC 7230), but jdBasic maps are case-sensitive, so
+    // handlers should look up `req.HEADERS{"mcp-session-id"}` regardless of
+    // what the client sent on the wire.
     Value hdrs = Value::make_object();
-    for (auto& [k, v] : req.headers)
-        hdrs.as_object()->set(k, Value::make_string(v));
+    for (auto& [k, v] : req.headers) {
+        std::string lower = k;
+        for (auto& c : lower) c = (char)std::tolower((unsigned char)c);
+        hdrs.as_object()->set(lower, Value::make_string(v));
+    }
     m.as_object()->set("HEADERS", std::move(hdrs));
 
     // Query params
@@ -495,11 +557,14 @@ void register_http_builtins(VM& vm) {
         for (auto& [path, func_name] : g_get_handlers) {
             std::string fn = func_name;
             g_server->Get(path, [fn](const httplib::Request& req, httplib::Response& res) {
+                log_request(req);
                 try {
                     Value req_map = request_to_map(req);
                     Value result = g_server_vm->call_function(fn, {req_map});
 
-                    if (result.type == ValueType::OBJECT && !false) {
+                    if (apply_rich_response(result, res)) {
+                        // Handler controlled status/headers/body.
+                    } else if (result.type == ValueType::OBJECT) {
                         // Map → JSON
                         Value json = g_server_vm->call_function("JSON.STRINGIFY$", {result});
                         res.set_content(json.as_string()->data, "application/json");
@@ -507,6 +572,8 @@ void register_http_builtins(VM& vm) {
                         res.set_content(result.to_string(), "text/html");
                     }
                 } catch (const std::exception& e) {
+                    std::cerr << "[" << req.method << " " << req.path
+                              << "] ERROR: " << e.what() << std::endl;
                     res.status = 500;
                     res.set_content(std::string("Error: ") + e.what(), "text/plain");
                 }
@@ -517,17 +584,22 @@ void register_http_builtins(VM& vm) {
         for (auto& [path, func_name] : g_post_handlers) {
             std::string fn = func_name;
             g_server->Post(path, [fn](const httplib::Request& req, httplib::Response& res) {
+                log_request(req);
                 try {
                     Value req_map = request_to_map(req);
                     Value result = g_server_vm->call_function(fn, {req_map});
 
-                    if (result.type == ValueType::OBJECT && !false) {
+                    if (apply_rich_response(result, res)) {
+                        // Handler controlled status/headers/body.
+                    } else if (result.type == ValueType::OBJECT) {
                         Value json = g_server_vm->call_function("JSON.STRINGIFY$", {result});
                         res.set_content(json.as_string()->data, "application/json");
                     } else {
                         res.set_content(result.to_string(), "text/html");
                     }
                 } catch (const std::exception& e) {
+                    std::cerr << "[" << req.method << " " << req.path
+                              << "] ERROR: " << e.what() << std::endl;
                     res.status = 500;
                     res.set_content(std::string("Error: ") + e.what(), "text/plain");
                 }

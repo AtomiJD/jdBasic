@@ -1,16 +1,21 @@
-' jdBasic MCP server — Phase 2 skeleton.
+' jdBasic MCP server — Streamable-HTTP transport.
 '
 ' Spec: https://modelcontextprotocol.io
 ' Transport: HTTP, JSON-RPC 2.0 over POST /mcp.
 ' Bound to 127.0.0.1 only (localhost). Run as:
 '   build/jdBasic.exe mcp/server.jdb
 '
-' This skeleton implements the three required JSON-RPC methods:
-'   - initialize       : handshake, returns server capabilities
-'   - tools/list       : enumerates available tools (currently just `echo`)
+' Implements the three required JSON-RPC methods:
+'   - initialize       : handshake, returns server capabilities,
+'                        issues a fresh Mcp-Session-Id response header
+'   - tools/list       : enumerates available tools
 '   - tools/call       : invokes a tool by name with JSON args
-' Phase 3 will replace the `echo` placeholder with real eval/reset/vars
-' tools that exercise the persistent VM.
+'
+' Session model (MCP "Streamable HTTP"):
+'   - Server issues an Mcp-Session-Id on initialize.
+'   - Clients echo it back as a request header on every later call.
+'   - Unknown session id ⇒ HTTP 404 (forces the client to re-initialize).
+'   - Notifications (method = "notifications/*") ⇒ HTTP 202 with no body.
 
 OPTION "EXPLICIT"
 
@@ -18,6 +23,9 @@ CONST MCP_PORT = 7321
 CONST MCP_VERSION$ = "2024-11-05"
 CONST SERVER_NAME$ = "jdbasic-mcp"
 CONST SERVER_VERSION$ = "0.1.0"
+
+' session_id$ → TRUE. Populated on initialize, consulted on every other request.
+DIM SESSIONS AS MAP = {}
 
 ' ── Tool descriptors (declared once, served by tools/list) ─────
 ' Each entry: {"name", "description", "inputSchema"}.
@@ -158,12 +166,6 @@ FUNC HANDLE_RPC(rpc)
                 }                                                       _
             }
             resp{"result"} = init_result
-        CASE "notifications/initialized"
-            ' Notification — client signals it finished initializing.
-            ' Per JSON-RPC, notifications get no response. The HTTP
-            ' server will still send back our object, but the client
-            ' ignores responses lacking an id.
-            resp = {"jsonrpc": "2.0"}
         CASE "tools/list"
             resp{"result"} = {"tools": TOOLS}
         CASE "tools/call"
@@ -182,15 +184,79 @@ FUNC HANDLE_RPC(rpc)
     RETURN resp
 ENDFUNC
 
+' ── Rich-response helpers ──────────────────────────────────────
+' The HTTP layer recognises maps that carry __http_status / __http_body /
+' __http_headers / __http_content_type and uses them to control the raw
+' HTTP response (status code, headers, body bytes). Without those keys it
+' falls back to auto-JSON-encoding the returned map at HTTP 200.
+
+FUNC RICH_JSON(status, payload, headers AS MAP)
+    DIM body$ AS STRING = JSON.STRINGIFY$(payload)
+    DIM r AS MAP = {                                                    _
+        "__http_status": status,                                        _
+        "__http_body": body$,                                           _
+        "__http_content_type": "application/json",                      _
+        "__http_headers": headers                                       _
+    }
+    RETURN r
+ENDFUNC
+
+FUNC RICH_EMPTY(status, headers AS MAP)
+    DIM r AS MAP = {                                                    _
+        "__http_status": status,                                        _
+        "__http_headers": headers                                       _
+    }
+    RETURN r
+ENDFUNC
+
 ' ── HTTP entrypoint ────────────────────────────────────────────
 ' The HTTP server passes the request as a map with PATH/METHOD/BODY/
-' HEADERS/PARAMS keys (uppercased by request_to_map). We parse the
-' body as JSON-RPC, hand it to HANDLE_RPC, and return the response —
-' the server auto-stringifies map returns to application/json.
+' HEADERS/PARAMS keys. We parse the body as JSON-RPC, hand it to
+' HANDLE_RPC, and wrap the result with proper HTTP status / session
+' headers.
+
+' HEADERS keys are normalised to lowercase by the HTTP layer (HTTP header
+' names are case-insensitive per RFC 7230) — pass the lowercase form here.
+FUNC GET_HEADER$(req, name$)
+    IF MAP.EXISTS(req{"HEADERS"}, name$) THEN RETURN req{"HEADERS"}{name$}
+    RETURN ""
+ENDFUNC
 
 FUNC MCP_POST(req)
+    DIM body_preview$ AS STRING = LEFT$(req.BODY, 160)
+    PRINT "[MCP] POST /mcp body=" + body_preview$
+
     DIM rpc = JSON.PARSE$(req.BODY)
-    RETURN HANDLE_RPC(rpc)
+    DIM method$ AS STRING = ""
+    IF MAP.EXISTS(rpc, "method") THEN method$ = rpc{"method"}
+
+    ' --- Notifications: per JSON-RPC, no response. MCP says HTTP 202, no body.
+    IF STARTSWITH(method$, "notifications/") THEN
+        PRINT "[MCP]   notification " + method$ + " -> 202"
+        RETURN RICH_EMPTY(202, {})
+    ENDIF
+
+    DIM client_sid$ AS STRING = GET_HEADER$(req, "mcp-session-id")
+
+    ' --- initialize: issue a fresh session id, attach as response header
+    IF method$ = "initialize" THEN
+        DIM new_sid$ AS STRING = CODEC.UUID$()
+        SESSIONS{new_sid$} = TRUE
+        PRINT "[MCP]   initialize -> sid=" + new_sid$
+        DIM init_resp = HANDLE_RPC(rpc)
+        DIM hdrs AS MAP = {"Mcp-Session-Id": new_sid$}
+        RETURN RICH_JSON(200, init_resp, hdrs)
+    ENDIF
+
+    ' --- All other methods require a known session.
+    IF client_sid$ = "" OR NOT MAP.EXISTS(SESSIONS, client_sid$) THEN
+        PRINT "[MCP]   unknown session sid='" + client_sid$ + "' for " + method$ + " -> 404"
+        RETURN RICH_EMPTY(404, {})
+    ENDIF
+
+    PRINT "[MCP]   " + method$ + " (sid=" + client_sid$ + ")"
+    DIM resp = HANDLE_RPC(rpc)
+    RETURN RICH_JSON(200, resp, {})
 ENDFUNC
 
 ' ── Boot ───────────────────────────────────────────────────────

@@ -1420,10 +1420,28 @@ These three natives redirect `PRINT`/all script output to an in-memory string bu
 
 The built-in HTTP server allows `jdBasic` to serve websites and create simple JSON APIs. The server runs in the background, handling requests by calling user-defined `jdBasic` functions.
 
-Handler functions receive one argument: a `Map` containing details about the incoming request (e.g., path, headers, body). The `RETURN` value of the function is sent back to the client as the response.
+Handler functions receive one argument: a `Map` containing details about the incoming request:
 
-* If the function returns a `Map`, it is automatically converted to a JSON string with `Content-Type: application/json`.
+* `PATH`, `METHOD`, `BODY`, `PARAMS` — request path, method, body bytes, and parsed query parameters.
+* `HEADERS` — a map of incoming request headers. **Keys are normalised to lowercase**, since HTTP header names are case-insensitive (RFC 7230). Look up `req{"HEADERS"}{"content-type"}`, `req{"HEADERS"}{"mcp-session-id"}`, etc.
+
+The `RETURN` value of the function is sent back to the client as the response.
+
 * If the function returns a `String`, it is sent with `Content-Type: text/html`.
+* If the function returns a `Map`, the default behaviour is to auto-convert it to JSON with `Content-Type: application/json` and HTTP 200.
+* For custom status codes / response headers / body bytes, return a "rich response" map carrying any of these reserved keys (auto-JSON encoding is suppressed when `__http_status` is present):
+    * `__http_status` (number) — the HTTP status code (e.g. `202`, `404`).
+    * `__http_body` (string) — the raw response body. Omit for an empty body.
+    * `__http_headers` (map) — extra response headers as `{name: value}`.
+    * `__http_content_type` (string) — defaults to `application/json` when a body is present.
+
+```basic
+' Custom response: 202 Accepted with no body and a custom session header
+RETURN { _
+    "__http_status": 202,                              _
+    "__http_headers": {"Mcp-Session-Id": new_sid$}     _
+}
+```
 
 ```basic
 ' --- Web Server and API Example ---

@@ -20,6 +20,7 @@
 #include <fstream>
 #include <regex>
 #include <unordered_set>
+#include <random>
 #include <thread>
 
 #if defined(_WIN32)
@@ -4636,11 +4637,40 @@ void VM::register_builtins() {
     });
 
     register_native("JSON.STRINGIFY$", [](const std::vector<Value>& args) -> Value {
+        // RFC 8259-compliant string escape: " \ and the C0 control range
+        // must be escaped, otherwise the output is not valid JSON.
+        auto escape_string = [](const std::string& s) -> std::string {
+            std::string out;
+            out.reserve(s.size() + 2);
+            out.push_back('"');
+            for (unsigned char c : s) {
+                switch (c) {
+                    case '"':  out += "\\\""; break;
+                    case '\\': out += "\\\\"; break;
+                    case '\b': out += "\\b";  break;
+                    case '\f': out += "\\f";  break;
+                    case '\n': out += "\\n";  break;
+                    case '\r': out += "\\r";  break;
+                    case '\t': out += "\\t";  break;
+                    default:
+                        if (c < 0x20) {
+                            char buf[8];
+                            snprintf(buf, sizeof(buf), "\\u%04x", c);
+                            out += buf;
+                        } else {
+                            // Pass through UTF-8 bytes >= 0x20 unchanged.
+                            out.push_back((char)c);
+                        }
+                }
+            }
+            out.push_back('"');
+            return out;
+        };
         std::function<std::string(const Value&)> to_json = [&](const Value& v) -> std::string {
             switch (v.type) {
                 case ValueType::NONE: return "null";
                 case ValueType::BOOLEAN: return v.boolean ? "true" : "false";
-                case ValueType::STRING: return "\"" + v.as_string()->data + "\"";
+                case ValueType::STRING: return escape_string(v.as_string()->data);
                 case ValueType::ARRAY: {
                     std::string r = "[";
                     auto* a = v.as_array();
@@ -4655,7 +4685,7 @@ void VM::register_builtins() {
                     auto* o = v.as_object();
                     for (size_t i = 0; i < o->fields.size(); i++) {
                         if (i > 0) r += ",";
-                        r += "\"" + o->fields[i].first + "\":" + to_json(o->fields[i].second);
+                        r += escape_string(o->fields[i].first) + ":" + to_json(o->fields[i].second);
                     }
                     return r + "}";
                 }
@@ -6012,7 +6042,14 @@ void VM::register_builtins() {
 
     register_native("CODEC.UUID$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        auto rb = []() -> uint8_t { return (uint8_t)(rand() & 0xFF); };
+        // Use a properly seeded std::mt19937. The previous implementation
+        // used ungeseeded rand() so the first ~16 UUIDs after process start
+        // were deterministic across runs (the famous RFC-4122 example UUID
+        // came out first every time).
+        static std::mt19937_64 rng{std::random_device{}()};
+        auto rb = [&]() -> uint8_t {
+            return (uint8_t)(rng() & 0xFF);
+        };
         uint8_t bytes[16];
         for (int i = 0; i < 16; i++) bytes[i] = rb();
         bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
