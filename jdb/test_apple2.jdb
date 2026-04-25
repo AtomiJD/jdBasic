@@ -1,0 +1,68 @@
+' Smoke test for apple2.jdb skeleton — no SCREEN window, just verify
+' the memory-map helpers behave like the real hardware.
+
+IMPORT APPLE2
+
+DIM tests_pass = 0
+DIM tests_fail = 0
+
+SUB ASSERT(cond, label$)
+    IF cond THEN
+        tests_pass = tests_pass + 1
+        PRINT "  PASS  " + label$
+    ELSE
+        tests_fail = tests_fail + 1
+        PRINT "  FAIL  " + label$
+    ENDIF
+ENDSUB
+
+APPLE2.INIT()
+
+' ─── Text-row address arithmetic ───────────────────────────────
+' These are the canonical addresses for the Apple II 40x24 text page.
+PRINT
+PRINT "── Text-page row addresses ──"
+ASSERT(APPLE2.TEXT_ROW_ADDR(0)  = $0400, "Row 0  -> $0400")
+ASSERT(APPLE2.TEXT_ROW_ADDR(1)  = $0480, "Row 1  -> $0480")
+ASSERT(APPLE2.TEXT_ROW_ADDR(7)  = $0780, "Row 7  -> $0780")
+ASSERT(APPLE2.TEXT_ROW_ADDR(8)  = $0428, "Row 8  -> $0428 (interleaved)")
+ASSERT(APPLE2.TEXT_ROW_ADDR(15) = $07A8, "Row 15 -> $07A8")
+ASSERT(APPLE2.TEXT_ROW_ADDR(16) = $0450, "Row 16 -> $0450")
+ASSERT(APPLE2.TEXT_ROW_ADDR(23) = $07D0, "Row 23 -> $07D0")
+
+' ─── Write/read round-trip ─────────────────────────────────────
+PRINT
+PRINT "── Text write / read round-trip ──"
+APPLE2.TEXT_WRITE(0, 0, ASC("H"))
+APPLE2.TEXT_WRITE(1, 0, ASC("i"))
+ASSERT(APPLE2.TEXT_READ(0, 0) = ASC("H"), "Row 0 col 0 = 'H'")
+ASSERT(APPLE2.TEXT_READ(1, 0) = ASC("i"), "Row 0 col 1 = 'i'")
+
+APPLE2.TEXT_WRITE(20, 12, ASC("X"))
+ASSERT(APPLE2.TEXT_READ(20, 12) = ASC("X"), "Row 12 col 20 = 'X'")
+
+' ─── Reset vector ──────────────────────────────────────────────
+PRINT
+PRINT "── Reset vector defaults ──"
+ASSERT(CPU6502.READ($FFFC) = $00, "Reset low byte")
+ASSERT(CPU6502.READ($FFFD) = $03, "Reset high byte ($0300 cold start)")
+
+' ─── 6502 program writes through Apple II text page ────────────
+PRINT
+PRINT "── 6502 STA into the text page ──"
+'   LDA #$C8     A9 C8           'H' with bit 7 set
+'   STA $0400    8D 00 04
+'   LDA #$C9     A9 C9           'I'
+'   STA $0401    8D 01 04
+'   JMP $030A    4C 0A 03        (loop self)
+DIM prog = [ $A9, $C8, $8D, $00, $04, $A9, $C9, $8D, $01, $04, $4C, $0A, $03 ]
+CPU6502.LOAD($0300, prog)
+CPU6502.SET_PC($0300)
+CPU6502.RUN_UNTIL($030A, 100)
+ASSERT(APPLE2.TEXT_READ(0, 0) = ASC("H"), "Top-left after 6502 STA")
+ASSERT(APPLE2.TEXT_READ(1, 0) = ASC("I"), "Col 1 row 0 after 6502 STA")
+
+PRINT
+PRINT "════════════════════════════════════"
+PRINT "  Apple II skeleton: PASS = " + STR$(tests_pass) + ", FAIL = " + STR$(tests_fail)
+PRINT "════════════════════════════════════"

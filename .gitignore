@@ -80,3 +80,5 @@ jdb/luli.clf
 *.log
 tmp/
 tests/ablage/
+# Apple II / C64 ROMs (Atomi's local set; not redistributable)
+thingsforyou/

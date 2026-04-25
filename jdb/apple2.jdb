@@ -1,0 +1,204 @@
+' apple2.jdb — Apple II platform skeleton on top of cpu6502.
+'
+' Today: memory-map constants, text-page address arithmetic, a SCREEN-
+' based 40x24 text display that reads from the CPU's RAM, and a stub
+' loop that ticks the CPU and refreshes the display.
+'
+' Next session: load Applesoft + Monitor ROM into $D000-$FFFF, wire up
+' the soft-switches at $C000 (keyboard, strobe), and let it boot to "]".
+
+EXPORT MODULE APPLE2
+
+IMPORT CPU6502
+
+' ─── Apple II memory map ───────────────────────────────────────
+EXPORT CONST ZEROPAGE_BASE = $0000
+EXPORT CONST STACK_BASE    = $0100
+EXPORT CONST TEXT1_BASE    = $0400   ' 40x24 text page 1 ($0400-$07FF)
+EXPORT CONST TEXT2_BASE    = $0800
+EXPORT CONST HIRES1_BASE   = $2000   ' 280x192 hi-res page 1
+EXPORT CONST HIRES2_BASE   = $4000
+EXPORT CONST IO_BASE       = $C000   ' soft-switches + slot I/O
+EXPORT CONST KBD_DATA      = $C000   ' read keyboard (bit 7 = strobe)
+EXPORT CONST KBD_STROBE    = $C010   ' write any value to clear strobe
+EXPORT CONST SPEAKER_TOG   = $C030   ' read/write toggles speaker
+EXPORT CONST APPLESOFT_ROM = $D000   ' to $F7FF
+EXPORT CONST MONITOR_ROM   = $F800   ' to $FFFF
+
+' ─── Display geometry ──────────────────────────────────────────
+EXPORT CONST TEXT_COLS = 40
+EXPORT CONST TEXT_ROWS = 24
+EXPORT CONST CHAR_W    = 14   ' 7px glyph * 2 scale
+EXPORT CONST CHAR_H    = 16   ' 8px glyph * 2 scale
+
+' Computed pixel dimensions of the 40x24 text screen.
+EXPORT CONST WINDOW_W = 560   ' TEXT_COLS * CHAR_W
+EXPORT CONST WINDOW_H = 384   ' TEXT_ROWS * CHAR_H
+
+' ─── Text page address layout ──────────────────────────────────
+'
+' The Apple II's video circuitry uses an interleaved layout for the
+' 40x24 text page so that the same memory range covers both text and
+' lo-res graphics. Row N's start address relative to TEXT1_BASE is:
+'
+'   row_offset[N] = (N AND 7) * $80 + (N SHR 3) * $28
+'
+' i.e. lines 0..7 step by $80 within $400..$780, then lines 8..15
+' interleave in the gaps starting at $428, etc.
+
+EXPORT FUNC TEXT_ROW_ADDR(row)
+    DIM block = row SHR 3       ' 0..2  (which 8-row group)
+    DIM in_blk = row BAND 7     ' 0..7  (within the group)
+    RETURN TEXT1_BASE + in_blk * $80 + block * $28
+ENDFUNC
+
+' Read the character at (col, row) — returns the raw 8-bit value the
+' CPU has stored. Apple II ASCII has bit 7 set for normal display, but
+' for skeleton purposes we just mask it off.
+EXPORT FUNC TEXT_READ(col, row)
+    DIM addr = TEXT_ROW_ADDR(row) + col
+    RETURN CPU6502.READ(addr) BAND $7F
+ENDFUNC
+
+EXPORT SUB TEXT_WRITE(col, row, ch)
+    DIM addr = TEXT_ROW_ADDR(row) + col
+    CPU6502.WRITE(addr, (ch BAND $7F) BOR $80)
+ENDSUB
+
+' Fill the text page with a value (0 = blanks, $20 = printable space).
+EXPORT SUB TEXT_CLEAR(ch)
+    DIM r
+    DIM c
+    FOR r = 0 TO TEXT_ROWS - 1
+        FOR c = 0 TO TEXT_COLS - 1
+            TEXT_WRITE(c, r, ch)
+        NEXT c
+    NEXT r
+ENDSUB
+
+' ─── ROM loading ───────────────────────────────────────────────
+'
+' Load a binary file into the CPU's memory at the given start address.
+' Returns the number of bytes copied, or -1 if the file couldn't be read.
+
+EXPORT FUNC LOAD_ROM(filename$, start_addr)
+    DIM data$
+    TRY
+        data$ = BINREADER$(filename$)
+    CATCH
+        RETURN -1
+    ENDTRY
+    DIM n = LEN(data$)
+    DIM i
+    FOR i = 0 TO n - 1
+        CPU6502.WRITE(start_addr + i, BYTEAT(data$, i))
+    NEXT i
+    RETURN n
+ENDFUNC
+
+' Load the canonical Apple II original ROM set from a directory. The
+' filenames match the dumps Atomi placed in thingsforyou/ (verbatim,
+' minus the leading directory).
+'
+' Returns total bytes loaded, or a negative count of failures.
+EXPORT FUNC LOAD_APPLE2_ROMS(rom_dir$)
+    DIM total = 0
+    DIM r
+    DIM sep$ = "/"
+    IF RIGHT$(rom_dir$, 1) <> "/" AND RIGHT$(rom_dir$, 1) <> "\" THEN
+        rom_dir$ = rom_dir$ + sep$
+    ENDIF
+
+    r = LOAD_ROM(rom_dir$ + "Apple II ROM Pages E0-E7 - 341-0001 - Integer BASIC.bin", $E000)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "Apple II ROM Pages E8-EF - 341-0002 - Integer BASIC.bin", $E800)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "Apple II ROM Pages F0-F7 - 341-0003 - Integer BASIC.bin", $F000)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "Apple II ROM Pages F8-FF - 341-0004 - Original Monitor.bin", $F800)
+    IF r > 0 THEN total = total + r
+
+    ' Programmer's Aid is optional — only load if present.
+    r = LOAD_ROM(rom_dir$ + "Apple Programmer's Aid #1 ROM (D000) - 341-0016 - 2716.bin", $D000)
+    IF r > 0 THEN total = total + r
+
+    RETURN total
+ENDFUNC
+
+' Load the character ROM (5x7 glyph data, $800 bytes covering 256 chars
+' at 8 bytes each — last byte unused). Stored in a side buffer rather
+' than CPU RAM since the real Apple II character ROM lives on the video
+' board and isn't CPU-addressable.
+
+DIM char_rom_data$ = ""
+
+EXPORT FUNC LOAD_CHAR_ROM(filename$)
+    TRY
+        char_rom_data$ = BINREADER$(filename$)
+        RETURN LEN(char_rom_data$)
+    CATCH
+        char_rom_data$ = ""
+        RETURN -1
+    ENDTRY
+ENDFUNC
+
+' Look up one of the 8 row bitmasks for character `ch` (0..255).
+' Returns 0 if the char ROM hasn't been loaded.
+EXPORT FUNC CHAR_GLYPH_ROW(ch, row)
+    IF char_rom_data$ = "" THEN RETURN 0
+    DIM idx = (ch BAND $FF) * 8 + (row BAND 7)
+    IF idx >= LEN(char_rom_data$) THEN RETURN 0
+    RETURN BYTEAT(char_rom_data$, idx)
+ENDFUNC
+
+' ─── Initialisation ────────────────────────────────────────────
+EXPORT SUB INIT()
+    CPU6502.INIT()
+    ' Set the reset vector at $FFFC/$FFFD to a sensible default — the
+    ' bootstrap address callers use when no ROM is loaded. ROM-load
+    ' will overwrite this when the Monitor ROM is mapped in.
+    CPU6502.WRITE($FFFC, $00)
+    CPU6502.WRITE($FFFD, $03)   ' default cold-start at $0300
+    TEXT_CLEAR($A0)             ' Apple II "blank" = $A0 (space + bit 7)
+ENDSUB
+
+' Boot helper for next-session experimentation. Loads ROMs from rom_dir,
+' resets the CPU (which pulls PC from $FFFC/$FFFD = the Monitor reset
+' vector), and returns the bytes loaded. Caller's loop should then
+' RUN()/RENDER_TEXT() until interrupted.
+EXPORT FUNC BOOT(rom_dir$)
+    INIT()
+    DIM n = LOAD_APPLE2_ROMS(rom_dir$)
+    IF n <= 0 THEN RETURN n
+    CPU6502.RESET()
+    RETURN n
+ENDFUNC
+
+' ─── Display rendering ─────────────────────────────────────────
+'
+' Walks the text page and draws one TEXT call per non-blank cell. Cheap
+' and obvious — we can swap in a glyph atlas later if we ever want
+' bitmap-accurate rendering of the Apple II character ROM.
+
+EXPORT SUB RENDER_TEXT()
+    DIM r
+    DIM c
+    DIM ch
+    DIM ch_str
+    FOR r = 0 TO TEXT_ROWS - 1
+        FOR c = 0 TO TEXT_COLS - 1
+            ch = TEXT_READ(c, r)
+            IF ch <> $20 AND ch <> 0 THEN
+                ch_str = CHR$(ch)
+                TEXT c * CHAR_W, r * CHAR_H, ch_str, 0, 255, 0
+            ENDIF
+        NEXT c
+    NEXT r
+ENDSUB
+
+' One emulator frame: tick the CPU for a budget of cycles (very rough
+' 1 MHz at 60 fps = ~17000 cycles), then redraw the screen.
+EXPORT SUB FRAME(cycle_budget)
+    CPU6502.RUN(cycle_budget)
+    RENDER_TEXT()
+ENDSUB

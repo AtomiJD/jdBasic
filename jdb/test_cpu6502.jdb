@@ -1,0 +1,202 @@
+' test_cpu6502.jdb — self-tests for the 6502 emulator core.
+'
+' Each test runs a tiny 6502 program out of RAM and checks register /
+' memory state afterwards. Counts PASS / FAIL and prints a summary.
+
+IMPORT CPU6502
+
+DIM tests_pass = 0
+DIM tests_fail = 0
+
+SUB ASSERT(cond, label$)
+    IF cond THEN
+        tests_pass = tests_pass + 1
+        PRINT "  PASS  " + label$
+    ELSE
+        tests_fail = tests_fail + 1
+        PRINT "  FAIL  " + label$
+    ENDIF
+ENDSUB
+
+SUB SETUP(prog_bytes, start_addr)
+    CPU6502.INIT()
+    CPU6502.LOAD(start_addr, prog_bytes)
+    CPU6502.SET_PC(start_addr)
+ENDSUB
+
+CPU6502.INIT()
+
+' ─── 1. LDA / STA / JMP ────────────────────────────────────────
+PRINT
+PRINT "── LDA / STA ──"
+DIM p1 = [ $A9, $42, $85, $10, $4C, $04, $02 ]
+'           LDA #$42  STA $10  JMP $0204 (loop)
+SETUP(p1, $0200)
+DIM steps = CPU6502.RUN_UNTIL($0204, 100)
+ASSERT(CPU6502.GET_A() = $42, "A = $42 after LDA #$42")
+ASSERT(CPU6502.READ($10) = $42, "mem[$10] = $42 after STA $10")
+ASSERT(CPU6502.GET_PC() = $0204, "PC at JMP-self after 2 instructions")
+
+' ─── 2. INX loop with branch ───────────────────────────────────
+PRINT
+PRINT "── INX / CPX / BNE loop ──"
+'   LDX #$00       A2 00
+' :loop INX        E8
+'   CPX #$05       E0 05
+'   BNE :loop      D0 FB    (-5: back to INX)
+'   STX $20        86 20
+'   JMP self       4C 09 02
+DIM p2 = [ $A2, $00, $E8, $E0, $05, $D0, $FB, $86, $20, $4C, $09, $02 ]
+SETUP(p2, $0200)
+CPU6502.RUN_UNTIL($0209, 1000)
+ASSERT(CPU6502.GET_X() = 5, "X = 5 after looping")
+ASSERT(CPU6502.READ($20) = 5, "mem[$20] = 5 (X stored)")
+ASSERT(CPU6502.GET_FLAG(CPU6502.FLAG_Z) = 1, "Z=1 because CPX #$05 matched")
+
+' ─── 3. JSR / RTS ──────────────────────────────────────────────
+PRINT
+PRINT "── JSR / RTS ──"
+'   $0200: JSR $0210     20 10 02
+'   $0203: STA $30       85 30
+'   $0205: JMP self      4C 05 02
+'   $0210: LDA #$AB      A9 AB
+'   $0212: RTS           60
+DIM p3 = [ $20, $10, $02, $85, $30, $4C, $05, $02 ]
+DIM sub3 = [ $A9, $AB, $60 ]
+CPU6502.INIT()
+CPU6502.LOAD($0200, p3)
+CPU6502.LOAD($0210, sub3)
+CPU6502.SET_PC($0200)
+CPU6502.RUN_UNTIL($0205, 200)
+ASSERT(CPU6502.GET_A() = $AB, "A = $AB after subroutine")
+ASSERT(CPU6502.READ($30) = $AB, "mem[$30] = $AB after JSR + STA")
+
+' ─── 4. ADC with carry ─────────────────────────────────────────
+PRINT
+PRINT "── ADC (binary mode) ──"
+'   CLC          18
+'   LDA #$F0     A9 F0
+'   ADC #$20     69 20         -> A = $10, C = 1, V = 0
+'   JMP self     4C 06 02
+DIM p4 = [ $18, $A9, $F0, $69, $20, $4C, $06, $02 ]
+SETUP(p4, $0200)
+CPU6502.RUN_UNTIL($0206, 100)
+ASSERT(CPU6502.GET_A() = $10,                   "A = $10 ($F0 + $20)")
+ASSERT(CPU6502.GET_FLAG(CPU6502.FLAG_C) = 1,    "Carry set on overflow")
+ASSERT(CPU6502.GET_FLAG(CPU6502.FLAG_V) = 0,    "V clear (no signed overflow)")
+
+' ─── 5. SBC ─────────────────────────────────────────────────────
+PRINT
+PRINT "── SBC (binary mode) ──"
+'   SEC          38
+'   LDA #$50     A9 50
+'   SBC #$20     E9 20         -> A = $30, C = 1
+'   JMP self     4C 06 02
+DIM p5 = [ $38, $A9, $50, $E9, $20, $4C, $06, $02 ]
+SETUP(p5, $0200)
+CPU6502.RUN_UNTIL($0206, 100)
+ASSERT(CPU6502.GET_A() = $30, "A = $30 ($50 - $20)")
+ASSERT(CPU6502.GET_FLAG(CPU6502.FLAG_C) = 1, "C=1 (no borrow)")
+
+' ─── 6. Stack PHA / PLA ────────────────────────────────────────
+PRINT
+PRINT "── PHA / PLA ──"
+'   LDA #$11    A9 11
+'   PHA         48
+'   LDA #$22    A9 22
+'   PHA         48
+'   LDA #$00    A9 00
+'   PLA         68            -> A = $22
+'   STA $40     85 40
+'   PLA         68            -> A = $11
+'   STA $41     85 41
+'   JMP self    4C 0E 02
+DIM p6 = [ $A9, $11, $48, $A9, $22, $48, $A9, $00, $68, $85, $40, $68, $85, $41, $4C, $0E, $02 ]
+SETUP(p6, $0200)
+CPU6502.RUN_UNTIL($020E, 200)
+ASSERT(CPU6502.READ($40) = $22, "mem[$40] = $22 (stack LIFO)")
+ASSERT(CPU6502.READ($41) = $11, "mem[$41] = $11 (stack LIFO)")
+
+' ─── 7. Shift ASL / LSR ────────────────────────────────────────
+PRINT
+PRINT "── ASL / LSR ──"
+'   LDA #$81    A9 81
+'   ASL A       0A      -> A = $02, C = 1
+'   LSR A       4A      -> A = $01, C = 0
+'   JMP self    4C 06 02
+DIM p7 = [ $A9, $81, $0A, $4A, $4C, $06, $02 ]
+SETUP(p7, $0200)
+CPU6502.RUN_UNTIL($0206, 100)
+ASSERT(CPU6502.GET_A() = 1, "A = 1 after ASL/LSR round trip")
+
+' ─── 8. CMP and BEQ ────────────────────────────────────────────
+PRINT
+PRINT "── CMP / BEQ ──"
+'   LDA #$42    A9 42
+'   CMP #$42    C9 42        -> Z=1
+'   BEQ +2      F0 02
+'   LDA #$00    A9 00
+'   STA $50     85 50
+'   JMP self    4C 0B 02
+'   At taken-branch target ($0208): LDA #$FF / STA $50 / JMP self
+'
+' Layout:
+'   $0200: A9 42        LDA #$42
+'   $0202: C9 42        CMP #$42
+'   $0204: F0 04        BEQ +4 (skip the failing path)
+'   $0206: A9 00        LDA #$00      ; (skipped)
+'   $0208: 85 50        STA $50       ; (skipped)
+'   $020A: 4C 12 02     JMP self      ; (skipped)
+'   $020D: A9 FF        LDA #$FF      ; <- BEQ lands here? actually +4 from PC=$0206
+' Recompute: BEQ at $0204, PC after = $0206, +4 -> $020A. Hmm.
+' Easier: just write it linearly with a small skip and a final JMP-self.
+'
+'   $0200: A9 42        LDA #$42
+'   $0202: C9 42        CMP #$42
+'   $0204: F0 03        BEQ +3 -> $0209
+'   $0206: A9 00        LDA #$00     ; (skipped on BEQ taken)
+'   $0208: EA           NOP
+'   $0209: 85 50        STA $50
+'   $020B: 4C 0B 02     JMP self
+DIM p8 = [ $A9, $42, $C9, $42, $F0, $03, $A9, $00, $EA, $85, $50, $4C, $0B, $02 ]
+SETUP(p8, $0200)
+CPU6502.RUN_UNTIL($020B, 100)
+ASSERT(CPU6502.READ($50) = $42, "BEQ taken kept A=$42 in mem[$50]")
+
+' ─── 9. Indexed addressing (LDA $nn,X) ─────────────────────────
+PRINT
+PRINT "── LDA zp,X ──"
+CPU6502.INIT()
+CPU6502.WRITE($30, $11)
+CPU6502.WRITE($31, $22)
+CPU6502.WRITE($32, $33)
+'   LDX #$02    A2 02
+'   LDA $30,X   B5 30        -> A = $33
+'   STA $60     85 60
+'   JMP self    4C 06 02
+DIM p9 = [ $A2, $02, $B5, $30, $85, $60, $4C, $06, $02 ]
+CPU6502.LOAD($0200, p9)
+CPU6502.SET_PC($0200)
+CPU6502.RUN_UNTIL($0206, 100)
+ASSERT(CPU6502.GET_A() = $33, "A = $33 from LDA $30,X with X=2")
+ASSERT(CPU6502.READ($60) = $33, "mem[$60] = $33")
+
+' ─── 10. Decimal mode ADC ──────────────────────────────────────
+PRINT
+PRINT "── ADC decimal mode ──"
+'   SED         F8
+'   CLC         18
+'   LDA #$09    A9 09
+'   ADC #$01    69 01      -> A = $10 (BCD)
+'   CLD         D8
+'   JMP self    4C 08 02
+DIM p10 = [ $F8, $18, $A9, $09, $69, $01, $D8, $4C, $08, $02 ]
+SETUP(p10, $0200)
+CPU6502.RUN_UNTIL($0208, 100)
+ASSERT(CPU6502.GET_A() = $10, "BCD: 09 + 01 = 10 (decimal)")
+
+' ─── Summary ───────────────────────────────────────────────────
+PRINT
+PRINT "════════════════════════════════════"
+PRINT "  6502 self-test: PASS = " + STR$(tests_pass) + ", FAIL = " + STR$(tests_fail)
+PRINT "════════════════════════════════════"

@@ -1,0 +1,837 @@
+' cpu6502.jdb — A 6502 CPU emulator core for jdBasic.
+'
+' Pure CPU + 64KB RAM. No platform-specific I/O — drives only its own
+' memory array. Platform modules (apple2.jdb, c64.jdb) sit on top and
+' use the public API to load programs and step the CPU.
+'
+' Public surface:
+'   INIT()                      one-time setup; clears RAM, builds dispatch tables
+'   RESET()                     reads PC from $FFFC/$FFFD, sets SP=$FD, P=$24
+'   STEP_ONE() -> cycles            executes one instruction, returns its cycle count
+'   RUN(max_cycles) -> cycles   steps until cycle budget reaches max
+'   READ(addr) -> byte          memory read (no platform hooks today)
+'   WRITE(addr, val)            memory write
+'   LOAD(addr, bytes_array)     bulk-load a byte array into memory
+'   SET_PC(addr)                force PC for testing
+'   GET_A/X/Y/SP/PC/P()         register inspectors
+'   GET_FLAG(flag) -> 0/1       single-flag check
+'
+' Status flags (cpu_p):
+'   bit 7  N  negative
+'   bit 6  V  overflow
+'   bit 5  -  unused (always 1)
+'   bit 4  B  break (only set when pushed by BRK / PHP)
+'   bit 3  D  decimal mode
+'   bit 2  I  interrupt disable
+'   bit 1  Z  zero
+'   bit 0  C  carry
+
+EXPORT MODULE CPU6502
+
+' ─── Status flag bits ──────────────────────────────────────────
+EXPORT CONST FLAG_C = 1
+EXPORT CONST FLAG_Z = 2
+EXPORT CONST FLAG_I = 4
+EXPORT CONST FLAG_D = 8
+EXPORT CONST FLAG_B = $10
+EXPORT CONST FLAG_U = $20
+EXPORT CONST FLAG_V = $40
+EXPORT CONST FLAG_N = $80
+
+' ─── Address modes ─────────────────────────────────────────────
+DIM AM_IMP = 1
+DIM AM_ACC = 2
+DIM AM_IMM = 3
+DIM AM_ZP  = 4
+DIM AM_ZPX = 5
+DIM AM_ZPY = 6
+DIM AM_ABS = 7
+DIM AM_ABX = 8
+DIM AM_ABY = 9
+DIM AM_IND = 10
+DIM AM_INX = 11
+DIM AM_INY = 12
+DIM AM_REL = 13
+
+' ─── Operation codes ───────────────────────────────────────────
+' One per mnemonic. The SWITCH in execute() dispatches on these.
+DIM OP_NIL = 0
+DIM OP_LDA = 1
+DIM OP_LDX = 2
+DIM OP_LDY = 3
+DIM OP_STA = 4
+DIM OP_STX = 5
+DIM OP_STY = 6
+DIM OP_TAX = 7
+DIM OP_TAY = 8
+DIM OP_TXA = 9
+DIM OP_TYA = 10
+DIM OP_TSX = 11
+DIM OP_TXS = 12
+DIM OP_PHA = 13
+DIM OP_PLA = 14
+DIM OP_PHP = 15
+DIM OP_PLP = 16
+DIM OP_AND = 17
+DIM OP_ORA = 18
+DIM OP_EOR = 19
+DIM OP_ADC = 20
+DIM OP_SBC = 21
+DIM OP_CMP = 22
+DIM OP_CPX = 23
+DIM OP_CPY = 24
+DIM OP_INC = 25
+DIM OP_DEC = 26
+DIM OP_INX = 27
+DIM OP_DEX = 28
+DIM OP_INY = 29
+DIM OP_DEY = 30
+DIM OP_ASL = 31
+DIM OP_LSR = 32
+DIM OP_ROL = 33
+DIM OP_ROR = 34
+DIM OP_JMP = 35
+DIM OP_JSR = 36
+DIM OP_RTS = 37
+DIM OP_BCC = 38
+DIM OP_BCS = 39
+DIM OP_BEQ = 40
+DIM OP_BNE = 41
+DIM OP_BMI = 42
+DIM OP_BPL = 43
+DIM OP_BVC = 44
+DIM OP_BVS = 45
+DIM OP_CLC = 46
+DIM OP_SEC = 47
+DIM OP_CLI = 48
+DIM OP_SEI = 49
+DIM OP_CLD = 50
+DIM OP_SED = 51
+DIM OP_CLV = 52
+DIM OP_NOP = 53
+DIM OP_BRK = 54
+DIM OP_RTI = 55
+DIM OP_BIT = 56
+
+' ─── State ─────────────────────────────────────────────────────
+DIM cpu_a = 0
+DIM cpu_x = 0
+DIM cpu_y = 0
+DIM cpu_sp = $FD
+DIM cpu_pc = 0
+DIM cpu_p = $24
+DIM cpu_cycles = 0
+
+' Memory + dispatch tables. Sized at module load — the FORs in INIT()
+' just zero-fill them so they can be re-INITed without losing the type.
+DIM mem[65536]
+DIM op_tbl[256]
+DIM am_tbl[256]
+DIM cyc_tbl[256]
+DIM tables_ready = 0
+
+' ─── Public API ────────────────────────────────────────────────
+
+EXPORT SUB INIT()
+    DIM mem[65536]
+    DIM op_tbl[256]
+    DIM am_tbl[256]
+    DIM cyc_tbl[256]
+    DIM i
+    FOR i = 0 TO 65535
+        mem[i] = 0
+    NEXT i
+    FOR i = 0 TO 255
+        op_tbl[i] = OP_NIL
+        am_tbl[i] = AM_IMP
+        cyc_tbl[i] = 2
+    NEXT i
+    init_optable()
+    tables_ready = 1
+    cpu_a = 0
+    cpu_x = 0
+    cpu_y = 0
+    cpu_sp = $FD
+    cpu_p = FLAG_I BOR FLAG_U
+    cpu_pc = 0
+    cpu_cycles = 0
+ENDSUB
+
+EXPORT SUB RESET()
+    cpu_a = 0
+    cpu_x = 0
+    cpu_y = 0
+    cpu_sp = $FD
+    cpu_p = FLAG_I BOR FLAG_U
+    cpu_pc = mem[$FFFC] BOR (mem[$FFFD] SHL 8)
+    cpu_cycles = 0
+ENDSUB
+
+EXPORT FUNC READ(addr)
+    RETURN mem[addr BAND $FFFF]
+ENDFUNC
+
+EXPORT SUB WRITE(addr, val)
+    mem[addr BAND $FFFF] = val BAND $FF
+ENDSUB
+
+EXPORT SUB LOAD(start_addr, bytes_arr)
+    DIM i
+    FOR i = 0 TO LEN(bytes_arr) - 1
+        mem[(start_addr + i) BAND $FFFF] = bytes_arr[i] BAND $FF
+    NEXT i
+ENDSUB
+
+EXPORT SUB SET_PC(addr)
+    cpu_pc = addr BAND $FFFF
+ENDSUB
+
+EXPORT FUNC GET_A()  : RETURN cpu_a  : ENDFUNC
+EXPORT FUNC GET_X()  : RETURN cpu_x  : ENDFUNC
+EXPORT FUNC GET_Y()  : RETURN cpu_y  : ENDFUNC
+EXPORT FUNC GET_SP() : RETURN cpu_sp : ENDFUNC
+EXPORT FUNC GET_PC() : RETURN cpu_pc : ENDFUNC
+EXPORT FUNC GET_P()  : RETURN cpu_p  : ENDFUNC
+EXPORT FUNC GET_CYCLES() : RETURN cpu_cycles : ENDFUNC
+
+EXPORT FUNC GET_FLAG(flag)
+    IF (cpu_p BAND flag) <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Step one instruction. Returns cycles consumed.
+' (Named TICK because STEP is a reserved keyword in jdBasic FOR loops.)
+EXPORT FUNC STEP_ONE()
+    DIM op = mem[cpu_pc]
+    DIM opcode = op_tbl[op]
+    DIM amode = am_tbl[op]
+    DIM ncyc = cyc_tbl[op]
+    cpu_pc = (cpu_pc + 1) BAND $FFFF
+    DIM addr = resolve_addr(amode)
+    execute(opcode, amode, addr)
+    cpu_cycles = cpu_cycles + ncyc
+    RETURN ncyc
+ENDFUNC
+
+' Run until cumulative cycles >= budget. Returns total cycles consumed.
+EXPORT FUNC RUN(max_cycles)
+    DIM start = cpu_cycles
+    DO WHILE (cpu_cycles - start) < max_cycles
+        STEP_ONE()
+    LOOP
+    RETURN cpu_cycles - start
+ENDFUNC
+
+' Run until PC reaches a target address (e.g. test scaffolding can BRK
+' or JMP-to-self at the end of a program).
+EXPORT FUNC RUN_UNTIL(target_pc, max_steps)
+    DIM steps = 0
+    DO WHILE cpu_pc <> target_pc AND steps < max_steps
+        STEP_ONE()
+        steps = steps + 1
+    LOOP
+    RETURN steps
+ENDFUNC
+
+' ─── Internal: address-mode resolution ─────────────────────────
+
+FUNC resolve_addr(am)
+    DIM addr
+    DIM lo
+    DIM hi
+    DIM zp
+    DIM ptr
+    DIM ptr_hi
+    DIM offset
+
+    SWITCH am
+        CASE AM_IMP
+            RETURN 0
+        CASE AM_ACC
+            RETURN 0
+        CASE AM_IMM
+            addr = cpu_pc
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            RETURN addr
+        CASE AM_ZP
+            addr = mem[cpu_pc]
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            RETURN addr
+        CASE AM_ZPX
+            addr = (mem[cpu_pc] + cpu_x) BAND $FF
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            RETURN addr
+        CASE AM_ZPY
+            addr = (mem[cpu_pc] + cpu_y) BAND $FF
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            RETURN addr
+        CASE AM_ABS
+            lo = mem[cpu_pc]
+            hi = mem[(cpu_pc + 1) BAND $FFFF]
+            cpu_pc = (cpu_pc + 2) BAND $FFFF
+            RETURN lo BOR (hi SHL 8)
+        CASE AM_ABX
+            lo = mem[cpu_pc]
+            hi = mem[(cpu_pc + 1) BAND $FFFF]
+            cpu_pc = (cpu_pc + 2) BAND $FFFF
+            RETURN ((lo BOR (hi SHL 8)) + cpu_x) BAND $FFFF
+        CASE AM_ABY
+            lo = mem[cpu_pc]
+            hi = mem[(cpu_pc + 1) BAND $FFFF]
+            cpu_pc = (cpu_pc + 2) BAND $FFFF
+            RETURN ((lo BOR (hi SHL 8)) + cpu_y) BAND $FFFF
+        CASE AM_IND
+            ' JMP ($nnnn) — and the famous 6502 page-wrap bug:
+            ' the high byte of the target is fetched without crossing
+            ' the page boundary (e.g. JMP ($30FF) reads from $30FF and
+            ' $3000, not $3100).
+            lo = mem[cpu_pc]
+            hi = mem[(cpu_pc + 1) BAND $FFFF]
+            cpu_pc = (cpu_pc + 2) BAND $FFFF
+            ptr = lo BOR (hi SHL 8)
+            ptr_hi = (ptr BAND $FF00) BOR ((ptr + 1) BAND $FF)
+            RETURN mem[ptr] BOR (mem[ptr_hi] SHL 8)
+        CASE AM_INX
+            zp = (mem[cpu_pc] + cpu_x) BAND $FF
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            lo = mem[zp]
+            hi = mem[(zp + 1) BAND $FF]
+            RETURN lo BOR (hi SHL 8)
+        CASE AM_INY
+            zp = mem[cpu_pc]
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            lo = mem[zp]
+            hi = mem[(zp + 1) BAND $FF]
+            RETURN ((lo BOR (hi SHL 8)) + cpu_y) BAND $FFFF
+        CASE AM_REL
+            offset = mem[cpu_pc]
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            IF offset >= 128 THEN offset = offset - 256
+            RETURN (cpu_pc + offset) BAND $FFFF
+    ENDSWITCH
+    RETURN 0
+ENDFUNC
+
+' ─── Internal: flag helpers ────────────────────────────────────
+
+SUB set_flag(flag, set_it)
+    IF set_it THEN
+        cpu_p = (cpu_p BOR flag) BAND $FF
+    ELSE
+        cpu_p = cpu_p BAND (flag BXOR $FF)
+    ENDIF
+ENDSUB
+
+SUB set_nz(val)
+    val = val BAND $FF
+    IF val = 0 THEN
+        cpu_p = (cpu_p BOR FLAG_Z) BAND $FF
+    ELSE
+        cpu_p = cpu_p BAND (FLAG_Z BXOR $FF)
+    ENDIF
+    IF (val BAND $80) <> 0 THEN
+        cpu_p = (cpu_p BOR FLAG_N) BAND $FF
+    ELSE
+        cpu_p = cpu_p BAND (FLAG_N BXOR $FF)
+    ENDIF
+ENDSUB
+
+' Push/pop on the page-1 stack ($0100 + SP).
+SUB push8(val)
+    mem[$0100 + cpu_sp] = val BAND $FF
+    cpu_sp = (cpu_sp - 1) BAND $FF
+ENDSUB
+
+FUNC pop8()
+    cpu_sp = (cpu_sp + 1) BAND $FF
+    RETURN mem[$0100 + cpu_sp]
+ENDFUNC
+
+SUB push16(val)
+    push8((val SHR 8) BAND $FF)
+    push8(val BAND $FF)
+ENDSUB
+
+FUNC pop16()
+    DIM lo = pop8()
+    DIM hi = pop8()
+    RETURN lo BOR (hi SHL 8)
+ENDFUNC
+
+' Compare helper used by CMP / CPX / CPY.
+SUB cmp_set_flags(reg, val)
+    DIM r = (reg - val) BAND $1FF
+    IF reg >= val THEN
+        cpu_p = (cpu_p BOR FLAG_C) BAND $FF
+    ELSE
+        cpu_p = cpu_p BAND (FLAG_C BXOR $FF)
+    ENDIF
+    set_nz(r BAND $FF)
+ENDSUB
+
+' ─── Opcode table init ─────────────────────────────────────────
+
+SUB def_op(op, opcode, am, cycles)
+    op_tbl[op] = opcode
+    am_tbl[op] = am
+    cyc_tbl[op] = cycles
+ENDSUB
+
+SUB init_optable()
+    ' Loads
+    def_op($A9, OP_LDA, AM_IMM, 2)
+    def_op($A5, OP_LDA, AM_ZP,  3)
+    def_op($B5, OP_LDA, AM_ZPX, 4)
+    def_op($AD, OP_LDA, AM_ABS, 4)
+    def_op($BD, OP_LDA, AM_ABX, 4)
+    def_op($B9, OP_LDA, AM_ABY, 4)
+    def_op($A1, OP_LDA, AM_INX, 6)
+    def_op($B1, OP_LDA, AM_INY, 5)
+
+    def_op($A2, OP_LDX, AM_IMM, 2)
+    def_op($A6, OP_LDX, AM_ZP,  3)
+    def_op($B6, OP_LDX, AM_ZPY, 4)
+    def_op($AE, OP_LDX, AM_ABS, 4)
+    def_op($BE, OP_LDX, AM_ABY, 4)
+
+    def_op($A0, OP_LDY, AM_IMM, 2)
+    def_op($A4, OP_LDY, AM_ZP,  3)
+    def_op($B4, OP_LDY, AM_ZPX, 4)
+    def_op($AC, OP_LDY, AM_ABS, 4)
+    def_op($BC, OP_LDY, AM_ABX, 4)
+
+    ' Stores
+    def_op($85, OP_STA, AM_ZP,  3)
+    def_op($95, OP_STA, AM_ZPX, 4)
+    def_op($8D, OP_STA, AM_ABS, 4)
+    def_op($9D, OP_STA, AM_ABX, 5)
+    def_op($99, OP_STA, AM_ABY, 5)
+    def_op($81, OP_STA, AM_INX, 6)
+    def_op($91, OP_STA, AM_INY, 6)
+    def_op($86, OP_STX, AM_ZP,  3)
+    def_op($96, OP_STX, AM_ZPY, 4)
+    def_op($8E, OP_STX, AM_ABS, 4)
+    def_op($84, OP_STY, AM_ZP,  3)
+    def_op($94, OP_STY, AM_ZPX, 4)
+    def_op($8C, OP_STY, AM_ABS, 4)
+
+    ' Transfers
+    def_op($AA, OP_TAX, AM_IMP, 2)
+    def_op($A8, OP_TAY, AM_IMP, 2)
+    def_op($8A, OP_TXA, AM_IMP, 2)
+    def_op($98, OP_TYA, AM_IMP, 2)
+    def_op($BA, OP_TSX, AM_IMP, 2)
+    def_op($9A, OP_TXS, AM_IMP, 2)
+
+    ' Stack
+    def_op($48, OP_PHA, AM_IMP, 3)
+    def_op($68, OP_PLA, AM_IMP, 4)
+    def_op($08, OP_PHP, AM_IMP, 3)
+    def_op($28, OP_PLP, AM_IMP, 4)
+
+    ' Logic
+    def_op($29, OP_AND, AM_IMM, 2)
+    def_op($25, OP_AND, AM_ZP,  3)
+    def_op($35, OP_AND, AM_ZPX, 4)
+    def_op($2D, OP_AND, AM_ABS, 4)
+    def_op($3D, OP_AND, AM_ABX, 4)
+    def_op($39, OP_AND, AM_ABY, 4)
+    def_op($21, OP_AND, AM_INX, 6)
+    def_op($31, OP_AND, AM_INY, 5)
+
+    def_op($09, OP_ORA, AM_IMM, 2)
+    def_op($05, OP_ORA, AM_ZP,  3)
+    def_op($15, OP_ORA, AM_ZPX, 4)
+    def_op($0D, OP_ORA, AM_ABS, 4)
+    def_op($1D, OP_ORA, AM_ABX, 4)
+    def_op($19, OP_ORA, AM_ABY, 4)
+    def_op($01, OP_ORA, AM_INX, 6)
+    def_op($11, OP_ORA, AM_INY, 5)
+
+    def_op($49, OP_EOR, AM_IMM, 2)
+    def_op($45, OP_EOR, AM_ZP,  3)
+    def_op($55, OP_EOR, AM_ZPX, 4)
+    def_op($4D, OP_EOR, AM_ABS, 4)
+    def_op($5D, OP_EOR, AM_ABX, 4)
+    def_op($59, OP_EOR, AM_ABY, 4)
+    def_op($41, OP_EOR, AM_INX, 6)
+    def_op($51, OP_EOR, AM_INY, 5)
+
+    ' Arithmetic
+    def_op($69, OP_ADC, AM_IMM, 2)
+    def_op($65, OP_ADC, AM_ZP,  3)
+    def_op($75, OP_ADC, AM_ZPX, 4)
+    def_op($6D, OP_ADC, AM_ABS, 4)
+    def_op($7D, OP_ADC, AM_ABX, 4)
+    def_op($79, OP_ADC, AM_ABY, 4)
+    def_op($61, OP_ADC, AM_INX, 6)
+    def_op($71, OP_ADC, AM_INY, 5)
+
+    def_op($E9, OP_SBC, AM_IMM, 2)
+    def_op($E5, OP_SBC, AM_ZP,  3)
+    def_op($F5, OP_SBC, AM_ZPX, 4)
+    def_op($ED, OP_SBC, AM_ABS, 4)
+    def_op($FD, OP_SBC, AM_ABX, 4)
+    def_op($F9, OP_SBC, AM_ABY, 4)
+    def_op($E1, OP_SBC, AM_INX, 6)
+    def_op($F1, OP_SBC, AM_INY, 5)
+
+    ' Compare
+    def_op($C9, OP_CMP, AM_IMM, 2)
+    def_op($C5, OP_CMP, AM_ZP,  3)
+    def_op($D5, OP_CMP, AM_ZPX, 4)
+    def_op($CD, OP_CMP, AM_ABS, 4)
+    def_op($DD, OP_CMP, AM_ABX, 4)
+    def_op($D9, OP_CMP, AM_ABY, 4)
+    def_op($C1, OP_CMP, AM_INX, 6)
+    def_op($D1, OP_CMP, AM_INY, 5)
+
+    def_op($E0, OP_CPX, AM_IMM, 2)
+    def_op($E4, OP_CPX, AM_ZP,  3)
+    def_op($EC, OP_CPX, AM_ABS, 4)
+
+    def_op($C0, OP_CPY, AM_IMM, 2)
+    def_op($C4, OP_CPY, AM_ZP,  3)
+    def_op($CC, OP_CPY, AM_ABS, 4)
+
+    ' Inc / Dec
+    def_op($E6, OP_INC, AM_ZP,  5)
+    def_op($F6, OP_INC, AM_ZPX, 6)
+    def_op($EE, OP_INC, AM_ABS, 6)
+    def_op($FE, OP_INC, AM_ABX, 7)
+    def_op($C6, OP_DEC, AM_ZP,  5)
+    def_op($D6, OP_DEC, AM_ZPX, 6)
+    def_op($CE, OP_DEC, AM_ABS, 6)
+    def_op($DE, OP_DEC, AM_ABX, 7)
+    def_op($E8, OP_INX, AM_IMP, 2)
+    def_op($CA, OP_DEX, AM_IMP, 2)
+    def_op($C8, OP_INY, AM_IMP, 2)
+    def_op($88, OP_DEY, AM_IMP, 2)
+
+    ' Shifts / rotates
+    def_op($0A, OP_ASL, AM_ACC, 2)
+    def_op($06, OP_ASL, AM_ZP,  5)
+    def_op($16, OP_ASL, AM_ZPX, 6)
+    def_op($0E, OP_ASL, AM_ABS, 6)
+    def_op($1E, OP_ASL, AM_ABX, 7)
+    def_op($4A, OP_LSR, AM_ACC, 2)
+    def_op($46, OP_LSR, AM_ZP,  5)
+    def_op($56, OP_LSR, AM_ZPX, 6)
+    def_op($4E, OP_LSR, AM_ABS, 6)
+    def_op($5E, OP_LSR, AM_ABX, 7)
+    def_op($2A, OP_ROL, AM_ACC, 2)
+    def_op($26, OP_ROL, AM_ZP,  5)
+    def_op($36, OP_ROL, AM_ZPX, 6)
+    def_op($2E, OP_ROL, AM_ABS, 6)
+    def_op($3E, OP_ROL, AM_ABX, 7)
+    def_op($6A, OP_ROR, AM_ACC, 2)
+    def_op($66, OP_ROR, AM_ZP,  5)
+    def_op($76, OP_ROR, AM_ZPX, 6)
+    def_op($6E, OP_ROR, AM_ABS, 6)
+    def_op($7E, OP_ROR, AM_ABX, 7)
+
+    ' Jumps / subroutine
+    def_op($4C, OP_JMP, AM_ABS, 3)
+    def_op($6C, OP_JMP, AM_IND, 5)
+    def_op($20, OP_JSR, AM_ABS, 6)
+    def_op($60, OP_RTS, AM_IMP, 6)
+    def_op($40, OP_RTI, AM_IMP, 6)
+    def_op($00, OP_BRK, AM_IMP, 7)
+
+    ' Branches
+    def_op($90, OP_BCC, AM_REL, 2)
+    def_op($B0, OP_BCS, AM_REL, 2)
+    def_op($F0, OP_BEQ, AM_REL, 2)
+    def_op($D0, OP_BNE, AM_REL, 2)
+    def_op($30, OP_BMI, AM_REL, 2)
+    def_op($10, OP_BPL, AM_REL, 2)
+    def_op($50, OP_BVC, AM_REL, 2)
+    def_op($70, OP_BVS, AM_REL, 2)
+
+    ' Flag ops
+    def_op($18, OP_CLC, AM_IMP, 2)
+    def_op($38, OP_SEC, AM_IMP, 2)
+    def_op($58, OP_CLI, AM_IMP, 2)
+    def_op($78, OP_SEI, AM_IMP, 2)
+    def_op($D8, OP_CLD, AM_IMP, 2)
+    def_op($F8, OP_SED, AM_IMP, 2)
+    def_op($B8, OP_CLV, AM_IMP, 2)
+
+    ' BIT
+    def_op($24, OP_BIT, AM_ZP,  3)
+    def_op($2C, OP_BIT, AM_ABS, 4)
+
+    ' NOP
+    def_op($EA, OP_NOP, AM_IMP, 2)
+ENDSUB
+
+' ─── Internal: dispatch ────────────────────────────────────────
+
+SUB execute(opcode, amode, addr)
+    DIM val
+    DIM r
+    DIM s
+    DIM c
+    DIM old_c
+
+    SWITCH opcode
+        CASE OP_LDA
+            cpu_a = mem[addr] BAND $FF
+            set_nz(cpu_a)
+        CASE OP_LDX
+            cpu_x = mem[addr] BAND $FF
+            set_nz(cpu_x)
+        CASE OP_LDY
+            cpu_y = mem[addr] BAND $FF
+            set_nz(cpu_y)
+
+        CASE OP_STA
+            mem[addr] = cpu_a BAND $FF
+        CASE OP_STX
+            mem[addr] = cpu_x BAND $FF
+        CASE OP_STY
+            mem[addr] = cpu_y BAND $FF
+
+        CASE OP_TAX
+            cpu_x = cpu_a
+            set_nz(cpu_x)
+        CASE OP_TAY
+            cpu_y = cpu_a
+            set_nz(cpu_y)
+        CASE OP_TXA
+            cpu_a = cpu_x
+            set_nz(cpu_a)
+        CASE OP_TYA
+            cpu_a = cpu_y
+            set_nz(cpu_a)
+        CASE OP_TSX
+            cpu_x = cpu_sp
+            set_nz(cpu_x)
+        CASE OP_TXS
+            cpu_sp = cpu_x
+
+        CASE OP_PHA
+            push8(cpu_a)
+        CASE OP_PLA
+            cpu_a = pop8()
+            set_nz(cpu_a)
+        CASE OP_PHP
+            push8((cpu_p BOR FLAG_B BOR FLAG_U) BAND $FF)
+        CASE OP_PLP
+            cpu_p = (pop8() BAND (FLAG_B BXOR $FF)) BOR FLAG_U
+
+        CASE OP_AND
+            cpu_a = (cpu_a BAND mem[addr]) BAND $FF
+            set_nz(cpu_a)
+        CASE OP_ORA
+            cpu_a = (cpu_a BOR mem[addr]) BAND $FF
+            set_nz(cpu_a)
+        CASE OP_EOR
+            cpu_a = (cpu_a BXOR mem[addr]) BAND $FF
+            set_nz(cpu_a)
+
+        CASE OP_ADC
+            val = mem[addr] BAND $FF
+            old_c = (cpu_p BAND FLAG_C)
+            r = cpu_a + val + old_c
+            ' Decimal mode: adjust if D flag set.
+            IF (cpu_p BAND FLAG_D) <> 0 THEN
+                IF ((cpu_a BAND $0F) + (val BAND $0F) + old_c) > 9 THEN r = r + 6
+                IF r > $99 THEN r = r + 96
+                IF r > $FF THEN
+                    cpu_p = (cpu_p BOR FLAG_C) BAND $FF
+                ELSE
+                    cpu_p = cpu_p BAND (FLAG_C BXOR $FF)
+                ENDIF
+            ELSE
+                IF r > $FF THEN
+                    cpu_p = (cpu_p BOR FLAG_C) BAND $FF
+                ELSE
+                    cpu_p = cpu_p BAND (FLAG_C BXOR $FF)
+                ENDIF
+            ENDIF
+            ' Overflow: set when sign of result differs from both operands' signs match
+            IF (((cpu_a BXOR r) BAND (val BXOR r)) BAND $80) <> 0 THEN
+                cpu_p = (cpu_p BOR FLAG_V) BAND $FF
+            ELSE
+                cpu_p = cpu_p BAND (FLAG_V BXOR $FF)
+            ENDIF
+            cpu_a = r BAND $FF
+            set_nz(cpu_a)
+
+        CASE OP_SBC
+            val = mem[addr] BAND $FF
+            old_c = (cpu_p BAND FLAG_C)
+            ' Standard 6502 SBC = ADC of one's complement
+            r = cpu_a - val - (1 - old_c)
+            IF (cpu_p BAND FLAG_D) <> 0 THEN
+                IF ((cpu_a BAND $0F) - (1 - old_c)) < (val BAND $0F) THEN r = r - 6
+                IF r > $FF THEN r = r - 96
+            ENDIF
+            IF (cpu_a BXOR val) BAND (cpu_a BXOR (r BAND $FF)) BAND $80 <> 0 THEN
+                cpu_p = (cpu_p BOR FLAG_V) BAND $FF
+            ELSE
+                cpu_p = cpu_p BAND (FLAG_V BXOR $FF)
+            ENDIF
+            IF cpu_a >= val + (1 - old_c) THEN
+                cpu_p = (cpu_p BOR FLAG_C) BAND $FF
+            ELSE
+                cpu_p = cpu_p BAND (FLAG_C BXOR $FF)
+            ENDIF
+            cpu_a = r BAND $FF
+            set_nz(cpu_a)
+
+        CASE OP_CMP
+            cmp_set_flags(cpu_a, mem[addr])
+        CASE OP_CPX
+            cmp_set_flags(cpu_x, mem[addr])
+        CASE OP_CPY
+            cmp_set_flags(cpu_y, mem[addr])
+
+        CASE OP_INC
+            val = (mem[addr] + 1) BAND $FF
+            mem[addr] = val
+            set_nz(val)
+        CASE OP_DEC
+            val = (mem[addr] - 1) BAND $FF
+            mem[addr] = val
+            set_nz(val)
+        CASE OP_INX
+            cpu_x = (cpu_x + 1) BAND $FF
+            set_nz(cpu_x)
+        CASE OP_DEX
+            cpu_x = (cpu_x - 1) BAND $FF
+            set_nz(cpu_x)
+        CASE OP_INY
+            cpu_y = (cpu_y + 1) BAND $FF
+            set_nz(cpu_y)
+        CASE OP_DEY
+            cpu_y = (cpu_y - 1) BAND $FF
+            set_nz(cpu_y)
+
+        CASE OP_ASL
+            IF amode = AM_ACC THEN
+                c = (cpu_a SHR 7) BAND 1
+                cpu_a = (cpu_a SHL 1) BAND $FF
+                set_flag(FLAG_C, c)
+                set_nz(cpu_a)
+            ELSE
+                val = mem[addr]
+                c = (val SHR 7) BAND 1
+                val = (val SHL 1) BAND $FF
+                mem[addr] = val
+                set_flag(FLAG_C, c)
+                set_nz(val)
+            ENDIF
+        CASE OP_LSR
+            IF amode = AM_ACC THEN
+                c = cpu_a BAND 1
+                cpu_a = (cpu_a SHR 1) BAND $FF
+                set_flag(FLAG_C, c)
+                set_nz(cpu_a)
+            ELSE
+                val = mem[addr]
+                c = val BAND 1
+                val = (val SHR 1) BAND $FF
+                mem[addr] = val
+                set_flag(FLAG_C, c)
+                set_nz(val)
+            ENDIF
+        CASE OP_ROL
+            IF amode = AM_ACC THEN
+                c = (cpu_a SHR 7) BAND 1
+                cpu_a = ((cpu_a SHL 1) BOR (cpu_p BAND FLAG_C)) BAND $FF
+                set_flag(FLAG_C, c)
+                set_nz(cpu_a)
+            ELSE
+                val = mem[addr]
+                c = (val SHR 7) BAND 1
+                val = ((val SHL 1) BOR (cpu_p BAND FLAG_C)) BAND $FF
+                mem[addr] = val
+                set_flag(FLAG_C, c)
+                set_nz(val)
+            ENDIF
+        CASE OP_ROR
+            IF amode = AM_ACC THEN
+                c = cpu_a BAND 1
+                cpu_a = ((cpu_a SHR 1) BOR ((cpu_p BAND FLAG_C) SHL 7)) BAND $FF
+                set_flag(FLAG_C, c)
+                set_nz(cpu_a)
+            ELSE
+                val = mem[addr]
+                c = val BAND 1
+                val = ((val SHR 1) BOR ((cpu_p BAND FLAG_C) SHL 7)) BAND $FF
+                mem[addr] = val
+                set_flag(FLAG_C, c)
+                set_nz(val)
+            ENDIF
+
+        CASE OP_JMP
+            cpu_pc = addr
+        CASE OP_JSR
+            ' JSR pushes (PC - 1) so that RTS pulls it and adds 1.
+            push16((cpu_pc - 1) BAND $FFFF)
+            cpu_pc = addr
+        CASE OP_RTS
+            cpu_pc = (pop16() + 1) BAND $FFFF
+        CASE OP_RTI
+            cpu_p = (pop8() BAND (FLAG_B BXOR $FF)) BOR FLAG_U
+            cpu_pc = pop16()
+
+        CASE OP_BCC
+            IF (cpu_p BAND FLAG_C) = 0 THEN cpu_pc = addr
+        CASE OP_BCS
+            IF (cpu_p BAND FLAG_C) <> 0 THEN cpu_pc = addr
+        CASE OP_BEQ
+            IF (cpu_p BAND FLAG_Z) <> 0 THEN cpu_pc = addr
+        CASE OP_BNE
+            IF (cpu_p BAND FLAG_Z) = 0 THEN cpu_pc = addr
+        CASE OP_BMI
+            IF (cpu_p BAND FLAG_N) <> 0 THEN cpu_pc = addr
+        CASE OP_BPL
+            IF (cpu_p BAND FLAG_N) = 0 THEN cpu_pc = addr
+        CASE OP_BVC
+            IF (cpu_p BAND FLAG_V) = 0 THEN cpu_pc = addr
+        CASE OP_BVS
+            IF (cpu_p BAND FLAG_V) <> 0 THEN cpu_pc = addr
+
+        CASE OP_CLC
+            cpu_p = cpu_p BAND (FLAG_C BXOR $FF)
+        CASE OP_SEC
+            cpu_p = (cpu_p BOR FLAG_C) BAND $FF
+        CASE OP_CLI
+            cpu_p = cpu_p BAND (FLAG_I BXOR $FF)
+        CASE OP_SEI
+            cpu_p = (cpu_p BOR FLAG_I) BAND $FF
+        CASE OP_CLD
+            cpu_p = cpu_p BAND (FLAG_D BXOR $FF)
+        CASE OP_SED
+            cpu_p = (cpu_p BOR FLAG_D) BAND $FF
+        CASE OP_CLV
+            cpu_p = cpu_p BAND (FLAG_V BXOR $FF)
+
+        CASE OP_BIT
+            val = mem[addr]
+            IF (cpu_a BAND val) = 0 THEN
+                cpu_p = (cpu_p BOR FLAG_Z) BAND $FF
+            ELSE
+                cpu_p = cpu_p BAND (FLAG_Z BXOR $FF)
+            ENDIF
+            ' N from bit 7 of memory, V from bit 6
+            cpu_p = (cpu_p BAND ((FLAG_N BOR FLAG_V) BXOR $FF)) BOR (val BAND (FLAG_N BOR FLAG_V))
+
+        CASE OP_BRK
+            ' BRK pushes PC+1 (the byte after BRK is reserved) and the
+            ' status register with B set, then jumps via $FFFE/$FFFF.
+            cpu_pc = (cpu_pc + 1) BAND $FFFF
+            push16(cpu_pc)
+            push8((cpu_p BOR FLAG_B BOR FLAG_U) BAND $FF)
+            cpu_p = (cpu_p BOR FLAG_I) BAND $FF
+            cpu_pc = mem[$FFFE] BOR (mem[$FFFF] SHL 8)
+
+        CASE OP_NOP
+            ' nothing
+        CASE OP_NIL
+            ' Illegal / unimplemented opcode — treated as NOP.
+    ENDSWITCH
+ENDSUB
