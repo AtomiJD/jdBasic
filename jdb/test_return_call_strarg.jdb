@@ -1,0 +1,33 @@
+' Regression: native codegen used to over-classify FUNCs as
+' string-returning when ANY string literal appeared inside a RETURN
+' expression — even nested as a CALL argument. Result: ASC("!") in
+' a RETURN crashed because the FUNC was ptr-returning but ASC gives
+' i64. Fix: expr_involves_strings no longer recurses into CALL args.
+
+FUNC f(kc)
+    SWITCH kc
+        CASE ASC("1") : RETURN ASC("!")
+        CASE ASC("2") : RETURN ASC("@")
+    ENDSWITCH
+    IF kc >= ASC("a") AND kc <= ASC("z") THEN RETURN kc - 32
+    RETURN kc
+ENDFUNC
+
+DIM passes = 0
+DIM fails = 0
+
+SUB CHK(label$, got, want)
+    IF got = want THEN
+        passes = passes + 1
+    ELSE
+        fails = fails + 1
+        PRINT "  FAIL " + label$ + ": got " + STR$(got) + " want " + STR$(want)
+    ENDIF
+ENDSUB
+
+CHK("f(101) = 'e' -> 'E'", f(101), 69)
+CHK("f(48)  = '0' -> '0'", f(48),  48)
+CHK("f(49)  = '1' -> '!'", f(49),  33)
+CHK("f(50)  = '2' -> '@'", f(50),  64)
+
+PRINT "RETURN-call-with-string-arg regression: " + STR$(passes) + " pass, " + STR$(fails) + " fail"

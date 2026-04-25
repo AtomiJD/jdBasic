@@ -6297,11 +6297,21 @@ bool LLVMCodegen::is_udt_string_field(const std::string& var_name, const std::st
 }
 
 bool LLVMCodegen::expr_involves_strings(const Expr& e) {
+    // Used to infer whether a `RETURN <expr>` makes the surrounding
+    // FUNC string-returning. We must look at what the EXPRESSION
+    // evaluates to, NOT what's nested inside. Recursing into CALL
+    // args was wrong: ASC("!") has a string literal argument but
+    // returns int — yet recursing flagged the whole FUNC as string-
+    // returning, so the codegen made `ret_type = ptr`. PRINT later
+    // tried to %s-format an int-as-pointer and segfaulted.
     if (e.kind == ExprKind::LITERAL_STRING) return true;
+    if (e.kind == ExprKind::VARIABLE && !e.str_val.empty() && e.str_val.back() == '$') return true;
     if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') return true;
-    if (e.left && expr_involves_strings(*e.left)) return true;
-    if (e.right && expr_involves_strings(*e.right)) return true;
-    for (auto& a : e.args) if (a && expr_involves_strings(*a)) return true;
+    // String concatenation: any arm being a string makes the result string.
+    if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) {
+        if (e.left && expr_involves_strings(*e.left)) return true;
+        if (e.right && expr_involves_strings(*e.right)) return true;
+    }
     return false;
 }
 
