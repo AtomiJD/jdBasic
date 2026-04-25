@@ -1,0 +1,47 @@
+' boot_probe.jdb — load Apple II ROMs, reset, run a fixed cycle budget,
+' and report where the CPU ended up. No SCREEN — pure introspection.
+
+IMPORT APPLE2
+
+FUNC IO_READ(addr)
+    RETURN APPLE2.IO_READ_DISPATCH(addr)
+ENDFUNC
+SUB IO_WRITE(addr, val)
+    APPLE2.IO_WRITE_DISPATCH(addr, val)
+ENDSUB
+
+PRINT "Booting Apple II..."
+APPLE2.INIT()
+DIM rom_n = APPLE2.LOAD_APPLE2_ROMS("thingsforyou")
+PRINT "ROM bytes loaded: " + STR$(rom_n)
+APPLE2.LOAD_CHAR_ROM("thingsforyou/Apple II Character ROM - 341-0036.bin")
+
+CPU6502.RESET()
+DIM start_pc = CPU6502.GET_PC()
+PRINT "Start PC after RESET: $" + HEX$(start_pc)
+
+DIM t0 = TICK
+DIM budget = 200000
+DIM consumed = CPU6502.RUN(budget)
+DIM elapsed_ms = (TICK - t0) * 1000
+
+PRINT "Ran " + STR$(consumed) + " cycles in " + STR$(elapsed_ms) + " ms"
+PRINT "  (~" + STR$(INT(consumed * 1000 / (elapsed_ms + 1))) + " cycles/sec)"
+PRINT "End PC: $" + HEX$(CPU6502.GET_PC())
+PRINT "A=$" + HEX$(CPU6502.GET_A()) + " X=$" + HEX$(CPU6502.GET_X()) + " Y=$" + HEX$(CPU6502.GET_Y())
+PRINT "SP=$" + HEX$(CPU6502.GET_SP()) + " P=$" + HEX$(CPU6502.GET_P())
+
+' Glance at the text page top-left in case the ROM has already drawn anything.
+PRINT
+PRINT "Text page row 0:"
+DIM line$ = ""
+DIM c
+FOR c = 0 TO 39
+    DIM ch = APPLE2.TEXT_READ(c, 0)
+    IF ch >= $20 AND ch < $7F THEN
+        line$ = line$ + CHR$(ch)
+    ELSE
+        line$ = line$ + "."
+    ENDIF
+NEXT c
+PRINT "[" + line$ + "]"

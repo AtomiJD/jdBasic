@@ -1,0 +1,38 @@
+' Cross-module write chain: host -> MODWRAP -> MODGLOB.
+
+IMPORT MODWRAP
+
+' Test pattern fill (no file I/O) first to isolate BINREADER$/BYTEAT.
+MODWRAP.FILL_PATTERN($F800, 2048)
+DIM last_pat = -1
+DIM zc_pat = 0
+DIM a
+FOR a = $F800 TO $FFFF
+    IF MODGLOB.PEEK(a) <> 0 THEN last_pat = a ELSE zc_pat = zc_pat + 1
+NEXT a
+PRINT "FILL_PATTERN: last non-zero $"; HEX$(last_pat); ", zeros = "; zc_pat; "/2048"
+PRINT
+
+MODWRAP.BOOTLIKE()
+PRINT "After BOOTLIKE — sweep $F800..$FFFF for last non-zero byte:"
+DIM last_nonzero = -1
+DIM zero_count = 0
+DIM addr
+FOR addr = $F800 TO $FFFF
+    IF MODGLOB.PEEK(addr) <> 0 THEN
+        last_nonzero = addr
+    ELSE
+        zero_count = zero_count + 1
+    ENDIF
+NEXT addr
+PRINT "  last non-zero byte at: $"; HEX$(last_nonzero)
+PRINT "  zero count: "; zero_count; " of 2048"
+PRINT
+PRINT "  PEEK($F800) = "; MODGLOB.PEEK($F800)
+PRINT "  PEEK($F900) = "; MODGLOB.PEEK($F900)
+PRINT "  PEEK($FA00) = "; MODGLOB.PEEK($FA00)
+PRINT "  PEEK($FB00) = "; MODGLOB.PEEK($FB00)
+PRINT "  PEEK($FC00) = "; MODGLOB.PEEK($FC00)
+PRINT "  PEEK($FD00) = "; MODGLOB.PEEK($FD00)
+PRINT "  PEEK($FE00) = "; MODGLOB.PEEK($FE00)
+PRINT "  PEEK($FF00) = "; MODGLOB.PEEK($FF00)

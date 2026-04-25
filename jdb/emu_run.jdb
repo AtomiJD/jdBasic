@@ -1,0 +1,107 @@
+' emu_run.jdb — graphical front-end for the 6502 emulator.
+'
+' Two modes (pick by setting MODE$ below):
+'   "demo" — load a tiny 6502 program that paints HELLO into the text
+'            page. Runs in milliseconds, proves the whole stack
+'            (CPU + bus hooks + Apple II text-page layout + render).
+'   "boot" — load Atomi's original Apple II ROMs and let the CPU run
+'            until you press ESC. Slow (~760 cyc/sec on this machine),
+'            so reaching the ">" prompt takes minutes — but it does
+'            advance, and you can see the text page update live.
+'
+' Controls (boot mode): any printable key → keyboard buffer; ESC quits.
+
+IMPORT APPLE2
+
+' ─── Host-side IO dispatch ─────────────────────────────────────
+' The CPU calls these by name; we just delegate.
+FUNC IO_READ(addr)
+    RETURN APPLE2.IO_READ_DISPATCH(addr)
+ENDFUNC
+
+SUB IO_WRITE(addr, val)
+    APPLE2.IO_WRITE_DISPATCH(addr, val)
+ENDSUB
+
+' ─── Configuration ─────────────────────────────────────────────
+DIM MODE$ = "boot"      ' "demo" or "boot"
+' jdBasic interpreter does ~760 6502-cycles/sec in this build, so
+' picking a frame budget is a trade-off: high values block the UI,
+' low values stretch the boot wallclock. 1500 = ~2 sec/frame.
+DIM CYCLES_PER_FRAME = 1500
+OPTION "NOPAUSE"        ' Skip the per-iteration ESC/Space break check.
+
+PWD
+' ─── Initialise emulator + load program/ROM ────────────────────
+APPLE2.INIT()
+
+IF MODE$ = "demo" THEN
+    PRINT "Mode: demo (HELLO splash)"
+    ' Tiny 6502 program at $0300 that writes "HELLO  WORLD" to the
+    ' top-left corner of the text page, then loops on itself.
+    DIM msg = [ $C8, $C5, $CC, $CC, $CF, $A0, $A0, $D7, $CF, $D2, $CC, $C4 ]
+    DIM prog = [ $A2, $00, $BD, $40, $03, $9D, $00, $04, $E8, $E0, $0C, $D0, $F5, $4C, $0D, $03 ]
+    '   $0300: LDX #$00          A2 00
+    '   $0302: LDA $0340,X       BD 40 03
+    '   $0305: STA $0400,X       9D 00 04
+    '   $0308: INX               E8
+    '   $0309: CPX #$0C          E0 0C
+    '   $030B: BNE $0302         D0 F5
+    '   $030D: JMP $030D         4C 0D 03
+    CPU6502.LOAD($0300, prog)
+    CPU6502.LOAD($0340, msg)
+    CPU6502.SET_PC($0300)
+ELSE
+    PRINT "Mode: boot (loading Apple II ROMs from thingsforyou/)"
+    DIM rom_n = APPLE2.LOAD_APPLE2_ROMS("thingsforyou")
+    IF rom_n <= 0 THEN
+        PRINT "ROM load failed — make sure thingsforyou/ contains the dumps."
+        END
+    ENDIF
+    APPLE2.LOAD_CHAR_ROM("thingsforyou/Apple II Character ROM - 341-0036.bin")
+    CPU6502.RESET()
+    PRINT "ROMs loaded (" + STR$(rom_n) + " bytes), reset to $" + HEX$(CPU6502.GET_PC())
+ENDIF
+
+' ─── Open the SCREEN window ───────────────────────────────────
+SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 1
+DIM running = 1
+
+DO WHILE running = 1
+    ' Drain key events; map ASCII printable + Enter into the keyboard
+    ' buffer. ESC sets running=0 to break the loop.
+    DIM ev$
+    DO
+        ev$ = GFX.POLLEVENT()
+        ' POLLEVENT returns the string "NONE" when the queue is empty —
+        ' NOT an empty string. Checking for "" loops forever.
+        IF ev$ = "NONE" THEN EXITDO
+        IF ev$ = "QUIT" THEN
+            running = 0
+            EXITDO
+        ENDIF
+        ' Format observed in other demos: "KEYDOWN:<key>"
+        IF LEFT$(ev$, 8) = "KEYDOWN:" THEN
+            DIM kc$ = MID$(ev$, 9)
+            IF kc$ = "Escape" THEN
+                running = 0
+            ELSEIF kc$ = "Return" THEN
+                APPLE2.PUSH_KEY($0D)
+            ELSEIF kc$ = "Space" THEN
+                APPLE2.PUSH_KEY($20)
+            ELSEIF LEN(kc$) = 1 THEN
+                APPLE2.PUSH_KEY(ASC(UCASE$(kc$)))
+            ENDIF
+        ENDIF
+    LOOP
+
+    ' Run the CPU for one frame's worth of cycles.
+    CPU6502.RUN(CYCLES_PER_FRAME)
+
+    ' Repaint.
+    CLS 0, 0, 0
+    APPLE2.RENDER_TEXT()
+    SCREENFLIP
+LOOP
+
+PRINT "Done. PC=$" + HEX$(CPU6502.GET_PC()) + " A=$" + HEX$(CPU6502.GET_A())

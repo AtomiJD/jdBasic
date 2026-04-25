@@ -1,0 +1,34 @@
+' Reproducer for module-global persistence across SUB calls in native mode.
+
+IMPORT MODGLOB
+
+PRINT "── Scalar persistence ──"
+MODGLOB.SET_SCALAR(42)
+PRINT "After SET_SCALAR(42), GET_SCALAR() = "; MODGLOB.GET_SCALAR()
+PRINT "  expected: 42"
+
+MODGLOB.SET_SCALAR(99)
+PRINT "After SET_SCALAR(99), GET_SCALAR() = "; MODGLOB.GET_SCALAR()
+PRINT "  expected: 99"
+
+PRINT
+PRINT "── Array element persistence ──"
+MODGLOB.SET_ELEM(3, 7)
+MODGLOB.SET_ELEM(5, 11)
+PRINT "GET_ELEM(3) = "; MODGLOB.GET_ELEM(3); "  expected: 7"
+PRINT "GET_ELEM(5) = "; MODGLOB.GET_ELEM(5); "  expected: 11"
+PRINT "GET_ELEM(0) = "; MODGLOB.GET_ELEM(0); "  expected: 0"
+
+PRINT
+PRINT "── Mutation through inner private SUB ──"
+MODGLOB.SET_VIA_INNER(50)
+PRINT "After SET_VIA_INNER(50), GET_SCALAR() = "; MODGLOB.GET_SCALAR()
+PRINT "  expected: 1050"
+
+PRINT
+PRINT "── 64K array: FILL_ZERO + BULK_WRITE ──"
+MODGLOB.FILL_ZERO()
+MODGLOB.BULK_WRITE($FF00, 256, $42)
+PRINT "PEEK($FF00) = "; MODGLOB.PEEK($FF00); "  expected: 66"
+PRINT "PEEK($FFFC) = "; MODGLOB.PEEK($FFFC); "  expected: 66"
+PRINT "PEEK($0000) = "; MODGLOB.PEEK($0000); "  expected: 0"

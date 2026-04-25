@@ -2657,7 +2657,14 @@ char* jdb_cstr(double x) { return jdb_str(x); }
 double jdb_tonum(const char* s) { return s ? atof(s) : 0.0; }
 
 int64_t jdb_byteat(const char* s, int64_t idx) {
-    if (!s || idx < 0 || idx >= (int64_t)strlen(s)) return 0;
+    if (!s || idx < 0) return 0;
+    // Honour binary strings (BINREADER$, PACK$) by consulting the
+    // jdrt_strlen registry first — strlen alone truncates at the
+    // first NUL, which makes binary file contents look truncated to
+    // BYTEAT after the first zero byte.
+    int64_t blen = jdrt_strlen(s);
+    if (blen < 0) blen = (int64_t)strlen(s);
+    if (idx >= blen) return 0;
     return (uint8_t)s[idx];
 }
 

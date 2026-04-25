@@ -1,0 +1,51 @@
+EXPORT MODULE MODGLOB
+
+EXPORT CONST FLAG_BIT = $80     ' EXPORT CONST like cpu6502.jdb
+DIM g_scalar = 0
+DIM g_array[65536]              ' 64K like cpu6502.jdb's mem
+DIM g_table[256]                ' 256 dispatch table like op_tbl
+
+EXPORT SUB SET_SCALAR(v)
+    g_scalar = v
+ENDSUB
+
+EXPORT FUNC GET_SCALAR()
+    RETURN g_scalar
+ENDFUNC
+
+EXPORT SUB SET_ELEM(idx, val)
+    g_array[idx] = val
+ENDSUB
+
+EXPORT FUNC GET_ELEM(idx)
+    RETURN g_array[idx]
+ENDFUNC
+
+' Mutate via two-step: another SUB writes through a private helper.
+SUB inner_set(v)
+    g_scalar = v + 1000
+ENDSUB
+
+EXPORT SUB SET_VIA_INNER(v)
+    inner_set(v)
+ENDSUB
+
+' Mimic cpu6502's INIT pattern: zero-fill 64K via FOR loop.
+EXPORT SUB FILL_ZERO()
+    DIM i
+    FOR i = 0 TO 65535
+        g_array[i] = 0
+    NEXT i
+ENDSUB
+
+' Bulk-write like LOAD_ROM's WRITE-in-loop.
+EXPORT SUB BULK_WRITE(start_addr, n, val)
+    DIM i
+    FOR i = 0 TO n - 1
+        g_array[start_addr + i] = val
+    NEXT i
+ENDSUB
+
+EXPORT FUNC PEEK(addr)
+    RETURN g_array[addr]
+ENDFUNC

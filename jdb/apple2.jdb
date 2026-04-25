@@ -151,15 +151,70 @@ EXPORT FUNC CHAR_GLYPH_ROW(ch, row)
     RETURN BYTEAT(char_rom_data$, idx)
 ENDFUNC
 
+' ─── Soft-switches ($C000-$C0FF) ───────────────────────────────
+'
+' Minimal subset for booting Integer BASIC: keyboard data with the
+' high-bit strobe convention, and the speaker toggle as a no-op.
+'
+'   $C000  read   keyboard data byte (bit 7 = strobe; clear when ROM
+'                 wants to know if a key has been pressed since last read)
+'   $C010  read   clears the strobe (returns 0)
+'          write  any value also clears the strobe
+'   $C030  any    toggles the speaker (we just no-op)
+
+' Pending keyboard byte. Bit 7 high = key available; ROMs poll $C000
+' until they see bit 7 set, then read $C010 to acknowledge.
+DIM kbd_byte = 0
+
+' Public: external SCREEN loop pushes the next typed char in here.
+' Apple II ROMs expect uppercase ASCII with bit 7 set; the strobe bit
+' is bit 7 of the byte at $C000.
+EXPORT SUB PUSH_KEY(ascii)
+    kbd_byte = (ascii BAND $7F) BOR $80
+ENDSUB
+
+' Soft-switch read implementation. The host script's IO_READ wrapper
+' calls this for every read in $C000-$C0FF; we return whatever the
+' Apple II would put on the bus.
+EXPORT FUNC IO_READ_DISPATCH(addr)
+    SWITCH addr
+        CASE $C000
+            RETURN kbd_byte
+        CASE $C010
+            ' Reading the strobe register clears the strobe bit on the
+            ' currently latched key. The latched byte itself stays so
+            ' the next $C000 read will also return it (without bit 7).
+            kbd_byte = kbd_byte BAND $7F
+            RETURN 0
+        CASE $C030
+            ' Speaker click — we just acknowledge.
+            RETURN 0
+    ENDSWITCH
+    RETURN 0
+ENDFUNC
+
+' Soft-switch write implementation. Apple II treats reads and writes
+' on most $C0xx addresses the same way (bus toggle).
+EXPORT SUB IO_WRITE_DISPATCH(addr, val)
+    SWITCH addr
+        CASE $C010
+            kbd_byte = kbd_byte BAND $7F
+        CASE $C030
+            ' Speaker — no-op for now.
+    ENDSWITCH
+ENDSUB
+
 ' ─── Initialisation ────────────────────────────────────────────
 EXPORT SUB INIT()
     CPU6502.INIT()
+    CPU6502.ENABLE_IO_HOOKS($C000, $C0FF)
     ' Set the reset vector at $FFFC/$FFFD to a sensible default — the
     ' bootstrap address callers use when no ROM is loaded. ROM-load
     ' will overwrite this when the Monitor ROM is mapped in.
     CPU6502.WRITE($FFFC, $00)
     CPU6502.WRITE($FFFD, $03)   ' default cold-start at $0300
     TEXT_CLEAR($A0)             ' Apple II "blank" = $A0 (space + bit 7)
+    kbd_byte = 0
 ENDSUB
 
 ' Boot helper for next-session experimentation. Loads ROMs from rom_dir,

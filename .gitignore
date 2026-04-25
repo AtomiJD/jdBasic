@@ -82,3 +82,8 @@ tmp/
 tests/ablage/
 # Apple II / C64 ROMs (Atomi's local set; not redistributable)
 thingsforyou/
+jdb/thingsforyou/
+
+# jdb/ build artifacts (.exe per --compile, jdbrt.dll copies)
+jdb/*.exe
+jdb/jdbrt.dll

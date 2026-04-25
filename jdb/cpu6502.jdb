@@ -130,13 +130,22 @@ DIM am_tbl[256]
 DIM cyc_tbl[256]
 DIM tables_ready = 0
 
+' I/O hook system. The CPU itself only knows an address range; when
+' a read/write inside that range happens, it calls a host-script
+' function named IO_READ(addr) / IO_WRITE(addr, val). The host script
+' typically just delegates these to the platform module (apple2.jdb,
+' c64.jdb). FUNCREF passing across modules is unreliable in jdBasic,
+' so name-based dispatch is the most portable wiring.
+DIM io_handlers_set = 0
+DIM io_min = 0
+DIM io_max = -1
+
 ' ─── Public API ────────────────────────────────────────────────
 
 EXPORT SUB INIT()
-    DIM mem[65536]
-    DIM op_tbl[256]
-    DIM am_tbl[256]
-    DIM cyc_tbl[256]
+    ' Don't re-DIM the module-level arrays — under native codegen that
+    ' creates locals that shadow the module state, leaving WRITE/RESET
+    ' touching a fresh empty array. Just zero-fill in place.
     DIM i
     FOR i = 0 TO 65535
         mem[i] = 0
@@ -168,11 +177,57 @@ EXPORT SUB RESET()
 ENDSUB
 
 EXPORT FUNC READ(addr)
-    RETURN mem[addr BAND $FFFF]
+    addr = addr BAND $FFFF
+    IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
+        RETURN IO_READ(addr)
+    ENDIF
+    RETURN mem[addr]
 ENDFUNC
 
 EXPORT SUB WRITE(addr, val)
-    mem[addr BAND $FFFF] = val BAND $FF
+    addr = addr BAND $FFFF
+    val = val BAND $FF
+    IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
+        IO_WRITE(addr, val)
+    ELSE
+        mem[addr] = val
+    ENDIF
+ENDSUB
+
+' Tell the CPU which address range to route through the host's
+' IO_READ / IO_WRITE callbacks. The host (or the platform layer it
+' loads) must define these two functions before any CPU run that
+' touches the configured range — calls to undefined IO_* will throw
+' "Undefined function" at runtime.
+EXPORT SUB ENABLE_IO_HOOKS(min_addr, max_addr)
+    io_min = min_addr BAND $FFFF
+    io_max = max_addr BAND $FFFF
+    io_handlers_set = 1
+ENDSUB
+
+EXPORT SUB DISABLE_IO_HOOKS()
+    io_handlers_set = 0
+ENDSUB
+
+' Internal bus helpers — the operation execute() body uses these so
+' that LDA/STA/etc. honour the platform hooks. Address-mode decoding
+' (resolve_addr) reads code bytes and stays on plain mem[].
+FUNC bus_read(addr)
+    addr = addr BAND $FFFF
+    IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
+        RETURN IO_READ(addr)
+    ENDIF
+    RETURN mem[addr]
+ENDFUNC
+
+SUB bus_write(addr, val)
+    addr = addr BAND $FFFF
+    val = val BAND $FF
+    IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
+        IO_WRITE(addr, val)
+    ELSE
+        mem[addr] = val
+    ENDIF
 ENDSUB
 
 EXPORT SUB LOAD(start_addr, bytes_arr)
@@ -576,21 +631,21 @@ SUB execute(opcode, amode, addr)
 
     SWITCH opcode
         CASE OP_LDA
-            cpu_a = mem[addr] BAND $FF
+            cpu_a = bus_read(addr) BAND $FF
             set_nz(cpu_a)
         CASE OP_LDX
-            cpu_x = mem[addr] BAND $FF
+            cpu_x = bus_read(addr) BAND $FF
             set_nz(cpu_x)
         CASE OP_LDY
-            cpu_y = mem[addr] BAND $FF
+            cpu_y = bus_read(addr) BAND $FF
             set_nz(cpu_y)
 
         CASE OP_STA
-            mem[addr] = cpu_a BAND $FF
+            bus_write(addr, cpu_a)
         CASE OP_STX
-            mem[addr] = cpu_x BAND $FF
+            bus_write(addr, cpu_x)
         CASE OP_STY
-            mem[addr] = cpu_y BAND $FF
+            bus_write(addr, cpu_y)
 
         CASE OP_TAX
             cpu_x = cpu_a
@@ -621,17 +676,17 @@ SUB execute(opcode, amode, addr)
             cpu_p = (pop8() BAND (FLAG_B BXOR $FF)) BOR FLAG_U
 
         CASE OP_AND
-            cpu_a = (cpu_a BAND mem[addr]) BAND $FF
+            cpu_a = (cpu_a BAND bus_read(addr)) BAND $FF
             set_nz(cpu_a)
         CASE OP_ORA
-            cpu_a = (cpu_a BOR mem[addr]) BAND $FF
+            cpu_a = (cpu_a BOR bus_read(addr)) BAND $FF
             set_nz(cpu_a)
         CASE OP_EOR
-            cpu_a = (cpu_a BXOR mem[addr]) BAND $FF
+            cpu_a = (cpu_a BXOR bus_read(addr)) BAND $FF
             set_nz(cpu_a)
 
         CASE OP_ADC
-            val = mem[addr] BAND $FF
+            val = bus_read(addr) BAND $FF
             old_c = (cpu_p BAND FLAG_C)
             r = cpu_a + val + old_c
             ' Decimal mode: adjust if D flag set.
@@ -660,7 +715,7 @@ SUB execute(opcode, amode, addr)
             set_nz(cpu_a)
 
         CASE OP_SBC
-            val = mem[addr] BAND $FF
+            val = bus_read(addr) BAND $FF
             old_c = (cpu_p BAND FLAG_C)
             ' Standard 6502 SBC = ADC of one's complement
             r = cpu_a - val - (1 - old_c)
@@ -682,19 +737,19 @@ SUB execute(opcode, amode, addr)
             set_nz(cpu_a)
 
         CASE OP_CMP
-            cmp_set_flags(cpu_a, mem[addr])
+            cmp_set_flags(cpu_a, bus_read(addr))
         CASE OP_CPX
-            cmp_set_flags(cpu_x, mem[addr])
+            cmp_set_flags(cpu_x, bus_read(addr))
         CASE OP_CPY
-            cmp_set_flags(cpu_y, mem[addr])
+            cmp_set_flags(cpu_y, bus_read(addr))
 
         CASE OP_INC
-            val = (mem[addr] + 1) BAND $FF
-            mem[addr] = val
+            val = (bus_read(addr) + 1) BAND $FF
+            bus_write(addr, val)
             set_nz(val)
         CASE OP_DEC
-            val = (mem[addr] - 1) BAND $FF
-            mem[addr] = val
+            val = (bus_read(addr) - 1) BAND $FF
+            bus_write(addr, val)
             set_nz(val)
         CASE OP_INX
             cpu_x = (cpu_x + 1) BAND $FF
@@ -716,10 +771,10 @@ SUB execute(opcode, amode, addr)
                 set_flag(FLAG_C, c)
                 set_nz(cpu_a)
             ELSE
-                val = mem[addr]
+                val = bus_read(addr)
                 c = (val SHR 7) BAND 1
                 val = (val SHL 1) BAND $FF
-                mem[addr] = val
+                bus_write(addr, val)
                 set_flag(FLAG_C, c)
                 set_nz(val)
             ENDIF
@@ -730,10 +785,10 @@ SUB execute(opcode, amode, addr)
                 set_flag(FLAG_C, c)
                 set_nz(cpu_a)
             ELSE
-                val = mem[addr]
+                val = bus_read(addr)
                 c = val BAND 1
                 val = (val SHR 1) BAND $FF
-                mem[addr] = val
+                bus_write(addr, val)
                 set_flag(FLAG_C, c)
                 set_nz(val)
             ENDIF
@@ -744,10 +799,10 @@ SUB execute(opcode, amode, addr)
                 set_flag(FLAG_C, c)
                 set_nz(cpu_a)
             ELSE
-                val = mem[addr]
+                val = bus_read(addr)
                 c = (val SHR 7) BAND 1
                 val = ((val SHL 1) BOR (cpu_p BAND FLAG_C)) BAND $FF
-                mem[addr] = val
+                bus_write(addr, val)
                 set_flag(FLAG_C, c)
                 set_nz(val)
             ENDIF
@@ -758,10 +813,10 @@ SUB execute(opcode, amode, addr)
                 set_flag(FLAG_C, c)
                 set_nz(cpu_a)
             ELSE
-                val = mem[addr]
+                val = bus_read(addr)
                 c = val BAND 1
                 val = ((val SHR 1) BOR ((cpu_p BAND FLAG_C) SHL 7)) BAND $FF
-                mem[addr] = val
+                bus_write(addr, val)
                 set_flag(FLAG_C, c)
                 set_nz(val)
             ENDIF
@@ -811,7 +866,7 @@ SUB execute(opcode, amode, addr)
             cpu_p = cpu_p BAND (FLAG_V BXOR $FF)
 
         CASE OP_BIT
-            val = mem[addr]
+            val = bus_read(addr)
             IF (cpu_a BAND val) = 0 THEN
                 cpu_p = (cpu_p BOR FLAG_Z) BAND $FF
             ELSE

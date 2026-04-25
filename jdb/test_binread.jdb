@@ -1,0 +1,17 @@
+DIM data$ = BINREADER$("thingsforyou/Apple II ROM Pages F8-FF - 341-0004 - Original Monitor.bin")
+PRINT "LEN(data$) = "; LEN(data$); "  (expected 2048)"
+
+DIM i
+DIM nonzero = 0
+FOR i = 0 TO 2047
+    IF BYTEAT(data$, i) <> 0 THEN nonzero = nonzero + 1
+NEXT i
+PRINT "Non-zero bytes via BYTEAT: "; nonzero
+
+' Sample a few specific offsets
+PRINT "BYTEAT(data$, 0)    = "; BYTEAT(data$, 0)
+PRINT "BYTEAT(data$, 25)   = "; BYTEAT(data$, 25)
+PRINT "BYTEAT(data$, 26)   = "; BYTEAT(data$, 26)
+PRINT "BYTEAT(data$, 100)  = "; BYTEAT(data$, 100)
+PRINT "BYTEAT(data$, 1000) = "; BYTEAT(data$, 1000)
+PRINT "BYTEAT(data$, 2047) = "; BYTEAT(data$, 2047)

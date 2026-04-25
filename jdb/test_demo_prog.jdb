@@ -1,0 +1,28 @@
+' Sanity-test the demo program from emu_run.jdb without opening SCREEN.
+IMPORT APPLE2
+
+FUNC IO_READ(addr)
+    RETURN APPLE2.IO_READ_DISPATCH(addr)
+ENDFUNC
+SUB IO_WRITE(addr, val)
+    APPLE2.IO_WRITE_DISPATCH(addr, val)
+ENDSUB
+
+APPLE2.INIT()
+
+DIM msg = [ $C8, $C5, $CC, $CC, $CF, $A0, $A0, $D7, $CF, $D2, $CC, $C4 ]
+DIM prog = [ $A2, $00, $BD, $40, $03, $9D, $00, $04, $E8, $E0, $0C, $D0, $F5, $4C, $0D, $03 ]
+CPU6502.LOAD($0300, prog)
+CPU6502.LOAD($0340, msg)
+CPU6502.SET_PC($0300)
+
+CPU6502.RUN_UNTIL($030D, 500)
+
+DIM line$ = ""
+DIM c
+FOR c = 0 TO 11
+    DIM ch = APPLE2.TEXT_READ(c, 0)
+    line$ = line$ + CHR$(ch)
+NEXT c
+PRINT "Top-left 12 chars: [" + line$ + "]"
+PRINT "(should read 'HELLO  WORLD')"
