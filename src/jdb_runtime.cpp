@@ -35,12 +35,38 @@ void jdb_print_int(int64_t val) {
     printf("%lld", (long long)val);
 }
 
+// Format a double the way the interpreter's value.h::format_float_locale
+// does: %.6f then trim trailing zeros and a trailing decimal point. This
+// keeps interp/native PRINT outputs aligned (1e8 → "100000000", 1e-10 → "0",
+// 1e20 → "100000000000000000000", 1.5 → "1.5").
+static int jdb_format_double(char* out, int cap, double val) {
+    int n = snprintf(out, cap, "%.6f", val);
+    if (n <= 0 || n >= cap) return n;
+    // Strip trailing zeros (only inside / after the fractional part).
+    int dot = -1;
+    for (int i = 0; i < n; i++) if (out[i] == '.') { dot = i; break; }
+    if (dot >= 0) {
+        int end = n - 1;
+        while (end > dot && out[end] == '0') end--;
+        if (end == dot) end--;  // drop the dot itself
+        out[end + 1] = '\0';
+        n = end + 1;
+    }
+    return n;
+}
+
 void jdb_print_double(double val) {
-    printf("%g", val);
+    char buf[64];
+    jdb_format_double(buf, sizeof(buf), val);
+    fputs(buf, stdout);
 }
 
 void jdb_print_str(const char* val) {
     printf("%s", val);
+}
+
+void jdb_print_bool(int64_t val) {
+    printf("%s", val ? "TRUE" : "FALSE");
 }
 
 void jdb_print_nl() {
@@ -890,6 +916,13 @@ void jdb_array_set_string_elems(JdbArray* arr) {
     if (arr) arr->flags |= 3;  // bit 0 (ptr) + bit 1 (string)
 }
 
+// Mark array as containing boolean elements so print emits TRUE/FALSE
+// instead of 1/0. The data slots stay plain f64 0/1 — only printing
+// changes.
+void jdb_array_set_bool_elems(JdbArray* arr) {
+    if (arr) arr->flags |= 4;  // bit 2 (bool)
+}
+
 // String * int → repeat: "-" * 5 → "-----"
 char* jdb_str_repeat(const char* s, int64_t n) {
     if (!s || n <= 0) return _strdup("");
@@ -1258,11 +1291,13 @@ int32_t jdb_array_is_nested(JdbArray* arr) {
 
 // Print an element of an array: uses flags bits to decide format.
 // Bit 0: ptr element. Bit 1: element is a string (vs nested array).
+// Bit 2: element is a boolean (TRUE/FALSE rather than 1/0).
 void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length) return;
     double val = arr->data[idx];
     bool has_ptr = (arr->flags & 1) != 0;
     bool has_string = (arr->flags & 2) != 0;
+    bool has_bool = (arr->flags & 4) != 0;
     if (has_string) {
         // String-flag alone is enough — element is a ptr-encoded char*.
         union { double d; int64_t i; } u; u.d = val;
@@ -1279,11 +1314,12 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
             jdb_print_array_elem(inner, i);
         }
         printf("]");
+    } else if (has_bool) {
+        printf("%s", val != 0.0 ? "TRUE" : "FALSE");
     } else {
-        if (val == (int64_t)val)
-            printf("%lld", (long long)(int64_t)val);
-        else
-            printf("%g", val);
+        char num[64];
+        jdb_format_double(num, sizeof(num), val);
+        fputs(num, stdout);
     }
 }
 
@@ -1590,8 +1626,80 @@ char* jdb_replace(const char* src, const char* find, const char* rep) {
 
 char* jdb_str(double val) {
     char buf[64];
-    snprintf(buf, sizeof(buf), "%g", val);
+    jdb_format_double(buf, sizeof(buf), val);
     return _strdup(buf);
+}
+
+// Format a JdbMap* the way the interpreter does:
+//   {"key1": value1, "key2": value2}
+// Strings are quoted; numbers use jdb_format_double; booleans render as
+// TRUE/FALSE; nested maps and arrays recurse.
+char* jdb_frmv(JdbArray* arr);  // forward decl — definition below
+static int jdb_map_str_into(JdbMap* m, char* buf, int cap, int pos);
+static int jdb_value_str_tag(char* buf, int cap, int pos, double val, int32_t tag) {
+    union { double d; int64_t i; } u; u.d = val;
+    switch (tag) {
+        case JD_TAG_I64:
+            return pos + snprintf(buf + pos, cap - pos, "%lld", (long long)u.i);
+        case JD_TAG_F64: {
+            char num[64];
+            jdb_format_double(num, sizeof(num), val);
+            return pos + snprintf(buf + pos, cap - pos, "%s", num);
+        }
+        case JD_TAG_STR: {
+            const char* s = (const char*)(intptr_t)u.i;
+            return pos + snprintf(buf + pos, cap - pos, "\"%s\"", s ? s : "");
+        }
+        case JD_TAG_ARR: {
+            JdbArray* arr = (JdbArray*)(intptr_t)u.i;
+            char* sub = jdb_frmv(arr);
+            int r = pos + snprintf(buf + pos, cap - pos, "%s", sub ? sub : "[]");
+            free(sub);
+            return r;
+        }
+        case JD_TAG_NATIVE_MAP: {
+            JdbMap* inner = (JdbMap*)(intptr_t)u.i;
+            return jdb_map_str_into(inner, buf, cap, pos);
+        }
+        case JD_TAG_BOOL:
+            return pos + snprintf(buf + pos, cap - pos, "%s",
+                val != 0.0 ? "TRUE" : "FALSE");
+        default: {
+            char num[64];
+            jdb_format_double(num, sizeof(num), val);
+            return pos + snprintf(buf + pos, cap - pos, "%s", num);
+        }
+    }
+}
+
+static int jdb_map_str_into(JdbMap* m, char* buf, int cap, int pos) {
+    if (!m || m->count == 0)
+        return pos + snprintf(buf + pos, cap - pos, "{}");
+    pos += snprintf(buf + pos, cap - pos, "{");
+    for (int64_t i = 0; i < m->count && pos < cap - 8; i++) {
+        if (i > 0) pos += snprintf(buf + pos, cap - pos, ", ");
+        pos += snprintf(buf + pos, cap - pos, "\"%s\": ", m->keys[i] ? m->keys[i] : "");
+        pos = jdb_value_str_tag(buf, cap, pos, m->values[i], m->tags[i]);
+    }
+    pos += snprintf(buf + pos, cap - pos, "}");
+    return pos;
+}
+
+char* jdb_map_str(JdbMap* m) {
+    char buf[8192];
+    int n = jdb_map_str_into(m, buf, (int)sizeof(buf), 0);
+    if (n < 0 || n >= (int)sizeof(buf)) buf[sizeof(buf) - 1] = '\0';
+    return _strdup(buf);
+}
+
+char* jdb_str_bool(int64_t val) {
+    return _strdup(val ? "TRUE" : "FALSE");
+}
+
+char* jdb_str_str(const char* s) {
+    // STR$(string) — pass-through. Returns a fresh copy because callers
+    // own (and may free) the result.
+    return _strdup(s ? s : "");
 }
 
 char* jdb_space(int64_t n) {
@@ -2479,6 +2587,7 @@ char* jdb_frmv(JdbArray* arr) {
     if (!arr || arr->length == 0) return _strdup("[]");
     bool is_str = (arr->flags & 2) != 0;
     bool is_nested = (arr->flags & 1) != 0 && !is_str;
+    bool is_bool = (arr->flags & 4) != 0;
     char buf[8192] = "[";
     int pos = 1;
     for (int64_t i = 0; i < arr->length && pos < 8180; i++) {
@@ -2493,8 +2602,13 @@ char* jdb_frmv(JdbArray* arr) {
             char* sub = jdb_frmv(inner);
             pos += snprintf(buf + pos, 8190 - pos, "%s", sub ? sub : "[]");
             free(sub);
+        } else if (is_bool) {
+            pos += snprintf(buf + pos, 8190 - pos, "%s",
+                arr->data[i] != 0.0 ? "TRUE" : "FALSE");
         } else {
-            pos += snprintf(buf + pos, 8190 - pos, "%g", arr->data[i]);
+            char num[64];
+            jdb_format_double(num, sizeof(num), arr->data[i]);
+            pos += snprintf(buf + pos, 8190 - pos, "%s", num);
         }
     }
     buf[pos++] = ']'; buf[pos] = '\0';

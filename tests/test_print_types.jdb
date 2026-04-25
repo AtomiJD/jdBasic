@@ -1,0 +1,78 @@
+' Compare PRINT formatting between interpreter and native compiler.
+' Run both modes and diff the outputs to find inconsistencies.
+
+PRINT "=== INTEGER ==="
+PRINT 0
+PRINT 1
+PRINT -42
+PRINT 1000000
+PRINT 292916015
+DIM i64 AS INTEGER = 9223372036854775000
+PRINT i64
+
+PRINT
+PRINT "=== FLOAT ==="
+PRINT 0.0
+PRINT 1.5
+PRINT -3.14159
+PRINT 1.0 / 3.0
+PRINT 1e-10
+PRINT 1e20
+PRINT 100000000.0
+
+PRINT
+PRINT "=== BOOLEAN ==="
+PRINT TRUE
+PRINT FALSE
+PRINT (1 = 1)
+PRINT (1 = 2)
+PRINT (1 < 2)
+PRINT NOT TRUE
+
+PRINT
+PRINT "=== STRING ==="
+PRINT ""
+PRINT "hello"
+PRINT "with""quote"
+PRINT "newline" + CHR$(10) + "after"
+
+PRINT
+PRINT "=== NONE ==="
+DIM n
+PRINT n
+
+PRINT
+PRINT "=== ARRAY (numeric) ==="
+PRINT [1, 2, 3]
+PRINT [1.5, 2.5]
+PRINT [TRUE, FALSE, TRUE]
+
+PRINT
+PRINT "=== ARRAY (mixed) ==="
+PRINT ["a", "b", "c"]
+PRINT [[1, 2], [3, 4]]
+
+PRINT
+PRINT "=== MAP ==="
+DIM m AS MAP = {"name": "Atomi", "age": 42, "active": TRUE}
+PRINT m
+
+PRINT
+PRINT "=== STR$ on each ==="
+PRINT "STR$(42)        = [" + STR$(42) + "]"
+PRINT "STR$(1.5)       = [" + STR$(1.5) + "]"
+PRINT "STR$(TRUE)      = [" + STR$(TRUE) + "]"
+PRINT "STR$(FALSE)     = [" + STR$(FALSE) + "]"
+PRINT "STR$(""hello"") = [" + STR$("hello") + "]"
+
+PRINT
+PRINT "=== TYPEOF on each ==="
+PRINT TYPEOF(42)
+PRINT TYPEOF(1.5)
+PRINT TYPEOF(TRUE)
+PRINT TYPEOF("hello")
+PRINT TYPEOF([1,2,3])
+PRINT TYPEOF({"a":1})
+
+PRINT
+PRINT "=== done ==="

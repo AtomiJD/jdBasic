@@ -114,8 +114,12 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_print_int",    "__print_int",    void_type, {i64_type}, -1);
     reg("jdb_print_double", "__print_double",  void_type, {f64_type}, -1);
     reg("jdb_print_str",    "__print_str",     void_type, {i8_ptr_type}, -1);
+    reg("jdb_print_bool",   "__print_bool",    void_type, {i64_type}, -1);
     reg("jdb_print_nl",     "__print_nl",      void_type, {}, -1);
     reg("jdb_print_space",  "__print_space",   void_type, {}, -1);
+    reg("jdb_str_bool",     "__str_bool",      i8_ptr_type, {i64_type}, 2);
+    reg("jdb_str_str",      "__str_str",       i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_map_str",      "__map_str",       i8_ptr_type, {i8_ptr_type}, 2);
 
     // String operations
     reg("jdb_str_concat",   "__str_concat",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
@@ -238,6 +242,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
+    reg("jdb_array_set_bool_elems", "__arr_set_bool_elems", void_type, {i8_ptr_type}, -1);
     reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
     reg("jdb_setlocale",  "SETLOCALE",    void_type, {i8_ptr_type}, -1);
     // Maps / Objects
@@ -3232,7 +3237,20 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
         }
 
         TypedValue tv = codegen_expr(*stmt.print_exprs[i]);
-        if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_NATIVE_MAP) {
+        if (tv.tag == JD_TAG_BOOL) {
+            auto& pr_bool = runtime_funcs["__print_bool"];
+            LLVMValueRef args[] = { tv.val };
+            LLVMBuildCall2(builder, pr_bool.fn_type, pr_bool.fn, args, 1, "");
+        } else if (tv.tag == JD_TAG_NATIVE_MAP) {
+            // Format the map via jdb_map_str — feeds {"k": v, ...} into pr_str.
+            auto* mfn = get_runtime_func("__map_str");
+            if (mfn) {
+                LLVMValueRef margs[] = { tv.val };
+                LLVMValueRef ms = LLVMBuildCall2(builder, mfn->fn_type, mfn->fn, margs, 1, "ms");
+                LLVMValueRef pargs[] = { ms };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pargs, 1, "");
+            }
+        } else if (tv.tag == JD_TAG_I64) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_int.fn_type, pr_int.fn, args, 1, "");
         } else if (tv.tag == JD_TAG_F64) {
@@ -3734,7 +3752,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             return { LLVMBuildGlobalStringPtr(builder, expr.str_val.c_str(), ".str"), JD_TAG_STR };
 
         case ExprKind::LITERAL_BOOL:
-            return { LLVMConstInt(i64_type, expr.bool_val ? 1 : 0, 0), JD_TAG_I64 };
+            return { LLVMConstInt(i64_type, expr.bool_val ? 1 : 0, 0), JD_TAG_BOOL };
 
         case ExprKind::ARRAY_LITERAL: {
             // [] or [a, b, c] → create array
@@ -3743,12 +3761,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, size_arg, 1, "arr");
             bool has_ptr_elems = false;
             bool has_string_elems = false;
+            bool all_bool_elems = !expr.args.empty();
             if (!expr.args.empty()) {
                 auto& arr_append = runtime_funcs["APPEND"];
                 for (size_t i = 0; i < expr.args.size(); i++) {
                     TypedValue elem = codegen_expr(*expr.args[i]);
+                    if (elem.tag != JD_TAG_BOOL) all_bool_elems = false;
                     LLVMValueRef fval = elem.val;
-                    if (elem.tag == JD_TAG_I64) fval = LLVMBuildSIToFP(builder, fval, f64_type, "itof");
+                    if (elem.tag == JD_TAG_I64 || elem.tag == JD_TAG_BOOL) fval = LLVMBuildSIToFP(builder, fval, f64_type, "itof");
                     else if (elem.tag == JD_TAG_STR || elem.tag == JD_TAG_ARR) {
                         // ptr (string or array) → encode as f64
                         LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, fval, i64_type, "ptoi");
@@ -3778,6 +3798,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                             LLVMValueRef ss[] = { arr };
                             LLVMBuildCall2(builder, set_str->fn_type, set_str->fn, ss, 1, "");
                         }
+                    }
+                } else if (all_bool_elems) {
+                    auto* set_bool = get_runtime_func("__arr_set_bool_elems");
+                    if (set_bool) {
+                        LLVMValueRef sb[] = { arr };
+                        LLVMBuildCall2(builder, set_bool->fn_type, set_bool->fn, sb, 1, "");
                     }
                 }
             }
@@ -3809,6 +3835,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef fv = pun_i64_to_f64(v.val);
                     auto& set_tg = runtime_funcs["__map_set_tagged"];
                     LLVMValueRef args[] = { m, key, fv, v.runtime_tag };
+                    LLVMBuildCall2(builder, set_tg.fn_type, set_tg.fn, args, 4, "");
+                } else if (v.tag == JD_TAG_BOOL) {
+                    // Preserve the bool tag so jdb_map_str renders TRUE/FALSE
+                    // instead of falling back to numeric formatting.
+                    LLVMValueRef fv = coerce_to(v, f64_type);
+                    auto& set_tg = runtime_funcs["__map_set_tagged"];
+                    LLVMValueRef args[] = { m, key, fv,
+                        LLVMConstInt(i32_type, JD_TAG_BOOL, 0) };
                     LLVMBuildCall2(builder, set_tg.fn_type, set_tg.fn, args, 4, "");
                 } else {
                     LLVMValueRef fv = coerce_to(v, f64_type);
@@ -4402,7 +4436,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 LLVMValueRef args[] = { lhs_check.val, rhs_check.val, LLVMConstInt(i32_type, cmp_op, 0) };
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), JD_TAG_ARR };
             } else {
-                LLVMValueRef scalar = rhs_check.tag == JD_TAG_I64
+                LLVMValueRef scalar = (rhs_check.tag == JD_TAG_I64 || rhs_check.tag == JD_TAG_BOOL)
                     ? LLVMBuildSIToFP(builder, rhs_check.val, f64_type, "itof") : rhs_check.val;
                 auto& fn = runtime_funcs["__arr_cmp_scalar"];
                 LLVMValueRef args[] = { lhs_check.val, scalar, LLVMConstInt(i32_type, cmp_op, 0) };
@@ -4493,11 +4527,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         if (expr.op == TokenType::NE) {
             auto& fn = runtime_funcs["__str_ne"];
             LLVMValueRef args[] = { l, r };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), JD_TAG_BOOL };
         }
         auto& fn = runtime_funcs["__str_eq"];
         LLVMValueRef args[] = { l, r };
-        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), JD_TAG_I64 };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), JD_TAG_BOOL };
     }
 
     // String comparison: str = str, str <> str
@@ -4507,12 +4541,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             auto& fn = runtime_funcs["__str_ne"];
             LLVMValueRef args[] = { lhs.val, rhs.val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne");
-            return { result, JD_TAG_I64 };
+            return { result, JD_TAG_BOOL };
         } else {
             auto& fn = runtime_funcs["__str_eq"];
             LLVMValueRef args[] = { lhs.val, rhs.val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq");
-            return { result, JD_TAG_I64 };
+            return { result, JD_TAG_BOOL };
         }
     }
 
@@ -4672,11 +4706,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         if (expr.op == TokenType::NE) {
             auto& fn = runtime_funcs["__str_ne"];
             LLVMValueRef args[] = { to_str2(lhs), to_str2(rhs) };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), JD_TAG_BOOL };
         } else {
             auto& fn = runtime_funcs["__str_eq"];
             LLVMValueRef args[] = { to_str2(lhs), to_str2(rhs) };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), JD_TAG_BOOL };
         }
     }
 
@@ -4737,13 +4771,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::STAR:  return { LLVMBuildFMul(builder, lhs.val, rhs.val, "fmul"), JD_TAG_F64 };
             case TokenType::SLASH: emit_div_zero_check(rhs); return { LLVMBuildFDiv(builder, lhs.val, rhs.val, "fdiv"), JD_TAG_F64 };
             case TokenType::MOD:   emit_div_zero_check(rhs); return { LLVMBuildFRem(builder, lhs.val, rhs.val, "fmod"), JD_TAG_F64 };
-            case TokenType::LT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::GT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::LE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::GE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
+            case TokenType::LT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::GT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::LE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::GE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
             case TokenType::EQ:
-            case TokenType::ASSIGN: return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOEQ, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::NE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealONE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
+            case TokenType::ASSIGN: return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOEQ, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::NE:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealONE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
             default: break;
         }
     } else {
@@ -4754,13 +4788,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::SLASH:     emit_div_zero_check(rhs); return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "div"), JD_TAG_I64 };
             case TokenType::BACKSLASH: emit_div_zero_check(rhs); return { LLVMBuildSDiv(builder, lhs.val, rhs.val, "idiv"), JD_TAG_I64 };
             case TokenType::MOD:       emit_div_zero_check(rhs); return { LLVMBuildSRem(builder, lhs.val, rhs.val, "mod"), JD_TAG_I64 };
-            case TokenType::LT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::GT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::LE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::GE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
+            case TokenType::LT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::GT:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::LE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSLE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::GE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntSGE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
             case TokenType::EQ:
-            case TokenType::ASSIGN:    return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntEQ, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
-            case TokenType::NE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntNE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_I64 };
+            case TokenType::ASSIGN:    return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntEQ, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
+            case TokenType::NE:        return { LLVMBuildZExt(builder, LLVMBuildICmp(builder, LLVMIntNE, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
             case TokenType::BAND:      return { LLVMBuildAnd(builder, lhs.val, rhs.val, "band"), JD_TAG_I64 };
             case TokenType::BOR:       return { LLVMBuildOr(builder, lhs.val, rhs.val, "bor"), JD_TAG_I64 };
             case TokenType::XOR:
@@ -4787,7 +4821,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
     if (expr.op == TokenType::NOT) {
         LLVMValueRef b = to_i1(operand);
         LLVMValueRef notb = LLVMBuildNot(builder, b, "not");
-        return { LLVMBuildZExt(builder, notb, i64_type, "ext"), JD_TAG_I64 };
+        return { LLVMBuildZExt(builder, notb, i64_type, "ext"), JD_TAG_BOOL };
     }
     return operand;
 }
@@ -4966,6 +5000,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // 2. Handle FORMAT$ specially (variable number of args)
     std::string upper = name;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+    // STR$(arg) — tag-aware. Default `jdb_str(double)` punnes strings
+    // and prints booleans as 1/0; route to specific helpers when the
+    // input tag is known.
+    if (upper == "STR$" && expr.args.size() == 1) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == JD_TAG_BOOL) {
+            auto& fn = runtime_funcs["__str_bool"];
+            LLVMValueRef args[] = { av.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sb"), JD_TAG_STR };
+        }
+        if (av.tag == JD_TAG_STR) {
+            auto& fn = runtime_funcs["__str_str"];
+            LLVMValueRef args[] = { av.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ss"), JD_TAG_STR };
+        }
+        // Numeric path: use existing jdb_str(double).
+        auto& fn = runtime_funcs["STR$"];
+        LLVMValueRef arg = coerce_to(av, f64_type);
+        LLVMValueRef args[] = { arg };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "snum"), JD_TAG_STR };
+    }
 
     if (upper == "FORMAT$" && expr.args.size() >= 2) {
         // FORMAT$(fmt_string, arg1, [arg2, [arg3, [arg4]]])
@@ -6118,7 +6174,8 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
 
 LLVMCodegen::TypedValue LLVMCodegen::promote_to_f64(TypedValue tv) {
     if (tv.tag == JD_TAG_F64) return tv;
-    if (tv.tag == JD_TAG_I64)
+    // BOOL is bit-identical to I64 (0/1) — same conversion path.
+    if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL)
         return { LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"), JD_TAG_F64 };
     return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
 }
@@ -6293,7 +6350,9 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
         }
     }
     if (target == f64_type) {
-        if (tv.tag == JD_TAG_I64) return LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
+        // BOOL is bit-identical to I64 (0/1), so use the same conversion.
+        if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL)
+            return LLVMBuildSIToFP(builder, tv.val, f64_type, "itof");
         if (tv.tag == JD_TAG_STR || tv.tag == JD_TAG_ARR || tv.tag == JD_TAG_NATIVE_MAP || tv.tag == JD_TAG_FUNCREF) {
             LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
             return pun_i64_to_f64(as_i64);
@@ -6331,7 +6390,7 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
         return tv.val;
     }
     if (target == i8_ptr_type) {
-        if (tv.tag == JD_TAG_I64) return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
+        if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL) return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
         if (tv.tag == JD_TAG_F64) {
             LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
             return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "ftoptr");

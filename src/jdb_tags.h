@@ -33,6 +33,8 @@ enum class JdTag : int32_t {
     FUNCREF    = 5,
     VM_HANDLE  = 6,
     RUNTIME    = 7,
+    // Codegen-internal: backed by i64 0/1, never appears on the wire.
+    BOOL       = 8,
 };
 
 constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
@@ -49,3 +51,8 @@ constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
 #define JD_TAG_FUNCREF    5
 #define JD_TAG_VM_HANDLE  6
 #define JD_TAG_RUNTIME    7
+// Codegen-only tag for Boolean values. Backed by i64 0/1 (no ABI
+// difference), lets PRINT / STR$ / array-print route through the bool
+// helpers so users see TRUE/FALSE instead of 1/0. Codegen downgrades
+// this to JD_TAG_I64 on bridge marshalling so the wire never carries it.
+#define JD_TAG_BOOL       8
