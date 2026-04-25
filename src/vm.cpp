@@ -570,7 +570,14 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             // and dispatch to SDL themselves — auto-vectorizing would
             // destructure the matrix into scalar calls and lose the
             // per-row colors.
-            "PSET","LINE","RECT","CIRCLE","ELLIPSE","ROUNDED_RECT","CIRCLE_SECTOR"
+            "PSET","LINE","RECT","CIRCLE","ELLIPSE","ROUNDED_RECT","CIRCLE_SECTOR",
+            // Internal dispatch helpers whose arrays are configuration
+            // payloads, not data to broadcast over. Auto-vectorizing
+            // these silently turns the registration into a 0-element
+            // loop when the payload array is empty (zero-arg DECLARE
+            // FUNC, no-arg event handler), so the call body never runs
+            // and the FFI/event function ends up unregistered.
+            "__FFI_DECLARE","__EVENT_ON","__EVENT_RAISE"
         };
         bool has_arr = false;
         if (!no_vec.count(name)) {

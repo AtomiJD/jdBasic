@@ -567,6 +567,41 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     };
     for (auto& stmt : program) if (stmt) scan_stmt_event(*stmt);
 
+    // Pre-pass: walk the program collecting FFI declarations
+    // (`DECLARE FUNC name LIB ... AS rettype`, lowered by the parser to
+    // `__FFI_DECLARE("NAME", "lib", "alias", [...], [...], "RET_TYPE")`).
+    // The dispatch site at the bottom of codegen_call uses these sets to
+    // route the call through jdrt_call_typed_arr / _str / _void; without
+    // them every FFI call would be dispatched as f64-returning, which
+    // collapses ARRAY-returning calls (RETURN buffers, packed results)
+    // to 0.0 and STRING-returning calls to garbage.
+    std::function<void(const Expr&)> scan_ffi = [&](const Expr& e) {
+        if (e.kind == ExprKind::CALL && e.func_name == "__FFI_DECLARE" &&
+            e.args.size() >= 6 &&
+            e.args[0] && e.args[0]->kind == ExprKind::LITERAL_STRING &&
+            e.args[5] && e.args[5]->kind == ExprKind::LITERAL_STRING) {
+            std::string fn = e.args[0]->str_val;
+            std::string ret = e.args[5]->str_val;
+            std::transform(fn.begin(), fn.end(), fn.begin(),
+                [](unsigned char c){ return (char)std::toupper(c); });
+            std::transform(ret.begin(), ret.end(), ret.begin(),
+                [](unsigned char c){ return (char)std::toupper(c); });
+            if (ret == "ARRAY")        ffi_array_returners.insert(fn);
+            else if (ret == "STRING")  ffi_string_returners.insert(fn);
+            else if (ret == "VOID")    ffi_void_returners.insert(fn);
+        }
+        if (e.left) scan_ffi(*e.left);
+        if (e.right) scan_ffi(*e.right);
+        for (auto& a : e.args) if (a) scan_ffi(*a);
+    };
+    std::function<void(const Stmt&)> scan_stmt_ffi = [&](const Stmt& s) {
+        if (s.expr) scan_ffi(*s.expr);
+        for (auto& b : s.body) if (b) scan_stmt_ffi(*b);
+        for (auto& br : s.branches) for (auto& b : br.body) if (b) scan_stmt_ffi(*b);
+        for (auto& c : s.catch_body) if (c) scan_stmt_ffi(*c);
+    };
+    for (auto& stmt : program) if (stmt) scan_stmt_ffi(*stmt);
+
     for (auto& stmt : program) {
         if (!stmt) continue;
         if (stmt->kind != StmtKind::FUNCTION && stmt->kind != StmtKind::SUB) continue;
@@ -5977,7 +6012,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "CVDATE", "CDATE", "DATEADD", "FORMAT_DATE"
             };
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
-                                string_returners.count(upper);
+                                string_returners.count(upper) ||
+                                ffi_string_returners.count(upper);
 
             static const std::unordered_set<std::string> object_returners = {
                 "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
@@ -6010,12 +6046,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // Array of strings from common helpers
                 "TILED.LAYERS", "FILE.LIST"
             };
-            bool is_array_fn = array_returners.count(upper);
+            bool is_array_fn = array_returners.count(upper) ||
+                               ffi_array_returners.count(upper);
+            bool is_void_fn  = ffi_void_returners.count(upper);
 
             LLVMValueRef call_args[] = { handle, name_str, args_ptr, tags_ptr,
                 LLVMConstInt(i32_type, nargs, 0) };
 
-            if (is_array_fn) {
+            if (is_void_fn) {
+                auto& fn = runtime_funcs["__jdrt_call_typed_void"];
+                LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "");
+                return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+            } else if (is_array_fn) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_arr"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmarr");
                 return { result, JD_TAG_ARR };

@@ -173,6 +173,15 @@ private:
     // pass a packed args array.
     std::unordered_set<std::string> event_handler_subs;
 
+    // Functions declared via `DECLARE FUNC ... AS <ret_type>` — populated
+    // by a pre-pass in declare_functions(). The bridge dispatch site uses
+    // these to route the call through the right jdrt_call_typed_*
+    // variant, since FFI names are user-supplied and so cannot live in
+    // the static array_returners / string_returners sets.
+    std::unordered_set<std::string> ffi_array_returners;
+    std::unordered_set<std::string> ffi_string_returners;
+    std::unordered_set<std::string> ffi_void_returners;
+
     // Vars whose array elements are known to be strings — INDEX returns tag=2
     // (decoded char*) for these. Currently populated for the data param of
     // event handler SUBs.
