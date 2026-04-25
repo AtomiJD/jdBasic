@@ -138,12 +138,56 @@ FUNC TOOL_JDB_EVAL(args)
     RETURN MAKE_TEXT_RESULT(out$, FALSE)
 ENDFUNC
 
-' jdb_vars — runs the existing VARS native and captures its output.
-' VARS lists every global except language internals (names starting __).
+' Parse VARS() output ("  NAME = VALUE" lines) → array of NAMES.
+FUNC EXTRACT_VAR_NAMES(captured$)
+    DIM names = []
+    DIM lines = SPLIT(captured$, CHR$(10))
+    FOR i = 0 TO LEN(lines) - 1
+        DIM line$ AS STRING = lines[i]
+        IF LEFT$(line$, 2) = "  " THEN
+            DIM rest$ AS STRING = MID$(line$, 2)
+            DIM eq AS INTEGER = INSTR(rest$, " = ")
+            IF eq >= 0 THEN
+                PUSH names, LEFT$(rest$, eq)
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN names
+ENDFUNC
+
+' jdb_vars — runs VARS() and filters out server-internal globals (anything
+' that already existed at boot, plus any name with a leading "__"). Returns
+' just the user's own variables.
 FUNC TOOL_JDB_VARS(args)
     OUTPUT.CAPTURE_BEGIN
     VARS()
-    DIM out$ AS STRING = OUTPUT.CAPTURE_END$
+    DIM raw$ AS STRING = OUTPUT.CAPTURE_END$
+    DIM lines = SPLIT(raw$, CHR$(10))
+    DIM kept = []
+    FOR i = 0 TO LEN(lines) - 1
+        DIM line$ AS STRING = lines[i]
+        IF LEFT$(line$, 2) <> "  " THEN
+            CONTINUEFOR
+        ENDIF
+        DIM rest$ AS STRING = MID$(line$, 2)
+        DIM eq AS INTEGER = INSTR(rest$, " = ")
+        IF eq < 0 THEN CONTINUEFOR
+        DIM nm$ AS STRING = LEFT$(rest$, eq)
+        IF MAP.EXISTS(__SYSTEM_VARS, nm$) THEN CONTINUEFOR
+        IF LEFT$(nm$, 2) = "__" THEN CONTINUEFOR
+        ' Names with "." (e.g. REQ.BODY, OUTPUT.CAPTURE_END$) are symbol-table
+        ' artefacts created by handler invocations / native-call captures —
+        ' the user can't create a dotted top-level global, so anything dotted
+        ' is engine noise.
+        IF INSTR(nm$, ".") >= 0 THEN CONTINUEFOR
+        PUSH kept, line$
+    NEXT
+    DIM out$ AS STRING = ""
+    IF LEN(kept) = 0 THEN
+        out$ = "(no user variables)"
+    ELSE
+        out$ = JOIN(kept, CHR$(10))
+    ENDIF
     RETURN MAKE_TEXT_RESULT(out$, FALSE)
 ENDFUNC
 
@@ -260,8 +304,21 @@ FUNC MCP_POST(req)
 ENDFUNC
 
 ' ── Boot ───────────────────────────────────────────────────────
+' Snapshot the names of every global VARS() can see right now — they
+' belong to the server, not the user. jdb_vars filters them out so
+' Atomi only sees the variables his own snippets defined.
+OUTPUT.CAPTURE_BEGIN
+VARS()
+DIM __BOOT_VARS$ AS STRING = OUTPUT.CAPTURE_END$
+DIM __SYSTEM_VARS AS MAP = {}
+DIM __snap = EXTRACT_VAR_NAMES(__BOOT_VARS$)
+FOR i = 0 TO LEN(__snap) - 1
+    __SYSTEM_VARS{__snap[i]} = TRUE
+NEXT
+
 PRINT "── jdBasic MCP server ──"
 PRINT "binding 127.0.0.1:"; MCP_PORT
+PRINT "system vars filtered: "; LEN(__snap)
 HTTP.SERVER.ON_POST "/mcp", "MCP_POST"
 IF HTTP.SERVER.START(MCP_PORT, "127.0.0.1") THEN
     PRINT "ready. POST JSON-RPC to http://127.0.0.1:" + STR$(MCP_PORT) + "/mcp"

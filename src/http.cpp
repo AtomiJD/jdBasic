@@ -36,6 +36,12 @@ static std::mutex g_http_mutex;
 static std::unique_ptr<httplib::Server> g_server;
 static std::thread g_server_thread;
 static std::mutex g_server_mutex;
+// Serialises every HTTP handler's access to g_server_vm. httplib spawns a
+// thread per accepted request, but the embedded VM is single-threaded —
+// without this lock two concurrent POSTs would race on the shared bytecode
+// (Phase-3 commit message has the gory details). Held across the user
+// handler and the auto-JSON-encode call that follows.
+static std::mutex g_server_vm_mutex;
 static VM* g_server_vm = nullptr;
 static std::unordered_map<std::string, std::string> g_get_handlers;  // path → func name
 static std::unordered_map<std::string, std::string> g_post_handlers;
@@ -559,6 +565,7 @@ void register_http_builtins(VM& vm) {
             g_server->Get(path, [fn](const httplib::Request& req, httplib::Response& res) {
                 log_request(req);
                 try {
+                    std::lock_guard<std::mutex> vm_lock(g_server_vm_mutex);
                     Value req_map = request_to_map(req);
                     Value result = g_server_vm->call_function(fn, {req_map});
 
@@ -586,6 +593,7 @@ void register_http_builtins(VM& vm) {
             g_server->Post(path, [fn](const httplib::Request& req, httplib::Response& res) {
                 log_request(req);
                 try {
+                    std::lock_guard<std::mutex> vm_lock(g_server_vm_mutex);
                     Value req_map = request_to_map(req);
                     Value result = g_server_vm->call_function(fn, {req_map});
 
