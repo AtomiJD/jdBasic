@@ -6686,6 +6686,17 @@ void VM::register_builtins() {
         return Value::make_none();
     });
 
+    // JDB.CHECK$(code) — Lex + Parse only. Returns "" if the code is
+    // syntactically valid, or the error message otherwise. No execution
+    // happens, no globals or functions get registered. Useful for the
+    // MCP jdb_check tool: validate a snippet before EXECUTE'ing it on
+    // the persistent VM.
+    register_native("JDB.CHECK$", 1, 1, [this](const std::vector<Value>& args) -> Value {
+        std::string code = args[0].as_string()->data;
+        if (on_check) return Value::make_string(on_check(*this, code));
+        return Value::make_string("JDB.CHECK$ unavailable: host did not register on_check");
+    });
+
     // ── Output capture ─────────────────────────────────────────
     // Redirects PRINT/EMIT output to a per-capture string buffer so that
     // tools like the MCP server can return what a snippet printed instead

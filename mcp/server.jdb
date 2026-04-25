@@ -64,6 +64,51 @@ FUNC BUILD_TOOLS()
     }
     PUSH tools, vars_tool
 
+    ' jdb_load — read a project file and EXECUTE it on the persistent VM.
+    DIM load_tool AS MAP = {                                           _
+        "name": "jdb_load",                                            _
+        "description": "Read a jdBasic source file (path is relative to the server's working directory, usually the project root) and EXECUTE its contents on the persistent VM. Avoids round-tripping the file's bytes through tool arguments. Returns captured stdout, or isError on read/parse/runtime failure.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "path": {                                              _
+                    "type": "string",                                  _
+                    "description": "Relative path to a .jdb file (e.g. tests/test_output_capture.jdb)." _
+                }                                                      _
+            },                                                         _
+            "required": ["path"]                                       _
+        }                                                              _
+    }
+    PUSH tools, load_tool
+
+    ' jdb_funcs — list user-defined FUNCs/SUBs (filters server internals).
+    DIM funcs_tool AS MAP = {                                          _
+        "name": "jdb_funcs",                                           _
+        "description": "List user-defined FUNC / SUB / ASYNC FUNC currently registered on the persistent VM, with their parameter signatures. Server-internal helpers (BUILD_TOOLS, MAKE_TEXT_RESULT, etc.) are filtered out — you only see what your own snippets defined.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {}                                           _
+        }                                                              _
+    }
+    PUSH tools, funcs_tool
+
+    ' jdb_check — Lex + Parse only. No execution, no VM mutation.
+    DIM check_tool AS MAP = {                                          _
+        "name": "jdb_check",                                           _
+        "description": "Validate jdBasic source by running Lex + Parse only. Returns 'ok' if the snippet is syntactically valid, or the parse-error message otherwise. Does NOT execute the code or touch the persistent VM — safe to call before jdb_eval to avoid contaminating state with half-executed snippets.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "code": {                                              _
+                    "type": "string",                                  _
+                    "description": "jdBasic source to validate."       _
+                }                                                      _
+            },                                                         _
+            "required": ["code"]                                       _
+        }                                                              _
+    }
+    PUSH tools, check_tool
+
     ' echo — kept as a connectivity smoke test.
     DIM echo_tool AS MAP = {                                           _
         "name": "echo",                                                _
@@ -97,6 +142,12 @@ FUNC DISPATCH_TOOL(tool_name$, args)
             RETURN TOOL_JDB_EVAL(args)
         CASE "jdb_vars"
             RETURN TOOL_JDB_VARS(args)
+        CASE "jdb_load"
+            RETURN TOOL_JDB_LOAD(args)
+        CASE "jdb_funcs"
+            RETURN TOOL_JDB_FUNCS(args)
+        CASE "jdb_check"
+            RETURN TOOL_JDB_CHECK(args)
         CASE "echo"
             RETURN TOOL_ECHO(args)
         DEFAULT
@@ -136,6 +187,87 @@ FUNC TOOL_JDB_EVAL(args)
         IF partial$ <> "" THEN err$ = partial$ + err$
         RETURN MAKE_TEXT_RESULT(err$, TRUE)
     ENDTRY
+ENDFUNC
+
+' jdb_load — read a project file from disk and EXECUTE it. Errors from
+' reading, parsing, or runtime all surface as isError MCP results.
+FUNC TOOL_JDB_LOAD(args)
+    DIM path$ AS STRING = args{"path"}
+    DIM code$ AS STRING = ""
+    TRY
+        code$ = TXTREADER$(path$)
+    CATCH
+        RETURN MAKE_TEXT_RESULT("Cannot read " + path$ + ": " + ERRMSG$, TRUE)
+    ENDTRY
+
+    OUTPUT.CAPTURE_BEGIN
+    TRY
+        EXECUTE code$
+        DIM out$ AS STRING = OUTPUT.CAPTURE_END$
+        DIM banner$ AS STRING = "[loaded " + path$ + ", " + STR$(LEN(code$)) + " bytes]"
+        DIM result$ AS STRING = banner$
+        IF out$ <> "" THEN result$ = banner$ + CHR$(10) + out$
+        RETURN MAKE_TEXT_RESULT(result$, FALSE)
+    CATCH
+        DIM partial$ AS STRING = OUTPUT.CAPTURE_END$
+        DIM err$ AS STRING = "Error in " + path$ + ": " + ERRMSG$
+        IF partial$ <> "" THEN err$ = partial$ + err$
+        RETURN MAKE_TEXT_RESULT(err$, TRUE)
+    ENDTRY
+ENDFUNC
+
+' Parse FUNCS() output — "  NAME(params)  KIND" lines → array of NAMES.
+FUNC EXTRACT_FUNC_NAMES(captured$)
+    DIM names = []
+    DIM lines = SPLIT(captured$, CHR$(10))
+    FOR i = 0 TO LEN(lines) - 1
+        DIM line$ AS STRING = lines[i]
+        IF LEFT$(line$, 2) <> "  " THEN CONTINUEFOR
+        DIM rest$ AS STRING = MID$(line$, 2)
+        DIM lp AS INTEGER = INSTR(rest$, "(")
+        IF lp < 0 THEN CONTINUEFOR
+        PUSH names, LEFT$(rest$, lp)
+    NEXT
+    RETURN names
+ENDFUNC
+
+' jdb_funcs — runs FUNCS() and filters out server-internal functions.
+FUNC TOOL_JDB_FUNCS(args)
+    OUTPUT.CAPTURE_BEGIN
+    FUNCS()
+    DIM raw$ AS STRING = OUTPUT.CAPTURE_END$
+    DIM lines = SPLIT(raw$, CHR$(10))
+    DIM kept = []
+    FOR i = 0 TO LEN(lines) - 1
+        DIM line$ AS STRING = lines[i]
+        IF LEFT$(line$, 2) <> "  " THEN CONTINUEFOR
+        DIM rest$ AS STRING = MID$(line$, 2)
+        DIM lp AS INTEGER = INSTR(rest$, "(")
+        IF lp < 0 THEN CONTINUEFOR
+        DIM nm$ AS STRING = LEFT$(rest$, lp)
+        IF MAP.EXISTS(__SYSTEM_FUNCS, nm$) THEN CONTINUEFOR
+        IF LEFT$(nm$, 2) = "__" THEN CONTINUEFOR
+        PUSH kept, line$
+    NEXT
+    DIM out$ AS STRING = ""
+    IF LEN(kept) = 0 THEN
+        out$ = "(no user functions)"
+    ELSE
+        out$ = JOIN(kept, CHR$(10))
+    ENDIF
+    RETURN MAKE_TEXT_RESULT(out$, FALSE)
+ENDFUNC
+
+' jdb_check — Lex + Parse only. Returns "ok" or the parse error.
+' isError flips on any error so MCP clients can branch.
+FUNC TOOL_JDB_CHECK(args)
+    DIM code$ AS STRING = args{"code"}
+    DIM err$ AS STRING = JDB.CHECK$(code$)
+    IF err$ = "" THEN
+        RETURN MAKE_TEXT_RESULT("ok", FALSE)
+    ELSE
+        RETURN MAKE_TEXT_RESULT(err$, TRUE)
+    ENDIF
 ENDFUNC
 
 ' Parse VARS() output ("  NAME = VALUE" lines) → array of NAMES.
@@ -316,9 +448,21 @@ FOR i = 0 TO LEN(__snap) - 1
     __SYSTEM_VARS{__snap[i]} = TRUE
 NEXT
 
+' Same idea for FUNCs/SUBs — the helpers in this file (MCP_POST,
+' BUILD_TOOLS, MAKE_TEXT_RESULT, …) shouldn't pollute jdb_funcs.
+OUTPUT.CAPTURE_BEGIN
+FUNCS()
+DIM __BOOT_FUNCS$ AS STRING = OUTPUT.CAPTURE_END$
+DIM __SYSTEM_FUNCS AS MAP = {}
+DIM __fsnap = EXTRACT_FUNC_NAMES(__BOOT_FUNCS$)
+FOR i = 0 TO LEN(__fsnap) - 1
+    __SYSTEM_FUNCS{__fsnap[i]} = TRUE
+NEXT
+
 PRINT "── jdBasic MCP server ──"
 PRINT "binding 127.0.0.1:"; MCP_PORT
-PRINT "system vars filtered: "; LEN(__snap)
+PRINT "system vars filtered:  "; LEN(__snap)
+PRINT "system funcs filtered: "; LEN(__fsnap)
 HTTP.SERVER.ON_POST "/mcp", "MCP_POST"
 IF HTTP.SERVER.START(MCP_PORT, "127.0.0.1") THEN
     PRINT "ready. POST JSON-RPC to http://127.0.0.1:" + STR$(MCP_PORT) + "/mcp"

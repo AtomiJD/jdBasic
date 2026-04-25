@@ -54,6 +54,7 @@ public:
     // Access globals (for serialization)
     const std::vector<Value>& get_globals() const { return globals; }
     const std::unordered_map<std::string, uint16_t>& get_global_names() const { return global_names; }
+    const std::deque<FuncProto>& get_funcs() const { return owned_funcs; }
     void set_global(const std::string& name, Value val);
 
     // Register a constant (cannot be overwritten by user code)
@@ -69,8 +70,13 @@ public:
     // Callback for EXECUTE/EVAL — set by the host to provide compilation
     using CompileAndRunFunc = std::function<void(VM&, const std::string&)>;
     using CompileAndEvalFunc = std::function<Value(VM&, const std::string&)>;
+    using ParseCheckFunc = std::function<std::string(VM&, const std::string&)>;
     CompileAndRunFunc on_execute;
     CompileAndEvalFunc on_eval;
+    // Lex + Parse only; returns "" on success, an error message otherwise.
+    // Lets tools (e.g. the MCP server's jdb_check) validate code without
+    // contaminating the persistent VM.
+    ParseCheckFunc on_check;
 
     // Output callback — if set, all VM output goes here instead of std::cout.
     // The host (Console) sets this to route output to the workspace buffer.

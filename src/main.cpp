@@ -173,6 +173,21 @@ static void setup_dynamic_code(VM& vm) {
         run_on_vm(v, code + "\n");
     };
 
+    // JDB.CHECK$ — Lex + Parse only. No compile, no run, no VM mutation.
+    // Returns "" on success or the error message on failure.
+    vm.on_check = [](VM& /*v*/, const std::string& code) -> std::string {
+        try {
+            Lexer lexer(code + "\n");
+            auto tokens = lexer.tokenize();
+            Parser parser(tokens);
+            setup_parser_modules(parser);
+            (void)parser.parse();
+            return "";
+        } catch (const std::exception& e) {
+            return e.what();
+        }
+    };
+
     // VARS — list global variables. Available in both console and script
     // modes (the MCP server in mcp/server.jdb relies on it). Filters out
     // names starting with __ which are language internals.
@@ -185,6 +200,28 @@ static void setup_dynamic_code(VM& vm) {
             for (auto& [name, slot] : names)
                 if (slot < globals.size() && name.substr(0,2) != "__")
                     vm.emit("  " + name + " = " + globals[slot].to_string() + "\n");
+        }
+        return Value::make_none();
+    });
+
+    // FUNCS — list user-defined FUNC / SUB / ASYNC FUNC, one per line, with
+    // the parameter signature. Companion to VARS — the MCP server's
+    // jdb_funcs tool captures this output and filters out boot-time
+    // helpers, leaving just what the user has defined in this session.
+    vm.register_native("FUNCS", [&vm](const std::vector<Value>& args) -> Value {
+        (void)args;
+        const auto& funcs = vm.get_funcs();
+        if (funcs.empty()) { vm.emit("No functions defined.\n"); return Value::make_none(); }
+        for (const auto& f : funcs) {
+            if (f.name.size() >= 2 && f.name[0] == '_' && f.name[1] == '_') continue;
+            std::string kind = f.is_sub ? "SUB" : (f.is_async ? "ASYNC FUNC" : "FUNC");
+            std::string sig = "(";
+            for (size_t i = 0; i < f.param_names.size(); i++) {
+                if (i > 0) sig += ", ";
+                sig += f.param_names[i];
+            }
+            sig += ")";
+            vm.emit("  " + f.name + sig + "  " + kind + "\n");
         }
         return Value::make_none();
     });
