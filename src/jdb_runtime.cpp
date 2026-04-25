@@ -442,6 +442,18 @@ int64_t jdb_array_any(JdbArray* arr) {
     return 0;
 }
 
+// Dot product on flat double buffers — bypasses the bridge's
+// jdbarray_to_value conversion which was making native DOT 13× slower
+// than the interpreter (the conversion alone allocates 2*N Value's
+// before the loop even starts). Bench at 4M elements: 91ms → ~7ms.
+double jdb_array_dot(JdbArray* a, JdbArray* b) {
+    if (!a || !b) return 0.0;
+    int64_t n = a->length < b->length ? a->length : b->length;
+    double s = 0.0;
+    for (int64_t i = 0; i < n; i++) s += a->data[i] * b->data[i];
+    return s;
+}
+
 int64_t jdb_array_all(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0;
     for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == 0.0) return 0;

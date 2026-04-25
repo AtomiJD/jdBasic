@@ -189,6 +189,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_max",  "__arr_max",    f64_type, {i8_ptr_type}, 1);
     reg("jdb_array_any",  "ANY",          i64_type, {i8_ptr_type}, 0);
     reg("jdb_array_all",  "ALL",          i64_type, {i8_ptr_type}, 0);
+    reg("jdb_array_dot",  "DOT",          f64_type, {i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_array_reverse","REVERSE",    i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);

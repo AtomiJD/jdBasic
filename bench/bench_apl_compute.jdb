@@ -1,0 +1,199 @@
+' Baseline benchmark for APL-pipeline ops we plan to back with ONNX
+' (or a SIMD-loop layer) — establishes per-iter cost across sizes so we
+' can see the small-array/big-array crossover and quantify any speedup
+' a future optimisation delivers.
+'
+' Run interpreted:  build/jdBasic.exe bench/bench_apl_compute.jdb
+' Run native:       build/jdBasic.exe -c bench/bench_apl_compute.jdb
+'                   ./bench/bench_apl_compute.exe
+
+OPTION "EXPLICIT"
+
+' Auto-scale iteration count so each measurement runs roughly 50-200 ms
+' regardless of array size — protects per-iter timings from clock noise
+' on small arrays without making big-array runs take forever.
+FUNC ITERS_FOR(size AS INTEGER)
+    IF size <=    100 THEN RETURN 50000
+    IF size <=   2000 THEN RETURN  5000
+    IF size <=  50000 THEN RETURN   500
+    IF size <= 500000 THEN RETURN    50
+    RETURN 10
+ENDFUNC
+
+' ---- per-op benchmarks ---------------------------------------------------
+' Each takes a size, builds inputs, warms once, measures across N iters,
+' prints one CSV line: op,size,iters,total_ms,per_iter_us.
+
+SUB report(op$ AS STRING, size AS INTEGER, iters AS INTEGER, total_ms AS DOUBLE)
+    DIM per_us AS DOUBLE = 0.0
+    IF iters > 0 THEN per_us = (total_ms * 1000.0) / iters
+    PRINT op$; ","; size; ","; iters; ","; total_ms; ","; per_us
+ENDSUB
+
+SUB bench_sum(size AS INTEGER)
+    DIM v = IOTA(size)
+    DIM sink AS DOUBLE = SUM(v)        ' warmup
+    DIM n AS INTEGER = ITERS_FOR(size)
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        sink = sink + SUM(v)
+    NEXT
+    report("SUM", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_min(size AS INTEGER)
+    DIM v = IOTA(size)
+    DIM sink AS DOUBLE = MIN(v)
+    DIM n AS INTEGER = ITERS_FOR(size)
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        sink = sink + MIN(v)
+    NEXT
+    report("MIN", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_max(size AS INTEGER)
+    DIM v = IOTA(size)
+    DIM sink AS DOUBLE = MAX(v)
+    DIM n AS INTEGER = ITERS_FOR(size)
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        sink = sink + MAX(v)
+    NEXT
+    report("MAX", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_mean(size AS INTEGER)
+    DIM v = IOTA(size)
+    DIM sink AS DOUBLE = MEAN(v)
+    DIM n AS INTEGER = ITERS_FOR(size)
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        sink = sink + MEAN(v)
+    NEXT
+    report("MEAN", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_cumsum(size AS INTEGER)
+    DIM v = IOTA(size)
+    DIM r = CUMSUM(v)
+    DIM n AS INTEGER = ITERS_FOR(size) / 4
+    IF n < 1 THEN n = 1
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        r = CUMSUM(v)
+    NEXT
+    report("CUMSUM", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_sin(size AS INTEGER)
+    ' SIN auto-vectorises element-wise — exactly the case ONNX could win.
+    DIM v = SELECT(lambda x -> x * 0.001, IOTA(size))
+    DIM r = SIN(v)
+    DIM n AS INTEGER = ITERS_FOR(size) / 4
+    IF n < 1 THEN n = 1
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        r = SIN(v)
+    NEXT
+    report("SIN", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_exp(size AS INTEGER)
+    DIM v = SELECT(lambda x -> x * 0.0001, IOTA(size))
+    DIM r = EXP(v)
+    DIM n AS INTEGER = ITERS_FOR(size) / 4
+    IF n < 1 THEN n = 1
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        r = EXP(v)
+    NEXT
+    report("EXP", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_sqrt(size AS INTEGER)
+    DIM v = SELECT(lambda x -> x * 0.5, IOTA(size))
+    DIM r = SQR(v)
+    DIM n AS INTEGER = ITERS_FOR(size) / 4
+    IF n < 1 THEN n = 1
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        r = SQR(v)
+    NEXT
+    report("SQR", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_add_ew(size AS INTEGER)
+    ' Element-wise vector + vector — should already be vectorised (broadcast).
+    DIM a = IOTA(size)
+    DIM b = IOTA(size)
+    DIM r = a + b
+    DIM n AS INTEGER = ITERS_FOR(size) / 4
+    IF n < 1 THEN n = 1
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        r = a + b
+    NEXT
+    report("ADD_EW", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_mul_ew(size AS INTEGER)
+    DIM a = IOTA(size)
+    DIM b = IOTA(size)
+    DIM r = a * b
+    DIM n AS INTEGER = ITERS_FOR(size) / 4
+    IF n < 1 THEN n = 1
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        r = a * b
+    NEXT
+    report("MUL_EW", size, n, TICK() - t0)
+ENDSUB
+
+SUB bench_dot(size AS INTEGER)
+    DIM a = IOTA(size)
+    DIM b = IOTA(size)
+    DIM sink AS DOUBLE = DOT(a, b)
+    DIM n AS INTEGER = ITERS_FOR(size) / 2
+    IF n < 1 THEN n = 1
+    DIM t0 AS INTEGER = TICK()
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        sink = sink + DOT(a, b)
+    NEXT
+    report("DOT", size, n, TICK() - t0)
+ENDSUB
+
+' ---- driver --------------------------------------------------------------
+
+DIM SIZES = [64, 1024, 16384, 262144, 4194304]
+DIM s_idx AS INTEGER
+
+PRINT "op,size,iters,total_ms,per_iter_us"
+
+FOR s_idx = 0 TO LEN(SIZES) - 1
+    DIM s AS INTEGER = SIZES[s_idx]
+    bench_sum(s)
+    bench_min(s)
+    bench_max(s)
+    bench_mean(s)
+    bench_cumsum(s)
+    bench_sin(s)
+    bench_exp(s)
+    bench_sqrt(s)
+    bench_add_ew(s)
+    bench_mul_ew(s)
+    bench_dot(s)
+NEXT
+
+PRINT "done"
