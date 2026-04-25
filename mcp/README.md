@@ -81,10 +81,8 @@ Every incoming request and any handler exception is logged to the server's stder
 
 ## Known limitations
 
-- **`TRY/CATCH` around `EXECUTE`** triggers a VM bytecode-corruption bug (repro in `tests/test_execute_in_try.jdb`). Workaround: `jdb_eval` does not wrap `EXECUTE` in `TRY`. Errors propagate up to the HTTP server's outer catch and come back as HTTP 500 plain-text — the server stays alive, but the response isn't a structured `isError` MCP block.
-- **No request-level mutex.** Concurrent MCP requests would race on the shared VM. Today Claude Code issues calls serially per server, so this is fine, but a `jdb_spawn` background tool (Phase 3+) will need locking.
-- **`jdb_vars` includes server internals** (`TOOLS`, `MCP_PORT`, etc.) alongside user globals. A future enhancement could mark "system" globals at server start and filter them out.
 - **Sessions never expire on the server side.** A client that drops without sending DELETE leaves an entry in the in-memory `SESSIONS` map until the server restarts. That's harmless for the single-client Claude Code use case but unbounded in principle.
+- **Single VM, no isolation.** Every `jdb_eval` call runs on the same persistent VM as the server itself. There is no `jdb_spawn` yet, so a long-running snippet blocks the next request behind the VM mutex.
 
 ## File layout
 

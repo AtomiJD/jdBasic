@@ -217,6 +217,16 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     auto saved_sp = sp;
     auto saved_min = min_frame_depth;
     bool saved_is_stopped = is_stopped;
+    // try_handlers is VM-global, but its catch_addr / saved_frame_count
+    // refer to the OUTER chunk and frame depth. If we leave the outer
+    // entries visible to the inner run(), an exception thrown from the
+    // EXECUTE'd code will trip the outer handler and ip-jump into the
+    // inner chunk at the outer's catch_addr — random bytes, "Unknown
+    // opcode". Save and clear so the inner run sees a clean stack; the
+    // exception will propagate up via run_code's catch block below and
+    // the outer try_handlers are restored before re-throwing.
+    auto saved_try_handlers = std::move(try_handlers);
+    try_handlers.clear();
     frames.clear();
     // IMPORTANT: do NOT reset sp to 0 — the existing stack may hold locals of an
     // outer user function (e.g. EVAL called from inside Calc). Start the new
@@ -240,9 +250,12 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
         sp = saved_sp;
         min_frame_depth = saved_min;
         is_stopped = saved_is_stopped;
+        try_handlers = std::move(saved_try_handlers);
         throw;
     }
     subrun_depth--;
+    // Sub-run completed cleanly — restore the outer try_handlers.
+    try_handlers = std::move(saved_try_handlers);
 
     if (is_stopped) {
         // Save stopped state for RESUME — keep chunk alive by copying

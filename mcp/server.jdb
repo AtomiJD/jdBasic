@@ -121,21 +121,21 @@ FUNC TOOL_ECHO(args)
 ENDFUNC
 
 ' jdb_eval — captures everything the snippet PRINTs and returns it.
-'
-' NOTE: We intentionally do NOT wrap EXECUTE in TRY/CATCH here. There
-' is a known VM bug where TRY around EXECUTE produces "Unknown opcode"
-' bytecode corruption (repro in tests/test_execute_in_try.jdb). For now
-' user-code errors propagate up; the HTTP server's outer catch
-' (http.cpp) returns them as a plain HTTP 500 with the error text as
-' body. The MCP client sees this as a transport-level error rather than
-' a structured isError result — uglier but functional, and the server
-' itself stays alive across faulty snippets.
+' Errors come back as a structured MCP isError block (text content =
+' whatever was printed before the throw, followed by the error message).
 FUNC TOOL_JDB_EVAL(args)
     DIM code$ AS STRING = args{"code"}
     OUTPUT.CAPTURE_BEGIN
-    EXECUTE code$
-    DIM out$ AS STRING = OUTPUT.CAPTURE_END$
-    RETURN MAKE_TEXT_RESULT(out$, FALSE)
+    TRY
+        EXECUTE code$
+        DIM out$ AS STRING = OUTPUT.CAPTURE_END$
+        RETURN MAKE_TEXT_RESULT(out$, FALSE)
+    CATCH
+        DIM partial$ AS STRING = OUTPUT.CAPTURE_END$
+        DIM err$ AS STRING = "Error: " + ERRMSG$
+        IF partial$ <> "" THEN err$ = partial$ + err$
+        RETURN MAKE_TEXT_RESULT(err$, TRUE)
+    ENDTRY
 ENDFUNC
 
 ' Parse VARS() output ("  NAME = VALUE" lines) → array of NAMES.
