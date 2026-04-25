@@ -190,6 +190,26 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_any",  "ANY",          i64_type, {i8_ptr_type}, 0);
     reg("jdb_array_all",  "ALL",          i64_type, {i8_ptr_type}, 0);
     reg("jdb_array_dot",  "DOT",          f64_type, {i8_ptr_type, i8_ptr_type}, 1);
+    // Unary array math: bypass the function-pointer-callback applier so
+    // the compiler can inline + vectorise the inner loop.
+    reg("jdb_array_sin",   "__arr_sin",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_cos",   "__arr_cos",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_tan",   "__arr_tan",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_asin",  "__arr_asin",  i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_acos",  "__arr_acos",  i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_atan",  "__arr_atan",  i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_sinh",  "__arr_sinh",  i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_cosh",  "__arr_cosh",  i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_tanh",  "__arr_tanh",  i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_exp",   "__arr_exp",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_log",   "__arr_log",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_log10", "__arr_log10", i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_sqr",   "__arr_sqr",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_abs",   "__arr_abs",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_floor", "__arr_floor", i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_ceil",  "__arr_ceil",  i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_round", "__arr_round", i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_trunc", "__arr_trunc", i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_reverse","REVERSE",    i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
@@ -5503,6 +5523,33 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         {"LEN$",   {"__arr_apply_ifs", "jdb_len_str", "ifs"}},
         {"ASC",    {"__arr_apply_ifs", "jdb_asc",     "ifs"}},
     };
+
+    // Direct array specializations — bypass the apply_ff function-pointer
+    // callback for unary math that can inline + vectorise.
+    {
+        static const std::unordered_map<std::string, const char*> direct_array_unary = {
+            {"SIN","__arr_sin"},   {"COS","__arr_cos"},   {"TAN","__arr_tan"},
+            {"ASIN","__arr_asin"}, {"ACOS","__arr_acos"}, {"ATAN","__arr_atan"},
+            {"SINH","__arr_sinh"}, {"COSH","__arr_cosh"}, {"TANH","__arr_tanh"},
+            {"EXP","__arr_exp"},   {"LOG","__arr_log"},   {"LOG10","__arr_log10"},
+            {"SQR","__arr_sqr"},   {"ABS","__arr_abs"},
+            {"FLOOR","__arr_floor"},{"CEIL","__arr_ceil"},
+            {"ROUND","__arr_round"},{"TRUNC","__arr_trunc"},
+        };
+        auto dit = direct_array_unary.find(upper);
+        if (dit != direct_array_unary.end() && expr.args.size() == 1) {
+            TypedValue av = codegen_expr(*expr.args[0]);
+            if (av.tag == JD_TAG_ARR) {
+                auto rit = runtime_funcs.find(dit->second);
+                if (rit != runtime_funcs.end()) {
+                    LLVMValueRef args[] = { av.val };
+                    LLVMValueRef result = LLVMBuildCall2(builder, rit->second.fn_type,
+                        rit->second.fn, args, 1, "vecd");
+                    return { result, JD_TAG_ARR };
+                }
+            }
+        }
+    }
 
     // Try native vectorization first — avoids VM bridge overhead.
     {

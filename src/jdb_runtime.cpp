@@ -454,6 +454,53 @@ double jdb_array_dot(JdbArray* a, JdbArray* b) {
     return s;
 }
 
+// Per-function array specializations for unary math. The previous path
+// (jdb_array_apply_ff with a function-pointer callback) prevented
+// inlining and SIMD vectorisation. Baking the scalar function in lets
+// the compiler inline std::sin / std::exp / etc. and emit a tight loop
+// the optimiser can vectorise on /O2 (or better with /fp:fast or
+// /arch:AVX2). The flags-bit-0 (nested array) case still recurses,
+// matching apply_ff's behaviour.
+#define JDB_ARRAY_FF(NAME, SCALAR_FN)                                    \
+    JdbArray* jdb_array_##NAME(JdbArray* arr) {                          \
+        if (!arr) return jdb_array_new(0);                               \
+        auto* r = jdb_array_new(arr->length);                            \
+        if (arr->flags & 1) {                                            \
+            r->flags |= 1;                                               \
+            for (int64_t i = 0; i < arr->length; i++) {                  \
+                union { double d; int64_t i; } u; u.d = arr->data[i];    \
+                JdbArray* inner = (JdbArray*)(intptr_t)u.i;              \
+                JdbArray* res = jdb_array_##NAME(inner);                 \
+                union { int64_t i; double d; } ur;                       \
+                ur.i = (int64_t)(intptr_t)res;                           \
+                r->data[i] = ur.d;                                       \
+            }                                                            \
+        } else {                                                         \
+            for (int64_t i = 0; i < arr->length; i++)                    \
+                r->data[i] = SCALAR_FN(arr->data[i]);                    \
+        }                                                                \
+        return r;                                                        \
+    }
+
+JDB_ARRAY_FF(sin,   sin)
+JDB_ARRAY_FF(cos,   cos)
+JDB_ARRAY_FF(tan,   tan)
+JDB_ARRAY_FF(asin,  asin)
+JDB_ARRAY_FF(acos,  acos)
+JDB_ARRAY_FF(atan,  atan)
+JDB_ARRAY_FF(sinh,  sinh)
+JDB_ARRAY_FF(cosh,  cosh)
+JDB_ARRAY_FF(tanh,  tanh)
+JDB_ARRAY_FF(exp,   exp)
+JDB_ARRAY_FF(log,   log)
+JDB_ARRAY_FF(log10, log10)
+JDB_ARRAY_FF(sqr,   sqrt)        // SQR is sqrt in jdBasic
+JDB_ARRAY_FF(abs,   fabs)
+JDB_ARRAY_FF(floor, floor)
+JDB_ARRAY_FF(ceil,  ceil)
+JDB_ARRAY_FF(round, round)
+JDB_ARRAY_FF(trunc, trunc)
+
 int64_t jdb_array_all(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0;
     for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == 0.0) return 0;
