@@ -558,6 +558,9 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             "HISTOGRAM","LINSPACE","FLATTEN","ZIP","RANGE","COUNT","INDEXOF",
             "ISNUM","ISSTR","ISARR","ISMAP","ISBOOL","ISNONE","ISNULL","RANDOMSEED",
             "IIF","EXECUTE","EVAL","LOAD","SAVE","LIST","HELP","HELP$","VARS",
+            // JDB.GLOBAL_SET stores a value as-is; auto-vectorising would
+            // call it once per element and clobber the slot with scalars.
+            "JDB.GLOBAL_GET","JDB.GLOBAL_SET","JDB.CHECK$","FUNCS",
             // SPRITE.ANIM id, name$, frames[], fps, [loop] — frames[] is the payload,
             // broadcasting would leave anim.frames empty and crash SPRITE.PLAY.
             "SPRITE.ANIM",
@@ -1433,6 +1436,11 @@ void VM::run() {
                     {"AWAIT",1}, {"THREAD.ISDONE",1}, {"THREAD.GETRESULT",1},
                     {"REACT_BIND",1}, {"UNREACT",1},
                     {"EXECUTE",1}, {"EVAL",1},
+                    // JDB.GLOBAL_SET stores a value as-is; vectorising it
+                    // would call once per array element and clobber the
+                    // slot with scalars (last write wins).
+                    {"JDB.GLOBAL_GET",1}, {"JDB.GLOBAL_SET",1},
+                    {"JDB.CHECK$",1}, {"FUNCS",1},
                     {"LOAD",1}, {"SAVE",1}, {"LIST",1}, {"HELP",1}, {"HELP$",1}, {"VARS",1},
                     {"SCREEN",1}, {"SCREENFLIP",1}, {"DRAWCOLOR",1}, {"SETFONT",1},
                     {"PSET",1}, {"LINE",1}, {"RECT",1}, {"CIRCLE",1}, {"ELLIPSE",1},
@@ -6695,6 +6703,29 @@ void VM::register_builtins() {
         std::string code = args[0].as_string()->data;
         if (on_check) return Value::make_string(on_check(*this, code));
         return Value::make_string("JDB.CHECK$ unavailable: host did not register on_check");
+    });
+
+    // JDB.GLOBAL_GET(name$) — read a single global by (case-insensitive)
+    // name. Returns NONE if the name is unknown. Companion to set_global.
+    // Used by the MCP jdb_save_state tool to capture a value-copy of each
+    // user variable before an experimental snippet runs.
+    register_native("JDB.GLOBAL_GET", 1, 1, [this](const std::vector<Value>& args) -> Value {
+        std::string nm = args[0].as_string()->data;
+        for (auto& c : nm) c = (char)std::toupper((unsigned char)c);
+        auto it = global_names.find(nm);
+        if (it == global_names.end() || it->second >= globals.size())
+            return Value::make_none();
+        return globals[it->second];
+    });
+
+    // JDB.GLOBAL_SET(name$, value) — write a single global by name.
+    // Allocates the slot if the name is new. Companion to GLOBAL_GET;
+    // jdb_restore_state writes saved values back into place via this.
+    register_native("JDB.GLOBAL_SET", 2, 2, [this](const std::vector<Value>& args) -> Value {
+        std::string nm = args[0].as_string()->data;
+        for (auto& c : nm) c = (char)std::toupper((unsigned char)c);
+        set_global(nm, args[1]);
+        return Value::make_none();
     });
 
     // ── Output capture ─────────────────────────────────────────

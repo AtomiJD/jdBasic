@@ -27,6 +27,10 @@ CONST SERVER_VERSION$ = "0.1.0"
 ' session_id$ → TRUE. Populated on initialize, consulted on every other request.
 DIM SESSIONS AS MAP = {}
 
+' label$ → MAP of name$ → value. Populated by jdb_save_state, drained by
+' jdb_restore_state. Lives for the server process's lifetime.
+DIM SNAPSHOTS AS MAP = {}
+
 ' ── Tool descriptors (declared once, served by tools/list) ─────
 ' Each entry: {"name", "description", "inputSchema"}.
 ' inputSchema follows JSON Schema (draft-07) — clients use it to validate
@@ -80,6 +84,57 @@ FUNC BUILD_TOOLS()
         }                                                              _
     }
     PUSH tools, load_tool
+
+    ' jdb_save_state — snapshot current user-var values under a label.
+    DIM save_tool AS MAP = {                                           _
+        "name": "jdb_save_state",                                      _
+        "description": "Snapshot the current values of every user-defined global (filters server internals the same way jdb_vars does) under a string label. Multiple snapshots can coexist. Use jdb_restore_state to roll back.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "label": {                                             _
+                    "type": "string",                                  _
+                    "description": "Snapshot identifier — pick anything memorable." _
+                }                                                      _
+            },                                                         _
+            "required": ["label"]                                      _
+        }                                                              _
+    }
+    PUSH tools, save_tool
+
+    ' jdb_restore_state — restore a previously saved snapshot.
+    DIM restore_tool AS MAP = {                                        _
+        "name": "jdb_restore_state",                                   _
+        "description": "Restore a previously saved snapshot. Re-assigns each variable that was captured under the label. Variables added after the save are left in place — this is restore-by-overwrite, not a hard rollback.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "label": {                                             _
+                    "type": "string",                                  _
+                    "description": "Label passed to a previous jdb_save_state." _
+                }                                                      _
+            },                                                         _
+            "required": ["label"]                                      _
+        }                                                              _
+    }
+    PUSH tools, restore_tool
+
+    ' jdb_run_native — run a compiled .exe or jdBasic file in a child process.
+    DIM run_native_tool AS MAP = {                                     _
+        "name": "jdb_run_native",                                      _
+        "description": "Run a command line in a child process and capture combined stdout+stderr plus the exit code. Useful for testing native-compiled .exes (e.g. tests/comprehensive_test.exe) or one-off interpreter runs without going through the persistent VM. Path and any args are concatenated into a single shell command — quote arguments with spaces yourself. v1 has no timeout; long-running processes block.", _
+        "inputSchema": {                                               _
+            "type": "object",                                          _
+            "properties": {                                            _
+                "command": {                                           _
+                    "type": "string",                                  _
+                    "description": "The command to run, e.g. 'tests/comprehensive_test.exe' or 'build/jdBasic.exe tests/foo.jdb'." _
+                }                                                      _
+            },                                                         _
+            "required": ["command"]                                    _
+        }                                                              _
+    }
+    PUSH tools, run_native_tool
 
     ' jdb_doc — fuzzy-search doc/languages.md by symbol or topic.
     DIM doc_tool AS MAP = {                                            _
@@ -167,6 +222,12 @@ FUNC DISPATCH_TOOL(tool_name$, args)
             RETURN TOOL_JDB_CHECK(args)
         CASE "jdb_doc"
             RETURN TOOL_JDB_DOC(args)
+        CASE "jdb_save_state"
+            RETURN TOOL_JDB_SAVE_STATE(args)
+        CASE "jdb_restore_state"
+            RETURN TOOL_JDB_RESTORE_STATE(args)
+        CASE "jdb_run_native"
+            RETURN TOOL_JDB_RUN_NATIVE(args)
         CASE "echo"
             RETURN TOOL_ECHO(args)
         DEFAULT
@@ -275,6 +336,86 @@ FUNC TOOL_JDB_FUNCS(args)
         out$ = JOIN(kept, CHR$(10))
     ENDIF
     RETURN MAKE_TEXT_RESULT(out$, FALSE)
+ENDFUNC
+
+' Snapshot every user variable (those NOT in __SYSTEM_VARS, not __ prefixed,
+' not dotted symbol-table noise) into a {name → JSON-serialised value} map.
+'
+' Maps and arrays in jdBasic are reference types — JDB.GLOBAL_GET on them
+' returns the same underlying object, so a later in-place mutation
+' (m{"k"} = v, PUSH arr x) would corrupt the snapshot. JSON.STRINGIFY
+' produces a deep-copy as a string; JSON.PARSE rebuilds a fresh tree on
+' restore. Limitation: values that don't round-trip through JSON
+' (functions, COM handles, NONE) are dropped.
+FUNC CAPTURE_USER_VARS()
+    OUTPUT.CAPTURE_BEGIN
+    VARS()
+    DIM raw$ AS STRING = OUTPUT.CAPTURE_END$
+    DIM names = EXTRACT_VAR_NAMES(raw$)
+    DIM snap AS MAP = {}
+    FOR i = 0 TO LEN(names) - 1
+        DIM nm$ AS STRING = names[i]
+        IF MAP.EXISTS(__SYSTEM_VARS, nm$) THEN CONTINUEFOR
+        IF LEFT$(nm$, 2) = "__" THEN CONTINUEFOR
+        IF INSTR(nm$, ".") >= 0 THEN CONTINUEFOR
+        TRY
+            DIM v = JDB.GLOBAL_GET(nm$)
+            snap{nm$} = JSON.STRINGIFY$(v)
+        CATCH
+            ' Skip values that can't round-trip through JSON.
+        ENDTRY
+    NEXT
+    RETURN snap
+ENDFUNC
+
+FUNC TOOL_JDB_SAVE_STATE(args)
+    DIM label$ AS STRING = args{"label"}
+    IF label$ = "" THEN
+        RETURN MAKE_TEXT_RESULT("label is empty", TRUE)
+    ENDIF
+    DIM snap = CAPTURE_USER_VARS()
+    SNAPSHOTS{label$} = snap
+    DIM count AS INTEGER = LEN(MAP.KEYS(snap))
+    RETURN MAKE_TEXT_RESULT("saved '" + label$ + "' (" + STR$(count) + " vars)", FALSE)
+ENDFUNC
+
+FUNC TOOL_JDB_RESTORE_STATE(args)
+    DIM label$ AS STRING = args{"label"}
+    IF NOT MAP.EXISTS(SNAPSHOTS, label$) THEN
+        RETURN MAKE_TEXT_RESULT("no snapshot named '" + label$ + "'", TRUE)
+    ENDIF
+    DIM snap = SNAPSHOTS{label$}
+    DIM keys = MAP.KEYS(snap)
+    FOR i = 0 TO LEN(keys) - 1
+        DIM k$ AS STRING = keys[i]
+        DIM json$ AS STRING = snap{k$}
+        DIM v = JSON.PARSE$(json$)
+        JDB.GLOBAL_SET(k$, v)
+    NEXT
+    RETURN MAKE_TEXT_RESULT("restored '" + label$ + "' (" + STR$(LEN(keys)) + " vars)", FALSE)
+ENDFUNC
+
+' jdb_run_native — thin wrapper around OS.EXEC. Returns stdout+stderr,
+' exit code, and the rough wall time so the caller can correlate.
+FUNC TOOL_JDB_RUN_NATIVE(args)
+    DIM cmd$ AS STRING = args{"command"}
+    IF cmd$ = "" THEN
+        RETURN MAKE_TEXT_RESULT("command is empty", TRUE)
+    ENDIF
+    ' OS.EXEC wraps the command in `cmd /c` on Windows, which mis-parses
+    ' forward slashes as switch markers. Translate to backslashes so the
+    ' caller can pass POSIX-looking paths like "tests/foo.exe".
+    IF OS.GETOS$() = "WINDOWS" THEN cmd$ = REPLACE$(cmd$, "/", CHR$(92))
+    DIM t0 AS INTEGER = TICK()
+    DIM r = OS.EXEC(cmd$)
+    DIM elapsed_ms AS INTEGER = TICK() - t0
+    DIM exit_code AS INTEGER = r{"EXIT_CODE"}
+    DIM out$ AS STRING = r{"OUTPUT"}
+    DIM banner$ AS STRING = "[exit=" + STR$(exit_code) + " " + STR$(elapsed_ms) + "ms] " + cmd$
+    DIM body$ AS STRING = banner$
+    IF out$ <> "" THEN body$ = banner$ + CHR$(10) + out$
+    DIM is_err = (exit_code <> 0)
+    RETURN MAKE_TEXT_RESULT(body$, is_err)
 ENDFUNC
 
 ' Anchor test — TRUE if `line$` starts a doc entry we want to match against
