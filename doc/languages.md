@@ -61,7 +61,7 @@ PRINT MultiLine$
 | `\`                                   | numeric (integer division) | INTEGER | **Truncates toward zero**; division by zero is an error.                                        |
 | `MOD`                                 | numeric remainder          | INTEGER | `a - trunc(a/b) * b`; division by zero is an error.                                             |
 | `^`                                   | numeric                    | DOUBLE  | Power.                                                                                          |
-| `BAND` `BOR` `BXOR` `NOT` `SHL` `SHR` | numeric                    | INTEGER | Operands coerced to 64-bit integer (trunc toward 0 first). Shift counts are clamped to `0..63`. |
+| `BAND` `BOR` `BXOR` `BNOT` `SHL` `SHR` | numeric                    | INTEGER | Operands coerced to 64-bit integer (trunc toward 0 first). `BNOT` is unary prefix. Shift counts are clamped to `0..63`. |
 
 **Arrays:** `+ - * / \ MOD` and bitwise ops apply **element-wise** for arrays of equal shape. Scalar–array operations broadcast the scalar.
 **Tensors:** `/` is supported; `\` (integer division) and `MOD` are **not supported** for tensors.
@@ -450,6 +450,8 @@ These operators perform bit-level calculations on numeric values, which are trea
 **`BOR`**: (Bitwise OR): 5 BOR 3 -> 7 (%0101 | %0011 = %0111)
 
 **`BXOR`**: (Bitwise XOR): 5 BXOR 3 -> 6 (%0101 ^ %0011 = %0110)
+
+**`BNOT`**: (Bitwise NOT, unary prefix): `BNOT 0` -> -1, `BNOT 5` -> -6, `(BNOT $AA) BAND $FF` -> $55. Vectorises element-wise over arrays.
 
 **`SHL`** — Bitwise shift left. Both **infix** and **function** form work:
 * `1 SHL 8` -> 256

@@ -1853,6 +1853,12 @@ ExprPtr Parser::parse_unary() {
         auto operand = parse_unary();
         return make_unary(TokenType::MINUS, std::move(operand), ln);
     }
+    if (check(TokenType::BNOT)) {
+        int ln = current().line;
+        advance();
+        auto operand = parse_unary();
+        return make_unary(TokenType::BNOT, std::move(operand), ln);
+    }
     return parse_primary();
 }
 

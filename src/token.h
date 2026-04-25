@@ -44,7 +44,7 @@ enum class TokenType {
     AND, OR, NOT, ANDALSO, ORELSE,
 
     // Bitwise operators
-    BAND, BOR, XOR, BXOR, SHL, SHR,
+    BAND, BOR, XOR, BXOR, BNOT, SHL, SHR,
 
     // Comparison
     GT, LT, GE, LE, NE, EQ,
@@ -121,6 +121,7 @@ inline const std::unordered_map<std::string, TokenType>& keywords() {
         {"ANDALSO", TokenType::ANDALSO}, {"ORELSE", TokenType::ORELSE},
         {"BAND", TokenType::BAND}, {"BOR", TokenType::BOR},
         {"XOR", TokenType::XOR}, {"BXOR", TokenType::BXOR},
+        {"BNOT", TokenType::BNOT},
         {"SHL", TokenType::SHL}, {"SHR", TokenType::SHR},
         {"MOD", TokenType::MOD}, {"OF", TokenType::OF},
         {"BOOLEAN", TokenType::TY_BOOLEAN}, {"BYTE", TokenType::TY_BYTE},

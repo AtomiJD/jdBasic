@@ -4854,6 +4854,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
         LLVMValueRef notb = LLVMBuildNot(builder, b, "not");
         return { LLVMBuildZExt(builder, notb, i64_type, "ext"), JD_TAG_BOOL };
     }
+    if (expr.op == TokenType::BNOT) {
+        if (operand.tag == JD_TAG_ARR) {
+            // Element-wise: arr BXOR -1. Reuse the runtime scalar_op codes
+            // (op 6 = XOR), pass scalar -1 as f64 like the binary path does.
+            auto& fn = runtime_funcs["__arr_scalar_op"];
+            LLVMValueRef neg1 = LLVMConstReal(f64_type, -1.0);
+            LLVMValueRef args[] = { operand.val, neg1,
+                                    LLVMConstInt(i32_type, 6, 0),
+                                    LLVMConstInt(i32_type, 0, 0) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "bnot_arr"),
+                     JD_TAG_ARR };
+        }
+        // Scalar: coerce to i64 then bit-flip.
+        LLVMValueRef ival = (operand.tag == JD_TAG_F64)
+            ? LLVMBuildFPToSI(builder, operand.val, i64_type, "ftoi")
+            : operand.val;
+        return { LLVMBuildNot(builder, ival, "bnot"), JD_TAG_I64 };
+    }
     return operand;
 }
 

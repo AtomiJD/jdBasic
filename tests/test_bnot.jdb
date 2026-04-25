@@ -1,0 +1,50 @@
+' Bitwise NOT operator regression test.
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(label$, cond)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: " + label$
+    ENDIF
+ENDSUB
+
+' ── Scalar i64 ────────────────────────────────────────────────
+Assert("BNOT 0  = -1",         BNOT 0  = -1)
+Assert("BNOT -1 = 0",          BNOT -1 = 0)
+Assert("BNOT 5  = -6",         BNOT 5  = -6)
+Assert("BNOT BNOT 7 = 7",      BNOT BNOT 7 = 7)
+Assert("BNOT $FF mask byte",   ((BNOT $FF) BAND $FF) = 0)
+Assert("byte invert 0xAA",     ((BNOT $AA) BAND $FF) = $55)
+
+' ── In binary expressions (precedence: tighter than BAND) ─────
+Assert("BNOT 5 BAND 7",        ((BNOT 5) BAND 7) = 2)
+Assert("BNOT (5 BAND 3)",      BNOT (5 BAND 3) = -2)
+
+' ── Mixed with parentheses ────────────────────────────────────
+Assert("BNOT(0)",              BNOT(0) = -1)
+Assert("BNOT(BNOT(42))",       BNOT(BNOT(42)) = 42)
+
+' ── Array element-wise ────────────────────────────────────────
+DIM arr[3]
+arr[0] = 0
+arr[1] = -1
+arr[2] = 5
+inv = BNOT arr
+Assert("arr BNOT [0]=-1",      inv[0] = -1)
+Assert("arr BNOT [1]=0",       inv[1] = 0)
+Assert("arr BNOT [2]=-6",      inv[2] = -6)
+
+PRINT ""
+PRINT "═══════════════════════════"
+PRINT " BNOT TEST RESULTS"
+PRINT " PASS: "; PASS; "  FAIL: "; FAIL
+IF FAIL = 0 THEN
+    PRINT " ALL BNOT TESTS PASSED!"
+ELSE
+    PRINT " SOME BNOT TESTS FAILED!"
+ENDIF
+PRINT "═══════════════════════════"

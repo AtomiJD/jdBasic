@@ -66,6 +66,10 @@ Description: Performs a bitwise OR operation on two numeric expressions.
 Syntax: expression BXOR expression
 Description: Performs a bitwise XOR operation on two numeric expressions.
 
+[BNOT]
+Syntax: BNOT expression
+Description: Unary bitwise NOT (~). Operand is coerced to 64-bit integer; vectorises element-wise over arrays. Example: BNOT 5 = -6, (BNOT $AA) BAND $FF = $55.
+
 [BYTEAT]
 Syntax: BYTEAT(str$, index)
 Description: Returns the numeric byte value (0-255) at the specified index.

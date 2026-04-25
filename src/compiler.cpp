@@ -1266,6 +1266,7 @@ void Compiler::compile_unary(const Expr& expr) {
     switch (expr.op) {
         case TokenType::MINUS: current_chunk().emit(OpCode::NEG, expr.line); break;
         case TokenType::NOT:   current_chunk().emit(OpCode::LOG_NOT, expr.line); break;
+        case TokenType::BNOT:  current_chunk().emit(OpCode::BIT_NOT, expr.line); break;
         default:
             throw std::runtime_error("Unknown unary operator");
     }
