@@ -1,0 +1,33 @@
+' test_ffi_smoke.jdb — quick check that the new FFI path still works.
+' Exercises: INTEGER/STRING/RETURN params, ARRAY destructuring,
+' scalable RETURN buffer.
+
+PRINT "FFI smoke test"
+
+' ── Plain INTEGER call ──────────────────────────────────────────
+DECLARE FUNC GetSystemMetrics LIB "user32.dll" ALIAS "GetSystemMetrics" (n AS INTEGER) AS INTEGER
+w = GetSystemMetrics(0)
+h = GetSystemMetrics(1)
+PRINT "Screen: " + STR$(w) + " x " + STR$(h)
+IF w < 100 OR h < 100 THEN
+    PRINT "FAIL: implausible screen size"
+    END
+ENDIF
+
+' ── STRING param ────────────────────────────────────────────────
+DECLARE FUNC GetEnvironmentVariable LIB "kernel32.dll" ALIAS "GetEnvironmentVariableA" (name AS STRING, outBuf AS RETURN, size AS INTEGER) AS ARRAY
+
+' Default-size buffer (caller passes 0 → 64 KB default)
+[len_default, val_default] = GetEnvironmentVariable("PATH", 0, 0)
+PRINT "PATH (default buf) length=" + STR$(len_default) + " — first 60 chars: " + LEFT$(val_default, 60)
+
+' Explicit larger buffer (256 KB)
+[len_big, val_big] = GetEnvironmentVariable("PATH", 256*1024, 256*1024)
+PRINT "PATH (256 KB buf) length=" + STR$(len_big)
+
+IF len_big = 0 THEN
+    PRINT "FAIL: PATH not retrievable"
+    END
+ENDIF
+
+PRINT "FFI smoke test OK"

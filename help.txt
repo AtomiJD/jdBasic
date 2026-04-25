@@ -265,9 +265,19 @@ Description: Lists files matching a pattern.
 If extended_info is TRUE, returns a 2D matrix: [Name, Size, Type, Date, Attr].
 Otherwise, returns a 1D array of filenames.
 
-[DLLIMPORT]
-Syntax: DLLIMPORT "library_file"
-Description: Loads a dynamic link library (.dll or .so) and registers its functions.
+[DECLARE]
+Syntax: DECLARE FUNC name LIB "library" ALIAS "export" (p AS type, ...) AS rettype
+        DECLARE SUB  name LIB "library" ALIAS "export" (p AS type, ...)
+Description: Foreign function interface. Declares a function exported from a
+shared library so it can be called from jdBasic. The library name gets the
+correct platform extension auto-applied (.dll / lib.so / lib.dylib).
+Param types: INTEGER, STRING, RETURN (output buffer; caller passes the desired
+size in bytes — 0 = 64 KB default, max 64 MB). Up to 8 parameters.
+Return types: INTEGER, STRING, ARRAY, VOID.
+When RETURN slots or AS ARRAY are used, the call returns
+[function_result, return_buf_1, ...]. See doc/languages.md for the full FFI
+section, jdb/dll_magic.jdb for a Win32 example, jdb/sqlite_demo.jdb for a
+bridge-DLL example.
 
 [DO]
 Syntax: DO ... LOOP [WHILE/UNTIL condition]

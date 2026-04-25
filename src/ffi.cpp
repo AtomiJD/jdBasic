@@ -2,34 +2,103 @@
 #include "vm.h"
 #include "errors.h"
 
-#ifdef _WIN32
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include <unordered_map>
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cctype>
 
-// ── DLL cache ───────────────────────────────────────────────────
+// ── Platform abstraction ────────────────────────────────────────
+//
+// FFI is supported on Windows (LoadLibrary/GetProcAddress) and on
+// POSIX systems (dlopen/dlsym). Calling convention is identical on
+// x86-64: integer/pointer args go through registers + stack and we
+// only ever pass intptr_t-sized values, so a single set of function
+// pointer typedefs covers both Win64 and SysV.
 
-static std::unordered_map<std::string, HMODULE> g_dll_cache;
+#ifdef _WIN32
+  #define NOMINMAX
+  #define WIN32_LEAN_AND_MEAN
+  #include <windows.h>
+  using DllHandle = HMODULE;
+  using SymbolPtr = FARPROC;
+  static DllHandle dll_open(const char* name) { return LoadLibraryA(name); }
+  static SymbolPtr dll_sym(DllHandle h, const char* sym) { return GetProcAddress(h, sym); }
+  static std::string dll_error() { return "GetLastError=" + std::to_string(GetLastError()); }
+#else
+  #include <dlfcn.h>
+  using DllHandle = void*;
+  using SymbolPtr = void*;
+  static DllHandle dll_open(const char* name) { return dlopen(name, RTLD_NOW | RTLD_LOCAL); }
+  static SymbolPtr dll_sym(DllHandle h, const char* sym) { return dlsym(h, sym); }
+  static std::string dll_error() { const char* e = dlerror(); return e ? std::string(e) : ""; }
+#endif
 
-static HMODULE get_dll(const std::string& name) {
-    // Case-insensitive cache key
+// ── Library name resolution ─────────────────────────────────────
+
+static bool has_path_separator(const std::string& s) {
+    return s.find('/') != std::string::npos || s.find('\\') != std::string::npos;
+}
+
+static bool ends_with_ci(const std::string& s, const std::string& suffix) {
+    if (s.size() < suffix.size()) return false;
+    return std::equal(suffix.rbegin(), suffix.rend(), s.rbegin(),
+        [](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); });
+}
+
+// Build the candidate list to try for a LIB "<name>" string.
+// If the name already has an extension or a path separator we trust
+// the caller. Otherwise we add the right platform suffix(es) so the
+// same .jdb source can target Windows and POSIX without conditionals.
+static std::vector<std::string> dll_candidate_names(const std::string& name) {
+    std::vector<std::string> out;
+    bool has_ext = ends_with_ci(name, ".dll") ||
+                   ends_with_ci(name, ".so")  ||
+                   ends_with_ci(name, ".dylib");
+    if (has_path_separator(name) || has_ext) {
+        out.push_back(name);
+        return out;
+    }
+#ifdef _WIN32
+    out.push_back(name + ".dll");
+    out.push_back(name);
+#elif defined(__APPLE__)
+    out.push_back("lib" + name + ".dylib");
+    out.push_back(name + ".dylib");
+    out.push_back("./lib" + name + ".dylib");
+    out.push_back("./" + name + ".dylib");
+#else
+    out.push_back("lib" + name + ".so");
+    out.push_back(name + ".so");
+    out.push_back("./lib" + name + ".so");
+    out.push_back("./" + name + ".so");
+#endif
+    return out;
+}
+
+static std::unordered_map<std::string, DllHandle> g_dll_cache;
+
+static DllHandle get_dll(const std::string& name) {
     std::string key = name;
-    std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+    std::transform(key.begin(), key.end(), key.begin(),
+        [](unsigned char c) { return (char)std::tolower(c); });
     auto it = g_dll_cache.find(key);
     if (it != g_dll_cache.end()) return it->second;
-    HMODULE h = LoadLibraryA(name.c_str());
-    if (!h) throw jdError(ErrCode::RUNTIME_ERROR, "Cannot load DLL: " + name);
+
+    DllHandle h = nullptr;
+    std::string last_err;
+    for (const auto& candidate : dll_candidate_names(name)) {
+        h = dll_open(candidate.c_str());
+        if (h) break;
+        last_err = dll_error();
+    }
+    if (!h) throw jdError(ErrCode::RUNTIME_ERROR,
+        "Cannot load library: " + name + (last_err.empty() ? "" : " (" + last_err + ")"));
     g_dll_cache[key] = h;
     return h;
 }
 
-// ── Generic FFI caller (x64) ────────────────────────────────────
-// On x64 Windows there is only one calling convention.
-// We dispatch by argument count, casting the function pointer.
+// ── Generic FFI caller (x86-64) ─────────────────────────────────
 
 typedef intptr_t (*FP0)();
 typedef intptr_t (*FP1)(intptr_t);
@@ -41,7 +110,7 @@ typedef intptr_t (*FP6)(intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr
 typedef intptr_t (*FP7)(intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t);
 typedef intptr_t (*FP8)(intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t, intptr_t);
 
-static intptr_t call_ffi(FARPROC proc, intptr_t* a, int n) {
+static intptr_t call_ffi(SymbolPtr proc, intptr_t* a, int n) {
     switch (n) {
         case 0: return ((FP0)proc)();
         case 1: return ((FP1)proc)(a[0]);
@@ -65,41 +134,63 @@ struct FFIDecl {
     std::string alias;
     std::vector<std::string> param_types; // "INTEGER", "STRING", "RETURN"
     std::string return_type;              // "INTEGER", "STRING", "ARRAY", "VOID"
-    FARPROC proc = nullptr;              // cached
+    SymbolPtr proc = nullptr;             // cached
 };
 
 static std::unordered_map<std::string, FFIDecl> g_ffi_decls;
 
-// ── Build the native wrapper for a declared function ────────────
+// ── RETURN buffer sizing ────────────────────────────────────────
+// The RETURN parameter is an output char buffer the native function
+// writes into. Its size is taken from the caller-supplied integer in
+// that argument slot (in bytes). 0 / missing → default. Above the cap
+// we clamp to protect against accidental huge allocations.
+
+static constexpr int FFI_RETURN_BUF_DEFAULT = 64 * 1024;       // 64 KB
+static constexpr int FFI_RETURN_BUF_MAX     = 64 * 1024 * 1024; // 64 MB
 
 static Value ffi_call_wrapper(const FFIDecl& decl, const std::vector<Value>& args) {
-    // Resolve proc if not cached
-    FARPROC proc = decl.proc;
+    SymbolPtr proc = decl.proc;
     if (!proc) {
-        HMODULE h = get_dll(decl.dll);
-        proc = GetProcAddress(h, decl.alias.c_str());
+        DllHandle h = get_dll(decl.dll);
+        proc = dll_sym(h, decl.alias.c_str());
         if (!proc) throw jdError(ErrCode::RUNTIME_ERROR,
             "FFI: function '" + decl.alias + "' not found in " + decl.dll);
-        // Cache it (const_cast to update the cached copy)
         const_cast<FFIDecl&>(decl).proc = proc;
     }
 
     int param_count = (int)decl.param_types.size();
     intptr_t raw_args[8] = {};
-
-    // Temporary storage for string buffers and RETURN buffers
     std::vector<std::string> str_storage(param_count);
-    // Pre-count RETURN params so we can pre-allocate (avoid realloc invalidation)
-    int return_count = 0;
-    for (auto& pt : decl.param_types) if (pt == "RETURN") return_count++;
-    std::vector<std::vector<char>> return_buffers(return_count, std::vector<char>(4096, 0));
+
+    // First pass: figure out per-RETURN buffer sizes from caller args.
+    std::vector<int> return_sizes;
+    {
+        int ai = 0;
+        for (int i = 0; i < param_count; i++) {
+            if (decl.param_types[i] == "RETURN") {
+                int sz = FFI_RETURN_BUF_DEFAULT;
+                if (ai < (int)args.size()) {
+                    long long requested = (long long)args[ai].to_int();
+                    if (requested > 0) {
+                        if (requested > FFI_RETURN_BUF_MAX) requested = FFI_RETURN_BUF_MAX;
+                        sz = (int)requested;
+                    }
+                }
+                return_sizes.push_back(sz);
+            }
+            ai++;
+        }
+    }
+
+    std::vector<std::vector<char>> return_buffers;
+    return_buffers.reserve(return_sizes.size());
+    for (int sz : return_sizes) return_buffers.emplace_back(sz, 0);
+
     std::vector<int> return_indices;
     int return_idx = 0;
-
     int arg_idx = 0;
     for (int i = 0; i < param_count && i < 8; i++) {
         const std::string& ptype = decl.param_types[i];
-
         if (ptype == "RETURN") {
             raw_args[i] = (intptr_t)return_buffers[return_idx].data();
             return_indices.push_back(return_idx);
@@ -121,42 +212,42 @@ static Value ffi_call_wrapper(const FFIDecl& decl, const std::vector<Value>& arg
         }
     }
 
-    // Call the function
     intptr_t result = call_ffi(proc, raw_args, param_count);
 
-    // Build return value
     if (!return_indices.empty() || decl.return_type == "ARRAY") {
-        // Pack [return_value, return_param1, return_param2, ...]
         Value arr = Value::make_array();
         arr.as_array()->elements.push_back(Value::make_i64(result));
         for (size_t ri = 0; ri < return_indices.size(); ri++) {
-            // RETURN params are char buffers → convert to string
-            std::string s(return_buffers[ri].data());
-            arr.as_array()->elements.push_back(Value::make_string(s));
+            // NUL-terminated up to capacity.
+            const char* data = return_buffers[ri].data();
+            int cap = (int)return_buffers[ri].size();
+            int len = 0;
+            while (len < cap && data[len] != 0) len++;
+            arr.as_array()->elements.push_back(Value::make_string(std::string(data, (size_t)len)));
         }
         return arr;
     }
 
     if (decl.return_type == "STRING") {
-        // Result is a char pointer
         if (result == 0) return Value::make_string("");
         return Value::make_string(std::string((const char*)result));
     }
-
     if (decl.return_type == "VOID") {
         return Value::make_none();
     }
-
-    // INTEGER (default)
     return Value::make_i64(result);
 }
 
-#endif // _WIN32
-
 // ── Register FFI builtins ───────────────────────────────────────
 
+static std::string ffi_to_upper(const std::string& s) {
+    std::string r = s;
+    std::transform(r.begin(), r.end(), r.begin(),
+        [](unsigned char c) { return (char)std::toupper(c); });
+    return r;
+}
+
 void register_ffi_builtins(VM& vm) {
-#ifdef _WIN32
     // __FFI_DECLARE(name, dll, alias, [param_types], [param_names], ret_type)
     vm.register_native("__FFI_DECLARE", [&vm](const std::vector<Value>& args) -> Value {
         if (args.size() < 6)
@@ -173,24 +264,27 @@ void register_ffi_builtins(VM& vm) {
 
         decl.return_type = args[5].as_string()->data;
 
-        // Store the declaration
-        g_ffi_decls[decl.name] = decl;
+        // Store under uppercase so the wrapper resolves regardless of
+        // which casing the dispatch site arrives with.
+        std::string key = ffi_to_upper(decl.name);
+        g_ffi_decls[key] = decl;
 
-        // Register a native function with this name
-        std::string fn_name = decl.name;
-        vm.register_native(fn_name, [fn_name](const std::vector<Value>& call_args) -> Value {
-            auto it = g_ffi_decls.find(fn_name);
+        auto wrapper = [key](const std::vector<Value>& call_args) -> Value {
+            auto it = g_ffi_decls.find(key);
             if (it == g_ffi_decls.end())
-                throw jdError(ErrCode::UNDEFINED_FUNCTION, "FFI function not declared: " + fn_name);
+                throw jdError(ErrCode::UNDEFINED_FUNCTION, "FFI function not declared: " + key);
             return ffi_call_wrapper(it->second, call_args);
-        });
+        };
+
+        // Register under both the original (case-preserved) name and the
+        // uppercased name. The interpreter dispatches with the parser's
+        // identifier value as-is; the LLVM-codegen path uppercases call
+        // names before passing them through jdrt_call_*, so without the
+        // uppercase alias native-compiled programs hit
+        // "Undefined function: <UPPERCASE>" on the FFI call site.
+        vm.register_native(decl.name, wrapper);
+        if (key != decl.name) vm.register_native(key, wrapper);
 
         return Value::make_none();
     });
-#else
-    vm.register_native("__FFI_DECLARE", [](const std::vector<Value>& args) -> Value {
-        (void)args;
-        throw jdError(ErrCode::RUNTIME_ERROR, "DECLARE: FFI only available on Windows");
-    });
-#endif
 }

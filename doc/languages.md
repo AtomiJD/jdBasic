@@ -693,7 +693,7 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
 * **`EXPORT MODULE [module]`**: Marks a file as EXPORT for importing with IMPORT
-* **`DLLIMPORT [funcfile]`**: Loads the funcfile.dll or funcfile.so as dynmaic library and register all included functions for jdBasic.
+* **`DECLARE FUNC name LIB "lib" ALIAS "export_name" (params) AS rettype`**: Declares a foreign function from a shared library so it can be called from jdBasic. See the **Foreign Function Interface** section below.
 * **`CLIPBOARD.SET text$`**: Sets the system clipboard text.
 * **`CLIPBOARD.GET$() -> string$`**: Returns the text currently in the system clipboard.
 * **`END`**: Immediately terminates the program execution (unlike `STOP` which pauses for debugging).
@@ -942,6 +942,84 @@ Icon            = resources/myprog.ico
 If `rc.exe` (the Windows resource compiler) is unavailable or fails, the
 linker continues without the version resource and a warning is printed to
 stderr — compilation never fails because of a bad props file.
+
+### Foreign Function Interface (DECLARE FUNC)
+
+`DECLARE FUNC` / `DECLARE SUB` lets jdBasic call any C-style function exported
+from a shared library — Win32 APIs, your own bridge DLLs (e.g. for SQLite,
+ZeroMQ, OpenSSL), or third-party libraries. There is no preprocessor and no
+header file: each function is declared inline.
+
+**Syntax**
+
+```basic
+DECLARE FUNC name LIB "library" ALIAS "export_name" (p1 AS type, ...) AS ret_type
+DECLARE SUB  name LIB "library" ALIAS "export_name" (p1 AS type, ...)
+```
+
+* **`name`** — the identifier you call from jdBasic. Does not have to match the export.
+* **`LIB "library"`** — base library name. The runtime appends the platform extension automatically:
+  * Windows: `name.dll`
+  * Linux:   `libname.so`
+  * macOS:   `libname.dylib`
+  * If the string already contains a path separator or one of these extensions, it is used verbatim.
+* **`ALIAS "export_name"`** — symbol exported by the library (case-sensitive). Default is `name`.
+* **Parameter types**: `INTEGER`, `STRING`, `RETURN`. Up to 8 parameters.
+* **Return types**: `INTEGER` (default for FUNC), `STRING`, `ARRAY`, `VOID` (SUB).
+
+**Parameter types in detail**
+
+| Type      | C-side                          | jdBasic-side                                    |
+|-----------|---------------------------------|-------------------------------------------------|
+| `INTEGER` | `intptr_t` (any int / pointer)  | Numeric value                                   |
+| `STRING`  | `const char*` (NUL-terminated)  | jdBasic string is copied into a temp buffer     |
+| `RETURN`  | `char*` writable output buffer  | The integer passed by the caller is the **buffer size in bytes** (0 = default 64 KB; clamped at 64 MB) |
+
+When a function uses one or more `RETURN` parameters, **or** declares
+`AS ARRAY`, the call returns an array: `[function_return, return_buf_1,
+return_buf_2, ...]`. Each `RETURN` slot is decoded as a NUL-terminated
+string. Use array destructuring to unpack:
+
+```basic
+[bytes_written, json$] = sqlb_query_json(db, "SELECT * FROM users", 1024*1024, 1024*1024)
+```
+
+The first `1024*1024` here both *requests* a 1 MB output buffer **and** is
+the integer the C function receives as its size argument — a single value
+serves both ends, which is the typical Win32 / POSIX pattern.
+
+**Calling convention**: x86-64 only — Win64 ABI on Windows and System V on
+Linux/macOS. Pass everything as `intptr_t`-sized values. There is no
+`STDCALL` / `CDECL` / `double` support today; floats must be marshalled as
+strings or bit-pattern integers in the bridge.
+
+**Example — Win32 API**
+
+```basic
+DECLARE FUNC MessageBox LIB "user32.dll" ALIAS "MessageBoxA" _
+    (hwnd AS INTEGER, text AS STRING, title AS STRING, type AS INTEGER) AS INTEGER
+
+result = MessageBox(0, "Hello from jdBasic!", "FFI demo", 0)
+```
+
+**Example — your own bridge DLL** (`bridges/sqlitebridge/sqlitebridge.c`):
+
+```basic
+DECLARE FUNC sqlb_open LIB "sqlitebridge" ALIAS "sqlb_open" (path AS STRING) AS INTEGER
+DECLARE FUNC sqlb_exec LIB "sqlitebridge" ALIAS "sqlb_exec" (h AS INTEGER, sql AS STRING) AS INTEGER
+
+db = sqlb_open("test.db")
+n  = sqlb_exec(db, "CREATE TABLE t(id INTEGER, name TEXT)")
+```
+
+Wrap your bridge in an `EXPORT MODULE` file so callers see a clean namespace:
+see `jdb/sqlite.jdb` and `jdb/sqlite_demo.jdb` for the full pattern.
+
+**Platform notes**
+
+* **Windows**: production-tested. Loads via `LoadLibraryA` / `GetProcAddress`.
+* **Linux/macOS**: `dlopen` / `dlsym` path is in place; build & validation
+  pending — see `src/ffi.cpp`.
 
 ### Python Integration (FFI)
 

@@ -1,0 +1,10 @@
+' Isolate STRING param vs RETURN buffer marshalling in native mode.
+
+' lstrlenA(s) → strlen of a Win32 ASCII string. Pure STRING input, INTEGER out.
+DECLARE FUNC lstrlenA LIB "kernel32.dll" ALIAS "lstrlenA" (s AS STRING) AS INTEGER
+
+n = lstrlenA("Hello, world!")
+PRINT "lstrlenA(""Hello, world!"") = " + STR$(n) + "  (expect 13)"
+
+n2 = lstrlenA("PATH")
+PRINT "lstrlenA(""PATH"") = " + STR$(n2) + "  (expect 4)"
