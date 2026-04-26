@@ -1,0 +1,14 @@
+' Helper module exposing FUNCs to be passed as arguments to higher-order
+' callers in test_xmod_funcarg.jdb.
+
+EXPORT FUNC SQUARE(x)
+    RETURN x * x
+ENDFUNC
+
+EXPORT FUNC PLUS_ONE(x)
+    RETURN x + 1
+ENDFUNC
+
+EXPORT FUNC IS_EVEN(x)
+    RETURN (x MOD 2) = 0
+ENDFUNC

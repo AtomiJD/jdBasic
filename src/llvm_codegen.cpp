@@ -4155,8 +4155,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef result = LLVMBuildCall2(builder, call_ft, lambda.val, args, 1, "pipe");
                     return { result, JD_TAG_F64 };
                 }
-            } else if (expr.right->kind == ExprKind::VARIABLE) {
-                // value |> FuncName  →  FuncName(value)
+            } else if (expr.right->kind == ExprKind::VARIABLE ||
+                       expr.right->kind == ExprKind::LITERAL_STRING) {
+                // value |> FuncName     →  FuncName(value)
+                // value |> Mod.FuncName@ →  Mod.FuncName(value)   (LITERAL_STRING is the funcref form)
                 std::string fn_name = expr.right->str_val;
                 auto uit = user_functions.find(fn_name);
                 if (uit != user_functions.end()) {
@@ -4930,6 +4932,86 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
     return operand;
 }
 
+// ── FUNCREF wrapper ─────────────────────────────────────────
+//
+// HOFs like SELECT/FILTER/REDUCE in jdb_runtime expect a JdbMapFn,
+// i.e. `double(double)` (or `double(double,double)` for binary). User
+// FUNCs may have differently-tagged params/returns (i64/bool), which
+// LLVM cannot freely cast to the expected signature. Instead we
+// generate a thin trampoline that forwards the call with proper
+// SIToFP/FPToSI coercions. Cached per (name, arity) so each FUNC
+// only gets one wrapper per .exe.
+LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int arity) {
+    std::string key = fn_name + "/" + std::to_string(arity);
+    auto cached = funcref_wrappers.find(key);
+    if (cached != funcref_wrappers.end()) return cached->second;
+
+    auto fit = user_functions.find(fn_name);
+    if (fit == user_functions.end()) return nullptr;
+    auto& fi = fit->second;
+    if ((int)fi.param_tags.size() < arity) return nullptr;
+
+    std::vector<LLVMTypeRef> wrap_params(arity, f64_type);
+    LLVMTypeRef wrap_ty = LLVMFunctionType(f64_type,
+        wrap_params.empty() ? nullptr : wrap_params.data(), arity, 0);
+
+    std::string wrap_name = "__funcref_" + fn_name + "_" + std::to_string(arity);
+    for (auto& c : wrap_name) if (c == '.' || c == '$' || c == '@') c = '_';
+    LLVMValueRef wrap_fn = LLVMAddFunction(module, wrap_name.c_str(), wrap_ty);
+
+    LLVMValueRef saved_fn = current_fn;
+    LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+
+    current_fn = wrap_fn;
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, wrap_fn, "entry");
+    LLVMPositionBuilderAtEnd(builder, entry);
+
+    std::vector<LLVMValueRef> inner_args;
+    for (int i = 0; i < arity; i++) {
+        LLVMValueRef p = LLVMGetParam(wrap_fn, i);
+        int expected = fi.param_tags[i];
+        // Param signature mirrors codegen_call: ptr-shaped tags get i8*,
+        // i64 stays as i64, everything else passes as f64.
+        if (expected == JD_TAG_I64 || expected == JD_TAG_BOOL) {
+            p = LLVMBuildFPToSI(builder, p, i64_type, "ftoi");
+        } else if (expected == JD_TAG_STR || expected == JD_TAG_ARR ||
+                   expected == JD_TAG_NATIVE_MAP) {
+            // Pun the f64 bits back to a pointer. HOF callers don't pass
+            // pointer args today; this is a defensive coercion.
+            LLVMValueRef as_i = pun_f64_to_i64(p);
+            p = LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr");
+        }
+        inner_args.push_back(p);
+    }
+
+    LLVMTypeRef inner_ty = LLVMGlobalGetValueType(fi.fn);
+    LLVMValueRef call = LLVMBuildCall2(builder, inner_ty, fi.fn,
+        inner_args.empty() ? nullptr : inner_args.data(),
+        (unsigned)inner_args.size(),
+        fi.return_tag == -1 ? "" : "wcall");
+
+    LLVMValueRef ret_val;
+    if (fi.return_tag == -1) {
+        ret_val = LLVMConstReal(f64_type, 0.0);
+    } else if (fi.return_tag == JD_TAG_I64 || fi.return_tag == JD_TAG_BOOL) {
+        ret_val = LLVMBuildSIToFP(builder, call, f64_type, "itof");
+    } else if (fi.return_tag == JD_TAG_STR || fi.return_tag == JD_TAG_ARR ||
+               fi.return_tag == JD_TAG_NATIVE_MAP) {
+        // Pun ptr → i64 → f64 so the value survives transit.
+        LLVMValueRef as_i = LLVMBuildPtrToInt(builder, call, i64_type, "ptoi");
+        ret_val = pun_i64_to_f64(as_i);
+    } else {
+        ret_val = call;
+    }
+    LLVMBuildRet(builder, ret_val);
+
+    current_fn = saved_fn;
+    LLVMPositionBuilderAtEnd(builder, saved_bb);
+
+    funcref_wrappers[key] = wrap_fn;
+    return wrap_fn;
+}
+
 // ── CALL ────────────────────────────────────────────────────
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
@@ -5150,8 +5232,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // Handle SELECT/FILTER/REDUCE with lambda function pointers
+    //
+    // The runtime expects a JdbMapFn (`double(double)`). Lambdas already
+    // emit that signature directly. For named FUNCs and module FUNCs
+    // (`MOD.FUNC@` parses to a string literal), build a thin trampoline
+    // that coerces tagged params/returns to f64.
+    auto resolve_funcref = [&](const Expr& e, int arity) -> TypedValue {
+        if (e.kind == ExprKind::LITERAL_STRING) {
+            LLVMValueRef wrap = build_funcref_wrapper(e.str_val, arity);
+            if (wrap) return { wrap, JD_TAG_FUNCREF };
+        }
+        return codegen_expr(e);
+    };
+
     if ((upper == "SELECT" || upper == "FILTER") && expr.args.size() >= 2) {
-        TypedValue fn_val = codegen_expr(*expr.args[0]);
+        TypedValue fn_val = resolve_funcref(*expr.args[0], 1);
         TypedValue arr_val = codegen_expr(*expr.args[1]);
         if (fn_val.tag == JD_TAG_FUNCREF) {
             // Lambda function pointer + array
@@ -5168,7 +5263,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
     if (upper == "REDUCE" && expr.args.size() >= 2) {
-        TypedValue fn_val = codegen_expr(*expr.args[0]);
+        TypedValue fn_val = resolve_funcref(*expr.args[0], 2);
         TypedValue arr_val = codegen_expr(*expr.args[1]);
         double init = 0.0;
         if (fn_val.tag == JD_TAG_FUNCREF) {

@@ -1,0 +1,16 @@
+' Helper module exporting both a scalar global, a fixed-size array,
+' and a SUB that initialises the array. Used by test_xmod_array.jdb.
+
+EXPORT DIM lookup[10]
+EXPORT DIM tag = "before"
+
+EXPORT SUB INIT_LOOKUP()
+    FOR i = 0 TO 9
+        lookup[i] = i * i
+    NEXT i
+    tag = "after"
+ENDSUB
+
+EXPORT FUNC GET_AT(i)
+    RETURN lookup[i]
+ENDFUNC

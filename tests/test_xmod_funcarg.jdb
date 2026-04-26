@@ -1,0 +1,50 @@
+' Cross-module FUNC passed as a higher-order argument.
+' Repro for "Cross-module functions as arguments" in the Apple-II punchlist.
+
+IMPORT TEST_XMOD_FUNCARG_MOD
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(label$, cond)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: " + label$
+    ENDIF
+ENDSUB
+
+' ── A) Pass module FUNC into builtin SELECT ───────────────────
+arr = IOTA(5)            ' [1,2,3,4,5]
+sq = SELECT(TEST_XMOD_FUNCARG_MOD.SQUARE@, arr)
+Assert("SELECT len",      LEN(sq) = 5)
+Assert("SELECT[0]=1",     sq[0] = 1)
+Assert("SELECT[2]=9",     sq[2] = 9)
+Assert("SELECT[4]=25",    sq[4] = 25)
+
+' ── B) Pass module FUNC into builtin FILTER ───────────────────
+ev = FILTER(TEST_XMOD_FUNCARG_MOD.IS_EVEN@, IOTA(10))
+Assert("FILTER len=5",    LEN(ev) = 5)
+Assert("FILTER[0]=2",     ev[0] = 2)
+Assert("FILTER[4]=10",    ev[4] = 10)
+
+' ── C) Skipped: REDUCE(lambda acc,x -> acc + USER_FUNC(x), ...)
+'        segfaults natively even with a *local* FUNC, so this is a
+'        general lambda-calls-named-FUNC-inside-REDUCE issue, not
+'        cross-module specific. Tracked separately.
+
+' ── D) Pipe form ──────────────────────────────────────────────
+piped = 7 |> TEST_XMOD_FUNCARG_MOD.SQUARE@
+Assert("pipe scalar",     piped = 49)
+
+PRINT ""
+PRINT "═══════════════════════════"
+PRINT " XMOD-FUNCARG TEST RESULTS"
+PRINT " PASS: "; PASS; "  FAIL: "; FAIL
+IF FAIL = 0 THEN
+    PRINT " ALL XMOD-FUNCARG TESTS PASSED!"
+ELSE
+    PRINT " SOME XMOD-FUNCARG TESTS FAILED!"
+ENDIF
+PRINT "═══════════════════════════"

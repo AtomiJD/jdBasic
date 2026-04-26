@@ -1,0 +1,52 @@
+' Cross-module access to an exported array (and scalar) global.
+' Repro for "Cross-module arrays" in the Apple-II punchlist.
+
+IMPORT TEST_XMOD_ARRAY_MOD
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(label$, cond)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: " + label$
+    ENDIF
+ENDSUB
+
+' ── Pre-init: read scalar export ──────────────────────────────
+Assert("scalar before init", TEST_XMOD_ARRAY_MOD.tag = "before")
+
+' ── Init via cross-module SUB ─────────────────────────────────
+TEST_XMOD_ARRAY_MOD.INIT_LOOKUP()
+
+' ── Read array element through module accessor FUNC ──────────
+Assert("FUNC GET_AT(0)=0",  TEST_XMOD_ARRAY_MOD.GET_AT(0) = 0)
+Assert("FUNC GET_AT(3)=9",  TEST_XMOD_ARRAY_MOD.GET_AT(3) = 9)
+Assert("FUNC GET_AT(5)=25", TEST_XMOD_ARRAY_MOD.GET_AT(5) = 25)
+Assert("FUNC GET_AT(9)=81", TEST_XMOD_ARRAY_MOD.GET_AT(9) = 81)
+
+' ── Read scalar export after side-effect ──────────────────────
+Assert("scalar after init",  TEST_XMOD_ARRAY_MOD.tag = "after")
+
+' ── Direct array indexing on module variable ─────────────────
+Assert("direct lookup[0]",   TEST_XMOD_ARRAY_MOD.lookup[0] = 0)
+Assert("direct lookup[3]",   TEST_XMOD_ARRAY_MOD.lookup[3] = 9)
+Assert("direct lookup[7]",   TEST_XMOD_ARRAY_MOD.lookup[7] = 49)
+
+' ── Pass module array into a builtin ─────────────────────────
+Assert("LEN module arr",     LEN(TEST_XMOD_ARRAY_MOD.lookup) = 10)
+Assert("SUM module arr",     SUM(TEST_XMOD_ARRAY_MOD.lookup) = 285)
+Assert("MAX module arr",     MAX(TEST_XMOD_ARRAY_MOD.lookup) = 81)
+
+PRINT ""
+PRINT "═══════════════════════════"
+PRINT " XMOD-ARRAY TEST RESULTS"
+PRINT " PASS: "; PASS; "  FAIL: "; FAIL
+IF FAIL = 0 THEN
+    PRINT " ALL XMOD-ARRAY TESTS PASSED!"
+ELSE
+    PRINT " SOME XMOD-ARRAY TESTS FAILED!"
+ENDIF
+PRINT "═══════════════════════════"

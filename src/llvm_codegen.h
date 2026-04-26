@@ -146,6 +146,13 @@ private:
     };
     std::unordered_map<std::string, FuncInfo> user_functions;
 
+    // Cache of "(name@, arity) -> wrapper LLVM function" so HOFs like
+    // SELECT/FILTER/REDUCE can pass a JdbMapFn-shaped pointer to the
+    // runtime even when the target user FUNC has a non-f64 signature.
+    // Wrapper is generated lazily on first reference.
+    std::unordered_map<std::string, LLVMValueRef> funcref_wrappers;
+    LLVMValueRef build_funcref_wrapper(const std::string& fn_name, int arity);
+
     // Loop control: stack of {break_bb, continue_bb} for EXITDO/EXITFOR/CONTINUE
     struct LoopCtx {
         LLVMBasicBlockRef break_bb;
