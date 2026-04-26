@@ -1,0 +1,69 @@
+' Numeric assignment to a $-suffixed variable. Native used to bit-pun
+' the f64 into the i8* slot and segfault on read; now it coerces via
+' __double_to_str / __int_to_str. The interpreter just stores the raw
+' numeric. Both behaviours converge once the value passes through a
+' string concat (`"x"+v$`), so we test through that lens.
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(label$, cond)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: " + label$
+    ENDIF
+ENDSUB
+
+' ── Direct numeric literal ────────────────────────────────────
+a$ = 42
+Assert("int via concat",      "x=" + a$ = "x=42")
+
+b$ = -7
+Assert("neg int via concat",  "n=" + b$ = "n=-7")
+
+' ── Expression result ────────────────────────────────────────
+d$ = 10 + 5
+Assert("expr via concat",     "v=" + d$ = "v=15")
+
+e$ = 2 ^ 10
+Assert("pow via concat",      "v=" + e$ = "v=1024")
+
+' ── FUNC return ──────────────────────────────────────────────
+FUNC TIMES_TWO(x)
+    RETURN x * 2
+ENDFUNC
+
+f$ = TIMES_TWO(21)
+Assert("FUNC ret via concat", "v=" + f$ = "v=42")
+
+' ── REDUCE with $-suffix LHS — the Apple-II repro ────────────
+FUNC PLUS_ONE(x)
+    RETURN x + 1
+ENDFUNC
+
+sum$ = REDUCE(lambda acc, x -> acc + PLUS_ONE(x), IOTA(5), 0)
+Assert("REDUCE via concat",   "s=" + sum$ = "s=20")
+
+' ── Reassignment from string to numeric ──────────────────────
+g$ = "before"
+Assert("init str",            g$ = "before")
+g$ = 99
+Assert("reassign via concat", "g=" + g$ = "g=99")
+
+' ── String concat in regular form still works ───────────────
+h$ = "hello"
+i$ = "world"
+Assert("plain concat",        h$ + " " + i$ = "hello world")
+
+PRINT ""
+PRINT "═══════════════════════════"
+PRINT " DOLLAR-COERCE TEST RESULTS"
+PRINT " PASS: "; PASS; "  FAIL: "; FAIL
+IF FAIL = 0 THEN
+    PRINT " ALL DOLLAR-COERCE TESTS PASSED!"
+ELSE
+    PRINT " SOME DOLLAR-COERCE TESTS FAILED!"
+ENDIF
+PRINT "═══════════════════════════"

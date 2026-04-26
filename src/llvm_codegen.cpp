@@ -2585,6 +2585,25 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         LLVMBuildStore(builder, rhs.runtime_tag, nv.runtime_tag_alloca);
         return;
     }
+    // Stringify a numeric/bool TypedValue in place. Mirrors the implicit
+    // coercion the interpreter does for `s$ = 42` / `DIM s AS STRING = 1.5`.
+    // Without it, a numeric RHS would land bit-punned in an i8* slot and
+    // any later read (PRINT, str-concat) would deref garbage and segfault.
+    auto coerce_rhs_to_str = [&](TypedValue& v) {
+        if (v.tag == JD_TAG_STR) return;
+        if (v.tag == JD_TAG_F64) {
+            auto& fn = runtime_funcs["__double_to_str"];
+            LLVMValueRef args[] = { v.val };
+            v.val = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "f2s");
+            v.tag = JD_TAG_STR;
+        } else if (v.tag == JD_TAG_I64 || v.tag == JD_TAG_BOOL) {
+            auto& fn = runtime_funcs["__int_to_str"];
+            LLVMValueRef args[] = { v.val };
+            v.val = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "i2s");
+            v.tag = JD_TAG_STR;
+        }
+    };
+
     if (vi) {
         if (vi->tag != rhs.tag) {
             if (vi->tag == JD_TAG_F64 && rhs.tag == JD_TAG_I64) {
@@ -2593,6 +2612,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             } else if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_F64) {
                 rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
                 rhs.tag = JD_TAG_I64;
+            } else if (vi->tag == JD_TAG_STR &&
+                       (rhs.tag == JD_TAG_I64 || rhs.tag == JD_TAG_F64 || rhs.tag == JD_TAG_BOOL)) {
+                coerce_rhs_to_str(rhs);
             } else if ((rhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF || rhs.tag == JD_TAG_VM_HANDLE) &&
                        vi->tag != rhs.tag) {
                 // Array (3), map (4), funcref (5), or VM handle (6) — replace
@@ -2606,6 +2628,12 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
+        // $-suffix forces a string slot; coerce numeric RHS so the var
+        // genuinely holds a string pointer, not bit-punned f64 garbage.
+        bool wants_str_slot = !stmt.var_name.empty() && stmt.var_name.back() == '$';
+        if (wants_str_slot && rhs.tag != JD_TAG_STR) {
+            coerce_rhs_to_str(rhs);
+        }
         // In functions, promote new numeric variables to f64 to avoid
         // type-upgrade issues when int vars later receive float values
         int var_tag = rhs.tag;
