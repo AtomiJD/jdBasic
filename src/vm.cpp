@@ -541,7 +541,7 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             "SUM","PRODUCT","MIN","MAX","ANY","ALL",
             "SCAN","SELECT","FILTER","REDUCE",
             "TAKE_WHILE","DROP_WHILE","CHUNK","ENUMERATE","GROUPBY",
-            "TAKE","DROP","REVERSE","UNIQUE","SHUFFLE",
+            "SORT","TAKE","DROP","REVERSE","UNIQUE","SHUFFLE",
             "FIND_IN_ARRAY","NORMALIZE","DISTANCE","GRADE",
             "TRANSPOSE","MATMUL","MVLET","STACK","SLICE",
             "SOLVE","INVERT","CONVOLVE","PLACE",
@@ -1411,7 +1411,7 @@ void VM::run() {
                     {"SCAN",1}, {"SELECT",1}, {"FILTER",1}, {"REDUCE",1},
                     {"TAKE_WHILE",1}, {"DROP_WHILE",1},
                     {"CHUNK",1}, {"ENUMERATE",1}, {"GROUPBY",1},
-                    {"TAKE",1}, {"DROP",1}, {"REVERSE",1}, {"UNIQUE",1}, {"SHUFFLE",1},
+                    {"SORT",1}, {"TAKE",1}, {"DROP",1}, {"REVERSE",1}, {"UNIQUE",1}, {"SHUFFLE",1},
                     {"FIND_IN_ARRAY",1}, {"NORMALIZE",1}, {"DISTANCE",1}, {"GRADE",1},
                     {"TRANSPOSE",1}, {"MATMUL",1}, {"MVLET",1}, {"STACK",1}, {"SLICE",1},
                     {"SOLVE",1}, {"INVERT",1}, {"CONVOLVE",1}, {"PLACE",1},
@@ -3249,6 +3249,10 @@ void VM::register_builtins() {
     register_native("TRUNC", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::trunc(args[0].to_double()));
     });
+    register_native("SIGN", 1, 1, [](const std::vector<Value>& args) -> Value {
+        double v = args[0].to_double();
+        return Value::make_i64(v > 0 ? 1 : (v < 0 ? -1 : 0));
+    });
     register_native("CDBL", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(args[0].to_double());
     });
@@ -3649,6 +3653,28 @@ void VM::register_builtins() {
     });
 
     // ── XSORT ────────────────────────────────────────────────
+    // SORT — simple ascending sort over a 1D array, alias for the
+    // codegen-side jdb_sort helper. Strings sort lexicographically,
+    // numerics by value. Multi-dim shape goes through XSORT.
+    register_native("SORT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        Value r = Value::make_array();
+        r.as_array()->elements = args[0].as_array()->elements;
+        bool desc = (args.size() >= 2 && args[1].to_bool());
+        auto& elems = r.as_array()->elements;
+        bool string_sort = !elems.empty() && elems[0].type == ValueType::STRING;
+        if (string_sort) {
+            std::sort(elems.begin(), elems.end(), [desc](const Value& a, const Value& b) {
+                const std::string& sa = a.as_string()->data;
+                const std::string& sb = b.as_string()->data;
+                return desc ? sa > sb : sa < sb;
+            });
+        } else {
+            std::sort(elems.begin(), elems.end(), [desc](const Value& a, const Value& b) {
+                return desc ? a.to_double() > b.to_double() : a.to_double() < b.to_double();
+            });
+        }
+        return r;
+    });
     register_native("XSORT", [](const std::vector<Value>& args) -> Value {
         Value r = Value::make_array();
         r.as_array()->elements = args[0].as_array()->elements;
@@ -5084,6 +5110,20 @@ void VM::register_builtins() {
     register_native("UCASE$", [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data;
         std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+        return Value::make_string(s);
+    });
+    // UPPER$ / LOWER$ — aliases the native compiler already exports
+    // through its arr_apply table (jdb_upper / jdb_lower). Registered
+    // in the VM so interpreter mode mirrors native and the shared
+    // test suite (tests/native_test.jdb) doesn't fail on either side.
+    register_native("UPPER$", [](const std::vector<Value>& args) -> Value {
+        std::string s = args[0].as_string()->data;
+        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+        return Value::make_string(s);
+    });
+    register_native("LOWER$", [](const std::vector<Value>& args) -> Value {
+        std::string s = args[0].as_string()->data;
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
         return Value::make_string(s);
     });
     register_native("STR$", [](const std::vector<Value>& args) -> Value {

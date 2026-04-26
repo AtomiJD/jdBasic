@@ -1180,7 +1180,21 @@ void Compiler::compile_expr(const Expr& expr) {
                 expr.right->kind == ExprKind::VARIABLE ||
                 expr.right->kind == ExprKind::LITERAL_STRING) {
                 // value |> func → __PIPE_APPLY(func, value)
-                compile_expr(*expr.right); // funcref
+                // VARIABLE on the RHS: if the name resolves to a user FUNC
+                // or VM native, lift it to a funcref-string constant so
+                // call_funcref can dispatch by name. Otherwise the VARIABLE
+                // path emits LOAD_VAR for an unset slot and __PIPE_APPLY
+                // gets NONE → "Invalid function reference". Falls through
+                // to ordinary VARIABLE compile when the name doesn't match.
+                if (expr.right->kind == ExprKind::VARIABLE) {
+                    const std::string& vn = expr.right->str_val;
+                    bool is_func = false;
+                    for (auto& fp : funcs) if (fp.name == vn) { is_func = true; break; }
+                    if (is_func) emit_constant(Value::make_string(vn), expr.line);
+                    else compile_expr(*expr.right);
+                } else {
+                    compile_expr(*expr.right); // funcref
+                }
                 compile_expr(*expr.left);  // value as argument
                 {
                     uint16_t fi = current_chunk().add_constant(Value::make_string("__PIPE_APPLY"));

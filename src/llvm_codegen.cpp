@@ -176,6 +176,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_new",  "__array_new",  i8_ptr_type, {i64_type}, 3);
     reg("jdb_array_set",  "__array_set",  void_type, {i8_ptr_type, i64_type, f64_type}, -1);
     reg("jdb_array_get",  "__array_get",  f64_type, {i8_ptr_type, i64_type}, 1);
+    // Fancy/vector indexing helper: arr[indices_array] → new array.
+    reg("jdb_array_gather", "__array_gather", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_array_len",  "LEN",          i64_type, {i8_ptr_type}, 0);
     reg("jdb_iota",       "IOTA",         i8_ptr_type, {i64_type}, 3);
     reg("jdb_iota3",      "__iota3",      i8_ptr_type, {f64_type, f64_type, f64_type}, 3);
@@ -4356,7 +4358,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             TypedValue body = codegen_expr(*expr.right);
 
             LLVMValueRef ret_val = body.val;
-            if (body.tag == JD_TAG_I64) ret_val = LLVMBuildSIToFP(builder, ret_val, f64_type, "itof");
+            // Lambda is declared as returning f64. Comparison ops (=, <,
+            // >, MOD, …) return JD_TAG_BOOL which is an i1-zext-to-i64;
+            // letting that flow into LLVMBuildRet without coercion lands
+            // an `i64` into a function whose signature is `double`, and
+            // the IR verifier rejects the module ("return type does not
+            // match"). Coerce both i64 and bool back to f64 before ret.
+            if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL)
+                ret_val = LLVMBuildSIToFP(builder, ret_val, f64_type, "itof");
             LLVMBuildRet(builder, ret_val);
 
             // Restore state — position builder back at the EXACT block we were in
@@ -4574,6 +4583,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             } else if (arr_tv.tag == JD_TAG_I64) {
                 arr_ptr = LLVMBuildIntToPtr(builder, arr_tv.val, i8_ptr_type, "itoptr");
+            }
+
+            // Fancy/vector indexing: `arr[indices_array]` returns a new
+            // array with arr's elements gathered at the given positions
+            // (APL/Numpy-style). Without this the codegen would pass a
+            // ptr where __array_get expects an i64 — LLVM IR verifier
+            // rejects the call. Dispatch to jdb_array_gather instead.
+            if (idx_tv.tag == JD_TAG_ARR) {
+                auto& gather = runtime_funcs["__array_gather"];
+                LLVMValueRef gargs[] = { arr_ptr, idx_tv.val };
+                LLVMValueRef gres = LLVMBuildCall2(builder, gather.fn_type, gather.fn, gargs, 2, "gather");
+                return { gres, JD_TAG_ARR };
             }
 
             // Convert index to i64

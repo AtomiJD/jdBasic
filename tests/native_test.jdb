@@ -373,9 +373,12 @@ Assert(cs[3] = 10)
 
 ' ── 34. REGEX ────────────────────────────────────────────────
 PRINT "── Regex ──"
-Assert(REGEX.MATCH("abc123", "[0-9]+"))
-Assert(NOT REGEX.MATCH("abcdef", "^[0-9]+$"))
-Assert(REGEX.REPLACE("Hello 2026", "[0-9]+", "XXXX") = "Hello XXXX")
+' REGEX.MATCH(pattern$, text$) — entire-text match. Patterns must
+' anchor or cover the whole string; the legacy underscore form
+' REGEX_MATCH(text$, pattern$) does substring search instead.
+Assert(REGEX.MATCH("[a-z0-9]+", "abc123"))
+Assert(NOT REGEX.MATCH("^[0-9]+$", "abcdef"))
+Assert(REGEX.REPLACE("[0-9]+", "Hello 2026", "XXXX") = "Hello XXXX")
 
 ' ── 35. SYSTEM ───────────────────────────────────────────────
 PRINT "── System ──"

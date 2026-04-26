@@ -373,6 +373,25 @@ double jdb_array_get(JdbArray* arr, int64_t idx) {
     return 0.0;
 }
 
+// Fancy/vector indexing: arr[indices] returns a new array with the
+// elements of arr at the positions given by indices (each position
+// is interpreted as an int64). Preserves arr's flag bits so nested-
+// pointer arrays stay flagged on the gathered result.
+JdbArray* jdb_array_gather(JdbArray* arr, JdbArray* idx) {
+    if (!arr || !idx) return jdb_array_new(0);
+    auto* r = jdb_array_new(idx->length);
+    for (int64_t i = 0; i < idx->length; i++) {
+        union { double d; int64_t v; } u; u.d = idx->data[i];
+        // Indices arrive as plain f64s (IOTA, INT(...), arithmetic
+        // results); double→int64 conversion is the right read here.
+        int64_t k = (int64_t)idx->data[i]; (void)u;
+        if (k >= 0 && k < arr->length) r->data[i] = arr->data[k];
+        else                            r->data[i] = 0.0;
+    }
+    r->flags = arr->flags;
+    return r;
+}
+
 int64_t jdb_array_len(JdbArray* arr) {
     return arr ? arr->length : 0;
 }
