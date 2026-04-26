@@ -17,7 +17,7 @@ IMPORT APPLE2
 ' directly into the CPU as funcrefs — no host-side wrappers needed.
 '
 ' ─── Configuration ─────────────────────────────────────────────
-DIM MODE$ = "boot"      ' "demo" or "boot"
+DIM MODE$ = "applesoft"      ' "demo" | "boot" | "applesoft"
 ' jdBasic interpreter does ~760 6502-cycles/sec in this build, so
 ' picking a frame budget is a trade-off: high values block the UI,
 ' low values stretch the boot wallclock. 1500 = ~2 sec/frame.
@@ -44,6 +44,19 @@ IF MODE$ = "demo" THEN
     CPU6502.LOAD($0300, prog)
     CPU6502.LOAD($0340, msg)
     CPU6502.SET_PC($0300)
+ELSEIF MODE$ = "applesoft" THEN
+    PRINT "Mode: applesoft (Apple II+ ROM set — Applesoft + AutoStart)"
+    DIM rom_n = APPLE2.LOAD_APPLE2P_ROMS("thingsforyou")
+    IF rom_n <= 0 THEN
+        PRINT "ROM load failed — make sure the Apple II+ ROMs (341-001x, 341-0020) are in thingsforyou/."
+        END
+    ENDIF
+    char_rom$ = APPLE2.LOAD_CHAR_ROM$("thingsforyou/Apple II Character ROM - 341-0036.bin")
+    APPLE2.INIT_GLYPH_CACHE(char_rom$)
+    APPLE2.INSTALL_TAPE_HOOKS()
+    CPU6502.RESET()
+    PRINT "ROMs loaded (" + STR$(rom_n) + " bytes), reset to $" + HEX$(CPU6502.GET_PC())
+    PRINT "Cassette LOAD/SAVE goes through: " + APPLE2.GET_TAPE_PATH$()
 ELSE
     PRINT "Mode: boot (loading Apple II ROMs from thingsforyou/)"
     DIM rom_n = APPLE2.LOAD_APPLE2_ROMS("thingsforyou")
@@ -53,8 +66,10 @@ ELSE
     ENDIF
     char_rom$ = APPLE2.LOAD_CHAR_ROM$("thingsforyou/Apple II Character ROM - 341-0036.bin")
     APPLE2.INIT_GLYPH_CACHE(char_rom$)
+    APPLE2.INSTALL_TAPE_HOOKS()
     CPU6502.RESET()
     PRINT "ROMs loaded (" + STR$(rom_n) + " bytes), reset to $" + HEX$(CPU6502.GET_PC())
+    PRINT "Cassette LOAD/SAVE goes through: " + APPLE2.GET_TAPE_PATH$()
 ENDIF
 
 DIM running = 1
@@ -106,7 +121,10 @@ ENDFUNC
 SUB HandleKey(KeyData)
     DIM kc = KeyData[0]{"keycode"}
     DIM shift = GFX.KEYSTATE("Left Shift") OR GFX.KEYSTATE("Right Shift")
-    IF kc = 27 THEN
+    DIM ctrl = GFX.KEYSTATE("Left Ctrl") OR GFX.KEYSTATE("Right Ctrl")
+    IF ctrl AND kc = ASC("v") THEN
+        APPLE2.ARM_PASTE(CLIPBOARD.GET$())
+    ELSEIF kc = 27 THEN
         running = 0
     ELSEIF kc = 13 THEN
         APPLE2.PUSH_KEY($0D)
@@ -134,15 +152,23 @@ ON "QUIT"    CALL HandleQuit
 SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 2
 SETFONT "C:/Windows/Fonts/consola.ttf", 14
 
-DO 
-    ' Run the CPU for one frame's worth of cycles.
+' Speaker emulation — must come after SCREEN so SDL audio can attach
+' to the same default device.
+APPLE2.ARM_AUDIO()
+
+DO
+    ' Capture cycle count, run CPU for one frame, then flush any
+    ' speaker toggles that happened during this frame to the PCM
+    ' stream. Order matters: BEGIN before RUN, END after RUN.
+    APPLE2.AUDIO_FRAME_BEGIN()
     CPU6502.RUN(CYCLES_PER_FRAME)
+    APPLE2.AUDIO_FRAME_END()
 
     ' Closing the window dispatches ON "QUIT" → running=0. SCREEN has
     ' already been torn down; skip the paint to avoid TEXT-no-screen.
     IF running = 1 THEN
         CLS 0, 0, 0
-        APPLE2.RENDER_TEXT_GLYPH(char_rom$)
+        APPLE2.RENDER_FRAME(char_rom$)
         SCREENFLIP
     ENDIF
     frame_count = frame_count + 1

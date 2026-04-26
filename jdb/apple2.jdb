@@ -102,6 +102,37 @@ EXPORT FUNC LOAD_ROM(filename$, start_addr)
     RETURN n
 ENDFUNC
 
+' Load the Apple II+ ROM set from a directory. Filenames carry the
+' load-address high byte, e.g. 3410011D0.bin → $D000.
+'   $D000-$D7FF  3410011D0.bin   Applesoft (1/5)
+'   $D800-$DFFF  3410012D8.bin   Applesoft (2/5)
+'   $E000-$E7FF  3410013E0.bin   Applesoft (3/5)
+'   $E800-$EFFF  3410014E8.bin   Applesoft (4/5)
+'   $F000-$F7FF  3410015F0.bin   Applesoft (5/5)
+'   $F800-$FFFF  3410020F8.bin   AutoStart Monitor — its reset vector
+'                                 cold-starts Applesoft directly.
+EXPORT FUNC LOAD_APPLE2P_ROMS(rom_dir$)
+    DIM total = 0
+    DIM r
+    DIM sep$ = "/"
+    IF RIGHT$(rom_dir$, 1) <> "/" AND RIGHT$(rom_dir$, 1) <> "\" THEN
+        rom_dir$ = rom_dir$ + sep$
+    ENDIF
+    r = LOAD_ROM(rom_dir$ + "3410011D0.bin", $D000)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "3410012D8.bin", $D800)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "3410013E0.bin", $E000)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "3410014E8.bin", $E800)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "3410015F0.bin", $F000)
+    IF r > 0 THEN total = total + r
+    r = LOAD_ROM(rom_dir$ + "3410020F8.bin", $F800)
+    IF r > 0 THEN total = total + r
+    RETURN total
+ENDFUNC
+
 ' Load the canonical Apple II original ROM set from a directory. The
 ' filenames match the dumps Atomi placed in thingsforyou/ (verbatim,
 ' minus the leading directory).
@@ -129,6 +160,24 @@ EXPORT FUNC LOAD_APPLE2_ROMS(rom_dir$)
     IF r > 0 THEN total = total + r
 
     RETURN total
+ENDFUNC
+
+' Load Applesoft I (the original cassette-loaded floating-point BASIC,
+' ~6 KB) into RAM at $0800–$1FFF. The caller is expected to have
+' loaded the Integer BASIC ROMs first — Applesoft I is RAM-resident
+' but calls Monitor routines like COUT ($FDED), RDKEY ($FD0C), etc.
+'
+' Returns the number of bytes loaded, or -1 on failure. After loading
+' the user can either type "800G" in the Monitor or call
+' CPU6502.SET_PC($0800) to start it.
+EXPORT FUNC LOAD_APPLESOFT(filepath$)
+    DIM n = LOAD_ROM(filepath$, $0800)
+    IF n <= 0 THEN
+        PRINT "Applesoft load failed: " + filepath$
+        RETURN -1
+    ENDIF
+    PRINT "Applesoft I loaded ("; n; " bytes) -> $0800.$" + HEX$(($0800 + n - 1) BAND $FFFF)
+    RETURN n
 ENDFUNC
 
 ' Load the character ROM (8 bytes per glyph × 256 glyphs = 2 KB).
@@ -173,12 +222,138 @@ ENDFUNC
 ' until they see bit 7 set, then read $C010 to acknowledge.
 DIM kbd_byte = 0
 
+' ─── Display mode soft-switches ────────────────────────────────
+'
+' Apple II video has four orthogonal toggles, each driven by *any*
+' access (read or write) to a pair of $C0xx addresses:
+'
+'   $C050 / $C051   GRAPHICS on  / TEXT on
+'   $C052 / $C053   FULL screen  / MIXED (4 text rows at the bottom)
+'   $C054 / $C055   PAGE 1       / PAGE 2 (display page)
+'   $C056 / $C057   LORES        / HIRES
+'
+' RESET in Apple II's ROM puts the machine back into text/page1/full.
+DIM gfx_graphics = 0
+DIM gfx_mixed = 0
+DIM gfx_page = 1
+DIM gfx_hires = 0
+
+' ─── Speaker (── $C030) ──────────────────────────────────────
+'
+' Reading or writing $C030 toggles the Apple II speaker membrane.
+' We capture the CPU cycle counter on every toggle, then in
+' AUDIO_FRAME_END convert the toggle list into a square-wave PCM
+' buffer and hand it to SOUND.PLAYBUFFER. The buffer is mapped
+' 1 emu-cycle ≈ 1 µs (so an authentic 1 MHz Apple II timing maps
+' to real-time audio); on the current jdBasic interpreter (~820k
+' cyc/sec) the mapping comes out about 20 % low, which is close
+' enough that BEEP and the Programmer's Aid music ROMs sound right.
+EXPORT CONST AUDIO_RATE = 22050
+DIM speaker_state = 0.25                  ' current membrane amplitude
+DIM speaker_toggles = ZEROS([2048])       ' fixed-size ring; never reallocated
+DIM speaker_toggle_count = 0
+DIM speaker_frame_start = 0
+DIM speaker_armed = 0                     ' 1 after ARM_AUDIO ran
+
+EXPORT SUB ARM_AUDIO()
+    IF speaker_armed = 1 THEN RETURN
+    SOUND.INIT
+    speaker_armed = 1
+ENDSUB
+
+EXPORT SUB AUDIO_FRAME_BEGIN()
+    IF speaker_armed = 0 THEN RETURN
+    speaker_frame_start = CPU6502.GET_CYCLES()
+    speaker_toggle_count = 0
+ENDSUB
+
+EXPORT SUB AUDIO_FRAME_END()
+    IF speaker_armed = 0 THEN RETURN
+    ' No toggles this frame → push nothing. Otherwise we'd queue a
+    ' frame's worth of constant ±speaker_state, which the playback
+    ' device hears as a DC offset (sub-bass hum that never stops once
+    ' the BELL routine leaves the membrane displaced).
+    IF speaker_toggle_count = 0 THEN RETURN
+
+    DIM frame_end = CPU6502.GET_CYCLES()
+    DIM cycles_this_frame = frame_end - speaker_frame_start
+    IF cycles_this_frame <= 0 THEN RETURN
+
+    DIM target_samples = INT(cycles_this_frame * AUDIO_RATE / 1000000)
+    IF target_samples < 1 THEN target_samples = 1
+
+    ' Build a histogram of toggle positions in sample-space. Iterating
+    ' only over the actual toggles (typically a few hundred per frame)
+    ' keeps this O(t); the per-sample work is then a single CUMSUM.
+    DIM flips = ZEROS([target_samples])
+    DIM j
+    DIM pos
+    FOR j = 0 TO speaker_toggle_count - 1
+        pos = INT((speaker_toggles[j] - speaker_frame_start) * target_samples / cycles_this_frame)
+        IF pos < 0 THEN pos = 0
+        IF pos >= target_samples THEN pos = target_samples - 1
+        flips[pos] = flips[pos] + 1
+    NEXT j
+    ' Cumulative parity flips the membrane sign at each toggle.
+    DIM signs = 1 - 2 * (CUMSUM(flips) MOD 2)
+    DIM buf = signs * speaker_state
+    IF (speaker_toggle_count MOD 2) <> 0 THEN speaker_state = -speaker_state
+    SOUND.PLAYBUFFER buf, AUDIO_RATE, 1
+ENDSUB
+
+SUB record_speaker_toggle()
+    IF speaker_armed = 0 THEN RETURN
+    IF speaker_toggle_count < 2048 THEN
+        speaker_toggles[speaker_toggle_count] = CPU6502.GET_CYCLES()
+        speaker_toggle_count = speaker_toggle_count + 1
+    ENDIF
+ENDSUB
+
 ' Public: external SCREEN loop pushes the next typed char in here.
 ' Apple II ROMs expect uppercase ASCII with bit 7 set; the strobe bit
 ' is bit 7 of the byte at $C000.
 EXPORT SUB PUSH_KEY(ascii)
     kbd_byte = (ascii BAND $7F) BOR $80
 ENDSUB
+
+' ─── Paste buffer ────────────────────────────────────────────
+'
+' Push a string onto a queue that feeds the keyboard latch one byte
+' per strobe-ack cycle. Lets the host script paste a multi-line
+' BASIC listing (or any text) directly into Integer BASIC / the
+' Monitor. LF bytes are dropped (Apple II uses CR alone for newline);
+' lowercase is folded to uppercase since the Apple II is uppercase-
+' only; tabs become spaces.
+DIM paste_queue$ = ""
+DIM paste_pos = 0
+
+SUB feed_paste()
+    DIM ch
+    DIM done = 0
+    DO WHILE paste_pos < LEN(paste_queue$) AND done = 0
+        ch = BYTEAT(paste_queue$, paste_pos)
+        paste_pos = paste_pos + 1
+        IF ch <> 10 THEN
+            IF ch >= ASC("a") AND ch <= ASC("z") THEN ch = ch - 32
+            IF ch = 9 THEN ch = ASC(" ")
+            IF ch >= 32 OR ch = 13 THEN
+                kbd_byte = (ch BAND $7F) BOR $80
+                done = 1
+            ENDIF
+        ENDIF
+    LOOP
+ENDSUB
+
+EXPORT SUB ARM_PASTE(text$)
+    paste_queue$ = text$
+    paste_pos = 0
+    feed_paste()
+ENDSUB
+
+EXPORT FUNC PASTE_PENDING()
+    IF paste_pos < LEN(paste_queue$) THEN RETURN 1
+    RETURN 0
+ENDFUNC
 
 ' Soft-switch read implementation. The host script's IO_READ wrapper
 ' calls this for every read in $C000-$C0FF; we return whatever the
@@ -192,10 +367,22 @@ EXPORT FUNC IO_READ_DISPATCH(addr)
             ' currently latched key. The latched byte itself stays so
             ' the next $C000 read will also return it (without bit 7).
             kbd_byte = kbd_byte BAND $7F
+            ' Paste-mode: latch the next queued char so BASIC's keyboard
+            ' poll (read $C000 → strobe-ack $C010) walks through the
+            ' clipboard one byte at a time without us missing keys.
+            IF paste_pos < LEN(paste_queue$) THEN feed_paste()
             RETURN 0
         CASE $C030
-            ' Speaker click — we just acknowledge.
+            record_speaker_toggle()
             RETURN 0
+        CASE $C050 : gfx_graphics = 1 : RETURN 0
+        CASE $C051 : gfx_graphics = 0 : RETURN 0
+        CASE $C052 : gfx_mixed    = 0 : RETURN 0
+        CASE $C053 : gfx_mixed    = 1 : RETURN 0
+        CASE $C054 : gfx_page     = 1 : RETURN 0
+        CASE $C055 : gfx_page     = 2 : RETURN 0
+        CASE $C056 : gfx_hires    = 0 : RETURN 0
+        CASE $C057 : gfx_hires    = 1 : RETURN 0
     ENDSWITCH
     RETURN 0
 ENDFUNC
@@ -206,8 +393,17 @@ EXPORT SUB IO_WRITE_DISPATCH(addr, val)
     SWITCH addr
         CASE $C010
             kbd_byte = kbd_byte BAND $7F
+            IF paste_pos < LEN(paste_queue$) THEN feed_paste()
         CASE $C030
-            ' Speaker — no-op for now.
+            record_speaker_toggle()
+        CASE $C050 : gfx_graphics = 1
+        CASE $C051 : gfx_graphics = 0
+        CASE $C052 : gfx_mixed    = 0
+        CASE $C053 : gfx_mixed    = 1
+        CASE $C054 : gfx_page     = 1
+        CASE $C055 : gfx_page     = 2
+        CASE $C056 : gfx_hires    = 0
+        CASE $C057 : gfx_hires    = 1
     ENDSWITCH
 ENDSUB
 
@@ -235,6 +431,146 @@ EXPORT FUNC BOOT(rom_dir$)
     CPU6502.RESET()
     RETURN n
 ENDFUNC
+
+' ─── Cassette LOAD / SAVE — ROM hooks ──────────────────────────
+'
+' Apple II Monitor ROM has two cassette routines:
+'   $FECD  WRITE  — dump bytes from ($3C/$3D)..($3E/$3F) to tape
+'   $FEFD  READ   — load bytes from tape into the same ZP range
+' Integer BASIC's SAVE / LOAD and the Monitor's "1000.10FFW" / "R"
+' end up there. We bypass the actual FSK encoding by short-circuiting
+' those PCs with native handlers (CPU6502.SET_PC_HOOK), so a SAVE in
+' the emulator turns into a binary file dump and a LOAD reads it back.
+'
+' The default file is "apple2_tape.bin" in the working directory;
+' SET_TAPE_PATH overrides it (per session).
+DIM tape_path$ = "apple2_tape.bin"
+
+EXPORT SUB SET_TAPE_PATH(p$)
+    tape_path$ = p$
+ENDSUB
+
+EXPORT FUNC GET_TAPE_PATH$()
+    RETURN tape_path$
+ENDFUNC
+
+' Detect Integer BASIC's SAVE/LOAD: it routes the 2-byte program-length
+' header through $FECD/$FEFD (range = $CE/$CF) but writes/reads the
+' program body via an inline FSK loop that bypasses the Monitor's tape
+' kernel. Side-stepping that loop completely: when we see the header
+' fingerprint, dump or restore the program range PV..HIMEM-1 directly
+' from the CPU's RAM so the file gains a real round-trip.
+'
+' Integer BASIC zero-page slots:
+'   $4A/$4B  LOMEM
+'   $4C/$4D  HIMEM
+'   $CA/$CB  PV  (program bottom — programs grow downward from HIMEM)
+'   $CE/$CF  scratch holding the 2-byte length header
+FUNC is_basic_tape_pattern(a1, a2)
+    IF a1 = $CE AND a2 = $CF THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' BASIC LOAD makes a second $FEFD call for the body after the header
+' read; its file-offset starts at 2 (past the 2-byte length header).
+' We flag this mode in the LOAD path so the next plain hook fire reads
+' from the right offset instead of the file start (which would feed
+' BASIC the header bytes as program data → garbage on LIST/RUN).
+DIM tape_basic_load_armed = 0
+
+SUB hook_tape_write()
+    DIM a1 = CPU6502.READ($3C) BOR (CPU6502.READ($3D) SHL 8)
+    DIM a2 = CPU6502.READ($3E) BOR (CPU6502.READ($3F) SHL 8)
+
+    IF is_basic_tape_pattern(a1, a2) = 1 THEN
+        DIM pv = CPU6502.READ($CA) BOR (CPU6502.READ($CB) SHL 8)
+        DIM himem = CPU6502.READ($4C) BOR (CPU6502.READ($4D) SHL 8)
+        DIM prog_len = himem - pv
+        IF prog_len > 0 AND prog_len < 32768 THEN
+            DIM data$ = CHR$(CPU6502.READ($CE)) + CHR$(CPU6502.READ($CF))
+            DIM i
+            FOR i = 0 TO prog_len - 1
+                data$ = data$ + CHR$(CPU6502.READ((pv + i) BAND $FFFF))
+            NEXT i
+            BINWRITER tape_path$, data$
+            PRINT "[BASIC SAVE] header + $"; HEX$(pv); ".$"; HEX$((himem - 1) BAND $FFFF); " ("; (prog_len + 2); " bytes) -> "; tape_path$
+            RETURN
+        ENDIF
+    ENDIF
+
+    DIM n = a2 - a1 + 1
+    IF n <= 0 OR n > $FFFF THEN
+        PRINT "[Cassette WRITE] bad range $"; HEX$(a1); ".$"; HEX$(a2)
+        RETURN
+    ENDIF
+    DIM data$ = ""
+    DIM i
+    FOR i = 0 TO n - 1
+        data$ = data$ + CHR$(CPU6502.READ((a1 + i) BAND $FFFF))
+    NEXT i
+    BINWRITER tape_path$, data$
+    PRINT "[Cassette WRITE] $"; HEX$(a1); ".$"; HEX$(a2); " ("; n; " bytes) -> "; tape_path$
+ENDSUB
+
+SUB hook_tape_read()
+    DIM a1 = CPU6502.READ($3C) BOR (CPU6502.READ($3D) SHL 8)
+    DIM a2 = CPU6502.READ($3E) BOR (CPU6502.READ($3F) SHL 8)
+    DIM data$ = ""
+    TRY
+        data$ = BINREADER$(tape_path$)
+    CATCH
+        PRINT "[Cassette READ] cannot open "; tape_path$
+        RETURN
+    ENDTRY
+    DIM avail = LEN(data$)
+
+    IF is_basic_tape_pattern(a1, a2) = 1 AND avail >= 2 THEN
+        ' Restore header bytes at $CE/$CF.
+        CPU6502.WRITE($CE, BYTEAT(data$, 0))
+        CPU6502.WRITE($CF, BYTEAT(data$, 1))
+        ' Compute target range from HIMEM and the saved length so we put
+        ' the program back where Integer BASIC expects it. The next time
+        ' BASIC runs / lists, it walks PV..HIMEM-1 — we mirror that.
+        DIM prog_len = avail - 2
+        DIM himem = CPU6502.READ($4C) BOR (CPU6502.READ($4D) SHL 8)
+        DIM pv = (himem - prog_len) BAND $FFFF
+        ' Write back PV pointer so BASIC's LST/RUN can find the program.
+        CPU6502.WRITE($CA, pv BAND $FF)
+        CPU6502.WRITE($CB, (pv SHR 8) BAND $FF)
+        DIM i
+        FOR i = 0 TO prog_len - 1
+            CPU6502.WRITE((pv + i) BAND $FFFF, BYTEAT(data$, 2 + i))
+        NEXT i
+        ' Arm: the very next non-header read is BASIC's body fetch and
+        ' must come from offset 2, not the file start.
+        tape_basic_load_armed = 1
+        PRINT "[BASIC LOAD] header + $"; HEX$(pv); ".$"; HEX$((himem - 1) BAND $FFFF); " ("; avail; " bytes) from "; tape_path$
+        RETURN
+    ENDIF
+
+    ' Body / Monitor read. If we just served a BASIC header, skip past
+    ' the 2-byte header in the file so the body bytes line up.
+    DIM offset = 0
+    IF tape_basic_load_armed = 1 AND avail >= 2 THEN
+        offset = 2
+        tape_basic_load_armed = 0
+    ENDIF
+    DIM want = a2 - a1 + 1
+    IF want < 0 THEN want = 0
+    DIM n = avail - offset
+    IF n < 0 THEN n = 0
+    IF n > want THEN n = want
+    DIM i
+    FOR i = 0 TO n - 1
+        CPU6502.WRITE((a1 + i) BAND $FFFF, BYTEAT(data$, offset + i))
+    NEXT i
+    PRINT "[Cassette READ] "; n; " bytes from "; tape_path$; " -> $"; HEX$(a1); ".$"; HEX$((a1 + n - 1) BAND $FFFF)
+ENDSUB
+
+EXPORT SUB INSTALL_TAPE_HOOKS()
+    CPU6502.SET_PC_HOOK($FECD, hook_tape_write@)
+    CPU6502.SET_PC_HOOK($FEFD, hook_tape_read@)
+ENDSUB
 
 ' ─── Display rendering ─────────────────────────────────────────
 '
@@ -283,6 +619,15 @@ EXPORT CONST GLYPH_DARK = 0               ' transparent (skip in PLOTRAW)
 DIM glyph_cache[256]
 DIM glyph_cache_ready = 0
 
+' Hardware-flash emulation. Real Apple II inverts $40-$7F characters
+' at ~2 Hz via the video chip; we toggle a phase bit every
+' FLASH_PERIOD_MS / 2 wallclock milliseconds (independent of frame
+' rate so the blink stays at 2 Hz when the interpreter speeds up or
+' the user switches to native compile).
+EXPORT CONST FLASH_PERIOD_MS = 500
+DIM flash_phase = 0
+DIM flash_last_tick = -1
+
 ' Test/inspection hook — returns the cached 8×7 matrix for ch, or 0
 ' if the cache is empty. Mostly useful for unit tests; renderers
 ' should call RENDER_TEXT_GLYPH directly.
@@ -299,17 +644,30 @@ EXPORT SUB INIT_GLYPH_CACHE(rom$)
     DIM gcol
     DIM rom_b
     DIM glyph
+    DIM bit_set
+    DIM inverse
     FOR ch = 0 TO 255
         glyph = ZEROS([8, 7])
+        ' Apple II char-ROM holds one bitmap per glyph shape — but the
+        ' video chip *inverts* it for $00-$3F (inverse) and $40-$7F
+        ' (flashing), and shows it as-is for $80-$FF (normal). Without
+        ' the invert here, $20 (inverse space = solid cursor block) is
+        ' rendered as nothing because the underlying space bitmap has
+        ' zero lit pixels. Treat $40-$7F as inverse for now too — that
+        ' renders flashing chars as a steady block; a real 2 Hz flash
+        ' would require a per-frame phase toggle.
+        inverse = 0
+        IF ch < $80 THEN inverse = 1
         FOR grow = 0 TO 7
             rom_b = BYTEAT(rom$, ch * 8 + grow)
             ' Apple II char-ROM stores pixels with bit 6 = leftmost
             ' (the video shift register pushes MSB-first). gcol=0 is
             ' the leftmost screen pixel, so test bit (6 - gcol).
             FOR gcol = 0 TO 6
-                IF (rom_b BAND (1 SHL (6 - gcol))) <> 0 THEN
-                    glyph[grow][gcol] = GLYPH_LIT
-                ENDIF
+                bit_set = 0
+                IF (rom_b BAND (1 SHL (6 - gcol))) <> 0 THEN bit_set = 1
+                IF inverse = 1 THEN bit_set = 1 - bit_set
+                IF bit_set = 1 THEN glyph[grow][gcol] = GLYPH_LIT
             NEXT gcol
         NEXT grow
         glyph_cache[ch] = glyph
@@ -322,22 +680,164 @@ ENDSUB
 ' on the first call. Each non-blank cell triggers one PLOTRAW with the
 ' cached 8×7 matrix scaled 2×2 — no per-frame array allocation.
 EXPORT SUB RENDER_TEXT_GLYPH(rom$)
+    render_text_rows(rom$, 0, TEXT_ROWS - 1)
+ENDSUB
+
+SUB render_text_rows(rom$, start_row, end_row)
     IF glyph_cache_ready = 0 THEN INIT_GLYPH_CACHE(rom$)
     IF glyph_cache_ready = 0 THEN RETURN
+    DIM now_ticks = GFX.TICKS
+    IF flash_last_tick < 0 THEN flash_last_tick = now_ticks
+    IF now_ticks - flash_last_tick >= FLASH_PERIOD_MS / 2 THEN
+        flash_last_tick = now_ticks
+        flash_phase = 1 - flash_phase
+    ENDIF
     DIM r
     DIM c
     DIM ch
-    FOR r = 0 TO TEXT_ROWS - 1
+    DIM render_ch
+    FOR r = start_row TO end_row
         FOR c = 0 TO TEXT_COLS - 1
             ch = TEXT_READ_RAW(c, r)
-            ' Skip the Apple II blank fill ($A0 = normal space) and
-            ' uninitialised bytes. $20 (inverse space) is the cursor
-            ' block — keep it.
-            IF ch <> $A0 AND ch <> 0 THEN
-                PLOTRAW c * CHAR_W, r * CHAR_H, glyph_cache[ch], 2, 2
+            ' $A0 is the normal-space fill — its inverted glyph is also
+            ' empty (zero lit pixels), so skipping it saves a PLOTRAW.
+            ' Don't skip $00 / $20: with the inverse-baked cache those
+            ' are the BASIC / Monitor cursor blocks.
+            IF ch <> $A0 THEN
+                render_ch = ch
+                ' Flashing range $40-$7F: on the "on" phase, swap to the
+                ' parallel normal-pattern slot (ch + $40 ∈ $80-$BF, same
+                ' shape but baked without inversion) so the user sees an
+                ' alternation between the inverse block and the actual
+                ' character.
+                IF ch >= $40 AND ch <= $7F AND flash_phase = 1 THEN
+                    render_ch = ch + $40
+                ENDIF
+                PLOTRAW c * CHAR_W, r * CHAR_H, glyph_cache[render_ch], 2, 2
             ENDIF
         NEXT c
     NEXT r
+ENDSUB
+
+' ─── Lo-Res rendering ──────────────────────────────────────────
+'
+' Lo-Res shares the text page memory ($0400-$07FF) with text mode,
+' but reinterprets each byte as two 4-bit colour cells (low nibble =
+' upper half, high nibble = lower half). 24 text rows × 2 = 48 lo-res
+' rows of 40 columns. Each lo-res "pixel" maps to a 14×8 area on our
+' 560×384 surface (PLOTRAW with a 2x2 scale on a 7×4 cache cell).
+EXPORT CONST LORES_PALETTE = [ _
+    $000000, $80003F, $00009F, $9F00DF, _
+    $005F00, $808080, $0040FF, $80AFFF, _
+    $804000, $FF8000, $C0C0C0, $FF8080, _
+    $00CF00, $FFFF00, $40FFC0, $FFFFFF ]
+
+DIM lores_cell[16]
+DIM lores_cache_ready = 0
+
+SUB init_lores_cache()
+    IF lores_cache_ready = 1 THEN RETURN
+    DIM ci
+    DIM bitmap
+    DIM rr
+    DIM cc
+    FOR ci = 0 TO 15
+        bitmap = ZEROS([4, 7])
+        FOR rr = 0 TO 3
+            FOR cc = 0 TO 6
+                bitmap[rr][cc] = LORES_PALETTE[ci]
+            NEXT cc
+        NEXT rr
+        lores_cell[ci] = bitmap
+    NEXT ci
+    lores_cache_ready = 1
+ENDSUB
+
+SUB render_lores(start_row, end_row)
+    init_lores_cache()
+    DIM r
+    DIM c
+    DIM b
+    DIM upper
+    DIM lower
+    FOR r = start_row TO end_row
+        FOR c = 0 TO TEXT_COLS - 1
+            b = TEXT_READ_RAW(c, r)
+            upper = b BAND $0F
+            lower = (b SHR 4) BAND $0F
+            IF upper <> 0 THEN
+                PLOTRAW c * CHAR_W, r * CHAR_H, lores_cell[upper], 2, 2
+            ENDIF
+            IF lower <> 0 THEN
+                PLOTRAW c * CHAR_W, r * CHAR_H + 8, lores_cell[lower], 2, 2
+            ENDIF
+        NEXT c
+    NEXT r
+ENDSUB
+
+' ─── Hi-Res rendering (monochrome green, first stage) ──────────
+'
+' Hi-Res page memory layout per row Y (0..191):
+'   addr = base + (Y AND 7)*$400 + ((Y SHR 3) AND 7)*$80 + (Y SHR 6)*$28
+' Each row is 40 bytes. Each byte holds 7 pixels (bit 0 leftmost);
+' bit 7 is the NTSC palette-phase flag — ignored here, every set bit
+' just lights green. Colour-phase / artefact rendering is a future
+' upgrade.
+FUNC hires_row_addr(row)
+    DIM base = $2000
+    IF gfx_page = 2 THEN base = $4000
+    DIM ones = row BAND 7
+    DIM eight = (row SHR 3) BAND 7
+    DIM third = row SHR 6
+    RETURN base + ones * $400 + eight * $80 + third * $28
+ENDFUNC
+
+SUB render_hires(end_row)
+    DIM frame = ZEROS([192, 280])
+    DIM hr_row
+    DIM hr_col
+    DIM hr_b
+    DIM addr
+    DIM xbase
+    FOR hr_row = 0 TO end_row
+        addr = hires_row_addr(hr_row)
+        FOR hr_col = 0 TO 39
+            hr_b = CPU6502.READ((addr + hr_col) BAND $FFFF)
+            IF hr_b <> 0 THEN
+                xbase = hr_col * 7
+                IF (hr_b BAND $01) <> 0 THEN frame[hr_row][xbase + 0] = $00FF00
+                IF (hr_b BAND $02) <> 0 THEN frame[hr_row][xbase + 1] = $00FF00
+                IF (hr_b BAND $04) <> 0 THEN frame[hr_row][xbase + 2] = $00FF00
+                IF (hr_b BAND $08) <> 0 THEN frame[hr_row][xbase + 3] = $00FF00
+                IF (hr_b BAND $10) <> 0 THEN frame[hr_row][xbase + 4] = $00FF00
+                IF (hr_b BAND $20) <> 0 THEN frame[hr_row][xbase + 5] = $00FF00
+                IF (hr_b BAND $40) <> 0 THEN frame[hr_row][xbase + 6] = $00FF00
+            ENDIF
+        NEXT hr_col
+    NEXT hr_row
+    PLOTRAW 0, 0, frame, 2, 2
+ENDSUB
+
+' ─── Frame dispatcher ──────────────────────────────────────────
+'
+' Drives the right renderer for the current display state. emu_run.jdb
+' calls this once per emulator frame. Mixed mode: top 20 text rows /
+' 40 lo-res rows / 160 hi-res rows = graphics, bottom 4 text rows.
+EXPORT SUB RENDER_FRAME(rom$)
+    IF gfx_graphics = 0 THEN
+        render_text_rows(rom$, 0, TEXT_ROWS - 1)
+        RETURN
+    ENDIF
+    DIM gfx_text_split = TEXT_ROWS
+    IF gfx_mixed = 1 THEN gfx_text_split = 20
+    IF gfx_hires = 1 THEN
+        DIM hi_end = 191
+        IF gfx_mixed = 1 THEN hi_end = 159
+        render_hires(hi_end)
+    ELSE
+        render_lores(0, gfx_text_split - 1)
+    ENDIF
+    IF gfx_mixed = 1 THEN render_text_rows(rom$, 20, TEXT_ROWS - 1)
 ENDSUB
 
 ' One emulator frame: tick the CPU for a budget of cycles (very rough

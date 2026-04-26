@@ -27,6 +27,12 @@ count_lit($A0)   ' blank — should be 0 lit
 count_lit($D7)   ' 'W' inverse
 count_lit($A1)   ' '!'
 
+' Cursor candidates — check whether the ROM has inverse-baked bitmaps.
+count_lit($00)   ' inverse '@' — cursor in many BASIC/Monitor states
+count_lit($20)   ' inverse space — solid block cursor
+count_lit($40)   ' flashing '@'
+count_lit($60)   ' flashing space
+
 ' Confirm shape.
 DIM sample = APPLE2.GLYPH_FOR($C1)
 PRINT "rows = "; LEN(sample)
