@@ -1254,7 +1254,12 @@ int main(int argc, char* argv[]) {
             size_t sep = filename.find_last_of("/\\");
             g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
         }
-        std::string program_buffer = read_file(filename);
+        std::string program_buffer;
+        try { program_buffer = read_file(filename); }
+        catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
         VM vm;
         setup_dynamic_code(vm);
         console_execute("LINT", vm, program_buffer);
@@ -1269,7 +1274,12 @@ int main(int argc, char* argv[]) {
             size_t sep = filename.find_last_of("/\\");
             g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
         }
-        std::string source = read_file(filename);
+        std::string source;
+        try { source = read_file(filename); }
+        catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
         Lexer lexer(source);
         auto tokens = lexer.tokenize();
         Parser parser(tokens);
