@@ -1,0 +1,17 @@
+' Quick benchmark of cpu6502 step rate. Run a tight loop (LDA imm, NOP)
+' for 10000 cycles, measure wallclock. Tells us how the audio scaling
+' should be sized.
+IMPORT APPLE2
+APPLE2.INIT()
+
+' Tight loop: 10 NOPs then JMP to start. Cycles = 10*2 + 3 = 23 / iter.
+DIM prog = [ $EA, $EA, $EA, $EA, $EA, $EA, $EA, $EA, $EA, $EA, $4C, $00, $03 ]
+CPU6502.LOAD($0300, prog)
+CPU6502.SET_PC($0300)
+
+DIM t0 = TICK
+CPU6502.RUN(50000)
+DIM t1 = TICK
+DIM dt = t1 - t0
+IF dt = 0 THEN dt = 1
+PRINT "50000 cycles in "; dt; " ms = "; INT(50000 * 1000 / dt); " cyc/sec"

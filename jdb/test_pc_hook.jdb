@@ -1,0 +1,25 @@
+' Verify SET_PC_HOOK fires the hook and RTS-emulation returns control
+' to the caller. Tiny program: JSR $4000, then JMP self at $0303.
+
+IMPORT CPU6502
+CPU6502.INIT()
+
+DIM prog = [ $20, $00, $40, $4C, $03, $03 ]
+CPU6502.LOAD($0300, prog)
+CPU6502.SET_PC($0300)
+
+DIM fired = 0
+SUB my_hook()
+    fired = fired + 1
+    PRINT "[hook fired at PC=$"; HEX$(CPU6502.GET_PC()); "] count="; fired
+ENDSUB
+
+CPU6502.SET_PC_HOOK($4000, my_hook@)
+
+' Inspect: was the hook actually stored?
+PRINT "GET_PC_HOOK($4000) = '"; CPU6502.GET_PC_HOOK($4000); "'"
+PRINT "GET_PC_HOOK($1234) = '"; CPU6502.GET_PC_HOOK($1234); "' (expect 0)"
+
+PRINT "Before RUN: PC = $"; HEX$(CPU6502.GET_PC())
+CPU6502.RUN(50)
+PRINT "After RUN: PC = $"; HEX$(CPU6502.GET_PC()); ", fired = "; fired

@@ -140,6 +140,15 @@ DIM io_max = -1
 DIM io_read_fn = ""
 DIM io_write_fn = ""
 
+' PC-hook system. SET_PC_HOOK installs a funcref that fires *instead
+' of* the instruction at `addr` — used to short-circuit slow ROM
+' routines (Cassette WRITE/READ on Apple II). The hook is expected to
+' do its work in native jdBasic and then return; RUN then emulates
+' RTS so control flows back to the caller as if the routine had
+' completed normally. Lazy-allocated 64K table = O(1) per-step lookup.
+DIM pc_hooks_set = 0
+DIM pc_hook_table = []
+
 ' ─── Public API ────────────────────────────────────────────────
 
 EXPORT SUB INIT()
@@ -208,6 +217,29 @@ EXPORT SUB DISABLE_IO_HOOKS()
     io_handlers_set = 0
 ENDSUB
 
+' Install a host-side handler that runs in place of the instruction
+' at `addr`. The CPU emulates RTS after the hook returns, so the
+' caller of the hooked routine resumes normally. Use cases: ROM
+' patches for fast Cassette I/O, slow boot-time waits, etc.
+EXPORT SUB SET_PC_HOOK(addr, hook_fn)
+    IF pc_hooks_set = 0 THEN
+        pc_hook_table = ZEROS([65536])
+        pc_hooks_set = 1
+    ENDIF
+    pc_hook_table[addr BAND $FFFF] = hook_fn
+ENDSUB
+
+EXPORT SUB CLEAR_PC_HOOK(addr)
+    IF pc_hooks_set = 0 THEN RETURN
+    pc_hook_table[addr BAND $FFFF] = 0
+ENDSUB
+
+' Diagnostic: returns the stored funcref for `addr` (0 if none).
+EXPORT FUNC GET_PC_HOOK(addr)
+    IF pc_hooks_set = 0 THEN RETURN 0
+    RETURN pc_hook_table[addr BAND $FFFF]
+ENDFUNC
+
 ' Internal bus helpers — the operation execute() body uses these so
 ' that LDA/STA/etc. honour the platform hooks. Address-mode decoding
 ' (resolve_addr) reads code bytes and stays on plain mem[].
@@ -270,8 +302,24 @@ ENDFUNC
 ' Run until cumulative cycles >= budget. Returns total cycles consumed.
 EXPORT FUNC RUN(max_cycles)
     DIM start = cpu_cycles
+    DIM hk
     DO WHILE (cpu_cycles - start) < max_cycles
-        STEP_ONE()
+        IF pc_hooks_set = 1 THEN
+            hk = pc_hook_table[cpu_pc]
+            ' Type-check the slot: empty slots are the numeric 0 from
+            ' the initial ZEROS fill, hook slots are funcref strings.
+            ' A `<> 0` comparison would coerce the string to 0 and miss.
+            IF TYPEOF(hk) = "STRING" THEN
+                hk()
+                ' Emulate RTS — pops 16-bit return-1, jumps to ret+1.
+                cpu_pc = (pop16() + 1) BAND $FFFF
+                cpu_cycles = cpu_cycles + 6
+            ELSE
+                STEP_ONE()
+            ENDIF
+        ELSE
+            STEP_ONE()
+        ENDIF
     LOOP
     RETURN cpu_cycles - start
 ENDFUNC
