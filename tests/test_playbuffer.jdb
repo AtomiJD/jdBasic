@@ -1,0 +1,31 @@
+' Smoke test for SOUND.PLAYBUFFER — generate a 440Hz square wave for
+' 0.5 seconds and play it. Listen to confirm it works.
+
+SOUND.INIT
+
+DIM rate = 22050
+DIM secs = 0.5
+DIM n = INT(rate * secs)
+
+' 440Hz square wave: period = rate / 440 samples; flip every half-period.
+DIM period = rate / 440
+DIM half = period / 2
+
+DIM amp = 0.2
+DIM phase = IOTA(n) MOD period
+DIM buf = amp - 2 * amp * (phase >= half)
+
+PRINT "buf type = "; TYPEOF(buf); ", len = "; LEN(buf)
+
+PRINT "queued before: "; SOUND.QUEUED()
+SOUND.PLAYBUFFER buf, rate, 1
+PRINT "queued after:  "; SOUND.QUEUED()
+
+' Wait long enough for it to finish (avoid hanging on QUEUED loop in
+' case the stream byte-count never quite hits zero).
+DIM ms = 0
+DO WHILE ms < 800 AND SOUND.QUEUED() > 0
+    GFX.DELAY 50
+    ms = ms + 50
+LOOP
+PRINT "after wait: queued = "; SOUND.QUEUED(); ", waited "; ms; "ms"

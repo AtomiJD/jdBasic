@@ -1825,6 +1825,8 @@ GUI.END
 * **`SOUND.PLAY track, frequency`**: Plays a note at a specific frequency (or note name like "C4") on the given track.
 * **`SOUND.RELEASE track`**: Starts the release phase of the note on the given track.
 * **`SOUND.STOP track`**: Immediately stops the note on the given track.
+* **`SOUND.PLAYBUFFER samples, [sample_rate], [channels]`**: Pushes a 1D float array (-1..1) directly onto a separate PCM stream that mixes alongside the synth tracks. Use this for hand-rolled waveforms, emulator audio (Apple II speaker), or anything that doesn't fit the ADSR/voice model. `sample_rate` defaults to 44100, `channels` to 1; if either changes between calls the underlying SDL stream is reopened so the resampler does the conversion. Calls are non-blocking — SDL queues until the device drains.
+* **`SOUND.QUEUED() -> integer`**: Returns the number of bytes still waiting in the PLAYBUFFER queue. Useful for keeping the buffer between min/max watermarks without overflowing or underrunning. Returns 0 if `SOUND.INIT` hasn't run.
 * **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file into memory slot `id`.
 * **`SFX.PLAY id`**: Plays a loaded WAV file once (fire-and-forget).
 * **`MUSIC.PLAY id, [loop_bool]`**: Plays a loaded WAV file as background music. Defaults to looping.

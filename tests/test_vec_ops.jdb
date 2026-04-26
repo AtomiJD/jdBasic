@@ -1,0 +1,32 @@
+' Verify the IOTA / element-wise compare / CUMSUM ops we want to use
+' for square-wave generation in AUDIO_FRAME_END.
+
+DIM n = 12
+DIM period = 4
+DIM half = 2
+
+DIM idx = IOTA(n)
+PRINT "idx     = "; idx
+DIM phase = idx MOD period
+PRINT "phase   = "; phase
+
+DIM less = phase < half
+PRINT "phase<half = "; less
+PRINT "type   = "; TYPEOF(less)
+
+DIM amp = 0.5
+DIM buf = amp - 2 * amp * (phase >= half)
+PRINT "buf     = "; buf
+
+' CUMSUM + parity for the toggle-counter pattern.
+DIM flips = ZEROS([10])
+flips[2] = 1
+flips[5] = 1
+flips[8] = 1
+PRINT "flips   = "; flips
+DIM counts = CUMSUM(flips)
+PRINT "counts  = "; counts
+DIM parity = counts MOD 2
+PRINT "parity  = "; parity
+DIM signs = 1 - 2 * parity
+PRINT "signs   = "; signs

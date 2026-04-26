@@ -566,6 +566,9 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             "SPRITE.ANIM",
             // GFX.PLOT_POINTS points[], GFX.PLOT_POINTS_TEX points[] — array is the data.
             "GFX.PLOT_POINTS","GFX.PLOT_POINTS_TEX",
+            // SOUND.PLAYBUFFER samples[] — the array IS the audio payload;
+            // auto-vec would call PLAYBUFFER once per sample and crash.
+            "SOUND.PLAYBUFFER",
             // Matrix-form drawing commands accept [[...]] as the payload
             // and dispatch to SDL themselves — auto-vectorizing would
             // destructure the matrix into scalar calls and lose the
@@ -1464,6 +1467,7 @@ void VM::run() {
                     {"GFX.TICKS",1}, {"GFX.CLOSE",1}, {"GFX.LOADIMAGE",1},
                     {"GFX.DRAWIMAGE",1}, {"GFX.FREEIMAGE",1}, {"GFX.TEXTSIZE",1},
                     {"GFX.PLOT_POINTS",1}, {"GFX.PLOT_POINTS_TEX",1}, {"GFX.HSV_RGB",1},
+                    {"SOUND.PLAYBUFFER",1},
                     {"MOUSEX",1}, {"MOUSEY",1}, {"MOUSEB",1},
                     {"TURTLE.FORWARD",1}, {"TURTLE.BACKWARD",1},
                     {"TURTLE.LEFT",1}, {"TURTLE.RIGHT",1},

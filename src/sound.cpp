@@ -330,6 +330,12 @@ struct Compressor {
 static struct SoundSystem {
     bool initialized = false;
     SDL_AudioStream* stream = nullptr;
+    // Push-mode stream for SOUND.PLAYBUFFER: scripts queue raw float32
+    // samples directly, the SDL audio mixer combines this stream's
+    // output with the synth's `stream` on the same device.
+    SDL_AudioStream* pcm_stream = nullptr;
+    int pcm_sample_rate = SAMPLE_RATE;
+    int pcm_channels = 1;
 
     // Voices
     Voice voices[MAX_VOICES];
@@ -932,6 +938,10 @@ void sound_shutdown() {
         SDL_DestroyAudioStream(g_sound.stream);
         g_sound.stream = nullptr;
     }
+    if (g_sound.pcm_stream) {
+        SDL_DestroyAudioStream(g_sound.pcm_stream);
+        g_sound.pcm_stream = nullptr;
+    }
     g_sound.initialized = false;
 }
 
@@ -972,6 +982,19 @@ void register_sound_builtins(VM& vm) {
         g_sound.wave_buffer.resize(1024, 0.0f);
 
         SDL_ResumeAudioStreamDevice(g_sound.stream);
+
+        // PCM push-stream — opened on the same default device. SDL3 mixes
+        // multiple device-streams together, so the synth and the raw
+        // sample buffer coexist without us writing a second mixer.
+        SDL_AudioSpec pcm_spec;
+        pcm_spec.freq = g_sound.pcm_sample_rate;
+        pcm_spec.format = SDL_AUDIO_F32;
+        pcm_spec.channels = g_sound.pcm_channels;
+        g_sound.pcm_stream = SDL_OpenAudioDeviceStream(
+            SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &pcm_spec, nullptr, nullptr);
+        if (g_sound.pcm_stream)
+            SDL_ResumeAudioStreamDevice(g_sound.pcm_stream);
+
         g_sound.initialized = true;
         return Value::make_none();
     });
@@ -1057,6 +1080,70 @@ void register_sound_builtins(VM& vm) {
             if (v.track == t) v.env.state = EnvState::OFF;
         SDL_UnlockAudioStream(g_sound.stream);
         return Value::make_none();
+    });
+
+    // ── SOUND.PLAYBUFFER samples, [sample_rate], [channels] ─────
+    //
+    // Push raw float samples (-1..1) onto the PCM stream. `samples` is
+    // a 1D array of numbers; numbers are converted to f32 in order. If
+    // the requested sample-rate or channel count differs from the
+    // currently-open pcm_stream, we re-open it so SDL's resampler does
+    // the conversion. Use cases: hand-drawn waveforms, emulator audio
+    // (Apple II speaker), synthesized blips that don't fit the synth
+    // model.
+
+    vm.register_native("SOUND.PLAYBUFFER", 1, 3, [](const std::vector<Value>& args) -> Value {
+        ensure_sound("SOUND.PLAYBUFFER");
+        if (!g_sound.pcm_stream)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PLAYBUFFER: PCM stream not open");
+        if (args[0].type != ValueType::ARRAY)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PLAYBUFFER: first arg must be an array");
+
+        int rate = (args.size() >= 2) ? (int)args[1].to_int() : g_sound.pcm_sample_rate;
+        int channels = (args.size() >= 3) ? (int)args[2].to_int() : g_sound.pcm_channels;
+        if (rate < 4000 || rate > 192000) rate = SAMPLE_RATE;
+        if (channels < 1 || channels > 2) channels = 1;
+
+        if (rate != g_sound.pcm_sample_rate || channels != g_sound.pcm_channels) {
+            if (g_sound.pcm_stream) {
+                SDL_DestroyAudioStream(g_sound.pcm_stream);
+                g_sound.pcm_stream = nullptr;
+            }
+            SDL_AudioSpec spec;
+            spec.freq = rate;
+            spec.format = SDL_AUDIO_F32;
+            spec.channels = channels;
+            g_sound.pcm_stream = SDL_OpenAudioDeviceStream(
+                SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+            if (!g_sound.pcm_stream)
+                throw jdError(ErrCode::RUNTIME_ERROR,
+                    std::string("SOUND.PLAYBUFFER: re-open failed: ") + SDL_GetError());
+            SDL_ResumeAudioStreamDevice(g_sound.pcm_stream);
+            g_sound.pcm_sample_rate = rate;
+            g_sound.pcm_channels = channels;
+        }
+
+        auto* arr = args[0].as_array();
+        std::vector<float> buf;
+        buf.reserve(arr->elements.size());
+        for (auto& e : arr->elements) {
+            buf.push_back((float)e.to_double());
+        }
+        if (!buf.empty()) {
+            SDL_PutAudioStreamData(g_sound.pcm_stream,
+                buf.data(), (int)(buf.size() * sizeof(float)));
+        }
+        return Value::make_none();
+    });
+
+    // ── SOUND.QUEUED() — bytes still pending in PCM stream ──────
+    //
+    // Useful for keeping the buffer between min/max water-marks without
+    // overflowing or underrunning. Returns 0 if PCM stream is closed.
+    vm.register_native("SOUND.QUEUED", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        if (!g_sound.pcm_stream) return Value::make_i64(0);
+        return Value::make_i64((int64_t)SDL_GetAudioStreamQueued(g_sound.pcm_stream));
     });
 
     // ── SFX.LOAD id, filepath ───────────────────────────────────

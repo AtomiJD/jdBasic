@@ -1463,6 +1463,14 @@ Description: Starts the release phase of the ADSR envelope for a note.
 Syntax: SOUND.STOP(track)
 Description: Immediately stops a note on a synthesizer track.
 
+[SOUND.PLAYBUFFER]
+Syntax: SOUND.PLAYBUFFER samples, [sample_rate], [channels]
+Description: Pushes raw float samples (-1..1) onto a PCM stream that mixes alongside the synth. Use for hand-drawn waveforms or emulator audio. Defaults: sample_rate=44100, channels=1.
+
+[SOUND.QUEUED]
+Syntax: SOUND.QUEUED()
+Description: Returns the number of bytes still waiting in the PLAYBUFFER queue. Useful for pacing pushes to avoid underrun/overflow.
+
 [SOUND.VOICE]
 Syntax: SOUND.VOICE track, waveform$, attack, decay, sustain, release
 Description: Configures the ADSR envelope and waveform for a synthesizer track.

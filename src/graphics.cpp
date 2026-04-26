@@ -547,6 +547,17 @@ void register_graphics_builtins(VM& vm) {
         if (g_plot_tex) { SDL_DestroyTexture(g_plot_tex); g_plot_tex = nullptr; }
         g_plot_tex_w = 0;
         g_plot_tex_h = 0;
+#ifdef IMGUI
+        // Tear ImGui down before destroying the renderer it was bound to.
+        // gui_init early-returns when already initialised, so without this
+        // the second SCREEN keeps gui.cpp's stale g_renderer pointer, and
+        // gui_new_frame re-applies logical presentation to the freed
+        // renderer instead of the new one — leaving the new renderer in
+        // PRESENTATION_DISABLED. Drawing then maps logical coords 1:1 to
+        // window pixels, so a 560×384 program renders in the upper-left
+        // corner of a 1120×768 window ("winzige Apple Console").
+        gui_shutdown();
+#endif
         if (g_renderer) { SDL_DestroyRenderer(g_renderer); g_renderer = nullptr; }
         if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
 
