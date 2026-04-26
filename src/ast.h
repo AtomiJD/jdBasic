@@ -213,7 +213,11 @@ struct Param {
 };
 
 struct IfBranch {
-    ExprPtr condition;           // nullptr for ELSE
+    ExprPtr condition;           // nullptr for ELSE/SWITCH-DEFAULT
+    // SWITCH multi-case labels: each pair is (low, high). high is nullptr for
+    // a single-value label, non-null for "lo TO hi" ranges. Empty for IF
+    // branches and SWITCH DEFAULT.
+    std::vector<std::pair<ExprPtr, ExprPtr>> case_labels;
     std::vector<StmtPtr> body;
 };
 

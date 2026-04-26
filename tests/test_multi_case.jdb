@@ -1,0 +1,106 @@
+' Multi-case (CASE 1, 2, 3 and CASE lo TO hi) regression test.
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(label$, cond)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: " + label$
+    ENDIF
+ENDSUB
+
+FUNC Classify(n)
+    DIM r$ = ""
+    SWITCH n
+    CASE 1, 3, 5, 7, 9
+        r$ = "odd-small"
+    CASE 2, 4, 6, 8
+        r$ = "even-small"
+    CASE 10 TO 19
+        r$ = "teen"
+    CASE 20 TO 29, 40 TO 49
+        r$ = "20s-or-40s"
+    CASE 100
+        r$ = "hundred"
+    DEFAULT
+        r$ = "other"
+    ENDSWITCH
+    RETURN r$
+ENDFUNC
+
+' ── Comma list ────────────────────────────────────────────────
+Assert("1->odd-small",    Classify(1) = "odd-small")
+Assert("5->odd-small",    Classify(5) = "odd-small")
+Assert("9->odd-small",    Classify(9) = "odd-small")
+Assert("2->even-small",   Classify(2) = "even-small")
+Assert("8->even-small",   Classify(8) = "even-small")
+
+' ── Range ─────────────────────────────────────────────────────
+Assert("10->teen",        Classify(10) = "teen")
+Assert("15->teen",        Classify(15) = "teen")
+Assert("19->teen",        Classify(19) = "teen")
+
+' ── Multiple ranges in one CASE ───────────────────────────────
+Assert("20->20s",         Classify(20) = "20s-or-40s")
+Assert("25->20s",         Classify(25) = "20s-or-40s")
+Assert("29->20s",         Classify(29) = "20s-or-40s")
+Assert("40->40s",         Classify(40) = "20s-or-40s")
+Assert("45->40s",         Classify(45) = "20s-or-40s")
+Assert("49->40s",         Classify(49) = "20s-or-40s")
+Assert("30->other",       Classify(30) = "other")
+Assert("35->other",       Classify(35) = "other")
+Assert("39->other",       Classify(39) = "other")
+
+' ── Single value still works ──────────────────────────────────
+Assert("100->hundred",    Classify(100) = "hundred")
+Assert("99->other",       Classify(99) = "other")
+Assert("0->other",        Classify(0) = "other")
+
+' ── String multi-case ─────────────────────────────────────────
+FUNC ColorGroup$(c$)
+    DIM g$ = ""
+    SWITCH c$
+    CASE "red", "orange", "yellow"
+        g$ = "warm"
+    CASE "blue", "cyan", "purple"
+        g$ = "cool"
+    DEFAULT
+        g$ = "neutral"
+    ENDSWITCH
+    RETURN g$
+ENDFUNC
+
+Assert("red->warm",       ColorGroup$("red") = "warm")
+Assert("yellow->warm",    ColorGroup$("yellow") = "warm")
+Assert("blue->cool",      ColorGroup$("blue") = "cool")
+Assert("purple->cool",    ColorGroup$("purple") = "cool")
+Assert("green->neutral",  ColorGroup$("green") = "neutral")
+
+' ── Empty ranges should not match ─────────────────────────────
+FUNC InRange(n)
+    DIM r$ = "no"
+    SWITCH n
+    CASE 5 TO 10
+        r$ = "yes"
+    ENDSWITCH
+    RETURN r$
+ENDFUNC
+
+Assert("4->no",           InRange(4) = "no")
+Assert("5->yes",          InRange(5) = "yes")
+Assert("10->yes",         InRange(10) = "yes")
+Assert("11->no",          InRange(11) = "no")
+
+PRINT ""
+PRINT "═══════════════════════════"
+PRINT " MULTI-CASE TEST RESULTS"
+PRINT " PASS: "; PASS; "  FAIL: "; FAIL
+IF FAIL = 0 THEN
+    PRINT " ALL MULTI-CASE TESTS PASSED!"
+ELSE
+    PRINT " SOME MULTI-CASE TESTS FAILED!"
+ENDIF
+PRINT "═══════════════════════════"

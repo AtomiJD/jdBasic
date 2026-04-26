@@ -813,6 +813,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                     if (b && body_drills_param(*b)) return true;
                                 for (auto& br : s.branches) {
                                     if (br.condition && param_used_as_index(*br.condition)) return true;
+                                    for (auto& [lo, hi] : br.case_labels) {
+                                        if (lo && param_used_as_index(*lo)) return true;
+                                        if (hi && param_used_as_index(*hi)) return true;
+                                    }
                                     for (auto& b : br.body)
                                         if (b && body_drills_param(*b)) return true;
                                 }
@@ -862,6 +866,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (auto& b : s.body) if (b) scan_stmt(*b);
         for (auto& br : s.branches) {
             if (br.condition) scan_expr(*br.condition);
+            for (auto& [lo, hi] : br.case_labels) {
+                if (lo) scan_expr(*lo);
+                if (hi) scan_expr(*hi);
+            }
             for (auto& b : br.body) if (b) scan_stmt(*b);
         }
         for (auto& c : s.catch_body) if (c) scan_stmt(*c);
@@ -3517,53 +3525,100 @@ void LLVMCodegen::codegen_if(const Stmt& stmt) {
 // ── SWITCH ──────────────────────────────────────────────────
 
 void LLVMCodegen::codegen_switch(const Stmt& stmt) {
-    // SWITCH expr / CASE val / ... / DEFAULT / ENDSWITCH
-    // Reuse IF-like structure: compare switch_expr against each case condition
+    // SWITCH expr / CASE labels / ... / DEFAULT / ENDSWITCH
+    // Each branch carries case_labels (multi-value comma list, each entry
+    // optionally a "low TO high" range). DEFAULT has both condition and
+    // case_labels empty.
     TypedValue switch_val = codegen_expr(*stmt.expr);
     LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.end");
 
+    // 0=eq, 1=ge, 2=le. Returns an i1 (or sign-equivalent) comparison
+    // result. Strings only support equality; range bounds with strings is
+    // a hard compile-time error, surfaced as an LLVM verification fail
+    // upstream — left as a future ergonomic.
+    auto build_cmp = [&](TypedValue sv, TypedValue cv, int op_kind) -> LLVMValueRef {
+        if (sv.tag == JD_TAG_STR && cv.tag == JD_TAG_STR) {
+            auto& fn = runtime_funcs["__str_eq"];
+            LLVMValueRef args[] = { sv.val, cv.val };
+            return LLVMBuildICmp(builder, LLVMIntNE,
+                LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "eq"),
+                LLVMConstInt(i64_type, 0, 0), "cmp");
+        } else if (sv.tag == JD_TAG_F64 || cv.tag == JD_TAG_F64) {
+            TypedValue svf = promote_to_f64(sv);
+            TypedValue cvf = promote_to_f64(cv);
+            LLVMRealPredicate p = op_kind == 0 ? LLVMRealOEQ
+                                : op_kind == 1 ? LLVMRealOGE
+                                               : LLVMRealOLE;
+            return LLVMBuildFCmp(builder, p, svf.val, cvf.val, "cmp");
+        } else {
+            LLVMIntPredicate p = op_kind == 0 ? LLVMIntEQ
+                                : op_kind == 1 ? LLVMIntSGE
+                                               : LLVMIntSLE;
+            return LLVMBuildICmp(builder, p, sv.val, cv.val, "cmp");
+        }
+    };
+
     for (size_t i = 0; i < stmt.branches.size(); i++) {
         auto& branch = stmt.branches[i];
+        bool is_default = branch.case_labels.empty() && !branch.condition;
 
-        if (!branch.condition) {
-            // DEFAULT
+        if (is_default) {
             for (auto& s : branch.body) { if (s) codegen_stmt(*s); }
             if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
                 LLVMBuildBr(builder, merge_bb);
-        } else {
-            // CASE: compare switch_val == case_val
-            TypedValue case_val = codegen_expr(*branch.condition);
-
-            LLVMValueRef cmp;
-            if (switch_val.tag == JD_TAG_STR && case_val.tag == JD_TAG_STR) {
-                auto& fn = runtime_funcs["__str_eq"];
-                LLVMValueRef args[] = { switch_val.val, case_val.val };
-                cmp = LLVMBuildICmp(builder, LLVMIntNE,
-                    LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "eq"),
-                    LLVMConstInt(i64_type, 0, 0), "cmp");
-            } else if (switch_val.tag == JD_TAG_F64 || case_val.tag == JD_TAG_F64) {
-                TypedValue sv = promote_to_f64(switch_val);
-                TypedValue cv = promote_to_f64(case_val);
-                cmp = LLVMBuildFCmp(builder, LLVMRealOEQ, sv.val, cv.val, "cmp");
-            } else {
-                cmp = LLVMBuildICmp(builder, LLVMIntEQ, switch_val.val, case_val.val, "cmp");
-            }
-
-            LLVMBasicBlockRef then_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.case");
-            LLVMBasicBlockRef next_bb = (i + 1 < stmt.branches.size())
-                ? LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.next")
-                : merge_bb;
-
-            LLVMBuildCondBr(builder, cmp, then_bb, next_bb);
-
-            LLVMPositionBuilderAtEnd(builder, then_bb);
-            for (auto& s : branch.body) { if (s) codegen_stmt(*s); }
-            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
-                LLVMBuildBr(builder, merge_bb);
-
-            if (next_bb != merge_bb)
-                LLVMPositionBuilderAtEnd(builder, next_bb);
+            continue;
         }
+
+        // Cascade label tests. Body block is the common landing pad once
+        // any label matches. After all labels fail we fall through to
+        // next_bb (the next branch, or merge if last).
+        LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.body");
+        LLVMBasicBlockRef next_bb = (i + 1 < stmt.branches.size())
+            ? LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.next")
+            : merge_bb;
+
+        // Legacy single-value condition (kept for safety; parser now uses
+        // case_labels exclusively).
+        if (branch.case_labels.empty() && branch.condition) {
+            TypedValue case_val = codegen_expr(*branch.condition);
+            LLVMValueRef cmp = build_cmp(switch_val, case_val, 0);
+            LLVMBuildCondBr(builder, cmp, body_bb, next_bb);
+        } else {
+            for (size_t li = 0; li < branch.case_labels.size(); li++) {
+                auto& [low_e, high_e] = branch.case_labels[li];
+                bool last = (li + 1 == branch.case_labels.size());
+                LLVMBasicBlockRef try_next_bb = last
+                    ? next_bb
+                    : LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.lbl");
+
+                if (high_e) {
+                    // Range: (switch_val >= low) && (switch_val <= high)
+                    LLVMBasicBlockRef hi_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "sw.rng_hi");
+                    TypedValue lo = codegen_expr(*low_e);
+                    LLVMValueRef cmp_lo = build_cmp(switch_val, lo, 1);
+                    LLVMBuildCondBr(builder, cmp_lo, hi_bb, try_next_bb);
+                    LLVMPositionBuilderAtEnd(builder, hi_bb);
+                    TypedValue hi = codegen_expr(*high_e);
+                    LLVMValueRef cmp_hi = build_cmp(switch_val, hi, 2);
+                    LLVMBuildCondBr(builder, cmp_hi, body_bb, try_next_bb);
+                } else {
+                    TypedValue cv = codegen_expr(*low_e);
+                    LLVMValueRef cmp = build_cmp(switch_val, cv, 0);
+                    LLVMBuildCondBr(builder, cmp, body_bb, try_next_bb);
+                }
+
+                if (!last)
+                    LLVMPositionBuilderAtEnd(builder, try_next_bb);
+            }
+        }
+
+        LLVMPositionBuilderAtEnd(builder, body_bb);
+        for (auto& s : branch.body) { if (s) codegen_stmt(*s); }
+        if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+            LLVMBuildBr(builder, merge_bb);
+
+        if (next_bb != merge_bb)
+            LLVMPositionBuilderAtEnd(builder, next_bb);
     }
     LLVMPositionBuilderAtEnd(builder, merge_bb);
 }

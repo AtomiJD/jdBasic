@@ -79,8 +79,8 @@ Syntax: CALL subroutine_name
 Description: Transfers control to a named SUB procedure.
 
 [CASE]
-Syntax: CASE value
-Description: A block inside a SWITCH statement that executes if its value matches the SWITCH expression.
+Syntax: CASE value[, value]... | CASE lo TO hi
+Description: A block inside a SWITCH statement that executes if any listed value matches the SWITCH expression. Multiple values may be comma-separated, and ranges (lo TO hi, inclusive) can be mixed in: CASE 1, 5 TO 9, 12.
 
 [CATCH]
 Syntax: CATCH

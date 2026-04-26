@@ -218,7 +218,19 @@ StmtPtr Parser::parse_statement() {
                 if (check(TokenType::CASE)) {
                     advance(); // CASE
                     IfBranch branch;
-                    branch.condition = parse_expr();
+                    // Multi-case: comma-separated values, each optionally a TO range.
+                    //   CASE 1, 3, 5
+                    //   CASE 10 TO 19
+                    //   CASE 1, 5 TO 9, 12
+                    do {
+                        ExprPtr low = parse_expr();
+                        ExprPtr high;
+                        if (check(TokenType::TO)) {
+                            advance(); // TO
+                            high = parse_expr();
+                        }
+                        branch.case_labels.emplace_back(std::move(low), std::move(high));
+                    } while (match(TokenType::COMMA));
                     expect_newline();
                     skip_newlines();
                     while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) &&

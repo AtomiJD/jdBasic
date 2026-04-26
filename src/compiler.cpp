@@ -567,21 +567,61 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             std::vector<size_t> end_jumps;
 
             for (auto& branch : stmt.branches) {
-                if (branch.condition) {
-                    // CASE: DUP switch value, eval case value, compare
+                bool is_default = branch.case_labels.empty() && !branch.condition;
+                if (is_default) {
+                    // DEFAULT: just execute body
+                    for (auto& s : branch.body) compile_stmt(*s);
+                    continue;
+                }
+
+                // Multi-case: any label match → run body. Each label is
+                // either a single value (low only) or a "low TO high" range.
+                std::vector<size_t> match_jumps;
+
+                // Legacy single-value case (parser now always populates
+                // case_labels, but keep this for any AST consumer that
+                // still sets condition).
+                if (branch.case_labels.empty() && branch.condition) {
                     current_chunk().emit(OpCode::DUP, stmt.line);
                     compile_expr(*branch.condition);
                     current_chunk().emit(OpCode::CMP_EQ, stmt.line);
-                    size_t skip = emit_jump(OpCode::JUMP_IF_FALSE, stmt.line);
-
-                    for (auto& s : branch.body) compile_stmt(*s);
-                    end_jumps.push_back(emit_jump(OpCode::JUMP, stmt.line));
-
-                    patch_jump(skip);
+                    match_jumps.push_back(emit_jump(OpCode::JUMP_IF_TRUE, stmt.line));
                 } else {
-                    // DEFAULT: just execute body
-                    for (auto& s : branch.body) compile_stmt(*s);
+                    for (auto& [low, high] : branch.case_labels) {
+                        if (high) {
+                            // Range: switch_val >= low AND switch_val <= high.
+                            // Two-step test reuses CMP_GE/CMP_LE without
+                            // needing a temporary; a failed lower bound
+                            // skips past the upper-bound test.
+                            current_chunk().emit(OpCode::DUP, stmt.line);
+                            compile_expr(*low);
+                            current_chunk().emit(OpCode::CMP_GE, stmt.line);
+                            size_t skip_low_fail = emit_jump(OpCode::JUMP_IF_FALSE, stmt.line);
+
+                            current_chunk().emit(OpCode::DUP, stmt.line);
+                            compile_expr(*high);
+                            current_chunk().emit(OpCode::CMP_LE, stmt.line);
+                            match_jumps.push_back(emit_jump(OpCode::JUMP_IF_TRUE, stmt.line));
+
+                            patch_jump(skip_low_fail);
+                        } else {
+                            current_chunk().emit(OpCode::DUP, stmt.line);
+                            compile_expr(*low);
+                            current_chunk().emit(OpCode::CMP_EQ, stmt.line);
+                            match_jumps.push_back(emit_jump(OpCode::JUMP_IF_TRUE, stmt.line));
+                        }
+                    }
                 }
+
+                // No label matched → skip the body.
+                size_t skip_body = emit_jump(OpCode::JUMP, stmt.line);
+
+                // Body entry: patch every match-jump here.
+                for (size_t j : match_jumps) patch_jump(j);
+                for (auto& s : branch.body) compile_stmt(*s);
+                end_jumps.push_back(emit_jump(OpCode::JUMP, stmt.line));
+
+                patch_jump(skip_body);
             }
 
             // Patch all end jumps to here

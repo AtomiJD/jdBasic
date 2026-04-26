@@ -708,11 +708,28 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 Provides a clear way to execute one of several blocks of code based on the value of a single expression. It is a more readable alternative to a long series of `IF...ELSEIF` statements.
 
 * **`SWITCH expression`**: Evaluates the `expression` once at the beginning.
-* **`CASE value_expression`**: Compares its `value_expression` to the main switch expression. If they are equal, the code block following the `CASE` is executed.
+* **`CASE value_expression[, value_expression]...`**: Compares each value to the main switch expression. If any match, the body runs. Each value can also be a range `lo TO hi` (inclusive both ends), and you may mix singletons and ranges in one `CASE`: `CASE 1, 5 TO 9, 12`.
 * **`DEFAULT`**: An optional block that executes if no preceding `CASE` statement matches.
 * **`ENDSWITCH`**: Marks the end of the `SWITCH` block.
 
 **Note**: The interpreter does not "fall through" cases. Once a `CASE` or `DEFAULT` block is executed, control jumps immediately to the statement following `ENDSWITCH`.
+
+**Multi-case examples:**
+
+```basic
+SWITCH n
+    CASE 1, 3, 5, 7, 9
+        PRINT "odd single-digit"
+    CASE 10 TO 19
+        PRINT "teen"
+    CASE 20 TO 29, 40 TO 49
+        PRINT "20s or 40s"
+    DEFAULT
+        PRINT "other"
+ENDSWITCH
+```
+
+String values work identically: `CASE "red", "orange", "yellow"`. `lo TO hi` ranges are intended for numeric values only.
 
 **Example:**
 
