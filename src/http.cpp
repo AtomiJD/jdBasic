@@ -557,6 +557,15 @@ void register_http_builtins(VM& vm) {
         std::lock_guard<std::mutex> lock(g_server_mutex);
         if (g_server) throw std::runtime_error("Server already running");
 
+        // Pin g_server_vm to the VM that actually started the server.
+        // register_http_builtins() runs once per workspace VM and clobbers
+        // g_server_vm each time, so by the time the user calls START from
+        // (say) WS1, the global still points at WS4 — and POST handlers
+        // would look up the user's FUNC on the wrong VM ("Undefined
+        // function: MCP_POST"). Re-binding here makes ON_POST/ON_GET
+        // resolve against the workspace that owns the handler functions.
+        g_server_vm = &vm;
+
         g_server = std::make_unique<httplib::Server>();
 
         // Register all GET handlers
