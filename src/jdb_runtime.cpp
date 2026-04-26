@@ -2607,24 +2607,32 @@ JdbArray* jdb_datediff_vec(const char* part, const char* date1, JdbArray* dates)
 
 // ── Regex (C++ internally, extern "C" interface) ────────────
 
-static int64_t regex_match_impl(const char* text, const char* pattern) {
+// VM convention is REGEX.MATCH(pattern, text) / REPLACE(pattern, text, repl)
+// — see vm.cpp's register_native impls and doc/languages.md. Native must
+// match that order or the same script picks one branch in interp and the
+// opposite in native (e.g. native_test.jdb's REGEX section flipping
+// PASS/FAIL between modes).
+static int64_t regex_match_impl(const char* pattern, const char* text) {
     try {
-        return std::regex_search(std::string(text), std::regex(pattern)) ? 1 : 0;
+        return std::regex_search(std::string(text ? text : ""),
+                                 std::regex(pattern ? pattern : "")) ? 1 : 0;
     } catch (...) { return 0; }
 }
 
-static char* regex_replace_impl(const char* text, const char* pattern, const char* replacement) {
+static char* regex_replace_impl(const char* pattern, const char* text, const char* replacement) {
     try {
-        std::string result = std::regex_replace(std::string(text), std::regex(pattern), std::string(replacement));
+        std::string result = std::regex_replace(std::string(text ? text : ""),
+                                                std::regex(pattern ? pattern : ""),
+                                                std::string(replacement ? replacement : ""));
         return _strdup(result.c_str());
     } catch (...) { return _strdup(text ? text : ""); }
 }
 
-static JdbArray* regex_findall_impl(const char* text, const char* pattern) {
+static JdbArray* regex_findall_impl(const char* pattern, const char* text) {
     std::vector<double> positions;
     try {
-        std::string s(text);
-        std::regex re(pattern);
+        std::string s(text ? text : "");
+        std::regex re(pattern ? pattern : "");
         auto begin = std::sregex_iterator(s.begin(), s.end(), re);
         auto end2 = std::sregex_iterator();
         for (auto it = begin; it != end2; ++it)
@@ -2636,9 +2644,9 @@ static JdbArray* regex_findall_impl(const char* text, const char* pattern) {
 }
 
 extern "C" {
-int64_t jdb_regex_match(const char* text, const char* pattern) { return regex_match_impl(text, pattern); }
-char* jdb_regex_replace(const char* text, const char* pattern, const char* replacement) { return regex_replace_impl(text, pattern, replacement); }
-JdbArray* jdb_regex_findall(const char* text, const char* pattern) { return regex_findall_impl(text, pattern); }
+int64_t jdb_regex_match(const char* pattern, const char* text) { return regex_match_impl(pattern, text); }
+char* jdb_regex_replace(const char* pattern, const char* text, const char* replacement) { return regex_replace_impl(pattern, text, replacement); }
+JdbArray* jdb_regex_findall(const char* pattern, const char* text) { return regex_findall_impl(pattern, text); }
 
 // ── SHA-256 ─────────────────────────────────────────────────
 // Minimal self-contained SHA-256 implementation
@@ -2807,13 +2815,15 @@ int64_t jdb_byteat(const char* s, int64_t idx) {
 }
 
 // OS info
+// Match the VM's getos_fn in vm.cpp — uppercase platform tags so
+// `IF OS.GETOS$() = "WINDOWS"` works the same way in interp + native.
 char* jdb_os_getos() {
 #ifdef _WIN32
-    return _strdup("win32");
-#elif __linux__
-    return _strdup("linux");
+    return _strdup("WINDOWS");
 #elif __APPLE__
-    return _strdup("macOS");
+    return _strdup("MACOS");
+#elif __linux__
+    return _strdup("LINUX");
 #else
     return _strdup("unknown");
 #endif

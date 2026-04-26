@@ -7,66 +7,66 @@ DIM PASS = 0
 DIM FAIL = 0
 
 test_num = 0
-SUB Assert(cond)
+SUB Assert(N,cond)
     test_num = test_num + 1
     IF cond THEN
         PASS = PASS + 1
     ELSE
+        PRINT "FAIL Test #";N
         FAIL = FAIL + 1
-        PRINT "  FAIL test #"; test_num
     ENDIF
 ENDSUB
 
 ' ── 1. ARITHMETIC ────────────────────────────────────────────
 PRINT "── Arithmetic ──"
-Assert(2 + 3 = 5)
-Assert(10 - 4 = 6)
-Assert(3 * 7 = 21)
-Assert(15 / 3 = 5)
-Assert(17 MOD 5 = 2)
-Assert(2 ^ 10 = 1024)
-Assert(-5 + 10 = 5)
+Assert(2,2 + 3 = 5)
+Assert(3,10 - 4 = 6)
+Assert(4,3 * 7 = 21)
+Assert(5,15 / 3 = 5)
+Assert(6,17 MOD 5 = 2)
+Assert(7,2 ^ 10 = 1024)
+Assert(8,-5 + 10 = 5)
 
 ' ── 2. COMPARISONS ───────────────────────────────────────────
 PRINT "── Comparisons ──"
-Assert(5 > 3)
-Assert(3 < 5)
-Assert(5 >= 5)
-Assert(5 <= 5)
-Assert(5 = 5)
-Assert(5 <> 3)
+Assert(9,5 > 3)
+Assert(10,3 < 5)
+Assert(11,5 >= 5)
+Assert(12,5 <= 5)
+Assert(13,5 = 5)
+Assert(14,5 <> 3)
 
 ' ── 3. LOGIC ─────────────────────────────────────────────────
 PRINT "── Logic ──"
-Assert(1 AND 1)
-Assert(1 OR 0)
-Assert(NOT 0)
-Assert(NOT (1 AND 0))
+Assert(15,1 AND 1)
+Assert(16,1 OR 0)
+Assert(17,NOT 0)
+Assert(18,NOT (1 AND 0))
 
 ' ── 4. VARIABLES ─────────────────────────────────────────────
 PRINT "── Variables ──"
 x = 42
-Assert(x = 42)
+Assert(19,x = 42)
 x = x + 1
-Assert(x = 43)
+Assert(20,x = 43)
 y = 3.14
-Assert(y > 3)
+Assert(21,y > 3)
 
 ' ── 5. IF/ELSEIF/ELSE ────────────────────────────────────────
 PRINT "── IF/ELSE ──"
 a = 10
 IF a > 5 THEN
-    Assert(1)
+    Assert(22,1)
 ELSE
-    Assert(0)
+    Assert(23,0)
 ENDIF
 
 IF a > 100 THEN
-    Assert(0)
+    Assert(24,0)
 ELSEIF a > 5 THEN
-    Assert(1)
+    Assert(25,1)
 ELSE
-    Assert(0)
+    Assert(26,0)
 ENDIF
 
 ' ── 6. FOR LOOP ──────────────────────────────────────────────
@@ -75,13 +75,13 @@ s = 0
 FOR i = 1 TO 10
     s = s + i
 NEXT i
-Assert(s = 55)
+Assert(27,s = 55)
 
 s2 = 0
 FOR i = 0 TO 10 STEP 2
     s2 = s2 + i
 NEXT i
-Assert(s2 = 30)
+Assert(28,s2 = 30)
 
 ' ── 7. DO LOOP ───────────────────────────────────────────────
 PRINT "── DO Loop ──"
@@ -89,13 +89,13 @@ c = 0
 DO WHILE c < 5
     c = c + 1
 LOOP
-Assert(c = 5)
+Assert(29,c = 5)
 
 d = 10
 DO
     d = d - 1
 LOOP UNTIL d = 5
-Assert(d = 5)
+Assert(30,d = 5)
 
 ' ── 8. FUNC/SUB ──────────────────────────────────────────────
 PRINT "── FUNC/SUB ──"
@@ -109,9 +109,9 @@ FUNC Factorial(n)
     RETURN n * Factorial(n - 1)
 ENDFUNC
 
-Assert(Add(3, 7) = 10)
-Assert(Factorial(5) = 120)
-Assert(Factorial(10) = 3628800)
+Assert(31,Add(3, 7) = 10)
+Assert(32,Factorial(5) = 120)
+Assert(33,Factorial(10) = 3628800)
 
 ' ── 9. GLOBAL VARS IN FUNC ──────────────────────────────────
 PRINT "── Globals in FUNC ──"
@@ -122,7 +122,7 @@ ENDSUB
 Increment
 Increment
 Increment
-Assert(counter = 3)
+Assert(34,counter = 3)
 
 ' ── 10. ARRAYS ───────────────────────────────────────────────
 PRINT "── Arrays ──"
@@ -130,67 +130,67 @@ DIM arr[5]
 FOR i = 0 TO 4
     arr[i] = (i + 1) * 10
 NEXT i
-Assert(arr[0] = 10)
-Assert(arr[4] = 50)
-Assert(LEN(arr) = 5)
+Assert(35,arr[0] = 10)
+Assert(36,arr[4] = 50)
+Assert(37,LEN(arr) = 5)
 
 b = IOTA(5)
-Assert(b[0] = 1)
-Assert(b[4] = 5)
-Assert(SUM(b) = 15)
+Assert(38,b[0] = 1)
+Assert(39,b[4] = 5)
+Assert(40,SUM(b) = 15)
 
 ' ── 11. MATH BUILTINS ────────────────────────────────────────
 PRINT "── Math ──"
-Assert(ABS(-42) = 42)
-Assert(SQR(144) = 12)
-Assert(SIN(0) = 0)
-Assert(COS(0) = 1)
-Assert(INT(3.7) = 3)
-Assert(ROUND(3.5) = 4)
-Assert(FAC(7) = 5040)
-Assert(SIGN(-5) = -1)
+Assert(41,ABS(-42) = 42)
+Assert(42,SQR(144) = 12)
+Assert(43,SIN(0) = 0)
+Assert(44,COS(0) = 1)
+Assert(45,INT(3.7) = 3)
+Assert(46,ROUND(3.5) = 4)
+Assert(47,FAC(7) = 5040)
+Assert(48,SIGN(-5) = -1)
 
 ' ── 12. STRING OPS ───────────────────────────────────────────
 PRINT "── Strings ──"
-Assert(UPPER$("hello") = "HELLO")
-Assert(LOWER$("WORLD") = "world")
-Assert(LEFT$("Hello", 3) = "Hel")
-Assert(RIGHT$("Hello", 3) = "llo")
-Assert(MID$("Hello World", 6, 5) = "World")
-Assert(LEN("test") = 4)
-Assert(CHR$(65) = "A")
-Assert(ASC("A") = 65)
-Assert(INSTR("Hello World", "World") = 6)
+Assert(49,UPPER$("hello") = "HELLO")
+Assert(50,LOWER$("WORLD") = "world")
+Assert(51,LEFT$("Hello", 3) = "Hel")
+Assert(52,RIGHT$("Hello", 3) = "llo")
+Assert(53,MID$("Hello World", 6, 5) = "World")
+Assert(54,LEN("test") = 4)
+Assert(55,CHR$(65) = "A")
+Assert(56,ASC("A") = 65)
+Assert(57,INSTR("Hello World", "World") = 6)
 
 ' ── 13. STRING CONCAT ────────────────────────────────────────
 PRINT "── String Concat ──"
-Assert("Hello" + " " + "World" = "Hello World")
-Assert("x=" + "42" = "x=42")
+Assert(58,"Hello" + " " + "World" = "Hello World")
+Assert(59,"x=" + "42" = "x=42")
 
 ' ── 14. DATE/TIME ────────────────────────────────────────────
 PRINT "── Date/Time ──"
 n = NOW()
-Assert(YEAR(n) >= 2025)
-Assert(MONTH(n) >= 1 AND MONTH(n) <= 12)
+Assert(60,YEAR(n) >= 2025)
+Assert(61,MONTH(n) >= 1 AND MONTH(n) <= 12)
 
 ' ── 15. ARRAY OPS ────────────────────────────────────────────
 PRINT "── Array Ops ──"
 v = IOTA(5)
-Assert(MIN(v) = 1)
-Assert(MAX(v) = 5)
-Assert(MEAN(v) = 3)
-Assert(PRODUCT(v) = 120)
+Assert(62,MIN(v) = 1)
+Assert(63,MAX(v) = 5)
+Assert(64,MEAN(v) = 3)
+Assert(65,PRODUCT(v) = 120)
 
 rv = REVERSE(v)
-Assert(rv[0] = 5)
-Assert(rv[4] = 1)
+Assert(66,rv[0] = 5)
+Assert(67,rv[4] = 1)
 
 ' ── 16. CODEC ────────────────────────────────────────────────
 PRINT "── Codec ──"
 enc$ = CODEC.BASE64_ENCODE$("Hello")
-Assert(enc$ = "SGVsbG8=")
+Assert(68,enc$ = "SGVsbG8=")
 dec$ = CODEC.BASE64_DECODE$(enc$)
-Assert(dec$ = "Hello")
+Assert(69,dec$ = "Hello")
 
 ' ── 17. EXITDO ───────────────────────────────────────────────
 PRINT "── EXITDO ──"
@@ -199,13 +199,13 @@ DO
     z = z + 1
     IF z = 5 THEN EXITDO
 LOOP
-Assert(z = 5)
+Assert(70,z = 5)
 
 ' ── 18. TYPEOF ───────────────────────────────────────────────
 PRINT "── TYPEOF ──"
-Assert(TYPEOF(42) = "INT64")
-Assert(TYPEOF(3.14) = "FLOAT64")
-Assert(TYPEOF("hi") = "STRING")
+Assert(71,TYPEOF(42) = "INT64")
+Assert(72,TYPEOF(3.14) = "FLOAT64")
+Assert(73,TYPEOF("hi") = "STRING")
 
 ' ── 19. NEGATIVE STEP FOR ─────────────────────────────────────
 PRINT "── Negative Step FOR ──"
@@ -213,7 +213,7 @@ ns = 0
 FOR i = 10 TO 1 STEP -1
     ns = ns + i
 NEXT i
-Assert(ns = 55)
+Assert(74,ns = 55)
 
 ' ── 20. EXITFOR ──────────────────────────────────────────────
 PRINT "── EXITFOR ──"
@@ -222,7 +222,7 @@ FOR i = 1 TO 100
     IF i = 6 THEN EXITFOR
     ef = ef + i
 NEXT i
-Assert(ef = 15)
+Assert(75,ef = 15)
 
 ' ── 21. CONTINUEFOR ──────────────────────────────────────────
 PRINT "── CONTINUEFOR ──"
@@ -231,7 +231,7 @@ FOR i = 1 TO 5
     IF i = 3 THEN CONTINUEFOR
     cf = cf + i
 NEXT i
-Assert(cf = 12)
+Assert(76,cf = 12)
 
 ' ── 22. DO UNTIL (top) ───────────────────────────────────────
 PRINT "── DO UNTIL top ──"
@@ -239,7 +239,7 @@ du = 0
 DO UNTIL du = 7
     du = du + 1
 LOOP
-Assert(du = 7)
+Assert(77,du = 7)
 
 ' ── 23. DO LOOP WHILE ────────────────────────────────────────
 PRINT "── DO LOOP WHILE ──"
@@ -247,7 +247,7 @@ dlw = 0
 DO
     dlw = dlw + 1
 LOOP WHILE dlw < 5
-Assert(dlw = 5)
+Assert(78,dlw = 5)
 
 ' ── 24. CONTINUEDO ───────────────────────────────────────────
 PRINT "── CONTINUEDO ──"
@@ -258,7 +258,7 @@ DO WHILE cd < 5
     IF cd = 3 THEN CONTINUEDO
     cd_sum = cd_sum + cd
 LOOP
-Assert(cd_sum = 12)
+Assert(79,cd_sum = 12)
 
 ' ── 25. NESTED LOOPS ─────────────────────────────────────────
 PRINT "── Nested Loops ──"
@@ -268,7 +268,7 @@ FOR i = 1 TO 3
         nested = nested + 1
     NEXT j
 NEXT i
-Assert(nested = 9)
+Assert(80,nested = 9)
 
 ' ── 26. FUNCTIONS ADVANCED ───────────────────────────────────
 PRINT "── Functions Advanced ──"
@@ -281,7 +281,7 @@ FUNC SumOfSquares(a, b)
     RETURN Square(a) + Square(b)
 ENDFUNC
 
-Assert(SumOfSquares(3, 4) = 25)
+Assert(81,SumOfSquares(3, 4) = 25)
 
 ' SUB modifying globals
 sub_counter = 0
@@ -291,109 +291,109 @@ SUB CountUp(n)
     NEXT ci
 ENDSUB
 CountUp 5
-Assert(sub_counter = 5)
+Assert(82,sub_counter = 5)
 
 ' ── 27. MATH ADVANCED ────────────────────────────────────────
 PRINT "── Math Advanced ──"
-Assert(ABS(-42) = 42)
-Assert(ABS(42) = 42)
-Assert(INT(-3.7) = -3)
-Assert(FLOOR(3.7) = 3)
-Assert(CEIL(3.2) = 4)
-Assert(FAC(6) = 720)
-Assert(FAC(0) = 1)
-Assert(SQR(144) = 12)
-Assert(ABS(SIN(0)) < 0.001)
-Assert(ABS(COS(0) - 1) < 0.001)
-Assert(CLAMP(15, 0, 10) = 10)
-Assert(CLAMP(-5, 0, 10) = 0)
-Assert(CLAMP(5, 0, 10) = 5)
+Assert(83,ABS(-42) = 42)
+Assert(84,ABS(42) = 42)
+Assert(85,INT(-3.7) = -3)
+Assert(86,FLOOR(3.7) = 3)
+Assert(87,CEIL(3.2) = 4)
+Assert(88,FAC(6) = 720)
+Assert(89,FAC(0) = 1)
+Assert(90,SQR(144) = 12)
+Assert(91,ABS(SIN(0)) < 0.001)
+Assert(92,ABS(COS(0) - 1) < 0.001)
+Assert(93,CLAMP(15, 0, 10) = 10)
+Assert(94,CLAMP(-5, 0, 10) = 0)
+Assert(95,CLAMP(5, 0, 10) = 5)
 
 ' ── 28. STRING ADVANCED ──────────────────────────────────────
 PRINT "── String Advanced ──"
-Assert(REPLACE$("Hello World", "World", "jdBasic") = "Hello jdBasic")
-Assert(TRIM$("  hi  ") = "hi")
-Assert(LTRIM$("  hi") = "hi")
-Assert(RTRIM$("hi  ") = "hi")
-Assert(STARTSWITH("Hello", "He"))
-Assert(ENDSWITH("Hello", "lo"))
-Assert(NOT STARTSWITH("Hello", "lo"))
+Assert(96,REPLACE$("Hello World", "World", "jdBasic") = "Hello jdBasic")
+Assert(97,TRIM$("  hi  ") = "hi")
+Assert(98,LTRIM$("  hi") = "hi")
+Assert(99,RTRIM$("hi  ") = "hi")
+Assert(100,STARTSWITH("Hello", "He"))
+Assert(101,ENDSWITH("Hello", "lo"))
+Assert(102,NOT STARTSWITH("Hello", "lo"))
 
 ' ── 29. FORMAT$ ──────────────────────────────────────────────
 PRINT "── FORMAT$ ──"
-Assert(FORMAT$("{:.2f}", 3.14159) = "3.14")
-Assert(FORMAT$("{}", 42) = "42")
+Assert(103,FORMAT$("{:.2f}", 3.14159) = "3.14")
+Assert(104,FORMAT$("{}", 42) = "42")
 
 ' ── 30. FILE I/O ─────────────────────────────────────────────
 PRINT "── File I/O ──"
 TXTWRITER "native_test_tmp.txt", "test data 123"
 tmp$ = TXTREADER$("native_test_tmp.txt")
-Assert(tmp$ = "test data 123")
-Assert(FILE.EXISTS("native_test_tmp.txt"))
+Assert(105,tmp$ = "test data 123")
+Assert(106,FILE.EXISTS("native_test_tmp.txt"))
 KILL "native_test_tmp.txt"
-Assert(NOT FILE.EXISTS("native_test_tmp.txt"))
+Assert(107,NOT FILE.EXISTS("native_test_tmp.txt"))
 
 ' ── 31. DATE/TIME ────────────────────────────────────────────
 PRINT "── Date/Time ──"
 now_val = NOW()
-Assert(YEAR(now_val) >= 2025)
-Assert(MONTH(now_val) >= 1 AND MONTH(now_val) <= 12)
-Assert(DAY(now_val) >= 1 AND DAY(now_val) <= 31)
+Assert(108,YEAR(now_val) >= 2025)
+Assert(109,MONTH(now_val) >= 1 AND MONTH(now_val) <= 12)
+Assert(110,DAY(now_val) >= 1 AND DAY(now_val) <= 31)
 tomorrow = DATEADD("D", 1, now_val)
-Assert(DATEDIFF("D", now_val, tomorrow) = 1)
+Assert(111,DATEDIFF("D", now_val, tomorrow) = 1)
 
 ' ── 32. CODEC ────────────────────────────────────────────────
 PRINT "── Codec ──"
-Assert(CODEC.BASE64_ENCODE$("Hello") = "SGVsbG8=")
-Assert(CODEC.BASE64_DECODE$("SGVsbG8=") = "Hello")
-Assert(LEN(CODEC.UUID$()) > 30)
-Assert(LEN(CODEC.SHA256$("test")) = 64)
+Assert(112,CODEC.BASE64_ENCODE$("Hello") = "SGVsbG8=")
+Assert(113,CODEC.BASE64_DECODE$("SGVsbG8=") = "Hello")
+Assert(114,LEN(CODEC.UUID$()) > 30)
+Assert(115,LEN(CODEC.SHA256$("test")) = 64)
 
 ' ── 33. ARRAY ADVANCED ───────────────────────────────────────
 PRINT "── Array Advanced ──"
 va = IOTA(10)
-Assert(SUM(va) = 55)
-Assert(PRODUCT(IOTA(5)) = 120)
-Assert(MEAN(IOTA(5)) = 3)
-Assert(MEDIAN(IOTA(5)) = 3)
-Assert(MIN(va) = 1)
-Assert(MAX(va) = 10)
-Assert(INDEXOF(va, 5) = 4)
-Assert(COUNT(va, 5) = 1)
-Assert(ANY(va))
-Assert(ALL(va))
+Assert(116,SUM(va) = 55)
+Assert(117,PRODUCT(IOTA(5)) = 120)
+Assert(118,MEAN(IOTA(5)) = 3)
+Assert(119,MEDIAN(IOTA(5)) = 3)
+Assert(120,MIN(va) = 1)
+Assert(121,MAX(va) = 10)
+Assert(122,INDEXOF(va, 5) = 4)
+Assert(123,COUNT(va, 5) = 1)
+Assert(124,ANY(va))
+Assert(125,ALL(va))
 
 sorted = SORT(REVERSE(IOTA(5)))
-Assert(sorted[0] = 1)
-Assert(sorted[4] = 5)
+Assert(126,sorted[0] = 1)
+Assert(127,sorted[4] = 5)
 
 cs = CUMSUM(IOTA(4))
-Assert(cs[0] = 1)
-Assert(cs[3] = 10)
+Assert(128,cs[0] = 1)
+Assert(129,cs[3] = 10)
 
 ' ── 34. REGEX ────────────────────────────────────────────────
 PRINT "── Regex ──"
 ' REGEX.MATCH(pattern$, text$) — entire-text match. Patterns must
 ' anchor or cover the whole string; the legacy underscore form
 ' REGEX_MATCH(text$, pattern$) does substring search instead.
-Assert(REGEX.MATCH("[a-z0-9]+", "abc123"))
-Assert(NOT REGEX.MATCH("^[0-9]+$", "abcdef"))
-Assert(REGEX.REPLACE("[0-9]+", "Hello 2026", "XXXX") = "Hello XXXX")
+Assert(130,REGEX.MATCH("[a-z0-9]+", "abc123"))
+Assert(131,NOT REGEX.MATCH("^[0-9]+$", "abcdef"))
+Assert(132,REGEX.REPLACE("[0-9]+", "Hello 2026", "XXXX") = "Hello XXXX")
 
 ' ── 35. SYSTEM ───────────────────────────────────────────────
 PRINT "── System ──"
-Assert(LEN(PWD()) > 0)
-Assert(LEN(GETENV$("PATH")) > 0)
-Assert(OS.GETOS$() = "win32")
-Assert(TICK() > 0)
+Assert(133,LEN(PWD()) > 0)
+Assert(134,LEN(GETENV$("PATH")) > 0)
+Assert(135,OS.GETOS$() = "WINDOWS")
+Assert(136,TICK() > 0)
 
 ' ── 36. POWER & SPECIAL OPS ──────────────────────────────────
 PRINT "── Power & Special ──"
-Assert(2 ^ 0 = 1)
-Assert(2 ^ 1 = 2)
-Assert(2 ^ 16 = 65536)
-Assert(IIF(1, 42, 99) = 42)
-Assert(IIF(0, 42, 99) = 99)
+Assert(137,2 ^ 0 = 1)
+Assert(138,2 ^ 1 = 2)
+Assert(139,2 ^ 16 = 65536)
+Assert(140,IIF(1, 42, 99) = 42)
+Assert(141,IIF(0, 42, 99) = 99)
 
 ' ── 37. SWITCH ────────────────────────────────────────────────
 PRINT "── SWITCH ──"
@@ -409,7 +409,7 @@ CASE 3
 DEFAULT
     sw_result = -1
 ENDSWITCH
-Assert(sw_result = 20)
+Assert(142,sw_result = 20)
 
 sw_val = 99
 SWITCH sw_val
@@ -418,7 +418,7 @@ CASE 1
 DEFAULT
     sw_result = -1
 ENDSWITCH
-Assert(sw_result = -1)
+Assert(143,sw_result = -1)
 
 ' ── 38. ENUM ──────────────────────────────────────────────────
 PRINT "── ENUM ──"
@@ -428,23 +428,23 @@ ENUM Directions
     SOUTH = 2
     WEST = 3
 ENDENUM
-Assert(NORTH = 0)
-Assert(EAST = 1)
-Assert(SOUTH = 2)
-Assert(WEST = 3)
+Assert(144,Directions.NORTH = 0)
+Assert(145,Directions.EAST = 1)
+Assert(146,Directions.SOUTH = 2)
+Assert(147,Directions.WEST = 3)
 
 ' ── 39. BITWISE ──────────────────────────────────────────────
 PRINT "── Bitwise ──"
-Assert((5 BAND 3) = 1)
-Assert((5 BOR 3) = 7)
-Assert((5 XOR 3) = 6)
+Assert(148,(5 BAND 3) = 1)
+Assert(149,(5 BOR 3) = 7)
+Assert(150,(5 XOR 3) = 6)
 
 ' ── 40. ANDALSO/ORELSE ───────────────────────────────────────
 PRINT "── ANDALSO/ORELSE ──"
-Assert(1 ANDALSO 1)
-Assert(NOT (1 ANDALSO 0))
-Assert(1 ORELSE 0)
-Assert(NOT (0 ORELSE 0))
+Assert(151,1 ANDALSO 1)
+Assert(152,NOT (1 ANDALSO 0))
+Assert(153,1 ORELSE 0)
+Assert(154,NOT (0 ORELSE 0))
 
 ' ── 41. FOR EACH ─────────────────────────────────────────────
 PRINT "── FOR EACH ──"
@@ -453,13 +453,13 @@ each_sum = 0.0
 FOR EACH n IN nums
     each_sum = each_sum + n
 NEXT n
-Assert(each_sum = 15)
+Assert(155,each_sum = 15)
 
 ' ── 42. HEX LITERALS ────────────────────────────────────────
 PRINT "── Hex Literals ──"
-Assert($FF = 255)
-Assert($0A = 10)
-Assert($80000 = 524288)
+Assert(156,$FF = 255)
+Assert(157,$0A = 10)
+Assert(158,$80000 = 524288)
 
 ' ── 43. NESTED IF/SWITCH ─────────────────────────────────────
 PRINT "── Nested IF/SWITCH ──"
@@ -474,62 +474,62 @@ ELSEIF grade >= 70 THEN
 ELSE
     result$ = "F"
 ENDIF
-Assert(result$ = "B")
+Assert(159,result$ = "B")
 
 ' ── 44. LAMBDA + SELECT ───────────────────────────────────────
 PRINT "── Lambda + SELECT ──"
 la_doubled = SELECT(lambda x -> x * 2, IOTA(5))
-Assert(la_doubled[0] = 2)
-Assert(la_doubled[4] = 10)
-Assert(SUM(la_doubled) = 30)
+Assert(160,la_doubled[0] = 2)
+Assert(161,la_doubled[4] = 10)
+Assert(162,SUM(la_doubled) = 30)
 
 ' ── 45. LAMBDA + FILTER ──────────────────────────────────────
 PRINT "── Lambda + FILTER ──"
 la_evens = FILTER(lambda x -> (x MOD 2) = 0, IOTA(10))
-Assert(la_evens[0] = 2)
-Assert(la_evens[4] = 10)
-Assert(LEN(la_evens) = 5)
+Assert(163,la_evens[0] = 2)
+Assert(164,la_evens[4] = 10)
+Assert(165,LEN(la_evens) = 5)
 
 ' ── 46. LAMBDA + REDUCE ──────────────────────────────────────
 PRINT "── Lambda + REDUCE ──"
 la_sum = REDUCE(lambda acc, x -> acc + x, IOTA(10), 0)
-Assert(la_sum = 55)
+Assert(166,la_sum = 55)
 la_prod = REDUCE(lambda acc, x -> acc * x, IOTA(5), 1)
-Assert(la_prod = 120)
+Assert(167,la_prod = 120)
 
 ' ── 47. LAMBDA CAPTURES (globals) ────────────────────────────
 PRINT "── Lambda Captures ──"
 la_offset = 1000
 la_result = SELECT(lambda x -> x + la_offset, IOTA(3))
-Assert(la_result[0] = 1001)
-Assert(la_result[2] = 1003)
+Assert(168,la_result[0] = 1001)
+Assert(169,la_result[2] = 1003)
 
 la_min_val = 5
 la_filtered = FILTER(lambda x -> x >= la_min_val, IOTA(10))
-Assert(LEN(la_filtered) = 6)
-Assert(la_filtered[0] = 5)
+Assert(170,LEN(la_filtered) = 6)
+Assert(171,la_filtered[0] = 5)
 
 ' ── 48. PIPE OPERATOR ────────────────────────────────────────
 PRINT "── PIPE ──"
 pipe_r1 = 21 |> lambda x -> x * 2
-Assert(pipe_r1 = 42)
+Assert(172,pipe_r1 = 42)
 
 FUNC PipeDouble(x)
     RETURN x * 2
 ENDFUNC
 pipe_r2 = 25 |> PipeDouble
-Assert(pipe_r2 = 50)
+Assert(173,pipe_r2 = 50)
 
 pipe_r3 = IOTA(5) |> FILTER(lambda x -> x > 3, ?)
-Assert(LEN(pipe_r3) = 2)
-Assert(pipe_r3[0] = 4)
+Assert(174,LEN(pipe_r3) = 2)
+Assert(175,pipe_r3[0] = 4)
 
 ' ── 49. LAMBDA SQUARES + CHAIN ───────────────────────────────
 PRINT "── Lambda Chain ──"
 la_chain = FILTER(lambda x -> x > 10, SELECT(lambda x -> x ^ 2, IOTA(5)))
-Assert(la_chain[0] = 16)
-Assert(la_chain[1] = 25)
-Assert(LEN(la_chain) = 2)
+Assert(176,la_chain[0] = 16)
+Assert(177,la_chain[1] = 25)
+Assert(178,LEN(la_chain) = 2)
 
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
@@ -547,3 +547,4 @@ ELSE
     PRINT " SOME TESTS FAILED!"
 ENDIF
 PRINT "══════════════════════════════════════════"
+
