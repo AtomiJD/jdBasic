@@ -6044,6 +6044,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "REACT_BIND", "UNREACT",
         // FFI/internals
         "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
+        // Graphics primitives that consume arrays as a whole (matrix arg,
+        // colour-list arg). Auto-vectorising PLOTRAW with a 2D RGB cache
+        // collapses to one PLOTRAW per element with a scalar in the matrix
+        // slot — every call sees args[2].type==FLOAT64 and exits early.
+        // Same shape applies to the other matrix-form drawing primitives.
+        "PLOTRAW", "RECT", "CIRCLE", "LINE", "ELLIPSE", "ROUNDED_RECT",
+        "CIRCLE_SECTOR", "PSET", "TEXT", "GFX.PLOT_POINTS", "DRAWCOLOR",
+        "SCREEN", "SCREENFLIP", "SETFONT", "TOGGLE_FULLSCREEN",
         // Assert is a user SUB but if used as native:
     };
 

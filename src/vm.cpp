@@ -574,6 +574,10 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
             // destructure the matrix into scalar calls and lose the
             // per-row colors.
             "PSET","LINE","RECT","CIRCLE","ELLIPSE","ROUNDED_RECT","CIRCLE_SECTOR",
+            // PLOTRAW <x>, <y>, matrix[][] — the matrix arg IS the bitmap;
+            // auto-vec destructures it into per-row scalar calls so PLOTRAW
+            // sees args[2].type=FLOAT64 with rows=0 and exits early.
+            "PLOTRAW",
             // Internal dispatch helpers whose arrays are configuration
             // payloads, not data to broadcast over. Auto-vectorizing
             // these silently turns the registration into a 0-element
