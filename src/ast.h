@@ -81,6 +81,11 @@ struct Expr {
     // LITERAL_BOOL
     bool bool_val = false;
 
+    // Set on string literals produced by the `name@` operator. The
+    // compiler treats them like any other LITERAL_STRING; the module
+    // rename pass uses the flag to namespace the referenced name.
+    bool is_funcref_lit = false;
+
     // BINARY
     TokenType op = TokenType::PLUS;
     ExprPtr left;
@@ -130,6 +135,17 @@ inline ExprPtr make_string_lit(const std::string& v, int line) {
     auto e = std::make_unique<Expr>();
     e->kind = ExprKind::LITERAL_STRING;
     e->str_val = v;
+    e->line = line;
+    return e;
+}
+
+// Same shape as a string literal, but flagged as a funcref (`name@`)
+// so the module-rename pass can namespace the referenced name.
+inline ExprPtr make_funcref_lit(const std::string& v, int line) {
+    auto e = std::make_unique<Expr>();
+    e->kind = ExprKind::LITERAL_STRING;
+    e->str_val = v;
+    e->is_funcref_lit = true;
     e->line = line;
     return e;
 }

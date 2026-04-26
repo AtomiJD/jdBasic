@@ -2031,7 +2031,7 @@ ExprPtr Parser::parse_primary() {
         // Function reference: name@
         if (check(TokenType::AT)) {
             advance(); // @
-            return make_string_lit(name, ln);
+            return make_funcref_lit(name, ln);
         }
 
         // Function call: name(args) or Dotted.Name(args)
@@ -2199,10 +2199,32 @@ void Parser::module_rename_expr(Expr& expr,
             if (it != var_map.end()) expr.str_val = it->second;
             break;
         }
+        case ExprKind::LITERAL_STRING: {
+            // Funcref literal (`name@`) — rewrite the embedded function
+            // name to the module-qualified slot so cross-module dispatch
+            // and stored-funcref dispatch both find it via the VM's
+            // global lookup. Plain string literals fall through.
+            if (expr.is_funcref_lit) {
+                auto it = func_map.find(expr.str_val);
+                if (it != func_map.end()) expr.str_val = it->second;
+            }
+            break;
+        }
         case ExprKind::CALL: {
             // Rename function calls to module-defined functions
             auto it = func_map.find(expr.func_name);
-            if (it != func_map.end()) expr.func_name = it->second;
+            if (it != func_map.end()) {
+                expr.func_name = it->second;
+            } else {
+                // Funcref stored in a module-level variable: rewrite the
+                // call site to the qualified slot ("MOD.cb" / "__MOD__cb")
+                // so the VM's CALL-fallback can find the global. Without
+                // this, `cb(x)` inside the module emits CALL "CB" and the
+                // VM's `global_names.find("CB")` misses the namespaced
+                // entry — every dispatch dies with "Undefined function".
+                auto vit = var_map.find(expr.func_name);
+                if (vit != var_map.end()) expr.func_name = vit->second;
+            }
             // Recurse into args
             for (auto& a : expr.args) module_rename_expr(*a, func_map, var_map);
             // Recurse into left (for method calls)
@@ -2296,9 +2318,19 @@ void Parser::module_rename_stmt(Stmt& stmt,
     for (auto& e : stmt.index_chain) module_rename_expr(*e, func_map, var_map);
     for (auto& e : stmt.ctor_args) module_rename_expr(*e, func_map, var_map);
 
-    // Rename in branches (IF/SWITCH)
+    // Rename in branches (IF/SWITCH).
+    // SWITCH multi-case lives in `case_labels` (vector of (low, high)
+    // expression pairs), separate from the `condition` slot used by IF
+    // and single-value CASE. Without renaming those, `CASE AM_ABS` in a
+    // module's SWITCH would keep the unqualified name while the DIM
+    // gets namespaced to `__MOD__AM_ABS`, and the comparison silently
+    // misses on every iteration.
     for (auto& br : stmt.branches) {
         if (br.condition) module_rename_expr(*br.condition, func_map, var_map);
+        for (auto& lbl : br.case_labels) {
+            if (lbl.first)  module_rename_expr(*lbl.first,  func_map, var_map);
+            if (lbl.second) module_rename_expr(*lbl.second, func_map, var_map);
+        }
         for (auto& s : br.body) module_rename_stmt(*s, func_map, var_map);
     }
 

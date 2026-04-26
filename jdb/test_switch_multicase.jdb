@@ -1,0 +1,41 @@
+FUNC test(x)
+    SWITCH x
+        CASE 1, 2
+            RETURN 100
+        CASE 3
+            RETURN 300
+        CASE 4 TO 7
+            RETURN 400
+    ENDSWITCH
+    RETURN -1
+ENDFUNC
+
+PRINT "test(1) = "; test(1)   ' expect 100
+PRINT "test(2) = "; test(2)   ' expect 100
+PRINT "test(3) = "; test(3)   ' expect 300
+PRINT "test(5) = "; test(5)   ' expect 400
+PRINT "test(7) = "; test(7)   ' expect 400
+PRINT "test(8) = "; test(8)   ' expect -1
+
+' Confirm AM_IMP/AM_ACC pattern from cpu6502.
+DIM AM_IMP = 1
+DIM AM_ACC = 2
+DIM AM_IMM = 3
+DIM AM_ABS = 7
+
+FUNC resolve(am)
+    SWITCH am
+        CASE AM_IMP, AM_ACC
+            RETURN 0
+        CASE AM_IMM
+            RETURN 999
+        CASE AM_ABS
+            RETURN 49152
+    ENDSWITCH
+    RETURN -1
+ENDFUNC
+
+PRINT "resolve(AM_IMP) = "; resolve(AM_IMP)
+PRINT "resolve(AM_ACC) = "; resolve(AM_ACC)
+PRINT "resolve(AM_IMM) = "; resolve(AM_IMM)
+PRINT "resolve(AM_ABS) = "; resolve(AM_ABS)
