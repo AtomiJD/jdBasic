@@ -52,12 +52,17 @@ EXPORT FUNC TEXT_ROW_ADDR(row)
     RETURN TEXT1_BASE + in_blk * $80 + block * $28
 ENDFUNC
 
-' Read the character at (col, row) — returns the raw 8-bit value the
-' CPU has stored. Apple II ASCII has bit 7 set for normal display, but
-' for skeleton purposes we just mask it off.
+' Read the character at (col, row) — returns ASCII (bit-7 stripped).
+' Use TEXT_READ_RAW for the unmasked byte that's needed to distinguish
+' inverse / flashing / normal modes (e.g. $A0 blank vs $20 cursor).
 EXPORT FUNC TEXT_READ(col, row)
     DIM addr = TEXT_ROW_ADDR(row) + col
     RETURN CPU6502.READ(addr) BAND $7F
+ENDFUNC
+
+EXPORT FUNC TEXT_READ_RAW(col, row)
+    DIM addr = TEXT_ROW_ADDR(row) + col
+    RETURN CPU6502.READ(addr) BAND $FF
 ENDFUNC
 
 EXPORT SUB TEXT_WRITE(col, row, ch)
@@ -65,7 +70,8 @@ EXPORT SUB TEXT_WRITE(col, row, ch)
     CPU6502.WRITE(addr, (ch BAND $7F) BOR $80)
 ENDSUB
 
-' Fill the text page with a value (0 = blanks, $20 = printable space).
+' Fill the text page with a value. Use $A0 for the standard Apple II
+' blank (normal space — RENDER_TEXT_GLYPH skips it).
 EXPORT SUB TEXT_CLEAR(ch)
     DIM r
     DIM c
@@ -125,30 +131,31 @@ EXPORT FUNC LOAD_APPLE2_ROMS(rom_dir$)
     RETURN total
 ENDFUNC
 
-' Load the character ROM (5x7 glyph data, $800 bytes covering 256 chars
-' at 8 bytes each — last byte unused). Stored in a side buffer rather
-' than CPU RAM since the real Apple II character ROM lives on the video
-' board and isn't CPU-addressable.
+' Load the character ROM (8 bytes per glyph × 256 glyphs = 2 KB).
+'
+' Returns the binary blob as a string. Caller keeps it in a host-side
+' variable and passes it to CHAR_GLYPH_ROW / RENDER_TEXT_GLYPH — the
+' native compiler doesn't reliably persist string writes to module-
+' private DIMs across SUB calls, so we sidestep the issue.
 
-DIM char_rom_data$ = ""
-
-EXPORT FUNC LOAD_CHAR_ROM(filename$)
+EXPORT FUNC LOAD_CHAR_ROM$(filename$)
+    DIM data$
     TRY
-        char_rom_data$ = BINREADER$(filename$)
-        RETURN LEN(char_rom_data$)
+        data$ = BINREADER$(filename$)
     CATCH
-        char_rom_data$ = ""
-        RETURN -1
+        data$ = ""
     ENDTRY
+    RETURN data$
 ENDFUNC
 
-' Look up one of the 8 row bitmasks for character `ch` (0..255).
-' Returns 0 if the char ROM hasn't been loaded.
-EXPORT FUNC CHAR_GLYPH_ROW(ch, row)
-    IF char_rom_data$ = "" THEN RETURN 0
+' Look up one of the 8 row bitmasks for character `ch` (0..255) in
+' a previously-loaded char-ROM blob. Returns 0 if the blob is empty
+' or the index is out of range.
+EXPORT FUNC CHAR_GLYPH_ROW(rom$, ch, row)
+    IF rom$ = "" THEN RETURN 0
     DIM idx = (ch BAND $FF) * 8 + (row BAND 7)
-    IF idx >= LEN(char_rom_data$) THEN RETURN 0
-    RETURN BYTEAT(char_rom_data$, idx)
+    IF idx >= LEN(rom$) THEN RETURN 0
+    RETURN BYTEAT(rom$, idx)
 ENDFUNC
 
 ' ─── Soft-switches ($C000-$C0FF) ───────────────────────────────
@@ -207,7 +214,7 @@ ENDSUB
 ' ─── Initialisation ────────────────────────────────────────────
 EXPORT SUB INIT()
     CPU6502.INIT()
-    CPU6502.ENABLE_IO_HOOKS($C000, $C0FF)
+    CPU6502.ENABLE_IO_HOOKS($C000, $C0FF, IO_READ_DISPATCH@, IO_WRITE_DISPATCH@)
     ' Set the reset vector at $FFFC/$FFFD to a sensible default — the
     ' bootstrap address callers use when no ROM is loaded. ROM-load
     ' will overwrite this when the Monitor ROM is mapped in.
@@ -249,6 +256,85 @@ EXPORT SUB RENDER_TEXT()
             IF ch >= $21 AND ch <= $7E THEN
                 ch_str = CHR$(ch)
                 TEXT c * CHAR_W, r * CHAR_H, ch_str, 0, 255, 0
+            ENDIF
+        NEXT c
+    NEXT r
+ENDSUB
+
+' ─── Authentic Char-ROM rendering ──────────────────────────────
+'
+' Builds a 7×8 RGB matrix per character from the Apple II video-board
+' ROM and blits it via PLOTRAW with a 2x scale. Bit 0 of each glyph
+' byte is the leftmost pixel (Apple II video circuit shifts LSB first).
+'
+' Pre-computed packed-RGB constants — PLOTRAW treats 0 as transparent
+' so background cells cost nothing.
+EXPORT CONST GLYPH_LIT  = $00FF00         ' phosphor green
+EXPORT CONST GLYPH_DARK = 0               ' transparent (skip in PLOTRAW)
+
+' Pre-baked glyph cache. After INIT_GLYPH_CACHE runs, glyph_cache[ch]
+' holds an 8×7 matrix of packed-RGB values (lit pixel = GLYPH_LIT, dark
+' = 0). PLOTRAW receives that matrix per cell and scales it to 16×14.
+'
+' Building the bitmaps once kills the per-frame allocation churn that
+' the old PUSH-into-xs/ys path caused — the boot screen used to grow
+' the heap by tens of MB / second because every frame produced two
+' fresh thousand-element arrays just to hand them to GFX.PLOT_POINTS.
+DIM glyph_cache[256]
+DIM glyph_cache_ready = 0
+
+' Test/inspection hook — returns the cached 8×7 matrix for ch, or 0
+' if the cache is empty. Mostly useful for unit tests; renderers
+' should call RENDER_TEXT_GLYPH directly.
+EXPORT FUNC GLYPH_FOR(ch)
+    IF glyph_cache_ready = 0 THEN RETURN 0
+    RETURN glyph_cache[ch BAND $FF]
+ENDFUNC
+
+EXPORT SUB INIT_GLYPH_CACHE(rom$)
+    glyph_cache_ready = 0
+    IF rom$ = "" THEN RETURN
+    DIM ch
+    DIM grow
+    DIM gcol
+    DIM rom_b
+    DIM glyph
+    FOR ch = 0 TO 255
+        glyph = ZEROS([8, 7])
+        FOR grow = 0 TO 7
+            rom_b = BYTEAT(rom$, ch * 8 + grow)
+            ' Apple II char-ROM stores pixels with bit 6 = leftmost
+            ' (the video shift register pushes MSB-first). gcol=0 is
+            ' the leftmost screen pixel, so test bit (6 - gcol).
+            FOR gcol = 0 TO 6
+                IF (rom_b BAND (1 SHL (6 - gcol))) <> 0 THEN
+                    glyph[grow][gcol] = GLYPH_LIT
+                ENDIF
+            NEXT gcol
+        NEXT grow
+        glyph_cache[ch] = glyph
+    NEXT ch
+    glyph_cache_ready = 1
+ENDSUB
+
+' Authentic Apple II char-ROM rendering. Caller passes the ROM blob
+' obtained from LOAD_CHAR_ROM$ (host-side); the cache is built lazily
+' on the first call. Each non-blank cell triggers one PLOTRAW with the
+' cached 8×7 matrix scaled 2×2 — no per-frame array allocation.
+EXPORT SUB RENDER_TEXT_GLYPH(rom$)
+    IF glyph_cache_ready = 0 THEN INIT_GLYPH_CACHE(rom$)
+    IF glyph_cache_ready = 0 THEN RETURN
+    DIM r
+    DIM c
+    DIM ch
+    FOR r = 0 TO TEXT_ROWS - 1
+        FOR c = 0 TO TEXT_COLS - 1
+            ch = TEXT_READ_RAW(c, r)
+            ' Skip the Apple II blank fill ($A0 = normal space) and
+            ' uninitialised bytes. $20 (inverse space) is the cursor
+            ' block — keep it.
+            IF ch <> $A0 AND ch <> 0 THEN
+                PLOTRAW c * CHAR_W, r * CHAR_H, glyph_cache[ch], 2, 2
             ENDIF
         NEXT c
     NEXT r

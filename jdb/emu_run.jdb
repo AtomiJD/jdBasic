@@ -13,16 +13,9 @@
 
 IMPORT APPLE2
 
-' ─── Host-side IO dispatch ─────────────────────────────────────
-' The CPU calls these by name; we just delegate.
-FUNC IO_READ(addr)
-    RETURN APPLE2.IO_READ_DISPATCH(addr)
-ENDFUNC
-
-SUB IO_WRITE(addr, val)
-    APPLE2.IO_WRITE_DISPATCH(addr, val)
-ENDSUB
-
+' APPLE2.INIT() now wires its IO_READ_DISPATCH / IO_WRITE_DISPATCH
+' directly into the CPU as funcrefs — no host-side wrappers needed.
+'
 ' ─── Configuration ─────────────────────────────────────────────
 DIM MODE$ = "boot"      ' "demo" or "boot"
 ' jdBasic interpreter does ~760 6502-cycles/sec in this build, so
@@ -33,6 +26,7 @@ OPTION "NOPAUSE"        ' Skip the per-iteration ESC/Space break check.
 
 ' ─── Initialise emulator + load program/ROM ────────────────────
 APPLE2.INIT()
+DIM char_rom$ = ""
 
 IF MODE$ = "demo" THEN
     PRINT "Mode: demo (HELLO splash)"
@@ -57,7 +51,8 @@ ELSE
         PRINT "ROM load failed — make sure thingsforyou/ contains the dumps."
         END
     ENDIF
-    APPLE2.LOAD_CHAR_ROM("thingsforyou/Apple II Character ROM - 341-0036.bin")
+    char_rom$ = APPLE2.LOAD_CHAR_ROM$("thingsforyou/Apple II Character ROM - 341-0036.bin")
+    APPLE2.INIT_GLYPH_CACHE(char_rom$)
     CPU6502.RESET()
     PRINT "ROMs loaded (" + STR$(rom_n) + " bytes), reset to $" + HEX$(CPU6502.GET_PC())
 ENDIF
@@ -147,7 +142,7 @@ DO
     ' already been torn down; skip the paint to avoid TEXT-no-screen.
     IF running = 1 THEN
         CLS 0, 0, 0
-        APPLE2.RENDER_TEXT()
+        APPLE2.RENDER_TEXT_GLYPH(char_rom$)
         SCREENFLIP
     ENDIF
     frame_count = frame_count + 1

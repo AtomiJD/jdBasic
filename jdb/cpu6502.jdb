@@ -130,15 +130,15 @@ DIM am_tbl[256]
 DIM cyc_tbl[256]
 DIM tables_ready = 0
 
-' I/O hook system. The CPU itself only knows an address range; when
-' a read/write inside that range happens, it calls a host-script
-' function named IO_READ(addr) / IO_WRITE(addr, val). The host script
-' typically just delegates these to the platform module (apple2.jdb,
-' c64.jdb). FUNCREF passing across modules is unreliable in jdBasic,
-' so name-based dispatch is the most portable wiring.
+' I/O hook system. The CPU only knows an address range and two
+' funcrefs; when a read/write inside the range happens, it calls
+' those refs directly. The platform layer (apple2.jdb, c64.jdb)
+' passes its own IO_READ_DISPATCH / IO_WRITE_DISPATCH funcrefs in.
 DIM io_handlers_set = 0
 DIM io_min = 0
 DIM io_max = -1
+DIM io_read_fn = ""
+DIM io_write_fn = ""
 
 ' ─── Public API ────────────────────────────────────────────────
 
@@ -179,7 +179,7 @@ ENDSUB
 EXPORT FUNC READ(addr)
     addr = addr BAND $FFFF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        RETURN IO_READ(addr)
+        RETURN io_read_fn(addr)
     ENDIF
     RETURN mem[addr]
 ENDFUNC
@@ -188,20 +188,19 @@ EXPORT SUB WRITE(addr, val)
     addr = addr BAND $FFFF
     val = val BAND $FF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        IO_WRITE(addr, val)
+        io_write_fn(addr, val)
     ELSE
         mem[addr] = val
     ENDIF
 ENDSUB
 
-' Tell the CPU which address range to route through the host's
-' IO_READ / IO_WRITE callbacks. The host (or the platform layer it
-' loads) must define these two functions before any CPU run that
-' touches the configured range — calls to undefined IO_* will throw
-' "Undefined function" at runtime.
-EXPORT SUB ENABLE_IO_HOOKS(min_addr, max_addr)
+' Tell the CPU which address range to dispatch through the platform
+' callbacks. read_fn / write_fn are funcrefs (e.g. APPLE2.IO_READ@).
+EXPORT SUB ENABLE_IO_HOOKS(min_addr, max_addr, read_fn, write_fn)
     io_min = min_addr BAND $FFFF
     io_max = max_addr BAND $FFFF
+    io_read_fn = read_fn
+    io_write_fn = write_fn
     io_handlers_set = 1
 ENDSUB
 
@@ -215,7 +214,7 @@ ENDSUB
 FUNC bus_read(addr)
     addr = addr BAND $FFFF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        RETURN IO_READ(addr)
+        RETURN io_read_fn(addr)
     ENDIF
     RETURN mem[addr]
 ENDFUNC
@@ -224,7 +223,7 @@ SUB bus_write(addr, val)
     addr = addr BAND $FFFF
     val = val BAND $FF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        IO_WRITE(addr, val)
+        io_write_fn(addr, val)
     ELSE
         mem[addr] = val
     ENDIF
@@ -300,9 +299,7 @@ FUNC resolve_addr(am)
     DIM offset
 
     SWITCH am
-        CASE AM_IMP
-            RETURN 0
-        CASE AM_ACC
+        CASE AM_IMP, AM_ACC
             RETURN 0
         CASE AM_IMM
             addr = cpu_pc
@@ -884,9 +881,7 @@ SUB execute(opcode, amode, addr)
             cpu_p = (cpu_p BOR FLAG_I) BAND $FF
             cpu_pc = mem[$FFFE] BOR (mem[$FFFF] SHL 8)
 
-        CASE OP_NOP
-            ' nothing
-        CASE OP_NIL
-            ' Illegal / unimplemented opcode — treated as NOP.
+        CASE OP_NOP, OP_NIL
+            ' NOP — and unimplemented opcodes are treated the same way.
     ENDSWITCH
 ENDSUB

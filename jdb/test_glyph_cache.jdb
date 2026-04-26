@@ -1,0 +1,33 @@
+' Verify INIT_GLYPH_CACHE produces sane 8x7 matrices for a known glyph.
+' We don't open a SCREEN — we just inspect the cached bitmaps.
+
+IMPORT APPLE2
+
+DIM rom$ = BINREADER$("thingsforyou/Apple II Character ROM - 341-0036.bin")
+PRINT "ROM bytes = "; LEN(rom$)
+
+APPLE2.INIT_GLYPH_CACHE(rom$)
+
+' Spot-check a few glyphs by counting lit pixels (non-zero entries).
+SUB count_lit(ch)
+    DIM g = APPLE2.GLYPH_FOR(ch)
+    DIM lit = 0
+    DIM r
+    DIM c
+    FOR r = 0 TO 7
+        FOR c = 0 TO 6
+            IF g[r][c] <> 0 THEN lit = lit + 1
+        NEXT c
+    NEXT r
+    PRINT "glyph $"; HEX$(ch); " ("; CHR$(ch); ") lit pixels = "; lit
+ENDSUB
+
+count_lit($C1)   ' 'A' inverse-coded
+count_lit($A0)   ' blank — should be 0 lit
+count_lit($D7)   ' 'W' inverse
+count_lit($A1)   ' '!'
+
+' Confirm shape.
+DIM sample = APPLE2.GLYPH_FOR($C1)
+PRINT "rows = "; LEN(sample)
+PRINT "cols = "; LEN(sample[0])
