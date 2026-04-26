@@ -410,7 +410,7 @@ ENDSUB
 ' ─── Initialisation ────────────────────────────────────────────
 EXPORT SUB INIT()
     CPU6502.INIT()
-    CPU6502.ENABLE_IO_HOOKS($C000, $C0FF, IO_READ_DISPATCH@, IO_WRITE_DISPATCH@)
+    CPU6502.ENABLE_IO_HOOKS($C000, $C0FF)
     ' Set the reset vector at $FFFC/$FFFD to a sensible default — the
     ' bootstrap address callers use when no ROM is loaded. ROM-load
     ' will overwrite this when the Monitor ROM is mapped in.
@@ -568,6 +568,14 @@ SUB hook_tape_read()
 ENDSUB
 
 EXPORT SUB INSTALL_TAPE_HOOKS()
+    ' PC hooks rely on a stored funcref + indirect call (hk()), which
+    ' the native compiler can't lower yet. Skip in native EXEs so
+    ' boots don't crash on the first $FECD touch; cassette LOAD/SAVE
+    ' is then interp-only, the rest of the emulator works fine.
+    IF OS.FEATURE("NATIVEC") THEN
+        PRINT "[apple2] tape hooks unavailable in native build — skipping"
+        RETURN
+    ENDIF
     CPU6502.SET_PC_HOOK($FECD, hook_tape_write@)
     CPU6502.SET_PC_HOOK($FEFD, hook_tape_read@)
 ENDSUB
@@ -775,14 +783,20 @@ SUB render_lores(start_row, end_row)
     NEXT r
 ENDSUB
 
-' ─── Hi-Res rendering (monochrome green, first stage) ──────────
+' ─── Hi-Res rendering (NTSC-artefact colour) ──────────────────
 '
 ' Hi-Res page memory layout per row Y (0..191):
 '   addr = base + (Y AND 7)*$400 + ((Y SHR 3) AND 7)*$80 + (Y SHR 6)*$28
 ' Each row is 40 bytes. Each byte holds 7 pixels (bit 0 leftmost);
-' bit 7 is the NTSC palette-phase flag — ignored here, every set bit
-' just lights green. Colour-phase / artefact rendering is a future
-' upgrade.
+' bit 7 selects the colour palette phase:
+'     bit-7 = 0  →  black / violet / green   / white
+'     bit-7 = 1  →  black / blue   / orange  / white
+'
+' Real Apple II colours come from NTSC chroma artefacting: a single
+' lit pixel takes a colour based on its column parity and the byte's
+' phase bit; two adjacent lit pixels collapse to white. We approximate
+' that with a two-pass per row: first build a 280-bit mono pattern,
+' then walk it with prev/next neighbour lookup.
 FUNC hires_row_addr(row)
     DIM base = $2000
     IF gfx_page = 2 THEN base = $4000
@@ -792,26 +806,116 @@ FUNC hires_row_addr(row)
     RETURN base + ones * $400 + eight * $80 + third * $28
 ENDFUNC
 
+EXPORT CONST HIRES_VIOLET = $D000FF
+EXPORT CONST HIRES_GREEN  = $00FF00
+EXPORT CONST HIRES_BLUE   = $0080FF
+EXPORT CONST HIRES_ORANGE = $FF8000
+EXPORT CONST HIRES_WHITE  = $FFFFFF
+
+' Pre-baked colour pattern per (byte, column-parity). Each entry is
+' an 8-cell row: positions 0..6 are the byte's 7 pixels, position 7
+' is the extension into the next byte's first pixel — we paint each
+' lit bit as TWO consecutive sub-pixels (the bit itself + the next
+' position) so the NTSC chroma signal extends naturally over byte
+' boundaries instead of leaving a 1-pixel gap. Two stacked colours
+' on the same cell collapse to white (real artefact merging).
+'
+' At render time, conditional writes (only overwrite if the new
+' value is non-zero) preserve cross-byte extensions: a previous
+' byte's bit-6 carry into position 7 isn't wiped by the next byte's
+' inactive bit 0.
+DIM hires_lookup_even = ZEROS([256, 8])
+DIM hires_lookup_odd  = ZEROS([256, 8])
+DIM hires_lookup_ready = 0
+
+SUB init_hires_lookup()
+    IF hires_lookup_ready = 1 THEN RETURN
+    DIM bv
+    DIM hi
+    DIM ec, oc
+    DIM bit_idx
+    DIM clr
+    DIM row
+    FOR bv = 0 TO 255
+        hi = (bv SHR 7) BAND 1
+        IF hi = 1 THEN
+            ec = HIRES_BLUE
+            oc = HIRES_ORANGE
+        ELSE
+            ec = HIRES_VIOLET
+            oc = HIRES_GREEN
+        ENDIF
+        ' Even col — bit_idx parity matches screen X parity.
+        row = ZEROS([8])
+        FOR bit_idx = 0 TO 6
+            IF (bv BAND (1 SHL bit_idx)) <> 0 THEN
+                IF (bit_idx BAND 1) = 0 THEN clr = ec ELSE clr = oc
+                IF row[bit_idx] = 0 THEN
+                    row[bit_idx] = clr
+                ELSEIF row[bit_idx] <> clr THEN
+                    row[bit_idx] = HIRES_WHITE
+                ENDIF
+                IF row[bit_idx + 1] = 0 THEN
+                    row[bit_idx + 1] = clr
+                ELSEIF row[bit_idx + 1] <> clr THEN
+                    row[bit_idx + 1] = HIRES_WHITE
+                ENDIF
+            ENDIF
+        NEXT bit_idx
+        hires_lookup_even[bv] = row
+        ' Odd col — bit_idx parity is flipped relative to screen X parity.
+        row = ZEROS([8])
+        FOR bit_idx = 0 TO 6
+            IF (bv BAND (1 SHL bit_idx)) <> 0 THEN
+                IF (bit_idx BAND 1) = 0 THEN clr = oc ELSE clr = ec
+                IF row[bit_idx] = 0 THEN
+                    row[bit_idx] = clr
+                ELSEIF row[bit_idx] <> clr THEN
+                    row[bit_idx] = HIRES_WHITE
+                ENDIF
+                IF row[bit_idx + 1] = 0 THEN
+                    row[bit_idx + 1] = clr
+                ELSEIF row[bit_idx + 1] <> clr THEN
+                    row[bit_idx + 1] = HIRES_WHITE
+                ENDIF
+            ENDIF
+        NEXT bit_idx
+        hires_lookup_odd[bv] = row
+    NEXT bv
+    hires_lookup_ready = 1
+ENDSUB
+
 SUB render_hires(end_row)
+    init_hires_lookup()
     DIM frame = ZEROS([192, 280])
     DIM hr_row
     DIM hr_col
     DIM hr_b
     DIM addr
     DIM xbase
+    DIM bp
+    DIM clr
     FOR hr_row = 0 TO end_row
         addr = hires_row_addr(hr_row)
         FOR hr_col = 0 TO 39
             hr_b = CPU6502.READ((addr + hr_col) BAND $FFFF)
             IF hr_b <> 0 THEN
                 xbase = hr_col * 7
-                IF (hr_b BAND $01) <> 0 THEN frame[hr_row][xbase + 0] = $00FF00
-                IF (hr_b BAND $02) <> 0 THEN frame[hr_row][xbase + 1] = $00FF00
-                IF (hr_b BAND $04) <> 0 THEN frame[hr_row][xbase + 2] = $00FF00
-                IF (hr_b BAND $08) <> 0 THEN frame[hr_row][xbase + 3] = $00FF00
-                IF (hr_b BAND $10) <> 0 THEN frame[hr_row][xbase + 4] = $00FF00
-                IF (hr_b BAND $20) <> 0 THEN frame[hr_row][xbase + 5] = $00FF00
-                IF (hr_b BAND $40) <> 0 THEN frame[hr_row][xbase + 6] = $00FF00
+                IF (hr_col BAND 1) = 0 THEN
+                    FOR bp = 0 TO 7
+                        clr = hires_lookup_even[hr_b][bp]
+                        IF clr <> 0 AND xbase + bp < 280 THEN
+                            frame[hr_row][xbase + bp] = clr
+                        ENDIF
+                    NEXT bp
+                ELSE
+                    FOR bp = 0 TO 7
+                        clr = hires_lookup_odd[hr_b][bp]
+                        IF clr <> 0 AND xbase + bp < 280 THEN
+                            frame[hr_row][xbase + bp] = clr
+                        ENDIF
+                    NEXT bp
+                ENDIF
             ENDIF
         NEXT hr_col
     NEXT hr_row

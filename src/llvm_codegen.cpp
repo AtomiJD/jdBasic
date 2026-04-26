@@ -733,11 +733,82 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB) continue;
         scan_top_decls(*stmt);
     }
+
+    // Pre-pass: any `arr[i] = some_array_value` statement marks `arr`
+    // as holding nested arrays (matrix-cache pattern). Lets
+    // classify_return tag `RETURN arr[i]` as ARR so a HOF FUNC like
+    // APPLE2.GLYPH_FOR returns an array, not an f64-punned-pointer
+    // that the caller can't deref. Tracks local var kinds within each
+    // SUB/FUNC scope so `glyph = ZEROS(...); glyph_cache[ch] = glyph`
+    // also marks glyph_cache (the RHS variable holds an array).
+    std::function<void(const Stmt&,
+                      std::unordered_map<std::string,int>&)> scan_idx_assigns;
+    // Helper: classify RHS expr in local scope. For a VARIABLE, only
+    // consult the local `kinds` map — never fall through to the global
+    // pre_var_tags, since a SUB param can shadow a same-named global
+    // (e.g. top-level `DIM v AS T` + `SUB Foo(v)` would otherwise leak
+    // the UDT-ARR tag onto the param). For non-VARIABLE exprs, defer to
+    // infer_expr_tag (literals + array-returning calls).
+    auto local_rhs_tag = [&](const Expr& e,
+                             const std::unordered_map<std::string,int>& kinds) -> int {
+        if (e.kind == ExprKind::VARIABLE) {
+            auto it = kinds.find(e.str_val);
+            return (it != kinds.end()) ? it->second : JD_TAG_F64;
+        }
+        return infer_expr_tag(e);
+    };
+    scan_idx_assigns = [&](const Stmt& s,
+                           std::unordered_map<std::string,int>& kinds) {
+        // Track local var kinds: `x = ARRAY_THING` makes x hold ARR.
+        if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+             s.kind == StmtKind::DIM) &&
+            !s.var_name.empty() && s.expr) {
+            int rt = local_rhs_tag(*s.expr, kinds);
+            if (rt == JD_TAG_ARR || rt == JD_TAG_NATIVE_MAP)
+                kinds[s.var_name] = rt;
+        }
+        if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty() &&
+            s.index_chain.size() == 1 && s.expr) {
+            int rt = local_rhs_tag(*s.expr, kinds);
+            if (rt == JD_TAG_ARR || rt == JD_TAG_NATIVE_MAP) {
+                array_array_vars.insert(s.var_name);
+            }
+        }
+        // SUB/FUNC body: recurse with a fresh kinds map (params and
+        // locals are scope-isolated; the outer caller's `glyph` and
+        // the callee's `glyph` are different slots).
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
+            std::unordered_map<std::string,int> inner;
+            for (auto& b : s.body) if (b) scan_idx_assigns(*b, inner);
+            return;
+        }
+        for (auto& b : s.body)         if (b) scan_idx_assigns(*b, kinds);
+        for (auto& b : s.catch_body)   if (b) scan_idx_assigns(*b, kinds);
+        for (auto& b : s.finally_body) if (b) scan_idx_assigns(*b, kinds);
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) scan_idx_assigns(*b, kinds);
+    };
+    {
+        std::unordered_map<std::string,int> top_kinds;
+        for (auto& stmt : program) if (stmt) scan_idx_assigns(*stmt, top_kinds);
+    }
+
     std::function<void(const Expr&)> scan_expr = [&](const Expr& e) {
         if (e.kind == ExprKind::CALL) {
             auto it = decls.find(e.func_name);
             if (it != decls.end()) {
                 for (size_t i = 0; i < e.args.size() && i < it->second.tags.size(); i++) {
+                    // Funcref-literal arg (`name@`) → callee receives a
+                    // function pointer, not a string. Without this the
+                    // param keeps its STR tag from the LITERAL_STRING
+                    // path below and the callee's `fn(...)` indirect
+                    // call falls through to a static "FN" CALL that the
+                    // VM then rejects with "Undefined function: FN".
+                    if (e.args[i] && e.args[i]->kind == ExprKind::LITERAL_STRING &&
+                        e.args[i]->is_funcref_lit) {
+                        it->second.tags[i] = JD_TAG_FUNCREF;
+                        continue;
+                    }
                     if (it->second.tags[i] != JD_TAG_STR && e.args[i] && is_str_expr(*e.args[i]))
                         it->second.tags[i] = JD_TAG_STR;
                     // Promote param types from the call-site so the callee's
@@ -938,6 +1009,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 auto lit = local_kinds.find(e.str_val);
                 if (lit != local_kinds.end()) return lit->second;
             }
+            // `RETURN arr[i]` where arr is known to hold nested arrays
+            // (a matrix cache, e.g. APPLE2.GLYPH_FOR). Without this
+            // hint the function's return tag stays f64 and the caller
+            // can't deref the result.
+            if (e.kind == ExprKind::INDEX && e.left &&
+                e.left->kind == ExprKind::VARIABLE) {
+                if (array_array_vars.count(e.left->str_val)) return JD_TAG_ARR;
+            }
             if (e.kind == ExprKind::CALL) {
                 auto cit = decls.find(e.func_name);
                 if (cit != decls.end() &&
@@ -976,6 +1055,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (auto& [name, decl] : decls) {
             if (decl.return_tag != JD_TAG_F64 || !decl.stmt) continue;
             std::unordered_map<std::string,int> local_kinds;
+            // Seed with param tags so `result = arr_param; RETURN result`
+            // can flow ARR through. Without this, AMAP-style HOFs that
+            // return an array built from an array param come back as f64
+            // and the caller never sees the array.
+            for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
+                if (decl.tags[pi] == JD_TAG_ARR || decl.tags[pi] == JD_TAG_NATIVE_MAP)
+                    local_kinds[decl.stmt->params[pi].name] = decl.tags[pi];
+            }
             int k = classify_return(*decl.stmt, local_kinds);
             if (k == 3 || k == 4) { decl.return_tag = k; rt_changed = true; }
         }
@@ -985,7 +1072,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     for (auto& [name, decl] : decls) {
         std::vector<LLVMTypeRef> param_types;
         for (int t : decl.tags)
-            param_types.push_back((t == 2 || t == 3 || t == 4) ? i8_ptr_type :
+            param_types.push_back((t == 2 || t == 3 || t == 4 || t == 5) ? i8_ptr_type :
                                   (t == 6) ? i64_type : f64_type);
 
         LLVMTypeRef ret_type;
@@ -3268,6 +3355,16 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     auto& arr_set = runtime_funcs["__array_set"];
     LLVMValueRef args[] = { arr_ptr, idx, val };
     LLVMBuildCall2(builder, arr_set.fn_type, arr_set.fn, args, 3, "");
+
+    // Track element-type for the outer array so subsequent reads can
+    // pun the f64 slot back to the right tag. `arr[i] = some_matrix`
+    // is the matrix-cache-of-matrices pattern — without this hint a
+    // later `glyph_cache[ch]` would come back as f64 and PLOTRAW would
+    // see a number where it expects an array.
+    if (val_tv.tag == JD_TAG_ARR && stmt.var_name.size() &&
+        stmt.index_chain.size() == 1) {
+        array_array_vars.insert(stmt.var_name);
+    }
 }
 
 // ── PRINT ───────────────────────────────────────────────────
@@ -4513,6 +4610,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(result);
                 return { as_i64, JD_TAG_VM_HANDLE };
             }
+            // Array-of-arrays (matrix cache pattern, e.g. glyph_cache[ch]
+            // holding 8x7 RGB matrices). Pun the punned-f64 back to an
+            // i8* so the outer caller (PLOTRAW, arr ops) sees an ARR.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                array_array_vars.count(expr.left->str_val)) {
+                LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_a");
+                return { as_ptr, JD_TAG_ARR };
+            }
             // LHS type hint (e.g. `id$ = arr[i]` with $-suffixed target)
             // lets us decode the punned-f64 element without needing the
             // source array to be pre-tracked as string/map-bearing. Crucial
@@ -4739,9 +4845,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::BXOR:  arith_op = 6; break;
             case TokenType::SHL:   arith_op = 7; break;
             case TokenType::SHR:   arith_op = 8; break;
+            case TokenType::MOD:   arith_op = 9; break;
             default: break;
         }
-        // Comparison ops: 0=eq, 1=ne, 2=and, 3=or
+        // Comparison ops: 0=eq, 1=ne, 2=and, 3=or, 4=lt, 5=le, 6=gt, 7=ge
         int32_t cmp_op = -1;
         switch (expr.op) {
             case TokenType::EQ:
@@ -4749,6 +4856,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::NE:     cmp_op = 1; break;
             case TokenType::AND:    cmp_op = 2; break;
             case TokenType::OR:     cmp_op = 3; break;
+            case TokenType::LT:     cmp_op = 4; break;
+            case TokenType::LE:     cmp_op = 5; break;
+            case TokenType::GT:     cmp_op = 6; break;
+            case TokenType::GE:     cmp_op = 7; break;
             default: break;
         }
 
@@ -5045,6 +5156,75 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
 
+    // ZEROS([N]) / ZEROS([N, M]) used as an *expression* (LET assignment,
+    // call argument, etc.) — codegen_dim has a special 2D path that
+    // builds a real nested array, but in expression context the call
+    // would otherwise fall through to runtime jdb_zeros which expects a
+    // flat i64 size and reads the array-literal pointer as the size,
+    // crashing as soon as the result is dereferenced. Handle the 1-D
+    // and 2-D shapes here so `glyph = ZEROS([8, 7])` and `cache[i] =
+    // ZEROS([2, 3])` build the proper structure in native, matching the
+    // interpreter.
+    if ((name == "ZEROS" || name == "ONES") && expr.args.size() == 1 &&
+        expr.args[0] && expr.args[0]->kind == ExprKind::ARRAY_LITERAL) {
+        auto& shape_args = expr.args[0]->args;
+        auto& arr_new = runtime_funcs["__array_new"];
+        if (shape_args.size() == 1) {
+            TypedValue size_val = codegen_expr(*shape_args[0]);
+            LLVMValueRef size_i64 = size_val.tag == JD_TAG_F64
+                ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
+            LLVMValueRef args[] = { size_i64 };
+            LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr1d");
+            return { arr, JD_TAG_ARR };
+        }
+        if (shape_args.size() == 2) {
+            auto& arr_append = runtime_funcs["APPEND"];
+            TypedValue rows_val = codegen_expr(*shape_args[0]);
+            TypedValue cols_val = codegen_expr(*shape_args[1]);
+            LLVMValueRef rows = rows_val.tag == JD_TAG_F64
+                ? LLVMBuildFPToSI(builder, rows_val.val, i64_type, "ftoi") : rows_val.val;
+            LLVMValueRef cols = cols_val.tag == JD_TAG_F64
+                ? LLVMBuildFPToSI(builder, cols_val.val, i64_type, "ftoi") : cols_val.val;
+
+            LLVMValueRef zero_args[] = { LLVMConstInt(i64_type, 0, 0) };
+            LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, zero_args, 1, "outer2d");
+
+            LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.loop");
+            LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.end");
+            LLVMValueRef idx_alloca   = LLVMBuildAlloca(builder, i64_type,    "z2d_i");
+            LLVMValueRef outer_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "z2d_outer");
+            LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
+            LLVMBuildStore(builder, outer, outer_alloca);
+            LLVMBuildBr(builder, loop_bb);
+
+            LLVMPositionBuilderAtEnd(builder, loop_bb);
+            LLVMValueRef cur_idx = LLVMBuildLoad2(builder, i64_type, idx_alloca, "i");
+            LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, cur_idx, rows, "cmp");
+            LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.body");
+            LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
+
+            LLVMPositionBuilderAtEnd(builder, body_bb);
+            LLVMValueRef inner_args[] = { cols };
+            LLVMValueRef inner = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, inner_args, 1, "inner");
+            LLVMValueRef inner_i64 = LLVMBuildPtrToInt(builder, inner, i64_type, "ptoi");
+            LLVMValueRef inner_f64 = pun_i64_to_f64(inner_i64);
+            LLVMValueRef cur_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "out");
+            LLVMValueRef append_args[] = { cur_outer, inner_f64 };
+            LLVMValueRef new_outer = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "out");
+            LLVMBuildStore(builder, new_outer, outer_alloca);
+            LLVMValueRef next_idx = LLVMBuildAdd(builder, cur_idx, LLVMConstInt(i64_type, 1, 0), "next");
+            LLVMBuildStore(builder, next_idx, idx_alloca);
+            LLVMBuildBr(builder, loop_bb);
+
+            LLVMPositionBuilderAtEnd(builder, end_bb);
+            LLVMValueRef final_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "arr2d");
+            auto& set_nested = runtime_funcs["__arr_set_nested"];
+            LLVMValueRef sn_args[] = { final_outer };
+            LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn_args, 1, "");
+            return { final_outer, JD_TAG_ARR };
+        }
+    }
+
     // Handle __METHOD__ calls: obj.method() or obj.method(args)
     if (name == "__METHOD__" && expr.left && expr.left->kind == ExprKind::MEMBER_ACCESS) {
         auto& member = *expr.left;
@@ -5191,9 +5371,32 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         auto& fi = uit->second;
         std::vector<LLVMValueRef> args;
         for (size_t i = 0; i < expr.args.size(); i++) {
-            TypedValue av = codegen_expr(*expr.args[i]);
             int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
-            LLVMTypeRef pt = (expected_tag == 2 || expected_tag == 3 || expected_tag == 4) ? i8_ptr_type :
+            TypedValue av;
+            // Funcref-literal arg (`name@`) → build a wrapper trampoline
+            // and pass the LLVM function pointer instead of the string
+            // name. The callee's `fn(...)` indirect call needs an actual
+            // fn-ptr; passing the string would route through the VM
+            // bridge and die with "Undefined function: FN".
+            //
+            // Arity defaults to 1 (the common HOF shape: fn(elem)). If
+            // the user function takes a 2-arg funcref, callers can
+            // declare AS FUNC and the wrapper signature will match
+            // through the param's declared type — for now arity 1
+            // covers MAP-style HOFs which is what people write.
+            if (expected_tag == JD_TAG_FUNCREF && expr.args[i] &&
+                expr.args[i]->kind == ExprKind::LITERAL_STRING &&
+                expr.args[i]->is_funcref_lit) {
+                int arity = 1;
+                LLVMValueRef wrap = build_funcref_wrapper(expr.args[i]->str_val, arity);
+                if (wrap) {
+                    args.push_back(wrap);
+                    continue;
+                }
+            }
+            av = codegen_expr(*expr.args[i]);
+            LLVMTypeRef pt = (expected_tag == 2 || expected_tag == 3 || expected_tag == 4 ||
+                              expected_tag == 5) ? i8_ptr_type :
                              (expected_tag == 6) ? i64_type : f64_type;
             args.push_back(coerce_to(av, pt));
         }
@@ -6373,6 +6576,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
                 "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
                 "XSORT", "TAKE", "DROP",
+                // APL-style scan / generators / shape ops. Without these
+                // tags the bridge classifies the result as f64 and the
+                // downstream array operators silently degrade to scalar
+                // arithmetic — e.g. `signs = 1 - 2 * (CUMSUM(flips) MOD 2)`
+                // collapses to a single number, so SOUND.PLAYBUFFER then
+                // refuses its first argument as "not an array".
+                "IOTA", "CUMSUM", "CUMPROD", "FLATTEN", "RANGE",
+                "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
+                "NORMALIZE", "DIFF", "APPEND",
                 // Array of strings from common helpers
                 "TILED.LAYERS", "FILE.LIST"
             };

@@ -13,9 +13,19 @@
 
 IMPORT APPLE2
 
-' APPLE2.INIT() now wires its IO_READ_DISPATCH / IO_WRITE_DISPATCH
-' directly into the CPU as funcrefs — no host-side wrappers needed.
-'
+' ─── Host-side IO dispatch ─────────────────────────────────────
+' The CPU's bus_read / bus_write call IO_READ / IO_WRITE by name when
+' an access falls in the configured soft-switch range — we forward to
+' the platform module. Funcref-via-module-state would be more elegant
+' but the native compiler can't lower indirect calls today.
+FUNC IO_READ(addr)
+    RETURN APPLE2.IO_READ_DISPATCH(addr)
+ENDFUNC
+
+SUB IO_WRITE(addr, val)
+    APPLE2.IO_WRITE_DISPATCH(addr, val)
+ENDSUB
+
 ' ─── Configuration ─────────────────────────────────────────────
 DIM MODE$ = "applesoft"      ' "demo" | "boot" | "applesoft"
 ' jdBasic interpreter does ~760 6502-cycles/sec in this build, so
@@ -118,12 +128,30 @@ FUNC german_to_appleii(kc, shift)
     RETURN kc
 ENDFUNC
 
+' SDL3 keycodes for the four arrow keys (SDLK_xxx = scancode | $40000000).
+DIM SDLK_RIGHT = $4000004F
+DIM SDLK_LEFT  = $40000050
+DIM SDLK_DOWN  = $40000051
+DIM SDLK_UP    = $40000052
+
 SUB HandleKey(KeyData)
     DIM kc = KeyData[0]{"keycode"}
     DIM shift = GFX.KEYSTATE("Left Shift") OR GFX.KEYSTATE("Right Shift")
     DIM ctrl = GFX.KEYSTATE("Left Ctrl") OR GFX.KEYSTATE("Right Ctrl")
     IF ctrl AND kc = ASC("v") THEN
         APPLE2.ARM_PASTE(CLIPBOARD.GET$())
+    ELSEIF ctrl AND kc >= ASC("a") AND kc <= ASC("z") THEN
+        ' Ctrl+letter → ASCII control code. CTRL+G=$07 BELL,
+        ' CTRL+H=$08 BS, CTRL+M=$0D CR, CTRL+J=$0A LF, etc.
+        APPLE2.PUSH_KEY(kc - 96)
+    ELSEIF kc = SDLK_LEFT THEN
+        APPLE2.PUSH_KEY($08)              ' Apple II left = CTRL-H
+    ELSEIF kc = SDLK_RIGHT THEN
+        APPLE2.PUSH_KEY($15)              ' Apple II right = CTRL-U
+    ELSEIF kc = SDLK_UP THEN
+        APPLE2.PUSH_KEY($0B)              ' Apple II up = CTRL-K
+    ELSEIF kc = SDLK_DOWN THEN
+        APPLE2.PUSH_KEY($0A)              ' Apple II down = CTRL-J
     ELSEIF kc = 27 THEN
         running = 0
     ELSEIF kc = 13 THEN
@@ -151,7 +179,7 @@ ON "QUIT"    CALL HandleQuit
 ' some drivers.
 SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 2
 SETFONT "C:/Windows/Fonts/consola.ttf", 14
-
+'TOGGLE_FULLSCREEN
 ' Speaker emulation — must come after SCREEN so SDL audio can attach
 ' to the same default device.
 APPLE2.ARM_AUDIO()

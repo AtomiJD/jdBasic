@@ -206,6 +206,13 @@ private:
     // JdbMap path (which would crash on a non-ptr handle).
     std::unordered_set<std::string> vm_array_vars;
 
+    // Vars whose array elements are known to hold native array (matrix)
+    // pointers — `glyph_cache[ch] = ZEROS([8,7])` and similar. INDEX read
+    // puns the f64 element back to an i8* and returns tag=3 so the matrix
+    // survives downstream native calls (PLOTRAW, vector arithmetic, etc.)
+    // that look for an ARR-tagged argument.
+    std::unordered_set<std::string> array_array_vars;
+
     // Maps a top-level-DIM'd global name to the source file it came from.
     // Used by codegen_let_or_assign to decide whether an implicit assignment
     // inside a SUB should update that global (same file) or create a local

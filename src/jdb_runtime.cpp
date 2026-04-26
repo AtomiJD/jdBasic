@@ -805,6 +805,11 @@ static inline double scalar_op(double a, double b, int op) {
         case 6: return (double)((int64_t)a ^ (int64_t)b);   // BXOR
         case 7: return (double)((int64_t)a << (int64_t)b);  // SHL
         case 8: return (double)((int64_t)a >> (int64_t)b);  // SHR (arith)
+        case 9: { // MOD — integer modulo (matches interp's MOD on doubles)
+            int64_t bi = (int64_t)b;
+            if (bi == 0) return 0;
+            return (double)((int64_t)a % bi);
+        }
         default: return 0;
     }
 }
@@ -814,6 +819,10 @@ static inline double scalar_cmp(double a, double b, int op) {
         case 1: return a != b ? 1.0 : 0.0;
         case 2: return (a && b) ? 1.0 : 0.0;
         case 3: return (a || b) ? 1.0 : 0.0;
+        case 4: return a <  b ? 1.0 : 0.0;
+        case 5: return a <= b ? 1.0 : 0.0;
+        case 6: return a >  b ? 1.0 : 0.0;
+        case 7: return a >= b ? 1.0 : 0.0;
         default: return 0;
     }
 }
@@ -1817,7 +1826,13 @@ char* jdb_space(int64_t n) {
 int64_t jdb_str_eq(const char* a, const char* b) {
     if (a == b) return 1;
     if (!a || !b) return 0;
-    return strcmp(a, b) == 0 ? 1 : 0;
+    // strcmp truncates at the first NUL — wrong for binary buffers
+    // (BINREADER$, PACK$, char-ROM blobs). Consult the binary-length
+    // registry so an Apple II ROM that starts with $00 isn't seen as "".
+    int64_t la = jdrt_strlen(a); if (la < 0) la = (int64_t)strlen(a);
+    int64_t lb = jdrt_strlen(b); if (lb < 0) lb = (int64_t)strlen(b);
+    if (la != lb) return 0;
+    return memcmp(a, b, (size_t)la) == 0 ? 1 : 0;
 }
 
 int64_t jdb_str_ne(const char* a, const char* b) {

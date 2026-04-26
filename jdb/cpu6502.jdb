@@ -130,24 +130,36 @@ DIM am_tbl[256]
 DIM cyc_tbl[256]
 DIM tables_ready = 0
 
-' I/O hook system. The CPU only knows an address range and two
-' funcrefs; when a read/write inside the range happens, it calls
-' those refs directly. The platform layer (apple2.jdb, c64.jdb)
-' passes its own IO_READ_DISPATCH / IO_WRITE_DISPATCH funcrefs in.
+' I/O hook system. The CPU only knows an address range; when a read
+' or write inside that range happens, it calls a host-provided FUNC
+' named IO_READ(addr) / SUB IO_WRITE(addr, val). The host script
+' typically delegates these to the platform module:
+'
+'     FUNC IO_READ(addr) : RETURN APPLE2.IO_READ_DISPATCH(addr) : ENDFUNC
+'     SUB  IO_WRITE(addr, val) : APPLE2.IO_WRITE_DISPATCH(addr, val) : ENDSUB
+'
+' Why fixed names instead of stored funcrefs: the native compiler
+' lowers a `var()` call as `CALL "var"` (a static name lookup), so a
+' module-level funcref string like __CPU6502__io_read_fn lands in
+' the linker as an undefined function and the EXE crashes the moment
+' the CPU touches a soft switch. Name-based dispatch goes through
+' the VM/runtime's call-by-name path and works in both modes.
 DIM io_handlers_set = 0
 DIM io_min = 0
 DIM io_max = -1
-DIM io_read_fn = ""
-DIM io_write_fn = ""
 
 ' PC-hook system. SET_PC_HOOK installs a funcref that fires *instead
 ' of* the instruction at `addr` — used to short-circuit slow ROM
 ' routines (Cassette WRITE/READ on Apple II). The hook is expected to
 ' do its work in native jdBasic and then return; RUN then emulates
 ' RTS so control flows back to the caller as if the routine had
-' completed normally. Lazy-allocated 64K table = O(1) per-step lookup.
-DIM pc_hooks_set = 0
-DIM pc_hook_table = []
+' completed normally. 64K table = O(1) per-step lookup.
+'
+' Allocated up front as DIM-with-NONE-defaults rather than ZEROS()
+' because the native compiler types ZEROS arrays as float64 buffers
+' and then segfaults when we drop a funcref string into a slot. The
+' DIM form keeps the cells heterogeneous (NONE → string).
+DIM pc_hook_table[65536]
 
 ' ─── Public API ────────────────────────────────────────────────
 
@@ -188,7 +200,7 @@ ENDSUB
 EXPORT FUNC READ(addr)
     addr = addr BAND $FFFF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        RETURN io_read_fn(addr)
+        RETURN IO_READ(addr)
     ENDIF
     RETURN mem[addr]
 ENDFUNC
@@ -197,19 +209,19 @@ EXPORT SUB WRITE(addr, val)
     addr = addr BAND $FFFF
     val = val BAND $FF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        io_write_fn(addr, val)
+        IO_WRITE(addr, val)
     ELSE
         mem[addr] = val
     ENDIF
 ENDSUB
 
-' Tell the CPU which address range to dispatch through the platform
-' callbacks. read_fn / write_fn are funcrefs (e.g. APPLE2.IO_READ@).
-EXPORT SUB ENABLE_IO_HOOKS(min_addr, max_addr, read_fn, write_fn)
+' Tell the CPU which address range to dispatch through the host's
+' IO_READ / IO_WRITE callbacks. The host (or its platform module)
+' must define those two as ordinary global FUNCs/SUBs before any
+' RUN/STEP_ONE that touches the configured range.
+EXPORT SUB ENABLE_IO_HOOKS(min_addr, max_addr)
     io_min = min_addr BAND $FFFF
     io_max = max_addr BAND $FFFF
-    io_read_fn = read_fn
-    io_write_fn = write_fn
     io_handlers_set = 1
 ENDSUB
 
@@ -222,22 +234,18 @@ ENDSUB
 ' caller of the hooked routine resumes normally. Use cases: ROM
 ' patches for fast Cassette I/O, slow boot-time waits, etc.
 EXPORT SUB SET_PC_HOOK(addr, hook_fn)
-    IF pc_hooks_set = 0 THEN
-        pc_hook_table = ZEROS([65536])
-        pc_hooks_set = 1
-    ENDIF
     pc_hook_table[addr BAND $FFFF] = hook_fn
 ENDSUB
 
 EXPORT SUB CLEAR_PC_HOOK(addr)
-    IF pc_hooks_set = 0 THEN RETURN
     pc_hook_table[addr BAND $FFFF] = 0
 ENDSUB
 
 ' Diagnostic: returns the stored funcref for `addr` (0 if none).
 EXPORT FUNC GET_PC_HOOK(addr)
-    IF pc_hooks_set = 0 THEN RETURN 0
-    RETURN pc_hook_table[addr BAND $FFFF]
+    DIM v = pc_hook_table[addr BAND $FFFF]
+    IF TYPEOF(v) = "STRING" THEN RETURN v
+    RETURN 0
 ENDFUNC
 
 ' Internal bus helpers — the operation execute() body uses these so
@@ -246,7 +254,7 @@ ENDFUNC
 FUNC bus_read(addr)
     addr = addr BAND $FFFF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        RETURN io_read_fn(addr)
+        RETURN IO_READ(addr)
     ENDIF
     RETURN mem[addr]
 ENDFUNC
@@ -255,7 +263,7 @@ SUB bus_write(addr, val)
     addr = addr BAND $FFFF
     val = val BAND $FF
     IF io_handlers_set = 1 AND addr >= io_min AND addr <= io_max THEN
-        io_write_fn(addr, val)
+        IO_WRITE(addr, val)
     ELSE
         mem[addr] = val
     ENDIF
@@ -304,19 +312,15 @@ EXPORT FUNC RUN(max_cycles)
     DIM start = cpu_cycles
     DIM hk
     DO WHILE (cpu_cycles - start) < max_cycles
-        IF pc_hooks_set = 1 THEN
-            hk = pc_hook_table[cpu_pc]
-            ' Type-check the slot: empty slots are the numeric 0 from
-            ' the initial ZEROS fill, hook slots are funcref strings.
-            ' A `<> 0` comparison would coerce the string to 0 and miss.
-            IF TYPEOF(hk) = "STRING" THEN
-                hk()
-                ' Emulate RTS — pops 16-bit return-1, jumps to ret+1.
-                cpu_pc = (pop16() + 1) BAND $FFFF
-                cpu_cycles = cpu_cycles + 6
-            ELSE
-                STEP_ONE()
-            ENDIF
+        hk = pc_hook_table[cpu_pc]
+        ' Type-check the slot: empty slots stay NONE (or 0 after a
+        ' CLEAR_PC_HOOK), hook slots hold a funcref string. A plain
+        ' `<> 0` comparison would coerce the string to 0 and miss.
+        IF TYPEOF(hk) = "STRING" THEN
+            hk()
+            ' Emulate RTS — pops 16-bit return-1, jumps to ret+1.
+            cpu_pc = (pop16() + 1) BAND $FFFF
+            cpu_cycles = cpu_cycles + 6
         ELSE
             STEP_ONE()
         ENDIF
