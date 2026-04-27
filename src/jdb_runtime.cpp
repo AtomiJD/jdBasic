@@ -1889,6 +1889,29 @@ char* jdb_str(double val) {
     return _strdup(buf);
 }
 
+// Element-wise stringify: returns an ARRAY of string pointers, one per
+// leaf scalar. Mirrors the interpreter's STR$(array).
+JdbArray* jdb_array_str(JdbArray* arr) {
+    if (!arr) return jdb_array_new(0);
+    auto* r = jdb_array_new(arr->length);
+    if (arr->flags & 1) {
+        r->flags |= 1;
+        for (int64_t i = 0; i < arr->length; i++) {
+            JdbArray* inner = jdb_array_str(decode_inner(arr->data[i]));
+            r->data[i] = encode_inner(inner);
+        }
+    } else {
+        r->flags |= 3;  // bit 0 = ptr-encoded, bit 1 = string elems
+        for (int64_t i = 0; i < arr->length; i++) {
+            char* s = jdb_str(arr->data[i]);
+            union { int64_t i; double d; } u;
+            u.i = (int64_t)(intptr_t)s;
+            r->data[i] = u.d;
+        }
+    }
+    return r;
+}
+
 // Format a JdbMap* the way the interpreter does:
 //   {"key1": value1, "key2": value2}
 // Strings are quoted; numbers use jdb_format_double; booleans render as

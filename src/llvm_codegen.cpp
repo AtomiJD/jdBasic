@@ -342,6 +342,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_instr",    "INSTR",    i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_replace",  "REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_str",      "STR$",     i8_ptr_type, {f64_type}, 2);
+    reg("jdb_array_str","__str_arr",i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_str",      "STR",      i8_ptr_type, {f64_type}, 2);
     reg("jdb_space",    "SPACE$",   i8_ptr_type, {i64_type}, 2);
     reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
@@ -2620,6 +2621,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
             u == "WORDS" || u == "CHARS")
             string_array_vars.insert(stmt.var_name);
+        // STR$(arr) returns an array of strings — mark so arr[i] reads
+        // back as STRING instead of the default-punned f64.
+        if (u == "STR$" && !stmt.expr->args.empty()) {
+            string_array_vars.insert(stmt.var_name);
+        }
     }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
@@ -2983,6 +2989,9 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
             u == "WORDS" || u == "CHARS")
             string_array_vars.insert(stmt.var_name);
+        if (u == "STR$" && !stmt.expr->args.empty()) {
+            string_array_vars.insert(stmt.var_name);
+        }
     }
 
     // DIM arr[N] AS TypeName → CALL("__MAKE_UDT_ARRAY__", [shape, "TypeName" [, vec1, vec2, ...]])
@@ -5589,9 +5598,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ss"), JD_TAG_STR };
         }
         if (av.tag == JD_TAG_ARR) {
-            auto& fn = runtime_funcs["FRMV$"];
+            // Element-wise stringify, matches interpreter STR$(array).
+            auto& fn = runtime_funcs["__str_arr"];
             LLVMValueRef args[] = { av.val };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sarr"), JD_TAG_STR };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sarr"), JD_TAG_ARR };
         }
         // Numeric path: use existing jdb_str(double).
         auto& fn = runtime_funcs["STR$"];

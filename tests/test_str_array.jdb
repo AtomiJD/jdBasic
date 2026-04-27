@@ -1,0 +1,10 @@
+DIM A = [1, 2, 3]
+DIM S = STR$(A)
+PRINT "STR$(A):", S
+PRINT "TYPEOF(S):", TYPEOF(S)
+PRINT "LENV(S):", LENV(S)
+PRINT "S[0]:", S[0]
+PRINT "S[1]:", S[1]
+PRINT "S[2]:", S[2]
+PRINT "TYPEOF(S[1]):", TYPEOF(S[1])
+END
