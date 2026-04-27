@@ -1,0 +1,23 @@
+' Trace OUTER + scalar arith.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM XS = [-1.0, 0.0, 1.0, 2.0]
+DIM YS = [10.0, 20.0, 30.0]
+
+PRINT "YS*0:", YS*0
+PRINT "XS*0:", XS*0
+
+DIM GX = OUTER(YS*0, XS, "+")
+DIM GY = OUTER(YS, XS*0, "+")
+PRINT "GX:", GX
+PRINT "GY:", GY
+
+DIM SX = GX * 30 + 400
+DIM SY = GY * 28 + 330
+PRINT "SX:", SX
+PRINT "SY:", SY
+PRINT "SX[0,0]:", SX[0,0]
+PRINT "SX[0,1]:", SX[0,1]
+PRINT "SX[1,2]:", SX[1,2]
+END

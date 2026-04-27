@@ -1,0 +1,57 @@
+' Test V_LINES pipeline only (no TRANSPOSE).
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM W = 800
+DIM H = 600
+DIM GW = 12
+DIM GH = 8
+
+SCREEN W, H, "v only"
+SETFONT "C:/Windows/Fonts/consola.ttf", 16
+
+DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
+DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+DIM GX   = OUTER(YS*0, XS, "+")
+DIM GY   = OUTER(YS, XS*0, "+")
+DIM DIST = SQR(GX^2 + GY^2)
+DIM Z0   = SIN(DIST)
+DIM SX   = GX * 30 + 400
+DIM SY   = GY * 28 - Z0 * 60 + 330
+
+DIM NV = (GH - 1) * GW
+
+DIM VX1 = DROP(-1, SX)
+DIM VX2 = DROP( 1, SX)
+DIM VY1 = DROP(-1, SY)
+DIM VY2 = DROP( 1, SY)
+DIM V_LINES = STACK(1, RESHAPE(VX1,[NV]), RESHAPE(VY1,[NV]), RESHAPE(VX2,[NV]), RESHAPE(VY2,[NV]))
+
+PRINT "SX shape: ", LEN(SX), LEN(SX[0])
+PRINT "VX1 shape: ", LEN(VX1), LEN(VX1[0])
+PRINT "V_LINES rows: ", LEN(V_LINES)
+PRINT "V_LINES[0]: ", V_LINES[0]
+
+DIM running = TRUE
+SUB OnQuit(d)
+    running = FALSE
+ENDSUB
+SUB OnKey(d)
+    DIM kc = d[0]{"keycode"}
+    IF kc = 27 THEN running = FALSE
+ENDSUB
+ON "QUIT"    CALL OnQuit
+ON "KEYDOWN" CALL OnKey
+
+DIM frames = 0
+DO
+    CLS 0, 0, 0
+    DRAWCOLOR 0, 255, 90
+    LINE V_LINES
+    TEXT 16, 16, "frame: " + STR$(frames), 200, 255, 200
+    SCREENFLIP
+    frames = frames + 1
+    SLEEP 100
+    IF frames > 20 THEN running = FALSE
+LOOP UNTIL running = FALSE
+END

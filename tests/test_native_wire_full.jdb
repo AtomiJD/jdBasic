@@ -1,0 +1,66 @@
+' Reproduce the wireframe at full scale, no graphics, just PRINTs.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM GW AS INTEGER = 140
+DIM GH AS INTEGER = 100
+
+DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
+DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+DIM GX   = OUTER(YS*0, XS, "+")
+DIM GY   = OUTER(YS, XS*0, "+")
+DIM DIST = SQR(GX^2 + GY^2)
+
+DIM yaw     AS DOUBLE = 0.0
+DIM pitch   AS DOUBLE = 0.45
+DIM roll    AS DOUBLE = 0.0
+DIM phase   AS DOUBLE = 0.0
+DIM SCALE_X AS DOUBLE = 90.0
+DIM SCALE_Y AS DOUBLE = 32.0
+DIM SCALE_Z AS DOUBLE = 95.0
+DIM CX      AS DOUBLE = 800.0
+DIM CY      AS DOUBLE = 495.0
+
+DIM Z0 = GX * 0.0
+DIM X1 = GX * 0.0
+DIM Y1 = GX * 0.0
+DIM Z1 = GX * 0.0
+DIM Y2 = GX * 0.0
+DIM Z2 = GX * 0.0
+DIM X3 = GX * 0.0
+DIM Z3 = GX * 0.0
+DIM SX = GX * 0.0
+DIM SY = GX * 0.0
+DIM cyaw AS DOUBLE = 1.0 : DIM syaw AS DOUBLE = 0.0
+DIM cpit AS DOUBLE = 1.0 : DIM spit AS DOUBLE = 0.0
+DIM crol AS DOUBLE = 1.0 : DIM srol AS DOUBLE = 0.0
+
+PRINT "Step 0 — after pre-DIMs:"
+PRINT "  SX[0,0]=";    SX[0,0]
+PRINT "  GX[0,0]=";    GX[0,0]
+PRINT "  GX[0,5]=";    GX[0,5]
+
+' --- One loop iteration's body
+Z0 = SIN(DIST - phase)
+cyaw = COS(yaw) : syaw = SIN(yaw)
+X1 = GX * cyaw - GY * syaw
+Y1 = GX * syaw + GY * cyaw
+Z1 = Z0
+cpit = COS(pitch) : spit = SIN(pitch)
+Y2 = Y1 * cpit - Z1 * spit
+Z2 = Y1 * spit + Z1 * cpit
+crol = COS(roll) : srol = SIN(roll)
+X3 = X1 * crol + Z2 * srol
+Z3 = Z2 * crol - X1 * srol
+SX = X3 * SCALE_X + CX
+SY = Y2 * SCALE_Y - Z3 * SCALE_Z + CY
+
+PRINT "Step 1 — after rotation chain:"
+PRINT "  cyaw=";    cyaw, "syaw=";    syaw
+PRINT "  X1[0,0]="; X1[0,0], "X1[0,5]="; X1[0,5]
+PRINT "  X3[0,0]="; X3[0,0], "X3[0,5]="; X3[0,5]
+PRINT "  SX[0,0]="; SX[0,0], "SX[0,5]="; SX[0,5]
+PRINT "  Y1[0,0]="; Y1[0,0], "Y1[5,0]="; Y1[5,0]
+PRINT "  Y2[0,0]="; Y2[0,0], "Y2[5,0]="; Y2[5,0]
+PRINT "  SY[0,0]="; SY[0,0], "SY[5,0]="; SY[5,0]
+END

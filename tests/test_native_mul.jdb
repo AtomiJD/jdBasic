@@ -1,0 +1,13 @@
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM GX = OUTER([0,0,0], [-1,0,1,2], "+")
+DIM GY = OUTER([0,1,2], [0,0,0,0], "+")
+DIM A = GX * GX
+PRINT "GX*GX:", A
+DIM B = GY * GY
+PRINT "GY*GY:", B
+DIM C = A + B
+PRINT "sum:", C
+DIM D = SQR(C)
+PRINT "SQR:", D
+END

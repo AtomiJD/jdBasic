@@ -1,0 +1,53 @@
+' Minimal native LINE-matrix repro
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM W = 800
+DIM H = 600
+
+SCREEN W, H, "test"
+SETFONT "C:/Windows/Fonts/consola.ttf", 16
+
+' Build a small ten-segment fan from STACK + RESHAPE so we can watch
+' the same pipeline as the wireframe demo.
+DIM N = 10
+DIM xs = IOTA(N) * 60.0           ' x positions  60..600
+DIM ys = IOTA(N) * 0.0 + 300.0    ' y constant
+DIM x2 = IOTA(N) * 0.0 + 400.0    ' converge to 400, 100
+DIM y2 = IOTA(N) * 0.0 + 100.0
+DIM lines_m = STACK(1, xs, ys, x2, y2)
+
+' Smaller path through a 2D matrix flattened via RESHAPE — the
+' wireframe demo does this.
+DIM gx = OUTER([1.0, 2.0, 3.0], [10.0, 20.0, 30.0, 40.0], "+")
+DIM flat = RESHAPE(gx, [12])
+
+DIM running = TRUE
+SUB OnQuit(d)
+    running = FALSE
+ENDSUB
+SUB OnKey(d)
+    DIM kc = d[0]{"keycode"}
+    IF kc = 27 THEN running = FALSE
+ENDSUB
+ON "QUIT"    CALL OnQuit
+ON "KEYDOWN" CALL OnKey
+
+DIM frames = 0
+DO
+    CLS 0, 0, 0
+    DRAWCOLOR 0, 255, 90
+    LINE lines_m
+    TEXT 16, 16, "frame: " + STR$(frames), 200, 255, 200
+    TEXT 16, 36, "lines_m rows: " + STR$(LEN(lines_m)), 200, 255, 200
+    TEXT 16, 56, "flat len: " + STR$(LEN(flat)), 200, 255, 200
+    SCREENFLIP
+    frames = frames + 1
+    SLEEP 100
+    IF frames > 20 THEN running = FALSE
+LOOP UNTIL running = FALSE
+
+PRINT "lines_m rows:", LEN(lines_m)
+PRINT "lines_m[0]:", lines_m[0]
+PRINT "flat:", flat
+END

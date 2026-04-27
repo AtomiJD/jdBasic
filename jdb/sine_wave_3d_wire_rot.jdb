@@ -1,0 +1,193 @@
+' 80s 3D Sine Wave Wireframe (rotatable + HUD) -- APL + matrix-form LINE
+' ----------------------------------------------------------------------
+' Higher-resolution mesh, full 3D rotation via WASD + Z/X.
+'   W / S  -- pitch (tilt forward / back)
+'   A / D  -- yaw   (spin left / right)
+'   Z / X  -- roll
+'   ESC    -- exit
+'
+' STRICT/EXPLICIT throughout so the same source compiles with -c.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM SCREEN_W = 1600
+DIM SCREEN_H = 900
+DIM GW = 140                         ' grid columns
+DIM GH = 100                         ' grid rows (depth)
+
+SCREEN SCREEN_W, SCREEN_H, "Retro Wireframe Sine Wave (WASD / ZX)"
+SETFONT "C:/Windows/Fonts/consola.ttf", 16
+
+' ---- World grid (centred, 4 ripple cycles) -------------------
+DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
+DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+DIM GX   = OUTER(YS*0, XS, "+")      ' GH x GW, each row = XS
+DIM GY   = OUTER(YS, XS*0, "+")      ' GH x GW, each col = YS
+DIM DIST = SQR(GX^2 + GY^2)
+
+' ---- Projection ---------------------------------------------
+' All scalars must be DOUBLE — `arr_double * i64 + i64` collapses to a
+' uniform constant in native (codegen i64 path takes over and the
+' array contribution is lost).
+DIM CX      AS DOUBLE = SCREEN_W / 2.0
+DIM CY      AS DOUBLE = SCREEN_H * 0.55
+DIM SCALE_X AS DOUBLE = 90.0
+DIM SCALE_Y AS DOUBLE = 32.0
+DIM SCALE_Z AS DOUBLE = 95.0
+
+DIM NH = GH * (GW - 1)               ' horizontal-segment count
+DIM NV = (GH - 1) * GW               ' vertical-segment count
+
+' ---- Rotation + animation state -----------------------------
+DIM yaw     AS DOUBLE = 0.0
+DIM pitch   AS DOUBLE = 0.45
+DIM roll    AS DOUBLE = 0.0
+DIM phase   AS DOUBLE = 0.0
+DIM running AS INTEGER = 1
+
+' ---- FPS bookkeeping ----------------------------------------
+DIM frames AS INTEGER = 0
+DIM fps    AS DOUBLE  = 0.0
+DIM t_prev AS DOUBLE  = GFX.TICKS()
+DIM t_now  AS DOUBLE  = 0.0
+DIM mode$  AS STRING  = "Interpreter"
+IF OS.FEATURE("NATIVEC") THEN mode$ = "Native (LLVM)"
+
+' ---- Pre-declare loop-local matrices ------------------------
+' Native codegen tags slot type from the first DIM: bare `DIM Y1`
+' creates an i64 slot, so a later `Y1 * cpit` compiles as i64-math
+' and collapses to 0. Initialise with a zero matrix so the slot is
+' tagged ARR and subsequent reassignments stay in array land.
+DIM Z0 = GX * 0.0
+DIM X1 = GX * 0.0
+DIM Y1 = GX * 0.0
+DIM Z1 = GX * 0.0
+DIM Y2 = GX * 0.0
+DIM Z2 = GX * 0.0
+DIM X3 = GX * 0.0
+DIM Z3 = GX * 0.0
+DIM SX = GX * 0.0
+DIM SY = GX * 0.0
+DIM TSX = TRANSPOSE(GX) * 0.0
+DIM TSY = TRANSPOSE(GX) * 0.0
+DIM HX1 = TRANSPOSE(DROP(-1, TRANSPOSE(GX))) * 0.0
+DIM HX2 = TRANSPOSE(DROP( 1, TRANSPOSE(GX))) * 0.0
+DIM HY1 = HX1
+DIM HY2 = HX2
+DIM VX1 = DROP(-1, GX) * 0.0
+DIM VX2 = DROP( 1, GX) * 0.0
+DIM VY1 = VX1
+DIM VY2 = VX2
+DIM H_LINES = STACK(1, RESHAPE(HX1,[NH]), RESHAPE(HY1,[NH]), RESHAPE(HX2,[NH]), RESHAPE(HY2,[NH]))
+DIM V_LINES = STACK(1, RESHAPE(VX1,[NV]), RESHAPE(VY1,[NV]), RESHAPE(VX2,[NV]), RESHAPE(VY2,[NV]))
+DIM cyaw AS DOUBLE = 1.0 : DIM syaw AS DOUBLE = 0.0
+DIM cpit AS DOUBLE = 1.0 : DIM spit AS DOUBLE = 0.0
+DIM crol AS DOUBLE = 1.0 : DIM srol AS DOUBLE = 0.0
+DIM hud1$ AS STRING = ""
+DIM hud2$ AS STRING = ""
+DIM hud3$ AS STRING = ""
+DIM hud4$ AS STRING = ""
+DIM dbg1$ AS STRING = ""
+DIM dbg2$ AS STRING = ""
+DIM dbg3$ AS STRING = ""
+
+' ---- Key handler (AST-VM: KeyData[0]{"keycode"}) ------------
+SUB OnKey(KeyData)
+    DIM kc = KeyData[0]{"keycode"}
+    IF kc = ASC("a") THEN yaw   = yaw   - 0.08
+    IF kc = ASC("d") THEN yaw   = yaw   + 0.08
+    IF kc = ASC("w") THEN pitch = pitch + 0.08
+    IF kc = ASC("s") THEN pitch = pitch - 0.08
+    IF kc = ASC("z") THEN roll  = roll  - 0.08
+    IF kc = ASC("x") THEN roll  = roll  + 0.08
+    IF kc = 27       THEN running = FALSE
+ENDSUB
+
+SUB OnQuit(QuitData)
+    running = FALSE
+ENDSUB
+
+ON "KEYDOWN" CALL OnKey
+ON "QUIT"    CALL OnQuit
+
+DO
+    ' ---- Heightfield (animated phase) -----------------------
+    Z0 = SIN(DIST - phase)
+
+    ' ---- Yaw around vertical (Z) axis: rotates (GX, GY) -----
+    cyaw = COS(yaw) : syaw = SIN(yaw)
+    X1 = GX * cyaw - GY * syaw
+    Y1 = GX * syaw + GY * cyaw
+    Z1 = Z0
+
+    ' ---- Pitch around X axis: rotates (Y1, Z1) --------------
+    cpit = COS(pitch) : spit = SIN(pitch)
+    Y2 = Y1 * cpit - Z1 * spit
+    Z2 = Y1 * spit + Z1 * cpit
+
+    ' ---- Roll around Y axis: rotates (X1, Z2) ---------------
+    crol = COS(roll) : srol = SIN(roll)
+    X3 = X1 * crol + Z2 * srol
+    Z3 = Z2 * crol - X1 * srol
+
+    ' ---- Orthographic projection ----------------------------
+    SX = X3 * SCALE_X + CX
+    SY = Y2 * SCALE_Y - Z3 * SCALE_Z + CY
+
+    ' ---- Horizontal segments (col j -> col j+1) -------------
+    TSX = TRANSPOSE(SX)
+    TSY = TRANSPOSE(SY)
+    HX1 = TRANSPOSE(DROP(-1, TSX))
+    HX2 = TRANSPOSE(DROP( 1, TSX))
+    HY1 = TRANSPOSE(DROP(-1, TSY))
+    HY2 = TRANSPOSE(DROP( 1, TSY))
+    H_LINES = STACK(1, RESHAPE(HX1,[NH]), RESHAPE(HY1,[NH]), RESHAPE(HX2,[NH]), RESHAPE(HY2,[NH]))
+
+    ' ---- Vertical segments (row i -> row i+1) ---------------
+    VX1 = DROP(-1, SX)
+    VX2 = DROP( 1, SX)
+    VY1 = DROP(-1, SY)
+    VY2 = DROP( 1, SY)
+    V_LINES = STACK(1, RESHAPE(VX1,[NV]), RESHAPE(VY1,[NV]), RESHAPE(VX2,[NV]), RESHAPE(VY2,[NV]))
+
+    ' ---- Render --------------------------------------------
+    CLS 0, 0, 0
+    DRAWCOLOR 0, 255, 90
+    LINE H_LINES
+    LINE V_LINES
+
+    ' ---- HUD ------------------------------------------------
+    ' Native compiler can't lower FORMAT$ with mixed double+string args today,
+    ' so build the HUD via STR$ + concat — works in both backends.
+    hud1$ = "FPS: " + STR$(ROUND(fps, 1)) + "   [" + mode$ + "]"
+    hud2$ = "Grid: " + STR$(GW) + " x " + STR$(GH) + "   Lines: " + STR$(NH + NV)
+    hud3$ = "Yaw: " + STR$(ROUND(yaw, 2)) + "   Pitch: " + STR$(ROUND(pitch, 2)) + "   Roll: " + STR$(ROUND(roll, 2))
+    hud4$ = "WASD / ZX rotate   ESC quit"
+    dbg1$ = "DBG SX[0,0]="   + STR$(ROUND(SX[0,0],   1)) + " SX[0,70]="  + STR$(ROUND(SX[0,70],  1)) + " SX[0,139]=" + STR$(ROUND(SX[0,139], 1))
+    dbg2$ = "DBG SY[0,0]="   + STR$(ROUND(SY[0,0],   1)) + " SY[50,70]=" + STR$(ROUND(SY[50,70], 1)) + " SY[99,70]=" + STR$(ROUND(SY[99,70], 1))
+    dbg3$ = "DBG Z[0,0]="    + STR$(ROUND(Z0[0,0],   3)) + " Z[50,70]="  + STR$(ROUND(Z0[50,70], 3)) + " Z[99,139]="+ STR$(ROUND(Z0[99,139],3))
+    TEXT 16, 16,  hud1$, 200, 255, 200
+    TEXT 16, 36,  hud2$, 120, 220, 120
+    TEXT 16, 56,  hud3$, 120, 220, 120
+    TEXT 16, 76,  hud4$, 80,  180, 80
+    TEXT 16, 110, dbg1$, 220, 220, 100
+    TEXT 16, 130, dbg2$, 220, 220, 100
+    TEXT 16, 150, dbg3$, 220, 220, 100
+
+    SCREENFLIP
+
+    ' ---- FPS sample (every ~500ms) --------------------------
+    frames = frames + 1
+    t_now = GFX.TICKS()
+    IF t_now - t_prev >= 500 THEN
+        fps = frames * 1000.0 / (t_now - t_prev)
+        frames = 0
+        t_prev = t_now
+    ENDIF
+
+    phase = phase + 0.18
+    SLEEP 16
+LOOP UNTIL running = FALSE
+
+END

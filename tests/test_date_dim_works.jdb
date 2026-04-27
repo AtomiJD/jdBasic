@@ -1,0 +1,5 @@
+DIM name AS STRING
+name = "Project Apollo"
+DIM deadline = CVDate("2025-07-01")
+PRINT "Deadline for "; name; " is "; deadline
+END

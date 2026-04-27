@@ -1,0 +1,149 @@
+' Debug variant of the wireframe at 10x10 grid so PRINTs are readable.
+' Screen size unchanged so the visual still shows the same
+' wireframe-vs-spurious-line problem.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM SCREEN_W = 1600
+DIM SCREEN_H = 900
+DIM GW = 10
+DIM GH = 10
+
+SCREEN SCREEN_W, SCREEN_H, "Wireframe DEBUG 10x10"
+SETFONT "C:/Windows/Fonts/consola.ttf", 16
+
+' ---- World grid ---------------------------------------------
+DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
+DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+DIM GX   = OUTER(YS*0, XS, "+")
+DIM GY   = OUTER(YS, XS*0, "+")
+DIM DIST = SQR(GX^2 + GY^2)
+
+' ---- Projection (all DOUBLE) --------------------------------
+DIM CX      AS DOUBLE = SCREEN_W / 2.0
+DIM CY      AS DOUBLE = SCREEN_H * 0.55
+DIM SCALE_X AS DOUBLE = 90.0
+DIM SCALE_Y AS DOUBLE = 32.0
+DIM SCALE_Z AS DOUBLE = 95.0
+
+DIM NH = GH * (GW - 1)
+DIM NV = (GH - 1) * GW
+
+' ---- Rotation state ----------------------------------------
+DIM yaw   AS DOUBLE = 0.0
+DIM pitch AS DOUBLE = 0.45
+DIM roll  AS DOUBLE = 0.0
+DIM phase AS DOUBLE = 0.0
+
+' ---- Pre-DIM with shape templates --------------------------
+DIM Z0 = GX * 0.0
+DIM X1 = GX * 0.0
+DIM Y1 = GX * 0.0
+DIM Z1 = GX * 0.0
+DIM Y2 = GX * 0.0
+DIM Z2 = GX * 0.0
+DIM X3 = GX * 0.0
+DIM Z3 = GX * 0.0
+DIM SX = GX * 0.0
+DIM SY = GX * 0.0
+DIM TSX = TRANSPOSE(GX) * 0.0
+DIM TSY = TRANSPOSE(GX) * 0.0
+DIM HX1 = TRANSPOSE(TAKE(GW - 1, TRANSPOSE(GX))) * 0.0
+DIM HX2 = TRANSPOSE(DROP( 1, TRANSPOSE(GX))) * 0.0
+DIM HY1 = HX1
+DIM HY2 = HX2
+DIM VX1 = TAKE(GH - 1, GX) * 0.0
+DIM VX2 = DROP( 1, GX) * 0.0
+DIM VY1 = VX1
+DIM VY2 = VX2
+DIM cyaw AS DOUBLE = 1.0 : DIM syaw AS DOUBLE = 0.0
+DIM cpit AS DOUBLE = 1.0 : DIM spit AS DOUBLE = 0.0
+DIM crol AS DOUBLE = 1.0 : DIM srol AS DOUBLE = 0.0
+
+' ---- One pipeline run --------------------------------------
+Z0 = SIN(DIST - phase)
+cyaw = COS(yaw) : syaw = SIN(yaw)
+X1 = GX * cyaw - GY * syaw
+Y1 = GX * syaw + GY * cyaw
+Z1 = Z0
+cpit = COS(pitch) : spit = SIN(pitch)
+Y2 = Y1 * cpit - Z1 * spit
+Z2 = Y1 * spit + Z1 * cpit
+crol = COS(roll) : srol = SIN(roll)
+X3 = X1 * crol + Z2 * srol
+Z3 = Z2 * crol - X1 * srol
+SX = X3 * SCALE_X + CX
+SY = Y2 * SCALE_Y - Z3 * SCALE_Z + CY
+
+TSX = TRANSPOSE(SX)
+TSY = TRANSPOSE(SY)
+HX1 = TRANSPOSE(TAKE(GW - 1, TSX))
+HX2 = TRANSPOSE(DROP(1,      TSX))
+HY1 = TRANSPOSE(TAKE(GW - 1, TSY))
+HY2 = TRANSPOSE(DROP(1,      TSY))
+DIM H_LINES = STACK(1, RESHAPE(HX1,[NH]), RESHAPE(HY1,[NH]), RESHAPE(HX2,[NH]), RESHAPE(HY2,[NH]))
+
+VX1 = TAKE(GH - 1, SX)
+VX2 = DROP(1,      SX)
+VY1 = TAKE(GH - 1, SY)
+VY2 = DROP(1,      SY)
+DIM V_LINES = STACK(1, RESHAPE(VX1,[NV]), RESHAPE(VY1,[NV]), RESHAPE(VX2,[NV]), RESHAPE(VY2,[NV]))
+
+' ---- Dump to a file (PRINT goes nowhere from a -c GUI exe) --
+DIM dump$ AS STRING = ""
+DIM i AS INTEGER = 0
+DIM r AS INTEGER = 0
+dump$ = "SX (rows " + STR$(GH) + " x cols " + STR$(GW) + "):" + CHR$(10)
+FOR r = 0 TO GH - 1
+    FOR i = 0 TO GW - 1
+        dump$ = dump$ + STR$(ROUND(SX[r, i], 1)) + " "
+    NEXT i
+    dump$ = dump$ + CHR$(10)
+NEXT r
+dump$ = dump$ + CHR$(10) + "SY (rows " + STR$(GH) + " x cols " + STR$(GW) + "):" + CHR$(10)
+FOR r = 0 TO GH - 1
+    FOR i = 0 TO GW - 1
+        dump$ = dump$ + STR$(ROUND(SY[r, i], 1)) + " "
+    NEXT i
+    dump$ = dump$ + CHR$(10)
+NEXT r
+dump$ = dump$ + CHR$(10) + "H_LINES (NH=" + STR$(NH) + ", LEN=" + STR$(LEN(H_LINES)) + "):" + CHR$(10)
+FOR r = 0 TO LEN(H_LINES) - 1
+    dump$ = dump$ + STR$(r) + ": " + STR$(ROUND(H_LINES[r, 0], 1)) + ", " + STR$(ROUND(H_LINES[r, 1], 1)) + " -> " + STR$(ROUND(H_LINES[r, 2], 1)) + ", " + STR$(ROUND(H_LINES[r, 3], 1)) + CHR$(10)
+NEXT r
+dump$ = dump$ + CHR$(10) + "V_LINES (NV=" + STR$(NV) + ", LEN=" + STR$(LEN(V_LINES)) + "):" + CHR$(10)
+FOR r = 0 TO LEN(V_LINES) - 1
+    dump$ = dump$ + STR$(r) + ": " + STR$(ROUND(V_LINES[r, 0], 1)) + ", " + STR$(ROUND(V_LINES[r, 1], 1)) + " -> " + STR$(ROUND(V_LINES[r, 2], 1)) + ", " + STR$(ROUND(V_LINES[r, 3], 1)) + CHR$(10)
+NEXT r
+TXTWRITER "D:/usr/dev/cc/tmp/wire_dump.txt", dump$
+
+' ---- Render once -------------------------------------------
+CLS 0, 0, 0
+DRAWCOLOR 0, 255, 90
+LINE H_LINES
+LINE V_LINES
+
+TEXT 16, 16, "10x10 DEBUG  H rows=" + STR$(LEN(H_LINES)) + " V rows=" + STR$(LEN(V_LINES)), 200, 255, 200
+TEXT 16, 36, "Dump: tmp/wire_dump.txt   Press ESC or close window", 200, 200, 100
+
+SCREENFLIP
+
+' --- Hold the window open until ESC / window-close ----------
+DIM running AS INTEGER = 1
+
+SUB OnKeyDbg(KeyData)
+    DIM kc = KeyData[0]{"keycode"}
+    IF kc = 27 THEN running = 0
+ENDSUB
+SUB OnQuitDbg(QuitData)
+    running = 0
+ENDSUB
+ON "KEYDOWN" CALL OnKeyDbg
+ON "QUIT"    CALL OnQuitDbg
+
+DO
+    SLEEP 50
+LOOP UNTIL running = 0
+
+END

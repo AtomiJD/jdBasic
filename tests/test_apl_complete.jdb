@@ -1,0 +1,396 @@
+' ============================================================
+' APL Array Operation Test Suite
+' ============================================================
+' Self-checking. Each test prints [PASS] or [FAIL].
+' Run in interpreter to verify test correctness.
+' Run with -c to find native codegen / runtime divergences.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_EQ(name$, expected, actual)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected; "  actual="; actual
+    ENDIF
+ENDSUB
+
+SUB CHECK_NEAR(name$, expected AS DOUBLE, actual AS DOUBLE)
+    DIM eps AS DOUBLE = 0.0001
+    DIM diff AS DOUBLE = expected - actual
+    IF diff < 0.0 THEN diff = -diff
+    IF diff < eps THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected; "  actual="; actual
+    ENDIF
+ENDSUB
+
+SUB SEC(label$)
+    PRINT ""
+    PRINT "=== "; label$; " ==="
+    PRINT "  [section start]"
+ENDSUB
+
+' ============================================================
+SEC("CONSTRUCTORS — IOTA / RANGE / LINSPACE / ZEROS / ONES")
+' ============================================================
+DIM v1 = IOTA(5)
+CHECK_EQ "IOTA(5) len",   5, LEN(v1)
+CHECK_EQ "IOTA(5)[0]",    1, v1[0]
+CHECK_EQ "IOTA(5)[4]",    5, v1[4]
+CHECK_EQ "IOTA(5) sum",   15, SUM(v1)
+
+DIM v2 = IOTA(5, 0)
+CHECK_EQ "IOTA(5,0)[0]",  0, v2[0]
+CHECK_EQ "IOTA(5,0)[4]",  4, v2[4]
+
+DIM v3 = IOTA(5, 0, 2)
+CHECK_EQ "IOTA(5,0,2)[3]", 6, v3[3]
+
+DIM r1 = RANGE(0, 10, 2)
+CHECK_EQ "RANGE(0,10,2) len", 5, LEN(r1)
+CHECK_EQ "RANGE(0,10,2)[2]",  4, r1[2]
+
+DIM ls = LINSPACE(0.0, 1.0, 5)
+CHECK_EQ "LINSPACE len",       5, LEN(ls)
+CHECK_NEAR "LINSPACE[0]",      0.0, ls[0]
+CHECK_NEAR "LINSPACE[4]",      1.0, ls[4]
+CHECK_NEAR "LINSPACE[2]",      0.5, ls[2]
+
+DIM z = ZEROS([3, 4])
+CHECK_EQ "ZEROS rows",     3, LEN(z)
+CHECK_EQ "ZEROS cols",     4, LEN(z[0])
+CHECK_EQ "ZEROS[1,2]",     0, z[1, 2]
+
+DIM o = ONES([2, 3])
+CHECK_EQ "ONES rows",      2, LEN(o)
+CHECK_EQ "ONES[0,0]",      1, o[0, 0]
+CHECK_EQ "ONES sum",       6, SUM(o)
+
+' ============================================================
+SEC("RESHAPE / FLATTEN")
+' ============================================================
+DIM rs = RESHAPE(IOTA(12), [3, 4])
+CHECK_EQ "RESHAPE rows",   3, LEN(rs)
+CHECK_EQ "RESHAPE cols",   4, LEN(rs[0])
+CHECK_EQ "RESHAPE[0,0]",   1, rs[0, 0]
+CHECK_EQ "RESHAPE[2,3]",   12, rs[2, 3]
+CHECK_EQ "RESHAPE row-maj[1,0]", 5, rs[1, 0]
+
+DIM fl = FLATTEN(rs)
+CHECK_EQ "FLATTEN len",    12, LEN(fl)
+CHECK_EQ "FLATTEN[0]",     1, fl[0]
+CHECK_EQ "FLATTEN[11]",    12, fl[11]
+CHECK_EQ "FLATTEN[4]",     5, fl[4]
+
+' RESHAPE 2D back to 1D
+DIM r1d = RESHAPE(rs, [12])
+CHECK_EQ "RESHAPE 2D->1D len", 12, LEN(r1d)
+CHECK_EQ "RESHAPE 2D->1D[5]",  6, r1d[5]
+
+' ============================================================
+SEC("TAKE / DROP — 1D")
+' ============================================================
+DIM tk1 = TAKE(3, IOTA(5))
+CHECK_EQ "TAKE(3,1D) len",  3, LEN(tk1)
+CHECK_EQ "TAKE(3,1D)[2]",   3, tk1[2]
+
+DIM tk2 = TAKE(-3, IOTA(5))
+CHECK_EQ "TAKE(-3,1D) len",  3, LEN(tk2)
+IF LEN(tk2) = 3 THEN
+    CHECK_EQ "TAKE(-3,1D)[0]",   3, tk2[0]
+    CHECK_EQ "TAKE(-3,1D)[2]",   5, tk2[2]
+ENDIF
+
+DIM dr1 = DROP(2, IOTA(5))
+CHECK_EQ "DROP(2,1D) len",  3, LEN(dr1)
+CHECK_EQ "DROP(2,1D)[0]",   3, dr1[0]
+
+DIM dr2 = DROP(-2, IOTA(5))
+CHECK_EQ "DROP(-2,1D) len", 3, LEN(dr2)
+IF LEN(dr2) = 3 THEN
+    CHECK_EQ "DROP(-2,1D)[0]",  1, dr2[0]
+    CHECK_EQ "DROP(-2,1D)[2]",  3, dr2[2]
+ENDIF
+
+' ============================================================
+SEC("TAKE / DROP — 2D (the wireframe killer)")
+' ============================================================
+DIM m23 = RESHAPE(IOTA(6), [2, 3])
+DIM m33 = RESHAPE(IOTA(9), [3, 3])
+DIM m34 = RESHAPE(IOTA(12), [3, 4])
+
+' TAKE positive
+DIM tk2d = TAKE(2, m33)
+CHECK_EQ "TAKE(2,3x3) rows",  2, LEN(tk2d)
+CHECK_EQ "TAKE(2,3x3) cols",  3, LEN(tk2d[0])
+CHECK_EQ "TAKE(2,3x3)[0,0]",  1, tk2d[0, 0]
+CHECK_EQ "TAKE(2,3x3)[1,2]",  6, tk2d[1, 2]
+
+' DROP positive
+DIM dr2d = DROP(1, m33)
+CHECK_EQ "DROP(1,3x3) rows",  2, LEN(dr2d)
+CHECK_EQ "DROP(1,3x3)[0,0]",  4, dr2d[0, 0]
+CHECK_EQ "DROP(1,3x3)[1,2]",  9, dr2d[1, 2]
+
+' DROP negative — KNOWN BROKEN in native (returns input unchanged)
+DIM dn2d = DROP(-1, m33)
+CHECK_EQ "DROP(-1,3x3) rows", 2, LEN(dn2d)
+IF LEN(dn2d) = 2 THEN
+    CHECK_EQ "DROP(-1,3x3)[0,0]", 1, dn2d[0, 0]
+    CHECK_EQ "DROP(-1,3x3)[1,2]", 6, dn2d[1, 2]
+ENDIF
+
+' Same for rectangular
+DIM dn34 = DROP(-1, m34)
+CHECK_EQ "DROP(-1,3x4) rows", 2, LEN(dn34)
+IF LEN(dn34) = 2 THEN
+    CHECK_EQ "DROP(-1,3x4)[1,3]", 8, dn34[1, 3]
+ENDIF
+
+' TAKE negative (1D fails too, see above; 2D?)
+DIM tn33 = TAKE(-2, m33)
+CHECK_EQ "TAKE(-2,3x3) rows", 2, LEN(tn33)
+IF LEN(tn33) = 2 THEN
+    CHECK_EQ "TAKE(-2,3x3)[0,0]", 4, tn33[0, 0]
+    CHECK_EQ "TAKE(-2,3x3)[1,2]", 9, tn33[1, 2]
+ENDIF
+
+' ============================================================
+SEC("TRANSPOSE")
+' ============================================================
+DIM tr1 = TRANSPOSE(m23)
+CHECK_EQ "TRANSPOSE(2x3) rows", 3, LEN(tr1)
+CHECK_EQ "TRANSPOSE(2x3) cols", 2, LEN(tr1[0])
+CHECK_EQ "TRANSPOSE[0,1]",      4, tr1[0, 1]
+CHECK_EQ "TRANSPOSE[2,0]",      3, tr1[2, 0]
+
+' Square: shape preserved but data swapped
+DIM tr2 = TRANSPOSE(m33)
+CHECK_EQ "TRANSPOSE(3x3) rows", 3, LEN(tr2)
+CHECK_EQ "TRANSPOSE(3x3)[0,1]", 4, tr2[0, 1]
+CHECK_EQ "TRANSPOSE(3x3)[1,2]", 8, tr2[1, 2]
+
+' Double transpose = identity
+DIM tr3 = TRANSPOSE(TRANSPOSE(m23))
+CHECK_EQ "TRANSPOSE^2 rows",    2, LEN(tr3)
+CHECK_EQ "TRANSPOSE^2[1,1]",    5, tr3[1, 1]
+
+' Combined TRANSPOSE+DROP+TRANSPOSE — drop a column
+DIM tdt = TRANSPOSE(DROP(1, TRANSPOSE(m33)))
+CHECK_EQ "T(DROP(1,T)) rows",    3, LEN(tdt)
+CHECK_EQ "T(DROP(1,T)) cols",    2, LEN(tdt[0])
+CHECK_EQ "T(DROP(1,T))[0,0]",    2, tdt[0, 0]
+
+' Same with TAKE — drop the LAST column
+DIM tta = TRANSPOSE(TAKE(2, TRANSPOSE(m33)))
+CHECK_EQ "T(TAKE(2,T)) rows",    3, LEN(tta)
+CHECK_EQ "T(TAKE(2,T)) cols",    2, LEN(tta[0])
+CHECK_EQ "T(TAKE(2,T))[0,0]",    1, tta[0, 0]
+
+' ============================================================
+SEC("OUTER")
+' ============================================================
+DIM ou1 = OUTER([1.0, 2.0, 3.0], [10.0, 20.0], "+")
+CHECK_EQ "OUTER+ rows",    3, LEN(ou1)
+CHECK_EQ "OUTER+ cols",    2, LEN(ou1[0])
+CHECK_EQ "OUTER+[0,0]",    11, ou1[0, 0]
+CHECK_EQ "OUTER+[2,1]",    23, ou1[2, 1]
+
+DIM ou2 = OUTER([1.0, 2.0, 3.0], [4.0, 5.0], "*")
+CHECK_EQ "OUTER*[2,1]",    15, ou2[2, 1]
+
+' ============================================================
+SEC("STACK")
+' ============================================================
+DIM sa = STACK(0, [1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+CHECK_EQ "STACK(0) rows",   2, LEN(sa)
+CHECK_EQ "STACK(0)[0,0]",   1, sa[0, 0]
+CHECK_EQ "STACK(0)[1,2]",   6, sa[1, 2]
+
+DIM sb = STACK(1, [1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+CHECK_EQ "STACK(1) rows",   3, LEN(sb)
+CHECK_EQ "STACK(1) cols",   2, LEN(sb[0])
+CHECK_EQ "STACK(1)[0,1]",   4, sb[0, 1]
+CHECK_EQ "STACK(1)[2,0]",   3, sb[2, 0]
+
+' ============================================================
+SEC("REVERSE")
+' ============================================================
+DIM rv = REVERSE([1, 2, 3, 4, 5])
+CHECK_EQ "REVERSE[0]",      5, rv[0]
+CHECK_EQ "REVERSE[4]",      1, rv[4]
+
+DIM rv2 = REVERSE(m23)
+CHECK_EQ "REVERSE(2x3)[0,0]", 4, rv2[0, 0]
+
+' ============================================================
+SEC("DIFF / CUMSUM / CUMPROD / GRADE")
+' ============================================================
+' DIFF is set-difference: elements in A but not in B
+DIM df = DIFF([1, 2, 3, 4, 5], [2, 4])
+CHECK_EQ "DIFF len",        3, LEN(df)
+CHECK_EQ "DIFF[0]",         1, df[0]
+CHECK_EQ "DIFF[2]",         5, df[2]
+
+DIM cs = CUMSUM([1, 2, 3, 4])
+CHECK_EQ "CUMSUM[0]",       1, cs[0]
+CHECK_EQ "CUMSUM[3]",       10, cs[3]
+
+DIM cp = CUMPROD([1, 2, 3, 4])
+CHECK_EQ "CUMPROD[0]",      1, cp[0]
+CHECK_EQ "CUMPROD[3]",      24, cp[3]
+
+DIM gr = GRADE([3, 1, 4, 1, 5])
+CHECK_EQ "GRADE len",       5, LEN(gr)
+' GRADE returns indices that would sort the array
+
+' ============================================================
+SEC("SORT / XSORT")
+' ============================================================
+DIM so = SORT([5.0, 2.0, 8.0, 1.0, 9.0])
+CHECK_EQ "SORT[0]",         1, so[0]
+CHECK_EQ "SORT[4]",         9, so[4]
+
+DIM srx = XSORT([3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0])
+CHECK_EQ "XSORT len",       8, LEN(srx)
+
+' ============================================================
+SEC("SHIFT / ROTATE")
+' ============================================================
+DIM sh = SHIFT([1, 2, 3, 4, 5], 2)
+CHECK_EQ "SHIFT len",       5, LEN(sh)
+
+DIM ro = ROTATE([1, 2, 3, 4, 5], 2)
+CHECK_EQ "ROTATE len",      5, LEN(ro)
+
+' ============================================================
+SEC("REDUCTIONS — SUM / PRODUCT / MIN / MAX / MEAN")
+' ============================================================
+CHECK_EQ "SUM 1D",          15, SUM(IOTA(5))
+CHECK_EQ "PRODUCT 1D",      120, PRODUCT(IOTA(5))
+CHECK_EQ "MIN 1D",          1, MIN(IOTA(5))
+CHECK_EQ "MAX 1D",          5, MAX(IOTA(5))
+CHECK_NEAR "MEAN 1D",       3.0, MEAN(IOTA(5))
+
+CHECK_EQ "SUM 2D",          21, SUM(m23)
+CHECK_EQ "MIN 2D",          1, MIN(m23)
+CHECK_EQ "MAX 2D",          6, MAX(m23)
+
+' ============================================================
+SEC("ANY / ALL / COUNT / INDEXOF")
+' ============================================================
+CHECK_EQ "ANY [0,0,1]",     1, ANY([0, 0, 1])
+CHECK_EQ "ANY [0,0,0]",     0, ANY([0, 0, 0])
+CHECK_EQ "ALL [1,1,1]",     1, ALL([1, 1, 1])
+CHECK_EQ "ALL [1,0,1]",     0, ALL([1, 0, 1])
+
+' COUNT(arr, val) counts occurrences of val. Note: boolean compares as TRUE/FALSE, not 1/0.
+CHECK_EQ "COUNT 3 in [1,2,3,3,3]", 3, COUNT([1, 2, 3, 3, 3], 3)
+CHECK_EQ "SUM bool mask", 5, SUM(IOTA(10) > 5)
+
+' ============================================================
+SEC("ELEMENT-WISE ARITHMETIC")
+' ============================================================
+DIM ea1 = [1.0, 2.0, 3.0] + [10.0, 20.0, 30.0]
+CHECK_EQ "1D+1D[0]",        11, ea1[0]
+CHECK_EQ "1D+1D[2]",        33, ea1[2]
+
+DIM ea2 = [1.0, 2.0, 3.0] * 5.0
+CHECK_EQ "1D*scalar[2]",    15, ea2[2]
+
+DIM ea3 = m23 + m23
+CHECK_EQ "2D+2D[1,2]",      12, ea3[1, 2]
+
+DIM ea4 = m23 * 2
+CHECK_EQ "2D*scalar[0,2]",  6, ea4[0, 2]
+
+' POW
+DIM ep1 = [2.0, 3.0, 4.0] ^ 2
+CHECK_EQ "1D^2[0]",         4, ep1[0]
+CHECK_EQ "1D^2[2]",         16, ep1[2]
+
+DIM ep2 = m23 ^ 2
+CHECK_EQ "2D^2[1,2]",       36, ep2[1, 2]
+CHECK_EQ "2D^2[0,0]",       1, ep2[0, 0]
+
+' Comparison
+DIM cmp1 = [1, 2, 3, 4] > 2
+CHECK_EQ "1D > scalar[0]",  0, cmp1[0]
+CHECK_EQ "1D > scalar[3]",  1, cmp1[3]
+
+' ============================================================
+SEC("MATMUL / DOT")
+' ============================================================
+DIM ma = RESHAPE(IOTA(6),  [2, 3])
+DIM mb = RESHAPE(IOTA(6),  [3, 2])
+DIM mm = MATMUL(ma, mb)
+CHECK_EQ "MATMUL rows",     2, LEN(mm)
+CHECK_EQ "MATMUL cols",     2, LEN(mm[0])
+' [1,2,3]·[1,3,5] = 1+6+15 = 22, [1,2,3]·[2,4,6] = 2+8+18 = 28
+CHECK_EQ "MATMUL[0,0]",     22, mm[0, 0]
+CHECK_EQ "MATMUL[0,1]",     28, mm[0, 1]
+
+CHECK_EQ "DOT 1D",          32, DOT([1, 2, 3], [4, 5, 6])
+
+' ============================================================
+SEC("CLAMP / IIF")
+' ============================================================
+DIM cl = CLAMP([1.0, 5.0, 10.0, 15.0, 20.0], 5.0, 15.0)
+CHECK_EQ "CLAMP[0]",        5, cl[0]
+CHECK_EQ "CLAMP[1]",        5, cl[1]
+CHECK_EQ "CLAMP[2]",        10, cl[2]
+CHECK_EQ "CLAMP[3]",        15, cl[3]
+CHECK_EQ "CLAMP[4]",        15, cl[4]
+
+' ============================================================
+SEC("STR$ on arrays")
+' ============================================================
+' STR$ on 1D array — should yield "[1, 2, 3]" or similar
+DIM s1$ = STR$([1, 2, 3])
+CHECK_EQ "STR$ 1D nonempty", 1, LEN(s1$) > 0
+DIM s2$ = STR$(m23)
+CHECK_EQ "STR$ 2D nonempty", 1, LEN(s2$) > 0
+
+' ============================================================
+SEC("APPEND")
+' ============================================================
+DIM ap = APPEND([1, 2, 3], 4)
+CHECK_EQ "APPEND len",      4, LEN(ap)
+CHECK_EQ "APPEND[3]",       4, ap[3]
+
+DIM ap2 = APPEND([1, 2], [3, 4])
+CHECK_EQ "APPEND vec len",  4, LEN(ap2)
+
+' ============================================================
+SEC("UNIQUE")
+' ============================================================
+DIM uq = UNIQUE([1, 2, 2, 3, 3, 3, 4])
+CHECK_EQ "UNIQUE len",      4, LEN(uq)
+
+' ============================================================
+SEC("HIGHER-ORDER — SCAN / SELECT / FILTER / REDUCE")
+' ============================================================
+DIM sel = SELECT(LAMBDA i -> i * 2, IOTA(5))
+CHECK_EQ "SELECT len",      5, LEN(sel)
+CHECK_EQ "SELECT[2]",       6, sel[2]
+
+DIM flt = FILTER(LAMBDA v -> v > 2, IOTA(5))
+CHECK_EQ "FILTER[0]",       3, flt[0]
+
+DIM rd = REDUCE(LAMBDA a, b -> a + b, IOTA(5), 0)
+CHECK_EQ "REDUCE sum",      15, rd
+
+' ============================================================
+PRINT ""
+PRINT "============================================="
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+PRINT "============================================="
+END

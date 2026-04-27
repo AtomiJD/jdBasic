@@ -1,0 +1,19 @@
+' Trace pipe tag through DIM
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM a = (IOTA(5) * 2)
+PRINT "a:", a
+PRINT "SUM(a):", SUM(a)
+
+DIM b = SUM(IOTA(5) * 2)
+PRINT "b (nested SUM):", b
+
+DIM c = (IOTA(5) * 2) |> SUM(?)
+PRINT "c (pipe SUM):", c
+PRINT "TYPEOF(c):", TYPEOF(c)
+
+DIM d = SUM((IOTA(5) * 2))
+PRINT "d (parenth SUM):", d
+PRINT "TYPEOF(d):", TYPEOF(d)
+END

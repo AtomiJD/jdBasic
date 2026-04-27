@@ -1,0 +1,18 @@
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM GX = OUTER([0,0,0], [-1,0,1,2], "+")
+DIM GY = OUTER([0,1,2], [0,0,0,0], "+")
+PRINT "GX:", GX
+PRINT "GY:", GY
+DIM A = GX^2
+PRINT "GX^2:", A
+DIM B = GY^2
+PRINT "GY^2:", B
+DIM C = A + B
+PRINT "GX^2 + GY^2:", C
+DIM D = SQR(C)
+PRINT "SQR(...):", D
+DIM E = SQR(GX^2 + GY^2)
+PRINT "Inline SQR(GX^2+GY^2):", E
+END

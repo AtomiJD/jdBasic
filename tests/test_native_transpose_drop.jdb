@@ -1,0 +1,19 @@
+' Verify the bug: TRANSPOSE(DROP(-1, TRANSPOSE(M))) on a square matrix.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM M = OUTER([10.0, 20.0, 30.0], [1.0, 2.0, 3.0], "+")
+PRINT "M:", M
+PRINT "TRANSPOSE(M):", TRANSPOSE(M)
+PRINT "DROP(-1, M):", DROP(-1, M)
+PRINT "DROP(-1, TRANSPOSE(M)):", DROP(-1, TRANSPOSE(M))
+DIM A = TRANSPOSE(DROP(-1, TRANSPOSE(M)))
+PRINT "TRANSPOSE(DROP(-1, TRANSPOSE(M))):", A
+PRINT "  shape rows:", LEN(A)
+PRINT "  shape cols:", LEN(A[0])
+
+' Same with rectangular matrix
+DIM N = OUTER([10.0, 20.0], [1.0, 2.0, 3.0, 4.0], "+")
+PRINT "N:", N
+PRINT "TRANSPOSE(DROP(-1, TRANSPOSE(N))):", TRANSPOSE(DROP(-1, TRANSPOSE(N)))
+END

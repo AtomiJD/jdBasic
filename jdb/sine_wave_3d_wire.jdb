@@ -1,0 +1,70 @@
+' 80s 3D Sine Wave Wireframe -- APL-vectorised, matrix-form LINE
+' ---------------------------------------------------------------
+' Classic vector-display look: black background, glowing green mesh.
+' The whole mesh is built end-to-end with array ops:
+'   - heightfield via SIN of the radial distance grid
+'   - oblique projection -> screen X/Y matrices
+'   - shifted slices (DROP +/-1) build line-segment endpoints
+'   - one matrix-form LINE call draws all segments in one shot
+
+SCREEN_W = 1280
+SCREEN_H = 720
+GW = 50                          ' grid columns (x)
+GH = 36                          ' grid rows (depth)
+
+SCREEN SCREEN_W, SCREEN_H, "Retro Wireframe Sine Wave"
+
+' ---- World grid (centred, 4 ripple cycles) -------------------
+XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
+YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+GX   = OUTER(YS*0, XS, "+")      ' GH x GW, each row = XS
+GY   = OUTER(YS, XS*0, "+")      ' GH x GW, each col = YS
+DIST = SQR(GX^2 + GY^2)
+
+' ---- Oblique projection params ------------------------------
+CX      = SCREEN_W / 2
+CY      = SCREEN_H * 0.55
+SCALE_X = 60
+SCALE_Y = 22
+SCALE_Z = 70
+
+NH = GH * (GW - 1)               ' horizontal-segment count
+NV = (GH - 1) * GW               ' vertical-segment count
+
+phase = 0.0
+DO
+    ' ---- Heightfield + screen projection --------------------
+    Z  = SIN(DIST - phase)                          ' [GH, GW]
+    SX = GX * SCALE_X + CX                          ' [GH, GW]
+    SY = GY * SCALE_Y - Z * SCALE_Z + CY            ' [GH, GW]
+
+    ' ---- Horizontal segments (col j -> col j+1 within row) --
+    TSX = TRANSPOSE(SX)
+    TSY = TRANSPOSE(SY)
+    HX1 = TRANSPOSE(DROP(-1, TSX))                  ' GH x GW-1
+    HX2 = TRANSPOSE(DROP( 1, TSX))
+    HY1 = TRANSPOSE(DROP(-1, TSY))
+    HY2 = TRANSPOSE(DROP( 1, TSY))
+    H_LINES = STACK(1, RESHAPE(HX1,[NH]), RESHAPE(HY1,[NH]), RESHAPE(HX2,[NH]), RESHAPE(HY2,[NH]))
+
+    ' ---- Vertical segments (row i -> row i+1 within col) ----
+    VX1 = DROP(-1, SX)                              ' GH-1 x GW
+    VX2 = DROP( 1, SX)
+    VY1 = DROP(-1, SY)
+    VY2 = DROP( 1, SY)
+    V_LINES = STACK(1, RESHAPE(VX1,[NV]), RESHAPE(VY1,[NV]), RESHAPE(VX2,[NV]), RESHAPE(VY2,[NV]))
+
+    ' ---- Render: glowing green wireframe --------------------
+    CLS 0, 0, 0
+    DRAWCOLOR 0, 255, 90
+    LINE H_LINES
+    LINE V_LINES
+    SCREENFLIP
+
+    phase = phase + 0.18
+    a$ = INKEY$()
+    IF a$ <> "" THEN EXITDO
+    SLEEP 16
+LOOP
+
+END

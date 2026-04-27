@@ -1,0 +1,62 @@
+' 3D Sine Wave -- APL-vectorised heightmap, drawn with PLOTRAW
+' -------------------------------------------------------------
+' Every frame is one chain of element-wise array ops:
+'   Z   = SIN(DIST - phase)        the heightfield
+'   N   = analytic gradient        surface normal at every pixel
+'   BR  = (N . L) / (|N|*|L|)      Lambertian shading
+'   COL = packed RGB matrix        sent straight to PLOTRAW
+' No scatter, no inner FOR. The whole frame is one tensor expression.
+
+PIX_W = 480
+PIX_H = 320
+SCALE = 3
+
+SCREEN PIX_W*SCALE, PIX_H*SCALE, "3D Sine Wave (APL + PLOTRAW)"
+
+' ---- World grid: centred, 4 ripple-cycles each axis ----------
+XS   = (IOTA(PIX_W) - PIX_W/2) * (8*PI / PIX_W)
+YS   = (IOTA(PIX_H) - PIX_H/2) * (8*PI / PIX_H)
+GX   = OUTER(YS*0, XS, "+")
+GY   = OUTER(YS, XS*0, "+")
+DIST = SQR(GX^2 + GY^2)
+
+' ---- Light (slanted from upper-left) -------------------------
+LX   = -0.5
+LY   = -0.5
+LZ   =  1.0
+LLEN = SQR(LX^2 + LY^2 + LZ^2)
+
+phase = 0
+DO
+    ' --- Heightfield ------------------------------------------
+    Z = SIN(DIST - phase)
+
+    ' Analytic gradient of Z(x,y) = sin(sqrt(x^2+y^2) - phase):
+    '   dZ/dx = cos(DIST - phase) * GX / DIST
+    '   dZ/dy = cos(DIST - phase) * GY / DIST
+    K    = COS(DIST - phase) / (DIST + 0.001)
+    DZX  = K * GX
+    DZY  = K * GY
+    NLEN = SQR(DZX^2 + DZY^2 + 1)
+
+    ' --- Lambert shading -------------------------------------
+    BR = ((-DZX)*LX + (-DZY)*LY + LZ) / (NLEN * LLEN)
+    BR = CLAMP(BR, 0, 1)
+
+    ' --- Colour: Lambert tint + height tint ------------------
+    HZ = (Z + 1) * 0.5
+    R  = CLAMP(INT(BR*80  + HZ*60),           0, 255)
+    G  = CLAMP(INT(BR*200 + HZ*30),           0, 255)
+    B  = CLAMP(INT(BR*100 + (1-HZ)*120 + 40), 0, 255)
+    COL = R*65536 + G*256 + B
+
+    CLS 0, 0, 0
+    PLOTRAW 0, 0, COL, SCALE, SCALE
+    SCREENFLIP
+
+    phase = phase + 0.18
+    a$ = INKEY$()
+    IF a$ <> "" THEN EXITDO
+    SLEEP 16
+LOOP
+END

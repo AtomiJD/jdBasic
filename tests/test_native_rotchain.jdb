@@ -1,0 +1,67 @@
+' Reproduce the wireframe's rotation chain at small scale.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM GW = 4
+DIM GH = 3
+
+DIM XS = (IOTA(GW) - GW/2) * 1.0
+DIM YS = (IOTA(GH) - GH/2) * 1.0
+DIM GX = OUTER(YS*0, XS, "+")
+DIM GY = OUTER(YS, XS*0, "+")
+DIM DIST = SQR(GX^2 + GY^2)
+
+DIM yaw = 0.0
+DIM pitch = 0.45
+DIM roll = 0.0
+DIM phase = 0.0
+
+DIM SCALE_X = 30
+DIM SCALE_Y = 28
+DIM SCALE_Z = 60
+DIM CX = 400
+DIM CY = 330
+
+' --- Pre-DIM with zero-matrix initialiser so codegen tags = ARR
+DIM Z0 = GX * 0.0
+DIM X1 = GX * 0.0
+DIM Y1 = GX * 0.0
+DIM Z1 = GX * 0.0
+DIM Y2 = GX * 0.0
+DIM Z2 = GX * 0.0
+DIM X3 = GX * 0.0
+DIM Z3 = GX * 0.0
+DIM SX = GX * 0.0
+DIM SY = GX * 0.0
+DIM cyaw = 1.0 : DIM syaw = 0.0
+DIM cpit = 1.0 : DIM spit = 0.0
+DIM crol = 1.0 : DIM srol = 0.0
+
+' --- First loop iteration assignments
+Z0 = SIN(DIST - phase)
+cyaw = COS(yaw) : syaw = SIN(yaw)
+X1 = GX * cyaw - GY * syaw
+Y1 = GX * syaw + GY * cyaw
+Z1 = Z0
+cpit = COS(pitch) : spit = SIN(pitch)
+Y2 = Y1 * cpit - Z1 * spit
+Z2 = Y1 * spit + Z1 * cpit
+crol = COS(roll) : srol = SIN(roll)
+X3 = X1 * crol + Z2 * srol
+Z3 = Z2 * crol - X1 * srol
+SX = X3 * SCALE_X + CX
+SY = Y2 * SCALE_Y - Z3 * SCALE_Z + CY
+
+PRINT "GX:",  GX
+PRINT "X1:",  X1
+PRINT "X3:",  X3
+PRINT "SX:",  SX
+PRINT "Y1:",  Y1
+PRINT "Y2:",  Y2
+PRINT "Z3:",  Z3
+PRINT "SY:",  SY
+PRINT "SX[0,0]:", SX[0,0]
+PRINT "SX[0,1]:", SX[0,1]
+PRINT "SY[0,0]:", SY[0,0]
+PRINT "SY[1,0]:", SY[1,0]
+END

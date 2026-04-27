@@ -1,0 +1,15 @@
+' Does STR$(2d_matrix_row) work in native?
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM A = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+PRINT "A:", A
+PRINT "A[0]:", A[0]
+PRINT "STR$(A[0]):", STR$(A[0])
+PRINT "STR$(A):", STR$(A)
+DIM v1 = [10.0, 20.0, 30.0]
+DIM v2 = [100.0, 200.0, 300.0]
+DIM s = STACK(1, v1, v2)
+PRINT "stack:", s
+PRINT "stack[0]:", s[0]
+PRINT "STR$(stack[0]):", STR$(s[0])
+END

@@ -1,0 +1,7 @@
+' Atomi's repro of the DATE DIM bug
+DIM deadline AS DATE
+DIM name AS STRING
+name = "Project Apollo"
+deadline = CVDate("2025-07-01")
+PRINT "Deadline for "; name; " is "; deadline
+END

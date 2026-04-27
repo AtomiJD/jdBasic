@@ -29,6 +29,11 @@ extern "C" JdbArray* jdb_array_new(int64_t size);
 
 extern "C" {
 
+// Forward decl of nested-array decoder so reductions (SUM/MIN/MAX/...)
+// defined further up can recurse into 2D arrays. Definition lives near
+// the arithmetic helpers further down.
+static inline JdbArray* decode_inner(double val);
+
 // ── I/O ─────────────────────────────────────────────────────
 
 void jdb_print_int(int64_t val) {
@@ -456,19 +461,37 @@ double jdb_stdev(JdbArray* arr) {
 double jdb_array_sum(JdbArray* arr) {
     if (!arr) return 0.0;
     double s = 0.0;
-    for (int64_t i = 0; i < arr->length; i++) s += arr->data[i];
+    if (arr->flags & 1) {
+        for (int64_t i = 0; i < arr->length; i++)
+            s += jdb_array_sum(decode_inner(arr->data[i]));
+    } else {
+        for (int64_t i = 0; i < arr->length; i++) s += arr->data[i];
+    }
     return s;
 }
 
 double jdb_array_product(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
     double s = 1.0;
-    for (int64_t i = 0; i < arr->length; i++) s *= arr->data[i];
+    if (arr->flags & 1) {
+        for (int64_t i = 0; i < arr->length; i++)
+            s *= jdb_array_product(decode_inner(arr->data[i]));
+    } else {
+        for (int64_t i = 0; i < arr->length; i++) s *= arr->data[i];
+    }
     return s;
 }
 
 double jdb_array_min(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
+    if (arr->flags & 1) {
+        double m = jdb_array_min(decode_inner(arr->data[0]));
+        for (int64_t i = 1; i < arr->length; i++) {
+            double v = jdb_array_min(decode_inner(arr->data[i]));
+            if (v < m) m = v;
+        }
+        return m;
+    }
     double m = arr->data[0];
     for (int64_t i = 1; i < arr->length; i++) if (arr->data[i] < m) m = arr->data[i];
     return m;
@@ -476,6 +499,14 @@ double jdb_array_min(JdbArray* arr) {
 
 double jdb_array_max(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
+    if (arr->flags & 1) {
+        double m = jdb_array_max(decode_inner(arr->data[0]));
+        for (int64_t i = 1; i < arr->length; i++) {
+            double v = jdb_array_max(decode_inner(arr->data[i]));
+            if (v > m) m = v;
+        }
+        return m;
+    }
     double m = arr->data[0];
     for (int64_t i = 1; i < arr->length; i++) if (arr->data[i] > m) m = arr->data[i];
     return m;
@@ -483,6 +514,11 @@ double jdb_array_max(JdbArray* arr) {
 
 int64_t jdb_array_any(JdbArray* arr) {
     if (!arr) return 0;
+    if (arr->flags & 1) {
+        for (int64_t i = 0; i < arr->length; i++)
+            if (jdb_array_any(decode_inner(arr->data[i]))) return 1;
+        return 0;
+    }
     for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] != 0.0) return 1;
     return 0;
 }
@@ -582,6 +618,19 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
     return r;
 }
 
+// APPEND(arr, other_arr) — flatten append. Per doc: "Appends a scalar
+// value or all elements of another array to a given array, returning
+// a new flat 1D array." Native codegen routes here when both args are
+// JD_TAG_ARR.
+JdbArray* jdb_array_append_arr(JdbArray* a, JdbArray* b) {
+    int64_t alen = a ? a->length : 0;
+    int64_t blen = b ? b->length : 0;
+    auto* r = jdb_array_new(alen + blen);
+    if (a) memcpy(r->data,        a->data, alen * sizeof(double));
+    if (b) memcpy(r->data + alen, b->data, blen * sizeof(double));
+    return r;
+}
+
 int64_t jdb_array_count(JdbArray* arr, double val) {
     if (!arr) return 0;
     int64_t c = 0;
@@ -642,7 +691,16 @@ JdbArray* jdb_array_cumprod(JdbArray* arr) {
 }
 
 JdbArray* jdb_array_take(JdbArray* arr, int64_t n) {
-    if (!arr || n <= 0) return jdb_array_new(0);
+    if (!arr || n == 0) return jdb_array_new(0);
+    // Negative n: take from the end (APL/interp semantics).
+    if (n < 0) {
+        int64_t k = -n;
+        if (k > arr->length) k = arr->length;
+        auto* r = jdb_array_new(k);
+        memcpy(r->data, arr->data + (arr->length - k), k * sizeof(double));
+        r->flags = arr->flags;
+        return r;
+    }
     if (n > arr->length) n = arr->length;
     auto* r = jdb_array_new(n);
     memcpy(r->data, arr->data, n * sizeof(double));
@@ -658,8 +716,18 @@ JdbArray* jdb_take_n(int64_t n, JdbArray* arr) {
 }
 
 JdbArray* jdb_array_drop(JdbArray* arr, int64_t n) {
-    if (!arr || n >= arr->length) return jdb_array_new(0);
-    if (n < 0) n = 0;
+    if (!arr) return jdb_array_new(0);
+    // Negative n: drop |n| elements from the end (APL/interp semantics).
+    if (n < 0) {
+        int64_t k = -n;
+        if (k >= arr->length) return jdb_array_new(0);
+        int64_t newlen = arr->length - k;
+        auto* r = jdb_array_new(newlen);
+        memcpy(r->data, arr->data, newlen * sizeof(double));
+        r->flags = arr->flags;
+        return r;
+    }
+    if (n >= arr->length) return jdb_array_new(0);
     int64_t newlen = arr->length - n;
     auto* r = jdb_array_new(newlen);
     memcpy(r->data, arr->data + n, newlen * sizeof(double));
@@ -829,6 +897,7 @@ static inline double scalar_op(double a, double b, int op) {
             if (bi == 0) return 0;
             return (double)((int64_t)a % bi);
         }
+        case 10: return std::pow(a, b);  // POW — element-wise x^y
         default: return 0;
     }
 }
@@ -1629,6 +1698,76 @@ char* jdb_format3(const char* fmt, double a1, double a2, double a3) {
 char* jdb_format4(const char* fmt, double a1, double a2, double a3, double a4) {
     auto* arr = jdb_array_new(4); arr->data[0] = a1; arr->data[1] = a2; arr->data[2] = a3; arr->data[3] = a4;
     char* r = jdb_format(fmt, arr); free(arr->data); free(arr); return r;
+}
+
+// Tagged FORMAT$ — args passed as i64 (punned doubles or string pointers).
+// `types` is a NUL-terminated string with one char per arg: 'd' = double,
+// 's' = string pointer. Walks the format string and substitutes each {...}
+// placeholder with the corresponding tagged arg.
+static char* jdb_format_tagged_impl(const char* fmt, const char* types,
+                                     int n, const int64_t* raw) {
+    char result[4096];
+    int rp = 0;
+    int arg_idx = 0;
+    const char* p = fmt;
+    while (*p && rp < 4090) {
+        if (*p == '{') {
+            if (*(p+1) == '{') { result[rp++] = '{'; p += 2; continue; }
+            const char* end = strchr(p, '}');
+            if (!end) { result[rp++] = *p++; continue; }
+
+            char spec[64] = {0};
+            int slen = (int)(end - p - 1);
+            if (slen > 0 && slen < 63) memcpy(spec, p+1, slen);
+
+            char tmp[256] = {0};
+            char tag = (arg_idx < n && types) ? types[arg_idx] : 'd';
+            int64_t r64 = (arg_idx < n) ? raw[arg_idx] : 0;
+            arg_idx++;
+
+            if (tag == 's') {
+                const char* s = (const char*)(intptr_t)r64;
+                snprintf(tmp, sizeof(tmp), "%s", s ? s : "");
+            } else {
+                union { double d; int64_t i; } u; u.i = r64;
+                double val = u.d;
+                if (spec[0] == ':' && spec[1] == '.' && spec[strlen(spec)-1] == 'f') {
+                    int prec = atoi(spec + 2);
+                    snprintf(tmp, sizeof(tmp), "%.*f", prec, val);
+                } else if (spec[0] == ':' && spec[strlen(spec)-1] == 'd') {
+                    snprintf(tmp, sizeof(tmp), "%lld", (long long)(int64_t)val);
+                } else {
+                    snprintf(tmp, sizeof(tmp), "%g", val);
+                }
+            }
+            int tlen = (int)strlen(tmp);
+            if (rp + tlen < 4090) { memcpy(result + rp, tmp, tlen); rp += tlen; }
+            p = end + 1;
+        } else if (*p == '}' && *(p+1) == '}') {
+            result[rp++] = '}'; p += 2;
+        } else {
+            result[rp++] = *p++;
+        }
+    }
+    result[rp] = '\0';
+    return _strdup(result);
+}
+
+char* jdb_format1_t(const char* fmt, const char* types, int64_t a1) {
+    int64_t raw[1] = { a1 };
+    return jdb_format_tagged_impl(fmt, types, 1, raw);
+}
+char* jdb_format2_t(const char* fmt, const char* types, int64_t a1, int64_t a2) {
+    int64_t raw[2] = { a1, a2 };
+    return jdb_format_tagged_impl(fmt, types, 2, raw);
+}
+char* jdb_format3_t(const char* fmt, const char* types, int64_t a1, int64_t a2, int64_t a3) {
+    int64_t raw[3] = { a1, a2, a3 };
+    return jdb_format_tagged_impl(fmt, types, 3, raw);
+}
+char* jdb_format4_t(const char* fmt, const char* types, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    int64_t raw[4] = { a1, a2, a3, a4 };
+    return jdb_format_tagged_impl(fmt, types, 4, raw);
 }
 
 // ── String Builtins ─────────────────────────────────────────

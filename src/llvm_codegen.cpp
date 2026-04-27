@@ -219,6 +219,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_reverse","REVERSE",    i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
+    reg("jdb_array_append_arr","__append_arr", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_array_count","COUNT",        i64_type, {i8_ptr_type, f64_type}, 0);
     reg("jdb_array_indexof","INDEXOF",    i64_type, {i8_ptr_type, f64_type}, 0);
     reg("jdb_array_has_str","__arr_has_str", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
@@ -319,6 +320,13 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_format2", "__format2", i8_ptr_type, {i8_ptr_type, f64_type, f64_type}, 2);
     reg("jdb_format3", "__format3", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type}, 2);
     reg("jdb_format4", "__format4", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type, f64_type}, 2);
+    // Tagged variants for FORMAT$ with mixed double + string args.
+    // Args punned to i64 (double bits or string pointer); types$ is one
+    // char per arg ('d' or 's'). See jdb_format_tagged_impl in jdb_runtime.cpp.
+    reg("jdb_format1_t", "__format1_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type}, 2);
+    reg("jdb_format2_t", "__format2_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type}, 2);
+    reg("jdb_format3_t", "__format3_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type, i64_type}, 2);
+    reg("jdb_format4_t", "__format4_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type, i64_type, i64_type}, 2);
 
     // String builtins
     reg("jdb_len_str",  "LEN$",     i64_type, {i8_ptr_type}, 0);
@@ -1271,9 +1279,30 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
                     default: return make(K::UNKNOWN);
                 }
             }
+            // Native runtime functions: look up the registered return tag.
+            auto rit = runtime_funcs.find(e.func_name);
+            if (rit != runtime_funcs.end()) {
+                switch (rit->second.return_tag) {
+                    case 0: return make(K::INTEGER);
+                    case 1: return make(K::NUMBER);
+                    case 2: return make(K::STRING);
+                    case 3: return make(K::ARRAY);
+                    case 4: return make(K::MAP);
+                    case 5: return make(K::FUNCREF);
+                    default: break;  // -1 / unknown — fall through to heuristics
+                }
+            }
             // $-suffixed builtins return strings (SPLIT$, LCASE$, etc).
             if (!e.func_name.empty() && e.func_name.back() == '$')
                 return make(K::STRING);
+            return make(K::UNKNOWN);
+        }
+        case ExprKind::PIPE_EXPR: {
+            // Pipe forwards the right side's return type. For `value |> FUNC(?, ...)`
+            // the result type is whatever FUNC returns. Without this case the
+            // pipe expression infers UNKNOWN, codegen_dim falls back to an i64
+            // slot, and a double-bit-pattern store/load reads back as junk int.
+            if (e.right) return infer_expr_type(*e.right);
             return make(K::UNKNOWN);
         }
         default: return make(K::UNKNOWN);
@@ -1615,6 +1644,20 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "DIR$"
                         };
                         if (arr_returners.count(upper)) return JD_TAG_ARR;
+                        // Scalar reducers — explicit list so DIM x = arr |>
+                        // SUM(?) creates an f64 slot. REDUCE/SUM/MIN/etc.
+                        // return doubles regardless of input arity, and
+                        // pipes wrap them as the final stage.
+                        static const std::unordered_set<std::string> scalar_reducers = {
+                            "SUM","PRODUCT","MIN","MAX","MEAN","STDEV","MEDIAN",
+                            "VARIANCE","DOT","CROSS","REDUCE"
+                        };
+                        if (scalar_reducers.count(upper)) return JD_TAG_F64;
+                        // Length-style reducers always return INT.
+                        static const std::unordered_set<std::string> int_reducers = {
+                            "LEN","COUNT","ANY","ALL","INDEXOF"
+                        };
+                        if (int_reducers.count(upper)) return JD_TAG_I64;
                         // VM-Value-handle returners (sync with bridge).
                         // TILED.OBJECTS returns an array of maps — the
                         // flat-JdbArray path can't carry OBJECT elements,
@@ -1661,6 +1704,41 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         return JD_TAG_I64;
                     }
                     if (e->kind == ExprKind::UNARY) return infer_tag(e->right.get());
+                    if (e->kind == ExprKind::PIPE_EXPR) {
+                        // `value |> FUNC(?, …)` returns whatever FUNC returns.
+                        // Without this case the pre-pass picks i64 for the
+                        // global slot, then the actual codegen does
+                        // `store double` against it and `load i64` reads back
+                        // the f64 bits as garbage int (manifests as giant
+                        // numbers in PRINT and `=` mismatches).
+                        if (!e->right) return -1;
+                        // Right side is a LAMBDA being applied: scalar pipe
+                        // returns f64 (lambda body is f64-typed); array pipe
+                        // can return scalar or array depending on body shape.
+                        if (e->right->kind == ExprKind::LAMBDA_EXPR) {
+                            int lt = infer_tag(e->left.get());
+                            if (lt == JD_TAG_ARR) return JD_TAG_ARR;
+                            return JD_TAG_F64;
+                        }
+                        // Right side is a bare FUNC name (`value |> FuncName`):
+                        // result is the function's return tag.
+                        if (e->right->kind == ExprKind::VARIABLE ||
+                            e->right->kind == ExprKind::LITERAL_STRING) {
+                            auto uit = user_functions.find(e->right->str_val);
+                            if (uit != user_functions.end())
+                                return uit->second.return_tag;
+                            return -1;
+                        }
+                        return infer_tag(e->right.get());
+                    }
+                    if (e->kind == ExprKind::PLACEHOLDER_EXPR) {
+                        // The `?` placeholder in a pipe carries the type of
+                        // whatever was piped in. The actual tag is set when
+                        // codegen evaluates the pipe; pre-pass can't resolve
+                        // it, so report unknown and let codegen_dim widen at
+                        // runtime.
+                        return -1;
+                    }
                     if (e->kind == ExprKind::INDEX) {
                         // Resolve the UDT type driving this INDEX, if any,
                         // so a string-keyed access can pick the right tag
@@ -2775,6 +2853,31 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             std::string up = stmt.var_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
             date_vars.insert(up);
+        }
+    }
+
+    // DIM x AS DATE — the parser stores "DATE" in stmt.label since DATE
+    // is not a token-level type. CVDATE/CDATE return a string pointer at
+    // runtime, so treat the slot as STRING-typed default-empty. Without
+    // this, the slot would route into the UDT path with no constructor
+    // and the later `x = CVDate(...)` store would crash on PRINT.
+    {
+        std::string lbl_up = stmt.label;
+        std::transform(lbl_up.begin(), lbl_up.end(), lbl_up.begin(), ::toupper);
+        if (lbl_up == "DATE" && !stmt.expr) {
+            LLVMValueRef init = LLVMBuildGlobalStringPtr(builder, "", ".dim_dt");
+            VarInfo* vi = lookup_var(stmt.var_name);
+            if (vi) {
+                vi->tag = JD_TAG_STR;
+                LLVMBuildStore(builder, init, vi->alloca_val);
+            } else {
+                VarInfo& nv = create_var(stmt.var_name, JD_TAG_STR);
+                LLVMBuildStore(builder, init, nv.alloca_val);
+            }
+            std::string up = stmt.var_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            date_vars.insert(up);
+            return;
         }
     }
 
@@ -4828,6 +4931,33 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
 
     // Power operator (^)
     if (expr.op == TokenType::CARET) {
+        // Array operands: dispatch elementwise via scalar_op code 10
+        // (added in jdb_runtime.cpp). Without this, GX^2 over a 2D matrix
+        // hit promote_to_f64 on the array pointer and the subsequent
+        // __pow call returned an empty/garbage array — the wireframe
+        // demo's DIST = SQR(GX^2 + GY^2) collapsed to [].
+        if (lhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_ARR) {
+            const int32_t POW_OP = 10;
+            if (lhs.tag == JD_TAG_ARR && rhs.tag == JD_TAG_ARR) {
+                auto& fn = runtime_funcs["__arr_binop"];
+                LLVMValueRef args[] = { lhs.val, rhs.val, LLVMConstInt(i32_type, POW_OP, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "apow"), JD_TAG_ARR };
+            } else if (lhs.tag == JD_TAG_ARR) {
+                LLVMValueRef scalar = rhs.tag == JD_TAG_I64
+                    ? LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof") : rhs.val;
+                auto& fn = runtime_funcs["__arr_scalar_op"];
+                LLVMValueRef args[] = { lhs.val, scalar, LLVMConstInt(i32_type, POW_OP, 0),
+                                         LLVMConstInt(i32_type, 0, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "aspow"), JD_TAG_ARR };
+            } else {
+                LLVMValueRef scalar = lhs.tag == JD_TAG_I64
+                    ? LLVMBuildSIToFP(builder, lhs.val, f64_type, "itof") : lhs.val;
+                auto& fn = runtime_funcs["__arr_scalar_op"];
+                LLVMValueRef args[] = { rhs.val, scalar, LLVMConstInt(i32_type, POW_OP, 0),
+                                         LLVMConstInt(i32_type, 1, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "aspow"), JD_TAG_ARR };
+            }
+        }
         lhs = promote_to_f64(lhs);
         rhs = promote_to_f64(rhs);
         auto& fn = runtime_funcs["__pow"];
@@ -5177,6 +5307,31 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
 
+    // APPEND(arr1, arr2) — when both arguments are arrays, jdBasic's
+    // interpreter flattens (concatenates). The default native dispatch
+    // routes through jdb_array_append(arr, double) and ends up
+    // appending the second array's *pointer* as a single element.
+    // Detect array+array here and route to __append_arr.
+    if (name == "APPEND" && expr.args.size() == 2) {
+        TypedValue a = codegen_expr(*expr.args[0]);
+        TypedValue b = codegen_expr(*expr.args[1]);
+        if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_ARR) {
+            auto& fn = runtime_funcs["__append_arr"];
+            LLVMValueRef args[] = { a.val, b.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "appa"), JD_TAG_ARR };
+        }
+        // Not array+array: fall through, but feed the already-evaluated
+        // operands to the standard APPEND(arr, double) path.
+        if (a.tag == JD_TAG_ARR) {
+            LLVMValueRef bf = b.tag == JD_TAG_I64
+                ? LLVMBuildSIToFP(builder, b.val, f64_type, "itof")
+                : (b.tag == JD_TAG_F64 ? b.val : coerce_to(b, f64_type));
+            auto& fn = runtime_funcs["APPEND"];
+            LLVMValueRef args[] = { a.val, bf };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "app"), JD_TAG_ARR };
+        }
+    }
+
     // ZEROS([N]) / ZEROS([N, M]) used as an *expression* (LET assignment,
     // call argument, etc.) — codegen_dim has a special 2D path that
     // builds a real nested array, but in expression context the call
@@ -5190,12 +5345,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         expr.args[0] && expr.args[0]->kind == ExprKind::ARRAY_LITERAL) {
         auto& shape_args = expr.args[0]->args;
         auto& arr_new = runtime_funcs["__array_new"];
+        // For ONES, build the inner arrays via jdb_ones so they're filled
+        // with 1.0; ZEROS gets zero-filled arrays via __array_new.
+        bool is_ones = (name == "ONES");
+        auto& arr_ones_fn = runtime_funcs["ONES"];
+
         if (shape_args.size() == 1) {
             TypedValue size_val = codegen_expr(*shape_args[0]);
             LLVMValueRef size_i64 = size_val.tag == JD_TAG_F64
                 ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
             LLVMValueRef args[] = { size_i64 };
-            LLVMValueRef arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr1d");
+            LLVMValueRef arr;
+            if (is_ones) {
+                arr = LLVMBuildCall2(builder, arr_ones_fn.fn_type, arr_ones_fn.fn, args, 1, "arr1d");
+            } else {
+                arr = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, args, 1, "arr1d");
+            }
             return { arr, JD_TAG_ARR };
         }
         if (shape_args.size() == 2) {
@@ -5226,7 +5391,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             LLVMPositionBuilderAtEnd(builder, body_bb);
             LLVMValueRef inner_args[] = { cols };
-            LLVMValueRef inner = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, inner_args, 1, "inner");
+            LLVMValueRef inner;
+            if (is_ones) {
+                inner = LLVMBuildCall2(builder, arr_ones_fn.fn_type, arr_ones_fn.fn, inner_args, 1, "inner");
+            } else {
+                inner = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, inner_args, 1, "inner");
+            }
             LLVMValueRef inner_i64 = LLVMBuildPtrToInt(builder, inner, i64_type, "ptoi");
             LLVMValueRef inner_f64 = pun_i64_to_f64(inner_i64);
             LLVMValueRef cur_outer = LLVMBuildLoad2(builder, i8_ptr_type, outer_alloca, "out");
@@ -5454,6 +5624,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { av.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ss"), JD_TAG_STR };
         }
+        if (av.tag == JD_TAG_ARR) {
+            // Array → "[a, b, c]" via the same formatter PRINT uses.
+            auto& fn = runtime_funcs["FRMV$"];
+            LLVMValueRef args[] = { av.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sarr"), JD_TAG_STR };
+        }
         // Numeric path: use existing jdb_str(double).
         auto& fn = runtime_funcs["STR$"];
         LLVMValueRef arg = coerce_to(av, f64_type);
@@ -5467,15 +5643,63 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         int nargs = (int)expr.args.size() - 1;
         if (nargs > 4) nargs = 4;
 
+        // Pre-evaluate args to learn their tags. If any is a string,
+        // route through the tagged variant (__formatN_t) which accepts
+        // i64-punned values + a per-arg type string.
+        std::vector<TypedValue> evald;
+        evald.reserve(nargs);
+        bool any_str = false;
+        for (int i = 0; i < nargs; i++) {
+            TypedValue av = codegen_expr(*expr.args[i + 1]);
+            if (av.tag == JD_TAG_STR) any_str = true;
+            evald.push_back(av);
+        }
+
+        if (any_str) {
+            std::string fn_name = "__format" + std::to_string(nargs) + "_t";
+            auto fit3 = runtime_funcs.find(fn_name);
+            if (fit3 != runtime_funcs.end()) {
+                // Build the per-arg type string ("d"/"s" per slot).
+                std::string types_lit;
+                types_lit.reserve(nargs);
+                for (auto& av : evald) types_lit += (av.tag == JD_TAG_STR ? 's' : 'd');
+                LLVMValueRef types_str = LLVMBuildGlobalStringPtr(
+                    builder, types_lit.c_str(), ".fmt_t");
+
+                std::vector<LLVMValueRef> args;
+                args.push_back(fmt_tv.val);
+                args.push_back(types_str);
+                for (auto& av : evald) {
+                    LLVMValueRef raw;
+                    if (av.tag == JD_TAG_STR) {
+                        raw = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
+                    } else if (av.tag == JD_TAG_I64) {
+                        // Pun int as f64 bits so the runtime sees a double.
+                        LLVMValueRef as_d = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                        raw = pun_f64_to_i64(as_d);
+                    } else if (av.tag == JD_TAG_F64) {
+                        raw = pun_f64_to_i64(av.val);
+                    } else {
+                        // Unknown — pun as-is.
+                        raw = pun_f64_to_i64(coerce_to(av, f64_type));
+                    }
+                    args.push_back(raw);
+                }
+                LLVMValueRef result = LLVMBuildCall2(builder, fit3->second.fn_type, fit3->second.fn,
+                                                      args.data(), (unsigned)args.size(), "fmt_t");
+                return { result, JD_TAG_STR };
+            }
+        }
+
         std::string fn_name = "__format" + std::to_string(nargs);
         auto fit2 = runtime_funcs.find(fn_name);
         if (fit2 != runtime_funcs.end()) {
             std::vector<LLVMValueRef> args;
             args.push_back(fmt_tv.val);
-            for (int i = 0; i < nargs; i++) {
-                TypedValue av = codegen_expr(*expr.args[i + 1]);
-                if (av.tag == JD_TAG_I64) av.val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
-                args.push_back(av.val);
+            for (auto& av : evald) {
+                LLVMValueRef val = av.val;
+                if (av.tag == JD_TAG_I64) val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                args.push_back(val);
             }
             LLVMValueRef result = LLVMBuildCall2(builder, fit2->second.fn_type, fit2->second.fn,
                                                   args.data(), (unsigned)args.size(), "fmt");

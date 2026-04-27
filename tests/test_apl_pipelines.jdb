@@ -1,0 +1,177 @@
+' ============================================================
+' APL Pipeline + Higher-Order Stress Tests
+' ============================================================
+' Targets: |> pipe operator, deep nesting, SELECT/FILTER/REDUCE
+' chains, named FUNC vs LAMBDA, mixed reductions.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_EQ(name$, expected AS DOUBLE, actual AS DOUBLE)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected; "  actual="; actual
+    ENDIF
+ENDSUB
+
+SUB CHECK_NEAR(name$, expected AS DOUBLE, actual AS DOUBLE)
+    DIM diff AS DOUBLE = expected - actual
+    IF diff < 0 THEN diff = -diff
+    IF diff < 0.0001 THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected; "  actual="; actual
+    ENDIF
+ENDSUB
+
+SUB SEC(s$)
+    PRINT ""
+    PRINT "=== "; s$; " ==="
+ENDSUB
+
+' Named FUNCs we'll feed via @ funcref
+FUNC dbl(i)
+    RETURN i * 2
+ENDFUNC
+
+FUNC even(v)
+    RETURN (v MOD 2) = 0
+ENDFUNC
+
+FUNC plus(a, b)
+    RETURN a + b
+ENDFUNC
+
+' ============================================================
+SEC("Nested calls (no pipes)")
+' ============================================================
+CHECK_EQ "SUM(REVERSE(IOTA(5)))",         15, SUM(REVERSE(IOTA(5)))
+CHECK_EQ "MAX(SORT(IOTA(7)))",            7, MAX(SORT(IOTA(7)))
+CHECK_EQ "LEN(TAKE(3, REVERSE(IOTA(5))))", 3, LEN(TAKE(3, REVERSE(IOTA(5))))
+CHECK_EQ "SUM(TAKE(-2, IOTA(5)))",        9, SUM(TAKE(-2, IOTA(5)))
+CHECK_EQ "SUM(DROP(2, IOTA(5)))",         12, SUM(DROP(2, IOTA(5)))
+CHECK_EQ "SUM(DROP(-2, IOTA(5)))",        6, SUM(DROP(-2, IOTA(5)))
+CHECK_EQ "MAX(REVERSE(SORT([3,1,4,1,5,9,2,6])))",  9, MAX(REVERSE(SORT([3,1,4,1,5,9,2,6])))
+
+' Nesting through OUTER + matrix reduction
+DIM m = OUTER([1.0, 2.0, 3.0], [10.0, 20.0, 30.0], "+")
+CHECK_EQ "SUM(OUTER + ...)",  198, SUM(m)  ' (1+2+3)*3 + (10+20+30)*3 = 18+180 = 198
+CHECK_EQ "MAX(OUTER + ...)",  33,  MAX(m)
+CHECK_EQ "MIN(OUTER + ...)",  11,  MIN(m)
+
+' ============================================================
+SEC("Higher-order with LAMBDA")
+' ============================================================
+DIM s1 = SELECT(LAMBDA i -> i + 1, IOTA(5))
+CHECK_EQ "SELECT len",  5, LEN(s1)
+CHECK_EQ "SELECT[0]",   2, s1[0]
+CHECK_EQ "SELECT[4]",   6, s1[4]
+CHECK_EQ "SUM(SELECT(λ i->i+1, IOTA(5)))", 20, SUM(SELECT(LAMBDA i -> i+1, IOTA(5)))
+
+DIM f1 = FILTER(LAMBDA v -> v > 2, IOTA(5))
+CHECK_EQ "FILTER len",  3, LEN(f1)
+CHECK_EQ "FILTER[0]",   3, f1[0]
+CHECK_EQ "FILTER[2]",   5, f1[2]
+CHECK_EQ "SUM(FILTER(λ v->v>2, IOTA(5)))", 12, SUM(FILTER(LAMBDA v -> v>2, IOTA(5)))
+
+CHECK_EQ "REDUCE(λ a,b -> a+b, IOTA(5), 0)", 15, REDUCE(LAMBDA a, b -> a+b, IOTA(5), 0)
+CHECK_EQ "REDUCE multiply", 120, REDUCE(LAMBDA a, b -> a*b, IOTA(5), 1)
+
+' ============================================================
+SEC("Higher-order chained")
+' ============================================================
+DIM ch1 = SELECT(LAMBDA i -> i*2, FILTER(LAMBDA v -> v > 2, IOTA(5)))
+CHECK_EQ "SELECT(λ, FILTER(λ, IOTA))", 3, LEN(ch1)
+CHECK_EQ "SELECT(FILTER) [0]",          6, ch1[0]
+CHECK_EQ "SELECT(FILTER) [2]",          10, ch1[2]
+
+' Reduce after select
+CHECK_EQ "REDUCE(SELECT(IOTA))", 30, REDUCE(LAMBDA a,b->a+b, SELECT(LAMBDA i->i*2, IOTA(5)), 0)
+
+' Filter, select, reduce
+CHECK_EQ "REDUCE(SELECT(FILTER(IOTA)))", 24, REDUCE(LAMBDA a,b->a+b, SELECT(LAMBDA i->i*2, FILTER(LAMBDA v->v>2, IOTA(5))), 0)
+
+' ============================================================
+SEC("Pipe operator |>")
+' ============================================================
+DIM p1 = IOTA(5) |> SELECT(LAMBDA i -> i+10, ?)
+CHECK_EQ "pipe SELECT len",  5, LEN(p1)
+CHECK_EQ "pipe SELECT[0]",   11, p1[0]
+CHECK_EQ "pipe SELECT[4]",   15, p1[4]
+
+DIM p2 = IOTA(10) |> FILTER(LAMBDA v -> v MOD 2 = 0, ?)
+CHECK_EQ "pipe FILTER even len", 5, LEN(p2)
+CHECK_EQ "pipe FILTER[0]",  2,  p2[0]
+CHECK_EQ "pipe FILTER[4]",  10, p2[4]
+
+' Multi-stage pipe
+DIM p3 = IOTA(10) |> SELECT(LAMBDA i -> i*2, ?) |> FILTER(LAMBDA v -> v > 5, ?)
+CHECK_EQ "pipe SELECT|FILTER len",  8, LEN(p3)
+CHECK_EQ "pipe SELECT|FILTER[0]",   6, p3[0]
+CHECK_EQ "pipe SELECT|FILTER[7]",   20, p3[7]
+
+' Pipe ending in REDUCE
+DIM p4 = IOTA(10) |> SELECT(LAMBDA i -> i*2, ?) |> FILTER(LAMBDA v -> v > 5, ?) |> REDUCE(LAMBDA a, b -> a+b, ?, 0)
+CHECK_EQ "pipe full to REDUCE", 104, p4
+
+' Pipe through TAKE / DROP / REVERSE
+DIM p5 = IOTA(10) |> REVERSE(?) |> TAKE(3, ?)
+CHECK_EQ "pipe REVERSE|TAKE len", 3, LEN(p5)
+CHECK_EQ "pipe REVERSE|TAKE[0]",  10, p5[0]
+CHECK_EQ "pipe REVERSE|TAKE[2]",  8,  p5[2]
+
+' Pipe to sum
+CHECK_EQ "pipe REVERSE|TAKE|SUM",  27, IOTA(10) |> REVERSE(?) |> TAKE(3, ?) |> SUM(?)
+
+' ============================================================
+SEC("Named FUNC via @ funcref in pipes")
+' ============================================================
+DIM nf1 = SELECT(dbl@, IOTA(5))
+CHECK_EQ "SELECT(named FUNC)[2]", 6, nf1[2]
+CHECK_EQ "SELECT(named FUNC) sum", 30, SUM(SELECT(dbl@, IOTA(5)))
+
+DIM nf2 = FILTER(even@, IOTA(10))
+CHECK_EQ "FILTER(named FUNC) len", 5, LEN(nf2)
+CHECK_EQ "FILTER(named FUNC)[0]",  2, nf2[0]
+
+CHECK_EQ "REDUCE(named FUNC)", 15, REDUCE(plus@, IOTA(5), 0)
+
+' Pipe with named functions
+DIM np1 = IOTA(10) |> SELECT(dbl@, ?) |> FILTER(LAMBDA v -> v > 10, ?) |> SUM(?)
+CHECK_EQ "pipe with named SELECT", 80, np1
+
+' ============================================================
+SEC("Pipes mixed with arithmetic broadcast")
+' ============================================================
+DIM pb1 = (IOTA(5) * 2) |> SUM(?)
+CHECK_EQ "pipe of (arr * scalar)", 30, pb1
+
+DIM pb2 = (IOTA(5) + IOTA(5)) |> MAX(?)
+CHECK_EQ "pipe of (arr + arr) MAX", 10, pb2
+
+' ============================================================
+SEC("Reductions on the result of a chain")
+' ============================================================
+CHECK_EQ "MAX after SELECT * 3",   15, MAX(SELECT(LAMBDA i -> i*3, IOTA(5)))
+CHECK_EQ "MIN after FILTER >2",    3,  MIN(FILTER(LAMBDA v -> v > 2, IOTA(5)))
+CHECK_NEAR "MEAN after SELECT",    6.0, MEAN(SELECT(LAMBDA i -> i*2, IOTA(5)))
+
+' ============================================================
+SEC("FILTER returning empty doesn't crash downstream")
+' ============================================================
+DIM em = FILTER(LAMBDA v -> v > 999, IOTA(5))
+CHECK_EQ "empty FILTER len", 0, LEN(em)
+CHECK_EQ "SUM(empty)",       0, SUM(em)
+
+' ============================================================
+PRINT ""
+PRINT "============================================="
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+PRINT "============================================="
+END

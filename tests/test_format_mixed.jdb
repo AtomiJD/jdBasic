@@ -1,0 +1,4 @@
+DIM x AS DOUBLE = 60.567
+DIM y AS STRING = "Native"
+PRINT FORMAT$("FPS: {:.1f}   [{}]", x, y)
+END

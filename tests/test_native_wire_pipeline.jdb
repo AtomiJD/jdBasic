@@ -1,0 +1,79 @@
+' Mirrors the wireframe pipeline at small scale for native debugging.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM W = 800
+DIM H = 600
+DIM GW = 12
+DIM GH = 8
+
+SCREEN W, H, "wire pipeline native"
+SETFONT "C:/Windows/Fonts/consola.ttf", 16
+
+DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
+DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+DIM GX   = OUTER(YS*0, XS, "+")
+DIM GY   = OUTER(YS, XS*0, "+")
+DIM DIST = SQR(GX^2 + GY^2)
+
+DIM CX      = W / 2
+DIM CY      = H * 0.55
+DIM SCALE_X = 30
+DIM SCALE_Y = 28
+DIM SCALE_Z = 60
+
+DIM NH = GH * (GW - 1)
+DIM NV = (GH - 1) * GW
+
+DIM Z0, SX, SY, TSX, TSY, HX1, HX2, HY1, HY2, VX1, VX2, VY1, VY2, H_LINES, V_LINES
+DIM phase = 0.0
+DIM frames = 0
+DIM running = TRUE
+
+SUB OnQuit(d)
+    running = FALSE
+ENDSUB
+SUB OnKey(d)
+    DIM kc = d[0]{"keycode"}
+    IF kc = 27 THEN running = FALSE
+ENDSUB
+ON "QUIT"    CALL OnQuit
+ON "KEYDOWN" CALL OnKey
+
+DO
+    Z0 = SIN(DIST - phase)
+    SX = GX * SCALE_X + CX
+    SY = GY * SCALE_Y - Z0 * SCALE_Z + CY
+
+    TSX = TRANSPOSE(SX)
+    TSY = TRANSPOSE(SY)
+    HX1 = TRANSPOSE(DROP(-1, TSX))
+    HX2 = TRANSPOSE(DROP( 1, TSX))
+    HY1 = TRANSPOSE(DROP(-1, TSY))
+    HY2 = TRANSPOSE(DROP( 1, TSY))
+    H_LINES = STACK(1, RESHAPE(HX1,[NH]), RESHAPE(HY1,[NH]), RESHAPE(HX2,[NH]), RESHAPE(HY2,[NH]))
+
+    VX1 = DROP(-1, SX)
+    VX2 = DROP( 1, SX)
+    VY1 = DROP(-1, SY)
+    VY2 = DROP( 1, SY)
+    V_LINES = STACK(1, RESHAPE(VX1,[NV]), RESHAPE(VY1,[NV]), RESHAPE(VX2,[NV]), RESHAPE(VY2,[NV]))
+
+    CLS 0, 0, 0
+    DRAWCOLOR 0, 255, 90
+    LINE H_LINES
+    LINE V_LINES
+    TEXT 16, 16, "frame: " + STR$(frames) + "  H rows: " + STR$(LEN(H_LINES)) + "  V rows: " + STR$(LEN(V_LINES)), 200, 255, 200
+    SCREENFLIP
+
+    phase = phase + 0.18
+    frames = frames + 1
+    SLEEP 80
+    IF frames > 30 THEN running = FALSE
+LOOP UNTIL running = FALSE
+
+PRINT "H_LINES rows:", LEN(H_LINES), "expected:", NH
+PRINT "V_LINES rows:", LEN(V_LINES), "expected:", NV
+PRINT "H_LINES[0]:", H_LINES[0]
+PRINT "V_LINES[0]:", V_LINES[0]
+END
