@@ -1,9 +1,12 @@
 ' 80s 3D Sine Wave Wireframe (rotatable + HUD) -- APL + matrix-form LINE
 ' ----------------------------------------------------------------------
-' Higher-resolution mesh, full 3D rotation via WASD + Z/X.
+' Higher-resolution mesh, full 3D rotation via WASD + Z/X. The wave is
+' shaped by a Gaussian envelope so it's full in the middle and flat at
+' the edges; Q/E shrink and grow the peak amplitude.
 '   W / S  -- pitch (tilt forward / back)
 '   A / D  -- yaw   (spin left / right)
 '   Z / X  -- roll
+'   Q / E  -- shrink / grow the wave amplitude
 '   ESC    -- exit
 '
 ' STRICT/EXPLICIT throughout so the same source compiles with -c.
@@ -24,7 +27,13 @@ DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
 DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
 DIM GX   = OUTER(YS*0, XS, "+")      ' GH x GW, each row = XS
 DIM GY   = OUTER(YS, XS*0, "+")      ' GH x GW, each col = YS
-DIM DIST = SQR(GX^2 + GY^2)
+
+' ---- Wave envelope: Gaussian dome centred on (peak_x, peak_y).
+' SIGMA picks how wide the bell is in grid units; with the grid radius
+' ~6.3, SIGMA=2.5 gives ~exp(-3.2)=0.04 at the corners, so the wave
+' fades to flat well before the edge.
+DIM SIGMA  AS DOUBLE = 2.5
+DIM SIG_SQ AS DOUBLE = SIGMA * SIGMA
 
 ' ---- Projection ---------------------------------------------
 ' All scalars must be DOUBLE — `arr_double * i64 + i64` collapses to a
@@ -44,6 +53,8 @@ DIM yaw     AS DOUBLE = 0.0
 DIM pitch   AS DOUBLE = 0.45
 DIM roll    AS DOUBLE = 0.0
 DIM phase   AS DOUBLE = 0.0
+DIM amp     AS DOUBLE = 1.0       ' Q/E scale the wave amplitude
+DIM AMP_STEP AS DOUBLE = 0.15
 DIM running AS INTEGER = 1
 
 ' ---- FPS bookkeeping ----------------------------------------
@@ -59,6 +70,12 @@ IF OS.FEATURE("NATIVEC") THEN mode$ = "Native (LLVM)"
 ' creates an i64 slot, so a later `Y1 * cpit` compiles as i64-math
 ' and collapses to 0. Initialise with a zero matrix so the slot is
 ' tagged ARR and subsequent reassignments stay in array land.
+' Pre-compute the static distance and envelope — centred on the grid
+' origin and never changes, so we only do this once.
+DIM DSQ_STATIC = GX*GX + GY*GY
+DIM DIST_STATIC = SQR(DSQ_STATIC)
+DIM ENV_STATIC  = EXP(DSQ_STATIC * (-1.0 / SIG_SQ))
+DIM ENV = GX * 0.0
 DIM Z0 = GX * 0.0
 DIM X1 = GX * 0.0
 DIM Y1 = GX * 0.0
@@ -88,9 +105,6 @@ DIM hud1$ AS STRING = ""
 DIM hud2$ AS STRING = ""
 DIM hud3$ AS STRING = ""
 DIM hud4$ AS STRING = ""
-DIM dbg1$ AS STRING = ""
-DIM dbg2$ AS STRING = ""
-DIM dbg3$ AS STRING = ""
 
 ' ---- Key handler (AST-VM: KeyData[0]{"keycode"}) ------------
 SUB OnKey(KeyData)
@@ -101,6 +115,9 @@ SUB OnKey(KeyData)
     IF kc = ASC("s") THEN pitch = pitch - 0.08
     IF kc = ASC("z") THEN roll  = roll  - 0.08
     IF kc = ASC("x") THEN roll  = roll  + 0.08
+    IF kc = ASC("q") THEN amp = amp - AMP_STEP
+    IF kc = ASC("e") THEN amp = amp + AMP_STEP
+    IF amp < 0.0 THEN amp = 0.0
     IF kc = 27       THEN running = FALSE
 ENDSUB
 
@@ -112,8 +129,11 @@ ON "KEYDOWN" CALL OnKey
 ON "QUIT"    CALL OnQuit
 
 DO
-    ' ---- Heightfield (animated phase) -----------------------
-    Z0 = SIN(DIST - phase)
+    ' ---- Heightfield -----------------------------------------
+    ' Distance grid + Gaussian envelope are static (centred); the
+    ' user-controlled `amp` scales the whole wave so Q/E grow or
+    ' shrink the peak while the edges stay pinned at zero.
+    Z0 = SIN(DIST_STATIC - phase) * ENV_STATIC * amp
 
     ' ---- Yaw around vertical (Z) axis: rotates (GX, GY) -----
     cyaw = COS(yaw) : syaw = SIN(yaw)
@@ -158,22 +178,17 @@ DO
     LINE V_LINES
 
     ' ---- HUD ------------------------------------------------
-    ' Native compiler can't lower FORMAT$ with mixed double+string args today,
-    ' so build the HUD via STR$ + concat — works in both backends.
-    hud1$ = "FPS: " + STR$(ROUND(fps, 1)) + "   [" + mode$ + "]"
-    hud2$ = "Grid: " + STR$(GW) + " x " + STR$(GH) + "   Lines: " + STR$(NH + NV)
-    hud3$ = "Yaw: " + STR$(ROUND(yaw, 2)) + "   Pitch: " + STR$(ROUND(pitch, 2)) + "   Roll: " + STR$(ROUND(roll, 2))
-    hud4$ = "WASD / ZX rotate   ESC quit"
-    dbg1$ = "DBG SX[0,0]="   + STR$(ROUND(SX[0,0],   1)) + " SX[0,70]="  + STR$(ROUND(SX[0,70],  1)) + " SX[0,139]=" + STR$(ROUND(SX[0,139], 1))
-    dbg2$ = "DBG SY[0,0]="   + STR$(ROUND(SY[0,0],   1)) + " SY[50,70]=" + STR$(ROUND(SY[50,70], 1)) + " SY[99,70]=" + STR$(ROUND(SY[99,70], 1))
-    dbg3$ = "DBG Z[0,0]="    + STR$(ROUND(Z0[0,0],   3)) + " Z[50,70]="  + STR$(ROUND(Z0[50,70], 3)) + " Z[99,139]="+ STR$(ROUND(Z0[99,139],3))
+    hud1$ = FORMAT$("FPS: {:5.1f}   [{}]", fps, mode$)
+    hud2$ = FORMAT$("Grid: {} x {}   Lines: {}", GW, GH, NH + NV)
+    hud3$ = FORMAT$("Yaw: {:6.2f}   Pitch: {:6.2f}   Roll: {:6.2f}   Amp: {:4.2f}", yaw, pitch, roll, amp)
+    hud4$ = "WASD/ZX rotate   Q/E amplitude   ESC quit"
     TEXT 16, 16,  hud1$, 200, 255, 200
     TEXT 16, 36,  hud2$, 120, 220, 120
     TEXT 16, 56,  hud3$, 120, 220, 120
     TEXT 16, 76,  hud4$, 80,  180, 80
-    TEXT 16, 110, dbg1$, 220, 220, 100
-    TEXT 16, 130, dbg2$, 220, 220, 100
-    TEXT 16, 150, dbg3$, 220, 220, 100
+    ' TEXT 16, 110, dbg1$, 220, 220, 100
+    ' TEXT 16, 130, dbg2$, 220, 220, 100
+    ' TEXT 16, 150, dbg3$, 220, 220, 100
 
     SCREENFLIP
 

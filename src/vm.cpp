@@ -1105,17 +1105,24 @@ void VM::run() {
         case OpCode::NEG: {
             Value a = pop();
             if (a.type == ValueType::ARRAY) {
-                auto* arr = a.as_array();
-                Value result = Value::make_array();
-                auto* out = result.as_array();
-                out->elements.reserve(arr->elements.size());
-                for (auto& elem : arr->elements) {
-                    if (is_integer_type(elem.type))
-                        out->elements.push_back(Value::make_i64(-elem.to_int()));
-                    else
-                        out->elements.push_back(Value::make_f64(-elem.to_double()));
-                }
-                push(std::move(result));
+                // Recursive negate so a 2D matrix (each element is itself
+                // an ARRAY) negates element-wise instead of collapsing
+                // every inner array via the scalar `to_int/to_double()`
+                // fallback (which returned 0).
+                std::function<Value(const Value&)> neg_rec = [&](const Value& v) -> Value {
+                    if (v.type == ValueType::ARRAY) {
+                        Value r = Value::make_array();
+                        auto* outv = r.as_array();
+                        outv->elements.reserve(v.as_array()->elements.size());
+                        for (auto& e : v.as_array()->elements)
+                            outv->elements.push_back(neg_rec(e));
+                        return r;
+                    }
+                    if (is_integer_type(v.type))
+                        return Value::make_i64(-v.to_int());
+                    return Value::make_f64(-v.to_double());
+                };
+                push(neg_rec(a));
             } else if (a.type == ValueType::STRING) {
                 // Unary split: -"ABC" → ["A", "B", "C"]
                 auto& s = a.as_string()->data;

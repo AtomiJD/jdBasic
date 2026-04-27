@@ -5193,8 +5193,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
     if (expr.op == TokenType::MINUS) {
         if (operand.tag == JD_TAG_F64)
             return { LLVMBuildFNeg(builder, operand.val, "fneg"), JD_TAG_F64 };
-        else
-            return { LLVMBuildNeg(builder, operand.val, "neg"), JD_TAG_I64 };
+        if (operand.tag == JD_TAG_ARR) {
+            // Element-wise negate: arr * -1.0 via the standard array
+            // arith runtime (op 2 = MUL). Without this the codegen
+            // falls into the i64 path and emits `sub ptr null, %arr`,
+            // which the IR verifier rejects.
+            auto& fn = runtime_funcs["__arr_scalar_op"];
+            LLVMValueRef m1 = LLVMConstReal(f64_type, -1.0);
+            LLVMValueRef args[] = { operand.val, m1,
+                                    LLVMConstInt(i32_type, 2, 0),
+                                    LLVMConstInt(i32_type, 0, 0) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "neg_arr"),
+                     JD_TAG_ARR };
+        }
+        return { LLVMBuildNeg(builder, operand.val, "neg"), JD_TAG_I64 };
     }
     if (expr.op == TokenType::NOT) {
         LLVMValueRef b = to_i1(operand);
