@@ -1105,10 +1105,6 @@ void VM::run() {
         case OpCode::NEG: {
             Value a = pop();
             if (a.type == ValueType::ARRAY) {
-                // Recursive negate so a 2D matrix (each element is itself
-                // an ARRAY) negates element-wise instead of collapsing
-                // every inner array via the scalar `to_int/to_double()`
-                // fallback (which returned 0).
                 std::function<Value(const Value&)> neg_rec = [&](const Value& v) -> Value {
                     if (v.type == ValueType::ARRAY) {
                         Value r = Value::make_array();

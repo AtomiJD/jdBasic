@@ -1088,9 +1088,7 @@ void register_sound_builtins(VM& vm) {
     // a 1D array of numbers; numbers are converted to f32 in order. If
     // the requested sample-rate or channel count differs from the
     // currently-open pcm_stream, we re-open it so SDL's resampler does
-    // the conversion. Use cases: hand-drawn waveforms, emulator audio
-    // (Apple II speaker), synthesized blips that don't fit the synth
-    // model.
+    // the conversion.
 
     vm.register_native("SOUND.PLAYBUFFER", 1, 3, [](const std::vector<Value>& args) -> Value {
         ensure_sound("SOUND.PLAYBUFFER");

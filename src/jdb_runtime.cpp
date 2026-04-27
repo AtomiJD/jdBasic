@@ -29,9 +29,6 @@ extern "C" JdbArray* jdb_array_new(int64_t size);
 
 extern "C" {
 
-// Forward decl of nested-array decoder so reductions (SUM/MIN/MAX/...)
-// defined further up can recurse into 2D arrays. Definition lives near
-// the arithmetic helpers further down.
 static inline JdbArray* decode_inner(double val);
 
 // ── I/O ─────────────────────────────────────────────────────
@@ -618,10 +615,6 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
     return r;
 }
 
-// APPEND(arr, other_arr) — flatten append. Per doc: "Appends a scalar
-// value or all elements of another array to a given array, returning
-// a new flat 1D array." Native codegen routes here when both args are
-// JD_TAG_ARR.
 JdbArray* jdb_array_append_arr(JdbArray* a, JdbArray* b) {
     int64_t alen = a ? a->length : 0;
     int64_t blen = b ? b->length : 0;
@@ -692,7 +685,6 @@ JdbArray* jdb_array_cumprod(JdbArray* arr) {
 
 JdbArray* jdb_array_take(JdbArray* arr, int64_t n) {
     if (!arr || n == 0) return jdb_array_new(0);
-    // Negative n: take from the end (APL/interp semantics).
     if (n < 0) {
         int64_t k = -n;
         if (k > arr->length) k = arr->length;
@@ -717,7 +709,6 @@ JdbArray* jdb_take_n(int64_t n, JdbArray* arr) {
 
 JdbArray* jdb_array_drop(JdbArray* arr, int64_t n) {
     if (!arr) return jdb_array_new(0);
-    // Negative n: drop |n| elements from the end (APL/interp semantics).
     if (n < 0) {
         int64_t k = -n;
         if (k >= arr->length) return jdb_array_new(0);
@@ -897,7 +888,7 @@ static inline double scalar_op(double a, double b, int op) {
             if (bi == 0) return 0;
             return (double)((int64_t)a % bi);
         }
-        case 10: return std::pow(a, b);  // POW — element-wise x^y
+        case 10: return std::pow(a, b);
         default: return 0;
     }
 }
@@ -1700,10 +1691,7 @@ char* jdb_format4(const char* fmt, double a1, double a2, double a3, double a4) {
     char* r = jdb_format(fmt, arr); free(arr->data); free(arr); return r;
 }
 
-// Tagged FORMAT$ — args passed as i64 (punned doubles or string pointers).
-// `types` is a NUL-terminated string with one char per arg: 'd' = double,
-// 's' = string pointer. Walks the format string and substitutes each {...}
-// placeholder with the corresponding tagged arg.
+// types[i] is 'd' for an f64-bit-pun or 's' for a const char*.
 static char* jdb_format_tagged_impl(const char* fmt, const char* types,
                                      int n, const int64_t* raw) {
     char result[4096];
@@ -1984,9 +1972,8 @@ char* jdb_space(int64_t n) {
 int64_t jdb_str_eq(const char* a, const char* b) {
     if (a == b) return 1;
     if (!a || !b) return 0;
-    // strcmp truncates at the first NUL — wrong for binary buffers
-    // (BINREADER$, PACK$, char-ROM blobs). Consult the binary-length
-    // registry so an Apple II ROM that starts with $00 isn't seen as "".
+    // Use the binary-length registry so buffers with embedded NULs
+    // (BINREADER$, PACK$, etc.) compare correctly past the first 0x00.
     int64_t la = jdrt_strlen(a); if (la < 0) la = (int64_t)strlen(a);
     int64_t lb = jdrt_strlen(b); if (lb < 0) lb = (int64_t)strlen(b);
     if (la != lb) return 0;

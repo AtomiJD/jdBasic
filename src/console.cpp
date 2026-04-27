@@ -306,9 +306,6 @@ void Console::process_key(int key) {
         dirty_prompt = true;
     }
     else if (key == KEY_F5) {
-        // F5: run the loaded program (matches the editor's F5 + the
-        // status-bar hint "[F5] Run"). Replace whatever is on the
-        // current input line with "RUN" and execute immediately.
         state.current_input = "RUN";
         state.cursor_pos = 3;
         execute_current_line();

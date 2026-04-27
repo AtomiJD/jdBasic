@@ -320,9 +320,6 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_format2", "__format2", i8_ptr_type, {i8_ptr_type, f64_type, f64_type}, 2);
     reg("jdb_format3", "__format3", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type}, 2);
     reg("jdb_format4", "__format4", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type, f64_type}, 2);
-    // Tagged variants for FORMAT$ with mixed double + string args.
-    // Args punned to i64 (double bits or string pointer); types$ is one
-    // char per arg ('d' or 's'). See jdb_format_tagged_impl in jdb_runtime.cpp.
     reg("jdb_format1_t", "__format1_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type}, 2);
     reg("jdb_format2_t", "__format2_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type}, 2);
     reg("jdb_format3_t", "__format3_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type, i64_type}, 2);
@@ -745,12 +742,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     }
 
     // Pre-pass: any `arr[i] = some_array_value` statement marks `arr`
-    // as holding nested arrays (matrix-cache pattern). Lets
-    // classify_return tag `RETURN arr[i]` as ARR so a HOF FUNC like
-    // APPLE2.GLYPH_FOR returns an array, not an f64-punned-pointer
-    // that the caller can't deref. Tracks local var kinds within each
-    // SUB/FUNC scope so `glyph = ZEROS(...); glyph_cache[ch] = glyph`
-    // also marks glyph_cache (the RHS variable holds an array).
+    // as holding nested arrays. Lets classify_return tag
+    // `RETURN arr[i]` as ARR so the caller gets a proper array
+    // pointer instead of an f64-punned one. Tracks local var kinds
+    // per SUB/FUNC scope so `glyph = ZEROS(...); cache[i] = glyph`
+    // also marks cache.
     std::function<void(const Stmt&,
                       std::unordered_map<std::string,int>&)> scan_idx_assigns;
     // Helper: classify RHS expr in local scope. For a VARIABLE, only
@@ -1019,9 +1015,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 auto lit = local_kinds.find(e.str_val);
                 if (lit != local_kinds.end()) return lit->second;
             }
-            // `RETURN arr[i]` where arr is known to hold nested arrays
-            // (a matrix cache, e.g. APPLE2.GLYPH_FOR). Without this
-            // hint the function's return tag stays f64 and the caller
+            // `RETURN arr[i]` where arr is known to hold nested arrays.
+            // Without this the return tag stays f64 and the caller
             // can't deref the result.
             if (e.kind == ExprKind::INDEX && e.left &&
                 e.left->kind == ExprKind::VARIABLE) {
@@ -1279,7 +1274,6 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
                     default: return make(K::UNKNOWN);
                 }
             }
-            // Native runtime functions: look up the registered return tag.
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) {
                 switch (rit->second.return_tag) {
@@ -1289,7 +1283,7 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
                     case 3: return make(K::ARRAY);
                     case 4: return make(K::MAP);
                     case 5: return make(K::FUNCREF);
-                    default: break;  // -1 / unknown — fall through to heuristics
+                    default: break;
                 }
             }
             // $-suffixed builtins return strings (SPLIT$, LCASE$, etc).
@@ -1298,10 +1292,6 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
             return make(K::UNKNOWN);
         }
         case ExprKind::PIPE_EXPR: {
-            // Pipe forwards the right side's return type. For `value |> FUNC(?, ...)`
-            // the result type is whatever FUNC returns. Without this case the
-            // pipe expression infers UNKNOWN, codegen_dim falls back to an i64
-            // slot, and a double-bit-pattern store/load reads back as junk int.
             if (e.right) return infer_expr_type(*e.right);
             return make(K::UNKNOWN);
         }
@@ -1644,16 +1634,11 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "DIR$"
                         };
                         if (arr_returners.count(upper)) return JD_TAG_ARR;
-                        // Scalar reducers — explicit list so DIM x = arr |>
-                        // SUM(?) creates an f64 slot. REDUCE/SUM/MIN/etc.
-                        // return doubles regardless of input arity, and
-                        // pipes wrap them as the final stage.
                         static const std::unordered_set<std::string> scalar_reducers = {
                             "SUM","PRODUCT","MIN","MAX","MEAN","STDEV","MEDIAN",
                             "VARIANCE","DOT","CROSS","REDUCE"
                         };
                         if (scalar_reducers.count(upper)) return JD_TAG_F64;
-                        // Length-style reducers always return INT.
                         static const std::unordered_set<std::string> int_reducers = {
                             "LEN","COUNT","ANY","ALL","INDEXOF"
                         };
@@ -1705,23 +1690,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     }
                     if (e->kind == ExprKind::UNARY) return infer_tag(e->right.get());
                     if (e->kind == ExprKind::PIPE_EXPR) {
-                        // `value |> FUNC(?, …)` returns whatever FUNC returns.
-                        // Without this case the pre-pass picks i64 for the
-                        // global slot, then the actual codegen does
-                        // `store double` against it and `load i64` reads back
-                        // the f64 bits as garbage int (manifests as giant
-                        // numbers in PRINT and `=` mismatches).
                         if (!e->right) return -1;
-                        // Right side is a LAMBDA being applied: scalar pipe
-                        // returns f64 (lambda body is f64-typed); array pipe
-                        // can return scalar or array depending on body shape.
+                        // LAMBDA right: scalar pipe returns f64, array pipe stays array.
                         if (e->right->kind == ExprKind::LAMBDA_EXPR) {
                             int lt = infer_tag(e->left.get());
                             if (lt == JD_TAG_ARR) return JD_TAG_ARR;
                             return JD_TAG_F64;
                         }
-                        // Right side is a bare FUNC name (`value |> FuncName`):
-                        // result is the function's return tag.
                         if (e->right->kind == ExprKind::VARIABLE ||
                             e->right->kind == ExprKind::LITERAL_STRING) {
                             auto uit = user_functions.find(e->right->str_val);
@@ -1732,11 +1707,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         return infer_tag(e->right.get());
                     }
                     if (e->kind == ExprKind::PLACEHOLDER_EXPR) {
-                        // The `?` placeholder in a pipe carries the type of
-                        // whatever was piped in. The actual tag is set when
-                        // codegen evaluates the pipe; pre-pass can't resolve
-                        // it, so report unknown and let codegen_dim widen at
-                        // runtime.
+                        // codegen widens at runtime via the pipe's __PIPE_TMP__ tag.
                         return -1;
                     }
                     if (e->kind == ExprKind::INDEX) {
@@ -2856,11 +2827,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
     }
 
-    // DIM x AS DATE — the parser stores "DATE" in stmt.label since DATE
-    // is not a token-level type. CVDATE/CDATE return a string pointer at
-    // runtime, so treat the slot as STRING-typed default-empty. Without
-    // this, the slot would route into the UDT path with no constructor
-    // and the later `x = CVDate(...)` store would crash on PRINT.
+    // DATE has no token-level VarType, so the parser stuffs it into
+    // stmt.label. Treat the slot as STRING since CVDATE returns char*.
     {
         std::string lbl_up = stmt.label;
         std::transform(lbl_up.begin(), lbl_up.end(), lbl_up.begin(), ::toupper);
@@ -4931,11 +4899,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
 
     // Power operator (^)
     if (expr.op == TokenType::CARET) {
-        // Array operands: dispatch elementwise via scalar_op code 10
-        // (added in jdb_runtime.cpp). Without this, GX^2 over a 2D matrix
-        // hit promote_to_f64 on the array pointer and the subsequent
-        // __pow call returned an empty/garbage array — the wireframe
-        // demo's DIST = SQR(GX^2 + GY^2) collapsed to [].
         if (lhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_ARR) {
             const int32_t POW_OP = 10;
             if (lhs.tag == JD_TAG_ARR && rhs.tag == JD_TAG_ARR) {
@@ -5194,10 +5157,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
         if (operand.tag == JD_TAG_F64)
             return { LLVMBuildFNeg(builder, operand.val, "fneg"), JD_TAG_F64 };
         if (operand.tag == JD_TAG_ARR) {
-            // Element-wise negate: arr * -1.0 via the standard array
-            // arith runtime (op 2 = MUL). Without this the codegen
-            // falls into the i64 path and emits `sub ptr null, %arr`,
-            // which the IR verifier rejects.
+            // Element-wise negate via arr * -1.0 (scalar_op code 2 = MUL).
             auto& fn = runtime_funcs["__arr_scalar_op"];
             LLVMValueRef m1 = LLVMConstReal(f64_type, -1.0);
             LLVMValueRef args[] = { operand.val, m1,
@@ -5319,11 +5279,7 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
 
-    // APPEND(arr1, arr2) — when both arguments are arrays, jdBasic's
-    // interpreter flattens (concatenates). The default native dispatch
-    // routes through jdb_array_append(arr, double) and ends up
-    // appending the second array's *pointer* as a single element.
-    // Detect array+array here and route to __append_arr.
+    // APPEND(arr, arr) flattens; APPEND(arr, scalar) appends one element.
     if (name == "APPEND" && expr.args.size() == 2) {
         TypedValue a = codegen_expr(*expr.args[0]);
         TypedValue b = codegen_expr(*expr.args[1]);
@@ -5332,8 +5288,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { a.val, b.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "appa"), JD_TAG_ARR };
         }
-        // Not array+array: fall through, but feed the already-evaluated
-        // operands to the standard APPEND(arr, double) path.
         if (a.tag == JD_TAG_ARR) {
             LLVMValueRef bf = b.tag == JD_TAG_I64
                 ? LLVMBuildSIToFP(builder, b.val, f64_type, "itof")
@@ -5357,8 +5311,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         expr.args[0] && expr.args[0]->kind == ExprKind::ARRAY_LITERAL) {
         auto& shape_args = expr.args[0]->args;
         auto& arr_new = runtime_funcs["__array_new"];
-        // For ONES, build the inner arrays via jdb_ones so they're filled
-        // with 1.0; ZEROS gets zero-filled arrays via __array_new.
         bool is_ones = (name == "ONES");
         auto& arr_ones_fn = runtime_funcs["ONES"];
 
@@ -5637,7 +5589,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ss"), JD_TAG_STR };
         }
         if (av.tag == JD_TAG_ARR) {
-            // Array → "[a, b, c]" via the same formatter PRINT uses.
             auto& fn = runtime_funcs["FRMV$"];
             LLVMValueRef args[] = { av.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "sarr"), JD_TAG_STR };
@@ -5655,9 +5606,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         int nargs = (int)expr.args.size() - 1;
         if (nargs > 4) nargs = 4;
 
-        // Pre-evaluate args to learn their tags. If any is a string,
-        // route through the tagged variant (__formatN_t) which accepts
-        // i64-punned values + a per-arg type string.
+        // Pre-evaluate args; route to __formatN_t when any is a string.
         std::vector<TypedValue> evald;
         evald.reserve(nargs);
         bool any_str = false;
@@ -5671,7 +5620,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             std::string fn_name = "__format" + std::to_string(nargs) + "_t";
             auto fit3 = runtime_funcs.find(fn_name);
             if (fit3 != runtime_funcs.end()) {
-                // Build the per-arg type string ("d"/"s" per slot).
                 std::string types_lit;
                 types_lit.reserve(nargs);
                 for (auto& av : evald) types_lit += (av.tag == JD_TAG_STR ? 's' : 'd');
@@ -5686,13 +5634,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     if (av.tag == JD_TAG_STR) {
                         raw = LLVMBuildPtrToInt(builder, av.val, i64_type, "ptoi");
                     } else if (av.tag == JD_TAG_I64) {
-                        // Pun int as f64 bits so the runtime sees a double.
                         LLVMValueRef as_d = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
                         raw = pun_f64_to_i64(as_d);
                     } else if (av.tag == JD_TAG_F64) {
                         raw = pun_f64_to_i64(av.val);
                     } else {
-                        // Unknown — pun as-is.
                         raw = pun_f64_to_i64(coerce_to(av, f64_type));
                     }
                     args.push_back(raw);
