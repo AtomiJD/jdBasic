@@ -78,12 +78,20 @@ void Console::enable_raw_mode() {
     }
 #else
     if (raw_mode_active) return;
-    struct termios t;
-    if (tcgetattr(STDIN_FILENO, &t) != 0) return;
     static_assert(sizeof(struct termios) <= sizeof(original_termios),
                   "original_termios buffer too small");
-    std::memcpy(original_termios, &t, sizeof(struct termios));
-    struct termios raw = t;
+    // Save the original termios once, in the FIRST enable. Subsequent
+    // re-enables (after a script ran with raw mode disabled) must NOT
+    // overwrite the saved state — child code may have temporarily tweaked
+    // line discipline and we want to restore the REPL-entry baseline.
+    if (!original_termios_saved) {
+        struct termios t;
+        if (tcgetattr(STDIN_FILENO, &t) != 0) return;
+        std::memcpy(original_termios, &t, sizeof(struct termios));
+        original_termios_saved = true;
+    }
+    struct termios raw;
+    std::memcpy(&raw, original_termios, sizeof(struct termios));
     // Same effect as Win raw flags: no echo, no line buffering, no Ctrl-C/Z
     // interpretation. Keep ISIG off so we see Ctrl-C ourselves (KEY_CTRL_C).
     raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
@@ -92,7 +100,7 @@ void Console::enable_raw_mode() {
     raw.c_cflag |= CS8;
     raw.c_cc[VMIN]  = 0;   // non-blocking single-byte read
     raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
     raw_mode_active = true;
 #endif
 }
@@ -102,10 +110,10 @@ void Console::disable_raw_mode() {
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     SetConsoleMode(hStdin, (DWORD)original_console_mode);
 #else
-    if (!raw_mode_active) return;
+    if (!raw_mode_active || !original_termios_saved) { raw_mode_active = false; return; }
     struct termios t;
     std::memcpy(&t, original_termios, sizeof(struct termios));
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &t);
+    tcsetattr(STDIN_FILENO, TCSANOW, &t);
     raw_mode_active = false;
 #endif
 }
@@ -355,6 +363,11 @@ void Console::run() {
 #else
             tcflush(STDIN_FILENO, TCIFLUSH);
             while (!input_queue.empty()) input_queue.pop();
+            // The script printed unrelated output; the previous prompt's
+            // "drawn length" no longer reflects what's on-screen. Drop it
+            // and force the next render to start fresh on a new line.
+            prompt_drawn_visual_len = 0;
+            std::cout << "\r\n" << std::flush;
 #endif
             render_prompt();
         }
@@ -432,6 +445,9 @@ void Console::switch_workspace(int target) {
     print("--- Workspace " + std::to_string(active_ws + 1) + " ---");
     set_color(7, 0);
     print("\r\n");
+    // Drop the previous prompt's drawn-length so render_prompt doesn't try
+    // to back up over content that was wiped by the screen clear.
+    prompt_drawn_visual_len = 0;
     render_prompt();
 }
 
@@ -655,6 +671,11 @@ void Console::execute_current_line() {
                 FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
                 while (!utf8_buffer.empty()) utf8_buffer.pop();
                 high_surrogate = 0;
+#else
+                tcflush(STDIN_FILENO, TCIFLUSH);
+                while (!input_queue.empty()) input_queue.pop();
+                prompt_drawn_visual_len = 0;
+                std::cout << "\r\n" << std::flush;
 #endif
             }
         }
@@ -874,18 +895,15 @@ void Console::set_color(int fg, int bg) {
     bool fg_bright = (fg & 0x08) != 0;
     bool bg_bright = (bg & 0x08) != 0;
     char buf[64];
-    snprintf(buf, sizeof(buf), "\033[%d;%s%dm",
-             fg_bright ? 1 : 22,
-             bg_bright ? "10" : "",
-             fg_bright ? fg_base : fg_base);
-    // Simpler: just emit fg, optionally bright.
-    if (fg_bright)
-        snprintf(buf, sizeof(buf), "\033[1;%dm", fg_base);
-    else
-        snprintf(buf, sizeof(buf), "\033[22;%dm", fg_base);
+    if (fg_bright) snprintf(buf, sizeof(buf), "\033[1;%dm", fg_base);
+    else           snprintf(buf, sizeof(buf), "\033[22;%dm", fg_base);
     std::cout << buf;
-    // Background — only set if non-zero so we don't clobber the terminal default
-    if (bg != 0) {
+    // Background: bg=0 means "default" (matches terminal default). Anything
+    // else is an explicit colour. We must always emit bg so set_color(X, 0)
+    // properly clears a previously-set bg (e.g. after F7's white header).
+    if (bg == 0)
+        std::cout << "\033[49m";
+    else {
         snprintf(buf, sizeof(buf), "\033[%dm", bg_bright ? bg_base + 60 : bg_base);
         std::cout << buf;
     }
@@ -920,7 +938,7 @@ bool Console::is_native(const std::string& word) const {
 void Console::render_prompt() {
     auto& state = active_state();
     std::cout.clear();
-    static int last_drawn_total_visual_len = 0;
+    int& last_drawn_total_visual_len = prompt_drawn_visual_len;
 
     std::string prompt_str = "WS" + std::to_string(active_ws + 1) + "> ";
     int prompt_len = (int)prompt_str.length();

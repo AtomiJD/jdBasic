@@ -47,9 +47,18 @@ enum : int {
     PK_DELETE, PK_BACKSPACE, PK_ENTER, PK_TAB, PK_ESC,
     PK_F5,
     PK_CTRL_S, PK_CTRL_Q, PK_CTRL_Z, PK_CTRL_Y,
-    PK_CTRL_C, PK_CTRL_V, PK_CTRL_G, PK_CTRL_F,
+    PK_CTRL_C, PK_CTRL_X, PK_CTRL_V, PK_CTRL_G, PK_CTRL_F, PK_CTRL_A,
     PK_CTRL_LEFT, PK_CTRL_RIGHT,
+    PK_SHIFT_LEFT, PK_SHIFT_RIGHT, PK_SHIFT_UP, PK_SHIFT_DOWN,
+    PK_SHIFT_HOME, PK_SHIFT_END,
 };
+
+// Internal clipboard fallback. xclip/wl-copy fail silently when there's no
+// DISPLAY/WAYLAND_DISPLAY (e.g. plain SSH session) — without this fallback
+// Ctrl+C+V across the editor would round-trip through the system clipboard
+// or stale state from another app.
+static std::string g_internal_clipboard;
+static bool        g_internal_clipboard_set = false;
 
 struct TermGuard {
     struct termios orig{};
@@ -99,8 +108,10 @@ int read_key_blocking(std::string& utf8_out) {
     if (c == 0x19) return PK_CTRL_Y;
     if (c == 0x03) return PK_CTRL_C;
     if (c == 0x16) return PK_CTRL_V;
+    if (c == 0x18) return PK_CTRL_X;
     if (c == 0x07) return PK_CTRL_G;
     if (c == 0x06) return PK_CTRL_F;
+    if (c == 0x01) return PK_CTRL_A;
 
     if (c == 0x1B) {
         int b1 = read_byte_timed(20);
@@ -133,19 +144,21 @@ int read_key_blocking(std::string& utf8_out) {
         } if (cur >= 0) nums.push_back(cur); }
         int p1 = nums.size() > 0 ? nums[0] : -1;
         int p2 = nums.size() > 1 ? nums[1] : -1;
-        bool ctrl_mod = (p2 == 5 || p2 == 6 || p2 == 7);
+        // xterm modifier conventions: p2 = 1+(shift?1:0)+(alt?2:0)+(ctrl?4:0)
+        bool shift_mod = (p2 == 2 || p2 == 4 || p2 == 6 || p2 == 8);
+        bool ctrl_mod  = (p2 == 5 || p2 == 6 || p2 == 7 || p2 == 8);
 
         switch (final) {
-            case 'A': return PK_UP;
-            case 'B': return PK_DOWN;
-            case 'C': return ctrl_mod ? PK_CTRL_RIGHT : PK_RIGHT;
-            case 'D': return ctrl_mod ? PK_CTRL_LEFT  : PK_LEFT;
-            case 'H': return PK_HOME;
-            case 'F': return PK_END;
+            case 'A': return shift_mod ? PK_SHIFT_UP    : PK_UP;
+            case 'B': return shift_mod ? PK_SHIFT_DOWN  : PK_DOWN;
+            case 'C': return ctrl_mod ? PK_CTRL_RIGHT : (shift_mod ? PK_SHIFT_RIGHT : PK_RIGHT);
+            case 'D': return ctrl_mod ? PK_CTRL_LEFT  : (shift_mod ? PK_SHIFT_LEFT  : PK_LEFT);
+            case 'H': return shift_mod ? PK_SHIFT_HOME  : PK_HOME;
+            case 'F': return shift_mod ? PK_SHIFT_END   : PK_END;
             case '~':
                 switch (p1) {
-                    case 1: case 7:  return PK_HOME;
-                    case 4: case 8:  return PK_END;
+                    case 1: case 7:  return shift_mod ? PK_SHIFT_HOME : PK_HOME;
+                    case 4: case 8:  return shift_mod ? PK_SHIFT_END  : PK_END;
                     case 3:  return PK_DELETE;
                     case 5:  return PK_PAGEUP;
                     case 6:  return PK_PAGEDOWN;
@@ -206,8 +219,12 @@ int byte_to_cp(const std::string& s, int byte_off) {
     return cp;
 }
 
-// Clipboard via xclip / wl-copy (line-based, single-line for simplicity)
+// Clipboard. Always updates the in-process fallback so editor copy/paste
+// works even with no DISPLAY (e.g. plain SSH). Also tries xclip/wl-copy/xsel
+// so paste into other apps still works when X/Wayland is around.
 void clip_set(const std::string& text) {
+    g_internal_clipboard = text;
+    g_internal_clipboard_set = true;
     const char* tools[] = {
         "wl-copy 2>/dev/null",
         "xclip -selection clipboard -in 2>/dev/null",
@@ -219,6 +236,9 @@ void clip_set(const std::string& text) {
     }
 }
 std::string clip_get() {
+    // If the user copied something inside this editor session, prefer that —
+    // the system clipboard might be unreachable (no DISPLAY) or out of sync.
+    if (g_internal_clipboard_set) return g_internal_clipboard;
     std::string r;
     const char* tools[] = {
         "wl-paste --no-newline 2>/dev/null",
@@ -254,6 +274,56 @@ private:
     int top_row = 0, left_col = 0;
     bool dirty = false;
     std::string status_msg;
+
+    // Selection state. has_sel() is true between Shift-arrow press and any
+    // non-shift movement (or selection-ending action like type/backspace).
+    bool sel_active = false;
+    int  sel_anchor_y = 0, sel_anchor_x = 0;   // anchor (set on first shift+move)
+    bool has_sel() const { return sel_active && !(sel_anchor_y == cy && sel_anchor_x == cx); }
+    void start_sel_if_needed() {
+        if (!sel_active) { sel_active = true; sel_anchor_y = cy; sel_anchor_x = cx; }
+    }
+    void clear_sel() { sel_active = false; }
+    // Normalised range (sy,sx) <= (ey,ex)
+    void get_sel_range(int& sy, int& sx, int& ey, int& ex) const {
+        if (sel_anchor_y < cy || (sel_anchor_y == cy && sel_anchor_x <= cx)) {
+            sy = sel_anchor_y; sx = sel_anchor_x; ey = cy; ex = cx;
+        } else {
+            sy = cy; sx = cx; ey = sel_anchor_y; ex = sel_anchor_x;
+        }
+    }
+    std::string sel_text() const {
+        if (!has_sel()) return "";
+        int sy, sx, ey, ex; get_sel_range(sy, sx, ey, ex);
+        std::string out;
+        for (int y = sy; y <= ey; y++) {
+            const std::string& l = lines_ref[y];
+            int from_byte = (y == sy) ? cp_to_byte(l, sx) : 0;
+            int to_byte   = (y == ey) ? cp_to_byte(l, ex) : (int)l.size();
+            out.append(l, from_byte, to_byte - from_byte);
+            if (y != ey) out += '\n';
+        }
+        return out;
+    }
+    void delete_sel() {
+        if (!has_sel()) return;
+        int sy, sx, ey, ex; get_sel_range(sy, sx, ey, ex);
+        if (sy == ey) {
+            int from = cp_to_byte(lines_ref[sy], sx);
+            int to   = cp_to_byte(lines_ref[sy], ex);
+            lines_ref[sy].erase(from, to - from);
+        } else {
+            int from = cp_to_byte(lines_ref[sy], sx);
+            int to   = cp_to_byte(lines_ref[ey], ex);
+            std::string head = lines_ref[sy].substr(0, from);
+            std::string tail = lines_ref[ey].substr(to);
+            lines_ref[sy] = head + tail;
+            lines_ref.erase(lines_ref.begin() + sy + 1, lines_ref.begin() + ey + 1);
+        }
+        cy = sy; cx = sx;
+        clear_sel();
+        dirty = true;
+    }
 
     // Undo/Redo
     struct Snap { std::vector<std::string> lines; int cx, cy; };
@@ -399,12 +469,32 @@ void EditorImpl::draw_line(int line_idx, int row_on_screen) {
     }
     const std::string& line = lines_ref[line_idx];
     int line_cp_total = utf8_codepoints(line);
-    if (left_col >= line_cp_total) return;
 
-    // Tokenise + colour, skipping bytes for the first `left_col` codepoints
+    // Compute selection columns for this row (in codepoints)
+    int sel_from = -1, sel_to = -1;
+    if (has_sel()) {
+        int sy, sx, ey, ex; get_sel_range(sy, sx, ey, ex);
+        if (line_idx >= sy && line_idx <= ey) {
+            sel_from = (line_idx == sy) ? sx : 0;
+            sel_to   = (line_idx == ey) ? ex : line_cp_total + 1;  // +1 = include newline cell
+        }
+    }
+
+    if (left_col >= line_cp_total && sel_from < 0) return;
+
     int skip_byte = cp_to_byte(line, left_col);
     int max_cp = screen_cols;
     int cp_emitted = 0;
+    int cp_pos = left_col;   // codepoint index of next emitted cell
+
+    auto open_color = [&](const char* color) {
+        bool selected = (sel_from >= 0 && cp_pos >= sel_from && cp_pos < sel_to);
+        if (selected) std::cout << "\033[7m";   // reverse video
+        std::cout << color;
+    };
+    auto close_color = [&]() {
+        std::cout << "\033[0m";
+    };
 
     size_t i = (size_t)skip_byte;
     while (i < line.size() && cp_emitted < max_cp) {
@@ -413,39 +503,71 @@ void EditorImpl::draw_line(int line_idx, int row_on_screen) {
         const char* color = "\033[0m";
 
         if (c == '\'') {
-            color = "\033[90m";   // grey
+            color = "\033[90m";
             while (i < line.size()) { token += line[i++]; }
         } else if (c == '"') {
-            color = "\033[36m";   // cyan
+            color = "\033[36m";
             token += line[i++];
             while (i < line.size() && line[i] != '"') token += line[i++];
             if (i < line.size()) token += line[i++];
         } else if (std::isdigit(c)) {
-            color = "\033[33m";   // yellow
+            color = "\033[33m";
             while (i < line.size() && (std::isdigit((unsigned char)line[i]) || line[i] == '.'))
                 token += line[i++];
         } else if (std::isalpha(c) || c == '_' || c >= 0x80) {
             while (i < line.size() && (std::isalnum((unsigned char)line[i]) || line[i] == '_' ||
                    (unsigned char)line[i] >= 0x80))
                 token += line[i++];
-            if      (is_kw(token))  color = "\033[35;1m";  // bright magenta
-            else if (is_nat(token)) color = "\033[36;1m";  // bright cyan
-            else                    color = "\033[32m";    // green
+            if      (is_kw(token))  color = "\033[35;1m";
+            else if (is_nat(token)) color = "\033[36;1m";
+            else                    color = "\033[32m";
         } else {
             color = "\033[37m";
             token += line[i++];
         }
         int tk_cp = utf8_codepoints(token);
         if (cp_emitted + tk_cp > max_cp) {
-            // Truncate token at codepoint boundary
             int allowed = max_cp - cp_emitted;
             int byte_lim = cp_to_byte(token, allowed);
-            std::cout << color << token.substr(0, byte_lim) << "\033[0m";
+            // Emit char-by-char so selection boundaries inside the truncated
+            // token render correctly.
+            size_t bi = 0;
+            while ((int)bi < byte_lim) {
+                unsigned char ch = token[bi];
+                int clen = (ch < 0x80) ? 1 : ((ch & 0xE0) == 0xC0 ? 2 : ((ch & 0xF0) == 0xE0 ? 3 : 4));
+                if ((int)bi + clen > byte_lim) break;
+                open_color(color);
+                std::cout << token.substr(bi, clen);
+                close_color();
+                bi += clen;
+                cp_pos++; cp_emitted++;
+            }
             cp_emitted = max_cp;
         } else {
-            std::cout << color << token << "\033[0m";
-            cp_emitted += tk_cp;
+            // Emit char-by-char if any selection boundary falls inside the token
+            if (sel_from >= 0 && cp_pos < sel_to && cp_pos + tk_cp > sel_from) {
+                size_t bi = 0;
+                while (bi < token.size()) {
+                    unsigned char ch = token[bi];
+                    int clen = (ch < 0x80) ? 1 : ((ch & 0xE0) == 0xC0 ? 2 : ((ch & 0xF0) == 0xE0 ? 3 : 4));
+                    open_color(color);
+                    std::cout << token.substr(bi, clen);
+                    close_color();
+                    bi += clen;
+                    cp_pos++; cp_emitted++;
+                }
+            } else {
+                std::cout << color << token << "\033[0m";
+                cp_emitted += tk_cp;
+                cp_pos += tk_cp;
+            }
         }
+    }
+
+    // If the selection extends past the visible text on this row (multi-line
+    // selection through whitespace), draw a single reverse-video space at end.
+    if (sel_from >= 0 && cp_pos < sel_to && cp_emitted < max_cp) {
+        std::cout << "\033[7m \033[0m";
     }
 }
 
@@ -495,6 +617,14 @@ void EditorImpl::run() {
         int key = read_key_blocking(utf);
         if (key == PK_NONE) continue;
 
+        // Movement keys clear selection on non-shift; the shift variants
+        // start it. Anything not in this list (typing, save, etc.) just
+        // proceeds — typing replaces the selection.
+        bool is_plain_move = (key == PK_LEFT || key == PK_RIGHT || key == PK_UP || key == PK_DOWN ||
+                              key == PK_HOME || key == PK_END || key == PK_PAGEUP || key == PK_PAGEDOWN ||
+                              key == PK_CTRL_LEFT || key == PK_CTRL_RIGHT);
+        if (is_plain_move) clear_sel();
+
         switch (key) {
             case PK_CTRL_Q:
                 if (dirty) {
@@ -509,9 +639,27 @@ void EditorImpl::run() {
             case PK_CTRL_Y: redo(); break;
             case PK_CTRL_G: go_to_line(); break;
             case PK_CTRL_F: find_next(); break;
-            case PK_CTRL_C: clip_set(lines_ref[cy]); status_msg = "Line copied"; break;
+            case PK_CTRL_A:
+                // Select all
+                sel_active = true; sel_anchor_y = 0; sel_anchor_x = 0;
+                cy = (int)lines_ref.size() - 1;
+                cx = line_cps(cy);
+                break;
+            case PK_CTRL_C:
+                if (has_sel()) { clip_set(sel_text()); status_msg = "Selection copied"; }
+                else           { clip_set(lines_ref[cy] + "\n"); status_msg = "Line copied"; }
+                break;
+            case PK_CTRL_X:
+                if (has_sel()) { save_state(); clip_set(sel_text()); delete_sel(); status_msg = "Selection cut"; }
+                else           { save_state(); clip_set(lines_ref[cy] + "\n");
+                                 lines_ref.erase(lines_ref.begin() + cy);
+                                 if (lines_ref.empty()) lines_ref.push_back("");
+                                 if (cy >= (int)lines_ref.size()) cy = (int)lines_ref.size() - 1;
+                                 clamp_cursor(); dirty = true; status_msg = "Line cut"; }
+                break;
             case PK_CTRL_V: {
                 save_state();
+                if (has_sel()) delete_sel();
                 std::string txt = clip_get();
                 // Insert at cursor; respect newlines by splitting into lines.
                 std::vector<std::string> parts; std::string cur;
@@ -536,19 +684,31 @@ void EditorImpl::run() {
                 break;
             }
             case PK_LEFT:
+            case PK_SHIFT_LEFT:
+                if (key == PK_SHIFT_LEFT) start_sel_if_needed();
                 if (cx > 0) cx--;
                 else if (cy > 0) { cy--; cx = line_cps(cy); }
                 break;
-            case PK_RIGHT: {
+            case PK_RIGHT:
+            case PK_SHIFT_RIGHT: {
+                if (key == PK_SHIFT_RIGHT) start_sel_if_needed();
                 int len = line_cps(cy);
                 if (cx < len) cx++;
                 else if (cy + 1 < (int)lines_ref.size()) { cy++; cx = 0; }
                 break;
             }
-            case PK_UP:    if (cy > 0) cy--; clamp_cursor(); break;
-            case PK_DOWN:  if (cy + 1 < (int)lines_ref.size()) cy++; clamp_cursor(); break;
-            case PK_HOME:  cx = 0; break;
-            case PK_END:   cx = line_cps(cy); break;
+            case PK_UP:
+            case PK_SHIFT_UP:
+                if (key == PK_SHIFT_UP) start_sel_if_needed();
+                if (cy > 0) cy--; clamp_cursor(); break;
+            case PK_DOWN:
+            case PK_SHIFT_DOWN:
+                if (key == PK_SHIFT_DOWN) start_sel_if_needed();
+                if (cy + 1 < (int)lines_ref.size()) cy++; clamp_cursor(); break;
+            case PK_HOME:        cx = 0; break;
+            case PK_SHIFT_HOME:  start_sel_if_needed(); cx = 0; break;
+            case PK_END:         cx = line_cps(cy); break;
+            case PK_SHIFT_END:   start_sel_if_needed(); cx = line_cps(cy); break;
             case PK_PAGEUP:   cy = std::max(0, cy - text_rows()); top_row = std::max(0, top_row - text_rows()); clamp_cursor(); break;
             case PK_PAGEDOWN: cy = std::min((int)lines_ref.size() - 1, cy + text_rows()); top_row = std::min(std::max(0,(int)lines_ref.size() - text_rows()), top_row + text_rows()); clamp_cursor(); break;
             case PK_CTRL_LEFT: {
@@ -570,6 +730,7 @@ void EditorImpl::run() {
             }
             case PK_BACKSPACE: {
                 save_state();
+                if (has_sel()) { delete_sel(); break; }
                 if (cx > 0) {
                     int b_end   = cp_to_byte(lines_ref[cy], cx);
                     int b_start = cp_to_byte(lines_ref[cy], cx - 1);
@@ -586,6 +747,7 @@ void EditorImpl::run() {
             }
             case PK_DELETE: {
                 save_state();
+                if (has_sel()) { delete_sel(); break; }
                 int len = line_cps(cy);
                 if (cx < len) {
                     int b_start = cp_to_byte(lines_ref[cy], cx);
@@ -601,10 +763,10 @@ void EditorImpl::run() {
             }
             case PK_ENTER: {
                 save_state();
+                if (has_sel()) delete_sel();
                 int b = cp_to_byte(lines_ref[cy], cx);
                 std::string remain = lines_ref[cy].substr(b);
                 lines_ref[cy] = lines_ref[cy].substr(0, b);
-                // Auto-indent: copy leading whitespace
                 std::string indent;
                 for (char c : lines_ref[cy]) { if (c == ' ' || c == '\t') indent += c; else break; }
                 lines_ref.insert(lines_ref.begin() + cy + 1, indent + remain);
@@ -614,6 +776,7 @@ void EditorImpl::run() {
             }
             case PK_TAB: {
                 save_state();
+                if (has_sel()) delete_sel();
                 int b = cp_to_byte(lines_ref[cy], cx);
                 lines_ref[cy].insert(b, "    ");
                 cx += 4; dirty = true;
@@ -622,6 +785,7 @@ void EditorImpl::run() {
             case -1: {
                 if (!utf.empty()) {
                     save_state();
+                    if (has_sel()) delete_sel();
                     int b = cp_to_byte(lines_ref[cy], cx);
                     lines_ref[cy].insert(b, utf);
                     cx++;

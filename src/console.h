@@ -129,9 +129,16 @@ private:
     // POSIX raw-mode state. Stored as a byte buffer so console.h does not
     // need to pull in <termios.h>; console.cpp casts to struct termios.
     bool   raw_mode_active = false;
+    bool   original_termios_saved = false;
     char   original_termios[64] = {0};   // sizeof(struct termios) is ≤ 64
     std::queue<int> input_queue;          // pushed-back bytes from escape parsing
 #endif
+    // render_prompt remembers how much it drew last time so the next call
+    // can back up and clear the previous render area. After a worker
+    // completes (the program may have printed unrelated output below the
+    // old prompt) this becomes stale — reset it to 0 to force a fresh
+    // redraw at the current cursor position without backing up.
+    int prompt_drawn_visual_len = 0;
 
     // Raw mode
     void enable_raw_mode();
