@@ -650,9 +650,10 @@ void EditorImpl::run() {
 
         switch (key) {
             case PK_CTRL_Q:
-                if (dirty) {
-                    if (!prompt_yn("Discard unsaved changes?")) { status_msg = "Cancelled"; break; }
-                }
+                // Exit unconditionally. The buffer (lines_ref) is the live
+                // in-memory program — main.cpp picks it up after we return,
+                // so a "discard?" prompt would be misleading. Ctrl+S still
+                // exists for writing to disk.
                 goto done;
             case PK_F5:
                 if (run_requested_out) *run_requested_out = true;
