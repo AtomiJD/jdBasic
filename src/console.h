@@ -125,6 +125,12 @@ private:
     uint32_t original_console_mode = 0;
     std::queue<int> utf8_buffer;
     uint16_t high_surrogate = 0;
+#else
+    // POSIX raw-mode state. Stored as a byte buffer so console.h does not
+    // need to pull in <termios.h>; console.cpp casts to struct termios.
+    bool   raw_mode_active = false;
+    char   original_termios[64] = {0};   // sizeof(struct termios) is ≤ 64
+    std::queue<int> input_queue;          // pushed-back bytes from escape parsing
 #endif
 
     // Raw mode

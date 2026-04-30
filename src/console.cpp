@@ -19,70 +19,12 @@
 #include <chrono>
 
 #if !defined(_WIN32)
-// ── POSIX stub (Linux/macOS): minimal getline-based REPL ─────
-// Full F-key 4-workspace console is Windows-only for now. On POSIX we
-// provide a plain interactive loop so `jdbasic` (no args) is still usable.
 #include <termios.h>
 #include <unistd.h>
-
-Console::Console() {
-    for (int i = 0; i < MAX_WORKSPACES; i++) {
-        workspaces[i].vm = std::make_unique<VM>();
-        auto* screen = &workspaces[i].screen;
-        workspaces[i].vm->on_output = [screen](const std::string& text) {
-            screen->write(text);
-            std::cout << text;
-            std::cout.flush();
-        };
-    }
-}
-Console::~Console() {}
-
-VM& Console::active_vm() { return *workspaces[active_ws].vm; }
-ConsoleState& Console::active_state() { return workspaces[active_ws].console; }
-
-void Console::print(const std::string& text)   { std::cout << text; std::cout.flush(); }
-void Console::println(const std::string& text) { std::cout << text << "\n"; }
-
-void Console::run() {
-    std::string& buffer = workspaces[active_ws].console.program_buffer;
-    std::string line;
-    std::cout << "> " << std::flush;
-    while (std::getline(std::cin, line)) {
-        if (executor) {
-            try { executor(line, *workspaces[active_ws].vm, buffer); }
-            catch (const std::exception& e) { std::cerr << "Error: " << e.what() << "\n"; }
-        }
-        std::cout << "> " << std::flush;
-    }
-}
-
-// Stubs for the rest of the public API
-void Console::enable_raw_mode() {}
-void Console::disable_raw_mode() {}
-int  Console::read_raw_key() { return std::cin.get(); }
-void Console::process_key(int) {}
-void Console::execute_current_line() {}
-void Console::navigate_history(int) {}
-void Console::show_history_f7() {}
-void Console::search_history_f8() {}
-void Console::switch_workspace(int) {}
-void Console::copy_to_clipboard(const std::string&) {}
-std::string Console::get_from_clipboard() { return {}; }
-void Console::set_color(int, int) {}
-void Console::render_prompt() {}
-bool Console::is_keyword(const std::string&) const { return false; }
-bool Console::is_native (const std::string&) const { return false; }
-void Console::save_history() {}
-void Console::load_history() {}
-
-int  Console::add_recur_task(int, const std::string&) { return 0; }
-void Console::clear_recur_task(int) {}
-void Console::list_recur_tasks() {}
-void Console::process_recur_tasks() {}
-
-#else
-// ── Windows full implementation ──────────────────────────────
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <fcntl.h>
+#endif
 
 // ── Constructor / Destructor ─────────────────────────────────
 
@@ -134,6 +76,24 @@ void Console::enable_raw_mode() {
         out_mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
         SetConsoleMode(hStdout, out_mode);
     }
+#else
+    if (raw_mode_active) return;
+    struct termios t;
+    if (tcgetattr(STDIN_FILENO, &t) != 0) return;
+    static_assert(sizeof(struct termios) <= sizeof(original_termios),
+                  "original_termios buffer too small");
+    std::memcpy(original_termios, &t, sizeof(struct termios));
+    struct termios raw = t;
+    // Same effect as Win raw flags: no echo, no line buffering, no Ctrl-C/Z
+    // interpretation. Keep ISIG off so we see Ctrl-C ourselves (KEY_CTRL_C).
+    raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+    raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
+    raw.c_oflag &= ~(OPOST);
+    raw.c_cflag |= CS8;
+    raw.c_cc[VMIN]  = 0;   // non-blocking single-byte read
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    raw_mode_active = true;
 #endif
 }
 
@@ -141,6 +101,12 @@ void Console::disable_raw_mode() {
 #if defined(_WIN32)
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     SetConsoleMode(hStdin, (DWORD)original_console_mode);
+#else
+    if (!raw_mode_active) return;
+    struct termios t;
+    std::memcpy(&t, original_termios, sizeof(struct termios));
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &t);
+    raw_mode_active = false;
 #endif
 }
 
@@ -231,7 +197,122 @@ int Console::read_raw_key() {
     }
     return 0;
 #else
-    return 0;
+    // POSIX: read one byte non-blocking, parse ANSI escape sequences.
+    // Returns 0 if no key available, otherwise either a UTF-8 byte (1..127,
+    // or 0x80..0xFF for multi-byte continuation passed through verbatim) or
+    // one of the abstract KEY_* codes from console.h.
+
+    // Drain pushback queue first
+    if (!input_queue.empty()) {
+        int c = input_queue.front(); input_queue.pop();
+        return c;
+    }
+
+    auto read_byte_now = []() -> int {
+        unsigned char ch;
+        ssize_t n = ::read(STDIN_FILENO, &ch, 1);
+        return (n == 1) ? (int)ch : -1;
+    };
+    // Read with short timeout — used after ESC to disambiguate "lone ESC"
+    // from start of an escape sequence.
+    auto read_byte_timed = [](int ms) -> int {
+        fd_set rfds; FD_ZERO(&rfds); FD_SET(STDIN_FILENO, &rfds);
+        struct timeval tv; tv.tv_sec = ms / 1000; tv.tv_usec = (ms % 1000) * 1000;
+        if (select(STDIN_FILENO + 1, &rfds, nullptr, nullptr, &tv) <= 0) return -1;
+        unsigned char ch;
+        ssize_t n = ::read(STDIN_FILENO, &ch, 1);
+        return (n == 1) ? (int)ch : -1;
+    };
+
+    int c = read_byte_now();
+    if (c < 0) return 0;
+
+    // Translate raw bytes
+    if (c == 0x7F || c == 0x08) return KEY_BACKSPACE;
+    if (c == '\r' || c == '\n') return KEY_ENTER;
+    if (c == '\t') return KEY_TAB;
+    if (c == 0x03) return KEY_CTRL_C;
+    if (c == 0x16) return KEY_CTRL_V;
+
+    if (c == 0x1B) {
+        // ESC: could be lone ESC, alt-key, or a CSI/SS3 sequence.
+        int b1 = read_byte_timed(20);
+        if (b1 < 0) return KEY_ESC;
+
+        if (b1 == '[' || b1 == 'O') {
+            // CSI (\x1b[) or SS3 (\x1bO). Read until a final byte (0x40..0x7E).
+            // Collect up to ~16 bytes of parameters.
+            std::string seq;
+            seq += (char)b1;
+            for (int i = 0; i < 16; i++) {
+                int b = read_byte_timed(20);
+                if (b < 0) break;
+                seq += (char)b;
+                if (b >= 0x40 && b <= 0x7E) break;  // final byte
+            }
+            // seq now looks like "[A", "[1;5C", "[15~", "OP", etc.
+            char final = seq.empty() ? 0 : seq.back();
+
+            if (b1 == 'O') {
+                // SS3: F1..F4 on most terminals
+                switch (final) {
+                    case 'P': return KEY_F1;
+                    case 'Q': return KEY_F2;
+                    case 'R': return KEY_F3;
+                    case 'S': return KEY_F4;
+                    case 'H': return KEY_HOME;
+                    case 'F': return KEY_END;
+                }
+                return 0;
+            }
+
+            // CSI: parse params between '[' and final
+            std::string params = seq.substr(1, seq.size() - 2);
+            // Split params on ';'
+            std::vector<int> nums;
+            { int cur = -1; for (char ch : params) {
+                if (ch >= '0' && ch <= '9') { if (cur < 0) cur = 0; cur = cur * 10 + (ch - '0'); }
+                else if (ch == ';') { nums.push_back(cur); cur = -1; }
+            } if (cur >= 0) nums.push_back(cur); }
+            int p1 = nums.size() > 0 ? nums[0] : -1;
+            int p2 = nums.size() > 1 ? nums[1] : -1;
+            // Modifier bitfield: 5=Ctrl, 3=Alt, 2=Shift (xterm convention is p2-1)
+            bool ctrl_mod = (p2 == 5 || p2 == 6 || p2 == 7);
+
+            switch (final) {
+                case 'A': return ctrl_mod ? KEY_UP    : KEY_UP;
+                case 'B': return ctrl_mod ? KEY_DOWN  : KEY_DOWN;
+                case 'C': return ctrl_mod ? KEY_CTRL_RIGHT : KEY_RIGHT;
+                case 'D': return ctrl_mod ? KEY_CTRL_LEFT  : KEY_LEFT;
+                case 'H': return KEY_HOME;
+                case 'F': return KEY_END;
+                case '~':
+                    switch (p1) {
+                        case 1: case 7: return KEY_HOME;
+                        case 4: case 8: return KEY_END;
+                        case 3:  return KEY_DELETE;
+                        case 5:  return 0;            // PageUp — unmapped
+                        case 6:  return 0;            // PageDown — unmapped
+                        case 11: return KEY_F1;
+                        case 12: return KEY_F2;
+                        case 13: return KEY_F3;
+                        case 14: return KEY_F4;
+                        case 15: return KEY_F5;
+                        case 17: return 0;            // F6 — unmapped
+                        case 18: return KEY_F7;
+                        case 19: return KEY_F8;
+                    }
+                    return 0;
+            }
+            return 0;
+        }
+        // Bare ESC followed by a non-bracket byte: treat as ESC (push the byte back)
+        input_queue.push(b1);
+        return KEY_ESC;
+    }
+
+    // Plain printable / UTF-8 continuation byte: pass through.
+    return c;
 #endif
 }
 
@@ -271,6 +352,9 @@ void Console::run() {
             FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
             while (!utf8_buffer.empty()) utf8_buffer.pop();
             high_surrogate = 0;
+#else
+            tcflush(STDIN_FILENO, TCIFLUSH);
+            while (!input_queue.empty()) input_queue.pop();
 #endif
             render_prompt();
         }
@@ -718,6 +802,21 @@ void Console::copy_to_clipboard(const std::string& text) {
         }
         CloseClipboard();
     }
+#else
+    // Try wl-copy (Wayland), then xclip, then xsel — first one that's on PATH.
+    const char* tools[] = {
+        "wl-copy 2>/dev/null",
+        "xclip -selection clipboard -in 2>/dev/null",
+        "xsel --clipboard --input 2>/dev/null",
+        nullptr
+    };
+    for (int i = 0; tools[i]; ++i) {
+        FILE* p = popen(tools[i], "w");
+        if (!p) continue;
+        fwrite(text.data(), 1, text.size(), p);
+        int rc = pclose(p);
+        if (rc == 0) return;
+    }
 #endif
 }
 
@@ -732,6 +831,23 @@ std::string Console::get_from_clipboard() {
         }
         CloseClipboard();
     }
+#else
+    const char* tools[] = {
+        "wl-paste --no-newline 2>/dev/null",
+        "xclip -selection clipboard -out 2>/dev/null",
+        "xsel --clipboard --output 2>/dev/null",
+        nullptr
+    };
+    for (int i = 0; tools[i]; ++i) {
+        FILE* p = popen(tools[i], "r");
+        if (!p) continue;
+        char buf[1024];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), p)) > 0) result.append(buf, n);
+        int rc = pclose(p);
+        if (rc == 0 && !result.empty()) return result;
+        result.clear();
+    }
 #endif
     return result;
 }
@@ -742,6 +858,38 @@ void Console::set_color(int fg, int bg) {
 #if defined(_WIN32)
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     SetConsoleTextAttribute(hOut, (WORD)(fg | (bg << 4)));
+#else
+    // Win console palette → ANSI SGR. Win uses BIOS-style codes:
+    //   bit 0=R, bit 1=G, bit 2=B, bit 3=intensity (bright)
+    // ANSI fg base: 30=black,31=R,32=G,33=Y,34=B,35=M,36=C,37=W; +60 for bright.
+    auto map = [](int c) {
+        int base = 0;
+        if (c & 1) base |= 1;  // R
+        if (c & 2) base |= 2;  // G
+        if (c & 4) base |= 4;  // B
+        return base;
+    };
+    int fg_base = 30 + map(fg & 0x07);
+    int bg_base = 40 + map(bg & 0x07);
+    bool fg_bright = (fg & 0x08) != 0;
+    bool bg_bright = (bg & 0x08) != 0;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "\033[%d;%s%dm",
+             fg_bright ? 1 : 22,
+             bg_bright ? "10" : "",
+             fg_bright ? fg_base : fg_base);
+    // Simpler: just emit fg, optionally bright.
+    if (fg_bright)
+        snprintf(buf, sizeof(buf), "\033[1;%dm", fg_base);
+    else
+        snprintf(buf, sizeof(buf), "\033[22;%dm", fg_base);
+    std::cout << buf;
+    // Background — only set if non-zero so we don't clobber the terminal default
+    if (bg != 0) {
+        snprintf(buf, sizeof(buf), "\033[%dm", bg_bright ? bg_base + 60 : bg_base);
+        std::cout << buf;
+    }
+    std::cout.flush();
 #endif
 }
 
@@ -928,8 +1076,35 @@ void Console::render_prompt() {
     last_drawn_total_visual_len = total_visual;
     return;
 #else
-    // ── Linux / fallback: existing terminal-escape path ──────
-    (void)last_drawn_total_visual_len;
+    // ── Linux: ANSI-escape redraw of a single logical input line ──
+    // Strategy: move cursor to column 0, clear from cursor down to end of
+    // screen, then re-emit prompt + tokenised input, then position the
+    // cursor at the codepoint offset.
+    //
+    // This is single-line (no wrap support); long input wraps visually but
+    // the cursor positioning still works because we count codepoints from
+    // the start of the prompt. Good enough for Phase 2 of the Linux port.
+
+    // Number of terminal rows the *previous* render took, so we can back up
+    // and clear them. Default to 1 if we don't know.
+    int cols = 80;
+    {
+        struct winsize ws;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+            cols = ws.ws_col;
+    }
+    int last_rows = (last_drawn_total_visual_len + cols - 1) / cols;
+    if (last_rows < 1) last_rows = 1;
+
+    // Move cursor up `last_rows-1` (we're on the last row we rendered last
+    // time, assuming nothing was emitted between renders), then to column 0,
+    // then clear from cursor to end of screen.
+    if (last_rows > 1) {
+        char up[16]; snprintf(up, sizeof(up), "\033[%dA", last_rows - 1);
+        std::cout << up;
+    }
+    std::cout << "\r\033[J";
+
     set_color(10, 0);
     print(prompt_str);
 
@@ -962,7 +1137,37 @@ void Console::render_prompt() {
             set_color(7, 0); print(std::string(1, (char)c)); i++;
         }
     }
-    set_color(7, 0);
+    // Reset attributes so subsequent output isn't tinted
+    std::cout << "\033[0m";
+
+    // Cursor positioning: count codepoints up to cursor_pos, add prompt_len,
+    // wrap into rows.
+    int cursor_cp = 0;
+    for (int k = 0; k < state.cursor_pos && k < (int)input.length(); k++) {
+        unsigned char ch = (unsigned char)input[k];
+        if (ch <= 0x7F || ch >= 0xC0) cursor_cp++;
+    }
+    int cursor_visual = prompt_len + cursor_cp;
+    int total_visual_cp = prompt_len;
+    for (size_t k = 0; k < input.length(); k++) {
+        unsigned char ch = (unsigned char)input[k];
+        if (ch <= 0x7F || ch >= 0xC0) total_visual_cp++;
+    }
+    int total_rows = (total_visual_cp + cols - 1) / cols;
+    if (total_rows < 1) total_rows = 1;
+    int cursor_row = cursor_visual / cols;
+    int cursor_col = cursor_visual % cols;
+    // After printing, the cursor sits at total_visual_cp position. Move from
+    // there back up to cursor_row.
+    int cur_row_now = total_visual_cp / cols;
+    int rows_up = cur_row_now - cursor_row;
+    if (rows_up > 0) { char up[16]; snprintf(up, sizeof(up), "\033[%dA", rows_up); std::cout << up; }
+    else if (rows_up < 0) { char dn[16]; snprintf(dn, sizeof(dn), "\033[%dB", -rows_up); std::cout << dn; }
+    std::cout << "\r";
+    if (cursor_col > 0) { char rt[16]; snprintf(rt, sizeof(rt), "\033[%dC", cursor_col); std::cout << rt; }
+    std::cout.flush();
+
+    last_drawn_total_visual_len = total_visual_cp;
 #endif
 }
 
@@ -1046,4 +1251,3 @@ void Console::load_history() {
     }
     in.close();
 }
-#endif // _WIN32

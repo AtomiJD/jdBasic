@@ -11,16 +11,643 @@
 #include "editor.h"
 
 #if !defined(_WIN32)
-// ── POSIX stub: full-screen editor is Windows-console-only ───
-// On Linux we just print a notice so the link succeeds. F5-from-REPL
-// flow simply won't open an editor.
+// ── POSIX full-screen editor ────────────────────────────────
+// Termios raw-mode + ANSI-escape full-screen edit. Same Editor class API
+// as the Windows version. Keymap chosen to mirror the Win editor where
+// the keys are reachable on a Linux terminal:
+//   arrows, Home/End, PageUp/Down, Backspace/Delete, Enter
+//   Ctrl+S = save     Ctrl+Q = quit (prompts if dirty)
+//   F5     = run (compile + execute current buffer)
+//   Ctrl+Z / Ctrl+Y = undo / redo
+//   Ctrl+C / Ctrl+V = copy line / paste (line-based for simplicity)
+//   Ctrl+G = go to line
+//   Ctrl+F = find next
+// Syntax highlighting reuses keywords() / native_names() from the parser.
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <termios.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <fcntl.h>
+
+namespace {
+
+// Abstract key codes (private to this TU, mirroring the Win editor's VKs)
+enum : int {
+    PK_NONE = 0,
+    PK_LEFT = 1000, PK_RIGHT, PK_UP, PK_DOWN,
+    PK_HOME, PK_END, PK_PAGEUP, PK_PAGEDOWN,
+    PK_DELETE, PK_BACKSPACE, PK_ENTER, PK_TAB, PK_ESC,
+    PK_F5,
+    PK_CTRL_S, PK_CTRL_Q, PK_CTRL_Z, PK_CTRL_Y,
+    PK_CTRL_C, PK_CTRL_V, PK_CTRL_G, PK_CTRL_F,
+    PK_CTRL_LEFT, PK_CTRL_RIGHT,
+};
+
+struct TermGuard {
+    struct termios orig{};
+    bool active = false;
+    void enable() {
+        if (active) return;
+        if (tcgetattr(STDIN_FILENO, &orig) != 0) return;
+        struct termios raw = orig;
+        raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+        raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
+        raw.c_oflag &= ~(OPOST);
+        raw.c_cflag |= CS8;
+        raw.c_cc[VMIN]  = 1;   // block until at least 1 byte (editor is event-driven)
+        raw.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+        active = true;
+    }
+    void disable() {
+        if (!active) return;
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig);
+        active = false;
+    }
+    ~TermGuard() { disable(); }
+};
+
+// Read one byte non-blocking (used after ESC, with a short timeout)
+int read_byte_timed(int ms) {
+    fd_set rfds; FD_ZERO(&rfds); FD_SET(STDIN_FILENO, &rfds);
+    struct timeval tv; tv.tv_sec = ms / 1000; tv.tv_usec = (ms % 1000) * 1000;
+    if (select(STDIN_FILENO + 1, &rfds, nullptr, nullptr, &tv) <= 0) return -1;
+    unsigned char ch;
+    return (::read(STDIN_FILENO, &ch, 1) == 1) ? (int)ch : -1;
+}
+
+// Blocking read with full ANSI/CSI escape parsing.
+int read_key_blocking(std::string& utf8_out) {
+    utf8_out.clear();
+    unsigned char c;
+    if (::read(STDIN_FILENO, &c, 1) != 1) return PK_NONE;
+
+    if (c == 0x7F || c == 0x08) return PK_BACKSPACE;
+    if (c == '\r' || c == '\n') return PK_ENTER;
+    if (c == '\t') return PK_TAB;
+    if (c == 0x13) return PK_CTRL_S;
+    if (c == 0x11) return PK_CTRL_Q;
+    if (c == 0x1A) return PK_CTRL_Z;
+    if (c == 0x19) return PK_CTRL_Y;
+    if (c == 0x03) return PK_CTRL_C;
+    if (c == 0x16) return PK_CTRL_V;
+    if (c == 0x07) return PK_CTRL_G;
+    if (c == 0x06) return PK_CTRL_F;
+
+    if (c == 0x1B) {
+        int b1 = read_byte_timed(20);
+        if (b1 < 0) return PK_ESC;
+        if (b1 != '[' && b1 != 'O') return PK_ESC;
+
+        std::string seq; seq += (char)b1;
+        for (int i = 0; i < 16; i++) {
+            int b = read_byte_timed(20);
+            if (b < 0) break;
+            seq += (char)b;
+            if (b >= 0x40 && b <= 0x7E) break;
+        }
+        char final = seq.empty() ? 0 : seq.back();
+
+        if (b1 == 'O') {
+            switch (final) {
+                case 'P': case 'Q': case 'R': case 'S': return PK_NONE;  // F1-F4 unmapped
+                case 'H': return PK_HOME;
+                case 'F': return PK_END;
+            }
+            return PK_NONE;
+        }
+
+        std::string params = seq.substr(1, seq.size() - 2);
+        std::vector<int> nums;
+        { int cur = -1; for (char ch : params) {
+            if (ch >= '0' && ch <= '9') { if (cur < 0) cur = 0; cur = cur * 10 + (ch - '0'); }
+            else if (ch == ';') { nums.push_back(cur); cur = -1; }
+        } if (cur >= 0) nums.push_back(cur); }
+        int p1 = nums.size() > 0 ? nums[0] : -1;
+        int p2 = nums.size() > 1 ? nums[1] : -1;
+        bool ctrl_mod = (p2 == 5 || p2 == 6 || p2 == 7);
+
+        switch (final) {
+            case 'A': return PK_UP;
+            case 'B': return PK_DOWN;
+            case 'C': return ctrl_mod ? PK_CTRL_RIGHT : PK_RIGHT;
+            case 'D': return ctrl_mod ? PK_CTRL_LEFT  : PK_LEFT;
+            case 'H': return PK_HOME;
+            case 'F': return PK_END;
+            case '~':
+                switch (p1) {
+                    case 1: case 7:  return PK_HOME;
+                    case 4: case 8:  return PK_END;
+                    case 3:  return PK_DELETE;
+                    case 5:  return PK_PAGEUP;
+                    case 6:  return PK_PAGEDOWN;
+                    case 15: return PK_F5;
+                }
+                return PK_NONE;
+        }
+        return PK_NONE;
+    }
+
+    // Plain UTF-8 byte: collect continuation bytes if needed
+    utf8_out += (char)c;
+    int extra = 0;
+    if      ((c & 0xE0) == 0xC0) extra = 1;
+    else if ((c & 0xF0) == 0xE0) extra = 2;
+    else if ((c & 0xF8) == 0xF0) extra = 3;
+    for (int i = 0; i < extra; i++) {
+        unsigned char k;
+        if (::read(STDIN_FILENO, &k, 1) != 1) break;
+        utf8_out += (char)k;
+    }
+    return -1;  // signal "literal char in utf8_out"
+}
+
+// UTF-8 codepoint count (= visual columns for ASCII; close enough for now)
+int utf8_codepoints(const std::string& s) {
+    int n = 0;
+    for (unsigned char c : s) {
+        if (c < 0x80 || c >= 0xC0) n++;
+    }
+    return n;
+}
+// Substring measured in codepoints, returning byte offset for `cp` codepoints
+int cp_to_byte(const std::string& s, int cp) {
+    int seen = 0; size_t i = 0;
+    while (i < s.size() && seen < cp) {
+        unsigned char c = s[i];
+        if (c < 0x80) i += 1;
+        else if ((c & 0xE0) == 0xC0) i += 2;
+        else if ((c & 0xF0) == 0xE0) i += 3;
+        else if ((c & 0xF8) == 0xF0) i += 4;
+        else i += 1;
+        seen++;
+    }
+    return (int)i;
+}
+int byte_to_cp(const std::string& s, int byte_off) {
+    int cp = 0; size_t i = 0;
+    while ((int)i < byte_off && i < s.size()) {
+        unsigned char c = s[i];
+        if (c < 0x80) i += 1;
+        else if ((c & 0xE0) == 0xC0) i += 2;
+        else if ((c & 0xF0) == 0xE0) i += 3;
+        else if ((c & 0xF8) == 0xF0) i += 4;
+        else i += 1;
+        cp++;
+    }
+    return cp;
+}
+
+// Clipboard via xclip / wl-copy (line-based, single-line for simplicity)
+void clip_set(const std::string& text) {
+    const char* tools[] = {
+        "wl-copy 2>/dev/null",
+        "xclip -selection clipboard -in 2>/dev/null",
+        "xsel --clipboard --input 2>/dev/null", nullptr };
+    for (int i = 0; tools[i]; ++i) {
+        FILE* p = popen(tools[i], "w"); if (!p) continue;
+        fwrite(text.data(), 1, text.size(), p);
+        if (pclose(p) == 0) return;
+    }
+}
+std::string clip_get() {
+    std::string r;
+    const char* tools[] = {
+        "wl-paste --no-newline 2>/dev/null",
+        "xclip -selection clipboard -out 2>/dev/null",
+        "xsel --clipboard --output 2>/dev/null", nullptr };
+    for (int i = 0; tools[i]; ++i) {
+        FILE* p = popen(tools[i], "r"); if (!p) continue;
+        char buf[1024]; size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), p)) > 0) r.append(buf, n);
+        if (pclose(p) == 0 && !r.empty()) return r;
+        r.clear();
+    }
+    return r;
+}
+
+class EditorImpl {
+public:
+    EditorImpl(std::vector<std::string>& lines, const std::string& fname, bool* run_flag)
+        : lines_ref(lines), filename(fname), run_requested_out(run_flag)
+    {
+        if (lines_ref.empty()) lines_ref.push_back("");
+        update_screen_size();
+    }
+    void run();
+
+private:
+    std::vector<std::string>& lines_ref;
+    std::string filename;
+    bool* run_requested_out;
+    int screen_cols = 80, screen_rows = 24;
+    int text_rows() const { return std::max(1, screen_rows - 2); }  // status + msg
+    int cy = 0, cx = 0;     // cursor in (line, codepoint-column)
+    int top_row = 0, left_col = 0;
+    bool dirty = false;
+    std::string status_msg;
+
+    // Undo/Redo
+    struct Snap { std::vector<std::string> lines; int cx, cy; };
+    std::vector<Snap> undo_stack, redo_stack;
+    void save_state() {
+        undo_stack.push_back({lines_ref, cx, cy});
+        if (undo_stack.size() > 200) undo_stack.erase(undo_stack.begin());
+        redo_stack.clear();
+    }
+    void undo() {
+        if (undo_stack.empty()) { status_msg = "Nothing to undo"; return; }
+        redo_stack.push_back({lines_ref, cx, cy});
+        auto& s = undo_stack.back();
+        lines_ref = s.lines; cx = s.cx; cy = s.cy;
+        undo_stack.pop_back();
+        dirty = true;
+    }
+    void redo() {
+        if (redo_stack.empty()) { status_msg = "Nothing to redo"; return; }
+        undo_stack.push_back({lines_ref, cx, cy});
+        auto& s = redo_stack.back();
+        lines_ref = s.lines; cx = s.cx; cy = s.cy;
+        redo_stack.pop_back();
+        dirty = true;
+    }
+
+    void update_screen_size() {
+        struct winsize ws;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+            screen_cols = ws.ws_col;
+            screen_rows = ws.ws_row;
+        }
+    }
+
+    // Cursor / scroll bookkeeping
+    int line_cps(int idx) const {
+        if (idx < 0 || idx >= (int)lines_ref.size()) return 0;
+        return utf8_codepoints(lines_ref[idx]);
+    }
+    void clamp_cursor() {
+        if (cy < 0) cy = 0;
+        if (cy >= (int)lines_ref.size()) cy = (int)lines_ref.size() - 1;
+        int len = line_cps(cy);
+        if (cx > len) cx = len;
+        if (cx < 0) cx = 0;
+    }
+    void scroll_to_cursor() {
+        int rows = text_rows();
+        if (cy < top_row) top_row = cy;
+        if (cy >= top_row + rows) top_row = cy - rows + 1;
+        if (cx < left_col) left_col = cx;
+        if (cx >= left_col + screen_cols) left_col = cx - screen_cols + 1;
+    }
+
+    void draw();
+    void draw_status();
+    void draw_line(int line_idx, int row_on_screen);
+
+    void save_file() {
+        std::ofstream out(filename);
+        if (!out) { status_msg = "Save failed: " + filename; return; }
+        for (size_t i = 0; i < lines_ref.size(); i++) {
+            out << lines_ref[i];
+            if (i + 1 < lines_ref.size()) out << "\n";
+        }
+        dirty = false;
+        status_msg = "Saved: " + filename;
+    }
+    bool prompt_yn(const std::string& q) {
+        std::cout << "\033[" << screen_rows << ";1H\033[K" << q << " (y/n) " << std::flush;
+        std::string utf;
+        while (true) {
+            int k = read_key_blocking(utf);
+            if (k == -1 && !utf.empty()) {
+                char c = utf[0];
+                if (c == 'y' || c == 'Y') return true;
+                if (c == 'n' || c == 'N') return false;
+            }
+            if (k == PK_ESC) return false;
+        }
+    }
+    std::string prompt_str(const std::string& q) {
+        std::string buf;
+        while (true) {
+            std::cout << "\033[" << screen_rows << ";1H\033[K"
+                      << q << buf << "\033[?25h" << std::flush;
+            std::string utf;
+            int k = read_key_blocking(utf);
+            if (k == PK_ENTER) return buf;
+            if (k == PK_ESC)   return "";
+            if (k == PK_BACKSPACE) {
+                if (!buf.empty()) {
+                    while (!buf.empty() && (((unsigned char)buf.back() & 0xC0) == 0x80))
+                        buf.pop_back();
+                    if (!buf.empty()) buf.pop_back();
+                }
+            } else if (k == -1 && !utf.empty()) {
+                buf += utf;
+            }
+        }
+    }
+    void go_to_line() {
+        std::string s = prompt_str("Goto line: ");
+        if (s.empty()) return;
+        try { int n = std::stoi(s); if (n < 1) n = 1;
+              cy = std::min((int)lines_ref.size() - 1, n - 1); cx = 0;
+              status_msg = "Jumped to line " + std::to_string(n);
+        } catch (...) { status_msg = "Bad line number"; }
+    }
+    void find_next() {
+        static std::string last_query;
+        std::string q = prompt_str("Find: ");
+        if (!q.empty()) last_query = q;
+        if (last_query.empty()) return;
+        for (int dy = 0; dy <= (int)lines_ref.size(); dy++) {
+            int idx = (cy + dy) % lines_ref.size();
+            int from = (dy == 0) ? cp_to_byte(lines_ref[idx], cx + 1) : 0;
+            size_t pos = lines_ref[idx].find(last_query, from);
+            if (pos != std::string::npos) {
+                cy = idx; cx = byte_to_cp(lines_ref[idx], (int)pos);
+                status_msg = "Match line " + std::to_string(cy + 1);
+                return;
+            }
+        }
+        status_msg = "Not found: " + last_query;
+    }
+
+    bool is_kw(const std::string& w) const {
+        std::string u = w; std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+        return keywords().count(u) > 0;
+    }
+    bool is_nat(const std::string& w) const {
+        std::string u = w; std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+        return native_names().count(u) > 0;
+    }
+};
+
+void EditorImpl::draw_line(int line_idx, int row_on_screen) {
+    std::cout << "\033[" << (row_on_screen + 1) << ";1H\033[K";
+    if (line_idx >= (int)lines_ref.size()) {
+        std::cout << "\033[34m~\033[0m";
+        return;
+    }
+    const std::string& line = lines_ref[line_idx];
+    int line_cp_total = utf8_codepoints(line);
+    if (left_col >= line_cp_total) return;
+
+    // Tokenise + colour, skipping bytes for the first `left_col` codepoints
+    int skip_byte = cp_to_byte(line, left_col);
+    int max_cp = screen_cols;
+    int cp_emitted = 0;
+
+    size_t i = (size_t)skip_byte;
+    while (i < line.size() && cp_emitted < max_cp) {
+        unsigned char c = (unsigned char)line[i];
+        std::string token;
+        const char* color = "\033[0m";
+
+        if (c == '\'') {
+            color = "\033[90m";   // grey
+            while (i < line.size()) { token += line[i++]; }
+        } else if (c == '"') {
+            color = "\033[36m";   // cyan
+            token += line[i++];
+            while (i < line.size() && line[i] != '"') token += line[i++];
+            if (i < line.size()) token += line[i++];
+        } else if (std::isdigit(c)) {
+            color = "\033[33m";   // yellow
+            while (i < line.size() && (std::isdigit((unsigned char)line[i]) || line[i] == '.'))
+                token += line[i++];
+        } else if (std::isalpha(c) || c == '_' || c >= 0x80) {
+            while (i < line.size() && (std::isalnum((unsigned char)line[i]) || line[i] == '_' ||
+                   (unsigned char)line[i] >= 0x80))
+                token += line[i++];
+            if      (is_kw(token))  color = "\033[35;1m";  // bright magenta
+            else if (is_nat(token)) color = "\033[36;1m";  // bright cyan
+            else                    color = "\033[32m";    // green
+        } else {
+            color = "\033[37m";
+            token += line[i++];
+        }
+        int tk_cp = utf8_codepoints(token);
+        if (cp_emitted + tk_cp > max_cp) {
+            // Truncate token at codepoint boundary
+            int allowed = max_cp - cp_emitted;
+            int byte_lim = cp_to_byte(token, allowed);
+            std::cout << color << token.substr(0, byte_lim) << "\033[0m";
+            cp_emitted = max_cp;
+        } else {
+            std::cout << color << token << "\033[0m";
+            cp_emitted += tk_cp;
+        }
+    }
+}
+
+void EditorImpl::draw_status() {
+    int row = screen_rows - 1;
+    std::cout << "\033[" << row << ";1H\033[K\033[7m";  // reverse video
+    std::ostringstream s;
+    s << " " << (filename.empty() ? "[no name]" : filename)
+      << (dirty ? " * " : "   ")
+      << "L" << (cy + 1) << "/" << lines_ref.size()
+      << " C" << (cx + 1)
+      << "  ^S save  ^Q quit  F5 run  ^Z undo  ^G goto  ^F find";
+    std::string line = s.str();
+    int cp = utf8_codepoints(line);
+    if (cp > screen_cols) line = line.substr(0, cp_to_byte(line, screen_cols));
+    else                  line.append(screen_cols - cp, ' ');
+    std::cout << line << "\033[0m";
+
+    // Message line
+    std::cout << "\033[" << screen_rows << ";1H\033[K" << status_msg;
+    status_msg.clear();
+}
+
+void EditorImpl::draw() {
+    update_screen_size();
+    scroll_to_cursor();
+    std::cout << "\033[?25l";   // hide cursor while redrawing
+    int rows = text_rows();
+    for (int r = 0; r < rows; r++) {
+        draw_line(top_row + r, r);
+    }
+    draw_status();
+    // Position cursor at (cy - top_row, cx - left_col)
+    int row = cy - top_row + 1;
+    int col = cx - left_col + 1;
+    std::cout << "\033[" << row << ";" << col << "H\033[?25h" << std::flush;
+}
+
+void EditorImpl::run() {
+    TermGuard guard;
+    guard.enable();
+    std::cout << "\033[?1049h\033[2J\033[H" << std::flush;  // alt screen + clear
+
+    while (true) {
+        draw();
+        std::string utf;
+        int key = read_key_blocking(utf);
+        if (key == PK_NONE) continue;
+
+        switch (key) {
+            case PK_CTRL_Q:
+                if (dirty) {
+                    if (!prompt_yn("Discard unsaved changes?")) { status_msg = "Cancelled"; break; }
+                }
+                goto done;
+            case PK_F5:
+                if (run_requested_out) *run_requested_out = true;
+                goto done;
+            case PK_CTRL_S: save_file(); break;
+            case PK_CTRL_Z: undo(); break;
+            case PK_CTRL_Y: redo(); break;
+            case PK_CTRL_G: go_to_line(); break;
+            case PK_CTRL_F: find_next(); break;
+            case PK_CTRL_C: clip_set(lines_ref[cy]); status_msg = "Line copied"; break;
+            case PK_CTRL_V: {
+                save_state();
+                std::string txt = clip_get();
+                // Insert at cursor; respect newlines by splitting into lines.
+                std::vector<std::string> parts; std::string cur;
+                for (char c : txt) { if (c == '\n') { parts.push_back(cur); cur.clear(); } else if (c != '\r') cur += c; }
+                parts.push_back(cur);
+                if (parts.empty()) break;
+                int byte_at = cp_to_byte(lines_ref[cy], cx);
+                std::string left  = lines_ref[cy].substr(0, byte_at);
+                std::string right = lines_ref[cy].substr(byte_at);
+                if (parts.size() == 1) {
+                    lines_ref[cy] = left + parts[0] + right;
+                    cx += utf8_codepoints(parts[0]);
+                } else {
+                    lines_ref[cy] = left + parts[0];
+                    for (size_t k = 1; k < parts.size() - 1; k++)
+                        lines_ref.insert(lines_ref.begin() + cy + k, parts[k]);
+                    lines_ref.insert(lines_ref.begin() + cy + parts.size() - 1, parts.back() + right);
+                    cy += (int)parts.size() - 1;
+                    cx = utf8_codepoints(parts.back());
+                }
+                dirty = true;
+                break;
+            }
+            case PK_LEFT:
+                if (cx > 0) cx--;
+                else if (cy > 0) { cy--; cx = line_cps(cy); }
+                break;
+            case PK_RIGHT: {
+                int len = line_cps(cy);
+                if (cx < len) cx++;
+                else if (cy + 1 < (int)lines_ref.size()) { cy++; cx = 0; }
+                break;
+            }
+            case PK_UP:    if (cy > 0) cy--; clamp_cursor(); break;
+            case PK_DOWN:  if (cy + 1 < (int)lines_ref.size()) cy++; clamp_cursor(); break;
+            case PK_HOME:  cx = 0; break;
+            case PK_END:   cx = line_cps(cy); break;
+            case PK_PAGEUP:   cy = std::max(0, cy - text_rows()); top_row = std::max(0, top_row - text_rows()); clamp_cursor(); break;
+            case PK_PAGEDOWN: cy = std::min((int)lines_ref.size() - 1, cy + text_rows()); top_row = std::min(std::max(0,(int)lines_ref.size() - text_rows()), top_row + text_rows()); clamp_cursor(); break;
+            case PK_CTRL_LEFT: {
+                const std::string& l = lines_ref[cy];
+                int b = cp_to_byte(l, cx);
+                while (b > 0 && std::isspace((unsigned char)l[b-1])) b--;
+                while (b > 0 && !std::isspace((unsigned char)l[b-1])) b--;
+                cx = byte_to_cp(l, b);
+                break;
+            }
+            case PK_CTRL_RIGHT: {
+                const std::string& l = lines_ref[cy];
+                int b = cp_to_byte(l, cx);
+                int n = (int)l.size();
+                while (b < n && !std::isspace((unsigned char)l[b])) b++;
+                while (b < n &&  std::isspace((unsigned char)l[b])) b++;
+                cx = byte_to_cp(l, b);
+                break;
+            }
+            case PK_BACKSPACE: {
+                save_state();
+                if (cx > 0) {
+                    int b_end   = cp_to_byte(lines_ref[cy], cx);
+                    int b_start = cp_to_byte(lines_ref[cy], cx - 1);
+                    lines_ref[cy].erase(b_start, b_end - b_start);
+                    cx--;
+                    dirty = true;
+                } else if (cy > 0) {
+                    int prev_len = line_cps(cy - 1);
+                    lines_ref[cy - 1] += lines_ref[cy];
+                    lines_ref.erase(lines_ref.begin() + cy);
+                    cy--; cx = prev_len; dirty = true;
+                }
+                break;
+            }
+            case PK_DELETE: {
+                save_state();
+                int len = line_cps(cy);
+                if (cx < len) {
+                    int b_start = cp_to_byte(lines_ref[cy], cx);
+                    int b_end   = cp_to_byte(lines_ref[cy], cx + 1);
+                    lines_ref[cy].erase(b_start, b_end - b_start);
+                    dirty = true;
+                } else if (cy + 1 < (int)lines_ref.size()) {
+                    lines_ref[cy] += lines_ref[cy + 1];
+                    lines_ref.erase(lines_ref.begin() + cy + 1);
+                    dirty = true;
+                }
+                break;
+            }
+            case PK_ENTER: {
+                save_state();
+                int b = cp_to_byte(lines_ref[cy], cx);
+                std::string remain = lines_ref[cy].substr(b);
+                lines_ref[cy] = lines_ref[cy].substr(0, b);
+                // Auto-indent: copy leading whitespace
+                std::string indent;
+                for (char c : lines_ref[cy]) { if (c == ' ' || c == '\t') indent += c; else break; }
+                lines_ref.insert(lines_ref.begin() + cy + 1, indent + remain);
+                cy++; cx = utf8_codepoints(indent);
+                dirty = true;
+                break;
+            }
+            case PK_TAB: {
+                save_state();
+                int b = cp_to_byte(lines_ref[cy], cx);
+                lines_ref[cy].insert(b, "    ");
+                cx += 4; dirty = true;
+                break;
+            }
+            case -1: {
+                if (!utf.empty()) {
+                    save_state();
+                    int b = cp_to_byte(lines_ref[cy], cx);
+                    lines_ref[cy].insert(b, utf);
+                    cx++;
+                    dirty = true;
+                }
+                break;
+            }
+            default: break;
+        }
+    }
+done:
+    std::cout << "\033[?1049l" << std::flush;  // leave alt screen
+    guard.disable();
+}
+
+}  // namespace
+
 Editor::Editor(std::vector<std::string>& lines, const std::string& fname)
     : lines_ref(lines), filename(fname) {}
+
 void Editor::run() {
-    std::cerr << "[editor] interactive editor not available on Linux yet "
-              << "(file: " << filename << ", " << lines_ref.size() << " lines)\n";
+    run_requested = false;
+    EditorImpl impl(lines_ref, filename, &run_requested);
+    impl.run();
 }
+
 #else
 // ── Windows full implementation ──────────────────────────────
 #include <vector>

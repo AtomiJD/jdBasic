@@ -36,6 +36,9 @@
 #else
 #include <sys/stat.h>
 #include <unistd.h>
+#include <cerrno>
+#include <dirent.h>
+#include <fnmatch.h>
 #endif
 
 // ── Windows SEH → C++ exception translator ───────────────────
@@ -6415,6 +6418,49 @@ void VM::register_builtins() {
             } while (FindNextFileA(hFind, &fd));
             FindClose(hFind);
         }
+#else
+        // POSIX: opendir + readdir + stat. Pattern-matching uses fnmatch on
+        // the basename. If the pattern has no slash and no glob chars, treat
+        // it as a directory listing of the cwd.
+        std::string dir_part = ".", base_pat = pattern;
+        size_t sl = pattern.find_last_of('/');
+        if (sl != std::string::npos) { dir_part = pattern.substr(0, sl); base_pat = pattern.substr(sl + 1); }
+        if (base_pat.empty()) base_pat = "*";
+        DIR* d = opendir(dir_part.c_str());
+        if (d) {
+            struct dirent* de;
+            while ((de = readdir(d))) {
+                std::string name = de->d_name;
+                if (name == "." || name == "..") continue;
+                if (fnmatch(base_pat.c_str(), name.c_str(), 0) != 0) continue;
+                if (!extended) {
+                    result.as_array()->elements.push_back(Value::make_string(name));
+                } else {
+                    Value row = Value::make_array();
+                    row.as_array()->elements.push_back(Value::make_string(name));
+                    std::string full = dir_part + "/" + name;
+                    struct stat st; int64_t size = 0;
+                    std::string type = "FILE", attr = "W";
+                    char dt[32] = "";
+                    if (stat(full.c_str(), &st) == 0) {
+                        size = (int64_t)st.st_size;
+                        if (S_ISDIR(st.st_mode)) type = "DIR";
+                        else if (S_ISLNK(st.st_mode)) type = "LINK";
+                        if ((st.st_mode & S_IWUSR) == 0) attr = "R";
+                        struct tm* tmv = localtime(&st.st_mtime);
+                        if (tmv) snprintf(dt, sizeof(dt), "%04d-%02d-%02d %02d:%02d:%02d",
+                            tmv->tm_year + 1900, tmv->tm_mon + 1, tmv->tm_mday,
+                            tmv->tm_hour, tmv->tm_min, tmv->tm_sec);
+                    }
+                    row.as_array()->elements.push_back(Value::make_i64(size));
+                    row.as_array()->elements.push_back(Value::make_string(type));
+                    row.as_array()->elements.push_back(Value::make_string(dt));
+                    row.as_array()->elements.push_back(Value::make_string(attr));
+                    result.as_array()->elements.push_back(std::move(row));
+                }
+            }
+            closedir(d);
+        }
 #endif
         return result;
     });
@@ -6488,6 +6534,9 @@ void VM::register_builtins() {
         std::string path = args[0].as_string()->data;
 #if defined(_WIN32)
         if (!CreateDirectoryA(path.c_str(), NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+            throw std::runtime_error("Cannot create directory: " + path);
+#else
+        if (mkdir(path.c_str(), 0755) != 0 && errno != EEXIST)
             throw std::runtime_error("Cannot create directory: " + path);
 #endif
         return Value::make_none();
