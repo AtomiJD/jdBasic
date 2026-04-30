@@ -17,6 +17,8 @@ LDFLAGS="-ldl -lpthread"
 WANT_HTTP=${HTTP:-1}
 WANT_GFX=${GFX:-1}
 WANT_IMGUI=${IMGUI:-0}
+WANT_LLM=${LLM:-0}
+WANT_ONNX=${ONNX:-0}
 
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
@@ -71,6 +73,35 @@ if [ "$WANT_IMGUI" = "1" ]; then
                $IMGUI_LIB/backends/imgui_impl_sdlrenderer3.cpp"
 fi
 
+if [ "$WANT_LLM" = "1" ]; then
+    LLAMA_DIR="libs/llama"
+    for a in libllama.a libggml.a libggml-base.a libggml-cpu.a; do
+        if [ ! -f "$LLAMA_DIR/$a" ]; then
+            echo "ERROR: $LLAMA_DIR/$a missing — run ./build_libs.sh first"; exit 1
+        fi
+    done
+    CXXFLAGS="$CXXFLAGS -DLLM -I$LLAMA_DIR"
+    # Order: llama links against ggml, ggml-cpu against ggml-base.
+    LDFLAGS="$LDFLAGS \
+        $LLAMA_DIR/libllama.a \
+        $LLAMA_DIR/libggml.a \
+        $LLAMA_DIR/libggml-cpu.a \
+        $LLAMA_DIR/libggml-base.a"
+fi
+
+if [ "$WANT_ONNX" = "1" ]; then
+    ORT_DIR="libs/onnxruntime"
+    if [ ! -f "$ORT_DIR/lib/libonnxruntime.so" ]; then
+        echo "ERROR: $ORT_DIR/lib/libonnxruntime.so missing — fetch the prebuilt tarball"; exit 1
+    fi
+    CXXFLAGS="$CXXFLAGS -DONNX -I$ORT_DIR/include"
+    # Dynamic-link onnxruntime; rpath \$ORIGIN/../libs/onnxruntime/lib so
+    # the binary finds it when run from the project root or build/.
+    LDFLAGS="$LDFLAGS -L$ORT_DIR/lib -lonnxruntime \
+        -Wl,-rpath,\$ORIGIN/../$ORT_DIR/lib \
+        -Wl,-rpath,\$ORIGIN/$ORT_DIR/lib"
+fi
+
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC"
@@ -104,6 +135,8 @@ features="console"
 [ "$WANT_HTTP"  = "1" ] && features="$features+HTTP"
 [ "$WANT_GFX"   = "1" ] && features="$features+GFX"
 [ "$WANT_IMGUI" = "1" ] && features="$features+IMGUI"
+[ "$WANT_LLM"   = "1" ] && features="$features+LLM"
+[ "$WANT_ONNX"  = "1" ] && features="$features+ONNX"
 echo "== Building jdBasic ($features) — $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 # xargs -P parallelises; each line is "src|obj"

@@ -62,6 +62,29 @@ build_one SDL3_mixer \
     -DSDLMIXER_MIDI=OFF -DSDLMIXER_MIDI_FLUIDSYNTH=OFF \
     -DSDLMIXER_FLAC=OFF
 
+# llama.cpp — built into libs/llama_src/build/, then headers + static
+# archives copied/symlinked into libs/llama/ to match the directory shape
+# expected by jdBasic's build flags. Skip when the source isn't there.
+if [ -d "$LIBS/llama_src" ]; then
+    echo "=== Building llama.cpp ==="
+    mkdir -p "$LIBS/llama_src/build"
+    (cd "$LIBS/llama_src/build" && cmake $COMMON_FLAGS \
+        -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+        -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF \
+        -DGGML_OPENMP=OFF \
+        ..)
+    cmake --build "$LIBS/llama_src/build" -j "$JOBS"
+
+    # Stage headers + .a files in libs/llama/ so the jdBasic build script
+    # finds them at predictable paths (-Ilibs/llama, -Llibs/llama).
+    mkdir -p "$LIBS/llama"
+    cp -f "$LIBS/llama_src/include/llama.h" "$LIBS/llama/"
+    cp -f "$LIBS/llama_src/ggml/include/"*.h "$LIBS/llama/" 2>/dev/null || true
+    find "$LIBS/llama_src/build" -name "*.a" -exec cp -f {} "$LIBS/llama/" \;
+    echo "done: llama"
+fi
+
 echo
 echo "All libs built. Static archives:"
-find "$LIBS" -name "libSDL3*.a" 2>/dev/null
+find "$LIBS" -maxdepth 4 -name "libSDL3*.a" -o -name "libllama*.a" -o -name "libggml*.a" 2>/dev/null
+[ -f "$LIBS/onnxruntime/lib/libonnxruntime.so" ] && echo "$LIBS/onnxruntime/lib/libonnxruntime.so (prebuilt)"
