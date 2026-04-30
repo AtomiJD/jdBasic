@@ -2,11 +2,27 @@
 #include "token.h"
 #include "natives_list.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include "editor.h"
+
+#if !defined(_WIN32)
+// ── POSIX stub: full-screen editor is Windows-console-only ───
+// On Linux we just print a notice so the link succeeds. F5-from-REPL
+// flow simply won't open an editor.
+#include <iostream>
+Editor::Editor(std::vector<std::string>& lines, const std::string& fname)
+    : lines_ref(lines), filename(fname) {}
+void Editor::run() {
+    std::cerr << "[editor] interactive editor not available on Linux yet "
+              << "(file: " << filename << ", " << lines_ref.size() << " lines)\n";
+}
+#else
+// ── Windows full implementation ──────────────────────────────
 #include <vector>
 #include <string>
 #include <fstream>
@@ -703,3 +719,4 @@ void Editor::run() {
     EditorImpl impl(lines_ref, filename, &run_requested);
     impl.run();
 }
+#endif // _WIN32

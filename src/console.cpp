@@ -2,10 +2,12 @@
 #include "token.h"
 #include "natives_list.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <conio.h>
+#endif
 
 #include "console.h"
 #include "vm.h"
@@ -15,6 +17,72 @@
 #include <cctype>
 #include <thread>
 #include <chrono>
+
+#if !defined(_WIN32)
+// ── POSIX stub (Linux/macOS): minimal getline-based REPL ─────
+// Full F-key 4-workspace console is Windows-only for now. On POSIX we
+// provide a plain interactive loop so `jdbasic` (no args) is still usable.
+#include <termios.h>
+#include <unistd.h>
+
+Console::Console() {
+    for (int i = 0; i < MAX_WORKSPACES; i++) {
+        workspaces[i].vm = std::make_unique<VM>();
+        auto* screen = &workspaces[i].screen;
+        workspaces[i].vm->on_output = [screen](const std::string& text) {
+            screen->write(text);
+            std::cout << text;
+            std::cout.flush();
+        };
+    }
+}
+Console::~Console() {}
+
+VM& Console::active_vm() { return *workspaces[active_ws].vm; }
+ConsoleState& Console::active_state() { return workspaces[active_ws].console; }
+
+void Console::print(const std::string& text)   { std::cout << text; std::cout.flush(); }
+void Console::println(const std::string& text) { std::cout << text << "\n"; }
+
+void Console::run() {
+    std::string& buffer = workspaces[active_ws].console.program_buffer;
+    std::string line;
+    std::cout << "> " << std::flush;
+    while (std::getline(std::cin, line)) {
+        if (executor) {
+            try { executor(line, *workspaces[active_ws].vm, buffer); }
+            catch (const std::exception& e) { std::cerr << "Error: " << e.what() << "\n"; }
+        }
+        std::cout << "> " << std::flush;
+    }
+}
+
+// Stubs for the rest of the public API
+void Console::enable_raw_mode() {}
+void Console::disable_raw_mode() {}
+int  Console::read_raw_key() { return std::cin.get(); }
+void Console::process_key(int) {}
+void Console::execute_current_line() {}
+void Console::navigate_history(int) {}
+void Console::show_history_f7() {}
+void Console::search_history_f8() {}
+void Console::switch_workspace(int) {}
+void Console::copy_to_clipboard(const std::string&) {}
+std::string Console::get_from_clipboard() { return {}; }
+void Console::set_color(int, int) {}
+void Console::render_prompt() {}
+bool Console::is_keyword(const std::string&) const { return false; }
+bool Console::is_native (const std::string&) const { return false; }
+void Console::save_history() {}
+void Console::load_history() {}
+
+int  Console::add_recur_task(int, const std::string&) { return 0; }
+void Console::clear_recur_task(int) {}
+void Console::list_recur_tasks() {}
+void Console::process_recur_tasks() {}
+
+#else
+// ── Windows full implementation ──────────────────────────────
 
 // ── Constructor / Destructor ─────────────────────────────────
 
@@ -978,3 +1046,4 @@ void Console::load_history() {
     }
     in.close();
 }
+#endif // _WIN32

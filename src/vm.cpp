@@ -33,6 +33,9 @@
 #include <windows.h>
 #include <conio.h>
 #include <eh.h>  // _set_se_translator
+#else
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 // ── Windows SEH → C++ exception translator ───────────────────
@@ -6178,11 +6181,19 @@ void VM::register_builtins() {
 #else
         cmd = cmd + " 2>&1";
 #endif
+#if defined(_WIN32)
         FILE* pipe = _popen(cmd.c_str(), "r");
+#else
+        FILE* pipe = popen(cmd.c_str(), "r");
+#endif
         if (pipe) {
             char buf[256];
             while (fgets(buf, sizeof(buf), pipe)) output += buf;
+#if defined(_WIN32)
             exit_code = _pclose(pipe);
+#else
+            exit_code = pclose(pipe);
+#endif
         }
         Value result = Value::make_object();
         result.as_object()->set("OUTPUT", Value::make_string(output));
@@ -6433,11 +6444,12 @@ void VM::register_builtins() {
     register_native("CD", 0, 1, [](const std::vector<Value>& args) -> Value {
         if (args.empty()) {
             // CD without args: just return current dir (no print in script mode)
-            char buf[MAX_PATH];
 #if defined(_WIN32)
+            char buf[MAX_PATH];
             GetCurrentDirectoryA(MAX_PATH, buf);
 #else
-            getcwd(buf, sizeof(buf));
+            char buf[4096];
+            if (!getcwd(buf, sizeof(buf))) buf[0] = '\0';
 #endif
             return Value::make_string(buf);
         }
@@ -6462,11 +6474,12 @@ void VM::register_builtins() {
 
     register_native("PWD", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        char buf[MAX_PATH];
 #if defined(_WIN32)
+        char buf[MAX_PATH];
         GetCurrentDirectoryA(MAX_PATH, buf);
 #else
-        getcwd(buf, sizeof(buf));
+        char buf[4096];
+        if (!getcwd(buf, sizeof(buf))) buf[0] = '\0';
 #endif
         return Value::make_string(buf);
     });

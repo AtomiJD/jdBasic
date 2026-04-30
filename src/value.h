@@ -4,6 +4,7 @@
 #include <memory>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <cmath>
 #include <ctime>
 #include <sstream>
