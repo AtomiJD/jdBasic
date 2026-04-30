@@ -219,12 +219,35 @@ int byte_to_cp(const std::string& s, int byte_off) {
     return cp;
 }
 
-// Clipboard. Always updates the in-process fallback so editor copy/paste
-// works even with no DISPLAY (e.g. plain SSH). Also tries xclip/wl-copy/xsel
-// so paste into other apps still works when X/Wayland is around.
+// Base64 helper for OSC 52 clipboard transport.
+static std::string base64_encode(const std::string& in) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((in.size() + 2) / 3) * 4);
+    int val = 0, bits = -6;
+    for (unsigned char c : in) {
+        val = (val << 8) | c;
+        bits += 8;
+        while (bits >= 0) { out += T[(val >> bits) & 0x3F]; bits -= 6; }
+    }
+    if (bits > -6) out += T[((val << 8) >> (bits + 8)) & 0x3F];
+    while (out.size() % 4) out += '=';
+    return out;
+}
+
+// Clipboard. Always updates in-process fallback so internal copy/paste works
+// even with no DISPLAY. Also pushes to the *terminal's* clipboard via OSC 52
+// — most modern terminals (xterm, kitty, alacritty, wezterm, foot,
+// gnome-terminal recent) support it. That makes the user's Ctrl+V work
+// consistently when their terminal intercepts it (common case on Linux/SSH).
+// Falls back to xclip/wl-copy/xsel when X/Wayland is around for the local
+// case.
 void clip_set(const std::string& text) {
     g_internal_clipboard = text;
     g_internal_clipboard_set = true;
+    // OSC 52 set: ESC ] 52 ; c ; <base64> BEL
+    std::string osc = "\033]52;c;" + base64_encode(text) + "\007";
+    write(STDOUT_FILENO, osc.data(), osc.size());
     const char* tools[] = {
         "wl-copy 2>/dev/null",
         "xclip -selection clipboard -in 2>/dev/null",
@@ -797,7 +820,10 @@ void EditorImpl::run() {
         }
     }
 done:
-    std::cout << "\033[?1049l" << std::flush;  // leave alt screen
+    // Reset SGR + show cursor + leave alt screen, in that order. The alt-
+    // screen restore brings back the prior buffer; the SGR/cursor resets
+    // make sure attributes from the editor don't leak into the REPL.
+    std::cout << "\033[0m\033[?25h\033[?1049l" << std::flush;
     guard.disable();
 }
 

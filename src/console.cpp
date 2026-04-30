@@ -210,6 +210,12 @@ int Console::read_raw_key() {
     // or 0x80..0xFF for multi-byte continuation passed through verbatim) or
     // one of the abstract KEY_* codes from console.h.
 
+    // While raw mode is off (e.g. between executor disable and worker join)
+    // a bare read() would block in cooked mode and stall the main loop —
+    // exactly when we need to be polling for the worker's completion.
+    // Treat "not in raw mode" as "no key available".
+    if (!raw_mode_active) return 0;
+
     // Drain pushback queue first
     if (!input_queue.empty()) {
         int c = input_queue.front(); input_queue.pop();
@@ -363,13 +369,17 @@ void Console::run() {
 #else
             tcflush(STDIN_FILENO, TCIFLUSH);
             while (!input_queue.empty()) input_queue.pop();
-            // The script printed unrelated output; the previous prompt's
-            // "drawn length" no longer reflects what's on-screen. Drop it
-            // and force the next render to start fresh on a new line.
+            // Bring the terminal back to a known state. The script may have
+            // left attributes set, the cursor hidden, or the cursor partway
+            // through a line — anything that hides the prompt afterwards.
+            // Reset SGR, show cursor, force a fresh line in column 0, and
+            // drop the previous prompt's drawn-length so render_prompt
+            // doesn't try to back up over content that has scrolled.
+            std::cout << "\033[0m\033[?25h\r\n" << std::flush;
             prompt_drawn_visual_len = 0;
-            std::cout << "\r\n" << std::flush;
 #endif
             render_prompt();
+            std::cout.flush();
         }
 
         if (workspaces[active_ws].executing) {
@@ -438,7 +448,20 @@ void Console::switch_workspace(int target) {
 
     // Clear screen and replay target workspace's output buffer
     std::cout << "\033[2J\033[H";
-    std::cout << workspaces[active_ws].screen.replay();
+    std::string replay = workspaces[active_ws].screen.replay();
+#if !defined(_WIN32)
+    // Raw mode has OPOST off, so a bare \n moves the cursor down without
+    // returning to column 0 — replayed output staircases. Convert any \n
+    // that isn't already preceded by \r into \r\n.
+    std::string fixed; fixed.reserve(replay.size() + 16);
+    for (size_t i = 0; i < replay.size(); ++i) {
+        char c = replay[i];
+        if (c == '\n' && (i == 0 || replay[i - 1] != '\r')) fixed += '\r';
+        fixed += c;
+    }
+    replay = std::move(fixed);
+#endif
+    std::cout << replay;
     std::cout.flush();
 
     set_color(14, 0);
@@ -674,8 +697,8 @@ void Console::execute_current_line() {
 #else
                 tcflush(STDIN_FILENO, TCIFLUSH);
                 while (!input_queue.empty()) input_queue.pop();
+                std::cout << "\033[0m\033[?25h\r\n" << std::flush;
                 prompt_drawn_visual_len = 0;
-                std::cout << "\r\n" << std::flush;
 #endif
             }
         }
