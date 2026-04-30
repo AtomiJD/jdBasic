@@ -19,6 +19,7 @@ WANT_GFX=${GFX:-1}
 WANT_IMGUI=${IMGUI:-0}
 WANT_LLM=${LLM:-0}
 WANT_ONNX=${ONNX:-0}
+WANT_NATIVEC=${NATIVEC:-0}
 
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
@@ -102,9 +103,22 @@ if [ "$WANT_ONNX" = "1" ]; then
         -Wl,-rpath,\$ORIGIN/$ORT_DIR/lib"
 fi
 
+NATIVEC_SRC=""
+if [ "$WANT_NATIVEC" = "1" ]; then
+    LLVM_CONFIG=${LLVM_CONFIG:-llvm-config-18}
+    if ! command -v "$LLVM_CONFIG" >/dev/null 2>&1; then
+        echo "ERROR: $LLVM_CONFIG not found — install llvm-18-dev or set LLVM_CONFIG="; exit 1
+    fi
+    LLVM_INC=$($LLVM_CONFIG --includedir)
+    CXXFLAGS="$CXXFLAGS -DLLVM_CODEGEN -I$LLVM_INC"
+    # Dynamic LLVM (libLLVM-18.so). Avoids 200+ MB of static archives.
+    LDFLAGS="$LDFLAGS $($LLVM_CONFIG --ldflags) -lLLVM-18"
+    NATIVEC_SRC="src/llvm_codegen.cpp"
+fi
+
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
-     src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC"
+     src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.
@@ -135,8 +149,9 @@ features="console"
 [ "$WANT_HTTP"  = "1" ] && features="$features+HTTP"
 [ "$WANT_GFX"   = "1" ] && features="$features+GFX"
 [ "$WANT_IMGUI" = "1" ] && features="$features+IMGUI"
-[ "$WANT_LLM"   = "1" ] && features="$features+LLM"
-[ "$WANT_ONNX"  = "1" ] && features="$features+ONNX"
+[ "$WANT_LLM"     = "1" ] && features="$features+LLM"
+[ "$WANT_ONNX"    = "1" ] && features="$features+ONNX"
+[ "$WANT_NATIVEC" = "1" ] && features="$features+NATIVEC"
 echo "== Building jdBasic ($features) — $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 # xargs -P parallelises; each line is "src|obj"
@@ -152,3 +167,46 @@ fi
 echo "== Linking =="
 $CXX "${OBJS[@]}" -o build/jdbasic $LDFLAGS
 echo "OK: build/jdbasic"
+
+# When NATIVEC is on, build the runtime support pieces too:
+#  - build/jdb_runtime.o: small static obj statically linked into every
+#    generated exe (basic intrinsics — printf, math, time, etc.)
+#  - build/libjdbrt.so:   shared library providing the full VM via the
+#    jdrt_* C-API, dlopen-style dependency of every generated exe
+if [ "$WANT_NATIVEC" = "1" ]; then
+    if [ ! -f build/jdb_runtime.o ] || [ src/jdb_runtime.cpp -nt build/jdb_runtime.o ]; then
+        echo "== Precompiling jdb_runtime.o =="
+        $CXX -std=c++17 -O2 -DNDEBUG -Isrc -c src/jdb_runtime.cpp -o build/jdb_runtime.o
+    fi
+
+    # libjdbrt.so source list mirrors the main build minus main.cpp +
+    # vm_bridge.cpp. Compile each to build/obj_pic/ with -fPIC, link as .so.
+    mkdir -p build/obj_pic
+    RT_SRC="src/vm_bridge.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
+            src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
+            src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC"
+    RT_FLAGS_HASH=$(echo "$CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS" | sha1sum | cut -c1-12)
+    RT_STAMP="build/obj_pic/.flags-$RT_FLAGS_HASH"
+    if [ ! -f "$RT_STAMP" ]; then
+        rm -f build/obj_pic/.flags-* 2>/dev/null
+        rm -f build/obj_pic/*.o 2>/dev/null
+        touch "$RT_STAMP"
+    fi
+    RT_OBJS=()
+    RT_TO_BUILD=()
+    for s in $RT_SRC; do
+        o="build/obj_pic/$(basename "$s" .cpp).o"; RT_OBJS+=("$o")
+        if [ ! -f "$o" ] || [ "$s" -nt "$o" ]; then RT_TO_BUILD+=("$s|$o"); fi
+    done
+    echo "== Building libjdbrt.so — ${#RT_TO_BUILD[@]} of ${#RT_OBJS[@]} stale =="
+    if [ "${#RT_TO_BUILD[@]}" -gt 0 ]; then
+        printf '%s\n' "${RT_TO_BUILD[@]}" | \
+            xargs -P "$JOBS" -I{} bash -c '
+                line="{}"; src="${line%%|*}"; obj="${line##*|}"
+                echo "  CC (PIC) $src"
+                '"$CXX"' '"$CXXFLAGS"' -fPIC -DJDRT_EXPORTS -c "$src" -o "$obj"
+            '
+    fi
+    $CXX -shared -o build/libjdbrt.so "${RT_OBJS[@]}" $LDFLAGS
+    echo "OK: build/libjdbrt.so"
+fi

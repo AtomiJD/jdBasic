@@ -7,10 +7,16 @@
 extern "C" {
 #endif
 
-#ifdef JDRT_EXPORTS
-#define JDRT_API __declspec(dllexport)
+#if defined(_WIN32)
+  #ifdef JDRT_EXPORTS
+    #define JDRT_API __declspec(dllexport)
+  #else
+    #define JDRT_API __declspec(dllimport)
+  #endif
 #else
-#define JDRT_API __declspec(dllimport)
+  // POSIX: default visibility is fine — symbols come from a shared library
+  // (or static archive) without needing per-symbol annotations.
+  #define JDRT_API
 #endif
 
 // Opaque handle to the VM runtime

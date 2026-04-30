@@ -19,6 +19,9 @@
 #else
 #include <sys/stat.h>
 #include <unistd.h>
+// POSIX has strdup; MSVC provides the underscore-prefixed _strdup. Map one
+// to the other so the call sites don't need a forest of #ifdefs.
+#define _strdup strdup
 #endif
 
 static auto g_start_time = std::chrono::steady_clock::now();

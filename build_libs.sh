@@ -7,7 +7,9 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 LIBS="$ROOT/libs"
 
 JOBS=${JOBS:-$(nproc)}
-COMMON_FLAGS="-G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF"
+# PIC needed so the static archives can also be linked into libjdbrt.so
+# (the runtime shared lib used by native-compiled executables).
+COMMON_FLAGS="-G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
 
 build_one() {
     local name="$1"

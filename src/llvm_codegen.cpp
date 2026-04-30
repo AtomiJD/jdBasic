@@ -5,6 +5,7 @@
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
 #include "llvm-c/Analysis.h"
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <cstdlib>
@@ -7251,18 +7252,22 @@ bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
 bool LLVMCodegen::link_executable(const std::string& obj_path,
                                    const std::string& exe_path,
                                    const std::string& res_path) {
+    // Find the precompiled runtime object. Win build emits .obj, Linux .o.
     std::string runtime_obj;
-    for (auto& candidate : {"build\\jdb_runtime.obj", "jdb_runtime.obj"}) {
+    for (auto& candidate : {
+            "build\\jdb_runtime.obj", "jdb_runtime.obj",
+            "build/jdb_runtime.o",   "jdb_runtime.o" }) {
         if (std::filesystem::exists(candidate)) {
             runtime_obj = candidate;
             break;
         }
     }
     if (runtime_obj.empty()) {
-        error_msg = "Cannot find jdb_runtime.obj. Build with NATIVEC flag first.";
+        error_msg = "Cannot find jdb_runtime.{obj,o}. Build with NATIVEC flag first.";
         return false;
     }
 
+#ifdef _WIN32
     std::string msvc = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207";
     std::string sdk = "C:\\Program Files (x86)\\Windows Kits\\10";
     std::string sdkv = "10.0.26100.0";
@@ -7289,6 +7294,43 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         return false;
     }
     return true;
+#else
+    // POSIX: hand the pre-compiled runtime object plus the LLVM-generated obj
+    // to g++. We don't link libjdbrt yet — that's only needed for programs
+    // that call out to VM builtins (HTTP, GFX, etc.); pure arithmetic /
+    // string / array programs are fully covered by jdb_runtime.o.
+    (void)res_path;  // .res is Win-specific (VERSIONINFO resources)
+    auto sh_quote = [](const std::string& s) {
+        std::string out = "'";
+        for (char c : s) { if (c == '\'') out += "'\\''"; else out += c; }
+        out += "'";
+        return out;
+    };
+    // -no-pie because LLVM emits non-PIC code by default and modern gcc
+    // defaults to PIE — the resulting .obj has R_X86_64_32 relocations
+    // that the linker rejects in PIE builds.
+    // libjdbrt.so provides the VM C-API (jdrt_*). Embed three rpaths:
+    //   $ORIGIN          — exe sits next to the .so (deployment case)
+    //   $ORIGIN/build    — exe sits at the project root
+    //   <abs-build-path> — absolute path of the build/ dir at compile
+    //                      time, lets the generated exe run from any cwd
+    std::string abs_build = std::filesystem::absolute("build").string();
+    std::string link_cmd =
+        "g++ -O2 -no-pie -o " + sh_quote(exe_path) + " "
+        + sh_quote(obj_path) + " "
+        + sh_quote(runtime_obj) + " "
+        + "-Lbuild -ljdbrt "
+        + "-Wl,-rpath,'$ORIGIN' "
+        + "-Wl,-rpath,'$ORIGIN/build' "
+        + "-Wl,-rpath," + sh_quote(abs_build) + " "
+        + "-lm -lpthread -ldl";
+    int ret = std::system(link_cmd.c_str());
+    if (ret != 0) {
+        error_msg = "Linker failed (exit code " + std::to_string(ret) + ")";
+        return false;
+    }
+    return true;
+#endif
 }
 
 // Parse <source>.props (key=value, # for comments). If present, write a temp

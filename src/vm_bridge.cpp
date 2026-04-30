@@ -15,6 +15,12 @@
 #include <unordered_map>
 #include <mutex>
 
+// MSVC's _strdup is POSIX strdup with an underscore prefix. Map them so
+// the call sites stay portable.
+#if !defined(_WIN32)
+#define _strdup strdup
+#endif
+
 // Map of char* buffers that came out of PACK$/binary I/O and may contain
 // embedded nulls. jdrt_strlen consults this registry before falling back
 // to strlen() so LEN$ reports the true byte length.
