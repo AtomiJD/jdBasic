@@ -25,15 +25,9 @@ build_number.txt
 
 # ── Third-party libraries (too large for git, install manually) ───
 # These are needed to build but must be downloaded separately.
-# See doc/BUILD.md for download links and install instructions.
-libs/llama/
-libs/onnxruntime/
-libs/SDL3-3.2.16/
-libs/SDL3_ttf-3.2.2/
-libs/SDL3_image-3.2.4/
-libs/SDL2_mixer-2.8.1/
-libs/imgui/
-libs/llvm/
+# Win build uses libs/SDL3-3.2.16/ etc.; Linux build uses libs/SDL3/ etc.
+# Catch both with a directory-prefix wildcard.
+libs/
 
 # ── LLM models (huge binary blobs) ────────────────────────────────
 models/
