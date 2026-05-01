@@ -6774,7 +6774,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                 "MAP.FROM", "MAP.COPY", "GROUPBY",
                 "FILE.STAT", "DATE.PARTS",
-                "HTTP.REQUEST"
+                "HTTP.REQUEST",
+                "OS.EXEC"
             };
             bool is_object_fn = object_returners.count(upper);
 
@@ -6808,7 +6809,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
                 "NORMALIZE", "DIFF", "APPEND",
                 // Array of strings from common helpers
-                "TILED.LAYERS", "FILE.LIST"
+                "TILED.LAYERS", "FILE.LIST",
+                // File I/O readers that return parsed-row arrays
+                "CSVREADER"
             };
             bool is_array_fn = array_returners.count(upper) ||
                                ffi_array_returners.count(upper);

@@ -231,6 +231,17 @@ struct JdbArrayFwd { double* data; int64_t length; int32_t flags; };
 // flags bit 1: those pointers are char* strings (else JdbArray* nested).
 // jdBasic's uniform-array rule means one of these encodings applies to
 // every element — no per-element tag is needed.
+// Heuristic: distinguish a real f64 number from an f64-punned pointer.
+// Userspace pointers on Linux/Windows x86_64 sit below 2^47. Any finite
+// f64 with non-zero magnitude has its exponent bits set high enough that
+// the raw bit pattern is at least 2^52, well above the pointer range.
+// Used by jdbarray_to_value to walk mixed-type arrays where the JdbArray
+// flags say "has pointers" but individual cells may carry either kind.
+static inline bool bits_look_like_ptr(double d) {
+    union { double d; uint64_t u; } u; u.d = d;
+    return u.u != 0 && u.u < (1ULL << 47);
+}
+
 static Value jdbarray_to_value(JdbArrayFwd* arr) {
     if (!arr) return Value::make_array();
     Value r = Value::make_array();
@@ -240,7 +251,7 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
     bool has_string = (arr->flags & 2) != 0;
     for (int64_t i = 0; i < arr->length; i++) {
         double d = arr->data[i];
-        if (has_ptr) {
+        if (has_ptr && bits_look_like_ptr(d)) {
             union { double d; int64_t i; } u; u.d = d;
             void* p = (void*)(intptr_t)u.i;
             if (!p) {
@@ -254,6 +265,9 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
                 out->elements.push_back(jdbarray_to_value((JdbArrayFwd*)p));
             }
         } else {
+            // Either uniform f64 array, or a numeric cell inside a mixed-
+            // type literal like [1, "x", 3] — the bit pattern reveals it
+            // as a real number despite the array-level has_ptr flag.
             out->elements.push_back(Value::make_f64(d));
         }
     }

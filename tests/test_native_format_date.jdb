@@ -1,0 +1,20 @@
+' Regression: FORMAT_DATE(t) without an explicit format string returned
+' "" in native mode. Cause: codegen passed a null fmt pointer when the
+' source called FORMAT_DATE with one arg, and the runtime used the null
+' as the strftime format — strftime then produced an empty string. Fix
+' was a default in jdb_format_date matching the interpreter
+' ("%Y-%m-%d %H:%M:%S").
+'
+' Run as both interpreter and native (jdbasic -c).
+
+PRINT "── FORMAT_DATE default vs explicit ──"
+
+DIM t = NOW()
+DIM def = FORMAT_DATE(t)
+DIM ex  = FORMAT_DATE(t, "%Y-%m-%d")
+
+PRINT "1) default fmt non-empty: " + STR$(LEN(def) > 0)
+PRINT "2) default fmt has time : " + STR$(INSTR(def, ":") > 0)
+PRINT "3) explicit fmt YYYY-MM-DD only (10 chars): " + STR$(LEN(ex) = 10)
+
+PRINT "── done ──"

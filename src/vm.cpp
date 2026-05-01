@@ -533,67 +533,189 @@ Value VM::call_funcref(const Value& ref, const std::vector<Value>& args) {
     throw std::runtime_error("Invalid function reference");
 }
 
+// Returns true if `name` should NOT be auto-vectorized when called with an
+// array argument — either because the function is array-aware itself
+// (consumes the array as a whole — file I/O, GFX matrix args, OS commands,
+// etc.), or because vectorising would clobber state (e.g. SETLOCALE).
+//
+// Used by both VM::call_function (the entry point used by the native-mode
+// bridge) and OpCode::CALL inside VM::run() (used by the bytecode
+// interpreter). Previously these were two separate lists; the bridge's
+// was a "deliberately smaller" subset that missed file I/O and OS
+// functions, so a 2D array passed to CSVWRITER from a native exe would
+// auto-vectorize per-cell, and CSVWRITER would receive 6 scalar calls
+// instead of one matrix call.
+bool jdb_no_vectorize(const std::string& name) {
+    static const std::unordered_set<std::string> set = {
+        "ZEROS", "ONES", "__MAKE_UDT_ARRAY__",
+        "IOTA", "RESHAPE", "LEN", "LENV", "PUSH", "POP",
+        "TENSOR", "TYPEOF", "APPEND", "DIFF",
+        "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL",
+        "SCAN", "SELECT", "FILTER", "REDUCE",
+        "TAKE_WHILE", "DROP_WHILE", "CHUNK", "ENUMERATE", "GROUPBY",
+        "SORT", "TAKE", "DROP", "REVERSE", "UNIQUE", "SHUFFLE",
+        "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE", "GRADE",
+        "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE",
+        "SOLVE", "INVERT", "CONVOLVE", "PLACE",
+        "OUTER", "ROTATE", "SHIFT", "XSORT", "INTEGRATE",
+        "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
+        "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
+        "DATE.UTC", "DATE.PARTS",
+        // DATEADD/DATEDIFF/FORMAT_DATE intentionally vectorize so e.g.
+        // DATEDIFF("D", scalar, [d1,d2,d3]) → element-wise.
+        "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
+        "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",
+        "JSON.PARSE$", "JSON.STRINGIFY$",
+        "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
+        "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",
+        "CLIPBOARD.SET", "CLIPBOARD.GET$",
+        "SPLIT", "FORMAT$", "FRMV$", "INSERT$",
+        "REPLACE$", "REVERSE$", "PACK$", "UNPACK",
+        "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
+        "CSVREADER", "CSVWRITER", "IIF",
+        "JOIN", "REGEX_MATCH", "REGEX_REPLACE$",
+        "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
+        "MEAN", "MEDIAN", "VARIANCE", "STDEV",
+        "DOT", "CROSS", "CUMSUM", "CUMPROD",
+        "HISTOGRAM", "LINSPACE", "FLATTEN", "ZIP",
+        "RANGE", "COUNT", "INDEXOF",
+        "ISNUM", "ISSTR", "ISARR", "ISMAP", "ISBOOL", "ISNONE", "ISNULL",
+        "ROTL", "ROTR", "GCD", "LCM",
+        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
+        "CODEC.SHA256$", "CODEC.UUID$",
+        "OS.GETOS", "OS.GETOS$", "OS.ARGS", "OS.EXEC",
+        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD", "OS.FEATURE",
+        "DIR$", "DIR", "CD", "PWD", "MKDIR", "KILL", "RMDIR", "MKTEMP$",
+        "FILE.EXISTS", "FILE.SIZE", "FILE.ISDIR", "FILE.STAT",
+        "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
+        "PATH.DIRNAME$", "PATH.NORMALIZE$",
+        "RECUR", "CLEAR_RECUR", "LIST_RECUR",
+        "AWAIT", "THREAD.ISDONE", "THREAD.GETRESULT",
+        "REACT_BIND", "UNREACT",
+        "EXECUTE", "EVAL",
+        "JDB.GLOBAL_GET", "JDB.GLOBAL_SET", "JDB.CHECK$", "FUNCS",
+        "LOAD", "SAVE", "LIST", "HELP", "HELP$", "VARS",
+        "SCREEN", "SCREENFLIP", "DRAWCOLOR", "SETFONT",
+        "PSET", "LINE", "RECT", "CIRCLE", "ELLIPSE",
+        "ROUNDED_RECT", "CIRCLE_SECTOR", "TEXT",
+        "PLOTRAW", "TOGGLE_FULLSCREEN",
+        "AUDIO.INIT", "AUDIO.LOADWAV", "AUDIO.LOADMUS",
+        "AUDIO.PLAY", "AUDIO.PLAYMUS", "AUDIO.STOP",
+        "AUDIO.STOPMUS", "AUDIO.VOLUME", "AUDIO.VOLUMEMUS",
+        "AUDIO.PAUSE", "AUDIO.RESUME", "AUDIO.PAUSEMUS",
+        "AUDIO.RESUMEMUS", "AUDIO.FREE", "AUDIO.FREEMUS",
+        "AUDIO.CLOSE",
+        "GFX.POLLEVENT", "GFX.KEYSTATE", "GFX.MOUSEX",
+        "GFX.MOUSEY", "GFX.MOUSEBUTTON", "GFX.DELAY",
+        "GFX.TICKS", "GFX.CLOSE", "GFX.LOADIMAGE",
+        "GFX.DRAWIMAGE", "GFX.FREEIMAGE", "GFX.TEXTSIZE",
+        "GFX.PLOT_POINTS", "GFX.PLOT_POINTS_TEX", "GFX.HSV_RGB",
+        "GFX.CAPTURE", "GFX.DRAW_CAPTURE",
+        "GFX.FADE", "GFX.SAVE_SCREENSHOT", "GFX.SAVE_IMAGE",
+        "GFX.DRAWIMAGE_REGION", "GFX.DRAWIMAGE_EX",
+        "GFX.COLOR_TO_ALPHA",
+        "SOUND.PLAYBUFFER",
+        "MOUSEX", "MOUSEY", "MOUSEB",
+        "TURTLE.FORWARD", "TURTLE.BACKWARD",
+        "TURTLE.LEFT", "TURTLE.RIGHT",
+        "TURTLE.PENUP", "TURTLE.PENDOWN",
+        "TURTLE.SETPOS", "TURTLE.SETHEADING",
+        "TURTLE.HOME", "TURTLE.DRAW", "TURTLE.CLEAR",
+        "TURTLE.SET_COLOR",
+        "JOY.COUNT", "JOY.NAME$", "JOY.BUTTON",
+        "JOY.AXIS", "JOY.HAT",
+        "SPRITE.LOAD", "SPRITE.POS", "SPRITE.MOVE",
+        "SPRITE.DRAW", "SPRITE.DRAW_ALL", "SPRITE.DELETE",
+        "SPRITE.GET_X", "SPRITE.GET_Y",
+        "SPRITE.SCALE", "SPRITE.FLIP", "SPRITE.ALPHA",
+        "SPRITE.VISIBLE", "SPRITE.ROTATE", "SPRITE.SET_ORIGIN",
+        "SPRITE.COLLISION", "SPRITE.WIDTH", "SPRITE.HEIGHT",
+        "SPRITE.ANIM", "SPRITE.PLAY", "SPRITE.STOP",
+        "SPRITE.FRAME", "SPRITE.UPDATE", "SPRITE.PLAYING",
+        "SPRITE.VELOCITY", "SPRITE.GET_VX", "SPRITE.GET_VY",
+        "SPRITE.GROUP", "SPRITE.COLLISIONS", "SPRITE.COLLISION_FIRST",
+        "SPRITE.ZORDER", "SPRITE.GRAVITY", "SPRITE.ON_GROUND", "SPRITE.LAND",
+        "TILEMAP.CREATE", "TILEMAP.DRAW", "TILEMAP.SET",
+        "TILEMAP.GET", "TILEMAP.SIZE", "TILEMAP.COLLIDES",
+        "TILEMAP.TILE_AT",
+        "CAM.FOLLOW", "CAM.SET", "CAM.BOUNDS", "CAM.SHAKE",
+        "CAM.X", "CAM.Y",
+        "PARTICLE.EMIT", "PARTICLE.DRAW", "PARTICLE.CLEAR", "PARTICLE.COUNT",
+        "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
+        "AI.LOAD", "AI.RUN", "AI.FREE", "AI.INFO",
+        "AI.LIST", "AI.TENSOR", "AI.SOFTMAX",
+        "AI.ARGMAX", "AI.TOPK",
+        "AI.LOAD_LLM", "AI.CHAT", "AI.CHAT_STREAM",
+        "AI.CHAT_RAW", "AI.SET", "AI.TOKENIZE",
+        "AI.DETOKENIZE", "AI.LLM_INFO", "AI.FREE_LLM",
+        "AI.TOOL_ADD", "AI.TOOL_REMOVE", "AI.TOOL_CHAT",
+        "AI.TOOL_LIST",
+        "AI.CLEAR_HISTORY", "AI.GET_HISTORY",
+        "AI.TOKEN_COUNT", "AI.COSINE_SIM", "AI.NORMALIZE",
+        "AI.RAG_CREATE", "AI.RAG_ADD", "AI.RAG_ADD_FILE",
+        "AI.RAG_ADD_DIR", "AI.RAG_SAVE", "AI.RAG_LOAD",
+        "AI.RAG_SEARCH", "AI.RAG_QUERY", "AI.RAG_QUERY_FULL",
+        "AI.RAG_QUERY_STREAM", "AI.RAG_BUILD_INDEX",
+        "AI.RAG_INFO", "AI.RAG_CLEAR", "AI.RAG_FREE",
+        "AI.EMBED", "AI.EMBED_LLM", "AI.SIMILARITY",
+        "AI.LOAD_EMBEDDINGS",
+        "AI.SET_GRAMMAR", "AI.CLEAR_GRAMMAR",
+        "AI.SET_JSON_MODE", "AI.CHAT_JSON",
+        "AI.CLASSIFIER_CREATE", "AI.CLASSIFIER_ADD",
+        "AI.CLASSIFIER_ADD_BATCH", "AI.CLASSIFIER_PREDICT",
+        "AI.CLASSIFIER_BUILD_INDEX",
+        "AI.CLASSIFIER_SAVE", "AI.CLASSIFIER_LOAD",
+        "AI.CLASSIFIER_INFO", "AI.CLASSIFIER_FREE",
+        "SOUND.INIT", "SOUND.VOICE", "SOUND.SAMPLE",
+        "SOUND.PLAY", "SOUND.RELEASE", "SOUND.STOP",
+        "SOUND.SEQ", "SOUND.BPM", "SOUND.NOTE",
+        "SOUND.GAIN", "SOUND.PAN", "SOUND.FILTER",
+        "SOUND.EQ", "SOUND.LFO", "SOUND.FM",
+        "SOUND.UNISON", "SOUND.BITCRUSH", "SOUND.RINGMOD",
+        "SOUND.REVERBSEND", "SOUND.DELAYSEND", "SOUND.SIDECHAIN",
+        "SOUND.SCALE", "SOUND.DELAY", "SOUND.REVERB",
+        "SOUND.COMPRESSOR", "SOUND.DISTORTION",
+        "SOUND.RESET", "SOUND.SHUTDOWN",
+        "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
+        "SFX.LOAD", "SFX.PLAY", "MUSIC.PLAY", "MUSIC.STOP",
+        "GUI.BEGIN", "GUI.END", "GUI.BEGIN_CHILD", "GUI.END_CHILD",
+        "GUI.COLLAPSING_HEADER", "GUI.TREE_NODE", "GUI.TREE_POP",
+        "GUI.SAME_LINE", "GUI.SEPARATOR", "GUI.SEPARATOR_TEXT", "GUI.DUMMY",
+        "GUI.TEXT", "GUI.BUTTON", "GUI.CHECKBOX", "GUI.RADIO",
+        "GUI.SLIDER", "GUI.PROGRESS", "GUI.COLOR",
+        "GUI.HELPMARKER", "GUI.TOOLTIP",
+        "GUI.INPUT", "GUI.INPUT_INT", "GUI.INPUT_DOUBLE",
+        "GUI.COMBO", "GUI.LISTBOX", "GUI.SELECTABLE",
+        "GUI.BEGIN_MAIN_MENU_BAR", "GUI.END_MAIN_MENU_BAR",
+        "GUI.BEGIN_MENU_BAR", "GUI.END_MENU_BAR",
+        "GUI.BEGIN_MENU", "GUI.END_MENU", "GUI.MENU_ITEM",
+        "GUI.OPEN_POPUP", "GUI.BEGIN_POPUP", "GUI.BEGIN_POPUP_MODAL",
+        "GUI.END_POPUP", "GUI.CLOSE_CURRENT_POPUP",
+        "GUI.BEGIN_TAB_BAR", "GUI.END_TAB_BAR",
+        "GUI.BEGIN_TAB_ITEM", "GUI.END_TAB_ITEM",
+        "GUI.PLOT_LINES", "GUI.PLOT_HISTOGRAM",
+        "GUI.BEGIN_TABLE", "GUI.END_TABLE",
+        "GUI.TABLE_SETUP_COLUMN", "GUI.TABLE_HEADERS_ROW",
+        "GUI.TABLE_NEXT_ROW", "GUI.TABLE_SET_COLUMN_INDEX", "GUI.TABLE_NEXT_COLUMN",
+        "GUI.THEME", "GUI.FLAG", "GUI.COL",
+        "GUI.PUSH_STYLE_COLOR", "GUI.POP_STYLE_COLOR",
+        "GUI.PUSH_ID", "GUI.POP_ID", "GUI.SHOW_FONT_ATLAS",
+        "GUI.ITEM_RECT", "GUI.SET_CURSOR_SCREEN_POS",
+        "GUI.SET_NEXT_ITEM_WIDTH", "GUI.SET_KEYBOARD_FOCUS",
+        "GUI.ITEM_DEACTIVATED_AFTER_EDIT",
+    };
+    return set.find(name) != set.end();
+}
+
 Value VM::call_function(const std::string& name, const std::vector<Value>& args) {
     // Native?
     auto nit = natives.find(name);
     if (nit != natives.end()) {
         // Auto-vectorize: mirror OpCode::CALL behaviour so external callers
-        // (e.g. the native-compiler VM bridge) also get vectorized results.
-        // This is a subset of OpCode::CALL's blocklist, focused on what
-        // the bridge actually hits — kept deliberately smaller.
-        static const std::unordered_set<std::string> no_vec = {
-            "ZEROS","ONES","__MAKE_UDT_ARRAY__","IOTA","RESHAPE","LEN","LENV","PUSH","POP",
-            "TENSOR","TYPEOF","APPEND","DIFF",
-            "SUM","PRODUCT","MIN","MAX","ANY","ALL",
-            "SCAN","SELECT","FILTER","REDUCE",
-            "TAKE_WHILE","DROP_WHILE","CHUNK","ENUMERATE","GROUPBY",
-            "SORT","TAKE","DROP","REVERSE","UNIQUE","SHUFFLE",
-            "FIND_IN_ARRAY","NORMALIZE","DISTANCE","GRADE",
-            "TRANSPOSE","MATMUL","MVLET","STACK","SLICE",
-            "SOLVE","INVERT","CONVOLVE","PLACE",
-            "OUTER","ROTATE","SHIFT","XSORT","INTEGRATE",
-            "GETENV$","SETLOCALE","TICK","NOW",
-            "DATE$","TIME$","CVDATE","CDATE",
-            "MAP.EXISTS","MAP.KEYS","MAP.VALUES","MAP.ITEMS","MAP.SIZE",
-            "MAP.DELETE","MAP.CLEAR","MAP.MERGE","MAP.FROM",
-            "JSON.PARSE$","JSON.STRINGIFY$",
-            "SPLIT","FORMAT$","FRMV$","INSERT$","REPLACE$","REVERSE$",
-            "PACK$","UNPACK","JOIN",
-            "REGEX_MATCH","REGEX_REPLACE$","REGEX.MATCH","REGEX.FINDALL","REGEX.REPLACE",
-            "MEAN","MEDIAN","VARIANCE","STDEV","DOT","CROSS","CUMSUM","CUMPROD",
-            "HISTOGRAM","LINSPACE","FLATTEN","ZIP","RANGE","COUNT","INDEXOF",
-            "ISNUM","ISSTR","ISARR","ISMAP","ISBOOL","ISNONE","ISNULL","RANDOMSEED",
-            "IIF","EXECUTE","EVAL","LOAD","SAVE","LIST","HELP","HELP$","VARS",
-            // JDB.GLOBAL_SET stores a value as-is; auto-vectorising would
-            // call it once per element and clobber the slot with scalars.
-            "JDB.GLOBAL_GET","JDB.GLOBAL_SET","JDB.CHECK$","FUNCS",
-            // SPRITE.ANIM id, name$, frames[], fps, [loop] — frames[] is the payload,
-            // broadcasting would leave anim.frames empty and crash SPRITE.PLAY.
-            "SPRITE.ANIM",
-            // GFX.PLOT_POINTS points[], GFX.PLOT_POINTS_TEX points[] — array is the data.
-            "GFX.PLOT_POINTS","GFX.PLOT_POINTS_TEX",
-            // SOUND.PLAYBUFFER samples[] — the array IS the audio payload;
-            // auto-vec would call PLAYBUFFER once per sample and crash.
-            "SOUND.PLAYBUFFER",
-            // Matrix-form drawing commands accept [[...]] as the payload
-            // and dispatch to SDL themselves — auto-vectorizing would
-            // destructure the matrix into scalar calls and lose the
-            // per-row colors.
-            "PSET","LINE","RECT","CIRCLE","ELLIPSE","ROUNDED_RECT","CIRCLE_SECTOR",
-            // PLOTRAW <x>, <y>, matrix[][] — the matrix arg IS the bitmap;
-            // auto-vec destructures it into per-row scalar calls so PLOTRAW
-            // sees args[2].type=FLOAT64 with rows=0 and exits early.
-            "PLOTRAW",
-            // Internal dispatch helpers whose arrays are configuration
-            // payloads, not data to broadcast over. Auto-vectorizing
-            // these silently turns the registration into a 0-element
-            // loop when the payload array is empty (zero-arg DECLARE
-            // FUNC, no-arg event handler), so the call body never runs
-            // and the FFI/event function ends up unregistered.
-            "__FFI_DECLARE","__EVENT_ON","__EVENT_RAISE"
-        };
+        // (e.g. the native-compiler VM bridge) get the same broadcasting
+        // semantics. Both sites consult jdb_no_vectorize() for parity.
         bool has_arr = false;
-        if (!no_vec.count(name)) {
+        if (!jdb_no_vectorize(name)) {
             for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
         }
         if (has_arr) {
@@ -1411,175 +1533,14 @@ void VM::run() {
                 }
 
                 // Auto-vectorize: if any arg is an array and the function
-                // is not array-aware, apply element-wise automatically
-                static const std::unordered_map<std::string, bool> no_vectorize = {
-                    {"ZEROS",1}, {"ONES",1}, {"__MAKE_UDT_ARRAY__",1},
-                    {"IOTA",1}, {"RESHAPE",1}, {"LEN",1}, {"LENV",1}, {"PUSH",1}, {"POP",1},
-                    {"TENSOR",1}, {"TYPEOF",1}, {"APPEND",1}, {"DIFF",1},
-                    {"SUM",1}, {"PRODUCT",1}, {"MIN",1}, {"MAX",1}, {"ANY",1}, {"ALL",1},
-                    {"SCAN",1}, {"SELECT",1}, {"FILTER",1}, {"REDUCE",1},
-                    {"TAKE_WHILE",1}, {"DROP_WHILE",1},
-                    {"CHUNK",1}, {"ENUMERATE",1}, {"GROUPBY",1},
-                    {"SORT",1}, {"TAKE",1}, {"DROP",1}, {"REVERSE",1}, {"UNIQUE",1}, {"SHUFFLE",1},
-                    {"FIND_IN_ARRAY",1}, {"NORMALIZE",1}, {"DISTANCE",1}, {"GRADE",1},
-                    {"TRANSPOSE",1}, {"MATMUL",1}, {"MVLET",1}, {"STACK",1}, {"SLICE",1},
-                    {"SOLVE",1}, {"INVERT",1}, {"CONVOLVE",1}, {"PLACE",1},
-                    {"OUTER",1}, {"ROTATE",1}, {"SHIFT",1}, {"XSORT",1}, {"INTEGRATE",1},
-                    {"GETENV$",1}, {"SETLOCALE",1}, {"TICK",1}, {"NOW",1},
-                    {"DATE$",1}, {"TIME$",1}, {"CVDATE",1}, {"CDATE",1},
-                    {"DATE.UTC",1}, {"DATE.PARTS",1},
-                    // DATEADD/DATEDIFF/FORMAT_DATE intentionally vectorize
-                    // so `DATEDIFF("D", scalar, [d1,d2,d3])` returns [d-d1,
-                    // d-d2, d-d3] element-wise.
-                    {"MAP.EXISTS",1}, {"MAP.KEYS",1}, {"MAP.VALUES",1}, {"MAP.ITEMS",1},
-                    {"MAP.SIZE",1}, {"MAP.DELETE",1}, {"MAP.CLEAR",1}, {"MAP.MERGE",1},
-                    {"MAP.FROM",1}, {"JSON.PARSE$",1}, {"JSON.STRINGIFY$",1},
-                    {"CLS",1}, {"LOCATE",1}, {"COLOR",1}, {"CURSOR",1}, {"SLEEP",1},
-                    {"GETX",1}, {"GETY",1}, {"INKEY$",1}, {"WAITKEY$",1}, {"OPTION",1},
-                    {"CLIPBOARD.SET",1}, {"CLIPBOARD.GET$",1},
-                    {"SPLIT",1}, {"FORMAT$",1}, {"FRMV$",1}, {"INSERT$",1},
-                    {"REPLACE$",1}, {"REVERSE$",1}, {"PACK$",1}, {"UNPACK",1},
-                    {"TXTREADER$",1}, {"TXTWRITER",1}, {"BINREADER$",1}, {"BINWRITER",1},
-                    {"CSVREADER",1}, {"CSVWRITER",1}, {"IIF",1},
-                    {"JOIN",1}, {"REGEX_MATCH",1}, {"REGEX_REPLACE$",1},
-                    {"REGEX.MATCH",1}, {"REGEX.FINDALL",1}, {"REGEX.REPLACE",1},
-                    {"MEAN",1}, {"MEDIAN",1}, {"VARIANCE",1}, {"STDEV",1},
-                    {"DOT",1}, {"CROSS",1}, {"CUMSUM",1}, {"CUMPROD",1},
-                    {"HISTOGRAM",1}, {"LINSPACE",1}, {"FLATTEN",1}, {"ZIP",1},
-                    {"ZEROS",1}, {"ONES",1}, {"RANGE",1}, {"COUNT",1}, {"INDEXOF",1},
-                    {"ISNUM",1}, {"ISSTR",1}, {"ISARR",1}, {"ISMAP",1}, {"ISBOOL",1},
-                    {"ISNONE",1}, {"ISNULL",1}, {"RANDOMSEED",1},
-                    {"CODEC.BASE64_ENCODE$",1}, {"CODEC.BASE64_DECODE$",1},
-                    {"CODEC.SHA256$",1}, {"CODEC.UUID$",1},
-                    {"OS.GETOS",1}, {"OS.GETOS$",1}, {"OS.ARGS",1}, {"OS.EXEC",1},
-                    {"OS.HOSTNAME$",1}, {"OS.IP$",1}, {"OS.LOAD",1}, {"OS.FEATURE",1},
-                    {"DIR$",1}, {"DIR",1}, {"CD",1}, {"PWD",1}, {"MKDIR",1}, {"KILL",1},
-                    {"PATH.JOIN$",1}, {"PATH.BASENAME$",1}, {"PATH.EXT$",1},
-                    {"RECUR",1}, {"CLEAR_RECUR",1}, {"LIST_RECUR",1},
-                    {"AWAIT",1}, {"THREAD.ISDONE",1}, {"THREAD.GETRESULT",1},
-                    {"REACT_BIND",1}, {"UNREACT",1},
-                    {"EXECUTE",1}, {"EVAL",1},
-                    // JDB.GLOBAL_SET stores a value as-is; vectorising it
-                    // would call once per array element and clobber the
-                    // slot with scalars (last write wins).
-                    {"JDB.GLOBAL_GET",1}, {"JDB.GLOBAL_SET",1},
-                    {"JDB.CHECK$",1}, {"FUNCS",1},
-                    {"LOAD",1}, {"SAVE",1}, {"LIST",1}, {"HELP",1}, {"HELP$",1}, {"VARS",1},
-                    {"SCREEN",1}, {"SCREENFLIP",1}, {"DRAWCOLOR",1}, {"SETFONT",1},
-                    {"PSET",1}, {"LINE",1}, {"RECT",1}, {"CIRCLE",1}, {"ELLIPSE",1},
-                    {"ROUNDED_RECT",1}, {"CIRCLE_SECTOR",1}, {"TEXT",1},
-                    {"PLOTRAW",1}, {"TOGGLE_FULLSCREEN",1},
-                    {"AUDIO.INIT",1}, {"AUDIO.LOADWAV",1}, {"AUDIO.LOADMUS",1},
-                    {"AUDIO.PLAY",1}, {"AUDIO.PLAYMUS",1}, {"AUDIO.STOP",1},
-                    {"AUDIO.STOPMUS",1}, {"AUDIO.VOLUME",1}, {"AUDIO.VOLUMEMUS",1},
-                    {"AUDIO.PAUSE",1}, {"AUDIO.RESUME",1}, {"AUDIO.PAUSEMUS",1},
-                    {"AUDIO.RESUMEMUS",1}, {"AUDIO.FREE",1}, {"AUDIO.FREEMUS",1},
-                    {"AUDIO.CLOSE",1},
-                    {"GFX.POLLEVENT",1}, {"GFX.KEYSTATE",1}, {"GFX.MOUSEX",1},
-                    {"GFX.MOUSEY",1}, {"GFX.MOUSEBUTTON",1}, {"GFX.DELAY",1},
-                    {"GFX.TICKS",1}, {"GFX.CLOSE",1}, {"GFX.LOADIMAGE",1},
-                    {"GFX.DRAWIMAGE",1}, {"GFX.FREEIMAGE",1}, {"GFX.TEXTSIZE",1},
-                    {"GFX.PLOT_POINTS",1}, {"GFX.PLOT_POINTS_TEX",1}, {"GFX.HSV_RGB",1},
-                    {"SOUND.PLAYBUFFER",1},
-                    {"MOUSEX",1}, {"MOUSEY",1}, {"MOUSEB",1},
-                    {"TURTLE.FORWARD",1}, {"TURTLE.BACKWARD",1},
-                    {"TURTLE.LEFT",1}, {"TURTLE.RIGHT",1},
-                    {"TURTLE.PENUP",1}, {"TURTLE.PENDOWN",1},
-                    {"TURTLE.SETPOS",1}, {"TURTLE.SETHEADING",1},
-                    {"TURTLE.HOME",1}, {"TURTLE.DRAW",1}, {"TURTLE.CLEAR",1},
-                    {"TURTLE.SET_COLOR",1},
-                    {"JOY.COUNT",1}, {"JOY.NAME$",1}, {"JOY.BUTTON",1},
-                    {"JOY.AXIS",1}, {"JOY.HAT",1},
-                    {"SPRITE.LOAD",1}, {"SPRITE.POS",1}, {"SPRITE.MOVE",1},
-                    {"SPRITE.DRAW",1}, {"SPRITE.DRAW_ALL",1}, {"SPRITE.DELETE",1},
-                    {"SPRITE.GET_X",1}, {"SPRITE.GET_Y",1},
-                    {"SPRITE.SCALE",1}, {"SPRITE.FLIP",1}, {"SPRITE.ALPHA",1},
-                    {"SPRITE.VISIBLE",1}, {"SPRITE.ROTATE",1}, {"SPRITE.SET_ORIGIN",1},
-                    {"SPRITE.COLLISION",1}, {"SPRITE.WIDTH",1}, {"SPRITE.HEIGHT",1},
-                    {"SPRITE.ANIM",1}, {"SPRITE.PLAY",1}, {"SPRITE.STOP",1},
-                    {"SPRITE.FRAME",1}, {"SPRITE.UPDATE",1}, {"SPRITE.PLAYING",1},
-                    {"SPRITE.VELOCITY",1}, {"SPRITE.GET_VX",1}, {"SPRITE.GET_VY",1},
-                    {"SPRITE.GROUP",1}, {"SPRITE.COLLISIONS",1}, {"SPRITE.COLLISION_FIRST",1},
-                    {"TILEMAP.CREATE",1}, {"TILEMAP.DRAW",1}, {"TILEMAP.SET",1},
-                    {"TILEMAP.GET",1}, {"TILEMAP.SIZE",1}, {"TILEMAP.COLLIDES",1},
-                    {"TILEMAP.TILE_AT",1},
-                    {"CAM.FOLLOW",1}, {"CAM.SET",1}, {"CAM.BOUNDS",1}, {"CAM.SHAKE",1},
-                    {"CAM.X",1}, {"CAM.Y",1},
-                    {"SPRITE.ZORDER",1}, {"SPRITE.GRAVITY",1}, {"SPRITE.ON_GROUND",1}, {"SPRITE.LAND",1},
-                    {"PARTICLE.EMIT",1}, {"PARTICLE.DRAW",1}, {"PARTICLE.CLEAR",1}, {"PARTICLE.COUNT",1},
-                    {"GFX.CAPTURE",1}, {"GFX.DRAW_CAPTURE",1},
-                    {"GFX.FADE",1}, {"GFX.SAVE_SCREENSHOT",1}, {"GFX.SAVE_IMAGE",1},
-                    {"GFX.DRAWIMAGE_REGION",1}, {"GFX.DRAWIMAGE_EX",1},
-                    {"GFX.COLOR_TO_ALPHA",1},
-                    {"__EVENT_ON",1}, {"__EVENT_RAISE",1},
-                    {"__FFI_DECLARE",1},
-                    {"AI.LOAD",1}, {"AI.RUN",1}, {"AI.FREE",1}, {"AI.INFO",1},
-                    {"AI.LIST",1}, {"AI.TENSOR",1}, {"AI.SOFTMAX",1},
-                    {"AI.ARGMAX",1}, {"AI.TOPK",1},
-                    {"AI.LOAD_LLM",1}, {"AI.CHAT",1}, {"AI.CHAT_STREAM",1},
-                    {"AI.CHAT_RAW",1}, {"AI.SET",1}, {"AI.TOKENIZE",1},
-                    {"AI.DETOKENIZE",1}, {"AI.LLM_INFO",1}, {"AI.FREE_LLM",1},
-                    {"AI.TOOL_ADD",1}, {"AI.TOOL_REMOVE",1}, {"AI.TOOL_CHAT",1},
-                    {"AI.TOOL_LIST",1},
-                    {"AI.CLEAR_HISTORY",1}, {"AI.GET_HISTORY",1},
-                    {"AI.TOKEN_COUNT",1}, {"AI.COSINE_SIM",1}, {"AI.NORMALIZE",1},
-                    {"AI.RAG_CREATE",1}, {"AI.RAG_ADD",1}, {"AI.RAG_ADD_FILE",1},
-                    {"AI.RAG_ADD_DIR",1}, {"AI.RAG_SAVE",1}, {"AI.RAG_LOAD",1},
-                    {"AI.RAG_SEARCH",1}, {"AI.RAG_QUERY",1}, {"AI.RAG_QUERY_FULL",1},
-                    {"AI.RAG_QUERY_STREAM",1}, {"AI.RAG_BUILD_INDEX",1},
-                    {"AI.RAG_INFO",1}, {"AI.RAG_CLEAR",1}, {"AI.RAG_FREE",1},
-                    {"AI.EMBED",1}, {"AI.EMBED_LLM",1}, {"AI.SIMILARITY",1},
-                    {"AI.LOAD_EMBEDDINGS",1},
-                    {"AI.SET_GRAMMAR",1}, {"AI.CLEAR_GRAMMAR",1},
-                    {"AI.SET_JSON_MODE",1}, {"AI.CHAT_JSON",1},
-                    {"AI.CLASSIFIER_CREATE",1}, {"AI.CLASSIFIER_ADD",1},
-                    {"AI.CLASSIFIER_ADD_BATCH",1}, {"AI.CLASSIFIER_PREDICT",1},
-                    {"AI.CLASSIFIER_BUILD_INDEX",1},
-                    {"AI.CLASSIFIER_SAVE",1}, {"AI.CLASSIFIER_LOAD",1},
-                    {"AI.CLASSIFIER_INFO",1}, {"AI.CLASSIFIER_FREE",1},
-                    {"SOUND.INIT",1}, {"SOUND.VOICE",1}, {"SOUND.SAMPLE",1},
-                    {"SOUND.PLAY",1}, {"SOUND.RELEASE",1}, {"SOUND.STOP",1},
-                    {"SOUND.SEQ",1}, {"SOUND.BPM",1},
-                    {"SOUND.NOTE",1},
-                    {"SOUND.GAIN",1}, {"SOUND.PAN",1}, {"SOUND.FILTER",1},
-                    {"SOUND.EQ",1}, {"SOUND.LFO",1}, {"SOUND.FM",1},
-                    {"SOUND.UNISON",1}, {"SOUND.BITCRUSH",1}, {"SOUND.RINGMOD",1},
-                    {"SOUND.REVERBSEND",1}, {"SOUND.DELAYSEND",1}, {"SOUND.SIDECHAIN",1},
-                    {"SOUND.SCALE",1}, {"SOUND.DELAY",1}, {"SOUND.REVERB",1},
-                    {"SOUND.COMPRESSOR",1}, {"SOUND.DISTORTION",1},
-                    {"SOUND.RESET",1}, {"SOUND.SHUTDOWN",1},
-                    {"SOUND.GET_WAVE",1}, {"SOUND.GET_BUS_WAVE",1},
-                    {"SFX.LOAD",1}, {"SFX.PLAY",1}, {"MUSIC.PLAY",1}, {"MUSIC.STOP",1},
-                    {"GUI.BEGIN",1}, {"GUI.END",1}, {"GUI.BEGIN_CHILD",1}, {"GUI.END_CHILD",1},
-                    {"GUI.COLLAPSING_HEADER",1}, {"GUI.TREE_NODE",1}, {"GUI.TREE_POP",1},
-                    {"GUI.SAME_LINE",1}, {"GUI.SEPARATOR",1}, {"GUI.SEPARATOR_TEXT",1}, {"GUI.DUMMY",1},
-                    {"GUI.TEXT",1}, {"GUI.BUTTON",1}, {"GUI.CHECKBOX",1}, {"GUI.RADIO",1},
-                    {"GUI.SLIDER",1}, {"GUI.PROGRESS",1}, {"GUI.COLOR",1},
-                    {"GUI.HELPMARKER",1}, {"GUI.TOOLTIP",1},
-                    {"GUI.INPUT",1}, {"GUI.INPUT_INT",1}, {"GUI.INPUT_DOUBLE",1},
-                    {"GUI.COMBO",1}, {"GUI.LISTBOX",1}, {"GUI.SELECTABLE",1},
-                    {"GUI.BEGIN_MAIN_MENU_BAR",1}, {"GUI.END_MAIN_MENU_BAR",1},
-                    {"GUI.BEGIN_MENU_BAR",1}, {"GUI.END_MENU_BAR",1},
-                    {"GUI.BEGIN_MENU",1}, {"GUI.END_MENU",1}, {"GUI.MENU_ITEM",1},
-                    {"GUI.OPEN_POPUP",1}, {"GUI.BEGIN_POPUP",1}, {"GUI.BEGIN_POPUP_MODAL",1},
-                    {"GUI.END_POPUP",1}, {"GUI.CLOSE_CURRENT_POPUP",1},
-                    {"GUI.BEGIN_TAB_BAR",1}, {"GUI.END_TAB_BAR",1},
-                    {"GUI.BEGIN_TAB_ITEM",1}, {"GUI.END_TAB_ITEM",1},
-                    {"GUI.PLOT_LINES",1}, {"GUI.PLOT_HISTOGRAM",1},
-                    {"GUI.BEGIN_TABLE",1}, {"GUI.END_TABLE",1},
-                    {"GUI.TABLE_SETUP_COLUMN",1}, {"GUI.TABLE_HEADERS_ROW",1},
-                    {"GUI.TABLE_NEXT_ROW",1}, {"GUI.TABLE_SET_COLUMN_INDEX",1}, {"GUI.TABLE_NEXT_COLUMN",1},
-                    {"GUI.THEME",1}, {"GUI.FLAG",1}, {"GUI.COL",1},
-                    {"GUI.PUSH_STYLE_COLOR",1}, {"GUI.POP_STYLE_COLOR",1},
-                    {"GUI.PUSH_ID",1}, {"GUI.POP_ID",1}, {"GUI.SHOW_FONT_ATLAS",1},
-                    {"GUI.ITEM_RECT",1}, {"GUI.SET_CURSOR_SCREEN_POS",1},
-                    {"GUI.SET_NEXT_ITEM_WIDTH",1}, {"GUI.SET_KEYBOARD_FOCUS",1},
-                    {"GUI.ITEM_DEACTIVATED_AFTER_EDIT",1}
-                };
+                // is not array-aware, apply element-wise automatically.
+                // The list of array-aware functions lives in jdb_no_vectorize()
+                // at file scope so VM::call_function (the bridge entry) can
+                // share the same set.
 
                 bool has_array = false;
                 size_t arr_len = 0;
-                if (no_vectorize.find(func_name) == no_vectorize.end()) {
+                if (!jdb_no_vectorize(func_name)) {
                     for (auto& a : args) {
                         if (a.type == ValueType::ARRAY) {
                             has_array = true;

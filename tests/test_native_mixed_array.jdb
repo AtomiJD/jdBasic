@@ -1,0 +1,31 @@
+' Regressions for the CSVWRITER native segfault and the bridge-side
+' mixed-type array marshalling that triggered it.
+'
+' Bug history (2026-05-01):
+'  1. VM::call_function (the entry point used by the native bridge)
+'     had its own "no_vec" set that omitted CSVWRITER, TXTWRITER,
+'     OS.EXEC, and most other file/OS functions. A 2D array passed to
+'     CSVWRITER was therefore auto-vectorized per cell — CSVWRITER
+'     received 6 scalar f64 calls and silently produced an empty file.
+'  2. CSVREADER was not in array_returners, so the codegen routed it
+'     through jdrt_call_typed_f64 — the array result collapsed to 0.0
+'     and LEN(...)/index access on the result returned 0 / null.
+'  3. Mixed-type arrays like [1, "x", 3] crashed in the bridge: the
+'     JdbArray's per-array has_string flag treated every cell as a
+'     char* and dereferenced the integer cells.
+'
+' Run as both interpreter and native (jdbasic -c).
+
+PRINT "── CSVWRITER round-trip (mixed types) ──"
+
+DIM raw = [1, "Alice", 90, 2, "Bob", 85]
+DIM data = RESHAPE(raw, [2, 3])
+PRINT "1) reshape(6 mixed, [2,3]) ok"
+
+CSVWRITER("/tmp/jdb_mixed_test.csv", data, ",")
+PRINT "2) CSVWRITER ok"
+
+DIM loaded = CSVREADER("/tmp/jdb_mixed_test.csv", ",", FALSE)
+PRINT "3) CSVREADER rows = " + STR$(LEN(loaded))
+
+PRINT "── done ──"

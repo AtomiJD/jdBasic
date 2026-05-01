@@ -1,0 +1,15 @@
+' Regression: OS.EXEC was missing from the codegen's object_returners
+' list, so the bridge dispatched it through jdrt_call_typed_f64. The
+' returned Map collapsed to 0.0 and r{"OUTPUT"} / r{"EXIT_CODE"} read
+' back garbage.
+'
+' Run as both interpreter and native (jdbasic -c).
+
+PRINT "── OS.EXEC native marshalling ──"
+
+DIM r = OS.EXEC("echo hello-from-shell")
+PRINT "1) exit_code = " + STR$(r{"EXIT_CODE"})
+PRINT "2) output    = " + TRIM$(r{"OUTPUT"})
+PRINT "3) output len > 0 ?  " + STR$(LEN(r{"OUTPUT"}) > 0)
+
+PRINT "── done ──"

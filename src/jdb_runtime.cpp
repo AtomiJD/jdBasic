@@ -2318,7 +2318,11 @@ int64_t jdb_second_str(const char* s) {
 // Otherwise shift the epoch by tz_hours and format via gmtime so the wall
 // clock reflects the chosen zone (tz_hours == 0 → UTC wall clock).
 char* jdb_format_date(const char* date_str, const char* fmt, double tz_hours) {
-    if (!date_str || !fmt) return _strdup("");
+    if (!date_str) return _strdup("");
+    // Mirror the interpreter: a missing/empty format means the standard
+    // "Y-m-d H:M:S" representation. Codegen passes a null fmt pointer
+    // when the caller writes FORMAT_DATE(t) with no second argument.
+    if (!fmt || !*fmt) fmt = "%Y-%m-%d %H:%M:%S";
     int y, m, d, hr = 0, mn = 0, sc = 0;
     int n = sscanf(date_str, "%d-%d-%d %d:%d:%d", &y, &m, &d, &hr, &mn, &sc);
     if (n < 3) return _strdup("");
