@@ -194,6 +194,13 @@ private:
     // event handler SUBs.
     std::unordered_set<std::string> string_array_vars;
 
+    // Vars holding mixed-type array literals (e.g. [1, "Alice", 90]). INDEX
+    // on these can't be tagged statically — every cell could be either a
+    // numeric f64 or a string pointer. The runtime classifier
+    // jdb_array_classify_elem inspects the bit pattern at access time and
+    // we hand back a JD_TAG_RUNTIME value carrying the per-cell tag.
+    std::unordered_set<std::string> mixed_array_vars;
+
     // Vars whose array elements are known to hold map pointers — INDEX decodes
     // the punned-f64 and returns tag=4 so `q = arr[i]; q{"k"} = v` mutates
     // the shared map instead of silently bailing in INDEX_ASSIGN.

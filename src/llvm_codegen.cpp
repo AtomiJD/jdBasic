@@ -247,6 +247,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_bool_elems", "__arr_set_bool_elems", void_type, {i8_ptr_type}, -1);
+    reg("jdb_array_classify_elem", "__arr_classify", i32_type, {i8_ptr_type, f64_type}, 2);
     reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
     reg("jdb_setlocale",  "SETLOCALE",    void_type, {i8_ptr_type}, -1);
     // Maps / Objects
@@ -2607,13 +2608,20 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // or a $-suffixed function call known to return an array of strings,
     // mark the LHS variable as string-holding so later INDEX access
     // returns tag=2 (string) instead of the default tag=1 (f64 punned).
+    // If the literal mixes string and non-string elements (e.g. CSV-style
+    // [1, "Alice", 90]), tag the variable as mixed instead — INDEX on a
+    // mixed var calls the runtime classifier per cell and returns a
+    // RUNTIME-tagged value, since tagging the whole var as string would
+    // pun the numeric cells into bogus pointers and crash on use.
     if (stmt.expr && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        bool has_str = false, has_non_str = false;
         for (auto& a : stmt.expr->args) {
-            if (a && a->kind == ExprKind::LITERAL_STRING) {
-                string_array_vars.insert(stmt.var_name);
-                break;
-            }
+            if (!a) continue;
+            if (a->kind == ExprKind::LITERAL_STRING) has_str = true;
+            else has_non_str = true;
         }
+        if (has_str && has_non_str)      mixed_array_vars.insert(stmt.var_name);
+        else if (has_str)                string_array_vars.insert(stmt.var_name);
     }
     if (stmt.expr && stmt.expr->kind == ExprKind::CALL &&
         !stmt.expr->func_name.empty()) {
@@ -2972,16 +2980,20 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         return;
     }
 
-    // Mirror codegen_let_or_assign: DIM with string-array-literal RHS or
-    // string-array-returning $-suffixed call marks the var as holding
-    // strings, so later `arr[i]` reads return tag=2 instead of punned f64.
+    // Mirror codegen_let_or_assign: DIM with array-literal RHS picks the
+    // right INDEX-tag tracking set. All-string → string_array_vars (INDEX
+    // returns tag=STR). Mixed string+number → mixed_array_vars (INDEX
+    // calls the runtime classifier per cell). Pure-numeric falls through
+    // to the default tag=F64 path.
     if (stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        bool has_str = false, has_non_str = false;
         for (auto& a : stmt.expr->args) {
-            if (a && a->kind == ExprKind::LITERAL_STRING) {
-                string_array_vars.insert(stmt.var_name);
-                break;
-            }
+            if (!a) continue;
+            if (a->kind == ExprKind::LITERAL_STRING) has_str = true;
+            else has_non_str = true;
         }
+        if (has_str && has_non_str)      mixed_array_vars.insert(stmt.var_name);
+        else if (has_str)                string_array_vars.insert(stmt.var_name);
     }
     if (stmt.expr->kind == ExprKind::CALL &&
         !stmt.expr->func_name.empty()) {
@@ -4686,6 +4698,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             auto& arr_get = runtime_funcs["__array_get"];
             LLVMValueRef args[] = { arr_ptr, idx };
             LLVMValueRef result = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, args, 2, "elem");
+            // Mixed-type array literal (e.g. [1, "Alice", 90]): the cell
+            // tag varies per element. Call the runtime classifier on the
+            // raw f64 cell — it consults the bit pattern (real numbers
+            // have bits ≥ 2^52, userspace pointers sit below 2^47) plus
+            // the array-wide flags and returns the correct JdTag. Hand
+            // the result back as a RUNTIME-tagged value; the caller's
+            // coerce_to / concat / print paths already handle that.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                mixed_array_vars.count(expr.left->str_val)) {
+                auto& classify = runtime_funcs["__arr_classify"];
+                LLVMValueRef cargs[] = { arr_ptr, result };
+                LLVMValueRef rt_tag = LLVMBuildCall2(builder, classify.fn_type,
+                                                     classify.fn, cargs, 2, "rtag");
+                LLVMValueRef as_i64 = pun_f64_to_i64(result);
+                return { as_i64, JD_TAG_RUNTIME, rt_tag };
+            }
             // If the source array is known to hold strings (e.g. event handler
             // data param), pun the f64-encoded ptr back to char* and tag as
             // string so concat / string-compare paths see it correctly.

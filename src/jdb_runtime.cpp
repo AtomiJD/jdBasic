@@ -1014,6 +1014,30 @@ void jdb_array_set_bool_elems(JdbArray* arr) {
     if (arr) arr->flags |= 4;  // bit 2 (bool)
 }
 
+// Classify a single cell of a mixed-type array. Used by the codegen for
+// INDEX access on arrays that contain *both* numeric and pointer (string
+// or nested-array) elements: the array-wide flags say "has pointers" but
+// individual cells may still be raw doubles.
+//
+// Heuristic: a real f64 number's raw bits are at least 2^52 (the lowest
+// non-zero exponent), well above the userspace pointer range (< 2^47 on
+// x86_64 Linux/Win). Cells whose bits look numeric stay as F64; cells
+// whose bits look like a pointer dispatch to STR or ARR depending on the
+// array-wide has_string flag.
+//
+// Returns a JdTag value:
+//   1 = JD_TAG_F64
+//   2 = JD_TAG_STR
+//   3 = JD_TAG_ARR
+int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
+    if (!arr) return 1;  // F64
+    union { double d; uint64_t u; } u; u.d = d;
+    bool looks_ptr = (u.u != 0 && u.u < (1ULL << 47));
+    if (!looks_ptr) return 1;  // F64
+    bool has_string = (arr->flags & 2) != 0;
+    return has_string ? 2 : 3;  // STR or ARR
+}
+
 // String * int → repeat: "-" * 5 → "-----"
 char* jdb_str_repeat(const char* s, int64_t n) {
     if (!s || n <= 0) return _strdup("");
