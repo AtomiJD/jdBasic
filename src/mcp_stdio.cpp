@@ -35,11 +35,18 @@
 #ifdef _WIN32
   #include <io.h>
   #include <fcntl.h>
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
   #define MCP_POPEN  _popen
   #define MCP_PCLOSE _pclose
 #else
   #include <unistd.h>
   #include <sys/wait.h>
+  #ifdef __APPLE__
+    #include <mach-o/dyld.h>
+  #endif
   #define MCP_POPEN  popen
   #define MCP_PCLOSE pclose
 #endif
@@ -309,6 +316,60 @@ Value tool_jdb_funcs(VM& vm, const Value&) {
     return make_text_result(out, false);
 }
 
+// Locate the directory containing the running jdBasic executable. Used to
+// resolve doc/languages.md relative to the binary so a redistributed bundle
+// works without the user having to set "cwd" in the MCP client config.
+// Returns "" if the platform lookup fails — caller falls back to CWD.
+
+std::string exe_dir() {
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, buf, (int)n, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
+    std::string path((size_t)len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, buf, (int)n, &path[0], len, nullptr, nullptr);
+    auto pos = path.find_last_of("\\/");
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#elif defined(__APPLE__)
+    char buf[4096]; uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0) return "";
+    std::string path(buf);
+    auto pos = path.find_last_of('/');
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#else
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf));
+    if (n <= 0) return "";
+    std::string path(buf, (size_t)n);
+    auto pos = path.find_last_of('/');
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#endif
+}
+
+// Open doc/languages.md, trying EXE-relative first (bundle case), then CWD
+// (in-tree dev case). On failure, both attempted paths are returned via
+// out-params so the error message can name them.
+
+bool open_doc_languages(std::ifstream& in,
+                        std::string& tried_exe,
+                        std::string& tried_cwd) {
+    std::string ed = exe_dir();
+    if (!ed.empty()) {
+#ifdef _WIN32
+        tried_exe = ed + "\\doc\\languages.md";
+#else
+        tried_exe = ed + "/doc/languages.md";
+#endif
+        in.open(tried_exe);
+        if (in.is_open()) return true;
+    }
+    tried_cwd = "doc/languages.md";
+    in.open(tried_cwd);
+    return in.is_open();
+}
+
 // jdb_doc — fuzzy search doc/languages.md, mirroring mcp/server.jdb's
 // IS_DOC_ANCHOR + body-collection logic. Anchor = bullet starting with
 // "* **" or any markdown heading.
@@ -329,8 +390,14 @@ Value tool_jdb_doc(VM&, const Value& args) {
     std::string query = obj_get_str(args, "query");
     if (query.empty()) return make_text_result("query is empty", true);
 
-    std::ifstream in("doc/languages.md");
-    if (!in.is_open()) return make_text_result("Cannot read doc/languages.md", true);
+    std::ifstream in;
+    std::string tried_exe, tried_cwd;
+    if (!open_doc_languages(in, tried_exe, tried_cwd)) {
+        std::string msg = "Cannot read doc/languages.md";
+        if (!tried_exe.empty()) msg += " — tried '" + tried_exe + "'";
+        if (!tried_cwd.empty()) msg += (tried_exe.empty() ? " — tried '" : " and '") + tried_cwd + "'";
+        return make_text_result(msg, true);
+    }
     std::stringstream ss; ss << in.rdbuf();
     std::string doc = ss.str();
 

@@ -35,6 +35,8 @@ Add an entry to your client's MCP config (`.mcp.json`, `claude_desktop_config.js
 }
 ```
 
+`jdb_doc` resolves `doc/languages.md` relative to the binary's own directory first, then falls back to the working directory — so a redistributed bundle (which ships `doc/languages.md` next to the EXE) works without any extra config. Set `"cwd"` only if you also want `jdb_load` to resolve relative file paths against a specific folder.
+
 Optional environment:
 
 - `JDBASIC_MCP_LOG=1` — write JSON-RPC traffic to stderr for debugging.
@@ -60,6 +62,22 @@ A second transport, an **HTTP** server, is available for remote / containerised 
 ```
 
 Run `jdbasic --mcp-http 7321` in a long-lived terminal or systemd unit. **Bind to localhost only** unless you put authentication in front — there is no built-in auth and the tools can execute arbitrary code (see *Security* below).
+
+---
+
+## Client setup notes
+
+### Claude Code / Claude Desktop
+
+Drop the snippet from *Quickstart* into the project's `.mcp.json` (Claude Code) or into `claude_desktop_config.json` (Claude Desktop, OS-specific path under `Application Support` / `%APPDATA%`). Restart the client. Tools appear as `mcp__jdbasic__*`.
+
+### ChatGPT Desktop (Mac / Windows)
+
+ChatGPT Desktop ships native MCP stdio support. Settings → *Developer* → *MCP Servers* → add an entry with the same `command` / `args` / `cwd` shape as above. The browser-only ChatGPT (chat.openai.com) does **not** speak MCP stdio — for that you need the HTTP transport plus a public HTTPS tunnel (Cloudflare Tunnel / ngrok) and your own auth proxy. Treat that as remote code execution and gate it behind a bearer token at minimum.
+
+### Cursor / Cline / Continue / Zed / Windsurf
+
+All five accept the standard MCP server config object. Paths differ (`~/.cursor/mcp.json`, Cline's settings UI, Continue's `~/.continue/config.json`, …) but the JSON snippet is identical to the Claude one — same `command`, `args`, `cwd`.
 
 ---
 
