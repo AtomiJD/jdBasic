@@ -1,8 +1,13 @@
 {
-  "mcpServers": {
-    "jdbasic": {
-      "type": "http",
-      "url": "http://127.0.0.1:7321/mcp"
+    "mcpServers": {
+      "jdbasic": {
+        "type": "http",
+        "url": "http://127.0.0.1:7321/mcp"
+      },
+      "jdbasic-stdio": {
+        "command": "/home/atomijd/dev/cc/build/jdbasic",
+        "args": ["--mcp"],
+        "env": { "JDBASIC_MCP_LOG": "1" }
+      }
     }
-  }
 }

@@ -37,6 +37,10 @@ inline std::string jdbasic_features() {
     if (!f.empty()) f += ", ";
     f += "LLM";
 #endif
+#ifdef MCPSERVER
+    if (!f.empty()) f += ", ";
+    f += "MCP";
+#endif
     if (f.empty()) f = "Core";
     return f;
 }

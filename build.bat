@@ -78,6 +78,11 @@ for %%A in (%*) do (
         set COPY_LLVM=1
         echo [+] LLVM Native Compiler
     )
+    if /I "%%A"=="MCPSERVER" (
+        set DEFS=!DEFS! /DMCPSERVER
+        set EXTRA_SRC=!EXTRA_SRC! src\mcp_stdio.cpp
+        echo [+] MCP Server - Model Context Protocol stdio
+    )
     if /I "%%A"=="RELEASE" (
         REM Increment build number
         set /p BNUM=< %BUILD_NUM_FILE%

@@ -46,6 +46,9 @@
 #ifdef LLVM_CODEGEN
 #include "llvm_codegen.h"
 #endif
+#ifdef MCPSERVER
+#include "mcp_stdio.h"
+#endif
 
 static std::string read_file(const std::string& path) {
     std::ifstream file(path);
@@ -57,7 +60,7 @@ static std::string read_file(const std::string& path) {
     return ss.str();
 }
 
-static void run_on_vm(VM& vm, const std::string& source);
+void run_on_vm(VM& vm, const std::string& source);
 static void setup_dynamic_code(VM& vm);
 
 // Module file reader: tries modulename.jdb in base_dir, then cwd
@@ -100,7 +103,7 @@ static Parser::FileReader make_module_reader() {
     };
 }
 
-static void setup_parser_modules(Parser& parser, const std::string& source_file = "") {
+void setup_parser_modules(Parser& parser, const std::string& source_file = "") {
     parser.file_reader = make_module_reader();
     parser.current_source_file = source_file;
 }
@@ -156,7 +159,7 @@ static void run_source(const std::string& source, bool show_timing) {
 }
 
 // Run source on an existing VM (keeps state)
-static void run_on_vm(VM& vm, const std::string& source) {
+void run_on_vm(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
     Parser parser(tokens);
@@ -1181,6 +1184,7 @@ int main(int argc, char* argv[]) {
     bool compile_native = false;
     bool emit_ir_only = false;
     bool lint_mode = false;
+    bool mcp_mode = false;
     std::string compile_output;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -1194,6 +1198,7 @@ int main(int argc, char* argv[]) {
               "  jdbasic <file.jdb> [args...]   Run a script in the interpreter\n"
               "  jdbasic -c <file.jdb>          Compile to a native .exe (LLVM)\n"
               "  jdbasic --lint <file.jdb>      Static analysis only (no execution)\n"
+              "  jdbasic --mcp                  Run as MCP server over stdio (requires MCPSERVER build)\n"
               "  jdbasic -d [port] <file.jdb>   Run under the DAP debugger (default 4711)\n"
               "\n"
               "FLAGS\n"
@@ -1204,6 +1209,7 @@ int main(int argc, char* argv[]) {
               "  -c, --compile            Compile the script to native code (requires NATIVEC)\n"
               "  -o, --output <file>      Write the compiled .exe to <file> (default: script name)\n"
               "      --lint               Parse + typecheck only, do not run\n"
+              "      --mcp                Speak the Model Context Protocol on stdio\n"
               "      --emit-ir            Emit LLVM IR to stdout instead of an .exe\n"
               "      --trace              Compile with codegen trace logging on\n"
               "\n"
@@ -1237,12 +1243,26 @@ int main(int argc, char* argv[]) {
         }
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--lint") { lint_mode = true; continue; }
+        if (a == "--mcp") { mcp_mode = true; continue; }
         if (a == "--emit-ir") { emit_ir_only = true; continue; }
         if (a == "--trace") { compile_native = true; /* set debug_log below */ continue; }
         if ((a == "-o" || a == "--output") && i + 1 < argc) { compile_output = argv[++i]; continue; }
         filename = a;
         break;
     }
+
+    // ── MCP server mode (stdio) — no filename required ──────────
+    if (mcp_mode) {
+#ifdef MCPSERVER
+        VM vm;
+        setup_dynamic_code(vm);
+        return run_mcp_stdio(vm);
+#else
+        std::cerr << "MCP server mode not available (build with MCPSERVER=1)." << std::endl;
+        return 1;
+#endif
+    }
+
     if (filename.empty()) {
         std::cerr << "Error: no input file specified. Run `jdbasic --help` for usage." << std::endl;
         return 1;

@@ -3,7 +3,7 @@
 # Compiles each source to build/obj/<basename>.o in parallel (one job per
 # core) with stamp-file-based incremental rebuilds, then links once.
 #
-# Toggle modules: HTTP=0, GFX=0, IMGUI=1 (default IMGUI=0).
+# Toggle modules: HTTP=0, GFX=0, IMGUI=1, MCPSERVER=1 (default off).
 # Override compiler: CXX=clang++ ./build.sh
 # Override jobs:    JOBS=4 ./build.sh
 set -e
@@ -20,6 +20,7 @@ WANT_IMGUI=${IMGUI:-0}
 WANT_LLM=${LLM:-0}
 WANT_ONNX=${ONNX:-0}
 WANT_NATIVEC=${NATIVEC:-0}
+WANT_MCPSERVER=${MCPSERVER:-0}
 
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
@@ -103,6 +104,12 @@ if [ "$WANT_ONNX" = "1" ]; then
         -Wl,-rpath,\$ORIGIN/$ORT_DIR/lib"
 fi
 
+MCPSERVER_SRC=""
+if [ "$WANT_MCPSERVER" = "1" ]; then
+    CXXFLAGS="$CXXFLAGS -DMCPSERVER"
+    MCPSERVER_SRC="src/mcp_stdio.cpp"
+fi
+
 NATIVEC_SRC=""
 if [ "$WANT_NATIVEC" = "1" ]; then
     LLVM_CONFIG=${LLVM_CONFIG:-llvm-config-18}
@@ -118,7 +125,7 @@ fi
 
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
-     src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC"
+     src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.
@@ -152,6 +159,7 @@ features="console"
 [ "$WANT_LLM"     = "1" ] && features="$features+LLM"
 [ "$WANT_ONNX"    = "1" ] && features="$features+ONNX"
 [ "$WANT_NATIVEC" = "1" ] && features="$features+NATIVEC"
+[ "$WANT_MCPSERVER" = "1" ] && features="$features+MCPSERVER"
 echo "== Building jdBasic ($features) — $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 # xargs -P parallelises; each line is "src|obj"
