@@ -671,6 +671,58 @@ vse_hashes = [vse_sa, vse_sb, vse_sc]
 vse_huniq = UNIQUE(vse_hashes)
 Assert(201, LEN(vse_huniq) = 2)
 
+' ── 53. ARRAY-TRANSFORMER FLAG PROPAGATION ───────────────────
+'   Runtime audit: each transformer (REVERSE / SORT / TAKE / DROP /
+'   APPEND / DIFF / FLATTEN / SHUFFLE / UNIQUE / STR$ / apply_ss)
+'   must preserve the string-elements flag on its result so the
+'   PRINT path's flag-driven dispatch keeps rendering strings.
+PRINT "── String-array flag propagation ──"
+
+tfp_xs = SPLIT("alpha,beta,gamma", ",")
+tfp_x0 = ""
+tfp_x0 = tfp_xs[0]
+Assert(202, tfp_x0 = "alpha")
+tfp_x2 = ""
+tfp_x2 = tfp_xs[2]
+Assert(203, tfp_x2 = "gamma")
+
+tfp_rev = REVERSE(tfp_xs)
+tfp_r0 = ""
+tfp_r0 = tfp_rev[0]
+Assert(204, tfp_r0 = "gamma")
+
+tfp_tk = TAKE(2, tfp_xs)
+tfp_tk0 = ""
+tfp_tk0 = tfp_tk[0]
+Assert(205, tfp_tk0 = "alpha")
+
+tfp_dr = DROP(1, tfp_xs)
+tfp_dr0 = ""
+tfp_dr0 = tfp_dr[0]
+Assert(206, tfp_dr0 = "beta")
+
+tfp_ext = APPEND(tfp_xs, ["delta"])
+Assert(207, LEN(tfp_ext) = 4)
+tfp_e3 = ""
+tfp_e3 = tfp_ext[3]
+Assert(208, tfp_e3 = "delta")
+
+tfp_chain = UNIQUE(APPEND(REVERSE(tfp_xs), ["alpha"]))
+Assert(209, LEN(tfp_chain) = 3)
+tfp_c0 = ""
+tfp_c2 = ""
+tfp_c0 = tfp_chain[0]
+tfp_c2 = tfp_chain[2]
+Assert(210, tfp_c0 = "gamma")
+Assert(211, tfp_c2 = "alpha")
+
+tfp_nums = [10, 20, 30]
+tfp_strs = STR$(tfp_nums)
+Assert(212, LEN(tfp_strs) = 3)
+tfp_s0 = ""
+tfp_s0 = tfp_strs[0]
+Assert(213, tfp_s0 = "10")
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

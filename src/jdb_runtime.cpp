@@ -593,6 +593,7 @@ JdbArray* jdb_array_reverse(JdbArray* arr) {
     auto* r = jdb_array_new(arr->length);
     for (int64_t i = 0; i < arr->length; i++)
         r->data[i] = arr->data[arr->length - 1 - i];
+    r->flags = arr->flags;  // preserve string-elem / nested-arr dispatch
     return r;
 }
 
@@ -600,13 +601,18 @@ JdbArray* jdb_array_sort(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
     memcpy(r->data, arr->data, arr->length * sizeof(double));
-    // Simple insertion sort
+    // Simple insertion sort. NB: when called on a string-array the sort
+    // key becomes the punned-pointer bits, which is effectively random.
+    // Codegen should route string sorts to a dedicated _str variant when
+    // we add one — for now we still preserve the flag so reads after the
+    // sort still see strings.
     for (int64_t i = 1; i < r->length; i++) {
         double key = r->data[i];
         int64_t j = i - 1;
         while (j >= 0 && r->data[j] > key) { r->data[j+1] = r->data[j]; j--; }
         r->data[j+1] = key;
     }
+    r->flags = arr->flags;
     return r;
 }
 
@@ -615,6 +621,7 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
     auto* r = jdb_array_new(newlen);
     if (arr) memcpy(r->data, arr->data, arr->length * sizeof(double));
     r->data[newlen - 1] = val;
+    if (arr) r->flags = arr->flags;  // preserve element-type marker
     return r;
 }
 
@@ -663,8 +670,16 @@ int64_t jdb_array_has_num(JdbArray* arr, double val) {
     return 0;
 }
 
+// Forward declaration — actual definition follows below.
+extern "C" JdbArray* jdb_array_unique_str(JdbArray* arr);
+
 JdbArray* jdb_array_unique(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
+    // Runtime fallback: if codegen didn't statically route to _str (e.g.
+    // UNIQUE(APPEND(REVERSE(arr), ...)) — args[0] is a CALL chain, not a
+    // VARIABLE in string_array_vars), the array's per-cell-type flag still
+    // tells us this is a string array. Delegate so dedupe uses strcmp.
+    if (arr->flags & 2) return jdb_array_unique_str(arr);
     auto* r = jdb_array_new(arr->length);
     int64_t n = 0;
     for (int64_t i = 0; i < arr->length; i++) {
@@ -673,6 +688,7 @@ JdbArray* jdb_array_unique(JdbArray* arr) {
         if (!found) r->data[n++] = arr->data[i];
     }
     r->length = n;
+    r->flags = arr->flags;
     return r;
 }
 
@@ -776,6 +792,7 @@ JdbArray* jdb_array_diff(JdbArray* a, JdbArray* b) {
         if (!found) r->data[n++] = a->data[i];
     }
     r->length = n;
+    r->flags = a->flags;  // preserve element-type marker
     return r;
 }
 
@@ -809,6 +826,9 @@ JdbArray* jdb_array_flatten(JdbArray* arr) {
     flatten_into(arr, flat);
     auto* r = jdb_array_new((int64_t)flat.size());
     if (!flat.empty()) memcpy(r->data, flat.data(), flat.size() * sizeof(double));
+    // Carry over the string-elements bit; the nested-array bit is gone
+    // by definition because we just flattened it out.
+    r->flags = arr->flags & ~1;
     return r;
 }
 
@@ -820,6 +840,7 @@ JdbArray* jdb_array_shuffle(JdbArray* arr) {
         int64_t j = rand() % (i + 1);
         double tmp = r->data[i]; r->data[i] = r->data[j]; r->data[j] = tmp;
     }
+    r->flags = arr->flags;
     return r;
 }
 

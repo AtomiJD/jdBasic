@@ -2216,6 +2216,68 @@ DIM vse_huniq = UNIQUE(vse_hashes)
 Assert(LEN(vse_huniq) = 2, "UNIQUE on SHA256$ results dedupes by hash text")
 
 ' ══════════════════════════════════════════════════════════════════
+' Array-transformer flag propagation audit
+'
+' Each transformer must preserve the string-elements flag on its
+' result so subsequent PRINTs / subscripts / FOR EACHs still see
+' real strings rather than f64-punned garbage. This audit pins the
+' runtime contract for jdb_array_reverse / sort / append / append_arr
+' / take / drop / diff / flatten / shuffle / gather / unique_str /
+' apply_ss + the producers SPLIT / OS.ARGS / array STR$.
+' ══════════════════════════════════════════════════════════════════
+Header("String-array flag propagation through transformers")
+
+' Producer: SPLIT. We've covered subscript via DIM = arr[i] earlier;
+' here we focus on the "PRINT renders strings, not f64" angle.
+DIM tfp_xs = SPLIT("alpha,beta,gamma", ",")
+DIM tfp_x0 AS STRING = tfp_xs[0]
+DIM tfp_x2 AS STRING = tfp_xs[2]
+Assert(tfp_x0 = "alpha", "SPLIT [0] decodes as string")
+Assert(tfp_x2 = "gamma", "SPLIT [2] decodes as string")
+
+' REVERSE preserves string elements. Also verifies the runtime flag
+' rather than just the codegen tracking — we read tfp_rev[0] back as
+' a STRING and check the literal value.
+DIM tfp_rev = REVERSE(tfp_xs)
+DIM tfp_r0 AS STRING = tfp_rev[0]
+Assert(tfp_r0 = "gamma", "REVERSE preserves string elements")
+
+' TAKE / DROP preserve string elements.
+DIM tfp_tk = TAKE(2, tfp_xs)
+DIM tfp_tk0 AS STRING = tfp_tk[0]
+Assert(tfp_tk0 = "alpha", "TAKE preserves string elements")
+DIM tfp_dr = DROP(1, tfp_xs)
+DIM tfp_dr0 AS STRING = tfp_dr[0]
+Assert(tfp_dr0 = "beta", "DROP preserves string elements")
+
+' APPEND(string_arr, [scalar_string]) — single-value path. Must keep
+' the existing string-array tag on the LHS.
+DIM tfp_ext = APPEND(tfp_xs, ["delta"])
+Assert(LEN(tfp_ext) = 4, "APPEND single string to string-array length")
+DIM tfp_e3 AS STRING = tfp_ext[3]
+Assert(tfp_e3 = "delta", "APPEND single string [last] decodes correctly")
+DIM tfp_e0 AS STRING = tfp_ext[0]
+Assert(tfp_e0 = "alpha", "APPEND single string preserves head")
+
+' Cross-transformer: REVERSE then APPEND then UNIQUE — the result
+' must still decode as strings end-to-end.
+DIM tfp_chain = UNIQUE(APPEND(REVERSE(tfp_xs), ["alpha"]))
+Assert(LEN(tfp_chain) = 3, "REVERSE + APPEND + UNIQUE chain dedupes correctly")
+DIM tfp_c0 AS STRING = tfp_chain[0]
+DIM tfp_c2 AS STRING = tfp_chain[2]
+Assert(tfp_c0 = "gamma", "transform chain preserves first element")
+Assert(tfp_c2 = "alpha", "transform chain preserves last element")
+
+' STR$(numeric_arr) produces a string-array — read elements back and
+' verify they're strings, not the f64 cells.
+DIM tfp_nums = [10, 20, 30]
+DIM tfp_strs = STR$(tfp_nums)
+Assert(LEN(tfp_strs) = 3, "STR$(arr) length")
+DIM tfp_s0 AS STRING = tfp_strs[0]
+Assert(LEN(tfp_s0) > 0, "STR$(arr) [0] is a non-empty string")
+Assert(tfp_s0 = "10", "STR$(arr) [0] = '10'")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""
