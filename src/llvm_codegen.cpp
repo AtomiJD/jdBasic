@@ -581,6 +581,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         const Stmt* stmt;
         std::vector<int> tags;  // per-param: 1=f64, 2=string
         int return_tag;
+        // True when the function returns an array whose elements are
+        // i8* string pointers. The callee's return_tag is JD_TAG_ARR
+        // either way; this carries the per-cell hint that the codegen
+        // INDEX/iter paths need to decode the punned-f64 cells back as
+        // strings on the caller side.
+        bool returns_string_array = false;
     };
     std::unordered_map<std::string, FuncDecl> decls;
 
@@ -1004,9 +1010,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     //   RETURN other_func()   — inherit callee's return_tag (after Phase 3)
     std::function<int(const Stmt&, std::unordered_map<std::string,int>&)> classify_return =
         [&](const Stmt& s, std::unordered_map<std::string,int>& local_kinds) -> int {
-        // Track `var = <literal>` so RETURN var can resolve.
-        if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN) &&
-            !s.var_name.empty() && s.expr) {
+        // Track `var = <literal>` (or DIM with init) so RETURN var resolves.
+        // DIM was missing here originally — `DIM out AS ARRAY = []` left out
+        // unclassified, so a FUNC building a list with rec APPENDs and
+        // returning `out` came back tagged f64 and the caller's APPEND took
+        // the single-cell path, dropping all but one element per call.
+        if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+             s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
             if (s.expr->kind == ExprKind::MAP_LITERAL)
                 local_kinds[s.var_name] = JD_TAG_NATIVE_MAP;
             else if (s.expr->kind == ExprKind::ARRAY_LITERAL)
@@ -1020,6 +1030,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 auto lit = local_kinds.find(s.expr->str_val);
                 if (lit != local_kinds.end()) local_kinds[s.var_name] = lit->second;
             }
+        }
+        // DIM x AS ARRAY (with or without init) tags the slot as ARR even if
+        // the initializer is a non-array shape (e.g. `DIM out AS ARRAY = []`
+        // where the empty literal is parsed as ARRAY_LITERAL anyway, or
+        // future shapes that don't infer cleanly).
+        if (s.kind == StmtKind::DIM && !s.var_name.empty() &&
+            s.var_type == VarType::ARRAY) {
+            local_kinds[s.var_name] = JD_TAG_ARR;
         }
         if (s.kind == StmtKind::RETURN && s.expr) {
             const Expr& e = *s.expr;
@@ -1086,6 +1104,135 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (k == 3 || k == 4) { decl.return_tag = k; rt_changed = true; }
         }
     }
+
+    // Phase 3.5: among the FUNCs that return ARR, determine which ones
+    // return a *string*-array specifically. Scan the body assignments and
+    // RETURNs, flowing string-array-ness through known string builtins,
+    // APPEND, and recursive callee tags. Without this, a user FUNC like
+    //   FUNC walk(p AS STRING)
+    //     DIM out AS ARRAY = []
+    //     ...
+    //     out = APPEND(out, [full_path])
+    //     RETURN out
+    //   ENDFUNC
+    // returns ARR but its caller (`DIM files = walk(root)`) wouldn't know
+    // the cells are string ptrs, so `files[i]` decoded as f64 garbage.
+    //
+    // We do a fixpoint over FUNCs because callee flags inform caller body
+    // classification (e.g. recursive walk needs walk's own flag set on
+    // pass 2 before APPEND(out, walk(...)) can mark the LHS).
+    auto scan_for_str_arr = [&](const Stmt& body, const FuncDecl& fd) -> bool {
+        std::unordered_set<std::string> local_str_arr;
+        std::unordered_set<std::string> local_str_var;
+        // Seed scalar-string locals from string-typed params.
+        for (size_t pi = 0; pi < fd.stmt->params.size(); pi++) {
+            auto& p = fd.stmt->params[pi];
+            if (p.type == VarType::STRING ||
+                (!p.name.empty() && p.name.back() == '$'))
+                local_str_var.insert(p.name);
+        }
+        bool returns_str = false;
+        // Recognise expressions that produce a scalar string.
+        std::function<bool(const Expr&)> is_string_scalar = [&](const Expr& e) -> bool {
+            if (e.kind == ExprKind::LITERAL_STRING) return true;
+            if (e.kind == ExprKind::VARIABLE) {
+                if (!e.str_val.empty() && e.str_val.back() == '$') return true;
+                return local_str_var.count(e.str_val) != 0;
+            }
+            if (e.kind == ExprKind::CALL) {
+                if (!e.func_name.empty() && e.func_name.back() == '$') return true;
+            }
+            if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) {
+                // BASIC convention: string + anything → string concat. Be
+                // liberal — any operand being string is enough evidence.
+                if (e.left && is_string_scalar(*e.left)) return true;
+                if (e.right && is_string_scalar(*e.right)) return true;
+            }
+            if (e.kind == ExprKind::INDEX && e.left &&
+                e.left->kind == ExprKind::VARIABLE &&
+                local_str_arr.count(e.left->str_val))
+                return true;  // arr[i] where arr is string-array
+            return false;
+        };
+        // Recognise expressions that produce a string-array.
+        std::function<bool(const Expr&)> is_str_arr_expr = [&](const Expr& e) -> bool {
+            if (e.kind == ExprKind::VARIABLE) return local_str_arr.count(e.str_val) != 0;
+            if (e.kind == ExprKind::ARRAY_LITERAL) {
+                bool any = false;
+                for (auto& a : e.args) {
+                    if (!a) continue;
+                    any = true;
+                    if (!is_string_scalar(*a)) return false;
+                }
+                return any;
+            }
+            if (e.kind == ExprKind::CALL) {
+                std::string u = e.func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
+                    u == "WORDS" || u == "CHARS" || u == "STR$" ||
+                    u == "OS.ARGS")
+                    return true;
+                if (u == "DIR$") {
+                    bool extended = false;
+                    if (e.args.size() >= 2 && e.args[1]) {
+                        auto& a = *e.args[1];
+                        if (a.kind == ExprKind::LITERAL_BOOL) extended = a.bool_val;
+                        else if (a.kind == ExprKind::LITERAL_INT) extended = (a.int_val != 0);
+                        else extended = true;
+                    }
+                    return !extended;
+                }
+                if (u == "APPEND" && e.args.size() >= 2 && e.args[0] && e.args[1]) {
+                    // Liberal: either side proves string-array-ness.
+                    return is_str_arr_expr(*e.args[0]) || is_str_arr_expr(*e.args[1]);
+                }
+                auto cit = decls.find(e.func_name);
+                if (cit != decls.end() && cit->second.returns_string_array) return true;
+            }
+            return false;
+        };
+        std::function<void(const Stmt&)> rec = [&](const Stmt& s) {
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                 s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
+                if (is_str_arr_expr(*s.expr)) local_str_arr.insert(s.var_name);
+                if (is_string_scalar(*s.expr)) local_str_var.insert(s.var_name);
+                // DIM ... AS STRING (with or without RHS) is also a scalar
+                // string, regardless of what the RHS infers to.
+                if (s.kind == StmtKind::DIM && s.var_type == VarType::STRING)
+                    local_str_var.insert(s.var_name);
+                if (!s.var_name.empty() && s.var_name.back() == '$')
+                    local_str_var.insert(s.var_name);
+            }
+            if (s.kind == StmtKind::RETURN && s.expr) {
+                if (is_str_arr_expr(*s.expr)) returns_str = true;
+            }
+            for (auto& b : s.body) if (b) rec(*b);
+            for (auto& br : s.branches)
+                for (auto& b : br.body) if (b) rec(*b);
+            for (auto& c : s.catch_body) if (c) rec(*c);
+            for (auto& f : s.finally_body) if (f) rec(*f);
+        };
+        rec(body);
+        return returns_str;
+    };
+    bool sa_changed = true;
+    int sa_guard = 0;
+    while (sa_changed && sa_guard++ < 4) {
+        sa_changed = false;
+        for (auto& [name, decl] : decls) {
+            if (decl.return_tag != JD_TAG_ARR || !decl.stmt || decl.returns_string_array)
+                continue;
+            if (scan_for_str_arr(*decl.stmt, decl)) {
+                decl.returns_string_array = true;
+                sa_changed = true;
+            }
+        }
+    }
+    // Mirror into the class-scope set so caller-side codegen (codegen_dim /
+    // codegen_let_or_assign) can mark `DIM x = func(...)` as a string array.
+    for (auto& [name, decl] : decls)
+        if (decl.returns_string_array) string_array_returning_funcs.insert(name);
 
     // Phase 4: create LLVM functions with inferred types
     for (auto& [name, decl] : decls) {
@@ -2686,12 +2833,21 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     return any;
                 }
                 if (e->kind == ExprKind::LITERAL_STRING) return true;
+                if (e->kind == ExprKind::CALL)
+                    return string_array_returning_funcs.count(e->func_name) != 0;
                 return false;
             };
             if (is_string_arr_expr(stmt.expr->args[0].get()) &&
                 is_string_arr_expr(stmt.expr->args[1].get())) {
                 string_array_vars.insert(stmt.var_name);
             }
+        }
+        // User FUNC whose RETURN is a string-array — Phase-1 figures this out
+        // and populates string_array_returning_funcs. Without this, the
+        // caller's `DIM files = walk(root)` would leave `files` untracked
+        // and files[i] would decode as f64 garbage.
+        if (string_array_returning_funcs.count(stmt.expr->func_name)) {
+            string_array_vars.insert(stmt.var_name);
         }
     }
     TypedValue rhs;
@@ -2954,7 +3110,18 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 break;  // unknown — fall through to existing paths
         }
         if (init) {
-            VarInfo* vi = lookup_var(stmt.var_name);
+            // DIM inside a FUNC/SUB shadows any outer binding — restrict the
+            // lookup to the current scope so a top-level `DIM i AS INTEGER`
+            // doesn't get reused by walk()'s `DIM i AS INTEGER` (which would
+            // make recursive walk()'s loop counter clobber main's loop
+            // counter and cause wedge / infinite-loop in the bottom for-loop).
+            VarInfo* vi = nullptr;
+            if (scopes.size() > 1) {
+                auto it = scopes.back().vars.find(stmt.var_name);
+                if (it != scopes.back().vars.end()) vi = &it->second;
+            } else {
+                vi = lookup_var(stmt.var_name);
+            }
             if (vi) {
                 vi->tag = tag;
                 LLVMBuildStore(builder, init, vi->alloca_val);
@@ -3096,12 +3263,18 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     return any;
                 }
                 if (e->kind == ExprKind::LITERAL_STRING) return true;
+                if (e->kind == ExprKind::CALL)
+                    return string_array_returning_funcs.count(e->func_name) != 0;
                 return false;
             };
             if (is_string_arr_expr(stmt.expr->args[0].get()) &&
                 is_string_arr_expr(stmt.expr->args[1].get())) {
                 string_array_vars.insert(stmt.var_name);
             }
+        }
+        // User FUNC return-tag (mirror codegen_let_or_assign).
+        if (string_array_returning_funcs.count(stmt.expr->func_name)) {
+            string_array_vars.insert(stmt.var_name);
         }
     }
 

@@ -194,6 +194,14 @@ private:
     // event handler SUBs.
     std::unordered_set<std::string> string_array_vars;
 
+    // User-defined FUNCs whose RETURN value is an ARR-tagged array whose
+    // cells are i8* string pointers. Populated by a Phase-1 fixpoint pass
+    // that walks each FUNC body and traces string-array-ness through known
+    // string builtins, APPEND, and recursive callee tags. Caller-side
+    // (codegen_dim / codegen_let_or_assign) consults this set so
+    // `DIM files = walk(root)` adds `files` to string_array_vars.
+    std::unordered_set<std::string> string_array_returning_funcs;
+
     // Vars holding mixed-type array literals (e.g. [1, "Alice", 90]). INDEX
     // on these can't be tagged statically — every cell could be either a
     // numeric f64 or a string pointer. The runtime classifier

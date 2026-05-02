@@ -602,6 +602,50 @@ sa_xy3 = sa_xy[3]
 Assert(190, sa_xy0 = "aa")
 Assert(191, sa_xy3 = "dd")
 
+' ── 51. DIM SHADOWING INSIDE FUNC/SUB ────────────────────────
+'   Native regression: `DIM x` inside a FUNC/SUB used to find an
+'   outer same-named global via lookup_var and write into THAT slot
+'   instead of allocating a fresh local. Recursive walk()'s `DIM i`
+'   then clobbered the caller's `DIM i AS INTEGER` loop counter →
+'   wedge.
+PRINT "── DIM Shadowing ──"
+
+shd_calls = 0
+FUNC shd_walk(depth AS INTEGER)
+    shd_calls = shd_calls + 1
+    IF depth = 0 THEN RETURN 0
+    DIM i AS INTEGER
+    DIM total AS INTEGER = 0
+    FOR i = 0 TO 2
+        total = total + shd_walk(depth - 1)
+    NEXT i
+    RETURN total
+ENDFUNC
+
+DIM i AS INTEGER
+shd_outer = 0
+FOR i = 0 TO 1
+    shd_outer = shd_outer + 1
+    shd_walk(2)
+NEXT i
+Assert(192, shd_outer = 2)
+Assert(193, shd_calls = 26)
+
+shd_x = 5
+SUB shd_local_only()
+    DIM shd_x AS INTEGER
+    shd_x = 99
+ENDSUB
+shd_local_only
+Assert(194, shd_x = 5)
+
+shd_v = 7
+FUNC shd_get_v(shd_v AS INTEGER)
+    RETURN shd_v + 1
+ENDFUNC
+Assert(195, shd_get_v(40) = 41)
+Assert(196, shd_v = 7)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

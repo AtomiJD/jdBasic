@@ -2073,6 +2073,111 @@ DIM nsa_xy3 AS STRING = nsa_xy[3]
 Assert(nsa_xy0 = "aa", "APPEND result [0] decodes as string")
 Assert(nsa_xy3 = "dd", "APPEND result [3] decodes as string")
 
+' User FUNC returning a string-array — caller must see the strings.
+' Without Phase 1 returns_string_array tracking this came back as f64.
+FUNC nsa_make_list()
+  DIM out AS ARRAY = []
+  out = APPEND(out, ["alpha"])
+  out = APPEND(out, ["bravo"])
+  out = APPEND(out, ["charlie"])
+  RETURN out
+ENDFUNC
+DIM nsa_made = nsa_make_list()
+Assert(LEN(nsa_made) = 3, "user-FUNC string-array return length")
+DIM nsa_m0 AS STRING = nsa_made[0]
+DIM nsa_m2 AS STRING = nsa_made[2]
+Assert(nsa_m0 = "alpha", "user-FUNC result [0] decodes as string")
+Assert(nsa_m2 = "charlie", "user-FUNC result [2] decodes as string")
+
+' ══════════════════════════════════════════════════════════════════
+' DIM shadowing inside FUNC/SUB
+'
+' Regression for native -c (2026-05-02): DIM x AS <type> inside a
+' FUNC/SUB without RHS used to do `lookup_var(x)` which crawled outer
+' scopes and reused a top-level @X global. Walks of recursive FUNCs
+' that declared `DIM i AS INTEGER` then shared a single global @I
+' with a top-level FOR i loop, so recursion clobbered the outer
+' iteration counter and the program wedged.
+'
+' Each test exercises a different shadowing axis. They MUST hold
+' identically in interp and native.
+' ══════════════════════════════════════════════════════════════════
+Header("DIM shadowing inside FUNC/SUB")
+
+' --- 1. Recursive FUNC's loop var must not clobber the caller's. ---
+DIM shd_calls AS INTEGER = 0
+
+FUNC shd_walk(depth AS INTEGER)
+  shd_calls = shd_calls + 1
+  IF depth = 0 THEN RETURN 0
+  DIM i AS INTEGER
+  DIM total AS INTEGER = 0
+  FOR i = 0 TO 2
+    total = total + shd_walk(depth - 1)
+  NEXT i
+  RETURN total
+ENDFUNC
+
+DIM i AS INTEGER
+DIM outer_loops AS INTEGER = 0
+FOR i = 0 TO 1
+  outer_loops = outer_loops + 1
+  shd_walk(2) ' 1 + 3 + 9 = 13 calls per outer iter
+NEXT i
+Assert(outer_loops = 2, "outer FOR i not corrupted by recursive FUNC's DIM i")
+Assert(shd_calls = 26, "recursive walk completed all calls (2 * 13)")
+
+' --- 2. SUB-local DIM doesn't bleed back to outer. ---
+DIM shd_x AS INTEGER = 5
+
+SUB shd_local_only()
+  DIM shd_x AS INTEGER
+  shd_x = 99
+ENDSUB
+
+shd_local_only
+Assert(shd_x = 5, "SUB-local DIM doesn't write to outer scope of same name")
+
+' --- 3. FUNC param shadows outer var. ---
+DIM shd_v AS INTEGER = 7
+FUNC shd_get_v(shd_v AS INTEGER)
+  RETURN shd_v + 1
+ENDFUNC
+Assert(shd_get_v(40) = 41, "param uses caller's argument, not outer")
+Assert(shd_v = 7, "outer untouched after FUNC call")
+
+' --- 4. DIM AS STRING shadow + recursion (string-typed counterpart). ---
+DIM shd_msg AS STRING = "outer"
+
+FUNC shd_recurse_str(n AS INTEGER)
+  DIM shd_msg AS STRING
+  shd_msg = "level-" + STR$(n)
+  IF n > 0 THEN shd_recurse_str(n - 1)
+  RETURN 0
+ENDFUNC
+
+shd_recurse_str(3)
+Assert(shd_msg = "outer", "outer string survives recursive shadow")
+
+' --- 5. SUB calls SUB that DIMs same-named local — middle-frame untouched. ---
+DIM shd_chain AS INTEGER = 100
+
+SUB shd_inner()
+  DIM shd_chain AS INTEGER
+  shd_chain = 42
+ENDSUB
+
+SUB shd_outer_sub()
+  DIM shd_chain AS INTEGER
+  shd_chain = 7
+  shd_inner
+  ' shd_inner's DIM must not have written to this frame's shd_chain.
+  Assert(shd_chain = 7, "middle-frame DIM survives nested SUB DIM")
+ENDSUB
+
+shd_outer_sub
+Assert(shd_chain = 100, "top-level DIM survives both nested SUB DIMs")
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
