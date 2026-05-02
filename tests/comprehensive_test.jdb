@@ -2060,6 +2060,19 @@ RMDIR "_nsa_tmp"
 DIM nsa_args = OS.ARGS()
 Assert(LEN(nsa_args) >= 0, "OS.ARGS callable, returns array")
 
+' APPEND(string_arr_a, string_arr_b) — result var must be tagged as
+' a string array so subscript reads decode the punned-f64 cells.
+' Use DIM = subscript form (forces the INDEX path); PRINT'ing the
+' whole array goes through a different stringifier today.
+DIM nsa_x = ["aa", "bb"]
+DIM nsa_y = ["cc", "dd"]
+DIM nsa_xy = APPEND(nsa_x, nsa_y)
+Assert(LEN(nsa_xy) = 4, "APPEND string-arr+string-arr length")
+DIM nsa_xy0 AS STRING = nsa_xy[0]
+DIM nsa_xy3 AS STRING = nsa_xy[3]
+Assert(nsa_xy0 = "aa", "APPEND result [0] decodes as string")
+Assert(nsa_xy3 = "dd", "APPEND result [3] decodes as string")
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

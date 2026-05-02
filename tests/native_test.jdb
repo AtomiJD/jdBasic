@@ -590,6 +590,18 @@ RMDIR "_sa_tmp"
 sa_args = OS.ARGS()
 Assert(188, LEN(sa_args) >= 0)
 
+' APPEND(string_arr_a, string_arr_b) — result must keep its strings.
+sa_x = ["aa", "bb"]
+sa_y = ["cc", "dd"]
+sa_xy = APPEND(sa_x, sa_y)
+Assert(189, LEN(sa_xy) = 4)
+sa_xy0 = ""
+sa_xy3 = ""
+sa_xy0 = sa_xy[0]
+sa_xy3 = sa_xy[3]
+Assert(190, sa_xy0 = "aa")
+Assert(191, sa_xy3 = "dd")
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

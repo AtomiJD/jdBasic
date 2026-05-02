@@ -2665,6 +2665,34 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             if (extended) mixed_array_vars.insert(stmt.var_name);
             else          string_array_vars.insert(stmt.var_name);
         }
+        // APPEND(arr, val) / APPEND(arr_a, arr_b) — propagates the element
+        // tag from its inputs. The runtime memcpy-merges the bits regardless,
+        // but the codegen needs to know the result holds strings so subscript
+        // / FOR EACH on the result var still decode correctly. Without this,
+        // walk()-style helpers that build a string list with rec APPENDs
+        // produce a result that prints as zeros under -c.
+        if (u == "APPEND" && stmt.expr->args.size() >= 2) {
+            auto is_string_arr_expr = [&](const Expr* e) -> bool {
+                if (!e) return false;
+                if (e->kind == ExprKind::VARIABLE)
+                    return string_array_vars.count(e->str_val) != 0;
+                if (e->kind == ExprKind::ARRAY_LITERAL) {
+                    bool any = false;
+                    for (auto& a : e->args) {
+                        if (!a) continue;
+                        if (a->kind != ExprKind::LITERAL_STRING) return false;
+                        any = true;
+                    }
+                    return any;
+                }
+                if (e->kind == ExprKind::LITERAL_STRING) return true;
+                return false;
+            };
+            if (is_string_arr_expr(stmt.expr->args[0].get()) &&
+                is_string_arr_expr(stmt.expr->args[1].get())) {
+                string_array_vars.insert(stmt.var_name);
+            }
+        }
     }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
@@ -3050,6 +3078,30 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             }
             if (extended) mixed_array_vars.insert(stmt.var_name);
             else          string_array_vars.insert(stmt.var_name);
+        }
+        // APPEND(arr_a, arr_b) — propagate string-element tag if both args
+        // resolve to known string arrays. Mirror codegen_let_or_assign.
+        if (u == "APPEND" && stmt.expr->args.size() >= 2) {
+            auto is_string_arr_expr = [&](const Expr* e) -> bool {
+                if (!e) return false;
+                if (e->kind == ExprKind::VARIABLE)
+                    return string_array_vars.count(e->str_val) != 0;
+                if (e->kind == ExprKind::ARRAY_LITERAL) {
+                    bool any = false;
+                    for (auto& a : e->args) {
+                        if (!a) continue;
+                        if (a->kind != ExprKind::LITERAL_STRING) return false;
+                        any = true;
+                    }
+                    return any;
+                }
+                if (e->kind == ExprKind::LITERAL_STRING) return true;
+                return false;
+            };
+            if (is_string_arr_expr(stmt.expr->args[0].get()) &&
+                is_string_arr_expr(stmt.expr->args[1].get())) {
+                string_array_vars.insert(stmt.var_name);
+            }
         }
     }
 
