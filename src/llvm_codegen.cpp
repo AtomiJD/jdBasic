@@ -5,6 +5,7 @@
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
 #include "llvm-c/Analysis.h"
+#include "llvm-c/Error.h"
 #include <cmath>
 #include <iostream>
 #include <sstream>
@@ -7731,6 +7732,20 @@ LLVMCodegen::RuntimeFunc* LLVMCodegen::get_runtime_func(const std::string& name)
 
 // ── Object File Emission ────────────────────────────────────
 
+// Forward-declare the New-PassManager C entry points. They are exported
+// from LLVM-C.dll as of LLVM 17, but the bundled headers in libs/LLVM
+// don't ship llvm-c/Transforms/PassBuilder.h — without this declaration
+// we couldn't run the optimization pipeline and every DIM stayed as an
+// alloca + load/store, leaving fib.exe ~1.5x slower than it had to be.
+extern "C" {
+    typedef struct LLVMOpaquePassBuilderOptions* LLVMPassBuilderOptionsRef;
+    LLVMPassBuilderOptionsRef LLVMCreatePassBuilderOptions(void);
+    void LLVMDisposePassBuilderOptions(LLVMPassBuilderOptionsRef Options);
+    LLVMErrorRef LLVMRunPasses(LLVMModuleRef M, const char* Passes,
+                                LLVMTargetMachineRef TM,
+                                LLVMPassBuilderOptionsRef Options);
+}
+
 bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
     LLVMInitializeX86TargetInfo();
     LLVMInitializeX86Target();
@@ -7748,11 +7763,40 @@ bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
         return false;
     }
 
+    // Use host CPU + feature set so generated code can use SSE4 / AVX2 /
+    // BMI etc. instead of the lowest-common-denominator "generic" target.
+    char* host_cpu = LLVMGetHostCPUName();
+    char* host_features = LLVMGetHostCPUFeatures();
+
     LLVMTargetMachineRef machine = LLVMCreateTargetMachine(
-        target, triple, "generic", "",
+        target, triple,
+        host_cpu ? host_cpu : "generic",
+        host_features ? host_features : "",
         LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
 
+    if (host_cpu)      LLVMDisposeMessage(host_cpu);
+    if (host_features) LLVMDisposeMessage(host_features);
+
     LLVMSetModuleDataLayout(module, LLVMCreateTargetDataLayout(machine));
+
+    // Run the standard O2 optimization pipeline before emitting the object.
+    // Promotes allocas to registers (mem2reg / sroa), runs instcombine /
+    // gvn / simplifycfg / dead-store-elim / inliner. The per-call error-
+    // pull preludes b57ec8e introduced (jdrt_last_error / jdb_err_code
+    // checks after each runtime call) get dramatically thinned because
+    // the optimizer can prove most of those branches are dead in straight-
+    // line numeric code paths.
+    LLVMPassBuilderOptionsRef pb_opts = LLVMCreatePassBuilderOptions();
+    LLVMErrorRef pb_err = LLVMRunPasses(module, "default<O2>", machine, pb_opts);
+    LLVMDisposePassBuilderOptions(pb_opts);
+    if (pb_err) {
+        char* msg = LLVMGetErrorMessage(pb_err);
+        error_msg = "PassBuilder failed: " + std::string(msg ? msg : "(unknown)");
+        LLVMDisposeErrorMessage(msg);
+        LLVMDisposeTargetMachine(machine);
+        LLVMDisposeMessage(triple);
+        return false;
+    }
 
     if (LLVMTargetMachineEmitToFile(machine, module, (char*)obj_path.c_str(),
                                      LLVMObjectFile, &err)) {
