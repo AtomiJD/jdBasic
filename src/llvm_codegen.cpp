@@ -226,6 +226,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_has_str","__arr_has_str", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_array_has_num","__arr_has_num", i64_type, {i8_ptr_type, f64_type}, 0);
     reg("jdb_array_unique","UNIQUE",      i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_unique_str","__unique_str", i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumsum","CUMSUM",      i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumprod","CUMPROD",    i8_ptr_type, {i8_ptr_type}, 3);
     // TAKE / DROP — interpreter signature is (n, arr); the (arr, n) variant
@@ -243,6 +244,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_binop",       "__arr_binop",       i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_scalar_op",   "__arr_scalar_op",   i8_ptr_type, {i8_ptr_type, f64_type, i32_type, i32_type}, 3);
     reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
+    reg("jdb_array_cmp_scalar_str","__arr_cmp_scalar_str", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
@@ -2771,11 +2773,35 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // mixed var calls the runtime classifier per cell and returns a
     // RUNTIME-tagged value, since tagging the whole var as string would
     // pun the numeric cells into bogus pointers and crash on use.
+    // Track scalar-string vars so subsequent ARRAY_LITERALs that name them
+    // can recognise [s1, s2, s3] as a string array (the literal-string-only
+    // check would miss VARIABLE elements).
+    {
+        bool wants_str_slot =
+            stmt.var_type == VarType::STRING ||
+            (!stmt.var_name.empty() && stmt.var_name.back() == '$');
+        bool rhs_is_str_lit = stmt.expr && stmt.expr->kind == ExprKind::LITERAL_STRING;
+        bool rhs_is_str_call = stmt.expr && stmt.expr->kind == ExprKind::CALL &&
+            !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$';
+        if (wants_str_slot || rhs_is_str_lit || rhs_is_str_call)
+            string_scalar_vars.insert(stmt.var_name);
+    }
     if (stmt.expr && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        auto el_is_string = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            if (e->kind == ExprKind::LITERAL_STRING) return true;
+            if (e->kind == ExprKind::VARIABLE) {
+                if (!e->str_val.empty() && e->str_val.back() == '$') return true;
+                return string_scalar_vars.count(e->str_val) != 0;
+            }
+            if (e->kind == ExprKind::CALL && !e->func_name.empty() &&
+                e->func_name.back() == '$') return true;
+            return false;
+        };
         bool has_str = false, has_non_str = false;
         for (auto& a : stmt.expr->args) {
             if (!a) continue;
-            if (a->kind == ExprKind::LITERAL_STRING) has_str = true;
+            if (el_is_string(a.get())) has_str = true;
             else has_non_str = true;
         }
         if (has_str && has_non_str)      mixed_array_vars.insert(stmt.var_name);
@@ -2811,6 +2837,26 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             }
             if (extended) mixed_array_vars.insert(stmt.var_name);
             else          string_array_vars.insert(stmt.var_name);
+        }
+        // SELECT(fn@, arr) inherits its element type from fn's return.
+        // Detect string-returning callees: $-suffix on the funcref name,
+        // or a user FUNC already known to return a string array (FUNCs
+        // returning a single string also count — apply per element).
+        if (u == "SELECT" && !stmt.expr->args.empty() && stmt.expr->args[0]) {
+            auto& fn_arg = *stmt.expr->args[0];
+            bool fn_returns_str = false;
+            if (fn_arg.kind == ExprKind::LITERAL_STRING && fn_arg.is_funcref_lit &&
+                !fn_arg.str_val.empty() && fn_arg.str_val.back() == '$') {
+                fn_returns_str = true;
+            }
+            if (fn_returns_str) string_array_vars.insert(stmt.var_name);
+        }
+        // UNIQUE(string_arr) and similar 1D filters preserve element type.
+        if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" || u == "DROP")
+            && !stmt.expr->args.empty() && stmt.expr->args[0] &&
+            stmt.expr->args[0]->kind == ExprKind::VARIABLE &&
+            string_array_vars.count(stmt.expr->args[0]->str_val)) {
+            string_array_vars.insert(stmt.var_name);
         }
         // APPEND(arr, val) / APPEND(arr_a, arr_b) — propagates the element
         // tag from its inputs. The runtime memcpy-merges the bits regardless,
@@ -3213,11 +3259,32 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     // returns tag=STR). Mixed string+number → mixed_array_vars (INDEX
     // calls the runtime classifier per cell). Pure-numeric falls through
     // to the default tag=F64 path.
+    {
+        bool wants_str_slot =
+            stmt.var_type == VarType::STRING ||
+            (!stmt.var_name.empty() && stmt.var_name.back() == '$');
+        bool rhs_is_str_lit = stmt.expr && stmt.expr->kind == ExprKind::LITERAL_STRING;
+        bool rhs_is_str_call = stmt.expr && stmt.expr->kind == ExprKind::CALL &&
+            !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$';
+        if (wants_str_slot || rhs_is_str_lit || rhs_is_str_call)
+            string_scalar_vars.insert(stmt.var_name);
+    }
     if (stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        auto el_is_string = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            if (e->kind == ExprKind::LITERAL_STRING) return true;
+            if (e->kind == ExprKind::VARIABLE) {
+                if (!e->str_val.empty() && e->str_val.back() == '$') return true;
+                return string_scalar_vars.count(e->str_val) != 0;
+            }
+            if (e->kind == ExprKind::CALL && !e->func_name.empty() &&
+                e->func_name.back() == '$') return true;
+            return false;
+        };
         bool has_str = false, has_non_str = false;
         for (auto& a : stmt.expr->args) {
             if (!a) continue;
-            if (a->kind == ExprKind::LITERAL_STRING) has_str = true;
+            if (el_is_string(a.get())) has_str = true;
             else has_non_str = true;
         }
         if (has_str && has_non_str)      mixed_array_vars.insert(stmt.var_name);
@@ -3245,6 +3312,20 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             }
             if (extended) mixed_array_vars.insert(stmt.var_name);
             else          string_array_vars.insert(stmt.var_name);
+        }
+        // SELECT(fn@, arr) — see codegen_let_or_assign for rationale.
+        if (u == "SELECT" && !stmt.expr->args.empty() && stmt.expr->args[0]) {
+            auto& fn_arg = *stmt.expr->args[0];
+            if (fn_arg.kind == ExprKind::LITERAL_STRING && fn_arg.is_funcref_lit &&
+                !fn_arg.str_val.empty() && fn_arg.str_val.back() == '$') {
+                string_array_vars.insert(stmt.var_name);
+            }
+        }
+        if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" || u == "DROP")
+            && !stmt.expr->args.empty() && stmt.expr->args[0] &&
+            stmt.expr->args[0]->kind == ExprKind::VARIABLE &&
+            string_array_vars.count(stmt.expr->args[0]->str_val)) {
+            string_array_vars.insert(stmt.var_name);
         }
         // APPEND(arr_a, arr_b) — propagate string-element tag if both args
         // resolve to known string arrays. Mirror codegen_let_or_assign.
@@ -5346,7 +5427,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), JD_TAG_ARR };
             }
         } else if (lhs.tag == JD_TAG_ARR) {
-            // arr OP scalar
+            // arr OP scalar — string-array-vs-string path takes precedence
+            // when the lhs source is a known string array (the numeric
+            // path would otherwise compare punned-pointer bits or, for
+            // a JD_TAG_STR rhs, hand a ptr to a function expecting f64
+            // and produce invalid IR).
+            if (cmp_op >= 0 && rhs.tag == JD_TAG_STR && expr.left &&
+                expr.left->kind == ExprKind::VARIABLE &&
+                string_array_vars.count(expr.left->str_val)) {
+                auto& fn = runtime_funcs["__arr_cmp_scalar_str"];
+                LLVMValueRef args[] = { lhs.val, rhs.val,
+                                        LLVMConstInt(i32_type, cmp_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmps"), JD_TAG_ARR };
+            }
             LLVMValueRef scalar = rhs.tag == JD_TAG_I64
                 ? LLVMBuildSIToFP(builder, rhs.val, f64_type, "itof") : rhs.val;
             if (arith_op >= 0) {
@@ -5361,7 +5454,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), JD_TAG_ARR };
             }
         } else {
-            // scalar OP arr
+            // scalar OP arr — same string-array dispatch with sides flipped.
+            if (cmp_op >= 0 && lhs.tag == JD_TAG_STR && expr.right &&
+                expr.right->kind == ExprKind::VARIABLE &&
+                string_array_vars.count(expr.right->str_val)) {
+                auto& fn = runtime_funcs["__arr_cmp_scalar_str"];
+                LLVMValueRef args[] = { rhs.val, lhs.val,
+                                        LLVMConstInt(i32_type, cmp_op, 0) };
+                return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmps"), JD_TAG_ARR };
+            }
             LLVMValueRef scalar = lhs.tag == JD_TAG_I64
                 ? LLVMBuildSIToFP(builder, lhs.val, f64_type, "itof") : lhs.val;
             if (arith_op >= 0) {
@@ -5634,6 +5735,19 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
+
+    // UNIQUE on a string-tracked array dedupes by strcmp instead of by
+    // raw double bits (which only catches pointer-identity duplicates).
+    // Route to the dedicated runtime when the source var is known to be
+    // a string array; otherwise fall through to the generic dispatch.
+    if (name == "UNIQUE" && expr.args.size() == 1 && expr.args[0] &&
+        expr.args[0]->kind == ExprKind::VARIABLE &&
+        string_array_vars.count(expr.args[0]->str_val)) {
+        TypedValue a = codegen_expr(*expr.args[0]);
+        auto& fn = runtime_funcs["__unique_str"];
+        LLVMValueRef args[] = { a.val };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "uniqs"), JD_TAG_ARR };
+    }
 
     // APPEND(arr, arr) flattens; APPEND(arr, scalar) appends one element.
     if (name == "APPEND" && expr.args.size() == 2) {

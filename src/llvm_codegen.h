@@ -202,6 +202,12 @@ private:
     // `DIM files = walk(root)` adds `files` to string_array_vars.
     std::unordered_set<std::string> string_array_returning_funcs;
 
+    // Top-level vars that hold a scalar string (DIM x AS STRING / DIM x$ /
+    // assigned a LITERAL_STRING). Lets ARRAY_LITERAL tracking recognise
+    // `[s1, s2, s3]` as a string array when s1..s3 are string variables
+    // rather than literals.
+    std::unordered_set<std::string> string_scalar_vars;
+
     // Vars holding mixed-type array literals (e.g. [1, "Alice", 90]). INDEX
     // on these can't be tagged statically — every cell could be either a
     // numeric f64 or a string pointer. The runtime classifier

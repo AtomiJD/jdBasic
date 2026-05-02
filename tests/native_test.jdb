@@ -646,6 +646,31 @@ ENDFUNC
 Assert(195, shd_get_v(40) = 41)
 Assert(196, shd_v = 7)
 
+' ── 52. VECTOR STRING EQUALITY + UNIQUE ──────────────────────
+'   `(string_arr = scalar_str)` and UNIQUE(string_arr) used to
+'   compare punned-pointer bits in native; identical text in
+'   separate allocations slipped through.
+PRINT "── Vector String Equality ──"
+
+vse_xs = SPLIT("aa,bb,aa,cc,aa", ",")
+vse_h = "aa"
+vse_mask = (vse_xs = vse_h)
+Assert(197, SUM(vse_mask) = 3)
+Assert(198, LEN(vse_mask) = 5)
+vse_neq = (vse_xs <> vse_h)
+Assert(199, SUM(vse_neq) = 2)
+
+vse_a = SPLIT("alpha,beta,alpha,gamma,beta", ",")
+vse_u = UNIQUE(vse_a)
+Assert(200, LEN(vse_u) = 3)
+
+vse_sa = CODEC.SHA256$("hello")
+vse_sb = CODEC.SHA256$("hello")
+vse_sc = CODEC.SHA256$("world")
+vse_hashes = [vse_sa, vse_sb, vse_sc]
+vse_huniq = UNIQUE(vse_hashes)
+Assert(201, LEN(vse_huniq) = 2)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

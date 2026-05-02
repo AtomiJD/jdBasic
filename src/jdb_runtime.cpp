@@ -670,6 +670,31 @@ JdbArray* jdb_array_unique(JdbArray* arr) {
     return r;
 }
 
+// String-array UNIQUE: each cell carries an i8* in punned-f64 bits.
+// Numeric UNIQUE only catches pointer-identity duplicates; this one
+// dedupes by string content (strcmp). Codegen routes here when the
+// argument is a known string-array (string_array_vars membership).
+JdbArray* jdb_array_unique_str(JdbArray* arr) {
+    if (!arr) return jdb_array_new(0);
+    auto* r = jdb_array_new(arr->length);
+    int64_t n = 0;
+    for (int64_t i = 0; i < arr->length; i++) {
+        union { double d; intptr_t p; } u; u.d = arr->data[i];
+        const char* si = (const char*)u.p;
+        if (!si) si = "";
+        bool found = false;
+        for (int64_t j = 0; j < n; j++) {
+            union { double d; intptr_t p; } v; v.d = r->data[j];
+            const char* sj = (const char*)v.p;
+            if (!sj) sj = "";
+            if (std::strcmp(si, sj) == 0) { found = true; break; }
+        }
+        if (!found) r->data[n++] = arr->data[i];
+    }
+    r->length = n;
+    return r;
+}
+
 JdbArray* jdb_array_cumsum(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     auto* r = jdb_array_new(arr->length);
@@ -995,6 +1020,40 @@ JdbArray* jdb_array_cmp_scalar(JdbArray* a, double s, int32_t op) {
 }
 JdbArray* jdb_array_cmp_arr(JdbArray* a, JdbArray* b, int32_t op) {
     return arr_cmp_arr(a, b, op);
+}
+
+// Forward declaration — actual definition is jdb_array_set_bool_elems
+// further down. Used by the string-cmp helper below.
+extern "C" void jdb_array_set_bool_elems(JdbArray* arr);
+
+// String-array vs string-scalar comparison. Each cell of `a` carries an
+// i8* string pointer in punned-f64 bits (the codegen side already tracks
+// these arrays via string_array_vars and dispatches here when the rhs is
+// a JD_TAG_STR). op: 0 = ==, 1 = <>, 4 = <, 5 = >, 6 = <=, 7 = >=
+// (mirrors scalar_cmp's op enum). Returns a fresh boolean-tagged array.
+JdbArray* jdb_array_cmp_scalar_str(JdbArray* a, const char* s, int32_t op) {
+    if (!a) return jdb_array_new(0);
+    auto* r = jdb_array_new(a->length);
+    jdb_array_set_bool_elems(r);
+    const char* sval = s ? s : "";
+    for (int64_t i = 0; i < a->length; i++) {
+        union { double d; intptr_t p; } u; u.d = a->data[i];
+        const char* cell = (const char*)u.p;
+        if (!cell) cell = "";
+        int c = std::strcmp(cell, sval);
+        bool result;
+        switch (op) {
+            case 0:  result = (c == 0); break;  // ==
+            case 1:  result = (c != 0); break;  // <>
+            case 4:  result = (c <  0); break;  // <
+            case 5:  result = (c >  0); break;  // >
+            case 6:  result = (c <= 0); break;  // <=
+            case 7:  result = (c >= 0); break;  // >=
+            default: result = false;
+        }
+        r->data[i] = result ? 1.0 : 0.0;
+    }
+    return r;
 }
 
 // Mark array as containing nested array pointers (2D+)

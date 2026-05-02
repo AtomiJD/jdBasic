@@ -2179,6 +2179,43 @@ shd_outer_sub
 Assert(shd_chain = 100, "top-level DIM survives both nested SUB DIMs")
 
 ' ══════════════════════════════════════════════════════════════════
+' Vector string equality + string UNIQUE under -c
+'
+' Regression: `(string_arr = scalar_str)` used to compare punned-
+' pointer bits in native (every cell got a different ptr from the
+' allocator, so all-FALSE), and `UNIQUE(string_arr)` deduped by
+' identity — two SHA256$ results with the same text but separate
+' allocations both survived. Both broke any downstream group-by-key
+' pattern (dupfinder being the canonical example).
+' ══════════════════════════════════════════════════════════════════
+Header("Vector string equality + UNIQUE")
+
+DIM vse_xs = SPLIT("aa,bb,aa,cc,aa", ",")
+DIM vse_h AS STRING = "aa"
+DIM vse_mask = (vse_xs = vse_h)
+Assert(SUM(vse_mask) = 3, "(string_arr = scalar_str) counts text matches")
+Assert(LEN(vse_mask) = 5, "compare result has same length as input")
+
+DIM vse_neq = (vse_xs <> vse_h)
+Assert(SUM(vse_neq) = 2, "(string_arr <> scalar_str) counts non-matches")
+
+' UNIQUE must dedupe by content, not pointer identity. We force
+' separate allocations via SPLIT pairs so identity-based dedupe
+' would leave duplicates behind.
+DIM vse_a = SPLIT("alpha,beta,alpha,gamma,beta", ",")
+DIM vse_u = UNIQUE(vse_a)
+Assert(LEN(vse_u) = 3, "UNIQUE on string-array dedupes by content")
+
+' SHA256$ is the dupfinder pattern: each call allocates a fresh
+' string, but identical inputs must dedupe to one entry.
+DIM vse_sa AS STRING = CODEC.SHA256$("hello")
+DIM vse_sb AS STRING = CODEC.SHA256$("hello")
+DIM vse_sc AS STRING = CODEC.SHA256$("world")
+DIM vse_hashes = [vse_sa, vse_sb, vse_sc]
+DIM vse_huniq = UNIQUE(vse_hashes)
+Assert(LEN(vse_huniq) = 2, "UNIQUE on SHA256$ results dedupes by hash text")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""
