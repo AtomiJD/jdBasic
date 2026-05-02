@@ -323,7 +323,9 @@ static void set_os_args(VM& vm, int argc, char* argv[]) {
 
 // ── Workspace save/load ──────────────────────────────────────
 
-static void save_workspace(VM& vm, const std::string& program_buffer, const std::string& name) {
+// Non-static so the MCP-stdio server can expose them as `jdb_savews` /
+// `jdb_loadws` tools — same persistence the REPL has, callable over MCP.
+void save_workspace(VM& vm, const std::string& program_buffer, const std::string& name) {
     std::string filename = name + ".jdws";
     std::ofstream out(filename);
     if (!out.is_open()) {
@@ -351,7 +353,7 @@ static void save_workspace(VM& vm, const std::string& program_buffer, const std:
     vm.emit("Workspace saved: " + filename + "\n");
 }
 
-static void load_workspace(VM& vm, std::string& program_buffer, const std::string& name) {
+void load_workspace(VM& vm, std::string& program_buffer, const std::string& name) {
     std::string filename = name + ".jdws";
     std::ifstream in(filename);
     if (!in.is_open()) {

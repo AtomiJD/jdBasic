@@ -55,6 +55,21 @@
 // drive code execution on the persistent VM.
 extern void run_on_vm(VM& vm, const std::string& source);
 
+// Workspace persistence — defined in main.cpp. SAVEWS / LOADWS are REPL
+// commands by their original UX, but the underlying logic is generic and
+// the MCP server exposes them as jdb_savews / jdb_loadws tools.
+extern void save_workspace(VM& vm, const std::string& program_buffer,
+                           const std::string& name);
+extern void load_workspace(VM& vm, std::string& program_buffer,
+                           const std::string& name);
+
+// Session source buffer: every successful jdb_eval call appends its source
+// here so jdb_savews can persist user FUNC/SUB definitions alongside the
+// var snapshot. Without this, only the variable values would survive a
+// save/load round-trip — load_workspace re-parses the program text to
+// rebuild function bindings.
+static std::string g_session_buffer;
+
 namespace {
 
 // ── Framing ─────────────────────────────────────────────────────
@@ -206,6 +221,12 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
     OutputCapture cap(vm);
     try {
         run_on_vm(vm, code + "\n");
+        // Only append on success — failed snippets shouldn't poison the
+        // workspace's PROGRAM section. load_workspace re-parses this text
+        // to rebuild user FUNC/SUB bindings, so syntax-broken fragments
+        // would prevent any later restore from succeeding.
+        g_session_buffer += code;
+        if (code.empty() || code.back() != '\n') g_session_buffer += '\n';
         return make_text_result(cap.buf, false);
     } catch (const std::exception& e) {
         std::string err = "Error: ";
@@ -443,6 +464,49 @@ Value tool_jdb_doc(VM&, const Value& args) {
     return make_text_result(out, false);
 }
 
+// jdb_savews / jdb_loadws — Smalltalk-style workspace persistence over MCP.
+// SAVEWS pickles every user-bound global (variables and FUNC/SUB definitions
+// the agent has accumulated this session) into "<name>.jdws" in the server's
+// CWD. LOADWS resets the VM and restores from that file. The original REPL
+// commands kept a source buffer too; the MCP server has no notion of a
+// linear input log so we pass an empty buffer — only state is persisted,
+// not history. Source-text projects are better handled with jdb_load.
+
+Value tool_jdb_savews(VM& vm, const Value& args) {
+    std::string name = obj_get_str(args, "name");
+    if (name.empty()) return make_text_result("name is empty", true);
+    OutputCapture cap(vm);
+    try {
+        // Pass the session buffer so FUNC/SUB definitions get persisted in
+        // the [PROGRAM] section of the .jdws file. load_workspace re-parses
+        // this text to rebuild user function bindings.
+        save_workspace(vm, g_session_buffer, name);
+        std::string body = cap.buf.empty()
+            ? ("workspace saved: " + name + ".jdws") : cap.buf;
+        return make_text_result(body, false);
+    } catch (const std::exception& e) {
+        return make_text_result(std::string("Error: ") + e.what(), true);
+    }
+}
+
+Value tool_jdb_loadws(VM& vm, const Value& args) {
+    std::string name = obj_get_str(args, "name");
+    if (name.empty()) return make_text_result("name is empty", true);
+    OutputCapture cap(vm);
+    try {
+        // load_workspace clears + repopulates the buffer — adopt it as the
+        // new session buffer so subsequent jdb_savews preserves the loaded
+        // FUNC/SUB definitions plus anything the user adds afterwards.
+        g_session_buffer.clear();
+        load_workspace(vm, g_session_buffer, name);
+        std::string body = cap.buf.empty()
+            ? ("workspace loaded: " + name + ".jdws") : cap.buf;
+        return make_text_result(body, false);
+    } catch (const std::exception& e) {
+        return make_text_result(std::string("Error: ") + e.what(), true);
+    }
+}
+
 // jdb_run_native — popen() the command, capture combined stdout+stderr,
 // return banner + body. No timeout (caller's responsibility) — same
 // limitation as the .jdb version.
@@ -550,6 +614,16 @@ Value build_tools() {
         build_input_schema({{"command", "Shell command line to execute."}}, {"command"})));
 
     a.push_back(tool_descriptor(
+        "jdb_savews",
+        "Persist the entire VM state (user globals + FUNC/SUB definitions) to '<name>.jdws' in the server's working directory. Mirrors the REPL's SAVEWS command. Useful for project-scoped DSL toolkits — call once per stable milestone, then restore with jdb_loadws at the start of the next session.",
+        build_input_schema({{"name", "Workspace name (file '<name>.jdws' is created)."}}, {"name"})));
+
+    a.push_back(tool_descriptor(
+        "jdb_loadws",
+        "Reset the VM and restore variables + functions from '<name>.jdws'. Replaces the current state — anything defined this session is lost unless you saved it first. Mirrors the REPL's LOADWS command.",
+        build_input_schema({{"name", "Workspace name (file '<name>.jdws' is read)."}}, {"name"})));
+
+    a.push_back(tool_descriptor(
         "echo",
         "Echo back the message you sent. Connectivity smoke test.",
         build_input_schema({{"message", "Text to echo back"}}, {"message"})));
@@ -567,6 +641,8 @@ Value dispatch_tool(VM& vm, const std::string& name, const Value& args) {
     if (name == "jdb_funcs")      return tool_jdb_funcs(vm, args);
     if (name == "jdb_doc")        return tool_jdb_doc(vm, args);
     if (name == "jdb_run_native") return tool_jdb_run_native(vm, args);
+    if (name == "jdb_savews")     return tool_jdb_savews(vm, args);
+    if (name == "jdb_loadws")     return tool_jdb_loadws(vm, args);
     if (name == "echo")           return tool_echo(vm, args);
     return make_text_result("Unknown tool: " + name, true);
 }

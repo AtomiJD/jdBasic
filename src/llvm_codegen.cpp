@@ -7807,15 +7807,113 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     }
 
 #ifdef _WIN32
-    std::string msvc = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207";
-    std::string sdk = "C:\\Program Files (x86)\\Windows Kits\\10";
-    std::string sdkv = "10.0.26100.0";
+    // Discover MSVC + Windows SDK at runtime instead of hard-coding paths.
+    // Discovery order:
+    //   1) Env vars set by vcvarsall.bat / "x64 Native Tools Command Prompt"
+    //      — VCToolsInstallDir, WindowsSdkDir, WindowsSDKVersion. If the user
+    //      ran the EXE from a developer prompt, this path "just works" with
+    //      whatever VS edition / patch they have installed.
+    //   2) vswhere.exe lookup. Microsoft ships vswhere with every VS install
+    //      at a stable path; it reports the latest installation for any
+    //      edition (Community / Pro / Enterprise / Build Tools). We then
+    //      derive MSVC version from VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt.
+    //   3) Windows SDK at the well-known `Program Files (x86)\Windows Kits\10`
+    //      location, picking the newest version found under Lib\.
+    auto rstrip = [](std::string s) {
+        while (!s.empty() && (s.back() == '\\' || s.back() == '/' ||
+                              s.back() == '\r' || s.back() == '\n' ||
+                              s.back() == ' ')) s.pop_back();
+        return s;
+    };
+
+    std::string msvc;     // .../VC/Tools/MSVC/<version>
+    std::string sdk;      // C:/Program Files (x86)/Windows Kits/10
+    std::string sdkv;     // 10.0.26100.0
+
+    // 1) Env-vars (developer prompt)
+    if (const char* e = std::getenv("VCToolsInstallDir")) msvc = rstrip(e);
+    if (const char* e = std::getenv("WindowsSdkDir"))     sdk  = rstrip(e);
+    if (const char* e = std::getenv("WindowsSDKVersion")) sdkv = rstrip(e);
+
+    // 2) vswhere.exe fallback for MSVC
+    if (msvc.empty()) {
+        const char* vswhere =
+            "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
+        if (std::filesystem::exists(vswhere)) {
+            std::string cmd = std::string("\"\"") + vswhere + "\" -latest "
+                "-products * -requires Microsoft.VisualCpp.Tools.Core "
+                "-property installationPath\"";
+            FILE* p = _popen(cmd.c_str(), "r");
+            std::string vs_path;
+            if (p) {
+                char buf[1024];
+                while (fgets(buf, sizeof(buf), p)) vs_path += buf;
+                _pclose(p);
+                vs_path = rstrip(vs_path);
+            }
+            if (!vs_path.empty()) {
+                std::string default_ver_file = vs_path +
+                    "\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt";
+                std::ifstream ifs(default_ver_file);
+                if (ifs.is_open()) {
+                    std::string vc_version;
+                    std::getline(ifs, vc_version);
+                    vc_version = rstrip(vc_version);
+                    if (!vc_version.empty()) {
+                        msvc = vs_path + "\\VC\\Tools\\MSVC\\" + vc_version;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) Windows SDK fallback — pick newest version found under Lib.
+    if (sdk.empty()) sdk = "C:\\Program Files (x86)\\Windows Kits\\10";
+    if (sdkv.empty()) {
+        std::string lib_root = sdk + "\\Lib";
+        if (std::filesystem::exists(lib_root)) {
+            std::string newest;
+            try {
+                for (auto& entry : std::filesystem::directory_iterator(lib_root)) {
+                    if (!entry.is_directory()) continue;
+                    std::string n = entry.path().filename().string();
+                    // Expect "10.0.<build>.<rev>"
+                    if (n.size() >= 5 && n.compare(0, 5, "10.0.") == 0 &&
+                        n > newest) newest = n;
+                }
+            } catch (...) {
+                // Permission errors etc. — leave sdkv empty so the helpful
+                // error message below tells the user what to install.
+            }
+            sdkv = newest;
+        }
+    }
+
+    if (msvc.empty()) {
+        error_msg = "Cannot find MSVC toolchain. Install Visual Studio 2022 "
+                    "(Community / Pro / Build Tools) with the C++ workload, "
+                    "or run jdBasic.exe from an x64 Native Tools Command Prompt.";
+        return false;
+    }
+    if (sdkv.empty()) {
+        error_msg = "Cannot find Windows SDK 10. Install the SDK via the VS "
+                    "Installer (workload: Desktop development with C++).";
+        return false;
+    }
+    // Validate that link.exe actually exists at the discovered path.
+    std::string link_exe = msvc + "\\bin\\Hostx64\\x64\\link.exe";
+    if (!std::filesystem::exists(link_exe)) {
+        error_msg = "MSVC link.exe not found at " + link_exe +
+                    ". Discovered MSVC dir may be incomplete — reinstall VS "
+                    "C++ tools.";
+        return false;
+    }
 
     std::string res_arg;
     if (!res_path.empty()) res_arg = "\"" + res_path + "\" ";
 
     std::string link_cmd =
-        "cmd /c \"\"" + msvc + "\\bin\\Hostx64\\x64\\link.exe\" "
+        "cmd /c \"\"" + link_exe + "\" "
         "/NOLOGO /OUT:\"" + exe_path + "\" "
         "/SUBSYSTEM:CONSOLE "
         "\"" + obj_path + "\" "
