@@ -85,6 +85,14 @@ REM End-user README inside the bundle.
 >>"%OUT%\README.txt" echo     jdBasic.exe -c file.jdb
 >>"%OUT%\README.txt" echo     copy jdbrt.dll alongside file.exe ^(or PATH^)
 >>"%OUT%\README.txt" echo.
+>>"%OUT%\README.txt" echo NATIVE COMPILE REQUIREMENTS:
+>>"%OUT%\README.txt" echo     -c invokes the MSVC linker to fuse the LLVM-emitted
+>>"%OUT%\README.txt" echo     object with jdb_runtime.obj + jdbrt.lib. You need:
+>>"%OUT%\README.txt" echo       - Visual Studio 2022 ^(Community is fine^), MSVC v143
+>>"%OUT%\README.txt" echo       - Windows SDK 10.0.26100.0
+>>"%OUT%\README.txt" echo     The MCP server itself ^(jdb_eval / jdb_doc / etc.^)
+>>"%OUT%\README.txt" echo     does NOT need MSVC — only the -c compile path does.
+>>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo doc\languages.md is read by jdb_doc at runtime;
 >>"%OUT%\README.txt" echo it's looked up next to the EXE first, so no "cwd"
 >>"%OUT%\README.txt" echo configuration is required in your MCP client.
