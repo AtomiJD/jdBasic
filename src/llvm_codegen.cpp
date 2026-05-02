@@ -2794,8 +2794,13 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 if (!e->str_val.empty() && e->str_val.back() == '$') return true;
                 return string_scalar_vars.count(e->str_val) != 0;
             }
-            if (e->kind == ExprKind::CALL && !e->func_name.empty() &&
-                e->func_name.back() == '$') return true;
+            if (e->kind == ExprKind::CALL) {
+                if (!e->func_name.empty() && e->func_name.back() == '$') return true;
+                // $-less builtins that nonetheless return strings.
+                std::string u = e->func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                if (u == "JOIN") return true;
+            }
             return false;
         };
         bool has_str = false, has_non_str = false;
@@ -2865,6 +2870,26 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // walk()-style helpers that build a string list with rec APPENDs
         // produce a result that prints as zeros under -c.
         if (u == "APPEND" && stmt.expr->args.size() >= 2) {
+            // Recognise scalar-string expressions inside a [scalar, scalar, ...]
+            // literal — handles VARIABLE refs to string locals, $-suffix calls,
+            // and known $-less string-returners like JOIN. Without this, an
+            // APPEND(arr, [JOIN(...)]) wouldn't tag the result as a string
+            // array because the inner CALL doesn't end in $.
+            auto is_string_scalar_expr = [&](const Expr* e) -> bool {
+                if (!e) return false;
+                if (e->kind == ExprKind::LITERAL_STRING) return true;
+                if (e->kind == ExprKind::VARIABLE) {
+                    if (!e->str_val.empty() && e->str_val.back() == '$') return true;
+                    return string_scalar_vars.count(e->str_val) != 0;
+                }
+                if (e->kind == ExprKind::CALL) {
+                    if (!e->func_name.empty() && e->func_name.back() == '$') return true;
+                    std::string u = e->func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    if (u == "JOIN") return true;
+                }
+                return false;
+            };
             auto is_string_arr_expr = [&](const Expr* e) -> bool {
                 if (!e) return false;
                 if (e->kind == ExprKind::VARIABLE)
@@ -2873,7 +2898,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     bool any = false;
                     for (auto& a : e->args) {
                         if (!a) continue;
-                        if (a->kind != ExprKind::LITERAL_STRING) return false;
+                        if (!is_string_scalar_expr(a.get())) return false;
                         any = true;
                     }
                     return any;
@@ -2883,7 +2908,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                     return string_array_returning_funcs.count(e->func_name) != 0;
                 return false;
             };
-            if (is_string_arr_expr(stmt.expr->args[0].get()) &&
+            // Liberal OR: either side proving string-array-ness is enough.
+            // Lets `g_paths = APPEND(g_paths, [JOIN(...)])` tag g_paths on
+            // the first append even when g_paths started as an empty `[]`
+            // and isn't yet in string_array_vars.
+            if (is_string_arr_expr(stmt.expr->args[0].get()) ||
                 is_string_arr_expr(stmt.expr->args[1].get())) {
                 string_array_vars.insert(stmt.var_name);
             }
@@ -3277,8 +3306,13 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 if (!e->str_val.empty() && e->str_val.back() == '$') return true;
                 return string_scalar_vars.count(e->str_val) != 0;
             }
-            if (e->kind == ExprKind::CALL && !e->func_name.empty() &&
-                e->func_name.back() == '$') return true;
+            if (e->kind == ExprKind::CALL) {
+                if (!e->func_name.empty() && e->func_name.back() == '$') return true;
+                // $-less builtins that nonetheless return strings.
+                std::string u = e->func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                if (u == "JOIN") return true;
+            }
             return false;
         };
         bool has_str = false, has_non_str = false;
@@ -3330,6 +3364,26 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         // APPEND(arr_a, arr_b) — propagate string-element tag if both args
         // resolve to known string arrays. Mirror codegen_let_or_assign.
         if (u == "APPEND" && stmt.expr->args.size() >= 2) {
+            // Recognise scalar-string expressions inside a [scalar, scalar, ...]
+            // literal — handles VARIABLE refs to string locals, $-suffix calls,
+            // and known $-less string-returners like JOIN. Without this, an
+            // APPEND(arr, [JOIN(...)]) wouldn't tag the result as a string
+            // array because the inner CALL doesn't end in $.
+            auto is_string_scalar_expr = [&](const Expr* e) -> bool {
+                if (!e) return false;
+                if (e->kind == ExprKind::LITERAL_STRING) return true;
+                if (e->kind == ExprKind::VARIABLE) {
+                    if (!e->str_val.empty() && e->str_val.back() == '$') return true;
+                    return string_scalar_vars.count(e->str_val) != 0;
+                }
+                if (e->kind == ExprKind::CALL) {
+                    if (!e->func_name.empty() && e->func_name.back() == '$') return true;
+                    std::string u = e->func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    if (u == "JOIN") return true;
+                }
+                return false;
+            };
             auto is_string_arr_expr = [&](const Expr* e) -> bool {
                 if (!e) return false;
                 if (e->kind == ExprKind::VARIABLE)
@@ -3338,7 +3392,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     bool any = false;
                     for (auto& a : e->args) {
                         if (!a) continue;
-                        if (a->kind != ExprKind::LITERAL_STRING) return false;
+                        if (!is_string_scalar_expr(a.get())) return false;
                         any = true;
                     }
                     return any;
@@ -3348,7 +3402,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     return string_array_returning_funcs.count(e->func_name) != 0;
                 return false;
             };
-            if (is_string_arr_expr(stmt.expr->args[0].get()) &&
+            // Liberal OR: either side proving string-array-ness is enough.
+            // Lets `g_paths = APPEND(g_paths, [JOIN(...)])` tag g_paths on
+            // the first append even when g_paths started as an empty `[]`
+            // and isn't yet in string_array_vars.
+            if (is_string_arr_expr(stmt.expr->args[0].get()) ||
                 is_string_arr_expr(stmt.expr->args[1].get())) {
                 string_array_vars.insert(stmt.var_name);
             }

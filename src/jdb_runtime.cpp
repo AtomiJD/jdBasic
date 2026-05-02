@@ -624,6 +624,12 @@ JdbArray* jdb_array_append_arr(JdbArray* a, JdbArray* b) {
     auto* r = jdb_array_new(alen + blen);
     if (a) memcpy(r->data,        a->data, alen * sizeof(double));
     if (b) memcpy(r->data + alen, b->data, blen * sizeof(double));
+    // Propagate the per-element-type flags. Either input being a string-
+    // array (or nested-array) marks the merged result the same way, so
+    // PRINT / INDEX paths that consult the runtime flag still see strings.
+    int32_t fa = a ? a->flags : 0;
+    int32_t fb = b ? b->flags : 0;
+    r->flags |= (fa | fb);
     return r;
 }
 
@@ -692,6 +698,7 @@ JdbArray* jdb_array_unique_str(JdbArray* arr) {
         if (!found) r->data[n++] = arr->data[i];
     }
     r->length = n;
+    r->flags |= 3;  // string elements — preserve dispatch info
     return r;
 }
 
@@ -1692,6 +1699,7 @@ JdbArray* jdb_os_args() {
         memcpy(&d, &p, sizeof(d));
         arr->data[i] = d;
     }
+    arr->flags |= 3;  // string elements
     return arr;
 }
 
@@ -2202,6 +2210,7 @@ JdbArray* jdb_split(const char* src, const char* delim) {
         memcpy(&arr->data[i], &ptr, sizeof(double));
         p = next ? next + dlen : p + plen;
     }
+    arr->flags |= 3;  // bit 0 (ptr) + bit 1 (string elems): PRINT + INDEX dispatch
     return arr;
 }
 
