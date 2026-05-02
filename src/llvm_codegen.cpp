@@ -7774,6 +7774,9 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                                    const std::string& exe_path,
                                    const std::string& res_path) {
     // Find the precompiled runtime object. Win build emits .obj, Linux .o.
+    // We probe both an in-tree dev layout (`build/`) and a flat layout
+    // (next to whichever EXE invoked us — typical for redistributed bundles
+    // where the user unpacks the zip and `cd`s into it before running -c).
     std::string runtime_obj;
     for (auto& candidate : {
             "build\\jdb_runtime.obj", "jdb_runtime.obj",
@@ -7785,6 +7788,21 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     }
     if (runtime_obj.empty()) {
         error_msg = "Cannot find jdb_runtime.{obj,o}. Build with NATIVEC flag first.";
+        return false;
+    }
+    // Same probe for the runtime's import library — `-c` used to hard-code
+    // build\jdbrt.lib, which broke any flat-layout deployment.
+    std::string jdbrt_lib;
+    for (auto& candidate : {
+            "build\\jdbrt.lib", "jdbrt.lib" }) {
+        if (std::filesystem::exists(candidate)) {
+            jdbrt_lib = candidate;
+            break;
+        }
+    }
+    if (jdbrt_lib.empty()) {
+        error_msg = "Cannot find jdbrt.lib next to the runtime object. "
+                    "Bundles must ship it alongside jdb_runtime.obj.";
         return false;
     }
 
@@ -7807,7 +7825,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\ucrt\\x64\" "
         "/LIBPATH:\"" + sdk + "\\Lib\\" + sdkv + "\\um\\x64\" "
         "libcmt.lib libucrt.lib kernel32.lib legacy_stdio_definitions.lib "
-        "\"build\\jdbrt.lib\"\"";
+        "\"" + jdbrt_lib + "\"\"";
 
     int ret = std::system(link_cmd.c_str());
     if (ret != 0) {
