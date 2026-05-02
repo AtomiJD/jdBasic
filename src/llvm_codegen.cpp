@@ -654,6 +654,17 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             auto& p = stmt->params[pi];
             bool sp = (!p.name.empty() && p.name.back() == '$');
             int t = sp ? 2 : 1;
+            // Honour explicit `AS <type>` annotations on params. Without this,
+            // `FUNC walk(path AS STRING)` decoded `path` as f64 garbage —
+            // only `$`-suffixed names got the string slot. Same idea covers
+            // ARRAY / OBJECT / MAP so a typed param doesn't silently down-
+            // grade to a number.
+            switch (p.type) {
+                case VarType::STRING:                            t = 2; break;
+                case VarType::ARRAY:                             t = 3; break;
+                case VarType::OBJECT:                            t = 4; break;
+                default: break;
+            }
             if (is_event_handler && pi == 0) t = 3;  // event data: JdbArray*
             tags.push_back(t);
         }
@@ -2635,6 +2646,25 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (u == "STR$" && !stmt.expr->args.empty()) {
             string_array_vars.insert(stmt.var_name);
         }
+        // OS.ARGS() returns argv as a 1D string array — without this
+        // tracking, args[i] decoded as f64 garbage (regression 2026-05-01).
+        if (u == "OS.ARGS")
+            string_array_vars.insert(stmt.var_name);
+        // DIR$(wildcard$, [extended_info]) — flat form is 1D string array;
+        // extended_info=TRUE produces a 2D mixed-type matrix (filename
+        // strings + size integers + type strings + dates). Without this
+        // tag, names[i] decoded as f64 garbage.
+        if (u == "DIR$") {
+            bool extended = false;
+            if (stmt.expr->args.size() >= 2 && stmt.expr->args[1]) {
+                auto& arg = *stmt.expr->args[1];
+                if (arg.kind == ExprKind::LITERAL_BOOL)      extended = arg.bool_val;
+                else if (arg.kind == ExprKind::LITERAL_INT)  extended = (arg.int_val != 0);
+                else                                          extended = true;  // defensive
+            }
+            if (extended) mixed_array_vars.insert(stmt.var_name);
+            else          string_array_vars.insert(stmt.var_name);
+        }
     }
     TypedValue rhs;
     if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
@@ -2768,12 +2798,15 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             } else if (vi->tag == JD_TAG_STR &&
                        (rhs.tag == JD_TAG_I64 || rhs.tag == JD_TAG_F64 || rhs.tag == JD_TAG_BOOL)) {
                 coerce_rhs_to_str(rhs);
-            } else if ((rhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF || rhs.tag == JD_TAG_VM_HANDLE) &&
+            } else if ((rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF || rhs.tag == JD_TAG_VM_HANDLE) &&
                        vi->tag != rhs.tag) {
-                // Array (3), map (4), funcref (5), or VM handle (6) — replace
-                // the tag so subsequent INDEX/calls dispatch on the new kind.
-                // This is what makes `game = {}` (native map) + later
-                // `game = JSON.PARSE$(...)` (VM handle) Just Work.
+                // String (2), array (3), map (4), funcref (5), or VM handle
+                // (6) — replace the tag so subsequent INDEX/loads dispatch on
+                // the new kind. This is what makes `game = {}` (native map)
+                // + later `game = JSON.PARSE$(...)` (VM handle) Just Work,
+                // and what makes `DIM s AS STRING = arr[i]` deliver a real
+                // string when arr is a string-tracked array (the pre-pass
+                // provisionally sized the slot for an i64-shaped tag).
                 vi->tag = rhs.tag;
                 LLVMBuildStore(builder, rhs.val, vi->alloca_val);
                 return;
@@ -3004,6 +3037,19 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             string_array_vars.insert(stmt.var_name);
         if (u == "STR$" && !stmt.expr->args.empty()) {
             string_array_vars.insert(stmt.var_name);
+        }
+        if (u == "OS.ARGS")
+            string_array_vars.insert(stmt.var_name);
+        if (u == "DIR$") {
+            bool extended = false;
+            if (stmt.expr->args.size() >= 2 && stmt.expr->args[1]) {
+                auto& arg = *stmt.expr->args[1];
+                if (arg.kind == ExprKind::LITERAL_BOOL)      extended = arg.bool_val;
+                else if (arg.kind == ExprKind::LITERAL_INT)  extended = (arg.int_val != 0);
+                else                                          extended = true;  // defensive
+            }
+            if (extended) mixed_array_vars.insert(stmt.var_name);
+            else          string_array_vars.insert(stmt.var_name);
         }
     }
 
@@ -3264,6 +3310,32 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
         LLVMBuildStore(builder, rhs.runtime_tag, vi->runtime_tag_alloca);
+        return;
+    }
+    // Pre-pass may have provisionally typed vi as RUNTIME (companion rtag
+    // alloca + i64 value slot) when it couldn't statically infer the rhs
+    // tag — typical for `DIM s AS STRING = arr[i]` where arr's element
+    // tracking wasn't decided in time. By the time we reach this store we
+    // know rhs.tag concretely; pun the value into the i64 slot, update
+    // vi->tag, and bake the concrete tag into the rtag alloca so a stale
+    // RUNTIME load wouldn't dispatch on garbage. Without this, an i8*
+    // string lands punned-as-f64 and reads back as garbage like 1.04965e-311.
+    if (vi && vi->tag == JD_TAG_RUNTIME && rhs.tag != JD_TAG_RUNTIME) {
+        LLVMValueRef val_for_storage;
+        if (rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_ARR ||
+            rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF) {
+            val_for_storage = LLVMBuildPtrToInt(builder, rhs.val, i64_type, "ptr2i");
+        } else if (rhs.tag == JD_TAG_F64) {
+            val_for_storage = pun_f64_to_i64(rhs.val);
+        } else {
+            val_for_storage = rhs.val;
+        }
+        LLVMBuildStore(builder, val_for_storage, vi->alloca_val);
+        if (vi->runtime_tag_alloca) {
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, rhs.tag, 0),
+                           vi->runtime_tag_alloca);
+        }
+        vi->tag = rhs.tag;
         return;
     }
     if (vi) {
@@ -3856,6 +3928,17 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
         arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
     }
 
+    // Determine the iter-var's element tag from Phase-2 tracking. Without
+    // this, FOR EACH over a string array (e.g. SPLIT, DIR$(FALSE), OS.ARGS)
+    // would store the punned-f64 pointer as a raw double — every read of
+    // the iter-var then sees 0 instead of the string (regression 2026-05-01).
+    bool source_is_string_arr = false;
+    if (stmt.expr && stmt.expr->kind == ExprKind::VARIABLE &&
+        string_array_vars.count(stmt.expr->str_val)) {
+        source_is_string_arr = true;
+    }
+    int iter_tag = source_is_string_arr ? JD_TAG_STR : JD_TAG_F64;
+
     // Get length
     auto& len_fn = runtime_funcs["LEN"];
     LLVMValueRef len_args[] = { arr_ptr };
@@ -3867,9 +3950,10 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     VarInfo& idx_vi = create_var(idx_name, JD_TAG_I64);
     LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_vi.alloca_val);
 
-    // Loop variable — always create a fresh f64 local in current scope
-    // to avoid collisions with existing globals of the same name
-    VarInfo& fe_var = create_var(stmt.var_name, JD_TAG_F64);  // f64 (array elements)
+    // Loop variable — fresh local in current scope. Tag picked above based
+    // on the source array, so the alloca is i8* for string-bearing arrays
+    // and the body stores the decoded pointer rather than the raw f64.
+    VarInfo& fe_var = create_var(stmt.var_name, iter_tag);
     VarInfo* var_vi = &fe_var;
 
     LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.cond");
@@ -3891,7 +3975,16 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     auto& get_fn = runtime_funcs["__array_get"];
     LLVMValueRef get_args[] = { arr_ptr, idx };
     LLVMValueRef elem = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, get_args, 2, "elem");
-    LLVMBuildStore(builder, elem, var_vi->alloca_val);
+    if (source_is_string_arr) {
+        // The runtime returns the cell as f64; the bits are an i8* pointer
+        // for string-bearing arrays. Decode before storing into an i8*
+        // alloca (instead of storing the raw f64 into an f64 slot).
+        LLVMValueRef as_i64 = pun_f64_to_i64(elem);
+        LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_fe_s");
+        LLVMBuildStore(builder, as_ptr, var_vi->alloca_val);
+    } else {
+        LLVMBuildStore(builder, elem, var_vi->alloca_val);
+    }
 
     for (auto& s : stmt.body) { if (s) codegen_stmt(*s); }
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))

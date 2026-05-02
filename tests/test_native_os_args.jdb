@@ -1,0 +1,55 @@
+' Native OS.ARGS regression — must be invoked WITH args:
+'
+'   jdBasic.exe -c tests/test_native_os_args.jdb
+'   tests/test_native_os_args.exe ALPHA BRAVO CHARLIE
+'
+' Expected output:  OK 3 args
+' Bug (pre 2026-05-01): each args[i] decoded as 0 / float garbage.
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(N, cond)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        PRINT "FAIL #"; N
+        FAIL = FAIL + 1
+    ENDIF
+ENDSUB
+
+' OS.ARGS slot 0 = invocation (script.jdb / EXE path), user args at [1..].
+DIM args = OS.ARGS()
+DIM n AS INTEGER = LEN(args)
+
+IF n < 4 THEN
+    PRINT "skip: needs >=3 user args after invocation slot, got "; (n - 1)
+    END
+ENDIF
+
+' Element extraction must yield the literal strings, not 0.
+DIM a1 AS STRING = args[1]
+DIM a2 AS STRING = args[2]
+DIM a3 AS STRING = args[3]
+Assert(1, LEN(a1) > 0)
+Assert(2, LEN(a2) > 0)
+Assert(3, LEN(a3) > 0)
+Assert(4, a1 = "ALPHA")
+Assert(5, a2 = "BRAVO")
+Assert(6, a3 = "CHARLIE")
+
+' FOR EACH over OS.ARGS — iter var must carry the string.
+DIM joined AS STRING = ""
+DIM s AS STRING
+FOR EACH s IN args
+    IF s = "ALPHA" OR s = "BRAVO" OR s = "CHARLIE" THEN
+        joined = joined + s + "|"
+    ENDIF
+NEXT
+Assert(7, joined = "ALPHA|BRAVO|CHARLIE|")
+
+IF FAIL = 0 THEN
+    PRINT "OK "; n; " args"
+ELSE
+    PRINT "FAIL "; FAIL; " of 7"
+ENDIF

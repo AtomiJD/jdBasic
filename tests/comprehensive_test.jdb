@@ -1996,6 +1996,71 @@ Assert(fap_nums[0] = 100, "param shadows top-level array global")
 '  a name with only case variation inside a SUB/FUNC.)
 
 ' ══════════════════════════════════════════════════════════════════
+' Native string-array element extraction
+'
+' Regression for codegen bugs (2026-05-01): under -c, arr[i] and
+' FOR EACH iter-vars on dynamically-typed string arrays (DIR$(*, FALSE),
+' OS.ARGS(), etc.) returned 0 instead of the string. Phase-2 tracking
+' didn't recognize those builtins, so INDEX defaulted to f64-decode.
+' These tests pin the fix.
+' ══════════════════════════════════════════════════════════════════
+Header("Native string-array element extraction")
+
+' Already-tracked: literal string array — sanity guard.
+DIM nsa_lits AS ARRAY = ["alpha", "beta", "gamma"]
+Assert(nsa_lits[0] = "alpha", "literal string array subscript [0]")
+Assert(nsa_lits[2] = "gamma", "literal string array subscript [2]")
+
+' Already-tracked: SPLIT.
+DIM nsa_parts = SPLIT("a,b,c,d", ",")
+Assert(nsa_parts[0] = "a", "SPLIT result subscript [0]")
+Assert(nsa_parts[3] = "d", "SPLIT result subscript [3]")
+
+' DIR$(*, FALSE) → 1D string array. Was broken in native.
+MKDIR "_nsa_tmp"
+TXTWRITER "_nsa_tmp/alpha.txt", "a"
+TXTWRITER "_nsa_tmp/bravo.txt", "b"
+TXTWRITER "_nsa_tmp/charlie.txt", "c"
+DIM nsa_names = DIR$("_nsa_tmp/*", FALSE)
+Assert(LEN(nsa_names) = 3, "DIR$(FALSE) row count")
+DIM nsa_nm0 AS STRING = nsa_names[0]
+Assert(LEN(nsa_nm0) > 0, "DIR$(FALSE) [0] returns non-empty string")
+DIM nsa_saw AS INTEGER = 0
+DIM nsa_i AS INTEGER
+FOR nsa_i = 0 TO LEN(nsa_names) - 1
+  IF nsa_names[nsa_i] = "alpha.txt" THEN nsa_saw = 1
+NEXT nsa_i
+Assert(nsa_saw = 1, "DIR$(FALSE) [i] in FOR loop sees real strings")
+
+' FOR EACH over a string array — iter var was 0 in native.
+DIM nsa_concat AS STRING = ""
+DIM nsa_s AS STRING
+FOR EACH nsa_s IN nsa_parts
+  nsa_concat = nsa_concat + nsa_s
+NEXT
+Assert(nsa_concat = "abcd", "FOR EACH over SPLIT result concatenates")
+
+DIM nsa_seen AS INTEGER = 0
+DIM nsa_nm AS STRING
+FOR EACH nsa_nm IN nsa_names
+  IF LEN(nsa_nm) > 0 THEN nsa_seen = nsa_seen + 1
+NEXT
+Assert(nsa_seen = 3, "FOR EACH over DIR$(FALSE) sees all entries")
+
+' Cleanup
+KILL "_nsa_tmp/alpha.txt"
+KILL "_nsa_tmp/bravo.txt"
+KILL "_nsa_tmp/charlie.txt"
+RMDIR "_nsa_tmp"
+
+' OS.ARGS — element extraction. The runner can't easily pass args here,
+' so we only smoke-test that it returns a value-shaped array. The real
+' element-subscript test lives in tests/test_native_os_args.jdb which
+' the build invokes with `-c` plus a known argv.
+DIM nsa_args = OS.ARGS()
+Assert(LEN(nsa_args) >= 0, "OS.ARGS callable, returns array")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

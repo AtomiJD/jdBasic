@@ -531,6 +531,65 @@ Assert(176,la_chain[0] = 16)
 Assert(177,la_chain[1] = 25)
 Assert(178,LEN(la_chain) = 2)
 
+' ── 50. STRING-ARRAY ELEMENT EXTRACTION ──────────────────────
+'   Regression for native codegen bugs (2026-05-01) where arr[i]
+'   and FOR EACH over dynamically-typed string arrays returned 0
+'   instead of the actual string. DIR$(FALSE) and OS.ARGS were
+'   the production triggers.
+PRINT "── String-Array Element Extraction ──"
+
+' Literal: already tracked, sanity guard.
+sa_lits = ["alpha", "beta", "gamma"]
+Assert(179, sa_lits[0] = "alpha")
+Assert(180, sa_lits[2] = "gamma")
+
+' SPLIT: already tracked, sanity guard.
+sa_parts = SPLIT("a,b,c,d", ",")
+Assert(181, sa_parts[0] = "a")
+Assert(182, sa_parts[3] = "d")
+
+' DIR$(*, FALSE) — was broken.
+MKDIR "_sa_tmp"
+TXTWRITER "_sa_tmp/alpha.txt", "a"
+TXTWRITER "_sa_tmp/bravo.txt", "b"
+TXTWRITER "_sa_tmp/charlie.txt", "c"
+sa_names = DIR$("_sa_tmp/*", FALSE)
+Assert(183, LEN(sa_names) = 3)
+Assert(184, LEN(sa_names[0]) > 0)
+sa_saw = 0
+sa_i = 0
+FOR sa_i = 0 TO LEN(sa_names) - 1
+    IF sa_names[sa_i] = "alpha.txt" THEN sa_saw = 1
+NEXT sa_i
+Assert(185, sa_saw = 1)
+
+' FOR EACH over string array — iter-var was 0 in native.
+sa_concat = ""
+sa_s = ""
+FOR EACH sa_s IN sa_parts
+    sa_concat = sa_concat + sa_s
+NEXT
+Assert(186, sa_concat = "abcd")
+
+sa_seen = 0
+sa_nm = ""
+FOR EACH sa_nm IN sa_names
+    IF LEN(sa_nm) > 0 THEN sa_seen = sa_seen + 1
+NEXT
+Assert(187, sa_seen = 3)
+
+KILL "_sa_tmp/alpha.txt"
+KILL "_sa_tmp/bravo.txt"
+KILL "_sa_tmp/charlie.txt"
+RMDIR "_sa_tmp"
+
+' OS.ARGS — runtime-test of element type. When this script is invoked
+' as `jdBasic.exe -c native_test.jdb` (no extra args), OS.ARGS is
+' empty; the dedicated tests/test_native_os_args.jdb is the runner
+' that asserts non-empty OS.ARGS()[0] is a real string.
+sa_args = OS.ARGS()
+Assert(188, LEN(sa_args) >= 0)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

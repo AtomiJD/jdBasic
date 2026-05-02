@@ -1,0 +1,103 @@
+' dupfinder.jdb — find duplicate files by SHA256, group, sort by recoverable size.
+' Usage:  dupfinder.exe <path>     (defaults to "." when no argument given)
+
+OPTION EXPLICIT
+OPTION STRICT
+
+FUNC walk(path AS STRING)
+  ' Note: DIR$(wildcard, TRUE) returns a mixed-type 2D matrix whose string
+  ' cells come back as 0 under native -c (codegen bug 2026-05-01).
+  ' Use the simpler 1D form and probe each entry with FILE.ISDIR.
+  DIM out AS ARRAY = []
+  DIM names = DIR$(path + "/*", FALSE)
+  DIM n AS INTEGER = LEN(names)
+  IF n = 0 THEN RETURN out
+  DIM i AS INTEGER
+  FOR i = 0 TO n - 1
+    DIM nm AS STRING = names[i]
+    DIM full AS STRING = path + "/" + nm
+    IF FILE.ISDIR(full) THEN
+      out = APPEND(out, walk(full))
+    ELSE
+      out = APPEND(out, [full])
+    ENDIF
+  NEXT i
+  RETURN out
+ENDFUNC
+
+FUNC where_true(mask)
+  DIM idx AS ARRAY = []
+  DIM i AS INTEGER
+  FOR i = 0 TO LEN(mask) - 1
+    IF mask[i] THEN idx = APPEND(idx, [i])
+  NEXT i
+  RETURN idx
+ENDFUNC
+
+FUNC hash_file$(path AS STRING)
+  RETURN CODEC.SHA256$(BINREADER$(path))
+ENDFUNC
+
+' --- main ---
+
+' OS.ARGS() slot 0 is the invocation (script.jdb in interp, EXE path in
+' native). User-supplied args start at slot 1. Defaults to "." otherwise.
+DIM args = OS.ARGS()
+DIM root AS STRING = "."
+IF LEN(args) >= 2 THEN root = args[1]
+
+IF FILE.ISDIR(root) = 0 THEN
+  PRINT "error: not a directory: "; root
+  END
+ENDIF
+
+DIM files = walk(root)
+IF LEN(files) = 0 THEN
+  PRINT "no files under "; root
+  END
+ENDIF
+
+DIM hashes = SELECT(hash_file$@, files)
+DIM uniq = UNIQUE(hashes)
+
+DIM g_sizes AS ARRAY = []
+DIM g_counts AS ARRAY = []
+DIM g_files AS ARRAY = []
+
+DIM h AS STRING
+FOR EACH h IN uniq
+  DIM m = (hashes = h)
+  DIM c AS INTEGER = SUM(m)
+  IF c >= 2 THEN
+    DIM matching = files{where_true(m)}
+    DIM sz AS INTEGER = FILE.SIZE(matching[0])
+    DIM saved AS INTEGER = sz * (c - 1)
+    g_sizes  = APPEND(g_sizes,  [saved])
+    g_counts = APPEND(g_counts, [c])
+    g_files  = APPEND(g_files,  [matching])
+  ENDIF
+NEXT
+
+PRINT "Scanned "; LEN(files); " files in "; root
+
+IF LEN(g_sizes) = 0 THEN
+  PRINT "no duplicates found"
+  END
+ENDIF
+
+DIM order = GRADE(0 - g_sizes)
+DIM total AS INTEGER = SUM(g_sizes)
+
+PRINT LEN(g_sizes); " duplicate groups, "; FORMAT$("{:.1f}", total/1048576.0); " MB recoverable"
+PRINT ""
+
+DIM i AS INTEGER
+FOR i = 0 TO LEN(order) - 1
+  DIM idx AS INTEGER = order[i]
+  DIM gp = g_files[idx]
+  PRINT FORMAT$("[{}] {:>7.2f} MB x {}  ", i+1, g_sizes[idx]/1048576.0, g_counts[idx]); gp[0]
+  DIM j AS INTEGER
+  FOR j = 1 TO LEN(gp) - 1
+    PRINT "                        "; gp[j]
+  NEXT j
+NEXT i
