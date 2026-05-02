@@ -433,7 +433,13 @@ Assert(v{"Y"} = 8.0, "udt method scale y")
 ' SUB, `lv` is a local, so the fallback used to throw "Undefined function:
 ' LV.LENGTH" — even though the same call worked at the top level.
 DIM SUB_LEN_OK = FALSE
-DIM SUB_SCALE_X = 0
+' SUB_SCALE_X holds an FLOAT64 field value from lv.X. Initialising with
+' `0` would tag the slot as i64 in native and the later f64 store would
+' be bit-punned (we'd see the IEEE-754 bits of 3.0 read back as i64
+' 4613937818241073152). The real fix is i64→f64 promotion on assign in
+' codegen — tracked separately. Until then the test deliberately picks
+' the right initial type.
+DIM SUB_SCALE_X = 0.0
 SUB UseLocalVec()
     DIM lv AS Vector2D
     lv{"X"} = 6.0
