@@ -6185,8 +6185,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             std::vector<LLVMValueRef> args;
             args.push_back(fmt_tv.val);
             for (auto& av : evald) {
-                LLVMValueRef val = av.val;
-                if (av.tag == JD_TAG_I64) val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                // jdb_formatN is declared as (i8*, double, ...). Tags other
+                // than F64/I64/BOOL (most importantly VM_HANDLE from map
+                // indexing like p{"menge"}, plus RUNTIME-tagged values) used
+                // to fall through as raw i64, tripping LLVM IR verification.
+                // Route through coerce_to so handle-deref / pun goes through
+                // the right runtime helper.
+                LLVMValueRef val;
+                if (av.tag == JD_TAG_F64) {
+                    val = av.val;
+                } else if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_BOOL) {
+                    val = LLVMBuildSIToFP(builder, av.val, f64_type, "itof");
+                } else {
+                    val = coerce_to(av, f64_type);
+                }
                 args.push_back(val);
             }
             LLVMValueRef result = LLVMBuildCall2(builder, fit2->second.fn_type, fit2->second.fn,
@@ -7895,17 +7907,39 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         if (!std::filesystem::exists(vswhere)) {
             log(std::string("vswhere not found at ") + vswhere);
         } else {
-            std::string cmd = std::string("\"\"") + vswhere + "\" -latest "
-                "-products * -requires Microsoft.VisualCpp.Tools.Core "
-                "-property installationPath\"";
-            FILE* p = _popen(cmd.c_str(), "r");
-            std::string vs_path;
-            if (p) {
-                char buf[1024];
-                while (fgets(buf, sizeof(buf), p)) vs_path += buf;
-                _pclose(p);
-                vs_path = rstrip(vs_path);
+            // Run vswhere with the given args and return its first stdout
+            // line (an installationPath). Empty string = no match.
+            auto run_vswhere = [&](const std::string& args) -> std::string {
+                std::string cmd = std::string("\"\"") + vswhere + "\" " +
+                                  args + " -property installationPath\"";
+                FILE* p = _popen(cmd.c_str(), "r");
+                std::string out;
+                if (p) {
+                    char buf[1024];
+                    while (fgets(buf, sizeof(buf), p)) out += buf;
+                    _pclose(p);
+                    out = rstrip(out);
+                }
+                return out;
+            };
+
+            // Pass 1: filter on the historical C++ tools requires-key. Works
+            // for VS2017/2019/2022.
+            std::string vs_path = run_vswhere(
+                "-latest -products * -requires Microsoft.VisualCpp.Tools.Core");
+
+            // Pass 2: VS18 / VS2026 renamed the component, so the requires
+            // filter returns empty even when MSVC is installed. Fall back to
+            // an unfiltered query and let the downstream VC\Tools\MSVC scan
+            // confirm the C++ tools are actually there.
+            if (vs_path.empty()) {
+                log("vswhere -requires Microsoft.VisualCpp.Tools.Core: empty");
+                vs_path = run_vswhere("-latest -products *");
+                if (!vs_path.empty()) {
+                    log("vswhere -latest (no requires): " + vs_path);
+                }
             }
+
             if (vs_path.empty()) {
                 log("vswhere returned no installationPath");
             } else {
@@ -8001,9 +8035,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                     "2022 17.10 or newer (Community / Pro / Build Tools) "
                     "with the \"Desktop development with C++\" workload, "
                     "or run jdBasic.exe from an x64 Native Tools Command "
-                    "Prompt. (MSVC v14.40+ is required because "
-                    "jdb_runtime.obj uses vectorized STL helpers from "
-                    "that release.) Discovery trace:\n" + discovery_log;
+                    "Prompt. Discovery trace:\n" + discovery_log;
         return false;
     }
     if (sdkv.empty()) {

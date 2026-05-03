@@ -1,0 +1,25 @@
+' test_format_vmh.jdb — regression test for FORMAT$ on VM_HANDLE args
+' (the codegen used to pass i64 raw bits where double was expected).
+
+OPTION "EXPLICIT"
+
+DIM p AS MAP
+p{"menge"} = 12.5
+p{"vk_preis"} = 99.95
+p{"rabatt"} = 5
+
+DIM s1$ = FORMAT$("{:.2f}", p{"menge"})
+DIM s2$ = FORMAT$("{:.2f}", p{"vk_preis"})
+DIM s3$ = FORMAT$("{:.2f}", p{"rabatt"})
+
+PRINT "menge   =", s1$
+PRINT "vk_preis=", s2$
+PRINT "rabatt  =", s3$
+
+' Explicit double coercion path — must still work
+DIM v AS DOUBLE = 42.42
+PRINT "v   =", FORMAT$("{:.2f}", v)
+
+' Multi-arg mixed with VM handles
+DIM line$ = FORMAT$("{:.2f} x {:.2f}", p{"menge"}, p{"vk_preis"})
+PRINT "line =", line$

@@ -2284,6 +2284,55 @@ Assert(LEN(tfp_s0) > 0, "STR$(arr) [0] is a non-empty string")
 Assert(tfp_s0 = "10", "STR$(arr) [0] = '10'")
 
 ' ══════════════════════════════════════════════════════════════════
+' FORMAT$ across all argument tag types
+' (regression for native codegen bug where MAP-indexed VM_HANDLE args
+'  were passed as raw i64 to jdb_format1 — declared (i8*, double) —
+'  tripping LLVM IR verification with "Call parameter type does not
+'  match function signature". Fix routes non-I64/F64 tags through
+'  coerce_to(f64) so VM handles hit __jdrt_val_to_f64 first.)
+' ══════════════════════════════════════════════════════════════════
+Header("FORMAT$ across argument tag types")
+
+' Anchor the locale so number formatting is deterministic across runs.
+SETLOCALE "C"
+
+' --- Literal scalars (the easy case — direct codegen tag) -----------
+Assert(FORMAT$("{:.2f}", 12.5) = "12.50",   "FORMAT$ literal f64 with :.2f")
+Assert(FORMAT$("{:.2f}", 7)    = "7.00",    "FORMAT$ literal i64 promoted to f64 via :.2f")
+Assert(FORMAT$("{}", 7)        = "7",       "FORMAT$ literal i64 via {}")
+Assert(FORMAT$("{}", 2.5)      = "2.5",     "FORMAT$ literal f64 via {}")
+Assert(FORMAT$("{}", "hello")  = "hello",   "FORMAT$ literal string via {}")
+
+' --- VM_HANDLE from MAP indexing (the bug from this session) --------
+DIM fmt_p AS MAP
+fmt_p{"f"} = 12.5
+fmt_p{"i"} = 7
+fmt_p{"s"} = "hi"
+Assert(FORMAT$("{:.2f}", fmt_p{"f"}) = "12.50", "FORMAT$ MAP-VM_HANDLE f64 via :.2f")
+Assert(FORMAT$("{:.2f}", fmt_p{"i"}) = "7.00",  "FORMAT$ MAP-VM_HANDLE i64 via :.2f")
+
+' --- Array-element extraction (numeric tag, indexed) ----------------
+DIM fmt_arr = [1, 2.5, 3]
+Assert(FORMAT$("{:.2f}", fmt_arr[1]) = "2.50", "FORMAT$ on arr[i] f64")
+Assert(FORMAT$("{:.2f}", fmt_arr[0]) = "1.00", "FORMAT$ on arr[i] i64-in-f64-arr")
+
+' --- Multi-arg mix --------------------------------------------------
+Assert(FORMAT$("{}={:.2f}", "px", 12.5)  = "px=12.50", "FORMAT$ multi-arg str + f64")
+Assert(FORMAT$("{} {} {}", 1, 2.5, "x")  = "1 2.5 x",  "FORMAT$ multi-arg i64 + f64 + str")
+Assert(FORMAT$("{:.2f} x {:.2f}", fmt_p{"f"}, fmt_p{"i"}) = "12.50 x 7.00", _
+       "FORMAT$ multi-arg both VM_HANDLE")
+
+' --- Known native codegen gaps (pre-existing, NOT caused by today's
+'  VM_HANDLE fix). Left commented so they're discoverable. Uncomment
+'  once the corresponding native-format-codegen issue lands.
+' Assert(FORMAT$("{}", TRUE)             = "TRUE",     "FORMAT$ BOOL — native says '1'")
+' Assert(FORMAT$("{:>8.2f}", 3.14)       = "    3.14", "FORMAT$ width >8 — native ignores width")
+' Assert(FORMAT$("{:0>4}", 7)            = "0007",     "FORMAT$ zero-pad 0>4 — native ignores fill")
+' Assert(FORMAT$("{}", fmt_p{"s"})       = "hi",       "FORMAT$ string from VM_HANDLE — native returns '0'")
+
+SETLOCALE "C"
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

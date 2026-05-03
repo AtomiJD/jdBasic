@@ -4574,7 +4574,17 @@ void VM::register_builtins() {
         // Reuse MAP.FROM for objects, also handle arrays
         std::string s = args[0].as_string()->data;
         size_t p = 0;
-        auto skip_ws = [&]() { while (p < s.size() && std::isspace(s[p])) p++; };
+        // Skip UTF-8 BOM (EF BB BF). Files written by VBA's ADODB.Stream,
+        // .NET StreamWriter, Notepad-on-save etc. all emit a BOM by default.
+        // Without this skip the first byte (0xEF) falls through the parser's
+        // if-chain and the "number" branch trips stoll on an empty string.
+        if (s.size() >= 3 &&
+            (unsigned char)s[0] == 0xEF &&
+            (unsigned char)s[1] == 0xBB &&
+            (unsigned char)s[2] == 0xBF) {
+            p = 3;
+        }
+        auto skip_ws = [&]() { while (p < s.size() && std::isspace((unsigned char)s[p])) p++; };
 
         std::function<Value()> parse_value = [&]() -> Value {
             skip_ws();
@@ -4661,8 +4671,20 @@ void VM::register_builtins() {
                 p++;
             }
             std::string ns = s.substr(start, p - start);
-            if (is_f) return Value::make_f64(std::stod(ns));
-            return Value::make_i64(std::stoll(ns));
+            if (ns.empty() || ns == "-") {
+                throw jdError(ErrCode::RUNTIME_ERROR,
+                    "JSON.PARSE$: unexpected character '" +
+                    std::string(1, s[start]) + "' at offset " +
+                    std::to_string(start));
+            }
+            try {
+                if (is_f) return Value::make_f64(std::stod(ns));
+                return Value::make_i64(std::stoll(ns));
+            } catch (const std::exception&) {
+                throw jdError(ErrCode::RUNTIME_ERROR,
+                    "JSON.PARSE$: bad number '" + ns + "' at offset " +
+                    std::to_string(start));
+            }
         };
 
         return parse_value();
