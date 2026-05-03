@@ -1119,6 +1119,18 @@ int main(int argc, char* argv[]) {
 #if defined(_WIN32)
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
+    // Enable ANSI escape interpretation up front. Console::enable_raw_mode
+    // also sets this, but that runs after main() prints the splash banner —
+    // on legacy conhost (cmd.exe on a fresh Windows install) the user used
+    // to see the literal "[2J[H" prefix. No-op when stdout is redirected
+    // (GetConsoleMode fails) or when VT is already on.
+    {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD outMode = 0;
+        if (GetConsoleMode(hOut, &outMode)) {
+            SetConsoleMode(hOut, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
 #endif
 #ifdef COM
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
