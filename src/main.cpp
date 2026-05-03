@@ -1291,6 +1291,18 @@ int main(int argc, char* argv[]) {
     // ── Native compilation (LLVM) ────────────────────────────────
     if (compile_native || emit_ir_only) {
 #ifdef LLVM_CODEGEN
+        // Phase markers + try/catch on every step — without these the
+        // process used to die silently on the deployment machine when
+        // any phase threw (parser, IMPORT-resolve, LLVM-C.dll loader,
+        // codegen). std::cerr is unbuffered, but we flush after each
+        // marker so an abort()/terminate() in LLVM still leaves a trail.
+        auto mark = [](const char* msg) {
+            std::cerr << "[jdbasic -c] " << msg << std::endl;
+            std::cerr.flush();
+        };
+
+        mark(("Compiling: " + filename).c_str());
+
         // Set base dir for IMPORT module resolution
         {
             size_t sep = filename.find_last_of("/\\");
@@ -1299,25 +1311,30 @@ int main(int argc, char* argv[]) {
         std::string source;
         try { source = read_file(filename); }
         catch (const std::exception& e) {
-            std::cerr << "Error: " << e.what() << std::endl;
+            std::cerr << "Read error: " << e.what() << std::endl;
             return 1;
         }
-        Lexer lexer(source);
-        auto tokens = lexer.tokenize();
-        Parser parser(tokens);
-        setup_parser_modules(parser);
-        auto ast = parser.parse();
 
-        LLVMCodegen codegen;
-
-        // Check if --trace was used
-        for (int j = 1; j < argc; j++) {
-            if (std::string(argv[j]) == "--trace") { codegen.debug_log = true; break; }
-        }
-
-        if (emit_ir_only) {
-            codegen.emit_ir(ast);
-            return 0;
+        std::vector<StmtPtr> ast;
+        try {
+            mark("Lexing...");
+            Lexer lexer(source);
+            auto tokens = lexer.tokenize();
+            mark("Parsing...");
+            Parser parser(tokens);
+            setup_parser_modules(parser);
+            ast = parser.parse();
+        } catch (const jdError& e) {
+            std::cerr << "Parse error";
+            if (e.line > 0) std::cerr << " at line " << e.line;
+            std::cerr << ": " << e.what() << std::endl;
+            return 1;
+        } catch (const std::exception& e) {
+            std::cerr << "Parse error: " << e.what() << std::endl;
+            return 1;
+        } catch (...) {
+            std::cerr << "Parse error: unknown exception during parse." << std::endl;
+            return 1;
         }
 
         if (compile_output.empty()) {
@@ -1327,8 +1344,40 @@ int main(int argc, char* argv[]) {
             compile_output += ".exe";
         }
 
-        if (!codegen.compile(ast, compile_output, filename)) {
-            std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
+        try {
+            mark("Initializing LLVM codegen...");
+            LLVMCodegen codegen;
+
+            // Check if --trace was used
+            for (int j = 1; j < argc; j++) {
+                if (std::string(argv[j]) == "--trace") { codegen.debug_log = true; break; }
+            }
+
+            if (emit_ir_only) {
+                mark("Emitting IR...");
+                codegen.emit_ir(ast);
+                return 0;
+            }
+
+            mark("Generating + linking...");
+            if (!codegen.compile(ast, compile_output, filename)) {
+                std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
+                return 1;
+            }
+        } catch (const jdError& e) {
+            std::cerr << "Codegen error";
+            if (e.line > 0) std::cerr << " at line " << e.line;
+            std::cerr << ": " << e.what() << std::endl;
+            return 1;
+        } catch (const std::exception& e) {
+            std::cerr << "Codegen error: " << e.what() << std::endl;
+            return 1;
+        } catch (...) {
+            std::cerr << "Codegen error: unknown exception "
+                         "(likely an LLVM-C.dll load failure or VC++ "
+                         "runtime mismatch — check that vcruntime140.dll, "
+                         "msvcp140.dll, and LLVM-C.dll are next to "
+                         "jdBasic.exe)." << std::endl;
             return 1;
         }
         // Auto-copy jdbrt.dll next to the produced .exe so the user

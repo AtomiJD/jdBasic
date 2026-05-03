@@ -7852,17 +7852,19 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
 
 #ifdef _WIN32
     // Discover MSVC + Windows SDK at runtime instead of hard-coding paths.
-    // Discovery order:
-    //   1) Env vars set by vcvarsall.bat / "x64 Native Tools Command Prompt"
-    //      — VCToolsInstallDir, WindowsSdkDir, WindowsSDKVersion. If the user
-    //      ran the EXE from a developer prompt, this path "just works" with
-    //      whatever VS edition / patch they have installed.
-    //   2) vswhere.exe lookup. Microsoft ships vswhere with every VS install
-    //      at a stable path; it reports the latest installation for any
-    //      edition (Community / Pro / Enterprise / Build Tools). We then
-    //      derive MSVC version from VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt.
+    // Works with VS 2017 / 2019 / 2022 (Community / Pro / Enterprise /
+    // Build Tools). Discovery order:
+    //   1) Env vars from a developer prompt (VCToolsInstallDir, WindowsSdkDir,
+    //      WindowsSDKVersion).
+    //   2) vswhere.exe at the standard Installer path. Multiple version-text
+    //      filenames are tried (default.v143.txt, default.txt, etc.) and a
+    //      direct directory scan of <vs>\VC\Tools\MSVC\ is the final fallback
+    //      for non-2022 layouts.
     //   3) Windows SDK at the well-known `Program Files (x86)\Windows Kits\10`
     //      location, picking the newest version found under Lib\.
+    // Every discovery step appends to a per-attempt log; if discovery fails
+    // the log is included in error_msg so the deployment machine can see
+    // exactly which paths were checked and what was/wasn't found.
     auto rstrip = [](std::string s) {
         while (!s.empty() && (s.back() == '\\' || s.back() == '/' ||
                               s.back() == '\r' || s.back() == '\n' ||
@@ -7873,9 +7875,16 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     std::string msvc;     // .../VC/Tools/MSVC/<version>
     std::string sdk;      // C:/Program Files (x86)/Windows Kits/10
     std::string sdkv;     // 10.0.26100.0
+    std::string discovery_log;
+    auto log = [&](const std::string& s) { discovery_log += "  " + s + "\n"; };
 
     // 1) Env-vars (developer prompt)
-    if (const char* e = std::getenv("VCToolsInstallDir")) msvc = rstrip(e);
+    if (const char* e = std::getenv("VCToolsInstallDir")) {
+        msvc = rstrip(e);
+        log("env VCToolsInstallDir=" + msvc);
+    } else {
+        log("env VCToolsInstallDir: not set");
+    }
     if (const char* e = std::getenv("WindowsSdkDir"))     sdk  = rstrip(e);
     if (const char* e = std::getenv("WindowsSDKVersion")) sdkv = rstrip(e);
 
@@ -7883,7 +7892,9 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     if (msvc.empty()) {
         const char* vswhere =
             "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
-        if (std::filesystem::exists(vswhere)) {
+        if (!std::filesystem::exists(vswhere)) {
+            log(std::string("vswhere not found at ") + vswhere);
+        } else {
             std::string cmd = std::string("\"\"") + vswhere + "\" -latest "
                 "-products * -requires Microsoft.VisualCpp.Tools.Core "
                 "-property installationPath\"";
@@ -7895,17 +7906,66 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                 _pclose(p);
                 vs_path = rstrip(vs_path);
             }
-            if (!vs_path.empty()) {
-                std::string default_ver_file = vs_path +
-                    "\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt";
-                std::ifstream ifs(default_ver_file);
-                if (ifs.is_open()) {
-                    std::string vc_version;
-                    std::getline(ifs, vc_version);
-                    vc_version = rstrip(vc_version);
-                    if (!vc_version.empty()) {
-                        msvc = vs_path + "\\VC\\Tools\\MSVC\\" + vc_version;
+            if (vs_path.empty()) {
+                log("vswhere returned no installationPath");
+            } else {
+                log("vswhere installationPath=" + vs_path);
+
+                // Try the well-known version text files in order. VS2022 uses
+                // Microsoft.VCToolsVersion.default.txt; some installs only have
+                // edition-suffixed variants (...v143.txt, ...v142.txt).
+                std::string vc_version;
+                const char* tried_files[] = {
+                    "\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt",
+                    "\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.v143.default.txt",
+                    "\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.v142.default.txt",
+                    "\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.v141.default.txt",
+                };
+                for (const char* suffix : tried_files) {
+                    std::string f = vs_path + suffix;
+                    std::ifstream ifs(f);
+                    if (!ifs.is_open()) continue;
+                    std::string v;
+                    std::getline(ifs, v);
+                    v = rstrip(v);
+                    if (!v.empty()) {
+                        vc_version = v;
+                        log(std::string("read VC version ") + v +
+                            " from " + suffix);
+                        break;
                     }
+                }
+
+                // Fallback: scan VC\Tools\MSVC\ directly for version dirs and
+                // pick the newest. Required for VS2019 layouts where the
+                // .default.txt files live under different names per workload.
+                std::string tools_root = vs_path + "\\VC\\Tools\\MSVC";
+                if (vc_version.empty()) {
+                    if (!std::filesystem::exists(tools_root)) {
+                        log("VC tools dir missing: " + tools_root);
+                    } else {
+                        std::string newest;
+                        try {
+                            for (auto& e : std::filesystem::directory_iterator(tools_root)) {
+                                if (!e.is_directory()) continue;
+                                std::string n = e.path().filename().string();
+                                // MSVC version dirs look like 14.xx.xxxxx
+                                if (n.size() < 4 || n.compare(0, 3, "14.") != 0)
+                                    continue;
+                                if (n > newest) newest = n;
+                            }
+                        } catch (...) {}
+                        if (!newest.empty()) {
+                            vc_version = newest;
+                            log("scanned VC\\Tools\\MSVC, newest=" + vc_version);
+                        } else {
+                            log("VC\\Tools\\MSVC has no 14.* version dirs");
+                        }
+                    }
+                }
+
+                if (!vc_version.empty()) {
+                    msvc = vs_path + "\\VC\\Tools\\MSVC\\" + vc_version;
                 }
             }
         }
@@ -7930,18 +7990,26 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                 // error message below tells the user what to install.
             }
             sdkv = newest;
+            if (!sdkv.empty()) log("Windows SDK newest=" + sdkv);
+        } else {
+            log("Windows SDK Lib dir missing: " + lib_root);
         }
     }
 
     if (msvc.empty()) {
-        error_msg = "Cannot find MSVC toolchain. Install Visual Studio 2022 "
-                    "(Community / Pro / Build Tools) with the C++ workload, "
-                    "or run jdBasic.exe from an x64 Native Tools Command Prompt.";
+        error_msg = "Cannot find MSVC toolchain. Install Visual Studio "
+                    "2022 17.10 or newer (Community / Pro / Build Tools) "
+                    "with the \"Desktop development with C++\" workload, "
+                    "or run jdBasic.exe from an x64 Native Tools Command "
+                    "Prompt. (MSVC v14.40+ is required because "
+                    "jdb_runtime.obj uses vectorized STL helpers from "
+                    "that release.) Discovery trace:\n" + discovery_log;
         return false;
     }
     if (sdkv.empty()) {
         error_msg = "Cannot find Windows SDK 10. Install the SDK via the VS "
-                    "Installer (workload: Desktop development with C++).";
+                    "Installer (workload: Desktop development with C++). "
+                    "Discovery trace:\n" + discovery_log;
         return false;
     }
     // Validate that link.exe actually exists at the discovered path.
@@ -7949,7 +8017,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     if (!std::filesystem::exists(link_exe)) {
         error_msg = "MSVC link.exe not found at " + link_exe +
                     ". Discovered MSVC dir may be incomplete — reinstall VS "
-                    "C++ tools.";
+                    "C++ tools. Discovery trace:\n" + discovery_log;
         return false;
     }
 
@@ -7972,6 +8040,20 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     int ret = std::system(link_cmd.c_str());
     if (ret != 0) {
         error_msg = "Linker failed (exit code " + std::to_string(ret) + ")";
+        // LNK1120 = "N unresolved externals". The single most common cause
+        // when -c works on the dev box but breaks on a deployment machine
+        // is an MSVC version skew: jdb_runtime.obj was built against MSVC
+        // v14.40+ (VS2022 17.10+) which emits vectorized-STL helper symbols
+        // (__std_find_trivial_1, __std_find_last_of_trivial_pos_1, ...) that
+        // older libcpmt.lib doesn't export. Surface the exact remedy.
+        if (ret == 1120) {
+            error_msg += "\n  → likely cause: MSVC version is too old. "
+                         "jdb_runtime.obj requires MSVC v14.40+ "
+                         "(Visual Studio 2022 17.10 or newer). If the "
+                         "linker output above mentions __std_find_trivial_1 "
+                         "or __std_find_last_of_trivial_pos_1, update VS "
+                         "via the Visual Studio Installer.";
+        }
         return false;
     }
     return true;

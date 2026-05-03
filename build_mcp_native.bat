@@ -88,8 +88,15 @@ REM End-user README inside the bundle.
 >>"%OUT%\README.txt" echo NATIVE COMPILE REQUIREMENTS:
 >>"%OUT%\README.txt" echo     -c invokes the MSVC linker to fuse the LLVM-emitted
 >>"%OUT%\README.txt" echo     object with jdb_runtime.obj + jdbrt.lib. You need:
->>"%OUT%\README.txt" echo       - Visual Studio 2022 ^(Community is fine^), MSVC v143
->>"%OUT%\README.txt" echo       - Windows SDK 10.0.26100.0
+>>"%OUT%\README.txt" echo       - Visual Studio 2022 17.10 or newer ^(Community
+>>"%OUT%\README.txt" echo         is fine^), MSVC v14.40+ with the "Desktop
+>>"%OUT%\README.txt" echo         development with C++" workload installed.
+>>"%OUT%\README.txt" echo         Older MSVC ^(VS2019, early VS2022^) fails at
+>>"%OUT%\README.txt" echo         link time with LNK2019 unresolved symbols
+>>"%OUT%\README.txt" echo         __std_find_trivial_1 / __std_find_last_of_*
+>>"%OUT%\README.txt" echo         because jdb_runtime.obj uses the vectorized
+>>"%OUT%\README.txt" echo         STL helpers introduced in MSVC v14.40.
+>>"%OUT%\README.txt" echo       - Windows SDK 10 ^(any recent version^)
 >>"%OUT%\README.txt" echo     The MCP server itself ^(jdb_eval / jdb_doc / etc.^)
 >>"%OUT%\README.txt" echo     does NOT need MSVC — only the -c compile path does.
 >>"%OUT%\README.txt" echo.
