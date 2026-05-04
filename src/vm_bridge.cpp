@@ -237,12 +237,19 @@ JDRT_API void jdrt_free(void* ptr) {
 
 // Must stay layout-compatible with JdbArray in jdb_runtime.cpp; duplicated
 // so the bridge does not pull the whole runtime header in.
-struct JdbArrayFwd { double* data; int64_t length; int32_t flags; };
+// bit 3 (= 8) marks per-element tag arrays added 2026-05-04 for ARRAY_LITERAL
+// containing map-lookup elements; elem_tags is allocated only when bit 3 set.
+struct JdbArrayFwd {
+    double* data;
+    int64_t length;
+    int32_t flags;
+    int8_t* elem_tags;
+};
 
 // flags bit 0: element doubles are pointers punned as f64.
 // flags bit 1: those pointers are char* strings (else JdbArray* nested).
-// jdBasic's uniform-array rule means one of these encodings applies to
-// every element — no per-element tag is needed.
+// flags bit 2: elements are bool (TRUE/FALSE rendering vs 1/0).
+// flags bit 3: per-element JdTag carried in elem_tags (mixed-type literals).
 // Heuristic: distinguish a real f64 number from an f64-punned pointer.
 // Userspace pointers on Linux/Windows x86_64 sit below 2^47. Any finite
 // f64 with non-zero magnitude has its exponent bits set high enough that
@@ -259,10 +266,29 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
     Value r = Value::make_array();
     auto* out = r.as_array();
     out->elements.reserve(arr->length);
+    bool has_tagged = (arr->flags & 8) != 0 && arr->elem_tags != nullptr;
     bool has_ptr = (arr->flags & 1) != 0;
     bool has_string = (arr->flags & 2) != 0;
     for (int64_t i = 0; i < arr->length; i++) {
         double d = arr->data[i];
+        if (has_tagged) {
+            // Per-cell tags from the tagged ARRAY_LITERAL path. This is
+            // what makes vo's GUI.COMBO pick up the actual string items
+            // when its third arg is a map-stored array of mixed type.
+            int8_t t = arr->elem_tags[i];
+            union { double d; int64_t i; } u; u.d = d;
+            if (t == jd_tag(JdTag::STR)) {
+                const char* p = (const char*)(intptr_t)u.i;
+                out->elements.push_back(p ? Value::make_string(p) : Value::make_none());
+            } else if (t == jd_tag(JdTag::ARR)) {
+                JdbArrayFwd* inner = (JdbArrayFwd*)(intptr_t)u.i;
+                out->elements.push_back(inner ? jdbarray_to_value(inner) : Value::make_none());
+            } else {
+                // F64 / I64 / BOOL — numeric.
+                out->elements.push_back(Value::make_f64(d));
+            }
+            continue;
+        }
         if (has_ptr && bits_look_like_ptr(d)) {
             union { double d; int64_t i; } u; u.d = d;
             void* p = (void*)(intptr_t)u.i;
@@ -523,10 +549,12 @@ JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
 }
 
 // Must stay layout-compatible with JdbArray in jdb_runtime.cpp.
+// elem_tags added 2026-05-04 — non-null when flags & 8.
 struct JdbArray {
     double* data;
     int64_t length;
     int32_t flags;
+    int8_t* elem_tags;
 };
 
 // Inverse of jdbarray_to_value: walk a VM array, copy its numeric cells
@@ -537,6 +565,7 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     r->data = nullptr;
     r->length = 0;
     r->flags = 0;
+    r->elem_tags = nullptr;
     if (v.type != ValueType::ARRAY) return r;
     auto* arr = v.as_array();
     r->length = (int64_t)arr->elements.size();
@@ -636,6 +665,16 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
         case ValueType::OBJECT:
             *out_val = rt->store_value(*v);
             return jd_tag(JdTag::VM_HANDLE);
+        case ValueType::INT64:
+            // Preserve the integer tag so `TYPEOF(row{"id"}) = "INT64"`
+            // matches in native — vo's load_form() guards `IF TYPEOF(
+            // row{"vertreter_id"}) = "INT64" THEN ...` and silently
+            // falls through to the default -1 if we collapse INT to FLOAT.
+            *out_val = v->to_int();
+            return jd_tag(JdTag::I64);
+        case ValueType::BOOLEAN:
+            *out_val = v->to_int() ? 1 : 0;
+            return jd_tag(JdTag::BOOL);
         default:
             u.d = v->to_double();
             *out_val = u.i;
@@ -698,11 +737,13 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
     union { double d; int64_t i; } u;
     u.d = arr->data[idx];
     *out_val = u.i;
-    // arr->flags & 1 = string-typed elements (set when the array carries
-    // char* punned through the f64 cells). Without this, the caller would
-    // read the raw f64-bit-pun and treat it as a number — string-array
-    // entries in MAPs come back as garbage doubles like 6.95e-310 and any
-    // downstream string concat then segfaults on the bogus pointer.
+    // Per-element tags (flags bit 3) win — they're set by the tagged
+    // ARRAY_LITERAL path for `[m{"name"}, m{"age"}, ...]` so each cell
+    // carries its real JdTag. Falls back to the all-elements-string flag
+    // (bit 1) and finally to F64 for pure-numeric arrays.
+    if ((arr->flags & 8) && arr->elem_tags) {
+        return (int32_t)arr->elem_tags[idx];
+    }
     if (arr->flags & 1) return jd_tag(JdTag::STR);
     return jd_tag(JdTag::F64);
 }
@@ -714,7 +755,7 @@ JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
     const Value* v = obj_field(rt, h, key);
     if (!v) {
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
-        r->data = nullptr; r->length = 0; r->flags = 0;
+        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr;
         return r;
     }
     return value_to_jdbarray(*v);
@@ -732,7 +773,7 @@ JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
-        r->data = nullptr; r->length = 0; r->flags = 0;
+        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr;
         return r;
     }
 }

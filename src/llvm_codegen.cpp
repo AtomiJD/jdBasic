@@ -964,8 +964,24 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                     if (f && body_drills_param(*f)) return true;
                                 return false;
                             };
-                            if (it->second.stmt && body_drills_param(*it->second.stmt))
-                                it->second.tags[i] = JD_TAG_VM_HANDLE;
+                            if (it->second.stmt && body_drills_param(*it->second.stmt)) {
+                                // The param is used as an INDEX source. The
+                                // value could be EITHER a VM Value handle
+                                // (e.g. JSON.PARSE$ result) or a NATIVE
+                                // JdbArray* (e.g. `vstate{"items"}` from
+                                // map_get_tagged). The two need DIFFERENT
+                                // dispatch — VM uses jdrt_val_arr_get, native
+                                // uses jdb_array_get. Promoting to VM_HANDLE
+                                // unconditionally killed combos that store
+                                // native int-arrays in vstate (vo's combo
+                                // round-trip lost the selection). Promote to
+                                // RUNTIME so the tag-aware ABI carries the
+                                // real type per-call.
+                                it->second.tags[i] = JD_TAG_RUNTIME;
+                            }
+                            // Note: the TYPEOF-driven JD_TAG_RUNTIME promotion
+                            // is done as a separate pre-Phase-4 pass (covers
+                            // FUNCs called with non-INDEX args too).
                         }
                     }
                 }
@@ -1280,12 +1296,87 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     for (auto& [name, decl] : decls)
         if (decl.returns_string_array) string_array_returning_funcs.insert(name);
 
+    // Pre-Phase-4: tag-aware FUNC ABI promotion. A FUNC param that the
+    // body passes to TYPEOF (and hasn't already been promoted to a more
+    // specific type via call-site analysis) becomes JD_TAG_RUNTIME — the
+    // LLVM signature then takes (i64 val, i32 tag) for that slot so the
+    // body can recover the dynamic type at runtime. Without this pre-pass
+    // the promotion was conditional on the call site passing an INDEX arg
+    // (the only path that ran my detection earlier), which missed cases
+    // like `q$("foo")` and `q$(42)` where the existing str-promotion
+    // had already locked the param at JD_TAG_STR and a later int call
+    // got bit-pun'd into the str slot — TYPEOF then said "STRING".
+    {
+        std::function<bool(const Expr&, const std::string&)> uses_typeof_param =
+            [&](const Expr& x, const std::string& pname) -> bool {
+            if (x.kind == ExprKind::CALL) {
+                std::string fn = x.func_name;
+                std::transform(fn.begin(), fn.end(), fn.begin(), ::toupper);
+                if (fn == "TYPEOF" || fn == "TYPEOF$") {
+                    for (auto& a : x.args)
+                        if (a && a->kind == ExprKind::VARIABLE &&
+                            a->str_val == pname)
+                            return true;
+                }
+            }
+            if (x.left && uses_typeof_param(*x.left, pname)) return true;
+            if (x.right && uses_typeof_param(*x.right, pname)) return true;
+            for (auto& a : x.args)
+                if (a && uses_typeof_param(*a, pname)) return true;
+            return false;
+        };
+        std::function<bool(const Stmt&, const std::string&)> body_uses_typeof_param =
+            [&](const Stmt& s, const std::string& pname) -> bool {
+            if (s.expr && uses_typeof_param(*s.expr, pname)) return true;
+            if (s.loop_cond && uses_typeof_param(*s.loop_cond, pname)) return true;
+            if (s.end_expr && uses_typeof_param(*s.end_expr, pname)) return true;
+            if (s.step_expr && uses_typeof_param(*s.step_expr, pname)) return true;
+            for (auto& pe : s.print_exprs)
+                if (pe && uses_typeof_param(*pe, pname)) return true;
+            for (auto& b : s.body)
+                if (b && body_uses_typeof_param(*b, pname)) return true;
+            for (auto& br : s.branches) {
+                if (br.condition && uses_typeof_param(*br.condition, pname)) return true;
+                for (auto& b : br.body)
+                    if (b && body_uses_typeof_param(*b, pname)) return true;
+            }
+            for (auto& c : s.catch_body)
+                if (c && body_uses_typeof_param(*c, pname)) return true;
+            return false;
+        };
+        for (auto& [name, decl] : decls) {
+            if (!decl.stmt) continue;
+            for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
+                // Don't override $-suffixed params (already STRING-typed)
+                // or AS-typed declarations — those have a real declared
+                // intent that should win.
+                const auto& p = decl.stmt->params[pi];
+                if (!p.name.empty() && p.name.back() == '$') continue;
+                if (p.type != VarType::NONE) continue;
+                if (body_uses_typeof_param(*decl.stmt, p.name)) {
+                    decl.tags[pi] = JD_TAG_RUNTIME;
+                }
+            }
+        }
+    }
+
     // Phase 4: create LLVM functions with inferred types
     for (auto& [name, decl] : decls) {
         std::vector<LLVMTypeRef> param_types;
-        for (int t : decl.tags)
-            param_types.push_back((t == 2 || t == 3 || t == 4 || t == 5) ? i8_ptr_type :
-                                  (t == 6) ? i64_type : f64_type);
+        for (int t : decl.tags) {
+            if (t == JD_TAG_RUNTIME) {
+                // Tag-aware ABI: each runtime-tagged param gets two LLVM
+                // args — i64 raw bits + i32 JdTag. The body recovers the
+                // real type at runtime so TYPEOF / coerce_to / Q$ dispatch
+                // correctly. Without this a string passed as `q$(arr[i])`
+                // arrived as f64 bits and TYPEOF said "FLOAT64".
+                param_types.push_back(i64_type);
+                param_types.push_back(i32_type);
+            } else {
+                param_types.push_back((t == 2 || t == 3 || t == 4 || t == 5) ? i8_ptr_type :
+                                      (t == 6) ? i64_type : f64_type);
+            }
+        }
 
         LLVMTypeRef ret_type;
         if (decl.return_tag == -1) ret_type = void_type;
@@ -2608,22 +2699,29 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         LLVMBuildStore(builder, LLVMConstNull(ret_ty), current_retval_alloca);
     }
 
-    // Create allocas for parameters — use param_tags for types
+    // Create allocas for parameters — use param_tags for types.
+    // Tag-aware ABI: a JD_TAG_RUNTIME param consumes TWO LLVM args
+    // (i64 val + i32 tag) so the body can recover the dynamic type at
+    // runtime via lookup_var's runtime_tag_alloca path. Track the LLVM
+    // argument index separately from the source param index because they
+    // diverge whenever a param is RUNTIME-typed.
     bool is_evt_handler = (stmt.kind == StmtKind::SUB) &&
                           event_handler_subs.count(stmt.func_name);
+    unsigned llvm_arg_idx = 0;
     for (size_t i = 0; i < stmt.params.size() && i < fit->second.param_tags.size(); i++) {
         int ptag = fit->second.param_tags[i];
         VarInfo& vi = create_var(stmt.params[i].name, ptag);
-        LLVMBuildStore(builder, LLVMGetParam(current_fn, (unsigned)i), vi.alloca_val);
-        // The data param of an event handler holds either string
-        // elements (when RAISEEVENT packs strings) or a single Map
-        // element (for SDL events: KEYDOWN/QUIT/MOUSE* — info-Map
-        // wrapped in an array of length 1). Both can occur for the
-        // same SUB. Marking the var as map_array_vars makes INDEX
-        // decode the pointer and return JD_TAG_NATIVE_MAP, which is
-        // what `KeyData[0]{"keycode"}` needs. RAISEEVENT-style string
-        // payloads still work because INDEX on a map-flagged element
-        // hands back a pointer the user can read as a string anyway.
+        LLVMBuildStore(builder, LLVMGetParam(current_fn, llvm_arg_idx), vi.alloca_val);
+        llvm_arg_idx++;
+        if (ptag == JD_TAG_RUNTIME) {
+            // Allocate the tag slot here (create_var doesn't do it for us)
+            // and store the second LLVM arg.
+            std::string rtag_name = stmt.params[i].name + ".rtag";
+            vi.runtime_tag_alloca = LLVMBuildAlloca(builder, i32_type, rtag_name.c_str());
+            LLVMBuildStore(builder, LLVMGetParam(current_fn, llvm_arg_idx),
+                           vi.runtime_tag_alloca);
+            llvm_arg_idx++;
+        }
         if (is_evt_handler && i == 0) {
             map_array_vars.insert(stmt.params[i].name);
         }
@@ -4007,11 +4105,25 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
             } else if (val_tv.tag == JD_TAG_RUNTIME && val_tv.runtime_tag) {
                 // Runtime-tagged: pass the live runtime tag through so
-                // the stored entry carries its real type identity.
-                // Pun the raw i64 bits to f64 (do NOT coerce, which would
-                // turn a STR-tagged pointer into VAL()-of-the-string).
-                // __map_set_tagged strdups for STR to keep ownership sane.
-                LLVMValueRef fval = pun_i64_to_f64(val_tv.val);
+                // the stored entry carries its real type identity. The
+                // i64 bits' meaning depends on the tag — STR/ARR/VMH bits
+                // are ptrs/handles (pun-as-f64); F64 bits are an f64
+                // bit-pun (also pun back); I64/BOOL bits are a real int
+                // and need SIToFP so the f64 storage cell holds 42.0
+                // not the denormal pun of i64=42. Without the I64-aware
+                // leg, `vstate{"id"} = row{"id"}` (where row is a JSON
+                // object with int field) round-tripped to denormal junk
+                // and PRINT formatted it as 9.88e-324.
+                LLVMValueRef is_int_v = LLVMBuildICmp(builder, LLVMIntEQ,
+                    val_tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_I64, 0), "obj_isint");
+                LLVMValueRef is_bool_v = LLVMBuildICmp(builder, LLVMIntEQ,
+                    val_tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "obj_isbool");
+                LLVMValueRef is_intish = LLVMBuildOr(builder, is_int_v, is_bool_v, "obj_isi");
+                LLVMValueRef as_f_pun  = pun_i64_to_f64(val_tv.val);
+                LLVMValueRef as_f_real = LLVMBuildSIToFP(builder, val_tv.val, f64_type, "obj_i2f");
+                LLVMValueRef fval      = LLVMBuildSelect(builder, is_intish, as_f_real, as_f_pun, "obj_f");
                 auto& set_fn = runtime_funcs["__map_set_tagged"];
                 LLVMValueRef args[] = { obj_ptr, field_str, fval, val_tv.runtime_tag };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
@@ -4084,9 +4196,28 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 LLVMConstInt(i32_type, val_tv.tag, 0) };
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
         } else if (val_tv.tag == JD_TAG_RUNTIME && val_tv.runtime_tag) {
+            // RUNTIME val carries i64 bits whose meaning depends on rtag:
+            //   STR / ARR / VMH / NATIVE_MAP — pun ptr-as-i64 → f64 cell
+            //   F64 — already f64 bits (pun back)
+            //   I64 / BOOL — real int → SIToFP so map storage is a true f64
+            //                 (read-back via coerce_to does FPToSI / SIToFP
+            //                 symmetric round-trip).
+            // Without the I64-aware leg, `vstate{"id"} = row{"id"}` where
+            // row{"id"} is an INT64 from JSON stored the int's bit pattern
+            // as a denormal double; PRINT then formatted it as 9.88e-324.
             auto& fn = runtime_funcs["__map_set_tagged"];
+            LLVMValueRef is_int_v = LLVMBuildICmp(builder, LLVMIntEQ,
+                val_tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_I64, 0), "msv_isint");
+            LLVMValueRef is_bool_v = LLVMBuildICmp(builder, LLVMIntEQ,
+                val_tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "msv_isbool");
+            LLVMValueRef is_intish_v = LLVMBuildOr(builder, is_int_v, is_bool_v, "msv_isi");
+            LLVMValueRef as_f_pun  = pun_i64_to_f64(val_tv.val);
+            LLVMValueRef as_f_real = LLVMBuildSIToFP(builder, val_tv.val, f64_type, "msv_i2f");
+            LLVMValueRef store_f   = LLVMBuildSelect(builder, is_intish_v, as_f_real, as_f_pun, "msv_f");
             LLVMValueRef args[] = { arr_ptr, idx_tv.val,
-                pun_i64_to_f64(val_tv.val), val_tv.runtime_tag };
+                store_f, val_tv.runtime_tag };
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
         } else {
             auto& fn = runtime_funcs["__map_set_f64"];
@@ -4181,9 +4312,40 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             LLVMValueRef args[] = { to_string_ptr(tv) };
             LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
         } else if (tv.tag == JD_TAG_RUNTIME) {
-            // Runtime-tagged: coerce to string for printing.
-            LLVMValueRef args[] = { coerce_to(tv, i8_ptr_type) };
-            LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+            // Runtime-tagged: branch on the runtime tag at runtime so we
+            // pick the right rendering. coerce_to(_, i8_ptr) for ARR now
+            // returns the raw array ptr (so JOIN etc. work); PRINT must
+            // therefore explicitly call FRMV$ for ARR cells, and use the
+            // generic str-coerce only for STR / VMH / numeric cells.
+            if (tv.runtime_tag) {
+                LLVMValueRef is_arr = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_ARR, 0), "pr_isarr");
+                LLVMBasicBlockRef bb_arr  = LLVMAppendBasicBlock(current_fn, "pr.arr");
+                LLVMBasicBlockRef bb_else = LLVMAppendBasicBlock(current_fn, "pr.else");
+                LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "pr.join");
+                LLVMBuildCondBr(builder, is_arr, bb_arr, bb_else);
+
+                LLVMPositionBuilderAtEnd(builder, bb_arr);
+                auto* frmv = get_runtime_func("FRMV$");
+                LLVMValueRef arr_ptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "pr_aptr");
+                LLVMValueRef args_a[] = { arr_ptr };
+                LLVMValueRef str_a = frmv
+                    ? LLVMBuildCall2(builder, frmv->fn_type, frmv->fn, args_a, 1, "pr_arr_s")
+                    : arr_ptr;
+                LLVMValueRef parr[] = { str_a };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, parr, 1, "");
+                LLVMBuildBr(builder, bb_join);
+
+                LLVMPositionBuilderAtEnd(builder, bb_else);
+                LLVMValueRef args_e[] = { coerce_to(tv, i8_ptr_type) };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args_e, 1, "");
+                LLVMBuildBr(builder, bb_join);
+
+                LLVMPositionBuilderAtEnd(builder, bb_join);
+            } else {
+                LLVMValueRef args[] = { coerce_to(tv, i8_ptr_type) };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
+            }
         } else {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args, 1, "");
@@ -5428,21 +5590,23 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             auto& arr_get = runtime_funcs["__array_get"];
             LLVMValueRef args[] = { arr_ptr, idx };
             LLVMValueRef result = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, args, 2, "elem");
-            // Mixed-type array literal (e.g. [1, "Alice", 90]): the cell
-            // tag varies per element. Call the runtime classifier on the
-            // raw f64 cell — it consults the bit pattern (real numbers
-            // have bits ≥ 2^52, userspace pointers sit below 2^47) plus
-            // the array-wide flags and returns the correct JdTag. Hand
-            // the result back as a RUNTIME-tagged value; the caller's
-            // coerce_to / concat / print paths already handle that.
+            // Mixed-type array literal (e.g. [1, "Alice", 90] or
+            // [m{"name"}, m{"age"}]): the cell tag varies per element.
+            // __arr_get_tagged consults flag-8 + elem_tags when present
+            // (the tagged-storage path) and falls back to the heuristic
+            // classifier otherwise. Either way, returns RUNTIME-tagged so
+            // the caller's coerce_to / concat / print paths dispatch
+            // correctly.
             if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
                 mixed_array_vars.count(expr.left->str_val)) {
-                auto& classify = runtime_funcs["__arr_classify"];
-                LLVMValueRef cargs[] = { arr_ptr, result };
-                LLVMValueRef rt_tag = LLVMBuildCall2(builder, classify.fn_type,
-                                                     classify.fn, cargs, 2, "rtag");
-                LLVMValueRef as_i64 = pun_f64_to_i64(result);
-                return { as_i64, JD_TAG_RUNTIME, rt_tag };
+                auto& gtg = runtime_funcs["__arr_get_tagged"];
+                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "mix_gt_tag");
+                LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
+                LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
+                    getargs, 3, "mix_gt");
+                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "mix_gt_tag");
+                LLVMValueRef as_i64 = pun_f64_to_i64(val);
+                return { as_i64, JD_TAG_RUNTIME, tag_v };
             }
             // If the source array is known to hold strings (e.g. event handler
             // data param), pun the f64-encoded ptr back to char* and tag as
@@ -6384,7 +6548,49 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     continue;
                 }
             }
-            av = codegen_expr(*expr.args[i]);
+            // Scope the leaf-type hint to the param's expected type so an
+            // outer assignment context (e.g. `out$ = ... + q$(params[i])`)
+            // can't leak its STR hint into the inner index codegen.
+            // F64/I64 params get NO hint — propagating would force the
+            // map_get_f64 fast-path on map-stored strings (and break a
+            // BINARY-EQ comparison passed in as the arg, since the EQ
+            // result was being f64-pun'd through the string slot).
+            // RUNTIME-typed param: also no hint — we want the arg
+            // codegen to return a RUNTIME-tagged TypedValue with its
+            // real per-cell tag preserved.
+            int arg_leaf_hint = (expected_tag == JD_TAG_STR) ? JD_TAG_STR : -1;
+            {
+                ScopedLeafTag _lt(this, arg_leaf_hint);
+                av = codegen_expr(*expr.args[i]);
+            }
+            if (expected_tag == JD_TAG_RUNTIME) {
+                // Tag-aware ABI: pack (i64 val, i32 tag) for this param.
+                // Strings / arrays / handles get pun'd to i64; numeric
+                // values keep their f64 bits but are bit-cast to i64 so
+                // both legs of the i64 alloca see uniform-shaped bits.
+                LLVMValueRef val_i64;
+                LLVMValueRef tag_i32;
+                if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
+                    val_i64 = av.val;  // already i64
+                    tag_i32 = av.runtime_tag;
+                } else if (av.tag == JD_TAG_STR || av.tag == JD_TAG_ARR ||
+                           av.tag == JD_TAG_NATIVE_MAP || av.tag == JD_TAG_FUNCREF) {
+                    val_i64 = LLVMBuildPtrToInt(builder, av.val, i64_type, "av_pti");
+                    tag_i32 = LLVMConstInt(i32_type, av.tag, 0);
+                } else if (av.tag == JD_TAG_F64) {
+                    val_i64 = pun_f64_to_i64(av.val);
+                    tag_i32 = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+                } else if (av.tag == JD_TAG_BOOL) {
+                    val_i64 = LLVMBuildSExt(builder, av.val, i64_type, "av_b2i");
+                    tag_i32 = LLVMConstInt(i32_type, JD_TAG_BOOL, 0);
+                } else {  // I64 / VM_HANDLE / unknown — pass raw bits
+                    val_i64 = av.val;
+                    tag_i32 = LLVMConstInt(i32_type, av.tag, 0);
+                }
+                args.push_back(val_i64);
+                args.push_back(tag_i32);
+                continue;
+            }
             LLVMTypeRef pt = (expected_tag == 2 || expected_tag == 3 || expected_tag == 4 ||
                               expected_tag == 5) ? i8_ptr_type :
                              (expected_tag == 6) ? i64_type : f64_type;
@@ -6647,12 +6853,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // VM-handle / runtime-tagged pushes must preserve raw i64 bits —
         // coerce_to(tag=7, f64) would CONVERT a VM handle via __jdrt_val_to_f64
         // (yielding 0 for a map object), erasing the handle. Pun directly so
-        // the element round-trips through f64 storage.
+        // the element round-trips through f64 storage. EXCEPT: for a
+        // RUNTIME-tagged value whose real type is I64/BOOL (e.g. a JSON
+        // int field accessed via tag-aware obj_get_tagged), the i64 bits
+        // are a real integer — pun would write a denormal f64 cell that
+        // index_of's `=` comparison never matches, so combos lost their
+        // selection on round-trip.
         LLVMValueRef fval;
-        bool pushing_handle = (val_tv.tag == JD_TAG_VM_HANDLE ||
-                               val_tv.tag == JD_TAG_RUNTIME);
-        if (pushing_handle) {
+        if (val_tv.tag == JD_TAG_VM_HANDLE) {
             fval = pun_i64_to_f64(val_tv.val);
+        } else if (val_tv.tag == JD_TAG_RUNTIME && val_tv.runtime_tag) {
+            LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, val_tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_I64, 0), "push_isint");
+            LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, val_tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "push_isbool");
+            LLVMValueRef is_intish = LLVMBuildOr(builder, is_int, is_bool, "push_isi");
+            LLVMValueRef as_f_pun  = pun_i64_to_f64(val_tv.val);
+            LLVMValueRef as_f_real = LLVMBuildSIToFP(builder, val_tv.val, f64_type, "push_i2f");
+            fval = LLVMBuildSelect(builder, is_intish, as_f_real, as_f_pun, "push_f");
         } else {
             // coerce_to(_, f64_type) handles other tags: int→fp, ptr→ptoi+pun.
             fval = coerce_to(val_tv, f64_type);
@@ -6707,7 +6925,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // nested map from a JSON-parsed object), or INDEX into an existing
             // vm-array. Mark dest so reads come back as tag=6 handles that
             // MAP_ACCESS routes through the VM bridge.
-            bool pushing_vm = pushing_handle;
+            bool pushing_vm = (val_tv.tag == JD_TAG_VM_HANDLE ||
+                              val_tv.tag == JD_TAG_RUNTIME);
             if (!pushing_vm && expr.args[1]->kind == ExprKind::VARIABLE &&
                 vm_array_vars.count(expr.args[1]->str_val))
                 pushing_vm = true;
@@ -7081,7 +7300,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { result, JD_TAG_STR };
         }
         auto& fn = runtime_funcs["__typeof_tag"];
-        LLVMValueRef args[] = { LLVMConstInt(i64_type, av.tag, 0) };
+        // Tag-aware ABI: a RUNTIME-tagged value carries its real JdTag in
+        // av.runtime_tag (i32). Dispatch on that instead of the static
+        // JD_TAG_RUNTIME constant — otherwise typeof on an untyped FUNC
+        // param always returned "UNKNOWN" and `IF TYPEOF(v) = "STRING"`
+        // never matched (vo Q$ regression).
+        LLVMValueRef tag_val;
+        if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
+            tag_val = LLVMBuildSExt(builder, av.runtime_tag, i64_type, "tof_rt");
+        } else {
+            tag_val = LLVMConstInt(i64_type, av.tag, 0);
+        }
+        LLVMValueRef args[] = { tag_val };
         LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "typeof");
         return { result, JD_TAG_STR };
     }
@@ -7541,10 +7771,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // Propagate the parameter's expected LLVM type as an INDEX-leaf
             // hint so `SCREEN SW, SH, game{"title"}` asks the runtime for
             // f64 / f64 / str instead of all-strings.
+            // Only set the hint for numeric params (f64/i64). Setting it
+            // for i8_ptr is ambiguous — the LLVM type doesn't distinguish
+            // a string-arg builtin (STR$, CONCAT) from an array-arg one
+            // (JOIN, PUSH, SORT). For i8_ptr we let the arg codegen pick
+            // the tagged path; coerce_to handles the resulting RUNTIME tag.
             LLVMTypeRef pt = param_types[i];
             int param_hint = -1;
             if (pt == f64_type || pt == i64_type) param_hint = JD_TAG_F64;
-            else if (pt == i8_ptr_type) param_hint = JD_TAG_STR;
             // RAII-scoped: the per-arg hint never leaks past the codegen call,
             // so a builtin used as an outer INDEX's idx (e.g. `m{"k"}[ABS(x)]`)
             // can't clobber the outer's pending hint.
@@ -7617,7 +7851,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMPositionBuilderAtEnd(builder, cur_bb);
 
                 for (int i = 0; i < nargs; i++) {
-                    TypedValue av = codegen_expr(*expr.args[i]);
+                    // Bridge dispatch resolves arg types at runtime — an
+                    // outer leaf-tag hint (e.g. `k_idx = GUI.COMBO(...)`
+                    // with k_idx INTEGER setting leaf=I64) must NOT leak
+                    // into the inner map-get for `vstate{"items"}`. Without
+                    // this, the F64 fast-path stripped the ARR tag and the
+                    // bridge handed the bridge a numeric Value, so GUI.COMBO
+                    // saw an empty array.
+                    TypedValue av;
+                    {
+                        ScopedLeafTag _lt(this, -1);
+                        av = codegen_expr(*expr.args[i]);
+                    }
 
                     // Encode every arg into an i64 slot and pick a wire
                     // tag. Only tags the bridge decodes are emitted here;
@@ -7923,8 +8168,19 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
 
+            // OTHER branch handles F64 (pun bits) AND I64/BOOL (SIToFP).
+            // Without the I64-vs-F64 split, an int passed via tag-aware FUNC
+            // ABI (val=42 i64, tag=I64) would have its bits pun'd as f64
+            // and STR$(v) would format a denormal "0".
             LLVMPositionBuilderAtEnd(builder, bb_other);
-            LLVMValueRef punned = pun_i64_to_f64(tv.val);
+            LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_I64, 0), "dyn_isint");
+            LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "dyn_isbool");
+            LLVMValueRef is_intish = LLVMBuildOr(builder, is_int, is_bool, "dyn_isintish");
+            LLVMValueRef sitof = LLVMBuildSIToFP(builder, tv.val, f64_type, "dyn_i2f");
+            LLVMValueRef pun_f = pun_i64_to_f64(tv.val);
+            LLVMValueRef punned = LLVMBuildSelect(builder, is_intish, sitof, pun_f, "dyn_oth");
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
 
@@ -7941,14 +8197,15 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
 
-            // Array rtag: i64 holds a JdbArray* — format via jdb_frmv.
+            // Array rtag: i64 holds a JdbArray* — return the raw ptr so
+            // builtins that take an array (JOIN, PUSH, SORT, etc.) get the
+            // real array. Consumers that want a stringified rendering
+            // (PRINT / string-concat) call FRMV$ themselves; routing
+            // everything through FRMV$ here makes JOIN crash because it
+            // then receives a formatted string and reads its bytes as a
+            // JdbArray length field.
             LLVMPositionBuilderAtEnd(builder, bb_arr);
-            LLVMValueRef arr_ptr = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "aptr");
-            auto* frmv = get_runtime_func("FRMV$");
-            LLVMValueRef arr_s = LLVMConstNull(i8_ptr_type);
-            if (frmv) {
-                arr_s = LLVMBuildCall2(builder, frmv->fn_type, frmv->fn, &arr_ptr, 1, "arr_s");
-            }
+            LLVMValueRef arr_s = LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "aptr");
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_arr_end = LLVMGetInsertBlock(builder);
 
@@ -7964,8 +8221,18 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
 
+            // OTHER branch: F64 (pun then format) vs I64/BOOL (real int).
+            // The tag-aware FUNC ABI passes a real i64 for I64/BOOL args,
+            // so pun_i64_to_f64 would denormal-format them as "0".
             LLVMPositionBuilderAtEnd(builder, bb_other);
-            LLVMValueRef f = pun_i64_to_f64(tv.val);
+            LLVMValueRef is_int_s = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_I64, 0), "str_isint");
+            LLVMValueRef is_bool_s = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "str_isbool");
+            LLVMValueRef is_intish_s = LLVMBuildOr(builder, is_int_s, is_bool_s, "str_isintish");
+            LLVMValueRef f_pun  = pun_i64_to_f64(tv.val);
+            LLVMValueRef f_real = LLVMBuildSIToFP(builder, tv.val, f64_type, "str_i2f");
+            LLVMValueRef f      = LLVMBuildSelect(builder, is_intish_s, f_real, f_pun, "str_oth_f");
             auto& d2s = runtime_funcs["__double_to_str"];
             LLVMValueRef fstr = LLVMBuildCall2(builder, d2s.fn_type, d2s.fn, &f, 1, "f2s");
             LLVMBuildBr(builder, bb_merge);
@@ -7989,15 +8256,20 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMPositionBuilderAtEnd(builder, bb_vmh);
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_vmh_end = LLVMGetInsertBlock(builder);
-            // OTHER (F64/I64/BOOL): the i64 here holds f64-bit-pun for F64
-            // case, raw int for I64. Convert via fpcast so e.g. a map-get
-            // that returned f64=2.0 becomes int 2 when used as an array idx.
-            // Without this, INDEX on a map-of-array with idx coming from a
-            // numeric map-lookup hands tagged_arr_get the f64 bits as i64
-            // (a huge number) and reads garbage.
+            // OTHER (F64/I64/BOOL). For I64/BOOL the i64 IS the int value
+            // (passed through tag-aware FUNC ABI as a real i64); for F64
+            // the i64 holds the f64-bit-pun and we need fpcast back to
+            // int. Without the I64-vs-F64 split, an int 42 came through
+            // as f64-pun denormal → FPToSI = 0.
             LLVMPositionBuilderAtEnd(builder, bb_other);
+            LLVMValueRef is_int_i = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_I64, 0), "i64_isint");
+            LLVMValueRef is_bool_i = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "i64_isbool");
+            LLVMValueRef is_intish_i = LLVMBuildOr(builder, is_int_i, is_bool_i, "i64_isintish");
             LLVMValueRef as_f = pun_i64_to_f64(tv.val);
-            LLVMValueRef as_i = LLVMBuildFPToSI(builder, as_f, i64_type, "f2i_dyn");
+            LLVMValueRef from_f = LLVMBuildFPToSI(builder, as_f, i64_type, "f2i_dyn");
+            LLVMValueRef as_i = LLVMBuildSelect(builder, is_intish_i, tv.val, from_f, "i64_oth");
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
             LLVMPositionBuilderAtEnd(builder, bb_merge);

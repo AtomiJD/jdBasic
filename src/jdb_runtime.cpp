@@ -1173,6 +1173,17 @@ void jdb_array_set_bool_elems(JdbArray* arr) {
 //   3 = JD_TAG_ARR
 int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
     if (!arr) return 1;  // F64
+    // Per-cell tags from the tagged ARRAY_LITERAL path. The classifier
+    // is called via mixed_array_vars dispatch and used to need a heuristic
+    // (looks_ptr); now we trust the explicit per-cell tag when present.
+    if ((arr->flags & 8) != 0 && arr->elem_tags != nullptr) {
+        // Find this cell's index by pointer arithmetic — d here is a copy
+        // of arr->data[idx], but the caller doesn't pass idx. Fall through
+        // to the heuristic if we can't map it.
+        for (int64_t i = 0; i < arr->length; i++) {
+            if (arr->data[i] == d) return (int32_t)arr->elem_tags[i];
+        }
+    }
     union { double d; uint64_t u; } u; u.d = d;
     bool looks_ptr = (u.u != 0 && u.u < (1ULL << 47));
     if (!looks_ptr) return 1;  // F64
@@ -1471,6 +1482,15 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
         const char* s = (const char*)(intptr_t)u.i;
         *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
         return JD_TAG_STR;
+    }
+    // Convention: out_val carries the natural i64 representation for the
+    // tag. STR/ARR/MAP/VMH = ptr-or-handle bits. F64 = f64-bit-pun. I64/
+    // BOOL = real int (FPToSI from the stored f64). Without the I64 leg,
+    // a `vstate{"id"} = INT` round-trip lost the int because storage is
+    // f64 — codegen-side now expects val to be a real int when tag=I64.
+    if (t == JD_TAG_I64 || t == JD_TAG_BOOL) {
+        *out_val = (int64_t)u.d;  // stored as f64; convert back to int
+        return t;
     }
     *out_val = u.i;
     return (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_VM_HANDLE) ? t : JD_TAG_F64;

@@ -842,6 +842,162 @@ DIM ftMaybe = ft_maybe_obj(0)
 Assert(237, LEN(ftMaybe) = 3)
 
 ' ══════════════════════════════════════════════════════════════════
+' Tests 238-265: ARRAY_LITERAL with map-lookup elements (per-cell tags),
+' tag-aware FUNC ABI for FUNCs that use TYPEOF on a parameter, BINARY
+' comparison BOOL inference, and ambient-state-leak audit across user
+' FUNC / SUB / builtin / VM-bridge call sites. Reproduces the vo
+' Vertreter "save returns 0 for every string column" + "combos empty"
+' regressions and surrounding patterns. Without per-cell tagged storage
+' + tag-aware FUNC ABI + scoped leaf hints in builtin / bridge calls,
+' these came back wrong (or segfaulted).
+' ══════════════════════════════════════════════════════════════════
+DIM mxMap AS MAP
+mxMap{"name"} = "Anna"
+mxMap{"email"} = "anna@example.com"
+mxMap{"age"} = 42
+mxMap{"score"} = 99.5
+
+' Simple: ARRAY_LITERAL with single map-lookup element. Pre-fix segfaulted
+' on PRINT and arr[0] returned the empty-array repr "[]".
+DIM mxArr1 = [mxMap{"name"}]
+Assert(238, mxArr1[0] = "Anna")
+
+' All-string map values
+DIM mxArr2 = [mxMap{"name"}, mxMap{"email"}]
+Assert(239, mxArr2[0] = "Anna")
+Assert(240, mxArr2[1] = "anna@example.com")
+
+' Mixed string + number map values — per-cell tags must distinguish
+DIM mxArr3 = [mxMap{"name"}, mxMap{"age"}, mxMap{"score"}, mxMap{"email"}]
+Assert(241, mxArr3[0] = "Anna")
+Assert(242, STR$(mxArr3[1]) = "42")
+Assert(243, STR$(mxArr3[2]) = "99.5")
+Assert(244, mxArr3[3] = "anna@example.com")
+
+' Map-stored array literal containing map-lookups. The outer
+' vstate{"items"}[i] reads must dispatch to the per-cell tag.
+DIM mxState AS MAP
+mxState{"items"} = [mxMap{"name"}, mxMap{"age"}]
+Assert(245, mxState{"items"}[0] = "Anna")
+Assert(246, STR$(mxState{"items"}[1]) = "42")
+
+' Tag-aware FUNC ABI: a FUNC param used with TYPEOF becomes RUNTIME-typed
+' (i64 val + i32 tag pair). Calling such a FUNC across a boundary must
+' preserve the per-cell tag through the ABI.
+FUNC mxQuoteForSql$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "STRING" THEN
+        RETURN "'" + v + "'"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+' Direct: scalar string literal — tag survives through the param.
+Assert(247, mxQuoteForSql$("foo") = "'foo'")
+
+' Direct: scalar number — tag survives, no quotes.
+Assert(248, mxQuoteForSql$(42) = "42")
+
+' Cross-FUNC: param value read from map-of-mixed-tagged-array.
+Assert(249, mxQuoteForSql$(mxArr3[0]) = "'Anna'")
+Assert(250, mxQuoteForSql$(mxArr3[1]) = "42")
+Assert(251, mxQuoteForSql$(mxArr3[3]) = "'anna@example.com'")
+
+' Cross-FUNC: param value read from a map directly — also RUNTIME-tagged.
+Assert(252, mxQuoteForSql$(mxMap{"name"}) = "'Anna'")
+Assert(253, mxQuoteForSql$(mxMap{"score"}) = "99.5")
+
+' Cross-FUNC via INNER FUNC — tagged value flows through TWO FUNC calls
+' (caller -> fmt$ -> q$). This is the exact vo DB.EXEC -> FMT$ -> Q$ chain.
+FUNC mxFmt$(template$, params)
+    DIM out$ = ""
+    DIM pidx AS INTEGER = 0
+    DIM n AS INTEGER = LEN(template$)
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        DIM c$ = MID$(template$, i, 1)
+        IF c$ = "?" THEN
+            out$ = out$ + mxQuoteForSql$(params[pidx])
+            pidx = pidx + 1
+        ELSE
+            out$ = out$ + c$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+DIM mxSql$ = mxFmt$("INSERT t(name,age,email) VALUES (?,?,?)", _
+    [mxMap{"name"}, mxMap{"age"}, mxMap{"email"}])
+Assert(254, mxSql$ = "INSERT t(name,age,email) VALUES ('Anna',42,'anna@example.com')")
+
+' Pre-pass infer_tag for BINARY: comparison ops yield BOOL, not the operand
+' tag. Without this, `DIM x = ("a" <> "b")` mis-inferred x's slot as STR
+' (taking the tag of the left operand) and the codegen STR-pun'd a 1/0
+' boolean into a bogus pointer.
+DIM mxBool1 = ("a" <> "b")
+Assert(255, mxBool1 = TRUE)
+DIM mxBool2 = ("a" = "b")
+Assert(256, mxBool2 = FALSE)
+DIM mxBool3 = (1 < 2)
+Assert(257, mxBool3 = TRUE)
+DIM mxBool4 = (3.14 >= 3.0)
+Assert(258, mxBool4 = TRUE)
+
+' Comparison binding to BOOLEAN slot — the BOOL tag must thread through
+' to make STRICT mode accept the assignment.
+DIM mxBool5 AS BOOLEAN = ("foo" = "foo")
+Assert(259, mxBool5 = TRUE)
+DIM mxBool6 AS BOOLEAN = (10 > 5) AND ("a" <> "b")
+Assert(260, mxBool6 = TRUE)
+
+' Ambient-state-leak audit: outer assignment hint must not leak into
+' inner FUNC call args, builtin args, or VM-bridge args. Without the
+' RAII guards / scoped hints these patterns silently returned wrong
+' types or segfaulted.
+
+' Outer assignment to STR slot wrapping a JOIN whose array arg is a
+' map-lookup. Pre-fix the STR hint leaked into JOIN's i8_ptr arg,
+' picking the map_get_str fast-path that snprintf'd the array bits
+' as "%g" and then JOIN read it as a JdbArray* -> segfault.
+DIM mxStrArr AS MAP
+mxStrArr{"items"} = ["alpha", "beta", "gamma"]
+DIM mxJoined$ = JOIN(mxStrArr{"items"}, ",")
+Assert(261, mxJoined$ = "alpha,beta,gamma")
+
+' Outer INTEGER-slot assignment + map-lookup arg to a builtin. Pre-fix
+' the I64 hint leaked, the inner map-get took the F64 fast-path and
+' the array silently came back empty.
+DIM mxLen AS INTEGER = LEN(mxStrArr{"items"})
+Assert(262, mxLen = 3)
+
+' User FUNC call with map-lookup arg. The leaf-hint scoping fix at the
+' user-FUNC call site keeps the inner INDEX dispatch tag-aware so the
+' callee receives a real STRING.
+FUNC mxIdent$(s$)
+    RETURN s$
+ENDFUNC
+DIM mxId$ = mxIdent$(mxMap{"name"})
+Assert(263, mxId$ = "Anna")
+
+' SUB call (no return) — same path. Side-effect via map mutation.
+SUB mxStashName(target AS MAP, val$)
+    target{"stash"} = val$
+ENDSUB
+DIM mxSink AS MAP
+mxStashName(mxSink, mxMap{"name"})
+Assert(264, mxSink{"stash"} = "Anna")
+
+' Tagged array passed across FUNC boundary; iterating each element must
+' not crash even when caller is a fresh literal.
+SUB mxRead(arr)
+    DIM ri AS INTEGER
+    FOR ri = 0 TO LEN(arr) - 1
+        DIM tmp = arr[ri]
+    NEXT ri
+ENDSUB
+mxRead([mxMap{"name"}, mxMap{"age"}, mxMap{"email"}])
+Assert(265, TRUE)
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""
