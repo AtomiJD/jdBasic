@@ -118,7 +118,7 @@ EXPORT FUNC SHOW_TITLE(config_file$)
     IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
     TRY : SETFONT font$, font_size
     CATCH : SETFONT "C:/Windows/Fonts/arial.ttf", 14 : ENDTRY
-    RPG_DIALOG.FS = font_size
+    RPG_DIALOG.FS = CINT(font_size)
 
     LET c = game{"colors"}
     LET cb = c{"text_bright"} : LET cm = c{"menu_text"}
@@ -170,7 +170,7 @@ EXPORT FUNC SHOW_TITLE(config_file$)
                 LET slot = SHOW_SLOT_PICKER("load")
                 IF slot >= 0 THEN
                     ' Store chosen slot for LOAD_GAME to pick up
-                    load_slot = slot
+                    load_slot = CINT(slot)
                     GFX.FADE 0, 0.5
                     RETURN 1
                 ENDIF
@@ -238,7 +238,7 @@ EXPORT SUB INIT(config_file$)
     ' Propagate font size to all UI modules
     LET font_size = 16
     IF MAP.EXISTS(game, "font_size") THEN font_size = game{"font_size"}
-    RPG_DIALOG.FS = font_size
+    RPG_DIALOG.FS = CINT(font_size)
 
     ' Apply full color palette to shared dialog module
     IF MAP.EXISTS(game, "colors") THEN
@@ -278,7 +278,7 @@ EXPORT SUB INIT(config_file$)
 
     ' Create player sprite
     TRY
-        hero = SPRITE.LOAD(sprite_path$ + game{"player_sprite"}, sprite_frame_w, sprite_frame_h)
+        hero = CINT(SPRITE.LOAD(sprite_path$ + game{"player_sprite"}, sprite_frame_w, sprite_frame_h))
         SPRITE.SCALE hero, sprite_scale
         has_sheet = TRUE
     CATCH
@@ -350,12 +350,12 @@ EXPORT SUB ENTER_MAP(map_file$, spawn_name$)
     ENDIF
     ' Camera offset for centering maps smaller than screen
     IF map_w < SW THEN
-        cam_off_x = -(SW - map_w) / 2
+        cam_off_x = CINT(-(SW - map_w) / 2)
     ELSE
         cam_off_x = 0
     ENDIF
     IF map_h < SH THEN
-        cam_off_y = -(SH - map_h) / 2
+        cam_off_y = CINT(-(SH - map_h) / 2)
     ELSE
         cam_off_y = 0
     ENDIF
@@ -392,7 +392,7 @@ EXPORT SUB ENTER_MAP(map_file$, spawn_name$)
         NEXT
     NEXT
     SPRITE.POS hero, spawn_x, spawn_y
-    last_trail_x = spawn_x : last_trail_y = spawn_y
+    last_trail_x = CINT(spawn_x) : last_trail_y = CINT(spawn_y)
     path_trail = []
 
     ' Restore saved state for this map
@@ -757,7 +757,7 @@ SUB UPDATE_FOLLOW_POSITIONS()
     LET dist = SQR(dx*dx + dy*dy)
     IF dist >= T THEN
         PUSH path_trail, [last_trail_x, last_trail_y]
-        last_trail_x = hx : last_trail_y = hy
+        last_trail_x = CINT(hx) : last_trail_y = CINT(hy)
         DO WHILE LEN(path_trail) > 50
             LET new_trail = []
             LET tl = LEN(path_trail)
@@ -1009,7 +1009,7 @@ EXPORT SUB UPDATE()
                             RPG_PARTY.ADD_MEMBER rpid$
                             recruit_data{rpid$} = TRUE
                             LET hx_now = SPRITE.GET_X(hero) : LET hy_now = SPRITE.GET_Y(hero)
-                            last_trail_x = hx_now : last_trail_y = hy_now
+                            last_trail_x = CINT(hx_now) : last_trail_y = CINT(hy_now)
                             path_trail = [] : PUSH path_trail, [hx_now, hy_now]
                             UPDATE_FOLLOW_SPRITES
                             msg$ = n.name$ + " ist der Gruppe beigetreten!" : msg_timer = 90

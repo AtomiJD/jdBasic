@@ -308,7 +308,7 @@ EXPORT SUB SHOW_SKILL_TREE(char_idx)
                     (m{"level"} >= INT(sk{"level_req"})) AND _
                     (NOT is_learned)
                 IF MAP.EXISTS(sk, "requires") THEN
-                    IF NOT HAS_SKILL(char_idx, sk{"requires"}) THEN can_learn = FALSE
+                    IF NOT HAS_SKILL(char_idx, sk{"requires"}) THEN can_learn = CDBL(FALSE)
                 ENDIF
 
                 ' Draw skill box

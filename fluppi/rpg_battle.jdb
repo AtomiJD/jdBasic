@@ -111,7 +111,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
         LET bg_path$ = RPG_DIALOG.MAP_BATTLE_BG$
         IF bg_path$ = "" THEN bg_path$ = RPG_DIALOG.BATTLE_BG$
         IF bg_path$ <> "" THEN
-            TRY : battle_bg = GFX.LOADIMAGE(bg_path$) : CATCH : ENDTRY
+            TRY : battle_bg = CINT(GFX.LOADIMAGE(bg_path$)) : CATCH : ENDTRY
         ENDIF
     ENDIF
 
