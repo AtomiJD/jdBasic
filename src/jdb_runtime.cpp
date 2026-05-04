@@ -356,7 +356,13 @@ void jdb_randomseed(int64_t seed) {
 struct JdbArray {
     double* data;
     int64_t length;
-    int32_t flags;  // bit 0: elements are nested array ptrs (2D+)
+    int32_t flags;       // bit 0: elements are nested array ptrs (2D+)
+                         // bit 1: elements are string ptrs
+                         // bit 2: elements are bool (TRUE/FALSE rendering)
+                         // bit 3: per-element tags array present (elem_tags)
+    int8_t* elem_tags;   // optional per-element JdTag (NULL when not used).
+                         // Allocated only by jdb_array_append_tagged so the
+                         // common no-tags case stays cheap.
 };
 
 JdbArray* jdb_array_new(int64_t size) {
@@ -364,6 +370,7 @@ JdbArray* jdb_array_new(int64_t size) {
     arr->data = (double*)calloc(size, sizeof(double));
     arr->length = size;
     arr->flags = 0;
+    arr->elem_tags = nullptr;
     return arr;
 }
 
@@ -621,8 +628,56 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
     auto* r = jdb_array_new(newlen);
     if (arr) memcpy(r->data, arr->data, arr->length * sizeof(double));
     r->data[newlen - 1] = val;
-    if (arr) r->flags = arr->flags;  // preserve element-type marker
+    if (arr) {
+        r->flags = arr->flags;  // preserve element-type marker
+        if (arr->elem_tags) {
+            r->elem_tags = (int8_t*)malloc(newlen);
+            memcpy(r->elem_tags, arr->elem_tags, arr->length);
+            r->elem_tags[newlen - 1] = 0;  // unknown / inherit-from-flags
+        }
+    }
     return r;
+}
+
+// Append a value carrying its own JdTag. Allocates the per-element tags
+// array on first tagged append and sets the JD_ARR_FLAG_TAGGED bit.
+// Used by ARRAY_LITERAL codegen when an element is RUNTIME-tagged
+// (e.g. `[m{"name"}, m{"age"}, m{"email"}]` from map-of-mixed-types) —
+// without per-cell tags the consumer can't tell strings from numbers.
+JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
+    int64_t newlen = arr ? arr->length + 1 : 1;
+    auto* r = jdb_array_new(newlen);
+    if (arr) memcpy(r->data, arr->data, arr->length * sizeof(double));
+    r->data[newlen - 1] = val;
+    int32_t base_flags = arr ? arr->flags : 0;
+    r->flags = base_flags | 8;  // bit 3: tagged elements present
+    r->elem_tags = (int8_t*)malloc(newlen);
+    if (arr && arr->elem_tags)
+        memcpy(r->elem_tags, arr->elem_tags, arr->length);
+    else
+        memset(r->elem_tags, 0, arr ? arr->length : 0);
+    r->elem_tags[newlen - 1] = (int8_t)tag;
+    return r;
+}
+
+// Read element + its per-cell JdTag. If no tags array, falls back to the
+// existing classifier so callers always get a sensible tag.
+double jdb_array_get_tagged(JdbArray* arr, int64_t idx, int32_t* out_tag) {
+    if (!arr || idx < 0 || idx >= arr->length) {
+        if (out_tag) *out_tag = 1;  // F64
+        return 0.0;
+    }
+    double v = arr->data[idx];
+    if (out_tag) {
+        if (arr->elem_tags && (arr->flags & 8)) {
+            *out_tag = (int32_t)arr->elem_tags[idx];
+        } else {
+            // Fall back to flag-based / heuristic classifier.
+            extern int32_t jdb_array_classify_elem(JdbArray*, double);
+            *out_tag = jdb_array_classify_elem(arr, v);
+        }
+    }
+    return v;
 }
 
 JdbArray* jdb_array_append_arr(JdbArray* a, JdbArray* b) {
@@ -1597,13 +1652,46 @@ int32_t jdb_array_is_nested(JdbArray* arr) {
 
 // Print an element of an array: uses flags bits to decide format.
 // Bit 0: ptr element. Bit 1: element is a string (vs nested array).
-// Bit 2: element is a boolean (TRUE/FALSE rather than 1/0).
+// Bit 2: element is a boolean (TRUE/FALSE rendering).
+// Bit 3: per-element tags array present — dispatch on the cell's own JdTag.
 void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length) return;
     double val = arr->data[idx];
+    bool has_tagged = (arr->flags & 8) != 0 && arr->elem_tags != nullptr;
     bool has_ptr = (arr->flags & 1) != 0;
     bool has_string = (arr->flags & 2) != 0;
     bool has_bool = (arr->flags & 4) != 0;
+    if (has_tagged) {
+        // Per-cell tag — built from a literal that mixed strings, numbers,
+        // and runtime-tagged map gets. Dispatch on the stored JdTag so each
+        // cell formats correctly (vo's `[name$, id, email$, ...]` case).
+        int8_t t = arr->elem_tags[idx];
+        if (t == 2) {  // STR
+            union { double d; int64_t i; } u; u.d = val;
+            const char* s = (const char*)(intptr_t)u.i;
+            if (s) printf("%s", s);
+            return;
+        }
+        if (t == 3) {  // ARR
+            union { double d; int64_t i; } u; u.d = val;
+            JdbArray* inner = (JdbArray*)(intptr_t)u.i;
+            if (!inner) return;
+            printf("[");
+            for (int64_t i = 0; i < inner->length; i++) {
+                if (i > 0) printf(", ");
+                jdb_print_array_elem(inner, i);
+            }
+            printf("]");
+            return;
+        }
+        if (t == 8) {  // BOOL
+            printf("%s", val != 0.0 ? "TRUE" : "FALSE");
+            return;
+        }
+        // 0 (unknown), 1 (F64), other → numeric
+        char num[64]; jdb_format_double(num, sizeof(num), val); fputs(num, stdout);
+        return;
+    }
     if (has_string) {
         // String-flag alone is enough — element is a ptr-encoded char*.
         union { double d; int64_t i; } u; u.d = val;

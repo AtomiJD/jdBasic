@@ -222,6 +222,12 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
     reg("jdb_array_append_arr","__append_arr", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    // Tagged variants — preserve per-element JdTag so arr[i] reads return
+    // the right RUNTIME-tag for downstream coerce_to / TYPEOF / FMT$.
+    reg("jdb_array_append_tagged","__arr_append_tagged",
+        i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, -1);
+    reg("jdb_array_get_tagged","__arr_get_tagged",
+        f64_type, {i8_ptr_type, i64_type, i8_ptr_type}, -1);
     reg("jdb_array_count","COUNT",        i64_type, {i8_ptr_type, f64_type}, 0);
     reg("jdb_array_indexof","INDEXOF",    i64_type, {i8_ptr_type, f64_type}, 0);
     reg("jdb_array_has_str","__arr_has_str", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
@@ -2881,13 +2887,28 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             }
             return false;
         };
-        bool has_str = false, has_non_str = false;
+        // INDEX-expressions (map / VM-handle / UDT field reads) return a
+        // RUNTIME-tagged value at codegen time — the actual element type
+        // (string vs number vs handle) only resolves at execution. Treat
+        // any such element as "could be anything" and mark the destination
+        // as mixed so arr[i] reads dispatch through __arr_classify rather
+        // than punning the cell as a number. Without this, `DIM args =
+        // [vstate{"f_name"}, vstate{"f_email"}, ...]` lost all the
+        // strings on the way into DB.EXEC (vo Vertreter save returned 0s
+        // for every text column).
+        auto el_is_runtime_typed = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            return e->kind == ExprKind::INDEX;
+        };
+        bool has_str = false, has_non_str = false, has_runtime = false;
         for (auto& a : stmt.expr->args) {
             if (!a) continue;
             if (el_is_string(a.get())) has_str = true;
+            else if (el_is_runtime_typed(a.get())) has_runtime = true;
             else has_non_str = true;
         }
-        if (has_str && has_non_str)      mixed_array_vars.insert(stmt.var_name);
+        if (has_runtime)                 mixed_array_vars.insert(stmt.var_name);
+        else if (has_str && has_non_str) mixed_array_vars.insert(stmt.var_name);
         else if (has_str)                string_array_vars.insert(stmt.var_name);
     }
     if (stmt.expr && stmt.expr->kind == ExprKind::CALL &&
@@ -3482,13 +3503,25 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             }
             return false;
         };
-        bool has_str = false, has_non_str = false;
+        // INDEX expressions (map / VM-handle / UDT field reads) resolve
+        // to RUNTIME-tagged values whose actual type is only known at
+        // execution. Treat the destination as mixed so arr[i] dispatches
+        // through __arr_classify per-cell instead of pun'ing as numeric.
+        // Fixes vo Vertreter save: `[vstate{"f_name"}, ...]` lost every
+        // string column on the way into DB.EXEC.
+        auto el_is_runtime_typed = [&](const Expr* e) -> bool {
+            if (!e) return false;
+            return e->kind == ExprKind::INDEX;
+        };
+        bool has_str = false, has_non_str = false, has_runtime = false;
         for (auto& a : stmt.expr->args) {
             if (!a) continue;
             if (el_is_string(a.get())) has_str = true;
+            else if (el_is_runtime_typed(a.get())) has_runtime = true;
             else has_non_str = true;
         }
-        if (has_str && has_non_str)      mixed_array_vars.insert(stmt.var_name);
+        if (has_runtime)                 mixed_array_vars.insert(stmt.var_name);
+        else if (has_str && has_non_str) mixed_array_vars.insert(stmt.var_name);
         else if (has_str)                string_array_vars.insert(stmt.var_name);
     }
     if (stmt.expr->kind == ExprKind::CALL &&
@@ -4709,13 +4742,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             bool has_ptr_elems = false;
             bool has_string_elems = false;
             bool all_bool_elems = !expr.args.empty();
+            // Pre-scan: any RUNTIME-tagged element (typical from map-of-mixed
+            // lookups, e.g. `[m{"name"}, m{"age"}]`) means we can't tell
+            // strings from numbers statically. Store every element through
+            // the tagged appender so each cell carries its own JdTag, and
+            // arr[i] reads can reconstruct the right type at runtime.
+            // Without this, vo's `DB.EXEC(h, sql, [vstate{"f_name"}, ...])`
+            // lost every string column on the way into FMT$.
+            bool any_runtime = false;
+            for (auto& a : expr.args)
+                if (a && (a->kind == ExprKind::INDEX)) { any_runtime = true; break; }
             if (!expr.args.empty()) {
                 auto& arr_append = runtime_funcs["APPEND"];
+                auto& arr_append_tg = runtime_funcs["__arr_append_tagged"];
                 for (size_t i = 0; i < expr.args.size(); i++) {
                     TypedValue elem = codegen_expr(*expr.args[i]);
                     if (elem.tag != JD_TAG_BOOL) all_bool_elems = false;
                     LLVMValueRef fval = elem.val;
-                    if (elem.tag == JD_TAG_I64 || elem.tag == JD_TAG_BOOL) fval = LLVMBuildSIToFP(builder, fval, f64_type, "itof");
+                    int store_tag = elem.tag;
+                    if (elem.tag == JD_TAG_I64 || elem.tag == JD_TAG_BOOL) {
+                        fval = LLVMBuildSIToFP(builder, fval, f64_type, "itof");
+                        store_tag = JD_TAG_F64;  // f64-shaped after coerce
+                    }
                     else if (elem.tag == JD_TAG_STR || elem.tag == JD_TAG_ARR) {
                         // ptr (string or array) → encode as f64
                         LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, fval, i64_type, "ptoi");
@@ -4732,10 +4780,23 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         fval = pun_i64_to_f64(elem.val);
                         has_ptr_elems = true;
                     }
-                    LLVMValueRef append_args[] = { arr, fval };
-                    arr = LLVMBuildCall2(builder, arr_append.fn_type, arr_append.fn, append_args, 2, "arr");
+                    if (any_runtime) {
+                        // Tagged path: store value + concrete or runtime tag.
+                        LLVMValueRef tag_v;
+                        if (elem.tag == JD_TAG_RUNTIME && elem.runtime_tag)
+                            tag_v = elem.runtime_tag;
+                        else
+                            tag_v = LLVMConstInt(i32_type, store_tag, 0);
+                        LLVMValueRef append_args[] = { arr, fval, tag_v };
+                        arr = LLVMBuildCall2(builder, arr_append_tg.fn_type,
+                            arr_append_tg.fn, append_args, 3, "arr");
+                    } else {
+                        LLVMValueRef append_args[] = { arr, fval };
+                        arr = LLVMBuildCall2(builder, arr_append.fn_type,
+                            arr_append.fn, append_args, 2, "arr");
+                    }
                 }
-                if (has_ptr_elems) {
+                if (has_ptr_elems && !any_runtime) {
                     auto& set_nested = runtime_funcs["__arr_set_nested"];
                     LLVMValueRef sn[] = { arr };
                     LLVMBuildCall2(builder, set_nested.fn_type, set_nested.fn, sn, 1, "");
@@ -5433,7 +5494,41 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_h_m");
                 return { as_ptr, JD_TAG_NATIVE_MAP };
             }
-            return { result, JD_TAG_F64 };  // array elements are f64
+            // Tagged-elements check: arrays built from `[m{"a"}, m{"b"},
+            // ...]` (any RUNTIME-element literal) carry per-cell tags so
+            // we can recover the actual type. Only trigger when we have
+            // NO other typed-array info — UDT-instance arrays, nested
+            // array-of-arrays, VM-handle arrays etc. all stay on the
+            // legacy f64 path because their downstream codegen expects
+            // a punned ptr, not a RUNTIME tag.
+            //
+            // Without this, vo's `DB.EXEC(h, sql, [vstate{"f_name"},
+            // vstate{"f_age"}])` → params[pidx] inside FUNC EXEC came
+            // back as a pun'd f64 (TYPEOF said "DOUBLE", FMT$ formatted
+            // every string as 0). With it, the per-cell tag is preserved
+            // and Q$ dispatches via TYPEOF correctly.
+            bool is_typed_arr_var = false;
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE) {
+                const std::string& nm = expr.left->str_val;
+                is_typed_arr_var =
+                    var_udt_type.count(nm) > 0 ||
+                    var_udt_type.count(nm + "[]") > 0 ||
+                    array_array_vars.count(nm) > 0 ||
+                    vm_array_vars.count(nm) > 0 ||
+                    map_array_vars.count(nm) > 0 ||
+                    string_array_vars.count(nm) > 0;
+            }
+            if (!is_typed_arr_var) {
+                auto& gtg = runtime_funcs["__arr_get_tagged"];
+                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "arr_gt_tag");
+                LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
+                LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
+                    getargs, 3, "elem_gt");
+                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "elem_gt_tag");
+                LLVMValueRef as_i64 = pun_f64_to_i64(val);
+                return { as_i64, JD_TAG_RUNTIME, tag_v };
+            }
+            return { result, JD_TAG_F64 };  // typed-array fallback
         }
 
         default:
