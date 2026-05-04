@@ -48,6 +48,13 @@ VarType Parser::parse_type() {
         advance();
         return VarType::OBJECT;
     }
+    // DATE — runtime stores dates as strings (CVDATE returns char*).
+    // Without this branch `FUNC X() AS DATE` would fall into the UDT
+    // catch-all below and silently get treated as OBJECT/VM_HANDLE.
+    if (current().type == TokenType::IDENTIFIER && current().value == "DATE") {
+        advance();
+        return VarType::STRING;
+    }
     // User-defined type names (any unrecognized IDENTIFIER in type context)
     if (current().type == TokenType::IDENTIFIER && !is_type_token(current().type)) {
         // Store name in a temporary — the DIM handler will check it

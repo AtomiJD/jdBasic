@@ -107,7 +107,8 @@ FUNC ScSideEffect()
   sc_called = TRUE
   RETURN TRUE
 ENDFUNC
-DIM sc_result = FALSE ANDALSO ScSideEffect()
+DIM sc_result AS INTEGER = 0
+sc_result = FALSE ANDALSO ScSideEffect()
 Assert(NOT sc_called, "andalso short-circuit")
 sc_result = TRUE ORELSE ScSideEffect()
 Assert(NOT sc_called, "orelse short-circuit")
@@ -433,13 +434,7 @@ Assert(v{"Y"} = 8.0, "udt method scale y")
 ' SUB, `lv` is a local, so the fallback used to throw "Undefined function:
 ' LV.LENGTH" — even though the same call worked at the top level.
 DIM SUB_LEN_OK = FALSE
-' SUB_SCALE_X holds an FLOAT64 field value from lv.X. Initialising with
-' `0` would tag the slot as i64 in native and the later f64 store would
-' be bit-punned (we'd see the IEEE-754 bits of 3.0 read back as i64
-' 4613937818241073152). The real fix is i64→f64 promotion on assign in
-' codegen — tracked separately. Until then the test deliberately picks
-' the right initial type.
-DIM SUB_SCALE_X = 0.0
+DIM SUB_SCALE_X AS DOUBLE = 0.0
 SUB UseLocalVec()
     DIM lv AS Vector2D
     lv{"X"} = 6.0
@@ -666,7 +661,7 @@ NEXT
 Assert(nested = 9, "nested for 3x3")
 
 ' Deeply nested with mixed types
-DIM deep = 0
+DIM deep AS DOUBLE = 0.0
 FOR i = 1 TO 2
   DIM k = 0
   DO WHILE k < 2
@@ -1125,7 +1120,7 @@ IF NOT OS.FEATURE("NATIVEC") THEN
     Assert(IMP_VAL = 42, "EXECUTE could IMPORT and call module func")
 
     ' EVAL: should also be able to use an already-imported module function
-    DIM EV_VAL = 0
+    DIM EV_VAL AS DOUBLE = 0.0
     EXECUTE "IMPORT test_imp_mod"
     EV_VAL = EVAL("test_imp_mod.TWICE(21)")
     Assert(EV_VAL = 42, "EVAL after IMPORT in EXECUTE")
@@ -1184,7 +1179,7 @@ DIM packed$ AS STRING
 packed$ = PACK$(">Isbsd", $CAFEBABE, 2, 255, 15000, 123.456)
 Assert(LEN(packed$) = 17, "PACK$ uppercase format chars: 17 bytes")
 
-DIM unpacked AS ARRAY
+DIM unpacked AS ARRAY = []
 unpacked = UNPACK(">Isbsd", packed$)
 Assert(LEN(unpacked) = 5,           "UNPACK returns all 5 fields")
 Assert(unpacked[0] = 3405691582,    "UNPACK round-trip uint32 (CAFEBABE)")
@@ -2117,7 +2112,7 @@ FUNC shd_walk(depth AS INTEGER)
   shd_calls = shd_calls + 1
   IF depth = 0 THEN RETURN 0
   DIM i AS INTEGER
-  DIM total AS INTEGER = 0
+  DIM total AS DOUBLE = 0.0
   FOR i = 0 TO 2
     total = total + shd_walk(depth - 1)
   NEXT i
@@ -2310,6 +2305,10 @@ fmt_p{"i"} = 7
 fmt_p{"s"} = "hi"
 Assert(FORMAT$("{:.2f}", fmt_p{"f"}) = "12.50", "FORMAT$ MAP-VM_HANDLE f64 via :.2f")
 Assert(FORMAT$("{:.2f}", fmt_p{"i"}) = "7.00",  "FORMAT$ MAP-VM_HANDLE i64 via :.2f")
+Assert(FORMAT$("{}", fmt_p{"s"})     = "hi",    "FORMAT$ MAP-VM_HANDLE string via {}")
+Assert(FORMAT$("{}", fmt_p{"f"})     = "12.5",  "FORMAT$ MAP-VM_HANDLE f64 via {}")
+Assert(FORMAT$("{:.2f} {}", fmt_p{"f"}, fmt_p{"s"}) = "12.50 hi", _
+       "FORMAT$ multi-arg mixed VM_HANDLE numeric+string")
 
 ' --- Array-element extraction (numeric tag, indexed) ----------------
 DIM fmt_arr = [1, 2.5, 3]
@@ -2322,13 +2321,13 @@ Assert(FORMAT$("{} {} {}", 1, 2.5, "x")  = "1 2.5 x",  "FORMAT$ multi-arg i64 + 
 Assert(FORMAT$("{:.2f} x {:.2f}", fmt_p{"f"}, fmt_p{"i"}) = "12.50 x 7.00", _
        "FORMAT$ multi-arg both VM_HANDLE")
 
-' --- Known native codegen gaps (pre-existing, NOT caused by today's
-'  VM_HANDLE fix). Left commented so they're discoverable. Uncomment
-'  once the corresponding native-format-codegen issue lands.
+' --- Known native codegen gaps (pre-existing). Left commented so
+'  they're discoverable. Uncomment once the corresponding native-
+'  format-codegen issue lands. (string-from-VM_HANDLE was fixed in
+'  the FORMAT$ 'h' tag follow-up — see asserts above.)
 ' Assert(FORMAT$("{}", TRUE)             = "TRUE",     "FORMAT$ BOOL — native says '1'")
 ' Assert(FORMAT$("{:>8.2f}", 3.14)       = "    3.14", "FORMAT$ width >8 — native ignores width")
 ' Assert(FORMAT$("{:0>4}", 7)            = "0007",     "FORMAT$ zero-pad 0>4 — native ignores fill")
-' Assert(FORMAT$("{}", fmt_p{"s"})       = "hi",       "FORMAT$ string from VM_HANDLE — native returns '0'")
 
 SETLOCALE "C"
 

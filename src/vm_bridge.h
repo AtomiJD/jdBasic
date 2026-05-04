@@ -86,6 +86,8 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT rt, int64_t val, int32_t val_tag,
 // Frame-based cleanup: save watermark at loop start, sweep at loop end.
 JDRT_API int64_t     jdrt_frame_begin(JdRT rt);
 JDRT_API void        jdrt_frame_end  (JdRT rt, int64_t watermark);
+// Re-store a temp handle as a persistent one (negative key, never swept).
+JDRT_API int64_t     jdrt_promote_handle(JdRT rt, int64_t h);
 
 // Type-aware call: each arg has a JdTag (see jdb_tags.h). The wire only
 // carries I64 / F64 / STR / ARR / VM_HANDLE; NATIVE_MAP and FUNCREF have

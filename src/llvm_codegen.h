@@ -107,12 +107,18 @@ public:
     // result will be the LEFT of an INDEX chain (e.g. inner `a{"b"}` of
     // `a{"b"}{"c"}`). Consumers return a raw map ptr (tag=4) instead of a
     // formatted string so the outer INDEX can traverse further.
+    //
+    // RAII rule: NEVER mutate directly. Use ScopedPtrResult below — a leaked
+    // hint into a recursive subexpr is the source of an entire bug class
+    // (hint applies to the wrong codegen frame).
     bool m_want_ptr_result = false;
 
     // Transient: when set to 0/1/2, an INDEX leaf on a Map (native tag=4 or
     // VM handle tag=6) picks the matching get_* runtime function so the
     // value comes back with the right type instead of always-stringified.
     // -1 = no preference (default = stringify, matches legacy behavior).
+    //
+    // RAII rule: NEVER mutate directly. Use ScopedLeafTag below.
     int m_want_leaf_tag = -1;
 
 private:
@@ -369,6 +375,31 @@ private:
     // no props file was found / generation failed.
     std::string generate_version_resource(const std::string& source_path,
                                           const std::string& obj_path);
+};
+
+// RAII scope guards for the transient codegen-hint members. A guard saves
+// the current value on construction, sets the new value, and restores the
+// saved value on destruction. This makes it impossible for an inner codegen
+// recursion to leak a hint back to an outer frame (the bug class that
+// produced the m_want_leaf_tag and m_want_ptr_result segfaults).
+struct ScopedLeafTag {
+    LLVMCodegen* gen;
+    int saved;
+    ScopedLeafTag(LLVMCodegen* g, int new_val)
+        : gen(g), saved(g->m_want_leaf_tag) { gen->m_want_leaf_tag = new_val; }
+    ~ScopedLeafTag() { gen->m_want_leaf_tag = saved; }
+    ScopedLeafTag(const ScopedLeafTag&) = delete;
+    ScopedLeafTag& operator=(const ScopedLeafTag&) = delete;
+};
+
+struct ScopedPtrResult {
+    LLVMCodegen* gen;
+    bool saved;
+    ScopedPtrResult(LLVMCodegen* g, bool new_val)
+        : gen(g), saved(g->m_want_ptr_result) { gen->m_want_ptr_result = new_val; }
+    ~ScopedPtrResult() { gen->m_want_ptr_result = saved; }
+    ScopedPtrResult(const ScopedPtrResult&) = delete;
+    ScopedPtrResult& operator=(const ScopedPtrResult&) = delete;
 };
 
 #endif // LLVM_CODEGEN

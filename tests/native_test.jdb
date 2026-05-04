@@ -724,6 +724,124 @@ tfp_s0 = tfp_strs[0]
 Assert(213, tfp_s0 = "10")
 
 ' ══════════════════════════════════════════════════════════════════
+' FUNC AS TYPE return-type annotations
+' ──────────────────────────────────────────────────────────────────
+' Regression for the codegen: explicit `AS STRING / ARRAY / OBJECT
+' / DOUBLE` on a FUNC must override the f64-default that historically
+' bit-pun'd ptr returns through a double. Covers literal returns,
+' nested wrapping, and module-crossing flow.
+' ══════════════════════════════════════════════════════════════════
+PRINT "── FUNC AS TYPE ──"
+
+IMPORT NATIVE_TEST_MODX
+
+' AS STRING — single FUNC, $-suffix harmless
+FUNC ft_str$() AS STRING
+    RETURN "abc"
+ENDFUNC
+DIM ftS$ = ft_str$()
+Assert(214, ftS$ = "abc")
+Assert(215, LEN(ft_str$()) = 3)
+
+' AS STRING — nested FUNC chain
+FUNC ft_str_inner$() AS STRING
+    RETURN "deep"
+ENDFUNC
+FUNC ft_str_outer$() AS STRING
+    RETURN ft_str_inner$() + "_W"
+ENDFUNC
+DIM ftSW$ = ft_str_outer$()
+Assert(216, ftSW$ = "deep_W")
+
+' AS ARRAY — direct
+FUNC ft_arr() AS ARRAY
+    RETURN [1, 2, 3, 4]
+ENDFUNC
+DIM ftA = ft_arr()
+Assert(217, LEN(ftA) = 4)
+Assert(218, ftA[0] = 1)
+Assert(219, ftA[3] = 4)
+
+' AS ARRAY — nested wrapper
+FUNC ft_arr_wrap() AS ARRAY
+    RETURN ft_arr()
+ENDFUNC
+DIM ftAW = ft_arr_wrap()
+Assert(220, LEN(ftAW) = 4)
+Assert(221, ftAW[2] = 3)
+
+' AS OBJECT — JSON handle direct
+FUNC ft_obj(s$) AS OBJECT
+    RETURN JSON.PARSE$(s$)
+ENDFUNC
+DIM ftO = ft_obj("[100,200,300]")
+Assert(222, LEN(ftO) = 3)
+' VM_HANDLE-element equality: stringify then compare so the test
+' doesn't depend on the (separately-tracked) runtime-tagged-equals
+' codegen path. The element value itself is materialised correctly,
+' as PRINT confirms — only `=` on a raw RUNTIME tag is unfinished.
+Assert(223, STR$(ftO[1]) = "200")
+
+' AS OBJECT — nested chain
+FUNC ft_obj_outer(s$) AS OBJECT
+    RETURN ft_obj(s$)
+ENDFUNC
+DIM ftOO = ft_obj_outer("[1,2,3,4,5]")
+Assert(224, LEN(ftOO) = 5)
+Assert(225, STR$(ftOO[4]) = "5")
+
+' AS DOUBLE — direct
+FUNC ft_dbl(x AS DOUBLE) AS DOUBLE
+    RETURN x * 1.5
+ENDFUNC
+DIM ftD = ft_dbl(4.0)
+Assert(226, ftD = 6.0)
+
+' Cross-module STRING
+DIM mxS$ = NATIVE_TEST_MODX.mx_str$("hello")
+Assert(227, mxS$ = "hello_X")
+
+' Cross-module ARRAY
+DIM mxA = NATIVE_TEST_MODX.mx_arr()
+Assert(228, LEN(mxA) = 3)
+Assert(229, mxA[1] = 20)
+
+' Cross-module OBJECT
+DIM mxO = NATIVE_TEST_MODX.mx_obj("[7,8,9]")
+Assert(230, LEN(mxO) = 3)
+Assert(231, STR$(mxO[2]) = "9")
+
+' Cross-module + nested OBJECT (the SQLITE.QUERY → DB.QROWS pattern)
+DIM mxOW = NATIVE_TEST_MODX.mx_obj_wrap("[42]")
+Assert(232, LEN(mxOW) = 1)
+Assert(233, STR$(mxOW[0]) = "42")
+
+' Cross-module DOUBLE
+DIM mxD = NATIVE_TEST_MODX.mx_dbl(4.0)
+Assert(234, mxD = 10.0)
+
+' OBJECT handle stored into a MAP slot (the vstate{"list"} = QROWS()
+' pattern — caused vstate{"list"} to read back garbage when map_set
+' coerce'd the handle through __jdrt_val_to_f64 instead of pun-storing
+' the raw key bits).
+DIM ftMap AS MAP
+ftMap{"data"} = ft_obj("[10,20,30,40]")
+DIM ftMapData = ftMap{"data"}
+Assert(235, LEN(ftMapData) = 4)
+Assert(236, STR$(ftMapData[2]) = "30")
+
+' Multi-statement OBJECT-returning FUNC with empty-array fallback
+' (equivalent of SQLITE.QUERY's `RETURN []` in the error path).
+FUNC ft_maybe_obj(empty AS INTEGER) AS OBJECT
+    IF empty <> 0 THEN
+        RETURN JSON.PARSE$("[]")
+    ENDIF
+    RETURN JSON.PARSE$("[1,2,3]")
+ENDFUNC
+DIM ftMaybe = ft_maybe_obj(0)
+Assert(237, LEN(ftMaybe) = 3)
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

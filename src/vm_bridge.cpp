@@ -131,11 +131,23 @@ struct JdRTImpl {
     VM vm;
     std::string last_error;
     std::unordered_map<int64_t, Value> value_store;
-    int64_t next_handle = 1;
+    int64_t next_handle = 1;            // positive — frame-temp, swept
+    int64_t next_persistent = -1;       // negative — persistent, never swept
     JdrtEventDispatch user_event_dispatch = nullptr;
 
     int64_t store_value(Value v) {
         int64_t h = next_handle++;
+        value_store[h] = std::move(v);
+        return h;
+    }
+
+    // Promote a frame-temp value to a persistent key so it survives
+    // jdrt_frame_end sweeps. Used when a VM handle is stored into a
+    // long-lived container (NATIVE_MAP, ARRAY) — without this the
+    // sweep at the end of the enclosing DO-loop iteration would erase
+    // the value, and the next iteration's read would fault.
+    int64_t store_persistent(Value v) {
+        int64_t h = next_persistent--;
         value_store[h] = std::move(v);
         return h;
     }
@@ -443,11 +455,26 @@ JDRT_API int64_t jdrt_frame_begin(JdRT handle) {
 JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
     auto* rt = (JdRTImpl*)handle;
     for (auto it = rt->value_store.begin(); it != rt->value_store.end(); ) {
-        if (it->first >= watermark)
+        // Negative keys are persistent (promoted via jdrt_promote_handle)
+        // and must survive the per-iteration sweep — they're held by
+        // long-lived containers like vstate{...}.
+        if (it->first >= watermark && it->first > 0)
             it = rt->value_store.erase(it);
         else
             ++it;
     }
+}
+
+// Re-store a frame-temp handle's Value at a persistent (negative) key
+// and return the new key. The original temp key is left in place — the
+// next jdrt_frame_end will sweep it. Idempotent on already-persistent
+// handles (returns the input key unchanged).
+JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
+    auto* rt = (JdRTImpl*)handle;
+    if (h <= 0) return h;
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end()) return h;
+    return rt->store_persistent(it->second);
 }
 
 // Every obj_get_* returns a safe default on unknown-handle or missing-key
@@ -671,6 +698,12 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
     union { double d; int64_t i; } u;
     u.d = arr->data[idx];
     *out_val = u.i;
+    // arr->flags & 1 = string-typed elements (set when the array carries
+    // char* punned through the f64 cells). Without this, the caller would
+    // read the raw f64-bit-pun and treat it as a number — string-array
+    // entries in MAPs come back as garbage doubles like 6.95e-310 and any
+    // downstream string concat then segfaults on the bogus pointer.
+    if (arr->flags & 1) return jd_tag(JdTag::STR);
     return jd_tag(JdTag::F64);
 }
 

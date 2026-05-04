@@ -1,0 +1,114 @@
+REM Regression: codegen ambient-hint state must not leak across recursion boundaries.
+REM Each pattern below has a NESTED expression where an inner codegen could clobber
+REM an outer hint (m_want_leaf_tag / m_want_ptr_result). Native MUST behave like interp.
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB check(name$, got$, want$)
+    IF got$ = want$ THEN
+        passed = passed + 1
+        PRINT "  PASS "; name$
+    ELSE
+        failed = failed + 1
+        PRINT "  FAIL "; name$; " got=["; got$; "] want=["; want$; "]"
+    ENDIF
+ENDSUB
+
+REM ============================================================
+REM Pattern A: outer assigns to STR$ slot, inner is map-of-array.
+REM   vn$ = m{"items"}[idx]
+REM Bug: inner map-get took str-fast-path → stringified array → segfault on outer [idx].
+REM ============================================================
+SUB pattern_a()
+    DIM m AS MAP
+    m{"items"} = ["alpha", "beta", "gamma"]
+    DIM vn$ = "x"
+    DIM i AS INTEGER = 1
+    vn$ = m{"items"}[i]
+    check("A: map{str}[int] into str$", vn$, "beta")
+ENDSUB
+
+REM ============================================================
+REM Pattern B: outer INDEX, idx itself is a map-lookup.
+REM   m{"items"}[other{"i"}]
+REM Latent: inner restore-order placed restored hint into idx codegen.
+REM ============================================================
+SUB pattern_b()
+    DIM m AS MAP
+    m{"items"} = ["zero", "one", "two", "three"]
+    DIM other AS MAP
+    other{"i"} = 2
+    DIM s$ = m{"items"}[other{"i"}]
+    check("B: map{str}[map{str}] nested idx", s$, "two")
+ENDSUB
+
+REM ============================================================
+REM Pattern C: outer INDEX, idx is a builtin call.
+REM   m{"items"}[ABS(x)]
+REM Latent: builtin call set m_want_leaf_tag and cleared to -1, killing outer hint.
+REM ============================================================
+SUB pattern_c()
+    DIM m AS MAP
+    m{"items"} = ["aa", "bb", "cc", "dd"]
+    DIM x AS INTEGER = 0 - 3
+    DIM s$ = m{"items"}[ABS(x)]
+    check("C: map{str}[builtin(x)]", s$, "dd")
+ENDSUB
+
+REM ============================================================
+REM Pattern D: doubly-nested map → array → element into str$.
+REM   vn$ = vstate{"data"}{"items"}[idx]
+REM Stress test for chained want_ptr + leaf_tag interaction.
+REM ============================================================
+SUB pattern_d()
+    DIM vstate AS MAP
+    DIM inner AS MAP
+    inner{"items"} = ["foo", "bar", "baz"]
+    vstate{"data"} = inner
+    DIM vn$ = "?"
+    DIM i AS INTEGER = 2
+    vn$ = vstate{"data"}{"items"}[i]
+    check("D: map{str}{str}[int] into str$", vn$, "baz")
+ENDSUB
+
+REM ============================================================
+REM Pattern E: numeric leaf hint should NOT leak into chained map.
+REM   total = m{"counts"}[i]   (counts is array of doubles)
+REM Inner map-lookup must return real array ptr, not f64-coerced.
+REM ============================================================
+SUB pattern_e()
+    DIM m AS MAP
+    m{"counts"} = [1.5, 2.5, 3.5, 4.5]
+    DIM total AS DOUBLE = 0.0
+    DIM i AS INTEGER = 2
+    total = m{"counts"}[i]
+    check("E: map{str}[int] into double", STR$(total), "3.5")
+ENDSUB
+
+REM ============================================================
+REM Pattern F: idx is itself an arithmetic expression that calls builtin.
+REM   m{"items"}[LEN("ab") + 1]
+REM ============================================================
+SUB pattern_f()
+    DIM m AS MAP
+    m{"items"} = ["w", "x", "y", "z"]
+    DIM s$ = m{"items"}[LEN("ab") + 1]
+    check("F: map{str}[LEN(str)+int]", s$, "z")
+ENDSUB
+
+PRINT "=== codegen hint-leak regression ==="
+pattern_a()
+pattern_b()
+pattern_c()
+pattern_d()
+pattern_e()
+pattern_f()
+PRINT "Pass: "; passed
+PRINT "Fail: "; failed
+IF failed > 0 THEN
+    PRINT "REGRESSION DETECTED"
+ELSE
+    PRINT "OK"
+ENDIF

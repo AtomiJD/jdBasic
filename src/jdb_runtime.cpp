@@ -1806,7 +1806,26 @@ char* jdb_format4(const char* fmt, double a1, double a2, double a3, double a4) {
     char* r = jdb_format(fmt, arr); free(arr->data); free(arr); return r;
 }
 
-// types[i] is 'd' for an f64-bit-pun or 's' for a const char*.
+// VM-bridge handle plumbing. The LLVM-generated main() calls jdrt_init()
+// to spin up the VM bridge, stores the handle in a module-internal global
+// __jdrt_handle, and now also pings it back here via jdb_runtime_set_handle
+// so VM_HANDLE args inside FORMAT$ can be materialised at runtime.
+extern "C" {
+    // Exported by jdbrt.dll — declared here so jdb_runtime.obj can call them
+    // when the format spec demands either numeric or string materialisation
+    // of a VM_HANDLE.
+    double jdrt_val_to_f64(void* rt, int64_t handle);
+    const char* jdrt_val_to_str(void* rt, int64_t handle);
+}
+static void* g_jdrt_handle = nullptr;
+extern "C" void jdb_runtime_set_handle(void* h) { g_jdrt_handle = h; }
+
+// types[i] is 'd' for an f64-bit-pun, 's' for a const char*, or 'h' for a
+// VM-handle (i64 key into the VM's value_store). 'h' lets us defer the
+// "is this number-or-string?" question to runtime, which is the only stage
+// that knows both the format spec and the underlying Value's type — useful
+// for MAP indexing where p{"name"} could be a string and p{"price"} a double
+// in the same FORMAT$ call.
 static char* jdb_format_tagged_impl(const char* fmt, const char* types,
                                      int n, const int64_t* raw) {
     char result[4096];
@@ -1831,6 +1850,28 @@ static char* jdb_format_tagged_impl(const char* fmt, const char* types,
             if (tag == 's') {
                 const char* s = (const char*)(intptr_t)r64;
                 snprintf(tmp, sizeof(tmp), "%s", s ? s : "");
+            } else if (tag == 'h') {
+                // VM handle. Pick number-or-string materialisation by spec.
+                size_t splen = strlen(spec);
+                bool is_numeric = (splen >= 2 && spec[0] == ':' &&
+                    (spec[splen-1] == 'f' || spec[splen-1] == 'd' ||
+                     spec[splen-1] == 'e' || spec[splen-1] == 'g'));
+                if (is_numeric && g_jdrt_handle) {
+                    double val = jdrt_val_to_f64(g_jdrt_handle, r64);
+                    if (spec[1] == '.' && spec[splen-1] == 'f') {
+                        int prec = atoi(spec + 2);
+                        snprintf(tmp, sizeof(tmp), "%.*f", prec, val);
+                    } else if (spec[splen-1] == 'd') {
+                        snprintf(tmp, sizeof(tmp), "%lld", (long long)(int64_t)val);
+                    } else {
+                        snprintf(tmp, sizeof(tmp), "%g", val);
+                    }
+                } else if (g_jdrt_handle) {
+                    const char* s = jdrt_val_to_str(g_jdrt_handle, r64);
+                    snprintf(tmp, sizeof(tmp), "%s", s ? s : "");
+                } else {
+                    snprintf(tmp, sizeof(tmp), "<no-runtime>");
+                }
             } else {
                 union { double d; int64_t i; } u; u.i = r64;
                 double val = u.d;
