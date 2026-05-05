@@ -2182,9 +2182,10 @@ LOOP
 PRINT
 ```
 
-`AI.CHAT_TOKENS` is interp-only in Phase 1 (native compile rejects with
-a clear error). The synchronous `AI.CHAT` and the callback-based
-`AI.CHAT_STREAM` keep working in native compile.
+`AI.CHAT_TOKENS` works in **both interp and native compile**. The
+generation thread is spawned inside the native handler itself (not via
+an `ASYNC FUNC`), so the native-compile gap around `ASYNC FUNC` doesn't
+apply.
 
 ### File streaming (handle-based reads)
 
@@ -2234,9 +2235,12 @@ CHAN.CLOSE ch                      ' producer + matcher both exit
 DIM r = AWAIT m
 ```
 
-The streaming API is currently **interp-only**; native compile rejects
-`FILE.OPEN_*` / `READLINE$` / `STREAM_*` with a clear error. The slurp
-APIs (`TXTREADER$` / `BINREADER$`) keep working in native.
+Single-thread use (one thread reads + processes) works in **both interp
+and native compile**. The `FILE.STREAM_*` sugars + `tail -f` style and
+the concurrent producer/consumer pattern require an `ASYNC FUNC`
+running on a separate thread; `ASYNC FUNC` itself is interp-only today
+(native compile runs the async body synchronously), so concurrent file
+streaming is interp-only until that gap is closed.
 
 ### Channels (Phase 1)
 
@@ -2251,8 +2255,21 @@ the rest of the buffer and then keep returning the **EOF marker** (a
 `MAP { __chan_eof__: TRUE }`, recognised by `CHAN.IS_EOF`). Send on a
 closed channel throws.
 
-Phase 1 is **interp-only**. Native compile (`-c`) rejects `CHAN.*` with a
-clear error — Phase 2 will close the gap.
+Native compile supports single-thread use of `CHAN.*` (open / send /
+recv / close + the polymorphic `FOR EACH v IN ch` works in interp;
+native compile runs single-thread channel access via the same VM-bridge
+path as every other native). **Concurrent** channel use across an
+`ASYNC FUNC` spawned consumer/producer pair is interp-only today —
+native compile currently runs `ASYNC FUNC` synchronously, so a bounded
+channel deadlocks if the producer's `SEND` can't drain before the
+consumer starts. The channel API itself is identical between modes;
+only the spawn primitive lags.
+
+Native channel `RECV` returns the underlying value via the VM-handle
+path (so mixed-type payloads survive intact). Numeric values come back
+through `f64`, which means STRICT-mode native code needs DOUBLE
+accumulators (`DIM total AS DOUBLE = 0.0`) when summing recv'd
+integers. Interp keeps the original tag and accepts either.
 
 | Native | Signature | Behaviour |
 |---|---|---|

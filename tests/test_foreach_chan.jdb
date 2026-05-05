@@ -85,7 +85,10 @@ FOR i = 1 TO 10
 NEXT
 CHAN.CLOSE ch4
 
-DIM exit_sum = 0
+' Channel-recv'd values arrive via VM_HANDLE in native compile, which
+' materialises to DOUBLE — STRICT-mode native therefore needs DOUBLE
+' accumulators here (interp accepts either).
+DIM exit_sum AS DOUBLE = 0.0
 DIM exit_n = 0
 FOR EACH v4 IN ch4
     IF v4 > 3 THEN EXITFOR
@@ -109,7 +112,7 @@ ENDFUNC
 DIM ch5 = CHAN.OPEN(4)            ' tight buffer → real backpressure
 DIM p5 = fe_producer(ch5, 50)
 
-DIM big_sum = 0
+DIM big_sum AS DOUBLE = 0.0
 FOR EACH v5 IN ch5
     big_sum = big_sum + v5
 NEXT

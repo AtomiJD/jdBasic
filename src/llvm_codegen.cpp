@@ -476,6 +476,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i8_ptr_type}, 3);
     reg("jdrt_obj_exists",  "__jdrt_obj_exists",  i64_type,
         {i8_ptr_type, i64_type, i8_ptr_type}, 0);
+    reg("jdrt_map_to_handle", "__jdrt_map_to_handle", i64_type,
+        {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdrt_val_to_f64",  "__jdrt_val_to_f64",  f64_type,
         {i8_ptr_type, i64_type}, 1);
     reg("jdrt_val_to_str",  "__jdrt_val_to_str",  i8_ptr_type,
@@ -5878,6 +5880,35 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     TypedValue lhs = codegen_expr(*expr.left);
     TypedValue rhs = codegen_expr(*expr.right);
 
+    // VM_HANDLE materialisation for binary ops. A handle on either side
+    // (e.g. a value pulled out of CHAN.RECV or a MAP-stored map field)
+    // would otherwise feed the i64 catch-all below, which compares the
+    // raw handle index instead of the underlying Value. Unwrap based on
+    // the OTHER side's tag: STR vs anything-numeric.
+    auto materialise_vmh = [&](TypedValue& tv, const TypedValue& other) {
+        if (tv.tag != JD_TAG_VM_HANDLE) return;
+        bool want_str = (other.tag == JD_TAG_STR);
+        if (want_str) {
+            auto* fn = get_runtime_func("__jdrt_val_to_str");
+            if (!fn) return;
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+            LLVMValueRef args[] = { rt, tv.val };
+            tv.val = LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "vmh_s");
+            tv.tag = JD_TAG_STR;
+        } else {
+            auto* fn = get_runtime_func("__jdrt_val_to_f64");
+            if (!fn) return;
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+            LLVMValueRef args[] = { rt, tv.val };
+            tv.val = LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 2, "vmh_f");
+            tv.tag = JD_TAG_F64;
+        }
+    };
+    materialise_vmh(lhs, rhs);
+    materialise_vmh(rhs, lhs);
+
     // String concatenation: str + str, str + int, int + str, str + float, etc.
     // But NOT if one side is an array (tag=3) — that goes to array arithmetic
     if (expr.op == TokenType::PLUS && (lhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_STR) &&
@@ -6382,36 +6413,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // (mutex + condvars + std::deque<Value>) lives behind native bridge
     // calls we haven't shaped yet, and it's not worth the API surface
     // until ASYNC FUNC is shippable in native too. Fail clear and early.
-    if (name.size() >= 5 && name.compare(0, 5, "CHAN.") == 0) {
-        report_error("", expr.line,
-            "Channels (CHAN.*) are not yet supported in native compile. "
-            "Compile in interp mode or run via the REPL.");
-        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
-    }
-    // FILE streaming primitives (OPEN_LINES / OPEN_TAIL / READLINE$ /
-    // AT_EOF / CLOSE) share the channel runtime's interp-only stance.
-    // The slurp APIs (TXTREADER$/BINREADER$/TXTWRITER) keep working in
-    // native compile.
-    if ((name == "FILE.OPEN_LINES")   || (name == "FILE.OPEN_TAIL") ||
-        (name == "FILE.READLINE$")    || (name == "FILE.AT_EOF") ||
-        (name == "FILE.CLOSE")        || (name == "FILE.STREAM_LINES") ||
-        (name == "FILE.STREAM_TAIL")) {
-        report_error("", expr.line,
-            "FILE streaming handles are not yet supported in native "
-            "compile. Use TXTREADER$ for slurp reads, or run in interp.");
-        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
-    }
-    // AI.CHAT_TOKENS pumps an LLM stream into a channel — leans on the
-    // channel runtime, which is interp-only in Phase 1. AI.CHAT and the
-    // callback-based AI.CHAT_STREAM still work in native (handled by the
-    // generic native dispatch).
-    if (name == "AI.CHAT_TOKENS") {
-        report_error("", expr.line,
-            "AI.CHAT_TOKENS feeds a channel and is interp-only in "
-            "Phase 1. Use AI.CHAT_STREAM with a callback in native, or "
-            "compile this script in interp mode.");
-        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
-    }
+    // CHAN.* / FILE.* streaming primitives + AI.CHAT_TOKENS used to be
+    // rejected here in Phase 1 — they now route through the generic VM-
+    // bridge dispatch (jdrt_call_typed_*), so the runtime DLL handles
+    // them via its in-process VM exactly like every other native. The
+    // return-type classification sets below (object_returners for
+    // CHAN.RECV, the trailing-$ heuristic for FILE.READLINE$, etc.) pick
+    // the right __jdrt_call_typed_* variant.
 
     // UNIQUE on a string-tracked array dedupes by strcmp instead of by
     // raw double bits (which only catches pointer-identity duplicates).
@@ -8026,9 +8034,25 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "atoi");
                         tag = JD_TAG_ARR;
                     } else if (av.tag == JD_TAG_NATIVE_MAP) {
-                        // Downgrade to I64 — bridge has no NATIVE_MAP path.
-                        encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "mptoi");
-                        tag = JD_TAG_I64;
+                        // Native MAP → box into a VM_HANDLE before
+                        // crossing the bridge so the receiver sees a
+                        // proper Value::OBJECT (with all entries copied
+                        // over) instead of the punned JdbMap pointer.
+                        // Without this, e.g. CHAN.SEND would store the
+                        // raw pointer as Value::make_i64(ptr), and any
+                        // RECVer would see junk.
+                        auto* boxer = get_runtime_func("__jdrt_map_to_handle");
+                        if (boxer) {
+                            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                            LLVMValueRef bargs[] = { rt, av.val };
+                            encoded = LLVMBuildCall2(builder, boxer->fn_type, boxer->fn,
+                                                      bargs, 2, "mtoh");
+                            tag = JD_TAG_VM_HANDLE;
+                        } else {
+                            encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "mptoi");
+                            tag = JD_TAG_I64;
+                        }
                     } else if (av.tag == JD_TAG_VM_HANDLE) {
                         encoded = av.val;
                         tag = JD_TAG_VM_HANDLE;
@@ -8089,7 +8113,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "MAP.FROM", "MAP.COPY", "GROUPBY",
                 "FILE.STAT", "DATE.PARTS",
                 "HTTP.REQUEST",
-                "OS.EXEC"
+                "OS.EXEC",
+                // Channel RECV returns whatever Value the producer sent —
+                // could be i64, f64, string, array, map, or the EOF marker.
+                // VM_HANDLE keeps the tag intact so CHAN.IS_EOF and the
+                // FOR EACH polymorphic dispatch can recognise it later.
+                "CHAN.RECV",
             };
             bool is_object_fn = object_returners.count(upper);
 

@@ -125,7 +125,11 @@ FOR i = 1 TO 5
     CHAN.SEND ch5, i * 10
 NEXT
 CHAN.CLOSE ch5
-DIM total = 0
+' Native CHAN.RECV unwraps the underlying VM Value through f64 (the
+' bridge can't preview the per-call tag without an extra runtime
+' query), so the accumulator must be typed double to satisfy STRICT
+' mode in native compile. Interp accepts either.
+DIM total AS DOUBLE = 0.0
 DIM count = 0
 DO
     DIM v = CHAN.RECV(ch5)

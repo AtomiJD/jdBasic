@@ -60,7 +60,7 @@ REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc !EXTRA_INC! ^
-  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp !EXTRA_SRC! ^
+  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp !EXTRA_SRC! ^
   /Fe:build\jdbrt.dll ^
   /Fo:build\ ^
   /link ^

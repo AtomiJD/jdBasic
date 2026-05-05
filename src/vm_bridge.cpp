@@ -593,6 +593,71 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     return r;
 }
 
+// Layout-compatible mirror of JdbMap from jdb_runtime.cpp. Used to
+// box a native JdbMap* into a Value::OBJECT before crossing the bridge,
+// so generic native CALLs that accept arbitrary Values (e.g. CHAN.SEND)
+// can store the map under VM_HANDLE without losing the contents.
+struct JdbMapFwd {
+    int64_t  count;
+    int64_t  capacity;
+    char**   keys;
+    double*  values;
+    int32_t* tags;
+};
+
+// Walk a native JdbMap*, build a fresh Value::OBJECT mirroring its
+// entries, store it in value_store, return the new handle. Caller
+// retains ownership of the JdbMap. Tag values follow JdTag enum.
+JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
+    auto* rt = (JdRTImpl*)handle;
+    Value v = Value::make_object();
+    if (!m_ptr) return rt->store_value(std::move(v));
+    auto* m = (JdbMapFwd*)m_ptr;
+    auto* obj = v.as_object();
+    for (int64_t i = 0; i < m->count; i++) {
+        std::string k = m->keys[i] ? m->keys[i] : "";
+        int32_t t = m->tags ? m->tags[i] : 0; // F64 default
+        double  d = m->values[i];
+        Value cell;
+        switch (static_cast<JdTag>(t)) {
+            case JdTag::I64: {
+                int64_t bits;
+                memcpy(&bits, &d, sizeof(bits));
+                cell = Value::make_i64(bits);
+                break;
+            }
+            case JdTag::STR: {
+                int64_t bits;
+                memcpy(&bits, &d, sizeof(bits));
+                const char* s = (const char*)(intptr_t)bits;
+                cell = Value::make_string(s ? s : "");
+                break;
+            }
+            case JdTag::ARR: {
+                int64_t bits;
+                memcpy(&bits, &d, sizeof(bits));
+                JdbArrayFwd* arr = (JdbArrayFwd*)(intptr_t)bits;
+                cell = jdbarray_to_value(arr);
+                break;
+            }
+            case JdTag::NATIVE_MAP: {
+                int64_t bits;
+                memcpy(&bits, &d, sizeof(bits));
+                int64_t inner = jdrt_map_to_handle(handle, (void*)(intptr_t)bits);
+                auto inner_it = rt->value_store.find(inner);
+                cell = (inner_it != rt->value_store.end()) ? inner_it->second : Value::make_object();
+                break;
+            }
+            case JdTag::F64:
+            default:
+                cell = Value::make_f64(d);
+                break;
+        }
+        obj->set(k, std::move(cell));
+    }
+    return rt->store_value(std::move(v));
+}
+
 // Materialise a handle as a concrete scalar. Numeric values round-trip
 // exactly; Maps/Arrays fall back to to_double()==0 and to_string()'s
 // formatted dump — callers that care must check the type first.

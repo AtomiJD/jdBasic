@@ -40,7 +40,11 @@ ASYNC FUNC produce_range(handle, n)
 ENDFUNC
 
 ASYNC FUNC consume_sum(handle)
-    DIM total = 0
+    ' Native CHAN.RECV unwraps the underlying Value through f64 (the
+    ' bridge can't peek at the per-call tag without a runtime query),
+    ' so STRICT-mode native compile needs a DOUBLE accumulator. Interp
+    ' is loose and accepts either.
+    DIM total AS DOUBLE = 0.0
     DO
         DIM v = CHAN.RECV(handle)
         IF CHAN.IS_EOF(v) THEN EXITDO
@@ -125,15 +129,17 @@ FOR i = 1 TO 20
 NEXT
 CHAN.CLOSE jobs
 
-' Wait for all workers to drain
-DIM total_done = AWAIT w1
+' Wait for all workers to drain. AWAIT in native unwraps via VM_HANDLE
+' so the worker's i64-typed RETURN ends up as a DOUBLE-tagged accumulator.
+DIM total_done AS DOUBLE = 0.0
+total_done = total_done + AWAIT w1
 total_done = total_done + AWAIT w2
 total_done = total_done + AWAIT w3
 total_done = total_done + AWAIT w4
 Assert(total_done = 20,              "4 workers together drained 20 jobs")
 
 CHAN.CLOSE results
-DIM sum_sq = 0
+DIM sum_sq AS DOUBLE = 0.0
 DO
     DIM s = CHAN.RECV(results)
     IF CHAN.IS_EOF(s) THEN EXITDO
