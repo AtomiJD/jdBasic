@@ -94,6 +94,38 @@ Description: Changes the current working directory.
 Syntax: CEIL(numeric_expression)
 Description: Rounds a number up to the nearest integer.
 
+[FILE.OPEN_LINES]
+Syntax: FILE.OPEN_LINES(path$) -> handle
+Description: Opens a file for line-by-line reading. Returns an i64 handle. Throws if the file cannot be opened. Interp-only.
+
+[FILE.OPEN_TAIL]
+Syntax: FILE.OPEN_TAIL(path$) -> handle
+Description: Like FILE.OPEN_LINES but READLINE$ blocks polling for new data (`tail -f`).
+
+[FILE.READLINE$]
+Syntax: FILE.READLINE$(handle) -> string
+Description: Returns the next line, LF/CRLF stripped. Tail-mode blocks until data arrives or the handle is closed.
+
+[FILE.AT_EOF]
+Syntax: FILE.AT_EOF(handle) -> boolean
+Description: TRUE when no more data. Tail handles: only TRUE after FILE.CLOSE.
+
+[FILE.CLOSE]
+Syntax: FILE.CLOSE(handle)
+Description: Closes a FILE handle. Wakes a parked tail reader.
+
+[FILE.STREAM_LINES]
+Syntax: FILE.STREAM_LINES(path$, ch [, cap])
+Description: Spawns a thread that pushes lines from `path$` into channel `ch`. Closes `ch` on EOF.
+
+[FILE.STREAM_TAIL]
+Syntax: FILE.STREAM_TAIL(path$, ch [, cap])
+Description: Like STREAM_LINES but follows growth. Stops when the consumer closes the channel.
+
+[AI.CHAT_TOKENS]
+Syntax: AI.CHAT_TOKENS(llm_id, prompt$ [, capacity]) -> handle
+Description: Channel-flavoured streaming. Spawns a generation thread that pushes each token into a fresh channel; closes the channel when done. Returns the channel handle. Interp-only.
+
 [CHAN.OPEN]
 Syntax: CHAN.OPEN(capacity) -> handle
 Description: Creates a bounded MP/MC channel. Capacity 0 = unbuffered rendezvous. Returns an i64 handle that can be passed across ASYNC FUNC boundaries. Phase 1 is interp-only.

@@ -1,6 +1,7 @@
 #include "llm.h"
 #include "vm.h"
 #include "errors.h"
+#include "channels.h"
 
 #ifndef LLM
 void register_llm_builtins(VM& vm) {
@@ -1199,6 +1200,86 @@ void register_llm_builtins(VM& vm) {
         m->history.push_back({"user", user_msg});
         m->history.push_back({"assistant", clean});
         return Value::make_string(clean);
+    });
+
+    // ── AI.CHAT_TOKENS(id, prompt$, [capacity]) -> chan handle ──
+    //
+    // Channel-flavoured streaming. Spawns a detached generation thread
+    // that pushes each cleaned token into a freshly-opened channel and
+    // closes it when generation completes (or the user closes the
+    // channel from outside, which cancels the run). Returns the handle
+    // immediately — caller drains the channel with the usual DO/RECV
+    // /IS_EOF idiom.
+
+    vm.register_native("AI.CHAT_TOKENS", 2, 3, [](const std::vector<Value>& args) -> Value {
+        int id = (int)args[0].to_int();
+        std::string user_msg = args[1].as_string()->data;
+        int64_t capacity = (args.size() >= 3) ? args[2].to_int() : 64;
+        if (capacity < 0) capacity = 0;
+        auto* m = get_llm(id);
+        if (!m) throw std::runtime_error("AI.CHAT_TOKENS: invalid llm id " + std::to_string(id));
+
+        auto ch = std::make_shared<Channel>();
+        ch->capacity = capacity;
+        int64_t handle = chan_register(ch);
+
+        std::thread([ch, m, user_msg]() {
+            try {
+                std::string full_prompt = m->build_chat_prompt(user_msg);
+                std::string full_result;
+                bool collecting_prefix = true;
+                std::string prefix_buf;
+
+                // Helper: enqueue a token, blocking on capacity, returning
+                // false if the channel was closed by the consumer (= cancel).
+                auto push_token = [&ch](const std::string& tok) -> bool {
+                    if (tok.empty()) return true;
+                    std::unique_lock<std::mutex> lock(ch->mtx);
+                    ch->cv_send.wait(lock, [&]() {
+                        return (ch->capacity == 0) ||
+                               (ch->buffer.size() < (size_t)ch->capacity) ||
+                                ch->closed.load();
+                    });
+                    if (ch->closed.load()) return false;
+                    ch->buffer.push_back(Value::make_string(tok));
+                    ch->cv_recv.notify_one();
+                    if (ch->capacity == 0) {
+                        // Unbuffered rendezvous: wait until receiver drains.
+                        ch->cv_send.wait(lock, [&]() {
+                            return ch->buffer.empty() || ch->closed.load();
+                        });
+                        if (ch->closed.load()) return false;
+                    }
+                    return true;
+                };
+
+                generate(m, full_prompt, [&](const std::string& token) -> bool {
+                    full_result += token;
+                    if (collecting_prefix) {
+                        prefix_buf += token;
+                        if (prefix_buf.find("<|assistant|>") != std::string::npos ||
+                            prefix_buf.find("\n") != std::string::npos ||
+                            prefix_buf.size() > 20) {
+                            collecting_prefix = false;
+                            std::string cleaned = LlmModel::clean_response(prefix_buf);
+                            return push_token(cleaned);
+                        }
+                        return true;
+                    }
+                    return push_token(token);
+                });
+
+                std::string clean = LlmModel::clean_response(full_result);
+                m->history.push_back({"user", user_msg});
+                m->history.push_back({"assistant", clean});
+            } catch (...) {
+                // Generation threw — fall through to close so the consumer
+                // unsticks from RECV with EOF instead of hanging forever.
+            }
+            chan_close(*ch);
+        }).detach();
+
+        return Value::make_i64(handle);
     });
 
     // ── AI.CHAT_RAW(id, prompt$) -> response$ ───────────────────

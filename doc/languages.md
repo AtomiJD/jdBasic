@@ -2161,6 +2161,83 @@ This section describes functions for low-level, background-threaded tasks, disti
 * **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronius.
 * **`AWAIT task`**: Waits for the given task to be completed and returns the result of the function.
 
+### LLM Streaming via Channel (sugar)
+
+`AI.CHAT_TOKENS(llm_id, prompt$, [capacity])` is a channel-flavoured
+companion to the callback-based `AI.CHAT_STREAM`. It opens a fresh
+channel, spawns a generation thread that pushes each token into it, and
+closes the channel when generation completes. Returns the channel
+handle immediately — the caller drains it with the standard
+`DO/RECV/IS_EOF` idiom. `SEND` blocks the LLM thread when the buffer
+fills, so consumer slowness applies natural backpressure to token
+generation. Closing the channel from outside cancels the run.
+
+```basic
+DIM ch = AI.CHAT_TOKENS(my_llm, "Erkläre Channels in 3 Sätzen.", 64)
+DO
+    DIM tok$ = CHAN.RECV(ch)
+    IF CHAN.IS_EOF(tok$) THEN EXITDO
+    PRINT tok$;                  ' stream live to console / GUI
+LOOP
+PRINT
+```
+
+`AI.CHAT_TOKENS` is interp-only in Phase 1 (native compile rejects with
+a clear error). The synchronous `AI.CHAT` and the callback-based
+`AI.CHAT_STREAM` keep working in native compile.
+
+### File streaming (handle-based reads)
+
+Alongside the slurp-style `TXTREADER$` / `BINREADER$`, jdBasic exposes a
+small handle-based API for line-by-line reads and `tail -f` style
+follow. Lives in a process-global registry, so a handle opened in one
+ASYNC FUNC is usable from any other.
+
+| Native | Signature | Behaviour |
+|---|---|---|
+| `FILE.OPEN_LINES(path$)` | `STRING → handle` | Open for line-by-line reading. Throws if the file cannot be opened. |
+| `FILE.OPEN_TAIL(path$)` | `STRING → handle` | Same as `OPEN_LINES` but `READLINE$` blocks polling for newly-appended data instead of returning EOF. |
+| `FILE.READLINE$(handle)` | `handle → STRING` | Returns the next line (CRLF and LF stripped). Tail-mode: blocks until data arrives or the handle is closed. |
+| `FILE.AT_EOF(handle)` | `handle → BOOLEAN` | Non-tail: true after the last line. Tail: only true once `FILE.CLOSE` has been called. |
+| `FILE.CLOSE(handle)` | `handle` | Idempotent. Wakes any tail reader within ~50ms. |
+| `FILE.STREAM_LINES(path$, ch [, cap])` | `STRING, channel handle` | Spawns a producer thread that reads `path$` line by line and pushes each line into `ch`. Closes `ch` when the file is exhausted (or when the consumer closes it from outside). Returns the channel handle for chaining. |
+| `FILE.STREAM_TAIL(path$, ch [, cap])` | `STRING, channel handle` | Like `STREAM_LINES` but follows growth. Stops when the consumer closes the channel. |
+
+```basic
+' Slurp replaced with streaming — constant memory regardless of file size.
+DIM h = FILE.OPEN_LINES("huge.log")
+DIM hits = 0
+DO
+    DIM line$ = FILE.READLINE$(h)
+    IF FILE.AT_EOF(h) THEN EXITDO
+    IF INSTR(line$, "ERROR") > 0 THEN hits = hits + 1
+LOOP
+FILE.CLOSE h
+PRINT "ERROR lines: "; hits
+```
+
+```basic
+' Tail-and-grep with channels. Line producer + matcher run in parallel,
+' constant memory, capacity 256 buffers a small spike.
+DIM ch = CHAN.OPEN(256)
+FILE.STREAM_TAIL "app.log", ch
+ASYNC FUNC matcher(ch)
+    DO
+        DIM line$ = CHAN.RECV(ch)
+        IF CHAN.IS_EOF(line$) THEN EXITDO
+        IF INSTR(line$, "FATAL") > 0 THEN PRINT line$
+    LOOP
+ENDFUNC
+DIM m = matcher(ch)
+SLEEP 60000                        ' watch for 60 seconds
+CHAN.CLOSE ch                      ' producer + matcher both exit
+DIM r = AWAIT m
+```
+
+The streaming API is currently **interp-only**; native compile rejects
+`FILE.OPEN_*` / `READLINE$` / `STREAM_*` with a clear error. The slurp
+APIs (`TXTREADER$` / `BINREADER$`) keep working in native.
+
 ### Channels (Phase 1)
 
 Channels are bounded MP/MC queues for ASYNC tasks. Each `ASYNC FUNC` runs

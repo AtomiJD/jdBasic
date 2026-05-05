@@ -2,6 +2,7 @@
 #include "dap.h"
 #include "errors.h"
 #include "channels.h"
+#include "file_streams.h"
 #ifdef COM
 #include "com.h"
 #endif
@@ -594,6 +595,10 @@ bool jdb_no_vectorize(const std::string& name) {
         "AWAIT", "THREAD.ISDONE", "THREAD.GETRESULT",
         "CHAN.OPEN", "CHAN.SEND", "CHAN.RECV", "CHAN.CLOSE",
         "CHAN.IS_EOF", "CHAN.IS_CLOSED", "CHAN.LEN", "CHAN.CAP",
+        "FILE.OPEN_LINES", "FILE.OPEN_TAIL", "FILE.READLINE$",
+        "FILE.AT_EOF", "FILE.CLOSE",
+        "FILE.STREAM_LINES", "FILE.STREAM_TAIL",
+        "AI.CHAT_TOKENS",
         "REACT_BIND", "UNREACT",
         "EXECUTE", "EVAL",
         "JDB.GLOBAL_GET", "JDB.GLOBAL_SET", "JDB.CHECK$", "FUNCS",
@@ -6533,6 +6538,160 @@ void VM::register_builtins() {
         if (!ch) return Value::make_i64(0);
         return Value::make_i64(ch->capacity);
     });
+
+    // ── FILE streaming handles ────────────────────────────────
+    //
+    // Line-by-line reader plus tail-follow mode. Mirror of the channel
+    // registry — process-global, indexed by an i64 handle so producer
+    // and consumer ASYNC FUNCs (separate VMs) hit the same FileHandle.
+
+    // FILE.OPEN_LINES(path$) → handle. Reads UTF-8 text, line by line.
+    // Throws if the file cannot be opened.
+    register_native("FILE.OPEN_LINES", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string path = args[0].as_string()->data;
+        auto fh = std::make_shared<FileHandle>();
+        fh->path = path;
+        fh->tail_mode = false;
+        fh->stream.open(path, std::ios::in | std::ios::binary);
+        if (!fh->stream.is_open()) {
+            throw std::runtime_error("FILE.OPEN_LINES: cannot open '" + path + "'");
+        }
+        return Value::make_i64(file_register(fh));
+    });
+
+    // FILE.OPEN_TAIL(path$) → handle. Same as OPEN_LINES but READLINE$
+    // blocks polling for newly-appended data instead of returning EOF.
+    register_native("FILE.OPEN_TAIL", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string path = args[0].as_string()->data;
+        auto fh = std::make_shared<FileHandle>();
+        fh->path = path;
+        fh->tail_mode = true;
+        fh->stream.open(path, std::ios::in | std::ios::binary);
+        if (!fh->stream.is_open()) {
+            throw std::runtime_error("FILE.OPEN_TAIL: cannot open '" + path + "'");
+        }
+        return Value::make_i64(file_register(fh));
+    });
+
+    // FILE.READLINE$(handle) → STRING. Trailing \n / \r\n stripped.
+    // Tail-mode: blocks until data arrives or the handle is closed.
+    register_native("FILE.READLINE$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto fh = file_lookup(handle);
+        if (!fh) {
+            throw std::runtime_error("FILE.READLINE$: invalid file handle " + std::to_string(handle));
+        }
+        return Value::make_string(file_readline(*fh));
+    });
+
+    // FILE.AT_EOF(handle) → BOOLEAN.
+    register_native("FILE.AT_EOF", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto fh = file_lookup(handle);
+        if (!fh) return Value::make_bool(true);
+        return Value::make_bool(file_at_eof(*fh));
+    });
+
+    // FILE.CLOSE(handle) — idempotent. Wakes any tail reader parked in
+    // its poll loop within ~poll_ms (default 50ms).
+    register_native("FILE.CLOSE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        file_unregister(handle);
+        return Value::make_none();
+    });
+
+    // ── FILE → CHAN sugar ─────────────────────────────────────
+    //
+    // FILE.STREAM_LINES(path$, ch [, capacity]) and FILE.STREAM_TAIL(...)
+    // wrap the OPEN_LINES / OPEN_TAIL + read-loop pattern as a single
+    // call: spawn a producer thread, push each line into the given
+    // channel, close the channel when the file is exhausted (or when
+    // the consumer closes it from outside, which cancels the read).
+    //
+    // The user supplies the channel so they own its lifetime. Pass an
+    // already-open channel — capacity decides backpressure.
+    auto file_pump_lines = [](int64_t ch_handle, std::string path, bool tail) {
+        auto ch = chan_lookup(ch_handle);
+        if (!ch) return; // gone already
+        auto fh = std::make_shared<FileHandle>();
+        fh->path = path;
+        fh->tail_mode = tail;
+        fh->stream.open(path, std::ios::in | std::ios::binary);
+        if (!fh->stream.is_open()) {
+            chan_close(*ch);
+            return;
+        }
+        int64_t f_handle = file_register(fh);
+        std::thread([ch, fh, f_handle]() {
+            // We can't use file_readline() here because its poll loop
+            // only watches fh->closed; consumer closes via the *channel*
+            // (ch->closed) and would otherwise wait the full poll cycle
+            // before noticing. Inline the poll so we can watch BOTH
+            // flags every tick.
+            const auto poll = std::chrono::milliseconds(50);
+            try {
+                while (!ch->closed.load() && !fh->closed.load()) {
+                    std::string line;
+                    bool got = false;
+                    {
+                        std::lock_guard<std::mutex> lock(fh->mtx);
+                        if (!fh->stream.is_open()) break;
+                        if (std::getline(fh->stream, line)) {
+                            got = true;
+                        } else {
+                            if (!fh->tail_mode) break;     // EOF in finite mode
+                            fh->stream.clear();             // re-arm in tail mode
+                        }
+                    }
+                    if (!got) {
+                        std::this_thread::sleep_for(poll);
+                        continue;
+                    }
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+
+                    std::unique_lock<std::mutex> lock(ch->mtx);
+                    ch->cv_send.wait(lock, [&]() {
+                        return (ch->capacity == 0) ||
+                               (ch->buffer.size() < (size_t)ch->capacity) ||
+                                ch->closed.load();
+                    });
+                    if (ch->closed.load()) break;
+                    ch->buffer.push_back(Value::make_string(line));
+                    ch->cv_recv.notify_one();
+                    if (ch->capacity == 0) {
+                        ch->cv_send.wait(lock, [&]() {
+                            return ch->buffer.empty() || ch->closed.load();
+                        });
+                        if (ch->closed.load()) break;
+                    }
+                }
+            } catch (...) {
+                // swallow — close below
+            }
+            file_unregister(f_handle);
+            chan_close(*ch);
+        }).detach();
+    };
+
+    register_native("FILE.STREAM_LINES", 2, 3,
+        [file_pump_lines](const std::vector<Value>& args) -> Value {
+            std::string path = args[0].as_string()->data;
+            int64_t ch_handle = args[1].to_int();
+            // capacity arg is informational here — the channel was opened
+            // by the caller with whatever capacity they chose.
+            (void)args; // silence unused-warning
+            file_pump_lines(ch_handle, path, /*tail=*/false);
+            return Value::make_i64(ch_handle);
+        });
+
+    register_native("FILE.STREAM_TAIL", 2, 3,
+        [file_pump_lines](const std::vector<Value>& args) -> Value {
+            std::string path = args[0].as_string()->data;
+            int64_t ch_handle = args[1].to_int();
+            (void)args;
+            file_pump_lines(ch_handle, path, /*tail=*/true);
+            return Value::make_i64(ch_handle);
+        });
 
     // ── Filesystem ────────────────────────────────────────────
 

@@ -1,0 +1,122 @@
+' ══════════════════════════════════════════════════════════════════
+'  FILE.OPEN_LINES / READLINE$ / AT_EOF / CLOSE — single-thread.
+'  Tail-mode tests live in test_file_tail.jdb.
+' ══════════════════════════════════════════════════════════════════
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Fixture: write three lines, LF-terminated ─────────────────────
+Header("Read three lines (LF-terminated)")
+TXTWRITER "fs_three.txt", "line one" + CHR$(10) + "line two" + CHR$(10) + "line three" + CHR$(10), FALSE
+
+DIM h1 = FILE.OPEN_LINES("fs_three.txt")
+Assert(NOT FILE.AT_EOF(h1),       "fresh handle not at EOF")
+Assert(FILE.READLINE$(h1) = "line one",   "first line")
+Assert(FILE.READLINE$(h1) = "line two",   "second line")
+Assert(FILE.READLINE$(h1) = "line three", "third line")
+Assert(FILE.AT_EOF(h1),           "AT_EOF after exhausting")
+Assert(FILE.READLINE$(h1) = "",   "READLINE$ on EOF returns empty string")
+FILE.CLOSE h1
+
+' ── Empty file ────────────────────────────────────────────────────
+Header("Empty file is immediately EOF")
+TXTWRITER "fs_empty.txt", "", FALSE
+DIM h2 = FILE.OPEN_LINES("fs_empty.txt")
+Assert(FILE.AT_EOF(h2),           "empty file AT_EOF immediately")
+Assert(FILE.READLINE$(h2) = "",   "READLINE$ on empty file returns empty")
+FILE.CLOSE h2
+
+' ── Nonexistent file throws on OPEN ───────────────────────────────
+Header("Nonexistent file throws on OPEN")
+DIM threw1 = FALSE
+TRY
+    DIM hx = FILE.OPEN_LINES("does_not_exist.txt")
+CATCH
+    threw1 = TRUE
+ENDTRY
+Assert(threw1,                    "OPEN_LINES on missing file throws")
+
+' ── File without trailing newline — last line still reachable ─────
+Header("Last line without trailing newline")
+TXTWRITER "fs_notrail.txt", "alpha" + CHR$(10) + "beta", FALSE
+DIM h3 = FILE.OPEN_LINES("fs_notrail.txt")
+Assert(FILE.READLINE$(h3) = "alpha", "first line")
+Assert(FILE.READLINE$(h3) = "beta",  "trailing line without newline visible")
+Assert(FILE.AT_EOF(h3),           "AT_EOF after trailing line")
+FILE.CLOSE h3
+
+' ── CRLF line endings stripped cleanly ────────────────────────────
+Header("CRLF line endings (Windows)")
+TXTWRITER "fs_crlf.txt", "win1" + CHR$(13) + CHR$(10) + "win2" + CHR$(13) + CHR$(10), FALSE
+DIM h4 = FILE.OPEN_LINES("fs_crlf.txt")
+Assert(FILE.READLINE$(h4) = "win1", "CRLF: first line stripped of \r\n")
+Assert(FILE.READLINE$(h4) = "win2", "CRLF: second line stripped of \r\n")
+FILE.CLOSE h4
+
+' ── UTF-8 round-trip ──────────────────────────────────────────────
+Header("UTF-8 round-trip")
+TXTWRITER "fs_utf8.txt", "Größe: 42€" + CHR$(10) + "日本語" + CHR$(10) + "🎉" + CHR$(10), FALSE
+DIM h5 = FILE.OPEN_LINES("fs_utf8.txt")
+Assert(FILE.READLINE$(h5) = "Größe: 42€", "UTF-8 German + Euro")
+Assert(FILE.READLINE$(h5) = "日本語",      "UTF-8 Japanese")
+Assert(FILE.READLINE$(h5) = "🎉",         "UTF-8 emoji")
+FILE.CLOSE h5
+
+' ── CLOSE then RECV is benign ─────────────────────────────────────
+Header("Use after CLOSE")
+DIM h6 = FILE.OPEN_LINES("fs_three.txt")
+FILE.CLOSE h6
+Assert(FILE.AT_EOF(h6),           "closed handle reports AT_EOF")
+DIM threw2 = FALSE
+TRY
+    DIM x = FILE.READLINE$(h6)
+CATCH
+    threw2 = TRUE
+ENDTRY
+Assert(threw2,                    "READLINE$ on closed handle throws")
+
+' ── Many handles open at once ─────────────────────────────────────
+Header("Multiple handles to the same file")
+DIM ha = FILE.OPEN_LINES("fs_three.txt")
+DIM hb = FILE.OPEN_LINES("fs_three.txt")
+Assert(FILE.READLINE$(ha) = "line one",  "handle A: first line")
+Assert(FILE.READLINE$(hb) = "line one",  "handle B: independent position")
+Assert(FILE.READLINE$(ha) = "line two",  "handle A advances independently")
+Assert(FILE.READLINE$(hb) = "line two",  "handle B advances independently")
+FILE.CLOSE ha
+FILE.CLOSE hb
+
+' ── Cleanup fixtures ──────────────────────────────────────────────
+KILL "fs_three.txt"
+KILL "fs_empty.txt"
+KILL "fs_notrail.txt"
+KILL "fs_crlf.txt"
+KILL "fs_utf8.txt"
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " FILE STREAMING (single-thread): PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

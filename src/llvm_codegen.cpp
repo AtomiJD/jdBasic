@@ -6388,6 +6388,30 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             "Compile in interp mode or run via the REPL.");
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
+    // FILE streaming primitives (OPEN_LINES / OPEN_TAIL / READLINE$ /
+    // AT_EOF / CLOSE) share the channel runtime's interp-only stance.
+    // The slurp APIs (TXTREADER$/BINREADER$/TXTWRITER) keep working in
+    // native compile.
+    if ((name == "FILE.OPEN_LINES")   || (name == "FILE.OPEN_TAIL") ||
+        (name == "FILE.READLINE$")    || (name == "FILE.AT_EOF") ||
+        (name == "FILE.CLOSE")        || (name == "FILE.STREAM_LINES") ||
+        (name == "FILE.STREAM_TAIL")) {
+        report_error("", expr.line,
+            "FILE streaming handles are not yet supported in native "
+            "compile. Use TXTREADER$ for slurp reads, or run in interp.");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
+    // AI.CHAT_TOKENS pumps an LLM stream into a channel — leans on the
+    // channel runtime, which is interp-only in Phase 1. AI.CHAT and the
+    // callback-based AI.CHAT_STREAM still work in native (handled by the
+    // generic native dispatch).
+    if (name == "AI.CHAT_TOKENS") {
+        report_error("", expr.line,
+            "AI.CHAT_TOKENS feeds a channel and is interp-only in "
+            "Phase 1. Use AI.CHAT_STREAM with a callback in native, or "
+            "compile this script in interp mode.");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
 
     // UNIQUE on a string-tracked array dedupes by strcmp instead of by
     // raw double bits (which only catches pointer-identity duplicates).

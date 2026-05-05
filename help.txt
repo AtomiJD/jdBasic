@@ -447,6 +447,34 @@ Description: Returns 1 if path$ is an existing directory, 0 otherwise.
 Syntax: FILE.SIZE(path$) -> integer
 Description: Returns the size of the file in bytes, or -1 if the file does not exist.
 
+[FILE.OPEN_LINES]
+Syntax: FILE.OPEN_LINES(path$) -> handle
+Description: Opens a file for line-by-line reading. Returns an i64 handle. Use FILE.READLINE$ to read each line; FILE.AT_EOF to check exhaustion; FILE.CLOSE to release. Throws if the file cannot be opened. Interp-only in Phase 1.
+
+[FILE.OPEN_TAIL]
+Syntax: FILE.OPEN_TAIL(path$) -> handle
+Description: Like FILE.OPEN_LINES but READLINE$ blocks polling for newly-appended data — analog to `tail -f`. AT_EOF is only true after FILE.CLOSE.
+
+[FILE.READLINE$]
+Syntax: FILE.READLINE$(handle) -> string
+Description: Returns the next line (LF and CRLF stripped). Tail-mode: blocks until data arrives or the handle is closed. Returns "" on EOF.
+
+[FILE.AT_EOF]
+Syntax: FILE.AT_EOF(handle) -> boolean
+Description: Non-tail: TRUE after the last line. Tail: only TRUE after FILE.CLOSE.
+
+[FILE.CLOSE]
+Syntax: FILE.CLOSE(handle)
+Description: Idempotent. Wakes any tail reader parked in its poll loop within ~50ms.
+
+[FILE.STREAM_LINES]
+Syntax: FILE.STREAM_LINES(path$, ch [, capacity])
+Description: Spawns a producer thread that reads `path$` line by line and pushes each line into the channel `ch`. Closes `ch` on EOF (or when the consumer closes it from outside). Returns `ch`. Pair with CHAN.OPEN beforehand. Interp-only.
+
+[FILE.STREAM_TAIL]
+Syntax: FILE.STREAM_TAIL(path$, ch [, capacity])
+Description: Like FILE.STREAM_LINES but follows growth (`tail -f`). Stops when the consumer closes the channel.
+
 [FILE.STAT]
 Syntax: FILE.STAT(path$) -> map
 Description: Returns a map with fields "exists", "size", "is_dir", "readonly", "hidden", "mtime" (string YYYY-MM-DD HH:MM:SS). For missing files, "exists" is FALSE.
