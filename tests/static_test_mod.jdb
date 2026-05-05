@@ -1,0 +1,71 @@
+' Helper module for STATIC local-variable cross-module tests.
+' Each EXPORT FUNC owns at least one STATIC slot. The test driver in
+' comprehensive_test.jdb calls these from outside the module to verify
+' that statics persist across calls and survive cross-module dispatch
+' (the storage hangs off the FuncProto/Chunk in this VM, regardless of
+' the call site).
+EXPORT MODULE STATIC_TEST_MOD
+
+' Scalar i64 counter — pillar test for "init once + persists".
+EXPORT FUNC mod_counter() AS INTEGER
+    STATIC DIM n AS INTEGER = 0
+    n = n + 1
+    RETURN n
+ENDFUNC
+
+' STRING static — exercises the refcounted-value path.
+EXPORT FUNC mod_concat(s$ AS STRING) AS STRING
+    STATIC DIM acc AS STRING = ""
+    acc = acc + s$
+    RETURN acc
+ENDFUNC
+
+' DOUBLE static — separate tag from the i64 counter.
+EXPORT FUNC mod_sum_d(x AS DOUBLE) AS DOUBLE
+    STATIC DIM total AS DOUBLE = 0.0
+    total = total + x
+    RETURN total
+ENDFUNC
+
+' MAP static — memoization use case.
+' Returns 1 if the key has been seen before, 0 on first sight.
+EXPORT FUNC mod_seen(k$ AS STRING) AS INTEGER
+    STATIC DIM memo AS MAP = {}
+    IF MAP.EXISTS(memo, k$) THEN
+        RETURN 1
+    ENDIF
+    memo{k$} = TRUE
+    RETURN 0
+ENDFUNC
+
+' ARRAY static — accumulator. Returns LEN after appending.
+EXPORT FUNC mod_log(s$ AS STRING) AS INTEGER
+    STATIC DIM events AS ARRAY = []
+    events = APPEND(events, s$)
+    RETURN LEN(events)
+ENDFUNC
+
+' SUB with STATIC (no return value).
+EXPORT SUB mod_bump()
+    STATIC DIM bumps AS INTEGER = 0
+    bumps = bumps + 1
+ENDSUB
+
+' Reader that pairs with mod_bump — proves the SUB's static is observable
+' to a same-module FUNC that shares no source-level scope but the same
+' logical (M, fn, slot) tuple lives at FuncProto level.
+EXPORT FUNC mod_bumps_via_recall() AS INTEGER
+    STATIC DIM cached AS INTEGER = 0
+    cached = cached + 1
+    RETURN cached
+ENDFUNC
+
+' Recursive — every depth shares the static (intentional behaviour).
+EXPORT FUNC mod_rec(depth AS INTEGER) AS INTEGER
+    STATIC DIM hits AS INTEGER = 0
+    hits = hits + 1
+    IF depth > 0 THEN
+        DIM unused = mod_rec(depth - 1)
+    ENDIF
+    RETURN hits
+ENDFUNC

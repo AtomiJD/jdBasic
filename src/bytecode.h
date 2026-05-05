@@ -107,6 +107,18 @@ enum class OpCode : uint8_t {
     // LOAD_VAR slot + RETURN_VAL (4 bytes total)
     // Fused layout: op(1) + slot(2) + NOP(1)
     LOAD_VAR_RETURN,             // u16 slot
+
+    // STATIC local variables (per-FuncProto persistent slots).
+    // Storage hangs off Chunk::static_values/static_inited so it survives
+    // across calls and is shared across recursion. Cross-module dispatch
+    // resolves to the same FuncProto, so the slot is identity-stable.
+    LOAD_STATIC,                 // u16 slot — push static_values[slot]
+    STORE_STATIC,                // u16 slot — pop into static_values[slot]
+    // Guard for lazy init: if static_inited[slot] is set, jump by i16
+    // offset (skip past the init block). Otherwise set the guard FIRST
+    // (so a recursive call during init terminates against the default
+    // slot value, not infinite recursion) and fall through.
+    MAYBE_INIT_STATIC,           // u16 slot, i16 offset
 };
 
 struct Chunk {
@@ -134,6 +146,13 @@ struct Chunk {
     // at a given name. Invalidated on VM reset/restore_state via the same
     // generation counter used for CALL caches.
     mutable std::vector<uint64_t> global_cache;
+
+    // STATIC local variables: per-FuncProto persistent storage. Sized at
+    // compile time, slot indexes baked into LOAD_STATIC/STORE_STATIC bytes.
+    // Init guard is mutated on first execution of MAYBE_INIT_STATIC, hence
+    // mutable (CallFrame::chunk is `const Chunk*`).
+    mutable std::vector<Value>   static_values;
+    mutable std::vector<uint8_t> static_inited;
 
     // Emit helpers
     size_t emit(OpCode op, int line) {
@@ -200,6 +219,8 @@ inline int opcode_width(OpCode op) {
         case OpCode::STORE_VAR:
         case OpCode::LOAD_GLOBAL:
         case OpCode::STORE_GLOBAL:
+        case OpCode::LOAD_STATIC:
+        case OpCode::STORE_STATIC:
         case OpCode::INPUT_VAR:
         case OpCode::MAKE_ARRAY:
         case OpCode::MAKE_MAP:
@@ -213,6 +234,10 @@ inline int opcode_width(OpCode op) {
         case OpCode::BREAK_LOOP:
         case OpCode::CONTINUE_LOOP_OP:
             return 3; // opcode + u16
+
+        // u16 slot + i16 jump offset
+        case OpCode::MAYBE_INIT_STATIC:
+            return 5;
 
         // u16 + u8
         case OpCode::CALL:
@@ -281,6 +306,11 @@ inline void peephole_optimize(Chunk& chunk) {
         } else if (op == OpCode::SETUP_TRY) {
             uint16_t off = code[ip + 1] | (code[ip + 2] << 8);
             size_t target = ip + 3 + off;
+            if (target < n) is_jump_target[target] = true;
+        } else if (op == OpCode::MAYBE_INIT_STATIC) {
+            // op(1) + slot(2) + i16 offset(2). Offset relative to ip+5.
+            int16_t off = (int16_t)(code[ip + 3] | (code[ip + 4] << 8));
+            size_t target = ip + 5 + off;
             if (target < n) is_jump_target[target] = true;
         }
         ip += w;

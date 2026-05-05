@@ -34,6 +34,7 @@ enum class TokenType {
     LAMBDA, ARROW, PIPE, PLACEHOLDER, USE,
     ASYNC, AWAIT_KW,
     TRUE_KW, FALSE_KW,
+    STATIC_KW,
 
     // Type keywords
     TY_BOOLEAN, TY_BYTE, TY_CHAR, TY_INT16, TY_INT32, TY_INT64,
@@ -117,6 +118,7 @@ inline const std::unordered_map<std::string, TokenType>& keywords() {
         {"FINALLY", TokenType::FINALLY}, {"ENDTRY", TokenType::ENDTRY},
         {"THROW", TokenType::THROW_KW},
         {"TRUE", TokenType::TRUE_KW}, {"FALSE", TokenType::FALSE_KW},
+        {"STATIC", TokenType::STATIC_KW},
         {"AND", TokenType::AND}, {"OR", TokenType::OR}, {"NOT", TokenType::NOT},
         {"ANDALSO", TokenType::ANDALSO}, {"ORELSE", TokenType::ORELSE},
         {"BAND", TokenType::BAND}, {"BOR", TokenType::BOR},

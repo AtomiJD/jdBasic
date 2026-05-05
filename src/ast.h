@@ -246,6 +246,7 @@ struct Stmt {
     std::string var_name;
     VarType var_type = VarType::NONE;
     bool is_const = false;
+    bool is_static = false;            // STATIC DIM inside FUNC/SUB body
     VarType elem_type = VarType::NONE; // for ARRAY OF <type>
     ExprPtr expr;
 

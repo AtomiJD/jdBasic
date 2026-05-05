@@ -149,6 +149,48 @@ MyArray = [1, 2, 3, 4] ' Creates an array
 EmptyArray = []
 ```
 
+## STATIC Local Variables
+
+`STATIC DIM` inside a `FUNC` or `SUB` declares a per-function persistent
+slot. The initializer runs on the first execution of the line; on every
+subsequent call the slot keeps its previous value. Storage hangs off the
+function definition (per-VM), so all recursive depths and cross-module
+callers share the same slot.
+
+**`STATIC DIM name [AS type] [= initializer]`** (inside FUNC/SUB only)
+
+```basic
+FUNC counter() AS INTEGER
+    STATIC DIM n AS INTEGER = 0     ' init runs once on first call
+    n = n + 1
+    RETURN n
+ENDFUNC
+
+PRINT counter()    ' 1
+PRINT counter()    ' 2
+PRINT counter()    ' 3
+```
+
+* Allowed types: `INTEGER`/`LONG`, `DOUBLE`/`SINGLE`, `STRING`, `BOOLEAN`,
+  `ARRAY`, `MAP`, plus the usual integer aliases. Initializer can be any
+  expression — literals, calls, array/map literals.
+* Recursion shares the slot. A `STATIC DIM hits = 0` increment in a
+  recursive `FUNC` accumulates across every depth in one call chain and
+  persists into the next call.
+* Cross-module: a `STATIC DIM` in a module's exported function resolves
+  to the same slot regardless of which file calls it (storage is keyed
+  on the function identity, not the call site).
+* Top-level `STATIC DIM` is a parse error — STATIC has meaning only
+  inside a function body.
+* Recursive `STATIC` initializer (the init expression calls back into the
+  enclosing function): the guard is set **before** the initializer runs,
+  so the inner call sees a default-zero slot rather than re-entering the
+  init block. Don't write initializers that depend on a fully-resolved
+  STATIC slot of the same function.
+* `STATIC` slots are private to their function — they're not reactive
+  (`REACT` does not track them) and they aren't currently persisted by
+  `SAVEWS` / `LOADWS`. A workspace reload starts every static fresh.
+
 ## Constants
 
 The `CONST` statement declares a named constant whose value cannot be changed after initialization. Constants are always global, even when declared inside a function.

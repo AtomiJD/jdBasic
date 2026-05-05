@@ -13,6 +13,10 @@ struct CompilerScope {
     // silently alias a parameter (BASIC is case-insensitive, so `DIM v` inside
     // FUNC F(V) overwrites the param — caught the user twice in 4d benches).
     std::unordered_set<std::string> params;
+    // STATIC DIM <name> registers the name here with its persistent slot
+    // index (separate namespace from `locals`). Subsequent reads/writes of
+    // the name inside this function emit LOAD_STATIC / STORE_STATIC.
+    std::unordered_map<std::string, uint16_t> statics;
     bool is_function = false;
 };
 
@@ -106,4 +110,12 @@ private:
     size_t emit_jump(OpCode op, int line);
     void patch_jump(size_t addr);
     void resolve_labels();
+
+    // Variable load/store dispatch — checks `statics` first so STATIC slots
+    // route through LOAD_STATIC/STORE_STATIC. Falls through to the existing
+    // global-vs-local logic otherwise. Mirrors the pre-existing inline
+    // pattern at the caller, just centralises the static check.
+    bool is_static_name(const std::string& name) const;
+    void emit_var_load(const std::string& name, int line);
+    void emit_var_store(const std::string& name, int line, bool prefer_local);
 };

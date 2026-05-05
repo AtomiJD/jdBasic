@@ -74,6 +74,58 @@ void Compiler::patch_jump(size_t addr) {
     current_chunk().patch_i16(addr, offset);
 }
 
+bool Compiler::is_static_name(const std::string& name) const {
+    // Walk scopes inside-out; STATIC slots are function-scoped so we only
+    // match the innermost active function frame, but inner blocks share it.
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->statics.count(name)) return true;
+        // Don't cross function boundaries: each FUNC has its own statics
+        if (it->is_function) break;
+    }
+    return false;
+}
+
+// Helper: locate the static slot index for a given name (assumes it exists).
+static uint16_t lookup_static_slot(const std::vector<CompilerScope>& scopes,
+                                   const std::string& name) {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        auto sit = it->statics.find(name);
+        if (sit != it->statics.end()) return sit->second;
+        if (it->is_function) break;
+    }
+    return 0; // unreachable if is_static_name() was true
+}
+
+void Compiler::emit_var_load(const std::string& name, int line) {
+    if (is_static_name(name)) {
+        current_chunk().emit(OpCode::LOAD_STATIC, line);
+        current_chunk().emit_u16(lookup_static_slot(scopes, name), line);
+        return;
+    }
+    bool use_global = should_use_global(name);
+    uint16_t slot = resolve_var(name);
+    current_chunk().emit(use_global ? OpCode::LOAD_GLOBAL : OpCode::LOAD_VAR, line);
+    current_chunk().emit_u16(slot, line);
+}
+
+void Compiler::emit_var_store(const std::string& name, int line, bool prefer_local) {
+    if (is_static_name(name)) {
+        current_chunk().emit(OpCode::STORE_STATIC, line);
+        current_chunk().emit_u16(lookup_static_slot(scopes, name), line);
+        return;
+    }
+    if (prefer_local) {
+        uint16_t slot = resolve_local(name);
+        current_chunk().emit(OpCode::STORE_VAR, line);
+        current_chunk().emit_u16(slot, line);
+    } else {
+        bool use_global = should_use_global(name);
+        uint16_t slot = resolve_var(name);
+        current_chunk().emit(use_global ? OpCode::STORE_GLOBAL : OpCode::STORE_VAR, line);
+        current_chunk().emit_u16(slot, line);
+    }
+}
+
 void Compiler::resolve_labels() {
     // Resolve all pending GOTOs against collected label positions.
     // IMPORTANT: labels and GOTOs are per‑chunk (each SUB/FUNC has its own
@@ -668,6 +720,73 @@ void Compiler::compile_let(const Stmt& stmt) {
 }
 
 void Compiler::compile_dim(const Stmt& stmt) {
+    // ── STATIC DIM <name> [AS T] [= init] ─────────────────────────
+    // Function-scoped persistent slot. Init runs once on the first
+    // execution of THIS line; subsequent executions skip past it via
+    // MAYBE_INIT_STATIC's guard. Reads/writes elsewhere in the function
+    // route through LOAD_STATIC / STORE_STATIC (see emit_var_load /
+    // emit_var_store).
+    if (stmt.is_static) {
+        if (scopes.size() <= 1) {
+            throw std::runtime_error("Line " + std::to_string(stmt.line) +
+                ": STATIC DIM is only allowed inside a FUNC or SUB");
+        }
+        if (current_scope().params.count(stmt.var_name)) {
+            throw std::runtime_error("Line " + std::to_string(stmt.line) +
+                ": STATIC DIM '" + stmt.var_name + "' shadows function parameter");
+        }
+        if (current_scope().statics.count(stmt.var_name)) {
+            throw std::runtime_error("Line " + std::to_string(stmt.line) +
+                ": STATIC DIM '" + stmt.var_name + "' redeclared");
+        }
+        // Allocate the persistent slot. The default value is NONE; the
+        // first-call init below stores the user-provided initializer.
+        uint16_t slot = static_cast<uint16_t>(current_chunk().static_values.size());
+        current_chunk().static_values.push_back(Value::make_none());
+        current_chunk().static_inited.push_back(0);
+        current_scope().statics[stmt.var_name] = slot;
+
+        // MAYBE_INIT_STATIC <slot> <i16 skip_offset>: if the guard is set
+        // jump past the init block; else set the guard FIRST (recursion
+        // safe) and fall through.
+        current_chunk().emit(OpCode::MAYBE_INIT_STATIC, stmt.line);
+        current_chunk().emit_u16(slot, stmt.line);
+        size_t skip_patch = current_chunk().code.size();
+        current_chunk().emit_i16(0, stmt.line);
+
+        // Init expression (or default-zero / empty value if absent).
+        if (stmt.expr) {
+            compile_expr(*stmt.expr);
+        } else if (!stmt.label.empty() && user_types.count(stmt.label)) {
+            uint16_t ctor_idx = current_chunk().add_constant(
+                Value::make_string(stmt.label + ".__NEW__"));
+            current_chunk().emit(OpCode::CALL, stmt.line);
+            current_chunk().emit_u16(ctor_idx, stmt.line);
+            current_chunk().emit_u8(0, stmt.line);
+            // (ctor args / INIT auto-call kept in non-static path; static
+            //  UDTs with constructor args are deferred to a follow-up.)
+        } else {
+            switch (stmt.var_type) {
+                case VarType::ARRAY:  emit_constant(Value::make_array(), stmt.line); break;
+                case VarType::STRING: emit_constant(Value::make_string(""), stmt.line); break;
+                case VarType::OBJECT: emit_constant(Value::make_object(), stmt.line); break;
+                default:              emit_constant(Value::make_i64(0), stmt.line); break;
+            }
+        }
+        if (stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY) {
+            current_chunk().emit(OpCode::CAST, stmt.line);
+            current_chunk().emit_u8(vartype_to_valuetype_byte(stmt.var_type), stmt.line);
+        }
+        current_chunk().emit(OpCode::STORE_STATIC, stmt.line);
+        current_chunk().emit_u16(slot, stmt.line);
+
+        // Patch the skip offset: jump from (skip_patch + 2) to here.
+        size_t target = current_chunk().code.size();
+        int16_t off = static_cast<int16_t>(target - (skip_patch + 2));
+        current_chunk().patch_i16(skip_patch, off);
+        return;
+    }
+
     if (stmt.expr) {
         compile_expr(*stmt.expr);
     } else if (!stmt.label.empty() && user_types.count(stmt.label)) {
@@ -741,10 +860,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
 
 void Compiler::compile_assign(const Stmt& stmt) {
     compile_expr(*stmt.expr);
-    bool use_global = should_use_global(stmt.var_name);
-    uint16_t slot = resolve_var(stmt.var_name);
-    current_chunk().emit(use_global ? OpCode::STORE_GLOBAL : OpCode::STORE_VAR, stmt.line);
-    current_chunk().emit_u16(slot, stmt.line);
+    emit_var_store(stmt.var_name, stmt.line, /*prefer_local=*/false);
 }
 
 void Compiler::compile_index_assign(const Stmt& stmt) {
@@ -768,9 +884,14 @@ void Compiler::compile_index_assign(const Stmt& stmt) {
 
     // Variable-based LHS: var[i1][i2]...[iN] = val
     bool is_global = should_use_global(stmt.var_name);
-    uint16_t slot = resolve_var(stmt.var_name);
-    current_chunk().emit(is_global ? OpCode::LOAD_GLOBAL : OpCode::LOAD_VAR, stmt.line);
-    current_chunk().emit_u16(slot, stmt.line);
+    if (is_static_name(stmt.var_name)) {
+        current_chunk().emit(OpCode::LOAD_STATIC, stmt.line);
+        current_chunk().emit_u16(lookup_static_slot(scopes, stmt.var_name), stmt.line);
+    } else {
+        uint16_t slot = resolve_var(stmt.var_name);
+        current_chunk().emit(is_global ? OpCode::LOAD_GLOBAL : OpCode::LOAD_VAR, stmt.line);
+        current_chunk().emit_u16(slot, stmt.line);
+    }
 
     // For multi-dimensional assignment (size >= 2), emit a MULTI_INDEX_SET.
     // This lets the runtime do fancy (vectorized) indexing when any index is
@@ -1112,10 +1233,7 @@ void Compiler::compile_expr(const Expr& expr) {
             break;
 
         case ExprKind::VARIABLE: {
-            bool use_global = should_use_global(expr.str_val);
-            uint16_t slot = resolve_var(expr.str_val);
-            current_chunk().emit(use_global ? OpCode::LOAD_GLOBAL : OpCode::LOAD_VAR, expr.line);
-            current_chunk().emit_u16(slot, expr.line);
+            emit_var_load(expr.str_val, expr.line);
             break;
         }
 

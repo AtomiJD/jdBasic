@@ -1642,6 +1642,10 @@ Description: Returns the square root of a number.
 Syntax: STACK(dimension, array1, array2, ...)
 Description: Stacks 1D vectors along a new dimension to create a 2D matrix.
 
+[STATIC]
+Syntax: STATIC DIM name [AS type] [= initializer]
+Description: Declares a function-scoped persistent variable inside a FUNC or SUB. The initializer runs once on the first execution of the line; the slot keeps its value across subsequent calls. All recursive depths and cross-module callers share the same slot.
+
 [STEP]
 Syntax: FOR ... STEP value
 Description: Specifies the increment value for a FOR loop counter.

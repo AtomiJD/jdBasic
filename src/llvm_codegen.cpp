@@ -3379,7 +3379,120 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
 
 // ── DIM (array allocation) ──────────────────────────────────
 
+void LLVMCodegen::codegen_static_dim(const Stmt& stmt) {
+    if (scopes.size() <= 1) {
+        report_error(stmt.source_file, stmt.line,
+            "STATIC DIM is only allowed inside a FUNC or SUB");
+        return;
+    }
+    if (scopes.back().vars.count(stmt.var_name)) {
+        report_error(stmt.source_file, stmt.line,
+            "STATIC DIM '" + stmt.var_name + "' redeclared");
+        return;
+    }
+
+    // ── Pick slot tag/type up-front from the AS clause + initializer ──
+    int tag = JD_TAG_I64;
+    LLVMTypeRef slot_type = i64_type;
+    switch (stmt.var_type) {
+        case VarType::STRING:
+            tag = JD_TAG_STR; slot_type = i8_ptr_type; break;
+        case VarType::FLOAT16:
+        case VarType::FLOAT32:
+        case VarType::FLOAT64:
+            tag = JD_TAG_F64; slot_type = f64_type; break;
+        case VarType::ARRAY:
+            tag = JD_TAG_ARR; slot_type = i8_ptr_type; break;
+        case VarType::OBJECT:
+            tag = JD_TAG_NATIVE_MAP; slot_type = i8_ptr_type; break;
+        default:
+            // No declared type — peek at the init expression's literal
+            // shape so we pick a pointer-typed slot for collection inits.
+            if (stmt.expr) {
+                if (stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+                    tag = JD_TAG_ARR; slot_type = i8_ptr_type;
+                } else if (stmt.expr->kind == ExprKind::MAP_LITERAL) {
+                    tag = JD_TAG_NATIVE_MAP; slot_type = i8_ptr_type;
+                } else if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
+                    tag = JD_TAG_STR; slot_type = i8_ptr_type;
+                } else if (stmt.expr->kind == ExprKind::LITERAL_FLOAT) {
+                    tag = JD_TAG_F64; slot_type = f64_type;
+                }
+            }
+            break;
+    }
+    if (!stmt.var_name.empty() && stmt.var_name.back() == '$') {
+        tag = JD_TAG_STR; slot_type = i8_ptr_type;
+    }
+
+    static unsigned long st_counter = 0;
+    std::string slot_name = "__st." + stmt.var_name + "." +
+                             std::to_string(st_counter++);
+    std::string guard_name = slot_name + ".init";
+
+    LLVMValueRef slot_global = LLVMAddGlobal(module, slot_type, slot_name.c_str());
+    LLVMSetInitializer(slot_global, LLVMConstNull(slot_type));
+    LLVMSetLinkage(slot_global, LLVMInternalLinkage);
+
+    LLVMTypeRef i1_type = LLVMInt1TypeInContext(ctx);
+    LLVMValueRef guard_global = LLVMAddGlobal(module, i1_type, guard_name.c_str());
+    LLVMSetInitializer(guard_global, LLVMConstInt(i1_type, 0, 0));
+    LLVMSetLinkage(guard_global, LLVMInternalLinkage);
+
+    // Register the slot before emitting init code so a recursive call from
+    // inside the initializer resolves to the (still null) slot rather than
+    // crashing on a missing var.
+    auto& vi = scopes.back().vars[stmt.var_name];
+    vi = { slot_global, tag };
+
+    // ── Guard branch: if initialised, skip; else set guard FIRST + init ──
+    LLVMBasicBlockRef do_init  = LLVMAppendBasicBlockInContext(ctx, current_fn, "static_init");
+    LLVMBasicBlockRef done_blk = LLVMAppendBasicBlockInContext(ctx, current_fn, "static_done");
+    LLVMValueRef guard_val = LLVMBuildLoad2(builder, i1_type, guard_global, "");
+    LLVMBuildCondBr(builder, guard_val, done_blk, do_init);
+
+    LLVMPositionBuilderAtEnd(builder, do_init);
+    LLVMBuildStore(builder, LLVMConstInt(i1_type, 1, 0), guard_global);
+
+    LLVMValueRef init_val = nullptr;
+    if (stmt.expr) {
+        TypedValue tv = codegen_expr(*stmt.expr);
+        TypedValue coerced = coerce_to_tag(tv, tag);
+        init_val = coerced.val;
+    } else {
+        switch (tag) {
+            case JD_TAG_F64: init_val = LLVMConstReal(f64_type, 0.0); break;
+            case JD_TAG_STR:
+                init_val = LLVMBuildGlobalStringPtr(builder, "", ".st_s_init");
+                break;
+            case JD_TAG_ARR: {
+                auto& arr_new = runtime_funcs["__array_new"];
+                LLVMValueRef zero = LLVMConstInt(i64_type, 0, 0);
+                init_val = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn,
+                                           &zero, 1, "");
+                break;
+            }
+            case JD_TAG_NATIVE_MAP: {
+                auto& map_new = runtime_funcs["__map_new"];
+                init_val = LLVMBuildCall2(builder, map_new.fn_type, map_new.fn,
+                                           nullptr, 0, "");
+                break;
+            }
+            default: init_val = LLVMConstInt(i64_type, 0, 0); break;
+        }
+    }
+
+    LLVMBuildStore(builder, init_val, slot_global);
+    LLVMBuildBr(builder, done_blk);
+
+    LLVMPositionBuilderAtEnd(builder, done_blk);
+}
+
 void LLVMCodegen::codegen_dim(const Stmt& stmt) {
+    if (stmt.is_static) {
+        codegen_static_dim(stmt);
+        return;
+    }
     // Phase 4 STRICT: DIM with declared type + initializer must match.
     // `DIM x AS INTEGER = "hello"` is the canonical bug this catches.
     // ARRAY and multi-dim shape inits are exempt — the initializer shape

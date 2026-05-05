@@ -893,6 +893,38 @@ void VM::run() {
             break;
         }
 
+        case OpCode::LOAD_STATIC: {
+            uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
+            cf.ip += 2;
+            if (sp >= stack.size()) stack.resize(stack.size() * 2);
+            stack[sp++] = cf.chunk->static_values[slot];
+            break;
+        }
+
+        case OpCode::STORE_STATIC: {
+            uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
+            cf.ip += 2;
+            cf.chunk->static_values[slot] = std::move(stack[--sp]);
+            break;
+        }
+
+        case OpCode::MAYBE_INIT_STATIC: {
+            // op(1) consumed; operands: u16 slot, i16 skip_offset
+            uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
+            int16_t off = (int16_t)(cf.chunk->code[cf.ip + 2] | (cf.chunk->code[cf.ip + 3] << 8));
+            cf.ip += 4;
+            if (cf.chunk->static_inited[slot]) {
+                cf.ip = (size_t)((ptrdiff_t)cf.ip + off);
+            } else {
+                // Set the guard BEFORE running init so a recursive call from
+                // inside the initializer terminates against the default
+                // slot value rather than re-entering the init block.
+                cf.chunk->static_inited[slot] = 1;
+                // Fall through to the init block.
+            }
+            break;
+        }
+
         case OpCode::LOAD_GLOBAL: {
             uint16_t name_idx = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip += 2;

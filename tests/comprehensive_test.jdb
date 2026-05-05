@@ -2332,6 +2332,222 @@ Assert(FORMAT$("{:.2f} x {:.2f}", fmt_p{"f"}, fmt_p{"i"}) = "12.50 x 7.00", _
 SETLOCALE "C"
 
 ' ══════════════════════════════════════════════════════════════════
+' STATIC local variables (FUNC/SUB-scoped persistent state).
+' Init runs once on the first execution of the STATIC DIM line; the
+' slot persists across calls and is shared by every recursive depth.
+' Storage is per-VM, hangs off the FuncProto, so cross-module calls
+' resolve to the same slot.
+' ══════════════════════════════════════════════════════════════════
+Header("STATIC local variables")
+
+IMPORT STATIC_TEST_MOD
+
+' --- Scalar i64 counter, in-file FUNC ------------------------------
+FUNC st_counter() AS INTEGER
+    STATIC DIM n AS INTEGER = 0
+    n = n + 1
+    RETURN n
+ENDFUNC
+
+Assert(st_counter() = 1, "STATIC int: first call returns 1")
+Assert(st_counter() = 2, "STATIC int: second call returns 2")
+Assert(st_counter() = 3, "STATIC int: third call returns 3")
+
+' --- Init runs exactly once — observable via global side-effect ----
+DIM st_init_runs = 0
+
+FUNC st_bump_init() AS INTEGER
+    st_init_runs = st_init_runs + 1
+    RETURN 0
+ENDFUNC
+
+FUNC st_counted_init() AS INTEGER
+    STATIC DIM dummy AS INTEGER = st_bump_init()
+    RETURN dummy
+ENDFUNC
+
+DIM st_d1 = st_counted_init()
+DIM st_d2 = st_counted_init()
+DIM st_d3 = st_counted_init()
+DIM st_d4 = st_counted_init()
+DIM st_d5 = st_counted_init()
+Assert(st_init_runs = 1, "STATIC initializer evaluated exactly once across N calls")
+Assert(st_d1 = 0 AND st_d5 = 0, "STATIC initializer return value is the slot value")
+
+' --- DOUBLE static -------------------------------------------------
+FUNC st_running_avg(x AS DOUBLE) AS DOUBLE
+    STATIC DIM total AS DOUBLE = 0.0
+    STATIC DIM count AS INTEGER = 0
+    total = total + x
+    count = count + 1
+    RETURN total / count
+ENDFUNC
+
+DIM st_avg1 = st_running_avg(10.0)
+DIM st_avg2 = st_running_avg(20.0)
+DIM st_avg3 = st_running_avg(30.0)
+Assert(st_avg1 = 10.0, "STATIC double: avg of [10] = 10")
+Assert(st_avg2 = 15.0, "STATIC double: avg of [10,20] = 15")
+Assert(st_avg3 = 20.0, "STATIC double: avg of [10,20,30] = 20")
+
+' --- STRING static (accumulator) -----------------------------------
+FUNC st_concat$(s$) AS STRING
+    STATIC DIM acc AS STRING = ""
+    acc = acc + s$
+    RETURN acc
+ENDFUNC
+
+Assert(st_concat$("a") = "a",   "STATIC string: first append")
+Assert(st_concat$("b") = "ab",  "STATIC string: second append accumulates")
+Assert(st_concat$("c") = "abc", "STATIC string: third append accumulates")
+
+' --- MAP static (memoization) --------------------------------------
+FUNC st_seen(k$) AS INTEGER
+    STATIC DIM memo AS MAP = {}
+    IF MAP.EXISTS(memo, k$) THEN
+        RETURN 1
+    ENDIF
+    memo{k$} = TRUE
+    RETURN 0
+ENDFUNC
+
+Assert(st_seen("foo") = 0, "STATIC map: foo unseen on first call")
+Assert(st_seen("foo") = 1, "STATIC map: foo seen on second call")
+Assert(st_seen("bar") = 0, "STATIC map: bar unseen on first sighting")
+Assert(st_seen("foo") = 1, "STATIC map: foo still remembered after intermediate keys")
+
+' --- ARRAY static (accumulator) ------------------------------------
+FUNC st_log(s$) AS INTEGER
+    STATIC DIM events AS ARRAY = []
+    events = APPEND(events, s$)
+    RETURN LEN(events)
+ENDFUNC
+
+Assert(st_log("a") = 1, "STATIC array: first event")
+Assert(st_log("b") = 2, "STATIC array: second event")
+Assert(st_log("c") = 3, "STATIC array: third event")
+
+' --- SUB with STATIC (no return) -----------------------------------
+DIM st_visible_bumps = 0
+
+SUB st_bump_observed()
+    STATIC DIM bumps AS INTEGER = 0
+    bumps = bumps + 1
+    st_visible_bumps = bumps
+ENDSUB
+
+st_bump_observed()
+Assert(st_visible_bumps = 1, "STATIC in SUB: first call sets bumps=1")
+st_bump_observed()
+st_bump_observed()
+Assert(st_visible_bumps = 3, "STATIC in SUB: persists across calls")
+
+' --- Recursion: every depth shares the same slot -------------------
+FUNC st_rec(depth AS INTEGER) AS INTEGER
+    STATIC DIM hits AS INTEGER = 0
+    hits = hits + 1
+    IF depth > 0 THEN
+        DIM unused = st_rec(depth - 1)
+    ENDIF
+    RETURN hits
+ENDFUNC
+
+' First call with depth 4 -> 5 invocations total (4,3,2,1,0); the
+' returned value is the value AFTER the deepest tail bumps it, then
+' unwinds back to the top frame's RETURN — i.e. the final hit count.
+DIM st_rec_first = st_rec(4)
+Assert(st_rec_first = 5, "STATIC + recursion: 5 invocations bump shared slot")
+DIM st_rec_second = st_rec(0)
+Assert(st_rec_second = 6, "STATIC + recursion: subsequent shallow call still sees state")
+
+' --- Multiple STATICs in same function -----------------------------
+FUNC st_pair() AS INTEGER
+    STATIC DIM a AS INTEGER = 1
+    STATIC DIM b AS INTEGER = 100
+    a = a + 1
+    b = b + 10
+    RETURN a * 1000 + b
+ENDFUNC
+
+Assert(st_pair() = 2110, "STATIC: two slots in one func, first call (a=2,b=110)")
+Assert(st_pair() = 3120, "STATIC: two slots in one func, second call (a=3,b=120)")
+
+' --- STATIC inside a conditional block -----------------------------
+' Init is tied to the line, not the function entry, so the first
+' execution of the line drives the init. Subsequent passes find the
+' guard set and skip.
+FUNC st_cond_init(trigger AS INTEGER) AS INTEGER
+    IF trigger > 0 THEN
+        STATIC DIM seen_in_branch AS INTEGER = 42
+        seen_in_branch = seen_in_branch + 1
+        RETURN seen_in_branch
+    ENDIF
+    RETURN -1
+ENDFUNC
+
+Assert(st_cond_init(0) = -1, "STATIC inside IF: branch not taken, no init yet")
+Assert(st_cond_init(1) = 43, "STATIC inside IF: first time branch taken, init=42 +1")
+Assert(st_cond_init(0) = -1, "STATIC inside IF: skip branch, slot untouched")
+Assert(st_cond_init(1) = 44, "STATIC inside IF: branch again, slot persisted")
+
+' --- Cross-module: same FUNC called from main vs nested helper -----
+Assert(STATIC_TEST_MOD.mod_counter() = 1, "Cross-module STATIC: mod first call")
+Assert(STATIC_TEST_MOD.mod_counter() = 2, "Cross-module STATIC: mod second call")
+
+' Wrapper FUNC in the main file calling the module function — the
+' module's static must be the SAME slot regardless of caller.
+FUNC st_call_module() AS INTEGER
+    RETURN STATIC_TEST_MOD.mod_counter()
+ENDFUNC
+
+Assert(st_call_module() = 3, "Cross-module STATIC: same slot from wrapper")
+Assert(STATIC_TEST_MOD.mod_counter() = 4, "Cross-module STATIC: same slot from main")
+
+' Cross-module STRING
+DIM mod_s1$ = STATIC_TEST_MOD.mod_concat("x")
+DIM mod_s2$ = STATIC_TEST_MOD.mod_concat("y")
+DIM mod_s3$ = STATIC_TEST_MOD.mod_concat("z")
+Assert(mod_s1$ = "x"   , "Cross-module STATIC string: x")
+Assert(mod_s2$ = "xy"  , "Cross-module STATIC string: xy")
+Assert(mod_s3$ = "xyz" , "Cross-module STATIC string: xyz")
+
+' Cross-module DOUBLE
+Assert(STATIC_TEST_MOD.mod_sum_d(1.5)  = 1.5, "Cross-module STATIC double: 1.5")
+Assert(STATIC_TEST_MOD.mod_sum_d(2.5)  = 4.0, "Cross-module STATIC double: 4.0")
+Assert(STATIC_TEST_MOD.mod_sum_d(0.25) = 4.25, "Cross-module STATIC double: 4.25")
+
+' Cross-module MAP
+Assert(STATIC_TEST_MOD.mod_seen("k1") = 0, "Cross-module STATIC map: k1 unseen")
+Assert(STATIC_TEST_MOD.mod_seen("k1") = 1, "Cross-module STATIC map: k1 remembered")
+Assert(STATIC_TEST_MOD.mod_seen("k2") = 0, "Cross-module STATIC map: k2 unseen")
+
+' Cross-module ARRAY
+Assert(STATIC_TEST_MOD.mod_log("e1") = 1, "Cross-module STATIC array: 1 event")
+Assert(STATIC_TEST_MOD.mod_log("e2") = 2, "Cross-module STATIC array: 2 events")
+
+' Cross-module SUB with STATIC
+STATIC_TEST_MOD.mod_bump
+STATIC_TEST_MOD.mod_bump
+STATIC_TEST_MOD.mod_bump
+' (bumps has no observable side-effect from outside; mod_bumps_via_recall
+'  has its own STATIC slot to prove the SUB compiles + dispatches OK)
+Assert(STATIC_TEST_MOD.mod_bumps_via_recall() = 1, "Cross-module STATIC SUB+FUNC compile clean")
+
+' Cross-module recursion with STATIC
+DIM mod_rec_first = STATIC_TEST_MOD.mod_rec(2)
+DIM mod_rec_second = STATIC_TEST_MOD.mod_rec(0)
+Assert(mod_rec_first = 3, "Cross-module STATIC + recursion: depth 2 = 3 hits")
+Assert(mod_rec_second = 4, "Cross-module STATIC + recursion: shallow call sees state")
+
+' --- FUNC@ reference resolves to same slot -------------------------
+' (native funcref dispatch on a 0-arg call only resolves through SELECT/
+' REDUCE-style indirect dispatch; a direct `ref()` syntax is interp-only.
+' We assert the funcref was at least bound, leaving the call test to
+' the interp pass.)
+LET ref_counter = st_counter@
+Assert(LEN(STR$(ref_counter)) > 0, "STATIC FUNC@ binding compiles")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

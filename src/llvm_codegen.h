@@ -307,6 +307,11 @@ private:
     void codegen_stmt(const Stmt& stmt);
     void codegen_let_or_assign(const Stmt& stmt);
     void codegen_dim(const Stmt& stmt);
+    // STATIC DIM <name> [AS T] [= init] inside a FUNC/SUB. Allocates a
+    // module-private global plus an i1 init guard, wraps the init in a
+    // first-call branch, and records the slot in scope.vars so subsequent
+    // reads/writes route through the regular alloca-based load/store path.
+    void codegen_static_dim(const Stmt& stmt);
     void codegen_index_assign(const Stmt& stmt);
     void codegen_print(const Stmt& stmt);
     void codegen_for(const Stmt& stmt);

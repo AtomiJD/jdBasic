@@ -113,6 +113,27 @@ StmtPtr Parser::parse_statement() {
     switch (current().type) {
         case TokenType::LET:     return parse_let();
         case TokenType::DIM:     return parse_dim();
+        case TokenType::STATIC_KW: {
+            // STATIC DIM <decl>[, <decl>...] inside FUNC/SUB body.
+            // Each declared slot persists across calls; init runs once,
+            // guarded at the line. Top-level STATIC is rejected.
+            int ln = current().line;
+            advance(); // STATIC
+            if (!check(TokenType::DIM)) {
+                throw std::runtime_error("Line " + std::to_string(ln) +
+                    ": expected DIM after STATIC");
+            }
+            advance(); // DIM
+            StmtPtr first = parse_dim_clause(ln);
+            first->is_static = true;
+            while (match(TokenType::COMMA)) {
+                auto more = parse_dim_clause(ln);
+                more->is_static = true;
+                pending_stmts.push_back(std::move(more));
+            }
+            expect_newline();
+            return first;
+        }
         case TokenType::CONST_KW: return parse_const();
         case TokenType::PRINT:   return parse_print();
         case TokenType::INPUT:   return parse_input();
