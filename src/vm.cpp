@@ -1,6 +1,7 @@
 #include "vm.h"
 #include "dap.h"
 #include "errors.h"
+#include "channels.h"
 #ifdef COM
 #include "com.h"
 #endif
@@ -591,6 +592,8 @@ bool jdb_no_vectorize(const std::string& name) {
         "PATH.DIRNAME$", "PATH.NORMALIZE$",
         "RECUR", "CLEAR_RECUR", "LIST_RECUR",
         "AWAIT", "THREAD.ISDONE", "THREAD.GETRESULT",
+        "CHAN.OPEN", "CHAN.SEND", "CHAN.RECV", "CHAN.CLOSE",
+        "CHAN.IS_EOF", "CHAN.IS_CLOSED", "CHAN.LEN", "CHAN.CAP",
         "REACT_BIND", "UNREACT",
         "EXECUTE", "EVAL",
         "JDB.GLOBAL_GET", "JDB.GLOBAL_SET", "JDB.CHECK$", "FUNCS",
@@ -6394,6 +6397,141 @@ void VM::register_builtins() {
         { std::lock_guard<std::mutex> lock(g_async_mutex);
           g_async_tasks.erase(task_id); }
         return result;
+    });
+
+    // ── Channels ──────────────────────────────────────────────
+    //
+    // Bounded MP/MC queue between ASYNC tasks (each ASYNC FUNC = its own
+    // OS thread + VM, see CALL dispatch above). Channels live in a global
+    // registry indexed by an i64 handle; the handle survives the per-VM
+    // globals copy that happens when ASYNC spawns, so worker tasks can
+    // look up the same Channel as the spawner.
+
+    // CHAN.OPEN(capacity) → handle. Capacity 0 → unbuffered rendezvous.
+    register_native("CHAN.OPEN", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t cap = args[0].to_int();
+        if (cap < 0) {
+            throw std::runtime_error("CHAN.OPEN: capacity must be >= 0");
+        }
+        auto ch = std::make_shared<Channel>();
+        ch->capacity = cap;
+        int64_t id = chan_register(ch);
+        return Value::make_i64(id);
+    });
+
+    // CHAN.SEND(ch, value) — blocks the calling thread when buffer is full.
+    // Throws on a closed channel.
+    register_native("CHAN.SEND", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) {
+            throw std::runtime_error("CHAN.SEND: invalid channel handle " + std::to_string(handle));
+        }
+        Value v = args[1];
+
+        std::unique_lock<std::mutex> lock(ch->mtx);
+        if (ch->capacity == 0) {
+            // Unbuffered rendezvous: park until a RECV is waiting, then
+            // hand the value through and wake exactly one receiver.
+            ++ch->waiting_send;
+            ch->buffer.push_back(std::move(v));
+            ch->cv_recv.notify_one();
+            // Wait for the receiver to drain our slot or the channel to close.
+            ch->cv_send.wait(lock, [&]() {
+                return ch->buffer.empty() || ch->closed.load();
+            });
+            --ch->waiting_send;
+            if (ch->closed.load() && !ch->buffer.empty()) {
+                // RECV never came + we got closed mid-flight → drop the
+                // value and report.
+                ch->buffer.pop_back();
+                throw std::runtime_error("CHAN.SEND: channel closed before delivery");
+            }
+            return Value::make_none();
+        }
+
+        // Bounded buffer: wait until there's room or we're closed.
+        ++ch->waiting_send;
+        ch->cv_send.wait(lock, [&]() {
+            return ch->buffer.size() < (size_t)ch->capacity || ch->closed.load();
+        });
+        --ch->waiting_send;
+        if (ch->closed.load()) {
+            throw std::runtime_error("CHAN.SEND: channel is closed");
+        }
+        ch->buffer.push_back(std::move(v));
+        ch->cv_recv.notify_one();
+        return Value::make_none();
+    });
+
+    // CHAN.RECV(ch) → value. Blocks while empty. Returns the EOF marker
+    // when the channel is closed AND the buffer is drained.
+    register_native("CHAN.RECV", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) {
+            throw std::runtime_error("CHAN.RECV: invalid channel handle " + std::to_string(handle));
+        }
+        std::unique_lock<std::mutex> lock(ch->mtx);
+        ++ch->waiting_recv;
+        ch->cv_recv.wait(lock, [&]() {
+            return !ch->buffer.empty() || ch->closed.load();
+        });
+        --ch->waiting_recv;
+        if (ch->buffer.empty()) {
+            // Drained + closed → EOF.
+            return chan_make_eof();
+        }
+        Value out = std::move(ch->buffer.front());
+        ch->buffer.pop_front();
+        // For unbuffered rendezvous, the SENDer is parked on cv_send
+        // waiting for buffer.empty(); wake them now that we've taken
+        // their slot. Buffered case wakes a sender slot too.
+        if (ch->capacity == 0) ch->cv_send.notify_one();
+        else                    ch->cv_send.notify_one();
+        return out;
+    });
+
+    // CHAN.CLOSE(ch) — wake everyone, idempotent.
+    register_native("CHAN.CLOSE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) {
+            throw std::runtime_error("CHAN.CLOSE: invalid channel handle " + std::to_string(handle));
+        }
+        chan_close(*ch);
+        return Value::make_none();
+    });
+
+    // CHAN.IS_EOF(value) → BOOLEAN. Inspects the marker map returned by
+    // RECV on a closed+empty channel.
+    register_native("CHAN.IS_EOF", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_bool(chan_value_is_eof(args[0]));
+    });
+
+    // CHAN.IS_CLOSED(ch) → BOOLEAN.
+    register_native("CHAN.IS_CLOSED", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) return Value::make_bool(true); // gone = effectively closed
+        return Value::make_bool(ch->closed.load());
+    });
+
+    // CHAN.LEN(ch) → INTEGER. Current buffer depth (0 for unbuffered).
+    register_native("CHAN.LEN", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) return Value::make_i64(0);
+        std::lock_guard<std::mutex> lock(ch->mtx);
+        return Value::make_i64((int64_t)ch->buffer.size());
+    });
+
+    // CHAN.CAP(ch) → INTEGER. Capacity for diagnostics.
+    register_native("CHAN.CAP", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) return Value::make_i64(0);
+        return Value::make_i64(ch->capacity);
     });
 
     // ── Filesystem ────────────────────────────────────────────

@@ -6378,6 +6378,17 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
 
+    // Phase 1: Channels are interp-only. The runtime data structure
+    // (mutex + condvars + std::deque<Value>) lives behind native bridge
+    // calls we haven't shaped yet, and it's not worth the API surface
+    // until ASYNC FUNC is shippable in native too. Fail clear and early.
+    if (name.size() >= 5 && name.compare(0, 5, "CHAN.") == 0) {
+        report_error("", expr.line,
+            "Channels (CHAN.*) are not yet supported in native compile. "
+            "Compile in interp mode or run via the REPL.");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
+
     // UNIQUE on a string-tracked array dedupes by strcmp instead of by
     // raw double bits (which only catches pointer-identity duplicates).
     // Route to the dedicated runtime when the source var is known to be

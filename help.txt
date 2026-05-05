@@ -98,6 +98,38 @@ Description: Changes the current working directory.
 Syntax: CDATE(date_string$ [, tz_hours])
 Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. Alias for CVDATE. With tz_hours, the string is interpreted as wall-clock time in that UTC offset.
 
+[CHAN.OPEN]
+Syntax: CHAN.OPEN(capacity) -> handle
+Description: Creates a bounded MP/MC channel. Capacity 0 = unbuffered rendezvous. Returns an i64 handle that can be passed across ASYNC FUNC boundaries. Phase 1 is interp-only.
+
+[CHAN.SEND]
+Syntax: CHAN.SEND(handle, value)
+Description: Pushes a value into the channel. Blocks while the buffer is full. Throws if the channel is closed.
+
+[CHAN.RECV]
+Syntax: CHAN.RECV(handle) -> value
+Description: Pops a value from the channel. Blocks while empty. Returns the EOF marker once the channel is closed AND drained. Use CHAN.IS_EOF to test the result.
+
+[CHAN.CLOSE]
+Syntax: CHAN.CLOSE(handle)
+Description: Marks the channel as closed and wakes every parked SEND/RECV. Idempotent. Subsequent SENDs throw; RECVs drain the remaining buffer then return EOF.
+
+[CHAN.IS_EOF]
+Syntax: CHAN.IS_EOF(value) -> boolean
+Description: Returns TRUE if `value` is the channel-EOF marker (a small map with key __chan_eof__). All other values, including TRUE/FALSE/NONE, return FALSE.
+
+[CHAN.IS_CLOSED]
+Syntax: CHAN.IS_CLOSED(handle) -> boolean
+Description: TRUE if the channel was closed (or the handle is invalid).
+
+[CHAN.LEN]
+Syntax: CHAN.LEN(handle) -> integer
+Description: Current depth of the channel buffer (queued items waiting for RECV).
+
+[CHAN.CAP]
+Syntax: CHAN.CAP(handle) -> integer
+Description: Capacity the channel was opened with. 0 means unbuffered rendezvous.
+
 [CVDATE]
 Syntax: CVDATE(date_string$ [, tz_hours])
 Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime value. With tz_hours, the string is interpreted as wall-clock time in that UTC offset (e.g. CVDATE("2024-01-15 14:00:00", 2) yields the same instant as CVDATE("2024-01-15 12:00:00", 0)).

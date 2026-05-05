@@ -2161,6 +2161,76 @@ This section describes functions for low-level, background-threaded tasks, disti
 * **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronius.
 * **`AWAIT task`**: Waits for the given task to be completed and returns the result of the function.
 
+### Channels (Phase 1)
+
+Channels are bounded MP/MC queues for ASYNC tasks. Each `ASYNC FUNC` runs
+on its own OS thread with a fresh VM copy of globals/funcs; channels live
+in a process-global registry indexed by an `i64` handle, so workers can
+look up the same Channel regardless of which VM they belong to.
+
+`CHAN.SEND` blocks the calling thread when the buffer is full. `CHAN.RECV`
+blocks while empty. `CHAN.CLOSE` wakes everyone — pending RECVers drain
+the rest of the buffer and then keep returning the **EOF marker** (a
+`MAP { __chan_eof__: TRUE }`, recognised by `CHAN.IS_EOF`). Send on a
+closed channel throws.
+
+Phase 1 is **interp-only**. Native compile (`-c`) rejects `CHAN.*` with a
+clear error — Phase 2 will close the gap.
+
+| Native | Signature | Behaviour |
+|---|---|---|
+| `CHAN.OPEN(capacity)` | `INTEGER → handle` | `capacity = 0` → unbuffered rendezvous; `> 0` → bounded queue. |
+| `CHAN.SEND(ch, value)` | `handle, ANY` | Blocks while buffer full. Throws on a closed channel. |
+| `CHAN.RECV(ch)` | `handle → value` | Blocks while empty. Returns the EOF marker on a closed-and-drained channel. |
+| `CHAN.CLOSE(ch)` | `handle` | Idempotent. Wakes every parked SEND/RECV. |
+| `CHAN.IS_EOF(value)` | `ANY → BOOLEAN` | Tests if a `RECV` result is the EOF marker. |
+| `CHAN.IS_CLOSED(ch)` | `handle → BOOLEAN` | Status query. Returns `TRUE` for unknown handles. |
+| `CHAN.LEN(ch)` | `handle → INTEGER` | Current buffer depth. |
+| `CHAN.CAP(ch)` | `handle → INTEGER` | Configured capacity (for diagnostics). |
+
+```basic
+ASYNC FUNC produce(handle, n)
+    FOR i = 1 TO n
+        CHAN.SEND handle, i
+    NEXT
+    CHAN.CLOSE handle
+ENDFUNC
+
+ASYNC FUNC consume(handle)
+    DIM total = 0
+    DO
+        DIM v = CHAN.RECV(handle)
+        IF CHAN.IS_EOF(v) THEN EXITDO
+        total = total + v
+    LOOP
+    RETURN total
+ENDFUNC
+
+DIM ch = CHAN.OPEN(4)             ' tiny buffer → real backpressure
+DIM p  = produce(ch, 1000)
+DIM c  = consume(ch)
+PRINT AWAIT c                       ' 500500
+```
+
+Idiom: drain a channel until EOF using a `DO ... LOOP` with an explicit
+`CHAN.IS_EOF` check. Phase 2 will add native `FOR EACH v IN ch` for the
+same pattern.
+
+Worker-pool / fan-in / fan-out flows fall out naturally:
+
+```basic
+DIM jobs    = CHAN.OPEN(0)         ' unbuffered → producer waits for a free worker
+DIM results = CHAN.OPEN(64)
+DIM w1 = worker(jobs, results)
+DIM w2 = worker(jobs, results)
+FOR EACH path$ IN DIR$("data/*.csv")
+    CHAN.SEND jobs, path$
+NEXT
+CHAN.CLOSE jobs                    ' workers drain, see EOF, exit
+DIM r1 = AWAIT w1
+DIM r2 = AWAIT w2
+```
+
 ```basic
 ' This function simulates a "download" that takes some time.
 ASYNC FUNC DOWNLOADFILE(url$, duration)

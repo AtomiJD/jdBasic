@@ -1,0 +1,159 @@
+' ══════════════════════════════════════════════════════════════════
+'  Channel Phase 1 — single-thread asserts.
+'  Buffered channels with capacity > 0 don't block in single-thread
+'  use; covers the data-structure, capacity tracking, close-and-drain
+'  semantics, and the EOF marker.
+'  Multi-thread behaviour lives in test_channels_concurrent.jdb.
+' ══════════════════════════════════════════════════════════════════
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── OPEN / capacity / fresh state ─────────────────────────────────
+Header("OPEN / capacity / fresh state")
+DIM ch1 = CHAN.OPEN(4)
+Assert(CHAN.CAP(ch1) = 4,         "CHAN.CAP returns capacity")
+Assert(CHAN.LEN(ch1) = 0,         "fresh channel has len 0")
+Assert(NOT CHAN.IS_CLOSED(ch1),   "fresh channel not closed")
+
+' ── Buffered SEND / RECV preserves FIFO order ─────────────────────
+Header("Buffered SEND/RECV / FIFO order")
+CHAN.SEND ch1, 10
+CHAN.SEND ch1, 20
+CHAN.SEND ch1, 30
+Assert(CHAN.LEN(ch1) = 3,         "len = 3 after 3 sends")
+Assert(CHAN.RECV(ch1) = 10,       "FIFO: recv #1 = 10")
+Assert(CHAN.RECV(ch1) = 20,       "FIFO: recv #2 = 20")
+Assert(CHAN.LEN(ch1) = 1,         "len = 1 after 2 recvs")
+
+' ── CLOSE drains buffer, then yields EOF ──────────────────────────
+Header("CLOSE + drain + EOF marker")
+CHAN.CLOSE ch1
+Assert(CHAN.IS_CLOSED(ch1),       "CHAN.IS_CLOSED true after close")
+Assert(CHAN.RECV(ch1) = 30,       "RECV drains remaining buffer after close")
+DIM eof_v = CHAN.RECV(ch1)
+Assert(CHAN.IS_EOF(eof_v),        "RECV on closed+empty returns EOF marker")
+Assert(CHAN.IS_EOF(CHAN.RECV(ch1)), "EOF is sticky once drained")
+
+' ── SEND on closed channel throws ─────────────────────────────────
+Header("SEND on closed throws")
+DIM threw = FALSE
+TRY
+    CHAN.SEND ch1, 99
+CATCH
+    threw = TRUE
+ENDTRY
+Assert(threw,                     "SEND on closed channel throws")
+
+' ── CLOSE is idempotent ───────────────────────────────────────────
+Header("Idempotent CLOSE")
+CHAN.CLOSE ch1
+Assert(CHAN.IS_CLOSED(ch1),       "second CLOSE keeps state closed (no throw)")
+
+' ── EOF is_eof recogniser is strict ───────────────────────────────
+Header("IS_EOF recogniser is strict")
+Assert(NOT CHAN.IS_EOF(42),       "integer is not EOF")
+Assert(NOT CHAN.IS_EOF("foo"),    "string is not EOF")
+Assert(NOT CHAN.IS_EOF(TRUE),     "bool is not EOF")
+Assert(NOT CHAN.IS_EOF([1, 2, 3]),"array is not EOF")
+DIM not_eof_map AS MAP
+not_eof_map{"x"} = 1
+Assert(NOT CHAN.IS_EOF(not_eof_map), "regular map is not EOF")
+
+' ── Mixed scalar types round-trip via the same channel ────────────
+Header("Mixed scalar types")
+DIM ch2 = CHAN.OPEN(8)
+CHAN.SEND ch2, 42
+CHAN.SEND ch2, "hello"
+CHAN.SEND ch2, 3.14
+CHAN.SEND ch2, TRUE
+Assert(CHAN.RECV(ch2) = 42,       "i64 round-trip")
+Assert(CHAN.RECV(ch2) = "hello",  "string round-trip")
+Assert(CHAN.RECV(ch2) = 3.14,     "f64 round-trip")
+Assert(CHAN.RECV(ch2) = TRUE,     "bool round-trip")
+CHAN.CLOSE ch2
+
+' ── Map / array values flow through ───────────────────────────────
+Header("Map and array payloads")
+DIM ch3 = CHAN.OPEN(4)
+DIM payload AS MAP
+payload{"key"} = "value"
+payload{"n"} = 7
+CHAN.SEND ch3, payload
+CHAN.SEND ch3, [10, 20, 30]
+DIM rcv_map = CHAN.RECV(ch3)
+Assert(rcv_map{"key"} = "value",  "map field 'key' preserved")
+Assert(rcv_map{"n"} = 7,          "map field 'n' preserved")
+DIM rcv_arr = CHAN.RECV(ch3)
+Assert(LEN(rcv_arr) = 3,          "array length preserved")
+Assert(rcv_arr[1] = 20,           "array element preserved")
+CHAN.CLOSE ch3
+
+' ── Capacity boundary: filling exactly to capacity is allowed ─────
+Header("Fill exactly to capacity")
+DIM ch4 = CHAN.OPEN(3)
+CHAN.SEND ch4, "a"
+CHAN.SEND ch4, "b"
+CHAN.SEND ch4, "c"
+Assert(CHAN.LEN(ch4) = 3,         "len reaches capacity without blocking")
+Assert(CHAN.CAP(ch4) = 3,         "cap unchanged after fill")
+Assert(CHAN.RECV(ch4) = "a",      "drain order preserved at boundary")
+Assert(CHAN.RECV(ch4) = "b",      "drain order preserved (b)")
+Assert(CHAN.RECV(ch4) = "c",      "drain order preserved (c)")
+CHAN.CLOSE ch4
+
+' ── Idiomatic DO/RECV/EOF loop drains a closed channel ────────────
+Header("Idiomatic DO loop with EOF check")
+DIM ch5 = CHAN.OPEN(8)
+FOR i = 1 TO 5
+    CHAN.SEND ch5, i * 10
+NEXT
+CHAN.CLOSE ch5
+DIM total = 0
+DIM count = 0
+DO
+    DIM v = CHAN.RECV(ch5)
+    IF CHAN.IS_EOF(v) THEN EXITDO
+    total = total + v
+    count = count + 1
+LOOP
+Assert(total = 150,               "DO/RECV/EOF loop sums [10..50] = 150")
+Assert(count = 5,                 "DO/RECV/EOF loop visits 5 elements")
+
+' ── Invalid handle errors cleanly ─────────────────────────────────
+Header("Invalid handle handling")
+DIM bad_threw = FALSE
+TRY
+    DIM x = CHAN.RECV(99999)
+CATCH
+    bad_threw = TRUE
+ENDTRY
+Assert(bad_threw,                 "RECV on non-existent handle throws")
+Assert(CHAN.IS_CLOSED(99999),     "IS_CLOSED on missing handle returns true")
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " CHANNELS (single-thread): PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

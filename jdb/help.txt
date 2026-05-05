@@ -94,6 +94,38 @@ Description: Changes the current working directory.
 Syntax: CEIL(numeric_expression)
 Description: Rounds a number up to the nearest integer.
 
+[CHAN.OPEN]
+Syntax: CHAN.OPEN(capacity) -> handle
+Description: Creates a bounded MP/MC channel. Capacity 0 = unbuffered rendezvous. Returns an i64 handle that can be passed across ASYNC FUNC boundaries. Phase 1 is interp-only.
+
+[CHAN.SEND]
+Syntax: CHAN.SEND(handle, value)
+Description: Pushes a value into the channel. Blocks while the buffer is full. Throws if the channel is closed.
+
+[CHAN.RECV]
+Syntax: CHAN.RECV(handle) -> value
+Description: Pops a value from the channel. Blocks while empty. Returns the EOF marker once the channel is closed AND drained. Use CHAN.IS_EOF to test the result.
+
+[CHAN.CLOSE]
+Syntax: CHAN.CLOSE(handle)
+Description: Marks the channel as closed and wakes every parked SEND/RECV. Idempotent.
+
+[CHAN.IS_EOF]
+Syntax: CHAN.IS_EOF(value) -> boolean
+Description: Returns TRUE if `value` is the channel-EOF marker.
+
+[CHAN.IS_CLOSED]
+Syntax: CHAN.IS_CLOSED(handle) -> boolean
+Description: TRUE if the channel was closed (or the handle is invalid).
+
+[CHAN.LEN]
+Syntax: CHAN.LEN(handle) -> integer
+Description: Current depth of the channel buffer.
+
+[CHAN.CAP]
+Syntax: CHAN.CAP(handle) -> integer
+Description: Capacity the channel was opened with.
+
 [CHR$]
 Syntax: CHR$(ascii_code)
 Description: Returns the character corresponding to an ASCII code.

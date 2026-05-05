@@ -1,0 +1,171 @@
+' ══════════════════════════════════════════════════════════════════
+'  Channel Phase 1 — multi-thread asserts.
+'  ASYNC FUNC = real OS thread (vm.cpp spawns std::thread per call,
+'  each task gets its own VM with copies of globals/funcs). The
+'  channel handle is a plain i64, so worker tasks can look up the
+'  same Channel via the process-global registry.
+'  Producer and consumer therefore live in separate ASYNC FUNCs,
+'  block on condvars when buffer is full/empty, and wake each
+'  other through CHAN.SEND/RECV.
+' ══════════════════════════════════════════════════════════════════
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Bounded buffer + backpressure: 1000 items through capacity 4 ──
+Header("Bounded buffer / backpressure")
+
+ASYNC FUNC produce_range(handle, n)
+    FOR i = 1 TO n
+        CHAN.SEND handle, i
+    NEXT
+    CHAN.CLOSE handle
+    RETURN n
+ENDFUNC
+
+ASYNC FUNC consume_sum(handle)
+    DIM total = 0
+    DO
+        DIM v = CHAN.RECV(handle)
+        IF CHAN.IS_EOF(v) THEN EXITDO
+        total = total + v
+    LOOP
+    RETURN total
+ENDFUNC
+
+DIM ch1 = CHAN.OPEN(4)               ' tiny buffer forces real backpressure
+DIM p1 = produce_range(ch1, 1000)
+DIM c1 = consume_sum(ch1)
+DIM s1 = AWAIT c1
+DIM r1 = AWAIT p1
+Assert(s1 = 500500,                  "sum 1..1000 across thread boundary")
+Assert(r1 = 1000,                    "producer reports n sent")
+
+' ── Larger buffer, same correctness ───────────────────────────────
+Header("Larger buffer (cap 256)")
+DIM ch2 = CHAN.OPEN(256)
+DIM p2 = produce_range(ch2, 5000)
+DIM c2 = consume_sum(ch2)
+DIM s2 = AWAIT c2
+DIM r2 = AWAIT p2
+Assert(s2 = 12502500,                "sum 1..5000 with bigger buffer")
+Assert(r2 = 5000,                    "producer count")
+
+' ── Two producers feeding one consumer (fan-in) ───────────────────
+Header("Fan-in: two producers, one consumer")
+
+ASYNC FUNC produce_range_partial(handle, lo, hi)
+    FOR i = lo TO hi
+        CHAN.SEND handle, i
+    NEXT
+    RETURN hi - lo + 1
+ENDFUNC
+
+' Closer task waits for both producers, then closes the channel so
+' the consumer's RECV loop terminates with EOF.
+ASYNC FUNC close_after(handle, t1, t2)
+    DIM x = AWAIT t1
+    DIM y = AWAIT t2
+    CHAN.CLOSE handle
+    RETURN x + y
+ENDFUNC
+
+DIM ch3 = CHAN.OPEN(16)
+DIM p3a = produce_range_partial(ch3, 1, 50)
+DIM p3b = produce_range_partial(ch3, 51, 100)
+DIM closer = close_after(ch3, p3a, p3b)
+DIM c3 = consume_sum(ch3)            ' real consumer drains while producers run
+
+DIM s3   = AWAIT c3
+DIM tot  = AWAIT closer
+Assert(s3 = 5050,                    "fan-in: sum 1..100 = 5050")
+Assert(tot = 100,                    "both producers sent 100 items total")
+
+' ── Worker pool: many consumers, single shared job stream ─────────
+Header("Worker pool: 4 workers, shared job stream")
+
+ASYNC FUNC sq_worker(jobs, results)
+    DIM count = 0
+    DO
+        DIM j = CHAN.RECV(jobs)
+        IF CHAN.IS_EOF(j) THEN EXITDO
+        CHAN.SEND results, j * j
+        count = count + 1
+    LOOP
+    RETURN count
+ENDFUNC
+
+DIM jobs    = CHAN.OPEN(4)
+DIM results = CHAN.OPEN(64)
+DIM w1 = sq_worker(jobs, results)
+DIM w2 = sq_worker(jobs, results)
+DIM w3 = sq_worker(jobs, results)
+DIM w4 = sq_worker(jobs, results)
+
+' Feed 20 jobs synchronously from the main thread — channel buffers
+' the burst, workers drain in parallel.
+FOR i = 1 TO 20
+    CHAN.SEND jobs, i
+NEXT
+CHAN.CLOSE jobs
+
+' Wait for all workers to drain
+DIM total_done = AWAIT w1
+total_done = total_done + AWAIT w2
+total_done = total_done + AWAIT w3
+total_done = total_done + AWAIT w4
+Assert(total_done = 20,              "4 workers together drained 20 jobs")
+
+CHAN.CLOSE results
+DIM sum_sq = 0
+DO
+    DIM s = CHAN.RECV(results)
+    IF CHAN.IS_EOF(s) THEN EXITDO
+    sum_sq = sum_sq + s
+LOOP
+Assert(sum_sq = 2870,                "sum of squares 1²+...+20² = 2870")
+
+' ── Closing while consumer is parked wakes them with EOF ──────────
+Header("Close-while-parked wakes consumers")
+
+ASYNC FUNC waiting_consumer(ch)
+    DIM v = CHAN.RECV(ch)
+    IF CHAN.IS_EOF(v) THEN
+        RETURN -1                    ' got woken by close
+    ENDIF
+    RETURN v
+ENDFUNC
+
+DIM ch4 = CHAN.OPEN(4)
+DIM cw  = waiting_consumer(ch4)
+SLEEP 50                              ' let consumer reach RECV and park
+CHAN.CLOSE ch4
+DIM result_cw = AWAIT cw
+Assert(result_cw = -1,               "parked RECV wakes with EOF on close")
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " CHANNELS (concurrent): PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF
