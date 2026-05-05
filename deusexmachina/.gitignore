@@ -1,0 +1,7 @@
+data/*.db
+data/*.db-journal
+*.dll
+*.exe
+*.obj
+*.exp
+*.lib

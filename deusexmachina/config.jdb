@@ -1,0 +1,43 @@
+' deusexmachina / config — JSON-Konfig-Loader mit mtime-Cache.
+'
+' Ein-Aufruf-Pro-Sektion-Stil: jede Datei wird beim ersten Zugriff
+' geparst und gemerkt. Nachfolgende Loads vergleichen FILE.STAT.mtime
+' und liefern aus dem Cache, oder neu parsen wenn die Datei aktualisiert
+' wurde. Hot-Reload via RECUR-Filewatch kommt in Sprint A-W3.
+'
+' Schema-Validierung ist Phase A-W3.
+
+EXPORT MODULE CONFIG
+
+DIM g_cache AS MAP    ' path -> { mtime, content }
+
+EXPORT FUNC load(path$) AS MAP
+    DIM stat = FILE.STAT(path$)
+    IF NOT stat{"exists"} THEN
+        THROW "CONFIG.load: file not found: " + path$
+    ENDIF
+    DIM mtime = stat{"mtime"}
+    IF MAP.EXISTS(g_cache, path$) THEN
+        DIM old = g_cache{path$}
+        IF old{"mtime"} = mtime THEN
+            RETURN old{"content"}
+        ENDIF
+    ENDIF
+    DIM raw$ = TXTREADER$(path$)
+    DIM content = JSON.PARSE$(raw$)
+    DIM entry AS MAP
+    entry{"mtime"} = mtime
+    entry{"content"} = content
+    g_cache{path$} = entry
+    RETURN content
+ENDFUNC
+
+EXPORT FUNC cache_size() AS INTEGER
+    RETURN MAP.SIZE(g_cache)
+ENDFUNC
+
+EXPORT SUB invalidate(path$)
+    IF MAP.EXISTS(g_cache, path$) THEN
+        MAP.DELETE g_cache, path$
+    ENDIF
+ENDSUB

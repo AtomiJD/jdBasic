@@ -1,0 +1,107 @@
+' deusexmachina — bus module tests (Sprint 1, W1)
+' Pub/sub topic registry over CHAN.*. Producer + consumer in
+' separate ASYNC FUNCs, multi-subscriber fan-in, clean-close.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT BUS
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Single-thread topic create + introspect ─────────────────────
+Header("Topic registry")
+DIM h1 = BUS.subscribe("alpha", 8)
+Assert(h1 > 0,                       "subscribe returns valid handle")
+Assert(BUS.has_topic("alpha"),       "has_topic detects new topic")
+Assert(NOT BUS.has_topic("beta"),    "has_topic false for absent")
+
+' Re-subscribe to same topic returns the same channel
+DIM h1b = BUS.subscribe("alpha", 8)
+Assert(h1 = h1b,                     "re-subscribe returns same channel")
+
+' ── Single-thread publish + drain via direct CHAN.RECV ──────────
+Header("Publish + drain")
+BUS.publish "alpha", "hello"
+BUS.publish "alpha", 42
+BUS.publish "alpha", [1, 2, 3]
+BUS.close_topic "alpha"
+
+DIM v1 = CHAN.RECV(h1)
+DIM v2 = CHAN.RECV(h1)
+DIM v3 = CHAN.RECV(h1)
+Assert(v1 = "hello",                 "string payload survives")
+Assert(v2 = 42,                      "int payload survives")
+Assert(LEN(v3) = 3,                  "array payload survives")
+DIM eof = CHAN.RECV(h1)
+Assert(CHAN.IS_EOF(eof),             "close_topic propagates EOF")
+
+' ── Concurrent: ASYNC producer feeds, sync consumer drains ──────
+' Wichtig: ASYNC FUNCs starten in einer frischen VM ohne Module-
+' Globals (nur func_map wird kopiert). Das BUS.publish-Pattern
+' (topic-name → look up in g_topics → CHAN.SEND) klappt also nur
+' im main-VM. Producer/Consumer in ASYNC-Tasks bekommen das
+' Channel-Handle als Arg übergeben und nutzen CHAN.SEND/RECV
+' direkt. Bus bleibt ein main-side-Topic-Verzeichnis.
+
+ASYNC FUNC producer_n(handle, n)
+    DIM i = 0
+    DIM written = 0
+    FOR i = 1 TO n
+        CHAN.SEND handle, i * 10
+        written = written + 1
+    NEXT
+    CHAN.CLOSE handle
+    RETURN written
+ENDFUNC
+
+DIM h2 = BUS.subscribe("counter", 4)
+DIM p = producer_n(h2, 25)
+
+DIM total AS DOUBLE = 0.0
+DIM cnt = 0
+DO
+    DIM v = CHAN.RECV(h2)
+    IF CHAN.IS_EOF(v) THEN EXITDO
+    total = total + v
+    cnt = cnt + 1
+LOOP
+
+DIM r = AWAIT p
+Assert(r = 25,                       "producer wrote 25 items")
+Assert(cnt = 25,                     "consumer received 25 items")
+Assert(total = 3250,                 "sum 10*1..25 = 3250")
+
+' ── Topic listing ───────────────────────────────────────────────
+Header("Topic listing")
+DIM ha = BUS.subscribe("topic_a", 4)
+DIM hb = BUS.subscribe("topic_b", 4)
+DIM names = BUS.list_topics()
+Assert(LEN(names) >= 2,              "list_topics returns >= 2 topics")
+BUS.close_topic "topic_a"
+BUS.close_topic "topic_b"
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " BUS: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

@@ -1,0 +1,73 @@
+' deusexmachina — persistence module tests (Sprint 1, W1)
+' SQLite-Wrapper über bridges/sqlitebridge/sqlitebridge.dll plus
+' ein Event-Log-Schema. RAG-Smoke läuft separat (test_persist_rag.jdb)
+' weil's einen LLM laden muss, was länger dauert.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT PERSIST
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Open + schema bootstrap ──────────────────────────────────
+Header("Init + schema")
+PERSIST.init_db "data/persist_test.db"
+Assert(PERSIST.is_open(),            "DB handle is open after init")
+
+' ── Event log: write + read ─────────────────────────────────
+Header("Event log")
+PERSIST.log_event "email", "from=alice subject=hello"
+PERSIST.log_event "telegram", "user=atomi msg=test"
+PERSIST.log_event "email", "from=bob subject=urgent"
+
+DIM all_events = PERSIST.recent_events(10)
+Assert(LEN(all_events) = 3,          "3 events recorded")
+Assert(all_events[0]{"topic"} = "email", "first event topic preserved")
+
+' ── Filter by topic ─────────────────────────────────────────
+Header("Topic filter")
+DIM email_events = PERSIST.events_by_topic("email", 10)
+Assert(LEN(email_events) = 2,        "2 email events")
+DIM tg_events = PERSIST.events_by_topic("telegram", 10)
+Assert(LEN(tg_events) = 1,           "1 telegram event")
+
+' ── Generic exec / query for ad-hoc use ─────────────────────
+Header("Ad-hoc exec/query")
+PERSIST.exec "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)"
+PERSIST.exec "INSERT INTO kv (k, v) VALUES ('hello', 'world')"
+DIM rows = PERSIST.query("SELECT k, v FROM kv")
+Assert(LEN(rows) = 1,                "1 row returned")
+Assert(rows[0]{"k"} = "hello",       "key column")
+Assert(rows[0]{"v"} = "world",       "value column")
+
+' ── Close + cleanup ─────────────────────────────────────────
+Header("Close")
+PERSIST.close
+Assert(NOT PERSIST.is_open(),        "DB handle closed")
+KILL "data/persist_test.db"
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " PERSIST: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

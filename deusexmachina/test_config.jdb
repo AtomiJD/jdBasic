@@ -1,0 +1,71 @@
+' deusexmachina — config module tests (Sprint 1, W1)
+' JSON loader with mtime-based cache. Hot-reload kommt in W3 als
+' RECUR-getriggert; Phase 1 = read-on-demand mit Memoization.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT CONFIG
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Setup fixture ─────────────────────────────────────────────
+TXTWRITER "data/cfg_test.json", _
+    "{""name"":""kernel"",""port"":8080,""enabled"":true,""tags"":[""a"",""b""]}", _
+    FALSE
+
+' ── Load + parse ──────────────────────────────────────────────
+Header("Load + parse")
+DIM c = CONFIG.load("data/cfg_test.json")
+Assert(c{"name"} = "kernel",         "string field")
+Assert(c{"port"} = 8080,             "integer field")
+Assert(c{"enabled"} = TRUE,          "bool field")
+Assert(LEN(c{"tags"}) = 2,           "array field length")
+Assert(c{"tags"}[0] = "a",           "array element")
+
+' ── Cache: second load returns same content ──────────────────
+Header("Cache hit")
+DIM c2 = CONFIG.load("data/cfg_test.json")
+Assert(c2{"port"} = 8080,            "cached load returns content")
+
+' ── Stats: cache size ────────────────────────────────────────
+Header("Cache introspection")
+Assert(CONFIG.cache_size() >= 1,     "cache holds at least one file")
+
+' ── Missing file throws ──────────────────────────────────────
+Header("Missing file")
+DIM threw = FALSE
+TRY
+    DIM x = CONFIG.load("data/does_not_exist.json")
+CATCH
+    threw = TRUE
+ENDTRY
+Assert(threw,                        "missing file throws clearly")
+
+' ── Cleanup ──────────────────────────────────────────────────
+KILL "data/cfg_test.json"
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " CONFIG: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

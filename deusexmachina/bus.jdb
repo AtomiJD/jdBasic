@@ -1,0 +1,47 @@
+' deusexmachina / bus — channel-basierter Pub/Sub-Topic-Bus.
+'
+' Topics sind benannte CHAN.OPEN-Handles. Producer veröffentlichen via
+' BUS.publish, Consumer holen sich das CHAN-Handle via BUS.subscribe
+' und drainen mit den standard CHAN.RECV / FOR EACH-Idiomen.
+'
+' Re-subscribe zum gleichen Topic liefert dasselbe Handle — der erste
+' subscribe legt's an, alle weiteren teilen es. Kapazität wird vom
+' ersten subscribe festgelegt.
+'
+' close_topic schliesst den Channel; spätere RECVs drainen den Rest
+' und sehen dann EOF. Das Topic bleibt im Registry-Map (für has_topic
+' und Diagnose), wird aber nicht wiederbelebt — ein neuer Aufruf zu
+' subscribe gibt das gleiche, jetzt geschlossene Handle zurück.
+
+EXPORT MODULE BUS
+
+DIM g_topics AS MAP
+
+EXPORT FUNC subscribe(topic$, capacity AS INTEGER) AS INTEGER
+    IF MAP.EXISTS(g_topics, topic$) THEN
+        RETURN g_topics{topic$}
+    ENDIF
+    DIM h = CHAN.OPEN(capacity)
+    g_topics{topic$} = h
+    RETURN h
+ENDFUNC
+
+EXPORT SUB publish(topic$, value)
+    IF MAP.EXISTS(g_topics, topic$) THEN
+        CHAN.SEND g_topics{topic$}, value
+    ENDIF
+ENDSUB
+
+EXPORT SUB close_topic(topic$)
+    IF MAP.EXISTS(g_topics, topic$) THEN
+        CHAN.CLOSE g_topics{topic$}
+    ENDIF
+ENDSUB
+
+EXPORT FUNC has_topic(topic$) AS BOOLEAN
+    RETURN MAP.EXISTS(g_topics, topic$)
+ENDFUNC
+
+EXPORT FUNC list_topics() AS ARRAY
+    RETURN MAP.KEYS(g_topics)
+ENDFUNC

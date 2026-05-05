@@ -1,0 +1,111 @@
+' deusexmachina / persist — SQLite-Wrapper plus Event-Log + RAG-Hook.
+'
+' Nutzt das existierende SQLITE-Modul (jdb/sqlite.jdb → wraps
+' bridges/sqlitebridge/sqlitebridge.dll). RAG-Schicht ist optional und
+' wird via init_rag separat eingehängt — Tests die kein LLM laden,
+' überspringen den Hook und rufen nur die SQL-Funktionen auf.
+'
+' SQL-String-Escaping ist primitiv (single-quote-doubling). Für externe
+' Inputs in Phase B/C reichen wir Parametrisierung nach (entweder via
+' eigene helper, oder die SQLITE-Bridge wird um exec_with_params
+' erweitert).
+
+EXPORT MODULE PERSIST
+IMPORT SQLITE
+
+DIM g_db = 0
+DIM g_rag = 0
+DIM g_llm_id = 0
+
+' ── Lifecycle ────────────────────────────────────────────────────
+
+EXPORT SUB init_db(path$)
+    IF g_db = 0 THEN
+        g_db = SQLITE.OPEN(path$)
+        DIM rc = SQLITE.EXEC(g_db, _
+            "CREATE TABLE IF NOT EXISTS events (" + _
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT," + _
+            "  ts INTEGER," + _
+            "  topic TEXT," + _
+            "  payload TEXT)")
+    ENDIF
+ENDSUB
+
+EXPORT FUNC is_open() AS BOOLEAN
+    RETURN g_db <> 0
+ENDFUNC
+
+EXPORT SUB close()
+    IF g_db <> 0 THEN
+        SQLITE.CLOSE g_db
+        g_db = 0
+    ENDIF
+    g_rag = 0
+ENDSUB
+
+' ── Event log ────────────────────────────────────────────────────
+
+EXPORT SUB log_event(topic$, payload$)
+    ' TICK = ms-seit-Programmstart, monotonic. Reicht für Reihenfolge
+    ' + relative-time. Phase B/C ergänzt eine echte Wallclock-Spalte
+    ' wenn wir ein NOW_EPOCH-Native haben (steht im no-vec-Set, aber
+    ' ist heute nicht registered).
+    DIM ts = TICK()
+    DIM tp$ = REPLACE$(topic$, "'", "''")
+    DIM pl$ = REPLACE$(payload$, "'", "''")
+    DIM rc = SQLITE.EXEC(g_db, _
+        "INSERT INTO events (ts, topic, payload) VALUES (" + _
+        STR$(ts) + ", '" + tp$ + "', '" + pl$ + "')")
+ENDSUB
+
+EXPORT FUNC recent_events(n AS INTEGER) AS ARRAY
+    RETURN SQLITE.QUERY(g_db, _
+        "SELECT id, ts, topic, payload FROM events " + _
+        "ORDER BY id LIMIT " + STR$(n))
+ENDFUNC
+
+EXPORT FUNC events_by_topic(topic$, n AS INTEGER) AS ARRAY
+    DIM tp$ = REPLACE$(topic$, "'", "''")
+    RETURN SQLITE.QUERY(g_db, _
+        "SELECT id, ts, topic, payload FROM events " + _
+        "WHERE topic = '" + tp$ + "' " + _
+        "ORDER BY id LIMIT " + STR$(n))
+ENDFUNC
+
+' ── Generic exec / query passthrough ─────────────────────────────
+
+EXPORT FUNC exec(sql$) AS INTEGER
+    RETURN SQLITE.EXEC(g_db, sql$)
+ENDFUNC
+
+EXPORT FUNC query(sql$) AS ARRAY
+    RETURN SQLITE.QUERY(g_db, sql$)
+ENDFUNC
+
+' ── Optional RAG layer ───────────────────────────────────────────
+' Pass an existing AI.LOAD_LLM id (or AI.LOAD_EMBEDDINGS id used
+' purely for embeddings). Without init_rag the remember/recall
+' functions throw — callers should check rag_ready() first.
+
+EXPORT SUB init_rag(llm_id AS INTEGER)
+    g_llm_id = llm_id
+    g_rag = AI.RAG_CREATE(llm_id)
+ENDSUB
+
+EXPORT FUNC rag_ready() AS BOOLEAN
+    RETURN g_rag <> 0
+ENDFUNC
+
+EXPORT SUB remember(text$, source$)
+    IF g_rag = 0 THEN
+        THROW "PERSIST.remember: RAG not initialised — call init_rag first"
+    ENDIF
+    AI.RAG_ADD g_rag, text$, source$
+ENDSUB
+
+EXPORT FUNC recall(query$, top_k AS INTEGER) AS ARRAY
+    IF g_rag = 0 THEN
+        THROW "PERSIST.recall: RAG not initialised — call init_rag first"
+    ENDIF
+    RETURN AI.RAG_SEARCH(g_rag, query$, top_k)
+ENDFUNC
