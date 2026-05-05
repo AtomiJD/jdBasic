@@ -1,0 +1,112 @@
+' deusexmachina / llm_brain — Wrapper um die lokale LLM-Schicht.
+'
+' Hostet eine geladene LLM-Session und stellt drei Aufruf-Stile bereit:
+'   * ask(id, prompt)             — synchron, fertige Antwort
+'   * ask_streaming(id, prompt)   — Channel mit Token-Stream (für UI)
+'   * ask_rag(id, rag, q, k)      — RAG-augmented synchron
+'
+' Der Channel-Pfad nutzt AI.CHAT_TOKENS aus Phase 3a — Producer ist
+' der LLM-Generations-Thread, Consumer kann live in Telegram, ImGui
+' oder Voice-TTS streamen.
+
+EXPORT MODULE LLM_BRAIN
+
+DIM g_llm_id = 0           ' aktuelle Hauptsession
+DIM g_model_path AS STRING = ""
+
+' ── Lifecycle ───────────────────────────────────────────────────
+
+EXPORT FUNC init(model_path$, n_ctx AS INTEGER, n_gpu_layers AS INTEGER) AS INTEGER
+    g_model_path = model_path$
+    g_llm_id = AI.LOAD_LLM(model_path$, n_ctx, n_gpu_layers)
+    DIM rc = AI.SET(g_llm_id, "TEMPERATURE", 0.7)
+    rc = AI.SET(g_llm_id, "TOP_P", 0.95)
+    rc = AI.SET(g_llm_id, "MAX_TOKENS", 512)
+    RETURN g_llm_id
+ENDFUNC
+
+EXPORT SUB set_system(llm_id AS INTEGER, system$)
+    DIM rc = AI.SET(llm_id, "SYSTEM", system$)
+ENDSUB
+
+EXPORT SUB set_temperature(llm_id AS INTEGER, t AS DOUBLE)
+    DIM rc = AI.SET(llm_id, "TEMPERATURE", t)
+ENDSUB
+
+EXPORT SUB set_max_tokens(llm_id AS INTEGER, n AS INTEGER)
+    DIM rc = AI.SET(llm_id, "MAX_TOKENS", n)
+ENDSUB
+
+EXPORT FUNC is_loaded() AS BOOLEAN
+    RETURN g_llm_id <> 0
+ENDFUNC
+
+EXPORT SUB clear_history(llm_id AS INTEGER)
+    DIM rc = AI.CLEAR_HISTORY(llm_id)
+ENDSUB
+
+EXPORT SUB free(llm_id AS INTEGER)
+    DIM rc = AI.FREE_LLM(llm_id)
+    IF llm_id = g_llm_id THEN
+        g_llm_id = 0
+    ENDIF
+ENDSUB
+
+' ── Synchronous ────────────────────────────────────────────────
+
+EXPORT FUNC ask(llm_id AS INTEGER, prompt$) AS STRING
+    RETURN AI.CHAT(llm_id, prompt$)
+ENDFUNC
+
+' ── Streaming via Channel ──────────────────────────────────────
+'
+' Returnt ein CHAN-Handle. Consumer drained mit:
+'   FOR EACH tok$ IN ch
+'     PRINT tok$;
+'   NEXT
+' Oder explizit:
+'   DO
+'     DIM t$ = CHAN.RECV(ch)
+'     IF CHAN.IS_EOF(t$) THEN EXITDO
+'     ...
+'   LOOP
+'
+' Buffer-Capacity: 64 ist Default — produces back-pressure auf den
+' LLM-Generations-Thread wenn der Consumer langsamer ist (Telegram-
+' Rate-Limit, GUI-Render).
+
+EXPORT FUNC ask_streaming(llm_id AS INTEGER, prompt$, capacity AS INTEGER) AS INTEGER
+    RETURN AI.CHAT_TOKENS(llm_id, prompt$, capacity)
+ENDFUNC
+
+' ── RAG-augmented ───────────────────────────────────────────────
+'
+' Holt top-k-Chunks aus dem RAG-Index und präfix den Prompt mit dem
+' Kontext. Synchron — für streaming-RAG ruft man ask_streaming nach
+' dem RAG-Lookup auf.
+
+EXPORT FUNC ask_rag(llm_id AS INTEGER, rag_id AS INTEGER, question$, top_k AS INTEGER) AS STRING
+    DIM ctx = AI.RAG_SEARCH(rag_id, question$, top_k)
+    DIM ctx_str$ = ""
+    FOR EACH chunk IN ctx
+        ctx_str$ = ctx_str$ + chunk{"text"} + CHR$(10) + "---" + CHR$(10)
+    NEXT
+    DIM prompt$ = "Beantworte die Frage gestützt auf den folgenden Kontext. " + _
+                  "Wenn der Kontext nicht ausreicht, sag das ehrlich." + CHR$(10) + _
+                  CHR$(10) + "Kontext:" + CHR$(10) + ctx_str$ + _
+                  CHR$(10) + "Frage: " + question$
+    RETURN AI.CHAT(llm_id, prompt$)
+ENDFUNC
+
+EXPORT FUNC ask_rag_streaming(llm_id AS INTEGER, rag_id AS INTEGER, question$, top_k AS INTEGER, capacity AS INTEGER) AS INTEGER
+    DIM ctx = AI.RAG_SEARCH(rag_id, question$, top_k)
+    DIM ctx_str$ = ""
+    FOR EACH chunk IN ctx
+        ctx_str$ = ctx_str$ + chunk{"text"} + CHR$(10) + "---" + CHR$(10)
+    NEXT
+    DIM prompt$ = "Beantworte die Frage gestützt auf den folgenden Kontext. " + _
+                  "Wenn der Kontext nicht ausreicht, sag das ehrlich." + CHR$(10) + _
+                  CHR$(10) + "Kontext:" + CHR$(10) + ctx_str$ + _
+                  CHR$(10) + "Frage: " + question$
+    RETURN AI.CHAT_TOKENS(llm_id, prompt$, capacity)
+ENDFUNC

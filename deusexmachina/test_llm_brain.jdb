@@ -1,0 +1,79 @@
+' deusexmachina / llm_brain — Integration-Test.
+'
+' Lädt Phi-3-mini-4k-instruct-q4 (~2.2 GB) über AI.LOAD_LLM und
+' verifiziert init / ask / ask_streaming / set_system. Läuft NICHT
+' im pre-commit-Gate weil's ~10s pro Run kostet — manuell:
+'   cd deusexmachina && ../build/jdBasic.exe test_llm_brain.jdb
+OPTION "EXPLICIT"
+
+IMPORT LLM_BRAIN
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Init ───────────────────────────────────────────────────────
+Header("Init Phi-3-mini")
+PRINT "  loading model... (10-30s on first run)"
+DIM llm = LLM_BRAIN.init("../models/Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
+Assert(llm > 0,                      "AI.LOAD_LLM returned valid id")
+Assert(LLM_BRAIN.is_loaded(),        "is_loaded reports true")
+
+LLM_BRAIN.set_system llm, _
+    "Du bist ein präziser Assistent. Antworte in einem einzigen kurzen deutschen Satz."
+
+' ── Synchronous ask ────────────────────────────────────────────
+Header("Synchronous ask")
+DIM r$ = LLM_BRAIN.ask(llm, "Was ist die Hauptstadt von Deutschland?")
+PRINT "  reply: "; r$
+Assert(LEN(r$) > 0,                  "non-empty reply")
+Assert(INSTR(LCASE$(r$), "berlin") > 0, "reply mentions berlin")
+
+' ── Streaming via Channel ──────────────────────────────────────
+Header("Streaming via channel")
+LLM_BRAIN.clear_history llm
+DIM ch = LLM_BRAIN.ask_streaming(llm, _
+    "Zähle von 1 bis 5, jede Zahl auf einer eigenen Zeile.", 64)
+
+DIM acc$ = ""
+DIM tok_count = 0
+DO
+    DIM t$ = CHAN.RECV(ch)
+    IF CHAN.IS_EOF(t$) THEN EXITDO
+    acc$ = acc$ + t$
+    tok_count = tok_count + 1
+LOOP
+PRINT "  streamed " ; tok_count ; " tokens"
+PRINT "  full: "; acc$
+Assert(tok_count > 0,                "received at least one token")
+Assert(LEN(acc$) > 0,                "accumulated non-empty text")
+Assert(INSTR(acc$, "3") > 0,         "stream contains '3' (counted 1..5)")
+
+' ── Cleanup ────────────────────────────────────────────────────
+Header("Free")
+LLM_BRAIN.free llm
+Assert(NOT LLM_BRAIN.is_loaded(),    "is_loaded false after free")
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " LLM_BRAIN: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF
