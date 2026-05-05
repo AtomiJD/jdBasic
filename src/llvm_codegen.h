@@ -149,6 +149,7 @@ private:
         LLVMValueRef fn;
         int return_tag;             // 0=i64, 1=f64, 2=str, -1=void(sub)
         std::vector<int> param_tags;
+        bool is_async = false;      // ASYNC FUNC: call site spawns a thread
     };
     std::unordered_map<std::string, FuncInfo> user_functions;
 

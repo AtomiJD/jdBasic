@@ -478,6 +478,10 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i8_ptr_type}, 0);
     reg("jdrt_map_to_handle", "__jdrt_map_to_handle", i64_type,
         {i8_ptr_type, i8_ptr_type}, 0);
+    // ASYNC FUNC dispatch — handle, fn ptr, args ptr (f64*), nargs (i32),
+    // return_tag (i32). Returns task id (i64).
+    reg("jdrt_async_spawn", "__jdrt_async_spawn", i64_type,
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type, i32_type}, 0);
     reg("jdrt_val_to_f64",  "__jdrt_val_to_f64",  f64_type,
         {i8_ptr_type, i64_type}, 1);
     reg("jdrt_val_to_str",  "__jdrt_val_to_str",  i8_ptr_type,
@@ -612,6 +616,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         // INDEX/iter paths need to decode the punned-f64 cells back as
         // strings on the caller side.
         bool returns_string_array = false;
+        bool is_async = false;
     };
     std::unordered_map<std::string, FuncDecl> decls;
 
@@ -717,7 +722,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (is_event_handler && pi == 0) t = 3;  // event data: JdbArray*
             tags.push_back(t);
         }
-        decls[stmt->func_name] = { stmt.get(), tags, ret_tag };
+        decls[stmt->func_name] = { stmt.get(), tags, ret_tag,
+                                    /*returns_string_array=*/false,
+                                    stmt->is_async_func };
     }
 
     // Phase 2: scan all call sites to infer string params from arguments
@@ -756,7 +763,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) return rit->second.return_tag;
             auto fit = decls.find(e.func_name);
-            if (fit != decls.end()) return fit->second.return_tag;
+            if (fit != decls.end()) {
+                // ASYNC FUNC native call returns the task id (i64) regardless
+                // of the user-declared return type — AWAIT yields the actual
+                // value later. Without this, `DIM p = mini_prod(...)` typed
+                // the slot from mini_prod's body return tag and stored the
+                // task id's bits in the wrong slot shape.
+                if (fit->second.is_async) return JD_TAG_I64;
+                return fit->second.return_tag;
+            }
             // Names like ZEROS/IOTA/RANGE/SHIFT/OUTER etc. are array-returners
             // known to the static native whitelist. Use the same list the
             // call-site uses later to tag VM-bridge returns.
@@ -786,9 +801,17 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             // export sentinel — otherwise `EXPORT DIM thing_count = 0`
             // would be mis-tagged as JD_TAG_ARR.
             bool is_udt_label = !s.label.empty() && s.label != "__EXPORT__";
+            // $-suffix on the variable name is a string-by-convention hint
+            // even without an AS clause — match how infer_expr_tag treats
+            // VARIABLE references and how user-FUNC return types respect
+            // the $ suffix. Without this, `DIM r$ = AWAIT p` would land
+            // in the f64 fallback below and the i8* string handle would
+            // get bit-pun'd into a numeric slot.
+            bool dollar_string = !s.var_name.empty() && s.var_name.back() == '$';
             if (s.var_type == VarType::ARRAY || is_udt_label) t = JD_TAG_ARR;
             else if (s.var_type == VarType::STRING) t = JD_TAG_STR;
             else if (s.var_type == VarType::OBJECT) t = JD_TAG_NATIVE_MAP;
+            else if (dollar_string) t = JD_TAG_STR;
             else if (s.expr) t = infer_expr_tag(*s.expr);
             auto it = pre_var_tags.find(s.var_name);
             // Promote only — don't downgrade from ARR to F64 via later
@@ -1391,7 +1414,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             param_types.empty() ? nullptr : param_types.data(),
             (unsigned)param_types.size(), 0);
         LLVMValueRef fn = LLVMAddFunction(module, name.c_str(), fn_type);
-        user_functions[name] = { fn, decl.return_tag, decl.tags };
+        user_functions[name] = { fn, decl.return_tag, decl.tags, decl.is_async };
     }
 }
 
@@ -1899,6 +1922,9 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         // (They aren't auto-vectorized.)
                         auto uit_pre = user_functions.find(e->func_name);
                         if (uit_pre != user_functions.end()) {
+                            // ASYNC FUNC native call returns the task id (i64),
+                            // not the body's return value — match infer_expr_tag.
+                            if (uit_pre->second.is_async) return JD_TAG_I64;
                             return uit_pre->second.return_tag;
                         }
                         std::string upper = e->func_name;
@@ -3238,6 +3264,21 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // any later read (PRINT, str-concat) would deref garbage and segfault.
     auto coerce_rhs_to_str = [&](TypedValue& v) {
         if (v.tag == JD_TAG_STR) return;
+        if (v.tag == JD_TAG_VM_HANDLE) {
+            // VM_HANDLE → string via the same materialiser FORMAT$ uses.
+            // Lets `s$ = AWAIT chan_recv@(ch)` and similar VM-handle-yielding
+            // calls land as a real char* in the string slot instead of an
+            // i64 stored into i8* (which segfaults on the next read).
+            auto* vts = get_runtime_func("__jdrt_val_to_str");
+            if (vts) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef args[] = { rt, v.val };
+                v.val = LLVMBuildCall2(builder, vts->fn_type, vts->fn, args, 2, "vmh2s");
+                v.tag = JD_TAG_STR;
+            }
+            return;
+        }
         if (v.tag == JD_TAG_F64) {
             auto& fn = runtime_funcs["__double_to_str"];
             LLVMValueRef args[] = { v.val };
@@ -3343,7 +3384,13 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 rhs.val = LLVMBuildFPToSI(builder, rhs.val, i64_type, "ftoi");
                 rhs.tag = JD_TAG_I64;
             } else if (vi->tag == JD_TAG_STR &&
-                       (rhs.tag == JD_TAG_I64 || rhs.tag == JD_TAG_F64 || rhs.tag == JD_TAG_BOOL)) {
+                       (rhs.tag == JD_TAG_I64 || rhs.tag == JD_TAG_F64 ||
+                        rhs.tag == JD_TAG_BOOL || rhs.tag == JD_TAG_VM_HANDLE)) {
+                // VM_HANDLE → STR materialises through __jdrt_val_to_str,
+                // not through the tag-overwrite branch below — the slot
+                // is genuinely declared as i8* (ptr) and storing the
+                // raw i64 handle into it would segfault on the next
+                // PRINT/concat read.
                 coerce_rhs_to_str(rhs);
             } else if ((rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF || rhs.tag == JD_TAG_VM_HANDLE) &&
                        vi->tag != rhs.tag) {
@@ -4114,6 +4161,20 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
         vi->tag = rhs.tag;
         return;
+    }
+    // VM_HANDLE → STR slot: materialise via __jdrt_val_to_str instead of
+    // pun-storing the i64 handle into an i8* slot. Same shape as the
+    // codegen_let_or_assign path; necessary for `DIM r$ = AWAIT task` and
+    // similar VM-handle-yielding ASYNC FUNC results.
+    if (vi && vi->tag == JD_TAG_STR && rhs.tag == JD_TAG_VM_HANDLE) {
+        auto* vts = get_runtime_func("__jdrt_val_to_str");
+        if (vts) {
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+            LLVMValueRef args[] = { rt, rhs.val };
+            rhs.val = LLVMBuildCall2(builder, vts->fn_type, vts->fn, args, 2, "vmh2s_dim");
+            rhs.tag = JD_TAG_STR;
+        }
     }
     if (vi) {
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
@@ -6679,6 +6740,71 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     auto uit = user_functions.find(name);
     if (uit != user_functions.end()) {
         auto& fi = uit->second;
+
+        // ASYNC FUNC: spawn a thread via the runtime helper. We can't
+        // emit a direct LLVMBuildCall — that runs the body inline in
+        // the caller's thread. Instead, build/get a uniform funcref
+        // wrapper (f64 args + f64 return) and pass its pointer to
+        // __jdrt_async_spawn along with a packed args array; the
+        // helper detaches a std::thread that invokes the wrapper and
+        // registers the result in g_async_tasks for later AWAIT.
+        if (fi.is_async) {
+            int arity = (int)expr.args.size();
+            LLVMValueRef wrapper = build_funcref_wrapper(name, arity);
+            auto* spawn = get_runtime_func("__jdrt_async_spawn");
+            if (wrapper && spawn) {
+                // Coerce every arg to f64; pun ptr-typed args through
+                // pun_i64_to_f64 so the wrapper can decode them via the
+                // existing param-tag-aware dispatch.
+                LLVMBasicBlockRef cur_bb = LLVMGetInsertBlock(builder);
+                LLVMBasicBlockRef entry_bb = LLVMGetEntryBasicBlock(current_fn);
+                LLVMValueRef first = LLVMGetFirstInstruction(entry_bb);
+                if (first) LLVMPositionBuilderBefore(builder, first);
+                else       LLVMPositionBuilderAtEnd(builder, entry_bb);
+                LLVMValueRef args_arr = arity > 0
+                    ? LLVMBuildArrayAlloca(builder, f64_type,
+                          LLVMConstInt(i32_type, arity, 0), "async_args")
+                    : LLVMConstNull(i8_ptr_type);
+                LLVMPositionBuilderAtEnd(builder, cur_bb);
+
+                for (int i = 0; i < arity; i++) {
+                    TypedValue av = codegen_expr(*expr.args[i]);
+                    LLVMValueRef as_f64;
+                    if (av.tag == JD_TAG_F64) {
+                        as_f64 = av.val;
+                    } else if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_BOOL) {
+                        as_f64 = LLVMBuildSIToFP(builder, av.val, f64_type, "i2f");
+                    } else if (av.tag == JD_TAG_STR || av.tag == JD_TAG_ARR ||
+                               av.tag == JD_TAG_NATIVE_MAP || av.tag == JD_TAG_FUNCREF) {
+                        LLVMValueRef as_i = LLVMBuildPtrToInt(builder, av.val, i64_type, "p2i");
+                        as_f64 = pun_i64_to_f64(as_i);
+                    } else {
+                        as_f64 = coerce_to(av, f64_type);
+                    }
+                    LLVMValueRef idx[] = { LLVMConstInt(i32_type, i, 0) };
+                    LLVMValueRef slot = LLVMBuildGEP2(builder, f64_type, args_arr, idx, 1, "as");
+                    LLVMBuildStore(builder, as_f64, slot);
+                }
+
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef fn_ptr = LLVMBuildBitCast(builder, wrapper, i8_ptr_type, "f2p");
+                LLVMValueRef args_ptr = arity > 0
+                    ? LLVMBuildBitCast(builder, args_arr, i8_ptr_type, "args_p")
+                    : LLVMConstNull(i8_ptr_type);
+                LLVMValueRef call_args[] = {
+                    rt, fn_ptr, args_ptr,
+                    LLVMConstInt(i32_type, arity, 0),
+                    LLVMConstInt(i32_type, fi.return_tag, 0)
+                };
+                LLVMValueRef task_id = LLVMBuildCall2(builder, spawn->fn_type, spawn->fn,
+                                                      call_args, 5, "async_id");
+                return { task_id, JD_TAG_I64 };
+            }
+            // No wrapper / no helper — fall through to the synchronous
+            // call below as a degraded best-effort.
+        }
+
         std::vector<LLVMValueRef> args;
         for (size_t i = 0; i < expr.args.size(); i++) {
             int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
@@ -8119,6 +8245,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // VM_HANDLE keeps the tag intact so CHAN.IS_EOF and the
                 // FOR EACH polymorphic dispatch can recognise it later.
                 "CHAN.RECV",
+                // AWAIT / THREAD.GETRESULT yield the awaited task's actual
+                // Value — could be any type, so route through VM_HANDLE so
+                // strings + arrays + maps survive intact. Without this,
+                // AWAIT was hitting the f64 fallback and stringifying via
+                // to_double() = 0.0, killing string-returning ASYNC funcs.
+                "AWAIT", "THREAD.GETRESULT",
             };
             bool is_object_fn = object_returners.count(upper);
 

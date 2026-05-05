@@ -7,6 +7,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
+#include "async_task.h"
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
@@ -14,6 +15,8 @@
 #include <algorithm>
 #include <unordered_map>
 #include <mutex>
+#include <thread>
+#include <atomic>
 
 // MSVC's _strdup is POSIX strdup with an underscore prefix. Map them so
 // the call sites stay portable.
@@ -656,6 +659,86 @@ JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
         obj->set(k, std::move(cell));
     }
     return rt->store_value(std::move(v));
+}
+
+// ── ASYNC FUNC dispatch from native code ───────────────────────
+//
+// Native compile emits each user FUNC as a real LLVM Function — they
+// never reach the runtime VM's func_map, so the OpCode::CALL ASYNC
+// path inside vm.cpp can't help. Instead, codegen synthesises a
+// uniform funcref wrapper for the target FUNC (f64 args, f64 return,
+// see build_funcref_wrapper) and calls jdrt_async_spawn with the
+// wrapper pointer. This routine spawns the thread, invokes the
+// wrapper with the packed args, repacks the f64 result into a Value
+// based on the user's declared return tag, and returns a task id
+// the caller can AWAIT through the existing g_async_tasks registry.
+// async_task.h declares g_async_tasks / g_async_mutex / g_async_next_id
+// (defined in vm.cpp).
+
+JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
+                                   const double* args, int nargs,
+                                   int return_tag) {
+    int task_id = g_async_next_id++;
+    auto task = std::make_shared<AsyncTask>();
+    std::vector<double> args_copy(args, args + nargs);
+    int rtag = return_tag;
+
+    task->thread = std::thread([fn_ptr, args_copy, rtag, task]() {
+        double r = 0.0;
+        try {
+            const auto& A = args_copy;
+            switch ((int)A.size()) {
+                case 0: r = ((double(*)())fn_ptr)(); break;
+                case 1: r = ((double(*)(double))fn_ptr)(A[0]); break;
+                case 2: r = ((double(*)(double,double))fn_ptr)(A[0],A[1]); break;
+                case 3: r = ((double(*)(double,double,double))fn_ptr)(A[0],A[1],A[2]); break;
+                case 4: r = ((double(*)(double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3]); break;
+                case 5: r = ((double(*)(double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4]); break;
+                case 6: r = ((double(*)(double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5]); break;
+                case 7: r = ((double(*)(double,double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5],A[6]); break;
+                case 8: r = ((double(*)(double,double,double,double,double,double,double,double))fn_ptr)(A[0],A[1],A[2],A[3],A[4],A[5],A[6],A[7]); break;
+                default:
+                    throw std::runtime_error(
+                        "ASYNC FUNC native dispatch supports up to 8 args");
+            }
+            Value result;
+            int64_t bits;
+            memcpy(&bits, &r, sizeof(bits));
+            switch (rtag) {
+                case JD_TAG_I64:
+                case JD_TAG_BOOL:
+                    result = Value::make_i64(bits);
+                    break;
+                case JD_TAG_STR: {
+                    const char* s = (const char*)(intptr_t)bits;
+                    result = Value::make_string(s ? s : "");
+                    break;
+                }
+                case JD_TAG_ARR: {
+                    JdbArrayFwd* arr = (JdbArrayFwd*)(intptr_t)bits;
+                    result = jdbarray_to_value(arr);
+                    break;
+                }
+                case -1: // SUB return — discard
+                    result = Value::make_none();
+                    break;
+                case JD_TAG_F64:
+                default:
+                    result = Value::make_f64(r);
+                    break;
+            }
+            task->result = std::move(result);
+        } catch (const std::exception& e) {
+            task->result = Value::make_string("ERROR: " + std::string(e.what()));
+        }
+        task->done = true;
+    });
+    task->thread.detach();
+
+    { std::lock_guard<std::mutex> lock(g_async_mutex);
+      g_async_tasks[task_id] = task; }
+    (void)handle;
+    return task_id;
 }
 
 // Materialise a handle as a concrete scalar. Numeric values round-trip

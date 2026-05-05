@@ -2235,12 +2235,10 @@ CHAN.CLOSE ch                      ' producer + matcher both exit
 DIM r = AWAIT m
 ```
 
-Single-thread use (one thread reads + processes) works in **both interp
-and native compile**. The `FILE.STREAM_*` sugars + `tail -f` style and
-the concurrent producer/consumer pattern require an `ASYNC FUNC`
-running on a separate thread; `ASYNC FUNC` itself is interp-only today
-(native compile runs the async body synchronously), so concurrent file
-streaming is interp-only until that gap is closed.
+Native compile supports the full FILE streaming API (line reader, tail
+mode, STREAM_* sugars) with concurrent ASYNC FUNC writers/readers — the
+underlying ASYNC FUNC dispatch became native in the same pass that made
+channels concurrent.
 
 ### Channels (Phase 1)
 
@@ -2255,18 +2253,20 @@ the rest of the buffer and then keep returning the **EOF marker** (a
 `MAP { __chan_eof__: TRUE }`, recognised by `CHAN.IS_EOF`). Send on a
 closed channel throws.
 
-Native compile supports single-thread use of `CHAN.*` (open / send /
-recv / close + the polymorphic `FOR EACH v IN ch` works in interp;
-native compile runs single-thread channel access via the same VM-bridge
-path as every other native). **Concurrent** channel use across an
-`ASYNC FUNC` spawned consumer/producer pair is interp-only today —
-native compile currently runs `ASYNC FUNC` synchronously, so a bounded
-channel deadlocks if the producer's `SEND` can't drain before the
-consumer starts. The channel API itself is identical between modes;
-only the spawn primitive lags.
+Native compile supports the full `CHAN.*` API including concurrent use
+across `ASYNC FUNC` consumers/producers — the call site for an ASYNC
+FUNC emits a `__jdrt_async_spawn` runtime call that detaches a thread
+running the function via its `__funcref_*` wrapper, then returns the
+task id (`AWAIT` consumes it through the VM-handle path so any return
+type makes it back).
+
+`FOR EACH v IN ch` in native iterates only the array branch today —
+the polymorphic `FOREACH_NEXT` opcode is interp-only. Use the explicit
+`DO ... CHAN.RECV ... IS_EOF` loop for native channel iteration. Phase
+5c will add a runtime helper for native channel iteration via FOR EACH.
 
 Native channel `RECV` returns the underlying value via the VM-handle
-path (so mixed-type payloads survive intact). Numeric values come back
+path (so mixed-type payloads survive intact). Numeric values materialise
 through `f64`, which means STRICT-mode native code needs DOUBLE
 accumulators (`DIM total AS DOUBLE = 0.0`) when summing recv'd
 integers. Interp keeps the original tag and accepts either.
