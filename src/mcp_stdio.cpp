@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <filesystem>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -574,6 +575,134 @@ Value tool_descriptor(const std::string& name, const std::string& desc, Value sc
     return t;
 }
 
+// ── User-defined tool registry ──────────────────────────────────
+//
+// Loaded at startup from a directory of JSON manifests. Each manifest:
+//   { "name": ..., "description": ..., "inputSchema": {...},
+//     "module": "path/to/module.jdb", "handler": "func_name" }
+//
+// At startup we EXECUTE each unique module on the persistent VM so the
+// handler FUNCs are defined globally. tools/list appends each user tool
+// after the built-ins; tools/call dispatches by name into the handler
+// FUNC, passing the call's "arguments" object as a JSON string (the
+// handler is responsible for JSON.PARSE$-ing it if it cares).
+
+struct UserTool {
+    std::string name;
+    std::string description;
+    Value       input_schema;   // OBJECT
+    std::string handler_fn;
+    std::string module_path;
+};
+static std::vector<UserTool>            g_user_tools;
+static std::unordered_set<std::string>  g_user_modules_loaded;
+
+void load_user_tools(VM& vm, const std::string& dir) {
+    if (dir.empty()) return;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) {
+        log_line("user-tools dir not found: " + dir);
+        return;
+    }
+    // Pass 1: parse manifests.
+    for (auto& entry : fs::directory_iterator(dir, ec)) {
+        if (ec) break;
+        if (entry.path().extension() != ".json") continue;
+        std::ifstream f(entry.path());
+        if (!f.is_open()) continue;
+        std::stringstream ss; ss << f.rdbuf();
+        try {
+            Value manifest = parse_json(vm, ss.str());
+            UserTool t;
+            t.name = obj_get_str(manifest, "name");
+            t.description = obj_get_str(manifest, "description");
+            if (Value* sch = obj_get(manifest, "inputSchema")) {
+                t.input_schema = *sch;
+            } else {
+                t.input_schema = build_input_schema({}, {});
+            }
+            t.handler_fn = obj_get_str(manifest, "handler");
+            t.module_path = obj_get_str(manifest, "module");
+            if (t.name.empty() || t.handler_fn.empty()) {
+                log_line("manifest missing name or handler: " + entry.path().string());
+                continue;
+            }
+            log_line("registered user tool: " + t.name +
+                     " → " + t.handler_fn +
+                     " (in " + t.module_path + ")");
+            g_user_tools.push_back(std::move(t));
+        } catch (const std::exception& e) {
+            log_line("manifest parse error in " + entry.path().string() +
+                     ": " + e.what());
+        }
+    }
+    // Pass 2: pre-load each unique module on the VM.
+    for (auto& t : g_user_tools) {
+        if (t.module_path.empty()) continue;
+        if (g_user_modules_loaded.count(t.module_path)) continue;
+        std::ifstream f(t.module_path);
+        if (!f.is_open()) {
+            log_line("module not found: " + t.module_path);
+            continue;
+        }
+        std::stringstream ss; ss << f.rdbuf();
+        try {
+            run_on_vm(vm, ss.str());
+            g_user_modules_loaded.insert(t.module_path);
+            log_line("loaded module: " + t.module_path);
+        } catch (const std::exception& e) {
+            log_line("module load error in " + t.module_path + ": " + e.what());
+        }
+    }
+}
+
+// Replace single quotes inside the JSON args so they survive being
+// embedded in a jdBasic string literal. Mirrors the SQLite-string
+// escape used elsewhere in deusexmachina.
+std::string escape_for_basic_string(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '"') { out += "\\\""; continue; }
+        if (c == '\\') { out += "\\\\"; continue; }
+        if (c == '\n') { out += "\\n"; continue; }
+        if (c == '\r') { out += "\\r"; continue; }
+        out += c;
+    }
+    return out;
+}
+
+Value invoke_user_tool(VM& vm, const UserTool& t, const Value& args) {
+    // Serialize args to JSON, expose as a global the handler can parse.
+    std::string args_json = stringify_json(vm, args);
+    vm.set_global("__MCP_ARGS$", Value::make_string(args_json));
+    vm.set_global("__MCP_RESULT$", Value::make_string(""));
+    // handler_fn(args_json_string$) → string
+    std::string src = "__MCP_RESULT$ = " + t.handler_fn + "(__MCP_ARGS$)\n";
+    try {
+        run_on_vm(vm, src);
+    } catch (const std::exception& e) {
+        return make_text_result(std::string("user tool '") + t.name +
+                                "' threw: " + e.what(), true);
+    }
+    // Read the result global back.
+    auto& gnames = vm.get_global_names();
+    auto& globals = vm.get_globals();
+    auto it = gnames.find("__MCP_RESULT$");
+    if (it == gnames.end() || it->second >= globals.size()) {
+        return make_text_result("", false);
+    }
+    const Value& r = globals[it->second];
+    std::string out;
+    if (r.type == ValueType::STRING && r.as_string()) {
+        out = r.as_string()->data;
+    } else {
+        out = r.to_string();
+    }
+    return make_text_result(out, false);
+}
+
 Value build_tools() {
     Value tools = Value::make_array();
     auto& a = tools.as_array()->elements;
@@ -628,6 +757,11 @@ Value build_tools() {
         "Echo back the message you sent. Connectivity smoke test.",
         build_input_schema({{"message", "Text to echo back"}}, {"message"})));
 
+    // Append user-defined tools registered from --tools <dir>.
+    for (auto& t : g_user_tools) {
+        a.push_back(tool_descriptor(t.name, t.description, t.input_schema));
+    }
+
     return tools;
 }
 
@@ -644,6 +778,10 @@ Value dispatch_tool(VM& vm, const std::string& name, const Value& args) {
     if (name == "jdb_savews")     return tool_jdb_savews(vm, args);
     if (name == "jdb_loadws")     return tool_jdb_loadws(vm, args);
     if (name == "echo")           return tool_echo(vm, args);
+    // User tools registered via --tools <dir>.
+    for (auto& t : g_user_tools) {
+        if (t.name == name) return invoke_user_tool(vm, t, args);
+    }
     return make_text_result("Unknown tool: " + name, true);
 }
 
@@ -700,7 +838,7 @@ Value handle_rpc(VM& vm, const Value& rpc) {
 
 } // namespace
 
-int run_mcp_stdio(VM& vm) {
+int run_mcp_stdio(VM& vm, const std::string& user_tools_dir) {
 #ifdef _WIN32
     // Windows defaults stdin/stdout to text mode, which translates LF↔CRLF
     // and would corrupt JSON containing escaped newlines. Force binary.
@@ -712,6 +850,11 @@ int run_mcp_stdio(VM& vm) {
 #endif
     capture_boot_set(vm);
     log_line("starting stdio server");
+    if (!user_tools_dir.empty()) {
+        log_line("scanning user-tools dir: " + user_tools_dir);
+        load_user_tools(vm, user_tools_dir);
+        log_line("user tools loaded: " + std::to_string(g_user_tools.size()));
+    }
 
     std::string body;
     while (read_frame(body)) {

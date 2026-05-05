@@ -100,7 +100,7 @@ EXPORT SUB remember(text$, source$)
     IF g_rag = 0 THEN
         THROW "PERSIST.remember: RAG not initialised — call init_rag first"
     ENDIF
-    AI.RAG_ADD g_rag, text$, source$
+    DIM rc = AI.RAG_ADD(g_rag, text$, source$)
 ENDSUB
 
 EXPORT FUNC recall(query$, top_k AS INTEGER) AS ARRAY

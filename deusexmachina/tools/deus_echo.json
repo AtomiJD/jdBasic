@@ -1,0 +1,13 @@
+{
+  "name": "deus_echo",
+  "description": "Smoke-test tool exposed by deusexmachina. Echoes back the message you sent, prefixed with the server tag. Use this to confirm the MCP user-tool registry is wired up.",
+  "module": "deusexmachina/tools.jdb",
+  "handler": "tool_echo",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": { "type": "string", "description": "Text to echo back" }
+    },
+    "required": ["message"]
+  }
+}

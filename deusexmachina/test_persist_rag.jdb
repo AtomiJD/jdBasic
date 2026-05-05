@@ -1,0 +1,111 @@
+' deusexmachina / persist+RAG — Integration-Smoke.
+'
+' Lädt bge-m3-Q4_K_M.gguf als Embedding-Modell, hängt das in PERSIST
+' ein, schreibt + sucht Chunks. Läuft NICHT im pre-commit-Gate weil
+' Modell-Load + Embed-Init ~3-8s kostet.
+OPTION "EXPLICIT"
+
+IMPORT PERSIST
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Setup ──────────────────────────────────────────────────────
+Header("Init DB + Embedding-Model")
+PERSIST.init_db "data/rag_test.db"
+Assert(PERSIST.is_open(),            "DB open")
+
+PRINT "  loading bge-m3 (~700 MB)..."
+DIM embed = AI.LOAD_EMBEDDINGS("../models/bge-m3-Q4_K_M.gguf", 512, 99)
+Assert(embed > 0,                    "AI.LOAD_EMBEDDINGS returned id")
+
+PERSIST.init_rag embed
+Assert(PERSIST.rag_ready(),          "rag_ready true after init_rag")
+
+' ── Add knowledge ──────────────────────────────────────────────
+Header("Remember")
+PERSIST.remember _
+    "Atomi entwickelt jdBasic, ein modernes BASIC mit APL-style array " + _
+    "operations, native LLVM compile, Channels und FFI.", _
+    "about:atomi"
+PERSIST.remember _
+    "deusexmachina ist ein verteilter persönlicher AI-Agent " + _
+    "geschrieben vollständig in jdBasic.", _
+    "about:project"
+PERSIST.remember _
+    "Phi-3-mini-4k-instruct ist ein 3.8 Milliarden Parameter LLM von " + _
+    "Microsoft, optimiert für lokale Ausführung.", _
+    "about:phi3"
+PERSIST.remember _
+    "Berlin ist die Hauptstadt von Deutschland und hat etwa 3.7 " + _
+    "Millionen Einwohner.", _
+    "about:berlin"
+PERSIST.remember _
+    "Channels in jdBasic sind bounded MP/MC queues, gebaut auf mutex+" + _
+    "condvar. SEND blockt wenn der Buffer voll ist.", _
+    "about:channels"
+
+' ── Recall ─────────────────────────────────────────────────────
+' Embedding-Ranking ist semantisch — wir asserten dass die richtige
+' Quelle in den TOP-K landet, nicht zwingend Position 0. bge-m3 hat
+' eigene Vorlieben über Spracherweiterungen / Begriffe.
+SUB AssertSourceInHits(hits, expected$, label$)
+    DIM found = FALSE
+    FOR EACH h IN hits
+        IF h{"source"} = expected$ THEN found = TRUE
+    NEXT
+    Assert(found, label$)
+ENDSUB
+
+Header("Recall by similarity")
+DIM hits = PERSIST.recall("Wer hat jdBasic gemacht?", 3)
+Assert(LEN(hits) > 0,                "recall returns at least one hit")
+Assert(LEN(hits) <= 3,               "recall respects top-k")
+DIM top = hits[0]
+Assert(MAP.EXISTS(top, "text"),      "hit has text field")
+Assert(MAP.EXISTS(top, "source"),    "hit has source field")
+PRINT "  top hit source: "; top{"source"}
+AssertSourceInHits(hits, "about:atomi", "atomi-jdBasic chunk in top 3")
+
+' ── Recall: another query ──────────────────────────────────────
+Header("Recall: different topic")
+DIM hits2 = PERSIST.recall("Hauptstadt von Deutschland", 2)
+Assert(LEN(hits2) > 0,               "recall returns hit for berlin query")
+PRINT "  top hit: "; hits2[0]{"source"}
+AssertSourceInHits(hits2, "about:berlin", "berlin chunk in top 2")
+
+' ── Recall: irrelevant query still returns top-k ───────────────
+Header("Recall: weak match still scores")
+DIM hits3 = PERSIST.recall("xyz random nonsense", 2)
+Assert(LEN(hits3) > 0,               "recall returns top-k even on weak query")
+
+' ── Cleanup ────────────────────────────────────────────────────
+Header("Cleanup")
+PERSIST.close
+Assert(NOT PERSIST.is_open(),        "DB closed")
+KILL "data/rag_test.db"
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " PERSIST RAG: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

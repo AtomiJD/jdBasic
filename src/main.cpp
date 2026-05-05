@@ -1199,6 +1199,7 @@ int main(int argc, char* argv[]) {
     bool emit_ir_only = false;
     bool lint_mode = false;
     bool mcp_mode = false;
+    std::string mcp_tools_dir;
     std::string compile_output;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -1258,6 +1259,10 @@ int main(int argc, char* argv[]) {
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--lint") { lint_mode = true; continue; }
         if (a == "--mcp") { mcp_mode = true; continue; }
+        if (a == "--tools" && i + 1 < argc) {
+            mcp_tools_dir = argv[++i];
+            continue;
+        }
         if (a == "--emit-ir") { emit_ir_only = true; continue; }
         if (a == "--trace") { compile_native = true; /* set debug_log below */ continue; }
         if ((a == "-o" || a == "--output") && i + 1 < argc) { compile_output = argv[++i]; continue; }
@@ -1270,7 +1275,7 @@ int main(int argc, char* argv[]) {
 #ifdef MCPSERVER
         VM vm;
         setup_dynamic_code(vm);
-        return run_mcp_stdio(vm);
+        return run_mcp_stdio(vm, mcp_tools_dir);
 #else
         std::cerr << "MCP server mode not available (build with MCPSERVER=1)." << std::endl;
         return 1;

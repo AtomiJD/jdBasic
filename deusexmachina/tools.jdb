@@ -1,0 +1,36 @@
+' deusexmachina / tools — Handler-FUNCs für die MCP-Tools.
+'
+' Jede FUNC hier kriegt die Args-as-JSON-String vom MCP-Dispatcher
+' und liefert einen String zurück (der wird als Tool-Output gerendert).
+' Schema-Validierung lebt in den .json-Manifests und macht die MCP-
+' Schicht bereits — hier bauen wir nur die Logik.
+
+EXPORT MODULE TOOLS
+
+' deus_echo — Connectivity-Smoke-Test, parsed args, returnt nachricht.
+EXPORT FUNC tool_echo(args_json$) AS STRING
+    DIM args = JSON.PARSE$(args_json$)
+    DIM msg$ = "(no message)"
+    IF MAP.EXISTS(args, "message") THEN msg$ = args{"message"}
+    RETURN "echo from deusexmachina: " + msg$
+ENDFUNC
+
+' deus_health — Liefert kompakten Runtime-Status. Keine Args.
+EXPORT FUNC tool_health(args_json$) AS STRING
+    DIM out AS MAP
+    out{"server"} = "deusexmachina"
+    out{"phase"} = "A"
+    out{"sprint"} = 3
+    out{"build"} = "GFX IMGUI NATIVEC LLM ONNX HTTP MCPSERVER"
+    out{"tick_ms"} = TICK()
+    RETURN JSON.STRINGIFY$(out)
+ENDFUNC
+
+' deus_now — Aktueller Zeitstempel + Locale.
+EXPORT FUNC tool_now(args_json$) AS STRING
+    DIM out AS MAP
+    out{"date"} = DATE$()
+    out{"time"} = TIME$()
+    out{"tick_ms"} = TICK()
+    RETURN JSON.STRINGIFY$(out)
+ENDFUNC
