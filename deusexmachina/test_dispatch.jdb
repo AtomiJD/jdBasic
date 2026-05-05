@@ -1,0 +1,90 @@
+' deusexmachina / dispatch — End-to-End-Test.
+'
+' Startet den HTTP-Server auf 127.0.0.1:8765, posted JSON aus
+' demselben Prozess hin, asserted dass der Body als geparste MAP im
+' Bus-Topic landet. Läuft NICHT im pre-commit-Gate weil's einen Port
+' belegt und ein bisschen Sleep für Server-Startup braucht.
+OPTION "EXPLICIT"
+
+IMPORT DISPATCH
+IMPORT BUS
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Routes registrieren ───────────────────────────────────────
+Header("Route + Topic-Subscribe")
+DIM h_email = BUS.subscribe("incoming.email", 16)
+DIM h_telegram = BUS.subscribe("incoming.telegram", 16)
+
+DISPATCH.route "/email", "incoming.email", 16
+DISPATCH.route "/telegram", "incoming.telegram", 16
+
+DIM rs = DISPATCH.routes()
+Assert(MAP.EXISTS(rs, "/email"),     "route /email registered")
+Assert(MAP.EXISTS(rs, "/telegram"),  "route /telegram registered")
+
+' ── Server starten ───────────────────────────────────────────
+Header("Server start")
+DIM ok = DISPATCH.start(8765, "127.0.0.1")
+Assert(ok,                           "HTTP server started on 127.0.0.1:8765")
+SLEEP 200                            ' bisschen Luft für Listen-Socket
+
+' ── POST /email ──────────────────────────────────────────────
+Header("POST /email landet im Topic")
+DIM mail_json$ = "{""from"":""alice@example.com"",""subject"":""hello"",""body"":""hi""}"
+DIM rc$ = HTTP.POST$("http://127.0.0.1:8765/email", mail_json$, "application/json")
+PRINT "  server replied: "; rc$
+Assert(rc$ = "ok",                   "server returned 'ok'")
+
+DIM v = CHAN.RECV(h_email)
+Assert(v{"from"} = "alice@example.com", "from-field arrived")
+Assert(v{"subject"} = "hello",       "subject-field arrived")
+
+' ── POST /telegram ────────────────────────────────────────────
+Header("POST /telegram unabhängiges Topic")
+DIM tg_json$ = "{""chat_id"":12345,""text"":""ping""}"
+DIM rc2$ = HTTP.POST$("http://127.0.0.1:8765/telegram", tg_json$, "application/json")
+Assert(rc2$ = "ok",                  "telegram POST acked")
+
+DIM tv = CHAN.RECV(h_telegram)
+Assert(tv{"chat_id"} = 12345,        "chat_id-field arrived")
+Assert(tv{"text"} = "ping",          "text-field arrived")
+
+' ── Unbekannte Route → 404 ───────────────────────────────────
+Header("Unknown route")
+HTTP.STATUSCODE                      ' clear cached status
+DIM r404$ = HTTP.POST$("http://127.0.0.1:8765/nowhere", "{}", "application/json")
+DIM code = HTTP.STATUSCODE()
+PRINT "  status: "; code; "  body: "; r404$
+Assert(code = 404,                   "unknown route returns 404")
+
+' ── Cleanup ──────────────────────────────────────────────────
+Header("Cleanup")
+DISPATCH.shutdown
+SLEEP 100
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " DISPATCH: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

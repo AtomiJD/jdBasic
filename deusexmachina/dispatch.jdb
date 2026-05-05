@@ -1,0 +1,81 @@
+' deusexmachina / dispatch — HTTP-Receiver-Hub.
+'
+' Mappt POST-Pfade auf BUS-Topics. Externe Quellen (Telegram-Webhook,
+' Outlook-Source-Scraper, Smart-Home-Devices) POSTen JSON nach
+' http://host:port/<route>; jeder Request landet als Channel-Message
+' im zugehörigen Topic, von wo Skill-Module ihn als ASYNC-Consumer
+' aufnehmen.
+'
+' Single-VM-Modell: HTTP-Server läuft auf einem Background-Thread,
+' der unter VM-Mutex die Handler-FUNCs auf der Main-VM aufruft —
+' Module-Globals (BUS.g_topics, DISPATCH.g_routes) sind dabei sichtbar
+' weil's dieselbe VM ist. Cross-VM-Sharing (= ASYNC FUNCs) ginge nur
+' über CHAN-Handles.
+
+EXPORT MODULE DISPATCH
+IMPORT BUS
+
+DIM g_routes AS MAP    ' path -> topic-name
+
+' Registriert eine Route. Stellt sicher dass das Topic existiert,
+' so dass spätere Subscriber das selbe Channel-Handle bekommen.
+EXPORT SUB route(path$, topic$, capacity AS INTEGER)
+    g_routes{path$} = topic$
+    DIM h = BUS.subscribe(topic$, capacity)
+ENDSUB
+
+' Listet die registrierten Routen für Diagnose.
+EXPORT FUNC routes() AS MAP
+    RETURN g_routes
+ENDFUNC
+
+' Startet den HTTP-Server. host = "127.0.0.1" für loopback-only,
+' "0.0.0.0" um an LAN zu binden (Phase B braucht das für ngrok).
+EXPORT FUNC start(port AS INTEGER, host$) AS BOOLEAN
+    DIM keys = MAP.KEYS(g_routes)
+    FOR EACH p$ IN keys
+        ' Uppercase: jdBasic stringifies FUNC-Namen case-insensitive
+        ' im func_map; call_function() macht aber exact-match auf den
+        ' Stringschlüssel. Hier: Kompatibilität sicherstellen.
+        HTTP.SERVER.ON_POST p$, "DISPATCH.HANDLE_POST"
+    NEXT
+    RETURN HTTP.SERVER.START(port, host$)
+ENDFUNC
+
+EXPORT SUB shutdown()
+    DIM rc = HTTP.SERVER.STOP()
+ENDSUB
+
+' Server-Thread ruft handle_post(req) für jede registrierte POST-Route.
+' Wir publishen den (geparsten oder rohen) Body ans gemappte Topic
+' und bestätigen mit 200. Unbekannte Pfade kommen hier nie an, weil
+' wir nur registrierte Routen an HTTP.SERVER.ON_POST hängen.
+' Server-Response-Konvention (siehe http.cpp:apply_rich_response):
+'   __http_status, __http_body, __http_headers, __http_content_type
+' setzen → diese Felder werden 1:1 auf die Response gemappt. Sonst
+' wird ein zurückgegebener Map als JSON serialisiert oder ein String
+' als text/html gerendert.
+EXPORT FUNC handle_post(req AS MAP) AS MAP
+    DIM path$ = req{"PATH"}
+    DIM resp AS MAP
+    IF NOT MAP.EXISTS(g_routes, path$) THEN
+        resp{"__http_status"} = 404
+        resp{"__http_body"} = "no route for " + path$
+        resp{"__http_content_type"} = "text/plain"
+        RETURN resp
+    ENDIF
+    DIM topic$ = g_routes{path$}
+    ' JSON-Body parsen wenn möglich; sonst roh als String publishen.
+    DIM payload
+    DIM body$ = req{"BODY"}
+    TRY
+        payload = JSON.PARSE$(body$)
+    CATCH
+        payload = body$
+    ENDTRY
+    BUS.publish topic$, payload
+    resp{"__http_status"} = 200
+    resp{"__http_body"} = "ok"
+    resp{"__http_content_type"} = "text/plain"
+    RETURN resp
+ENDFUNC
