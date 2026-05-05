@@ -50,6 +50,26 @@ std::vector<SDL_Event> gfx_drain_pending_events() {
     out.swap(g_pending_sdl_events);
     return out;
 }
+
+// REPL workspace-switch hook (Ctrl+F1..F4). Null in standalone mode.
+static bool g_repl_active = false;
+static void (*g_repl_switch_cb)(int) = nullptr;
+void gfx_set_repl_switch_hook(bool active, void (*cb)(int)) {
+    g_repl_active = active;
+    g_repl_switch_cb = cb;
+}
+// Returns true (and dispatches) if `ev` is the Ctrl+F1..F4 chord while the
+// REPL hook is active; the caller should `continue` so ImGui and ON-handlers
+// never see the event.
+static bool gfx_intercept_repl_chord(const SDL_Event& ev) {
+    if (!g_repl_active || !g_repl_switch_cb) return false;
+    if (ev.type != SDL_EVENT_KEY_DOWN || ev.key.repeat) return false;
+    if (!(ev.key.mod & SDL_KMOD_CTRL)) return false;
+    SDL_Keycode k = ev.key.key;
+    if (k < SDLK_F1 || k > SDLK_F4) return false;
+    g_repl_switch_cb((int)(k - SDLK_F1));
+    return true;
+}
 static int           g_screen_w = 0;
 static int           g_screen_h = 0;
 static float         g_scale    = 1.0f;
@@ -461,6 +481,7 @@ void gfx_pump_events() {
     if (!g_renderer) return;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+        if (gfx_intercept_repl_chord(ev)) continue;
 #ifdef IMGUI
         gui_process_event(&ev);
 #endif
@@ -648,6 +669,7 @@ void register_graphics_builtins(VM& vm) {
         // see an empty queue (because we already drained it here).
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+            if (gfx_intercept_repl_chord(ev)) continue;
 #ifdef IMGUI
             gui_process_event(&ev);
 #endif

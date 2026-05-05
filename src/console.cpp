@@ -10,6 +10,7 @@
 #endif
 
 #include "console.h"
+#include "graphics.h"
 #include "vm.h"
 #include <iostream>
 #include <fstream>
@@ -330,13 +331,32 @@ int Console::read_raw_key() {
 #endif
 }
 
+// ── REPL workspace-switch trampoline ─────────────────────────
+// Set while Console::run() is alive. The graphics hook is invoked from a
+// VM worker thread (where SDL_PollEvent is drained) — we can't touch
+// stdout from there, so we just record the request and let the main run()
+// loop pick it up.
+Console* Console::s_active_repl = nullptr;
+void Console::repl_switch_workspace_trampoline(int ws) {
+    if (s_active_repl) s_active_repl->pending_switch.store(ws, std::memory_order_relaxed);
+}
+
 // ── Main loop ────────────────────────────────────────────────
 
 void Console::run() {
     // Banner is printed by main.cpp before Console::run()
     render_prompt();
 
+    s_active_repl = this;
+    gfx_set_repl_switch_hook(true, &Console::repl_switch_workspace_trampoline);
+
     while (is_running) {
+        // Drain Ctrl+F1..F4 chord requested from the graphics SDL loop
+        int requested = pending_switch.exchange(-1, std::memory_order_relaxed);
+        if (requested >= 0 && requested < MAX_WORKSPACES && requested != active_ws) {
+            switch_workspace(requested);
+        }
+
         // Process RECUR tasks
         process_recur_tasks();
         if (!pending_executions.empty()) {
@@ -388,24 +408,55 @@ void Console::run() {
                 // VM is blocking on INPUT/std::cin — do NOT touch console buffer
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
             } else {
-                // VM is running normally (INKEY$ polls non-blocking) —
-                // peek for F1-F4 workspace switch, leave everything else
+                // VM is running normally (INKEY$ polls non-blocking).
+                // Drain the console input buffer carefully: the head event
+                // is sticky (PeekConsoleInputW only ever returns position 0)
+                // so a non-F1..F4 key like ESC will block all subsequent
+                // F1..F4 peeks until something pops it.
 #if defined(_WIN32)
                 HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-                INPUT_RECORD ir;
-                DWORD peeked;
-                if (PeekConsoleInputW(hStdin, &ir, 1, &peeked) && peeked > 0) {
+                bool gfx_running = false;
+#ifdef GFX
+                extern bool gfx_is_active();
+                gfx_running = gfx_is_active();
+#endif
+                while (true) {
+                    INPUT_RECORD ir;
+                    DWORD peeked = 0;
+                    if (!PeekConsoleInputW(hStdin, &ir, 1, &peeked) || peeked == 0) break;
+
+                    bool consume = true;     // default: pop and ignore
+                    bool keep_draining = true;
+
                     if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
                         WORD vk = ir.Event.KeyEvent.wVirtualKeyCode;
+                        DWORD ks = ir.Event.KeyEvent.dwControlKeyState;
+                        bool ctrl = (ks & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+
                         if (vk >= VK_F1 && vk <= VK_F4) {
-                            ReadConsoleInputW(hStdin, &ir, 1, &peeked);
+                            // Bare or Ctrl+F1..F4: switch workspace
                             switch_workspace(vk - VK_F1);
+                        } else if (ctrl && (vk == 'C' || vk == VK_PAUSE)) {
+                            // Ctrl+C / Ctrl+Break: halt the running program
+                            workspaces[active_ws].vm->is_halted = true;
+                        } else if (!gfx_running) {
+                            // Console-mode program may want this key via
+                            // INKEY$/_kbhit/_getch — leave it at the head
+                            // and stop draining for this tick.
+                            consume = false;
+                            keep_draining = false;
                         }
-                        // Other keys: leave for INKEY$/WAITKEY$
-                    } else {
-                        // Non-key events (mouse, focus): discard
-                        ReadConsoleInputW(hStdin, &ir, 1, &peeked);
+                        // Graphics mode: drop the key (program reads SDL,
+                        // not stdin) so the buffer head doesn't get stuck.
                     }
+                    // Key-up, mouse, focus events: always drained.
+
+                    if (consume) {
+                        INPUT_RECORD discard;
+                        DWORD r = 0;
+                        ReadConsoleInputW(hStdin, &discard, 1, &r);
+                    }
+                    if (!keep_draining) break;
                 }
 #endif
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -428,6 +479,9 @@ void Console::run() {
             }
         }
     }
+
+    gfx_set_repl_switch_hook(false, nullptr);
+    s_active_repl = nullptr;
 
     // Join any running worker threads on exit
     for (int i = 0; i < MAX_WORKSPACES; i++) {

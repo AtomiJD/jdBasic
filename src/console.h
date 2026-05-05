@@ -118,6 +118,13 @@ private:
     Workspace workspaces[MAX_WORKSPACES];
     int active_ws = 0;
     bool is_running = true;
+
+    // Ctrl+F1..F4 from a graphics SDL window arrives on a worker thread —
+    // we cannot touch stdout/screen state there. The graphics hook stores
+    // the requested workspace here; the main run() loop drains it.
+    std::atomic<int> pending_switch{-1};
+    static Console* s_active_repl;
+    static void repl_switch_workspace_trampoline(int ws);
     bool dirty_prompt = false; // set by key handlers; main loop re-renders once per batch
     ExecuteFunc executor;
 

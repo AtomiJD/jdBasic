@@ -844,6 +844,18 @@ ENDTRY
 * **`NEW`**: Empties the source code, compiled p-code, and user-defined function tables.
 * **`UNREACT(name$)`**: Remove reactive variable. name$ can be a plain var (e.g., "A"), a dotted member (e.g., "PLAYER.X") or special "ALL"/"*" to clear the entire reactive graph.
 
+### REPL Keyboard Shortcuts
+
+The interactive REPL hosts up to four parallel workspaces, each with its own VM.
+
+* **`F1` … `F4`**: Switch to workspace 1–4. Works at the prompt and while a console-mode program is running (the keys are intercepted before reaching `INKEY$`).
+* **`Ctrl+F1` … `Ctrl+F4`**: Same as `F1`…`F4`, but also works while a graphics program is running. The chord is consumed before ImGui or `ON KEYDOWN` handlers see it, so the running program is free to bind plain `F1`…`F4` for its own use (help screens, save slots, etc.).
+* **`F5`**: Run the current source buffer.
+* **`F7`**: Show command history.
+* **`F8`**: Search command history (incremental, by prefix of current line).
+
+The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Standalone runs (`jdbasic foo.jdb`) install no hook, so the chord has zero overhead and `F1`…`F4` reach the program normally.
+
 ### Filesystem
 
 * **`DIR [path]`**: Lists files and directories. Supports wildcards like `*` and `?`.
