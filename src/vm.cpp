@@ -916,6 +916,77 @@ void VM::run() {
             break;
         }
 
+        case OpCode::FOREACH_NEXT: {
+            // i16 exit_offset (relative to ip after operand).
+            int16_t off = (int16_t)(cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8));
+            cf.ip += 2;
+            // Stack top is state, then iter (we pop in that order).
+            Value state = std::move(stack[--sp]);
+            Value iter  = std::move(stack[--sp]);
+
+            auto take_exit = [&]() {
+                cf.ip = (size_t)((ptrdiff_t)cf.ip + off);
+            };
+
+            if (iter.type == ValueType::ARRAY) {
+                int64_t idx = state.to_int();
+                auto* arr = iter.as_array();
+                if (idx < 0 || idx >= (int64_t)arr->elements.size()) {
+                    take_exit();
+                    break;
+                }
+                Value val = arr->elements[(size_t)idx];
+                if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
+                stack[sp++] = Value::make_i64(idx + 1);
+                stack[sp++] = std::move(val);
+            } else if (iter.type == ValueType::STRING) {
+                int64_t idx = state.to_int();
+                const auto& s = iter.as_string()->data;
+                if (idx < 0 || idx >= (int64_t)s.size()) {
+                    take_exit();
+                    break;
+                }
+                Value val = Value::make_string(std::string(1, s[(size_t)idx]));
+                if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
+                stack[sp++] = Value::make_i64(idx + 1);
+                stack[sp++] = std::move(val);
+            } else if (iter.type == ValueType::INT64) {
+                // Channel handle? Look up in the global registry.
+                int64_t handle = iter.to_int();
+                auto ch = chan_lookup(handle);
+                if (!ch) {
+                    // Bare i64 that isn't a channel handle — match the
+                    // pre-Phase-4 LEN=0 behaviour for non-iterables and
+                    // exit with zero iterations.
+                    take_exit();
+                    break;
+                }
+                std::unique_lock<std::mutex> lock(ch->mtx);
+                ++ch->waiting_recv;
+                ch->cv_recv.wait(lock, [&]() {
+                    return !ch->buffer.empty() || ch->closed.load();
+                });
+                --ch->waiting_recv;
+                if (ch->buffer.empty()) {
+                    // Closed + drained. Exit.
+                    take_exit();
+                    break;
+                }
+                Value val = std::move(ch->buffer.front());
+                ch->buffer.pop_front();
+                ch->cv_send.notify_one();
+                // State unchanged for channels — keep whatever was there.
+                if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
+                stack[sp++] = std::move(state);
+                stack[sp++] = std::move(val);
+            } else {
+                // MAP / OBJECT / NONE / ... — pre-existing FOR EACH path
+                // returned LEN=0 for these and never entered the loop.
+                take_exit();
+            }
+            break;
+        }
+
         case OpCode::MAYBE_INIT_STATIC: {
             // op(1) consumed; operands: u16 slot, i16 skip_offset
             uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);

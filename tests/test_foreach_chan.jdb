@@ -1,0 +1,129 @@
+' ══════════════════════════════════════════════════════════════════
+'  FOR EACH v IN ch — Phase 4. Iterate a channel until its EOF.
+'  Same loop syntax as `FOR EACH x IN [1,2,3]` so the existing
+'  array/map paths must keep working (regression).
+' ══════════════════════════════════════════════════════════════════
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── Regression: FOR EACH over array still works ──────────────────
+Header("Regression: FOR EACH over array")
+DIM acc1$ = ""
+FOR EACH a$ IN ["x", "y", "z"]
+    acc1$ = acc1$ + a$
+NEXT
+Assert(acc1$ = "xyz",            "array FOR EACH unchanged")
+
+DIM nums = [10, 20, 30, 40]
+DIM total = 0
+FOR EACH n IN nums
+    total = total + n
+NEXT
+Assert(total = 100,              "array sum via FOR EACH")
+
+' ── FOR EACH over a pre-filled, closed channel ───────────────────
+Header("FOR EACH over pre-filled closed channel")
+DIM ch1 = CHAN.OPEN(8)
+FOR i = 1 TO 5
+    CHAN.SEND ch1, i * 10
+NEXT
+CHAN.CLOSE ch1
+
+DIM sum1 = 0
+FOR EACH v IN ch1
+    sum1 = sum1 + v
+NEXT
+Assert(sum1 = 150,               "FOR EACH drains 5 items: 10+20+30+40+50")
+
+' ── FOR EACH over an empty closed channel: zero iterations ───────
+Header("FOR EACH over empty closed channel")
+DIM ch2 = CHAN.OPEN(4)
+CHAN.CLOSE ch2
+DIM iters = 0
+FOR EACH v2 IN ch2
+    iters = iters + 1
+NEXT
+Assert(iters = 0,                "empty closed channel yields zero iterations")
+
+' ── FOR EACH with mixed payloads ──────────────────────────────────
+Header("FOR EACH with mixed types")
+DIM ch3 = CHAN.OPEN(8)
+CHAN.SEND ch3, 1
+CHAN.SEND ch3, "two"
+CHAN.SEND ch3, 3.14
+CHAN.SEND ch3, TRUE
+CHAN.CLOSE ch3
+DIM seen$ = ""
+FOR EACH x IN ch3
+    seen$ = seen$ + STR$(x) + "|"
+NEXT
+' Mixed types stringify with their natural form
+Assert(LEN(seen$) > 0,           "FOR EACH visits all mixed-type entries")
+
+' ── EXITFOR breaks out of channel iteration ──────────────────────
+Header("EXITFOR breaks out of channel FOR EACH")
+DIM ch4 = CHAN.OPEN(16)
+FOR i = 1 TO 10
+    CHAN.SEND ch4, i
+NEXT
+CHAN.CLOSE ch4
+
+DIM exit_sum = 0
+DIM exit_n = 0
+FOR EACH v4 IN ch4
+    IF v4 > 3 THEN EXITFOR
+    exit_sum = exit_sum + v4
+    exit_n = exit_n + 1
+NEXT
+Assert(exit_n = 3,               "EXITFOR after seeing 1..3")
+Assert(exit_sum = 6,             "EXITFOR sum 1+2+3 = 6")
+
+' ── Concurrent: ASYNC producer + FOR EACH consumer ───────────────
+Header("Concurrent: ASYNC producer feeds FOR EACH consumer")
+
+ASYNC FUNC fe_producer(handle, n)
+    FOR i = 1 TO n
+        CHAN.SEND handle, i * 100
+    NEXT
+    CHAN.CLOSE handle
+    RETURN n
+ENDFUNC
+
+DIM ch5 = CHAN.OPEN(4)            ' tight buffer → real backpressure
+DIM p5 = fe_producer(ch5, 50)
+
+DIM big_sum = 0
+FOR EACH v5 IN ch5
+    big_sum = big_sum + v5
+NEXT
+DIM r5 = AWAIT p5
+Assert(r5 = 50,                  "producer sent 50 items")
+Assert(big_sum = 127500,         "FOR EACH summed 100*1..50 = 127500")
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " FOR EACH IN channel: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

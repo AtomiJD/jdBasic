@@ -511,64 +511,62 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             break;
         }
         case StmtKind::FOR_EACH: {
-            // Evaluate collection, store in hidden temp
+            // Evaluate the iterable once, stash in a hidden temp slot.
+            // The FOREACH_NEXT opcode advances per-iteration: pops state +
+            // iter from the stack, on continue pushes (new_state, value)
+            // — and dispatches based on iter type so ARRAY (index walk),
+            // STRING (char walk), and channel handle (CHAN.RECV-until-EOF)
+            // all share one loop body.
             compile_expr(*stmt.expr);
-            std::string arr_tmp = "__FOREACH_ARR_" + std::to_string(stmt.line);
-            std::string idx_tmp = "__FOREACH_IDX_" + std::to_string(stmt.line);
-            uint16_t arr_slot = resolve_var(arr_tmp);
-            uint16_t idx_slot = resolve_var(idx_tmp);
-            bool is_global = should_use_global(arr_tmp);
-            auto emit_store = [&](uint16_t slot) {
+            std::string iter_tmp  = "__FOREACH_ITER_"  + std::to_string(stmt.line);
+            std::string state_tmp = "__FOREACH_STATE_" + std::to_string(stmt.line);
+            uint16_t iter_slot  = resolve_var(iter_tmp);
+            uint16_t state_slot = resolve_var(state_tmp);
+            bool is_global = should_use_global(iter_tmp);
+            auto emit_store_temp = [&](uint16_t slot) {
                 current_chunk().emit(is_global ? OpCode::STORE_GLOBAL : OpCode::STORE_VAR, stmt.line);
                 current_chunk().emit_u16(slot, stmt.line);
             };
-            auto emit_load = [&](uint16_t slot) {
+            auto emit_load_temp = [&](uint16_t slot) {
                 current_chunk().emit(is_global ? OpCode::LOAD_GLOBAL : OpCode::LOAD_VAR, stmt.line);
                 current_chunk().emit_u16(slot, stmt.line);
             };
-            emit_store(arr_slot);
-            emit_constant(Value::make_i64(0), stmt.line);
-            emit_store(idx_slot);
 
-            // Loop start
+            emit_store_temp(iter_slot);
+            emit_constant(Value::make_i64(0), stmt.line);
+            emit_store_temp(state_slot);
+
             { LoopCtx lc; lc.is_for = true; loop_stack.push_back(std::move(lc)); }
             size_t loop_start = current_chunk().code.size();
 
-            // Condition: idx < LEN(arr)
-            emit_load(idx_slot);
-            emit_load(arr_slot);
-            // Call LEN
-            uint16_t len_fi = current_chunk().add_constant(Value::make_string("LEN"));
-            current_chunk().emit(OpCode::CALL, stmt.line);
-            current_chunk().emit_u16(len_fi, stmt.line);
-            current_chunk().emit_u8(1, stmt.line);
-            current_chunk().emit(OpCode::CMP_LT, stmt.line);
-            size_t exit_jump = emit_jump(OpCode::JUMP_IF_FALSE, stmt.line);
+            // Push iter, state; opcode pops both. On exit it jumps to
+            // exit_patch; on continue it pushes (new_state, value).
+            emit_load_temp(iter_slot);
+            emit_load_temp(state_slot);
+            current_chunk().emit(OpCode::FOREACH_NEXT, stmt.line);
+            size_t exit_patch = current_chunk().code.size();
+            current_chunk().emit_i16(0, stmt.line); // placeholder
 
-            // var = arr[idx]
-            emit_load(arr_slot);
-            emit_load(idx_slot);
-            current_chunk().emit(OpCode::INDEX_GET, stmt.line);
-            uint16_t var_slot = resolve_var(stmt.var_name);
-            emit_store(var_slot);
+            // Stack now: [..., new_state, value]. Pop value into the
+            // user's loop variable, pop new_state back to the temp slot.
+            emit_var_store(stmt.var_name, stmt.line, /*prefer_local=*/false);
+            emit_store_temp(state_slot);
 
             // Body
             for (auto& s : stmt.body) compile_stmt(*s);
 
-            // Continue point: increment idx
+            // Continue jumps land here; loop back to loop_start.
             for (size_t cp : loop_stack.back().continue_patches) patch_jump(cp);
-            emit_load(idx_slot);
-            emit_constant(Value::make_i64(1), stmt.line);
-            current_chunk().emit(OpCode::ADD, stmt.line);
-            emit_store(idx_slot);
-
-            // Jump back
             current_chunk().emit(OpCode::JUMP, stmt.line);
             size_t back_addr = current_chunk().code.size();
             current_chunk().emit_i16(static_cast<int16_t>(loop_start - back_addr - 2), stmt.line);
 
-            // Patch exit
-            patch_jump(exit_jump);
+            // Patch FOREACH_NEXT exit offset to here.
+            int16_t fwd_off = static_cast<int16_t>(
+                current_chunk().code.size() - (exit_patch + 2));
+            current_chunk().patch_i16(exit_patch, fwd_off);
+
+            // Break patches land at exit too.
             for (size_t bp : loop_stack.back().break_patches) patch_jump(bp);
             loop_stack.pop_back();
             break;

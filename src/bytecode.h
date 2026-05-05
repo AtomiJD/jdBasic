@@ -119,6 +119,17 @@ enum class OpCode : uint8_t {
     // (so a recursive call during init terminates against the default
     // slot value, not infinite recursion) and fall through.
     MAYBE_INIT_STATIC,           // u16 slot, i16 offset
+
+    // FOR EACH iterator step. Pops (state, iter) from the stack top.
+    // - ARRAY iter: integer-indexed; on exit pops, jumps; on continue
+    //   pushes (state+1, iter[state]).
+    // - STRING iter: same shape, byte-indexed, single-char STRINGs.
+    // - INT64 iter that's a registered channel handle: blocks on
+    //   CHAN.RECV, EOF → jump; else pushes (state, value) — state is
+    //   unchanged for channels.
+    // - Anything else: jump immediately (zero iterations) to keep
+    //   parity with the prior LEN=0 behaviour.
+    FOREACH_NEXT,                // i16 exit_offset
 };
 
 struct Chunk {
@@ -233,6 +244,7 @@ inline int opcode_width(OpCode op) {
         case OpCode::SETUP_TRY:
         case OpCode::BREAK_LOOP:
         case OpCode::CONTINUE_LOOP_OP:
+        case OpCode::FOREACH_NEXT:
             return 3; // opcode + u16
 
         // u16 slot + i16 jump offset
@@ -311,6 +323,11 @@ inline void peephole_optimize(Chunk& chunk) {
             // op(1) + slot(2) + i16 offset(2). Offset relative to ip+5.
             int16_t off = (int16_t)(code[ip + 3] | (code[ip + 4] << 8));
             size_t target = ip + 5 + off;
+            if (target < n) is_jump_target[target] = true;
+        } else if (op == OpCode::FOREACH_NEXT) {
+            // op(1) + i16 offset(2). Offset relative to ip+3.
+            int16_t off = (int16_t)(code[ip + 1] | (code[ip + 2] << 8));
+            size_t target = ip + 3 + off;
             if (target < n) is_jump_target[target] = true;
         }
         ip += w;

@@ -2289,13 +2289,30 @@ DIM c  = consume(ch)
 PRINT AWAIT c                       ' 500500
 ```
 
-Idiom: drain a channel until EOF using a `DO ... LOOP` with an explicit
-`CHAN.IS_EOF` check. Phase 2 will add native `FOR EACH v IN ch` for the
-same pattern.
+`FOR EACH v IN ch` iterates the channel until EOF — same syntax as
+`FOR EACH x IN [1,2,3]`. The loop blocks on RECV between iterations, so
+producer/consumer backpressure works naturally:
+
+```basic
+DIM total = 0
+FOR EACH v IN ch
+    total = total + v
+NEXT
+```
+
+The explicit `DO ... LOOP` with `CHAN.IS_EOF` is still useful when you
+need to inspect the EOF marker directly or interleave multiple channels
+manually.
 
 Worker-pool / fan-in / fan-out flows fall out naturally:
 
 ```basic
+ASYNC FUNC worker(jobs_ch, results_ch)
+    FOR EACH path$ IN jobs_ch        ' drains until producer closes jobs_ch
+        CHAN.SEND results_ch, parse_one(path$)
+    NEXT
+ENDFUNC
+
 DIM jobs    = CHAN.OPEN(0)         ' unbuffered → producer waits for a free worker
 DIM results = CHAN.OPEN(64)
 DIM w1 = worker(jobs, results)
