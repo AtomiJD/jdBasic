@@ -1467,8 +1467,14 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 
 ### File I/O Functions
 
-* **`TXTREADER$(filename$)`**: Reads an entire text file into a single string variable.
-* **`TXTWRITER filename$, content$, [append]`**: Writes a string variable to a text file. If the optional third argument `append` is `TRUE`, content is appended to the existing file; otherwise the file is overwritten (default). The file is written in binary mode, so no newline translation is performed.
+* **`TXTREADER$(filename$, [encoding$])`**: Reads an entire text file into a single string variable. If the optional `encoding$` argument is given, the file's bytes are decoded from that codepage to UTF-8 for the returned string. Default (no arg, `""`, or `"utf-8"`) is byte-pass-through. Supported codepage names: `"cp1252"` / `"windows-1252"` / `"latin1"`, `"cp850"`, `"cp437"`, `"cp1250"`, `"cp1251"`, `"cp936"`, `"cp932"`. Codepage decoding is Windows-only; other platforms only support pass-through.
+* **`TXTWRITER filename$, content$, [append], [encoding$]`**: Writes a string variable to a text file. The optional 3rd argument `append` (boolean) chooses overwrite (`FALSE`, default) vs. append. The optional 4th argument `encoding$` re-encodes the UTF-8 jdBasic string to the named codepage on disk; same name set as `TXTREADER$`. The file is written in binary mode, so no newline translation is performed. Example for round-tripping a VBA `.bas` export:
+
+    ```basic
+    DIM src$ = TXTREADER$("modAuftragFachlich.bas", "cp1252")
+    src$ = REPLACE$(src$, "Datensätze", "Datensätze (geprüft)")
+    TXTWRITER "modAuftragFachlich.bas", src$, FALSE, "cp1252"
+    ```
 * **`CSVREADER(filename$, [delimiter$], [has_header])`**: Reads a CSV file into a 2D array of numbers.
 * **`CSVWRITER filename$, array, [delimiter$], [header_array]`**: Writes a 2D array to a CSV file.
 * **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.

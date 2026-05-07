@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "jdb_tags.h"
+#include "jdb_encoding.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -2427,6 +2428,48 @@ void jdb_txtwriter_append(const char* path, const char* content) {
 void jdb_txtwriter3(const char* path, const char* content, int64_t append) {
     if (append) jdb_txtwriter_append(path, content);
     else        jdb_txtwriter(path, content);
+}
+
+// 2-arg TXTREADER$ with codepage — decodes file bytes (in `encoding`) to UTF-8
+// for the jdBasic string. encoding=NULL or "" means byte-pass-through (same as
+// the 1-arg jdb_txtreader). On Windows the conversion goes via UTF-16; other
+// platforms only support pass-through.
+char* jdb_txtreader_enc(const char* path, const char* encoding) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return _strdup("");
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::string raw((size_t)len, '\0');
+    if (len > 0) fread(&raw[0], 1, len, f);
+    fclose(f);
+    std::string enc = encoding ? encoding : "";
+    try {
+        std::string out = jdb_enc::decode_to_utf8(raw, enc);
+        return _strdup(out.c_str());
+    } catch (const std::exception&) {
+        // Fall back to pass-through on conversion error so the script can
+        // recover; the (corrupt-on-bad-bytes) data is still readable.
+        return _strdup(raw.c_str());
+    }
+}
+
+// 4-arg TXTWRITER with codepage — encodes UTF-8 jdBasic string to `encoding`
+// bytes before writing. encoding=NULL or "" means byte-pass-through.
+void jdb_txtwriter_enc(const char* path, const char* content, int64_t append,
+                       const char* encoding) {
+    std::string in = content ? content : "";
+    std::string enc = encoding ? encoding : "";
+    std::string out;
+    try {
+        out = jdb_enc::encode_from_utf8(in, enc);
+    } catch (const std::exception&) {
+        out = in;
+    }
+    FILE* f = fopen(path, append ? "ab" : "wb");
+    if (!f) return;
+    if (!out.empty()) fwrite(out.data(), 1, out.size(), f);
+    fclose(f);
 }
 
 char* jdb_pwd() {

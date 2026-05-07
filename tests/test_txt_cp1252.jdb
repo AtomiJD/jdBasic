@@ -1,0 +1,92 @@
+' ============================================================
+' TXTREADER$ / TXTWRITER codepage roundtrip
+' ============================================================
+' Verifies the optional encoding arg added 2026-05-07.
+' - Default (no enc arg) stays byte-pass-through (no regression).
+' - "cp1252" encodes UTF-8 -> 1 byte per umlaut on write.
+' - "cp1252" decodes 1-byte umlauts -> UTF-8 on read.
+' - Roundtrip is identity.
+'
+' Umlaut bytes (avoid relying on file-editor encoding):
+'   UTF-8: ae=195,164  oe=195,182  ue=195,188  sz=195,159
+'   CP1252: ae=228     oe=246      ue=252      sz=223
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_EQ(name$, expected, actual)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected; "  actual="; actual
+    ENDIF
+ENDSUB
+
+DIM utf8_ae$  AS STRING = CHR$(195) + CHR$(164)
+DIM utf8_oe$  AS STRING = CHR$(195) + CHR$(182)
+DIM utf8_ue$  AS STRING = CHR$(195) + CHR$(188)
+DIM utf8_sz$  AS STRING = CHR$(195) + CHR$(159)
+DIM cp_ae$    AS STRING = CHR$(228)
+
+DIM tmp$      AS STRING = "tmp_cp_test.txt"
+
+' ── Test 1: default (no enc arg) is byte-pass-through ─────────
+TXTWRITER tmp$, cp_ae$
+DIM raw$ AS STRING = TXTREADER$(tmp$)
+CHECK_EQ "byte-pass len",       1,   LEN(raw$)
+CHECK_EQ "byte-pass byte",      228, ASC(raw$)
+
+' ── Test 2: write UTF-8 with cp1252 -> file has CP1252 byte ───
+TXTWRITER tmp$, utf8_ae$, FALSE, "cp1252"
+raw$ = TXTREADER$(tmp$)
+CHECK_EQ "encode ae len",       1,   LEN(raw$)
+CHECK_EQ "encode ae byte",      228, ASC(raw$)
+
+' ── Test 3: read CP1252 file with cp1252 -> UTF-8 string ──────
+TXTWRITER tmp$, cp_ae$
+DIM decoded$ AS STRING = TXTREADER$(tmp$, "cp1252")
+CHECK_EQ "decode ae len",       2,   LEN(decoded$)
+CHECK_EQ "decode ae byte 0",    195, ASC(MID$(decoded$, 0, 1))
+CHECK_EQ "decode ae byte 1",    164, ASC(MID$(decoded$, 1, 1))
+
+' ── Test 4: roundtrip on all four umlauts ─────────────────────
+DIM original$ AS STRING = utf8_ae$ + utf8_oe$ + utf8_ue$ + utf8_sz$
+TXTWRITER tmp$, original$, FALSE, "cp1252"
+DIM rt$ AS STRING = TXTREADER$(tmp$, "cp1252")
+CHECK_EQ "rt utf8 len",         8,   LEN(rt$)
+CHECK_EQ "rt equals original",  1,   IIF(original$ = rt$, 1, 0)
+
+' Now read the bytes raw and verify CP1252 layout
+DIM raw2$ AS STRING = TXTREADER$(tmp$)
+CHECK_EQ "cp1252 file size",    4,   LEN(raw2$)
+CHECK_EQ "cp1252 ae",           228, ASC(MID$(raw2$, 0, 1))
+CHECK_EQ "cp1252 oe",           246, ASC(MID$(raw2$, 1, 1))
+CHECK_EQ "cp1252 ue",           252, ASC(MID$(raw2$, 2, 1))
+CHECK_EQ "cp1252 sz",           223, ASC(MID$(raw2$, 3, 1))
+
+' ── Test 5: append still works with encoding ──────────────────
+TXTWRITER tmp$, utf8_ae$, FALSE, "cp1252"
+TXTWRITER tmp$, utf8_oe$, TRUE,  "cp1252"
+DIM ap$ AS STRING = TXTREADER$(tmp$)
+CHECK_EQ "append cp1252 size",  2,   LEN(ap$)
+CHECK_EQ "append cp1252 ae",    228, ASC(MID$(ap$, 0, 1))
+CHECK_EQ "append cp1252 oe",    246, ASC(MID$(ap$, 1, 1))
+
+' ── Test 6: utf-8 alias is no-op pass-through ─────────────────
+TXTWRITER tmp$, utf8_ae$, FALSE, "utf-8"
+DIM u$ AS STRING = TXTREADER$(tmp$, "utf-8")
+CHECK_EQ "utf-8 alias rt",      1,   IIF(utf8_ae$ = u$, 1, 0)
+CHECK_EQ "utf-8 alias len",     2,   LEN(u$)
+
+' Cleanup
+KILL tmp$
+
+PRINT ""
+PRINT "============================================="
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+PRINT "============================================="
+END

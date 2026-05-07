@@ -380,6 +380,12 @@ void LLVMCodegen::declare_runtime_functions() {
     // 3-arg TXTWRITER: 2-arg calls pad 0 → no append, 3-arg picks append
     reg("jdb_txtwriter3",      "TXTWRITER",   void_type, {i8_ptr_type, i8_ptr_type, i64_type}, -1);
     reg("jdb_txtwriter_append","TXTWRITER_APPEND", void_type, {i8_ptr_type, i8_ptr_type}, -1);
+    // Codepage-aware variants. The codegen routes TXTREADER$/TXTWRITER calls
+    // here when an encoding arg is present (see the upper-rewrite block in
+    // codegen_call). Underscore prefix keeps them out of the user namespace.
+    reg("jdb_txtreader_enc",   "__TXTREADER_ENC", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_txtwriter_enc",   "__TXTWRITER_ENC", void_type,
+        {i8_ptr_type, i8_ptr_type, i64_type, i8_ptr_type}, -1);
     reg("jdb_pwd",             "PWD",         i8_ptr_type, {}, 2);
     reg("jdb_cd",              "CD",          i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_mkdir_native",    "MKDIR",       void_type, {i8_ptr_type}, -1);
@@ -8037,6 +8043,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // 3. Try runtime builtin (uppercase lookup)
     // (Vectorization for array args was handled in the block above.)
+    // Route TXTREADER$/TXTWRITER to the codepage-aware variant when the user
+    // supplied an encoding argument. Detection is by arg count: the
+    // pass-through forms take 1 (TXTREADER$) and 2-3 (TXTWRITER) args; one
+    // more positional arg => encoding string at the tail.
+    if (upper == "TXTREADER$" && expr.args.size() == 2) upper = "__TXTREADER_ENC";
+    else if (upper == "TXTWRITER" && expr.args.size() == 4) upper = "__TXTWRITER_ENC";
     auto rit = runtime_funcs.find(upper);
     if (rit != runtime_funcs.end() &&
         expr.args.size() <= LLVMCountParamTypes(rit->second.fn_type)) {
@@ -8075,10 +8087,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // call is well-formed. -1 is the "rest of string / open length"
         // sentinel honoured by jdb_mid/jdb_left/jdb_right etc. FORMAT_DATE
         // uses NaN on the tz arg to signal "no tz specified → use localtime",
-        // distinguishing it from an explicit tz=0 (UTC).
+        // distinguishing it from an explicit tz=0 (UTC). TXTWRITER's append
+        // flag and __TXTWRITER_ENC's append slot must default to 0 (no
+        // append), not -1 (which is truthy and would silently switch to
+        // append mode for 2-arg / 3-arg calls).
+        bool i64_default_zero = (upper == "TXTWRITER" || upper == "__TXTWRITER_ENC");
         for (size_t i = expr.args.size(); i < param_count; i++) {
             LLVMTypeRef t = param_types[i];
-            if (t == i64_type) args.push_back(LLVMConstInt(i64_type, -1, 1));
+            if (t == i64_type) {
+                int64_t pad = i64_default_zero ? 0 : -1;
+                args.push_back(LLVMConstInt(i64_type, pad, 1));
+            }
             else if (t == f64_type) {
                 if (upper == "FORMAT_DATE")
                     args.push_back(LLVMConstReal(f64_type, std::nan("")));

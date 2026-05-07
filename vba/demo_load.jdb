@@ -1,0 +1,24 @@
+' Demo: load modAuftragFachlich.bas via the vba module, find the umlaut
+' lines, replace one phrase, write to a copy. Verifies the round-trip.
+
+IMPORT VBA
+
+DIM src$ AS STRING = VBA.LOAD$("..\tmp\modAuftragFachlich.bas")
+PRINT "loaded: "; LEN(src$); " UTF-8 bytes"
+
+' Show that the umlauts decoded correctly — searching by UTF-8 literal:
+DIM idx AS INTEGER = INSTR(src$, "Datensätze")
+PRINT "INSTR('Datensätze') = "; idx; " (should be > 0)"
+
+' Replace one occurrence
+DIM new$ AS STRING = REPLACE$(src$, "Datensätze für den Export", "Datensätze für den XRechnung-Export")
+
+' Write to a copy with cp1252 (so VBA can re-import it)
+VBA.SAVE "..\tmp\modAuftragFachlich_copy.bas", new$
+PRINT "wrote modAuftragFachlich_copy.bas"
+
+' Re-load to verify roundtrip
+DIM rt$ AS STRING = VBA.LOAD$("..\tmp\modAuftragFachlich_copy.bas")
+PRINT "roundtrip equal? "; IIF(new$ = rt$, "yes", "no")
+PRINT "copy length:    "; LEN(rt$)
+PRINT "INSTR new phrase: "; INSTR(rt$, "XRechnung-Export")

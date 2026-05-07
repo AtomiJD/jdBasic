@@ -1971,12 +1971,14 @@ Syntax: TURTLE.SETPOS(x, y)
 Description: Moves the turtle to an absolute screen position without drawing.
 
 [TXTREADER$]
-TXTREADER$(filename$) -> string$
-Reads the entire contents of a text file into a string.
+TXTREADER$(filename$, [encoding$]) -> string$
+Reads the entire contents of a text file into a string. If `encoding$` is given, the file's bytes are decoded from that codepage to UTF-8. Default (no arg / "" / "utf-8") is byte-pass-through. Supported: "cp1252"/"windows-1252"/"latin1", "cp850", "cp437", "cp1250", "cp1251", "cp936", "cp932". Codepage decode is Windows-only.
 
 [TXTWRITER]
-TXTWRITER filename$, content$, [append]
-Writes a string to a text file. If the optional third argument `append` is TRUE, content is appended to an existing file; otherwise the file is overwritten. The file is written in binary mode (no newline translation).
+TXTWRITER filename$, content$, [append], [encoding$]
+Writes a string to a text file. The optional 3rd arg `append` (TRUE = append, default FALSE = overwrite). The optional 4th arg `encoding$` re-encodes the UTF-8 jdBasic string to the named codepage on disk; same name set as TXTREADER$. Binary mode, no newline translation. Roundtrip example:
+    DIM src$ = TXTREADER$("export.bas", "cp1252")
+    TXTWRITER "export.bas", src$, FALSE, "cp1252"
 
 [TYPE]
 Syntax: TYPE name ... ENDTYPE

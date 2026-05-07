@@ -43,6 +43,10 @@
 #include <fnmatch.h>
 #endif
 
+// jdb_encoding.h pulls <windows.h>; must come after the winsock2 / ws2tcpip
+// block above, otherwise winsock1.h leaks in via windows.h and collides.
+#include "jdb_encoding.h"
+
 // ── Windows SEH → C++ exception translator ───────────────────
 // Without this, an access violation, divide-by-zero, stack overflow, etc.
 // inside a native function tears down the whole interpreter. With this
@@ -766,6 +770,7 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
         throw jdError(ErrCode::UNDEFINED_FUNCTION, "Undefined function: " + name);
 
     FuncProto& proto = (*func_protos)[fit->second];
+
     size_t new_base = sp;
     for (auto& a : args) push(a);
     size_t needed = new_base + proto.chunk.var_names.size();
@@ -5055,26 +5060,29 @@ void VM::register_builtins() {
 
     // ── File I/O ─────────────────────────────────────────────
 
-    register_native("TXTREADER$", [](const std::vector<Value>& args) -> Value {
+    register_native("TXTREADER$", 1, 2, [](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
-        std::ifstream f(fname);
+        std::string encoding = (args.size() >= 2) ? args[1].as_string()->data : std::string();
+        std::ifstream f(fname, std::ios::binary);
         if (!f) throw std::runtime_error("Cannot open file: " + fname);
         std::ostringstream ss;
         ss << f.rdbuf();
-        return Value::make_string(ss.str());
+        return Value::make_string(jdb_enc::decode_to_utf8(ss.str(), encoding));
     });
 
-    register_native("TXTWRITER", 2, 3, [](const std::vector<Value>& args) -> Value {
+    register_native("TXTWRITER", 2, 4, [](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string content = args[1].as_string()->data;
         bool append = (args.size() >= 3) ? args[2].to_bool() : false;
+        std::string encoding = (args.size() >= 4) ? args[3].as_string()->data : std::string();
+        std::string out = jdb_enc::encode_from_utf8(content, encoding);
         // Binary mode to match native jdb_txtwriter — avoids \r\n translation
         // so FILE.SIZE returns the same byte count in both runtimes.
         std::ios::openmode mode = std::ios::out | std::ios::binary |
                                    (append ? std::ios::app : std::ios::trunc);
         std::ofstream f(fname, mode);
         if (!f) throw std::runtime_error("Cannot write file: " + fname);
-        f << content;
+        f.write(out.data(), out.size());
         return Value::make_none();
     });
 
