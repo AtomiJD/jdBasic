@@ -15,6 +15,18 @@ jdBasic supports a variety of data types. While variables are variants and can h
 * **Tensor**: An opaque data type that holds multi-dimensional floating-point data and tracks computational history for automatic differentiation (autodiff). It is the core of the AI functions and enables building and training neural networks.
 * **JsonObject**: A special type returned by `JSON.PARSE$`, which can be accessed like a Map or Array.
 * **ComObject**: A special type returned by `CREATEOBJECT`, representing an instance of a COM Automation object.
+* **DYNAMIC**: A tagged-mixed array — opt-in storage for arrays whose elements have heterogeneous types known only at runtime (e.g. `[m{"name"}, m{"age"}, m{"email"}]`). Each cell carries its own JdTag so reads via `arr[i]` recover the actual type. Use on FUNC parameters or DIM destinations that receive such arrays:
+
+```basic
+FUNC mxFmt$(template$, params AS DYNAMIC)
+    DIM v = params[0]   ' string, number, or handle — type preserved
+    ...
+ENDFUNC
+mxFmt$("INSERT t(name,age,email) VALUES (?,?,?)", _
+       [m{"name"}, m{"age"}, m{"email"}])
+```
+
+The native compiler emits a `[warn]` diagnostic when a mixed-element array literal is passed to a non-`DYNAMIC` parameter. Numeric arrays (e.g. `mem[]`, lookup tables) MUST stay un-annotated; `AS DYNAMIC` on a plain numeric array forces the tagged-storage path and slows reads with no benefit. The interpreter treats `DYNAMIC` like `ARRAY`.
 
 ## Numeric Semantics
 

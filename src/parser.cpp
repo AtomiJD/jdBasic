@@ -39,7 +39,7 @@ void Parser::expect_newline() {
 }
 
 bool Parser::is_type_token(TokenType t) const {
-    return t >= TokenType::TY_BOOLEAN && t <= TokenType::TY_ARRAY;
+    return t >= TokenType::TY_BOOLEAN && t <= TokenType::TY_ANY;
 }
 
 VarType Parser::parse_type() {

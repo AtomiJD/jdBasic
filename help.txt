@@ -327,6 +327,21 @@ Description: Declares a variable to hold a 64-bit floating-point number.
 Syntax: DROP(N, array)
 Description: Returns a new array with the first N (or last N if negative) elements removed.
 
+[DYNAMIC]
+Syntax: FUNC f(p AS DYNAMIC) ...   |   DIM x AS DYNAMIC
+Description: Tagged-mixed array — opt-in for FUNC params or DIM that
+receive arrays built from `[m{"a"}, m{"b"}, ...]` (any array literal whose
+elements are INDEX expressions). Stores per-cell JdTags so `p[i]` reads
+return the correct type at runtime instead of bit-pun'ing every element
+through a double. Without it, native compile drops every string element to
+0 / loses every map handle.
+
+The native compiler emits a `[warn]` diagnostic when a mixed-element array
+literal is passed to a non-DYNAMIC parameter — annotate the param to fix.
+Numeric arrays (e.g. `mem[]`, lookup tables) MUST stay un-annotated; AS
+DYNAMIC on a plain numeric array forces the tagged-storage path and slows
+reads with no benefit. Interpreter treats DYNAMIC like ARRAY.
+
 [DROP_WHILE]
 Syntax: DROP_WHILE(predicate@, array)
 Description: Drops the longest prefix where predicate(elem) is TRUE, returning the remainder. Interpreter only.

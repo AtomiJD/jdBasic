@@ -37,7 +37,7 @@
         },
         {
             "name": "storage.type.jdbasic",
-            "match": "(?i)\\b(INTEGER|DOUBLE|STRING|MAP|ARRAY|TENSOR|JSON|DATE|BOOLEAN|BOOL|BYTE|CHAR|INT16|INT32|INT64|FLOAT16|FLOAT32|FLOAT64|OBJECT)\\b"
+            "match": "(?i)\\b(INTEGER|DOUBLE|STRING|MAP|ARRAY|DYNAMIC|TENSOR|JSON|DATE|BOOLEAN|BOOL|BYTE|CHAR|INT16|INT32|INT64|FLOAT16|FLOAT32|FLOAT64|OBJECT)\\b"
         },
         {
             "name": "constant.language.jdbasic",

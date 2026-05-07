@@ -909,7 +909,7 @@ Assert(253, mxQuoteForSql$(mxMap{"score"}) = "99.5")
 
 ' Cross-FUNC via INNER FUNC — tagged value flows through TWO FUNC calls
 ' (caller -> fmt$ -> q$). This is the exact vo DB.EXEC -> FMT$ -> Q$ chain.
-FUNC mxFmt$(template$, params)
+FUNC mxFmt$(template$, params AS DYNAMIC)
     DIM out$ = ""
     DIM pidx AS INTEGER = 0
     DIM n AS INTEGER = LEN(template$)
@@ -988,7 +988,7 @@ Assert(264, mxSink{"stash"} = "Anna")
 
 ' Tagged array passed across FUNC boundary; iterating each element must
 ' not crash even when caller is a fresh literal.
-SUB mxRead(arr)
+SUB mxRead(arr AS DYNAMIC)
     DIM ri AS INTEGER
     FOR ri = 0 TO LEN(arr) - 1
         DIM tmp = arr[ri]

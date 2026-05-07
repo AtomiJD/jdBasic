@@ -723,10 +723,23 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 case VarType::STRING:                            t = 2; break;
                 case VarType::ARRAY:                             t = 3; break;
                 case VarType::OBJECT:                            t = 4; break;
+                // ANY = tagged-mixed array (per-cell JdTag storage). Same
+                // ABI shape as ARRAY (single i8_ptr) but the param's reads
+                // route through __arr_get_tagged so consumers see the
+                // correct per-cell type. Opt-in for the vo `DB.EXEC(h, sql,
+                // [vstate{"f_name"}, vstate{"f_age"}])` pattern where the
+                // caller built a tagged-element array.
+                case VarType::ANY:                               t = 3; break;
                 default: break;
             }
             if (is_event_handler && pi == 0) t = 3;  // event data: JdbArray*
             tags.push_back(t);
+            // Mark ANY-typed params as mixed so reads route through the
+            // tagged-get path even though the param itself isn't a local
+            // DIM/LET that would have populated mixed_array_vars naturally.
+            if (p.type == VarType::ANY) {
+                mixed_array_vars.insert(p.name);
+            }
         }
         decls[stmt->func_name] = { stmt.get(), tags, ret_tag,
                                     /*returns_string_array=*/false,
@@ -1063,6 +1076,62 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 
     for (auto& stmt : program) {
         if (stmt) scan_stmt(*stmt);
+    }
+
+    // Phase 2.5: warn when a tagged-mixed array literal is passed to a
+    // FUNC param that isn't declared `AS DYNAMIC`. The receiver param
+    // would silently fall onto the legacy f64 path and lose every per-cell
+    // type — strings format as 0, FMT$ produces nonsense. Catching this
+    // at compile time saves the user from chasing the ghost at runtime.
+    std::function<bool(const Expr&)> arg_is_mixed_literal = [&](const Expr& e) -> bool {
+        if (e.kind != ExprKind::ARRAY_LITERAL) return false;
+        for (auto& a : e.args)
+            if (a && a->kind == ExprKind::INDEX) return true;
+        return false;
+    };
+    std::function<void(const Stmt&)> warn_calls;
+    std::function<void(const Expr&)> warn_expr_calls = [&](const Expr& e) {
+        if (e.left)  warn_expr_calls(*e.left);
+        if (e.right) warn_expr_calls(*e.right);
+        for (auto& a : e.args) if (a) warn_expr_calls(*a);
+        if (e.kind == ExprKind::CALL) {
+            auto fit = decls.find(e.func_name);
+            if (fit != decls.end() && fit->second.stmt) {
+                auto& callee = *fit->second.stmt;
+                size_t n = std::min(e.args.size(), callee.params.size());
+                for (size_t i = 0; i < n; i++) {
+                    if (!e.args[i]) continue;
+                    if (!arg_is_mixed_literal(*e.args[i])) continue;
+                    auto& p = callee.params[i];
+                    if (p.type != VarType::ANY) {
+                        std::cerr << "[warn] " << e.func_name << "(): arg #"
+                                  << (i + 1) << " is a mixed-element array "
+                                  << "literal but parameter '" << p.name
+                                  << "' is not declared AS DYNAMIC. Reads "
+                                  << "via '" << p.name << "[i]' will lose "
+                                  << "per-cell types (strings format as 0).\n";
+                    }
+                }
+            }
+        }
+    };
+    warn_calls = [&](const Stmt& s) {
+        if (s.expr) warn_expr_calls(*s.expr);
+        if (s.loop_cond) warn_expr_calls(*s.loop_cond);
+        if (s.end_expr) warn_expr_calls(*s.end_expr);
+        if (s.step_expr) warn_expr_calls(*s.step_expr);
+        for (auto& pe : s.print_exprs) if (pe) warn_expr_calls(*pe);
+        for (auto& ic : s.index_chain) if (ic) warn_expr_calls(*ic);
+        for (auto& b : s.body) if (b) warn_calls(*b);
+        for (auto& br : s.branches) {
+            if (br.condition) warn_expr_calls(*br.condition);
+            for (auto& b : br.body) if (b) warn_calls(*b);
+        }
+        for (auto& c : s.catch_body) if (c) warn_calls(*c);
+        for (auto& f : s.finally_body) if (f) warn_calls(*f);
+    };
+    for (auto& stmt : program) {
+        if (stmt) warn_calls(*stmt);
     }
 
     // Phase 3: infer return types from RETURN statements in the body.
@@ -5764,10 +5833,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 return { gres, JD_TAG_ARR };
             }
 
-            // Convert index to i64
+            // Convert index to i64. RUNTIME-tagged values (from a prior
+            // tagged-get array read that bled into a scalar slot) need to
+            // be unwrapped first — using the i64 bits directly would treat
+            // the f64 bit pattern as an array index and read garbage.
             LLVMValueRef idx = idx_tv.val;
             if (idx_tv.tag == JD_TAG_F64)
                 idx = LLVMBuildFPToSI(builder, idx, i64_type, "ftoi");
+            else if (idx_tv.tag == JD_TAG_RUNTIME) {
+                LLVMValueRef as_f64 = coerce_to(idx_tv, f64_type);
+                idx = LLVMBuildFPToSI(builder, as_f64, i64_type, "rt_ftoi");
+            }
 
             auto& arr_get = runtime_funcs["__array_get"];
             LLVMValueRef args[] = { arr_ptr, idx };
@@ -5840,41 +5916,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_h_m");
                 return { as_ptr, JD_TAG_NATIVE_MAP };
             }
-            // Tagged-elements check: arrays built from `[m{"a"}, m{"b"},
-            // ...]` (any RUNTIME-element literal) carry per-cell tags so
-            // we can recover the actual type. Only trigger when we have
-            // NO other typed-array info — UDT-instance arrays, nested
-            // array-of-arrays, VM-handle arrays etc. all stay on the
-            // legacy f64 path because their downstream codegen expects
-            // a punned ptr, not a RUNTIME tag.
+            // Tagged-elements path: only fires for arrays explicitly built
+            // with mixed/RUNTIME elements (`[m{"a"}, m{"b"}, ...]`) — those
+            // carry per-cell tags so the consumer can recover the actual
+            // type. The earlier "any non-typed array" heuristic incorrectly
+            // routed plain numeric arrays (e.g. cpu6502 `mem[]`) through
+            // the tagged path; reads came back as RUNTIME-pun(f64-bits)
+            // and the receiver var got promoted to RUNTIME, which cascaded
+            // through bitwise/index operations that didn't unwrap properly,
+            // breaking the 6502 emulator boot.
             //
-            // Without this, vo's `DB.EXEC(h, sql, [vstate{"f_name"},
-            // vstate{"f_age"}])` → params[pidx] inside FUNC EXEC came
-            // back as a pun'd f64 (TYPEOF said "DOUBLE", FMT$ formatted
-            // every string as 0). With it, the per-cell tag is preserved
-            // and Q$ dispatches via TYPEOF correctly.
-            bool is_typed_arr_var = false;
-            if (expr.left && expr.left->kind == ExprKind::VARIABLE) {
-                const std::string& nm = expr.left->str_val;
-                is_typed_arr_var =
-                    var_udt_type.count(nm) > 0 ||
-                    var_udt_type.count(nm + "[]") > 0 ||
-                    array_array_vars.count(nm) > 0 ||
-                    vm_array_vars.count(nm) > 0 ||
-                    map_array_vars.count(nm) > 0 ||
-                    string_array_vars.count(nm) > 0;
-            }
-            if (!is_typed_arr_var) {
-                auto& gtg = runtime_funcs["__arr_get_tagged"];
-                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "arr_gt_tag");
-                LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
-                LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
-                    getargs, 3, "elem_gt");
-                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "elem_gt_tag");
-                LLVMValueRef as_i64 = pun_f64_to_i64(val);
-                return { as_i64, JD_TAG_RUNTIME, tag_v };
-            }
-            return { result, JD_TAG_F64 };  // typed-array fallback
+            // The vo `DB.EXEC(h, sql, [vstate{"f_name"}, ...])` case still
+            // works because the array-literal codegen tags the destination
+            // (mixed_array_vars), and that variable's reads are handled by
+            // the explicit `mixed_array_vars` check higher up. Only plain
+            // numeric arrays now stay on the legacy f64 path.
+            return { result, JD_TAG_F64 };
         }
 
         default:

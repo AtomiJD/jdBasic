@@ -6,7 +6,8 @@
 
 enum class VarType {
     NONE, BOOLEAN, BYTE, CHAR, INT16, INT32, INT64,
-    FLOAT16, FLOAT32, FLOAT64, STRING, OBJECT, TENSOR, ARRAY
+    FLOAT16, FLOAT32, FLOAT64, STRING, OBJECT, TENSOR, ARRAY,
+    ANY  // tagged-mixed array / dynamic — opt-in to per-cell JdTag storage
 };
 
 // VarType is the parser/compiler-side enum (extra CHAR slot at index 3),
@@ -31,6 +32,7 @@ inline uint8_t vartype_to_valuetype_byte(VarType vt) {
         case VarType::OBJECT:  return 10; // ValueType::OBJECT
         case VarType::TENSOR:  return 11; // ValueType::TENSOR
         case VarType::ARRAY:   return 12; // ValueType::ARRAY
+        case VarType::ANY:     return 12; // map ANY to ARRAY for VM byte
     }
     return 0;
 }
@@ -50,6 +52,7 @@ inline VarType token_to_vartype(TokenType t) {
         case TokenType::TY_OBJECT:  return VarType::OBJECT;
         case TokenType::TY_TENSOR:  return VarType::TENSOR;
         case TokenType::TY_ARRAY:   return VarType::ARRAY;
+        case TokenType::TY_ANY:     return VarType::ANY;
         default: return VarType::NONE;
     }
 }

@@ -13,6 +13,8 @@
 
 IMPORT APPLE2
 
+CD "D:\usr\dev\cc\jdb"
+
 ' ─── Host-side IO dispatch ─────────────────────────────────────
 ' The CPU's bus_read / bus_write call IO_READ / IO_WRITE by name when
 ' an access falls in the configured soft-switch range — we forward to
@@ -28,10 +30,12 @@ ENDSUB
 
 ' ─── Configuration ─────────────────────────────────────────────
 DIM MODE$ = "applesoft"      ' "demo" | "boot" | "applesoft"
-' jdBasic interpreter does ~760 6502-cycles/sec in this build, so
-' picking a frame budget is a trade-off: high values block the UI,
-' low values stretch the boot wallclock. 1500 = ~2 sec/frame.
+
+' Frame budget. The interpreter manages ~760 cyc/sec on this machine,
+' so 1500 cyc/frame would block the UI for >2 sec; native does >100M
+' cyc/sec, so we can afford a much fatter slice and still hit 60 fps.
 DIM CYCLES_PER_FRAME = 1500
+IF OS.FEATURE("NATIVEC") THEN CYCLES_PER_FRAME = 50000
 OPTION "NOPAUSE"        ' Skip the per-iteration ESC/Space break check.
 
 ' ─── Initialise emulator + load program/ROM ────────────────────

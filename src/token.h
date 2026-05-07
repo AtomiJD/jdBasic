@@ -39,7 +39,7 @@ enum class TokenType {
     // Type keywords
     TY_BOOLEAN, TY_BYTE, TY_CHAR, TY_INT16, TY_INT32, TY_INT64,
     TY_FLOAT16, TY_FLOAT32, TY_FLOAT64, TY_STRING, TY_OBJECT,
-    TY_TENSOR, TY_ARRAY,
+    TY_TENSOR, TY_ARRAY, TY_ANY,
 
     // Logical operators
     AND, OR, NOT, ANDALSO, ORELSE,
@@ -133,6 +133,15 @@ inline const std::unordered_map<std::string, TokenType>& keywords() {
         {"FLOAT64", TokenType::TY_FLOAT64}, {"STRING", TokenType::TY_STRING},
         {"OBJECT", TokenType::TY_OBJECT}, {"TENSOR", TokenType::TY_TENSOR},
         {"ARRAY", TokenType::TY_ARRAY},
+        // DYNAMIC: tagged-mixed array (per-cell JdTag storage). Opt-in for
+        // FUNC params or DIM that receive arrays built from `[m{"a"},
+        // m{"b"}, ...]` so reads dispatch through __arr_get_tagged and the
+        // consumer sees the correct per-cell type. Without this, the
+        // codegen has no way to distinguish a mixed array from a plain
+        // numeric one and falls back to the legacy f64 path. Note: we do
+        // NOT register `ANY` here because `ANY(arr)` is already a built-in
+        // truthy-test function on arrays.
+        {"DYNAMIC", TokenType::TY_ANY},
         // Classic-BASIC type aliases — friendlier than INT64/FLOAT64
         {"INTEGER", TokenType::TY_INT64},
         {"LONG",    TokenType::TY_INT64},

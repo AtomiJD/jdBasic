@@ -412,6 +412,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                     case VarType::BOOLEAN: def = Value::make_bool(false); break;
                     case VarType::OBJECT:  def = Value::make_object(); break;
                     case VarType::ARRAY:   def = Value::make_array(); break;
+                    case VarType::ANY:     def = Value::make_array(); break;
                     default: def = Value::make_i64(0); break;
                 }
                 uint16_t val_idx = cc.add_constant(std::move(def));
@@ -766,12 +767,14 @@ void Compiler::compile_dim(const Stmt& stmt) {
         } else {
             switch (stmt.var_type) {
                 case VarType::ARRAY:  emit_constant(Value::make_array(), stmt.line); break;
+                case VarType::ANY:    emit_constant(Value::make_array(), stmt.line); break;
                 case VarType::STRING: emit_constant(Value::make_string(""), stmt.line); break;
                 case VarType::OBJECT: emit_constant(Value::make_object(), stmt.line); break;
                 default:              emit_constant(Value::make_i64(0), stmt.line); break;
             }
         }
-        if (stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY) {
+        if (stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY &&
+            stmt.var_type != VarType::ANY) {
             current_chunk().emit(OpCode::CAST, stmt.line);
             current_chunk().emit_u8(vartype_to_valuetype_byte(stmt.var_type), stmt.line);
         }
@@ -826,12 +829,14 @@ void Compiler::compile_dim(const Stmt& stmt) {
     } else {
         switch (stmt.var_type) {
             case VarType::ARRAY:  emit_constant(Value::make_array(), stmt.line); break;
+            case VarType::ANY:    emit_constant(Value::make_array(), stmt.line); break;
             case VarType::STRING: emit_constant(Value::make_string(""), stmt.line); break;
             case VarType::OBJECT: emit_constant(Value::make_object(), stmt.line); break;
             default:              emit_constant(Value::make_i64(0), stmt.line); break;
         }
     }
-    if (stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY) {
+    if (stmt.var_type != VarType::NONE && stmt.var_type != VarType::ARRAY &&
+        stmt.var_type != VarType::ANY) {
         current_chunk().emit(OpCode::CAST, stmt.line);
         current_chunk().emit_u8(vartype_to_valuetype_byte(stmt.var_type), stmt.line);
     }
