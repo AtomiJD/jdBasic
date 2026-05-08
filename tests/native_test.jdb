@@ -845,11 +845,7 @@ Assert(237, LEN(ftMaybe) = 3)
 ' Tests 238-265: ARRAY_LITERAL with map-lookup elements (per-cell tags),
 ' tag-aware FUNC ABI for FUNCs that use TYPEOF on a parameter, BINARY
 ' comparison BOOL inference, and ambient-state-leak audit across user
-' FUNC / SUB / builtin / VM-bridge call sites. Reproduces the vo
-' Vertreter "save returns 0 for every string column" + "combos empty"
-' regressions and surrounding patterns. Without per-cell tagged storage
-' + tag-aware FUNC ABI + scoped leaf hints in builtin / bridge calls,
-' these came back wrong (or segfaulted).
+' FUNC / SUB / builtin / VM-bridge call sites.
 ' ══════════════════════════════════════════════════════════════════
 DIM mxMap AS MAP
 mxMap{"name"} = "Anna"
@@ -907,8 +903,8 @@ Assert(251, mxQuoteForSql$(mxArr3[3]) = "'anna@example.com'")
 Assert(252, mxQuoteForSql$(mxMap{"name"}) = "'Anna'")
 Assert(253, mxQuoteForSql$(mxMap{"score"}) = "99.5")
 
-' Cross-FUNC via INNER FUNC — tagged value flows through TWO FUNC calls
-' (caller -> fmt$ -> q$). This is the exact vo DB.EXEC -> FMT$ -> Q$ chain.
+' Cross-FUNC via INNER FUNC — tagged value flows through two FUNC
+' calls (caller -> fmt$ -> q$).
 FUNC mxFmt$(template$, params AS DYNAMIC)
     DIM out$ = ""
     DIM pidx AS INTEGER = 0

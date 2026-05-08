@@ -765,14 +765,8 @@ void Compiler::compile_dim(const Stmt& stmt) {
             // (ctor args / INIT auto-call kept in non-static path; static
             //  UDTs with constructor args are deferred to a follow-up.)
         } else {
-            // Default-init: emit MAKE_ARRAY / MAKE_MAP at runtime so each
-            // invocation gets a FRESH instance. Pooling Value::make_array()
-            // / make_object() in the constant table aliased every DIM call
-            // through the same backing storage, so `DIM p AS MAP` inside
-            // SUB add_position() returned the SAME map every iteration —
-            // PUSHing it into an array stored N references to one map and
-            // any later mutation (like the second add overwriting fields)
-            // bled into every previously-pushed copy.
+            // Emit MAKE_ARRAY / MAKE_MAP at runtime so each DIM call gets
+            // a fresh backing buffer instead of pooling one shared instance.
             switch (stmt.var_type) {
                 case VarType::ARRAY:
                 case VarType::ANY:
@@ -845,9 +839,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
             current_chunk().emit(OpCode::POP, stmt.line);
         }
     } else {
-        // Same fix as the STATIC branch above — emit MAKE_ARRAY / MAKE_MAP
-        // at runtime so each SUB invocation gets a fresh instance instead
-        // of aliasing the pooled make_object() / make_array() Value.
+        // Same as the STATIC branch above: emit a fresh container per call.
         switch (stmt.var_type) {
             case VarType::ARRAY:
             case VarType::ANY:

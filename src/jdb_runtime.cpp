@@ -1683,9 +1683,7 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     bool has_string = (arr->flags & 2) != 0;
     bool has_bool = (arr->flags & 4) != 0;
     if (has_tagged) {
-        // Per-cell tag — built from a literal that mixed strings, numbers,
-        // and runtime-tagged map gets. Dispatch on the stored JdTag so each
-        // cell formats correctly (vo's `[name$, id, email$, ...]` case).
+        // Per-cell tag — dispatch on the stored JdTag.
         int8_t t = arr->elem_tags[idx];
         if (t == 2) {  // STR
             union { double d; int64_t i; } u; u.d = val;
@@ -1853,18 +1851,12 @@ double jdb_val_ptr(double encoded_ptr) {
 // Supports: {} for auto, {:.Nf} for fixed-point, {:d} for integer
 // Up to 8 arguments (variadic via double array)
 
-// Apply a Python-style format spec — `[fill][align][width][.prec][#][type]`
-// — to a single value. Mirrors the interpreter's FORMAT$ in vm.cpp so
-// native-compiled output matches interp byte-for-byte. Without this, the
-// pad-format `{:0>8}` silently dropped padding (vo's belegnummer rendered
-// as "cw1" instead of "cw00000001"; smoke_db caught it once the
-// 6141235-mask cleared and numeric arrays stopped going through the
-// tagged path).
-//
-// `spec` is the contents between `{` and `}` — may start with `:` (we skip
-// it). `is_str=true` formats `str_val` as a string; otherwise we format
-// `val` per the type letter (d/f/x/X) or default (`%g` / `.precf`). Returns
-// chars written (excluding NUL); caller must pass `cap >= 2`.
+// Apply a Python-style format spec `[fill][align][width][.prec][#][type]`
+// to a single value, mirroring the interpreter's FORMAT$ implementation.
+// `spec` is the content between `{` and `}` (leading `:` is skipped here).
+// `is_str=true` formats `str_val`; otherwise `val` is formatted per the
+// type letter (d/f/x/X) or the default (`%g` or `.precf`). Returns chars
+// written (excluding NUL); caller must pass `cap >= 2`.
 static int jdb_format_one_arg(char* out, int cap,
                                const char* spec,
                                double val,

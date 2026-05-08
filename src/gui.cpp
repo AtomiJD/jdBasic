@@ -572,6 +572,13 @@ void register_gui_builtins(VM& vm) {
         buf = current;
         buf.resize(INPUT_BUF_SIZE, '\0');
 
+        // `##`-prefixed labels are hidden — fill the cell so the field
+        // doesn't collapse to 0px. Visible labels keep ImGui's default.
+        bool hidden_label = (label.size() >= 2 && label[0] == '#' && label[1] == '#');
+        if (hidden_label) {
+            float avail_w = ImGui::GetContentRegionAvail().x;
+            if (avail_w > 1.0f) ImGui::SetNextItemWidth(avail_w);
+        }
         if (ImGui::InputText(label.c_str(), buf.data(), INPUT_BUF_SIZE,
                              ImGuiInputTextFlags_EnterReturnsTrue)) {
             // Enter pressed - return current content
@@ -584,7 +591,16 @@ void register_gui_builtins(VM& vm) {
         ensure_imgui("GUI.INPUT_INT");
         std::string label = args[0].as_string()->data;
         int v = (int)args[1].to_int();
-        ImGui::InputInt(label.c_str(), &v);
+        // `##` label: drop step buttons and fill the cell; visible label
+        // keeps the default input + buttons + label-on-right layout.
+        bool hidden_label = (label.size() >= 2 && label[0] == '#' && label[1] == '#');
+        if (hidden_label) {
+            float avail = ImGui::GetContentRegionAvail().x;
+            if (avail > 1.0f) ImGui::SetNextItemWidth(avail);
+            ImGui::InputInt(label.c_str(), &v, 0, 0);
+        } else {
+            ImGui::InputInt(label.c_str(), &v);
+        }
         return Value::make_i64(v);
     });
 
@@ -592,7 +608,14 @@ void register_gui_builtins(VM& vm) {
         ensure_imgui("GUI.INPUT_DOUBLE");
         std::string label = args[0].as_string()->data;
         double v = args[1].to_double();
-        ImGui::InputDouble(label.c_str(), &v);
+        bool hidden_label = (label.size() >= 2 && label[0] == '#' && label[1] == '#');
+        if (hidden_label) {
+            float avail = ImGui::GetContentRegionAvail().x;
+            if (avail > 1.0f) ImGui::SetNextItemWidth(avail);
+            ImGui::InputDouble(label.c_str(), &v, 0.0, 0.0);
+        } else {
+            ImGui::InputDouble(label.c_str(), &v);
+        }
         return Value::make_f64(v);
     });
 

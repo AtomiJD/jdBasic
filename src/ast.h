@@ -7,7 +7,7 @@
 enum class VarType {
     NONE, BOOLEAN, BYTE, CHAR, INT16, INT32, INT64,
     FLOAT16, FLOAT32, FLOAT64, STRING, OBJECT, TENSOR, ARRAY,
-    ANY  // tagged-mixed array / dynamic — opt-in to per-cell JdTag storage
+    ANY  // DYNAMIC — tagged-mixed array (per-cell JdTag)
 };
 
 // VarType is the parser/compiler-side enum (extra CHAR slot at index 3),

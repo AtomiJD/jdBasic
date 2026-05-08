@@ -2548,6 +2548,196 @@ LET ref_counter = st_counter@
 Assert(LEN(STR$(ref_counter)) > 0, "STATIC FUNC@ binding compiles")
 
 ' ══════════════════════════════════════════════════════════════════
+' AS DYNAMIC — tagged-mixed array params
+' Arrays built from `[map{"k1"}, map{"k2"}, ...]` carry per-cell tags;
+' FUNC params declared `AS DYNAMIC` route reads through the tagged
+' path so each cell's type survives the call boundary.
+' ══════════════════════════════════════════════════════════════════
+Header("AS DYNAMIC tagged FUNC params")
+
+DIM dyn_meta AS MAP
+dyn_meta{"name"} = "Anna"
+dyn_meta{"age"}  = 42
+dyn_meta{"email"} = "anna@example.com"
+
+' --- 1. Direct DIM AS DYNAMIC ---
+DIM dyn_arr AS DYNAMIC = [dyn_meta{"name"}, dyn_meta{"age"}, dyn_meta{"email"}]
+Assert(LEN(dyn_arr) = 3, "AS DYNAMIC: array length preserved")
+Assert(dyn_arr[0] = "Anna", "AS DYNAMIC: string element[0] survives")
+Assert(dyn_arr[1] = 42, "AS DYNAMIC: int element[1] survives")
+Assert(dyn_arr[2] = "anna@example.com", "AS DYNAMIC: string element[2] survives")
+
+' --- 2. FUNC param AS DYNAMIC: each cell keeps its real type ---
+FUNC dyn_first$(arr AS DYNAMIC)
+    RETURN arr[0]
+ENDFUNC
+FUNC dyn_second(arr AS DYNAMIC)
+    RETURN arr[1]
+ENDFUNC
+Assert(dyn_first$([dyn_meta{"name"}, dyn_meta{"age"}]) = "Anna", _
+    "AS DYNAMIC param: read string from cross-FUNC tagged array")
+Assert(dyn_second([dyn_meta{"name"}, dyn_meta{"age"}]) = 42, _
+    "AS DYNAMIC param: read int from cross-FUNC tagged array")
+
+' --- 3. mxFmt$ pattern: SQL-format with mixed array of map-fields ---
+FUNC dyn_q$(v)
+    IF TYPEOF(v) = "STRING" THEN RETURN "'" + v + "'"
+    RETURN STR$(v)
+ENDFUNC
+FUNC dyn_fmt$(template$, params AS DYNAMIC)
+    DIM out$ = ""
+    DIM pidx AS INTEGER = 0
+    DIM n AS INTEGER = LEN(template$)
+    DIM ci AS INTEGER
+    FOR ci = 0 TO n - 1
+        DIM c$ = MID$(template$, ci, 1)
+        IF c$ = "?" THEN
+            out$ = out$ + dyn_q$(params[pidx])
+            pidx = pidx + 1
+        ELSE
+            out$ = out$ + c$
+        ENDIF
+    NEXT ci
+    RETURN out$
+ENDFUNC
+DIM dyn_sql$ = dyn_fmt$("INSERT t(n,a,e) VALUES (?,?,?)", _
+    [dyn_meta{"name"}, dyn_meta{"age"}, dyn_meta{"email"}])
+Assert(dyn_sql$ = "INSERT t(n,a,e) VALUES ('Anna',42,'anna@example.com')", _
+    "AS DYNAMIC chained FUNC -> dyn_q$: string columns keep quotes, int stays bare")
+
+' ══════════════════════════════════════════════════════════════════
+' DIM AS MAP / ARRAY inside SUB — fresh instance per call
+' Each invocation must allocate its own backing buffer so PUSHing into
+' a shared array doesn't store N references to the same map.
+' ══════════════════════════════════════════════════════════════════
+Header("DIM AS MAP/ARRAY fresh instance")
+
+DIM dim_state AS MAP
+dim_state{"items"} = []
+
+SUB dim_add(num)
+    DIM arr = dim_state{"items"}
+    DIM p AS MAP
+    p{"pos"}  = num
+    p{"name"} = "item " + STR$(num)
+    PUSH arr, p
+    dim_state{"items"} = arr
+ENDSUB
+
+dim_add(10)
+dim_add(20)
+DIM dim_items = dim_state{"items"}
+Assert(LEN(dim_items) = 2, "DIM AS MAP fresh: array has 2 distinct entries")
+Assert(dim_items[0]{"pos"} = 10, "DIM AS MAP fresh: entry[0].pos = 10 (not aliased to 20)")
+Assert(dim_items[1]{"pos"} = 20, "DIM AS MAP fresh: entry[1].pos = 20")
+Assert(dim_items[0]{"name"} = "item 10", "DIM AS MAP fresh: entry[0].name preserved")
+Assert(dim_items[1]{"name"} = "item 20", "DIM AS MAP fresh: entry[1].name preserved")
+
+' --- DIM AS ARRAY also gets a fresh instance per call ---
+DIM dim_outer AS MAP
+dim_outer{"rows"} = []
+SUB dim_add_row(n)
+    DIM o = dim_outer{"rows"}
+    DIM r AS ARRAY = [n, n+1, n+2]
+    PUSH o, r
+    dim_outer{"rows"} = o
+ENDSUB
+dim_add_row(0)
+dim_add_row(100)
+Assert(LEN(dim_outer{"rows"}) = 2, "DIM AS ARRAY fresh: 2 distinct sub-arrays")
+Assert(dim_outer{"rows"}[0][0] = 0,   "DIM AS ARRAY fresh: row 0 untouched by row 1")
+Assert(dim_outer{"rows"}[1][0] = 100, "DIM AS ARRAY fresh: row 1 has its own data")
+
+' ══════════════════════════════════════════════════════════════════
+' Map-field assign on RUNTIME-tagged variable
+' `p{"key"} = expr` must evaluate the RHS and persist the field even
+' when p was read from an untyped array (i.e. the local slot is
+' RUNTIME-tagged and the bits are a JdbMap*).
+' ══════════════════════════════════════════════════════════════════
+Header("RUNTIME-tagged var: p{key} = expr")
+
+DIM rt_state AS MAP
+rt_state{"items"} = []
+
+' Seed the map's array via a SUB-local round-trip.
+SUB rt_seed()
+    DIM rt_inner = rt_state{"items"}
+    DIM rt_p_init AS MAP
+    rt_p_init{"pos"}  = 1
+    rt_p_init{"name"} = "x"
+    rt_p_init{"prc"}  = 0.0
+    PUSH rt_inner, rt_p_init
+    rt_state{"items"} = rt_inner
+ENDSUB
+rt_seed()
+
+' Round-trip: read p from RUNTIME array, mutate, write back.
+DIM rt_arr = rt_state{"items"}
+DIM p = rt_arr[0]
+p{"pos"}  = 99            ' int assign on RUNTIME-tagged var
+p{"name"} = "edited"      ' string assign
+p{"prc"}  = 12.5          ' double assign
+rt_arr[0] = p
+rt_state{"items"} = rt_arr
+
+' Re-read and verify each field actually got persisted
+DIM rt_check = rt_state{"items"}[0]
+Assert(rt_check{"pos"}  = 99,       "RUNTIME map-set: int field persists")
+Assert(rt_check{"name"} = "edited", "RUNTIME map-set: string field persists")
+Assert(rt_check{"prc"}  = 12.5,     "RUNTIME map-set: double field persists")
+
+' Side-effect on RHS must run — confirms the assignment isn't elided.
+DIM rt_call_count AS INTEGER = 0
+SUB rt_inc_count()
+    rt_call_count = rt_call_count + 1
+ENDSUB
+DIM rt_p2 = rt_state{"items"}[0]
+rt_inc_count()
+rt_p2{"name"} = "after-call"
+Assert(rt_call_count = 1, "RUNTIME map-set: code around p{} = ... runs (statement not elided)")
+Assert(rt_p2{"name"} = "after-call", "RUNTIME map-set: assign after observable side-effect")
+
+' ══════════════════════════════════════════════════════════════════
+' PUSH on a map-field directly (`PUSH m{"key"}, val`)
+' The appended array must be written back into the map and the
+' string-elems flag must propagate so reads round-trip the type.
+' ══════════════════════════════════════════════════════════════════
+Header("PUSH on map field (write-back)")
+
+DIM pmf_m AS MAP
+pmf_m{"items"} = []
+PUSH pmf_m{"items"}, 10
+PUSH pmf_m{"items"}, 20
+PUSH pmf_m{"items"}, 30
+Assert(LEN(pmf_m{"items"}) = 3, "PUSH map{key}: 3 elements after 3 PUSHes")
+Assert(pmf_m{"items"}[0] = 10, "PUSH map{key}: element 0 = 10")
+Assert(pmf_m{"items"}[1] = 20, "PUSH map{key}: element 1 = 20")
+Assert(pmf_m{"items"}[2] = 30, "PUSH map{key}: element 2 = 30")
+
+DIM pmf_str AS MAP
+pmf_str{"names"} = []
+PUSH pmf_str{"names"}, "alice"
+PUSH pmf_str{"names"}, "bob"
+Assert(LEN(pmf_str{"names"}) = 2, "PUSH map{key} string: 2 elements")
+Assert(pmf_str{"names"}[0] = "alice", "PUSH map{key} string: first preserved")
+Assert(pmf_str{"names"}[1] = "bob",   "PUSH map{key} string: second preserved")
+
+' ══════════════════════════════════════════════════════════════════
+' FORMAT$ — full Python-style spec parity (interp ↔ native)
+' [fill][align][width][.prec][#][type] all honoured.
+' ══════════════════════════════════════════════════════════════════
+Header("FORMAT$ Python-style spec parity")
+
+Assert(FORMAT$("{:0>8}", 1)         = "00000001", "FORMAT$ pad zero right-align width 8")
+Assert(FORMAT$("{:0>8}", STR$(1))   = "00000001", "FORMAT$ pad zero on a stringified int")
+Assert(FORMAT$("{:.>8}", "x")       = ".......x", "FORMAT$ fill char + right-align")
+Assert(FORMAT$("{:<8}",  "x")       = "x       ", "FORMAT$ left align")
+Assert(FORMAT$("{:^7}",  "ab")      = "  ab   ",  "FORMAT$ center align")
+Assert(FORMAT$("{:.2f}", 3.14159)   = "3.14",     "FORMAT$ fixed precision")
+Assert(FORMAT$("{:5d}",  42)        = "   42",    "FORMAT$ width on int")
+Assert(FORMAT$("{:#x}",  255)       = "0xff",     "FORMAT$ hex with hash flag")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""
