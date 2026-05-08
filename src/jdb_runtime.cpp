@@ -1853,6 +1853,102 @@ double jdb_val_ptr(double encoded_ptr) {
 // Supports: {} for auto, {:.Nf} for fixed-point, {:d} for integer
 // Up to 8 arguments (variadic via double array)
 
+// Apply a Python-style format spec — `[fill][align][width][.prec][#][type]`
+// — to a single value. Mirrors the interpreter's FORMAT$ in vm.cpp so
+// native-compiled output matches interp byte-for-byte. Without this, the
+// pad-format `{:0>8}` silently dropped padding (vo's belegnummer rendered
+// as "cw1" instead of "cw00000001"; smoke_db caught it once the
+// 6141235-mask cleared and numeric arrays stopped going through the
+// tagged path).
+//
+// `spec` is the contents between `{` and `}` — may start with `:` (we skip
+// it). `is_str=true` formats `str_val` as a string; otherwise we format
+// `val` per the type letter (d/f/x/X) or default (`%g` / `.precf`). Returns
+// chars written (excluding NUL); caller must pass `cap >= 2`.
+static int jdb_format_one_arg(char* out, int cap,
+                               const char* spec,
+                               double val,
+                               const char* str_val,
+                               bool is_str) {
+    if (cap < 2) { if (cap > 0) out[0] = 0; return 0; }
+    if (spec && spec[0] == ':') spec++;
+    int slen = spec ? (int)strlen(spec) : 0;
+    int sp = 0;
+
+    char fill = ' ', align = '\0';
+    if (slen >= 2 && (spec[1] == '<' || spec[1] == '>' || spec[1] == '^')) {
+        fill = spec[0]; align = spec[1]; sp = 2;
+    } else if (slen >= 1 && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^')) {
+        align = spec[0]; sp = 1;
+    }
+    int width = 0;
+    while (sp < slen && spec[sp] >= '0' && spec[sp] <= '9')
+        width = width * 10 + (spec[sp++] - '0');
+    int prec = -1;
+    if (sp < slen && spec[sp] == '.') {
+        sp++; prec = 0;
+        while (sp < slen && spec[sp] >= '0' && spec[sp] <= '9')
+            prec = prec * 10 + (spec[sp++] - '0');
+    }
+    bool hash_flag = false;
+    if (sp < slen && spec[sp] == '#') { hash_flag = true; sp++; }
+    char type = (sp < slen) ? spec[sp] : 0;
+
+    char raw[256];
+    int raw_len;
+    if (is_str) {
+        const char* s = str_val ? str_val : "";
+        raw_len = (int)strlen(s);
+        if (raw_len >= (int)sizeof(raw)) raw_len = (int)sizeof(raw) - 1;
+        memcpy(raw, s, raw_len);
+        raw[raw_len] = 0;
+    } else if (type == 'd') {
+        raw_len = snprintf(raw, sizeof(raw), "%lld", (long long)(int64_t)val);
+    } else if (type == 'f') {
+        if (prec >= 0) raw_len = snprintf(raw, sizeof(raw), "%.*f", prec, val);
+        else           raw_len = snprintf(raw, sizeof(raw), "%f", val);
+    } else if (type == 'x') {
+        raw_len = snprintf(raw, sizeof(raw),
+            hash_flag ? "0x%llx" : "%llx", (long long)(int64_t)val);
+    } else if (type == 'X') {
+        raw_len = snprintf(raw, sizeof(raw),
+            hash_flag ? "0x%llX" : "%llX", (long long)(int64_t)val);
+    } else if (prec >= 0) {
+        raw_len = snprintf(raw, sizeof(raw), "%.*f", prec, val);
+    } else {
+        raw_len = snprintf(raw, sizeof(raw), "%g", val);
+    }
+    if (raw_len < 0) raw_len = 0;
+    if (raw_len >= (int)sizeof(raw)) raw_len = (int)sizeof(raw) - 1;
+
+    int written = 0;
+    if (width > 0 && raw_len < width) {
+        if (align == '\0') align = '>';
+        int pad = width - raw_len;
+        if (align == '<') {
+            if (raw_len < cap - 1) { memcpy(out, raw, raw_len); written = raw_len; }
+            for (int k = 0; k < pad && written < cap - 1; k++) out[written++] = fill;
+        } else if (align == '^') {
+            int left = pad / 2;
+            for (int k = 0; k < left && written < cap - 1; k++) out[written++] = fill;
+            if (written + raw_len < cap - 1) {
+                memcpy(out + written, raw, raw_len); written += raw_len;
+            }
+            for (int k = 0; k < pad - left && written < cap - 1; k++) out[written++] = fill;
+        } else { // '>'
+            for (int k = 0; k < pad && written < cap - 1; k++) out[written++] = fill;
+            if (written + raw_len < cap - 1) {
+                memcpy(out + written, raw, raw_len); written += raw_len;
+            }
+        }
+    } else {
+        int n = raw_len < cap - 1 ? raw_len : cap - 1;
+        memcpy(out, raw, n); written = n;
+    }
+    out[written] = 0;
+    return written;
+}
+
 char* jdb_format(const char* fmt, JdbArray* args) {
     char result[4096];
     int rp = 0;
@@ -1862,28 +1958,17 @@ char* jdb_format(const char* fmt, JdbArray* args) {
     while (*p && rp < 4090) {
         if (*p == '{') {
             if (*(p+1) == '{') { result[rp++] = '{'; p += 2; continue; }
-            // Find closing }
             const char* end = strchr(p, '}');
             if (!end) { result[rp++] = *p++; continue; }
 
-            // Extract format spec (between { and })
             char spec[64] = {0};
             int slen = (int)(end - p - 1);
             if (slen > 0 && slen < 63) memcpy(spec, p+1, slen);
 
             double val = (args && arg_idx < args->length) ? args->data[arg_idx++] : 0.0;
 
-            char tmp[128];
-            if (spec[0] == ':' && spec[1] == '.' && spec[strlen(spec)-1] == 'f') {
-                int prec = atoi(spec + 2);
-                snprintf(tmp, sizeof(tmp), "%.*f", prec, val);
-            } else if (spec[0] == ':' && spec[strlen(spec)-1] == 'd') {
-                snprintf(tmp, sizeof(tmp), "%lld", (long long)(int64_t)val);
-            } else {
-                snprintf(tmp, sizeof(tmp), "%g", val);
-            }
-
-            int tlen = (int)strlen(tmp);
+            char tmp[256];
+            int tlen = jdb_format_one_arg(tmp, sizeof(tmp), spec, val, nullptr, false);
             if (rp + tlen < 4090) { memcpy(result + rp, tmp, tlen); rp += tlen; }
 
             p = end + 1;
@@ -1958,40 +2043,27 @@ static char* jdb_format_tagged_impl(const char* fmt, const char* types,
 
             if (tag == 's') {
                 const char* s = (const char*)(intptr_t)r64;
-                snprintf(tmp, sizeof(tmp), "%s", s ? s : "");
+                jdb_format_one_arg(tmp, sizeof(tmp), spec, 0.0, s, true);
             } else if (tag == 'h') {
-                // VM handle. Pick number-or-string materialisation by spec.
+                // VM handle. Pick number-or-string materialisation by the
+                // type letter in the spec — d/f/x/X/e/g all want a number,
+                // anything else (including bare `{}`) renders as string.
                 size_t splen = strlen(spec);
-                bool is_numeric = (splen >= 2 && spec[0] == ':' &&
-                    (spec[splen-1] == 'f' || spec[splen-1] == 'd' ||
-                     spec[splen-1] == 'e' || spec[splen-1] == 'g'));
+                char ty = (splen > 0) ? spec[splen-1] : 0;
+                bool is_numeric = (ty == 'f' || ty == 'd' || ty == 'x' ||
+                                   ty == 'X' || ty == 'e' || ty == 'g');
                 if (is_numeric && g_jdrt_handle) {
                     double val = jdrt_val_to_f64(g_jdrt_handle, r64);
-                    if (spec[1] == '.' && spec[splen-1] == 'f') {
-                        int prec = atoi(spec + 2);
-                        snprintf(tmp, sizeof(tmp), "%.*f", prec, val);
-                    } else if (spec[splen-1] == 'd') {
-                        snprintf(tmp, sizeof(tmp), "%lld", (long long)(int64_t)val);
-                    } else {
-                        snprintf(tmp, sizeof(tmp), "%g", val);
-                    }
+                    jdb_format_one_arg(tmp, sizeof(tmp), spec, val, nullptr, false);
                 } else if (g_jdrt_handle) {
                     const char* s = jdrt_val_to_str(g_jdrt_handle, r64);
-                    snprintf(tmp, sizeof(tmp), "%s", s ? s : "");
+                    jdb_format_one_arg(tmp, sizeof(tmp), spec, 0.0, s, true);
                 } else {
                     snprintf(tmp, sizeof(tmp), "<no-runtime>");
                 }
             } else {
                 union { double d; int64_t i; } u; u.i = r64;
-                double val = u.d;
-                if (spec[0] == ':' && spec[1] == '.' && spec[strlen(spec)-1] == 'f') {
-                    int prec = atoi(spec + 2);
-                    snprintf(tmp, sizeof(tmp), "%.*f", prec, val);
-                } else if (spec[0] == ':' && spec[strlen(spec)-1] == 'd') {
-                    snprintf(tmp, sizeof(tmp), "%lld", (long long)(int64_t)val);
-                } else {
-                    snprintf(tmp, sizeof(tmp), "%g", val);
-                }
+                jdb_format_one_arg(tmp, sizeof(tmp), spec, u.d, nullptr, false);
             }
             int tlen = (int)strlen(tmp);
             if (rp + tlen < 4090) { memcpy(result + rp, tmp, tlen); rp += tlen; }
