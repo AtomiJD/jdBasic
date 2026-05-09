@@ -1,0 +1,6 @@
+DIM I AS INTEGER = 0
+DO
+    I = I + 1
+    PRINT "tick "; I
+    SLEEP 100
+LOOP UNTIL I > 100000

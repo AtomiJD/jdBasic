@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <functional>
 #include <filesystem>
 #include <cstdio>
 #include <cstring>
@@ -32,6 +33,12 @@
 #include <cctype>
 #include <cerrno>
 #include <ctime>
+#include <mutex>
+#include <condition_variable>
+#include <deque>
+#include <thread>
+#include <atomic>
+#include <future>
 
 #ifdef _WIN32
   #include <io.h>
@@ -58,9 +65,12 @@ extern void run_on_vm(VM& vm, const std::string& source);
 
 // Workspace persistence — defined in main.cpp. SAVEWS / LOADWS are REPL
 // commands by their original UX, but the underlying logic is generic and
-// the MCP server exposes them as jdb_savews / jdb_loadws tools.
+// the MCP server exposes them as jdb_savews / jdb_loadws tools. The fourth
+// `extra_filter` param lets the MCP wrapper drop boot-set vars (PI, E,
+// other VM-builtin globals) from the saved workspace.
 extern void save_workspace(VM& vm, const std::string& program_buffer,
-                           const std::string& name);
+                           const std::string& name,
+                           std::function<bool(const std::string&)> extra_filter = nullptr);
 extern void load_workspace(VM& vm, std::string& program_buffer,
                            const std::string& name);
 
@@ -113,10 +123,17 @@ bool read_frame(std::string& body) {
     }
 }
 
+// stdout is shared between the main dispatch thread and the reader thread
+// (when it fast-paths a jdb_stop response). Without serialisation the two
+// frames could interleave bytes mid-flush. Held only for the duration of
+// the cout write, so it never blocks the VM tick.
+static std::mutex g_stdout_mutex;
+
 void write_frame(const std::string& body) {
     // One JSON object, then '\n'. Flush so the client sees the reply
     // before its handshake timeout fires. NDJSON forbids embedded
     // newlines in the body — JSON.STRINGIFY$ already escapes them.
+    std::lock_guard<std::mutex> g(g_stdout_mutex);
     std::cout << body << '\n';
     std::cout.flush();
 }
@@ -211,6 +228,84 @@ struct OutputCapture {
     ~OutputCapture() { vm.on_output = prev; }
 };
 
+// ── VM worker thread + job queue ────────────────────────────────
+//
+// All VM-mutating work runs on a single persistent worker thread:
+//
+//  * keeps SDL thread-affinity intact across multiple jdb_load /
+//    jdb_resume calls (a fresh thread per call would break the
+//    "the thread that did SDL_Init owns the window" rule),
+//  * decouples long-running scripts from the MCP request/response
+//    cycle — jdb_load/jdb_resume post a job and return immediately,
+//    so the MCP client never waits for the game loop to end.
+//
+// jdb_eval also posts a job, but waits on a promise — evals are
+// short and the caller wants the result. While the worker is
+// running a long script, eval is rejected ("VM busy") rather than
+// queued, because waiting would re-introduce the very hang the
+// async model is meant to avoid. Atomi must call jdb_stop first.
+//
+// jdb_vars / jdb_funcs / jdb_savews / jdb_loadws read or mutate
+// VM state and stay on the main thread — they take the worker
+// mutex briefly so they're serialised against any in-flight job.
+
+struct VmJob {
+    std::function<void(VM&)> task;
+};
+
+struct VmWorker {
+    std::thread t;
+    std::mutex m;
+    std::condition_variable cv;
+    std::deque<VmJob> queue;
+    std::atomic<bool> busy{false};      // true while a job is executing
+    std::atomic<bool> shutdown{false};
+};
+
+static VmWorker g_worker;
+
+// True while the worker is actively running a job OR a job is queued
+// waiting to be picked up. Caller MUST hold g_worker.m to make this
+// check race-free against the worker thread.
+inline bool worker_busy_or_queued_locked() {
+    return g_worker.busy.load() || !g_worker.queue.empty();
+}
+
+void worker_loop(VM& vm) {
+    while (true) {
+        VmJob job;
+        {
+            std::unique_lock<std::mutex> lk(g_worker.m);
+            g_worker.cv.wait(lk, []{
+                return !g_worker.queue.empty() || g_worker.shutdown.load();
+            });
+            if (g_worker.queue.empty() && g_worker.shutdown.load()) break;
+            job = std::move(g_worker.queue.front());
+            g_worker.queue.pop_front();
+            g_worker.busy.store(true);
+        }
+        try {
+            job.task(vm);
+        } catch (const std::exception& e) {
+            log_line(std::string("worker job exception: ") + e.what());
+        } catch (...) {
+            log_line("worker job: unknown exception");
+        }
+        g_worker.busy.store(false);
+    }
+}
+
+// Post a job and notify the worker. Caller must NOT hold g_worker.m.
+void post_job(std::function<void(VM&)> task) {
+    {
+        std::lock_guard<std::mutex> lk(g_worker.m);
+        VmJob j;
+        j.task = std::move(task);
+        g_worker.queue.push_back(std::move(j));
+    }
+    g_worker.cv.notify_one();
+}
+
 // ── Tools ───────────────────────────────────────────────────────
 
 Value tool_echo(VM&, const Value& args) {
@@ -219,22 +314,35 @@ Value tool_echo(VM&, const Value& args) {
 
 Value tool_jdb_eval(VM& vm, const Value& args) {
     std::string code = obj_get_str(args, "code");
-    OutputCapture cap(vm);
-    try {
-        run_on_vm(vm, code + "\n");
-        // Only append on success — failed snippets shouldn't poison the
-        // workspace's PROGRAM section. load_workspace re-parses this text
-        // to rebuild user FUNC/SUB bindings, so syntax-broken fragments
-        // would prevent any later restore from succeeding.
-        g_session_buffer += code;
-        if (code.empty() || code.back() != '\n') g_session_buffer += '\n';
-        return make_text_result(cap.buf, false);
-    } catch (const std::exception& e) {
-        std::string err = "Error: ";
-        err += e.what();
-        std::string body = cap.buf.empty() ? err : (cap.buf + err);
-        return make_text_result(body, true);
+    {
+        std::lock_guard<std::mutex> lk(g_worker.m);
+        if (worker_busy_or_queued_locked()) {
+            return make_text_result(
+                "VM busy — call jdb_stop first (or wait for the script to STOP "
+                "on its own).", true);
+        }
     }
+    auto promise = std::make_shared<std::promise<Value>>();
+    auto fut = promise->get_future();
+    post_job([code, promise](VM& v) {
+        OutputCapture cap(v);
+        try {
+            run_on_vm(v, code + "\n");
+            // Only append on success — failed snippets shouldn't poison the
+            // workspace's PROGRAM section. load_workspace re-parses this text
+            // to rebuild user FUNC/SUB bindings, so syntax-broken fragments
+            // would prevent any later restore from succeeding.
+            g_session_buffer += code;
+            if (code.empty() || code.back() != '\n') g_session_buffer += '\n';
+            promise->set_value(make_text_result(cap.buf, false));
+        } catch (const std::exception& e) {
+            std::string err = "Error: ";
+            err += e.what();
+            std::string body = cap.buf.empty() ? err : (cap.buf + err);
+            promise->set_value(make_text_result(body, true));
+        }
+    });
+    return fut.get();
 }
 
 Value tool_jdb_check(VM& vm, const Value& args) {
@@ -247,7 +355,68 @@ Value tool_jdb_check(VM& vm, const Value& args) {
     return make_text_result(err, true);
 }
 
+Value tool_jdb_stop(VM& vm, const Value& /*args*/) {
+    // Fallback path. Normally the reader thread fast-paths jdb_stop before
+    // it ever reaches the main dispatch (so the response goes out while the
+    // VM is still running). If we get here, the request arrived between
+    // tool calls — the VM is idle and stop_requested will be cleared by
+    // the next run_code prep, so this is mostly a no-op-with-receipt.
+    vm.stop_requested.store(true);
+    return make_text_result("[stop requested]", false);
+}
+
+Value tool_jdb_status(VM& vm, const Value&) {
+    std::string s;
+    if (g_worker.busy.load()) {
+        s = "running (worker executing a job)";
+    } else if (vm.is_paused()) {
+        s = "stopped — call jdb_resume to continue, or jdb_eval to inspect/mutate";
+    } else {
+        s = "idle — ready for jdb_load / jdb_eval";
+    }
+    return make_text_result(s, false);
+}
+
+Value tool_jdb_resume(VM& vm, const Value& /*args*/) {
+    {
+        std::lock_guard<std::mutex> lk(g_worker.m);
+        if (worker_busy_or_queued_locked()) {
+            return make_text_result("VM is already running.", true);
+        }
+        if (!vm.is_paused()) {
+            return make_text_result(
+                "Nothing to resume — VM is not in a STOPped state.", false);
+        }
+    }
+    post_job([](VM& v) {
+        // Discard PRINT during the async resume — the originating tool
+        // call is already gone. Live-tweak workflows inspect via
+        // jdb_eval after the next STOP, not via load/resume stdout.
+        auto prev = v.on_output;
+        v.on_output = [](const std::string&) {};
+        try { v.resume(); } catch (...) {}
+        v.on_output = prev;
+    });
+    return make_text_result(
+        "[resumed in worker — script runs until next STOP or running=0]",
+        false);
+}
+
 Value tool_jdb_load(VM& vm, const Value& args) {
+    {
+        std::lock_guard<std::mutex> lk(g_worker.m);
+        if (worker_busy_or_queued_locked()) {
+            return make_text_result(
+                "VM busy — call jdb_stop first.", true);
+        }
+        if (vm.is_paused()) {
+            return make_text_result(
+                "VM is paused (STOPped). Call jdb_resume to continue the "
+                "current script, or interact with it via jdb_eval. To run "
+                "a different script, exit the current one first (e.g. "
+                "`running = 0` then jdb_resume).", true);
+        }
+    }
     std::string path = obj_get_str(args, "path");
     std::ifstream in(path);
     if (!in.is_open()) {
@@ -255,18 +424,24 @@ Value tool_jdb_load(VM& vm, const Value& args) {
     }
     std::stringstream ss; ss << in.rdbuf();
     std::string source = ss.str();
-
-    OutputCapture cap(vm);
-    try {
-        run_on_vm(vm, source);
-        std::string banner = "[loaded " + path + ", " + std::to_string(source.size()) + " bytes]";
-        std::string body = cap.buf.empty() ? banner : (banner + "\n" + cap.buf);
-        return make_text_result(body, false);
-    } catch (const std::exception& e) {
-        std::string err = "Error in " + path + ": " + e.what();
-        std::string body = cap.buf.empty() ? err : (cap.buf + err);
-        return make_text_result(body, true);
-    }
+    std::string banner = "[load posted: " + path + ", "
+        + std::to_string(source.size()) + " bytes — script runs until first "
+        "STOP or running=0]";
+    post_job([source, path](VM& v) {
+        // Discard PRINT during async run — the load tool already returned.
+        // For live-tweak workflows, use jdb_eval after STOP to read state.
+        auto prev = v.on_output;
+        v.on_output = [](const std::string&) {};
+        try {
+            run_on_vm(v, source);
+        } catch (const std::exception& e) {
+            log_line("run error in " + path + ": " + e.what());
+        } catch (...) {
+            log_line("run error in " + path + " (unknown exception)");
+        }
+        v.on_output = prev;
+    });
+    return make_text_result(banner, false);
 }
 
 // Cache of variable names that exist on the VM at boot. jdb_vars hides
@@ -298,6 +473,10 @@ bool is_user_func(const std::string& name) {
 }
 
 Value tool_jdb_vars(VM& vm, const Value&) {
+    std::lock_guard<std::mutex> lk(g_worker.m);
+    if (worker_busy_or_queued_locked()) {
+        return make_text_result("VM busy — call jdb_stop first.", true);
+    }
     auto& names = vm.get_global_names();
     auto& globals = vm.get_globals();
     std::vector<std::string> kept;
@@ -316,6 +495,10 @@ Value tool_jdb_vars(VM& vm, const Value&) {
 }
 
 Value tool_jdb_funcs(VM& vm, const Value&) {
+    std::lock_guard<std::mutex> lk(g_worker.m);
+    if (worker_busy_or_queued_locked()) {
+        return make_text_result("VM busy — call jdb_stop first.", true);
+    }
     const auto& funcs = vm.get_funcs();
     std::vector<std::string> kept;
     for (const auto& f : funcs) {
@@ -476,14 +659,23 @@ Value tool_jdb_doc(VM&, const Value& args) {
 Value tool_jdb_savews(VM& vm, const Value& args) {
     std::string name = obj_get_str(args, "name");
     if (name.empty()) return make_text_result("name is empty", true);
+    std::lock_guard<std::mutex> lk(g_worker.m);
+    if (worker_busy_or_queued_locked()) {
+        return make_text_result("VM busy — call jdb_stop first.", true);
+    }
     OutputCapture cap(vm);
     try {
         // Pass the session buffer so FUNC/SUB definitions get persisted in
-        // the [PROGRAM] section of the .jdws file. load_workspace re-parses
-        // this text to rebuild user function bindings.
-        save_workspace(vm, g_session_buffer, name);
+        // the source_code array of the .jsws file. load_workspace re-parses
+        // this text to rebuild user function bindings. The MCP server also
+        // hands save_workspace its boot-set filter so VM-internal globals
+        // (created during VM bootstrap, e.g. ZEROS scratch slots) are
+        // skipped — only vars the user actually set this session land in
+        // the file.
+        save_workspace(vm, g_session_buffer, name,
+                       [](const std::string& n) { return is_user_var(n); });
         std::string body = cap.buf.empty()
-            ? ("workspace saved: " + name + ".jdws") : cap.buf;
+            ? ("workspace saved: " + name + ".jsws") : cap.buf;
         return make_text_result(body, false);
     } catch (const std::exception& e) {
         return make_text_result(std::string("Error: ") + e.what(), true);
@@ -493,6 +685,10 @@ Value tool_jdb_savews(VM& vm, const Value& args) {
 Value tool_jdb_loadws(VM& vm, const Value& args) {
     std::string name = obj_get_str(args, "name");
     if (name.empty()) return make_text_result("name is empty", true);
+    std::lock_guard<std::mutex> lk(g_worker.m);
+    if (worker_busy_or_queued_locked()) {
+        return make_text_result("VM busy — call jdb_stop first.", true);
+    }
     OutputCapture cap(vm);
     try {
         // load_workspace clears + repopulates the buffer — adopt it as the
@@ -501,7 +697,7 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
         g_session_buffer.clear();
         load_workspace(vm, g_session_buffer, name);
         std::string body = cap.buf.empty()
-            ? ("workspace loaded: " + name + ".jdws") : cap.buf;
+            ? ("workspace loaded: " + name + ".jsws") : cap.buf;
         return make_text_result(body, false);
     } catch (const std::exception& e) {
         return make_text_result(std::string("Error: ") + e.what(), true);
@@ -723,6 +919,21 @@ Value build_tools() {
         build_input_schema({{"path", "Relative path to a .jdb file."}}, {"path"})));
 
     a.push_back(tool_descriptor(
+        "jdb_resume",
+        "Continue a script that paused via the STOP statement. While paused, the stopped frame's locals are exposed as globals so jdb_eval can inspect/mutate them; jdb_resume folds those changes back and continues execution from the next opcode. Returns any captured stdout. No-op (with a friendly message) if the VM is not stopped.",
+        build_input_schema({}, {})));
+
+    a.push_back(tool_descriptor(
+        "jdb_stop",
+        "Pause a running script (e.g. a long-running jdb_load) by setting an external STOP flag. The VM's dispatch loop checks the flag every ~200 opcodes and stashes state exactly like the in-script STOP statement. The reader thread fast-paths this tool, so the response arrives even while another tool call is still executing. Pair with jdb_eval (to inspect/mutate during the pause) and jdb_resume.",
+        build_input_schema({}, {})));
+
+    a.push_back(tool_descriptor(
+        "jdb_status",
+        "Report the VM's current state: 'running' (worker executing a script — most tools are busy-rejected, call jdb_stop first), 'stopped' (paused at a STOP — eval/resume work), or 'idle' (no script running, ready for jdb_load).",
+        build_input_schema({}, {})));
+
+    a.push_back(tool_descriptor(
         "jdb_vars",
         "List user-defined global variables on the persistent VM. Server internals and engine-noise (dotted, __-prefixed) are filtered out.",
         build_input_schema({}, {})));
@@ -744,13 +955,13 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_savews",
-        "Persist the entire VM state (user globals + FUNC/SUB definitions) to '<name>.jdws' in the server's working directory. Mirrors the REPL's SAVEWS command. Useful for project-scoped DSL toolkits — call once per stable milestone, then restore with jdb_loadws at the start of the next session.",
-        build_input_schema({{"name", "Workspace name (file '<name>.jdws' is created)."}}, {"name"})));
+        "Persist user-set globals (filtered to skip VM-builtin constants and empty values) plus FUNC/SUB definitions to '<name>.jsws' in the server's working directory. JSON format with shape-preserving array wrapping. Mirrors the REPL's SAVEWS. Useful for project-scoped DSL toolkits — call once per stable milestone, then restore with jdb_loadws at the start of the next session.",
+        build_input_schema({{"name", "Workspace name (file '<name>.jsws' is created)."}}, {"name"})));
 
     a.push_back(tool_descriptor(
         "jdb_loadws",
-        "Reset the VM and restore variables + functions from '<name>.jdws'. Replaces the current state — anything defined this session is lost unless you saved it first. Mirrors the REPL's LOADWS command.",
-        build_input_schema({{"name", "Workspace name (file '<name>.jdws' is read)."}}, {"name"})));
+        "Reset the VM and restore variables + functions from '<name>.jsws'. Falls back to legacy '<name>.jdws' if no .jsws exists. Replaces the current state — anything defined this session is lost unless you saved it first. Mirrors the REPL's LOADWS command.",
+        build_input_schema({{"name", "Workspace name (file '<name>.jsws' is read; .jdws as fallback)."}}, {"name"})));
 
     a.push_back(tool_descriptor(
         "echo",
@@ -771,6 +982,9 @@ Value dispatch_tool(VM& vm, const std::string& name, const Value& args) {
     if (name == "jdb_eval")       return tool_jdb_eval(vm, args);
     if (name == "jdb_check")      return tool_jdb_check(vm, args);
     if (name == "jdb_load")       return tool_jdb_load(vm, args);
+    if (name == "jdb_resume")     return tool_jdb_resume(vm, args);
+    if (name == "jdb_stop")       return tool_jdb_stop(vm, args);
+    if (name == "jdb_status")     return tool_jdb_status(vm, args);
     if (name == "jdb_vars")       return tool_jdb_vars(vm, args);
     if (name == "jdb_funcs")      return tool_jdb_funcs(vm, args);
     if (name == "jdb_doc")        return tool_jdb_doc(vm, args);
@@ -838,6 +1052,82 @@ Value handle_rpc(VM& vm, const Value& rpc) {
 
 } // namespace
 
+// ── Reader thread + inbox ───────────────────────────────────────
+// The main dispatch thread blocks for the duration of every tool call
+// (synchronous run_on_vm). To let an MCP client deliver jdb_stop while
+// a script is running, a separate reader thread reads stdin
+// continuously, fast-paths jdb_stop (sets vm.stop_requested + replies
+// inline), and posts other frames to a queue the main loop drains.
+//
+// The reader does NOT touch the VM's value system (no parse_json /
+// stringify_json from the reader thread) — those allocate via the VM's
+// arena and aren't thread-safe. Detection is byte-level on the raw
+// frame body; the response is a hand-built JSON literal.
+
+struct McpInbox {
+    std::mutex m;
+    std::condition_variable cv;
+    std::deque<std::string> bodies;
+    bool eof = false;
+};
+
+// Byte-level detection of `tools/call` for `jdb_stop`. We control the
+// client (MCP frame format) so we can rely on quoted-key shapes; this
+// is a fast-path, the slow path through normal dispatch still works.
+bool is_stop_request(const std::string& body, std::string& id_literal) {
+    if (body.find("\"name\":\"jdb_stop\"") == std::string::npos) return false;
+    if (body.find("\"method\":\"tools/call\"") == std::string::npos) return false;
+    auto p = body.find("\"id\":");
+    if (p == std::string::npos) { id_literal = "null"; return true; }
+    p += 5;
+    while (p < body.size() && (body[p] == ' ' || body[p] == '\t')) p++;
+    size_t end = p;
+    if (p < body.size() && body[p] == '"') {
+        end = p + 1;
+        while (end < body.size() && body[end] != '"') {
+            if (body[end] == '\\' && end + 1 < body.size()) end += 2;
+            else end++;
+        }
+        if (end < body.size()) end++;  // consume closing quote
+    } else {
+        while (end < body.size() && body[end] != ',' && body[end] != '}'
+               && body[end] != ' ' && body[end] != '\t' && body[end] != '\n'
+               && body[end] != '\r') end++;
+    }
+    id_literal = body.substr(p, end - p);
+    if (id_literal.empty()) id_literal = "null";
+    return true;
+}
+
+void reader_loop(VM& vm, McpInbox& inbox) {
+    std::string body;
+    while (read_frame(body)) {
+        std::string id_lit;
+        if (is_stop_request(body, id_lit)) {
+            vm.stop_requested.store(true);
+            // Hand-built response — bypasses parse_json / stringify_json,
+            // both of which mutate VM-arena state and aren't safe from a
+            // non-VM thread.
+            std::string resp = "{\"jsonrpc\":\"2.0\",\"id\":" + id_lit
+                + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[stop requested]\"}],\"isError\":false}}";
+            write_frame(resp);
+            log_line("fast-path jdb_stop");
+            continue;
+        }
+        {
+            std::lock_guard<std::mutex> g(inbox.m);
+            inbox.bodies.push_back(std::move(body));
+        }
+        inbox.cv.notify_one();
+    }
+    {
+        std::lock_guard<std::mutex> g(inbox.m);
+        inbox.eof = true;
+    }
+    inbox.cv.notify_one();
+    log_line("reader: stdin closed");
+}
+
 int run_mcp_stdio(VM& vm, const std::string& user_tools_dir) {
 #ifdef _WIN32
     // Windows defaults stdin/stdout to text mode, which translates LF↔CRLF
@@ -856,8 +1146,24 @@ int run_mcp_stdio(VM& vm, const std::string& user_tools_dir) {
         log_line("user tools loaded: " + std::to_string(g_user_tools.size()));
     }
 
-    std::string body;
-    while (read_frame(body)) {
+    // Persistent VM worker — owns the VM during job execution. SDL
+    // thread-affinity requires a single thread for the entire session,
+    // not a fresh thread per jdb_load/jdb_resume call.
+    g_worker.t = std::thread(worker_loop, std::ref(vm));
+
+    McpInbox inbox;
+    std::thread reader([&]{ reader_loop(vm, inbox); });
+
+    while (true) {
+        std::string body;
+        {
+            std::unique_lock<std::mutex> lk(inbox.m);
+            inbox.cv.wait(lk, [&]{ return !inbox.bodies.empty() || inbox.eof; });
+            if (inbox.bodies.empty() && inbox.eof) break;
+            body = std::move(inbox.bodies.front());
+            inbox.bodies.pop_front();
+        }
+
         Value rpc;
         try {
             rpc = parse_json(vm, body);
@@ -900,6 +1206,13 @@ int run_mcp_stdio(VM& vm, const std::string& user_tools_dir) {
     }
 
     log_line("stdin closed, exiting");
+    if (reader.joinable()) reader.join();
+    // Drain any in-flight job, then shut the worker down. We don't try
+    // to interrupt — a long-running game loop will exit on its own
+    // (END or running=0) or via stop_requested if the client sent one.
+    g_worker.shutdown.store(true);
+    g_worker.cv.notify_one();
+    if (g_worker.t.joinable()) g_worker.t.join();
     return 0;
 }
 

@@ -249,6 +249,14 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     sp = base + chunk.var_names.size();
     min_frame_depth = 0;
     is_stopped = false;  // fresh sub-run; prior STOP state preserved in stopped_*
+    // A previous run may have ended via END_PROGRAM, leaving is_halted=true.
+    // Without this reset, run() bails at its top-of-loop guard and the
+    // sub-chunk silently never executes — wedges every MCP eval after END.
+    is_halted = false;
+    // Clear any pre-fired external stop signal: a sub-run inherits a clean
+    // slate, so e.g. an MCP eval doesn't fire-and-forget-stop a tiny snippet
+    // because someone sent jdb_stop while the VM was idle.
+    stop_requested.store(false);
     subrun_depth++;
 
     // Run the new chunk
@@ -339,19 +347,29 @@ void VM::inject_stopped_locals() {
         if (name.empty()) continue;
         size_t stack_idx = f.stack_base + i;
         if (stack_idx >= stopped_stack.size()) continue;
+        const Value& slot_val = stopped_stack[stack_idx];
+        auto git = global_names.find(name);
+        // Sub-run main chunks store top-level vars via OP_STORE_GLOBAL; the
+        // frame slot is allocated but unused (stays NONE). Don't clobber the
+        // real global with a stale NONE — let the user inspect/mutate the
+        // global directly. The script's OP_LOAD_GLOBAL on resume sees the
+        // user's modification, since extract_stopped_locals has no entry to
+        // revert.
+        if (slot_val.type == ValueType::NONE && git != global_names.end()) {
+            continue;
+        }
         InjectedLocal il;
         il.name = name;
         il.slot_in_stopped_stack = stack_idx;
-        auto git = global_names.find(name);
         if (git != global_names.end()) {
             il.was_existing = true;
             il.overridden_value = globals[git->second];
             il.global_slot = git->second;
-            globals[git->second] = stopped_stack[stack_idx];
+            globals[git->second] = slot_val;
         } else {
             il.was_existing = false;
             il.global_slot = static_cast<uint16_t>(globals.size());
-            globals.push_back(stopped_stack[stack_idx]);
+            globals.push_back(slot_val);
             global_names[name] = il.global_slot;
         }
         injected_locals.push_back(std::move(il));
@@ -854,6 +872,21 @@ void VM::run() {
             tick_counter = 0;
             if (on_tick) on_tick();
             if (!event_handlers.empty()) event_poll();
+            // External STOP request (set from MCP reader thread, joystick
+            // handler in the host, etc). Acts exactly like the in-script
+            // STOP statement: stash state, return; run_code's epilogue
+            // moves frames into stopped_* and inject_stopped_locals exposes
+            // the pause-point's frame. cf.ip currently points to the NEXT
+            // opcode (the one we're about to fetch), so line_info[cf.ip]
+            // is the line that will execute on resume.
+            if (stop_requested.exchange(false)) {
+                int stop_line = (cf.ip < cf.chunk->line_info.size())
+                    ? cf.chunk->line_info[cf.ip] : 0;
+                emit("STOP (external) at line " + std::to_string(stop_line)
+                     + ". Type RESUME or call jdb_resume to continue.\n");
+                is_stopped = true;
+                return;
+            }
         }
 
         size_t trace_ip = cf.ip;

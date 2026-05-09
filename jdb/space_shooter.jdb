@@ -1,0 +1,1254 @@
+' ──────────────────────────────────────────────────────────────────
+' STELLAR DRIFT — 80s vector-style space shooter
+' Controls: arrows / WASD / joystick stick to fly,
+'           Space / button 0 to fire.
+' ──────────────────────────────────────────────────────────────────
+OPTION "EXPLICIT"
+OPTION "STRICT"
+OPTION "NOPAUSE"
+
+' --- Screen ---
+DIM SCR_W AS INTEGER = 960
+DIM SCR_H AS INTEGER = 720
+SCREEN SCR_W, SCR_H, "Stellar Drift", 2
+SETFONT "C:/Windows/Fonts/consola.ttf", 16
+
+' --- Pools (sized once; alive[] flags rather than dynamic resize) ---
+DIM N_STARS   AS INTEGER = 140
+DIM N_BULLETS AS INTEGER = 64
+DIM N_ENEMIES AS INTEGER = 24
+DIM N_FX      AS INTEGER = 120
+DIM N_PU      AS INTEGER = 8
+
+' --- Stars: scalar-init, then vector update + batch draw ---
+DIM star_x     = ZEROS(N_STARS)
+DIM star_y     = ZEROS(N_STARS)
+DIM star_layer = ZEROS(N_STARS)
+DIM star_speed = ZEROS(N_STARS)
+DIM star_rgb   = ZEROS(N_STARS * 3)
+
+DIM si AS INTEGER
+FOR si = 0 TO N_STARS - 1
+    star_x[si]     = RND(1) * SCR_W
+    star_y[si]     = RND(1) * SCR_H
+    DIM lyr AS INTEGER = INT(RND(1) * 3)
+    star_layer[si] = lyr
+    star_speed[si] = 0.4 + lyr * 0.9      ' 0.4 / 1.3 / 2.2
+    star_rgb[si*3 + 0] = 60 + lyr * 80
+    star_rgb[si*3 + 1] = 60 + lyr * 80
+    star_rgb[si*3 + 2] = 80 + lyr * 90
+NEXT si
+
+' --- Player bullets — now with velocity vector + pierce flag ---
+DIM bx = ZEROS(N_BULLETS)
+DIM by = ZEROS(N_BULLETS)
+DIM b_vx = ZEROS(N_BULLETS)
+DIM b_vy = ZEROS(N_BULLETS)
+DIM b_pierce = ZEROS(N_BULLETS)
+DIM b_alive = ZEROS(N_BULLETS)
+
+DIM ex = ZEROS(N_ENEMIES)
+DIM ey = ZEROS(N_ENEMIES)
+DIM e_phase = ZEROS(N_ENEMIES)
+DIM e_speed = ZEROS(N_ENEMIES)
+DIM e_kind  = ZEROS(N_ENEMIES)   ' 0=scout 10p, 1=drone 20p, 2=interceptor 50p, 3=ace 100p
+DIM e_alive = ZEROS(N_ENEMIES)
+DIM e_state = ZEROS(N_ENEMIES)
+DIM e_dir   = ZEROS(N_ENEMIES)
+DIM e_peel_y = ZEROS(N_ENEMIES)
+DIM e_amp   = ZEROS(N_ENEMIES)
+DIM e_freq  = ZEROS(N_ENEMIES)
+DIM e_spin  = ZEROS(N_ENEMIES)   ' rotation angle (rad), updated per frame
+DIM e_wobble = ZEROS(N_ENEMIES)  ' wobble phase
+DIM e_eye   = ZEROS(N_ENEMIES)   ' KITT-style eye scanner phase
+
+' Wave choreography
+DIM wave_remaining AS INTEGER = 0      ' enemies left to release in current wave
+DIM wave_spawn_cd  AS INTEGER = 90     ' frames until next member appears
+DIM wave_cooldown  AS INTEGER = 120    ' frames between waves
+DIM wave_kind      AS INTEGER = 0
+DIM wave_dir       AS INTEGER = 1      ' -1 / +1 sweep direction
+DIM wave_base_x    AS DOUBLE  = 0.0
+DIM wave_amp       AS DOUBLE  = 120.0
+DIM wave_freq      AS DOUBLE  = 0.018
+DIM wave_speed     AS DOUBLE  = 1.6
+
+' Score popups (floating "+10" / "+20" / ...)
+DIM N_POP AS INTEGER = 16
+DIM pop_x    = ZEROS(N_POP)
+DIM pop_y    = ZEROS(N_POP)
+DIM pop_life = ZEROS(N_POP)
+DIM pop_pts  = ZEROS(N_POP)
+
+' Enemy projectiles (lasers / bombs / mines).
+DIM N_EP AS INTEGER = 48
+DIM ep_x     = ZEROS(N_EP)
+DIM ep_y     = ZEROS(N_EP)
+DIM ep_vx    = ZEROS(N_EP)
+DIM ep_vy    = ZEROS(N_EP)
+DIM ep_kind  = ZEROS(N_EP)    ' 0=laser, 1=bomb, 2=mine
+DIM ep_life  = ZEROS(N_EP)    ' frames until expiry (mines: arming/lifetime)
+DIM ep_alive = ZEROS(N_EP)
+
+' Per-enemy fire cooldown
+DIM e_fire_cd = ZEROS(N_ENEMIES)
+
+' --- Powerups: float down from killed enemies, picked up on contact ---
+' kind: 0=SPREAD, 1=WIDE, 2=RAPID, 3=SHIELD, 4=PIERCE, 5=BOMB
+DIM pu_x     = ZEROS(N_PU)
+DIM pu_y     = ZEROS(N_PU)
+DIM pu_phase = ZEROS(N_PU)
+DIM pu_kind  = ZEROS(N_PU)
+DIM pu_alive = ZEROS(N_PU)
+
+' --- Active powerup timers (frames remaining) ---
+DIM pw_spread AS INTEGER = 0
+DIM pw_wide   AS INTEGER = 0
+DIM pw_rapid  AS INTEGER = 0
+DIM pw_shield AS INTEGER = 0
+DIM pw_pierce AS INTEGER = 0
+
+DIM fx_x  = ZEROS(N_FX)
+DIM fx_y  = ZEROS(N_FX)
+DIM fx_vx = ZEROS(N_FX)
+DIM fx_vy = ZEROS(N_FX)
+DIM fx_life = ZEROS(N_FX)
+
+' --- State ---
+DIM mode$           = "title"
+DIM running         = 1
+DIM frame AS INTEGER = 0
+DIM score AS INTEGER = 0
+DIM hi_score AS INTEGER = 0
+DIM lives AS INTEGER = 3
+
+DIM px AS DOUBLE = SCR_W / 2.0
+DIM py AS DOUBLE = SCR_H * 1.0 - 90.0
+DIM player_cd AS INTEGER = 0
+DIM invuln    AS INTEGER = 0
+DIM enemy_spawn_cd AS INTEGER = 60
+
+DIM has_joy AS INTEGER = 0
+IF JOY.COUNT() > 0 THEN has_joy = 1
+
+' Game-over input lock: ignore fire/start for ~2.5s after death so a
+' player who was holding the trigger doesn't bounce straight back in.
+DIM gameover_lock AS INTEGER = 0
+
+' Pause state — toggled by Joystick button 7 (Start) or P key. While
+' paused the game loop keeps running (renders + window stays
+' responsive) but no game-object updates happen. Lets a live MCP
+' session inject changes between frames without spawn/movement noise.
+DIM paused AS INTEGER = 0
+DIM pause_held AS INTEGER = 0
+' Edge-detect for the joystick START → claude-pause path. We don't want
+' a single press to STOP twice in the wait loop after RESUME.
+DIM start_held AS INTEGER = 0
+
+' --- Quit handler (window close). Event-handler SUBs receive one
+' payload arg — without it, the ON-dispatch errors with "Invalid
+' function reference" the moment the event fires.
+SUB on_quit(QuitData)
+    running = 0
+ENDSUB
+ON "QUIT" CALL on_quit
+
+' ──────────────────────────────────────────────────────────────────
+' SOUND — synthwave loop on voices 0/1, SFX on voices 2/3
+' ──────────────────────────────────────────────────────────────────
+SUB sound_setup()
+    SOUND.INIT
+    SOUND.BPM 130
+
+    SOUND.VOICE 0, "SQUARE", 0.01, 0.18, 0.35, 0.28
+    SOUND.FILTER 0, 2400
+    SOUND.GAIN 0, 0.45
+
+    SOUND.VOICE 1, "SAW", 0.005, 0.12, 0.45, 0.10
+    SOUND.FILTER 1, 550
+    SOUND.GAIN 1, 0.55
+
+    SOUND.VOICE 2, "SQUARE", 0.005, 0.05, 0.0, 0.04
+    SOUND.FILTER 2, 4000
+    SOUND.GAIN 2, 0.32
+
+    SOUND.VOICE 3, "TRIANGLE", 0.005, 0.18, 0.0, 0.14
+    SOUND.FILTER 3, 900
+    SOUND.GAIN 3, 0.55
+    SOUND.BITCRUSH 3, 0.4, 6
+
+    SOUND.REVERB 0.8, 0.3, 0.85, 0.3
+    SOUND.REVERBSEND 0, 0.4
+
+    DIM melody$ = _
+        "[a4 ~ e5 ~] [c5 ~ a4 ~] [g4 ~ d5 ~] [b4 ~ g4 ~] " + _
+        "[a4 [c5 e5] g5 ~] [f5 ~ e5 c5] [d5 ~ b4 ~] [a4 ~ ~ ~]"
+    DIM bass$ = _
+        "[[a2 a3]*4] [[f2 f3]*4] [[g2 g3]*4] [[e2 e3]*4] " + _
+        "[[a2 a3]*4] [[f2 f3]*4] [[g2 g3]*4] [[a1 a2]*4]"
+    SOUND.NOTE "< " + melody$ + " , " + bass$ + " >", TRUE
+ENDSUB
+
+SUB sfx_laser() : SOUND.PLAY 2, "g6" : ENDSUB
+SUB sfx_boom()  : SOUND.PLAY 3, "c2" : ENDSUB
+
+' SOUND.PLAY holds the voice's gate on indefinitely; with a 0.0 sustain
+' the cell is silent but still alive. Drain the SFX tracks every few
+' frames so the global voice pool can't be consumed by stale shots.
+SUB sfx_drain()
+    SOUND.RELEASE 2
+    SOUND.RELEASE 3
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' INPUT — joystick + keyboard merged
+' ──────────────────────────────────────────────────────────────────
+FUNC input_x()
+    DIM x AS DOUBLE = 0.0
+    IF GFX.KEYSTATE("Left")  OR GFX.KEYSTATE("A") THEN x = x - 1.0
+    IF GFX.KEYSTATE("Right") OR GFX.KEYSTATE("D") THEN x = x + 1.0
+    IF has_joy = 1 THEN
+        DIM jx AS DOUBLE = JOY.AXIS(0, 0)
+        IF ABS(jx) > 0.18 THEN x = jx
+    ENDIF
+    RETURN x
+ENDFUNC
+
+FUNC input_y()
+    DIM y AS DOUBLE = 0.0
+    IF GFX.KEYSTATE("Up")   OR GFX.KEYSTATE("W") THEN y = y - 1.0
+    IF GFX.KEYSTATE("Down") OR GFX.KEYSTATE("S") THEN y = y + 1.0
+    IF has_joy = 1 THEN
+        DIM jy AS DOUBLE = JOY.AXIS(0, 1)
+        IF ABS(jy) > 0.18 THEN y = jy
+    ENDIF
+    RETURN y
+ENDFUNC
+
+FUNC input_fire()
+    IF GFX.KEYSTATE("Space") THEN RETURN 1
+    IF has_joy = 1 THEN
+        IF JOY.BUTTON(0, 0) THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+FUNC input_start()
+    IF GFX.KEYSTATE("Space") OR GFX.KEYSTATE("Return") THEN RETURN 1
+    IF has_joy = 1 THEN
+        IF JOY.BUTTON(0, 0) OR JOY.BUTTON(0, 7) THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+FUNC input_back()
+    IF GFX.KEYSTATE("Escape") THEN RETURN 1
+    IF has_joy = 1 THEN
+        IF JOY.BUTTON(0, 6) OR JOY.BUTTON(0, 1) THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+FUNC input_pause()
+    IF GFX.KEYSTATE("P") THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Joystick START (button 7) is reserved for the live-tweak STOP — it
+' freezes the VM via the in-script STOP statement so the MCP host can
+' inspect/mutate state. Keyboard P keeps the ordinary local pause.
+FUNC input_claude_pause()
+    IF has_joy = 1 THEN
+        IF JOY.BUTTON(0, 7) THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+' Any non-START button counts as "Claude is done, resume the game".
+' FIRE is the canonical "go" button; we also accept B (1).
+FUNC input_claude_unpause()
+    IF GFX.KEYSTATE("Space") OR GFX.KEYSTATE("Return") THEN RETURN 1
+    IF has_joy = 1 THEN
+        IF JOY.BUTTON(0, 0) OR JOY.BUTTON(0, 1) THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+' ──────────────────────────────────────────────────────────────────
+' RESET
+' ──────────────────────────────────────────────────────────────────
+SUB reset_game()
+    score = 0
+    lives = 3
+    px = SCR_W / 2.0
+    py = SCR_H * 1.0 - 90.0
+    player_cd = 0
+    invuln = 0
+    enemy_spawn_cd = 60
+    wave_remaining = 0
+    wave_cooldown = 60
+    b_alive   = ZEROS(N_BULLETS)
+    b_pierce  = ZEROS(N_BULLETS)
+    e_alive   = ZEROS(N_ENEMIES)
+    e_state   = ZEROS(N_ENEMIES)
+    e_fire_cd = ZEROS(N_ENEMIES)
+    ep_alive  = ZEROS(N_EP)
+    fx_life   = ZEROS(N_FX)
+    pop_life  = ZEROS(N_POP)
+    pu_alive  = ZEROS(N_PU)
+    pw_spread = 0
+    pw_wide   = 0
+    pw_rapid  = 0
+    pw_shield = 0
+    pw_pierce = 0
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' SPAWNS — pool scan + first free slot
+' ──────────────────────────────────────────────────────────────────
+SUB fire_one(x, y, vx, vy)
+    DIM i AS INTEGER
+    FOR i = 0 TO N_BULLETS - 1
+        IF b_alive[i] = 0 THEN
+            bx[i] = x
+            by[i] = y
+            b_vx[i] = vx
+            b_vy[i] = vy
+            IF pw_pierce > 0 THEN
+                b_pierce[i] = 1
+            ELSE
+                b_pierce[i] = 0
+            ENDIF
+            b_alive[i] = 1
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB spawn_bullet()
+    DIM ox AS DOUBLE = px
+    DIM oy AS DOUBLE = py - 18.0
+    ' Always fire the centre shot
+    fire_one(ox, oy, 0.0, -12.0)
+    ' Spread: ±15° diagonals
+    IF pw_spread > 0 THEN
+        fire_one(ox, oy, -3.1, -11.5)
+        fire_one(ox, oy,  3.1, -11.5)
+    ENDIF
+    ' Wide: 45° forward-diagonal pair (cos/sin of 45° at speed 12)
+    IF pw_wide > 0 THEN
+        fire_one(ox - 8.0, py - 4.0, -8.5, -8.5)
+        fire_one(ox + 8.0, py - 4.0,  8.5, -8.5)
+    ENDIF
+    sfx_laser()
+ENDSUB
+
+' Pick the kind for the next wave. As score grows, more dangerous types appear.
+FUNC pick_wave_kind() AS INTEGER
+    DIM r AS DOUBLE = RND(1)
+    IF score < 200 THEN
+        IF r < 0.75 THEN RETURN 0
+        RETURN 1
+    ELSEIF score < 800 THEN
+        IF r < 0.55 THEN RETURN 0
+        IF r < 0.85 THEN RETURN 1
+        RETURN 2
+    ELSE
+        IF r < 0.40 THEN RETURN 0
+        IF r < 0.70 THEN RETURN 1
+        IF r < 0.92 THEN RETURN 2
+        RETURN 3
+    ENDIF
+ENDFUNC
+
+' Begin a coordinated wave. Picks count + direction + path params.
+SUB start_wave()
+    wave_remaining = 5 + INT(RND(1) * 4)         ' 5..8 enemies
+    wave_kind      = CINT(pick_wave_kind())
+    wave_dir       = 1
+    IF RND(1) < 0.5 THEN wave_dir = -1
+    ' Stream entry x: outer side opposite the sweep direction
+    IF wave_dir = 1 THEN
+        wave_base_x = 80.0 + RND(1) * 80.0
+    ELSE
+        wave_base_x = SCR_W - 80.0 - RND(1) * 80.0
+    ENDIF
+    wave_amp   = 100.0 + RND(1) * 80.0
+    wave_freq  = 0.014 + RND(1) * 0.008
+    wave_speed = 1.5 + RND(1) * 0.8
+    IF wave_kind = 2 THEN wave_speed = wave_speed + 0.6
+    IF wave_kind = 3 THEN wave_speed = wave_speed + 1.0
+    wave_spawn_cd = 8
+ENDSUB
+
+SUB spawn_wave_member()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_ENEMIES - 1
+        IF e_alive[i] = 0 THEN
+            ex[i]      = wave_base_x
+            ey[i]      = -30.0 - RND(1) * 20.0
+            e_phase[i] = RND(1) * 6.2832
+            e_kind[i]  = wave_kind
+            e_speed[i] = wave_speed
+            e_amp[i]   = wave_amp
+            e_freq[i]  = wave_freq
+            e_dir[i]   = wave_dir
+            e_state[i] = 0
+            e_peel_y[i] = py - 80.0 - RND(1) * 60.0
+            e_fire_cd[i] = 30 + INT(RND(1) * 50)
+            e_spin[i]   = RND(1) * 6.2832
+            e_wobble[i] = RND(1) * 6.2832
+            e_eye[i]    = RND(1) * 6.2832
+            e_alive[i] = 1
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB maybe_drop_powerup(x, y, kind)
+    DIM chance AS DOUBLE = 0.05
+    IF kind = 1 THEN chance = 0.08
+    IF kind = 2 THEN chance = 0.18
+    IF kind = 3 THEN chance = 0.30
+    IF RND(1) > chance THEN RETURN
+    DIM i AS INTEGER
+    FOR i = 0 TO N_PU - 1
+        IF pu_alive[i] = 0 THEN
+            pu_x[i] = x
+            pu_y[i] = y
+            pu_phase[i] = RND(1) * 6.2832
+            pu_kind[i] = INT(RND(1) * 6.0)   ' uniform across the 6 types
+            pu_alive[i] = 1
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ── Enemy projectile spawn ─────────────────────────────────────
+' kind: 0 = laser (fast, straight down)
+'       1 = bomb  (slow + accelerating, larger hitbox)
+'       2 = mine  (drop, then sit until expiry)
+SUB spawn_ep(x, y, kind, vx, vy)
+    DIM i AS INTEGER
+    FOR i = 0 TO N_EP - 1
+        IF ep_alive[i] = 0 THEN
+            ep_x[i] = x
+            ep_y[i] = y
+            ep_vx[i] = vx
+            ep_vy[i] = vy
+            ep_kind[i] = kind
+            IF kind = 2 THEN
+                ep_life[i] = 240         ' mine: 4s lifetime
+            ELSE
+                ep_life[i] = 360
+            ENDIF
+            ep_alive[i] = 1
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Decide what each enemy fires per type. Called when its cooldown hits 0.
+SUB enemy_fire(idx)
+    DIM x AS DOUBLE = ex[idx]
+    DIM y AS DOUBLE = ey[idx] + 14.0
+    DIM k AS INTEGER = e_kind[idx]
+    ' Aim a bit toward the player so non-direct paths still threaten.
+    DIM aim_dx AS DOUBLE = px - x
+    DIM aim_len AS DOUBLE = SQR(aim_dx * aim_dx + 1.0) + 0.001
+    DIM nx AS DOUBLE = aim_dx / aim_len
+    IF k = 0 THEN
+        ' Scout — single straight laser
+        spawn_ep(x, y, 0, 0.0, 7.0)
+        e_fire_cd[idx] = 110 + INT(RND(1) * 90)
+    ELSEIF k = 1 THEN
+        ' Drone — single aimed laser
+        spawn_ep(x, y, 0, nx * 4.5, 6.5)
+        e_fire_cd[idx] = 80 + INT(RND(1) * 60)
+    ELSEIF k = 2 THEN
+        ' Interceptor — drops a slow bomb (gravity in update)
+        spawn_ep(x, y, 1, 0.0, 1.6)
+        e_fire_cd[idx] = 90 + INT(RND(1) * 50)
+    ELSE
+        ' Ace — drops a mine, then a 3-shot fan
+        spawn_ep(x, y, 2, 0.0, 1.4)
+        spawn_ep(x, y, 0, -2.5, 6.0)
+        spawn_ep(x, y, 0,  0.0, 7.0)
+        spawn_ep(x, y, 0,  2.5, 6.0)
+        e_fire_cd[idx] = 130 + INT(RND(1) * 80)
+    ENDIF
+ENDSUB
+
+SUB spawn_popup(x, y, pts)
+    DIM i AS INTEGER
+    FOR i = 0 TO N_POP - 1
+        IF pop_life[i] <= 0 THEN
+            pop_x[i] = x
+            pop_y[i] = y
+            pop_pts[i] = pts
+            pop_life[i] = 50
+            RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB spawn_explosion(x, y)
+    DIM cnt AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO N_FX - 1
+        IF fx_life[i] <= 0 THEN
+            DIM ang AS DOUBLE = RND(1) * 6.2832
+            DIM spd AS DOUBLE = 1.0 + RND(1) * 4.0
+            fx_x[i] = x
+            fx_y[i] = y
+            fx_vx[i] = COS(ang) * spd
+            fx_vy[i] = SIN(ang) * spd
+            fx_life[i] = 24 + INT(RND(1) * 12)
+            cnt = cnt + 1
+            IF cnt >= 16 THEN RETURN
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' UPDATES — vector ops where possible
+' ──────────────────────────────────────────────────────────────────
+SUB update_stars()
+    star_y = star_y + star_speed
+    ' Wrap stars that fell off the bottom: y > H → y = 0, x = random
+    DIM i AS INTEGER
+    FOR i = 0 TO N_STARS - 1
+        IF star_y[i] >= SCR_H THEN
+            star_y[i] = 0
+            star_x[i] = RND(1) * SCR_W
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB update_player()
+    px = px + input_x() * 5.5
+    py = py + input_y() * 4.5
+    IF px < 16          THEN px = 16
+    IF px > SCR_W - 16  THEN px = SCR_W - 16
+    IF py < SCR_H / 2   THEN py = SCR_H / 2
+    IF py > SCR_H - 32  THEN py = SCR_H - 32
+    IF player_cd > 0 THEN player_cd = player_cd - 1
+    IF invuln    > 0 THEN invuln    = invuln    - 1
+    ' Tick down powerup timers
+    IF pw_spread > 0 THEN pw_spread = pw_spread - 1
+    IF pw_wide   > 0 THEN pw_wide   = pw_wide   - 1
+    IF pw_rapid  > 0 THEN pw_rapid  = pw_rapid  - 1
+    IF pw_shield > 0 THEN pw_shield = pw_shield - 1
+    IF pw_pierce > 0 THEN pw_pierce = pw_pierce - 1
+    IF input_fire() = 1 AND player_cd = 0 THEN
+        spawn_bullet()
+        IF pw_rapid > 0 THEN
+            player_cd = 4
+        ELSE
+            player_cd = 9
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB update_bullets()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_BULLETS - 1
+        IF b_alive[i] = 1 THEN
+            bx[i] = bx[i] + b_vx[i]
+            by[i] = by[i] + b_vy[i]
+            IF by[i] < -10 OR by[i] > SCR_H + 10 OR _
+               bx[i] < -10 OR bx[i] > SCR_W + 10 THEN
+                b_alive[i] = 0
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB update_powerups()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_PU - 1
+        IF pu_alive[i] = 1 THEN
+            pu_y[i] = pu_y[i] + 1.6
+            pu_phase[i] = pu_phase[i] + 0.12
+            pu_x[i] = pu_x[i] + COS(pu_phase[i]) * 0.6
+            ' Pickup
+            DIM dx AS DOUBLE = px - pu_x[i]
+            DIM dy AS DOUBLE = py - pu_y[i]
+            IF dx*dx + dy*dy < 24*24 THEN
+                pu_alive[i] = 0
+                apply_powerup(CINT(pu_kind[i]))
+            ELSEIF pu_y[i] > SCR_H + 20 THEN
+                pu_alive[i] = 0
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB apply_powerup(k)
+    IF k = 0 THEN
+        pw_spread = 600
+    ELSEIF k = 1 THEN
+        pw_wide = 600
+    ELSEIF k = 2 THEN
+        pw_rapid = 600
+    ELSEIF k = 3 THEN
+        pw_shield = 360
+        invuln = 360
+    ELSEIF k = 4 THEN
+        pw_pierce = 600
+    ELSE
+        ' BOMB — clear all enemies + projectiles + score them
+        smart_bomb()
+    ENDIF
+    sfx_laser()
+ENDSUB
+
+SUB smart_bomb()
+    DIM j AS INTEGER
+    FOR j = 0 TO N_ENEMIES - 1
+        IF e_alive[j] = 1 THEN
+            spawn_explosion(ex[j], ey[j])
+            DIM pts AS INTEGER = 10
+            IF e_kind[j] = 1 THEN pts = 20
+            IF e_kind[j] = 2 THEN pts = 50
+            IF e_kind[j] = 3 THEN pts = 100
+            score = score + pts
+            spawn_popup(ex[j], ey[j], pts)
+            e_alive[j] = 0
+        ENDIF
+    NEXT j
+    FOR j = 0 TO N_EP - 1
+        IF ep_alive[j] = 1 THEN
+            spawn_explosion(ep_x[j], ep_y[j])
+            ep_alive[j] = 0
+        ENDIF
+    NEXT j
+    sfx_boom()
+ENDSUB
+
+SUB update_enemies()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_ENEMIES - 1
+        IF e_alive[i] = 1 THEN
+            IF e_state[i] = 0 THEN
+                ey[i] = ey[i] + e_speed[i]
+                ex[i] = ex[i] + e_dir[i] * 1.2 + _
+                        COS(e_phase[i] + ey[i] * e_freq[i]) * (e_amp[i] * 0.018)
+                IF ey[i] >= e_peel_y[i] THEN
+                    e_state[i] = 1
+                    IF ex[i] < px THEN
+                        e_dir[i] = -1
+                    ELSE
+                        e_dir[i] = 1
+                    ENDIF
+                ENDIF
+            ELSE
+                ey[i] = ey[i] - e_speed[i] * 0.7
+                ex[i] = ex[i] + e_dir[i] * (3.0 + e_speed[i] * 0.5)
+            ENDIF
+            ' Per-enemy animation phases
+            DIM kind AS INTEGER = CINT(e_kind[i])
+            IF kind = 0 THEN
+                e_spin[i] = e_spin[i] + 0.04        ' diamond rotates slowly
+            ELSEIF kind = 2 THEN
+                e_spin[i] = e_spin[i] + 0.08        ' hexagon spins
+            ELSEIF kind = 3 THEN
+                e_spin[i] = e_spin[i] + 0.06        ' ace lattice rotates
+            ENDIF
+            e_wobble[i] = e_wobble[i] + 0.18
+            e_eye[i]    = e_eye[i] + 0.22
+            IF ex[i] < -40 OR ex[i] > SCR_W + 40 OR ey[i] > SCR_H + 40 OR ey[i] < -120 THEN
+                e_alive[i] = 0
+            ENDIF
+            IF e_alive[i] = 1 AND ey[i] > 0 AND ey[i] < SCR_H - 20 THEN
+                e_fire_cd[i] = e_fire_cd[i] - 1
+                IF e_fire_cd[i] <= 0 THEN enemy_fire(i)
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB update_eps()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_EP - 1
+        IF ep_alive[i] = 1 THEN
+            DIM k AS INTEGER = ep_kind[i]
+            IF k = 1 THEN
+                ' Bomb: gravity-accelerated drop
+                ep_vy[i] = ep_vy[i] + 0.10
+            ELSEIF k = 2 THEN
+                ' Mine: drift slows after release, becomes near-stationary
+                ep_vy[i] = ep_vy[i] * 0.94
+            ENDIF
+            ep_x[i] = ep_x[i] + ep_vx[i]
+            ep_y[i] = ep_y[i] + ep_vy[i]
+            ep_life[i] = ep_life[i] - 1
+            IF ep_life[i] <= 0 OR ep_y[i] > SCR_H + 30 OR _
+               ep_x[i] < -30 OR ep_x[i] > SCR_W + 30 THEN
+                ep_alive[i] = 0
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB update_fx()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_FX - 1
+        IF fx_life[i] > 0 THEN
+            fx_x[i]  = fx_x[i]  + fx_vx[i]
+            fx_y[i]  = fx_y[i]  + fx_vy[i]
+            fx_vy[i] = fx_vy[i] + 0.12
+            fx_life[i] = fx_life[i] - 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB update_popups()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_POP - 1
+        IF pop_life[i] > 0 THEN
+            pop_y[i] = pop_y[i] - 1.6
+            pop_life[i] = pop_life[i] - 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB collisions()
+    DIM i AS INTEGER, j AS INTEGER
+    FOR i = 0 TO N_BULLETS - 1
+        IF b_alive[i] = 1 THEN
+            FOR j = 0 TO N_ENEMIES - 1
+                IF e_alive[j] = 1 THEN
+                    DIM dx AS DOUBLE = bx[i] - ex[j]
+                    DIM dy AS DOUBLE = by[i] - ey[j]
+                    IF dx*dx + dy*dy < 22*22 THEN
+                        IF b_pierce[i] = 0 THEN b_alive[i] = 0
+                        e_alive[j] = 0
+                        spawn_explosion(ex[j], ey[j])
+                        sfx_boom()
+                        DIM pts AS INTEGER = 10
+                        IF e_kind[j] = 1 THEN pts = 20
+                        IF e_kind[j] = 2 THEN pts = 50
+                        IF e_kind[j] = 3 THEN pts = 100
+                        score = score + pts
+                        spawn_popup(ex[j], ey[j], pts)
+                        maybe_drop_powerup(ex[j], ey[j], CINT(e_kind[j]))
+                    ENDIF
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT i
+    IF invuln = 0 THEN
+        FOR j = 0 TO N_ENEMIES - 1
+            IF e_alive[j] = 1 THEN
+                DIM dx2 AS DOUBLE = px - ex[j]
+                DIM dy2 AS DOUBLE = py - ey[j]
+                IF dx2*dx2 + dy2*dy2 < 24*24 THEN
+                    e_alive[j] = 0
+                    spawn_explosion(ex[j], ey[j])
+                    sfx_boom()
+                    lives = lives - 1
+                    invuln = 90
+                    IF lives <= 0 THEN
+                        IF score > hi_score THEN hi_score = score
+                        mode$ = "gameover"
+                        gameover_lock = 150
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT j
+        ' Enemy projectiles vs. player — bombs/mines have a bigger hitbox.
+        DIM k AS INTEGER
+        FOR k = 0 TO N_EP - 1
+            IF ep_alive[k] = 1 THEN
+                DIM dx3 AS DOUBLE = px - ep_x[k]
+                DIM dy3 AS DOUBLE = py - ep_y[k]
+                DIM r AS DOUBLE = 14.0
+                IF ep_kind[k] = 1 THEN r = 18.0
+                IF ep_kind[k] = 2 THEN r = 22.0
+                IF dx3*dx3 + dy3*dy3 < r*r THEN
+                    ep_alive[k] = 0
+                    spawn_explosion(ep_x[k], ep_y[k])
+                    sfx_boom()
+                    lives = lives - 1
+                    invuln = 90
+                    IF lives <= 0 THEN
+                        IF score > hi_score THEN hi_score = score
+                        mode$ = "gameover"
+                        gameover_lock = 150
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT k
+    ENDIF
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' DRAW — batch via matrix-mode LINE / GFX.PLOT_POINTS
+' ──────────────────────────────────────────────────────────────────
+SUB draw_stars()
+    GFX.PLOT_POINTS star_x, star_y, star_rgb
+ENDSUB
+
+SUB draw_player()
+    IF invuln > 0 AND pw_shield = 0 AND (frame MOD 4) < 2 THEN RETURN
+    DRAWCOLOR 80, 255, 200
+    LINE px,      py - 16, px - 14, py + 12
+    LINE px - 14, py + 12, px + 14, py + 12
+    LINE px + 14, py + 12, px,      py - 16
+    LINE px - 6,  py + 12, px,      py + 4
+    LINE px + 6,  py + 12, px,      py + 4
+    ' Wide-cannon side pods when active
+    IF pw_wide > 0 THEN
+        DRAWCOLOR 100, 220, 255
+        LINE px - 18, py - 4, px - 18, py + 8
+        LINE px + 18, py - 4, px + 18, py + 8
+    ENDIF
+    ' Shield bubble — pulsing octagon
+    IF pw_shield > 0 THEN
+        DIM pulse AS DOUBLE = 22.0 + SIN(frame * 0.25) * 3.0
+        IF (frame MOD 4) < 2 THEN
+            DRAWCOLOR 80, 200, 255
+        ELSE
+            DRAWCOLOR 160, 240, 255
+        ENDIF
+        LINE px - pulse,        py,                px - pulse * 0.7,  py - pulse * 0.7
+        LINE px - pulse * 0.7,  py - pulse * 0.7,  px,                py - pulse
+        LINE px,                py - pulse,        px + pulse * 0.7,  py - pulse * 0.7
+        LINE px + pulse * 0.7,  py - pulse * 0.7,  px + pulse,        py
+        LINE px + pulse,        py,                px + pulse * 0.7,  py + pulse * 0.7
+        LINE px + pulse * 0.7,  py + pulse * 0.7,  px,                py + pulse
+        LINE px,                py + pulse,        px - pulse * 0.7,  py + pulse * 0.7
+        LINE px - pulse * 0.7,  py + pulse * 0.7,  px - pulse,        py
+    ENDIF
+ENDSUB
+
+SUB draw_bullets()
+    DRAWCOLOR 255, 240, 80
+    DIM i AS INTEGER
+    FOR i = 0 TO N_BULLETS - 1
+        IF b_alive[i] = 1 THEN
+            LINE bx[i],     by[i] - 7, bx[i],     by[i] + 7
+            LINE bx[i] - 1, by[i] - 7, bx[i] - 1, by[i] + 7
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Helper: draw a polygon described by alternating dx/dy vertex offsets
+' rotated by `ang` around (cx, cy). vs is a flat array [x0,y0,x1,y1,...]
+SUB draw_poly(cx, cy, ang, vs)
+    DIM ca AS DOUBLE = COS(ang)
+    DIM sa AS DOUBLE = SIN(ang)
+    DIM n AS INTEGER = LEN(vs) / 2
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        DIM j AS INTEGER = (i + 1) MOD n
+        DIM ax AS DOUBLE = vs[i*2]
+        DIM ay AS DOUBLE = vs[i*2 + 1]
+        DIM bxv AS DOUBLE = vs[j*2]
+        DIM byv AS DOUBLE = vs[j*2 + 1]
+        LINE cx + ax*ca - ay*sa, cy + ax*sa + ay*ca, _
+             cx + bxv*ca - byv*sa, cy + bxv*sa + byv*ca
+    NEXT i
+ENDSUB
+
+SUB draw_enemies()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_ENEMIES - 1
+        IF e_alive[i] = 1 THEN
+            ' Wobble adds tiny per-frame jitter to the draw centre.
+            DIM cx AS DOUBLE = ex[i] + SIN(e_wobble[i]) * 1.6
+            DIM cy AS DOUBLE = ey[i] + COS(e_wobble[i] * 0.8) * 1.0
+            DIM k AS INTEGER = CINT(e_kind[i])
+            IF k = 0 THEN
+                ' Scout — magenta diamond, slow rotation
+                DRAWCOLOR 255, 80, 180
+                draw_poly(cx, cy, e_spin[i], _
+                    [0, -10, 10, 0, 0, 10, -10, 0])
+            ELSEIF k = 1 THEN
+                ' Drone — orange triangle, oriented toward the player
+                DIM ang AS DOUBLE = ATAN2(py - cy, px - cx) - 1.5708
+                DRAWCOLOR 255, 140, 60
+                draw_poly(cx, cy, ang, _
+                    [-14, -10, 14, -10, 0, 14])
+                ' KITT eye scanner — small red dot swinging left↔right
+                DIM eye AS DOUBLE = SIN(e_eye[i]) * 9.0
+                DRAWCOLOR 255, 60, 60
+                PSET cx + eye, cy - 4
+                PSET cx + eye + 1, cy - 4
+                PSET cx + eye - 1, cy - 4
+            ELSEIF k = 2 THEN
+                ' Interceptor — cyan hexagon, faster spin
+                DRAWCOLOR 80, 220, 255
+                draw_poly(cx, cy, e_spin[i], _
+                    [-8, -14, 8, -14, 16, 0, 8, 14, -8, 14, -16, 0])
+                ' Twin scanning eyes
+                DIM eye2 AS DOUBLE = SIN(e_eye[i]) * 7.0
+                DRAWCOLOR 255, 60, 60
+                PSET cx - eye2, cy
+                PSET cx + eye2, cy
+            ELSE
+                ' Ace — counter-rotating star (two triangles)
+                DRAWCOLOR 255, 230, 80
+                draw_poly(cx, cy, e_spin[i], _
+                    [0, -16, 14, 8, -14, 8])
+                DRAWCOLOR 255, 200, 60
+                draw_poly(cx, cy, -e_spin[i], _
+                    [0, 16, 14, -8, -14, -8])
+                ' Triple-eye band, scanner-style
+                DIM eye3 AS DOUBLE = SIN(e_eye[i]) * 6.0
+                DRAWCOLOR 255, 60, 60
+                PSET cx + eye3 - 4, cy
+                PSET cx + eye3,     cy
+                PSET cx + eye3 + 4, cy
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB draw_powerups()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_PU - 1
+        IF pu_alive[i] = 1 THEN
+            DIM cx AS DOUBLE = pu_x[i]
+            DIM cy AS DOUBLE = pu_y[i]
+            DIM k AS INTEGER = CINT(pu_kind[i])
+            ' Tier colour per kind
+            IF k = 0 THEN
+                DRAWCOLOR 255, 120, 220        ' SPREAD pink
+            ELSEIF k = 1 THEN
+                DRAWCOLOR 100, 220, 255        ' WIDE cyan
+            ELSEIF k = 2 THEN
+                DRAWCOLOR 255, 240, 80         ' RAPID yellow
+            ELSEIF k = 3 THEN
+                DRAWCOLOR 80, 255, 200         ' SHIELD teal
+            ELSEIF k = 4 THEN
+                DRAWCOLOR 200, 120, 255        ' PIERCE violet
+            ELSE
+                DRAWCOLOR 255, 80, 80          ' BOMB red
+            ENDIF
+            ' Pulsing hexagon outline
+            DIM r AS DOUBLE = 11.0 + SIN(pu_phase[i]) * 1.5
+            draw_poly(cx, cy, pu_phase[i] * 0.4, _
+                [-r*0.5, -r*0.87, r*0.5, -r*0.87, r, 0, _
+                 r*0.5, r*0.87, -r*0.5, r*0.87, -r, 0])
+            ' Letter in the centre
+            DIM lab$ = "?"
+            IF k = 0 THEN lab$ = "S"
+            IF k = 1 THEN lab$ = "W"
+            IF k = 2 THEN lab$ = "R"
+            IF k = 3 THEN lab$ = "H"
+            IF k = 4 THEN lab$ = "P"
+            IF k = 5 THEN lab$ = "B"
+            TEXT cx - 5, cy - 8, lab$
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB draw_eps()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_EP - 1
+        IF ep_alive[i] = 1 THEN
+            DIM k AS INTEGER = ep_kind[i]
+            DIM x AS DOUBLE = ep_x[i]
+            DIM y AS DOUBLE = ep_y[i]
+            IF k = 0 THEN
+                ' Laser — short red bar
+                DRAWCOLOR 255, 90, 90
+                LINE x, y - 6, x, y + 6
+                LINE x + 1, y - 6, x + 1, y + 6
+            ELSEIF k = 1 THEN
+                ' Bomb — pulsing diamond outline
+                DRAWCOLOR 255, 180, 80
+                LINE x, y - 8, x + 8, y
+                LINE x + 8, y, x, y + 8
+                LINE x, y + 8, x - 8, y
+                LINE x - 8, y, x, y - 8
+                ' inner cross
+                LINE x - 3, y, x + 3, y
+                LINE x, y - 3, x, y + 3
+            ELSE
+                ' Mine — stationary triangle-pair (skull-like) with blink
+                IF (frame MOD 14) < 7 THEN
+                    DRAWCOLOR 255, 60, 200
+                ELSE
+                    DRAWCOLOR 200, 60, 255
+                ENDIF
+                LINE x - 10, y - 6, x + 10, y - 6
+                LINE x + 10, y - 6, x,     y + 10
+                LINE x,     y + 10, x - 10, y - 6
+                LINE x - 10, y + 6, x + 10, y + 6
+                LINE x + 10, y + 6, x,     y - 10
+                LINE x,     y - 10, x - 10, y + 6
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB draw_popups()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_POP - 1
+        IF pop_life[i] > 0 THEN
+            DIM life AS INTEGER = pop_life[i]
+            DIM pts AS INTEGER = pop_pts[i]
+            ' Tier-coloured: small=cool, big=hot
+            IF pts >= 100 THEN
+                DRAWCOLOR 255, 230, 80
+            ELSEIF pts >= 50 THEN
+                DRAWCOLOR 80, 220, 255
+            ELSEIF pts >= 20 THEN
+                DRAWCOLOR 255, 140, 60
+            ELSE
+                DRAWCOLOR 255, 80, 180
+            ENDIF
+            TEXT pop_x[i] - 14, pop_y[i], "+" + STR$(pts)
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB draw_fx()
+    DIM i AS INTEGER
+    FOR i = 0 TO N_FX - 1
+        IF fx_life[i] > 0 THEN
+            DIM life AS INTEGER = fx_life[i]
+            DIM gg AS INTEGER = 100 + life * 4
+            DIM bb AS INTEGER = 40 + life * 5
+            IF gg > 255 THEN gg = 255
+            IF bb > 255 THEN bb = 255
+            DRAWCOLOR 255, gg, bb
+            PSET fx_x[i],     fx_y[i]
+            PSET fx_x[i] + 1, fx_y[i]
+            PSET fx_x[i],     fx_y[i] + 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB draw_hud_pu_chip(x, label$, t, r, g, b)
+    IF t <= 0 THEN RETURN
+    DRAWCOLOR r, g, b
+    TEXT x, SCR_H - 28, label$
+    ' Countdown bar underneath (60 frames per "tick")
+    DIM w AS DOUBLE = (t * 1.0 / 600.0) * 36.0
+    IF w > 36.0 THEN w = 36.0
+    LINE x, SCR_H - 12, x + w, SCR_H - 12
+    LINE x, SCR_H - 11, x + w, SCR_H - 11
+ENDSUB
+
+SUB draw_hud()
+    DRAWCOLOR 180, 220, 255
+    TEXT 16, 12, "SCORE " + FORMAT$("{:0>6}", score)
+    TEXT SCR_W - 150, 12, "LIVES " + STR$(lives)
+    TEXT SCR_W / 2 - 60, 12, "HI " + FORMAT$("{:0>6}", hi_score)
+    ' Active powerup chips along the bottom edge
+    draw_hud_pu_chip(16,  "SPREAD", pw_spread, 255, 120, 220)
+    draw_hud_pu_chip(96,  "WIDE",   pw_wide,   100, 220, 255)
+    draw_hud_pu_chip(176, "RAPID",  pw_rapid,  255, 240,  80)
+    draw_hud_pu_chip(256, "SHIELD", pw_shield,  80, 255, 200)
+    draw_hud_pu_chip(336, "PIERCE", pw_pierce, 200, 120, 255)
+ENDSUB
+
+SUB draw_title()
+    DRAWCOLOR 255, 80, 255
+    TEXT SCR_W / 2 - 130, SCR_H / 2 - 100, "S T E L L A R   D R I F T"
+    DRAWCOLOR 180, 220, 255
+    TEXT SCR_W / 2 - 150, SCR_H / 2 - 30, "Arrows / WASD or Joystick to fly"
+    TEXT SCR_W / 2 - 150, SCR_H / 2,      "Space or Button 0 to fire"
+    IF has_joy = 1 THEN
+        TEXT SCR_W / 2 - 150, SCR_H / 2 + 30, "Joystick: " + JOY.NAME$(0)
+    ELSE
+        TEXT SCR_W / 2 - 150, SCR_H / 2 + 30, "(no joystick — keyboard only)"
+    ENDIF
+    IF (frame MOD 60) < 40 THEN
+        DRAWCOLOR 255, 240, 80
+        TEXT SCR_W / 2 - 110, SCR_H - 150, "PRESS  FIRE  TO  START"
+    ENDIF
+    DRAWCOLOR 130, 160, 200
+    TEXT SCR_W / 2 - 90, SCR_H - 110, "ESC  to  exit"
+    IF hi_score > 0 THEN
+        DRAWCOLOR 180, 220, 255
+        TEXT SCR_W / 2 - 70, SCR_H - 70, "HI " + FORMAT$("{:0>6}", hi_score)
+    ENDIF
+ENDSUB
+
+SUB draw_paused()
+    DRAWCOLOR 255, 240, 80
+    TEXT SCR_W / 2 - 60, SCR_H / 2 - 16, "P A U S E D"
+    DRAWCOLOR 130, 160, 200
+    TEXT SCR_W / 2 - 90, SCR_H / 2 + 10, "P to resume"
+ENDSUB
+
+SUB draw_claude_pause()
+    DRAWCOLOR 80, 220, 255
+    TEXT SCR_W / 2 - 130, SCR_H / 2 - 30, "C L A U D E   E D I T I N G"
+    DRAWCOLOR 130, 180, 220
+    TEXT SCR_W / 2 - 130, SCR_H / 2 + 10, "VM stopped — eval / resume via MCP"
+ENDSUB
+
+SUB draw_claude_resume_wait()
+    DRAWCOLOR 80, 255, 120
+    TEXT SCR_W / 2 - 100, SCR_H / 2 - 30, "C L A U D E   D O N E"
+    DRAWCOLOR 130, 200, 130
+    TEXT SCR_W / 2 - 100, SCR_H / 2 + 10, "FIRE to continue"
+ENDSUB
+
+SUB draw_gameover()
+    DRAWCOLOR 255, 80, 180
+    TEXT SCR_W / 2 - 90, SCR_H / 2 - 60, "G A M E   O V E R"
+    DRAWCOLOR 180, 220, 255
+    TEXT SCR_W / 2 - 80, SCR_H / 2,      "SCORE " + FORMAT$("{:0>6}", score)
+    TEXT SCR_W / 2 - 80, SCR_H / 2 + 24, "HI    " + FORMAT$("{:0>6}", hi_score)
+    IF gameover_lock > 0 THEN
+        DRAWCOLOR 130, 160, 200
+        TEXT SCR_W / 2 - 40, SCR_H / 2 + 80, "..."
+    ELSEIF (frame MOD 60) < 40 THEN
+        DRAWCOLOR 255, 240, 80
+        TEXT SCR_W / 2 - 120, SCR_H / 2 + 80, "FIRE  TO  PLAY  AGAIN"
+    ENDIF
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' MAIN
+' ──────────────────────────────────────────────────────────────────
+RANDOMSEED INT(NOW() * 1000.0)
+sound_setup()
+
+DO
+    CLS 8, 8, 18
+    update_stars()
+    draw_stars()
+
+    IF mode$ = "title" THEN
+        draw_title()
+        IF input_start() = 1 THEN
+            reset_game()
+            mode$ = "play"
+        ENDIF
+        IF input_back() = 1 THEN running = 0
+    ELSEIF mode$ = "play" THEN
+        IF input_back() = 1 THEN
+            IF score > hi_score THEN hi_score = score
+            mode$ = "title"
+        ENDIF
+        ' Edge-detect pause: only flip on the press, not every frame held.
+        DIM p_now AS INTEGER = CINT(input_pause())
+        IF p_now = 1 AND pause_held = 0 THEN
+            paused = 1 - paused
+        ENDIF
+        pause_held = p_now
+
+        ' ── Live-tweak handoff to Claude ──────────────────────────────
+        ' START button → render an overlay so the screen says "stopped",
+        ' SCREENFLIP (so the overlay is actually visible BEFORE the VM
+        ' freezes), then STOP. The MCP host can now jdb_eval / jdb_vars
+        ' / mutate any global. After jdb_resume we fall into a wait loop
+        ' that keeps the frozen scene + a "DONE — FIRE to continue"
+        ' overlay on screen until the user presses FIRE.
+        DIM s_now AS INTEGER = CINT(input_claude_pause())
+        IF s_now = 1 AND start_held = 0 THEN
+            draw_enemies()
+            draw_eps()
+            draw_bullets()
+            draw_powerups()
+            draw_player()
+            draw_fx()
+            draw_popups()
+            draw_hud()
+            draw_claude_pause()
+            SCREENFLIP
+            STOP
+            ' --- VM resumes here when MCP calls jdb_resume ---
+            ' Wait for FIRE. The SCREENFLIP each iteration pumps SDL
+            ' events, so joystick state stays fresh. We deliberately
+            ' don't gate on START-release first — without SCREENFLIP
+            ' there's no event pump and the joystick state goes stale,
+            ' which used to wedge the script in an endless loop.
+            DO
+                CLS 8, 8, 18
+                update_stars()
+                draw_stars()
+                draw_enemies()
+                draw_eps()
+                draw_bullets()
+                draw_powerups()
+                draw_player()
+                draw_fx()
+                draw_popups()
+                draw_hud()
+                draw_claude_resume_wait()
+                SCREENFLIP
+                SLEEP 30
+            LOOP UNTIL input_claude_unpause() = 1
+            ' Re-read current START state so the edge-detect at the
+            ' top of the next frame sees "still held" and does NOT
+            ' immediately re-trigger STOP. start_held drops to 0
+            ' naturally on the frame Atomi releases the button.
+            s_now = CINT(input_claude_pause())
+        ENDIF
+        start_held = s_now
+        IF paused = 0 THEN
+            update_player()
+            update_bullets()
+            update_enemies()
+            update_eps()
+            update_powerups()
+            update_fx()
+            update_popups()
+            collisions()
+        ENDIF
+        ' Wave driver
+        IF wave_remaining > 0 THEN
+            IF wave_spawn_cd > 0 THEN wave_spawn_cd = wave_spawn_cd - 1
+            IF wave_spawn_cd <= 0 THEN
+                spawn_wave_member()
+                wave_remaining = wave_remaining - 1
+                wave_spawn_cd = 12 - INT(score / 800)
+                IF wave_spawn_cd < 6 THEN wave_spawn_cd = 6
+            ENDIF
+        ELSE
+            IF wave_cooldown > 0 THEN wave_cooldown = wave_cooldown - 1
+            IF wave_cooldown <= 0 THEN
+                start_wave()
+                wave_cooldown = 90 - INT(score / 200)
+                IF wave_cooldown < 30 THEN wave_cooldown = 30
+            ENDIF
+        ENDIF
+        IF paused = 1 THEN
+            ' Eat the wave + spawn cooldowns so nothing piles up while paused.
+            wave_cooldown = wave_cooldown + 0
+        ENDIF
+        draw_enemies()
+        draw_eps()
+        draw_bullets()
+        draw_powerups()
+        draw_player()
+        draw_fx()
+        draw_popups()
+        draw_hud()
+        IF paused = 1 THEN draw_paused()
+    ELSE
+        update_fx()
+        update_popups()
+        draw_fx()
+        draw_popups()
+        draw_gameover()
+        IF gameover_lock > 0 THEN
+            gameover_lock = gameover_lock - 1
+        ELSE
+            IF input_start() = 1 THEN
+                reset_game()
+                mode$ = "play"
+            ENDIF
+            IF input_back() = 1 THEN mode$ = "title"
+        ENDIF
+    ENDIF
+
+    ' Periodically gate-off SFX tracks so finished one-shots don't
+    ' linger in SUSTAIN and steal voices from the music.
+    IF (frame MOD 6) = 0 THEN sfx_drain()
+
+    SCREENFLIP
+    SLEEP 16
+    frame = frame + 1
+LOOP WHILE running = 1
+
+SOUND.SHUTDOWN

@@ -187,6 +187,11 @@ private:
 public:
     bool is_halted = false;
     std::atomic<bool> is_waiting_input{false};  // true while blocking on INPUT/std::cin
+    // External STOP request — set from another thread (e.g. the MCP reader
+    // thread when the client sends a jdb_stop tool call). The VM's dispatch
+    // tick polls this every ~200 opcodes; on true, it stashes state exactly
+    // like the in-script STOP statement and returns from run().
+    std::atomic<bool> stop_requested{false};
 private:
 
     // STOP/RESUME state

@@ -1,0 +1,9 @@
+DIM I AS INTEGER = 0
+DO
+	I = I + 1
+	If I = 10 THEN 
+		PRINT I
+		STOP
+	ENDIf
+	PRINT I
+Loop until I > 20
