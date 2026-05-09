@@ -62,6 +62,7 @@
 // run_on_vm lives in main.cpp. Declared extern here so mcp_stdio.cpp can
 // drive code execution on the persistent VM.
 extern void run_on_vm(VM& vm, const std::string& source);
+extern std::string recompile_on_vm(VM& vm, const std::string& source);
 
 // Workspace persistence — defined in main.cpp. SAVEWS / LOADWS are REPL
 // commands by their original UX, but the underlying logic is generic and
@@ -80,6 +81,10 @@ extern void load_workspace(VM& vm, std::string& program_buffer,
 // save/load round-trip — load_workspace re-parses the program text to
 // rebuild function bindings.
 static std::string g_session_buffer;
+
+// Last path passed to jdb_load — jdb_recompile defaults to this so the
+// caller doesn't have to pass it again every iteration.
+static std::string g_last_loaded_path;
 
 namespace {
 
@@ -365,6 +370,44 @@ Value tool_jdb_stop(VM& vm, const Value& /*args*/) {
     return make_text_result("[stop requested]", false);
 }
 
+Value tool_jdb_recompile(VM& vm, const Value& args) {
+    {
+        std::lock_guard<std::mutex> lk(g_worker.m);
+        if (worker_busy_or_queued_locked()) {
+            return make_text_result(
+                "VM busy — call jdb_stop first, then recompile while STOPped.",
+                true);
+        }
+    }
+    std::string path = obj_get_str(args, "path");
+    if (path.empty()) {
+        if (g_last_loaded_path.empty()) {
+            return make_text_result(
+                "No path given and no previous jdb_load — pass path=<file>.",
+                true);
+        }
+        path = g_last_loaded_path;
+    }
+    std::ifstream in(path);
+    if (!in.is_open()) return make_text_result("Cannot read " + path, true);
+    std::stringstream ss; ss << in.rdbuf();
+    std::string source = ss.str();
+
+    auto promise = std::make_shared<std::promise<Value>>();
+    auto fut = promise->get_future();
+    post_job([source, path, promise](VM& v) {
+        try {
+            std::string summary = recompile_on_vm(v, source);
+            promise->set_value(make_text_result(
+                "[recompiled " + path + " — " + summary + "]", false));
+        } catch (const std::exception& e) {
+            promise->set_value(make_text_result(
+                "Recompile error in " + path + ": " + e.what(), true));
+        }
+    });
+    return fut.get();
+}
+
 Value tool_jdb_status(VM& vm, const Value&) {
     std::string s;
     if (g_worker.busy.load()) {
@@ -427,6 +470,7 @@ Value tool_jdb_load(VM& vm, const Value& args) {
     std::string banner = "[load posted: " + path + ", "
         + std::to_string(source.size()) + " bytes — script runs until first "
         "STOP or running=0]";
+    g_last_loaded_path = path;  // jdb_recompile defaults to this
     post_job([source, path](VM& v) {
         // Discard PRINT during async run — the load tool already returned.
         // For live-tweak workflows, use jdb_eval after STOP to read state.
@@ -934,6 +978,11 @@ Value build_tools() {
         build_input_schema({}, {})));
 
     a.push_back(tool_descriptor(
+        "jdb_recompile",
+        "Re-read a .jdb file from disk, parse + compile it, and merge its FUNC/SUB definitions into the live VM. Used for live-coding while a script is STOPped: after editing the file, call jdb_recompile, then jdb_resume to continue with the updated code. Same-name FUNC/SUB overwrites; new ones append. The main-chunk's top-level statements are NOT re-applied to the running script (the stopped frames hold the OLD main chunk) — keep iterable logic inside SUBs/FUNCs. If `path` is omitted, defaults to the most recent jdb_load path.",
+        build_input_schema({{"path", "Optional .jdb file path. Defaults to the last jdb_load path."}}, {})));
+
+    a.push_back(tool_descriptor(
         "jdb_vars",
         "List user-defined global variables on the persistent VM. Server internals and engine-noise (dotted, __-prefixed) are filtered out.",
         build_input_schema({}, {})));
@@ -985,6 +1034,7 @@ Value dispatch_tool(VM& vm, const std::string& name, const Value& args) {
     if (name == "jdb_resume")     return tool_jdb_resume(vm, args);
     if (name == "jdb_stop")       return tool_jdb_stop(vm, args);
     if (name == "jdb_status")     return tool_jdb_status(vm, args);
+    if (name == "jdb_recompile")  return tool_jdb_recompile(vm, args);
     if (name == "jdb_vars")       return tool_jdb_vars(vm, args);
     if (name == "jdb_funcs")      return tool_jdb_funcs(vm, args);
     if (name == "jdb_doc")        return tool_jdb_doc(vm, args);

@@ -792,17 +792,24 @@ ENDSUB
 
 SUB draw_player()
     IF invuln > 0 AND pw_shield = 0 AND (frame MOD 4) < 2 THEN RETURN
-    DRAWCOLOR 80, 255, 200
-    LINE px,      py - 16, px - 14, py + 12
-    LINE px - 14, py + 12, px + 14, py + 12
-    LINE px + 14, py + 12, px,      py - 16
-    LINE px - 6,  py + 12, px,      py + 4
-    LINE px + 6,  py + 12, px,      py + 4
+    ' Orange smiley face — eyes + grin
+    CIRCLE px, py, 28, 255, 140, 40, TRUE
+    CIRCLE px, py, 28, 30, 20, 10, FALSE
+    CIRCLE px - 10, py - 8, 4, 30, 20, 10, TRUE
+    CIRCLE px + 10, py - 8, 4, 30, 20, 10, TRUE
+    DRAWCOLOR 30, 20, 10
+    DIM i AS INTEGER
+    FOR i = 0 TO 7
+        DIM a1 AS DOUBLE = 3.14159 + 3.14159 * (i + 0) / 8.0
+        DIM a2 AS DOUBLE = 3.14159 + 3.14159 * (i + 1) / 8.0
+        LINE px + COS(a1) * 14.0, py - SIN(a1) * 14.0 + 4.0, _
+             px + COS(a2) * 14.0, py - SIN(a2) * 14.0 + 4.0
+    NEXT i
     ' Wide-cannon side pods when active
     IF pw_wide > 0 THEN
         DRAWCOLOR 100, 220, 255
-        LINE px - 18, py - 4, px - 18, py + 8
-        LINE px + 18, py - 4, px + 18, py + 8
+        LINE px - 36, py - 8, px - 36, py + 16
+        LINE px + 36, py - 8, px + 36, py + 16
     ENDIF
     ' Shield bubble — pulsing octagon
     IF pw_shield > 0 THEN
@@ -824,10 +831,16 @@ SUB draw_player()
 ENDSUB
 
 SUB draw_bullets()
-    DRAWCOLOR 255, 240, 80
     DIM i AS INTEGER
     FOR i = 0 TO N_BULLETS - 1
         IF b_alive[i] = 1 THEN
+            DIM h AS INTEGER = (i + frame / 3) MOD 6
+            IF h = 0 THEN DRAWCOLOR 255,  80,  80
+            IF h = 1 THEN DRAWCOLOR 255, 200,  60
+            IF h = 2 THEN DRAWCOLOR  80, 255,  80
+            IF h = 3 THEN DRAWCOLOR  60, 220, 220
+            IF h = 4 THEN DRAWCOLOR  80,  80, 255
+            IF h = 5 THEN DRAWCOLOR 220,  80, 220
             LINE bx[i],     by[i] - 7, bx[i],     by[i] + 7
             LINE bx[i] - 1, by[i] - 7, bx[i] - 1, by[i] + 7
         ENDIF
@@ -1035,7 +1048,7 @@ SUB draw_hud_pu_chip(x, label$, t, r, g, b)
 ENDSUB
 
 SUB draw_hud()
-    DRAWCOLOR 180, 220, 255
+    DRAWCOLOR 255, 140, 40
     TEXT 16, 12, "SCORE " + FORMAT$("{:0>6}", score)
     TEXT SCR_W - 150, 12, "LIVES " + STR$(lives)
     TEXT SCR_W / 2 - 60, 12, "HI " + FORMAT$("{:0>6}", hi_score)

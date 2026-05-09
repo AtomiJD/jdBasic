@@ -170,6 +170,29 @@ void run_on_vm(VM& vm, const std::string& source) {
     vm.run_code(compiler.main_chunk(), compiler.functions());
 }
 
+// Recompile source against an existing VM WITHOUT running anything —
+// just merges the new function definitions into vm.owned_funcs. Same-name
+// FUNC/SUB overwrites are how live-coding picks up edits: the next CALL
+// dispatches through func_map to the new body. The main chunk is
+// dropped on the floor (the running script holds the OLD main chunk
+// in its stopped frames; recompiling its top-level statements would not
+// retroactively change the running loop). For live-coding workflows,
+// keep iterables in SUBs/FUNCs.
+//
+// Returns "added=N updated=M" on success, throws on parse/compile error.
+std::string recompile_on_vm(VM& vm, const std::string& source) {
+    Lexer lexer(source);
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    setup_parser_modules(parser);
+    auto ast = parser.parse();
+    Compiler compiler;
+    compiler.compile(ast);
+    auto& fns = compiler.functions();
+    auto [added, updated] = vm.merge_funcs(fns);
+    return "added=" + std::to_string(added) + " updated=" + std::to_string(updated);
+}
+
 static void setup_dynamic_code(VM& vm) {
     // EXECUTE: compile and run a string of code
     vm.on_execute = [](VM& v, const std::string& code) {

@@ -208,6 +208,24 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     frames.push_back({&main_chunk, 0, 0});
 }
 
+std::pair<size_t, size_t> VM::merge_funcs(std::vector<FuncProto>& new_funcs) {
+    size_t added = 0, updated = 0;
+    for (auto& f : new_funcs) {
+        auto it = func_map.find(f.name);
+        if (it != func_map.end()) {
+            owned_funcs[it->second] = std::move(f);
+            updated++;
+        } else {
+            func_map[f.name] = owned_funcs.size();
+            owned_funcs.push_back(std::move(f));
+            added++;
+        }
+    }
+    func_protos = &owned_funcs;
+    if (added || updated) func_map_generation++;
+    return {added, updated};
+}
+
 void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     // Merge new functions into owned storage
     bool funcs_changed = false;

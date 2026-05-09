@@ -44,6 +44,15 @@ public:
     // Incremental: run new code keeping existing state (for console)
     void run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs);
 
+    // Merge new function definitions into the live VM without running
+    // anything. Same merge rules as run_code's prelude — same name
+    // overwrites, new name appends, func_map_generation bumps so any
+    // cached lookups invalidate. Returns {added, updated} for the caller
+    // to surface in a recompile summary. Safe to call while the VM is
+    // STOPped (the existing stopped_frames keep working — they dispatch
+    // through func_map on the next CALL opcode and pick up the new bodies).
+    std::pair<size_t, size_t> merge_funcs(std::vector<FuncProto>& new_funcs);
+
     // State management for workspaces
     VMState save_state() const;
     void restore_state(const VMState& state);
