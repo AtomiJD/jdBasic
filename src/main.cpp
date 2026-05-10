@@ -48,6 +48,7 @@
 #endif
 #ifdef MCPSERVER
 #include "mcp_stdio.h"
+#include "repl_ftxui.h"
 #endif
 
 static std::string read_file(const std::string& path) {
@@ -566,7 +567,10 @@ static void register_console_builtins(VM& vm) {
 
 // ── Console executor (simplified) ────────────────────────────
 
-static void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer) {
+// Exported (non-static) so the FTXUI REPL can dispatch the same way the
+// legacy Console does — gives the new path LOAD / SAVE / RUN / NEW
+// commands for free without re-implementing the table.
+void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer) {
     g_program_buffer_ptr = &program_buffer;
     std::string upper = cmd;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
@@ -1222,6 +1226,7 @@ int main(int argc, char* argv[]) {
     bool emit_ir_only = false;
     bool lint_mode = false;
     bool mcp_mode = false;
+    bool ftxui_mode = false;
     std::string mcp_tools_dir;
     std::string compile_output;
     for (int i = 1; i < argc; i++) {
@@ -1282,6 +1287,7 @@ int main(int argc, char* argv[]) {
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--lint") { lint_mode = true; continue; }
         if (a == "--mcp") { mcp_mode = true; continue; }
+        if (a == "--ftxui") { ftxui_mode = true; continue; }
         if (a == "--tools" && i + 1 < argc) {
             mcp_tools_dir = argv[++i];
             continue;
@@ -1301,6 +1307,26 @@ int main(int argc, char* argv[]) {
         return run_mcp_stdio(vm, mcp_tools_dir);
 #else
         std::cerr << "MCP server mode not available (build with MCPSERVER=1)." << std::endl;
+        return 1;
+#endif
+    }
+
+    // ── FTXUI REPL — coexists with the legacy console; opt-in via --ftxui ──
+    if (ftxui_mode) {
+#ifdef FTXUI
+        // Build 4 workspaces, each with its own VM pre-registered the
+        // same way the legacy console does. The REPL adopts ownership.
+        std::vector<std::unique_ptr<VM>> vms;
+        for (int i = 0; i < 4; i++) {
+            auto vm = std::make_unique<VM>();
+            setup_dynamic_code(*vm);
+            register_console_builtins(*vm);
+            set_os_args(*vm, argc, argv);
+            vms.push_back(std::move(vm));
+        }
+        return run_repl_ftxui(std::move(vms));
+#else
+        std::cerr << "FTXUI REPL not available (build with FTXUI=1)." << std::endl;
         return 1;
 #endif
     }

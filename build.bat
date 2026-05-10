@@ -83,6 +83,19 @@ for %%A in (%*) do (
         set EXTRA_SRC=!EXTRA_SRC! src\mcp_stdio.cpp
         echo [+] MCP Server - Model Context Protocol stdio
     )
+    if /I "%%A"=="FTXUI" (
+        REM /D UNICODE/_UNICODE matches the libs\ftxui\build\ftxui.lib ABI;
+        REM mismatched runtime would surface as link errors on string types.
+        set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
+        set EXTRA_SRC=!EXTRA_SRC! src\repl_ftxui.cpp
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\ftxui\include
+        if not exist libs\ftxui\build\ftxui.lib (
+            echo [+] FTXUI lib missing - building one-time...
+            call build_ftxui.bat
+        )
+        set EXTRA_LIB=!EXTRA_LIB! libs\ftxui\build\ftxui.lib
+        echo [+] FTXUI - Terminal UI
+    )
     if /I "%%A"=="RELEASE" (
         REM Increment build number
         set /p BNUM=< %BUILD_NUM_FILE%
@@ -103,7 +116,9 @@ set "RC=%SDK%\bin\%SDKV%\x64\rc.exe"
 REM /MP32 → cl spawns up to 32 worker processes for the compile phase
 REM (machine has 32 logical threads + 64 GB RAM, so memory headroom is fine).
 REM /MP without a number uses min(NUMBER_OF_PROCESSORS, 8); explicit 32 wins.
-"%CC%" /std:c++17 /O2 /EHa /MP32 %DEFS% ^
+REM /MD: link the DLL CRT. ftxui.lib (and OpenSSL's MD libs) expect this;
+REM mismatched runtimes show up as unresolved __imp__* symbols.
+"%CC%" /std:c++17 /O2 /EHa /MP32 /MD %DEFS% ^
   /I"%MSVC%\include" ^
   /I"%SDK%\Include\%SDKV%\ucrt" ^
   /I"%SDK%\Include\%SDKV%\um" ^
