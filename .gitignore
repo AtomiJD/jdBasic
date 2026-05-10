@@ -7,9 +7,17 @@ _*
 
 # ── Personal scratch / current tests (not for git) ────────────────
 fluppi/tiled/
+vo/
+VBA 6.0/
 
 # ── Build outputs ─────────────────────────────────────────────────
 build/
+
+# Stable jdBasic.exe + DLLs that the MCP server runs against. Decoupled
+# from build/ so a fresh `build.bat` can replace build/jdBasic.exe even
+# while the MCP server is still serving — the server's own EXE lives in
+# mcp-runtime/ and only gets refreshed manually after a successful build.
+mcp-runtime/
 dist/
 *.obj
 *.exe
@@ -26,8 +34,16 @@ build_number.txt
 # ── Third-party libraries (too large for git, install manually) ───
 # These are needed to build but must be downloaded separately.
 # Win build uses libs/SDL3-3.2.16/ etc.; Linux build uses libs/SDL3/ etc.
-# Catch both with a directory-prefix wildcard.
-libs/
+# Catch both with a directory-prefix wildcard. `libs/*` (with the
+# asterisk) ignores the direct children only — that lets us re-include
+# a single sub-tree below. A bare `libs/` excludes the whole subtree
+# and gitignore can't re-include from a fully-excluded parent.
+libs/*
+# FTXUI is vendored (cloned + .git stripped) so the repo stays
+# self-contained. Exempt the source tree, keep the build/ subdir
+# (compiled .obj + ftxui.lib) ignored.
+!libs/ftxui
+libs/ftxui/build/
 
 # ── LLM models (huge binary blobs) ────────────────────────────────
 models/
