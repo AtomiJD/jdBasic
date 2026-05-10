@@ -2760,14 +2760,22 @@ void register_graphics_builtins(VM& vm) {
     // ══════════════════════════════════════════════════════════════
 
     static std::vector<SDL_Joystick*> s_joysticks;
-    static bool s_joy_init = false;
 
     auto joy_refresh = []() {
-        if (!s_joy_init) {
+        // SDL_Quit (called by gfx_shutdown / END) tears down ALL
+        // subsystems, including SDL_INIT_JOYSTICK. The next SCREEN
+        // re-inits VIDEO+EVENTS but NOT JOYSTICK. If we naively
+        // reused our cached `s_joysticks` handles after that, we'd
+        // be calling SDL_CloseJoystick on freed pointers. Detect
+        // the post-Quit state via SDL_WasInit and start fresh.
+        if (!SDL_WasInit(SDL_INIT_JOYSTICK)) {
+            // Subsystem went away (or never came up): drop any stale
+            // handles WITHOUT closing — SDL_Quit already did that —
+            // then re-init.
+            s_joysticks.clear();
             SDL_InitSubSystem(SDL_INIT_JOYSTICK);
-            s_joy_init = true;
         }
-        // Close old handles
+        // Subsystem is alive: close currently-open handles cleanly.
         for (auto* j : s_joysticks) if (j) SDL_CloseJoystick(j);
         s_joysticks.clear();
         // Open all connected joysticks
