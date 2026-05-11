@@ -21,6 +21,11 @@
 #include "repl_ftxui.h"
 #include "vm.h"
 #include "version.h"
+#include "ftxui_theme.h"
+#include "editor.h"
+
+#include <fstream>
+#include <sstream>
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
@@ -127,6 +132,7 @@ const std::vector<CmdEntry> kCommands = {
     {"funcs",     "show user functions",                "funcs"},
     {"help",      "show jdBasic help",                  "help"},
     {"load",      "load a .jdb file into buffer",       "load "},
+    {"edit",      "open a file in the FTXUI editor",    "edit "},
     {"save",      "save buffer to file",                "save "},
     {"loadws",    "load a workspace (.jsws)",           "loadws "},
     {"savews",    "save a workspace (.jsws)",           "savews "},
@@ -150,7 +156,7 @@ ftxui::Element render_side_panel(const Workspace& w) {
     constexpr int kMaxFuncs = 12;
     Elements rows;
 
-    rows.push_back(text(" VARIABLES ") | bold | color(Color::Cyan3));
+    rows.push_back(text(" VARIABLES ") | bold | color(jdb_theme::accent));
     int var_count = 0, var_seen = 0;
     auto& names = w.vm->get_global_names();
     auto& globals = w.vm->get_globals();
@@ -164,9 +170,9 @@ ftxui::Element render_side_panel(const Workspace& w) {
         std::string val = globals[slot].to_string();
         if (val.size() > 28) val = val.substr(0, 25) + "...";
         rows.push_back(hbox({
-            text(" " + name) | color(Color::White),
+            text(" " + name) | color(jdb_theme::fg_primary),
             text(" = "),
-            text(val) | color(Color::Yellow3),
+            text(val) | color(jdb_theme::var_value),
         }));
         var_count++;
     }
@@ -177,7 +183,7 @@ ftxui::Element render_side_panel(const Workspace& w) {
     }
 
     rows.push_back(text(""));
-    rows.push_back(text(" FUNCTIONS ") | bold | color(Color::Cyan3));
+    rows.push_back(text(" FUNCTIONS ") | bold | color(jdb_theme::accent));
     int fn_count = 0, fn_seen = 0;
     for (const auto& f : w.vm->get_funcs()) {
         if (w.boot_funcs.count(f.name)) continue;
@@ -192,7 +198,7 @@ ftxui::Element render_side_panel(const Workspace& w) {
         }
         sig += ")";
         if (sig.size() > 36) sig = sig.substr(0, 33) + "...";
-        rows.push_back(text(" " + sig) | color(Color::Magenta));
+        rows.push_back(text(" " + sig) | color(jdb_theme::func_sig));
         fn_count++;
     }
     if (fn_seen == 0) rows.push_back(text("  (none yet)") | dim);
@@ -208,12 +214,12 @@ ftxui::Element render_outbox_line(const std::string& line) {
     using namespace ftxui;
     if (line.size() >= 2 && line[0] == '>' && line[1] == ' ') {
         return hbox({
-            text("> ") | color(Color::Cyan3),
-            text(line.substr(2)) | color(Color::White),
+            text("> ") | color(jdb_theme::accent),
+            text(line.substr(2)) | color(jdb_theme::fg_primary),
         });
     }
     if (line.rfind("error:", 0) == 0) {
-        return text(line) | color(Color::RedLight);
+        return text(line) | color(jdb_theme::error);
     }
     return text(line);
 }
@@ -273,7 +279,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
     };
 
     InputOption opt;
-    opt.placeholder = "type a jdBasic statement, Enter to run, :exit to leave";
+    opt.placeholder = "type a jdBasic statement, Enter runs, :exit to leave";
     opt.multiline = false;
     opt.insert = true;
     opt.transform = [](InputState state) {
@@ -283,7 +289,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
                 state.element | dim
             });
         }
-        return state.element | color(Color::GreenLight);
+        return state.element | color(jdb_theme::input_text);
     };
     opt.on_change = [&] { *auto_follow = true; };
     // Bind cursor_position via Ref<int>(int*) so palette injections can
@@ -308,6 +314,73 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         w.history.push_back(code);
         if (w.history.size() > 200) w.history.pop_front();
         w.outbox->push("> " + code + "\n");
+
+        // `edit` / `edit <file>` — port of the legacy console_execute
+        // EDIT handler. The Editor class uses raw termios (POSIX) /
+        // Win32 console API directly, so it owns the terminal once
+        // we suspend FTXUI via WithRestoredIO. After it exits we
+        // mirror the lines back into the workspace's program_buffer
+        // and, if F5 was pressed, run it on the workspace's VM —
+        // same UX as the legacy REPL.
+        {
+            std::string upper = code;
+            std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+            if (upper == "EDIT" || upper.substr(0, 5) == "EDIT ") {
+                std::string edit_file;
+                if (upper.size() > 5) {
+                    edit_file = code.substr(5);
+                    while (!edit_file.empty() && (edit_file.front() == ' ' || edit_file.front() == '\t')) edit_file.erase(0, 1);
+                    while (!edit_file.empty() && (edit_file.back()  == ' ' || edit_file.back()  == '\t')) edit_file.pop_back();
+                    if (!edit_file.empty() && edit_file.find('.') == std::string::npos) edit_file += ".jdb";
+                }
+                std::vector<std::string> lines;
+                if (!edit_file.empty()) {
+                    std::ifstream in(edit_file);
+                    if (in.is_open()) {
+                        std::string l;
+                        while (std::getline(in, l)) lines.push_back(l);
+                    }
+                } else if (!w.program_buffer.empty()) {
+                    std::istringstream ss(w.program_buffer);
+                    std::string l;
+                    while (std::getline(ss, l)) lines.push_back(l);
+                }
+                if (lines.empty()) lines.push_back("");
+                Editor editor(lines, edit_file);
+                bool wants_run = false;
+                auto saved = w.vm->on_output;
+                w.vm->on_output = nullptr;
+                screen.WithRestoredIO([&] {
+                    editor.run();
+                    wants_run = editor.wants_run();
+                })();
+                w.vm->on_output = saved;
+                // Mirror buffer back
+                std::string new_buf;
+                for (size_t li = 0; li < lines.size(); li++) {
+                    new_buf += lines[li];
+                    if (li + 1 < lines.size()) new_buf += "\n";
+                }
+                w.program_buffer = new_buf;
+                w.outbox->push("[edit done — " + std::to_string(lines.size()) + " line(s)"
+                               + (wants_run ? ", running...]" : "]") + "\n");
+                if (wants_run) {
+                    // F5 in editor → compile + run the buffer (no save).
+                    // Mirror legacy console_execute behaviour.
+                    auto saved2 = w.vm->on_output;
+                    w.vm->on_output = nullptr;
+                    screen.WithRestoredIO([&] {
+                        try { run_on_vm(*w.vm, w.program_buffer); }
+                        catch (const std::exception& e) {
+                            w.outbox->push(std::string("error: ") + e.what() + "\n");
+                        } catch (...) {}
+                        w.vm->is_halted = false;
+                    })();
+                    w.vm->on_output = saved2;
+                }
+                return;
+            }
+        }
 
         // RUN runs the program_buffer. Simple scripts (PRINT loops,
         // computation) should keep their output in the outbox — that's
@@ -433,7 +506,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         auto filtered = get_filtered();
         if (filtered.empty()) {
             return vbox({
-                text(" Command Palette ") | bold | color(Color::Cyan3) | center,
+                text(" Command Palette ") | bold | color(jdb_theme::accent) | center,
                 separator(),
                 hbox({ text("> "),
                        palette_input->Render() | flex }),
@@ -454,14 +527,14 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
                 // bgcolor for the visual highlight; focus tells the
                 // surrounding yframe to scroll this row into view when
                 // the selection moves past the visible window.
-                row = row | bgcolor(Color::DarkBlue) | color(Color::White) | focus;
+                row = row | bgcolor(jdb_theme::accent_bg) | color(jdb_theme::fg_primary) | focus;
             }
             rows.push_back(row);
         }
         return vbox({
-            text(" Command Palette ") | bold | color(Color::Cyan3) | center,
+            text(" Command Palette ") | bold | color(jdb_theme::accent) | center,
             separator(),
-            hbox({ text("> ") | color(Color::Cyan3),
+            hbox({ text("> ") | color(jdb_theme::accent),
                    palette_input->Render() | flex }),
             separator(),
             vbox(std::move(rows)) | yframe | yflex,
@@ -517,9 +590,9 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
                 // Active tab: cyan text, bold, plus an underline so it
                 // reads as "selected" without the heavy inverted-bg
                 // contrast that the previous version had.
-                seg = seg | bold | color(Color::Cyan3) | underlined;
+                seg = seg | bold | color(jdb_theme::accent) | underlined;
             } else {
-                seg = seg | color(Color::GrayDark);
+                seg = seg | color(jdb_theme::fg_muted);
             }
             tabs.push_back(seg);
             if (i + 1 < N_WS) tabs.push_back(text(" "));
@@ -585,10 +658,10 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
             separator(),
             output_area,
             separator(),
-            hbox({ text("> ") | color(Color::Cyan3),
+            hbox({ text("> ") | color(jdb_theme::accent),
                    input_with_history->Render() | flex }),
             separator(),
-            text(status) | color(Color::GrayLight),
+            text(status) | color(jdb_theme::fg_dim),
         });
     });
 
