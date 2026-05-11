@@ -214,10 +214,13 @@ SUB render_about_modal()
 ENDSUB
 
 ' --- Quit handler -----------------------------------------
+' TUI.ON registers an event binding by FUNC name. Dispatch is
+' still parked (Phase G+) — the demo keeps Ctrl+Q wiring active
+' via the QUIT flag drained inside TUI.RENDER.
 SUB on_quit(payload)
     TUI.EXIT
 ENDSUB
-TUI.ON "QUIT" CALL on_quit
+TUI.ON "QUIT", "on_quit"
 
 ' --- Main loop --------------------------------------------
 TUI.THEME "cool"

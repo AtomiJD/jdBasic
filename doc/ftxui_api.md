@@ -135,7 +135,7 @@ Most widgets follow the GUI.* `byref` pattern: pass a variable name; the command
 | `TUI.MOUSE_Y` | `TUI.MOUSE_Y() -> int` | Mouse row. | `MOUSE_Y` |
 | `TUI.MOUSE_BUTTON` | `TUI.MOUSE_BUTTON(n) -> bool` | True if button `n` (0=left, 1=middle, 2=right) is currently down. | `MOUSE_BUTTON` |
 | `TUI.MOUSE_WHEEL` | `TUI.MOUSE_WHEEL() -> int` | +1 / -1 / 0 for the current frame's wheel delta. | (none) |
-| `TUI.ON` | `TUI.ON event$ CALL handler` | Register a SUB to fire on specific events (`"QUIT"`, `"RESIZE"`, `"KEYDOWN"`). Mirrors `ON "..." CALL ...`. | (existing `ON "..."`) |
+| `TUI.ON` | `TUI.ON(event$, handler$)` | Register a SUB to fire on specific events (`"QUIT"`, `"RESIZE"`, `"KEYDOWN"`). Handler is passed by FUNC name. Recording-only today; dispatch lands with mouse events. | (existing `ON "..." CALL ...`) |
 
 ## 11 · Diagnostics
 
