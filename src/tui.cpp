@@ -158,14 +158,16 @@ void drain_keys(jdb_tui::TuiState& s) {
         s.last_key = k;
         if (k == "C-q") s.quit_requested = true;
 
-        // F1..F10 open submenus when a menubar exists.
-        // Pressed again on the same one (or ESC) closes.
+        // F1..F10 open submenus when a menubar exists AND the index
+        // points at an actual submenu. F-keys above the submenu count
+        // fall through so scripts can bind them (tab switchers etc).
         if (k.size() >= 2 && k[0] == 'F' &&
             std::isdigit((unsigned char)k[1])) {
             int idx = std::atoi(k.c_str() + 1) - 1;
-            if (idx >= 0) {
+            if (idx >= 0 && idx < s.menu.submenus_seen_this_frame) {
                 s.menu.open_index = (s.menu.open_index == idx) ? -1 : idx;
                 s.menu.item_focus = 0;
+                s.last_key.clear(); // don't let the script ALSO see this F-key
                 continue;
             }
         }
@@ -234,10 +236,13 @@ bool is_focused(int id) {
 }
 
 // Returns true (and clears) when pending_action matches `key`.
+// Also clears last_key so scripts that consult TUI.KEY$() don't
+// see a key the focused widget has already swallowed.
 bool consume_action(const std::string& key) {
     auto& s = jdb_tui::state();
     if (s.pending_action == key) {
         s.pending_action.clear();
+        if (s.last_key == key) s.last_key.clear();
         return true;
     }
     return false;
@@ -252,6 +257,7 @@ bool consume_printable(std::string& out) {
         if (c >= 32 && c < 127) {
             out = s.pending_action;
             s.pending_action.clear();
+            if (s.last_key == out) s.last_key.clear();
             return true;
         }
     }
@@ -370,8 +376,10 @@ void push_layout(jdb_tui::LayoutFrame::Kind kind,
     s.layout_stack.push_back(std::move(f));
 }
 
-// Theme name → title-bar tint. Add entries here when shipping a
-// new theme — the script-facing surface is just the name string.
+// Theme name → primary tint. Used in the title bar, the active
+// tab, selected list rows, focused widget overlays, and the
+// filled portion of TUI.SLIDER / PROGRESS / GAUGE. Add entries
+// here when shipping a new theme.
 ftxui::Color theme_tint(const std::string& name) {
     using namespace ftxui;
     if (name == "warm")  return Color::Orange1;
@@ -380,6 +388,20 @@ ftxui::Color theme_tint(const std::string& name) {
     if (name == "gold")  return Color::Yellow1;
     return Color::Cyan3; // default = "cool"
 }
+
+// A darker counterpart used as a contrasting backdrop where we
+// want the theme to read as a "selection band" rather than text.
+ftxui::Color theme_band(const std::string& name) {
+    using namespace ftxui;
+    if (name == "warm")  return Color::Red;
+    if (name == "neon")  return Color::Green;
+    if (name == "cyber") return Color::Purple;
+    if (name == "gold")  return Color::Yellow;
+    return Color::Blue;
+}
+
+ftxui::Color active_theme_tint() { return theme_tint(jdb_tui::state().theme); }
+ftxui::Color active_theme_band() { return theme_band(jdb_tui::state().theme); }
 
 void render_once(jdb_tui::TuiState& s) {
     using namespace ftxui;
@@ -705,11 +727,13 @@ void register_tui_natives(VM& vm) {
         }
         std::vector<Element> rows;
         rows.push_back(text(args[0].as_string()->data) | bold);
+        ftxui::Color tint = active_theme_tint();
         for (int i = 0; i < n; ++i) {
             std::string s = std::string(i == sel ? "(*) " : "( ) ")
                           + arr->elements[i].as_string()->data;
             Element row = text(s);
-            if (focused && i == sel) row = row | inverted;
+            if (i == sel)              row = row | color(tint) | bold;
+            if (focused && i == sel)   row = row | inverted;
             rows.push_back(row);
         }
         emit_element(vbox(std::move(rows)));
@@ -809,13 +833,14 @@ void register_tui_natives(VM& vm) {
         if (frac > 1) frac = 1;
         const int bar_w = 20;
         int filled = (int)(frac * bar_w + 0.5);
-        std::string bar = "[" + std::string(filled, '=')
-                              + std::string(bar_w - filled, ' ') + "]";
         char val_s[32];
         std::snprintf(val_s, sizeof(val_s), " %.3f", v);
         Element row = hbox({
             text(args[0].as_string()->data + " "),
-            text(bar),
+            text("["),
+            text(std::string(filled, '=')) | color(active_theme_tint()) | bold,
+            text(std::string(bar_w - filled, ' ')),
+            text("]"),
             text(val_s)
         });
         if (focused) row = row | inverted;
@@ -840,9 +865,13 @@ void register_tui_natives(VM& vm) {
         }
         std::vector<Element> rows;
         rows.push_back(text(args[0].as_string()->data) | bold);
+        ftxui::Color tint = active_theme_tint();
         for (int i = 0; i < n; ++i) {
             Element row = text("  " + arr->elements[i].as_string()->data);
-            if (i == sel) row = row | (focused ? inverted : bold);
+            if (i == sel) {
+                row = row | color(tint) | bold;
+                if (focused) row = row | inverted;
+            }
             rows.push_back(row);
         }
         emit_element(vbox(std::move(rows)));
@@ -867,7 +896,7 @@ void register_tui_natives(VM& vm) {
             : std::string("(empty)");
         Element row = hbox({
             text(args[0].as_string()->data + ": "),
-            text(txt)
+            text(txt) | color(active_theme_tint()) | bold
         });
         if (focused) row = row | inverted;
         emit_element(row);
@@ -898,7 +927,7 @@ void register_tui_natives(VM& vm) {
         float f = (float)args[0].to_double();
         if (f < 0) f = 0;
         if (f > 1) f = 1;
-        Element bar = gauge(f) | flex;
+        Element bar = gauge(f) | color(active_theme_tint()) | flex;
         if (args.size() >= 2 && args[1].type == ValueType::STRING) {
             emit_element(hbox({bar, text(" "), text(args[1].as_string()->data)}));
         } else {
@@ -914,7 +943,7 @@ void register_tui_natives(VM& vm) {
         float f = (float)args[0].to_double();
         if (f < 0) f = 0;
         if (f > 1) f = 1;
-        Element bar = gauge(f);
+        Element bar = gauge(f) | color(active_theme_tint());
         if (args.size() >= 2 && args[1].type == ValueType::STRING) {
             emit_element(window(text(" " + args[1].as_string()->data + " "), bar));
         } else {
@@ -1221,13 +1250,19 @@ void register_tui_natives(VM& vm) {
         if (!s.tab_bar.labels.empty() &&
             s.tab_bar.active_idx >= (int)s.tab_bar.labels.size())
             s.tab_bar.active_idx = (int)s.tab_bar.labels.size() - 1;
-        // Render the tab strip immediately.
+        // Render the tab strip immediately. The active tab is
+        // painted with the theme's band colour so the strip moves
+        // with TUI.THEME — same logic as the title-bar tint.
+        Color band = active_theme_band();
+        Color tint = active_theme_tint();
         std::vector<Element> tabs;
         for (size_t i = 0; i < s.tab_bar.labels.size(); ++i) {
             std::string lbl = " " + s.tab_bar.labels[i] + " ";
             Element e = text(lbl);
-            if ((int)i == s.tab_bar.active_idx) e = e | inverted;
-            else                                e = e | dim;
+            if ((int)i == s.tab_bar.active_idx)
+                e = e | bgcolor(band) | color(Color::White) | bold;
+            else
+                e = e | color(tint) | dim;
             tabs.push_back(e);
             tabs.push_back(text(" "));
         }

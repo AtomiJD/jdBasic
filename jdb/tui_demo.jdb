@@ -12,11 +12,13 @@
 '     load jdb/tui_demo.jdb
 '     run
 '
-' Controls (Phase B keymap):
-'     F1-F5      switch tab
+' Controls:
+'     F1-F3      open File / View / Demo submenu (also closes when re-pressed)
+'     F6-F10     switch tab (Dashboard / Form / Table / Canvas / About)
 '     Tab        cycle widget focus inside the active tab
-'     Arrows     navigate the focused widget
-'     Enter      activate
+'     Arrows     navigate the focused widget (or menu items, when a menu is open)
+'     Enter      activate focused widget / menu item
+'     Esc        close open menu or modal
 '     Ctrl+T     cycle theme (cool → warm → neon → cyber → gold)
 '     Ctrl+Q     quit
 ' ===========================================================
@@ -235,13 +237,14 @@ DO
     IF (frame MOD 30) = 0 THEN heartbeat = heartbeat + 1
     spinner_idx = (frame MOD 8)
 
-    ' Hotkey shortcuts (mirror the menu entries).
+    ' Hotkey shortcuts. F1-F3 are owned by the menubar; tabs live
+    ' on F6-F10 so the two key spaces don't overlap.
     DIM k$ AS STRING = TUI.KEY$()
-    IF k$ = "F1" THEN active_tab = 0
-    IF k$ = "F2" THEN active_tab = 1
-    IF k$ = "F3" THEN active_tab = 2
-    IF k$ = "F4" THEN active_tab = 3
-    IF k$ = "F5" THEN active_tab = 4
+    IF k$ = "F6"  THEN active_tab = 0
+    IF k$ = "F7"  THEN active_tab = 1
+    IF k$ = "F8"  THEN active_tab = 2
+    IF k$ = "F9"  THEN active_tab = 3
+    IF k$ = "F10" THEN active_tab = 4
     IF k$ = "C-t" THEN cycle_theme()
 
     TUI.BEGIN "jdBasic — TUI.* Demo"
@@ -256,7 +259,7 @@ DO
     render_about_modal()
     TUI.SEPARATOR
     TUI.HBOX_BEGIN
-    TUI.TEXT "F1-F5 tabs · Tab focus · Ctrl+T theme · Ctrl+Q quit"
+    TUI.TEXT "F1-F3 menus · F6-F10 tabs · Tab focus · Ctrl+T theme · Ctrl+Q quit"
     TUI.SPACER
     TUI.TEXT FORMAT$("frame {:>5}", frame)
     TUI.HBOX_END
