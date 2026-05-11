@@ -2011,7 +2011,7 @@ The colour and style stacks decorate every subsequent emit until popped.
 #### Events + diagnostics
 
 * **`TUI.KEY$`**: Last drained key name (e.g. `"Enter"`, `"Up"`, `"F1"`, `"C-t"`, `" "`, `"a"`).
-* **`TUI.MOUSE_X / MOUSE_Y / MOUSE_BTN / MOUSE_WHEEL`**: Mouse accessors — return 0 today (pollers deferred until a `ReadConsoleInput` driver lands).
+* **`TUI.MOUSE_X / MOUSE_Y / MOUSE_BTN / MOUSE_WHEEL`**: Mouse position (cell coords, 0-based), button mask (bit 0 = left, 1 = right, 2 = middle) and an accumulating wheel delta. Polled from `MOUSE_EVENT` records via `ReadConsoleInputW`; the Windows-Terminal QuickEdit flag is auto-disabled while the script runs so clicks fire as events instead of dragging a selection.
 * **`TUI.ON(event$, handler$)`**: Recording-only stub today; dispatch arrives alongside the mouse driver.
 * **`TUI.WIDTH / TUI.HEIGHT`**: Live terminal dimensions in cells.
 * **`TUI.LAST_RENDER_MS`**: Wall-clock ms for the previous `TUI.RENDER`.

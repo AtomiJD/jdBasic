@@ -2239,7 +2239,7 @@ Description: Returns the last drained key name (e.g. "Enter", "Up", "F1", "C-t",
 
 [TUI.MOUSE_X]
 Syntax: TUI.MOUSE_X
-Description: Last seen mouse column. (Mouse polling deferred — returns 0 today.)
+Description: Mouse column (0-based) at the most recent input poll.
 
 [TUI.MOUSE_Y]
 Syntax: TUI.MOUSE_Y

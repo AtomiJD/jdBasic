@@ -56,6 +56,14 @@ namespace {
 // registers the inverse so the terminal is always restored, even
 // when the script aborts.
 
+// Console-input mode captured the first time we enter alt-screen,
+// so atexit can put the terminal exactly back where it was before
+// the script started fiddling with mouse / QuickEdit / line modes.
+#ifdef _WIN32
+static DWORD g_saved_in_mode = 0;
+static bool g_saved_in_mode_valid = false;
+#endif
+
 void atexit_restore_terminal() {
     auto& s = jdb_tui::state();
     if (s.alt_screen_active) {
@@ -64,6 +72,13 @@ void atexit_restore_terminal() {
                   << std::flush;
         s.alt_screen_active = false;
     }
+#ifdef _WIN32
+    if (g_saved_in_mode_valid) {
+        HANDLE hin = GetStdHandle(STD_INPUT_HANDLE);
+        SetConsoleMode(hin, g_saved_in_mode);
+        g_saved_in_mode_valid = false;
+    }
+#endif
 }
 
 void enter_alt_screen_once() {
@@ -77,6 +92,26 @@ void enter_alt_screen_once() {
     DWORD mode = 0;
     if (GetConsoleMode(h, &mode)) {
         SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+    // Enable mouse + window events on stdin and DROP QuickEdit so
+    // clicks don't trigger select-region instead of firing as
+    // MOUSE_EVENTs. ENABLE_EXTENDED_FLAGS is required for the
+    // QuickEdit toggle to actually stick.
+    HANDLE hin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD in_mode = 0;
+    if (GetConsoleMode(hin, &in_mode)) {
+        if (!g_saved_in_mode_valid) {
+            g_saved_in_mode = in_mode;
+            g_saved_in_mode_valid = true;
+        }
+        DWORD desired = (in_mode | ENABLE_MOUSE_INPUT |
+                                   ENABLE_WINDOW_INPUT |
+                                   ENABLE_EXTENDED_FLAGS)
+                        & ~ENABLE_QUICK_EDIT_MODE
+                        & ~ENABLE_LINE_INPUT
+                        & ~ENABLE_ECHO_INPUT
+                        & ~ENABLE_PROCESSED_INPUT;
+        SetConsoleMode(hin, desired);
     }
 #endif
     std::cout << "\033[?1049h"   // enter alt screen
@@ -97,51 +132,109 @@ void enter_alt_screen_once() {
 // observe via TUI.KEY$). Phase G fleshes out arrow/F-key
 // decoding and mouse events.
 
-bool poll_one_key(std::string& out) {
 #ifdef _WIN32
-    if (!_kbhit()) return false;
-    int ch = _getch();
-    if (ch == 0 || ch == 224) {
-        // Extended key — second byte carries arrow / F-key / Shift+Tab.
-        int ext = _getch();
-        switch (ext) {
-            case 72:  out = "Up";       return true;
-            case 80:  out = "Down";     return true;
-            case 75:  out = "Left";     return true;
-            case 77:  out = "Right";    return true;
-            case 71:  out = "Home";     return true;
-            case 79:  out = "End";      return true;
-            case 73:  out = "PgUp";     return true;
-            case 81:  out = "PgDn";     return true;
-            case 83:  out = "Delete";   return true;
-            case 15:  out = "S-Tab";    return true; // Shift+Tab (BACKTAB)
-            case 59:  out = "F1";       return true;
-            case 60:  out = "F2";       return true;
-            case 61:  out = "F3";       return true;
-            case 62:  out = "F4";       return true;
-            case 63:  out = "F5";       return true;
-            case 64:  out = "F6";       return true;
-            case 65:  out = "F7";       return true;
-            case 66:  out = "F8";       return true;
-            case 67:  out = "F9";       return true;
-            case 68:  out = "F10";      return true;
-            default: {
-                char buf[16];
-                std::snprintf(buf, sizeof(buf), "ext-%d", ext);
-                out = buf;
-                return true;
-            }
-        }
+// Map Windows virtual-key codes for arrow / F-key / nav keys to the
+// same string names the script-facing API expects.
+static const char* vk_to_name(WORD vk) {
+    switch (vk) {
+        case VK_UP:     return "Up";
+        case VK_DOWN:   return "Down";
+        case VK_LEFT:   return "Left";
+        case VK_RIGHT:  return "Right";
+        case VK_HOME:   return "Home";
+        case VK_END:    return "End";
+        case VK_PRIOR:  return "PgUp";
+        case VK_NEXT:   return "PgDn";
+        case VK_DELETE: return "Delete";
+        case VK_F1:  return "F1";  case VK_F2:  return "F2";
+        case VK_F3:  return "F3";  case VK_F4:  return "F4";
+        case VK_F5:  return "F5";  case VK_F6:  return "F6";
+        case VK_F7:  return "F7";  case VK_F8:  return "F8";
+        case VK_F9:  return "F9";  case VK_F10: return "F10";
+        case VK_F11: return "F11"; case VK_F12: return "F12";
+        default: return nullptr;
     }
-    if (ch == 17) { out = "C-q";       return true; } // Ctrl+Q
-    if (ch == 3)  { out = "C-c";       return true; } // Ctrl+C
-    if (ch == 20) { out = "C-t";       return true; } // Ctrl+T
-    if (ch == 13) { out = "Enter";     return true; }
-    if (ch == 9)  { out = "Tab";       return true; }
-    if (ch == 8 || ch == 127) { out = "Backspace"; return true; }
-    if (ch == 27) { out = "Esc";       return true; }
-    out = std::string(1, (char)ch);
-    return true;
+}
+#endif
+
+// Drain one console-input event into TuiState. Returns true when a
+// KEY event filled `out`; mouse / resize events update state in
+// place and return false so the caller's poll loop keeps walking.
+bool poll_one_event(std::string& out) {
+#ifdef _WIN32
+    HANDLE hin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD avail = 0;
+    if (!GetNumberOfConsoleInputEvents(hin, &avail) || avail == 0)
+        return false;
+    INPUT_RECORD rec;
+    DWORD nread = 0;
+    if (!ReadConsoleInputW(hin, &rec, 1, &nread) || nread == 0)
+        return false;
+
+    auto& s = jdb_tui::state();
+    switch (rec.EventType) {
+        case KEY_EVENT: {
+            const auto& ke = rec.Event.KeyEvent;
+            if (!ke.bKeyDown) return false;
+            const char* nm = vk_to_name(ke.wVirtualKeyCode);
+            // Shift+Tab arrives as VK_TAB with shift held.
+            if (ke.wVirtualKeyCode == VK_TAB) {
+                if (ke.dwControlKeyState & SHIFT_PRESSED) { out = "S-Tab"; return true; }
+                out = "Tab"; return true;
+            }
+            if (nm) { out = nm; return true; }
+            wchar_t wc = ke.uChar.UnicodeChar;
+            if (wc == 0) return false; // modifier-only
+            if (wc == 17) { out = "C-q"; return true; }
+            if (wc == 3)  { out = "C-c"; return true; }
+            if (wc == 20) { out = "C-t"; return true; }
+            if (wc == 13) { out = "Enter"; return true; }
+            if (wc == 8 || wc == 127) { out = "Backspace"; return true; }
+            if (wc == 27) { out = "Esc"; return true; }
+            if (wc < 32) {
+                // Other control chars — emit "C-<letter>" for the
+                // common ASCII range so script keymaps stay readable.
+                if (wc >= 1 && wc <= 26) {
+                    char buf[4] = { 'C', '-', (char)('a' + (int)wc - 1), 0 };
+                    out = buf; return true;
+                }
+                return false;
+            }
+            // Unicode characters: best-effort narrow round-trip.
+            // jdBasic strings are byte-oriented; printables fit one
+            // byte, multi-byte glyphs get UTF-8-encoded so INPUT can
+            // still accumulate them.
+            if (wc < 128) { out = std::string(1, (char)wc); return true; }
+            char enc[8] = {0};
+            int n = 0;
+            if (wc < 0x800) {
+                enc[n++] = (char)(0xC0 | (wc >> 6));
+                enc[n++] = (char)(0x80 | (wc & 0x3F));
+            } else {
+                enc[n++] = (char)(0xE0 | (wc >> 12));
+                enc[n++] = (char)(0x80 | ((wc >> 6) & 0x3F));
+                enc[n++] = (char)(0x80 | (wc & 0x3F));
+            }
+            out.assign(enc, n);
+            return true;
+        }
+        case MOUSE_EVENT: {
+            const auto& me = rec.Event.MouseEvent;
+            s.mouse_x = me.dwMousePosition.X;
+            s.mouse_y = me.dwMousePosition.Y;
+            // Bottom 5 bits of dwButtonState are the button-mask:
+            //   bit 0 = left, 1 = right, 2 = middle, etc.
+            s.mouse_buttons = (int)(me.dwButtonState & 0x1F);
+            if (me.dwEventFlags & MOUSE_WHEELED) {
+                SHORT delta = (SHORT)HIWORD(me.dwButtonState);
+                s.mouse_wheel += (delta > 0 ? 1 : -1);
+            }
+            return false;
+        }
+        case WINDOW_BUFFER_SIZE_EVENT:
+        default:
+            return false;
+    }
 #else
     (void)out;
     return false; // Linux poll deferred — see project_linux_port.md
@@ -154,7 +247,7 @@ bool poll_one_key(std::string& out) {
 // for next frame's focused widget to consume.
 void drain_keys(jdb_tui::TuiState& s) {
     std::string k;
-    while (poll_one_key(k)) {
+    while (poll_one_event(k)) {
         s.last_key = k;
         if (k == "C-q") s.quit_requested = true;
 
@@ -525,7 +618,7 @@ void register_tui_natives(VM& vm) {
         // Spin-poll until a key arrives. Phase G will replace this
         // with a proper blocking read or FTXUI task-receiver path.
         std::string k;
-        while (!poll_one_key(k)) {
+        while (!poll_one_event(k)) {
 #ifdef _WIN32
             Sleep(8);
 #endif
@@ -1363,15 +1456,22 @@ void register_tui_natives(VM& vm) {
     });
 
     // ── Events (Phase G) ────────────────────────────────────
+    // TUI.KEY$ is one-shot: returns the buffered key and clears it
+    // so a single press only fires once. Without this, scripts that
+    // `IF TUI.KEY$() = "..." THEN ...` inside their main loop
+    // re-trigger every frame until another key comes in.
     vm.register_native("TUI.KEY$", 0, 0, [&vm](V) -> Value {
         (void)vm;
-        return Value::make_string(jdb_tui::state().last_key);
+        auto& s = jdb_tui::state();
+        std::string k = s.last_key;
+        s.last_key.clear();
+        return Value::make_string(k);
     });
-    // Mouse: the console-mode driver doesn't poll mouse events yet
-    // (we'd need ReadConsoleInput w/ ENABLE_MOUSE_INPUT and a
-    // separate event-queue loop). The fields exist on TuiState so
-    // a future patch can flip the implementation without touching
-    // these accessors.
+    // Mouse: the console-input loop polls MOUSE_EVENT records via
+    // ReadConsoleInputW and updates these slots in place. Buttons
+    // are the bottom 5 bits of dwButtonState (bit 0 = left). Wheel
+    // is a +1 / -1 accumulator that scripts can decrement after
+    // reading.
     vm.register_native("TUI.MOUSE_X", 0, 0, [&vm](V) -> Value {
         (void)vm; return Value::make_i64(jdb_tui::state().mouse_x);
     });

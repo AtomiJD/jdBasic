@@ -261,6 +261,8 @@ DO
     TUI.HBOX_BEGIN
     TUI.TEXT "F1-F3 menus · F6-F10 tabs · Tab focus · Ctrl+T theme · Ctrl+Q quit"
     TUI.SPACER
+    TUI.TEXT "mouse (" + STR$(TUI.MOUSE_X()) + ", " + STR$(TUI.MOUSE_Y()) + ") btn=" + STR$(TUI.MOUSE_BTN())
+    TUI.SPACER
     TUI.TEXT FORMAT$("frame {:>5}", frame)
     TUI.HBOX_END
     TUI.END
