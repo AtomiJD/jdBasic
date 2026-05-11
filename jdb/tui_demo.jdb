@@ -129,14 +129,16 @@ SUB render_dashboard()
 ENDSUB
 
 SUB render_form()
+    ' Widgets are value-in / value-out — assign the return so the
+    ' next frame sees the edited state.
     TUI.HEADING "User Profile", 2
     TUI.SEPARATOR
-    TUI.INPUT "Display name", name$
-    TUI.INPUT_INT "Lucky number", count_var
-    TUI.SLIDER "Volume", volume, 0.0, 1.0
-    TUI.CHECKBOX "Subscribe to newsletter", newsletter
+    name$       = TUI.INPUT("Display name", name$)
+    count_var   = TUI.INPUT_INT("Lucky number", count_var)
+    volume      = TUI.SLIDER("Volume", volume, 0.0, 1.0)
+    newsletter  = TUI.CHECKBOX("Subscribe to newsletter", newsletter)
     TUI.SEPARATOR_TEXT "Favourite language"
-    TUI.DROPDOWN "lang", langs, lang_choice
+    lang_choice = TUI.DROPDOWN("lang", langs, lang_choice)
     TUI.SEPARATOR
     TUI.HBOX_BEGIN
     IF TUI.BUTTON("Save") THEN
