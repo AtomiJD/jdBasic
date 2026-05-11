@@ -1,10 +1,22 @@
 #pragma once
 #include <string>
 
-// Version info — updated by release builds
+// Version info — updated by release builds.
+// `/DJDBASIC_BUILD_NUM=` and `/DJDBASIC_BUILD_DATE=` are injected by
+// build.bat under the RELEASE flag; the fallbacks below kick in only
+// for non-RELEASE builds (dev builds, --lint, IDE indexers). Guarded
+// with #ifndef so the command-line define isn't redefined here — that
+// was the source of the C4005 warning seen in every TU that included
+// version.h.
+#ifndef JDBASIC_VERSION
 #define JDBASIC_VERSION    "1.0"
-#define JDBASIC_BUILD_NUM  "2"
-#define JDBASIC_BUILD_DATE "2026/04/15"
+#endif
+#ifndef JDBASIC_BUILD_NUM
+#define JDBASIC_BUILD_NUM  "0"
+#endif
+#ifndef JDBASIC_BUILD_DATE
+#define JDBASIC_BUILD_DATE "dev"
+#endif
 
 // Feature flags (set by compiler directives)
 inline std::string jdbasic_features() {

@@ -108,6 +108,34 @@ struct Workspace {
     std::unordered_set<std::string> boot_funcs;
 };
 
+// Command palette entries — what shows up in the Ctrl+P modal.
+// `template_` is what gets injected into the input field; for commands
+// that need an argument (load, save) we leave the trailing space so the
+// user just types the path. `desc` is a one-line description shown
+// dimmed beside the label.
+struct CmdEntry {
+    std::string label;
+    std::string desc;
+    std::string template_;
+};
+
+const std::vector<CmdEntry> kCommands = {
+    {"run",       "execute the current buffer",         "run"},
+    {"new",       "clear the current buffer",           "new"},
+    {"list",      "list buffer contents",               "list"},
+    {"vars",      "show user variables",                "vars"},
+    {"funcs",     "show user functions",                "funcs"},
+    {"help",      "show jdBasic help",                  "help"},
+    {"load",      "load a .jdb file into buffer",       "load "},
+    {"save",      "save buffer to file",                "save "},
+    {"loadws",    "load a workspace (.jsws)",           "loadws "},
+    {"savews",    "save a workspace (.jsws)",           "savews "},
+    {"cls",       "clear the output buffer",            "cls"},
+    {"trace on",  "enable trace logging",               "tron"},
+    {"trace off", "disable trace logging",              "troff"},
+    {":exit",     "exit the FTXUI REPL",                ":exit"},
+};
+
 // Build the right-side panel listing user vars + funcs of the active
 // workspace. Filters out boot-set names so VM-internal globals don't
 // drown out the interesting state. Read-only snapshot per render.
@@ -214,7 +242,13 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         for (auto& [name, _slot] : w.vm->get_global_names()) w.boot_vars.insert(name);
         for (auto& f : w.vm->get_funcs()) w.boot_funcs.insert(f.name);
     }
-    auto show_panel = std::make_shared<bool>(false);
+    auto show_panel   = std::make_shared<bool>(false);
+    // Command-palette state. When show_palette is true the Modal
+    // overlay covers the screen; palette_filter narrows the list and
+    // palette_idx drives the highlighted row.
+    auto show_palette   = std::make_shared<bool>(false);
+    auto palette_filter = std::make_shared<std::string>();
+    auto palette_idx    = std::make_shared<int>(0);
     auto active     = std::make_shared<int>(0);
     auto auto_follow   = std::make_shared<bool>(true);
     auto scroll_anchor = std::make_shared<int>(0);
@@ -222,6 +256,9 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
     auto screen = ScreenInteractive::Fullscreen();
     bool exit_requested = false;
     std::string input_text;
+    // Shared cursor position for the input row — exposed via Ref so
+    // the palette can land the cursor right after the injected text.
+    auto input_cursor = std::make_shared<int>(0);
 
     // Tab-switch helper — saves the current input as the active ws's
     // draft and restores the target ws's draft so each tab feels like
@@ -236,7 +273,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
     };
 
     InputOption opt;
-    opt.placeholder = "type a jdBasic statement, Enter to run, :quit to exit";
+    opt.placeholder = "type a jdBasic statement, Enter to run, :exit to leave";
     opt.multiline = false;
     opt.insert = true;
     opt.transform = [](InputState state) {
@@ -249,15 +286,21 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         return state.element | color(Color::GreenLight);
     };
     opt.on_change = [&] { *auto_follow = true; };
+    // Bind cursor_position via Ref<int>(int*) so palette injections can
+    // place the cursor at the end of the template string.
+    opt.cursor_position = input_cursor.get();
     opt.on_enter = [&] {
         std::string code = input_text;
         input_text.clear();
+        *input_cursor = 0;
         auto& w = (*workspaces)[*active];
         w.history_idx = -1;
         w.draft.clear();
         *auto_follow = true;
         if (code.empty()) return;
-        if (code == ":quit" || code == ":q") {
+        // `:exit` mirrors the legacy console's EXIT command. `:quit`
+        // kept as a friendly synonym for muscle memory.
+        if (code == ":exit" || code == ":quit" || code == ":q") {
             exit_requested = true;
             screen.ExitLoopClosure()();
             return;
@@ -265,16 +308,49 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         w.history.push_back(code);
         if (w.history.size() > 200) w.history.pop_front();
         w.outbox->push("> " + code + "\n");
-        try {
-            // console_execute handles LOAD / SAVE / RUN / NEW / LINT
-            // and falls through to run_on_vm for plain code. PRINT
-            // output and command feedback both land in our outbox via
-            // vm.on_output (set during workspace construction).
-            console_execute(code, *w.vm, w.program_buffer);
-        } catch (const std::exception& e) {
-            w.outbox->push(std::string("error: ") + e.what() + "\n");
-        } catch (...) {
-            w.outbox->push("error: unknown\n");
+
+        // RUN runs the program_buffer. Simple scripts (PRINT loops,
+        // computation) should keep their output in the outbox — that's
+        // the natural REPL view. Console-mode interactive programs
+        // (Snake-style: CLS + ON "KEYDOWN" + INKEY$ + LOCATE) need the
+        // raw terminal so VM event_poll's _kbhit branch can see keys
+        // and ANSI screen-positioning escapes hit a real cursor.
+        //
+        // Heuristic: scan program_buffer for stdin-blocking primitives
+        // and ON-KEY handlers. If any are present → use WithRestoredIO
+        // and let emit() fall through to std::cout. Otherwise → keep
+        // on_output bound to the outbox.
+        auto wants_terminal_io = [&]() -> bool {
+            std::string upper = code;
+            std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+            bool is_run_cmd =
+                (upper == "RUN" || upper.substr(0, 4) == "RUN ");
+            if (!is_run_cmd) return false;
+            std::string buf = w.program_buffer;
+            std::transform(buf.begin(), buf.end(), buf.begin(), ::toupper);
+            return buf.find("ON \"KEYDOWN\"") != std::string::npos
+                || buf.find("ON \"KEYUP\"")   != std::string::npos
+                || buf.find("INKEY$")          != std::string::npos
+                || buf.find("WAITKEY")         != std::string::npos;
+        };
+
+        auto run_it = [&] {
+            try {
+                console_execute(code, *w.vm, w.program_buffer);
+            } catch (const std::exception& e) {
+                w.outbox->push(std::string("error: ") + e.what() + "\n");
+            } catch (...) {
+                w.outbox->push("error: unknown\n");
+            }
+        };
+
+        if (wants_terminal_io()) {
+            auto saved = w.vm->on_output;
+            w.vm->on_output = nullptr;     // emit() falls through to std::cout
+            screen.WithRestoredIO(run_it)();
+            w.vm->on_output = saved;
+        } else {
+            run_it();
         }
     };
     auto input_box = Input(&input_text, opt);
@@ -290,6 +366,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
                     w.history_idx -= 1;
                 }
                 input_text = w.history[w.history_idx];
+                *input_cursor = (int)input_text.size();
                 return true;
             }
             if (e == Event::ArrowDown) {
@@ -301,6 +378,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
                 } else {
                     input_text = w.history[w.history_idx];
                 }
+                *input_cursor = (int)input_text.size();
                 return true;
             }
         }
@@ -326,6 +404,100 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
             const auto& m = e.mouse();
             if (m.button == Mouse::WheelUp)   { scroll_up(3);   return true; }
             if (m.button == Mouse::WheelDown) { scroll_down(3); return true; }
+        }
+        return false;
+    });
+
+    // ── Command palette modal ──────────────────────────────────────
+    InputOption pal_opt;
+    pal_opt.placeholder = "filter (run, vars, load, ...)";
+    pal_opt.multiline = false;
+    auto palette_input = Input(palette_filter.get(), pal_opt);
+
+    // Re-filter on every render based on current palette_filter.
+    auto get_filtered = [palette_filter]() {
+        std::vector<CmdEntry> out;
+        std::string f = *palette_filter;
+        std::transform(f.begin(), f.end(), f.begin(), ::tolower);
+        for (const auto& e : kCommands) {
+            std::string l = e.label;
+            std::transform(l.begin(), l.end(), l.begin(), ::tolower);
+            if (f.empty() || l.find(f) != std::string::npos) {
+                out.push_back(e);
+            }
+        }
+        return out;
+    };
+
+    auto palette_renderer = Renderer(palette_input, [&] {
+        auto filtered = get_filtered();
+        if (filtered.empty()) {
+            return vbox({
+                text(" Command Palette ") | bold | color(Color::Cyan3) | center,
+                separator(),
+                hbox({ text("> "),
+                       palette_input->Render() | flex }),
+                separator(),
+                text("(no match)") | dim | center,
+            }) | border | size(WIDTH, EQUAL, 60) | size(HEIGHT, EQUAL, 18);
+        }
+        if (*palette_idx >= (int)filtered.size()) *palette_idx = 0;
+        if (*palette_idx < 0) *palette_idx = 0;
+        Elements rows;
+        for (size_t i = 0; i < filtered.size(); i++) {
+            Element row = hbox({
+                text("  " + filtered[i].label) | size(WIDTH, EQUAL, 14),
+                text("  ") | dim,
+                text(filtered[i].desc) | dim,
+            });
+            if ((int)i == *palette_idx) {
+                // bgcolor for the visual highlight; focus tells the
+                // surrounding yframe to scroll this row into view when
+                // the selection moves past the visible window.
+                row = row | bgcolor(Color::DarkBlue) | color(Color::White) | focus;
+            }
+            rows.push_back(row);
+        }
+        return vbox({
+            text(" Command Palette ") | bold | color(Color::Cyan3) | center,
+            separator(),
+            hbox({ text("> ") | color(Color::Cyan3),
+                   palette_input->Render() | flex }),
+            separator(),
+            vbox(std::move(rows)) | yframe | yflex,
+            separator(),
+            text(" Up/Dn navigate · Enter inject · Esc cancel ") | dim | center,
+        }) | border | size(WIDTH, EQUAL, 60) | size(HEIGHT, EQUAL, 18);
+    });
+
+    auto palette_with_keys = CatchEvent(palette_renderer, [&](Event e) {
+        auto filtered = get_filtered();
+        if (e == Event::Escape) {
+            *show_palette = false;
+            return true;
+        }
+        if (filtered.empty()) return false;
+        if (e == Event::ArrowDown) {
+            *palette_idx = std::min((int)filtered.size() - 1, *palette_idx + 1);
+            return true;
+        }
+        if (e == Event::ArrowUp) {
+            *palette_idx = std::max(0, *palette_idx - 1);
+            return true;
+        }
+        if (e == Event::Return) {
+            const auto& sel = filtered[*palette_idx];
+            input_text = sel.template_;
+            // Place the cursor exactly one position after the injected
+            // text. For "load " (trailing space) that's right after the
+            // space, ready for the user to type a filename. For "run"
+            // it's at the end of the word, ready for Enter.
+            *input_cursor = (int)input_text.size();
+            *show_palette = false;
+            *palette_filter = "";
+            *palette_idx = 0;
+            input_with_history->TakeFocus();
+            return true;
         }
         return false;
     });
@@ -385,7 +557,8 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
             " jdBasic v" JDBASIC_VERSION " · build " JDBASIC_BUILD_NUM
             " · ws=" + std::string(kWsNames[*active]) +
             " ·" + scroll_hint + "· " + std::to_string(total) +
-            " lines · F1-F4 switch · Ctrl+B " + panel_hint + " · ESC quit ";
+            " lines · F1-F4 · Ctrl+B " + panel_hint +
+            " · Ctrl+P palette · :exit ";
 
         // Output area; if the side panel is on, lay it horizontally
         // beside the output column. Two important wrappers when the
@@ -419,19 +592,43 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         });
     });
 
-    auto with_keys = CatchEvent(renderer, [&](Event e) {
-        if (e == Event::Escape || e == Event::CtrlQ) {
-            exit_requested = true;
-            screen.ExitLoopClosure()();
+    // Modal-wrap so the palette overlays the main view when active.
+    auto root = Modal(renderer, palette_with_keys, show_palette.get());
+
+    auto with_keys = CatchEvent(root, [&](Event e) {
+        // Exit only via the explicit `:exit` command — no panic-keys.
+        // Esc closes the palette if it's open; otherwise it clears the
+        // current input line (so the user can abort a half-typed
+        // statement without backspace-spamming).
+        if (e == Event::Escape) {
+            if (*show_palette) {
+                *show_palette = false;
+                input_with_history->TakeFocus();
+                return true;
+            }
+            input_text.clear();
+            *input_cursor = 0;
             return true;
         }
-        if (e == Event::F1) { switch_to(0); return true; }
-        if (e == Event::F2) { switch_to(1); return true; }
-        if (e == Event::F3) { switch_to(2); return true; }
-        if (e == Event::F4) { switch_to(3); return true; }
-        if (e == Event::CtrlB) {
-            *show_panel = !*show_panel;
+        if (e == Event::CtrlP) {
+            *show_palette = !*show_palette;
+            *palette_filter = "";
+            *palette_idx = 0;
+            if (*show_palette) palette_input->TakeFocus();
+            else               input_with_history->TakeFocus();
             return true;
+        }
+        // F-keys + Ctrl+B only when palette is closed; otherwise typing
+        // would fight with the filter Input.
+        if (!*show_palette) {
+            if (e == Event::F1) { switch_to(0); return true; }
+            if (e == Event::F2) { switch_to(1); return true; }
+            if (e == Event::F3) { switch_to(2); return true; }
+            if (e == Event::F4) { switch_to(3); return true; }
+            if (e == Event::CtrlB) {
+                *show_panel = !*show_panel;
+                return true;
+            }
         }
         return false;
     });

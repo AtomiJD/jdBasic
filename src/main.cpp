@@ -5,6 +5,7 @@
 #include <chrono>
 #include <algorithm>
 #include <set>
+#include <unordered_set>
 #include <functional>
 #include <filesystem>
 #include "lexer.h"
@@ -346,44 +347,120 @@ static void set_os_args(VM& vm, int argc, char* argv[]) {
 }
 
 // ── Workspace save/load ──────────────────────────────────────
+//
+// Format: JSON `.jsws` files matching the legacy jdBasic shape:
+//   { "source_code": ["line", ...], "variables": { "NAME": value, ... } }
+//
+// 2-D / N-D arrays are wrapped as `{ "__type__": "array", "shape": [...], "data": [...] }`
+// so SHAPE survives a save/load round-trip. Scalars, strings, booleans, maps and
+// UDT instances serialize as their natural JSON counterparts.
+//
+// Old plain-text `.jdws` files are still readable as a fallback — back-compat
+// for workspaces saved before the JSON refactor on 2026-05-07.
+
+// Default predicate: skip dunder, dotted, well-known built-in constants and
+// empty/NONE values. Callers (e.g. the MCP server) can pass a tighter filter
+// via the optional `extra_filter` callback to also drop boot-set vars.
+static bool ws_default_user_filter(const std::string& name) {
+    if (name.size() >= 2 && name[0] == '_' && name[1] == '_') return false;
+    if (name.find('.') != std::string::npos) return false;
+    static const std::unordered_set<std::string> builtins = {
+        "PI", "E", "PWD", "TRUE", "FALSE", "NULL", "NONE",
+        "VBCRLF", "VBNEWLINE", "VBTAB"
+    };
+    if (builtins.count(name)) return false;
+    return true;
+}
+
+// In this jdBasic build, ARRAYs are nested (a 2-D array is an array of arrays)
+// rather than flat-with-shape, so JSON.STRINGIFY$ already round-trips them
+// faithfully — no `__type__`/`shape`/`data` wrapping is needed. The legacy
+// jdBasic on disk had wrapping; the loader below tolerates both shapes.
+
+// Reverse-direction helper: if v is a legacy `{__type__:"array", data:[...]}`
+// envelope from an old `.jsws`, unwrap it back to a plain ARRAY. Pass-through
+// otherwise. (Old shape info is dropped since current ArrayObj has no shape.)
+static Value ws_unwrap_from_load(const Value& v) {
+    if (v.type != ValueType::OBJECT || !v.as_object()) return v;
+    Value* type_field = v.as_object()->get("__type__");
+    if (!type_field || type_field->type != ValueType::STRING ||
+        type_field->as_string()->data != "array") return v;
+
+    Value* data_field = v.as_object()->get("data");
+    if (!data_field || data_field->type != ValueType::ARRAY) return v;
+
+    Value arr = Value::make_array();
+    for (auto& el : data_field->as_array()->elements) {
+        arr.as_array()->elements.push_back(ws_unwrap_from_load(el));
+    }
+    return arr;
+}
 
 // Non-static so the MCP-stdio server can expose them as `jdb_savews` /
 // `jdb_loadws` tools — same persistence the REPL has, callable over MCP.
-void save_workspace(VM& vm, const std::string& program_buffer, const std::string& name) {
-    std::string filename = name + ".jdws";
+// `extra_filter` defaults to nullptr; the MCP wrapper passes a stricter
+// boot-set filter so VM-internal globals stay out of the file.
+void save_workspace(VM& vm, const std::string& program_buffer, const std::string& name,
+                    std::function<bool(const std::string&)> extra_filter = nullptr) {
+    std::string filename = name + ".jsws";
+
+    // Build the workspace as a jdBasic Object so we can hand it to JSON.STRINGIFY$.
+    Value ws = Value::make_object();
+
+    // 1. source_code: program buffer split into lines
+    Value src_arr = Value::make_array();
+    {
+        std::stringstream ss(program_buffer);
+        std::string line;
+        while (std::getline(ss, line)) {
+            // Strip trailing CR if the buffer happens to be CRLF.
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            src_arr.as_array()->elements.push_back(Value::make_string(line));
+        }
+    }
+    ws.as_object()->set("source_code", std::move(src_arr));
+
+    // 2. variables: filtered map of user-set globals, with arrays wrapped.
+    Value vars_obj = Value::make_object();
+    auto& names = vm.get_global_names();
+    auto& globals = vm.get_globals();
+    for (auto& [vname, slot] : names) {
+        if (slot >= globals.size()) continue;
+        if (!ws_default_user_filter(vname)) continue;
+        if (extra_filter && !extra_filter(vname)) continue;
+        auto& val = globals[slot];
+        // Skip empty strings and NONE — they're either stale resets or untouched defaults.
+        if (val.type == ValueType::STRING && val.as_string() && val.as_string()->data.empty()) continue;
+        if (val.type == ValueType::NONE) continue;
+        vars_obj.as_object()->set(vname, val);
+    }
+    ws.as_object()->set("variables", std::move(vars_obj));
+
+    // 3. Stringify and write.
+    Value out_str = vm.call_function("JSON.STRINGIFY$", { ws });
+    if (out_str.type != ValueType::STRING) {
+        std::cerr << "Error: failed to stringify workspace" << std::endl;
+        return;
+    }
+
     std::ofstream out(filename);
     if (!out.is_open()) {
         std::cerr << "Error: Cannot write to " << filename << std::endl;
         return;
     }
-
-    // Save variables
-    out << "[VARIABLES]\n";
-    auto& names = vm.get_global_names();
-    auto& globals = vm.get_globals();
-    for (auto& [vname, slot] : names) {
-        if (slot < globals.size()) {
-            auto& val = globals[slot];
-            out << vname << "\t" << (int)val.type << "\t" << val.to_string() << "\n";
-        }
-    }
-
-    // Save program buffer
-    out << "[PROGRAM]\n";
-    out << program_buffer;
-    if (!program_buffer.empty() && program_buffer.back() != '\n') out << "\n";
-
+    out << out_str.as_string()->data;
     out.close();
+
     vm.emit("Workspace saved: " + filename + "\n");
 }
 
-void load_workspace(VM& vm, std::string& program_buffer, const std::string& name) {
-    std::string filename = name + ".jdws";
+// Old-format loader, preserved so workspaces saved before the JSON refactor
+// (2026-05-07) keep loading. Returns true on success, false if the file is
+// missing or unparseable.
+static bool load_workspace_legacy(VM& vm, std::string& program_buffer,
+                                   const std::string& filename) {
     std::ifstream in(filename);
-    if (!in.is_open()) {
-        std::cerr << "Error: Cannot open " << filename << std::endl;
-        return;
-    }
+    if (!in.is_open()) return false;
 
     vm.reset();
     program_buffer.clear();
@@ -394,9 +471,7 @@ void load_workspace(VM& vm, std::string& program_buffer, const std::string& name
     while (std::getline(in, line)) {
         if (line == "[VARIABLES]") { section = VARS; continue; }
         if (line == "[PROGRAM]") { section = PROGRAM; continue; }
-
         if (section == VARS && !line.empty()) {
-            // Parse: name\ttype\tvalue
             size_t t1 = line.find('\t');
             size_t t2 = line.find('\t', t1 + 1);
             if (t1 != std::string::npos && t2 != std::string::npos) {
@@ -404,7 +479,6 @@ void load_workspace(VM& vm, std::string& program_buffer, const std::string& name
                 int type_id = std::stoi(line.substr(t1 + 1, t2 - t1 - 1));
                 std::string val_str = line.substr(t2 + 1);
                 ValueType vt = static_cast<ValueType>(type_id);
-
                 Value val;
                 switch (vt) {
                     case ValueType::BOOLEAN:
@@ -430,14 +504,65 @@ void load_workspace(VM& vm, std::string& program_buffer, const std::string& name
                 }
                 vm.set_global(vname, std::move(val));
             }
-        }
-        else if (section == PROGRAM) {
+        } else if (section == PROGRAM) {
             program_buffer += line + "\n";
         }
     }
     in.close();
+    return true;
+}
 
-    // Re-compile and register functions from program buffer
+void load_workspace(VM& vm, std::string& program_buffer, const std::string& name) {
+    std::string filename = name + ".jsws";
+    std::ifstream in(filename);
+    if (!in.is_open()) {
+        // Fall back to the legacy plain-text format.
+        std::string legacy = name + ".jdws";
+        if (load_workspace_legacy(vm, program_buffer, legacy)) {
+            // Re-compile + emit reused at the bottom of this function — but the
+            // legacy loader has already reset and populated state, so we just
+            // continue into the recompile path below.
+            filename = legacy;
+        } else {
+            std::cerr << "Error: Cannot open " << filename << " or " << legacy << std::endl;
+            return;
+        }
+    } else {
+        // New JSON format.
+        std::stringstream buf;
+        buf << in.rdbuf();
+        in.close();
+        std::string json_str = buf.str();
+
+        Value parsed = vm.call_function("JSON.PARSE$", { Value::make_string(json_str) });
+        if (parsed.type != ValueType::OBJECT || !parsed.as_object()) {
+            std::cerr << "Error: invalid workspace JSON in " << filename << std::endl;
+            return;
+        }
+
+        vm.reset();
+        program_buffer.clear();
+
+        // 1. source_code
+        Value* src = parsed.as_object()->get("source_code");
+        if (src && src->type == ValueType::ARRAY) {
+            for (auto& line_v : src->as_array()->elements) {
+                program_buffer += line_v.to_string() + "\n";
+            }
+        }
+
+        // 2. variables (unwrap arrays back to ARRAY values)
+        Value* vars = parsed.as_object()->get("variables");
+        if (vars && vars->type == ValueType::OBJECT) {
+            for (auto& pair : vars->as_object()->fields) {
+                Value unwrapped = ws_unwrap_from_load(pair.second);
+                vm.set_global(pair.first, std::move(unwrapped));
+            }
+        }
+    }
+
+    // Re-compile and register functions from program buffer (shared between
+    // both load paths).
     if (!program_buffer.empty()) {
         try {
             Lexer lexer(program_buffer);
@@ -445,19 +570,14 @@ void load_workspace(VM& vm, std::string& program_buffer, const std::string& name
             Parser parser(tokens);
             setup_parser_modules(parser);
             auto ast = parser.parse();
-
-            // Only compile SUB/FUNCTION declarations (don't execute main code)
             Compiler compiler;
             compiler.compile(ast);
-            // Register the functions without executing
             auto& funcs = compiler.functions();
-            // Create a dummy empty chunk
             Chunk empty;
             empty.emit(OpCode::HALT, 0);
-            // Merge functions by running empty code
             vm.run_code(empty, funcs);
         } catch (...) {
-            // Ignore errors in function restoration
+            // Ignore errors in function restoration.
         }
     }
 
@@ -1242,6 +1362,7 @@ int main(int argc, char* argv[]) {
               "  jdbasic -c <file.jdb>          Compile to a native .exe (LLVM)\n"
               "  jdbasic --lint <file.jdb>      Static analysis only (no execution)\n"
               "  jdbasic --mcp                  Run as MCP server over stdio (requires MCPSERVER build)\n"
+              "  jdbasic --ftxui                Start the FTXUI REPL (4 workspaces, side-panel, palette)\n"
               "  jdbasic -d [port] <file.jdb>   Run under the DAP debugger (default 4711)\n"
               "\n"
               "FLAGS\n"
@@ -1253,6 +1374,8 @@ int main(int argc, char* argv[]) {
               "  -o, --output <file>      Write the compiled .exe to <file> (default: script name)\n"
               "      --lint               Parse + typecheck only, do not run\n"
               "      --mcp                Speak the Model Context Protocol on stdio\n"
+              "      --ftxui              Start the modern terminal REPL (F1-F4 workspaces,\n"
+              "                            Ctrl+B side-panel, Ctrl+P command palette)\n"
               "      --emit-ir            Emit LLVM IR to stdout instead of an .exe\n"
               "      --trace              Compile with codegen trace logging on\n"
               "\n"
@@ -1261,6 +1384,7 @@ int main(int argc, char* argv[]) {
               "  jdbasic -c my_script.jdb               # → my_script.exe + jdbrt.dll runtime\n"
               "  jdbasic -c -o build/app.exe app.jdb    # named output\n"
               "  jdbasic --lint module.jdb              # CI-friendly syntax check\n"
+              "  jdbasic --ftxui                        # FTXUI REPL — opt-in\n"
               "  jdbasic -d 5678 my_script.jdb          # wait for DAP attach on :5678\n"
               "\n"
               "NOTES\n"
