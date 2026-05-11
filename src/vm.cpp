@@ -751,6 +751,36 @@ bool jdb_no_vectorize(const std::string& name) {
         "GUI.ITEM_RECT", "GUI.SET_CURSOR_SCREEN_POS",
         "GUI.SET_NEXT_ITEM_WIDTH", "GUI.SET_KEYBOARD_FOCUS",
         "GUI.ITEM_DEACTIVATED_AFTER_EDIT",
+        // TUI.* — every entry. None of the immediate-mode widgets
+        // want auto-vectorization (an array passed as options[] is
+        // ONE argument, not a fan-out trigger). See
+        // project_matrix_gfx_novec.md for the canonical rule.
+        "TUI.BEGIN", "TUI.END", "TUI.RENDER", "TUI.RENDER_HEADLESS$",
+        "TUI.WAIT_EVENT", "TUI.QUIT", "TUI.EXIT",
+        "TUI.HBOX_BEGIN", "TUI.HBOX_END",
+        "TUI.VBOX_BEGIN", "TUI.VBOX_END",
+        "TUI.GRID_BEGIN", "TUI.GRID_END",
+        "TUI.BORDER_BEGIN", "TUI.BORDER_END",
+        "TUI.SEPARATOR", "TUI.SEPARATOR_TEXT",
+        "TUI.SPACER", "TUI.SIZE", "TUI.SAME_LINE",
+        "TUI.TEXT", "TUI.PARAGRAPH", "TUI.HEADING", "TUI.LINK",
+        "TUI.BUTTON", "TUI.CHECKBOX", "TUI.RADIO",
+        "TUI.INPUT", "TUI.INPUT_INT", "TUI.INPUT_DOUBLE",
+        "TUI.SLIDER", "TUI.MENU", "TUI.DROPDOWN", "TUI.SELECTABLE",
+        "TUI.PROGRESS", "TUI.GAUGE", "TUI.SPINNER",
+        "TUI.CANVAS_BEGIN", "TUI.CANVAS_END",
+        "TUI.LINE", "TUI.PIXEL",
+        "TUI.TABLE_BEGIN", "TUI.TABLE_ROW", "TUI.TABLE_END",
+        "TUI.MODAL_OPEN", "TUI.MODAL_BEGIN", "TUI.MODAL_END", "TUI.MODAL_CLOSE",
+        "TUI.MENUBAR_BEGIN", "TUI.MENUBAR_END",
+        "TUI.SUBMENU_BEGIN", "TUI.SUBMENU_END", "TUI.MENUITEM",
+        "TUI.TAB_BAR_BEGIN", "TUI.TAB_BAR_END",
+        "TUI.TAB_BEGIN", "TUI.TAB_END",
+        "TUI.COLOR", "TUI.BG_COLOR", "TUI.POP_COLOR",
+        "TUI.STYLE_PUSH", "TUI.STYLE_POP", "TUI.THEME",
+        "TUI.KEY$", "TUI.MOUSE_X", "TUI.MOUSE_Y",
+        "TUI.MOUSE_BTN", "TUI.MOUSE_WHEEL", "TUI.ON",
+        "TUI.WIDTH", "TUI.HEIGHT", "TUI.LAST_RENDER_MS", "TUI.VERSION$",
     };
     return set.find(name) != set.end();
 }

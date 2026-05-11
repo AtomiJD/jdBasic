@@ -8291,7 +8291,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // jdrt_call_typed_f64 and the result comes back as 0.0 —
                 // every text field shows "0" and edits never persist. The
                 // INT/DOUBLE variants stay numeric and don't need an entry.
-                "GUI.INPUT"
+                "GUI.INPUT",
+                // TUI.INPUT mirrors GUI.INPUT — string return value, would
+                // otherwise be dropped by the bridge's default f64 path.
+                "TUI.INPUT"
             };
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
                                 string_returners.count(upper) ||

@@ -1,0 +1,78 @@
+' Phase-F smoke: menubar with F-key submenus, tabs, modal.
+' F1-F3 open menus, ESC closes. Tab cycles widget focus inside tabs.
+
+DIM active_tab AS INTEGER = 0
+DIM tabs = ["Dashboard", "Form", "About"]
+DIM about_open AS INTEGER = 0
+DIM name$ AS STRING = "Atomi"
+DIM count_var AS INTEGER = 0
+DIM cpu AS DOUBLE = 0.42
+
+SUB render_menubar()
+    TUI.MENUBAR_BEGIN
+    IF TUI.SUBMENU_BEGIN("File") THEN
+        IF TUI.MENUITEM("Reset") THEN count_var = 0
+        IF TUI.MENUITEM("Quit", "Ctrl+Q") THEN TUI.EXIT
+        TUI.SUBMENU_END
+    ENDIF
+    IF TUI.SUBMENU_BEGIN("View") THEN
+        IF TUI.MENUITEM("About") THEN about_open = 1
+        TUI.SUBMENU_END
+    ENDIF
+    IF TUI.SUBMENU_BEGIN("Demo") THEN
+        IF TUI.MENUITEM("Spike CPU") THEN cpu = 0.95
+        IF TUI.MENUITEM("All clear") THEN cpu = 0.05
+        TUI.SUBMENU_END
+    ENDIF
+    TUI.MENUBAR_END
+ENDSUB
+
+DIM frame AS INTEGER = 0
+DO
+    DIM k$ AS STRING = TUI.KEY$()
+    IF k$ = "F1" THEN active_tab = 0
+    IF k$ = "F2" THEN active_tab = 1
+    IF k$ = "F3" THEN active_tab = 2
+
+    TUI.BEGIN "jdBasic - Phase F"
+    render_menubar()
+    TUI.SEPARATOR
+    TUI.TAB_BAR_BEGIN tabs, active_tab
+
+    IF TUI.TAB_BEGIN("Dashboard") THEN
+        TUI.HEADING "System Pulse", 2
+        TUI.PROGRESS cpu, "cpu"
+        TUI.TEXT "frame: " + STR$(frame)
+        TUI.TAB_END
+    ENDIF
+    IF TUI.TAB_BEGIN("Form") THEN
+        TUI.HEADING "Form", 2
+        name$ = TUI.INPUT("Name", name$)
+        count_var = TUI.INPUT_INT("Count", count_var)
+        TUI.TAB_END
+    ENDIF
+    IF TUI.TAB_BEGIN("About") THEN
+        TUI.HEADING "About", 2
+        TUI.PARAGRAPH "Phase F: menubar/submenu/menuitem/tabs/modal."
+        TUI.LINK "jdbasic.org", "https://jdbasic.org"
+        TUI.TAB_END
+    ENDIF
+
+    TUI.TAB_BAR_END
+
+    IF about_open = 1 THEN
+        IF TUI.MODAL_BEGIN("about", "About this demo") THEN
+            TUI.PARAGRAPH "Phase F modal overlay. Esc dismisses."
+            IF TUI.BUTTON("OK") THEN
+                about_open = 0
+                TUI.MODAL_CLOSE
+            ENDIF
+            TUI.MODAL_END
+        ENDIF
+    ENDIF
+
+    TUI.END
+    TUI.RENDER
+    SLEEP 40
+    frame = frame + 1
+LOOP UNTIL TUI.QUIT()

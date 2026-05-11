@@ -45,7 +45,7 @@
         },
         {
             "name": "entity.name.type.class.jdbasic",
-            "match": "(?i)\\b(AI|AUDIO|CAM|CLIPBOARD|CODEC|GFX|GUI|HTTP|JOY|JSON|MAP|MUSIC|OS|OUTPUT|PARTICLE|PATH|REGEX|SERIAL|SFX|SOUND|SPRITE|THREAD|TILED|TILEMAP|TURTLE)\\b"
+            "match": "(?i)\\b(AI|AUDIO|CAM|CLIPBOARD|CODEC|GFX|GUI|HTTP|JOY|JSON|MAP|MUSIC|OS|OUTPUT|PARTICLE|PATH|REGEX|SERIAL|SFX|SOUND|SPRITE|THREAD|TILED|TILEMAP|TUI|TURTLE)\\b"
         },
         {
             "name": "support.function.jdbasic",

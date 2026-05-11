@@ -1985,6 +1985,294 @@ Description: Sets the absolute heading of the turtle. 0 is right, 90 is up.
 Syntax: TURTLE.SETPOS(x, y)
 Description: Moves the turtle to an absolute screen position without drawing.
 
+[TUI.BEGIN]
+Syntax: TUI.BEGIN([title$])
+Description: Open a new TUI frame (FTXUI bridge). Subsequent TUI.* calls build the frame; TUI.END seals it and TUI.RENDER paints to the terminal's alt-screen buffer.
+
+[TUI.END]
+Syntax: TUI.END
+Description: Seal the current TUI frame. Auto-closes any layout frames the script left open.
+
+[TUI.RENDER]
+Syntax: TUI.RENDER
+Description: Render the current frame to the terminal and drain pending keypresses. Ctrl+Q sets the QUIT flag.
+
+[TUI.WAIT_EVENT]
+Syntax: TUI.WAIT_EVENT
+Description: Block until a key is pressed; returns the key name as a string.
+
+[TUI.QUIT]
+Syntax: TUI.QUIT
+Description: Returns TRUE once Ctrl+Q has been pressed or TUI.EXIT has been called.
+
+[TUI.EXIT]
+Syntax: TUI.EXIT
+Description: Sets the QUIT flag from the script.
+
+[TUI.TEXT]
+Syntax: TUI.TEXT(text$)
+Description: Append a text element to the current frame.
+
+[TUI.PARAGRAPH]
+Syntax: TUI.PARAGRAPH(text$)
+Description: Append an auto-wrapped paragraph.
+
+[TUI.HEADING]
+Syntax: TUI.HEADING(text$, [level])
+Description: Heading text. Level 1 = bold+underlined, 2 = bold, 3+ = dim.
+
+[TUI.LINK]
+Syntax: TUI.LINK(label$, url$)
+Description: Underlined OSC-8 hyperlink (clickable in Windows Terminal and most modern terminals).
+
+[TUI.HBOX_BEGIN]
+Syntax: TUI.HBOX_BEGIN
+Description: Start a horizontal layout collector. Children are laid out left-to-right.
+
+[TUI.HBOX_END]
+Syntax: TUI.HBOX_END
+Description: Close the current HBOX.
+
+[TUI.VBOX_BEGIN]
+Syntax: TUI.VBOX_BEGIN
+Description: Start a vertical layout collector.
+
+[TUI.VBOX_END]
+Syntax: TUI.VBOX_END
+Description: Close the current VBOX.
+
+[TUI.GRID_BEGIN]
+Syntax: TUI.GRID_BEGIN(cols)
+Description: Start an n-column grid. Children fill row by row; the trailing row is padded with empty cells.
+
+[TUI.GRID_END]
+Syntax: TUI.GRID_END
+Description: Close the current GRID.
+
+[TUI.BORDER_BEGIN]
+Syntax: TUI.BORDER_BEGIN([title$])
+Description: Wrap the next block in a rounded border. A title becomes the window caption.
+
+[TUI.BORDER_END]
+Syntax: TUI.BORDER_END
+Description: Close the current BORDER.
+
+[TUI.SEPARATOR]
+Syntax: TUI.SEPARATOR
+Description: Direction-aware separator line (horizontal in vbox, vertical in hbox).
+
+[TUI.SEPARATOR_TEXT]
+Syntax: TUI.SEPARATOR_TEXT(label$)
+Description: Separator with an inline centred label.
+
+[TUI.SPACER]
+Syntax: TUI.SPACER
+Description: filler() — stretches to consume free space in the parent box.
+
+[TUI.SIZE]
+Syntax: TUI.SIZE(w, h)
+Description: Retroactively constrain the size of the previously emitted element. Pass -1 to skip a dimension.
+
+[TUI.SAME_LINE]
+Syntax: TUI.SAME_LINE
+Description: Join the next emitted element with the previous one in an hbox.
+
+[TUI.BUTTON]
+Syntax: TUI.BUTTON(label$) -> bool
+Description: A clickable label. Returns TRUE on the frame the focused button is activated with Enter.
+
+[TUI.CHECKBOX]
+Syntax: TUI.CHECKBOX(label$, checked) -> int
+Description: Toggleable checkbox. Returns the new state (0 or 1).
+
+[TUI.RADIO]
+Syntax: TUI.RADIO(label$, options[], selected) -> int
+Description: Vertical radio-group. Up/Down cycles when focused; returns the (possibly changed) selection index.
+
+[TUI.INPUT]
+Syntax: TUI.INPUT(label$, text$, [width]) -> string
+Description: Single-line text input. Returns the (edited) text. Type characters / Backspace when focused.
+
+[TUI.INPUT_INT]
+Syntax: TUI.INPUT_INT(label$, value, [width]) -> int
+Description: Integer input. Digits append, Backspace deletes a digit, Up/Down adjust by 1.
+
+[TUI.INPUT_DOUBLE]
+Syntax: TUI.INPUT_DOUBLE(label$, value, [width]) -> double
+Description: Double input. Left/Right adjust by 0.1, Up/Down by 1.0.
+
+[TUI.SLIDER]
+Syntax: TUI.SLIDER(label$, value, min, max, [step]) -> double
+Description: Horizontal slider. Left/Right adjust by step.
+
+[TUI.MENU]
+Syntax: TUI.MENU(label$, options[], selected) -> int
+Description: Vertical menu list. Like RADIO but without the (*) glyph.
+
+[TUI.DROPDOWN]
+Syntax: TUI.DROPDOWN(label$, options[], selected) -> int
+Description: Compact single-line option picker. Left/Right cycles.
+
+[TUI.SELECTABLE]
+Syntax: TUI.SELECTABLE(label$, selected) -> bool
+Description: Row-style clickable item. Returns TRUE the frame Enter fires on it.
+
+[TUI.PROGRESS]
+Syntax: TUI.PROGRESS(fraction, [label$])
+Description: Horizontal progress bar with optional inline label. Fraction clamped to [0..1].
+
+[TUI.GAUGE]
+Syntax: TUI.GAUGE(fraction, [label$])
+Description: Same bar as PROGRESS but wrapped in a window/border.
+
+[TUI.SPINNER]
+Syntax: TUI.SPINNER(frame, [variant])
+Description: One of 22 spinner styles (variant 0-21). `frame` advances the animation.
+
+[TUI.CANVAS_BEGIN]
+Syntax: TUI.CANVAS_BEGIN(w, h)
+Description: Begin a braille-resolution canvas of width × height cells (2x4 sub-pixels per cell).
+
+[TUI.CANVAS_END]
+Syntax: TUI.CANVAS_END
+Description: Close the canvas; emits one element replaying every queued LINE/PIXEL.
+
+[TUI.LINE]
+Syntax: TUI.LINE(x1, y1, x2, y2, color)
+Description: Draw a line on the active canvas. `color` is a Palette16 index (0-15).
+
+[TUI.PIXEL]
+Syntax: TUI.PIXEL(x, y, color)
+Description: Draw a single point on the active canvas.
+
+[TUI.TABLE_BEGIN]
+Syntax: TUI.TABLE_BEGIN(headers[])
+Description: Start a table. headers[] seeds row 0 (bold, double-line bottom).
+
+[TUI.TABLE_ROW]
+Syntax: TUI.TABLE_ROW(cells[])
+Description: Append a row of cells; short rows are padded.
+
+[TUI.TABLE_END]
+Syntax: TUI.TABLE_END
+Description: Close the table; emits the rendered grid (LIGHT outer border).
+
+[TUI.MODAL_OPEN]
+Syntax: TUI.MODAL_OPEN(id$)
+Description: Mark a modal as active. The next frame's TUI.MODAL_BEGIN(id$) returns TRUE.
+
+[TUI.MODAL_BEGIN]
+Syntax: TUI.MODAL_BEGIN(id$, [title$]) -> bool
+Description: Begin a modal body block. Returns TRUE iff this modal is active; only then is MODAL_END expected.
+
+[TUI.MODAL_END]
+Syntax: TUI.MODAL_END
+Description: Seal the modal body. The overlay is centred over the main frame in TUI.RENDER.
+
+[TUI.MODAL_CLOSE]
+Syntax: TUI.MODAL_CLOSE
+Description: Clear the active modal (Esc also does this).
+
+[TUI.MENUBAR_BEGIN]
+Syntax: TUI.MENUBAR_BEGIN
+Description: Begin a horizontal menubar.
+
+[TUI.MENUBAR_END]
+Syntax: TUI.MENUBAR_END
+Description: Close the menubar; emits the menu row and any popup body.
+
+[TUI.SUBMENU_BEGIN]
+Syntax: TUI.SUBMENU_BEGIN(label$) -> bool
+Description: Begin a submenu; each gets an implicit F-key (F1, F2, ...). Returns TRUE if currently open.
+
+[TUI.SUBMENU_END]
+Syntax: TUI.SUBMENU_END
+Description: Close the submenu.
+
+[TUI.MENUITEM]
+Syntax: TUI.MENUITEM(label$, [hint$]) -> bool
+Description: Menu entry. Returns TRUE the frame Enter fires on it (also closes the menu).
+
+[TUI.TAB_BAR_BEGIN]
+Syntax: TUI.TAB_BAR_BEGIN(labels[], active_idx)
+Description: Paint a tab strip and set the active tab index.
+
+[TUI.TAB_BAR_END]
+Syntax: TUI.TAB_BAR_END
+Description: Close the tab bar.
+
+[TUI.TAB_BEGIN]
+Syntax: TUI.TAB_BEGIN(label$) -> bool
+Description: Begin a tab body. Returns TRUE iff this label matches the active tab; only then is TAB_END expected.
+
+[TUI.TAB_END]
+Syntax: TUI.TAB_END
+Description: Close the current tab body.
+
+[TUI.COLOR]
+Syntax: TUI.COLOR(r, g, b)
+Description: Push an RGB foreground colour onto the style stack. Applies to subsequent elements until popped.
+
+[TUI.BG_COLOR]
+Syntax: TUI.BG_COLOR(r, g, b)
+Description: Push an RGB background colour onto the style stack.
+
+[TUI.POP_COLOR]
+Syntax: TUI.POP_COLOR
+Description: Pop the top of the style stack.
+
+[TUI.STYLE_PUSH]
+Syntax: TUI.STYLE_PUSH(name$)
+Description: Push a named style: "bold", "dim", "italic", "underlined", or "inverted".
+
+[TUI.STYLE_POP]
+Syntax: TUI.STYLE_POP
+Description: Pop the top of the style stack.
+
+[TUI.THEME]
+Syntax: TUI.THEME(name$)
+Description: Set the title-bar tint: "cool", "warm", "neon", "cyber", or "gold".
+
+[TUI.KEY$]
+Syntax: TUI.KEY$
+Description: Returns the last drained key name (e.g. "Enter", "Up", "F1", "C-t", " ", "a").
+
+[TUI.MOUSE_X]
+Syntax: TUI.MOUSE_X
+Description: Last seen mouse column. (Mouse polling deferred — returns 0 today.)
+
+[TUI.MOUSE_Y]
+Syntax: TUI.MOUSE_Y
+Description: Last seen mouse row.
+
+[TUI.MOUSE_BTN]
+Syntax: TUI.MOUSE_BTN
+Description: Bitmask of mouse buttons pressed.
+
+[TUI.MOUSE_WHEEL]
+Syntax: TUI.MOUSE_WHEEL
+Description: Mouse wheel delta accumulator.
+
+[TUI.ON]
+Syntax: TUI.ON(event$, handler$)
+Description: Register a callback by FUNC/SUB name (record-only today — dispatch lands with mouse events).
+
+[TUI.WIDTH]
+Syntax: TUI.WIDTH
+Description: Terminal width in cells (live).
+
+[TUI.HEIGHT]
+Syntax: TUI.HEIGHT
+Description: Terminal height in cells (live).
+
+[TUI.LAST_RENDER_MS]
+Syntax: TUI.LAST_RENDER_MS
+Description: Wall-clock milliseconds the previous TUI.RENDER took.
+
+[TUI.VERSION$]
+Syntax: TUI.VERSION$
+Description: TUI namespace version string.
+
 [TXTREADER$]
 TXTREADER$(filename$, [encoding$]) -> string$
 Reads the entire contents of a text file into a string. If `encoding$` is given, the file's bytes are decoded from that codepage to UTF-8. Default (no arg / "" / "utf-8") is byte-pass-through. Supported: "cp1252"/"windows-1252"/"latin1", "cp850", "cp437", "cp1250", "cp1251", "cp936", "cp932". Codepage decode is Windows-only.

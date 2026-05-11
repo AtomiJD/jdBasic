@@ -1,0 +1,46 @@
+' Phase-D smoke: input widgets. Tab cycles focus. Ctrl+Q exits.
+
+DIM name$       AS STRING  = "Atomi"
+DIM count_var   AS INTEGER = 42
+DIM volume      AS DOUBLE  = 0.5
+DIM newsletter  AS INTEGER = 1
+DIM lang_sel    AS INTEGER = 0
+DIM rad_sel     AS INTEGER = 1
+DIM langs       = ["jdBasic", "Python", "Rust", "Smalltalk"]
+DIM clicks      AS INTEGER = 0
+
+DO
+    TUI.BEGIN "jdBasic - Phase D Input Smoke"
+    TUI.TEXT "Tab to cycle focus. Enter activates. Ctrl+Q quits."
+    TUI.SEPARATOR
+
+    IF TUI.BUTTON("Click me") THEN clicks = clicks + 1
+    TUI.TEXT "clicks: " + STR$(clicks)
+    TUI.SEPARATOR
+
+    newsletter = TUI.CHECKBOX("Subscribe", newsletter)
+    TUI.SEPARATOR
+
+    name$ = TUI.INPUT("Name", name$)
+    count_var = TUI.INPUT_INT("Count", count_var)
+    volume = TUI.SLIDER("Volume", volume, 0.0, 1.0)
+    TUI.SEPARATOR
+
+    rad_sel = TUI.RADIO("Pick one", langs, rad_sel)
+    TUI.SEPARATOR
+
+    lang_sel = TUI.DROPDOWN("Lang", langs, lang_sel)
+
+    TUI.END
+    TUI.RENDER
+    SLEEP 30
+LOOP UNTIL TUI.QUIT()
+
+PRINT "Final state:"
+PRINT "  name      = "; name$
+PRINT "  count     = "; count_var
+PRINT "  volume    = "; volume
+PRINT "  newsletter= "; newsletter
+PRINT "  radio sel = "; rad_sel
+PRINT "  drop sel  = "; lang_sel
+PRINT "  clicks    = "; clicks

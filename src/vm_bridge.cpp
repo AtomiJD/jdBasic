@@ -53,6 +53,9 @@ extern void register_graphics_builtins(VM& vm);
 #ifdef IMGUI
 extern void register_gui_builtins(VM& vm);
 #endif
+#ifdef TUI
+extern void register_tui_natives(VM& vm);
+#endif
 
 // DLL-local base directory for module imports
 static std::string g_base_dir = ".";
@@ -120,6 +123,9 @@ static void setup_all_builtins(VM& vm) {
 #endif
 #ifdef IMGUI
     register_gui_builtins(vm);
+#endif
+#ifdef TUI
+    register_tui_natives(vm);
 #endif
     register_sound_builtins(vm);
     register_ffi_builtins(vm);

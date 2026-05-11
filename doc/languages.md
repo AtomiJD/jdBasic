@@ -1904,6 +1904,119 @@ GUI.END
 * **`MUSIC.PLAY id, [loop_bool]`**: Plays a loaded WAV file as background music. Defaults to looping.
 * **`MUSIC.STOP`**: Immediately stops the background music.
 
+### Terminal UI (TUI.*)
+
+The `TUI.*` namespace mirrors `GUI.*` against the **FTXUI** library, rendering jdBasic apps into the terminal. The control flow matches ImGui: rebuild the frame every loop, call `TUI.RENDER`, repeat. Available only in builds compiled with the `TUI` flag (which implies `FTXUI`). See `doc/ftxui_plan.md` for the architectural sketch and `tests/test_tui_smoke.jdb` for a runnable reference.
+
+The script-facing surface is value-in / value-out (no byref) — widgets receive the current state, return the (possibly mutated) state, and the script reassigns:
+
+```basic
+DIM volume AS DOUBLE = 0.5
+DO
+    TUI.BEGIN "App"
+    TUI.TEXT "Hello"
+    IF TUI.BUTTON("OK") THEN TUI.EXIT
+    volume = TUI.SLIDER("Volume", volume, 0.0, 1.0)
+    TUI.END
+    TUI.RENDER
+    SLEEP 16
+LOOP UNTIL TUI.QUIT()
+```
+
+#### Core loop
+
+* **`TUI.BEGIN([title$])`**: Open a frame. `title$` becomes the outer window caption (tinted by the active theme).
+* **`TUI.END`**: Seal the frame. Auto-closes layout frames the script left open.
+* **`TUI.RENDER`**: Paint to the alt-screen buffer; drain pending input.
+* **`TUI.WAIT_EVENT`**: Block until a key, return the key name.
+* **`TUI.QUIT() -> bool`**: TRUE once Ctrl+Q was pressed or `TUI.EXIT` ran.
+* **`TUI.EXIT`**: Set the QUIT flag from the script.
+
+#### Layout
+
+* **`TUI.HBOX_BEGIN`/`HBOX_END`**, **`TUI.VBOX_BEGIN`/`VBOX_END`**: Horizontal / vertical collectors.
+* **`TUI.GRID_BEGIN(cols)`/`GRID_END`**: N-column grid; trailing row padded with empty cells.
+* **`TUI.BORDER_BEGIN([title$])`/`BORDER_END`**: Rounded border (or titled window).
+* **`TUI.SEPARATOR`**, **`TUI.SEPARATOR_TEXT(label$)`**: Direction-aware separator line, with optional inline label.
+* **`TUI.SPACER`**: `filler()` — stretches to consume free space.
+* **`TUI.SIZE(w, h)`**: Retroactively constrain the previous element (-1 = skip).
+* **`TUI.SAME_LINE`**: Join next emit with previous in an hbox.
+
+#### Text & links
+
+* **`TUI.TEXT(text$)`**: One-line text element.
+* **`TUI.PARAGRAPH(text$)`**: Auto-wrapped paragraph.
+* **`TUI.HEADING(text$, [level])`**: Level 1 = bold+underlined, 2 = bold, 3+ = dim.
+* **`TUI.LINK(label$, url$)`**: Underlined OSC-8 hyperlink (clickable in Windows Terminal).
+
+#### Input widgets
+
+Focus advances via **Tab / Shift+Tab**. The focused widget inverts; Enter / arrow keys drive its action.
+
+* **`TUI.BUTTON(label$) -> bool`**: TRUE the frame Enter fires on a focused button.
+* **`TUI.CHECKBOX(label$, checked) -> int`**: Returns new state (0/1).
+* **`TUI.RADIO(label$, options[], sel) -> int`**: Up/Down cycles when focused.
+* **`TUI.INPUT(label$, text$) -> string`**: Type / Backspace edit the buffer.
+* **`TUI.INPUT_INT(label$, value) -> int`**: Digit append, Backspace delete, Up/Down ±1.
+* **`TUI.INPUT_DOUBLE(label$, value) -> double`**: Up/Down ±1, Left/Right ±0.1.
+* **`TUI.SLIDER(label$, value, min, max, [step]) -> double`**: Left/Right by step.
+* **`TUI.MENU(label$, options[], sel) -> int`**: Vertical menu list.
+* **`TUI.DROPDOWN(label$, options[], sel) -> int`**: Compact picker; Left/Right cycles.
+* **`TUI.SELECTABLE(label$, selected) -> bool`**: Row-style clickable.
+
+#### Display
+
+* **`TUI.PROGRESS(frac, [label$])`**: Horizontal gauge with optional inline label.
+* **`TUI.GAUGE(frac, [label$])`**: Same bar wrapped in a window/border.
+* **`TUI.SPINNER(frame, [variant])`**: 22 styles (`variant` 0-21); `frame` advances the animation.
+
+#### Braille canvas
+
+* **`TUI.CANVAS_BEGIN(w, h)`** … **`TUI.CANVAS_END`**: Draws into a 2×4-sub-cell canvas.
+* **`TUI.LINE(x1, y1, x2, y2, color)`**: Line on the active canvas; `color` is a Palette16 index (0-15).
+* **`TUI.PIXEL(x, y, color)`**: Single point.
+
+#### Tables
+
+* **`TUI.TABLE_BEGIN(headers[])`** … **`TUI.TABLE_ROW(cells[])`** … **`TUI.TABLE_END`**: LIGHT outer border with DOUBLE-bordered header; short rows are padded.
+
+#### Modal
+
+* **`TUI.MODAL_OPEN(id$)`**: Mark a modal active. Next frame's `MODAL_BEGIN(id$)` returns TRUE.
+* **`TUI.MODAL_BEGIN(id$, [title$]) -> bool`**: Begin overlay body. Frame is only pushed when active — pair with `IF` and `MODAL_END` inside.
+* **`TUI.MODAL_END`**: Seal overlay. Rendered centred over the main doc.
+* **`TUI.MODAL_CLOSE`**: Dismiss (Esc also does this).
+
+#### Menubar
+
+F-keys (F1, F2, …) open submenus by index. Arrows navigate items, Enter fires, Esc closes.
+
+* **`TUI.MENUBAR_BEGIN`** … **`TUI.MENUBAR_END`**: Top-row menu strip + popup body.
+* **`TUI.SUBMENU_BEGIN(label$) -> bool`** … **`TUI.SUBMENU_END`**: TRUE only when this submenu is the open one. Items inside the `IF` block render in the popup.
+* **`TUI.MENUITEM(label$, [hint$]) -> bool`**: TRUE the frame Enter fires on a focused item; selecting also closes the menu.
+
+#### Tabs
+
+* **`TUI.TAB_BAR_BEGIN(labels[], active_idx)`** … **`TUI.TAB_BAR_END`**: Paints the strip and sets the active index.
+* **`TUI.TAB_BEGIN(label$) -> bool`** … **`TUI.TAB_END`**: Body only renders for the active tab; pair with `IF`.
+
+#### Colour + style + theme
+
+The colour and style stacks decorate every subsequent emit until popped.
+
+* **`TUI.COLOR(r, g, b)`**, **`TUI.BG_COLOR(r, g, b)`**, **`TUI.POP_COLOR`**.
+* **`TUI.STYLE_PUSH(name$)`** with `"bold"`, `"dim"`, `"italic"`, `"underlined"`, `"inverted"`; **`TUI.STYLE_POP`**.
+* **`TUI.THEME(name$)`**: `"cool"` (default), `"warm"`, `"neon"`, `"cyber"`, `"gold"` — tints the title bar.
+
+#### Events + diagnostics
+
+* **`TUI.KEY$`**: Last drained key name (e.g. `"Enter"`, `"Up"`, `"F1"`, `"C-t"`, `" "`, `"a"`).
+* **`TUI.MOUSE_X / MOUSE_Y / MOUSE_BTN / MOUSE_WHEEL`**: Mouse accessors — return 0 today (pollers deferred until a `ReadConsoleInput` driver lands).
+* **`TUI.ON(event$, handler$)`**: Recording-only stub today; dispatch arrives alongside the mouse driver.
+* **`TUI.WIDTH / TUI.HEIGHT`**: Live terminal dimensions in cells.
+* **`TUI.LAST_RENDER_MS`**: Wall-clock ms for the previous `TUI.RENDER`.
+* **`TUI.VERSION$`**: Namespace version string.
+
 ### Live Coding Sequencer
 
 The live coding sequencer allows you to program rhythmic musical patterns and manipulate sound in real-time.

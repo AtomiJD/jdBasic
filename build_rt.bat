@@ -49,12 +49,48 @@ for %%A in (%*) do (
         set EXTRA_SRC=!EXTRA_SRC! src\serial.cpp
         echo [+] Serial
     )
+    if /I "%%A"=="FTXUI" (
+        REM /D UNICODE/_UNICODE matches the ftxui.lib ABI (same rule as build.bat).
+        set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\ftxui\include
+        if not exist libs\ftxui\build\ftxui.lib (
+            echo [+] FTXUI lib missing - building one-time...
+            call build_ftxui.bat
+        )
+        set EXTRA_LIB=!EXTRA_LIB! libs\ftxui\build\ftxui.lib
+        set HAVE_FTXUI=1
+        echo [+] FTXUI
+    )
+    if /I "%%A"=="TUI" (
+        set DEFS=!DEFS! /DTUI /DUNICODE /D_UNICODE
+        set EXTRA_SRC=!EXTRA_SRC! src\tui.cpp src\tui_state.cpp
+        set WANT_TUI=1
+        echo [+] TUI
+    )
 )
+
+REM TUI implies FTXUI — pull the lib in if only TUI was passed.
+if defined WANT_TUI if not defined HAVE_FTXUI (
+    set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
+    set EXTRA_INC=!EXTRA_INC! /Ilibs\ftxui\include
+    if not exist libs\ftxui\build\ftxui.lib (
+        echo [+] FTXUI lib missing - building one-time...
+        call build_ftxui.bat
+    )
+    set EXTRA_LIB=!EXTRA_LIB! libs\ftxui\build\ftxui.lib
+    set HAVE_FTXUI=1
+    echo [+] TUI implies FTXUI - lib auto-enabled
+)
+
+REM ftxui.lib is /MD; mixing /MT vm_bridge with /MD ftxui hits LNK2038.
+REM Match the CRT whenever FTXUI is in the mix.
+set CRT_FLAG=/MT
+if defined HAVE_FTXUI set CRT_FLAG=/MD
 
 echo Building jdbrt.dll ...
 
 REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
-"%CC%" /std:c++17 /O2 /fp:fast /EHa /MP32 %DEFS% /LD ^
+"%CC%" /std:c++17 /O2 /fp:fast /EHa /MP32 %CRT_FLAG% %DEFS% /LD ^
   /I"%MSVC%\include" ^
   /I"%SDK%\Include\%SDKV%\ucrt" ^
   /I"%SDK%\Include\%SDKV%\um" ^

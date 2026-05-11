@@ -1,0 +1,191 @@
+' ===========================================================
+' test_tui_smoke.jdb — TUI.* compile-only smoke for the gate.
+'
+' Phase H designed this as a TUI.RENDER_HEADLESS-driven assertion
+' suite, but RENDER_HEADLESS is parked (no FTXUI buffer-grab path
+' wired yet). For the gate we settle for "every native is callable
+' and returns without crashing" — that catches symbol regressions
+' and most arg-arity drift.
+'
+' Run via: ./build/jdBasic.exe tests/test_tui_smoke.jdb
+' Expected tail: ALL TESTS PASSED!
+' ===========================================================
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB expect(name$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        PRINT "FAIL: "; name$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+' 1. Diagnostics — version + dimensions before any frame
+expect "VERSION$ non-empty", LEN(TUI.VERSION$()) > 0
+expect "WIDTH > 0",  TUI.WIDTH() > 0
+expect "HEIGHT > 0", TUI.HEIGHT() > 0
+
+' 2. Build a frame using every layout primitive, then DROP it
+'    (no TUI.RENDER — the gate runs piped, no real terminal).
+TUI.BEGIN "smoke"
+TUI.HEADING "header", 1
+TUI.PARAGRAPH "lorem ipsum"
+TUI.SEPARATOR
+TUI.SEPARATOR_TEXT "section"
+TUI.HBOX_BEGIN
+    TUI.TEXT "left"
+    TUI.SPACER
+    TUI.TEXT "right"
+TUI.HBOX_END
+TUI.VBOX_BEGIN
+    TUI.TEXT "top"
+    TUI.TEXT "bottom"
+TUI.VBOX_END
+TUI.BORDER_BEGIN "framed"
+    TUI.TEXT "inside"
+TUI.BORDER_END
+TUI.GRID_BEGIN 2
+    TUI.TEXT "a"
+    TUI.TEXT "b"
+    TUI.TEXT "c"
+    TUI.TEXT "d"
+TUI.GRID_END
+TUI.TEXT "first"
+TUI.SAME_LINE
+TUI.TEXT "second"
+TUI.TEXT "sized"
+TUI.SIZE 10, 1
+TUI.LINK "site", "https://jdbasic.org"
+TUI.END
+
+expect "frame built without crash", TRUE
+
+' 3. Input widgets — value-in / value-out contract
+DIM name$    AS STRING  = "atomi"
+DIM count    AS INTEGER = 7
+DIM volume   AS DOUBLE  = 0.5
+DIM checked  AS INTEGER = 0
+DIM sel      AS INTEGER = 1
+DIM opts     = ["one", "two", "three"]
+
+TUI.BEGIN "inputs"
+DIM clicked = TUI.BUTTON("press")
+expect "BUTTON initial = 0",       clicked = 0
+checked = TUI.CHECKBOX("flag", checked)
+expect "CHECKBOX preserved",        checked = 0
+name$ = TUI.INPUT("name", name$)
+expect "INPUT preserved",           name$ = "atomi"
+count = TUI.INPUT_INT("n", count)
+expect "INPUT_INT preserved",       count = 7
+volume = TUI.SLIDER("vol", volume, 0.0, 1.0)
+expect "SLIDER preserved",          volume = 0.5
+sel = TUI.RADIO("pick", opts, sel)
+expect "RADIO preserved",           sel = 1
+sel = TUI.DROPDOWN("dd", opts, sel)
+expect "DROPDOWN preserved",        sel = 1
+sel = TUI.MENU("mn", opts, sel)
+expect "MENU preserved",            sel = 1
+DIM sclk = TUI.SELECTABLE("row", 0)
+expect "SELECTABLE initial = 0",    sclk = 0
+volume = TUI.INPUT_DOUBLE("v", volume)
+expect "INPUT_DOUBLE preserved",    volume = 0.5
+TUI.END
+
+' 4. Display widgets
+TUI.BEGIN "display"
+TUI.PROGRESS 0.5, "loading"
+TUI.GAUGE    0.75
+TUI.SPINNER  3
+TUI.SPINNER  3, 7
+TUI.END
+
+' 5. Canvas
+TUI.BEGIN "canvas"
+TUI.CANVAS_BEGIN 40, 10
+TUI.LINE 0, 0, 39, 9, 7
+TUI.PIXEL 1, 1, 4
+TUI.CANVAS_END
+TUI.END
+
+' 6. Table
+TUI.BEGIN "table"
+TUI.TABLE_BEGIN ["A", "B"]
+TUI.TABLE_ROW ["1", "2"]
+TUI.TABLE_ROW ["3", "4"]
+TUI.TABLE_END
+TUI.END
+
+' 7. Menubar + tabs + modal
+DIM active_tab AS INTEGER = 0
+DIM tab_labels = ["one", "two"]
+
+TUI.MODAL_OPEN "confirm"
+TUI.BEGIN "menus-tabs-modal"
+
+TUI.MENUBAR_BEGIN
+IF TUI.SUBMENU_BEGIN("File") THEN
+    DIM rc1 = TUI.MENUITEM("New")
+    DIM rc2 = TUI.MENUITEM("Open", "Ctrl+O")
+    TUI.SUBMENU_END
+ENDIF
+TUI.MENUBAR_END
+
+TUI.TAB_BAR_BEGIN tab_labels, active_tab
+IF TUI.TAB_BEGIN("one") THEN
+    TUI.TEXT "tab one body"
+    TUI.TAB_END
+ENDIF
+TUI.TAB_BAR_END
+
+IF TUI.MODAL_BEGIN("confirm", "Confirm") THEN
+    TUI.TEXT "Sure?"
+    TUI.MODAL_END
+ENDIF
+TUI.END
+TUI.MODAL_CLOSE
+
+' 8. Colour + style stack
+TUI.BEGIN "theme"
+TUI.COLOR 255, 100, 50
+TUI.TEXT "tinted"
+TUI.POP_COLOR
+TUI.BG_COLOR 20, 20, 60
+TUI.TEXT "on a bg"
+TUI.POP_COLOR
+TUI.STYLE_PUSH "bold"
+TUI.TEXT "bold"
+TUI.STYLE_PUSH "underlined"
+TUI.TEXT "bold + ul"
+TUI.STYLE_POP
+TUI.STYLE_POP
+TUI.END
+TUI.THEME "warm"
+TUI.THEME "cool"
+
+' 9. Event accessors return without crash
+DIM k$ AS STRING = TUI.KEY$()
+DIM mx AS INTEGER = TUI.MOUSE_X()
+DIM my AS INTEGER = TUI.MOUSE_Y()
+DIM mb AS INTEGER = TUI.MOUSE_BTN()
+DIM mw AS INTEGER = TUI.MOUSE_WHEEL()
+DIM ms AS DOUBLE = TUI.LAST_RENDER_MS()
+expect "MOUSE_X 0-init",     mx = 0
+expect "MOUSE_Y 0-init",     my = 0
+expect "MOUSE_BTN 0-init",   mb = 0
+expect "MOUSE_WHEEL 0-init", mw = 0
+expect "LAST_RENDER_MS >= 0", ms >= 0
+
+' 10. QUIT flag round-trip
+expect "QUIT initially false", TUI.QUIT() = 0
+TUI.EXIT
+expect "QUIT true after EXIT", TUI.QUIT() <> 0
+
+PRINT "============================================="
+PRINT "RESULTS: "; passed; " passed, "; failed; " failed"
+PRINT "============================================="
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

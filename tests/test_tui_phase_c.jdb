@@ -1,0 +1,55 @@
+' Phase-C smoke: exercise every layout primitive.
+
+DIM frame AS INTEGER = 0
+DO
+    TUI.BEGIN "jdBasic — Phase C Layout Smoke"
+
+    TUI.BORDER_BEGIN "Top — HBOX inside border"
+        TUI.HBOX_BEGIN
+            TUI.TEXT "left"
+            TUI.SEPARATOR
+            TUI.TEXT "middle"
+            TUI.SEPARATOR
+            TUI.TEXT "right"
+        TUI.HBOX_END
+    TUI.BORDER_END
+
+    TUI.SEPARATOR_TEXT "GRID 3 columns"
+
+    TUI.GRID_BEGIN 3
+        TUI.TEXT "A1"
+        TUI.TEXT "B1"
+        TUI.TEXT "C1"
+        TUI.TEXT "A2"
+        TUI.TEXT "B2"
+        TUI.TEXT "C2"
+        TUI.TEXT "A3"
+    TUI.GRID_END
+
+    TUI.SEPARATOR_TEXT "HBOX + SPACER"
+
+    TUI.HBOX_BEGIN
+        TUI.TEXT "L"
+        TUI.SPACER
+        TUI.TEXT "frame "
+        TUI.TEXT STR$(frame)
+        TUI.SPACER
+        TUI.TEXT "R"
+    TUI.HBOX_END
+
+    TUI.SEPARATOR_TEXT "SAME_LINE"
+    TUI.TEXT "[A]"
+    TUI.SAME_LINE
+    TUI.TEXT "[B]"
+    TUI.SAME_LINE
+    TUI.TEXT "[C]"
+
+    TUI.SEPARATOR_TEXT "SIZE (fixed 30x1 element)"
+    TUI.TEXT "this text is sized to 30"
+    TUI.SIZE 30, 1
+
+    TUI.END
+    TUI.RENDER
+    SLEEP 50
+    frame = frame + 1
+LOOP UNTIL TUI.QUIT()

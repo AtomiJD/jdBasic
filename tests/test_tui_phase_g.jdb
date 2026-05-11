@@ -1,0 +1,59 @@
+' Phase-G smoke: colour stack, style push/pop, theme tint,
+' WIDTH/HEIGHT/LAST_RENDER_MS, MOUSE accessors.
+
+DIM frame AS INTEGER = 0
+DIM themes = ["cool", "warm", "neon", "cyber", "gold"]
+DIM theme_idx AS INTEGER = 0
+
+DO
+    DIM k$ AS STRING = TUI.KEY$()
+    IF k$ = "C-t" THEN
+        theme_idx = (theme_idx + 1) MOD LEN(themes)
+        TUI.THEME themes[theme_idx]
+    ENDIF
+
+    TUI.BEGIN "jdBasic - Phase G"
+    TUI.HEADING "Colour stack", 2
+
+    TUI.COLOR 255, 80, 80
+    TUI.TEXT "this should be red"
+    TUI.COLOR 80, 255, 80
+    TUI.TEXT "this should be green"
+    TUI.COLOR 80, 160, 255
+    TUI.TEXT "this should be blue"
+    TUI.POP_COLOR
+    TUI.POP_COLOR
+    TUI.POP_COLOR
+    TUI.TEXT "back to default"
+    TUI.SEPARATOR
+
+    TUI.HEADING "Style stack", 2
+    TUI.STYLE_PUSH "bold"
+    TUI.TEXT "bold"
+    TUI.STYLE_PUSH "underlined"
+    TUI.TEXT "bold + underlined"
+    TUI.STYLE_PUSH "italic"
+    TUI.TEXT "bold + underlined + italic"
+    TUI.STYLE_POP
+    TUI.STYLE_POP
+    TUI.STYLE_POP
+    TUI.TEXT "default again"
+    TUI.SEPARATOR
+
+    TUI.HEADING "Diagnostics", 2
+    TUI.TEXT "WIDTH    = " + STR$(TUI.WIDTH())
+    TUI.TEXT "HEIGHT   = " + STR$(TUI.HEIGHT())
+    DIM ms AS DOUBLE = TUI.LAST_RENDER_MS()
+    TUI.TEXT "last render ms = " + STR$(ms)
+    TUI.TEXT "mouse XY = (" + STR$(TUI.MOUSE_X()) + ", " + STR$(TUI.MOUSE_Y()) + ")"
+    TUI.SEPARATOR
+
+    TUI.HEADING "Theme cycle (Ctrl+T)", 2
+    TUI.TEXT "Current theme: " + themes[theme_idx]
+    TUI.TEXT "Watch the title bar tint change."
+
+    TUI.END
+    TUI.RENDER
+    SLEEP 50
+    frame = frame + 1
+LOOP UNTIL TUI.QUIT()

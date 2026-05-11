@@ -94,7 +94,16 @@ for %%A in (%*) do (
             call build_ftxui.bat
         )
         set EXTRA_LIB=!EXTRA_LIB! libs\ftxui\build\ftxui.lib
+        set HAVE_FTXUI=1
         echo [+] FTXUI - Terminal UI
+    )
+    if /I "%%A"=="TUI" (
+        REM TUI.* namespace (scripts target FTXUI through immediate-mode API).
+        REM Implies FTXUI — drag the lib in if the user didn't pass it.
+        set DEFS=!DEFS! /DTUI /DUNICODE /D_UNICODE
+        set EXTRA_SRC=!EXTRA_SRC! src\tui.cpp src\tui_state.cpp
+        set WANT_TUI=1
+        echo [+] TUI - Script-facing terminal UI namespace
     )
     if /I "%%A"=="RELEASE" (
         REM Increment build number
@@ -107,6 +116,19 @@ for %%A in (%*) do (
         set DEFS=!DEFS! /DJDBASIC_BUILD_NUM=\"!BNUM!\" /DJDBASIC_BUILD_DATE=\"!BDATE!\"
         echo [+] RELEASE Build !BNUM! - !BDATE!
     )
+)
+
+REM TUI implies FTXUI — pull the lib in if the user only passed TUI.
+if defined WANT_TUI if not defined HAVE_FTXUI (
+    set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
+    set EXTRA_SRC=!EXTRA_SRC! src\repl_ftxui.cpp
+    set EXTRA_INC=!EXTRA_INC! /Ilibs\ftxui\include
+    if not exist libs\ftxui\build\ftxui.lib (
+        echo [+] FTXUI lib missing - building one-time...
+        call build_ftxui.bat
+    )
+    set EXTRA_LIB=!EXTRA_LIB! libs\ftxui\build\ftxui.lib
+    echo [+] TUI implies FTXUI - lib auto-enabled
 )
 
 REM Compile resources (icon, manifest, version info)

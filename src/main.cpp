@@ -38,6 +38,9 @@
 #ifdef IMGUI
 #include "gui.h"
 #endif
+#ifdef TUI
+#include "tui.h"
+#endif
 #include "sound.h"
 #include "dap.h"
 #include "ffi.h"
@@ -49,6 +52,8 @@
 #endif
 #ifdef MCPSERVER
 #include "mcp_stdio.h"
+#endif
+#ifdef FTXUI
 #include "repl_ftxui.h"
 #endif
 
@@ -288,6 +293,9 @@ static void setup_dynamic_code(VM& vm) {
 #endif
 #ifdef IMGUI
     register_gui_builtins(vm);
+#endif
+#ifdef TUI
+    register_tui_natives(vm);
 #endif
     register_sound_builtins(vm);
     register_ffi_builtins(vm);

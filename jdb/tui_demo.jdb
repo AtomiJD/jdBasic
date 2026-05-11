@@ -1,0 +1,266 @@
+' ===========================================================
+' tui_demo.jdb — TUI.* showcase. Designed to crash the dopamine
+' centres on Win Terminal and Konsole alike.
+'
+' Status: PROPOSAL — the TUI.* namespace doesn't exist yet. This
+' file documents how the demo will read once Phase A-H land per
+' doc/ftxui_implementation.md.
+'
+' Run with:
+'     jdbasic jdb/tui_demo.jdb
+' or, from inside the FTXUI REPL:
+'     load jdb/tui_demo.jdb
+'     run
+'
+' Controls (Phase B keymap):
+'     F1-F5      switch tab
+'     Tab        cycle widget focus inside the active tab
+'     Arrows     navigate the focused widget
+'     Enter      activate
+'     Ctrl+T     cycle theme (cool → warm → neon → cyber → gold)
+'     Ctrl+Q     quit
+' ===========================================================
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+OPTION "NOPAUSE"
+
+' --- State -------------------------------------------------
+DIM active_tab    AS INTEGER = 0
+DIM tabs          = ["Dashboard", "Form", "Table", "Canvas", "About"]
+
+' Dashboard
+DIM cpu_load      AS DOUBLE  = 0.0
+DIM mem_load      AS DOUBLE  = 0.0
+DIM gpu_load      AS DOUBLE  = 0.0
+DIM heartbeat     AS INTEGER = 0
+DIM spinner_idx   AS INTEGER = 0
+DIM frame         AS INTEGER = 0
+
+' Form
+DIM name$         AS STRING  = "Atomi"
+DIM count_var     AS INTEGER = 42
+DIM volume        AS DOUBLE  = 0.5
+DIM newsletter    AS INTEGER = 1
+DIM lang_choice   AS INTEGER = 0
+DIM langs         = ["jdBasic", "Python", "Rust", "Smalltalk"]
+
+' Table
+DIM rows = [ _
+    ["Alice",   "Admin",      "99"], _
+    ["Bob",     "Editor",     "82"], _
+    ["Charlie", "Viewer",     "73"], _
+    ["Dora",    "Editor",     "88"], _
+    ["Eve",     "Auditor",    "65"], _
+    ["Felix",   "Admin",      "94"], _
+    ["Greta",   "Viewer",     "71"] _
+]
+DIM table_sel     AS INTEGER = 0
+
+' Canvas — a Lissajous figure animated by frame counter
+DIM canvas_w      AS INTEGER = 60
+DIM canvas_h      AS INTEGER = 20
+
+' Modal
+DIM about_open    AS INTEGER = 0
+
+' Theme rotation
+DIM theme_names   = ["cool", "warm", "neon", "cyber", "gold"]
+DIM theme_idx     AS INTEGER = 0
+
+' --- Helpers -----------------------------------------------
+SUB render_menubar()
+    TUI.MENUBAR_BEGIN
+    IF TUI.SUBMENU_BEGIN("File") THEN
+        IF TUI.MENUITEM("Reset state") THEN reset_state()
+        IF TUI.MENUITEM("Quit", "Ctrl+Q") THEN TUI.EXIT
+        TUI.SUBMENU_END
+    ENDIF
+    IF TUI.SUBMENU_BEGIN("View") THEN
+        IF TUI.MENUITEM("Next theme", "Ctrl+T") THEN cycle_theme()
+        IF TUI.MENUITEM("About") THEN about_open = 1
+        TUI.SUBMENU_END
+    ENDIF
+    IF TUI.SUBMENU_BEGIN("Demo") THEN
+        IF TUI.MENUITEM("Spike CPU")    THEN cpu_load = 0.95
+        IF TUI.MENUITEM("Spike memory") THEN mem_load = 0.95
+        IF TUI.MENUITEM("Spike GPU")    THEN gpu_load = 0.95
+        IF TUI.MENUITEM("All clear")    THEN cpu_load = 0.1 : mem_load = 0.1 : gpu_load = 0.1
+        TUI.SUBMENU_END
+    ENDIF
+    TUI.MENUBAR_END
+ENDSUB
+
+SUB reset_state()
+    cpu_load = 0.0 : mem_load = 0.0 : gpu_load = 0.0
+    heartbeat = 0 : frame = 0
+ENDSUB
+
+SUB cycle_theme()
+    theme_idx = (theme_idx + 1) MOD LEN(theme_names)
+    TUI.THEME theme_names[theme_idx]
+ENDSUB
+
+' --- Tab renderers -----------------------------------------
+SUB render_dashboard()
+    TUI.HEADING "System Pulse", 1
+    TUI.SEPARATOR
+    TUI.GRID_BEGIN 3
+    ' --- Cell 1: CPU ---
+    TUI.BORDER_BEGIN "CPU"
+    TUI.PROGRESS cpu_load, FORMAT$("{:.0%}", cpu_load)
+    TUI.BORDER_END
+    ' --- Cell 2: Memory ---
+    TUI.BORDER_BEGIN "Memory"
+    TUI.PROGRESS mem_load, FORMAT$("{:.0%}", mem_load)
+    TUI.BORDER_END
+    ' --- Cell 3: GPU ---
+    TUI.BORDER_BEGIN "GPU"
+    TUI.PROGRESS gpu_load, FORMAT$("{:.0%}", gpu_load)
+    TUI.BORDER_END
+    TUI.GRID_END
+    TUI.SEPARATOR
+    TUI.HBOX_BEGIN
+    TUI.SPINNER spinner_idx, 7
+    TUI.TEXT "  Streaming telemetry at " + STR$(60 - INT(TUI.LAST_RENDER_MS())) + " FPS"
+    TUI.SPACER
+    TUI.TEXT FORMAT$("heartbeat ♥ {}", heartbeat) , "bold"
+    TUI.HBOX_END
+ENDSUB
+
+SUB render_form()
+    TUI.HEADING "User Profile", 2
+    TUI.SEPARATOR
+    TUI.INPUT "Display name", name$
+    TUI.INPUT_INT "Lucky number", count_var
+    TUI.SLIDER "Volume", volume, 0.0, 1.0
+    TUI.CHECKBOX "Subscribe to newsletter", newsletter
+    TUI.SEPARATOR_TEXT "Favourite language"
+    TUI.DROPDOWN "lang", langs, lang_choice
+    TUI.SEPARATOR
+    TUI.HBOX_BEGIN
+    IF TUI.BUTTON("Save") THEN
+        about_open = 1
+    ENDIF
+    TUI.TEXT "  "
+    IF TUI.BUTTON("Reset") THEN
+        name$ = "" : count_var = 0 : volume = 0.5 : newsletter = 0 : lang_choice = 0
+    ENDIF
+    TUI.HBOX_END
+ENDSUB
+
+SUB render_table()
+    TUI.HEADING "Users", 2
+    TUI.SEPARATOR
+    TUI.TABLE_BEGIN ["Name", "Role", "Score"]
+    DIM r AS INTEGER
+    FOR r = 0 TO LEN(rows) - 1
+        TUI.TABLE_ROW rows[r]
+    NEXT r
+    TUI.TABLE_END
+    TUI.SEPARATOR
+    TUI.PARAGRAPH "Click a row, drag the gutter (Ctrl+wheel) to resize a column, or use arrow keys to walk the selection."
+ENDSUB
+
+SUB render_canvas()
+    TUI.HEADING "Lissajous", 2
+    TUI.SEPARATOR
+    TUI.CANVAS_BEGIN canvas_w, canvas_h
+    DIM t AS DOUBLE = frame * 0.05
+    DIM steps AS INTEGER = 240
+    DIM i AS INTEGER
+    FOR i = 0 TO steps - 1
+        DIM a AS DOUBLE = i / 240.0 * 6.2832
+        DIM b AS DOUBLE = (i + 1) / 240.0 * 6.2832
+        DIM x1 AS INTEGER = INT(canvas_w/2 + SIN(a*3 + t) * canvas_w*0.45)
+        DIM y1 AS INTEGER = INT(canvas_h/2 + COS(a*2)    * canvas_h*0.45)
+        DIM x2 AS INTEGER = INT(canvas_w/2 + SIN(b*3 + t) * canvas_w*0.45)
+        DIM y2 AS INTEGER = INT(canvas_h/2 + COS(b*2)    * canvas_h*0.45)
+        TUI.LINE x1, y1, x2, y2, 4 + (i MOD 6)
+    NEXT i
+    TUI.CANVAS_END
+    TUI.PARAGRAPH "Braille sub-cell rendering gives us 2x4 'pixels' per cell. The whole figure animates at " + STR$(canvas_w * canvas_h * 8) + " virtual pixels."
+ENDSUB
+
+SUB render_about()
+    TUI.HEADING "jdBasic + FTXUI", 1
+    TUI.SEPARATOR
+    TUI.PARAGRAPH "TUI.* is the terminal-mode twin of GUI.*. Same script, different backend — render any jdBasic app into a terminal with menus, mouse, modals, and animated charts."
+    TUI.SEPARATOR
+    TUI.TEXT "Build:    " + TUI.VERSION$()
+    TUI.TEXT "Terminal: " + STR$(TUI.WIDTH()) + " x " + STR$(TUI.HEIGHT())
+    TUI.TEXT "Theme:    " + theme_names[theme_idx]
+    TUI.TEXT "Frame:    " + STR$(frame)
+    TUI.SEPARATOR
+    TUI.LINK "Project site", "https://jdbasic.org"
+    TUI.LINK "Source",       "https://github.com/AtomiJD/jdBasic"
+ENDSUB
+
+SUB render_about_modal()
+    IF about_open = 0 THEN RETURN
+    IF TUI.MODAL_BEGIN("about", "About this demo") THEN
+        TUI.PARAGRAPH "TUI.* showcase running on jdBasic. Every widget you see is one immediate-mode call away."
+        TUI.SEPARATOR
+        TUI.PARAGRAPH "Press Esc or click 'OK' to dismiss."
+        TUI.HBOX_BEGIN
+        TUI.SPACER
+        IF TUI.BUTTON("OK") THEN
+            about_open = 0
+            TUI.MODAL_CLOSE
+        ENDIF
+        TUI.HBOX_END
+        TUI.MODAL_END
+    ENDIF
+ENDSUB
+
+' --- Quit handler -----------------------------------------
+SUB on_quit(payload)
+    TUI.EXIT
+ENDSUB
+TUI.ON "QUIT" CALL on_quit
+
+' --- Main loop --------------------------------------------
+TUI.THEME "cool"
+
+DO
+    ' Tick simulated metrics so the dashboard looks alive.
+    cpu_load = ABS(SIN(frame * 0.04))
+    mem_load = 0.3 + 0.5 * ABS(SIN(frame * 0.018 + 1.0))
+    gpu_load = 0.1 + 0.4 * ABS(SIN(frame * 0.025 + 2.0))
+    IF (frame MOD 30) = 0 THEN heartbeat = heartbeat + 1
+    spinner_idx = (frame MOD 8)
+
+    ' Hotkey shortcuts (mirror the menu entries).
+    DIM k$ AS STRING = TUI.KEY$()
+    IF k$ = "F1" THEN active_tab = 0
+    IF k$ = "F2" THEN active_tab = 1
+    IF k$ = "F3" THEN active_tab = 2
+    IF k$ = "F4" THEN active_tab = 3
+    IF k$ = "F5" THEN active_tab = 4
+    IF k$ = "C-t" THEN cycle_theme()
+
+    TUI.BEGIN "jdBasic — TUI.* Demo"
+    render_menubar()
+    TUI.TAB_BAR_BEGIN tabs, active_tab
+    IF TUI.TAB_BEGIN("Dashboard") THEN render_dashboard() : TUI.TAB_END
+    IF TUI.TAB_BEGIN("Form")      THEN render_form()      : TUI.TAB_END
+    IF TUI.TAB_BEGIN("Table")     THEN render_table()     : TUI.TAB_END
+    IF TUI.TAB_BEGIN("Canvas")    THEN render_canvas()    : TUI.TAB_END
+    IF TUI.TAB_BEGIN("About")     THEN render_about()     : TUI.TAB_END
+    TUI.TAB_BAR_END
+    render_about_modal()
+    TUI.SEPARATOR
+    TUI.HBOX_BEGIN
+    TUI.TEXT "F1-F5 tabs · Tab focus · Ctrl+T theme · Ctrl+Q quit"
+    TUI.SPACER
+    TUI.TEXT FORMAT$("frame {:>5}", frame)
+    TUI.HBOX_END
+    TUI.END
+
+    TUI.RENDER
+    SLEEP 16
+    frame = frame + 1
+LOOP UNTIL TUI.QUIT()
+
+PRINT "Thanks for trying the TUI.* demo. ", frame; " frames rendered."
+END

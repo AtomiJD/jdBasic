@@ -1,0 +1,24 @@
+' Phase-B smoke: BEGIN/TEXT/END/RENDER + WAIT_EVENT loop.
+' Run from terminal (not the REPL). Ctrl+Q exits.
+
+PRINT "Starting TUI Phase B demo. Press Ctrl+Q to quit."
+
+DIM frame AS INTEGER = 0
+
+DO
+    TUI.BEGIN "jdBasic — Phase B Smoke"
+    TUI.TEXT "Hello from the terminal!"
+    TUI.TEXT ""
+    TUI.TEXT "TUI.* is alive."
+    TUI.TEXT ""
+    TUI.TEXT "Frame: " + STR$(frame)
+    TUI.TEXT "Last key: " + TUI.KEY$()
+    TUI.TEXT ""
+    TUI.TEXT "Press Ctrl+Q to quit."
+    TUI.END
+    TUI.RENDER
+    SLEEP 50
+    frame = frame + 1
+LOOP UNTIL TUI.QUIT()
+
+PRINT "Bye. ", frame; " frames rendered."

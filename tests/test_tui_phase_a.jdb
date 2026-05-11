@@ -1,0 +1,12 @@
+' Phase-A scaffolding smoke: every TUI.* native should be callable
+' and return NONE without crashing. Each stub prints one warning on
+' first call, then stays quiet.
+
+PRINT "phase A smoke"
+TUI.BEGIN "hello"
+TUI.TEXT "world"
+TUI.END
+DIM q = TUI.QUIT()
+PRINT "qflag = "; q
+PRINT "version = "; TUI.VERSION$()
+PRINT "smoke OK"

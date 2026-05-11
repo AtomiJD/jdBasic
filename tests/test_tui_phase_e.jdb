@@ -1,0 +1,64 @@
+' Phase-E smoke: progress, gauge, spinner, canvas, table, paragraph,
+' heading, link.
+
+DIM frame AS INTEGER = 0
+DIM head = ["Name", "Role", "Score"]
+DIM rows = [ _
+    ["Alice",   "Admin",   "99"], _
+    ["Bob",     "Editor",  "82"], _
+    ["Charlie", "Viewer",  "73"], _
+    ["Eve",     "Auditor", "65"]  _
+]
+
+DO
+    TUI.BEGIN "jdBasic - Phase E Display Smoke"
+
+    TUI.HEADING "Dashboard", 1
+    TUI.PARAGRAPH "Live demo of TUI.PROGRESS, GAUGE, SPINNER, CANVAS, TABLE, LINK. All driven from a single jdBasic script."
+    TUI.SEPARATOR
+
+    TUI.HEADING "Progress + gauge", 2
+    DIM frac AS DOUBLE = (frame MOD 100) / 100.0
+    TUI.PROGRESS frac, FORMAT$("{:.0%}", frac)
+    TUI.GAUGE frac, "Loading..."
+    TUI.SEPARATOR
+
+    TUI.HBOX_BEGIN
+        DIM si AS INTEGER = frame MOD 8
+        TUI.SPINNER si, 7
+        TUI.TEXT "  Streaming telemetry..."
+    TUI.HBOX_END
+    TUI.SEPARATOR
+
+    TUI.HEADING "Canvas (Lissajous)", 2
+    TUI.CANVAS_BEGIN 60, 16
+        DIM t AS DOUBLE = frame * 0.05
+        DIM i AS INTEGER
+        FOR i = 0 TO 119
+            DIM a AS DOUBLE = i / 120.0 * 6.2832
+            DIM b AS DOUBLE = (i+1) / 120.0 * 6.2832
+            DIM x1 AS INTEGER = INT(30 + SIN(a*3 + t) * 27)
+            DIM y1 AS INTEGER = INT(8  + COS(a*2) * 7)
+            DIM x2 AS INTEGER = INT(30 + SIN(b*3 + t) * 27)
+            DIM y2 AS INTEGER = INT(8  + COS(b*2) * 7)
+            TUI.LINE x1, y1, x2, y2, 4 + (i MOD 6)
+        NEXT i
+    TUI.CANVAS_END
+    TUI.SEPARATOR
+
+    TUI.HEADING "Table", 2
+    TUI.TABLE_BEGIN head
+        DIM r AS INTEGER
+        FOR r = 0 TO LEN(rows) - 1
+            TUI.TABLE_ROW rows[r]
+        NEXT r
+    TUI.TABLE_END
+    TUI.SEPARATOR
+
+    TUI.LINK "jdBasic project site", "https://jdbasic.org"
+
+    TUI.END
+    TUI.RENDER
+    SLEEP 40
+    frame = frame + 1
+LOOP UNTIL TUI.QUIT()
