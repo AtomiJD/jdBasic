@@ -63,9 +63,6 @@ DIM table_sel     AS INTEGER = 0
 DIM canvas_w      AS INTEGER = 60
 DIM canvas_h      AS INTEGER = 20
 
-' Modal
-DIM about_open    AS INTEGER = 0
-
 ' Theme rotation
 DIM theme_names   = ["cool", "warm", "neon", "cyber", "gold"]
 DIM theme_idx     AS INTEGER = 0
@@ -80,7 +77,7 @@ SUB render_menubar()
     ENDIF
     IF TUI.SUBMENU_BEGIN("View") THEN
         IF TUI.MENUITEM("Next theme", "Ctrl+T") THEN cycle_theme()
-        IF TUI.MENUITEM("About") THEN about_open = 1
+        IF TUI.MENUITEM("About") THEN TUI.MODAL_OPEN "about"
         TUI.SUBMENU_END
     ENDIF
     IF TUI.SUBMENU_BEGIN("Demo") THEN
@@ -144,7 +141,7 @@ SUB render_form()
     TUI.SEPARATOR
     TUI.HBOX_BEGIN
     IF TUI.BUTTON("Save") THEN
-        about_open = 1
+        TUI.MODAL_OPEN "about"
     ENDIF
     TUI.TEXT "  "
     IF TUI.BUTTON("Reset") THEN
@@ -213,17 +210,16 @@ SUB render_about()
 ENDSUB
 
 SUB render_about_modal()
-    IF about_open = 0 THEN RETURN
+    ' MODAL_BEGIN(id$) returns true only while the matching modal
+    ' is active — set by TUI.MODAL_OPEN, cleared by TUI.MODAL_CLOSE
+    ' or by the engine's Esc handler.
     IF TUI.MODAL_BEGIN("about", "About this demo") THEN
         TUI.PARAGRAPH "TUI.* showcase running on jdBasic. Every widget you see is one immediate-mode call away."
         TUI.SEPARATOR
         TUI.PARAGRAPH "Press Esc, or Tab to OK and hit Enter."
         TUI.HBOX_BEGIN
         TUI.SPACER
-        IF TUI.BUTTON("OK") THEN
-            about_open = 0
-            TUI.MODAL_CLOSE
-        ENDIF
+        IF TUI.BUTTON("OK") THEN TUI.MODAL_CLOSE
         TUI.HBOX_END
         TUI.MODAL_END
     ENDIF
