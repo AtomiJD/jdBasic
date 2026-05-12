@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstdint>
 #include "token.h"
 
 enum class VarType {

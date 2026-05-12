@@ -3,6 +3,7 @@
 #include <iostream>
 #include <cmath>
 #include <functional>
+#include <algorithm>
 
 Compiler::Compiler() {
     scopes.push_back(CompilerScope{}); // main scope

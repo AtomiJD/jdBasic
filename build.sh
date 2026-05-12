@@ -125,7 +125,8 @@ fi
 
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
-     src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC"
+     src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
+     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.
@@ -192,7 +193,8 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     mkdir -p build/obj_pic
     RT_SRC="src/vm_bridge.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
             src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
-            src/gui.cpp src/ai.cpp src/llm.cpp $HTTP_SRC $GFX_SRC $IMGUI_SRC"
+            src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
+            $HTTP_SRC $GFX_SRC $IMGUI_SRC"
     RT_FLAGS_HASH=$(echo "$CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS" | sha1sum | cut -c1-12)
     RT_STAMP="build/obj_pic/.flags-$RT_FLAGS_HASH"
     if [ ! -f "$RT_STAMP" ]; then

@@ -348,7 +348,9 @@ void Console::run() {
     render_prompt();
 
     s_active_repl = this;
+#ifdef GFX
     gfx_set_repl_switch_hook(true, &Console::repl_switch_workspace_trampoline);
+#endif
 
     while (is_running) {
         // Drain Ctrl+F1..F4 chord requested from the graphics SDL loop
@@ -480,7 +482,9 @@ void Console::run() {
         }
     }
 
+#ifdef GFX
     gfx_set_repl_switch_hook(false, nullptr);
+#endif
     s_active_repl = nullptr;
 
     // Join any running worker threads on exit
