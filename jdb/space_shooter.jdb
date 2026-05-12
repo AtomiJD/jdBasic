@@ -1305,7 +1305,12 @@ ENDSUB
 ' DRAW — batch via matrix-mode LINE / GFX.PLOT_POINTS
 ' ──────────────────────────────────────────────────────────────────
 SUB draw_stars()
-    GFX.PLOT_POINTS star_x, star_y, star_rgb
+    ' PLOT_POINTS_TEX batches into one SDL_UpdateTexture + RenderTexture
+    ' instead of N individual RenderPoint submits — drops the GPU command
+    ' count from O(N) per frame to O(1). Cleared bg gets folded in so the
+    ' preceding CLS becomes redundant but stays for visual clarity.
+    DIM bg = g_palette{"bg"}
+    GFX.PLOT_POINTS_TEX star_x, star_y, star_rgb, bg
 ENDSUB
 
 SUB draw_player()

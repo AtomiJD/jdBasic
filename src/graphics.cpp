@@ -32,6 +32,13 @@ static SDL_Texture*       g_plot_tex   = nullptr;
 static int                g_plot_tex_w = 0;
 static int                g_plot_tex_h = 0;
 static std::vector<uint32_t> g_plot_buf;
+
+// Reusable scratch buffer for GFX.PLOT_POINTS. SDL3's renderer backends
+// don't all copy the SDL_FPoint array on submit — a per-frame local
+// vector would be freed before the GPU consumed it. File-scope keeps the
+// pointer valid until the next call (which is fine: the renderer drains
+// its queue before the next PLOT_POINTS arrives, on RenderPresent).
+static std::vector<SDL_FPoint> g_pts_buf;
 static bool          g_sdl_init = false;
 
 // Key buffer for INKEY$ in GFX mode
@@ -817,18 +824,20 @@ void register_graphics_builtins(VM& vm) {
             }
         }
 
-        // Build a contiguous SDL_FPoint array (cheap)
-        std::vector<SDL_FPoint> pts(n);
+        // Fill the file-scope scratch buffer. Reusing it across calls
+        // keeps the SDL_FPoint pointer valid even if SDL3's renderer
+        // defers consumption until SDL_RenderPresent.
+        g_pts_buf.resize(n);
         for (size_t i = 0; i < n; i++) {
-            pts[i].x = (float)xs[i].to_double();
-            pts[i].y = (float)ys[i].to_double();
+            g_pts_buf[i].x = (float)xs[i].to_double();
+            g_pts_buf[i].y = (float)ys[i].to_double();
         }
 
         if (!has_rgb_arg) {
-            SDL_RenderPoints(g_renderer, pts.data(), (int)n);
+            SDL_RenderPoints(g_renderer, g_pts_buf.data(), (int)n);
         } else if (single_colour) {
             SDL_SetRenderDrawColor(g_renderer, sr, sg, sb, 255);
-            SDL_RenderPoints(g_renderer, pts.data(), (int)n);
+            SDL_RenderPoints(g_renderer, g_pts_buf.data(), (int)n);
             apply_draw_color();
         } else if (flat_per_pixel) {
             auto& cs = args[2].as_array()->elements;
@@ -837,7 +846,7 @@ void register_graphics_builtins(VM& vm) {
                     (Uint8)cs[i*3 + 0].to_int(),
                     (Uint8)cs[i*3 + 1].to_int(),
                     (Uint8)cs[i*3 + 2].to_int(), 255);
-                SDL_RenderPoint(g_renderer, pts[i].x, pts[i].y);
+                SDL_RenderPoint(g_renderer, g_pts_buf[i].x, g_pts_buf[i].y);
             }
             apply_draw_color();
         } else {
@@ -846,7 +855,7 @@ void register_graphics_builtins(VM& vm) {
                 Uint8 r, g, b;
                 get_color_at(args[2], i, r, g, b);
                 SDL_SetRenderDrawColor(g_renderer, r, g, b, 255);
-                SDL_RenderPoint(g_renderer, pts[i].x, pts[i].y);
+                SDL_RenderPoint(g_renderer, g_pts_buf[i].x, g_pts_buf[i].y);
             }
             apply_draw_color();
         }
