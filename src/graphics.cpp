@@ -85,6 +85,7 @@ static bool g_ttf_init = false;
 
 // Audio state
 static bool g_audio_init = false;
+static MIX_Mixer* g_mixer = nullptr;
 
 // Image cache: id -> texture
 static int g_next_image_id = 1;
@@ -534,7 +535,11 @@ static void cleanup_graphics() {
     if (g_font) { TTF_CloseFont(g_font); g_font = nullptr; }
     if (g_ttf_init) { TTF_Quit(); g_ttf_init = false; }
 
-    if (g_audio_init) { Mix_CloseAudio(); Mix_Quit(); g_audio_init = false; }
+    if (g_audio_init) {
+        if (g_mixer) { MIX_DestroyMixer(g_mixer); g_mixer = nullptr; }
+        MIX_Quit();
+        g_audio_init = false;
+    }
 
 #ifdef IMGUI
     gui_shutdown();
@@ -2443,7 +2448,7 @@ void register_graphics_builtins(VM& vm) {
     });
 
     // ══════════════════════════════════════════════════════════════
-    // ── Audio (SDL_mixer / SDL3_mixer) ───────────────────────────
+    // ── Audio (SDL3_mixer 3.4+ — track/audio model) ──────────────
     // ══════════════════════════════════════════════════════════════
 
     vm.register_native("AUDIO.INIT", 0, 0, [](const std::vector<Value>& args) -> Value {
@@ -2459,83 +2464,113 @@ void register_graphics_builtins(VM& vm) {
             SDL_InitSubSystem(SDL_INIT_AUDIO);
         }
 
-        Mix_Init(MIX_INIT_MP3 | MIX_INIT_OGG | MIX_INIT_FLAC);
+        if (!MIX_Init())
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("MIX_Init failed: ") + SDL_GetError());
 
         SDL_AudioSpec spec;
         spec.freq = 44100;
         spec.format = SDL_AUDIO_S16;
         spec.channels = 2;
 
-        if (!Mix_OpenAudio(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec))
+        g_mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
+        if (!g_mixer)
             throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("Mix_OpenAudio failed: ") + SDL_GetError());
+                std::string("MIX_CreateMixerDevice failed: ") + SDL_GetError());
 
         g_audio_init = true;
         return Value::make_none();
     });
 
-    // Sound effects (chunks)
-    static std::unordered_map<int, Mix_Chunk*> s_chunks;
+    // Sound effects: predecoded MIX_Audio + one MIX_Track per chunk id.
+    // Old API supported concurrent play of the same chunk on different
+    // channels — that collapses to a single track per id that restarts
+    // on play. Add a track pool here later if real overlap is needed.
+    static std::unordered_map<int, MIX_Audio*> s_chunks;
+    static std::unordered_map<int, MIX_Track*> s_chunk_tracks;
     static int s_next_chunk_id = 1;
 
     vm.register_native("AUDIO.LOADWAV", 1, 1, [](const std::vector<Value>& args) -> Value {
         if (!g_audio_init)
             throw jdError(ErrCode::RUNTIME_ERROR, "AUDIO.LOADWAV: call AUDIO.INIT first");
         std::string path = args[0].as_string()->data;
-        Mix_Chunk* chunk = Mix_LoadWAV(path.c_str());
-        if (!chunk)
+        MIX_Audio* audio = MIX_LoadAudio(g_mixer, path.c_str(), true);
+        if (!audio)
             throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("Mix_LoadWAV failed: ") + SDL_GetError());
+                std::string("MIX_LoadAudio failed: ") + SDL_GetError());
         int id = s_next_chunk_id++;
-        s_chunks[id] = chunk;
+        s_chunks[id] = audio;
         return Value::make_i64(id);
     });
 
     vm.register_native("AUDIO.PLAY", 1, 3, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
         int loops = (args.size() >= 2) ? (int)args[1].to_int() : 0;
-        int channel = (args.size() >= 3) ? (int)args[2].to_int() : -1;
         auto it = s_chunks.find(id);
         if (it == s_chunks.end())
             throw jdError(ErrCode::RUNTIME_ERROR, "AUDIO.PLAY: invalid sound id");
-        int ch = Mix_PlayChannel(channel, it->second, loops);
-        return Value::make_i64(ch);
+
+        MIX_Track* track;
+        auto tit = s_chunk_tracks.find(id);
+        if (tit == s_chunk_tracks.end()) {
+            track = MIX_CreateTrack(g_mixer);
+            s_chunk_tracks[id] = track;
+            MIX_SetTrackAudio(track, it->second);
+        } else {
+            track = tit->second;
+            MIX_StopTrack(track, 0);
+        }
+        MIX_SetTrackLoops(track, loops);
+        MIX_PlayTrack(track, 0);
+        return Value::make_i64(id);
     });
 
     vm.register_native("AUDIO.FREE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
+        auto tit = s_chunk_tracks.find(id);
+        if (tit != s_chunk_tracks.end()) {
+            MIX_DestroyTrack(tit->second);
+            s_chunk_tracks.erase(tit);
+        }
         auto it = s_chunks.find(id);
         if (it != s_chunks.end()) {
-            Mix_FreeChunk(it->second);
+            MIX_DestroyAudio(it->second);
             s_chunks.erase(it);
         }
         return Value::make_none();
     });
 
-    // Music
-    static std::unordered_map<int, Mix_Music*> s_musics;
+    // Music: streamed MIX_Audio + a single dedicated MIX_Track shared
+    // across all music ids (only one piece of music plays at a time, same
+    // as the old Mix_PlayMusic semantics).
+    static std::unordered_map<int, MIX_Audio*> s_musics;
     static int s_next_music_id = 1;
+    static MIX_Track* s_music_track = nullptr;
 
     vm.register_native("AUDIO.LOADMUS", 1, 1, [](const std::vector<Value>& args) -> Value {
         if (!g_audio_init)
             throw jdError(ErrCode::RUNTIME_ERROR, "AUDIO.LOADMUS: call AUDIO.INIT first");
         std::string path = args[0].as_string()->data;
-        Mix_Music* mus = Mix_LoadMUS(path.c_str());
-        if (!mus)
+        MIX_Audio* audio = MIX_LoadAudio(g_mixer, path.c_str(), false);
+        if (!audio)
             throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("Mix_LoadMUS failed: ") + SDL_GetError());
+                std::string("MIX_LoadAudio failed: ") + SDL_GetError());
         int id = s_next_music_id++;
-        s_musics[id] = mus;
+        s_musics[id] = audio;
         return Value::make_i64(id);
     });
 
     vm.register_native("AUDIO.PLAYMUS", 1, 2, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
-        int loops = (args.size() >= 2) ? (int)args[1].to_int() : -1; // -1 = infinite
+        int loops = (args.size() >= 2) ? (int)args[1].to_int() : -1;
         auto it = s_musics.find(id);
         if (it == s_musics.end())
             throw jdError(ErrCode::RUNTIME_ERROR, "AUDIO.PLAYMUS: invalid music id");
-        Mix_PlayMusic(it->second, loops);
+        if (!s_music_track) s_music_track = MIX_CreateTrack(g_mixer);
+        MIX_StopTrack(s_music_track, 0);
+        MIX_SetTrackAudio(s_music_track, it->second);
+        MIX_SetTrackLoops(s_music_track, loops);
+        MIX_PlayTrack(s_music_track, 0);
         return Value::make_none();
     });
 
@@ -2543,66 +2578,95 @@ void register_graphics_builtins(VM& vm) {
         int id = (int)args[0].to_int();
         auto it = s_musics.find(id);
         if (it != s_musics.end()) {
-            Mix_FreeMusic(it->second);
+            if (s_music_track && MIX_GetTrackAudio(s_music_track) == it->second)
+                MIX_StopTrack(s_music_track, 0);
+            MIX_DestroyAudio(it->second);
             s_musics.erase(it);
         }
         return Value::make_none();
     });
 
     vm.register_native("AUDIO.STOP", 0, 1, [](const std::vector<Value>& args) -> Value {
-        int ch = args.empty() ? -1 : (int)args[0].to_int();
-        Mix_HaltChannel(ch);
+        if (args.empty() || (int)args[0].to_int() < 0) {
+            for (auto& kv : s_chunk_tracks) MIX_StopTrack(kv.second, 0);
+        } else {
+            int id = (int)args[0].to_int();
+            auto it = s_chunk_tracks.find(id);
+            if (it != s_chunk_tracks.end()) MIX_StopTrack(it->second, 0);
+        }
         return Value::make_none();
     });
 
     vm.register_native("AUDIO.STOPMUS", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        Mix_HaltMusic();
+        if (s_music_track) MIX_StopTrack(s_music_track, 0);
         return Value::make_none();
     });
 
     vm.register_native("AUDIO.VOLUME", 1, 2, [](const std::vector<Value>& args) -> Value {
-        int vol = (int)args[0].to_int(); // 0-128
-        int ch = (args.size() >= 2) ? (int)args[1].to_int() : -1;
-        return Value::make_i64(Mix_Volume(ch, vol));
+        int vol = (int)args[0].to_int(); // 0-128 (compat)
+        float gain = (float)vol / 128.0f;
+        if (args.size() >= 2 && (int)args[1].to_int() >= 0) {
+            int id = (int)args[1].to_int();
+            auto it = s_chunk_tracks.find(id);
+            if (it != s_chunk_tracks.end()) MIX_SetTrackGain(it->second, gain);
+        } else if (g_mixer) {
+            MIX_SetMixerGain(g_mixer, gain);
+        }
+        return Value::make_i64(vol);
     });
 
     vm.register_native("AUDIO.VOLUMEMUS", 1, 1, [](const std::vector<Value>& args) -> Value {
         int vol = (int)args[0].to_int();
-        return Value::make_i64(Mix_VolumeMusic(vol));
+        if (s_music_track) MIX_SetTrackGain(s_music_track, (float)vol / 128.0f);
+        return Value::make_i64(vol);
     });
 
     vm.register_native("AUDIO.PAUSE", 0, 1, [](const std::vector<Value>& args) -> Value {
-        int ch = args.empty() ? -1 : (int)args[0].to_int();
-        Mix_Pause(ch);
+        if (args.empty() || (int)args[0].to_int() < 0) {
+            if (g_mixer) MIX_PauseAllTracks(g_mixer);
+        } else {
+            int id = (int)args[0].to_int();
+            auto it = s_chunk_tracks.find(id);
+            if (it != s_chunk_tracks.end()) MIX_PauseTrack(it->second);
+        }
         return Value::make_none();
     });
 
     vm.register_native("AUDIO.RESUME", 0, 1, [](const std::vector<Value>& args) -> Value {
-        int ch = args.empty() ? -1 : (int)args[0].to_int();
-        Mix_Resume(ch);
+        if (args.empty() || (int)args[0].to_int() < 0) {
+            if (g_mixer) MIX_ResumeAllTracks(g_mixer);
+        } else {
+            int id = (int)args[0].to_int();
+            auto it = s_chunk_tracks.find(id);
+            if (it != s_chunk_tracks.end()) MIX_ResumeTrack(it->second);
+        }
         return Value::make_none();
     });
 
     vm.register_native("AUDIO.PAUSEMUS", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        Mix_PauseMusic();
+        if (s_music_track) MIX_PauseTrack(s_music_track);
         return Value::make_none();
     });
 
     vm.register_native("AUDIO.RESUMEMUS", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        Mix_ResumeMusic();
+        if (s_music_track) MIX_ResumeTrack(s_music_track);
         return Value::make_none();
     });
 
     vm.register_native("AUDIO.CLOSE", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        for (auto& [id, ch] : s_chunks) Mix_FreeChunk(ch);
+        for (auto& kv : s_chunk_tracks) MIX_DestroyTrack(kv.second);
+        s_chunk_tracks.clear();
+        for (auto& kv : s_chunks) MIX_DestroyAudio(kv.second);
         s_chunks.clear();
-        for (auto& [id, m] : s_musics) Mix_FreeMusic(m);
+        if (s_music_track) { MIX_DestroyTrack(s_music_track); s_music_track = nullptr; }
+        for (auto& kv : s_musics) MIX_DestroyAudio(kv.second);
         s_musics.clear();
-        if (g_audio_init) { Mix_CloseAudio(); Mix_Quit(); g_audio_init = false; }
+        if (g_mixer) { MIX_DestroyMixer(g_mixer); g_mixer = nullptr; }
+        if (g_audio_init) { MIX_Quit(); g_audio_init = false; }
         return Value::make_none();
     });
 
