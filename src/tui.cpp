@@ -44,6 +44,10 @@
   #ifdef DOUBLE
     #undef DOUBLE
   #endif
+#else
+  #include <unistd.h>
+  #include <termios.h>
+  #include <fcntl.h>
 #endif
 
 namespace {
@@ -62,12 +66,42 @@ namespace {
 #ifdef _WIN32
 static DWORD g_saved_in_mode = 0;
 static bool g_saved_in_mode_valid = false;
+#else
+static struct termios g_saved_tio;
+static bool g_saved_tio_valid = false;
+static std::string g_input_buf;  // pending stdin bytes across polls
+
+static void posix_enter_raw_mode() {
+    if (g_saved_tio_valid) return;
+    if (tcgetattr(STDIN_FILENO, &g_saved_tio) != 0) return;
+    g_saved_tio_valid = true;
+    struct termios raw = g_saved_tio;
+    // Drop canonical / echo / signal mode so we see every byte raw.
+    raw.c_lflag &= ~(ICANON | ECHO | ISIG);
+    // Disable XON/XOFF and CR translation so ESC/Ctrl bytes survive.
+    raw.c_iflag &= ~(IXON | ICRNL);
+    // Keep output processing disabled too — we drive the terminal.
+    raw.c_oflag &= ~(OPOST);
+    // VMIN=0,VTIME=0: read returns immediately with whatever is there.
+    raw.c_cc[VMIN]  = 0;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+}
+
+static void posix_restore_mode() {
+    if (g_saved_tio_valid) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_saved_tio);
+        g_saved_tio_valid = false;
+    }
+}
 #endif
 
 void atexit_restore_terminal() {
     auto& s = jdb_tui::state();
     if (s.alt_screen_active) {
-        std::cout << "\033[?25h"      // show cursor
+        std::cout << "\033[?1003l"    // disable any-motion mouse
+                  << "\033[?1006l"    // disable SGR mouse mode
+                  << "\033[?25h"      // show cursor
                   << "\033[?1049l"    // leave alt screen
                   << std::flush;
         s.alt_screen_active = false;
@@ -78,6 +112,8 @@ void atexit_restore_terminal() {
         SetConsoleMode(hin, g_saved_in_mode);
         g_saved_in_mode_valid = false;
     }
+#else
+    posix_restore_mode();
 #endif
 }
 
@@ -113,9 +149,12 @@ void enter_alt_screen_once() {
                         & ~ENABLE_PROCESSED_INPUT;
         SetConsoleMode(hin, desired);
     }
+#else
+    posix_enter_raw_mode();
 #endif
-    std::cout << "\033[?1049h"   // enter alt screen
-              << "\033[?25l"     // hide cursor (we don't blink one)
+    std::cout << "\033[?1049h"           // enter alt screen
+              << "\033[?25l"             // hide cursor (we don't blink one)
+              << "\033[?1003h\033[?1006h"  // any-motion mouse + SGR coords
               << std::flush;
     s.alt_screen_active = true;
     static bool atexit_registered = false;
@@ -236,8 +275,152 @@ bool poll_one_event(std::string& out) {
             return false;
     }
 #else
-    (void)out;
-    return false; // Linux poll deferred — see project_linux_port.md
+    auto& s = jdb_tui::state();
+    // Top up the input buffer non-blockingly. read() returns 0 immediately
+    // when nothing is available (VMIN=0, VTIME=0 in raw mode).
+    char readbuf[64];
+    ssize_t nread = read(STDIN_FILENO, readbuf, sizeof(readbuf));
+    if (nread > 0) g_input_buf.append(readbuf, (size_t)nread);
+
+    while (!g_input_buf.empty()) {
+        unsigned char c0 = (unsigned char)g_input_buf[0];
+
+        // Non-ESC: simple byte or control char
+        if (c0 != 0x1B) {
+            if (c0 == '\t')  { out = "Tab";        g_input_buf.erase(0, 1); return true; }
+            if (c0 == '\r' || c0 == '\n')
+                              { out = "Enter";      g_input_buf.erase(0, 1); return true; }
+            if (c0 == 0x08 || c0 == 0x7F)
+                              { out = "Backspace";  g_input_buf.erase(0, 1); return true; }
+            if (c0 >= 0x01 && c0 <= 0x1A) {
+                if (c0 == 0x11) { out = "C-q"; g_input_buf.erase(0, 1); return true; }
+                if (c0 == 0x03) { out = "C-c"; g_input_buf.erase(0, 1); return true; }
+                if (c0 == 0x14) { out = "C-t"; g_input_buf.erase(0, 1); return true; }
+                char ctrl[4] = { 'C', '-', (char)('a' + c0 - 1), 0 };
+                out = ctrl; g_input_buf.erase(0, 1); return true;
+            }
+            // Printable ASCII
+            if (c0 >= 0x20 && c0 < 0x80) {
+                out.assign(1, (char)c0); g_input_buf.erase(0, 1); return true;
+            }
+            // UTF-8 multibyte — pass through as bytes once complete
+            int need = 0;
+            if      ((c0 & 0xE0) == 0xC0) need = 2;
+            else if ((c0 & 0xF0) == 0xE0) need = 3;
+            else if ((c0 & 0xF8) == 0xF0) need = 4;
+            if (need && g_input_buf.size() >= (size_t)need) {
+                out = g_input_buf.substr(0, need); g_input_buf.erase(0, need); return true;
+            }
+            return false;  // incomplete — wait for more
+        }
+
+        // ESC alone — treat as Esc (no follow-up byte buffered yet).
+        if (g_input_buf.size() == 1) {
+            out = "Esc"; g_input_buf.erase(0, 1); return true;
+        }
+
+        char c1 = g_input_buf[1];
+
+        // SS3 sequence: \x1B O <X>  → xterm F1-F4, Home/End
+        if (c1 == 'O') {
+            if (g_input_buf.size() < 3) return false;
+            char c2 = g_input_buf[2];
+            const char* fn = nullptr;
+            switch (c2) {
+                case 'P': fn = "F1"; break;
+                case 'Q': fn = "F2"; break;
+                case 'R': fn = "F3"; break;
+                case 'S': fn = "F4"; break;
+                case 'H': fn = "Home"; break;
+                case 'F': fn = "End"; break;
+            }
+            if (fn) { out = fn; g_input_buf.erase(0, 3); return true; }
+            g_input_buf.erase(0, 3);  // unknown SS3, drop and keep looping
+            continue;
+        }
+
+        // CSI sequence: \x1B [
+        if (c1 == '[') {
+            if (g_input_buf.size() < 3) return false;
+
+            // SGR mouse: \x1B [ < <btn>;<x>;<y> M  (press) or m (release)
+            if (g_input_buf[2] == '<') {
+                size_t end = 3;
+                while (end < g_input_buf.size() &&
+                       g_input_buf[end] != 'M' && g_input_buf[end] != 'm') end++;
+                if (end >= g_input_buf.size()) return false;  // incomplete
+                std::string body = g_input_buf.substr(3, end - 3);
+                int btn = 0, mx = 0, my = 0;
+                std::sscanf(body.c_str(), "%d;%d;%d", &btn, &mx, &my);
+                bool release = (g_input_buf[end] == 'm');
+                s.mouse_x = mx - 1;  // SGR coords are 1-based
+                s.mouse_y = my - 1;
+                if (btn == 64) s.mouse_wheel += 1;
+                else if (btn == 65) s.mouse_wheel -= 1;
+                else {
+                    int base = btn & 0x03;
+                    int bit  = (base == 0) ? 0x01   // left
+                            : (base == 1) ? 0x04   // middle
+                            : (base == 2) ? 0x02   // right
+                            : 0;
+                    if (bit) {
+                        if (release) s.mouse_buttons &= ~bit;
+                        else         s.mouse_buttons |=  bit;
+                    }
+                }
+                g_input_buf.erase(0, end + 1);
+                continue;  // mouse handled, keep polling for keys
+            }
+
+            // CSI arrows + nav (single char)
+            char c2 = g_input_buf[2];
+            const char* fn = nullptr;
+            switch (c2) {
+                case 'A': fn = "Up";    break;
+                case 'B': fn = "Down";  break;
+                case 'C': fn = "Right"; break;
+                case 'D': fn = "Left";  break;
+                case 'H': fn = "Home";  break;
+                case 'F': fn = "End";   break;
+                case 'Z': fn = "S-Tab"; break;
+            }
+            if (fn) { out = fn; g_input_buf.erase(0, 3); return true; }
+
+            // Numbered CSI: \x1B [ <digits> ~  (possibly with ; modifier)
+            if (c2 >= '0' && c2 <= '9') {
+                size_t end = 2;
+                while (end < g_input_buf.size() && g_input_buf[end] != '~') end++;
+                if (end >= g_input_buf.size()) return false;
+                int n = std::atoi(g_input_buf.c_str() + 2);
+                const char* fk = nullptr;
+                switch (n) {
+                    case  2: fk = "Insert"; break;
+                    case  3: fk = "Delete"; break;
+                    case  5: fk = "PgUp";   break;
+                    case  6: fk = "PgDn";   break;
+                    case 15: fk = "F5";     break;
+                    case 17: fk = "F6";     break;
+                    case 18: fk = "F7";     break;
+                    case 19: fk = "F8";     break;
+                    case 20: fk = "F9";     break;
+                    case 21: fk = "F10";    break;
+                    case 23: fk = "F11";    break;
+                    case 24: fk = "F12";    break;
+                }
+                if (fk) { out = fk; g_input_buf.erase(0, end + 1); return true; }
+                g_input_buf.erase(0, end + 1);  // unknown, drop
+                continue;
+            }
+
+            // Unknown CSI byte — drop ESC[ and keep parsing
+            g_input_buf.erase(0, 2);
+            continue;
+        }
+
+        // Unknown ESC follower — drop the ESC and keep parsing
+        g_input_buf.erase(0, 1);
+    }
+    return false;
 #endif
 }
 
