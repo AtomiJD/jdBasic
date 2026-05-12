@@ -79,17 +79,8 @@ if defined WANT_GFX (
     copy /Y build\SDL3.dll        %DIST%\ >nul
     copy /Y build\SDL3_ttf.dll    %DIST%\ >nul
     copy /Y build\SDL3_image.dll  %DIST%\ >nul
-    copy /Y build\SDL2_mixer.dll  %DIST%\ >nul
-    REM SDL2_mixer 2.8.x has a load-time dependency on SDL2.dll —
-    REM without it jdBasic.exe fails to start on any machine that
-    REM doesn't already have SDL2 on PATH.
-    if exist build\SDL2.dll (
-        copy /Y build\SDL2.dll    %DIST%\ >nul
-    ) else (
-        echo  [!] WARNING: build\SDL2.dll not found — bundle will
-        echo      fail on machines without SDL2 installed.
-    )
-    echo  [+] SDL3 / TTF / Image / Mixer ^(+ SDL2.dll for mixer^)
+    copy /Y build\SDL3_mixer.dll  %DIST%\ >nul
+    echo  [+] SDL3 / TTF / Image / Mixer
 )
 
 if defined WANT_HTTP (

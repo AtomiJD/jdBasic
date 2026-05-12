@@ -61,11 +61,7 @@ REM EXEs would exit 127 with "DLL not found".
 copy /Y build\SDL3.dll             "%OUT%\" >nul 2>&1
 copy /Y build\SDL3_ttf.dll         "%OUT%\" >nul 2>&1
 copy /Y build\SDL3_image.dll       "%OUT%\" >nul 2>&1
-copy /Y build\SDL2_mixer.dll       "%OUT%\" >nul 2>&1
-REM SDL2_mixer 2.8.x has a load-time dependency on SDL2.dll; without it
-REM jdBasic.exe fails to start on any machine that doesn't already have
-REM SDL2 on PATH.
-copy /Y build\SDL2.dll             "%OUT%\" >nul 2>&1
+copy /Y build\SDL3_mixer.dll       "%OUT%\" >nul 2>&1
 
 REM Docs that jdb_doc reads at runtime + project-level licence.
 copy /Y LICENSE.txt        "%OUT%\"     >nul

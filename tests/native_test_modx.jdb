@@ -1,0 +1,24 @@
+' Helper module for cross-module FUNC ... AS TYPE coverage in native_test.
+EXPORT MODULE NATIVE_TEST_MODX
+
+EXPORT FUNC mx_str$(s$) AS STRING
+    RETURN s$ + "_X"
+ENDFUNC
+
+EXPORT FUNC mx_arr() AS ARRAY
+    RETURN [10, 20, 30]
+ENDFUNC
+
+EXPORT FUNC mx_obj(s$) AS OBJECT
+    RETURN JSON.PARSE$(s$)
+ENDFUNC
+
+EXPORT FUNC mx_dbl(x AS DOUBLE) AS DOUBLE
+    RETURN x * 2.5
+ENDFUNC
+
+' Wrapper that itself calls a typed FUNC — exercises return-tag flow
+' through a chain that crosses the module boundary.
+EXPORT FUNC mx_obj_wrap(s$) AS OBJECT
+    RETURN mx_obj(s$)
+ENDFUNC

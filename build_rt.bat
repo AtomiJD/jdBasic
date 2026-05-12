@@ -33,9 +33,9 @@ for %%A in (%*) do (
     if /I "%%A"=="GFX" (
         set DEFS=!DEFS! /DGFX
         set EXTRA_SRC=!EXTRA_SRC! src\graphics.cpp src\tiledmap.cpp
-        set EXTRA_INC=!EXTRA_INC! /Ilibs\SDL3-3.2.16\include /Ilibs\SDL3_ttf-3.2.2\include /Ilibs\SDL3_image-3.2.4\include /Ilibs\SDL2_mixer-2.8.1\include
-        set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\SDL3-3.2.16\lib\x64 /LIBPATH:libs\SDL3_ttf-3.2.2\lib\x64 /LIBPATH:libs\SDL3_image-3.2.4\lib\x64 /LIBPATH:libs\SDL2_mixer-2.8.1\lib\x64
-        set EXTRA_LIB=!EXTRA_LIB! SDL3.lib SDL3_ttf.lib SDL3_image.lib SDL2_mixer.lib
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\SDL3-3.4.8\include /Ilibs\SDL3_ttf-3.2.2\include /Ilibs\SDL3_image-3.4.4\include /Ilibs\SDL3_mixer-3.2.2\include /Ilibs\SDL3_mixer-3.2.2\include\SDL3_mixer
+        set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\SDL3-3.4.8\lib\x64 /LIBPATH:libs\SDL3_ttf-3.2.2\lib\x64 /LIBPATH:libs\SDL3_image-3.4.4\lib\x64 /LIBPATH:libs\SDL3_mixer-3.2.2\lib\x64
+        set EXTRA_LIB=!EXTRA_LIB! SDL3.lib SDL3_ttf.lib SDL3_image.lib SDL3_mixer.lib
         echo [+] GFX
     )
     if /I "%%A"=="IMGUI" (
