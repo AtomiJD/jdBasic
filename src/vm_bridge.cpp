@@ -57,8 +57,9 @@ extern void register_gui_builtins(VM& vm);
 extern void register_tui_natives(VM& vm);
 #endif
 
-// DLL-local base directory for module imports
-static std::string g_base_dir = ".";
+// DLL-local base directory for module imports. Non-static so graphics.cpp
+// can extern-link it for asset-path resolution.
+std::string g_base_dir = ".";
 
 static void setup_parser_modules(Parser& parser) {
     // Minimal module reader for EVAL/EXECUTE

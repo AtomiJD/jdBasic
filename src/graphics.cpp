@@ -15,10 +15,35 @@
 #include <unordered_map>
 #include <string>
 #include <algorithm>
+#include <filesystem>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// Defined in main.cpp (exe) and vm_bridge.cpp (libjdbrt.so) — the
+// directory of the .jdb the user invoked. Falls back to "." in the
+// runtime DLL until the entry point sets it.
+extern std::string g_base_dir;
+
+// Resolve a user-supplied filesystem path: pass absolute paths through
+// untouched, and for relative ones try CWD first (back-compat: most
+// existing demos chdir before run), then fall back to a path relative
+// to the main script's directory. Returns the path that actually exists,
+// or the original input if neither did (so the caller still produces a
+// recognisable error message).
+static std::string resolve_asset_path(const std::string& p) {
+    namespace fs = std::filesystem;
+    fs::path in(p);
+    if (in.is_absolute()) return p;
+    std::error_code ec;
+    if (fs::exists(in, ec)) return p;
+    if (!g_base_dir.empty()) {
+        fs::path candidate = fs::path(g_base_dir) / in;
+        if (fs::exists(candidate, ec)) return candidate.string();
+    }
+    return p;
+}
 
 // ── Global SDL state ────────────────────────────────────────────
 
@@ -731,7 +756,7 @@ void register_graphics_builtins(VM& vm) {
     // ── SETFONT filename$, size ─────────────────────────────────
 
     vm.register_native("SETFONT", 2, 2, [](const std::vector<Value>& args) -> Value {
-        std::string path = args[0].as_string()->data;
+        std::string path = resolve_asset_path(args[0].as_string()->data);
         float size = (float)args[1].to_double();
 
         if (!g_ttf_init) {

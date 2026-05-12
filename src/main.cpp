@@ -71,7 +71,10 @@ void run_on_vm(VM& vm, const std::string& source);
 static void setup_dynamic_code(VM& vm);
 
 // Module file reader: tries modulename.jdb in base_dir, then cwd
-static std::string g_base_dir; // directory of main source file
+// Directory of main source file. Non-static so other TUs (graphics.cpp)
+// can extern-link it to resolve relative asset paths against the script
+// dir instead of CWD.
+std::string g_base_dir;
 
 static Parser::FileReader make_module_reader() {
     return [](const std::string& module_name) -> std::pair<std::string, std::string> {
