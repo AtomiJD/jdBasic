@@ -1440,7 +1440,7 @@ void register_graphics_builtins(VM& vm) {
 
     vm.register_native("GFX.LOADIMAGE", 1, 1, [](const std::vector<Value>& args) -> Value {
         ensure_screen("GFX.LOADIMAGE");
-        std::string path = args[0].as_string()->data;
+        std::string path = resolve_asset_path(args[0].as_string()->data);
 
         SDL_Surface* surface = IMG_Load(path.c_str());
         if (!surface)
@@ -1495,7 +1495,7 @@ void register_graphics_builtins(VM& vm) {
     // SPRITE.LOAD file$, frame_w, frame_h — spritesheet with frame size
     vm.register_native("SPRITE.LOAD", 1, 3, [](const std::vector<Value>& args) -> Value {
         ensure_screen("SPRITE.LOAD");
-        std::string path = args[0].as_string()->data;
+        std::string path = resolve_asset_path(args[0].as_string()->data);
         SDL_Surface* surface = IMG_Load(path.c_str());
         if (!surface)
             throw jdError(ErrCode::RUNTIME_ERROR,
@@ -2527,7 +2527,7 @@ void register_graphics_builtins(VM& vm) {
     vm.register_native("AUDIO.LOADWAV", 1, 1, [](const std::vector<Value>& args) -> Value {
         if (!g_audio_init)
             throw jdError(ErrCode::RUNTIME_ERROR, "AUDIO.LOADWAV: call AUDIO.INIT first");
-        std::string path = args[0].as_string()->data;
+        std::string path = resolve_asset_path(args[0].as_string()->data);
         MIX_Audio* audio = MIX_LoadAudio(g_mixer, path.c_str(), true);
         if (!audio)
             throw jdError(ErrCode::RUNTIME_ERROR,
@@ -2584,7 +2584,7 @@ void register_graphics_builtins(VM& vm) {
     vm.register_native("AUDIO.LOADMUS", 1, 1, [](const std::vector<Value>& args) -> Value {
         if (!g_audio_init)
             throw jdError(ErrCode::RUNTIME_ERROR, "AUDIO.LOADMUS: call AUDIO.INIT first");
-        std::string path = args[0].as_string()->data;
+        std::string path = resolve_asset_path(args[0].as_string()->data);
         MIX_Audio* audio = MIX_LoadAudio(g_mixer, path.c_str(), false);
         if (!audio)
             throw jdError(ErrCode::RUNTIME_ERROR,
@@ -2936,7 +2936,7 @@ void register_graphics_builtins(VM& vm) {
     vm.register_native("TILED.LOAD", 2, 2, [](const std::vector<Value>& args) -> Value {
         ensure_screen("TILED.LOAD");
         std::string name = args[0].as_string()->data;
-        std::string filename = args[1].as_string()->data;
+        std::string filename = resolve_asset_path(args[1].as_string()->data);
         bool ok = g_tiled.load_map(name, filename);
         return Value::make_bool(ok);
     });
