@@ -8898,6 +8898,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         error_msg = "Cannot find jdb_runtime.{obj,o}. Build with NATIVEC flag first.";
         return false;
     }
+#ifdef _WIN32
     // Same probe for the runtime's import library — `-c` used to hard-code
     // build\jdbrt.lib, which broke any flat-layout deployment.
     std::string jdbrt_lib;
@@ -8913,6 +8914,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                     "Bundles must ship it alongside jdb_runtime.obj.";
         return false;
     }
+#endif
 
 #ifdef _WIN32
     // Discover MSVC + Windows SDK at runtime instead of hard-coding paths.
