@@ -21,6 +21,10 @@ WANT_LLM=${LLM:-0}
 WANT_ONNX=${ONNX:-0}
 WANT_NATIVEC=${NATIVEC:-0}
 WANT_MCPSERVER=${MCPSERVER:-0}
+WANT_FTXUI=${FTXUI:-0}
+WANT_TUI=${TUI:-0}
+# TUI implies FTXUI — drag the lib in if only TUI was passed.
+if [ "$WANT_TUI" = "1" ]; then WANT_FTXUI=1; fi
 
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
@@ -109,6 +113,33 @@ if [ "$WANT_MCPSERVER" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DMCPSERVER"
     MCPSERVER_SRC="src/mcp_stdio.cpp"
 fi
+FTXUI_SRC=""
+if [ "$WANT_FTXUI" = "1" ]; then
+    FTXUI_DIR="libs/ftxui"
+    for a in libftxui-component.a libftxui-dom.a libftxui-screen.a; do
+        if [ ! -f "$FTXUI_DIR/build/$a" ]; then
+            echo "ERROR: $FTXUI_DIR/build/$a missing — build ftxui first:"
+            echo "  cd libs/ftxui && mkdir -p build && cd build && \\"
+            echo "    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \\"
+            echo "          -DFTXUI_BUILD_EXAMPLES=OFF -DFTXUI_BUILD_TESTS=OFF -DFTXUI_BUILD_DOCS=OFF .. && \\"
+            echo "    cmake --build . -j"
+            exit 1
+        fi
+    done
+    CXXFLAGS="$CXXFLAGS -DFTXUI -I$FTXUI_DIR/include"
+    # Order matters: component → dom → screen (high-level first).
+    LDFLAGS="$LDFLAGS \
+        $FTXUI_DIR/build/libftxui-component.a \
+        $FTXUI_DIR/build/libftxui-dom.a \
+        $FTXUI_DIR/build/libftxui-screen.a"
+    FTXUI_SRC="src/repl_ftxui.cpp"
+fi
+
+TUI_SRC=""
+if [ "$WANT_TUI" = "1" ]; then
+    CXXFLAGS="$CXXFLAGS -DTUI"
+    TUI_SRC="src/tui.cpp src/tui_state.cpp"
+fi
 
 NATIVEC_SRC=""
 if [ "$WANT_NATIVEC" = "1" ]; then
@@ -126,7 +157,7 @@ fi
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC"
+     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $FTXUI_SRC $TUI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.
@@ -161,6 +192,8 @@ features="console"
 [ "$WANT_ONNX"    = "1" ] && features="$features+ONNX"
 [ "$WANT_NATIVEC" = "1" ] && features="$features+NATIVEC"
 [ "$WANT_MCPSERVER" = "1" ] && features="$features+MCPSERVER"
+[ "$WANT_FTXUI" = "1" ] && features="$features+FTXUI"
+[ "$WANT_TUI" = "1" ] && features="$features+TUI"
 echo "== Building jdBasic ($features) — $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 # xargs -P parallelises; each line is "src|obj"
@@ -194,7 +227,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     RT_SRC="src/vm_bridge.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
             src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
             src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-            $HTTP_SRC $GFX_SRC $IMGUI_SRC"
+            $HTTP_SRC $GFX_SRC $IMGUI_SRC $TUI_SRC"
     RT_FLAGS_HASH=$(echo "$CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS" | sha1sum | cut -c1-12)
     RT_STAMP="build/obj_pic/.flags-$RT_FLAGS_HASH"
     if [ ! -f "$RT_STAMP" ]; then
