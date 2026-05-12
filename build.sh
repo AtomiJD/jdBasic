@@ -80,19 +80,27 @@ if [ "$WANT_IMGUI" = "1" ]; then
 fi
 
 if [ "$WANT_LLM" = "1" ]; then
-    LLAMA_DIR="libs/llama"
-    for a in libllama.a libggml.a libggml-base.a libggml-cpu.a; do
-        if [ ! -f "$LLAMA_DIR/$a" ]; then
-            echo "ERROR: $LLAMA_DIR/$a missing — run ./build_libs.sh first"; exit 1
-        fi
-    done
-    CXXFLAGS="$CXXFLAGS -DLLM -I$LLAMA_DIR"
-    # Order: llama links against ggml, ggml-cpu against ggml-base.
-    LDFLAGS="$LDFLAGS \
-        $LLAMA_DIR/libllama.a \
-        $LLAMA_DIR/libggml.a \
-        $LLAMA_DIR/libggml-cpu.a \
-        $LLAMA_DIR/libggml-base.a"
+    if [ "${LLM_SYSTEM:-0}" = "1" ]; then
+        # System-installed llama.cpp — e.g., when building inside the
+        # Strix-Halo distrobox where /usr/lib64 already has libllama.so
+        # + libggml-vulkan.so wired up against the Radeon iGPU.
+        CXXFLAGS="$CXXFLAGS -DLLM"
+        LDFLAGS="$LDFLAGS -lllama -lggml -lggml-cpu -lggml-base"
+    else
+        LLAMA_DIR="libs/llama"
+        for a in libllama.a libggml.a libggml-base.a libggml-cpu.a; do
+            if [ ! -f "$LLAMA_DIR/$a" ]; then
+                echo "ERROR: $LLAMA_DIR/$a missing — run ./build_libs.sh first (or set LLM_SYSTEM=1 if libs are at /usr)"; exit 1
+            fi
+        done
+        CXXFLAGS="$CXXFLAGS -DLLM -I$LLAMA_DIR"
+        # Order: llama links against ggml, ggml-cpu against ggml-base.
+        LDFLAGS="$LDFLAGS \
+            $LLAMA_DIR/libllama.a \
+            $LLAMA_DIR/libggml.a \
+            $LLAMA_DIR/libggml-cpu.a \
+            $LLAMA_DIR/libggml-base.a"
+    fi
 fi
 
 if [ "$WANT_ONNX" = "1" ]; then
