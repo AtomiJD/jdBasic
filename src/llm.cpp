@@ -29,6 +29,7 @@ void register_llm_builtins(VM& vm) {
 #include <set>
 #include <map>
 #include <filesystem>
+#include <thread>
 
 // ── Text Embedding Engine (TF-IDF) ─────────────────────────────
 
