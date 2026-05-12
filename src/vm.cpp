@@ -4428,9 +4428,22 @@ void VM::register_builtins() {
 
     register_native("SETLOCALE", [](const std::vector<Value>& args) -> Value {
         std::string loc_name = args[0].as_string()->data;
-        std::setlocale(LC_ALL, loc_name.c_str());
+        // Windows accepts bare names ("de_DE"); glibc on Linux/macOS
+        // requires an encoding suffix and the user-facing name often
+        // doesn't carry one. Fall through .UTF-8 / .utf8 if the bare
+        // name failed and no encoding was already specified.
+        const char* set = std::setlocale(LC_ALL, loc_name.c_str());
+        std::string applied = loc_name;
+        if (!set && loc_name.find('.') == std::string::npos) {
+            applied = loc_name + ".UTF-8";
+            set = std::setlocale(LC_ALL, applied.c_str());
+            if (!set) {
+                applied = loc_name + ".utf8";
+                set = std::setlocale(LC_ALL, applied.c_str());
+            }
+        }
         try {
-            g_jd_locale = std::locale(loc_name.c_str());
+            g_jd_locale = std::locale(applied.c_str());
             std::cout.imbue(g_jd_locale);
         } catch (const std::runtime_error&) {
             // If the C++ locale fails, keep the previous one
