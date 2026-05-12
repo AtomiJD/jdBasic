@@ -384,7 +384,7 @@ Assert(132,REGEX.REPLACE("[0-9]+", "Hello 2026", "XXXX") = "Hello XXXX")
 PRINT "── System ──"
 Assert(133,LEN(PWD()) > 0)
 Assert(134,LEN(GETENV$("PATH")) > 0)
-Assert(135,OS.GETOS$() = "WINDOWS")
+Assert(135,OS.GETOS$() = "WINDOWS" OR OS.GETOS$() = "LINUX" OR OS.GETOS$() = "MACOS")
 Assert(136,TICK() > 0)
 
 ' ── 36. POWER & SPECIAL OPS ──────────────────────────────────
