@@ -141,11 +141,11 @@ PRINT "--- DATE Test ---"
 Print "Tick: "; Tick()
 Print "Now: "; Now()
 
-DIM deadline AS DATE
+'DIM deadline AS DATE
 DIM name AS STRING
 
 name = "Project Apollo"
-deadline = CVDate("2025-07-01")
+DIM deadline = CVDate("2025-07-01")
 
 PRINT "Deadline for "; name; " is "; deadline
 

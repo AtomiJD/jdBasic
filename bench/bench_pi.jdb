@@ -1,16 +1,1 @@
-' Pi via Leibniz series, 100M iterations.
-DIM N AS INTEGER
-DIM i AS INTEGER
-DIM result AS DOUBLE
-DIM sign AS DOUBLE
-
-N = 100000000
-result = 0.0
-sign = 1.0
-
-FOR i = 0 TO N - 1
-    result = result + sign / (2 * i + 1)
-    sign = -sign
-NEXT
-
-PRINT "pi = "; 4.0 * result
+' Pi via Leibniz series, 100M iterations.DIM N AS INTEGERDIM i AS INTEGERDIM result AS DOUBLEDIM sign AS DOUBLEN = 100000000result = 0.0sign = 1.0TI=tick()FOR i = 0 TO N - 1    result = result + sign / (2 * i + 1)    sign = -signNEXTPRINT "pi = "; 4.0 * resultPRINT TICK()-TI

@@ -14,7 +14,73 @@ These are foundational libraries used across various scripts.
 
 ---
 
-## 📑 Full Sample Index (201 Files)
+## 🆕 Recently Added (post-2026-03)
+
+The samples that landed in the last sprint, grouped by what they show off. Each is self-contained — `./build/jdBasic.exe jdb/<name>.jdb` from the repo root.
+
+### Terminal UI (TUI.\*) — FTXUI bridge
+
+* **`tui_demo.jdb`** — Showcase for the new `TUI.*` namespace: menubar, tabs, modal overlay, table + selectable list, animated braille canvas, theme cycle (`Ctrl+T`). Mirrors `GUI.*` but renders into the terminal via FTXUI. See `doc/ftxui_plan.md` for the architecture and `doc/languages.md` for the API reference.
+
+### 6502 / Apple II emulator
+
+* **`cpu6502.jdb`** — Pure 6502 CPU core (instruction decode + execute).
+* **`apple2.jdb`** — Apple II memory map, character ROM rendering, IO hooks.
+* **`emu_run.jdb`** — Host shell that wires the CPU to a framebuffer + optional tape I/O. Native-compile + `timeout 5` is part of the gate.
+
+### AI / ML — agents, RAG, classifier
+
+* **`agent_task.jdb`** — Tool-using LLM agent with a task queue.
+* **`ai_chat_demo.jdb`** — llama.cpp chat session with history persistence.
+* **`ai_demo.jdb`** — ONNX inference smoke.
+* **`classifier_demo.jdb`** — k-NN text classifier inference.
+* **`train_classifier.jdb`** — Build and save a k-NN classifier from labelled data.
+* **`rag_demo.jdb`** — Retrieval-augmented chat using the `AI.RAG_*` primitives.
+
+### Sprites + Tilemap + Games
+
+* **`sprite_demo.jdb`** — Animation + collisions + z-order sweep.
+* **`sprite_gen.jdb`** — Procedural sprite generation.
+* **`sprite_walk.jdb`** — Top-down 4-direction walk cycle.
+* **`tilemap_demo.jdb`** — Tiled-map rendering + collision query.
+* **`car_race.jdb`** — Sprite-based car race.
+* **`space_shooter.jdb`** — Vertically-scrolling shooter; doubles as the live-coding STOP/RESUME testbed.
+
+### APL idioms in sound + graphics + physics
+
+* **`boids_apl.jdb`** — APL-style flocking with vectorized forces.
+* **`synth_apl.jdb`** — APL-style additive synth waveform.
+* **`life_demo.jdb`** — Game of Life with vectorized neighbour count.
+* **`universe.jdb`** — Vectorized N-body universe.
+* **`universe_naive.jdb`** — Same as `universe.jdb` but `O(n²)` baseline (use for bench comparisons).
+
+### Database
+
+* **`sqlite.jdb`** — Minimal SQLite open / query / close.
+
+### FFI
+
+* **`dll_demo.jdb`** — `DECLARE FUNC` into a C DLL.
+* **`dll_magic.jdb`** — Win32 FFI for keypress automation (used by the GUI test harness).
+
+### Language
+
+* **`brainf__k.jdb`** — Brainfuck interpreter in jdBasic.
+* **`udt_lifecycle_demo.jdb`** — UDT `INIT` / `DISPOSE` lifecycle.
+* **`udt_full_demo/`** — Multi-file UDT demo (`main.jdb` + `INV.jdb` + `LOG.jdb`).
+
+### Utility / system
+
+* **`world_clock.jdb`** — Multi-timezone wall clock.
+* **`pi.jdb`** — π via Monte-Carlo plus analytical comparison.
+
+### Benchmarks
+
+* **`benchmark.jdb`** / **`bench_fib.jdb`** / **`bench_cpu_speed.jdb`** / **`bench_mixed.jdb`** — interp vs. native and feature microbenches.
+
+---
+
+## 📑 Full Sample Index
 
 | File Name | Category | Description |
 | :--- | :--- | :--- |

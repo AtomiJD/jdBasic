@@ -5,16 +5,16 @@
     },
     "activeFile": "maps/village.tmx",
     "expandedProjectPaths": [
-        "maps",
-        "tiled/tilesets",
         "tiled/pirat/TiledMap Editor/Tilesets",
-        "tiled/pirat/TiledMap Editor",
-        "tiled/village/TiledMap Editor",
         "tiled/village",
+        "tiled/pirat/TiledMap Editor",
         "tiled",
-        "tiled/pirat",
         ".",
-        "tiled/village/TiledMap Editor/tilesets"
+        "tiled/village/TiledMap Editor/tilesets",
+        "maps",
+        "tiled/pirat",
+        "tiled/village/TiledMap Editor",
+        "tiled/tilesets"
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
@@ -35,7 +35,7 @@
                 5
             ],
             "scale": 2,
-            "selectedLayer": 1,
+            "selectedLayer": 7,
             "viewCenter": {
                 "x": 597.5,
                 "y": 543.25

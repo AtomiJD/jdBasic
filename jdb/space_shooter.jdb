@@ -145,6 +145,227 @@ DIM pause_held AS INTEGER = 0
 ' a single press to STOP twice in the wait loop after RESUME.
 DIM start_held AS INTEGER = 0
 
+' ──────────────────────────────────────────────────────────────────
+' CONFIG + LEVEL STATE
+' ──────────────────────────────────────────────────────────────────
+' Single Map for all tweakable parameters — change via jdb_eval at
+' runtime: e.g. `g_config{"waves_per_level"} = 3` for faster level-ups.
+DIM g_config AS MAP = { _
+    "waves_per_level":   5, _
+    "max_level":        10, _
+    "shield_max":      300, _
+    "shield_drain":    1.0, _
+    "shield_recharge": 0.4, _
+    "shield_cooldown":  60, _
+    "level_score_bonus": 1000, _
+    "enemy_speed_mult": 1.05, _
+    "boss_every":        5 _
+}
+
+DIM g_level         AS INTEGER = 1
+DIM g_waves_done    AS INTEGER = 0
+DIM g_level_announce AS INTEGER = 0   ' frames remaining for "LEVEL N!" banner
+
+' ──────────────────────────────────────────────────────────────────
+' COLOR PALETTE  (Phase 2)
+' ──────────────────────────────────────────────────────────────────
+' Active palette — replaced by apply_palette(level). Each entry is
+' a 3-element [r, g, b] array. Helper use_color "name" wraps the
+' DRAWCOLOR lookup so draw_* SUBs stay terse.
+DIM g_palette AS MAP = {}
+
+' Cool-cyan default (Levels 1-2)
+FUNC palette_cool()
+    RETURN { _
+        "hud":          [180, 220, 255], _
+        "level":        [130, 220, 180], _
+        "level_banner": [255, 240,  80], _
+        "level_sub":    [130, 220, 180], _
+        "player":       [ 80, 255, 200], _
+        "shield":       [ 80, 255, 200], _
+        "bg":           [  8,   8,  18], _
+        "title":        [255,  80, 255] _
+    }
+ENDFUNC
+
+' Warm orange/red (Levels 3-4)
+FUNC palette_warm()
+    RETURN { _
+        "hud":          [255, 200, 140], _
+        "level":        [255, 180, 100], _
+        "level_banner": [255, 240,  80], _
+        "level_sub":    [255, 180, 100], _
+        "player":       [255, 140,  40], _
+        "shield":       [255, 200,  60], _
+        "bg":           [ 24,  10,   8], _
+        "title":        [255, 100,  60] _
+    }
+ENDFUNC
+
+' Neon green/magenta (Levels 5-6)
+FUNC palette_neon()
+    RETURN { _
+        "hud":          [180, 255, 160], _
+        "level":        [120, 255, 100], _
+        "level_banner": [255, 100, 220], _
+        "level_sub":    [180, 255, 100], _
+        "player":       [120, 255, 100], _
+        "shield":       [255, 100, 220], _
+        "bg":           [  4,  16,   8], _
+        "title":        [255, 100, 220] _
+    }
+ENDFUNC
+
+' Cyberpunk purple/cyan (Levels 7-8)
+FUNC palette_cyber()
+    RETURN { _
+        "hud":          [200, 180, 255], _
+        "level":        [180, 120, 255], _
+        "level_banner": [100, 220, 255], _
+        "level_sub":    [180, 120, 255], _
+        "player":       [180, 120, 255], _
+        "shield":       [100, 220, 255], _
+        "bg":           [ 14,   6,  22], _
+        "title":        [220, 120, 255] _
+    }
+ENDFUNC
+
+' Golden / blood-red (Level 9+)
+FUNC palette_gold()
+    RETURN { _
+        "hud":          [255, 220, 140], _
+        "level":        [255, 200,  80], _
+        "level_banner": [255, 100,  60], _
+        "level_sub":    [255, 200,  80], _
+        "player":       [255, 200,  80], _
+        "shield":       [255, 100,  60], _
+        "bg":           [ 22,   6,   6], _
+        "title":        [255, 100,  60] _
+    }
+ENDFUNC
+
+' Phase 6: cyclic palette so endless play keeps refreshing visually.
+' Cycle period = 10 levels (5 schemes × 2 levels each).
+SUB apply_palette(L)
+    DIM idx AS INTEGER = (L - 1) MOD 10
+    IF idx <= 1 THEN
+        g_palette = palette_cool()
+    ELSEIF idx <= 3 THEN
+        g_palette = palette_warm()
+    ELSEIF idx <= 5 THEN
+        g_palette = palette_neon()
+    ELSEIF idx <= 7 THEN
+        g_palette = palette_cyber()
+    ELSE
+        g_palette = palette_gold()
+    ENDIF
+ENDSUB
+
+' Helper: set DRAWCOLOR from a palette slot.
+SUB use_color(name$)
+    DIM c = g_palette{name$}
+    DRAWCOLOR c[0], c[1], c[2]
+ENDSUB
+
+' Initialize so first reset_game / level_up sees a non-empty palette.
+apply_palette(1)
+
+' ──────────────────────────────────────────────────────────────────
+' MANUAL SHIELD STATE  (Phase 3)
+' ──────────────────────────────────────────────────────────────────
+DIM shield_active     AS INTEGER = 0
+DIM shield_energy     AS DOUBLE  = 300.0   ' refilled at reset
+DIM shield_cooldown_t AS INTEGER = 0       ' frames of forced-off after empty
+
+' ──────────────────────────────────────────────────────────────────
+' PERMANENT POWERUPS  (Phase 4)
+' ──────────────────────────────────────────────────────────────────
+DIM g_perm_wide   AS INTEGER = 0
+DIM g_perm_spread AS INTEGER = 0
+DIM g_perm_rapid  AS INTEGER = 0
+DIM g_perm_pierce AS INTEGER = 0
+
+' ──────────────────────────────────────────────────────────────────
+' SCREEN-SHAKE  (Phase 5)
+' ──────────────────────────────────────────────────────────────────
+' Player-sprite wobble + brief background tint when the player takes
+' a hit. Doesn't move the camera (jdBasic GFX has no offset primitive),
+' just enough visual jolt to make hits feel weighty.
+DIM g_shake_t       AS INTEGER = 0     ' frames remaining
+DIM g_shake_int     AS DOUBLE  = 0.0   ' current intensity (decays)
+DIM g_shake_dx      AS DOUBLE  = 0.0
+DIM g_shake_dy      AS DOUBLE  = 0.0
+
+SUB trigger_shake(intensity AS DOUBLE, dur AS INTEGER)
+    g_shake_int = intensity
+    g_shake_t   = dur
+ENDSUB
+
+SUB tick_shake()
+    IF g_shake_t <= 0 THEN
+        g_shake_dx = 0.0
+        g_shake_dy = 0.0
+        RETURN
+    ENDIF
+    g_shake_t = g_shake_t - 1
+    DIM decay AS DOUBLE = g_shake_t / 12.0
+    IF decay > 1.0 THEN decay = 1.0
+    g_shake_dx = (RND(1) - 0.5) * 2.0 * g_shake_int * decay
+    g_shake_dy = (RND(1) - 0.5) * 2.0 * g_shake_int * decay
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' COMBO  (Phase 5)
+' ──────────────────────────────────────────────────────────────────
+' Successive kills within a 90-frame window stack a combo counter,
+' boosting per-kill score: pts * (1 + combo/10). Combo decays to 0
+' if no kill happens within g_combo_max_t frames.
+DIM g_combo       AS INTEGER = 0
+DIM g_combo_t     AS INTEGER = 0
+DIM g_combo_peak  AS INTEGER = 0       ' for end-of-game display
+DIM g_combo_max_t AS INTEGER = 90
+
+SUB tick_combo()
+    IF g_combo_t > 0 THEN
+        g_combo_t = g_combo_t - 1
+        IF g_combo_t = 0 THEN g_combo = 0
+    ENDIF
+ENDSUB
+
+' Returns the score multiplier for the current combo. Each +10 combo
+' adds another full base score.
+FUNC combo_mult()
+    RETURN 1.0 + g_combo / 10.0
+ENDFUNC
+
+SUB combo_hit()
+    g_combo = g_combo + 1
+    g_combo_t = g_combo_max_t
+    IF g_combo > g_combo_peak THEN g_combo_peak = g_combo
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' BOSS  (Phase 5)
+' ──────────────────────────────────────────────────────────────────
+' Single-instance boss spawned in place of a regular wave at every
+' g_config{"boss_every"} levels. Sinus sweep + periodic burst-fire.
+' HP bar at top center. Defeat awards a fat score bonus.
+DIM g_boss_active   AS INTEGER = 0
+DIM g_boss_x        AS DOUBLE  = 0.0
+DIM g_boss_y        AS DOUBLE  = 0.0
+DIM g_boss_hp       AS INTEGER = 0
+DIM g_boss_max_hp   AS INTEGER = 0
+DIM g_boss_phase    AS DOUBLE  = 0.0   ' sweep phase
+DIM g_boss_fire_cd  AS INTEGER = 0
+DIM g_boss_intro_t  AS INTEGER = 0     ' "intro" descent counter
+DIM g_boss_pending  AS INTEGER = 0     ' set by level_up at boss-level
+
+' Phase 7: life-drop pacing — track levels since last extra life so we
+' can hand one out roughly every 3-5 levels, not every level.
+DIM g_life_drop_armed   AS INTEGER = 0
+DIM g_levels_since_life AS INTEGER = 0
+DIM g_next_life_gap     AS INTEGER = 4   ' rolled fresh each grant
+
 ' --- Quit handler (window close). Event-handler SUBs receive one
 ' payload arg — without it, the ON-dispatch errors with "Invalid
 ' function reference" the moment the event fires.
@@ -244,13 +465,24 @@ ENDFUNC
 FUNC input_back()
     IF GFX.KEYSTATE("Escape") THEN RETURN 1
     IF has_joy = 1 THEN
-        IF JOY.BUTTON(0, 6) OR JOY.BUTTON(0, 1) THEN RETURN 1
+        ' Button 6 = Select/View (small button left of Start) — kept off
+        ' the four action buttons so B stays free for SHIELD.
+        IF JOY.BUTTON(0, 6) THEN RETURN 1
     ENDIF
     RETURN 0
 ENDFUNC
 
 FUNC input_pause()
     IF GFX.KEYSTATE("P") THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Phase 3: manual shield trigger. Hold to drain energy + absorb hits.
+FUNC input_shield()
+    IF GFX.KEYSTATE("Left Shift") OR GFX.KEYSTATE("Right Shift") THEN RETURN 1
+    IF has_joy = 1 THEN
+        IF JOY.BUTTON(0, 1) THEN RETURN 1   ' B button
+    ENDIF
     RETURN 0
 ENDFUNC
 
@@ -301,6 +533,28 @@ SUB reset_game()
     pw_rapid  = 0
     pw_shield = 0
     pw_pierce = 0
+    g_level         = 1
+    g_waves_done    = 0
+    g_level_announce = 0
+    apply_palette(g_level)
+    shield_active     = 0
+    shield_energy     = g_config{"shield_max"}
+    shield_cooldown_t = 0
+    g_perm_wide   = 0
+    g_perm_spread = 0
+    g_perm_rapid  = 0
+    g_perm_pierce = 0
+    g_shake_t = 0
+    g_shake_dx = 0.0
+    g_shake_dy = 0.0
+    g_combo = 0
+    g_combo_t = 0
+    g_combo_peak = 0
+    g_boss_active = 0
+    g_boss_pending = 0
+    g_life_drop_armed = 0
+    g_levels_since_life = 0
+    g_next_life_gap = 4
 ENDSUB
 
 ' ──────────────────────────────────────────────────────────────────
@@ -335,10 +589,10 @@ SUB spawn_bullet()
         fire_one(ox, oy, -3.1, -11.5)
         fire_one(ox, oy,  3.1, -11.5)
     ENDIF
-    ' Wide: 45° forward-diagonal pair (cos/sin of 45° at speed 12)
+    ' Wide: ~30° forward-diagonal pair (cos/sin of 30° at speed 12)
     IF pw_wide > 0 THEN
-        fire_one(ox - 8.0, py - 4.0, -8.5, -8.5)
-        fire_one(ox + 8.0, py - 4.0,  8.5, -8.5)
+        fire_one(ox - 8.0, py - 4.0, -6.0, -10.4)
+        fire_one(ox + 8.0, py - 4.0,  6.0, -10.4)
     ENDIF
     sfx_laser()
 ENDSUB
@@ -361,9 +615,61 @@ FUNC pick_wave_kind() AS INTEGER
     ENDIF
 ENDFUNC
 
+' Level-up: bumps g_level, awards score bonus, queues the banner.
+' Phase 2 hook: re-apply palette here. Phase 4 hook: weapon unlocks.
+' Phase 4: per-level permanent powerup unlocks. Pickups still work
+' as bonuses on top.
+SUB apply_level_unlocks(L)
+    IF L >= 2 THEN g_perm_wide   = 1
+    IF L >= 3 THEN g_perm_spread = 1
+    IF L >= 5 THEN g_perm_rapid  = 1
+    IF L >= 7 THEN g_perm_pierce = 1
+ENDSUB
+
+' Phase 6: tier = (level-1)/10. Tier 0 = levels 1-10, tier 1 = 11-20,
+' etc. Used to ratchet boss HP, wave size, and HUD displays.
+FUNC level_tier()
+    RETURN (g_level - 1) / 10
+ENDFUNC
+
+SUB level_up()
+    g_level = g_level + 1                  ' Phase 6: no cap — endless
+    score = score + CINT(g_config{"level_score_bonus"})
+    g_level_announce = 120                 ' ~2 seconds at 60 FPS
+    apply_palette(g_level)                 ' Phase 2 — switch colour scheme
+    apply_level_unlocks(g_level)           ' Phase 4 — grant new perm-powerups
+    ' Phase 5: queue a boss for the first wave of every Nth level
+    DIM be AS INTEGER = CINT(g_config{"boss_every"})
+    IF be > 0 AND (g_level MOD be) = 0 THEN g_boss_pending = 1
+    ' Phase 7: arm a one-time life drop after enough levels have passed
+    g_levels_since_life = g_levels_since_life + 1
+    IF g_levels_since_life >= g_next_life_gap THEN g_life_drop_armed = 1
+ENDSUB
+
 ' Begin a coordinated wave. Picks count + direction + path params.
+' Increments the level-progression counter and may trigger level_up.
 SUB start_wave()
-    wave_remaining = 5 + INT(RND(1) * 4)         ' 5..8 enemies
+    g_waves_done = g_waves_done + 1
+    DIM wpl AS INTEGER = CINT(g_config{"waves_per_level"})
+    IF g_waves_done > 1 AND (g_waves_done MOD wpl) = 1 THEN level_up()
+
+    ' Phase 5: if a boss was queued by level_up, spawn it instead of
+    ' the regular wave and bail. The wave-driver in the main loop will
+    ' park while g_boss_active = 1.
+    IF g_boss_pending = 1 THEN
+        spawn_boss()
+        g_boss_pending = 0
+        wave_remaining = 0
+        wave_spawn_cd = 999
+        RETURN
+    ENDIF
+
+    ' Compounding speed mult: each level +5% by default
+    DIM lvl_mult AS DOUBLE = g_config{"enemy_speed_mult"} ^ (g_level - 1)
+    ' Phase 6: tier bonus = +1 enemy per wave per tier (tier 2 → +2)
+    DIM tier AS INTEGER = CINT(level_tier())
+
+    wave_remaining = 5 + INT(RND(1) * 4) + tier  ' base 5..8, tier-extras
     wave_kind      = CINT(pick_wave_kind())
     wave_dir       = 1
     IF RND(1) < 0.5 THEN wave_dir = -1
@@ -375,10 +681,101 @@ SUB start_wave()
     ENDIF
     wave_amp   = 100.0 + RND(1) * 80.0
     wave_freq  = 0.014 + RND(1) * 0.008
-    wave_speed = 1.5 + RND(1) * 0.8
+    wave_speed = (1.5 + RND(1) * 0.8) * lvl_mult
     IF wave_kind = 2 THEN wave_speed = wave_speed + 0.6
     IF wave_kind = 3 THEN wave_speed = wave_speed + 1.0
     wave_spawn_cd = 8
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' BOSS — single instance, sinus sweep + spread-fire
+' ──────────────────────────────────────────────────────────────────
+SUB spawn_boss()
+    g_boss_active = 1
+    g_boss_x = SCR_W / 2.0
+    g_boss_y = -60.0                  ' starts off-screen, descends in
+    g_boss_intro_t = 80               ' ~1.3s of invuln descent
+    g_boss_phase = 0.0
+    g_boss_fire_cd = 120
+    ' Phase 6: tier-bonus on top of per-level scaling.
+    DIM tier AS INTEGER = CINT(level_tier())
+    DIM hp_base AS INTEGER = 30
+    g_boss_max_hp = hp_base + (g_level - 1) * 10 + tier * 50
+    g_boss_hp = g_boss_max_hp
+ENDSUB
+
+SUB update_boss()
+    IF g_boss_active = 0 THEN RETURN
+    IF g_boss_intro_t > 0 THEN
+        g_boss_intro_t = g_boss_intro_t - 1
+        g_boss_y = g_boss_y + 1.6
+        IF g_boss_y > 100.0 THEN g_boss_y = 100.0
+        RETURN
+    ENDIF
+    g_boss_phase = g_boss_phase + 0.025
+    g_boss_x = SCR_W / 2.0 + SIN(g_boss_phase) * SCR_W * 0.35
+    g_boss_y = 100.0 + SIN(g_boss_phase * 0.5) * 20.0
+    IF g_boss_fire_cd > 0 THEN g_boss_fire_cd = g_boss_fire_cd - 1
+    IF g_boss_fire_cd <= 0 THEN
+        spawn_ep(g_boss_x, g_boss_y + 30, 0, -2.5, 5.0)
+        spawn_ep(g_boss_x, g_boss_y + 30, 0,  0.0, 5.5)
+        spawn_ep(g_boss_x, g_boss_y + 30, 0,  2.5, 5.0)
+        DIM cd AS INTEGER = 90 - g_level * 4
+        IF cd < 30 THEN cd = 30
+        g_boss_fire_cd = cd
+    ENDIF
+ENDSUB
+
+SUB draw_boss()
+    IF g_boss_active = 0 THEN RETURN
+    use_color "title"
+    DIM r AS DOUBLE = 50.0
+    DIM i AS INTEGER
+    FOR i = 0 TO 5
+        DIM a1 AS DOUBLE = 3.14159 * 2.0 * i / 6.0
+        DIM a2 AS DOUBLE = 3.14159 * 2.0 * (i + 1) / 6.0
+        LINE g_boss_x + COS(a1) * r, g_boss_y + SIN(a1) * r, _
+             g_boss_x + COS(a2) * r, g_boss_y + SIN(a2) * r
+    NEXT i
+    use_color "shield"
+    LINE g_boss_x - 16, g_boss_y - 4, g_boss_x + 16, g_boss_y - 4
+    LINE g_boss_x - 8,  g_boss_y + 4, g_boss_x + 8,  g_boss_y + 4
+    ' HP bar at top center
+    DIM bw AS INTEGER = 400
+    DIM bxs AS INTEGER = SCR_W / 2 - bw / 2
+    DIM bys AS INTEGER = 60
+    DIM frac AS DOUBLE = g_boss_hp / (g_boss_max_hp + 0.001)
+    IF frac < 0.0 THEN frac = 0.0
+    DRAWCOLOR 30, 30, 50
+    RECT bxs, bys, bw, 8, TRUE
+    DRAWCOLOR 220, 80, 80
+    IF CINT(bw * frac) > 0 THEN RECT bxs, bys, CINT(bw * frac), 8, TRUE
+    DRAWCOLOR 100, 120, 140
+    RECT bxs, bys, bw, 8, FALSE
+    DRAWCOLOR 255, 200, 80
+    TEXT SCR_W / 2 - 30, bys - 18, "BOSS"
+ENDSUB
+
+SUB hit_boss(damage AS INTEGER, ix AS DOUBLE, iy AS DOUBLE)
+    IF g_boss_active = 0 THEN RETURN
+    IF g_boss_intro_t > 0 THEN RETURN
+    g_boss_hp = g_boss_hp - damage
+    spawn_explosion(ix, iy)               ' Phase 7: visible impact at hit point
+    trigger_shake 6.0, 8
+    IF g_boss_hp <= 0 THEN defeat_boss()
+ENDSUB
+
+SUB defeat_boss()
+    g_boss_active = 0
+    spawn_explosion(g_boss_x, g_boss_y)
+    spawn_explosion(g_boss_x - 30, g_boss_y - 10)
+    spawn_explosion(g_boss_x + 30, g_boss_y + 10)
+    spawn_explosion(g_boss_x, g_boss_y + 30)
+    sfx_boom()
+    DIM bonus AS INTEGER = 5000 + (g_level - 1) * 1000
+    score = score + bonus
+    spawn_popup(g_boss_x, g_boss_y, bonus)
+    trigger_shake 12.0, 20
 ENDSUB
 
 SUB spawn_wave_member()
@@ -410,6 +807,11 @@ SUB maybe_drop_powerup(x, y, kind)
     IF kind = 1 THEN chance = 0.08
     IF kind = 2 THEN chance = 0.18
     IF kind = 3 THEN chance = 0.30
+    ' Phase 7: scale drop chance down at higher levels — early levels
+    ' should feel rich with powerups, endgame should feel earned.
+    DIM lvl_scale AS DOUBLE = 1.0 / (1.0 + (g_level - 1) * 0.15)
+    IF lvl_scale < 0.25 THEN lvl_scale = 0.25
+    chance = chance * lvl_scale
     IF RND(1) > chance THEN RETURN
     DIM i AS INTEGER
     FOR i = 0 TO N_PU - 1
@@ -417,7 +819,16 @@ SUB maybe_drop_powerup(x, y, kind)
             pu_x[i] = x
             pu_y[i] = y
             pu_phase[i] = RND(1) * 6.2832
-            pu_kind[i] = INT(RND(1) * 6.0)   ' uniform across the 6 types
+            ' Phase 7: if a life drop is armed, prefer it over the
+            ' usual six types; otherwise random across the standard pool.
+            IF g_life_drop_armed = 1 THEN
+                pu_kind[i] = 6                       ' LIFE
+                g_life_drop_armed = 0
+                g_levels_since_life = 0
+                g_next_life_gap = 3 + INT(RND(1) * 3) ' 3-5 levels until next
+            ELSE
+                pu_kind[i] = INT(RND(1) * 6.0)
+            ENDIF
             pu_alive[i] = 1
             RETURN
         ENDIF
@@ -540,6 +951,14 @@ SUB update_player()
     IF pw_rapid  > 0 THEN pw_rapid  = pw_rapid  - 1
     IF pw_shield > 0 THEN pw_shield = pw_shield - 1
     IF pw_pierce > 0 THEN pw_pierce = pw_pierce - 1
+    ' Phase 4: top-up perm-unlocked powerups so they never decay below
+    ' a small floor. Pickups still bump them higher.
+    IF g_perm_wide   = 1 AND pw_wide   < 60 THEN pw_wide   = 60
+    IF g_perm_spread = 1 AND pw_spread < 60 THEN pw_spread = 60
+    IF g_perm_rapid  = 1 AND pw_rapid  < 60 THEN pw_rapid  = 60
+    IF g_perm_pierce = 1 AND pw_pierce < 60 THEN pw_pierce = 60
+    ' Phase 3: shield energy update (drain / recharge / cooldown)
+    update_shield()
     IF input_fire() = 1 AND player_cd = 0 THEN
         spawn_bullet()
         IF pw_rapid > 0 THEN
@@ -596,9 +1015,13 @@ SUB apply_powerup(k)
         invuln = 360
     ELSEIF k = 4 THEN
         pw_pierce = 600
-    ELSE
+    ELSEIF k = 5 THEN
         ' BOMB — clear all enemies + projectiles + score them
         smart_bomb()
+    ELSEIF k = 6 THEN
+        ' LIFE — extra life, capped softly so 99 stays as the ceiling
+        IF lives < 99 THEN lives = lives + 1
+        spawn_popup(px, py - 30, 1)
     ENDIF
     sfx_laser()
 ENDSUB
@@ -717,6 +1140,15 @@ SUB collisions()
     DIM i AS INTEGER, j AS INTEGER
     FOR i = 0 TO N_BULLETS - 1
         IF b_alive[i] = 1 THEN
+            ' Phase 5: bullet-vs-boss check first (boss is one entity)
+            IF g_boss_active = 1 AND g_boss_intro_t = 0 THEN
+                DIM dxb AS DOUBLE = bx[i] - g_boss_x
+                DIM dyb AS DOUBLE = by[i] - g_boss_y
+                IF dxb*dxb + dyb*dyb < 50*50 THEN
+                    IF b_pierce[i] = 0 THEN b_alive[i] = 0
+                    hit_boss 1, bx[i], by[i]
+                ENDIF
+            ENDIF
             FOR j = 0 TO N_ENEMIES - 1
                 IF e_alive[j] = 1 THEN
                     DIM dx AS DOUBLE = bx[i] - ex[j]
@@ -730,8 +1162,11 @@ SUB collisions()
                         IF e_kind[j] = 1 THEN pts = 20
                         IF e_kind[j] = 2 THEN pts = 50
                         IF e_kind[j] = 3 THEN pts = 100
-                        score = score + pts
-                        spawn_popup(ex[j], ey[j], pts)
+                        ' Phase 5: combo + score multiplier
+                        combo_hit()
+                        DIM gained AS INTEGER = CINT(pts * combo_mult())
+                        score = score + gained
+                        spawn_popup(ex[j], ey[j], gained)
                         maybe_drop_powerup(ex[j], ey[j], CINT(e_kind[j]))
                     ENDIF
                 ENDIF
@@ -747,12 +1182,21 @@ SUB collisions()
                     e_alive[j] = 0
                     spawn_explosion(ex[j], ey[j])
                     sfx_boom()
-                    lives = lives - 1
-                    invuln = 90
-                    IF lives <= 0 THEN
-                        IF score > hi_score THEN hi_score = score
-                        mode$ = "gameover"
-                        gameover_lock = 150
+                    ' Manual shield absorbs the hit instead of losing a life.
+                    IF shield_active = 1 THEN
+                        invuln = 30
+                        trigger_shake 4.0, 6
+                    ELSE
+                        lives = lives - 1
+                        invuln = 90
+                        trigger_shake 8.0, 14
+                        g_combo = 0
+                        g_combo_t = 0
+                        IF lives <= 0 THEN
+                            IF score > hi_score THEN hi_score = score
+                            mode$ = "gameover"
+                            gameover_lock = 150
+                        ENDIF
                     ENDIF
                 ENDIF
             ENDIF
@@ -770,17 +1214,91 @@ SUB collisions()
                     ep_alive[k] = 0
                     spawn_explosion(ep_x[k], ep_y[k])
                     sfx_boom()
-                    lives = lives - 1
-                    invuln = 90
-                    IF lives <= 0 THEN
-                        IF score > hi_score THEN hi_score = score
-                        mode$ = "gameover"
-                        gameover_lock = 150
+                    IF shield_active = 1 THEN
+                        invuln = 30
+                        trigger_shake 4.0, 6
+                    ELSE
+                        lives = lives - 1
+                        invuln = 90
+                        trigger_shake 8.0, 14
+                        g_combo = 0
+                        g_combo_t = 0
+                        IF lives <= 0 THEN
+                            IF score > hi_score THEN hi_score = score
+                            mode$ = "gameover"
+                            gameover_lock = 150
+                        ENDIF
                     ENDIF
                 ENDIF
             ENDIF
         NEXT k
     ENDIF
+ENDSUB
+
+' ──────────────────────────────────────────────────────────────────
+' SHIELD — manual hold-to-block, energy drains while on
+' ──────────────────────────────────────────────────────────────────
+SUB update_shield()
+    DIM want_on AS INTEGER = CINT(input_shield())
+    DIM mx AS DOUBLE = g_config{"shield_max"}
+    IF shield_cooldown_t > 0 THEN
+        shield_cooldown_t = shield_cooldown_t - 1
+        shield_active = 0
+    ELSEIF want_on = 1 AND shield_energy > 0 THEN
+        shield_active = 1
+        shield_energy = shield_energy - g_config{"shield_drain"}
+        IF shield_energy <= 0 THEN
+            shield_energy = 0
+            shield_cooldown_t = CINT(g_config{"shield_cooldown"})
+        ENDIF
+    ELSE
+        shield_active = 0
+        shield_energy = shield_energy + g_config{"shield_recharge"}
+        IF shield_energy > mx THEN shield_energy = mx
+    ENDIF
+ENDSUB
+
+' Animated octagon bubble around the player while the manual shield
+' is up. Shares visual language with the existing pw_shield bubble
+' but uses the level palette so it looks at home in any colour scheme.
+SUB draw_manual_shield()
+    IF shield_active = 0 THEN RETURN
+    DIM pulse AS DOUBLE = 28.0 + SIN(frame * 0.3) * 4.0
+    use_color "shield"
+    LINE px - pulse,        py,                px - pulse * 0.7,  py - pulse * 0.7
+    LINE px - pulse * 0.7,  py - pulse * 0.7,  px,                py - pulse
+    LINE px,                py - pulse,        px + pulse * 0.7,  py - pulse * 0.7
+    LINE px + pulse * 0.7,  py - pulse * 0.7,  px + pulse,        py
+    LINE px + pulse,        py,                px + pulse * 0.7,  py + pulse * 0.7
+    LINE px + pulse * 0.7,  py + pulse * 0.7,  px,                py + pulse
+    LINE px,                py + pulse,        px - pulse * 0.7,  py + pulse * 0.7
+    LINE px - pulse * 0.7,  py + pulse * 0.7,  px - pulse,        py
+ENDSUB
+
+' Horizontal energy bar at the bottom-left. Red while in cooldown,
+' palette-shield colour while available. Background + border keep
+' the empty slot visible.
+SUB draw_shield_bar()
+    DIM bw AS INTEGER = 200
+    DIM bxs AS INTEGER = 16
+    DIM bys AS INTEGER = SCR_H - 28
+    DIM mx AS DOUBLE = g_config{"shield_max"}
+    DIM frac AS DOUBLE = shield_energy / mx
+    IF frac < 0.0 THEN frac = 0.0
+    IF frac > 1.0 THEN frac = 1.0
+    DIM fill_w AS INTEGER = CINT(bw * frac)
+    DRAWCOLOR 40, 40, 60
+    RECT bxs, bys, bw, 12, TRUE
+    IF shield_cooldown_t > 0 THEN
+        DRAWCOLOR 200, 80, 80
+    ELSE
+        use_color "shield"
+    ENDIF
+    IF fill_w > 0 THEN RECT bxs, bys, fill_w, 12, TRUE
+    DRAWCOLOR 100, 120, 140
+    RECT bxs, bys, bw, 12, FALSE
+    DRAWCOLOR 180, 200, 220
+    TEXT bxs + bw + 8, bys - 2, "SHIELD"
 ENDSUB
 
 ' ──────────────────────────────────────────────────────────────────
@@ -792,12 +1310,17 @@ ENDSUB
 
 SUB draw_player()
     IF invuln > 0 AND pw_shield = 0 AND (frame MOD 4) < 2 THEN RETURN
-    DRAWCOLOR 80, 255, 200
-    LINE px,      py - 16, px - 14, py + 12
-    LINE px - 14, py + 12, px + 14, py + 12
-    LINE px + 14, py + 12, px,      py - 16
-    LINE px - 6,  py + 12, px,      py + 4
-    LINE px + 6,  py + 12, px,      py + 4
+    use_color "player"
+    ' Phase 5: shake offset wobbles the player visually only — px/py
+    ' stay clean so collision / movement stay deterministic.
+    DIM dx AS DOUBLE = g_shake_dx
+    DIM dy AS DOUBLE = g_shake_dy
+    LINE px + dx,      py + dy - 16, px + dx - 14, py + dy + 12
+    LINE px + dx - 14, py + dy + 12, px + dx + 14, py + dy + 12
+    LINE px + dx + 14, py + dy + 12, px + dx,      py + dy - 16
+    LINE px + dx - 6,  py + dy + 12, px + dx,      py + dy + 4
+    LINE px + dx + 6,  py + dy + 12, px + dx,      py + dy + 4
+    draw_manual_shield()
     ' Wide-cannon side pods when active
     IF pw_wide > 0 THEN
         DRAWCOLOR 100, 220, 255
@@ -924,8 +1447,10 @@ SUB draw_powerups()
                 DRAWCOLOR 80, 255, 200         ' SHIELD teal
             ELSEIF k = 4 THEN
                 DRAWCOLOR 200, 120, 255        ' PIERCE violet
-            ELSE
+            ELSEIF k = 5 THEN
                 DRAWCOLOR 255, 80, 80          ' BOMB red
+            ELSE
+                DRAWCOLOR 120, 255, 120        ' LIFE bright green
             ENDIF
             ' Pulsing hexagon outline
             DIM r AS DOUBLE = 11.0 + SIN(pu_phase[i]) * 1.5
@@ -1035,16 +1560,63 @@ SUB draw_hud_pu_chip(x, label$, t, r, g, b)
 ENDSUB
 
 SUB draw_hud()
-    DRAWCOLOR 180, 220, 255
+    use_color "hud"
     TEXT 16, 12, "SCORE " + FORMAT$("{:0>6}", score)
     TEXT SCR_W - 150, 12, "LIVES " + STR$(lives)
     TEXT SCR_W / 2 - 60, 12, "HI " + FORMAT$("{:0>6}", hi_score)
+    ' Level + wave-progress (e.g. "LEVEL 2  WAVE 3/5")
+    DIM wpl AS INTEGER = CINT(g_config{"waves_per_level"})
+    DIM cur_in_level AS INTEGER = 0
+    IF g_waves_done > 0 THEN
+        cur_in_level = ((g_waves_done - 1) MOD wpl) + 1
+    ENDIF
+    use_color "level"
+    TEXT 16, 32, "LEVEL " + STR$(g_level) + "  WAVE " + STR$(cur_in_level) + "/" + STR$(wpl)
+    ' Phase 6: tier shown only after first reset
+    DIM t AS INTEGER = CINT(level_tier())
+    IF t > 0 THEN
+        use_color "level_banner"
+        TEXT 16, 52, "TIER " + STR$(t)
+    ENDIF
     ' Active powerup chips along the bottom edge
     draw_hud_pu_chip(16,  "SPREAD", pw_spread, 255, 120, 220)
     draw_hud_pu_chip(96,  "WIDE",   pw_wide,   100, 220, 255)
     draw_hud_pu_chip(176, "RAPID",  pw_rapid,  255, 240,  80)
     draw_hud_pu_chip(256, "SHIELD", pw_shield,  80, 255, 200)
     draw_hud_pu_chip(336, "PIERCE", pw_pierce, 200, 120, 255)
+ENDSUB
+
+' Combo-streak indicator at top-right with a decay bar that drains
+' as g_combo_t ticks down. Hidden for combos < 2 — a single kill
+' isn't a streak.
+SUB draw_combo()
+    IF g_combo < 2 THEN RETURN
+    DIM bright AS DOUBLE = g_combo_t / (g_combo_max_t + 0.0)
+    use_color "level_banner"
+    TEXT SCR_W - 150, 36, "COMBO x" + STR$(g_combo)
+    DIM bw AS INTEGER = 80
+    DIM bxs AS INTEGER = SCR_W - 150
+    DIM bys AS INTEGER = 56
+    DRAWCOLOR 50, 50, 60
+    RECT bxs, bys, bw, 4, TRUE
+    use_color "shield"
+    DIM fw AS INTEGER = CINT(bw * bright)
+    IF fw > 0 THEN RECT bxs, bys, fw, 4, TRUE
+ENDSUB
+
+' Big centered banner shown for ~2 seconds after level_up().
+' Counter is decremented inside the SUB to keep main-loop wiring small.
+SUB draw_level_announce()
+    IF g_level_announce <= 0 THEN RETURN
+    g_level_announce = g_level_announce - 1
+    DIM b = g_palette{"level_banner"}
+    DIM s = g_palette{"level_sub"}
+    DIM bright AS DOUBLE = 0.6 + ABS(SIN(g_level_announce * 0.2)) * 0.4
+    DRAWCOLOR CINT(b[0] * bright), CINT(b[1] * bright), CINT(b[2] * bright)
+    TEXT SCR_W / 2 - 90, SCR_H / 2 - 50, "LEVEL " + STR$(g_level)
+    DRAWCOLOR s[0], s[1], s[2]
+    TEXT SCR_W / 2 - 110, SCR_H / 2 - 18, _
+        "+" + STR$(CINT(g_config{"level_score_bonus"})) + "  bonus"
 ENDSUB
 
 SUB draw_title()
@@ -1113,7 +1685,8 @@ RANDOMSEED INT(NOW() * 1000.0)
 sound_setup()
 
 DO
-    CLS 8, 8, 18
+    DIM bg = g_palette{"bg"}
+    CLS bg[0], bg[1], bg[2]
     update_stars()
     draw_stars()
 
@@ -1163,7 +1736,8 @@ DO
             ' there's no event pump and the joystick state goes stale,
             ' which used to wedge the script in an endless loop.
             DO
-                CLS 8, 8, 18
+                DIM bg = g_palette{"bg"}
+    CLS bg[0], bg[1], bg[2]
                 update_stars()
                 draw_stars()
                 draw_enemies()
@@ -1193,10 +1767,15 @@ DO
             update_powerups()
             update_fx()
             update_popups()
+            update_boss()
             collisions()
+            tick_shake()
+            tick_combo()
         ENDIF
-        ' Wave driver
-        IF wave_remaining > 0 THEN
+        ' Wave driver — boss takes priority and parks the wave system
+        IF g_boss_active = 1 THEN
+            ' boss handled by update_boss() above; no regular waves
+        ELSEIF wave_remaining > 0 THEN
             IF wave_spawn_cd > 0 THEN wave_spawn_cd = wave_spawn_cd - 1
             IF wave_spawn_cd <= 0 THEN
                 spawn_wave_member()
@@ -1220,10 +1799,14 @@ DO
         draw_eps()
         draw_bullets()
         draw_powerups()
+        draw_boss()
         draw_player()
         draw_fx()
         draw_popups()
         draw_hud()
+        draw_shield_bar()
+        draw_combo()
+        draw_level_announce()
         IF paused = 1 THEN draw_paused()
     ELSE
         update_fx()
@@ -1252,3 +1835,8 @@ DO
 LOOP WHILE running = 1
 
 SOUND.SHUTDOWN
+' END destroys the SDL window via cleanup_graphics — without it, the
+' window sits open with no event pump after running=0 and Windows
+' marks it "Not Responding". Safe inside the MCP worker because
+' run_code resets is_halted on the next sub-run.
+END

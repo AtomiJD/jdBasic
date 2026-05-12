@@ -19,9 +19,6 @@ DIM SCREEN_H = 900
 DIM GW = 140                         ' grid columns
 DIM GH = 100                         ' grid rows (depth)
 
-SCREEN SCREEN_W, SCREEN_H, "Retro Wireframe Sine Wave (WASD / ZX)"
-SETFONT "C:/Windows/Fonts/consola.ttf", 16
-
 ' ---- World grid (centred, 4 ripple cycles) -------------------
 DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
 DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
@@ -127,6 +124,10 @@ ENDSUB
 
 ON "KEYDOWN" CALL OnKey
 ON "QUIT"    CALL OnQuit
+
+SCREEN SCREEN_W, SCREEN_H, "Retro Wireframe Sine Wave (WASD / ZX)"
+SETFONT "C:/Windows/Fonts/consola.ttf", 16
+TOGGLE_FULLSCREEN
 
 DO
     ' ---- Heightfield -----------------------------------------

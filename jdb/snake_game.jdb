@@ -102,7 +102,7 @@ DO
 
     ' 2. Logic
     IF NOT GameOver THEN
-        Dims = LEN(SnakeX)
+        Dims = LENV(SnakeX)
         Count = Dims[0]
         
         ' FIX: Head is now at the END of the array
@@ -164,7 +164,7 @@ DO
         LOCATE HEIGHT / 2, (WIDTH / 2) - 4
         COLOR 15, 4
         PRINT " GAME OVER "
-        LOCATE((HEIGHT / 2) + 1, (WIDTH / 2) - 8)
+        LOCATE (HEIGHT / 2) + 1, (WIDTH / 2) - 8
         COLOR 7, 0
         PRINT "Press Q to Quit"
     ENDIF
@@ -175,3 +175,4 @@ LOOP
 CURSOR TRUE
 COLOR 2,0
 CLS
+END

@@ -19,7 +19,7 @@ FUNC DisplayWorldClock()
     ' Draw the clock at the top of the screen
     LOCATE 1, 1
     COLOR 14, 0 ' Yellow text
-    PRINT "FRA: " + baseTime;
+    PRINT "FRA: " + CVDATE(baseTime);
     PRINT " / NY: " + nyTime;
     PRINT " / LAX: " + lvTime
 
@@ -31,4 +31,3 @@ ENDFUNC
 
 ' 2. Start the recursive background task (2000ms = 2 seconds)
 TickerID = RECUR(2000, "DisplayWorldClock")
-

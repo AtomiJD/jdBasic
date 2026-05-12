@@ -8,6 +8,11 @@
         "command": "/home/atomijd/dev/cc/build/jdbasic",
         "args": ["--mcp"],
         "env": { "JDBASIC_MCP_LOG": "1" }
+      },
+      "jdbasic-stdio-win": {
+        "command": "D:\\usr\\dev\\cc\\mcp-runtime\\jdBasic.exe",
+        "args": ["--mcp"],
+        "env": { "JDBASIC_MCP_LOG": "1" }
       }
     }
 }

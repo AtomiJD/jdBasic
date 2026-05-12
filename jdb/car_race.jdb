@@ -13,7 +13,8 @@ DO
     SWITCH C$="*" OR R=14
         CASE 1: PRINT ["WIN!","DIED"][C$="*"]
                 CURSOR TRUE
-                END
+                EXITDO
     ENDSWITCH
     SLEEP 50
 LOOP
+PRINT "Done."
