@@ -81,7 +81,7 @@ PRINT "Drawing spiral..."
 ' In jdBasic, SETPOS uses absolute screen coordinates, so we calculate
 ' the position relative to the center of the screen.
 TURTLE.PENUP
-TURTLE.SETPOS (SCREEN_W / 2) + FACTOR, (SCREEN_H / 2)
+TURTLE.SETPOS SCREEN_W / 2 + FACTOR, SCREEN_H / 2
 TURTLE.SETHEADING 0
 TURTLE.PENDOWN
 
