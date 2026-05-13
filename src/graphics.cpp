@@ -2304,7 +2304,7 @@ void register_graphics_builtins(VM& vm) {
     // GFX.SAVE_SCREENSHOT file$, [x, y, w, h] — save full screen or a region
     vm.register_native("GFX.SAVE_SCREENSHOT", 1, 5, [](const std::vector<Value>& args) -> Value {
         ensure_screen("GFX.SAVE_SCREENSHOT");
-        std::string path = args[0].as_string()->data;
+        std::string path = resolve_asset_path(args[0].as_string()->data);
 
         SDL_Rect region_rect;
         SDL_Rect* rect_ptr = nullptr;
@@ -2314,6 +2314,14 @@ void register_graphics_builtins(VM& vm) {
             region_rect.w = (int)args[3].to_int();
             region_rect.h = (int)args[4].to_int();
             rect_ptr = &region_rect;
+        } else {
+            // Default to the current renderer viewport instead of NULL.
+            // SDL3's D3D11 backend has a broken staging-texture path for
+            // a NULL rect under some configs; the viewport rect always
+            // matches the logical presentation and reads cleanly.
+            if (SDL_GetRenderViewport(g_renderer, &region_rect)) {
+                rect_ptr = &region_rect;
+            }
         }
 
         SDL_Surface* surface = SDL_RenderReadPixels(g_renderer, rect_ptr);
