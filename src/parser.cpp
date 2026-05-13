@@ -1326,23 +1326,44 @@ StmtPtr Parser::parse_ident_stmt() {
                 }
             }
             if (pure_dots && check(TokenType::LPAREN)) {
-                // Simple dotted function call: HTTP.SETHEADER(...)
-                advance(); // (
-                std::vector<ExprPtr> args;
-                if (!check(TokenType::RPAREN)) {
-                    args.push_back(parse_expr());
-                    while (match(TokenType::COMMA)) args.push_back(parse_expr());
+                // Only commit to method-call form when the '(' sits
+                // IMMEDIATELY after the identifier (no whitespace). A
+                // space between the name and the paren means the '('
+                // is grouping the first argument of an imperative call
+                // — e.g. 'TURTLE.SETPOS (x+1), (y+1)' should parse as
+                // SETPOS with two args, not as 'SETPOS((x+1))' followed
+                // by stray ', (y+1)'.
+                const Token& prev_name = tokens[pos - 1];
+                const Token& lpar_tok  = tokens[pos];
+                // Lexer stores Token.col as the column AFTER the last
+                // consumed character (i.e. where the next char will
+                // land). Adjacency therefore means lpar.col equals
+                // prev.col + lpar's own width — no whitespace between.
+                bool paren_is_adjacent =
+                    (lpar_tok.line == prev_name.line &&
+                     lpar_tok.col  == prev_name.col + (int)lpar_tok.value.size());
+                if (paren_is_adjacent) {
+                    // Simple dotted function call: HTTP.SETHEADER(...)
+                    advance(); // (
+                    std::vector<ExprPtr> args;
+                    if (!check(TokenType::RPAREN)) {
+                        args.push_back(parse_expr());
+                        while (match(TokenType::COMMA)) args.push_back(parse_expr());
+                    }
+                    expect(TokenType::RPAREN, "')'");
+                    // If chain continues (.field, [idx], {key}), fall through to chain parser
+                    if (check(TokenType::DOT) || check(TokenType::LBRACKET) || check(TokenType::LBRACE)) {
+                        lhs = make_call(dotted, std::move(args), ln);
+                        pure_dots = false; // prevent rewind below
+                    } else {
+                        auto call = make_call(dotted, std::move(args), ln);
+                        expect_newline();
+                        return make_expr_stmt(std::move(call), ln);
+                    }
                 }
-                expect(TokenType::RPAREN, "')'");
-                // If chain continues (.field, [idx], {key}), fall through to chain parser
-                if (check(TokenType::DOT) || check(TokenType::LBRACKET) || check(TokenType::LBRACE)) {
-                    lhs = make_call(dotted, std::move(args), ln);
-                    pure_dots = false; // prevent rewind below
-                } else {
-                    auto call = make_call(dotted, std::move(args), ln);
-                    expect_newline();
-                    return make_expr_stmt(std::move(call), ln);
-                }
+                // else: fall through to the imperative-call branch below,
+                // which already accepts LPAREN as the start of the first
+                // bare argument.
             }
             if (pure_dots && check(TokenType::ASSIGN)) {
                 // Simple dotted assignment: obj.field = val
