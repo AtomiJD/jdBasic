@@ -1,0 +1,28 @@
+' ══════════════════════════════════════════════════════════════════
+'  mini_llm.jdb — Local LLM inference via llama.cpp
+'  Load a GGUF model, set a system prompt, stream the answer token
+'  by token. No internet, no Python, no cloud — your hardware only.
+' ══════════════════════════════════════════════════════════════════
+
+DIM model = "models/Phi-3-mini-4k-instruct-q4.gguf"  ' ~2.4 GB
+DIM ctx_size = 2048
+DIM gpu_layers = 99   ' all on GPU if the build has CUDA/Vulkan/ROCm
+
+DIM llm = AI.LOAD_LLM(model, ctx_size, gpu_layers)
+DIM rc1 = AI.SET(llm, "system", "You are a concise assistant. Answer in 2 sentences.")
+DIM rc2 = AI.SET(llm, "temperature", 0.5)
+DIM rc3 = AI.SET(llm, "max_tokens", 120)
+
+' AI.CHAT_STREAM hands each new token to the callback as it's generated.
+' Return TRUE to keep going, FALSE to stop early.
+FUNC OnToken(t)
+  PRINT t;
+  RETURN TRUE
+ENDFUNC
+
+PRINT "Q: Why is BASIC a good language to teach with?"
+PRINT "A: ";
+DIM full_response = AI.CHAT_STREAM(llm, "Why is BASIC a good language to teach with?", OnToken@)
+PRINT
+
+DIM rc4 = AI.FREE_LLM(llm)

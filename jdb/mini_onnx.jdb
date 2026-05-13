@@ -1,0 +1,19 @@
+' ══════════════════════════════════════════════════════════════════
+'  mini_onnx.jdb — ONNX inference as a generic compute backend
+'  Load a tiny 3×3 convolution model and run it on a 5×5 input.
+'  Same pattern works for full image classifiers (MNIST, ResNet, …):
+'  swap the .onnx file and reshape the input.
+' ══════════════════════════════════════════════════════════════════
+
+DIM conv = AI.LOAD("bench/conv3x3.onnx")
+
+' ONNX Conv2D wants [batch, channels, h, w]. Edge-detect kernel below.
+LET edge_kernel = [[[[-1.0, -1.0, -1.0], [2.0, 2.0, 2.0], [-1.0, -1.0, -1.0]]]]
+
+' Tiny 5×5 image with a vertical line down the middle.
+LET image = [[[[0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]]]]
+
+LET out = AI.RUN(conv, [image, edge_kernel])
+
+PRINT "Edge-detected response (positive values mark the line):"
+PRINT out[0][0]

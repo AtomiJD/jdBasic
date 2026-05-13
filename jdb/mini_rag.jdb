@@ -1,0 +1,33 @@
+' ══════════════════════════════════════════════════════════════════
+'  mini_rag.jdb — Retrieval over a tiny in-memory corpus
+'  Build a TF-IDF index over four hand-written paragraphs, then ask
+'  questions. No LLM, no embedding model — pure retrieval.
+'
+'  Once you have a local LLM loaded (see mini_llm.jdb), swap
+'  AI.RAG_SEARCH for AI.RAG_QUERY to get a generated answer with the
+'  retrieved context folded in.
+' ══════════════════════════════════════════════════════════════════
+
+' AI.RAG_CREATE(llm_id, chunk_size, chunk_overlap, [emb_id]).
+' llm_id = 0 + no emb_id → TF-IDF mode: no model files required.
+DIM rag = AI.RAG_CREATE(0, 400, 40)
+
+DIM rc1 = AI.RAG_ADD(rag, "jdBasic is a modern BASIC dialect with APL-style array ops, ImGui graphics, and a built-in LLVM-18 native compiler.", "overview")
+DIM rc2 = AI.RAG_ADD(rag, "AI features include AI.LOAD for ONNX models, AI.LOAD_LLM for GGUF local language models via llama.cpp, and AI.RAG_QUERY for retrieval-augmented generation.", "ai")
+DIM rc3 = AI.RAG_ADD(rag, "The jdBasic MCP server lets Claude or Cursor pair-program on a persistent VM with STOP/RESUME and LLVM compile-and-ship.", "mcp")
+DIM rc4 = AI.RAG_ADD(rag, "Graphics commands include SCREEN to open a window, LINE / RECT / CIRCLE for primitives, SPRITE.LOAD for spritesheets, and a Tiled-map loader.", "graphics")
+
+' TF-IDF mode doesn't need an HNSW index — RAG_SEARCH works directly.
+' (Call AI.RAG_BUILD_INDEX only when you create a RAG with a dense
+'  embedding model: AI.RAG_CREATE(llm, chunk, overlap, emb_id).)
+
+DIM hits = AI.RAG_SEARCH(rag, "How can I pair-program with Claude?", 2)
+
+DIM i AS INTEGER
+FOR i = 0 TO LEN(hits) - 1
+  PRINT "── hit ", i + 1, " — source=", hits[i]{"source"}, "  score=", hits[i]{"score"}
+  PRINT hits[i]{"text"}
+  PRINT
+NEXT i
+
+DIM rc = AI.RAG_FREE(rag)
