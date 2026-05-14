@@ -1,0 +1,80 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 06 — Maps (key-value storage)
+'  Topic: map literal, indexing, assign, MAP.SIZE, MAP.EXISTS,
+'         MAP.KEYS, FOR EACH iteration
+'  Target runtime: ~5 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 06 | Maps | Key-Value Storage
+
+SAY: Welcome back. Jaydee here. Lesson six.
+
+SAY: Arrays in lesson three were great when you had a list of similar values. Today we look at "maps", which store key-value pairs. Think phone book, or dictionary.
+
+SAY: Let us start at the prompt.
+
+TYPE: DIM person = {"name": "Atomi", "age": 38, "city": "Heidelberg"}
+TYPE: PRINT person
+WAIT: 1.0
+
+SAY: Curly braces create a map. Each entry is a key, a colon, then a value. Keys are strings, values can be any type.
+
+TYPE: PRINT person["name"]
+TYPE: PRINT person["age"]
+WAIT: 0.8
+
+SAY: Square brackets with a key string read the value back out.
+
+TYPE: person["age"] = 39
+TYPE: PRINT person["age"]
+WAIT: 0.8
+
+SAY: Same syntax to write. We just had a birthday.
+
+SAY: To add a new key, assign to it.
+
+TYPE: person["email"] = "atomi@example.com"
+TYPE: PRINT person
+WAIT: 1.0
+
+SAY: Now the map has four entries.
+
+SAY: A few useful built-ins. "map size" tells you how many entries. "map exists" checks whether a key is present. "map keys" returns an array of all the keys.
+
+TYPE: PRINT MAP.SIZE(person)
+TYPE: PRINT MAP.EXISTS(person, "city")
+TYPE: PRINT MAP.EXISTS(person, "phone")
+TYPE: PRINT MAP.KEYS(person)
+WAIT: 1.5
+
+SAY: Four entries. The "city" key exists, the "phone" key does not. And we get every key back as an array.
+
+SAY: To iterate over a map, walk its keys with "for each".
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM person = {"name": "Atomi", "age": 39, "city": "Heidelberg"}
+TYPE: FOR EACH k IN MAP.KEYS(person)
+TYPE:     PRINT k; ": "; person[k]
+TYPE: NEXT
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.8
+CMD: RUN
+WAIT: 1.5
+
+SAY: Three fields, three lines of output. The order is not guaranteed, but every key gets visited exactly once.
+
+SAY: That is lesson six. Maps for key-value data, arrays for sequences. Together they handle almost any shape of data you will meet.
+
+SAY: In lesson seven we will let the user talk back to our program with "input", and we will discover the "do" loop.
+
+SAY: Until then! Keep coding. Bye!
+
+WAIT: 2

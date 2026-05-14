@@ -1,9 +1,0 @@
-SAY: Willkommen zu jdBasic. Ich zeige euch heute eine Schleife.
-CMD: EDIT
-SAY: Wir schreiben jetzt ein einfaches FOR-Statement.
-LOAD: for_demo.jdb
-'TYPE: FOR I = 1 TO 10\n\tPRINT I\n\bNEXT I
-CMD: CTRL-Q
-CMD: RUN
-SAY: Und hier sehen wir das Ergebnis.
-LOAD: for_demo.jdb

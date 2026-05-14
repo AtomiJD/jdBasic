@@ -23,13 +23,16 @@ IMPORT FFMPEG
 CD "\usr\dev\cc\jdb\tv"
 
 ' Script filename comes from the first CLI argument; falls back to the
-' lesson-01 default when called bare.  Examples:
-'   jdbasic director.jdb                       → script_01_hello.txt
-'   jdbasic director.jdb script_02_loops.txt   → that file
+' lesson-01 default when called bare.  Pass the bare basename — the
+' director resolves it inside the scripts\ subfolder where all
+' lesson scripts now live.  Examples:
+'   jdbasic director.jdb                       → scripts\script_01_hello.txt
+'   jdbasic director.jdb script_03_arrays.txt  → scripts\script_03_arrays.txt
 DIM SCRIPT_FILE$ = "script_01_hello.txt"
 DIM cli_args = OS.ARGS()
 IF LEN(cli_args) >= 2 THEN SCRIPT_FILE$ = cli_args[1]
-PRINT "── director: shooting "; SCRIPT_FILE$
+DIM SCRIPT_PATH$ = "scripts\" + SCRIPT_FILE$
+PRINT "── director: shooting "; SCRIPT_PATH$
 
 ' Strip extension so we can name the voice WAVs after the script.
 ' INSTR$ is 0-indexed in jdBasic so the prefix length == the index of '.'.
@@ -89,7 +92,7 @@ ENDSUB
 ' it inline during the shoot the recording would have dead-air gaps.
 ' Render everything first; the shoot just plays existing files.
 PRINT "── pre-rendering voice clips + title cards ──"
-DIM lines = SPLIT(TXTREADER$(SCRIPT_FILE$), CHR$(10))
+DIM lines = SPLIT(TXTREADER$(SCRIPT_PATH$), CHR$(10))
 DIM voice_wavs = []
 DIM voice_durs = []
 DIM card_pngs  = []
@@ -234,11 +237,14 @@ FOR I = 0 TO LEN(lines) - 1
                 REMOTE.ActivateJDB(hIDE)
                 REMOTE.SendKey(13)
         ENDSWITCH
-        SLEEP 500
+        SLEEP 100
 
     ELSEIF STARTSWITH(line$, "TYPE:") THEN
+        ' TypeText already sends Enter when it's done — no extra SendKey
+        ' here, otherwise every typed line is followed by a blank line
+        ' (visible at the REPL and, more annoyingly, inside the EDIT
+        ' buffer as a blank source line between every statement).
         TypeText(hIDE, MID$(line$, 6))
-        REMOTE.SendKey($0D)
 
     ELSEIF STARTSWITH(line$, "LOAD:") THEN
         DIM fp$ = TRIM$(MID$(line$, 6))
@@ -250,6 +256,48 @@ FOR I = 0 TO LEN(lines) - 1
             TypeText(hIDE, content$)
         ELSE
             PRINT "[LOAD] FAIL: file not found: "; fp$
+        ENDIF
+
+    ELSEIF STARTSWITH(line$, "WINMOVE:") THEN
+        ' WINMOVE: <window-title>
+        ' Looks the window up by exact title and shoves it to 0,0
+        ' with the same 1920x1080 footprint we use for the IDE.  Used
+        ' for SDL graphics windows (SCREEN ...) so they land inside
+        ' the OBS Desktop-scene crop region.  Retries a few times to
+        ' give SDL a moment to register the window after RUN.  After
+        ' the move we also activate it so it sits on top of the IDE
+        ' in the Z-order (SDL otherwise often comes up behind).
+        DIM wt$ = TRIM$(MID$(line$, 9))
+        PRINT "[WINMOVE] "; wt$
+        DIM hwnd_w = 0
+        DIM wtries AS INTEGER = 0
+        DO
+            hwnd_w = REMOTE.FindJDB(wt$)
+            IF hwnd_w <> 0 THEN PRINT "Found Window: "; hwnd_w : EXITDO
+            SLEEP 100
+            wtries = wtries + 1
+        LOOP UNTIL wtries > 30
+        IF hwnd_w = 0 THEN
+            PRINT "  (window not found: "; wt$; ")"
+        ELSE
+            REMOTE.ResizeJDB(hwnd_w, 1920, 1080)
+            REMOTE.ActivateJDB(hwnd_w)
+        ENDIF
+
+    ELSEIF STARTSWITH(line$, "FOCUS:") THEN
+        ' FOCUS: <window-title>
+        ' Bring the named window to the foreground.  Use after a SDL
+        ' demo closes to put the IDE back on top so the next TYPE:
+        ' line reaches the right window.  (TypeText also activates
+        ' the IDE internally, but issuing FOCUS explicitly gives the
+        ' Z-order time to settle before the next keystroke.)
+        DIM ft$ = TRIM$(MID$(line$, 7))
+        PRINT "[FOCUS] "; ft$
+        DIM hwnd_f = REMOTE.FindJDB(ft$)
+        IF hwnd_f <> 0 THEN
+            REMOTE.ActivateJDB(hwnd_f)
+        ELSE
+            PRINT "  (window not found: "; ft$; ")"
         ENDIF
     ENDIF
 NEXT I

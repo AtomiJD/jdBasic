@@ -1,0 +1,151 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 09 — Graphics
+'  Topic: SCREEN to open a window, DRAWCOLOR, RECT, CIRCLE, LINE,
+'         SCREENFLIP to display, classic render-loop (POLLEVENT +
+'         SLEEP) so SDL keeps pumping window messages.
+'
+'  Recording note: this lesson uses OBS scene switching.  The script
+'  flips to a "Desktop" scene (cropped 0,0,1920x1080 of the display)
+'  while the SDL window is on screen, and the director's WINMOVE
+'  command snaps the freshly-opened SDL window to that 1920x1080
+'  area so it lands exactly inside the crop region.  Between demos
+'  we switch back to "IDE" (window-capture of jdBasic) and FOCUS
+'  back on the IDE so the next TYPE: reaches the right window.
+'
+'  Why a render loop instead of SLEEP 3500: a flat SLEEP blocks the
+'  whole VM, so the SDL window never gets its WM_WINDOWPOSCHANGING
+'  serviced and Windows refuses to move it.  A loop calling
+'  GFX.POLLEVENT() every 16 ms keeps the SDL message pump alive,
+'  WINMOVE settles into the new position, and the visual content
+'  stays painted because we already flipped once before the loop.
+'
+'  Target runtime: ~6 minutes
+' ──────────────────────────────────────────────────────────────────
+
+SCENE: IDE
+
+TITLE: 09 | Graphics | Pixels on Screen
+
+SAY: Welcome back. Jaydee here. Lesson nine.
+
+SAY: We have spent eight lessons inside the text terminal. Today we open a graphics window. We will draw shapes, set colours, and combine them into pictures.
+
+SAY: Three commands do most of the work. "screen" opens a window of a given size. "draw-color" sets the current colour. "screen-flip" pushes everything we drew to the display.
+
+SAY: Let us start with the smallest possible drawing program.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: SCREEN 600, 400, "Lesson 09"
+TYPE: DRAWCOLOR 255, 220, 0
+TYPE: CIRCLE 300, 200, 80, TRUE
+TYPE: SCREENFLIP
+TYPE: DIM ev
+TYPE: FOR f = 0 TO 220
+TYPE:     ev = GFX.POLLEVENT()
+TYPE:     SLEEP 16
+TYPE: NEXT f
+TYPE: GFX.CLOSE
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+
+SCENE: Desktop
+CMD: RUN
+WINMOVE: Lesson 09
+WAIT: 4.5
+SCENE: IDE
+FOCUS: jdBasic
+
+SAY: A yellow circle in the middle of a six-hundred by four-hundred window. The "circle" command takes a centre point, a radius, and a boolean. True means filled, false would draw only the outline. The render loop at the end keeps the window responsive for about three and a half seconds, then closes it.
+
+SAY: Colours are three numbers from zero to two-fifty-five, the standard "rgb" format. Let us combine a few shapes and colours.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: SCREEN 600, 400, "Shapes"
+TYPE: DRAWCOLOR 30, 30, 50
+TYPE: RECT 0, 0, 600, 400, TRUE
+TYPE: DRAWCOLOR 80, 200, 255
+TYPE: RECT 100, 100, 400, 200, TRUE
+TYPE: DRAWCOLOR 255, 100, 100
+TYPE: CIRCLE 300, 200, 60, TRUE
+TYPE: DRAWCOLOR 255, 255, 255
+TYPE: LINE 0, 0, 600, 400
+TYPE: LINE 600, 0, 0, 400
+TYPE: SCREENFLIP
+TYPE: DIM ev
+TYPE: FOR f = 0 TO 220
+TYPE:     ev = GFX.POLLEVENT()
+TYPE:     SLEEP 16
+TYPE: NEXT f
+TYPE: GFX.CLOSE
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 3.5
+
+SCENE: Desktop
+CMD: RUN
+WINMOVE: Shapes
+WAIT: 4.5
+SCENE: IDE
+FOCUS: jdBasic
+
+SAY: A dark background, a blue panel, a red ball in the middle, and two white diagonals. Each command paints on top of whatever was there before, so the order matters.
+
+SAY: Because every drawing command is a regular jdBasic statement, you can put them inside loops. Watch.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: SCREEN 600, 400, "Loop"
+TYPE: DRAWCOLOR 0, 0, 0
+TYPE: RECT 0, 0, 600, 400, TRUE
+TYPE: FOR i = 0 TO 9
+TYPE:     DRAWCOLOR 255 - i * 25, 100, i * 25
+TYPE:     CIRCLE 60 + i * 55, 200, 25, TRUE
+TYPE: NEXT i
+TYPE: SCREENFLIP
+TYPE: DIM ev
+TYPE: FOR f = 0 TO 220
+TYPE:     ev = GFX.POLLEVENT()
+TYPE:     SLEEP 16
+TYPE: NEXT f
+TYPE: GFX.CLOSE
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 3.0
+
+SCENE: Desktop
+CMD: RUN
+WINMOVE: Loop
+WAIT: 4.5
+SCENE: IDE
+FOCUS: jdBasic
+
+SAY: Ten circles in a row, each a different colour, drawn by a single "for" loop. The colour shifts smoothly from red toward purple as the index grows.
+
+SAY: That is lesson nine. "screen" opens a window, "draw-color" picks a colour, and "rect", "circle", and "line" paint shapes. Wrap them in loops for patterns. A small render loop at the end keeps the window alive long enough for us to look at it.
+
+SAY: In lesson ten, our final episode, we will put it all together. We will write our first module, import it, and finish with a small project.
+
+SAY: Until then! Keep coding. Bye!
+
+WAIT: 2

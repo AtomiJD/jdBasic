@@ -1,0 +1,90 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 08 — File I/O
+'  Topic: TXTWRITER (write whole string), TXTREADER$ (read whole
+'         file), SPLIT on CHR$(10) for line iteration, a small
+'         "save and reload a todo list" demo
+'  Target runtime: ~5-6 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 08 | File I/O | Saving Your Work
+
+SAY: Welcome back. Jaydee here. Lesson eight.
+
+SAY: Until now, every value we computed vanished the moment the program ended. Today we change that by writing files to disk, and reading them back.
+
+SAY: jdBasic gives you two simple commands. "txt-writer" writes a whole string to a text file. "txt-reader" reads a whole text file into a string. That is it. No streams, no buffers, no close handles.
+
+SAY: Let us try them.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM message$ = "Hello from jdBasic!"
+TYPE: TXTWRITER "hello.txt", message$
+TYPE: PRINT "wrote hello.txt"
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.5
+CMD: RUN
+WAIT: 1.2
+
+SAY: Three lines. The first creates a string. "txt-writer" takes a filename and the string, and writes them straight to disk.
+
+SAY: Reading is just as easy.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM content$ = TXTREADER$("hello.txt")
+TYPE: PRINT "File says: "; content$
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.5
+CMD: RUN
+WAIT: 1.2
+
+SAY: "txt-reader" returns the full text. We print it back out, and there is the same message we saved a moment ago.
+
+SAY: For multi-line files, write each line separated by a newline character. Use "char" of ten for that. Then split when reading.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM todos$ = "Buy bread" + CHR$(10) + "Walk dog" + CHR$(10) + "Record lesson"
+TYPE: TXTWRITER "todo.txt", todos$
+TYPE: DIM raw$ = TXTREADER$("todo.txt")
+TYPE: DIM lines = SPLIT(raw$, CHR$(10))
+TYPE: PRINT "You have "; LEN(lines); " todos:"
+TYPE: FOR i = 0 TO LEN(lines) - 1
+TYPE:     PRINT "  - "; lines[i]
+TYPE: NEXT i
+WAIT: 1.0
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+CMD: RUN
+WAIT: 1.8
+
+SAY: A three-item todo list, written to disk, read back, split into an array, and pretty-printed. The whole save-and-load cycle in seven lines.
+
+SAY: That is lesson eight. "txt-writer" to save, "txt-reader" to load. For binary data there is also "bin-writer" and "bin-reader", which preserve raw bytes including zeros.
+
+SAY: In lesson nine we leave the text terminal behind and open a graphics window. We will draw shapes, set colours, and put pixels on the screen.
+
+SAY: Until then! Keep coding. Bye!
+
+WAIT: 2

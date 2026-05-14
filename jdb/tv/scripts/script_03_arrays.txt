@@ -1,0 +1,107 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 03 — Arrays and Vector Operations
+'  Topic: array literals, indexing, LEN, element-wise math,
+'         scalar broadcast, reductions (SUM/MEAN/MIN/MAX), IOTA
+'  Target runtime: ~5 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 03 | Arrays | The "for"-less Loop
+
+SAY: Hello again. Jaydee here. Welcome to lesson three.
+
+SAY: Today we leave single values behind and look at arrays, sequences of numbers that jdBasic can operate on as a single unit. This is where the language really shines.
+
+SAY: Let us start at the prompt.
+
+TYPE: DIM scores = [10, 20, 30, 40, 50]
+TYPE: PRINT scores
+WAIT: 0.8
+
+SAY: Square brackets create an array. Comma-separated values inside. jdBasic prints it back as a row.
+
+TYPE: PRINT scores[0]
+TYPE: PRINT scores[4]
+WAIT: 0.8
+
+SAY: Indexing is zero-based. "scores" of zero is the first element, ten. "scores" of four is the fifth, fifty.
+
+TYPE: PRINT LEN(scores)
+WAIT: 0.6
+
+SAY: "len" gives you the number of elements.
+
+SAY: Now the interesting part. Watch what happens when we do arithmetic on the whole array at once.
+
+TYPE: PRINT scores * 2
+WAIT: 0.8
+
+SAY: Every element doubled. No "for" loop. jdBasic broadcasts the scalar across the array.
+
+TYPE: PRINT scores + 100
+WAIT: 0.6
+
+SAY: One hundred added to every element.
+
+TYPE: PRINT scores + scores
+WAIT: 0.6
+
+SAY: Two arrays of the same length add element-wise.
+
+SAY: Comparisons work the same way. They return a boolean array.
+
+TYPE: PRINT scores > 25
+WAIT: 1.0
+
+SAY: Five values in, five answers out. False, false, true, true, true.
+
+SAY: Built-in reductions collapse an array to a single number.
+
+TYPE: PRINT SUM(scores)
+TYPE: PRINT MEAN(scores)
+WAIT: 0.8
+
+SAY: One hundred fifty in total, average thirty.
+
+TYPE: PRINT MIN(scores), MAX(scores)
+WAIT: 0.8
+
+SAY: Smallest is ten, largest is fifty.
+
+SAY: One more helper. "iota" of N builds a range from one to N without you typing each number.
+
+TYPE: PRINT IOTA(10)
+WAIT: 0.8
+
+SAY: One through ten. Now let us put everything together in a small program.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM temps = [20, 25, 18, 22, 28, 30, 19]
+TYPE: DIM avg = MEAN(temps)
+TYPE: DIM diff = temps - avg
+TYPE: PRINT "Week:     "; temps
+TYPE: PRINT "Average:  "; avg
+TYPE: PRINT "Diff:     "; diff
+TYPE: PRINT "Hottest:  "; MAX(temps); " degrees"
+TYPE: PRINT "Coolest:  "; MIN(temps); " degrees"
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.8
+CMD: RUN
+WAIT: 1.5
+
+SAY: A week of temperatures. We computed the average, then subtracted it from each day to see how far each day was from the mean. Three lines of real work. No "for" loop in sight.
+
+SAY: That is the jdBasic way. Treat the array as the thing, not the element. Most numeric problems become shorter and faster when you stop thinking one-at-a-time and start thinking all-at-once.
+
+SAY: That is lesson three. In lesson four we leave numbers behind and look at strings slicing text, searching, and splitting.
+
+SAY: Until then! Keep coding. Bye!
+
+WAIT: 2

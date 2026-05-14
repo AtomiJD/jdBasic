@@ -1,0 +1,121 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 07 — INPUT and DO loops
+'  Topic: INPUT prompt, DO ... LOOP UNTIL, EXITDO, a small
+'         interactive sum-input demo
+'  Target runtime: ~5-6 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 07 | Input and Do Loops | Talking Back
+
+SAY: Welcome back. Jaydee here. Lesson seven.
+
+SAY: So far every program ran the same way every time. Today we let the user steer it. We meet "input" for reading data from the keyboard, and the "do" loop for repeating an action until a condition holds.
+
+SAY: First, "input". It prints a prompt and waits for the user to type.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: INPUT "What is your name? ", name$
+TYPE: PRINT "Hello, "; name$; "!"
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.5
+CMD: RUN
+WAIT: 0.8
+
+TYPE: Atomi
+WAIT: 1.0
+
+SAY: The variable on the right of the comma receives whatever the user typed. We can read numbers the same way.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: INPUT "How old are you? ", age
+TYPE: PRINT "In ten years you will be "; age + 10
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.5
+CMD: RUN
+WAIT: 0.8
+
+TYPE: 39
+WAIT: 1.2
+
+SAY: When the variable name has no dollar sign, jdBasic parses the input as a number for you.
+
+SAY: Now the "do" loop. It repeats a block of code until a condition becomes true.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM i = 1
+TYPE: DO
+TYPE:     PRINT "Step "; i
+TYPE:     i = i + 1
+TYPE: LOOP UNTIL i > 5
+WAIT: 0.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.0
+CMD: RUN
+WAIT: 1.5
+
+SAY: The block runs once, then jdBasic checks the condition. As soon as it is true, the loop exits. Five steps, five lines.
+
+SAY: The real power shows up when we combine "input" and "do". Let us write a tiny program that adds numbers until the user types zero.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM total = 0
+TYPE: DIM n = 1
+TYPE: DO
+TYPE:     INPUT "Number (0 to quit): ", n
+TYPE:     total = total + n
+TYPE: LOOP UNTIL n = 0
+TYPE: PRINT "Sum: "; total
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+CMD: RUN
+WAIT: 0.8
+
+TYPE: 5
+WAIT: 0.6
+TYPE: 10
+WAIT: 0.6
+TYPE: 3
+WAIT: 0.6
+TYPE: 0
+WAIT: 1.5
+
+SAY: Five plus ten plus three is eighteen. We typed zero to end the loop, and the program reported the total.
+
+SAY: That is lesson seven. "input" pulls data from the user. "do" loops repeat until a condition is met. There is also "exit-do" if you need to break out early.
+
+SAY: In lesson eight we will save data between runs by reading and writing text files.
+
+SAY: Until then! Keep coding. Bye!
+
+WAIT: 2

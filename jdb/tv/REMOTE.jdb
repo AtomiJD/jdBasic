@@ -12,17 +12,25 @@ DECLARE FUNC MoveWindow LIB "user32.dll" ALIAS "MoveWindow" (hwnd AS INTEGER, x 
 ' Key Codes
 CONST VK_SHIFT   = $10
 CONST VK_CONTROL = $11
+CONST VK_MENU    = $12    ' Alt
 CONST VK_RETURN  = $0D
-CONST KEYEVENTF_KEYUP = $02
+CONST KEYEVENTF_EXTENDEDKEY = $01
+CONST KEYEVENTF_KEYUP       = $02
 
 ' Findet das jdBasic Fenster (Titel muss exakt passen)
 EXPORT FUNC FindJDB(title$)
     RETURN FindWindow(0, title$)
 ENDFUNC
 
-' Neue Hilfsfunktion zum Aktivieren
+' Bringt ein Fenster nach vorn.  Windows blockt SetForegroundWindow
+' wenn der aufrufende Prozess gerade nicht selbst im Foreground ist.
+' Trick: eine synthetische Alt-Druck-/-Freigabe-Sequenz hebt diesen
+' Foreground-Lock kurz auf, danach geht der Fokuswechsel durch.  Die
+' Alt-Taste selbst tut nichts (kein Menü in der jdBasic-IDE).
 EXPORT SUB ActivateJDB(hwnd)
     IF hwnd <> 0 THEN
+        keybd_event(VK_MENU, 0, 0, 0)
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
         SetForegroundWindow(hwnd)
         jSleep(200) ' Gib Windows kurz Zeit für den Fokus-Wechsel
     ENDIF
@@ -45,18 +53,37 @@ EXPORT SUB SendKey(vk)
     jSleep(50)
 ENDSUB
 
-' Diese neue Funktion wandelt Zeichen korrekt in Keycodes um
+' Wandelt ein einzelnes Zeichen in den passenden Keycode um.
+'
+' VkKeyScan liefert im High-Byte alle nötigen Modifier-Bits zurück:
+'   bit 0 = Shift
+'   bit 1 = Ctrl
+'   bit 2 = Alt
+' Auf nicht-US Layouts (QWERTZ, AZERTY, …) kommen Zeichen wie
+' '[' und ']' als AltGr+key zurück, also Ctrl + Alt im modState.
+' Windows kodiert AltGr aber speziell als Left-Ctrl + *Right*-Alt
+' mit Extended-Key-Prefix.  Ein blankes Left-Alt wird vom Editor
+' als Hotkey-Chord interpretiert und das Zeichen verschluckt;
+' deshalb hängen wir am Alt-Press das EXTENDEDKEY-Flag dran, was
+' es zur rechten Alt-Taste (= AltGr) macht.
 EXPORT SUB TypeChar(c$)
-    DIM vkCode = VkKeyScan(ASC(c$))
-    DIM shiftState = (vkCode BAND $100) <> 0 ' Prüfen, ob SHIFT nötig ist
-    DIM cleanVK = vkCode BAND $FF            ' Den eigentlichen Keycode extrahieren
+    DIM vkCode    = VkKeyScan(ASC(c$))
+    DIM modState  = (vkCode SHR 8) BAND $FF
+    DIM cleanVK   = vkCode BAND $FF
+    DIM needShift = (modState BAND 1) <> 0
+    DIM needCtrl  = (modState BAND 2) <> 0
+    DIM needAlt   = (modState BAND 4) <> 0
 
-    IF shiftState THEN keybd_event(VK_SHIFT, 0, 0, 0)
-    
+    IF needShift THEN keybd_event(VK_SHIFT, 0, 0, 0)
+    IF needCtrl  THEN keybd_event(VK_CONTROL, 0, 0, 0)
+    IF needAlt   THEN keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY, 0)
+
     keybd_event(cleanVK, 0, 0, 0)
     keybd_event(cleanVK, 0, KEYEVENTF_KEYUP, 0)
-    
-    IF shiftState THEN keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0)
+
+    IF needAlt   THEN keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY BOR KEYEVENTF_KEYUP, 0)
+    IF needCtrl  THEN keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+    IF needShift THEN keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0)
     jSleep(20)
 ENDSUB
 

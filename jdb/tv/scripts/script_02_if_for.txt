@@ -28,8 +28,8 @@ WAIT: 0.2
 
 TYPE: DIM age = 18
 TYPE: IF age >= 18 THEN
-TYPE: PRINT "You can vote!"
-TYPE: PRINT "And drive."
+TYPE:     PRINT "You can vote!"
+TYPE:     PRINT "And drive."
 TYPE: ENDIF
 WAIT: 1.0
 
@@ -53,9 +53,9 @@ WAIT: 0.2
 
 TYPE: DIM hour = 22
 TYPE: IF hour < 12 THEN
-TYPE: PRINT "Good morning"
+TYPE:     PRINT "Good morning"
 TYPE: ELSE
-TYPE: PRINT "Good evening"
+TYPE:     PRINT "Good evening"
 TYPE: ENDIF
 WAIT: 0.8
 
@@ -77,11 +77,11 @@ WAIT: 0.2
 
 TYPE: DIM hour = 14
 TYPE: IF hour < 12 THEN
-TYPE: PRINT "Good morning"
+TYPE:     PRINT "Good morning"
 TYPE: ELSEIF hour < 18 THEN
-TYPE: PRINT "Good afternoon"
+TYPE:     PRINT "Good afternoon"
 TYPE: ELSE
-TYPE: PRINT "Good evening"
+TYPE:     PRINT "Good evening"
 TYPE: ENDIF
 WAIT: 0.8
 
@@ -102,7 +102,7 @@ CMD: EDIT
 WAIT: 0.2
 
 TYPE: FOR i = 1 TO 5
-TYPE: PRINT "Hello "; i
+TYPE:     PRINT "Hello "; i
 TYPE: NEXT i
 WAIT: 0.8
 
@@ -123,7 +123,7 @@ CMD: EDIT
 WAIT: 0.2
 
 TYPE: FOR i = 10 TO 0 STEP -2
-TYPE: PRINT i
+TYPE:     PRINT i
 TYPE: NEXT i
 WAIT: 0.8
 
@@ -144,15 +144,15 @@ CMD: EDIT
 WAIT: 0.2
 
 TYPE: FOR i = 1 TO 15
-TYPE: IF i MOD 15 = 0 THEN
-TYPE: PRINT "FizzBuzz"
-TYPE: ELSEIF i MOD 3 = 0 THEN
-TYPE: PRINT "Fizz"
-TYPE: ELSEIF i MOD 5 = 0 THEN
-TYPE: PRINT "Buzz"
-TYPE: ELSE
-TYPE: PRINT i
-TYPE: ENDIF
+TYPE:     IF i MOD 15 = 0 THEN
+TYPE:         PRINT "FizzBuzz"
+TYPE:     ELSEIF i MOD 3 = 0 THEN
+TYPE:         PRINT "Fizz"
+TYPE:     ELSEIF i MOD 5 = 0 THEN
+TYPE:         PRINT "Buzz"
+TYPE:     ELSE
+TYPE:         PRINT i
+TYPE:     ENDIF
 TYPE: NEXT i
 WAIT: 1.0
 
