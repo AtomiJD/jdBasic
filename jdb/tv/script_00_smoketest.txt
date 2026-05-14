@@ -7,7 +7,7 @@
 '  through 003.wav.
 ' ──────────────────────────────────────────────────────────────────
 
-TITLE: Train jdBasic — Pipeline Smoke Test
+TITLE: 00 | Pipeline Smoke Test | Phase 1 + 2 ✓
 
 SAY: Hello, I am Jaydee Basica. Let me show you a tiny demo.
 

@@ -1,0 +1,47 @@
+' ══════════════════════════════════════════════════════════════════
+'  CARDS.jdb — render branded title cards / thumbnails to PNG via
+'  the Playwright helper. Same brand palette as jdbasic.org so the
+'  YouTube videos and the website read as one product.
+' ══════════════════════════════════════════════════════════════════
+
+EXPORT MODULE CARDS
+
+DIM HELPER$ = "python helpers\render_card.py"
+
+' Render a full-frame 1920×1080 title card.
+'   lesson$    e.g. "01"
+'   title$     e.g. "Hello jdBasic"
+'   subtitle$  e.g. "PRINT and Variables"
+'   host$      e.g. "with Jaydee Basica" (default if empty)
+EXPORT FUNC RenderTitle(out_png$, lesson$, title$, subtitle$, host$)
+    DIM cmd$ = HELPER$ + " title " _
+        + CHR$(34) + out_png$ + CHR$(34) + " " _
+        + CHR$(34) + lesson$ + CHR$(34) + " " _
+        + CHR$(34) + title$ + CHR$(34) + " " _
+        + CHR$(34) + subtitle$ + CHR$(34) + " " _
+        + CHR$(34) + host$ + CHR$(34)
+    DIM r = OS.EXEC(cmd$)
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "[CARDS] title render FAIL: " + r{"OUTPUT"}
+        RETURN 0
+    ENDIF
+    RETURN 1
+ENDFUNC
+
+' Render a 1280×720 YouTube thumbnail.
+'   lesson$  e.g. "01"
+'   title$   e.g. "Hello jdBasic"
+'   hook$    short attention-grabbing line, e.g. "PRINT in 60 seconds"
+EXPORT FUNC RenderThumbnail(out_png$, lesson$, title$, hook$)
+    DIM cmd$ = HELPER$ + " thumb " _
+        + CHR$(34) + out_png$ + CHR$(34) + " " _
+        + CHR$(34) + lesson$ + CHR$(34) + " " _
+        + CHR$(34) + title$ + CHR$(34) + " " _
+        + CHR$(34) + hook$ + CHR$(34)
+    DIM r = OS.EXEC(cmd$)
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "[CARDS] thumbnail render FAIL: " + r{"OUTPUT"}
+        RETURN 0
+    ENDIF
+    RETURN 1
+ENDFUNC

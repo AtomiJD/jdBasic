@@ -17,6 +17,7 @@
 IMPORT REMOTE
 IMPORT TTS
 IMPORT OBS
+IMPORT CARDS
 
 CD "\usr\dev\cc\jdb\tv"
 
@@ -75,30 +76,49 @@ SUB Speak(out_path$, text$)
 ENDSUB
 
 
-' ── Pre-render all SAY lines BEFORE we touch OBS ─────────────────
-' edge-tts + ffmpeg take a few seconds per clip; if we did it inline
-' during the shoot the recording would have dead-air gaps. Render
-' everything first into voice\<base>_NNN.wav, then the shoot just
-' plays the existing files (fast).
-PRINT "── pre-rendering voice clips ──"
+' ── Pre-render all SAY + TITLE assets BEFORE we touch OBS ────────
+' edge-tts + ffmpeg + Playwright take a few seconds each; if we did
+' it inline during the shoot the recording would have dead-air gaps.
+' Render everything first; the shoot just plays existing files.
+PRINT "── pre-rendering voice clips + title cards ──"
 DIM lines = SPLIT(TXTREADER$(SCRIPT_FILE$), CHR$(10))
 DIM voice_wavs = []
 DIM voice_durs = []
-DIM prerender_idx AS INTEGER = 0
+DIM card_pngs  = []
+DIM say_count AS INTEGER = 0
+DIM title_count AS INTEGER = 0
 DIM prl AS INTEGER
 FOR prl = 0 TO LEN(lines) - 1
     DIM pline$ = TRIM$(lines[prl])
     IF STARTSWITH(pline$, "SAY:") THEN
         DIM ptext$ = TRIM$(MID$(pline$, 5))
-        DIM pwav$ = "voice\" + SCRIPT_BASE$ + "_" + FORMAT$("{:03}", prerender_idx) + ".wav"
+        DIM pwav$ = "voice\" + SCRIPT_BASE$ + "_" + FORMAT$("{:0>3}", say_count) + ".wav"
         DIM pdur = TTS.Say(pwav$, ptext$)
         PUSH voice_wavs, pwav$
         PUSH voice_durs, pdur
-        PRINT "  ["; prerender_idx; "] "; pdur; "s  "; ptext$
-        prerender_idx = prerender_idx + 1
+        PRINT "  SAY ["; say_count; "] "; pdur; "s  "; ptext$
+        say_count = say_count + 1
+    ELSEIF STARTSWITH(pline$, "TITLE:") THEN
+        ' TITLE: <lesson> | <title> | <subtitle>     (pipe-separated)
+        '   single field → that's the title; lesson="00", subtitle=""
+        DIM body$ = TRIM$(MID$(pline$, 7))
+        DIM parts = SPLIT(body$, "|")
+        DIM lesson$   = "00"
+        DIM ttitle$   = body$
+        DIM tsub$     = ""
+        IF LEN(parts) >= 2 THEN
+            lesson$ = TRIM$(parts[0])
+            ttitle$ = TRIM$(parts[1])
+        ENDIF
+        IF LEN(parts) >= 3 THEN tsub$ = TRIM$(parts[2])
+        DIM cpng$ = "cards\" + SCRIPT_BASE$ + "_title_" + FORMAT$("{:0>3}", title_count) + ".png"
+        DIM cok = CARDS.RenderTitle(cpng$, lesson$, ttitle$, tsub$, "")
+        PUSH card_pngs, cpng$
+        PRINT "  TITLE ["; title_count; "]  "; lesson$; " | "; ttitle$; " | "; tsub$
+        title_count = title_count + 1
     ENDIF
 NEXT prl
-PRINT "── "; prerender_idx; " voice clip(s) ready ──"
+PRINT "── "; say_count; " voice clip(s) + "; title_count; " card(s) ready ──"
 
 
 ' ── Prep IDE: disable auto-indent so pre-formatted code doesn't compound ─
@@ -108,23 +128,28 @@ PRINT "── "; prerender_idx; " voice clip(s) ready ──"
 ' editor reads on every Enter press.
 PRINT "── director: disabling IDE auto-indent ──"
 TypeText(hIDE, "OPTION " + CHR$(34) + "NOAUTOIDENT" + CHR$(34))
-SLEEP 400
+TypeText(hIDE, "NEW")
+SLEEP 200
 
 
 ' ── Start recording (manual STOP is fine too — RECORD:stop in script) ─
 PRINT "── director: starting OBS recording ──"
 DIM rec_start$ = OBS.StartRecord$()
 PRINT rec_start$
-SLEEP 800  ' give OBS a beat to actually start writing
+SLEEP 800  ' give OBS a beat to actually start writing frames
 
-' Mark recording-start time so we can log each SAY's offset for post-prod
-' audio mixing. TICK() returns ms since program start.
-DIM REC_T0 = TICK() + 800   ' compensate the 800ms SLEEP we just did
+' Mark recording-start time AFTER the warm-up sleep — anything we log
+' from here forward gets a non-negative offset into the recorded file.
+DIM REC_T0 = TICK()
 DIM MANIFEST = ""            ' accumulates "offset_ms\tdur_ms\twav_path\n"
 
 
-' ── Walk the script (using the pre-rendered voice clips) ────────
+' ── Walk the script (using the pre-rendered assets) ─────────────
+' Manifest data rows are prefixed with VOICE\t or CARD\t so the
+' composer can dispatch.  Card display window is 3.5 s.
+DIM CARD_DUR_MS AS INTEGER = 3500
 DIM say_idx AS INTEGER = 0
+DIM title_idx AS INTEGER = 0
 
 FOR I = 0 TO LEN(lines) - 1
     DIM raw$ = lines[I]
@@ -144,17 +169,22 @@ FOR I = 0 TO LEN(lines) - 1
             ' clean WAV is muxed onto the video by compose.jdb later).
             DIM rcplay = OS.EXEC("ffplay -nodisp -autoexit -loglevel error " + CHR$(34) + wav$ + CHR$(34))
             DIM dur_ms = CINT(dur_sec * 1000)
-            MANIFEST = MANIFEST + STR$(CINT(say_offset)) + CHR$(9) + STR$(dur_ms) + CHR$(9) + wav$ + CHR$(10)
+            MANIFEST = MANIFEST + "VOICE" + CHR$(9) + STR$(CINT(say_offset)) + CHR$(9) + STR$(dur_ms) + CHR$(9) + wav$ + CHR$(10)
         ENDIF
         say_idx = say_idx + 1
 
     ELSEIF STARTSWITH(line$, "TITLE:") THEN
-        ' Post-prod will burn the real title overlay via FFmpeg drawtext.
-        ' For now we just log it and pause so OBS captures a clean beat
-        ' that we can later replace with the title card.
+        ' Title card was pre-rendered to PNG; here we log its window
+        ' (offset + 3.5s) for the composer to overlay on the final
+        ' video.  We also SLEEP so the underlying take has a clean
+        ' beat where the card will sit.
         DIM tt$ = TRIM$(MID$(line$, 7))
         COLOR 13, 0 : PRINT "[TITLE] "; tt$ : COLOR 7, 0
-        SLEEP 3000
+        DIM title_offset = TICK() - REC_T0
+        DIM tpng$ = card_pngs[title_idx]
+        MANIFEST = MANIFEST + "CARD" + CHR$(9) + STR$(CINT(title_offset)) + CHR$(9) + STR$(CARD_DUR_MS) + CHR$(9) + tpng$ + CHR$(10)
+        title_idx = title_idx + 1
+        SLEEP CARD_DUR_MS
 
     ELSEIF STARTSWITH(line$, "SCENE:") THEN
         DIM scn$ = TRIM$(MID$(line$, 7))

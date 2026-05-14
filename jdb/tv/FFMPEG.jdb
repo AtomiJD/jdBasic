@@ -1,26 +1,29 @@
 ' ══════════════════════════════════════════════════════════════════
 '  FFMPEG.jdb — post-production composition.
-'  Reads a director manifest, layers the TTS voice clips onto the raw
-'  recording at the exact offsets the director measured, and renders
-'  a final MP4 with clean audio (no soundcard loopback artefacts).
+'  Reads a director manifest, layers TTS voice clips + title cards
+'  onto the raw recording, and renders a final MP4 with clean audio
+'  and branded overlays.
+'
+'  Manifest data rows (tab-separated, leading-tagged):
+'      VOICE\t<offset_ms>\t<dur_ms>\t<wav_path>
+'      CARD \t<offset_ms>\t<dur_ms>\t<png_path>
+'  Header lines (RAW: / SCRIPT: / # ...) are skipped.
 ' ══════════════════════════════════════════════════════════════════
 
 EXPORT MODULE FFMPEG
 
-' Build the ffmpeg command that turns a manifest into a final MP4.
-' Manifest format (one shoot per file):
-'     RAW: <path to obs recording>
-'     SCRIPT: <script_NN.txt>
-'     # offset_ms  dur_ms  wav_path
-'     1200  4440   voice\script_00_smoketest_000.wav
-'     ...
 EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
     DIM text$ = TXTREADER$(manifest_path$)
     DIM lines = SPLIT(text$, CHR$(10))
 
     DIM raw_path$ = ""
-    DIM offsets = []
-    DIM wavs    = []
+    ' Parallel arrays per kind so we know each entry's exact index
+    ' in the final ffmpeg input list.
+    DIM voice_offs = []
+    DIM voice_paths = []
+    DIM card_offs = []
+    DIM card_durs = []
+    DIM card_paths = []
 
     DIM i AS INTEGER
     FOR i = 0 TO LEN(lines) - 1
@@ -32,10 +35,17 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
             CONTINUEFOR
         ENDIF
         IF STARTSWITH(ln$, "SCRIPT:") THEN CONTINUEFOR
+
         DIM parts = SPLIT(ln$, CHR$(9))
-        IF LEN(parts) >= 3 THEN
-            PUSH offsets, VAL(parts[0])
-            PUSH wavs, TRIM$(parts[2])
+        IF LEN(parts) < 4 THEN CONTINUEFOR
+        DIM kind$ = TRIM$(parts[0])
+        IF kind$ = "VOICE" THEN
+            PUSH voice_offs,  VAL(parts[1])
+            PUSH voice_paths, TRIM$(parts[3])
+        ELSEIF kind$ = "CARD" THEN
+            PUSH card_offs,  VAL(parts[1])
+            PUSH card_durs,  VAL(parts[2])
+            PUSH card_paths, TRIM$(parts[3])
         ENDIF
     NEXT i
 
@@ -44,42 +54,87 @@ EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
         RETURN ""
     ENDIF
 
-    DIM n AS INTEGER = LEN(offsets)
-    PRINT "[FFMPEG] composing "; n; " voice clip(s) onto "; raw_path$
+    DIM nv AS INTEGER = LEN(voice_offs)
+    DIM nc AS INTEGER = LEN(card_offs)
+    PRINT "[FFMPEG] composing "; nv; " voice + "; nc; " card(s) onto "; raw_path$
 
+    ' ── Build the input list ─────────────────────────────────────
+    ' Index 0           : raw video
+    ' Index 1..nc       : card PNGs
+    ' Index nc+1..nc+nv : voice WAVs
     DIM cmd$ = "ffmpeg -y -loglevel warning -i " + CHR$(34) + raw_path$ + CHR$(34)
     DIM k AS INTEGER
-    FOR k = 0 TO n - 1
-        cmd$ = cmd$ + " -i " + CHR$(34) + wavs[k] + CHR$(34)
+    FOR k = 0 TO nc - 1
+        ' -loop 1 isn't needed here; a single image input is auto-extended
+        ' to the [0:v] duration by ffmpeg when used through overlay.
+        cmd$ = cmd$ + " -i " + CHR$(34) + card_paths[k] + CHR$(34)
+    NEXT k
+    FOR k = 0 TO nv - 1
+        cmd$ = cmd$ + " -i " + CHR$(34) + voice_paths[k] + CHR$(34)
     NEXT k
 
-    IF n = 0 THEN
-        ' No SAY lines — just copy the video and drop any audio.
-        cmd$ = cmd$ + " -map 0:v -c:v copy -an " + CHR$(34) + out_path$ + CHR$(34)
-    ELSE
-        ' Build complex filter: each WAV gets adelay'd by its recorded
-        ' offset, then amix layers all of them. normalize=0 keeps each
-        ' clip at its original level so non-overlapping ones aren't
-        ' attenuated.
-        DIM filter$ = ""
-        FOR k = 0 TO n - 1
-            DIM idx$ = STR$(k + 1)
-            DIM off$ = STR$(CINT(offsets[k]))
-            filter$ = filter$ + "[" + idx$ + ":a]adelay=" + off$ + "|" + off$ + "[a" + STR$(k) + "];"
-        NEXT k
-        IF n = 1 THEN
-            filter$ = filter$ + "[a0]anull[aout]"
-        ELSE
-            DIM mix$ = ""
-            FOR k = 0 TO n - 1
-                mix$ = mix$ + "[a" + STR$(k) + "]"
-            NEXT k
-            filter$ = filter$ + mix$ + "amix=inputs=" + STR$(n) + ":normalize=0[aout]"
-        ENDIF
-        cmd$ = cmd$ + " -filter_complex " + CHR$(34) + filter$ + CHR$(34) _
-                    + " -map 0:v -map " + CHR$(34) + "[aout]" + CHR$(34) _
-                    + " -c:v copy -c:a aac -b:a 192k " + CHR$(34) + out_path$ + CHR$(34)
+    ' ── Build the complex filter graph ───────────────────────────
+    DIM filter$ = ""
+    DIM last_v$ = "[0:v]"   ' walks down the overlay chain
+
+    ' Card overlays — chain each on top of the previous video stage.
+    FOR k = 0 TO nc - 1
+        DIM idx$ = STR$(k + 1)
+        DIM offs$ = STR$(card_offs[k] / 1000.0)
+        DIM end$  = STR$((card_offs[k] + card_durs[k]) / 1000.0)
+        ' between() takes seconds, fractional; rgba conversion so the
+        ' card stays opaque on dark video without ghosting.
+        filter$ = filter$ + "[" + idx$ + ":v]format=rgba[c" + STR$(k) + "];"
+        DIM next_v$ = "[v" + STR$(k) + "]"
+        filter$ = filter$ + last_v$ + "[c" + STR$(k) + "]overlay=x=0:y=0:enable='between(t," + offs$ + "," + end$ + ")'" + next_v$ + ";"
+        last_v$ = next_v$
+    NEXT k
+
+    ' Voice mix — adelay each clip to its recorded offset, then amix.
+    DIM voice_outs$ = ""
+    FOR k = 0 TO nv - 1
+        DIM v_in$ = "[" + STR$(nc + k + 1) + ":a]"
+        DIM v_off$ = STR$(CINT(voice_offs[k]))
+        filter$ = filter$ + v_in$ + "adelay=" + v_off$ + "|" + v_off$ + "[a" + STR$(k) + "];"
+        voice_outs$ = voice_outs$ + "[a" + STR$(k) + "]"
+    NEXT k
+
+    DIM has_audio AS INTEGER = 0
+    IF nv = 1 THEN
+        filter$ = filter$ + "[a0]anull[aout]"
+        has_audio = 1
+    ELSEIF nv > 1 THEN
+        filter$ = filter$ + voice_outs$ + "amix=inputs=" + STR$(nv) + ":normalize=0[aout]"
+        has_audio = 1
     ENDIF
+
+    ' ── Map + encode ─────────────────────────────────────────────
+    ' If we added any overlay or filter, we have to re-encode video
+    ' (no -c:v copy). Without filters we can stream-copy.
+    DIM use_video_filter AS INTEGER = nc
+    DIM filter_tail$ = ""
+    IF LEN(filter$) > 0 THEN
+        ' Trim trailing semicolon.
+        IF RIGHT$(filter$, 1) = ";" THEN filter$ = LEFT$(filter$, LEN(filter$) - 1)
+        filter_tail$ = " -filter_complex " + CHR$(34) + filter$ + CHR$(34)
+    ENDIF
+
+    cmd$ = cmd$ + filter_tail$
+
+    IF use_video_filter > 0 THEN
+        cmd$ = cmd$ + " -map " + CHR$(34) + last_v$ + CHR$(34)
+        cmd$ = cmd$ + " -c:v libx264 -preset veryfast -crf 18"
+    ELSE
+        cmd$ = cmd$ + " -map 0:v -c:v copy"
+    ENDIF
+
+    IF has_audio = 1 THEN
+        cmd$ = cmd$ + " -map " + CHR$(34) + "[aout]" + CHR$(34) + " -c:a aac -b:a 192k"
+    ELSE
+        cmd$ = cmd$ + " -an"
+    ENDIF
+
+    cmd$ = cmd$ + " " + CHR$(34) + out_path$ + CHR$(34)
 
     PRINT "[FFMPEG] " + cmd$
     DIM r = OS.EXEC(cmd$)

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Train jdBasic — Title Card</title>
+<style>
+  /* ───────────────────────────────────────────────────────────────
+     Title card — 1920×1080. Looks at home next to jdbasic.org's
+     dark/teal palette so Site + Video read as one brand.
+     Tokens replaced by render_card.py:
+       {{LESSON}}    "01"
+       {{TITLE}}     "Hello jdBasic"
+       {{SUBTITLE}}  "PRINT & Variables"
+       {{HOST}}      "with Jaydee Basica"   (or "")
+     ─────────────────────────────────────────────────────────────── */
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&family=Inter:wght@400;700;900&display=swap');
+
+  *  { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: radial-gradient(ellipse at top, #1a2540 0%, #0c1021 55%, #050813 100%);
+    color: #cdd6f4;
+    display: grid;
+    grid-template-columns: 720px 1fr;
+    align-items: center;
+    position: relative;
+  }
+  body::before {
+    /* Subtle grid pattern */
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(94, 234, 212, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(94, 234, 212, 0.06) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+  }
+  body::after {
+    /* Teal halo behind the lesson number */
+    content: '';
+    position: absolute; left: 200px; top: 50%; transform: translateY(-50%);
+    width: 700px; height: 700px;
+    background: radial-gradient(circle, rgba(94, 234, 212, 0.22) 0%, transparent 60%);
+    filter: blur(40px);
+    pointer-events: none;
+  }
+
+  .left { padding-left: 120px; position: relative; z-index: 2; }
+  .label {
+    font-family: 'Fira Code', monospace;
+    font-size: 32px;
+    letter-spacing: 0.6em;
+    color: #5eead4;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    text-shadow: 0 0 18px rgba(94, 234, 212, 0.45);
+  }
+  .lesson-num {
+    font-size: 480px;
+    font-weight: 900;
+    line-height: 1;
+    color: #5eead4;
+    letter-spacing: -0.04em;
+    text-shadow:
+      0 0 60px rgba(94, 234, 212, 0.55),
+      0 0 120px rgba(94, 234, 212, 0.25);
+  }
+
+  .right { padding: 0 120px 0 40px; position: relative; z-index: 2; }
+  .brand {
+    font-family: 'Fira Code', monospace;
+    font-size: 28px;
+    color: #94a3b8;
+    margin-bottom: 24px;
+  }
+  .brand .accent { color: #5eead4; }
+  .title {
+    font-size: 116px;
+    font-weight: 900;
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    color: #ffffff;
+    margin-bottom: 28px;
+  }
+  .title .glow { color: #5eead4; text-shadow: 0 0 30px rgba(94, 234, 212, 0.55); }
+  .subtitle {
+    font-size: 48px;
+    font-weight: 400;
+    color: #94a3b8;
+    margin-bottom: 64px;
+  }
+  .host {
+    font-family: 'Fira Code', monospace;
+    font-size: 26px;
+    color: #64748b;
+  }
+  .host .accent { color: #cdd6f4; }
+
+  .footer {
+    position: absolute;
+    bottom: 60px; right: 120px;
+    font-family: 'Fira Code', monospace;
+    font-size: 24px;
+    color: #475569;
+    z-index: 2;
+  }
+  .footer .accent { color: #5eead4; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="label">Lesson</div>
+    <div class="lesson-num">{{LESSON}}</div>
+  </div>
+  <div class="right">
+    <div class="brand">Train <span class="accent">jdBasic</span></div>
+    <h1 class="title">{{TITLE}}</h1>
+    <div class="subtitle">{{SUBTITLE}}</div>
+    <div class="host">{{HOST}}</div>
+  </div>
+  <div class="footer">jdbasic.org <span class="accent">/</span> @AtomiJD</div>
+</body>
+</html>

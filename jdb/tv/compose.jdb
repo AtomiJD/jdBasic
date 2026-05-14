@@ -9,7 +9,7 @@ IMPORT FFMPEG
 
 CD "\usr\dev\cc\jdb\tv"
 
-DIM MANIFEST$ = "raw\script_00_smoketes.manifest.txt"
+DIM MANIFEST$ = "raw\script_00_smoketest.manifest.txt"
 DIM OUT$      = "final\script_00_smoketest.mp4"
 
 DIM result$ = FFMPEG.ComposeFromManifest$(MANIFEST$, OUT$)

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Train jdBasic — Thumbnail</title>
+<style>
+  /* ───────────────────────────────────────────────────────────────
+     YouTube thumbnail — 1280×720. Punchy, readable at 320px wide
+     in someone's subscription feed. Same palette as the title card
+     but louder typography + bigger lesson chip.
+     Tokens: {{LESSON}} {{TITLE}} {{HOOK}}
+     ─────────────────────────────────────────────────────────────── */
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@600&family=Inter:wght@900&display=swap');
+
+  *  { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: linear-gradient(135deg, #1a2540 0%, #0c1021 60%, #050813 100%);
+    color: #cdd6f4;
+    position: relative;
+    padding: 60px;
+  }
+  body::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(94, 234, 212, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(94, 234, 212, 0.08) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+  }
+  body::after {
+    content: '';
+    position: absolute; right: -100px; bottom: -100px;
+    width: 700px; height: 700px;
+    background: radial-gradient(circle, rgba(94, 234, 212, 0.32) 0%, transparent 60%);
+    filter: blur(50px);
+    pointer-events: none;
+  }
+
+  .chip {
+    display: inline-block;
+    font-family: 'Fira Code', monospace;
+    font-size: 38px;
+    font-weight: 600;
+    color: #050813;
+    background: #5eead4;
+    padding: 14px 30px;
+    border-radius: 12px;
+    margin-bottom: 36px;
+    box-shadow: 0 0 35px rgba(94, 234, 212, 0.45);
+    letter-spacing: 0.1em;
+    position: relative; z-index: 2;
+  }
+  .title {
+    font-size: 120px;
+    font-weight: 900;
+    line-height: 0.96;
+    letter-spacing: -0.025em;
+    color: #ffffff;
+    margin-bottom: 30px;
+    text-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
+    position: relative; z-index: 2;
+  }
+  .title .glow { color: #5eead4; }
+  .hook {
+    font-size: 44px;
+    font-weight: 900;
+    color: #fbbf24;
+    text-shadow: 0 0 30px rgba(251, 191, 36, 0.4);
+    position: relative; z-index: 2;
+  }
+  .footer {
+    position: absolute;
+    bottom: 50px; left: 60px; right: 60px;
+    display: flex; justify-content: space-between;
+    font-family: 'Fira Code', monospace;
+    font-size: 26px;
+    color: #94a3b8;
+    z-index: 2;
+  }
+  .footer .brand { color: #5eead4; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="chip">LESSON {{LESSON}}</div>
+  <h1 class="title">{{TITLE}}</h1>
+  <div class="hook">{{HOOK}}</div>
+  <div class="footer">
+    <span class="brand">Train jdBasic</span>
+    <span>with Jaydee Basica</span>
+  </div>
+</body>
+</html>
