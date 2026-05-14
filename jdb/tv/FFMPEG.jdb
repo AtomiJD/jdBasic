@@ -1,0 +1,93 @@
+' ══════════════════════════════════════════════════════════════════
+'  FFMPEG.jdb — post-production composition.
+'  Reads a director manifest, layers the TTS voice clips onto the raw
+'  recording at the exact offsets the director measured, and renders
+'  a final MP4 with clean audio (no soundcard loopback artefacts).
+' ══════════════════════════════════════════════════════════════════
+
+EXPORT MODULE FFMPEG
+
+' Build the ffmpeg command that turns a manifest into a final MP4.
+' Manifest format (one shoot per file):
+'     RAW: <path to obs recording>
+'     SCRIPT: <script_NN.txt>
+'     # offset_ms  dur_ms  wav_path
+'     1200  4440   voice\script_00_smoketest_000.wav
+'     ...
+EXPORT FUNC ComposeFromManifest$(manifest_path$, out_path$)
+    DIM text$ = TXTREADER$(manifest_path$)
+    DIM lines = SPLIT(text$, CHR$(10))
+
+    DIM raw_path$ = ""
+    DIM offsets = []
+    DIM wavs    = []
+
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        DIM ln$ = TRIM$(lines[i])
+        IF LEN(ln$) = 0 THEN CONTINUEFOR
+        IF STARTSWITH(ln$, "#") THEN CONTINUEFOR
+        IF STARTSWITH(ln$, "RAW:") THEN
+            raw_path$ = TRIM$(MID$(ln$, 5))
+            CONTINUEFOR
+        ENDIF
+        IF STARTSWITH(ln$, "SCRIPT:") THEN CONTINUEFOR
+        DIM parts = SPLIT(ln$, CHR$(9))
+        IF LEN(parts) >= 3 THEN
+            PUSH offsets, VAL(parts[0])
+            PUSH wavs, TRIM$(parts[2])
+        ENDIF
+    NEXT i
+
+    IF LEN(raw_path$) = 0 THEN
+        PRINT "[FFMPEG] manifest is missing the RAW: line"
+        RETURN ""
+    ENDIF
+
+    DIM n AS INTEGER = LEN(offsets)
+    PRINT "[FFMPEG] composing "; n; " voice clip(s) onto "; raw_path$
+
+    DIM cmd$ = "ffmpeg -y -loglevel warning -i " + CHR$(34) + raw_path$ + CHR$(34)
+    DIM k AS INTEGER
+    FOR k = 0 TO n - 1
+        cmd$ = cmd$ + " -i " + CHR$(34) + wavs[k] + CHR$(34)
+    NEXT k
+
+    IF n = 0 THEN
+        ' No SAY lines — just copy the video and drop any audio.
+        cmd$ = cmd$ + " -map 0:v -c:v copy -an " + CHR$(34) + out_path$ + CHR$(34)
+    ELSE
+        ' Build complex filter: each WAV gets adelay'd by its recorded
+        ' offset, then amix layers all of them. normalize=0 keeps each
+        ' clip at its original level so non-overlapping ones aren't
+        ' attenuated.
+        DIM filter$ = ""
+        FOR k = 0 TO n - 1
+            DIM idx$ = STR$(k + 1)
+            DIM off$ = STR$(CINT(offsets[k]))
+            filter$ = filter$ + "[" + idx$ + ":a]adelay=" + off$ + "|" + off$ + "[a" + STR$(k) + "];"
+        NEXT k
+        IF n = 1 THEN
+            filter$ = filter$ + "[a0]anull[aout]"
+        ELSE
+            DIM mix$ = ""
+            FOR k = 0 TO n - 1
+                mix$ = mix$ + "[a" + STR$(k) + "]"
+            NEXT k
+            filter$ = filter$ + mix$ + "amix=inputs=" + STR$(n) + ":normalize=0[aout]"
+        ENDIF
+        cmd$ = cmd$ + " -filter_complex " + CHR$(34) + filter$ + CHR$(34) _
+                    + " -map 0:v -map " + CHR$(34) + "[aout]" + CHR$(34) _
+                    + " -c:v copy -c:a aac -b:a 192k " + CHR$(34) + out_path$ + CHR$(34)
+    ENDIF
+
+    PRINT "[FFMPEG] " + cmd$
+    DIM r = OS.EXEC(cmd$)
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "[FFMPEG] FAIL ("; r{"EXIT_CODE"}; "):"
+        PRINT r{"OUTPUT"}
+        RETURN ""
+    ENDIF
+    PRINT "[FFMPEG] composed → " + out_path$
+    RETURN out_path$
+ENDFUNC

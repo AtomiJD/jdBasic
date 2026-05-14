@@ -1,0 +1,28 @@
+' ──────────────────────────────────────────────────────────────────
+'  script_00_smoketest.txt — 30-second end-to-end pipeline check
+'
+'  Tests: OBS recording start/stop, TTS voice render+play, keyboard
+'  driving the IDE, file LOAD, jdBasic RUN. After this runs you
+'  should see raw\<name>.mkv + voice\script_00_smoketest_000.wav
+'  through 003.wav.
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: Train jdBasic — Pipeline Smoke Test
+
+SAY: Hello, I am Jaydee Basica. Let me show you a tiny demo.
+
+CMD: EDIT
+WAIT: 0.5
+
+LOAD: for_demo.jdb
+WAIT: 0.5
+
+SAY: Now I will press control Q to leave the editor.
+CMD: CTRL-Q
+
+SAY: And run the script. Watch the multiplication table appear.
+CMD: RUN
+WAIT: 2
+
+SAY: That's it for our smoke test. The pipeline works.
+WAIT: 1

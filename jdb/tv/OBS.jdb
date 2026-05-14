@@ -1,0 +1,37 @@
+' ══════════════════════════════════════════════════════════════════
+' OBS.jdb — drive OBS Studio's WebSocket from jdBasic via the
+' _helpers/obs_cmd.py shim. Connection settings live in tv/.env so
+' the password never leaks into source. Every entry-point returns
+' the helper's stdout (or empty string) and prints any error.
+' ══════════════════════════════════════════════════════════════════
+
+EXPORT MODULE OBS
+
+' Path is relative to whatever CWD the director set (typically jdb\tv\).
+DIM HELPER$ = "python helpers\obs_cmd.py"
+
+FUNC RUN$(args$)
+    DIM r = OS.EXEC(HELPER$ + " " + args$)
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "[OBS] FAIL ("; r{"EXIT_CODE"}; "): "; r{"OUTPUT"}
+    ENDIF
+    RETURN r{"OUTPUT"}
+ENDFUNC
+
+EXPORT FUNC StartRecord$()
+    RETURN RUN$("start_record")
+ENDFUNC
+
+EXPORT FUNC StopRecord$()
+    ' Returns the recording's output path (last line of stdout) when OBS
+    ' wrote the file successfully.
+    RETURN RUN$("stop_record")
+ENDFUNC
+
+EXPORT FUNC Scene$(name$)
+    RETURN RUN$("scene " + name$)
+ENDFUNC
+
+EXPORT FUNC Status$()
+    RETURN RUN$("status")
+ENDFUNC

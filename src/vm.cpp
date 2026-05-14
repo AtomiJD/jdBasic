@@ -5136,6 +5136,14 @@ void VM::register_builtins() {
         std::transform(opt.begin(), opt.end(), opt.begin(), ::toupper);
         if (opt == "NOCOLOR" || opt == "PLAINTEXT") g_color_errors = false;
         else if (opt == "COLOR") g_color_errors = true;
+        else if (opt == "NOAUTOIDENT" || opt == "NOAUTOINDENT") {
+            extern bool g_editor_autoindent;
+            g_editor_autoindent = false;
+        }
+        else if (opt == "AUTOIDENT" || opt == "AUTOINDENT") {
+            extern bool g_editor_autoindent;
+            g_editor_autoindent = true;
+        }
         return Value::make_none();
     });
 

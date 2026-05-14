@@ -1,0 +1,243 @@
+' ══════════════════════════════════════════════════════════════════
+'  director.jdb — drives a Train-jdBasic video shoot end-to-end:
+'    • finds + resizes + focuses the jdBasic IDE window
+'    • starts OBS recording
+'    • walks the script.txt commands (SAY/CMD/TYPE/LOAD/TITLE/SCENE/WAIT)
+'    • renders SAY-lines via edge-tts → plays voice → auto-advances
+'    • stops OBS recording at the end
+'
+'  Output per shoot:
+'    voice\<scriptbase>_NNN.wav    — one WAV per SAY line
+'    raw\<obs-default-name>.mkv    — OBS recording file (named by OBS)
+'
+'  Switch lesson by editing SCRIPT_FILE$ below or calling
+'  director.Direct("script_03.txt") from the REPL.
+' ══════════════════════════════════════════════════════════════════
+
+IMPORT REMOTE
+IMPORT TTS
+IMPORT OBS
+
+CD "\usr\dev\cc\jdb\tv"
+
+DIM SCRIPT_FILE$ = "script_00_smoketest.txt"
+
+' Strip extension so we can name the voice WAVs after the script.
+' INSTR$ is 0-indexed in jdBasic so the prefix length == the index of '.'.
+DIM SCRIPT_BASE$ = SCRIPT_FILE$
+DIM dot_pos = INSTR$(SCRIPT_BASE$, ".")
+IF dot_pos >= 0 THEN SCRIPT_BASE$ = LEFT$(SCRIPT_BASE$, dot_pos)
+
+
+' ── Window setup ─────────────────────────────────────────────────
+DIM hIDE = REMOTE.FindJDB("jdBasic")
+IF hIDE = 0 THEN
+    PRINT "FATAL: jdBasic IDE window not found. Open it first."
+    END
+ENDIF
+REMOTE.ResizeJDB(hIDE, 1920, 1080)
+REMOTE.ActivateJDB(hIDE)
+
+
+' ── Keyboard helper (unchanged from the original director) ───────
+' (See SUB below; declared early so the prelude can call it.)
+SUB TypeText(hIDE, text$)
+    REMOTE.ActivateJDB(hIDE)
+    FOR J = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, J, 1)
+        IF ch$ = "\" AND J < LEN(text$) - 1 THEN
+            DIM nx$ = LCASE$(MID$(text$, J + 1, 1))
+            SWITCH nx$
+                CASE "n" : REMOTE.SendKey($0D) : J = J + 1
+                CASE "t" : REMOTE.SendKey($09) : J = J + 1
+                CASE "b" : REMOTE.SendKey($08) : J = J + 1
+                DEFAULT  : REMOTE.TypeChar(ch$)
+            ENDSWITCH
+        ELSE
+            REMOTE.TypeChar(ch$)
+        ENDIF
+        SLEEP 5 + RND(1)*5
+    NEXT J
+    REMOTE.SendKey($0D)
+ENDSUB
+
+
+' ── Render + play one SAY line through Jaydee Basica's voice ─────
+SUB Speak(out_path$, text$)
+    DIM dur = TTS.Say(out_path$, text$)
+    IF dur <= 0.0 THEN
+        PRINT "  (TTS failed — skipping playback)"
+        RETURN
+    ENDIF
+    ' Play synchronously via ffplay — blocks for the wav's duration,
+    ' so the next director command runs once Jaydee finishes talking.
+    DIM rc = OS.EXEC("ffplay -nodisp -autoexit -loglevel error " + CHR$(34) + out_path$ + CHR$(34))
+ENDSUB
+
+
+' ── Pre-render all SAY lines BEFORE we touch OBS ─────────────────
+' edge-tts + ffmpeg take a few seconds per clip; if we did it inline
+' during the shoot the recording would have dead-air gaps. Render
+' everything first into voice\<base>_NNN.wav, then the shoot just
+' plays the existing files (fast).
+PRINT "── pre-rendering voice clips ──"
+DIM lines = SPLIT(TXTREADER$(SCRIPT_FILE$), CHR$(10))
+DIM voice_wavs = []
+DIM voice_durs = []
+DIM prerender_idx AS INTEGER = 0
+DIM prl AS INTEGER
+FOR prl = 0 TO LEN(lines) - 1
+    DIM pline$ = TRIM$(lines[prl])
+    IF STARTSWITH(pline$, "SAY:") THEN
+        DIM ptext$ = TRIM$(MID$(pline$, 5))
+        DIM pwav$ = "voice\" + SCRIPT_BASE$ + "_" + FORMAT$("{:03}", prerender_idx) + ".wav"
+        DIM pdur = TTS.Say(pwav$, ptext$)
+        PUSH voice_wavs, pwav$
+        PUSH voice_durs, pdur
+        PRINT "  ["; prerender_idx; "] "; pdur; "s  "; ptext$
+        prerender_idx = prerender_idx + 1
+    ENDIF
+NEXT prl
+PRINT "── "; prerender_idx; " voice clip(s) ready ──"
+
+
+' ── Prep IDE: disable auto-indent so pre-formatted code doesn't compound ─
+' The IDE's editor copies the previous line's leading whitespace into
+' every new line; replaying typed code via TypeText would then drift
+' rightwards on each \n. OPTION "NOAUTOIDENT" flips a runtime flag the
+' editor reads on every Enter press.
+PRINT "── director: disabling IDE auto-indent ──"
+TypeText(hIDE, "OPTION " + CHR$(34) + "NOAUTOIDENT" + CHR$(34))
+SLEEP 400
+
+
+' ── Start recording (manual STOP is fine too — RECORD:stop in script) ─
+PRINT "── director: starting OBS recording ──"
+DIM rec_start$ = OBS.StartRecord$()
+PRINT rec_start$
+SLEEP 800  ' give OBS a beat to actually start writing
+
+' Mark recording-start time so we can log each SAY's offset for post-prod
+' audio mixing. TICK() returns ms since program start.
+DIM REC_T0 = TICK() + 800   ' compensate the 800ms SLEEP we just did
+DIM MANIFEST = ""            ' accumulates "offset_ms\tdur_ms\twav_path\n"
+
+
+' ── Walk the script (using the pre-rendered voice clips) ────────
+DIM say_idx AS INTEGER = 0
+
+FOR I = 0 TO LEN(lines) - 1
+    DIM raw$ = lines[I]
+    DIM line$ = TRIM$(raw$)
+
+    IF LEN(line$) = 0 THEN CONTINUEFOR
+    IF STARTSWITH(line$, "'") THEN CONTINUEFOR
+
+    IF STARTSWITH(line$, "SAY:") THEN
+        DIM text$ = TRIM$(MID$(line$, 5))
+        COLOR 14, 0 : PRINT "[SAY] "; text$ : COLOR 7, 0
+        DIM wav$ = voice_wavs[say_idx]
+        DIM dur_sec = voice_durs[say_idx]
+        DIM say_offset = TICK() - REC_T0
+        IF dur_sec > 0.0 THEN
+            ' Monitor playback only (OBS Desktop Audio is muted; the
+            ' clean WAV is muxed onto the video by compose.jdb later).
+            DIM rcplay = OS.EXEC("ffplay -nodisp -autoexit -loglevel error " + CHR$(34) + wav$ + CHR$(34))
+            DIM dur_ms = CINT(dur_sec * 1000)
+            MANIFEST = MANIFEST + STR$(CINT(say_offset)) + CHR$(9) + STR$(dur_ms) + CHR$(9) + wav$ + CHR$(10)
+        ENDIF
+        say_idx = say_idx + 1
+
+    ELSEIF STARTSWITH(line$, "TITLE:") THEN
+        ' Post-prod will burn the real title overlay via FFmpeg drawtext.
+        ' For now we just log it and pause so OBS captures a clean beat
+        ' that we can later replace with the title card.
+        DIM tt$ = TRIM$(MID$(line$, 7))
+        COLOR 13, 0 : PRINT "[TITLE] "; tt$ : COLOR 7, 0
+        SLEEP 3000
+
+    ELSEIF STARTSWITH(line$, "SCENE:") THEN
+        DIM scn$ = TRIM$(MID$(line$, 7))
+        PRINT "[SCENE] "; scn$
+        DIM rc1 = OBS.Scene$(scn$)
+
+    ELSEIF STARTSWITH(line$, "WAIT:") THEN
+        DIM secs = VAL(TRIM$(MID$(line$, 6)))
+        PRINT "[WAIT] "; secs; "s"
+        SLEEP CINT(secs * 1000)
+
+    ELSEIF STARTSWITH(line$, "RECORD:") THEN
+        DIM what$ = LCASE$(TRIM$(MID$(line$, 8)))
+        IF what$ = "start" THEN
+            DIM r1$ = OBS.StartRecord$()
+        ELSEIF what$ = "stop" THEN
+            DIM r2$ = OBS.StopRecord$()
+        ENDIF
+
+    ELSEIF STARTSWITH(line$, "CMD:") THEN
+        DIM cmd$ = TRIM$(UCASE$(MID$(line$, 5)))
+        SWITCH cmd$
+            CASE "EDIT"
+                REMOTE.ActivateJDB(hIDE)
+                REMOTE.SendKey(ASC("E")) : REMOTE.SendKey(ASC("D"))
+                REMOTE.SendKey(ASC("I")) : REMOTE.SendKey(ASC("T"))
+                REMOTE.SendKey(13)
+            CASE "CTRL-Q"
+                REMOTE.ActivateJDB(hIDE)
+                REMOTE.PressCtrlQ()
+            CASE "RUN"
+                REMOTE.ActivateJDB(hIDE)
+                REMOTE.SendKey(ASC("R")) : REMOTE.SendKey(ASC("U"))
+                REMOTE.SendKey(ASC("N")) : REMOTE.SendKey(13)
+            CASE "ENTER"
+                REMOTE.ActivateJDB(hIDE)
+                REMOTE.SendKey(13)
+        ENDSWITCH
+        SLEEP 500
+
+    ELSEIF STARTSWITH(line$, "TYPE:") THEN
+        TypeText(hIDE, MID$(line$, 6))
+        REMOTE.SendKey($0D)
+
+    ELSEIF STARTSWITH(line$, "LOAD:") THEN
+        DIM fp$ = TRIM$(MID$(line$, 6))
+        IF FILE.EXISTS(fp$) THEN
+            PRINT "[LOAD] "; fp$
+            DIM content$ = TXTREADER$(fp$)
+            content$ = REPLACE$(content$, CHR$(13) + CHR$(10), "\n")
+            content$ = REPLACE$(content$, CHR$(10), "\n")
+            TypeText(hIDE, content$)
+        ELSE
+            PRINT "[LOAD] FAIL: file not found: "; fp$
+        ENDIF
+    ENDIF
+NEXT I
+
+
+' ── Stop recording ───────────────────────────────────────────────
+PRINT "── director: stopping OBS recording ──"
+DIM rec_stop$ = OBS.StopRecord$()
+PRINT rec_stop$
+
+' Parse OBS's stop-output for the recording path. obs_cmd.py prints
+' "recording stopped: <path>" — peel off the path.
+DIM raw_path$ = ""
+DIM stop_lines = SPLIT(rec_stop$, CHR$(10))
+DIM si AS INTEGER
+FOR si = 0 TO LEN(stop_lines) - 1
+    DIM sl$ = TRIM$(stop_lines[si])
+    DIM colon_pos = INSTR$(sl$, ":")
+    IF colon_pos > 0 AND STARTSWITH(sl$, "recording stopped") THEN
+        raw_path$ = TRIM$(MID$(sl$, colon_pos + 1))
+    ENDIF
+NEXT si
+
+' Write the manifest so the post-prod composer can mux the voice clips
+' onto the raw video at exactly the right offsets.
+DIM manifest_path$ = "raw\" + SCRIPT_BASE$ + ".manifest.txt"
+DIM hdr$ = "RAW: " + raw_path$ + CHR$(10) + _
+            "SCRIPT: " + SCRIPT_FILE$ + CHR$(10) + _
+            "# offset_ms  dur_ms  wav_path" + CHR$(10)
+TXTWRITER manifest_path$, hdr$ + MANIFEST
+PRINT "── manifest: "; manifest_path$ : PRINT
+PRINT hdr$ + MANIFEST

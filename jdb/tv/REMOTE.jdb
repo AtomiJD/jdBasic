@@ -1,0 +1,69 @@
+' remote.jdb - Hilfsfunktionen zur Fernsteuerung
+EXPORT MODULE REMOTE
+
+' Windows API Deklarationen
+DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" (kcls AS INTEGER, title AS STRING) AS INTEGER
+DECLARE SUB keybd_event LIB "user32.dll" ALIAS "keybd_event" (bVk AS INTEGER, bScan AS INTEGER, dwFlags AS INTEGER, dwExtraInfo AS INTEGER)
+DECLARE SUB jSleep LIB "kernel32.dll" ALIAS "Sleep" (ms AS INTEGER)
+DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" (hwnd AS INTEGER) AS INTEGER
+DECLARE FUNC VkKeyScan LIB "user32.dll" ALIAS "VkKeyScanA" (kchar AS INTEGER) AS INTEGER
+DECLARE FUNC MoveWindow LIB "user32.dll" ALIAS "MoveWindow" (hwnd AS INTEGER, x AS INTEGER, y AS INTEGER, nWidth AS INTEGER, nHeight AS INTEGER, bRepaint AS INTEGER) AS INTEGER 
+
+' Key Codes
+CONST VK_SHIFT   = $10
+CONST VK_CONTROL = $11
+CONST VK_RETURN  = $0D
+CONST KEYEVENTF_KEYUP = $02
+
+' Findet das jdBasic Fenster (Titel muss exakt passen)
+EXPORT FUNC FindJDB(title$)
+    RETURN FindWindow(0, title$)
+ENDFUNC
+
+' Neue Hilfsfunktion zum Aktivieren
+EXPORT SUB ActivateJDB(hwnd)
+    IF hwnd <> 0 THEN
+        SetForegroundWindow(hwnd)
+        jSleep(200) ' Gib Windows kurz Zeit für den Fokus-Wechsel
+    ENDIF
+ENDSUB
+
+' Skalierung des Fensters
+EXPORT SUB ResizeJDB(hwnd, w, h)
+    IF hwnd <> 0 THEN
+        ' Verschiebt das Fenster auf 0,0 und setzt die Größe
+        ' Der letzte Parameter 1 (TRUE) erzwingt ein Neuzeichnen
+        MoveWindow(hwnd, 0, 0, w, h, 1) 
+        jSleep(200) 
+    ENDIF
+ENDSUB
+
+' Sendet einen einzelnen Tastendruck
+EXPORT SUB SendKey(vk)
+    keybd_event(vk, 0, 0, 0)
+    keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    jSleep(50)
+ENDSUB
+
+' Diese neue Funktion wandelt Zeichen korrekt in Keycodes um
+EXPORT SUB TypeChar(c$)
+    DIM vkCode = VkKeyScan(ASC(c$))
+    DIM shiftState = (vkCode BAND $100) <> 0 ' Prüfen, ob SHIFT nötig ist
+    DIM cleanVK = vkCode BAND $FF            ' Den eigentlichen Keycode extrahieren
+
+    IF shiftState THEN keybd_event(VK_SHIFT, 0, 0, 0)
+    
+    keybd_event(cleanVK, 0, 0, 0)
+    keybd_event(cleanVK, 0, KEYEVENTF_KEYUP, 0)
+    
+    IF shiftState THEN keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0)
+    jSleep(20)
+ENDSUB
+
+' Spezialkombination: CTRL+Q (Editor beenden)
+EXPORT SUB PressCtrlQ()
+    keybd_event(VK_CONTROL, 0, 0, 0)
+    ' Wir nutzen hier direkt SendKey mit dem KeyCode für 'Q'
+    SendKey($51) ' $51 ist der Virtual Key Code für Q
+    keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+ENDSUB

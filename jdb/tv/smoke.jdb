@@ -1,0 +1,13 @@
+' Phase-1 smoke test — verify OBS WS + edge-tts both respond.
+
+IMPORT OBS
+IMPORT TTS
+
+PRINT "── OBS status ──"
+PRINT OBS.Status$()
+PRINT
+
+PRINT "── TTS render ──"
+DIM dur = TTS.Say("jdb\tv\voice\smoke.wav", "Hello from jdBasic. This is a test.")
+PRINT "duration = "; dur; " seconds"
+PRINT "saved to jdb\tv\voice\smoke.wav"

@@ -10,6 +10,13 @@
 
 #include "editor.h"
 
+// Toggled by OPTION "NOAUTOIDENT" / "AUTOIDENT" in vm.cpp. When false,
+// pressing Enter inserts a bare newline — the next line starts at col 0
+// instead of mirroring the previous line's leading whitespace. Useful
+// for keyboard-driven scripts that already supply their own indentation
+// (e.g. jdb/tv/director.jdb typing pre-indented code into the editor).
+bool g_editor_autoindent = true;
+
 #if !defined(_WIN32)
 // ── POSIX full-screen editor ────────────────────────────────
 // Termios raw-mode + ANSI-escape full-screen edit. Same Editor class API
@@ -792,7 +799,9 @@ void EditorImpl::run() {
                 std::string remain = lines_ref[cy].substr(b);
                 lines_ref[cy] = lines_ref[cy].substr(0, b);
                 std::string indent;
-                for (char c : lines_ref[cy]) { if (c == ' ' || c == '\t') indent += c; else break; }
+                if (g_editor_autoindent) {
+                    for (char c : lines_ref[cy]) { if (c == ' ' || c == '\t') indent += c; else break; }
+                }
                 lines_ref.insert(lines_ref.begin() + cy + 1, indent + remain);
                 cy++; cx = utf8_codepoints(indent);
                 dirty = true;
@@ -1086,9 +1095,11 @@ void EditorImpl::run() {
                 std::wstring wl = to_wide(lines_ref[cy]);
                 std::wstring remain = wl.substr(cx);
                 std::wstring indent;
-                for (wchar_t c : wl) {
-                    if (c == L' ' || c == L'\t') indent += c;
-                    else break;
+                if (g_editor_autoindent) {
+                    for (wchar_t c : wl) {
+                        if (c == L' ' || c == L'\t') indent += c;
+                        else break;
+                    }
                 }
                 wl = wl.substr(0, cx);
                 lines_ref[cy] = to_utf8(wl);

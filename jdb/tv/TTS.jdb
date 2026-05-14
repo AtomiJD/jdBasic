@@ -1,0 +1,66 @@
+' ══════════════════════════════════════════════════════════════════
+' TTS.jdb — render a line of narration to WAV via edge-tts, return
+' the duration in seconds so the director knows how long to wait
+' while OBS keeps the screen rolling.
+' ══════════════════════════════════════════════════════════════════
+
+EXPORT MODULE TTS
+
+' Path is relative to whatever CWD the director set (typically jdb\tv\).
+DIM HELPER$ = "python helpers\tts_render.py"
+
+' Jaydee Basica's signature voice — Jenny pitched +20Hz for a slightly
+' brighter, friendlier read. Override via the env file or by calling
+' RenderEx() with explicit pitch/rate.
+DIM DEFAULT_VOICE$ = "en-US-JennyNeural"
+DIM DEFAULT_PITCH$ = "+20Hz"
+DIM DEFAULT_RATE$  = "+0%"
+
+' Render <text$> with the chosen <voice$> + pitch + rate to <out_path$>.
+' Returns duration in seconds (DOUBLE). 0.0 on failure (stderr already
+' printed by the python helper).
+EXPORT FUNC RenderEx(out_path$, voice$, pitch$, rate$, text$)
+    ' Escape double-quotes inside the text — Windows cmd needs them
+    ' doubled inside a "..."-wrapped argument.
+    DIM safe$ = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ = CHR$(34) THEN
+            safe$ = safe$ + CHR$(92) + CHR$(34)
+        ELSE
+            safe$ = safe$ + ch$
+        ENDIF
+    NEXT i
+
+    DIM cmd$ = HELPER$ _
+        + " " + CHR$(34) + out_path$ + CHR$(34) _
+        + " " + voice$ _
+        + " " + CHR$(34) + safe$ + CHR$(34) _
+        + " " + CHR$(34) + pitch$ + CHR$(34) _
+        + " " + CHR$(34) + rate$ + CHR$(34)
+    DIM r = OS.EXEC(cmd$)
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "[TTS] FAIL: "; r{"OUTPUT"}
+        RETURN 0.0
+    ENDIF
+
+    ' helper prints duration on its last line. Take the last non-empty.
+    DIM lines = SPLIT(r{"OUTPUT"}, CHR$(10))
+    DIM j AS INTEGER
+    FOR j = LEN(lines) - 1 TO 0 STEP -1
+        DIM s$ = TRIM$(lines[j])
+        IF LEN(s$) > 0 THEN RETURN VAL(s$)
+    NEXT j
+    RETURN 0.0
+ENDFUNC
+
+' Convenience: render with the default voice + Jaydee Basica's +20Hz lift.
+EXPORT FUNC Say(out_path$, text$)
+    RETURN RenderEx(out_path$, DEFAULT_VOICE$, DEFAULT_PITCH$, DEFAULT_RATE$, text$)
+ENDFUNC
+
+' Back-compat: pitch defaults to +0Hz when caller picks an explicit voice.
+EXPORT FUNC Render(out_path$, voice$, text$)
+    RETURN RenderEx(out_path$, voice$, "+0Hz", "+0%", text$)
+ENDFUNC

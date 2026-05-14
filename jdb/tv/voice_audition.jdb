@@ -1,0 +1,17 @@
+' Voice audition — render the same line in 4 candidate voices so we
+' can pick Jaydee Basica's signature timbre.
+
+IMPORT TTS
+
+DIM line$ = "Hello, I am Jaydee Basica, and today I will teach you jdBasic."
+
+DIM voices = ["en-US-JennyNeural", "en-US-AriaNeural", "en-US-MichelleNeural", "en-GB-SoniaNeural"]
+
+DIM i AS INTEGER
+FOR i = 0 TO LEN(voices) - 1
+    DIM voice$ = voices[i]
+    DIM out$ = "jdb\tv\voice\audition_" + voice$ + ".wav"
+    PRINT "Rendering "; voice$; " ..."
+    DIM dur = TTS.Render(out$, voice$, line$)
+    PRINT "  " + out$ + "  ("; dur; " s)"
+NEXT i
