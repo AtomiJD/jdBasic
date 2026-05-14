@@ -1,0 +1,71 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 01 — Hello jdBasic
+'  Topic: PRINT statement, basic types, DIM, type annotations
+'  Target runtime: ~5 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 01 | Hello jdBasic | PRINT and Variables
+
+SAY: Hello! I am Jaydee Basica. Welcome to Train jdBasic, lesson one.
+
+SAY: Today we will learn the two most fundamental concepts in any programming language: how to print something to the screen, and how to store values in variables.
+
+SAY: Let's start with the simplest program you can write in jdBasic.
+
+TYPE: PRINT "Hello, World!"
+WAIT: 0.5
+
+SAY: That is a print statement. Anything in quotes is a string, and print just shows it on the screen.
+
+SAY: Print can also do math. Watch.
+
+TYPE: PRINT 5 + 7
+WAIT: 0.5
+
+SAY: Twelve. As expected.
+
+SAY: You can mix text and numbers using a semicolon to glue them together.
+
+TYPE: PRINT "The answer is "; 6 * 7
+WAIT: 0.5
+
+SAY: The semicolon joins the two pieces with no space in between. Use a comma instead if you want a tab between them.
+
+SAY: Now, variables. A variable is just a name for a value.
+
+TYPE: DIM age = 38
+TYPE: PRINT age
+WAIT: 0.5
+
+SAY: We used the keyword dim to create a variable called age, and gave it the value thirty-eight. Then we printed it.
+
+SAY: jdBasic figures out the type for you, but you can also be explicit.
+
+TYPE: DIM name AS STRING = "Atomi"
+TYPE: PRINT "Hello, "; name
+WAIT: 0.5
+
+SAY: Adding "as string" tells jdBasic this variable holds text. There is also "as integer" for whole numbers, "as double" for fractional ones, and "as boolean" for true or false.
+
+SAY: Variables can be reassigned at any time.
+
+TYPE: age = age + 1
+TYPE: PRINT "Now I am "; age
+WAIT: 0.5
+
+SAY: Happy birthday! age is now thirty-nine.
+
+SAY: One last trick. If you print a list of values separated by commas, they line up neatly.
+
+TYPE: PRINT name, age, age * 365
+WAIT: 0.5
+
+SAY: That's the number of days Atomi has been alive, by the way.
+
+SAY: That is all for lesson one. To recap: print shows things on screen, and dim creates variables that can hold numbers, strings, or other types.
+
+SAY: In lesson two we will look at "if" statements and "for" loops, the two building blocks of every program.
+
+SAY: Until then. Keep coding. Bye!
+
+WAIT: 2

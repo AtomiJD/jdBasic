@@ -18,10 +18,18 @@ IMPORT REMOTE
 IMPORT TTS
 IMPORT OBS
 IMPORT CARDS
+IMPORT FFMPEG
 
 CD "\usr\dev\cc\jdb\tv"
 
-DIM SCRIPT_FILE$ = "script_00_smoketest.txt"
+' Script filename comes from the first CLI argument; falls back to the
+' lesson-01 default when called bare.  Examples:
+'   jdbasic director.jdb                       → script_01_hello.txt
+'   jdbasic director.jdb script_02_loops.txt   → that file
+DIM SCRIPT_FILE$ = "script_01_hello.txt"
+DIM cli_args = OS.ARGS()
+IF LEN(cli_args) >= 2 THEN SCRIPT_FILE$ = cli_args[1]
+PRINT "── director: shooting "; SCRIPT_FILE$
 
 ' Strip extension so we can name the voice WAVs after the script.
 ' INSTR$ is 0-indexed in jdBasic so the prefix length == the index of '.'.
@@ -121,14 +129,16 @@ NEXT prl
 PRINT "── "; say_count; " voice clip(s) + "; title_count; " card(s) ready ──"
 
 
-' ── Prep IDE: disable auto-indent so pre-formatted code doesn't compound ─
-' The IDE's editor copies the previous line's leading whitespace into
-' every new line; replaying typed code via TypeText would then drift
-' rightwards on each \n. OPTION "NOAUTOIDENT" flips a runtime flag the
-' editor reads on every Enter press.
-PRINT "── director: disabling IDE auto-indent ──"
-TypeText(hIDE, "OPTION " + CHR$(34) + "NOAUTOIDENT" + CHR$(34))
+' ── Prep IDE: load Intro workspace which prints the banner and flips
+'    OPTION "NOAUTOIDENT" inside its INIT() SUB.  Doing it via a
+'    workspace keeps the on-screen reveal to four short typed lines
+'    (NEW / LOADWS / COMPILE / INIT) instead of eight PRINT statements
+'    crawling across the screen one after another.
+PRINT "── director: loading Intro workspace ──"
 TypeText(hIDE, "NEW")
+TypeText(hIDE, "LOADWS " + CHR$(34) + "Intro" + CHR$(34))
+TypeText(hIDE, "COMPILE")
+TypeText(hIDE, "INIT")
 SLEEP 200
 
 
@@ -136,18 +146,19 @@ SLEEP 200
 PRINT "── director: starting OBS recording ──"
 DIM rec_start$ = OBS.StartRecord$()
 PRINT rec_start$
-SLEEP 800  ' give OBS a beat to actually start writing frames
-
-' Mark recording-start time AFTER the warm-up sleep — anything we log
-' from here forward gets a non-negative offset into the recorded file.
+' Sample REC_T0 IMMEDIATELY after StartRecord — that way manifest
+' offsets map directly onto frame 0 of the OBS recording. A tiny
+' SLEEP after is only to give OBS its first-frame breathing room;
+' the title-card overlay covers whatever the camera sees during it.
 DIM REC_T0 = TICK()
+SLEEP 200
 DIM MANIFEST = ""            ' accumulates "offset_ms\tdur_ms\twav_path\n"
 
 
 ' ── Walk the script (using the pre-rendered assets) ─────────────
 ' Manifest data rows are prefixed with VOICE\t or CARD\t so the
 ' composer can dispatch.  Card display window is 3.5 s.
-DIM CARD_DUR_MS AS INTEGER = 3500
+DIM CARD_DUR_MS AS INTEGER = 2500
 DIM say_idx AS INTEGER = 0
 DIM title_idx AS INTEGER = 0
 
@@ -271,3 +282,18 @@ DIM hdr$ = "RAW: " + raw_path$ + CHR$(10) + _
 TXTWRITER manifest_path$, hdr$ + MANIFEST
 PRINT "── manifest: "; manifest_path$ : PRINT
 PRINT hdr$ + MANIFEST
+
+
+' ── Post-prod: mux voice + cards onto the raw OBS take ───────────
+' Runs in-process so a single director.jdb invocation produces the
+' finished MP4.  If you ever need to re-compose without re-recording,
+' compose.jdb takes the manifest path and runs just this last step.
+PRINT
+PRINT "── director: composing final video ──"
+DIM final_path$  = "final\" + SCRIPT_BASE$ + ".mp4"
+DIM final_result$ = FFMPEG.ComposeFromManifest$(manifest_path$, final_path$)
+IF LEN(final_result$) > 0 THEN
+    PRINT "── DONE: "; final_result$
+ELSE
+    PRINT "── compose failed — check messages above."
+ENDIF
