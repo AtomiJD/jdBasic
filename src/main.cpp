@@ -15,6 +15,9 @@
 #include "console.h"
 #include "editor.h"
 #include "errors.h"
+#include "natives_list.h"
+#include <cstdio>
+#include <cctype>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -644,7 +647,10 @@ static std::string* g_program_buffer_ptr = nullptr;
 // to the same file instead of prompting again.
 static std::string g_loaded_filename;
 
-static void register_console_builtins(VM& vm) {
+// ansi_color: legacy console gets coloured LIST output via VT escapes;
+// FTXUI's outbox renders Elements directly and would print raw escape
+// bytes, so the FTXUI caller passes false.
+static void register_console_builtins(VM& vm, bool ansi_color) {
     auto& pbuf = g_program_buffer_ptr;
 
     // LOAD
@@ -681,13 +687,69 @@ static void register_console_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // LIST
-    vm.register_native("LIST", [&pbuf, &vm](const std::vector<Value>& args) -> Value {
+    // LIST — syntax-highlighted listing.  ANSI escapes are emitted only
+    // when the output goes straight to the terminal (legacy console with
+    // VT mode on).  When vm.on_output is bound — FTXUI outbox, MCP
+    // response, OUTPUT.CAPTURE_BEGIN — we fall back to plain text so
+    // those consumers don't see raw escape bytes.
+    vm.register_native("LIST", [&pbuf, &vm, ansi_color](const std::vector<Value>& args) -> Value {
         (void)args;
         if (!pbuf || pbuf->empty()) { vm.emit("No program loaded.\n"); return Value::make_none(); }
+
+        const bool color = ansi_color;
+        auto& kw = keywords();
+        auto& nv = native_names();
+        auto upcase = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+            return s;
+        };
+        auto wrap = [&](const std::string& s, const char* code) -> std::string {
+            if (!color) return s;
+            return std::string("\x1b[") + code + "m" + s + "\x1b[0m";
+        };
+
         std::istringstream ss(*pbuf);
-        std::string line; int ln = 1;
-        while (std::getline(ss, line)) vm.emit(std::to_string(ln++) + "  " + line + "\n");
+        std::string line;
+        int ln = 1;
+        while (std::getline(ss, line)) {
+            char gutter[16];
+            std::snprintf(gutter, sizeof(gutter), "%4d", ln);
+            // U+2502 (│) in UTF-8 = E2 94 82.  main.cpp sets CP_UTF8 on
+            // the Windows console, so this renders cleanly there too.
+            std::string out = wrap(std::string(gutter) + " " + (color ? "\xe2\x94\x82" : "|") + " ", "90");
+
+            size_t i = 0;
+            while (i < line.size()) {
+                unsigned char c = (unsigned char)line[i];
+                if (c == '"') {
+                    size_t st = i++;
+                    while (i < line.size() && line[i] != '"') ++i;
+                    if (i < line.size()) ++i;
+                    out += wrap(line.substr(st, i - st), "33");
+                } else if (c == '\'') {
+                    out += wrap(line.substr(i), "32");
+                    break;
+                } else if (std::isdigit(c)) {
+                    size_t st = i;
+                    while (i < line.size() && (std::isdigit((unsigned char)line[i]) || line[i] == '.')) ++i;
+                    out += wrap(line.substr(st, i - st), "96");
+                } else if (std::isalpha(c) || c == '_') {
+                    size_t st = i;
+                    while (i < line.size() && (std::isalnum((unsigned char)line[i]) || line[i] == '_' || line[i] == '$')) ++i;
+                    std::string word = line.substr(st, i - st);
+                    std::string up = upcase(word);
+                    if (kw.find(up) != kw.end())      out += wrap(word, "95");
+                    else if (nv.find(up) != nv.end()) out += wrap(word, "96");
+                    else                              out += word;
+                } else {
+                    out += line[i];
+                    ++i;
+                }
+            }
+            out += "\n";
+            vm.emit(out);
+            ++ln;
+        }
         return Value::make_none();
     });
 
@@ -1305,7 +1367,7 @@ int main(int argc, char* argv[]) {
         // Setup all workspace VMs
         console.for_each_vm([&](VM& vm) {
             setup_dynamic_code(vm);
-            register_console_builtins(vm);
+            register_console_builtins(vm, /*ansi_color=*/true);
             set_os_args(vm, argc, argv);
 
             // RECUR task natives
@@ -1456,7 +1518,7 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < 4; i++) {
             auto vm = std::make_unique<VM>();
             setup_dynamic_code(*vm);
-            register_console_builtins(*vm);
+            register_console_builtins(*vm, /*ansi_color=*/false);
             set_os_args(*vm, argc, argv);
             vms.push_back(std::move(vm));
         }
