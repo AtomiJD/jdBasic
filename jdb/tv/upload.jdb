@@ -1,0 +1,412 @@
+' ══════════════════════════════════════════════════════════════════
+'  upload.jdb — push a finished lesson MP4 to YouTube via the
+'  youtubeuploader.exe CLI binary. Reads metadata from a per-script
+'  Markdown file (scripts/<base>.md), generates auto-chapters from
+'  the manifest's VOICE-row timings, and writes a per-script
+'  "uploaded marker" so re-runs are idempotent.
+'
+'  Usage:
+'    jdbasic upload.jdb script_11_repl_workflow
+'    jdbasic upload.jdb --all
+'
+'  Prereqs (one-time, see tv\yt\README — or this file's prelude):
+'    • client_secret_*.json in tv\yt\ (Google Cloud OAuth client)
+'    • First run opens a browser → consent → writes request.token
+'    • tv\.env points at the right uploader.exe + client_secret name
+'    • tv\yt\defaults.json holds series-wide metadata (tags, footer,
+'      playlist ID once create_playlist.jdb has run once)
+' ══════════════════════════════════════════════════════════════════
+
+IMPORT CARDS
+
+CD "\usr\dev\cc\jdb\tv"
+
+' ── Parse tv\.env into a Map ─────────────────────────────────────
+FUNC LoadEnv()
+    DIM env = {}
+    IF NOT FILE.EXISTS(".env") THEN
+        PRINT "[upload] FATAL: tv\.env not found"
+        END
+    ENDIF
+    DIM raw$ = TXTREADER$(".env")
+    DIM lines = SPLIT(raw$, CHR$(10))
+    DIM li AS INTEGER
+    FOR li = 0 TO LEN(lines) - 1
+        DIM ln$ = TRIM$(lines[li])
+        IF LEN(ln$) = 0 THEN CONTINUEFOR
+        IF LEFT$(ln$, 1) = "#" THEN CONTINUEFOR
+        DIM eq = INSTR$(ln$, "=")
+        IF eq < 1 THEN CONTINUEFOR
+        DIM k$ = TRIM$(LEFT$(ln$, eq))
+        DIM v$ = TRIM$(MID$(ln$, eq + 1))
+        env{k$} = v$
+    NEXT li
+    RETURN env
+ENDFUNC
+
+' ── Parse tv\yt\defaults.json ────────────────────────────────────
+FUNC LoadDefaults(path$)
+    IF NOT FILE.EXISTS(path$) THEN
+        PRINT "[upload] FATAL: defaults file not found: "; path$
+        END
+    ENDIF
+    DIM raw$ = TXTREADER$(path$)
+    RETURN JSON.PARSE$(raw$)
+ENDFUNC
+
+' ── Markdown parser (frontmatter + body) ─────────────────────────
+'   Returns a map with: title$, hook$, tags[], description$.
+'   Frontmatter format (between --- markers):
+'     title: Lesson 11 — REPL Workflow
+'     hook:  Tools that make you fast
+'     tags:  repl, tooling, pretty, lint
+'   Tag values are comma-separated.  Everything after the closing
+'   --- is the description body.  Title is mandatory; absence is a
+'   fatal error (deliberate per the no-fallback design decision).
+FUNC ParseMd(path$)
+    DIM out = {}
+    out{"title"} = ""
+    out{"hook"} = ""
+    out{"tags"} = []
+    out{"description"} = ""
+
+    IF NOT FILE.EXISTS(path$) THEN
+        PRINT "[upload] FATAL: lesson description missing: "; path$
+        PRINT "  Create a .md file alongside the script (no fallback)."
+        END
+    ENDIF
+    DIM raw$ = TXTREADER$(path$)
+    raw$ = REPLACE$(raw$, CHR$(13), "")
+    DIM lines = SPLIT(raw$, CHR$(10))
+    DIM total = LEN(lines)
+    DIM in_fm = 0
+    DIM fm_done = 0
+    DIM body$ = ""
+    DIM mi AS INTEGER
+    FOR mi = 0 TO total - 1
+        DIM ln$ = lines[mi]
+        IF TRIM$(ln$) = "---" THEN
+            IF in_fm = 0 AND fm_done = 0 THEN
+                in_fm = 1
+                CONTINUEFOR
+            ELSEIF in_fm = 1 THEN
+                in_fm = 0
+                fm_done = 1
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        IF in_fm = 1 THEN
+            DIM eq = INSTR$(ln$, ":")
+            IF eq < 1 THEN CONTINUEFOR
+            DIM k$ = LCASE$(TRIM$(LEFT$(ln$, eq)))
+            DIM v$ = TRIM$(MID$(ln$, eq + 1))
+            ' Strip surrounding quotes if any.
+            IF LEN(v$) >= 2 AND LEFT$(v$, 1) = CHR$(34) AND RIGHT$(v$, 1) = CHR$(34) THEN
+                v$ = MID$(v$, 1, LEN(v$) - 2)
+            ENDIF
+            IF k$ = "title" THEN out{"title"} = v$
+            IF k$ = "hook"  THEN out{"hook"}  = v$
+            IF k$ = "tags"  THEN
+                DIM parts = SPLIT(v$, ",")
+                DIM pi AS INTEGER
+                FOR pi = 0 TO LEN(parts) - 1
+                    DIM t$ = TRIM$(parts[pi])
+                    IF LEN(t$) > 0 THEN PUSH out{"tags"}, t$
+                NEXT pi
+            ENDIF
+        ELSEIF fm_done = 1 THEN
+            body$ = body$ + ln$ + CHR$(10)
+        ENDIF
+    NEXT mi
+    out{"description"} = TRIM$(body$)
+    IF LEN(out{"title"}) = 0 THEN
+        PRINT "[upload] FATAL: "; path$; " has no 'title:' frontmatter key"
+        END
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' ── Format ms → mm:ss (or h:mm:ss for >=1h) ──────────────────────
+FUNC TimeStr$(ms)
+    DIM total_s = INT(ms / 1000)
+    DIM h = INT(total_s / 3600)
+    DIM m = INT((total_s - h * 3600) / 60)
+    DIM s = total_s - h * 3600 - m * 60
+    IF h > 0 THEN
+        RETURN FORMAT$("{}:{:0>2}:{:0>2}", h, m, s)
+    ELSE
+        RETURN FORMAT$("{:0>2}:{:0>2}", m, s)
+    ENDIF
+ENDFUNC
+
+' ── Build YouTube-format chapter list ────────────────────────────
+'   Walks scripts\<base>.txt collecting CHAPTER:<title> lines and
+'   correlating them with VOICE rows in raw\<base>.manifest.txt.
+'   Each CHAPTER applies to the NEXT SAY in the script; the offset
+'   for that SAY is read from the matching VOICE row in the manifest
+'   (manifest writes one VOICE row per SAY, in order).  The first
+'   chapter is force-rebased to 00:00 — YouTube requires it.
+'   Returns a string (already newline-separated mm:ss titles) ready
+'   to splice into the description; empty if no CHAPTER: markers.
+FUNC BuildChapters(script_path$, manifest_path$)
+    IF NOT FILE.EXISTS(script_path$) THEN RETURN ""
+    IF NOT FILE.EXISTS(manifest_path$) THEN RETURN ""
+
+    ' Pass 1: scan script for CHAPTER: tied to next SAY-index.
+    DIM script_raw$ = TXTREADER$(script_path$)
+    script_raw$ = REPLACE$(script_raw$, CHR$(13), "")
+    DIM script_lines = SPLIT(script_raw$, CHR$(10))
+    DIM chapter_titles = []   ' parallel arrays — title at i belongs
+    DIM chapter_say_idx  = []  ' to SAY-index chapter_say_idx[i].
+    DIM say_count AS INTEGER = 0
+    DIM pending$ = ""
+    DIM si AS INTEGER
+    FOR si = 0 TO LEN(script_lines) - 1
+        DIM sln$ = TRIM$(script_lines[si])
+        IF STARTSWITH(sln$, "CHAPTER:") THEN
+            pending$ = TRIM$(MID$(sln$, 9))
+        ELSEIF STARTSWITH(sln$, "SAY:") THEN
+            IF LEN(pending$) > 0 THEN
+                PUSH chapter_titles, pending$
+                PUSH chapter_say_idx, say_count
+                pending$ = ""
+            ENDIF
+            say_count = say_count + 1
+        ENDIF
+    NEXT si
+    IF LEN(chapter_titles) = 0 THEN RETURN ""
+
+    ' Pass 2: harvest VOICE-row offsets from the manifest, in order.
+    DIM mani_raw$ = TXTREADER$(manifest_path$)
+    mani_raw$ = REPLACE$(mani_raw$, CHR$(13), "")
+    DIM mani_lines = SPLIT(mani_raw$, CHR$(10))
+    DIM voice_offsets = []
+    DIM mi AS INTEGER
+    FOR mi = 0 TO LEN(mani_lines) - 1
+        DIM mln$ = mani_lines[mi]
+        IF STARTSWITH(mln$, "VOICE" + CHR$(9)) THEN
+            DIM cols = SPLIT(mln$, CHR$(9))
+            IF LEN(cols) >= 2 THEN PUSH voice_offsets, VAL(cols[1])
+        ENDIF
+    NEXT mi
+
+    ' Pass 3: build the formatted chapter block — first one to 00:00,
+    ' rest at their actual offset (relative to first VOICE).
+    DIM out$ = ""
+    DIM base_off = 0
+    IF LEN(chapter_say_idx) > 0 AND chapter_say_idx[0] < LEN(voice_offsets) THEN
+        base_off = voice_offsets[chapter_say_idx[0]]
+    ENDIF
+    DIM ci AS INTEGER
+    FOR ci = 0 TO LEN(chapter_titles) - 1
+        DIM idx = chapter_say_idx[ci]
+        IF idx >= LEN(voice_offsets) THEN CONTINUEFOR
+        DIM off = voice_offsets[idx] - base_off
+        IF off < 0 THEN off = 0
+        out$ = out$ + TimeStr$(off) + " " + chapter_titles[ci] + CHR$(10)
+    NEXT ci
+    RETURN out$
+ENDFUNC
+
+' ── Compose full description: chapters + body + footer ───────────
+FUNC ComposeDescription$(chapters$, body$, footer$)
+    DIM out$ = ""
+    IF LEN(chapters$) > 0 THEN
+        out$ = chapters$ + CHR$(10)
+    ENDIF
+    out$ = out$ + body$
+    IF LEN(footer$) > 0 THEN
+        out$ = out$ + CHR$(10) + CHR$(10) + footer$
+    ENDIF
+    RETURN out$
+ENDFUNC
+
+' ── Today's date as yyyy-mm-dd ───────────────────────────────────
+FUNC TodayIso$()
+    DIM parts = DATE.PARTS(NOW())
+    RETURN FORMAT$("{:0>4}-{:0>2}-{:0>2}", parts{"year"}, parts{"month"}, parts{"day"})
+ENDFUNC
+
+' ── Build metaJSON for one lesson ────────────────────────────────
+FUNC BuildMeta(base$, env, defaults, lesson_md)
+    DIM meta = {}
+    meta{"title"} = lesson_md{"title"}
+    meta{"description"} = ComposeDescription$( _
+        BuildChapters("scripts\" + base$ + ".txt", "raw\" + base$ + ".manifest.txt"), _
+        lesson_md{"description"}, _
+        defaults{"descriptionFooter"})
+
+    ' Tags = series defaults + per-lesson, dedup by case-insensitive eq.
+    DIM tags = []
+    DIM seen = {}
+    DIM def_tags = defaults{"tags"}
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(def_tags) - 1
+        DIM tg$ = TRIM$(def_tags[ti])
+        IF LEN(tg$) = 0 THEN CONTINUEFOR
+        DIM low$ = LCASE$(tg$)
+        IF NOT MAP.EXISTS(seen, low$) THEN
+            PUSH tags, tg$
+            seen{low$} = 1
+        ENDIF
+    NEXT ti
+    DIM les_tags = lesson_md{"tags"}
+    DIM tj AS INTEGER
+    FOR tj = 0 TO LEN(les_tags) - 1
+        DIM tg2$ = TRIM$(les_tags[tj])
+        IF LEN(tg2$) = 0 THEN CONTINUEFOR
+        DIM low2$ = LCASE$(tg2$)
+        IF NOT MAP.EXISTS(seen, low2$) THEN
+            PUSH tags, tg2$
+            seen{low2$} = 1
+        ENDIF
+    NEXT tj
+    meta{"tags"} = tags
+
+    meta{"categoryId"} = defaults{"categoryId"}
+    meta{"privacyStatus"} = defaults{"privacyStatus"}
+    meta{"language"} = defaults{"language"}
+    meta{"recordingDate"} = TodayIso$()
+
+    ' Playlist (only if defaults has a non-empty playlistID).
+    IF LEN(defaults{"playlistID"}) > 0 THEN
+        DIM pls = []
+        PUSH pls, defaults{"playlistID"}
+        meta{"playlistIds"} = pls
+    ENDIF
+
+    RETURN meta
+ENDFUNC
+
+' ── Render thumbnail if missing ──────────────────────────────────
+SUB EnsureThumbnail(base$, lesson_md)
+    DIM thumb$ = "final\" + base$ + ".thumb.png"
+    IF FILE.EXISTS(thumb$) THEN RETURN
+    ' Derive a 2-char lesson number from the script base (script_NN_…).
+    ' Fall back to "00" for non-conforming names.
+    DIM lesson$ = "00"
+    IF STARTSWITH(base$, "script_") AND LEN(base$) >= 9 THEN
+        lesson$ = MID$(base$, 7, 2)
+    ENDIF
+    DIM hook$ = lesson_md{"hook"}
+    IF LEN(hook$) = 0 THEN hook$ = lesson_md{"title"}
+    PRINT "[upload] rendering thumbnail: "; thumb$
+    DIM ok = CARDS.RenderThumbnail(thumb$, lesson$, lesson_md{"title"}, hook$)
+    IF ok = 0 THEN
+        PRINT "[upload] FATAL: thumbnail render failed"
+        END
+    ENDIF
+ENDSUB
+
+' ── Upload a single lesson ───────────────────────────────────────
+'   dry_run=1 stops just before invoking youtubeuploader.exe, leaves
+'   the _tmp metaJSON on disk and prints it.  Use to validate the
+'   chapter list, tags merge, description render before burning an
+'   OAuth round-trip.
+SUB UploadOne(base$, env, defaults, dry_run)
+    PRINT "── upload: "; base$
+    IF dry_run = 1 THEN PRINT "  (dry-run — no upload will happen)"
+    DIM mp4$ = "final\" + base$ + ".mp4"
+    DIM md$  = "scripts\" + base$ + ".md"
+    DIM marker$ = "final\" + base$ + ".uploaded.json"
+
+    IF NOT FILE.EXISTS(mp4$) THEN
+        PRINT "  FATAL: video file missing: "; mp4$
+        END
+    ENDIF
+    IF FILE.EXISTS(marker$) AND dry_run = 0 THEN
+        PRINT "  SKIP — already uploaded ("; marker$; ")"
+        RETURN
+    ENDIF
+
+    DIM lesson_md = ParseMd(md$)
+    IF dry_run = 0 THEN
+        EnsureThumbnail(base$, lesson_md)
+    ENDIF
+
+    DIM meta = BuildMeta(base$, env, defaults, lesson_md)
+    DIM meta_tmp$ = "yt\_tmp_" + base$ + ".json"
+    TXTWRITER meta_tmp$, JSON.STRINGIFY$(meta), FALSE, "utf-8"
+    IF dry_run = 1 THEN
+        PRINT "  metaJSON written: "; meta_tmp$
+        PRINT "  ── description (first 800 chars) ──"
+        DIM desc$ = meta{"description"}
+        IF LEN(desc$) > 800 THEN desc$ = LEFT$(desc$, 800) + "…"
+        PRINT desc$
+        PRINT "  ── tags ──"
+        PRINT meta{"tags"}
+        RETURN
+    ENDIF
+
+    ' Build the youtubeuploader command.  Every path goes through CHR$(34)
+    ' since several of them legitimately contain spaces (Program Files).
+    DIM q$ = CHR$(34)
+    DIM cmd$ = q$ + env{"YT_UPLOADER"} + q$
+    cmd$ = cmd$ + " -filename "    + q$ + mp4$ + q$
+    cmd$ = cmd$ + " -metaJSON "    + q$ + meta_tmp$ + q$
+    cmd$ = cmd$ + " -thumbnail "   + q$ + "final\" + base$ + ".thumb.png" + q$
+    cmd$ = cmd$ + " -secrets "     + q$ + env{"YT_CLIENT_SECRETS"} + q$
+    cmd$ = cmd$ + " -cache "       + q$ + env{"YT_TOKEN_CACHE"} + q$
+    cmd$ = cmd$ + " -metaJSONout " + q$ + marker$ + q$
+    PRINT "  invoking youtubeuploader…"
+    DIM r = OS.EXEC(cmd$)
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "  FAIL ("; r{"EXIT_CODE"}; "):"
+        PRINT r{"OUTPUT"}
+        ' Leave _tmp around for inspection.
+        END
+    ENDIF
+    PRINT "  OK — marker: "; marker$
+    KILL meta_tmp$
+ENDSUB
+
+' ── Walk every final\*.mp4 missing a marker ──────────────────────
+SUB UploadAll(env, defaults, dry_run)
+    DIM files = DIR$("final\*.mp4")
+    IF LEN(files) = 0 THEN
+        PRINT "[upload] nothing to upload — final\ is empty"
+        RETURN
+    ENDIF
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(files) - 1
+        DIM fn$ = files[fi]
+        ' Strip directory + ".mp4" suffix.
+        DIM slash = INSTR$(fn$, "\")
+        DO WHILE slash >= 0
+            fn$ = MID$(fn$, slash + 1)
+            slash = INSTR$(fn$, "\")
+        LOOP
+        DIM dot = INSTR$(fn$, ".")
+        IF dot < 1 THEN CONTINUEFOR
+        DIM base$ = LEFT$(fn$, dot)
+        UploadOne(base$, env, defaults, dry_run)
+    NEXT fi
+ENDSUB
+
+' ── Main ─────────────────────────────────────────────────────────
+DIM args = OS.ARGS()
+IF LEN(args) < 2 THEN
+    PRINT "usage:"
+    PRINT "  jdbasic upload.jdb <script_base>             upload one lesson"
+    PRINT "  jdbasic upload.jdb --all                     every final\*.mp4 without marker"
+    PRINT "  jdbasic upload.jdb --dry-run <script_base>   build metaJSON, no upload"
+    END
+ENDIF
+
+DIM env = LoadEnv()
+DIM defaults = LoadDefaults(env{"YT_DEFAULTS"})
+
+DIM dry_run AS INTEGER = 0
+DIM target$ = args[1]
+IF target$ = "--dry-run" AND LEN(args) >= 3 THEN
+    dry_run = 1
+    target$ = args[2]
+ENDIF
+
+IF target$ = "--all" THEN
+    UploadAll(env, defaults, dry_run)
+ELSE
+    UploadOne(target$, env, defaults, dry_run)
+ENDIF
+
+PRINT "── upload: done"

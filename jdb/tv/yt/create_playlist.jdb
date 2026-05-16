@@ -1,0 +1,67 @@
+' ══════════════════════════════════════════════════════════════════
+'  create_playlist.jdb — one-shot helper that creates the
+'  "Train jdBasic" YouTube playlist via the YouTube Data API v3
+'  Python helper, then writes the resulting playlist ID into
+'  tv\yt\defaults.json so subsequent uploads append every new lesson
+'  to it.
+'
+'  First run: opens a browser → Google OAuth consent screen → writes
+'  tv\yt\playlist.token.  Subsequent runs are silent if defaults.json
+'  already has a non-empty playlistID (no-op).
+'
+'  Title / description / privacy come from the script's CLI args with
+'  conservative defaults — override if you want a different name.
+'
+'  Usage:
+'    jdbasic yt\create_playlist.jdb
+'    jdbasic yt\create_playlist.jdb "Series Title" "Series description" public
+' ══════════════════════════════════════════════════════════════════
+
+CD "\usr\dev\cc\jdb\tv"
+
+DIM args = OS.ARGS()
+DIM TITLE$ = "Train jdBasic"
+DIM DESC$  = "Tooling-first jdBasic lessons. New episode every release."
+DIM PRIV$  = "public"
+IF LEN(args) > 1 THEN TITLE$ = args[1]
+IF LEN(args) > 2 THEN DESC$  = args[2]
+IF LEN(args) > 3 THEN PRIV$  = args[3]
+
+DIM defaults_path$ = "yt\defaults.json"
+IF NOT FILE.EXISTS(defaults_path$) THEN
+    PRINT "FATAL: "; defaults_path$; " missing"
+    END
+ENDIF
+DIM defaults = JSON.PARSE$(TXTREADER$(defaults_path$))
+IF MAP.EXISTS(defaults, "playlistID") AND LEN(defaults{"playlistID"}) > 0 THEN
+    PRINT "Playlist already configured: "; defaults{"playlistID"}
+    PRINT "Delete the playlistID from "; defaults_path$; " to re-create."
+    END
+ENDIF
+
+PRINT "── creating YouTube playlist: "; TITLE$
+DIM q$ = CHR$(34)
+DIM cmd$ = "python helpers\yt_create_playlist.py " _
+          + q$ + TITLE$ + q$ + " " _
+          + q$ + DESC$  + q$ + " " _
+          + PRIV$
+DIM r = OS.EXEC(cmd$)
+IF r{"EXIT_CODE"} <> 0 THEN
+    PRINT "FAIL ("; r{"EXIT_CODE"}; "):"
+    PRINT r{"OUTPUT"}
+    END
+ENDIF
+
+' Helper prints exactly one line on success — the playlist ID.
+DIM out_lines = SPLIT(TRIM$(r{"OUTPUT"}), CHR$(10))
+DIM pid$ = TRIM$(out_lines[LEN(out_lines) - 1])
+IF LEFT$(pid$, 2) <> "PL" THEN
+    PRINT "  (unexpected output from helper — full stdout follows)"
+    PRINT r{"OUTPUT"}
+    END
+ENDIF
+PRINT "  ID: "; pid$
+
+defaults{"playlistID"} = pid$
+TXTWRITER defaults_path$, JSON.STRINGIFY$(defaults), FALSE, "utf-8"
+PRINT "  written to "; defaults_path$

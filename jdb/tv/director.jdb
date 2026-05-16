@@ -58,12 +58,25 @@ SUB TypeText(hIDE, text$)
     FOR J = 0 TO LEN(text$) - 1
         DIM ch$ = MID$(text$, J, 1)
         IF ch$ = "\" AND J < LEN(text$) - 1 THEN
-            DIM nx$ = LCASE$(MID$(text$, J + 1, 1))
+            ' MID$ on the lookahead is case-sensitive; only fold the
+            ' control letters (n/t/b), not the literal backslash itself,
+            ' otherwise `\\` would route through the DEFAULT branch and
+            ' the second `\` would pair with whatever followed it (e.g.
+            ' `\\build` → BS that eats the first backslash).
+            DIM raw$ = MID$(text$, J + 1, 1)
+            DIM nx$ = LCASE$(raw$)
             SWITCH nx$
                 CASE "n" : REMOTE.SendKey($0D) : J = J + 1
                 CASE "t" : REMOTE.SendKey($09) : J = J + 1
                 CASE "b" : REMOTE.SendKey($08) : J = J + 1
-                DEFAULT  : REMOTE.TypeChar(ch$)
+                DEFAULT
+                    IF raw$ = "\" THEN
+                        ' `\\` → type one literal backslash, consume both
+                        REMOTE.TypeChar("\")
+                        J = J + 1
+                    ELSE
+                        REMOTE.TypeChar(ch$)
+                    ENDIF
             ENDSWITCH
         ELSE
             REMOTE.TypeChar(ch$)

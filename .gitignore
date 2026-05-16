@@ -103,6 +103,12 @@ jdb/tv/voice/
 jdb/tv/raw/
 jdb/tv/final/
 jdb/tv/avatar/
+# YouTube uploader: OAuth client secret + token cache stay local.
+# defaults.json is committed (no secrets in it).
+jdb/tv/yt/client_secret*.json
+jdb/tv/yt/request.token
+jdb/tv/yt/playlist.token
+jdb/tv/yt/_tmp_*.json
 # Rendered title-cards / thumbnails go through here; only the
 # template_*.html sources are tracked.
 jdb/tv/cards/*.png

@@ -7,6 +7,7 @@
 
 TITLE: 11 | REPL Workflow | Tools That Make You Fast
 
+CHAPTER: Intro
 SAY: Welcome back to Train jdBasic. Jaydee here. Lesson eleven, and the start of a more professional chapter. The first ten lessons covered the language itself. From here on we look at the tools that make a jdBasic workflow actually pleasant.
 
 SAY: No new language features today. Instead, a tour of the REPL commands that you will use every day. Saving your work. Loading it back. Auto-formatting messy source. Linting it. Tracing execution to find a bug. And freezing the entire workspace, source plus variables, in a single file.
@@ -32,6 +33,7 @@ TYPE: CLS
 TYPE: LIST
 WAIT: 2.5
 
+CHAPTER: PRETTY — auto-format your source
 SAY: It works, but the casing is inconsistent. Watch what "pretty" does.
 
 TYPE: PRETTY
@@ -42,6 +44,7 @@ WAIT: 2.5
 
 SAY: Keywords are now uppercase, indentation is normalised, the layout is clean. "pretty" rewrites the buffer in place. Variants. "pretty preview" shows the result without changing the buffer, and "pretty style vb" uses VB-style Pascal casing — "For", "Print", "Next" — instead of all caps.
 
+CHAPTER: LINT — catch typos before they bite
 SAY: Next, the linter.
 
 TYPE: LINT
@@ -60,6 +63,7 @@ WAIT: 2.5
 
 SAY: There. "xyz" was assigned without ever being declared with DIM, and the linter flagged it. The interpreter will happily auto-create that variable, which is exactly how typos slip into long sessions. The linter is your safety net.
 
+CHAPTER: TRON / TROFF — trace execution
 SAY: Let us run the program with tracing on. "tron" turns the trace on. Every executed statement prints its location.
 
 TYPE: TRON
@@ -71,6 +75,7 @@ WAIT: 0.5
 
 SAY: Each line shows where execution went. Invaluable when you want to know which branch of an "if" your code took, or how many times a loop body actually ran. "troff" turns it off again.
 
+CHAPTER: SAVE / LOAD — source on disk
 SAY: Now let us save the work. "save" writes the current buffer to a jdBasic file.
 
 TYPE: SAVE "greet"
@@ -88,6 +93,7 @@ WAIT: 2.5
 
 SAY: Back exactly as we left it. "save" and "load" work on source code only. Variables in memory are not part of that.
 
+CHAPTER: SAVEWS / LOADWS — freeze the whole workspace
 SAY: There is a richer pair. "savews" and "loadws". WS stands for workspace. A workspace freezes the source AND every variable currently in memory.
 
 CMD: RUN
@@ -119,6 +125,7 @@ WAIT: 1.5
 
 SAY: There she is again, without even having to re-run the program. Workspaces are perfect for exploring data across sessions. Put down jdBasic in the middle of a session, come back tomorrow, "loadws" and pick up exactly where you left off.
 
+CHAPTER: Recap + Outro
 SAY: That is your toolkit for the day. "new" to clear the program buffer, "clearws" to nuke the whole workspace. "list" to see the buffer. "edit" to change it. "pretty" to format. "lint" to spot issues. "tron" and "troff" to trace execution. "save" and "load" for source files. "savews" and "loadws" for the whole workspace, code plus state.
 
 SAY: Next lesson, higher order functions. Passing a function as an argument to another function, mapping it across an array, reducing an array down to a single value. Until then. Keep coding. Bye!

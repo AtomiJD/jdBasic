@@ -97,7 +97,7 @@ ignored. Commands recognised:
 |---------------------------|-----------------------------------------------------------|
 | `TITLE: lesson \| title \| subtitle` | Pre-renders a title-card PNG; the composer overlays it on the recording for ~2.5 s. Pipe-separated. |
 | `SAY: <text>`             | Pre-rendered as a WAV via edge-tts. Plays during the shoot via `ffplay`; muxed into the final video. |
-| `TYPE: <text>`            | Types `<text>` into the foreground window followed by Enter. Backslash escapes: `\n` Enter, `\t` Tab, `\b` Backspace. Leading whitespace **after** `TYPE: ` is preserved (used for source indentation when `OPTION "NOAUTOIDENT"` is on). |
+| `TYPE: <text>`            | Types `<text>` into the foreground window followed by Enter. Backslash escapes: `\n` Enter, `\t` Tab, `\b` Backspace, `\\` literal backslash (use this for Windows paths — `..\\..\\build\\jdbasic` types `..\..\build\jdbasic`). A lone `\` followed by anything else is typed verbatim. Leading whitespace **after** `TYPE: ` is preserved (used for source indentation when `OPTION "NOAUTOIDENT"` is on). |
 | `CMD: EDIT \| CTRL-Q \| RUN \| ENTER` | Sends the named keystroke chord. |
 | `WAIT: <seconds>`         | `SLEEP` (floats OK). |
 | `LOAD: <file.jdb>`        | Reads the file, types its content into the editor. |
@@ -105,6 +105,7 @@ ignored. Commands recognised:
 | `WINMOVE: <window-title>` | Finds a window by exact title and snaps it to `0,0,1920×1080`. Used for SDL `SCREEN` windows so they land inside the OBS Desktop-scene crop region. Retries for up to 3 s. |
 | `FOCUS: <window-title>`   | Brings a named window to the foreground. Use after an SDL demo to put the IDE back on top before the next `TYPE:`. |
 | `RECORD: start \| stop`   | Manual OBS control inside the script (rarely needed — the director already does start/stop). |
+| `CHAPTER: <title>`        | Marks a YouTube-chapter heading for the SAY that follows. Ignored during the shoot; consumed by `upload.jdb`. The first CHAPTER is force-rebased to `00:00`. Skip if you don't want a chapter list in the description. |
 
 Pronunciation tips for `SAY:` lines:
 
@@ -201,6 +202,99 @@ encode is `libx264` / `aac` on a muted-desktop base track.
 - ✅ **Phase 1**: end-to-end pipeline (TTS + OBS + IDE-driver + FFmpeg).
 - ✅ **Phase 2**: branded title-card overlays via Playwright + HTML.
 - ✅ **Phase 3**: lessons 00 → 10 shot and rendered.
+- ✅ **Phase 5**: YouTube upload via `upload.jdb` + `youtubeuploader.exe`.
 - ⏳ **Phase 4**: virtual Jaydee Basica avatar (`avatar/JayDee.vrm`,
   VSeeFace lip-sync to the WAVs, OBS source).
-- ⏳ **Phase 5**: YouTube upload via `youtubeuploader.exe` (`YT.jdb`).
+
+---
+
+## YouTube upload workflow
+
+After a shoot, `final/<base>.mp4` is the muxed master.  `upload.jdb`
+publishes it to YouTube **as `private`** with auto-generated chapters,
+a dedicated 1280×720 thumbnail and tags pulled from a per-lesson
+Markdown file.  You flip the privacy from `private` → `public` in
+YouTube Studio when you're ready to publish.
+
+### One-time setup
+
+1. **Google Cloud Console** → create an OAuth client of type
+   "Desktop App", download the JSON.  Drop it at
+   `tv/yt/client_secret_*.json` (the exact filename Google generated
+   is fine — `.gitignore` matches `client_secret*.json`).
+2. **Update `tv/.env`** so `YT_CLIENT_SECRETS` points at that file.
+3. **Install the Python deps** for the playlist-creation helper
+   (the uploader itself is Go and needs nothing extra):
+
+   ```
+   pip install google-auth-oauthlib google-api-python-client
+   ```
+
+4. **Create the series playlist** (interactive — opens a browser):
+
+   ```
+   jdbasic yt/create_playlist.jdb
+   ```
+
+   First run opens the OAuth consent screen; subsequent runs are
+   no-ops.  The new playlist ID is written into
+   `yt/defaults.json`.
+
+### Per-lesson — write the description
+
+For each `scripts/<base>.txt`, drop a sibling `scripts/<base>.md`
+with frontmatter + body:
+
+```markdown
+---
+title: Train jdBasic — Lesson 11 — REPL Workflow
+hook:  Tools that make you fast
+tags:  repl, tooling, pretty, lint
+---
+
+Body paragraph — appears under the auto-generated chapter list in
+the YouTube description.  Markdown is allowed; YouTube renders it
+as plain text with links auto-linkified.
+```
+
+Mandatory keys: **`title`**.  Optional: `hook` (one-liner that goes
+on the thumbnail), `tags` (comma-separated, merged with the series
+defaults from `yt/defaults.json`).
+
+### Optional — mark chapters in the script
+
+Add `CHAPTER: <title>` lines to `scripts/<base>.txt` directly before
+the SAY where each chapter should start.  The director ignores them
+during the shoot; `upload.jdb` correlates them with the VOICE-row
+offsets in the manifest to produce the YouTube chapter block.  No
+markers → no chapter block (everything else works).
+
+```
+CHAPTER: Intro
+SAY: Welcome back to Train jdBasic…
+
+CHAPTER: PRETTY in 60 seconds
+SAY: Watch what pretty does…
+```
+
+The first chapter is force-rebased to `00:00` (YouTube requirement).
+
+### Upload
+
+```
+jdbasic upload.jdb script_11_repl_workflow      # one lesson
+jdbasic upload.jdb --all                        # every final/*.mp4
+                                                # missing a marker
+```
+
+After a successful upload, `final/<base>.uploaded.json` is written
+(YouTube's metadata for the new video).  Re-running with the same
+base skips with a SKIP message.  Delete the marker file to force
+re-upload.
+
+`final/<base>.thumb.png` is rendered on the first upload via
+`CARDS.RenderThumbnail`; subsequent re-renders need a manual delete.
+
+The first ever upload triggers the youtubeuploader's OAuth flow
+(browser consent → `tv/yt/request.token`).  Every subsequent upload
+runs unattended.
