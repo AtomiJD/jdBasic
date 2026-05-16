@@ -1270,8 +1270,12 @@ Syntax: PLOTRAW x, y, matrix, [scaleX, scaleY]
 Description: Draws a matrix of color values directly to the graphics screen.
 
 [PRETTY]
-Syntax: PRETTY [PREVIEW] [STYLE UPPER|VB] [WIDTH n]
-Description: Formats the current source code with standardized indentation and spacing.
+Syntax: PRETTY [PREVIEW] [STYLE UPPER|VB]
+Description: Reformats the loaded source — 4-space indent, normalized keyword casing.
+  PREVIEW    show the result on screen without overwriting the buffer
+  STYLE VB   Pascal-cased keywords (For, Print, Next) instead of UPPER (the default)
+  Strings and ' / REM comments are passed through verbatim.
+  Same formatting is available at the CLI via `jdbasic --pretty file.jdb` (or --pretty-vb).
 
 [PRINT]
 PRINT [expressionlist] [{; | ,}]

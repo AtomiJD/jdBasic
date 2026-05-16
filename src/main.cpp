@@ -1028,6 +1028,60 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
         bool preview = (cmd_upper.find("PREVIEW") != std::string::npos);
         bool vb_style = (cmd_upper.find("VB") != std::string::npos);
 
+        // Re-case identifier runs that match a known keyword. Strings and
+        // line comments (' ... or REM ...) are passed through verbatim.
+        auto recase = [&](const std::string& src) -> std::string {
+            const auto& kw = keywords();
+            std::string out;
+            out.reserve(src.size());
+            size_t i = 0;
+            while (i < src.size()) {
+                char c = src[i];
+                if (c == '"') {
+                    out += c; i++;
+                    while (i < src.size() && src[i] != '"') { out += src[i]; i++; }
+                    if (i < src.size()) { out += src[i]; i++; }
+                    continue;
+                }
+                if (c == '\'') {
+                    while (i < src.size()) { out += src[i]; i++; }
+                    continue;
+                }
+                if (std::isalpha((unsigned char)c) || c == '_') {
+                    size_t start = i;
+                    while (i < src.size() &&
+                           (std::isalnum((unsigned char)src[i]) || src[i] == '_'))
+                        i++;
+                    std::string word = src.substr(start, i - start);
+                    std::string upper = word;
+                    std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                    // REM starts a comment — pass it through cased, then dump
+                    // the rest of the line verbatim.
+                    if (upper == "REM") {
+                        out += vb_style ? std::string("Rem") : upper;
+                        while (i < src.size()) { out += src[i]; i++; }
+                        continue;
+                    }
+                    if (kw.count(upper)) {
+                        if (vb_style) {
+                            std::string vb = upper;
+                            for (size_t k = 1; k < vb.size(); k++)
+                                vb[k] = (char)std::tolower((unsigned char)vb[k]);
+                            out += vb;
+                        } else {
+                            out += upper;
+                        }
+                    } else {
+                        out += word;
+                    }
+                    continue;
+                }
+                out += c;
+                i++;
+            }
+            return out;
+        };
+
         std::istringstream ss(program_buffer);
         std::string line;
         std::string result;
@@ -1052,17 +1106,10 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 upper_trimmed.substr(0,7) == "DEFAULT" || upper_trimmed.substr(0,4) == "CASE")
                 if (indent > 0) indent--;
 
-            // Apply indent
+            // Apply indent + recase keywords
             std::string indented;
             for (int i = 0; i < indent; i++) indented += tab;
-
-            // Optionally uppercase keywords
-            if (vb_style) {
-                // Keep as-is (VB style = mixed case, original)
-                indented += trimmed;
-            } else {
-                indented += trimmed;
-            }
+            indented += recase(trimmed);
 
             result += indented + "\n";
 
@@ -1205,25 +1252,24 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             walk_stmts = [&](const std::vector<StmtPtr>& stmts) {
                 for (auto& s : stmts) {
                     if (!s) continue;
-                    bool in_explicit = explicit_files.count(s->source_file) > 0;
-                    bool in_strict   = strict_files.count(s->source_file) > 0;
-                    if (in_explicit) {
-                        // Bare ASSIGN to an undeclared name is the classic
-                        // "OPTION EXPLICIT" violation the codegen errors on.
-                        if ((s->kind == StmtKind::ASSIGN || s->kind == StmtKind::INDEX_ASSIGN) &&
-                            !s->var_name.empty()) {
-                            std::string head = head_name(s->var_name);
-                            if (!declared.count(head) && !declared.count(s->var_name))
-                                undeclared.push_back(s->var_name + " (line " + std::to_string(s->line) + ")");
-                        }
-                        walk_expr(s->expr.get());
-                        for (auto& pe : s->print_exprs) walk_expr(pe.get());
-                        for (auto& ix : s->index_chain) walk_expr(ix.get());
-                        walk_expr(s->loop_cond.get());
-                        walk_expr(s->end_expr.get());
-                        walk_expr(s->step_expr.get());
-                        for (auto& br : s->branches) walk_expr(br.condition.get());
+                    bool in_strict = strict_files.count(s->source_file) > 0;
+                    // Bare ASSIGN to an undeclared name is the classic
+                    // implicit-DIM the interpreter tolerates and the strict
+                    // codegen rejects. LINT always flags it so REPL users
+                    // catch typos without having to opt in to OPTION EXPLICIT.
+                    if ((s->kind == StmtKind::ASSIGN || s->kind == StmtKind::INDEX_ASSIGN) &&
+                        !s->var_name.empty()) {
+                        std::string head = head_name(s->var_name);
+                        if (!declared.count(head) && !declared.count(s->var_name))
+                            undeclared.push_back(s->var_name + " (line " + std::to_string(s->line) + ")");
                     }
+                    walk_expr(s->expr.get());
+                    for (auto& pe : s->print_exprs) walk_expr(pe.get());
+                    for (auto& ix : s->index_chain) walk_expr(ix.get());
+                    walk_expr(s->loop_cond.get());
+                    walk_expr(s->end_expr.get());
+                    walk_expr(s->step_expr.get());
+                    for (auto& br : s->branches) walk_expr(br.condition.get());
                     (void)in_strict; // STRICT type-mismatch checks live in the codegen
                     walk_stmts(s->body);
                     walk_stmts(s->catch_body);
@@ -1254,7 +1300,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             int warnings = 0;
             if (!undeclared.empty()) {
                 warnings += (int)undeclared.size();
-                vm.emit("  EXPLICIT undeclared refs: " + std::to_string(undeclared.size()) + "\n");
+                vm.emit("  Undeclared refs: " + std::to_string(undeclared.size()) + "\n");
                 int shown = 0;
                 for (auto& u : undeclared) {
                     if (++shown > 10) {
@@ -1418,6 +1464,8 @@ int main(int argc, char* argv[]) {
     bool compile_native = false;
     bool emit_ir_only = false;
     bool lint_mode = false;
+    bool pretty_mode = false;
+    bool pretty_vb   = false;
     bool mcp_mode = false;
     bool ftxui_mode = false;
     std::string mcp_tools_dir;
@@ -1447,6 +1495,8 @@ int main(int argc, char* argv[]) {
               "  -c, --compile            Compile the script to native code (requires NATIVEC)\n"
               "  -o, --output <file>      Write the compiled .exe to <file> (default: script name)\n"
               "      --lint               Parse + typecheck only, do not run\n"
+              "      --pretty             Reformat source to stdout (UPPER keywords)\n"
+              "      --pretty-vb          Reformat source to stdout (VB-style Pascal-cased keywords)\n"
               "      --mcp                Speak the Model Context Protocol on stdio\n"
               "      --ftxui              Start the modern terminal REPL (F1-F4 workspaces,\n"
               "                            Ctrl+B side-panel, Ctrl+P command palette)\n"
@@ -1484,6 +1534,8 @@ int main(int argc, char* argv[]) {
         }
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--lint") { lint_mode = true; continue; }
+        if (a == "--pretty") { pretty_mode = true; continue; }
+        if (a == "--pretty-vb") { pretty_mode = true; pretty_vb = true; continue; }
         if (a == "--mcp") { mcp_mode = true; continue; }
         if (a == "--ftxui") { ftxui_mode = true; continue; }
         if (a == "--tools" && i + 1 < argc) {
@@ -1549,6 +1601,22 @@ int main(int argc, char* argv[]) {
         VM vm;
         setup_dynamic_code(vm);
         console_execute("LINT", vm, program_buffer);
+        return 0;
+    }
+
+    // ── PRETTY (reformat source, print to stdout, no execution) ──
+    if (pretty_mode) {
+        std::string program_buffer;
+        try { program_buffer = read_file(filename); }
+        catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
+        VM vm;
+        setup_dynamic_code(vm);
+        // PRETTY PREVIEW writes the formatted source to vm.emit (stdout)
+        // without mutating any persistent buffer — perfect for piping.
+        console_execute(pretty_vb ? "PRETTY PREVIEW STYLE VB" : "PRETTY PREVIEW", vm, program_buffer);
         return 0;
     }
 

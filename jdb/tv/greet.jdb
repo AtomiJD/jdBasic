@@ -1,0 +1,5 @@
+DIM names = ["Atomi", "Jaydee", "World"]
+FOR EACH n IN names
+    PRINT "Hello, "; n
+NEXT n
+xyz = 99

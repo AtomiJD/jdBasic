@@ -1,0 +1,126 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 11 — REPL Workflow
+'  Topic: NEW, LIST, EDIT, PRETTY, LINT, TRON/TROFF,
+'         SAVE/LOAD for source, SAVEWS/LOADWS for whole workspace.
+'  Target runtime: ~6 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 11 | REPL Workflow | Tools That Make You Fast
+
+SAY: Welcome back to Train jdBasic. Jaydee here. Lesson eleven, and the start of a more professional chapter. The first ten lessons covered the language itself. From here on we look at the tools that make a jdBasic workflow actually pleasant.
+
+SAY: No new language features today. Instead, a tour of the REPL commands that you will use every day. Saving your work. Loading it back. Auto-formatting messy source. Linting it. Tracing execution to find a bug. And freezing the entire workspace, source plus variables, in a single file.
+
+SAY: First command. "new" clears the program buffer. Always start a session with "new" so nothing from before is in the way.
+
+TYPE: NEW
+WAIT: 0.5
+
+SAY: Now let us write a small program. I will type it all lowercase, deliberately messy.
+
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: dim names = ["Atomi", "Jaydee", "World"]
+TYPE: for each n in names
+TYPE:     print "Hello, "; n
+TYPE: next n
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+
+SAY: It works, but the casing is inconsistent. Watch what "pretty" does.
+
+TYPE: PRETTY
+WAIT: 0.5
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+
+SAY: Keywords are now uppercase, indentation is normalised, the layout is clean. "pretty" rewrites the buffer in place. Variants. "pretty preview" shows the result without changing the buffer, and "pretty style vb" uses VB-style Pascal casing — "For", "Print", "Next" — instead of all caps.
+
+SAY: Next, the linter.
+
+TYPE: LINT
+WAIT: 1.5
+
+SAY: The linter parses the buffer, reports the statement and function counts, and lists every name you assigned to without declaring it first with DIM. Right now we are clean. Let me introduce a problem.
+
+CMD: EDIT
+WAIT: 0.2
+TYPE: xyz = 99
+WAIT: 0.5
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LINT
+WAIT: 2.5
+
+SAY: There. "xyz" was assigned without ever being declared with DIM, and the linter flagged it. The interpreter will happily auto-create that variable, which is exactly how typos slip into long sessions. The linter is your safety net.
+
+SAY: Let us run the program with tracing on. "tron" turns the trace on. Every executed statement prints its location.
+
+TYPE: TRON
+WAIT: 0.3
+CMD: RUN
+WAIT: 2.0
+TYPE: TROFF
+WAIT: 0.5
+
+SAY: Each line shows where execution went. Invaluable when you want to know which branch of an "if" your code took, or how many times a loop body actually ran. "troff" turns it off again.
+
+SAY: Now let us save the work. "save" writes the current buffer to a jdBasic file.
+
+TYPE: SAVE "greet"
+WAIT: 1.0
+
+SAY: Disk now has "greet dot jdb". To prove it round-trips, "new" clears everything, and "load" reads it back.
+
+TYPE: NEW
+WAIT: 0.3
+TYPE: LOAD "greet"
+WAIT: 0.5
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+
+SAY: Back exactly as we left it. "save" and "load" work on source code only. Variables in memory are not part of that.
+
+SAY: There is a richer pair. "savews" and "loadws". WS stands for workspace. A workspace freezes the source AND every variable currently in memory.
+
+CMD: RUN
+WAIT: 1.2
+
+SAY: After running, our "names" variable still holds those three strings.
+
+TYPE: PRINT names[1]
+WAIT: 1.0
+
+SAY: Jaydee. Now "savews" saves source plus that array, plus every live variable, to a single workspace file.
+
+TYPE: SAVEWS "greet_ws"
+WAIT: 0.8
+
+SAY: Watch what happens after "new".
+
+TYPE: NEW
+WAIT: 0.3
+TYPE: PRINT names[1]
+WAIT: 1.5
+
+SAY: Error. "new" wiped both the program and every variable. But "loadws" brings it all back.
+
+TYPE: LOADWS "greet_ws"
+WAIT: 0.5
+TYPE: PRINT names[1]
+WAIT: 1.5
+
+SAY: There she is again, without even having to re-run the program. Workspaces are perfect for exploring data across sessions. Put down jdBasic in the middle of a session, come back tomorrow, "loadws" and pick up exactly where you left off.
+
+SAY: That is your toolkit for the day. "new" to start clean. "list" to see the buffer. "edit" to change it. "pretty" to format. "lint" to spot issues. "tron" and "troff" to trace execution. "save" and "load" for source files. "savews" and "loadws" for the whole workspace, code plus state.
+
+SAY: Next lesson, higher order functions. Passing a function as an argument to another function, mapping it across an array, reducing an array down to a single value. Until then. Keep coding. Bye!
+
+WAIT: 2
