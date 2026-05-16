@@ -103,14 +103,14 @@ SAY: Jaydee. Now "savews" saves source plus that array, plus every live variable
 TYPE: SAVEWS "greet_ws"
 WAIT: 0.8
 
-SAY: Watch what happens after "new".
+SAY: Watch what happens after "clearws". "new" alone only clears the program buffer, your variables stay. "clearws" wipes the whole workspace, source and variables and functions, just like a fresh start.
 
-TYPE: NEW
+TYPE: CLEARWS
 WAIT: 0.3
 TYPE: PRINT names[1]
 WAIT: 1.5
 
-SAY: Error. "new" wiped both the program and every variable. But "loadws" brings it all back.
+SAY: Error. "clearws" took both the program and every variable with it. But "loadws" brings it all back.
 
 TYPE: LOADWS "greet_ws"
 WAIT: 0.5
@@ -119,7 +119,7 @@ WAIT: 1.5
 
 SAY: There she is again, without even having to re-run the program. Workspaces are perfect for exploring data across sessions. Put down jdBasic in the middle of a session, come back tomorrow, "loadws" and pick up exactly where you left off.
 
-SAY: That is your toolkit for the day. "new" to start clean. "list" to see the buffer. "edit" to change it. "pretty" to format. "lint" to spot issues. "tron" and "troff" to trace execution. "save" and "load" for source files. "savews" and "loadws" for the whole workspace, code plus state.
+SAY: That is your toolkit for the day. "new" to clear the program buffer, "clearws" to nuke the whole workspace. "list" to see the buffer. "edit" to change it. "pretty" to format. "lint" to spot issues. "tron" and "troff" to trace execution. "save" and "load" for source files. "savews" and "loadws" for the whole workspace, code plus state.
 
 SAY: Next lesson, higher order functions. Passing a function as an argument to another function, mapping it across an array, reducing an array down to a single value. Until then. Keep coding. Bye!
 
