@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 05 — Functions and SUBs
+'  Lesson 05 - Functions and SUBs
 '  Topic: FUNC ... ENDFUNC + RETURN, SUB ... ENDSUB, parameters,
 '         local scope, recursion via Fibonacci
 '  Target runtime: ~5-6 minutes
@@ -7,10 +7,12 @@
 
 TITLE: 05 | Functions and SUBs | Code You Can Name
 
+CHAPTER: Welcome
 SAY: Welcome back. Jaydee here. Lesson five.
 
 SAY: Until now everything we wrote ran top to bottom in one stretch. Today we learn to name a piece of code and call it whenever we want. Two flavours "func" for code that returns a value, and "sub" for code that just acts.
 
+CHAPTER: FUNC + RETURN
 SAY: Let us start with a simple function.
 
 TYPE: NEW
@@ -35,6 +37,7 @@ WAIT: 1.2
 
 SAY: "func" "twice" of x. The word "return" hands a value back to whoever called us. "end-func" closes the block. Then we call "twice" three times with different numbers and print each result.
 
+CHAPTER: Multiple parameters
 SAY: Functions can take more than one parameter.
 
 TYPE: NEW
@@ -58,6 +61,7 @@ WAIT: 1.0
 
 SAY: Two parameters separated by a comma. Same idea.
 
+CHAPTER: SUB - actions, no return
 SAY: For a subroutine you skip "return" entirely a "sub" performs an action and ends. Useful for tasks like printing a banner.
 
 TYPE: NEW
@@ -82,8 +86,10 @@ WAIT: 1.5
 
 SAY: One "sub" called twice with different names. Notice the call site looks the same as a function call name in front, arguments in parentheses.
 
+CHAPTER: Local scope
 SAY: Variables defined inside a function or a sub are local. They vanish when the call returns. That keeps your code clean and predictable.
 
+CHAPTER: Recursion - Fibonacci
 SAY: For the finale, here is a classic. Fibonacci numbers, computed by a function that calls itself.
 
 TYPE: NEW
@@ -112,6 +118,7 @@ WAIT: 1.5
 
 SAY: "fib" of n. If n is less than two, return n. Otherwise return "fib" of n minus one, plus "fib" of n minus two. The first eleven Fibonacci numbers zero, one, one, two, three, five, eight, and so on. Recursion in three lines of jdBasic.
 
+CHAPTER: Recap + Outro
 SAY: That is lesson five. "func" for values, "sub" for actions, parameters to pass data in, and recursion when a function calls itself.
 
 SAY: In lesson six we will look at maps, jdBasic's key-value data type, similar to a dictionary in other languages.

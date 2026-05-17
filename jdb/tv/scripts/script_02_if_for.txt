@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 02 — If and For
+'  Lesson 02 - If and For
 '  Topic: IF/THEN/ELSE, ELSEIF, FOR/NEXT, STEP, a touch of MOD
 '  Also introduces:  EDIT  (full-screen editor) and RUN
 '  Target runtime: ~6 minutes
@@ -7,10 +7,12 @@
 
 TITLE: 02 | If and For | Decisions and Loops
 
+CHAPTER: Welcome
 SAY: Hello again! It is Jaydee Basica. Welcome back to Train jdBasic, lesson two.
 
 SAY: Last time we printed text and stored values in variables. Today we make our programs decide things, and repeat themselves. We will cover "if!" statements, and "for" loops.
 
+CHAPTER: Inline IF
 SAY: Let us start with the simplest decision. Is something true?
 
 TYPE: DIM age = 18
@@ -19,6 +21,7 @@ WAIT: 1.5
 
 SAY: That is the inline form. The whole "if!" on a single line. Good for one quick check.
 
+CHAPTER: Block IF + EDIT
 SAY: For anything longer we need the editor. The prompt only accepts one statement at a time. So I type the word "edit" and press enter to open the full screen editor.
 
 TYPE: NEW
@@ -44,6 +47,7 @@ WAIT: 0.8
 
 SAY: Every block-form "if!" ends with "end-if". No exceptions.
 
+CHAPTER: IF / ELSE
 SAY: To handle the "otherwise" case, add an else branch.
 
 TYPE: NEW
@@ -68,6 +72,7 @@ WAIT: 0.8
 
 SAY: Since the hour is twenty-two, the else branch ran.
 
+CHAPTER: ELSEIF chains
 SAY: One last variant. "Else-if" chains multiple conditions.
 
 TYPE: NEW
@@ -94,6 +99,7 @@ WAIT: 0.8
 
 SAY: jdBasic walks the branches top to bottom and runs the first one that matches.
 
+CHAPTER: FOR loops
 SAY: Now "for" loops. The classic shape: do something a known number of times.
 
 TYPE: NEW
@@ -115,6 +121,7 @@ WAIT: 1.0
 
 SAY: The variable i counts from the start value to the end value, inclusive. Five iterations, five greetings.
 
+CHAPTER: STEP - count by anything
 SAY: You can step by something other than one. Even backwards.
 
 TYPE: NEW
@@ -136,6 +143,7 @@ WAIT: 1.0
 
 SAY: Counting down by two. Step also accepts fractional values for double-precision loops.
 
+CHAPTER: FizzBuzz finale
 SAY: Now let us combine "if!" and "for". Here is fizz-buzz, the classic interview warm-up.
 
 TYPE: NEW
@@ -165,6 +173,7 @@ WAIT: 1.8
 
 SAY: There it is. Every multiple of three prints fizz, every multiple of five prints buzz, and multiples of both print fizz-buzz.
 
+CHAPTER: Recap + Outro
 SAY: That is everything for lesson two. To recap: inline "if!" for one quick check at the prompt. "Edit", then "run", for anything bigger. "If!", "else-if", and "else" to decide. "For" and "next" to repeat.
 
 SAY: In lesson three we introduce arrays, and a bit of the magic that makes jdBasic special. Vector operations that work on whole arrays at once, with no "for"-loop in sight.

@@ -1,0 +1,102 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 13 - HTTP and JSON
+'  Topic: HTTP.GET$ to fetch a remote resource,
+'         JSON.PARSE$ to turn the response body into a usable
+'         Map / Array, dotted access on the parsed object.
+'  Target runtime: ~6 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 13 | HTTP and JSON | Talk to the Web
+
+CHAPTER: Welcome - talk to the web
+SAY: Lesson thirteen. Jaydee here. Today we step outside our program and talk to the internet.
+
+SAY: jdBasic ships with a built-in HTTP client and a JSON parser. Two functions are enough to consume almost any modern web API. "http get string" fetches the response body. "json parse string" turns that text into a structure you can read like a map.
+
+CHAPTER: HTTP.GET$ - raw response
+SAY: Let us fetch the current weather for Heidelberg from a free public API.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM url$ = "https://api.open-meteo.com/v1/forecast?latitude=49.40&longitude=8.69&current_weather=true"
+TYPE: PRINT "Fetching..."
+TYPE: DIM body$ = HTTP.GET$(url$)
+TYPE: PRINT body$
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.0
+CMD: RUN
+WAIT: 3.0
+
+SAY: That is the raw JSON response. Curly braces, key-value pairs, nested objects. Readable, but to use any of these numbers in our program we need to parse it.
+
+CHAPTER: JSON.PARSE$ - structured data
+SAY: One line does the job.
+
+TYPE: NEW
+WAIT: 0.2
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM url$ = "https://api.open-meteo.com/v1/forecast?latitude=49.40&longitude=8.69&current_weather=true"
+TYPE: PRINT "Fetching..."
+TYPE: DIM body$ = HTTP.GET$(url$)
+TYPE: DIM data = JSON.PARSE$(body$)
+TYPE: DIM w = data["current_weather"]
+TYPE: PRINT
+TYPE: PRINT "Temperature : "; w["temperature"]; " degC"
+TYPE: PRINT "Windspeed   : "; w["windspeed"]; " km/h"
+TYPE: PRINT "Wind heading: "; w["winddirection"]; " deg"
+WAIT: 1.0
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 3.0
+CMD: RUN
+WAIT: 3.0
+
+SAY: There. Three live values, pulled from the air. "json parse string" returned a structure that behaves exactly like the maps you saw in lesson six. The "current weather" key gave us a sub-object, and indexing into that gave us each field.
+
+SAY: Notice we did not write any parser code, no string slicing, no manual hunt for commas. The library handles all of that. Your job is to know the shape of the data and read what you need.
+
+CHAPTER: GitHub user demo
+SAY: One more example. Let us hit the GitHub API to look up a user.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM body$ = HTTP.GET$("https://api.github.com/users/AtomiJD")
+TYPE: DIM user = JSON.PARSE$(body$)
+TYPE: PRINT "Name        : "; user["name"]
+TYPE: PRINT "Public repos: "; user["public_repos"]
+TYPE: PRINT "Followers   : "; user["followers"]
+TYPE: PRINT "Joined      : "; user["created_at"]
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+CMD: RUN
+WAIT: 3.0
+
+SAY: Live data from a real API, in a half-dozen lines. The shape of the JSON dictates what keys you read. The rest looks like any other jdBasic code.
+
+CHAPTER: Production notes - timeout, status, async
+SAY: A few quick notes for production. "http set timeout" of N seconds controls how long to wait before giving up. The default is ten. "http status code" returns the response code from the last request, so you can check for two hundred versus four hundred and four. And there is an asynchronous variant, "http get async string", which returns immediately with a task id so your program does not freeze while waiting. We will see that in a future lesson.
+
+CHAPTER: Recap + Outro
+SAY: That is HTTP and JSON in jdBasic. One function to fetch, one to parse, and the rest is just reading a map.
+
+SAY: Next lesson, we put on the engineering hat. We compile a jdBasic program to a native Windows executable, learn how strict mode catches type errors at compile time, and measure the speedup. Until then. Keep coding. Bye!
+
+WAIT: 2

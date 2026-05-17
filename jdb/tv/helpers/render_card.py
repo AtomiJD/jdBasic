@@ -3,43 +3,54 @@
 render_card.py — render an HTML template to PNG via headless Chrome.
 
 Usage:
-    python render_card.py title   <out.png> <lesson> <title> <subtitle> [host]
-    python render_card.py thumb   <out.png> <lesson> <title> <hook>
+    python render_card.py title  <out.png> <args.json>
+    python render_card.py thumb  <out.png> <args.json>
+
+args.json (UTF-8) carries the template substitutions:
+    title-kind: {"lesson": ..., "title": ..., "subtitle": ..., "host": ...}
+    thumb-kind: {"lesson": ..., "title": ..., "hook": ...}
+
+The JSON-sidecar approach exists to bypass cmd.exe's ANSI/CP1252 arg
+parsing on Windows.  Passing non-ASCII (em-dashes, umlauts, …) via the
+command line gets mangled before Python ever sees it; routing through a
+UTF-8 file keeps the bytes intact.
 
 Reads cards/template_<kind>.html, substitutes {{TOKENS}}, renders via
 Playwright (Chromium) at the template's CSS dimensions (1920x1080 for
 title cards, 1280x720 for thumbnails).
 """
-import sys, pathlib
+import sys, pathlib, json
 
-if len(sys.argv) < 5:
-    print("usage: render_card.py {title|thumb} <out.png> <lesson> <title> [extras…]", file=sys.stderr)
+if len(sys.argv) != 4:
+    print("usage: render_card.py {title|thumb} <out.png> <args.json>", file=sys.stderr)
     sys.exit(2)
 
 kind     = sys.argv[1].lower()
 out_path = pathlib.Path(sys.argv[2])
-lesson   = sys.argv[3]
-title    = sys.argv[4]
-extra1   = sys.argv[5] if len(sys.argv) > 5 else ""
-extra2   = sys.argv[6] if len(sys.argv) > 6 else ""
+args_path = pathlib.Path(sys.argv[3])
+
+if not args_path.exists():
+    print(f"ERROR: args file not found: {args_path}", file=sys.stderr)
+    sys.exit(3)
+payload = json.loads(args_path.read_text(encoding="utf-8"))
 
 here = pathlib.Path(__file__).resolve().parent.parent
 if kind == "title":
     tpl_path = here / "cards" / "template_title.html"
     width, height = 1920, 1080
     substitutions = {
-        "{{LESSON}}":   lesson,
-        "{{TITLE}}":    title,
-        "{{SUBTITLE}}": extra1,
-        "{{HOST}}":     extra2 or "with Jaydee Basica",
+        "{{LESSON}}":   payload.get("lesson", ""),
+        "{{TITLE}}":    payload.get("title", ""),
+        "{{SUBTITLE}}": payload.get("subtitle", ""),
+        "{{HOST}}":     payload.get("host") or "with Jaydee Basica",
     }
 elif kind == "thumb":
     tpl_path = here / "cards" / "template_thumbnail.html"
     width, height = 1280, 720
     substitutions = {
-        "{{LESSON}}": lesson,
-        "{{TITLE}}":  title,
-        "{{HOOK}}":   extra1,
+        "{{LESSON}}": payload.get("lesson", ""),
+        "{{TITLE}}":  payload.get("title", ""),
+        "{{HOOK}}":   payload.get("hook", ""),
     }
 else:
     print(f"unknown kind: {kind!r} — use 'title' or 'thumb'", file=sys.stderr)

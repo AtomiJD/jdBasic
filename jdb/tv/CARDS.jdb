@@ -2,11 +2,37 @@
 '  CARDS.jdb — render branded title cards / thumbnails to PNG via
 '  the Playwright helper. Same brand palette as jdbasic.org so the
 '  YouTube videos and the website read as one product.
+'
+'  Substitutions (title, hook, subtitle) are passed via a UTF-8 JSON
+'  sidecar file rather than cmd.exe args.  Windows _popen is ANSI and
+'  re-interprets UTF-8 bytes as CP1252 before Python ever sees them,
+'  which mangles em-dashes / umlauts in the rendered HTML.  The
+'  sidecar lives next to the PNG (<out>.args.json) and is removed
+'  after rendering.
 ' ══════════════════════════════════════════════════════════════════
 
 EXPORT MODULE CARDS
 
 DIM HELPER$ = "python helpers\render_card.py"
+
+' Internal: shell out to the Playwright helper with a UTF-8 JSON
+' sidecar carrying the template tokens.  Returns 1 on success, 0 on
+' failure (helper output already printed).
+FUNC Run(kind$, out_png$, payload)
+    DIM args_path$ = out_png$ + ".args.json"
+    TXTWRITER args_path$, JSON.STRINGIFY$(payload), FALSE, "utf-8"
+    DIM q$ = CHR$(34)
+    DIM cmd$ = HELPER$ + " " + kind$ + " " _
+        + q$ + out_png$ + q$ + " " _
+        + q$ + args_path$ + q$
+    DIM r = OS.EXEC(cmd$)
+    IF FILE.EXISTS(args_path$) THEN KILL args_path$
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "[CARDS] "; kind$; " render FAIL: " + r{"OUTPUT"}
+        RETURN 0
+    ENDIF
+    RETURN 1
+ENDFUNC
 
 ' Render a full-frame 1920×1080 title card.
 '   lesson$    e.g. "01"
@@ -14,18 +40,12 @@ DIM HELPER$ = "python helpers\render_card.py"
 '   subtitle$  e.g. "PRINT and Variables"
 '   host$      e.g. "with Jaydee Basica" (default if empty)
 EXPORT FUNC RenderTitle(out_png$, lesson$, title$, subtitle$, host$)
-    DIM cmd$ = HELPER$ + " title " _
-        + CHR$(34) + out_png$ + CHR$(34) + " " _
-        + CHR$(34) + lesson$ + CHR$(34) + " " _
-        + CHR$(34) + title$ + CHR$(34) + " " _
-        + CHR$(34) + subtitle$ + CHR$(34) + " " _
-        + CHR$(34) + host$ + CHR$(34)
-    DIM r = OS.EXEC(cmd$)
-    IF r{"EXIT_CODE"} <> 0 THEN
-        PRINT "[CARDS] title render FAIL: " + r{"OUTPUT"}
-        RETURN 0
-    ENDIF
-    RETURN 1
+    DIM payload = {}
+    payload{"lesson"} = lesson$
+    payload{"title"} = title$
+    payload{"subtitle"} = subtitle$
+    payload{"host"} = host$
+    RETURN Run("title", out_png$, payload)
 ENDFUNC
 
 ' Render a 1280×720 YouTube thumbnail.
@@ -33,15 +53,9 @@ ENDFUNC
 '   title$   e.g. "Hello jdBasic"
 '   hook$    short attention-grabbing line, e.g. "PRINT in 60 seconds"
 EXPORT FUNC RenderThumbnail(out_png$, lesson$, title$, hook$)
-    DIM cmd$ = HELPER$ + " thumb " _
-        + CHR$(34) + out_png$ + CHR$(34) + " " _
-        + CHR$(34) + lesson$ + CHR$(34) + " " _
-        + CHR$(34) + title$ + CHR$(34) + " " _
-        + CHR$(34) + hook$ + CHR$(34)
-    DIM r = OS.EXEC(cmd$)
-    IF r{"EXIT_CODE"} <> 0 THEN
-        PRINT "[CARDS] thumbnail render FAIL: " + r{"OUTPUT"}
-        RETURN 0
-    ENDIF
-    RETURN 1
+    DIM payload = {}
+    payload{"lesson"} = lesson$
+    payload{"title"} = title$
+    payload{"hook"} = hook$
+    RETURN Run("thumb", out_png$, payload)
 ENDFUNC

@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 11 — REPL Workflow
+'  Lesson 11 - REPL Workflow
 '  Topic: NEW, LIST, EDIT, PRETTY, LINT, TRON/TROFF,
 '         SAVE/LOAD for source, SAVEWS/LOADWS for whole workspace.
 '  Target runtime: ~6 minutes
@@ -33,7 +33,7 @@ TYPE: CLS
 TYPE: LIST
 WAIT: 2.5
 
-CHAPTER: PRETTY — auto-format your source
+CHAPTER: PRETTY - auto-format your source
 SAY: It works, but the casing is inconsistent. Watch what "pretty" does.
 
 TYPE: PRETTY
@@ -42,9 +42,9 @@ TYPE: CLS
 TYPE: LIST
 WAIT: 2.5
 
-SAY: Keywords are now uppercase, indentation is normalised, the layout is clean. "pretty" rewrites the buffer in place. Variants. "pretty preview" shows the result without changing the buffer, and "pretty style vb" uses VB-style Pascal casing — "For", "Print", "Next" — instead of all caps.
+SAY: Keywords are now uppercase, indentation is normalised, the layout is clean. "pretty" rewrites the buffer in place. Variants. "pretty preview" shows the result without changing the buffer, and "pretty style vb" uses VB-style Pascal casing - "For", "Print", "Next" - instead of all caps.
 
-CHAPTER: LINT — catch typos before they bite
+CHAPTER: LINT - catch typos before they bite
 SAY: Next, the linter.
 
 TYPE: LINT
@@ -63,7 +63,7 @@ WAIT: 2.5
 
 SAY: There. "xyz" was assigned without ever being declared with DIM, and the linter flagged it. The interpreter will happily auto-create that variable, which is exactly how typos slip into long sessions. The linter is your safety net.
 
-CHAPTER: TRON / TROFF — trace execution
+CHAPTER: TRON / TROFF - trace execution
 SAY: Let us run the program with tracing on. "tron" turns the trace on. Every executed statement prints its location.
 
 TYPE: TRON
@@ -75,7 +75,7 @@ WAIT: 0.5
 
 SAY: Each line shows where execution went. Invaluable when you want to know which branch of an "if" your code took, or how many times a loop body actually ran. "troff" turns it off again.
 
-CHAPTER: SAVE / LOAD — source on disk
+CHAPTER: SAVE / LOAD - source on disk
 SAY: Now let us save the work. "save" writes the current buffer to a jdBasic file.
 
 TYPE: SAVE "greet"
@@ -93,7 +93,7 @@ WAIT: 2.5
 
 SAY: Back exactly as we left it. "save" and "load" work on source code only. Variables in memory are not part of that.
 
-CHAPTER: SAVEWS / LOADWS — freeze the whole workspace
+CHAPTER: SAVEWS / LOADWS - freeze the whole workspace
 SAY: There is a richer pair. "savews" and "loadws". WS stands for workspace. A workspace freezes the source AND every variable currently in memory.
 
 CMD: RUN

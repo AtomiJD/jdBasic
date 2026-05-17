@@ -1,0 +1,93 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 14 - Native Compilation
+'  Topic: jdbasic -c → standalone .exe, STRICT / EXPLICIT enforced
+'         by the compiler, AS Type annotations, side-by-side
+'         interpreter-vs-native benchmark with TICK().
+'  Target runtime: ~7 minutes
+'
+'  Recording prereq: the jdbasic compiler must be reachable as
+'  "jdbasic" on PATH for the OS.EXEC step.  In the session shell:
+'     set PATH=D:\usr\dev\cc\build;%PATH%
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 14 | Native Compilation | One EXE, Ten Times Faster
+
+CHAPTER: Welcome - the engineering hat
+SAY: Lesson fourteen. Jaydee here. Today we put on the engineering hat.
+
+SAY: Until now, every jdBasic program ran inside the interpreter. The interpreter is friendly. It runs anything. Loose types, missing declarations, surprises welcome. But for performance critical code, or for shipping a program to someone who does not have jdBasic installed, we want a standalone executable. That is what native compilation gives us.
+
+SAY: The trade is simple. The compiler is stricter than the interpreter, so you write a few more annotations. In return, you get a fast standalone "exe" that has no runtime dependency on jdBasic itself, except for one small DLL.
+
+CHAPTER: The benchmark + type annotations
+SAY: Let us see this with a benchmark. We will write a tiny CPU bound program, run it interpreted, then compile it, then run the compiled version. Same code, two backends.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: FUNC SumSquares(n AS INTEGER) AS DOUBLE
+TYPE:     DIM total AS DOUBLE = 0.0
+TYPE:     DIM i AS INTEGER
+TYPE:     FOR i = 1 TO n
+TYPE:         total = total + i * i
+TYPE:     NEXT i
+TYPE:     RETURN total
+TYPE: ENDFUNC
+TYPE:
+TYPE: DIM t0 AS INTEGER = TICK()
+TYPE: DIM s AS DOUBLE = SumSquares(1000000)
+TYPE: DIM t1 AS INTEGER = TICK()
+TYPE: PRINT "Result : "; s
+TYPE: PRINT "Elapsed: "; (t1 - t0); " ms"
+WAIT: 1.5
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 3.5
+
+SAY: Let me walk through the new pieces. "n as integer" on the function signature is a type annotation. It says, the parameter n is an integer. "as double" on the return tells the compiler the function returns a double precision float. Inside the function, every "dim" also gets an "as" clause. In strict mode, every name must be declared with its type before use.
+
+SAY: The interpreter does not require any of this. But the compiler does, and it pays off. The native code generator now knows exactly which CPU instructions to emit, which keeps the inner loop on the integer path with no boxing.
+
+CHAPTER: Interpreted timing
+SAY: Save it and run it interpreted first.
+
+TYPE: SAVE "bench"
+WAIT: 0.8
+CMD: RUN
+WAIT: 5.0
+
+CHAPTER: Compile + native run
+SAY: There is our interpreted timing. One million iterations of "total plus i times i". Now compile.
+
+TYPE: DIM r = OS.EXEC("..\\..\\build\jdbasic -c bench.jdb")
+WAIT: 0.3
+TYPE: PRINT r["OUTPUT"]
+WAIT: 3.0
+
+SAY: The compiler printed "compiled to bytes" and dropped a "bench dot exe" next to the source. It also auto-copied the jdBasic runtime DLL right beside the exe, so we can launch it without any further setup.
+
+TYPE: DIM r2 = OS.EXEC("bench.exe")
+WAIT: 0.3
+TYPE: PRINT r2["OUTPUT"]
+WAIT: 3.0
+
+SAY: Same result. Tiny fraction of the time. The annotations told the compiler enough about the shape of the data that it could emit a tight loop with no interpreter overhead per instruction.
+
+CHAPTER: Strict mode - three rules
+SAY: A quick word on strict mode. When you run "jdbasic dash c", three rules kick in automatically. Every variable must be declared with "dim" before it is used. Every "dim" must include an "as" clause. And every function parameter and return needs an "as" clause too. The interpreter forgives all of this. The compiler does not. If you forget a type, you get a clear compile error with the offending line.
+
+SAY: That sounds painful but it is the opposite. Type errors that used to bite you at runtime, often deep in user testing, now stop you at compile time, in your editor, with a line number. The compiler is your second pair of eyes.
+
+CHAPTER: When to compile
+SAY: When should you reach for native compilation? Three cases. One. Hot loops where speed matters. Math, simulations, image work, anything CPU bound. Two. When you want to ship a binary to someone who does not have jdBasic installed. The exe plus the small runtime DLL is everything they need. Three. As a sanity check on your own code. If the compiler accepts it, you know all your types line up.
+
+CHAPTER: Series wrap + Outro
+SAY: That closes out this advanced arc. You now have the productivity tools, the higher-order toolbox, the HTTP and JSON pair, and a way to ship native binaries. Pick a problem you actually care about and build something with it.
+
+SAY: I have been Jaydee Basica. Thank you for keeping me company through fourteen lessons. Keep coding. Bye!
+
+WAIT: 3

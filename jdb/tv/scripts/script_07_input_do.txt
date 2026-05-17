@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 07 — INPUT and DO loops
+'  Lesson 07 - INPUT and DO loops
 '  Topic: INPUT prompt, DO ... LOOP UNTIL, EXITDO, a small
 '         interactive sum-input demo
 '  Target runtime: ~5-6 minutes
@@ -7,10 +7,12 @@
 
 TITLE: 07 | Input and Do Loops | Talking Back
 
+CHAPTER: Welcome
 SAY: Welcome back. Jaydee here. Lesson seven.
 
 SAY: So far every program ran the same way every time. Today we let the user steer it. We meet "input" for reading data from the keyboard, and the "do" loop for repeating an action until a condition holds.
 
+CHAPTER: INPUT - reading a string
 SAY: First, "input". It prints a prompt and waits for the user to type.
 
 TYPE: NEW
@@ -32,6 +34,7 @@ WAIT: 0.8
 TYPE: Atomi
 WAIT: 1.0
 
+CHAPTER: INPUT - reading a number
 SAY: The variable on the right of the comma receives whatever the user typed. We can read numbers the same way.
 
 TYPE: NEW
@@ -55,6 +58,7 @@ WAIT: 1.2
 
 SAY: When the variable name has no dollar sign, jdBasic parses the input as a number for you.
 
+CHAPTER: DO ... LOOP UNTIL
 SAY: Now the "do" loop. It repeats a block of code until a condition becomes true.
 
 TYPE: NEW
@@ -78,6 +82,7 @@ WAIT: 1.5
 
 SAY: The block runs once, then jdBasic checks the condition. As soon as it is true, the loop exits. Five steps, five lines.
 
+CHAPTER: INPUT + DO together
 SAY: The real power shows up when we combine "input" and "do". Let us write a tiny program that adds numbers until the user types zero.
 
 TYPE: NEW
@@ -112,6 +117,7 @@ WAIT: 1.5
 
 SAY: Five plus ten plus three is eighteen. We typed zero to end the loop, and the program reported the total.
 
+CHAPTER: Recap + Outro
 SAY: That is lesson seven. "input" pulls data from the user. "do" loops repeat until a condition is met. There is also "exit-do" if you need to break out early.
 
 SAY: In lesson eight we will save data between runs by reading and writing text files.

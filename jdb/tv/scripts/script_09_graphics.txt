@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 09 — Graphics
+'  Lesson 09 - Graphics
 '  Topic: SCREEN to open a window, DRAWCOLOR, RECT, CIRCLE, LINE,
 '         SCREENFLIP to display, classic render-loop (POLLEVENT +
 '         SLEEP) so SDL keeps pumping window messages.
@@ -26,12 +26,14 @@ SCENE: IDE
 
 TITLE: 09 | Graphics | Pixels on Screen
 
+CHAPTER: Welcome
 SAY: Welcome back. Jaydee here. Lesson nine.
 
 SAY: We have spent eight lessons inside the text terminal. Today we open a graphics window. We will draw shapes, set colours, and combine them into pictures.
 
 SAY: Three commands do most of the work. "screen" opens a window of a given size. "draw-color" sets the current colour. "screen-flip" pushes everything we drew to the display.
 
+CHAPTER: First circle
 SAY: Let us start with the smallest possible drawing program.
 
 TYPE: NEW
@@ -65,7 +67,8 @@ FOCUS: jdBasic
 
 SAY: A yellow circle in the middle of a six-hundred by four-hundred window. The "circle" command takes a centre point, a radius, and a boolean. True means filled, false would draw only the outline. The render loop at the end keeps the window responsive for about three and a half seconds, then closes it.
 
-SAY: Colours are three numbers from zero to two-fifty-five, the standard "rgb" format. Let us combine a few shapes and colours.
+CHAPTER: Layered shapes
+SAY: Colours are three numbers from 0 to 255, the standard "rgb" format. Let us combine a few shapes and colours.
 
 TYPE: NEW
 WAIT: 0.3
@@ -105,6 +108,7 @@ FOCUS: jdBasic
 
 SAY: A dark background, a blue panel, a red ball in the middle, and two white diagonals. Each command paints on top of whatever was there before, so the order matters.
 
+CHAPTER: Drawing in a loop
 SAY: Because every drawing command is a regular jdBasic statement, you can put them inside loops. Watch.
 
 TYPE: NEW
@@ -142,6 +146,7 @@ FOCUS: jdBasic
 
 SAY: Ten circles in a row, each a different colour, drawn by a single "for" loop. The colour shifts smoothly from red toward purple as the index grows.
 
+CHAPTER: Recap + Outro
 SAY: That is lesson nine. "screen" opens a window, "draw-color" picks a colour, and "rect", "circle", and "line" paint shapes. Wrap them in loops for patterns. A small render loop at the end keeps the window alive long enough for us to look at it.
 
 SAY: In lesson ten, our final episode, we will put it all together. We will write our first module, import it, and finish with a small project.

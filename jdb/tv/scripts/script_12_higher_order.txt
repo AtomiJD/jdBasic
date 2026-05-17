@@ -1,0 +1,157 @@
+' ──────────────────────────────────────────────────────────────────
+'  Lesson 12 - Higher-Order Functions
+'  Topic: passing functions with FNNAME@,
+'         SELECT (map), FILTER, REDUCE,
+'         inline lambdas, the pipe operator |>.
+'  Target runtime: ~6 minutes
+' ──────────────────────────────────────────────────────────────────
+
+TITLE: 12 | Higher-Order Functions | Functions as Data
+
+CHAPTER: Welcome - functions as data
+SAY: Lesson twelve. Jaydee here. Today we treat functions as data.
+
+SAY: In every lesson so far, functions were named things we called by writing the name and parentheses. Today we pass a function as an argument to another function. That unlocks three small tools that replace a lot of "for" loops. "select" maps a function across an array. "filter" keeps only the elements that match a predicate. And "reduce" collapses an array down to a single value.
+
+CHAPTER: SELECT + the @ reference
+SAY: Let us start with the basics. Write a tiny function, then hand it to "select".
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: FUNC Twice(x)
+TYPE:     RETURN x * 2
+TYPE: ENDFUNC
+TYPE:
+TYPE: DIM nums = [1, 2, 3, 4, 5]
+TYPE: PRINT SELECT(Twice@, nums)
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.0
+CMD: RUN
+WAIT: 1.5
+
+SAY: Two, four, six, eight, ten. "select" called "twice" once per element and built a new array of the results. The little "at" sign after the function name is the trick. It says, do not call this function right now, hand me the function itself so I can call it for each element.
+
+CHAPTER: Lambdas
+SAY: For one-off transformations you do not need to give the function a name at all. Use a lambda.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM nums = [1, 2, 3, 4, 5]
+TYPE: PRINT SELECT(LAMBDA x -> x * x, nums)
+WAIT: 0.6
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.5
+CMD: RUN
+WAIT: 1.5
+
+SAY: One, four, nine, sixteen, twenty-five. A lambda is just a function written inline. The arrow separates the parameter from the expression it returns.
+
+CHAPTER: FILTER
+SAY: Next, "filter". Keep only the elements where a predicate returns true.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM xs = [12, 7, 19, 3, 25, 8]
+TYPE: PRINT FILTER(LAMBDA x -> x > 10, xs)
+WAIT: 0.6
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.5
+CMD: RUN
+WAIT: 1.5
+
+SAY: Twelve, nineteen, twenty-five. Everything that was greater than ten survived. Everything else was dropped.
+
+CHAPTER: REDUCE
+SAY: Now "reduce". Take an array and a two-argument function, and fold it down to a single value.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM xs = [1, 2, 3, 4, 5]
+TYPE: PRINT REDUCE(LAMBDA a, b -> a + b, xs)
+WAIT: 0.6
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 1.5
+CMD: RUN
+WAIT: 1.5
+
+SAY: Fifteen. "reduce" started with one, took the next element two, called our lambda which returned three, then folded three with the next element, and so on. That is exactly what sum would do, written by hand.
+
+CHAPTER: The pipe operator
+SAY: The real power shows when you chain them. jdBasic gives you a pipe operator, "vertical bar greater-than", to thread a value through a series of transformations.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: DIM result = IOTA(10) |> FILTER(LAMBDA x -> x MOD 2 = 0, ?) |> SELECT(LAMBDA x -> x * x, ?) |> REDUCE(LAMBDA a, b -> a + b, ?)
+TYPE: PRINT "Sum of squares of even numbers from 1 to 10: "; result
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+CMD: RUN
+WAIT: 1.8
+
+SAY: Two hundred and twenty. Reading left to right. Take the numbers one through ten. Keep the even ones. Square each. Sum the result. The question mark in each pipe stage marks where the previous result plugs in. Four lines of intent instead of a counter loop, an if, and an accumulator.
+
+CHAPTER: Closures - MakeAdder
+SAY: One more trick. Functions can build other functions. Watch.
+
+TYPE: NEW
+WAIT: 0.3
+CMD: EDIT
+WAIT: 0.2
+
+TYPE: FUNC MakeAdder(n)
+TYPE:     RETURN LAMBDA USE(n) x -> x + n
+TYPE: ENDFUNC
+TYPE:
+TYPE: DIM add10 = MakeAdder(10)
+TYPE: DIM add100 = MakeAdder(100)
+TYPE: PRINT add10(5)
+TYPE: PRINT add100(5)
+WAIT: 0.8
+
+CMD: CTRL-Q
+TYPE: CLS
+TYPE: LIST
+WAIT: 2.5
+CMD: RUN
+WAIT: 1.5
+
+SAY: Fifteen and one hundred five. "MakeAdder" returned a fresh lambda each time, with the value of "n" baked in. The "use" clause is what tells the lambda to capture that value. This is called a closure, and it lets you build small specialised functions on the fly.
+
+CHAPTER: Recap + Outro
+SAY: That is higher order programming in jdBasic. "select" to transform. "filter" to keep what matters. "reduce" to collapse. Pipe with the question mark to chain them. And lambdas with "use" when you want to bake a value into a function.
+
+SAY: Next lesson, the web. We will fetch real data from an HTTP API, parse the JSON, and put the result on screen. Until then. Keep coding. Bye!
+
+WAIT: 2

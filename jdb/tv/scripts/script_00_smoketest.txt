@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  script_00_smoketest.txt — 30-second end-to-end pipeline check
+'  script_00_smoketest.txt - 30-second end-to-end pipeline check
 '
 '  Tests: OBS recording start/stop, TTS voice render+play, keyboard
 '  driving the IDE, file LOAD, jdBasic RUN. After this runs you

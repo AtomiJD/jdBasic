@@ -62,7 +62,11 @@ if not creds or not creds.valid:
         creds.refresh(Request())
     else:
         flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets), SCOPES)
-        creds = flow.run_local_server(port=8081)  # 8080 reserved by youtubeuploader
+        # port=0 → OS picks an ephemeral free port.  Desktop OAuth clients
+        # accept any 127.0.0.1:<port> redirect URI, so we don't have to
+        # fight for a fixed slot (8080 / 8081 were already taken on the
+        # build machine).  The library updates redirect_uri to match.
+        creds = flow.run_local_server(port=0)
     token_path.write_text(creds.to_json(), encoding="utf-8")
 
 youtube = build("youtube", "v3", credentials=creds)

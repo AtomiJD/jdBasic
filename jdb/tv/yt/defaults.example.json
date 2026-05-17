@@ -1,0 +1,9 @@
+{
+  "channelTitle": "Your Series Title",
+  "categoryId": "27",
+  "language": "en",
+  "tags": ["your-tag", "programming", "tutorial"],
+  "playlistID": "",
+  "privacyStatus": "private",
+  "descriptionFooter": "── Subscribe for the next lesson.\nMore at https://github.com/your/repo\n#yourchannel"
+}

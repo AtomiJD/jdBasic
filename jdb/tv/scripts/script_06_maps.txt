@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 06 — Maps (key-value storage)
+'  Lesson 06 - Maps (key-value storage)
 '  Topic: map literal, indexing, assign, MAP.SIZE, MAP.EXISTS,
 '         MAP.KEYS, FOR EACH iteration
 '  Target runtime: ~5 minutes
@@ -7,10 +7,12 @@
 
 TITLE: 06 | Maps | Key-Value Storage
 
+CHAPTER: Welcome
 SAY: Welcome back. Jaydee here. Lesson six.
 
 SAY: Arrays in lesson three were great when you had a list of similar values. Today we look at "maps", which store key-value pairs. Think phone book, or dictionary.
 
+CHAPTER: Map literal + indexing
 SAY: Let us start at the prompt.
 
 TYPE: DIM person = {"name": "Atomi", "age": 38, "city": "Heidelberg"}
@@ -29,6 +31,7 @@ TYPE: person["age"] = 39
 TYPE: PRINT person["age"]
 WAIT: 0.8
 
+CHAPTER: Update + add keys
 SAY: Same syntax to write. We just had a birthday.
 
 SAY: To add a new key, assign to it.
@@ -39,6 +42,7 @@ WAIT: 1.0
 
 SAY: Now the map has four entries.
 
+CHAPTER: MAP.SIZE / EXISTS / KEYS
 SAY: A few useful built-ins. "map size" tells you how many entries. "map exists" checks whether a key is present. "map keys" returns an array of all the keys.
 
 TYPE: PRINT MAP.SIZE(person)
@@ -49,6 +53,7 @@ WAIT: 1.5
 
 SAY: Four entries. The "city" key exists, the "phone" key does not. And we get every key back as an array.
 
+CHAPTER: FOR EACH iteration
 SAY: To iterate over a map, walk its keys with "for each".
 
 TYPE: NEW
@@ -71,6 +76,7 @@ WAIT: 1.5
 
 SAY: Three fields, three lines of output. The order is not guaranteed, but every key gets visited exactly once.
 
+CHAPTER: Recap + Outro
 SAY: That is lesson six. Maps for key-value data, arrays for sequences. Together they handle almost any shape of data you will meet.
 
 SAY: In lesson seven we will let the user talk back to our program with "input", and we will discover the "do" loop.

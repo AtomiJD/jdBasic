@@ -268,15 +268,41 @@ FUNC BuildMeta(base$, env, defaults, lesson_md)
     meta{"language"} = defaults{"language"}
     meta{"recordingDate"} = TodayIso$()
 
-    ' Playlist (only if defaults has a non-empty playlistID).
-    IF LEN(defaults{"playlistID"}) > 0 THEN
-        DIM pls = []
-        PUSH pls, defaults{"playlistID"}
-        meta{"playlistIds"} = pls
-    ENDIF
+    ' Playlist add is intentionally NOT included in the metaJSON.
+    ' youtubeuploader does upload+playlist atomically and the playlist call
+    ' hits a propagation-window 404 ("video not found") for fresh uploads,
+    ' which then trips its exit code.  AddToPlaylist below does it as a
+    ' separate post-upload step with retry, sleeping through the window.
 
     RETURN meta
 ENDFUNC
+
+' ── Append uploaded video to the series playlist (with retry) ────
+'   uploaded.json is whatever youtubeuploader wrote via -metaJSONout —
+'   YouTube's API response with `id` = the new video ID.
+SUB AddToPlaylist(marker_path$, defaults)
+    IF LEN(defaults{"playlistID"}) = 0 THEN RETURN
+    IF NOT FILE.EXISTS(marker_path$) THEN
+        PRINT "  (no marker, skipping playlist add)"
+        RETURN
+    ENDIF
+    DIM body = JSON.PARSE$(TXTREADER$(marker_path$))
+    IF NOT MAP.EXISTS(body, "id") THEN
+        PRINT "  (marker has no 'id' field, skipping playlist add)"
+        RETURN
+    ENDIF
+    DIM vid$ = body{"id"}
+    DIM pid$ = defaults{"playlistID"}
+    PRINT "  appending " + vid$ + " to playlist " + pid$
+    DIM cmd$ = "python helpers\yt_add_to_playlist.py " + vid$ + " " + pid$
+    DIM r = OS.EXEC(cmd$)
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "  (playlist add FAILED, video still uploaded - add manually in Studio)"
+        PRINT r{"OUTPUT"}
+    ELSE
+        PRINT "  " + TRIM$(r{"OUTPUT"})
+    ENDIF
+ENDSUB
 
 ' ── Render thumbnail if missing ──────────────────────────────────
 SUB EnsureThumbnail(base$, lesson_md)
@@ -325,6 +351,24 @@ SUB UploadOne(base$, env, defaults, dry_run)
     ENDIF
 
     DIM meta = BuildMeta(base$, env, defaults, lesson_md)
+
+    ' YouTube rejects "<" and ">" in title or description with a cryptic
+    ' 400 "invalidDescription" — pre-flight here so the failure is clear
+    ' BEFORE we burn the upload bandwidth.  Rephrase the .md to use words
+    ' (or backticks elsewhere); these characters are XSS-blocked, not
+    ' encoded-then-rendered.
+    DIM bad$ = ""
+    IF INSTR$(meta{"title"}, "<") >= 0 OR INSTR$(meta{"title"}, ">") >= 0 THEN
+        bad$ = "title"
+    ELSEIF INSTR$(meta{"description"}, "<") >= 0 OR INSTR$(meta{"description"}, ">") >= 0 THEN
+        bad$ = "description"
+    ENDIF
+    IF LEN(bad$) > 0 THEN
+        PRINT "  FATAL: " + bad$ + " contains '<' or '>' which YouTube rejects."
+        PRINT "  Rephrase scripts\" + base$ + ".md (e.g. 'greater than' instead of '>')."
+        END
+    ENDIF
+
     DIM meta_tmp$ = "yt\_tmp_" + base$ + ".json"
     TXTWRITER meta_tmp$, JSON.STRINGIFY$(meta), FALSE, "utf-8"
     IF dry_run = 1 THEN
@@ -340,6 +384,12 @@ SUB UploadOne(base$, env, defaults, dry_run)
 
     ' Build the youtubeuploader command.  Every path goes through CHR$(34)
     ' since several of them legitimately contain spaces (Program Files).
+    ' cmd.exe quirk: when the executable path is quoted AND any argument is
+    ' also quoted, cmd's parser strips the outermost quotes of the line —
+    ' "D:\Program Files\…\foo.exe" then becomes the bare token "D:\Program"
+    ' plus a junk "Files\…\foo.exe" arg.  The defensive idiom is to wrap
+    ' the whole command in an EXTRA pair of quotes; cmd peels exactly one
+    ' set and the inner exe-path quoting survives.
     DIM q$ = CHR$(34)
     DIM cmd$ = q$ + env{"YT_UPLOADER"} + q$
     cmd$ = cmd$ + " -filename "    + q$ + mp4$ + q$
@@ -348,16 +398,38 @@ SUB UploadOne(base$, env, defaults, dry_run)
     cmd$ = cmd$ + " -secrets "     + q$ + env{"YT_CLIENT_SECRETS"} + q$
     cmd$ = cmd$ + " -cache "       + q$ + env{"YT_TOKEN_CACHE"} + q$
     cmd$ = cmd$ + " -metaJSONout " + q$ + marker$ + q$
-    PRINT "  invoking youtubeuploader…"
+    cmd$ = q$ + cmd$ + q$
+    PRINT "  invoking youtubeuploader..."
     DIM r = OS.EXEC(cmd$)
-    IF r{"EXIT_CODE"} <> 0 THEN
+    DIM upload_ok AS INTEGER = 0
+    ' Truth source for "did the upload succeed" is the marker file
+    ' (youtubeuploader writes it via -metaJSONout right after the video
+    ' is up).  The exit code can be non-zero for non-fatal post-upload
+    ' wobbles (e.g. playlist 404), so don't trust it alone.
+    IF FILE.EXISTS(marker$) THEN upload_ok = 1
+
+    IF upload_ok = 0 THEN
         PRINT "  FAIL ("; r{"EXIT_CODE"}; "):"
         PRINT r{"OUTPUT"}
-        ' Leave _tmp around for inspection.
+        IF FILE.EXISTS(meta_tmp$) THEN KILL meta_tmp$
         END
     ENDIF
-    PRINT "  OK — marker: "; marker$
-    KILL meta_tmp$
+
+    IF r{"EXIT_CODE"} <> 0 THEN
+        PRINT "  OK (upload), but youtubeuploader exited "; r{"EXIT_CODE"}; " - last output:"
+        ' Print only the tail so we see the actual error without 100+ progress lines.
+        DIM out_lines = SPLIT(r{"OUTPUT"}, CHR$(10))
+        DIM start_i = LEN(out_lines) - 3
+        IF start_i < 0 THEN start_i = 0
+        DIM li AS INTEGER
+        FOR li = start_i TO LEN(out_lines) - 1
+            PRINT "    " + TRIM$(out_lines[li])
+        NEXT li
+    ELSE
+        PRINT "  OK - marker: "; marker$
+    ENDIF
+    IF FILE.EXISTS(meta_tmp$) THEN KILL meta_tmp$
+    AddToPlaylist(marker$, defaults)
 ENDSUB
 
 ' ── Walk every final\*.mp4 missing a marker ──────────────────────
@@ -387,9 +459,10 @@ ENDSUB
 DIM args = OS.ARGS()
 IF LEN(args) < 2 THEN
     PRINT "usage:"
-    PRINT "  jdbasic upload.jdb <script_base>             upload one lesson"
-    PRINT "  jdbasic upload.jdb --all                     every final\*.mp4 without marker"
-    PRINT "  jdbasic upload.jdb --dry-run <script_base>   build metaJSON, no upload"
+    PRINT "  jdbasic upload.jdb <script_base>                 upload one lesson"
+    PRINT "  jdbasic upload.jdb --all                         every final\*.mp4 without marker"
+    PRINT "  jdbasic upload.jdb --dry-run <script_base>       build metaJSON, no upload"
+    PRINT "  jdbasic upload.jdb --render-thumb <script_base>  (re)render thumbnail PNG only"
     END
 ENDIF
 
@@ -397,13 +470,24 @@ DIM env = LoadEnv()
 DIM defaults = LoadDefaults(env{"YT_DEFAULTS"})
 
 DIM dry_run AS INTEGER = 0
+DIM render_only AS INTEGER = 0
 DIM target$ = args[1]
 IF target$ = "--dry-run" AND LEN(args) >= 3 THEN
     dry_run = 1
     target$ = args[2]
+ELSEIF target$ = "--render-thumb" AND LEN(args) >= 3 THEN
+    render_only = 1
+    target$ = args[2]
 ENDIF
 
-IF target$ = "--all" THEN
+IF render_only = 1 THEN
+    DIM md$ = "scripts\" + target$ + ".md"
+    DIM lesson_md = ParseMd(md$)
+    DIM thumb$ = "final\" + target$ + ".thumb.png"
+    IF FILE.EXISTS(thumb$) THEN KILL thumb$
+    EnsureThumbnail(target$, lesson_md)
+    PRINT "── rendered: "; thumb$
+ELSEIF target$ = "--all" THEN
     UploadAll(env, defaults, dry_run)
 ELSE
     UploadOne(target$, env, defaults, dry_run)

@@ -1,16 +1,18 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 04 — Strings
+'  Lesson 04 - Strings
 '  Topic: concat, LEN, LEFT$/RIGHT$/MID$, INSTR$, UCASE$/LCASE$/TRIM$,
-'         SPLIT — plus a small CSV-style parsing demo
+'         SPLIT - plus a small CSV-style parsing demo
 '  Target runtime: ~5-6 minutes
 ' ──────────────────────────────────────────────────────────────────
 
 TITLE: 04 | Strings | Text the Right Way
 
+CHAPTER: Welcome
 SAY: Welcome back. Jaydee here. Lesson four.
 
 SAY: We have done numbers. We have done arrays. Today: strings. Pieces of text, and how to slice, search, and reshape them.
 
+CHAPTER: Concatenation + LEN
 SAY: Concatenation first. Use plus to glue two strings together.
 
 TYPE: DIM first$ = "Jaydee"
@@ -25,6 +27,7 @@ WAIT: 0.6
 
 SAY: "len" works on strings too. Six characters in "Jaydee".
 
+CHAPTER: LEFT$, RIGHT$, MID$
 SAY: To grab parts of a string, use "left", "right", or "mid". All three end with a dollar sign because they return strings.
 
 TYPE: PRINT LEFT$("Hello, World!", 5)
@@ -38,6 +41,7 @@ WAIT: 1.0
 
 SAY: "mid" takes a start position and a length. And one important detail positions are zero-based. Position zero is the first character. Same convention as arrays.
 
+CHAPTER: INSTR$ - find substring
 SAY: To find one string inside another, use "instr".
 
 TYPE: DIM pos = INSTR$("Hello, World!", "World")
@@ -51,6 +55,7 @@ SAY: If the substring is not found, "instr" returns minus one.
 TYPE: PRINT INSTR$("Hello", "xyz")
 WAIT: 0.6
 
+CHAPTER: UCASE$ / LCASE$ / TRIM$
 SAY: Case changes are easy.
 
 TYPE: PRINT UCASE$("hello")
@@ -64,6 +69,7 @@ WAIT: 0.8
 
 SAY: Useful when you read input from a file or the user, and you do not know how clean it is.
 
+CHAPTER: SPLIT - string to array
 SAY: One last trick. "split" takes a string and a delimiter, and returns an array of pieces.
 
 TYPE: DIM parts = SPLIT("red,green,blue", ",")
@@ -73,6 +79,7 @@ WAIT: 1.2
 
 SAY: Three colours separated by commas. "split" gave us back an array of strings. Element one is "green".
 
+CHAPTER: CSV mini-parser
 SAY: Now let us combine everything in a small program the kind of thing you would write to parse a line out of a text file.
 
 TYPE: NEW
@@ -98,6 +105,7 @@ WAIT: 1.5
 
 SAY: A single line of CSV-style text, split into three fields, then combined into a sentence. The same pattern handles real-world text files line by line.
 
+CHAPTER: Recap + Outro
 SAY: That is lesson four. In lesson five we will look at writing your own functions and subroutines code you can name and re-use across a program.
 
 SAY: Until then! Keep coding. Bye!

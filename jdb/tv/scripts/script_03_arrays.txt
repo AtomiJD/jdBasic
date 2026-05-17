@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 03 — Arrays and Vector Operations
+'  Lesson 03 - Arrays and Vector Operations
 '  Topic: array literals, indexing, LEN, element-wise math,
 '         scalar broadcast, reductions (SUM/MEAN/MIN/MAX), IOTA
 '  Target runtime: ~5 minutes
@@ -7,10 +7,12 @@
 
 TITLE: 03 | Arrays | The "for"-less Loop
 
+CHAPTER: Welcome
 SAY: Hello again. Jaydee here. Welcome to lesson three.
 
 SAY: Today we leave single values behind and look at arrays, sequences of numbers that jdBasic can operate on as a single unit. This is where the language really shines.
 
+CHAPTER: Array literals + indexing
 SAY: Let us start at the prompt.
 
 TYPE: DIM scores = [10, 20, 30, 40, 50]
@@ -30,6 +32,7 @@ WAIT: 0.6
 
 SAY: "len" gives you the number of elements.
 
+CHAPTER: Broadcast + element-wise math
 SAY: Now the interesting part. Watch what happens when we do arithmetic on the whole array at once.
 
 TYPE: PRINT scores * 2
@@ -47,6 +50,7 @@ WAIT: 0.6
 
 SAY: Two arrays of the same length add element-wise.
 
+CHAPTER: Boolean arrays
 SAY: Comparisons work the same way. They return a boolean array.
 
 TYPE: PRINT scores > 25
@@ -54,6 +58,7 @@ WAIT: 1.0
 
 SAY: Five values in, five answers out. False, false, true, true, true.
 
+CHAPTER: Reductions - SUM, MEAN, MIN, MAX
 SAY: Built-in reductions collapse an array to a single number.
 
 TYPE: PRINT SUM(scores)
@@ -67,11 +72,13 @@ WAIT: 0.8
 
 SAY: Smallest is ten, largest is fifty.
 
+CHAPTER: IOTA - the range generator
 SAY: One more helper. "iota" of N builds a range from one to N without you typing each number.
 
 TYPE: PRINT IOTA(10)
 WAIT: 0.8
 
+CHAPTER: Putting it together
 SAY: One through ten. Now let us put everything together in a small program.
 
 TYPE: NEW
@@ -98,6 +105,7 @@ WAIT: 1.5
 
 SAY: A week of temperatures. We computed the average, then subtracted it from each day to see how far each day was from the mean. Three lines of real work. No "for" loop in sight.
 
+CHAPTER: Recap + Outro
 SAY: That is the jdBasic way. Treat the array as the thing, not the element. Most numeric problems become shorter and faster when you stop thinking one-at-a-time and start thinking all-at-once.
 
 SAY: That is lesson three. In lesson four we leave numbers behind and look at strings slicing text, searching, and splitting.

@@ -1,5 +1,5 @@
 ' ──────────────────────────────────────────────────────────────────
-'  Lesson 10 — Modules + final wrap-up
+'  Lesson 10 - Modules + final wrap-up
 '  Topic: EXPORT MODULE, EXPORT FUNC, SAVE the workspace as a .jdb,
 '         IMPORT in a fresh program, dotted module-name calls.
 '         Closes the ten-lesson arc with a recap.
@@ -8,12 +8,14 @@
 
 TITLE: 10 | Modules | Code Worth Reusing
 
+CHAPTER: Welcome to the finale
 SAY: Welcome back to the final lesson of Train jdBasic. Jaydee here. Lesson ten.
 
 SAY: We have covered a lot. Today we tie it all together. We will write our first reusable module, save it as its own file, then import it from a brand-new program and use the functions inside.
 
 SAY: A module is just a jdBasic file that begins with "export module" and a name. Any "func" or "sub" you mark with "export" becomes callable from outside under that name.
 
+CHAPTER: Writing a module
 SAY: Let us write one.
 
 TYPE: NEW
@@ -41,11 +43,13 @@ WAIT: 3.0
 
 SAY: A tiny math toolbox. "clamp" keeps a value between a low and a high bound. "percent" computes a percentage. Both are marked "export" so other files can call them.
 
+CHAPTER: Saving the module to disk
 SAY: Now we save the buffer to disk under the module's file name. Lowercase.
 
 TYPE: SAVE mathx
 WAIT: 1.0
 
+CHAPTER: IMPORT + dotted calls
 SAY: One file written to disk. Now a fresh program that uses it.
 
 TYPE: NEW
@@ -72,6 +76,7 @@ SAY: "import" loads the module and makes its exports available under the module 
 
 SAY: That is how you organise code. Drop related functions into a module, save the file, and any program in the same folder can pull them in with one line.
 
+CHAPTER: Season 1 recap
 SAY: That brings us to the end of Train jdBasic, season one. Let us recap.
 
 SAY: Lesson one. We printed text and stored values in variables.
@@ -96,6 +101,7 @@ SAY: And today, lesson ten. We organised code into modules.
 
 SAY: You now have everything you need to start building real programs in jdBasic. The official docs cover every command, with examples. The website is at jdbasic dot org.
 
+CHAPTER: Outro
 SAY: Thank you for spending these ten lessons with me. I have been Jaydee Basica. Keep coding. Bye!
 
 WAIT: 3
