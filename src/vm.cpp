@@ -431,6 +431,24 @@ bool VM::resume() {
 
     // Continue execution
     run();
+
+    // If run() returned because the script hit another STOP_OP, re-stash
+    // the new stopped state so the NEXT resume() can find it. Mirrors
+    // run_code() lines 298-310. Without this, a second jdb_resume after
+    // a stop/eval/resume cycle moves empty stopped_frames into frames
+    // and crashes on the first opcode fetch — silently swallowed by
+    // mcp_stdio's catch(...) and surfacing as a hung SDL window with
+    // the VM mysteriously back at idle (RUNNING=1 global, but worker
+    // terminated mid-loop). stopped_chunk stays valid: it's the same
+    // chunk copy from the first STOP, and frame pointers either still
+    // reference it or point into owned_funcs (which persist).
+    if (is_stopped) {
+        stopped_frames = std::move(frames);
+        stopped_stack.assign(stack.begin(), stack.begin() + sp);
+        stopped_sp = sp;
+        inject_stopped_locals();
+    }
+
     return true;
 }
 

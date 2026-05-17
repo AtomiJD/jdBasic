@@ -1,0 +1,34 @@
+' ──────────────────────────────────────────────────────────────────
+' Regression fixture: stop/resume chain.
+'
+' Reproduces the bug where the second jdb_resume after a chain of
+' jdb_eval mutations silently terminated the worker (root cause was
+' VM::resume() not re-stashing stopped_* after run() returned with
+' is_stopped=true). See feedback/project notes in memory.
+'
+' Driven by tests/mcp_resume_chain.py via the MCP stdio server.
+' Each STOP yields control to MCP; the driver mutates `counter` via
+' jdb_eval and resumes. After 5 cycles, counter should equal 50
+' (driver adds 10 per cycle).
+'
+' Pure interpreter, no SDL — keeps the test self-contained and fast.
+' ──────────────────────────────────────────────────────────────────
+DIM counter AS INTEGER = 0
+
+PRINT "fixture: before cycle 1"
+STOP
+PRINT "fixture: after cycle 1, counter="; counter
+
+STOP
+PRINT "fixture: after cycle 2, counter="; counter
+
+STOP
+PRINT "fixture: after cycle 3, counter="; counter
+
+STOP
+PRINT "fixture: after cycle 4, counter="; counter
+
+STOP
+PRINT "fixture: after cycle 5, counter="; counter
+
+PRINT "fixture: done. final counter="; counter

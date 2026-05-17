@@ -437,7 +437,13 @@ Value tool_jdb_resume(VM& vm, const Value& /*args*/) {
         // jdb_eval after the next STOP, not via load/resume stdout.
         auto prev = v.on_output;
         v.on_output = [](const std::string&) {};
-        try { v.resume(); } catch (...) {}
+        try {
+            v.resume();
+        } catch (const std::exception& e) {
+            log_line(std::string("resume error: ") + e.what());
+        } catch (...) {
+            log_line("resume error (unknown exception)");
+        }
         v.on_output = prev;
     });
     return make_text_result(
