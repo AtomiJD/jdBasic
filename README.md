@@ -6,6 +6,8 @@ It combines the immediacy of classic BASIC with powerful built-in capabilities a
 
 > **Reduce friction between thinking and running code.**
 
+> **🎥 Train jdBasic** is on YouTube — 14 video lessons covering everything from PRINT to native compilation, all auto-generated and voiced by jdBasic itself. **[Watch the playlist →](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ)**
+
 You can:
 
 - explore ideas in a powerful interactive REPL
@@ -21,6 +23,37 @@ You can:
 ## Try jdBasic in your browser
 
 [jdbasic.org/live](https://jdbasic.org/live/index.html) — no installation required.
+
+---
+
+## Watch the lessons
+
+The **Train jdBasic** YouTube series walks through the language from
+"Hello, World" to native compilation — 14 episodes, 5–10 minutes each,
+with auto-generated chapters and code-on-screen as it happens.
+
+▶️ **[Full playlist on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ)**
+
+| #  | Lesson | Topic |
+|----|--------|-------|
+| 01 | [Hello jdBasic](https://youtu.be/4qvPFoqxPHE) | PRINT, DIM, basic types |
+| 02 | [If and For](https://youtu.be/RTI-f9cHldI) | IF/ELSE, FOR/NEXT, FizzBuzz |
+| 03 | [Arrays](https://youtu.be/V33CGCt1zB8) | Vector ops, broadcasting, reductions |
+| 04 | [Strings](https://youtu.be/NUhdrMU9T9c) | Slice, search, SPLIT |
+| 05 | [Functions and SUBs](https://youtu.be/_4Q7qR1sA3Q) | FUNC, SUB, recursion |
+| 06 | [Maps](https://youtu.be/vp0tCYa6__A) | Key-value data |
+| 07 | [INPUT and DO Loops](https://youtu.be/1Sd7jCzY8Zc) | User-driven programs |
+| 08 | [File I/O](https://youtu.be/gbFvgqIYNMM) | TXTWRITER, TXTREADER$ |
+| 09 | [Graphics](https://youtu.be/qtBCNaVaRLA) | SCREEN, shapes, colours |
+| 10 | [Modules](https://youtu.be/fg0ib3SgGio) | EXPORT, IMPORT, code reuse |
+| 11 | [REPL Workflow](https://youtu.be/Noa4mqwEZ5w) | PRETTY, LINT, SAVEWS |
+| 12 | [Higher-Order Functions](https://youtu.be/WPpzO0tHJNE) | SELECT, FILTER, REDUCE, lambdas |
+| 13 | [HTTP and JSON](https://youtu.be/ecq8uZHAV7U) | Talk to the web |
+| 14 | [Native Compilation](https://youtu.be/4DlthnUo56w) | Compile to .exe with `jdbasic -c` |
+
+The entire production pipeline — voice synthesis, screen recording,
+FFmpeg compositing, even the YouTube uploads — is itself a jdBasic
+program. See [`jdb/tv/`](jdb/tv/) if you want to fork the rig.
 
 ---
 
@@ -130,6 +163,7 @@ Numbers from the latest run: **[bench/Results.md](bench/Results.md)**.
 - See **[doc/BUILD.md](doc/BUILD.md)** for the full build guide (prerequisites, third-party libraries, feature flags, packaging)
 
 ### Learn the language
+- **Video tutorials**: [Train jdBasic playlist on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) — 14 episodes, beginner to native compile
 - **Language reference**: [doc/languages.md](doc/languages.md)
 - **Built-in command reference**: [help.txt](help.txt) (also accessible via `HELP` in the REPL)
 - **Examples**: browse the [`jdb/`](jdb/) folder
@@ -161,14 +195,16 @@ dist/       — packaged distribution (not in git)
 
 ## Contributing
 
-Contributions, bug reports, and feedback are welcome! Please make sure that the regression suite still passes after your changes:
+Contributions, bug reports, and feedback are welcome! Please make sure that the regression suite still passes after your changes — four test files cover the language, the native compiler, and the APL pipeline:
 
 ```bash
 build\jdBasic.exe tests\comprehensive_test.jdb
-build\jdBasic.exe tests\crash_test.jdb
+build\jdBasic.exe tests\native_test.jdb
+build\jdBasic.exe tests\test_apl_complete.jdb
+build\jdBasic.exe tests\test_apl_pipelines.jdb
 ```
 
-184 + 11 tests should be green.
+All four should report `0 failed` (1139 tests total at the time of writing). For changes that touch the LLVM codegen, run each suite again through the compiler — `build\jdBasic.exe -c tests\<suite>.jdb && tests\<suite>.exe` — so both the interpreter and native paths stay green.
 
 ---
 
