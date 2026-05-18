@@ -4231,7 +4231,23 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             rhs.tag = JD_TAG_STR;
         }
     }
+    // `DIM x AS FLOAT16/32/64 = <int-literal>` — the AS clause must win,
+    // otherwise the int RHS tag types the slot as i64. Later
+    // `x = x + 0.00628` (with a CONST DOUBLE) then loads x as i64,
+    // truncates 0.00628 to int 0, and the add is a no-op — the wavi.jdb
+    // animation froze on exactly this. We coerce the RHS to f64 here so
+    // the create_var call below sees rhs.tag == JD_TAG_F64. Mirror update
+    // for an existing vi: upgrade its tag too so subsequent loads use
+    // f64. See feedback_native_dim_init_array.md.
+    if ((stmt.var_type == VarType::FLOAT16 ||
+         stmt.var_type == VarType::FLOAT32 ||
+         stmt.var_type == VarType::FLOAT64) &&
+        rhs.tag == JD_TAG_I64) {
+        rhs.val = LLVMBuildSIToFP(builder, rhs.val, f64_type, "dim_as_dbl");
+        rhs.tag = JD_TAG_F64;
+    }
     if (vi) {
+        if (rhs.tag == JD_TAG_F64 && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
         VarInfo& nv = create_var(stmt.var_name, rhs.tag);
