@@ -1,0 +1,106 @@
+' Interference - jdBasic Port (Compiler Function-Isolated)
+' ----------------------------------
+OPTION "EXPLICIT"
+
+' Konstanten einzeln deklariert
+CONST W = 640
+CONST H = 400
+CONST HW = 320
+CONST HH = 200
+CONST LAMBDA_VAL = 56
+CONST LANBDA_2PI = 8.91267681314614 ' 56 / (PI * 2)
+CONST TPER = 0.45
+CONST T_2PI = 0.0716197243913529 ' 0.45 / (PI * 2)
+CONST NA = 1000
+CONST NB = 550
+CONST RA = 171.428571428571 ' 6 * 200 / 7
+CONST RB = 135.777864175987 ' RA - 4 * LANBDA_2PI
+CONST DTA = 0.00628318530717959 ' 2 * PI / 1000
+CONST DTB = 0.0114239732857811 ' 2 * PI / 550
+CONST DT = 0.0166666666666667 ' 1 / 60
+CONST TAU = 6.28318530717959
+
+' 1. Grafikfenster initialisieren
+SCREEN W, H, "Interference", 2
+
+' 2. Globale Matrix für das Rendering anlegen
+DIM RGB_MATRIX[H, W]
+
+' Deklaration der Hauptvariablen — Initialisierer MUSS Double-Literal sein
+' (= 0 statt 0.0 lässt native codegen den Slot als i64 taggen → DTA wird zu
+' int 0 truncated und der Increment im Loop ist no-op; Pattern dokumentiert
+' in feedback_native_dim_init_array.md für arrays, gilt auch für scalars).
+DIM TA AS DOUBLE = 0.0
+DIM TB AS DOUBLE = 0.0
+DIM T AS DOUBLE = 0.0
+DIM K$ AS STRING
+
+' 3. Berechnungs-Prozedur: Isoliert den Code vor C++-Schleifenoptimierungen
+SUB RenderInterference(ta_val AS DOUBLE, tb_val AS DOUBLE, t_val AS DOUBLE)
+    DIM Y_IDX AS INTEGER
+    DIM X_IDX AS INTEGER
+    DIM XA AS DOUBLE, YA AS DOUBLE, XB AS DOUBLE, YB AS DOUBLE
+    DIM X_CUR AS DOUBLE, Y_CUR AS DOUBLE
+    DIM DA AS DOUBLE, DB AS DOUBLE, WAVE AS DOUBLE
+    DIM T_DIV AS DOUBLE
+    DIM ABS_WAVE AS INTEGER, R AS INTEGER, G AS INTEGER, B AS INTEGER
+
+    ' Positionen basierend auf den Parametern berechnen
+    XA = RA * COS(ta_val)
+    YA = RA * SIN(ta_val)
+    XB = -RB * COS(tb_val)
+    YB = -RB * SIN(tb_val)
+
+    T_DIV = t_val / T_2PI
+
+    FOR Y_IDX = 0 TO H - 1
+        Y_CUR = Y_IDX - HH
+        FOR X_IDX = 0 TO W - 1
+            X_CUR = X_IDX - HW
+
+            DA = SQR((X_CUR - XA)^2 + (Y_CUR - YA)^2)
+            DB = SQR((X_CUR - XB)^2 + (Y_CUR - YB)^2)
+
+            WAVE = SIN(DA / LANBDA_2PI - T_DIV) + SIN(DB / LANBDA_2PI - T_DIV)
+
+            ABS_WAVE = CINT(ABS(WAVE) * 128)
+            R = ABS_WAVE MOD 256
+            G = (ABS_WAVE MOD 129) * 2
+            B = (ABS_WAVE MOD 65) * 4
+
+            IF WAVE < 0 THEN
+                DIM TEMP_COLOR = R
+                R = B
+                B = TEMP_COLOR
+            ENDIF
+
+            RGB_MATRIX[Y_IDX, X_IDX] = R + (G * 256) + (B * 65536)
+        NEXT
+    NEXT
+ENDSUB
+
+' --- Hauptschleife ---
+DO
+    CLS
+
+    ' Aufruf der isolierten Funktion mit aktuellen Werten
+    RenderInterference(TA, TB, T)
+
+    ' Die fertig berechnete Matrix zeichnen
+    PLOTRAW 0, 0, RGB_MATRIX
+
+    SCREENFLIP
+
+    ' Werte verändern (Erzwingt Neuberechnung beim nächsten SUB-Aufruf).
+    ' Reset-Werte ebenfalls als Double-Literal damit der Slot DOUBLE bleibt.
+    TA = TA + DTA
+    IF TA >= TAU THEN TA = 0.0
+
+    TB = TB + DTB
+    IF TB >= TAU THEN TB = 0.0
+
+    T = T + DT
+
+    SLEEP 16
+    K$ = INKEY$()
+LOOP UNTIL LCASE$(K$) = "q"
