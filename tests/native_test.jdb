@@ -1075,6 +1075,32 @@ Assert(2751, sea_outer$[0] = "outer0")
 Assert(2752, sea_outer$[2] = "outer2")
 Assert(2753, sea_outer$[4] = "outer4")
 
+' ── 66. BUILT-IN CONSTS INSIDE FUNC BODY ─────────────────────
+'   Regression 2026-05-20: PI/E read as NONE inside a FUNC/SUB body in
+'   interp because the compiler's `should_use_global` consulted
+'   `known_globals` which only seeded ERR/ERL/ERRMSG$/STACK$. Without
+'   the math-const names there, function-scope LOAD emitted LOAD_VAR for
+'   a slot never STORE'd -> NONE. Production trigger: P_SETUP doing
+'   `ta * (PI / 180)` stored 0 into P_PLAYER_A. Fix in compiler.cpp:
+'   include PI/E/VBNEWLINE/VBCRLF/VBTAB in k_vm_globals seed.
+PRINT "── Built-in CONST visibility in FUNC ──"
+
+FUNC bc_pi_in_func() AS DOUBLE
+    RETURN PI
+ENDFUNC
+
+FUNC bc_e_in_func() AS DOUBLE
+    RETURN E
+ENDFUNC
+
+FUNC bc_pi_deg_to_rad(deg AS INTEGER) AS DOUBLE
+    RETURN deg * (PI / 180.0)
+ENDFUNC
+
+Assert(295, bc_pi_in_func() > 3.14159 AND bc_pi_in_func() < 3.14160)
+Assert(296, bc_e_in_func() > 2.71828 AND bc_e_in_func() < 2.71829)
+Assert(297, CINT(bc_pi_deg_to_rad(90) * 1000000) = 1570796)
+
 ' ── 65. BINARY-SAFE MID$ / INSTR / CHR$(0) ───────────────────
 '   Regression 2026-05-20: jdb_mid_lax / jdb_instr used strlen()
 '   internally, so any slice past the first 0x00 byte of a BINREADER$

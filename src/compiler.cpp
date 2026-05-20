@@ -156,8 +156,16 @@ void Compiler::collect_globals(const std::vector<StmtPtr>& program) {
     // These never appear in user assignments, so without seeding them here,
     // the compiler would treat e.g. ERRMSG$ as an uninitialised local inside
     // a SUB and `PRINT ERRMSG$` would print NONE instead of the error text.
+    //
+    // Built-in math/string constants (PI/E/INF/NAN/VBNEWLINE/VBCRLF/VBTAB)
+    // are registered the same way - register_const(name) in vm.cpp puts
+    // them in globals. Without listing them here, a `SUB { ... PI ... }` in
+    // a module emits LOAD_VAR (slot never stored) and reads NONE. Top-level
+    // works because main-scope LOAD always uses LOAD_GLOBAL.
     static const char* k_vm_globals[] = {
-        "ERR", "ERL", "ERRMSG$", "STACK$"
+        "ERR", "ERL", "ERRMSG$", "STACK$",
+        "PI", "E",
+        "VBNEWLINE", "VBCRLF", "VBTAB"
     };
     for (auto* name : k_vm_globals) known_globals.insert(name);
 
