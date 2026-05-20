@@ -1029,6 +1029,86 @@ FOR dasd_i = 1 TO 3
 NEXT dasd_i
 Assert(269, CINT(dasd_TE * 1000) = 1500)
 
+' ── 64. STRING-ARRAY ELEMENT ASSIGN (DIM arr$[N], arr$[i] = "..." ) ─
+'   Regression 2026-05-20: native INDEX_ASSIGN of a STRING into an
+'   integer-keyed array silently coerced the char* through f64 and
+'   never set the string-array flag. Reading back returned 0 instead
+'   of the original string. Production trigger was the DOOM port's
+'   wad_name$[] directory (lump names) — every name read back as 0
+'   so wad_find never matched anything.
+PRINT "── String-Array Element Assign ──"
+DIM sea_arr$[5]
+DIM sea_i AS INTEGER
+FOR sea_i = 0 TO 4
+    sea_arr$[sea_i] = "lump" + STR$(sea_i)
+NEXT sea_i
+Assert(270, sea_arr$[0] = "lump0")
+Assert(271, sea_arr$[3] = "lump3")
+Assert(272, LEN(sea_arr$[2]) = 5)
+
+' Mixed-typed string array (DIM arr$[N] AS STRING) — same bug class.
+DIM sea_typed$[3] AS STRING
+sea_typed$[0] = "alpha"
+sea_typed$[1] = "beta"
+sea_typed$[2] = "gamma"
+Assert(273, sea_typed$[1] = "beta")
+Assert(274, sea_typed$[0] + sea_typed$[2] = "alphagamma")
+
+' Re-assign after first write — must not stay stuck on first value.
+sea_typed$[1] = "delta"
+Assert(275, sea_typed$[1] = "delta")
+
+' ── 65. BINARY-SAFE MID$ / INSTR / CHR$(0) ───────────────────
+'   Regression 2026-05-20: jdb_mid_lax / jdb_instr used strlen()
+'   internally, so any slice past the first 0x00 byte of a BINREADER$
+'   buffer returned an empty string. INSTR(buf, CHR$(0)) returned 0
+'   (treating CHR$(0) as an empty needle) instead of the real index.
+'   Production trigger: the DOOM WAD directory parser - lump names
+'   are 8-byte NUL-padded fields, MID$+INSTR is the only way to read
+'   them.
+PRINT "── Binary-Safe MID$ / INSTR / CHR$(0) ──"
+
+' Build a binary buffer with an embedded NUL: "ABC\0DEF" via PACK$.
+DIM bn_buf$ AS STRING = PACK$("bbbbbbb", 65, 66, 67, 0, 68, 69, 70)
+Assert(276, LEN(bn_buf$) = 7)
+Assert(277, BYTEAT(bn_buf$, 3) = 0)
+Assert(278, BYTEAT(bn_buf$, 5) = 69)
+
+' MID$ past the embedded NUL must return real bytes, not "".
+DIM bn_tail$ AS STRING = MID$(bn_buf$, 4, 3)
+Assert(279, LEN(bn_tail$) = 3)
+Assert(280, BYTEAT(bn_tail$, 0) = 68)
+Assert(281, BYTEAT(bn_tail$, 2) = 70)
+
+' MID$ result must itself be binary-safe (length survives further slicing).
+DIM bn_mid$ AS STRING = MID$(bn_buf$, 2, 4)
+Assert(282, LEN(bn_mid$) = 4)
+Assert(283, BYTEAT(bn_mid$, 1) = 0)
+DIM bn_left$ AS STRING = LEFT$(bn_mid$, 3)
+Assert(284, LEN(bn_left$) = 3)
+Assert(285, BYTEAT(bn_left$, 1) = 0)
+Assert(2851, BYTEAT(bn_left$, 2) = 68)
+
+' CHR$(0) is a 1-byte string, not empty.
+DIM bn_nul$ AS STRING = CHR$(0)
+Assert(286, LEN(bn_nul$) = 1)
+Assert(287, BYTEAT(bn_nul$, 0) = 0)
+
+' INSTR finds the NUL at the right offset.
+Assert(288, INSTR(bn_buf$, CHR$(0)) = 3)
+
+' INSTR returns -1 when needle isn't present (no fallthrough to 0).
+Assert(289, INSTR(bn_buf$, "Z") = -1)
+
+' DOOM-shape regression: 8-byte NUL-padded name → INSTR finds the cut.
+DIM bn_name$ AS STRING = PACK$("bbbbbbbb", 80, 76, 65, 89, 80, 65, 76, 0)
+Assert(290, LEN(bn_name$) = 8)
+Assert(291, INSTR(bn_name$, CHR$(0)) = 7)
+DIM bn_trim$ AS STRING = LEFT$(bn_name$, INSTR(bn_name$, CHR$(0)))
+Assert(292, LEN(bn_trim$) = 7)
+Assert(293, BYTEAT(bn_trim$, 0) = 80)
+Assert(294, BYTEAT(bn_trim$, 6) = 76)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

@@ -77,6 +77,7 @@ void jdb_print_bool(int64_t val) {
 
 void jdb_print_nl() {
     printf("\n");
+    fflush(stdout);
 }
 
 // Trace logging: writes to stderr with immediate flush so we can find crash sites.
@@ -2097,6 +2098,21 @@ __declspec(dllimport)
 #endif
 int64_t jdrt_strlen(const char* s);
 
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+void jdrt_register_binary(const char* s, int64_t n);
+
+// Inline helper that mirrors jdb_len_str but is cheap to use inline in
+// the string slicers below. Honours the binary-length registry so
+// substrings of BINREADER$/PACK$ buffers survive past the first 0x00.
+static inline int64_t jdb_str_blen(const char* s) {
+    if (!s) return 0;
+    int64_t blen = jdrt_strlen(s);
+    if (blen >= 0) return blen;
+    return (int64_t)strlen(s);
+}
+
 int64_t jdb_len_str(const char* s) {
     if (!s) return 0;
     int64_t blen = jdrt_strlen(s);
@@ -2109,7 +2125,7 @@ int64_t jdb_len_str(const char* s) {
 // crash_test relies on this).
 char* jdb_mid(const char* s, int64_t start, int64_t length) {
     if (!s) return _strdup("");
-    int64_t slen = (int64_t)strlen(s);
+    int64_t slen = jdb_str_blen(s);
     if (start < 0 || start > slen) {
         jdb_err_set("MID: index out of range", 1);
         return _strdup("");
@@ -2118,6 +2134,7 @@ char* jdb_mid(const char* s, int64_t start, int64_t length) {
     char* r = (char*)malloc(length + 1);
     memcpy(r, s + start, length);
     r[length] = '\0';
+    jdrt_register_binary(r, length);
     return r;
 }
 
@@ -2127,13 +2144,14 @@ char* jdb_mid(const char* s, int64_t start, int64_t length) {
 // end of a string without bounds-checking.
 char* jdb_mid_lax(const char* s, int64_t start, int64_t length) {
     if (!s) return _strdup("");
-    int64_t slen = (int64_t)strlen(s);
+    int64_t slen = jdb_str_blen(s);
     if (start < 0) start = 0;
     if (start > slen) return _strdup("");
     if (length < 0 || start + length > slen) length = slen - start;
     char* r = (char*)malloc(length + 1);
     memcpy(r, s + start, length);
     r[length] = '\0';
+    jdrt_register_binary(r, length);
     return r;
 }
 
@@ -2143,7 +2161,7 @@ char* jdb_left(const char* s, int64_t n) {
 
 char* jdb_right(const char* s, int64_t n) {
     if (!s) return _strdup("");
-    int64_t slen = (int64_t)strlen(s);
+    int64_t slen = jdb_str_blen(s);
     if (n >= slen) return _strdup(s);
     return jdb_mid(s, slen - n, n);
 }
@@ -2175,17 +2193,32 @@ char* jdb_trim(const char* s) {
 
 char* jdb_chr(int64_t code) {
     char buf[2] = { (char)code, '\0' };
-    return _strdup(buf);
+    char* r = _strdup(buf);
+    // CHR$(0) is a 1-byte string whose only byte is 0x00. strlen would
+    // report 0; register the real length so INSTR/MID$/etc. treat it as
+    // a real character. Other CHR$(N) values are fine - strlen=1.
+    if (code == 0) jdrt_register_binary(r, 1);
+    return r;
 }
 
 int64_t jdb_asc(const char* s) {
     return (s && *s) ? (unsigned char)s[0] : 0;
 }
 
+// Binary-safe substring search: walks the registered length of the
+// haystack and uses memcmp so embedded 0x00 bytes don't terminate the
+// search. The old strstr-based version stopped at the first NUL, which
+// broke INSTR(buf$, CHR$(0)) for any BINREADER$ buffer.
 int64_t jdb_instr(const char* haystack, const char* needle) {
     if (!haystack || !needle) return -1;
-    const char* p = strstr(haystack, needle);
-    return p ? (int64_t)(p - haystack) : -1;
+    int64_t hlen = jdb_str_blen(haystack);
+    int64_t nlen = jdb_str_blen(needle);
+    if (nlen == 0) return 0;
+    if (nlen > hlen) return -1;
+    for (int64_t i = 0; i + nlen <= hlen; i++) {
+        if (memcmp(haystack + i, needle, (size_t)nlen) == 0) return i;
+    }
+    return -1;
 }
 
 char* jdb_replace(const char* src, const char* find, const char* rep) {

@@ -422,6 +422,19 @@ JDRT_API int64_t jdrt_strlen(const char* s) {
     return -1;
 }
 
+// Exposed so the jdb_runtime helpers (MID$, LEFT$, RIGHT$, REPLACE$, ...)
+// can record their own result lengths when they produce buffers that
+// contain embedded NULs. Without this, slicing a binary buffer (BINREADER$
+// content, PACK$ output) loses the length the moment it passes through
+// MID$ - downstream BYTEAT/MID$/INSTR calls would then trip over the
+// strlen fallback at the first 0x00 byte.
+JDRT_API void jdrt_register_binary(const char* s, int64_t n) {
+    if (!s || n <= 0) return;
+    if (strlen(s) == (size_t)n) return;
+    std::lock_guard<std::mutex> lk(bin_mx());
+    bin_lens()[(const void*)s] = (size_t)n;
+}
+
 JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
                                     const int64_t* args, const int32_t* tags, int nargs) {
     auto* rt = (JdRTImpl*)handle;

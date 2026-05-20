@@ -4504,6 +4504,20 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         stmt.index_chain.size() == 1) {
         array_array_vars.insert(stmt.var_name);
     }
+    // Same trick for string elements: `names$[i] = "PLAYPAL"` punned the
+    // char* through the f64 slot. Without the codegen-side string_array_vars
+    // entry, later `names$[i]` reads returned the raw f64 (= integer 0 in
+    // PRINT) instead of the original char*. The runtime flag matters too —
+    // map/array-iteration paths consult it to know cells hold pointers.
+    if (val_tv.tag == JD_TAG_STR && stmt.var_name.size() &&
+        stmt.index_chain.size() == 1) {
+        string_array_vars.insert(stmt.var_name);
+        auto* mark = get_runtime_func("__arr_set_string_elems");
+        if (mark) {
+            LLVMValueRef margs[] = { arr_ptr };
+            LLVMBuildCall2(builder, mark->fn_type, mark->fn, margs, 1, "");
+        }
+    }
 }
 
 // ── PRINT ───────────────────────────────────────────────────
