@@ -147,3 +147,6 @@ jdb/thingsforyou/
 # jdb/ build artifacts (.exe per --compile, jdbrt.dll copies)
 jdb/*.exe
 jdb/jdbrt.dll
+
+# ── DOOM port (local-only, original WADs not redistributable) ─────
+jdb/doom/
