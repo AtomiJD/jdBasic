@@ -1390,6 +1390,39 @@ StmtPtr Parser::parse_ident_stmt() {
                 s->expr = std::move(val);
                 return s;
             }
+            // Module-qualified indexed assignment: MOD.ARR[i1, i2, ...] = val
+            // Disambiguates against the no-parens dotted call `MOD.FN [arr]`
+            // by peeking past the matching `]` for an `=`. Emits the same
+            // shape as the local `name[i, j] = val` path so module-rename
+            // and codegen_index_assign treat it identically.
+            if (pure_dots && check(TokenType::LBRACKET)) {
+                size_t la = pos;
+                int depth = 0;
+                while (la < tokens.size()) {
+                    TokenType lt = tokens[la].type;
+                    if (lt == TokenType::LBRACKET) depth++;
+                    else if (lt == TokenType::RBRACKET) {
+                        depth--;
+                        if (depth == 0) { la++; break; }
+                    } else if (lt == TokenType::NEWLINE ||
+                               lt == TokenType::EOF_TOKEN) break;
+                    la++;
+                }
+                if (la < tokens.size() &&
+                    tokens[la].type == TokenType::ASSIGN) {
+                    advance(); // [
+                    std::vector<ExprPtr> simple_chain;
+                    simple_chain.push_back(parse_expr());
+                    while (match(TokenType::COMMA))
+                        simple_chain.push_back(parse_expr());
+                    expect(TokenType::RBRACKET, "']'");
+                    advance(); // =
+                    ExprPtr val = parse_expr();
+                    expect_newline();
+                    return make_index_assign(dotted, std::move(simple_chain),
+                                             std::move(val), ln);
+                }
+            }
             // Check if this is a module function call or a method call on a variable.
             // Module calls have known prefixes (multiple dots or known module names).
             // Single-dot names like "q.INIT" could be method calls on local vars.

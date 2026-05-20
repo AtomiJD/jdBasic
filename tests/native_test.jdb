@@ -1153,6 +1153,40 @@ Assert(293, BYTEAT(bn_trim$, 0) = 80)
 Assert(294, BYTEAT(bn_trim$, 6) = 76)
 
 ' ══════════════════════════════════════════════════════════════════
+' Module-qualified indexed assignment (DOOM regression 2026-05-20)
+' ══════════════════════════════════════════════════════════════════
+PRINT "── Module-qualified MOD.ARR[i, j] = v ──"
+
+NATIVE_TEST_MODX.mx_grid[0, 0] = 11
+NATIVE_TEST_MODX.mx_grid[3, 5] = 77
+NATIVE_TEST_MODX.mx_grid[7, 7] = 99
+Assert(298, NATIVE_TEST_MODX.mx_grid_at(0, 0) = 11)
+Assert(299, NATIVE_TEST_MODX.mx_grid_at(3, 5) = 77)
+Assert(300, NATIVE_TEST_MODX.mx_grid_at(7, 7) = 99)
+
+NATIVE_TEST_MODX.mx_row[0]  = 1.5
+NATIVE_TEST_MODX.mx_row[15] = 99.25
+Assert(301, NATIVE_TEST_MODX.mx_row_at(0)  = 1.5)
+Assert(302, NATIVE_TEST_MODX.mx_row_at(15) = 99.25)
+
+NATIVE_TEST_MODX.mx_names$[0] = "alpha"
+NATIVE_TEST_MODX.mx_names$[3] = "delta"
+Assert(303, NATIVE_TEST_MODX.mx_name_at$(0) = "alpha")
+Assert(304, NATIVE_TEST_MODX.mx_name_at$(3) = "delta")
+
+' Write-through-loop also has to work (DOOM's sprite column draw shape).
+DIM mqi AS INTEGER
+DIM mqj AS INTEGER
+FOR mqi = 0 TO 3
+    FOR mqj = 0 TO 3
+        NATIVE_TEST_MODX.mx_grid[mqi, mqj] = mqi * 10 + mqj
+    NEXT mqj
+NEXT mqi
+Assert(305, NATIVE_TEST_MODX.mx_grid_at(0, 0) = 0)
+Assert(306, NATIVE_TEST_MODX.mx_grid_at(2, 3) = 23)
+Assert(307, NATIVE_TEST_MODX.mx_grid_at(3, 3) = 33)
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

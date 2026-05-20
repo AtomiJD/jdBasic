@@ -83,7 +83,7 @@ EXPORT TYPE T_ENEMY
     drop_chance
     sprite_id
 
-    SUB INIT_FROM_MAP(data, asset_path$)
+    SUB INIT_FROM_MAP(data, apath$)
         THIS.id$ = data{"id"}
         THIS.name$ = data{"name"}
         THIS.frame_w = INT(data{"frame_w"})
@@ -101,7 +101,7 @@ EXPORT TYPE T_ENEMY
         THIS.sprite_id = -1
         THIS.sprite_file$ = ""
         IF data{"sprite"} <> "" THEN
-            THIS.sprite_file$ = asset_path$ + data{"sprite"}
+            THIS.sprite_file$ = apath$ + data{"sprite"}
         ENDIF
     ENDSUB
 

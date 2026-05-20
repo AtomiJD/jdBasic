@@ -22,3 +22,23 @@ ENDFUNC
 EXPORT FUNC mx_obj_wrap(s$) AS OBJECT
     RETURN mx_obj(s$)
 ENDFUNC
+
+' Module-qualified indexed-assign regression coverage. Writer in another
+' compilation unit must be able to do `NATIVE_TEST_MODX.mx_grid[i, j] = v`
+' under -c. Pre-2026-05-20 the parser routed this through the no-parens
+' dotted-call branch and the runtime died "Undefined function: ...mx_grid".
+EXPORT DIM mx_grid[8, 8] AS INTEGER
+EXPORT DIM mx_row[16]    AS DOUBLE
+EXPORT DIM mx_names$[4]  AS STRING
+
+EXPORT FUNC mx_grid_at(r AS INTEGER, c AS INTEGER) AS INTEGER
+    RETURN mx_grid[r, c]
+ENDFUNC
+
+EXPORT FUNC mx_row_at(i AS INTEGER) AS DOUBLE
+    RETURN mx_row[i]
+ENDFUNC
+
+EXPORT FUNC mx_name_at$(i AS INTEGER) AS STRING
+    RETURN mx_names$[i]
+ENDFUNC
