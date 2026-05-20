@@ -2325,6 +2325,23 @@ void Parser::module_rename_stmt(Stmt& stmt,
     if (stmt.kind == StmtKind::FUNCTION || stmt.kind == StmtKind::SUB) {
         auto it = func_map.find(stmt.func_name);
         if (it != func_map.end()) stmt.func_name = it->second;
+        // Shadow guard: a SUB/FUNC parameter that has the SAME name as a
+        // module-level variable would be silently rewritten to the global's
+        // namespaced name by the rename pass below, and the function body's
+        // uses of the parameter would resolve to the global instead. The
+        // surface symptom is "the param value is ignored and the body sees
+        // whatever the global holds" - debugged 2026-05-20 on the DOOM
+        // renderer's `DrawWallStrip(tex_name$ AS STRING)` colliding with
+        // the module's `DIM tex_name$[...]`. Catch it at parse time.
+        for (auto& p : stmt.params) {
+            if (var_map.count(p.name)) {
+                throw std::runtime_error("Parse error at line " +
+                    std::to_string(stmt.line) +
+                    ": parameter '" + p.name + "' in '" + stmt.func_name +
+                    "' shadows a module-level variable of the same name; "
+                    "rename the parameter to avoid silent name capture.");
+            }
+        }
     }
 
     // Rename TYPE declarations: type name + method names
