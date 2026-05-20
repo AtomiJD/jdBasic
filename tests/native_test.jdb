@@ -1058,6 +1058,23 @@ Assert(274, sea_typed$[0] + sea_typed$[2] = "alphagamma")
 sea_typed$[1] = "delta"
 Assert(275, sea_typed$[1] = "delta")
 
+' Regression 2026-05-20 (second pass): assignment to a top-level `arr$[i]`
+' from inside a SUB silently dropped under -c. Root cause was the pre-pass
+' force-tagging any $-suffix DIM as STR scalar, even when the RHS was
+' ZEROS([N]) - codegen_index_assign's guard then early-returned because
+' the var wasn't tagged ARR. Production trigger was the DOOM port's
+' module structure (W_WAD.INIT_NAMES → write into module-level array).
+DIM sea_outer$[5] AS STRING
+SUB sea_fill()
+    sea_outer$[0] = "outer0"
+    sea_outer$[2] = "outer2"
+    sea_outer$[4] = "outer4"
+ENDSUB
+sea_fill()
+Assert(2751, sea_outer$[0] = "outer0")
+Assert(2752, sea_outer$[2] = "outer2")
+Assert(2753, sea_outer$[4] = "outer4")
+
 ' ── 65. BINARY-SAFE MID$ / INSTR / CHR$(0) ───────────────────
 '   Regression 2026-05-20: jdb_mid_lax / jdb_instr used strlen()
 '   internally, so any slice past the first 0x00 byte of a BINREADER$

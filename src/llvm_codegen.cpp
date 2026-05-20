@@ -2190,7 +2190,16 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 }
                 // Variables ending with $ are strings by convention,
                 // regardless of what infer_tag picked up from the RHS.
-                if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$') {
+                // EXCEPTION: `DIM names$[N] AS STRING` desugars to ZEROS([N])
+                // and is a string ARRAY, not a string scalar. Forcing STR
+                // here made codegen_index_assign early-return (its guard
+                // requires tag == ARR/NATIVE_MAP/RUNTIME), silently dropping
+                // every `names$[i] = "..."` write from inside SUB bodies.
+                bool is_array_dim =
+                    stmt->expr && stmt->expr->kind == ExprKind::CALL &&
+                    stmt->expr->func_name == "ZEROS";
+                if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$' &&
+                    !is_array_dim) {
                     tag = JD_TAG_STR;
                     tag_known = true;
                 }
