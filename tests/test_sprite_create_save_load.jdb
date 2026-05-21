@@ -1,0 +1,81 @@
+' ── SPRITE.CREATE / SETBUFFER / SETPIXEL / SAVE / reload roundtrip ──
+' Graphics-touching test: runs in interpreter; SCREEN window is tiny.
+
+SCREEN 16, 16, "sprite-create-test"
+
+' ── Test 1: 2x2 SETBUFFER roundtrip ─────────────────────────────
+PRINT "=== Test 1: 2x2 buffer roundtrip ==="
+DIM sid = SPRITE.CREATE(2, 2)
+PRINT "Created sprite id ="; sid
+
+' 2x2 RGBA pattern: red, green, blue, white
+DIM buf = [255,0,0,255,  0,255,0,255,  0,0,255,255,  255,255,255,255]
+SPRITE.SETBUFFER sid, buf
+
+DIM tmppath$ = "test_sprite_roundtrip.png"
+SPRITE.SAVE sid, tmppath$
+PRINT "Saved to "; tmppath$
+
+DIM loaded = SPRITE.LOAD(tmppath$)
+PRINT "Loaded back, id ="; loaded
+DIM lw = SPRITE.WIDTH(loaded)
+DIM lh = SPRITE.HEIGHT(loaded)
+PRINT "Loaded width ="; lw; " height ="; lh
+IF lw <> 2 THEN THROW "FAIL: width mismatch (expected 2)"
+IF lh <> 2 THEN THROW "FAIL: height mismatch (expected 2)"
+PRINT "OK"
+SPRITE.DELETE sid
+SPRITE.DELETE loaded
+KILL tmppath$
+
+' ── Test 2: SPRITE.SETPIXEL smoke test ──────────────────────────
+PRINT ""
+PRINT "=== Test 2: SETPIXEL smoke ==="
+DIM sid2 = SPRITE.CREATE(4, 4)
+SPRITE.SETPIXEL sid2, 1, 1, 255, 0, 0, 255
+SPRITE.SETPIXEL sid2, 2, 2, 0, 255, 0, 128
+SPRITE.SETPIXEL sid2, 0, 3, 0, 0, 255, 255
+DIM savpath$ = "test_sprite_pixel.png"
+SPRITE.SAVE sid2, savpath$
+DIM check = SPRITE.LOAD(savpath$)
+IF SPRITE.WIDTH(check) <> 4 THEN THROW "FAIL: 4x4 sprite width wrong"
+PRINT "OK"
+SPRITE.DELETE sid2
+SPRITE.DELETE check
+KILL savpath$
+
+' ── Test 3: SETBUFFER length mismatch raises ───────────────────
+PRINT ""
+PRINT "=== Test 3: buffer length mismatch ==="
+DIM sid3 = SPRITE.CREATE(4, 4)
+DIM caught = 0
+TRY
+    DIM badbuf = [1, 2, 3]
+    SPRITE.SETBUFFER sid3, badbuf
+    THROW "FAIL: SETBUFFER should have raised"
+CATCH
+    caught = 1
+    PRINT "Caught expected error: "; ERRMSG$
+ENDTRY
+IF caught <> 1 THEN THROW "FAIL: CATCH did not fire"
+PRINT "OK"
+SPRITE.DELETE sid3
+
+' ── Test 4: SETPIXEL out-of-bounds raises ──────────────────────
+PRINT ""
+PRINT "=== Test 4: setpixel out of bounds ==="
+DIM sid4 = SPRITE.CREATE(4, 4)
+DIM oob = 0
+TRY
+    SPRITE.SETPIXEL sid4, 99, 0, 0, 0, 0, 255
+    THROW "FAIL: SETPIXEL(99,0) should have raised"
+CATCH
+    oob = 1
+    PRINT "Caught expected error: "; ERRMSG$
+ENDTRY
+IF oob <> 1 THEN THROW "FAIL: oob CATCH did not fire"
+PRINT "OK"
+SPRITE.DELETE sid4
+
+PRINT ""
+PRINT "ALL SPRITE.CREATE TESTS PASSED"

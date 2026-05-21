@@ -1686,12 +1686,28 @@ Syntax: SPRITE.GET_Y(instance_id)
 Description: Returns the Y coordinate of a sprite instance.
 
 [SPRITE.LOAD]
-Syntax: SPRITE.LOAD(type_id, "filename.png")
-Description: Loads a sprite image from a file and assigns it a type ID.
+Syntax: SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id
+Description: Loads a sprite image (optionally as a spritesheet with the given frame size) and returns its sprite id.
 
 [SPRITE.LOAD_ASEPRITE]
 Syntax: SPRITE.LOAD_ASEPRITE(type_id, "filename.json")
 Description: Loads a sprite sheet and animation data from an Aseprite export.
+
+[SPRITE.CREATE]
+Syntax: SPRITE.CREATE(w, h) -> sprite_id
+Description: Allocates a new transparent sprite texture of size w x h (1..4096) and returns its sprite id. Fill with SPRITE.SETPIXEL or SPRITE.SETBUFFER, persist via SPRITE.SAVE.
+
+[SPRITE.SETPIXEL]
+Syntax: SPRITE.SETPIXEL(id, x, y, r, g, b, a)
+Description: Writes one RGBA pixel into a SPRITE.CREATE'd sprite. Uploads the texture after the write; use SPRITE.SETBUFFER for bulk fills.
+
+[SPRITE.SETBUFFER]
+Syntax: SPRITE.SETBUFFER(id, rgba_array)
+Description: Bulk RGBA-fill from a flat array of length width*height*4. Length mismatch raises an error; values clamped to 0..255.
+
+[SPRITE.SAVE]
+Syntax: SPRITE.SAVE(id, path$)
+Description: Writes the CPU RGBA buffer of a SPRITE.CREATE'd sprite to a PNG file. For SPRITE.LOAD'd images, use GFX.SAVE_IMAGE instead.
 
 [SPRITE.MOVE]
 Syntax: SPRITE.MOVE(instance_id, x, y)

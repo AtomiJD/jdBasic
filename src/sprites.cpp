@@ -18,6 +18,17 @@ std::map<int, Sprite> g_sprites;
 int g_next_sprite_id = 1;
 static Uint64 g_last_update_tick = 0;
 
+// AI-created sprites carry a CPU-side RGBA buffer in addition to the
+// GPU texture. SETPIXEL / SETBUFFER mutate the buffer and SDL_UpdateTexture
+// uploads. SAVE reads from the buffer (no render-target round-trip).
+struct SpritePixels {
+    int width;
+    int height;
+    std::vector<Uint8> rgba;   // width * height * 4, RGBA byte order
+};
+
+static std::map<int, SpritePixels> g_sprite_pixels;
+
 Sprite& get_sprite(const char* fn, int id) {
     auto it = g_sprites.find(id);
     if (it == g_sprites.end())
@@ -101,6 +112,149 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_i64(sid);
     });
 
+    // SPRITE.CREATE(w, h) — allocate a blank streaming texture + CPU pixel
+    // buffer. Returns the new sprite id. Fill via SPRITE.SETPIXEL/SETBUFFER
+    // and persist via SPRITE.SAVE.
+    vm.register_native("SPRITE.CREATE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        ensure_screen("SPRITE.CREATE");
+        int w = (int)args[0].to_int();
+        int h = (int)args[1].to_int();
+        if (w <= 0 || h <= 0 || w > 4096 || h > 4096)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "SPRITE.CREATE: width/height must be 1..4096");
+
+        SDL_Texture* tex = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_RGBA32,
+                                             SDL_TEXTUREACCESS_STREAMING, w, h);
+        if (!tex)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("SPRITE.CREATE: ") + SDL_GetError());
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+
+        int tid = g_next_image_id++;
+        g_images[tid] = tex;
+
+        SpritePixels px;
+        px.width = w;
+        px.height = h;
+        px.rgba.assign((size_t)w * h * 4, 0);   // transparent black
+        SDL_UpdateTexture(tex, nullptr, px.rgba.data(), w * 4);
+
+        int sid = g_next_sprite_id++;
+        Sprite sp{};
+        sp.texture_id = tid;
+        sp.x = 0; sp.y = 0;
+        sp.vx = 0; sp.vy = 0;
+        sp.scale_x = 1.0f; sp.scale_y = 1.0f;
+        sp.origin_x = 0; sp.origin_y = 0;
+        sp.angle = 0;
+        sp.alpha = 255;
+        sp.visible = true;
+        sp.flip_h = false; sp.flip_v = false;
+        sp.tex_w = (float)w; sp.tex_h = (float)h;
+        sp.w = (float)w; sp.h = (float)h;
+        sp.frame_w = 0; sp.frame_h = 0; sp.cols = 1;
+        sp.current_frame = 0;
+        sp.zorder = 0;
+        sp.current_anim = -1;
+        sp.anim_timer = 0; sp.playing = false;
+        sp.gravity = 0; sp.on_ground = false;
+        g_sprites[sid] = sp;
+
+        g_sprite_pixels[sid] = std::move(px);
+        return Value::make_i64(sid);
+    });
+
+    // SPRITE.SETPIXEL(id, x, y, r, g, b, a) — write one RGBA pixel.
+    // Uploads the whole texture afterwards; convenient for incremental
+    // edits, slow for bulk fills (use SETBUFFER for those).
+    vm.register_native("SPRITE.SETPIXEL", 7, 7, [](const std::vector<Value>& args) -> Value {
+        int sid = (int)args[0].to_int();
+        auto it = g_sprite_pixels.find(sid);
+        if (it == g_sprite_pixels.end())
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "SPRITE.SETPIXEL: sprite " + std::to_string(sid) +
+                " was not created via SPRITE.CREATE");
+        SpritePixels& px = it->second;
+        int x = (int)args[1].to_int();
+        int y = (int)args[2].to_int();
+        if (x < 0 || x >= px.width || y < 0 || y >= px.height)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "SPRITE.SETPIXEL: pixel (" + std::to_string(x) + "," +
+                std::to_string(y) + ") out of bounds for " +
+                std::to_string(px.width) + "x" + std::to_string(px.height));
+        size_t i = ((size_t)y * px.width + x) * 4;
+        px.rgba[i + 0] = (Uint8)args[3].to_int();
+        px.rgba[i + 1] = (Uint8)args[4].to_int();
+        px.rgba[i + 2] = (Uint8)args[5].to_int();
+        px.rgba[i + 3] = (Uint8)args[6].to_int();
+
+        Sprite& sp = get_sprite("SPRITE.SETPIXEL", sid);
+        SDL_Texture* tex = g_images[sp.texture_id];
+        SDL_UpdateTexture(tex, nullptr, px.rgba.data(), px.width * 4);
+        return Value::make_none();
+    });
+
+    // SPRITE.SETBUFFER(id, rgba_array) — bulk fill from a flat RGBA array
+    // of length width*height*4. Values clamped to 0..255.
+    vm.register_native("SPRITE.SETBUFFER", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int sid = (int)args[0].to_int();
+        auto it = g_sprite_pixels.find(sid);
+        if (it == g_sprite_pixels.end())
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "SPRITE.SETBUFFER: sprite " + std::to_string(sid) +
+                " was not created via SPRITE.CREATE");
+        SpritePixels& px = it->second;
+        if (args[1].type != ValueType::ARRAY)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "SPRITE.SETBUFFER: second arg must be a flat RGBA array");
+        auto& elems = args[1].as_array()->elements;
+        size_t expected = (size_t)px.width * px.height * 4;
+        if (elems.size() != expected)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "SPRITE.SETBUFFER: array length " + std::to_string(elems.size()) +
+                " does not match " + std::to_string(px.width) + "x" +
+                std::to_string(px.height) + "x4 = " + std::to_string(expected));
+        for (size_t i = 0; i < expected; ++i) {
+            int v = (int)elems[i].to_int();
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            px.rgba[i] = (Uint8)v;
+        }
+
+        Sprite& sp = get_sprite("SPRITE.SETBUFFER", sid);
+        SDL_Texture* tex = g_images[sp.texture_id];
+        SDL_UpdateTexture(tex, nullptr, px.rgba.data(), px.width * 4);
+        return Value::make_none();
+    });
+
+    // SPRITE.SAVE(id, path$) — persist the CPU pixel buffer to a PNG.
+    // Only works on sprites originally created via SPRITE.CREATE; for
+    // SPRITE.LOAD'd images use GFX.SAVE_IMAGE instead.
+    vm.register_native("SPRITE.SAVE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int sid = (int)args[0].to_int();
+        auto it = g_sprite_pixels.find(sid);
+        if (it == g_sprite_pixels.end())
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                "SPRITE.SAVE: sprite " + std::to_string(sid) +
+                " was not created via SPRITE.CREATE");
+        SpritePixels& px = it->second;
+        std::string path = resolve_asset_path(args[1].as_string()->data);
+
+        SDL_Surface* surf = SDL_CreateSurfaceFrom(px.width, px.height,
+                                                  SDL_PIXELFORMAT_RGBA32,
+                                                  px.rgba.data(),
+                                                  px.width * 4);
+        if (!surf)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("SPRITE.SAVE: ") + SDL_GetError());
+        bool ok = IMG_SavePNG(surf, path.c_str());
+        SDL_DestroySurface(surf);
+        if (!ok)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("SPRITE.SAVE: ") + SDL_GetError());
+        return Value::make_none();
+    });
+
     vm.register_native("SPRITE.POS", 3, 3, [](const std::vector<Value>& args) -> Value {
         Sprite& sp = get_sprite("SPRITE.POS", (int)args[0].to_int());
         sp.x = (float)args[1].to_double();
@@ -150,6 +304,7 @@ void register_sprite_builtins(VM& vm) {
     vm.register_native("SPRITE.DELETE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
         g_sprites.erase(id);
+        g_sprite_pixels.erase(id);
         return Value::make_none();
     });
 

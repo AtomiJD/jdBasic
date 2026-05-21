@@ -2190,9 +2190,12 @@ LOOP  UNTIL k$ = "q" OR k$ = "Q"
 
 #### Sprites and Maps
 
-* **`SPRITE.LOAD type_id, "filename.png"`**: Loads a sprite image from a file and assigns it a type ID.
+* **`SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id`**: Loads a sprite image (optionally a spritesheet with the given frame size) and returns the sprite id. The returned id is what every other SPRITE.* call expects.
 * **`SPRITE.LOAD_ASEPRITE type_id, "filename.json"`**: Loads a sprite sheet and animation data from an Aseprite export.
-* **`SPRITE.CREATE(type_id, x, y)`**: Creates an instance of a sprite at a given position and returns its unique instance ID.
+* **`SPRITE.CREATE(w, h) -> sprite_id`**: Creates a new empty (transparent) sprite texture with the given dimensions and returns the sprite id. The sprite is registered like one loaded via SPRITE.LOAD - the same SPRITE.POS / SPRITE.DRAW / SPRITE.DELETE work. Width and height must be 1..4096. Combine with SPRITE.SETPIXEL or SPRITE.SETBUFFER to fill in the artwork at runtime, then optionally SPRITE.SAVE to write a PNG.
+* **`SPRITE.SETPIXEL id, x, y, r, g, b, a`**: Set one pixel on a SPRITE.CREATE'd sprite. r/g/b/a are 0-255. Out-of-bounds raises a runtime error. The texture is uploaded after each call, so SETPIXEL is convenient but slow for large updates - use SPRITE.SETBUFFER for bulk fills.
+* **`SPRITE.SETBUFFER id, rgba_array`**: Bulk RGBA-fill. Pass a flat 1-D array `[r0, g0, b0, a0, r1, g1, b1, a1, ...]` with `width * height * 4` entries. Length mismatch raises a runtime error. Values are clamped to 0..255. This is the fast path and the one Claude uses when generating sprites via MCP.
+* **`SPRITE.SAVE id, path$`**: Write the sprite's RGBA buffer as a PNG. Only works on sprites created via SPRITE.CREATE (not SPRITE.LOAD'd sprites; for those use GFX.SAVE_IMAGE instead). Relative paths resolve against CWD then the script directory, like every other asset-aware builtin.
 * **`SPRITE.MOVE instance_id, x, y`**: Moves a sprite instance to a new position.
 * **`SPRITE.SET_VELOCITY instance_id, vx, vy`**: Sets the velocity for a sprite instance for use with `SPRITE.UPDATE`.
 * **`SPRITE.DELETE instance_id`**: Removes a sprite instance.
