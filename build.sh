@@ -58,7 +58,7 @@ if [ "$WANT_GFX" = "1" ]; then
         $SDL3_DIR/build/libSDL3.a \
         -lfreetype -lharfbuzz -lpng -ljpeg -ltiff -lwebp -lwebpdemux \
         -lm"
-    GFX_SRC="src/graphics.cpp src/tiledmap.cpp"
+    GFX_SRC="src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
 fi
 
 IMGUI_SRC=""
