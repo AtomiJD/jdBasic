@@ -697,6 +697,68 @@ JdbArray* jdb_array_append_arr(JdbArray* a, JdbArray* b) {
     return r;
 }
 
+// FILLV: bulk in-place fill of a numeric array. memset-speed via std::fill_n
+// over the underlying double buffer. For nested arrays (flag bit 0 set),
+// recursively fills each inner array. Returns the same array for chaining.
+JdbArray* jdb_array_fillv(JdbArray* arr, double val) {
+    if (!arr) return nullptr;
+    if (arr->flags & 1) {
+        for (int64_t i = 0; i < arr->length; i++)
+            jdb_array_fillv(decode_inner(arr->data[i]), val);
+    } else if (arr->length > 0) {
+        std::fill_n(arr->data, arr->length, val);
+    }
+    return arr;
+}
+// (no fprintf — keep runtime quiet)
+
+// COPYV helper: flatten src leaves into a flat double vector.
+static void copyv_flatten(JdbArray* arr, std::vector<double>& out) {
+    if (!arr) return;
+    if (arr->flags & 1) {
+        for (int64_t i = 0; i < arr->length; i++)
+            copyv_flatten(decode_inner(arr->data[i]), out);
+    } else {
+        out.insert(out.end(), arr->data, arr->data + arr->length);
+    }
+}
+
+// COPYV helper: walk dst leaves and assign cyclically from flat src vector.
+static void copyv_assign(JdbArray* arr, const std::vector<double>& src, size_t& si) {
+    if (!arr) return;
+    if (arr->flags & 1) {
+        for (int64_t i = 0; i < arr->length; i++)
+            copyv_assign(decode_inner(arr->data[i]), src, si);
+    } else {
+        for (int64_t i = 0; i < arr->length; i++) {
+            arr->data[i] = src[si % src.size()];
+            si++;
+        }
+    }
+}
+
+// COPYV: bulk in-place copy from src into dst with cyclic broadcast if
+// shapes differ. Memcpy fast-path when both are flat with matching lengths;
+// otherwise recursive descent into nested structures. Never throws on size
+// mismatch — broadcasts/truncates/cycles instead.
+JdbArray* jdb_array_copyv(JdbArray* dst, JdbArray* src) {
+    if (!dst) return nullptr;
+    if (!src) return dst;
+    // Fast path: both flat with matching lengths → single memcpy.
+    if (!(dst->flags & 1) && !(src->flags & 1) &&
+        dst->length == src->length && dst->length > 0) {
+        std::memcpy(dst->data, src->data, dst->length * sizeof(double));
+        return dst;
+    }
+    // General path: flatten src into a leaf-vector, then cyclic-assign.
+    std::vector<double> src_flat;
+    copyv_flatten(src, src_flat);
+    if (src_flat.empty()) return dst;
+    size_t si = 0;
+    copyv_assign(dst, src_flat, si);
+    return dst;
+}
+
 int64_t jdb_array_count(JdbArray* arr, double val) {
     if (!arr) return 0;
     int64_t c = 0;

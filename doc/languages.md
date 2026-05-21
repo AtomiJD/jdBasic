@@ -1453,6 +1453,9 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 
 * **`ZEROS(shape_vector) -> array`**: Creates an array of the given shape filled with zeros.
 * **`ONES(shape_vector) -> array`**: Creates an array of the given shape filled with ones.
+* **`FILLV arr, value`** / **`FILLV(arr, value) -> arr`**: **In-place** bulk fill of every leaf element of `arr` with `value`. Recurses into nested arrays (2D, 3D, ...). Returns the same array handle (the function form is useful for chaining; statement form is the typical use). Works in interpreter AND `-c` native compile — native uses `memset`/`std::fill_n` over the flat double buffer for memset-speed (~50× faster than `ZEROS([...])` + slice-assign loop for large arrays). String / Object values not supported.
+* **`COPYV dst, src`** / **`COPYV(dst, src) -> dst`**: **In-place** bulk copy from `src` into `dst`. Same-shape fast path is a single `memcpy`. On shape mismatch broadcasts cyclically (`dst[i] = src[i mod len(src)]`) — never throws. `src` may also be a scalar, in which case `COPYV` behaves like `FILLV`. Returns `dst` for chaining.
+  > **Mutator note:** `FILLV` and `COPYV` modify the destination array's storage in place (unlike `ZEROS` which allocates a fresh array, or `dst = src + 0` which deep-copies). Use for bulk pixel buffers, visplane resets, and any hot loop where you'd otherwise pay per-element jdBasic overhead.
 * **`RANGE(start, stop, [step=1]) -> vector`**: Python-style range — returns `[start, start+step, ..., stop)`.
 * **`LINSPACE(start, stop, n) -> vector`**: Returns `n` evenly spaced samples over `[start, stop]` inclusive.
 * **`FLATTEN(array) -> vector`**: Flattens a multi-dimensional array into a 1D vector.

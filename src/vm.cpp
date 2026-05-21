@@ -609,7 +609,7 @@ bool jdb_no_vectorize(const std::string& name) {
     static const std::unordered_set<std::string> set = {
         "ZEROS", "ONES", "__MAKE_UDT_ARRAY__",
         "IOTA", "RESHAPE", "LEN", "LENV", "PUSH", "POP",
-        "TENSOR", "TYPEOF", "APPEND", "DIFF",
+        "TENSOR", "TYPEOF", "APPEND", "DIFF", "FILLV", "COPYV",
         "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL",
         "SCAN", "SELECT", "FILTER", "REDUCE",
         "TAKE_WHILE", "DROP_WHILE", "CHUNK", "ENUMERATE", "GROUPBY",
@@ -3559,6 +3559,71 @@ void VM::register_builtins() {
         Value v = arr->elements.back();
         arr->elements.pop_back();
         return v;
+    });
+
+    // ── FILLV / COPYV — bulk array mutators ─────────────────────────
+    // FILLV arr, value         → fills every leaf element with value
+    // COPYV dst, src           → copies src into dst with cyclic broadcast
+    // Both work as statement (no return needed) AND function form
+    // (returns dst for chaining: result = FILLV(arr, 0)).
+    register_native("FILLV", 2, 2, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::ARRAY)
+            throw jdError(ErrCode::TYPE_MISMATCH, "FILLV: arg 1 must be ARRAY");
+        if (args[1].type == ValueType::STRING)
+            throw jdError(ErrCode::TYPE_MISMATCH, "FILLV: STRING value not supported");
+        if (args[1].type == ValueType::OBJECT)
+            throw jdError(ErrCode::TYPE_MISMATCH, "FILLV: OBJECT value not supported");
+        const Value& fill_val = args[1];
+        std::function<void(ArrayObj*)> fill = [&](ArrayObj* arr) {
+            for (auto& elem : arr->elements) {
+                if (elem.type == ValueType::ARRAY) fill(elem.as_array());
+                else elem = fill_val;
+            }
+        };
+        fill(args[0].as_array());
+        return args[0];
+    });
+    register_native("COPYV", 2, 2, [](const std::vector<Value>& args) -> Value {
+        if (args[0].type != ValueType::ARRAY)
+            throw jdError(ErrCode::TYPE_MISMATCH, "COPYV: arg 1 (dst) must be ARRAY");
+        // src can be scalar → behaves like FILLV (single value broadcast)
+        if (args[1].type != ValueType::ARRAY) {
+            if (args[1].type == ValueType::STRING)
+                throw jdError(ErrCode::TYPE_MISMATCH, "COPYV: STRING source not supported");
+            if (args[1].type == ValueType::OBJECT)
+                throw jdError(ErrCode::TYPE_MISMATCH, "COPYV: OBJECT source not supported");
+            const Value& fill_val = args[1];
+            std::function<void(ArrayObj*)> fill = [&](ArrayObj* arr) {
+                for (auto& elem : arr->elements) {
+                    if (elem.type == ValueType::ARRAY) fill(elem.as_array());
+                    else elem = fill_val;
+                }
+            };
+            fill(args[0].as_array());
+            return args[0];
+        }
+        // Flatten src to a leaf-vector; cyclic-broadcast into dst leaves.
+        std::vector<Value> src_flat;
+        std::function<void(const ArrayObj*)> flatten = [&](const ArrayObj* arr) {
+            for (auto& elem : arr->elements) {
+                if (elem.type == ValueType::ARRAY) flatten(elem.as_array());
+                else src_flat.push_back(elem);
+            }
+        };
+        flatten(args[1].as_array());
+        if (src_flat.empty()) return args[0];
+        size_t si = 0;
+        std::function<void(ArrayObj*)> copy_in = [&](ArrayObj* arr) {
+            for (auto& elem : arr->elements) {
+                if (elem.type == ValueType::ARRAY) copy_in(elem.as_array());
+                else {
+                    elem = src_flat[si % src_flat.size()];
+                    si++;
+                }
+            }
+        };
+        copy_in(args[0].as_array());
+        return args[0];
     });
 
     // Type checking

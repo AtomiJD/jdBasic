@@ -1187,6 +1187,78 @@ Assert(306, NATIVE_TEST_MODX.mx_grid_at(2, 3) = 23)
 Assert(307, NATIVE_TEST_MODX.mx_grid_at(3, 3) = 33)
 
 ' ══════════════════════════════════════════════════════════════════
+' FILLV / COPYV bulk array mutators (2026-05-21)
+' ══════════════════════════════════════════════════════════════════
+PRINT "── FILLV / COPYV ──"
+
+' FILLV statement form, INTEGER 1D
+DIM fv1[5] AS INTEGER
+FILLV fv1, 42
+Assert(308, fv1[0] = 42)
+Assert(309, fv1[4] = 42)
+
+' FILLV function form returns same array handle
+DIM fv2[4] AS INTEGER
+DIM fv2_ref = FILLV(fv2, 7)
+Assert(310, fv2[0] = 7)
+Assert(311, fv2_ref[3] = 7)
+fv2_ref[0] = 99
+Assert(312, fv2[0] = 99)   ' aliasing — fv2_ref is fv2
+
+' FILLV 2D
+DIM fv3[3, 3] AS INTEGER
+FILLV fv3, 11
+Assert(313, fv3[0, 0] = 11)
+Assert(314, fv3[1, 1] = 11)
+Assert(315, fv3[2, 2] = 11)
+
+' FILLV DOUBLE
+DIM fv4[4] AS DOUBLE
+FILLV fv4, 3.14
+Assert(316, ABS(fv4[0] - 3.14) < 0.0001)
+Assert(317, ABS(fv4[3] - 3.14) < 0.0001)
+
+' COPYV same shape
+DIM cv_src[5] AS INTEGER
+cv_src[0] = 10
+cv_src[1] = 20
+cv_src[2] = 30
+cv_src[3] = 40
+cv_src[4] = 50
+DIM cv_dst[5] AS INTEGER
+COPYV cv_dst, cv_src
+Assert(318, cv_dst[0] = 10)
+Assert(319, cv_dst[2] = 30)
+Assert(320, cv_dst[4] = 50)
+
+' COPYV cyclic (src shorter than dst)
+DIM cv_s2[3] AS INTEGER
+cv_s2[0] = 1
+cv_s2[1] = 2
+cv_s2[2] = 3
+DIM cv_d2[7] AS INTEGER
+COPYV cv_d2, cv_s2
+Assert(321, cv_d2[0] = 1)
+Assert(322, cv_d2[1] = 2)
+Assert(323, cv_d2[2] = 3)
+Assert(324, cv_d2[3] = 1)   ' wraps
+Assert(325, cv_d2[6] = 1)   ' wraps again
+
+' COPYV truncate (src longer)
+DIM cv_s3[10] AS INTEGER
+FILLV cv_s3, 9
+DIM cv_d3[4] AS INTEGER
+COPYV cv_d3, cv_s3
+Assert(326, cv_d3[0] = 9)
+Assert(327, cv_d3[3] = 9)
+
+' COPYV with scalar (= FILLV semantic)
+DIM cv_d4[3] AS INTEGER
+COPYV cv_d4, 77
+Assert(328, cv_d4[0] = 77)
+Assert(329, cv_d4[2] = 77)
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

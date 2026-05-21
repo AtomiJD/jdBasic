@@ -9,7 +9,7 @@
 inline const std::unordered_set<std::string>& native_names() {
     static const std::unordered_set<std::string> ns = {
         "ABS", "ACOS", "AI", "ALL",
-        "ALPHA", "ANIM", "ANY", "APPEND",
+        "ALPHA", "ANIM", "ANY", "APPEND", "COPYV", "FILLV",
         "ARGMAX", "ARGS", "ASC", "ASIN",
         "ATAN", "ATAN2", "AUDIO", "AVAILABLE",
         "AVAIL_HEIGHT", "AVAIL_WIDTH", "AWAIT", "AXIS",

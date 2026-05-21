@@ -222,6 +222,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
     reg("jdb_array_append_arr","__append_arr", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_array_fillv", "FILLV",       i8_ptr_type, {i8_ptr_type, f64_type}, 3);
+    reg("jdb_array_copyv", "COPYV",       i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     // Tagged variants — preserve per-element JdTag so arr[i] reads return
     // the right RUNTIME-tag for downstream coerce_to / TYPEOF / FMT$.
     reg("jdb_array_append_tagged","__arr_append_tagged",
@@ -7714,7 +7716,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "ZEROS", "ONES", "__MAKE_UDT_ARRAY__", "IOTA", "RESHAPE", "TENSOR",
         "RANGE", "LINSPACE",
         // Array/matrix operations that consume arrays as a whole
-        "LEN", "PUSH", "POP", "APPEND", "DIFF", "TAKE", "DROP", "REVERSE",
+        "LEN", "PUSH", "POP", "APPEND", "DIFF", "TAKE", "DROP", "REVERSE", "FILLV", "COPYV",
         "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE",
         "GRADE", "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE", "SOLVE",
         "INVERT", "CONVOLVE", "PLACE", "OUTER", "ROTATE", "SHIFT", "XSORT",
@@ -8132,6 +8134,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // more positional arg => encoding string at the tail.
     if (upper == "TXTREADER$" && expr.args.size() == 2) upper = "__TXTREADER_ENC";
     else if (upper == "TXTWRITER" && expr.args.size() == 4) upper = "__TXTWRITER_ENC";
+    // COPYV(dst, scalar) → reroute to FILLV (= scalar broadcast). Detection
+    // by inferred type of arg[1]: if not ARRAY-typed, treat as fill.
+    else if (upper == "COPYV" && expr.args.size() == 2 && expr.args[1]) {
+        StaticType src_ty = infer_expr_type(*expr.args[1]);
+        if (src_ty.kind != StaticType::Kind::ARRAY &&
+            src_ty.kind != StaticType::Kind::UNKNOWN) {
+            upper = "FILLV";
+        }
+    }
     auto rit = runtime_funcs.find(upper);
     if (rit != runtime_funcs.end() &&
         expr.args.size() <= LLVMCountParamTypes(rit->second.fn_type)) {
