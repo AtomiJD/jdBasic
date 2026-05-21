@@ -1,0 +1,44 @@
+' SPRITE.CREATE live demo driver
+'
+' Opens a 256x256 window and renders every sprite registered via
+' SPRITE.CREATE / SPRITE.LOAD until either q is pressed or `running`
+' is set to 0 from outside (jdb_eval).
+'
+' Used by the Phase-2 vibe-coding test: Claude injects code via
+' jdb_eval that calls SPRITE.CREATE + SPRITE.SETBUFFER to draw a
+' procedurally-generated sprite live into this loop.
+
+OPTION "EXPLICIT"
+
+SCREEN 256, 256, "SPRITE.CREATE - live test"
+SETFONT "C:/Windows/Fonts/arial.ttf", 14
+
+DIM running AS INTEGER = 1
+DIM K$ AS STRING
+
+PRINT "Driver running. Inject sprite-creation code via jdb_eval."
+
+DO
+    DRAWCOLOR 18, 22, 30
+    CLS
+
+    ' Soft grid so it's obvious the window is alive
+    DRAWCOLOR 40, 48, 60
+    DIM i AS INTEGER
+    FOR i = 0 TO 256 STEP 32
+        LINE i, 0, i, 256
+        LINE 0, i, 256, i
+    NEXT i
+
+    ' Headline
+    DRAWCOLOR 200, 220, 255
+    TEXT 8, 8, "SPRITE.CREATE test"
+
+    ' Draw every sprite (CREATE and LOAD both register here)
+    SPRITE.DRAW_ALL
+
+    SCREENFLIP
+    SLEEP 16
+
+    K$ = INKEY$()
+LOOP UNTIL LCASE$(K$) = "q" OR running = 0
