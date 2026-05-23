@@ -19,6 +19,11 @@
 #include "vm.h"
 #include "value.h"
 
+// Defined in main.cpp / vm_bridge.cpp — directory of the currently-loaded
+// script. Set by tool_jdb_load so that IMPORT inside a loaded script can
+// resolve modules that live next to it.
+extern std::string g_base_dir;
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -477,6 +482,14 @@ Value tool_jdb_load(VM& vm, const Value& args) {
         + std::to_string(source.size()) + " bytes — script runs until first "
         "STOP or running=0]";
     g_last_loaded_path = path;  // jdb_recompile defaults to this
+    // Set g_base_dir to the loaded script's directory so IMPORT resolves
+    // modules that live next to the script (matches CLI behaviour in
+    // main.cpp — without this, jdb_load'd scripts with IMPORT silently
+    // abort because the module file can't be found via cwd alone).
+    {
+        auto sep = path.find_last_of("/\\");
+        g_base_dir = (sep != std::string::npos) ? path.substr(0, sep) : ".";
+    }
     post_job([source, path](VM& v) {
         // Discard PRINT during async run — the load tool already returned.
         // For live-tweak workflows, use jdb_eval after STOP to read state.

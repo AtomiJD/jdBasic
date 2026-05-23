@@ -123,7 +123,14 @@ struct Envelope {
                 break;
             case EnvState::DECAY:
                 level -= dt / std::max(decay, 0.001f);
-                if (level <= sustain) { level = sustain; state = EnvState::SUSTAIN; }
+                if (level <= sustain) {
+                    level = sustain;
+                    // Percussive / one-shot envelopes (sustain ≈ 0) should
+                    // self-terminate so the voice slot can be reused. With
+                    // sustain > 0 we hold for gate_off.
+                    if (sustain <= 0.0001f) state = EnvState::OFF;
+                    else state = EnvState::SUSTAIN;
+                }
                 break;
             case EnvState::SUSTAIN: break;
             case EnvState::RELEASE:
