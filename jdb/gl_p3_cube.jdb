@@ -1,0 +1,91 @@
+' OpenGL Phase 3 demo - rotating wireframe cube.
+' Demonstrates mat4 stack (proj * view * model), GL.UNIFORM.MAT4,
+' GL.DRAW.LINES. ESC via ON "KEYDOWN" (no POLLEVENT).
+
+OPTION "EXPLICIT"
+
+GL.WINDOW(800, 600, "GL P3 - rotating cube")
+GL.ENABLE("DEPTH_TEST")
+
+DIM vs$ AS STRING = "#version 330 core" + CHR$(10) + _
+                    "layout(location=0) in vec3 aPos;" + CHR$(10) + _
+                    "uniform mat4 uMVP;" + CHR$(10) + _
+                    "void main() { gl_Position = uMVP * vec4(aPos, 1.0); }"
+
+DIM fs$ AS STRING = "#version 330 core" + CHR$(10) + _
+                    "out vec4 FragColor;" + CHR$(10) + _
+                    "uniform vec4 uColor;" + CHR$(10) + _
+                    "void main() { FragColor = uColor; }"
+
+DIM prog AS INTEGER = GL.SHADER(vs$, fs$)
+
+' 12 edges of a unit cube = 24 vertices = 72 floats.
+DIM cube = [_
+    -1,-1,-1,  1,-1,-1,  _
+     1,-1,-1,  1, 1,-1,  _
+     1, 1,-1, -1, 1,-1,  _
+    -1, 1,-1, -1,-1,-1,  _
+    -1,-1, 1,  1,-1, 1,  _
+     1,-1, 1,  1, 1, 1,  _
+     1, 1, 1, -1, 1, 1,  _
+    -1, 1, 1, -1,-1, 1,  _
+    -1,-1,-1, -1,-1, 1,  _
+     1,-1,-1,  1,-1, 1,  _
+    -1, 1,-1, -1, 1, 1,  _
+     1, 1,-1,  1, 1, 1   _
+]
+
+DIM vao AS INTEGER = GL.VAO()
+DIM vbo AS INTEGER = GL.VBO(cube)
+GL.ATTRIB(0, 3, 3 * 4, 0)        ' position vec3, stride=12, offset=0
+
+DIM running AS INTEGER = 1
+DIM angle   AS DOUBLE  = 0.0
+DIM last_t  AS INTEGER = TICK()
+
+SUB HandleKey(KeyData)
+    DIM k$ AS STRING = KeyData[0]{"key"}
+    PRINT "KEY: "; k$
+    IF k$ = "Escape" THEN running = 0
+ENDSUB
+
+SUB HandleQuit(QuitData)
+    running = 0
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+ON "QUIT"    CALL HandleQuit
+
+' Camera + projection are static; rebuild model each frame.
+DIM proj = MAT4.PERSPECTIVE(60.0, 800.0 / 600.0, 0.1, 100.0)
+DIM view = MAT4.LOOKAT(0, 0, 5,   0, 0, 0,   0, 1, 0)
+DIM vp   = MAT4.MUL(proj, view)
+
+PRINT "Cube spinning. ESC to quit."
+
+DO
+    DIM now AS INTEGER = TICK()
+    DIM dt  AS DOUBLE = (now - last_t) / 1000.0
+    last_t = now
+    angle = angle + 1.2 * dt          ' rad/sec around tilted axis
+
+    DIM model = MAT4.IDENTITY()
+    model = MAT4.ROTATE(model, angle, 0.5, 1.0, 0.3)
+    DIM mvp = MAT4.MUL(vp, model)
+
+    GL.CLEAR(15, 20, 35)
+    GL.USE(prog)
+    GL.UNIFORM.MAT4("uMVP",   mvp)
+    GL.UNIFORM.F4(  "uColor", 1.0, 0.75, 0.25, 1.0)
+    GL.VAO.BIND(vao)
+    GL.DRAW.LINES(0, 24)
+    GL.FLIP()
+    SLEEP 16
+LOOP WHILE running = 1
+
+GL.VAO.DELETE(vao)
+GL.BUFFER.DELETE(vbo)
+GL.SHADER.DELETE(prog)
+GL.CLOSE()
+PRINT "done."
+END

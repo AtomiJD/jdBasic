@@ -702,6 +702,17 @@ bool jdb_no_vectorize(const std::string& name) {
         "SPRITE.VELOCITY", "SPRITE.GET_VX", "SPRITE.GET_VY",
         "SPRITE.GROUP", "SPRITE.COLLISIONS", "SPRITE.COLLISION_FIRST",
         "SPRITE.ZORDER", "SPRITE.GRAVITY", "SPRITE.ON_GROUND", "SPRITE.LAND",
+        "GL.WINDOW", "GL.CLOSE", "GL.CLEAR", "GL.FLIP", "GL.VIEWPORT",
+        "GL.ENABLE", "GL.DISABLE",
+        "GL.SHADER", "GL.USE", "GL.SHADER.DELETE",
+        "GL.VBO", "GL.VBO.BIND", "GL.BUFFER.DELETE",
+        "GL.VAO", "GL.VAO.BIND", "GL.VAO.DELETE",
+        "GL.ATTRIB", "GL.DRAW.TRIS", "GL.DRAW.LINES", "GL.DRAW.TRIS.IDX",
+        "GL.UNIFORM.F1", "GL.UNIFORM.F3", "GL.UNIFORM.F4", "GL.UNIFORM.I1",
+        "GL.UNIFORM.MAT4",
+        "GL.TEX.LOAD", "GL.TEX.BIND", "GL.TEX.DELETE", "GL.EBO",
+        "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
+        "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
         "TILEMAP.CREATE", "TILEMAP.DRAW", "TILEMAP.SET",
         "TILEMAP.GET", "TILEMAP.SIZE", "TILEMAP.COLLIDES",
         "TILEMAP.TILE_AT",
@@ -7526,7 +7537,15 @@ void VM::event_poll() {
     extern bool gfx_is_active();
     extern bool gfx_has_pending_events();
     extern std::vector<SDL_Event> gfx_drain_pending_events();
-    if (gfx_is_active()) {
+#ifdef OPENGL
+    // A GL.WINDOW alone (no SCREEN) doesn't create a SDL_Renderer, so
+    // gfx_is_active() would return false and the queue would never drain.
+    extern bool gl_is_active();
+    bool any_window = gfx_is_active() || gl_is_active();
+#else
+    bool any_window = gfx_is_active();
+#endif
+    if (any_window) {
         // Drain the shared event queue that SCREENFLIP and gfx_pump_events
         // already populated. We must NOT call SDL_PollEvent here — that
         // would race with SCREENFLIP's loop and whichever runs first eats

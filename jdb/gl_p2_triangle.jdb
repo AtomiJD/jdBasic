@@ -1,0 +1,59 @@
+' OpenGL Phase 2 demo - first triangle via shader + VBO + VAO.
+' Interleaved positions+colors, color comes from vertex attribute (no uniforms).
+' ESC to quit.
+
+GL.WINDOW(800, 600, "GL P2 - rainbow triangle")
+
+DIM vs$ = "#version 330 core" + CHR$(10) + _
+          "layout(location=0) in vec2 aPos;" + CHR$(10) + _
+          "layout(location=1) in vec3 aColor;" + CHR$(10) + _
+          "out vec3 vColor;" + CHR$(10) + _
+          "void main() {" + CHR$(10) + _
+          "  gl_Position = vec4(aPos, 0.0, 1.0);" + CHR$(10) + _
+          "  vColor = aColor;" + CHR$(10) + _
+          "}"
+
+DIM fs$ = "#version 330 core" + CHR$(10) + _
+          "in vec3 vColor;" + CHR$(10) + _
+          "out vec4 FragColor;" + CHR$(10) + _
+          "void main() {" + CHR$(10) + _
+          "  FragColor = vec4(vColor, 1.0);" + CHR$(10) + _
+          "}"
+
+DIM prog = GL.SHADER(vs$, fs$)
+
+' Vertex data: x, y, r, g, b — three vertices, 5 floats each
+DIM verts = [_
+  -0.6, -0.5, 1.0, 0.0, 0.0, _
+   0.6, -0.5, 0.0, 1.0, 0.0, _
+   0.0,  0.6, 0.0, 0.0, 1.0  _
+]
+
+' Each float is 4 bytes. Stride between vertices = 5 * 4 = 20 bytes.
+DIM vao = GL.VAO()
+DIM vbo = GL.VBO(verts)
+GL.ATTRIB(0, 2, 5 * 4, 0)        ' aPos at offset 0
+GL.ATTRIB(1, 3, 5 * 4, 2 * 4)    ' aColor at offset 8
+
+PRINT "Triangle ready. ESC to quit."
+
+DIM running AS INTEGER = 1
+DO
+    DIM ev$ AS STRING = GFX.POLLEVENT()
+    IF ev$ = "QUIT" THEN running = 0
+    IF ev$ = "KEYDOWN:Escape" THEN running = 0
+
+    GL.CLEAR(20, 25, 40)
+    GL.USE(prog)
+    GL.VAO.BIND(vao)
+    GL.DRAW.TRIS(0, 3)
+    GL.FLIP()
+    SLEEP 16
+LOOP WHILE running = 1
+
+GL.VAO.DELETE(vao)
+GL.BUFFER.DELETE(vbo)
+GL.SHADER.DELETE(prog)
+GL.CLOSE()
+PRINT "done."
+END

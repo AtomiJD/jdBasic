@@ -38,6 +38,9 @@
 #ifdef GFX
 #include "graphics.h"
 #endif
+#ifdef OPENGL
+#include "opengl.h"
+#endif
 #ifdef IMGUI
 #include "gui.h"
 #endif
@@ -296,6 +299,9 @@ static void setup_dynamic_code(VM& vm) {
 #endif
 #ifdef GFX
     register_graphics_builtins(vm);
+#endif
+#ifdef OPENGL
+    register_opengl_builtins(vm);
 #endif
 #ifdef IMGUI
     register_gui_builtins(vm);

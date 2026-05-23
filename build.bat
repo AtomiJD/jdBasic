@@ -83,6 +83,15 @@ for %%A in (%*) do (
         set EXTRA_SRC=!EXTRA_SRC! src\mcp_stdio.cpp
         echo [+] MCP Server - Model Context Protocol stdio
     )
+    if /I "%%A"=="OPENGL" (
+        REM Requires GFX (shares SDL3 init + event loop). We don't auto-imply
+        REM GFX here — caller must pass GFX explicitly so they see the cost.
+        set DEFS=!DEFS! /DOPENGL
+        set EXTRA_SRC=!EXTRA_SRC! src\opengl.cpp
+        set EXTRA_LIB=!EXTRA_LIB! opengl32.lib
+        set WANT_OPENGL=1
+        echo [+] OpenGL 3.3 Core - separate GL.WINDOW context
+    )
     if /I "%%A"=="FTXUI" (
         REM /D UNICODE/_UNICODE matches the libs\ftxui\build\ftxui.lib ABI;
         REM mismatched runtime would surface as link errors on string types.
@@ -115,6 +124,15 @@ for %%A in (%*) do (
         set BDATE=!BDATE: =0!
         set DEFS=!DEFS! /DJDBASIC_BUILD_NUM=\"!BNUM!\" /DJDBASIC_BUILD_DATE=\"!BDATE!\"
         echo [+] RELEASE Build !BNUM! - !BDATE!
+    )
+)
+
+REM OPENGL requires GFX (SDL_Window + SDL init come from there).
+if defined WANT_OPENGL (
+    echo %DEFS% | findstr /C:"/DGFX" >nul
+    if errorlevel 1 (
+        echo [!] OPENGL needs GFX - aborting. Pass GFX OPENGL together.
+        exit /b 1
     )
 )
 

@@ -1,0 +1,37 @@
+' OpenGL Phase 1 demo - context + clear + flip only.
+' Opens a 800x600 GL window, pulses the background color, quits on ESC.
+
+GL.WINDOW(800, 600, "GL P1 - color pulse")
+GL.ENABLE("DEPTH_TEST")
+
+PRINT "GL window open. ESC to quit (or window close)."
+
+DIM t AS DOUBLE = 0
+DIM running AS INTEGER = 1
+DIM last_t = TICK()
+
+DO
+    DIM now = TICK()
+    DIM dt AS DOUBLE = (now - last_t) / 1000.0
+    last_t = now
+    t = t + dt
+
+    ' Drain SDL events. GFX.POLLEVENT works even without a SCREEN
+    ' because GL.WINDOW already init'd SDL_INIT_EVENTS.
+    DIM ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" THEN running = 0
+    IF ev$ = "KEYDOWN:Escape" THEN running = 0
+
+    ' Pulse: each channel out of phase so we sweep through the spectrum
+    DIM r = INT(127 + 127 * SIN(t * 1.3))
+    DIM g = INT(127 + 127 * SIN(t * 1.7 + 2.0))
+    DIM b = INT(127 + 127 * SIN(t * 2.1 + 4.0))
+
+    GL.CLEAR(r, g, b)
+    GL.FLIP()
+    SLEEP 16
+LOOP WHILE running = 1
+
+GL.CLOSE()
+PRINT "GL window closed."
+END

@@ -1,0 +1,66 @@
+' Self-validating GL keyboard test: synthesizes ESC via Win32 keybd_event
+' after ~1 sec and expects ON "KEYDOWN" to fire it, dropping us out of the
+' main loop. Prints a summary so the smoke output is unambiguous.
+
+OPTION "EXPLICIT"
+
+DECLARE FUNC keybd_event LIB "user32.dll" ALIAS "keybd_event" _
+    (bVk AS INTEGER, bScan AS INTEGER, dwFlags AS INTEGER, extraInfo AS INTEGER) AS INTEGER
+
+CONST VK_ESCAPE   = 27
+CONST KEYEVENTF_KEYUP = 2
+
+GL.WINDOW(400, 300, "GL keyboard smoke")
+GL.ENABLE("DEPTH_TEST")
+
+DIM running   AS INTEGER = 1
+DIM key_count AS INTEGER = 0
+DIM frame     AS INTEGER = 0
+DIM saw_esc   AS INTEGER = 0
+
+SUB HandleKey(KeyData)
+    DIM k$ AS STRING = KeyData[0]{"key"}
+    key_count = key_count + 1
+    PRINT "  got KEYDOWN: "; k$
+    IF k$ = "Escape" THEN
+        saw_esc = 1
+        running = 0
+    ENDIF
+ENDSUB
+
+SUB HandleQuit(QuitData)
+    running = 0
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+ON "QUIT"    CALL HandleQuit
+
+PRINT "main loop running; will synthesize ESC at frame 60"
+
+DO
+    frame = frame + 1
+    IF frame = 60 THEN
+        PRINT "synthesizing ESC..."
+        keybd_event(VK_ESCAPE, 0, 0, 0)
+        keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0)
+    ENDIF
+    ' Safety: cap at 200 frames so this never hangs
+    IF frame > 200 THEN running = 0
+
+    GL.CLEAR(30, 30, 60)
+    GL.FLIP()
+    SLEEP 16
+LOOP WHILE running = 1
+
+GL.CLOSE()
+
+PRINT "------"
+PRINT "frames=";   frame
+PRINT "keys=";     key_count
+PRINT "saw_esc=";  saw_esc
+IF saw_esc = 1 THEN
+    PRINT "PASS"
+ELSE
+    PRINT "FAIL: ON KEYDOWN never fired with ESC"
+ENDIF
+END

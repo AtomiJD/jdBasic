@@ -2036,7 +2036,11 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         static const std::unordered_set<std::string> obj_returners = {
                             "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                             "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
-                            "HTTP.REQUEST"
+                            "HTTP.REQUEST",
+                            // MAT4.* returns a TENSOR Value; flat-array path
+                            // can't carry the shape, so route through VM handle.
+                            "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
+                            "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -7778,6 +7782,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "PLOTRAW", "RECT", "CIRCLE", "LINE", "ELLIPSE", "ROUNDED_RECT",
         "CIRCLE_SECTOR", "PSET", "TEXT", "GFX.PLOT_POINTS", "DRAWCOLOR",
         "SCREEN", "SCREENFLIP", "SETFONT", "TOGGLE_FULLSCREEN",
+        // OpenGL — array args (VBO data) are payload, not broadcast targets.
+        "GL.WINDOW", "GL.CLOSE", "GL.CLEAR", "GL.FLIP", "GL.VIEWPORT",
+        "GL.ENABLE", "GL.DISABLE",
+        "GL.SHADER", "GL.USE", "GL.SHADER.DELETE",
+        "GL.VBO", "GL.VBO.BIND", "GL.BUFFER.DELETE",
+        "GL.VAO", "GL.VAO.BIND", "GL.VAO.DELETE",
+        "GL.ATTRIB", "GL.DRAW.TRIS", "GL.DRAW.LINES", "GL.DRAW.TRIS.IDX",
+        "GL.UNIFORM.F1", "GL.UNIFORM.F3", "GL.UNIFORM.F4", "GL.UNIFORM.I1",
+        "GL.UNIFORM.MAT4",
+        "GL.TEX.LOAD", "GL.TEX.BIND", "GL.TEX.DELETE", "GL.EBO",
+        "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
+        "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
         // Assert is a user SUB but if used as native:
     };
 
@@ -8367,6 +8383,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // AWAIT was hitting the f64 fallback and stringifying via
                 // to_double() = 0.0, killing string-returning ASYNC funcs.
                 "AWAIT", "THREAD.GETRESULT",
+                // MAT4.* returns a TENSOR Value; route through VM_HANDLE so
+                // the 16-element flat doesn't get unboxed into a scalar.
+                "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
+                "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
             };
             bool is_object_fn = object_returners.count(upper);
 

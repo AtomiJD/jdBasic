@@ -50,6 +50,9 @@ extern void register_serial_builtins(VM& vm);
 #ifdef GFX
 extern void register_graphics_builtins(VM& vm);
 #endif
+#ifdef OPENGL
+extern void register_opengl_builtins(VM& vm);
+#endif
 #ifdef IMGUI
 extern void register_gui_builtins(VM& vm);
 #endif
@@ -121,6 +124,9 @@ static void setup_all_builtins(VM& vm) {
 #endif
 #ifdef GFX
     register_graphics_builtins(vm);
+#endif
+#ifdef OPENGL
+    register_opengl_builtins(vm);
 #endif
 #ifdef IMGUI
     register_gui_builtins(vm);

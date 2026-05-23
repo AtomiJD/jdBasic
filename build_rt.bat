@@ -44,6 +44,12 @@ for %%A in (%*) do (
         set EXTRA_INC=!EXTRA_INC! /Ilibs\imgui /Ilibs\imgui\backends
         echo [+] ImGui
     )
+    if /I "%%A"=="OPENGL" (
+        set DEFS=!DEFS! /DOPENGL
+        set EXTRA_SRC=!EXTRA_SRC! src\opengl.cpp
+        set EXTRA_LIB=!EXTRA_LIB! opengl32.lib
+        echo [+] OpenGL 3.3 Core
+    )
     if /I "%%A"=="SERIAL" (
         set DEFS=!DEFS! /DUSE_SERIAL
         set EXTRA_SRC=!EXTRA_SRC! src\serial.cpp

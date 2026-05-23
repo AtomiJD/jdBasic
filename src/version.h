@@ -41,6 +41,10 @@ inline std::string jdbasic_features() {
     if (!f.empty()) f += ", ";
     f += "ImGui";
 #endif
+#ifdef OPENGL
+    if (!f.empty()) f += ", ";
+    f += "GL3.3";
+#endif
 #ifdef ONNX
     if (!f.empty()) f += ", ";
     f += "ONNX";

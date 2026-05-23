@@ -1,0 +1,108 @@
+' OpenGL Phase 4 demo - textured rotating cube.
+' 24 vertices (4 per face, per-face UVs) + EBO with 36 indices.
+' Texture: jdb/art/p_grass1.png (any RGBA PNG works).
+' ESC via ON "KEYDOWN".
+
+OPTION "EXPLICIT"
+
+GL.WINDOW(800, 600, "GL P4 - textured cube")
+GL.ENABLE("DEPTH_TEST")
+
+DIM vs$ AS STRING = "#version 330 core" + CHR$(10) + _
+                    "layout(location=0) in vec3 aPos;" + CHR$(10) + _
+                    "layout(location=1) in vec2 aUV;" + CHR$(10) + _
+                    "uniform mat4 uMVP;" + CHR$(10) + _
+                    "out vec2 vUV;" + CHR$(10) + _
+                    "void main() {" + CHR$(10) + _
+                    "  gl_Position = uMVP * vec4(aPos, 1.0);" + CHR$(10) + _
+                    "  vUV = aUV;" + CHR$(10) + _
+                    "}"
+
+DIM fs$ AS STRING = "#version 330 core" + CHR$(10) + _
+                    "in vec2 vUV;" + CHR$(10) + _
+                    "out vec4 FragColor;" + CHR$(10) + _
+                    "uniform sampler2D uTex;" + CHR$(10) + _
+                    "void main() { FragColor = texture(uTex, vUV); }"
+
+DIM prog AS INTEGER = GL.SHADER(vs$, fs$)
+
+' 24 vertices, 5 floats each (x,y,z, u,v). Per-face UVs go 0,0 -> 1,1.
+DIM verts = [_
+    -1,-1, 1, 0,0,   1,-1, 1, 1,0,   1, 1, 1, 1,1,  -1, 1, 1, 0,1,  _   ' front  (+Z)
+     1,-1,-1, 0,0,  -1,-1,-1, 1,0,  -1, 1,-1, 1,1,   1, 1,-1, 0,1,  _   ' back   (-Z)
+    -1,-1,-1, 0,0,  -1,-1, 1, 1,0,  -1, 1, 1, 1,1,  -1, 1,-1, 0,1,  _   ' left   (-X)
+     1,-1, 1, 0,0,   1,-1,-1, 1,0,   1, 1,-1, 1,1,   1, 1, 1, 0,1,  _   ' right  (+X)
+    -1, 1, 1, 0,0,   1, 1, 1, 1,0,   1, 1,-1, 1,1,  -1, 1,-1, 0,1,  _   ' top    (+Y)
+    -1,-1,-1, 0,0,   1,-1,-1, 1,0,   1,-1, 1, 1,1,  -1,-1, 1, 0,1   _   ' bottom (-Y)
+]
+
+' 6 faces, each = 2 triangles = 6 indices, total 36.
+DIM idx = [_
+     0, 1, 2,   0, 2, 3,  _
+     4, 5, 6,   4, 6, 7,  _
+     8, 9,10,   8,10,11,  _
+    12,13,14,  12,14,15,  _
+    16,17,18,  16,18,19,  _
+    20,21,22,  20,22,23   _
+]
+
+DIM vao AS INTEGER = GL.VAO()
+DIM vbo AS INTEGER = GL.VBO(verts)
+DIM ebo AS INTEGER = GL.EBO(idx)
+GL.ATTRIB(0, 3, 5 * 4, 0)         ' pos:  3 floats at offset 0
+GL.ATTRIB(1, 2, 5 * 4, 3 * 4)     ' uv:   2 floats at offset 12
+
+DIM tex AS INTEGER = GL.TEX.LOAD("art/p_grass1.png")
+
+DIM running AS INTEGER = 1
+DIM angle   AS DOUBLE  = 0.0
+DIM last_t  AS INTEGER = TICK()
+
+SUB HandleKey(KeyData)
+    DIM k$ AS STRING = KeyData[0]{"key"}
+    PRINT "KEY: "; k$
+    IF k$ = "Escape" THEN running = 0
+ENDSUB
+
+SUB HandleQuit(QuitData)
+    running = 0
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+ON "QUIT"    CALL HandleQuit
+
+DIM proj = MAT4.PERSPECTIVE(60.0, 800.0 / 600.0, 0.1, 100.0)
+DIM view = MAT4.LOOKAT(0, 0, 5,   0, 0, 0,   0, 1, 0)
+DIM vp   = MAT4.MUL(proj, view)
+
+PRINT "Textured cube spinning. ESC to quit."
+
+DO
+    DIM now AS INTEGER = TICK()
+    DIM dt  AS DOUBLE = (now - last_t) / 1000.0
+    last_t = now
+    angle = angle + 0.8 * dt
+
+    DIM model = MAT4.IDENTITY()
+    model = MAT4.ROTATE(model, angle, 0.4, 1.0, 0.2)
+    DIM mvp = MAT4.MUL(vp, model)
+
+    GL.CLEAR(10, 12, 22)
+    GL.USE(prog)
+    GL.UNIFORM.MAT4("uMVP", mvp)
+    GL.UNIFORM.I1("uTex", 0)          ' sampler bound to texture unit 0
+    GL.TEX.BIND(tex, 0)
+    GL.VAO.BIND(vao)
+    GL.DRAW.TRIS.IDX(36)
+    GL.FLIP()
+    SLEEP 16
+LOOP WHILE running = 1
+
+GL.TEX.DELETE(tex)
+GL.VAO.DELETE(vao)
+GL.BUFFER.DELETE(vbo)
+GL.BUFFER.DELETE(ebo)
+GL.SHADER.DELETE(prog)
+GL.CLOSE()
+PRINT "done."
+END
