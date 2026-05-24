@@ -100,6 +100,9 @@ if [ "$WANT_LLM" = "1" ]; then
             $LLAMA_DIR/libggml.a \
             $LLAMA_DIR/libggml-cpu.a \
             $LLAMA_DIR/libggml-base.a"
+        if [ -f "$LLAMA_DIR/libggml-cuda.a" ]; then
+            LDFLAGS="$LDFLAGS $LLAMA_DIR/libggml-cuda.a -lcudart -lcublas -lcublasLt -lcuda"
+        fi
     fi
 fi
 
