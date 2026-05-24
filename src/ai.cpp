@@ -150,6 +150,20 @@ void register_ai_builtins(VM& vm) {
         opts.SetIntraOpNumThreads(0); // auto
         opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
+        if (const char* prov = std::getenv("JDB_ONNX_PROVIDER")) {
+            std::string p = prov;
+            std::transform(p.begin(), p.end(), p.begin(), ::tolower);
+            if (p == "cuda") {
+                OrtCUDAProviderOptions cuda_opts{};
+                cuda_opts.device_id = 0;
+                opts.AppendExecutionProvider_CUDA(cuda_opts);
+            } else if (p == "tensorrt") {
+                OrtTensorRTProviderOptions trt_opts{};
+                trt_opts.device_id = 0;
+                opts.AppendExecutionProvider_TensorRT(trt_opts);
+            }
+        }
+
         try {
             // Convert path to wide string for Windows
 #ifdef _WIN32
