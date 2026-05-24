@@ -135,6 +135,9 @@ vo.db
 release/*.zip
 release/*.sha256
 release/jdbasic-*-windows-x64/
+# Release planning notes (drafts, scratch, launch logistics) — these
+# evolve fast and are not part of the source distribution.
+release/*.md
 release/jdbasic-mcp-native-windows-x64/
 
 # ── Test session scratch (interactive-run leftovers) ──────────────

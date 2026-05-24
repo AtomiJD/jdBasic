@@ -1717,7 +1717,7 @@ ENDIF
 In addition to the high-level drawing commands above, the `GFX.*` namespace exposes lower-level window, timing, image, and input access.
 
 * **`GFX.CLOSE`**: Closes the graphics window and releases SDL resources.
-* **`GFX.POLLEVENT() -> object`**: Polls one pending SDL event and returns it as an object, or `NONE` if the queue is empty. Common types are `"quit"`, `"keydown"`, `"keyup"`, `"mousemove"`, `"mousebutton"`, `"windowresized"`.
+* **`GFX.POLLEVENT() -> object`** *(deprecated — prefer `ON "KEYDOWN" ...`, `ON "QUIT" ...`, etc.)*: Polls one pending SDL event and returns it as an object, or `NONE` if the queue is empty. Common types are `"quit"`, `"keydown"`, `"keyup"`, `"mousemove"`, `"mousebutton"`, `"windowresized"`. Note: when IMGUI is built in, POLLEVENT goes through the ImGui input filter which can swallow keystrokes — `ON "KEYDOWN"` handlers bypass that and are the recommended pattern.
 * **`GFX.KEYSTATE(scancode) -> boolean`**: Returns `TRUE` if the given SDL scancode is currently held down.
 * **`GFX.DELAY(ms)`**: Pauses for `ms` milliseconds using SDL's high-resolution timer.
 * **`GFX.TICKS() -> number`**: Returns a monotonically increasing millisecond counter since the SDL subsystem was initialised — ideal for delta-time computations in game loops.
