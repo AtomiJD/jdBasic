@@ -59,6 +59,10 @@ if [ "$WANT_TUI" = "1" ]; then WANT_FTXUI=1; fi
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
     LDFLAGS="$LDFLAGS -lssl -lcrypto"
+    # macOS: cpp-httplib's TLS chain pulls Apple's Keychain via Security.framework.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        LDFLAGS="$LDFLAGS -framework Security -framework CoreFoundation"
+    fi
     HTTP_SRC="src/http.cpp"
 else
     HTTP_SRC=""
@@ -90,6 +94,7 @@ if [ "$WANT_GFX" = "1" ]; then
         -lm"
     # macOS: SDL3's static lib doesn't auto-pull its Cocoa/Metal/IOKit/
     # AudioToolbox dependencies — they have to ride on the link line.
+    # QuartzCore is for CAMetalLayer (cocoavulkan in SDL3).
     if [ "$(uname -s)" = "Darwin" ]; then
         LDFLAGS="$LDFLAGS \
             -framework Cocoa -framework IOKit -framework CoreVideo \
@@ -97,7 +102,8 @@ if [ "$WANT_GFX" = "1" ]; then
             -framework ForceFeedback -framework Metal -framework MetalKit \
             -framework GameController -framework CoreHaptics \
             -framework CoreFoundation -framework UniformTypeIdentifiers \
-            -framework AVFoundation -framework CoreMedia"
+            -framework AVFoundation -framework CoreMedia \
+            -framework QuartzCore"
     fi
     GFX_SRC="src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
 fi
