@@ -255,14 +255,16 @@ features="console"
 echo "== Building jdBasic ($features) — $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 # xargs -P parallelises; each line is "src|obj".
-# CXX/CXXFLAGS are exported so the per-iteration bash -c stays short
-# (macOS's ARG_MAX is 256KB vs Linux's 2MB; embedding the full CXXFLAGS
-# literal in the bash -c script overflows there with a kitchen-sink build).
+# CXX/CXXFLAGS are exported so the per-iteration bash -c stays short.
+# We use -n1 (one input per exec, passed as $0) instead of -I{} — the
+# BSD xargs on macOS chokes on -I{} substitution into a multi-line
+# body with a "command line cannot be assembled, too long" even when
+# the actual command size is well under ARG_MAX.
 export CXX CXXFLAGS
 if [ "${#TO_BUILD[@]}" -gt 0 ]; then
     printf '%s\n' "${TO_BUILD[@]}" | \
-        xargs -P "$JOBS" -I{} bash -c '
-            line="{}"; src="${line%%|*}"; obj="${line##*|}"
+        xargs -P "$JOBS" -n1 bash -c '
+            line="$0"; src="${line%%|*}"; obj="${line##*|}"
             echo "  CC $src"
             $CXX $CXXFLAGS -c "$src" -o "$obj"
         '
@@ -306,8 +308,8 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     echo "== Building libjdbrt.so — ${#RT_TO_BUILD[@]} of ${#RT_OBJS[@]} stale =="
     if [ "${#RT_TO_BUILD[@]}" -gt 0 ]; then
         printf '%s\n' "${RT_TO_BUILD[@]}" | \
-            xargs -P "$JOBS" -I{} bash -c '
-                line="{}"; src="${line%%|*}"; obj="${line##*|}"
+            xargs -P "$JOBS" -n1 bash -c '
+                line="$0"; src="${line%%|*}"; obj="${line##*|}"
                 echo "  CC (PIC) $src"
                 $CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS -c "$src" -o "$obj"
             '
