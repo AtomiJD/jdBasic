@@ -5104,6 +5104,11 @@ void VM::register_builtins() {
 
     register_native("SLEEP", [this](const std::vector<Value>& args) -> Value {
         int ms = (int)args[0].to_int();
+        // Flush stdout so any pending PRINT-with-semicolon output (game frames
+        // drawn with LOCATE/COLOR/PRINT but no trailing newline) becomes
+        // visible before we go idle. POSIX TTYs are line-buffered by default
+        // and would otherwise sit on the buffer until something prints \n.
+        std::fflush(stdout);
         // Slice the wait so events get polled while sleeping. Without this,
         // a tight `DO sleep 15 LOOP` could starve key/quit events for many
         // seconds — the periodic on_tick fires only every 2000 VM ticks.
