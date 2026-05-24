@@ -8881,10 +8881,21 @@ extern "C" {
 }
 
 bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
+    // Initialize the host architecture's target. Linux/Windows x86_64 needs
+    // X86Target; Apple Silicon / ARM64 Linux needs AArch64Target. Cheaper
+    // than InitializeAllTargets, which would drag every backend (~10 MB of
+    // static lib data) into the binary.
+#if defined(__aarch64__) || defined(_M_ARM64)
+    LLVMInitializeAArch64TargetInfo();
+    LLVMInitializeAArch64Target();
+    LLVMInitializeAArch64TargetMC();
+    LLVMInitializeAArch64AsmPrinter();
+#else
     LLVMInitializeX86TargetInfo();
     LLVMInitializeX86Target();
     LLVMInitializeX86TargetMC();
     LLVMInitializeX86AsmPrinter();
+#endif
 
     char* triple = LLVMGetDefaultTargetTriple();
     LLVMTargetRef target;
