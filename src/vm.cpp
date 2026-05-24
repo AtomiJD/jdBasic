@@ -41,6 +41,7 @@
 #include <cerrno>
 #include <dirent.h>
 #include <fnmatch.h>
+#include <termios.h>   // raw-mode keyboard polling for console-mode KEYDOWN
 #endif
 
 // jdb_encoding.h pulls <windows.h>; must come after the winsock2 / ws2tcpip
@@ -7638,6 +7639,44 @@ void VM::event_poll() {
                 Value info = Value::make_object();
                 info.as_object()->set("scancode", Value::make_i64(ch));
                 info.as_object()->set("key", Value::make_string(std::string(1, (char)ch)));
+                event_raise("KEYDOWN", {info});
+            }
+        }
+    }
+#else
+    // POSIX console KEYDOWN: only enter raw mode when the script actually
+    // wants keystrokes. Otherwise INPUT/READLINE would lose line discipline.
+    auto kit = event_handlers.find("KEYDOWN");
+    if (kit != event_handlers.end()) {
+        static bool g_posix_raw_set = false;
+        static struct termios g_posix_saved_tio;
+        if (!g_posix_raw_set) {
+            if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &g_posix_saved_tio) == 0) {
+                struct termios raw = g_posix_saved_tio;
+                // ICANON off so we see each byte; ECHO off so keys don't
+                // leak onto a CLS-drawn screen. Keep ISIG so Ctrl+C still
+                // breaks out of the script.
+                raw.c_lflag &= ~(ICANON | ECHO);
+                raw.c_iflag &= ~(IXON | ICRNL);
+                raw.c_cc[VMIN]  = 0;   // read() returns immediately
+                raw.c_cc[VTIME] = 0;
+                if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0) {
+                    g_posix_raw_set = true;
+                    std::atexit([]() {
+                        if (g_posix_raw_set) {
+                            tcsetattr(STDIN_FILENO, TCSANOW, &g_posix_saved_tio);
+                        }
+                    });
+                }
+            }
+        }
+        unsigned char buf[16];
+        ssize_t n;
+        while ((n = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                Value info = Value::make_object();
+                info.as_object()->set("scancode", Value::make_i64((int)buf[i]));
+                info.as_object()->set("key", Value::make_string(std::string(1, (char)buf[i])));
                 event_raise("KEYDOWN", {info});
             }
         }
