@@ -274,6 +274,13 @@ echo "== Linking =="
 $CXX "${OBJS[@]}" -o build/jdbasic $LDFLAGS
 echo "OK: build/jdbasic"
 
+# Bundle the default font next to the binary so SCREEN can auto-load it
+# (TEXT no longer requires an explicit SETFONT call). Silent skip if the
+# source font is missing — keeps minimal-checkout builds working.
+if [ -f fonts/JetBrainsMono-Regular.ttf ]; then
+    cp -f fonts/JetBrainsMono-Regular.ttf build/jdbasic_default.ttf
+fi
+
 # When NATIVEC is on, build the runtime support pieces too:
 #  - build/jdb_runtime.o: small static obj statically linked into every
 #    generated exe (basic intrinsics — printf, math, time, etc.)

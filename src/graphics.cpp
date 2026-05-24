@@ -19,9 +19,58 @@
 #include <algorithm>
 #include <filesystem>
 
+#ifdef _WIN32
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #include <windows.h>
+#elif defined(__APPLE__)
+  #include <mach-o/dyld.h>
+#else
+  #include <unistd.h>
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// Locate the directory containing the running jdBasic executable (or
+// libjdbrt for native -c EXEs). Used to find jdbasic_default.ttf which
+// ships next to the binary so SCREEN can auto-load a default font.
+// Returns "" if the platform lookup fails (caller treats that as "no
+// default font available" and reverts to the explicit-SETFONT path).
+static std::string exe_directory() {
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, buf, (int)n, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
+    std::string path((size_t)len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, buf, (int)n, &path[0], len, nullptr, nullptr);
+    auto pos = path.find_last_of("\\/");
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#elif defined(__APPLE__)
+    char buf[4096]; uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0) return "";
+    std::string path(buf);
+    auto pos = path.find_last_of('/');
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#else
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf));
+    if (n <= 0) return "";
+    std::string path(buf, (size_t)n);
+    auto pos = path.find_last_of('/');
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#endif
+}
+
+// try_load_default_font is defined further down, after the file-scope
+// font globals (g_font, g_ttf_init, g_font_path, g_font_size) — those
+// are `static` so we cannot extern them from up here. Forward-declare
+// just the signature so SCREEN / TEXT can call it.
+static void try_load_default_font(float size_pt = 18.0f);
 
 // Defined in main.cpp (exe) and vm_bridge.cpp (libjdbrt.so) — the
 // directory of the .jdb the user invoked. Falls back to "." in the
@@ -118,6 +167,28 @@ static TTF_Font* g_font = nullptr;
 static std::string g_font_path;
 static float g_font_size = 16.0f;
 static bool g_ttf_init = false;
+
+// Attempt to load the bundled default font (jdbasic_default.ttf, sits
+// next to the EXE). NO-OP if a font is already loaded or the file is
+// missing. Silent — callers that REQUIRE a font (TEXT) still throw their
+// own "no font loaded" error when this falls through.
+static void try_load_default_font(float size_pt) {
+    if (g_font) return;
+    std::string dir = exe_directory();
+    if (dir.empty()) return;
+    std::string path = dir + "/jdbasic_default.ttf";
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return;
+    if (!g_ttf_init) {
+        if (!TTF_Init()) return;
+        g_ttf_init = true;
+    }
+    g_font = TTF_OpenFont(path.c_str(), size_pt);
+    if (g_font) {
+        g_font_path = path;
+        g_font_size = size_pt;
+    }
+}
 
 // Audio state
 static bool g_audio_init = false;
@@ -587,6 +658,11 @@ void register_graphics_builtins(VM& vm) {
 
         // Init TiledMap system with the renderer
         g_tiled.init(g_renderer);
+
+        // Auto-load bundled default font (silent skip if missing or
+        // if a font is already loaded). Lets demos use TEXT without
+        // having to ship SETFONT boilerplate.
+        try_load_default_font();
 
         // Register cleanup at exit
         static bool atexit_set = false;
@@ -1159,6 +1235,7 @@ void register_graphics_builtins(VM& vm) {
 
     vm.register_native("TEXT", 3, 6, [](const std::vector<Value>& args) -> Value {
         ensure_screen("TEXT");
+        if (!g_font) try_load_default_font();
         if (!g_font)
             throw jdError(ErrCode::RUNTIME_ERROR, "TEXT: no font loaded (call SETFONT first)");
 

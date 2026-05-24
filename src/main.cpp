@@ -1737,6 +1737,16 @@ int main(int argc, char* argv[]) {
                 std::filesystem::copy_file(src_dll, dst_dll,
                     std::filesystem::copy_options::overwrite_existing);
             }
+            // Same treatment for the bundled default font (used by SCREEN
+            // auto-load so demos don't need a SETFONT boilerplate).
+            std::filesystem::path src_ttf = self_dir + "/jdbasic_default.ttf";
+            std::filesystem::path dst_ttf = out_dir + "/jdbasic_default.ttf";
+            if (std::filesystem::exists(src_ttf) &&
+                (!std::filesystem::exists(dst_ttf) ||
+                 !std::filesystem::equivalent(src_ttf, dst_ttf))) {
+                std::filesystem::copy_file(src_ttf, dst_ttf,
+                    std::filesystem::copy_options::overwrite_existing);
+            }
         } catch (...) { /* best-effort — do not fail the compile */ }
         std::cout << "Compiled: " << compile_output << std::endl;
         return 0;

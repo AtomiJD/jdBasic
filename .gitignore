@@ -130,6 +130,10 @@ jdb/tv/mathx.jdb
 jdb/apple2_tape.bin
 jdb/sqlite_demo.db
 vo.db
+# Per-user calibration: monitor geometry for the recording session.
+# Each developer's setup is different; re-run winpos_probe.jdb to regen.
+jdb/winpos.json
+tmp/winpos.json
 
 # ── Release bundles (built by dist.bat, not for source repo) ──────
 release/*.zip

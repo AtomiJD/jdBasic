@@ -1,0 +1,124 @@
+' ══════════════════════════════════════════════════════════════════
+'  winpos_probe.jdb — interactive window-position calibrator
+'
+'  Opens an SDL window, lets you drag/resize it with the keyboard, and
+'  saves the final geometry to winpos.json. Use BEFORE recording so
+'  the shooter (or any other jdBasic SDL app) can MOVE_WINDOW to the
+'  exact slot next to your Claude terminal on monitor 2.
+'
+'  Run:  ..\build\jdBasic.exe winpos_probe.jdb
+'        (from D:\usr\dev\cc\jdb)
+'
+'  Keys (inside the green probe window):
+'      W A S D       move the window by 50 px (up / left / down / right)
+'      Shift+WASD    fine move by 10 px
+'      PgUp / PgDn   width  +/- 100 px
+'      Home / End    height +/- 100 px
+'      SPACE         save current geometry to winpos.json
+'      Q  /  Esc     quit (without saving)
+' ══════════════════════════════════════════════════════════════════
+
+IMPORT WINPOS
+
+DIM TITLE$ AS STRING = "JD-PROBE"
+
+' Window starting geometry. After SCREEN, we immediately MoveWindow to
+' apply these — that way the user sees the probe land at a predictable
+' spot (centre of monitor 1) instead of wherever SDL felt like.
+DIM px AS INTEGER = 200
+DIM py AS INTEGER = 200
+DIM pw AS INTEGER = 780
+DIM ph AS INTEGER = 760
+
+SCREEN pw, ph, TITLE$
+WINPOS.MOVE_WINDOW(TITLE$, px, py, pw, ph)
+
+DIM running AS INTEGER = 1
+DIM saved AS INTEGER = 0
+
+' SDL scancodes (subset). We use ON "KEYDOWN" handler with data[0]{"scancode"}.
+DIM SC_W    AS INTEGER = 26
+DIM SC_A    AS INTEGER = 4
+DIM SC_S    AS INTEGER = 22
+DIM SC_D    AS INTEGER = 7
+DIM SC_Q    AS INTEGER = 20
+DIM SC_ESC  AS INTEGER = 41
+DIM SC_SP   AS INTEGER = 44
+DIM SC_PGUP AS INTEGER = 75
+DIM SC_PGDN AS INTEGER = 78
+DIM SC_HOME AS INTEGER = 74
+DIM SC_END  AS INTEGER = 77
+
+SUB HandleKey(data)
+    DIM ev = data[0]
+    DIM sc = ev{"scancode"}
+    DIM shifted AS INTEGER = 0
+    IF MAP.EXISTS(ev, "mod") THEN
+        ' SDL3 KMOD_SHIFT = 0x0003
+        IF (ev{"mod"} BAND 3) <> 0 THEN shifted = 1
+    ENDIF
+    DIM mv AS INTEGER = 50
+    IF shifted = 1 THEN mv = 10
+    DIM rmv AS INTEGER = 100
+
+    IF sc = SC_W THEN py = py - mv
+    IF sc = SC_A THEN px = px - mv
+    IF sc = SC_S AND shifted = 0 THEN py = py + mv
+    IF sc = SC_D THEN px = px + mv
+    IF sc = SC_PGUP THEN pw = pw + rmv
+    IF sc = SC_PGDN THEN pw = pw - rmv
+    IF sc = SC_HOME THEN ph = ph + rmv
+    IF sc = SC_END THEN ph = ph - rmv
+
+    IF sc = SC_SP THEN
+        DIM cfg = {}
+        cfg{"x"} = px
+        cfg{"y"} = py
+        cfg{"w"} = pw
+        cfg{"h"} = ph
+        TXTWRITER "winpos.json", JSON.STRINGIFY$(cfg)
+        saved = 1
+        PRINT "saved: x="; px; " y="; py; " w="; pw; " h="; ph
+    ENDIF
+
+    IF sc = SC_Q OR sc = SC_ESC THEN running = 0
+
+    ' Re-apply geometry. SDL's window position read-back is unreliable
+    ' across drivers, so we drive the position from our own px/py vars.
+    WINPOS.MOVE_WINDOW(TITLE$, px, py, pw, ph)
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+ON "QUIT" CALL Quit
+SUB Quit(data)
+    running = 0
+ENDSUB
+
+' ── Draw loop ────────────────────────────────────────────────────
+DIM frame AS INTEGER = 0
+DO
+    CLS 0, 24, 0
+    DIM hue AS INTEGER = (frame * 2) MOD 256
+    TEXT 30, 30, "JD-PROBE  -  WINDOW CALIBRATOR", 64, 255, 96
+    TEXT 30, 90, "X = " + STR$(px) + "    Y = " + STR$(py), 200, 255, 200
+    TEXT 30, 130, "W = " + STR$(pw) + "    H = " + STR$(ph), 200, 255, 200
+
+    TEXT 30, 220, "W A S D    move 50 px   (hold SHIFT = 10 px)", 120, 220, 160
+    TEXT 30, 260, "PgUp/PgDn  width  +/- 100 px", 120, 220, 160
+    TEXT 30, 300, "Home/End   height +/- 100 px", 120, 220, 160
+    TEXT 30, 340, "SPACE      save to tmp/winpos.json", 120, 220, 160
+    TEXT 30, 380, "Q / ESC    quit", 120, 220, 160
+
+    IF saved = 1 THEN
+        TEXT 30, 480, "SAVED to tmp/winpos.json", 255, 220, 64
+        TEXT 30, 520, "Drag/move again or press Q to quit.", 200, 200, 200
+    ENDIF
+
+    TEXT 30, 700, "drag me to where the shooter should sit, then SPACE", 96, 200, 255
+    SCREENFLIP
+    SLEEP 16
+    frame = frame + 1
+LOOP WHILE running = 1
+
+PRINT "final geometry:  x="; px; " y="; py; " w="; pw; " h="; ph
+PRINT "(use these in your shooter's MOVE_WINDOW call)"

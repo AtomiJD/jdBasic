@@ -1,0 +1,73 @@
+' ══════════════════════════════════════════════════════════════════
+'  winpos.jdb — Win32 helper: find a window by title and move/resize it.
+'
+'  Lets a script position its SDL window precisely (e.g. on the second
+'  monitor next to the Claude terminal during a launch-video take).
+'
+'  Usage from a host script:
+'      IMPORT "lib/winpos.jdb"
+'      SCREEN 800, 600, "My Shooter"
+'      winpos.MOVE_WINDOW("My Shooter", 2090, 240, 780, 760)
+'
+'  Windows-only. The DECLAREs target user32.dll which exists on Win10/11.
+'  On Linux/macOS the IMPORT will still parse but the FFI calls will fail
+'  at runtime; gate with `IF OS.NAME$() = "windows" THEN ...` if you
+'  want cross-platform safety.
+' ══════════════════════════════════════════════════════════════════
+
+EXPORT MODULE WINPOS
+
+DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" (kcls AS INTEGER, title AS STRING) AS INTEGER
+DECLARE FUNC MoveWindow LIB "user32.dll" ALIAS "MoveWindow" (hwnd AS INTEGER, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, repaint AS INTEGER) AS INTEGER
+DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" (hwnd AS INTEGER) AS INTEGER
+DECLARE SUB keybd_event LIB "user32.dll" ALIAS "keybd_event" (vk AS INTEGER, sc AS INTEGER, flg AS INTEGER, extra AS INTEGER)
+DECLARE SUB winsleep LIB "kernel32.dll" ALIAS "Sleep" (ms AS INTEGER)
+
+CONST VK_MENU = $12          ' Alt key
+CONST KEYEVENTF_KEYUP = $02
+
+' REFOCUS(title$) — snap a window to the foreground.
+' Windows blocks SetForegroundWindow when the caller is not already in the
+' foreground (focus-stealing prevention). A synthetic Alt-press defeats
+' that lock. Call after jdb_resume so the game window grabs focus back
+' from the Claude terminal automatically.
+EXPORT SUB REFOCUS(title$)
+    IF title$ = "" THEN RETURN
+    DIM hwnd AS INTEGER = FindWindow(0, title$)
+    IF hwnd <> 0 THEN
+        keybd_event(VK_MENU, 0, 0, 0)
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        SetForegroundWindow(hwnd)
+        winsleep(120)
+    ENDIF
+ENDSUB
+
+' MOVE_WINDOW(title$, x, y, w, h) → hwnd (0 if not found).
+'   title$  must match the SDL window title exactly (case-sensitive).
+'   x,y     are absolute screen pixels (negative / >1920 = second monitor).
+'   w,h     are the new client size in pixels.
+' Also brings the window to the foreground (Alt-press refocus trick).
+EXPORT FUNC MOVE_WINDOW(title$, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER) AS INTEGER
+    DIM hwnd AS INTEGER = FindWindow(0, title$)
+    IF hwnd <> 0 THEN
+        MoveWindow(hwnd, x, y, w, h, 1)
+        keybd_event(VK_MENU, 0, 0, 0)
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        SetForegroundWindow(hwnd)
+    ENDIF
+    RETURN hwnd
+ENDFUNC
+
+' MOVE_WINDOW_FROM_JSON(title$, path$) — convenience: read a JSON file
+' written by tmp/winpos_probe.jdb and apply it. Returns 1 on success,
+' 0 if the file/title was missing.
+'
+' JSON layout (matches probe output):
+'   { "x": 2090, "y": 240, "w": 780, "h": 760 }
+EXPORT FUNC MOVE_WINDOW_FROM_JSON(title$, path$) AS INTEGER
+    IF NOT FILE.EXISTS(path$) THEN RETURN 0
+    DIM cfg = JSON.PARSE$(TXTREADER$(path$))
+    DIM hwnd AS INTEGER = MOVE_WINDOW(title$, cfg{"x"}, cfg{"y"}, cfg{"w"}, cfg{"h"})
+    IF hwnd <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC

@@ -183,6 +183,9 @@ if %ERRORLEVEL%==0 (
         copy /Y libs\SDL3_ttf-3.2.2\lib\x64\SDL3_ttf.dll build\ >nul 2>&1
         copy /Y libs\SDL3_image-3.4.4\lib\x64\SDL3_image.dll build\ >nul 2>&1
         copy /Y libs\SDL3_mixer-3.2.2\lib\x64\SDL3_mixer.dll build\ >nul 2>&1
+        if exist fonts\JetBrainsMono-Regular.ttf (
+            copy /Y fonts\JetBrainsMono-Regular.ttf build\jdbasic_default.ttf >nul 2>&1
+        )
         echo DLLs copied to build\
     )
     if defined COPY_OPENSSL (
