@@ -137,7 +137,7 @@ private:
     // need to pull in <termios.h>; console.cpp casts to struct termios.
     bool   raw_mode_active = false;
     bool   original_termios_saved = false;
-    char   original_termios[64] = {0};   // sizeof(struct termios) is ≤ 64
+    char   original_termios[128] = {0};  // Linux struct termios = 60B; macOS = 72B; cushion 128B
     std::queue<int> input_queue;          // pushed-back bytes from escape parsing
 #endif
     // render_prompt remembers how much it drew last time so the next call
