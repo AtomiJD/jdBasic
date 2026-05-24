@@ -9,10 +9,26 @@
 set -e
 mkdir -p build build/obj
 
-CXX=${CXX:-g++}
-JOBS=${JOBS:-$(nproc)}
+# macOS doesn't ship nproc; fall back to sysctl. Linux ships both.
+default_jobs() {
+    if command -v nproc >/dev/null 2>&1; then nproc
+    elif command -v sysctl >/dev/null 2>&1; then sysctl -n hw.ncpu
+    else echo 4
+    fi
+}
+# macOS defaults to clang/AppleClang under /usr/bin; brew's llvm@18 lands at
+# /opt/homebrew/opt/llvm@18/bin/clang++. Either one works as $CXX.
+if [ -z "${CXX:-}" ]; then
+    case "$(uname -s)" in
+        Darwin) CXX=clang++ ;;
+        *)      CXX=g++ ;;
+    esac
+fi
+JOBS=${JOBS:-$(default_jobs)}
 CXXFLAGS="-std=c++17 -O2 -DNDEBUG -Isrc"
 LDFLAGS="-ldl -lpthread"
+# macOS-specific: -ldl is fine but linker needs -framework Cocoa etc. when
+# SDL3 pulls in the platform shims. They're tucked under GFX further below.
 
 WANT_HTTP=${HTTP:-1}
 WANT_GFX=${GFX:-1}
@@ -207,13 +223,17 @@ features="console"
 [ "$WANT_TUI" = "1" ] && features="$features+TUI"
 echo "== Building jdBasic ($features) — $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
-# xargs -P parallelises; each line is "src|obj"
+# xargs -P parallelises; each line is "src|obj".
+# CXX/CXXFLAGS are exported so the per-iteration bash -c stays short
+# (macOS's ARG_MAX is 256KB vs Linux's 2MB; embedding the full CXXFLAGS
+# literal in the bash -c script overflows there with a kitchen-sink build).
+export CXX CXXFLAGS
 if [ "${#TO_BUILD[@]}" -gt 0 ]; then
     printf '%s\n' "${TO_BUILD[@]}" | \
         xargs -P "$JOBS" -I{} bash -c '
             line="{}"; src="${line%%|*}"; obj="${line##*|}"
             echo "  CC $src"
-            '"$CXX"' '"$CXXFLAGS"' -c "$src" -o "$obj"
+            $CXX $CXXFLAGS -c "$src" -o "$obj"
         '
 fi
 
@@ -258,9 +278,12 @@ if [ "$WANT_NATIVEC" = "1" ]; then
             xargs -P "$JOBS" -I{} bash -c '
                 line="{}"; src="${line%%|*}"; obj="${line##*|}"
                 echo "  CC (PIC) $src"
-                '"$CXX"' '"$CXXFLAGS"' -fPIC -DJDRT_EXPORTS -c "$src" -o "$obj"
+                $CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS -c "$src" -o "$obj"
             '
     fi
+    # macOS dlopen wants .dylib (cc -shared still produces a .so-looking
+    # file on Darwin; the loader doesn't care about the extension, but
+    # we keep .so for cross-platform path-consistency with build/jdbrt).
     $CXX -shared -o build/libjdbrt.so "${RT_OBJS[@]}" $LDFLAGS
     echo "OK: build/libjdbrt.so"
 fi
