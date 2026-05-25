@@ -1,0 +1,172 @@
+' ─────────────────────────────────────────────────────────────────
+' Benchmark: update_stars vectorisation
+'
+' Compares three implementations of the star-wrap update:
+'   v1 — original: FOR-loop with per-element if-branch
+'   v2 — vector mask + FOR for fresh RND values
+'   v3 — vector mask + ring-buffer of pre-rolled RND (zero FOR/frame)
+' ─────────────────────────────────────────────────────────────────
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' Sweep multiple N values to find the FOR-vs-vector crossover point.
+' Override via command line in future; for now pick one of the presets.
+DIM N_STARS AS INTEGER = 140       ' game-realistic; tweak to 1400, 14000 to sweep
+DIM SCR_W   AS INTEGER = 960
+DIM SCR_H   AS INTEGER = 720
+DIM ITERS   AS INTEGER = 30000      ' ≈ 8 minutes of 60-FPS gameplay
+
+' Star arrays — four independent copies so each version starts from
+' the same state (no cross-contamination between runs).
+DIM x1 = ZEROS(N_STARS)
+DIM y1 = ZEROS(N_STARS)
+DIM x2 = ZEROS(N_STARS)
+DIM y2 = ZEROS(N_STARS)
+DIM x3 = ZEROS(N_STARS)
+DIM y3 = ZEROS(N_STARS)
+DIM x4 = ZEROS(N_STARS)
+DIM y4 = ZEROS(N_STARS)
+DIM speed = ZEROS(N_STARS)
+DIM zero_template = ZEROS(N_STARS)   ' reused for vectorised RND seed
+
+' Ring-buffer of random x-values for v3 — avoids per-frame RND calls.
+DIM RING_N AS INTEGER = 4096
+DIM ring = ZEROS(RING_N)
+DIM ring_idx AS INTEGER = 0
+
+' ── Setup: identical state for all three copies ──────────────────
+RANDOMSEED 42
+DIM si AS INTEGER
+FOR si = 0 TO N_STARS - 1
+    DIM rx AS DOUBLE = RND(1) * SCR_W
+    DIM ry AS DOUBLE = RND(1) * SCR_H
+    DIM rs AS DOUBLE = 0.4 + RND(1) * 1.8
+    x1[si] = rx : x2[si] = rx : x3[si] = rx : x4[si] = rx
+    y1[si] = ry : y2[si] = ry : y3[si] = ry : y4[si] = ry
+    speed[si] = rs
+NEXT si
+
+FOR si = 0 TO RING_N - 1
+    ring[si] = RND(1) * SCR_W
+NEXT si
+
+' ── v1: original FOR-loop with branch ─────────────────────────────
+SUB update_stars_v1()
+    y1 = y1 + speed
+    DIM i AS INTEGER
+    FOR i = 0 TO N_STARS - 1
+        IF y1[i] >= SCR_H THEN
+            y1[i] = 0
+            x1[i] = RND(1) * SCR_W
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ── v2: vector mask + FOR for fresh RND ──────────────────────────
+SUB update_stars_v2()
+    y2 = y2 + speed
+    DIM mask = (y2 >= SCR_H)        ' 1 where wrapped, 0 where not
+    DIM keep = 1 - mask
+    y2 = y2 * keep                  ' wrapped → 0, others → unchanged
+    ' Generate fresh random x for every star (cheap O(N) FOR), then
+    ' branchless blend via mask.
+    DIM new_x = ZEROS(N_STARS)
+    DIM i AS INTEGER
+    FOR i = 0 TO N_STARS - 1
+        new_x[i] = RND(1) * SCR_W
+    NEXT i
+    x2 = x2 * keep + new_x * mask
+ENDSUB
+
+' ── v4: PURE APL — vectorised RND, zero FOR ─────────────────────
+SUB update_stars_v4()
+    y4 = y4 + speed
+    DIM mask = (y4 >= SCR_H)
+    DIM keep = 1 - mask
+    y4 = y4 * keep
+    ' RND(zero_template) returns N fresh randoms in [0,1) — completely
+    ' branch-free, single allocation in the runtime.
+    DIM new_x = RND(zero_template) * SCR_W
+    x4 = x4 * keep + new_x * mask
+ENDSUB
+
+' ── v3: vector mask + ring-buffer (zero per-frame FOR) ───────────
+SUB update_stars_v3()
+    y3 = y3 + speed
+    DIM mask = (y3 >= SCR_H)
+    DIM keep = 1 - mask
+    y3 = y3 * keep
+    ' Slice N_STARS values from the ring buffer, advance index.
+    ' If the slice would wrap past RING_N, reset to 0 — coarse but
+    ' fine for a star field (no statistical guarantee needed).
+    IF ring_idx + N_STARS > RING_N THEN ring_idx = 0
+    DIM new_x = TAKE(N_STARS, DROP(ring_idx, ring))
+    ring_idx = ring_idx + N_STARS
+    x3 = x3 * keep + new_x * mask
+ENDSUB
+
+' ── Helper: run N iterations of a SUB and return ms elapsed ──────
+FUNC bench_v1()
+    DIM t0 AS INTEGER = TICK()
+    DIM k AS INTEGER
+    FOR k = 0 TO ITERS - 1
+        update_stars_v1()
+    NEXT k
+    RETURN TICK() - t0
+ENDFUNC
+
+FUNC bench_v2()
+    DIM t0 AS INTEGER = TICK()
+    DIM k AS INTEGER
+    FOR k = 0 TO ITERS - 1
+        update_stars_v2()
+    NEXT k
+    RETURN TICK() - t0
+ENDFUNC
+
+FUNC bench_v3()
+    DIM t0 AS INTEGER = TICK()
+    DIM k AS INTEGER
+    FOR k = 0 TO ITERS - 1
+        update_stars_v3()
+    NEXT k
+    RETURN TICK() - t0
+ENDFUNC
+
+FUNC bench_v4()
+    DIM t0 AS INTEGER = TICK()
+    DIM k AS INTEGER
+    FOR k = 0 TO ITERS - 1
+        update_stars_v4()
+    NEXT k
+    RETURN TICK() - t0
+ENDFUNC
+
+' ── Run + report ──────────────────────────────────────────────────
+PRINT "─── update_stars benchmark ────────────────────────────────"
+PRINT "N_STARS  = "; N_STARS
+PRINT "ITERS    = "; ITERS
+PRINT ""
+
+DIM ms1 AS INTEGER = bench_v1()
+DIM ms2 AS INTEGER = bench_v2()
+DIM ms3 AS INTEGER = bench_v3()
+DIM ms4 AS INTEGER = bench_v4()
+
+DIM us1 AS DOUBLE = ms1 * 1000.0 / ITERS
+DIM us2 AS DOUBLE = ms2 * 1000.0 / ITERS
+DIM us3 AS DOUBLE = ms3 * 1000.0 / ITERS
+DIM us4 AS DOUBLE = ms4 * 1000.0 / ITERS
+
+PRINT "v1 (FOR + branch)        : "; ms1; " ms total  ("; us1; " us / call)"
+PRINT "v2 (mask + FOR-RND)      : "; ms2; " ms total  ("; us2; " us / call)"
+PRINT "v3 (mask + ring-buffer)  : "; ms3; " ms total  ("; us3; " us / call)"
+PRINT "v4 (pure APL, vec-RND)   : "; ms4; " ms total  ("; us4; " us / call)"
+PRINT ""
+PRINT "Speedup v2 vs v1 : "; FORMAT$("{:.2f}", ms1 / (ms2 + 0.001)); "x"
+PRINT "Speedup v3 vs v1 : "; FORMAT$("{:.2f}", ms1 / (ms3 + 0.001)); "x"
+PRINT "Speedup v4 vs v1 : "; FORMAT$("{:.2f}", ms1 / (ms4 + 0.001)); "x"
+PRINT ""
+PRINT "Sanity (final y-sums should be in same ballpark):"
+PRINT "  v1: "; SUM(y1); "  v2: "; SUM(y2); "  v3: "; SUM(y3); "  v4: "; SUM(y4)

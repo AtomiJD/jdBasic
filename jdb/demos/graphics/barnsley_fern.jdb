@@ -1,0 +1,90 @@
+' ══════════════════════════════════════════════════════════════════
+' Barnsley Fern — jdBasic translation of K Moerman's SmallBASIC version
+' https://en.wikipedia.org/wiki/Barnsley_fern
+'
+' The original samples the framebuffer with pixel(x,y) to deepen the
+' green on each repeated hit. jdBasic has no GETPIXEL native, so we
+' track per-pixel density in our own array — same visual outcome.
+'
+' Native-codegen note: the plot logic is INLINED (no SUB call) and all
+' loop-body locals are pre-DIM'd above the FOR. Two open native bugs
+' make those workarounds load-bearing:
+'   • a SUB that touches a file-scope ARRAY global segfaults under -c
+'   • DIM x = arr[i]  inside a loop reads a stale slot instead of the
+'     current array value (the cumulative density gradient collapses)
+' Assigning into a pre-DIM'd local works fine in both backends.
+' ══════════════════════════════════════════════════════════════════
+
+RANDOMSEED 1
+
+DIM W AS INTEGER = 1200
+DIM H AS INTEGER = 1500
+DIM HW AS INTEGER = W \ 2
+DIM XSCALE AS INTEGER = W \ 6
+DIM YSCALE AS INTEGER = H \ 11
+
+SCREEN W, H, "Barnsley Fern", 1
+CLS 0, 0, 0
+
+' Density buffer (one INT per pixel) — replaces pixel(x,y) sampling.
+DIM density AS ARRAY = RESHAPE(0, [W * H])
+
+' Fractal-space state
+DIM x AS DOUBLE = 0.0
+DIM y AS DOUBLE = 0.0
+DIM xn AS DOUBLE = 0.0
+DIM r AS DOUBLE = 0.0
+
+' Loop locals — pre-DIM'd so the body uses plain assignment (native fix).
+DIM xscr AS INTEGER = 0
+DIM yscr AS INTEGER = 0
+DIM idx AS INTEGER = 0
+DIM cg AS INTEGER = 0
+
+DIM total AS INTEGER = W * H
+DIM t AS INTEGER
+
+FOR t = 1 TO total
+    r = RND()
+    IF r < 0.01 THEN
+        xn = 0.0
+        y = 0.16 * y
+    ELSEIF r < 0.86 THEN
+        xn = 0.85 * x + 0.04 * y
+        y = -0.04 * x + 0.85 * y + 1.6
+    ELSEIF r < 0.93 THEN
+        xn = 0.2 * x - 0.26 * y
+        y = 0.23 * x + 0.22 * y + 1.6
+    ELSE
+        xn = -0.15 * x + 0.28 * y
+        y = 0.26 * x + 0.24 * y + 0.44
+    ENDIF
+    x = xn
+
+    ' Inlined plotpoint: scale to screen, deepen density, plot.
+    ' g = 7/8 * g + 33 saturates around 264 → clamped to 255.
+    xscr = HW + INT(x * XSCALE)
+    yscr = H - INT(y * YSCALE)
+    IF xscr >= 0 AND xscr < W AND yscr >= 0 AND yscr < H THEN
+        idx = yscr * W + xscr
+        cg = density[idx]
+        IF cg < 255 THEN
+            cg = (7 * cg) \ 8 + 33
+            IF cg > 255 THEN cg = 255
+            density[idx] = cg
+            DRAWCOLOR 0, cg, 0
+            PSET xscr, yscr
+        ENDIF
+    ENDIF
+    IF t MOD 100000 = 0 THEN SCREENFLIP
+NEXT t
+
+SETFONT "C:/Windows/Fonts/arial.ttf", 14
+DRAWCOLOR 0, 100, 0
+TEXT 80, 50, "Barnsley Fern"
+SCREENFLIP
+
+GFX.SAVE_SCREENSHOT "barnsley_fern.png", 0, 0, W, H
+
+' Hold the result on screen so you can admire it before exit.
+SLEEP 3000

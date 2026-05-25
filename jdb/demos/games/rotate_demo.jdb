@@ -1,0 +1,91 @@
+' ===================================================================
+' Simple SPRITE.ROTATE demo - draws a procedural arrow, spins it.
+' Click on the screen to set new pivot (origin) offsets.
+' ESC quits.
+' ===================================================================
+
+SCREEN 800, 600, "SPRITE.ROTATE demo"
+SETFONT "C:/Windows/Fonts/arial.ttf", 16
+
+' --- Build a 32x32 arrow sprite (points to the right) -----------------
+SZ = 32
+arrow = SPRITE.CREATE(SZ, SZ)
+
+' Background transparent (alpha 0), shaft + head opaque cyan/yellow
+FOR y = 0 TO SZ - 1
+    FOR x = 0 TO SZ - 1
+        SPRITE.SETPIXEL arrow, x, y, 0, 0, 0, 0
+    NEXT x
+NEXT y
+
+' Shaft: 4-pixel-thick horizontal bar from x=4..22, centered vertically
+FOR x = 4 TO 22
+    FOR y = 14 TO 17
+        SPRITE.SETPIXEL arrow, x, y, 0, 220, 220, 255
+    NEXT y
+NEXT x
+
+' Arrowhead: triangle from x=20..30
+FOR i = 0 TO 10
+    FOR y = 15 - i TO 16 + i
+        IF y >= 0 ANDALSO y < SZ THEN
+            SPRITE.SETPIXEL arrow, 20 + i, y, 255, 220, 0, 255
+        ENDIF
+    NEXT y
+NEXT i
+
+' --- Place and pivot --------------------------------------------------
+SPRITE.SCALE       arrow, 6, 6                   ' 32 -> 192 px visible
+SPRITE.SET_ORIGIN  arrow, SZ / 2, SZ / 2         ' rotate around center
+SPRITE.POS         arrow, 400 - SZ * 3, 300 - SZ * 3
+
+' Second arrow with off-center pivot to show what origin changes
+arrow2 = SPRITE.CREATE(SZ, SZ)
+FOR x = 4 TO 22
+    FOR y = 14 TO 17
+        SPRITE.SETPIXEL arrow2, x, y, 255, 80, 80, 255
+    NEXT y
+NEXT x
+FOR i = 0 TO 10
+    FOR y = 15 - i TO 16 + i
+        IF y >= 0 ANDALSO y < SZ THEN
+            SPRITE.SETPIXEL arrow2, 20 + i, y, 255, 200, 60, 255
+        ENDIF
+    NEXT y
+NEXT i
+SPRITE.SCALE       arrow2, 4, 4
+SPRITE.SET_ORIGIN  arrow2, 4, SZ / 2             ' pivot at left end of shaft
+SPRITE.POS         arrow2, 650 - 16, 300 - 16
+
+' --- Spin --------------------------------------------------------------
+angle = 0
+last_t = TICK()
+
+DO
+    now = TICK()
+    dt = (now - last_t) / 1000.0
+    last_t = now
+
+    ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" THEN EXITDO
+    IF ev$ = "KEYDOWN:Escape" THEN EXITDO
+
+    angle = angle + 90 * dt           ' 90 degrees/sec, framerate-independent
+    SPRITE.ROTATE arrow,  angle
+    SPRITE.ROTATE arrow2, -angle * 2  ' opposite direction, twice as fast
+
+    CLS 20, 20, 35
+    SPRITE.DRAW_ALL
+
+    TEXT 10, 10,  "SPRITE.ROTATE demo - ESC to quit", 220, 220, 220
+    TEXT 10, 35,  "Left arrow:  pivot at center  (rotates in place)", 200, 200, 200
+    TEXT 10, 60,  "Right arrow: pivot at tail    (sweeps like a clock hand)", 200, 200, 200
+    TEXT 10, 90,  "angle = " + STR$(INT(angle) MOD 360) + " deg", 180, 220, 180
+
+    SCREENFLIP
+    SLEEP 16
+LOOP
+
+SPRITE.DELETE arrow
+SPRITE.DELETE arrow2
+END

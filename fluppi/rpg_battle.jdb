@@ -244,7 +244,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
         ' Action delay: show battle message before next turn
         IF action_delay > 0 THEN
             action_delay = action_delay - 1
-            GFX.POLLEVENT()
+            RPG_DIALOG.DRAIN_KEY$()  ' discard buffered keys during delay
             CONTINUELOOP
         ENDIF
 
@@ -263,14 +263,14 @@ EXPORT FUNC FIGHT$(enemy_id$)
             LOOP
             pm = RPG_PARTY.GET_MEMBER(cur_member)
 
-            LET ev$ = GFX.POLLEVENT()
-            IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_menu
-            IF ev$ = "KEYDOWN:Up" THEN
+            LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+            IF ev$ = "Down" THEN selected = (selected + 1) MOD num_menu
+            IF ev$ = "Up" THEN
                 selected = selected - 1
                 IF selected < 0 THEN selected = num_menu - 1
             ENDIF
 
-            IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+            IF ev$ = "Return" OR ev$ = "Space" THEN
                 player_defending[cur_member] = FALSE
 
                 IF selected = 0 THEN
@@ -325,14 +325,14 @@ EXPORT FUNC FIGHT$(enemy_id$)
                             NEXT ski
                             TEXT 20, sh - INT(fs*1.5), skills[sk_sel]{"desc"}, ctx[0]-30, ctx[1]-30, ctx[2]-10
                             SPRITE.UPDATE : SCREENFLIP : SLEEP 16
-                            LET sev$ = GFX.POLLEVENT()
-                            IF sev$ = "KEYDOWN:Down" THEN sk_sel = (sk_sel + 1) MOD sk_count
-                            IF sev$ = "KEYDOWN:Up" THEN
+                            LET sev$ = RPG_DIALOG.DRAIN_KEY$()
+                            IF sev$ = "Down" THEN sk_sel = (sk_sel + 1) MOD sk_count
+                            IF sev$ = "Up" THEN
                                 sk_sel = sk_sel - 1
                                 IF sk_sel < 0 THEN sk_sel = sk_count - 1
                             ENDIF
-                            IF sev$ = "KEYDOWN:Escape" THEN EXITDO
-                            IF sev$ = "KEYDOWN:Return" OR sev$ = "KEYDOWN:Space" THEN
+                            IF sev$ = "Escape" THEN EXITDO
+                            IF sev$ = "Return" OR sev$ = "Space" THEN
                                 sk = skills[sk_sel]
                                 LET mp_cost = INT(sk{"mp_cost"})
                                 IF pm{"mp"} >= mp_cost THEN
@@ -463,7 +463,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
             ENDIF
 
         ELSEIF turn$ = "enemy" THEN
-            ev$ = GFX.POLLEVENT()
+            RPG_DIALOG.DRAIN_KEY$()  ' discard input during enemy turn
             anim_timer = anim_timer - 1
             IF anim_timer <= 0 THEN
                 IF e_hp > 0 THEN
@@ -529,7 +529,7 @@ EXPORT FUNC FIGHT$(enemy_id$)
 
             ' Show result
             FOR wi = 0 TO 90
-                GFX.POLLEVENT()
+                RPG_DIALOG.DRAIN_KEY$()  ' discard input during result animation
                 CLS cbg[0], cbg[1], cbg[2]
                 RECT 10, 10, sw-20, sh/2-20, cbg[0]+5, cbg[1], cbg[2]-15, TRUE
                 IF enemy_sprite > 0 AND result$ = "win" THEN
@@ -544,17 +544,17 @@ EXPORT FUNC FIGHT$(enemy_id$)
             NEXT wi
 
             ' Wait for confirm
-            DO : ev$ = GFX.POLLEVENT() : LOOP UNTIL ev$ = "NONE"
+            RPG_DIALOG.DRAIN_KEY$()  ' discard any latched key before waiting
             SLEEP 200
             DO
-                ev$ = GFX.POLLEVENT()
+                ev$ = RPG_DIALOG.DRAIN_KEY$()
                 CLS cbg[0], cbg[1], cbg[2]
                 RECT 10, sh/2+10, sw-20, sh/2-20, cbg[0], cbg[1], cbg[2], TRUE
                 TEXT 25, sh - INT(fs*1.8), battle_msg$, cmsg[0], cmsg[1], cmsg[2]
                 LET blink = (INT(TICK() / 400) MOD 2) = 0
                 IF blink THEN TEXT sw/2 - INT(fs*8), sh/2 + INT(fs*1.2), "Leertaste zum Fortfahren", ctx[0]-30, ctx[1]-30, ctx[2]+15
                 SCREENFLIP : SLEEP 16
-            LOOP UNTIL ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Escape"
+            LOOP UNTIL ev$ = "Space" OR ev$ = "Return" OR ev$ = "Escape"
 
             ' Cleanup
             IF enemy_sprite > 0 THEN SPRITE.DELETE enemy_sprite

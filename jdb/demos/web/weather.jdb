@@ -1,0 +1,14 @@
+' --- Wetter-Abfrage für jdBasic ---
+
+' 1. Header setzen, damit wttr.in uns als Konsolen-Programm erkennt
+HTTP.SETHEADER "User-Agent", "curl/7.81.0"
+
+' 2. Die Abfrage ausführen
+' Nutze v2.wttr.in für das volle Layout oder wttr.in/Gernsheim?0 für nur das aktuelle Wetter
+Wetter$ = HTTP.GET$("https://wttr.in/Gernsheim")
+
+' 3. Ergebnis ausgeben
+PRINT Wetter$
+
+' 4. Header wieder leeren (optional, falls du danach andere APIs nutzt)
+HTTP.CLEARHEADERS()

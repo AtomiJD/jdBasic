@@ -1,7 +1,0 @@
-W=40:H=20:F=6
-C=RESHAPE([" "],[H,W])
-X=IOTA(W)-1
-Y=INT((SIN(X/F)+1)*((H-1)/2))
-C[Y,X]="*"
-c[h/2,iota(w)-1] = "-"
-PRINT FRMV$(c)

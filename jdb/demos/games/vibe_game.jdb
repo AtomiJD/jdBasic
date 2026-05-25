@@ -1,0 +1,1385 @@
+' vibe_game.jdb - empty skeleton for a Claude-paired vibe-coded game.
+'
+' Opens a window with a HUD (lives + score) and a title screen that
+' prompts Start. Supports keyboard + Xbox-style joystick. F6 or the
+' joystick Start button hands control to Claude via STOP; on resume,
+' the window auto-refocuses (Win32 FFI in CLAUDE_LIVE module).
+'
+' Controls:
+'   Space / Enter / Joy-A     Start / unpause
+'   F6 / Joy-Start (btn 7)    Vibe-code with Claude (STOP)
+'   F11                       Toggle fullscreen
+'   Escape                    Quit
+'
+' Vibe-coding hooks live in jdb/claude_live.jdb.
+
+OPTION "EXPLICIT"
+
+IMPORT CLAUDE_LIVE
+
+CONST W = 1280
+CONST H = 720
+CONST SCALE = 2
+CONST GAME_TITLE = "Vibe Game"
+
+' --- State ---------------------------------------------------------
+
+DIM running   AS INTEGER = 1
+DIM mode$     AS STRING  = "title"     ' "title" | "play"
+DIM lives     AS INTEGER = 3
+DIM score     AS INTEGER = 0           ' unused; kept for legacy main-chunk
+DIM pscore    AS INTEGER = 0           ' pellet-only score shown in HUD
+DIM fs        AS INTEGER = 0            ' fullscreen flag
+DIM start_held AS INTEGER = 0           ' edge-detect for start press
+
+' Pacman state (4-dir, 4-frame animated sprite)
+DIM pac_sid AS INTEGER = 0
+DIM pac_x   AS DOUBLE  = 0
+DIM pac_y   AS DOUBLE  = 0
+DIM pac_dir AS INTEGER = 0              ' 0=right 1=down 2=left 3=up
+DIM pac_dir_last AS INTEGER = -1
+DIM pac_moving_last AS INTEGER = 0
+
+' Ghosts (4 of them: Blinky, Pinky, Inky, Clyde — all 4-frame walk anim,
+' all wander randomly with a re-roll every 0.5-1.5s + on wall bounce).
+' Pupils are NOT baked into the sheet — they're drawn live each frame
+' offset toward Pacman by draw_ghost_eyes().
+' Up to 8 ghost slots — pre-allocated. g_num_ghosts controls how many
+' are active this wave. Slots beyond it stay hidden until a new ghost
+' is unlocked at the next 3-wave mark.
+DIM ghost_sids  = ZEROS(8)
+DIM ghost_x     = ZEROS(8)
+DIM ghost_y     = ZEROS(8)
+DIM ghost_dir   = ZEROS(8)
+DIM ghost_timer = ZEROS(8)
+DIM ghost_state    = ZEROS(8)
+DIM ghost_target_x = ZEROS(8)
+DIM ghost_target_y = ZEROS(8)
+DIM frght_sids  = ZEROS(8)
+DIM g_num_ghosts AS INTEGER = 4
+
+' Pacman invuln-after-hit (frames remaining) + visible blink while > 0
+DIM pac_invuln AS INTEGER = 0
+
+' Pellets — small dots on a grid that Pacman eats for +10 score each.
+' Reset when all are gone (next "wave").
+DIM pellet_x     = ZEROS(256)
+DIM pellet_y     = ZEROS(256)
+DIM pellet_alive = ZEROS(256)
+DIM pellet_count   AS INTEGER = 0
+DIM pellets_eaten  AS INTEGER = 0
+
+' Sound state — voice 0 = chomp (square), voice 1 = hit (triangle),
+' voice 2 = footstep noise. Per-voice "guard" counts frames remaining
+' where the voice MUST NOT be drained, so we never clip an envelope.
+DIM chomp_toggle AS INTEGER = 0
+DIM step_timer   AS INTEGER = 0
+DIM v_guard      = ZEROS(8)
+DIM frame_tick   AS INTEGER = 0
+
+' Power-pellets (4 in the corners). Eating one starts FRIGHTENED mode:
+' ghosts can be eaten for chain-bonus (200/400/800/1600) instead of
+' costing a life.
+DIM power_x     = ZEROS(4)
+DIM power_y     = ZEROS(4)
+DIM power_alive = ZEROS(4)
+DIM frightened_timer AS INTEGER = 0
+DIM ghost_chain      AS INTEGER = 0
+' Per-ghost stun (frames remaining). When > 0, ghost is frozen in place
+' and shown blue; Pacman can eat it like a frightened ghost.
+DIM ghost_stun = ZEROS(8)
+
+' Fruit power-up — single one at a time. Three kinds:
+'   0 = CHERRY  → +3 bullets   + 100 score
+'   1 = BANANA  → 5 s speed boost + 200 score
+'   2 = ORANGE  → 3 s ghost freeze + 300 score
+DIM cherry_alive       AS INTEGER = 0
+DIM cherry_x           AS DOUBLE  = 0
+DIM cherry_y           AS DOUBLE  = 0
+DIM cherry_life        AS INTEGER = 0
+DIM cherry_spawn_timer AS INTEGER = 600
+DIM cherry_kind        AS INTEGER = 0
+DIM pac_speed_boost    AS INTEGER = 0     ' frames remaining of speed-up
+DIM ghost_freeze_timer AS INTEGER = 0     ' frames remaining of ghost freeze
+
+' Pacman bullets — fired with SPACE, travel in current pac_dir, stun on hit
+DIM pac_ammo  AS INTEGER = 0
+DIM pb_x      = ZEROS(8)
+DIM pb_y      = ZEROS(8)
+DIM pb_vx     = ZEROS(8)
+DIM pb_vy     = ZEROS(8)
+DIM pb_alive  = ZEROS(8)
+DIM fire_held AS INTEGER = 0
+
+' Level counter — bumps on each cleared pellet wave
+DIM g_level AS INTEGER = 1
+
+' Particle burst pool (ring buffer)
+DIM part_x    = ZEROS(96)
+DIM part_y    = ZEROS(96)
+DIM part_vx   = ZEROS(96)
+DIM part_vy   = ZEROS(96)
+DIM part_life = ZEROS(96)
+DIM part_r    = ZEROS(96)
+DIM part_g    = ZEROS(96)
+DIM part_b    = ZEROS(96)
+DIM part_next AS INTEGER = 0
+
+' Floating score popups (ring buffer)
+DIM pop_x      = ZEROS(16)
+DIM pop_y      = ZEROS(16)
+DIM pop_life   = ZEROS(16)
+DIM pop_r      = ZEROS(16)
+DIM pop_g      = ZEROS(16)
+DIM pop_b      = ZEROS(16)
+DIM pop_text$[16]
+DIM pop_next   AS INTEGER = 0
+
+' --- Input helpers -------------------------------------------------
+
+' Rising-edge "Start": Space / Enter / Joy-A
+FUNC start_pressed()
+    DIM nw AS INTEGER = 0
+    IF GFX.KEYSTATE("Space") OR GFX.KEYSTATE("Return") THEN nw = 1
+    IF JOY.COUNT() > 0 THEN
+        IF JOY.BUTTON(0, 0) THEN nw = 1
+    ENDIF
+    DIM was AS INTEGER = start_held
+    start_held = nw
+    IF nw = 1 AND was = 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' --- Drawing -------------------------------------------------------
+
+SUB draw_bg()
+    DRAWCOLOR 12, 16, 24
+    CLS
+    DRAWCOLOR 28, 32, 44
+    DIM i AS INTEGER
+    FOR i = 0 TO W STEP 40
+        LINE i, 0, i, H
+    NEXT i
+    FOR i = 0 TO H STEP 40
+        LINE 0, i, W, i
+    NEXT i
+ENDSUB
+
+SUB draw_hud()
+    DRAWCOLOR 180, 220, 255
+    TEXT 16, 12, "LIVES " + STR$(lives)
+    DRAWCOLOR 100, 255, 180
+    TEXT 16, 36, "LEVEL " + STR$(g_level) + "  GHOSTS " + STR$(g_num_ghosts)
+    DRAWCOLOR 255, 220, 80
+    TEXT W - 200, 12, "SCORE " + FORMAT$("{:0>6}", pscore)
+    IF pac_ammo > 0 THEN
+        DRAWCOLOR 255, 80, 80
+        TEXT W/2 - 40, 12, "AMMO " + STR$(pac_ammo)
+    ENDIF
+    IF pac_speed_boost > 0 THEN
+        DRAWCOLOR 255, 220, 60
+        TEXT W/2 - 200, 36, "BOOST " + FORMAT$("{:0.1f}", pac_speed_boost / 60.0) + "s"
+    ENDIF
+    IF ghost_freeze_timer > 0 THEN
+        DRAWCOLOR 100, 200, 255
+        TEXT W/2 + 80, 36, "FREEZE " + FORMAT$("{:0.1f}", ghost_freeze_timer / 60.0) + "s"
+    ENDIF
+ENDSUB
+
+SUB draw_title()
+    DRAWCOLOR 230, 240, 255
+    TEXT W/2 - 80, H/2 - 80, "VIBE GAME"
+    DRAWCOLOR 160, 180, 210
+    TEXT W/2 - 160, H/2 - 30, "Space / Enter / Joy-A   to start"
+    TEXT W/2 - 180, H/2 -  4, "F6 / Joy-Start          to vibe-code"
+    TEXT W/2 - 140, H/2 + 22, "F11   fullscreen"
+    TEXT W/2 - 140, H/2 + 46, "ESC   quit"
+ENDSUB
+
+SUB draw_play()
+    frame_tick = frame_tick + 1
+    update_pacman()
+    update_ghosts()
+    update_pellets()
+    update_power_pellets()
+    update_cherry()
+    update_pac_bullets()
+    update_particles()
+    update_popups()
+    check_collisions()
+    draw_pellets()            ' background layer, sprites paint on top
+    draw_power_pellets()
+    draw_cherry()
+    SPRITE.UPDATE
+    SPRITE.DRAW_ALL
+    draw_ghost_eyes()
+    draw_pac_bullets()
+    draw_particles()
+    draw_popups()
+    draw_frightened_banner()
+    draw_combo()
+    sfx_drain()               ' per-voice guard-protected, safe every frame
+    DRAWCOLOR 110, 130, 160
+    TEXT W/2 - 220, H - 50, "WASD move  -  SPACE fire (cherry)  -  F6 vibe"
+ENDSUB
+
+' --- Pacman ----------------------------------------------------------
+
+' Procedurally builds a 4x4 spritesheet (16x16 frames, 64x64 total):
+'   row 0=right, row 1=down, row 2=left, row 3=up
+'   col 0=closed, col 1=quarter, col 2=open, col 3=quarter
+' Sheet is saved as art/pacman_sheet.png, then SPRITE.LOAD'd so the
+' standard frame-slicing path works for animation.
+SUB init_pacman()
+    DIM pp_rgba = ZEROS(64 * 64 * 4)
+    DIM pp_row AS INTEGER
+    DIM pp_col AS INTEGER
+    DIM pp_lx  AS INTEGER
+    DIM pp_ly  AS INTEGER
+    DIM pp_idx AS INTEGER
+    DIM pp_sx  AS INTEGER
+    DIM pp_sy  AS INTEGER
+    DIM pp_cdx AS DOUBLE
+    DIM pp_cdy AS DOUBLE
+    DIM pp_dist AS DOUBLE
+    DIM pp_pang AS DOUBLE
+    DIM pp_mang AS DOUBLE
+    DIM pp_aper AS DOUBLE
+    DIM pp_diff AS DOUBLE
+    DIM pp_PI     AS DOUBLE = 3.14159265358979
+    DIM pp_TAU    AS DOUBLE = 6.28318530717959
+    DIM pp_HALFPI AS DOUBLE = 1.5707963267949
+
+    FOR pp_row = 0 TO 3
+        IF pp_row = 0 THEN pp_mang = 0.0
+        IF pp_row = 1 THEN pp_mang = pp_HALFPI
+        IF pp_row = 2 THEN pp_mang = pp_PI
+        IF pp_row = 3 THEN pp_mang = -pp_HALFPI
+        FOR pp_col = 0 TO 3
+            IF pp_col = 0 THEN pp_aper = 0.0
+            IF pp_col = 1 THEN pp_aper = 0.4
+            IF pp_col = 2 THEN pp_aper = 0.85
+            IF pp_col = 3 THEN pp_aper = 0.4
+            FOR pp_ly = 0 TO 15
+                FOR pp_lx = 0 TO 15
+                    pp_sx  = pp_col * 16 + pp_lx
+                    pp_sy  = pp_row * 16 + pp_ly
+                    pp_idx = (pp_sy * 64 + pp_sx) * 4
+                    pp_cdx = pp_lx - 7.5
+                    pp_cdy = pp_ly - 7.5
+                    pp_dist = SQR(pp_cdx * pp_cdx + pp_cdy * pp_cdy)
+                    IF pp_dist <= 7.2 THEN
+                        DIM pp_in_mouth AS INTEGER = 0
+                        IF pp_aper > 0 THEN
+                            pp_pang = ATAN2(pp_cdy, pp_cdx)
+                            pp_diff = pp_pang - pp_mang
+                            DO WHILE pp_diff > pp_PI
+                                pp_diff = pp_diff - pp_TAU
+                            LOOP
+                            DO WHILE pp_diff < -pp_PI
+                                pp_diff = pp_diff + pp_TAU
+                            LOOP
+                            IF ABS(pp_diff) < pp_aper THEN pp_in_mouth = 1
+                        ENDIF
+                        IF pp_in_mouth = 0 THEN
+                            IF pp_dist > 6.5 THEN
+                                ' dark rim
+                                pp_rgba[pp_idx + 0] = 180
+                                pp_rgba[pp_idx + 1] = 140
+                                pp_rgba[pp_idx + 2] = 0
+                                pp_rgba[pp_idx + 3] = 255
+                            ELSE
+                                ' yellow body
+                                pp_rgba[pp_idx + 0] = 255
+                                pp_rgba[pp_idx + 1] = 220
+                                pp_rgba[pp_idx + 2] = 40
+                                pp_rgba[pp_idx + 3] = 255
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                NEXT pp_lx
+            NEXT pp_ly
+        NEXT pp_col
+    NEXT pp_row
+
+    ' Build the sheet via tmp sprite + save, then load as proper spritesheet
+    DIM pp_tmp AS INTEGER = SPRITE.CREATE(64, 64)
+    SPRITE.SETBUFFER pp_tmp, pp_rgba
+    SPRITE.SAVE pp_tmp, "art/pacman_sheet.png"
+    SPRITE.DELETE pp_tmp
+
+    pac_sid = SPRITE.LOAD("art/pacman_sheet.png", 16, 16)
+    SPRITE.SCALE pac_sid, 3.0, 3.0
+    SPRITE.SET_ORIGIN pac_sid, 8, 8
+
+    ' Animations: 4 frames per direction. col index = frame col
+    SPRITE.ANIM pac_sid, "right", [0, 1, 2, 3], 10
+    SPRITE.ANIM pac_sid, "down",  [4, 5, 6, 7], 10
+    SPRITE.ANIM pac_sid, "left",  [8, 9, 10, 11], 10
+    SPRITE.ANIM pac_sid, "up",    [12, 13, 14, 15], 10
+    SPRITE.PLAY pac_sid, "right"
+
+    ' Sprite is 16x16 base * 3.0 scale = 48x48 with top-left anchor.
+    ' Center on the screen.
+    pac_x = W / 2.0 - 24
+    pac_y = H / 2.0 - 24
+    SPRITE.POS pac_sid, pac_x, pac_y
+ENDSUB
+
+SUB update_pacman()
+    IF pac_sid = 0 THEN RETURN
+    DIM moved AS INTEGER = 0
+    DIM speed AS DOUBLE = 3.5
+    ' Banana power-up — almost-double speed for a few seconds
+    IF pac_speed_boost > 0 THEN
+        speed = 6.5
+        pac_speed_boost = pac_speed_boost - 1
+    ENDIF
+    ' Mutually exclusive: ELSEIF prevents diagonals.
+    ' Priority: right > down > left > up (arbitrary, but stable).
+    IF GFX.KEYSTATE("D") THEN
+        pac_x = pac_x + speed
+        pac_dir = 0
+        moved = 1
+    ELSEIF GFX.KEYSTATE("S") THEN
+        pac_y = pac_y + speed
+        pac_dir = 1
+        moved = 1
+    ELSEIF GFX.KEYSTATE("A") THEN
+        pac_x = pac_x - speed
+        pac_dir = 2
+        moved = 1
+    ELSEIF GFX.KEYSTATE("W") THEN
+        pac_y = pac_y - speed
+        pac_dir = 3
+        moved = 1
+    ENDIF
+
+    ' Horizontal: tunnel wraparound — fully leave the screen, reappear on
+    ' the other side. Vertical stays clamped (no top/bottom tunnel).
+    IF pac_x < -48     THEN pac_x = W
+    IF pac_x > W       THEN pac_x = -48
+    IF pac_y < 0       THEN pac_y = 0
+    IF pac_y > H - 48  THEN pac_y = H - 48
+
+    ' Switch animation only when direction actually changes.
+    ' Animation keeps chomping continuously, even when idle.
+    IF moved = 1 AND pac_dir <> pac_dir_last THEN
+        IF pac_dir = 0 THEN SPRITE.PLAY pac_sid, "right"
+        IF pac_dir = 1 THEN SPRITE.PLAY pac_sid, "down"
+        IF pac_dir = 2 THEN SPRITE.PLAY pac_sid, "left"
+        IF pac_dir = 3 THEN SPRITE.PLAY pac_sid, "up"
+        pac_dir_last = pac_dir
+    ENDIF
+    pac_moving_last = moved
+
+    ' Footstep "chr" — fire every ~6 frames while moving
+    IF moved = 1 THEN
+        step_timer = step_timer - 1
+        IF step_timer <= 0 THEN
+            sfx_step()
+            step_timer = 6
+        ENDIF
+    ELSE
+        step_timer = 0
+    ENDIF
+
+    ' Cherry-gun: SPACE → spawn bullet in current direction (consumes ammo)
+    IF pac_ammo > 0 AND fire_pressed() = 1 THEN
+        spawn_pac_bullet()
+    ELSE
+        ' Still tick the edge-detector even when ammo is empty
+        DIM dummy_fp AS INTEGER = fire_pressed()
+    ENDIF
+
+    SPRITE.POS pac_sid, pac_x, pac_y
+ENDSUB
+
+' --- Ghosts ----------------------------------------------------------
+
+' Builds a 4x4 ghost spritesheet at 16x16 per frame:
+'   row 0=Blinky (red), row 1=Pinky (pink),
+'   row 2=Inky (cyan),  row 3=Clyde (orange)
+'   cols 0/2 = "feet pattern A", cols 1/3 = "feet pattern B"
+' Eyes always look forward (down). Sheet saved as art/ghost_sheet.png,
+' then loaded 4 times — one Sprite per ghost, each playing its own row.
+SUB init_ghosts()
+    DIM g_rgba = ZEROS(64 * 64 * 4)
+    DIM gh_row AS INTEGER
+    DIM gh_col AS INTEGER
+    DIM gh_lx  AS INTEGER
+    DIM gh_ly  AS INTEGER
+    DIM gh_sx  AS INTEGER
+    DIM gh_sy  AS INTEGER
+    DIM gh_idx AS INTEGER
+    DIM gr AS INTEGER
+    DIM gg AS INTEGER
+    DIM gb AS INTEGER
+    DIM wave_phase AS INTEGER
+    DIM is_body AS INTEGER
+    DIM is_eye AS INTEGER
+
+    FOR gh_row = 0 TO 3
+        IF gh_row = 0 THEN
+            gr = 255 : gg = 50 : gb = 50          ' Blinky
+        ELSEIF gh_row = 1 THEN
+            gr = 255 : gg = 184 : gb = 222        ' Pinky
+        ELSEIF gh_row = 2 THEN
+            gr = 80 : gg = 220 : gb = 255         ' Inky
+        ELSE
+            gr = 255 : gg = 184 : gb = 81         ' Clyde
+        ENDIF
+        FOR gh_col = 0 TO 3
+            wave_phase = gh_col MOD 2
+            FOR gh_ly = 0 TO 15
+                FOR gh_lx = 0 TO 15
+                    gh_sx  = gh_col * 16 + gh_lx
+                    gh_sy  = gh_row * 16 + gh_ly
+                    gh_idx = (gh_sy * 64 + gh_sx) * 4
+                    is_body = 0
+                    is_eye = 0
+
+                    ' Rounded top (rows 0..2) + body rect (rows 3..12)
+                    IF gh_ly = 0 AND gh_lx >= 5 AND gh_lx <= 10 THEN is_body = 1
+                    IF gh_ly = 1 AND gh_lx >= 4 AND gh_lx <= 11 THEN is_body = 1
+                    IF gh_ly = 2 AND gh_lx >= 3 AND gh_lx <= 12 THEN is_body = 1
+                    IF gh_ly >= 3 AND gh_ly <= 12 AND gh_lx >= 2 AND gh_lx <= 13 THEN is_body = 1
+
+                    ' Wavy bottom — 3 humps, phase shifts per frame
+                    IF gh_ly = 13 AND gh_lx >= 2 AND gh_lx <= 13 THEN is_body = 1
+                    IF gh_ly = 14 THEN
+                        IF wave_phase = 0 THEN
+                            IF (gh_lx >= 2 AND gh_lx <= 3) OR (gh_lx >= 6 AND gh_lx <= 7) OR (gh_lx >= 10 AND gh_lx <= 11) THEN is_body = 1
+                        ELSE
+                            IF (gh_lx = 2) OR (gh_lx >= 4 AND gh_lx <= 5) OR (gh_lx >= 8 AND gh_lx <= 9) OR (gh_lx >= 12 AND gh_lx <= 13) THEN is_body = 1
+                        ENDIF
+                    ENDIF
+
+                    ' Eyes (whites only) — 2x2 at upper-left + upper-right.
+                    ' Pupils painted live by draw_ghost_eyes(), so we leave
+                    ' the whites blank here.
+                    IF (gh_ly = 5 OR gh_ly = 6) AND ((gh_lx = 5 OR gh_lx = 6) OR (gh_lx = 9 OR gh_lx = 10)) THEN is_eye = 1
+
+                    IF is_eye = 1 THEN
+                        g_rgba[gh_idx + 0] = 255
+                        g_rgba[gh_idx + 1] = 255
+                        g_rgba[gh_idx + 2] = 255
+                        g_rgba[gh_idx + 3] = 255
+                    ELSEIF is_body = 1 THEN
+                        g_rgba[gh_idx + 0] = gr
+                        g_rgba[gh_idx + 1] = gg
+                        g_rgba[gh_idx + 2] = gb
+                        g_rgba[gh_idx + 3] = 255
+                    ENDIF
+                NEXT gh_lx
+            NEXT gh_ly
+        NEXT gh_col
+    NEXT gh_row
+
+    DIM gh_tmp AS INTEGER = SPRITE.CREATE(64, 64)
+    SPRITE.SETBUFFER gh_tmp, g_rgba
+    SPRITE.SAVE gh_tmp, "art/ghost_sheet.png"
+    SPRITE.DELETE gh_tmp
+
+    ' 8 ghost slots — each plays its color-row's 4 frames. Slots
+    ' beyond g_num_ghosts are hidden by the visibility-sync until the
+    ' wave-progression unlocks them.
+    DIM gi AS INTEGER
+    DIM base AS INTEGER
+    FOR gi = 0 TO 7
+        ghost_sids[gi] = SPRITE.LOAD("art/ghost_sheet.png", 16, 16)
+        SPRITE.SCALE ghost_sids[gi], 3.0, 3.0
+        base = (gi MOD 4) * 4
+        SPRITE.ANIM ghost_sids[gi], "walk", [base, base + 1, base + 2, base + 3], 6
+        SPRITE.PLAY ghost_sids[gi], "walk"
+        ghost_x[gi] = 40 + RND(1) * (W - 128)
+        ghost_y[gi] = 40 + RND(1) * (H - 128)
+        ghost_dir[gi] = INT(RND(1) * 4)
+        ghost_timer[gi] = 30 + INT(RND(1) * 60)
+        SPRITE.POS ghost_sids[gi], ghost_x[gi], ghost_y[gi]
+        ' Slots beyond the active count start hidden
+        IF gi >= g_num_ghosts THEN SPRITE.VISIBLE ghost_sids[gi], 0
+    NEXT gi
+ENDSUB
+
+' All-blue spritesheet for frightened mode — same shape/animation as
+' init_ghosts but every body pixel is dark blue regardless of row.
+SUB init_frightened_ghosts()
+    DIM g_rgba = ZEROS(64 * 64 * 4)
+    DIM fr_row AS INTEGER
+    DIM fr_col AS INTEGER
+    DIM fr_lx  AS INTEGER
+    DIM fr_ly  AS INTEGER
+    DIM fr_sx  AS INTEGER
+    DIM fr_sy  AS INTEGER
+    DIM fr_idx AS INTEGER
+    DIM wave_phase AS INTEGER
+    DIM is_body AS INTEGER
+    DIM is_eye AS INTEGER
+
+    FOR fr_row = 0 TO 3
+        FOR fr_col = 0 TO 3
+            wave_phase = fr_col MOD 2
+            FOR fr_ly = 0 TO 15
+                FOR fr_lx = 0 TO 15
+                    fr_sx  = fr_col * 16 + fr_lx
+                    fr_sy  = fr_row * 16 + fr_ly
+                    fr_idx = (fr_sy * 64 + fr_sx) * 4
+                    is_body = 0
+                    is_eye = 0
+                    IF fr_ly = 0 AND fr_lx >= 5 AND fr_lx <= 10 THEN is_body = 1
+                    IF fr_ly = 1 AND fr_lx >= 4 AND fr_lx <= 11 THEN is_body = 1
+                    IF fr_ly = 2 AND fr_lx >= 3 AND fr_lx <= 12 THEN is_body = 1
+                    IF fr_ly >= 3 AND fr_ly <= 12 AND fr_lx >= 2 AND fr_lx <= 13 THEN is_body = 1
+                    IF fr_ly = 13 AND fr_lx >= 2 AND fr_lx <= 13 THEN is_body = 1
+                    IF fr_ly = 14 THEN
+                        IF wave_phase = 0 THEN
+                            IF (fr_lx >= 2 AND fr_lx <= 3) OR (fr_lx >= 6 AND fr_lx <= 7) OR (fr_lx >= 10 AND fr_lx <= 11) THEN is_body = 1
+                        ELSE
+                            IF (fr_lx = 2) OR (fr_lx >= 4 AND fr_lx <= 5) OR (fr_lx >= 8 AND fr_lx <= 9) OR (fr_lx >= 12 AND fr_lx <= 13) THEN is_body = 1
+                        ENDIF
+                    ENDIF
+                    IF (fr_ly = 5 OR fr_ly = 6) AND ((fr_lx = 5 OR fr_lx = 6) OR (fr_lx = 9 OR fr_lx = 10)) THEN is_eye = 1
+
+                    IF is_eye = 1 THEN
+                        g_rgba[fr_idx + 0] = 255
+                        g_rgba[fr_idx + 1] = 255
+                        g_rgba[fr_idx + 2] = 255
+                        g_rgba[fr_idx + 3] = 255
+                    ELSEIF is_body = 1 THEN
+                        ' Frightened blue
+                        g_rgba[fr_idx + 0] = 30
+                        g_rgba[fr_idx + 1] = 80
+                        g_rgba[fr_idx + 2] = 220
+                        g_rgba[fr_idx + 3] = 255
+                    ENDIF
+                NEXT fr_lx
+            NEXT fr_ly
+        NEXT fr_col
+    NEXT fr_row
+
+    DIM fr_tmp AS INTEGER = SPRITE.CREATE(64, 64)
+    SPRITE.SETBUFFER fr_tmp, g_rgba
+    SPRITE.SAVE fr_tmp, "art/ghost_blue_sheet.png"
+    SPRITE.DELETE fr_tmp
+
+    DIM gi AS INTEGER
+    DIM base AS INTEGER
+    FOR gi = 0 TO 7
+        frght_sids[gi] = SPRITE.LOAD("art/ghost_blue_sheet.png", 16, 16)
+        SPRITE.SCALE frght_sids[gi], 3.0, 3.0
+        base = (gi MOD 4) * 4
+        SPRITE.ANIM frght_sids[gi], "walk", [base, base + 1, base + 2, base + 3], 6
+        SPRITE.PLAY frght_sids[gi], "walk"
+        SPRITE.VISIBLE frght_sids[gi], 0
+        SPRITE.POS frght_sids[gi], ghost_x[gi], ghost_y[gi]
+    NEXT gi
+ENDSUB
+
+SUB update_ghosts()
+    IF ghost_sids[0] = 0 THEN RETURN
+    ' Orange-power freeze: skip random-wander branch this frame. Stun + eyes
+    ' return continue to tick so the player can still eat frozen ghosts.
+    IF ghost_freeze_timer > 0 THEN ghost_freeze_timer = ghost_freeze_timer - 1
+    DIM gi AS INTEGER
+    ' Speed scales with level: 1.6 at L1 -> 3.5 cap by level ~14
+    DIM speed AS DOUBLE = 1.6 + (g_level - 1) * 0.15
+    IF speed > 3.5 THEN speed = 3.5
+    DIM eye_speed AS DOUBLE = 7.0
+    FOR gi = 0 TO g_num_ghosts - 1
+        ' Stunned: freeze in place, count down. Pacman can still eat.
+        IF ghost_stun[gi] > 0 THEN
+            ghost_stun[gi] = ghost_stun[gi] - 1
+            SPRITE.POS ghost_sids[gi], ghost_x[gi], ghost_y[gi]
+        ELSEIF ghost_state[gi] = 1 THEN
+            ' Eyes-only-returning: linear move to target, fast.
+            DIM tdx AS DOUBLE = ghost_target_x[gi] - ghost_x[gi]
+            DIM tdy AS DOUBLE = ghost_target_y[gi] - ghost_y[gi]
+            DIM tdist AS DOUBLE = SQR(tdx * tdx + tdy * tdy)
+            IF tdist < eye_speed THEN
+                ghost_x[gi] = ghost_target_x[gi]
+                ghost_y[gi] = ghost_target_y[gi]
+                ghost_state[gi] = 0
+                ghost_dir[gi] = INT(RND(1) * 4)
+                ghost_timer[gi] = 30 + INT(RND(1) * 60)
+            ELSE
+                ghost_x[gi] = ghost_x[gi] + tdx / tdist * eye_speed
+                ghost_y[gi] = ghost_y[gi] + tdy / tdist * eye_speed
+            ENDIF
+        ELSEIF ghost_freeze_timer > 0 THEN
+            ' Frozen by ORANGE power — hold position, sprite stays put
+            SPRITE.POS ghost_sids[gi], ghost_x[gi], ghost_y[gi]
+        ELSE
+            ' Normal random-wander
+            ghost_timer[gi] = ghost_timer[gi] - 1
+            IF ghost_timer[gi] <= 0 THEN
+                ghost_dir[gi] = INT(RND(1) * 4)
+                ghost_timer[gi] = 30 + INT(RND(1) * 90)
+            ENDIF
+            IF ghost_dir[gi] = 0 THEN ghost_x[gi] = ghost_x[gi] + speed
+            IF ghost_dir[gi] = 1 THEN ghost_y[gi] = ghost_y[gi] + speed
+            IF ghost_dir[gi] = 2 THEN ghost_x[gi] = ghost_x[gi] - speed
+            IF ghost_dir[gi] = 3 THEN ghost_y[gi] = ghost_y[gi] - speed
+
+            ' Horizontal: tunnel wraparound (same as Pacman).
+            ' Vertical: bounce + re-roll direction.
+            IF ghost_x[gi] < -48 THEN ghost_x[gi] = W
+            IF ghost_x[gi] > W   THEN ghost_x[gi] = -48
+            IF ghost_y[gi] < 0 THEN
+                ghost_y[gi] = 0
+                ghost_dir[gi] = INT(RND(1) * 4)
+            ENDIF
+            IF ghost_y[gi] > H - 48 THEN
+                ghost_y[gi] = H - 48
+                ghost_dir[gi] = INT(RND(1) * 4)
+            ENDIF
+        ENDIF
+        SPRITE.POS ghost_sids[gi], ghost_x[gi], ghost_y[gi]
+    NEXT gi
+
+    ' Sync frightened twins + flip visibility based on mode + per-ghost state.
+    ' Slots beyond g_num_ghosts get both bodies hidden.
+    IF frght_sids[0] <> 0 THEN
+        DIM frightened_on AS INTEGER = 0
+        IF frightened_timer > 0 THEN frightened_on = 1
+        DIM gj AS INTEGER
+        FOR gj = 0 TO 7
+            IF gj >= g_num_ghosts THEN
+                SPRITE.VISIBLE ghost_sids[gj], 0
+                SPRITE.VISIBLE frght_sids[gj], 0
+            ELSE
+            SPRITE.POS frght_sids[gj], ghost_x[gj], ghost_y[gj]
+            IF ghost_state[gj] = 1 THEN
+                ' Eyes only — hide both bodies, eyes are drawn by draw_ghost_eyes
+                SPRITE.VISIBLE ghost_sids[gj], 0
+                SPRITE.VISIBLE frght_sids[gj], 0
+            ELSEIF ghost_stun[gj] > 0 OR frightened_on = 1 THEN
+                ' Frightened OR individually stunned → show blue body
+                SPRITE.VISIBLE ghost_sids[gj], 0
+                SPRITE.VISIBLE frght_sids[gj], 1
+            ELSE
+                SPRITE.VISIBLE ghost_sids[gj], 1
+                SPRITE.VISIBLE frght_sids[gj], 0
+            ENDIF
+            ENDIF
+        NEXT gj
+    ENDIF
+ENDSUB
+
+' Draw ghost pupils overlay-style — each pupil offset toward Pacman.
+' Called after SPRITE.DRAW_ALL so it paints on top of the white eyes.
+SUB draw_ghost_eyes()
+    IF ghost_sids[0] = 0 THEN RETURN
+    DIM pac_cx AS DOUBLE = pac_x + 24
+    DIM pac_cy AS DOUBLE = pac_y + 24
+    DIM gi AS INTEGER
+    DIM eye_lcx AS DOUBLE
+    DIM eye_lcy AS DOUBLE
+    DIM eye_rcx AS DOUBLE
+    DIM eye_rcy AS DOUBLE
+    DIM target_cx AS DOUBLE
+    DIM target_cy AS DOUBLE
+    DIM dx AS DOUBLE
+    DIM dy AS DOUBLE
+    DIM ln AS DOUBLE
+    DIM ox AS DOUBLE
+    DIM oy AS DOUBLE
+    DIM max_off AS DOUBLE = 1.8
+    FOR gi = 0 TO g_num_ghosts - 1
+        ' Eye-white centres on screen for a 16x16 sprite at 3x scale.
+        eye_lcx = ghost_x[gi] + 18
+        eye_lcy = ghost_y[gi] + 18
+        eye_rcx = ghost_x[gi] + 30
+        eye_rcy = ghost_y[gi] + 18
+
+        ' Look-target: in eyes-only return, look toward the respawn spot.
+        IF ghost_state[gi] = 1 THEN
+            target_cx = ghost_target_x[gi] + 24
+            target_cy = ghost_target_y[gi] + 24
+            ' Body is hidden — paint the white eyeballs ourselves
+            DRAWCOLOR 255, 255, 255
+            RECT eye_lcx - 4, eye_lcy - 4, 8, 8, TRUE
+            RECT eye_rcx - 4, eye_rcy - 4, 8, 8, TRUE
+            DRAWCOLOR 0, 0, 90
+        ELSE
+            target_cx = pac_cx
+            target_cy = pac_cy
+            ' Pupils: blue during frightened, near-black otherwise
+            IF frightened_timer > 0 THEN
+                DRAWCOLOR 80, 140, 255
+            ELSE
+                DRAWCOLOR 0, 0, 90
+            ENDIF
+        ENDIF
+
+        dx = target_cx - eye_lcx
+        dy = target_cy - eye_lcy
+        ln = SQR(dx * dx + dy * dy) + 0.001
+        ox = dx / ln * max_off
+        oy = dy / ln * max_off
+        RECT eye_lcx + ox - 2, eye_lcy + oy - 2, 4, 4, TRUE
+
+        dx = target_cx - eye_rcx
+        dy = target_cy - eye_rcy
+        ln = SQR(dx * dx + dy * dy) + 0.001
+        ox = dx / ln * max_off
+        oy = dy / ln * max_off
+        RECT eye_rcx + ox - 2, eye_rcy + oy - 2, 4, 4, TRUE
+    NEXT gi
+ENDSUB
+
+' --- Sound -----------------------------------------------------------
+
+SUB init_sound()
+    SOUND.INIT
+    SOUND.BPM 140
+    ' Voice 0: melody square (lead) — moderate sustain so notes hold
+    SOUND.VOICE 0, "SQUARE", 0.01, 0.12, 0.45, 0.18
+    SOUND.FILTER 0, 2400
+    SOUND.GAIN 0, 0.32
+    ' Voice 1: bass triangle — warmer low end
+    SOUND.VOICE 1, "TRIANGLE", 0.01, 0.15, 0.55, 0.20
+    SOUND.FILTER 1, 600
+    SOUND.GAIN 1, 0.38
+    SOUND.REVERB 0.5, 0.3, 0.85, 0.2
+    SOUND.REVERBSEND 0, 0.3
+    ' Voice 2: percussive chomp blip (SFX — sustain 0 self-terminates)
+    SOUND.VOICE 2, "SQUARE", 0.005, 0.12, 0.0, 0.06
+    SOUND.FILTER 2, 3500
+    SOUND.GAIN 2, 0.8
+    ' Voice 3: low triangle thud for hit / death
+    SOUND.VOICE 3, "TRIANGLE", 0.005, 0.18, 0.0, 0.20
+    SOUND.FILTER 3, 700
+    SOUND.GAIN 3, 0.9
+    ' Voice 4: open noise "tsch" footstep
+    SOUND.VOICE 4, "NOISE", 0.005, 0.08, 0.0, 0.03
+    SOUND.FILTER 4, 2200
+    SOUND.GAIN 4, 1.0
+
+    ' Pacman-vibe loop in A-minor, 8 bars. Arcade chiptune feel.
+    DIM mel$ AS STRING = "[a4 ~ c5 ~] [e5 ~ c5 ~] [d5 ~ a4 ~] [c5 ~ e5 ~] " + _
+                        "[g5 ~ e5 ~] [a5 ~ g5 ~] [e5 ~ c5 ~] [a4 ~ ~ ~]"
+    DIM bas$ AS STRING = "[[a2 a3]*4] [[d2 d3]*4] [[g2 g3]*4] [[a2 a3]*4] " + _
+                        "[[a2 a3]*4] [[d2 d3]*4] [[e2 e3]*4] [[a2 a3]*4]"
+    SOUND.NOTE "< " + mel$ + " , " + bas$ + " >", TRUE
+ENDSUB
+
+SUB sfx_step()
+    SOUND.PLAY 4, "c5"
+    v_guard[4] = 6
+ENDSUB
+
+SUB sfx_chomp()
+    chomp_toggle = 1 - chomp_toggle
+    IF chomp_toggle = 0 THEN
+        SOUND.PLAY 2, "a5"
+    ELSE
+        SOUND.PLAY 2, "d5"
+    ENDIF
+    v_guard[2] = 12
+ENDSUB
+
+SUB sfx_hit()
+    SOUND.PLAY 3, "a2"
+    v_guard[3] = 18
+ENDSUB
+
+' Bright square pop for power-pellet pickup
+SUB sfx_power()
+    SOUND.PLAY 2, "e5"
+    v_guard[2] = 20
+ENDSUB
+
+' Bloop for eating a frightened ghost
+SUB sfx_eat_ghost()
+    SOUND.PLAY 3, "g3"
+    v_guard[3] = 20
+ENDSUB
+
+' Sharp blip for firing the cherry-gun
+SUB sfx_shoot()
+    SOUND.PLAY 2, "c6"
+    v_guard[2] = 10
+ENDSUB
+
+' Per-voice drain: release only SFX voices (2..4) whose guard has expired.
+' Voices 0+1 are the music loop and must NOT be touched here.
+SUB sfx_drain()
+    DIM ti AS INTEGER
+    FOR ti = 2 TO 4
+        IF v_guard[ti] > 0 THEN
+            v_guard[ti] = v_guard[ti] - 1
+        ELSE
+            SOUND.RELEASE ti
+        ENDIF
+    NEXT ti
+ENDSUB
+
+' --- Pellets ---------------------------------------------------------
+
+SUB init_pellets()
+    DIM gx AS INTEGER
+    DIM gy AS INTEGER
+    DIM idx AS INTEGER = 0
+    FOR gy = 80 TO H - 80 STEP 80
+        FOR gx = 80 TO W - 80 STEP 80
+            pellet_x[idx] = gx
+            pellet_y[idx] = gy
+            pellet_alive[idx] = 1
+            idx = idx + 1
+        NEXT gx
+    NEXT gy
+    pellet_count = idx
+    pellets_eaten = 0
+ENDSUB
+
+SUB update_pellets()
+    IF pac_sid = 0 THEN RETURN
+    DIM pcx AS DOUBLE = pac_x + 24
+    DIM pcy AS DOUBLE = pac_y + 24
+    DIM pi AS INTEGER
+    DIM dx AS DOUBLE
+    DIM dy AS DOUBLE
+    FOR pi = 0 TO pellet_count - 1
+        IF pellet_alive[pi] = 1 THEN
+            dx = pellet_x[pi] - pcx
+            dy = pellet_y[pi] - pcy
+            ' Eat-radius ~22 px (sprite half-size minus a small bite-margin)
+            IF dx * dx + dy * dy < 484 THEN
+                pellet_alive[pi] = 0
+                pellets_eaten = pellets_eaten + 1
+                pscore = pscore + 10
+                sfx_chomp()
+                IF pellets_eaten >= pellet_count THEN
+                    ' Wave cleared — bump level + respawn pellets + power pellets
+                    g_level = g_level + 1
+                    init_pellets()
+                    init_power_pellets()
+                    spawn_popup(W/2, H/2, "LEVEL " + STR$(g_level), 255, 200, 60)
+                    ' Unlock a new ghost every 3 levels, max 8
+                    IF (g_level - 1) MOD 3 = 0 AND g_level > 1 AND g_num_ghosts < 8 THEN
+                        DIM ni AS INTEGER = g_num_ghosts
+                        ghost_x[ni] = 80 + RND(1) * (W - 160)
+                        ghost_y[ni] = 80 + RND(1) * (H - 160)
+                        ghost_dir[ni] = INT(RND(1) * 4)
+                        ghost_timer[ni] = 30 + INT(RND(1) * 60)
+                        ghost_state[ni] = 0
+                        ghost_stun[ni] = 0
+                        SPRITE.POS ghost_sids[ni], ghost_x[ni], ghost_y[ni]
+                        g_num_ghosts = g_num_ghosts + 1
+                        spawn_popup(W/2, H/2 + 30, "NEW GHOST!", 255, 100, 100)
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT pi
+ENDSUB
+
+SUB draw_pellets()
+    DRAWCOLOR 240, 220, 160
+    DIM pi AS INTEGER
+    FOR pi = 0 TO pellet_count - 1
+        IF pellet_alive[pi] = 1 THEN
+            ' Tiny 4x4 dot centred at pellet position
+            RECT pellet_x[pi] - 2, pellet_y[pi] - 2, 4, 4, TRUE
+        ENDIF
+    NEXT pi
+ENDSUB
+
+' --- Power pellets ---------------------------------------------------
+
+SUB init_power_pellets()
+    power_x[0] = 80     : power_y[0] = 80
+    power_x[1] = W - 80 : power_y[1] = 80
+    power_x[2] = 80     : power_y[2] = H - 80
+    power_x[3] = W - 80 : power_y[3] = H - 80
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        power_alive[i] = 1
+    NEXT i
+    frightened_timer = 0
+    ghost_chain = 0
+ENDSUB
+
+SUB update_power_pellets()
+    IF pac_sid = 0 THEN RETURN
+    DIM pcx AS DOUBLE = pac_x + 24
+    DIM pcy AS DOUBLE = pac_y + 24
+    DIM pi AS INTEGER
+    DIM dx AS DOUBLE
+    DIM dy AS DOUBLE
+    FOR pi = 0 TO 3
+        IF power_alive[pi] = 1 THEN
+            dx = power_x[pi] - pcx
+            dy = power_y[pi] - pcy
+            IF dx * dx + dy * dy < 1024 THEN     ' 32 px eat-radius
+                power_alive[pi] = 0
+                pscore = pscore + 50
+                frightened_timer = 360            ' ~6 s at 60 fps
+                ghost_chain = 0
+                sfx_power()
+                spawn_particles(power_x[pi], power_y[pi], 255, 240, 200)
+                spawn_popup(power_x[pi], power_y[pi], "+50 POWER", 255, 240, 200)
+            ENDIF
+        ENDIF
+    NEXT pi
+    IF frightened_timer > 0 THEN frightened_timer = frightened_timer - 1
+ENDSUB
+
+SUB draw_power_pellets()
+    DIM pi AS INTEGER
+    DIM pulse AS INTEGER = (frame_tick \ 10) MOD 2
+    DRAWCOLOR 255, 240, 200
+    FOR pi = 0 TO 3
+        IF power_alive[pi] = 1 THEN
+            IF pulse = 0 THEN
+                CIRCLE power_x[pi], power_y[pi], 10, TRUE
+            ELSE
+                CIRCLE power_x[pi], power_y[pi], 7, TRUE
+            ENDIF
+        ENDIF
+    NEXT pi
+ENDSUB
+
+' Banner "FRIGHTENED 3.4s" near the top so Atomi sees the timer
+SUB draw_frightened_banner()
+    IF frightened_timer <= 0 THEN RETURN
+    DRAWCOLOR 80, 140, 255
+    DIM secs AS DOUBLE = frightened_timer / 60.0
+    TEXT W/2 - 120, 50, "FRIGHTENED " + FORMAT$("{:0.1f}", secs) + "s"
+ENDSUB
+
+' --- Cherry + bullets ------------------------------------------------
+
+SUB init_cherry()
+    cherry_alive = 0
+    cherry_x = 0
+    cherry_y = 0
+    cherry_life = 0
+    cherry_spawn_timer = 600
+    cherry_kind = 0
+    pac_speed_boost = 0
+    ghost_freeze_timer = 0
+    DIM ci AS INTEGER
+    FOR ci = 0 TO 7
+        pb_alive[ci] = 0
+    NEXT ci
+    pac_ammo = 0
+ENDSUB
+
+SUB update_cherry()
+    IF pac_sid = 0 THEN RETURN
+    ' Spawn-timer ticks while no cherry on map
+    IF cherry_alive = 0 THEN
+        cherry_spawn_timer = cherry_spawn_timer - 1
+        IF cherry_spawn_timer <= 0 THEN
+            cherry_x = 80 + RND(1) * (W - 160)
+            cherry_y = 80 + RND(1) * (H - 160)
+            cherry_kind = INT(RND(1) * 3)         ' pick fruit type
+            cherry_alive = 1
+            cherry_life = 480     ' on map for 8 s if uneaten
+            cherry_spawn_timer = 900 + INT(RND(1) * 600) ' 15-25 s next spawn
+        ENDIF
+        RETURN
+    ENDIF
+
+    ' Cherry on the map — countdown + eat check
+    cherry_life = cherry_life - 1
+    IF cherry_life <= 0 THEN
+        cherry_alive = 0
+        RETURN
+    ENDIF
+    DIM pcx AS DOUBLE = pac_x + 24
+    DIM pcy AS DOUBLE = pac_y + 24
+    DIM cdx AS DOUBLE = cherry_x - pcx
+    DIM cdy AS DOUBLE = cherry_y - pcy
+    IF cdx * cdx + cdy * cdy < 900 THEN
+        cherry_alive = 0
+        sfx_power()
+        IF cherry_kind = 0 THEN
+            ' Cherry — 3 ammo + 100
+            pac_ammo = pac_ammo + 3
+            pscore = pscore + 100
+            spawn_particles(cherry_x, cherry_y, 255, 60, 60)
+            spawn_popup(cherry_x, cherry_y, "+100  +3 AMMO", 255, 100, 100)
+        ELSEIF cherry_kind = 1 THEN
+            ' Banana — speed boost 5 s + 200
+            pac_speed_boost = 300
+            pscore = pscore + 200
+            spawn_particles(cherry_x, cherry_y, 255, 220, 60)
+            spawn_popup(cherry_x, cherry_y, "+200  SPEED!", 255, 220, 60)
+        ELSE
+            ' Orange — freeze ghosts 3 s + 300
+            ghost_freeze_timer = 180
+            pscore = pscore + 300
+            spawn_particles(cherry_x, cherry_y, 255, 140, 40)
+            spawn_popup(cherry_x, cherry_y, "+300  FREEZE!", 100, 200, 255)
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB draw_cherry()
+    IF cherry_alive = 0 THEN RETURN
+    IF cherry_kind = 0 THEN
+        ' Cherry — two red lobes + slanted stems
+        DRAWCOLOR 255, 30, 30
+        CIRCLE cherry_x - 6, cherry_y + 4, 7, TRUE
+        CIRCLE cherry_x + 6, cherry_y + 4, 7, TRUE
+        DRAWCOLOR 60, 180, 40
+        LINE cherry_x - 6, cherry_y - 3, cherry_x + 1, cherry_y - 10
+        LINE cherry_x + 6, cherry_y - 3, cherry_x + 1, cherry_y - 10
+        DRAWCOLOR 255, 200, 200
+        RECT cherry_x - 8, cherry_y + 1, 2, 2, TRUE
+        RECT cherry_x + 4, cherry_y + 1, 2, 2, TRUE
+    ELSEIF cherry_kind = 1 THEN
+        ' Banana — yellow crescent (two overlapping circles + bg notch)
+        DRAWCOLOR 255, 220, 60
+        CIRCLE cherry_x - 4, cherry_y - 4, 10, TRUE
+        CIRCLE cherry_x + 4, cherry_y + 4, 10, TRUE
+        DRAWCOLOR 18, 22, 30
+        CIRCLE cherry_x - 3, cherry_y + 3, 7, TRUE
+        DRAWCOLOR 100, 80, 0
+        RECT cherry_x + 8, cherry_y - 12, 3, 4, TRUE
+        DRAWCOLOR 255, 240, 120
+        RECT cherry_x - 7, cherry_y - 7, 2, 2, TRUE
+    ELSE
+        ' Orange — solid disc with dark rim + tiny green stem
+        DRAWCOLOR 255, 140, 30
+        CIRCLE cherry_x, cherry_y, 11, TRUE
+        DRAWCOLOR 180, 90, 0
+        CIRCLE cherry_x, cherry_y, 11, FALSE
+        DRAWCOLOR 60, 180, 40
+        RECT cherry_x - 1, cherry_y - 14, 2, 4, TRUE
+        DRAWCOLOR 255, 200, 100
+        RECT cherry_x - 5, cherry_y - 5, 2, 2, TRUE
+    ENDIF
+ENDSUB
+
+' Rising-edge SPACE press for fire (only while in play mode)
+FUNC fire_pressed()
+    DIM nw AS INTEGER = 0
+    IF GFX.KEYSTATE("Space") THEN nw = 1
+    DIM was AS INTEGER = fire_held
+    fire_held = nw
+    IF nw = 1 AND was = 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+SUB spawn_pac_bullet()
+    DIM bi AS INTEGER
+    FOR bi = 0 TO 7
+        IF pb_alive[bi] = 0 THEN
+            pb_x[bi] = pac_x + 24
+            pb_y[bi] = pac_y + 24
+            ' Velocity from pac_dir (0=R 1=D 2=L 3=U), 9 px/frame
+            IF pac_dir = 0 THEN
+                pb_vx[bi] = 9 : pb_vy[bi] = 0
+            ELSEIF pac_dir = 1 THEN
+                pb_vx[bi] = 0 : pb_vy[bi] = 9
+            ELSEIF pac_dir = 2 THEN
+                pb_vx[bi] = -9 : pb_vy[bi] = 0
+            ELSE
+                pb_vx[bi] = 0 : pb_vy[bi] = -9
+            ENDIF
+            pb_alive[bi] = 1
+            pac_ammo = pac_ammo - 1
+            sfx_shoot()
+            RETURN
+        ENDIF
+    NEXT bi
+ENDSUB
+
+SUB update_pac_bullets()
+    DIM bi AS INTEGER
+    DIM gi AS INTEGER
+    DIM bdx AS DOUBLE
+    DIM bdy AS DOUBLE
+    FOR bi = 0 TO 7
+        IF pb_alive[bi] = 1 THEN
+            pb_x[bi] = pb_x[bi] + pb_vx[bi]
+            pb_y[bi] = pb_y[bi] + pb_vy[bi]
+            ' Off-screen kill
+            IF pb_x[bi] < -10 OR pb_x[bi] > W + 10 OR pb_y[bi] < -10 OR pb_y[bi] > H + 10 THEN
+                pb_alive[bi] = 0
+            ELSE
+                ' Hit-test against ghosts (any state except eyes-returning)
+                FOR gi = 0 TO g_num_ghosts - 1
+                    IF ghost_state[gi] <> 1 THEN
+                        bdx = (ghost_x[gi] + 24) - pb_x[bi]
+                        bdy = (ghost_y[gi] + 24) - pb_y[bi]
+                        IF bdx * bdx + bdy * bdy < 576 THEN  ' 24 px radius
+                            ghost_stun[gi] = 240             ' 4 s frozen-blue
+                            pb_alive[bi] = 0
+                            sfx_eat_ghost()
+                        ENDIF
+                    ENDIF
+                NEXT gi
+            ENDIF
+        ENDIF
+    NEXT bi
+ENDSUB
+
+SUB draw_pac_bullets()
+    DRAWCOLOR 255, 240, 80
+    DIM bi AS INTEGER
+    FOR bi = 0 TO 7
+        IF pb_alive[bi] = 1 THEN
+            RECT pb_x[bi] - 3, pb_y[bi] - 3, 6, 6, TRUE
+        ENDIF
+    NEXT bi
+ENDSUB
+
+' --- Juice: particles + score popups + combo HUD ----------------------
+
+SUB spawn_particles(spx, spy, pr, pg, pb)
+    DIM i AS INTEGER
+    DIM slot AS INTEGER
+    DIM ang AS DOUBLE
+    DIM spd AS DOUBLE
+    FOR i = 0 TO 11
+        slot = part_next MOD 96
+        part_x[slot]    = spx
+        part_y[slot]    = spy
+        ang = i * 0.5236                 ' 12 dirs at 30° spacing
+        spd = 3.0 + RND(1) * 3.0
+        part_vx[slot]   = COS(ang) * spd
+        part_vy[slot]   = SIN(ang) * spd - 1.5
+        part_life[slot] = 30 + INT(RND(1) * 10)
+        part_r[slot]    = pr
+        part_g[slot]    = pg
+        part_b[slot]    = pb
+        part_next       = part_next + 1
+    NEXT i
+ENDSUB
+
+SUB update_particles()
+    DIM i AS INTEGER
+    FOR i = 0 TO 95
+        IF part_life[i] > 0 THEN
+            part_x[i]   = part_x[i]  + part_vx[i]
+            part_y[i]   = part_y[i]  + part_vy[i]
+            part_vy[i]  = part_vy[i] + 0.18    ' a touch of gravity
+            part_life[i] = part_life[i] - 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB draw_particles()
+    DIM i AS INTEGER
+    FOR i = 0 TO 95
+        IF part_life[i] > 0 THEN
+            DRAWCOLOR part_r[i], part_g[i], part_b[i]
+            RECT part_x[i] - 2, part_y[i] - 2, 4, 4, TRUE
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB spawn_popup(ppx, ppy, t$, pr, pg, pb)
+    DIM slot AS INTEGER = pop_next MOD 16
+    pop_x[slot]     = ppx
+    pop_y[slot]     = ppy
+    pop_text$[slot] = t$
+    pop_life[slot]  = 60
+    pop_r[slot]     = pr
+    pop_g[slot]     = pg
+    pop_b[slot]     = pb
+    pop_next        = pop_next + 1
+ENDSUB
+
+SUB update_popups()
+    DIM i AS INTEGER
+    FOR i = 0 TO 15
+        IF pop_life[i] > 0 THEN
+            pop_y[i]    = pop_y[i] - 1.5
+            pop_life[i] = pop_life[i] - 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB draw_popups()
+    DIM i AS INTEGER
+    FOR i = 0 TO 15
+        IF pop_life[i] > 0 THEN
+            DRAWCOLOR pop_r[i], pop_g[i], pop_b[i]
+            TEXT pop_x[i] - 30, pop_y[i], pop_text$[i]
+        ENDIF
+    NEXT i
+ENDSUB
+
+' Big chain badge — visible only while a ghost-eat combo > 1 is active
+SUB draw_combo()
+    IF ghost_chain <= 1 THEN RETURN
+    DRAWCOLOR 255, 240, 80
+    TEXT W/2 - 60, 90, "CHAIN x" + STR$(ghost_chain) + "!"
+ENDSUB
+
+' Pacman vs ghosts: AABB via SPRITE.COLLISION. On hit, lose a life,
+' reset pacman to centre, set 90-frame invuln. During invuln pacman
+' blinks (alpha toggles every 4 frames) and ghosts can't re-hit.
+SUB check_collisions()
+    IF pac_sid = 0 OR ghost_sids[0] = 0 THEN RETURN
+    IF pac_invuln > 0 THEN
+        pac_invuln = pac_invuln - 1
+        IF (pac_invuln MOD 8) < 4 THEN
+            SPRITE.ALPHA pac_sid, 80
+        ELSE
+            SPRITE.ALPHA pac_sid, 255
+        ENDIF
+        IF pac_invuln = 0 THEN SPRITE.ALPHA pac_sid, 255
+        RETURN
+    ENDIF
+    DIM gi AS INTEGER
+    DIM target_sid AS INTEGER
+    FOR gi = 0 TO g_num_ghosts - 1
+        ' Skip eyes-only ghosts entirely
+        IF ghost_state[gi] = 1 THEN
+            target_sid = 0
+        ELSEIF ghost_stun[gi] > 0 OR frightened_timer > 0 THEN
+            ' Frightened or stunned → blue twin is the visible one
+            target_sid = frght_sids[gi]
+        ELSE
+            target_sid = ghost_sids[gi]
+        ENDIF
+        ' ANDALSO short-circuits, AND doesn't — guard SPRITE.COLLISION
+        ' so we never call it on a zero (eyes-only) sprite-id.
+        IF target_sid <> 0 ANDALSO SPRITE.COLLISION(pac_sid, target_sid) THEN
+            IF frightened_timer > 0 OR ghost_stun[gi] > 0 THEN
+                ' Eat the ghost — chain bonus (200 / 400 / 800 / 1600)
+                ghost_chain = ghost_chain + 1
+                DIM ch AS INTEGER = ghost_chain
+                IF ch > 4 THEN ch = 4
+                DIM bonus AS INTEGER = 200
+                DIM k AS INTEGER
+                FOR k = 1 TO ch - 1
+                    bonus = bonus * 2
+                NEXT k
+                pscore = pscore + bonus
+                sfx_eat_ghost()
+                ' Burst + popup at ghost location, colored by ghost index
+                DIM gr AS INTEGER = 255
+                DIM gg AS INTEGER = 50
+                DIM gb AS INTEGER = 50
+                IF gi = 1 THEN
+                    gr = 255 : gg = 184 : gb = 222
+                ELSEIF gi = 2 THEN
+                    gr = 80  : gg = 220 : gb = 255
+                ELSEIF gi = 3 THEN
+                    gr = 255 : gg = 184 : gb = 81
+                ENDIF
+                spawn_particles(ghost_x[gi] + 24, ghost_y[gi] + 24, gr, gg, gb)
+                spawn_popup(ghost_x[gi] + 24, ghost_y[gi] + 24, "+" + STR$(bonus), 255, 220, 80)
+                ' Send eyes home — pick a random target and switch to state 1.
+                ghost_target_x[gi] = 80 + RND(1) * (W - 160)
+                ghost_target_y[gi] = 80 + RND(1) * (H - 160)
+                ghost_state[gi] = 1
+                ghost_stun[gi] = 0
+                RETURN
+            ENDIF
+            lives = lives - 1
+            sfx_hit()
+            spawn_particles(pac_x + 24, pac_y + 24, 255, 60, 60)
+            spawn_popup(pac_x + 24, pac_y + 24, "OUCH!", 255, 60, 60)
+            pac_x = W / 2.0 - 24
+            pac_y = H / 2.0 - 24
+            SPRITE.POS pac_sid, pac_x, pac_y
+            pac_invuln = 90
+            IF lives <= 0 THEN
+                ' Game over: bounce back to title, reset stats
+                mode$ = "title"
+                lives = 3
+                score = 0
+                pscore = 0
+            ENDIF
+            RETURN
+        ENDIF
+    NEXT gi
+ENDSUB
+
+SUB draw_paused_overlay()
+    ' Bright yellow tape strip with the message — visible on any bg
+    DRAWCOLOR 0, 0, 0
+    RECT W/2 - 240, H/2 - 44, 480, 88, TRUE
+    DRAWCOLOR 255, 200, 0
+    RECT W/2 - 240, H/2 - 44, 480, 88, FALSE
+    RECT W/2 - 236, H/2 - 40, 472, 80, FALSE
+    DRAWCOLOR 255, 230, 60
+    TEXT W/2 - 190, H/2 - 28, "STOPPED - Claude is vibe-coding"
+    DRAWCOLOR 200, 220, 255
+    TEXT W/2 - 165, H/2 +  4, "Space / Enter / Joy-A to resume"
+ENDSUB
+
+SUB draw_frame()
+    draw_bg()
+    IF mode$ = "title" THEN
+        draw_title()
+    ELSE
+        draw_play()
+    ENDIF
+    draw_hud()
+ENDSUB
+
+' --- Event handlers ------------------------------------------------
+
+SUB HandleKey(KeyData)
+    DIM k$ AS STRING = KeyData[0]{"key"}
+    IF k$ = "F11" THEN
+        fs = 1 - fs
+        TOGGLE_FULLSCREEN
+    ENDIF
+    IF k$ = "Escape" THEN
+        running = 0
+    ENDIF
+ENDSUB
+
+SUB HandleQuit(QuitData)
+    running = 0
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+ON "QUIT"    CALL HandleQuit
+
+' --- Setup ---------------------------------------------------------
+
+SCREEN W, H, GAME_TITLE, SCALE
+SETFONT "C:/Windows/Fonts/arial.ttf", 18
+CLAUDE_LIVE.init(GAME_TITLE)
+init_sound()
+init_pacman()
+init_ghosts()
+init_frightened_ghosts()
+init_pellets()
+init_power_pellets()
+init_cherry()
+
+PRINT "Vibe Game ready - press Space to start, F6 to summon Claude."
+
+' --- Main loop -----------------------------------------------------
+
+DO
+    draw_frame()
+
+    IF mode$ = "title" THEN
+        IF start_pressed() = 1 THEN mode$ = "play"
+    ENDIF
+    ' play-state update happens inside draw_play() / update_pellets,
+    ' which run from draw_frame() on every tick of this loop.
+
+    ' --- Claude live-tweak handoff (F6 / Joy-Start) ----------------
+    IF CLAUDE_LIVE.pause_pressed() = 1 THEN
+        draw_frame()
+        draw_paused_overlay()
+        SCREENFLIP
+        STOP
+        ' --- VM resumes here when Claude calls jdb_resume ----------
+        CLAUDE_LIVE.refocus()
+        DO
+            draw_frame()
+            draw_paused_overlay()
+            SCREENFLIP
+            SLEEP 30
+        LOOP UNTIL CLAUDE_LIVE.unpause_held() = 1
+    ENDIF
+
+    SCREENFLIP
+    SLEEP 16
+LOOP WHILE running = 1

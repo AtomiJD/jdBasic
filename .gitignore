@@ -110,8 +110,10 @@ jdb/tv/avatar/
 jdb/tv/yt/client_secret*.json
 jdb/tv/yt/request.token
 jdb/tv/yt/playlist.token
+jdb/tv/yt/*.token.expired
 jdb/tv/yt/_tmp_*.json
 jdb/tv/yt/defaults.json
+jdb/tv/OBS/
 # CARDS render sidecar JSONs (UTF-8 substitution payloads).
 jdb/tv/cards/*.args.json
 # Rendered title-cards / thumbnails go through here; only the

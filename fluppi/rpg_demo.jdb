@@ -6,8 +6,23 @@ OPTION "EXPLICIT"
 OPTION "STRICT"
 
 IMPORT RPG_ENGINE
+IMPORT RPG_DIALOG
 CD "D:\usr\dev\cc\fluppi"
 LET config$ = "D:/usr/dev/cc/fluppi/rpg_data/game.json"
+
+' ── Input wiring ──────────────────────────────────────────────
+' ON-handlers bypass the ImGui POLLEVENT filter that swallows keys;
+' every modal loop in the engine drains RPG_DIALOG.DRAIN_KEY$() instead.
+SUB ON_KEY(KeyData)
+    RPG_DIALOG.SET_KEY KeyData[0]{"key"}
+ENDSUB
+
+SUB ON_QUIT(QuitData)
+    RPG_DIALOG.SET_QUIT
+ENDSUB
+
+ON "KEYDOWN" CALL ON_KEY
+ON "QUIT"    CALL ON_QUIT
 
 ' ── Title Screen ──────────────────────────────────────────────
 LET menu_choice = RPG_ENGINE.SHOW_TITLE(config$)

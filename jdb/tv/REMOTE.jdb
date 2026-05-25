@@ -3,6 +3,7 @@ EXPORT MODULE REMOTE
 
 ' Windows API Deklarationen
 DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" (kcls AS INTEGER, title AS STRING) AS INTEGER
+
 DECLARE SUB keybd_event LIB "user32.dll" ALIAS "keybd_event" (bVk AS INTEGER, bScan AS INTEGER, dwFlags AS INTEGER, dwExtraInfo AS INTEGER)
 DECLARE SUB jSleep LIB "kernel32.dll" ALIAS "Sleep" (ms AS INTEGER)
 DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" (hwnd AS INTEGER) AS INTEGER

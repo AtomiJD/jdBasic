@@ -1,6 +1,0 @@
-DO
-	I = i + 1
-	PRINT I
-	K$=INKEY$()
-	SLEEP 20
-LOOP UNTIL K$=CHR$(27)

@@ -1,0 +1,126 @@
+' ─────────────────────────────────────────────────────────────────
+' Crossover sweep: at which N does vectorisation start to pay off?
+' Runs v1 (FOR+branch) vs v3 (mask+ring) at multiple N_STARS values.
+' ─────────────────────────────────────────────────────────────────
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM SCR_W AS INTEGER = 960
+DIM SCR_H AS INTEGER = 720
+
+' Time per iteration scales ~linearly with N for both impls, so to
+' keep total runtime bounded we shrink ITERS as N grows.
+DIM N_LIST = [140, 280, 700, 1400, 2800, 7000, 14000]
+DIM I_LIST = [30000, 15000, 6000, 3000, 1500, 600, 300]
+
+' Globals reused across runs — initialized as ZEROS so codegen tags
+' the slots ARR (per feedback_native_dim_init_array.md). setup() then
+' replaces them with correctly-sized arrays per N.
+DIM x1 = ZEROS(1)
+DIM y1 = ZEROS(1)
+DIM x2 = ZEROS(1)
+DIM y2 = ZEROS(1)
+DIM x4 = ZEROS(1)
+DIM y4 = ZEROS(1)
+DIM speed = ZEROS(1)
+DIM ring = ZEROS(1)
+DIM zero_template = ZEROS(1)
+DIM N AS INTEGER = 0
+DIM RING_N AS INTEGER = 0
+DIM ring_idx AS INTEGER = 0
+
+SUB setup(n_val AS INTEGER)
+    N = CINT(n_val)
+    RING_N = CINT(N * 32)            ' generous so we don't wrap mid-bench
+    x1 = ZEROS(N) : y1 = ZEROS(N)
+    x2 = ZEROS(N) : y2 = ZEROS(N)
+    x4 = ZEROS(N) : y4 = ZEROS(N)
+    speed = ZEROS(N)
+    ring = ZEROS(RING_N)
+    zero_template = ZEROS(N)
+    ring_idx = 0
+    DIM si AS INTEGER
+    FOR si = 0 TO N - 1
+        DIM rx AS DOUBLE = RND(1) * SCR_W
+        DIM ry AS DOUBLE = RND(1) * SCR_H
+        DIM rs AS DOUBLE = 0.4 + RND(1) * 1.8
+        x1[si] = rx : x2[si] = rx : x4[si] = rx
+        y1[si] = ry : y2[si] = ry : y4[si] = ry
+        speed[si] = rs
+    NEXT si
+    FOR si = 0 TO RING_N - 1
+        ring[si] = RND(1) * SCR_W
+    NEXT si
+ENDSUB
+
+SUB step_v1()
+    y1 = y1 + speed
+    DIM i AS INTEGER
+    FOR i = 0 TO N - 1
+        IF y1[i] >= SCR_H THEN
+            y1[i] = 0
+            x1[i] = RND(1) * SCR_W
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB step_v3()
+    y2 = y2 + speed
+    DIM mask = (y2 >= SCR_H)
+    DIM keep = 1 - mask
+    y2 = y2 * keep
+    IF ring_idx + N > RING_N THEN ring_idx = 0
+    DIM new_x = TAKE(N, DROP(ring_idx, ring))
+    ring_idx = ring_idx + N
+    x2 = x2 * keep + new_x * mask
+ENDSUB
+
+SUB step_v4()
+    y4 = y4 + speed
+    DIM mask = (y4 >= SCR_H)
+    DIM keep = 1 - mask
+    y4 = y4 * keep
+    DIM new_x = RND(zero_template) * SCR_W
+    x4 = x4 * keep + new_x * mask
+ENDSUB
+
+PRINT "─── update_stars: crossover sweep ────────────────────────────────────"
+PRINT FORMAT$("{:>8}", "N"); FORMAT$("{:>8}", "ITERS"); _
+      FORMAT$("{:>10}", "v1 ms"); FORMAT$("{:>10}", "v3 ms"); _
+      FORMAT$("{:>10}", "v4 ms"); _
+      FORMAT$("{:>10}", "v3/v1"); FORMAT$("{:>10}", "v4/v1")
+PRINT "──────────────────────────────────────────────────────────────────"
+
+DIM idx AS INTEGER
+FOR idx = 0 TO LEN(N_LIST) - 1
+    DIM n_val AS INTEGER = CINT(N_LIST[idx])
+    DIM iters AS INTEGER = CINT(I_LIST[idx])
+    RANDOMSEED 42
+    setup(n_val)
+    DIM t0 AS INTEGER = TICK()
+    DIM k AS INTEGER
+    FOR k = 0 TO iters - 1
+        step_v1()
+    NEXT k
+    DIM ms1 AS INTEGER = TICK() - t0
+    t0 = TICK()
+    FOR k = 0 TO iters - 1
+        step_v3()
+    NEXT k
+    DIM ms3 AS INTEGER = TICK() - t0
+    t0 = TICK()
+    FOR k = 0 TO iters - 1
+        step_v4()
+    NEXT k
+    DIM ms4 AS INTEGER = TICK() - t0
+    DIM sp3 AS DOUBLE = ms1 / (ms3 + 0.001)
+    DIM sp4 AS DOUBLE = ms1 / (ms4 + 0.001)
+    PRINT FORMAT$("{:>8d}", n_val); _
+          FORMAT$("{:>8d}", iters); _
+          FORMAT$("{:>10d}", ms1); _
+          FORMAT$("{:>10d}", ms3); _
+          FORMAT$("{:>10d}", ms4); _
+          FORMAT$("{:>9.2f}", sp3); "x"; _
+          FORMAT$("{:>9.2f}", sp4); "x"
+NEXT idx

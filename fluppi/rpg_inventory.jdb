@@ -228,9 +228,9 @@ EXPORT SUB SHOW_BAG()
         SCREENFLIP
         SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Tab" OR ev$ = "KEYDOWN:Escape" OR _
-           ev$ = "KEYDOWN:Space" OR ev$ = "QUIT" THEN EXITDO
+        IF RPG_DIALOG.quit_event THEN EXITDO
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "Tab" OR ev$ = "Escape" OR ev$ = "Space" THEN EXITDO
     LOOP
 
     GFX.FREEIMAGE bag_bg
@@ -368,22 +368,23 @@ EXPORT FUNC OPEN_SHOP(shop_name$, shop_items)
         SCREENFLIP
         SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD (max_sel + 1)
-        IF ev$ = "KEYDOWN:Up" THEN
+        IF RPG_DIALOG.quit_event THEN EXITDO
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "Down" THEN selected = (selected + 1) MOD (max_sel + 1)
+        IF ev$ = "Up" THEN
             selected = selected - 1
             IF selected < 0 THEN selected = max_sel
         ENDIF
 
         ' Tab switching: S for sell, K for buy
-        IF ev$ = "KEYDOWN:S" AND mode$ = "buy" THEN
+        IF ev$ = "S" AND mode$ = "buy" THEN
             mode$ = "sell" : selected = 0
         ENDIF
-        IF ev$ = "KEYDOWN:K" AND mode$ = "sell" THEN
+        IF ev$ = "K" AND mode$ = "sell" THEN
             mode$ = "buy" : selected = 0
         ENDIF
 
-        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+        IF ev$ = "Return" OR ev$ = "Space" THEN
             IF mode$ = "buy" THEN
                 IF selected = num_items THEN
                     EXITDO  ' Leave shop
@@ -417,7 +418,7 @@ EXPORT FUNC OPEN_SHOP(shop_name$, shop_items)
                 ENDIF
             ENDIF
         ENDIF
-        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
+        IF ev$ = "Escape" THEN EXITDO
     LOOP
 
     GFX.FREEIMAGE shop_bg

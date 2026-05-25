@@ -1,0 +1,155 @@
+' ===================================================================
+' Parallax-Hintergrund - 4 Ebenen, alle scrollen unterschiedlich schnell.
+' Steuerung: A/D oder Pfeile links/rechts. ESC = Quit.
+'
+' Trick: jede Ebene hat einen "speed-factor". Je weiter weg, desto
+' kleiner. Far stars = 0.1 (fast still), boden = 1.0 (komplett mit).
+' Wrap-around: x = (base_x - cam * factor) MOD welt_breite.
+' ===================================================================
+
+SCREEN 800, 600, "Parallax-Demo"
+SETFONT "C:/Windows/Fonts/arial.ttf", 16
+
+W   = 800
+H   = 600
+WLD = 1600                  ' "Welt"-Breite fuer wrap-around
+
+' --- 1) Sterne: precomputed Positionen + Helligkeit ----------------------
+N_STARS   = 120
+star_x    = ZEROS(N_STARS)    ' Dummy, wird gefuellt
+star_y    = ZEROS(N_STARS)
+star_b    = ZEROS(N_STARS)
+FOR i = 0 TO N_STARS - 1
+    star_x[i] = INT(RND(1) * WLD)
+    star_y[i] = INT(RND(1) * 280)
+    star_b[i] = 120 + INT(RND(1) * 135)
+NEXT i
+
+' --- 2) Berge: peak_x + peak_h (precomputed) ----------------------------
+N_PEAKS   = 8
+peak_x    = INT(IOTA(N_PEAKS) * 0 + 1)
+peak_h    = INT(IOTA(N_PEAKS) * 0 + 1)
+FOR i = 0 TO N_PEAKS - 1
+    peak_x[i] = i * (WLD / N_PEAKS) + INT(RND(1) * 80)
+    peak_h[i] = 120 + INT(RND(1) * 80)
+NEXT i
+
+' --- 3) Huegel: gleiche Idee, kleinere Berge, naeher dran ---------------
+N_HILLS   = 14
+hill_x    = INT(IOTA(N_HILLS) * 0 + 1)
+hill_h    = INT(IOTA(N_HILLS) * 0 + 1)
+FOR i = 0 TO N_HILLS - 1
+    hill_x[i] = i * (WLD / N_HILLS) + INT(RND(1) * 50)
+    hill_h[i] = 60 + INT(RND(1) * 50)
+NEXT i
+
+' --- 4) Grasbueschel im Vordergrund -------------------------------------
+N_GRASS   = 40
+grass_x   = INT(IOTA(N_GRASS) * 0 + 1)
+grass_h   = INT(IOTA(N_GRASS) * 0 + 1)
+FOR i = 0 TO N_GRASS - 1
+    grass_x[i] = i * (WLD / N_GRASS) + INT(RND(1) * 30)
+    grass_h[i] = 8 + INT(RND(1) * 12)
+NEXT i
+
+' --- Player + Kamera -----------------------------------------------------
+player_x = 400              ' bleibt visuell in der Bildmitte
+cam      = 0
+speed    = 240              ' Pixel/Sek
+
+last_t = TICK()
+
+DO
+    now = TICK()
+    dt  = (now - last_t) / 1000.0
+    last_t = now
+
+    ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" THEN EXITDO
+    IF ev$ = "KEYDOWN:Escape" THEN EXITDO
+
+    IF GFX.KEYSTATE("D") OR GFX.KEYSTATE("Right") THEN cam = cam + speed * dt
+    IF GFX.KEYSTATE("A") OR GFX.KEYSTATE("Left")  THEN cam = cam - speed * dt
+
+    ' --- Render ---
+    CLS 12, 14, 30                          ' Nachthimmel
+
+    ' Layer 1: Sterne (factor 0.1)
+    FOR i = 0 TO N_STARS - 1
+        sx = star_x[i] - cam * 0.1
+        sx = sx - WLD * INT(sx / WLD)       ' MOD fuer negative Zahlen
+        IF sx < 0 THEN sx = sx + WLD
+        IF sx < W THEN PSET sx, star_y[i], star_b[i], star_b[i], star_b[i] * 0.9
+    NEXT i
+
+    ' Layer 2: Berge (factor 0.3, dunkles Lila)
+    FOR i = 0 TO N_PEAKS - 1
+        bx = peak_x[i] - cam * 0.3
+        bx = bx - WLD * INT(bx / WLD)
+        IF bx < 0 THEN bx = bx + WLD
+        ' zweimal zeichnen damit beim wrap nichts blitzt
+        draw_mountain bx, peak_h[i], 55, 45, 80
+        draw_mountain bx - WLD, peak_h[i], 55, 45, 80
+    NEXT i
+
+    ' Layer 3: Huegel (factor 0.6, mittelgruen)
+    FOR i = 0 TO N_HILLS - 1
+        hx = hill_x[i] - cam * 0.6
+        hx = hx - WLD * INT(hx / WLD)
+        IF hx < 0 THEN hx = hx + WLD
+        draw_hill hx, hill_h[i], 40, 90, 55
+        draw_hill hx - WLD, hill_h[i], 40, 90, 55
+    NEXT i
+
+    ' Boden (factor 1.0 - bewegt sich komplett mit dem Player)
+    RECT 0, 480, W, 120, 70, 50, 30, TRUE
+
+    ' Layer 4: Grasbueschel (factor 1.0)
+    FOR i = 0 TO N_GRASS - 1
+        gx = grass_x[i] - cam
+        gx = gx - WLD * INT(gx / WLD)
+        IF gx < 0 THEN gx = gx + WLD
+        IF gx < W THEN LINE gx, 480, gx, 480 - grass_h[i], 90, 160, 70
+    NEXT i
+
+    ' Player (simples rotes Rechteck mit Schatten)
+    RECT player_x - 12, 460, 24, 24, 0, 0, 0, TRUE
+    RECT player_x - 14, 456, 24, 24, 230, 80, 80, TRUE
+
+    ' HUD
+    TEXT 10, 10, "Parallax: A/D bewegen, ESC = Quit", 230, 230, 230
+    TEXT 10, 35, "cam = " + STR$(INT(cam)), 200, 220, 200
+    TEXT 10, 60, "speeds: stars 0.1 / mountains 0.3 / hills 0.6 / ground 1.0", 180, 180, 180
+
+    SCREENFLIP
+    SLEEP 16
+LOOP
+
+END
+
+' --- Helfer: Berg als Dreieck zeichnen (mit LINE pro Spalte) ---
+SUB draw_mountain (cx, height, r, g, b)
+    base_y = 480
+    FOR dx = -100 TO 100
+        col_h = height - ABS(dx)
+        IF col_h > 0 THEN
+            px = cx + dx
+            IF px >= 0 ANDALSO px < 800 THEN
+                LINE px, base_y, px, base_y - col_h, r, g, b
+            ENDIF
+        ENDIF
+    NEXT dx
+ENDSUB
+
+SUB draw_hill (cx, height, r, g, b)
+    base_y = 480
+    FOR dx = -60 TO 60
+        col_h = height - (dx * dx) / 50    ' Parabel = runder als Berg
+        IF col_h > 0 THEN
+            px = cx + dx
+            IF px >= 0 ANDALSO px < 800 THEN
+                LINE px, base_y, px, base_y - col_h, r, g, b
+            ENDIF
+        ENDIF
+    NEXT dx
+ENDSUB

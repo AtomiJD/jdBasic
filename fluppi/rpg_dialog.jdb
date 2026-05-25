@@ -53,6 +53,28 @@ EXPORT DIM DLG_BORDER_B = 200
 ' --- Internal state ---
 EXPORT DIM dlg_active = FALSE
 
+' --- Shared input state (event-driven via top-level ON "KEYDOWN"/"QUIT") ---
+' rpg_demo.jdb registers handlers that call SET_KEY/SET_QUIT here;
+' every modal loop drains via DRAIN_KEY$() instead of GFX.POLLEVENT().
+' Lives in RPG_DIALOG because every other RPG module already imports it
+' (avoids circular IMPORTs back to RPG_ENGINE).
+EXPORT DIM last_key$ = ""
+EXPORT DIM quit_event = FALSE
+
+EXPORT SUB SET_KEY(k$)
+    last_key$ = k$
+ENDSUB
+
+EXPORT SUB SET_QUIT()
+    quit_event = TRUE
+ENDSUB
+
+EXPORT FUNC DRAIN_KEY$()
+    LET k$ = last_key$
+    last_key$ = ""
+    RETURN k$
+ENDFUNC
+
 ' ===================================================================
 ' SAY name$, text$ — Show a dialog box with typewriter effect
 ' Pauses game until player presses Space/Enter
@@ -153,8 +175,9 @@ EXPORT SUB SAY(name$, text$)
         SLEEP 16
 
         ' Input: Space/Enter to advance, or skip typing
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" THEN
+        IF quit_event THEN EXITDO
+        LET ev$ = DRAIN_KEY$()
+        IF ev$ = "Space" OR ev$ = "Return" THEN
             IF done_typing THEN
                 EXITDO
             ELSE
@@ -162,7 +185,7 @@ EXPORT SUB SAY(name$, text$)
                 done_typing = TRUE
             ENDIF
         ENDIF
-        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN EXITDO
+        IF ev$ = "Escape" THEN EXITDO
     LOOP
 
     GFX.FREEIMAGE bg_capture
@@ -208,19 +231,23 @@ EXPORT FUNC CHOICE(options$)
         SCREENFLIP
         SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Down" THEN
+        IF quit_event THEN
+            GFX.FREEIMAGE choice_bg
+            RETURN -1
+        ENDIF
+        LET ev$ = DRAIN_KEY$()
+        IF ev$ = "Down" THEN
             selected = (selected + 1) MOD num_items
         ENDIF
-        IF ev$ = "KEYDOWN:Up" THEN
+        IF ev$ = "Up" THEN
             selected = selected - 1
             IF selected < 0 THEN selected = num_items - 1
         ENDIF
-        IF ev$ = "KEYDOWN:Space" OR ev$ = "KEYDOWN:Return" THEN
+        IF ev$ = "Space" OR ev$ = "Return" THEN
             GFX.FREEIMAGE choice_bg
             RETURN selected
         ENDIF
-        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN
+        IF ev$ = "Escape" THEN
             GFX.FREEIMAGE choice_bg
             RETURN -1
         ENDIF
@@ -285,25 +312,29 @@ EXPORT FUNC ASK$(name$, question$)
         SCREENFLIP
         SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN
+        IF quit_event THEN
             GFX.FREEIMAGE ask_bg
             dlg_active = FALSE
             RETURN ""
         ENDIF
-        IF ev$ = "KEYDOWN:Return" THEN
+        LET ev$ = DRAIN_KEY$()
+        IF ev$ = "Escape" THEN
+            GFX.FREEIMAGE ask_bg
+            dlg_active = FALSE
+            RETURN ""
+        ENDIF
+        IF ev$ = "Return" THEN
             GFX.FREEIMAGE ask_bg
             dlg_active = FALSE
             RETURN input$
         ENDIF
-        IF ev$ = "KEYDOWN:Backspace" THEN
+        IF ev$ = "Backspace" THEN
             IF LEN(input$) > 0 THEN input$ = LEFT$(input$, LEN(input$) - 1)
         ENDIF
-        ' Regular key input
-        IF LEFT$(ev$, 8) = "KEYDOWN:" THEN
-            LET key$ = MID$(ev$, 8)
-            IF LEN(key$) = 1 THEN
-                LET ch$ = key$
+        ' Regular key input (single-char alphabetic + Space)
+        IF ev$ <> "" THEN
+            IF LEN(ev$) = 1 THEN
+                LET ch$ = ev$
                 ' Check shift for uppercase (simplified)
                 IF GFX.KEYSTATE("Left Shift") OR GFX.KEYSTATE("Right Shift") THEN
                     ch$ = UCASE$(ch$)
@@ -311,7 +342,7 @@ EXPORT FUNC ASK$(name$, question$)
                     ch$ = LCASE$(ch$)
                 ENDIF
                 IF LEN(input$) < 30 THEN input$ = input$ + ch$
-            ELSEIF key$ = "Space" THEN
+            ELSEIF ev$ = "Space" THEN
                 IF LEN(input$) < 30 THEN input$ = input$ + " "
             ENDIF
         ENDIF

@@ -1,5 +1,0 @@
-PRINT "Gebe Deinen Namen ein:"
-INPUT A$
-PRINT "Du heisst: "; A$
-INPUT "Dein Alter, alter: ", B
-PRINT "Du bist warscheinlich: "; year(now())-b; " geboren, stimmts?"

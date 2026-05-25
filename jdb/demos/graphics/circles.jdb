@@ -1,0 +1,56 @@
+CONST SCREEN_W = 1380
+CONST SCREEN_H = 824
+
+SCREEN SCREEN_W, SCREEN_H, "jdBasic Orbs", 1
+
+DO
+    CLS
+    ver = INT(RND()) * 7 
+    
+    ' versions:
+    ' 0    - create all orbs as per the color in the original program
+    ' 1,2  - create all orbs with one random color
+    ' 3    - create each orb with a random color
+    ' 4    - create each orb with a 1/5 chance of a random color
+    ' 5    - create each orb with a 1/30 chance of a random color
+    ' 6    - create each orb with a 1/70 chance of a random color
+
+    IF ver = 0 THEN 
+        rf = 16 : gf = 14 : bf = 12
+    ELSE
+        rf = RND() * 16 + 1
+        gf = RND() * 16 + 1
+        bf = RND() * 16 + 1
+    ENDIF
+
+    FOR i = 1 TO 200
+        x = RND() * SCREEN_W
+        y = RND() * SCREEN_H
+        r = RND() * 48  + 32
+        s = r \ 15 ' Using integer division \
+
+        ' Logic for changing color mid-loop based on version
+        IF (ver = 3) OR (ver = 4 AND INT(RND()*5) = 4) OR (ver = 5 AND INT(RND()*30) = 29) OR (ver = 6 AND INT(RND()*70) = 69) THEN
+            rf = RND() * 16 + 1
+            gf = RND() * 16 + 1
+            bf = RND() * 16 + 1
+        ENDIF
+
+        ' Draw background white circle first
+        ' CIRCLE x, y, r, [fill], [r, g, b]
+        CIRCLE x, y, r, TRUE, 255, 255, 255
+        
+        FOR m = 1 TO 15
+            ' In jdBasic, drawing commands take RGB directly
+            DRAWCOLOR rf * m, gf * m, bf * m
+            CIRCLE x, y, r, TRUE
+            r = r - s
+        NEXT
+
+        ' Update screen to show the orb immediately
+        SCREENFLIP    
+        SLEEP 1 ' SLEEP is in milliseconds
+    NEXT i
+    
+    SLEEP 3000 ' Wait 3 seconds before clearing
+LOOP

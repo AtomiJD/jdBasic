@@ -1,0 +1,344 @@
+' parallax_game.jdb - empty_game.jdb + 4-layer parallax background.
+'
+' Same wiring as empty:
+'   F6 / Joy-Start -> STOP for live editing via MCP
+'   F11            -> fullscreen toggle
+'   ESC            -> quit
+' Plus:
+'   A/D or Left/Right  -> scroll the camera
+'   Space / Enter      -> start (auto-scroll demo)
+
+OPTION "EXPLICIT"
+
+IMPORT CLAUDE_LIVE
+
+CONST W = 1280
+CONST H = 756
+CONST SCALE = 2
+CONST LAYER_W = 1280       ' Alle p_*.png sind 1280x756 nach trim_parallax.py
+CONST GAME_TITLE = "Parallax Game - Vibe Code Me!"
+
+DIM running    AS INTEGER = 1
+DIM mode$      AS STRING  = "title"
+DIM lives      AS INTEGER = 3
+DIM pscore     AS INTEGER = 0
+DIM g_level    AS INTEGER = 1
+DIM fs         AS INTEGER = 0
+DIM start_held AS INTEGER = 0
+
+DIM v_guard      = ZEROS(8)
+DIM chomp_toggle AS INTEGER = 0
+
+' --- Parallax state -----------------------------------------------------
+DIM cam       AS DOUBLE  = 0.0
+DIM cam_speed AS DOUBLE  = 180.0    ' Pixel/Sek bei A/D oder Auto-Scroll
+
+' Sprite-Handles (alle PNGs sind nativ 1280x756, kein SCALE noetig)
+DIM sky_sid    AS INTEGER = 0
+DIM cloud_sid  AS INTEGER = 0
+DIM mtn_sid    AS INTEGER = 0
+DIM hill_sid   AS INTEGER = 0
+DIM grass_sid  AS INTEGER = 0
+
+' Chrissi (Player) -------------------------------------------------------
+CONST CHR_SCALE  = 2.5         ' 48x48 native -> 120x120 on screen
+CONST CHR_BASE_Y = 590         ' Fuesse landen ungefaehr am Grasrand
+DIM chr_sid   AS INTEGER = 0
+DIM chr_dir   AS INTEGER = 1               ' 1 = rechts, -1 = links
+DIM chr_x     AS DOUBLE  = 0.0
+DIM chr_anim$ AS STRING  = ""              ' welche Anim laeuft gerade
+
+DIM last_t      AS INTEGER = 0
+
+' --- Input helpers ------------------------------------------------------
+
+FUNC start_pressed()
+    DIM nw AS INTEGER = 0
+    IF GFX.KEYSTATE("Space") OR GFX.KEYSTATE("Return") THEN nw = 1
+    IF JOY.COUNT() > 0 THEN
+        IF JOY.BUTTON(0, 0) THEN nw = 1
+    ENDIF
+    DIM was AS INTEGER = start_held
+    start_held = nw
+    IF nw = 1 AND was = 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' --- Sound (unchanged from empty_game) ---------------------------------
+
+SUB init_sound()
+    SOUND.INIT
+    SOUND.BPM 140
+    SOUND.VOICE 0, "SQUARE", 0.01, 0.12, 0.45, 0.18
+    SOUND.FILTER 0, 2400
+    SOUND.GAIN 0, 0.32
+    SOUND.VOICE 1, "TRIANGLE", 0.01, 0.15, 0.55, 0.20
+    SOUND.FILTER 1, 600
+    SOUND.GAIN 1, 0.38
+    SOUND.REVERB 0.5, 0.3, 0.85, 0.2
+    SOUND.REVERBSEND 0, 0.3
+    SOUND.VOICE 2, "SQUARE", 0.005, 0.12, 0.0, 0.06
+    SOUND.FILTER 2, 3500
+    SOUND.GAIN 2, 0.8
+    SOUND.VOICE 3, "TRIANGLE", 0.005, 0.18, 0.0, 0.20
+    SOUND.FILTER 3, 700
+    SOUND.GAIN 3, 0.9
+    SOUND.VOICE 4, "NOISE", 0.005, 0.08, 0.0, 0.03
+    SOUND.FILTER 4, 2200
+    SOUND.GAIN 4, 1.0
+
+    DIM mel$ AS STRING = "[a4 ~ c5 ~] [e5 ~ c5 ~] [d5 ~ a4 ~] [c5 ~ e5 ~] " + _
+                        "[g5 ~ e5 ~] [a5 ~ g5 ~] [e5 ~ c5 ~] [a4 ~ ~ ~]"
+    DIM bas$ AS STRING = "[[a2 a3]*4] [[d2 d3]*4] [[g2 g3]*4] [[a2 a3]*4] " + _
+                        "[[a2 a3]*4] [[d2 d3]*4] [[e2 e3]*4] [[a2 a3]*4]"
+    SOUND.NOTE "< " + mel$ + " , " + bas$ + " >", TRUE
+ENDSUB
+
+SUB sfx_drain()
+    DIM ti AS INTEGER
+    FOR ti = 2 TO 4
+        IF v_guard[ti] > 0 THEN
+            v_guard[ti] = v_guard[ti] - 1
+        ELSE
+            SOUND.RELEASE ti
+        ENDIF
+    NEXT ti
+ENDSUB
+
+' --- Parallax loading + drawing ----------------------------------------
+
+SUB init_parallax()
+    ' Alle 5 Layer laden — die PNGs sind nach trim_parallax.py exakt
+    ' 1280x756, also kein SPRITE.SCALE noetig, kein y-anchor noetig.
+    sky_sid   = SPRITE.LOAD("art/p_sky.png")
+    cloud_sid = SPRITE.LOAD("art/p_clouds.png")
+    mtn_sid   = SPRITE.LOAD("art/p_mountain.png")
+    hill_sid  = SPRITE.LOAD("art/p_hill.png")
+    grass_sid = SPRITE.LOAD("art/p_grass.png")
+
+    ' Wir zeichnen explizit hinten->vorne via SPRITE.DRAW. DRAW_ALL
+    ' wuerde alles auf einmal pinseln, also Sprites unsichtbar machen.
+    SPRITE.VISIBLE sky_sid,   FALSE
+    SPRITE.VISIBLE cloud_sid, FALSE
+    SPRITE.VISIBLE mtn_sid,   FALSE
+    SPRITE.VISIBLE hill_sid,  FALSE
+    SPRITE.VISIBLE grass_sid, FALSE
+ENDSUB
+
+' Einen Layer mit wrap-around zeichnen. y_off verschiebt nach unten
+' (positiv) - nuetzlich um Berge/Huegel optisch tiefer zu setzen ohne
+' die PNGs neu zu trimmen.
+SUB draw_layer(sid, factor, y_off)
+    DIM offset AS DOUBLE = -(cam * factor)
+    offset = offset - LAYER_W * INT(offset / LAYER_W)
+    IF offset > 0 THEN offset = offset - LAYER_W
+    DIM x AS DOUBLE = offset
+    SPRITE.VISIBLE sid, TRUE
+    DO WHILE x < W
+        SPRITE.POS sid, x, y_off
+        SPRITE.DRAW sid
+        x = x + LAYER_W
+    LOOP
+    SPRITE.VISIBLE sid, FALSE
+ENDSUB
+
+SUB draw_parallax()
+    draw_layer sky_sid,   0.05,  0
+    draw_layer cloud_sid, 0.15,  0
+    draw_layer mtn_sid,   0.30, 60     ' Berge tiefer absetzen
+    draw_layer hill_sid,  0.60, 45     ' Huegel auch, weniger
+    draw_layer grass_sid, 1.00,  0
+ENDSUB
+
+' --- Chrissi (Player) ---------------------------------------------------
+
+SUB init_chrissi()
+    ' 288x48 Sheet = 6 Frames @ 48x48 (3x rechts, 3x links)
+    chr_sid = SPRITE.LOAD("art/chrissi.png", 48, 48)
+    SPRITE.SCALE chr_sid, CHR_SCALE, CHR_SCALE
+    SPRITE.ANIM chr_sid, "walk_right", [0, 1, 2], 8, TRUE
+    SPRITE.ANIM chr_sid, "walk_left",  [3, 4, 5], 8, TRUE
+    chr_x = W / 2 - 24 * CHR_SCALE
+    SPRITE.POS chr_sid, chr_x, CHR_BASE_Y
+    SPRITE.VISIBLE chr_sid, FALSE          ' manuell zeichnen
+    SPRITE.FRAME   chr_sid, 0
+ENDSUB
+
+' Setzt Anim/Frame je nach Bewegungs-State. Wird einmal pro Frame
+' aufgerufen, BEVOR SPRITE.UPDATE ausgeloest wird.
+SUB update_chrissi(walking, dir_now)
+    IF walking = 1 THEN
+        chr_dir = dir_now
+        DIM want$ AS STRING = "walk_right"
+        IF chr_dir = -1 THEN want$ = "walk_left"
+        IF chr_anim$ <> want$ THEN
+            SPRITE.PLAY chr_sid, want$
+            chr_anim$ = want$
+        ENDIF
+    ELSE
+        ' Idle: Animation anhalten, stehender Frame in Blickrichtung
+        IF chr_anim$ <> "idle" THEN
+            SPRITE.STOP chr_sid
+            IF chr_dir = 1 THEN
+                SPRITE.FRAME chr_sid, 0
+            ELSE
+                SPRITE.FRAME chr_sid, 3
+            ENDIF
+            chr_anim$ = "idle"
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB draw_chrissi()
+    SPRITE.VISIBLE chr_sid, TRUE
+    SPRITE.POS chr_sid, chr_x, CHR_BASE_Y
+    SPRITE.DRAW chr_sid
+    SPRITE.VISIBLE chr_sid, FALSE
+ENDSUB
+
+' --- Drawing ------------------------------------------------------------
+
+SUB draw_bg()
+    draw_parallax()
+ENDSUB
+
+SUB draw_hud()
+    DRAWCOLOR 255, 255, 255
+    TEXT 16, 12, "LIVES " + STR$(lives)
+    DRAWCOLOR 180, 255, 200
+    TEXT 16, 36, "LEVEL " + STR$(g_level)
+    DRAWCOLOR 255, 230, 80
+    TEXT W - 200, 12, "SCORE " + FORMAT$("{:0>6}", pscore)
+    DRAWCOLOR 200, 220, 255
+    TEXT 16, H - 28, "cam = " + STR$(INT(cam)) + "    A/D = scroll    F6 = vibe-code"
+ENDSUB
+
+SUB draw_title()
+    DRAWCOLOR 0, 0, 0
+    RECT W/2 - 300, H/2 - 100, 600, 200, TRUE
+    DRAWCOLOR 255, 255, 255
+    RECT W/2 - 300, H/2 - 100, 600, 200, FALSE
+    DRAWCOLOR 240, 245, 255
+    TEXT W/2 - 130, H/2 - 80, "PARALLAX VIBE GAME"
+    DRAWCOLOR 200, 220, 240
+    TEXT W/2 - 230, H/2 - 30, "Space / Enter / Joy-A      to start scrolling"
+    TEXT W/2 - 230, H/2 -  4, "A/D or Left/Right          to scroll manually"
+    TEXT W/2 - 230, H/2 + 22, "F6 / Joy-Start             to vibe-code"
+    TEXT W/2 - 230, H/2 + 46, "F11 fullscreen  /  ESC quit"
+ENDSUB
+
+SUB draw_play()
+    ' Auto-scroll im Play-Mode + manuelle Override
+    DIM was_left   AS INTEGER = GFX.KEYSTATE("A") OR GFX.KEYSTATE("Left")
+    DIM was_right  AS INTEGER = GFX.KEYSTATE("D") OR GFX.KEYSTATE("Right")
+    sfx_drain()
+ENDSUB
+
+SUB draw_paused_overlay()
+    DRAWCOLOR 0, 0, 0
+    RECT W/2 - 240, H/2 - 44, 480, 88, TRUE
+    DRAWCOLOR 255, 200, 0
+    RECT W/2 - 240, H/2 - 44, 480, 88, FALSE
+    RECT W/2 - 236, H/2 - 40, 472, 80, FALSE
+    DRAWCOLOR 255, 230, 60
+    TEXT W/2 - 190, H/2 - 28, "STOPPED - Claude is vibe-coding"
+    DRAWCOLOR 200, 220, 255
+    TEXT W/2 - 165, H/2 +  4, "Space / Enter / Joy-A to resume"
+ENDSUB
+
+SUB draw_frame()
+    draw_bg()
+    draw_chrissi()             ' Player vor das HUD, hinter Title-Overlay
+    IF mode$ = "title" THEN
+        draw_title()
+    ELSE
+        draw_play()
+    ENDIF
+    draw_hud()
+ENDSUB
+
+' --- Event handlers ----------------------------------------------------
+
+SUB HandleKey(KeyData)
+    DIM k$ AS STRING = KeyData[0]{"key"}
+    IF k$ = "F11" THEN
+        fs = 1 - fs
+        TOGGLE_FULLSCREEN
+    ENDIF
+    IF k$ = "Escape" THEN
+        running = 0
+    ENDIF
+ENDSUB
+
+SUB HandleQuit(QuitData)
+    running = 0
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKey
+ON "QUIT"    CALL HandleQuit
+
+' --- Setup -------------------------------------------------------------
+
+SCREEN W, H, GAME_TITLE, SCALE
+SETFONT "C:/Windows/Fonts/arial.ttf", 18
+CLAUDE_LIVE.init(GAME_TITLE)
+init_sound()
+init_parallax()
+init_chrissi()
+
+PRINT "Parallax demo ready - Space to auto-scroll, F6 to summon Claude."
+
+last_t = TICK()
+
+' --- Main loop ---------------------------------------------------------
+
+DO
+    DIM now AS INTEGER = TICK()
+    DIM dt AS DOUBLE = (now - last_t) / 1000.0
+    last_t = now
+
+    ' Kamera bewegen (in beiden Modi) und Chrissi mit-laufen lassen
+    DIM kr AS INTEGER = GFX.KEYSTATE("D") OR GFX.KEYSTATE("Right")
+    DIM kl AS INTEGER = GFX.KEYSTATE("A") OR GFX.KEYSTATE("Left")
+    IF kr THEN cam = cam + cam_speed * dt
+    IF kl THEN cam = cam - cam_speed * dt
+    ' Im Play-Mode zusaetzlich automatisch nach rechts driften
+    IF mode$ = "play" THEN cam = cam + (cam_speed * 0.5) * dt
+
+    ' Bewegungs-State fuer Chrissi: walking? + Richtung
+    DIM walking AS INTEGER = 0
+    DIM dir_now AS INTEGER = chr_dir
+    IF kr THEN walking = 1 : dir_now = 1
+    IF kl THEN walking = 1 : dir_now = -1
+    IF walking = 0 ANDALSO mode$ = "play" THEN
+        walking = 1
+        dir_now = 1                ' Auto-Drift = nach rechts laufen
+    ENDIF
+    update_chrissi(walking, dir_now)
+    SPRITE.UPDATE
+
+    draw_frame()
+
+    IF mode$ = "title" THEN
+        IF start_pressed() = 1 THEN mode$ = "play"
+    ENDIF
+
+    IF CLAUDE_LIVE.pause_pressed() = 1 THEN
+        draw_frame()
+        draw_paused_overlay()
+        SCREENFLIP
+        STOP
+        CLAUDE_LIVE.refocus()
+        DO
+            draw_frame()
+            draw_paused_overlay()
+            SCREENFLIP
+            SLEEP 30
+        LOOP UNTIL CLAUDE_LIVE.unpause_held() = 1
+    ENDIF
+
+    SCREENFLIP
+    SLEEP 16
+LOOP WHILE running = 1
+
+END

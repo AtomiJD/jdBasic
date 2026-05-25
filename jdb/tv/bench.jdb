@@ -1,0 +1,14 @@
+FUNC SumSquares(n AS INTEGER) AS DOUBLE
+    DIM total AS DOUBLE = 0.0
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        total = total + i * i
+    NEXT i
+    RETURN total
+ENDFUNC
+
+DIM t0 AS INTEGER = TICK()
+DIM s AS DOUBLE = SumSquares(1000000)
+DIM t1 AS INTEGER = TICK()
+PRINT "Result : "; s
+PRINT "Elapsed: "; (t1 - t0); " ms"

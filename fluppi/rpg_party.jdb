@@ -341,25 +341,26 @@ EXPORT SUB SHOW_SKILL_TREE(char_idx)
 
         SCREENFLIP : SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Escape" OR ev$ = "KEYDOWN:S" THEN EXITDO
-        IF ev$ = "KEYDOWN:Down" THEN
+        IF RPG_DIALOG.quit_event THEN EXITDO
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "Escape" OR ev$ = "S" THEN EXITDO
+        IF ev$ = "Down" THEN
             sel_s = sel_s + 1
             LET max_s = LEN(branches[sel_b]{"skills"})
             IF sel_s >= max_s THEN sel_s = 0
         ENDIF
-        IF ev$ = "KEYDOWN:Up" THEN
+        IF ev$ = "Up" THEN
             sel_s = sel_s - 1
             IF sel_s < 0 THEN sel_s = LEN(branches[sel_b]{"skills"}) - 1
         ENDIF
-        IF ev$ = "KEYDOWN:Left" THEN
+        IF ev$ = "Left" THEN
             sel_b = sel_b - 1 : sel_s = 0
             IF sel_b < 0 THEN sel_b = num_branches - 1
         ENDIF
-        IF ev$ = "KEYDOWN:Right" THEN
+        IF ev$ = "Right" THEN
             sel_b = (sel_b + 1) MOD num_branches : sel_s = 0
         ENDIF
-        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+        IF ev$ = "Return" OR ev$ = "Space" THEN
             LET sel_skill_id$ = sel_skills[sel_s]{"id"}
             IF LEARN_SKILL(char_idx, sel_skill_id$) THEN
                 m = members[char_idx]  ' refresh
@@ -443,14 +444,15 @@ EXPORT SUB SHOW_PARTY()
 
         SCREENFLIP : SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Escape" OR ev$ = "KEYDOWN:P" THEN EXITDO
-        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD member_count
-        IF ev$ = "KEYDOWN:Up" THEN
+        IF RPG_DIALOG.quit_event THEN EXITDO
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "Escape" OR ev$ = "P" THEN EXITDO
+        IF ev$ = "Down" THEN selected = (selected + 1) MOD member_count
+        IF ev$ = "Up" THEN
             selected = selected - 1
             IF selected < 0 THEN selected = member_count - 1
         ENDIF
-        IF ev$ = "KEYDOWN:S" THEN
+        IF ev$ = "S" THEN
             SHOW_SKILL_TREE selected
             GFX.DRAW_CAPTURE bg
         ENDIF

@@ -218,8 +218,9 @@ EXPORT SUB SHOW_LOG()
         TEXT bx + 10, by + bh - 25, "Press Q to close", 100, 100, 140
         SCREENFLIP : SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Q" OR ev$ = "KEYDOWN:Escape" OR ev$ = "QUIT" THEN EXITDO
+        IF RPG_DIALOG.quit_event THEN EXITDO
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "Q" OR ev$ = "Escape" THEN EXITDO
     LOOP
     GFX.FREEIMAGE log_bg
 ENDSUB

@@ -1,281 +1,180 @@
-# 🚀 jdBasic Sample Gallery
+# jdBasic Sample Gallery
 
-Welcome to the official collection of code samples for **jdBasic**, a custom interpreted language designed for high-performance math, graphics, system automation, and AI integration. This repository contains all **sample files** demonstrating the core features and breadth of the language.
+Curated collection of `.jdb` source files demonstrating the language. Everything here runs with the standard interpreter from the repo root:
 
-## 📂 Core Modules
+```bash
+./build/jdBasic.exe jdb/demos/games/space_shooter.jdb
+./build/jdBasic.exe jdb/demos/ai/mini_llm.jdb
+./build/jdBasic.exe jdb/demos/apl/life_demo.jdb
+```
 
-These are foundational libraries used across various scripts.
+The `-c` flag compiles a script to a native EXE; the runtime `jdbrt.dll` is auto-copied next to it:
 
-* **`MATH.jdb`**: Core mathematical functions, constants, and statistical tools.
-* **`MLAB.jdb`**: High-level data science and matrix manipulation library.
-* **`PLOTTER.jdb`**: Reusable library for generating 2D charts and data visualizations.
-* **`SQ.jdb`**: The primary audio engine and sequencer module.
-* **`WFLIB.jdb`**: Workflow management and automation utility library.
-
----
-
-## 🆕 Recently Added (post-2026-03)
-
-The samples that landed in the last sprint, grouped by what they show off. Each is self-contained — `./build/jdBasic.exe jdb/<name>.jdb` from the repo root.
-
-### Terminal UI (TUI.\*) — FTXUI bridge
-
-* **`tui_demo.jdb`** — Showcase for the new `TUI.*` namespace: menubar, tabs, modal overlay, table + selectable list, animated braille canvas, theme cycle (`Ctrl+T`). Mirrors `GUI.*` but renders into the terminal via FTXUI. See `doc/ftxui_plan.md` for the architecture and `doc/languages.md` for the API reference.
-
-### 6502 / Apple II emulator
-
-* **`cpu6502.jdb`** — Pure 6502 CPU core (instruction decode + execute).
-* **`apple2.jdb`** — Apple II memory map, character ROM rendering, IO hooks.
-* **`emu_run.jdb`** — Host shell that wires the CPU to a framebuffer + optional tape I/O. Native-compile + `timeout 5` is part of the gate.
-
-### AI / ML — agents, RAG, classifier
-
-* **`agent_task.jdb`** — Tool-using LLM agent with a task queue.
-* **`ai_chat_demo.jdb`** — llama.cpp chat session with history persistence.
-* **`ai_demo.jdb`** — ONNX inference smoke.
-* **`classifier_demo.jdb`** — k-NN text classifier inference.
-* **`train_classifier.jdb`** — Build and save a k-NN classifier from labelled data.
-* **`rag_demo.jdb`** — Retrieval-augmented chat using the `AI.RAG_*` primitives.
-
-### Sprites + Tilemap + Games
-
-* **`sprite_demo.jdb`** — Animation + collisions + z-order sweep.
-* **`sprite_gen.jdb`** — Procedural sprite generation.
-* **`sprite_walk.jdb`** — Top-down 4-direction walk cycle.
-* **`tilemap_demo.jdb`** — Tiled-map rendering + collision query.
-* **`car_race.jdb`** — Sprite-based car race.
-* **`space_shooter.jdb`** — Vertically-scrolling shooter; doubles as the live-coding STOP/RESUME testbed.
-
-### APL idioms in sound + graphics + physics
-
-* **`boids_apl.jdb`** — APL-style flocking with vectorized forces.
-* **`synth_apl.jdb`** — APL-style additive synth waveform.
-* **`life_demo.jdb`** — Game of Life with vectorized neighbour count.
-* **`universe.jdb`** — Vectorized N-body universe.
-* **`universe_naive.jdb`** — Same as `universe.jdb` but `O(n²)` baseline (use for bench comparisons).
-
-### Database
-
-* **`sqlite.jdb`** — Minimal SQLite open / query / close.
-
-### FFI
-
-* **`dll_demo.jdb`** — `DECLARE FUNC` into a C DLL.
-* **`dll_magic.jdb`** — Win32 FFI for keypress automation (used by the GUI test harness).
-
-### Language
-
-* **`brainf__k.jdb`** — Brainfuck interpreter in jdBasic.
-* **`udt_lifecycle_demo.jdb`** — UDT `INIT` / `DISPOSE` lifecycle.
-* **`udt_full_demo/`** — Multi-file UDT demo (`main.jdb` + `INV.jdb` + `LOG.jdb`).
-
-### Utility / system
-
-* **`world_clock.jdb`** — Multi-timezone wall clock.
-* **`pi.jdb`** — π via Monte-Carlo plus analytical comparison.
-
-### Benchmarks
-
-* **`benchmark.jdb`** / **`bench_fib.jdb`** / **`bench_cpu_speed.jdb`** / **`bench_mixed.jdb`** — interp vs. native and feature microbenches.
+```bash
+./build/jdBasic.exe -c jdb/demos/games/snake_game.jdb
+./jdb/demos/games/snake_game.exe
+```
 
 ---
 
-## 📑 Full Sample Index
+## Layout
 
-| File Name | Category | Description |
-| :--- | :--- | :--- |
-| `access_reader.jdb` | Database | ADODB connection test for Reading .accdb records. |
-| `access_sql.jdb` | Database | MS Access SQL executor for 64-bit drivers. |
-| `acc_module.jdb` | Database | Reusable MS Access interface module. |
-| `ansi_styles.jdb` | System | Console styling with escape codes and themes. |
-| `app_master.jdb` | System | Main application controller/entry point. |
-| `array_basics.jdb` | Language | Basic multi-type array and indexing tests. |
-| `async_await.jdb` | System | Non-blocking task management and concurrency. |
-| `binary_io.jdb` | System | Constructing binary data with hex literals and memory. |
-| `bit_ops.jdb` | Language | Demonstration of BAND, BOR, and BXOR operators. |
-| `branch_logic.jdb` | Language | Deeply nested IF/ELSEIF block testing. |
-| `bundler.jdb` | Utility | Script to bundle multiple files. |
-| `chess_engine.jdb` | Games | Full chess implementation with move history. |
-| `clip_tool.jdb` | Utility | System clipboard interaction and path parsing. |
-| `cnn_edges.jdb` | AI/ML | Forward pass test for edge detection kernels. |
-| `codec_tools.jdb` | System | Base64, hashing, and UUID generation functions. |
-| `code_one_line.jdb` | Language | Complex operations in a single line. |
-| `cowsay.jdb` | Utility | Console-based "Cowsay" clone. |
-| `csv_stats.jdb` | Data | CSV loading and statistical data slicing. |
-| `custom_ops.jdb` | Language | Implementing user-defined infix operators. |
-| `date_vec.jdb` | Utility | Vectorized date difference and arithmetic. |
-| `destructure.jdb` | Language | Destructuring multiple values from array literals. |
-| `dir_matrix.jdb` | System | Extended DIR$ matrix for file attribute access. |
-| `enum_types.jdb` | Language | Manual and automatic enumeration definition. |
-| `eqn_solver.jdb` | Math | Linear equation solver validation. |
-| `error_info.jdb` | Language | Error property (ERR/ERRMSG) catching tests. |
-| `error_throw.jdb` | Language | Testing manual error throwing. |
-| `eval_expr.jdb` | Language | Dynamic jdBasic expression evaluation. |
-| `event_bus.jdb` | System | Custom event firing and KEYDOWN handlers. |
-| `excel_com.jdb` | COM | Excel automation and workbook property control. |
-| `exit_test.jdb` | Language | Validation of program termination statements. |
-| `factorial.jdb` | Math | Factorial and combination calculations. |
-| `fem_1d.jdb` | Physics | 1D Finite Element Method simulation. |
-| `fft_viz.jdb` | Sound | Real-time sound spectrum visualization. |
-| `fib_reduce.jdb` | Math | Fibonacci logic using array reduction. |
-| `file_reader.jdb` | System | TXT and CSV reader function tests. |
-| `file_write.jdb` | System | Text file generation and appending. |
-| `fso_util.jdb` | System | Wrapper for Scripting.FileSystemObject. |
-| `func_factory.jdb` | Language | Lexical scoping and closure factory patterns. |
-| `func_recurse.jdb` | Language | APL-style recursion and higher-order function demo. |
-| `gen_art_llm.jdb` | AI/ML | Transformer-based model generating a drawing language. |
-| `gol_doc.jdb` | Graphics | Documented GOL with neighbor logic. |
-| `gol_graph.jdb` | Graphics | Graphical/Vectorized GOL simulation. |
-| `gol_logic.jdb` | Graphics | Standard Game of Life implementation. |
-| `gpt_client.jdb` | AI/ML | OpenAI client with history and JSON response handling. |
-| `gpt_mini.jdb` | AI/ML | Minimal GPT-4o-mini API wrapper. |
-| `gpt_v2.jdb` | AI/ML | Iterative LLM API integration test. |
-| `gpt_v3.jdb` | AI/ML | LLM prompt engineering validation. |
-| `gpt_v4.jdb` | AI/ML | Advanced LLM context management. |
-| `gpt_v5.jdb` | AI/ML | LLM multi-turn conversation test. |
-| `graph_v2.jdb` | Graphics | Updated graphical plotting engine. |
-| `gui_full.jdb` | Graphics | Complete ImGui widget showcase. |
-| `gui_input.jdb` | Graphics | ImGui text input and form handling. |
-| `gui_mouse.jdb` | Graphics | Handling complex ImGui mouse states. |
-| `gui_sql.jdb` | Database | Graphical interface for SQL queries. |
-| `gui_theme.jdb` | Graphics | ImGui color styling and theme control. |
-| `gui_v1.jdb` | Graphics | Early ImGui layout and window tests. |
-| `gui_v2.jdb` | Graphics | Expanded ImGui control testing. |
-| `http_get.jdb` | System | JSON fetch and API connectivity test. |
-| `if_blocks.jdb` | Language | Comprehensive IF/ELSE logic testing. |
-| `input_joy.jdb` | System | Joystick and gamepad controller testing. |
-| `int64_ops.jdb` | Language | 64-bit integer arithmetic validation. |
-| `invader_soa.jdb` | Games | Invaders using Structure-of-Arrays (SoA). |
-| `invader_v1.jdb` | Games | Classic Space Invaders game core. |
-| `iota_vec.jdb` | Math | APL-style IOTA sequence generation. |
-| `lambda_capture.jdb` | Language | Testing variable capture inside nested lambdas. |
-| `lambda_ops.jdb` | Language | Functional programming with lambdas. |
-| `locale_test.jdb` | System | Internationalization and number formats. |
-| `logic_nor.jdb` | Language | Implementation of NOR logical gates. |
-| `logic_vec.jdb` | Language | Testing vectorized logic vs. scalar short-circuits. |
-| `loop_control.jdb` | Language | Testing CONTINUEFOR in nested loop structures. |
-| `loop_logic.jdb` | Language | DO/WHILE/UNTIL and EXIT DO test suite. |
-| `loop_step.jdb` | Language | Testing FOR loops with negative STEP. |
-| `loop_vars.jdb` | Language | Testing loop variable scope and limits. |
-| `mandel_core.jdb` | Graphics | Fractal generator core logic. |
-| `mandel_eigen.jdb` | Graphics | Fractal calculation using Eigen libraries. |
-| `mandel_live.jdb` | Graphics | Reactive/Real-time fractal rendering. |
-| `mandel_vec.jdb` | Graphics | SIMD-style vectorized fractal rendering. |
-| `mandel_zoom.jdb` | Graphics | Interactive fractal zoom with mouse. |
-| `map_basics.jdb` | Language | Core dictionary/map CRUD operations. |
-| `map_ext.jdb` | Language | Extended key-value map functionality. |
-| `map_filter.jdb` | Language | Higher-order array SELECT/FILTER demos. |
-| `map_keys.jdb` | Language | Validation of non-string map keys. |
-| `math_ext.jdb` | Math | Logarithms, ROUND, and clamping functions. |
-| `math_test.jdb` | Language | Testing the external MATH module import. |
-| `matrix_inv.jdb` | Math | Matrix inversion and linear algebra. |
-| `matrix_rain.jdb` | Graphics | Digital "Matrix Rain" terminal effect. |
-| `matrix_vec.jdb` | Math | Basic matrix-vector multiplication. |
-| `matrix_view.jdb` | Graphics | Grid formatting for large data matrices. |
-| `md_browser.jdb` | Graphics | Advanced UI for Markdown navigation. |
-| `md_explorer.jdb` | Graphics | Markdown file browser and viewer. |
-| `md_render_v1.jdb` | Graphics | Terminal-based Markdown renderer. |
-| `md_render_v2.jdb` | Graphics | Improved Markdown with table support. |
-| `md_to_word.jdb` | COM | Utility to convert Markdown text to Word .docx. |
-| `minesweeper.jdb` | Games | Classic Minesweeper implementation. |
-| `mine_joy.jdb` | Games | Minesweeper with joystick support. |
-| `mini_graphics.jdb` | Graphics | Minimal graphics abstraction layer. |
-| `mlab_bench.jdb` | Math | Benchmarking MLAB functions. |
-| `mlab_stats.jdb` | Math | High-level statistical functions. |
-| `mlab_test.jdb` | Math | Financial and identity matrix tests. |
-| `mouse_basics.jdb` | Graphics | Basic mouse coordinate and button test. |
-| `movie_data.jdb` | Data | Complex dataset/simulation manager. |
-| `nbody_galaxy.jdb` | Physics | 100-body galactic disk simulation. |
-| `nested_for.jdb` | Language | Deeply nested FOR loops and returns. |
-| `nl_part2.jdb` | Language | Nonlinear logic part 2. |
-| `nl_part3.jdb` | Language | Nonlinear logic part 3. |
-| `nl_part4.jdb` | Language | Nonlinear logic part 4. |
-| `nl_part5.jdb` | Language | Nonlinear logic part 5. |
-| `nl_start.jdb` | Language | Nonlinear or NL logic part 1. |
-| `nn_adam.jdb` | AI/ML | Neural network training using the ADAM optimizer. |
-| `node_regex.jdb` | System | Node-style regex processing. |
-| `num_eigen.jdb` | Math | FFT and Eigenvalue calculations via DLL. |
-| `num_integral.jdb` | Math | Simpson's rule numerical integration. |
-| `num_theory.jdb` | Math | Infinite number or high-precision tests. |
-| `orbit_core.jdb` | Physics | Stable "figure-8" 3-body simulation. |
-| `orbit_sim.jdb` | Physics | Full vectorized simulation with graphics. |
-| `orbit_vec.jdb` | Physics | Vectorized gravitational force calculations. |
-| `orbit_visual.jdb` | Physics | 3-body simulation with graphical output. |
-| `os_detect.jdb` | System | OS detection and shell command tests. |
-| `outer_prod.jdb` | Math | Matrix outer products and tables. |
-| `piano_ui.jdb` | Sound | On-screen piano with keyboard map. |
-| `pipe_v1.jdb` | System | Standard process output capture. |
-| `pipe_v2.jdb` | System | Advanced inter-process piping. |
-| `plot_lib.jdb` | Graphics | Reusable library for bar and line charting. |
-| `plot_viz.jdb` | Graphics | Visual demonstration of plotting tools. |
-| `prime_gen.jdb` | Math | Standard prime number generation. |
-| `prime_sieve.jdb` | Math | Set-based prime number sieve using APL logic. |
-| `proc_gen.jdb` | Graphics | Procedural content generation test. |
-| `random_arr.jdb` | Math | Specialized random array generation. |
-| `raytracer.jdb` | Graphics | Basic ray-tracing algorithm test. |
-| `reduce_ops.jdb` | Language | Custom array reduction applications. |
-| `re_basics.jdb` | Utility | Core regex match and findall tests. |
-| `re_library.jdb` | Utility | Collection of regex pattern examples. |
-| `re_sort.jdb` | Utility | Regex-based sorting or reordering. |
-| `sandbox.jdb` | Utility | General purpose code scratchpad. |
-| `script_edit.jdb` | Utility | Built-in jdBasic code editor script. |
-| `self_ref.jdb` | Language | Testing object/structure self-reference. |
-| `serial_com.jdb` | System | RS-232 serial port communication. |
-| `set_lookup.jdb` | Language | Testing the IN operator for set membership. |
-| `sha256_gen.jdb` | System | File and string SHA-256 generation. |
-| `simple_sim.jdb` | Math | Simplified numerical simulation. |
-| `sim_meta.jdb` | Games | Complex world simulation logic. |
-| `sin_vec.jdb` | Math | Vectorized sine wave generation. |
-| `sin_visual.jdb` | Graphics | Graphical sine wave plotting. |
-| `snake_game.jdb` | Games | Optimized Snake clone. |
-| `spreadsheet.jdb` | Utility | Miniature grid-based calculator. |
-| `sprite_core.jdb` | Graphics | Sprite loading and collision test. |
-| `sqlite_core.jdb` | Database | SQLite handle and CRUD testing. |
-| `sql_insert.jdb` | Database | Testing batch SQL INSERT statements. |
-| `sql_logging.jdb` | Database | Logging application events to SQL. |
-| `sq_core.jdb` | Sound | Core music sequencer logic. |
-| `sq_fluent.jdb` | Sound | Sequencer with fluent interface. |
-| `sq_part15.jdb` | Sound | Sequencer variation 15. |
-| `sq_part2.jdb` | Sound | Sequencer variation 2. |
-| `sq_part22.jdb` | Sound | Sequencer variation 22. |
-| `sq_part23.jdb` | Sound | Sequencer variation 23. |
-| `sq_part3.jdb` | Sound | Sequencer variation 3. |
-| `sq_part4.jdb` | Sound | Sequencer variation 4. |
-| `sq_part5.jdb` | Sound | Sequencer variation 5. |
-| `sq_part6.jdb` | Sound | Sequencer variation 6. |
-| `sq_part7.jdb` | Sound | Sequencer variation 7. |
-| `sq_part8.jdb` | Sound | Sequencer variation 8. |
-| `sq_reactive.jdb` | Sound | Reactive audio sequencer logic. |
-| `stock_plot.jdb` | COM | Stock data to Excel chart tool. |
-| `str_basics.jdb` | Language | String manipulation (MID$, TRIM$, cases). |
-| `str_format.jdb` | Language | Positional string formatting using FORMAT$. |
-| `str_multi.jdb` | Language | Multi-line string literal validation. |
-| `str_ops.jdb` | Language | Advanced string operator testing. |
-| `switch_case.jdb` | Language | SWITCH/CASE block validation. |
-| `sys_logger.jdb` | System | File-based timestamped logging. |
-| `sys_monitor.jdb` | Utility | System resource or data monitor view. |
-| `sys_paths.jdb` | System | File path and directory string logic. |
-| `task_queue.jdb` | System | Main thread task dispatching logic. |
-| `tensor_bench.jdb` | AI/ML | Tensor engine performance benchmark. |
-| `tensor_core.jdb` | AI/ML | Core demonstration of tensor engine. |
-| `tensor_train.jdb` | AI/ML | Training logic for tensor models. |
-| `tensor_v1.jdb` | AI/ML | Initial tensor operation test. |
-| `tetris_game.jdb` | Games | Full Tetris implementation. |
-| `text_viz.jdb` | Graphics | Rendering styled text in graphics. |
-| `thread_v1.jdb` | System | Basic multi-threading demo. |
-| `try_catch.jdb` | Language | TRY/CATCH/FINALLY block validation. |
-| `turtle_dragon.jdb` | Graphics | Dragon curve fractal (turtle). |
-| `turtle_fib.jdb` | Graphics | Fibonacci spiral using turtle. |
-| `turtle_koch.jdb` | Graphics | Koch snowflake fractal (turtle). |
-| `turtle_start.jdb` | Graphics | Basic turtle graphics showcase. |
-| `turtle_tree.jdb` | Graphics | Recursive fractal tree (turtle). |
-| `type_cast.jdb` | Language | Mixed integer/double precision math. |
-| `type_id.jdb` | Language | Runtime type checking and IDs. |
-| `vec_plot.jdb` | Graphics | Drawing vectors directly to screen. |
-| `web_server.jdb` | System | HTTP server with custom route handlers. |
-| `wf_cube.jdb` | System | Wavefront or Workflow cube test. |
-| `word_auto.jdb` | COM | Basic Word automation and document creation. |
-| `worker_node.jdb` | System | Background worker process logic. |
-| `workflow_pipe.jdb` | System | Process piping for external tool integration. |
-| `workflow_run.jdb` | System | JSON-based external workflow executor. |
-| `workflow_v3.jdb` | System | Advanced workflow orchestration. |
+```
+jdb/
+├── modules/     reusable libraries — see "Modules" below
+├── demos/       polished showcase samples, by domain
+│   ├── games/   space shooter, snake, tetris, chess, mines, ...
+│   ├── graphics/ fractals, sine fields, N-body, plots, raytracer
+│   ├── gl/      OpenGL P1-P4 (raw GL, shaders, VBO, textures)
+│   ├── ai/      LLM, RAG, ONNX, classifier, GPT clients
+│   ├── gui/     Dear ImGui apps + spreadsheet + sequencer studio
+│   ├── sound/   SOUND.* synth, sequencer parts, APL additive synth
+│   ├── apl/     vectorised idioms — Game of Life, primes, OUTER
+│   ├── tui/     terminal UI, FTXUI, markdown browser, cowsay
+│   ├── web/     HTTP client + server + weather/ticker/wflib
+│   ├── bridges/ FFI, COM (Excel/Word/Access/Outlook), SQLite, serial
+│   ├── async/   ASYNC / AWAIT, threads, task queue
+│   ├── turtle/  classic turtle graphics (dragon, Koch, fib, tree)
+│   ├── sprites/ sprite engine + tilemap + Invaders variants
+│   ├── workflow/ regex, eval, event bus, n8n-style runners
+│   └── tensor/  TF-style tensor + neural-net step-by-step series
+├── tutorials/   bite-size language exercises (DIM, MAP, IF, lambda, TRY, ...)
+├── tools/       small utilities you might use day-to-day
+├── emu/         6502 + Apple II emulator core, tests + bench
+├── tv/          jdBasic-TV pipeline (lesson scripts + director)
+├── parallax_game/ multi-file game project
+├── udt_full_demo/ multi-file UDT demo (INIT/DISPOSE lifecycle)
+├── doom/        DOOM port (frozen, see release/ notes)
+└── _scratch/    development-time scratch — not curated, not for newcomers
+```
+
+---
+
+## Modules — reusable libraries
+
+`jdb/modules/` houses the `IMPORT`-able libraries. The interpreter walks up from any script's directory looking for a sibling `modules/` folder, so a demo in `jdb/demos/games/` can `IMPORT CLAUDE_LIVE` and pick up `jdb/modules/claude_live.jdb` transparently.
+
+| Module | What it gives you |
+|---|---|
+| `MATH.jdb`         | math constants + helpers used by other modules |
+| `MLAB.jdb`         | matrix / statistical functions, mortgage calc, financial |
+| `PLOTTER.jdb`      | 2D chart routine (`DATA_PLOTTER`) used by graphics demos |
+| `plot_lib.jdb`     | older plotting library, kept for back-compat with samples |
+| `text_viz.jdb`     | text-mode `PLOTTER` for terminals |
+| `SQ.jdb`           | sequencer engine driving the `demos/sound/` series |
+| `claude_live.jdb`  | MCP live-coding hooks + window positioning + Alt-press refocus |
+| `cpu6502.jdb`      | pure 6502 CPU emulator core |
+| `apple2.jdb`       | Apple II platform skeleton on top of `cpu6502` |
+| `sqlite.jdb`       | DECLARE-FUNC wrapper around `sqlitebridge.dll` |
+| `sprite_core.jdb`  | sprite engine wrapper used by `demos/sprites/` |
+| `sys_paths.jdb`    | OS-agnostic path joining |
+| `modglob.jdb`      | module-global mutation test fixture + helpers |
+| `modwrap.jdb`      | wrapper for `MODGLOB.BULK_WRITE` (cross-module write chain) |
+
+---
+
+## Try these first
+
+A short curated list — the demos most likely to make a "wait, that's nice" impression.
+
+### Games
+
+* **`demos/games/space_shooter.jdb`** — *Stellar Drift*, 80s-style vector shooter. Also the canonical test bed for live-coding via MCP (`/jdvibe` skill).
+* **`demos/games/snake_game.jdb`** — console snake with `ON "KEYDOWN"` (the POSIX `KEYDOWN` raw-mode bridge lives here).
+* **`demos/games/chess_engine.jdb`** — a chess engine in one file.
+* **`demos/games/raytracer.jdb`** — software raytracer rendered pixel by pixel.
+
+### Graphics
+
+* **`demos/graphics/mandel_vec.jdb`** — vectorised Mandelbrot (compare against `mandel_core.jdb` for the loop-form baseline).
+* **`demos/graphics/sine_wave_3d_wire_rot.jdb`** — fully rotating wireframe sine surface (WASD + Z/X).
+* **`demos/graphics/nbody_galaxy.jdb`** — n-body galaxy sim.
+* **`demos/graphics/universe.jdb`** — bubble universe (APL form) vs. `universe_naive.jdb` (loop form) for benchmarking.
+
+### OpenGL
+
+* **`demos/gl/gl_p4_texcube.jdb`** — textured rotating cube. Walk back through `gl_p1..p3` for context (just clear → triangle → wireframe cube → texture).
+
+### AI / LLM
+
+* **`demos/ai/mini_llm.jdb`** — local LLM inference via llama.cpp.
+* **`demos/ai/mini_onnx.jdb`** — ONNX inference as a generic compute backend (used by APL demos for Conv2D).
+* **`demos/ai/rag_demo.jdb`** — RAG Studio: HNSW index + JSON mode + persistence.
+* **`demos/ai/ai_chat_demo.jdb`** — full chat studio with history + GPU streaming.
+
+### GUI
+
+* **`demos/gui/gui_full.jdb`** — ImGui widget showcase.
+* **`demos/gui/spreadsheet.jdb`** — mini calc (formula bar + grid).
+* **`demos/gui/app_master.jdb`** — *JD-Basic Sequencer Studio*, ImGui front-end for the audio engine.
+* **`demos/gui/piano_ui.jdb`** — on-screen piano driving `SOUND.*`.
+
+### Sound
+
+* **`demos/sound/sq_core.jdb`** — synth + sequencer foundations.
+* **`demos/sound/sq_fluent.jdb`** — fluent-interface DSL showcase.
+* **`demos/sound/synth_apl.jdb`** — APL-style additive synthesis + waveform visualisation.
+
+### APL idioms
+
+* **`demos/apl/life_demo.jdb`** — Conway's Life with `AI.RUN` Conv2D as the neighbour count.
+* **`demos/apl/prime_sieve.jdb`** — sieve via set membership.
+* **`demos/apl/outer_prod.jdb`** — `OUTER` patterns.
+* **`demos/apl/fib_reduce.jdb`** — Fibonacci via `REDUCE`.
+
+### TUI
+
+* **`demos/tui/tui_demo.jdb`** — FTXUI showcase (menubar / tabs / modal / table / braille canvas / theme cycle).
+* **`demos/tui/md_browser.jdb`** — terminal markdown browser.
+* **`demos/tui/sys_monitor.jdb`** — "hacker screen" system monitor.
+
+### Bridges (FFI / COM / SQL)
+
+* **`demos/bridges/dll_demo.jdb`** — Win32 FFI: console transparency via `SetLayeredWindowAttributes`.
+* **`demos/bridges/sqlite_demo.jdb`** — SQLite via `DECLARE FUNC`.
+* **`demos/bridges/word_auto.jdb`** — Word automation, generate a `.docx`.
+* **`demos/bridges/excel_com.jdb`** — Excel automation.
+
+### Turtle
+
+* **`demos/turtle/turtle_dragon.jdb`** — dragon curve.
+* **`demos/turtle/turtle_koch.jdb`** — Koch snowflake.
+* **`demos/turtle/turtle_tree.jdb`** — recursive tree.
+
+### Workflow / Reactive
+
+* **`demos/workflow/workflow_v3.jdb`** — n8n-style JSON workflow runner with triggers.
+* **`demos/workflow/event_bus.jdb`** — custom event bus + `KEYDOWN` handlers.
+
+### Tensor / Neural-net teaching series
+
+* **`demos/tensor/nl_start.jdb`** ... `nl_part4.jdb` — build a neuron step by step, then the layer.
+* **`demos/tensor/tensor_train.jdb`** — scalar-mode training loop.
+
+### Tools
+
+* **`tools/winpos_probe.jdb`** — interactive window-position calibrator (used to set up the launch-video recording slot).
+* **`tools/bundler.jdb`** — combine multiple `.jdb` files into one for distribution.
+
+### Tutorials
+
+`tutorials/` is the right place to send a beginner. Each file is ~30 lines and demonstrates exactly one feature: `if_blocks`, `loop_control`, `map_basics`, `str_format`, `try_catch`, `enum_types`, `lambda_capture`, `destructure`, ... 45 of them, naming should be self-explanatory.
+
+---
+
+## 6502 / Apple II emulator (`jdb/emu/`)
+
+Standalone subdir with the emulator core + a graphical front-end and a fistful of self-tests:
+
+* `emu_run.jdb` — graphical front-end (SCREEN window, runs the demo program from `boot_probe`).
+* `boot_probe.jdb` — load Apple ROMs, reset, run a fixed cycle budget.
+* `bench_cpu_speed.jdb` — tight-loop benchmark of the 6502 step rate.
+* `test_*.jdb` — self-tests for opcodes, glyph cache, PC hooks, module-global persistence, etc.
+
+The CPU + Apple II modules themselves live in `jdb/modules/` (`cpu6502.jdb` + `apple2.jdb`) and are picked up via the auto-IMPORT walk.
+
+---
+
+## What's in `_scratch/`?
+
+Files that didn't make the curated cut — older experiments, single-purpose debugging snippets, work-in-progress that didn't pan out. They still parse and (mostly) still run; they're just not documented. Browse if you're curious, ignore for getting started.

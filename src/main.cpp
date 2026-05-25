@@ -95,6 +95,14 @@ static Parser::FileReader make_module_reader() {
             candidates.push_back(g_base_dir + "/" + lower + ".jdb");
             candidates.push_back(g_base_dir + "\\" + upper + ".jdb");
             candidates.push_back(g_base_dir + "\\" + lower + ".jdb");
+            // Exactly one level down into a sibling "modules/" subdir.
+            // No walk-up — modules must live in the script's own dir, or
+            // in a `modules/` subdir of it. This is unambiguous (you
+            // can't accidentally pick up a module from a sibling project)
+            // and matches the post-2026-05-25 layout where reusable
+            // libraries are duplicated into each subdir that needs them.
+            candidates.push_back(g_base_dir + "/modules/" + upper + ".jdb");
+            candidates.push_back(g_base_dir + "/modules/" + lower + ".jdb");
         }
         candidates.push_back(upper + ".jdb");
         candidates.push_back(lower + ".jdb");

@@ -1,0 +1,58 @@
+' capturew.jdb
+' Windows only: Capture window screenshot by exact window title
+
+DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" _
+    (className AS INTEGER, windowName AS STRING) AS INTEGER
+
+DECLARE FUNC ShowWindow LIB "user32.dll" ALIAS "ShowWindow" _
+    (hwnd AS INTEGER, cmd AS INTEGER) AS INTEGER
+
+DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" _
+    (hwnd AS INTEGER) AS INTEGER
+
+FUNC capturew(title$)
+    IF OS.GETOS$() <> "WINDOWS" THEN
+        THROW "capturew() funktioniert nur unter Windows."
+    ENDIF
+
+    hwnd = FindWindow(0, title$)
+
+    IF hwnd = 0 THEN
+        THROW "Fenster nicht gefunden: " + title$
+    ENDIF
+
+    ' 9 = SW_RESTORE
+    ShowWindow(hwnd, 9)
+    SetForegroundWindow(hwnd)
+    SLEEP 300
+
+    outfile$ = PATH.JOIN$(PWD(), "capture_" + REPLACE$(title$, " ", "_") + ".png")
+
+    ' Fallback über PowerShell:
+    ' Macht Screenshot vom Desktop nach dem Aktivieren des Fensters.
+    ' Für echtes Fenster-Cropping wäre eine kleine native GDI-Bridge besser.
+    ps$ = ""
+    ps$ = ps$ + "Add-Type -AssemblyName System.Windows.Forms;"
+    ps$ = ps$ + "Add-Type -AssemblyName System.Drawing;"
+    ps$ = ps$ + "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;"
+    ps$ = ps$ + "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
+    ps$ = ps$ + "$g=[System.Drawing.Graphics]::FromImage($bmp);"
+    ps$ = ps$ + "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);"
+    ps$ = ps$ + "$bmp.Save('" + outfile$ + "',[System.Drawing.Imaging.ImageFormat]::Png);"
+    ps$ = ps$ + "$g.Dispose();$bmp.Dispose();"
+
+    r = OS.EXEC("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps$])
+
+    IF r{"exit_code"} <> 0 THEN
+        THROW "Screenshot fehlgeschlagen: " + r{"output"}
+    ENDIF
+
+    RETURN outfile$
+ENDFUNC
+
+
+' Demo:
+INPUT "Fenstertitel: ", t$
+shot$ = capturew(t$)
+PRINT "Screenshot gespeichert:"
+PRINT shot$

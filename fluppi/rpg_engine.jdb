@@ -156,14 +156,15 @@ EXPORT FUNC SHOW_TITLE(config_file$)
         TEXT SW/2 - INT(fs*5), SH - INT(fs*1.8), "Pfeiltasten + Enter", cd[0], cd[1], cd[2]
         SCREENFLIP : SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:F11" THEN TOGGLE_FULLSCREEN
-        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_items
-        IF ev$ = "KEYDOWN:Up" THEN
+        IF RPG_DIALOG.quit_event THEN RETURN 2
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "F11" THEN TOGGLE_FULLSCREEN
+        IF ev$ = "Down" THEN selected = (selected + 1) MOD num_items
+        IF ev$ = "Up" THEN
             selected = selected - 1
             IF selected < 0 THEN selected = num_items - 1
         ENDIF
-        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+        IF ev$ = "Return" OR ev$ = "Space" THEN
             IF selected = 2 THEN RETURN 2
             IF selected = 1 THEN
                 ' Laden — show slot picker on title screen
@@ -180,7 +181,7 @@ EXPORT FUNC SHOW_TITLE(config_file$)
             GFX.FADE 0, 0.5
             RETURN selected
         ENDIF
-        IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN RETURN 2
+        IF ev$ = "Escape" THEN RETURN 2
     LOOP
 ENDFUNC
 
@@ -834,18 +835,18 @@ ENDSUB
 EXPORT SUB UPDATE()
     TILED.UPDATE 0.016
 
-    LET ev$ = GFX.POLLEVENT()
-    IF ev$ = "QUIT" THEN quit_flag = TRUE : RETURN
-    IF ev$ = "KEYDOWN:Escape" THEN
+    IF RPG_DIALOG.quit_event THEN quit_flag = TRUE : RETURN
+    LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+    IF ev$ = "Escape" THEN
         DRAW_SCENE
         SHOW_PAUSE_MENU
         RETURN
     ENDIF
-    IF ev$ = "KEYDOWN:F11" THEN TOGGLE_FULLSCREEN
-    IF ev$ = "KEYDOWN:Tab" THEN DRAW_SCENE : RPG_INVENTORY.SHOW_BAG
-    IF ev$ = "KEYDOWN:P" THEN DRAW_SCENE : RPG_PARTY.SHOW_PARTY
-    IF ev$ = "KEYDOWN:S" THEN DRAW_SCENE : RPG_PARTY.SHOW_SKILL_TREE 0
-    IF ev$ = "KEYDOWN:Q" THEN DRAW_SCENE : RPG_QUEST.SHOW_LOG
+    IF ev$ = "F11" THEN TOGGLE_FULLSCREEN
+    IF ev$ = "Tab" THEN DRAW_SCENE : RPG_INVENTORY.SHOW_BAG
+    IF ev$ = "P" THEN DRAW_SCENE : RPG_PARTY.SHOW_PARTY
+    IF ev$ = "S" THEN DRAW_SCENE : RPG_PARTY.SHOW_SKILL_TREE 0
+    IF ev$ = "Q" THEN DRAW_SCENE : RPG_QUEST.SHOW_LOG
 
     ' Movement
     LET old_x = SPRITE.GET_X(hero) : LET old_y = SPRITE.GET_Y(hero)
@@ -951,7 +952,7 @@ EXPORT SUB UPDATE()
     IF npc_hit > 0 THEN hint$ = "[Leertaste] Reden"
     IF chest_hit > 0 THEN hint$ = "[Leertaste] Öffnen"
 
-    IF ev$ = "KEYDOWN:Space" AND msg_timer <= 0 THEN
+    IF ev$ = "Space" AND msg_timer <= 0 THEN
         ' Chest interaction
         IF chest_hit > 0 THEN
             FOR ci = 0 TO chest_count - 1
@@ -1168,14 +1169,15 @@ SUB SHOW_PAUSE_MENU()
 
         SCREENFLIP : SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Escape" THEN EXITDO
-        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD num_items
-        IF ev$ = "KEYDOWN:Up" THEN
+        IF RPG_DIALOG.quit_event THEN quit_flag = TRUE : EXITDO
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "Escape" THEN EXITDO
+        IF ev$ = "Down" THEN selected = (selected + 1) MOD num_items
+        IF ev$ = "Up" THEN
             selected = selected - 1
             IF selected < 0 THEN selected = num_items - 1
         ENDIF
-        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+        IF ev$ = "Return" OR ev$ = "Space" THEN
             IF selected = 0 THEN
                 ' Weiterspielen
                 EXITDO
@@ -1312,17 +1314,21 @@ FUNC SHOW_SLOT_PICKER(mode$)
         TEXT bx + bw/2 - INT(fs*6), by + bh - INT(fs*1.3), "Hoch/Runter  Enter:Wählen  Esc:Zurück", ctd[0]-40, ctd[1]-40, ctd[2]-20
         SCREENFLIP : SLEEP 16
 
-        LET ev$ = GFX.POLLEVENT()
-        IF ev$ = "KEYDOWN:Escape" THEN
+        IF RPG_DIALOG.quit_event THEN
             GFX.FREEIMAGE slot_bg
             RETURN -1
         ENDIF
-        IF ev$ = "KEYDOWN:Down" THEN selected = (selected + 1) MOD SLOT_COUNT
-        IF ev$ = "KEYDOWN:Up" THEN
+        LET ev$ = RPG_DIALOG.DRAIN_KEY$()
+        IF ev$ = "Escape" THEN
+            GFX.FREEIMAGE slot_bg
+            RETURN -1
+        ENDIF
+        IF ev$ = "Down" THEN selected = (selected + 1) MOD SLOT_COUNT
+        IF ev$ = "Up" THEN
             selected = selected - 1
             IF selected < 0 THEN selected = SLOT_COUNT - 1
         ENDIF
-        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN
+        IF ev$ = "Return" OR ev$ = "Space" THEN
             ' For load mode, don't allow empty slots
             IF mode$ = "load" AND slot_infos[selected] = "" THEN
                 CONTINUELOOP

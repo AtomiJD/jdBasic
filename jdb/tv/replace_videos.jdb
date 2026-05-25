@@ -1,0 +1,261 @@
+' ══════════════════════════════════════════════════════════════════
+'  replace_videos.jdb - delete + re-upload a range of lesson MP4s,
+'  flip privacy to public, then re-sort the playlist.
+'
+'  Use case: a remake (e.g. lessons #2-#10 redone with the Jaydee
+'  anime intro) was rendered over the existing final/*.mp4 files.
+'  Each lesson's uploaded.json marker still points at the OLD videoId
+'  on YouTube. We need to delete the old upload, push the new MP4
+'  (upload.jdb idempotency is keyed off the marker, so we remove it
+'  first), then sort the playlist so new uploads land in lesson order
+'  instead of at the end.
+'
+'  Usage:
+'    jdbasic replace_videos.jdb --list                      show plan, no API calls
+'    jdbasic replace_videos.jdb --dry-run script_02_if_for  full dry-run, one
+'    jdbasic replace_videos.jdb --dry-run --range 02 10     full dry-run, range
+'    jdbasic replace_videos.jdb script_02_if_for            do it, one
+'    jdbasic replace_videos.jdb --range 02 10               do it, range
+'
+'  Prereqs:
+'    • Same .env / defaults.json / playlist.token as upload.jdb.
+'    • helpers/yt_delete_video.py + yt_set_privacy.py + yt_sort_playlist.py
+'      sit next to yt_add_to_playlist.py.
+'    • The NEW MP4 must already be at final/<base>.mp4 (overwrite-style).
+'
+'  Per-lesson sequence (skipped sections show "  …" in dry-run):
+'    1. read final/<base>.uploaded.json  -> OLD videoId + title
+'    2. delete OLD videoId via yt_delete_video.py
+'    3. KILL final/<base>.uploaded.json  (clears upload.jdb's idempotency)
+'    4. jdbasic upload.jdb <base>        (uploads new + writes new marker
+'                                          + appends to playlist)
+'    5. read NEW marker                  -> NEW videoId
+'    6. yt_set_privacy.py NEW_ID public  (defaults.json still 'private')
+'  After the loop:
+'    7. yt_sort_playlist.py PLAYLIST_ID  (lessons appended at end -> back to
+'                                          numeric order)
+' ══════════════════════════════════════════════════════════════════
+
+CD "\usr\dev\cc\jdb\tv"
+
+' ── Reuse upload.jdb's env / defaults loaders ────────────────────
+FUNC LoadEnv()
+    DIM env = {}
+    IF NOT FILE.EXISTS(".env") THEN
+        PRINT "[replace] FATAL: tv\.env not found" : END
+    ENDIF
+    DIM raw$ = TXTREADER$(".env")
+    DIM lines = SPLIT(raw$, CHR$(10))
+    DIM li AS INTEGER
+    FOR li = 0 TO LEN(lines) - 1
+        DIM ln$ = TRIM$(lines[li])
+        IF LEN(ln$) = 0 THEN CONTINUEFOR
+        IF LEFT$(ln$, 1) = "#" THEN CONTINUEFOR
+        DIM eq = INSTR$(ln$, "=")
+        IF eq < 1 THEN CONTINUEFOR
+        DIM k$ = TRIM$(LEFT$(ln$, eq))
+        DIM v$ = TRIM$(MID$(ln$, eq + 1))
+        env{k$} = v$
+    NEXT li
+    RETURN env
+ENDFUNC
+
+FUNC LoadDefaults(path$)
+    IF NOT FILE.EXISTS(path$) THEN
+        PRINT "[replace] FATAL: defaults missing: "; path$ : END
+    ENDIF
+    RETURN JSON.PARSE$(TXTREADER$(path$))
+ENDFUNC
+
+' ── Locate scripts/<base>.<ext> for a lesson number ──────────────
+'   We need the basename, not just the number, to drive upload.jdb.
+'   DIR$ globs filesystem-style (`scripts/script_02_*.md`).
+FUNC FindBaseForLesson(num$)
+    DIM files = DIR$("scripts\script_" + num$ + "_*.md")
+    IF LEN(files) = 0 THEN RETURN ""
+    DIM f$ = files[0]
+    ' strip .md suffix
+    RETURN LEFT$(f$, LEN(f$) - 3)
+ENDFUNC
+
+' Read uploaded.json marker; returns "" if missing or no 'id' field.
+FUNC ReadMarkerId(base$)
+    DIM marker$ = "final\" + base$ + ".uploaded.json"
+    IF NOT FILE.EXISTS(marker$) THEN RETURN ""
+    DIM data = JSON.PARSE$(TXTREADER$(marker$))
+    IF MAP.EXISTS(data, "id") THEN RETURN data{"id"}
+    RETURN ""
+ENDFUNC
+
+FUNC ReadMarkerTitle(base$)
+    DIM marker$ = "final\" + base$ + ".uploaded.json"
+    IF NOT FILE.EXISTS(marker$) THEN RETURN ""
+    DIM data = JSON.PARSE$(TXTREADER$(marker$))
+    IF MAP.EXISTS(data, "snippet") THEN
+        DIM snip = data{"snippet"}
+        IF MAP.EXISTS(snip, "title") THEN RETURN snip{"title"}
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' ── One lesson's full delete -> re-upload -> public pass ─────────
+SUB ReplaceOne(base$, env, defaults, dry_run)
+    PRINT ""
+    PRINT "── "; base$
+    DIM mp4$ = "final\" + base$ + ".mp4"
+    IF NOT FILE.EXISTS(mp4$) THEN
+        PRINT "  FATAL: new MP4 missing: "; mp4$
+        END
+    ENDIF
+
+    DIM old_id$    = ReadMarkerId(base$)
+    DIM old_title$ = ReadMarkerTitle(base$)
+    IF LEN(old_id$) = 0 THEN
+        PRINT "  (no marker - lesson was never uploaded; running pure upload)"
+    ELSE
+        PRINT "  old videoId: "; old_id$
+        IF LEN(old_title$) > 0 THEN PRINT "  old title:   "; old_title$
+    ENDIF
+
+    IF dry_run = 1 THEN
+        PRINT "  [dry-run] would: delete "; old_id$; ", kill marker, upload "; mp4$; ", set public"
+        RETURN
+    ENDIF
+
+    ' 1) delete OLD on YouTube (skipped if no marker existed)
+    IF LEN(old_id$) > 0 THEN
+        PRINT "  deleting OLD upload..."
+        DIM dcmd$ = "python helpers\yt_delete_video.py " + old_id$
+        DIM dr = OS.EXEC(dcmd$)
+        IF dr <> 0 THEN
+            PRINT "  FATAL: delete failed (rc="; dr; "). Aborting before upload."
+            END
+        ENDIF
+    ENDIF
+
+    ' 2) kill local marker so upload.jdb doesn't SKIP us
+    DIM marker$ = "final\" + base$ + ".uploaded.json"
+    IF FILE.EXISTS(marker$) THEN
+        KILL marker$
+        PRINT "  marker cleared"
+    ENDIF
+
+    ' 3) re-upload via upload.jdb (handles thumbnail, meta, playlist add).
+    '    Use absolute path to jdBasic.exe so cmd.exe doesn't try PATH lookup
+    '    (which hangs silently on a missing executable instead of erroring).
+    PRINT "  invoking upload.jdb..."
+    DIM ucmd$ = "..\..\build\jdBasic.exe upload.jdb " + base$
+    DIM ur = OS.EXEC(ucmd$)
+    IF ur <> 0 THEN
+        PRINT "  FATAL: upload.jdb returned "; ur; ". Marker not present, re-run to retry."
+        END
+    ENDIF
+
+    ' 4) flip privacy to public (defaults.json stays at 'private' for #11-14)
+    DIM new_id$ = ReadMarkerId(base$)
+    IF LEN(new_id$) = 0 THEN
+        PRINT "  WARN: upload finished but new marker missing/malformed; skipping privacy flip"
+        RETURN
+    ENDIF
+    PRINT "  new videoId: "; new_id$
+    PRINT "  setting privacy=public..."
+    DIM pcmd$ = "python helpers\yt_set_privacy.py " + new_id$ + " public"
+    DIM pr = OS.EXEC(pcmd$)
+    IF pr <> 0 THEN
+        PRINT "  WARN: privacy flip rc="; pr; " (video uploaded; fix manually in Studio)"
+    ENDIF
+ENDSUB
+
+' ── Range expander: --range 02 10 -> [script_02_if_for, ..., script_10_modules]
+FUNC RangeBases(from$, to$)
+    DIM out = []
+    DIM lo AS INTEGER = VAL(from$)
+    DIM hi AS INTEGER = VAL(to$)
+    DIM n AS INTEGER
+    FOR n = lo TO hi
+        DIM num$ = FORMAT$("{:0>2}", n)
+        DIM base$ = FindBaseForLesson(num$)
+        IF LEN(base$) = 0 THEN
+            PRINT "[replace] WARN: no scripts\script_"; num$; "_*.md found, skipping"
+            CONTINUEFOR
+        ENDIF
+        out = APPEND(out, base$)
+    NEXT n
+    RETURN out
+ENDFUNC
+
+' ── List-only mode: dump plan, do nothing ────────────────────────
+SUB ListMode(env, defaults)
+    PRINT "── plan ──"
+    PRINT "  defaults.privacyStatus = "; defaults{"privacyStatus"}; "  (will overrun to 'public' per-lesson)"
+    PRINT "  playlistID             = "; defaults{"playlistID"}
+    PRINT ""
+    PRINT "  call with --range 02 10  to act on lessons #02..#10"
+    PRINT "  call with --dry-run ...  to see deletes/uploads without API calls"
+ENDSUB
+
+' ── Main ─────────────────────────────────────────────────────────
+DIM args = OS.ARGS()
+IF LEN(args) < 2 THEN
+    PRINT "usage:"
+    PRINT "  jdbasic replace_videos.jdb --list"
+    PRINT "  jdbasic replace_videos.jdb --dry-run <script_base>"
+    PRINT "  jdbasic replace_videos.jdb --dry-run --range FROM TO"
+    PRINT "  jdbasic replace_videos.jdb <script_base>"
+    PRINT "  jdbasic replace_videos.jdb --range FROM TO"
+    END
+ENDIF
+
+DIM env = LoadEnv()
+DIM defaults = LoadDefaults(env{"YT_DEFAULTS"})
+
+DIM dry_run AS INTEGER = 0
+DIM mode$ AS STRING = "single"
+DIM arg_idx AS INTEGER = 1
+
+IF args[arg_idx] = "--list" THEN
+    ListMode(env, defaults)
+    END
+ENDIF
+
+IF args[arg_idx] = "--dry-run" THEN
+    dry_run = 1
+    arg_idx = arg_idx + 1
+    IF arg_idx >= LEN(args) THEN
+        PRINT "[replace] --dry-run needs a target" : END
+    ENDIF
+ENDIF
+
+DIM bases = []
+IF args[arg_idx] = "--range" THEN
+    IF arg_idx + 2 >= LEN(args) THEN
+        PRINT "[replace] --range needs FROM TO" : END
+    ENDIF
+    bases = RangeBases(args[arg_idx + 1], args[arg_idx + 2])
+ELSE
+    bases = APPEND(bases, args[arg_idx])
+ENDIF
+
+IF LEN(bases) = 0 THEN
+    PRINT "[replace] nothing to do" : END
+ENDIF
+
+PRINT "── plan: "; LEN(bases); " lesson(s), dry_run="; dry_run
+DIM bi AS INTEGER
+FOR bi = 0 TO LEN(bases) - 1
+    ReplaceOne(bases[bi], env, defaults, dry_run)
+NEXT bi
+
+' ── Final pass: re-sort the playlist (only if we did real work) ──
+IF dry_run = 0 ANDALSO LEN(defaults{"playlistID"}) > 0 THEN
+    PRINT ""
+    PRINT "── resorting playlist..."
+    DIM scmd$ = "python helpers\yt_sort_playlist.py " + defaults{"playlistID"}
+    DIM sr = OS.EXEC(scmd$)
+    IF sr <> 0 THEN
+        PRINT "  WARN: sort rc="; sr; " (videos uploaded, fix order manually if needed)"
+    ENDIF
+ENDIF
+
+PRINT ""
+PRINT "── replace: done"

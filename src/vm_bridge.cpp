@@ -13,6 +13,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <filesystem>
 #include <unordered_map>
 #include <mutex>
 #include <thread>
@@ -75,6 +76,11 @@ static void setup_parser_modules(Parser& parser) {
             module_name + ".jdb",
             lower + ".jdb"
         };
+        // Exactly one level down into a sibling "modules/" subdir.
+        // Mirror main.cpp's resolver — no walk-up. The script's own dir
+        // (or a direct `modules/` subdir) is the only place we look.
+        candidates.push_back(g_base_dir + "/modules/" + module_name + ".jdb");
+        candidates.push_back(g_base_dir + "/modules/" + lower + ".jdb");
         for (auto& cand : candidates) {
             std::ifstream f(cand);
             if (f.is_open()) {
