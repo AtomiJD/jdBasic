@@ -113,6 +113,17 @@ private:
         ScreenBuffer screen;          // per-workspace output buffer
         std::thread worker;           // execution thread (joinable when running)
         std::atomic<bool> executing{false}; // true while a program runs
+        // True while the worker thread is alive but the VM is paused
+        // (script hit STOP, worker is parked in the GFX pump loop to
+        // keep the SDL window's owner-thread alive on Windows). The
+        // REPL prompt renders while parked, but main thread MUST NOT
+        // join the worker — joining would block until vm.resume() is
+        // signalled and the worker exits, defeating the prompt-return.
+        std::atomic<bool> parked{false};
+        // Main thread sets this when it has rendered a prompt in
+        // response to the parked transition, so the next iteration
+        // doesn't re-render. Reset when the worker un-parks (RESUME).
+        bool parked_announced = false;
     };
 
     Workspace workspaces[MAX_WORKSPACES];

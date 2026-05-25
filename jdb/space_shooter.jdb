@@ -7,11 +7,20 @@ OPTION "EXPLICIT"
 OPTION "STRICT"
 OPTION "NOPAUSE"
 
+IMPORT CLAUDE_LIVE
+
 ' --- Screen ---
 DIM SCR_W AS INTEGER = 960
 DIM SCR_H AS INTEGER = 720
 SCREEN SCR_W, SCR_H, "Stellar Drift", 2
 SETFONT "C:/Windows/Fonts/consola.ttf", 16
+
+' Re-position the window to the recording-session slot (Atomi's monitor
+' setup; see jdb/winpos.json — gitignored, regen via winpos_probe.jdb).
+' init() registers the title so refocus() later (after STOP) is a no-arg
+' call.
+CLAUDE_LIVE.MOVE_WINDOW_FROM_JSON("Stellar Drift", "winpos.json")
+CLAUDE_LIVE.init("Stellar Drift")
 
 ' --- Pools (sized once; alive[] flags rather than dynamic resize) ---
 DIM N_STARS   AS INTEGER = 140
@@ -486,10 +495,12 @@ FUNC input_shield()
     RETURN 0
 ENDFUNC
 
-' Joystick START (button 7) is reserved for the live-tweak STOP — it
-' freezes the VM via the in-script STOP statement so the MCP host can
-' inspect/mutate state. Keyboard P keeps the ordinary local pause.
+' Joystick START (button 7) and keyboard F6 are reserved for the
+' live-tweak STOP — they freeze the VM via the in-script STOP statement
+' so the MCP host can inspect/mutate state. Keyboard P keeps the
+' ordinary local pause.
 FUNC input_claude_pause()
+    IF GFX.KEYSTATE("F6") THEN RETURN 1
     IF has_joy = 1 THEN
         IF JOY.BUTTON(0, 7) THEN RETURN 1
     ENDIF
@@ -1566,7 +1577,7 @@ ENDSUB
 
 SUB draw_hud()
     use_color "hud"
-    TEXT 16, 12, "SCORE " + FORMAT$("{:0>6}", score)
+    TEXT 16, 12, "SCORE: " + FORMAT$("{:0>6}", score)
     TEXT SCR_W - 150, 12, "LIVES " + STR$(lives)
     TEXT SCR_W / 2 - 60, 12, "HI " + FORMAT$("{:0>6}", hi_score)
     ' Level + wave-progress (e.g. "LEVEL 2  WAVE 3/5")
@@ -1735,6 +1746,10 @@ DO
             SCREENFLIP
             STOP
             ' --- VM resumes here when MCP calls jdb_resume ---
+            ' Snap the game window back to the foreground — Claude's edit
+            ' just stole focus from us. Windows blocks SetForegroundWindow
+            ' unless we feign an Alt-press first; CLAUDE_LIVE handles it.
+            CLAUDE_LIVE.refocus()
             ' Wait for FIRE. The SCREENFLIP each iteration pumps SDL
             ' events, so joystick state stays fresh. We deliberately
             ' don't gate on START-release first — without SCREENFLIP

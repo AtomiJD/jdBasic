@@ -134,6 +134,12 @@ vo.db
 # Each developer's setup is different; re-run winpos_probe.jdb to regen.
 jdb/winpos.json
 tmp/winpos.json
+# Default font auto-copied next to native -c outputs (originals live in
+# fonts/ and build/ — the per-script copies are just runtime artifacts).
+jdbasic_default.ttf
+# Local-only reference backup of the syntax file (developer keeps a
+# pristine copy to diff against; not part of the source distribution).
+syntaxes/jdbasic.tmLanguage_org.json
 
 # ── Release bundles (built by dist.bat, not for source repo) ──────
 release/*.zip

@@ -154,6 +154,17 @@ static void run_source(const std::string& source, bool show_timing) {
     vm.load(compiler.main_chunk(), compiler.functions());
     vm.run();
 #ifdef GFX
+    // CLAUDE_LIVE pause loop: a `STOP` statement returns from vm.run()
+    // without exiting the program. In MCP mode an external host calls
+    // jdb_resume; in standalone CLI mode there is no host, so we
+    // pump SDL events to keep the game window alive and wait for the
+    // user to press Space / Enter / F7 to resume (or Esc / close to
+    // quit). vm.resume() may STOP again — loop until it terminates
+    // naturally (HALT) or the user quits.
+    while (vm.is_paused() && gfx_is_active()) {
+        if (!gfx_console_pause_wait()) break;
+        vm.resume();
+    }
     sound_shutdown();
     gfx_shutdown();
 #endif
@@ -860,6 +871,10 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
         if (!program_buffer.empty()) {
             try { run_on_vm(vm, program_buffer); }
             catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
+            // If the script hit a STOP, return immediately so the REPL
+            // prompt comes back. Console::run pumps SDL events from the
+            // main thread (see gfx_pump_events) so the window stays
+            // alive while the user types RESUME.
             vm.is_halted = false;
         } else { vm.emit("No program loaded.\n"); }
         return;
@@ -912,8 +927,25 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
     }
 
     // ── RESUME ───────────────────────────────────────────────
+    // If a RUN-worker is currently parked in the gfx_console_pause_wait
+    // loop (script hit STOP, GFX window kept alive), just signal it
+    // and let it call vm.resume() itself — that worker owns the SDL
+    // window on Windows and resuming from a different thread would
+    // race the renderer. Fall back to direct vm.resume() for the
+    // non-GFX or no-worker case.
     if (cmd_upper == "RESUME") {
-        if (!vm.resume()) vm.emit("Nothing to resume.\n");
+#ifdef GFX
+        if (vm.is_paused() && gfx_is_active()) {
+            extern void gfx_signal_resume();
+            gfx_signal_resume();
+            return;
+        }
+#endif
+        try {
+            if (!vm.resume()) vm.emit("Nothing to resume.\n");
+        } catch (const std::exception& e) {
+            std::cerr << "\033[91mResume error:\033[0m " << e.what() << std::endl;
+        }
         return;
     }
 

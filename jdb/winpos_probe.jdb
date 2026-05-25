@@ -18,7 +18,7 @@
 '      Q  /  Esc     quit (without saving)
 ' ══════════════════════════════════════════════════════════════════
 
-IMPORT WINPOS
+IMPORT CLAUDE_LIVE
 
 DIM TITLE$ AS STRING = "JD-PROBE"
 
@@ -31,7 +31,7 @@ DIM pw AS INTEGER = 780
 DIM ph AS INTEGER = 760
 
 SCREEN pw, ph, TITLE$
-WINPOS.MOVE_WINDOW(TITLE$, px, py, pw, ph)
+CLAUDE_LIVE.MOVE_WINDOW(TITLE$, px, py, pw, ph)
 
 DIM running AS INTEGER = 1
 DIM saved AS INTEGER = 0
@@ -85,7 +85,7 @@ SUB HandleKey(data)
 
     ' Re-apply geometry. SDL's window position read-back is unreliable
     ' across drivers, so we drive the position from our own px/py vars.
-    WINPOS.MOVE_WINDOW(TITLE$, px, py, pw, ph)
+    CLAUDE_LIVE.MOVE_WINDOW(TITLE$, px, py, pw, ph)
 ENDSUB
 
 ON "KEYDOWN" CALL HandleKey

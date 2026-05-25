@@ -487,6 +487,57 @@ static void cleanup_graphics();
 
 void gfx_shutdown() { cleanup_graphics(); }
 
+// Cross-thread resume signal. The REPL's RESUME command sets this from
+// the main thread; the worker thread parked in gfx_console_pause_wait
+// polls it. std::atomic so the worker doesn't need a mutex.
+#include <atomic>
+static std::atomic<bool> g_resume_signal{false};
+
+void gfx_signal_resume() { g_resume_signal.store(true); }
+
+// Pause-wait: keep the SDL window alive after a STOP_OP returned. Used
+// in two scenarios:
+//   * CLI mode (run_source): the script hit STOP, no MCP host to
+//     issue jdb_resume; we wait for Space / Enter / F7 in the window.
+//   * REPL mode (RUN worker): same thread that created the window now
+//     parks here pumping events so the window stays responsive. The
+//     REPL's RESUME command on the main thread sets g_resume_signal
+//     to break us out.
+// Returns:
+//   true  -> Space / Enter / F7 pressed in window, OR resume signal
+//            received from REPL (caller should call vm.resume()).
+//   false -> user closed the window or pressed Esc (exit the program).
+bool gfx_console_pause_wait() {
+    if (!g_renderer) return false;
+    g_resume_signal.store(false); // clear any stale signal on entry
+    // Do NOT call SDL_RenderPresent here — SDL3's logical-presentation
+    // back-buffer is cleared after present, so a bare re-present would
+    // show a black frame and wipe out the script's overlay drawn just
+    // before STOP. We rely on the OS to keep the last presented frame
+    // visible while we pump events.
+    for (;;) {
+        if (g_resume_signal.load()) {
+            g_resume_signal.store(false);
+            return true;
+        }
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_EVENT_QUIT) return false;
+            if (ev.type == SDL_EVENT_KEY_DOWN) {
+                SDL_Scancode sc = ev.key.scancode;
+                if (sc == SDL_SCANCODE_SPACE  ||
+                    sc == SDL_SCANCODE_RETURN ||
+                    sc == SDL_SCANCODE_F7) {
+                    return true;
+                }
+                if (sc == SDL_SCANCODE_ESCAPE) return false;
+            }
+            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) return false;
+        }
+        SDL_Delay(16);
+    }
+}
+
 bool gfx_has_key() { return g_key_available; }
 std::string gfx_get_key() {
     if (!g_key_available) return "";

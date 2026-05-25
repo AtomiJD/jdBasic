@@ -353,6 +353,18 @@ void Console::run() {
 #endif
 
     while (is_running) {
+#ifdef GFX
+        // Keep an SDL window responsive while the script is paused
+        // (STOP_OP returned to REPL, user is typing RESUME / a debug
+        // command). Without this the window goes "Not Responding"
+        // ghost after a few seconds because nobody pumps its event
+        // queue. No-op when no window exists.
+        {
+            extern void gfx_pump_events();
+            gfx_pump_events();
+        }
+#endif
+
         // Drain Ctrl+F1..F4 chord requested from the graphics SDL loop
         int requested = pending_switch.exchange(-1, std::memory_order_relaxed);
         if (requested >= 0 && requested < MAX_WORKSPACES && requested != active_ws) {
@@ -378,9 +390,36 @@ void Console::run() {
             render_prompt();
         }
 
-        // Check if active workspace's worker thread has finished
+        // Check if active workspace's worker thread has finished.
+        // A "parked" worker (script in STOP, GFX pump-loop holding
+        // the SDL window's owner-thread alive) reports !executing
+        // too, but must NOT be joined yet — joining would block
+        // until RESUME signals it out, defeating the prompt-return
+        // semantics. We render the prompt once when entering parked
+        // state, then leave the worker alone until it truly exits.
         auto& aws = workspaces[active_ws];
-        if (aws.worker.joinable() && !aws.executing) {
+        // Worker un-parked? Reset the announcement latch so a future
+        // parking renders the prompt again.
+        if (!aws.parked) aws.parked_announced = false;
+        // Worker just parked? Render the prompt once (same dance as
+        // the post-join branch below) and arm the announcement latch.
+        if (aws.parked && !aws.parked_announced && !aws.executing) {
+            aws.parked_announced = true;
+            enable_raw_mode();
+#if defined(_WIN32)
+            FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+            while (!utf8_buffer.empty()) utf8_buffer.pop();
+            high_surrogate = 0;
+#else
+            tcflush(STDIN_FILENO, TCIFLUSH);
+            while (!input_queue.empty()) input_queue.pop();
+            std::cout << "\033[0m\033[?25h\r\n" << std::flush;
+            prompt_drawn_visual_len = 0;
+#endif
+            render_prompt();
+            std::cout.flush();
+        }
+        if (aws.worker.joinable() && !aws.executing && !aws.parked) {
             aws.worker.join();
             // Re-enable raw mode and re-render prompt
             enable_raw_mode();
@@ -678,8 +717,10 @@ void Console::process_key(int key) {
 // Check if a command should run asynchronously in a worker thread
 static bool is_async_command(const std::string& upper) {
     return (upper == "RUN" ||
-            upper.substr(0, 4) == "RUN " ||
-            upper == "RESUME");
+            upper.substr(0, 4) == "RUN ");
+    // RESUME is now sync: the RUN-worker stays alive parked in a pump
+    // loop after STOP, so RESUME just signals it (gfx_signal_resume)
+    // from the console-execute handler — no new worker needed.
 }
 
 void Console::execute_current_line() {
@@ -730,6 +771,33 @@ void Console::execute_current_line() {
                 ws.worker = std::thread([this, cmd, ws_idx]() {
                     auto& w = workspaces[ws_idx];
                     executor(cmd, *w.vm, w.console.program_buffer);
+#ifdef GFX
+                    // STOP inside a GFX context: keep this worker thread
+                    // alive (Windows SDL window's WindowProc runs on the
+                    // thread that called CreateWindow — if we exit, the
+                    // window goes ghost). Mark `parked=true` and
+                    // `executing=false` so the REPL renders its prompt
+                    // back to the user; main thread MUST NOT join us
+                    // while parked. Stays parked until RESUME signals
+                    // us out (via gfx_signal_resume) or the window
+                    // closes.
+                    extern bool gfx_is_active();
+                    extern bool gfx_console_pause_wait();
+                    while (w.vm->is_paused() && gfx_is_active()) {
+                        w.executing = false;
+                        w.parked = true;
+                        bool should_resume = gfx_console_pause_wait();
+                        w.parked = false;
+                        if (!should_resume) break;
+                        w.executing = true;
+                        try { w.vm->resume(); }
+                        catch (const std::exception& e) {
+                            std::cerr << "\033[91mResume error:\033[0m "
+                                      << e.what() << std::endl;
+                            break;
+                        }
+                    }
+#endif
                     w.executing = false;
                 });
 

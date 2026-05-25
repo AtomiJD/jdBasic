@@ -1,0 +1,154 @@
+' claude_live.jdb - Hooks for MCP-driven live-coding mid-game
+'
+' Provides a reusable handoff API so any game can:
+'   * position its SDL window precisely (e.g. on the second monitor next
+'     to the Claude terminal during a launch-video take)
+'   * pause itself on F6 / Joy-Start
+'   * let Claude mutate the running VM via jdb_eval / jdb_recompile
+'   * resume cleanly with the focus snapping back to the game window
+'
+' Public API:
+'   ---- positioning ----
+'   CLAUDE_LIVE.MOVE_WINDOW(title$, x, y, w, h)            absolute move + raise
+'   CLAUDE_LIVE.MOVE_WINDOW_FROM_JSON(title$, path$)       read winpos.json and apply
+'   CLAUDE_LIVE.REFOCUS(title$)                            Alt-press + SetForegroundWindow
+'   ---- live-coding pause loop ----
+'   CLAUDE_LIVE.init(title$)                               register the SDL window title
+'   CLAUDE_LIVE.pause_pressed()                            1 on rising edge of F6 / Joy-Start
+'   CLAUDE_LIVE.unpause_held()                             1 while Space / Enter / Joy-A is held
+'   CLAUDE_LIVE.refocus()                                  zero-arg shortcut: refocus the init() title
+'
+' Typical usage in the game loop:
+'   IMPORT CLAUDE_LIVE
+'   SCREEN 1780, 1560, "Space Shooter"
+'   CLAUDE_LIVE.MOVE_WINDOW_FROM_JSON("Space Shooter", "winpos.json")
+'   CLAUDE_LIVE.init("Space Shooter")
+'   ...
+'   IF CLAUDE_LIVE.pause_pressed() = 1 THEN
+'       draw_paused_frame() : SCREENFLIP
+'       STOP                              ' <-- Claude takes over via MCP
+'       CLAUDE_LIVE.refocus()             ' <-- focus snaps back to game
+'       DO
+'           draw_paused_frame() : SCREENFLIP : SLEEP 30
+'       LOOP UNTIL CLAUDE_LIVE.unpause_held() = 1
+'   ENDIF
+'
+' Windows-only (uses user32 / kernel32). On Linux/Mac the IMPORT parses
+' but the FFI calls fail at runtime — gate game-loop calls with
+' `IF OS.NAME$() = "windows" THEN ...` if you want cross-platform safety.
+
+EXPORT MODULE CLAUDE_LIVE
+
+' Win32 FFI. "winsleep" because jdBasic has SLEEP as a builtin.
+DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" (kcls AS INTEGER, title AS STRING) AS INTEGER
+DECLARE FUNC MoveWindow LIB "user32.dll" ALIAS "MoveWindow" (hwnd AS INTEGER, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, repaint AS INTEGER) AS INTEGER
+DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" (hwnd AS INTEGER) AS INTEGER
+DECLARE SUB keybd_event LIB "user32.dll" ALIAS "keybd_event" (vk AS INTEGER, sc AS INTEGER, flg AS INTEGER, extra AS INTEGER)
+DECLARE SUB winsleep LIB "kernel32.dll" ALIAS "Sleep" (ms AS INTEGER)
+
+CONST VK_MENU = $12          ' Alt key
+CONST KEYEVENTF_KEYUP = $02
+
+' Private cross-frame state.
+DIM cl_title AS STRING = ""
+DIM cl_pause_held AS INTEGER = 0
+
+' === POSITIONING =================================================
+
+' MOVE_WINDOW(title$, x, y, w, h) -> hwnd (0 if not found).
+'   title$  must match the SDL window title exactly (case-sensitive).
+'   x,y     absolute screen pixels (negative / >1920 = second monitor).
+'   w,h     new client size in pixels.
+' Also brings the window to the foreground via the Alt-press refocus trick.
+EXPORT FUNC MOVE_WINDOW(title$, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER) AS INTEGER
+    DIM hwnd AS INTEGER = FindWindow(0, title$)
+    IF hwnd <> 0 THEN
+        MoveWindow(hwnd, x, y, w, h, 1)
+        keybd_event(VK_MENU, 0, 0, 0)
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        SetForegroundWindow(hwnd)
+    ENDIF
+    RETURN hwnd
+ENDFUNC
+
+' MOVE_WINDOW_FROM_JSON(title$, path$) - convenience: read a JSON file
+' written by jdb/winpos_probe.jdb and apply it. Returns 1 on success,
+' 0 if the file/title was missing.
+'   JSON layout: { "x": 5700, "y": 450, "w": 1780, "h": 1560 }
+'
+' Tries the path as given first, then a "jdb/" prefix. Reason: when the
+' MCP host loads the shooter via jdb_load, the process cwd is the
+' project root (D:\usr\dev\cc), not the jdb/ subdir, so a bare
+' "winpos.json" doesn't resolve. CLI launches from jdb/ get the first
+' match; MCP launches fall through to the prefixed candidate.
+EXPORT FUNC MOVE_WINDOW_FROM_JSON(title$, path$) AS INTEGER
+    DIM use_path AS STRING = ""
+    IF FILE.EXISTS(path$) THEN
+        use_path = path$
+    ELSEIF FILE.EXISTS("jdb/" + path$) THEN
+        use_path = "jdb/" + path$
+    ENDIF
+    IF use_path = "" THEN RETURN 0
+    DIM cfg = JSON.PARSE$(TXTREADER$(use_path))
+    DIM hwnd AS INTEGER = MOVE_WINDOW(title$, cfg{"x"}, cfg{"y"}, cfg{"w"}, cfg{"h"})
+    IF hwnd <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' refocus_title(title$) - snap any window to the foreground.
+' Windows blocks SetForegroundWindow when the caller is not in the
+' foreground (focus-stealing prevention); the synthetic Alt-press
+' defeats that lock. Use after jdb_resume so the game grabs focus back.
+'   Lowercase deliberately: jdBasic identifiers are case-insensitive,
+'   so REFOCUS and refocus must be the SAME symbol — the 0-arg
+'   refocus() shortcut below would otherwise collide on arity.
+EXPORT SUB refocus_title(title$)
+    IF title$ = "" THEN RETURN
+    DIM hwnd AS INTEGER = FindWindow(0, title$)
+    IF hwnd <> 0 THEN
+        keybd_event(VK_MENU, 0, 0, 0)
+        keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        SetForegroundWindow(hwnd)
+        winsleep(120)
+    ENDIF
+ENDSUB
+
+' === LIVE-CODING PAUSE LOOP ======================================
+
+' init(title$) - register the SDL window title so refocus() (zero-arg)
+' and the pause-loop helpers know which window we mean. Call once after
+' SCREEN. Idempotent.
+EXPORT SUB init(title$)
+    cl_title = title$
+ENDSUB
+
+' refocus() - zero-arg shortcut that refocuses the init()-registered
+' title. Use this in the game loop right after STOP returns.
+EXPORT SUB refocus()
+    refocus_title(cl_title)
+ENDSUB
+
+' pause_pressed() - returns 1 on the frame F6 or Joy-Start is first
+' pressed (rising edge).
+EXPORT FUNC pause_pressed()
+    DIM nw AS INTEGER = 0
+    IF GFX.KEYSTATE("F6") THEN nw = 1
+    IF JOY.COUNT() > 0 THEN
+        IF JOY.BUTTON(0, 7) THEN nw = 1
+    ENDIF
+    DIM was AS INTEGER = cl_pause_held
+    cl_pause_held = nw
+    IF nw = 1 AND was = 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' unpause_held() - returns 1 while the unpause input is held
+' (Space / Enter / Joy A / Joy B). Held semantics (not edge) so it
+' works in a tight resume-wait loop.
+EXPORT FUNC unpause_held()
+    IF GFX.KEYSTATE("Space") OR GFX.KEYSTATE("Return") THEN RETURN 1
+    IF JOY.COUNT() > 0 THEN
+        IF JOY.BUTTON(0, 0) OR JOY.BUTTON(0, 1) THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
