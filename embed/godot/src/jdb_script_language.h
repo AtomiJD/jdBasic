@@ -83,6 +83,11 @@ public:
     // registered language; required-virtual even if no profiling happens.
     void                _frame()                          override;
 
+    // Hot-reload fan-out. Godot calls this when multiple scripts need to
+    // reload in one tick. We forward to each script's own _reload.
+    void                _reload_scripts(const Array& p_scripts,
+                                          bool p_soft_reload) override;
+
 private:
     static JdbScriptLanguage* s_singleton;
 };

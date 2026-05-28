@@ -6,7 +6,9 @@
 #include "jdb_script_resource.h"
 
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 
 using namespace godot;
@@ -137,6 +139,17 @@ bool JdbScriptLanguage::_is_using_templates() {
 void JdbScriptLanguage::_frame() {
     // No-op. Required-virtual stub; Godot calls every frame for every
     // registered language. T3.7 hooks profiling here if we ever want it.
+}
+
+void JdbScriptLanguage::_reload_scripts(const Array& p_scripts, bool p_soft_reload) {
+    // Forward to each Script's own _reload. We don't batch-optimise yet;
+    // hot-reload of a single script per tick is the common case.
+    for (int i = 0; i < p_scripts.size(); ++i) {
+        Ref<JdbScriptResource> s = p_scripts[i];
+        if (s.is_valid()) {
+            s->_reload(p_soft_reload);
+        }
+    }
 }
 
 Dictionary JdbScriptLanguage::_complete_code(const String& /*p_code*/,
