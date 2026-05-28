@@ -134,6 +134,18 @@ bool JdbScriptLanguage::_is_using_templates() {
     return true;
 }
 
+Dictionary JdbScriptLanguage::_complete_code(const String& /*p_code*/,
+                                              const String& /*p_path*/,
+                                              Object* /*p_owner*/) const {
+    // T3.0 stub. Real autocomplete is the T3.6 stretch goal.
+    Dictionary d;
+    d[String("result")]  = Error::OK;
+    d[String("force")]   = false;
+    d[String("call_hint")] = String();
+    d[String("options")] = Array();
+    return d;
+}
+
 Dictionary JdbScriptLanguage::_validate(const String& /*p_script*/,
                                        const String& /*p_path*/,
                                        bool /*p_validate_functions*/,

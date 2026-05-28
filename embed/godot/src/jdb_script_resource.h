@@ -47,6 +47,9 @@ public:
     Error      _reload(bool p_keep_state)                     override;
     ScriptLanguage* _get_language()                     const override;
 
+    // Required virtual stub; real doc extraction is the T3.6 stretch.
+    TypedArray<Dictionary> _get_documentation()         const override;
+
     // Path-B preprocessing outputs - filled by _set_source_code.
     String                 get_processed_source() const { return m_source_processed; }
     StringName             get_extends_type()     const { return m_extends_type;     }

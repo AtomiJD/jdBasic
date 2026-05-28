@@ -73,6 +73,12 @@ public:
                                   bool p_validate_warnings,
                                   bool p_validate_safe_lines) const override;
 
+    // Editor-IDE callbacks - Godot insists these exist even if we have
+    // nothing useful to say yet. T3.6 (autocomplete) fills them in.
+    Dictionary          _complete_code(const String& p_code,
+                                        const String& p_path,
+                                        Object* p_owner) const override;
+
 private:
     static JdbScriptLanguage* s_singleton;
 };

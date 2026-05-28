@@ -192,4 +192,8 @@ ScriptLanguage* JdbScriptResource::_get_language() const {
     return JdbScriptLanguage::get_singleton();
 }
 
+TypedArray<Dictionary> JdbScriptResource::_get_documentation() const {
+    return TypedArray<Dictionary>();
+}
+
 #endif  // GODOT
