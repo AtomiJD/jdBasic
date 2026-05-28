@@ -176,6 +176,34 @@ Dictionary JdbScriptLanguage::_lookup_code(const String& /*p_code*/,
     return d;
 }
 
+void JdbScriptLanguage::_thread_enter() {}
+void JdbScriptLanguage::_thread_exit()  {}
+
+bool JdbScriptLanguage::_handles_global_class_type(const String& /*p_type*/) const {
+    // No global class registration yet (we don't implement
+    // `class_name Foo`-style declarations in jdBasic-as-Godot-script).
+    return false;
+}
+
+bool JdbScriptLanguage::_overrides_external_editor() {
+    return false;
+}
+
+bool JdbScriptLanguage::_is_control_flow_keyword(const String& p_keyword) const {
+    static const char* kw[] = {
+        "IF", "THEN", "ELSE", "ENDIF",
+        "FOR", "TO", "STEP", "NEXT",
+        "WHILE", "WEND", "DO", "LOOP", "UNTIL",
+        "RETURN", "EXITSUB", "EXITFUNC",
+        "ANDALSO", "ORELSE",
+    };
+    String upper = p_keyword.to_upper();
+    for (const char* k : kw) {
+        if (upper == String(k)) return true;
+    }
+    return false;
+}
+
 Dictionary JdbScriptLanguage::_validate(const String& /*p_script*/,
                                        const String& /*p_path*/,
                                        bool /*p_validate_functions*/,

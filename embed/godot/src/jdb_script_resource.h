@@ -65,6 +65,15 @@ public:
     // base class anyway, but the explicit override removes ambiguity.
     bool       _editor_can_reload_from_file()             override;
 
+    // Required-virtual stubs - we don't implement inheritance, signals,
+    // global class names or doc extraction yet; all return safe empties.
+    Ref<Script>            _get_base_script()             const override;
+    StringName             _get_global_name()             const override;
+    StringName             _get_doc_class_name()          const override;
+    bool                   _has_script_signal(const StringName& p_signal) const override;
+    TypedArray<Dictionary> _get_script_signal_list()      const override;
+    void                   _update_exports()                    override;
+
     // Path-B preprocessing outputs - filled by _set_source_code.
     String                 get_processed_source() const { return m_source_processed; }
     StringName             get_extends_type()     const { return m_extends_type;     }

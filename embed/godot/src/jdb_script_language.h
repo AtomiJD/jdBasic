@@ -85,6 +85,14 @@ public:
                                       const String& p_path,
                                       Object* p_owner) const override;
 
+    // Threading / external-editor / class-discovery stubs - all
+    // required-virtual but cleanly defaulted to "not supported".
+    void                _thread_enter()                      override;
+    void                _thread_exit()                       override;
+    bool                _handles_global_class_type(const String& p_type) const override;
+    bool                _overrides_external_editor()         override;
+    bool                _is_control_flow_keyword(const String& p_keyword) const override;
+
     // Per-frame profiler hook. Godot calls this every frame for every
     // registered language; required-virtual even if no profiling happens.
     void                _frame()                          override;

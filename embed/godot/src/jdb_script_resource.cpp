@@ -232,6 +232,31 @@ bool JdbScriptResource::_editor_can_reload_from_file() {
     return true;
 }
 
+Ref<Script> JdbScriptResource::_get_base_script() const {
+    return Ref<Script>();  // no inheritance yet
+}
+
+StringName JdbScriptResource::_get_global_name() const {
+    return StringName();
+}
+
+StringName JdbScriptResource::_get_doc_class_name() const {
+    return StringName();
+}
+
+bool JdbScriptResource::_has_script_signal(const StringName& /*p_signal*/) const {
+    return false;
+}
+
+TypedArray<Dictionary> JdbScriptResource::_get_script_signal_list() const {
+    return TypedArray<Dictionary>();
+}
+
+void JdbScriptResource::_update_exports() {
+    // Inspector queries the live property list via _get_script_property_list;
+    // we don't have a per-resource exports cache that needs refresh.
+}
+
 Error JdbScriptResource::_reload(bool p_keep_state) {
     // Source has already been pushed in via _set_source_code by the time
     // Godot calls _reload; m_source_processed is fresh. Fan out across
