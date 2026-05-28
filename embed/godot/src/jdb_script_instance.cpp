@@ -106,19 +106,37 @@ void JdbScriptInstance::scan_methods_(const String& source) {
 
 JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_owner)
     : m_script(p_script), m_owner(p_owner) {
+    UtilityFunctions::print(String("[JdbScriptInstance] ctor begin"));
     m_vm = jdb_embed_init();
-    if (!m_vm) return;
+    if (!m_vm) {
+        UtilityFunctions::push_error(String("[JdbScriptInstance] jdb_embed_init returned NULL"));
+        return;
+    }
     if (m_script.is_valid()) {
-        // Load the preprocessed source - that's what jdBasic can actually
-        // eval (EXTENDS / INSPECTOR have been stripped out into metadata).
         String src = m_script->get_processed_source();
         if (src.is_empty()) src = m_script->_get_source_code();
+        UtilityFunctions::print(String("[JdbScriptInstance] source len = ") + String::num_int64(src.length()));
         if (!src.is_empty()) {
             char* out = jdb_embed_eval(m_vm, src.utf8().get_data());
-            if (out) jdb_embed_free(out);
+            if (out) {
+                String s = String::utf8(out).strip_edges();
+                if (!s.is_empty()) UtilityFunctions::print(String("[boot] ") + s);
+                jdb_embed_free(out);
+            } else {
+                const char* err = jdb_embed_last_error(m_vm);
+                UtilityFunctions::push_error(String("[JdbScriptInstance] boot eval failed: ") + String(err ? err : "?"));
+            }
         }
         scan_methods_(m_script->_get_source_code());
+        String methods;
+        for (const auto& m : m_method_set) {
+            methods += String(m.c_str()) + String(", ");
+        }
+        UtilityFunctions::print(String("[JdbScriptInstance] methods scanned: ") + methods);
+    } else {
+        UtilityFunctions::push_error(String("[JdbScriptInstance] script ref is invalid"));
     }
+    UtilityFunctions::print(String("[JdbScriptInstance] ctor done"));
 }
 
 JdbScriptInstance::~JdbScriptInstance() {

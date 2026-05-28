@@ -117,7 +117,7 @@ Ref<Script> JdbScriptLanguage::_make_template(const String& /*p_template*/,
     src += String("\n");
     src += String("INSPECTOR DIM speed = 1.0\n");
     src += String("\n");
-    src += String("SUB _ready\n");
+    src += String("SUB _ready()\n");
     src += String("\tPRINT \"") + cls + String(" ready\"\n");
     src += String("ENDSUB\n");
     src += String("\n");
@@ -132,6 +132,11 @@ Ref<Script> JdbScriptLanguage::_make_template(const String& /*p_template*/,
 
 bool JdbScriptLanguage::_is_using_templates() {
     return true;
+}
+
+void JdbScriptLanguage::_frame() {
+    // No-op. Required-virtual stub; Godot calls every frame for every
+    // registered language. T3.7 hooks profiling here if we ever want it.
 }
 
 Dictionary JdbScriptLanguage::_complete_code(const String& /*p_code*/,

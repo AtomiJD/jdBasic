@@ -79,6 +79,10 @@ public:
                                         const String& p_path,
                                         Object* p_owner) const override;
 
+    // Per-frame profiler hook. Godot calls this every frame for every
+    // registered language; required-virtual even if no profiling happens.
+    void                _frame()                          override;
+
 private:
     static JdbScriptLanguage* s_singleton;
 };

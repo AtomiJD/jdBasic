@@ -4,9 +4,11 @@ EXTENDS Node3D
 
 INSPECTOR DIM speed = 1.0
 
-SUB _ready
-	 PRINT "hello from jdBasic attached directly to the Node!"
+SUB _ready()
+	PRINT "hello from jdBasic attached directly to the Node!"
 ENDSUB
 
 SUB _process(delta)
+	' uncomment to spam the console
+	' PRINT delta
 ENDSUB
