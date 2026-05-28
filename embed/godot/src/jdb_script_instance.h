@@ -66,6 +66,13 @@ public:
     Variant get_property(const StringName& name);
     bool    set_property(const StringName& name, const Variant& value);
 
+    // Hot reload (Script._reload with keep_state=true). Merges new FUNC/SUB
+    // bodies via jdb_embed_recompile_source; globals + state preserved.
+    bool    hot_recompile(const String& processed_src);
+    // Hard reload (keep_state=false). Drops the VM, creates a fresh one,
+    // re-evals from scratch. Any non-INSPECTOR state is lost.
+    bool    hard_reload(const String& processed_src);
+
     // The shared info table that backs every JdbScriptInstance.
     static const GDExtensionScriptInstanceInfo3 s_info;
 

@@ -5,11 +5,15 @@
 #include "jdb_script_resource.h"
 #include "jdb_script_language.h"
 #include "jdb_script_instance.h"
+#include "jdb_embed_api.h"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/gdextension_interface_loader.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/variant.hpp>
+
+#include <algorithm>
 
 using namespace godot;
 
@@ -224,9 +228,51 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
     return out;
 }
 
-Error JdbScriptResource::_reload(bool /*p_keep_state*/) {
-    // T3.0 no-op. T3.4 plugs this into jdb_embed_recompile_source.
-    return Error::OK;
+bool JdbScriptResource::_editor_can_reload_from_file() {
+    return true;
+}
+
+Error JdbScriptResource::_reload(bool p_keep_state) {
+    // Source has already been pushed in via _set_source_code by the time
+    // Godot calls _reload; m_source_processed is fresh. Fan out across
+    // every live instance: keep_state=true uses jdb_embed_recompile_source
+    // (FUNC bodies swap, globals stay); keep_state=false drops the VM
+    // and re-evals from scratch via the existing eval path.
+    if (m_source_processed.is_empty() && !m_source.is_empty()) {
+        preprocess_();
+    }
+    String src = m_source_processed.is_empty() ? m_source : m_source_processed;
+    if (src.is_empty()) return Error::ERR_INVALID_DATA;
+
+    int reloaded = 0;
+    int failed   = 0;
+    for (JdbScriptInstance* inst : m_live_instances) {
+        if (!inst) continue;
+        if (p_keep_state) {
+            if (inst->hot_recompile(src)) ++reloaded; else ++failed;
+        } else {
+            if (inst->hard_reload(src))   ++reloaded; else ++failed;
+        }
+    }
+    if (reloaded || failed) {
+        UtilityFunctions::print(String("[jdBasic reload] ")
+            + String::num_int64(reloaded) + String(" ok, ")
+            + String::num_int64(failed)   + String(" failed"));
+    }
+    return failed ? Error::ERR_COMPILATION_FAILED : Error::OK;
+}
+
+void JdbScriptResource::register_instance(JdbScriptInstance* inst) {
+    if (!inst) return;
+    if (std::find(m_live_instances.begin(), m_live_instances.end(), inst)
+        == m_live_instances.end()) {
+        m_live_instances.push_back(inst);
+    }
+}
+
+void JdbScriptResource::unregister_instance(JdbScriptInstance* inst) {
+    auto it = std::find(m_live_instances.begin(), m_live_instances.end(), inst);
+    if (it != m_live_instances.end()) m_live_instances.erase(it);
 }
 
 ScriptLanguage* JdbScriptResource::_get_language() const {

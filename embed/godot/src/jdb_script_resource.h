@@ -19,6 +19,8 @@
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 
+#include <vector>
+
 namespace godot {
 
 class JdbScriptResource : public ScriptExtension {
@@ -59,10 +61,19 @@ public:
     TypedArray<Dictionary> _get_script_property_list() const override;
     Variant                _get_property_default_value(const StringName& p_property) const override;
 
+    // T3.4 - tell Godot we accept hot-reload. Defaults to true on the
+    // base class anyway, but the explicit override removes ambiguity.
+    bool       _editor_can_reload_from_file()             override;
+
     // Path-B preprocessing outputs - filled by _set_source_code.
     String                 get_processed_source() const { return m_source_processed; }
     StringName             get_extends_type()     const { return m_extends_type;     }
     const TypedArray<Dictionary>& get_inspector_vars() const { return m_inspector_vars; }
+
+    // Live-instance registry (used by _reload to fan a hot-reload out
+    // across every Node currently running this script).
+    void register_instance(class JdbScriptInstance* inst);
+    void unregister_instance(class JdbScriptInstance* inst);
 
 private:
     // User-typed source as Godot edits / saves it.
@@ -72,6 +83,11 @@ private:
     String                 m_source_processed;  // what jdBasic eats
     StringName             m_extends_type;      // from EXTENDS Foo line
     TypedArray<Dictionary> m_inspector_vars;    // [{name, default, type}]
+
+    // Live JdbScriptInstance pointers attached to this Resource. Used
+    // for hot-reload fan-out. Not thread-safe for now; instance lifecycle
+    // happens on the engine main thread.
+    std::vector<class JdbScriptInstance*> m_live_instances;
 
     void preprocess_();
 };

@@ -141,13 +141,56 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     } else {
         UtilityFunctions::push_error(String("[JdbScriptInstance] script ref is invalid"));
     }
+
+    // Register with the script so hot-reload can find us.
+    if (m_script.is_valid()) m_script->register_instance(this);
 }
 
 JdbScriptInstance::~JdbScriptInstance() {
+    if (m_script.is_valid()) m_script->unregister_instance(this);
     if (m_vm) {
         jdb_embed_shutdown(m_vm);
         m_vm = nullptr;
     }
+}
+
+bool JdbScriptInstance::hot_recompile(const String& processed_src) {
+    if (!m_vm) return false;
+    char* out = jdb_embed_recompile_source(m_vm, processed_src.utf8().get_data());
+    if (!out) {
+        const char* err = jdb_embed_last_error(m_vm);
+        UtilityFunctions::push_error(String("[jdBasic recompile] ") + String(err ? err : "?"));
+        return false;
+    }
+    String summary = String::utf8(out);
+    jdb_embed_free(out);
+
+    // Re-scan FUNC/SUB names from the latest source so newly-added
+    // engine callbacks become callable.
+    m_method_set.clear();
+    if (m_script.is_valid()) scan_methods_(m_script->_get_source_code());
+
+    UtilityFunctions::print(String("[jdBasic recompile] ") + summary);
+    return true;
+}
+
+bool JdbScriptInstance::hard_reload(const String& processed_src) {
+    if (m_vm) {
+        jdb_embed_shutdown(m_vm);
+        m_vm = nullptr;
+    }
+    m_vm = jdb_embed_init();
+    if (!m_vm) return false;
+    char* out = jdb_embed_eval(m_vm, processed_src.utf8().get_data());
+    if (!out) {
+        const char* err = jdb_embed_last_error(m_vm);
+        UtilityFunctions::push_error(String("[jdBasic hard reload] ") + String(err ? err : "?"));
+        return false;
+    }
+    jdb_embed_free(out);
+    m_method_set.clear();
+    if (m_script.is_valid()) scan_methods_(m_script->_get_source_code());
+    return true;
 }
 
 bool JdbScriptInstance::has_method(const StringName& name) const {
