@@ -6,6 +6,7 @@
 
 #include "register_types.h"
 #include "jdbasic_vm.h"
+#include "jdb_script.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -16,6 +17,7 @@ using namespace godot;
 void initialize_jdb_godot_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
     ClassDB::register_class<JDBasicVM>();
+    ClassDB::register_class<JDBScript>();
 }
 
 void uninitialize_jdb_godot_module(ModuleInitializationLevel p_level) {

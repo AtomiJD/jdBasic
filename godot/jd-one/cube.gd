@@ -1,83 +1,57 @@
 extends Node3D
 
-# E4 demo - jdBasic drives the cube AND Atomi can edit the .jdb file
-# while the scene runs.
+# Tier 2 cube demo. The JDBScript child node owns the jdBasic VM and
+# auto-dispatches on_process(delta) every frame. This script is reduced
+# to thin glue: read display_angle() / hue() from jdBasic, apply to the
+# Godot mesh; on button press, mutate `rot_speed` in the running VM.
 #
-# Workflow:
-#   1. F5 starts the scene. cube.jdb gets loaded into the persistent VM.
-#   2. Atomi edits cube.jdb (add wobble, change hue speed, anything).
-#   3. Atomi clicks the RECOMPILE button.
-#   4. The new FUNC bodies swap into the running VM. `angle`, `rot_speed`
-#      etc. keep their current values - state survives the recompile.
+# Cube3D has process_priority = 1 so JDBScript (default 0) runs first
+# every frame - we read the freshly-updated values, not stale ones.
 
-const JDB_PATH := "res://cube.jdb"
+@onready var cube:         MeshInstance3D = $Cube
+@onready var jdb:          JDBScript      = $JDBScript
+@onready var speed_label:  Label          = $UI/Panel/VBox/SpeedLabel
+@onready var angle_label:  Label          = $UI/Panel/VBox/AngleLabel
+@onready var status_label: Label          = $UI/Panel/VBox/StatusLabel
 
-@onready var cube:        MeshInstance3D = $Cube
-@onready var speed_label: Label          = $UI/Panel/VBox/SpeedLabel
-@onready var angle_label: Label          = $UI/Panel/VBox/AngleLabel
-@onready var status_label: Label         = $UI/Panel/VBox/StatusLabel
-
-var vm: JDBasicVM
 var current_speed := 1.0
 var cube_material: StandardMaterial3D
 
 func _ready() -> void:
-	vm = JDBasicVM.new()
 	cube_material = cube.material_override.duplicate()
 	cube.material_override = cube_material
-	_load_script()
 	_refresh_speed_label()
+	if jdb.last_error().is_empty():
+		status_label.text = "loaded " + jdb.get_script_path()
+	else:
+		status_label.text = "ERR: " + jdb.last_error()
 
-func _load_script() -> void:
-	# Read the .jdb file via Godot's resource system, then hand the source
-	# to the embedded VM. We avoid jdb_embed_load() here because that one
-	# wants an OS path; res:// is Godot's virtual filesystem.
-	var source := FileAccess.get_file_as_string(JDB_PATH)
-	if source.is_empty():
-		status_label.text = "ERR: could not read " + JDB_PATH
-		return
-	var out := vm.eval(source)
-	status_label.text = "loaded cube.jdb"
-	if not out.is_empty():
-		print("[jdBasic boot] ", out)
-
-func _process(delta: float) -> void:
-	vm.eval("on_process(%f)" % delta)
-	# display_angle() = angle + wobble. The base angle is monotonic so the
-	# integrator can't stall; the wobble lives in the FUNC body so it can
-	# be tweaked live via Recompile.
-	var a := vm.eval("PRINT display_angle()").strip_edges().to_float()
+func _process(_delta: float) -> void:
+	var a: float = float(jdb.call("display_angle", []))
 	cube.rotation.y = a
 	angle_label.text = "angle = %.2f rad" % a
-	# Hue cycle - the cube colour reads from the jdBasic FUNC hue() so
-	# editing that function in cube.jdb + Recompile changes the colour
-	# behaviour live.
-	var h := vm.eval("PRINT hue()").strip_edges().to_float()
+	var h: float = float(jdb.call("hue", []))
 	cube_material.albedo_color = Color.from_hsv(h, 0.7, 0.95)
 
 func _on_slow_pressed() -> void:
 	current_speed = 2.0
-	vm.eval("rot_speed = 2.0")
+	jdb.set_var("rot_speed", 2.0)
 	_refresh_speed_label()
 
 func _on_fast_pressed() -> void:
 	current_speed = 10.0
-	vm.eval("rot_speed = 10.0")
+	jdb.set_var("rot_speed", 10.0)
 	_refresh_speed_label()
 
 func _on_reverse_pressed() -> void:
 	current_speed = -current_speed
-	vm.eval("rot_speed = %f" % current_speed)
+	jdb.set_var("rot_speed", current_speed)
 	_refresh_speed_label()
 
 func _on_recompile_pressed() -> void:
-	# Read the file fresh from disk so the editor's latest save is what
-	# gets merged. ProjectSettings.globalize_path turns res:// into an
-	# absolute OS path that jdb_embed can open directly.
-	var os_path := ProjectSettings.globalize_path(JDB_PATH)
-	var summary := vm.recompile(os_path)
+	var summary := jdb.recompile()
 	if summary.is_empty():
-		status_label.text = "ERR: " + vm.last_error()
+		status_label.text = "ERR: " + jdb.last_error()
 	else:
 		status_label.text = "recompiled - " + summary
 
