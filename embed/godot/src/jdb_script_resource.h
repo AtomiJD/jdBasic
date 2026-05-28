@@ -50,6 +50,10 @@ public:
     // Required virtual stub; real doc extraction is the T3.6 stretch.
     TypedArray<Dictionary> _get_documentation()         const override;
 
+    // T3.2 instance bridge - creates a JdbScriptInstance and hands its
+    // GDExtension handle back to Godot.
+    void*      _instance_create(Object* p_for_object)   const override;
+
     // Path-B preprocessing outputs - filled by _set_source_code.
     String                 get_processed_source() const { return m_source_processed; }
     StringName             get_extends_type()     const { return m_extends_type;     }

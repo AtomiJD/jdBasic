@@ -4,8 +4,10 @@
 
 #include "jdb_script_resource.h"
 #include "jdb_script_language.h"
+#include "jdb_script_instance.h"
 
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/core/gdextension_interface_loader.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
@@ -194,6 +196,18 @@ ScriptLanguage* JdbScriptResource::_get_language() const {
 
 TypedArray<Dictionary> JdbScriptResource::_get_documentation() const {
     return TypedArray<Dictionary>();
+}
+
+void* JdbScriptResource::_instance_create(Object* p_for_object) const {
+    // Const cast: Godot's API hands us a const ScriptExtension*; building
+    // a Ref<> needs a non-const pointer. The instance only borrows the
+    // script reference, never mutates the script object itself.
+    Ref<JdbScriptResource> script(const_cast<JdbScriptResource*>(this));
+    JdbScriptInstance* inst = new JdbScriptInstance(script, p_for_object);
+    GDExtensionScriptInstancePtr h =
+        gdextension_interface::script_instance_create3(&JdbScriptInstance::s_info, inst);
+    inst->set_godot_handle(h);
+    return h;
 }
 
 #endif  // GODOT
