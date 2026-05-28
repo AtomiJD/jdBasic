@@ -57,6 +57,13 @@ public:
     // user clicks "Create" in the Attach-Script dialog.
     Object*             _create_script()             const override;
 
+    // Boilerplate for a freshly-created .jdb file. Without overriding
+    // this, Godot dereferences a null Ref<Script> and crashes.
+    Ref<Script>         _make_template(const String& p_template,
+                                       const String& p_class_name,
+                                       const String& p_base_class_name) const override;
+    bool                _is_using_templates()              override;
+
     // Validation - T3.0 always returns "ok"; T3.1 will plug into
     // jdBasic's on_check (lex+parse only) for real diagnostics.
     Dictionary          _validate(const String& p_script,

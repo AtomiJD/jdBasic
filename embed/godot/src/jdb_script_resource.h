@@ -13,8 +13,10 @@
 #ifdef GODOT
 
 #include <godot_cpp/classes/script_extension.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 
 namespace godot {
 
@@ -46,8 +48,21 @@ public:
     Error      _reload(bool p_keep_state)                     override;
     ScriptLanguage* _get_language()                     const override;
 
+    // Path-B preprocessing outputs - filled by _set_source_code.
+    String                 get_processed_source() const { return m_source_processed; }
+    StringName             get_extends_type()     const { return m_extends_type;     }
+    const TypedArray<Dictionary>& get_inspector_vars() const { return m_inspector_vars; }
+
 private:
+    // User-typed source as Godot edits / saves it.
     String m_source;
+
+    // Path-B outputs (rebuilt every _set_source_code call).
+    String                 m_source_processed;  // what jdBasic eats
+    StringName             m_extends_type;      // from EXTENDS Foo line
+    TypedArray<Dictionary> m_inspector_vars;    // [{name, default, type}]
+
+    void preprocess_();
 };
 
 }  // namespace godot

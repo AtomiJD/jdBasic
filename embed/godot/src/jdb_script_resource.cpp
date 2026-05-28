@@ -6,13 +6,141 @@
 #include "jdb_script_language.h"
 
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 using namespace godot;
 
 void JdbScriptResource::_bind_methods() {}
 
-JdbScriptResource::JdbScriptResource() {}
+JdbScriptResource::JdbScriptResource() : m_extends_type(StringName("Node")) {}
 JdbScriptResource::~JdbScriptResource() {}
+
+// ── Path-B preprocessing ────────────────────────────────────────────
+//
+// We scan the source line by line. Two pieces of jdBasic-flavoured
+// syntax that the runtime VM does not understand:
+//
+//   EXTENDS Node3D           -> commented out, base type captured
+//   INSPECTOR DIM speed = 1  -> INSPECTOR keyword stripped, name+default captured
+//
+// Everything else passes through untouched. The processed source is what
+// gets handed to jdb_embed_eval; the original is what _get_source_code
+// returns so Godot's editor sees what the user typed.
+
+namespace {
+
+// Trim leading whitespace and return the offset of the first non-ws byte.
+int leading_ws(const String& s) {
+    for (int i = 0; i < s.length(); ++i) {
+        char32_t c = s[i];
+        if (c != ' ' && c != '\t') return i;
+    }
+    return s.length();
+}
+
+bool starts_with_keyword_ci(const String& trimmed, const char* kw, int kw_len) {
+    if (trimmed.length() < kw_len + 1) return false;
+    for (int i = 0; i < kw_len; ++i) {
+        char32_t c = trimmed[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c != (char32_t)kw[i]) return false;
+    }
+    char32_t after = trimmed[kw_len];
+    return after == ' ' || after == '\t';
+}
+
+// Parse "name = value" — minimal. Returns true on success and fills name + default_str.
+bool parse_dim_assign(const String& tail, String& out_name, String& out_default) {
+    int eq = tail.find(String("="));
+    if (eq < 0) return false;
+    String left  = tail.substr(0, eq).strip_edges();
+    String right = tail.substr(eq + 1).strip_edges();
+    if (left.is_empty() || right.is_empty()) return false;
+    out_name    = left;
+    out_default = right;
+    return true;
+}
+
+// Crude type inference for the default value.
+// Float literal -> FLOAT, integer literal -> INT, quoted -> STRING.
+Variant default_value_from_literal(const String& s, Variant::Type& out_type) {
+    if (s.length() >= 2 && s[0] == '"' && s[s.length() - 1] == '"') {
+        out_type = Variant::STRING;
+        return s.substr(1, s.length() - 2);
+    }
+    if (s.is_valid_int()) {
+        out_type = Variant::INT;
+        return s.to_int();
+    }
+    if (s.is_valid_float()) {
+        out_type = Variant::FLOAT;
+        return s.to_float();
+    }
+    // Fallback - treat as string literal.
+    out_type = Variant::STRING;
+    return s;
+}
+
+}  // namespace
+
+void JdbScriptResource::preprocess_() {
+    m_source_processed = String();
+    m_extends_type     = StringName("Node");
+    m_inspector_vars   = TypedArray<Dictionary>();
+
+    PackedStringArray lines = m_source.split(String("\n"), true);
+    String out;
+    out.resize(m_source.length() + 32);  // hint; not strictly needed
+    out = String();
+
+    bool seen_extends = false;
+    for (int i = 0; i < lines.size(); ++i) {
+        String line = lines[i];
+        int    pad  = leading_ws(line);
+        String trim = line.substr(pad, line.length() - pad);
+
+        // EXTENDS Foo -- first one wins; subsequent ones are passed through
+        // unchanged (they'd be syntax errors in the jdBasic eval anyway).
+        if (!seen_extends && starts_with_keyword_ci(trim, "EXTENDS", 7)) {
+            String tail = trim.substr(7, trim.length() - 7).strip_edges();
+            if (!tail.is_empty()) {
+                m_extends_type = StringName(tail);
+                seen_extends   = true;
+                out += line.substr(0, pad) + String("' ") + trim;
+                if (i + 1 < lines.size()) out += String("\n");
+                continue;
+            }
+        }
+
+        // INSPECTOR DIM name = value
+        if (starts_with_keyword_ci(trim, "INSPECTOR", 9)) {
+            String after_insp = trim.substr(9, trim.length() - 9).strip_edges();
+            if (starts_with_keyword_ci(after_insp, "DIM", 3)) {
+                String tail = after_insp.substr(3, after_insp.length() - 3).strip_edges();
+                String var_name, default_str;
+                if (parse_dim_assign(tail, var_name, default_str)) {
+                    Variant::Type t;
+                    Variant dv = default_value_from_literal(default_str, t);
+                    Dictionary d;
+                    d[String("name")]    = var_name;
+                    d[String("default")] = dv;
+                    d[String("type")]    = (int)t;
+                    m_inspector_vars.append(d);
+                    // Strip "INSPECTOR " from the line so jdBasic eats it
+                    // as a normal DIM.
+                    out += line.substr(0, pad) + after_insp;
+                    if (i + 1 < lines.size()) out += String("\n");
+                    continue;
+                }
+            }
+        }
+
+        out += line;
+        if (i + 1 < lines.size()) out += String("\n");
+    }
+    m_source_processed = out;
+}
 
 bool JdbScriptResource::_has_source_code() const {
     return !m_source.is_empty();
@@ -24,6 +152,7 @@ String JdbScriptResource::_get_source_code() const {
 
 void JdbScriptResource::_set_source_code(const String& p_code) {
     m_source = p_code;
+    preprocess_();
 }
 
 bool JdbScriptResource::_can_instantiate() const {
@@ -41,8 +170,7 @@ bool JdbScriptResource::_is_tool() const {
 }
 
 StringName JdbScriptResource::_get_instance_base_type() const {
-    // T3.0 default. T3.1 will parse `EXTENDS Foo` out of the source.
-    return StringName("Node");
+    return m_extends_type;
 }
 
 bool JdbScriptResource::_has_method(const StringName& /*method*/) const {

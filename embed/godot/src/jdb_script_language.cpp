@@ -5,6 +5,7 @@
 #include "jdb_script_language.h"
 #include "jdb_script_resource.h"
 
+#include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 
@@ -101,6 +102,36 @@ Object* JdbScriptLanguage::_create_script() const {
     // Godot owns the returned pointer; ClassDB will refcount-manage as
     // appropriate based on the class registration.
     return memnew(JdbScriptResource);
+}
+
+Ref<Script> JdbScriptLanguage::_make_template(const String& /*p_template*/,
+                                              const String& p_class_name,
+                                              const String& p_base_class_name) const {
+    String base = p_base_class_name.is_empty() ? String("Node") : p_base_class_name;
+    String cls  = p_class_name.is_empty()      ? String("Untitled") : p_class_name;
+
+    String src;
+    src += String("EXTENDS ") + base + String("\n");
+    src += String("\n");
+    src += String("' ") + cls + String(" -- jdBasic script\n");
+    src += String("\n");
+    src += String("INSPECTOR DIM speed = 1.0\n");
+    src += String("\n");
+    src += String("SUB _ready\n");
+    src += String("\tPRINT \"") + cls + String(" ready\"\n");
+    src += String("ENDSUB\n");
+    src += String("\n");
+    src += String("SUB _process(delta)\n");
+    src += String("ENDSUB\n");
+
+    Ref<JdbScriptResource> script;
+    script.instantiate();
+    script->_set_source_code(src);
+    return script;
+}
+
+bool JdbScriptLanguage::_is_using_templates() {
+    return true;
 }
 
 Dictionary JdbScriptLanguage::_validate(const String& /*p_script*/,
