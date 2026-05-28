@@ -7,6 +7,7 @@
 #include "jdb_script_instance.h"
 #include "jdb_embed_api.h"
 
+#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/gdextension_interface_loader.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
@@ -258,11 +259,25 @@ void JdbScriptResource::_update_exports() {
 }
 
 Error JdbScriptResource::_reload(bool p_keep_state) {
-    // Source has already been pushed in via _set_source_code by the time
-    // Godot calls _reload; m_source_processed is fresh. Fan out across
-    // every live instance: keep_state=true uses jdb_embed_recompile_source
-    // (FUNC bodies swap, globals stay); keep_state=false drops the VM
-    // and re-evals from scratch via the existing eval path.
+    // External-editor save path: Godot detects the file change and calls
+    // _reload directly, WITHOUT first round-tripping through _set_source_code.
+    // m_source / m_source_processed would still be the stale buffer and
+    // jdb_embed_recompile_source would happily "update" the same bytes,
+    // reporting success while behaviour stays unchanged.
+    //
+    // Always pull fresh content from disk before fanning out. If the path
+    // is empty (resource isn't on disk yet) we trust whatever m_source has.
+    String path = get_path();
+    if (!path.is_empty()) {
+        String fresh = FileAccess::get_file_as_string(path);
+        if (!fresh.is_empty() && fresh != m_source) {
+            m_source = fresh;
+            preprocess_();
+            UtilityFunctions::print(String("[jdBasic reload] re-read ")
+                + path + String(" (")
+                + String::num_int64(fresh.length()) + String(" bytes)"));
+        }
+    }
     if (m_source_processed.is_empty() && !m_source.is_empty()) {
         preprocess_();
     }
