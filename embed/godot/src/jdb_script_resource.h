@@ -13,14 +13,13 @@
 #ifdef GODOT
 
 #include <godot_cpp/classes/script_extension.hpp>
+#include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 
 namespace godot {
-
-class ScriptLanguage;
 
 class JdbScriptResource : public ScriptExtension {
     GDCLASS(JdbScriptResource, ScriptExtension)

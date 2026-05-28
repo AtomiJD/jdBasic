@@ -9,9 +9,12 @@
 #include "jdb_script.h"
 #include "jdb_script_language.h"
 #include "jdb_script_resource.h"
+#include "jdb_resource_format.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/resource_saver.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
@@ -19,7 +22,9 @@ using namespace godot;
 
 // Held alive between init / finish so the language pointer registered
 // with the engine stays valid for the lifetime of the GDExtension.
-static JdbScriptLanguage* s_language_instance = nullptr;
+static JdbScriptLanguage*       s_language_instance = nullptr;
+static Ref<JdbResourceFormatLoader> s_resource_loader;
+static Ref<JdbResourceFormatSaver>  s_resource_saver;
 
 void initialize_jdb_godot_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
@@ -29,17 +34,33 @@ void initialize_jdb_godot_module(ModuleInitializationLevel p_level) {
     ClassDB::register_class<JDBScript>();
 
     // Tier 3 - ScriptLanguageExtension + ScriptExtension subclasses, plus
-    // singleton registration so Godot's editor enumerates jdBasic as a
-    // language alongside GDScript / C#.
+    // ResourceFormatLoader / Saver so the editor can read/write .jdb files
+    // through the standard ResourceLoader / ResourceSaver pipeline.
     ClassDB::register_class<JdbScriptResource>();
     ClassDB::register_class<JdbScriptLanguage>();
+    ClassDB::register_class<JdbResourceFormatLoader>();
+    ClassDB::register_class<JdbResourceFormatSaver>();
 
     s_language_instance = memnew(JdbScriptLanguage);
     Engine::get_singleton()->register_script_language(s_language_instance);
+
+    s_resource_loader.instantiate();
+    ResourceLoader::get_singleton()->add_resource_format_loader(s_resource_loader);
+
+    s_resource_saver.instantiate();
+    ResourceSaver::get_singleton()->add_resource_format_saver(s_resource_saver);
 }
 
 void uninitialize_jdb_godot_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
+    if (s_resource_loader.is_valid()) {
+        ResourceLoader::get_singleton()->remove_resource_format_loader(s_resource_loader);
+        s_resource_loader.unref();
+    }
+    if (s_resource_saver.is_valid()) {
+        ResourceSaver::get_singleton()->remove_resource_format_saver(s_resource_saver);
+        s_resource_saver.unref();
+    }
     if (s_language_instance) {
         Engine::get_singleton()->unregister_script_language(s_language_instance);
         memdelete(s_language_instance);
