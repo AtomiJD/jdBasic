@@ -181,8 +181,47 @@ bool JdbScriptResource::_has_method(const StringName& /*method*/) const {
     return false;
 }
 
-bool JdbScriptResource::_has_property_default_value(const StringName& /*p_property*/) const {
+bool JdbScriptResource::_has_property_default_value(const StringName& p_property) const {
+    String name = p_property;
+    for (int i = 0; i < m_inspector_vars.size(); ++i) {
+        Dictionary d = m_inspector_vars[i];
+        if (String(d[String("name")]) == name) return true;
+    }
     return false;
+}
+
+Variant JdbScriptResource::_get_property_default_value(const StringName& p_property) const {
+    String name = p_property;
+    for (int i = 0; i < m_inspector_vars.size(); ++i) {
+        Dictionary d = m_inspector_vars[i];
+        if (String(d[String("name")]) == name) return d[String("default")];
+    }
+    return Variant();
+}
+
+TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
+    // Re-shape m_inspector_vars (which has name/default/type) into the
+    // PropertyInfo dictionaries Godot expects in script-property lists.
+    TypedArray<Dictionary> out;
+    static const String K_NAME       = String("name");
+    static const String K_TYPE       = String("type");
+    static const String K_CLASS_NAME = String("class_name");
+    static const String K_HINT       = String("hint");
+    static const String K_HINT_STR   = String("hint_string");
+    static const String K_USAGE      = String("usage");
+    static const String K_DEFAULT    = String("default");
+    for (int i = 0; i < m_inspector_vars.size(); ++i) {
+        Dictionary src = m_inspector_vars[i];
+        Dictionary p;
+        p[K_NAME]       = src[K_NAME];
+        p[K_TYPE]       = src[K_TYPE];
+        p[K_CLASS_NAME] = String();
+        p[K_HINT]       = 0;
+        p[K_HINT_STR]   = String();
+        p[K_USAGE]      = 6;  // PROPERTY_USAGE_STORAGE | EDITOR
+        out.append(p);
+    }
+    return out;
 }
 
 Error JdbScriptResource::_reload(bool /*p_keep_state*/) {

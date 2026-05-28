@@ -25,6 +25,7 @@
 
 #include <unordered_set>
 #include <string>
+#include <vector>
 
 extern "C" {
 struct JdbEmbed;
@@ -53,6 +54,18 @@ public:
     bool    has_method(const StringName& name) const;
     Variant call_method(const StringName& name, const Variant** args, int64_t argc);
 
+    // Inspector property access.
+    struct InspectorVar {
+        StringName       name;
+        Variant::Type    type;
+        StringName       class_name;  // empty for primitives
+        StringName       hint_string; // empty by default
+    };
+    const std::vector<InspectorVar>& inspector_vars() const { return m_inspector_vars; }
+    bool    has_property(const StringName& name) const;
+    Variant get_property(const StringName& name);
+    bool    set_property(const StringName& name, const Variant& value);
+
     // The shared info table that backs every JdbScriptInstance.
     static const GDExtensionScriptInstanceInfo3 s_info;
 
@@ -61,7 +74,8 @@ private:
     Object*                            m_owner = nullptr;
     JdbEmbed*                          m_vm = nullptr;
     GDExtensionScriptInstancePtr       m_godot_handle = nullptr;
-    std::unordered_set<std::string>    m_method_set;   // lower-cased
+    std::unordered_set<std::string>    m_method_set;     // lower-cased
+    std::vector<InspectorVar>          m_inspector_vars; // mirror of script metadata
 
     static std::string variant_to_jdb_arg_(const Variant& v);
     void scan_methods_(const String& source);

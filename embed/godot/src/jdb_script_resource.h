@@ -54,6 +54,11 @@ public:
     // GDExtension handle back to Godot.
     void*      _instance_create(Object* p_for_object)   const override;
 
+    // T3.3 - INSPECTOR DIM properties surface on the Resource so the editor
+    // can fill in defaults before a per-Node instance even exists.
+    TypedArray<Dictionary> _get_script_property_list() const override;
+    Variant                _get_property_default_value(const StringName& p_property) const override;
+
     // Path-B preprocessing outputs - filled by _set_source_code.
     String                 get_processed_source() const { return m_source_processed; }
     StringName             get_extends_type()     const { return m_extends_type;     }

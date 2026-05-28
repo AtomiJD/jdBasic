@@ -106,7 +106,6 @@ void JdbScriptInstance::scan_methods_(const String& source) {
 
 JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_owner)
     : m_script(p_script), m_owner(p_owner) {
-    UtilityFunctions::print(String("[JdbScriptInstance] ctor begin"));
     m_vm = jdb_embed_init();
     if (!m_vm) {
         UtilityFunctions::push_error(String("[JdbScriptInstance] jdb_embed_init returned NULL"));
@@ -115,7 +114,6 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     if (m_script.is_valid()) {
         String src = m_script->get_processed_source();
         if (src.is_empty()) src = m_script->_get_source_code();
-        UtilityFunctions::print(String("[JdbScriptInstance] source len = ") + String::num_int64(src.length()));
         if (!src.is_empty()) {
             char* out = jdb_embed_eval(m_vm, src.utf8().get_data());
             if (out) {
@@ -128,15 +126,21 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
             }
         }
         scan_methods_(m_script->_get_source_code());
-        String methods;
-        for (const auto& m : m_method_set) {
-            methods += String(m.c_str()) + String(", ");
+
+        // Mirror the script's INSPECTOR DIM metadata so the Godot Inspector
+        // can enumerate properties without round-tripping into the Resource
+        // every frame.
+        const TypedArray<Dictionary>& src_vars = m_script->get_inspector_vars();
+        for (int i = 0; i < src_vars.size(); ++i) {
+            Dictionary d = src_vars[i];
+            InspectorVar v;
+            v.name = StringName(String(d[String("name")]));
+            v.type = (Variant::Type)(int)d[String("type")];
+            m_inspector_vars.push_back(v);
         }
-        UtilityFunctions::print(String("[JdbScriptInstance] methods scanned: ") + methods);
     } else {
         UtilityFunctions::push_error(String("[JdbScriptInstance] script ref is invalid"));
     }
-    UtilityFunctions::print(String("[JdbScriptInstance] ctor done"));
 }
 
 JdbScriptInstance::~JdbScriptInstance() {
@@ -151,6 +155,53 @@ bool JdbScriptInstance::has_method(const StringName& name) const {
     std::transform(n.begin(), n.end(), n.begin(),
                    [](unsigned char c){ return (char)std::tolower(c); });
     return m_method_set.find(n) != m_method_set.end();
+}
+
+bool JdbScriptInstance::has_property(const StringName& name) const {
+    for (const auto& v : m_inspector_vars) {
+        if (v.name == name) return true;
+    }
+    return false;
+}
+
+Variant JdbScriptInstance::get_property(const StringName& name) {
+    if (!m_vm) return Variant();
+    std::string code = "PRINT ";
+    code += String(name).utf8().get_data();
+    code += "\n";
+    char* out = jdb_embed_eval(m_vm, code.c_str());
+    if (!out) return Variant();
+    String s = String::utf8(out).strip_edges();
+    jdb_embed_free(out);
+    if (s.is_empty() || s == String("NONE")) return Variant();
+
+    // Best-effort type match using the declared property type.
+    for (const auto& v : m_inspector_vars) {
+        if (v.name == name) {
+            switch (v.type) {
+                case Variant::INT:    return (int64_t)s.to_int();
+                case Variant::FLOAT:  return (double)s.to_float();
+                case Variant::STRING: return s;
+                case Variant::BOOL:   return s.to_int() != 0;
+                default: break;
+            }
+        }
+    }
+    if (s.is_valid_float()) return s.to_float();
+    return s;
+}
+
+bool JdbScriptInstance::set_property(const StringName& name, const Variant& value) {
+    if (!m_vm) return false;
+    if (!has_property(name)) return false;
+    std::string code = String(name).utf8().get_data();
+    code += " = ";
+    code += variant_to_jdb_arg_(value);
+    code += "\n";
+    char* out = jdb_embed_eval(m_vm, code.c_str());
+    if (!out) return false;
+    jdb_embed_free(out);
+    return true;
 }
 
 Variant JdbScriptInstance::call_method(const StringName& name,
@@ -201,28 +252,62 @@ JdbScriptInstance* self_of(GDExtensionScriptInstanceDataPtr p) {
     return reinterpret_cast<JdbScriptInstance*>(p);
 }
 
-GDExtensionBool bounce_set(GDExtensionScriptInstanceDataPtr /*p_instance*/,
-                            GDExtensionConstStringNamePtr /*p_name*/,
-                            GDExtensionConstVariantPtr /*p_value*/) {
-    return 0;  // T3.3 will route to jdBasic globals via INSPECTOR DIM list.
+GDExtensionBool bounce_set(GDExtensionScriptInstanceDataPtr p_instance,
+                            GDExtensionConstStringNamePtr p_name,
+                            GDExtensionConstVariantPtr p_value) {
+    JdbScriptInstance* inst = self_of(p_instance);
+    if (!inst || !p_name || !p_value) return 0;
+    const StringName& name  = *reinterpret_cast<const StringName*>(p_name);
+    const Variant&    value = *reinterpret_cast<const Variant*>(p_value);
+    return inst->set_property(name, value) ? 1 : 0;
 }
 
-GDExtensionBool bounce_get(GDExtensionScriptInstanceDataPtr /*p_instance*/,
-                            GDExtensionConstStringNamePtr /*p_name*/,
-                            GDExtensionVariantPtr /*r_ret*/) {
-    return 0;
+GDExtensionBool bounce_get(GDExtensionScriptInstanceDataPtr p_instance,
+                            GDExtensionConstStringNamePtr p_name,
+                            GDExtensionVariantPtr r_ret) {
+    JdbScriptInstance* inst = self_of(p_instance);
+    if (!inst || !p_name || !r_ret) return 0;
+    const StringName& name = *reinterpret_cast<const StringName*>(p_name);
+    if (!inst->has_property(name)) return 0;
+    Variant v = inst->get_property(name);
+    *reinterpret_cast<Variant*>(r_ret) = v;
+    return 1;
 }
 
 const GDExtensionPropertyInfo* bounce_get_property_list(
-        GDExtensionScriptInstanceDataPtr /*p_instance*/,
+        GDExtensionScriptInstanceDataPtr p_instance,
         uint32_t* r_count) {
-    *r_count = 0;
-    return nullptr;
+    JdbScriptInstance* inst = self_of(p_instance);
+    if (!inst) { *r_count = 0; return nullptr; }
+    const auto& vars = inst->inspector_vars();
+    if (vars.empty()) { *r_count = 0; return nullptr; }
+
+    // Allocate fresh property-info array per call. The StringName pointers
+    // inside reference data owned by the JdbScriptInstance (vars[i].name)
+    // so they live as long as the instance does. bounce_free_property_list
+    // only frees the array shell.
+    auto* list = static_cast<GDExtensionPropertyInfo*>(
+        memalloc(sizeof(GDExtensionPropertyInfo) * vars.size()));
+    static StringName s_empty_sn;  // shared empty for class_name / hint
+    static String     s_empty_str;
+
+    for (size_t i = 0; i < vars.size(); ++i) {
+        list[i].type        = (GDExtensionVariantType)vars[i].type;
+        list[i].name        = (GDExtensionStringNamePtr)&vars[i].name;
+        list[i].class_name  = (GDExtensionStringNamePtr)&s_empty_sn;
+        list[i].hint        = 0;  // PROPERTY_HINT_NONE
+        list[i].hint_string = (GDExtensionStringPtr)&s_empty_str;
+        list[i].usage       = 6;  // PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR
+    }
+    *r_count = (uint32_t)vars.size();
+    return list;
 }
 
 void bounce_free_property_list(GDExtensionScriptInstanceDataPtr /*p_instance*/,
-                                const GDExtensionPropertyInfo* /*p_list*/,
-                                uint32_t /*p_count*/) {}
+                                const GDExtensionPropertyInfo* p_list,
+                                uint32_t /*p_count*/) {
+    if (p_list) memfree(const_cast<GDExtensionPropertyInfo*>(p_list));
+}
 
 GDExtensionBool bounce_property_can_revert(GDExtensionScriptInstanceDataPtr /*p*/,
                                             GDExtensionConstStringNamePtr /*n*/) {
@@ -257,9 +342,21 @@ void bounce_free_method_list(GDExtensionScriptInstanceDataPtr /*p*/,
                               const GDExtensionMethodInfo* /*list*/,
                               uint32_t /*count*/) {}
 
-GDExtensionVariantType bounce_get_property_type(GDExtensionScriptInstanceDataPtr /*p*/,
-                                                  GDExtensionConstStringNamePtr /*name*/,
+GDExtensionVariantType bounce_get_property_type(GDExtensionScriptInstanceDataPtr p,
+                                                  GDExtensionConstStringNamePtr p_name,
                                                   GDExtensionBool* r_is_valid) {
+    JdbScriptInstance* inst = self_of(p);
+    if (!inst || !p_name) {
+        if (r_is_valid) *r_is_valid = 0;
+        return GDEXTENSION_VARIANT_TYPE_NIL;
+    }
+    const StringName& name = *reinterpret_cast<const StringName*>(p_name);
+    for (const auto& v : inst->inspector_vars()) {
+        if (v.name == name) {
+            if (r_is_valid) *r_is_valid = 1;
+            return (GDExtensionVariantType)v.type;
+        }
+    }
     if (r_is_valid) *r_is_valid = 0;
     return GDEXTENSION_VARIANT_TYPE_NIL;
 }
