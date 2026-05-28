@@ -38,11 +38,13 @@ matches the live-tweak pattern from the launch video.
 | **E0** | jdb_embed C-ABI + standalone C smoke test | done 2026-05-28 |
 | **E1** | GDExtension wrapper `jdb_godot.dll` with `JDBasicVM` class + REPL panel | done 2026-05-28 |
 | **E2** | Rotating-cube demo, `on_process(delta)` runs in jdBasic, Slow/Fast/Reverse buttons mutate `rot_speed` live | done 2026-05-28 |
-| **E3** | Variant marshalling (`Array`, `Dictionary`, `PackedFloat64Array`); kill the PRINT-and-parse round-trip in `cube.gd` | next |
-| **E4** | Embed API gets `stop` / `resume` / `recompile` + a worker thread, so the Stellar-Drift live-loop works against Godot scripts | |
+| **E4** | `jdb_embed_recompile` - live FUNC-body swap. Cube wobble/hue tweaked while running. | done 2026-05-28 |
+| **Tier 2** | `JDBScript : Node` auto-dispatches `_process(delta)` -> jdBasic `on_process`. cube.gd reduced to thin glue. | done 2026-05-28 |
+| **E3** | Variant marshalling (`Array`, `Dictionary`, `PackedFloat64Array`); kill the PRINT-and-parse round-trip in JDBScript.call | next |
 | **E5** | `HEADLESS` build flag on jdbrt - no SDL / no ImGui / no OpenGL, ~10 MB DLL | |
 | **E6** | APL procedural-content demo (PackedFloat64Array straight from `IOTA + sin`-style vector ops) | |
 | **E7** | Editor plugin: REPL panel that talks to all `JDBasicVM`s in the running scene | |
+| **Tier 3** | Full `ScriptLanguageExtension` - jdBasic peer to GDScript, attach .jdb to ANY Node as its `script` | 2-4 weeks, post-launch |
 
 ---
 
