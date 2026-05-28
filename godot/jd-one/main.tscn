@@ -3,25 +3,33 @@
 [ext_resource type="Script" path="res://main.gd" id="1_main"]
 
 [node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_right = 1280.0
-offset_bottom = 720.0
+grow_horizontal = 2
+grow_vertical = 2
 script = ExtResource("1_main")
 
 [node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 16.0
 offset_top = 16.0
 offset_right = -16.0
 offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 2
 
 [node name="Title" type="Label" parent="VBox"]
+layout_mode = 2
 text = "jdBasic in Godot - first look"
 theme_override_font_sizes/font_size = 24
 
 [node name="Output" type="RichTextLabel" parent="VBox"]
+layout_mode = 2
 size_flags_vertical = 3
 bbcode_enabled = true
 scroll_following = true
@@ -29,14 +37,18 @@ selection_enabled = true
 
 [node name="Input" type="CodeEdit" parent="VBox"]
 custom_minimum_size = Vector2(0, 120)
+layout_mode = 2
 text = "PRINT 3 * 7"
 
 [node name="HBox" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
 
 [node name="Run" type="Button" parent="VBox/HBox"]
-text = "Run (Ctrl+Enter)"
+layout_mode = 2
+text = "Run"
 
 [node name="Clear" type="Button" parent="VBox/HBox"]
+layout_mode = 2
 text = "Clear output"
 
 [connection signal="pressed" from="VBox/HBox/Run"   to="." method="_on_run_pressed"]
