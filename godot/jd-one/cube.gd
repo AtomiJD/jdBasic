@@ -43,7 +43,10 @@ func _load_script() -> void:
 
 func _process(delta: float) -> void:
 	vm.eval("on_process(%f)" % delta)
-	var a := vm.eval("PRINT angle").strip_edges().to_float()
+	# display_angle() = angle + wobble. The base angle is monotonic so the
+	# integrator can't stall; the wobble lives in the FUNC body so it can
+	# be tweaked live via Recompile.
+	var a := vm.eval("PRINT display_angle()").strip_edges().to_float()
 	cube.rotation.y = a
 	angle_label.text = "angle = %.2f rad" % a
 	# Hue cycle - the cube colour reads from the jdBasic FUNC hue() so
@@ -53,8 +56,8 @@ func _process(delta: float) -> void:
 	cube_material.albedo_color = Color.from_hsv(h, 0.7, 0.95)
 
 func _on_slow_pressed() -> void:
-	current_speed = 1.0
-	vm.eval("rot_speed = 1.0")
+	current_speed = 2.0
+	vm.eval("rot_speed = 2.0")
 	_refresh_speed_label()
 
 func _on_fast_pressed() -> void:
