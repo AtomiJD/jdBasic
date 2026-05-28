@@ -1,3 +1,6 @@
 [gd_scene format=3 uid="uid://cpyclbsi0vjal"]
 
-[node name="Node3D" type="Node3D" unique_id=1840761518]
+[ext_resource type="Script" uid="uid://cnblitgocrk2p" path="res://test.jdb" id="1_a202f"]
+
+[node name="Node3D" type="Node3D" unique_id=1104401229]
+script = ExtResource("1_a202f")

@@ -139,9 +139,12 @@ Variant JdbScriptInstance::call_method(const StringName& name,
                                        const Variant** args, int64_t argc) {
     if (!m_vm) return Variant();
     std::string n = String(name).utf8().get_data();
+
+    // SUB call form (no PRINT prefix). PRINTs inside the body land in
+    // the captured output buffer which we forward to Godot's console
+    // after the eval.
     std::string code;
     code.reserve(64 + argc * 16);
-    code += "PRINT ";
     code += n;
     code += "(";
     for (int64_t i = 0; i < argc; ++i) {
@@ -149,13 +152,23 @@ Variant JdbScriptInstance::call_method(const StringName& name,
         code += variant_to_jdb_arg_(*args[i]);
     }
     code += ")\n";
+
     char* out = jdb_embed_eval(m_vm, code.c_str());
-    if (!out) return Variant();
-    String s = String::utf8(out).strip_edges();
+    if (!out) {
+        const char* err = jdb_embed_last_error(m_vm);
+        if (err) UtilityFunctions::push_error(String("[jdBasic] ") + String(err));
+        return Variant();
+    }
+    String s = String::utf8(out);
     jdb_embed_free(out);
-    if (s.is_empty() || s == String("NONE")) return Variant();
-    if (s.is_valid_float()) return s.to_float();
-    return s;
+
+    // Forward any PRINT output to Godot's console so the user actually
+    // sees PRINT statements from inside the script.
+    String trimmed = s.strip_edges();
+    if (!trimmed.is_empty()) {
+        UtilityFunctions::print(trimmed);
+    }
+    return Variant();
 }
 
 // ── C bouncers for GDExtensionScriptInstanceInfo3 ────────────────────
