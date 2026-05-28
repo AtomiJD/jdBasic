@@ -6,6 +6,7 @@ INSPECTOR DIM speed = 1.0
 
 SUB _ready()
 	PRINT "hello from jdBasic attached directly to the Node!"
+	PRINT "speed = "; speed
 ENDSUB
 
 SUB _process(delta)

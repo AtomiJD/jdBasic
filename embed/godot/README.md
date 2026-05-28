@@ -41,8 +41,8 @@ matches the live-tweak pattern from the launch video.
 | **E4** | `jdb_embed_recompile` - live FUNC-body swap. Cube wobble/hue tweaked while running. | done 2026-05-28 |
 | **Tier 2** | `JDBScript : Node` auto-dispatches `_process(delta)` -> jdBasic `on_process`. cube.gd reduced to thin glue. | done 2026-05-28 |
 | **T3.0-T3.2** | `JdbScriptLanguage` + `JdbScriptResource` + `JdbScriptInstance`. .jdb attaches as a Node's `script`, engine `_ready` / `_process` route into jdBasic SUBs. | done 2026-05-28 |
-| **T3.3** | INSPECTOR DIM globals exposed as Inspector properties | next |
-| **T3.4** | Hot-reload (Script._reload -> jdb_embed_recompile_source) | |
+| **T3.3** | INSPECTOR DIM globals exposed as Inspector properties (full roundtrip: edit + save in .tscn + load into VM before `_ready`) | done 2026-05-28 |
+| **T3.4** | Hot-reload (Script._reload -> jdb_embed_recompile_source) | next |
 | **T3.5** | Reserved words, comment delimiters, editor highlighting (T3b) | |
 | **E3** | Variant marshalling (`Array`, `Dictionary`, `PackedFloat64Array`); kill the PRINT-and-parse round-trip | |
 | **E5** | `HEADLESS` build flag on jdbrt - no SDL / no ImGui / no OpenGL, ~10 MB DLL | |
