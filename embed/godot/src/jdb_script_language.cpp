@@ -60,6 +60,18 @@ void JdbScriptLanguage::_finish() {
     // T3.0: no-op.
 }
 
+// Returns UPPER, lower, and Title forms of a keyword so Godot's editor
+// (which matches reserved words case-sensitively) highlights them no
+// matter how the user types them. jdBasic itself is case-insensitive.
+static void push_case_variants(PackedStringArray& out, const char* kw) {
+    String upper(kw);
+    String lower = upper.to_lower();
+    String title = upper.substr(0, 1) + upper.substr(1, upper.length() - 1).to_lower();
+    out.push_back(upper);
+    if (lower != upper) out.push_back(lower);
+    if (title != upper && title != lower) out.push_back(title);
+}
+
 PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
     // Canonical jdBasic keyword set, mirrored from syntaxes/jdbasic.tmLanguage.json
     // so Godot's editor colours the same words as VS Code / the existing
@@ -99,7 +111,7 @@ PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
         "BAND","BOR","BXOR","BNOT","SHL","SHR",
     };
     PackedStringArray r;
-    for (const char* w : kw) r.push_back(String(w));
+    for (const char* w : kw) push_case_variants(r, w);
     return r;
 }
 
