@@ -102,7 +102,7 @@ REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc !EXTRA_INC! ^
-  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp !EXTRA_SRC! ^
+  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\jdb_embed_api.cpp !EXTRA_SRC! ^
   /Fe:build\jdbrt.dll ^
   /Fo:build\ ^
   /link ^
@@ -115,7 +115,8 @@ REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
 if %ERRORLEVEL%==0 (
     echo.
     echo BUILD OK: build\jdbrt.dll
-    echo   Exports: jdrt_init, jdrt_call_f64, jdrt_call_str, jdrt_call_void, jdrt_shutdown
+    echo   Exports: jdrt_*       native-EXE  -^> runtime bridge
+    echo            jdb_embed_*  host app    -^> embedded VM
 ) else (
     echo.
     echo BUILD FAILED
