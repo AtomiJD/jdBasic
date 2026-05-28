@@ -79,6 +79,12 @@ public:
                                         const String& p_path,
                                         Object* p_owner) const override;
 
+    // Ctrl-click "go to definition" lookup. Stub returns ERR_UNAVAILABLE.
+    Dictionary          _lookup_code(const String& p_code,
+                                      const String& p_symbol,
+                                      const String& p_path,
+                                      Object* p_owner) const override;
+
     // Per-frame profiler hook. Godot calls this every frame for every
     // registered language; required-virtual even if no profiling happens.
     void                _frame()                          override;

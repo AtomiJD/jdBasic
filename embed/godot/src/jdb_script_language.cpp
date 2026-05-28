@@ -164,6 +164,18 @@ Dictionary JdbScriptLanguage::_complete_code(const String& /*p_code*/,
     return d;
 }
 
+Dictionary JdbScriptLanguage::_lookup_code(const String& /*p_code*/,
+                                            const String& /*p_symbol*/,
+                                            const String& /*p_path*/,
+                                            Object* /*p_owner*/) const {
+    // T3 stub. T3.6 wires this into the jdBasic symbol table so Ctrl-click
+    // jumps to definitions. For now we report "unavailable" cleanly so
+    // Godot's editor doesn't spam the console.
+    Dictionary d;
+    d[String("result")] = Error::ERR_UNAVAILABLE;
+    return d;
+}
+
 Dictionary JdbScriptLanguage::_validate(const String& /*p_script*/,
                                        const String& /*p_path*/,
                                        bool /*p_validate_functions*/,
