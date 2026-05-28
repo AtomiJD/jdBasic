@@ -50,6 +50,46 @@ matches the live-tweak pattern from the launch video.
 
 ---
 
+## Resuming this branch in a future session
+
+If you (or **Atomi**) come back to `godot_spinoff` later, this is the
+shortest path to running:
+
+1. `git checkout godot_spinoff && git pull`
+2. `git submodule update --init embed/godot/godot-cpp`
+3. Rebuild jdbrt.dll: `build_rt.bat GFX IMGUI HTTP` from the repo root
+4. Rebuild the GDExtension: `embed\godot\build.bat template_debug`
+5. Open `godot\jd-one\` in Godot 4.6.x, F5 - `node_3d.tscn` shows
+   `[JdbScriptInstance] ctor (alive=1)` + the `_ready` PRINT output.
+
+Demo script: `godot/jd-one/test.jdb` is attached to the Node3D in
+`node_3d.tscn` as its actual `script` (peer to GDScript). It has:
+
+  - `EXTENDS Node3D` (parsed by Path-B preprocessing, not real jdBasic core)
+  - `INSPECTOR DIM speed = 1.0` (shows in the Inspector panel)
+  - `SUB _ready()` (engine callback - fires once when Node enters tree)
+  - `SUB _process(delta)` (engine callback - fires every frame)
+
+Hot-reload: edit `test.jdb` in any editor, Ctrl+S - new FUNC bodies
+swap into the running VM with state preserved.
+
+The next planned work (T3.6 autocomplete + T3.7 debugger + the E3 / E5 / E6
+items above) is multi-day each. None is blocking - what we have today is
+already a complete, demo-able "jdBasic in Godot" loop.
+
+Open architectural questions parked for later:
+
+- **Multiple Nodes sharing one VM** vs the current "one VM per instance"
+  pattern. Sharing would let two scripts on different Nodes see each
+  other's globals; isolation is what we have now.
+- **Threaded VM** for long-running FUNCs that would otherwise stall a
+  16ms Godot frame. Tier 2 / Tier 3 both inherit the synchronous-eval
+  constraint from the `jdb_embed_*` C-ABI.
+- **`res://` aware IMPORT** so jdBasic scripts can use IMPORT against
+  Godot's virtual filesystem. Today only OS-path IMPORT works.
+
+---
+
 ## Installation needed before E1
 
 Atomi installs:
