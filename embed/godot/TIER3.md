@@ -2,7 +2,26 @@
 
 **Branch:** `godot_spinoff`
 **Started:** 2026-05-28
-**Status:** design / pre-implementation
+**Status:** design locked 2026-05-28, pre-T3.0
+
+## Locked decisions
+
+| # | Decision           | Choice                                           |
+|---|---|---|
+| 1 | Callback naming    | `_process`, `_ready`, `_input` (Godot 1:1)       |
+| 2 | Base class         | new keyword `EXTENDS Node3D` at top of file      |
+| 3 | Inspector exports  | new keyword `INSPECTOR DIM speed = 1.0`          |
+| 4 | Editor scope (E1)  | T3b - includes syntax highlighting in Godot editor |
+| 5 | Hot reload         | recompile_source on soft reload, full re-eval on hard |
+| 6 | Naming             | C++ class `JdbScript`, label "jdBasic", ext `.jdb` |
+
+Decisions 2 and 3 introduce two new jdBasic-core keywords. See the
+"Implementation strategy for EXTENDS / INSPECTOR" section below.
+
+Decision 1 means Tier 2's `JDBScript` Node convention (`on_process`)
+becomes inconsistent. Plan: deprecate `on_*` naming in Tier 2,
+migrate `JDBScript` to also accept `_process` (or remove the auto-dispatch
+once Tier 3 ships).
 
 Goal: a Godot user clicks **Attach Script** on any Node, picks **jdBasic**
 from the language dropdown next to GDScript / C#, the `.jdb` file is
@@ -71,19 +90,20 @@ That's the bar. No syntax highlighting yet, no autocomplete, no debugger.
 
 | Phase    | Deliverable                                                      | Est.   |
 |---|---|---|
-| **T3.0** | Skeleton classes register, "jdBasic" shows in Attach Script menu | 1 day  |
-| **T3.1** | `.jdb` resource round-trip (open / edit / save / reload)         | 1 day  |
-| **T3.2** | Engine callback dispatch (`_ready`, `_process` -> jdBasic FUNCs) | 1-2 days |
-| **T3.3** | EXPORT DIM globals visible + editable in Inspector               | 1-2 days |
-| **T3.4** | Hot-reload via `_reload` -> `jdb_embed_recompile_source`         | 0.5 day |
-| **T3.5** | Reserved words, comment delimiters, basic editor template         | 0.5 day |
-| **T3.6** | (optional) Syntax highlighting via existing tmLanguage import    | 1 day  |
-| **T3.7** | (optional) Live debugger - breakpoints, stack inspection         | 1 week |
+| **T3.0** | jdBasic core: `EXTENDS` + `INSPECTOR` keywords (lexer + parser + introspection API) | 1 day |
+| **T3.1** | Skeleton classes register, "jdBasic" shows in Attach Script menu | 1 day  |
+| **T3.2** | `.jdb` resource round-trip (open / edit / save / reload)         | 1 day  |
+| **T3.3** | Engine callback dispatch (`_ready`, `_process` -> jdBasic FUNCs) | 1-2 days |
+| **T3.4** | `INSPECTOR DIM` globals visible + editable in Inspector          | 1-2 days |
+| **T3.5** | Hot-reload via `_reload` -> `jdb_embed_recompile_source`         | 0.5 day |
+| **T3.6** | Reserved words, comment delimiters, basic editor template (T3b) | 1 day  |
+| **T3.7** | (optional) Autocomplete + symbol lookup                          | 1 week |
+| **T3.8** | (optional) Live debugger - breakpoints, stack inspection         | 1 week |
 
-Realistic schedule for **T3.0 through T3.5** (a shippable demo with
-Inspector + hot-reload): **5-7 focused workdays**.
+Realistic schedule for **T3.0 through T3.6** (locked scope): **6-8
+focused workdays**.
 
-T3.6 and T3.7 are stretch goals. The original `plan_godot_embedding.md`
+T3.7 and T3.8 are stretch goals. The original `plan_godot_embedding.md`
 called this whole thing "2-3 weeks of work to make embedding production-grade".
 
 ---
@@ -201,6 +221,49 @@ that's unambiguous and aligned with how Atomi writes the language name elsewhere
   via `Engine::is_editor_hint()`. For Tier 3 the editor needs to
   introspect the script (method list, property list) without running it.
   Plan: parse-only mode that builds the symbol table but doesn't execute.
+
+---
+
+## Implementation strategy for EXTENDS / INSPECTOR
+
+Both are net-new jdBasic syntax. Two viable paths:
+
+### Path A - real jdBasic core keywords
+
+Add to `src/lexer.cpp` + `src/parser.cpp` proper. The interpreter and
+the native `-c` compiler both learn them; AST gets new node types. The
+embedder asks the VM for `vm.get_extends_target()` / `vm.list_inspector_vars()`.
+
+- Pro: clean, one source of truth, `jdbasic.exe foo.jdb` works on a
+  Tier-3-authored script even outside Godot
+- Pro: native-`-c` compiled jdBasic-script EXEs can also expose
+  Inspector metadata (future MCP/IDE tooling)
+- Con: ~4-8 hours of careful core work (lexer rule + parser rule +
+  AST + compiler/interp ignore-on-emit + introspection API)
+
+### Path B - pre-process in the GDExtension
+
+Our `JdbScriptLanguage::_set_source_code` parses EXTENDS / INSPECTOR
+itself, captures the metadata, then rewrites the source before handing
+to jdBasic:
+
+- `EXTENDS Node3D` -> `' EXTENDS Node3D` (commented out)
+- `INSPECTOR DIM x = 5.0` -> `DIM x = 5.0` (modifier stripped)
+
+The rewritten source goes to `jdb_embed_eval`. Metadata stays in C++
+side.
+
+- Pro: zero jdBasic-core changes, Tier 3 stays contained in `embed/godot/`
+- Pro: faster to ship (a couple hours of regex work)
+- Con: `jdbasic.exe foo.jdb` outside Godot errors on `EXTENDS Node3D` /
+  `INSPECTOR DIM x = 5.0` - the user has to either run via Godot or
+  manually strip those lines
+- Con: error messages reference the rewritten source, not what the user typed
+
+**Default recommendation: Path A** because Atomi already picked the
+"new keyword" option twice. Half-implementing them as GDExtension-only
+hacks would contradict that intent. Path A's 4-8h cost lands in the
+T3.0/T3.1 window anyway.
 
 ---
 
