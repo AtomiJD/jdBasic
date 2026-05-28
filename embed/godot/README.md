@@ -42,8 +42,8 @@ matches the live-tweak pattern from the launch video.
 | **Tier 2** | `JDBScript : Node` auto-dispatches `_process(delta)` -> jdBasic `on_process`. cube.gd reduced to thin glue. | done 2026-05-28 |
 | **T3.0-T3.2** | `JdbScriptLanguage` + `JdbScriptResource` + `JdbScriptInstance`. .jdb attaches as a Node's `script`, engine `_ready` / `_process` route into jdBasic SUBs. | done 2026-05-28 |
 | **T3.3** | INSPECTOR DIM globals exposed as Inspector properties (full roundtrip: edit + save in .tscn + load into VM before `_ready`) | done 2026-05-28 |
-| **T3.4** | Hot-reload (Script._reload -> jdb_embed_recompile_source) | next |
-| **T3.5** | Reserved words, comment delimiters, editor highlighting (T3b) | |
+| **T3.4** | Hot-reload - edit `.jdb` in any editor, Ctrl+S, new FUNC bodies swap into the running VM, state survives | done 2026-05-28 |
+| **T3.5** | Reserved words, comment delimiters, editor highlighting (T3b) | next |
 | **E3** | Variant marshalling (`Array`, `Dictionary`, `PackedFloat64Array`); kill the PRINT-and-parse round-trip | |
 | **E5** | `HEADLESS` build flag on jdbrt - no SDL / no ImGui / no OpenGL, ~10 MB DLL | |
 | **E6** | APL procedural-content demo (PackedFloat64Array straight from `IOTA + sin`-style vector ops) | |
