@@ -181,3 +181,18 @@ jdb/doom/
 # ── Published website mirror (jdbasic.dev source lives elsewhere) ──
 # Local checkout / wasm build artefacts of the public site go here.
 doc/jdBasic/
+
+# ── Godot — per-project caches + GDExtension build outputs ─────────
+# .godot/ is the import / shader cache Godot regenerates on first open.
+# /android/ holds per-platform export build dirs.
+godot/**/.godot/
+godot/**/android/
+# GDExtension build artefacts go into the addons/.../bin/ dir; the *.dll
+# rule at the top of this file catches them, but pin .lib/.exp here too.
+godot/**/addons/**/bin/*.lib
+godot/**/addons/**/bin/*.exp
+godot/**/addons/**/bin/*.pdb
+# SCons build cache from embed/godot/godot-cpp builds
+embed/godot/.sconsign.dblite
+embed/godot/godot-cpp/bin/
+embed/godot/godot-cpp/gen/

@@ -1,0 +1,46 @@
+#!/usr/bin/env python
+"""SConstruct for jdb_godot.dll - the GDExtension that wraps jdbrt.dll.
+
+Builds a Godot 4.x native extension that exposes a `JDBasicVM` class to
+GDScript. The class wraps the `jdb_embed_*` C-ABI exported from
+../../build/jdbrt.dll (see ../../src/jdb_embed_api.h).
+
+Output lands directly in the demo project's addons folder so the .gdextension
+manifest there can pick it up without any copy step:
+
+    ../../godot/jd-one/addons/jdb_godot/bin/jdb_godot{suffix}.dll
+
+Usage from this folder:
+    scons platform=windows target=template_debug
+    scons platform=windows target=template_release
+"""
+import os
+
+# Pull in godot-cpp's SConstruct - that's where the platform / target /
+# arch detection, MSVC env setup, and bindings library compile rules live.
+env = SConscript("godot-cpp/SConstruct")
+
+# Mark every TU compiled here as part of the Godot integration. Per Atomi's
+# directive: any code that should not be reachable from a non-Godot build
+# wraps its body in `#ifdef GODOT`. The SConstruct is the one place that
+# defines it; build_rt.bat (the generic jdbrt.dll build) never does.
+env.Append(CPPDEFINES=["GODOT"])
+
+# Headers: our wrapper sources live in src/; jdb_embed_api.h is up in the
+# main repo's src/ tree.
+env.Append(CPPPATH=["src/", "../../src/"])
+
+# Link against the import library produced alongside build/jdbrt.dll.
+env.Append(LIBPATH=["../../build"])
+env.Append(LIBS=["jdbrt"])
+
+sources = Glob("src/*.cpp")
+
+# Output: drop the DLL straight into the demo project's bin folder. The
+# .gdextension manifest there references this path.
+target_dir = "../../godot/jd-one/addons/jdb_godot/bin"
+target_name = "jdb_godot{}{}".format(env["suffix"], env["SHLIBSUFFIX"])
+target_path = os.path.join(target_dir, target_name)
+
+library = env.SharedLibrary(target=target_path, source=sources)
+Default(library)

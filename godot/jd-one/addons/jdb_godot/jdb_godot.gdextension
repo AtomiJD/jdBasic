@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "jdb_godot_library_init"
+compatibility_minimum = "4.3"
+
+[libraries]
+windows.debug.x86_64   = "res://addons/jdb_godot/bin/jdb_godot.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/jdb_godot/bin/jdb_godot.windows.template_release.x86_64.dll"
+
+[dependencies]
+windows.debug.x86_64   = { "res://addons/jdb_godot/bin/jdbrt.dll" : "" }
+windows.release.x86_64 = { "res://addons/jdb_godot/bin/jdbrt.dll" : "" }

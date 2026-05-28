@@ -1,0 +1,4 @@
+[submodule "embed/godot/godot-cpp"]
+	path = embed/godot/godot-cpp
+	url = https://github.com/godotengine/godot-cpp
+	branch = master

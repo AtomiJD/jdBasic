@@ -1,0 +1,43 @@
+[gd_scene load_steps=2 format=3 uid="uid://b5jdb1tg0m1n0"]
+
+[ext_resource type="Script" path="res://main.gd" id="1_main"]
+
+[node name="Main" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 1280.0
+offset_bottom = 720.0
+script = ExtResource("1_main")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = -16.0
+
+[node name="Title" type="Label" parent="VBox"]
+text = "jdBasic in Godot - first look"
+theme_override_font_sizes/font_size = 24
+
+[node name="Output" type="RichTextLabel" parent="VBox"]
+size_flags_vertical = 3
+bbcode_enabled = true
+scroll_following = true
+selection_enabled = true
+
+[node name="Input" type="CodeEdit" parent="VBox"]
+custom_minimum_size = Vector2(0, 120)
+text = "PRINT 3 * 7"
+
+[node name="HBox" type="HBoxContainer" parent="VBox"]
+
+[node name="Run" type="Button" parent="VBox/HBox"]
+text = "Run (Ctrl+Enter)"
+
+[node name="Clear" type="Button" parent="VBox/HBox"]
+text = "Clear output"
+
+[connection signal="pressed" from="VBox/HBox/Run"   to="." method="_on_run_pressed"]
+[connection signal="pressed" from="VBox/HBox/Clear" to="." method="_on_clear_pressed"]
