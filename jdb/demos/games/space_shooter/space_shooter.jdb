@@ -159,16 +159,27 @@ DIM start_held AS INTEGER = 0
 ' ──────────────────────────────────────────────────────────────────
 ' Single Map for all tweakable parameters — change via jdb_eval at
 ' runtime: e.g. `g_config{"waves_per_level"} = 3` for faster level-ups.
+' Every value here is hot-swappable while paused; no recompile needed.
 DIM g_config AS MAP = { _
-    "waves_per_level":   5, _
-    "max_level":        10, _
-    "shield_max":      300, _
-    "shield_drain":    1.0, _
-    "shield_recharge": 0.4, _
-    "shield_cooldown":  60, _
-    "level_score_bonus": 1000, _
+    "waves_per_level":     5, _
+    "max_level":          10, _
+    "shield_max":        300, _
+    "shield_drain":      1.0, _
+    "shield_recharge":   0.4, _
+    "shield_cooldown":    60, _
+    "level_score_bonus":1000, _
     "enemy_speed_mult": 1.05, _
-    "boss_every":        5 _
+    "boss_every":          5, _
+    "player_speed_x":    5.5, _
+    "player_speed_y":    4.5, _
+    "fire_cd_normal":      9, _
+    "fire_cd_rapid":       4, _
+    "bullet_speed":    -12.0, _
+    "invuln_hit_shield":  30, _
+    "invuln_hit_bare":    90, _
+    "invuln_respawn":    360, _
+    "gameover_lock_dur": 150, _
+    "powerup_drop_base":0.05  _
 }
 
 DIM g_level         AS INTEGER = 1
@@ -191,7 +202,9 @@ FUNC palette_cool()
         "level_banner": [255, 240,  80], _
         "level_sub":    [130, 220, 180], _
         "player":       [ 80, 255, 200], _
-        "shield":       [ 80, 255, 200], _
+        "shield":       [ 80, 200, 255], _
+        "accent":       [100, 220, 255], _
+        "bullet":       [255, 240,  80], _
         "bg":           [  8,   8,  18], _
         "title":        [255,  80, 255] _
     }
@@ -206,6 +219,8 @@ FUNC palette_warm()
         "level_sub":    [255, 180, 100], _
         "player":       [255, 140,  40], _
         "shield":       [255, 200,  60], _
+        "accent":       [255, 180,  80], _
+        "bullet":       [255, 220, 120], _
         "bg":           [ 24,  10,   8], _
         "title":        [255, 100,  60] _
     }
@@ -220,6 +235,8 @@ FUNC palette_neon()
         "level_sub":    [180, 255, 100], _
         "player":       [120, 255, 100], _
         "shield":       [255, 100, 220], _
+        "accent":       [180, 255, 140], _
+        "bullet":       [180, 255, 100], _
         "bg":           [  4,  16,   8], _
         "title":        [255, 100, 220] _
     }
@@ -234,6 +251,8 @@ FUNC palette_cyber()
         "level_sub":    [180, 120, 255], _
         "player":       [180, 120, 255], _
         "shield":       [100, 220, 255], _
+        "accent":       [160, 200, 255], _
+        "bullet":       [180, 120, 255], _
         "bg":           [ 14,   6,  22], _
         "title":        [220, 120, 255] _
     }
@@ -248,6 +267,8 @@ FUNC palette_gold()
         "level_sub":    [255, 200,  80], _
         "player":       [255, 200,  80], _
         "shield":       [255, 100,  60], _
+        "accent":       [255, 180, 120], _
+        "bullet":       [255, 240, 160], _
         "bg":           [ 22,   6,   6], _
         "title":        [255, 100,  60] _
     }
@@ -276,8 +297,67 @@ SUB use_color(name$)
     DRAWCOLOR c[0], c[1], c[2]
 ENDSUB
 
+' Generic: set DRAWCOLOR from any 3-element [r,g,b] array.
+' Use this for colours that live outside g_palette (enemy / powerup /
+' enemy-projectile / UI chrome maps below).
+SUB set_col(c)
+    DRAWCOLOR c[0], c[1], c[2]
+ENDSUB
+
 ' Initialize so first reset_game / level_up sees a non-empty palette.
 apply_palette(1)
+
+' ──────────────────────────────────────────────────────────────────
+' FIXED COLOUR MAPS (NOT theme-driven)
+' ──────────────────────────────────────────────────────────────────
+' These stay constant across all palettes because the player learns
+' the game by colour-coding: magenta diamond = scout, yellow R = rapid.
+' Switching them per level would erase that muscle memory. Still fully
+' tweakable individually via `jdb_eval g_enemy_col{"scout"} = [...]`.
+
+DIM g_enemy_col AS MAP = { _
+    "scout":       [255,  80, 180], _
+    "drone":       [255, 140,  60], _
+    "interceptor": [ 80, 220, 255], _
+    "ace":         [255, 230,  80], _
+    "ace_inner":   [255, 200,  60], _
+    "eye":         [255,  60,  60] _
+}
+
+DIM g_pu_col AS MAP = { _
+    "spread":      [255, 120, 220], _
+    "wide":        [100, 220, 255], _
+    "rapid":       [255, 240,  80], _
+    "shield":      [ 80, 255, 200], _
+    "pierce":      [200, 120, 255], _
+    "bomb":        [255,  80,  80], _
+    "life":        [120, 255, 120] _
+}
+
+DIM g_ep_col AS MAP = { _
+    "laser":       [255,  90,  90], _
+    "bomb":        [255, 180,  80], _
+    "mine_a":      [255,  60, 200], _
+    "mine_b":      [200,  60, 255] _
+}
+
+DIM g_ui_col AS MAP = { _
+    "bar_bg":           [ 50,  50,  60], _
+    "shield_bar_bg":    [ 40,  40,  60], _
+    "shield_warn":      [200,  80,  80], _
+    "shield_label":     [180, 200, 220], _
+    "boss_bar_bg":      [ 30,  30,  50], _
+    "bar_border":       [100, 120, 140], _
+    "hp_bar":           [220,  80,  80], _
+    "boss_text":        [255, 200,  80], _
+    "text_dim":         [130, 160, 200], _
+    "text_dim_warm":    [130, 180, 220], _
+    "text_dim_green":   [130, 200, 130], _
+    "prompt_blink":     [255, 240,  80], _
+    "claude_pause":     [ 80, 220, 255], _
+    "claude_resume":    [ 80, 255, 120], _
+    "gameover_title":   [255,  80, 180] _
+}
 
 ' ──────────────────────────────────────────────────────────────────
 ' MANUAL SHIELD STATE  (Phase 3)
@@ -593,17 +673,18 @@ ENDSUB
 SUB spawn_bullet()
     DIM ox AS DOUBLE = px
     DIM oy AS DOUBLE = py - 18.0
+    DIM bs AS DOUBLE = g_config{"bullet_speed"}      ' negative = upward
     ' Always fire the centre shot
-    fire_one(ox, oy, 0.0, -12.0)
-    ' Spread: ±15° diagonals
+    fire_one(ox, oy, 0.0, bs)
+    ' Spread: ±15° diagonals (~96% of base speed on Y)
     IF pw_spread > 0 THEN
-        fire_one(ox, oy, -3.1, -11.5)
-        fire_one(ox, oy,  3.1, -11.5)
+        fire_one(ox, oy, -3.1, bs * 0.958)
+        fire_one(ox, oy,  3.1, bs * 0.958)
     ENDIF
-    ' Wide: ~30° forward-diagonal pair (cos/sin of 30° at speed 12)
+    ' Wide: ~30° forward-diagonal pair (cos/sin of 30°)
     IF pw_wide > 0 THEN
-        fire_one(ox - 8.0, py - 4.0, -6.0, -10.4)
-        fire_one(ox + 8.0, py - 4.0,  6.0, -10.4)
+        fire_one(ox - 8.0, py - 4.0, -6.0, bs * 0.866)
+        fire_one(ox + 8.0, py - 4.0,  6.0, bs * 0.866)
     ENDIF
     sfx_laser()
 ENDSUB
@@ -757,13 +838,13 @@ SUB draw_boss()
     DIM bys AS INTEGER = 60
     DIM frac AS DOUBLE = g_boss_hp / (g_boss_max_hp + 0.001)
     IF frac < 0.0 THEN frac = 0.0
-    DRAWCOLOR 30, 30, 50
+    set_col g_ui_col{"boss_bar_bg"}
     RECT bxs, bys, bw, 8, TRUE
-    DRAWCOLOR 220, 80, 80
+    set_col g_ui_col{"hp_bar"}
     IF CINT(bw * frac) > 0 THEN RECT bxs, bys, CINT(bw * frac), 8, TRUE
-    DRAWCOLOR 100, 120, 140
+    set_col g_ui_col{"bar_border"}
     RECT bxs, bys, bw, 8, FALSE
-    DRAWCOLOR 255, 200, 80
+    set_col g_ui_col{"boss_text"}
     TEXT SCR_W / 2 - 30, bys - 18, "BOSS"
 ENDSUB
 
@@ -814,10 +895,14 @@ SUB spawn_wave_member()
 ENDSUB
 
 SUB maybe_drop_powerup(x, y, kind)
-    DIM chance AS DOUBLE = 0.05
-    IF kind = 1 THEN chance = 0.08
-    IF kind = 2 THEN chance = 0.18
-    IF kind = 3 THEN chance = 0.30
+    ' Base chance scales every tier with the same ratios as the originals
+    ' (scout 0.05 / drone 0.08 / interceptor 0.18 / ace 0.30); editing
+    ' g_config{"powerup_drop_base"} alone moves the whole curve.
+    DIM base AS DOUBLE = g_config{"powerup_drop_base"}
+    DIM chance AS DOUBLE = base
+    IF kind = 1 THEN chance = base * 1.6
+    IF kind = 2 THEN chance = base * 3.6
+    IF kind = 3 THEN chance = base * 6.0
     ' Phase 7: scale drop chance down at higher levels — early levels
     ' should feel rich with powerups, endgame should feel earned.
     DIM lvl_scale AS DOUBLE = 1.0 / (1.0 + (g_level - 1) * 0.15)
@@ -948,8 +1033,8 @@ SUB update_stars()
 ENDSUB
 
 SUB update_player()
-    px = px + input_x() * 5.5
-    py = py + input_y() * 4.5
+    px = px + input_x() * g_config{"player_speed_x"}
+    py = py + input_y() * g_config{"player_speed_y"}
     IF px < 16          THEN px = 16
     IF px > SCR_W - 16  THEN px = SCR_W - 16
     IF py < SCR_H / 2   THEN py = SCR_H / 2
@@ -973,9 +1058,9 @@ SUB update_player()
     IF input_fire() = 1 AND player_cd = 0 THEN
         spawn_bullet()
         IF pw_rapid > 0 THEN
-            player_cd = 4
+            player_cd = CINT(g_config{"fire_cd_rapid"})
         ELSE
-            player_cd = 9
+            player_cd = CINT(g_config{"fire_cd_normal"})
         ENDIF
     ENDIF
 ENDSUB
@@ -1023,7 +1108,7 @@ SUB apply_powerup(k)
         pw_rapid = 600
     ELSEIF k = 3 THEN
         pw_shield = 360
-        invuln = 360
+        invuln = CINT(g_config{"invuln_respawn"})
     ELSEIF k = 4 THEN
         pw_pierce = 600
     ELSEIF k = 5 THEN
@@ -1195,18 +1280,18 @@ SUB collisions()
                     sfx_boom()
                     ' Manual shield absorbs the hit instead of losing a life.
                     IF shield_active = 1 THEN
-                        invuln = 30
+                        invuln = CINT(g_config{"invuln_hit_shield"})
                         trigger_shake 4.0, 6
                     ELSE
                         lives = lives - 1
-                        invuln = 90
+                        invuln = CINT(g_config{"invuln_hit_bare"})
                         trigger_shake 8.0, 14
                         g_combo = 0
                         g_combo_t = 0
                         IF lives <= 0 THEN
                             IF score > hi_score THEN hi_score = score
                             mode$ = "gameover"
-                            gameover_lock = 150
+                            gameover_lock = CINT(g_config{"gameover_lock_dur"})
                         ENDIF
                     ENDIF
                 ENDIF
@@ -1226,18 +1311,18 @@ SUB collisions()
                     spawn_explosion(ep_x[k], ep_y[k])
                     sfx_boom()
                     IF shield_active = 1 THEN
-                        invuln = 30
+                        invuln = CINT(g_config{"invuln_hit_shield"})
                         trigger_shake 4.0, 6
                     ELSE
                         lives = lives - 1
-                        invuln = 90
+                        invuln = CINT(g_config{"invuln_hit_bare"})
                         trigger_shake 8.0, 14
                         g_combo = 0
                         g_combo_t = 0
                         IF lives <= 0 THEN
                             IF score > hi_score THEN hi_score = score
                             mode$ = "gameover"
-                            gameover_lock = 150
+                            gameover_lock = CINT(g_config{"gameover_lock_dur"})
                         ENDIF
                     ENDIF
                 ENDIF
@@ -1292,23 +1377,23 @@ ENDSUB
 SUB draw_shield_bar()
     DIM bw AS INTEGER = 200
     DIM bxs AS INTEGER = 16
-    DIM bys AS INTEGER = SCR_H - 28
+    DIM bys AS INTEGER = SCR_H - 44
     DIM mx AS DOUBLE = g_config{"shield_max"}
     DIM frac AS DOUBLE = shield_energy / mx
     IF frac < 0.0 THEN frac = 0.0
     IF frac > 1.0 THEN frac = 1.0
     DIM fill_w AS INTEGER = CINT(bw * frac)
-    DRAWCOLOR 40, 40, 60
+    set_col g_ui_col{"shield_bar_bg"}
     RECT bxs, bys, bw, 12, TRUE
     IF shield_cooldown_t > 0 THEN
-        DRAWCOLOR 200, 80, 80
+        set_col g_ui_col{"shield_warn"}
     ELSE
         use_color "shield"
     ENDIF
     IF fill_w > 0 THEN RECT bxs, bys, fill_w, 12, TRUE
-    DRAWCOLOR 100, 120, 140
+    set_col g_ui_col{"bar_border"}
     RECT bxs, bys, bw, 12, FALSE
-    DRAWCOLOR 180, 200, 220
+    set_col g_ui_col{"shield_label"}
     TEXT bxs + bw + 8, bys - 2, "SHIELD"
 ENDSUB
 
@@ -1339,7 +1424,7 @@ SUB draw_player()
     draw_manual_shield()
     ' Wide-cannon side pods when active
     IF pw_wide > 0 THEN
-        DRAWCOLOR 100, 220, 255
+        use_color "accent"
         LINE px - 18, py - 4, px - 18, py + 8
         LINE px + 18, py - 4, px + 18, py + 8
     ENDIF
@@ -1347,9 +1432,9 @@ SUB draw_player()
     IF pw_shield > 0 THEN
         DIM pulse AS DOUBLE = 22.0 + SIN(frame * 0.25) * 3.0
         IF (frame MOD 4) < 2 THEN
-            DRAWCOLOR 80, 200, 255
+            use_color "shield"
         ELSE
-            DRAWCOLOR 160, 240, 255
+            use_color "accent"
         ENDIF
         LINE px - pulse,        py,                px - pulse * 0.7,  py - pulse * 0.7
         LINE px - pulse * 0.7,  py - pulse * 0.7,  px,                py - pulse
@@ -1363,10 +1448,13 @@ SUB draw_player()
 ENDSUB
 
 SUB draw_bullets()
-    DRAWCOLOR 255, 240, 80
+    DIM rainbow = [[255, 0, 0], [255, 127, 0], [255, 255, 0], [0, 255, 0], [0, 0, 255], [139, 0, 255]]
     DIM i AS INTEGER
     FOR i = 0 TO N_BULLETS - 1
         IF b_alive[i] = 1 THEN
+            DIM color_idx AS INTEGER = (TICK() / 50 + i) MOD 6
+            DIM col = rainbow[color_idx]
+            DRAWCOLOR col[0], col[1], col[2]
             LINE bx[i],     by[i] - 7, bx[i],     by[i] + 7
             LINE bx[i] - 1, by[i] - 7, bx[i] - 1, by[i] + 7
         ENDIF
@@ -1401,42 +1489,42 @@ SUB draw_enemies()
             DIM k AS INTEGER = CINT(e_kind[i])
             IF k = 0 THEN
                 ' Scout — magenta diamond, slow rotation
-                DRAWCOLOR 255, 80, 180
+                set_col g_enemy_col{"scout"}
                 draw_poly(cx, cy, e_spin[i], _
                     [0, -10, 10, 0, 0, 10, -10, 0])
             ELSEIF k = 1 THEN
                 ' Drone — orange triangle, oriented toward the player
                 DIM ang AS DOUBLE = ATAN2(py - cy, px - cx) - 1.5708
-                DRAWCOLOR 255, 140, 60
+                set_col g_enemy_col{"drone"}
                 draw_poly(cx, cy, ang, _
                     [-14, -10, 14, -10, 0, 14])
                 ' KITT eye scanner — small red dot swinging left↔right
                 DIM eye AS DOUBLE = SIN(e_eye[i]) * 9.0
-                DRAWCOLOR 255, 60, 60
+                set_col g_enemy_col{"eye"}
                 PSET cx + eye, cy - 4
                 PSET cx + eye + 1, cy - 4
                 PSET cx + eye - 1, cy - 4
             ELSEIF k = 2 THEN
                 ' Interceptor — cyan hexagon, faster spin
-                DRAWCOLOR 80, 220, 255
+                set_col g_enemy_col{"interceptor"}
                 draw_poly(cx, cy, e_spin[i], _
                     [-8, -14, 8, -14, 16, 0, 8, 14, -8, 14, -16, 0])
                 ' Twin scanning eyes
                 DIM eye2 AS DOUBLE = SIN(e_eye[i]) * 7.0
-                DRAWCOLOR 255, 60, 60
+                set_col g_enemy_col{"eye"}
                 PSET cx - eye2, cy
                 PSET cx + eye2, cy
             ELSE
                 ' Ace — counter-rotating star (two triangles)
-                DRAWCOLOR 255, 230, 80
+                set_col g_enemy_col{"ace"}
                 draw_poly(cx, cy, e_spin[i], _
                     [0, -16, 14, 8, -14, 8])
-                DRAWCOLOR 255, 200, 60
+                set_col g_enemy_col{"ace_inner"}
                 draw_poly(cx, cy, -e_spin[i], _
                     [0, 16, 14, -8, -14, -8])
                 ' Triple-eye band, scanner-style
                 DIM eye3 AS DOUBLE = SIN(e_eye[i]) * 6.0
-                DRAWCOLOR 255, 60, 60
+                set_col g_enemy_col{"eye"}
                 PSET cx + eye3 - 4, cy
                 PSET cx + eye3,     cy
                 PSET cx + eye3 + 4, cy
@@ -1452,21 +1540,21 @@ SUB draw_powerups()
             DIM cx AS DOUBLE = pu_x[i]
             DIM cy AS DOUBLE = pu_y[i]
             DIM k AS INTEGER = CINT(pu_kind[i])
-            ' Tier colour per kind
+            ' Tier colour per kind (from g_pu_col — fixed UX semantics)
             IF k = 0 THEN
-                DRAWCOLOR 255, 120, 220        ' SPREAD pink
+                set_col g_pu_col{"spread"}
             ELSEIF k = 1 THEN
-                DRAWCOLOR 100, 220, 255        ' WIDE cyan
+                set_col g_pu_col{"wide"}
             ELSEIF k = 2 THEN
-                DRAWCOLOR 255, 240, 80         ' RAPID yellow
+                set_col g_pu_col{"rapid"}
             ELSEIF k = 3 THEN
-                DRAWCOLOR 80, 255, 200         ' SHIELD teal
+                set_col g_pu_col{"shield"}
             ELSEIF k = 4 THEN
-                DRAWCOLOR 200, 120, 255        ' PIERCE violet
+                set_col g_pu_col{"pierce"}
             ELSEIF k = 5 THEN
-                DRAWCOLOR 255, 80, 80          ' BOMB red
+                set_col g_pu_col{"bomb"}
             ELSE
-                DRAWCOLOR 120, 255, 120        ' LIFE bright green
+                set_col g_pu_col{"life"}
             ENDIF
             ' Pulsing hexagon outline
             DIM r AS DOUBLE = 11.0 + SIN(pu_phase[i]) * 1.5
@@ -1495,12 +1583,12 @@ SUB draw_eps()
             DIM y AS DOUBLE = ep_y[i]
             IF k = 0 THEN
                 ' Laser — short red bar
-                DRAWCOLOR 255, 90, 90
+                set_col g_ep_col{"laser"}
                 LINE x, y - 6, x, y + 6
                 LINE x + 1, y - 6, x + 1, y + 6
             ELSEIF k = 1 THEN
                 ' Bomb — pulsing diamond outline
-                DRAWCOLOR 255, 180, 80
+                set_col g_ep_col{"bomb"}
                 LINE x, y - 8, x + 8, y
                 LINE x + 8, y, x, y + 8
                 LINE x, y + 8, x - 8, y
@@ -1511,9 +1599,9 @@ SUB draw_eps()
             ELSE
                 ' Mine — stationary triangle-pair (skull-like) with blink
                 IF (frame MOD 14) < 7 THEN
-                    DRAWCOLOR 255, 60, 200
+                    set_col g_ep_col{"mine_a"}
                 ELSE
-                    DRAWCOLOR 200, 60, 255
+                    set_col g_ep_col{"mine_b"}
                 ENDIF
                 LINE x - 10, y - 6, x + 10, y - 6
                 LINE x + 10, y - 6, x,     y + 10
@@ -1532,15 +1620,16 @@ SUB draw_popups()
         IF pop_life[i] > 0 THEN
             DIM life AS INTEGER = pop_life[i]
             DIM pts AS INTEGER = pop_pts[i]
-            ' Tier-coloured: small=cool, big=hot
+            ' Tier-coloured popups echo enemy colours so the player
+            ' instantly reads which tier just died.
             IF pts >= 100 THEN
-                DRAWCOLOR 255, 230, 80
+                set_col g_enemy_col{"ace"}
             ELSEIF pts >= 50 THEN
-                DRAWCOLOR 80, 220, 255
+                set_col g_enemy_col{"interceptor"}
             ELSEIF pts >= 20 THEN
-                DRAWCOLOR 255, 140, 60
+                set_col g_enemy_col{"drone"}
             ELSE
-                DRAWCOLOR 255, 80, 180
+                set_col g_enemy_col{"scout"}
             ENDIF
             TEXT pop_x[i] - 14, pop_y[i], "+" + STR$(pts)
         ENDIF
@@ -1564,9 +1653,9 @@ SUB draw_fx()
     NEXT i
 ENDSUB
 
-SUB draw_hud_pu_chip(x, label$, t, r, g, b)
+SUB draw_hud_pu_chip(x, label$, t, col_key$)
     IF t <= 0 THEN RETURN
-    DRAWCOLOR r, g, b
+    set_col g_pu_col{col_key$}
     TEXT x, SCR_H - 28, label$
     ' Countdown bar underneath (60 frames per "tick")
     DIM w AS DOUBLE = (t * 1.0 / 600.0) * 36.0
@@ -1594,12 +1683,13 @@ SUB draw_hud()
         use_color "level_banner"
         TEXT 16, 52, "TIER " + STR$(t)
     ENDIF
-    ' Active powerup chips along the bottom edge
-    draw_hud_pu_chip(16,  "SPREAD", pw_spread, 255, 120, 220)
-    draw_hud_pu_chip(96,  "WIDE",   pw_wide,   100, 220, 255)
-    draw_hud_pu_chip(176, "RAPID",  pw_rapid,  255, 240,  80)
-    draw_hud_pu_chip(256, "SHIELD", pw_shield,  80, 255, 200)
-    draw_hud_pu_chip(336, "PIERCE", pw_pierce, 200, 120, 255)
+    ' Active powerup chips along the bottom edge — colours pulled from
+    ' g_pu_col so the chip matches the icon dropped on the field.
+    draw_hud_pu_chip(16,  "SPREAD", pw_spread, "spread")
+    draw_hud_pu_chip(96,  "WIDE",   pw_wide,   "wide")
+    draw_hud_pu_chip(176, "RAPID",  pw_rapid,  "rapid")
+    draw_hud_pu_chip(256, "SHIELD", pw_shield, "shield")
+    draw_hud_pu_chip(336, "PIERCE", pw_pierce, "pierce")
 ENDSUB
 
 ' Combo-streak indicator at top-right with a decay bar that drains
@@ -1613,7 +1703,7 @@ SUB draw_combo()
     DIM bw AS INTEGER = 80
     DIM bxs AS INTEGER = SCR_W - 150
     DIM bys AS INTEGER = 56
-    DRAWCOLOR 50, 50, 60
+    set_col g_ui_col{"bar_bg"}
     RECT bxs, bys, bw, 4, TRUE
     use_color "shield"
     DIM fw AS INTEGER = CINT(bw * bright)
@@ -1636,60 +1726,60 @@ SUB draw_level_announce()
 ENDSUB
 
 SUB draw_title()
-    DRAWCOLOR 255, 80, 255
+    use_color "title"
     TEXT SCR_W / 2 - 130, SCR_H / 2 - 100, "S T E L L A R   D R I F T"
-    DRAWCOLOR 180, 220, 255
+    use_color "hud"
     TEXT SCR_W / 2 - 150, SCR_H / 2 - 30, "Arrows / WASD or Joystick to fly"
     TEXT SCR_W / 2 - 150, SCR_H / 2,      "Space or Button 0 to fire"
     IF has_joy = 1 THEN
         TEXT SCR_W / 2 - 150, SCR_H / 2 + 30, "Joystick: " + JOY.NAME$(0)
     ELSE
-        TEXT SCR_W / 2 - 150, SCR_H / 2 + 30, "(no joystick — keyboard only)"
+        TEXT SCR_W / 2 - 150, SCR_H / 2 + 30, "(no joystick - keyboard only)"
     ENDIF
     IF (frame MOD 60) < 40 THEN
-        DRAWCOLOR 255, 240, 80
+        set_col g_ui_col{"prompt_blink"}
         TEXT SCR_W / 2 - 110, SCR_H - 150, "PRESS  FIRE  TO  START"
     ENDIF
-    DRAWCOLOR 130, 160, 200
+    set_col g_ui_col{"text_dim"}
     TEXT SCR_W / 2 - 90, SCR_H - 110, "ESC  to  exit"
     IF hi_score > 0 THEN
-        DRAWCOLOR 180, 220, 255
+        use_color "hud"
         TEXT SCR_W / 2 - 70, SCR_H - 70, "HI " + FORMAT$("{:0>6}", hi_score)
     ENDIF
 ENDSUB
 
 SUB draw_paused()
-    DRAWCOLOR 255, 240, 80
+    set_col g_ui_col{"prompt_blink"}
     TEXT SCR_W / 2 - 60, SCR_H / 2 - 16, "P A U S E D"
-    DRAWCOLOR 130, 160, 200
+    set_col g_ui_col{"text_dim"}
     TEXT SCR_W / 2 - 90, SCR_H / 2 + 10, "P to resume"
 ENDSUB
 
 SUB draw_claude_pause()
-    DRAWCOLOR 80, 220, 255
+    set_col g_ui_col{"claude_pause"}
     TEXT SCR_W / 2 - 130, SCR_H / 2 - 30, "C L A U D E   E D I T I N G"
-    DRAWCOLOR 130, 180, 220
-    TEXT SCR_W / 2 - 130, SCR_H / 2 + 10, "VM stopped — eval / resume via MCP"
+    set_col g_ui_col{"text_dim_warm"}
+    TEXT SCR_W / 2 - 130, SCR_H / 2 + 10, "VM stopped - eval / resume via MCP"
 ENDSUB
 
 SUB draw_claude_resume_wait()
-    DRAWCOLOR 80, 255, 120
+    set_col g_ui_col{"claude_resume"}
     TEXT SCR_W / 2 - 100, SCR_H / 2 - 30, "C L A U D E   D O N E"
-    DRAWCOLOR 130, 200, 130
+    set_col g_ui_col{"text_dim_green"}
     TEXT SCR_W / 2 - 100, SCR_H / 2 + 10, "FIRE to continue"
 ENDSUB
 
 SUB draw_gameover()
-    DRAWCOLOR 255, 80, 180
+    set_col g_ui_col{"gameover_title"}
     TEXT SCR_W / 2 - 90, SCR_H / 2 - 60, "G A M E   O V E R"
-    DRAWCOLOR 180, 220, 255
+    use_color "hud"
     TEXT SCR_W / 2 - 80, SCR_H / 2,      "SCORE " + FORMAT$("{:0>6}", score)
     TEXT SCR_W / 2 - 80, SCR_H / 2 + 24, "HI    " + FORMAT$("{:0>6}", hi_score)
     IF gameover_lock > 0 THEN
-        DRAWCOLOR 130, 160, 200
+        set_col g_ui_col{"text_dim"}
         TEXT SCR_W / 2 - 40, SCR_H / 2 + 80, "..."
     ELSEIF (frame MOD 60) < 40 THEN
-        DRAWCOLOR 255, 240, 80
+        set_col g_ui_col{"prompt_blink"}
         TEXT SCR_W / 2 - 120, SCR_H / 2 + 80, "FIRE  TO  PLAY  AGAIN"
     ENDIF
 ENDSUB
