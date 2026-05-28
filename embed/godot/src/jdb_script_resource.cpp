@@ -324,9 +324,8 @@ TypedArray<Dictionary> JdbScriptResource::_get_documentation() const {
 }
 
 void* JdbScriptResource::_instance_create(Object* p_for_object) const {
-    // Const cast: Godot's API hands us a const ScriptExtension*; building
-    // a Ref<> needs a non-const pointer. The instance only borrows the
-    // script reference, never mutates the script object itself.
+    UtilityFunctions::print(String("[JdbScriptResource] _instance_create for object=")
+        + String::num_int64((int64_t)p_for_object));
     Ref<JdbScriptResource> script(const_cast<JdbScriptResource*>(this));
     JdbScriptInstance* inst = new JdbScriptInstance(script, p_for_object);
     GDExtensionScriptInstancePtr h =
