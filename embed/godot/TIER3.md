@@ -90,17 +90,16 @@ That's the bar. No syntax highlighting yet, no autocomplete, no debugger.
 
 | Phase    | Deliverable                                                      | Est.   |
 |---|---|---|
-| **T3.0** | jdBasic core: `EXTENDS` + `INSPECTOR` keywords (lexer + parser + introspection API) | 1 day |
-| **T3.1** | Skeleton classes register, "jdBasic" shows in Attach Script menu | 1 day  |
-| **T3.2** | `.jdb` resource round-trip (open / edit / save / reload)         | 1 day  |
-| **T3.3** | Engine callback dispatch (`_ready`, `_process` -> jdBasic FUNCs) | 1-2 days |
-| **T3.4** | `INSPECTOR DIM` globals visible + editable in Inspector          | 1-2 days |
-| **T3.5** | Hot-reload via `_reload` -> `jdb_embed_recompile_source`         | 0.5 day |
-| **T3.6** | Reserved words, comment delimiters, basic editor template (T3b) | 1 day  |
-| **T3.7** | (optional) Autocomplete + symbol lookup                          | 1 week |
-| **T3.8** | (optional) Live debugger - breakpoints, stack inspection         | 1 week |
+| **T3.0** | JdbScriptLanguage + JdbScript skeleton classes register, "jdBasic" shows in Attach-Script menu | 0.5 day |
+| **T3.1** | `.jdb` resource round-trip + Path-B preprocessing (parse EXTENDS / INSPECTOR, rewrite source) | 1 day |
+| **T3.2** | Engine callback dispatch via GDExtensionScriptInstanceInfo3 (`_ready`, `_process`) | 1-2 days |
+| **T3.3** | `INSPECTOR DIM` globals visible + editable in Inspector          | 1-2 days |
+| **T3.4** | Hot-reload via `_reload` -> `jdb_embed_recompile_source`         | 0.5 day |
+| **T3.5** | Reserved words, comment delimiters, basic editor template (T3b) | 1 day  |
+| **T3.6** | (optional) Autocomplete + symbol lookup                          | 1 week |
+| **T3.7** | (optional) Live debugger - breakpoints, stack inspection         | 1 week |
 
-Realistic schedule for **T3.0 through T3.6** (locked scope): **6-8
+Realistic schedule for **T3.0 through T3.5** (locked scope): **5-7
 focused workdays**.
 
 T3.7 and T3.8 are stretch goals. The original `plan_godot_embedding.md`
@@ -260,10 +259,12 @@ side.
   manually strip those lines
 - Con: error messages reference the rewritten source, not what the user typed
 
-**Default recommendation: Path A** because Atomi already picked the
-"new keyword" option twice. Half-implementing them as GDExtension-only
-hacks would contradict that intent. Path A's 4-8h cost lands in the
-T3.0/T3.1 window anyway.
+**Locked 2026-05-28: Path B** - Atomi picked the GDExtension-preprocessing
+route. Trade-off accepted: `jdbasic.exe foo.jdb` won't run a Tier-3-authored
+script outside Godot (would error on `EXTENDS Node3D` line). Sentinel-tagged
+metadata stays in the GDExtension's C++ layer; jdBasic core never sees
+those tokens. If we later want core-keyword support, Path A is additive
+to the existing surface, not a rewrite.
 
 ---
 

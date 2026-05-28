@@ -1,0 +1,55 @@
+// JdbScriptResource - a .jdb file as a Godot Resource.
+//
+// T3.0 surface: source-code round-trip + base-type stub. Per-Node
+// instance creation and engine-callback dispatch arrive in T3.2 via the
+// GDExtensionScriptInstanceInfo3 bridge.
+//
+// Naming note: this class is named `JdbScriptResource` to avoid the
+// collision with Tier 2's `JDBScript` Node class. The user-facing
+// language label in Godot stays "jdBasic" (see JdbScriptLanguage::_get_name).
+
+#pragma once
+
+#ifdef GODOT
+
+#include <godot_cpp/classes/script_extension.hpp>
+#include <godot_cpp/variant/string.hpp>
+#include <godot_cpp/variant/string_name.hpp>
+
+namespace godot {
+
+class ScriptLanguage;
+
+class JdbScriptResource : public ScriptExtension {
+    GDCLASS(JdbScriptResource, ScriptExtension)
+
+protected:
+    static void _bind_methods();
+
+public:
+    JdbScriptResource();
+    ~JdbScriptResource();
+
+    // Source code persistence (Godot's editor saves via this).
+    bool       _has_source_code()                       const override;
+    String     _get_source_code()                       const override;
+    void       _set_source_code(const String& p_code)         override;
+
+    // Identity / capability stubs - just enough for T3.0 to register
+    // cleanly. T3.1 hooks _validate and the introspection methods.
+    bool       _can_instantiate()                       const override;
+    bool       _is_valid()                              const override;
+    bool       _is_tool()                               const override;
+    StringName _get_instance_base_type()                const override;
+    bool       _has_method(const StringName& method)    const override;
+    bool       _has_property_default_value(const StringName& p_property) const override;
+    Error      _reload(bool p_keep_state)                     override;
+    ScriptLanguage* _get_language()                     const override;
+
+private:
+    String m_source;
+};
+
+}  // namespace godot
+
+#endif  // GODOT

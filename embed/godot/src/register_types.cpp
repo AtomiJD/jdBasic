@@ -7,21 +7,44 @@
 #include "register_types.h"
 #include "jdbasic_vm.h"
 #include "jdb_script.h"
+#include "jdb_script_language.h"
+#include "jdb_script_resource.h"
 
 #include <gdextension_interface.h>
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
 using namespace godot;
 
+// Held alive between init / finish so the language pointer registered
+// with the engine stays valid for the lifetime of the GDExtension.
+static JdbScriptLanguage* s_language_instance = nullptr;
+
 void initialize_jdb_godot_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
+
+    // Tier 1 + Tier 2 (kept stable across the spinoff branch).
     ClassDB::register_class<JDBasicVM>();
     ClassDB::register_class<JDBScript>();
+
+    // Tier 3 - ScriptLanguageExtension + ScriptExtension subclasses, plus
+    // singleton registration so Godot's editor enumerates jdBasic as a
+    // language alongside GDScript / C#.
+    ClassDB::register_class<JdbScriptResource>();
+    ClassDB::register_class<JdbScriptLanguage>();
+
+    s_language_instance = memnew(JdbScriptLanguage);
+    Engine::get_singleton()->register_script_language(s_language_instance);
 }
 
 void uninitialize_jdb_godot_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
+    if (s_language_instance) {
+        Engine::get_singleton()->unregister_script_language(s_language_instance);
+        memdelete(s_language_instance);
+        s_language_instance = nullptr;
+    }
 }
 
 extern "C" {
