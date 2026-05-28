@@ -7,6 +7,7 @@
 #include "jdb_script_language.h"
 #include "jdb_embed_api.h"
 
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -110,8 +111,21 @@ int JdbScriptInstance::alive_count() { return g_alive_instances; }
 JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_owner)
     : m_script(p_script), m_owner(p_owner) {
     ++g_alive_instances;
+    bool in_editor = Engine::get_singleton() && Engine::get_singleton()->is_editor_hint();
     UtilityFunctions::print(String("[JdbScriptInstance] ctor (alive=")
-        + String::num_int64(g_alive_instances) + String(")"));
+        + String::num_int64(g_alive_instances)
+        + String(in_editor ? ", editor-mode)" : ")"));
+
+    if (in_editor) {
+        // Don't spin up a VM for editor-side instances. Godot creates these
+        // for Inspector previews, type discovery, etc.; running script code
+        // there would tick _process inside the editor process and never
+        // stop. Game-mode instances get a real VM via the same ctor path
+        // because is_editor_hint is false in play.
+        if (m_script.is_valid()) m_script->register_instance(this);
+        return;
+    }
+
     m_vm = jdb_embed_init();
     if (!m_vm) {
         UtilityFunctions::push_error(String("[JdbScriptInstance] jdb_embed_init returned NULL"));
