@@ -61,15 +61,42 @@ void JdbScriptLanguage::_finish() {
 }
 
 PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
-    // Keep the list short for T3.0; the syntax-highlighting tier (T3.5)
-    // will fill in the full token set from doc/languages.md.
+    // Canonical jdBasic keyword set, mirrored from syntaxes/jdbasic.tmLanguage.json
+    // so Godot's editor colours the same words as VS Code / the existing
+    // tooling. Tier-3-specific additions: EXTENDS, INSPECTOR.
     static const char* kw[] = {
-        "DIM", "EXPORT", "INSPECTOR", "EXTENDS", "FUNC", "SUB", "ENDFUNC",
-        "ENDSUB", "RETURN", "IF", "THEN", "ELSE", "ENDIF", "FOR", "TO", "STEP",
-        "NEXT", "WHILE", "WEND", "DO", "LOOP", "UNTIL", "IMPORT", "MODULE",
-        "AND", "OR", "NOT", "TRUE", "FALSE", "NULL", "AS", "INTEGER",
-        "DOUBLE", "STRING", "ARRAY", "MAP", "PRINT", "INPUT", "OPTION",
-        "ON", "OFF", "ANDALSO", "ORELSE",
+        // Control flow (also reported via _is_control_flow_keyword for
+        // the secondary highlight colour).
+        "IF","THEN","ELSE","ELSEIF","ENDIF",
+        "FOR","TO","STEP","NEXT","EACH","IN",
+        "DO","LOOP","WHILE","WEND","UNTIL",
+        "SWITCH","CASE","DEFAULT","ENDSWITCH","EXITSWITCH",
+        "SUB","ENDSUB","FUNC","ENDFUNC",
+        "RETURN","GOTO","CALL",
+        "EXIT","EXITFUNC","EXITDO","EXITFOR","EXITSUB",
+        "CONTINUEFOR","CONTINUEDO","CONTINUELOOP",
+        "TRY","CATCH","FINALLY","ENDTRY","THROW",
+        "AWAIT","ASYNC",
+        // Declarations / structure
+        "CONST","DIM","STATIC","AS","LET",
+        "TYPE","ENDTYPE","ENUM","ENDENUM","THIS","REACT",
+        "IMPORT","EXPORT","MODULE","DECLARE","OPTION",
+        "STOP","RESUME","CHAN","END",
+        // Tier-3 additions
+        "EXTENDS","INSPECTOR",
+        // Built-in types
+        "INTEGER","DOUBLE","STRING","MAP","ARRAY","DYNAMIC","TENSOR",
+        "JSON","DATE","BOOLEAN","BOOL","BYTE","CHAR",
+        "INT16","INT32","INT64","FLOAT16","FLOAT32","FLOAT64","OBJECT",
+        // Common commands / built-ins
+        "PRINT","INPUT","CLS","COLOR","LOCATE","CURSOR","SLEEP","REM",
+        "LIST","RUN","NEW","COMPILE","EXECUTE","EVAL","LAMBDA",
+        // Constants
+        "TRUE","FALSE","PI","E","VBNEWLINE","VBCRLF","VBTAB",
+        "NONE","NULL","INF","NAN",
+        // Operators / boolean (highlighted as keywords)
+        "AND","OR","NOT","XOR","MOD","ANDALSO","ORELSE",
+        "BAND","BOR","BXOR","BNOT","SHL","SHR",
     };
     PackedStringArray r;
     for (const char* w : kw) r.push_back(String(w));
@@ -78,7 +105,8 @@ PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
 
 PackedStringArray JdbScriptLanguage::_get_comment_delimiters() const {
     PackedStringArray r;
-    r.push_back(String("'"));  // jdBasic line comment
+    r.push_back(String("'"));    // apostrophe -> end of line
+    r.push_back(String("REM"));  // REM keyword -> end of line
     return r;
 }
 
@@ -195,11 +223,15 @@ bool JdbScriptLanguage::_overrides_external_editor() {
 
 bool JdbScriptLanguage::_is_control_flow_keyword(const String& p_keyword) const {
     static const char* kw[] = {
-        "IF", "THEN", "ELSE", "ENDIF",
-        "FOR", "TO", "STEP", "NEXT",
-        "WHILE", "WEND", "DO", "LOOP", "UNTIL",
-        "RETURN", "EXITSUB", "EXITFUNC",
-        "ANDALSO", "ORELSE",
+        "IF","THEN","ELSE","ELSEIF","ENDIF",
+        "FOR","TO","STEP","NEXT","EACH","IN",
+        "DO","LOOP","WHILE","WEND","UNTIL",
+        "SWITCH","CASE","DEFAULT","ENDSWITCH","EXITSWITCH",
+        "RETURN","GOTO","CALL",
+        "EXIT","EXITFUNC","EXITDO","EXITFOR","EXITSUB",
+        "CONTINUEFOR","CONTINUEDO","CONTINUELOOP",
+        "TRY","CATCH","FINALLY","ENDTRY","THROW",
+        "AWAIT","ASYNC",
     };
     String upper = p_keyword.to_upper();
     for (const char* k : kw) {
