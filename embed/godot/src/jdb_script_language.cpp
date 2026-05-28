@@ -96,6 +96,10 @@ bool JdbScriptLanguage::_supports_builtin_mode() const {
     return false;  // .jdb is always a separate file, not inline-in-tscn.
 }
 
+bool JdbScriptLanguage::_supports_documentation() const {
+    return false;  // No doc extraction yet.
+}
+
 bool JdbScriptLanguage::_can_inherit_from_file() const {
     return false;  // No script inheritance yet.
 }

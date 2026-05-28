@@ -104,8 +104,14 @@ void JdbScriptInstance::scan_methods_(const String& source) {
 
 // ── Lifecycle ──────────────────────────────────────────────────────
 
+static int g_alive_instances = 0;
+int JdbScriptInstance::alive_count() { return g_alive_instances; }
+
 JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_owner)
     : m_script(p_script), m_owner(p_owner) {
+    ++g_alive_instances;
+    UtilityFunctions::print(String("[JdbScriptInstance] ctor (alive=")
+        + String::num_int64(g_alive_instances) + String(")"));
     m_vm = jdb_embed_init();
     if (!m_vm) {
         UtilityFunctions::push_error(String("[JdbScriptInstance] jdb_embed_init returned NULL"));
@@ -152,6 +158,9 @@ JdbScriptInstance::~JdbScriptInstance() {
         jdb_embed_shutdown(m_vm);
         m_vm = nullptr;
     }
+    --g_alive_instances;
+    UtilityFunctions::print(String("[JdbScriptInstance] dtor (alive=")
+        + String::num_int64(g_alive_instances) + String(")"));
 }
 
 bool JdbScriptInstance::hot_recompile(const String& processed_src) {

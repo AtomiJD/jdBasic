@@ -76,6 +76,9 @@ public:
     // The shared info table that backs every JdbScriptInstance.
     static const GDExtensionScriptInstanceInfo3 s_info;
 
+    // Diagnostic - how many instances are alive right now.
+    static int alive_count();
+
 private:
     Ref<JdbScriptResource>             m_script;
     Object*                            m_owner = nullptr;

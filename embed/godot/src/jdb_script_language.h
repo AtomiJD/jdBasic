@@ -51,6 +51,7 @@ public:
 
     bool                _has_named_classes()         const override;
     bool                _supports_builtin_mode()     const override;
+    bool                _supports_documentation()    const override;
     bool                _can_inherit_from_file()     const override;
 
     // Hand back a fresh JdbScript resource. Godot calls this when the
