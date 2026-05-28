@@ -39,6 +39,23 @@ void run_source(VM& vm, const std::string& source) {
     vm.run_code(c.main_chunk(), c.functions());
 }
 
+// Recompile pattern: lex / parse / compile, then merge_funcs into the
+// running VM. The main chunk (top-level DIM statements etc.) is dropped
+// on purpose - the running script is mid-flight, retro-actively re-running
+// its boot code would clobber state. This is exactly the path the MCP
+// jdb_recompile tool uses, mirrored here for embedders.
+std::string recompile_source(VM& vm, const std::string& source) {
+    Lexer lexer(source);
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parse();
+    Compiler c;
+    c.compile(ast);
+    auto& fns = c.functions();
+    auto [added, updated] = vm.merge_funcs(fns);
+    return "added=" + std::to_string(added) + " updated=" + std::to_string(updated);
+}
+
 void setup(JdbEmbedImpl* e) {
     e->vm.on_output = [e](const std::string& s) {
         e->output_buf += s;
@@ -123,6 +140,47 @@ JDB_EMBED_API char* jdb_embed_load(JdbEmbed* eh, const char* path) {
         return nullptr;
     } catch (...) {
         e->last_error = "unknown exception in jdb_embed_load";
+        return nullptr;
+    }
+}
+
+JDB_EMBED_API char* jdb_embed_recompile_source(JdbEmbed* eh, const char* source) {
+    if (!eh || !source) return nullptr;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->output_buf.clear();
+    e->last_error.clear();
+    try {
+        std::string summary = recompile_source(e->vm, source);
+        return dup_cstr(summary);
+    } catch (const std::exception& ex) {
+        e->last_error = ex.what();
+        return nullptr;
+    } catch (...) {
+        e->last_error = "unknown exception in jdb_embed_recompile_source";
+        return nullptr;
+    }
+}
+
+JDB_EMBED_API char* jdb_embed_recompile(JdbEmbed* eh, const char* path) {
+    if (!eh || !path) return nullptr;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->output_buf.clear();
+    e->last_error.clear();
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        e->last_error = std::string("Cannot read ") + path;
+        return nullptr;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    try {
+        std::string summary = recompile_source(e->vm, ss.str());
+        return dup_cstr(summary);
+    } catch (const std::exception& ex) {
+        e->last_error = ex.what();
+        return nullptr;
+    } catch (...) {
+        e->last_error = "unknown exception in jdb_embed_recompile";
         return nullptr;
     }
 }

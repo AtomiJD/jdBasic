@@ -38,6 +38,18 @@ JDB_EMBED_API void       jdb_embed_shutdown(JdbEmbed* e);
 JDB_EMBED_API char*      jdb_embed_eval(JdbEmbed* e, const char* code);
 JDB_EMBED_API char*      jdb_embed_load(JdbEmbed* e, const char* path);
 
+// Re-parse `source` (or `path` contents) and merge any FUNC/SUB bodies
+// into the running VM. Top-level statements in the new source are
+// discarded - so DIM angle = 0.0 keeps its current value, but a same-named
+// SUB body gets swapped in. Returns a malloc'd "added=N updated=M" summary,
+// or NULL on parse/compile failure (last_error has the message).
+//
+// This is the live-coding primitive: the embedder edits a .jdb file, calls
+// recompile, and the next FUNC invocation runs the new body against the
+// existing state.
+JDB_EMBED_API char*      jdb_embed_recompile(JdbEmbed* e, const char* path);
+JDB_EMBED_API char*      jdb_embed_recompile_source(JdbEmbed* e, const char* source);
+
 JDB_EMBED_API const char* jdb_embed_last_error(JdbEmbed* e);
 JDB_EMBED_API void        jdb_embed_free(char* s);
 

@@ -42,6 +42,14 @@ public:
     // Read + execute a .jdb file. Same return convention as eval().
     String load(const String& path);
 
+    // Live-coding primitive: re-parse source / file, merge any FUNC/SUB
+    // bodies into the running VM. Top-level DIMs / statements are dropped
+    // (the running script is mid-flight; re-running its boot would clobber
+    // state). Returns a summary like "added=0 updated=1" on success or an
+    // empty String on failure (check last_error()).
+    String recompile_source(const String& source);
+    String recompile(const String& path);
+
     // Last embed-side error message (empty string if none).
     String last_error() const;
 

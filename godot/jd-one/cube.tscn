@@ -50,10 +50,10 @@ material_override = SubResource("Mat_1")
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -260.0
+offset_left = -300.0
 offset_top = 16.0
 offset_right = -16.0
-offset_bottom = 220.0
+offset_bottom = 320.0
 grow_horizontal = 0
 
 [node name="VBox" type="VBoxContainer" parent="UI/Panel"]
@@ -72,6 +72,11 @@ text = "rot_speed = 1.0"
 layout_mode = 2
 text = "angle = 0.00 rad"
 
+[node name="StatusLabel" type="Label" parent="UI/Panel/VBox"]
+layout_mode = 2
+text = "ready"
+theme_override_font_sizes/font_size = 11
+
 [node name="HBox" type="HBoxContainer" parent="UI/Panel/VBox"]
 layout_mode = 2
 
@@ -87,12 +92,17 @@ text = "Fast"
 layout_mode = 2
 text = "Reverse"
 
+[node name="Recompile" type="Button" parent="UI/Panel/VBox"]
+layout_mode = 2
+text = "Recompile cube.jdb (Live edit)"
+
 [node name="Hint" type="Label" parent="UI/Panel/VBox"]
 layout_mode = 2
-text = "(integration loop runs in jdBasic - the buttons mutate rot_speed live in the VM)"
+text = "Edit cube.jdb in any editor, click Recompile - the new FUNC body swaps into the running VM. angle / rot_speed keep their current values."
 autowrap_mode = 3
 theme_override_font_sizes/font_size = 11
 
 [connection signal="pressed" from="UI/Panel/VBox/HBox/Slow"    to="." method="_on_slow_pressed"]
 [connection signal="pressed" from="UI/Panel/VBox/HBox/Fast"    to="." method="_on_fast_pressed"]
 [connection signal="pressed" from="UI/Panel/VBox/HBox/Reverse" to="." method="_on_reverse_pressed"]
+[connection signal="pressed" from="UI/Panel/VBox/Recompile"    to="." method="_on_recompile_pressed"]

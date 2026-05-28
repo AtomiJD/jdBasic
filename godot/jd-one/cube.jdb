@@ -1,0 +1,27 @@
+' Stellar-Drift-style live-coding canvas for the Godot cube demo.
+'
+' Workflow:
+'   1. Run the Godot project. The cube spins. Atomi clicks buttons.
+'   2. Atomi edits this file in his editor (or asks Claude to).
+'   3. Atomi clicks the RECOMPILE button in Godot.
+'   4. The new SUB on_process body swaps into the running VM.
+'      `angle` and `rot_speed` keep their current values - only the
+'      function bodies change.
+'
+' Try this for a vibe: add an `easing` term, change the colour-cycle
+' speed, make the rotation wobble. The VM survives every edit.
+
+DIM angle = 0.0
+DIM rot_speed = 1.0
+DIM wobble = 0.0
+
+' Frame integrator. Called once per Godot frame with the delta time.
+SUB on_process(delta)
+	angle = angle + rot_speed * delta
+ENDSUB
+
+' Hue cycler. Godot reads this to colour the cube in HSV.
+' Returns a value in 0.0..1.0.
+FUNC hue()
+	RETURN (angle * 0.1) MOD 1.0
+ENDFUNC
