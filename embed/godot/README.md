@@ -40,11 +40,13 @@ matches the live-tweak pattern from the launch video.
 | **E2** | Rotating-cube demo, `on_process(delta)` runs in jdBasic, Slow/Fast/Reverse buttons mutate `rot_speed` live | done 2026-05-28 |
 | **E4** | `jdb_embed_recompile` - live FUNC-body swap. Cube wobble/hue tweaked while running. | done 2026-05-28 |
 | **Tier 2** | `JDBScript : Node` auto-dispatches `_process(delta)` -> jdBasic `on_process`. cube.gd reduced to thin glue. | done 2026-05-28 |
-| **E3** | Variant marshalling (`Array`, `Dictionary`, `PackedFloat64Array`); kill the PRINT-and-parse round-trip in JDBScript.call | next |
+| **T3.0-T3.2** | `JdbScriptLanguage` + `JdbScriptResource` + `JdbScriptInstance`. .jdb attaches as a Node's `script`, engine `_ready` / `_process` route into jdBasic SUBs. | done 2026-05-28 |
+| **T3.3** | INSPECTOR DIM globals exposed as Inspector properties | next |
+| **T3.4** | Hot-reload (Script._reload -> jdb_embed_recompile_source) | |
+| **T3.5** | Reserved words, comment delimiters, editor highlighting (T3b) | |
+| **E3** | Variant marshalling (`Array`, `Dictionary`, `PackedFloat64Array`); kill the PRINT-and-parse round-trip | |
 | **E5** | `HEADLESS` build flag on jdbrt - no SDL / no ImGui / no OpenGL, ~10 MB DLL | |
 | **E6** | APL procedural-content demo (PackedFloat64Array straight from `IOTA + sin`-style vector ops) | |
-| **E7** | Editor plugin: REPL panel that talks to all `JDBasicVM`s in the running scene | |
-| **Tier 3** | Full `ScriptLanguageExtension` - jdBasic peer to GDScript, attach .jdb to ANY Node as its `script` | 2-4 weeks, post-launch |
 
 ---
 
