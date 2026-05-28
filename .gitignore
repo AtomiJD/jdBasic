@@ -7,9 +7,19 @@ _*
 
 # ── Personal scratch / current tests (not for git) ────────────────
 fluppi/tiled/
+fluppi/generated_sprites/
 vo/
 VBA 6.0/
 vba/
+# Scratch sprite sheets + game-art piles (pacman/ghost/parallax PNGs etc.)
+art/
+jdb/art/
+jdb/parallax_game/art/
+# One-off scratch files at the jdb/ root
+jdb/a
+jdb/prime.jdb
+# Personal reset-snapshot of the Stellar Drift live-coding template
+jdb/demos/games/space_shooter/space_shooter_templare_for_reset_code_only.jdb
 
 # ── Build outputs ─────────────────────────────────────────────────
 build/
@@ -137,6 +147,7 @@ vo.db
 # Each developer's setup is different; re-run winpos_probe.jdb to regen.
 jdb/winpos.json
 tmp/winpos.json
+jdb/demos/games/*/winpos.json
 # Default font auto-copied next to native -c outputs (originals live in
 # fonts/ and build/ — the per-script copies are just runtime artifacts).
 jdbasic_default.ttf
@@ -166,3 +177,7 @@ jdb/jdbrt.dll
 
 # ── DOOM port (local-only, original WADs not redistributable) ─────
 jdb/doom/
+
+# ── Published website mirror (jdbasic.dev source lives elsewhere) ──
+# Local checkout / wasm build artefacts of the public site go here.
+doc/jdBasic/
