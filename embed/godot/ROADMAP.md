@@ -107,6 +107,76 @@ following round out the editor side:
 - **Inline diagnostics** - jdBasic parse errors surface as red squiggles
   in the Godot script editor
 
+### Tier 8 - shippable compiled scripts (1-2 weeks)
+
+The hybrid library/script model. `jdbasic --compile foo.jdb -o foo.jdb.dll`
+already produces an LLVM-native .dll with a C-ABI from the existing
+`-c` pipeline; T8 wires that into the GDExtension so the same `.jdb`
+either runs interpreted (dev / hot-reload) or routes through a native
+sidecar .dll (ship). Scripts keep all their Tier-3 behaviour - Inspector
+properties, signals, engine callbacks - the only thing that changes is
+where the FUNC / SUB bodies live.
+
+Components:
+
+- **Build pipeline.** `embed/godot/compile_scripts.bat` (and the SCons /
+  shell equivalents for cross-platform) walks `*.jdb` next to the .tscn
+  files, calls `jdbasic --compile` for each, drops the resulting
+  `foo.jdb.dll` next to the source. CI build = compile + zip. Dev =
+  no DLL, interpreter handles everything.
+
+- **Sidecar lookup.** `JdbScriptInstance::ctor` checks for
+  `m_script->get_path() + ".dll"`. If present, `LoadLibrary` it,
+  resolve each user FUNC / SUB via `GetProcAddress` with a known name
+  mangling (e.g. `jdb_userfn_<name>`), populate a dispatch table.
+  `call_method` becomes "if name in native dispatch table → call C
+  function with marshalled args, else fall back to interpreter eval".
+  Engine callbacks (`_ready` / `_process`) flow through the same path
+  so they get the native speedup automatically.
+
+- **Metadata sidecar.** INSPECTOR DIM defaults / hints, EXTENDS base
+  type, SIGNAL declarations all live in source. Two options:
+  1. Generate `foo.jdb.meta.json` at compile time and load it
+     alongside the .dll. Compiler grows a `--emit-metadata` flag.
+  2. Embed metadata as a resource section inside the .dll
+     (`.rsrc` on Windows, `.note` on ELF, `__DATA,__jdbmeta` on
+     Mach-O). Cleaner distribution, more platform-specific code.
+
+  Recommendation: start with (1) - one read at script load, zero
+  platform-specific code.
+
+- **Lost: hot-reload.** Compiled scripts can't merge_funcs the way
+  interpreted ones do. `_reload_tool_script` for a compiled script
+  prints "compiled script - changes require recompile + Godot restart"
+  and skips the fan-out. Dev workflow stays: keep the .jdb source +
+  delete the .dll while iterating.
+
+- **Lost: live-tweak via eval.** `vm.eval("rot_speed = 10")` from the
+  Tier 4 Stellar-Drift live-coding loop only works against interpreted
+  scripts. Compiled scripts get a stub that pushes
+  "live-tweak unavailable in compiled mode".
+
+- **Win: distribution.** Shipped `.dll` contains compiled jdBasic
+  bytecode - source is not in the package. Performance is native
+  (the existing `-c` benches show 4-10x speedup vs. interpreter for
+  hot loops). The jdbrt.dll runtime is still needed at load time for
+  the metadata + lifecycle bridges, but it's tiny (HEADLESS is 1.8MB).
+
+Pre-T8 dependencies that are already shipped:
+- `jdbasic --compile` works (Tier 3 RPG demo proved it).
+- HEADLESS jdbrt is the shippable runtime.
+- C-ABI for embedders (jdb_embed_*) is the contract everything plugs
+  into.
+
+Open question for the T8 spike: do we want a **single** "is compiled
+mode" flag at the script level (whole script is native, or whole
+script is interpreted), or a **per-FUNC** dispatch (some FUNCs in the
+native dispatch table, the rest fall through to the interpreter)?
+The per-FUNC version enables a "compile hot paths, leave cold ones
+editable" workflow that nothing else offers. Worth the extra
+complexity if Atomi sees Stellar-Drift-style live-coding as the
+differentiated story.
+
 ### Tier 7 - debugger (multi-week)
 
 The `_debug_*` virtuals on `ScriptLanguageExtension` cover breakpoints,
