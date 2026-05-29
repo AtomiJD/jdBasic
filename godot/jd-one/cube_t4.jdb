@@ -17,6 +17,10 @@ DIM time_acc = 0.0
 DIM self_h   = 0
 DIM cube_h   = 0
 
+SUB Flupp()
+	GODOT.PRINT("Flupp")
+ENDSUB
+
 SUB _ready()
 	self_h = GODOT.SELF()
 	' The cube is the first MeshInstance3D child - look it up once via
@@ -53,4 +57,6 @@ ENDSUB
 SUB _lall(w)
 	GODOT.PRINT("Chrissi")
 	GODOT.PRINT("Signal at", GODOT.TIME_MS(), "ms with speed", w)
+	FLUPP()
+	
 ENDSUB

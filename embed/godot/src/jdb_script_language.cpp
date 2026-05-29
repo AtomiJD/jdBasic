@@ -10,6 +10,7 @@
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 
 using namespace godot;
@@ -341,29 +342,199 @@ void JdbScriptLanguage::_reload_tool_script(const Ref<Script>& p_script,
     }
 }
 
-Dictionary JdbScriptLanguage::_complete_code(const String& /*p_code*/,
+Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
                                               const String& /*p_path*/,
                                               Object* /*p_owner*/) const {
-    // T3.0 stub. Real autocomplete is the T3.6 stretch goal.
     Dictionary d;
-    d[String("result")]  = Error::OK;
-    d[String("force")]   = false;
+    Array options;
+
+    static const String K_KIND        = String("kind");
+    static const String K_DISPLAY     = String("display");
+    static const String K_INSERT_TEXT = String("insert_text");
+    static const String K_LOCATION    = String("location");
+    static const String K_FONT_COLOR  = String("font_color");
+    static const String K_ICON        = String("icon");
+    static const String K_MATCHES     = String("matches");
+    static const String K_DEFAULT_VAL = String("default_value");
+
+    // CodeCompletionKind enum values from Godot's TextEdit / CodeEdit:
+    //   0=CLASS, 1=FUNCTION, 2=SIGNAL, 3=VARIABLE, 4=MEMBER, 5=ENUM,
+    //   6=CONSTANT, 7=NODE_PATH, 8=FILE_PATH, 9=PLAIN_TEXT
+    //
+    // Godot's wrapper skips any option missing the font_color / icon /
+    // matches keys (logs "Condition ... is true. Continuing." for each).
+    // We give every option the same default white tint and an empty
+    // icon so the editor falls back to its built-in CodeCompletionKind
+    // glyphs; matches stays empty since we don't pre-fuzz the list -
+    // Godot's CodeEdit does substring filtering itself.
+    auto push_opt = [&](int kind, const String& display,
+                        const String& insert, int location) {
+        Dictionary opt;
+        opt[K_KIND]        = kind;
+        opt[K_DISPLAY]     = display;
+        opt[K_INSERT_TEXT] = insert;
+        opt[K_LOCATION]    = location;
+        opt[K_FONT_COLOR]  = Color(1, 1, 1, 1);
+        opt[K_ICON]        = Variant();
+        opt[K_DEFAULT_VAL] = Variant();   // required - or ERR_CONTINUE drops the option
+        // 'matches' is optional and uses PackedInt32Array; we let Godot
+        // compute matches itself by leaving it absent.
+        options.append(opt);
+    };
+
+    // Figure out what's right before the cursor so dotted-name
+    // completions don't duplicate the qualifier. Godot replaces only the
+    // partial-word at the cursor with insert_text, leaving anything before
+    // the last word-boundary alone - typing "GODOT." and picking "GODOT.SET"
+    // would otherwise produce "GODOT.GODOT.SET". Detect a "<qualifier>."
+    // prefix; if it's a known namespace, send only the suffix as insert_text
+    // while keeping the full name in display so the user sees what they're
+    // picking.
+    int cursor = p_code.length();
+    int word_end = cursor;
+    int word_start = word_end;
+    while (word_start > 0) {
+        char32_t c = p_code[word_start - 1];
+        bool is_ident = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                     || (c >= '0' && c <= '9') || c == '_' || c == '$';
+        if (!is_ident) break;
+        --word_start;
+    }
+    String qualifier;
+    if (word_start > 0 && p_code[word_start - 1] == '.') {
+        int q_end = word_start - 1;
+        int q_start = q_end;
+        while (q_start > 0) {
+            char32_t c = p_code[q_start - 1];
+            bool is_ident = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                         || (c >= '0' && c <= '9') || c == '_';
+            if (!is_ident) break;
+            --q_start;
+        }
+        qualifier = p_code.substr(q_start, q_end - q_start).to_upper();
+    }
+    bool godot_dot_ctx = (qualifier == String("GODOT"));
+
+    // ── GODOT.* native suite (functions) ─────────────────────────
+    static const char* godot_natives[] = {
+        "GODOT.SELF", "GODOT.GET", "GODOT.SET", "GODOT.CALL", "GODOT.EMIT",
+        "GODOT.LOAD", "GODOT.INSTANTIATE", "GODOT.NEW",
+        "GODOT.ADD_CHILD", "GODOT.QUEUE_FREE",
+        "GODOT.TIME_MS", "GODOT.TIME_SEC",
+        "GODOT.VEC2", "GODOT.VEC3", "GODOT.COLOR", "GODOT.PRINT",
+    };
+    for (const char* n : godot_natives) {
+        String full = String(n);
+        // After "GODOT." the user already has the prefix; only insert the
+        // suffix so the dot doesn't get duplicated.
+        String insert = godot_dot_ctx ? full.substr(6, full.length() - 6) : full;
+        push_opt(1, full, insert, 0);
+    }
+
+    // ── jdBasic top-level + structural keywords ──────────────────
+    static const char* keywords[] = {
+        "EXTENDS", "INSPECTOR", "SIGNAL",
+        "DIM", "CONST", "STATIC", "AS", "EXPORT", "IMPORT", "MODULE",
+        "SUB", "ENDSUB", "FUNC", "ENDFUNC", "RETURN",
+        "IF", "THEN", "ELSE", "ELSEIF", "ENDIF",
+        "FOR", "TO", "STEP", "NEXT", "EACH", "IN",
+        "DO", "LOOP", "WHILE", "UNTIL",
+        "SWITCH", "CASE", "DEFAULT", "ENDSWITCH",
+        "TRY", "CATCH", "FINALLY", "ENDTRY", "THROW",
+        "TRUE", "FALSE", "NONE", "NULL", "PI", "E",
+        "AND", "OR", "NOT", "ANDALSO", "ORELSE", "MOD",
+        "PRINT", "INPUT", "SLEEP",
+    };
+    for (const char* k : keywords) push_opt(9, String(k), String(k), 0);
+
+    // ── User-defined FUNC / SUB / DIM scan ───────────────────────
+    PackedStringArray lines = p_code.split(String("\n"), true);
+    for (int i = 0; i < lines.size(); ++i) {
+        String line = lines[i].strip_edges();
+        String low  = line.to_lower();
+
+        int name_start = -1;
+        int kind = 9;
+        if (low.begins_with(String("sub ")))           { name_start = 4;  kind = 1; }
+        else if (low.begins_with(String("func ")))      { name_start = 5;  kind = 1; }
+        else if (low.begins_with(String("dim ")))       { name_start = 4;  kind = 3; }
+        else if (low.begins_with(String("inspector dim "))) { name_start = 14; kind = 3; }
+        else if (low.begins_with(String("const ")))     { name_start = 6;  kind = 6; }
+        else if (low.begins_with(String("signal ")))    { name_start = 7;  kind = 2; }
+        else continue;
+
+        while (name_start < line.length()
+               && (line[name_start] == ' ' || line[name_start] == '\t')) ++name_start;
+        int name_end = name_start;
+        while (name_end < line.length()) {
+            char32_t c = line[name_end];
+            bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                   || (c >= '0' && c <= '9') || c == '_' || c == '$';
+            if (!ok) break;
+            ++name_end;
+        }
+        if (name_end > name_start) {
+            String name = line.substr(name_start, name_end - name_start);
+            push_opt(kind, name, name, i + 1);
+        }
+    }
+
+    d[String("result")]    = Error::OK;
+    d[String("force")]     = false;
     d[String("call_hint")] = String();
-    d[String("options")] = Array();
+    d[String("options")]   = options;
     return d;
 }
 
-Dictionary JdbScriptLanguage::_lookup_code(const String& /*p_code*/,
-                                            const String& /*p_symbol*/,
-                                            const String& /*p_path*/,
+Dictionary JdbScriptLanguage::_lookup_code(const String& p_code,
+                                            const String& p_symbol,
+                                            const String& p_path,
                                             Object* /*p_owner*/) const {
-    // T3 stub. T3.6 wires this into the jdBasic symbol table so Ctrl-click
-    // jumps to definitions. Godot also expects a "type" key in the result
-    // dict otherwise it pushes "Condition !ret.has('type') is true" errors.
+    // Scan source for SUB / FUNC / DIM / INSPECTOR DIM / CONST / SIGNAL
+    // declarations matching p_symbol. Case-insensitive (jdBasic-style).
     Dictionary d;
-    d[String("result")]   = Error::ERR_UNAVAILABLE;
-    d[String("type")]     = 0;     // LOOKUP_RESULT_SCRIPT_LOCATION sentinel
-    d[String("location")] = -1;
+    d[String("type")]         = 0;  // LOOKUP_RESULT_SCRIPT_LOCATION
+    d[String("location")]     = -1;
+    d[String("script")]       = Variant();
+    d[String("class_name")]   = String();
+    d[String("class_path")]   = p_path;
+    d[String("class_member")] = p_symbol;
+    d[String("description")]  = String();
+
+    String needle = p_symbol.to_lower();
+    PackedStringArray lines = p_code.split(String("\n"), true);
+    for (int i = 0; i < lines.size(); ++i) {
+        String line = lines[i].strip_edges();
+        String low  = line.to_lower();
+
+        int name_start = -1;
+        if      (low.begins_with(String("sub ")))            name_start = 4;
+        else if (low.begins_with(String("func ")))           name_start = 5;
+        else if (low.begins_with(String("dim ")))            name_start = 4;
+        else if (low.begins_with(String("inspector dim ")))  name_start = 14;
+        else if (low.begins_with(String("const ")))          name_start = 6;
+        else if (low.begins_with(String("signal ")))         name_start = 7;
+        else continue;
+
+        while (name_start < low.length()
+               && (low[name_start] == ' ' || low[name_start] == '\t')) ++name_start;
+        int name_end = name_start;
+        while (name_end < low.length()) {
+            char32_t c = low[name_end];
+            bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                   || c == '_' || c == '$';
+            if (!ok) break;
+            ++name_end;
+        }
+        if (name_end > name_start
+            && low.substr(name_start, name_end - name_start) == needle) {
+            d[String("result")]   = Error::OK;
+            d[String("location")] = i + 1;
+            return d;
+        }
+    }
+
+    d[String("result")] = Error::ERR_UNAVAILABLE;
     return d;
 }
 
