@@ -50,6 +50,13 @@ public:
     String recompile_source(const String& source);
     String recompile(const String& path);
 
+    // E3 typed access. eval_expr evaluates a jdBasic expression and returns
+    // the result as a typed Godot Variant (numeric arrays become
+    // PackedFloat64Array; maps become Dictionary; etc.). get_var fetches
+    // a top-level global by name.
+    Variant eval_expr(const String& expr);
+    Variant get_var (const String& name);
+
     // Last embed-side error message (empty string if none).
     String last_error() const;
 

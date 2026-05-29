@@ -4,6 +4,8 @@
 
 #include "jdbasic_vm.h"
 #include "jdb_embed_api.h"
+#include "jdb_script_instance.h"
+#include "jdb_script_resource.h"
 
 #include <godot_cpp/core/class_db.hpp>
 
@@ -14,6 +16,8 @@ void JDBasicVM::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load", "path"),                      &JDBasicVM::load);
     ClassDB::bind_method(D_METHOD("recompile_source", "source"),        &JDBasicVM::recompile_source);
     ClassDB::bind_method(D_METHOD("recompile", "path"),                 &JDBasicVM::recompile);
+    ClassDB::bind_method(D_METHOD("eval_expr", "expr"),                 &JDBasicVM::eval_expr);
+    ClassDB::bind_method(D_METHOD("get_var",   "name"),                 &JDBasicVM::get_var);
     ClassDB::bind_method(D_METHOD("last_error"),                        &JDBasicVM::last_error);
 }
 
@@ -59,6 +63,24 @@ String JDBasicVM::recompile(const String& path) {
     if (!out) return String();
     String result = String::utf8(out);
     jdb_embed_free(out);
+    return result;
+}
+
+Variant JDBasicVM::eval_expr(const String& expr) {
+    if (!m_vm) return Variant();
+    int64_t h = jdb_embed_eval_expr(m_vm, expr.utf8().get_data());
+    if (!h) return Variant();
+    Variant result = JdbScriptInstance::value_to_variant(m_vm, h);
+    jdb_embed_value_release(m_vm, h);
+    return result;
+}
+
+Variant JDBasicVM::get_var(const String& name) {
+    if (!m_vm) return Variant();
+    int64_t h = jdb_embed_get_global(m_vm, name.utf8().get_data());
+    if (!h) return Variant();
+    Variant result = JdbScriptInstance::value_to_variant(m_vm, h);
+    jdb_embed_value_release(m_vm, h);
     return result;
 }
 

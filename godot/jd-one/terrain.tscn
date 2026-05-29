@@ -1,0 +1,104 @@
+[gd_scene load_steps=8 format=3 uid="uid://b9je6vivjg3je"]
+
+[ext_resource type="Script" path="res://terrain.gd" id="1_terrain"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_1"]
+albedo_color = Color(0.55, 0.6, 0.45, 1)
+roughness = 0.7
+metallic = 0.05
+
+[sub_resource type="ProceduralSkyMaterial" id="Sky_1"]
+sky_top_color = Color(0.06, 0.10, 0.20, 1)
+sky_horizon_color = Color(0.50, 0.42, 0.55, 1)
+ground_horizon_color = Color(0.18, 0.12, 0.18, 1)
+ground_bottom_color = Color(0.04, 0.04, 0.06, 1)
+
+[sub_resource type="Sky" id="Sky_2"]
+sky_material = SubResource("Sky_1")
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 2
+sky = SubResource("Sky_2")
+ambient_light_source = 3
+ambient_light_color = Color(0.45, 0.55, 0.65, 1)
+ambient_light_energy = 0.5
+
+[node name="Terrain" type="Node3D"]
+script = ExtResource("1_terrain")
+
+[node name="WorldEnv" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_1")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.78, 0.63, 0, -0.63, 0.78, 0, 28, 36)
+current = true
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.7, 0.4, -0.5, 0, 0.7, 0.7, 0.7, -0.5, 0.5, 0, 30, 10)
+light_energy = 1.1
+shadow_enabled = true
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+material_override = SubResource("Mat_1")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="PanelContainer" parent="UI"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -320.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = 260.0
+grow_horizontal = 0
+
+[node name="VBox" type="VBoxContainer" parent="UI/Panel"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="UI/Panel/VBox"]
+layout_mode = 2
+text = "jdBasic procedural terrain"
+theme_override_font_sizes/font_size = 18
+
+[node name="GridLabel" type="Label" parent="UI/Panel/VBox"]
+layout_mode = 2
+text = "grid 48 x 48"
+
+[node name="InfoLabel" type="Label" parent="UI/Panel/VBox"]
+layout_mode = 2
+text = "computing..."
+theme_override_font_sizes/font_size = 12
+
+[node name="HBoxSize" type="HBoxContainer" parent="UI/Panel/VBox"]
+layout_mode = 2
+
+[node name="Smaller" type="Button" parent="UI/Panel/VBox/HBoxSize"]
+layout_mode = 2
+text = "Smaller grid"
+
+[node name="Bigger" type="Button" parent="UI/Panel/VBox/HBoxSize"]
+layout_mode = 2
+text = "Bigger grid"
+
+[node name="HBoxFreq" type="HBoxContainer" parent="UI/Panel/VBox"]
+layout_mode = 2
+
+[node name="Rougher" type="Button" parent="UI/Panel/VBox/HBoxFreq"]
+layout_mode = 2
+text = "Rougher"
+
+[node name="Smoother" type="Button" parent="UI/Panel/VBox/HBoxFreq"]
+layout_mode = 2
+text = "Smoother"
+
+[node name="Hint" type="Label" parent="UI/Panel/VBox"]
+layout_mode = 2
+text = "heightmap = SIN(cx) * COS(cy) * amp + harmonics  (vectorised in jdBasic)"
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 11
+
+[connection signal="pressed" from="UI/Panel/VBox/HBoxSize/Smaller" to="." method="_on_smaller_pressed"]
+[connection signal="pressed" from="UI/Panel/VBox/HBoxSize/Bigger"  to="." method="_on_bigger_pressed"]
+[connection signal="pressed" from="UI/Panel/VBox/HBoxFreq/Rougher" to="." method="_on_rougher_pressed"]
+[connection signal="pressed" from="UI/Panel/VBox/HBoxFreq/Smoother" to="." method="_on_smoother_pressed"]
