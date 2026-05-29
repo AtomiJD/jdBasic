@@ -84,6 +84,7 @@ public:
     String                 get_processed_source() const { return m_source_processed; }
     StringName             get_extends_type()     const { return m_extends_type;     }
     const TypedArray<Dictionary>& get_inspector_vars() const { return m_inspector_vars; }
+    const TypedArray<Dictionary>& get_signals()        const { return m_signals;       }
 
     // Live-instance registry (used by _reload to fan a hot-reload out
     // across every Node currently running this script).
@@ -98,6 +99,7 @@ private:
     String                 m_source_processed;  // what jdBasic eats
     StringName             m_extends_type;      // from EXTENDS Foo line
     TypedArray<Dictionary> m_inspector_vars;    // [{name, default, type}]
+    TypedArray<Dictionary> m_signals;           // [{name, args:[{name,type}]}]
 
     // Live JdbScriptInstance pointers attached to this Resource. Used
     // for hot-reload fan-out. Not thread-safe for now; instance lifecycle

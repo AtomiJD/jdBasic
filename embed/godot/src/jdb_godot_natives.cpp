@@ -339,6 +339,31 @@ static int64_t native_color(JdbEmbed* vm, int argc, const int64_t* args, void* /
     return arr;
 }
 
+// GODOT.EMIT(handle, "signal_name", arg1, arg2, ...) -> emit a signal
+// on the target Object. The first arg is the bridge handle (typically
+// GODOT.SELF for emitting from self). Returns 1 on success.
+static int64_t native_emit(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    int64_t handle = jdb_embed_value_int(vm, args[0]);
+    Object* obj = bridge->lookup(handle);
+    if (!obj) return jdb_embed_make_bool(vm, 0);
+    const char* signal_name = jdb_embed_value_string(vm, args[1]);
+    int extra = argc - 2;
+    Array emit_args;
+    for (int i = 0; i < extra; ++i) {
+        emit_args.append(jdb_value_to_variant(bridge, args[2 + i]));
+    }
+    // emit_signalp on Object expects a Variant** array. Easier: use callv
+    // on the engine-side `emit_signal` method, passing signal name first.
+    Array call_args;
+    call_args.append(StringName(signal_name ? signal_name : ""));
+    for (int i = 0; i < emit_args.size(); ++i) call_args.append(emit_args[i]);
+    obj->callv(StringName("emit_signal"), call_args);
+    return jdb_embed_make_bool(vm, 1);
+}
+
 // GODOT.PRINT(value) -> print into Godot's output panel
 static int64_t native_print(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     GodotBridge* bridge = bridge_of(ud);
@@ -360,6 +385,7 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.VEC2",   2, 2,  &native_vec2,  this);
     jdb_embed_register_native(m_vm, "GODOT.VEC3",   3, 3,  &native_vec3,  this);
     jdb_embed_register_native(m_vm, "GODOT.COLOR",  3, 4,  &native_color, this);
+    jdb_embed_register_native(m_vm, "GODOT.EMIT",   2, -1, &native_emit,  this);
     jdb_embed_register_native(m_vm, "GODOT.PRINT",  1, -1, &native_print, this);
 }
 

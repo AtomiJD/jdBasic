@@ -96,6 +96,7 @@ void JdbScriptResource::preprocess_() {
     m_source_processed = String();
     m_extends_type     = StringName("Node");
     m_inspector_vars   = TypedArray<Dictionary>();
+    m_signals          = TypedArray<Dictionary>();
 
     PackedStringArray lines = m_source.split(String("\n"), true);
     String out;
@@ -115,6 +116,47 @@ void JdbScriptResource::preprocess_() {
             if (!tail.is_empty()) {
                 m_extends_type = StringName(tail);
                 seen_extends   = true;
+                out += line.substr(0, pad) + String("' ") + trim;
+                if (i + 1 < lines.size()) out += String("\n");
+                continue;
+            }
+        }
+
+        // SIGNAL name(arg1, arg2, ...)  - declares a Godot signal so the
+        // Inspector's "Signals" tab can list it and other Nodes can wire
+        // up handlers. jdBasic-core treats SIGNAL as an unknown identifier
+        // so we strip the whole line to a comment after capturing the
+        // metadata.
+        if (starts_with_keyword_ci(trim, "SIGNAL", 6)) {
+            String tail = trim.substr(6, trim.length() - 6).strip_edges();
+            // Allow either `SIGNAL name(args)` or bare `SIGNAL name`.
+            String sig_name;
+            String args_part;
+            int paren = tail.find("(");
+            if (paren >= 0) {
+                sig_name  = tail.substr(0, paren).strip_edges();
+                int close = tail.find(")", paren);
+                if (close > paren) {
+                    args_part = tail.substr(paren + 1, close - paren - 1);
+                }
+            } else {
+                sig_name = tail;
+            }
+            if (!sig_name.is_empty()) {
+                Dictionary sig;
+                sig[String("name")] = sig_name;
+                Array sig_args;
+                PackedStringArray parts = args_part.split(String(","), false);
+                for (int j = 0; j < parts.size(); ++j) {
+                    String a = parts[j].strip_edges();
+                    if (a.is_empty()) continue;
+                    Dictionary arg;
+                    arg[String("name")] = a;
+                    arg[String("type")] = (int)Variant::NIL;  // untyped - jdBasic figures it out
+                    sig_args.append(arg);
+                }
+                sig[String("args")] = sig_args;
+                m_signals.append(sig);
                 out += line.substr(0, pad) + String("' ") + trim;
                 if (i + 1 < lines.size()) out += String("\n");
                 continue;
@@ -275,12 +317,17 @@ StringName JdbScriptResource::_get_doc_class_name() const {
     return StringName();
 }
 
-bool JdbScriptResource::_has_script_signal(const StringName& /*p_signal*/) const {
+bool JdbScriptResource::_has_script_signal(const StringName& p_signal) const {
+    String name = p_signal;
+    for (int i = 0; i < m_signals.size(); ++i) {
+        Dictionary d = m_signals[i];
+        if (String(d[String("name")]) == name) return true;
+    }
     return false;
 }
 
 TypedArray<Dictionary> JdbScriptResource::_get_script_signal_list() const {
-    return TypedArray<Dictionary>();
+    return m_signals;
 }
 
 void JdbScriptResource::_update_exports() {
