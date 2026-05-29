@@ -117,8 +117,12 @@ PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
 
 PackedStringArray JdbScriptLanguage::_get_comment_delimiters() const {
     PackedStringArray r;
-    r.push_back(String("'"));    // apostrophe -> end of line
-    r.push_back(String("REM"));  // REM keyword -> end of line
+    // Apostrophe is the only delimiter Godot's editor highlighter
+    // accepts; REM is a keyword (no leading symbol) so Godot rejects it
+    // with "delimiter must start with a symbol". REM is still in the
+    // reserved-words list, so it colours as a keyword rather than starting
+    // a comment region - close enough for the editor experience.
+    r.push_back(String("'"));
     return r;
 }
 

@@ -417,7 +417,7 @@ const GDExtensionPropertyInfo* bounce_get_property_list(
         list[i].class_name  = (GDExtensionStringNamePtr)&s_empty_sn;
         list[i].hint        = 0;  // PROPERTY_HINT_NONE
         list[i].hint_string = (GDExtensionStringPtr)&s_empty_str;
-        list[i].usage       = 6;  // PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR
+        list[i].usage       = 2 | 4 | 4096;  // STORAGE | EDITOR | SCRIPT_VARIABLE
     }
     *r_count = (uint32_t)vars.size();
     return list;

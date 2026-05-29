@@ -92,6 +92,8 @@ Variant default_value_from_literal(const String& s, Variant::Type& out_type) {
 }  // namespace
 
 void JdbScriptResource::preprocess_() {
+    UtilityFunctions::print(String("[JdbScriptResource] preprocess_ on source len=")
+        + String::num_int64(m_source.length()));
     m_source_processed = String();
     m_extends_type     = StringName("Node");
     m_inspector_vars   = TypedArray<Dictionary>();
@@ -157,11 +159,6 @@ String JdbScriptResource::_get_source_code() const {
     return m_source;
 }
 
-void JdbScriptResource::_set_source_code(const String& p_code) {
-    m_source = p_code;
-    preprocess_();
-}
-
 bool JdbScriptResource::_can_instantiate() const {
     // T3.0: lying yes so the editor's "Attach Script" dialog allows
     // selecting our language. T3.2 hooks real instance creation.
@@ -215,6 +212,8 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
     static const String K_HINT_STR   = String("hint_string");
     static const String K_USAGE      = String("usage");
     static const String K_DEFAULT    = String("default");
+    UtilityFunctions::print(String("[JdbScriptResource] _get_script_property_list -> ")
+        + String::num_int64(m_inspector_vars.size()) + String(" var(s)"));
     for (int i = 0; i < m_inspector_vars.size(); ++i) {
         Dictionary src = m_inspector_vars[i];
         Dictionary p;
@@ -223,10 +222,23 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
         p[K_CLASS_NAME] = String();
         p[K_HINT]       = 0;
         p[K_HINT_STR]   = String();
-        p[K_USAGE]      = 6;  // PROPERTY_USAGE_STORAGE | EDITOR
+        // STORAGE | EDITOR | SCRIPT_VARIABLE - the last flag is what tells
+        // the Inspector to file the property under the "Script Variables"
+        // section (without it, the property is silently dropped).
+        p[K_USAGE]      = 2 | 4 | 4096;
         out.append(p);
     }
     return out;
+}
+
+// Diagnostic print added at end of preprocess_() so we know exactly
+// which globals the parser captured.
+void JdbScriptResource::_set_source_code(const String& p_code) {
+    m_source = p_code;
+    preprocess_();
+    UtilityFunctions::print(String("[JdbScriptResource] after preprocess: extends=")
+        + String(m_extends_type) + String(", inspector_vars=")
+        + String::num_int64(m_inspector_vars.size()));
 }
 
 bool JdbScriptResource::_editor_can_reload_from_file() {
