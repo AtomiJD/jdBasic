@@ -198,7 +198,7 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
             v.type = (Variant::Type)(int)d[String("type")];
             if (d.has(String("hint_name"))) {
                 String hn = String(d[String("hint_name")]).to_upper();
-                String ha = String(d[String("hint_args")]);
+                String ha = String(d[String("hint_args")]).replace(String(" "), String());
                 if      (hn == String("RANGE"))           { v.hint = 1;  v.hint_string = ha; }
                 else if (hn == String("ENUM"))            { v.hint = 2;  v.hint_string = ha; }
                 else if (hn == String("EXP_EASING"))      { v.hint = 4;  v.hint_string = ha; }

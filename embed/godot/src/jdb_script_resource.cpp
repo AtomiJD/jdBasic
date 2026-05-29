@@ -249,45 +249,34 @@ StringName JdbScriptResource::_get_instance_base_type() const {
 }
 
 bool JdbScriptResource::_has_method(const StringName& p_method) const {
-    // Linear scan of m_source_processed for "SUB name" / "FUNC name" line
-    // starts. Cheap enough at signal-connect time; cache later if it
-    // shows up in profiles.
+    // Line-by-line scan of the script source for "SUB name" / "FUNC name"
+    // declarations. jdBasic is case-insensitive so we lowercase both
+    // sides. Linear per call; cache if it ever shows up in profiles.
     String needle = String(p_method).to_lower();
     String src    = m_source_processed.is_empty() ? m_source : m_source_processed;
-    String lower  = src.to_lower();
-    int pos = 0;
-    while (true) {
-        int line_start = (pos == 0) ? 0 : lower.find("\n", pos);
-        if (line_start < 0) break;
-        if (pos != 0) ++line_start;
-        // Skip leading whitespace.
-        int s = line_start;
-        while (s < lower.length() && (lower[s] == ' ' || lower[s] == '\t')) ++s;
-        // Try "sub " or "func "
+    PackedStringArray lines = src.split(String("\n"), true);
+    for (int i = 0; i < lines.size(); ++i) {
+        String line = lines[i].strip_edges();
+        String low  = line.to_lower();
         int name_start = -1;
-        if (lower.substr(s, 4) == String("sub ")) name_start = s + 4;
-        else if (lower.substr(s, 5) == String("func ")) name_start = s + 5;
-        if (name_start > 0) {
-            while (name_start < lower.length()
-                   && (lower[name_start] == ' ' || lower[name_start] == '\t'))
-                ++name_start;
-            int name_end = name_start;
-            while (name_end < lower.length()) {
-                char32_t c = lower[name_end];
-                bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
-                if (!ok) break;
-                ++name_end;
-            }
-            if (name_end > name_start
-                && lower.substr(name_start, name_end - name_start) == needle) {
-                return true;
-            }
+        if      (low.begins_with(String("sub ")))  name_start = 4;
+        else if (low.begins_with(String("func "))) name_start = 5;
+        else continue;
+        // Skip extra whitespace after keyword.
+        while (name_start < low.length()
+               && (low[name_start] == ' ' || low[name_start] == '\t'))
+            ++name_start;
+        int name_end = name_start;
+        while (name_end < low.length()) {
+            char32_t c = low[name_end];
+            bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+            if (!ok) break;
+            ++name_end;
         }
-        pos = (line_start == 0) ? 1 : line_start + 1;
-        // Advance past current line: find next newline.
-        int nl = lower.find("\n", pos);
-        if (nl < 0) break;
-        pos = nl;
+        if (name_end > name_start
+            && low.substr(name_start, name_end - name_start) == needle) {
+            return true;
+        }
     }
     return false;
 }
@@ -361,7 +350,10 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
         String hint_str = String();
         if (src.has(String("hint_name"))) {
             String hn = String(src[String("hint_name")]).to_upper();
-            String ha = String(src[String("hint_args")]);
+            // Godot's hint-string parsers expect comma-separated values
+            // without whitespace ("0,10,0.1" not "0, 10, 0.1"); strip
+            // spaces so RANGE / ENUM tokens are recognised correctly.
+            String ha = String(src[String("hint_args")]).replace(String(" "), String());
             if      (hn == String("RANGE"))           { hint = 1;  hint_str = ha; }
             else if (hn == String("ENUM"))            { hint = 2;  hint_str = ha; }
             else if (hn == String("EXP_EASING"))      { hint = 4;  hint_str = ha; }
