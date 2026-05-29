@@ -16,39 +16,70 @@ set EXTRA_INC=
 set EXTRA_LIB=user32.lib ws2_32.lib iphlpapi.lib
 set EXTRA_LIBPATH=
 
-REM Parse arguments for optional modules
+REM Parse arguments for optional modules.
+REM Pass HEADLESS to forbid GFX/IMGUI/OPENGL/HTTP/COM in this build - useful
+REM for embed hosts (Godot, etc.) that don't want SDL/ImGui/OpenSSL pulled in.
+set HEADLESS=
+for %%A in (%*) do (
+    if /I "%%A"=="HEADLESS" (
+        set HEADLESS=1
+        set DEFS=!DEFS! /DHEADLESS
+        echo [+] HEADLESS (no GFX, no IMGUI, no OpenGL, no HTTP)
+    )
+)
+
 for %%A in (%*) do (
     if /I "%%A"=="COM" (
-        set DEFS=!DEFS! /DCOM
-        set EXTRA_SRC=!EXTRA_SRC! src\com.cpp
-        echo [+] COM
+        if defined HEADLESS (
+            echo [skip] COM ignored in HEADLESS build
+        ) else (
+            set DEFS=!DEFS! /DCOM
+            set EXTRA_SRC=!EXTRA_SRC! src\com.cpp
+            echo [+] COM
+        )
     )
     if /I "%%A"=="HTTP" (
-        set DEFS=!DEFS! /DHTTP
-        set EXTRA_SRC=!EXTRA_SRC! src\http.cpp
-        set EXTRA_INC=!EXTRA_INC! /I"C:\Program Files\OpenSSL-Win64\include"
-        set EXTRA_LIB=!EXTRA_LIB! "C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD\libssl.lib" "C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD\libcrypto.lib"
-        echo [+] HTTP
+        if defined HEADLESS (
+            echo [skip] HTTP ignored in HEADLESS build
+        ) else (
+            set DEFS=!DEFS! /DHTTP
+            set EXTRA_SRC=!EXTRA_SRC! src\http.cpp
+            set EXTRA_INC=!EXTRA_INC! /I"C:\Program Files\OpenSSL-Win64\include"
+            set EXTRA_LIB=!EXTRA_LIB! "C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD\libssl.lib" "C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD\libcrypto.lib"
+            echo [+] HTTP
+        )
     )
     if /I "%%A"=="GFX" (
-        set DEFS=!DEFS! /DGFX
-        set EXTRA_SRC=!EXTRA_SRC! src\graphics.cpp src\sprites.cpp src\tiledmap.cpp
-        set EXTRA_INC=!EXTRA_INC! /Ilibs\SDL3-3.4.8\include /Ilibs\SDL3_ttf-3.2.2\include /Ilibs\SDL3_image-3.4.4\include /Ilibs\SDL3_mixer-3.2.2\include /Ilibs\SDL3_mixer-3.2.2\include\SDL3_mixer
-        set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\SDL3-3.4.8\lib\x64 /LIBPATH:libs\SDL3_ttf-3.2.2\lib\x64 /LIBPATH:libs\SDL3_image-3.4.4\lib\x64 /LIBPATH:libs\SDL3_mixer-3.2.2\lib\x64
-        set EXTRA_LIB=!EXTRA_LIB! SDL3.lib SDL3_ttf.lib SDL3_image.lib SDL3_mixer.lib
-        echo [+] GFX
+        if defined HEADLESS (
+            echo [skip] GFX ignored in HEADLESS build
+        ) else (
+            set DEFS=!DEFS! /DGFX
+            set EXTRA_SRC=!EXTRA_SRC! src\graphics.cpp src\sprites.cpp src\tiledmap.cpp
+            set EXTRA_INC=!EXTRA_INC! /Ilibs\SDL3-3.4.8\include /Ilibs\SDL3_ttf-3.2.2\include /Ilibs\SDL3_image-3.4.4\include /Ilibs\SDL3_mixer-3.2.2\include /Ilibs\SDL3_mixer-3.2.2\include\SDL3_mixer
+            set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\SDL3-3.4.8\lib\x64 /LIBPATH:libs\SDL3_ttf-3.2.2\lib\x64 /LIBPATH:libs\SDL3_image-3.4.4\lib\x64 /LIBPATH:libs\SDL3_mixer-3.2.2\lib\x64
+            set EXTRA_LIB=!EXTRA_LIB! SDL3.lib SDL3_ttf.lib SDL3_image.lib SDL3_mixer.lib
+            echo [+] GFX
+        )
     )
     if /I "%%A"=="IMGUI" (
-        set DEFS=!DEFS! /DIMGUI
-        set EXTRA_SRC=!EXTRA_SRC! libs\imgui\imgui.cpp libs\imgui\imgui_draw.cpp libs\imgui\imgui_tables.cpp libs\imgui\imgui_widgets.cpp libs\imgui\backends\imgui_impl_sdl3.cpp libs\imgui\backends\imgui_impl_sdlrenderer3.cpp
-        set EXTRA_INC=!EXTRA_INC! /Ilibs\imgui /Ilibs\imgui\backends
-        echo [+] ImGui
+        if defined HEADLESS (
+            echo [skip] IMGUI ignored in HEADLESS build
+        ) else (
+            set DEFS=!DEFS! /DIMGUI
+            set EXTRA_SRC=!EXTRA_SRC! libs\imgui\imgui.cpp libs\imgui\imgui_draw.cpp libs\imgui\imgui_tables.cpp libs\imgui\imgui_widgets.cpp libs\imgui\backends\imgui_impl_sdl3.cpp libs\imgui\backends\imgui_impl_sdlrenderer3.cpp
+            set EXTRA_INC=!EXTRA_INC! /Ilibs\imgui /Ilibs\imgui\backends
+            echo [+] ImGui
+        )
     )
     if /I "%%A"=="OPENGL" (
-        set DEFS=!DEFS! /DOPENGL
-        set EXTRA_SRC=!EXTRA_SRC! src\opengl.cpp
-        set EXTRA_LIB=!EXTRA_LIB! opengl32.lib
-        echo [+] OpenGL 3.3 Core
+        if defined HEADLESS (
+            echo [skip] OPENGL ignored in HEADLESS build
+        ) else (
+            set DEFS=!DEFS! /DOPENGL
+            set EXTRA_SRC=!EXTRA_SRC! src\opengl.cpp
+            set EXTRA_LIB=!EXTRA_LIB! opengl32.lib
+            echo [+] OpenGL 3.3 Core
+        )
     )
     if /I "%%A"=="SERIAL" (
         set DEFS=!DEFS! /DUSE_SERIAL

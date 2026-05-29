@@ -15,6 +15,17 @@ set SCONS=C:\Users\atomi\AppData\Roaming\Python\Python314\Scripts\scons.exe
 set TARGET=%1
 if "%TARGET%"=="" set TARGET=template_debug
 
+REM Make sure jdbrt.dll exists. Prefer the HEADLESS build (no SDL / ImGui /
+REM OpenSSL inside the host process) - that's the right flavour for a Godot
+REM embed. If the user has a non-HEADLESS jdbrt sitting in build/ from
+REM another flow, fall back to copying that.
+if not exist "%REPO%\build\jdbrt.dll" (
+    echo [info] no jdbrt.dll in build/ - running build_rt.bat HEADLESS ...
+    pushd "%REPO%"
+    call build_rt.bat HEADLESS
+    popd
+)
+
 echo Building jdb_godot.dll (target=%TARGET%) ...
 echo (first run compiles godot-cpp bindings -- this can take 5-10 min)
 echo.
