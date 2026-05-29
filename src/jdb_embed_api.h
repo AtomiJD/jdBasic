@@ -55,6 +55,13 @@ JDB_EMBED_API char*      jdb_embed_recompile_source(JdbEmbed* e, const char* sou
 JDB_EMBED_API const char* jdb_embed_last_error(JdbEmbed* e);
 JDB_EMBED_API void        jdb_embed_free(char* s);
 
+// Standalone syntax check: lex + parse only. No VM, no state. Returns
+// NULL when `source` parses cleanly, or a malloc'd error message (caller
+// frees with jdb_embed_free) when it doesn't. The error message follows
+// jdBasic's "Parse error at line N: ..." / "Lex error at line N: ..."
+// convention - the host can scrape line numbers from it.
+JDB_EMBED_API char*       jdb_embed_check_standalone(const char* source);
+
 // ── Typed value access (E3 marshalling) ────────────────────────────
 //
 // A `JdbValue` is an opaque handle into the embed's per-VM value store.

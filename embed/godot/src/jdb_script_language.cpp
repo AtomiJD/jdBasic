@@ -4,6 +4,7 @@
 
 #include "jdb_script_language.h"
 #include "jdb_script_resource.h"
+#include "jdb_embed_api.h"
 
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/script.hpp>
@@ -263,19 +264,57 @@ bool JdbScriptLanguage::_is_control_flow_keyword(const String& p_keyword) const 
     return false;
 }
 
-Dictionary JdbScriptLanguage::_validate(const String& /*p_script*/,
+Dictionary JdbScriptLanguage::_validate(const String& p_script,
                                        const String& /*p_path*/,
                                        bool /*p_validate_functions*/,
                                        bool /*p_validate_errors*/,
                                        bool /*p_validate_warnings*/,
                                        bool /*p_validate_safe_lines*/) const {
-    // T3.0 stub: always-ok. T3.1 wires this into the jdBasic check path.
     Dictionary d;
-    d[String("valid")]                  = true;
-    d[String("errors")]                 = Array();
-    d[String("warnings")]               = Array();
-    d[String("functions")]              = Array();
-    d[String("safe_lines")]             = Array();
+    Array errors;
+    Array warnings;
+    Array functions;
+    Array safe_lines;
+    bool valid = true;
+
+    // T5.1: route through the standalone embed check (lex + parse only,
+    // no VM state). jdBasic reports "Parse error at line N: ..." or
+    // "Lex error at line N: ..."; we scrape the line number out so
+    // Godot's editor can point at the right row.
+    CharString src_utf8 = p_script.utf8();
+    char* err = jdb_embed_check_standalone(src_utf8.get_data());
+    if (err) {
+        valid = false;
+        String msg = String::utf8(err);
+        jdb_embed_free(err);
+
+        int line = 0;
+        int at_line = msg.find("line ");
+        if (at_line >= 0) {
+            String tail = msg.substr(at_line + 5, msg.length() - (at_line + 5));
+            // Walk forward while digit; stop at first non-digit.
+            int end = 0;
+            while (end < tail.length()) {
+                char32_t c = tail[end];
+                if (c < '0' || c > '9') break;
+                ++end;
+            }
+            if (end > 0) line = tail.substr(0, end).to_int();
+        }
+
+        Dictionary e;
+        e[String("line")]    = line;
+        e[String("column")]  = 1;
+        e[String("message")] = msg;
+        e[String("path")]    = String();
+        errors.append(e);
+    }
+
+    d[String("valid")]     = valid;
+    d[String("errors")]    = errors;
+    d[String("warnings")]  = warnings;
+    d[String("functions")] = functions;
+    d[String("safe_lines")] = safe_lines;
     return d;
 }
 

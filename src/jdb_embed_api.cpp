@@ -216,6 +216,23 @@ JDB_EMBED_API void jdb_embed_free(char* s) {
     std::free(s);
 }
 
+JDB_EMBED_API char* jdb_embed_check_standalone(const char* source) {
+    if (!source) return dup_cstr(std::string("source is null"));
+    try {
+        std::string src = source;
+        if (src.empty() || src.back() != '\n') src += '\n';
+        Lexer lexer(src);
+        auto tokens = lexer.tokenize();
+        Parser parser(tokens);
+        (void)parser.parse();
+        return nullptr;  // success
+    } catch (const std::exception& ex) {
+        return dup_cstr(std::string(ex.what()));
+    } catch (...) {
+        return dup_cstr(std::string("unknown parse error"));
+    }
+}
+
 // ── E3: typed value handles ────────────────────────────────────────
 //
 // Helpers below are static C++ functions inside the surrounding extern
