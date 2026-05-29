@@ -51,5 +51,6 @@ SUB _process(delta)
 ENDSUB
 
 SUB _lall(w)
-	GODOT.PRINT("Signal NEU: ",w)
+	GODOT.PRINT("Chrissi")
+	GODOT.PRINT("Signal at", GODOT.TIME_MS(), "ms with speed", w)
 ENDSUB

@@ -65,6 +65,10 @@ public:
                                        const String& p_base_class_name) const override;
     bool                _is_using_templates()              override;
 
+    // Built-in templates that show in the Attach-Script dialog's
+    // Template dropdown for each base class.
+    TypedArray<Dictionary> _get_built_in_templates(const StringName& p_object) const override;
+
     // Validation - T3.0 always returns "ok"; T3.1 will plug into
     // jdBasic's on_check (lex+parse only) for real diagnostics.
     Dictionary          _validate(const String& p_script,

@@ -9,3 +9,11 @@ windows.release.x86_64 = "res://addons/jdb_godot/bin/jdb_godot.windows.template_
 [dependencies]
 windows.debug.x86_64   = { "res://addons/jdb_godot/bin/jdbrt.dll" : "" }
 windows.release.x86_64 = { "res://addons/jdb_godot/bin/jdbrt.dll" : "" }
+
+# Class icons - Godot picks these up at GDExtension load time and shows
+# them in the FileSystem dock, Attach-Script dialog dropdown, and any
+# other place the editor renders the class.
+[icons]
+JdbScriptResource = "res://addons/jdb_godot/icon.svg"
+JDBScript         = "res://addons/jdb_godot/icon.svg"
+JDBasicVM         = "res://addons/jdb_godot/icon.svg"

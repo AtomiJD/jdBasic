@@ -76,6 +76,11 @@ public:
     Ref<Script>            _get_base_script()             const override;
     StringName             _get_global_name()             const override;
     StringName             _get_doc_class_name()          const override;
+
+    // Icon shown next to the script everywhere in the editor (FileSystem
+    // dock, script tab, scene tree). Returns a res:// path the editor's
+    // image loader can grab.
+    String                 _get_class_icon_path()         const override;
     bool                   _has_script_signal(const StringName& p_signal) const override;
     TypedArray<Dictionary> _get_script_signal_list()      const override;
     TypedArray<Dictionary> _get_script_method_list()      const override;

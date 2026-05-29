@@ -30,6 +30,16 @@ The demo scenes prove every layer of the stack:
 
 ## Where the integration goes next
 
+## Parked: Godot engine bugs (not ours to fix)
+
+- **GDExtension language icons missing in Attach-Script dialog**
+  [godot#98800](https://github.com/godotengine/godot/issues/98800).
+  Godot's ScriptCreateDialog doesn't query GDExtension icon paths for
+  the language dropdown. Our `[icons]` section in jdb_godot.gdextension
+  and `JdbScriptResource::_get_class_icon_path()` both populate the
+  Scene-tree + FileSystem dock icons correctly; the dropdown shows a
+  generic broken-document until Godot patches the dialog upstream.
+
 ## Parked T5 issues (rediscover before public reveal)
 
 Both of these are cosmetic; the underlying machinery works at runtime.

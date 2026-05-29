@@ -450,6 +450,13 @@ StringName JdbScriptResource::_get_doc_class_name() const {
     return StringName();
 }
 
+String JdbScriptResource::_get_class_icon_path() const {
+    // Lives next to the .gdextension manifest so it travels with the
+    // addon. Anyone embedding a non-bundled icon can override this in
+    // a subclass.
+    return String("res://addons/jdb_godot/icon.svg");
+}
+
 bool JdbScriptResource::_has_script_signal(const StringName& p_signal) const {
     String name = p_signal;
     for (int i = 0; i < m_signals.size(); ++i) {

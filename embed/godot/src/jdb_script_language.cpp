@@ -185,6 +185,130 @@ bool JdbScriptLanguage::_is_using_templates() {
     return true;
 }
 
+TypedArray<Dictionary> JdbScriptLanguage::_get_built_in_templates(const StringName& p_object) const {
+    // Each template entry expects:
+    //   inherit:     base class (StringName / String) - filters which
+    //                templates show up for which Node type
+    //   name:        short label shown in the template dropdown
+    //   description: tooltip
+    //   content:     the .jdb source. %CLASS% / %BASE% get string-replaced
+    //                by Godot when the user clicks Create.
+    //   id, origin:  0 / 0 for built-in
+    TypedArray<Dictionary> out;
+    String base = String(p_object).is_empty() ? String("Node") : String(p_object);
+
+    static const String K_INHERIT     = String("inherit");
+    static const String K_NAME        = String("name");
+    static const String K_DESCRIPTION = String("description");
+    static const String K_CONTENT     = String("content");
+    static const String K_ID          = String("id");
+    static const String K_ORIGIN      = String("origin");
+
+    // ── Default - empty body ─────────────────────────────────────
+    {
+        Dictionary d;
+        d[K_INHERIT]     = base;
+        d[K_NAME]        = String("Empty");
+        d[K_DESCRIPTION] = String("Minimal jdBasic script with the engine hooks stubbed out.");
+        String content;
+        content += String("EXTENDS ") + base + String("\n");
+        content += String("\n");
+        content += String("' %CLASS% - jdBasic script\n");
+        content += String("\n");
+        content += String("SUB _ready()\n");
+        content += String("ENDSUB\n");
+        content += String("\n");
+        content += String("SUB _process(delta)\n");
+        content += String("ENDSUB\n");
+        d[K_CONTENT]    = content;
+        d[K_ID]         = 0;
+        d[K_ORIGIN]     = 0;
+        out.append(d);
+    }
+
+    // ── INSPECTOR-DIM showcase ──────────────────────────────────
+    {
+        Dictionary d;
+        d[K_INHERIT]     = base;
+        d[K_NAME]        = String("With Inspector vars");
+        d[K_DESCRIPTION] = String("Exposes speed + colour as INSPECTOR DIM with RANGE/COLOR hints.");
+        String content;
+        content += String("EXTENDS ") + base + String("\n");
+        content += String("\n");
+        content += String("INSPECTOR DIM speed = 1.0 AS RANGE(0.0, 10.0, 0.1)\n");
+        content += String("INSPECTOR DIM tint  = 0.5 AS RANGE(0.0, 1.0, 0.01)\n");
+        content += String("\n");
+        content += String("DIM self_h = 0\n");
+        content += String("\n");
+        content += String("SUB _ready()\n");
+        content += String("\tself_h = GODOT.SELF()\n");
+        content += String("\tGODOT.PRINT(\"%CLASS% ready - speed =\", speed)\n");
+        content += String("ENDSUB\n");
+        content += String("\n");
+        content += String("SUB _process(delta)\n");
+        content += String("ENDSUB\n");
+        d[K_CONTENT]    = content;
+        d[K_ID]         = 1;
+        d[K_ORIGIN]     = 0;
+        out.append(d);
+    }
+
+    // ── @tool template ──────────────────────────────────────────
+    {
+        Dictionary d;
+        d[K_INHERIT]     = base;
+        d[K_NAME]        = String("@tool");
+        d[K_DESCRIPTION] = String("Runs in the editor too - good for procedural meshes / editor helpers.");
+        String content;
+        content += String("' @tool\n");
+        content += String("EXTENDS ") + base + String("\n");
+        content += String("\n");
+        content += String("DIM self_h = 0\n");
+        content += String("\n");
+        content += String("SUB _ready()\n");
+        content += String("\tself_h = GODOT.SELF()\n");
+        content += String("\tGODOT.PRINT(\"%CLASS% (tool) ready\")\n");
+        content += String("ENDSUB\n");
+        content += String("\n");
+        content += String("SUB _process(delta)\n");
+        content += String("ENDSUB\n");
+        d[K_CONTENT]    = content;
+        d[K_ID]         = 2;
+        d[K_ORIGIN]     = 0;
+        out.append(d);
+    }
+
+    // ── Spinner (Node3D-flavoured pre-built demo) ──────────────
+    if (base == String("Node3D")) {
+        Dictionary d;
+        d[K_INHERIT]     = base;
+        d[K_NAME]        = String("Spinner (Node3D)");
+        d[K_DESCRIPTION] = String("Continuously rotates the Node3D on Y using GODOT.SET.");
+        String content;
+        content += String("EXTENDS Node3D\n");
+        content += String("\n");
+        content += String("INSPECTOR DIM rot_speed = 1.0 AS RANGE(0.0, 10.0, 0.1)\n");
+        content += String("\n");
+        content += String("DIM self_h = 0\n");
+        content += String("DIM angle  = 0.0\n");
+        content += String("\n");
+        content += String("SUB _ready()\n");
+        content += String("\tself_h = GODOT.SELF()\n");
+        content += String("ENDSUB\n");
+        content += String("\n");
+        content += String("SUB _process(delta)\n");
+        content += String("\tangle = angle + rot_speed * delta\n");
+        content += String("\tGODOT.SET(self_h, \"rotation:y\", angle)\n");
+        content += String("ENDSUB\n");
+        d[K_CONTENT]    = content;
+        d[K_ID]         = 3;
+        d[K_ORIGIN]     = 0;
+        out.append(d);
+    }
+
+    return out;
+}
+
 void JdbScriptLanguage::_frame() {
     // No-op. Required-virtual stub; Godot calls every frame for every
     // registered language. T3.7 hooks profiling here if we ever want it.

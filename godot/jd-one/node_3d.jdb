@@ -1,0 +1,12 @@
+EXTENDS Node3D
+
+' node_3d -- jdBasic script
+
+INSPECTOR DIM speed = 1.0
+
+SUB _ready()
+	PRINT "node_3d ready"
+ENDSUB
+
+SUB _process(delta)
+ENDSUB
