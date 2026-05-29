@@ -76,6 +76,13 @@ public:
     // Register with arity check: min_args, max_args (-1 = unlimited)
     void register_native(const std::string& name, int min_args, int max_args, NativeFunc fn);
 
+    // Per-VM no-vectorize extension. Names added here join the static
+    // jdb_no_vectorize() set: a call to one of them will pass through
+    // unmodified even if some of its args are arrays. Embed hosts
+    // register their natives this way - "GODOT.SET(node, prop, [r,g,b,a])"
+    // should call the bridge once, not four times per colour channel.
+    std::unordered_set<std::string> extra_no_vectorize;
+
     // Callback for EXECUTE/EVAL — set by the host to provide compilation
     using CompileAndRunFunc = std::function<void(VM&, const std::string&)>;
     using CompileAndEvalFunc = std::function<Value(VM&, const std::string&)>;

@@ -223,15 +223,32 @@ static int64_t native_get(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
 // can poke individual Vector3 / Color / etc. components without first
 // having to read-modify-write the whole struct.
 static int64_t native_set(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
-    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    if (argc < 3) {
+        UtilityFunctions::push_error(String("[GODOT.SET] argc < 3"));
+        return jdb_embed_make_bool(vm, 0);
+    }
     GodotBridge* bridge = bridge_of(ud);
-    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    if (!bridge) {
+        UtilityFunctions::push_error(String("[GODOT.SET] no bridge"));
+        return jdb_embed_make_bool(vm, 0);
+    }
     int64_t handle = jdb_embed_value_int(vm, args[0]);
     Object* obj = bridge->lookup(handle);
-    if (!obj) return jdb_embed_make_bool(vm, 0);
+    if (!obj) {
+        UtilityFunctions::push_error(String("[GODOT.SET] no obj for handle ") + String::num_int64(handle));
+        return jdb_embed_make_bool(vm, 0);
+    }
     const char* prop_name = jdb_embed_value_string(vm, args[1]);
     Variant v = jdb_value_to_variant(bridge, args[2]);
     String name(prop_name ? prop_name : "");
+
+    static int s_log_counter = 0;
+    if (s_log_counter < 5) {
+        UtilityFunctions::print(String("[GODOT.SET] obj=") + obj->get_class()
+            + String(", prop='") + name + String("', val=") + String(v));
+        ++s_log_counter;
+    }
+
     if (name.contains(":")) {
         obj->set_indexed(NodePath(name), v);
     } else {

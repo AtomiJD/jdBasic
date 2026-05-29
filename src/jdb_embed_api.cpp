@@ -471,6 +471,10 @@ JDB_EMBED_API int jdb_embed_register_native(JdbEmbed* eh,
         return out;
     };
     e->vm.register_native(name, min_args, max_args, wrapper);
+    // Host-supplied natives must never broadcast: when a script passes
+    // an array (e.g. GODOT.COLOR result), the host expects ONE call with
+    // the whole array, not N calls with element scalars.
+    e->vm.extra_no_vectorize.insert(name);
     return 1;
 }
 

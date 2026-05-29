@@ -823,8 +823,9 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
         // Auto-vectorize: mirror OpCode::CALL behaviour so external callers
         // (e.g. the native-compiler VM bridge) get the same broadcasting
         // semantics. Both sites consult jdb_no_vectorize() for parity.
+        // Embed-registered natives may also opt out via extra_no_vectorize.
         bool has_arr = false;
-        if (!jdb_no_vectorize(name)) {
+        if (!jdb_no_vectorize(name) && extra_no_vectorize.find(name) == extra_no_vectorize.end()) {
             for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
         }
         if (has_arr) {
@@ -1768,7 +1769,8 @@ void VM::run() {
 
                 bool has_array = false;
                 size_t arr_len = 0;
-                if (!jdb_no_vectorize(func_name)) {
+                if (!jdb_no_vectorize(func_name)
+                        && extra_no_vectorize.find(func_name) == extra_no_vectorize.end()) {
                     for (auto& a : args) {
                         if (a.type == ValueType::ARRAY) {
                             has_array = true;
