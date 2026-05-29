@@ -10,6 +10,8 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/script_language.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_float64_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <algorithm>
@@ -230,44 +232,84 @@ bool JdbScriptInstance::has_property(const StringName& name) const {
     return false;
 }
 
-Variant JdbScriptInstance::get_property(const StringName& name) {
-    if (!m_vm) return Variant();
-    std::string code = "PRINT ";
-    code += String(name).utf8().get_data();
-    code += "\n";
-    char* out = jdb_embed_eval(m_vm, code.c_str());
-    if (!out) return Variant();
-    String s = String::utf8(out).strip_edges();
-    jdb_embed_free(out);
-    if (s.is_empty() || s == String("NONE")) return Variant();
-
-    // Best-effort type match using the declared property type.
-    for (const auto& v : m_inspector_vars) {
-        if (v.name == name) {
-            switch (v.type) {
-                case Variant::INT:    return (int64_t)s.to_int();
-                case Variant::FLOAT:  return (double)s.to_float();
-                case Variant::STRING: return s;
-                case Variant::BOOL:   return s.to_int() != 0;
-                default: break;
+Variant JdbScriptInstance::value_to_variant(JdbEmbed* vm, int64_t h) {
+    if (!vm || !h) return Variant();
+    int tag = jdb_embed_value_tag(vm, h);
+    switch (tag) {
+        case JDB_T_NONE:   return Variant();
+        case JDB_T_BOOL:   return jdb_embed_value_bool(vm, h) != 0;
+        case JDB_T_INT:    return (int64_t)jdb_embed_value_int(vm, h);
+        case JDB_T_DOUBLE: return jdb_embed_value_double(vm, h);
+        case JDB_T_STRING: {
+            const char* s = jdb_embed_value_string(vm, h);
+            return String::utf8(s ? s : "");
+        }
+        case JDB_T_ARRAY: {
+            int n = jdb_embed_array_len(vm, h);
+            if (jdb_embed_array_is_numeric(vm, h)) {
+                // Fast path - homogeneous numeric arrays land as a typed
+                // packed array Godot can render / mesh-build directly.
+                PackedFloat64Array out;
+                out.resize(n);
+                double* w = out.ptrw();
+                for (int i = 0; i < n; ++i) {
+                    int64_t el = jdb_embed_array_get(vm, h, i);
+                    w[i] = jdb_embed_value_double(vm, el);
+                    jdb_embed_value_release(vm, el);
+                }
+                return out;
             }
+            Array out;
+            for (int i = 0; i < n; ++i) {
+                int64_t el = jdb_embed_array_get(vm, h, i);
+                out.append(value_to_variant(vm, el));
+                jdb_embed_value_release(vm, el);
+            }
+            return out;
+        }
+        case JDB_T_OBJECT: {
+            Dictionary d;
+            int n = jdb_embed_map_size(vm, h);
+            for (int i = 0; i < n; ++i) {
+                const char* k = jdb_embed_map_key_at(vm, h, i);
+                int64_t  v   = jdb_embed_map_value_at(vm, h, i);
+                d[String::utf8(k ? k : "")] = value_to_variant(vm, v);
+                jdb_embed_value_release(vm, v);
+            }
+            return d;
         }
     }
-    if (s.is_valid_float()) return s.to_float();
-    return s;
+    return Variant();
+}
+
+Variant JdbScriptInstance::get_property(const StringName& name) {
+    if (!m_vm) return Variant();
+    int64_t h = jdb_embed_get_global(m_vm, String(name).utf8().get_data());
+    if (!h) return Variant();
+    Variant out = value_to_variant(m_vm, h);
+    jdb_embed_value_release(m_vm, h);
+    return out;
 }
 
 bool JdbScriptInstance::set_property(const StringName& name, const Variant& value) {
     if (!m_vm) return false;
     if (!has_property(name)) return false;
-    std::string code = String(name).utf8().get_data();
-    code += " = ";
-    code += variant_to_jdb_arg_(value);
-    code += "\n";
-    char* out = jdb_embed_eval(m_vm, code.c_str());
-    if (!out) return false;
-    jdb_embed_free(out);
-    return true;
+    String s_name = String(name);
+    CharString c_name = s_name.utf8();
+    switch (value.get_type()) {
+        case Variant::BOOL:
+            return jdb_embed_set_global_bool(m_vm, c_name.get_data(), bool(value) ? 1 : 0) != 0;
+        case Variant::INT:
+            return jdb_embed_set_global_int(m_vm, c_name.get_data(), int64_t(value)) != 0;
+        case Variant::FLOAT:
+            return jdb_embed_set_global_double(m_vm, c_name.get_data(), double(value)) != 0;
+        case Variant::STRING: {
+            CharString c_val = String(value).utf8();
+            return jdb_embed_set_global_string(m_vm, c_name.get_data(), c_val.get_data()) != 0;
+        }
+        default:
+            return false;
+    }
 }
 
 Variant JdbScriptInstance::call_method(const StringName& name,

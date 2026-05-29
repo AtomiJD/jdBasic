@@ -79,6 +79,12 @@ public:
     // Diagnostic - how many instances are alive right now.
     static int alive_count();
 
+    // E3 - convert a jdBasic value handle into the closest matching Godot
+    // Variant type. Numeric arrays become PackedFloat64Array; mixed arrays
+    // become generic Array; OBJECT becomes Dictionary; etc. The handle is
+    // NOT released - caller is responsible.
+    static Variant value_to_variant(JdbEmbed* vm, int64_t handle);
+
 private:
     Ref<JdbScriptResource>             m_script;
     Object*                            m_owner = nullptr;

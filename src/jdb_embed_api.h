@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +54,66 @@ JDB_EMBED_API char*      jdb_embed_recompile_source(JdbEmbed* e, const char* sou
 
 JDB_EMBED_API const char* jdb_embed_last_error(JdbEmbed* e);
 JDB_EMBED_API void        jdb_embed_free(char* s);
+
+// ── Typed value access (E3 marshalling) ────────────────────────────
+//
+// A `JdbValue` is an opaque handle into the embed's per-VM value store.
+// Handles are obtained by jdb_embed_eval_expr or jdb_embed_get_global;
+// the caller frees them with jdb_embed_value_release. A handle of 0
+// means "no value / lookup failed".
+//
+// Tag values match jdBasic's ValueType compactly:
+typedef int64_t JdbValue;
+
+enum {
+    JDB_T_NONE   = 0,   // NIL / NONE
+    JDB_T_BOOL   = 1,
+    JDB_T_INT    = 2,   // any signed integer (BYTE through INT64)
+    JDB_T_DOUBLE = 3,   // any float (FLOAT16 through FLOAT64)
+    JDB_T_STRING = 4,
+    JDB_T_OBJECT = 5,   // jdBasic MAP / object - JSON-style dict
+    JDB_T_ARRAY  = 6,
+};
+
+// Evaluate an expression (NOT a statement), return a handle to its value.
+// Internally synthesises `__jdb_embed_ret = (expr)` so the result is
+// captured. Returns 0 if compilation or eval failed (check last_error).
+JDB_EMBED_API JdbValue jdb_embed_eval_expr(JdbEmbed* e, const char* expr);
+
+// Read a top-level global by name. Returns 0 if no such global exists.
+JDB_EMBED_API JdbValue jdb_embed_get_global(JdbEmbed* e, const char* name);
+
+// Inspect / extract.
+JDB_EMBED_API int         jdb_embed_value_tag   (JdbEmbed* e, JdbValue h);
+JDB_EMBED_API int64_t     jdb_embed_value_int   (JdbEmbed* e, JdbValue h);
+JDB_EMBED_API double      jdb_embed_value_double(JdbEmbed* e, JdbValue h);
+JDB_EMBED_API const char* jdb_embed_value_string(JdbEmbed* e, JdbValue h);  // owned by store; valid until release
+JDB_EMBED_API int         jdb_embed_value_bool  (JdbEmbed* e, JdbValue h);
+
+// Array (jdBasic ARRAY type) accessors.
+JDB_EMBED_API int      jdb_embed_array_len        (JdbEmbed* e, JdbValue h);
+JDB_EMBED_API JdbValue jdb_embed_array_get        (JdbEmbed* e, JdbValue h, int idx);
+// Returns 1 if every element is numeric (INT/DOUBLE/BOOL). Lets the host
+// fast-path to a typed packed array instead of a generic Array.
+JDB_EMBED_API int      jdb_embed_array_is_numeric(JdbEmbed* e, JdbValue h);
+
+// Map (jdBasic OBJECT type) accessors.
+JDB_EMBED_API int         jdb_embed_map_size     (JdbEmbed* e, JdbValue h);
+JDB_EMBED_API const char* jdb_embed_map_key_at   (JdbEmbed* e, JdbValue h, int idx);
+JDB_EMBED_API JdbValue    jdb_embed_map_value_at (JdbEmbed* e, JdbValue h, int idx);
+JDB_EMBED_API JdbValue    jdb_embed_map_get      (JdbEmbed* e, JdbValue h, const char* key);
+
+// Write side - set a top-level global from a primitive. Useful for
+// reverse-marshalling Inspector property values without synthesising
+// `name = value` source. Returns 1 on success.
+JDB_EMBED_API int jdb_embed_set_global_double(JdbEmbed* e, const char* name, double v);
+JDB_EMBED_API int jdb_embed_set_global_int   (JdbEmbed* e, const char* name, int64_t v);
+JDB_EMBED_API int jdb_embed_set_global_string(JdbEmbed* e, const char* name, const char* v);
+JDB_EMBED_API int jdb_embed_set_global_bool  (JdbEmbed* e, const char* name, int v);
+
+// Release a handle. After release the handle is invalid; do not pass it
+// to any other accessor. Released slots may be re-used. Release-of-0 is OK.
+JDB_EMBED_API void jdb_embed_value_release(JdbEmbed* e, JdbValue h);
 
 #ifdef __cplusplus
 }
