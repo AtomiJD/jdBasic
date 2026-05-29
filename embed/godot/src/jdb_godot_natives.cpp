@@ -10,6 +10,8 @@
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/node_path.hpp>
+
+#include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/vector2.hpp>
@@ -193,6 +195,10 @@ static int64_t native_self(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, 
 }
 
 // GODOT.GET(handle, "property") -> variant
+//
+// Both flat names ("position") and sub-property paths ("position:x")
+// are supported by routing through Object::get_indexed (which falls
+// through to Object::get for flat NodePaths).
 static int64_t native_get(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 2) return jdb_embed_make_nil(vm);
     GodotBridge* bridge = bridge_of(ud);
@@ -201,11 +207,21 @@ static int64_t native_get(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
     Object* obj = bridge->lookup(handle);
     if (!obj) return jdb_embed_make_nil(vm);
     const char* prop_name = jdb_embed_value_string(vm, args[1]);
-    Variant v = obj->get(StringName(prop_name ? prop_name : ""));
+    String name(prop_name ? prop_name : "");
+    Variant v;
+    if (name.contains(":")) {
+        v = obj->get_indexed(NodePath(name));
+    } else {
+        v = obj->get(StringName(name));
+    }
     return variant_to_jdb_value(bridge, v);
 }
 
 // GODOT.SET(handle, "property", value)
+//
+// Property paths like "rotation:y" go through set_indexed so the script
+// can poke individual Vector3 / Color / etc. components without first
+// having to read-modify-write the whole struct.
 static int64_t native_set(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 3) return jdb_embed_make_bool(vm, 0);
     GodotBridge* bridge = bridge_of(ud);
@@ -215,7 +231,12 @@ static int64_t native_set(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
     if (!obj) return jdb_embed_make_bool(vm, 0);
     const char* prop_name = jdb_embed_value_string(vm, args[1]);
     Variant v = jdb_value_to_variant(bridge, args[2]);
-    obj->set(StringName(prop_name ? prop_name : ""), v);
+    String name(prop_name ? prop_name : "");
+    if (name.contains(":")) {
+        obj->set_indexed(NodePath(name), v);
+    } else {
+        obj->set(StringName(name), v);
+    }
     return jdb_embed_make_bool(vm, 1);
 }
 

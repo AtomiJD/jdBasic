@@ -23,6 +23,7 @@ SUB _ready()
 ENDSUB
 
 SUB _process(delta)
+	GODOT.PRINT("tick", delta)
 	angle    = angle + rot_speed * delta
 	time_acc = time_acc + delta
 	DIM y = angle + SIN(time_acc * 6.0) * wobble

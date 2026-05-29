@@ -1,20 +1,12 @@
-[gd_scene load_steps=7 format=3 uid="uid://b4t4cubejdb1"]
+[gd_scene format=3 uid="uid://b4t4cubejdb1"]
 
-[ext_resource type="Script" path="res://cube_t4.jdb" id="1_t4"]
-
-[sub_resource type="BoxMesh" id="BoxMesh_1"]
-size = Vector3(1.5, 1.5, 1.5)
-
-[sub_resource type="StandardMaterial3D" id="Mat_1"]
-albedo_color = Color(0.5, 0.8, 0.7, 1)
-metallic = 0.2
-roughness = 0.4
+[ext_resource type="Script" uid="uid://beorfxlsxil0t" path="res://cube_t4.jdb" id="1_t4"]
 
 [sub_resource type="ProceduralSkyMaterial" id="Sky_1"]
 sky_top_color = Color(0.05, 0.08, 0.18, 1)
-sky_horizon_color = Color(0.42, 0.22, 0.40, 1)
-ground_horizon_color = Color(0.15, 0.10, 0.22, 1)
+sky_horizon_color = Color(0.42, 0.22, 0.4, 1)
 ground_bottom_color = Color(0.02, 0.02, 0.05, 1)
+ground_horizon_color = Color(0.15, 0.1, 0.22, 1)
 
 [sub_resource type="Sky" id="Sky_2"]
 sky_material = SubResource("Sky_1")
@@ -26,20 +18,28 @@ ambient_light_source = 3
 ambient_light_color = Color(0.45, 0.55, 0.65, 1)
 ambient_light_energy = 0.45
 
-[node name="Cube3DT4" type="Node3D"]
+[sub_resource type="StandardMaterial3D" id="Mat_1"]
+albedo_color = Color(0.5, 0.8, 0.7, 1)
+metallic = 0.2
+roughness = 0.4
+
+[sub_resource type="BoxMesh" id="BoxMesh_1"]
+size = Vector3(1.5, 1.5, 1.5)
+
+[node name="Cube3DT4" type="Node3D" unique_id=1988882706]
 script = ExtResource("1_t4")
 
-[node name="WorldEnv" type="WorldEnvironment" parent="."]
+[node name="WorldEnv" type="WorldEnvironment" parent="." unique_id=1327741526]
 environment = SubResource("Env_1")
 
-[node name="Camera3D" type="Camera3D" parent="."]
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1627816420]
 transform = Transform3D(1, 0, 0, 0, 0.94, 0.34, 0, -0.34, 0.94, 0, 1.6, 4.5)
 current = true
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=128895475]
 transform = Transform3D(0.7, 0.5, -0.5, 0, 0.7, 0.7, 0.7, -0.5, 0.5, 0, 4, 2)
 light_energy = 1.2
 
-[node name="Cube" type="MeshInstance3D" parent="."]
-mesh = SubResource("BoxMesh_1")
+[node name="Cube" type="MeshInstance3D" parent="." unique_id=494275023]
 material_override = SubResource("Mat_1")
+mesh = SubResource("BoxMesh_1")
