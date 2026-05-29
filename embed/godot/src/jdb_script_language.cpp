@@ -265,11 +265,12 @@ bool JdbScriptLanguage::_is_control_flow_keyword(const String& p_keyword) const 
 }
 
 Dictionary JdbScriptLanguage::_validate(const String& p_script,
-                                       const String& /*p_path*/,
+                                       const String& p_path,
                                        bool /*p_validate_functions*/,
                                        bool /*p_validate_errors*/,
                                        bool /*p_validate_warnings*/,
                                        bool /*p_validate_safe_lines*/) const {
+    (void)p_path;
     Dictionary d;
     Array errors;
     Array warnings;
@@ -281,7 +282,20 @@ Dictionary JdbScriptLanguage::_validate(const String& p_script,
     // no VM state). jdBasic reports "Parse error at line N: ..." or
     // "Lex error at line N: ..."; we scrape the line number out so
     // Godot's editor can point at the right row.
-    CharString src_utf8 = p_script.utf8();
+    //
+    // CRITICAL: the editor hands us the raw source with EXTENDS /
+    // INSPECTOR DIM lines that jdBasic-core doesn't recognise. Push the
+    // text through Path-B preprocessing first (using a throwaway
+    // JdbScriptResource as the engine) so the check sees the same code
+    // the runtime would. Line numbers stay aligned - preprocess only
+    // rewrites in place, never adds or drops lines.
+    Ref<JdbScriptResource> staging;
+    staging.instantiate();
+    staging->_set_source_code(p_script);
+    String processed = staging->get_processed_source();
+    if (processed.is_empty()) processed = p_script;
+
+    CharString src_utf8 = processed.utf8();
     char* err = jdb_embed_check_standalone(src_utf8.get_data());
     if (err) {
         valid = false;
