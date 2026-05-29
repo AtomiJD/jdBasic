@@ -249,11 +249,36 @@ static int64_t native_set(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
         ++s_log_counter;
     }
 
-    if (name.contains(":")) {
-        obj->set_indexed(NodePath(name), v);
-    } else {
+    int colon = name.find(":");
+    if (colon < 0) {
         obj->set(StringName(name), v);
+        return jdb_embed_make_bool(vm, 1);
     }
+    // Sub-property write. set_indexed exists but doesn't reliably refresh
+    // derived properties on Node3D (e.g. rotation:y -> the rendered
+    // transform). Do an explicit read-modify-write: get the parent
+    // property as a Variant, mutate the component via Variant::set, and
+    // write the whole thing back so the parent setter fires its
+    // recompute hook (transform basis, material cache, etc.).
+    String parent_name = name.substr(0, colon);
+    String child_name  = name.substr(colon + 1, name.length() - colon - 1);
+    // For deeper paths like "a:b:c" we'd recurse - skip for now and
+    // fall through to set_indexed since one-level is the common case.
+    if (child_name.contains(":")) {
+        obj->set_indexed(NodePath(name), v);
+        return jdb_embed_make_bool(vm, 1);
+    }
+    Variant parent = obj->get(StringName(parent_name));
+    bool valid = false;
+    // Variant::set takes (key, value, &r_valid). Key as plain String works
+    // for Vector3.x/y/z, Color.r/g/b/a, etc.
+    parent.set(Variant(child_name), v, &valid);
+    if (!valid) {
+        // Couldn't reach the child via Variant::set; fall back.
+        obj->set_indexed(NodePath(name), v);
+        return jdb_embed_make_bool(vm, 1);
+    }
+    obj->set(StringName(parent_name), parent);
     return jdb_embed_make_bool(vm, 1);
 }
 
