@@ -5,6 +5,7 @@
 #include "jdb_script_instance.h"
 #include "jdb_script_resource.h"
 #include "jdb_script_language.h"
+#include "jdb_godot_natives.h"
 #include "jdb_embed_api.h"
 
 #include <godot_cpp/classes/engine.hpp>
@@ -133,6 +134,13 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
         UtilityFunctions::push_error(String("[JdbScriptInstance] jdb_embed_init returned NULL"));
         return;
     }
+
+    // Tier 4 - register GODOT.* natives BEFORE the boot eval so the script
+    // can use them at top level if it wants to. The bridge keeps a back-
+    // pointer to this instance so GODOT.SELF() works.
+    m_bridge = new GodotBridge(m_vm, this);
+    m_bridge->register_all();
+
     if (m_script.is_valid()) {
         String src = m_script->get_processed_source();
         if (src.is_empty()) src = m_script->_get_source_code();
@@ -170,6 +178,10 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
 
 JdbScriptInstance::~JdbScriptInstance() {
     if (m_script.is_valid()) m_script->unregister_instance(this);
+    if (m_bridge) {
+        delete m_bridge;
+        m_bridge = nullptr;
+    }
     if (m_vm) {
         jdb_embed_shutdown(m_vm);
         m_vm = nullptr;

@@ -93,6 +93,9 @@ private:
     std::unordered_set<std::string>    m_method_set;     // lower-cased
     std::vector<InspectorVar>          m_inspector_vars; // mirror of script metadata
 
+    // Tier 4 - GODOT.* native suite. Lives as long as the instance does.
+    class GodotBridge*                 m_bridge = nullptr;
+
     static std::string variant_to_jdb_arg_(const Variant& v);
     void scan_methods_(const String& source);
 };

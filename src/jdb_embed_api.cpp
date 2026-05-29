@@ -436,4 +436,86 @@ JDB_EMBED_API void jdb_embed_value_release(JdbEmbed* eh, JdbValue h) {
     e->value_store.erase(h);
 }
 
+// ── Tier 4: host-supplied native functions ─────────────────────────
+
+JDB_EMBED_API int jdb_embed_register_native(JdbEmbed* eh,
+                                              const char* name,
+                                              int min_args,
+                                              int max_args,
+                                              JdbNativeFunc fn,
+                                              void* userdata) {
+    if (!eh || !name || !fn) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    JdbEmbed* embed_handle = eh;
+    auto wrapper = [e, embed_handle, fn, userdata]
+                   (const std::vector<Value>& args) -> Value {
+        // Stage each arg into the value-store; the C callback only sees
+        // int64 handles. Track them for cleanup after the call returns.
+        std::vector<int64_t> handles;
+        handles.reserve(args.size());
+        for (const auto& a : args) handles.push_back(e->store(a));
+
+        int64_t result_handle = fn(embed_handle,
+                                   (int)handles.size(),
+                                   handles.data(),
+                                   userdata);
+
+        // Release temp arg handles.
+        for (auto h : handles) e->value_store.erase(h);
+
+        if (!result_handle) return Value::make_none();
+        auto it = e->value_store.find(result_handle);
+        if (it == e->value_store.end()) return Value::make_none();
+        Value out = std::move(it->second);
+        e->value_store.erase(it);
+        return out;
+    };
+    e->vm.register_native(name, min_args, max_args, wrapper);
+    return 1;
+}
+
+JDB_EMBED_API JdbValue jdb_embed_make_int(JdbEmbed* eh, int64_t v) {
+    if (!eh) return 0;
+    return reinterpret_cast<JdbEmbedImpl*>(eh)->store(Value::make_i64(v));
+}
+
+JDB_EMBED_API JdbValue jdb_embed_make_double(JdbEmbed* eh, double v) {
+    if (!eh) return 0;
+    return reinterpret_cast<JdbEmbedImpl*>(eh)->store(Value::make_f64(v));
+}
+
+JDB_EMBED_API JdbValue jdb_embed_make_string(JdbEmbed* eh, const char* v) {
+    if (!eh || !v) return 0;
+    return reinterpret_cast<JdbEmbedImpl*>(eh)->store(Value::make_string(std::string(v)));
+}
+
+JDB_EMBED_API JdbValue jdb_embed_make_bool(JdbEmbed* eh, int v) {
+    if (!eh) return 0;
+    return reinterpret_cast<JdbEmbedImpl*>(eh)->store(Value::make_bool(v != 0));
+}
+
+JDB_EMBED_API JdbValue jdb_embed_make_nil(JdbEmbed* eh) {
+    if (!eh) return 0;
+    return reinterpret_cast<JdbEmbedImpl*>(eh)->store(Value::make_none());
+}
+
+JDB_EMBED_API JdbValue jdb_embed_make_array(JdbEmbed* eh,
+                                              const JdbValue* elems,
+                                              int n) {
+    if (!eh) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    Value v = Value::make_array();  // refcount starts at 1
+    auto* arr = (ArrayObj*)v.obj;
+    arr->elements.reserve((size_t)n);
+    for (int i = 0; i < n; ++i) {
+        auto it = e->value_store.find(elems ? elems[i] : 0);
+        if (it == e->value_store.end()) {
+            arr->elements.push_back(Value::make_none());
+        } else {
+            arr->elements.push_back(it->second);  // copy
+        }
+    }
+    return e->store(std::move(v));
+}
+
 }  // extern "C"

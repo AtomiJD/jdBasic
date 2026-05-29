@@ -115,6 +115,45 @@ JDB_EMBED_API int jdb_embed_set_global_bool  (JdbEmbed* e, const char* name, int
 // to any other accessor. Released slots may be re-used. Release-of-0 is OK.
 JDB_EMBED_API void jdb_embed_value_release(JdbEmbed* e, JdbValue h);
 
+// ── Tier 4: host-supplied native functions ─────────────────────────
+//
+// The host (e.g. the Godot GDExtension) registers callbacks that show
+// up as named functions in jdBasic. From the script:
+//
+//     GODOT.SET(GODOT.SELF(), "rotation:y", angle)
+//
+// On the C side, each callback gets the arg-handles, returns a single
+// result handle, and may store small state via the userdata pointer.
+// Args are JdbValue handles owned by the VM - DO NOT release them inside
+// the callback. The return handle (0 means "no value / NIL") is taken
+// by the VM and released after the value lands in jdBasic.
+typedef int64_t (*JdbNativeFunc)(JdbEmbed* vm,
+                                 int argc,
+                                 const int64_t* args,
+                                 void* userdata);
+
+// min_args / max_args are checked by the VM before the callback runs.
+// max_args = -1 means "unlimited". Returns 1 on success.
+JDB_EMBED_API int jdb_embed_register_native(JdbEmbed* e,
+                                              const char* name,
+                                              int min_args,
+                                              int max_args,
+                                              JdbNativeFunc fn,
+                                              void* userdata);
+
+// Helpers a native callback uses to construct return values without
+// the surrounding host having to manage allocations directly.
+JDB_EMBED_API JdbValue jdb_embed_make_int   (JdbEmbed* e, int64_t v);
+JDB_EMBED_API JdbValue jdb_embed_make_double(JdbEmbed* e, double v);
+JDB_EMBED_API JdbValue jdb_embed_make_string(JdbEmbed* e, const char* v);
+JDB_EMBED_API JdbValue jdb_embed_make_bool  (JdbEmbed* e, int v);
+JDB_EMBED_API JdbValue jdb_embed_make_nil   (JdbEmbed* e);
+// Build an array from N pre-existing handles. The handles are copied;
+// the caller still owns and must release them. Returns 0 on failure.
+JDB_EMBED_API JdbValue jdb_embed_make_array (JdbEmbed* e,
+                                              const JdbValue* elems,
+                                              int n);
+
 #ifdef __cplusplus
 }
 #endif
