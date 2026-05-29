@@ -163,11 +163,36 @@ void JdbScriptResource::preprocess_() {
             }
         }
 
-        // INSPECTOR DIM name = value
+        // INSPECTOR DIM name = value [AS HINT(args)]
+        //
+        // The trailing AS clause (T5.3) is optional - if present we
+        // capture the PROPERTY_HINT_* type and pass it through to the
+        // Inspector so it renders sliders / file pickers / colour
+        // swatches instead of a bare numeric field.
         if (starts_with_keyword_ci(trim, "INSPECTOR", 9)) {
             String after_insp = trim.substr(9, trim.length() - 9).strip_edges();
             if (starts_with_keyword_ci(after_insp, "DIM", 3)) {
                 String tail = after_insp.substr(3, after_insp.length() - 3).strip_edges();
+
+                // Extract optional "AS HINT(...)" suffix before parsing
+                // the assignment so the default value can stay any literal.
+                String hint_name;
+                String hint_args;
+                int as_at = tail.find(" AS ");
+                if (as_at < 0) as_at = tail.find(" as ");
+                if (as_at >= 0) {
+                    String as_part = tail.substr(as_at + 4, tail.length() - (as_at + 4)).strip_edges();
+                    int paren = as_part.find("(");
+                    if (paren >= 0) {
+                        hint_name = as_part.substr(0, paren).strip_edges();
+                        int close = as_part.find(")", paren);
+                        if (close > paren) hint_args = as_part.substr(paren + 1, close - paren - 1);
+                    } else {
+                        hint_name = as_part;
+                    }
+                    tail = tail.substr(0, as_at).strip_edges();
+                }
+
                 String var_name, default_str;
                 if (parse_dim_assign(tail, var_name, default_str)) {
                     Variant::Type t;
@@ -176,10 +201,15 @@ void JdbScriptResource::preprocess_() {
                     d[String("name")]    = var_name;
                     d[String("default")] = dv;
                     d[String("type")]    = (int)t;
+                    if (!hint_name.is_empty()) {
+                        d[String("hint_name")] = hint_name;
+                        d[String("hint_args")] = hint_args;
+                    }
                     m_inspector_vars.append(d);
-                    // Strip "INSPECTOR " from the line so jdBasic eats it
-                    // as a normal DIM.
-                    out += line.substr(0, pad) + after_insp;
+                    // Re-emit the DIM line WITHOUT the AS clause so jdBasic
+                    // sees normal source.
+                    String reemit = String("DIM ") + var_name + String(" = ") + default_str;
+                    out += line.substr(0, pad) + reemit;
                     if (i + 1 < lines.size()) out += String("\n");
                     continue;
                 }
@@ -285,12 +315,30 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
         p[K_NAME]       = src[K_NAME];
         p[K_TYPE]       = src[K_TYPE];
         p[K_CLASS_NAME] = String();
-        p[K_HINT]       = 0;
-        p[K_HINT_STR]   = String();
-        // STORAGE | EDITOR | SCRIPT_VARIABLE - the last flag is what tells
-        // the Inspector to file the property under the "Script Variables"
-        // section (without it, the property is silently dropped).
-        p[K_USAGE]      = 2 | 4 | 4096;
+
+        // T5.3 hint mapping. Common names map to Godot's PROPERTY_HINT_*
+        // codes; the args string is passed verbatim. RANGE expects
+        // "min,max[,step]" - same format jdBasic users typed in.
+        int    hint     = 0;     // PROPERTY_HINT_NONE
+        String hint_str = String();
+        if (src.has(String("hint_name"))) {
+            String hn = String(src[String("hint_name")]).to_upper();
+            String ha = String(src[String("hint_args")]);
+            if      (hn == String("RANGE"))           { hint = 1;  hint_str = ha; }
+            else if (hn == String("ENUM"))            { hint = 2;  hint_str = ha; }
+            else if (hn == String("EXP_EASING"))      { hint = 4;  hint_str = ha; }
+            else if (hn == String("FLAGS"))           { hint = 6;  hint_str = ha; }
+            else if (hn == String("FILE"))            { hint = 13; hint_str = ha; }
+            else if (hn == String("DIR"))             { hint = 14; hint_str = ha; }
+            else if (hn == String("GLOBAL_FILE"))     { hint = 15; hint_str = ha; }
+            else if (hn == String("GLOBAL_DIR"))      { hint = 16; hint_str = ha; }
+            else if (hn == String("MULTILINE"))       { hint = 28; hint_str = String(); }
+            else if (hn == String("COLOR_NO_ALPHA"))  { hint = 9;  hint_str = String(); }
+            else if (hn == String("PASSWORD"))        { hint = 36; hint_str = String(); }
+        }
+        p[K_HINT]       = hint;
+        p[K_HINT_STR]   = hint_str;
+        p[K_USAGE]      = 2 | 4 | 4096;  // STORAGE | EDITOR | SCRIPT_VARIABLE
         out.append(p);
     }
     return out;

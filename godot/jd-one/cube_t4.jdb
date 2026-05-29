@@ -6,8 +6,10 @@ EXTENDS Node3D
 ' engine callbacks (Tier 3); the GODOT.* native suite (Tier 4) lets us
 ' reach the owning Node and set its rotation directly.
 
-INSPECTOR DIM rot_speed = 1.5
-INSPECTOR DIM wobble    = 0.5
+SIGNAL spin_changed(new_speed)
+
+INSPECTOR DIM rot_speed = 1.5 AS RANGE(0.0, 10.0, 0.1)
+INSPECTOR DIM wobble    = 0.5 AS RANGE(0.0, 2.0,  0.05)
 
 DIM angle    = 0.0
 DIM time_acc = 0.0
@@ -23,11 +25,10 @@ SUB _ready()
 ENDSUB
 
 SUB _process(delta)
-	
 	angle    = angle + rot_speed * delta
 	time_acc = time_acc + delta
 	DIM y = angle + SIN(time_acc * 6.0) * wobble
-	GODOT.PRINT("lall", delta, "y: ", y, "rot_speed: ", rot_speed)
+	'GODOT.PRINT("lall", delta, "y: ", y, "rot_speed: ", rot_speed)
 	' rotation:y indexes into the Vector3 'rotation' property.
 	' Rotate the cube CHILD, NOT the root - rotating the root would
 	' carry the Camera + Sun along and the cube would look static.
