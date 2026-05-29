@@ -23,6 +23,8 @@
 
 #include <gdextension_interface.h>
 
+#include <godot_cpp/variant/dictionary.hpp>
+
 #include <unordered_set>
 #include <string>
 #include <vector>
@@ -92,6 +94,11 @@ private:
     GDExtensionScriptInstancePtr       m_godot_handle = nullptr;
     std::unordered_set<std::string>    m_method_set;     // lower-cased
     std::vector<InspectorVar>          m_inspector_vars; // mirror of script metadata
+
+    // Editor-mode property cache. When the instance has no VM (we're in
+    // the Inspector, not playing the game), get_property reads from here
+    // and set_property writes here so the .tscn override round-trip works.
+    Dictionary                         m_editor_values;
 
     // Tier 4 - GODOT.* native suite. Lives as long as the instance does.
     class GodotBridge*                 m_bridge = nullptr;

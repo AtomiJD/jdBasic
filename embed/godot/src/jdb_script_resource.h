@@ -47,6 +47,11 @@ public:
     bool       _has_method(const StringName& method)    const override;
     bool       _has_static_method(const StringName& method) const override;
     bool       _has_property_default_value(const StringName& p_property) const override;
+
+    // Godot uses this to decide whether the script has a live instance
+    // attached to a given Object. The Inspector consults it before listing
+    // script properties for that Object.
+    bool       _instance_has(Object* p_object)          const override;
     Error      _reload(bool p_keep_state)                     override;
     ScriptLanguage* _get_language()                     const override;
 

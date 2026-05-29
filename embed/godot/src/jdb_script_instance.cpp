@@ -125,7 +125,26 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
         // there would tick _process inside the editor process and never
         // stop. Game-mode instances get a real VM via the same ctor path
         // because is_editor_hint is false in play.
-        if (m_script.is_valid()) m_script->register_instance(this);
+        //
+        // Mirror the INSPECTOR DIM metadata + seed the per-instance value
+        // cache with the script's defaults so the Inspector shows real
+        // numbers instead of zeroes. set_property writes back here when
+        // the user edits in the Inspector; Godot then persists those
+        // values in the .tscn override.
+        if (m_script.is_valid()) {
+            m_script->register_instance(this);
+            const TypedArray<Dictionary>& src_vars = m_script->get_inspector_vars();
+            for (int i = 0; i < src_vars.size(); ++i) {
+                Dictionary d = src_vars[i];
+                InspectorVar v;
+                v.name = StringName(String(d[String("name")]));
+                v.type = (Variant::Type)(int)d[String("type")];
+                m_inspector_vars.push_back(v);
+                m_editor_values[v.name] = d[String("default")];
+            }
+            UtilityFunctions::print(String("[JdbScriptInstance editor] mirrored ")
+                + String::num_int64(m_inspector_vars.size()) + String(" inspector vars"));
+        }
         return;
     }
 
@@ -295,7 +314,12 @@ Variant JdbScriptInstance::value_to_variant(JdbEmbed* vm, int64_t h) {
 }
 
 Variant JdbScriptInstance::get_property(const StringName& name) {
-    if (!m_vm) return Variant();
+    // Editor-mode path: no VM yet, serve from the per-instance cache that
+    // we seeded with defaults at ctor time and that holds any user edits.
+    if (!m_vm) {
+        if (m_editor_values.has(name)) return m_editor_values[name];
+        return Variant();
+    }
     int64_t h = jdb_embed_get_global(m_vm, String(name).utf8().get_data());
     if (!h) return Variant();
     Variant out = value_to_variant(m_vm, h);
@@ -304,8 +328,16 @@ Variant JdbScriptInstance::get_property(const StringName& name) {
 }
 
 bool JdbScriptInstance::set_property(const StringName& name, const Variant& value) {
-    if (!m_vm) return false;
     if (!has_property(name)) return false;
+    // Editor-mode path: stash the value so the Inspector shows it on the
+    // next get_property; the .tscn override Godot serialises also reads
+    // back through the same get_property. When the game runs, the new
+    // game-mode instance applies the override via this same set_property
+    // (this time with a live VM).
+    if (!m_vm) {
+        m_editor_values[name] = value;
+        return true;
+    }
     String s_name = String(name);
     CharString c_name = s_name.utf8();
     switch (value.get_type()) {

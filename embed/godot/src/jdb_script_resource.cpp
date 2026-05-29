@@ -8,6 +8,7 @@
 #include "jdb_embed_api.h"
 
 #include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/gdextension_interface_loader.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
@@ -185,6 +186,14 @@ bool JdbScriptResource::_has_method(const StringName& /*method*/) const {
 
 bool JdbScriptResource::_has_static_method(const StringName& /*method*/) const {
     return false;  // jdBasic-as-Godot-script has no static methods.
+}
+
+bool JdbScriptResource::_instance_has(Object* p_object) const {
+    if (!p_object) return false;
+    for (JdbScriptInstance* inst : m_live_instances) {
+        if (inst && inst->get_owner() == p_object) return true;
+    }
+    return false;
 }
 
 bool JdbScriptResource::_has_property_default_value(const StringName& p_property) const {
