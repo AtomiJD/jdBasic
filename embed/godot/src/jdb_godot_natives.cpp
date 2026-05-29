@@ -7,7 +7,14 @@
 #include "jdb_script_resource.h"
 #include "jdb_embed_api.h"
 
+#include <godot_cpp/classes/class_db_singleton.hpp>
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/classes/packed_scene.hpp>
+#include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/node_path.hpp>
 
@@ -364,6 +371,85 @@ static int64_t native_emit(JdbEmbed* vm, int argc, const int64_t* args, void* ud
     return jdb_embed_make_bool(vm, 1);
 }
 
+// GODOT.LOAD("res://path.png") -> Resource handle (Texture2D, Mesh, etc.)
+static int64_t native_load(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_nil(vm);
+    const char* path = jdb_embed_value_string(vm, args[0]);
+    Ref<Resource> res = ResourceLoader::get_singleton()->load(String::utf8(path ? path : ""));
+    if (!res.is_valid()) return jdb_embed_make_nil(vm);
+    int64_t handle = bridge->store(res.ptr());
+    return jdb_embed_make_int(vm, handle);
+}
+
+// GODOT.INSTANTIATE("res://prefab.tscn") -> Node handle (instantiated)
+static int64_t native_instantiate(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_nil(vm);
+    const char* path = jdb_embed_value_string(vm, args[0]);
+    Ref<PackedScene> scene = ResourceLoader::get_singleton()->load(String::utf8(path ? path : ""));
+    if (!scene.is_valid()) return jdb_embed_make_nil(vm);
+    Node* node = scene->instantiate();
+    if (!node) return jdb_embed_make_nil(vm);
+    int64_t handle = bridge->store(node);
+    return jdb_embed_make_int(vm, handle);
+}
+
+// GODOT.NEW("ClassName") -> Object handle (e.g. "StandardMaterial3D")
+static int64_t native_new(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_nil(vm);
+    const char* class_name = jdb_embed_value_string(vm, args[0]);
+    Variant v = ClassDBSingleton::get_singleton()->instantiate(StringName(class_name ? class_name : ""));
+    Object* obj = v;
+    if (!obj) return jdb_embed_make_nil(vm);
+    int64_t handle = bridge->store(obj);
+    return jdb_embed_make_int(vm, handle);
+}
+
+// GODOT.ADD_CHILD(parent_handle, child_handle) - parent.add_child(child)
+static int64_t native_add_child(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    Object* parent = bridge->lookup(jdb_embed_value_int(vm, args[0]));
+    Object* child  = bridge->lookup(jdb_embed_value_int(vm, args[1]));
+    if (!parent || !child) return jdb_embed_make_bool(vm, 0);
+    Node* p = Object::cast_to<Node>(parent);
+    Node* c = Object::cast_to<Node>(child);
+    if (!p || !c) return jdb_embed_make_bool(vm, 0);
+    p->add_child(c);
+    return jdb_embed_make_bool(vm, 1);
+}
+
+// GODOT.QUEUE_FREE(handle) - obj.queue_free()
+static int64_t native_queue_free(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    Object* o = bridge->lookup(jdb_embed_value_int(vm, args[0]));
+    if (!o) return jdb_embed_make_bool(vm, 0);
+    Node* n = Object::cast_to<Node>(o);
+    if (!n) return jdb_embed_make_bool(vm, 0);
+    n->queue_free();
+    return jdb_embed_make_bool(vm, 1);
+}
+
+// GODOT.TIME.MS() -> int64 millisecond ticks since process start
+static int64_t native_time_ms(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* /*ud*/) {
+    uint64_t ms = Time::get_singleton()->get_ticks_msec();
+    return jdb_embed_make_int(vm, (int64_t)ms);
+}
+
+// GODOT.TIME.SEC() -> double seconds since process start (high precision)
+static int64_t native_time_sec(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* /*ud*/) {
+    uint64_t us = Time::get_singleton()->get_ticks_usec();
+    return jdb_embed_make_double(vm, (double)us / 1'000'000.0);
+}
+
 // GODOT.PRINT(value) -> print into Godot's output panel
 static int64_t native_print(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     GodotBridge* bridge = bridge_of(ud);
@@ -385,8 +471,15 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.VEC2",   2, 2,  &native_vec2,  this);
     jdb_embed_register_native(m_vm, "GODOT.VEC3",   3, 3,  &native_vec3,  this);
     jdb_embed_register_native(m_vm, "GODOT.COLOR",  3, 4,  &native_color, this);
-    jdb_embed_register_native(m_vm, "GODOT.EMIT",   2, -1, &native_emit,  this);
-    jdb_embed_register_native(m_vm, "GODOT.PRINT",  1, -1, &native_print, this);
+    jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
+    jdb_embed_register_native(m_vm, "GODOT.LOAD",        1, 1,  &native_load,        this);
+    jdb_embed_register_native(m_vm, "GODOT.INSTANTIATE", 1, 1,  &native_instantiate, this);
+    jdb_embed_register_native(m_vm, "GODOT.NEW",         1, 1,  &native_new,         this);
+    jdb_embed_register_native(m_vm, "GODOT.ADD_CHILD",   2, 2,  &native_add_child,   this);
+    jdb_embed_register_native(m_vm, "GODOT.QUEUE_FREE",  1, 1,  &native_queue_free,  this);
+    jdb_embed_register_native(m_vm, "GODOT.TIME_MS",     0, 0,  &native_time_ms,     nullptr);
+    jdb_embed_register_native(m_vm, "GODOT.TIME_SEC",    0, 0,  &native_time_sec,    nullptr);
+    jdb_embed_register_native(m_vm, "GODOT.PRINT",       1, -1, &native_print,       this);
 }
 
 #endif  // GODOT
