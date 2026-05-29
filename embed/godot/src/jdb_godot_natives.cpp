@@ -242,13 +242,6 @@ static int64_t native_set(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
     Variant v = jdb_value_to_variant(bridge, args[2]);
     String name(prop_name ? prop_name : "");
 
-    static int s_log_counter = 0;
-    if (s_log_counter < 5) {
-        UtilityFunctions::print(String("[GODOT.SET] obj=") + obj->get_class()
-            + String(", prop='") + name + String("', val=") + String(v));
-        ++s_log_counter;
-    }
-
     int colon = name.find(":");
     if (colon < 0) {
         obj->set(StringName(name), v);

@@ -115,9 +115,6 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     : m_script(p_script), m_owner(p_owner) {
     ++g_alive_instances;
     bool in_editor = Engine::get_singleton() && Engine::get_singleton()->is_editor_hint();
-    UtilityFunctions::print(String("[JdbScriptInstance] ctor (alive=")
-        + String::num_int64(g_alive_instances)
-        + String(in_editor ? ", editor-mode)" : ")"));
 
     if (in_editor) {
         // Don't spin up a VM for editor-side instances. Godot creates these
@@ -142,8 +139,6 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
                 m_inspector_vars.push_back(v);
                 m_editor_values[v.name] = d[String("default")];
             }
-            UtilityFunctions::print(String("[JdbScriptInstance editor] mirrored ")
-                + String::num_int64(m_inspector_vars.size()) + String(" inspector vars"));
         }
         return;
     }
@@ -206,8 +201,6 @@ JdbScriptInstance::~JdbScriptInstance() {
         m_vm = nullptr;
     }
     --g_alive_instances;
-    UtilityFunctions::print(String("[JdbScriptInstance] dtor (alive=")
-        + String::num_int64(g_alive_instances) + String(")"));
 }
 
 bool JdbScriptInstance::hot_recompile(const String& processed_src) {

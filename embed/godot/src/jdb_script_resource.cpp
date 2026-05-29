@@ -93,8 +93,6 @@ Variant default_value_from_literal(const String& s, Variant::Type& out_type) {
 }  // namespace
 
 void JdbScriptResource::preprocess_() {
-    UtilityFunctions::print(String("[JdbScriptResource] preprocess_ on source len=")
-        + String::num_int64(m_source.length()));
     m_source_processed = String();
     m_extends_type     = StringName("Node");
     m_inspector_vars   = TypedArray<Dictionary>();
@@ -225,9 +223,6 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
     static const String K_HINT_STR   = String("hint_string");
     static const String K_USAGE      = String("usage");
     static const String K_DEFAULT    = String("default");
-    UtilityFunctions::print(String("[JdbScriptResource] _get_script_property_list -> ")
-        + String::num_int64(m_inspector_vars.size()) + String(" var(s)"));
-
     // Leading category entry - without this the Inspector won't render
     // a section header for our script and silently drops the rows below
     // (the same pattern GDScript uses).
@@ -259,14 +254,9 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
     return out;
 }
 
-// Diagnostic print added at end of preprocess_() so we know exactly
-// which globals the parser captured.
 void JdbScriptResource::_set_source_code(const String& p_code) {
     m_source = p_code;
     preprocess_();
-    UtilityFunctions::print(String("[JdbScriptResource] after preprocess: extends=")
-        + String(m_extends_type) + String(", inspector_vars=")
-        + String::num_int64(m_inspector_vars.size()));
 }
 
 bool JdbScriptResource::_editor_can_reload_from_file() {
@@ -364,8 +354,6 @@ TypedArray<Dictionary> JdbScriptResource::_get_documentation() const {
 }
 
 void* JdbScriptResource::_instance_create(Object* p_for_object) const {
-    UtilityFunctions::print(String("[JdbScriptResource] _instance_create for object=")
-        + String::num_int64((int64_t)p_for_object));
     Ref<JdbScriptResource> script(const_cast<JdbScriptResource*>(this));
     JdbScriptInstance* inst = new JdbScriptInstance(script, p_for_object);
     GDExtensionScriptInstancePtr h =

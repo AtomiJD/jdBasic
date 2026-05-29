@@ -7,7 +7,7 @@ EXTENDS Node3D
 ' reach the owning Node and set its rotation directly.
 
 INSPECTOR DIM rot_speed = 1.5
-INSPECTOR DIM wobble    = 0.4
+INSPECTOR DIM wobble    = 0.5
 
 DIM angle    = 0.0
 DIM time_acc = 0.0
@@ -23,12 +23,15 @@ SUB _ready()
 ENDSUB
 
 SUB _process(delta)
-	GODOT.PRINT("tick", delta)
+	
 	angle    = angle + rot_speed * delta
 	time_acc = time_acc + delta
 	DIM y = angle + SIN(time_acc * 6.0) * wobble
+	GODOT.PRINT("lall", delta, "y: ", y, "rot_speed: ", rot_speed)
 	' rotation:y indexes into the Vector3 'rotation' property.
-	GODOT.SET(self_h, "rotation:y", y)
+	' Rotate the cube CHILD, NOT the root - rotating the root would
+	' carry the Camera + Sun along and the cube would look static.
+	GODOT.SET(cube_h, "rotation:y", y)
 	' Hue cycle on the cube's material colour (cube has an Override).
 	DIM hue_norm = (angle * 0.15) MOD 1.0
 	DIM mat_h = GODOT.GET(cube_h, "material_override")
