@@ -41,14 +41,15 @@ if %RC% NEQ 0 (
 )
 
 echo.
-echo Staging jdbrt.dll + sat DLLs into the demo project ...
+echo Staging jdbrt.dll into the demo project ...
 set DST=%REPO%\godot\jd-one\addons\jdb_godot\bin
-copy /Y "%REPO%\build\jdbrt.dll"      "%DST%" >nul
-copy /Y "%REPO%\build\SDL3.dll"       "%DST%" >nul 2>&1
-copy /Y "%REPO%\build\SDL3_ttf.dll"   "%DST%" >nul 2>&1
-copy /Y "%REPO%\build\SDL3_image.dll" "%DST%" >nul 2>&1
-copy /Y "%REPO%\build\SDL3_mixer.dll" "%DST%" >nul 2>&1
-copy /Y "%REPO%\build\LLVM-C.dll"     "%DST%" >nul 2>&1
+copy /Y "%REPO%\build\jdbrt.dll" "%DST%" >nul
+REM HEADLESS jdbrt links no SDL / OpenSSL / LLVM, so we don't stage
+REM those satellite DLLs anymore. If a non-HEADLESS build sneaks back
+REM in (e.g. someone runs build_rt.bat GFX HTTP for some other flow),
+REM Godot will fail to load with "jdbrt.dll dependent module missing"
+REM and the right fix is to re-run build_rt.bat HEADLESS, not to copy
+REM stray DLLs in here.
 
 echo BUILD OK: %DST%
 dir /b "%DST%"

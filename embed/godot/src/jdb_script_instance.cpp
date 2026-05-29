@@ -115,8 +115,13 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     : m_script(p_script), m_owner(p_owner) {
     ++g_alive_instances;
     bool in_editor = Engine::get_singleton() && Engine::get_singleton()->is_editor_hint();
+    // T5.4: a script can opt in to running in the editor via ' @tool /
+    // OPTION TOOL. When that flag is set we drop the editor-hint guard
+    // and let the VM init normally - _ready / _process will fire inside
+    // the editor process the same as during play.
+    bool is_tool = m_script.is_valid() && m_script->get_is_tool();
 
-    if (in_editor) {
+    if (in_editor && !is_tool) {
         // Don't spin up a VM for editor-side instances. Godot creates these
         // for Inspector previews, type discovery, etc.; running script code
         // there would tick _process inside the editor process and never
@@ -235,7 +240,16 @@ JdbScriptInstance::~JdbScriptInstance() {
 }
 
 bool JdbScriptInstance::hot_recompile(const String& processed_src) {
+    bool in_editor = Engine::get_singleton()
+        && Engine::get_singleton()->is_editor_hint();
+    bool is_tool   = m_script.is_valid() && m_script->get_is_tool();
+
+    if (in_editor) {
+        if (is_tool && !m_vm)      return hard_reload(processed_src);
+        if (!is_tool && m_vm)      return hard_reload(processed_src);
+    }
     if (!m_vm) return false;
+
     char* out = jdb_embed_recompile_source(m_vm, processed_src.utf8().get_data());
     if (!out) {
         const char* err = jdb_embed_last_error(m_vm);
@@ -255,12 +269,32 @@ bool JdbScriptInstance::hot_recompile(const String& processed_src) {
 }
 
 bool JdbScriptInstance::hard_reload(const String& processed_src) {
+    // Tear down whatever's there.
+    if (m_bridge) {
+        delete m_bridge;
+        m_bridge = nullptr;
+    }
     if (m_vm) {
         jdb_embed_shutdown(m_vm);
         m_vm = nullptr;
     }
+
+    // T5.4: in editor mode without @tool we stay inert (no VM, no bridge,
+    // no callbacks fire). Same condition the ctor uses.
+    bool in_editor = Engine::get_singleton()
+        && Engine::get_singleton()->is_editor_hint();
+    bool is_tool   = m_script.is_valid() && m_script->get_is_tool();
+    if (in_editor && !is_tool) {
+        m_method_set.clear();
+        if (m_script.is_valid()) scan_methods_(m_script->_get_source_code());
+        return true;
+    }
+
     m_vm = jdb_embed_init();
     if (!m_vm) return false;
+    m_bridge = new GodotBridge(m_vm, this);
+    m_bridge->register_all();
+
     char* out = jdb_embed_eval(m_vm, processed_src.utf8().get_data());
     if (!out) {
         const char* err = jdb_embed_last_error(m_vm);
@@ -270,6 +304,15 @@ bool JdbScriptInstance::hard_reload(const String& processed_src) {
     jdb_embed_free(out);
     m_method_set.clear();
     if (m_script.is_valid()) scan_methods_(m_script->_get_source_code());
+
+    // hard_reload nukes any prior globals; Godot only fires _ready once
+    // per Node lifecycle, so without a manual call here `DIM self_h = 0`
+    // stays 0 and the next _process can't reach the Node. Fire it now
+    // if the script defines one.
+    if (m_method_set.find("_ready") != m_method_set.end()) {
+        char* r = jdb_embed_eval(m_vm, "_ready()\n");
+        if (r) jdb_embed_free(r);
+    }
     return true;
 }
 

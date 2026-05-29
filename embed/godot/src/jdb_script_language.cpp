@@ -206,6 +206,17 @@ void JdbScriptLanguage::_reload_all_scripts() {
     // through here; individual _reload calls handle the per-script side.
 }
 
+void JdbScriptLanguage::_reload_tool_script(const Ref<Script>& p_script,
+                                              bool p_soft_reload) {
+    // @tool scripts go through this path on file-save instead of the
+    // generic Script::_reload. Forward to our Resource's _reload so the
+    // live-instance fan-out + recompile actually runs.
+    Ref<JdbScriptResource> s = p_script;
+    if (s.is_valid()) {
+        s->_reload(p_soft_reload);
+    }
+}
+
 Dictionary JdbScriptLanguage::_complete_code(const String& /*p_code*/,
                                               const String& /*p_path*/,
                                               Object* /*p_owner*/) const {
@@ -243,6 +254,15 @@ bool JdbScriptLanguage::_handles_global_class_type(const String& /*p_type*/) con
 
 bool JdbScriptLanguage::_overrides_external_editor() {
     return false;
+}
+
+bool JdbScriptLanguage::_can_make_function() const {
+    return false;  // Editor's "create empty function" template flow off for now.
+}
+
+int32_t JdbScriptLanguage::_find_function(const String& /*p_function*/,
+                                            const String& /*p_code*/) const {
+    return -1;  // T5.6 hooks the symbol-table lookup.
 }
 
 bool JdbScriptLanguage::_is_control_flow_keyword(const String& p_keyword) const {

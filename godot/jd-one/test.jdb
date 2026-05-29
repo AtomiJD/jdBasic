@@ -5,11 +5,14 @@ EXTENDS Node3D
 INSPECTOR DIM speed = 1.0
 
 SUB _ready()
-	PRINT "hello from jdBasic attached directly to the Node!"
-	PRINT "speed = "; speed
+	'PRINT "hello from jdBasic attached directly to the Node!"
+	'PRINT "speed = "; speed
+	  PRINT "RELOADED VERSION"
+	  PRINT "speed * 2 = "; speed * 2	
 ENDSUB
 
-SUB _process(delta)
-	' uncomment to spam the console
-	' PRINT delta
-ENDSUB
+sub _process(delta)
+	If DElta = 100 then
+		PRINT "Bert "; delta
+	Endif
+Endsub

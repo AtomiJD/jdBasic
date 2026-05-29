@@ -1,3 +1,4 @@
+' @tool
 EXTENDS Node3D
 
 ' Tier 4 demo - pure-jdBasic cube spinner.
@@ -42,4 +43,13 @@ SUB _process(delta)
 	DIM g = 0.5 + 0.45 * SIN(phase + 2.0944)
 	DIM b = 0.5 + 0.45 * SIN(phase + 4.1888)
 	GODOT.SET(mat_h, "albedo_color", GODOT.COLOR(r, g, b, 1.0))
+	'GODOT.PRINT("lall", angle)
+	IF angle > 6.28 THEN
+	  GODOT.EMIT(self_h, "spin_changed", rot_speed)
+	  angle = 0.0
+	ENDIF
+ENDSUB
+
+SUB _lall(w)
+	GODOT.PRINT("Signal NEU: ",w)
 ENDSUB

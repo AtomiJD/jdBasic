@@ -30,6 +30,45 @@ The demo scenes prove every layer of the stack:
 
 ## Where the integration goes next
 
+## Parked T5 issues (rediscover before public reveal)
+
+Both of these are cosmetic; the underlying machinery works at runtime.
+Park-and-revisit pattern - they're not blocking T6 / T7 but should be
+fixed before the showcase post lands.
+
+- **RANGE step doesn't snap in the Spinbox**. Tested with both
+  `AS RANGE(0.0, 10.0, 0.1)` and `AS RANGE(0, 10, 0.1)`; the Resource
+  side passes hint_string=`"0,10,0.1"` (whitespace stripped) and
+  hint=`PROPERTY_HINT_RANGE` (=1). Diagnostic confirmed Godot reads
+  those values from `_get_script_property_list`. Inspector renders a
+  slider with min/max applied but the spinbox arrow steps in 1.0, the
+  slider drag is continuous. Same data path GDScript `@export_range`
+  uses works for GDScript, so the issue is likely in how the property
+  is registered on the script-instance side or a missing flag in our
+  PropertyInfo Dictionary. **Next attempts:**
+  1. Try emitting numbers via `String::num(v, 7)` to get fixed-precision
+     floats without trailing zeros - "0,10,0.1" exactly
+  2. Check if `PROPERTY_USAGE_NIL_IS_VARIANT` or another usage flag
+     matters
+  3. Diff our PropertyInfo dict keys against `GDScript::get_script_property_list`'s
+     output - maybe a key is missing
+
+- **"Missing connected method 'X'" editor warning** for signal handlers
+  defined as jdBasic SUBs. The signal connection works at runtime (the
+  SUB fires when the signal emits, confirmed by `GODOT.PRINT` output),
+  but Godot's editor still warns at scene-load. `JdbScriptResource::_has_method`
+  AND `_get_script_method_list` are both implemented and return the
+  scanned FUNC/SUB names; diagnostic confirmed neither was actually
+  called by Godot. The verification path must go through a different
+  route (possibly `Object::has_method` against `ClassDB` only, which
+  never consults extensions). **Next attempts:**
+  1. Override `_get_method_info(name)` (separate from list)
+  2. Investigate whether `ScriptInstance::has_method` is the path Godot
+     uses for connected-signal verification - if so, the editor-mode
+     bouncer needs to mirror the runtime one
+  3. Look at how Lua-for-Godot / Python-for-Godot plugins handle this
+     same warning
+
 ### Tier 5 - editor experience polish (1-2 weeks)
 
 The script-language registration ships the bare minimum for the Inspector

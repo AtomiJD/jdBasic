@@ -93,6 +93,9 @@ public:
     bool                _handles_global_class_type(const String& p_type) const override;
     bool                _overrides_external_editor()         override;
     bool                _is_control_flow_keyword(const String& p_keyword) const override;
+    bool                _can_make_function()           const override;
+    int32_t             _find_function(const String& p_function,
+                                         const String& p_code) const override;
 
     // Per-frame profiler hook. Godot calls this every frame for every
     // registered language; required-virtual even if no profiling happens.
@@ -104,6 +107,11 @@ public:
                                           bool p_soft_reload) override;
     // Project-wide hot-reload (rare; fires from Project menu).
     void                _reload_all_scripts()             override;
+    // Tool-script save path: editing a .jdb whose source declared
+    // ' @tool routes here instead of Script::_reload. Forward to the
+    // resource's own _reload so the live-instance fan-out runs.
+    void                _reload_tool_script(const Ref<Script>& p_script,
+                                              bool p_soft_reload) override;
 
 private:
     static JdbScriptLanguage* s_singleton;

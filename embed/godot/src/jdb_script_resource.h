@@ -78,11 +78,13 @@ public:
     StringName             _get_doc_class_name()          const override;
     bool                   _has_script_signal(const StringName& p_signal) const override;
     TypedArray<Dictionary> _get_script_signal_list()      const override;
+    TypedArray<Dictionary> _get_script_method_list()      const override;
     void                   _update_exports()                    override;
 
     // Path-B preprocessing outputs - filled by _set_source_code.
     String                 get_processed_source() const { return m_source_processed; }
     StringName             get_extends_type()     const { return m_extends_type;     }
+    bool                   get_is_tool()          const { return m_is_tool;          }
     const TypedArray<Dictionary>& get_inspector_vars() const { return m_inspector_vars; }
     const TypedArray<Dictionary>& get_signals()        const { return m_signals;       }
 
@@ -98,6 +100,7 @@ private:
     // Path-B outputs (rebuilt every _set_source_code call).
     String                 m_source_processed;  // what jdBasic eats
     StringName             m_extends_type;      // from EXTENDS Foo line
+    bool                   m_is_tool = false;   // from leading ' @tool / OPTION TOOL
     TypedArray<Dictionary> m_inspector_vars;    // [{name, default, type}]
     TypedArray<Dictionary> m_signals;           // [{name, args:[{name,type}]}]
 
@@ -105,6 +108,12 @@ private:
     // for hot-reload fan-out. Not thread-safe for now; instance lifecycle
     // happens on the engine main thread.
     std::vector<class JdbScriptInstance*> m_live_instances;
+
+    // True while a _reload call was triggered from inside our own
+    // _set_source_code (in-editor Ctrl-S path). Tells _reload that m_source
+    // is already the freshest content - don't re-read disk, which would
+    // still have the pre-save bytes since Godot hasn't called the saver yet.
+    mutable bool m_internal_reload = false;
 
     void preprocess_();
 };

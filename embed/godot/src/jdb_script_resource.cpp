@@ -95,6 +95,7 @@ Variant default_value_from_literal(const String& s, Variant::Type& out_type) {
 void JdbScriptResource::preprocess_() {
     m_source_processed = String();
     m_extends_type     = StringName("Node");
+    m_is_tool          = false;
     m_inspector_vars   = TypedArray<Dictionary>();
     m_signals          = TypedArray<Dictionary>();
 
@@ -108,6 +109,20 @@ void JdbScriptResource::preprocess_() {
         String line = lines[i];
         int    pad  = leading_ws(line);
         String trim = line.substr(pad, line.length() - pad);
+
+        // ' @tool  /  REM @tool  /  OPTION TOOL  - run the script in the
+        // editor too (instead of being skipped at instance-create time).
+        // Lets jdBasic scripts power procedural Inspector previews etc.
+        {
+            String low = trim.to_lower();
+            if (low.begins_with(String("' @tool"))
+                || low.begins_with(String("'@tool"))
+                || low.begins_with(String("rem @tool"))
+                || low.begins_with(String("option tool"))
+                || low.begins_with(String("option \"tool\""))) {
+                m_is_tool = true;
+            }
+        }
 
         // EXTENDS Foo -- first one wins; subsequent ones are passed through
         // unchanged (they'd be syntax errors in the jdBasic eval anyway).
@@ -241,20 +256,19 @@ bool JdbScriptResource::_is_valid() const {
 }
 
 bool JdbScriptResource::_is_tool() const {
-    return false;
+    return m_is_tool;
 }
 
 StringName JdbScriptResource::_get_instance_base_type() const {
     return m_extends_type;
 }
 
-bool JdbScriptResource::_has_method(const StringName& p_method) const {
-    // Line-by-line scan of the script source for "SUB name" / "FUNC name"
-    // declarations. jdBasic is case-insensitive so we lowercase both
-    // sides. Linear per call; cache if it ever shows up in profiles.
-    String needle = String(p_method).to_lower();
-    String src    = m_source_processed.is_empty() ? m_source : m_source_processed;
-    PackedStringArray lines = src.split(String("\n"), true);
+// Shared helper - both _has_method and _get_script_method_list want the
+// same parse. Returns the lowercase set of FUNC/SUB names defined in the
+// processed source.
+static PackedStringArray jdb_collect_method_names(const String& source) {
+    PackedStringArray names;
+    PackedStringArray lines = source.split(String("\n"), true);
     for (int i = 0; i < lines.size(); ++i) {
         String line = lines[i].strip_edges();
         String low  = line.to_lower();
@@ -262,7 +276,6 @@ bool JdbScriptResource::_has_method(const StringName& p_method) const {
         if      (low.begins_with(String("sub ")))  name_start = 4;
         else if (low.begins_with(String("func "))) name_start = 5;
         else continue;
-        // Skip extra whitespace after keyword.
         while (name_start < low.length()
                && (low[name_start] == ' ' || low[name_start] == '\t'))
             ++name_start;
@@ -273,12 +286,37 @@ bool JdbScriptResource::_has_method(const StringName& p_method) const {
             if (!ok) break;
             ++name_end;
         }
-        if (name_end > name_start
-            && low.substr(name_start, name_end - name_start) == needle) {
-            return true;
+        if (name_end > name_start) {
+            names.push_back(low.substr(name_start, name_end - name_start));
         }
     }
+    return names;
+}
+
+bool JdbScriptResource::_has_method(const StringName& p_method) const {
+    String needle = String(p_method).to_lower();
+    String src    = m_source_processed.is_empty() ? m_source : m_source_processed;
+    PackedStringArray names = jdb_collect_method_names(src);
+    for (int i = 0; i < names.size(); ++i) {
+        if (names[i] == needle) return true;
+    }
     return false;
+}
+
+TypedArray<Dictionary> JdbScriptResource::_get_script_method_list() const {
+    TypedArray<Dictionary> out;
+    String src = m_source_processed.is_empty() ? m_source : m_source_processed;
+    PackedStringArray names = jdb_collect_method_names(src);
+    for (int i = 0; i < names.size(); ++i) {
+        Dictionary m;
+        m[String("name")] = names[i];
+        m[String("args")] = Array();
+        m[String("default_args")] = Array();
+        m[String("flags")] = 1;  // METHOD_FLAG_NORMAL
+        m[String("return")] = Dictionary();
+        out.append(m);
+    }
+    return out;
 }
 
 bool JdbScriptResource::_has_static_method(const StringName& /*method*/) const {
@@ -375,8 +413,25 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
 }
 
 void JdbScriptResource::_set_source_code(const String& p_code) {
+    bool changed = (p_code != m_source);
     m_source = p_code;
     preprocess_();
+    // GDScript's own set_source_code just flips a dirty flag; the editor
+    // is supposed to follow up with reload_tool_script. For our language
+    // that hand-off doesn't always fire (likely because the script editor
+    // gates it on language-specific conditions we don't satisfy). Be
+    // belt-and-braces and trigger our own reload here so the live VM
+    // picks up the new source even on a plain Ctrl-S inside Godot.
+    //
+    // Skip when the content is unchanged or when there are no live
+    // instances yet (which happens during the initial load - the
+    // Resource hasn't been attached to any Node, so there's nothing to
+    // hot-recompile yet).
+    if (changed && !m_live_instances.empty()) {
+        m_internal_reload = true;
+        _reload(true);
+        m_internal_reload = false;
+    }
 }
 
 bool JdbScriptResource::_editor_can_reload_from_file() {
@@ -414,23 +469,26 @@ void JdbScriptResource::_update_exports() {
 }
 
 Error JdbScriptResource::_reload(bool p_keep_state) {
-    // External-editor save path: Godot detects the file change and calls
-    // _reload directly, WITHOUT first round-tripping through _set_source_code.
-    // m_source / m_source_processed would still be the stale buffer and
-    // jdb_embed_recompile_source would happily "update" the same bytes,
-    // reporting success while behaviour stays unchanged.
+    // External-editor save path: the file changed on disk; Godot may call
+    // _reload directly without round-tripping through _set_source_code.
+    // Re-read disk in that case so we recompile the new content.
     //
-    // Always pull fresh content from disk before fanning out. If the path
-    // is empty (resource isn't on disk yet) we trust whatever m_source has.
-    String path = get_path();
-    if (!path.is_empty()) {
-        String fresh = FileAccess::get_file_as_string(path);
-        if (!fresh.is_empty() && fresh != m_source) {
-            m_source = fresh;
-            preprocess_();
-            UtilityFunctions::print(String("[jdBasic reload] re-read ")
-                + path + String(" (")
-                + String::num_int64(fresh.length()) + String(" bytes)"));
+    // BUT: if we're inside the in-editor Ctrl-S path (m_internal_reload),
+    // m_source already holds the fresh content; disk still has the OLD
+    // bytes because Godot's ResourceSaver runs AFTER _set_source_code.
+    // Re-reading disk there would clobber the fresh content with stale
+    // bytes - exactly the bug Atomi caught.
+    if (!m_internal_reload) {
+        String path = get_path();
+        if (!path.is_empty()) {
+            String fresh = FileAccess::get_file_as_string(path);
+            if (!fresh.is_empty() && fresh != m_source) {
+                m_source = fresh;
+                preprocess_();
+                UtilityFunctions::print(String("[jdBasic reload] re-read ")
+                    + path + String(" (")
+                    + String::num_int64(fresh.length()) + String(" bytes)"));
+            }
         }
     }
     if (m_source_processed.is_empty() && !m_source.is_empty()) {

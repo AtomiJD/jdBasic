@@ -19,7 +19,7 @@ ambient_light_color = Color(0.45, 0.55, 0.65, 1)
 ambient_light_energy = 0.45
 
 [sub_resource type="StandardMaterial3D" id="Mat_1"]
-albedo_color = Color(0.5, 0.8, 0.7, 1)
+albedo_color = Color(0.34976044, 0.2077714, 0.9424706, 1)
 metallic = 0.2
 roughness = 0.4
 
@@ -41,5 +41,8 @@ transform = Transform3D(0.7, 0.5, -0.5, 0, 0.7, 0.7, 0.7, -0.5, 0.5, 0, 4, 2)
 light_energy = 1.2
 
 [node name="Cube" type="MeshInstance3D" parent="." unique_id=494275023]
+transform = Transform3D(-0.57841665, 0, -0.81574124, 0, 1, 0, 0.81574124, 0, -0.57841665, 0, 0, 0)
 material_override = SubResource("Mat_1")
 mesh = SubResource("BoxMesh_1")
+
+[connection signal="spin_changed" from="." to="." method="_lall"]
