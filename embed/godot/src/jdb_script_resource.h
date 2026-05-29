@@ -45,6 +45,7 @@ public:
     bool       _is_tool()                               const override;
     StringName _get_instance_base_type()                const override;
     bool       _has_method(const StringName& method)    const override;
+    bool       _has_static_method(const StringName& method) const override;
     bool       _has_property_default_value(const StringName& p_property) const override;
     Error      _reload(bool p_keep_state)                     override;
     ScriptLanguage* _get_language()                     const override;

@@ -217,10 +217,12 @@ Dictionary JdbScriptLanguage::_lookup_code(const String& /*p_code*/,
                                             const String& /*p_path*/,
                                             Object* /*p_owner*/) const {
     // T3 stub. T3.6 wires this into the jdBasic symbol table so Ctrl-click
-    // jumps to definitions. For now we report "unavailable" cleanly so
-    // Godot's editor doesn't spam the console.
+    // jumps to definitions. Godot also expects a "type" key in the result
+    // dict otherwise it pushes "Condition !ret.has('type') is true" errors.
     Dictionary d;
-    d[String("result")] = Error::ERR_UNAVAILABLE;
+    d[String("result")]   = Error::ERR_UNAVAILABLE;
+    d[String("type")]     = 0;     // LOOKUP_RESULT_SCRIPT_LOCATION sentinel
+    d[String("location")] = -1;
     return d;
 }
 

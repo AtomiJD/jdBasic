@@ -183,6 +183,10 @@ bool JdbScriptResource::_has_method(const StringName& /*method*/) const {
     return false;
 }
 
+bool JdbScriptResource::_has_static_method(const StringName& /*method*/) const {
+    return false;  // jdBasic-as-Godot-script has no static methods.
+}
+
 bool JdbScriptResource::_has_property_default_value(const StringName& p_property) const {
     String name = p_property;
     for (int i = 0; i < m_inspector_vars.size(); ++i) {
