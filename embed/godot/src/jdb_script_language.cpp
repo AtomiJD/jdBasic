@@ -200,6 +200,11 @@ void JdbScriptLanguage::_reload_scripts(const Array& p_scripts, bool p_soft_relo
     }
 }
 
+void JdbScriptLanguage::_reload_all_scripts() {
+    // No-op for now. The Project menu's "Reload Scripts" trigger goes
+    // through here; individual _reload calls handle the per-script side.
+}
+
 Dictionary JdbScriptLanguage::_complete_code(const String& /*p_code*/,
                                               const String& /*p_path*/,
                                               Object* /*p_owner*/) const {

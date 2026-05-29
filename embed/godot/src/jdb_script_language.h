@@ -102,6 +102,8 @@ public:
     // reload in one tick. We forward to each script's own _reload.
     void                _reload_scripts(const Array& p_scripts,
                                           bool p_soft_reload) override;
+    // Project-wide hot-reload (rare; fires from Project menu).
+    void                _reload_all_scripts()             override;
 
 private:
     static JdbScriptLanguage* s_singleton;

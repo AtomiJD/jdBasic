@@ -218,6 +218,21 @@ TypedArray<Dictionary> JdbScriptResource::_get_script_property_list() const {
     static const String K_DEFAULT    = String("default");
     UtilityFunctions::print(String("[JdbScriptResource] _get_script_property_list -> ")
         + String::num_int64(m_inspector_vars.size()) + String(" var(s)"));
+
+    // Leading category entry - without this the Inspector won't render
+    // a section header for our script and silently drops the rows below
+    // (the same pattern GDScript uses).
+    if (m_inspector_vars.size() > 0) {
+        Dictionary cat;
+        cat[K_NAME]       = String("jdBasic Script");  // section title
+        cat[K_TYPE]       = (int)Variant::NIL;
+        cat[K_CLASS_NAME] = String();
+        cat[K_HINT]       = 0;
+        cat[K_HINT_STR]   = String();
+        cat[K_USAGE]      = 128;  // PROPERTY_USAGE_CATEGORY
+        out.append(cat);
+    }
+
     for (int i = 0; i < m_inspector_vars.size(); ++i) {
         Dictionary src = m_inspector_vars[i];
         Dictionary p;
