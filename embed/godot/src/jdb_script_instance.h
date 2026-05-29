@@ -61,7 +61,8 @@ public:
         StringName       name;
         Variant::Type    type;
         StringName       class_name;  // empty for primitives
-        StringName       hint_string; // empty by default
+        int              hint = 0;    // PROPERTY_HINT_*
+        String           hint_string; // RANGE("min,max"), ENUM("a,b,c"), FILE("*.png")
     };
     const std::vector<InspectorVar>& inspector_vars() const { return m_inspector_vars; }
     bool    has_property(const StringName& name) const;

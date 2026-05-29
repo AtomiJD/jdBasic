@@ -248,9 +248,47 @@ StringName JdbScriptResource::_get_instance_base_type() const {
     return m_extends_type;
 }
 
-bool JdbScriptResource::_has_method(const StringName& /*method*/) const {
-    // T3.0 stub - reports no methods. T3.2 scans the source for FUNC/SUB
-    // definitions.
+bool JdbScriptResource::_has_method(const StringName& p_method) const {
+    // Linear scan of m_source_processed for "SUB name" / "FUNC name" line
+    // starts. Cheap enough at signal-connect time; cache later if it
+    // shows up in profiles.
+    String needle = String(p_method).to_lower();
+    String src    = m_source_processed.is_empty() ? m_source : m_source_processed;
+    String lower  = src.to_lower();
+    int pos = 0;
+    while (true) {
+        int line_start = (pos == 0) ? 0 : lower.find("\n", pos);
+        if (line_start < 0) break;
+        if (pos != 0) ++line_start;
+        // Skip leading whitespace.
+        int s = line_start;
+        while (s < lower.length() && (lower[s] == ' ' || lower[s] == '\t')) ++s;
+        // Try "sub " or "func "
+        int name_start = -1;
+        if (lower.substr(s, 4) == String("sub ")) name_start = s + 4;
+        else if (lower.substr(s, 5) == String("func ")) name_start = s + 5;
+        if (name_start > 0) {
+            while (name_start < lower.length()
+                   && (lower[name_start] == ' ' || lower[name_start] == '\t'))
+                ++name_start;
+            int name_end = name_start;
+            while (name_end < lower.length()) {
+                char32_t c = lower[name_end];
+                bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+                if (!ok) break;
+                ++name_end;
+            }
+            if (name_end > name_start
+                && lower.substr(name_start, name_end - name_start) == needle) {
+                return true;
+            }
+        }
+        pos = (line_start == 0) ? 1 : line_start + 1;
+        // Advance past current line: find next newline.
+        int nl = lower.find("\n", pos);
+        if (nl < 0) break;
+        pos = nl;
+    }
     return false;
 }
 

@@ -136,6 +136,21 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
                 InspectorVar v;
                 v.name = StringName(String(d[String("name")]));
                 v.type = (Variant::Type)(int)d[String("type")];
+                if (d.has(String("hint_name"))) {
+                    String hn = String(d[String("hint_name")]).to_upper();
+                    String ha = String(d[String("hint_args")]);
+                    if      (hn == String("RANGE"))           { v.hint = 1;  v.hint_string = ha; }
+                    else if (hn == String("ENUM"))            { v.hint = 2;  v.hint_string = ha; }
+                    else if (hn == String("EXP_EASING"))      { v.hint = 4;  v.hint_string = ha; }
+                    else if (hn == String("FLAGS"))           { v.hint = 6;  v.hint_string = ha; }
+                    else if (hn == String("FILE"))            { v.hint = 13; v.hint_string = ha; }
+                    else if (hn == String("DIR"))             { v.hint = 14; v.hint_string = ha; }
+                    else if (hn == String("GLOBAL_FILE"))     { v.hint = 15; v.hint_string = ha; }
+                    else if (hn == String("GLOBAL_DIR"))      { v.hint = 16; v.hint_string = ha; }
+                    else if (hn == String("MULTILINE"))       { v.hint = 28; }
+                    else if (hn == String("COLOR_NO_ALPHA"))  { v.hint = 9;  }
+                    else if (hn == String("PASSWORD"))        { v.hint = 36; }
+                }
                 m_inspector_vars.push_back(v);
                 m_editor_values[v.name] = d[String("default")];
             }
@@ -173,13 +188,29 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
 
         // Mirror the script's INSPECTOR DIM metadata so the Godot Inspector
         // can enumerate properties without round-tripping into the Resource
-        // every frame.
+        // every frame. Carry hint info so sliders / file pickers /
+        // dropdowns render correctly.
         const TypedArray<Dictionary>& src_vars = m_script->get_inspector_vars();
         for (int i = 0; i < src_vars.size(); ++i) {
             Dictionary d = src_vars[i];
             InspectorVar v;
             v.name = StringName(String(d[String("name")]));
             v.type = (Variant::Type)(int)d[String("type")];
+            if (d.has(String("hint_name"))) {
+                String hn = String(d[String("hint_name")]).to_upper();
+                String ha = String(d[String("hint_args")]);
+                if      (hn == String("RANGE"))           { v.hint = 1;  v.hint_string = ha; }
+                else if (hn == String("ENUM"))            { v.hint = 2;  v.hint_string = ha; }
+                else if (hn == String("EXP_EASING"))      { v.hint = 4;  v.hint_string = ha; }
+                else if (hn == String("FLAGS"))           { v.hint = 6;  v.hint_string = ha; }
+                else if (hn == String("FILE"))            { v.hint = 13; v.hint_string = ha; }
+                else if (hn == String("DIR"))             { v.hint = 14; v.hint_string = ha; }
+                else if (hn == String("GLOBAL_FILE"))     { v.hint = 15; v.hint_string = ha; }
+                else if (hn == String("GLOBAL_DIR"))      { v.hint = 16; v.hint_string = ha; }
+                else if (hn == String("MULTILINE"))       { v.hint = 28; }
+                else if (hn == String("COLOR_NO_ALPHA"))  { v.hint = 9;  }
+                else if (hn == String("PASSWORD"))        { v.hint = 36; }
+            }
             m_inspector_vars.push_back(v);
         }
     } else {
@@ -433,15 +464,14 @@ const GDExtensionPropertyInfo* bounce_get_property_list(
     // only frees the array shell.
     auto* list = static_cast<GDExtensionPropertyInfo*>(
         memalloc(sizeof(GDExtensionPropertyInfo) * vars.size()));
-    static StringName s_empty_sn;  // shared empty for class_name / hint
-    static String     s_empty_str;
+    static StringName s_empty_sn;  // shared empty for class_name
 
     for (size_t i = 0; i < vars.size(); ++i) {
         list[i].type        = (GDExtensionVariantType)vars[i].type;
         list[i].name        = (GDExtensionStringNamePtr)&vars[i].name;
         list[i].class_name  = (GDExtensionStringNamePtr)&s_empty_sn;
-        list[i].hint        = 0;  // PROPERTY_HINT_NONE
-        list[i].hint_string = (GDExtensionStringPtr)&s_empty_str;
+        list[i].hint        = vars[i].hint;
+        list[i].hint_string = (GDExtensionStringPtr)&vars[i].hint_string;
         list[i].usage       = 2 | 4 | 4096;  // STORAGE | EDITOR | SCRIPT_VARIABLE
     }
     *r_count = (uint32_t)vars.size();
