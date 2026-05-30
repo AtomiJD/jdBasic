@@ -1,0 +1,25 @@
+' Sanity test: can jdBasic.exe load Phi-3 at all?
+' Run from D:\usr\dev\cc with:  build\jdBasic.exe jdb\test_phi3_load.jdb
+
+PRINT "LLM feature: "; OS.FEATURE("LLM")
+PRINT "trying to load model..."
+
+DIM path$ = "D:/usr/dev/cc/models/Phi-3-mini-4k-instruct-q4.gguf"
+PRINT "path: "; path$
+
+DIM llm = AI.LOAD_LLM(path$, 2048, 99)
+PRINT "loaded! id="; llm
+
+DIM info = AI.LLM_INFO(llm)
+PRINT "n_ctx: ";  info{"n_ctx"}
+PRINT "n_vocab: "; info{"n_vocab"}
+
+DIM rc = AI.SET(llm, "system", "You are a knight in a fantasy world. Reply in one sentence.")
+DIM rc2 = AI.SET(llm, "max_tokens", 60)
+
+PRINT "asking..."
+DIM reply$ = AI.CHAT(llm, "*A traveler approaches.* What do you say?")
+PRINT "reply: "; reply$
+
+AI.FREE_LLM(llm)
+PRINT "done"

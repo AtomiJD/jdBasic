@@ -211,6 +211,32 @@ it. Having a working debugger would be a meaningful differentiator.
 - **macOS / Linux ports** of `build.bat` / `build_rt.bat` / `SConstruct`
   paths so the GDExtension builds cross-platform
 
+### Community backlog - Sankt Nimmerleinstag (only if a community shows up)
+
+Gaps surfaced while building the weekend rpg-demo where Godot APIs
+have no jdBasic surface yet. The demo works around them by keeping
+GDScript for plumbing (input, mesh construction, await), so these
+only become worth shipping once external contributors actually need
+them. Until then, do not invest engineering time here.
+
+- **T9 - `GODOT.INPUT.*` natives** - `Input.is_action_pressed`,
+  `Input.get_axis`, `Input.is_key_pressed`, `Input.set_mouse_mode`,
+  plus `InputEvent` introspection (type, action_match, relative
+  motion). Without this, every player-controller is GDScript-only.
+- **T10 - `GODOT.MESH.*` natives** - `ArrayMesh.add_surface_from_arrays`
+  binding + `HeightMapShape3D.map_data` setter. The math-heavy
+  compute (heightmaps, voxel fields) is already a jdBasic strength;
+  this would let jdBasic also drive the mesh-build side without
+  marshalling raw arrays back to GDScript.
+- **T11 - Static engine singletons via `GODOT.CALL`** - `Time.*`,
+  `ProjectSettings.*`, `Engine.*`, `OS.*` - currently `GODOT.CALL`
+  needs an object handle, so static-class methods are unreachable.
+  Extend with a string-keyed singleton table.
+- **T12 - `GODOT.AWAIT$` for engine signals** - jdBasic's CHAN covers
+  jdBasic-internal async, but `await get_tree().process_frame` or
+  `await node.body_entered` has no equivalent. Needs an event-loop
+  bridge that pumps Godot signals into a per-VM event queue.
+
 ### Showcase / outreach
 
 - **Tweet-ready GIF** of `cube_t4.tscn` running and the .jdb source

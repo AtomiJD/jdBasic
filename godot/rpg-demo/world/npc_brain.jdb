@@ -1,0 +1,100 @@
+' NPC behaviour brain - pure jdBasic logic, zero Godot coupling.
+'
+' Architecture: GDScript spawns NPC bodies and ticks them every frame.
+' Per tick it calls npc_tick(id, dt, ground_y) and gets back the new
+' (x, y, z, yaw). All state lives in the EXPORT'd npcs MAP keyed by id.
+'
+' This file is testable via the MCP without Godot - load it, call
+' npc_init / npc_tick with synthetic data, inspect npc_state$.
+
+EXPORT DIM npcs AS MAP = {}
+
+' Initialise an NPC from a JSON record. Returns the state map for
+' callers that want to peek at it.
+EXPORT FUNC npc_init(id, data)
+    DIM s AS MAP = {}
+    s{"state"} = "Idle"
+    s{"timer"} = 0.0
+    s{"patrol_idx"} = 0
+    s{"patrol"} = data{"patrol"}
+    s{"spawn"} = data{"spawn"}
+    s{"pos_x"} = data{"spawn"}[0]
+    s{"pos_y"} = data{"spawn"}[1]
+    s{"pos_z"} = data{"spawn"}[2]
+    s{"yaw"} = 0.0
+    s{"idle_dwell"} = 2.0
+    s{"speed"} = 1.8
+    s{"reach"} = 0.6
+    s{"name"} = data{"name"}
+    s{"persona"} = data{"persona"}
+    s{"legend"} = data{"legend"}
+    s{"knowledge"} = data{"knowledge"}
+    s{"quests"} = data{"quests"}
+    s{"dialog_cache"} = ""
+    s{"dialog_ready"} = FALSE
+    npcs{id} = s
+    RETURN s
+ENDFUNC
+
+' Advance an NPC by dt seconds. ground_y is the terrain height at the
+' NPC's current xz - GDScript reads that from terrain.sample_height
+' and passes it in so the brain doesn't need to know about the world.
+'
+' Returns [x, y, z, yaw_radians].
+EXPORT FUNC npc_tick(id, dt, ground_y)
+    DIM s = npcs{id}
+    s{"timer"} = s{"timer"} + dt
+    s{"pos_y"} = ground_y
+
+    IF s{"state"} = "Idle" THEN
+        IF s{"timer"} >= s{"idle_dwell"} THEN
+            s{"state"} = "Patrol"
+            s{"timer"} = 0.0
+        ENDIF
+    ELSE
+        IF s{"state"} = "Patrol" THEN
+            DIM target = s{"patrol"}{s{"patrol_idx"}}
+            DIM dx = target[0] - s{"pos_x"}
+            DIM dz = target[2] - s{"pos_z"}
+            DIM dist = SQR(dx * dx + dz * dz)
+            IF dist < s{"reach"} THEN
+                s{"patrol_idx"} = (s{"patrol_idx"} + 1) MOD LEN(s{"patrol"})
+                s{"state"} = "Idle"
+                s{"timer"} = 0.0
+            ELSE
+                DIM nx = dx / dist
+                DIM nz = dz / dist
+                s{"pos_x"} = s{"pos_x"} + nx * s{"speed"} * dt
+                s{"pos_z"} = s{"pos_z"} + nz * s{"speed"} * dt
+                s{"yaw"} = ATAN2(nx, nz)
+            ENDIF
+        ENDIF
+    ENDIF
+
+    npcs{id} = s
+    RETURN [s{"pos_x"}, s{"pos_y"}, s{"pos_z"}, s{"yaw"}]
+ENDFUNC
+
+EXPORT FUNC npc_state(id)
+    RETURN npcs{id}{"state"}
+ENDFUNC
+
+' Load a list of NPC definitions from an OS-path JSON file and init
+' each one. Returns the number of NPCs loaded. Called from world.gd
+' after the file path has been globalised through ProjectSettings.
+EXPORT FUNC load_npcs(path)
+    DIM raw$ = TXTREADER$(path)
+    DIM data = JSON.PARSE$(raw$)
+    FOR i = 0 TO LEN(data) - 1
+        npc_init(data[i]{"id"}, data[i])
+    NEXT
+    RETURN LEN(data)
+ENDFUNC
+
+' Walk every loaded NPC by dt seconds. Returns a flat array of
+' (id_count * 5) values per NPC: [id_str_placeholder, x, y, z, yaw].
+' GDScript reads the ids separately via list_ids() then ticks each
+' one with npc_tick() so we keep the marshalling simple.
+EXPORT FUNC list_ids()
+    RETURN MAP.KEYS(npcs)
+ENDFUNC

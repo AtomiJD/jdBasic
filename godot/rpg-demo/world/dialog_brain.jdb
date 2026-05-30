@@ -1,0 +1,128 @@
+' Dialog brain - LLM-driven NPC greetings + conversations.
+'
+' Architecture: one Phi-3-mini loaded on the GPU, one ASYNC FUNC
+' generates dialog off the main thread, one task slot at a time so
+' llama.cpp isn't hit concurrently per model.
+'
+' GDScript drives this from world.gd:
+'   dialog_init(model_path)      ' once at boot
+'   prefetch_tick(px, pz, r)     ' every physics frame
+'   is_dialog_ready(id) / get_dialog$(id)  ' when player presses E
+'
+' All state lives in npc_brain.jdb's `npcs` MAP - see npc_init for the
+' per-NPC fields (dialog_cache, dialog_ready, plus the persona/legend
+' loaded from npcs.json).
+
+EXPORT DIM g_llm = 0
+EXPORT DIM g_task = 0
+EXPORT DIM g_task_npc = ""
+
+' Boot the LLM. model_path is an OS path to a GGUF file. Returns the
+' llama.cpp model id.
+' n_gpu_layers default 99 = "everything on GPU". Override via dialog_init
+' to test whether CUDA loading is the failure source.
+EXPORT FUNC dialog_init(model_path)
+    RETURN dialog_init_with(model_path, 99)
+ENDFUNC
+
+EXPORT FUNC dialog_init_with(model_path, n_gpu)
+    g_llm = AI.LOAD_LLM(model_path, 2048, n_gpu)
+    AI.SET(g_llm, "max_tokens", 180)
+    AI.SET(g_llm, "temperature", 0.85)
+    RETURN g_llm
+ENDFUNC
+
+' Compose the per-NPC system prompt from JSON-loaded fields.
+EXPORT FUNC build_sys(id)
+    DIM s = npcs{id}
+    DIM sys = "You are " + s{"name"} + ", a character in a low-fantasy RPG world."
+    sys = sys + CHR$(10) + "Persona: " + s{"persona"}
+    sys = sys + CHR$(10) + "Background: " + s{"legend"}
+    sys = sys + CHR$(10) + "What you know: " + s{"knowledge"}
+    IF LEN(s{"quests"}) > 0 THEN
+        sys = sys + CHR$(10) + "You may offer this quest if it fits the moment: " + s{"quests"}[0]{"description"}
+    ENDIF
+    sys = sys + CHR$(10) + "Stay strictly in character. Reply in 1-3 short sentences."
+    sys = sys + CHR$(10) + "Never mention you are an AI, model, or assistant. No meta-commentary."
+    RETURN sys
+ENDFUNC
+
+' The actual LLM call. Runs in an isolated worker VM - all inputs are
+' explicit args because globals don't carry across.
+ASYNC FUNC gen_dialog(llm, sys_prompt, user_prompt)
+    AI.SET(llm, "system", sys_prompt)
+    AI.CLEAR_HISTORY(llm)
+    RETURN AI.CHAT(llm, user_prompt)
+ENDFUNC
+
+' Called every physics frame from GDScript. Drains any finished task
+' first, then if idle and an NPC within radius lacks a cached greeting,
+' kicks off the next generation.
+'
+' Returns the id of an NPC that just got a fresh greeting (so GDScript
+' can flip its UI marker), or "" otherwise.
+EXPORT DIM g_diag_log = ""
+
+EXPORT FUNC prefetch_tick(player_x, player_z, radius)
+    DIM finished = ""
+    g_diag_log = ""
+
+    IF g_task <> 0 THEN
+        IF THREAD.ISDONE(g_task) THEN
+            DIM reply = AWAIT g_task
+            npcs{g_task_npc}{"dialog_cache"} = reply
+            npcs{g_task_npc}{"dialog_ready"} = TRUE
+            finished = g_task_npc
+            g_task = 0
+            g_task_npc = ""
+        ELSE
+            RETURN ""
+        ENDIF
+    ENDIF
+
+    DIM ids = MAP.KEYS(npcs)
+    g_diag_log = g_diag_log + "ids=" + STR$(LEN(ids))
+    DIM best_id = ""
+    DIM best_d2 = radius * radius
+    FOR i = 0 TO LEN(ids) - 1
+        DIM id = ids[i]
+        DIM s = npcs{id}
+        DIM ready_flag = s{"dialog_ready"}
+        DIM dx = s{"pos_x"} - player_x
+        DIM dz = s{"pos_z"} - player_z
+        DIM d2 = dx * dx + dz * dz
+        g_diag_log = g_diag_log + "|" + id + " ready=" + STR$(ready_flag) + " d2=" + STR$(d2)
+        IF ready_flag <> TRUE THEN
+            IF d2 < best_d2 THEN
+                best_d2 = d2
+                best_id = id
+            ENDIF
+        ENDIF
+    NEXT
+
+    g_diag_log = g_diag_log + " best=" + best_id
+
+    IF best_id <> "" THEN
+        DIM sys = build_sys(best_id)
+        DIM user = "*The player approaches you in the wilderness.* Greet them in 1-3 sentences, in character."
+        g_task = gen_dialog(g_llm, sys, user)
+        g_task_npc = best_id
+        g_diag_log = g_diag_log + " spawned task=" + STR$(g_task)
+    ENDIF
+
+    RETURN finished
+ENDFUNC
+
+EXPORT FUNC is_dialog_ready(id)
+    RETURN npcs{id}{"dialog_ready"} = TRUE
+ENDFUNC
+
+EXPORT FUNC get_dialog(id)
+    DIM s = npcs{id}
+    IF s{"dialog_ready"} = TRUE THEN RETURN s{"dialog_cache"}
+    RETURN ""
+ENDFUNC
+
+EXPORT FUNC busy_for()
+    RETURN g_task_npc
+ENDFUNC

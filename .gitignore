@@ -21,6 +21,17 @@ jdb/prime.jdb
 # Personal reset-snapshot of the Stellar Drift live-coding template
 jdb/demos/games/space_shooter/space_shooter_templare_for_reset_code_only.jdb
 
+# ── godot/rpg-demo: heavy generated / third-party content ─────────
+# 1.1GB of CUDA + ggml DLLs in addons/jdb_godot/bin (rebuild from
+# build_rt.bat LLM + stage script), Godot editor cache, and the
+# 117MB KayKit Adventurers character/animation pack (download from
+# kaylousberg.com; see godot/rpg-demo/README.md for instructions).
+godot/Assets/
+godot/rpg-demo/.godot/
+godot/rpg-demo/addons/jdb_godot/bin/
+godot/rpg-demo/assets/characters/
+godot/rpg-demo/assets/animations/
+
 # ── Build outputs ─────────────────────────────────────────────────
 build/
 

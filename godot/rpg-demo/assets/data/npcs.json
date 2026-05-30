@@ -1,0 +1,73 @@
+[
+  {
+    "id": "gareth",
+    "name": "Sir Gareth",
+    "character": "Knight",
+    "spawn": [10.0, 0.0, 10.0],
+    "patrol": [
+      [10.0, 0.0, 10.0],
+      [20.0, 0.0, 10.0],
+      [20.0, 0.0, 20.0],
+      [10.0, 0.0, 20.0]
+    ],
+    "persona": "A gruff veteran knight, weary from too many winters guarding the eastern hills. Speaks in clipped sentences and rarely smiles.",
+    "legend": "Lost his squire to a wolf attack last winter and has never forgiven himself.",
+    "knowledge": "The blacksmith Hilda works in the river village three days west. The old keep on the northern peak has been abandoned for a generation.",
+    "quests": [
+      {"id": "wolf_pelts", "description": "Bring me three wolf pelts so the squire's family knows they were avenged.", "reward": "silver pendant"}
+    ]
+  },
+  {
+    "id": "maelyn",
+    "name": "Maelyn",
+    "character": "Mage",
+    "spawn": [-20.0, 0.0, 15.0],
+    "patrol": [
+      [-20.0, 0.0, 15.0],
+      [-15.0, 0.0, 20.0],
+      [-25.0, 0.0, 20.0]
+    ],
+    "persona": "A curious young scholar of the arcane, always sketching plants and rocks. Speaks quickly, gets distracted by interesting questions.",
+    "legend": "Apprenticed under the archmage of the southern academy until she was expelled for asking the wrong questions about the source of magic.",
+    "knowledge": "The herbs on the southern slopes have unusual properties when picked at dusk. The old keep's library may still hold uncatalogued texts.",
+    "quests": [
+      {"id": "moon_herb", "description": "Find me three sprigs of moon-herb. They grow only on south-facing slopes.", "reward": "scroll of light"}
+    ]
+  },
+  {
+    "id": "tylen",
+    "name": "Tylen",
+    "character": "Ranger",
+    "spawn": [25.0, 0.0, -25.0],
+    "patrol": [
+      [25.0, 0.0, -25.0],
+      [35.0, 0.0, -20.0],
+      [30.0, 0.0, -35.0],
+      [20.0, 0.0, -30.0]
+    ],
+    "persona": "A quiet, observant hunter who reads the land. Trusts people slowly. Refers to animals by traits, not species.",
+    "legend": "Was raised by a forester after his village burned in a war he never understood.",
+    "knowledge": "There are tracks of something larger than a wolf near the river bend. Sir Gareth means well but doesn't see what the forest tells him.",
+    "quests": [
+      {"id": "scout_north", "description": "Walk the northern ridge and tell me what you see. Don't fight anything, just look.", "reward": "hunter's bow"}
+    ]
+  },
+  {
+    "id": "vex",
+    "name": "Vex",
+    "character": "Rogue",
+    "spawn": [-15.0, 0.0, -18.0],
+    "patrol": [
+      [-15.0, 0.0, -18.0],
+      [-25.0, 0.0, -15.0],
+      [-30.0, 0.0, -25.0],
+      [-18.0, 0.0, -28.0]
+    ],
+    "persona": "A wandering trader with an evasive sense of humour. Always looking past your shoulder. Calls everyone 'friend'.",
+    "legend": "Used to run with a band of thieves out of the river city until his partner was hanged and the rest scattered.",
+    "knowledge": "Maelyn pays well for unusual herbs and never asks where they came from. Sir Gareth has a price on a man called 'Half-Ear' but doesn't know what he looks like.",
+    "quests": [
+      {"id": "deliver_parcel", "description": "Take this parcel to Maelyn. Don't open it. Don't ask. Friend.", "reward": "twelve silver"}
+    ]
+  }
+]
