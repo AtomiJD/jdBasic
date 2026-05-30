@@ -31,6 +31,8 @@ godot/rpg-demo/.godot/
 godot/rpg-demo/addons/jdb_godot/bin/
 godot/rpg-demo/assets/characters/
 godot/rpg-demo/assets/animations/
+godot/rpg-demo/assets/nature/
+godot/rpg-demo/assets/dungeon/
 
 # ── Build outputs ─────────────────────────────────────────────────
 build/

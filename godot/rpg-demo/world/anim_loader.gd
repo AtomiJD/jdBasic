@@ -48,21 +48,10 @@ static func get_library() -> AnimationLibrary:
 				_lib.add_animation(n, clip)
 				_names.append(n)
 		inst.queue_free()
-	print("[anim] merged library: %s clips: %s" % [_names.size(), ", ".join(_names)])
-	# Dump the first 5 track paths of Idle_A so we can verify root_node
-	# resolution against the character's tree.
-	if _lib.has_animation("Idle_A"):
-		var idle := _lib.get_animation("Idle_A")
-		print("[anim] Idle_A has %s tracks; first 5 paths:" % idle.get_track_count())
-		for i in min(5, idle.get_track_count()):
-			print("[anim]   %s" % idle.track_get_path(i))
+	print("[anim] merged library: %s clips" % _names.size())
 	return _lib
 
 static func attach_to(visual_root: Node3D) -> AnimationPlayer:
-	# Print the character tree once so we can see the bones / skeleton
-	# names if anything goes off.
-	_print_tree(visual_root, 0)
-
 	var ap := _find_anim_player(visual_root)
 	if ap == null:
 		# KayKit characters ship a Skeleton3D but no AnimationPlayer.
@@ -72,8 +61,6 @@ static func attach_to(visual_root: Node3D) -> AnimationPlayer:
 		ap.name = "AnimationPlayer"
 		visual_root.add_child(ap)
 		ap.root_node = ap.get_path_to(visual_root)
-		print("[anim] created AnimationPlayer on %s, root_node=%s"
-			% [visual_root.name, ap.root_node])
 	var lib := get_library()
 	if lib == null:
 		push_warning("[anim] no library available")
@@ -81,8 +68,6 @@ static func attach_to(visual_root: Node3D) -> AnimationPlayer:
 	if ap.has_animation_library(""):
 		ap.remove_animation_library("")
 	ap.add_animation_library("", lib)
-	print("[anim] attached library to %s -> %s clips on player" %
-		[visual_root.name, ap.get_animation_list().size()])
 	return ap
 
 # Resolve a logical name ("Idle", "Walk", "Run") against the merged
@@ -124,11 +109,3 @@ static func _find_anim_player(n: Node) -> AnimationPlayer:
 		if r != null:
 			return r
 	return null
-
-static func _print_tree(n: Node, depth: int) -> void:
-	if depth > 5:
-		return
-	var prefix := "  ".repeat(depth)
-	print("[tree] %s%s : %s" % [prefix, n.name, n.get_class()])
-	for c in n.get_children():
-		_print_tree(c, depth + 1)

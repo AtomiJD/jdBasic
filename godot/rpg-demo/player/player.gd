@@ -5,7 +5,6 @@ extends CharacterBody3D
 # usable when we run from F5.
 
 const PLAYER_GLB := "res://assets/characters/Rogue_Hooded.glb"
-const AnimLoader := preload("res://world/anim_loader.gd")
 
 @export var walk_speed: float = 5.0
 @export var run_speed: float = 9.0
@@ -43,8 +42,6 @@ func _load_character() -> void:
 	anim_idle = AnimLoader.best_name("Idle")
 	anim_walk = AnimLoader.best_name("Walk")
 	anim_run  = AnimLoader.best_name("Run")
-	print("[player] anims resolved: idle=%s walk=%s run=%s (ap=%s)"
-		% [anim_idle, anim_walk, anim_run, anim_player])
 	_play(anim_idle)
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -95,14 +92,14 @@ func _physics_process(delta: float) -> void:
 		else:
 			_play(anim_walk)
 
-func _play(name: String) -> void:
-	if name == "" or anim_player == null:
+func _play(anim_name: String) -> void:
+	if anim_name == "" or anim_player == null:
 		return
-	if current_anim == name:
+	if current_anim == anim_name:
 		return
 	# 0.2s crossfade so the player doesn't snap between idle / walk / run.
-	anim_player.play(name, 0.2)
-	current_anim = name
+	anim_player.play(anim_name, 0.2)
+	current_anim = anim_name
 
 func _capture_mouse(capture: bool) -> void:
 	mouse_captured = capture

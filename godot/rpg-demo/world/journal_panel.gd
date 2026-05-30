@@ -15,7 +15,7 @@ enum Tab { QUESTS = 0, INVENTORY = 1 }
 @onready var inventory_list: VBoxContainer = $Panel/VBox/Tabs/Inventory/Scroll/Items
 
 var vm: JDBasicVM
-var prev_mouse_mode: int = Input.MOUSE_MODE_CAPTURED
+var prev_mouse_mode: Input.MouseMode = Input.MOUSE_MODE_CAPTURED
 
 func open(p_vm: JDBasicVM, p_initial_tab: int) -> void:
 	vm = p_vm

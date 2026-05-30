@@ -8,14 +8,21 @@ extends StaticBody3D
 # origin and extends -N/2 to +N/2 in X and Z.
 
 const TERRAIN_JDB := "res://world/terrain_gen.jdb"
+const WORLD_MAP   := "res://assets/data/world_map.txt"
 
 @export var grid_size: int = 192
 @export var frequency: float = 28.0
 @export var amplitude: float = 2.5
 @export var noise_seed: int = 7
 
+@export var grass_color: Color = Color(0.45, 0.6, 0.3)
+@export var path_color:  Color = Color(0.50, 0.40, 0.28)
+@export var clearing_color: Color = Color(0.55, 0.65, 0.40)
+
 var vm: JDBasicVM
 var heights: PackedFloat64Array
+var map_rows: PackedStringArray = PackedStringArray()
+var map_n: int = 0
 
 func _ready() -> void:
 	vm = JDBasicVM.new()
@@ -26,7 +33,36 @@ func _ready() -> void:
 	var boot := vm.eval(src)
 	if not boot.is_empty():
 		print("[terrain boot] ", boot)
+	_load_map()
 	_rebuild()
+
+func _load_map() -> void:
+	var raw := FileAccess.get_file_as_string(WORLD_MAP)
+	map_rows = raw.strip_edges(false, true).split("\n")
+	map_n = map_rows.size()
+	if map_n == 0:
+		push_warning("[terrain] world_map.txt empty - vertices stay grass-coloured")
+
+# Public: which tile char sits at world (x, z)? '.' fallback when off-map.
+func tile_at(world_x: float, world_z: float) -> String:
+	if map_n == 0:
+		return "."
+	var half := grid_size * 0.5
+	var cell := float(grid_size) / float(map_n)
+	var col := int(floor((world_x + half) / cell))
+	var row := int(floor((world_z + half) / cell))
+	if col < 0 or row < 0 or col >= map_n or row >= map_n:
+		return "."
+	var line: String = map_rows[row]
+	if col >= line.length():
+		return "."
+	return line[col]
+
+func color_for_tile(ch: String) -> Color:
+	match ch:
+		"#": return path_color
+		"o": return clearing_color
+		_:   return grass_color
 
 func _rebuild() -> void:
 	var t0 := Time.get_ticks_usec()
@@ -79,11 +115,21 @@ func _build_mesh(n: int, h: PackedFloat64Array) -> ArrayMesh:
 			var v10 := Vector3(x + 1 - half, h[i10], y - half)
 			var v01 := Vector3(x - half,     h[i01], y + 1 - half)
 			var v11 := Vector3(x + 1 - half, h[i11], y + 1 - half)
+			# Per-vertex colour from the tile map. Vertex coords are
+			# already centred on the origin so we can pass them
+			# straight to tile_at(). Linear interpolation across the
+			# triangle gives a soft path edge for free.
+			st.set_color(color_for_tile(tile_at(v00.x, v00.z)))
 			st.add_vertex(v00)
+			st.set_color(color_for_tile(tile_at(v10.x, v10.z)))
 			st.add_vertex(v10)
+			st.set_color(color_for_tile(tile_at(v11.x, v11.z)))
 			st.add_vertex(v11)
+			st.set_color(color_for_tile(tile_at(v00.x, v00.z)))
 			st.add_vertex(v00)
+			st.set_color(color_for_tile(tile_at(v11.x, v11.z)))
 			st.add_vertex(v11)
+			st.set_color(color_for_tile(tile_at(v01.x, v01.z)))
 			st.add_vertex(v01)
 	st.generate_normals()
 	return st.commit()

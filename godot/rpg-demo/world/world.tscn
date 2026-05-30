@@ -26,7 +26,8 @@ tonemap_mode = 2
 glow_enabled = true
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_terrain"]
-albedo_color = Color(0.45, 0.6, 0.3, 1)
+vertex_color_use_as_albedo = true
+albedo_color = Color(1, 1, 1, 1)
 roughness = 0.85
 metallic = 0.0
 

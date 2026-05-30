@@ -16,6 +16,16 @@
 EXPORT DIM g_llm = 0
 EXPORT DIM g_task = 0
 EXPORT DIM g_task_npc = ""
+EXPORT DIM world_lore AS MAP = {}
+
+' Load the world-lore JSON once at boot. The contents (setting,
+' geography, current_state, rules, npc_roster) are injected into
+' every NPC's system prompt so everyone shares the same world model.
+EXPORT FUNC load_world_lore(path)
+    DIM raw$ = TXTREADER$(path)
+    world_lore = JSON.PARSE$(raw$)
+    RETURN MAP.SIZE(world_lore)
+ENDFUNC
 
 ' Boot the LLM. model_path is an OS path to a GGUF file. Returns the
 ' llama.cpp model id.
@@ -32,19 +42,172 @@ EXPORT FUNC dialog_init_with(model_path, n_gpu)
     RETURN g_llm
 ENDFUNC
 
-' Compose the per-NPC system prompt from JSON-loaded fields.
+' Compose the per-NPC system prompt. Phi-3 is recency- and
+' top-biased, so the BLOCKS THAT MATTER MOST FOR THIS TURN go first:
+'   1. identity ("You are Maelyn") - sets the voice
+'   2. critical now-context: inventory the player carries, deliveries
+'      this NPC expects, role reinforcement - acted on per turn
+'   3. persona / background / known facts - flavour
+'   4. world lore - setting context
+'   5. rules - format guard at the very end so they're freshest in
+'      working memory when the reply starts
 EXPORT FUNC build_sys(id)
     DIM s = npcs{id}
-    DIM sys = "You are " + s{"name"} + ", a character in a low-fantasy RPG world."
+    DIM sys = "You are " + s{"name"} + ". Stay in character at all times."
     sys = sys + CHR$(10) + "Persona: " + s{"persona"}
-    sys = sys + CHR$(10) + "Background: " + s{"legend"}
-    sys = sys + CHR$(10) + "What you know: " + s{"knowledge"}
-    IF LEN(s{"quests"}) > 0 THEN
-        sys = sys + CHR$(10) + "You may offer this quest if it fits the moment: " + s{"quests"}[0]{"description"}
+
+    ' --- Critical now-context (top of prompt for max attention) ---
+
+    ' Cross-NPC awareness: deliveries this NPC is expecting.
+    DIM expected = ""
+    DIM other_ids = MAP.KEYS(npcs)
+    FOR i = 0 TO LEN(other_ids) - 1
+        DIM oid = other_ids[i]
+        IF oid <> id THEN
+            DIM oq = npcs{oid}{"quests"}
+            IF LEN(oq) > 0 THEN
+                IF MAP.EXISTS(oq[0], "target_npc") = TRUE THEN
+                    IF oq[0]{"target_npc"} = id THEN
+                        IF MAP.EXISTS(oq[0], "item_given") = TRUE ANDALSO LEN(oq[0]{"item_given"}) > 0 THEN
+                            expected = expected + " '" + oq[0]{"item_given"} + "' from " + npcs{oid}{"name"} + ";"
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+
+    sys = sys + CHR$(10) + CHR$(10) + "=== CHECK THIS BEFORE REPLYING ==="
+    IF LEN(player_state{"inventory"}) > 0 THEN
+        sys = sys + CHR$(10) + "Player inventory:"
+        DIM inv = player_state{"inventory"}
+        FOR i = 0 TO LEN(inv) - 1
+            sys = sys + " " + inv[i]{"name"}
+            IF i < LEN(inv) - 1 THEN sys = sys + ","
+        NEXT
+    ELSE
+        sys = sys + CHR$(10) + "Player inventory: empty."
     ENDIF
-    sys = sys + CHR$(10) + "Stay strictly in character. Reply in 1-3 short sentences."
-    sys = sys + CHR$(10) + "Never mention you are an AI, model, or assistant. No meta-commentary."
+    IF LEN(expected) > 0 THEN
+        sys = sys + CHR$(10) + "YOU ARE EXPECTING:" + expected
+        sys = sys + CHR$(10) + "If ANY expected item is in the player inventory, your FIRST sentence must acknowledge it gladly and accept the handover. Do not bring up your own quests until after you accept the delivery."
+    ENDIF
+    IF LEN(player_state{"active"}) > 0 THEN
+        sys = sys + CHR$(10) + "Active quests the player already holds:"
+        DIM act = player_state{"active"}
+        FOR i = 0 TO LEN(act) - 1
+            sys = sys + CHR$(10) + "  - '" + act[i]{"description"} + "' (from " + act[i]{"giver_name"} + ")"
+        NEXT
+        sys = sys + CHR$(10) + "Do not re-offer a quest the player has already accepted."
+    ENDIF
+
+    sys = sys + CHR$(10) + "Role boundary: YOU are " + s{"name"} + " (a stationary NPC). The PLAYER is the traveling adventurer. Never offer to fetch, deliver, gather, or scout - those are the player's actions, not yours."
+
+    ' --- Flavour ---
+
+    sys = sys + CHR$(10) + CHR$(10) + "Background: " + s{"legend"}
+    sys = sys + CHR$(10) + "What you personally know: " + s{"knowledge"}
+    IF LEN(s{"quests"}) > 0 THEN
+        DIM mine = s{"quests"}[0]
+        sys = sys + CHR$(10) + "Quest you can offer (only if not already accepted): " + mine{"description"}
+    ENDIF
+
+    ' --- World lore (setting context, less critical per turn) ---
+
+    IF MAP.EXISTS(world_lore, "setting") = TRUE THEN
+        sys = sys + CHR$(10) + CHR$(10) + "World setting: " + world_lore{"setting"}
+    ENDIF
+    IF MAP.EXISTS(world_lore, "geography") = TRUE THEN
+        sys = sys + CHR$(10) + "Geography: " + world_lore{"geography"}
+    ENDIF
+    IF MAP.EXISTS(world_lore, "current_state") = TRUE THEN
+        sys = sys + CHR$(10) + "Current state: " + world_lore{"current_state"}
+    ENDIF
+    IF MAP.EXISTS(world_lore, "npc_roster") = TRUE THEN
+        sys = sys + CHR$(10) + "Other people in the area:"
+        DIM roster = world_lore{"npc_roster"}
+        FOR i = 0 TO LEN(roster) - 1
+            sys = sys + CHR$(10) + "- " + roster[i]{"name"} + " (" + roster[i]{"role"} + ")"
+        NEXT
+    ENDIF
+
+    ' --- Rules last so they're freshest in working memory ---
+
+    IF MAP.EXISTS(world_lore, "rules") = TRUE THEN
+        sys = sys + CHR$(10) + CHR$(10) + "Rules:"
+        DIM rules = world_lore{"rules"}
+        FOR i = 0 TO LEN(rules) - 1
+            sys = sys + CHR$(10) + "- " + rules[i]
+        NEXT
+    ENDIF
+
     RETURN sys
+ENDFUNC
+
+' Strip hallucinated continuation past the NPC's own turn. Phi-3
+' occasionally writes "Maelyn: ...\nPlayer: ...\nMaelyn: ..." or
+' tacks on "(Note: This response ...)" meta-commentary at the end.
+' We cut at every known leak pattern and trim the result.
+FUNC clean_reply(id, raw)
+    DIM r = raw
+    DIM nl_player = CHR$(10) + "Player:"
+    DIM idx = INSTR(r, nl_player)
+    IF idx >= 0 THEN r = LEFT$(r, idx)
+    DIM nl_self = CHR$(10) + npcs{id}{"name"} + ":"
+    idx = INSTR(r, nl_self)
+    IF idx >= 0 THEN r = LEFT$(r, idx)
+    ' Meta-commentary leak: cut at ANY double-newline. In-character
+    ' replies should be 1-3 sentences in a single paragraph, so any
+    ' "\n\n" almost always precedes "In this response..." style
+    ' disclaimers or fake follow-up turns.
+    idx = INSTR(r, CHR$(10) + CHR$(10))
+    IF idx >= 0 THEN r = LEFT$(r, idx)
+    ' Disclaimer one-liner: "(Note:" / "(NB:" / "(P.S." anywhere.
+    idx = INSTR(r, "(Note")
+    IF idx >= 0 THEN r = LEFT$(r, idx)
+    idx = INSTR(r, "(NB")
+    IF idx >= 0 THEN r = LEFT$(r, idx)
+    idx = INSTR(r, "(P.S")
+    IF idx >= 0 THEN r = LEFT$(r, idx)
+    ' Bullet/headed meta-leak after a newline.
+    DIM meta_prefixes = ["- Solution", "Solution:", "Explanation:", "Reasoning:", "Clarification:", "Reply:", "Response:", "reply:", "In this response", "In this scenario", "Improved response", "=== ", "===", "Author:", "Note:", "Remark:", "Comment:", "Continuation:", "Action:"]
+    FOR i = 0 TO LEN(meta_prefixes) - 1
+        idx = INSTR(r, CHR$(10) + meta_prefixes[i])
+        IF idx >= 0 THEN r = LEFT$(r, idx)
+    NEXT
+    ' Inline meta that doesn't start on a fresh line - Phi-3 sometimes
+    ' writes "...this little box has Maelyn' Author: This scenario..."
+    ' i.e. tacks on the disclaimer mid-paragraph after a space.
+    DIM inline_meta = [" Author:", " Note:", " Solution:", " Explanation:", " Reply:", " reply:"]
+    FOR i = 0 TO LEN(inline_meta) - 1
+        idx = INSTR(r, inline_meta[i])
+        IF idx >= 0 THEN r = LEFT$(r, idx)
+    NEXT
+    ' If the reply STARTS with a meta-label (no leading newline),
+    ' strip the label off the front and keep the rest. e.g.
+    ' "reply: Deine Suche..." becomes "Deine Suche...".
+    DIM start_strips = ["reply:", "Reply:", "Response:", "Action:"]
+    FOR i = 0 TO LEN(start_strips) - 1
+        DIM lbl = start_strips[i]
+        IF LEN(r) >= LEN(lbl) ANDALSO LEFT$(r, LEN(lbl)) = lbl THEN
+            r = MID$(r, LEN(lbl) + 1)
+            IF LEN(r) > 0 ANDALSO LEFT$(r, 1) = " " THEN r = MID$(r, 2)
+        ENDIF
+    NEXT
+    ' Trim trailing whitespace / newlines
+    DO WHILE LEN(r) > 0 ANDALSO (RIGHT$(r, 1) = CHR$(10) ORELSE RIGHT$(r, 1) = " ")
+        r = LEFT$(r, LEN(r) - 1)
+    LOOP
+    ' If Phi-3 prefixed its line with "Maelyn:" itself, strip that.
+    DIM self_prefix = npcs{id}{"name"} + ":"
+    IF LEN(r) > LEN(self_prefix) THEN
+        IF LEFT$(r, LEN(self_prefix)) = self_prefix THEN
+            r = MID$(r, LEN(self_prefix) + 1)
+            ' Eat one optional leading space
+            IF LEN(r) > 0 ANDALSO LEFT$(r, 1) = " " THEN r = MID$(r, 2)
+        ENDIF
+    ENDIF
+    RETURN r
 ENDFUNC
 
 ' The actual LLM call. Runs in an isolated worker VM - all inputs are
@@ -61,15 +224,13 @@ ENDFUNC
 '
 ' Returns the id of an NPC that just got a fresh greeting (so GDScript
 ' can flip its UI marker), or "" otherwise.
-EXPORT DIM g_diag_log = ""
-
 EXPORT FUNC prefetch_tick(player_x, player_z, radius)
     DIM finished = ""
-    g_diag_log = ""
 
     IF g_task <> 0 THEN
         IF THREAD.ISDONE(g_task) THEN
             DIM reply = AWAIT g_task
+            reply = clean_reply(g_task_npc, reply)
             npcs{g_task_npc}{"dialog_cache"} = reply
             npcs{g_task_npc}{"dialog_ready"} = TRUE
             finished = g_task_npc
@@ -81,18 +242,15 @@ EXPORT FUNC prefetch_tick(player_x, player_z, radius)
     ENDIF
 
     DIM ids = MAP.KEYS(npcs)
-    g_diag_log = g_diag_log + "ids=" + STR$(LEN(ids))
     DIM best_id = ""
     DIM best_d2 = radius * radius
     FOR i = 0 TO LEN(ids) - 1
         DIM id = ids[i]
         DIM s = npcs{id}
-        DIM ready_flag = s{"dialog_ready"}
-        DIM dx = s{"pos_x"} - player_x
-        DIM dz = s{"pos_z"} - player_z
-        DIM d2 = dx * dx + dz * dz
-        g_diag_log = g_diag_log + "|" + id + " ready=" + STR$(ready_flag) + " d2=" + STR$(d2)
-        IF ready_flag <> TRUE THEN
+        IF s{"dialog_ready"} <> TRUE THEN
+            DIM dx = s{"pos_x"} - player_x
+            DIM dz = s{"pos_z"} - player_z
+            DIM d2 = dx * dx + dz * dz
             IF d2 < best_d2 THEN
                 best_d2 = d2
                 best_id = id
@@ -100,14 +258,11 @@ EXPORT FUNC prefetch_tick(player_x, player_z, radius)
         ENDIF
     NEXT
 
-    g_diag_log = g_diag_log + " best=" + best_id
-
     IF best_id <> "" THEN
         DIM sys = build_sys(best_id)
         DIM user = "*The player approaches you in the wilderness.* Greet them in 1-3 sentences, in character."
         g_task = gen_dialog(g_llm, sys, user)
         g_task_npc = best_id
-        g_diag_log = g_diag_log + " spawned task=" + STR$(g_task)
     ENDIF
 
     RETURN finished
@@ -127,6 +282,88 @@ EXPORT FUNC busy_for()
     RETURN g_task_npc
 ENDFUNC
 
+' ── Deterministic delivery handler ────────────────────────────────
+' Instead of trusting the LLM to recognise a delivery, jdBasic checks
+' the player's inventory against this NPC's expected_items list
+' (derived from other NPCs' quests with target_npc = this id).
+'
+' On a match the function:
+'   1. Removes the item from player inventory
+'   2. Moves the source quest from active -> completed
+'   3. Flags the giver's quest_completed
+'   4. Returns a canned thanks line for GDScript to show
+'
+' Returns "" if there's nothing to deliver here.
+EXPORT FUNC check_pending_delivery(id)
+    DIM s = npcs{id}
+    DIM other_ids = MAP.KEYS(npcs)
+    FOR i = 0 TO LEN(other_ids) - 1
+        DIM oid = other_ids[i]
+        DIM skip = FALSE
+        IF oid = id THEN skip = TRUE
+        DIM oq AS ARRAY = []
+        IF skip = FALSE THEN
+            oq = npcs{oid}{"quests"}
+            IF LEN(oq) = 0 THEN skip = TRUE
+        ENDIF
+        IF skip = FALSE THEN
+            IF MAP.EXISTS(oq[0], "target_npc") <> TRUE THEN skip = TRUE
+        ENDIF
+        IF skip = FALSE THEN
+            IF oq[0]{"target_npc"} <> id THEN skip = TRUE
+        ENDIF
+        IF skip = FALSE THEN
+            IF MAP.EXISTS(oq[0], "item_given") <> TRUE THEN skip = TRUE
+        ENDIF
+        DIM expected_item = ""
+        IF skip = FALSE THEN
+            expected_item = oq[0]{"item_given"}
+            IF LEN(expected_item) = 0 THEN skip = TRUE
+        ENDIF
+        IF skip = FALSE THEN
+            DIM inv = player_state{"inventory"}
+            DIM found_idx = -1
+            FOR j = 0 TO LEN(inv) - 1
+                IF inv[j]{"name"} = expected_item THEN
+                    found_idx = j
+                    EXITFOR
+                ENDIF
+            NEXT
+            IF found_idx >= 0 THEN
+                ' Strip the item out of inventory
+                DIM new_inv = []
+                FOR j = 0 TO LEN(inv) - 1
+                    IF j <> found_idx THEN new_inv = APPEND(new_inv, inv[j])
+                NEXT
+                player_state{"inventory"} = new_inv
+
+                ' Move source quest from active to completed
+                DIM quest_id = oq[0]{"id"}
+                DIM act = player_state{"active"}
+                DIM new_active = []
+                DIM completed_entry AS MAP = {}
+                DIM had_active = FALSE
+                FOR j = 0 TO LEN(act) - 1
+                    IF act[j]{"id"} = quest_id THEN
+                        completed_entry = act[j]
+                        had_active = TRUE
+                    ELSE
+                        new_active = APPEND(new_active, act[j])
+                    ENDIF
+                NEXT
+                IF had_active = TRUE THEN
+                    player_state{"active"} = new_active
+                    player_state{"completed"} = APPEND(player_state{"completed"}, completed_entry)
+                ENDIF
+
+                npcs{oid}{"quest_completed"} = TRUE
+                RETURN "*" + s{"name"} + " takes the " + expected_item + " from you with a small smile.* The " + expected_item + " from " + npcs{oid}{"name"} + " - thank you, traveler."
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN ""
+ENDFUNC
+
 ' ── Conversation API ──────────────────────────────────────────────
 ' GDScript calls these once the player presses E near an NPC. The
 ' conversation reuses the same single-LLM single-task slot as the
@@ -139,6 +376,18 @@ ENDFUNC
 ' continue_dialog has context for turn 2.
 EXPORT FUNC start_dialog(id)
     DIM s = npcs{id}
+    ' Code-driven delivery takes priority over any cached LLM greeting.
+    DIM thanks = check_pending_delivery(id)
+    IF LEN(thanks) > 0 THEN
+        npcs{id}{"dialog_cache"} = thanks
+        npcs{id}{"dialog_ready"} = TRUE
+        IF LEN(s{"history"}) = 0 THEN
+            npcs{id}{"history"} = npcs{id}{"name"} + ": " + thanks
+        ELSE
+            npcs{id}{"history"} = s{"history"} + CHR$(10) + npcs{id}{"name"} + ": " + thanks
+        ENDIF
+        RETURN thanks
+    ENDIF
     IF s{"dialog_ready"} <> TRUE THEN RETURN ""
     DIM greeting = s{"dialog_cache"}
     IF LEN(s{"history"}) = 0 THEN
@@ -164,6 +413,19 @@ EXPORT FUNC continue_dialog(id, player_msg)
     ENDIF
     DIM s = npcs{id}
     npcs{id}{"history"} = s{"history"} + CHR$(10) + "Player: " + player_msg
+
+    ' Code-driven delivery: if the player just handed something we
+    ' were expecting, skip the LLM and queue a canned thanks reply.
+    ' g_task = -1 is the sentinel for "synthetic; poll_reply returns
+    ' it instantly without going through THREAD.ISDONE/AWAIT".
+    DIM thanks = check_pending_delivery(id)
+    IF LEN(thanks) > 0 THEN
+        npcs{id}{"synthetic_reply"} = thanks
+        g_task = -1
+        g_task_npc = id
+        RETURN g_task
+    ENDIF
+
     DIM sys = build_sys(id)
     DIM convo = npcs{id}{"history"} + CHR$(10) + s{"name"} + ":"
     g_task = gen_dialog(g_llm, sys, convo)
@@ -176,8 +438,18 @@ ENDFUNC
 EXPORT FUNC poll_reply(id)
     IF g_task = 0 THEN RETURN ""
     IF g_task_npc <> id THEN RETURN ""
+    ' Synthetic delivery reply - no async task to await.
+    IF g_task = -1 THEN
+        DIM s_reply = npcs{id}{"synthetic_reply"}
+        npcs{id}{"history"} = npcs{id}{"history"} + CHR$(10) + npcs{id}{"name"} + ": " + s_reply
+        npcs{id}{"synthetic_reply"} = ""
+        g_task = 0
+        g_task_npc = ""
+        RETURN s_reply
+    ENDIF
     IF THREAD.ISDONE(g_task) THEN
-        DIM reply = AWAIT g_task
+        DIM raw = AWAIT g_task
+        DIM reply = clean_reply(id, raw)
         npcs{id}{"history"} = npcs{id}{"history"} + CHR$(10) + npcs{id}{"name"} + ": " + reply
         g_task = 0
         g_task_npc = ""

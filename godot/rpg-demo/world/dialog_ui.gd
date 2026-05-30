@@ -26,7 +26,7 @@ var vm: JDBasicVM
 var npc_id: String = ""
 var npc_name: String = ""
 var npc_color: Color = Color(0.85, 0.92, 1)
-var prev_mouse_mode: int = Input.MOUSE_MODE_CAPTURED
+var prev_mouse_mode: Input.MouseMode = Input.MOUSE_MODE_CAPTURED
 var awaiting_reply: bool = false
 
 func open(p_vm: JDBasicVM, p_npc_id: String, p_npc_name: String, p_color: Color) -> void:
@@ -54,7 +54,7 @@ func open(p_vm: JDBasicVM, p_npc_id: String, p_npc_name: String, p_color: Color)
 
 func _refresh_quest_row() -> void:
 	var offerable: Variant = vm.eval_expr('has_offerable_quest("%s")' % npc_id)
-	if offerable == true:
+	if offerable is bool and bool(offerable):
 		var desc: Variant = vm.eval_expr('npcs{"%s"}{"quests"}[0]{"description"}' % npc_id)
 		quest_text.text = "Quest: %s" % desc
 		quest_row.visible = true
@@ -63,7 +63,7 @@ func _refresh_quest_row() -> void:
 
 func _on_accept() -> void:
 	var res: Variant = vm.eval_expr('accept_quest("%s")' % npc_id)
-	if res == "accepted":
+	if res is String and str(res) == "accepted":
 		var desc: Variant = vm.eval_expr('player_state{"active"}[quest_count_active() - 1]{"description"}')
 		history_text.append_text("[color=#e0d090][i]Quest accepted: %s[/i][/color]\n\n" % desc)
 		print("[QUEST] Player accepted from %s: %s" % [npc_name, desc])
@@ -85,11 +85,16 @@ func _ready() -> void:
 	$Panel/CloseButton.pressed.connect(close)
 
 # _input fires before GUI controls get a crack at it, so we close
-# on the first Esc instead of having LineEdit eat it.
+# on the first Esc instead of having LineEdit eat it. Shift+Enter
+# accepts the offered quest without leaving the input line.
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		close()
-		get_viewport().set_input_as_handled()
+	if event is InputEventKey and event.pressed:
+		if event.keycode == KEY_ESCAPE:
+			close()
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_ENTER and event.shift_pressed and quest_row.visible:
+			_on_accept()
+			get_viewport().set_input_as_handled()
 
 func _process(_delta: float) -> void:
 	if not awaiting_reply or vm == null:
@@ -117,8 +122,37 @@ func _on_send() -> void:
 	send_button.disabled = true
 	awaiting_reply = true
 	_set_status("...thinking")
-	var escaped := text.replace("\\", "\\\\").replace("\"", "\\\"")
+	# jdBasic's inline-string lexer chokes on non-ASCII bytes inside
+	# eval_expr literals. Map common German umlauts to ASCII before
+	# the call; replace anything else non-ASCII with '?'.
+	var safe := _ascii_safe(text)
+	var escaped := safe.replace("\\", "\\\\").replace("\"", "\\\"")
 	vm.eval_expr('continue_dialog("%s", "%s")' % [npc_id, escaped])
+
+func _ascii_safe(s: String) -> String:
+	var out := ""
+	for i in s.length():
+		var c := s[i]
+		var code := c.unicode_at(0)
+		if code < 128:
+			out += c
+			continue
+		match c:
+			"ä": out += "ae"
+			"ö": out += "oe"
+			"ü": out += "ue"
+			"Ä": out += "Ae"
+			"Ö": out += "Oe"
+			"Ü": out += "Ue"
+			"ß": out += "ss"
+			"é", "è", "ê": out += "e"
+			"á", "à", "â": out += "a"
+			"í", "ì", "î": out += "i"
+			"ó", "ò", "ô": out += "o"
+			"ú", "ù", "û": out += "u"
+			"ñ": out += "n"
+			_:  out += "?"
+	return out
 
 func _append_npc(line: String) -> void:
 	# Phi-3 emits stage directions as *action text*. Convert to bold so

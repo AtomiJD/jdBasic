@@ -135,6 +135,16 @@ EXPORT FUNC inventory_field(idx, key)
     RETURN player_state{"inventory"}[idx]{key}
 ENDFUNC
 
+' Called from GDScript when a chest is opened - drops every loot
+' entry into the inventory tagged with the chest's label as source.
+EXPORT FUNC add_inventory_item(item_name, source)
+    DIM inv AS MAP = {}
+    inv{"name"} = item_name
+    inv{"source"} = source
+    player_state{"inventory"} = APPEND(player_state{"inventory"}, inv)
+    RETURN LEN(player_state{"inventory"})
+ENDFUNC
+
 ' Advance an NPC by dt seconds. ground_y is the terrain height at the
 ' NPC's current xz - GDScript reads that from terrain.sample_height
 ' and passes it in so the brain doesn't need to know about the world.
