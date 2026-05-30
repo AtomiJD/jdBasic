@@ -5,6 +5,7 @@ extends CharacterBody3D
 # usable when we run from F5.
 
 const PLAYER_GLB := "res://assets/characters/Rogue_Hooded.glb"
+const AnimLoader := preload("res://world/anim_loader.gd")
 
 @export var walk_speed: float = 5.0
 @export var run_speed: float = 9.0
@@ -21,6 +22,11 @@ const PLAYER_GLB := "res://assets/characters/Rogue_Hooded.glb"
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var mouse_captured: bool = false
 var character_yaw: float = 0.0
+var anim_player: AnimationPlayer = null
+var anim_idle: String = ""
+var anim_walk: String = ""
+var anim_run: String = ""
+var current_anim: String = ""
 
 func _ready() -> void:
 	_load_character()
@@ -33,6 +39,13 @@ func _load_character() -> void:
 		return
 	var inst: Node3D = scene.instantiate()
 	visual.add_child(inst)
+	anim_player = AnimLoader.attach_to(inst)
+	anim_idle = AnimLoader.best_name("Idle")
+	anim_walk = AnimLoader.best_name("Walk")
+	anim_run  = AnimLoader.best_name("Run")
+	print("[player] anims resolved: idle=%s walk=%s run=%s (ap=%s)"
+		% [anim_idle, anim_walk, anim_run, anim_player])
+	_play(anim_idle)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("mouse_capture_toggle"):
@@ -72,6 +85,24 @@ func _physics_process(delta: float) -> void:
 		visual.rotation.y = character_yaw
 
 	move_and_slide()
+
+	if anim_player != null:
+		var ground_speed := Vector2(velocity.x, velocity.z).length()
+		if ground_speed < 0.3:
+			_play(anim_idle)
+		elif ground_speed > (run_speed - 1.0):
+			_play(anim_run if anim_run != "" else anim_walk)
+		else:
+			_play(anim_walk)
+
+func _play(name: String) -> void:
+	if name == "" or anim_player == null:
+		return
+	if current_anim == name:
+		return
+	# 0.2s crossfade so the player doesn't snap between idle / walk / run.
+	anim_player.play(name, 0.2)
+	current_anim = name
 
 func _capture_mouse(capture: bool) -> void:
 	mouse_captured = capture

@@ -9,6 +9,14 @@
 
 EXPORT DIM npcs AS MAP = {}
 
+' Player-side state: quests in flight, completed, plus inventory. The
+' jdBasic side is the single source of truth; GDScript queries it
+' through small expression-eval calls when the Q/I panels open.
+EXPORT DIM player_state AS MAP = {}
+player_state{"active"}    = []
+player_state{"completed"} = []
+player_state{"inventory"} = []
+
 ' Initialise an NPC from a JSON record. Returns the state map for
 ' callers that want to peek at it.
 EXPORT FUNC npc_init(id, data)
@@ -32,8 +40,99 @@ EXPORT FUNC npc_init(id, data)
     s{"quests"} = data{"quests"}
     s{"dialog_cache"} = ""
     s{"dialog_ready"} = FALSE
+    s{"history"} = ""
+    s{"color"} = data{"color"}
+    s{"quest_offered"} = FALSE
+    s{"quest_completed"} = FALSE
     npcs{id} = s
     RETURN s
+ENDFUNC
+
+' ── Quest / inventory API (called from GDScript) ───────────────────
+
+EXPORT FUNC has_offerable_quest(id)
+    DIM s = npcs{id}
+    IF LEN(s{"quests"}) = 0 THEN RETURN FALSE
+    IF s{"quest_offered"} = TRUE THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
+' Player accepted a quest from this NPC. Marks it offered, pushes it
+' onto active list, hands over item_given if the NPC's quest has one.
+' Returns a short status string GDScript can show in the dialog log.
+EXPORT FUNC accept_quest(id)
+    DIM s = npcs{id}
+    IF LEN(s{"quests"}) = 0 THEN RETURN "no quest"
+    IF s{"quest_offered"} = TRUE THEN RETURN "already offered"
+    DIM q = s{"quests"}[0]
+    DIM entry AS MAP = {}
+    entry{"id"} = q{"id"}
+    entry{"giver"} = id
+    entry{"giver_name"} = s{"name"}
+    entry{"description"} = q{"description"}
+    entry{"reward"} = q{"reward"}
+    player_state{"active"} = APPEND(player_state{"active"}, entry)
+    npcs{id}{"quest_offered"} = TRUE
+    ' Seed the LLM history so the NPC's next reply knows the player
+    ' said yes - otherwise Phi-3 will keep re-offering or get confused.
+    npcs{id}{"history"} = s{"history"} + CHR$(10) + "Player: I accept your quest."
+    DIM item = ""
+    DIM has_item = MAP.EXISTS(q, "item_given")
+    IF has_item = TRUE THEN
+        item = q{"item_given"}
+        IF LEN(item) > 0 THEN
+            DIM inv AS MAP = {}
+            inv{"name"} = item
+            inv{"source"} = s{"name"}
+            player_state{"inventory"} = APPEND(player_state{"inventory"}, inv)
+            npcs{id}{"history"} = npcs{id}{"history"} + " (You hand over the " + item + ".)"
+        ENDIF
+    ENDIF
+    RETURN "accepted"
+ENDFUNC
+
+' Mark a quest as completed (called from the quest panel's "Complete"
+' button - in a full RPG this would be auto-detected). Moves the
+' entry from active to completed.
+EXPORT FUNC complete_quest_by_idx(idx)
+    DIM act = player_state{"active"}
+    IF idx < 0 ORELSE idx >= LEN(act) THEN RETURN "bad idx"
+    DIM entry = act[idx]
+    player_state{"completed"} = APPEND(player_state{"completed"}, entry)
+    DIM new_active = []
+    FOR i = 0 TO LEN(act) - 1
+        IF i <> idx THEN new_active = APPEND(new_active, act[i])
+    NEXT
+    player_state{"active"} = new_active
+    DIM gid = entry{"giver"}
+    npcs{gid}{"quest_completed"} = TRUE
+    RETURN "completed"
+ENDFUNC
+
+EXPORT FUNC quest_count_active()
+    RETURN LEN(player_state{"active"})
+ENDFUNC
+
+EXPORT FUNC quest_count_completed()
+    RETURN LEN(player_state{"completed"})
+ENDFUNC
+
+EXPORT FUNC inventory_count()
+    RETURN LEN(player_state{"inventory"})
+ENDFUNC
+
+' GDScript-friendly accessors: return one entry's display fields by
+' index. Keeps marshalling simple - no nested-MAP roundtrips.
+EXPORT FUNC active_quest_field(idx, key)
+    RETURN player_state{"active"}[idx]{key}
+ENDFUNC
+
+EXPORT FUNC completed_quest_field(idx, key)
+    RETURN player_state{"completed"}[idx]{key}
+ENDFUNC
+
+EXPORT FUNC inventory_field(idx, key)
+    RETURN player_state{"inventory"}[idx]{key}
 ENDFUNC
 
 ' Advance an NPC by dt seconds. ground_y is the terrain height at the

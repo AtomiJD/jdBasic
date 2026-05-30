@@ -7,9 +7,12 @@ const NPCS_JSON     := "res://assets/data/npcs.json"
 const NPC_BRAIN     := "res://world/npc_brain.jdb"
 const DIALOG_BRAIN  := "res://world/dialog_brain.jdb"
 const NPC_SCENE     := preload("res://world/npc.tscn")
+const DIALOG_UI     := preload("res://world/dialog_ui.tscn")
+const JOURNAL_PANEL := preload("res://world/journal_panel.tscn")
 
 @export var model_path: String = "D:/usr/dev/cc/models/Phi-3-mini-4k-instruct-q4.gguf"
 @export var prefetch_radius: float = 30.0
+@export var talk_radius: float = 3.5
 
 @onready var terrain: Node3D = $Terrain
 @onready var player:  Node3D = $Player
@@ -22,6 +25,12 @@ var _last_busy: String = ""
 var _ready_ids: Dictionary = {}
 var _frame_count: int = 0
 
+var talk_hint: CanvasLayer
+var talk_hint_label: Label
+var nearest_talkable: Node = null
+var dialog_ui: CanvasLayer = null
+var journal_panel: CanvasLayer = null
+
 func _ready() -> void:
 	# Wait one frame so Terrain._ready has populated the heightmap.
 	await get_tree().process_frame
@@ -31,6 +40,7 @@ func _ready() -> void:
 	_boot_brain()
 	_spawn_npcs()
 	_boot_llm()
+	_build_talk_hint()
 
 func _boot_brain() -> void:
 	vm = JDBasicVM.new()
@@ -110,6 +120,7 @@ func _spawn_npcs() -> void:
 		npc.npc_id         = entry.get("id", "")
 		npc.character_type = entry.get("character", "Knight")
 		npc.display_name   = entry.get("name", "")
+		npc.tint           = Color(entry.get("color", "#ffffff"))
 		add_child(npc)
 		var spawn: Array = entry.get("spawn", [0.0, 0.0, 0.0])
 		var sx := float(spawn[0])
@@ -120,9 +131,74 @@ func _spawn_npcs() -> void:
 		npc_by_id[npc.npc_id] = npc
 		print("[world] spawned %s (%s) at %s" % [npc.display_name, npc.character_type, npc.global_position])
 
+func _build_talk_hint() -> void:
+	talk_hint = CanvasLayer.new()
+	talk_hint.layer = 5
+	add_child(talk_hint)
+	talk_hint_label = Label.new()
+	talk_hint_label.text = ""
+	talk_hint_label.add_theme_font_size_override("font_size", 20)
+	talk_hint_label.add_theme_color_override("font_color", Color(1, 1, 1))
+	talk_hint_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	talk_hint_label.add_theme_constant_override("outline_size", 6)
+	talk_hint_label.anchor_left = 0.5
+	talk_hint_label.anchor_right = 0.5
+	talk_hint_label.anchor_top = 0.85
+	talk_hint_label.anchor_bottom = 0.85
+	talk_hint_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	talk_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	talk_hint.add_child(talk_hint_label)
+
+func _update_talk_hint() -> void:
+	if dialog_ui != null:
+		talk_hint_label.text = ""
+		nearest_talkable = null
+		return
+	var ppos := player.global_position
+	var best: Node = null
+	var best_d2 := talk_radius * talk_radius
+	for npc in npc_bodies:
+		var d := npc.global_position - ppos
+		var d2 := d.x * d.x + d.z * d.z
+		if d2 < best_d2:
+			best_d2 = d2
+			best = npc
+	nearest_talkable = best
+	if best != null:
+		talk_hint_label.text = "[E] Talk to %s" % best.display_name
+	else:
+		talk_hint_label.text = ""
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("talk") and nearest_talkable != null and dialog_ui == null and journal_panel == null:
+		_open_dialog(nearest_talkable)
+	elif event.is_action_pressed("open_quests") and dialog_ui == null and journal_panel == null:
+		_open_journal(0)
+	elif event.is_action_pressed("open_inventory") and dialog_ui == null and journal_panel == null:
+		_open_journal(1)
+
+func _open_dialog(npc: Node) -> void:
+	dialog_ui = DIALOG_UI.instantiate()
+	add_child(dialog_ui)
+	dialog_ui.closed.connect(_on_dialog_closed)
+	dialog_ui.open(vm, npc.npc_id, npc.display_name, npc.tint)
+
+func _on_dialog_closed() -> void:
+	dialog_ui = null
+
+func _open_journal(initial_tab: int) -> void:
+	journal_panel = JOURNAL_PANEL.instantiate()
+	add_child(journal_panel)
+	journal_panel.closed.connect(_on_journal_closed)
+	journal_panel.open(vm, initial_tab)
+
+func _on_journal_closed() -> void:
+	journal_panel = null
+
 func _physics_process(delta: float) -> void:
 	if vm == null:
 		return
+	_update_talk_hint()
 	for npc in npc_bodies:
 		var pos := npc.global_position
 		var ground_y := (terrain as Node).call("sample_height", pos.x, pos.z) as float
@@ -130,8 +206,14 @@ func _physics_process(delta: float) -> void:
 			% [npc.npc_id, delta, ground_y])
 		if not (result is PackedFloat64Array) or result.size() < 4:
 			continue
-		npc.global_position = Vector3(result[0], result[1], result[2])
+		var new_pos := Vector3(result[0], result[1], result[2])
+		# Idle/Walk decision: did we actually move on the xz plane?
+		var dx := new_pos.x - pos.x
+		var dz := new_pos.z - pos.z
+		var moved := (dx * dx + dz * dz) > 0.0001
+		npc.global_position = new_pos
 		(npc.get_node("Visual") as Node3D).rotation.y = result[3]
+		npc.set_moving(moved)
 
 	if llm_ready:
 		var ppos := player.global_position

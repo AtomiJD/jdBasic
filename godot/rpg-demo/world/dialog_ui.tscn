@@ -1,0 +1,95 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://world/dialog_ui.gd" id="1_dlg"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.07, 0.08, 0.1, 0.92)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.4, 0.5, 0.7, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[node name="DialogUI" type="CanvasLayer"]
+layer = 10
+script = ExtResource("1_dlg")
+
+[node name="Panel" type="PanelContainer" parent="."]
+anchors_preset = 12
+anchor_top = 0.55
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = 0.0
+offset_right = -32.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="VBox" type="VBoxContainer" parent="Panel"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="NameLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+text = "NPC Name"
+theme_override_font_sizes/font_size = 22
+theme_override_colors/font_color = Color(0.85, 0.92, 1, 1)
+
+[node name="History" type="RichTextLabel" parent="Panel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = false
+scroll_active = true
+scroll_following = true
+
+[node name="QuestRow" type="HBoxContainer" parent="Panel/VBox"]
+layout_mode = 2
+visible = false
+
+[node name="QuestText" type="Label" parent="Panel/VBox/QuestRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ""
+autowrap_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.85, 0.55, 1)
+
+[node name="AcceptButton" type="Button" parent="Panel/VBox/QuestRow"]
+layout_mode = 2
+text = "Accept Quest"
+
+[node name="StatusLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+text = ""
+theme_override_colors/font_color = Color(0.8, 0.75, 0.5, 1)
+theme_override_font_sizes/font_size = 14
+
+[node name="InputRow" type="HBoxContainer" parent="Panel/VBox"]
+layout_mode = 2
+
+[node name="Input" type="LineEdit" parent="Panel/VBox/InputRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Type your reply, Enter to send"
+
+[node name="Send" type="Button" parent="Panel/VBox/InputRow"]
+layout_mode = 2
+text = "Send"
+
+[node name="CloseButton" type="Button" parent="Panel"]
+layout_mode = 2
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -36.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = 36.0
+grow_horizontal = 0
+text = "X"

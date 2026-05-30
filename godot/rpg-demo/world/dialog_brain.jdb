@@ -126,3 +126,62 @@ ENDFUNC
 EXPORT FUNC busy_for()
     RETURN g_task_npc
 ENDFUNC
+
+' ── Conversation API ──────────────────────────────────────────────
+' GDScript calls these once the player presses E near an NPC. The
+' conversation reuses the same single-LLM single-task slot as the
+' prefetch loop - so if a prefetch is in flight, the player has to
+' wait until it lands before their reply gets generated.
+
+' Open a conversation. Returns the cached greeting if ready, "" if
+' the prefetch hasn't landed yet (UI shows a spinner in that case).
+' Also seeds the per-NPC history string with the greeting so
+' continue_dialog has context for turn 2.
+EXPORT FUNC start_dialog(id)
+    DIM s = npcs{id}
+    IF s{"dialog_ready"} <> TRUE THEN RETURN ""
+    DIM greeting = s{"dialog_cache"}
+    IF LEN(s{"history"}) = 0 THEN
+        npcs{id}{"history"} = s{"name"} + ": " + greeting
+    ENDIF
+    RETURN greeting
+ENDFUNC
+
+' Send a player message. Spawns an ASYNC task that generates the next
+' NPC reply with the full conversation history as context. Returns
+' the task_id - GDScript polls via dialog_reply_ready / dialog_reply.
+EXPORT FUNC continue_dialog(id, player_msg)
+    IF g_task <> 0 THEN
+        ' Wait for any in-flight prefetch to land first - cheap because
+        ' single-task slot guarantees the model isn't being hammered.
+        DIM stale_reply = AWAIT g_task
+        IF g_task_npc <> "" THEN
+            npcs{g_task_npc}{"dialog_cache"} = stale_reply
+            npcs{g_task_npc}{"dialog_ready"} = TRUE
+        ENDIF
+        g_task = 0
+        g_task_npc = ""
+    ENDIF
+    DIM s = npcs{id}
+    npcs{id}{"history"} = s{"history"} + CHR$(10) + "Player: " + player_msg
+    DIM sys = build_sys(id)
+    DIM convo = npcs{id}{"history"} + CHR$(10) + s{"name"} + ":"
+    g_task = gen_dialog(g_llm, sys, convo)
+    g_task_npc = id
+    RETURN g_task
+ENDFUNC
+
+' Poll for the active conversation reply. Returns the text and clears
+' the task slot when ready; returns "" if still generating.
+EXPORT FUNC poll_reply(id)
+    IF g_task = 0 THEN RETURN ""
+    IF g_task_npc <> id THEN RETURN ""
+    IF THREAD.ISDONE(g_task) THEN
+        DIM reply = AWAIT g_task
+        npcs{id}{"history"} = npcs{id}{"history"} + CHR$(10) + npcs{id}{"name"} + ": " + reply
+        g_task = 0
+        g_task_npc = ""
+        RETURN reply
+    ENDIF
+    RETURN ""
+ENDFUNC
