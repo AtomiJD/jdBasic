@@ -14,16 +14,18 @@ const JOURNAL_PANEL := preload("res://world/journal_panel.tscn")
 const ScatterScript := preload("res://world/scatter.gd")
 const ChestScript   := preload("res://world/chest.gd")
 
-@export var model_path: String = "D:/usr/dev/cc/models/Phi-3-mini-4k-instruct-q4.gguf"
+@export var model_path: String = "D:/usr/dev/cc/models/qwen2.5-7b-instruct-q4_k_m.gguf"
 @export var prefetch_radius: float = 30.0
 @export var talk_radius: float = 3.5
 @export var chest_radius: float = 2.5
 
 # Day/Night cycle. time_of_day is 0..1 where 0=midnight, 0.25=sunrise,
 # 0.5=noon, 0.75=sunset. day_seconds is the wall-clock duration of one
-# full cycle - 180s makes the demo show a complete day in 3 minutes.
+# full cycle. day_night_ratio biases the cycle so daylight stretches
+# longer than night (3.0 = 3:1, summer-feel; 1.0 = equinox).
 @export_range(0.0, 1.0, 0.001) var time_of_day: float = 0.35
 @export_range(30.0, 1800.0, 1.0) var day_seconds: float = 180.0
+@export_range(0.5, 5.0, 0.1) var day_night_ratio: float = 3.0
 
 const NIGHT_TOP    := Color(0.02, 0.03, 0.10)
 const DAY_TOP      := Color(0.35, 0.55, 0.85)
@@ -39,6 +41,7 @@ const DAY_AMBIENT   := Color(0.60, 0.70, 0.85)
 @onready var world_env: WorldEnvironment = $WorldEnvironment
 
 var time_label: Label = null
+var compass_label: Label = null
 var sky_material: ProceduralSkyMaterial
 var quest_hud: VBoxContainer = null
 var _last_quest_signature: String = ""
@@ -72,6 +75,7 @@ func _ready() -> void:
 	_boot_llm()
 	_build_talk_hint()
 	_build_time_hud()
+	_build_compass_hud()
 	_build_quest_hud()
 	_refresh_npc_quest_badges()
 	sky_material = world_env.environment.sky.sky_material as ProceduralSkyMaterial
@@ -114,36 +118,65 @@ func _boot_llm() -> void:
 		return
 
 	var has_llm: Variant = vm.eval_expr('OS.FEATURE("LLM")')
-	print("[llm] OS.FEATURE(\"LLM\") = ", has_llm)
 	if has_llm != true:
 		push_error("jdbrt.dll was built without LLM support - prefetch disabled")
 		return
 
-	# Try GPU first; if it fails, fall back to CPU so we can at least
-	# see if the model file itself is readable. Either path is fine for
-	# a demo - Phi-3 Q4 on CPU does ~10 tok/s, still usable for
-	# prefetched greetings.
-	print("[llm] === GPU attempt (n_gpu_layers=99) ===")
+	# Show a splash so the GPU model-load (5-30s on first launch,
+	# depending on disk cache + model size) doesn't look like a hang.
+	var splash := _make_splash("Loading %s ..." % model_path.get_file())
+	await get_tree().process_frame   # let the splash render before we block
+
 	var path := model_path.replace("\\", "/")
 	var t0 := Time.get_ticks_msec()
 	var output := vm.eval('PRINT "id="; dialog_init_with("%s", 99)\n' % path)
 	var dt := Time.get_ticks_msec() - t0
-	print("[llm] GPU eval took ", dt, " ms, output: ", output.strip_edges())
+	print("[llm] GPU load took %s ms, output: %s" % [dt, output.strip_edges()])
 
 	if vm.eval_expr('g_llm') == 0:
-		print("[llm] === GPU failed, trying CPU (n_gpu_layers=0) ===")
+		(splash.get_child(0).get_child(0) as Label).text = "GPU failed, retrying on CPU..."
+		await get_tree().process_frame
 		t0 = Time.get_ticks_msec()
 		output = vm.eval('PRINT "id="; dialog_init_with("%s", 0)\n' % path)
 		dt = Time.get_ticks_msec() - t0
-		print("[llm] CPU eval took ", dt, " ms, output: ", output.strip_edges())
+		print("[llm] CPU load took %s ms, output: %s" % [dt, output.strip_edges()])
+
+	splash.queue_free()
 
 	var verify: Variant = vm.eval_expr('g_llm')
-	print("[llm] g_llm after init = ", verify, " (type=", typeof(verify), ")")
 	if typeof(verify) == TYPE_INT and int(verify) > 0:
 		llm_ready = true
 	elif typeof(verify) == TYPE_FLOAT and float(verify) > 0.0:
 		llm_ready = true
-	print("[llm] llm_ready = ", llm_ready)
+	print("[llm] ready=%s (g_llm=%s)" % [llm_ready, verify])
+
+func _make_splash(text: String) -> CanvasLayer:
+	var layer := CanvasLayer.new()
+	layer.layer = 50
+	add_child(layer)
+	var bg := ColorRect.new()
+	bg.color = Color(0.05, 0.07, 0.1, 0.92)
+	bg.anchor_right = 1.0
+	bg.anchor_bottom = 1.0
+	layer.add_child(bg)
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 32)
+	lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	lbl.add_theme_constant_override("outline_size", 6)
+	lbl.anchor_left = 0.5
+	lbl.anchor_right = 0.5
+	lbl.anchor_top = 0.5
+	lbl.anchor_bottom = 0.5
+	lbl.offset_left = -500
+	lbl.offset_right = 500
+	lbl.offset_top = -40
+	lbl.offset_bottom = 40
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bg.add_child(lbl)
+	return layer
 
 func _spawn_npcs() -> void:
 	# Read the same file on the GDScript side so we know which
@@ -295,6 +328,26 @@ func _compute_quest_signature() -> String:
 		parts.append("%s:%s/%s" % [npc.npc_id, str(off), str(done)])
 	return "|".join(parts)
 
+func _build_compass_hud() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 4
+	add_child(layer)
+	compass_label = Label.new()
+	compass_label.add_theme_font_size_override("font_size", 28)
+	compass_label.add_theme_color_override("font_color", Color(1, 1, 1))
+	compass_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	compass_label.add_theme_constant_override("outline_size", 6)
+	compass_label.anchor_left = 0.5
+	compass_label.anchor_right = 0.5
+	compass_label.anchor_top = 0.0
+	compass_label.anchor_bottom = 0.0
+	compass_label.offset_left = -120
+	compass_label.offset_right = 120
+	compass_label.offset_top = 12
+	compass_label.offset_bottom = 50
+	compass_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	layer.add_child(compass_label)
+
 func _build_time_hud() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 4
@@ -438,8 +491,51 @@ func _on_journal_closed() -> void:
 
 func _process(delta: float) -> void:
 	if day_seconds > 0.0:
-		time_of_day = fposmod(time_of_day + delta / day_seconds, 1.0)
+		# Bias the per-second advance so day:night spans day_night_ratio:1
+		# of wall-clock. The two halves of the cycle each cover 0.5 of
+		# time_of_day, so we slow the day half and speed up the night
+		# half such that the totals add up to one day_seconds.
+		var elevation := -cos(time_of_day * TAU)
+		var sum_weight := day_night_ratio + 1.0
+		var multiplier := (2.0 / sum_weight) if elevation > 0.0 \
+			else (2.0 * day_night_ratio / sum_weight)
+		time_of_day = fposmod(time_of_day + delta * multiplier / day_seconds, 1.0)
 		_apply_time_of_day()
+	if compass_label != null:
+		_update_compass()
+
+func _update_compass() -> void:
+	# Compass reads the camera's forward direction so the player sees
+	# where they are LOOKING, not where the body is facing. Spring-arm
+	# camera lives at YawPivot under the player.
+	var yaw_pivot: Node3D = player.get_node("YawPivot") as Node3D
+	if yaw_pivot == null:
+		return
+	# Camera forward in world space is -Z of YawPivot's basis.
+	var fwd := -yaw_pivot.global_transform.basis.z
+	var angle := atan2(fwd.x, -fwd.z)   # 0=N (-Z), PI/2=E (+X)
+	if angle < 0.0:
+		angle += TAU
+	var deg := rad_to_deg(angle)
+	# 8-way compass
+	var label := "N"
+	if deg < 22.5 or deg >= 337.5:
+		label = "N"
+	elif deg < 67.5:
+		label = "NE"
+	elif deg < 112.5:
+		label = "E"
+	elif deg < 157.5:
+		label = "SE"
+	elif deg < 202.5:
+		label = "S"
+	elif deg < 247.5:
+		label = "SW"
+	elif deg < 292.5:
+		label = "W"
+	else:
+		label = "NW"
+	compass_label.text = "%s  %d°" % [label, int(deg)]
 
 func _physics_process(delta: float) -> void:
 	if vm == null:

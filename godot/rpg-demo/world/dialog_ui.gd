@@ -78,7 +78,9 @@ func close() -> void:
 
 func _ready() -> void:
 	action_re = RegEx.new()
-	action_re.compile("\\*([^*]+)\\*")
+	# Stage directions come in two flavours: *like this* (Phi-3) and
+	# |like this| (Qwen) - both get rendered bold.
+	action_re.compile("\\*([^*]+)\\*|\\|([^|]+)\\|")
 	send_button.pressed.connect(_on_send)
 	input_line.text_submitted.connect(func(_t): _on_send())
 	accept_button.pressed.connect(_on_accept)
@@ -155,10 +157,10 @@ func _ascii_safe(s: String) -> String:
 	return out
 
 func _append_npc(line: String) -> void:
-	# Phi-3 emits stage directions as *action text*. Convert to bold so
-	# they read as action vs spoken text. Also colourise the NPC name
-	# with the per-character color from npcs.json.
-	var formatted := action_re.sub(line, "[b]$1[/b]", true)
+	# Stage directions come as *...* (Phi-3) or |...| (Qwen). Convert
+	# either to bold so they read as action vs spoken text. Also
+	# colourise the NPC name with the per-character color.
+	var formatted := action_re.sub(line, "[b]$1$2[/b]", true)
 	var hex := "#%02x%02x%02x" % [int(npc_color.r * 255), int(npc_color.g * 255), int(npc_color.b * 255)]
 	history_text.append_text("[color=%s][b]%s:[/b][/color] %s\n\n" % [hex, npc_name, formatted])
 

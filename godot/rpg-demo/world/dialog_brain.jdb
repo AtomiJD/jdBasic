@@ -194,8 +194,11 @@ FUNC clean_reply(id, raw)
             IF LEN(r) > 0 ANDALSO LEFT$(r, 1) = " " THEN r = MID$(r, 2)
         ENDIF
     NEXT
-    ' Trim trailing whitespace / newlines
-    DO WHILE LEN(r) > 0 ANDALSO (RIGHT$(r, 1) = CHR$(10) ORELSE RIGHT$(r, 1) = " ")
+    ' Trim trailing whitespace / newlines / chat-template artefacts.
+    ' Qwen's "<|im_end|>" template sometimes bleeds through as "_|" or
+    ' "|" trailing junk; strip that before the whitespace pass.
+    IF LEN(r) >= 2 ANDALSO RIGHT$(r, 2) = "_|" THEN r = LEFT$(r, LEN(r) - 2)
+    DO WHILE LEN(r) > 0 ANDALSO (RIGHT$(r, 1) = CHR$(10) ORELSE RIGHT$(r, 1) = " " ORELSE RIGHT$(r, 1) = "|")
         r = LEFT$(r, LEN(r) - 1)
     LOOP
     ' If Phi-3 prefixed its line with "Maelyn:" itself, strip that.

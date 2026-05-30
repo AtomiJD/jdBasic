@@ -121,10 +121,22 @@ func _place_bush(terrain: Node3D, cx: float, cz: float, cell: float) -> void:
 		return
 	var scene: PackedScene = bush_scenes[randi() % bush_scenes.size()]
 	var inst: Node3D = scene.instantiate()
-	add_child(inst)
+	# Wrap in a small StaticBody so the player and NPCs can push bushes
+	# aside instead of walking through them. Cylinder fits the foliage
+	# silhouette better than a box.
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var cyl := CylinderShape3D.new()
+	cyl.radius = 0.35
+	cyl.height = 0.7
+	shape.shape = cyl
+	shape.position = Vector3(0, 0.35, 0)
+	body.add_child(shape)
+	body.add_child(inst)
+	add_child(body)
 	var ground := (terrain as Node).call("sample_height", wx, wz) as float
-	inst.global_position = Vector3(wx, ground, wz)
-	inst.rotation.y = randf() * TAU
+	body.global_position = Vector3(wx, ground, wz)
+	body.rotation.y = randf() * TAU
 
 func _too_close_to_npc(wx: float, wz: float) -> bool:
 	var r2 := npc_clear_radius * npc_clear_radius
