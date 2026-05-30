@@ -14,6 +14,18 @@
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
+#include "ai.h"
+#include "llm.h"
+
+// Defined in llm.cpp; we populate it on Windows so explicit backend
+// loads can find ggml-*.dll next to our jdbrt runtime.
+extern std::string g_jdb_embed_dll_dir;
+
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -97,6 +109,13 @@ void setup(JdbEmbedImpl* e) {
             return ex.what();
         }
     };
+
+    // Optional module-natives. Same conditional registration the standalone
+    // bridge does in vm_bridge.cpp - embed hosts that built with LLM/HTTP/
+    // GFX flags get those surfaces too. Functions live at global scope so
+    // we use ::-qualified names to escape the anonymous namespace.
+    ::register_ai_builtins(e->vm);
+    ::register_llm_builtins(e->vm);
 }
 
 char* dup_cstr(const std::string& s) {
@@ -111,7 +130,79 @@ char* dup_cstr(const std::string& s) {
 
 extern "C" {
 
+#ifdef _WIN32
+// When jdbrt.dll lives in an unusual location (Godot addon, plugin folder,
+// etc.) and the host process (Godot.exe) doesn't add it to the DLL search
+// path, secondary loads like ggml_backend_load_all() find no backends and
+// AI.LOAD_LLM fails silently. Resolve our own .dll location and pin it
+// as an extra search directory the first time jdb_embed_init runs.
+static void register_self_dll_dir(void) {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCSTR)&register_self_dll_dir, &self) || !self) {
+        return;
+    }
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(self, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    for (DWORD i = n; i > 0; --i) {
+        if (buf[i - 1] == L'\\' || buf[i - 1] == L'/') {
+            buf[i - 1] = L'\0';
+            break;
+        }
+    }
+    // SetDllDirectoryW affects plain LoadLibrary calls process-wide, which
+    // is what ggml's backend scanner uses. AddDllDirectory only helps if
+    // the caller passes LOAD_LIBRARY_SEARCH_USER_DIRS, which ggml doesn't.
+    SetDllDirectoryW(buf);
+
+    // Belt + braces: prepend our directory to PATH so even DLLs loaded
+    // by indirect dependency chains (CUDA -> ggml-cuda -> cublas) can
+    // find their siblings.
+    wchar_t* current_path = nullptr;
+    size_t path_size = 0;
+    _wdupenv_s(&current_path, &path_size, L"PATH");
+    std::wstring new_path = std::wstring(buf) + L";";
+    if (current_path) {
+        new_path += current_path;
+        free(current_path);
+    }
+    _wputenv_s(L"PATH", new_path.c_str());
+
+    // Pre-load the LLM backend chain by full path so subsequent ggml
+    // backend scans see them as already-loaded modules.
+    auto preload = [&](const wchar_t* name) {
+        std::wstring full = std::wstring(buf) + L"\\" + name;
+        LoadLibraryW(full.c_str());
+    };
+    preload(L"cudart64_12.dll");
+    preload(L"cublasLt64_12.dll");
+    preload(L"cublas64_12.dll");
+    preload(L"ggml-base.dll");
+    preload(L"ggml.dll");
+    preload(L"ggml-cuda.dll");
+    preload(L"llama.dll");
+
+    // Hand the directory to llm.cpp so its ensure_backend() can call
+    // ggml_backend_load() explicitly when load_all comes up empty.
+    int len = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+    if (len > 0) {
+        std::string utf8(len - 1, 0);
+        WideCharToMultiByte(CP_UTF8, 0, buf, -1, utf8.data(), len, nullptr, nullptr);
+        ::g_jdb_embed_dll_dir = utf8;
+    }
+}
+#endif
+
 JDB_EMBED_API JdbEmbed* jdb_embed_init(void) {
+#ifdef _WIN32
+    register_self_dll_dir();
+#endif
     auto* e = new (std::nothrow) JdbEmbedImpl();
     if (!e) return nullptr;
     setup(e);

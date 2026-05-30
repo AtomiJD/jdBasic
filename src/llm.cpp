@@ -716,15 +716,51 @@ static LlmModel* rag_lookup_llm(int id) {
     return (it == g_llms.end()) ? nullptr : it->second.get();
 }
 static bool g_llama_backend_init = false;
+static std::string g_llama_log_buf;
+
+// Embed hosts (Godot, etc.) live in a directory the Windows DLL loader
+// doesn't search by default. We let jdb_embed_api.cpp drop the runtime
+// dll's directory in here, and ensure_backend() then walks it for
+// ggml-*.dll entries via ggml_backend_load() so we don't depend on
+// ggml_backend_load_all()'s implicit EXE-dir scan.
+std::string g_jdb_embed_dll_dir;
+
+// Capture llama / ggml log lines so they show up in jdBasic stdout
+// instead of vanishing into the host process's stderr (which Godot's
+// editor console doesn't show for plugin-side prints).
+static void llama_log_cb(ggml_log_level level, const char* text, void* /*ud*/) {
+    if (!text) return;
+    g_llama_log_buf += text;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────
 
 static void ensure_backend() {
-    if (!g_llama_backend_init) {
-        ggml_backend_load_all();
-        llama_backend_init();
-        g_llama_backend_init = true;
+    if (g_llama_backend_init) return;
+    llama_log_set(llama_log_cb, nullptr);
+    ggml_backend_load_all();
+
+    // Embed fallback: if load_all came up empty (host process directory
+    // doesn't have the backend DLLs), explicitly load each ggml-*.dll
+    // from the directory jdb_embed_api.cpp gave us.
+    if (ggml_backend_reg_count() == 0 && !g_jdb_embed_dll_dir.empty()) {
+        const char* names[] = {
+            "ggml-cpu-alderlake.dll", "ggml-cpu-haswell.dll",
+            "ggml-cpu-icelake.dll", "ggml-cpu-skylakex.dll",
+            "ggml-cpu-sandybridge.dll", "ggml-cpu-sapphirerapids.dll",
+            "ggml-cpu-cascadelake.dll", "ggml-cpu-cooperlake.dll",
+            "ggml-cpu-cannonlake.dll", "ggml-cpu-zen4.dll",
+            "ggml-cpu-piledriver.dll", "ggml-cpu-ivybridge.dll",
+            "ggml-cpu-sse42.dll", "ggml-cpu-x64.dll",
+            "ggml-cuda.dll",
+        };
+        for (const char* n : names) {
+            std::string full = g_jdb_embed_dll_dir + "\\" + n;
+            ggml_backend_load(full.c_str());
+        }
     }
+    llama_backend_init();
+    g_llama_backend_init = true;
 }
 
 static LlmModel* get_llm(int id) {
@@ -974,9 +1010,25 @@ void register_llm_builtins(VM& vm) {
         mparams.n_gpu_layers = n_gpu;
 
         std::cerr << "Loading LLM: " << path << " (ctx=" << n_ctx << ", gpu_layers=" << n_gpu << ")..." << std::endl;
+
+        // Diagnostics: how many backends did ggml find?
+        size_t n_backends = ggml_backend_reg_count();
+        std::string backend_list;
+        for (size_t i = 0; i < n_backends; ++i) {
+            ggml_backend_reg_t reg = ggml_backend_reg_get(i);
+            const char* name = ggml_backend_reg_name(reg);
+            if (i) backend_list += ", ";
+            backend_list += (name ? name : "?");
+        }
+
+        g_llama_log_buf.clear();
         m->model = llama_model_load_from_file(path.c_str(), mparams);
-        if (!m->model)
-            throw jdError(ErrCode::RUNTIME_ERROR, "Failed to load LLM: " + path);
+        if (!m->model) {
+            std::string err = "Failed to load LLM: " + path
+                + " | backends(" + std::to_string(n_backends) + ")=[" + backend_list + "]"
+                + " | llama_log:\n" + g_llama_log_buf;
+            throw jdError(ErrCode::RUNTIME_ERROR, err);
+        }
 
         m->vocab = llama_model_get_vocab(m->model);
 

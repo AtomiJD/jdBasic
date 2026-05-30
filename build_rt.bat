@@ -86,6 +86,17 @@ for %%A in (%*) do (
         set EXTRA_SRC=!EXTRA_SRC! src\serial.cpp
         echo [+] Serial
     )
+    if /I "%%A"=="LLM" (
+        if defined HEADLESS (
+            echo [skip] LLM ignored in HEADLESS build
+        ) else (
+            set DEFS=!DEFS! /DLLM
+            set EXTRA_INC=!EXTRA_INC! /Ilibs\llama
+            set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\llama
+            set EXTRA_LIB=!EXTRA_LIB! llama.lib ggml.lib ggml-base.lib
+            echo [+] LLM - llama.cpp
+        )
+    )
     if /I "%%A"=="FTXUI" (
         REM /D UNICODE/_UNICODE matches the ftxui.lib ABI (same rule as build.bat).
         set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
@@ -148,6 +159,18 @@ if %ERRORLEVEL%==0 (
     echo BUILD OK: build\jdbrt.dll
     echo   Exports: jdrt_*       native-EXE  -^> runtime bridge
     echo            jdb_embed_*  host app    -^> embedded VM
+    REM Copy llama.cpp runtime DLLs next to jdbrt so AI.* loads work.
+    if exist libs\llama\llama.dll (
+        copy /Y libs\llama\llama.dll build\ >nul 2>&1
+        copy /Y libs\llama\ggml.dll build\ >nul 2>&1
+        copy /Y libs\llama\ggml-base.dll build\ >nul 2>&1
+        copy /Y libs\llama\ggml-cpu*.dll build\ >nul 2>&1
+        copy /Y libs\llama\ggml-cuda.dll build\ >nul 2>&1
+        copy /Y libs\llama\cublas64_12.dll build\ >nul 2>&1
+        copy /Y libs\llama\cublasLt64_12.dll build\ >nul 2>&1
+        copy /Y libs\llama\cudart64_12.dll build\ >nul 2>&1
+        echo LLM DLLs copied to build\
+    )
 ) else (
     echo.
     echo BUILD FAILED

@@ -2028,6 +2028,13 @@ void VM::run() {
                     install_seh_translator_for_this_thread();
                     try {
                         VM async_vm;
+                        // Module natives (AI/LLM/HTTP/etc.) aren't auto-carried
+                        // from the parent VM - re-register them on the worker
+                        // so ASYNC FUNCs can call AI.SET / AI.CHAT / etc.
+                        extern void register_ai_builtins(VM&);
+                        extern void register_llm_builtins(VM&);
+                        register_ai_builtins(async_vm);
+                        register_llm_builtins(async_vm);
                         // Register all functions via restore_state
                         VMState st;
                         st.functions = *funcs_copy;

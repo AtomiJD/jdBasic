@@ -33,7 +33,10 @@ JDBasicVM::~JDBasicVM() {
 String JDBasicVM::eval(const String& code) {
     if (!m_vm) return String();
     char* out = jdb_embed_eval(m_vm, code.utf8().get_data());
-    if (!out) return String();
+    if (!out) {
+        const char* err = jdb_embed_last_error(m_vm);
+        return String("[jdb error] ") + (err ? String::utf8(err) : String("unknown"));
+    }
     String result = String::utf8(out);
     jdb_embed_free(out);
     return result;
@@ -69,7 +72,13 @@ String JDBasicVM::recompile(const String& path) {
 Variant JDBasicVM::eval_expr(const String& expr) {
     if (!m_vm) return Variant();
     int64_t h = jdb_embed_eval_expr(m_vm, expr.utf8().get_data());
-    if (!h) return Variant();
+    if (!h) {
+        const char* err = jdb_embed_last_error(m_vm);
+        if (err && *err) {
+            return String("[jdb error] ") + String::utf8(err);
+        }
+        return Variant();
+    }
     Variant result = JdbScriptInstance::value_to_variant(m_vm, h);
     jdb_embed_value_release(m_vm, h);
     return result;
