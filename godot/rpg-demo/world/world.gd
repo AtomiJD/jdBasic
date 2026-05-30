@@ -6,6 +6,7 @@ extends Node3D
 const NPCS_JSON     := "res://assets/data/npcs.json"
 const WORLD_LORE    := "res://assets/data/world_lore.json"
 const CHESTS_JSON   := "res://assets/data/chests.json"
+const DUNGEONS_JSON := "res://assets/data/dungeons.json"
 const NPC_BRAIN     := "res://world/npc_brain.jdb"
 const DIALOG_BRAIN  := "res://world/dialog_brain.jdb"
 const NPC_SCENE     := preload("res://world/npc.tscn")
@@ -13,11 +14,13 @@ const DIALOG_UI     := preload("res://world/dialog_ui.tscn")
 const JOURNAL_PANEL := preload("res://world/journal_panel.tscn")
 const ScatterScript := preload("res://world/scatter.gd")
 const ChestScript   := preload("res://world/chest.gd")
+const DungeonScript := preload("res://world/dungeon.gd")
 
 @export var model_path: String = "D:/usr/dev/cc/models/qwen2.5-7b-instruct-q4_k_m.gguf"
 @export var prefetch_radius: float = 30.0
 @export var talk_radius: float = 3.5
 @export var chest_radius: float = 2.5
+@export var door_radius: float = 2.5
 
 # Day/Night cycle. time_of_day is 0..1 where 0=midnight, 0.25=sunrise,
 # 0.5=noon, 0.75=sunset. day_seconds is the wall-clock duration of one
@@ -61,6 +64,9 @@ var dialog_ui: CanvasLayer = null
 var journal_panel: CanvasLayer = null
 var chests: Array[Node3D] = []
 var nearest_chest: Node = null
+var dungeons: Array[Node3D] = []
+var nearest_door: Node = null
+var dungeon_bounds_list: Array = []
 
 func _ready() -> void:
 	# Wait one frame so Terrain._ready has populated the heightmap.
@@ -70,6 +76,7 @@ func _ready() -> void:
 
 	_boot_brain()
 	_spawn_npcs()
+	_build_dungeons()     # before scatter so bounds are known
 	_scatter_world()
 	_spawn_chests()
 	_boot_llm()
@@ -77,6 +84,7 @@ func _ready() -> void:
 	_build_time_hud()
 	_build_compass_hud()
 	_build_quest_hud()
+	_build_damage_vignette()
 	_refresh_npc_quest_badges()
 	sky_material = world_env.environment.sky.sky_material as ProceduralSkyMaterial
 	_apply_time_of_day()
@@ -214,7 +222,59 @@ func _scatter_world() -> void:
 	var avoid: Array = []
 	for npc in npc_bodies:
 		avoid.append(Vector2(npc.global_position.x, npc.global_position.z))
+	# Avoid every dungeon footprint (called after _build_dungeons).
+	scatter.set("avoid_rects", dungeon_bounds_list)
 	scatter.call("build", terrain, avoid)
+
+func _build_dungeons() -> void:
+	# Read dungeons.json, instantiate each entry, ask the builder to
+	# return its footprint + ground-y, then carve the terrain under
+	# every dungeon so floors sit flush with the heightmap collider.
+	var raw := FileAccess.get_file_as_string(DUNGEONS_JSON)
+	if raw.is_empty():
+		return
+	var data: Variant = JSON.parse_string(raw)
+	if not (data is Array):
+		push_error("dungeons.json: expected array")
+		return
+	for spec: Dictionary in data:
+		var d := Node3D.new()
+		d.name = "Dungeon_" + str(spec.get("id", "?"))
+		d.set_script(DungeonScript)
+		add_child(d)
+		var result: Variant = d.call("build", spec, terrain)
+		if result is Array and result.size() == 2:
+			var rect: Rect2 = result[0]
+			var dy: float = result[1]
+			(terrain as Node).call("set_carve_zone", rect, dy - 0.05)
+			# 2m padded box so scatter keeps trees away from walls.
+			var pad := 2.0
+			dungeon_bounds_list.append(Rect2(rect.position - Vector2(pad, pad), rect.size + Vector2(pad * 2, pad * 2)))
+			print("[dungeon] %s built at origin %s" % [spec.get("id", "?"), d.get("origin")])
+		# Wire the trap_triggered signal to our damage vignette.
+		if d.has_signal("trap_triggered"):
+			d.connect("trap_triggered", _on_trap_hit)
+		dungeons.append(d)
+
+var damage_vignette: ColorRect = null
+
+func _build_damage_vignette() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 6
+	add_child(layer)
+	damage_vignette = ColorRect.new()
+	damage_vignette.color = Color(0.8, 0.0, 0.0, 0.0)
+	damage_vignette.anchor_right = 1.0
+	damage_vignette.anchor_bottom = 1.0
+	damage_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(damage_vignette)
+
+func _on_trap_hit() -> void:
+	if damage_vignette == null:
+		return
+	var tween := create_tween()
+	tween.tween_property(damage_vignette, "color:a", 0.45, 0.08)
+	tween.tween_property(damage_vignette, "color:a", 0.0, 0.55)
 
 func _spawn_chests() -> void:
 	var raw := FileAccess.get_file_as_string(CHESTS_JSON)
@@ -422,9 +482,11 @@ func _update_talk_hint() -> void:
 		talk_hint_label.text = ""
 		nearest_talkable = null
 		nearest_chest = null
+		nearest_door = null
 		return
 	var ppos := player.global_position
-	# Nearest NPC within talk_radius
+	# Three interact targets: NPC / Chest / Door. Pick whichever sits
+	# closest relative to its own reach radius.
 	var best_npc: Node = null
 	var best_npc_d2 := talk_radius * talk_radius
 	for npc in npc_bodies:
@@ -433,7 +495,6 @@ func _update_talk_hint() -> void:
 		if d2 < best_npc_d2:
 			best_npc_d2 = d2
 			best_npc = npc
-	# Nearest unopened chest within chest_radius
 	var best_chest: Node = null
 	var best_chest_d2 := chest_radius * chest_radius
 	for ch in chests:
@@ -444,20 +505,42 @@ func _update_talk_hint() -> void:
 		if d2 < best_chest_d2:
 			best_chest_d2 = d2
 			best_chest = ch
-	# Whichever target is closer (relative to its own radius) wins
-	var npc_t := best_npc_d2 / (talk_radius * talk_radius) if best_npc != null else 999.0
-	var chest_t := best_chest_d2 / (chest_radius * chest_radius) if best_chest != null else 999.0
-	if best_npc != null and npc_t <= chest_t:
+	var best_door: Node = null
+	var best_door_d2 := door_radius * door_radius
+	for dungeon in dungeons:
+		var door: Node = dungeon.call("door_at", ppos, door_radius) as Node
+		if door != null:
+			var d_pos: Vector3 = (door as Node3D).global_position
+			var dx: float = d_pos.x - ppos.x
+			var dz: float = d_pos.z - ppos.z
+			var d2: float = dx * dx + dz * dz
+			if d2 < best_door_d2:
+				best_door_d2 = d2
+				best_door = door
+
+	var npc_t: float = best_npc_d2 / (talk_radius * talk_radius) if best_npc != null else 999.0
+	var chest_t: float = best_chest_d2 / (chest_radius * chest_radius) if best_chest != null else 999.0
+	var door_t: float = best_door_d2 / (door_radius * door_radius) if best_door != null else 999.0
+	if best_npc != null and npc_t <= chest_t and npc_t <= door_t:
 		nearest_talkable = best_npc
 		nearest_chest = null
+		nearest_door = null
 		talk_hint_label.text = "[E] Talk to %s" % best_npc.display_name
-	elif best_chest != null:
+	elif best_chest != null and chest_t <= door_t:
 		nearest_talkable = null
 		nearest_chest = best_chest
+		nearest_door = null
 		talk_hint_label.text = "[E] Open %s" % best_chest.label
+	elif best_door != null:
+		nearest_talkable = null
+		nearest_chest = null
+		nearest_door = best_door
+		var is_open: bool = best_door.get_meta("open", false)
+		talk_hint_label.text = "[E] Close door" if is_open else "[E] Open door"
 	else:
 		nearest_talkable = null
 		nearest_chest = null
+		nearest_door = null
 		talk_hint_label.text = ""
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -466,6 +549,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_open_dialog(nearest_talkable)
 		elif nearest_chest != null:
 			nearest_chest.call("try_open")
+		elif nearest_door != null:
+			# Find which dungeon owns this door so we can call toggle.
+			for dungeon in dungeons:
+				if (dungeon as Node).has_method("toggle_door"):
+					(dungeon as Node).call("toggle_door", nearest_door)
+					break
 	elif event.is_action_pressed("open_quests") and dialog_ui == null and journal_panel == null:
 		_open_journal(0)
 	elif event.is_action_pressed("open_inventory") and dialog_ui == null and journal_panel == null:

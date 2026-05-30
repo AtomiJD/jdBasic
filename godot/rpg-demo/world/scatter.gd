@@ -35,6 +35,7 @@ const BUSHES := [
 var tree_scenes: Array = []
 var bush_scenes: Array = []
 var npc_avoid: Array = []  # [(x, z), ...] - world coords to keep tree-free
+var avoid_rects: Array = []  # [Rect2(x, z, w, h), ...] - world-aligned no-spawn boxes
 
 func build(terrain: Node3D, npc_spawn_xz: Array) -> void:
 	npc_avoid = npc_spawn_xz
@@ -144,5 +145,8 @@ func _too_close_to_npc(wx: float, wz: float) -> bool:
 		var dx := p.x - wx
 		var dz := p.y - wz
 		if dx * dx + dz * dz < r2:
+			return true
+	for r: Rect2 in avoid_rects:
+		if r.has_point(Vector2(wx, wz)):
 			return true
 	return false

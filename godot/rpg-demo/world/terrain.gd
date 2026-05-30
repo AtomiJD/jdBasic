@@ -24,6 +24,12 @@ var heights: PackedFloat64Array
 var map_rows: PackedStringArray = PackedStringArray()
 var map_n: int = 0
 
+# Carve zone: a rectangular area of the heightmap forced to a fixed
+# y. Used by world.gd to flatten ground under the dungeon so the
+# floor sits at terrain level instead of floating / clipping.
+var carve_bounds: Rect2 = Rect2()
+var carve_y: float = 0.0
+
 func _ready() -> void:
 	vm = JDBasicVM.new()
 	var src := FileAccess.get_file_as_string(TERRAIN_JDB)
@@ -78,6 +84,7 @@ func _rebuild() -> void:
 		return
 
 	heights = raw
+	_apply_carve()
 
 	# Visual mesh
 	var mesh_inst := $Mesh as MeshInstance3D
@@ -100,6 +107,32 @@ func _rebuild() -> void:
 
 	print("[terrain] jdBasic: %.2f ms | mesh: %.2f ms | collider: %.2f ms"
 		% [(t1 - t0) / 1000.0, (t2 - t1) / 1000.0, (t3 - t2) / 1000.0])
+
+# Public: world.gd calls this once the dungeon footprint is known so
+# the heightmap (mesh + collider + sample_height) gets flattened
+# inside the rect to a fixed y. Triggers a full rebuild.
+func set_carve_zone(rect: Rect2, y: float) -> void:
+	carve_bounds = rect
+	carve_y = y
+	_rebuild()
+
+func _apply_carve() -> void:
+	if carve_bounds.size.x <= 0 or carve_bounds.size.y <= 0:
+		return
+	var half := grid_size * 0.5
+	# Heightmap is sampled at integer (x, z) cell coords centred on
+	# origin. Find the cell range that overlaps the carve rect.
+	var min_x := int(floor(carve_bounds.position.x + half))
+	var max_x := int(ceil(carve_bounds.position.x + carve_bounds.size.x + half))
+	var min_z := int(floor(carve_bounds.position.y + half))
+	var max_z := int(ceil(carve_bounds.position.y + carve_bounds.size.y + half))
+	min_x = clamp(min_x, 0, grid_size - 1)
+	max_x = clamp(max_x, 0, grid_size - 1)
+	min_z = clamp(min_z, 0, grid_size - 1)
+	max_z = clamp(max_z, 0, grid_size - 1)
+	for z in range(min_z, max_z + 1):
+		for x in range(min_x, max_x + 1):
+			heights[z * grid_size + x] = carve_y
 
 func _build_mesh(n: int, h: PackedFloat64Array) -> ArrayMesh:
 	var st := SurfaceTool.new()

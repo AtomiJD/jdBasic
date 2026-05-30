@@ -60,12 +60,12 @@
     "name": "Vex",
     "character": "Rogue",
     "color": "#e0b76a",
-    "spawn": [-15.0, 0.0, -18.0],
+    "spawn": [-15.0, 0.0, 25.0],
     "patrol": [
-      [-15.0, 0.0, -18.0],
-      [-25.0, 0.0, -15.0],
-      [-30.0, 0.0, -25.0],
-      [-18.0, 0.0, -28.0]
+      [-15.0, 0.0, 25.0],
+      [-25.0, 0.0, 28.0],
+      [-22.0, 0.0, 35.0],
+      [-12.0, 0.0, 30.0]
     ],
     "persona": "A wandering trader with an evasive sense of humour. Always looking past your shoulder. Calls everyone 'friend'.",
     "legend": "Used to run with a band of thieves out of the river city until his partner was hanged and the rest scattered.",
