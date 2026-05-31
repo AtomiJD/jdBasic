@@ -11,7 +11,7 @@ extends CanvasLayer
 
 signal closed
 
-@onready var name_label: Label = $Panel/VBox/NameLabel
+@onready var name_label: Label = $Panel/VBox/HeaderRow/NameLabel
 @onready var history_text: RichTextLabel = $Panel/VBox/History
 @onready var input_line: LineEdit = $Panel/VBox/InputRow/Input
 @onready var send_button: Button = $Panel/VBox/InputRow/Send
@@ -84,7 +84,7 @@ func _ready() -> void:
 	send_button.pressed.connect(_on_send)
 	input_line.text_submitted.connect(func(_t): _on_send())
 	accept_button.pressed.connect(_on_accept)
-	$Panel/CloseButton.pressed.connect(close)
+	$Panel/VBox/HeaderRow/CloseButton.pressed.connect(close)
 
 # _input fires before GUI controls get a crack at it, so we close
 # on the first Esc instead of having LineEdit eat it. Shift+Enter
@@ -111,6 +111,22 @@ func _process(_delta: float) -> void:
 		send_button.disabled = false
 		input_line.grab_focus()
 		_refresh_quest_row()
+		return
+	# Safety net: if no reply has landed in 20 seconds, assume the
+	# brain-side call threw silently (eval_expr returned null and
+	# g_task is still 0) and recover the UI so the player isn't
+	# stuck at "thinking".
+	if Time.get_ticks_msec() - _await_start_ms > 20000:
+		var g_task_v: Variant = vm.eval_expr('g_task')
+		if str(g_task_v) == "0":
+			_append_system_line(_system_line("no_reply", {}))
+			_set_status("")
+			awaiting_reply = false
+			input_line.editable = true
+			send_button.disabled = false
+			input_line.grab_focus()
+
+var _await_start_ms: int = 0
 
 func _on_send() -> void:
 	if awaiting_reply or vm == null:
@@ -124,13 +140,17 @@ func _on_send() -> void:
 	input_line.editable = false
 	send_button.disabled = true
 	awaiting_reply = true
+	_await_start_ms = Time.get_ticks_msec()
 	_set_status("...thinking")
 	# jdBasic's inline-string lexer chokes on non-ASCII bytes inside
 	# eval_expr literals. Map common German umlauts to ASCII before
 	# the call; replace anything else non-ASCII with '?'.
+	# Double quotes inside the string literal also confuse the parser
+	# even with \" escapes, so we swap them for single quotes - loses
+	# nothing semantically for the LLM and avoids a parser crash.
 	var safe := _ascii_safe(text)
-	var escaped := safe.replace("\\", "\\\\").replace("\"", "\\\"")
-	vm.eval_expr('continue_dialog("%s", "%s")' % [npc_id, escaped])
+	var sanitized := safe.replace("\\", "\\\\").replace("\"", "'")
+	vm.eval_expr('continue_dialog("%s", "%s")' % [npc_id, sanitized])
 
 func _ascii_safe(s: String) -> String:
 	var out := ""
@@ -192,25 +212,25 @@ func _dispatch_actions(actions: Array) -> void:
 				var esc := _ascii_safe(item_name).replace("\"", "\\\"")
 				var src := _ascii_safe(npc_name).replace("\"", "\\\"")
 				vm.eval_expr('add_inventory_item("%s", "%s")' % [esc, src])
-				_append_system_line("+ %s" % item_name)
+				_append_system_line(_system_line("received_item", {"name": item_name}))
 				print("[%s gave] %s" % [npc_name, item_name])
 			"accept_item":
 				var item_name: String = str(args.get("name", ""))
 				if item_name != "":
 					var esc := _ascii_safe(item_name).replace("\"", "\\\"")
 					vm.eval_expr('remove_player_inventory("%s")' % esc)
-					_append_system_line("- %s" % item_name)
+					_append_system_line(_system_line("gave_item", {"name": item_name}))
 					print("[%s took] %s" % [npc_name, item_name])
 			"offer_quest":
 				vm.eval_expr('accept_quest("%s")' % npc_id)
-				_append_system_line("Quest accepted from %s" % npc_name)
+				_append_system_line(_system_line("quest_accepted", {"npc": npc_name}))
 				print("[QUEST offered+accepted] from %s" % npc_name)
 			"complete_quest":
 				var qid: String = str(args.get("id", ""))
 				if qid != "":
 					var esc := _ascii_safe(qid).replace("\"", "\\\"")
 					vm.eval_expr('complete_quest_by_id("%s")' % esc)
-					_append_system_line("Quest completed: %s" % qid)
+					_append_system_line(_system_line("quest_completed", {"id": qid}))
 					print("[QUEST completed] %s by %s" % [qid, npc_name])
 			"set_flag":
 				# World-state flags - placeholder for the next polish wave.
@@ -221,6 +241,17 @@ func _dispatch_actions(actions: Array) -> void:
 
 func _append_system_line(line: String) -> void:
 	history_text.append_text("[color=#bbe0a0][i]%s[/i][/color]\n\n" % line)
+
+# Render a one-line message from dialog_rules.system_lines via the
+# brain-side rule() helper. Keeps all user-visible text out of the
+# code so it can be tweaked / translated in JSON.
+func _system_line(key: String, vars: Dictionary) -> String:
+	var setup := "DIM __rv AS MAP = {}\n"
+	for k in vars:
+		var v := _ascii_safe(str(vars[k])).replace("\\", "\\\\").replace("\"", "'")
+		setup += "__rv{\"%s\"} = \"%s\"\n" % [k, v]
+	var captured := vm.eval(setup + "PRINT rule(\"system_lines\", \"%s\", __rv)\n" % key)
+	return captured.strip_edges()
 
 func _append_npc(line: String) -> void:
 	# Stage directions come as *...* (Phi-3) or |...| (Qwen). Convert

@@ -1,0 +1,57 @@
+{
+  "acceptance_signals": [
+    "yes", "ja", "sure", "ok", "okay",
+    "I'll do it", "mach ich", "ich mach das", "ich nehme das",
+    "I accept", "I'll take it",
+    "give me the quest", "gib mir den quest", "gibs mir", "her damit",
+    "what's the task",
+    "ich helfe", "I'll help",
+    "ich bringe dir", "I'll bring you"
+  ],
+
+  "rejection_signals": [
+    "no", "nein", "not interested", "kein bock", "later", "lass mal"
+  ],
+
+  "quest_offer_instruction": "QUEST OFFER RULE: If the player's last line contains ANY of the acceptance signals listed above (case-insensitive, any language), you MUST emit offer_quest in the SAME response. Do NOT wait for repeated confirmation - first plausible acceptance = offer the quest immediately. If the player is instead asking about other topics (your name, the world, the king, magic, places), answer THAT in the say, but you can STILL emit offer_quest in the same turn if they showed earlier interest in helping.",
+
+  "prompt_labels": {
+    "quest_completed": "Quest already completed by the player. Do not re-offer.",
+    "quest_already_offered": "You already offered the quest id={id} to the player and they accepted. Do NOT re-offer it. Do NOT give them the item again. Do NOT bring up the quest topic in say unless the player asks about it - they know what they have to do. Focus on whatever the player actually asks or talks about next.",
+    "quest_offer_intro": "You have a quest to offer (id={id}): {desc}",
+    "items_none": "You currently have nothing to give. Do NOT use the give_item tool - you carry no items.",
+    "items_allowed": "The ONLY items you may give via give_item are: {list}. NEVER invent or give items not on this list (no maps, no random objects, only the listed items).",
+    "expecting_deliveries_intro": "You are expecting these deliveries:{list}",
+    "expecting_deliveries_action": "If ANY of these is in the player inventory, immediately emit accept_item with that exact name + a warm say.",
+    "already_received_intro": "You ALREADY received these items earlier in your conversation history:{list}",
+    "already_received_action": "Do NOT ask for them again. Do NOT emit accept_item for them. If the player mentions them, acknowledge that you already have them.",
+    "player_inventory_label": "Player inventory:",
+    "player_inventory_empty": "Player inventory: (empty)",
+    "active_quests_label": "Active quests the player holds:",
+    "active_quest_entry": "  - id={id}: '{desc}' (from {giver})",
+    "long_term_label": "Long-term memory of past conversations with this player:",
+    "recent_history_label": "Recent conversation so far:",
+    "relevant_context_label": "Relevant world knowledge (for context):"
+  },
+
+  "user_prompts": {
+    "greeting_cue": "*The player approaches you in the wilderness.* Greet them in character. JSON object only, with a single say action of 1-3 sentences.",
+    "turn_cue": "Now reply as {name} - JSON object only, with at least one say action and any tools that fit."
+  },
+
+  "task_prompts": {
+    "summary_system": "You compress short dialogue exchanges. Output ONE short sentence (under 25 words) summarising what happened between the player and {name}, from {name}'s perspective. Plain text, no quotes, no JSON."
+  },
+
+  "synthetic_replies": {
+    "delivery_thanks": "*{npc} takes the {item} from you with a small smile.* The {item} from {giver} - thank you, traveler."
+  },
+
+  "system_lines": {
+    "received_item": "+ {name}",
+    "gave_item": "- {name}",
+    "quest_accepted": "Quest accepted from {npc}",
+    "quest_completed": "Quest completed: {id}",
+    "no_reply": "(no reply - try again)"
+  }
+}

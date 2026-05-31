@@ -5,6 +5,7 @@ extends Node3D
 
 const NPCS_JSON     := "res://assets/data/npcs.json"
 const WORLD_LORE    := "res://assets/data/world_lore.json"
+const DIALOG_RULES  := "res://assets/data/dialog_rules.json"
 const CHESTS_JSON   := "res://assets/data/chests.json"
 const DUNGEONS_JSON := "res://assets/data/dungeons.json"
 const NPC_BRAIN     := "res://world/npc_brain.jdb"
@@ -17,6 +18,7 @@ const ChestScript   := preload("res://world/chest.gd")
 const DungeonScript := preload("res://world/dungeon.gd")
 
 @export var model_path: String = "D:/usr/dev/cc/models/qwen2.5-7b-instruct-q4_k_m.gguf"
+@export var embed_model_path: String = "D:/usr/dev/cc/models/nomic-embed-text-v1.5.Q4_K_M.gguf"
 @export var prefetch_radius: float = 30.0
 @export var talk_radius: float = 3.5
 @export var chest_radius: float = 2.5
@@ -121,6 +123,10 @@ func _boot_brain() -> void:
 	var k: Variant = vm.eval_expr('load_world_lore("%s")' % lore_path)
 	print("[brain] loaded world_lore with %s top-level fields" % k)
 
+	var rules_path := ProjectSettings.globalize_path(DIALOG_RULES).replace("\\", "/")
+	var r: Variant = vm.eval_expr('load_dialog_rules("%s")' % rules_path)
+	print("[brain] loaded dialog_rules with %s top-level fields" % r)
+
 	# Hand the prompt template's OS path to dialog_brain so its
 	# build_sys can TXTREADER$ it - relative paths don't resolve
 	# from Godot's runtime CWD.
@@ -177,6 +183,23 @@ func _boot_llm() -> void:
 	elif typeof(verify) == TYPE_FLOAT and float(verify) > 0.0:
 		llm_ready = true
 	print("[llm] ready=%s (g_llm=%s)" % [llm_ready, verify])
+
+	# RAG init - embedding model + lore directory ingest. Runs after
+	# the main LLM is up so g_llm is available for AI.RAG_CREATE's
+	# answer-generation slot.
+	if llm_ready and FileAccess.file_exists(embed_model_path):
+		var rag_splash := _make_splash("Indexing world lore ...")
+		await get_tree().process_frame
+		var lore_dir := ProjectSettings.globalize_path("res://assets/lore/").replace("\\", "/")
+		var embed_p := embed_model_path.replace("\\", "/")
+		var stats: Variant = vm.eval_expr('rag_init("%s", "%s")' % [embed_p, lore_dir])
+		print("[rag] ingest stats=", stats)
+		var info: Variant = vm.eval_expr('AI.RAG_INFO(g_rag)')
+		print("[rag] info=", info)
+		# Sanity-search: does "king" actually retrieve kingdom_history?
+		var probe: Variant = vm.eval_expr('AI.RAG_SEARCH(g_rag, "who is the king and what happened in the war", 3)')
+		print("[rag] probe(king/war)=", probe)
+		rag_splash.queue_free()
 
 func _make_splash(text: String) -> CanvasLayer:
 	var layer := CanvasLayer.new()

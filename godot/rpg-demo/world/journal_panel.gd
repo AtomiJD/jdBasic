@@ -33,7 +33,7 @@ func close() -> void:
 	queue_free()
 
 func _ready() -> void:
-	$Panel/CloseButton.pressed.connect(close)
+	$Panel/VBox/HeaderRow/CloseButton.pressed.connect(close)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:

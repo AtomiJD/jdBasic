@@ -69,11 +69,21 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="NameLabel" type="Label" parent="Panel/VBox"]
+[node name="HeaderRow" type="HBoxContainer" parent="Panel/VBox"]
 layout_mode = 2
+
+[node name="NameLabel" type="Label" parent="Panel/VBox/HeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
 text = "NPC Name"
 theme_override_font_sizes/font_size = 22
 theme_override_colors/font_color = Color(0.85, 0.92, 1, 1)
+
+[node name="CloseButton" type="Button" parent="Panel/VBox/HeaderRow"]
+process_mode = 3
+layout_mode = 2
+custom_minimum_size = Vector2(40, 32)
+text = "X"
 
 [node name="History" type="RichTextLabel" parent="Panel/VBox"]
 layout_mode = 2
@@ -125,15 +135,3 @@ theme_override_styles/normal = SubResource("StyleBoxFlat_send")
 theme_override_styles/hover = SubResource("StyleBoxFlat_send")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_send")
 
-[node name="CloseButton" type="Button" parent="Panel"]
-process_mode = 3
-layout_mode = 2
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -36.0
-offset_top = 4.0
-offset_right = -4.0
-offset_bottom = 36.0
-grow_horizontal = 0
-text = "X"

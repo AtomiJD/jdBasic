@@ -38,6 +38,11 @@ EXPORT FUNC npc_init(id, data)
     s{"legend"} = data{"legend"}
     s{"knowledge"} = data{"knowledge"}
     s{"quests"} = data{"quests"}
+    IF MAP.EXISTS(data, "lore_tags") = TRUE THEN
+        s{"lore_tags"} = data{"lore_tags"}
+    ELSE
+        s{"lore_tags"} = []
+    ENDIF
     s{"dialog_cache"} = ""
     s{"dialog_actions"} = []
     s{"dialog_ready"} = FALSE

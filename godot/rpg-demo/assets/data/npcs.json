@@ -4,6 +4,7 @@
     "name": "Sir Gareth",
     "character": "Knight",
     "color": "#7aa8d8",
+    "lore_tags": ["kingdom_history", "factions_and_rumors", "geography_and_places", "forest_and_wildlife"],
     "spawn": [10.0, 0.0, 10.0],
     "patrol": [
       [10.0, 0.0, 10.0],
@@ -23,6 +24,7 @@
     "name": "Maelyn",
     "character": "Mage",
     "color": "#c89af0",
+    "lore_tags": ["arcane_and_herbs", "geography_and_places", "mysteries", "kingdom_history", "factions_and_rumors"],
     "spawn": [-20.0, 0.0, 15.0],
     "patrol": [
       [-20.0, 0.0, 15.0],
@@ -41,6 +43,7 @@
     "name": "Tylen",
     "character": "Ranger",
     "color": "#6fc28a",
+    "lore_tags": ["forest_and_wildlife", "geography_and_places", "mysteries", "kingdom_history", "factions_and_rumors"],
     "spawn": [25.0, 0.0, -25.0],
     "patrol": [
       [25.0, 0.0, -25.0],
@@ -60,6 +63,7 @@
     "name": "Vex",
     "character": "Rogue",
     "color": "#e0b76a",
+    "lore_tags": ["factions_and_rumors", "geography_and_places", "mysteries", "kingdom_history", "forest_and_wildlife"],
     "spawn": [-15.0, 0.0, 25.0],
     "patrol": [
       [-15.0, 0.0, 25.0],

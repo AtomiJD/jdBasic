@@ -17,6 +17,7 @@ EXPORT DIM g_llm = 0
 EXPORT DIM g_task = 0
 EXPORT DIM g_task_npc = ""
 EXPORT DIM world_lore AS MAP = {}
+EXPORT DIM dialog_rules AS MAP = {}
 EXPORT DIM g_last_raw = "(none)"     ' last raw LLM output for diagnostics
 EXPORT DIM g_last_who = ""
 
@@ -31,6 +32,14 @@ EXPORT DIM g_summary_npc = ""
 EXPORT DIM g_summary_pair = ""
 EXPORT DIM g_last_summary = ""        ' last summary line (for GDScript diag)
 EXPORT DIM g_last_summary_npc = ""
+
+' RAG state - knowledge base of world lore files. Built once at boot
+' from assets/lore/*.md; each chunk carries its source filename
+' (without extension) so we can filter per NPC via lore_tags.
+EXPORT DIM g_embed_llm = 0
+EXPORT DIM g_rag = 0
+EXPORT DIM g_rag_top_k = 10           ' retrieve this many candidates per query
+EXPORT DIM g_rag_per_npc = 3          ' keep this many after NPC-tag filter
 
 ' ── Memory helpers ────────────────────────────────────────────────
 
@@ -86,8 +95,8 @@ ENDFUNC
 
 ' Summariser worker. Returns one short sentence describing what
 ' happened in this oldest exchange, from the NPC's POV.
-ASYNC FUNC gen_summary(llm, npc_name, pair_text)
-    AI.SET(llm, "system", "You compress short dialogue exchanges. Output ONE short sentence (under 25 words) summarising what happened between the player and " + npc_name + ", from " + npc_name + "'s perspective. Plain text, no quotes, no JSON.")
+ASYNC FUNC gen_summary(llm, npc_name, pair_text, sys_prompt)
+    AI.SET(llm, "system", sys_prompt)
     AI.CLEAR_HISTORY(llm)
     RETURN AI.CHAT(llm, pair_text)
 ENDFUNC
@@ -124,7 +133,10 @@ FUNC maybe_compact_buffer()
             IF LEN(pair) > 0 THEN
                 g_summary_pair = pair
                 g_summary_npc = id
-                g_summary_task = gen_summary(g_llm, npcs{id}{"name"}, pair)
+                DIM sv AS MAP = {}
+                sv{"name"} = npcs{id}{"name"}
+                DIM sysp = rule("task_prompts", "summary_system", sv)
+                g_summary_task = gen_summary(g_llm, npcs{id}{"name"}, pair, sysp)
                 RETURN id
             ENDIF
         ENDIF
@@ -139,6 +151,12 @@ EXPORT FUNC load_world_lore(path)
     DIM raw$ = TXTREADER$(path)
     world_lore = JSON.PARSE$(raw$)
     RETURN MAP.SIZE(world_lore)
+ENDFUNC
+
+EXPORT FUNC load_dialog_rules(path)
+    DIM raw$ = TXTREADER$(path)
+    dialog_rules = JSON.PARSE$(raw$)
+    RETURN MAP.SIZE(dialog_rules)
 ENDFUNC
 
 ' Boot the LLM. model_path is an OS path to a GGUF file. Returns the
@@ -160,6 +178,76 @@ EXPORT FUNC dialog_init_with(model_path, n_gpu)
     RETURN g_llm
 ENDFUNC
 
+' ── RAG initialisation ────────────────────────────────────────────
+' Loads the embedding model + creates a dense-mode RAG store, then
+' adds every .md in lore_dir. Each file's chunks carry its basename
+' (e.g. "forest_and_wildlife") as source - used later for filtering
+' a search result down to the chunks an NPC would plausibly know.
+
+EXPORT FUNC rag_init(embed_path, lore_dir)
+    g_embed_llm = AI.LOAD_EMBEDDINGS(embed_path, 512, 99)
+    g_rag = AI.RAG_CREATE(g_llm, 500, 50, g_embed_llm)
+    DIM stats = AI.RAG_ADD_DIR(g_rag, lore_dir, "*.md", 1)
+    RETURN stats
+ENDFUNC
+
+' Extracts the basename (no extension) from a source path so we can
+' compare against an NPC's lore_tags list.
+FUNC source_basename(source_str)
+    DIM s = source_str
+    ' Strip directory. INSTR is 0-based; MID$ uses the same offset
+    ' so MID$(s, n+1) returns the substring AFTER position n.
+    DIM slash = INSTR(s, "/")
+    DO WHILE slash >= 0
+        s = MID$(s, slash + 1)
+        slash = INSTR(s, "/")
+    LOOP
+    DIM bslash = INSTR(s, CHR$(92))
+    DO WHILE bslash >= 0
+        s = MID$(s, bslash + 1)
+        bslash = INSTR(s, CHR$(92))
+    LOOP
+    ' Strip extension
+    DIM dot = INSTR(s, ".")
+    IF dot >= 0 THEN s = LEFT$(s, dot)
+    RETURN s
+ENDFUNC
+
+' Returns true if an NPC's lore_tags list contains the given source
+' file's basename.
+FUNC npc_knows_source(id, source_str)
+    DIM tags = npcs{id}{"lore_tags"}
+    IF LEN(tags) = 0 THEN RETURN FALSE
+    DIM base = source_basename(source_str)
+    FOR i = 0 TO LEN(tags) - 1
+        IF tags[i] = base THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+' Public: given a query string + NPC id, return up to g_rag_per_npc
+' relevant lore chunks formatted as bullet lines. Empty if RAG isn't
+' initialised or no chunk matches the NPC's expertise.
+EXPORT FUNC retrieve_context(id, query)
+    IF g_rag = 0 THEN RETURN ""
+    DIM hits = AI.RAG_SEARCH(g_rag, query, g_rag_top_k)
+    IF LEN(hits) = 0 THEN RETURN ""
+    DIM out = ""
+    DIM kept = 0
+    FOR i = 0 TO LEN(hits) - 1
+        IF kept >= g_rag_per_npc THEN EXITFOR
+        DIM h = hits[i]
+        DIM src = h{"source"}
+        IF npc_knows_source(id, src) = TRUE THEN
+            DIM base = source_basename(src)
+            out = out + "- [" + base + "] " + h{"text"} + CHR$(10)
+            kept = kept + 1
+        ENDIF
+    NEXT
+    IF LEN(out) = 0 THEN RETURN ""
+    RETURN rule("prompt_labels", "relevant_context_label", {}) + CHR$(10) + out
+ENDFUNC
+
 ' ── Template renderer ─────────────────────────────────────────────
 ' Reads a .tmpl file, substitutes {{key}} placeholders from the vars
 ' map. Used to compose the per-NPC system prompt from a shared
@@ -178,6 +266,23 @@ EXPORT FUNC render_template(path, vars)
     RETURN tmpl
 ENDFUNC
 
+' Render a single-line template string from dialog_rules with
+' {placeholder} substitution. Used for every prompt fragment, system
+' line, and synthetic reply that previously lived as a string literal
+' in jdBasic. Returns empty if the rule path doesn't resolve.
+EXPORT FUNC rule(category, key, vars)
+    IF MAP.EXISTS(dialog_rules, category) <> TRUE THEN RETURN ""
+    DIM cat = dialog_rules{category}
+    IF MAP.EXISTS(cat, key) <> TRUE THEN RETURN ""
+    DIM tmpl = cat{key}
+    DIM keys = MAP.KEYS(vars)
+    FOR i = 0 TO LEN(keys) - 1
+        DIM k = keys[i]
+        tmpl = REPLACE$(tmpl, "{" + k + "}", vars{k})
+    NEXT
+    RETURN tmpl
+ENDFUNC
+
 ' Section builders - each returns a string fragment that the template
 ' splices into the system prompt. Keeping them as small functions
 ' makes it cheap to iterate on individual sections.
@@ -187,23 +292,45 @@ FUNC build_quest_block(id)
     IF LEN(s{"quests"}) = 0 THEN RETURN ""
     DIM q = s{"quests"}[0]
     IF s{"quest_completed"} = TRUE THEN
-        RETURN "Quest already completed by the player. Do not re-offer."
+        RETURN rule("prompt_labels", "quest_completed", {})
     ENDIF
+    DIM vars AS MAP = {}
+    vars{"id"} = q{"id"}
     IF s{"quest_offered"} = TRUE THEN
-        RETURN "You already offered the quest id=" + q{"id"} + " to the player and they accepted. Do not re-offer. Do not give them the item again."
+        RETURN rule("prompt_labels", "quest_already_offered", vars)
     ENDIF
-    DIM out = "You have a quest to offer (id=" + q{"id"} + "): " + q{"description"}
+    vars{"desc"} = q{"description"}
+    DIM out = rule("prompt_labels", "quest_offer_intro", vars)
     DIM has_item = FALSE
     DIM item_name = ""
     IF MAP.EXISTS(q, "item_given") = TRUE THEN
         item_name = q{"item_given"}
         IF LEN(item_name) > 0 THEN has_item = TRUE
     ENDIF
-    out = out + CHR$(10) + "When the player shows ANY willingness to help, accept work, or asks what you need, you MUST emit offer_quest with the id above"
-    IF has_item = TRUE THEN
-        out = out + " AND give_item with name '" + item_name + "' in the same response"
+    ' Acceptance signals and quest-offer rule live in dialog_rules.json
+    ' so they can be tuned / translated without touching code.
+    DIM signals_csv = ""
+    IF MAP.EXISTS(dialog_rules, "acceptance_signals") = TRUE THEN
+        DIM sigs = dialog_rules{"acceptance_signals"}
+        FOR i = 0 TO LEN(sigs) - 1
+            IF i > 0 THEN signals_csv = signals_csv + ", "
+            signals_csv = signals_csv + "'" + sigs[i] + "'"
+        NEXT
     ENDIF
-    out = out + ". Do this on the first turn that fits."
+    IF LEN(signals_csv) > 0 THEN
+        out = out + CHR$(10) + "Acceptance signals (any language, case-insensitive): " + signals_csv
+    ENDIF
+    DIM rule = ""
+    IF MAP.EXISTS(dialog_rules, "quest_offer_instruction") = TRUE THEN
+        rule = dialog_rules{"quest_offer_instruction"}
+    ENDIF
+    IF LEN(rule) > 0 THEN
+        DIM with_item = " in the same offer_quest response"
+        IF has_item = TRUE THEN
+            with_item = " in the SAME response (also include give_item with name '" + item_name + "')"
+        ENDIF
+        out = out + CHR$(10) + rule + with_item
+    ENDIF
     RETURN out
 ENDFUNC
 
@@ -231,14 +358,16 @@ ENDFUNC
 FUNC build_item_constraints(id)
     DIM items = available_items(id)
     IF LEN(items) = 0 THEN
-        RETURN "You currently have nothing to give. Do NOT use the give_item tool - you carry no items."
+        RETURN rule("prompt_labels", "items_none", {})
     ENDIF
     DIM list = ""
     FOR i = 0 TO LEN(items) - 1
         IF i > 0 THEN list = list + ", "
         list = list + "'" + items[i] + "'"
     NEXT
-    RETURN "The ONLY items you may give via give_item are: " + list + ". NEVER invent or give items not on this list (no maps, no random objects, only the listed items)."
+    DIM vars AS MAP = {}
+    vars{"list"} = list
+    RETURN rule("prompt_labels", "items_allowed", vars)
 ENDFUNC
 
 FUNC build_world_context()
@@ -254,6 +383,7 @@ FUNC build_cross_facts(id)
     DIM out = ""
     DIM others = MAP.KEYS(npcs)
     DIM expected = ""
+    DIM already_received = ""
     FOR i = 0 TO LEN(others) - 1
         DIM oid = others[i]
         IF oid <> id THEN
@@ -263,7 +393,13 @@ FUNC build_cross_facts(id)
                     IF oq[0]{"target_npc"} = id THEN
                         IF MAP.EXISTS(oq[0], "item_given") = TRUE THEN
                             IF LEN(oq[0]{"item_given"}) > 0 THEN
-                                expected = expected + " '" + oq[0]{"item_given"} + "' from " + npcs{oid}{"name"} + ";"
+                                DIM item = oq[0]{"item_given"}
+                                DIM giver = npcs{oid}{"name"}
+                                IF npcs{oid}{"quest_completed"} = TRUE THEN
+                                    already_received = already_received + " '" + item + "' from " + giver + ";"
+                                ELSE
+                                    expected = expected + " '" + item + "' from " + giver + ";"
+                                ENDIF
                             ENDIF
                         ENDIF
                     ENDIF
@@ -272,8 +408,16 @@ FUNC build_cross_facts(id)
         ENDIF
     NEXT
     IF LEN(expected) > 0 THEN
-        out = out + "You are expecting these deliveries:" + expected + CHR$(10)
-        out = out + "If ANY of these is in the player inventory, immediately emit accept_item with that exact name + a warm say."
+        DIM v1 AS MAP = {}
+        v1{"list"} = expected
+        out = out + rule("prompt_labels", "expecting_deliveries_intro", v1) + CHR$(10)
+        out = out + rule("prompt_labels", "expecting_deliveries_action", {}) + CHR$(10)
+    ENDIF
+    IF LEN(already_received) > 0 THEN
+        DIM v2 AS MAP = {}
+        v2{"list"} = already_received
+        out = out + rule("prompt_labels", "already_received_intro", v2) + CHR$(10)
+        out = out + rule("prompt_labels", "already_received_action", {})
     ENDIF
     RETURN out
 ENDFUNC
@@ -281,7 +425,7 @@ ENDFUNC
 FUNC build_player_state()
     DIM out = ""
     IF LEN(player_state{"inventory"}) > 0 THEN
-        out = out + "Player inventory:"
+        out = out + rule("prompt_labels", "player_inventory_label", {})
         DIM inv = player_state{"inventory"}
         FOR i = 0 TO LEN(inv) - 1
             out = out + " " + inv[i]{"name"}
@@ -289,13 +433,17 @@ FUNC build_player_state()
         NEXT
         out = out + CHR$(10)
     ELSE
-        out = out + "Player inventory: (empty)" + CHR$(10)
+        out = out + rule("prompt_labels", "player_inventory_empty", {}) + CHR$(10)
     ENDIF
     IF LEN(player_state{"active"}) > 0 THEN
-        out = out + "Active quests the player holds:"
+        out = out + rule("prompt_labels", "active_quests_label", {})
         DIM act = player_state{"active"}
         FOR i = 0 TO LEN(act) - 1
-            out = out + CHR$(10) + "  - id=" + act[i]{"id"} + ": '" + act[i]{"description"} + "' (from " + act[i]{"giver_name"} + ")"
+            DIM v AS MAP = {}
+            v{"id"} = act[i]{"id"}
+            v{"desc"} = act[i]{"description"}
+            v{"giver"} = act[i]{"giver_name"}
+            out = out + CHR$(10) + rule("prompt_labels", "active_quest_entry", v)
         NEXT
     ENDIF
     RETURN out
@@ -318,19 +466,28 @@ EXPORT FUNC build_sys(id)
     vars{"player_state"} = build_player_state()
     vars{"long_term_memory"} = build_long_term(id)
     vars{"recent_history"} = build_recent(id)
+    vars{"relevant_context"} = build_relevant_context(id)
     RETURN render_template(g_template_path, vars)
+ENDFUNC
+
+FUNC build_relevant_context(id)
+    DIM s = npcs{id}
+    IF MAP.EXISTS(s, "last_query") <> TRUE THEN RETURN ""
+    DIM q = s{"last_query"}
+    IF LEN(q) = 0 THEN RETURN ""
+    RETURN retrieve_context(id, q)
 ENDFUNC
 
 FUNC build_long_term(id)
     DIM lt = npcs{id}{"long_term"}
     IF LEN(lt) = 0 THEN RETURN ""
-    RETURN "Long-term memory of past conversations with this player:" + CHR$(10) + lt
+    RETURN rule("prompt_labels", "long_term_label", {}) + CHR$(10) + lt
 ENDFUNC
 
 FUNC build_recent(id)
     DIM recent = format_recent_turns(id)
     IF LEN(recent) = 0 THEN RETURN ""
-    RETURN "Recent conversation so far:" + CHR$(10) + recent
+    RETURN rule("prompt_labels", "recent_history_label", {}) + CHR$(10) + recent
 ENDFUNC
 
 ' Legacy section-based prompt (kept as reference, unused).
@@ -595,7 +752,7 @@ EXPORT FUNC prefetch_tick(player_x, player_z, radius)
 
     IF best_id <> "" THEN
         DIM sys = build_sys(best_id)
-        DIM user = "*The player approaches you in the wilderness.* Greet them in character. JSON object only, with a single say action of 1-3 sentences."
+        DIM user = rule("user_prompts", "greeting_cue", {})
         g_task = gen_dialog(g_llm, sys, user)
         g_task_npc = best_id
     ELSE
@@ -695,7 +852,11 @@ EXPORT FUNC check_pending_delivery(id)
                 ENDIF
 
                 npcs{oid}{"quest_completed"} = TRUE
-                RETURN "*" + s{"name"} + " takes the " + expected_item + " from you with a small smile.* The " + expected_item + " from " + npcs{oid}{"name"} + " - thank you, traveler."
+                DIM thanks_vars AS MAP = {}
+                thanks_vars{"npc"} = s{"name"}
+                thanks_vars{"item"} = expected_item
+                thanks_vars{"giver"} = npcs{oid}{"name"}
+                RETURN rule("synthetic_replies", "delivery_thanks", thanks_vars)
             ENDIF
         ENDIF
     NEXT
@@ -750,6 +911,7 @@ EXPORT FUNC continue_dialog(id, player_msg)
     ENDIF
     DIM s = npcs{id}
     push_player_turn(id, player_msg)
+    npcs{id}{"last_query"} = player_msg
 
     ' Code-driven delivery: if the player just handed something we
     ' were expecting, skip the LLM and queue a synthetic actions
@@ -765,7 +927,9 @@ EXPORT FUNC continue_dialog(id, player_msg)
     DIM sys = build_sys(id)
     ' build_sys already inlines the recent buffer + long_term summary,
     ' so the user prompt is just the cue for the next turn.
-    DIM user_prompt = "Now reply as " + s{"name"} + " - JSON object only, with at least one say action and any tools that fit."
+    DIM tvars AS MAP = {}
+    tvars{"name"} = s{"name"}
+    DIM user_prompt = rule("user_prompts", "turn_cue", tvars)
     g_task = gen_dialog(g_llm, sys, user_prompt)
     g_task_npc = id
     RETURN g_task
