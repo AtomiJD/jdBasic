@@ -58,6 +58,7 @@ var _last_busy: String = ""
 var _ready_ids: Dictionary = {}
 var _diag_timer: float = 0.0
 var _last_raw_seen: String = ""
+var _last_summary_seen: String = ""
 
 var talk_hint: CanvasLayer
 var talk_hint_label: Label
@@ -689,18 +690,23 @@ func _physics_process(delta: float) -> void:
 		# Every 2s: dump g_task + the last raw LLM string we saw.
 		# Lets us see whether the worker is stuck OR whether the
 		# parse is rejecting non-JSON output.
+		# Summary-event poll - independent of the 2s diag tick so we
+		# surface compactions the moment they land.
+		var sm: Variant = vm.eval_expr('g_last_summary')
+		if sm is String and str(sm) != "" and str(sm) != _last_summary_seen:
+			_last_summary_seen = str(sm)
+			var smwho: Variant = vm.eval_expr('g_last_summary_npc')
+			print("[summary] ", smwho, ": ", sm)
+
 		_diag_timer += delta
-		if _diag_timer >= 2.0:
+		if _diag_timer >= 5.0:
 			_diag_timer = 0.0
 			var g_task_v: Variant = vm.eval_expr('g_task')
-			var raw: Variant = vm.eval_expr('g_last_raw')
-			var who: Variant = vm.eval_expr('g_last_who')
-			var n_npcs: Variant = vm.eval_expr('LEN(MAP.KEYS(npcs))')
-			var g_ready: Variant = vm.eval_expr('npcs{"gareth"}{"dialog_ready"}')
-			var g_pos_x: Variant = vm.eval_expr('npcs{"gareth"}{"pos_x"}')
-			var g_pos_z: Variant = vm.eval_expr('npcs{"gareth"}{"pos_z"}')
-			print("[diag] npcs=%s gareth(ready=%s,pos=%s,%s) g_task=%s who=%s raw=%s"
-				% [n_npcs, g_ready, g_pos_x, g_pos_z, g_task_v, who, str(raw).substr(0, 200)])
+			var g_st: Variant = vm.eval_expr('g_summary_task')
+			var v_buf: Variant = vm.eval_expr('LEN(npcs{"vex"}{"recent_turns"})')
+			var v_lt: Variant = vm.eval_expr('LEN(npcs{"vex"}{"long_term"})')
+			print("[diag] g_task=%s g_summary_task=%s | vex.buf=%s vex.long_term_chars=%s"
+				% [g_task_v, g_st, v_buf, v_lt])
 
 func _refresh_npc_quest_badges() -> void:
 	for npc in npc_bodies:

@@ -20,6 +20,118 @@ EXPORT DIM world_lore AS MAP = {}
 EXPORT DIM g_last_raw = "(none)"     ' last raw LLM output for diagnostics
 EXPORT DIM g_last_who = ""
 
+' Conversation memory tuning.
+EXPORT DIM g_buffer_max = 10        ' keep last N turns verbatim
+EXPORT DIM g_summary_min = 4        ' when buffer >= this many, summarise oldest pair
+
+' Summary task slot - separate from g_task so dialog generation
+' and history compression don't fight for the single LLM.
+EXPORT DIM g_summary_task = 0
+EXPORT DIM g_summary_npc = ""
+EXPORT DIM g_summary_pair = ""
+EXPORT DIM g_last_summary = ""        ' last summary line (for GDScript diag)
+EXPORT DIM g_last_summary_npc = ""
+
+' ── Memory helpers ────────────────────────────────────────────────
+
+FUNC push_turn(id, who, msg)
+    DIM entry AS MAP = {}
+    entry{"who"} = who
+    entry{"text"} = msg
+    npcs{id}{"recent_turns"} = APPEND(npcs{id}{"recent_turns"}, entry)
+ENDFUNC
+
+EXPORT FUNC push_player_turn(id, msg)
+    push_turn(id, "Player", msg)
+ENDFUNC
+
+EXPORT FUNC push_npc_turn(id, msg)
+    push_turn(id, npcs{id}{"name"}, msg)
+ENDFUNC
+
+' Returns the recent_turns buffer formatted as a single string
+' suitable for prompt injection. Pre-fixed with "Player:" / "<name>:"
+' so the model reads it as a script.
+FUNC format_recent_turns(id)
+    DIM turns = npcs{id}{"recent_turns"}
+    IF LEN(turns) = 0 THEN RETURN ""
+    DIM out = ""
+    FOR i = 0 TO LEN(turns) - 1
+        out = out + turns[i]{"who"} + ": " + turns[i]{"text"}
+        IF i < LEN(turns) - 1 THEN out = out + CHR$(10)
+    NEXT
+    RETURN out
+ENDFUNC
+
+' Pulls the OLDEST player+npc pair off the buffer and returns them
+' as a single block of text suitable for summarising. The buffer
+' is shrunk by 2 entries (or 1 if only one remains).
+FUNC pop_oldest_pair(id)
+    DIM turns = npcs{id}{"recent_turns"}
+    IF LEN(turns) = 0 THEN RETURN ""
+    DIM pair = ""
+    DIM take = 2
+    IF LEN(turns) < 2 THEN take = LEN(turns)
+    FOR i = 0 TO take - 1
+        pair = pair + turns[i]{"who"} + ": " + turns[i]{"text"}
+        IF i < take - 1 THEN pair = pair + CHR$(10)
+    NEXT
+    DIM rest = []
+    FOR i = take TO LEN(turns) - 1
+        rest = APPEND(rest, turns[i])
+    NEXT
+    npcs{id}{"recent_turns"} = rest
+    RETURN pair
+ENDFUNC
+
+' Summariser worker. Returns one short sentence describing what
+' happened in this oldest exchange, from the NPC's POV.
+ASYNC FUNC gen_summary(llm, npc_name, pair_text)
+    AI.SET(llm, "system", "You compress short dialogue exchanges. Output ONE short sentence (under 25 words) summarising what happened between the player and " + npc_name + ", from " + npc_name + "'s perspective. Plain text, no quotes, no JSON.")
+    AI.CLEAR_HISTORY(llm)
+    RETURN AI.CHAT(llm, pair_text)
+ENDFUNC
+
+' Called every prefetch_tick AFTER drain. If the buffer has grown
+' past the limit AND no summary task is in flight, kick one off.
+' On completion we append the summary to long_term and drop the
+' just-summarised pair. We only run when dialog isn't busy so
+' summarisation never blocks the player.
+FUNC maybe_compact_buffer()
+    IF g_summary_task <> 0 THEN
+        IF THREAD.ISDONE(g_summary_task) THEN
+            DIM summary = AWAIT g_summary_task
+            DIM cur = npcs{g_summary_npc}{"long_term"}
+            IF LEN(cur) > 0 THEN
+                npcs{g_summary_npc}{"long_term"} = cur + CHR$(10) + summary
+            ELSE
+                npcs{g_summary_npc}{"long_term"} = summary
+            ENDIF
+            g_last_summary = summary
+            g_last_summary_npc = g_summary_npc
+            g_summary_task = 0
+            g_summary_npc = ""
+            g_summary_pair = ""
+        ENDIF
+        RETURN ""
+    ENDIF
+    IF g_task <> 0 THEN RETURN ""   ' don't fight dialog generation
+    DIM ids = MAP.KEYS(npcs)
+    FOR i = 0 TO LEN(ids) - 1
+        DIM id = ids[i]
+        IF LEN(npcs{id}{"recent_turns"}) >= g_buffer_max THEN
+            DIM pair = pop_oldest_pair(id)
+            IF LEN(pair) > 0 THEN
+                g_summary_pair = pair
+                g_summary_npc = id
+                g_summary_task = gen_summary(g_llm, npcs{id}{"name"}, pair)
+                RETURN id
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN ""
+ENDFUNC
+
 ' Load the world-lore JSON once at boot. The contents (setting,
 ' geography, current_state, rules, npc_roster) are injected into
 ' every NPC's system prompt so everyone shares the same world model.
@@ -78,9 +190,55 @@ FUNC build_quest_block(id)
         RETURN "Quest already completed by the player. Do not re-offer."
     ENDIF
     IF s{"quest_offered"} = TRUE THEN
-        RETURN "You already offered the quest id=" + q{"id"} + " to the player and they accepted. Do not re-offer."
+        RETURN "You already offered the quest id=" + q{"id"} + " to the player and they accepted. Do not re-offer. Do not give them the item again."
     ENDIF
-    RETURN "You may offer this quest if it fits the moment (id=" + q{"id"} + "): " + q{"description"}
+    DIM out = "You have a quest to offer (id=" + q{"id"} + "): " + q{"description"}
+    DIM has_item = FALSE
+    DIM item_name = ""
+    IF MAP.EXISTS(q, "item_given") = TRUE THEN
+        item_name = q{"item_given"}
+        IF LEN(item_name) > 0 THEN has_item = TRUE
+    ENDIF
+    out = out + CHR$(10) + "When the player shows ANY willingness to help, accept work, or asks what you need, you MUST emit offer_quest with the id above"
+    IF has_item = TRUE THEN
+        out = out + " AND give_item with name '" + item_name + "' in the same response"
+    ENDIF
+    out = out + ". Do this on the first turn that fits."
+    RETURN out
+ENDFUNC
+
+' Whitelist of items this NPC may emit via give_item. Derived from
+' the quest's item_given for now; later we can attach an explicit
+' "inventory" field per NPC. Used both for prompt scoping and the
+' GDScript-side validation pass.
+EXPORT FUNC available_items(id)
+    DIM out = []
+    DIM s = npcs{id}
+    ' Once the quest has been offered the item has been handed over -
+    ' don't list it as available any more so the LLM can't re-gift it.
+    IF s{"quest_offered"} = TRUE THEN RETURN out
+    IF LEN(s{"quests"}) > 0 THEN
+        DIM q = s{"quests"}[0]
+        IF MAP.EXISTS(q, "item_given") = TRUE THEN
+            IF LEN(q{"item_given"}) > 0 THEN
+                out = APPEND(out, q{"item_given"})
+            ENDIF
+        ENDIF
+    ENDIF
+    RETURN out
+ENDFUNC
+
+FUNC build_item_constraints(id)
+    DIM items = available_items(id)
+    IF LEN(items) = 0 THEN
+        RETURN "You currently have nothing to give. Do NOT use the give_item tool - you carry no items."
+    ENDIF
+    DIM list = ""
+    FOR i = 0 TO LEN(items) - 1
+        IF i > 0 THEN list = list + ", "
+        list = list + "'" + items[i] + "'"
+    NEXT
+    RETURN "The ONLY items you may give via give_item are: " + list + ". NEVER invent or give items not on this list (no maps, no random objects, only the listed items)."
 ENDFUNC
 
 FUNC build_world_context()
@@ -154,10 +312,25 @@ EXPORT FUNC build_sys(id)
     vars{"legend"} = s{"legend"}
     vars{"knowledge"} = s{"knowledge"}
     vars{"quest_block"} = build_quest_block(id)
+    vars{"item_constraints"} = build_item_constraints(id)
     vars{"world_context"} = build_world_context()
     vars{"cross_npc_facts"} = build_cross_facts(id)
     vars{"player_state"} = build_player_state()
+    vars{"long_term_memory"} = build_long_term(id)
+    vars{"recent_history"} = build_recent(id)
     RETURN render_template(g_template_path, vars)
+ENDFUNC
+
+FUNC build_long_term(id)
+    DIM lt = npcs{id}{"long_term"}
+    IF LEN(lt) = 0 THEN RETURN ""
+    RETURN "Long-term memory of past conversations with this player:" + CHR$(10) + lt
+ENDFUNC
+
+FUNC build_recent(id)
+    DIM recent = format_recent_turns(id)
+    IF LEN(recent) = 0 THEN RETURN ""
+    RETURN "Recent conversation so far:" + CHR$(10) + recent
 ENDFUNC
 
 ' Legacy section-based prompt (kept as reference, unused).
@@ -422,9 +595,12 @@ EXPORT FUNC prefetch_tick(player_x, player_z, radius)
 
     IF best_id <> "" THEN
         DIM sys = build_sys(best_id)
-        DIM user = "*The player approaches you in the wilderness.* Greet them in character. Emit a JSON object with a single say action of 1-3 sentences."
+        DIM user = "*The player approaches you in the wilderness.* Greet them in character. JSON object only, with a single say action of 1-3 sentences."
         g_task = gen_dialog(g_llm, sys, user)
         g_task_npc = best_id
+    ELSE
+        ' No prefetch pending - use the idle time to compact memory.
+        maybe_compact_buffer()
     ENDIF
 
     RETURN finished
@@ -545,16 +721,14 @@ EXPORT FUNC start_dialog(id)
         npcs{id}{"dialog_cache"} = thanks
         npcs{id}{"dialog_actions"} = acts
         npcs{id}{"dialog_ready"} = TRUE
-        IF LEN(s{"history"}) = 0 THEN
-            npcs{id}{"history"} = npcs{id}{"name"} + ": " + thanks
-        ELSE
-            npcs{id}{"history"} = s{"history"} + CHR$(10) + npcs{id}{"name"} + ": " + thanks
-        ENDIF
+        push_npc_turn(id, thanks)
         RETURN acts
     ENDIF
     IF s{"dialog_ready"} <> TRUE THEN RETURN []
-    IF LEN(s{"history"}) = 0 THEN
-        npcs{id}{"history"} = s{"name"} + ": " + s{"dialog_cache"}
+    ' Seed the buffer with the cached greeting the first time the
+    ' player opens this dialog.
+    IF LEN(s{"recent_turns"}) = 0 THEN
+        push_npc_turn(id, s{"dialog_cache"})
     ENDIF
     RETURN s{"dialog_actions"}
 ENDFUNC
@@ -575,7 +749,7 @@ EXPORT FUNC continue_dialog(id, player_msg)
         g_task_npc = ""
     ENDIF
     DIM s = npcs{id}
-    npcs{id}{"history"} = s{"history"} + CHR$(10) + "Player: " + player_msg
+    push_player_turn(id, player_msg)
 
     ' Code-driven delivery: if the player just handed something we
     ' were expecting, skip the LLM and queue a synthetic actions
@@ -589,8 +763,10 @@ EXPORT FUNC continue_dialog(id, player_msg)
     ENDIF
 
     DIM sys = build_sys(id)
-    DIM convo = npcs{id}{"history"} + CHR$(10) + s{"name"} + ": (your JSON-only reply with at least one say action)"
-    g_task = gen_dialog(g_llm, sys, convo)
+    ' build_sys already inlines the recent buffer + long_term summary,
+    ' so the user prompt is just the cue for the next turn.
+    DIM user_prompt = "Now reply as " + s{"name"} + " - JSON object only, with at least one say action and any tools that fit."
+    g_task = gen_dialog(g_llm, sys, user_prompt)
     g_task_npc = id
     RETURN g_task
 ENDFUNC
@@ -603,7 +779,7 @@ EXPORT FUNC poll_reply(id)
     IF g_task = -1 THEN
         DIM s_acts = npcs{id}{"synthetic_reply"}
         DIM s_text = extract_say_text({"actions": s_acts})
-        npcs{id}{"history"} = npcs{id}{"history"} + CHR$(10) + npcs{id}{"name"} + ": " + s_text
+        push_npc_turn(id, s_text)
         npcs{id}{"synthetic_reply"} = []
         g_task = 0
         g_task_npc = ""
@@ -618,7 +794,7 @@ EXPORT FUNC poll_reply(id)
             acts = [{"tool": "say", "args": {"text": "..."}}]
         ENDIF
         DIM say_text = extract_say_from_actions(acts)
-        npcs{id}{"history"} = npcs{id}{"history"} + CHR$(10) + npcs{id}{"name"} + ": " + say_text
+        push_npc_turn(id, say_text)
         g_task = 0
         g_task_npc = ""
         RETURN acts

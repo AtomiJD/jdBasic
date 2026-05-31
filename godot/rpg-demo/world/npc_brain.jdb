@@ -41,6 +41,11 @@ EXPORT FUNC npc_init(id, data)
     s{"dialog_cache"} = ""
     s{"dialog_actions"} = []
     s{"dialog_ready"} = FALSE
+    ' recent_turns is the rolling per-NPC buffer (max ~10 entries).
+    ' long_term is the LLM-summarised history of older turns - kept
+    ' as a single string so the prompt template can splice it in.
+    s{"recent_turns"} = []
+    s{"long_term"} = ""
     s{"history"} = ""
     s{"color"} = data{"color"}
     s{"quest_offered"} = FALSE

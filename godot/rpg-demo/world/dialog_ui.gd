@@ -174,12 +174,26 @@ func _dispatch_actions(actions: Array) -> void:
 					print("[%s] %s" % [npc_name, text])
 			"give_item":
 				var item_name: String = str(args.get("name", ""))
-				if item_name != "":
-					var esc := _ascii_safe(item_name).replace("\"", "\\\"")
-					var src := _ascii_safe(npc_name).replace("\"", "\\\"")
-					vm.eval_expr('add_inventory_item("%s", "%s")' % [esc, src])
-					_append_system_line("+ %s" % item_name)
-					print("[%s gave] %s" % [npc_name, item_name])
+				if item_name == "":
+					continue
+				# Validate against the NPC's whitelist. The brain
+				# returns an Array of allowed item names; anything
+				# else is treated as model hallucination and dropped.
+				var allowed: Variant = vm.eval_expr('available_items("%s")' % npc_id)
+				var ok := false
+				if allowed is Array:
+					for a in allowed:
+						if str(a) == item_name:
+							ok = true
+							break
+				if not ok:
+					print("[%s] dropped hallucinated give_item: %s (allowed=%s)" % [npc_name, item_name, allowed])
+					continue
+				var esc := _ascii_safe(item_name).replace("\"", "\\\"")
+				var src := _ascii_safe(npc_name).replace("\"", "\\\"")
+				vm.eval_expr('add_inventory_item("%s", "%s")' % [esc, src])
+				_append_system_line("+ %s" % item_name)
+				print("[%s gave] %s" % [npc_name, item_name])
 			"accept_item":
 				var item_name: String = str(args.get("name", ""))
 				if item_name != "":
