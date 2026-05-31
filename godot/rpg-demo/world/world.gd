@@ -56,6 +56,8 @@ var npc_by_id: Dictionary = {}
 var llm_ready: bool = false
 var _last_busy: String = ""
 var _ready_ids: Dictionary = {}
+var _diag_timer: float = 0.0
+var _last_raw_seen: String = ""
 
 var talk_hint: CanvasLayer
 var talk_hint_label: Label
@@ -117,6 +119,23 @@ func _boot_brain() -> void:
 	var lore_path := ProjectSettings.globalize_path(WORLD_LORE).replace("\\", "/")
 	var k: Variant = vm.eval_expr('load_world_lore("%s")' % lore_path)
 	print("[brain] loaded world_lore with %s top-level fields" % k)
+
+	# Hand the prompt template's OS path to dialog_brain so its
+	# build_sys can TXTREADER$ it - relative paths don't resolve
+	# from Godot's runtime CWD.
+	var tmpl_path := ProjectSettings.globalize_path("res://prompts/dialog_system.tmpl").replace("\\", "/")
+	vm.eval('g_template_path = "%s"' % tmpl_path)
+	print("[brain] template path set to %s" % tmpl_path)
+
+	# Pre-flight: verify the brain's section builders work. Each
+	# eval returns null on jdBasic exception, so we can pinpoint
+	# which step throws.
+	print("[probe] template file size: ", vm.eval_expr('LEN(TXTREADER$(g_template_path))'))
+	print("[probe] build_quest_block(gareth): ", vm.eval_expr('build_quest_block("gareth")'))
+	print("[probe] build_world_context: ", vm.eval_expr('LEN(build_world_context())'))
+	print("[probe] build_cross_facts(gareth): ", vm.eval_expr('LEN(build_cross_facts("gareth"))'))
+	print("[probe] build_player_state: ", vm.eval_expr('LEN(build_player_state())'))
+	print("[probe] build_sys(gareth) total length: ", vm.eval_expr('LEN(build_sys("gareth"))'))
 
 func _boot_llm() -> void:
 	# dialog_brain.jdb is already concatenated into the VM by
@@ -666,6 +685,22 @@ func _physics_process(delta: float) -> void:
 		if busy is String and busy != _last_busy:
 			_last_busy = busy
 			_refresh_busy_label(busy)
+
+		# Every 2s: dump g_task + the last raw LLM string we saw.
+		# Lets us see whether the worker is stuck OR whether the
+		# parse is rejecting non-JSON output.
+		_diag_timer += delta
+		if _diag_timer >= 2.0:
+			_diag_timer = 0.0
+			var g_task_v: Variant = vm.eval_expr('g_task')
+			var raw: Variant = vm.eval_expr('g_last_raw')
+			var who: Variant = vm.eval_expr('g_last_who')
+			var n_npcs: Variant = vm.eval_expr('LEN(MAP.KEYS(npcs))')
+			var g_ready: Variant = vm.eval_expr('npcs{"gareth"}{"dialog_ready"}')
+			var g_pos_x: Variant = vm.eval_expr('npcs{"gareth"}{"pos_x"}')
+			var g_pos_z: Variant = vm.eval_expr('npcs{"gareth"}{"pos_z"}')
+			print("[diag] npcs=%s gareth(ready=%s,pos=%s,%s) g_task=%s who=%s raw=%s"
+				% [n_npcs, g_ready, g_pos_x, g_pos_z, g_task_v, who, str(raw).substr(0, 200)])
 
 func _refresh_npc_quest_badges() -> void:
 	for npc in npc_bodies:

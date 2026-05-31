@@ -39,6 +39,7 @@ EXPORT FUNC npc_init(id, data)
     s{"knowledge"} = data{"knowledge"}
     s{"quests"} = data{"quests"}
     s{"dialog_cache"} = ""
+    s{"dialog_actions"} = []
     s{"dialog_ready"} = FALSE
     s{"history"} = ""
     s{"color"} = data{"color"}
@@ -143,6 +144,50 @@ EXPORT FUNC add_inventory_item(item_name, source)
     inv{"source"} = source
     player_state{"inventory"} = APPEND(player_state{"inventory"}, inv)
     RETURN LEN(player_state{"inventory"})
+ENDFUNC
+
+' Tool-call helpers: LLM-emitted give_item / accept_item / complete_quest
+
+EXPORT FUNC remove_player_inventory(item_name)
+    DIM inv = player_state{"inventory"}
+    DIM found_idx = -1
+    FOR i = 0 TO LEN(inv) - 1
+        IF inv[i]{"name"} = item_name THEN
+            found_idx = i
+            EXITFOR
+        ENDIF
+    NEXT
+    IF found_idx < 0 THEN RETURN "not found"
+    DIM new_inv = []
+    FOR i = 0 TO LEN(inv) - 1
+        IF i <> found_idx THEN new_inv = APPEND(new_inv, inv[i])
+    NEXT
+    player_state{"inventory"} = new_inv
+    RETURN "removed"
+ENDFUNC
+
+EXPORT FUNC complete_quest_by_id(quest_id)
+    DIM act = player_state{"active"}
+    DIM idx = -1
+    FOR i = 0 TO LEN(act) - 1
+        IF act[i]{"id"} = quest_id THEN
+            idx = i
+            EXITFOR
+        ENDIF
+    NEXT
+    IF idx < 0 THEN RETURN "not found"
+    DIM entry = act[idx]
+    DIM new_active = []
+    FOR i = 0 TO LEN(act) - 1
+        IF i <> idx THEN new_active = APPEND(new_active, act[i])
+    NEXT
+    player_state{"active"} = new_active
+    player_state{"completed"} = APPEND(player_state{"completed"}, entry)
+    DIM gid = entry{"giver"}
+    IF MAP.EXISTS(npcs, gid) = TRUE THEN
+        npcs{gid}{"quest_completed"} = TRUE
+    ENDIF
+    RETURN "completed"
 ENDFUNC
 
 ' Advance an NPC by dt seconds. ground_y is the terrain height at the

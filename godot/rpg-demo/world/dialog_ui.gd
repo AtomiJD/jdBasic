@@ -43,10 +43,10 @@ func open(p_vm: JDBasicVM, p_npc_id: String, p_npc_name: String, p_color: Color)
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	print("\n[dialog open] === %s ===" % npc_name)
-	var greeting: Variant = vm.eval_expr('start_dialog("%s")' % npc_id)
-	if greeting is String and greeting != "":
-		_append_npc(greeting)
-		print("[%s] %s" % [npc_name, greeting])
+	var actions: Variant = vm.eval_expr('start_dialog("%s")' % npc_id)
+	print("[diag] start_dialog returned: type=", typeof(actions), " value=", actions)
+	if actions is Array and actions.size() > 0:
+		_dispatch_actions(actions)
 	else:
 		_set_status("...not ready yet")
 	_refresh_quest_row()
@@ -101,15 +101,16 @@ func _input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if not awaiting_reply or vm == null:
 		return
-	var reply: Variant = vm.eval_expr('poll_reply("%s")' % npc_id)
-	if reply is String and reply != "":
-		_append_npc(reply)
-		print("[%s] %s" % [npc_name, reply])
+	var actions: Variant = vm.eval_expr('poll_reply("%s")' % npc_id)
+	if actions is Array and actions.size() > 0:
+		print("[diag] poll_reply returned: ", actions)
+		_dispatch_actions(actions)
 		_set_status("")
 		awaiting_reply = false
 		input_line.editable = true
 		send_button.disabled = false
 		input_line.grab_focus()
+		_refresh_quest_row()
 
 func _on_send() -> void:
 	if awaiting_reply or vm == null:
@@ -155,6 +156,57 @@ func _ascii_safe(s: String) -> String:
 			"ñ": out += "n"
 			_:  out += "?"
 	return out
+
+# Walk the LLM's actions array and translate each tool call into UI
+# + jdBasic side effects. "say" is the only one we directly render;
+# the others either mutate game state via brain functions or emit a
+# small system line in the history pane.
+func _dispatch_actions(actions: Array) -> void:
+	for action_v in actions:
+		var action: Dictionary = action_v as Dictionary
+		var tool: String = str(action.get("tool", ""))
+		var args: Dictionary = action.get("args", {}) as Dictionary
+		match tool:
+			"say":
+				var text: String = str(args.get("text", ""))
+				if text != "":
+					_append_npc(text)
+					print("[%s] %s" % [npc_name, text])
+			"give_item":
+				var item_name: String = str(args.get("name", ""))
+				if item_name != "":
+					var esc := _ascii_safe(item_name).replace("\"", "\\\"")
+					var src := _ascii_safe(npc_name).replace("\"", "\\\"")
+					vm.eval_expr('add_inventory_item("%s", "%s")' % [esc, src])
+					_append_system_line("+ %s" % item_name)
+					print("[%s gave] %s" % [npc_name, item_name])
+			"accept_item":
+				var item_name: String = str(args.get("name", ""))
+				if item_name != "":
+					var esc := _ascii_safe(item_name).replace("\"", "\\\"")
+					vm.eval_expr('remove_player_inventory("%s")' % esc)
+					_append_system_line("- %s" % item_name)
+					print("[%s took] %s" % [npc_name, item_name])
+			"offer_quest":
+				vm.eval_expr('accept_quest("%s")' % npc_id)
+				_append_system_line("Quest accepted from %s" % npc_name)
+				print("[QUEST offered+accepted] from %s" % npc_name)
+			"complete_quest":
+				var qid: String = str(args.get("id", ""))
+				if qid != "":
+					var esc := _ascii_safe(qid).replace("\"", "\\\"")
+					vm.eval_expr('complete_quest_by_id("%s")' % esc)
+					_append_system_line("Quest completed: %s" % qid)
+					print("[QUEST completed] %s by %s" % [qid, npc_name])
+			"set_flag":
+				# World-state flags - placeholder for the next polish wave.
+				pass
+			"shift_affinity":
+				# Affinity system - placeholder for the next polish wave.
+				pass
+
+func _append_system_line(line: String) -> void:
+	history_text.append_text("[color=#bbe0a0][i]%s[/i][/color]\n\n" % line)
 
 func _append_npc(line: String) -> void:
 	# Stage directions come as *...* (Phi-3) or |...| (Qwen). Convert
