@@ -105,6 +105,7 @@ func _process(_delta: float) -> void:
 	if actions is Array and actions.size() > 0:
 		print("[diag] poll_reply returned: ", actions)
 		_dispatch_actions(actions)
+		_drain_act_events()
 		_set_status("")
 		awaiting_reply = false
 		input_line.editable = true
@@ -233,11 +234,67 @@ func _dispatch_actions(actions: Array) -> void:
 					_append_system_line(_system_line("quest_completed", {"id": qid}))
 					print("[QUEST completed] %s by %s" % [qid, npc_name])
 			"set_flag":
-				# World-state flags - placeholder for the next polish wave.
-				pass
+				var fkey: String = str(args.get("key", ""))
+				var fval: Variant = args.get("value", true)
+				# LLM frequently emits stray set_flag with value:false or
+				# with a hallucinated key. We only accept true transitions
+				# on keys that actually exist in world_state.flags.
+				var fval_str := str(fval).to_lower()
+				if fkey == "":
+					continue
+				if fval_str != "true" and fval_str != "1":
+					print("[world flag] dropped non-true: %s -> %s" % [fkey, fval])
+					continue
+				var fkey_esc := _ascii_safe(fkey).replace("\"", "'")
+				var res: Variant = vm.eval_expr('set_world_flag("%s", true)' % fkey_esc)
+				if str(res) == "set":
+					print("[world flag] %s -> true" % fkey)
+					_append_system_line(_system_line("world_shifts", {"key": fkey}))
+				else:
+					print("[world flag] dropped unknown key: %s" % fkey)
 			"shift_affinity":
-				# Affinity system - placeholder for the next polish wave.
-				pass
+				var delta_raw: Variant = args.get("delta", 0)
+				var delta: int = int(delta_raw)
+				if delta == 0:
+					continue
+				if delta < -10:
+					delta = -10
+				elif delta > 10:
+					delta = 10
+				var new_score: Variant = vm.eval_expr('shift_npc_affinity("%s", %d)' % [npc_id, delta])
+				if new_score is float or new_score is int:
+					var score_int: int = int(new_score)
+					if score_int == -9999:
+						print("[affinity] unknown npc_id: %s" % npc_id)
+						continue
+					var key := "affinity_up" if delta > 0 else "affinity_down"
+					var sign_str := ("+" + str(delta)) if delta > 0 else str(delta)
+					var line := _system_line(key, {
+						"npc": npc_name,
+						"delta": sign_str,
+						"score": str(score_int),
+					})
+					_append_system_line(line)
+					print("[affinity] %s %s -> %d" % [npc_name, sign_str, score_int])
+
+# Story-arc state changes accumulate in brain-side g_act_events. We
+# drain after each dispatched reply so the player sees "A new chapter
+# begins" / "Chapter complete" inline in the dialog history.
+func _drain_act_events() -> void:
+	var events: Variant = vm.eval_expr('drain_act_events()')
+	if not (events is Array):
+		return
+	for e_v in events:
+		if not (e_v is Dictionary):
+			continue
+		var e: Dictionary = e_v
+		var kind: String = str(e.get("kind", ""))
+		var title: String = str(e.get("title", ""))
+		var line_key := "act_started" if kind == "act_started" else "act_completed"
+		var line := _system_line(line_key, {"title": title})
+		var col := "[color=#d8c280][b]"
+		history_text.append_text("%s%s[/b][/color]\n\n" % [col, line])
+		print("[story] %s: %s" % [kind, title])
 
 func _append_system_line(line: String) -> void:
 	history_text.append_text("[color=#bbe0a0][i]%s[/i][/color]\n\n" % line)

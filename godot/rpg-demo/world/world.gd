@@ -6,6 +6,8 @@ extends Node3D
 const NPCS_JSON     := "res://assets/data/npcs.json"
 const WORLD_LORE    := "res://assets/data/world_lore.json"
 const DIALOG_RULES  := "res://assets/data/dialog_rules.json"
+const WORLD_STATE   := "res://assets/data/world_state.json"
+const STORY_JSON    := "res://assets/data/story.json"
 const CHESTS_JSON   := "res://assets/data/chests.json"
 const DUNGEONS_JSON := "res://assets/data/dungeons.json"
 const NPC_BRAIN     := "res://world/npc_brain.jdb"
@@ -17,7 +19,7 @@ const ScatterScript := preload("res://world/scatter.gd")
 const ChestScript   := preload("res://world/chest.gd")
 const DungeonScript := preload("res://world/dungeon.gd")
 
-@export var model_path: String = "D:/usr/dev/cc/models/qwen2.5-7b-instruct-q4_k_m.gguf"
+@export var model_path: String = "D:/usr/dev/cc/models/Qwen_Qwen3-14B-Q4_K_M.gguf"
 @export var embed_model_path: String = "D:/usr/dev/cc/models/nomic-embed-text-v1.5.Q4_K_M.gguf"
 @export var prefetch_radius: float = 30.0
 @export var talk_radius: float = 3.5
@@ -126,6 +128,17 @@ func _boot_brain() -> void:
 	var rules_path := ProjectSettings.globalize_path(DIALOG_RULES).replace("\\", "/")
 	var r: Variant = vm.eval_expr('load_dialog_rules("%s")' % rules_path)
 	print("[brain] loaded dialog_rules with %s top-level fields" % r)
+
+	var state_path := ProjectSettings.globalize_path(WORLD_STATE).replace("\\", "/")
+	var ws: Variant = vm.eval_expr('load_world_state("%s")' % state_path)
+	print("[brain] loaded world_state with %s top-level fields" % ws)
+
+	var story_path := ProjectSettings.globalize_path(STORY_JSON).replace("\\", "/")
+	var st: Variant = vm.eval_expr('load_story("%s")' % story_path)
+	print("[brain] loaded story with %s top-level fields" % st)
+	# Initial progression check: any acts already satisfied by the
+	# starting flag set jump straight to active/completed.
+	vm.eval_expr('check_story_progression()')
 
 	# Hand the prompt template's OS path to dialog_brain so its
 	# build_sys can TXTREADER$ it - relative paths don't resolve
@@ -621,17 +634,22 @@ func _open_journal(initial_tab: int) -> void:
 func _on_journal_closed() -> void:
 	journal_panel = null
 
+var _prev_time_of_day: float = -1.0
+
 func _process(delta: float) -> void:
 	if day_seconds > 0.0:
-		# Bias the per-second advance so day:night spans day_night_ratio:1
-		# of wall-clock. The two halves of the cycle each cover 0.5 of
-		# time_of_day, so we slow the day half and speed up the night
-		# half such that the totals add up to one day_seconds.
 		var elevation := -cos(time_of_day * TAU)
 		var sum_weight := day_night_ratio + 1.0
 		var multiplier := (2.0 / sum_weight) if elevation > 0.0 \
 			else (2.0 * day_night_ratio / sum_weight)
-		time_of_day = fposmod(time_of_day + delta * multiplier / day_seconds, 1.0)
+		var new_t := fposmod(time_of_day + delta * multiplier / day_seconds, 1.0)
+		# Day rollover: time_of_day wrapped around past midnight.
+		# Tell the brain to advance the world day.
+		if vm != null and _prev_time_of_day > 0.8 and new_t < 0.2:
+			var new_day: Variant = vm.eval_expr('advance_world_day()')
+			print("[world] day advanced to ", new_day)
+		_prev_time_of_day = new_t
+		time_of_day = new_t
 		_apply_time_of_day()
 	if compass_label != null:
 		_update_compass()

@@ -55,8 +55,34 @@ EXPORT FUNC npc_init(id, data)
     s{"color"} = data{"color"}
     s{"quest_offered"} = FALSE
     s{"quest_completed"} = FALSE
+    ' Affinity: -100 (hates you) .. 0 (neutral) .. +100 (trusts you).
+    ' Optional starting_affinity in npcs.json lets a character begin
+    ' biased - default neutral 0.
+    IF MAP.EXISTS(data, "starting_affinity") = TRUE THEN
+        s{"affinity"} = data{"starting_affinity"}
+    ELSE
+        s{"affinity"} = 0
+    ENDIF
     npcs{id} = s
     RETURN s
+ENDFUNC
+
+' Affinity API. Clamps to [-100, +100]. Returns the new value, or
+' -9999 if id is unknown (impossible during normal play but guards
+' against typos from the LLM/UI dispatch path).
+EXPORT FUNC shift_npc_affinity(id, delta)
+    IF MAP.EXISTS(npcs, id) <> TRUE THEN RETURN -9999
+    DIM cur = npcs{id}{"affinity"}
+    DIM new_val = cur + delta
+    IF new_val < -100 THEN new_val = -100
+    IF new_val > 100 THEN new_val = 100
+    npcs{id}{"affinity"} = new_val
+    RETURN new_val
+ENDFUNC
+
+EXPORT FUNC get_npc_affinity(id)
+    IF MAP.EXISTS(npcs, id) <> TRUE THEN RETURN 0
+    RETURN npcs{id}{"affinity"}
 ENDFUNC
 
 ' ── Quest / inventory API (called from GDScript) ───────────────────

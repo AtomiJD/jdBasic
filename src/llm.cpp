@@ -652,20 +652,53 @@ struct LlmModel {
         return calls;
     }
 
-    // Build a prompt from history using the model's chat template
+    // Build a prompt from history using the model's chat template.
+    // First try llama_chat_apply_template() with the model's embedded
+    // tokenizer.chat_template (Jinja-decoded by llama.cpp's built-in
+    // list of supported templates) - that's the only way to support
+    // Qwen-style <|im_start|>/<|im_end|> ChatML and avoid the model
+    // generating stray Phi-3 tokens. Fall back to the legacy hardcoded
+    // Phi-3 style when the model has no embedded template or it isn't
+    // recognised.
     std::string build_chat_prompt(const std::string& user_msg) const {
-        // Detect template style from vocab
-        bool has_im_start = false;
-        // Try common chat templates
-        // Phi-3 style: <|system|>\n...<|end|>\n<|user|>\n...<|end|>\n<|assistant|>\n
-        // Llama/Mistral style: [INST] ... [/INST]
-        // ChatML style: <|im_start|>system\n...<|im_end|>
-
-        std::string prompt;
-
-        // Simple auto-detect: check if vocab has special tokens
-        // For now, use Phi-3 / ChatML-like format as default
         std::string sys = system_prompt + build_tool_system_prompt();
+
+        const char* tmpl = model ? llama_model_chat_template(model, nullptr) : nullptr;
+        if (tmpl) {
+            std::vector<llama_chat_message> msgs;
+            if (!sys.empty()) msgs.push_back({"system", sys.c_str()});
+            for (auto& m : history) {
+                msgs.push_back({m.role.c_str(), m.content.c_str()});
+            }
+            msgs.push_back({"user", user_msg.c_str()});
+
+            // Estimate buffer size = 2x total content + overhead for the
+            // template scaffolding. Re-alloc on under-size return.
+            size_t total = sys.size() + user_msg.size();
+            for (auto& m : history) total += m.content.size() + m.role.size();
+            int32_t bufsz = static_cast<int32_t>(total * 2 + 512);
+            std::vector<char> buf(bufsz);
+            int32_t written = llama_chat_apply_template(
+                tmpl, msgs.data(), msgs.size(), /*add_ass=*/true,
+                buf.data(), bufsz);
+            if (written > bufsz) {
+                buf.resize(written);
+                written = llama_chat_apply_template(
+                    tmpl, msgs.data(), msgs.size(), true,
+                    buf.data(), written);
+            }
+            if (written > 0) {
+                return std::string(buf.data(), written);
+            }
+            // written <= 0 → template unsupported by llama.cpp's built-in
+            // list; fall through to the legacy Phi-3 path so older models
+            // still work.
+        }
+
+        // Legacy fallback: Phi-3 style scaffolding. Worked for Phi-3 +
+        // tolerant of Qwen2.5; explicitly broken for Qwen3 (the model
+        // generates the stop tokens it never saw in training).
+        std::string prompt;
         if (!sys.empty()) {
             prompt += "<|system|>\n" + sys + "<|end|>\n";
         }
@@ -691,8 +724,10 @@ struct LlmModel {
         // Strip leading whitespace again
         start = s.find_first_not_of(" \t\n\r");
         if (start != std::string::npos && start > 0) s = s.substr(start);
-        // Strip trailing <|end|> or <|endoftext|>
-        for (auto& suffix : {"<|end|>", "<|endoftext|>", "</s>"}) {
+        // Strip trailing stop tokens for Phi-3, ChatML (Qwen),
+        // Mistral and Llama-3 templates.
+        for (auto& suffix : {"<|end|>", "<|endoftext|>", "<|im_end|>",
+                             "<|eot_id|>", "</s>"}) {
             size_t pos = s.rfind(suffix);
             if (pos != std::string::npos && pos > s.size() - strlen(suffix) - 5)
                 s = s.substr(0, pos);

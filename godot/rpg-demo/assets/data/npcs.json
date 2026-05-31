@@ -16,7 +16,7 @@
     "legend": "Lost his squire to a wolf attack last winter and has never forgiven himself.",
     "knowledge": "The blacksmith Hilda works in the river village three days west. The old keep on the northern peak has been abandoned for a generation.",
     "quests": [
-      {"id": "wolf_pelts", "description": "Bring me three wolf pelts so the squire's family knows they were avenged.", "reward": "silver pendant", "item_given": ""}
+      {"id": "wolf_pelts", "description": "Bring me three wolf pelts so the squire's family knows they were avenged.", "reward": "silver pendant", "item_given": "", "completes_on_flag": "wolves_thinned"}
     ]
   },
   {
@@ -35,7 +35,7 @@
     "legend": "Apprenticed under the archmage of the southern academy until she was expelled for asking the wrong questions about the source of magic.",
     "knowledge": "The herbs on the southern slopes have unusual properties when picked at dusk. The old keep's library may still hold uncatalogued texts.",
     "quests": [
-      {"id": "moon_herb", "description": "Find me three sprigs of moon-herb. They grow only on south-facing slopes.", "reward": "scroll of light", "item_given": ""}
+      {"id": "moon_herb", "description": "Find me three sprigs of moon-herb. They grow only on south-facing slopes.", "reward": "scroll of light", "item_given": "", "completes_on_flag": "moon_herb_collected"}
     ]
   },
   {
@@ -55,7 +55,7 @@
     "legend": "Was raised by a forester after his village burned in a war he never understood.",
     "knowledge": "There are tracks of something larger than a wolf near the river bend. Sir Gareth means well but doesn't see what the forest tells him.",
     "quests": [
-      {"id": "scout_north", "description": "Walk the northern ridge and tell me what you see. Don't fight anything, just look.", "reward": "hunter's bow", "item_given": ""}
+      {"id": "scout_north", "description": "Walk the northern ridge and tell me what you see. Don't fight anything, just look.", "reward": "hunter's bow", "item_given": "", "completes_on_flag": "scouted_north"}
     ]
   },
   {

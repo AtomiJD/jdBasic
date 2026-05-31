@@ -7,12 +7,13 @@ extends CanvasLayer
 
 signal closed
 
-enum Tab { QUESTS = 0, INVENTORY = 1 }
+enum Tab { QUESTS = 0, INVENTORY = 1, REPUTATION = 2 }
 
 @onready var tabs: TabContainer    = $Panel/VBox/Tabs
 @onready var active_list: VBoxContainer    = $Panel/VBox/Tabs/Quests/Scroll/Inner/Active
 @onready var completed_list: VBoxContainer = $Panel/VBox/Tabs/Quests/Scroll/Inner/Completed
 @onready var inventory_list: VBoxContainer = $Panel/VBox/Tabs/Inventory/Scroll/Items
+@onready var reputation_list: VBoxContainer = $Panel/VBox/Tabs/Reputation/Scroll/Items
 
 var vm: JDBasicVM
 var prev_mouse_mode: Input.MouseMode = Input.MOUSE_MODE_CAPTURED
@@ -46,6 +47,7 @@ func _refresh() -> void:
 	_clear(active_list)
 	_clear(completed_list)
 	_clear(inventory_list)
+	_clear(reputation_list)
 
 	var n_active: Variant = vm.eval_expr('quest_count_active()')
 	var n_done: Variant   = vm.eval_expr('quest_count_completed()')
@@ -65,6 +67,13 @@ func _refresh() -> void:
 		inventory_list.add_child(_dim_label("Inventory empty."))
 	for i in int(n_inv):
 		inventory_list.add_child(_inventory_row(i))
+
+	var ids: Variant = vm.eval_expr('list_ids()')
+	if ids is Array and ids.size() > 0:
+		for id_v in ids:
+			reputation_list.add_child(_reputation_row(str(id_v)))
+	else:
+		reputation_list.add_child(_dim_label("No characters met yet."))
 
 func _active_quest_row(idx: int) -> Control:
 	var giver: Variant = vm.eval_expr('active_quest_field(%d, "giver_name")' % idx)
@@ -110,6 +119,45 @@ func _completed_quest_row(idx: int) -> Control:
 	box.add_child(body)
 	box.add_child(_separator())
 	return box
+
+func _reputation_row(id: String) -> Control:
+	var npc_name: Variant = vm.eval_expr('npc_display_name("%s")' % id)
+	var score_v: Variant  = vm.eval_expr('get_npc_affinity("%s")' % id)
+	var label_v: Variant  = vm.eval_expr('affinity_label_for("%s")' % id)
+	var score: int = int(score_v)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+
+	var head := HBoxContainer.new()
+	var nm := Label.new()
+	nm.text = str(npc_name)
+	nm.add_theme_font_size_override("font_size", 16)
+	nm.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(nm)
+	var sc := Label.new()
+	sc.text = "%+d  (%s)" % [score, str(label_v)]
+	var hue := _affinity_color(score)
+	sc.add_theme_color_override("font_color", hue)
+	head.add_child(sc)
+	box.add_child(head)
+
+	var bar := ProgressBar.new()
+	bar.min_value = -100
+	bar.max_value = 100
+	bar.value = score
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 12)
+	box.add_child(bar)
+	box.add_child(_separator())
+	return box
+
+func _affinity_color(score: int) -> Color:
+	if score >= 61: return Color(0.55, 0.95, 0.55)
+	if score >= 21: return Color(0.75, 0.95, 0.55)
+	if score >= -20: return Color(0.85, 0.85, 0.85)
+	if score >= -60: return Color(0.95, 0.75, 0.45)
+	return Color(0.95, 0.45, 0.45)
 
 func _inventory_row(idx: int) -> Control:
 	var name_: Variant   = vm.eval_expr('inventory_field(%d, "name")' % idx)

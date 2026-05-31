@@ -96,3 +96,14 @@ layout_mode = 2
 layout_mode = 2
 size_flags_horizontal = 3
 
+[node name="Reputation" type="MarginContainer" parent="Panel/VBox/Tabs"]
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="Panel/VBox/Tabs/Reputation"]
+layout_mode = 2
+
+[node name="Items" type="VBoxContainer" parent="Panel/VBox/Tabs/Reputation/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+

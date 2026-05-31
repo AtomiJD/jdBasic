@@ -18,6 +18,8 @@ EXPORT DIM g_task = 0
 EXPORT DIM g_task_npc = ""
 EXPORT DIM world_lore AS MAP = {}
 EXPORT DIM dialog_rules AS MAP = {}
+EXPORT DIM world_state AS MAP = {}
+EXPORT DIM g_world_log_max = 8        ' keep this many recent events in events_log
 EXPORT DIM g_last_raw = "(none)"     ' last raw LLM output for diagnostics
 EXPORT DIM g_last_who = ""
 
@@ -95,10 +97,26 @@ ENDFUNC
 
 ' Summariser worker. Returns one short sentence describing what
 ' happened in this oldest exchange, from the NPC's POV.
+' True if the summary is dominated by ASCII printable / common Latin
+' chars. Used to drop language-drift garbage before it pollutes the
+' long-term memory buffer. Threshold: <20% non-ASCII bytes pass.
+FUNC is_summary_clean(s)
+    DIM n = LEN(s)
+    IF n = 0 THEN RETURN FALSE
+    DIM bad = 0
+    FOR i = 1 TO n
+        DIM c = ASC(MID$(s, i - 1, 1))
+        IF c > 127 THEN bad = bad + 1
+    NEXT
+    IF (bad * 100) / n > 20 THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
 ASYNC FUNC gen_summary(llm, npc_name, pair_text, sys_prompt)
     AI.SET(llm, "system", sys_prompt)
     AI.CLEAR_HISTORY(llm)
-    RETURN AI.CHAT(llm, pair_text)
+    ' Qwen3 expects /no_think on the user side, not in system.
+    RETURN AI.CHAT(llm, pair_text + CHR$(10) + "/no_think")
 ENDFUNC
 
 ' Called every prefetch_tick AFTER drain. If the buffer has grown
@@ -106,18 +124,41 @@ ENDFUNC
 ' On completion we append the summary to long_term and drop the
 ' just-summarised pair. We only run when dialog isn't busy so
 ' summarisation never blocks the player.
+' Strip a leading "<think>...</think>" block (Qwen3 still emits one
+' even with /no_think in user msg) plus any leading whitespace. Used
+' on summary output before it lands in long_term_memory.
+FUNC strip_think_block(s)
+    DIM tend = INSTR(s, "</think>")
+    IF tend >= 0 THEN
+        s = MID$(s, tend + 8)
+    ENDIF
+    DO WHILE LEN(s) > 0 ANDALSO (LEFT$(s, 1) = " " ORELSE LEFT$(s, 1) = CHR$(10) ORELSE LEFT$(s, 1) = CHR$(13))
+        s = MID$(s, 2)
+    LOOP
+    RETURN s
+ENDFUNC
+
 FUNC maybe_compact_buffer()
     IF g_summary_task <> 0 THEN
         IF THREAD.ISDONE(g_summary_task) THEN
             DIM summary = AWAIT g_summary_task
-            DIM cur = npcs{g_summary_npc}{"long_term"}
-            IF LEN(cur) > 0 THEN
-                npcs{g_summary_npc}{"long_term"} = cur + CHR$(10) + summary
+            summary = strip_think_block(summary)
+            ' Reject Qwen's mid-sentence language drift (Chinese,
+            ' Cyrillic, Japanese...). If more than 20% of chars are
+            ' non-ASCII printable, the summary is poison - dropping it
+            ' keeps long_term_memory clean.
+            IF is_summary_clean(summary) THEN
+                DIM cur = npcs{g_summary_npc}{"long_term"}
+                IF LEN(cur) > 0 THEN
+                    npcs{g_summary_npc}{"long_term"} = cur + CHR$(10) + summary
+                ELSE
+                    npcs{g_summary_npc}{"long_term"} = summary
+                ENDIF
+                g_last_summary = summary
+                g_last_summary_npc = g_summary_npc
             ELSE
-                npcs{g_summary_npc}{"long_term"} = summary
+                PRINT "[summary REJECTED non-ASCII drift] "; g_summary_npc; ": "; summary
             ENDIF
-            g_last_summary = summary
-            g_last_summary_npc = g_summary_npc
             g_summary_task = 0
             g_summary_npc = ""
             g_summary_pair = ""
@@ -159,6 +200,355 @@ EXPORT FUNC load_dialog_rules(path)
     RETURN MAP.SIZE(dialog_rules)
 ENDFUNC
 
+EXPORT DIM story AS MAP = {}
+EXPORT DIM g_act_events AS ARRAY = []
+
+' Load story.json - defines the act roster and triggers. Initialises
+' act_status in world_state: every act starts as "pending", except
+' those with active_when_no_other = true which seed as "active".
+EXPORT FUNC load_story(path)
+    DIM raw$ = TXTREADER$(path)
+    story = JSON.PARSE$(raw$)
+    IF MAP.SIZE(world_state) = 0 THEN RETURN MAP.SIZE(story)
+    IF MAP.EXISTS(world_state, "act_status") <> TRUE THEN
+        world_state{"act_status"} = {}
+    ENDIF
+    DIM acts = story{"acts"}
+    FOR i = 0 TO LEN(acts) - 1
+        DIM a = acts[i]
+        DIM aid = a{"id"}
+        IF MAP.EXISTS(world_state{"act_status"}, aid) <> TRUE THEN
+            IF MAP.EXISTS(a, "active_when_no_other") = TRUE ANDALSO a{"active_when_no_other"} = TRUE THEN
+                world_state{"act_status"}{aid} = "active"
+            ELSE
+                world_state{"act_status"}{aid} = "pending"
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN MAP.SIZE(story)
+ENDFUNC
+
+' Test whether every flag in `keys` is currently TRUE in
+' world_state.flags. Empty keys list returns TRUE (vacuously
+' satisfied) - used for the seeding act_when_no_other path.
+FUNC all_flags_true(keys)
+    IF LEN(keys) = 0 THEN RETURN TRUE
+    FOR i = 0 TO LEN(keys) - 1
+        IF MAP.EXISTS(world_state{"flags"}, keys[i]) <> TRUE THEN RETURN FALSE
+        IF world_state{"flags"}{keys[i]} <> TRUE THEN RETURN FALSE
+    NEXT
+    RETURN TRUE
+ENDFUNC
+
+' Re-evaluate every act: pending -> active when its triggers fire,
+' active -> completed when its completes_when_all_true list lights
+' up. Emits log events for every state change so the UI can surface
+' "A new chapter begins...". Idempotent - safe to call every flag flip.
+EXPORT FUNC check_story_progression()
+    IF MAP.SIZE(story) = 0 THEN RETURN 0
+    IF MAP.EXISTS(world_state, "act_status") <> TRUE THEN RETURN 0
+    DIM acts = story{"acts"}
+    DIM changed = 0
+    FOR i = 0 TO LEN(acts) - 1
+        DIM a = acts[i]
+        DIM aid = a{"id"}
+        DIM st = world_state{"act_status"}{aid}
+        IF st = "pending" THEN
+            DIM trigs = a{"triggers"}
+            IF LEN(trigs) > 0 ANDALSO all_flags_true(trigs) THEN
+                world_state{"act_status"}{aid} = "active"
+                DIM ev1 AS MAP = {}
+                ev1{"kind"} = "act_started"
+                ev1{"id"} = aid
+                ev1{"title"} = a{"title"}
+                g_act_events = APPEND(g_act_events, ev1)
+                log_event("Day " + STR$(world_state{"day"}) + ": act started -> " + aid)
+                changed = changed + 1
+            ENDIF
+        ELSEIF st = "active" THEN
+            DIM cmps = a{"completes_when_all_true"}
+            IF LEN(cmps) > 0 ANDALSO all_flags_true(cmps) THEN
+                world_state{"act_status"}{aid} = "completed"
+                DIM ev2 AS MAP = {}
+                ev2{"kind"} = "act_completed"
+                ev2{"id"} = aid
+                ev2{"title"} = a{"title"}
+                g_act_events = APPEND(g_act_events, ev2)
+                log_event("Day " + STR$(world_state{"day"}) + ": act completed -> " + aid)
+                changed = changed + 1
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN changed
+ENDFUNC
+
+' Drain accumulated act-state-change events so GDScript can announce
+' them once and clear the queue. Returns the array and resets.
+EXPORT FUNC drain_act_events()
+    DIM events = g_act_events
+    g_act_events = []
+    RETURN events
+ENDFUNC
+
+' Renders the active-acts section of the system prompt. Lists
+' every currently-active act with its narrative line so the LLM
+' colours its responses toward the current story beat.
+FUNC build_active_acts_block(id)
+    IF MAP.SIZE(story) = 0 THEN RETURN ""
+    IF MAP.EXISTS(world_state, "act_status") <> TRUE THEN RETURN ""
+    DIM acts = story{"acts"}
+    DIM count = 0
+    DIM out = ""
+    FOR i = 0 TO LEN(acts) - 1
+        DIM a = acts[i]
+        DIM st = world_state{"act_status"}{a{"id"}}
+        IF st = "active" THEN
+            DIM ln_vars AS MAP = {}
+            ln_vars{"title"} = a{"title"}
+            ln_vars{"narrative"} = a{"narrative"}
+            IF count = 0 THEN
+                out = rule("story_block", "header", {})
+            ENDIF
+            out = out + CHR$(10) + rule("story_block", "act_line", ln_vars)
+            count = count + 1
+        ENDIF
+    NEXT
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC load_world_state(path)
+    DIM raw$ = TXTREADER$(path)
+    world_state = JSON.PARSE$(raw$)
+    RETURN MAP.SIZE(world_state)
+ENDFUNC
+
+' ── World-state tick + mutators ────────────────────────────────────
+
+' Called from GDScript whenever the Day/Night cycle crosses midnight.
+' Increments day + days_since_arrival, logs a sunrise marker, and
+' optionally shifts the mood once specific flags have flipped.
+EXPORT FUNC advance_world_day()
+    world_state{"day"} = world_state{"day"} + 1
+    world_state{"counters"}{"days_since_arrival"} = world_state{"counters"}{"days_since_arrival"} + 1
+    log_event("Dawn of day " + STR$(world_state{"day"}))
+    recompute_mood()
+    RETURN world_state{"day"}
+ENDFUNC
+
+' Mood shifts based on accumulated flags. Cheap rules - the LLM
+' picks up the new descriptor on the next prompt and tone shifts
+' naturally.
+FUNC recompute_mood()
+    DIM flags = world_state{"flags"}
+    DIM new_mood = "peaceful"
+    IF flags{"saw_tracks"} = TRUE THEN new_mood = "uneasy"
+    IF flags{"scouted_north"} = TRUE ANDALSO flags{"saw_tracks"} = TRUE THEN new_mood = "tense"
+    IF flags{"keep_investigated"} = TRUE THEN new_mood = "foreboding"
+    DIM counters = world_state{"counters"}
+    IF counters{"wolves_killed"} >= 3 THEN
+        world_state{"flags"}{"wolves_thinned"} = TRUE
+    ENDIF
+    world_state{"mood"} = new_mood
+ENDFUNC
+
+' Called by the LLM's set_flag tool. Returns "set" if the flag
+' was actually flipped (so GDScript can log it), "noop" if the value
+' was already the same, "unknown" if the flag doesn't exist.
+' Scan free-form player text for flag triggers using the keyword
+' + ctx tables in world_state.flag_triggers. Returns an array of
+' matched flag keys (lowercased input, case-insensitive contains).
+' Only matches flags that are still false - already-true flags
+' won't fire again. Match rule: (any keyword in text) AND
+' (any ctx in text) AND (flag still false).
+EXPORT FUNC check_flag_triggers(player_msg)
+    IF MAP.SIZE(world_state) = 0 THEN RETURN []
+    DIM triggers = world_state{"flag_triggers"}
+    DIM lc = LCASE$(player_msg)
+    DIM keys = MAP.KEYS(triggers)
+    DIM hits = []
+    FOR i = 0 TO LEN(keys) - 1
+        DIM k = keys[i]
+        IF world_state{"flags"}{k} <> TRUE THEN
+            DIM def = triggers{k}
+            DIM kw_arr = def{"keywords"}
+            DIM ctx_arr = def{"ctx"}
+            DIM kw_hit = FALSE
+            FOR j = 0 TO LEN(kw_arr) - 1
+                IF INSTR(lc, LCASE$(kw_arr[j])) >= 0 THEN
+                    kw_hit = TRUE
+                    EXITFOR
+                ENDIF
+            NEXT
+            DIM ctx_hit = FALSE
+            IF kw_hit THEN
+                FOR j = 0 TO LEN(ctx_arr) - 1
+                    IF INSTR(lc, LCASE$(ctx_arr[j])) >= 0 THEN
+                        ctx_hit = TRUE
+                        EXITFOR
+                    ENDIF
+                NEXT
+            ENDIF
+            IF kw_hit ANDALSO ctx_hit THEN
+                hits = APPEND(hits, k)
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN hits
+ENDFUNC
+
+' Scan player text for affinity-shifting cues. Returns the summed
+' delta across all matching signal categories (so "danke, mach ich"
+' counts as compliment+promise = +8). Caps the absolute return at
+' +/-10 so a single turn can't whiplash the relationship.
+EXPORT FUNC check_affinity_triggers(player_msg)
+    IF MAP.EXISTS(dialog_rules, "affinity_signals") <> TRUE THEN RETURN 0
+    DIM signals = dialog_rules{"affinity_signals"}
+    DIM cats = MAP.KEYS(signals)
+    DIM lc = LCASE$(player_msg)
+    DIM total = 0
+    FOR ci = 0 TO LEN(cats) - 1
+        DIM cat = cats[ci]
+        DIM def = signals{cat}
+        DIM kws = def{"keywords"}
+        DIM hit = FALSE
+        FOR ki = 0 TO LEN(kws) - 1
+            IF INSTR(lc, LCASE$(kws[ki])) >= 0 THEN
+                hit = TRUE
+                EXITFOR
+            ENDIF
+        NEXT
+        IF hit THEN total = total + def{"delta"}
+    NEXT
+    IF total > 10 THEN total = 10
+    IF total < -10 THEN total = -10
+    RETURN total
+ENDFUNC
+
+' Push a rumor onto world_state.rumors with the current day stamp.
+' Drops the oldest entry once the buffer exceeds dialog_rules.rumor_max
+' (default 6). source_id is the NPC who first heard the news from the
+' player, so the rumor block can hide it from that same NPC's prompt.
+EXPORT FUNC push_rumor(source_id, body)
+    IF MAP.SIZE(world_state) = 0 THEN RETURN 0
+    DIM entry AS MAP = {}
+    entry{"day"} = world_state{"day"}
+    entry{"source"} = source_id
+    DIM src_name = source_id
+    IF MAP.EXISTS(npcs, source_id) = TRUE THEN
+        src_name = npcs{source_id}{"name"}
+    ENDIF
+    entry{"source_name"} = src_name
+    entry{"text"} = body
+    world_state{"rumors"} = APPEND(world_state{"rumors"}, entry)
+    DIM cap = 6
+    IF MAP.EXISTS(dialog_rules, "rumor_max") = TRUE THEN cap = dialog_rules{"rumor_max"}
+    DIM rs = world_state{"rumors"}
+    IF LEN(rs) > cap THEN
+        DIM trimmed = []
+        DIM start = LEN(rs) - cap
+        FOR i = start TO LEN(rs) - 1
+            trimmed = APPEND(trimmed, rs[i])
+        NEXT
+        world_state{"rumors"} = trimmed
+    ENDIF
+    RETURN LEN(world_state{"rumors"})
+ENDFUNC
+
+' Look up the rumor template for a flag key, splice the NPC's name
+' in for {npc}. Returns "" if no template is defined for the flag.
+FUNC rumor_text_for_flag(flag_key, npc_name)
+    IF MAP.EXISTS(dialog_rules, "rumor_templates") <> TRUE THEN RETURN ""
+    DIM tmpls = dialog_rules{"rumor_templates"}
+    IF MAP.EXISTS(tmpls, flag_key) <> TRUE THEN RETURN ""
+    RETURN REPLACE$(tmpls{flag_key}, "{npc}", npc_name)
+ENDFUNC
+
+EXPORT FUNC set_world_flag(flag_key, value)
+    IF MAP.EXISTS(world_state{"flags"}, flag_key) <> TRUE THEN RETURN "unknown"
+    DIM cur = world_state{"flags"}{flag_key}
+    DIM new_val = FALSE
+    IF value = "true" ORELSE value = "TRUE" ORELSE value = 1 ORELSE value = TRUE THEN new_val = TRUE
+    IF cur = new_val THEN RETURN "noop"
+    world_state{"flags"}{flag_key} = new_val
+    log_event("Day " + STR$(world_state{"day"}) + ": " + flag_key + " = " + STR$(new_val))
+    recompute_mood()
+    check_story_progression()
+    IF new_val = TRUE THEN auto_complete_quests_for_flag(flag_key)
+    RETURN "set"
+ENDFUNC
+
+' Walk every NPC's quest list and complete any whose completes_on_flag
+' matches the just-flipped flag. Idempotent: complete_quest_by_id is
+' already a no-op when the quest is already in player_state.completed.
+FUNC auto_complete_quests_for_flag(flag_key)
+    DIM ids = MAP.KEYS(npcs)
+    FOR i = 0 TO LEN(ids) - 1
+        DIM gid = ids[i]
+        DIM gq = npcs{gid}{"quests"}
+        IF LEN(gq) > 0 THEN
+            DIM q = gq[0]
+            IF MAP.EXISTS(q, "completes_on_flag") = TRUE ANDALSO q{"completes_on_flag"} = flag_key THEN
+                complete_quest_by_id(q{"id"})
+            ENDIF
+        ENDIF
+    NEXT
+ENDFUNC
+
+EXPORT FUNC inc_world_counter(key, delta)
+    IF MAP.EXISTS(world_state{"counters"}, key) <> TRUE THEN RETURN -1
+    world_state{"counters"}{key} = world_state{"counters"}{key} + delta
+    RETURN world_state{"counters"}{key}
+ENDFUNC
+
+FUNC log_event(msg)
+    world_state{"events_log"} = APPEND(world_state{"events_log"}, msg)
+    DIM log = world_state{"events_log"}
+    DIM excess = LEN(log) - g_world_log_max
+    IF excess > 0 THEN
+        DIM trimmed = []
+        FOR i = excess TO LEN(log) - 1
+            trimmed = APPEND(trimmed, log[i])
+        NEXT
+        world_state{"events_log"} = trimmed
+    ENDIF
+ENDFUNC
+
+' Compact summary that goes into every NPC's system prompt. Two
+' lines: a header with day/mood, and any active flags + recent
+' events the NPCs should be aware of.
+FUNC build_world_state_summary()
+    IF MAP.SIZE(world_state) = 0 THEN RETURN ""
+    DIM day = world_state{"day"}
+    DIM mood = world_state{"mood"}
+    DIM mood_text = ""
+    IF MAP.EXISTS(world_state, "moods") = TRUE THEN
+        DIM moods = world_state{"moods"}
+        IF MAP.EXISTS(moods, mood) = TRUE THEN mood_text = " - " + moods{mood}
+    ENDIF
+    DIM out = "Day " + STR$(day) + ". World mood: " + mood + mood_text
+    DIM active_flags = ""
+    DIM fkeys = MAP.KEYS(world_state{"flags"})
+    FOR i = 0 TO LEN(fkeys) - 1
+        IF world_state{"flags"}{fkeys[i]} = TRUE THEN
+            IF LEN(active_flags) > 0 THEN active_flags = active_flags + ", "
+            active_flags = active_flags + fkeys[i]
+        ENDIF
+    NEXT
+    IF LEN(active_flags) > 0 THEN
+        out = out + CHR$(10) + "Established facts in this world: " + active_flags
+    ENDIF
+    DIM log = world_state{"events_log"}
+    IF LEN(log) > 0 THEN
+        out = out + CHR$(10) + "Recent events:"
+        DIM start = LEN(log) - 4
+        IF start < 0 THEN start = 0
+        FOR i = start TO LEN(log) - 1
+            out = out + CHR$(10) + "  - " + log[i]
+        NEXT
+    ENDIF
+    RETURN out
+ENDFUNC
+
 ' Boot the LLM. model_path is an OS path to a GGUF file. Returns the
 ' llama.cpp model id.
 ' n_gpu_layers default 99 = "everything on GPU". Override via dialog_init
@@ -168,7 +558,7 @@ EXPORT FUNC dialog_init(model_path)
 ENDFUNC
 
 EXPORT FUNC dialog_init_with(model_path, n_gpu)
-    g_llm = AI.LOAD_LLM(model_path, 2048, n_gpu)
+    g_llm = AI.LOAD_LLM(model_path, 8192, n_gpu)
     AI.SET(g_llm, "max_tokens", 400)
     AI.SET(g_llm, "temperature", 0.7)
     ' Qwen2.5-7B-Instruct is reliable at following "output only JSON"
@@ -355,6 +745,57 @@ EXPORT FUNC available_items(id)
     RETURN out
 ENDFUNC
 
+' Tell the LLM which world flags are valid for the set_flag tool.
+' Anything not on this list gets silently dropped by dispatch, so
+' inlining the list lets the model pick the right key.
+FUNC build_flag_constraints()
+    IF MAP.SIZE(world_state) = 0 THEN RETURN ""
+    DIM keys = MAP.KEYS(world_state{"flags"})
+    IF LEN(keys) = 0 THEN RETURN ""
+    ' Only advertise flags that aren't already TRUE (no point asking
+    ' the LLM to re-set them). Two-pass: build the comma list + count,
+    ' then iterate the same keys array a second time for the cheatsheet
+    ' so we don't need a runtime-typed intermediate array.
+    DIM available = ""
+    DIM count = 0
+    FOR i = 0 TO LEN(keys) - 1
+        IF world_state{"flags"}{keys[i]} <> TRUE THEN
+            IF count > 0 THEN available = available + ", "
+            available = available + "'" + keys[i] + "'"
+            count = count + 1
+        ENDIF
+    NEXT
+    IF count = 0 THEN RETURN ""
+    DIM sub_vars AS MAP = {}
+    sub_vars{"list"} = available
+    DIM out = ""
+    DIM ln_text = rule("flag_constraints", "header", {})
+    IF LEN(ln_text) > 0 THEN out = out + ln_text
+    ln_text = rule("flag_constraints", "subheader", sub_vars)
+    IF LEN(ln_text) > 0 THEN out = out + CHR$(10) + ln_text
+    ln_text = rule("flag_constraints", "cheatsheet_header", {})
+    IF LEN(ln_text) > 0 THEN out = out + CHR$(10) + ln_text
+    DIM triggers = world_state{"flag_triggers"}
+    FOR i = 0 TO LEN(keys) - 1
+        IF world_state{"flags"}{keys[i]} <> TRUE THEN
+            DIM k = keys[i]
+            IF MAP.EXISTS(triggers, k) THEN
+                DIM ln_vars AS MAP = {}
+                ln_vars{"key"} = k
+                ln_vars{"hint"} = triggers{k}{"hint"}
+                out = out + CHR$(10) + rule("flag_constraints", "cheatsheet_line", ln_vars)
+            ENDIF
+        ENDIF
+    NEXT
+    ln_text = rule("flag_constraints", "example_header", {})
+    IF LEN(ln_text) > 0 THEN out = out + CHR$(10) + ln_text
+    ln_text = rule("flag_constraints", "example_line", {})
+    IF LEN(ln_text) > 0 THEN out = out + CHR$(10) + ln_text
+    ln_text = rule("flag_constraints", "directive", {})
+    IF LEN(ln_text) > 0 THEN out = out + CHR$(10) + ln_text
+    RETURN out
+ENDFUNC
+
 FUNC build_item_constraints(id)
     DIM items = available_items(id)
     IF LEN(items) = 0 THEN
@@ -461,13 +902,101 @@ EXPORT FUNC build_sys(id)
     vars{"knowledge"} = s{"knowledge"}
     vars{"quest_block"} = build_quest_block(id)
     vars{"item_constraints"} = build_item_constraints(id)
+    vars{"flag_constraints"} = build_flag_constraints()
     vars{"world_context"} = build_world_context()
     vars{"cross_npc_facts"} = build_cross_facts(id)
     vars{"player_state"} = build_player_state()
     vars{"long_term_memory"} = build_long_term(id)
     vars{"recent_history"} = build_recent(id)
     vars{"relevant_context"} = build_relevant_context(id)
+    vars{"world_state_summary"} = build_world_state_summary()
+    vars{"affinity_block"} = build_affinity_block(id)
+    vars{"rumor_block"} = build_rumor_block(id)
+    vars{"active_acts"} = build_active_acts_block(id)
     RETURN render_template(g_template_path, vars)
+ENDFUNC
+
+' Look up which descriptor row matches the given score. Returns a
+' MAP with "label" and "phrase" keys (phrase still has {npc} unresolved
+' so callers can splice the actual NPC name in).
+FUNC affinity_descriptor(score)
+    IF MAP.EXISTS(dialog_rules, "affinity_descriptors") <> TRUE THEN
+        DIM fallback AS MAP = {}
+        fallback{"label"} = "neutral"
+        fallback{"phrase"} = ""
+        RETURN fallback
+    ENDIF
+    DIM rows = dialog_rules{"affinity_descriptors"}
+    FOR i = 0 TO LEN(rows) - 1
+        DIM r = rows[i]
+        IF score >= r{"min"} ANDALSO score <= r{"max"} THEN RETURN r
+    NEXT
+    DIM none AS MAP = {}
+    none{"label"} = "neutral"
+    none{"phrase"} = ""
+    RETURN none
+ENDFUNC
+
+' Public helper for Godot's journal panel: just the descriptor label
+' (e.g. "trusts" / "friendly" / "neutral"). Empty string if dialog_rules
+' isn't loaded yet.
+EXPORT FUNC affinity_label_for(id)
+    IF MAP.EXISTS(npcs, id) <> TRUE THEN RETURN ""
+    DIM score = npcs{id}{"affinity"}
+    DIM desc = affinity_descriptor(score)
+    RETURN desc{"label"}
+ENDFUNC
+
+EXPORT FUNC npc_display_name(id)
+    IF MAP.EXISTS(npcs, id) <> TRUE THEN RETURN id
+    RETURN npcs{id}{"name"}
+ENDFUNC
+
+' Render the rumors block for an NPC's system prompt. Filters out
+' rumors the NPC itself was the source of (otherwise Tylen would
+' read "Tylen says Atomi found tracks" - silly).
+FUNC build_rumor_block(id)
+    IF MAP.SIZE(world_state) = 0 THEN RETURN ""
+    IF MAP.EXISTS(world_state, "rumors") <> TRUE THEN RETURN ""
+    DIM rs = world_state{"rumors"}
+    IF LEN(rs) = 0 THEN RETURN ""
+    DIM count = 0
+    DIM out = ""
+    FOR i = 0 TO LEN(rs) - 1
+        DIM r = rs[i]
+        IF r{"source"} <> id THEN
+            DIM src_name = r{"source"}
+            IF MAP.EXISTS(r, "source_name") = TRUE THEN
+                src_name = r{"source_name"}
+            ENDIF
+            DIM ln_vars AS MAP = {}
+            ln_vars{"day"} = STR$(r{"day"})
+            ln_vars{"source"} = src_name
+            ln_vars{"text"} = r{"text"}
+            IF count = 0 THEN
+                out = rule("rumor_block", "header", {})
+            ENDIF
+            out = out + CHR$(10) + rule("rumor_block", "line", ln_vars)
+            count = count + 1
+        ENDIF
+    NEXT
+    RETURN out
+ENDFUNC
+
+FUNC build_affinity_block(id)
+    IF MAP.EXISTS(npcs{id}, "affinity") <> TRUE THEN RETURN ""
+    DIM score = npcs{id}{"affinity"}
+    DIM desc = affinity_descriptor(score)
+    DIM hdr_vars AS MAP = {}
+    hdr_vars{"score"} = STR$(score)
+    hdr_vars{"label"} = desc{"label"}
+    DIM phrase_vars AS MAP = {}
+    phrase_vars{"phrase"} = REPLACE$(desc{"phrase"}, "{npc}", npcs{id}{"name"})
+    DIM out = rule("affinity_block", "header", hdr_vars)
+    IF LEN(desc{"phrase"}) > 0 THEN
+        out = out + CHR$(10) + rule("affinity_block", "phrase_line", phrase_vars)
+    ENDIF
+    RETURN out
 ENDFUNC
 
 FUNC build_relevant_context(id)
@@ -676,14 +1205,65 @@ ENDFUNC
 ' look like JSON (starts with non-'{' character, ASYNC ERROR
 ' string, plain prose) we wrap it as a single say so the player
 ' still gets to see something readable.
+' Qwen3 sometimes emits Latin-1 codepoints as Python-style \xHH
+' escapes inside JSON strings ("Sch\xf6lerin" instead of UTF-8 or
+' "Schölerin"). JSON.PARSE$ then keeps the raw "xf6" bytes
+' verbatim. Rewriting \xHH → \u00HH before parsing makes them
+' valid JSON unicode escapes (U+00f6 = ö, U+00fc = ü, etc.).
+FUNC fix_qwen_hex_escapes(s)
+    DIM out = ""
+    DIM i = 0
+    DIM n = LEN(s)
+    DO WHILE i < n
+        DIM ch = MID$(s, i, 1)
+        IF ch = "\" ANDALSO i + 3 < n ANDALSO MID$(s, i + 1, 1) = "x" THEN
+            DIM h1 = MID$(s, i + 2, 1)
+            DIM h2 = MID$(s, i + 3, 1)
+            IF is_hex_digit(h1) ANDALSO is_hex_digit(h2) THEN
+                out = out + "\u00" + h1 + h2
+                i = i + 4
+            ELSE
+                out = out + ch
+                i = i + 1
+            ENDIF
+        ELSE
+            out = out + ch
+            i = i + 1
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+FUNC is_hex_digit(c)
+    IF LEN(c) <> 1 THEN RETURN FALSE
+    DIM code = ASC(c)
+    IF code >= 48 ANDALSO code <= 57 THEN RETURN TRUE   ' 0-9
+    IF code >= 65 ANDALSO code <= 70 THEN RETURN TRUE   ' A-F
+    IF code >= 97 ANDALSO code <= 102 THEN RETURN TRUE  ' a-f
+    RETURN FALSE
+ENDFUNC
+
 FUNC parse_actions(raw)
     DIM trimmed = raw
+    ' Qwen3 leaks <think>...</think> CoT blocks even with /no_think.
+    ' Strip everything up to (and including) a </think> close tag.
+    DIM tend = INSTR(trimmed, "</think>")
+    IF tend >= 0 THEN
+        trimmed = MID$(trimmed, tend + 8)
+    ENDIF
+    ' Drop everything before the first '{' - some models add a stray
+    ' preamble line ("Sure, here:") or a code-fence marker.
+    DIM brace = INSTR(trimmed, "{")
+    IF brace >= 0 THEN
+        trimmed = MID$(trimmed, brace)
+    ENDIF
     DO WHILE LEN(trimmed) > 0 ANDALSO (LEFT$(trimmed, 1) = " " ORELSE LEFT$(trimmed, 1) = CHR$(10) ORELSE LEFT$(trimmed, 1) = CHR$(13))
         trimmed = MID$(trimmed, 2)
     LOOP
     IF LEN(trimmed) = 0 ORELSE LEFT$(trimmed, 1) <> "{" THEN
         RETURN [{"tool": "say", "args": {"text": raw}}]
     ENDIF
+    trimmed = fix_qwen_hex_escapes(trimmed)
     DIM parsed = JSON.PARSE$(trimmed)
     IF MAP.EXISTS(parsed, "actions") = TRUE THEN RETURN parsed{"actions"}
     RETURN [{"tool": "say", "args": {"text": raw}}]
@@ -913,6 +1493,40 @@ EXPORT FUNC continue_dialog(id, player_msg)
     push_player_turn(id, player_msg)
     npcs{id}{"last_query"} = player_msg
 
+    ' Deterministic flag-trigger detection. Keyword-matching catches
+    ' the obvious cases the LLM keeps missing - we stage matched
+    ' set_flag actions here and prepend them to the LLM's reply in
+    ' poll_reply, so the UI dispatches them through its normal path
+    ' (validation + system_line + console).
+    DIM hits = check_flag_triggers(player_msg)
+    DIM pending = []
+    FOR hi = 0 TO LEN(hits) - 1
+        DIM hk = hits[hi]
+        DIM act AS MAP = {}
+        act{"tool"} = "set_flag"
+        DIM act_args AS MAP = {}
+        act_args{"key"} = hk
+        act_args{"value"} = TRUE
+        act{"args"} = act_args
+        pending = APPEND(pending, act)
+        ' Mirror the player's revelation as a world-wide rumor so the
+        ' next NPC the player approaches already knows about it.
+        DIM rt = rumor_text_for_flag(hk, npcs{id}{"name"})
+        IF LEN(rt) > 0 THEN
+            push_rumor(id, rt)
+        ENDIF
+    NEXT
+    DIM aff_delta = check_affinity_triggers(player_msg)
+    IF aff_delta <> 0 THEN
+        DIM aa AS MAP = {}
+        aa{"tool"} = "shift_affinity"
+        DIM aa_args AS MAP = {}
+        aa_args{"delta"} = aff_delta
+        aa{"args"} = aa_args
+        pending = APPEND(pending, aa)
+    ENDIF
+    npcs{id}{"pending_actions"} = pending
+
     ' Code-driven delivery: if the player just handed something we
     ' were expecting, skip the LLM and queue a synthetic actions
     ' array with just a thanks say. g_task = -1 is the sentinel.
@@ -959,6 +1573,17 @@ EXPORT FUNC poll_reply(id)
         ENDIF
         DIM say_text = extract_say_from_actions(acts)
         push_npc_turn(id, say_text)
+        ' Prepend deterministic set_flag actions detected from the
+        ' player's last message before handing back to the UI.
+        DIM pa = npcs{id}{"pending_actions"}
+        IF LEN(pa) > 0 THEN
+            DIM merged = pa
+            FOR pi = 0 TO LEN(acts) - 1
+                merged = APPEND(merged, acts[pi])
+            NEXT
+            acts = merged
+            npcs{id}{"pending_actions"} = []
+        ENDIF
         g_task = 0
         g_task_npc = ""
         RETURN acts

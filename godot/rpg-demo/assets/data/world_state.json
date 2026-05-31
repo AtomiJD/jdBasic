@@ -1,0 +1,70 @@
+{
+  "day": 1,
+  "mood": "uneasy",
+  "flags": {
+    "scouted_north":       false,
+    "delivered_parcel":    false,
+    "saw_tracks":          false,
+    "wolves_thinned":      false,
+    "keep_investigated":   false,
+    "moon_herb_collected": false
+  },
+  "flag_triggers": {
+    "scouted_north": {
+      "hint": "Player says they scouted / walked / explored the north ridge",
+      "keywords": ["scouted", "walked", "explored", "patrolled", "checked",
+                   "was at", "was in", "was on", "been at", "been to", "been on",
+                   "erkundet", "geschaut", "gegangen", "gelaufen",
+                   "war im", "war am", "war an", "war beim", "war auf", "war oben",
+                   "umgeschaut", "umgesehen", "abgesucht"],
+      "ctx":      ["north ridge", "northern peak", "northern ridge", "noerdlich",
+                   "nördlich", "norden", "nordkamm", "ridge"]
+    },
+    "delivered_parcel": {
+      "hint": "Player delivered Vex's sealed parcel to Maelyn",
+      "keywords": ["delivered", "gave", "handed", "übergeben", "abgegeben", "gebracht"],
+      "ctx":      ["parcel", "package", "paket", "päckchen"]
+    },
+    "saw_tracks": {
+      "hint": "Player says they saw / found strange tracks at the river bend",
+      "keywords": ["saw", "found", "spotted", "discovered", "leading", "leeding",
+                   "gesehen", "gefunden", "entdeckt", "bemerkt", "ungewöhnliche", "ungewoehnliche",
+                   "strange", "verdächtige", "verdaechtige"],
+      "ctx":      ["tracks", "spuren", "footprints", "fußabdrücke", "fussabdruecke",
+                   "river", "fluss", "river bend", "flussbiegung"]
+    },
+    "wolves_thinned": {
+      "hint": "Player reports having killed at least 3 wolves",
+      "keywords": ["killed", "slew", "hunted", "slain", "getötet", "erlegt", "gejagt", "umgebracht"],
+      "ctx":      ["wolves", "wolf", "wölfe", "wölfen"]
+    },
+    "keep_investigated": {
+      "hint": "Player says they entered / investigated the old keep on the northern peak",
+      "keywords": ["entered", "investigated", "explored", "betreten", "untersucht", "erkundet"],
+      "ctx":      ["keep", "festung", "burg", "old keep"]
+    },
+    "moon_herb_collected": {
+      "hint": "Player brings 3 moon-herbs from the southern slopes",
+      "keywords": ["brought", "collected", "gathered", "got", "have", "gesammelt", "geholt", "gebracht", "habe"],
+      "ctx":      ["moon-herb", "moon herb", "moonherb", "mondkraut"]
+    }
+  },
+  "counters": {
+    "wolves_killed": 0,
+    "days_since_arrival": 0,
+    "quests_completed": 0
+  },
+  "events_log": [],
+  "rumors": [],
+  "moods": {
+    "peaceful":    "The hills are calm. Birds sing. Travelers walk easy.",
+    "uneasy":      "Something feels off in the air. People glance over their shoulders.",
+    "tense":       "Word is spreading - something is wrong. Doors are barred at dusk.",
+    "foreboding":  "A weight hangs over the hills. Few travel after dark.",
+    "dire":        "The hills feel watched. No one wants to be alone."
+  },
+  "event_messages": {
+    "dawn":  "Dawn of day {day}",
+    "flag_set": "Day {day}: {key} = {value}"
+  }
+}
