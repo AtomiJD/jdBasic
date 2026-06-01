@@ -42,6 +42,13 @@ The demo scenes prove every layer of the stack:
   `connect_demo.tscn`, `connect_smoke.tscn`. This is the *runtime* path and
   sidesteps the parked "Missing connected method" editor warning below,
   which only affects connections authored in the editor's Signal panel.
+- **GODOT.TIMER** (2026-06-01) - `GODOT.TIMER(secs, "sub" [, repeat])`
+  spawns a Timer child, wires its timeout to a SUB, and starts it. One-shots
+  free themselves after firing. Built on CONNECT. See `SIGNALS.md`.
+- **Self-validating handles** (2026-06-01) - the bridge handle table now
+  stores `ObjectID` and resolves through `ObjectDB` on every `lookup`, so a
+  handle to a freed object (one-shot timer, queue_freed node) returns null
+  instead of dangling.
 
 ### Still open
 
@@ -50,7 +57,6 @@ The demo scenes prove every layer of the stack:
   `Dictionary` <-> jdBasic `MAP` and `Vector2i` / `Transform2D` are not
   marshalled. Candidate: explicit `GODOT.RECT2` builder + Dictionary support
   in `variant_to_jdb_value` / `jdb_value_to_variant`.
-- `GODOT.TIMER(secs, "sub")` one-shot/repeat helper, built on CONNECT.
 - `GODOT.DRAW_TEXT(node, pos, str, size, color)` - pull the ThemeDB default
   font so pure-jdBasic `_draw` can render text without a Label node.
 

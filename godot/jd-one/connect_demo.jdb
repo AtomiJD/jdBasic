@@ -13,7 +13,6 @@ DIM self_h   = 0
 DIM btn_h    = 0
 DIM slider_h = 0
 DIM status_h = 0
-DIM beat_h   = 0
 
 DIM clicks    = 0
 DIM beats     = 0
@@ -53,12 +52,11 @@ SUB _ready()
 	btn_h    = GODOT.CALL(self_h, "get_node", "UI/Button")
 	slider_h = GODOT.CALL(self_h, "get_node", "UI/Slider")
 	status_h = GODOT.CALL(self_h, "get_node", "UI/Status")
-	beat_h   = GODOT.CALL(self_h, "get_node", "Beat")
 
 	GODOT.CONNECT(btn_h, "pressed", "on_click")
 	GODOT.CONNECT(slider_h, "value_changed", "on_slide")
-	GODOT.CONNECT(beat_h, "timeout", "on_beat")
 
-	GODOT.CALL(beat_h, "start")
+	' One repeating timer, straight from code - no Timer node in the scene.
+	GODOT.TIMER(1.0, "on_beat", 1)
 	refresh()
 ENDSUB

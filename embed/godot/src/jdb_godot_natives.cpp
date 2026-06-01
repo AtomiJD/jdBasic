@@ -10,6 +10,7 @@
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/variant/callable_custom.hpp>
 #include <godot_cpp/classes/packed_scene.hpp>
@@ -259,24 +260,40 @@ GodotBridge::~GodotBridge() {
 
 Object* GodotBridge::lookup(int64_t handle) const {
     auto it = m_table.find(handle);
-    return (it == m_table.end()) ? nullptr : it->second;
+    if (it == m_table.end()) return nullptr;
+    // Resolve through ObjectDB every time: an object behind a handle may
+    // have been freed (a one-shot timer, a queue_freed node) since we
+    // issued it. Return null rather than a dangling pointer.
+    return ObjectDB::get_instance(it->second);
 }
 
 int64_t GodotBridge::store(Object* obj) {
     if (!obj) return 0;
+    uint64_t id = (uint64_t)obj->get_instance_id();
     // Re-use a handle if we've already issued one for this object.
     for (auto& kv : m_table) {
-        if (kv.second == obj) return kv.first;
+        if (kv.second == id) return kv.first;
     }
     int64_t h = m_next_handle++;
-    m_table[h] = obj;
+    m_table[h] = id;
     return h;
 }
 
 // ── Signals ──────────────────────────────────────────────────────
 
+void GodotBridge::prune_dead_() {
+    for (size_t i = 0; i < m_connections.size(); ) {
+        if (!ObjectDB::get_instance((uint64_t)m_connections[i].src)) {
+            m_connections.erase(m_connections.begin() + i);
+        } else {
+            ++i;
+        }
+    }
+}
+
 int GodotBridge::connect_signal(int64_t obj_handle, const String& sig,
                                 const String& sub, uint32_t flags) {
+    prune_dead_();
     Object* src = lookup(obj_handle);
     if (!src) return -1;
 
@@ -433,6 +450,34 @@ void GodotBridge::dispatch_signal(const String& sub, const Variant** args, int a
         return;
     }
     run_call_(code);
+}
+
+int64_t GodotBridge::make_timer(double secs, const String& sub, bool repeat) {
+    Node* owner_node = Object::cast_to<Node>(m_owner ? m_owner->get_owner() : nullptr);
+    if (!owner_node) return 0;
+
+    Timer* t = memnew(Timer);
+    t->set_wait_time(secs > 0.0 ? secs : 0.0001);
+    t->set_one_shot(!repeat);
+    t->set_autostart(false);
+    owner_node->add_child(t);
+
+    int64_t h = store(t);
+    if (!sub.is_empty()) connect_signal(h, String("timeout"), sub, 0);
+
+    if (!repeat) {
+        // Self-clean: a one-shot timer queue_frees itself once it fires so
+        // repeated GODOT.TIMER calls (cooldowns, delays) don't pile up
+        // stopped Timer nodes. Deferred so it frees after the timeout has
+        // been fully processed. lookup() resolves the now-dead handle to
+        // null, so a stale GODOT.CALL on it is a safe no-op rather than a
+        // dangling deref.
+        t->connect("timeout", Callable(t, "queue_free"),
+                   Object::CONNECT_ONE_SHOT | Object::CONNECT_DEFERRED);
+    }
+
+    t->start();
+    return h;
 }
 
 // ── Native callbacks ─────────────────────────────────────────────
@@ -653,6 +698,24 @@ static int64_t native_disconnect(JdbEmbed* vm, int argc, const int64_t* args, vo
     return jdb_embed_make_bool(vm, ok ? 1 : 0);
 }
 
+// GODOT.TIMER(secs, "sub" [, repeat]) -> Timer handle
+//
+// Fires sub() after `secs` seconds. repeat (default false / 0) makes it a
+// one-shot that frees itself after firing; a truthy repeat keeps it ticking
+// every `secs`. The returned handle works with GODOT.CALL(h, "stop"/"start")
+// and GODOT.QUEUE_FREE(h) for a repeating timer.
+static int64_t native_timer(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_nil(vm);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_nil(vm);
+    double secs = jdb_embed_value_double(vm, args[0]);
+    const char* sub = jdb_embed_value_string(vm, args[1]);
+    bool repeat = (argc > 2) ? (jdb_embed_value_int(vm, args[2]) != 0) : false;
+    if (!sub) return jdb_embed_make_nil(vm);
+    int64_t h = bridge->make_timer(secs, String::utf8(sub), repeat);
+    return h ? jdb_embed_make_int(vm, h) : jdb_embed_make_nil(vm);
+}
+
 // GODOT.LOAD("res://path.png") -> Resource handle (Texture2D, Mesh, etc.)
 static int64_t native_load(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_nil(vm);
@@ -756,6 +819,7 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);
+    jdb_embed_register_native(m_vm, "GODOT.TIMER",       2, 3,  &native_timer,       this);
     jdb_embed_register_native(m_vm, "GODOT.LOAD",        1, 1,  &native_load,        this);
     jdb_embed_register_native(m_vm, "GODOT.INSTANTIATE", 1, 1,  &native_instantiate, this);
     jdb_embed_register_native(m_vm, "GODOT.NEW",         1, 1,  &native_new,         this);

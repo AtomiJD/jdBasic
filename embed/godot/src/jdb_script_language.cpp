@@ -418,7 +418,7 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
     // ── GODOT.* native suite (functions) ─────────────────────────
     static const char* godot_natives[] = {
         "GODOT.SELF", "GODOT.GET", "GODOT.SET", "GODOT.CALL", "GODOT.EMIT",
-        "GODOT.CONNECT", "GODOT.DISCONNECT",
+        "GODOT.CONNECT", "GODOT.DISCONNECT", "GODOT.TIMER",
         "GODOT.LOAD", "GODOT.INSTANTIATE", "GODOT.NEW",
         "GODOT.ADD_CHILD", "GODOT.QUEUE_FREE",
         "GODOT.TIME_MS", "GODOT.TIME_SEC",

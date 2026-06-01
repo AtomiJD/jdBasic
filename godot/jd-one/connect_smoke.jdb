@@ -5,16 +5,24 @@ EXTENDS Node
 '   Godot ... --headless --path godot/jd-one res://connect_smoke.tscn
 
 DIM self_h = 0
-DIM beat_h = 0
 DIM n = 0
+DIM oneshots = 0
 
 SUB on_beat()
 	n = n + 1
 	PRINT "BEAT " + STR$(n)
 	IF n >= 3 THEN
+		PRINT "oneshot fired " + STR$(oneshots) + " time(s) total"
 		DIM tree_h = GODOT.CALL(self_h, "get_tree")
 		GODOT.CALL(tree_h, "quit")
 	ENDIF
+ENDSUB
+
+' Fired by a one-shot GODOT.TIMER. Must run exactly once even though the
+' scene lives long enough for a repeating timer to fire ~6 times.
+SUB on_oneshot()
+	oneshots = oneshots + 1
+	PRINT "ONESHOT"
 ENDSUB
 
 ' Object-arg path: the signal hands us the child Node as a bridge handle,
@@ -26,9 +34,11 @@ ENDSUB
 
 SUB _ready()
 	self_h = GODOT.SELF()
-	beat_h = GODOT.CALL(self_h, "get_node", "Beat")
-	GODOT.CONNECT(beat_h, "timeout", "on_beat")
-	GODOT.CALL(beat_h, "start")
+
+	' GODOT.TIMER: a repeating beat (replaces the .tscn Timer node) and a
+	' one-shot that must fire exactly once.
+	GODOT.TIMER(0.3, "on_beat", 1)
+	GODOT.TIMER(0.15, "on_oneshot")
 
 	' Re-entrancy path: ADD_CHILD emits child_entered_tree synchronously
 	' while we're still inside this _ready eval. The bridge must DEFER that

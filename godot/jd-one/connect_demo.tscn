@@ -29,6 +29,3 @@ offset_right = 632.0
 offset_bottom = 264.0
 theme_override_font_sizes/font_size = 20
 text = "starting..."
-
-[node name="Beat" type="Timer" parent="."]
-wait_time = 1.0

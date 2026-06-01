@@ -4,6 +4,3 @@
 
 [node name="ConnectSmoke" type="Node"]
 script = ExtResource("1_connect_smoke")
-
-[node name="Beat" type="Timer" parent="."]
-wait_time = 0.3

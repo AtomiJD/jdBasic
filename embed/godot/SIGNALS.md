@@ -60,6 +60,31 @@ ENDSUB
 
 See `godot/jd-one/connect_demo.tscn` for a runnable version, and `connect_smoke.tscn` for the headless regression check.
 
+## Timers
+
+`GODOT.TIMER` is a convenience built on the same dispatch path - it spawns a `Timer` child on the script's Node, wires its `timeout` to a SUB, and starts it. No Timer node needs to exist in the scene.
+
+| Function | Returns | Notes |
+|----------|---------|-------|
+| `GODOT.TIMER(secs, "sub")` | handle | One-shot: fires `sub` once after `secs`, then frees itself |
+| `GODOT.TIMER(secs, "sub", 1)` | handle | Repeating: fires `sub` every `secs` until you stop/free it |
+
+The returned handle works with `GODOT.CALL(h, "stop")` / `GODOT.CALL(h, "start")` and `GODOT.QUEUE_FREE(h)`. A one-shot frees its node automatically after firing; the handle then resolves to nothing, so a stray `GODOT.CALL` on it is a safe no-op rather than a crash.
+
+```basic
+SUB on_cooldown_done()
+    can_dash = TRUE
+ENDSUB
+
+SUB do_dash()
+    can_dash = FALSE
+    ' ... dash ...
+    GODOT.TIMER(0.6, "on_cooldown_done")   ' re-arm in 0.6s, fire-and-forget
+ENDSUB
+```
+
+Each call makes a new timer. Cache the handle if you only ever want one.
+
 ## Re-entrancy
 
 The jdBasic interpreter is single-threaded and not re-entrant. If a signal fires *while* the VM is already running an engine callback (e.g. your handler calls `emit_signal`, or `add_child` triggers `child_entered_tree`), the dispatch is **queued** and drained the moment the outer callback returns - never nested. Handlers triggered this way run in order, one after another, on the main thread. The common case (a button or timer firing between frames) runs immediately with no delay.

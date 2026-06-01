@@ -74,6 +74,12 @@ public:
     // mid-callback - see m_callback_depth).
     void dispatch_signal(const String& sub, const Variant** args, int argc);
 
+    // GODOT.TIMER - spawn a Timer child on the owning Node, wire its
+    // timeout to `sub`, and start it. repeat=false makes a one-shot that
+    // frees itself after firing. Returns a bridge handle to the Timer (0
+    // if there's no owner Node to parent it to).
+    int64_t make_timer(double secs, const String& sub, bool repeat);
+
     // Re-entrancy fence around every VM eval that runs an engine callback
     // (_process / _input / a signal dispatch). While depth > 0 any further
     // signal dispatch is queued and drained when depth returns to 0, so we
@@ -87,6 +93,9 @@ private:
     // SUB receives something GODOT.GET/SET/CALL can resolve.
     std::string arg_literal_(const Variant& v);
     void        run_call_(const std::string& code);
+    // Drop connection records whose source Object has been freed (e.g. a
+    // one-shot timer that queue_freed itself) so the list stays bounded.
+    void        prune_dead_();
 
     struct ConnRec {
         ObjectID   src;
@@ -97,7 +106,9 @@ private:
 
     JdbEmbed*                              m_vm    = nullptr;
     JdbScriptInstance*                     m_owner = nullptr;
-    std::unordered_map<int64_t, Object*>   m_table;
+    // Handle -> ObjectID (not raw Object*) so lookup() can validate against
+    // ObjectDB and hand back a freed object as null instead of dangling.
+    std::unordered_map<int64_t, uint64_t>  m_table;
     int64_t                                m_next_handle = 1;
 
     std::shared_ptr<BridgeAlive>           m_alive;
