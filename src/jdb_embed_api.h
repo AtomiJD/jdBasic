@@ -161,6 +161,14 @@ JDB_EMBED_API JdbValue jdb_embed_make_array (JdbEmbed* e,
                                               const JdbValue* elems,
                                               int n);
 
+// Build a jdBasic MAP / OBJECT from N (key, value) pairs. Keys are
+// plain C strings; values are pre-existing handles (copied, caller
+// still owns and releases them). Returns 0 on failure.
+JDB_EMBED_API JdbValue jdb_embed_make_map   (JdbEmbed* e,
+                                              const char* const* keys,
+                                              const JdbValue* vals,
+                                              int n);
+
 #ifdef __cplusplus
 }
 #endif

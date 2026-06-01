@@ -630,4 +630,22 @@ JDB_EMBED_API JdbValue jdb_embed_make_array(JdbEmbed* eh,
     return e->store(std::move(v));
 }
 
+JDB_EMBED_API JdbValue jdb_embed_make_map(JdbEmbed* eh,
+                                            const char* const* keys,
+                                            const JdbValue* vals,
+                                            int n) {
+    if (!eh) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    Value v = Value::make_object();
+    auto* obj = (ObjectObj*)v.obj;
+    obj->fields.reserve((size_t)n);
+    for (int i = 0; i < n; ++i) {
+        std::string k = (keys && keys[i]) ? std::string(keys[i]) : std::string();
+        auto it = e->value_store.find(vals ? vals[i] : 0);
+        Value entry = (it == e->value_store.end()) ? Value::make_none() : it->second;
+        obj->fields.emplace_back(std::move(k), std::move(entry));
+    }
+    return e->store(std::move(v));
+}
+
 }  // extern "C"

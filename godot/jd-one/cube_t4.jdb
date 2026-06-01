@@ -1,4 +1,3 @@
-' @tool
 EXTENDS Node3D
 
 ' Tier 4 demo - pure-jdBasic cube spinner.
@@ -52,6 +51,7 @@ SUB _process(delta)
 	  GODOT.EMIT(self_h, "spin_changed", rot_speed)
 	  angle = 0.0
 	ENDIF
+	print(vm.eval_expr('GODOT.INPUT.IS_ACTION_PRESSED("ui_accept")'))
 ENDSUB
 
 SUB _lall(w)

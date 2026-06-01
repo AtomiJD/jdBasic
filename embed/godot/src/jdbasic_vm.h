@@ -18,6 +18,8 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/string.hpp>
 
+#include "jdb_godot_input.h"
+
 extern "C" {
 struct JdbEmbed;
 }
@@ -33,6 +35,16 @@ protected:
 public:
     JDBasicVM();
     ~JDBasicVM();
+
+    // Push an InputEvent description into the per-VM queue. GDScript
+    // wires its own _input(event) hook to this. From jdBasic, drain
+    // via GODOT.INPUT.POLL_EVENT().
+    void push_input_event(const String& kind,
+                          const String& action,
+                          const String& type,
+                          double strength);
+    void clear_input_events();
+    int  pending_input_events() const;
 
     // Run a snippet against the persistent VM. Returns the captured PRINT
     // output as a String. Empty on success-with-no-output; check last_error()
@@ -61,7 +73,8 @@ public:
     String last_error() const;
 
 private:
-    JdbEmbed* m_vm;
+    JdbEmbed*       m_vm;
+    InputEventQueue m_input_queue;
 };
 
 }  // namespace godot

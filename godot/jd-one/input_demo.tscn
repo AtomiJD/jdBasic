@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://bmma70ndyrv4c"]
+
+[ext_resource type="Script" uid="uid://whl3em4xkv4x" path="res://input_demo.jdb" id="1_input_demo"]
+
+[node name="InputDemo" type="Node2D" unique_id=286419616]
+script = ExtResource("1_input_demo")
+
+[node name="BackgroundLayer" type="CanvasLayer" parent="."]
+layer = -1
+
+[node name="Background" type="ColorRect" parent="BackgroundLayer" unique_id=1775095248]
+offset_right = 4096.0
+offset_bottom = 4096.0
+color = Color(0.07, 0.09, 0.13, 1)
+
+[node name="UILayer" type="CanvasLayer" parent="."]
+layer = 1
+
+[node name="HUD" type="Label" parent="UILayer" unique_id=1887954739]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 1008.0
+offset_bottom = 64.0
+theme_override_colors/font_color = Color(0.85, 0.92, 1, 1)
+theme_override_font_sizes/font_size = 18
+text = "Score: 0"
+
+[node name="Hint" type="Label" parent="UILayer" unique_id=466486810]
+offset_left = 16.0
+offset_top = 660.0
+offset_right = 1008.0
+offset_bottom = 712.0
+theme_override_colors/font_color = Color(0.6, 0.7, 0.85, 1)
+theme_override_font_sizes/font_size = 14
+text = "WASD: move    Shift: sprint    Space: dash    R: reset    E: spawn    LMB: flag    Esc: pause"

@@ -6,6 +6,7 @@
 #include "jdb_script_resource.h"
 #include "jdb_script_language.h"
 #include "jdb_godot_natives.h"
+#include "jdb_godot_input.h"
 #include "jdb_embed_api.h"
 
 #include <godot_cpp/classes/engine.hpp>
@@ -174,6 +175,10 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     // pointer to this instance so GODOT.SELF() works.
     m_bridge = new GodotBridge(m_vm, this);
     m_bridge->register_all();
+    // Tier-3 scripts get discrete events via _input(event) directly,
+    // so no event queue is needed; pass nullptr - POLL_EVENT will
+    // just return NIL.
+    register_godot_input_natives(m_vm, nullptr);
 
     if (m_script.is_valid()) {
         String src = m_script->get_processed_source();
@@ -294,6 +299,7 @@ bool JdbScriptInstance::hard_reload(const String& processed_src) {
     if (!m_vm) return false;
     m_bridge = new GodotBridge(m_vm, this);
     m_bridge->register_all();
+    register_godot_input_natives(m_vm, nullptr);
 
     char* out = jdb_embed_eval(m_vm, processed_src.utf8().get_data());
     if (!out) {

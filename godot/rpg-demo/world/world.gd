@@ -637,6 +637,7 @@ func _on_journal_closed() -> void:
 var _prev_time_of_day: float = -1.0
 
 func _process(delta: float) -> void:
+	print(vm.eval_expr('GODOT.INPUT.IS_ACTION_PRESSED("ui_accept")'))
 	if day_seconds > 0.0:
 		var elevation := -cos(time_of_day * TAU)
 		var sum_weight := day_night_ratio + 1.0
