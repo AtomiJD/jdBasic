@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://type_smoke.jdb" id="1_type_smoke"]
+
+[node name="TypeSmoke" type="Node"]
+script = ExtResource("1_type_smoke")

@@ -55,14 +55,20 @@ The demo scenes prove every layer of the stack:
   pure-jdBasic HUD lives entirely in `_draw` with no Label node. `pos` is a
   `[x, y]` baseline, `color` a `[r, g, b, a]` (default white), size default
   16. Demo: `draw_text_demo.tscn`; headless regression: `draw_text_smoke.tscn`.
+- **Dictionary <-> MAP + typed-value marshalling** (2026-06-01) - a Godot
+  `Dictionary` now marshals to a jdBasic `MAP` and back (was stringified).
+  Godot types that a plain numeric array can't disambiguate use a `__gd`
+  tag inside a map: `Rect2` (vs a 4-float `Color`) and `Vector2i` (vs a
+  float `Vector2`) round-trip via `{__gd: "Rect2", x, y, w, h}`. Builders:
+  `GODOT.RECT2(x, y, w, h)`, `GODOT.VEC2I(x, y)`. Regression: `type_smoke.tscn`.
 
 ### Still open
 
-- Type round-trip gaps: a 4-float array always collapses to `Color`, so
-  `Rect2` / `Quaternion` / a plain 4-element numeric array can't round-trip.
-  `Dictionary` <-> jdBasic `MAP` and `Vector2i` / `Transform2D` are not
-  marshalled. Candidate: explicit `GODOT.RECT2` builder + Dictionary support
-  in `variant_to_jdb_value` / `jdb_value_to_variant`.
+- Remaining un-marshalled Variant types: `Transform2D` / `Transform3D` /
+  `Basis` / `Quaternion` / `Vector4` / `Plane`. Each could follow the same
+  `__gd`-tagged-map pattern with a matching `GODOT.*` builder if a use case
+  shows up. 2D node transforms are already reachable by setting
+  `position` / `rotation` / `scale` separately, so this is low priority.
 
 ## Parked: Godot engine bugs (not ours to fix)
 

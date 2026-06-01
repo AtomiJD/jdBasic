@@ -29,7 +29,11 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/vector2.hpp>
+#include <godot_cpp/variant/vector2i.hpp>
 #include <godot_cpp/variant/vector3.hpp>
+#include <godot_cpp/variant/rect2.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <cstring>
@@ -38,6 +42,25 @@
 using namespace godot;
 
 // ── Variant <-> JdbValue marshalling ──────────────────────────────
+
+// Build a jdBasic MAP tagged with a "__gd" discriminator plus N named
+// double fields. Used for Godot types that would otherwise be ambiguous as
+// plain numeric arrays (a 4-float array can't tell Rect2 from Color), so
+// they round-trip through `{__gd: "Rect2", x:.., y:.., w:.., h:..}` instead.
+static int64_t make_gd_typed(JdbEmbed* vm, const char* tag,
+                             const char* const* fkeys, const double* fvals, int n) {
+    std::vector<const char*> keys;
+    std::vector<int64_t>     vals;
+    keys.push_back("__gd");
+    vals.push_back(jdb_embed_make_string(vm, tag));
+    for (int i = 0; i < n; ++i) {
+        keys.push_back(fkeys[i]);
+        vals.push_back(jdb_embed_make_double(vm, fvals[i]));
+    }
+    int64_t m = jdb_embed_make_map(vm, keys.data(), vals.data(), (int)vals.size());
+    for (int64_t hv : vals) jdb_embed_value_release(vm, hv);
+    return m;
+}
 
 int64_t godot::variant_to_jdb_value(GodotBridge* bridge, const Variant& v) {
     if (!bridge) return 0;
@@ -87,6 +110,37 @@ int64_t godot::variant_to_jdb_value(GodotBridge* bridge, const Variant& v) {
             int64_t arr = jdb_embed_make_array(vm, e, 4);
             for (int i = 0; i < 4; ++i) jdb_embed_value_release(vm, e[i]);
             return arr;
+        }
+        case Variant::VECTOR2I: {
+            Vector2i vv = v;
+            const char* k[2] = {"x", "y"};
+            double f[2] = {(double)vv.x, (double)vv.y};
+            return make_gd_typed(vm, "Vector2i", k, f, 2);
+        }
+        case Variant::RECT2: {
+            Rect2 r = v;
+            const char* k[4] = {"x", "y", "w", "h"};
+            double f[4] = {r.position.x, r.position.y, r.size.x, r.size.y};
+            return make_gd_typed(vm, "Rect2", k, f, 4);
+        }
+        case Variant::DICTIONARY: {
+            Dictionary d = v;
+            Array ks = d.keys();
+            int n = (int)ks.size();
+            // Keep each key's utf8 buffer alive until make_map has copied it.
+            std::vector<CharString> kbufs;
+            std::vector<const char*> keys;
+            std::vector<int64_t>     vals;
+            kbufs.reserve(n);
+            for (int i = 0; i < n; ++i) {
+                Variant key = ks[i];
+                kbufs.push_back(String(key).utf8());
+                keys.push_back(kbufs.back().get_data());
+                vals.push_back(variant_to_jdb_value(bridge, d[key]));
+            }
+            int64_t m = jdb_embed_make_map(vm, keys.data(), vals.data(), n);
+            for (int64_t hv : vals) jdb_embed_value_release(vm, hv);
+            return m;
         }
         case Variant::OBJECT: {
             Object* o = v;
@@ -166,6 +220,44 @@ Variant godot::jdb_value_to_variant(GodotBridge* bridge, int64_t h) {
                 jdb_embed_value_release(vm, el);
             }
             return arr;
+        }
+        case JDB_T_OBJECT: {
+            // A "__gd"-tagged map round-trips a specific Godot type that a
+            // plain numeric array can't disambiguate (Rect2 vs Color, etc.).
+            std::string gd;
+            int64_t tagv = jdb_embed_map_get(vm, h, "__gd");
+            if (tagv) {
+                if (jdb_embed_value_tag(vm, tagv) == JDB_T_STRING) {
+                    const char* s = jdb_embed_value_string(vm, tagv);
+                    if (s) gd = s;
+                }
+                jdb_embed_value_release(vm, tagv);
+            }
+
+            auto field = [&](const char* k) -> double {
+                int64_t fv = jdb_embed_map_get(vm, h, k);
+                double d = fv ? jdb_embed_value_double(vm, fv) : 0.0;
+                if (fv) jdb_embed_value_release(vm, fv);
+                return d;
+            };
+
+            if (gd == "Vector2i") {
+                return Vector2i((int32_t)field("x"), (int32_t)field("y"));
+            }
+            if (gd == "Rect2") {
+                return Rect2(field("x"), field("y"), field("w"), field("h"));
+            }
+
+            // Plain jdBasic map -> Godot Dictionary.
+            Dictionary d;
+            int n = jdb_embed_map_size(vm, h);
+            for (int i = 0; i < n; ++i) {
+                const char* k = jdb_embed_map_key_at(vm, h, i);
+                int64_t val = jdb_embed_map_value_at(vm, h, i);
+                d[String::utf8(k ? k : "")] = jdb_value_to_variant(bridge, val);
+                if (val) jdb_embed_value_release(vm, val);
+            }
+            return d;
         }
     }
     return Variant();
@@ -643,6 +735,30 @@ static int64_t native_color(JdbEmbed* vm, int argc, const int64_t* args, void* /
     return arr;
 }
 
+// GODOT.RECT2(x, y, w, h) -> a "__gd"-tagged map that marshals to a Godot
+// Rect2. Needed because a plain 4-element numeric array is taken as a Color.
+static int64_t native_rect2(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
+    double f[4] = {
+        (argc > 0) ? jdb_embed_value_double(vm, args[0]) : 0.0,
+        (argc > 1) ? jdb_embed_value_double(vm, args[1]) : 0.0,
+        (argc > 2) ? jdb_embed_value_double(vm, args[2]) : 0.0,
+        (argc > 3) ? jdb_embed_value_double(vm, args[3]) : 0.0,
+    };
+    const char* k[4] = {"x", "y", "w", "h"};
+    return make_gd_typed(vm, "Rect2", k, f, 4);
+}
+
+// GODOT.VEC2I(x, y) -> a "__gd"-tagged map that marshals to a Godot
+// Vector2i (integer vector), distinct from the float Vector2 a [x,y] makes.
+static int64_t native_vec2i(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
+    double f[2] = {
+        (argc > 0) ? (double)jdb_embed_value_int(vm, args[0]) : 0.0,
+        (argc > 1) ? (double)jdb_embed_value_int(vm, args[1]) : 0.0,
+    };
+    const char* k[2] = {"x", "y"};
+    return make_gd_typed(vm, "Vector2i", k, f, 2);
+}
+
 // GODOT.EMIT(handle, "signal_name", arg1, arg2, ...) -> emit a signal
 // on the target Object. The first arg is the bridge handle (typically
 // GODOT.SELF for emitting from self). Returns 1 on success.
@@ -849,6 +965,8 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.VEC2",   2, 2,  &native_vec2,  this);
     jdb_embed_register_native(m_vm, "GODOT.VEC3",   3, 3,  &native_vec3,  this);
     jdb_embed_register_native(m_vm, "GODOT.COLOR",  3, 4,  &native_color, this);
+    jdb_embed_register_native(m_vm, "GODOT.RECT2",  4, 4,  &native_rect2, this);
+    jdb_embed_register_native(m_vm, "GODOT.VEC2I",  2, 2,  &native_vec2i, this);
     jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXT",   3, 5,  &native_draw_text,   this);
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
