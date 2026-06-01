@@ -7,9 +7,13 @@
 #include "jdb_script_resource.h"
 #include "jdb_embed_api.h"
 
+#include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
+#include <godot_cpp/classes/font.hpp>
+#include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/classes/theme_db.hpp>
 #include <godot_cpp/classes/timer.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/variant/callable_custom.hpp>
@@ -808,6 +812,35 @@ static int64_t native_print(JdbEmbed* vm, int argc, const int64_t* args, void* u
     return jdb_embed_make_nil(vm);
 }
 
+// GODOT.DRAW_TEXT(node, pos, "text" [, font_size [, color]])
+//
+// Draw a string in a CanvasItem's _draw using the engine's fallback font,
+// so pure-jdBasic _draw can render a HUD without a Label node. pos is a
+// [x, y] (the text baseline); color a [r, g, b, a], default white; font
+// size defaults to 16. Must be called from inside _draw, like the other
+// draw_* calls routed through GODOT.CALL.
+static int64_t native_draw_text(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    int64_t handle = jdb_embed_value_int(vm, args[0]);
+    CanvasItem* ci = Object::cast_to<CanvasItem>(bridge->lookup(handle));
+    if (!ci) return jdb_embed_make_bool(vm, 0);
+
+    Vector2 pos = jdb_value_to_variant(bridge, args[1]);
+    const char* txt = jdb_embed_value_string(vm, args[2]);
+    int font_size = (argc > 3) ? (int)jdb_embed_value_int(vm, args[3]) : 16;
+    Color col(1, 1, 1, 1);
+    if (argc > 4) col = jdb_value_to_variant(bridge, args[4]);
+
+    Ref<Font> font = ThemeDB::get_singleton()->get_fallback_font();
+    if (font.is_null()) return jdb_embed_make_bool(vm, 0);
+
+    ci->draw_string(font, pos, String::utf8(txt ? txt : ""),
+                    HORIZONTAL_ALIGNMENT_LEFT, -1.0f, font_size, col);
+    return jdb_embed_make_bool(vm, 1);
+}
+
 void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.SELF",   0, 0,  &native_self,  this);
     jdb_embed_register_native(m_vm, "GODOT.GET",    2, 2,  &native_get,   this);
@@ -816,6 +849,7 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.VEC2",   2, 2,  &native_vec2,  this);
     jdb_embed_register_native(m_vm, "GODOT.VEC3",   3, 3,  &native_vec3,  this);
     jdb_embed_register_native(m_vm, "GODOT.COLOR",  3, 4,  &native_color, this);
+    jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXT",   3, 5,  &native_draw_text,   this);
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);

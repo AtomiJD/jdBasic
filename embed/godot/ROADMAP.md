@@ -49,6 +49,12 @@ The demo scenes prove every layer of the stack:
   stores `ObjectID` and resolves through `ObjectDB` on every `lookup`, so a
   handle to a freed object (one-shot timer, queue_freed node) returns null
   instead of dangling.
+- **GODOT.DRAW_TEXT** (2026-06-01) -
+  `GODOT.DRAW_TEXT(node, pos, "text" [, font_size [, color]])` draws a
+  string in a CanvasItem's `_draw` using the ThemeDB fallback font, so a
+  pure-jdBasic HUD lives entirely in `_draw` with no Label node. `pos` is a
+  `[x, y]` baseline, `color` a `[r, g, b, a]` (default white), size default
+  16. Demo: `draw_text_demo.tscn`; headless regression: `draw_text_smoke.tscn`.
 
 ### Still open
 
@@ -57,8 +63,6 @@ The demo scenes prove every layer of the stack:
   `Dictionary` <-> jdBasic `MAP` and `Vector2i` / `Transform2D` are not
   marshalled. Candidate: explicit `GODOT.RECT2` builder + Dictionary support
   in `variant_to_jdb_value` / `jdb_value_to_variant`.
-- `GODOT.DRAW_TEXT(node, pos, str, size, color)` - pull the ThemeDB default
-  font so pure-jdBasic `_draw` can render text without a Label node.
 
 ## Parked: Godot engine bugs (not ours to fix)
 

@@ -1,0 +1,25 @@
+EXTENDS Node2D
+
+' Headless check for GODOT.DRAW_TEXT: confirms the CanvasItem cast, the
+' ThemeDB fallback font fetch, and the draw_string call all succeed. Prints
+' the return code on the first _draw, then quits.
+
+DIM self_h = 0
+DIM drew = 0
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	GODOT.CALL(self_h, "queue_redraw")
+ENDSUB
+
+SUB _draw()
+	DIM p = GODOT.VEC2(20.0, 40.0)
+	DIM c = GODOT.COLOR(1.0, 0.9, 0.2, 1.0)
+	DIM rc = GODOT.DRAW_TEXT(self_h, p, "Hello from jdBasic _draw", 28, c)
+	IF drew = 0 THEN
+		PRINT "draw_text rc=" + STR$(rc)
+		drew = 1
+		DIM tree_h = GODOT.CALL(self_h, "get_tree")
+		GODOT.CALL(tree_h, "quit")
+	ENDIF
+ENDSUB
