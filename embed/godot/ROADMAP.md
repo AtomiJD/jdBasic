@@ -1,7 +1,11 @@
 # jdBasic + Godot - Roadmap after Tier 4
 
-**Status:** 2026-05-29 - Tier 0 through Tier 4 + E3/E5/E6 shipped on
-`godot_spinoff` branch, all pushed to origin. The integration is now
+**Status:** 2026-06-01 - Tier 0 through Tier 4 + E3/E5/E6 shipped on
+`godot_spinoff`, all pushed to origin. On top of that a **runtime API
+layer** landed (input, signals, timers, `_draw` text, full type
+round-trip) that pulled several items forward out of the far-out
+"Sankt Nimmerleinstag" community backlog - T9 (input) in full, T12
+(signal event bridge) in its core. The integration is now
 feature-complete for daily use:
 
   * `.jdb` files attach to any Node as the actual `script` resource
@@ -61,6 +65,13 @@ The demo scenes prove every layer of the stack:
   tag inside a map: `Rect2` (vs a 4-float `Color`) and `Vector2i` (vs a
   float `Vector2`) round-trip via `{__gd: "Rect2", x, y, w, h}`. Builders:
   `GODOT.RECT2(x, y, w, h)`, `GODOT.VEC2I(x, y)`. Regression: `type_smoke.tscn`.
+- **GODOT.AUDIO.\*** (2026-06-01) - `PLAY(path [, vol_db [, pitch]])`
+  (fire-and-forget SFX, self-freeing), `MUSIC(path [, vol_db])` (looping
+  music on one reusable player, swappable), `STOP_MUSIC()`, `STOP(handle)`.
+  Players parent to the script's Node; music loops format-agnostically by
+  replaying on `finished`. The natives use real player pointers internally,
+  sidestepping the "object handle is just an int" gap. See `AUDIO.md`,
+  `audio_smoke.tscn`. First building block of the game-complete native set.
 
 ### Still open
 
@@ -128,9 +139,12 @@ following round out the editor side:
 - **Inspector hint types** - parse `INSPECTOR DIM hp AS RANGE(0, 100)`,
   `INSPECTOR DIM source AS FILE("*.txt")` into PROPERTY_HINT values so
   the Inspector renders sliders / file pickers / colour pickers
-- **Signal declarations** - `SIGNAL hit(damage)` at the top of a .jdb,
-  surfaced through `_get_script_signal_list` so the Inspector's "Signals"
-  tab shows them and `_connect` works
+- **Signal declarations** - *runtime side shipped*: `GODOT.CONNECT` /
+  `GODOT.DISCONNECT` / `GODOT.EMIT` wire and fire signals from code. What's
+  left is the *editor* side: a `SIGNAL hit(damage)` declaration at the top
+  of a .jdb surfaced through `_get_script_signal_list` so the Inspector's
+  "Signals" tab lists them and editor-authored connections verify (this is
+  also the fix for the parked "Missing connected method" warning)
 - **`@tool` mode** - drop the editor-hint VM-skip guard for scripts
   whose first non-comment line is `' @tool` (or a new `OPTION TOOL`),
   so editor-time logic (procedural mesh previews) becomes possible
@@ -241,41 +255,42 @@ it. Having a working debugger would be a meaningful differentiator.
   results across; needed for CPU-heavy procedural / AI scripts
 - **`res://` aware IMPORT** - jdBasic's IMPORT resolves through Godot's
   virtual filesystem instead of OS paths
-- **More GODOT.* natives** -
-  `GODOT.NEW("StandardMaterial3D")`, `GODOT.SIGNAL.CONNECT(obj, "pressed", callback)`,
-  `GODOT.LOAD("res://x.png")`, `GODOT.INSTANTIATE("res://prefab.tscn")`,
-  `GODOT.TIME.GET_TICKS_MSEC()` etc.
+- ~~**More GODOT.* natives**~~ - *shipped*: `GODOT.NEW`, `GODOT.CONNECT`,
+  `GODOT.LOAD`, `GODOT.INSTANTIATE`, `GODOT.TIME_MS` / `GODOT.TIME_SEC`,
+  plus `GODOT.TIMER` / `GODOT.DRAW_TEXT` / `GODOT.RECT2` / `GODOT.VEC2I`.
 - **Distribution tiering** - `jdbrt-mini.dll` (interpreter only,
   ~1 MB), `jdbrt-llm.dll` (+ LLM bridge, ~150 MB + weights) so users
   pick what they need
 - **macOS / Linux ports** of `build.bat` / `build_rt.bat` / `SConstruct`
   paths so the GDExtension builds cross-platform
 
-### Community backlog - Sankt Nimmerleinstag (only if a community shows up)
+### Former community backlog - pulled forward
 
-Gaps surfaced while building the weekend rpg-demo where Godot APIs
-have no jdBasic surface yet. The demo works around them by keeping
-GDScript for plumbing (input, mesh construction, await), so these
-only become worth shipping once external contributors actually need
-them. Until then, do not invest engineering time here.
+These four surfaced while building the weekend rpg-demo as Godot APIs with
+no jdBasic surface, and were originally parked as "only if a community
+shows up". Building the input demo + the RPG made them worth doing now, so
+two shipped ahead of schedule:
 
-- **T9 - `GODOT.INPUT.*` natives** - `Input.is_action_pressed`,
-  `Input.get_axis`, `Input.is_key_pressed`, `Input.set_mouse_mode`,
-  plus `InputEvent` introspection (type, action_match, relative
-  motion). Without this, every player-controller is GDScript-only.
-- **T10 - `GODOT.MESH.*` natives** - `ArrayMesh.add_surface_from_arrays`
-  binding + `HeightMapShape3D.map_data` setter. The math-heavy
-  compute (heightmaps, voxel fields) is already a jdBasic strength;
-  this would let jdBasic also drive the mesh-build side without
-  marshalling raw arrays back to GDScript.
-- **T11 - Static engine singletons via `GODOT.CALL`** - `Time.*`,
-  `ProjectSettings.*`, `Engine.*`, `OS.*` - currently `GODOT.CALL`
-  needs an object handle, so static-class methods are unreachable.
-  Extend with a string-keyed singleton table.
-- **T12 - `GODOT.AWAIT$` for engine signals** - jdBasic's CHAN covers
-  jdBasic-internal async, but `await get_tree().process_frame` or
-  `await node.body_entered` has no equivalent. Needs an event-loop
-  bridge that pumps Godot signals into a per-VM event queue.
+- ~~**T9 - `GODOT.INPUT.*` natives**~~ - **shipped** (2026-05-31). Full
+  polling suite (`is_action_pressed`, `get_axis`, `get_vector`,
+  `is_key_pressed`, mouse position/velocity/buttons) plus an event queue
+  and `_input(event)` introspection. See `INPUT.md`.
+- **T10 - `GODOT.MESH.*` natives** - still open.
+  `ArrayMesh.add_surface_from_arrays` binding + `HeightMapShape3D.map_data`
+  setter. The math-heavy compute (heightmaps, voxel fields) is already a
+  jdBasic strength; this would let jdBasic drive the mesh-build side too,
+  without marshalling raw arrays back to GDScript.
+- **T11 - Static engine singletons via `GODOT.CALL`** - still open. `Time.*`,
+  `ProjectSettings.*`, `Engine.*`, `OS.*` - `GODOT.CALL` needs an object
+  handle, so static-class methods are unreachable. Extend with a
+  string-keyed singleton table (e.g. `GODOT.SINGLETON("OS")` -> handle).
+- **T12 - `GODOT.AWAIT$` for engine signals** - **core shipped** via
+  `GODOT.CONNECT` (2026-06-01): the event-loop bridge that pumps Godot
+  signals into the VM (with re-entrancy-safe deferred dispatch) is exactly
+  what `await node.body_entered` needed, just expressed as a connected SUB
+  instead of an inline `await`. A literal `AWAIT$` expression that parks a
+  FUNC mid-line is the only remaining piece, and depends on the `YIELD`
+  opcode below.
 
 ### Showcase / outreach
 

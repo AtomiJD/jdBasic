@@ -1,0 +1,28 @@
+EXTENDS Node
+
+' Headless check for GODOT.AUDIO.*. The dummy audio driver won't make
+' sound, but this confirms the stream loads, the player is created and
+' parented, and PLAY/MUSIC/STOP return sane values without erroring.
+
+DIM self_h = 0
+
+SUB _ready()
+	self_h = GODOT.SELF()
+
+	DIM sfx = GODOT.AUDIO.PLAY("res://beep.wav", -6.0, 1.0)
+	PRINT "SFX   handle=" + STR$(sfx) + " class=" + GODOT.CALL(sfx, "get_class")
+
+	DIM mus = GODOT.AUDIO.MUSIC("res://beep.wav", -12.0)
+	PRINT "MUSIC handle=" + STR$(mus) + " class=" + GODOT.CALL(mus, "get_class")
+
+	' A second MUSIC call must reuse the same player (swap track), not make
+	' a new one - so the handle resolves to the same node.
+	DIM mus2 = GODOT.AUDIO.MUSIC("res://beep.wav")
+	PRINT "MUSIC2 same=" + STR$(mus2 = mus)
+
+	GODOT.AUDIO.STOP_MUSIC()
+	PRINT "stopped music"
+
+	DIM tree_h = GODOT.CALL(self_h, "get_tree")
+	GODOT.CALL(tree_h, "quit")
+ENDSUB

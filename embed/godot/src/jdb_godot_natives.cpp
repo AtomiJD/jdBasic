@@ -7,6 +7,8 @@
 #include "jdb_script_resource.h"
 #include "jdb_embed_api.h"
 
+#include <godot_cpp/classes/audio_stream.hpp>
+#include <godot_cpp/classes/audio_stream_player.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/font.hpp>
@@ -576,6 +578,69 @@ int64_t GodotBridge::make_timer(double secs, const String& sub, bool repeat) {
     return h;
 }
 
+int64_t GodotBridge::audio_play(const String& path, double volume_db, double pitch) {
+    Node* owner_node = Object::cast_to<Node>(m_owner ? m_owner->get_owner() : nullptr);
+    if (!owner_node) return 0;
+    Ref<AudioStream> stream = ResourceLoader::get_singleton()->load(path);
+    if (stream.is_null()) {
+        UtilityFunctions::push_error(String("[GODOT.AUDIO.PLAY] cannot load ") + path);
+        return 0;
+    }
+    AudioStreamPlayer* p = memnew(AudioStreamPlayer);
+    p->set_stream(stream);
+    p->set_volume_db((float)volume_db);
+    p->set_pitch_scale(pitch > 0.0 ? (float)pitch : 1.0f);
+    owner_node->add_child(p);
+    int64_t h = store(p);
+    // One-shot SFX: free the player once it finishes so they don't pile up.
+    p->connect("finished", Callable(p, "queue_free"),
+               Object::CONNECT_ONE_SHOT | Object::CONNECT_DEFERRED);
+    p->play();
+    return h;
+}
+
+int64_t GodotBridge::audio_music(const String& path, double volume_db) {
+    Node* owner_node = Object::cast_to<Node>(m_owner ? m_owner->get_owner() : nullptr);
+    if (!owner_node) return 0;
+    Ref<AudioStream> stream = ResourceLoader::get_singleton()->load(path);
+    if (stream.is_null()) {
+        UtilityFunctions::push_error(String("[GODOT.AUDIO.MUSIC] cannot load ") + path);
+        return 0;
+    }
+    AudioStreamPlayer* p = nullptr;
+    if (m_music_id) p = Object::cast_to<AudioStreamPlayer>(ObjectDB::get_instance(m_music_id));
+    if (!p) {
+        p = memnew(AudioStreamPlayer);
+        owner_node->add_child(p);
+        m_music_id = (uint64_t)p->get_instance_id();
+        // Format-agnostic loop: replay from the top whenever it finishes.
+        p->connect("finished", Callable(p, "play"));
+    }
+    p->set_stream(stream);
+    p->set_volume_db((float)volume_db);
+    p->play();
+    return store(p);
+}
+
+void GodotBridge::audio_stop_music() {
+    if (!m_music_id) return;
+    AudioStreamPlayer* p = Object::cast_to<AudioStreamPlayer>(ObjectDB::get_instance(m_music_id));
+    if (p) {
+        p->stop();
+        p->queue_free();
+    }
+    m_music_id = 0;
+}
+
+bool GodotBridge::audio_stop(int64_t handle) {
+    AudioStreamPlayer* p = Object::cast_to<AudioStreamPlayer>(lookup(handle));
+    if (!p) return false;
+    if ((uint64_t)p->get_instance_id() == m_music_id) m_music_id = 0;
+    p->stop();
+    p->queue_free();
+    return true;
+}
+
 // ── Native callbacks ─────────────────────────────────────────────
 
 static GodotBridge* bridge_of(void* userdata) {
@@ -836,6 +901,55 @@ static int64_t native_timer(JdbEmbed* vm, int argc, const int64_t* args, void* u
     return h ? jdb_embed_make_int(vm, h) : jdb_embed_make_nil(vm);
 }
 
+// GODOT.AUDIO.PLAY("res://shoot.wav" [, volume_db [, pitch]]) -> player handle
+//
+// Fire-and-forget sound effect: spawns an AudioStreamPlayer, plays the
+// stream, and frees the player when it finishes. volume_db default 0 (full),
+// pitch default 1.0.
+static int64_t native_audio_play(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_nil(vm);
+    const char* path = jdb_embed_value_string(vm, args[0]);
+    if (!path) return jdb_embed_make_nil(vm);
+    double vol   = (argc > 1) ? jdb_embed_value_double(vm, args[1]) : 0.0;
+    double pitch = (argc > 2) ? jdb_embed_value_double(vm, args[2]) : 1.0;
+    int64_t h = bridge->audio_play(String::utf8(path), vol, pitch);
+    return h ? jdb_embed_make_int(vm, h) : jdb_embed_make_nil(vm);
+}
+
+// GODOT.AUDIO.MUSIC("res://music.ogg" [, volume_db]) -> player handle
+//
+// Looping background music on a single reusable player. Calling it again
+// swaps the track. volume_db default 0.
+static int64_t native_audio_music(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_nil(vm);
+    const char* path = jdb_embed_value_string(vm, args[0]);
+    if (!path) return jdb_embed_make_nil(vm);
+    double vol = (argc > 1) ? jdb_embed_value_double(vm, args[1]) : 0.0;
+    int64_t h = bridge->audio_music(String::utf8(path), vol);
+    return h ? jdb_embed_make_int(vm, h) : jdb_embed_make_nil(vm);
+}
+
+// GODOT.AUDIO.STOP_MUSIC() -> stop and free the looping music player.
+static int64_t native_audio_stop_music(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* ud) {
+    GodotBridge* bridge = bridge_of(ud);
+    if (bridge) bridge->audio_stop_music();
+    return jdb_embed_make_nil(vm);
+}
+
+// GODOT.AUDIO.STOP(handle) -> stop and free a player started by AUDIO.PLAY
+// or AUDIO.MUSIC. Returns 1 if the handle was an audio player.
+static int64_t native_audio_stop(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    int64_t handle = jdb_embed_value_int(vm, args[0]);
+    return jdb_embed_make_bool(vm, bridge->audio_stop(handle) ? 1 : 0);
+}
+
 // GODOT.LOAD("res://path.png") -> Resource handle (Texture2D, Mesh, etc.)
 static int64_t native_load(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_nil(vm);
@@ -972,6 +1086,10 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);
     jdb_embed_register_native(m_vm, "GODOT.TIMER",       2, 3,  &native_timer,       this);
+    jdb_embed_register_native(m_vm, "GODOT.AUDIO.PLAY",       1, 3, &native_audio_play,       this);
+    jdb_embed_register_native(m_vm, "GODOT.AUDIO.MUSIC",      1, 2, &native_audio_music,      this);
+    jdb_embed_register_native(m_vm, "GODOT.AUDIO.STOP_MUSIC", 0, 0, &native_audio_stop_music, this);
+    jdb_embed_register_native(m_vm, "GODOT.AUDIO.STOP",       1, 1, &native_audio_stop,       this);
     jdb_embed_register_native(m_vm, "GODOT.LOAD",        1, 1,  &native_load,        this);
     jdb_embed_register_native(m_vm, "GODOT.INSTANTIATE", 1, 1,  &native_instantiate, this);
     jdb_embed_register_native(m_vm, "GODOT.NEW",         1, 1,  &native_new,         this);

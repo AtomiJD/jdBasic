@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://audio_smoke.jdb" id="1_audio_smoke"]
+
+[node name="AudioSmoke" type="Node"]
+script = ExtResource("1_audio_smoke")

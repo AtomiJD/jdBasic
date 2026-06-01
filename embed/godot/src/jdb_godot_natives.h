@@ -80,6 +80,14 @@ public:
     // if there's no owner Node to parent it to).
     int64_t make_timer(double secs, const String& sub, bool repeat);
 
+    // GODOT.AUDIO.* - the natives work with real AudioStreamPlayer pointers
+    // internally, sidestepping the "object handle is just an int" gap that
+    // GODOT.SET(player, "stream", h) would hit.
+    int64_t audio_play(const String& path, double volume_db, double pitch);
+    int64_t audio_music(const String& path, double volume_db);
+    void    audio_stop_music();
+    bool    audio_stop(int64_t handle);
+
     // Re-entrancy fence around every VM eval that runs an engine callback
     // (_process / _input / a signal dispatch). While depth > 0 any further
     // signal dispatch is queued and drained when depth returns to 0, so we
@@ -115,6 +123,8 @@ private:
     std::vector<ConnRec>                   m_connections;
     int                                    m_callback_depth = 0;
     std::vector<std::string>               m_deferred;
+    // The single reusable looping music player (0 = none yet).
+    uint64_t                               m_music_id = 0;
 };
 
 // Conversion helpers used by the natives. Variant -> jdBasic JdbValue,

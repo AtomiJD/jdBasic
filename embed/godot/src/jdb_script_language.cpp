@@ -419,6 +419,7 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
     static const char* godot_natives[] = {
         "GODOT.SELF", "GODOT.GET", "GODOT.SET", "GODOT.CALL", "GODOT.EMIT",
         "GODOT.CONNECT", "GODOT.DISCONNECT", "GODOT.TIMER",
+        "GODOT.AUDIO.PLAY", "GODOT.AUDIO.MUSIC", "GODOT.AUDIO.STOP_MUSIC", "GODOT.AUDIO.STOP",
         "GODOT.LOAD", "GODOT.INSTANTIATE", "GODOT.NEW",
         "GODOT.ADD_CHILD", "GODOT.QUEUE_FREE",
         "GODOT.TIME_MS", "GODOT.TIME_SEC",
