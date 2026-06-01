@@ -447,7 +447,11 @@ Variant JdbScriptInstance::call_method(const StringName& name,
     }
     code += ")\n";
 
+    // Fence the eval so any Godot signal that fires while we're inside the
+    // VM gets queued by the bridge instead of nesting jdb_embed_eval.
+    if (m_bridge) m_bridge->enter_callback();
     char* out = jdb_embed_eval(m_vm, code.c_str());
+    if (m_bridge) m_bridge->leave_callback();
     if (!out) {
         const char* err = jdb_embed_last_error(m_vm);
         if (err) UtilityFunctions::push_error(String("[jdBasic] ") + String(err));

@@ -30,6 +30,30 @@ The demo scenes prove every layer of the stack:
 
 ## Where the integration goes next
 
+### Shipped after Tier 4
+
+- **GODOT.INPUT.\*** - full polling + event-queue input suite. See `INPUT.md`.
+- **GODOT.CONNECT / GODOT.DISCONNECT** (2026-06-01) - runtime, code-driven
+  signal wiring straight into jdBasic SUBs. Signal args marshal like
+  `GODOT.GET` returns (Objects arrive as bridge handles). Re-entrant
+  dispatch is queued and drained after the outer callback so the
+  single-threaded interpreter is never nested. Connections are owned by
+  the script bridge and dropped on hot-reload / detach. See `SIGNALS.md`,
+  `connect_demo.tscn`, `connect_smoke.tscn`. This is the *runtime* path and
+  sidesteps the parked "Missing connected method" editor warning below,
+  which only affects connections authored in the editor's Signal panel.
+
+### Still open
+
+- Type round-trip gaps: a 4-float array always collapses to `Color`, so
+  `Rect2` / `Quaternion` / a plain 4-element numeric array can't round-trip.
+  `Dictionary` <-> jdBasic `MAP` and `Vector2i` / `Transform2D` are not
+  marshalled. Candidate: explicit `GODOT.RECT2` builder + Dictionary support
+  in `variant_to_jdb_value` / `jdb_value_to_variant`.
+- `GODOT.TIMER(secs, "sub")` one-shot/repeat helper, built on CONNECT.
+- `GODOT.DRAW_TEXT(node, pos, str, size, color)` - pull the ThemeDB default
+  font so pure-jdBasic `_draw` can render text without a Label node.
+
 ## Parked: Godot engine bugs (not ours to fix)
 
 - **GDExtension language icons missing in Attach-Script dialog**

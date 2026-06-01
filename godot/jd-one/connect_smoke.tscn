@@ -1,0 +1,9 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://connect_smoke.jdb" id="1_connect_smoke"]
+
+[node name="ConnectSmoke" type="Node"]
+script = ExtResource("1_connect_smoke")
+
+[node name="Beat" type="Timer" parent="."]
+wait_time = 0.3

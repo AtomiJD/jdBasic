@@ -1,0 +1,64 @@
+EXTENDS Node2D
+
+' Pure-jdBasic demo of GODOT.CONNECT - wiring Godot signals to jdBasic SUBs.
+'
+' No polling here: the SUBs below only run when their signal fires.
+'   Button "pressed"        -> on_click       (no-arg signal)
+'   HSlider "value_changed" -> on_slide(v)    (float-arg signal)
+'   Timer  "timeout"        -> on_beat        (recurring signal)
+'
+' After 5 clicks we DISCONNECT the button to show teardown works.
+
+DIM self_h   = 0
+DIM btn_h    = 0
+DIM slider_h = 0
+DIM status_h = 0
+DIM beat_h   = 0
+
+DIM clicks    = 0
+DIM beats     = 0
+DIM slider_at = 0.0
+DIM btn_live  = TRUE
+
+SUB refresh()
+	DIM body = "GODOT.CONNECT demo" + CHR$(10)
+	body = body + "clicks: " + STR$(clicks)
+	IF NOT btn_live THEN body = body + "  (button disconnected)"
+	body = body + CHR$(10) + "slider: " + STR$(slider_at)
+	body = body + CHR$(10) + "beats : " + STR$(beats) + "  (1/sec)"
+	GODOT.SET(status_h, "text", body)
+ENDSUB
+
+SUB on_click()
+	clicks = clicks + 1
+	IF clicks >= 5 ANDALSO btn_live THEN
+		GODOT.DISCONNECT(btn_h, "pressed", "on_click")
+		btn_live = FALSE
+	ENDIF
+	refresh()
+ENDSUB
+
+SUB on_slide(v)
+	slider_at = v
+	refresh()
+ENDSUB
+
+SUB on_beat()
+	beats = beats + 1
+	refresh()
+ENDSUB
+
+SUB _ready()
+	self_h   = GODOT.SELF()
+	btn_h    = GODOT.CALL(self_h, "get_node", "UI/Button")
+	slider_h = GODOT.CALL(self_h, "get_node", "UI/Slider")
+	status_h = GODOT.CALL(self_h, "get_node", "UI/Status")
+	beat_h   = GODOT.CALL(self_h, "get_node", "Beat")
+
+	GODOT.CONNECT(btn_h, "pressed", "on_click")
+	GODOT.CONNECT(slider_h, "value_changed", "on_slide")
+	GODOT.CONNECT(beat_h, "timeout", "on_beat")
+
+	GODOT.CALL(beat_h, "start")
+	refresh()
+ENDSUB

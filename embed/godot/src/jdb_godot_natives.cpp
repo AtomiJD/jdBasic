@@ -10,6 +10,8 @@
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/core/object.hpp>
+#include <godot_cpp/variant/callable_custom.hpp>
 #include <godot_cpp/classes/packed_scene.hpp>
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/resource.hpp>
@@ -164,12 +166,96 @@ Variant godot::jdb_value_to_variant(GodotBridge* bridge, int64_t h) {
     return Variant();
 }
 
+// ── Signal relay ─────────────────────────────────────────────────
+//
+// A CallableCustom we hand to Object::connect. When the signal fires Godot
+// calls call(); we forward the args into the jdBasic VM via the bridge. The
+// shared BridgeAlive token lets us survive the bridge being torn down (hot
+// reload) without dereferencing freed memory - a stale fire is a no-op.
+
+namespace {
+
+class JdbSignalCallable : public CallableCustom {
+public:
+    JdbSignalCallable(std::shared_ptr<BridgeAlive> link, const String& sub)
+        : m_link(std::move(link)), m_sub(sub) {}
+
+    uint32_t hash() const override {
+        // Combine the sub name with the bridge identity so two callables
+        // into different scripts don't collide.
+        uint32_t h = m_sub.hash();
+        BridgeAlive* p = m_link.get();
+        return h ^ (uint32_t)(reinterpret_cast<uintptr_t>(p));
+    }
+
+    String get_as_text() const override {
+        return String("jdBasic::") + m_sub;
+    }
+
+    static bool _equal(const CallableCustom* a, const CallableCustom* b) {
+        const JdbSignalCallable* x = static_cast<const JdbSignalCallable*>(a);
+        const JdbSignalCallable* y = static_cast<const JdbSignalCallable*>(b);
+        return x->m_link.get() == y->m_link.get() && x->m_sub == y->m_sub;
+    }
+    static bool _less(const CallableCustom* a, const CallableCustom* b) {
+        const JdbSignalCallable* x = static_cast<const JdbSignalCallable*>(a);
+        const JdbSignalCallable* y = static_cast<const JdbSignalCallable*>(b);
+        if (x->m_link.get() != y->m_link.get())
+            return x->m_link.get() < y->m_link.get();
+        return x->m_sub < y->m_sub;
+    }
+    CompareEqualFunc get_compare_equal_func() const override { return &_equal; }
+    CompareLessFunc  get_compare_less_func()  const override { return &_less; }
+
+    // Validity is tied to the bridge, not to any Godot Object, so report no
+    // associated object and gate on the alive token instead.
+    ObjectID get_object() const override { return ObjectID(); }
+    bool is_valid() const override { return m_link && m_link->alive; }
+
+    void call(const Variant** p_arguments, int p_argcount,
+              Variant& r_return_value, GDExtensionCallError& r_call_error) const override {
+        r_return_value = Variant();
+        r_call_error.error = GDEXTENSION_CALL_OK;
+        if (m_link && m_link->alive && m_link->bridge) {
+            m_link->bridge->dispatch_signal(m_sub, p_arguments, p_argcount);
+        }
+    }
+
+private:
+    std::shared_ptr<BridgeAlive> m_link;
+    String                       m_sub;
+};
+
+}  // namespace
+
 // ── GodotBridge ──────────────────────────────────────────────────
 
 GodotBridge::GodotBridge(JdbEmbed* vm, JdbScriptInstance* owner)
-    : m_vm(vm), m_owner(owner) {}
+    : m_vm(vm), m_owner(owner) {
+    m_alive = std::make_shared<BridgeAlive>();
+    m_alive->bridge = this;
+    m_alive->alive  = true;
+}
 
-GodotBridge::~GodotBridge() {}
+GodotBridge::~GodotBridge() {
+    // Drop every live signal connection so a Node that outlives this bridge
+    // (hot reload, or the script detaching while the source stays in the
+    // tree) doesn't keep a callable pointing at a dead VM. Only touch
+    // sources still registered in ObjectDB.
+    for (ConnRec& rec : m_connections) {
+        Object* src = ObjectDB::get_instance((uint64_t)rec.src);
+        if (src && src->is_connected(rec.sig, rec.cb)) {
+            src->disconnect(rec.sig, rec.cb);
+        }
+    }
+    m_connections.clear();
+    // Belt-and-suspenders: any callable that still fires after this becomes
+    // an inert no-op via the shared token.
+    if (m_alive) {
+        m_alive->alive  = false;
+        m_alive->bridge = nullptr;
+    }
+}
 
 Object* GodotBridge::lookup(int64_t handle) const {
     auto it = m_table.find(handle);
@@ -185,6 +271,168 @@ int64_t GodotBridge::store(Object* obj) {
     int64_t h = m_next_handle++;
     m_table[h] = obj;
     return h;
+}
+
+// ── Signals ──────────────────────────────────────────────────────
+
+int GodotBridge::connect_signal(int64_t obj_handle, const String& sig,
+                                const String& sub, uint32_t flags) {
+    Object* src = lookup(obj_handle);
+    if (!src) return -1;
+
+    StringName sig_n(sig);
+    // Skip an exact duplicate so re-running _ready (or a manual reconnect)
+    // doesn't stack identical handlers on the same signal.
+    for (ConnRec& rec : m_connections) {
+        if ((uint64_t)rec.src == (uint64_t)src->get_instance_id()
+                && rec.sig == sig_n && rec.sub == sub) {
+            return 0;
+        }
+    }
+
+    Callable cb(memnew(JdbSignalCallable(m_alive, sub)));
+    Error err = src->connect(sig_n, cb, flags);
+    if (err != OK) {
+        UtilityFunctions::push_error(
+            String("[GODOT.CONNECT] connect '") + sig + String("' failed: ")
+            + String::num_int64((int64_t)err));
+        return -1;
+    }
+
+    ConnRec rec;
+    rec.src = src->get_instance_id();
+    rec.sig = sig_n;
+    rec.sub = sub;
+    rec.cb  = cb;
+    m_connections.push_back(rec);
+    return 0;
+}
+
+bool GodotBridge::disconnect_signal(int64_t obj_handle, const String& sig,
+                                    const String& sub) {
+    Object* src = lookup(obj_handle);
+    if (!src) return false;
+    StringName sig_n(sig);
+    for (size_t i = 0; i < m_connections.size(); ++i) {
+        ConnRec& rec = m_connections[i];
+        if ((uint64_t)rec.src == (uint64_t)src->get_instance_id()
+                && rec.sig == sig_n && rec.sub == sub) {
+            if (src->is_connected(sig_n, rec.cb)) {
+                src->disconnect(sig_n, rec.cb);
+            }
+            m_connections.erase(m_connections.begin() + i);
+            return true;
+        }
+    }
+    return false;
+}
+
+void GodotBridge::enter_callback() { ++m_callback_depth; }
+
+void GodotBridge::leave_callback() {
+    if (m_callback_depth > 0) --m_callback_depth;
+    // Outermost callback returned - flush any signals that fired while we
+    // were inside the VM. Each drained call may itself queue more, so loop.
+    if (m_callback_depth == 0) {
+        while (!m_deferred.empty()) {
+            std::vector<std::string> batch;
+            batch.swap(m_deferred);
+            for (const std::string& code : batch) {
+                run_call_(code);
+            }
+        }
+    }
+}
+
+std::string GodotBridge::arg_literal_(const Variant& v) {
+    switch (v.get_type()) {
+        case Variant::BOOL:  return bool(v) ? "1" : "0";
+        case Variant::INT: {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)int64_t(v));
+            return std::string(buf);
+        }
+        case Variant::FLOAT: {
+            char buf[40];
+            snprintf(buf, sizeof(buf), "%.7f", (double)v);
+            return std::string(buf);
+        }
+        case Variant::STRING:
+        case Variant::STRING_NAME:
+        case Variant::NODE_PATH: {
+            std::string raw = String(v).utf8().get_data();
+            std::string out = "\"";
+            for (char c : raw) {
+                if (c == '"') out += "\\\"";
+                else out += c;
+            }
+            out += "\"";
+            return out;
+        }
+        case Variant::VECTOR2: {
+            Vector2 vv = v;
+            char buf[96];
+            snprintf(buf, sizeof(buf), "[%.7f, %.7f]", vv.x, vv.y);
+            return std::string(buf);
+        }
+        case Variant::VECTOR3: {
+            Vector3 vv = v;
+            char buf[128];
+            snprintf(buf, sizeof(buf), "[%.7f, %.7f, %.7f]", vv.x, vv.y, vv.z);
+            return std::string(buf);
+        }
+        case Variant::COLOR: {
+            Color c = v;
+            char buf[160];
+            snprintf(buf, sizeof(buf), "[%.7f, %.7f, %.7f, %.7f]", c.r, c.g, c.b, c.a);
+            return std::string(buf);
+        }
+        case Variant::OBJECT: {
+            Object* o = v;
+            int64_t h = o ? store(o) : 0;
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)h);
+            return std::string(buf);
+        }
+        default:
+            // Unsupported payloads (Dictionary, packed arrays, ...) degrade
+            // to numeric zero rather than producing a broken source literal.
+            return "0";
+    }
+}
+
+void GodotBridge::run_call_(const std::string& code) {
+    if (!m_vm) return;
+    char* out = jdb_embed_eval(m_vm, code.c_str());
+    if (!out) {
+        const char* err = jdb_embed_last_error(m_vm);
+        if (err) UtilityFunctions::push_error(String("[jdBasic signal] ") + String(err));
+        return;
+    }
+    String s = String::utf8(out).strip_edges();
+    jdb_embed_free(out);
+    if (!s.is_empty()) UtilityFunctions::print(s);
+}
+
+void GodotBridge::dispatch_signal(const String& sub, const Variant** args, int argc) {
+    std::string code;
+    code.reserve(32 + argc * 16);
+    code += String(sub).utf8().get_data();
+    code += "(";
+    for (int i = 0; i < argc; ++i) {
+        if (i > 0) code += ", ";
+        code += arg_literal_(args[i] ? *args[i] : Variant());
+    }
+    code += ")\n";
+
+    // If we're already inside a VM callback, defer rather than nest
+    // jdb_embed_eval (the interpreter is not re-entrant). leave_callback
+    // drains the queue once the outer eval unwinds.
+    if (m_callback_depth > 0) {
+        m_deferred.push_back(code);
+        return;
+    }
+    run_call_(code);
 }
 
 // ── Native callbacks ─────────────────────────────────────────────
@@ -371,6 +619,40 @@ static int64_t native_emit(JdbEmbed* vm, int argc, const int64_t* args, void* ud
     return jdb_embed_make_bool(vm, 1);
 }
 
+// GODOT.CONNECT(handle, "signal_name", "sub_name" [, flags]) -> 1 on success
+//
+// Wires a Godot signal on the target object to a jdBasic SUB. When the
+// signal fires, sub_name(arg, ...) runs in this script's VM; signal args
+// marshal the same way GODOT.GET return values do (Object args arrive as
+// bridge handles). Optional flags map to Godot's CONNECT_* bitmask
+// (1=DEFERRED, 4=ONE_SHOT).
+static int64_t native_connect(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    int64_t handle = jdb_embed_value_int(vm, args[0]);
+    const char* sig = jdb_embed_value_string(vm, args[1]);
+    const char* sub = jdb_embed_value_string(vm, args[2]);
+    uint32_t flags = (argc > 3) ? (uint32_t)jdb_embed_value_int(vm, args[3]) : 0;
+    if (!sig || !sub) return jdb_embed_make_bool(vm, 0);
+    int rc = bridge->connect_signal(handle, String::utf8(sig), String::utf8(sub), flags);
+    return jdb_embed_make_bool(vm, rc == 0 ? 1 : 0);
+}
+
+// GODOT.DISCONNECT(handle, "signal_name", "sub_name") -> 1 if a matching
+// connection was found and removed.
+static int64_t native_disconnect(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    int64_t handle = jdb_embed_value_int(vm, args[0]);
+    const char* sig = jdb_embed_value_string(vm, args[1]);
+    const char* sub = jdb_embed_value_string(vm, args[2]);
+    if (!sig || !sub) return jdb_embed_make_bool(vm, 0);
+    bool ok = bridge->disconnect_signal(handle, String::utf8(sig), String::utf8(sub));
+    return jdb_embed_make_bool(vm, ok ? 1 : 0);
+}
+
 // GODOT.LOAD("res://path.png") -> Resource handle (Texture2D, Mesh, etc.)
 static int64_t native_load(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_nil(vm);
@@ -472,6 +754,8 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.VEC3",   3, 3,  &native_vec3,  this);
     jdb_embed_register_native(m_vm, "GODOT.COLOR",  3, 4,  &native_color, this);
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
+    jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
+    jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);
     jdb_embed_register_native(m_vm, "GODOT.LOAD",        1, 1,  &native_load,        this);
     jdb_embed_register_native(m_vm, "GODOT.INSTANTIATE", 1, 1,  &native_instantiate, this);
     jdb_embed_register_native(m_vm, "GODOT.NEW",         1, 1,  &native_new,         this);

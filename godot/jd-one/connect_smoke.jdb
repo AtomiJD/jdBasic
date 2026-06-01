@@ -1,0 +1,43 @@
+EXTENDS Node
+
+' Headless smoke test for GODOT.CONNECT. A Timer's "timeout" signal is
+' wired to on_beat(); after 3 beats we quit. Run with:
+'   Godot ... --headless --path godot/jd-one res://connect_smoke.tscn
+
+DIM self_h = 0
+DIM beat_h = 0
+DIM n = 0
+
+SUB on_beat()
+	n = n + 1
+	PRINT "BEAT " + STR$(n)
+	IF n >= 3 THEN
+		DIM tree_h = GODOT.CALL(self_h, "get_tree")
+		GODOT.CALL(tree_h, "quit")
+	ENDIF
+ENDSUB
+
+' Object-arg path: the signal hands us the child Node as a bridge handle,
+' which GODOT.GET can resolve straight away.
+SUB on_child_added(child)
+	DIM nm = GODOT.GET(child, "name")
+	PRINT "CHILD ADDED handle=" + STR$(child) + " name=" + nm
+ENDSUB
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	beat_h = GODOT.CALL(self_h, "get_node", "Beat")
+	GODOT.CONNECT(beat_h, "timeout", "on_beat")
+	GODOT.CALL(beat_h, "start")
+
+	' Re-entrancy path: ADD_CHILD emits child_entered_tree synchronously
+	' while we're still inside this _ready eval. The bridge must DEFER that
+	' dispatch and drain it after _ready returns - so "CHILD ADDED" prints
+	' after this line, not nested inside it.
+	GODOT.CONNECT(self_h, "child_entered_tree", "on_child_added")
+	DIM sprout = GODOT.NEW("Node")
+	GODOT.SET(sprout, "name", "Sprout")
+	GODOT.ADD_CHILD(self_h, sprout)
+
+	PRINT "smoke: connected, timer started, child queued"
+ENDSUB
