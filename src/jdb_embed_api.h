@@ -87,6 +87,20 @@ enum {
 // captured. Returns 0 if compilation or eval failed (check last_error).
 JDB_EMBED_API JdbValue jdb_embed_eval_expr(JdbEmbed* e, const char* expr);
 
+// Call an already-compiled FUNC/SUB by name with pre-marshalled value
+// handles - no lex / parse / compile, no source-text round-trip. This is
+// the fast path for per-frame engine callbacks (_process / _input / _draw).
+// The name is matched case-insensitively. Returns a handle to the return
+// value (0 / NIL for a SUB); the caller releases it. Arg handles are NOT
+// consumed - the caller still owns and releases them.
+JDB_EMBED_API JdbValue jdb_embed_call(JdbEmbed* e, const char* func_name,
+                                      const JdbValue* args, int argc);
+
+// Take (and clear) any text the last call/eval PRINTed. Returns NULL when
+// empty. Caller frees with jdb_embed_free. Lets the host forward callback
+// PRINT output to its console without the eval path's return-string.
+JDB_EMBED_API char*    jdb_embed_take_output(JdbEmbed* e);
+
 // Read a top-level global by name. Returns 0 if no such global exists.
 JDB_EMBED_API JdbValue jdb_embed_get_global(JdbEmbed* e, const char* name);
 

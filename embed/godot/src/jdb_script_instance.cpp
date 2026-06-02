@@ -513,40 +513,41 @@ Variant JdbScriptInstance::call_method(const StringName& name,
     if (!m_vm) return Variant();
     std::string n = String(name).utf8().get_data();
 
-    // SUB call form (no PRINT prefix). PRINTs inside the body land in
-    // the captured output buffer which we forward to Godot's console
-    // after the eval.
-    std::string code;
-    code.reserve(64 + argc * 16);
-    code += n;
-    code += "(";
+    // Fast path: marshal the args straight to value handles and invoke the
+    // already-compiled SUB via jdb_embed_call - no per-frame lex/parse/
+    // compile and no source-text round-trip. variant_to_jdb_value yields the
+    // same jdBasic values the old text path did, including bridge handles for
+    // Object args (e.g. the InputEvent passed to _input).
+    std::vector<int64_t> handles;
+    handles.reserve((size_t)argc);
     for (int64_t i = 0; i < argc; ++i) {
-        if (i > 0) code += ", ";
-        // Marshal through the bridge so Object args (e.g. the InputEvent in
-        // _input) arrive as usable handles instead of being dropped to 0.
-        code += m_bridge ? m_bridge->arg_to_source(*args[i])
-                         : variant_to_jdb_arg_(*args[i]);
+        handles.push_back(m_bridge ? variant_to_jdb_value(m_bridge, *args[i]) : 0);
     }
-    code += ")\n";
 
-    // Fence the eval so any Godot signal that fires while we're inside the
-    // VM gets queued by the bridge instead of nesting jdb_embed_eval.
+    // Fence so a Godot signal firing while we're in the VM gets queued by the
+    // bridge instead of nesting a VM call.
     if (m_bridge) m_bridge->enter_callback();
-    char* out = jdb_embed_eval(m_vm, code.c_str());
+    int64_t ret = jdb_embed_call(m_vm, n.c_str(),
+                                 handles.empty() ? nullptr : handles.data(),
+                                 (int)handles.size());
     if (m_bridge) m_bridge->leave_callback();
-    if (!out) {
-        const char* err = jdb_embed_last_error(m_vm);
-        if (err) UtilityFunctions::push_error(String("[jdBasic] ") + String(err));
-        return Variant();
-    }
-    String s = String::utf8(out);
-    jdb_embed_free(out);
 
-    // Forward any PRINT output to Godot's console so the user actually
-    // sees PRINT statements from inside the script.
-    String trimmed = s.strip_edges();
-    if (!trimmed.is_empty()) {
-        UtilityFunctions::print(trimmed);
+    for (int64_t h : handles) {
+        if (h) jdb_embed_value_release(m_vm, h);
+    }
+    if (ret) {
+        jdb_embed_value_release(m_vm, ret);
+    } else {
+        const char* err = jdb_embed_last_error(m_vm);
+        if (err && err[0]) UtilityFunctions::push_error(String("[jdBasic] ") + String(err));
+    }
+
+    // Forward any PRINT output from the callback to Godot's console.
+    char* out = jdb_embed_take_output(m_vm);
+    if (out) {
+        String s = String::utf8(out).strip_edges();
+        if (!s.is_empty()) UtilityFunctions::print(s);
+        jdb_embed_free(out);
     }
     return Variant();
 }

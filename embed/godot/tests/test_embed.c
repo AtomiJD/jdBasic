@@ -103,6 +103,16 @@ int main(void) {
 
     printf("breakpoint hits = %d (expected 3)\n", g_break_hits);
 
+    /* Fast callback path: call a compiled FUNC by name with a marshalled
+     * arg - no lex/parse/compile. */
+    printf("\n=== fast call (jdb_embed_call) ===\n");
+    run(e, "FUNC triple(x)\n  RETURN x * 3\nENDFUNC");
+    JdbValue arg = jdb_embed_make_int(e, 14);
+    JdbValue r = jdb_embed_call(e, "triple", &arg, 1);
+    printf("triple(14) = %lld (expected 42)\n", (long long)jdb_embed_value_int(e, r));
+    jdb_embed_value_release(e, arg);
+    jdb_embed_value_release(e, r);
+
     jdb_embed_shutdown(e);
     printf("done\n");
     return 0;

@@ -247,6 +247,42 @@ JDB_EMBED_API char* jdb_embed_eval(JdbEmbed* eh, const char* code) {
     }
 }
 
+static std::string upper_(const std::string& s);  // defined below
+
+JDB_EMBED_API JdbValue jdb_embed_call(JdbEmbed* eh, const char* func_name,
+                                      const JdbValue* args, int argc) {
+    if (!eh || !func_name) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->output_buf.clear();
+    e->last_error.clear();
+    try {
+        std::vector<Value> argv;
+        argv.reserve(argc > 0 ? (size_t)argc : 0);
+        for (int i = 0; i < argc; ++i) {
+            const Value* v = e->lookup(args ? args[i] : 0);
+            argv.push_back(v ? *v : Value::make_none());
+        }
+        // Function names are stored upper-cased; match case-insensitively.
+        Value result = e->vm.call_function(upper_(func_name), argv);
+        return e->store(std::move(result));
+    } catch (const std::exception& ex) {
+        e->last_error = ex.what();
+        return 0;
+    } catch (...) {
+        e->last_error = "unknown exception in jdb_embed_call";
+        return 0;
+    }
+}
+
+JDB_EMBED_API char* jdb_embed_take_output(JdbEmbed* eh) {
+    if (!eh) return nullptr;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    if (e->output_buf.empty()) return nullptr;
+    char* out = dup_cstr(e->output_buf);
+    e->output_buf.clear();
+    return out;
+}
+
 JDB_EMBED_API char* jdb_embed_load(JdbEmbed* eh, const char* path) {
     if (!eh || !path) return nullptr;
     auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
