@@ -20,6 +20,14 @@ DIM gravity = 9.8
 DIM mouse_captured = FALSE
 DIM character_yaw  = 0.0
 
+' Animation state (KayKit clips merged from the shared Rig GLBs).
+DIM anim_player_h = 0
+DIM anim_names AS ARRAY = []
+DIM anim_idle = ""
+DIM anim_walk = ""
+DIM anim_run  = ""
+DIM current_anim = ""
+
 ' @GlobalScope enums aren't class constants, so spell the keycode out.
 DIM KEY_SHIFT = 4194325
 
@@ -30,6 +38,84 @@ SUB capture_mouse(cap)
 	ELSE
 		GODOT.INPUT.SET_MOUSE_MODE(0)   ' VISIBLE
 	ENDIF
+ENDSUB
+
+FUNC find_anim_player(node)
+	IF GODOT.CALL(node, "get_class") = "AnimationPlayer" THEN RETURN node
+	DIM kids = GODOT.CALL(node, "get_children")
+	FOR i = 0 TO LEN(kids) - 1
+		DIM r = find_anim_player(kids[i])
+		IF r <> 0 THEN RETURN r
+	NEXT
+	RETURN 0
+ENDFUNC
+
+FUNC should_loop(nm)
+	DIM low = LCASE$(nm)
+	IF LEFT$(low, 4) = "idle" THEN RETURN TRUE
+	IF LEFT$(low, 4) = "walk" THEN RETURN TRUE
+	IF LEFT$(low, 3) = "run" THEN RETURN TRUE
+	RETURN FALSE
+ENDFUNC
+
+' Pull every clip out of one animation GLB into the merged library.
+SUB merge_anim_glb(path, lib)
+	DIM inst = GODOT.INSTANTIATE(path)
+	IF inst = 0 THEN RETURN
+	DIM src_ap = find_anim_player(inst)
+	IF src_ap <> 0 THEN
+		DIM names = GODOT.CALL(src_ap, "get_animation_list")
+		FOR i = 0 TO LEN(names) - 1
+			DIM nm = names[i]
+			IF NOT GODOT.CALL(lib, "has_animation", nm) THEN
+				DIM clip = GODOT.CALL(src_ap, "get_animation", nm)
+				IF should_loop(nm) THEN GODOT.SET(clip, "loop_mode", GODOT.ENUM("Animation", "LOOP_LINEAR"))
+				GODOT.CALL(lib, "add_animation", nm, GODOT.REF(clip))
+				anim_names = APPEND(anim_names, nm)
+			ENDIF
+		NEXT
+	ENDIF
+	GODOT.QUEUE_FREE(inst)
+ENDSUB
+
+' Resolve a logical name ("Idle") to a real clip ("Idle_A"): exact, then
+' prefix, then substring.
+FUNC best_name(want)
+	DIM low = LCASE$(want)
+	FOR i = 0 TO LEN(anim_names) - 1
+		IF anim_names[i] = want THEN RETURN want
+	NEXT
+	FOR i = 0 TO LEN(anim_names) - 1
+		IF LEFT$(LCASE$(anim_names[i]), LEN(low)) = low THEN RETURN anim_names[i]
+	NEXT
+	FOR i = 0 TO LEN(anim_names) - 1
+		IF INSTR(LCASE$(anim_names[i]), low) >= 0 THEN RETURN anim_names[i]
+	NEXT
+	RETURN ""
+ENDFUNC
+
+SUB setup_animation(model)
+	DIM lib = GODOT.NEW("AnimationLibrary")
+	anim_names = []
+	merge_anim_glb("res://assets/animations/Rig_Medium_General.glb", lib)
+	merge_anim_glb("res://assets/animations/Rig_Medium_MovementBasic.glb", lib)
+
+	' Fresh AnimationPlayer on the model; default root_node ".." is the
+	' model, so the bone tracks resolve against its Skeleton3D.
+	anim_player_h = GODOT.NEW("AnimationPlayer")
+	GODOT.ADD_CHILD(model, anim_player_h)
+	GODOT.CALL(anim_player_h, "add_animation_library", "", GODOT.REF(lib))
+
+	anim_idle = best_name("Idle")
+	anim_walk = best_name("Walk")
+	anim_run  = best_name("Run")
+	PRINT "anim: " + STR$(LEN(anim_names)) + " clips, idle=" + anim_idle + " walk=" + anim_walk + " run=" + anim_run
+ENDSUB
+
+SUB play_anim(nm)
+	IF nm = "" ORELSE anim_player_h = 0 ORELSE current_anim = nm THEN RETURN
+	GODOT.CALL(anim_player_h, "play", nm, 0.2)
+	current_anim = nm
 ENDSUB
 
 SUB _ready()
@@ -44,6 +130,8 @@ SUB _ready()
 	' Real character model (KayKit Rogue) instead of the capsule placeholder.
 	DIM model = GODOT.INSTANTIATE("res://assets/characters/Rogue_Hooded.glb")
 	GODOT.ADD_CHILD(visual_h, model)
+	setup_animation(model)
+	play_anim(anim_idle)
 
 	capture_mouse(TRUE)
 ENDSUB
@@ -96,4 +184,19 @@ SUB _physics_process(delta)
 	ENDIF
 
 	GODOT.MOVE_AND_SLIDE(self_h)
+
+	' Drive locomotion animation from the horizontal ground speed.
+	DIM nv = GODOT.GET_VELOCITY(self_h)
+	DIM gs = SQR(nv[0] * nv[0] + nv[2] * nv[2])
+	IF gs < 0.3 THEN
+		play_anim(anim_idle)
+	ELSEIF gs > run_speed - 1.0 THEN
+		IF anim_run <> "" THEN
+			play_anim(anim_run)
+		ELSE
+			play_anim(anim_walk)
+		ENDIF
+	ELSE
+		play_anim(anim_walk)
+	ENDIF
 ENDSUB
