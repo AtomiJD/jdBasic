@@ -145,6 +145,15 @@ static int64_t native_is_mouse_button_pressed(JdbEmbed* vm, int argc, const int6
     return jdb_embed_make_bool(vm, v ? 1 : 0);
 }
 
+// GODOT.INPUT.SET_MOUSE_MODE(mode) - 0 visible, 1 hidden, 2 captured,
+// 3 confined, 4 confined+hidden.
+static int64_t native_set_mouse_mode(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    int64_t m = jdb_embed_value_int(vm, args[0]);
+    Input::get_singleton()->set_mouse_mode(static_cast<Input::MouseMode>(m));
+    return jdb_embed_make_nil(vm);
+}
+
 // ── Event queue drain ─────────────────────────────────────────────
 
 static int64_t native_poll_event(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* ud) {
@@ -193,6 +202,7 @@ void godot::register_godot_input_natives(JdbEmbed* vm, InputEventQueue* queue) {
     jdb_embed_register_native(vm, "GODOT.INPUT.MOUSE_POSITION",          0, 0, &native_mouse_position,          nullptr);
     jdb_embed_register_native(vm, "GODOT.INPUT.MOUSE_VELOCITY",          0, 0, &native_mouse_velocity,          nullptr);
     jdb_embed_register_native(vm, "GODOT.INPUT.IS_MOUSE_BUTTON_PRESSED", 1, 1, &native_is_mouse_button_pressed, nullptr);
+    jdb_embed_register_native(vm, "GODOT.INPUT.SET_MOUSE_MODE",          1, 1, &native_set_mouse_mode,          nullptr);
     jdb_embed_register_native(vm, "GODOT.INPUT.POLL_EVENT",              0, 0, &native_poll_event,              q);
     jdb_embed_register_native(vm, "GODOT.INPUT.PENDING_EVENTS",          0, 0, &native_pending_events,          q);
 }

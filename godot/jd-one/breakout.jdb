@@ -7,11 +7,12 @@ EXTENDS Node2D
 '   Mouse  : move paddle
 '   Click  : launch the ball / restart after win or loss
 '
-' Gaps found while building this are noted with "GAP:" comments.
+' Juice: a brick hit bursts particles, pops a floating "+N" score, and the
+' top rows are worth more than the bottom ones.
 
 DIM self_h = 0
 
-' Playfield (filled in _ready from the viewport size).
+' Playfield (kept in sync with the viewport every frame).
 DIM fw = 800.0
 DIM fh = 600.0
 
@@ -39,12 +40,28 @@ DIM brick_h = 22.0
 DIM alive AS MAP = {}
 DIM remaining = 0
 
+' Effects.
+DIM parts AS ARRAY = []
+DIM pops  AS ARRAY = []
+
 DIM score = 0
 DIM lives = 3
 DIM mode = "serve"     ' serve / play / won / lost
 
 SUB blip(vol, pitch)
 	GODOT.AUDIO.PLAY("res://beep.wav", vol, pitch)
+ENDSUB
+
+SUB relayout()
+	DIM vr = GODOT.CALL(self_h, "get_viewport_rect")
+	DIM nw = vr{"w"}
+	DIM nh = vr{"h"}
+	IF nw <> fw ORELSE nh <> fh THEN
+		fw = nw
+		fh = nh
+		brick_w = (fw - 2.0 * side_off - (cols - 1) * gap) / cols
+		pad_y = fh - 44.0
+	ENDIF
 ENDSUB
 
 SUB setup_level()
@@ -67,9 +84,67 @@ ENDSUB
 SUB start_new_game()
 	score = 0
 	lives = 3
+	parts = []
+	pops = []
 	setup_level()
 	place_ball_on_paddle()
 	mode = "serve"
+ENDSUB
+
+SUB spawn_burst(cx, cy)
+	FOR k = 0 TO 11
+		DIM p AS MAP = {}
+		p{"x"} = cx
+		p{"y"} = cy
+		p{"vx"} = (RND(1) - 0.5) * 380.0
+		p{"vy"} = (RND(1) - 0.5) * 380.0 - 60.0
+		p{"life"} = 0.30 + RND(1) * 0.30
+		p{"max"} = p{"life"}
+		parts = APPEND(parts, p)
+	NEXT
+ENDSUB
+
+SUB spawn_pop(cx, cy, pts)
+	DIM q AS MAP = {}
+	q{"x"} = cx
+	q{"y"} = cy
+	q{"life"} = 0.8
+	q{"txt"} = "+" + STR$(pts)
+	pops = APPEND(pops, q)
+ENDSUB
+
+SUB update_effects(dt)
+	DIM kp AS ARRAY = []
+	FOR i = 0 TO LEN(parts) - 1
+		DIM p = parts[i]
+		DIM nl = p{"life"} - dt
+		IF nl > 0.0 THEN
+			DIM np AS MAP = {}
+			np{"x"} = p{"x"} + p{"vx"} * dt
+			np{"y"} = p{"y"} + p{"vy"} * dt
+			np{"vx"} = p{"vx"}
+			np{"vy"} = p{"vy"} + 520.0 * dt
+			np{"life"} = nl
+			np{"max"} = p{"max"}
+			kp = APPEND(kp, np)
+		ENDIF
+	NEXT
+	parts = kp
+
+	DIM kq AS ARRAY = []
+	FOR i = 0 TO LEN(pops) - 1
+		DIM q = pops[i]
+		DIM ql = q{"life"} - dt
+		IF ql > 0.0 THEN
+			DIM nq AS MAP = {}
+			nq{"x"} = q{"x"}
+			nq{"y"} = q{"y"} - 38.0 * dt
+			nq{"life"} = ql
+			nq{"txt"} = q{"txt"}
+			kq = APPEND(kq, nq)
+		ENDIF
+	NEXT
+	pops = kq
 ENDSUB
 
 SUB hit_bricks()
@@ -84,8 +159,11 @@ SUB hit_bricks()
 				IF ball_y + ball_r > by ANDALSO ball_y - ball_r < by + brick_h THEN
 					alive{STR$(idx)} = 0
 					remaining = remaining - 1
-					score = score + 10
+					DIM pts = (rows - row) * 10
+					score = score + pts
 					ball_vy = -ball_vy
+					spawn_burst(bx + brick_w / 2.0, by + brick_h / 2.0)
+					spawn_pop(bx + brick_w / 2.0, by, pts)
 					blip(-7.0, 1.6)
 					IF remaining <= 0 THEN mode = "won"
 					RETURN
@@ -99,7 +177,6 @@ SUB step_ball(dt)
 	ball_x = ball_x + ball_vx * dt
 	ball_y = ball_y + ball_vy * dt
 
-	' Walls.
 	IF ball_x < ball_r THEN
 		ball_x = ball_r
 		ball_vx = ABS(ball_vx)
@@ -116,7 +193,6 @@ SUB step_ball(dt)
 		blip(-10.0, 1.0)
 	ENDIF
 
-	' Paddle.
 	IF ball_y + ball_r >= pad_y ANDALSO ball_y - ball_r <= pad_y + pad_h THEN
 		IF ball_x >= pad_x ANDALSO ball_x <= pad_x + pad_w ANDALSO ball_vy > 0.0 THEN
 			DIM rel = (ball_x - (pad_x + pad_w / 2.0)) / (pad_w / 2.0)
@@ -128,7 +204,6 @@ SUB step_ball(dt)
 
 	hit_bricks()
 
-	' Bottom - lose a life.
 	IF ball_y - ball_r > fh THEN
 		lives = lives - 1
 		blip(-6.0, 0.6)
@@ -143,14 +218,14 @@ ENDSUB
 
 SUB _ready()
 	self_h = GODOT.SELF()
-	DIM vr = GODOT.CALL(self_h, "get_viewport_rect")
-	fw = vr{"w"}
-	fh = vr{"h"}
-	pad_y = fh - 44.0
+	GODOT.INPUT.SET_MOUSE_MODE(1)   ' hide the cursor - the paddle is the pointer
+	relayout()
 	start_new_game()
 ENDSUB
 
 SUB _process(delta)
+	relayout()
+
 	DIM mp = GODOT.INPUT.MOUSE_POSITION()
 	pad_x = mp[0] - pad_w / 2.0
 	IF pad_x < 0.0 THEN pad_x = 0.0
@@ -163,6 +238,7 @@ SUB _process(delta)
 		step_ball(delta)
 	ENDIF
 
+	update_effects(delta)
 	GODOT.CALL(self_h, "queue_redraw")
 ENDSUB
 
@@ -185,10 +261,8 @@ SUB draw_box(x, y, w, h, r, g, b)
 ENDSUB
 
 SUB _draw()
-	' Background.
 	draw_box(0.0, 0.0, fw, fh, 0.06, 0.07, 0.11)
 
-	' Bricks - hue shifts down the rows.
 	DIM n = cols * rows
 	FOR idx = 0 TO n - 1
 		IF alive{STR$(idx)} = 1 THEN
@@ -202,16 +276,27 @@ SUB _draw()
 		ENDIF
 	NEXT
 
-	' Paddle + ball.
+	' Explosion particles.
+	FOR i = 0 TO LEN(parts) - 1
+		DIM p = parts[i]
+		DIM pa = p{"life"} / p{"max"}
+		GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(p{"x"}, p{"y"}), 3.0, GODOT.COLOR(1.0, 0.6 + 0.4 * pa, 0.2, pa))
+	NEXT
+
 	draw_box(pad_x, pad_y, pad_w, pad_h, 0.85, 0.9, 1.0)
 	GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(ball_x, ball_y), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+
+	' Floating "+N" score pops.
+	FOR i = 0 TO LEN(pops) - 1
+		DIM q = pops[i]
+		DIM qa = q{"life"} / 0.8
+		GODOT.DRAW_STRING(self_h, GODOT.VEC2(q{"x"} - 24.0, q{"y"}), q{"txt"}, 1, 48.0, 18, GODOT.COLOR(1.0, 1.0, 0.6, qa))
+	NEXT
 
 	' HUD.
 	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(side_off, 32.0), "Score " + STR$(score), 22, GODOT.COLOR(0.9, 0.95, 1.0, 1.0))
 	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(fw - 140.0, 32.0), "Lives " + STR$(lives), 22, GODOT.COLOR(0.9, 0.95, 1.0, 1.0))
 
-	' Centered via DRAW_STRING align=1 across the full field width - no more
-	' eyeballed pixel offsets.
 	IF mode = "serve" THEN
 		GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, fh / 2.0), "Click to launch", 1, fw, 24, GODOT.COLOR(1.0, 1.0, 0.7, 1.0))
 	ELSEIF mode = "won" THEN

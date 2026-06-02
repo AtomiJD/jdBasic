@@ -20,6 +20,7 @@ Direct reads of Godot's input state. No setup; just call.
 | `GODOT.INPUT.MOUSE_POSITION()` | `[x, y]` | Global screen coords (DisplayServer) |
 | `GODOT.INPUT.MOUSE_VELOCITY()` | `[x, y]` | Last frame's mouse delta |
 | `GODOT.INPUT.IS_MOUSE_BUTTON_PRESSED(idx)` | bool | 1 = left, 2 = right, 3 = middle |
+| `GODOT.INPUT.SET_MOUSE_MODE(mode)` | - | 0 visible, 1 hidden, 2 captured, 3 confined, 4 confined+hidden |
 
 ### Example: WASD movement in jdBasic
 
