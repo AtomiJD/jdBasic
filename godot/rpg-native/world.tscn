@@ -1,0 +1,56 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://player.jdb" id="1_player"]
+
+[sub_resource type="BoxShape3D" id="Box_floor"]
+size = Vector3(40, 1, 40)
+
+[sub_resource type="BoxMesh" id="BoxMesh_floor"]
+size = Vector3(40, 1, 40)
+
+[sub_resource type="CapsuleShape3D" id="Cap_col"]
+radius = 0.4
+height = 2.0
+
+[sub_resource type="CapsuleMesh" id="Cap_mesh"]
+radius = 0.4
+height = 2.0
+
+[node name="World" type="Node3D"]
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.7, 0.7, 0, -0.7, 0.7, 0, 8, 0)
+shadow_enabled = true
+
+[node name="Floor" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+
+[node name="FloorCol" type="CollisionShape3D" parent="Floor"]
+shape = SubResource("Box_floor")
+
+[node name="FloorMesh" type="MeshInstance3D" parent="Floor"]
+mesh = SubResource("BoxMesh_floor")
+
+[node name="Player" type="CharacterBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+script = ExtResource("1_player")
+
+[node name="Col" type="CollisionShape3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("Cap_col")
+
+[node name="Visual" type="Node3D" parent="Player"]
+
+[node name="VisualMesh" type="MeshInstance3D" parent="Player/Visual"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+mesh = SubResource("Cap_mesh")
+
+[node name="YawPivot" type="Node3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+
+[node name="PitchPivot" type="Node3D" parent="Player/YawPivot"]
+
+[node name="SpringArm3D" type="SpringArm3D" parent="Player/YawPivot/PitchPivot"]
+spring_length = 5.0
+
+[node name="Camera3D" type="Camera3D" parent="Player/YawPivot/PitchPivot/SpringArm3D"]

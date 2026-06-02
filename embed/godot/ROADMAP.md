@@ -99,6 +99,25 @@ The demo scenes prove every layer of the stack:
   sidestepping the "object handle is just an int" gap. See `AUDIO.md`,
   `audio_smoke.tscn`. First building block of the game-complete native set.
 
+- **Performance pass + dedicated hot natives** (2026-06-02): callback
+  dispatch no longer re-lexes/parses/compiles a stub each frame -
+  `jdb_embed_call` invokes the compiled SUB directly with marshalled value
+  handles (no source-text round-trip). Dedicated hot-path natives that skip
+  the `GODOT.CALL` StringName+`callv` dispatch (~18% per call, benchmarked):
+  draw (`DRAW_CIRCLE/RECT/LINE/POLYGON/TEXTURE_RECT`) and physics
+  (`MOVE_AND_SLIDE`, `IS_ON_FLOOR/WALL/CEILING`, `GET/SET_VELOCITY`). Generic
+  API reach kept for the long tail: `GODOT.SINGLETON` / `GODOT.STATIC` /
+  `GODOT.ENUM` (real Godot names, e.g. `FileAccess.get_file_as_string`,
+  `Tween.TRANS_BACK`).
+- **Pure-jdBasic RPG rewrite (dogfood, in progress)** - `godot/rpg-native/`
+  is a fresh project where the RPG is being rebuilt with zero GDScript, one
+  node at a time, to find remaining gaps. First slice done: `player.jdb`
+  (CharacterBody3D, camera-relative WASD + run + jump + mouse-orbit) running
+  on the physics natives. Gaps surfaced: `Transform3D`/`Basis` not marshalled
+  (workaround: `GODOT.GET(n, "global_transform:basis:x")` sub-path resolves);
+  `@GlobalScope` enums (`KEY_SHIFT`) need a literal int or a global-enum
+  lookup; GLB + AnimationPlayer (AnimLoader) is the next slice.
+
 ### Still open
 
 - Remaining un-marshalled Variant types: `Transform2D` / `Transform3D` /

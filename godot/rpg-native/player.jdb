@@ -1,0 +1,95 @@
+EXTENDS CharacterBody3D
+
+' Third-person player, pure jdBasic (no GDScript). WASD walks camera-relative,
+' Shift runs, Space jumps, mouse orbits, Esc toggles capture. A capsule mesh
+' stands in for the character model (GLB + animation come in a later slice).
+
+INSPECTOR DIM walk_speed       = 5.0    AS RANGE(1.0, 20.0, 0.5)
+INSPECTOR DIM run_speed        = 9.0    AS RANGE(1.0, 30.0, 0.5)
+INSPECTOR DIM jump_velocity    = 6.5    AS RANGE(1.0, 20.0, 0.5)
+INSPECTOR DIM mouse_sens       = 0.0025 AS RANGE(0.0005, 0.01, 0.0005)
+INSPECTOR DIM pitch_min        = -1.2
+INSPECTOR DIM pitch_max        = 0.4
+
+DIM self_h   = 0
+DIM visual_h = 0
+DIM yaw_h    = 0
+DIM pitch_h  = 0
+
+DIM gravity = 9.8
+DIM mouse_captured = FALSE
+DIM character_yaw  = 0.0
+
+' @GlobalScope enums aren't class constants, so spell the keycode out.
+DIM KEY_SHIFT = 4194325
+
+SUB capture_mouse(cap)
+	mouse_captured = cap
+	IF cap THEN
+		GODOT.INPUT.SET_MOUSE_MODE(2)   ' CAPTURED
+	ELSE
+		GODOT.INPUT.SET_MOUSE_MODE(0)   ' VISIBLE
+	ENDIF
+ENDSUB
+
+SUB _ready()
+	self_h   = GODOT.SELF()
+	visual_h = GODOT.CALL(self_h, "get_node", "Visual")
+	yaw_h    = GODOT.CALL(self_h, "get_node", "YawPivot")
+	pitch_h  = GODOT.CALL(self_h, "get_node", "YawPivot/PitchPivot")
+
+	DIM ps = GODOT.SINGLETON("ProjectSettings")
+	gravity = GODOT.CALL(ps, "get_setting", "physics/3d/default_gravity", 9.8)
+
+	capture_mouse(TRUE)
+ENDSUB
+
+SUB _unhandled_input(event)
+	IF GODOT.CALL(event, "is_action_pressed", "mouse_capture_toggle") THEN
+		capture_mouse(NOT mouse_captured)
+		RETURN
+	ENDIF
+	IF GODOT.CALL(event, "get_class") = "InputEventMouseMotion" ANDALSO mouse_captured THEN
+		DIM rel = GODOT.GET(event, "relative")
+		GODOT.CALL(yaw_h,   "rotate_y", -rel[0] * mouse_sens)
+		GODOT.CALL(pitch_h, "rotate_x", -rel[1] * mouse_sens)
+		DIM px = GODOT.GET(pitch_h, "rotation:x")
+		IF px < pitch_min THEN px = pitch_min
+		IF px > pitch_max THEN px = pitch_max
+		GODOT.SET(pitch_h, "rotation:x", px)
+	ENDIF
+ENDSUB
+
+SUB _physics_process(delta)
+	DIM on_floor = GODOT.IS_ON_FLOOR(self_h)
+
+	DIM vel = GODOT.GET_VELOCITY(self_h)
+	DIM vy = vel[1]
+	IF NOT on_floor THEN vy = vy - gravity * delta
+	IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("jump") ANDALSO on_floor THEN vy = jump_velocity
+
+	' WASD in the yaw pivot's frame so movement follows the camera.
+	DIM ix = GODOT.INPUT.GET_AXIS("move_left", "move_right")
+	DIM iz = GODOT.INPUT.GET_AXIS("move_forward", "move_back")
+	DIM bx = GODOT.GET(yaw_h, "global_transform:basis:x")
+	DIM bz = GODOT.GET(yaw_h, "global_transform:basis:z")
+	DIM dx = bx[0] * ix + bz[0] * iz
+	DIM dz = bx[2] * ix + bz[2] * iz
+	DIM len = SQR(dx * dx + dz * dz)
+	IF len > 0.001 THEN
+		dx = dx / len
+		dz = dz / len
+	ENDIF
+
+	DIM speed = walk_speed
+	IF GODOT.INPUT.IS_KEY_PRESSED(KEY_SHIFT) THEN speed = run_speed
+
+	GODOT.SET_VELOCITY(self_h, GODOT.VEC3(dx * speed, vy, dz * speed))
+
+	IF len > 0.01 THEN
+		character_yaw = ATAN2(dx, dz)
+		GODOT.SET(visual_h, "rotation:y", character_yaw)
+	ENDIF
+
+	GODOT.MOVE_AND_SLIDE(self_h)
+ENDSUB
