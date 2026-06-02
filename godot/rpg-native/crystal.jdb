@@ -1,0 +1,29 @@
+EXTENDS MeshInstance3D
+
+' A floating crystal that bobs up/down and spins - validates the tween path
+' (create_tween / tween_property / set_trans / set_ease / set_loops /
+' as_relative) entirely from jdBasic via GODOT.CALL + GODOT.REF + GODOT.ENUM.
+' Exact Godot API names, so a GDScript user's knowledge carries over.
+
+DIM self_h = 0
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	DIM base_y = GODOT.GET(self_h, "position:y")
+
+	' Bob: a looping tween that eases up then back down.
+	DIM tb = GODOT.CALL(self_h, "create_tween")
+	GODOT.CALL(tb, "set_loops")
+	DIM up = GODOT.CALL(tb, "tween_property", GODOT.REF(self_h), "position:y", base_y + 0.4, 1.0)
+	GODOT.CALL(up, "set_trans", GODOT.ENUM("Tween", "TRANS_SINE"))
+	GODOT.CALL(up, "set_ease",  GODOT.ENUM("Tween", "EASE_IN_OUT"))
+	DIM dn = GODOT.CALL(tb, "tween_property", GODOT.REF(self_h), "position:y", base_y, 1.0)
+	GODOT.CALL(dn, "set_trans", GODOT.ENUM("Tween", "TRANS_SINE"))
+	GODOT.CALL(dn, "set_ease",  GODOT.ENUM("Tween", "EASE_IN_OUT"))
+
+	' Spin: a separate looping tween, relative so each loop adds a full turn.
+	DIM tr = GODOT.CALL(self_h, "create_tween")
+	GODOT.CALL(tr, "set_loops")
+	DIM sp = GODOT.CALL(tr, "tween_property", GODOT.REF(self_h), "rotation:y", 2.0 * PI, 3.0)
+	GODOT.CALL(sp, "as_relative")
+ENDSUB

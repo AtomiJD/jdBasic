@@ -1,6 +1,10 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://player.jdb" id="1_player"]
+[ext_resource type="Script" path="res://crystal.jdb" id="2_crystal"]
+
+[sub_resource type="BoxMesh" id="Box_crystal"]
+size = Vector3(0.6, 0.6, 0.6)
 
 [sub_resource type="BoxShape3D" id="Box_floor"]
 size = Vector3(40, 1, 40)
@@ -50,3 +54,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 spring_length = 5.0
 
 [node name="Camera3D" type="Camera3D" parent="Player/YawPivot/PitchPivot/SpringArm3D"]
+
+[node name="Crystal" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1.5, -3)
+mesh = SubResource("Box_crystal")
+script = ExtResource("2_crystal")
