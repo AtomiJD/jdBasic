@@ -106,6 +106,10 @@ private:
 
     static std::string variant_to_jdb_arg_(const Variant& v);
     void scan_methods_(const String& source);
+    // Godot only auto-enables _process from a script's method list, not the
+    // input callbacks. Mirror the scanned method set onto the owning Node's
+    // processing flags so _input / _unhandled_input / _physics_process fire.
+    void enable_node_processing_();
 };
 
 }  // namespace godot

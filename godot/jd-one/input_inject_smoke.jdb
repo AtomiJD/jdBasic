@@ -1,0 +1,40 @@
+EXTENDS Node2D
+
+' End-to-end headless proof of the mouse-click fix: build a synthetic left
+' button press, push it through the viewport (passing the event object by
+' GODOT.REF), and confirm _input fires AND receives the event as a usable
+' handle. Pushed via call_deferred so delivery happens outside the _process
+' eval (no nested VM call - mirrors how Godot phases real input vs process).
+
+DIM self_h = 0
+DIM f = 0
+DIM got = 0
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	PRINT "processing_input=" + STR$(GODOT.CALL(self_h, "is_processing_input"))
+ENDSUB
+
+SUB _input(event)
+	DIM kind = GODOT.CALL(event, "get_class")
+	IF kind = "InputEventMouseButton" THEN
+		got = got + 1
+		PRINT "INPUT mouse pressed=" + STR$(GODOT.GET(event, "pressed")) + " button=" + STR$(GODOT.GET(event, "button_index"))
+	ENDIF
+ENDSUB
+
+SUB _process(delta)
+	f = f + 1
+	IF f = 3 THEN
+		DIM ev = GODOT.NEW("InputEventMouseButton")
+		GODOT.SET(ev, "button_index", 1)
+		GODOT.SET(ev, "pressed", TRUE)
+		DIM vp = GODOT.CALL(self_h, "get_viewport")
+		GODOT.CALL(vp, "call_deferred", "push_input", GODOT.REF(ev))
+	ENDIF
+	IF f >= 8 THEN
+		PRINT "got_clicks=" + STR$(got)
+		DIM tree = GODOT.CALL(self_h, "get_tree")
+		GODOT.CALL(tree, "quit")
+	ENDIF
+ENDSUB

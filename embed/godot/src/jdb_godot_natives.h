@@ -58,6 +58,19 @@ public:
     Object* lookup(int64_t handle) const;
     int64_t store(Object* obj);
 
+    // Keep a Variant (and therefore its Ref, if it wraps a RefCounted)
+    // alive for the bridge's lifetime. GODOT.NEW / GODOT.LOAD hand back a
+    // bare Object*, but a freshly instantiated RefCounted (InputEvent,
+    // Material, Resource, ...) would be freed the moment the local Ref
+    // drops; retaining it here keeps the handle valid.
+    void retain(const Variant& v);
+
+    // Serialize a Variant into a jdBasic source literal (Object -> bridge
+    // handle, Vector2 -> [x,y], Color -> [r,g,b,a], ...). Engine callbacks
+    // (_input(event), ...) marshal their args through this so an Object
+    // argument arrives as a usable handle instead of being dropped to 0.
+    std::string arg_to_source(const Variant& v) { return arg_literal_(v); }
+
     JdbEmbed*          vm()    const { return m_vm; }
     JdbScriptInstance* owner() const { return m_owner; }
 
@@ -125,6 +138,9 @@ private:
     std::vector<std::string>               m_deferred;
     // The single reusable looping music player (0 = none yet).
     uint64_t                               m_music_id = 0;
+    // Refs to RefCounted objects created via GODOT.NEW / GODOT.LOAD so they
+    // outlive the native call that made them.
+    std::vector<Variant>                   m_owned;
 };
 
 // Conversion helpers used by the natives. Variant -> jdBasic JdbValue,

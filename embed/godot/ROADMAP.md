@@ -53,12 +53,38 @@ The demo scenes prove every layer of the stack:
   stores `ObjectID` and resolves through `ObjectDB` on every `lookup`, so a
   handle to a freed object (one-shot timer, queue_freed node) returns null
   instead of dangling.
-- **GODOT.DRAW_TEXT** (2026-06-01) -
+- **GODOT.DRAW_TEXT / DRAW_STRING / TEXT_SIZE** (2026-06-01..02) -
   `GODOT.DRAW_TEXT(node, pos, "text" [, font_size [, color]])` draws a
   string in a CanvasItem's `_draw` using the ThemeDB fallback font, so a
-  pure-jdBasic HUD lives entirely in `_draw` with no Label node. `pos` is a
-  `[x, y]` baseline, `color` a `[r, g, b, a]` (default white), size default
-  16. Demo: `draw_text_demo.tscn`; headless regression: `draw_text_smoke.tscn`.
+  pure-jdBasic HUD lives entirely in `_draw` with no Label node.
+  `GODOT.DRAW_STRING(node, pos, "text" [, align [, width [, font_size [, color]]]])`
+  is the 1:1 of `CanvasItem.draw_string`: `align` 0/1/2/3 (left/center/right/fill)
+  inside a `width` box gives centred / right-aligned text.
+  `GODOT.TEXT_SIZE("text" [, font_size])` -> `[w, h]` measures a string in
+  the fallback font for manual layout. Demo: `draw_text_demo.tscn`; headless
+  regression: `draw_text_smoke.tscn`, `drawstr_smoke.tscn`.
+- **Mouse-click / `_input` fix** (2026-06-02) - two stacked bugs killed
+  discrete `_input` handling (polling-based movement always worked):
+  1. Godot only auto-enabled `_process` from a Tier-3 script's method list,
+     never the input callbacks, so `_input` SUBs never fired. The script
+     instance now mirrors its method set onto the Node's flags
+     (`set_process_input` / `set_process_unhandled_input` /
+     `set_process_shortcut_input` / `set_physics_process`) in ctor,
+     hot-reload and hard-reload.
+  2. `call_method` serialized engine-callback args with a static serializer
+     that dropped Objects to `0`, so `_input(event)` arrived as `_input(0)`.
+     It now marshals through the bridge (Object -> handle), the same path
+     the signal dispatch uses. `store()` self-prunes dead entries during its
+     scan so the per-event objects don't accumulate. Regression:
+     `input_inject_smoke.tscn` (synthetic click, end to end).
+- **GODOT.REF** (2026-06-02) - `GODOT.REF(handle)` wraps a bridge handle so
+  it marshals back to the actual Object when passed as a property/method
+  *value*: `GODOT.SET(sprite, "texture", GODOT.REF(tex))`. A bare handle is
+  just an int. Uses the same `__gd`-tagged-map machinery as RECT2/VEC2I.
+- **GODOT.NEW / GODOT.LOAD RefCounted retain** (2026-06-02) - a freshly
+  instantiated RefCounted (InputEvent, Material, Resource) was freed the
+  instant the native's local Ref dropped, leaving a dead handle. The bridge
+  now retains these for its lifetime.
 - **Dictionary <-> MAP + typed-value marshalling** (2026-06-01) - a Godot
   `Dictionary` now marshals to a jdBasic `MAP` and back (was stringified).
   Godot types that a plain numeric array can't disambiguate use a `__gd`

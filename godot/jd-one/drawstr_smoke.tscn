@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://drawstr_smoke.jdb" id="1_drawstr_smoke"]
+
+[node name="DrawStrSmoke" type="Node2D"]
+script = ExtResource("1_drawstr_smoke")

@@ -1,0 +1,222 @@
+EXTENDS Node2D
+
+' Breakout, 100% jdBasic - the dogfood game. No GDScript, no helper nodes:
+' everything is drawn in _draw, sounds come from GODOT.AUDIO, the playfield
+' size is read back from get_viewport_rect (a Rect2 round-trip).
+'
+'   Mouse  : move paddle
+'   Click  : launch the ball / restart after win or loss
+'
+' Gaps found while building this are noted with "GAP:" comments.
+
+DIM self_h = 0
+
+' Playfield (filled in _ready from the viewport size).
+DIM fw = 800.0
+DIM fh = 600.0
+
+' Paddle.
+DIM pad_w = 120.0
+DIM pad_h = 16.0
+DIM pad_x = 340.0
+DIM pad_y = 560.0
+
+' Ball.
+DIM ball_x = 400.0
+DIM ball_y = 540.0
+DIM ball_vx = 220.0
+DIM ball_vy = -320.0
+DIM ball_r  = 8.0
+
+' Brick grid.
+DIM cols = 12
+DIM rows = 6
+DIM gap = 4.0
+DIM top_off = 56.0
+DIM side_off = 24.0
+DIM brick_w = 60.0
+DIM brick_h = 22.0
+DIM alive AS MAP = {}
+DIM remaining = 0
+
+DIM score = 0
+DIM lives = 3
+DIM mode = "serve"     ' serve / play / won / lost
+
+SUB blip(vol, pitch)
+	GODOT.AUDIO.PLAY("res://beep.wav", vol, pitch)
+ENDSUB
+
+SUB setup_level()
+	brick_w = (fw - 2.0 * side_off - (cols - 1) * gap) / cols
+	alive = {}
+	DIM n = cols * rows
+	FOR idx = 0 TO n - 1
+		alive{STR$(idx)} = 1
+	NEXT
+	remaining = n
+ENDSUB
+
+SUB place_ball_on_paddle()
+	ball_x = pad_x + pad_w / 2.0
+	ball_y = pad_y - ball_r - 2.0
+	ball_vx = 220.0
+	ball_vy = -320.0
+ENDSUB
+
+SUB start_new_game()
+	score = 0
+	lives = 3
+	setup_level()
+	place_ball_on_paddle()
+	mode = "serve"
+ENDSUB
+
+SUB hit_bricks()
+	DIM n = cols * rows
+	FOR idx = 0 TO n - 1
+		IF alive{STR$(idx)} = 1 THEN
+			DIM row = INT(idx / cols)
+			DIM col = idx - row * cols
+			DIM bx = side_off + col * (brick_w + gap)
+			DIM by = top_off + row * (brick_h + gap)
+			IF ball_x + ball_r > bx ANDALSO ball_x - ball_r < bx + brick_w THEN
+				IF ball_y + ball_r > by ANDALSO ball_y - ball_r < by + brick_h THEN
+					alive{STR$(idx)} = 0
+					remaining = remaining - 1
+					score = score + 10
+					ball_vy = -ball_vy
+					blip(-7.0, 1.6)
+					IF remaining <= 0 THEN mode = "won"
+					RETURN
+				ENDIF
+			ENDIF
+		ENDIF
+	NEXT
+ENDSUB
+
+SUB step_ball(dt)
+	ball_x = ball_x + ball_vx * dt
+	ball_y = ball_y + ball_vy * dt
+
+	' Walls.
+	IF ball_x < ball_r THEN
+		ball_x = ball_r
+		ball_vx = ABS(ball_vx)
+		blip(-10.0, 1.0)
+	ENDIF
+	IF ball_x > fw - ball_r THEN
+		ball_x = fw - ball_r
+		ball_vx = -ABS(ball_vx)
+		blip(-10.0, 1.0)
+	ENDIF
+	IF ball_y < ball_r THEN
+		ball_y = ball_r
+		ball_vy = ABS(ball_vy)
+		blip(-10.0, 1.0)
+	ENDIF
+
+	' Paddle.
+	IF ball_y + ball_r >= pad_y ANDALSO ball_y - ball_r <= pad_y + pad_h THEN
+		IF ball_x >= pad_x ANDALSO ball_x <= pad_x + pad_w ANDALSO ball_vy > 0.0 THEN
+			DIM rel = (ball_x - (pad_x + pad_w / 2.0)) / (pad_w / 2.0)
+			ball_vx = rel * 300.0
+			ball_vy = -ABS(ball_vy)
+			blip(-8.0, 1.2)
+		ENDIF
+	ENDIF
+
+	hit_bricks()
+
+	' Bottom - lose a life.
+	IF ball_y - ball_r > fh THEN
+		lives = lives - 1
+		blip(-6.0, 0.6)
+		IF lives <= 0 THEN
+			mode = "lost"
+		ELSE
+			place_ball_on_paddle()
+			mode = "serve"
+		ENDIF
+	ENDIF
+ENDSUB
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	DIM vr = GODOT.CALL(self_h, "get_viewport_rect")
+	fw = vr{"w"}
+	fh = vr{"h"}
+	pad_y = fh - 44.0
+	start_new_game()
+ENDSUB
+
+SUB _process(delta)
+	DIM mp = GODOT.INPUT.MOUSE_POSITION()
+	pad_x = mp[0] - pad_w / 2.0
+	IF pad_x < 0.0 THEN pad_x = 0.0
+	IF pad_x > fw - pad_w THEN pad_x = fw - pad_w
+
+	IF mode = "serve" THEN
+		ball_x = pad_x + pad_w / 2.0
+		ball_y = pad_y - ball_r - 2.0
+	ELSEIF mode = "play" THEN
+		step_ball(delta)
+	ENDIF
+
+	GODOT.CALL(self_h, "queue_redraw")
+ENDSUB
+
+SUB _input(event)
+	DIM kind = GODOT.CALL(event, "get_class")
+	IF kind = "InputEventMouseButton" THEN
+		IF GODOT.GET(event, "pressed") THEN
+			IF mode = "serve" THEN
+				mode = "play"
+				blip(-9.0, 1.4)
+			ELSEIF mode = "won" ORELSE mode = "lost" THEN
+				start_new_game()
+			ENDIF
+		ENDIF
+	ENDIF
+ENDSUB
+
+SUB draw_box(x, y, w, h, r, g, b)
+	GODOT.CALL(self_h, "draw_rect", GODOT.RECT2(x, y, w, h), GODOT.COLOR(r, g, b, 1.0), TRUE)
+ENDSUB
+
+SUB _draw()
+	' Background.
+	draw_box(0.0, 0.0, fw, fh, 0.06, 0.07, 0.11)
+
+	' Bricks - hue shifts down the rows.
+	DIM n = cols * rows
+	FOR idx = 0 TO n - 1
+		IF alive{STR$(idx)} = 1 THEN
+			DIM row = INT(idx / cols)
+			DIM col = idx - row * cols
+			DIM bx = side_off + col * (brick_w + gap)
+			DIM by = top_off + row * (brick_h + gap)
+			DIM rr = 0.35 + 0.11 * row
+			DIM gg = 0.95 - 0.12 * row
+			draw_box(bx, by, brick_w, brick_h, rr, gg, 0.45)
+		ENDIF
+	NEXT
+
+	' Paddle + ball.
+	draw_box(pad_x, pad_y, pad_w, pad_h, 0.85, 0.9, 1.0)
+	GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(ball_x, ball_y), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+
+	' HUD.
+	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(side_off, 32.0), "Score " + STR$(score), 22, GODOT.COLOR(0.9, 0.95, 1.0, 1.0))
+	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(fw - 140.0, 32.0), "Lives " + STR$(lives), 22, GODOT.COLOR(0.9, 0.95, 1.0, 1.0))
+
+	' Centered via DRAW_STRING align=1 across the full field width - no more
+	' eyeballed pixel offsets.
+	IF mode = "serve" THEN
+		GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, fh / 2.0), "Click to launch", 1, fw, 24, GODOT.COLOR(1.0, 1.0, 0.7, 1.0))
+	ELSEIF mode = "won" THEN
+		GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, fh / 2.0), "YOU WIN - click to play again", 1, fw, 28, GODOT.COLOR(0.6, 1.0, 0.6, 1.0))
+	ELSEIF mode = "lost" THEN
+		GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, fh / 2.0), "GAME OVER - click to restart", 1, fw, 28, GODOT.COLOR(1.0, 0.5, 0.5, 1.0))
+	ENDIF
+ENDSUB

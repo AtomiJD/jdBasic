@@ -64,6 +64,15 @@ static int64_t make_gd_typed(JdbEmbed* vm, const char* tag,
     return m;
 }
 
+// Build a 2-element numeric jdBasic array [x, y].
+static int64_t make_vec2_array_dbl(JdbEmbed* vm, double x, double y) {
+    int64_t e[2] = { jdb_embed_make_double(vm, x), jdb_embed_make_double(vm, y) };
+    int64_t arr = jdb_embed_make_array(vm, e, 2);
+    jdb_embed_value_release(vm, e[0]);
+    jdb_embed_value_release(vm, e[1]);
+    return arr;
+}
+
 int64_t godot::variant_to_jdb_value(GodotBridge* bridge, const Variant& v) {
     if (!bridge) return 0;
     JdbEmbed* vm = bridge->vm();
@@ -249,6 +258,10 @@ Variant godot::jdb_value_to_variant(GodotBridge* bridge, int64_t h) {
             if (gd == "Rect2") {
                 return Rect2(field("x"), field("y"), field("w"), field("h"));
             }
+            if (gd == "Ref") {
+                Object* o = bridge->lookup((int64_t)field("h"));
+                return o ? Variant(o) : Variant();
+            }
 
             // Plain jdBasic map -> Godot Dictionary.
             Dictionary d;
@@ -365,13 +378,29 @@ Object* GodotBridge::lookup(int64_t handle) const {
     return ObjectDB::get_instance(it->second);
 }
 
+void GodotBridge::retain(const Variant& v) {
+    m_owned.push_back(v);
+}
+
 int64_t GodotBridge::store(Object* obj) {
     if (!obj) return 0;
     uint64_t id = (uint64_t)obj->get_instance_id();
-    // Re-use a handle if we've already issued one for this object.
-    for (auto& kv : m_table) {
-        if (kv.second == id) return kv.first;
+    // Scan for an existing handle, and drop dead entries as we pass them.
+    // Engine callbacks marshal transient objects (every InputEvent passed to
+    // _input) through here, so without this sweep the table would grow
+    // without bound. Pruning during the scan keeps it down to live objects.
+    int64_t found = 0;
+    for (auto it = m_table.begin(); it != m_table.end(); ) {
+        if (it->second == id) {
+            found = it->first;
+            ++it;
+        } else if (!ObjectDB::get_instance(it->second)) {
+            it = m_table.erase(it);
+        } else {
+            ++it;
+        }
     }
+    if (found) return found;
     int64_t h = m_next_handle++;
     m_table[h] = id;
     return h;
@@ -824,6 +853,18 @@ static int64_t native_vec2i(JdbEmbed* vm, int argc, const int64_t* args, void* /
     return make_gd_typed(vm, "Vector2i", k, f, 2);
 }
 
+// GODOT.REF(handle) -> wraps a bridge handle so it marshals back to the
+// actual Object when passed as a *value* (property or method argument).
+// A bare handle is just an int, so GODOT.SET(sprite, "texture", tex) would
+// store the integer; GODOT.SET(sprite, "texture", GODOT.REF(tex)) stores the
+// Texture. Returns a "__gd"-tagged map the reverse marshaller decodes.
+static int64_t native_ref(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    double h = (double)jdb_embed_value_int(vm, args[0]);
+    const char* k[1] = {"h"};
+    return make_gd_typed(vm, "Ref", k, &h, 1);
+}
+
 // GODOT.EMIT(handle, "signal_name", arg1, arg2, ...) -> emit a signal
 // on the target Object. The first arg is the bridge handle (typically
 // GODOT.SELF for emitting from self). Returns 1 on success.
@@ -958,6 +999,8 @@ static int64_t native_load(JdbEmbed* vm, int argc, const int64_t* args, void* ud
     const char* path = jdb_embed_value_string(vm, args[0]);
     Ref<Resource> res = ResourceLoader::get_singleton()->load(String::utf8(path ? path : ""));
     if (!res.is_valid()) return jdb_embed_make_nil(vm);
+    // Hold a ref so the handle stays valid even if the loader cache evicts.
+    bridge->retain(res);
     int64_t handle = bridge->store(res.ptr());
     return jdb_embed_make_int(vm, handle);
 }
@@ -985,6 +1028,9 @@ static int64_t native_new(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
     Variant v = ClassDBSingleton::get_singleton()->instantiate(StringName(class_name ? class_name : ""));
     Object* obj = v;
     if (!obj) return jdb_embed_make_nil(vm);
+    // A RefCounted (InputEvent, Material, ...) would be freed the instant `v`
+    // goes out of scope; keep it alive on the bridge.
+    bridge->retain(v);
     int64_t handle = bridge->store(obj);
     return jdb_embed_make_int(vm, handle);
 }
@@ -1071,6 +1117,51 @@ static int64_t native_draw_text(JdbEmbed* vm, int argc, const int64_t* args, voi
     return jdb_embed_make_bool(vm, 1);
 }
 
+// GODOT.DRAW_STRING(node, pos, "text" [, align [, width [, font_size [, color]]]])
+//
+// 1:1 with CanvasItem.draw_string using the ThemeDB fallback font: exposes
+// alignment (0=left, 1=center, 2=right, 3=fill) and the layout width so
+// text can be centred/right-aligned within a box. With align=1 and
+// width=field_w you get horizontally centred text. width<0 disables the
+// alignment box (plain left-anchored draw). Must run inside _draw.
+static int64_t native_draw_string(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* bridge = bridge_of(ud);
+    if (!bridge) return jdb_embed_make_bool(vm, 0);
+    int64_t handle = jdb_embed_value_int(vm, args[0]);
+    CanvasItem* ci = Object::cast_to<CanvasItem>(bridge->lookup(handle));
+    if (!ci) return jdb_embed_make_bool(vm, 0);
+
+    Vector2 pos = jdb_value_to_variant(bridge, args[1]);
+    const char* txt = jdb_embed_value_string(vm, args[2]);
+    int   align     = (argc > 3) ? (int)jdb_embed_value_int(vm, args[3]) : 0;
+    float width     = (argc > 4) ? (float)jdb_embed_value_double(vm, args[4]) : -1.0f;
+    int   font_size = (argc > 5) ? (int)jdb_embed_value_int(vm, args[5]) : 16;
+    Color col(1, 1, 1, 1);
+    if (argc > 6) col = jdb_value_to_variant(bridge, args[6]);
+
+    Ref<Font> font = ThemeDB::get_singleton()->get_fallback_font();
+    if (font.is_null()) return jdb_embed_make_bool(vm, 0);
+
+    ci->draw_string(font, pos, String::utf8(txt ? txt : ""),
+                    (HorizontalAlignment)align, width, font_size, col);
+    return jdb_embed_make_bool(vm, 1);
+}
+
+// GODOT.TEXT_SIZE("text" [, font_size]) -> [w, h]
+//
+// Measures a string in the fallback font so scripts can centre / right-align
+// / lay out HUD text precisely. Companion to DRAW_TEXT / DRAW_STRING.
+static int64_t native_text_size(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
+    const char* txt = (argc > 0) ? jdb_embed_value_string(vm, args[0]) : "";
+    int font_size = (argc > 1) ? (int)jdb_embed_value_int(vm, args[1]) : 16;
+    Ref<Font> font = ThemeDB::get_singleton()->get_fallback_font();
+    if (font.is_null()) return make_vec2_array_dbl(vm, 0.0, 0.0);
+    Vector2 sz = font->get_string_size(String::utf8(txt ? txt : ""),
+                                       HORIZONTAL_ALIGNMENT_LEFT, -1.0f, font_size);
+    return make_vec2_array_dbl(vm, sz.x, sz.y);
+}
+
 void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.SELF",   0, 0,  &native_self,  this);
     jdb_embed_register_native(m_vm, "GODOT.GET",    2, 2,  &native_get,   this);
@@ -1081,7 +1172,10 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.COLOR",  3, 4,  &native_color, this);
     jdb_embed_register_native(m_vm, "GODOT.RECT2",  4, 4,  &native_rect2, this);
     jdb_embed_register_native(m_vm, "GODOT.VEC2I",  2, 2,  &native_vec2i, this);
+    jdb_embed_register_native(m_vm, "GODOT.REF",    1, 1,  &native_ref,   this);
     jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXT",   3, 5,  &native_draw_text,   this);
+    jdb_embed_register_native(m_vm, "GODOT.DRAW_STRING", 3, 7,  &native_draw_string, this);
+    jdb_embed_register_native(m_vm, "GODOT.TEXT_SIZE",   1, 2,  &native_text_size,   this);
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);

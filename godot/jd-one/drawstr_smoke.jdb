@@ -1,0 +1,32 @@
+EXTENDS Node2D
+
+' Verifies the input-processing fix (is_processing_input must be TRUE once a
+' script defines _input) plus GODOT.DRAW_STRING / GODOT.TEXT_SIZE.
+
+DIM self_h = 0
+DIM f = 0
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	PRINT "processing_input=" + STR$(GODOT.CALL(self_h, "is_processing_input"))
+	DIM sz = GODOT.TEXT_SIZE("Hello", 24)
+	PRINT "text_size w=" + STR$(sz[0]) + " h=" + STR$(sz[1])
+ENDSUB
+
+SUB _input(event)
+	PRINT "input " + GODOT.CALL(event, "get_class")
+ENDSUB
+
+SUB _draw()
+	DIM rc = GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, 40.0), "centered", 1, 400.0, 24, GODOT.COLOR(1.0, 1.0, 1.0, 1.0))
+	IF f = 0 THEN PRINT "draw_string rc=" + STR$(rc)
+ENDSUB
+
+SUB _process(delta)
+	GODOT.CALL(self_h, "queue_redraw")
+	f = f + 1
+	IF f >= 3 THEN
+		DIM tree = GODOT.CALL(self_h, "get_tree")
+		GODOT.CALL(tree, "quit")
+	ENDIF
+ENDSUB

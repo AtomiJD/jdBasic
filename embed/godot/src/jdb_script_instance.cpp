@@ -10,6 +10,7 @@
 #include "jdb_embed_api.h"
 
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -107,6 +108,19 @@ void JdbScriptInstance::scan_methods_(const String& source) {
     }
 }
 
+void JdbScriptInstance::enable_node_processing_() {
+    Node* node = Object::cast_to<Node>(m_owner);
+    if (!node) return;
+    auto has = [&](const char* n) {
+        return m_method_set.find(n) != m_method_set.end();
+    };
+    node->set_process(has("_process"));
+    node->set_physics_process(has("_physics_process"));
+    node->set_process_input(has("_input"));
+    node->set_process_unhandled_input(has("_unhandled_input"));
+    node->set_process_shortcut_input(has("_shortcut_input"));
+}
+
 // ── Lifecycle ──────────────────────────────────────────────────────
 
 static int g_alive_instances = 0;
@@ -195,6 +209,7 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
             }
         }
         scan_methods_(m_script->_get_source_code());
+        enable_node_processing_();
 
         // Mirror the script's INSPECTOR DIM metadata so the Godot Inspector
         // can enumerate properties without round-tripping into the Resource
@@ -268,6 +283,7 @@ bool JdbScriptInstance::hot_recompile(const String& processed_src) {
     // engine callbacks become callable.
     m_method_set.clear();
     if (m_script.is_valid()) scan_methods_(m_script->_get_source_code());
+    enable_node_processing_();
 
     UtilityFunctions::print(String("[jdBasic recompile] ") + summary);
     return true;
@@ -310,6 +326,7 @@ bool JdbScriptInstance::hard_reload(const String& processed_src) {
     jdb_embed_free(out);
     m_method_set.clear();
     if (m_script.is_valid()) scan_methods_(m_script->_get_source_code());
+    enable_node_processing_();
 
     // hard_reload nukes any prior globals; Godot only fires _ready once
     // per Node lifecycle, so without a manual call here `DIM self_h = 0`
@@ -443,7 +460,10 @@ Variant JdbScriptInstance::call_method(const StringName& name,
     code += "(";
     for (int64_t i = 0; i < argc; ++i) {
         if (i > 0) code += ", ";
-        code += variant_to_jdb_arg_(*args[i]);
+        // Marshal through the bridge so Object args (e.g. the InputEvent in
+        // _input) arrive as usable handles instead of being dropped to 0.
+        code += m_bridge ? m_bridge->arg_to_source(*args[i])
+                         : variant_to_jdb_arg_(*args[i]);
     }
     code += ")\n";
 

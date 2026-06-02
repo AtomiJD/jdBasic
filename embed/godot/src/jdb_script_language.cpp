@@ -423,8 +423,8 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
         "GODOT.LOAD", "GODOT.INSTANTIATE", "GODOT.NEW",
         "GODOT.ADD_CHILD", "GODOT.QUEUE_FREE",
         "GODOT.TIME_MS", "GODOT.TIME_SEC",
-        "GODOT.VEC2", "GODOT.VEC3", "GODOT.VEC2I", "GODOT.COLOR", "GODOT.RECT2",
-        "GODOT.DRAW_TEXT", "GODOT.PRINT",
+        "GODOT.VEC2", "GODOT.VEC3", "GODOT.VEC2I", "GODOT.COLOR", "GODOT.RECT2", "GODOT.REF",
+        "GODOT.DRAW_TEXT", "GODOT.DRAW_STRING", "GODOT.TEXT_SIZE", "GODOT.PRINT",
     };
     for (const char* n : godot_natives) {
         String full = String(n);
