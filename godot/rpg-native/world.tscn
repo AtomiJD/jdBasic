@@ -1,8 +1,9 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://player.jdb" id="1_player"]
 [ext_resource type="Script" path="res://crystal.jdb" id="2_crystal"]
 [ext_resource type="Script" path="res://npc.jdb" id="3_npc"]
+[ext_resource type="Script" path="res://terrain.jdb" id="4_terrain"]
 
 [sub_resource type="BoxMesh" id="Box_crystal"]
 size = Vector3(0.6, 0.6, 0.6)
@@ -76,3 +77,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
 billboard = 1
 pixel_size = 0.008
 text = "NPC"
+
+[node name="Terrain" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, -14)
+script = ExtResource("4_terrain")

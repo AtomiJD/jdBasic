@@ -1,0 +1,93 @@
+EXTENDS MeshInstance3D
+
+' Procedural heightmap terrain, pure jdBasic. The heights are computed
+' APL-style (vectorised SIN/COS over IOTA, no loops), then the vertex,
+' index and per-vertex-colour arrays are built and handed to
+' ArrayMesh.add_surface_from_arrays via the GODOT.PACKED_* builders - the
+' jdBasic->Godot direction for packed arrays.
+
+INSPECTOR DIM grid_n    = 48    AS RANGE(8, 128, 1)
+INSPECTOR DIM cell_size = 0.45  AS RANGE(0.1, 2.0, 0.05)
+INSPECTOR DIM freq      = 9.0   AS RANGE(2.0, 40.0, 0.5)
+INSPECTOR DIM amp       = 1.8   AS RANGE(0.1, 8.0, 0.1)
+INSPECTOR DIM seed      = 7
+
+DIM self_h = 0
+
+SUB _ready()
+	self_h = GODOT.SELF()
+
+	DIM n = grid_n
+	DIM total = n * n
+	DIM half = n / 2.0
+
+	' Heights - one vectorised pass, no FOR loops.
+	DIM idx = IOTA(total)
+	DIM gx = idx MOD n
+	DIM gy = (idx - gx) / n
+	DIM cx = (gx - half) / freq
+	DIM cy = (gy - half) / freq
+	DIM h1 = SIN(cx + seed * 0.10) * COS(cy + seed * 0.13)
+	DIM h2 = SIN(cx * 2.1 + seed * 0.7) * COS(cy * 2.3 + seed * 1.9) * 0.5
+	DIM h3 = SIN(cx * 4.7 + seed * 2.1) * COS(cy * 4.1 + seed * 0.4) * 0.25
+	DIM hh = (h1 + h2 + h3) * amp
+
+	' Vertices (flat x,y,z) and per-vertex colour (flat r,g,b,a).
+	DIM verts = ZEROS(total * 3)
+	DIM cols  = ZEROS(total * 4)
+	FOR k = 0 TO total - 1
+		DIM y = hh[k]
+		verts[k * 3]     = (gx[k] - half) * cell_size
+		verts[k * 3 + 1] = y
+		verts[k * 3 + 2] = (gy[k] - half) * cell_size
+		DIM t = (y / amp + 1.0) * 0.5
+		cols[k * 4]     = 0.28 + 0.22 * t
+		cols[k * 4 + 1] = 0.52 + 0.20 * t
+		cols[k * 4 + 2] = 0.30
+		cols[k * 4 + 3] = 1.0
+	NEXT
+
+	' Two triangles per grid quad.
+	DIM quads = (n - 1) * (n - 1)
+	DIM inds = ZEROS(quads * 6)
+	DIM w = 0
+	FOR gyq = 0 TO n - 2
+		FOR gxq = 0 TO n - 2
+			DIM i00 = gyq * n + gxq
+			DIM i10 = i00 + 1
+			DIM i01 = (gyq + 1) * n + gxq
+			DIM i11 = i01 + 1
+			inds[w]     = i00
+			inds[w + 1] = i10
+			inds[w + 2] = i11
+			inds[w + 3] = i00
+			inds[w + 4] = i11
+			inds[w + 5] = i01
+			w = w + 6
+		NEXT
+	NEXT
+
+	' Mesh.ARRAY_VERTEX=0, ARRAY_COLOR=3, ARRAY_INDEX=12 in a 13-slot array.
+	' Unused slots MUST be NONE (not 0.0) or Godot validates them as the
+	' wrong packed type (e.g. "Bones must be a PackedInt32Array").
+	DIM sa AS ARRAY = []
+	FOR i = 0 TO 12
+		sa = APPEND(sa, NULL)
+	NEXT
+	sa[0]  = GODOT.PACKED_VEC3(verts)
+	sa[3]  = GODOT.PACKED_COLOR(cols)
+	sa[12] = GODOT.PACKED_INT32(inds)
+
+	DIM mesh = GODOT.NEW("ArrayMesh")
+	GODOT.CALL(mesh, "add_surface_from_arrays", GODOT.ENUM("Mesh", "PRIMITIVE_TRIANGLES"), sa)
+
+	' Unshaded vertex colours so it's visible without computed normals.
+	DIM mat = GODOT.NEW("StandardMaterial3D")
+	GODOT.SET(mat, "shading_mode", GODOT.ENUM("BaseMaterial3D", "SHADING_MODE_UNSHADED"))
+	GODOT.SET(mat, "vertex_color_use_as_albedo", TRUE)
+	GODOT.SET(mat, "cull_mode", GODOT.ENUM("BaseMaterial3D", "CULL_DISABLED"))
+	GODOT.CALL(mesh, "surface_set_material", 0, GODOT.REF(mat))
+
+	GODOT.SET(self_h, "mesh", GODOT.REF(mesh))
+	PRINT "terrain: " + STR$(total) + " verts, " + STR$(quads * 2) + " tris"
+ENDSUB
