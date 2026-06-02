@@ -41,6 +41,10 @@ SUB _ready()
 	DIM ps = GODOT.SINGLETON("ProjectSettings")
 	gravity = GODOT.CALL(ps, "get_setting", "physics/3d/default_gravity", 9.8)
 
+	' Real character model (KayKit Rogue) instead of the capsule placeholder.
+	DIM model = GODOT.INSTANTIATE("res://assets/characters/Rogue_Hooded.glb")
+	GODOT.ADD_CHILD(visual_h, model)
+
 	capture_mouse(TRUE)
 ENDSUB
 

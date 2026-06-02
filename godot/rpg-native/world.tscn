@@ -41,10 +41,6 @@ shape = SubResource("Cap_col")
 
 [node name="Visual" type="Node3D" parent="Player"]
 
-[node name="VisualMesh" type="MeshInstance3D" parent="Player/Visual"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-mesh = SubResource("Cap_mesh")
-
 [node name="YawPivot" type="Node3D" parent="Player"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 
