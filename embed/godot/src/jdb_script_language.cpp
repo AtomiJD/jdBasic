@@ -429,7 +429,8 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
         "GODOT.DRAW_CIRCLE", "GODOT.DRAW_RECT", "GODOT.DRAW_LINE",
         "GODOT.DRAW_TEXTURE_RECT", "GODOT.DRAW_POLYGON",
         "GODOT.MOVE_AND_SLIDE", "GODOT.IS_ON_FLOOR", "GODOT.IS_ON_WALL",
-        "GODOT.IS_ON_CEILING", "GODOT.GET_VELOCITY", "GODOT.SET_VELOCITY", "GODOT.PRINT",
+        "GODOT.IS_ON_CEILING", "GODOT.GET_VELOCITY", "GODOT.SET_VELOCITY",
+        "GODOT.SINGLETON", "GODOT.STATIC", "GODOT.ENUM", "GODOT.PRINT",
     };
     for (const char* n : godot_natives) {
         String full = String(n);

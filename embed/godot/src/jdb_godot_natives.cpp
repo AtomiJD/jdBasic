@@ -11,6 +11,7 @@
 #include <godot_cpp/classes/audio_stream_player.hpp>
 #include <godot_cpp/classes/character_body2d.hpp>
 #include <godot_cpp/classes/character_body3d.hpp>
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/font.hpp>
@@ -1301,6 +1302,63 @@ static int64_t native_set_velocity(JdbEmbed* vm, int argc, const int64_t* args, 
     return jdb_embed_make_bool(vm, 0);
 }
 
+// ── Generic API reach: singletons, static methods, enum constants ──
+// These keep the real Godot API names so a GDScript user's knowledge
+// transfers 1:1 - only the call shape is jdBasic.
+
+// GODOT.SINGLETON("Name") -> handle to an engine singleton (ProjectSettings,
+// OS, Time, Input, RenderingServer, ...). Then GODOT.CALL on it as usual.
+static int64_t native_singleton(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    GodotBridge* b = bridge_of(ud);
+    if (!b) return jdb_embed_make_nil(vm);
+    const char* name = jdb_embed_value_string(vm, args[0]);
+    Object* o = Engine::get_singleton()->get_singleton(StringName(name ? name : ""));
+    if (!o) return jdb_embed_make_nil(vm);
+    return jdb_embed_make_int(vm, b->store(o));
+}
+
+// GODOT.STATIC("Class", "method", args...) -> call a static method on any
+// class by its real name (e.g. FileAccess.get_file_as_string).
+static int64_t native_static(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_nil(vm);
+    GodotBridge* b = bridge_of(ud);
+    if (!b) return jdb_embed_make_nil(vm);
+    const char* cls = jdb_embed_value_string(vm, args[0]);
+    const char* method = jdb_embed_value_string(vm, args[1]);
+    StringName c(cls ? cls : ""), m(method ? method : "");
+    // The public class_call_static is a compile-time-variadic template, so
+    // dispatch on the runtime actual-arg count (0..4 covers static methods
+    // in practice - get_file_as_string takes 1, etc.).
+    std::vector<Variant> a;
+    a.reserve((size_t)(argc - 2));
+    for (int i = 2; i < argc; ++i) a.push_back(jdb_value_to_variant(b, args[i]));
+    ClassDBSingleton* cdb = ClassDBSingleton::get_singleton();
+    Variant ret;
+    switch (a.size()) {
+        case 0: ret = cdb->class_call_static(c, m); break;
+        case 1: ret = cdb->class_call_static(c, m, a[0]); break;
+        case 2: ret = cdb->class_call_static(c, m, a[0], a[1]); break;
+        case 3: ret = cdb->class_call_static(c, m, a[0], a[1], a[2]); break;
+        case 4: ret = cdb->class_call_static(c, m, a[0], a[1], a[2], a[3]); break;
+        default:
+            UtilityFunctions::push_error(String("[GODOT.STATIC] too many args (max 4)"));
+            return jdb_embed_make_nil(vm);
+    }
+    return variant_to_jdb_value(b, ret);
+}
+
+// GODOT.ENUM("Class", "CONSTANT") -> integer value of a class constant /
+// enum (e.g. Tween.TRANS_BACK, MouseButton.MOUSE_BUTTON_LEFT).
+static int64_t native_enum(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
+    if (argc < 2) return jdb_embed_make_int(vm, 0);
+    const char* cls = jdb_embed_value_string(vm, args[0]);
+    const char* name = jdb_embed_value_string(vm, args[1]);
+    int64_t v = ClassDBSingleton::get_singleton()->class_get_integer_constant(
+        StringName(cls ? cls : ""), StringName(name ? name : ""));
+    return jdb_embed_make_int(vm, v);
+}
+
 void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.SELF",   0, 0,  &native_self,  this);
     jdb_embed_register_native(m_vm, "GODOT.GET",    2, 2,  &native_get,   this);
@@ -1326,6 +1384,9 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.IS_ON_CEILING",  1, 1, &native_is_on_ceiling,  this);
     jdb_embed_register_native(m_vm, "GODOT.GET_VELOCITY",   1, 1, &native_get_velocity,   this);
     jdb_embed_register_native(m_vm, "GODOT.SET_VELOCITY",   2, 2, &native_set_velocity,   this);
+    jdb_embed_register_native(m_vm, "GODOT.SINGLETON", 1,  1, &native_singleton, this);
+    jdb_embed_register_native(m_vm, "GODOT.STATIC",    2, -1, &native_static,    this);
+    jdb_embed_register_native(m_vm, "GODOT.ENUM",      2,  2, &native_enum,      this);
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);
