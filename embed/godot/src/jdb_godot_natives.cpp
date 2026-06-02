@@ -41,6 +41,13 @@
 #include <godot_cpp/variant/rect2.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_float64_array.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/packed_int64_array.hpp>
+#include <godot_cpp/variant/packed_vector3_array.hpp>
+#include <godot_cpp/variant/packed_color_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <cstring>
@@ -75,6 +82,20 @@ static int64_t make_vec2_array_dbl(JdbEmbed* vm, double x, double y) {
     int64_t arr = jdb_embed_make_array(vm, e, 2);
     jdb_embed_value_release(vm, e[0]);
     jdb_embed_value_release(vm, e[1]);
+    return arr;
+}
+
+// Marshal any indexable Godot container (Array, Packed*Array) to a jdBasic
+// array, recursing per element so nested types (Vector2, Color, Object ...)
+// marshal correctly.
+template <typename T>
+static int64_t marshal_list(GodotBridge* bridge, JdbEmbed* vm, const T& list) {
+    int n = (int)list.size();
+    std::vector<int64_t> e;
+    e.reserve((size_t)n);
+    for (int i = 0; i < n; ++i) e.push_back(variant_to_jdb_value(bridge, Variant(list[i])));
+    int64_t arr = jdb_embed_make_array(vm, e.empty() ? nullptr : e.data(), n);
+    for (int64_t h : e) jdb_embed_value_release(vm, h);
     return arr;
 }
 
@@ -164,6 +185,18 @@ int64_t godot::variant_to_jdb_value(GodotBridge* bridge, const Variant& v) {
             int64_t h = bridge->store(o);
             return jdb_embed_make_int(vm, h);
         }
+        // Lists -> jdBasic arrays. A generic Array (get_children, ...) and the
+        // typed Packed*Arrays (get_animation_list, polygon data, ...) all
+        // marshal element-by-element instead of being stringified.
+        case Variant::ARRAY:               { Array a = v;               return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_STRING_ARRAY: { PackedStringArray a = v;    return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_FLOAT64_ARRAY:{ PackedFloat64Array a = v;   return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_FLOAT32_ARRAY:{ PackedFloat32Array a = v;   return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_INT64_ARRAY:  { PackedInt64Array a = v;     return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_INT32_ARRAY:  { PackedInt32Array a = v;     return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_VECTOR2_ARRAY:{ PackedVector2Array a = v;   return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_VECTOR3_ARRAY:{ PackedVector3Array a = v;   return marshal_list(bridge, vm, a); }
+        case Variant::PACKED_COLOR_ARRAY:  { PackedColorArray a = v;     return marshal_list(bridge, vm, a); }
         default:
             // Fallback: stringify so the user at least sees something.
             CharString s = String(v).utf8();
