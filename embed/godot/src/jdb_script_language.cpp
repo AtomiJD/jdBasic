@@ -687,15 +687,26 @@ String JdbScriptLanguage::_debug_get_stack_level_source(int32_t /*p_level*/) con
     return s.is_valid() ? s->get_path() : String();
 }
 
-Dictionary JdbScriptLanguage::_debug_get_stack_level_locals(int32_t /*p_level*/, int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
+Dictionary JdbScriptLanguage::_debug_get_stack_level_locals(int32_t p_level, int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
     // Godot's wrapper expects { "<kind>": [names], "values": [values] }.
     PackedStringArray names;
     Array values;
     if (m_break_inst && m_break_inst->get_vm()) {
         JdbEmbed* vm = m_break_inst->get_vm();
-        int n = jdb_embed_debug_locals_count(vm);
+        // jdBasic names a function's locals "<FUNC>_<var>"; strip that prefix
+        // for display so the panel shows the bare variable name.
+        int frames = jdb_embed_debug_stack_count(vm);
+        String prefix;
+        if (p_level < frames) {
+            prefix = String::utf8(jdb_embed_debug_stack_function(vm, p_level)) + String("_");
+        }
+        int n = jdb_embed_debug_locals_count(vm, p_level);
         for (int i = 0; i < n; ++i) {
-            names.push_back(String::utf8(jdb_embed_debug_local_name(vm, i)));
+            String nm = String::utf8(jdb_embed_debug_local_name(vm, i));
+            if (prefix.length() > 1 && nm.begins_with(prefix)) {
+                nm = nm.substr(prefix.length());
+            }
+            names.push_back(nm);
             values.push_back(String::utf8(jdb_embed_debug_local_value(vm, i)));
         }
     }
@@ -735,8 +746,10 @@ Dictionary JdbScriptLanguage::_debug_get_globals(int32_t /*p_max_subitems*/, int
     return d;
 }
 
-String JdbScriptLanguage::_debug_parse_stack_level_expression(int32_t /*p_level*/, const String& /*p_expression*/, int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
-    return String();  // watch expressions land in P5
+String JdbScriptLanguage::_debug_parse_stack_level_expression(int32_t /*p_level*/, const String& p_expression, int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
+    if (!m_break_inst || !m_break_inst->get_vm()) return String();
+    return String::utf8(jdb_embed_debug_eval(m_break_inst->get_vm(),
+                                             p_expression.utf8().get_data()));
 }
 
 TypedArray<Dictionary> JdbScriptLanguage::_debug_get_current_stack_info() {

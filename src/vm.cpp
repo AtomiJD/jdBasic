@@ -3174,6 +3174,8 @@ void VM::debug_check(int line) {
     if (!debug || line <= 0) return;
     // Need either the socket DAP or a host hook to have somewhere to break to.
     if (!debug->dap && !debug->host_hook) return;
+    // A watch-expression eval runs as a sub-chunk; don't let it re-break.
+    if (debug->suppress) return;
     // Inside REPL/EVAL/EXECUTE sub-runs, never pause for the socket DAP: the
     // sub-chunk's line numbers would otherwise look like the main program and
     // re-trigger stopped events. The embed/Godot host hook is the opposite
@@ -3330,11 +3332,17 @@ std::vector<std::pair<std::string, std::string>> VM::debug_get_globals() const {
 }
 
 std::vector<std::pair<std::string, std::string>> VM::debug_get_locals() const {
-    std::vector<std::pair<std::string, std::string>> result;
-    if (frames.size() <= 1) return result; // no function frame
+    return debug_get_locals_at(0);
+}
 
-    auto& f = frames.back();
-    // Find function name
+std::vector<std::pair<std::string, std::string>> VM::debug_get_locals_at(int level) const {
+    std::vector<std::pair<std::string, std::string>> result;
+    if (level < 0) return result;
+    // level 0 = innermost frame. Index 0 is the global frame (no locals).
+    int idx = (int)frames.size() - 1 - level;
+    if (idx <= 0 || idx >= (int)frames.size()) return result;
+
+    auto& f = frames[idx];
     std::string func_name;
     if (func_protos) {
         for (auto& fp : *func_protos) {
@@ -3342,9 +3350,13 @@ std::vector<std::pair<std::string, std::string>> VM::debug_get_locals() const {
         }
     }
 
+    // A frame's locals live between its base and the next frame's base
+    // (or sp for the innermost) - bound by that so deeper frames don't
+    // pick up the slots of the frames above them.
+    size_t upper = (idx + 1 < (int)frames.size()) ? frames[idx + 1].stack_base : sp;
     for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
         size_t abs = f.stack_base + i;
-        if (abs < sp) {
+        if (abs < upper) {
             std::string name = func_name.empty()
                 ? f.chunk->var_names[i]
                 : func_name + "_" + f.chunk->var_names[i];

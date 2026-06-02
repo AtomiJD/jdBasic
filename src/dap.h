@@ -133,6 +133,11 @@ struct DebugInfo {
     void* line_ud = nullptr;
     int (*line_break)(void* ud, int line) = nullptr;
 
+    // Set while evaluating a watch expression at a breakpoint so that eval
+    // doesn't re-enter the debugger (it runs as a sub-chunk that would
+    // otherwise trip debug_check again).
+    bool suppress = false;
+
     void pause();
     void resume();
     void step_over(size_t call_depth);

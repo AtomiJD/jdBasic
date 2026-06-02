@@ -203,14 +203,19 @@ JDB_EMBED_API int         jdb_embed_debug_stack_count   (JdbEmbed* e);
 JDB_EMBED_API int         jdb_embed_debug_stack_line     (JdbEmbed* e, int level);
 JDB_EMBED_API const char* jdb_embed_debug_stack_function (JdbEmbed* e, int level);
 
-// Locals (current frame) and globals as name/value-string pairs. Refresh
-// with the _count call, then read names/values by index.
-JDB_EMBED_API int         jdb_embed_debug_locals_count (JdbEmbed* e);
+// Locals (at stack `level`, 0 = innermost) and globals as name/value-string
+// pairs. Refresh with the _count call, then read names/values by index.
+JDB_EMBED_API int         jdb_embed_debug_locals_count (JdbEmbed* e, int level);
 JDB_EMBED_API const char* jdb_embed_debug_local_name   (JdbEmbed* e, int i);
 JDB_EMBED_API const char* jdb_embed_debug_local_value  (JdbEmbed* e, int i);
 JDB_EMBED_API int         jdb_embed_debug_globals_count(JdbEmbed* e);
 JDB_EMBED_API const char* jdb_embed_debug_global_name  (JdbEmbed* e, int i);
 JDB_EMBED_API const char* jdb_embed_debug_global_value (JdbEmbed* e, int i);
+
+// Evaluate a watch expression against the paused VM (global scope). Returns
+// the value formatted as a string (valid until the next call). Suppresses
+// the debugger during the eval so it can't re-break.
+JDB_EMBED_API const char* jdb_embed_debug_eval         (JdbEmbed* e, const char* expr);
 
 // Next-action selectors - call exactly one from inside the hook.
 JDB_EMBED_API void jdb_embed_debug_continue (JdbEmbed* e);

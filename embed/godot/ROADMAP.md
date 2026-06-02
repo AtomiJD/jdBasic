@@ -306,14 +306,26 @@ Phases:
 - **P4 - breakpoint sync** (DONE 2026-06-02): editor gutter breakpoints are
   polled per line via `is_breakpoint`, so no separate sync step was needed.
   `.jdb` line maps 1:1 to the VM line (the .jdb is the source).
-- **P5 - polish** (open): watch expressions (`_debug_parse_stack_level_expression`
-  currently returns ""), per-level locals (only the top frame is exposed
-  today), stripping the function-name prefix from local names
-  (`ADD_THEM_P` -> `p`) for display.
+- **P5 - polish** (DONE 2026-06-02): per-level locals
+  (`debug_get_locals_at(level)`, so selecting any stack frame shows its own
+  locals), the function-name prefix stripped from local names (`ADD_THEM_P`
+  -> `p`) in the panel, and watch-expression eval wired
+  (`_debug_parse_stack_level_expression` -> `jdb_embed_debug_eval`, global
+  scope, guarded by a `suppress` flag so the eval can't re-break).
 
 **Verified in the editor 2026-06-02**: breakpoints set/clear, break, step
-over/into, continue, the call stack, locals and globals all work against
-`breakout.jdb`. Standalone/VS-Code DAP path unchanged; pre-commit gate green.
+over/into, continue, the call stack, per-level locals (function prefix
+stripped) and globals all work against `breakout.jdb`. Standalone/VS-Code
+DAP path unchanged; pre-commit gate green.
+
+Notes / future:
+- Godot's editor surfaces runtime values only in the Debugger dock's
+  variable tree - there is no code-hover value tooltip for any language, so
+  the watch-eval virtual has no built-in editor trigger today (it's ready if
+  a flow or a custom dock calls it).
+- Values cross as strings, so the tree can't expand arrays / maps into
+  sub-trees. Returning real Variants (so the tree expands) is the next
+  optional step if richer inspection is wanted.
 
 Key decisions:
 - Per-instance VM vs. global language: the language tracks the active

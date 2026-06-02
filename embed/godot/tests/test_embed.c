@@ -34,11 +34,12 @@ static void on_break(JdbEmbed* e, int line, const char* reason, void* ud) {
     int sc = jdb_embed_debug_stack_count(e);
     printf("  stack=%d top=%s@%d\n", sc,
            jdb_embed_debug_stack_function(e, 0), jdb_embed_debug_stack_line(e, 0));
-    int lc = jdb_embed_debug_locals_count(e);
+    int lc = jdb_embed_debug_locals_count(e, 0);
     printf("  locals(%d):", lc);
     for (int i = 0; i < lc; i++)
         printf(" %s=%s", jdb_embed_debug_local_name(e, i), jdb_embed_debug_local_value(e, i));
     printf("\n");
+    printf("  watch (gg1+gg2) = %s\n", jdb_embed_debug_eval(e, "gg1 + gg2"));
     int gc = jdb_embed_debug_globals_count(e);
     printf("  globals(%d):", gc);
     for (int i = 0; i < gc; i++)

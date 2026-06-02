@@ -140,7 +140,8 @@ public:
     struct DebugFrame { int line; std::string name; std::string file; };
     std::vector<DebugFrame> debug_get_stack_frames() const;
     std::vector<std::pair<std::string, std::string>> debug_get_globals() const;  // name, value_str
-    std::vector<std::pair<std::string, std::string>> debug_get_locals() const;   // name, value_str
+    std::vector<std::pair<std::string, std::string>> debug_get_locals() const;   // innermost frame
+    std::vector<std::pair<std::string, std::string>> debug_get_locals_at(int level) const; // 0 = innermost
 
 private:
     // Execution state

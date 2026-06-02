@@ -63,6 +63,7 @@ struct JdbEmbedImpl {
     std::vector<VM::DebugFrame>                         dbg_frames;
     std::vector<std::pair<std::string, std::string>>    dbg_locals;
     std::vector<std::pair<std::string, std::string>>    dbg_globals;
+    std::string                                         dbg_eval;
 
     int64_t store(Value v) {
         int64_t h = next_handle++;
@@ -758,10 +759,10 @@ JDB_EMBED_API const char* jdb_embed_debug_stack_function(JdbEmbed* eh, int level
     return e->dbg_frames[(size_t)level].name.c_str();
 }
 
-JDB_EMBED_API int jdb_embed_debug_locals_count(JdbEmbed* eh) {
+JDB_EMBED_API int jdb_embed_debug_locals_count(JdbEmbed* eh, int level) {
     if (!eh) return 0;
     auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
-    e->dbg_locals = e->vm.debug_get_locals();
+    e->dbg_locals = e->vm.debug_get_locals_at(level);
     return (int)e->dbg_locals.size();
 }
 
@@ -798,6 +799,20 @@ JDB_EMBED_API const char* jdb_embed_debug_global_value(JdbEmbed* eh, int i) {
     auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
     if (i < 0 || i >= (int)e->dbg_globals.size()) return "";
     return e->dbg_globals[(size_t)i].second.c_str();
+}
+
+JDB_EMBED_API const char* jdb_embed_debug_eval(JdbEmbed* eh, const char* expr) {
+    if (!eh || !expr) return "";
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    bool had_debug = (bool)e->vm.debug;
+    bool prev = had_debug ? e->vm.debug->suppress : false;
+    if (had_debug) e->vm.debug->suppress = true;
+    JdbValue h = jdb_embed_eval_expr(eh, expr);
+    if (had_debug) e->vm.debug->suppress = prev;
+    const Value* v = e->lookup(h);
+    e->dbg_eval = v ? v->to_string() : std::string("<error>");
+    if (h) jdb_embed_value_release(eh, h);
+    return e->dbg_eval.c_str();
 }
 
 JDB_EMBED_API void jdb_embed_debug_continue(JdbEmbed* eh) {
