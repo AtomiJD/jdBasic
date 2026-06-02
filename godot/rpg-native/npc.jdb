@@ -1,0 +1,163 @@
+EXTENDS CharacterBody3D
+
+' Wandering NPC, pure jdBasic. Loads a KayKit character, merges its
+' animations the same way the player does, and roams between random points
+' near its spawn, idling between walks and facing its heading. (Dialog / the
+' LLM brain is a separate system, not part of this slice.)
+
+INSPECTOR DIM character_type = "Knight"
+INSPECTOR DIM display_name   = "Sir Cube"
+INSPECTOR DIM move_speed     = 2.2  AS RANGE(0.5, 8.0, 0.1)
+INSPECTOR DIM wander_radius  = 6.0  AS RANGE(1.0, 20.0, 0.5)
+
+DIM self_h    = 0
+DIM visual_h  = 0
+DIM name_h    = 0
+
+DIM gravity = 9.8
+
+' Animation state (KayKit clips merged from the shared Rig GLBs).
+DIM anim_player_h = 0
+DIM anim_names AS ARRAY = []
+DIM anim_idle = ""
+DIM anim_walk = ""
+DIM current_anim = ""
+
+' Wander FSM.
+DIM npc_state   = "idle"   ' idle / walk
+DIM state_timer = 1.5
+DIM home_x = 0.0
+DIM home_z = 0.0
+DIM target_x = 0.0
+DIM target_z = 0.0
+
+FUNC find_anim_player(node)
+	IF GODOT.CALL(node, "get_class") = "AnimationPlayer" THEN RETURN node
+	DIM kids = GODOT.CALL(node, "get_children")
+	FOR i = 0 TO LEN(kids) - 1
+		DIM r = find_anim_player(kids[i])
+		IF r <> 0 THEN RETURN r
+	NEXT
+	RETURN 0
+ENDFUNC
+
+FUNC should_loop(nm)
+	DIM low = LCASE$(nm)
+	IF LEFT$(low, 4) = "idle" THEN RETURN TRUE
+	IF LEFT$(low, 4) = "walk" THEN RETURN TRUE
+	IF LEFT$(low, 3) = "run" THEN RETURN TRUE
+	RETURN FALSE
+ENDFUNC
+
+SUB merge_anim_glb(path, lib)
+	DIM inst = GODOT.INSTANTIATE(path)
+	IF inst = 0 THEN RETURN
+	DIM src_ap = find_anim_player(inst)
+	IF src_ap <> 0 THEN
+		DIM names = GODOT.CALL(src_ap, "get_animation_list")
+		FOR i = 0 TO LEN(names) - 1
+			DIM nm = names[i]
+			IF NOT GODOT.CALL(lib, "has_animation", nm) THEN
+				DIM clip = GODOT.CALL(src_ap, "get_animation", nm)
+				IF should_loop(nm) THEN GODOT.SET(clip, "loop_mode", GODOT.ENUM("Animation", "LOOP_LINEAR"))
+				GODOT.CALL(lib, "add_animation", nm, GODOT.REF(clip))
+				anim_names = APPEND(anim_names, nm)
+			ENDIF
+		NEXT
+	ENDIF
+	GODOT.QUEUE_FREE(inst)
+ENDSUB
+
+FUNC best_name(want)
+	DIM low = LCASE$(want)
+	FOR i = 0 TO LEN(anim_names) - 1
+		IF anim_names[i] = want THEN RETURN want
+	NEXT
+	FOR i = 0 TO LEN(anim_names) - 1
+		IF LEFT$(LCASE$(anim_names[i]), LEN(low)) = low THEN RETURN anim_names[i]
+	NEXT
+	FOR i = 0 TO LEN(anim_names) - 1
+		IF INSTR(LCASE$(anim_names[i]), low) >= 0 THEN RETURN anim_names[i]
+	NEXT
+	RETURN ""
+ENDFUNC
+
+SUB setup_animation(model)
+	DIM lib = GODOT.NEW("AnimationLibrary")
+	anim_names = []
+	merge_anim_glb("res://assets/animations/Rig_Medium_General.glb", lib)
+	merge_anim_glb("res://assets/animations/Rig_Medium_MovementBasic.glb", lib)
+	anim_player_h = GODOT.NEW("AnimationPlayer")
+	GODOT.ADD_CHILD(model, anim_player_h)
+	GODOT.CALL(anim_player_h, "add_animation_library", "", GODOT.REF(lib))
+	anim_idle = best_name("Idle")
+	anim_walk = best_name("Walk")
+ENDSUB
+
+SUB play_anim(nm)
+	IF nm = "" ORELSE anim_player_h = 0 ORELSE current_anim = nm THEN RETURN
+	GODOT.CALL(anim_player_h, "play", nm, 0.2)
+	current_anim = nm
+ENDSUB
+
+SUB pick_target()
+	DIM ang = RND(1) * 2.0 * PI
+	DIM rad = 1.5 + RND(1) * wander_radius
+	target_x = home_x + COS(ang) * rad
+	target_z = home_z + SIN(ang) * rad
+ENDSUB
+
+SUB _ready()
+	self_h   = GODOT.SELF()
+	visual_h = GODOT.CALL(self_h, "get_node", "Visual")
+	name_h   = GODOT.CALL(self_h, "get_node", "NameLabel")
+
+	DIM model = GODOT.INSTANTIATE("res://assets/characters/" + character_type + ".glb")
+	GODOT.ADD_CHILD(visual_h, model)
+	setup_animation(model)
+	play_anim(anim_idle)
+
+	GODOT.SET(name_h, "text", display_name)
+
+	DIM pos = GODOT.GET(self_h, "position")
+	home_x = pos[0]
+	home_z = pos[2]
+	npc_state = "idle"
+	state_timer = 1.0 + RND(1) * 2.0
+ENDSUB
+
+SUB _physics_process(delta)
+	DIM vel = GODOT.GET_VELOCITY(self_h)
+	DIM vy = vel[1]
+	IF NOT GODOT.IS_ON_FLOOR(self_h) THEN vy = vy - gravity * delta
+
+	DIM vx = 0.0
+	DIM vz = 0.0
+
+	IF npc_state = "idle" THEN
+		play_anim(anim_idle)
+		state_timer = state_timer - delta
+		IF state_timer <= 0.0 THEN
+			pick_target()
+			npc_state = "walk"
+		ENDIF
+	ELSE
+		DIM pos = GODOT.GET(self_h, "position")
+		DIM dx = target_x - pos[0]
+		DIM dz = target_z - pos[2]
+		DIM dist = SQR(dx * dx + dz * dz)
+		IF dist < 0.5 THEN
+			npc_state = "idle"
+			state_timer = 1.0 + RND(1) * 2.5
+			play_anim(anim_idle)
+		ELSE
+			vx = (dx / dist) * move_speed
+			vz = (dz / dist) * move_speed
+			GODOT.SET(visual_h, "rotation:y", ATAN2(dx, dz))
+			play_anim(anim_walk)
+		ENDIF
+	ENDIF
+
+	GODOT.SET_VELOCITY(self_h, GODOT.VEC3(vx, vy, vz))
+	GODOT.MOVE_AND_SLIDE(self_h)
+ENDSUB
