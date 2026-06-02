@@ -126,6 +126,13 @@ struct DebugInfo {
     void* host_ud = nullptr;
     void (*host_hook)(void* ud, int line, const char* reason) = nullptr;
 
+    // Per-line breakpoint predicate (embed/Godot). When set, debug_check
+    // asks it on every line whether to break here - lets the host consult
+    // an external breakpoint source (Godot's editor breakpoints) without
+    // mirroring them into the map. Returns nonzero to pause.
+    void* line_ud = nullptr;
+    int (*line_break)(void* ud, int line) = nullptr;
+
     void pause();
     void resume();
     void step_over(size_t call_depth);

@@ -58,6 +58,8 @@ struct JdbEmbedImpl {
     // T7 debugger - host hook + snapshot caches for the query accessors.
     JdbDebugHook user_debug_hook = nullptr;
     void*        user_debug_ud   = nullptr;
+    JdbLineHook  user_line_hook  = nullptr;
+    void*        user_line_ud    = nullptr;
     std::vector<VM::DebugFrame>                         dbg_frames;
     std::vector<std::pair<std::string, std::string>>    dbg_locals;
     std::vector<std::pair<std::string, std::string>>    dbg_globals;
@@ -672,6 +674,16 @@ static void embed_debug_trampoline(void* ud, int line, const char* reason) {
     }
 }
 
+// Per-line predicate trampoline: routes the VM's plain C line callback to
+// the public JdbLineHook with the embed handle.
+static int embed_line_trampoline(void* ud, int line) {
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(ud);
+    if (e && e->user_line_hook) {
+        return e->user_line_hook(reinterpret_cast<JdbEmbed*>(e), line, e->user_line_ud);
+    }
+    return 0;
+}
+
 static DebugInfo* dbg_(JdbEmbedImpl* e) {
     if (!e) return nullptr;
     if (!e->vm.debug) e->vm.debug = std::make_unique<DebugInfo>();
@@ -691,6 +703,16 @@ JDB_EMBED_API void jdb_embed_debug_set_hook(JdbEmbed* eh, JdbDebugHook hook, voi
     e->user_debug_ud   = ud;
     d->host_ud   = e;
     d->host_hook = hook ? &embed_debug_trampoline : nullptr;
+}
+
+JDB_EMBED_API void jdb_embed_debug_set_line_hook(JdbEmbed* eh, JdbLineHook hook, void* ud) {
+    if (!eh) return;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    DebugInfo* d = dbg_(e);
+    e->user_line_hook = hook;
+    e->user_line_ud   = ud;
+    d->line_ud   = e;
+    d->line_break = hook ? &embed_line_trampoline : nullptr;
 }
 
 JDB_EMBED_API void jdb_embed_debug_set_breakpoint(JdbEmbed* eh, int line) {

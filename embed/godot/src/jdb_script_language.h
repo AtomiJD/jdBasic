@@ -17,8 +17,12 @@
 #include <godot_cpp/classes/script_language_extension.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 
 namespace godot {
+
+class JdbScriptInstance;
 
 class JdbScriptLanguage : public ScriptLanguageExtension {
     GDCLASS(JdbScriptLanguage, ScriptLanguageExtension)
@@ -117,8 +121,26 @@ public:
     void                _reload_tool_script(const Ref<Script>& p_script,
                                               bool p_soft_reload) override;
 
+    // ── T7 debugger ────────────────────────────────────────────────
+    // While a script instance is paused at a breakpoint it registers
+    // itself here so the editor's _debug_* queries route to its VM.
+    void set_break_instance(JdbScriptInstance* inst) { m_break_inst = inst; }
+
+    String                  _debug_get_error() const override;
+    int32_t                 _debug_get_stack_level_count() const override;
+    int32_t                 _debug_get_stack_level_line(int32_t p_level) const override;
+    String                  _debug_get_stack_level_function(int32_t p_level) const override;
+    String                  _debug_get_stack_level_source(int32_t p_level) const override;
+    Dictionary              _debug_get_stack_level_locals(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) override;
+    Dictionary              _debug_get_stack_level_members(int32_t p_level, int32_t p_max_subitems, int32_t p_max_depth) override;
+    void*                   _debug_get_stack_level_instance(int32_t p_level) override;
+    Dictionary              _debug_get_globals(int32_t p_max_subitems, int32_t p_max_depth) override;
+    String                  _debug_parse_stack_level_expression(int32_t p_level, const String& p_expression, int32_t p_max_subitems, int32_t p_max_depth) override;
+    TypedArray<Dictionary>  _debug_get_current_stack_info() override;
+
 private:
     static JdbScriptLanguage* s_singleton;
+    JdbScriptInstance*        m_break_inst = nullptr;
 };
 
 }  // namespace godot

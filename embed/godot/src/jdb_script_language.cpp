@@ -4,6 +4,7 @@
 
 #include "jdb_script_language.h"
 #include "jdb_script_resource.h"
+#include "jdb_script_instance.h"
 #include "jdb_embed_api.h"
 
 #include <godot_cpp/classes/ref.hpp>
@@ -648,6 +649,122 @@ Dictionary JdbScriptLanguage::_validate(const String& p_script,
     d[String("functions")] = functions;
     d[String("safe_lines")] = safe_lines;
     return d;
+}
+
+// ── T7 debugger virtuals ───────────────────────────────────────────
+//
+// All of these route to whichever JdbScriptInstance is currently paused
+// (set via set_break_instance from JdbScriptInstance::on_debug_break) and
+// query its VM through the embed debug ABI.
+
+String JdbScriptLanguage::_debug_get_error() const {
+    return String();
+}
+
+int32_t JdbScriptLanguage::_debug_get_stack_level_count() const {
+    if (!m_break_inst || !m_break_inst->get_vm()) return 1;  // at least the global frame
+    int n = jdb_embed_debug_stack_count(m_break_inst->get_vm());
+    return n > 0 ? n : 1;
+}
+
+int32_t JdbScriptLanguage::_debug_get_stack_level_line(int32_t p_level) const {
+    if (!m_break_inst || !m_break_inst->get_vm()) return 0;
+    JdbEmbed* vm = m_break_inst->get_vm();
+    if (jdb_embed_debug_stack_count(vm) == 0) return jdb_embed_debug_current_line(vm);
+    return jdb_embed_debug_stack_line(vm, p_level);
+}
+
+String JdbScriptLanguage::_debug_get_stack_level_function(int32_t p_level) const {
+    if (!m_break_inst || !m_break_inst->get_vm()) return String("<global>");
+    JdbEmbed* vm = m_break_inst->get_vm();
+    if (jdb_embed_debug_stack_count(vm) == 0) return String("<global>");
+    return String::utf8(jdb_embed_debug_stack_function(vm, p_level));
+}
+
+String JdbScriptLanguage::_debug_get_stack_level_source(int32_t /*p_level*/) const {
+    if (!m_break_inst) return String();
+    Ref<JdbScriptResource> s = m_break_inst->get_script();
+    return s.is_valid() ? s->get_path() : String();
+}
+
+Dictionary JdbScriptLanguage::_debug_get_stack_level_locals(int32_t /*p_level*/, int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
+    // Godot's wrapper expects { "<kind>": [names], "values": [values] }.
+    PackedStringArray names;
+    Array values;
+    if (m_break_inst && m_break_inst->get_vm()) {
+        JdbEmbed* vm = m_break_inst->get_vm();
+        int n = jdb_embed_debug_locals_count(vm);
+        for (int i = 0; i < n; ++i) {
+            names.push_back(String::utf8(jdb_embed_debug_local_name(vm, i)));
+            values.push_back(String::utf8(jdb_embed_debug_local_value(vm, i)));
+        }
+    }
+    Dictionary d;
+    d[String("locals")] = names;
+    d[String("values")] = values;
+    return d;
+}
+
+Dictionary JdbScriptLanguage::_debug_get_stack_level_members(int32_t /*p_level*/, int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
+    // jdBasic instance state lives in globals (surfaced below), so members
+    // is empty - but still return the expected shape.
+    Dictionary d;
+    d[String("members")] = PackedStringArray();
+    d[String("values")]  = Array();
+    return d;
+}
+
+void* JdbScriptLanguage::_debug_get_stack_level_instance(int32_t /*p_level*/) {
+    return nullptr;  // no Godot Object backs a jdBasic stack frame
+}
+
+Dictionary JdbScriptLanguage::_debug_get_globals(int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
+    PackedStringArray names;
+    Array values;
+    if (m_break_inst && m_break_inst->get_vm()) {
+        JdbEmbed* vm = m_break_inst->get_vm();
+        int n = jdb_embed_debug_globals_count(vm);
+        for (int i = 0; i < n; ++i) {
+            names.push_back(String::utf8(jdb_embed_debug_global_name(vm, i)));
+            values.push_back(String::utf8(jdb_embed_debug_global_value(vm, i)));
+        }
+    }
+    Dictionary d;
+    d[String("globals")] = names;
+    d[String("values")]  = values;
+    return d;
+}
+
+String JdbScriptLanguage::_debug_parse_stack_level_expression(int32_t /*p_level*/, const String& /*p_expression*/, int32_t /*p_max_subitems*/, int32_t /*p_max_depth*/) {
+    return String();  // watch expressions land in P5
+}
+
+TypedArray<Dictionary> JdbScriptLanguage::_debug_get_current_stack_info() {
+    TypedArray<Dictionary> out;
+    if (!m_break_inst || !m_break_inst->get_vm()) return out;
+    JdbEmbed* vm = m_break_inst->get_vm();
+    String src;
+    {
+        Ref<JdbScriptResource> s = m_break_inst->get_script();
+        if (s.is_valid()) src = s->get_path();
+    }
+    int n = jdb_embed_debug_stack_count(vm);
+    if (n == 0) {
+        Dictionary f;
+        f[String("func")] = String("<global>");
+        f[String("line")] = jdb_embed_debug_current_line(vm);
+        f[String("file")] = src;
+        out.push_back(f);
+        return out;
+    }
+    for (int i = 0; i < n; ++i) {
+        Dictionary f;
+        f[String("func")] = String::utf8(jdb_embed_debug_stack_function(vm, i));
+        f[String("line")] = jdb_embed_debug_stack_line(vm, i);
+        f[String("file")] = src;
+        out.push_back(f);
+    }
+    return out;
 }
 
 #endif  // GODOT

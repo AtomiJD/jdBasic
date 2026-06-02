@@ -183,8 +183,14 @@ JDB_EMBED_API JdbValue jdb_embed_make_map   (JdbEmbed* e,
 // returns. Breakpoints are line-only (the embed runs one script per VM).
 typedef void (*JdbDebugHook)(JdbEmbed* e, int line, const char* reason, void* ud);
 
+// Per-line breakpoint predicate: return nonzero to break at `line`. Lets the
+// host poll an external breakpoint source (Godot editor breakpoints) instead
+// of mirroring them into the VM map.
+typedef int  (*JdbLineHook)(JdbEmbed* e, int line, void* ud);
+
 JDB_EMBED_API int  jdb_embed_debug_enable        (JdbEmbed* e);
 JDB_EMBED_API void jdb_embed_debug_set_hook      (JdbEmbed* e, JdbDebugHook hook, void* ud);
+JDB_EMBED_API void jdb_embed_debug_set_line_hook (JdbEmbed* e, JdbLineHook hook, void* ud);
 JDB_EMBED_API void jdb_embed_debug_set_breakpoint(JdbEmbed* e, int line);
 JDB_EMBED_API void jdb_embed_debug_clear_breakpoint(JdbEmbed* e, int line);
 JDB_EMBED_API void jdb_embed_debug_clear_all     (JdbEmbed* e);

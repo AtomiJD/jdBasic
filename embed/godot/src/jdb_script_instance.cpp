@@ -9,7 +9,10 @@
 #include "jdb_godot_input.h"
 #include "jdb_embed_api.h"
 
+#include "jdb_script_language.h"
+
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/engine_debugger.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/script_language.hpp>
@@ -121,6 +124,63 @@ void JdbScriptInstance::enable_node_processing_() {
     node->set_process_shortcut_input(has("_shortcut_input"));
 }
 
+// ── T7 debugger plumbing ───────────────────────────────────────────
+
+// Static trampolines registered on the embed VM; route back to the
+// instance that owns the VM.
+static void jdb_debug_break_tramp(JdbEmbed* /*e*/, int line, const char* reason, void* ud) {
+    reinterpret_cast<JdbScriptInstance*>(ud)->on_debug_break(line, reason);
+}
+static int jdb_debug_line_tramp(JdbEmbed* /*e*/, int line, void* ud) {
+    return reinterpret_cast<JdbScriptInstance*>(ud)->is_break_line(line);
+}
+
+// Wire the VM's debug hooks - but only when a debug session is live, so a
+// shipped game (no editor attached) pays zero per-line overhead.
+static void setup_debugger(JdbEmbed* vm, JdbScriptInstance* self) {
+    EngineDebugger* dbg = EngineDebugger::get_singleton();
+    if (!vm || !dbg || !dbg->is_active()) return;
+    jdb_embed_debug_enable(vm);
+    jdb_embed_debug_set_hook(vm, &jdb_debug_break_tramp, self);
+    jdb_embed_debug_set_line_hook(vm, &jdb_debug_line_tramp, self);
+}
+
+// Per-line predicate: is there an editor breakpoint on this line of our
+// script? Polled by the VM via the line hook.
+int JdbScriptInstance::is_break_line(int line) {
+    EngineDebugger* dbg = EngineDebugger::get_singleton();
+    if (!dbg || !dbg->is_active() || dbg->is_skipping_breakpoints()) return 0;
+    String src = m_script.is_valid() ? m_script->get_path() : String();
+    return dbg->is_breakpoint(line, StringName(src)) ? 1 : 0;
+}
+
+// Called synchronously by the VM when it pauses. Enter Godot's debugger
+// break (blocks + pumps the editor message loop, which queries our
+// language's _debug_* virtuals), then translate the editor's continue/step
+// choice back into a VM action.
+void JdbScriptInstance::on_debug_break(int line, const char* /*reason*/) {
+    if (!m_vm) return;
+    JdbScriptLanguage* lang = JdbScriptLanguage::get_singleton();
+    EngineDebugger* dbg = EngineDebugger::get_singleton();
+    if (!lang || !dbg || !dbg->is_active()) {
+        jdb_embed_debug_continue(m_vm);
+        return;
+    }
+    lang->set_break_instance(this);
+    dbg->script_debug(lang, true, false);
+    int lines_left = dbg->get_lines_left();
+    int depth      = dbg->get_depth();
+    lang->set_break_instance(nullptr);
+
+    if (lines_left < 0) {
+        jdb_embed_debug_continue(m_vm);     // Continue
+    } else if (depth < 0) {
+        jdb_embed_debug_step_in(m_vm);      // Step Into
+    } else {
+        jdb_embed_debug_step_over(m_vm);    // Step Over (Next)
+    }
+}
+
 // ── Lifecycle ──────────────────────────────────────────────────────
 
 static int g_alive_instances = 0;
@@ -193,6 +253,7 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     // so no event queue is needed; pass nullptr - POLL_EVENT will
     // just return NIL.
     register_godot_input_natives(m_vm, nullptr);
+    setup_debugger(m_vm, this);
 
     if (m_script.is_valid()) {
         String src = m_script->get_processed_source();
@@ -316,6 +377,7 @@ bool JdbScriptInstance::hard_reload(const String& processed_src) {
     m_bridge = new GodotBridge(m_vm, this);
     m_bridge->register_all();
     register_godot_input_natives(m_vm, nullptr);
+    setup_debugger(m_vm, this);
 
     char* out = jdb_embed_eval(m_vm, processed_src.utf8().get_data());
     if (!out) {

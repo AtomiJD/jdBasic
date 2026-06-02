@@ -291,15 +291,29 @@ Phases:
   breakpoint, register hook, stack count/line/function/source, locals /
   globals at a level, eval-in-frame, step / continue / pause. Mostly
   forwarding to the existing `DebugInfo`. Headless-testable without Godot.
-- **P2 - break wiring**: VM hook -> `EngineDebugger.script_debug` +
-  `line_poll`; the language tracks the currently-executing instance (each
-  instance has its own VM). The integration spike - the main risk lives here.
-- **P3 - the 11 `_debug_*` virtuals** on `JdbScriptLanguage`, forwarding to
-  the paused instance's VM.
-- **P4 - breakpoint sync**: editor gutter breakpoints -> language -> VM
-  breakpoints; `.jdb` line maps 1:1 to VM line (the .jdb is the source).
-- **P5 - polish**: locals/members/globals dictionaries, watch expressions
-  (eval in a frame), step over/into/out in the panel.
+- **P2 - break wiring** (DONE 2026-06-02): per-line breakpoint predicate
+  added to the VM (`DebugInfo.line_break`, polled in `debug_check`) +
+  `jdb_embed_debug_set_line_hook`. `JdbScriptInstance::on_debug_break` enters
+  `EngineDebugger::script_debug(language)` and translates the returned
+  `get_lines_left()`/`get_depth()` into continue / step-in / step-over.
+  `is_break_line` polls `EngineDebugger::is_breakpoint(line, script_path)`.
+  Hooks are wired only when a debug session is active (zero overhead in a
+  shipped game).
+- **P3 - the `_debug_*` virtuals** (DONE 2026-06-02) on `JdbScriptLanguage`,
+  routing to the paused instance's VM (tracked via `set_break_instance`).
+  Locals / globals returned in Godot's `{"<kind>": [names], "values": [...]}`
+  shape; stack info + current-stack-info implemented.
+- **P4 - breakpoint sync** (DONE 2026-06-02): editor gutter breakpoints are
+  polled per line via `is_breakpoint`, so no separate sync step was needed.
+  `.jdb` line maps 1:1 to the VM line (the .jdb is the source).
+- **P5 - polish** (open): watch expressions (`_debug_parse_stack_level_expression`
+  currently returns ""), per-level locals (only the top frame is exposed
+  today), stripping the function-name prefix from local names
+  (`ADD_THEM_P` -> `p`) for display.
+
+**Verified in the editor 2026-06-02**: breakpoints set/clear, break, step
+over/into, continue, the call stack, locals and globals all work against
+`breakout.jdb`. Standalone/VS-Code DAP path unchanged; pre-commit gate green.
 
 Key decisions:
 - Per-instance VM vs. global language: the language tracks the active

@@ -3206,6 +3206,12 @@ void VM::debug_check(int line) {
                 pause_reason = "breakpoint";
             }
         }
+        // Host-supplied breakpoint source (Godot editor breakpoints, polled
+        // per line via is_breakpoint) - in addition to the map above.
+        if (!should_pause && debug->line_break && debug->line_break(debug->line_ud, line)) {
+            should_pause = true;
+            pause_reason = "breakpoint";
+        }
     }
     // 2. Stepping
     if (!should_pause) {

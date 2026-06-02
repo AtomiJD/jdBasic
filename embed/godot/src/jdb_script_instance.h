@@ -56,6 +56,13 @@ public:
     bool    has_method(const StringName& name) const;
     Variant call_method(const StringName& name, const Variant** args, int64_t argc);
 
+    // T7 debugger. The embed VM calls these back (via static trampolines)
+    // when a breakpoint / step pauses execution. get_vm exposes the handle
+    // so JdbScriptLanguage can query the paused VM for its _debug_* virtuals.
+    JdbEmbed* get_vm() const { return m_vm; }
+    void      on_debug_break(int line, const char* reason);
+    int       is_break_line(int line);
+
     // Inspector property access.
     struct InspectorVar {
         StringName       name;

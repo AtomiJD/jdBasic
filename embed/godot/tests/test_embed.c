@@ -47,6 +47,12 @@ static void on_break(JdbEmbed* e, int line, const char* reason, void* ud) {
     jdb_embed_debug_continue(e);
 }
 
+/* Per-line breakpoint predicate (the Godot model): break at line 2 only. */
+static int line_is_break(JdbEmbed* e, int line, void* ud) {
+    (void)e; (void)ud;
+    return line == 2 ? 1 : 0;
+}
+
 int main(void) {
     printf("jdb_embed smoke test\n");
 
@@ -86,7 +92,15 @@ int main(void) {
     jdb_embed_debug_set_breakpoint(e, 3);
     run(e, "SUB add_them(p, q)\n  DIM r = p + q\n  PRINT r\nENDSUB\nadd_them(5, 7)");
 
-    printf("breakpoint hits = %d (expected 2)\n", g_break_hits);
+    /* Scenario 3: no map breakpoint - a per-line predicate decides (this is
+     * how Godot editor breakpoints will be polled via is_breakpoint). */
+    printf("-- line-hook breakpoint (predicate: line 2) --\n");
+    jdb_embed_debug_clear_all(e);
+    jdb_embed_debug_set_line_hook(e, line_is_break, NULL);
+    run(e, "DIM h1 = 1\nDIM h2 = 2\nPRINT h1 + h2");
+    jdb_embed_debug_set_line_hook(e, NULL, NULL);  /* detach */
+
+    printf("breakpoint hits = %d (expected 3)\n", g_break_hits);
 
     jdb_embed_shutdown(e);
     printf("done\n");
