@@ -345,7 +345,7 @@ SUB _input(event)
 ENDSUB
 
 SUB draw_box(x, y, w, h, r, g, b)
-	GODOT.CALL(self_h, "draw_rect", GODOT.RECT2(x, y, w, h), GODOT.COLOR(r, g, b, 1.0), TRUE)
+	GODOT.DRAW_RECT(self_h, GODOT.RECT2(x, y, w, h), GODOT.COLOR(r, g, b, 1.0), TRUE)
 ENDSUB
 
 SUB _draw()
@@ -392,18 +392,18 @@ SUB _draw()
 	FOR i = 0 TO LEN(parts) - 1
 		DIM p = parts[i]
 		DIM pa = p{"life"} / p{"max"}
-		GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(p{"x"}, p{"y"}), 3.0, GODOT.COLOR(1.0, 0.6 + 0.4 * pa, 0.2, pa))
+		GODOT.DRAW_CIRCLE(self_h, GODOT.VEC2(p{"x"}, p{"y"}), 3.0, GODOT.COLOR(1.0, 0.6 + 0.4 * pa, 0.2, pa))
 	NEXT
 
 	draw_box(pad_x, pad_y, pad_w, pad_h, 0.85, 0.9, 1.0)
 
 	' Balls (or the preview ball on the paddle while serving).
 	IF mode = "serve" THEN
-		GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(pad_x + pad_w / 2.0, pad_y - ball_r - 2.0), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+		GODOT.DRAW_CIRCLE(self_h, GODOT.VEC2(pad_x + pad_w / 2.0, pad_y - ball_r - 2.0), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
 	ELSE
 		FOR i = 0 TO LEN(balls) - 1
 			DIM b = balls[i]
-			GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(b{"x"}, b{"y"}), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+			GODOT.DRAW_CIRCLE(self_h, GODOT.VEC2(b{"x"}, b{"y"}), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
 		NEXT
 	ENDIF
 

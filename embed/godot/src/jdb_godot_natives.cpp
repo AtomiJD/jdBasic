@@ -9,6 +9,8 @@
 
 #include <godot_cpp/classes/audio_stream.hpp>
 #include <godot_cpp/classes/audio_stream_player.hpp>
+#include <godot_cpp/classes/character_body2d.hpp>
+#include <godot_cpp/classes/character_body3d.hpp>
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/font.hpp>
@@ -1241,6 +1243,64 @@ static int64_t native_draw_polygon(JdbEmbed* vm, int argc, const int64_t* args, 
     return jdb_embed_make_bool(vm, 1);
 }
 
+// ── Dedicated physics (per physics-frame hot path) ─────────────────
+// CharacterBody2D and 3D don't share these in a common base, so each
+// native tries both casts.
+
+static int64_t native_move_and_slide(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
+    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) { c3->move_and_slide(); return jdb_embed_make_bool(vm, 1); }
+    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) { c2->move_and_slide(); return jdb_embed_make_bool(vm, 1); }
+    return jdb_embed_make_bool(vm, 0);
+}
+
+static int64_t native_is_on_floor(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
+    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return jdb_embed_make_bool(vm, c3->is_on_floor() ? 1 : 0);
+    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return jdb_embed_make_bool(vm, c2->is_on_floor() ? 1 : 0);
+    return jdb_embed_make_bool(vm, 0);
+}
+
+static int64_t native_is_on_wall(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
+    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return jdb_embed_make_bool(vm, c3->is_on_wall() ? 1 : 0);
+    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return jdb_embed_make_bool(vm, c2->is_on_wall() ? 1 : 0);
+    return jdb_embed_make_bool(vm, 0);
+}
+
+static int64_t native_is_on_ceiling(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
+    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return jdb_embed_make_bool(vm, c3->is_on_ceiling() ? 1 : 0);
+    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return jdb_embed_make_bool(vm, c2->is_on_ceiling() ? 1 : 0);
+    return jdb_embed_make_bool(vm, 0);
+}
+
+static int64_t native_get_velocity(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    GodotBridge* b = bridge_of(ud);
+    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
+    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return variant_to_jdb_value(b, c3->get_velocity());
+    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return variant_to_jdb_value(b, c2->get_velocity());
+    return jdb_embed_make_nil(vm);
+}
+
+static int64_t native_set_velocity(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
+    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) { c3->set_velocity(jdb_value_to_variant(b, args[1])); return jdb_embed_make_bool(vm, 1); }
+    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) { c2->set_velocity(jdb_value_to_variant(b, args[1])); return jdb_embed_make_bool(vm, 1); }
+    return jdb_embed_make_bool(vm, 0);
+}
+
 void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.SELF",   0, 0,  &native_self,  this);
     jdb_embed_register_native(m_vm, "GODOT.GET",    2, 2,  &native_get,   this);
@@ -1260,6 +1320,12 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.DRAW_LINE",         4, 5, &native_draw_line,         this);
     jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXTURE_RECT", 3, 4, &native_draw_texture_rect, this);
     jdb_embed_register_native(m_vm, "GODOT.DRAW_POLYGON",      2, 3, &native_draw_polygon,      this);
+    jdb_embed_register_native(m_vm, "GODOT.MOVE_AND_SLIDE", 1, 1, &native_move_and_slide, this);
+    jdb_embed_register_native(m_vm, "GODOT.IS_ON_FLOOR",    1, 1, &native_is_on_floor,    this);
+    jdb_embed_register_native(m_vm, "GODOT.IS_ON_WALL",     1, 1, &native_is_on_wall,     this);
+    jdb_embed_register_native(m_vm, "GODOT.IS_ON_CEILING",  1, 1, &native_is_on_ceiling,  this);
+    jdb_embed_register_native(m_vm, "GODOT.GET_VELOCITY",   1, 1, &native_get_velocity,   this);
+    jdb_embed_register_native(m_vm, "GODOT.SET_VELOCITY",   2, 2, &native_set_velocity,   this);
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);
