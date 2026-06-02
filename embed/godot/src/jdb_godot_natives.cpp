@@ -12,6 +12,8 @@
 #include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/class_db_singleton.hpp>
 #include <godot_cpp/classes/font.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
+#include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
@@ -1162,6 +1164,83 @@ static int64_t native_text_size(JdbEmbed* vm, int argc, const int64_t* args, voi
     return make_vec2_array_dbl(vm, sz.x, sz.y);
 }
 
+// ── Dedicated drawing primitives (hot path - called many times per _draw) ──
+// Same as GODOT.CALL(node, "draw_*", ...) but a direct typed call: no
+// StringName interning, no name-based method dispatch.
+
+static int64_t native_draw_circle(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    CanvasItem* ci = b ? Object::cast_to<CanvasItem>(b->lookup(jdb_embed_value_int(vm, args[0]))) : nullptr;
+    if (!ci) return jdb_embed_make_bool(vm, 0);
+    Vector2 pos = jdb_value_to_variant(b, args[1]);
+    double r = jdb_embed_value_double(vm, args[2]);
+    Color col(1, 1, 1, 1);
+    if (argc > 3) col = jdb_value_to_variant(b, args[3]);
+    bool filled = (argc > 4) ? jdb_embed_value_int(vm, args[4]) != 0 : true;
+    ci->draw_circle(pos, (float)r, col, filled);
+    return jdb_embed_make_bool(vm, 1);
+}
+
+static int64_t native_draw_rect(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    CanvasItem* ci = b ? Object::cast_to<CanvasItem>(b->lookup(jdb_embed_value_int(vm, args[0]))) : nullptr;
+    if (!ci) return jdb_embed_make_bool(vm, 0);
+    Rect2 rect = jdb_value_to_variant(b, args[1]);
+    Color col = jdb_value_to_variant(b, args[2]);
+    bool filled = (argc > 3) ? jdb_embed_value_int(vm, args[3]) != 0 : true;
+    ci->draw_rect(rect, col, filled);
+    return jdb_embed_make_bool(vm, 1);
+}
+
+static int64_t native_draw_line(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 4) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    CanvasItem* ci = b ? Object::cast_to<CanvasItem>(b->lookup(jdb_embed_value_int(vm, args[0]))) : nullptr;
+    if (!ci) return jdb_embed_make_bool(vm, 0);
+    Vector2 from = jdb_value_to_variant(b, args[1]);
+    Vector2 to   = jdb_value_to_variant(b, args[2]);
+    Color col    = jdb_value_to_variant(b, args[3]);
+    double w = (argc > 4) ? jdb_embed_value_double(vm, args[4]) : -1.0;
+    ci->draw_line(from, to, col, (float)w);
+    return jdb_embed_make_bool(vm, 1);
+}
+
+static int64_t native_draw_texture_rect(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 3) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    CanvasItem* ci = b ? Object::cast_to<CanvasItem>(b->lookup(jdb_embed_value_int(vm, args[0]))) : nullptr;
+    if (!ci) return jdb_embed_make_bool(vm, 0);
+    Variant texv = jdb_value_to_variant(b, args[1]);   // pass via GODOT.REF(tex)
+    Texture2D* tex = Object::cast_to<Texture2D>((Object*)texv);
+    if (!tex) return jdb_embed_make_bool(vm, 0);
+    Rect2 rect = jdb_value_to_variant(b, args[2]);
+    Color mod(1, 1, 1, 1);
+    if (argc > 3) mod = jdb_value_to_variant(b, args[3]);
+    ci->draw_texture_rect(Ref<Texture2D>(tex), rect, false, mod);
+    return jdb_embed_make_bool(vm, 1);
+}
+
+static int64_t native_draw_polygon(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_bool(vm, 0);
+    GodotBridge* b = bridge_of(ud);
+    CanvasItem* ci = b ? Object::cast_to<CanvasItem>(b->lookup(jdb_embed_value_int(vm, args[0]))) : nullptr;
+    if (!ci) return jdb_embed_make_bool(vm, 0);
+    // args[1] = array of [x, y] points.
+    PackedVector2Array pts;
+    int n = jdb_embed_array_len(vm, args[1]);
+    for (int i = 0; i < n; ++i) {
+        int64_t el = jdb_embed_array_get(vm, args[1], i);
+        pts.push_back(jdb_value_to_variant(b, el));
+        jdb_embed_value_release(vm, el);
+    }
+    Color col(1, 1, 1, 1);
+    if (argc > 2) col = jdb_value_to_variant(b, args[2]);
+    ci->draw_colored_polygon(pts, col);
+    return jdb_embed_make_bool(vm, 1);
+}
+
 void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.SELF",   0, 0,  &native_self,  this);
     jdb_embed_register_native(m_vm, "GODOT.GET",    2, 2,  &native_get,   this);
@@ -1176,6 +1255,11 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXT",   3, 5,  &native_draw_text,   this);
     jdb_embed_register_native(m_vm, "GODOT.DRAW_STRING", 3, 7,  &native_draw_string, this);
     jdb_embed_register_native(m_vm, "GODOT.TEXT_SIZE",   1, 2,  &native_text_size,   this);
+    jdb_embed_register_native(m_vm, "GODOT.DRAW_CIRCLE",       2, 5, &native_draw_circle,       this);
+    jdb_embed_register_native(m_vm, "GODOT.DRAW_RECT",         3, 4, &native_draw_rect,         this);
+    jdb_embed_register_native(m_vm, "GODOT.DRAW_LINE",         4, 5, &native_draw_line,         this);
+    jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXTURE_RECT", 3, 4, &native_draw_texture_rect, this);
+    jdb_embed_register_native(m_vm, "GODOT.DRAW_POLYGON",      2, 3, &native_draw_polygon,      this);
     jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);

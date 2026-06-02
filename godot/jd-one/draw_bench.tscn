@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://draw_bench.jdb" id="1_draw_bench"]
+
+[node name="DrawBench" type="Node2D"]
+script = ExtResource("1_draw_bench")

@@ -1,0 +1,41 @@
+EXTENDS Node2D
+
+' Benchmark: GODOT.CALL("draw_circle") vs the dedicated GODOT.DRAW_CIRCLE.
+' Both paths marshal the same args, so the delta is pure dispatch overhead
+' (StringName interning + name-based method lookup) that the native skips.
+
+DIM self_h = 0
+DIM done = 0
+DIM N = 60000
+
+SUB _ready()
+	self_h = GODOT.SELF()
+ENDSUB
+
+SUB _draw()
+	IF done = 1 THEN RETURN
+	done = 1
+	DIM c   = GODOT.VEC2(100.0, 100.0)
+	DIM col = GODOT.COLOR(1.0, 0.5, 0.2, 1.0)
+
+	DIM t0 = GODOT.TIME_MS()
+	FOR i = 1 TO N
+		GODOT.CALL(self_h, "draw_circle", c, 5.0, col)
+	NEXT
+	DIM t1 = GODOT.TIME_MS()
+	FOR i = 1 TO N
+		GODOT.DRAW_CIRCLE(self_h, c, 5.0, col)
+	NEXT
+	DIM t2 = GODOT.TIME_MS()
+
+	PRINT "N=" + STR$(N)
+	PRINT "GODOT.CALL draw_circle : " + STR$(t1 - t0) + " ms"
+	PRINT "GODOT.DRAW_CIRCLE      : " + STR$(t2 - t1) + " ms"
+
+	DIM tree = GODOT.CALL(self_h, "get_tree")
+	GODOT.CALL(tree, "quit")
+ENDSUB
+
+SUB _process(delta)
+	GODOT.CALL(self_h, "queue_redraw")
+ENDSUB
