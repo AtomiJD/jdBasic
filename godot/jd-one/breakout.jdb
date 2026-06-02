@@ -7,8 +7,11 @@ EXTENDS Node2D
 '   Mouse  : move paddle
 '   Click  : launch the ball / restart after win or loss
 '
-' Juice: a brick hit bursts particles, pops a floating "+N" score, and the
-' top rows are worth more than the bottom ones.
+' Powerups drop from broken bricks; catch them with the paddle:
+'   MULTI - splits every ball in play
+'   WIDE  - a wider paddle for a while
+'   SLOW  - slows the balls for a while
+'   LIFE  - an extra life
 
 DIM self_h = 0
 
@@ -17,17 +20,13 @@ DIM fw = 800.0
 DIM fh = 600.0
 
 ' Paddle.
+DIM pad_base_w = 120.0
 DIM pad_w = 120.0
 DIM pad_h = 16.0
 DIM pad_x = 340.0
 DIM pad_y = 560.0
 
-' Ball.
-DIM ball_x = 400.0
-DIM ball_y = 540.0
-DIM ball_vx = 220.0
-DIM ball_vy = -320.0
-DIM ball_r  = 8.0
+DIM ball_r = 8.0
 
 ' Brick grid.
 DIM cols = 12
@@ -40,9 +39,15 @@ DIM brick_h = 22.0
 DIM alive AS MAP = {}
 DIM remaining = 0
 
-' Effects.
+' Dynamic collections (arrays of maps, rebuilt each frame).
+DIM balls AS ARRAY = []
+DIM caps  AS ARRAY = []
 DIM parts AS ARRAY = []
 DIM pops  AS ARRAY = []
+
+' Timed powerup effects.
+DIM wide_t = 0.0
+DIM slow_t = 0.0
 
 DIM score = 0
 DIM lives = 3
@@ -74,21 +79,33 @@ SUB setup_level()
 	remaining = n
 ENDSUB
 
-SUB place_ball_on_paddle()
-	ball_x = pad_x + pad_w / 2.0
-	ball_y = pad_y - ball_r - 2.0
-	ball_vx = 220.0
-	ball_vy = -320.0
-ENDSUB
-
 SUB start_new_game()
 	score = 0
 	lives = 3
+	pad_w = pad_base_w
+	wide_t = 0.0
+	slow_t = 0.0
+	balls = []
+	caps = []
 	parts = []
 	pops = []
 	setup_level()
-	place_ball_on_paddle()
 	mode = "serve"
+ENDSUB
+
+FUNC make_ball(x, y, vx, vy)
+	DIM b AS MAP = {}
+	b{"x"} = x
+	b{"y"} = y
+	b{"vx"} = vx
+	b{"vy"} = vy
+	RETURN b
+ENDFUNC
+
+SUB launch_ball()
+	balls = []
+	balls = APPEND(balls, make_ball(pad_x + pad_w / 2.0, pad_y - ball_r - 2.0, 120.0, -360.0))
+	mode = "play"
 ENDSUB
 
 SUB spawn_burst(cx, cy)
@@ -104,16 +121,140 @@ SUB spawn_burst(cx, cy)
 	NEXT
 ENDSUB
 
-SUB spawn_pop(cx, cy, pts)
+SUB spawn_pop(cx, cy, txt)
 	DIM q AS MAP = {}
 	q{"x"} = cx
 	q{"y"} = cy
 	q{"life"} = 0.8
-	q{"txt"} = "+" + STR$(pts)
+	q{"txt"} = txt
 	pops = APPEND(pops, q)
 ENDSUB
 
+SUB maybe_drop_cap(cx, cy)
+	IF RND(1) < 0.18 THEN
+		DIM r = RND(1)
+		DIM kind = "LIFE"
+		IF r < 0.30 THEN
+			kind = "MULTI"
+		ELSEIF r < 0.58 THEN
+			kind = "WIDE"
+		ELSEIF r < 0.82 THEN
+			kind = "SLOW"
+		ENDIF
+		DIM c AS MAP = {}
+		c{"x"} = cx
+		c{"y"} = cy
+		c{"kind"} = kind
+		caps = APPEND(caps, c)
+	ENDIF
+ENDSUB
+
+SUB apply_cap(kind)
+	IF kind = "MULTI" THEN
+		DIM add AS ARRAY = []
+		FOR i = 0 TO LEN(balls) - 1
+			DIM b = balls[i]
+			add = APPEND(add, make_ball(b{"x"}, b{"y"}, (RND(1) - 0.5) * 520.0, -ABS(b{"vy"})))
+			add = APPEND(add, make_ball(b{"x"}, b{"y"}, (RND(1) - 0.5) * 520.0, -ABS(b{"vy"})))
+		NEXT
+		FOR i = 0 TO LEN(add) - 1
+			IF LEN(balls) < 18 THEN balls = APPEND(balls, add[i])
+		NEXT
+	ELSEIF kind = "WIDE" THEN
+		pad_w = pad_base_w * 1.8
+		wide_t = 8.0
+	ELSEIF kind = "SLOW" THEN
+		slow_t = 6.0
+	ELSEIF kind = "LIFE" THEN
+		lives = lives + 1
+	ENDIF
+ENDSUB
+
+FUNC brick_bounce(cx, cy, vy)
+	DIM n = cols * rows
+	FOR idx = 0 TO n - 1
+		IF alive{STR$(idx)} = 1 THEN
+			DIM row = INT(idx / cols)
+			DIM col = idx - row * cols
+			DIM bx = side_off + col * (brick_w + gap)
+			DIM by = top_off + row * (brick_h + gap)
+			IF cx + ball_r > bx ANDALSO cx - ball_r < bx + brick_w ANDALSO cy + ball_r > by ANDALSO cy - ball_r < by + brick_h THEN
+				alive{STR$(idx)} = 0
+				remaining = remaining - 1
+				DIM pts = (rows - row) * 10
+				score = score + pts
+				spawn_burst(bx + brick_w / 2.0, by + brick_h / 2.0)
+				spawn_pop(bx + brick_w / 2.0, by, "+" + STR$(pts))
+				maybe_drop_cap(bx + brick_w / 2.0, by + brick_h / 2.0)
+				blip(-7.0, 1.6)
+				IF remaining <= 0 THEN mode = "won"
+				RETURN -vy
+			ENDIF
+		ENDIF
+	NEXT
+	RETURN vy
+ENDFUNC
+
+SUB step_balls(dt)
+	DIM sc = 1.0
+	IF slow_t > 0.0 THEN sc = 0.55
+
+	DIM kept AS ARRAY = []
+	FOR i = 0 TO LEN(balls) - 1
+		DIM b = balls[i]
+		DIM bx = b{"x"} + b{"vx"} * dt * sc
+		DIM by = b{"y"} + b{"vy"} * dt * sc
+		DIM vx = b{"vx"}
+		DIM vy = b{"vy"}
+
+		IF bx < ball_r THEN
+			bx = ball_r
+			vx = ABS(vx)
+		ENDIF
+		IF bx > fw - ball_r THEN
+			bx = fw - ball_r
+			vx = -ABS(vx)
+		ENDIF
+		IF by < ball_r THEN
+			by = ball_r
+			vy = ABS(vy)
+		ENDIF
+
+		IF by + ball_r >= pad_y ANDALSO by - ball_r <= pad_y + pad_h ANDALSO vy > 0.0 THEN
+			IF bx >= pad_x ANDALSO bx <= pad_x + pad_w THEN
+				DIM rel = (bx - (pad_x + pad_w / 2.0)) / (pad_w / 2.0)
+				vx = rel * 300.0
+				vy = -ABS(vy)
+				blip(-8.0, 1.2)
+			ENDIF
+		ENDIF
+
+		vy = brick_bounce(bx, by, vy)
+
+		IF by - ball_r <= fh THEN
+			kept = APPEND(kept, make_ball(bx, by, vx, vy))
+		ENDIF
+	NEXT
+	balls = kept
+
+	IF LEN(balls) = 0 THEN
+		lives = lives - 1
+		blip(-6.0, 0.6)
+		IF lives <= 0 THEN
+			mode = "lost"
+		ELSE
+			mode = "serve"
+		ENDIF
+	ENDIF
+ENDSUB
+
 SUB update_effects(dt)
+	IF wide_t > 0.0 THEN
+		wide_t = wide_t - dt
+		IF wide_t <= 0.0 THEN pad_w = pad_base_w
+	ENDIF
+	IF slow_t > 0.0 THEN slow_t = slow_t - dt
+
 	DIM kp AS ARRAY = []
 	FOR i = 0 TO LEN(parts) - 1
 		DIM p = parts[i]
@@ -145,75 +286,28 @@ SUB update_effects(dt)
 		ENDIF
 	NEXT
 	pops = kq
-ENDSUB
 
-SUB hit_bricks()
-	DIM n = cols * rows
-	FOR idx = 0 TO n - 1
-		IF alive{STR$(idx)} = 1 THEN
-			DIM row = INT(idx / cols)
-			DIM col = idx - row * cols
-			DIM bx = side_off + col * (brick_w + gap)
-			DIM by = top_off + row * (brick_h + gap)
-			IF ball_x + ball_r > bx ANDALSO ball_x - ball_r < bx + brick_w THEN
-				IF ball_y + ball_r > by ANDALSO ball_y - ball_r < by + brick_h THEN
-					alive{STR$(idx)} = 0
-					remaining = remaining - 1
-					DIM pts = (rows - row) * 10
-					score = score + pts
-					ball_vy = -ball_vy
-					spawn_burst(bx + brick_w / 2.0, by + brick_h / 2.0)
-					spawn_pop(bx + brick_w / 2.0, by, pts)
-					blip(-7.0, 1.6)
-					IF remaining <= 0 THEN mode = "won"
-					RETURN
-				ENDIF
-			ENDIF
+	DIM kc AS ARRAY = []
+	FOR i = 0 TO LEN(caps) - 1
+		DIM c = caps[i]
+		DIM ny = c{"y"} + 135.0 * dt
+		DIM caught = FALSE
+		IF ny >= pad_y ANDALSO ny <= pad_y + pad_h ANDALSO c{"x"} >= pad_x ANDALSO c{"x"} <= pad_x + pad_w THEN
+			caught = TRUE
+		ENDIF
+		IF caught THEN
+			apply_cap(c{"kind"})
+			spawn_pop(c{"x"}, pad_y - 12.0, c{"kind"})
+			blip(-5.0, 2.0)
+		ELSEIF ny < fh + 20.0 THEN
+			DIM nc AS MAP = {}
+			nc{"x"} = c{"x"}
+			nc{"y"} = ny
+			nc{"kind"} = c{"kind"}
+			kc = APPEND(kc, nc)
 		ENDIF
 	NEXT
-ENDSUB
-
-SUB step_ball(dt)
-	ball_x = ball_x + ball_vx * dt
-	ball_y = ball_y + ball_vy * dt
-
-	IF ball_x < ball_r THEN
-		ball_x = ball_r
-		ball_vx = ABS(ball_vx)
-		blip(-10.0, 1.0)
-	ENDIF
-	IF ball_x > fw - ball_r THEN
-		ball_x = fw - ball_r
-		ball_vx = -ABS(ball_vx)
-		blip(-10.0, 1.0)
-	ENDIF
-	IF ball_y < ball_r THEN
-		ball_y = ball_r
-		ball_vy = ABS(ball_vy)
-		blip(-10.0, 1.0)
-	ENDIF
-
-	IF ball_y + ball_r >= pad_y ANDALSO ball_y - ball_r <= pad_y + pad_h THEN
-		IF ball_x >= pad_x ANDALSO ball_x <= pad_x + pad_w ANDALSO ball_vy > 0.0 THEN
-			DIM rel = (ball_x - (pad_x + pad_w / 2.0)) / (pad_w / 2.0)
-			ball_vx = rel * 300.0
-			ball_vy = -ABS(ball_vy)
-			blip(-8.0, 1.2)
-		ENDIF
-	ENDIF
-
-	hit_bricks()
-
-	IF ball_y - ball_r > fh THEN
-		lives = lives - 1
-		blip(-6.0, 0.6)
-		IF lives <= 0 THEN
-			mode = "lost"
-		ELSE
-			place_ball_on_paddle()
-			mode = "serve"
-		ENDIF
-	ENDIF
+	caps = kc
 ENDSUB
 
 SUB _ready()
@@ -231,13 +325,7 @@ SUB _process(delta)
 	IF pad_x < 0.0 THEN pad_x = 0.0
 	IF pad_x > fw - pad_w THEN pad_x = fw - pad_w
 
-	IF mode = "serve" THEN
-		ball_x = pad_x + pad_w / 2.0
-		ball_y = pad_y - ball_r - 2.0
-	ELSEIF mode = "play" THEN
-		step_ball(delta)
-	ENDIF
-
+	IF mode = "play" THEN step_balls(delta)
 	update_effects(delta)
 	GODOT.CALL(self_h, "queue_redraw")
 ENDSUB
@@ -247,7 +335,7 @@ SUB _input(event)
 	IF kind = "InputEventMouseButton" THEN
 		IF GODOT.GET(event, "pressed") THEN
 			IF mode = "serve" THEN
-				mode = "play"
+				launch_ball()
 				blip(-9.0, 1.4)
 			ELSEIF mode = "won" ORELSE mode = "lost" THEN
 				start_new_game()
@@ -276,6 +364,30 @@ SUB _draw()
 		ENDIF
 	NEXT
 
+	' Falling powerup capsules.
+	FOR i = 0 TO LEN(caps) - 1
+		DIM c = caps[i]
+		DIM ck = c{"kind"}
+		DIM cr = 0.9
+		DIM cg = 0.4
+		DIM cb = 0.9
+		IF ck = "MULTI" THEN
+			cr = 1.0
+			cg = 0.85
+			cb = 0.3
+		ELSEIF ck = "WIDE" THEN
+			cr = 0.3
+			cg = 0.8
+			cb = 1.0
+		ELSEIF ck = "SLOW" THEN
+			cr = 0.4
+			cg = 1.0
+			cb = 0.5
+		ENDIF
+		draw_box(c{"x"} - 13.0, c{"y"} - 9.0, 26.0, 18.0, cr, cg, cb)
+		GODOT.DRAW_STRING(self_h, GODOT.VEC2(c{"x"} - 13.0, c{"y"} + 5.0), LEFT$(ck, 1), 1, 26.0, 16, GODOT.COLOR(0.05, 0.05, 0.1, 1.0))
+	NEXT
+
 	' Explosion particles.
 	FOR i = 0 TO LEN(parts) - 1
 		DIM p = parts[i]
@@ -284,13 +396,22 @@ SUB _draw()
 	NEXT
 
 	draw_box(pad_x, pad_y, pad_w, pad_h, 0.85, 0.9, 1.0)
-	GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(ball_x, ball_y), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
 
-	' Floating "+N" score pops.
+	' Balls (or the preview ball on the paddle while serving).
+	IF mode = "serve" THEN
+		GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(pad_x + pad_w / 2.0, pad_y - ball_r - 2.0), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+	ELSE
+		FOR i = 0 TO LEN(balls) - 1
+			DIM b = balls[i]
+			GODOT.CALL(self_h, "draw_circle", GODOT.VEC2(b{"x"}, b{"y"}), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+		NEXT
+	ENDIF
+
+	' Floating score / powerup pops.
 	FOR i = 0 TO LEN(pops) - 1
 		DIM q = pops[i]
 		DIM qa = q{"life"} / 0.8
-		GODOT.DRAW_STRING(self_h, GODOT.VEC2(q{"x"} - 24.0, q{"y"}), q{"txt"}, 1, 48.0, 18, GODOT.COLOR(1.0, 1.0, 0.6, qa))
+		GODOT.DRAW_STRING(self_h, GODOT.VEC2(q{"x"} - 40.0, q{"y"}), q{"txt"}, 1, 80.0, 18, GODOT.COLOR(1.0, 1.0, 0.6, qa))
 	NEXT
 
 	' HUD.
