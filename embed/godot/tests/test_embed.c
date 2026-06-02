@@ -23,6 +23,30 @@ static void run(JdbEmbed* e, const char* code) {
     }
 }
 
+static int g_break_hits = 0;
+
+/* Debugger hook (the Godot model): fires synchronously when the VM hits a
+ * breakpoint. We inspect the paused VM and then continue. */
+static void on_break(JdbEmbed* e, int line, const char* reason, void* ud) {
+    (void)ud;
+    g_break_hits++;
+    printf("[break] line=%d reason=%s\n", line, reason);
+    int sc = jdb_embed_debug_stack_count(e);
+    printf("  stack=%d top=%s@%d\n", sc,
+           jdb_embed_debug_stack_function(e, 0), jdb_embed_debug_stack_line(e, 0));
+    int lc = jdb_embed_debug_locals_count(e);
+    printf("  locals(%d):", lc);
+    for (int i = 0; i < lc; i++)
+        printf(" %s=%s", jdb_embed_debug_local_name(e, i), jdb_embed_debug_local_value(e, i));
+    printf("\n");
+    int gc = jdb_embed_debug_globals_count(e);
+    printf("  globals(%d):", gc);
+    for (int i = 0; i < gc; i++)
+        printf(" %s=%s", jdb_embed_debug_global_name(e, i), jdb_embed_debug_global_value(e, i));
+    printf("\n");
+    jdb_embed_debug_continue(e);
+}
+
 int main(void) {
     printf("jdb_embed smoke test\n");
 
@@ -45,6 +69,24 @@ int main(void) {
 
     /* Deliberate error to exercise the error path. */
     run(e, "PRINT undefined_symbol_xyz");
+
+    /* T7 debugger ABI. */
+    printf("\n=== debugger ===\n");
+    jdb_embed_debug_enable(e);
+    jdb_embed_debug_set_hook(e, on_break, NULL);
+
+    /* Scenario 1: breakpoint at global scope - vars are globals, no frame. */
+    printf("-- global breakpoint (line 3) --\n");
+    jdb_embed_debug_set_breakpoint(e, 3);
+    run(e, "DIM gg1 = 5\nDIM gg2 = 7\nPRINT gg1 + gg2\nPRINT gg1 * gg2");
+
+    /* Scenario 2: breakpoint inside a SUB - a real call frame + locals. */
+    printf("-- function breakpoint (line 3, inside SUB) --\n");
+    jdb_embed_debug_clear_all(e);
+    jdb_embed_debug_set_breakpoint(e, 3);
+    run(e, "SUB add_them(p, q)\n  DIM r = p + q\n  PRINT r\nENDSUB\nadd_them(5, 7)");
+
+    printf("breakpoint hits = %d (expected 2)\n", g_break_hits);
 
     jdb_embed_shutdown(e);
     printf("done\n");

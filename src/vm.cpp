@@ -977,8 +977,10 @@ void VM::run() {
             if (tline > 0) std::cerr << "[TRACE] line " << tline << " op " << (int)op << std::endl;
         }
 
-        // Debug adapter: check for breakpoints/stepping on line change
-        if (debug && debug->dap && !frames.empty()) {
+        // Debug adapter: check for breakpoints/stepping on line change.
+        // Either the socket DAP (standalone / VS Code) or the embed host hook
+        // (Godot) drives it.
+        if (debug && (debug->dap || debug->host_hook) && !frames.empty()) {
             if (trace_ip < frame().chunk->line_info.size()) {
                 int dline = frame().chunk->line_info[trace_ip];
                 if (dline > 0) {
@@ -3169,10 +3171,16 @@ static Value make_matrix(int rows, int cols, double fill = 0.0) {
 // ── Debug adapter support ────────────────────────────────────────
 
 void VM::debug_check(int line) {
-    if (!debug || !debug->dap || line <= 0) return;
-    // Inside REPL/EVAL/EXECUTE sub-runs, never pause: the sub-chunk's line numbers
-    // would otherwise look like the main program and re-trigger stopped events.
-    if (subrun_depth > 0) return;
+    if (!debug || line <= 0) return;
+    // Need either the socket DAP or a host hook to have somewhere to break to.
+    if (!debug->dap && !debug->host_hook) return;
+    // Inside REPL/EVAL/EXECUTE sub-runs, never pause for the socket DAP: the
+    // sub-chunk's line numbers would otherwise look like the main program and
+    // re-trigger stopped events. The embed/Godot host hook is the opposite
+    // case - there ALL script execution arrives as run_code sub-runs (every
+    // _process / _input callback is a jdb_embed_eval), so the hook path must
+    // debug them.
+    if (!debug->host_hook && subrun_depth > 0) return;
     if (line == debug->last_debug_line) return;
     debug->last_debug_line = line;
 
@@ -3228,13 +3236,20 @@ void VM::debug_check(int line) {
 
     if (should_pause) {
         debug->state = DebugState::PAUSED;
-        if (debug->is_entry) {
-            pause_reason = "entry";
-            debug->is_entry = false;
+        if (debug->host_hook) {
+            // Synchronous host break: the hook inspects the VM and sets the
+            // next action (state) via the embed control ABI, then returns.
+            // (No "entry" stop - that's a DAP-only concept.)
+            debug->host_hook(debug->host_ud, line, pause_reason.c_str());
+        } else {
+            if (debug->is_entry) {
+                pause_reason = "entry";
+                debug->is_entry = false;
+            }
+            debug->dap->send_stopped_message(pause_reason, line,
+                cur_file.empty() ? debug->program_path : cur_file);
+            debug->pause();
         }
-        debug->dap->send_stopped_message(pause_reason, line,
-            cur_file.empty() ? debug->program_path : cur_file);
-        debug->pause();
     }
 }
 

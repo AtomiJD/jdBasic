@@ -169,6 +169,49 @@ JDB_EMBED_API JdbValue jdb_embed_make_map   (JdbEmbed* e,
                                               const JdbValue* vals,
                                               int n);
 
+// ── Debugger (T7) ──────────────────────────────────────────────────
+//
+// The jdBasic VM already has a debug engine (breakpoints, stepping, stack
+// frames, locals/globals). These exports surface it so a host (the Godot
+// GDExtension) can drive it without the socket DAP.
+//
+// Break model: register a hook with jdb_embed_debug_set_hook. When the VM
+// hits a breakpoint / completes a step, it calls the hook synchronously on
+// the VM thread. Inside the hook the host inspects the paused VM via the
+// query functions below, then picks the next action with one of the
+// continue/step functions before returning. The VM resumes when the hook
+// returns. Breakpoints are line-only (the embed runs one script per VM).
+typedef void (*JdbDebugHook)(JdbEmbed* e, int line, const char* reason, void* ud);
+
+JDB_EMBED_API int  jdb_embed_debug_enable        (JdbEmbed* e);
+JDB_EMBED_API void jdb_embed_debug_set_hook      (JdbEmbed* e, JdbDebugHook hook, void* ud);
+JDB_EMBED_API void jdb_embed_debug_set_breakpoint(JdbEmbed* e, int line);
+JDB_EMBED_API void jdb_embed_debug_clear_breakpoint(JdbEmbed* e, int line);
+JDB_EMBED_API void jdb_embed_debug_clear_all     (JdbEmbed* e);
+
+JDB_EMBED_API int  jdb_embed_debug_current_line  (JdbEmbed* e);
+
+// Stack frames (level 0 = innermost). Refresh the snapshot with _stack_count
+// before reading _stack_line / _stack_function for a given level.
+JDB_EMBED_API int         jdb_embed_debug_stack_count   (JdbEmbed* e);
+JDB_EMBED_API int         jdb_embed_debug_stack_line     (JdbEmbed* e, int level);
+JDB_EMBED_API const char* jdb_embed_debug_stack_function (JdbEmbed* e, int level);
+
+// Locals (current frame) and globals as name/value-string pairs. Refresh
+// with the _count call, then read names/values by index.
+JDB_EMBED_API int         jdb_embed_debug_locals_count (JdbEmbed* e);
+JDB_EMBED_API const char* jdb_embed_debug_local_name   (JdbEmbed* e, int i);
+JDB_EMBED_API const char* jdb_embed_debug_local_value  (JdbEmbed* e, int i);
+JDB_EMBED_API int         jdb_embed_debug_globals_count(JdbEmbed* e);
+JDB_EMBED_API const char* jdb_embed_debug_global_name  (JdbEmbed* e, int i);
+JDB_EMBED_API const char* jdb_embed_debug_global_value (JdbEmbed* e, int i);
+
+// Next-action selectors - call exactly one from inside the hook.
+JDB_EMBED_API void jdb_embed_debug_continue (JdbEmbed* e);
+JDB_EMBED_API void jdb_embed_debug_step_over(JdbEmbed* e);
+JDB_EMBED_API void jdb_embed_debug_step_in  (JdbEmbed* e);
+JDB_EMBED_API void jdb_embed_debug_step_out (JdbEmbed* e);
+
 #ifdef __cplusplus
 }
 #endif

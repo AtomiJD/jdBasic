@@ -758,7 +758,7 @@ static std::string g_llama_log_buf;
 // dll's directory in here, and ensure_backend() then walks it for
 // ggml-*.dll entries via ggml_backend_load() so we don't depend on
 // ggml_backend_load_all()'s implicit EXE-dir scan.
-std::string g_jdb_embed_dll_dir;
+extern std::string g_jdb_embed_dll_dir;  // defined in jdb_embed_api.cpp
 
 // Capture llama / ggml log lines so they show up in jdBasic stdout
 // instead of vanishing into the host process's stderr (which Godot's

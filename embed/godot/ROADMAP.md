@@ -257,20 +257,57 @@ editable" workflow that nothing else offers. Worth the extra
 complexity if Atomi sees Stellar-Drift-style live-coding as the
 differentiated story.
 
-### Tier 7 - debugger (multi-week)
+### Tier 7 - debugger (IN PROGRESS, started 2026-06-02)
 
-The `_debug_*` virtuals on `ScriptLanguageExtension` cover breakpoints,
-stack inspection, expression evaluation. jdBasic already has a DAP
-implementation (`src/dap.cpp`); wiring it through the GDExtension
-debugger contract gets us:
+Breakpoints / step / locals / call stack / watch in the Godot Debugger
+panel. Lua / Python plugins for Godot punt on this, so it's the headline
+differentiator.
 
-- Breakpoints honoured during `_process` / `_ready`
-- Step over / step into / step out
-- Locals / globals / call stack in the Godot Debugger panel
-- Watch expressions evaluating against the running VM
+**This is bridge work, not a debugger from scratch.** The pieces already
+exist on both sides:
+- VM side: `DebugInfo` (pause / step_over / step_in / step_out, a
+  breakpoints map, a per-line `debug_check()` hook) plus
+  `debug_get_stack_frames()` / `debug_current_line()` / `debug_call_depth()`.
+  Today only driven by the socket DAP (`src/dap.cpp`).
+- Godot side: `EngineDebugger::script_debug(language, ...)` / `line_poll()`
+  are reachable from a GDExtension (verified), and `ScriptLanguageExtension`
+  declares 11 `_debug_*` virtuals.
 
-This is the big one - Lua / Python plugins for Godot typically punt on
-it. Having a working debugger would be a meaningful differentiator.
+What's missing is the bridge: the embed C-ABI exposes none of the VM debug
+primitives, and `JdbScriptLanguage` overrides none of the `_debug_*`
+virtuals.
+
+Flow:
+```
+breakpoint hit in VM -> debug-hook callback (new ABI)
+  -> JdbScriptLanguage fires EngineDebugger.script_debug(this)  [blocks + pumps]
+  -> editor queries the _debug_* virtuals
+  -> forwarded to the paused instance's VM (new ABI)
+  -> continue / step  ->  VM resumes
+```
+
+Phases:
+- **P1 - embed debug ABI** (started): `jdb_embed_debug_*` - set/clear
+  breakpoint, register hook, stack count/line/function/source, locals /
+  globals at a level, eval-in-frame, step / continue / pause. Mostly
+  forwarding to the existing `DebugInfo`. Headless-testable without Godot.
+- **P2 - break wiring**: VM hook -> `EngineDebugger.script_debug` +
+  `line_poll`; the language tracks the currently-executing instance (each
+  instance has its own VM). The integration spike - the main risk lives here.
+- **P3 - the 11 `_debug_*` virtuals** on `JdbScriptLanguage`, forwarding to
+  the paused instance's VM.
+- **P4 - breakpoint sync**: editor gutter breakpoints -> language -> VM
+  breakpoints; `.jdb` line maps 1:1 to VM line (the .jdb is the source).
+- **P5 - polish**: locals/members/globals dictionaries, watch expressions
+  (eval in a frame), step over/into/out in the panel.
+
+Key decisions:
+- Per-instance VM vs. global language: the language tracks the active
+  `JdbScriptInstance` (set around the `call_method` eval) so a break knows
+  which VM to query.
+- Pausing blocks the game's main thread while the editor inspects (correct
+  debugger behaviour). Works because the running game is a separate process
+  from the editor.
 
 ### Production-grade follow-ups (each independent)
 

@@ -10,6 +10,7 @@
 
 #include "jdb_embed_api.h"
 #include "vm.h"
+#include "dap.h"
 #include "value.h"
 #include "lexer.h"
 #include "parser.h"
@@ -17,9 +18,11 @@
 #include "ai.h"
 #include "llm.h"
 
-// Defined in llm.cpp; we populate it on Windows so explicit backend
-// loads can find ggml-*.dll next to our jdbrt runtime.
-extern std::string g_jdb_embed_dll_dir;
+// Where jdbrt.dll lives, so explicit LLM backend loads can find ggml-*.dll
+// next to our runtime. Defined here (always compiled into jdbrt) rather than
+// in llm.cpp, whose body is excluded in some build flavors - otherwise the
+// unconditional reference below fails to link in HEADLESS builds.
+std::string g_jdb_embed_dll_dir;
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -35,6 +38,8 @@ extern std::string g_jdb_embed_dll_dir;
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
+#include <utility>
 
 namespace {
 
@@ -49,6 +54,13 @@ struct JdbEmbedImpl {
     // Value copies and stay valid until release.
     std::unordered_map<int64_t, Value> value_store;
     int64_t next_handle = 1;
+
+    // T7 debugger - host hook + snapshot caches for the query accessors.
+    JdbDebugHook user_debug_hook = nullptr;
+    void*        user_debug_ud   = nullptr;
+    std::vector<VM::DebugFrame>                         dbg_frames;
+    std::vector<std::pair<std::string, std::string>>    dbg_locals;
+    std::vector<std::pair<std::string, std::string>>    dbg_globals;
 
     int64_t store(Value v) {
         int64_t h = next_handle++;
@@ -646,6 +658,150 @@ JDB_EMBED_API JdbValue jdb_embed_make_map(JdbEmbed* eh,
         obj->fields.emplace_back(std::move(k), std::move(entry));
     }
     return e->store(std::move(v));
+}
+
+// ── Debugger (T7) ──────────────────────────────────────────────────
+
+// Trampoline: the VM's DebugInfo holds a plain C hook (void*, int, const
+// char*); we route it to the public JdbDebugHook with the embed handle.
+static void embed_debug_trampoline(void* ud, int line, const char* reason) {
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(ud);
+    if (e && e->user_debug_hook) {
+        e->user_debug_hook(reinterpret_cast<JdbEmbed*>(e), line,
+                           reason ? reason : "", e->user_debug_ud);
+    }
+}
+
+static DebugInfo* dbg_(JdbEmbedImpl* e) {
+    if (!e) return nullptr;
+    if (!e->vm.debug) e->vm.debug = std::make_unique<DebugInfo>();
+    return e->vm.debug.get();
+}
+
+JDB_EMBED_API int jdb_embed_debug_enable(JdbEmbed* eh) {
+    if (!eh) return 0;
+    return dbg_(reinterpret_cast<JdbEmbedImpl*>(eh)) ? 1 : 0;
+}
+
+JDB_EMBED_API void jdb_embed_debug_set_hook(JdbEmbed* eh, JdbDebugHook hook, void* ud) {
+    if (!eh) return;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    DebugInfo* d = dbg_(e);
+    e->user_debug_hook = hook;
+    e->user_debug_ud   = ud;
+    d->host_ud   = e;
+    d->host_hook = hook ? &embed_debug_trampoline : nullptr;
+}
+
+JDB_EMBED_API void jdb_embed_debug_set_breakpoint(JdbEmbed* eh, int line) {
+    if (!eh) return;
+    dbg_(reinterpret_cast<JdbEmbedImpl*>(eh))->breakpoints[""].insert(line);
+}
+
+JDB_EMBED_API void jdb_embed_debug_clear_breakpoint(JdbEmbed* eh, int line) {
+    if (!eh) return;
+    DebugInfo* d = dbg_(reinterpret_cast<JdbEmbedImpl*>(eh));
+    auto it = d->breakpoints.find("");
+    if (it != d->breakpoints.end()) it->second.erase(line);
+}
+
+JDB_EMBED_API void jdb_embed_debug_clear_all(JdbEmbed* eh) {
+    if (!eh) return;
+    dbg_(reinterpret_cast<JdbEmbedImpl*>(eh))->breakpoints.clear();
+}
+
+JDB_EMBED_API int jdb_embed_debug_current_line(JdbEmbed* eh) {
+    if (!eh) return 0;
+    return reinterpret_cast<JdbEmbedImpl*>(eh)->vm.debug_current_line();
+}
+
+JDB_EMBED_API int jdb_embed_debug_stack_count(JdbEmbed* eh) {
+    if (!eh) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->dbg_frames = e->vm.debug_get_stack_frames();
+    return (int)e->dbg_frames.size();
+}
+
+JDB_EMBED_API int jdb_embed_debug_stack_line(JdbEmbed* eh, int level) {
+    if (!eh) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    if (level < 0 || level >= (int)e->dbg_frames.size()) return 0;
+    return e->dbg_frames[(size_t)level].line;
+}
+
+JDB_EMBED_API const char* jdb_embed_debug_stack_function(JdbEmbed* eh, int level) {
+    if (!eh) return "";
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    if (level < 0 || level >= (int)e->dbg_frames.size()) return "";
+    return e->dbg_frames[(size_t)level].name.c_str();
+}
+
+JDB_EMBED_API int jdb_embed_debug_locals_count(JdbEmbed* eh) {
+    if (!eh) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->dbg_locals = e->vm.debug_get_locals();
+    return (int)e->dbg_locals.size();
+}
+
+JDB_EMBED_API const char* jdb_embed_debug_local_name(JdbEmbed* eh, int i) {
+    if (!eh) return "";
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    if (i < 0 || i >= (int)e->dbg_locals.size()) return "";
+    return e->dbg_locals[(size_t)i].first.c_str();
+}
+
+JDB_EMBED_API const char* jdb_embed_debug_local_value(JdbEmbed* eh, int i) {
+    if (!eh) return "";
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    if (i < 0 || i >= (int)e->dbg_locals.size()) return "";
+    return e->dbg_locals[(size_t)i].second.c_str();
+}
+
+JDB_EMBED_API int jdb_embed_debug_globals_count(JdbEmbed* eh) {
+    if (!eh) return 0;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->dbg_globals = e->vm.debug_get_globals();
+    return (int)e->dbg_globals.size();
+}
+
+JDB_EMBED_API const char* jdb_embed_debug_global_name(JdbEmbed* eh, int i) {
+    if (!eh) return "";
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    if (i < 0 || i >= (int)e->dbg_globals.size()) return "";
+    return e->dbg_globals[(size_t)i].first.c_str();
+}
+
+JDB_EMBED_API const char* jdb_embed_debug_global_value(JdbEmbed* eh, int i) {
+    if (!eh) return "";
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    if (i < 0 || i >= (int)e->dbg_globals.size()) return "";
+    return e->dbg_globals[(size_t)i].second.c_str();
+}
+
+JDB_EMBED_API void jdb_embed_debug_continue(JdbEmbed* eh) {
+    if (!eh) return;
+    dbg_(reinterpret_cast<JdbEmbedImpl*>(eh))->state = DebugState::RUNNING;
+}
+
+JDB_EMBED_API void jdb_embed_debug_step_over(JdbEmbed* eh) {
+    if (!eh) return;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    DebugInfo* d = dbg_(e);
+    d->state = DebugState::STEP_OVER;
+    d->step_over_depth = e->vm.debug_call_depth();
+}
+
+JDB_EMBED_API void jdb_embed_debug_step_in(JdbEmbed* eh) {
+    if (!eh) return;
+    dbg_(reinterpret_cast<JdbEmbedImpl*>(eh))->state = DebugState::STEP_IN;
+}
+
+JDB_EMBED_API void jdb_embed_debug_step_out(JdbEmbed* eh) {
+    if (!eh) return;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    DebugInfo* d = dbg_(e);
+    d->state = DebugState::STEP_OUT;
+    d->step_out_depth = e->vm.debug_call_depth();
 }
 
 }  // extern "C"

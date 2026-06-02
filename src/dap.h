@@ -118,6 +118,14 @@ struct DebugInfo {
     bool launch_ready = false;
     bool launch_success = false;
 
+    // Host-driven break path (embed / Godot debugger). When host_hook is
+    // set, debug_check calls it synchronously on a pause instead of sending
+    // a DAP "stopped" message and blocking on the condvar. The host inspects
+    // state and sets the next action (RUNNING / STEP_*) via the embed debug
+    // ABI before the hook returns; the VM then proceeds without a wait.
+    void* host_ud = nullptr;
+    void (*host_hook)(void* ud, int line, const char* reason) = nullptr;
+
     void pause();
     void resume();
     void step_over(size_t call_depth);
