@@ -17,6 +17,7 @@
 #include "compiler.h"
 #include "ai.h"
 #include "llm.h"
+#include "sound.h"
 
 // Where jdbrt.dll lives, so explicit LLM backend loads can find ggml-*.dll
 // next to our runtime. Defined here (always compiled into jdbrt) rather than
@@ -131,6 +132,10 @@ void setup(JdbEmbedImpl* e) {
     // we use ::-qualified names to escape the anonymous namespace.
     ::register_ai_builtins(e->vm);
     ::register_llm_builtins(e->vm);
+#if defined(GFX) || defined(SOUND_DSP)
+    // SOUND.* sequencer (pull-mode under SOUND_DSP: no device, host renders).
+    ::register_sound_builtins(e->vm);
+#endif
 }
 
 char* dup_cstr(const std::string& s) {

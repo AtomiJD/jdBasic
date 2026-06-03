@@ -2,17 +2,25 @@
 #include "vm.h"
 #include "errors.h"
 
-#ifndef GFX
-// Stub when SDL3 not available
+#if !defined(GFX) && !defined(SOUND_DSP)
+// Stub when neither the SDL device (GFX) nor the standalone DSP (SOUND_DSP) is built.
 void sound_shutdown() {}
 void register_sound_builtins(VM& vm) {
     vm.register_native("SOUND.INIT", [](const std::vector<Value>&) -> Value {
-        throw jdError(ErrCode::RUNTIME_ERROR, "SOUND requires GFX build (build.bat GFX)");
+        throw jdError(ErrCode::RUNTIME_ERROR, "SOUND requires a GFX or SOUND build");
     });
 }
-#else // GFX
+#else // GFX or SOUND_DSP
 
+// DSP core compiles for both builds; SDL (the audio device) only under GFX.
+#ifdef GFX
 #include <SDL3/SDL.h>
+#define SND_LOCK()   SDL_LockAudioStream(g_sound.stream)
+#define SND_UNLOCK() SDL_UnlockAudioStream(g_sound.stream)
+#else
+#define SND_LOCK()   ((void)0)
+#define SND_UNLOCK() ((void)0)
+#endif
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -336,11 +344,13 @@ struct Compressor {
 
 static struct SoundSystem {
     bool initialized = false;
+#ifdef GFX
     SDL_AudioStream* stream = nullptr;
     // Push-mode stream for SOUND.PLAYBUFFER: scripts queue raw float32
     // samples directly, the SDL audio mixer combines this stream's
     // output with the synth's `stream` on the same device.
     SDL_AudioStream* pcm_stream = nullptr;
+#endif
     int pcm_sample_rate = SAMPLE_RATE;
     int pcm_channels = 1;
 
@@ -704,13 +714,8 @@ static struct SoundSystem {
 
     // ── Audio callback ──────────────────────────────────────────
 
-    static void audio_callback(void* userdata, SDL_AudioStream* stream, int additional_len, int total_len) {
-        (void)total_len;
-        auto* sys = (SoundSystem*)userdata;
-        int num_floats = additional_len / sizeof(float);
-        int num_frames = num_floats / 2;
-
-        std::vector<float> buffer(num_floats, 0.0f);
+    // SDL-free render: fill `buffer` with num_frames interleaved stereo samples.
+    static void render_frames(SoundSystem* sys, float* buffer, int num_frames) {
         double dt = 1.0 / SAMPLE_RATE;
 
         // Sequencer phase
@@ -926,21 +931,32 @@ static struct SoundSystem {
             buffer[f * 2] = mix_l;
             buffer[f * 2 + 1] = mix_r;
         }
+    }
 
+#ifdef GFX
+    // SDL callback: render into a temp buffer, hand it to the device stream.
+    static void audio_callback(void* userdata, SDL_AudioStream* stream, int additional_len, int total_len) {
+        (void)total_len;
+        auto* sys = (SoundSystem*)userdata;
+        int num_floats = additional_len / sizeof(float);
+        std::vector<float> buffer(num_floats, 0.0f);
+        render_frames(sys, buffer.data(), num_floats / 2);
         SDL_PutAudioStreamData(stream, buffer.data(), additional_len);
     }
+#endif
 } g_sound;
 
 // ── Helpers ─────────────────────────────────────────────────────
 
 static void ensure_sound(const char* fn) {
-    if (!g_sound.initialized || !g_sound.stream)
+    if (!g_sound.initialized)
         throw jdError(ErrCode::RUNTIME_ERROR, std::string(fn) + ": call SOUND.INIT first");
 }
 
 // ── Public API ──────────────────────────────────────────────────
 
 void sound_shutdown() {
+#ifdef GFX
     if (g_sound.stream) {
         SDL_DestroyAudioStream(g_sound.stream);
         g_sound.stream = nullptr;
@@ -949,7 +965,17 @@ void sound_shutdown() {
         SDL_DestroyAudioStream(g_sound.pcm_stream);
         g_sound.pcm_stream = nullptr;
     }
+#endif
     g_sound.initialized = false;
+}
+
+// Pull-mode render entry point: fill `out` with num_frames interleaved
+// stereo samples from the live sequencer. Used by embed hosts (Godot) that
+// drive their own audio device. Returns frames produced.
+int sound_render(float* out, int num_frames) {
+    if (!g_sound.initialized || num_frames <= 0) return 0;
+    SoundSystem::render_frames(&g_sound, out, num_frames);
+    return num_frames;
 }
 
 void register_sound_builtins(VM& vm) {
@@ -961,6 +987,12 @@ void register_sound_builtins(VM& vm) {
         (void)args;
         if (g_sound.initialized) return Value::make_none();
 
+        // Effect buffers - needed in both device and pull mode.
+        g_sound.reverb.init();
+        g_sound.delay_buffer.resize(SAMPLE_RATE * 2 * 2, 0.0f); // 2 sec stereo
+        g_sound.wave_buffer.resize(1024, 0.0f);
+
+#ifdef GFX
         if (!SDL_WasInit(0)) {
             // SDL not initialized at all
             if (!SDL_Init(SDL_INIT_AUDIO))
@@ -983,11 +1015,6 @@ void register_sound_builtins(VM& vm) {
         if (!g_sound.stream)
             throw jdError(ErrCode::RUNTIME_ERROR, std::string("SOUND.INIT failed: ") + SDL_GetError());
 
-        // Init effects
-        g_sound.reverb.init();
-        g_sound.delay_buffer.resize(SAMPLE_RATE * 2 * 2, 0.0f); // 2 sec stereo
-        g_sound.wave_buffer.resize(1024, 0.0f);
-
         SDL_ResumeAudioStreamDevice(g_sound.stream);
 
         // PCM push-stream — opened on the same default device. SDL3 mixes
@@ -1001,6 +1028,7 @@ void register_sound_builtins(VM& vm) {
             SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &pcm_spec, nullptr, nullptr);
         if (g_sound.pcm_stream)
             SDL_ResumeAudioStreamDevice(g_sound.pcm_stream);
+#endif
 
         g_sound.initialized = true;
         return Value::make_none();
@@ -1049,7 +1077,7 @@ void register_sound_builtins(VM& vm) {
             freq = (float)args[1].to_double();
         if (freq <= 0) return Value::make_none();
 
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        ensure_sound("SOUND"); SND_LOCK();
         int vi = g_sound.allocate_voice(t);
         if (vi >= 0) {
             auto& v = g_sound.voices[vi];
@@ -1063,7 +1091,7 @@ void register_sound_builtins(VM& vm) {
                 v.sample_pos = 0;
             }
         }
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1071,10 +1099,10 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("SOUND.RELEASE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int();
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        ensure_sound("SOUND"); SND_LOCK();
         for (auto& v : g_sound.voices)
             if (v.track == t && v.env.state != EnvState::OFF) v.env.gate_off();
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1082,10 +1110,10 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("SOUND.STOP", 1, 1, [](const std::vector<Value>& args) -> Value {
         int t = (int)args[0].to_int();
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        ensure_sound("SOUND"); SND_LOCK();
         for (auto& v : g_sound.voices)
             if (v.track == t) v.env.state = EnvState::OFF;
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1098,6 +1126,10 @@ void register_sound_builtins(VM& vm) {
     // the conversion.
 
     vm.register_native("SOUND.PLAYBUFFER", 1, 3, [](const std::vector<Value>& args) -> Value {
+#ifndef GFX
+        (void)args;
+        throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PLAYBUFFER requires a GFX build");
+#else
         ensure_sound("SOUND.PLAYBUFFER");
         if (!g_sound.pcm_stream)
             throw jdError(ErrCode::RUNTIME_ERROR, "SOUND.PLAYBUFFER: PCM stream not open");
@@ -1139,6 +1171,7 @@ void register_sound_builtins(VM& vm) {
                 buf.data(), (int)(buf.size() * sizeof(float)));
         }
         return Value::make_none();
+#endif
     });
 
     // ── SOUND.QUEUED() — bytes still pending in PCM stream ──────
@@ -1147,13 +1180,21 @@ void register_sound_builtins(VM& vm) {
     // overflowing or underrunning. Returns 0 if PCM stream is closed.
     vm.register_native("SOUND.QUEUED", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
+#ifdef GFX
         if (!g_sound.pcm_stream) return Value::make_i64(0);
         return Value::make_i64((int64_t)SDL_GetAudioStreamQueued(g_sound.pcm_stream));
+#else
+        return Value::make_i64(0);
+#endif
     });
 
     // ── SFX.LOAD id, filepath ───────────────────────────────────
 
     vm.register_native("SFX.LOAD", 2, 2, [](const std::vector<Value>& args) -> Value {
+#ifndef GFX
+        (void)args;
+        throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD requires a GFX build");
+#else
         int id = (int)args[0].to_int();
         std::string path = args[1].as_string()->data;
         SDL_AudioSpec spec;
@@ -1176,6 +1217,7 @@ void register_sound_builtins(VM& vm) {
 
         g_sound.samples[id] = std::move(chunk);
         return Value::make_none();
+#endif
     });
 
     // ── SFX.PLAY id ─────────────────────────────────────────────
@@ -1183,14 +1225,14 @@ void register_sound_builtins(VM& vm) {
     vm.register_native("SFX.PLAY", 1, 1, [](const std::vector<Value>& args) -> Value {
         int id = (int)args[0].to_int();
         if (g_sound.samples.find(id) == g_sound.samples.end()) return Value::make_none();
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        ensure_sound("SOUND"); SND_LOCK();
         for (auto& ch : g_sound.sfx_channels) {
             if (!ch.active) {
                 ch.sample_id = id; ch.position = 0; ch.active = true; ch.looping = false;
                 break;
             }
         }
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1200,7 +1242,7 @@ void register_sound_builtins(VM& vm) {
         int id = (int)args[0].to_int();
         bool loop = (args.size() >= 2) ? args[1].to_bool() : true;
         if (g_sound.samples.find(id) == g_sound.samples.end()) return Value::make_none();
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        ensure_sound("SOUND"); SND_LOCK();
         // Stop current music
         if (g_sound.music_channel >= 0)
             g_sound.sfx_channels[g_sound.music_channel].active = false;
@@ -1211,7 +1253,7 @@ void register_sound_builtins(VM& vm) {
                 break;
             }
         }
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1219,11 +1261,11 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("MUSIC.STOP", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        ensure_sound("SOUND"); SND_LOCK();
         if (g_sound.music_channel >= 0)
             g_sound.sfx_channels[g_sound.music_channel].active = false;
         g_sound.music_channel = -1;
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1236,7 +1278,7 @@ void register_sound_builtins(VM& vm) {
         std::string wf = args[2].as_string()->data;
         std::transform(wf.begin(), wf.end(), wf.begin(), ::toupper);
 
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        ensure_sound("SOUND"); SND_LOCK();
         auto& layer = g_sound.seq_layers[t];
         layer.events.clear();
         layer.use_voice = (wf == "VOICE");
@@ -1244,7 +1286,7 @@ void register_sound_builtins(VM& vm) {
             g_sound.tracks[t].waveform = parse_waveform(wf);
         }
         g_sound.parse_pattern(pattern, layer.events, 0.0f, 1.0f);
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
@@ -1255,9 +1297,9 @@ void register_sound_builtins(VM& vm) {
         std::string pattern = args[0].as_string()->data;
         bool loop = (args.size() >= 2) ? args[1].to_bool() : false;
         bool debug = (args.size() >= 3) ? args[2].to_bool() : false;
-        SDL_LockAudioStream(g_sound.stream);
+        SND_LOCK();
         g_sound.parse_note_pattern(pattern, 0, loop);
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         if (debug) {
             for (int t = 0; t < NUM_TRACKS; t++) {
                 auto& layer = g_sound.seq_layers[t];
@@ -1391,6 +1433,24 @@ void register_sound_builtins(VM& vm) {
         g_sound.distortion_amount = (float)args[0].to_double(); return Value::make_none();
     });
 
+    // ── SOUND.RENDER(frames) — pull interleaved stereo samples ──
+    //
+    // Renders the next `frames` stereo frames of the live sequencer and
+    // returns them as a flat array [L0, R0, L1, R1, ...]. For embed hosts
+    // that own the audio device (e.g. feeding a Godot AudioStreamGenerator).
+
+    vm.register_native("SOUND.RENDER", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int frames = (int)args[0].to_int();
+        Value r = Value::make_array();
+        if (frames <= 0 || !g_sound.initialized) return r;
+        std::vector<float> buf((size_t)frames * 2, 0.0f);
+        SoundSystem::render_frames(&g_sound, buf.data(), frames);
+        r.as_array()->elements.reserve(buf.size());
+        for (float f : buf)
+            r.as_array()->elements.push_back(Value::make_f64(f));
+        return r;
+    });
+
     // ── SOUND.GET_WAVE / SOUND.GET_BUS_WAVE ─────────────────────
 
     vm.register_native("SOUND.GET_WAVE", 0, 0, [](const std::vector<Value>& args) -> Value {
@@ -1415,7 +1475,9 @@ void register_sound_builtins(VM& vm) {
         (void)args;
         Value r = Value::make_object();
         r.as_object()->set("initialized", Value::make_bool(g_sound.initialized));
+#ifdef GFX
         r.as_object()->set("stream", Value::make_bool(g_sound.stream != nullptr));
+#endif
         // Count active voices
         int active = 0;
         for (auto& v : g_sound.voices)
@@ -1440,8 +1502,8 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("SOUND.RESET", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        if (!g_sound.stream) return Value::make_none();
-        ensure_sound("SOUND"); SDL_LockAudioStream(g_sound.stream);
+        if (!g_sound.initialized) return Value::make_none();
+        ensure_sound("SOUND"); SND_LOCK();
         for (auto& v : g_sound.voices) v.env.state = EnvState::OFF;
         for (auto& ch : g_sound.sfx_channels) ch.active = false;
         for (auto& l : g_sound.seq_layers) {
@@ -1456,7 +1518,7 @@ void register_sound_builtins(VM& vm) {
         g_sound.reverb.wet = 0;
         std::fill(g_sound.delay_buffer.begin(), g_sound.delay_buffer.end(), 0.0f);
         for (int t = 0; t < NUM_TRACKS; t++) g_sound.tracks[t] = TrackParams{};
-        SDL_UnlockAudioStream(g_sound.stream);
+        SND_UNLOCK();
         return Value::make_none();
     });
 
