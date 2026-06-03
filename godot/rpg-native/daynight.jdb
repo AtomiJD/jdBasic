@@ -1,0 +1,44 @@
+EXTENDS DirectionalLight3D
+
+' Sky + day/night cycle, pure jdBasic. Builds a procedural-sky
+' WorldEnvironment in code (so there's an actual sky, not a flat
+' background) and arcs the sun across it over `day_length` seconds.
+
+INSPECTOR DIM day_length = 90.0 AS RANGE(10.0, 600.0, 5.0)
+
+DIM self_h = 0
+DIM tod = 0.25   ' time of day, 0..1 (start mid-morning)
+
+SUB _ready()
+	self_h = GODOT.SELF()
+
+	' Procedural sky -> Environment -> WorldEnvironment (added to the world).
+	DIM skymat = GODOT.NEW("ProceduralSkyMaterial")
+	DIM sky = GODOT.NEW("Sky")
+	GODOT.SET(sky, "sky_material", GODOT.REF(skymat))
+
+	DIM env = GODOT.NEW("Environment")
+	GODOT.SET(env, "background_mode", GODOT.ENUM("Environment", "BG_SKY"))
+	GODOT.SET(env, "sky", GODOT.REF(sky))
+	GODOT.SET(env, "ambient_light_source", GODOT.ENUM("Environment", "AMBIENT_SOURCE_SKY"))
+
+	DIM we = GODOT.NEW("WorldEnvironment")
+	GODOT.SET(we, "environment", GODOT.REF(env))
+	' Defer: the parent is still building its children during _ready.
+	DIM parent = GODOT.CALL(self_h, "get_parent")
+	GODOT.CALL(parent, "call_deferred", "add_child", GODOT.REF(we))
+ENDSUB
+
+SUB _process(delta)
+	tod = tod + delta / day_length
+	IF tod > 1.0 THEN tod = tod - 1.0
+
+	' Arc the sun across the sky: a full -2*PI rotation about X over a day.
+	GODOT.SET(self_h, "rotation:x", -tod * 2.0 * PI)
+
+	' Dim and warm the light through dusk/dawn; near-dark at night.
+	DIM up = SIN(tod * 2.0 * PI)          ' >0 daytime, <0 night
+	DIM e = up
+	IF e < 0.05 THEN e = 0.05
+	GODOT.SET(self_h, "light_energy", e * 1.3)
+ENDSUB

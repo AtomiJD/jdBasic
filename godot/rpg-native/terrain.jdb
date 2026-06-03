@@ -8,7 +8,7 @@ EXTENDS StaticBody3D
 '   Mesh       child: MeshInstance3D - gets the ArrayMesh
 '   Collision  child: CollisionShape3D - gets the HeightMapShape3D
 
-INSPECTOR DIM grid_n    = 64    AS RANGE(8, 192, 1)
+INSPECTOR DIM grid_n    = 96    AS RANGE(8, 192, 1)
 INSPECTOR DIM cell_size = 1.0   AS RANGE(0.25, 2.0, 0.05)
 INSPECTOR DIM freq      = 14.0  AS RANGE(2.0, 40.0, 0.5)
 INSPECTOR DIM amp       = 2.0   AS RANGE(0.1, 8.0, 0.1)
@@ -38,19 +38,73 @@ SUB _ready()
 	DIM h3 = SIN(cx * 4.7 + seed * 2.1) * COS(cy * 4.1 + seed * 0.4) * 0.25
 	DIM hh = (h1 + h2 + h3) * amp
 
-	' Vertices (flat x,y,z) + per-vertex colour (flat r,g,b,a).
+	' Tile map -> per-vertex colour (paths / clearings / trees). Read the
+	' raw .txt via the real Godot API (FileAccess.get_file_as_string).
+	DIM map_src  = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_map.txt")
+	DIM map_rows = SPLIT(map_src, CHR$(10))
+	DIM map_rn   = LEN(map_rows)
+	DIM map_cols = LEN(map_rows[0])
+
+	' Vertices (flat x,y,z), per-vertex colour (r,g,b,a) and normals (x,y,z).
 	DIM verts = ZEROS(total * 3)
 	DIM cols  = ZEROS(total * 4)
+	DIM nrm   = ZEROS(total * 3)
 	FOR k = 0 TO total - 1
 		DIM y = hh[k]
 		verts[k * 3]     = (gx[k] - half) * cell_size
 		verts[k * 3 + 1] = y
 		verts[k * 3 + 2] = (gy[k] - half) * cell_size
+		' Grass base, shaded by height; overridden by the tile under it.
 		DIM t = (y / amp + 1.0) * 0.5
-		cols[k * 4]     = 0.26 + 0.24 * t
-		cols[k * 4 + 1] = 0.50 + 0.22 * t
-		cols[k * 4 + 2] = 0.28
+		DIM rr = 0.26 + 0.20 * t
+		DIM gg = 0.50 + 0.22 * t
+		DIM bb = 0.28
+		DIM my = INT(gy[k] * map_rn / n)
+		DIM mx = INT(gx[k] * map_cols / n)
+		IF my >= 0 ANDALSO my < map_rn THEN
+			DIM row = map_rows[my]
+			IF mx >= 0 ANDALSO mx < LEN(row) THEN
+				DIM ch = MID$(row, mx, 1)
+				IF ch = "#" THEN
+					rr = 0.50
+					gg = 0.40
+					bb = 0.28
+				ELSEIF ch = "o" THEN
+					rr = 0.56
+					gg = 0.62
+					bb = 0.40
+				ELSEIF ch = "T" THEN
+					rr = 0.16
+					gg = 0.34
+					bb = 0.20
+				ENDIF
+			ENDIF
+		ENDIF
+		cols[k * 4]     = rr
+		cols[k * 4 + 1] = gg
+		cols[k * 4 + 2] = bb
 		cols[k * 4 + 3] = 1.0
+
+		' Normal from the height gradient (clamped neighbours) - needed for
+		' lighting AND so Godot culls the underside (no normals = double-sided).
+		' Derive grid coords from k (0-based) to index hh safely.
+		DIM gyk = INT(k / n)
+		DIM gxk = k - gyk * n
+		DIM xl = gxk - 1
+		IF xl < 0 THEN xl = 0
+		DIM xr = gxk + 1
+		IF xr > n - 1 THEN xr = n - 1
+		DIM zd = gyk - 1
+		IF zd < 0 THEN zd = 0
+		DIM zu = gyk + 1
+		IF zu > n - 1 THEN zu = n - 1
+		DIM nx = hh[gyk * n + xl] - hh[gyk * n + xr]
+		DIM nz = hh[zd * n + gxk] - hh[zu * n + gxk]
+		DIM ny = 2.0 * cell_size
+		DIM nl = SQR(nx * nx + ny * ny + nz * nz)
+		nrm[k * 3]     = nx / nl
+		nrm[k * 3 + 1] = ny / nl
+		nrm[k * 3 + 2] = nz / nl
 	NEXT
 
 	' Two triangles per grid quad.
@@ -79,6 +133,7 @@ SUB _ready()
 		sa = APPEND(sa, NULL)
 	NEXT
 	sa[0]  = GODOT.PACKED_VEC3(verts)
+	sa[1]  = GODOT.PACKED_VEC3(nrm)
 	sa[3]  = GODOT.PACKED_COLOR(cols)
 	sa[12] = GODOT.PACKED_INT32(inds)
 

@@ -1,0 +1,105 @@
+EXTENDS Node3D
+
+' World scatter, pure jdBasic. Reads the tile map and populates the terrain
+' with trees (T: dense, .: sparse) and bushes (o / . occasionally). Each
+' plant is a StaticBody3D + CylinderShape3D so the player and NPC can't walk
+' through trunks. Plants are grounded on the procedural terrain and kept
+' clear of the player / NPC / chest spawns.
+
+INSPECTOR DIM density      = 0.3  AS RANGE(0.0, 1.0, 0.05)
+INSPECTOR DIM trunk_radius = 0.45 AS RANGE(0.1, 1.5, 0.05)
+INSPECTOR DIM trunk_height = 3.0  AS RANGE(0.5, 6.0, 0.1)
+
+DIM self_h = 0
+
+DIM tree_paths AS ARRAY = ["res://assets/nature/Tree_1_A_Color1.gltf", "res://assets/nature/Tree_2_A_Color1.gltf", "res://assets/nature/Tree_2_C_Color1.gltf", "res://assets/nature/Tree_3_A_Color1.gltf"]
+DIM bush_paths AS ARRAY = ["res://assets/nature/Bush_1_A_Color1.gltf", "res://assets/nature/Bush_2_A_Color1.gltf", "res://assets/nature/Bush_3_A_Color1.gltf"]
+
+' Keep-clear spots: player (0,0), NPC (-4,-2), chest (5,3).
+DIM avoid_x AS ARRAY = [0.0, -4.0, 5.0]
+DIM avoid_z AS ARRAY = [0.0, -2.0, 3.0]
+
+' Matches terrain.jdb defaults (n=64, cell=1, freq=14, amp=2, seed=7).
+FUNC terrain_height(wx, wz)
+	DIM cx = wx / 14.0
+	DIM cy = wz / 14.0
+	DIM a1 = SIN(cx + 0.70) * COS(cy + 0.91)
+	DIM a2 = SIN(cx * 2.1 + 4.90) * COS(cy * 2.3 + 13.30) * 0.5
+	DIM a3 = SIN(cx * 4.7 + 14.70) * COS(cy * 4.1 + 2.80) * 0.25
+	RETURN (a1 + a2 + a3) * 2.0
+ENDFUNC
+
+FUNC too_close(wx, wz)
+	FOR i = 0 TO LEN(avoid_x) - 1
+		DIM dx = avoid_x[i] - wx
+		DIM dz = avoid_z[i] - wz
+		IF dx * dx + dz * dz < 6.25 THEN RETURN TRUE
+	NEXT
+	RETURN FALSE
+ENDFUNC
+
+SUB place_plant(path, wx, wz, rad, hgt, sc)
+	DIM body  = GODOT.NEW("StaticBody3D")
+	DIM shape = GODOT.NEW("CollisionShape3D")
+	DIM cyl   = GODOT.NEW("CylinderShape3D")
+	GODOT.SET(cyl, "radius", rad * sc)
+	GODOT.SET(cyl, "height", hgt * sc)
+	GODOT.SET(shape, "shape", GODOT.REF(cyl))
+	GODOT.SET(shape, "position", GODOT.VEC3(0.0, hgt * sc * 0.5, 0.0))
+	GODOT.ADD_CHILD(body, shape)
+	DIM inst = GODOT.INSTANTIATE(path)
+	GODOT.SET(inst, "scale", GODOT.VEC3(sc, sc, sc))
+	GODOT.ADD_CHILD(body, inst)
+	GODOT.ADD_CHILD(self_h, body)
+	GODOT.SET(body, "global_position", GODOT.VEC3(wx, terrain_height(wx, wz), wz))
+	GODOT.SET(body, "rotation:y", RND(1) * 2.0 * PI)
+ENDSUB
+
+SUB place_trees(cx, cz, cell, count)
+	FOR i = 1 TO count
+		DIM tx = cx + (RND(1) - 0.5) * cell * 0.8
+		DIM tz = cz + (RND(1) - 0.5) * cell * 0.8
+		IF NOT too_close(tx, tz) THEN
+			DIM p = tree_paths[INT(RND(1) * LEN(tree_paths))]
+			place_plant(p, tx, tz, trunk_radius, trunk_height, 0.85 + RND(1) * 0.4)
+		ENDIF
+	NEXT
+ENDSUB
+
+SUB place_bush(cx, cz, cell)
+	DIM bx = cx + (RND(1) - 0.5) * cell * 0.7
+	DIM bz = cz + (RND(1) - 0.5) * cell * 0.7
+	IF NOT too_close(bx, bz) THEN
+		DIM p = bush_paths[INT(RND(1) * LEN(bush_paths))]
+		place_plant(p, bx, bz, 0.35, 0.7, 0.9 + RND(1) * 0.3)
+	ENDIF
+ENDSUB
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_map.txt")
+	DIM rows = SPLIT(src, CHR$(10))
+	DIM rn = LEN(rows)
+	DIM world_size = 96.0
+	DIM placed = 0
+	FOR r = 0 TO rn - 1
+		DIM row = rows[r]
+		DIM rw = LEN(row)
+		DIM cell = world_size / rn
+		FOR c = 0 TO rw - 1
+			DIM ch = MID$(row, c, 1)
+			DIM wx = (c + 0.5) * cell - world_size * 0.5
+			DIM wz = (r + 0.5) * cell - world_size * 0.5
+			IF ch = "T" THEN
+				place_trees(wx, wz, cell, INT((3 + RND(1) * 3) * density))
+				placed = placed + 1
+			ELSEIF ch = "." THEN
+				place_trees(wx, wz, cell, INT(RND(1) * 3 * density))
+				IF RND(1) < 0.15 * density THEN place_bush(wx, wz, cell)
+			ELSEIF ch = "o" THEN
+				IF RND(1) < 0.4 * density THEN place_bush(wx, wz, cell)
+			ENDIF
+		NEXT
+	NEXT
+	PRINT "scatter: tile rows=" + STR$(rn) + " tree-clusters=" + STR$(placed)
+ENDSUB

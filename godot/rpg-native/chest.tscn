@@ -1,0 +1,30 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://chest.jdb" id="1_chest"]
+
+[sub_resource type="BoxShape3D" id="Box_chest"]
+size = Vector3(0.9, 0.7, 0.7)
+
+[sub_resource type="BoxShape3D" id="Box_zone"]
+size = Vector3(3.0, 2.5, 3.0)
+
+[node name="Chest" type="StaticBody3D"]
+script = ExtResource("1_chest")
+
+[node name="Body" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+shape = SubResource("Box_chest")
+
+[node name="Zone" type="Area3D" parent="."]
+
+[node name="ZoneCol" type="CollisionShape3D" parent="Zone"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("Box_zone")
+
+[node name="Prompt" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+visible = false
+billboard = 1
+pixel_size = 0.006
+modulate = Color(1, 0.95, 0.5, 1)
+text = "[E] Open"

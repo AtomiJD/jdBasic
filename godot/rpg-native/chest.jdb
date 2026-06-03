@@ -1,0 +1,85 @@
+EXTENDS StaticBody3D
+
+' Interactive chest, pure jdBasic. An Area3D "Zone" detects the player via
+' body_entered/body_exited (GODOT.CONNECT with an Object arg in 3D); pressing
+' "use" (E) inside the zone tweens the KayKit lid open. Grounds itself on the
+' procedural terrain by re-evaluating the same height formula.
+
+INSPECTOR DIM model         = "chest"
+INSPECTOR DIM label         = "Chest"
+INSPECTOR DIM open_angle    = -1.6  AS RANGE(-3.14, 0.0, 0.05)
+INSPECTOR DIM open_duration = 0.45  AS RANGE(0.1, 2.0, 0.05)
+
+DIM self_h   = 0
+DIM zone_h   = 0
+DIM lid_h    = 0
+DIM prompt_h = 0
+DIM opened   = FALSE
+DIM in_range = FALSE
+
+' Matches terrain.jdb's defaults (n=64, cell=1, freq=14, amp=2, seed=7).
+FUNC terrain_height(wx, wz)
+	DIM half = 32.0
+	DIM cx = wx / 14.0
+	DIM cy = wz / 14.0
+	DIM a1 = SIN(cx + 0.70) * COS(cy + 0.91)
+	DIM a2 = SIN(cx * 2.1 + 4.90) * COS(cy * 2.3 + 13.30) * 0.5
+	DIM a3 = SIN(cx * 4.7 + 14.70) * COS(cy * 4.1 + 2.80) * 0.25
+	RETURN (a1 + a2 + a3) * 2.0
+ENDFUNC
+
+FUNC find_lid(node)
+	DIM nm = LCASE$(GODOT.GET(node, "name"))
+	IF INSTR(nm, "lid") >= 0 THEN RETURN node
+	DIM kids = GODOT.CALL(node, "get_children")
+	FOR i = 0 TO LEN(kids) - 1
+		DIM r = find_lid(kids[i])
+		IF r <> 0 THEN RETURN r
+	NEXT
+	RETURN 0
+ENDFUNC
+
+SUB on_enter(body)
+	in_range = TRUE
+	IF NOT opened ANDALSO prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", TRUE)
+ENDSUB
+
+SUB on_exit(body)
+	in_range = FALSE
+	IF prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", FALSE)
+ENDSUB
+
+SUB open_chest()
+	opened = TRUE
+	IF prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", FALSE)
+	IF lid_h <> 0 THEN
+		DIM tw = GODOT.CALL(self_h, "create_tween")
+		DIM p = GODOT.CALL(tw, "tween_property", GODOT.REF(lid_h), "rotation:x", open_angle, open_duration)
+		GODOT.CALL(p, "set_trans", GODOT.ENUM("Tween", "TRANS_BACK"))
+		GODOT.CALL(p, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+	ENDIF
+	PRINT "opened: " + label
+ENDSUB
+
+SUB _ready()
+	self_h   = GODOT.SELF()
+	zone_h   = GODOT.CALL(self_h, "get_node", "Zone")
+	prompt_h = GODOT.CALL(self_h, "get_node", "Prompt")
+
+	DIM model_node = GODOT.INSTANTIATE("res://assets/dungeon/" + model + ".gltf")
+	GODOT.ADD_CHILD(self_h, model_node)
+	lid_h = find_lid(model_node)
+
+	GODOT.CONNECT(zone_h, "body_entered", "on_enter")
+	GODOT.CONNECT(zone_h, "body_exited",  "on_exit")
+
+	' Drop onto the terrain surface.
+	DIM pos = GODOT.GET(self_h, "position")
+	GODOT.SET(self_h, "position:y", terrain_height(pos[0], pos[2]))
+ENDSUB
+
+SUB _process(delta)
+	IF in_range ANDALSO NOT opened ANDALSO GODOT.INPUT.IS_ACTION_JUST_PRESSED("use") THEN
+		open_chest()
+	ENDIF
+ENDSUB

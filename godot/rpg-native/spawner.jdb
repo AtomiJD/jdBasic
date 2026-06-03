@@ -1,0 +1,48 @@
+EXTENDS Node3D
+
+' Data-driven world populator, pure jdBasic. Reads npcs.json + chests.json
+' (via the real FileAccess API + JSON.PARSE$), instantiates the npc.tscn /
+' chest.tscn templates and sets each instance's properties before adding it
+' to the tree (so the script's _ready sees the right values). The LLM dialog
+' layer plugs onto these later; for now NPCs wander and chests open.
+
+DIM self_h = 0
+
+SUB spawn_npcs()
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/npcs.json")
+	DIM arr = JSON.PARSE$(src)
+	DIM cnt = LEN(arr)
+	FOR i = 0 TO cnt - 1
+		DIM e = arr[i]
+		DIM npc = GODOT.INSTANTIATE("res://npc.tscn")
+		GODOT.SET(npc, "character_type", e{"character"})
+		GODOT.SET(npc, "display_name", e{"name"})
+		' TEST: cluster the NPCs in a ring around the crossroads (origin)
+		' so they're all in view. Swap back to e{"spawn"} for the real map.
+		DIM ang = i * 2.0 * PI / cnt
+		GODOT.SET(npc, "position", GODOT.VEC3(COS(ang) * 7.0, 6.0, SIN(ang) * 7.0))
+		GODOT.ADD_CHILD(self_h, npc)
+	NEXT
+	PRINT "spawned " + STR$(cnt) + " npcs"
+ENDSUB
+
+SUB spawn_chests()
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/chests.json")
+	DIM arr = JSON.PARSE$(src)
+	FOR i = 0 TO LEN(arr) - 1
+		DIM e = arr[i]
+		DIM ch = GODOT.INSTANTIATE("res://chest.tscn")
+		GODOT.SET(ch, "model", e{"model"})
+		GODOT.SET(ch, "label", e{"label"})
+		DIM p = e{"pos"}
+		GODOT.SET(ch, "position", GODOT.VEC3(p[0], 0.0, p[2]))
+		GODOT.ADD_CHILD(self_h, ch)
+	NEXT
+	PRINT "spawned " + STR$(LEN(arr)) + " chests"
+ENDSUB
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	spawn_npcs()
+	spawn_chests()
+ENDSUB

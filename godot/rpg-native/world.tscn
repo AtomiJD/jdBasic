@@ -1,29 +1,34 @@
 [gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://player.jdb" id="1_player"]
-[ext_resource type="Script" path="res://crystal.jdb" id="2_crystal"]
-[ext_resource type="Script" path="res://npc.jdb" id="3_npc"]
-[ext_resource type="Script" path="res://terrain.jdb" id="4_terrain"]
+[ext_resource type="Script" path="res://terrain.jdb" id="2_terrain"]
+[ext_resource type="Script" path="res://scatter.jdb" id="3_scatter"]
+[ext_resource type="Script" path="res://spawner.jdb" id="4_spawner"]
+[ext_resource type="Script" path="res://daynight.jdb" id="5_daynight"]
 
 [sub_resource type="CapsuleShape3D" id="Cap_col"]
 radius = 0.4
 height = 2.0
-
-[sub_resource type="BoxMesh" id="Box_crystal"]
-size = Vector3(0.6, 0.6, 0.6)
 
 [node name="World" type="Node3D"]
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 0.7, 0.7, 0, -0.7, 0.7, 0, 8, 0)
 shadow_enabled = true
+script = ExtResource("5_daynight")
 
 [node name="Terrain" type="StaticBody3D" parent="."]
-script = ExtResource("4_terrain")
+script = ExtResource("2_terrain")
 
 [node name="Mesh" type="MeshInstance3D" parent="Terrain"]
 
 [node name="Collision" type="CollisionShape3D" parent="Terrain"]
+
+[node name="Scatter" type="Node3D" parent="."]
+script = ExtResource("3_scatter")
+
+[node name="Spawner" type="Node3D" parent="."]
+script = ExtResource("4_spawner")
 
 [node name="Player" type="CharacterBody3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6, 0)
@@ -44,24 +49,3 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 spring_length = 5.0
 
 [node name="Camera3D" type="Camera3D" parent="Player/YawPivot/PitchPivot/SpringArm3D"]
-
-[node name="NPC" type="CharacterBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 6, -2)
-script = ExtResource("3_npc")
-
-[node name="Col" type="CollisionShape3D" parent="NPC"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-shape = SubResource("Cap_col")
-
-[node name="Visual" type="Node3D" parent="NPC"]
-
-[node name="NameLabel" type="Label3D" parent="NPC"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
-billboard = 1
-pixel_size = 0.008
-text = "NPC"
-
-[node name="Crystal" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 3, -3)
-mesh = SubResource("Box_crystal")
-script = ExtResource("2_crystal")
