@@ -1,0 +1,203 @@
+EXTENDS Node3D
+
+' Runtime music: a step sequencer synthesised in jdBasic. Each frame fills a
+' Godot AudioStreamGenerator with melody + bass samples, routed to a "Music"
+' bus carrying a reverb effect. The active theme follows the game state -
+' dungeon interior, dialogue (tree paused), or open-world exploration.
+
+DIM self_h   = 0
+DIM player_h = 0
+DIM dialog_h = 0
+DIM mplayer  = 0
+DIM started  = FALSE
+DIM playback = 0
+DIM rate     = 22050.0
+
+DIM phase_inc = 0.0
+DIM m_phase = 0.0
+DIM b_phase = 0.0
+DIM song_pos = 0.0
+
+DIM m_len = 8
+DIM b_len = 4
+DIM m_sps = 0.0
+DIM b_sps = 0.0
+DIM loop_samples = 0.0
+
+' Active theme parameters.
+DIM cur_theme = ""
+DIM bpm    = 100.0
+DIM m_wave = 0          ' 0 = sine, 1 = saw
+DIM b_wave = 0
+DIM m_gain = 0.25
+DIM b_gain = 0.30
+DIM m_freqs AS ARRAY = [0.0]
+DIM b_freqs AS ARRAY = [0.0]
+
+DIM themes AS MAP = {}
+
+' Dungeon footprint (world rect), read from dungeons.json.
+DIM dun_x0 = 1.0
+DIM dun_x1 = -1.0
+DIM dun_z0 = 1.0
+DIM dun_z1 = -1.0
+
+FUNC wave_id(name)
+	IF name = "saw" THEN RETURN 1
+	RETURN 0
+ENDFUNC
+
+SUB load_themes()
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/music.json")
+	DIM data = JSON.PARSE$(src)
+	themes = data{"themes"}
+ENDSUB
+
+SUB set_theme(name)
+	IF name = cur_theme THEN RETURN
+	IF NOT MAP.EXISTS(themes, name) THEN RETURN
+	cur_theme = name
+	DIM t = themes{name}
+	bpm    = t{"bpm"}
+	m_wave = wave_id(t{"melody_wave"})
+	b_wave = wave_id(t{"bass_wave"})
+	m_gain = t{"melody_gain"}
+	b_gain = t{"bass_gain"}
+	m_freqs = t{"melody"}
+	b_freqs = t{"bass"}
+	m_len = LEN(m_freqs)
+	b_len = LEN(b_freqs)
+	m_sps = INT(rate * 60.0 / bpm / 2.0)
+	b_sps = m_sps * 2.0
+	loop_samples = m_sps * m_len
+	song_pos = 0.0
+ENDSUB
+
+SUB load_dungeon_rect()
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM all = JSON.PARSE$(src)
+	IF LEN(all) = 0 THEN RETURN
+	DIM spec = all[0]
+	DIM org = spec{"origin"}
+	DIM rooms = spec{"rooms"}
+	DIM gw = 0
+	DIM gh = 0
+	FOR i = 0 TO LEN(rooms) - 1
+		DIM rm = rooms[i]
+		DIM re = INT(rm{"col"}) + INT(rm{"w"})
+		DIM be = INT(rm{"row"}) + INT(rm{"h"})
+		IF re > gw THEN gw = re
+		IF be > gh THEN gh = be
+	NEXT
+	dun_x0 = org[0]
+	dun_x1 = org[0] + (gw + 1) * 4.0
+	dun_z0 = org[2]
+	dun_z1 = org[2] + (gh + 1) * 4.0
+ENDSUB
+
+SUB setup_bus()
+	DIM asrv = GODOT.SINGLETON("AudioServer")
+	IF GODOT.CALL(asrv, "get_bus_index", "Music") < 0 THEN
+		GODOT.CALL(asrv, "add_bus", -1)
+		DIM idx = GODOT.CALL(asrv, "get_bus_count") - 1
+		GODOT.CALL(asrv, "set_bus_name", idx, "Music")
+		DIM rev = GODOT.NEW("AudioEffectReverb")
+		GODOT.SET(rev, "room_size", 0.6)
+		GODOT.SET(rev, "wet", 0.25)
+		GODOT.CALL(asrv, "add_bus_effect", idx, GODOT.REF(rev))
+	ENDIF
+ENDSUB
+
+FUNC want_theme()
+	DIM tree = GODOT.CALL(self_h, "get_tree")
+	IF GODOT.CALL(tree, "is_paused") THEN RETURN "dialog"
+	IF player_h <> 0 ANDALSO dun_x1 > dun_x0 THEN
+		DIM pp = GODOT.GET(player_h, "global_position")
+		IF pp[0] > dun_x0 ANDALSO pp[0] < dun_x1 ANDALSO pp[2] > dun_z0 ANDALSO pp[2] < dun_z1 THEN RETURN "dungeon"
+	ENDIF
+	RETURN "explore"
+ENDFUNC
+
+SUB _ready()
+	self_h = GODOT.SELF()
+	GODOT.SET(self_h, "process_mode", 3)
+	player_h = GODOT.CALL(self_h, "get_node", "../Player")
+	dialog_h = GODOT.CALL(self_h, "get_node", "../DialogManager")
+	phase_inc = 2.0 * PI / rate
+	load_themes()
+	load_dungeon_rect()
+	setup_bus()
+	set_theme("explore")
+
+	DIM gen = GODOT.NEW("AudioStreamGenerator")
+	GODOT.SET(gen, "mix_rate", rate)
+	GODOT.SET(gen, "buffer_length", 0.3)
+	mplayer = GODOT.NEW("AudioStreamPlayer")
+	GODOT.SET(mplayer, "stream", GODOT.REF(gen))
+	GODOT.SET(mplayer, "bus", "Music")
+	GODOT.ADD_CHILD(self_h, mplayer)
+ENDSUB
+
+SUB _process(delta)
+	' Hold playback until the dialogue model has finished its blocking load,
+	' otherwise the load stalls the audio thread and the music stutters.
+	IF NOT started THEN
+		IF dialog_h = 0 THEN RETURN
+		IF NOT GODOT.CALL(dialog_h, "get_meta", "llm_ready", FALSE) THEN RETURN
+		GODOT.CALL(mplayer, "play")
+		playback = GODOT.CALL(mplayer, "get_stream_playback")
+		started = TRUE
+		PRINT "music: playback=" + STR$(playback)
+	ENDIF
+	IF playback = 0 THEN RETURN
+	set_theme(want_theme())
+
+	DIM avail = GODOT.CALL(playback, "get_frames_available")
+	IF avail <= 0 THEN RETURN
+	DIM flat = ZEROS(avail * 2)
+	DIM tau = 2.0 * PI
+	FOR i = 0 TO avail - 1
+		DIM sp = song_pos + i
+
+		DIM mstep = INT(sp / m_sps)
+		DIM mfrac = (sp - mstep * m_sps) / m_sps
+		mstep = mstep - INT(mstep / m_len) * m_len
+		DIM mf = m_freqs[mstep]
+		DIM ms = 0.0
+		IF mf > 0.0 THEN
+			m_phase = m_phase + mf * phase_inc
+			IF m_phase > tau THEN m_phase = m_phase - tau
+			DIM mosc = SIN(m_phase)
+			IF m_wave = 1 THEN mosc = m_phase / PI - 1.0
+			DIM menv = (1.0 - mfrac) * (1.0 - mfrac)
+			IF mfrac < 0.02 THEN menv = menv * (mfrac / 0.02)
+			ms = mosc * menv * m_gain
+		ENDIF
+
+		DIM bstep = INT(sp / b_sps)
+		DIM bfrac = (sp - bstep * b_sps) / b_sps
+		bstep = bstep - INT(bstep / b_len) * b_len
+		DIM bf = b_freqs[bstep]
+		DIM bs = 0.0
+		IF bf > 0.0 THEN
+			b_phase = b_phase + bf * phase_inc
+			IF b_phase > tau THEN b_phase = b_phase - tau
+			DIM bosc = SIN(b_phase)
+			IF b_wave = 1 THEN bosc = b_phase / PI - 1.0
+			DIM benv = 1.0
+			IF bfrac < 0.02 THEN
+				benv = bfrac / 0.02
+			ELSEIF bfrac > 0.9 THEN
+				benv = (1.0 - bfrac) / 0.1
+			ENDIF
+			bs = bosc * benv * b_gain
+		ENDIF
+
+		DIM mix = ms + bs
+		flat[i * 2]     = mix
+		flat[i * 2 + 1] = mix
+	NEXT
+	song_pos = song_pos + avail
+	IF song_pos >= loop_samples THEN song_pos = song_pos - loop_samples
+	GODOT.CALL(playback, "push_buffer", GODOT.PACKED_VEC2(flat))
+ENDSUB

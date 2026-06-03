@@ -2244,6 +2244,8 @@ SUB _process(delta)
 		dialog_init_with(g_model_path, 99)
 		IF g_llm <> 0 THEN g_ready = TRUE
 		GODOT.CALL(splash_layer, "queue_free")
+		' Signal the music manager that the (blocking) model load is done.
+		GODOT.CALL(self_h, "set_meta", "llm_ready", TRUE)
 		RETURN
 	ENDIF
 	IF NOT g_ready THEN RETURN

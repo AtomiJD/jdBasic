@@ -300,8 +300,9 @@ Variant godot::jdb_value_to_variant(GodotBridge* bridge, int64_t h) {
                 Object* o = bridge->lookup((int64_t)field("h"));
                 return o ? Variant(o) : Variant();
             }
-            if (gd == "PackedVector3Array" || gd == "PackedInt32Array" ||
-                gd == "PackedColorArray"   || gd == "PackedFloat32Array") {
+            if (gd == "PackedVector3Array" || gd == "PackedVector2Array" ||
+                gd == "PackedInt32Array"   || gd == "PackedColorArray"  ||
+                gd == "PackedFloat32Array") {
                 int64_t dh = jdb_embed_map_get(vm, h, "data");
                 int dn = dh ? jdb_embed_array_len(vm, dh) : 0;
                 auto dval = [&](int i) -> double {
@@ -314,6 +315,10 @@ Variant godot::jdb_value_to_variant(GodotBridge* bridge, int64_t h) {
                 if (gd == "PackedVector3Array") {
                     PackedVector3Array p;
                     for (int i = 0; i + 2 < dn; i += 3) p.push_back(Vector3((float)dval(i), (float)dval(i+1), (float)dval(i+2)));
+                    out = p;
+                } else if (gd == "PackedVector2Array") {
+                    PackedVector2Array p;
+                    for (int i = 0; i + 1 < dn; i += 2) p.push_back(Vector2((float)dval(i), (float)dval(i+1)));
                     out = p;
                 } else if (gd == "PackedColorArray") {
                     PackedColorArray p;
@@ -946,6 +951,10 @@ static int64_t make_packed_tag(JdbEmbed* vm, const char* tag, int64_t arr_handle
     jdb_embed_value_release(vm, vals[0]);   // arr_handle is the caller's; not ours to release
     return m;
 }
+static int64_t native_packed_vec2(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
+    if (argc < 1) return jdb_embed_make_nil(vm);
+    return make_packed_tag(vm, "PackedVector2Array", args[0]);
+}
 static int64_t native_packed_vec3(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     if (argc < 1) return jdb_embed_make_nil(vm);
     return make_packed_tag(vm, "PackedVector3Array", args[0]);
@@ -1463,6 +1472,7 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GODOT.RECT2",  4, 4,  &native_rect2, this);
     jdb_embed_register_native(m_vm, "GODOT.VEC2I",  2, 2,  &native_vec2i, this);
     jdb_embed_register_native(m_vm, "GODOT.REF",    1, 1,  &native_ref,   this);
+    jdb_embed_register_native(m_vm, "GODOT.PACKED_VEC2",    1, 1, &native_packed_vec2,    this);
     jdb_embed_register_native(m_vm, "GODOT.PACKED_VEC3",    1, 1, &native_packed_vec3,    this);
     jdb_embed_register_native(m_vm, "GODOT.PACKED_INT32",   1, 1, &native_packed_int32,   this);
     jdb_embed_register_native(m_vm, "GODOT.PACKED_COLOR",   1, 1, &native_packed_color,   this);

@@ -1,0 +1,31 @@
+{
+  "themes": {
+    "explore": {
+      "bpm": 100,
+      "melody_wave": "sine",
+      "bass_wave": "sine",
+      "melody_gain": 0.25,
+      "bass_gain": 0.30,
+      "melody": [440.0, 523.25, 659.25, 523.25, 587.33, 523.25, 440.0, 0.0],
+      "bass": [110.0, 110.0, 87.31, 98.0]
+    },
+    "dungeon": {
+      "bpm": 76,
+      "melody_wave": "sine",
+      "bass_wave": "saw",
+      "melody_gain": 0.22,
+      "bass_gain": 0.12,
+      "melody": [0.0, 220.0, 0.0, 261.63, 233.08, 0.0, 220.0, 0.0],
+      "bass": [55.0, 55.0, 49.0, 55.0]
+    },
+    "dialog": {
+      "bpm": 88,
+      "melody_wave": "sine",
+      "bass_wave": "sine",
+      "melody_gain": 0.14,
+      "bass_gain": 0.16,
+      "melody": [330.0, 0.0, 392.0, 0.0, 330.0, 0.0, 294.0, 0.0],
+      "bass": [82.41, 0.0, 98.0, 0.0]
+    }
+  }
+}

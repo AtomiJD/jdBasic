@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://daynight.jdb" id="5_daynight"]
 [ext_resource type="Script" path="res://dungeon.jdb" id="6_dungeon"]
 [ext_resource type="Script" path="res://dialog.jdb" id="7_dialog"]
+[ext_resource type="Script" path="res://music.jdb" id="8_music"]
 
 [sub_resource type="CapsuleShape3D" id="Cap_col"]
 radius = 0.4
@@ -37,6 +38,9 @@ script = ExtResource("6_dungeon")
 
 [node name="DialogManager" type="Node3D" parent="."]
 script = ExtResource("7_dialog")
+
+[node name="MusicManager" type="Node3D" parent="."]
+script = ExtResource("8_music")
 
 [node name="Player" type="CharacterBody3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6, 0)
