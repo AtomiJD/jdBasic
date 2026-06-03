@@ -27,6 +27,68 @@ SUB load_themes()
 	themes = data{"themes"}
 ENDSUB
 
+' Apply every optional per-track design field present in the theme, keyed
+' "<prefix>_<field>". Arrays carry the multi-arg commands (e.g. fm:[amount,
+' ratio], unison:[voices,detune,spread]).
+SUB apply_fx(track, t, prefix)
+	DIM a AS ARRAY = []
+	IF MAP.EXISTS(t, prefix + "_filter") THEN SOUND.FILTER track, t{prefix + "_filter"}
+	IF MAP.EXISTS(t, prefix + "_gain") THEN SOUND.GAIN track, t{prefix + "_gain"}
+	IF MAP.EXISTS(t, prefix + "_pan") THEN SOUND.PAN track, t{prefix + "_pan"}
+	IF MAP.EXISTS(t, prefix + "_reverb_send") THEN SOUND.REVERBSEND track, t{prefix + "_reverb_send"}
+	IF MAP.EXISTS(t, prefix + "_delay_send") THEN SOUND.DELAYSEND track, t{prefix + "_delay_send"}
+	IF MAP.EXISTS(t, prefix + "_lfo") THEN
+		a = t{prefix + "_lfo"}
+		SOUND.LFO track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_fm") THEN
+		a = t{prefix + "_fm"}
+		SOUND.FM track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_unison") THEN
+		a = t{prefix + "_unison"}
+		SOUND.UNISON track, a[0], a[1], a[2]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_eq") THEN
+		a = t{prefix + "_eq"}
+		SOUND.EQ track, a[0], a[1], a[2]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_bitcrush") THEN
+		a = t{prefix + "_bitcrush"}
+		SOUND.BITCRUSH track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_ringmod") THEN
+		a = t{prefix + "_ringmod"}
+		SOUND.RINGMOD track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_scale") THEN
+		a = t{prefix + "_scale"}
+		SOUND.SCALE track, a[0], a[1]
+	ENDIF
+ENDSUB
+
+' Apply optional master-bus effects present in the theme.
+SUB apply_master(t)
+	DIM a AS ARRAY = []
+	IF MAP.EXISTS(t, "reverb") THEN
+		a = t{"reverb"}
+		SOUND.REVERB a[0], a[1], a[2], a[3]
+	ENDIF
+	IF MAP.EXISTS(t, "delay") THEN
+		a = t{"delay"}
+		SOUND.DELAY a[0], a[1], a[2], a[3]
+	ENDIF
+	IF MAP.EXISTS(t, "compressor") THEN
+		a = t{"compressor"}
+		SOUND.COMPRESSOR a[0], a[1], a[2], a[3], a[4]
+	ENDIF
+	IF MAP.EXISTS(t, "distortion") THEN SOUND.DISTORTION t{"distortion"}
+	IF MAP.EXISTS(t, "sidechain") THEN
+		a = t{"sidechain"}
+		SOUND.SIDECHAIN a[0], a[1], a[2]
+	ENDIF
+ENDSUB
+
 SUB set_theme(name)
 	IF name = cur_theme THEN RETURN
 	IF NOT MAP.EXISTS(themes, name) THEN RETURN
@@ -39,17 +101,13 @@ SUB set_theme(name)
 
 	DIM mv = t{"melody_voice"}
 	SOUND.VOICE 0, mv[0], mv[1], mv[2], mv[3], mv[4]
-	SOUND.FILTER 0, t{"melody_filter"}
-	SOUND.GAIN 0, t{"melody_gain"}
+	apply_fx(0, t, "melody")
 
 	DIM bv = t{"bass_voice"}
 	SOUND.VOICE 1, bv[0], bv[1], bv[2], bv[3], bv[4]
-	SOUND.FILTER 1, t{"bass_filter"}
-	SOUND.GAIN 1, t{"bass_gain"}
+	apply_fx(1, t, "bass")
 
-	DIM rv = t{"reverb"}
-	SOUND.REVERB rv[0], rv[1], rv[2], rv[3]
-	SOUND.REVERBSEND 0, t{"reverb_send"}
+	apply_master(t)
 
 	DIM melody = t{"melody"}
 	DIM bass = t{"bass"}

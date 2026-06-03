@@ -1546,6 +1546,10 @@ Description: Immediately stops a note on a synthesizer track.
 Syntax: SOUND.PLAYBUFFER samples, [sample_rate], [channels]
 Description: Pushes raw float samples (-1..1) onto a PCM stream that mixes alongside the synth. Use for hand-drawn waveforms or emulator audio. Defaults: sample_rate=44100, channels=1.
 
+[SOUND.RENDER]
+Syntax: SOUND.RENDER(frames)
+Description: Renders the next 'frames' stereo frames of the live sequencer and returns them interleaved as [L0, R0, L1, R1, ...] (length frames*2), advancing the sequencer at 44100 Hz. For embed hosts built without an audio device (SOUND build flag) that feed their own engine, e.g. a Godot AudioStreamGenerator.
+
 [SOUND.QUEUED]
 Syntax: SOUND.QUEUED()
 Description: Returns the number of bytes still waiting in the PLAYBUFFER queue. Useful for pacing pushes to avoid underrun/overflow.

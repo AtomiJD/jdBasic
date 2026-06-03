@@ -60,6 +60,17 @@ These commands allow you to design the unique "Voice" of each track.
 * **`SOUND.DELAYSEND track, amount`**: Sets the signal level sent to the global Delay (0.0–1.0).
 * **`SOUND.SIDECHAIN target, source, amount`**: Ducks the volume of the `target` when the `source` plays.
 
+### Per-Track Modulation
+
+These shape the timbre of a track's voice and must be set before the pattern plays.
+
+* **`SOUND.EQ track, low, mid, high`**: 3-band equalizer gains (1.0 = flat).
+* **`SOUND.LFO track, freq, depth`**: Vibrato - pitch modulation at `freq` Hz with `depth`.
+* **`SOUND.FM track, amount, ratio`**: Frequency modulation for metallic / bell tones.
+* **`SOUND.UNISON track, voices, detune, spread`**: Stacks `voices` (1–16) detuned copies for a super-saw; `detune` 0.0–1.0, `spread` 0.0–1.0 stereo.
+* **`SOUND.BITCRUSH track, bits, rate`**: Lo-fi effect; `bits` 1–16 resolution, `rate` 0.0–1.0 sample-rate reduction.
+* **`SOUND.RINGMOD track, freq, mix`**: Ring modulation for robotic / sci-fi tones.
+
 ## 4. PCM Samples and SFX
 
 jdBasic allows you to load and play high-quality WAV files.
@@ -83,12 +94,37 @@ You can use a loaded sample as a sound source for a sequencer track.
 
 * **`SOUND.REVERB size, damp, width, wet`**: Configures the global reverb room.
 * **`SOUND.DELAY active, time_ms, feedback, mix`**: Configures the global stereo delay.
+* **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master dynamics; `thresh` 0.0–1.0, `ratio` 1.0–20.0, `attack`/`release` in ms.
 * **`SOUND.DISTORTION amount`**: Applies master saturation/overdrive.
 
 ## 6. Visualization
 
 * **`SOUND.GET_WAVE()`**: Returns an array of the master mix for oscilloscopes.
 * **`SOUND.GET_BUS_WAVE(id)`**: Returns the "wet-only" signal from a bus (`0` for Reverb, `1` for Delay).
+
+## 7. Embedded / Pull-Mode Rendering
+
+Normally `SOUND.INIT` opens an SDL audio device and a background thread plays
+the mix. When jdBasic is built **without** a device (the `SOUND` build flag,
+`/DSOUND_DSP` - used by embed hosts such as Godot), the same sequencer runs but
+nothing is sent to the speakers automatically. The host pulls the mix instead:
+
+* **`SOUND.RENDER(frames) -> array`**: Renders the next `frames` stereo frames
+  of the live sequencer and returns them as a flat `[L0, R0, L1, R1, ...]`
+  array (length `frames * 2`). Advances the sequencer by `frames` at 44100 Hz.
+
+The host feeds those samples to its own audio engine each frame. In Godot:
+
+```basic
+' once: an AudioStreamGenerator at 44100 Hz on an AudioStreamPlayer
+DIM avail = GODOT.CALL(playback, "get_frames_available")
+DIM buf = SOUND.RENDER(avail)
+GODOT.CALL(playback, "push_buffer", GODOT.PACKED_VEC2(buf))
+```
+
+All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`
+/ ...) work identically in pull mode; only `SFX.LOAD` and `SOUND.PLAYBUFFER`
+(which need the SDL device and WAV decoder) require a `GFX` build.
 
 ---
 
@@ -104,6 +140,12 @@ You can use a loaded sample as a sound source for a sequencer track.
 | **Track FX** | `SOUND.GAIN` | `track, volume` | Per-track volume |
 |  | `SOUND.PAN` | `track, position` | Per-track stereo position |
 |  | `SOUND.FILTER` | `track, frequency` | Per-track low-pass filter |
+|  | `SOUND.EQ` | `track, low, mid, high` | 3-band equalizer |
+|  | `SOUND.LFO` | `track, freq, depth` | Vibrato (pitch modulation) |
+|  | `SOUND.FM` | `track, amount, ratio` | Frequency modulation |
+|  | `SOUND.UNISON` | `track, voices, detune, spread` | Super-saw voice stacking |
+|  | `SOUND.BITCRUSH` | `track, bits, rate` | Lo-fi bit/rate reduction |
+|  | `SOUND.RINGMOD` | `track, freq, mix` | Ring modulation |
 |  | `SOUND.REVERBSEND` | `track, amount` | Reverb send level |
 |  | `SOUND.DELAYSEND` | `track, amount` | Delay send level |
 |  | `SOUND.SIDECHAIN` | `target, source, amt` | Ducking (Drums vs Bass) |
@@ -111,8 +153,10 @@ You can use a loaded sample as a sound source for a sequencer track.
 |  | `SOUND.SAMPLE` | `track, id, base$, loop` | Use WAV as track instrument |
 | **Global FX** | `SOUND.REVERB` | `size, damp, width, wet` | Set master reverb room |
 |  | `SOUND.DELAY` | `on, time, feed, mix` | Set master delay settings |
+|  | `SOUND.COMPRESSOR` | `thresh, ratio, atk, rel, gain` | Master dynamics |
 |  | `SOUND.DISTORTION` | `amount` | Master saturation |
 | **Analysis** | `SOUND.GET_WAVE` | none | Get master waveform array |
+|  | `SOUND.RENDER` | `frames` | Pull stereo samples (embed/no-device) |
 |  | `SOUND.GET_BUS_WAVE` | `bus_id` | Get wet-only waveform |
 
 ---

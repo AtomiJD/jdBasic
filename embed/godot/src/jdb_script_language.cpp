@@ -112,6 +112,14 @@ PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
         // Operators / boolean (highlighted as keywords)
         "AND","OR","NOT","XOR","MOD","ANDALSO","ORELSE",
         "BAND","BOR","BXOR","BNOT","SHL","SHR",
+        // Native namespaces (the method after the dot also colours via the
+        // entries below; mirrors the namespace rule in the tmLanguage grammar).
+        "GODOT","SOUND","SFX","MUSIC","GFX","AI","JSON","MAP","FILE","OS","HTTP",
+        // SOUND.* sequencer method names
+        "INIT","BPM","SEQ","SCALE","NOTE","VOICE","GAIN","PAN","FILTER","EQ",
+        "LFO","FM","UNISON","BITCRUSH","RINGMOD","REVERBSEND","DELAYSEND",
+        "SIDECHAIN","REVERB","DELAY","COMPRESSOR","DISTORTION","SAMPLE","RENDER",
+        "GET_WAVE","GET_BUS_WAVE","PLAYBUFFER","QUEUED",
     };
     PackedStringArray r;
     for (const char* w : kw) push_case_variants(r, w);
@@ -431,7 +439,7 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
         "GODOT.MOVE_AND_SLIDE", "GODOT.IS_ON_FLOOR", "GODOT.IS_ON_WALL",
         "GODOT.IS_ON_CEILING", "GODOT.GET_VELOCITY", "GODOT.SET_VELOCITY",
         "GODOT.SINGLETON", "GODOT.STATIC", "GODOT.ENUM",
-        "GODOT.PACKED_VEC3", "GODOT.PACKED_INT32", "GODOT.PACKED_COLOR", "GODOT.PACKED_FLOAT32",
+        "GODOT.PACKED_VEC2", "GODOT.PACKED_VEC3", "GODOT.PACKED_INT32", "GODOT.PACKED_COLOR", "GODOT.PACKED_FLOAT32",
         "GODOT.PRINT",
     };
     for (const char* n : godot_natives) {
@@ -439,6 +447,26 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
         // After "GODOT." the user already has the prefix; only insert the
         // suffix so the dot doesn't get duplicated.
         String insert = godot_dot_ctx ? full.substr(6, full.length() - 6) : full;
+        push_opt(1, full, insert, 0);
+    }
+
+    // ── SOUND.* sequencer suite (functions) ──────────────────────
+    bool sound_dot_ctx = (qualifier == String("SOUND"));
+    static const char* sound_natives[] = {
+        "SOUND.INIT", "SOUND.BPM", "SOUND.RESET", "SOUND.SHUTDOWN",
+        "SOUND.SEQ", "SOUND.SCALE", "SOUND.NOTE", "SOUND.VOICE",
+        "SOUND.GAIN", "SOUND.PAN", "SOUND.FILTER", "SOUND.EQ",
+        "SOUND.LFO", "SOUND.FM", "SOUND.UNISON", "SOUND.BITCRUSH", "SOUND.RINGMOD",
+        "SOUND.REVERBSEND", "SOUND.DELAYSEND", "SOUND.SIDECHAIN",
+        "SOUND.REVERB", "SOUND.DELAY", "SOUND.COMPRESSOR", "SOUND.DISTORTION",
+        "SOUND.SAMPLE", "SOUND.RENDER", "SOUND.PLAYBUFFER", "SOUND.QUEUED",
+        "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
+        "SFX.LOAD", "SFX.PLAY", "MUSIC.PLAY", "MUSIC.STOP",
+    };
+    for (const char* n : sound_natives) {
+        String full = String(n);
+        // Trim the "SOUND." prefix only when completing after "SOUND.".
+        String insert = sound_dot_ctx ? full.substr(6, full.length() - 6) : full;
         push_opt(1, full, insert, 0);
     }
 

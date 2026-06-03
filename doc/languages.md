@@ -2146,6 +2146,7 @@ Use these functions to retrieve audio data for custom ImGui oscilloscopes or deb
 * **`SOUND.GET_WAVE() -> Array`**: Returns a 1D array of the current master stereo mix (averaged to mono).
 * **`SOUND.GET_BUS_WAVE(bus_id) -> Array`**: Returns a 1D array of the audio data currently residing in a specific effect bus.
 * `bus_id`: `0` for Reverb, `1` for Delay.
+* **`SOUND.RENDER(frames) -> Array`**: Renders the next `frames` stereo frames of the live sequencer and returns them interleaved as `[L0, R0, L1, R1, ...]` (length `frames * 2`), advancing the sequencer by `frames` at 44100 Hz. For embed hosts built without an audio device (the `SOUND` build flag) that drive their own engine - e.g. feeding a Godot `AudioStreamGenerator`. See SequencerHelp.md "Embedded / Pull-Mode Rendering".
 
 ### Example: Custom Studio Monitor
 
