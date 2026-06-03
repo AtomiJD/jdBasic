@@ -1,27 +1,33 @@
-EXTENDS MeshInstance3D
+EXTENDS StaticBody3D
 
-' Procedural heightmap terrain, pure jdBasic. The heights are computed
-' APL-style (vectorised SIN/COS over IOTA, no loops), then the vertex,
-' index and per-vertex-colour arrays are built and handed to
-' ArrayMesh.add_surface_from_arrays via the GODOT.PACKED_* builders - the
-' jdBasic->Godot direction for packed arrays.
+' Walkable procedural terrain, pure jdBasic. Heights are computed APL-style
+' (vectorised SIN/COS over IOTA, no loops). The same height grid drives both
+' the visual ArrayMesh (per-vertex colour) and a HeightMapShape3D collider,
+' so the player and NPCs walk on the generated ground.
+'
+'   Mesh       child: MeshInstance3D - gets the ArrayMesh
+'   Collision  child: CollisionShape3D - gets the HeightMapShape3D
 
-INSPECTOR DIM grid_n    = 48    AS RANGE(8, 128, 1)
-INSPECTOR DIM cell_size = 0.45  AS RANGE(0.1, 2.0, 0.05)
-INSPECTOR DIM freq      = 9.0   AS RANGE(2.0, 40.0, 0.5)
-INSPECTOR DIM amp       = 1.8   AS RANGE(0.1, 8.0, 0.1)
+INSPECTOR DIM grid_n    = 64    AS RANGE(8, 192, 1)
+INSPECTOR DIM cell_size = 1.0   AS RANGE(0.25, 2.0, 0.05)
+INSPECTOR DIM freq      = 14.0  AS RANGE(2.0, 40.0, 0.5)
+INSPECTOR DIM amp       = 2.0   AS RANGE(0.1, 8.0, 0.1)
 INSPECTOR DIM seed      = 7
 
 DIM self_h = 0
+DIM mesh_h = 0
+DIM col_h  = 0
 
 SUB _ready()
 	self_h = GODOT.SELF()
+	mesh_h = GODOT.CALL(self_h, "get_node", "Mesh")
+	col_h  = GODOT.CALL(self_h, "get_node", "Collision")
 
 	DIM n = grid_n
 	DIM total = n * n
 	DIM half = n / 2.0
 
-	' Heights - one vectorised pass, no FOR loops.
+	' Heights - one vectorised pass.
 	DIM idx = IOTA(total)
 	DIM gx = idx MOD n
 	DIM gy = (idx - gx) / n
@@ -32,7 +38,7 @@ SUB _ready()
 	DIM h3 = SIN(cx * 4.7 + seed * 2.1) * COS(cy * 4.1 + seed * 0.4) * 0.25
 	DIM hh = (h1 + h2 + h3) * amp
 
-	' Vertices (flat x,y,z) and per-vertex colour (flat r,g,b,a).
+	' Vertices (flat x,y,z) + per-vertex colour (flat r,g,b,a).
 	DIM verts = ZEROS(total * 3)
 	DIM cols  = ZEROS(total * 4)
 	FOR k = 0 TO total - 1
@@ -41,9 +47,9 @@ SUB _ready()
 		verts[k * 3 + 1] = y
 		verts[k * 3 + 2] = (gy[k] - half) * cell_size
 		DIM t = (y / amp + 1.0) * 0.5
-		cols[k * 4]     = 0.28 + 0.22 * t
-		cols[k * 4 + 1] = 0.52 + 0.20 * t
-		cols[k * 4 + 2] = 0.30
+		cols[k * 4]     = 0.26 + 0.24 * t
+		cols[k * 4 + 1] = 0.50 + 0.22 * t
+		cols[k * 4 + 2] = 0.28
 		cols[k * 4 + 3] = 1.0
 	NEXT
 
@@ -67,9 +73,7 @@ SUB _ready()
 		NEXT
 	NEXT
 
-	' Mesh.ARRAY_VERTEX=0, ARRAY_COLOR=3, ARRAY_INDEX=12 in a 13-slot array.
-	' Unused slots MUST be NONE (not 0.0) or Godot validates them as the
-	' wrong packed type (e.g. "Bones must be a PackedInt32Array").
+	' Visual mesh via ArrayMesh.add_surface_from_arrays. Empty slots NONE.
 	DIM sa AS ARRAY = []
 	FOR i = 0 TO 12
 		sa = APPEND(sa, NULL)
@@ -80,14 +84,20 @@ SUB _ready()
 
 	DIM mesh = GODOT.NEW("ArrayMesh")
 	GODOT.CALL(mesh, "add_surface_from_arrays", GODOT.ENUM("Mesh", "PRIMITIVE_TRIANGLES"), sa)
-
-	' Unshaded vertex colours so it's visible without computed normals.
 	DIM mat = GODOT.NEW("StandardMaterial3D")
-	GODOT.SET(mat, "shading_mode", GODOT.ENUM("BaseMaterial3D", "SHADING_MODE_UNSHADED"))
 	GODOT.SET(mat, "vertex_color_use_as_albedo", TRUE)
-	GODOT.SET(mat, "cull_mode", GODOT.ENUM("BaseMaterial3D", "CULL_DISABLED"))
 	GODOT.CALL(mesh, "surface_set_material", 0, GODOT.REF(mat))
+	GODOT.SET(mesh_h, "mesh", GODOT.REF(mesh))
 
-	GODOT.SET(self_h, "mesh", GODOT.REF(mesh))
-	PRINT "terrain: " + STR$(total) + " verts, " + STR$(quads * 2) + " tris"
+	' Collision: a HeightMapShape3D fed the same row-major height grid.
+	' The shape samples at 1-unit spacing, so scale the collider by
+	' cell_size in X/Z to line up with the visual mesh.
+	DIM shape = GODOT.NEW("HeightMapShape3D")
+	GODOT.SET(shape, "map_width", n)
+	GODOT.SET(shape, "map_depth", n)
+	GODOT.SET(shape, "map_data", GODOT.PACKED_FLOAT32(hh))
+	GODOT.SET(col_h, "shape", GODOT.REF(shape))
+	GODOT.SET(col_h, "scale", GODOT.VEC3(cell_size, 1.0, cell_size))
+
+	PRINT "terrain: " + STR$(total) + " verts, walkable HeightMapShape " + STR$(n) + "x" + STR$(n)
 ENDSUB
