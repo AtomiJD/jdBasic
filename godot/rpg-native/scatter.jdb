@@ -19,6 +19,13 @@ DIM bush_paths AS ARRAY = ["res://assets/nature/Bush_1_A_Color1.gltf", "res://as
 DIM avoid_x AS ARRAY = [0.0, -4.0, 5.0]
 DIM avoid_z AS ARRAY = [0.0, -2.0, 3.0]
 
+' Dungeon footprints (world-space rects), read from dungeons.json in _ready.
+DIM dun_count = 0
+DIM dun_x0 AS ARRAY = []
+DIM dun_x1 AS ARRAY = []
+DIM dun_z0 AS ARRAY = []
+DIM dun_z1 AS ARRAY = []
+
 ' Matches terrain.jdb defaults (n=64, cell=1, freq=14, amp=2, seed=7).
 FUNC terrain_height(wx, wz)
 	DIM cx = wx / 14.0
@@ -29,7 +36,42 @@ FUNC terrain_height(wx, wz)
 	RETURN (a1 + a2 + a3) * 2.0
 ENDFUNC
 
+' Read dungeons.json and store each dungeon's world-space footprint (+pad)
+' so no trees or bushes spawn on top of a dungeon.
+SUB load_dungeon_rects()
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM all = JSON.PARSE$(src)
+	DIM pad = 2.0
+	FOR di = 0 TO LEN(all) - 1
+		DIM spec = all[di]
+		DIM org  = spec{"origin"}
+		DIM ox = org[0]
+		DIM oz = org[2]
+		DIM rooms = spec{"rooms"}
+		DIM gw = 0
+		DIM gh = 0
+		FOR ri = 0 TO LEN(rooms) - 1
+			DIM rm = rooms[ri]
+			DIM re = INT(rm{"col"}) + INT(rm{"w"})
+			DIM be = INT(rm{"row"}) + INT(rm{"h"})
+			IF re > gw THEN gw = re
+			IF be > gh THEN gh = be
+		NEXT
+		DIM fw = (gw + 1) * 4.0
+		DIM fh = (gh + 1) * 4.0
+		dun_x0 = APPEND(dun_x0, ox - pad)
+		dun_x1 = APPEND(dun_x1, ox + fw + pad)
+		dun_z0 = APPEND(dun_z0, oz - pad)
+		dun_z1 = APPEND(dun_z1, oz + fh + pad)
+		dun_count = dun_count + 1
+	NEXT
+ENDSUB
+
 FUNC too_close(wx, wz)
+	' Inside any dungeon footprint? No foliage there.
+	FOR d = 0 TO dun_count - 1
+		IF wx > dun_x0[d] ANDALSO wx < dun_x1[d] ANDALSO wz > dun_z0[d] ANDALSO wz < dun_z1[d] THEN RETURN TRUE
+	NEXT
 	FOR i = 0 TO LEN(avoid_x) - 1
 		DIM dx = avoid_x[i] - wx
 		DIM dz = avoid_z[i] - wz
@@ -77,6 +119,7 @@ ENDSUB
 
 SUB _ready()
 	self_h = GODOT.SELF()
+	load_dungeon_rects()
 	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_map.txt")
 	DIM rows = SPLIT(src, CHR$(10))
 	DIM rn = LEN(rows)
@@ -101,5 +144,5 @@ SUB _ready()
 			ENDIF
 		NEXT
 	NEXT
-	PRINT "scatter: tile rows=" + STR$(rn) + " tree-clusters=" + STR$(placed)
+	PRINT "scatter: tile rows=" + STR$(rn) + " tree-clusters=" + STR$(placed) + " dungeon-rects=" + STR$(dun_count)
 ENDSUB

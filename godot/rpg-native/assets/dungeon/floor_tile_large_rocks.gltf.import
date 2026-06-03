@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cdpnhgjn1r0cn"
-path="res://.godot/imported/chest_gold.gltf-4e973723b8e10167f99356a20875bd66.scn"
+uid="uid://8y1m7kl7drpc"
+path="res://.godot/imported/floor_tile_large_rocks.gltf-51fa74eaf913bc9da6fbfa6e9e9cb74e.scn"
 
 [deps]
 
-source_file="res://assets/dungeon/chest_gold.gltf"
-dest_files=["res://.godot/imported/chest_gold.gltf-4e973723b8e10167f99356a20875bd66.scn"]
+source_file="res://assets/dungeon/floor_tile_large_rocks.gltf"
+dest_files=["res://.godot/imported/floor_tile_large_rocks.gltf-51fa74eaf913bc9da6fbfa6e9e9cb74e.scn"]
 
 [params]
 

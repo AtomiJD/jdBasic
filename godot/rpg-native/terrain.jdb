@@ -18,6 +18,17 @@ DIM self_h = 0
 DIM mesh_h = 0
 DIM col_h  = 0
 
+' Same height formula the dungeon builder uses, so a dungeon's computed
+' ground-y matches the terrain we flatten under it.
+FUNC terrain_height(wx, wz)
+	DIM cx = wx / 14.0
+	DIM cy = wz / 14.0
+	DIM a1 = SIN(cx + 0.70) * COS(cy + 0.91)
+	DIM a2 = SIN(cx * 2.1 + 4.90) * COS(cy * 2.3 + 13.30) * 0.5
+	DIM a3 = SIN(cx * 4.7 + 14.70) * COS(cy * 4.1 + 2.80) * 0.25
+	RETURN (a1 + a2 + a3) * 2.0
+ENDFUNC
+
 SUB _ready()
 	self_h = GODOT.SELF()
 	mesh_h = GODOT.CALL(self_h, "get_node", "Mesh")
@@ -37,6 +48,56 @@ SUB _ready()
 	DIM h2 = SIN(cx * 2.1 + seed * 0.7) * COS(cy * 2.3 + seed * 1.9) * 0.5
 	DIM h3 = SIN(cx * 4.7 + seed * 2.1) * COS(cy * 4.1 + seed * 0.4) * 0.25
 	DIM hh = (h1 + h2 + h3) * amp
+
+	' Flatten the heightmap under every dungeon (read dungeons.json) so the
+	' dungeon floors sit on level ground - both the visual mesh and the
+	' collider, since the player walks on the terrain collider in there.
+	DIM dsrc = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM dall = JSON.PARSE$(dsrc)
+	FOR di = 0 TO LEN(dall) - 1
+		DIM dspec = dall[di]
+		DIM dorg  = dspec{"origin"}
+		DIM dox = dorg[0]
+		DIM doz = dorg[2]
+		DIM drooms = dspec{"rooms"}
+		DIM dgw = 0
+		DIM dgh = 0
+		FOR ri = 0 TO LEN(drooms) - 1
+			DIM rm = drooms[ri]
+			DIM re = INT(rm{"col"}) + INT(rm{"w"})
+			DIM be = INT(rm{"row"}) + INT(rm{"h"})
+			IF re > dgw THEN dgw = re
+			IF be > dgh THEN dgh = be
+		NEXT
+		DIM dfw = (dgw + 1) * 4.0
+		DIM dfh = (dgh + 1) * 4.0
+
+		' max-of-9 terrain height across the footprint, sunk to max-0.3.
+		DIM dmax = -1000.0
+		DIM dss AS ARRAY = [0.1, 0.5, 0.9]
+		FOR sa = 0 TO 2
+			FOR sb = 0 TO 2
+				DIM dth = terrain_height(dox + dss[sa] * dfw, doz + dss[sb] * dfh)
+				IF dth > dmax THEN dmax = dth
+			NEXT
+		NEXT
+		DIM carve_y = dmax - 0.35
+
+		' Grid cells overlapping [dox, dox+dfw] x [doz, doz+dfh].
+		DIM cgx0 = INT(dox / cell_size + half)
+		DIM cgx1 = INT((dox + dfw) / cell_size + half)
+		DIM cgz0 = INT(doz / cell_size + half)
+		DIM cgz1 = INT((doz + dfh) / cell_size + half)
+		IF cgx0 < 0 THEN cgx0 = 0
+		IF cgz0 < 0 THEN cgz0 = 0
+		IF cgx1 > n - 1 THEN cgx1 = n - 1
+		IF cgz1 > n - 1 THEN cgz1 = n - 1
+		FOR cz = cgz0 TO cgz1
+			FOR cx = cgx0 TO cgx1
+				hh[cz * n + cx] = carve_y
+			NEXT
+		NEXT
+	NEXT
 
 	' Tile map -> per-vertex colour (paths / clearings / trees). Read the
 	' raw .txt via the real Godot API (FileAccess.get_file_as_string).

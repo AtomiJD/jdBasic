@@ -1,0 +1,76 @@
+[
+  {
+    "id": "starter_dungeon",
+    "origin": [-32.0, 0.0, -50.0],
+    "rooms": [
+      {"col": 2,  "row": 1,  "w": 7, "h": 4, "comment": "Entry hall (north)"},
+      {"col": 5,  "row": 5,  "w": 1, "h": 2, "comment": "corridor A->B"},
+      {"col": 2,  "row": 7,  "w": 7, "h": 4, "comment": "Great hall (south)"},
+      {"col": 9,  "row": 8,  "w": 2, "h": 1, "comment": "corridor B->C"},
+      {"col": 11, "row": 7,  "w": 4, "h": 4, "comment": "Treasury (east)"}
+    ],
+    "doorways": [
+      {"col": 5,  "row": 4,  "side": "s"},
+      {"col": 5,  "row": 7,  "side": "n"},
+      {"col": 8,  "row": 8,  "side": "e"},
+      {"col": 11, "row": 8,  "side": "w"},
+      {"col": 5,  "row": 10, "side": "s"}
+    ],
+    "torches": [
+      {"col": 3,  "row": 1,  "side": "n"},
+      {"col": 7,  "row": 1,  "side": "n"},
+      {"col": 3,  "row": 4,  "side": "s"},
+      {"col": 7,  "row": 4,  "side": "s"},
+      {"col": 3,  "row": 7,  "side": "n"},
+      {"col": 7,  "row": 7,  "side": "n"},
+      {"col": 3,  "row": 10, "side": "s"},
+      {"col": 7,  "row": 10, "side": "s"},
+      {"col": 11, "row": 7,  "side": "n"},
+      {"col": 14, "row": 10, "side": "s"}
+    ],
+    "props": [
+      {"col": 5, "row": 2, "model": "table_long",    "yaw": 0},
+      {"col": 5, "row": 2, "model": "chair",         "yaw": 90,   "offset": [0, 0, -2.7]},
+      {"col": 5, "row": 2, "model": "chair",         "yaw": -90, "offset": [0, 0,  2.7]},
+      {"col": 5, "row": 2, "model": "mug_full",      "yaw": 0,   "offset": [-0.3, 1.0, 0]},
+      {"col": 5, "row": 2, "model": "plate_food_A",  "yaw": 0,   "offset": [0.4, 1.0, 0.2]},
+
+      {"col": 2, "row": 1, "model": "pillar",        "yaw": 0,   "offset": [0.4, 0, 0.4]},
+      {"col": 8, "row": 1, "model": "pillar",        "yaw": 0,   "offset": [-0.4, 0, 0.4]},
+      {"col": 2, "row": 4, "model": "pillar",        "yaw": 0,   "offset": [0.4, 0, -0.4]},
+      {"col": 8, "row": 4, "model": "pillar",        "yaw": 0,   "offset": [-0.4, 0, -0.4]},
+
+      {"col": 3, "row": 3, "model": "barrel_large",  "yaw": 0},
+      {"col": 7, "row": 3, "model": "crates_stacked","yaw": 0},
+      {"col": 4, "row": 4, "model": "sword_shield_broken", "yaw": 25,   "offset": [0, 1, 0]},
+
+      {"col": 5, "row": 8, "model": "table_medium_broken", "yaw": 90},
+      {"col": 3, "row": 9, "model": "barrel_small",  "yaw": 0},
+      {"col": 7, "row": 9, "model": "barrel_small",  "yaw": 45},
+      {"col": 6, "row": 9, "model": "stool",         "yaw": 0},
+      {"col": 4, "row": 9, "model": "stool",         "yaw": 90},
+      {"col": 8, "row": 7, "model": "bookcase_double", "yaw": 0, "offset": [-0.5, 0, -1]},
+      {"col": 8, "row": 7, "model": "book_brown",    "yaw": 160,  "offset": [0, 1.2, -1]},
+      {"col": 6, "row": 10,"model": "sword_shield_broken", "yaw": 180,   "offset": [0, 1, 0]},
+
+      {"col": 11, "row": 7, "model": "pillar_decorated", "yaw": 0, "offset": [0.4, 0, 0.4]},
+      {"col": 14, "row": 7, "model": "pillar_decorated", "yaw": 0, "offset": [-0.4, 0, 0.4]},
+      {"col": 11, "row": 10,"model": "pillar_decorated", "yaw": 180, "offset": [0.4, 0, -0.4]},
+      {"col": 14, "row": 10,"model": "pillar_decorated", "yaw": 180, "offset": [-0.4, 0, -0.4]},
+      {"col": 12, "row": 8, "model": "crates_stacked", "yaw": 0},
+      {"col": 13, "row": 9, "model": "barrel_large",   "yaw": 0},
+      {"col": 13, "row": 9, "model": "plate",          "yaw": 0, "offset": [0, 1.9, 0]}
+    ],
+    "wall_decor": [
+      {"col": 4, "row": 1,  "side": "n", "model": "banner_patternA_red"},
+      {"col": 6, "row": 1,  "side": "n", "model": "banner_patternA_blue"},
+      {"col": 4, "row": 7,  "side": "n", "model": "banner_patternA_blue"},
+      {"col": 6, "row": 7,  "side": "n", "model": "banner_patternA_red"},
+      {"col": 14, "row": 7, "side": "n", "model": "banner_patternA_red"}
+    ],
+    "traps": [
+      {"col": 5, "row": 5, "comment": "corridor A->B"},
+      {"col": 10, "row": 8, "comment": "corridor B->C"}
+    ]
+  }
+]

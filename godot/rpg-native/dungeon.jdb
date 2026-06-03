@@ -1,0 +1,450 @@
+EXTENDS Node3D
+
+' Data-driven dungeon builder, pure jdBasic. Reads dungeons.json (FileAccess +
+' JSON.PARSE$) and builds the whole structure from a 4m tile grid of KayKit
+' Dungeon Remastered GLTFs: floors, walls, openable doorways, flickering
+' torches, props, wall banners and spike traps. No GDScript anywhere.
+'
+'   - Doors: walk close + press E to swing them open/closed (collider toggles).
+'   - Traps: step onto a spike tile and the spikes shoot up, then retract.
+'
+' Grounds itself on the procedural terrain by re-evaluating the same height
+' formula terrain.jdb uses (cross-script return values aren't marshalled, so
+' we replicate the math instead of calling terrain.sample_height).
+
+DIM ASSET_DIR  = "res://assets/dungeon/"
+DIM TILE       = 4.0
+DIM WALL_DEPTH = 1.0
+DIM DOOR_H     = 3.5
+DIM DOOR_W     = 1.2
+
+DIM self_h   = 0
+DIM player_h = 0
+
+DIM org_x = 0.0
+DIM org_y = 0.0
+DIM org_z = 0.0
+DIM grid_w = 0
+DIM grid_h = 0
+DIM floor_mask AS ARRAY = []
+DIM doorway_keys AS ARRAY = []
+
+' Door registry (parallel arrays, indexed by door id).
+DIM door_count = 0
+DIM door_body AS ARRAY = []
+DIM door_open AS ARRAY = []
+DIM door_visual AS ARRAY = []
+DIM door_collider AS ARRAY = []
+
+' Trap registry.
+DIM trap_count = 0
+DIM trap_spikes AS ARRAY = []
+DIM trap_wx AS ARRAY = []
+DIM trap_wz AS ARRAY = []
+DIM trap_state AS ARRAY = []
+DIM trap_t AS ARRAY = []
+
+' Matches terrain.jdb's defaults (freq=14, amp=2, seed=7).
+FUNC terrain_height(wx, wz)
+	DIM cx = wx / 14.0
+	DIM cy = wz / 14.0
+	DIM a1 = SIN(cx + 0.70) * COS(cy + 0.91)
+	DIM a2 = SIN(cx * 2.1 + 4.90) * COS(cy * 2.3 + 13.30) * 0.5
+	DIM a3 = SIN(cx * 4.7 + 14.70) * COS(cy * 4.1 + 2.80) * 0.25
+	RETURN (a1 + a2 + a3) * 2.0
+ENDFUNC
+
+FUNC side_from(s)
+	DIM c = LCASE$(s)
+	IF c = "e" THEN RETURN 1
+	IF c = "s" THEN RETURN 2
+	IF c = "w" THEN RETURN 3
+	RETURN 0
+ENDFUNC
+
+FUNC find_named(node, needle)
+	DIM nm = LCASE$(GODOT.GET(node, "name"))
+	IF INSTR(nm, needle) >= 0 THEN RETURN node
+	DIM kids = GODOT.CALL(node, "get_children")
+	FOR i = 0 TO LEN(kids) - 1
+		DIM r = find_named(kids[i], needle)
+		IF r <> 0 THEN RETURN r
+	NEXT
+	RETURN 0
+ENDFUNC
+
+FUNC masked(cc, rr)
+	IF rr < 0 ORELSE rr >= grid_h THEN RETURN FALSE
+	IF cc < 0 ORELSE cc >= grid_w THEN RETURN FALSE
+	IF floor_mask[rr * grid_w + cc] = 1 THEN RETURN TRUE
+	RETURN FALSE
+ENDFUNC
+
+FUNC doorway_has(cc, rr, sd)
+	DIM key = cc * 10000 + rr * 100 + sd
+	FOR i = 0 TO LEN(doorway_keys) - 1
+		IF doorway_keys[i] = key THEN RETURN TRUE
+	NEXT
+	RETURN FALSE
+ENDFUNC
+
+' Add a BoxShape3D collider to a body; returns the CollisionShape3D handle.
+FUNC add_box(body, ox, oy, oz, sx, sy, sz)
+	DIM shape = GODOT.NEW("CollisionShape3D")
+	DIM box   = GODOT.NEW("BoxShape3D")
+	GODOT.SET(box, "size", GODOT.VEC3(sx, sy, sz))
+	GODOT.SET(shape, "shape", GODOT.REF(box))
+	GODOT.SET(shape, "position", GODOT.VEC3(ox, oy, oz))
+	GODOT.ADD_CHILD(body, shape)
+	RETURN shape
+ENDFUNC
+
+SUB mark_room(c, r, w, h)
+	FOR rr = r TO r + h - 1
+		FOR cc = c TO c + w - 1
+			IF rr >= 0 ANDALSO rr < grid_h ANDALSO cc >= 0 ANDALSO cc < grid_w THEN
+				floor_mask[rr * grid_w + cc] = 1
+			ENDIF
+		NEXT
+	NEXT
+ENDSUB
+
+SUB place_floor()
+	DIM floor_path = ASSET_DIR + "floor_dirt_large.gltf"
+	FOR r = 0 TO grid_h - 1
+		FOR c = 0 TO grid_w - 1
+			IF masked(c, r) THEN
+				DIM inst = GODOT.INSTANTIATE(floor_path)
+				GODOT.ADD_CHILD(self_h, inst)
+				GODOT.SET(inst, "global_position", GODOT.VEC3(org_x + c * TILE, org_y, org_z + r * TILE))
+			ENDIF
+		NEXT
+	NEXT
+ENDSUB
+
+SUB maybe_wall(c, r, sd, dx, dr)
+	' A wall sits on a side only when the neighbour tile is not floor.
+	IF masked(c + dx, r + dr) THEN RETURN
+
+	DIM px = org_x + c * TILE
+	DIM pz = org_z + r * TILE
+	DIM yaw = 0.0
+	IF sd = 0 THEN
+		pz = pz - TILE * 0.5
+		yaw = 0.0
+	ELSEIF sd = 2 THEN
+		pz = pz + TILE * 0.5
+		yaw = PI
+	ELSEIF sd = 1 THEN
+		px = px + TILE * 0.5
+		yaw = -PI * 0.5
+	ELSE
+		px = px - TILE * 0.5
+		yaw = PI * 0.5
+	ENDIF
+
+	DIM is_door = doorway_has(c, r, sd)
+	DIM body = GODOT.NEW("StaticBody3D")
+	DIM scene_path = ASSET_DIR + "wall.gltf"
+	IF is_door THEN scene_path = ASSET_DIR + "wall_doorway.gltf"
+	DIM visual = GODOT.INSTANTIATE(scene_path)
+	GODOT.ADD_CHILD(body, visual)
+
+	IF is_door THEN
+		' Two flanking colliders + a thin centre panel we toggle off on open.
+		DIM dummy1 = add_box(body, -TILE * 0.4, 2.0, 0.0, TILE * 0.2, 4.0, WALL_DEPTH)
+		DIM dummy2 = add_box(body,  TILE * 0.4, 2.0, 0.0, TILE * 0.2, 4.0, WALL_DEPTH)
+		DIM dcoll  = add_box(body, 0.0, 1.75, 0.0, DOOR_W, DOOR_H, 0.2)
+		DIM dvis = find_named(visual, "doorway_door")
+		door_body = APPEND(door_body, body)
+		door_open = APPEND(door_open, 0)
+		door_visual = APPEND(door_visual, dvis)
+		door_collider = APPEND(door_collider, dcoll)
+		door_count = door_count + 1
+	ELSE
+		DIM wcoll = add_box(body, 0.0, 2.0, 0.0, TILE, 4.0, WALL_DEPTH)
+	ENDIF
+
+	GODOT.ADD_CHILD(self_h, body)
+	GODOT.SET(body, "global_position", GODOT.VEC3(px, org_y, pz))
+	GODOT.SET(body, "rotation:y", yaw)
+ENDSUB
+
+SUB place_walls()
+	FOR r = 0 TO grid_h - 1
+		FOR c = 0 TO grid_w - 1
+			IF masked(c, r) THEN
+				maybe_wall(c, r, 0, 0, -1)
+				maybe_wall(c, r, 2, 0, 1)
+				maybe_wall(c, r, 1, 1, 0)
+				maybe_wall(c, r, 3, -1, 0)
+			ENDIF
+		NEXT
+	NEXT
+ENDSUB
+
+SUB place_torches(spots)
+	DIM torch_path = ASSET_DIR + "torch_mounted.gltf"
+	FOR i = 0 TO LEN(spots) - 1
+		DIM sp = spots[i]
+		DIM c = INT(sp{"col"})
+		DIM r = INT(sp{"row"})
+		IF NOT masked(c, r) THEN CONTINUEFOR
+		DIM sd = 0
+		IF MAP.EXISTS(sp, "side") THEN sd = side_from(sp{"side"})
+
+		DIM px = org_x + c * TILE
+		DIM pz = org_z + r * TILE
+		DIM yaw = 0.0
+		IF sd = 0 THEN
+			pz = pz - TILE * 0.45
+		ELSEIF sd = 2 THEN
+			pz = pz + TILE * 0.45
+			yaw = PI
+		ELSEIF sd = 1 THEN
+			px = px + TILE * 0.45
+			yaw = -PI * 0.5
+		ELSE
+			px = px - TILE * 0.45
+			yaw = PI * 0.5
+		ENDIF
+
+		DIM root = GODOT.NEW("Node3D")
+		GODOT.ADD_CHILD(self_h, root)
+		GODOT.SET(root, "global_position", GODOT.VEC3(px, org_y + 1.2, pz))
+		GODOT.SET(root, "rotation:y", yaw)
+		GODOT.ADD_CHILD(root, GODOT.INSTANTIATE(torch_path))
+
+		DIM light = GODOT.NEW("OmniLight3D")
+		GODOT.SET(light, "light_color", GODOT.COLOR(1.0, 0.55, 0.25, 1.0))
+		GODOT.SET(light, "light_energy", 2.0)
+		GODOT.SET(light, "omni_range", 9.0)
+		GODOT.SET(light, "shadow_enabled", FALSE)
+		GODOT.ADD_CHILD(root, light)
+		GODOT.SET(light, "position", GODOT.VEC3(0.0, 0.8, 0.1))
+
+		' Looping flicker.
+		DIM tw = GODOT.CALL(light, "create_tween")
+		GODOT.CALL(tw, "set_loops")
+		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 2.4, 0.18)
+		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 1.6, 0.13)
+		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 2.1, 0.22)
+		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 1.8, 0.16)
+	NEXT
+ENDSUB
+
+SUB place_props(props)
+	FOR i = 0 TO LEN(props) - 1
+		DIM p = props[i]
+		DIM path = ASSET_DIR + p{"model"} + ".gltf"
+		DIM inst = GODOT.INSTANTIATE(path)
+		IF inst = 0 THEN CONTINUEFOR
+		GODOT.ADD_CHILD(self_h, inst)
+		DIM c = INT(p{"col"})
+		DIM r = INT(p{"row"})
+		DIM wx = org_x + c * TILE
+		DIM wy = org_y
+		DIM wz = org_z + r * TILE
+		IF MAP.EXISTS(p, "offset") THEN
+			DIM off = p{"offset"}
+			wx = wx + off[0]
+			wy = wy + off[1]
+			wz = wz + off[2]
+		ENDIF
+		GODOT.SET(inst, "global_position", GODOT.VEC3(wx, wy, wz))
+		DIM yaw = 0.0
+		IF MAP.EXISTS(p, "yaw") THEN yaw = p{"yaw"}
+		GODOT.SET(inst, "rotation:y", yaw * PI / 180.0)
+	NEXT
+ENDSUB
+
+SUB place_decor(decor)
+	FOR i = 0 TO LEN(decor) - 1
+		DIM d = decor[i]
+		DIM path = ASSET_DIR + d{"model"} + ".gltf"
+		DIM inst = GODOT.INSTANTIATE(path)
+		IF inst = 0 THEN CONTINUEFOR
+		DIM c = INT(d{"col"})
+		DIM r = INT(d{"row"})
+		DIM sd = 0
+		IF MAP.EXISTS(d, "side") THEN sd = side_from(d{"side"})
+		DIM px = org_x + c * TILE
+		DIM pz = org_z + r * TILE
+		DIM yaw = 0.0
+		IF sd = 0 THEN
+			pz = pz - TILE * 0.48
+		ELSEIF sd = 2 THEN
+			pz = pz + TILE * 0.48
+			yaw = PI
+		ELSEIF sd = 1 THEN
+			px = px + TILE * 0.48
+			yaw = -PI * 0.5
+		ELSE
+			px = px - TILE * 0.48
+			yaw = PI * 0.5
+		ENDIF
+		GODOT.ADD_CHILD(self_h, inst)
+		GODOT.SET(inst, "global_position", GODOT.VEC3(px, org_y, pz))
+		GODOT.SET(inst, "rotation:y", yaw)
+	NEXT
+ENDSUB
+
+SUB place_traps(traps)
+	DIM spike_path = ASSET_DIR + "floor_tile_big_spikes.gltf"
+	FOR i = 0 TO LEN(traps) - 1
+		DIM t = traps[i]
+		DIM c = INT(t{"col"})
+		DIM r = INT(t{"row"})
+		DIM wx = org_x + c * TILE
+		DIM wz = org_z + r * TILE
+		DIM root = GODOT.NEW("Node3D")
+		GODOT.ADD_CHILD(self_h, root)
+		GODOT.SET(root, "global_position", GODOT.VEC3(wx, org_y, wz))
+		DIM inst = GODOT.INSTANTIATE(spike_path)
+		GODOT.ADD_CHILD(root, inst)
+		DIM spikes = find_named(inst, "spikes")
+		IF spikes <> 0 THEN GODOT.SET(spikes, "position:y", -2.2)
+
+		trap_spikes = APPEND(trap_spikes, spikes)
+		trap_wx = APPEND(trap_wx, wx)
+		trap_wz = APPEND(trap_wz, wz)
+		trap_state = APPEND(trap_state, 0)
+		trap_t = APPEND(trap_t, 0.0)
+		trap_count = trap_count + 1
+	NEXT
+ENDSUB
+
+SUB toggle_door(di)
+	DIM op = 0
+	IF door_open[di] = 0 THEN op = 1
+	door_open[di] = op
+	DIM coll = door_collider[di]
+	IF coll <> 0 THEN GODOT.SET(coll, "disabled", op = 1)
+	DIM vis = door_visual[di]
+	IF vis <> 0 THEN
+		DIM tgt = 0.0
+		IF op = 1 THEN tgt = -PI * 0.5
+		DIM tw = GODOT.CALL(self_h, "create_tween")
+		DIM pr = GODOT.CALL(tw, "tween_property", GODOT.REF(vis), "rotation:y", tgt, 0.35)
+		GODOT.CALL(pr, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
+		GODOT.CALL(pr, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+	ENDIF
+ENDSUB
+
+SUB fire_trap(ti)
+	DIM sp = trap_spikes[ti]
+	IF sp <> 0 THEN
+		DIM tw = GODOT.CALL(self_h, "create_tween")
+		DIM p1 = GODOT.CALL(tw, "tween_property", GODOT.REF(sp), "position:y", 0.0, 0.14)
+		GODOT.CALL(p1, "set_trans", GODOT.ENUM("Tween", "TRANS_BACK"))
+		GODOT.CALL(p1, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+		GODOT.CALL(tw, "tween_interval", 1.6)
+		DIM p2 = GODOT.CALL(tw, "tween_property", GODOT.REF(sp), "position:y", -2.2, 0.45)
+		GODOT.CALL(p2, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
+		GODOT.CALL(p2, "set_ease",  GODOT.ENUM("Tween", "EASE_IN"))
+	ENDIF
+	trap_state[ti] = 1
+	trap_t[ti] = 0.0
+ENDSUB
+
+SUB _ready()
+	self_h   = GODOT.SELF()
+	player_h = GODOT.CALL(self_h, "get_node", "../Player")
+
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM all = JSON.PARSE$(src)
+	IF LEN(all) = 0 THEN
+		PRINT "dungeon: no specs"
+		RETURN
+	ENDIF
+	DIM spec = all[0]
+
+	DIM origin = spec{"origin"}
+	org_x = origin[0]
+	org_z = origin[2]
+
+	' Footprint bounds from the rooms (+1 tile border for the outer walls).
+	DIM rooms = spec{"rooms"}
+	FOR i = 0 TO LEN(rooms) - 1
+		DIM rm = rooms[i]
+		DIM re = INT(rm{"col"}) + INT(rm{"w"})
+		DIM be = INT(rm{"row"}) + INT(rm{"h"})
+		IF re > grid_w THEN grid_w = re
+		IF be > grid_h THEN grid_h = be
+	NEXT
+	grid_w = grid_w + 1
+	grid_h = grid_h + 1
+
+	' Drop the floor onto the terrain: sample 9 points, sink to max-0.3.
+	DIM foot_w = grid_w * TILE
+	DIM foot_h = grid_h * TILE
+	DIM max_h = -1000.0
+	DIM sxs AS ARRAY = [0.1, 0.5, 0.9]
+	FOR a = 0 TO 2
+		FOR b = 0 TO 2
+			DIM th = terrain_height(org_x + sxs[a] * foot_w, org_z + sxs[b] * foot_h)
+			IF th > max_h THEN max_h = th
+		NEXT
+	NEXT
+	org_y = max_h - 0.3
+
+	' Floor mask.
+	floor_mask = ZEROS(grid_w * grid_h)
+	FOR i = 0 TO LEN(rooms) - 1
+		DIM rm2 = rooms[i]
+		mark_room(INT(rm2{"col"}), INT(rm2{"row"}), INT(rm2{"w"}), INT(rm2{"h"}))
+	NEXT
+
+	' Doorway overrides -> integer keys.
+	DIM dws = spec{"doorways"}
+	FOR i = 0 TO LEN(dws) - 1
+		DIM dw = dws[i]
+		DIM sd = 0
+		IF MAP.EXISTS(dw, "side") THEN sd = side_from(dw{"side"})
+		DIM key = INT(dw{"col"}) * 10000 + INT(dw{"row"}) * 100 + sd
+		doorway_keys = APPEND(doorway_keys, key)
+	NEXT
+
+	place_floor()
+	place_walls()
+	place_torches(spec{"torches"})
+	place_props(spec{"props"})
+	place_decor(spec{"wall_decor"})
+	place_traps(spec{"traps"})
+
+	PRINT "dungeon: " + STR$(grid_w) + "x" + STR$(grid_h) + " grid, " + STR$(door_count) + " doors, " + STR$(trap_count) + " traps"
+ENDSUB
+
+SUB _process(delta)
+	IF player_h = 0 THEN RETURN
+	DIM pp = GODOT.GET(player_h, "global_position")
+
+	' E near a door -> toggle the nearest one within reach.
+	IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("use") THEN
+		DIM best = -1
+		DIM bestd = 9.0
+		FOR di = 0 TO door_count - 1
+			DIM dp = GODOT.GET(door_body[di], "global_position")
+			DIM ex = dp[0] - pp[0]
+			DIM ez = dp[2] - pp[2]
+			DIM d2 = ex * ex + ez * ez
+			IF d2 < bestd THEN
+				bestd = d2
+				best = di
+			ENDIF
+		NEXT
+		IF best >= 0 THEN toggle_door(best)
+	ENDIF
+
+	' Spike traps: armed tiles fire when stepped on, re-arm after the cycle.
+	FOR ti = 0 TO trap_count - 1
+		IF trap_state[ti] = 0 THEN
+			DIM tx = trap_wx[ti] - pp[0]
+			DIM tz = trap_wz[ti] - pp[2]
+			IF tx * tx + tz * tz < 2.56 THEN fire_trap(ti)
+		ELSE
+			trap_t[ti] = trap_t[ti] + delta
+			IF trap_t[ti] > 2.3 THEN trap_state[ti] = 0
+		ENDIF
+	NEXT
+ENDSUB
