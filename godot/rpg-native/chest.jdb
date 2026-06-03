@@ -1,9 +1,7 @@
 EXTENDS StaticBody3D
 
-' Interactive chest, pure jdBasic. An Area3D "Zone" detects the player via
-' body_entered/body_exited (GODOT.CONNECT with an Object arg in 3D); pressing
-' "use" (E) inside the zone tweens the KayKit lid open. Grounds itself on the
-' procedural terrain by re-evaluating the same height formula.
+' Interactive chest: an Area3D zone detects the player; pressing "use" (E)
+' inside it tweens the lid open. Grounds itself on the procedural terrain.
 
 INSPECTOR DIM model         = "chest"
 INSPECTOR DIM label         = "Chest"

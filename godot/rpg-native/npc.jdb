@@ -1,9 +1,7 @@
 EXTENDS CharacterBody3D
 
-' Wandering NPC, pure jdBasic. Loads a KayKit character, merges its
-' animations the same way the player does, and roams between random points
-' near its spawn, idling between walks and facing its heading. (Dialog / the
-' LLM brain is a separate system, not part of this slice.)
+' Wandering NPC: loads a character model, merges its animations, and roams
+' between random points near its spawn, idling between walks and facing its heading.
 
 INSPECTOR DIM npc_id         = ""
 INSPECTOR DIM character_type = "Knight"

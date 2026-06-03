@@ -1,9 +1,7 @@
 EXTENDS StaticBody3D
 
-' Walkable procedural terrain, pure jdBasic. Heights are computed APL-style
-' (vectorised SIN/COS over IOTA, no loops). The same height grid drives both
-' the visual ArrayMesh (per-vertex colour) and a HeightMapShape3D collider,
-' so the player and NPCs walk on the generated ground.
+' Walkable procedural terrain. One vectorised height grid drives both the
+' visual ArrayMesh (per-vertex colour) and a HeightMapShape3D collider.
 '
 '   Mesh       child: MeshInstance3D - gets the ArrayMesh
 '   Collision  child: CollisionShape3D - gets the HeightMapShape3D

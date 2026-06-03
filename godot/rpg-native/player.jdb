@@ -1,8 +1,7 @@
 EXTENDS CharacterBody3D
 
-' Third-person player, pure jdBasic (no GDScript). WASD walks camera-relative,
-' Shift runs, Space jumps, mouse orbits, Esc toggles capture. A capsule mesh
-' stands in for the character model (GLB + animation come in a later slice).
+' Third-person player: WASD walks camera-relative, Shift runs, Space jumps,
+' the mouse orbits the camera and Esc toggles mouse capture.
 
 INSPECTOR DIM walk_speed       = 5.0    AS RANGE(1.0, 20.0, 0.5)
 INSPECTOR DIM run_speed        = 9.0    AS RANGE(1.0, 30.0, 0.5)

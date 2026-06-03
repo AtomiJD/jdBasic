@@ -1,10 +1,8 @@
 EXTENDS Node3D
 
-' Data-driven world populator, pure jdBasic. Reads npcs.json + chests.json
-' (via the real FileAccess API + JSON.PARSE$), instantiates the npc.tscn /
-' chest.tscn templates and sets each instance's properties before adding it
-' to the tree (so the script's _ready sees the right values). The LLM dialog
-' layer plugs onto these later; for now NPCs wander and chests open.
+' Data-driven world populator: reads npcs.json and chests.json, instantiates
+' the npc.tscn / chest.tscn templates, sets each instance's properties, and
+' adds it to the tree.
 
 DIM self_h = 0
 
@@ -18,10 +16,9 @@ SUB spawn_npcs()
 		GODOT.SET(npc, "npc_id", e{"id"})
 		GODOT.SET(npc, "character_type", e{"character"})
 		GODOT.SET(npc, "display_name", e{"name"})
-		' TEST: cluster the NPCs in a ring around the crossroads (origin)
-		' so they're all in view. Swap back to e{"spawn"} for the real map.
-		DIM ang = i * 2.0 * PI / cnt
-		GODOT.SET(npc, "position", GODOT.VEC3(COS(ang) * 7.0, 6.0, SIN(ang) * 7.0))
+		' Drop in above the spawn point; gravity settles it onto the terrain.
+		DIM sp = e{"spawn"}
+		GODOT.SET(npc, "position", GODOT.VEC3(sp[0], 6.0, sp[2]))
 		GODOT.ADD_CHILD(self_h, npc)
 	NEXT
 	PRINT "spawned " + STR$(cnt) + " npcs"

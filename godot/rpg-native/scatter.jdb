@@ -1,10 +1,8 @@
 EXTENDS Node3D
 
-' World scatter, pure jdBasic. Reads the tile map and populates the terrain
-' with trees (T: dense, .: sparse) and bushes (o / . occasionally). Each
-' plant is a StaticBody3D + CylinderShape3D so the player and NPC can't walk
-' through trunks. Plants are grounded on the procedural terrain and kept
-' clear of the player / NPC / chest spawns.
+' World scatter: reads the tile map and places trees and bushes on the terrain.
+' Each plant is a StaticBody3D + CylinderShape3D, grounded on the terrain and
+' kept clear of spawn points and dungeon footprints.
 
 INSPECTOR DIM density      = 0.3  AS RANGE(0.0, 1.0, 0.05)
 INSPECTOR DIM trunk_radius = 0.45 AS RANGE(0.1, 1.5, 0.05)

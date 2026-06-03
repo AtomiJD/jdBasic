@@ -1,8 +1,7 @@
 EXTENDS DirectionalLight3D
 
-' Sky + day/night cycle, pure jdBasic. Builds a procedural-sky
-' WorldEnvironment in code (so there's an actual sky, not a flat
-' background) and arcs the sun across it over `day_length` seconds.
+' Sky and day/night cycle: builds a procedural-sky WorldEnvironment and arcs
+' the sun across it over `day_length` seconds.
 
 INSPECTOR DIM day_length = 90.0 AS RANGE(10.0, 600.0, 5.0)
 

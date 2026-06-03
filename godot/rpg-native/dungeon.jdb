@@ -1,16 +1,13 @@
 EXTENDS Node3D
 
-' Data-driven dungeon builder, pure jdBasic. Reads dungeons.json (FileAccess +
-' JSON.PARSE$) and builds the whole structure from a 4m tile grid of KayKit
-' Dungeon Remastered GLTFs: floors, walls, openable doorways, flickering
-' torches, props, wall banners and spike traps. No GDScript anywhere.
+' Data-driven dungeon builder: reads dungeons.json and builds the structure
+' from a 4m tile grid - floors, walls, openable doorways, flickering torches,
+' props, wall banners and spike traps.
 '
-'   - Doors: walk close + press E to swing them open/closed (collider toggles).
+'   - Doors: walk close and press E to swing them open/closed.
 '   - Traps: step onto a spike tile and the spikes shoot up, then retract.
 '
-' Grounds itself on the procedural terrain by re-evaluating the same height
-' formula terrain.jdb uses (cross-script return values aren't marshalled, so
-' we replicate the math instead of calling terrain.sample_height).
+' Grounds itself on the procedural terrain via the same height formula as terrain.jdb.
 
 DIM ASSET_DIR  = "res://assets/dungeon/"
 DIM TILE       = 4.0

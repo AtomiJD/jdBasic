@@ -1,35 +1,22 @@
 EXTENDS Node3D
 
-' ============================================================================
-' jdRPG dialog - pure jdBasic LLM dialogue, running as a Tier-3 Godot script.
-'
-' The whole "brain" (npc_brain + dialog_brain) is inlined below because the
-' Godot embed has no file reader: IMPORT and TXTREADER$ are unavailable. So
-'   - all brain embed_read$(path) calls are rewritten to embed_read$(key),
-'   - the glue (bottom of file) reads every data file via GODOT.STATIC
-'     (FileAccess) into g_files, then hands the brain the cached strings.
-' ============================================================================
+' LLM-driven NPC dialogue: loads the persona/lore/quest data and the language
+' model, opens a dialogue panel near an NPC, and runs each conversation turn.
+' Data files are read via FileAccess into g_files; embed_read$ serves them by key.
 
 DIM g_files AS MAP = {}
+
+' Return a data file's cached contents by key.
 FUNC embed_read$(key)
 	RETURN g_files{key}
 ENDFUNC
 
-' ===================== NPC BRAIN (npc_brain.jdb) =====================
-' NPC behaviour brain - pure jdBasic logic, zero Godot coupling.
-'
-' Architecture: GDScript spawns NPC bodies and ticks them every frame.
-' Per tick it calls npc_tick(id, dt, ground_y) and gets back the new
-' (x, y, z, yaw). All state lives in the EXPORT'd npcs MAP keyed by id.
-'
-' This file is testable via the MCP without Godot - load it, call
-' npc_init / npc_tick with synthetic data, inspect npc_state$.
+' ===================== NPC data + state =====================
+' All NPC state lives in the npcs MAP keyed by id.
 
 EXPORT DIM npcs AS MAP = {}
 
-' Player-side state: quests in flight, completed, plus inventory. The
-' jdBasic side is the single source of truth; GDScript queries it
-' through small expression-eval calls when the Q/I panels open.
+' Player-side state: active quests, completed quests, and inventory.
 EXPORT DIM player_state AS MAP = {}
 player_state{"active"}    = []
 player_state{"completed"} = []
@@ -103,7 +90,7 @@ EXPORT FUNC get_npc_affinity(id)
 	RETURN npcs{id}{"affinity"}
 ENDFUNC
 
-' ── Quest / inventory API (called from GDScript) ───────────────────
+' ── Quest / inventory API ───────────────────
 
 EXPORT FUNC has_offerable_quest(id)
 	DIM s = npcs{id}
@@ -114,7 +101,7 @@ ENDFUNC
 
 ' Player accepted a quest from this NPC. Marks it offered, pushes it
 ' onto active list, hands over item_given if the NPC's quest has one.
-' Returns a short status string GDScript can show in the dialog log.
+' Returns a short status string for the dialog log.
 EXPORT FUNC accept_quest(id)
 	DIM s = npcs{id}
 	IF LEN(s{"quests"}) = 0 THEN RETURN "no quest"
@@ -129,7 +116,7 @@ EXPORT FUNC accept_quest(id)
 	player_state{"active"} = APPEND(player_state{"active"}, entry)
 	npcs{id}{"quest_offered"} = TRUE
 	' Seed the LLM history so the NPC's next reply knows the player
-	' said yes - otherwise Phi-3 will keep re-offering or get confused.
+	' said yes, so it is not re-offered.
 	npcs{id}{"history"} = s{"history"} + CHR$(10) + "Player: I accept your quest."
 	DIM item = ""
 	DIM has_item = MAP.EXISTS(q, "item_given")
@@ -176,7 +163,7 @@ EXPORT FUNC inventory_count()
 	RETURN LEN(player_state{"inventory"})
 ENDFUNC
 
-' GDScript-friendly accessors: return one entry's display fields by
+' Accessors: return one entry's display fields by
 ' index. Keeps marshalling simple - no nested-MAP roundtrips.
 EXPORT FUNC active_quest_field(idx, key)
 	RETURN player_state{"active"}[idx]{key}
@@ -190,7 +177,7 @@ EXPORT FUNC inventory_field(idx, key)
 	RETURN player_state{"inventory"}[idx]{key}
 ENDFUNC
 
-' Called from GDScript when a chest is opened - drops every loot
+' Called when a chest is opened - drops every loot
 ' entry into the inventory tagged with the chest's label as source.
 EXPORT FUNC add_inventory_item(item_name, source)
 	DIM inv AS MAP = {}
@@ -245,7 +232,7 @@ EXPORT FUNC complete_quest_by_id(quest_id)
 ENDFUNC
 
 ' Advance an NPC by dt seconds. ground_y is the terrain height at the
-' NPC's current xz - GDScript reads that from terrain.sample_height
+' NPC's current xz - sampled from the terrain height
 ' and passes it in so the brain doesn't need to know about the world.
 '
 ' Returns [x, y, z, yaw_radians].
@@ -301,27 +288,17 @@ ENDFUNC
 
 ' Walk every loaded NPC by dt seconds. Returns a flat array of
 ' (id_count * 5) values per NPC: [id_str_placeholder, x, y, z, yaw].
-' GDScript reads the ids separately via list_ids() then ticks each
+' the ids are read via list_ids() then each is ticked
 ' one with npc_tick() so we keep the marshalling simple.
 EXPORT FUNC list_ids()
 	RETURN MAP.KEYS(npcs)
 ENDFUNC
 
-' ===================== DIALOG BRAIN (dialog_brain.jdb) =====================
-' Dialog brain - LLM-driven NPC greetings + conversations.
-'
-' Architecture: one Phi-3-mini loaded on the GPU, one ASYNC FUNC
-' generates dialog off the main thread, one task slot at a time so
-' llama.cpp isn't hit concurrently per model.
-'
-' GDScript drives this from world.gd:
-'   dialog_init(model_path)      ' once at boot
-'   prefetch_tick(px, pz, r)     ' every physics frame
-'   is_dialog_ready(id) / get_dialog$(id)  ' when player presses E
-'
-' All state lives in npc_brain.jdb's `npcs` MAP - see npc_init for the
-' per-NPC fields (dialog_cache, dialog_ready, plus the persona/legend
-' loaded from npcs.json).
+' ===================== Dialogue brain =====================
+' LLM-driven NPC greetings and conversations. One model on the GPU; an async
+' task generates each reply off the main thread, one task slot at a time.
+' Per-NPC dialogue fields (dialog_cache, dialog_ready, persona, legend) live
+' in the npcs MAP.
 
 EXPORT DIM g_llm = 0
 EXPORT DIM g_task = 0
@@ -425,7 +402,7 @@ ENDFUNC
 ASYNC FUNC gen_summary(llm, npc_name, pair_text, sys_prompt)
 	AI.SET(llm, "system", sys_prompt)
 	AI.CLEAR_HISTORY(llm)
-	' Qwen3 expects /no_think on the user side, not in system.
+	' Put /no_think on the user side, not in the system prompt.
 	RETURN AI.CHAT(llm, pair_text + CHR$(10) + "/no_think")
 ENDFUNC
 
@@ -434,9 +411,8 @@ ENDFUNC
 ' On completion we append the summary to long_term and drop the
 ' just-summarised pair. We only run when dialog isn't busy so
 ' summarisation never blocks the player.
-' Strip a leading "<think>...</think>" block (Qwen3 still emits one
-' even with /no_think in user msg) plus any leading whitespace. Used
-' on summary output before it lands in long_term_memory.
+' Strip a leading "<think>...</think>" block plus leading whitespace from
+' summary output before it lands in long_term_memory.
 FUNC strip_think_block(s)
 	DIM tend = INSTR(s, "</think>")
 	IF tend >= 0 THEN
@@ -453,10 +429,8 @@ FUNC maybe_compact_buffer()
 		IF THREAD.ISDONE(g_summary_task) THEN
 			DIM summary = AWAIT g_summary_task
 			summary = strip_think_block(summary)
-			' Reject Qwen's mid-sentence language drift (Chinese,
-			' Cyrillic, Japanese...). If more than 20% of chars are
-			' non-ASCII printable, the summary is poison - dropping it
-			' keeps long_term_memory clean.
+			' Drop a summary with too many non-ASCII printable chars
+			' (mid-sentence language drift) to keep long_term_memory clean.
 			IF is_summary_clean(summary) THEN
 				DIM cur = npcs{g_summary_npc}{"long_term"}
 				IF LEN(cur) > 0 THEN
@@ -538,9 +512,8 @@ EXPORT FUNC load_story(path)
 	RETURN MAP.SIZE(story)
 ENDFUNC
 
-' Test whether every flag in `keys` is currently TRUE in
-' world_state.flags. Empty keys list returns TRUE (vacuously
-' satisfied) - used for the seeding act_when_no_other path.
+' Returns whether every flag in `keys` is TRUE in world_state.flags.
+' An empty keys list returns TRUE.
 FUNC all_flags_true(keys)
 	IF LEN(keys) = 0 THEN RETURN TRUE
 	FOR i = 0 TO LEN(keys) - 1
@@ -592,7 +565,7 @@ EXPORT FUNC check_story_progression()
 	RETURN changed
 ENDFUNC
 
-' Drain accumulated act-state-change events so GDScript can announce
+' Drain accumulated act-state-change events so the caller can announce
 ' them once and clear the queue. Returns the array and resets.
 EXPORT FUNC drain_act_events()
 	DIM events = g_act_events
@@ -634,7 +607,7 @@ ENDFUNC
 
 ' ── World-state tick + mutators ────────────────────────────────────
 
-' Called from GDScript whenever the Day/Night cycle crosses midnight.
+' Called whenever the day/night cycle crosses midnight.
 ' Increments day + days_since_arrival, logs a sunrise marker, and
 ' optionally shifts the mood once specific flags have flipped.
 EXPORT FUNC advance_world_day()
@@ -662,7 +635,7 @@ FUNC recompute_mood()
 ENDFUNC
 
 ' Called by the LLM's set_flag tool. Returns "set" if the flag
-' was actually flipped (so GDScript can log it), "noop" if the value
+' was actually flipped, "noop" if the value
 ' was already the same, "unknown" if the flag doesn't exist.
 ' Scan free-form player text for flag triggers using the keyword
 ' + ctx tables in world_state.flag_triggers. Returns an array of
@@ -859,22 +832,18 @@ FUNC build_world_state_summary()
 	RETURN out
 ENDFUNC
 
-' Boot the LLM. model_path is an OS path to a GGUF file. Returns the
-' llama.cpp model id.
-' n_gpu_layers default 99 = "everything on GPU". Override via dialog_init
-' to test whether CUDA loading is the failure source.
+' Load the model from a GGUF path with all layers on the GPU (n_gpu_layers 99).
 EXPORT FUNC dialog_init(model_path)
 	RETURN dialog_init_with(model_path, 99)
 ENDFUNC
 
+' Load the model with an explicit GPU-layer count.
 EXPORT FUNC dialog_init_with(model_path, n_gpu)
 	g_llm = AI.LOAD_LLM(model_path, 8192, n_gpu)
 	AI.SET(g_llm, "max_tokens", 400)
 	AI.SET(g_llm, "temperature", 0.7)
-	' Qwen2.5-7B-Instruct is reliable at following "output only JSON"
-	' from the prompt; the GBNF grammar path caused empty completions
-	' on the 2nd / 3rd generation. parse_actions defensively wraps
-	' any non-JSON output as a plain say so the player still sees it.
+	' The prompt asks for JSON only; parse_actions wraps any non-JSON output
+	' as a plain say so the player still sees a reply.
 	RETURN g_llm
 ENDFUNC
 
@@ -1034,15 +1003,13 @@ FUNC build_quest_block(id)
 	RETURN out
 ENDFUNC
 
-' Whitelist of items this NPC may emit via give_item. Derived from
-' the quest's item_given for now; later we can attach an explicit
-' "inventory" field per NPC. Used both for prompt scoping and the
-' GDScript-side validation pass.
+' Items this NPC may hand over via give_item, derived from the quest's
+' item_given. Used for prompt scoping and give_item validation.
 EXPORT FUNC available_items(id)
 	DIM out = []
 	DIM s = npcs{id}
-	' Once the quest has been offered the item has been handed over -
-	' don't list it as available any more so the LLM can't re-gift it.
+	' Once the quest has been offered the item is handed over; drop it from
+	' the list so it can't be gifted again.
 	IF s{"quest_offered"} = TRUE THEN RETURN out
 	IF LEN(s{"quests"}) > 0 THEN
 		DIM q = s{"quests"}[0]
@@ -1262,9 +1229,8 @@ EXPORT FUNC npc_display_name(id)
 	RETURN npcs{id}{"name"}
 ENDFUNC
 
-' Render the rumors block for an NPC's system prompt. Filters out
-' rumors the NPC itself was the source of (otherwise Tylen would
-' read "Tylen says Atomi found tracks" - silly).
+' Render the rumors block for an NPC's system prompt, omitting rumors the
+' NPC itself was the source of.
 FUNC build_rumor_block(id)
 	IF MAP.SIZE(world_state) = 0 THEN RETURN ""
 	IF MAP.EXISTS(world_state, "rumors") <> TRUE THEN RETURN ""
@@ -1423,10 +1389,8 @@ FUNC build_sys_old(id)
 	RETURN sys
 ENDFUNC
 
-' Strip hallucinated continuation past the NPC's own turn. Phi-3
-' occasionally writes "Maelyn: ...\nPlayer: ...\nMaelyn: ..." or
-' tacks on "(Note: This response ...)" meta-commentary at the end.
-' We cut at every known leak pattern and trim the result.
+' Cut the reply at any continuation past the NPC's own turn (fake follow-up
+' turns, trailing meta-commentary) and trim chat-template artefacts.
 FUNC clean_reply(id, raw)
 	DIM r = raw
 	DIM nl_player = CHR$(10) + "Player:"
@@ -1454,9 +1418,7 @@ FUNC clean_reply(id, raw)
 		idx = INSTR(r, CHR$(10) + meta_prefixes[i])
 		IF idx >= 0 THEN r = LEFT$(r, idx)
 	NEXT
-	' Inline meta that doesn't start on a fresh line - Phi-3 sometimes
-	' writes "...this little box has Maelyn' Author: This scenario..."
-	' i.e. tacks on the disclaimer mid-paragraph after a space.
+	' Inline meta tacked on mid-paragraph after a space.
 	DIM inline_meta = [" Author:", " Note:", " Solution:", " Explanation:", " Reply:", " reply:"]
 	FOR i = 0 TO LEN(inline_meta) - 1
 		idx = INSTR(r, inline_meta[i])
@@ -1473,14 +1435,12 @@ FUNC clean_reply(id, raw)
 			IF LEN(r) > 0 ANDALSO LEFT$(r, 1) = " " THEN r = MID$(r, 2)
 		ENDIF
 	NEXT
-	' Trim trailing whitespace / newlines / chat-template artefacts.
-	' Qwen's "<|im_end|>" template sometimes bleeds through as "_|" or
-	' "|" trailing junk; strip that before the whitespace pass.
+	' Trim trailing chat-template artefacts ("_|", "|") before whitespace.
 	IF LEN(r) >= 2 ANDALSO RIGHT$(r, 2) = "_|" THEN r = LEFT$(r, LEN(r) - 2)
 	DO WHILE LEN(r) > 0 ANDALSO (RIGHT$(r, 1) = CHR$(10) ORELSE RIGHT$(r, 1) = " " ORELSE RIGHT$(r, 1) = "|")
 		r = LEFT$(r, LEN(r) - 1)
 	LOOP
-	' If Phi-3 prefixed its line with "Maelyn:" itself, strip that.
+	' Strip a leading "<name>:" the model prefixed onto its own line.
 	DIM self_prefix = npcs{id}{"name"} + ":"
 	IF LEN(r) > LEN(self_prefix) THEN
 		IF LEFT$(r, LEN(self_prefix)) = self_prefix THEN
@@ -1505,21 +1465,18 @@ ASYNC FUNC gen_dialog(llm, sys_prompt, user_prompt)
 	RETURN AI.CHAT(llm, user_prompt)
 ENDFUNC
 
-' Called every physics frame from GDScript. Drains any finished task
+' Called every frame. Drains any finished task
 ' first, then if idle and an NPC within radius lacks a cached greeting,
 ' kicks off the next generation.
 '
-' Returns the id of an NPC that just got a fresh greeting (so GDScript
+' Returns the id of an NPC that just got a fresh greeting (so the caller
 ' can flip its UI marker), or "" otherwise.
 ' Parse raw text into an actions array. Defensive: if it doesn't
 ' look like JSON (starts with non-'{' character, ASYNC ERROR
 ' string, plain prose) we wrap it as a single say so the player
 ' still gets to see something readable.
-' Qwen3 sometimes emits Latin-1 codepoints as Python-style \xHH
-' escapes inside JSON strings ("Sch\xf6lerin" instead of UTF-8 or
-' "Schölerin"). JSON.PARSE$ then keeps the raw "xf6" bytes
-' verbatim. Rewriting \xHH → \u00HH before parsing makes them
-' valid JSON unicode escapes (U+00f6 = ö, U+00fc = ü, etc.).
+' Rewrite Python-style \xHH escapes to \u00HH so JSON.PARSE$ decodes them
+' as valid unicode (U+00f6 = ö, U+00fc = ü, etc.).
 FUNC fix_qwen_hex_escapes(s)
 	DIM out = ""
 	DIM i = 0
@@ -1555,8 +1512,7 @@ ENDFUNC
 
 FUNC parse_actions(raw)
     DIM trimmed = raw
-    ' Qwen3 leaks <think>...</think> CoT blocks even with /no_think.
-    ' Strip everything up to (and including) a </think> close tag.
+    ' Strip a leading <think>...</think> block up to the close tag.
 	DIM tend = INSTR(trimmed, "</think>")
     IF tend >= 0 THEN
         trimmed = MID$(trimmed, tend + 8)
@@ -1676,7 +1632,7 @@ ENDFUNC
 '   1. Removes the item from player inventory
 '   2. Moves the source quest from active -> completed
 '   3. Flags the giver's quest_completed
-'   4. Returns a canned thanks line for GDScript to show
+'   4. Returns a canned thanks line to show
 '
 ' Returns "" if there's nothing to deliver here.
 EXPORT FUNC check_pending_delivery(id)
@@ -1754,7 +1710,7 @@ EXPORT FUNC check_pending_delivery(id)
 ENDFUNC
 
 ' ── Conversation API ──────────────────────────────────────────────
-' GDScript calls these once the player presses E near an NPC. The
+' Called once the player presses E near an NPC. The
 ' conversation reuses the same single-LLM single-task slot as the
 ' prefetch loop - so if a prefetch is in flight, the player has to
 ' wait until it lands before their reply gets generated.
@@ -1786,7 +1742,7 @@ ENDFUNC
 
 ' Send a player message. Spawns an ASYNC task that generates the next
 ' NPC reply with the full conversation history as context. Returns
-' the task_id - GDScript polls via dialog_reply_ready / dialog_reply.
+' the task id; poll via dialog_reply_ready / dialog_reply.
 EXPORT FUNC continue_dialog(id, player_msg)
     IF g_task <> 0 THEN
         ' Wait for any in-flight prefetch to land first - cheap because
@@ -1901,40 +1857,37 @@ EXPORT FUNC poll_reply(id)
     RETURN []
 ENDFUNC
 
-' ===================== GODOT GLUE - classic RPG dialog box =====================
-' Detects the player near an NPC, opens a bottom-screen dialogue panel, frees
-' the mouse + freezes the player, and runs the brain's async turn loop
-' (continue_dialog -> poll_reply each frame). Pure jdBasic; the brain above is
-' untouched apart from the embed_read$ file shim.
+' Player interaction, the dialogue panel, and the per-frame turn loop.
 
 DIM self_h    = 0
 DIM player_h  = 0
 DIM spawner_h = 0
 DIM g_model_path = "D:/usr/dev/cc/models/Qwen_Qwen3-14B-Q4_K_M.gguf"
 
-DIM boot_phase = 0          ' 1 = boot LLM next frame, 2 = booted
+DIM boot_phase = 0          ' 1 = show splash, 2 = load model, 3 = ready
 DIM g_ready    = FALSE
 DIM npcs_found = FALSE
 
-DIM active_npc  = ""        ' brain id of the NPC in dialog ("" = closed)
+DIM active_npc  = ""        ' id of the NPC in dialog ("" = closed)
 DIM active_node = 0
 DIM awaiting    = FALSE
 DIM talk_range2 = 12.25     ' (3.5m)^2
-DIM focus_clear   = FALSE   ' wipe the stray 'e' from the open keypress (one-shot)
+DIM focus_clear = FALSE     ' clear the stray open-keypress char once
 
 DIM npc_nodes AS ARRAY = []
 DIM npc_ids   AS ARRAY = []
 
-DIM ui_layer  = 0
-DIM ui_panel  = 0
-DIM ui_name   = 0
-DIM ui_close  = 0
-DIM ui_hist   = 0
-DIM ui_quest  = 0
-DIM ui_accept = 0
-DIM ui_input  = 0
-DIM ui_status = 0
-DIM hint_lbl  = 0
+DIM ui_layer     = 0
+DIM ui_panel     = 0
+DIM ui_name      = 0
+DIM ui_close     = 0
+DIM ui_hist      = 0
+DIM ui_quest     = 0
+DIM ui_accept    = 0
+DIM ui_input     = 0
+DIM ui_status    = 0
+DIM hint_lbl     = 0
+DIM splash_layer = 0
 
 SUB set_rect(node, a1, a2, a3, a4, f1, f2, f3, f4)
 	GODOT.SET(node, "anchor_left", a1)
@@ -2002,6 +1955,23 @@ SUB build_ui()
 	GODOT.SET(hint_lbl, "horizontal_alignment", 1)
 	GODOT.SET(hint_lbl, "visible", FALSE)
 	GODOT.ADD_CHILD(ui_layer, hint_lbl)
+ENDSUB
+
+' Full-screen overlay shown while the language model loads.
+SUB build_splash()
+	splash_layer = GODOT.NEW("CanvasLayer")
+	GODOT.SET(splash_layer, "layer", 100)
+	GODOT.ADD_CHILD(self_h, splash_layer)
+	DIM bg = GODOT.NEW("ColorRect")
+	GODOT.SET(bg, "color", GODOT.COLOR(0.05, 0.07, 0.1, 1.0))
+	set_rect(bg, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)
+	GODOT.ADD_CHILD(splash_layer, bg)
+	DIM lbl = GODOT.NEW("Label")
+	GODOT.SET(lbl, "text", "Loading dialogue model...")
+	GODOT.SET(lbl, "horizontal_alignment", 1)
+	GODOT.SET(lbl, "vertical_alignment", 1)
+	set_rect(lbl, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)
+	GODOT.ADD_CHILD(bg, lbl)
 ENDSUB
 
 SUB load_data()
@@ -2259,25 +2229,27 @@ SUB _ready()
 	player_h = GODOT.CALL(self_h, "get_node", "../Player")
 	load_data()
 	build_ui()
+	build_splash()
 	boot_phase = 1
-	PRINT "dialog: data loaded, npcs=" + STR$(MAP.SIZE(npcs)) + " - booting LLM next frame"
 ENDSUB
 
 SUB _process(delta)
+	' Phase 1 lets the splash paint a frame before the blocking model load.
 	IF boot_phase = 1 THEN
 		boot_phase = 2
-		DIM t0 = TICK()
+		RETURN
+	ENDIF
+	IF boot_phase = 2 THEN
+		boot_phase = 3
 		dialog_init_with(g_model_path, 99)
 		IF g_llm <> 0 THEN g_ready = TRUE
-		PRINT "dialog: ready=" + STR$(g_ready) + " g_llm=" + STR$(g_llm) + " load=" + STR$(TICK() - t0) + "ms"
+		GODOT.CALL(splash_layer, "queue_free")
 		RETURN
 	ENDIF
 	IF NOT g_ready THEN RETURN
 	IF NOT npcs_found THEN find_npcs()
 
 	IF active_npc <> "" THEN
-		' Godot keeps dropping focus off the LineEdit; re-assert it every
-		' idle frame so the player can always just type after the NPC speaks.
 		IF NOT awaiting THEN
 			' edit() puts the LineEdit into text-edit mode (and grabs focus);
 			' a no-op once already editing.
