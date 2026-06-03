@@ -40,11 +40,14 @@ FUNC find_lid(node)
 ENDFUNC
 
 SUB on_enter(body)
+	' Only the player triggers the chest - NPCs wander through zones too.
+	IF INSTR(LCASE$(GODOT.GET(body, "name")), "player") < 0 THEN RETURN
 	in_range = TRUE
 	IF NOT opened ANDALSO prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", TRUE)
 ENDSUB
 
 SUB on_exit(body)
+	IF INSTR(LCASE$(GODOT.GET(body, "name")), "player") < 0 THEN RETURN
 	in_range = FALSE
 	IF prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", FALSE)
 ENDSUB

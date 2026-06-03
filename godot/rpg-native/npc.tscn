@@ -16,7 +16,7 @@ shape = SubResource("Cap")
 [node name="Visual" type="Node3D" parent="."]
 
 [node name="NameLabel" type="Label3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.1, 0)
 billboard = 1
 pixel_size = 0.008
 text = "NPC"

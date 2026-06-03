@@ -20,6 +20,7 @@ DIM DOOR_W     = 1.2
 
 DIM self_h   = 0
 DIM player_h = 0
+DIM splat_h  = 0
 
 DIM org_x = 0.0
 DIM org_y = 0.0
@@ -35,6 +36,7 @@ DIM door_body AS ARRAY = []
 DIM door_open AS ARRAY = []
 DIM door_visual AS ARRAY = []
 DIM door_collider AS ARRAY = []
+DIM door_prompt AS ARRAY = []
 
 ' Trap registry.
 DIM trap_count = 0
@@ -156,10 +158,23 @@ SUB maybe_wall(c, r, sd, dx, dr)
 		DIM dummy2 = add_box(body,  TILE * 0.4, 2.0, 0.0, TILE * 0.2, 4.0, WALL_DEPTH)
 		DIM dcoll  = add_box(body, 0.0, 1.75, 0.0, DOOR_W, DOOR_H, 0.2)
 		DIM dvis = find_named(visual, "doorway_door")
+		' "[E] Open door" billboard hint, shown when the player is in reach.
+		DIM prompt = GODOT.NEW("Label3D")
+		GODOT.SET(prompt, "text", "[E] Open door")
+		GODOT.SET(prompt, "billboard", 1)
+		GODOT.SET(prompt, "pixel_size", 0.004)
+		GODOT.SET(prompt, "modulate", GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+		GODOT.SET(prompt, "no_depth_test", TRUE)
+		GODOT.SET(prompt, "fixed_size", TRUE)
+		GODOT.SET(prompt, "visible", FALSE)
+		GODOT.SET(prompt, "position", GODOT.VEC3(0.0, 4.2, 0.0))
+		GODOT.ADD_CHILD(body, prompt)
+
 		door_body = APPEND(door_body, body)
 		door_open = APPEND(door_open, 0)
 		door_visual = APPEND(door_visual, dvis)
 		door_collider = APPEND(door_collider, dcoll)
+		door_prompt = APPEND(door_prompt, prompt)
 		door_count = door_count + 1
 	ELSE
 		DIM wcoll = add_box(body, 0.0, 2.0, 0.0, TILE, 4.0, WALL_DEPTH)
@@ -319,7 +334,9 @@ SUB toggle_door(di)
 	IF door_open[di] = 0 THEN op = 1
 	door_open[di] = op
 	DIM coll = door_collider[di]
-	IF coll <> 0 THEN GODOT.SET(coll, "disabled", op = 1)
+	DIM is_disabled = FALSE
+	IF op = 1 THEN is_disabled = TRUE
+	IF coll <> 0 THEN GODOT.SET(coll, "disabled", is_disabled)
 	DIM vis = door_visual[di]
 	IF vis <> 0 THEN
 		DIM tgt = 0.0
@@ -343,6 +360,15 @@ SUB fire_trap(ti)
 		GODOT.CALL(p2, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
 		GODOT.CALL(p2, "set_ease",  GODOT.ENUM("Tween", "EASE_IN"))
 	ENDIF
+	' Red damage flash.
+	IF splat_h <> 0 THEN
+		GODOT.SET(splat_h, "modulate", GODOT.COLOR(1.0, 1.0, 1.0, 1.0))
+		DIM tws = GODOT.CALL(self_h, "create_tween")
+		DIM ps = GODOT.CALL(tws, "tween_property", GODOT.REF(splat_h), "modulate:a", 0.0, 0.6)
+		GODOT.CALL(ps, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
+		GODOT.CALL(ps, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+	ENDIF
+
 	trap_state[ti] = 1
 	trap_t[ti] = 0.0
 ENDSUB
@@ -412,6 +438,17 @@ SUB _ready()
 	place_decor(spec{"wall_decor"})
 	place_traps(spec{"traps"})
 
+	' Full-screen red damage vignette, flashed when a trap fires.
+	DIM layer = GODOT.NEW("CanvasLayer")
+	GODOT.ADD_CHILD(self_h, layer)
+	splat_h = GODOT.NEW("ColorRect")
+	GODOT.SET(splat_h, "color", GODOT.COLOR(0.7, 0.0, 0.0, 0.55))
+	GODOT.SET(splat_h, "anchor_right", 1.0)
+	GODOT.SET(splat_h, "anchor_bottom", 1.0)
+	GODOT.SET(splat_h, "mouse_filter", 2)
+	GODOT.SET(splat_h, "modulate", GODOT.COLOR(1.0, 1.0, 1.0, 0.0))
+	GODOT.ADD_CHILD(layer, splat_h)
+
 	PRINT "dungeon: " + STR$(grid_w) + "x" + STR$(grid_h) + " grid, " + STR$(door_count) + " doors, " + STR$(trap_count) + " traps"
 ENDSUB
 
@@ -419,22 +456,33 @@ SUB _process(delta)
 	IF player_h = 0 THEN RETURN
 	DIM pp = GODOT.GET(player_h, "global_position")
 
-	' E near a door -> toggle the nearest one within reach.
-	IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("use") THEN
-		DIM best = -1
-		DIM bestd = 9.0
-		FOR di = 0 TO door_count - 1
-			DIM dp = GODOT.GET(door_body[di], "global_position")
-			DIM ex = dp[0] - pp[0]
-			DIM ez = dp[2] - pp[2]
-			DIM d2 = ex * ex + ez * ez
-			IF d2 < bestd THEN
-				bestd = d2
-				best = di
+	' Nearest door within reach: show its [E] hint; E toggles it.
+	DIM best = -1
+	DIM bestd = 12.25
+	FOR di = 0 TO door_count - 1
+		DIM dp = GODOT.GET(door_body[di], "global_position")
+		DIM ex = dp[0] - pp[0]
+		DIM ez = dp[2] - pp[2]
+		DIM d2 = ex * ex + ez * ez
+		IF d2 < bestd THEN
+			bestd = d2
+			best = di
+		ENDIF
+	NEXT
+	FOR di = 0 TO door_count - 1
+		DIM pr = door_prompt[di]
+		IF pr <> 0 THEN
+			IF di = best THEN
+				DIM txt = "[E] Open door"
+				IF door_open[di] = 1 THEN txt = "[E] Close door"
+				GODOT.SET(pr, "text", txt)
+				GODOT.SET(pr, "visible", TRUE)
+			ELSE
+				GODOT.SET(pr, "visible", FALSE)
 			ENDIF
-		NEXT
-		IF best >= 0 THEN toggle_door(best)
-	ENDIF
+		ENDIF
+	NEXT
+	IF best >= 0 ANDALSO GODOT.INPUT.IS_ACTION_JUST_PRESSED("use") THEN toggle_door(best)
 
 	' Spike traps: armed tiles fire when stepped on, re-arm after the cycle.
 	FOR ti = 0 TO trap_count - 1
