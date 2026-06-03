@@ -14,6 +14,7 @@ DIM lid_h    = 0
 DIM prompt_h = 0
 DIM opened   = FALSE
 DIM in_range = FALSE
+DIM contents AS ARRAY = []
 
 ' Matches terrain.jdb's defaults (n=64, cell=1, freq=14, amp=2, seed=7).
 FUNC terrain_height(wx, wz)
@@ -50,6 +51,37 @@ SUB on_exit(body)
 	IF prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", FALSE)
 ENDSUB
 
+' Float a loot item's model up out of the chest, then shrink it away.
+SUB spawn_loot_visual(item, idx)
+	DIM inst = GODOT.INSTANTIATE("res://assets/dungeon/" + item + ".gltf")
+	IF inst = 0 THEN RETURN
+	GODOT.ADD_CHILD(self_h, inst)
+	GODOT.SET(inst, "position", GODOT.VEC3((idx - 1) * 0.3, 0.7, 0.0))
+	DIM tw = GODOT.CALL(self_h, "create_tween")
+	DIM p = GODOT.CALL(tw, "tween_property", GODOT.REF(inst), "position:y", 1.9, 0.9)
+	GODOT.CALL(p, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
+	GODOT.CALL(p, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+	GODOT.CALL(tw, "tween_property", GODOT.REF(inst), "scale", GODOT.VEC3(0.01, 0.01, 0.01), 0.4)
+ENDSUB
+
+' Hand the chest contents to the player: queue them on the DialogManager's
+' loot_inbox meta (it owns the brain inventory and drains the inbox), and
+' float each item out of the chest.
+SUB give_loot()
+	DIM dm = GODOT.CALL(self_h, "get_node", "/root/World/DialogManager")
+	DIM inbox AS ARRAY = []
+	IF dm <> 0 ANDALSO GODOT.CALL(dm, "has_meta", "loot_inbox") THEN inbox = GODOT.CALL(dm, "get_meta", "loot_inbox")
+	FOR i = 0 TO LEN(contents) - 1
+		DIM c = contents[i]
+		DIM e AS MAP = {}
+		e{"name"} = c{"name"}
+		e{"source"} = label
+		inbox = APPEND(inbox, e)
+		spawn_loot_visual(c{"item"}, i)
+	NEXT
+	IF dm <> 0 THEN GODOT.CALL(dm, "set_meta", "loot_inbox", inbox)
+ENDSUB
+
 SUB open_chest()
 	opened = TRUE
 	IF prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", FALSE)
@@ -59,6 +91,7 @@ SUB open_chest()
 		GODOT.CALL(p, "set_trans", GODOT.ENUM("Tween", "TRANS_BACK"))
 		GODOT.CALL(p, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
 	ENDIF
+	give_loot()
 	PRINT "opened: " + label
 ENDSUB
 
@@ -70,6 +103,13 @@ SUB _ready()
 	DIM model_node = GODOT.INSTANTIATE("res://assets/dungeon/" + model + ".gltf")
 	GODOT.ADD_CHILD(self_h, model_node)
 	lid_h = find_lid(model_node)
+
+	' Find this chest's loot by label in chests.json.
+	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/chests.json")
+	DIM arr = JSON.PARSE$(src)
+	FOR i = 0 TO LEN(arr) - 1
+		IF arr[i]{"label"} = label THEN contents = arr[i]{"contents"}
+	NEXT
 
 	GODOT.CONNECT(zone_h, "body_entered", "on_enter")
 	GODOT.CONNECT(zone_h, "body_exited",  "on_exit")

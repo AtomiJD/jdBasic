@@ -1889,6 +1889,19 @@ DIM ui_status    = 0
 DIM hint_lbl     = 0
 DIM splash_layer = 0
 
+DIM journal_layer = 0
+DIM journal_panel = 0
+DIM journal_tabs  = 0
+DIM journal_q     = 0
+DIM journal_i     = 0
+DIM journal_w     = 0
+DIM journal_open  = FALSE
+DIM journal_tab   = 0
+DIM q_was = FALSE
+DIM i_was = FALSE
+DIM j_was = FALSE
+DIM want_edit = FALSE   ' grab the input box once (set on open / after a reply)
+
 SUB set_rect(node, a1, a2, a3, a4, f1, f2, f3, f4)
 	GODOT.SET(node, "anchor_left", a1)
 	GODOT.SET(node, "anchor_top", a2)
@@ -1972,6 +1985,129 @@ SUB build_splash()
 	GODOT.SET(lbl, "vertical_alignment", 1)
 	set_rect(lbl, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)
 	GODOT.ADD_CHILD(bg, lbl)
+ENDSUB
+
+' Journal overlay with one tab per topic. Q = Quests, I = Inventory, J = World.
+FUNC make_tab(node_name)
+	DIM rt = GODOT.NEW("RichTextLabel")
+	GODOT.SET(rt, "name", node_name)
+	GODOT.SET(rt, "bbcode_enabled", TRUE)
+	GODOT.SET(rt, "focus_mode", 0)
+	GODOT.ADD_CHILD(journal_tabs, rt)
+	RETURN rt
+ENDFUNC
+
+SUB build_journal()
+	journal_layer = GODOT.NEW("CanvasLayer")
+	GODOT.SET(journal_layer, "layer", 60)
+	GODOT.ADD_CHILD(self_h, journal_layer)
+	journal_panel = GODOT.NEW("Panel")
+	set_rect(journal_panel, 0.15, 0.1, 0.85, 0.9, 0.0, 0.0, 0.0, 0.0)
+	GODOT.SET(journal_panel, "visible", FALSE)
+	GODOT.ADD_CHILD(journal_layer, journal_panel)
+	journal_tabs = GODOT.NEW("TabContainer")
+	set_rect(journal_tabs, 0.0, 0.0, 1.0, 1.0, 12.0, 12.0, -12.0, -12.0)
+	GODOT.ADD_CHILD(journal_panel, journal_tabs)
+	journal_q = make_tab("Quests")
+	journal_i = make_tab("Inventory")
+	journal_w = make_tab("World")
+ENDSUB
+
+FUNC quests_text()
+	DIM s = ""
+	DIM act = player_state{"active"}
+	IF LEN(act) = 0 THEN
+		s = s + "[color=#888888]No active quests.[/color]" + CHR$(10)
+	ELSE
+		FOR i = 0 TO LEN(act) - 1
+			DIM q = act[i]
+			s = s + "[color=#ffd96b]- " + q{"description"} + "[/color]" + CHR$(10) + "    [color=#888888]" + q{"giver_name"} + " - reward: " + q{"reward"} + "[/color]" + CHR$(10)
+		NEXT
+	ENDIF
+	DIM don = player_state{"completed"}
+	IF LEN(don) > 0 THEN
+		s = s + CHR$(10) + "[color=#7fc77f][b]Completed[/b][/color]" + CHR$(10)
+		FOR i = 0 TO LEN(don) - 1
+			s = s + "[color=#7fc77f]- " + don[i]{"description"} + "[/color]" + CHR$(10)
+		NEXT
+	ENDIF
+	RETURN s
+ENDFUNC
+
+FUNC inventory_text()
+	DIM s = ""
+	DIM inv = player_state{"inventory"}
+	IF LEN(inv) = 0 THEN
+		s = s + "[color=#888888]Empty.[/color]" + CHR$(10)
+	ELSE
+		FOR i = 0 TO LEN(inv) - 1
+			s = s + "- " + inv[i]{"name"} + " [color=#888888](from " + inv[i]{"source"} + ")[/color]" + CHR$(10)
+		NEXT
+	ENDIF
+	RETURN s
+ENDFUNC
+
+FUNC world_text()
+	DIM s = ""
+	DIM any_flag = FALSE
+	IF MAP.EXISTS(world_state, "flags") THEN
+		DIM fl = world_state{"flags"}
+		DIM keys = MAP.KEYS(fl)
+		FOR i = 0 TO LEN(keys) - 1
+			IF fl{keys[i]} = TRUE THEN
+				s = s + "- " + keys[i] + CHR$(10)
+				any_flag = TRUE
+			ENDIF
+		NEXT
+	ENDIF
+	IF NOT any_flag THEN s = s + "[color=#888888]Nothing has shifted in the world yet.[/color]" + CHR$(10)
+	RETURN s
+ENDFUNC
+
+SUB refresh_journal()
+	GODOT.SET(journal_q, "text", quests_text())
+	GODOT.SET(journal_i, "text", inventory_text())
+	GODOT.SET(journal_w, "text", world_text())
+ENDSUB
+
+SUB open_journal()
+	refresh_journal()
+	GODOT.SET(journal_panel, "visible", TRUE)
+	journal_open = TRUE
+	GODOT.INPUT.SET_MOUSE_MODE(0)
+	GODOT.CALL(player_h, "set_physics_process", FALSE)
+	GODOT.CALL(player_h, "set_process_unhandled_input", FALSE)
+ENDSUB
+
+SUB close_journal()
+	GODOT.SET(journal_panel, "visible", FALSE)
+	journal_open = FALSE
+	GODOT.INPUT.SET_MOUSE_MODE(2)
+	GODOT.CALL(player_h, "set_physics_process", TRUE)
+	GODOT.CALL(player_h, "set_process_unhandled_input", TRUE)
+ENDSUB
+
+' A topic key (0=Quests,1=Inventory,2=World): open to that tab, or close if
+' it's already showing that tab.
+SUB journal_key(tab)
+	IF journal_open ANDALSO journal_tab = tab THEN
+		close_journal()
+		RETURN
+	ENDIF
+	IF NOT journal_open THEN open_journal()
+	journal_tab = tab
+	GODOT.SET(journal_tabs, "current_tab", tab)
+ENDSUB
+
+' Drain chest loot queued on our "loot_inbox" meta into the brain inventory.
+SUB drain_loot()
+	IF NOT GODOT.CALL(self_h, "has_meta", "loot_inbox") THEN RETURN
+	DIM inbox = GODOT.CALL(self_h, "get_meta", "loot_inbox")
+	IF LEN(inbox) = 0 THEN RETURN
+	FOR i = 0 TO LEN(inbox) - 1
+		add_inventory_item(inbox[i]{"name"}, inbox[i]{"source"})
+	NEXT
+	GODOT.CALL(self_h, "set_meta", "loot_inbox", [])
 ENDSUB
 
 SUB load_data()
@@ -2168,11 +2304,13 @@ ENDSUB
 
 SUB on_accept_pressed()
 	IF active_npc = "" THEN RETURN
+	IF NOT has_offerable_quest(active_npc) THEN RETURN
+	DIM q = npcs{active_npc}{"quests"}[0]{"description"}
 	DIM res = accept_quest(active_npc)
 	IF res = "accepted" THEN
-		DIM q = player_state{"active"}[quest_count_active() - 1]{"description"}
 		GODOT.CALL(ui_hist, "append_text", "[color=#e0d090][i]Quest accepted: " + q + "[/i][/color]" + CHR$(10))
 		refresh_quest()
+		want_edit = TRUE
 	ENDIF
 ENDSUB
 
@@ -2195,6 +2333,7 @@ SUB open_dialog(idx)
 	' _ready, so the dialog stays live and the LineEdit reliably gets text.
 	GODOT.SET(GODOT.CALL(self_h, "get_tree"), "paused", TRUE)
 	focus_clear = TRUE
+	want_edit = TRUE
 	DIM g = start_dialog(active_npc)
 	IF LEN(g) > 0 THEN dispatch_actions(g)
 	refresh_quest()
@@ -2229,6 +2368,7 @@ SUB _ready()
 	player_h = GODOT.CALL(self_h, "get_node", "../Player")
 	load_data()
 	build_ui()
+	build_journal()
 	build_splash()
 	boot_phase = 1
 ENDSUB
@@ -2250,16 +2390,35 @@ SUB _process(delta)
 	ENDIF
 	IF NOT g_ready THEN RETURN
 	IF NOT npcs_found THEN find_npcs()
+	drain_loot()
+
+	' Journal tabs: Q = Quests, I = Inventory, J = World (only outside dialog).
+	DIM kq = GODOT.INPUT.IS_KEY_PRESSED(81)
+	DIM ki = GODOT.INPUT.IS_KEY_PRESSED(73)
+	DIM kj = GODOT.INPUT.IS_KEY_PRESSED(74)
+	IF active_npc = "" THEN
+		IF kq ANDALSO NOT q_was THEN journal_key(0)
+		IF ki ANDALSO NOT i_was THEN journal_key(1)
+		IF kj ANDALSO NOT j_was THEN journal_key(2)
+	ENDIF
+	q_was = kq
+	i_was = ki
+	j_was = kj
+	IF journal_open THEN
+		IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("ui_cancel") THEN close_journal()
+		RETURN
+	ENDIF
 
 	IF active_npc <> "" THEN
-		IF NOT awaiting THEN
-			' edit() puts the LineEdit into text-edit mode (and grabs focus);
-			' a no-op once already editing.
+		' Grab the input box only when needed (not every frame) so a click on
+		' the Accept Quest button isn't stolen back by a constant re-focus.
+		IF want_edit ANDALSO NOT awaiting THEN
 			GODOT.CALL(ui_input, "edit")
 			IF focus_clear THEN
 				GODOT.CALL(ui_input, "clear")
 				focus_clear = FALSE
 			ENDIF
+			want_edit = FALSE
 		ENDIF
 		IF awaiting THEN
 			DIM acts = poll_reply(active_npc)
@@ -2269,6 +2428,7 @@ SUB _process(delta)
 				dispatch_actions(acts)
 				drain_events()
 				refresh_quest()
+				want_edit = TRUE
 			ENDIF
 		ENDIF
 		IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("ui_cancel") THEN close_dialog()
