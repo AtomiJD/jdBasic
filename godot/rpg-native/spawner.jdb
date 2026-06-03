@@ -15,6 +15,7 @@ SUB spawn_npcs()
 	FOR i = 0 TO cnt - 1
 		DIM e = arr[i]
 		DIM npc = GODOT.INSTANTIATE("res://npc.tscn")
+		GODOT.SET(npc, "npc_id", e{"id"})
 		GODOT.SET(npc, "character_type", e{"character"})
 		GODOT.SET(npc, "display_name", e{"name"})
 		' TEST: cluster the NPCs in a ring around the crossroads (origin)

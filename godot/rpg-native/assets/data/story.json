@@ -1,0 +1,31 @@
+{
+  "acts": [
+    {
+      "id": "act1_arrival",
+      "title": "Arrival in the Hills",
+      "narrative": "The player has just arrived. People in the hills are uneasy but life is still ordinary - wolves at the edge, a missing parcel, herbs to gather.",
+      "triggers": [],
+      "completes_when_all_true": ["saw_tracks", "scouted_north"],
+      "unlocks_quests": [],
+      "active_when_no_other": true
+    },
+    {
+      "id": "act2_tracks_lead_north",
+      "title": "Tracks Lead North",
+      "narrative": "The player has seen the strange tracks AND walked the northern ridge. The hills now know something is wrong. Conversations should reference the old keep and the missing northern patrol. The wolves and parcel matters feel small next to this.",
+      "triggers": ["saw_tracks", "scouted_north"],
+      "completes_when_all_true": ["keep_investigated"],
+      "unlocks_quests": ["investigate_keep"],
+      "active_when_no_other": false
+    },
+    {
+      "id": "act3_into_the_keep",
+      "title": "Into the Keep",
+      "narrative": "The player has entered the old keep. Whatever is there is older than the kingdom. Maelyn's moon-herbs and Gareth's wolves are now in service of a single question: what came back through the keep.",
+      "triggers": ["keep_investigated"],
+      "completes_when_all_true": ["moon_herb_collected", "wolves_thinned"],
+      "unlocks_quests": [],
+      "active_when_no_other": false
+    }
+  ]
+}

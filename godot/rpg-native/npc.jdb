@@ -5,6 +5,7 @@ EXTENDS CharacterBody3D
 ' near its spawn, idling between walks and facing its heading. (Dialog / the
 ' LLM brain is a separate system, not part of this slice.)
 
+INSPECTOR DIM npc_id         = ""
 INSPECTOR DIM character_type = "Knight"
 INSPECTOR DIM display_name   = "Sir Cube"
 INSPECTOR DIM move_speed     = 2.2  AS RANGE(0.5, 8.0, 0.1)
