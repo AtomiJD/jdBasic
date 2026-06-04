@@ -41,15 +41,18 @@ if %RC% NEQ 0 (
 )
 
 echo.
-echo Staging jdbrt.dll into the demo project ...
+echo Staging jdbrt.dll + satellite DLLs into the demo project ...
 set DST=%REPO%\godot\jd-one\addons\jdb_godot\bin
-copy /Y "%REPO%\build\jdbrt.dll" "%DST%" >nul
-REM HEADLESS jdbrt links no SDL / OpenSSL / LLVM, so we don't stage
-REM those satellite DLLs anymore. If a non-HEADLESS build sneaks back
-REM in (e.g. someone runs build_rt.bat GFX HTTP for some other flow),
-REM Godot will fail to load with "jdbrt.dll dependent module missing"
-REM and the right fix is to re-run build_rt.bat HEADLESS, not to copy
-REM stray DLLs in here.
+REM jdbrt.dll plus whatever satellite DLLs build_rt.bat dropped in build\
+REM (LLM: llama.dll / ggml*.dll / cuda*.dll). The recommended embed flavour
+REM is `build_rt.bat LLM SOUND HTTP` - SOUND_DSP pulls no device and HTTP
+REM links OpenSSL, so we also stage the two OpenSSL runtime DLLs below.
+REM Never build GFX / IMGUI / OPENGL for the embed - those pull SDL3 / LLVM-C
+REM which aren't here and Godot then fails to load jdb_godot with error 126.
+copy /Y "%REPO%\build\*.dll" "%DST%" >nul
+set OSSL=C:\Program Files\OpenSSL-Win64\bin
+if exist "%OSSL%\libssl-3-x64.dll"    copy /Y "%OSSL%\libssl-3-x64.dll"    "%DST%" >nul
+if exist "%OSSL%\libcrypto-3-x64.dll" copy /Y "%OSSL%\libcrypto-3-x64.dll" "%DST%" >nul
 
 echo BUILD OK: %DST%
 dir /b "%DST%"

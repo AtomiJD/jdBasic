@@ -1,0 +1,9 @@
+EXTENDS Node
+SUB _ready()
+	HTTP.SETTIMEOUT(4000)
+	DIM body = ""
+	body = HTTP.GET$("http://example.com")
+	PRINT "HTTP.GET status=" + STR$(HTTP.STATUSCODE()) + " len=" + STR$(LEN(body))
+	PRINT "HTTP SMOKE OK"
+	GDX.QUIT(GDX.SELF())
+ENDSUB

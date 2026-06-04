@@ -18,6 +18,9 @@
 #include "ai.h"
 #include "llm.h"
 #include "sound.h"
+#ifdef HTTP
+#include "http.h"
+#endif
 
 // Where jdbrt.dll lives, so explicit LLM backend loads can find ggml-*.dll
 // next to our runtime. Defined here (always compiled into jdbrt) rather than
@@ -319,6 +322,11 @@ void setup(JdbEmbedImpl* e) {
 #if defined(GFX) || defined(SOUND_DSP)
     // SOUND.* sequencer (pull-mode under SOUND_DSP: no device, host renders).
     ::register_sound_builtins(e->vm);
+#endif
+#ifdef HTTP
+    // HTTP.* client + server (links OpenSSL). Lets a Godot-embedded script
+    // fetch/serve over the network.
+    ::register_http_builtins(e->vm);
 #endif
 }
 
