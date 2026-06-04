@@ -202,6 +202,11 @@ SUB _ready()
 	GDX.SET(mat, "vertex_color_use_as_albedo", TRUE)
 	GDX.CALL(mesh, "surface_set_material", 0, GDX.REF(mat))
 	GDX.SET(mesh_h, "mesh", GDX.REF(mesh))
+	' The procedurally built ArrayMesh sometimes gets a too-tight / degenerate
+	' cull AABB, so Godot frustum-culls the whole patch when the camera turns
+	' (the terrain "pops out"). A generous extra cull margin (terrain half-
+	' extent is ~48) keeps it always considered for drawing.
+	GDX.SET(mesh_h, "extra_cull_margin", 256.0)
 
 	' Collision: a HeightMapShape3D fed the same row-major height grid.
 	' The shape samples at 1-unit spacing, so scale the collider by
