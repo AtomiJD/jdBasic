@@ -123,8 +123,10 @@ static const char* GDX_MODULE_SRC =
     "EXPORT FUNC GET_CHILDREN(n)\n"
     "    RETURN GDX.CALL(n, \"get_children\")\n"
     "ENDFUNC\n"
+    // recursive=TRUE, owned=FALSE so dynamically-added children (whose
+    // `owner` isn't set) are still found - friendlier than Godot's default.
     "EXPORT FUNC FIND_CHILD(n, pattern)\n"
-    "    RETURN GDX.CALL(n, \"find_child\", pattern)\n"
+    "    RETURN GDX.CALL(n, \"find_child\", pattern, TRUE, FALSE)\n"
     "ENDFUNC\n"
     "EXPORT FUNC QUIT(n)\n"
     "    RETURN GDX.CALL(GDX.CALL(n, \"get_tree\"), \"quit\")\n"

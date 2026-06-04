@@ -1,0 +1,215 @@
+EXTENDS Node3D
+
+' ============================================================================
+' GDX regression test - validates the full GDX surface (C++ natives + the
+' jdBasic GDX convenience module) in a headless Godot run.
+'
+' Run:  godot --headless --path godot/jd-one res://gdx_regress.tscn --quit-after 300
+' Pass: prints  GDX_REGRESS_RESULT: PASS <n>/<n>
+' Fail: prints   GDX_REGRESS_RESULT: FAIL <f>/<n>  plus a FAIL line per case.
+'
+' Runs from _physics_process (first frame) so the physics space state is live
+' for RAYCAST. NOTE: GDX.EMIT must not be called synchronously from here while
+' a jdBasic handler is connected - re-entering the embed VM crashes it (a known
+' limitation), so the signal section connects/disconnects without a live emit.
+' ============================================================================
+
+DIM self_h = 0
+DIM g_total = 0
+DIM g_fail = 0
+DIM g_done = 0
+
+' ── assertion helpers ───────────────────────────────────────────────────
+SUB CHK(name, ok)
+	g_total = g_total + 1
+	IF NOT ok THEN
+		g_fail = g_fail + 1
+		PRINT "  FAIL: " + name
+	ENDIF
+ENDSUB
+
+FUNC NEARLY(a, b)
+	RETURN ABS(a - b) < 0.0001
+ENDFUNC
+
+FUNC VEQ3(v, x, y, z)
+	RETURN NEARLY(v[0], x) ANDALSO NEARLY(v[1], y) ANDALSO NEARLY(v[2], z)
+ENDFUNC
+
+SUB ON_PING()
+ENDSUB
+
+SUB _ready()
+	self_h = GDX.SELF()
+	' Build the RAYCAST collider here so the physics space has registered it
+	' by the first _physics_process tick.
+	DIM sb = GDX.NEW("StaticBody3D")
+	DIM cs = GDX.NEW("CollisionShape3D")
+	DIM box = GDX.NEW("BoxShape3D")
+	GDX.SET(box, "size", GDX.VEC3(10.0, 1.0, 10.0))
+	GDX.SET(cs, "shape", GDX.REF(box))
+	GDX.ADD_CHILD(sb, cs)
+	GDX.ADD_CHILD(self_h, sb)
+ENDSUB
+
+SUB _physics_process(delta)
+	IF g_done = 1 THEN RETURN
+	g_done = 1
+
+	' ===== C++ marshalling primitives =====================================
+	CHK("SELF", self_h <> 0)
+	CHK("VEC3", VEQ3(GDX.VEC3(1.0, 2.0, 3.0), 1.0, 2.0, 3.0))
+	DIM v2 = GDX.VEC2(7.0, 8.0)
+	CHK("VEC2", NEARLY(v2[0], 7.0) ANDALSO NEARLY(v2[1], 8.0))
+	DIM col = GDX.COLOR(0.1, 0.2, 0.3, 0.4)
+	CHK("COLOR", NEARLY(col[0], 0.1) ANDALSO NEARLY(col[3], 0.4))
+	DIM v2i = GDX.VEC2I(5, 9)
+	CHK("VEC2I", v2i{"x"} = 5 ANDALSO v2i{"y"} = 9)
+	DIM r2 = GDX.RECT2(0.0, 0.0, 10.0, 20.0)
+	CHK("RECT2", NEARLY(r2{"w"}, 10.0) ANDALSO NEARLY(r2{"h"}, 20.0))
+	DIM pv3 = GDX.PACKED_VEC3([0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+	CHK("PACKED_VEC3", LEN(pv3{"data"}) = 6)
+	DIM pf = GDX.PACKED_FLOAT32([1.0, 2.0, 3.0])
+	CHK("PACKED_FLOAT32", LEN(pf{"data"}) = 3)
+	DIM pin = GDX.PACKED_INT32([1, 2, 3])
+	CHK("PACKED_INT32", LEN(pin{"data"}) = 3)
+
+	' ===== GET / SET / CALL ===============================================
+	DIM probe = GDX.NEW("Node3D")
+	GDX.ADD_CHILD(self_h, probe)
+	GDX.SET(probe, "position", GDX.VEC3(4.0, 5.0, 6.0))
+	CHK("GET/SET roundtrip", VEQ3(GDX.GET(probe, "position"), 4.0, 5.0, 6.0))
+	CHK("CALL get_class", GDX.CALL(probe, "get_class") = "Node3D")
+
+	' ===== SINGLETON / STATIC / ENUM ======================================
+	CHK("SINGLETON Time", GDX.CALL(GDX.SINGLETON("Time"), "get_ticks_msec") > 0)
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://gdx_regress.jdb")
+	CHK("STATIC file read", LEN(src) > 0)
+	CHK("ENUM Tween.TRANS_BACK", GDX.ENUM("Tween", "TRANS_BACK") = 10)
+
+	' ===== object lifecycle ===============================================
+	DIM child = GDX.NEW("Node3D")
+	GDX.SET(child, "name", "Foo")
+	GDX.ADD_CHILD(self_h, child)
+	CHK("NEW/ADD_CHILD/parent", GDX.GET_PARENT(child) = self_h)
+	CHK("LOAD resource", GDX.LOAD("res://icon.svg") <> 0)
+	DIM doomed = GDX.NEW("Node3D")
+	GDX.ADD_CHILD(self_h, doomed)
+	GDX.QUEUE_FREE(doomed)
+	CHK("QUEUE_FREE no crash", TRUE)
+
+	' ===== timer ==========================================================
+	CHK("TIMER handle", GDX.TIMER(0.5, "ON_PING", 0) <> 0)
+
+	' ===== signals: CONNECT / DISCONNECT / EMIT (C++ entry points) ========
+	' NB: no synchronous emit while ON_PING is connected (re-entrancy crash).
+	GDX.CALL(self_h, "add_user_signal", "ping")
+	GDX.CONNECT(self_h, "ping", "ON_PING")
+	CHK("CONNECT no crash", TRUE)
+	GDX.DISCONNECT(self_h, "ping", "ON_PING")
+	GDX.EMIT(self_h, "ping")
+	CHK("DISCONNECT/EMIT no crash", TRUE)
+
+	' ===== audio (smoke - must not crash) =================================
+	GDX.AUDIO.PLAY("res://beep.wav", -12.0, 1.0)
+	GDX.AUDIO.MUSIC("res://beep.wav", -18.0)
+	GDX.AUDIO.STOP_MUSIC()
+	CHK("AUDIO smoke", TRUE)
+
+	' ===== input (smoke - headless returns sane defaults) =================
+	CHK("INPUT.IS_ACTION_PRESSED bool", GDX.INPUT.IS_ACTION_PRESSED("ui_accept") = FALSE)
+	CHK("INPUT.MOUSE_POSITION 2-array", LEN(GDX.INPUT.MOUSE_POSITION()) = 2)
+
+	' ===== EXPORT: CharacterBody movement =================================
+	DIM body = GDX.NEW("CharacterBody3D")
+	GDX.ADD_CHILD(self_h, body)
+	GDX.SET_VELOCITY(body, GDX.VEC3(1.0, 0.0, 2.0))
+	CHK("SET/GET_VELOCITY", VEQ3(GDX.GET_VELOCITY(body), 1.0, 0.0, 2.0))
+	GDX.MOVE_AND_SLIDE(body)
+	CHK("MOVE_AND_SLIDE no crash", TRUE)
+	CHK("IS_ON_FLOOR bool", GDX.IS_ON_FLOOR(body) = FALSE)
+	CHK("IS_ON_WALL bool", GDX.IS_ON_WALL(body) = FALSE)
+	CHK("IS_ON_CEILING bool", GDX.IS_ON_CEILING(body) = FALSE)
+
+	' ===== EXPORT: time ===================================================
+	CHK("TIME_MS", GDX.TIME_MS() > 0)
+	CHK("TIME_SEC", GDX.TIME_SEC() > 0.0)
+
+	' ===== EXPORT: navigation =============================================
+	CHK("GET_NODE by name", GDX.GET_NODE(self_h, "Foo") = child)
+	CHK("GET_TREE", GDX.GET_TREE(self_h) <> 0)
+	CHK("GET_PARENT", GDX.GET_PARENT(child) = self_h)
+	CHK("GET_CHILDREN", LEN(GDX.GET_CHILDREN(self_h)) >= 1)
+	CHK("FIND_CHILD", GDX.FIND_CHILD(self_h, "Foo") = child)
+
+	' ===== EXPORT: transform / property ===================================
+	GDX.SET_POS(child, GDX.VEC3(2.0, 3.0, 4.0))
+	CHK("POS/SET_POS", VEQ3(GDX.POS(child), 2.0, 3.0, 4.0))
+	GDX.SET_GLOBAL_POS(child, GDX.VEC3(11.0, 12.0, 13.0))
+	CHK("GLOBAL_POS/SET_GLOBAL_POS", VEQ3(GDX.GLOBAL_POS(child), 11.0, 12.0, 13.0))
+	GDX.SET(child, "rotation", GDX.VEC3(0.0, 0.0, 0.0))
+	GDX.ROTATE_Y(child, 1.0)
+	CHK("ROTATE_Y", NEARLY(GDX.GET(child, "rotation:y"), 1.0))
+	GDX.SET(child, "rotation", GDX.VEC3(0.0, 0.0, 0.0))
+	GDX.ROTATE_X(child, 0.5)
+	CHK("ROTATE_X", NEARLY(GDX.GET(child, "rotation:x"), 0.5))
+	GDX.LOOK_AT(child, GDX.VEC3(100.0, 0.0, 0.0), GDX.VEC3(0.0, 1.0, 0.0))
+	CHK("LOOK_AT no crash", TRUE)
+
+	DIM lbl = GDX.NEW("Label")
+	GDX.ADD_CHILD(self_h, lbl)
+	GDX.SET_TEXT(lbl, "regress")
+	CHK("SET/GET_TEXT", GDX.GET_TEXT(lbl) = "regress")
+	GDX.SET_VISIBLE(lbl, FALSE)
+	CHK("SET/IS_VISIBLE", GDX.IS_VISIBLE(lbl) = FALSE)
+
+	' ===== EXPORT: metadata ===============================================
+	GDX.SET_META(self_h, "score", 99)
+	CHK("SET/GET_META", GDX.GET_META(self_h, "score") = 99)
+	CHK("HAS_META", GDX.HAS_META(self_h, "score") = TRUE)
+	CHK("HAS_META negative", GDX.HAS_META(self_h, "nope") = FALSE)
+
+	' ===== EXPORT: process control (smoke) ================================
+	GDX.SET_PROCESS(child, FALSE)
+	GDX.SET_PHYSICS_PROCESS(child, FALSE)
+	GDX.SET_PROCESS_INPUT(child, FALSE)
+	GDX.SET_PROCESS_UNHANDLED_INPUT(child, FALSE)
+	CHK("process control no crash", TRUE)
+
+	' ===== EXPORT: tween ==================================================
+	CHK("TWEEN_TO", GDX.TWEEN_TO(lbl, "modulate:a", 0.0, 0.3) <> 0)
+	CHK("TWEEN_TO_EASE", GDX.TWEEN_TO_EASE(lbl, "modulate:a", 1.0, 0.3, 0, 0) <> 0)
+
+	' ===== EXPORT: vector math (pure jdBasic) =============================
+	CHK("V3_LEN", NEARLY(GDX.V3_LEN(GDX.VEC3(3.0, 4.0, 0.0)), 5.0))
+	CHK("V3_DIST", NEARLY(GDX.V3_DIST(GDX.VEC3(0.0,0.0,0.0), GDX.VEC3(3.0,4.0,0.0)), 5.0))
+	CHK("V3_DOT", NEARLY(GDX.V3_DOT(GDX.VEC3(1.0,2.0,3.0), GDX.VEC3(4.0,5.0,6.0)), 32.0))
+	CHK("V3_CROSS", VEQ3(GDX.V3_CROSS(GDX.VEC3(1.0,0.0,0.0), GDX.VEC3(0.0,1.0,0.0)), 0.0, 0.0, 1.0))
+	CHK("V3_NORM", VEQ3(GDX.V3_NORM(GDX.VEC3(0.0,0.0,5.0)), 0.0, 0.0, 1.0))
+	CHK("V3_LERP", VEQ3(GDX.V3_LERP(GDX.VEC3(0.0,0.0,0.0), GDX.VEC3(10.0,20.0,30.0), 0.5), 5.0, 10.0, 15.0))
+	CHK("V3_DIR_TO", VEQ3(GDX.V3_DIR_TO(GDX.VEC3(0.0,0.0,0.0), GDX.VEC3(0.0,0.0,7.0)), 0.0, 0.0, 1.0))
+	CHK("V2_LEN", NEARLY(GDX.V2_LEN(GDX.VEC2(3.0, 4.0)), 5.0))
+	CHK("V2_DIST", NEARLY(GDX.V2_DIST(GDX.VEC2(0.0,0.0), GDX.VEC2(3.0,4.0)), 5.0))
+	CHK("V2_DOT", NEARLY(GDX.V2_DOT(GDX.VEC2(1.0,2.0), GDX.VEC2(3.0,4.0)), 11.0))
+	DIM n2 = GDX.V2_NORM(GDX.VEC2(0.0, 5.0))
+	CHK("V2_NORM", NEARLY(n2[0], 0.0) ANDALSO NEARLY(n2[1], 1.0))
+	DIM l2 = GDX.V2_LERP(GDX.VEC2(0.0,0.0), GDX.VEC2(10.0,20.0), 0.5)
+	CHK("V2_LERP", NEARLY(l2[0], 5.0) ANDALSO NEARLY(l2[1], 10.0))
+
+	' ===== C++ RAYCAST against the collider built in _ready ===============
+	DIM hit = GDX.RAYCAST(GDX.VEC3(0.0, 5.0, 0.0), GDX.VEC3(0.0, -5.0, 0.0))
+	CHK("RAYCAST hit", hit{"hit"} = TRUE)
+	CHK("RAYCAST position", VEQ3(hit{"position"}, 0.0, 0.5, 0.0))
+	CHK("RAYCAST normal", VEQ3(hit{"normal"}, 0.0, 1.0, 0.0))
+	CHK("RAYCAST collider", hit{"collider"} <> 0)
+	DIM hit2 = GDX.RAYCAST_2D(GDX.VEC2(0.0, 0.0), GDX.VEC2(100.0, 0.0))
+	CHK("RAYCAST_2D miss", hit2{"hit"} = FALSE)
+
+	' ===== summary ========================================================
+	IF g_fail = 0 THEN
+		PRINT "GDX_REGRESS_RESULT: PASS " + STR$(g_total) + "/" + STR$(g_total)
+	ELSE
+		PRINT "GDX_REGRESS_RESULT: FAIL " + STR$(g_fail) + "/" + STR$(g_total)
+	ENDIF
+	GDX.QUIT(self_h)
+ENDSUB
