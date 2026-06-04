@@ -209,3 +209,6 @@ godot/**/addons/**/bin/*.pdb
 embed/godot/.sconsign.dblite
 embed/godot/godot-cpp/bin/
 embed/godot/godot-cpp/gen/
+
+# rpg-native: project-local LLM model(s) - large, carried via USB not git
+godot/rpg-native/models/

@@ -847,6 +847,17 @@ EXPORT FUNC dialog_init_with(model_path, n_gpu)
 	RETURN g_llm
 ENDFUNC
 
+' Resolve the model to a machine-independent OS path: prefer the project-local
+' res://models/<g_model_file> (globalized to an absolute path for AI.LOAD_LLM),
+' otherwise fall back to the original absolute dev path.
+FUNC resolve_model_path()
+	DIM rp = "res://models/" + g_model_file
+	IF GDX.STATIC("FileAccess", "file_exists", rp) THEN
+		RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "globalize_path", rp)
+	ENDIF
+	RETURN g_model_fallback
+ENDFUNC
+
 ' ── RAG initialisation ────────────────────────────────────────────
 ' Loads the embedding model + creates a dense-mode RAG store, then
 ' adds every .md in lore_dir. Each file's chunks carry its basename
@@ -1862,7 +1873,15 @@ ENDFUNC
 DIM self_h    = 0
 DIM player_h  = 0
 DIM spawner_h = 0
-DIM g_model_path = "D:/usr/dev/cc/models/Qwen_Qwen3-14B-Q4_K_M.gguf"
+
+' ── LLM config (per machine) ────────────────────────────────────────────
+' The model .gguf lives in the project's own models/ folder (res://models/),
+' so the project is portable - copy it to any machine and it just works.
+' On a 6 GB GPU (e.g. GTX 1660 Ti) use a 7B-class model; a 14B won't fit.
+DIM g_model_file     = "qwen2.5-7b-instruct-q4_k_m.gguf"   ' drop the GGUF in res://models/
+DIM g_gpu_layers     = 99    ' 99 = all layers on GPU (NVIDIA); set 0 for CPU-only
+' Legacy fallback if no model is in res://models/ (the original dev machine).
+DIM g_model_fallback = "D:/usr/dev/cc/models/Qwen_Qwen3-14B-Q4_K_M.gguf"
 
 DIM boot_phase = 0          ' 1 = show splash, 2 = load model, 3 = ready
 DIM g_ready    = FALSE
@@ -2381,7 +2400,7 @@ SUB _process(delta)
 	ENDIF
 	IF boot_phase = 2 THEN
 		boot_phase = 3
-		dialog_init_with(g_model_path, 99)
+		dialog_init_with(resolve_model_path(), g_gpu_layers)
 		IF g_llm <> 0 THEN g_ready = TRUE
 		GDX.CALL(splash_layer, "queue_free")
 		' Signal the music manager that the (blocking) model load is done.
