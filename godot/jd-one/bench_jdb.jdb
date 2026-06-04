@@ -1,0 +1,50 @@
+EXTENDS Node
+
+' jdBasic (Tier-3) side of the GDScript-vs-jdBasic micro-benchmark. Same three
+' workloads as bench_gd.gd, timed with GDX.TIME_MS, plus a vectorised variant
+' of the array benchmark to show the APL-style speedup.
+
+DIM self_h = 0
+
+SUB _ready()
+	self_h = GDX.SELF()
+
+	' 1. Tight numeric loop (pure VM arithmetic).
+	DIM t0 = GDX.TIME_MS()
+	DIM acc = 0.0
+	FOR i = 1 TO 500000
+		acc = acc + SIN(i * 0.001) * SQR(i + 1.0)
+	NEXT
+	DIM t1 = GDX.TIME_MS()
+
+	' 2. Array fill + element-wise transform (imperative, like GDScript).
+	DIM n2 = 200000
+	DIM a = ZEROS(n2)
+	FOR i = 0 TO n2 - 1
+		a[i] = i * 0.5
+	NEXT
+	DIM b = ZEROS(n2)
+	FOR i = 0 TO n2 - 1
+		b[i] = a[i] * 2.0 + 1.0
+	NEXT
+	DIM t2 = GDX.TIME_MS()
+
+	' 2b. Same transform vectorised (one array expression, no loop).
+	DIM bv = a * 2.0 + 1.0
+	DIM t2v = GDX.TIME_MS()
+
+	' 3. Node property read-modify-write (engine bridge per call).
+	DIM node = GDX.NEW("Node3D")
+	GDX.ADD_CHILD(self_h, node)
+	FOR i = 1 TO 50000
+		DIM px = GDX.GET(node, "position:x")
+		GDX.SET(node, "position:x", px + 0.001)
+	NEXT
+	DIM t3 = GDX.TIME_MS()
+
+	PRINT "JDB bench1 numeric loop  : " + STR$(t1 - t0) + " ms (acc=" + STR$(acc) + ")"
+	PRINT "JDB bench2 array fill+xf : " + STR$(t2 - t1) + " ms (b0=" + STR$(b[0]) + ")"
+	PRINT "JDB bench2 vectorised    : " + STR$(t2v - t2) + " ms (bv0=" + STR$(bv[0]) + ")"
+	PRINT "JDB bench3 node get/set  : " + STR$(t3 - t2v) + " ms"
+	GDX.CALL(GDX.CALL(self_h, "get_tree"), "quit")
+ENDSUB
