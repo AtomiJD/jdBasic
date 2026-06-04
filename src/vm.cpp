@@ -816,50 +816,53 @@ bool jdb_no_vectorize(const std::string& name) {
     return set.find(name) != set.end();
 }
 
+// Invoke an already-resolved native: a direct call, or element-wise
+// auto-vectorisation when an arg is an array and no_vec is false. Shared by
+// OpCode::CALL_NATIVE, the slow CALL path, and call_function.
+Value VM::invoke_native(const NativeFunc& fn, const std::vector<Value>& args, bool no_vec) {
+    bool has_arr = false;
+    if (!no_vec) {
+        for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
+    }
+    if (!has_arr) return fn(args);
+    std::function<Value(const std::vector<Value>&)> vec =
+        [&](const std::vector<Value>& cur) -> Value {
+        size_t alen = 0;
+        bool any = false;
+        for (auto& a : cur) {
+            if (a.type == ValueType::ARRAY) {
+                any = true;
+                size_t n = a.as_array()->elements.size();
+                if (n > alen) alen = n;
+            }
+        }
+        if (!any) return fn(cur);
+        Value r = Value::make_array();
+        r.as_array()->elements.reserve(alen);
+        for (size_t i = 0; i < alen; i++) {
+            std::vector<Value> ea(cur.size());
+            for (size_t j = 0; j < cur.size(); j++) {
+                if (cur[j].type == ValueType::ARRAY) {
+                    auto* ar = cur[j].as_array();
+                    ea[j] = ar->elements[i % ar->elements.size()];
+                } else {
+                    ea[j] = cur[j];
+                }
+            }
+            r.as_array()->elements.push_back(vec(ea));
+        }
+        return r;
+    };
+    return vec(args);
+}
+
 Value VM::call_function(const std::string& name, const std::vector<Value>& args) {
     // Native?
     auto nit = natives.find(name);
     if (nit != natives.end()) {
-        // Auto-vectorize: mirror OpCode::CALL behaviour so external callers
-        // (e.g. the native-compiler VM bridge) get the same broadcasting
-        // semantics. Both sites consult jdb_no_vectorize() for parity.
-        // Embed-registered natives may also opt out via extra_no_vectorize.
-        bool has_arr = false;
-        if (!jdb_no_vectorize(name) && extra_no_vectorize.find(name) == extra_no_vectorize.end()) {
-            for (auto& a : args) if (a.type == ValueType::ARRAY) { has_arr = true; break; }
-        }
-        if (has_arr) {
-            std::function<Value(const std::vector<Value>&)> vec =
-                [&](const std::vector<Value>& cur) -> Value {
-                size_t alen = 0;
-                bool any = false;
-                for (auto& a : cur) {
-                    if (a.type == ValueType::ARRAY) {
-                        any = true;
-                        size_t n = a.as_array()->elements.size();
-                        if (n > alen) alen = n;
-                    }
-                }
-                if (!any) return nit->second(cur);
-                Value r = Value::make_array();
-                r.as_array()->elements.reserve(alen);
-                for (size_t i = 0; i < alen; i++) {
-                    std::vector<Value> ea(cur.size());
-                    for (size_t j = 0; j < cur.size(); j++) {
-                        if (cur[j].type == ValueType::ARRAY) {
-                            auto* ar = cur[j].as_array();
-                            ea[j] = ar->elements[i % ar->elements.size()];
-                        } else {
-                            ea[j] = cur[j];
-                        }
-                    }
-                    r.as_array()->elements.push_back(vec(ea));
-                }
-                return r;
-            };
-            return vec(args);
-        }
-        return nit->second(args);
+        bool no_vec = jdb_no_vectorize(name)
+            || extra_no_vectorize.find(name) != extra_no_vectorize.end();
+        return invoke_native(nit->second, args, no_vec);
     }
 
     // User-defined?
@@ -1714,6 +1717,51 @@ void VM::run() {
         }
 
         // ── Functions ────────────────────────────────────────
+
+        case OpCode::CALL_NATIVE: {
+            // Compile-time-resolved native: index straight into native_table,
+            // no name copy, no hash, no no-vectorize set lookups (cached).
+            uint16_t slot = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
+            cf.ip += 2;
+            uint8_t argc = cf.chunk->code[cf.ip++];
+
+            const NativeFunc* fn = ((size_t)slot < native_table.size()) ? &native_table[slot] : nullptr;
+            if (fn == nullptr || !*fn) {
+                int eline = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0;
+                throw jdError(ErrCode::UNDEFINED_FUNCTION,
+                    "native '" + jdb_native_name(slot) + "' not available in this VM", eline);
+            }
+
+            int8_t nv = ((size_t)slot < native_novec.size()) ? native_novec[slot] : -1;
+            if (nv < 0) {
+                const std::string& nm = jdb_native_name(slot);
+                nv = (jdb_no_vectorize(nm) || extra_no_vectorize.find(nm) != extra_no_vectorize.end()) ? 1 : 0;
+                if ((size_t)slot >= native_novec.size()) native_novec.resize(slot + 1, -1);
+                native_novec[slot] = nv;
+            }
+
+            std::vector<Value> args(argc);
+            for (int i = argc - 1; i >= 0; i--) args[i] = pop();
+            try {
+                push(invoke_native(*fn, args, nv != 0));
+            } catch (const jdError&) {
+                throw;
+            } catch (const std::out_of_range&) {
+                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                throw jdError(ErrCode::WRONG_ARG_COUNT,
+                    jdb_native_name(slot) + ": wrong number of arguments (got " + std::to_string(argc) + ")", eline);
+            } catch (const std::bad_alloc&) {
+                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": out of memory", eline);
+            } catch (const std::exception& e) {
+                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": " + e.what(), eline);
+            } catch (...) {
+                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": internal error", eline);
+            }
+            break;
+        }
 
         case OpCode::CALL: {
             uint16_t name_idx = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
@@ -3108,8 +3156,54 @@ Value VM::cast_value(const Value& v, ValueType target) {
 
 // ── Built-in functions ───────────────────────────────────────
 
+// ── Process-global native slot registry ──────────────────────────
+// Stable name->index map shared by every VM so CALL_NATIVE slot operands
+// baked into a chunk stay valid under any VM. Guarded by a mutex because an
+// async-worker VM may register on another thread while the main thread relinks.
+static std::mutex& native_slot_mutex() { static std::mutex m; return m; }
+static std::unordered_map<std::string, int>& native_slot_map() {
+    static std::unordered_map<std::string, int> m; return m;
+}
+static std::vector<std::string>& native_slot_names() {
+    static std::vector<std::string> v; return v;
+}
+
+int jdb_native_slot(const std::string& name) {
+    std::lock_guard<std::mutex> lk(native_slot_mutex());
+    auto& m = native_slot_map();
+    auto it = m.find(name);
+    return it == m.end() ? -1 : it->second;
+}
+
+const std::string& jdb_native_name(int slot) {
+    std::lock_guard<std::mutex> lk(native_slot_mutex());
+    static const std::string empty;
+    auto& v = native_slot_names();
+    if (slot < 0 || (size_t)slot >= v.size()) return empty;
+    return v[slot];
+}
+
+static int native_slot_intern(const std::string& name) {
+    std::lock_guard<std::mutex> lk(native_slot_mutex());
+    auto& m = native_slot_map();
+    auto it = m.find(name);
+    if (it != m.end()) return it->second;
+    int slot = (int)m.size();
+    m[name] = slot;
+    native_slot_names().push_back(name);
+    return slot;
+}
+
 void VM::register_native(const std::string& name, NativeFunc fn) {
     natives[name] = std::move(fn);
+    // Mirror into the slot-indexed table for CALL_NATIVE dispatch.
+    int slot = native_slot_intern(name);
+    if ((size_t)slot >= native_table.size()) {
+        native_table.resize(slot + 1);
+        native_novec.resize(slot + 1, -1);
+    }
+    native_table[slot] = natives[name];
+    native_novec[slot] = -1;  // recomputed lazily (extra_no_vectorize may fill later)
 }
 
 // Note: Functions registered with this simple overload rely on the
@@ -3118,7 +3212,7 @@ void VM::register_native(const std::string& name, NativeFunc fn) {
 
 void VM::register_native(const std::string& name, int min_args, int max_args, NativeFunc fn) {
     std::string fname = name;
-    natives[name] = [fname, min_args, max_args, fn](const std::vector<Value>& args) -> Value {
+    register_native(name, [fname, min_args, max_args, fn](const std::vector<Value>& args) -> Value {
         int n = (int)args.size();
         if (n < min_args)
             throw jdError(ErrCode::WRONG_ARG_COUNT,
@@ -3127,7 +3221,7 @@ void VM::register_native(const std::string& name, int min_args, int max_args, Na
             throw jdError(ErrCode::WRONG_ARG_COUNT,
                 fname + ": expected at most " + std::to_string(max_args) + " argument(s), got " + std::to_string(n));
         return fn(args);
-    };
+    });
 }
 
 // ── Helpers for matrix operations ─────────────────────────────

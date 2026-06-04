@@ -5,6 +5,37 @@
 #include <functional>
 #include <algorithm>
 
+// Process-global native-slot registry (defined in vm.cpp).
+int jdb_native_slot(const std::string& name);
+
+// Rewrite CALL -> CALL_NATIVE in place wherever the callee is a registered
+// native. Same operand layout (u16 + u8 argc), so it's a byte patch that keeps
+// every jump offset valid. The VM then dispatches the native by direct table
+// index, skipping the per-call name copy, hash, and no-vectorize set lookups.
+static void relink_call_natives(Chunk& chunk) {
+    auto& code = chunk.code;
+    size_t n = code.size();
+    size_t ip = 0;
+    while (ip < n) {
+        OpCode op = (OpCode)code[ip];
+        int w = opcode_width(op);
+        if (w < 1) w = 1;
+        if (op == OpCode::CALL && ip + 3 < n) {
+            uint16_t name_idx = code[ip + 1] | (code[ip + 2] << 8);
+            if (name_idx < chunk.constants.size()
+                    && chunk.constants[name_idx].type == ValueType::STRING) {
+                int slot = jdb_native_slot(chunk.constants[name_idx].as_string()->data);
+                if (slot >= 0 && slot <= 0xFFFF) {
+                    code[ip] = (uint8_t)OpCode::CALL_NATIVE;
+                    code[ip + 1] = (uint8_t)(slot & 0xFF);
+                    code[ip + 2] = (uint8_t)((slot >> 8) & 0xFF);
+                }
+            }
+        }
+        ip += w;
+    }
+}
+
 Compiler::Compiler() {
     scopes.push_back(CompilerScope{}); // main scope
 }
@@ -285,8 +316,10 @@ void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& m
     // Peephole pass: fuse common sequences like LOAD_VAR+LOAD_CONST+SUB.
     // Runs after label resolution so jump offsets are final.
     peephole_optimize(current_chunk());
+    relink_call_natives(current_chunk());
     for (auto& f : funcs) {
         peephole_optimize(f.chunk);
+        relink_call_natives(f.chunk);
     }
 }
 

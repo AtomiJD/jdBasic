@@ -32,6 +32,13 @@ struct VMState {
     std::unordered_map<std::string, size_t> func_map;
 };
 
+// Process-global native-slot registry: a stable name->index assignment shared
+// by all VMs, so the compiler can bake CALL_NATIVE slot indices that stay valid
+// in any VM (each VM fills its own native_table at those slots). Returns -1 if
+// `name` is not a registered native.
+int jdb_native_slot(const std::string& name);
+const std::string& jdb_native_name(int slot);
+
 class VM {
 public:
     VM();
@@ -125,6 +132,9 @@ public:
     Value call_function(const std::string& name, const std::vector<Value>& args);
     // Call a funcref value (string or lambda array)
     Value call_funcref(const Value& ref, const std::vector<Value>& args);
+    // Invoke an already-resolved native: direct call, or element-wise
+    // auto-vectorisation when an arg is an array and no_vec is false.
+    Value invoke_native(const NativeFunc& fn, const std::vector<Value>& args, bool no_vec);
 
     // Apply a binary operator by string name
     Value apply_binary_op(const std::string& op, const Value& a, const Value& b);
@@ -245,6 +255,11 @@ private:
     std::deque<FuncProto> owned_funcs;
     std::unordered_map<std::string, size_t> func_map;
     std::unordered_map<std::string, NativeFunc> natives;
+    // Per-VM native dispatch tables indexed by the *global* native slot
+    // (jdb_native_slot). CALL_NATIVE indexes these directly, skipping the
+    // name hash. native_novec is computed lazily on first call (-1 = unknown).
+    std::vector<NativeFunc> native_table;
+    std::vector<int8_t>     native_novec;
 
     // Bumped whenever owned_funcs / func_map changes. Per-chunk inline CALL
     // caches store this value so they can invalidate themselves on reload.

@@ -35,6 +35,7 @@ enum class OpCode : uint8_t {
 
     // Functions
     CALL,               // u16 func_index, u8 argc
+    CALL_NATIVE,        // u16 global native slot, u8 argc — compile-time-resolved native
     RETURN_VOID,
     RETURN_VAL,
 
@@ -253,6 +254,7 @@ inline int opcode_width(OpCode op) {
 
         // u16 + u8
         case OpCode::CALL:
+        case OpCode::CALL_NATIVE:
         case OpCode::CALL_METHOD:
             return 4;
 
