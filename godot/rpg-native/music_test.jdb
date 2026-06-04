@@ -1,0 +1,139 @@
+' @tool
+EXTENDS Node
+
+' Melody auditioning tool. Runs IN THE EDITOR (@tool): open music_test.tscn and
+' it plays a theme from music.json straight away - no game, no LLM, no F5.
+' Pick the theme in the Inspector (theme = explore / dungeon / dialog) and it
+' switches live. Tweak music.json, re-open the scene, hear the change.
+
+INSPECTOR DIM theme = "explore"
+
+DIM self_h    = 0
+DIM mplayer   = 0
+DIM playback  = 0
+DIM started   = FALSE
+DIM rate      = 44100.0
+DIM cur_theme = ""
+DIM themes AS MAP = {}
+
+SUB load_themes()
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/music.json")
+	DIM data = JSON.PARSE$(src)
+	themes = data{"themes"}
+ENDSUB
+
+' Per-track design fields, keyed "<prefix>_<field>" (mirrors music.jdb).
+SUB apply_fx(track, t, prefix)
+	DIM a AS ARRAY = []
+	IF MAP.EXISTS(t, prefix + "_filter") THEN SOUND.FILTER track, t{prefix + "_filter"}
+	IF MAP.EXISTS(t, prefix + "_gain") THEN SOUND.GAIN track, t{prefix + "_gain"}
+	IF MAP.EXISTS(t, prefix + "_pan") THEN SOUND.PAN track, t{prefix + "_pan"}
+	IF MAP.EXISTS(t, prefix + "_reverb_send") THEN SOUND.REVERBSEND track, t{prefix + "_reverb_send"}
+	IF MAP.EXISTS(t, prefix + "_delay_send") THEN SOUND.DELAYSEND track, t{prefix + "_delay_send"}
+	IF MAP.EXISTS(t, prefix + "_lfo") THEN
+		a = t{prefix + "_lfo"}
+		SOUND.LFO track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_fm") THEN
+		a = t{prefix + "_fm"}
+		SOUND.FM track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_unison") THEN
+		a = t{prefix + "_unison"}
+		SOUND.UNISON track, a[0], a[1], a[2]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_eq") THEN
+		a = t{prefix + "_eq"}
+		SOUND.EQ track, a[0], a[1], a[2]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_bitcrush") THEN
+		a = t{prefix + "_bitcrush"}
+		SOUND.BITCRUSH track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_ringmod") THEN
+		a = t{prefix + "_ringmod"}
+		SOUND.RINGMOD track, a[0], a[1]
+	ENDIF
+	IF MAP.EXISTS(t, prefix + "_scale") THEN
+		a = t{prefix + "_scale"}
+		SOUND.SCALE track, a[0], a[1]
+	ENDIF
+ENDSUB
+
+SUB apply_master(t)
+	DIM a AS ARRAY = []
+	IF MAP.EXISTS(t, "reverb") THEN
+		a = t{"reverb"}
+		SOUND.REVERB a[0], a[1], a[2], a[3]
+	ENDIF
+	IF MAP.EXISTS(t, "delay") THEN
+		a = t{"delay"}
+		SOUND.DELAY a[0], a[1], a[2], a[3]
+	ENDIF
+	IF MAP.EXISTS(t, "compressor") THEN
+		a = t{"compressor"}
+		SOUND.COMPRESSOR a[0], a[1], a[2], a[3], a[4]
+	ENDIF
+	IF MAP.EXISTS(t, "distortion") THEN SOUND.DISTORTION t{"distortion"}
+	IF MAP.EXISTS(t, "sidechain") THEN
+		a = t{"sidechain"}
+		SOUND.SIDECHAIN a[0], a[1], a[2]
+	ENDIF
+ENDSUB
+
+SUB set_theme(name)
+	IF name = cur_theme THEN RETURN
+	IF NOT MAP.EXISTS(themes, name) THEN RETURN
+	cur_theme = name
+	DIM t = themes{name}
+
+	SOUND.RESET
+	SOUND.INIT
+	SOUND.BPM t{"bpm"}
+
+	DIM mv = t{"melody_voice"}
+	SOUND.VOICE 0, mv[0], mv[1], mv[2], mv[3], mv[4]
+	apply_fx(0, t, "melody")
+
+	DIM bv = t{"bass_voice"}
+	SOUND.VOICE 1, bv[0], bv[1], bv[2], bv[3], bv[4]
+	apply_fx(1, t, "bass")
+
+	apply_master(t)
+
+	DIM melody = t{"melody"}
+	DIM bass = t{"bass"}
+	SOUND.NOTE "< " + melody + " , " + bass + " >", TRUE
+	PRINT "music_test: now playing theme '" + name + "'"
+ENDSUB
+
+SUB _ready()
+	self_h = GDX.SELF()
+	SOUND.INIT
+	load_themes()
+
+	DIM gen = GDX.NEW("AudioStreamGenerator")
+	GDX.SET(gen, "mix_rate", rate)
+	GDX.SET(gen, "buffer_length", 0.3)
+	mplayer = GDX.NEW("AudioStreamPlayer")
+	GDX.SET(mplayer, "stream", GDX.REF(gen))
+	GDX.SET(mplayer, "bus", "Music")
+	GDX.ADD_CHILD(self_h, mplayer)
+ENDSUB
+
+SUB _process(delta)
+	IF NOT started THEN
+		GDX.CALL(mplayer, "play")
+		playback = GDX.CALL(mplayer, "get_stream_playback")
+		started = TRUE
+	ENDIF
+	IF playback = 0 THEN RETURN
+
+	' Switch theme live when the Inspector value changes.
+	set_theme(theme)
+
+	DIM avail = GDX.CALL(playback, "get_frames_available")
+	IF avail <= 0 THEN RETURN
+	DIM buf = SOUND.RENDER(avail)
+	GDX.CALL(playback, "push_buffer", GDX.PACKED_VEC2(buf))
+ENDSUB
