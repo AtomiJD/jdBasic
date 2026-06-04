@@ -16,7 +16,15 @@
     "completed_header": "Completed",
     "inventory_empty": "Empty.",
     "from_label": "(from ",
-    "world_nothing": "Nothing has shifted in the world yet."
+    "world_nothing": "Nothing has shifted in the world yet.",
+    "trade_button": "Trade",
+    "shop_title": "Shop - ",
+    "shop_buy_header": "Buy",
+    "shop_sell_header": "Sell",
+    "gold_label": "Gold: ",
+    "bought_msg": "Bought: ",
+    "sold_msg": "Sold: ",
+    "cant_afford": "Not enough gold."
   },
 
   "acceptance_signals": [

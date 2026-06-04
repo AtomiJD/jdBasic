@@ -96,6 +96,15 @@
     "knowledge": "Sie verkauft Heiltraenke, Gegengifte und Gluecksbringer - 'immer ein fairer Preis, mein Schatz'. Die Navigatorin Morgaine zahlt gut fuer Mondkraut. Der Werftmeister Holk beliefert sie mit eisernen Talismanen.",
     "quests": [
       {"id": "restock_charms", "description": "Bring mir fuenf Eisennaegel aus der Werft, dann mach ich dir einen Talisman gegen die Nachtkaelte - halber Preis, nur fuer dich, mein Lieber.", "reward": "eiserner Talisman", "item_given": "", "completes_on_flag": "charms_restocked"}
-    ]
+    ],
+    "shop": {
+      "sell_price": 6,
+      "wares": [
+        {"name": "Heiltrank",      "price": 15},
+        {"name": "Gegengift",      "price": 12},
+        {"name": "Gluecksbringer", "price": 25},
+        {"name": "Fackel",         "price": 5}
+      ]
+    }
   }
 ]

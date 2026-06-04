@@ -21,6 +21,23 @@ EXPORT DIM player_state AS MAP = {}
 player_state{"active"}    = []
 player_state{"completed"} = []
 player_state{"inventory"} = []
+player_state{"gold"}      = 120
+
+' ── Gold currency ────────────────────────────────────────────────
+EXPORT FUNC player_gold()
+	RETURN player_state{"gold"}
+ENDFUNC
+
+EXPORT SUB add_gold(n)
+	player_state{"gold"} = player_state{"gold"} + n
+ENDSUB
+
+' Spend gold if affordable; returns TRUE on success.
+EXPORT FUNC spend_gold(n)
+	IF player_state{"gold"} < n THEN RETURN FALSE
+	player_state{"gold"} = player_state{"gold"} - n
+	RETURN TRUE
+ENDFUNC
 
 ' Initialise an NPC from a JSON record. Returns the state map for
 ' callers that want to peek at it.
@@ -1918,8 +1935,19 @@ DIM ui_quest     = 0
 DIM ui_accept    = 0
 DIM ui_input     = 0
 DIM ui_status    = 0
+DIM ui_trade     = 0
 DIM hint_lbl     = 0
 DIM splash_layer = 0
+
+' Shop / trade panel.
+DIM shop_panel = 0
+DIM shop_title = 0
+DIM shop_gold  = 0
+DIM shop_buy   = 0
+DIM shop_sell  = 0
+DIM shop_msg   = 0
+DIM shop_wares AS ARRAY = []
+DIM shop_sellp = 6
 
 DIM journal_layer = 0
 DIM journal_panel = 0
@@ -1983,6 +2011,13 @@ SUB build_ui()
 	GDX.SET(ui_accept, "visible", FALSE)
 	GDX.ADD_CHILD(ui_panel, ui_accept)
 	GDX.CONNECT(ui_accept, "pressed", "on_accept_pressed")
+
+	ui_trade = GDX.NEW("Button")
+	set_rect(ui_trade, 1.0, 0.0, 1.0, 0.0, -124.0, 6.0, -48.0, 36.0)
+	GDX.SET(ui_trade, "text", rule("ui", "trade_button", {}))
+	GDX.SET(ui_trade, "visible", FALSE)
+	GDX.ADD_CHILD(ui_panel, ui_trade)
+	GDX.CONNECT(ui_trade, "pressed", "on_trade_pressed")
 
 	ui_input = GDX.NEW("LineEdit")
 	set_rect(ui_input, 0.0, 1.0, 1.0, 1.0, 16.0, -48.0, -210.0, -14.0)
@@ -2067,7 +2102,7 @@ FUNC quests_text()
 ENDFUNC
 
 FUNC inventory_text()
-	DIM s = ""
+	DIM s = "[color=#ffd84d]" + rule("ui", "gold_label", {}) + STR$(player_gold()) + "[/color]" + CHR$(10) + CHR$(10)
 	DIM inv = player_state{"inventory"}
 	IF LEN(inv) = 0 THEN
 		s = s + "[color=#888888]" + rule("ui", "inventory_empty", {}) + "[/color]" + CHR$(10)
@@ -2351,6 +2386,116 @@ SUB on_close_pressed()
 	close_dialog()
 ENDSUB
 
+' ── Shop / trading (RPG buy-sell with gold) ──────────────────────
+FUNC is_merchant(id)
+	IF MAP.EXISTS(npcs, id) <> TRUE THEN RETURN FALSE
+	RETURN MAP.EXISTS(npcs{id}, "shop")
+ENDFUNC
+
+SUB build_shop_ui()
+	shop_panel = GDX.NEW("Panel")
+	set_rect(shop_panel, 0.5, 0.5, 0.5, 0.5, -320.0, -210.0, 320.0, 210.0)
+	GDX.SET(shop_panel, "visible", FALSE)
+	GDX.ADD_CHILD(ui_layer, shop_panel)
+
+	shop_title = GDX.NEW("Label")
+	set_rect(shop_title, 0.0, 0.0, 1.0, 0.0, 16.0, 8.0, -210.0, 38.0)
+	GDX.ADD_CHILD(shop_panel, shop_title)
+
+	shop_gold = GDX.NEW("Label")
+	set_rect(shop_gold, 1.0, 0.0, 1.0, 0.0, -200.0, 8.0, -48.0, 38.0)
+	GDX.SET(shop_gold, "horizontal_alignment", 2)
+	GDX.SET(shop_gold, "modulate", GDX.COLOR(1.0, 0.85, 0.3, 1.0))
+	GDX.ADD_CHILD(shop_panel, shop_gold)
+
+	DIM scl = GDX.NEW("Button")
+	set_rect(scl, 1.0, 0.0, 1.0, 0.0, -40.0, 6.0, -10.0, 36.0)
+	GDX.SET(scl, "text", "X")
+	GDX.ADD_CHILD(shop_panel, scl)
+	GDX.CONNECT(scl, "pressed", "on_shop_close")
+
+	DIM bh = GDX.NEW("Label")
+	set_rect(bh, 0.0, 0.0, 0.5, 0.0, 16.0, 44.0, -8.0, 72.0)
+	GDX.SET(bh, "text", rule("ui", "shop_buy_header", {}))
+	GDX.ADD_CHILD(shop_panel, bh)
+
+	shop_buy = GDX.NEW("ItemList")
+	set_rect(shop_buy, 0.0, 0.0, 0.5, 1.0, 16.0, 74.0, -8.0, -52.0)
+	GDX.ADD_CHILD(shop_panel, shop_buy)
+	GDX.CONNECT(shop_buy, "item_selected", "on_buy_selected")
+
+	DIM slh = GDX.NEW("Label")
+	set_rect(slh, 0.5, 0.0, 1.0, 0.0, 8.0, 44.0, -16.0, 72.0)
+	GDX.SET(slh, "text", rule("ui", "shop_sell_header", {}))
+	GDX.ADD_CHILD(shop_panel, slh)
+
+	shop_sell = GDX.NEW("ItemList")
+	set_rect(shop_sell, 0.5, 0.0, 1.0, 1.0, 8.0, 74.0, -16.0, -52.0)
+	GDX.ADD_CHILD(shop_panel, shop_sell)
+	GDX.CONNECT(shop_sell, "item_selected", "on_sell_selected")
+
+	shop_msg = GDX.NEW("Label")
+	set_rect(shop_msg, 0.0, 1.0, 1.0, 1.0, 16.0, -44.0, -16.0, -14.0)
+	GDX.SET(shop_msg, "modulate", GDX.COLOR(0.8, 0.9, 0.7, 1.0))
+	GDX.ADD_CHILD(shop_panel, shop_msg)
+ENDSUB
+
+SUB refresh_shop()
+	GDX.SET(shop_gold, "text", rule("ui", "gold_label", {}) + STR$(player_gold()))
+	GDX.CALL(shop_buy, "clear")
+	FOR i = 0 TO LEN(shop_wares) - 1
+		DIM w = shop_wares[i]
+		GDX.CALL(shop_buy, "add_item", w{"name"} + "   " + STR$(w{"price"}) + " G")
+	NEXT
+	GDX.CALL(shop_sell, "clear")
+	DIM inv = player_state{"inventory"}
+	FOR i = 0 TO LEN(inv) - 1
+		GDX.CALL(shop_sell, "add_item", inv[i]{"name"} + "   (" + STR$(shop_sellp) + " G)")
+	NEXT
+ENDSUB
+
+SUB open_shop(id)
+	DIM sd = npcs{id}{"shop"}
+	shop_wares = sd{"wares"}
+	shop_sellp = sd{"sell_price"}
+	GDX.SET(shop_title, "text", rule("ui", "shop_title", {}) + npc_display_name(id))
+	GDX.SET(shop_msg, "text", "")
+	refresh_shop()
+	GDX.SET(shop_panel, "visible", TRUE)
+ENDSUB
+
+SUB on_trade_pressed()
+	IF active_npc = "" THEN RETURN
+	IF NOT is_merchant(active_npc) THEN RETURN
+	open_shop(active_npc)
+ENDSUB
+
+SUB on_shop_close()
+	GDX.SET(shop_panel, "visible", FALSE)
+ENDSUB
+
+SUB on_buy_selected(idx)
+	IF idx < 0 ORELSE idx >= LEN(shop_wares) THEN RETURN
+	DIM w = shop_wares[idx]
+	IF spend_gold(w{"price"}) THEN
+		add_inventory_item(w{"name"}, "shop")
+		GDX.SET(shop_msg, "text", rule("ui", "bought_msg", {}) + w{"name"})
+	ELSE
+		GDX.SET(shop_msg, "text", rule("ui", "cant_afford", {}))
+	ENDIF
+	refresh_shop()
+ENDSUB
+
+SUB on_sell_selected(idx)
+	DIM inv = player_state{"inventory"}
+	IF idx < 0 ORELSE idx >= LEN(inv) THEN RETURN
+	DIM nm = inv[idx]{"name"}
+	remove_player_inventory(nm)
+	add_gold(shop_sellp)
+	GDX.SET(shop_msg, "text", rule("ui", "sold_msg", {}) + nm)
+	refresh_shop()
+ENDSUB
+
 SUB open_dialog(idx)
 	active_npc  = npc_ids[idx]
 	active_node = npc_nodes[idx]
@@ -2360,6 +2505,7 @@ SUB open_dialog(idx)
 	GDX.SET(ui_hist, "text", "")
 	GDX.SET(ui_status, "text", "")
 	GDX.SET(ui_panel, "visible", TRUE)
+	GDX.SET(ui_trade, "visible", is_merchant(active_npc))
 	GDX.INPUT.SET_MOUSE_MODE(0)
 	' Pause the whole tree (player, NPCs, day/night) so there's no input
 	' contention; this manager + its UI run with PROCESS_MODE_ALWAYS, set in
@@ -2377,6 +2523,7 @@ SUB close_dialog()
 	active_node = 0
 	awaiting = FALSE
 	GDX.SET(ui_panel, "visible", FALSE)
+	GDX.SET(shop_panel, "visible", FALSE)
 	GDX.CALL(ui_input, "clear")
 	GDX.SET(GDX.CALL(self_h, "get_tree"), "paused", FALSE)
 	GDX.INPUT.SET_MOUSE_MODE(2)
@@ -2401,6 +2548,7 @@ SUB _ready()
 	player_h = GDX.CALL(self_h, "get_node", "../Player")
 	load_data()
 	build_ui()
+	build_shop_ui()
 	build_journal()
 	build_splash()
 	boot_phase = 1

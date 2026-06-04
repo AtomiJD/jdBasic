@@ -16,7 +16,15 @@
     "completed_header": "Erledigt",
     "inventory_empty": "Leer.",
     "from_label": "(von ",
-    "world_nothing": "Noch hat sich nichts in der Bucht getan."
+    "world_nothing": "Noch hat sich nichts in der Bucht getan.",
+    "trade_button": "Handeln",
+    "shop_title": "Laden - ",
+    "shop_buy_header": "Kaufen",
+    "shop_sell_header": "Verkaufen",
+    "gold_label": "Gold: ",
+    "bought_msg": "Gekauft: ",
+    "sold_msg": "Verkauft: ",
+    "cant_afford": "Nicht genug Gold, Matrose."
   },
 
   "acceptance_signals": [

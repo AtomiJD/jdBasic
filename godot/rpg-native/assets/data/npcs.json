@@ -96,6 +96,15 @@
     "knowledge": "She sells healing potions, antidotes and lucky charms - 'always a fair price, dear'. The scholar Maelyn pays well for moon-herb. The blacksmith Hilda restocks her with iron charms.",
     "quests": [
       {"id": "restock_charms", "description": "Bring me five iron nails from old Hilda's forge and I'll make you a charm that wards off the night-cold - half price, just for you, love.", "reward": "iron charm", "item_given": "", "completes_on_flag": "charms_restocked"}
-    ]
+    ],
+    "shop": {
+      "sell_price": 6,
+      "wares": [
+        {"name": "Healing Potion", "price": 15},
+        {"name": "Antidote",       "price": 12},
+        {"name": "Lucky Charm",    "price": 25},
+        {"name": "Torch",          "price": 5}
+      ]
+    }
   }
 ]
