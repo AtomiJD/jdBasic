@@ -1,0 +1,101 @@
+[
+  {
+    "id": "gareth",
+    "name": "Kaeptn Sturmbart",
+    "character": "Knight",
+    "color": "#7aa8d8",
+    "lore_tags": ["kingdom_history", "factions_and_rumors", "geography_and_places", "forest_and_wildlife"],
+    "spawn": [10.0, 0.0, 10.0],
+    "patrol": [
+      [10.0, 0.0, 10.0],
+      [20.0, 0.0, 10.0],
+      [20.0, 0.0, 20.0],
+      [10.0, 0.0, 20.0]
+    ],
+    "persona": "Ein griesgraemiger alter Freibeuter-Kapitaen, muede von zu vielen Sturmen vor den Ostklippen. Spricht in kurzen Saetzen und lacht selten. Sagt 'Landratte' und 'beim Klabautermann'.",
+    "legend": "Verlor letzten Sommer seinen Schiffsjungen an einen Hai-Angriff und hat es sich nie verziehen.",
+    "knowledge": "Der Werftmeister Holk schuftet im Hafen drei Tagesreisen westlich. Die alte Schmugglerhoehle am Nordfelsen ist seit einer Generation verlassen.",
+    "quests": [
+      {"id": "wolf_pelts", "description": "Bring mir drei Haifischzaehne, damit die Crew des Jungen weiss, dass er geraecht wurde.", "reward": "silberne Dublone", "item_given": "", "completes_on_flag": "wolves_thinned"}
+    ]
+  },
+  {
+    "id": "maelyn",
+    "name": "Morgaine",
+    "character": "Mage",
+    "color": "#c89af0",
+    "lore_tags": ["arcane_and_herbs", "geography_and_places", "mysteries", "kingdom_history", "factions_and_rumors"],
+    "spawn": [-20.0, 0.0, 15.0],
+    "patrol": [
+      [-20.0, 0.0, 15.0],
+      [-15.0, 0.0, 20.0],
+      [-25.0, 0.0, 20.0]
+    ],
+    "persona": "Eine neugierige junge Navigatorin und Sterndeuterin, staendig am Kritzeln von Karten und Kraeutern. Redet schnell, laesst sich von guten Fragen ablenken.",
+    "legend": "Lernte bei der Sternwarte der Hafenstadt, bis man sie verbannte, weil sie die falschen Fragen ueber die alten Seekarten stellte.",
+    "knowledge": "Die Kraeuter an den Suedklippen wirken seltsam, wenn man sie in der Daemmerung pflueckt. In der alten Hoehle sollen noch unentdeckte Schriftrollen liegen.",
+    "quests": [
+      {"id": "moon_herb", "description": "Bring mir drei Bueschel Mondkraut. Es waechst nur an den nach Sueden gewandten Klippen.", "reward": "alte Seekarte", "item_given": "", "completes_on_flag": "moon_herb_collected"}
+    ]
+  },
+  {
+    "id": "tylen",
+    "name": "Finn",
+    "character": "Ranger",
+    "color": "#6fc28a",
+    "lore_tags": ["forest_and_wildlife", "geography_and_places", "mysteries", "kingdom_history", "factions_and_rumors"],
+    "spawn": [25.0, 0.0, -25.0],
+    "patrol": [
+      [25.0, 0.0, -25.0],
+      [35.0, 0.0, -20.0],
+      [30.0, 0.0, -35.0],
+      [20.0, 0.0, -30.0]
+    ],
+    "persona": "Ein stiller, wachsamer Ausguck, der das Wasser und das Wetter liest. Vertraut nur langsam. Nennt Tiere nach Merkmalen, nicht nach Art.",
+    "legend": "Wurde von einem alten Leuchtturmwaerter grossgezogen, nachdem sein Heimathafen in einem Krieg brannte, den er nie verstand.",
+    "knowledge": "Am Nordkamm liegen Spuren von etwas Groesserem als ein Hai. Kaeptn Sturmbart meint es gut, sieht aber nicht, was das Meer ihm sagt.",
+    "quests": [
+      {"id": "scout_north", "description": "Geh den Nordkamm ab und sag mir, was du siehst. Kaempf gegen nichts, schau nur.", "reward": "Fernrohr", "item_given": "", "completes_on_flag": "scouted_north"}
+    ]
+  },
+  {
+    "id": "vex",
+    "name": "Kraehe",
+    "character": "Rogue",
+    "color": "#e0b76a",
+    "lore_tags": ["factions_and_rumors", "geography_and_places", "mysteries", "kingdom_history", "forest_and_wildlife"],
+    "spawn": [-15.0, 0.0, 25.0],
+    "patrol": [
+      [-15.0, 0.0, 25.0],
+      [-25.0, 0.0, 28.0],
+      [-22.0, 0.0, 35.0],
+      [-12.0, 0.0, 30.0]
+    ],
+    "persona": "Ein umherziehender Schmuggler mit ausweichendem Humor. Schaut dir immer ueber die Schulter. Nennt jeden 'Kumpel'.",
+    "legend": "Segelte einst mit einer Bande Strandraeuber aus der Hafenstadt, bis sein Partner gehenkt wurde und der Rest sich verlief.",
+    "knowledge": "Morgaine zahlt gut fuer seltsame Kraeuter und fragt nie, woher sie kommen. Kaeptn Sturmbart hat ein Kopfgeld auf einen Kerl namens 'Halb-Ohr', weiss aber nicht, wie der aussieht.",
+    "quests": [
+      {"id": "deliver_parcel", "description": "Bring dieses Paeckchen zu Morgaine. Nicht oeffnen. Nicht fragen. Kumpel.", "reward": "zwoelf Dublonen", "item_given": "Verschnuertes Paeckchen", "target_npc": "maelyn"}
+    ]
+  },
+  {
+    "id": "rosalind",
+    "name": "Rosalind",
+    "character": "Druid",
+    "color": "#9ad8a0",
+    "lore_tags": ["arcane_and_herbs", "factions_and_rumors", "geography_and_places", "forest_and_wildlife"],
+    "spawn": [0.0, 0.0, -8.0],
+    "patrol": [
+      [0.0, 0.0, -8.0],
+      [3.0, 0.0, -8.0],
+      [3.0, 0.0, -5.0],
+      [0.0, 0.0, -5.0]
+    ],
+    "persona": "Eine warmherzige, gewitzte Hafenhaendlerin mit einem kleinen Stand voller Traenke, Talismane und getrockneter Kraeuter. Froehlich und gespraechig, versucht dir (sanft) immer etwas zu verkaufen, nennt Kundschaft 'mein Schatz' und 'mein Lieber' und kennt aus jedem Hafen einen Klatsch.",
+    "legend": "Einst Lehrling einer Kuestenhexe, merkte sie, dass sie besser feilschen als zaubern kann, und nahm ihre Mittelchen mit auf die Stege.",
+    "knowledge": "Sie verkauft Heiltraenke, Gegengifte und Gluecksbringer - 'immer ein fairer Preis, mein Schatz'. Die Navigatorin Morgaine zahlt gut fuer Mondkraut. Der Werftmeister Holk beliefert sie mit eisernen Talismanen.",
+    "quests": [
+      {"id": "restock_charms", "description": "Bring mir fuenf Eisennaegel aus der Werft, dann mach ich dir einen Talisman gegen die Nachtkaelte - halber Preis, nur fuer dich, mein Lieber.", "reward": "eiserner Talisman", "item_given": "", "completes_on_flag": "charms_restocked"}
+    ]
+  }
+]

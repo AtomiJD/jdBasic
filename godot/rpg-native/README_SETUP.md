@@ -44,6 +44,23 @@ DIM g_gpu_layers = 99    ' 99 = alles auf die GPU (NVIDIA). 0 = nur CPU (langsam
   legen und `g_model_file` darauf zeigen lassen.
 - Kein NVIDIA: `g_gpu_layers = 0` (CPU, läuft, aber langsam).
 
+## Sprache / Thema umschalten (Englisch-Fantasy <-> Deutsch-Piraten)
+
+Das Spiel hat zwei Inhalts-Pakete:
+- `assets/data/`      - Original (englisches Low-Fantasy-Koenigreich)
+- `assets/data_ger/`  - Deutsch + Piraten-Thema (Bucht, Crew, Dublonen)
+
+Umschalten ohne Code: **Project -> Project Settings -> Game -> Data Dir**
+(oder in `project.godot` der Wert `data_dir`):
+- `res://assets/data`      = Original
+- `res://assets/data_ger`  = Deutsch-Piraten
+
+Alle NPCs/Quests/Lore/Musik/Karten + der LLM-System-Prompt kommen aus diesem
+Ordner. Die NPCs nutzen vorerst die vorhandenen Modelle (Piraten-Modelle aus
+dem KayKit Pirate Kit kann man spaeter dazulegen). Ein eigenes Thema baust du,
+indem du `assets/data/` kopierst, die Texte aenderst und `data_dir` darauf
+zeigen laesst.
+
 ## Womit du arbeitest
 
 - **Spiel-Logik:** die `.jdb`-Dateien (player, npc, dialog, dungeon, scatter,

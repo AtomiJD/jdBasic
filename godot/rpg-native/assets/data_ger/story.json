@@ -1,0 +1,31 @@
+{
+  "acts": [
+    {
+      "id": "act1_arrival",
+      "title": "Ankunft in der Bucht",
+      "narrative": "Der Spieler ist gerade angeheuert. Die Leute in der Bucht sind unruhig, doch das Leben geht seinen Gang - Haie am Riff, ein verschwundenes Paeckchen, Kraeuter zum Sammeln.",
+      "triggers": [],
+      "completes_when_all_true": ["saw_tracks", "scouted_north"],
+      "unlocks_quests": [],
+      "active_when_no_other": true
+    },
+    {
+      "id": "act2_tracks_lead_north",
+      "title": "Spuren fuehren zum Nordfelsen",
+      "narrative": "Der Spieler hat die seltsamen Spuren gesehen UND den Nordkamm abgegangen. Die Bucht weiss nun, dass etwas nicht stimmt. Gespraeche sollten die alte Schmugglerhoehle und die verschollene Nordwache erwaehnen. Haie und Paeckchen wirken klein dagegen.",
+      "triggers": ["saw_tracks", "scouted_north"],
+      "completes_when_all_true": ["keep_investigated"],
+      "unlocks_quests": ["investigate_keep"],
+      "active_when_no_other": false
+    },
+    {
+      "id": "act3_into_the_keep",
+      "title": "Hinab in die Hoehle",
+      "narrative": "Der Spieler hat die alte Schmugglerhoehle betreten. Was dort haust, ist aelter als die Hafenstadt. Morgaines Mondkraut und Sturmbarts Haie dienen nun einer einzigen Frage: was durch die Hoehle zurueckkam.",
+      "triggers": ["keep_investigated"],
+      "completes_when_all_true": ["moon_herb_collected", "wolves_thinned"],
+      "unlocks_quests": [],
+      "active_when_no_other": false
+    }
+  ]
+}

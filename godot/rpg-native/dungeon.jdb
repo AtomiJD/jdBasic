@@ -374,7 +374,7 @@ SUB _ready()
 	self_h   = GDX.SELF()
 	player_h = GDX.CALL(self_h, "get_node", "../Player")
 
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/dungeons.json")
 	DIM all = JSON.PARSE$(src)
 	IF LEN(all) = 0 THEN
 		PRINT "dungeon: no specs"
@@ -493,3 +493,9 @@ SUB _process(delta)
 		ENDIF
 	NEXT
 ENDSUB
+
+' Content-pack root (Project Settings -> Game -> data_dir). Flip to
+' res://assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC

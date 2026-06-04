@@ -2130,12 +2130,12 @@ SUB drain_loot()
 ENDSUB
 
 SUB load_data()
-	g_files{"npcs"}     = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/npcs.json")
-	g_files{"lore"}     = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_lore.json")
-	g_files{"rules"}    = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dialog_rules.json")
-	g_files{"state"}    = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_state.json")
-	g_files{"story"}    = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/story.json")
-	g_files{"template"} = GDX.STATIC("FileAccess", "get_file_as_string", "res://prompts/dialog_system.tmpl")
+	g_files{"npcs"}     = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/npcs.json")
+	g_files{"lore"}     = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/world_lore.json")
+	g_files{"rules"}    = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/dialog_rules.json")
+	g_files{"state"}    = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/world_state.json")
+	g_files{"story"}    = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/story.json")
+	g_files{"template"} = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/dialog_system.tmpl")
 	load_npcs("npcs")
 	load_world_lore("lore")
 	load_dialog_rules("rules")
@@ -2464,3 +2464,9 @@ SUB _process(delta)
 		GDX.SET(hint_lbl, "visible", FALSE)
 	ENDIF
 ENDSUB
+
+' Content-pack root (Project Settings -> Game -> data_dir). Flip to
+' res://assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC

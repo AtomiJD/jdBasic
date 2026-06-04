@@ -17,7 +17,7 @@ DIM cur_theme = ""
 DIM themes AS MAP = {}
 
 SUB load_themes()
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/music.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/music.json")
 	DIM data = JSON.PARSE$(src)
 	themes = data{"themes"}
 ENDSUB
@@ -137,3 +137,9 @@ SUB _process(delta)
 	DIM buf = SOUND.RENDER(avail)
 	GDX.CALL(playback, "push_buffer", GDX.PACKED_VEC2(buf))
 ENDSUB
+
+' Content-pack root (Project Settings -> Game -> data_dir). Flip to
+' res://assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC

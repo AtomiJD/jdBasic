@@ -37,7 +37,7 @@ ENDFUNC
 ' Read dungeons.json and store each dungeon's world-space footprint (+pad)
 ' so no trees or bushes spawn on top of a dungeon.
 SUB load_dungeon_rects()
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/dungeons.json")
 	DIM all = JSON.PARSE$(src)
 	DIM pad = 2.0
 	FOR di = 0 TO LEN(all) - 1
@@ -118,7 +118,7 @@ ENDSUB
 SUB _ready()
 	self_h = GDX.SELF()
 	load_dungeon_rects()
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_map.txt")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/world_map.txt")
 	DIM rows = SPLIT(src, CHR$(10))
 	DIM rn = LEN(rows)
 	DIM world_size = 96.0
@@ -144,3 +144,9 @@ SUB _ready()
 	NEXT
 	PRINT "scatter: tile rows=" + STR$(rn) + " tree-clusters=" + STR$(placed) + " dungeon-rects=" + STR$(dun_count)
 ENDSUB
+
+' Content-pack root (Project Settings -> Game -> data_dir). Flip to
+' res://assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC

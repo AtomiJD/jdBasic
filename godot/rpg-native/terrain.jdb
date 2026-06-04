@@ -50,7 +50,7 @@ SUB _ready()
 	' Flatten the heightmap under every dungeon (read dungeons.json) so the
 	' dungeon floors sit on level ground - both the visual mesh and the
 	' collider, since the player walks on the terrain collider in there.
-	DIM dsrc = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM dsrc = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/dungeons.json")
 	DIM dall = JSON.PARSE$(dsrc)
 	FOR di = 0 TO LEN(dall) - 1
 		DIM dspec = dall[di]
@@ -99,7 +99,7 @@ SUB _ready()
 
 	' Tile map -> per-vertex colour (paths / clearings / trees). Read the
 	' raw .txt via the real Godot API (FileAccess.get_file_as_string).
-	DIM map_src  = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_map.txt")
+	DIM map_src  = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/world_map.txt")
 	DIM map_rows = SPLIT(map_src, CHR$(10))
 	DIM map_rn   = LEN(map_rows)
 	DIM map_cols = LEN(map_rows[0])
@@ -215,3 +215,9 @@ SUB _ready()
 
 	PRINT "terrain: " + STR$(total) + " verts, walkable HeightMapShape " + STR$(n) + "x" + STR$(n)
 ENDSUB
+
+' Content-pack root (Project Settings -> Game -> data_dir). Flip to
+' res://assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC

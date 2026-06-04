@@ -22,7 +22,7 @@ DIM dun_z0 = 1.0
 DIM dun_z1 = -1.0
 
 SUB load_themes()
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/music.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/music.json")
 	DIM data = JSON.PARSE$(src)
 	themes = data{"themes"}
 ENDSUB
@@ -115,7 +115,7 @@ SUB set_theme(name)
 ENDSUB
 
 SUB load_dungeon_rect()
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/dungeons.json")
 	DIM all = JSON.PARSE$(src)
 	IF LEN(all) = 0 THEN RETURN
 	DIM spec = all[0]
@@ -187,3 +187,9 @@ SUB _process(delta)
 	DIM buf = SOUND.RENDER(avail)
 	GDX.CALL(playback, "push_buffer", GDX.PACKED_VEC2(buf))
 ENDSUB
+
+' Content-pack root (Project Settings -> Game -> data_dir). Flip to
+' res://assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC

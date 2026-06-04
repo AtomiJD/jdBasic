@@ -1,0 +1,32 @@
+[
+  {
+    "id": "crossroads_cache",
+    "model": "chest",
+    "pos": [4.0, 0.0, 4.0],
+    "label": "Versteck am Steg",
+    "contents": [
+      {"item": "coin_stack_small", "name": "Beutel Dublonen"},
+      {"item": "key",               "name": "Eiserner Schluessel"}
+    ]
+  },
+  {
+    "id": "knight_stash",
+    "model": "chest_gold",
+    "pos": [18.0, 0.0, 22.0],
+    "label": "Kaeptn Sturmbarts Beutekiste",
+    "contents": [
+      {"item": "coin_stack_small", "name": "Silberne Dublonen"},
+      {"item": "bottle_A_green",   "name": "Heiltrank"}
+    ]
+  },
+  {
+    "id": "mage_chest",
+    "model": "chest",
+    "pos": [-22.0, 0.0, 22.0],
+    "label": "Morgaines Kartenkiste",
+    "contents": [
+      {"item": "book_brown", "name": "Logbuch-Notizen"},
+      {"item": "key",        "name": "Messing-Schluessel"}
+    ]
+  }
+]

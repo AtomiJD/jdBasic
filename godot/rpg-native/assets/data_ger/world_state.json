@@ -1,0 +1,68 @@
+{
+  "day": 1,
+  "mood": "uneasy",
+  "flags": {
+    "scouted_north":       false,
+    "delivered_parcel":    false,
+    "saw_tracks":          false,
+    "wolves_thinned":      false,
+    "keep_investigated":   false,
+    "moon_herb_collected": false
+  },
+  "flag_triggers": {
+    "scouted_north": {
+      "hint": "Spieler sagt, er hat den Nordkamm abgegangen / erkundet",
+      "keywords": ["scouted", "walked", "explored", "patrolled", "checked",
+                   "erkundet", "geschaut", "gegangen", "gelaufen", "abgegangen",
+                   "war im", "war am", "war an", "war beim", "war auf", "war oben",
+                   "umgeschaut", "umgesehen", "abgesucht"],
+      "ctx":      ["nordkamm", "nordfelsen", "noerdlich", "norden", "kamm", "klippe", "klippen"]
+    },
+    "delivered_parcel": {
+      "hint": "Spieler hat Kraehes verschnuertes Paeckchen zu Morgaine gebracht",
+      "keywords": ["delivered", "gave", "handed", "uebergeben", "abgegeben", "gebracht", "gegeben"],
+      "ctx":      ["paeckchen", "paket", "parcel", "package"]
+    },
+    "saw_tracks": {
+      "hint": "Spieler sagt, er hat seltsame Spuren am Riff / an der Flussbiegung gesehen",
+      "keywords": ["saw", "found", "spotted", "discovered",
+                   "gesehen", "gefunden", "entdeckt", "bemerkt", "ungewoehnliche",
+                   "seltsame", "verdaechtige"],
+      "ctx":      ["spuren", "tracks", "fussabdruecke", "riff", "wrack", "flussbiegung", "strand"]
+    },
+    "wolves_thinned": {
+      "hint": "Spieler berichtet, mindestens 3 Haie vertrieben / erlegt zu haben",
+      "keywords": ["killed", "slew", "hunted", "getoetet", "erlegt", "gejagt", "vertrieben", "umgebracht"],
+      "ctx":      ["hai", "haie", "haien", "haifisch", "haifische", "haiflosse"]
+    },
+    "keep_investigated": {
+      "hint": "Spieler sagt, er hat die alte Schmugglerhoehle am Nordfelsen betreten / untersucht",
+      "keywords": ["entered", "investigated", "explored", "betreten", "untersucht", "erkundet"],
+      "ctx":      ["hoehle", "schmugglerhoehle", "grotte", "keep", "festung"]
+    },
+    "moon_herb_collected": {
+      "hint": "Spieler bringt 3 Bueschel Mondkraut von den Suedklippen",
+      "keywords": ["brought", "collected", "gathered", "got", "have",
+                   "gesammelt", "geholt", "gebracht", "habe", "gepflueckt"],
+      "ctx":      ["mondkraut", "moon-herb", "moonherb", "kraut", "kraeuter"]
+    }
+  },
+  "counters": {
+    "wolves_killed": 0,
+    "days_since_arrival": 0,
+    "quests_completed": 0
+  },
+  "events_log": [],
+  "rumors": [],
+  "moods": {
+    "peaceful":    "Die Bucht liegt ruhig. Moewen kreisen. Matrosen schlendern ueber die Stege.",
+    "uneasy":      "Etwas liegt in der Luft. Die Leute schauen ueber die Schulter zum Wasser.",
+    "tense":       "Es spricht sich herum - etwas stimmt nicht. Bei Daemmerung werden die Luken verriegelt.",
+    "foreboding":  "Eine Schwere liegt ueber der Bucht. Wenige segeln nach Einbruch der Dunkelheit.",
+    "dire":        "Die Bucht fuehlt sich beobachtet an. Keiner will allein an Bord bleiben."
+  },
+  "event_messages": {
+    "dawn":  "Morgengrauen von Tag {day}",
+    "flag_set": "Tag {day}: {key} = {value}"
+  }
+}

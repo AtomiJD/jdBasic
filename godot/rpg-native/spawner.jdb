@@ -7,7 +7,7 @@ EXTENDS Node3D
 DIM self_h = 0
 
 SUB spawn_npcs()
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/npcs.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/npcs.json")
 	DIM arr = JSON.PARSE$(src)
 	DIM cnt = LEN(arr)
 	FOR i = 0 TO cnt - 1
@@ -25,7 +25,7 @@ SUB spawn_npcs()
 ENDSUB
 
 SUB spawn_chests()
-	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/chests.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/chests.json")
 	DIM arr = JSON.PARSE$(src)
 	FOR i = 0 TO LEN(arr) - 1
 		DIM e = arr[i]
@@ -44,3 +44,9 @@ SUB _ready()
 	spawn_npcs()
 	spawn_chests()
 ENDSUB
+
+' Content-pack root (Project Settings -> Game -> data_dir). Flip to
+' res://assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC

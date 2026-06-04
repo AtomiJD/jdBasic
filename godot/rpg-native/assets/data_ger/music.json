@@ -1,0 +1,48 @@
+{
+  "themes": {
+    "explore": {
+      "bpm": 125,
+      "melody_voice": ["SQUARE", 0.01, 0.15, 0.3, 0.25],
+      "melody_filter": 2000,
+      "melody_gain": 0.5,
+      "melody_unison": [3, 0.25, 0.5],
+      "melody_reverb_send": 0.4,
+      "bass_voice": ["SAW", 0.005, 0.08, 0.5, 0.08],
+      "bass_filter": 500,
+      "bass_gain": 0.65,
+      "reverb": [0.7, 0.3, 0.8, 0.25],
+      "melody": "[c5 e5 g5 e5] [a4 c5 e5 c5] [f4 a4 c5 [d5 c5]] [g4 b4 d5 ~] [e5 g5 [a5 g5] e5] [d5 f5 [e5 d5] c5] [c5 [b4 c5] d5 e5] [c5 ~ ~ ~]",
+      "bass": "[[c2 c3]*4] [[a1 a2]*4] [[f1 f2]*4] [[g1 g2]*4] [[c2 c3]*4] [[d2 d3]*2 [f1 f2]*2] [[g1 g2]*2 [g1 b1]*2] [[c2 c3]*4]"
+    },
+    "dungeon": {
+      "bpm": 90,
+      "melody_voice": ["SQUARE", 0.02, 0.3, 0.2, 0.4],
+      "melody_filter": 1400,
+      "melody_gain": 0.4,
+      "melody_lfo": [4.0, 6.0],
+      "melody_reverb_send": 0.6,
+      "melody_delay_send": 0.4,
+      "bass_voice": ["SAW", 0.01, 0.15, 0.3, 0.15],
+      "bass_filter": 340,
+      "bass_gain": 0.5,
+      "reverb": [0.9, 0.2, 1.0, 0.45],
+      "delay": [1, 320, 0.35, 0.3],
+      "melody": "[a4 ~ c5 ~] [e4 ~ g4 ~] [f4 ~ a4 [g4 f4]] [e4 ~ ~ ~] [a4 ~ [b4 c5] ~] [d5 ~ c5 a4] [b4 ~ [a4 g4] ~] [a4 ~ ~ ~]",
+      "bass": "[[a1 a2]*2 [a1 e2]*2] [[e1 e2]*2 [e1 b1]*2] [[f1 f2]*2 [f1 c2]*2] [[e1 e2]*4] [[a1 a2]*2 [a1 e2]*2] [[d2 d3]*2 [d2 a2]*2] [[e1 e2]*2 [e1 b1]*2] [[a1 a2]*4]"
+    },
+    "dialog": {
+      "bpm": 96,
+      "melody_voice": ["TRIANGLE", 0.03, 0.4, 0.3, 0.5],
+      "melody_filter": 1600,
+      "melody_gain": 0.22,
+      "melody_lfo": [5.5, 5.0],
+      "melody_reverb_send": 0.5,
+      "bass_voice": ["SINE", 0.02, 0.3, 0.4, 0.3],
+      "bass_filter": 500,
+      "bass_gain": 0.28,
+      "reverb": [0.8, 0.3, 0.9, 0.4],
+      "melody": "[e5 ~ ~ ~] [g4 ~ a4 ~] [c5 ~ ~ ~] [b4 ~ a4 ~] [e5 ~ ~ ~] [d5 ~ c5 ~] [d5 ~ ~ ~] [~ ~ ~ ~]",
+      "bass": "[[c2 c3]*2 ~] [[a1 a2]*2 ~] [[f1 f2]*2 ~] [[g1 g2]*2 ~] [[c2 c3]*2 ~] [[f1 f2]*2 ~] [[g1 g2]*2 ~] [[c2 c3]*2 ~]"
+    }
+  }
+}
