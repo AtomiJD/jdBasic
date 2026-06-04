@@ -1,0 +1,36 @@
+DIM total = 0
+DIM fails = 0
+SUB CK(name, ok)
+    total = total + 1
+    IF NOT ok THEN
+        fails = fails + 1
+        PRINT "  FAIL: " + name
+    ENDIF
+ENDSUB
+
+DIM m = {"a": 1, "b": 2}
+DIM m3 = {"a": 1, "b": 2}
+
+' ── the bug: OBJECT/MAP vs NULL / 0 ──
+CK("map = NULL is FALSE", (m = NULL) = FALSE)
+CK("map <> NULL is TRUE", (m <> NULL) = TRUE)
+CK("map = 0 is FALSE",    (m = 0) = FALSE)
+CK("map <> 0 is TRUE",    (m <> 0) = TRUE)
+CK("NULL = map is FALSE", (NULL = m) = FALSE)
+CK("map = same is TRUE",  (m = m) = TRUE)
+CK("map = othermap FALSE",(m = m3) = FALSE)
+
+' ── preserved: NULL / numeric / string semantics ──
+CK("NULL = NULL TRUE",    (NULL = NULL) = TRUE)
+CK("5 = 5 TRUE",          (5 = 5) = TRUE)
+CK("5 = 6 FALSE",         (5 = 6) = FALSE)
+CK("TRUE = 1 TRUE",       (TRUE = 1) = TRUE)
+CK("str eq TRUE",         ("abc" = "abc") = TRUE)
+CK("str ne TRUE",         ("abc" <> "abd") = TRUE)
+CK("3 < 5 TRUE",          (3 < 5) = TRUE)
+
+IF fails = 0 THEN
+    PRINT "CMP_RESULT: PASS " + STR$(total) + "/" + STR$(total)
+ELSE
+    PRINT "CMP_RESULT: FAIL " + STR$(fails) + "/" + STR$(total)
+ENDIF

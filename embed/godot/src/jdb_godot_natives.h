@@ -114,6 +114,10 @@ private:
     // SUB receives something GDX.GET/SET/CALL can resolve.
     std::string arg_literal_(const Variant& v);
     void        run_call_(const std::string& code);
+    // Invoke a connected handler SUB by name with pre-marshalled value
+    // handles via jdb_embed_call (compiled path - no text re-parse, no
+    // double-execution). Releases the handles after the call.
+    void        invoke_handler_(const std::string& sub, std::vector<int64_t>& handles);
     // Drop connection records whose source Object has been freed (e.g. a
     // one-shot timer that queue_freed itself) so the list stays bounded.
     void        prune_dead_();
@@ -135,7 +139,11 @@ private:
     std::shared_ptr<BridgeAlive>           m_alive;
     std::vector<ConnRec>                   m_connections;
     int                                    m_callback_depth = 0;
-    std::vector<std::string>               m_deferred;
+    // Signal handlers that fired while a VM callback was already running.
+    // Stored as (sub name, marshalled arg handles) and drained via
+    // jdb_embed_call once the outer callback unwinds.
+    struct DeferredCall { std::string sub; std::vector<int64_t> handles; };
+    std::vector<DeferredCall>              m_deferred;
     // The single reusable looping music player (0 = none yet).
     uint64_t                               m_music_id = 0;
     // Refs to RefCounted objects created via GDX.NEW / GDX.LOAD so they

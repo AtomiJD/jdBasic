@@ -565,13 +565,37 @@ void GodotBridge::leave_callback() {
     // were inside the VM. Each drained call may itself queue more, so loop.
     if (m_callback_depth == 0) {
         while (!m_deferred.empty()) {
-            std::vector<std::string> batch;
+            std::vector<DeferredCall> batch;
             batch.swap(m_deferred);
-            for (const std::string& code : batch) {
-                run_call_(code);
+            for (DeferredCall& d : batch) {
+                invoke_handler_(d.sub, d.handles);
             }
         }
     }
+}
+
+void GodotBridge::invoke_handler_(const std::string& sub, std::vector<int64_t>& handles) {
+    if (!m_vm) return;
+    int64_t ret = jdb_embed_call(m_vm, sub.c_str(),
+                                 handles.empty() ? nullptr : handles.data(),
+                                 (int)handles.size());
+    if (ret) {
+        jdb_embed_value_release(m_vm, ret);
+    } else {
+        const char* err = jdb_embed_last_error(m_vm);
+        if (err && *err) UtilityFunctions::push_error(String("[jdBasic signal] ") + String(err));
+    }
+    // Forward any PRINT output the handler produced to Godot's console.
+    char* out = jdb_embed_take_output(m_vm);
+    if (out) {
+        String s = String::utf8(out).strip_edges();
+        if (!s.is_empty()) UtilityFunctions::print(s);
+        jdb_embed_free(out);
+    }
+    for (int64_t h : handles) {
+        if (h) jdb_embed_value_release(m_vm, h);
+    }
+    handles.clear();
 }
 
 std::string GodotBridge::arg_literal_(const Variant& v) {
@@ -645,24 +669,25 @@ void GodotBridge::run_call_(const std::string& code) {
 }
 
 void GodotBridge::dispatch_signal(const String& sub, const Variant** args, int argc) {
-    std::string code;
-    code.reserve(32 + argc * 16);
-    code += String(sub).utf8().get_data();
-    code += "(";
+    // Marshal the signal args to jdBasic value handles once, then invoke the
+    // handler SUB via jdb_embed_call - the same compiled path as the engine
+    // lifecycle callbacks. (The old text-eval path re-parsed `sub(literals)`,
+    // degraded Dictionary/packed args to 0, and double-executed the body.)
+    std::vector<int64_t> handles;
+    handles.reserve((size_t)argc);
     for (int i = 0; i < argc; ++i) {
-        if (i > 0) code += ", ";
-        code += arg_literal_(args[i] ? *args[i] : Variant());
+        handles.push_back(variant_to_jdb_value(this, args[i] ? *args[i] : Variant()));
     }
-    code += ")\n";
 
-    // If we're already inside a VM callback, defer rather than nest
-    // jdb_embed_eval (the interpreter is not re-entrant). leave_callback
-    // drains the queue once the outer eval unwinds.
+    // If we're already inside a VM callback, defer rather than nest a VM call
+    // (the interpreter is not re-entrant). leave_callback drains the queue
+    // once the outer callback unwinds; the marshalled handles stay alive in
+    // the value store until then.
     if (m_callback_depth > 0) {
-        m_deferred.push_back(code);
+        m_deferred.push_back(DeferredCall{ std::string(sub.utf8().get_data()), std::move(handles) });
         return;
     }
-    run_call_(code);
+    invoke_handler_(std::string(sub.utf8().get_data()), handles);
 }
 
 int64_t GodotBridge::make_timer(double secs, const String& sub, bool repeat) {

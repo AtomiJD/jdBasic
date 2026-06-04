@@ -18,6 +18,7 @@ DIM self_h = 0
 DIM g_total = 0
 DIM g_fail = 0
 DIM g_done = 0
+DIM g_ping = 0
 
 ' ── assertion helpers ───────────────────────────────────────────────────
 SUB CHK(name, ok)
@@ -37,6 +38,7 @@ FUNC VEQ3(v, x, y, z)
 ENDFUNC
 
 SUB ON_PING()
+	g_ping = g_ping + 1
 ENDSUB
 
 SUB _ready()
@@ -53,7 +55,19 @@ SUB _ready()
 ENDSUB
 
 SUB _physics_process(delta)
-	IF g_done = 1 THEN RETURN
+	IF g_done = 2 THEN RETURN
+	IF g_done = 1 THEN
+		' Frame 2: the signal handler deferred on frame 1 has now run.
+		CHK("EMIT handler ran (deferred)", g_ping = 1)
+		IF g_fail = 0 THEN
+			PRINT "GDX_REGRESS_RESULT: PASS " + STR$(g_total) + "/" + STR$(g_total)
+		ELSE
+			PRINT "GDX_REGRESS_RESULT: FAIL " + STR$(g_fail) + "/" + STR$(g_total)
+		ENDIF
+		g_done = 2
+		GDX.QUIT(self_h)
+		RETURN
+	ENDIF
 	g_done = 1
 
 	' ===== C++ marshalling primitives =====================================
@@ -101,14 +115,21 @@ SUB _physics_process(delta)
 	' ===== timer ==========================================================
 	CHK("TIMER handle", GDX.TIMER(0.5, "ON_PING", 0) <> 0)
 
-	' ===== signals: CONNECT / DISCONNECT / EMIT (C++ entry points) ========
-	' NB: no synchronous emit while ON_PING is connected (re-entrancy crash).
+	' ===== signals: CONNECT / EMIT / DISCONNECT =========================
+	' EMIT from inside this callback fires ON_PING deferred (drained when the
+	' callback unwinds); frame 2 asserts g_ping = 1.
 	GDX.CALL(self_h, "add_user_signal", "ping")
 	GDX.CONNECT(self_h, "ping", "ON_PING")
-	CHK("CONNECT no crash", TRUE)
-	GDX.DISCONNECT(self_h, "ping", "ON_PING")
+	g_ping = 0
 	GDX.EMIT(self_h, "ping")
-	CHK("DISCONNECT/EMIT no crash", TRUE)
+	CHK("CONNECT/EMIT no crash", TRUE)
+	DIM dc = GDX.NEW("Node")
+	GDX.ADD_CHILD(self_h, dc)
+	GDX.CALL(dc, "add_user_signal", "z")
+	GDX.CONNECT(dc, "z", "ON_PING")
+	GDX.DISCONNECT(dc, "z", "ON_PING")
+	GDX.EMIT(dc, "z")
+	CHK("DISCONNECT no crash", TRUE)
 
 	' ===== audio (smoke - must not crash) =================================
 	GDX.AUDIO.PLAY("res://beep.wav", -12.0, 1.0)
@@ -205,11 +226,6 @@ SUB _physics_process(delta)
 	DIM hit2 = GDX.RAYCAST_2D(GDX.VEC2(0.0, 0.0), GDX.VEC2(100.0, 0.0))
 	CHK("RAYCAST_2D miss", hit2{"hit"} = FALSE)
 
-	' ===== summary ========================================================
-	IF g_fail = 0 THEN
-		PRINT "GDX_REGRESS_RESULT: PASS " + STR$(g_total) + "/" + STR$(g_total)
-	ELSE
-		PRINT "GDX_REGRESS_RESULT: FAIL " + STR$(g_fail) + "/" + STR$(g_total)
-	ENDIF
-	GDX.QUIT(self_h)
+	' Frame-1 checks done; the deferred ON_PING runs as this callback unwinds.
+	' Frame 2 (above) asserts it ran and prints the summary.
 ENDSUB

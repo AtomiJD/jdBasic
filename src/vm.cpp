@@ -3128,6 +3128,21 @@ Value VM::compare(const Value& a, const Value& b, OpCode op) {
         return Value::make_bool(result);
     }
 
+    // Reference-type equality. A MAP/OBJECT or TENSOR must not fall through to
+    // the to_double() path below — to_double() reads every reference type as
+    // 0.0, which makes `map = NULL`, `map = 0`, and `obj1 = obj2` all compare
+    // equal. Resolve =/<> by heap identity (same type + same object); leave
+    // ordering (LT/GT/LE/GE) on the legacy numeric path. ARRAY is intentionally
+    // excluded: element-wise array compares are intercepted before compare()
+    // is ever reached, so arrays here are vanishingly rare and best left alone.
+    if (a.type == ValueType::OBJECT || a.type == ValueType::TENSOR ||
+        b.type == ValueType::OBJECT || b.type == ValueType::TENSOR) {
+        if (op == OpCode::CMP_EQ || op == OpCode::CMP_NE) {
+            bool eq = (a.type == b.type && a.obj == b.obj && a.obj != nullptr);
+            return Value::make_bool(op == OpCode::CMP_EQ ? eq : !eq);
+        }
+    }
+
     // Numeric comparison
     double da = a.to_double();
     double db = b.to_double();

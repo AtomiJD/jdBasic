@@ -543,11 +543,7 @@ Variant JdbScriptInstance::call_method(const StringName& name,
     int64_t ret = jdb_embed_call(m_vm, n.c_str(),
                                  handles.empty() ? nullptr : handles.data(),
                                  (int)handles.size());
-    if (m_bridge) m_bridge->leave_callback();
 
-    for (int64_t h : handles) {
-        if (h) jdb_embed_value_release(m_vm, h);
-    }
     if (ret) {
         jdb_embed_value_release(m_vm, ret);
     } else {
@@ -555,12 +551,22 @@ Variant JdbScriptInstance::call_method(const StringName& name,
         if (err && err[0]) UtilityFunctions::push_error(String("[jdBasic] ") + String(err));
     }
 
-    // Forward any PRINT output from the callback to Godot's console.
+    // Forward this callback's PRINT output to Godot's console BEFORE draining
+    // deferred signal handlers: a deferred handler runs via jdb_embed_call,
+    // which clears the shared output buffer and would otherwise swallow the
+    // output this callback just produced.
     char* out = jdb_embed_take_output(m_vm);
     if (out) {
         String s = String::utf8(out).strip_edges();
         if (!s.is_empty()) UtilityFunctions::print(s);
         jdb_embed_free(out);
+    }
+
+    // Now safe to drain any signals that fired while we were inside the VM.
+    if (m_bridge) m_bridge->leave_callback();
+
+    for (int64_t h : handles) {
+        if (h) jdb_embed_value_release(m_vm, h);
     }
     return Variant();
 }
