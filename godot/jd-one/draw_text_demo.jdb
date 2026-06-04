@@ -1,6 +1,6 @@
 EXTENDS Node2D
 
-' GODOT.DRAW_TEXT showcase: a live HUD rendered entirely inside _draw,
+' GDX.DRAW_TEXT showcase: a live HUD rendered entirely inside _draw,
 ' with no Label node anywhere in the scene. The elapsed counter ticks up
 ' so you can see the text re-renders every frame.
 
@@ -8,16 +8,16 @@ DIM self_h = 0
 DIM t = 0.0
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 ENDSUB
 
 SUB _process(dt)
 	t = t + dt
-	GODOT.CALL(self_h, "queue_redraw")
+	GDX.CALL(self_h, "queue_redraw")
 ENDSUB
 
 SUB _draw()
-	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(40.0, 60.0), "GODOT.DRAW_TEXT - HUD in jdBasic _draw, no Label node", 26, GODOT.COLOR(1.0, 0.9, 0.2, 1.0))
-	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(40.0, 110.0), "elapsed seconds: " + STR$(INT(t)), 22)
-	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(40.0, 150.0), "this line is cyan, size 18", 18, GODOT.COLOR(0.3, 0.9, 1.0, 1.0))
+	GDX.DRAW_TEXT(self_h, GDX.VEC2(40.0, 60.0), "GDX.DRAW_TEXT - HUD in jdBasic _draw, no Label node", 26, GDX.COLOR(1.0, 0.9, 0.2, 1.0))
+	GDX.DRAW_TEXT(self_h, GDX.VEC2(40.0, 110.0), "elapsed seconds: " + STR$(INT(t)), 22)
+	GDX.DRAW_TEXT(self_h, GDX.VEC2(40.0, 150.0), "this line is cyan, size 18", 18, GDX.COLOR(0.3, 0.9, 1.0, 1.0))
 ENDSUB

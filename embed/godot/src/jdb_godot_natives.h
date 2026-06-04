@@ -1,4 +1,4 @@
-// Tier 4 - jdBasic GODOT.* native function suite.
+// Tier 4 - jdBasic GDX.* native function suite.
 //
 // Registered on every JdbScriptInstance's VM right after boot eval. The
 // natives are static C-callable functions (jdb_embed_register_native
@@ -6,8 +6,8 @@
 // JdbScriptInstance and call godot-cpp from there.
 //
 // Each instance keeps its own handle table mapping int64 -> Object*. The
-// handles are plain jdBasic INT values; GODOT.SELF / GODOT.GET / etc
-// return them, and any GODOT.* call that takes a "target object" expects
+// handles are plain jdBasic INT values; GDX.SELF / GDX.GET / etc
+// return them, and any GDX.* call that takes a "target object" expects
 // such an int.
 
 #pragma once
@@ -51,7 +51,7 @@ public:
     GodotBridge(JdbEmbed* vm, JdbScriptInstance* owner);
     ~GodotBridge();
 
-    // Register the full GODOT.* suite on the embed VM.
+    // Register the full GDX.* suite on the embed VM.
     void register_all();
 
     // Handle -> Object* lookup.
@@ -59,7 +59,7 @@ public:
     int64_t store(Object* obj);
 
     // Keep a Variant (and therefore its Ref, if it wraps a RefCounted)
-    // alive for the bridge's lifetime. GODOT.NEW / GODOT.LOAD hand back a
+    // alive for the bridge's lifetime. GDX.NEW / GDX.LOAD hand back a
     // bare Object*, but a freshly instantiated RefCounted (InputEvent,
     // Material, Resource, ...) would be freed the moment the local Ref
     // drops; retaining it here keeps the handle valid.
@@ -74,7 +74,7 @@ public:
     JdbEmbed*          vm()    const { return m_vm; }
     JdbScriptInstance* owner() const { return m_owner; }
 
-    // ── Signals (GODOT.CONNECT / GODOT.DISCONNECT) ────────────────────
+    // ── Signals (GDX.CONNECT / GDX.DISCONNECT) ────────────────────
     // Wire a Godot signal on the object behind `obj_handle` to a jdBasic
     // SUB. Returns 0 on success, -1 if the handle resolves to no object.
     int  connect_signal(int64_t obj_handle, const String& sig,
@@ -87,15 +87,15 @@ public:
     // mid-callback - see m_callback_depth).
     void dispatch_signal(const String& sub, const Variant** args, int argc);
 
-    // GODOT.TIMER - spawn a Timer child on the owning Node, wire its
+    // GDX.TIMER - spawn a Timer child on the owning Node, wire its
     // timeout to `sub`, and start it. repeat=false makes a one-shot that
     // frees itself after firing. Returns a bridge handle to the Timer (0
     // if there's no owner Node to parent it to).
     int64_t make_timer(double secs, const String& sub, bool repeat);
 
-    // GODOT.AUDIO.* - the natives work with real AudioStreamPlayer pointers
+    // GDX.AUDIO.* - the natives work with real AudioStreamPlayer pointers
     // internally, sidestepping the "object handle is just an int" gap that
-    // GODOT.SET(player, "stream", h) would hit.
+    // GDX.SET(player, "stream", h) would hit.
     int64_t audio_play(const String& path, double volume_db, double pitch);
     int64_t audio_music(const String& path, double volume_db);
     void    audio_stop_music();
@@ -111,7 +111,7 @@ public:
 private:
     // Serialize one signal argument into a jdBasic source literal. Objects
     // are stored in the handle table and emitted as their int handle so the
-    // SUB receives something GODOT.GET/SET/CALL can resolve.
+    // SUB receives something GDX.GET/SET/CALL can resolve.
     std::string arg_literal_(const Variant& v);
     void        run_call_(const std::string& code);
     // Drop connection records whose source Object has been freed (e.g. a
@@ -138,7 +138,7 @@ private:
     std::vector<std::string>               m_deferred;
     // The single reusable looping music player (0 = none yet).
     uint64_t                               m_music_id = 0;
-    // Refs to RefCounted objects created via GODOT.NEW / GODOT.LOAD so they
+    // Refs to RefCounted objects created via GDX.NEW / GDX.LOAD so they
     // outlive the native call that made them.
     std::vector<Variant>                   m_owned;
 };
@@ -147,7 +147,7 @@ private:
 // and the reverse direction. Vectors / Colors / similar go through
 // 3-or-4-element jdBasic arrays so we don't have to invent new value tags.
 // Variant::OBJECT lands as a jdBasic INT carrying the bridge handle that
-// the GODOT.* natives can later resolve back to an Object*.
+// the GDX.* natives can later resolve back to an Object*.
 int64_t variant_to_jdb_value(GodotBridge* bridge, const Variant& v);
 Variant jdb_value_to_variant(GodotBridge* bridge, int64_t h);
 

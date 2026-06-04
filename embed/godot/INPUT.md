@@ -1,6 +1,6 @@
-# GODOT.INPUT - Native Input API for jdBasic-in-Godot
+# GDX.INPUT - Native Input API for jdBasic-in-Godot
 
-`GODOT.INPUT.*` is a suite of native functions registered automatically on every `JDBasicVM` instance. It exposes Godot's `Input` singleton (and `DisplayServer` for mouse position) directly to jdBasic scripts, no GDScript pump needed.
+`GDX.INPUT.*` is a suite of native functions registered automatically on every `JDBasicVM` instance. It exposes Godot's `Input` singleton (and `DisplayServer` for mouse position) directly to jdBasic scripts, no GDScript pump needed.
 
 Two halves: stateless polling, and an event queue for discrete one-shot signals.
 
@@ -10,29 +10,29 @@ Direct reads of Godot's input state. No setup; just call.
 
 | Function | Returns | Notes |
 |----------|---------|-------|
-| `GODOT.INPUT.IS_ACTION_PRESSED("name")` | bool | Held-down state of a project-settings action |
-| `GODOT.INPUT.IS_ACTION_JUST_PRESSED("name")` | bool | True only for the frame the press happened |
-| `GODOT.INPUT.IS_ACTION_JUST_RELEASED("name")` | bool | True only for the frame the release happened |
-| `GODOT.INPUT.GET_ACTION_STRENGTH("name")` | double | 0..1, useful for analog inputs |
-| `GODOT.INPUT.GET_AXIS("neg", "pos")` | double | -1..1, classic axis pair |
-| `GODOT.INPUT.GET_VECTOR("l", "r", "u", "d")` | `[x, y]` | Deadzone-aware joypad vector |
-| `GODOT.INPUT.IS_KEY_PRESSED(keycode)` | bool | Raw key, Godot Key enum integer |
-| `GODOT.INPUT.MOUSE_POSITION()` | `[x, y]` | Global screen coords (DisplayServer) |
-| `GODOT.INPUT.MOUSE_VELOCITY()` | `[x, y]` | Last frame's mouse delta |
-| `GODOT.INPUT.IS_MOUSE_BUTTON_PRESSED(idx)` | bool | 1 = left, 2 = right, 3 = middle |
-| `GODOT.INPUT.SET_MOUSE_MODE(mode)` | - | 0 visible, 1 hidden, 2 captured, 3 confined, 4 confined+hidden |
+| `GDX.INPUT.IS_ACTION_PRESSED("name")` | bool | Held-down state of a project-settings action |
+| `GDX.INPUT.IS_ACTION_JUST_PRESSED("name")` | bool | True only for the frame the press happened |
+| `GDX.INPUT.IS_ACTION_JUST_RELEASED("name")` | bool | True only for the frame the release happened |
+| `GDX.INPUT.GET_ACTION_STRENGTH("name")` | double | 0..1, useful for analog inputs |
+| `GDX.INPUT.GET_AXIS("neg", "pos")` | double | -1..1, classic axis pair |
+| `GDX.INPUT.GET_VECTOR("l", "r", "u", "d")` | `[x, y]` | Deadzone-aware joypad vector |
+| `GDX.INPUT.IS_KEY_PRESSED(keycode)` | bool | Raw key, Godot Key enum integer |
+| `GDX.INPUT.MOUSE_POSITION()` | `[x, y]` | Global screen coords (DisplayServer) |
+| `GDX.INPUT.MOUSE_VELOCITY()` | `[x, y]` | Last frame's mouse delta |
+| `GDX.INPUT.IS_MOUSE_BUTTON_PRESSED(idx)` | bool | 1 = left, 2 = right, 3 = middle |
+| `GDX.INPUT.SET_MOUSE_MODE(mode)` | - | 0 visible, 1 hidden, 2 captured, 3 confined, 4 confined+hidden |
 
 ### Example: WASD movement in jdBasic
 
 ```basic
 EXPORT FUNC tick_player(dt)
-    DIM v = GODOT.INPUT.GET_VECTOR("ui_left", "ui_right", "ui_up", "ui_down")
+    DIM v = GDX.INPUT.GET_VECTOR("ui_left", "ui_right", "ui_up", "ui_down")
     DIM speed = 5.0
     DIM sprint = 1.0
-    IF GODOT.INPUT.IS_ACTION_PRESSED("sprint") THEN sprint = 2.0
+    IF GDX.INPUT.IS_ACTION_PRESSED("sprint") THEN sprint = 2.0
     player_x = player_x + v[0] * speed * sprint * dt
     player_z = player_z + v[1] * speed * sprint * dt
-    IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("jump") THEN
+    IF GDX.INPUT.IS_ACTION_JUST_PRESSED("jump") THEN
         player_vy = 6.0
     ENDIF
 ENDFUNC
@@ -62,7 +62,7 @@ func _input(event: InputEvent) -> void:
 **jdBasic side**:
 
 ```basic
-DIM ev = GODOT.INPUT.POLL_EVENT()
+DIM ev = GDX.INPUT.POLL_EVENT()
 DO WHILE ev <> NONE
     IF ev{"kind"} = "action" ANDALSO ev{"action"} = "talk" ANDALSO ev{"type"} = "pressed" THEN
         on_player_talk()
@@ -70,7 +70,7 @@ DO WHILE ev <> NONE
     IF ev{"kind"} = "key" ANDALSO INT(ev{"strength"}) = 27 THEN
         on_escape()
     ENDIF
-    ev = GODOT.INPUT.POLL_EVENT()
+    ev = GDX.INPUT.POLL_EVENT()
 LOOP
 ```
 
@@ -86,7 +86,7 @@ Each event is a MAP with four keys:
 Plus a queue-size accessor:
 
 ```basic
-DIM n = GODOT.INPUT.PENDING_EVENTS()
+DIM n = GDX.INPUT.PENDING_EVENTS()
 PRINT "queue has "; n; " events"
 ```
 

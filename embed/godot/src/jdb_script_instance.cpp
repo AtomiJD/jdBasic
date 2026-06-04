@@ -244,9 +244,9 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
         return;
     }
 
-    // Tier 4 - register GODOT.* natives BEFORE the boot eval so the script
+    // Tier 4 - register GDX.* natives BEFORE the boot eval so the script
     // can use them at top level if it wants to. The bridge keeps a back-
-    // pointer to this instance so GODOT.SELF() works.
+    // pointer to this instance so GDX.SELF() works.
     m_bridge = new GodotBridge(m_vm, this);
     m_bridge->register_all();
     // Tier-3 scripts get discrete events via _input(event) directly,
@@ -254,6 +254,19 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     // just return NIL.
     register_godot_input_natives(m_vm, nullptr);
     setup_debugger(m_vm, this);
+
+    // Bring the bundled GDX convenience library into scope via in-memory
+    // IMPORT, so scripts can call GDX.MOVE_AND_SLIDE / GDX.TIME_MS etc. The
+    // helpers are pure jdBasic over the GDX.* native primitives.
+    {
+        char* gout = jdb_embed_eval(m_vm, "IMPORT GDX\n");
+        if (gout) {
+            jdb_embed_free(gout);
+        } else {
+            const char* gerr = jdb_embed_last_error(m_vm);
+            UtilityFunctions::push_error(String("[GDX] import failed: ") + String(gerr ? gerr : "?"));
+        }
+    }
 
     if (m_script.is_valid()) {
         String src = m_script->get_processed_source();

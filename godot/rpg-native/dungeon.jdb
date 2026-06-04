@@ -62,9 +62,9 @@ FUNC side_from(s)
 ENDFUNC
 
 FUNC find_named(node, needle)
-	DIM nm = LCASE$(GODOT.GET(node, "name"))
+	DIM nm = LCASE$(GDX.GET(node, "name"))
 	IF INSTR(nm, needle) >= 0 THEN RETURN node
-	DIM kids = GODOT.CALL(node, "get_children")
+	DIM kids = GDX.CALL(node, "get_children")
 	FOR i = 0 TO LEN(kids) - 1
 		DIM r = find_named(kids[i], needle)
 		IF r <> 0 THEN RETURN r
@@ -89,12 +89,12 @@ ENDFUNC
 
 ' Add a BoxShape3D collider to a body; returns the CollisionShape3D handle.
 FUNC add_box(body, ox, oy, oz, sx, sy, sz)
-	DIM shape = GODOT.NEW("CollisionShape3D")
-	DIM box   = GODOT.NEW("BoxShape3D")
-	GODOT.SET(box, "size", GODOT.VEC3(sx, sy, sz))
-	GODOT.SET(shape, "shape", GODOT.REF(box))
-	GODOT.SET(shape, "position", GODOT.VEC3(ox, oy, oz))
-	GODOT.ADD_CHILD(body, shape)
+	DIM shape = GDX.NEW("CollisionShape3D")
+	DIM box   = GDX.NEW("BoxShape3D")
+	GDX.SET(box, "size", GDX.VEC3(sx, sy, sz))
+	GDX.SET(shape, "shape", GDX.REF(box))
+	GDX.SET(shape, "position", GDX.VEC3(ox, oy, oz))
+	GDX.ADD_CHILD(body, shape)
 	RETURN shape
 ENDFUNC
 
@@ -113,9 +113,9 @@ SUB place_floor()
 	FOR r = 0 TO grid_h - 1
 		FOR c = 0 TO grid_w - 1
 			IF masked(c, r) THEN
-				DIM inst = GODOT.INSTANTIATE(floor_path)
-				GODOT.ADD_CHILD(self_h, inst)
-				GODOT.SET(inst, "global_position", GODOT.VEC3(org_x + c * TILE, org_y, org_z + r * TILE))
+				DIM inst = GDX.INSTANTIATE(floor_path)
+				GDX.ADD_CHILD(self_h, inst)
+				GDX.SET(inst, "global_position", GDX.VEC3(org_x + c * TILE, org_y, org_z + r * TILE))
 			ENDIF
 		NEXT
 	NEXT
@@ -143,11 +143,11 @@ SUB maybe_wall(c, r, sd, dx, dr)
 	ENDIF
 
 	DIM is_door = doorway_has(c, r, sd)
-	DIM body = GODOT.NEW("StaticBody3D")
+	DIM body = GDX.NEW("StaticBody3D")
 	DIM scene_path = ASSET_DIR + "wall.gltf"
 	IF is_door THEN scene_path = ASSET_DIR + "wall_doorway.gltf"
-	DIM visual = GODOT.INSTANTIATE(scene_path)
-	GODOT.ADD_CHILD(body, visual)
+	DIM visual = GDX.INSTANTIATE(scene_path)
+	GDX.ADD_CHILD(body, visual)
 
 	IF is_door THEN
 		' Two flanking colliders + a thin centre panel we toggle off on open.
@@ -156,16 +156,16 @@ SUB maybe_wall(c, r, sd, dx, dr)
 		DIM dcoll  = add_box(body, 0.0, 1.75, 0.0, DOOR_W, DOOR_H, 0.2)
 		DIM dvis = find_named(visual, "doorway_door")
 		' "[E] Open door" billboard hint, shown when the player is in reach.
-		DIM prompt = GODOT.NEW("Label3D")
-		GODOT.SET(prompt, "text", "[E] Open door")
-		GODOT.SET(prompt, "billboard", 1)
-		GODOT.SET(prompt, "pixel_size", 0.004)
-		GODOT.SET(prompt, "modulate", GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
-		GODOT.SET(prompt, "no_depth_test", TRUE)
-		GODOT.SET(prompt, "fixed_size", TRUE)
-		GODOT.SET(prompt, "visible", FALSE)
-		GODOT.SET(prompt, "position", GODOT.VEC3(0.0, 4.2, 0.0))
-		GODOT.ADD_CHILD(body, prompt)
+		DIM prompt = GDX.NEW("Label3D")
+		GDX.SET(prompt, "text", "[E] Open door")
+		GDX.SET(prompt, "billboard", 1)
+		GDX.SET(prompt, "pixel_size", 0.004)
+		GDX.SET(prompt, "modulate", GDX.COLOR(1.0, 0.95, 0.5, 1.0))
+		GDX.SET(prompt, "no_depth_test", TRUE)
+		GDX.SET(prompt, "fixed_size", TRUE)
+		GDX.SET(prompt, "visible", FALSE)
+		GDX.SET(prompt, "position", GDX.VEC3(0.0, 4.2, 0.0))
+		GDX.ADD_CHILD(body, prompt)
 
 		door_body = APPEND(door_body, body)
 		door_open = APPEND(door_open, 0)
@@ -177,9 +177,9 @@ SUB maybe_wall(c, r, sd, dx, dr)
 		DIM wcoll = add_box(body, 0.0, 2.0, 0.0, TILE, 4.0, WALL_DEPTH)
 	ENDIF
 
-	GODOT.ADD_CHILD(self_h, body)
-	GODOT.SET(body, "global_position", GODOT.VEC3(px, org_y, pz))
-	GODOT.SET(body, "rotation:y", yaw)
+	GDX.ADD_CHILD(self_h, body)
+	GDX.SET(body, "global_position", GDX.VEC3(px, org_y, pz))
+	GDX.SET(body, "rotation:y", yaw)
 ENDSUB
 
 SUB place_walls()
@@ -221,27 +221,27 @@ SUB place_torches(spots)
 			yaw = PI * 0.5
 		ENDIF
 
-		DIM root = GODOT.NEW("Node3D")
-		GODOT.ADD_CHILD(self_h, root)
-		GODOT.SET(root, "global_position", GODOT.VEC3(px, org_y + 1.2, pz))
-		GODOT.SET(root, "rotation:y", yaw)
-		GODOT.ADD_CHILD(root, GODOT.INSTANTIATE(torch_path))
+		DIM root = GDX.NEW("Node3D")
+		GDX.ADD_CHILD(self_h, root)
+		GDX.SET(root, "global_position", GDX.VEC3(px, org_y + 1.2, pz))
+		GDX.SET(root, "rotation:y", yaw)
+		GDX.ADD_CHILD(root, GDX.INSTANTIATE(torch_path))
 
-		DIM light = GODOT.NEW("OmniLight3D")
-		GODOT.SET(light, "light_color", GODOT.COLOR(1.0, 0.55, 0.25, 1.0))
-		GODOT.SET(light, "light_energy", 2.0)
-		GODOT.SET(light, "omni_range", 9.0)
-		GODOT.SET(light, "shadow_enabled", FALSE)
-		GODOT.ADD_CHILD(root, light)
-		GODOT.SET(light, "position", GODOT.VEC3(0.0, 0.8, 0.1))
+		DIM light = GDX.NEW("OmniLight3D")
+		GDX.SET(light, "light_color", GDX.COLOR(1.0, 0.55, 0.25, 1.0))
+		GDX.SET(light, "light_energy", 2.0)
+		GDX.SET(light, "omni_range", 9.0)
+		GDX.SET(light, "shadow_enabled", FALSE)
+		GDX.ADD_CHILD(root, light)
+		GDX.SET(light, "position", GDX.VEC3(0.0, 0.8, 0.1))
 
 		' Looping flicker.
-		DIM tw = GODOT.CALL(light, "create_tween")
-		GODOT.CALL(tw, "set_loops")
-		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 2.4, 0.18)
-		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 1.6, 0.13)
-		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 2.1, 0.22)
-		GODOT.CALL(tw, "tween_property", GODOT.REF(light), "light_energy", 1.8, 0.16)
+		DIM tw = GDX.CALL(light, "create_tween")
+		GDX.CALL(tw, "set_loops")
+		GDX.CALL(tw, "tween_property", GDX.REF(light), "light_energy", 2.4, 0.18)
+		GDX.CALL(tw, "tween_property", GDX.REF(light), "light_energy", 1.6, 0.13)
+		GDX.CALL(tw, "tween_property", GDX.REF(light), "light_energy", 2.1, 0.22)
+		GDX.CALL(tw, "tween_property", GDX.REF(light), "light_energy", 1.8, 0.16)
 	NEXT
 ENDSUB
 
@@ -249,9 +249,9 @@ SUB place_props(props)
 	FOR i = 0 TO LEN(props) - 1
 		DIM p = props[i]
 		DIM path = ASSET_DIR + p{"model"} + ".gltf"
-		DIM inst = GODOT.INSTANTIATE(path)
+		DIM inst = GDX.INSTANTIATE(path)
 		IF inst = 0 THEN CONTINUEFOR
-		GODOT.ADD_CHILD(self_h, inst)
+		GDX.ADD_CHILD(self_h, inst)
 		DIM c = INT(p{"col"})
 		DIM r = INT(p{"row"})
 		DIM wx = org_x + c * TILE
@@ -263,10 +263,10 @@ SUB place_props(props)
 			wy = wy + off[1]
 			wz = wz + off[2]
 		ENDIF
-		GODOT.SET(inst, "global_position", GODOT.VEC3(wx, wy, wz))
+		GDX.SET(inst, "global_position", GDX.VEC3(wx, wy, wz))
 		DIM yaw = 0.0
 		IF MAP.EXISTS(p, "yaw") THEN yaw = p{"yaw"}
-		GODOT.SET(inst, "rotation:y", yaw * PI / 180.0)
+		GDX.SET(inst, "rotation:y", yaw * PI / 180.0)
 	NEXT
 ENDSUB
 
@@ -274,7 +274,7 @@ SUB place_decor(decor)
 	FOR i = 0 TO LEN(decor) - 1
 		DIM d = decor[i]
 		DIM path = ASSET_DIR + d{"model"} + ".gltf"
-		DIM inst = GODOT.INSTANTIATE(path)
+		DIM inst = GDX.INSTANTIATE(path)
 		IF inst = 0 THEN CONTINUEFOR
 		DIM c = INT(d{"col"})
 		DIM r = INT(d{"row"})
@@ -295,9 +295,9 @@ SUB place_decor(decor)
 			px = px - TILE * 0.48
 			yaw = PI * 0.5
 		ENDIF
-		GODOT.ADD_CHILD(self_h, inst)
-		GODOT.SET(inst, "global_position", GODOT.VEC3(px, org_y, pz))
-		GODOT.SET(inst, "rotation:y", yaw)
+		GDX.ADD_CHILD(self_h, inst)
+		GDX.SET(inst, "global_position", GDX.VEC3(px, org_y, pz))
+		GDX.SET(inst, "rotation:y", yaw)
 	NEXT
 ENDSUB
 
@@ -309,13 +309,13 @@ SUB place_traps(traps)
 		DIM r = INT(t{"row"})
 		DIM wx = org_x + c * TILE
 		DIM wz = org_z + r * TILE
-		DIM root = GODOT.NEW("Node3D")
-		GODOT.ADD_CHILD(self_h, root)
-		GODOT.SET(root, "global_position", GODOT.VEC3(wx, org_y, wz))
-		DIM inst = GODOT.INSTANTIATE(spike_path)
-		GODOT.ADD_CHILD(root, inst)
+		DIM root = GDX.NEW("Node3D")
+		GDX.ADD_CHILD(self_h, root)
+		GDX.SET(root, "global_position", GDX.VEC3(wx, org_y, wz))
+		DIM inst = GDX.INSTANTIATE(spike_path)
+		GDX.ADD_CHILD(root, inst)
 		DIM spikes = find_named(inst, "spikes")
-		IF spikes <> 0 THEN GODOT.SET(spikes, "position:y", -2.2)
+		IF spikes <> 0 THEN GDX.SET(spikes, "position:y", -2.2)
 
 		trap_spikes = APPEND(trap_spikes, spikes)
 		trap_wx = APPEND(trap_wx, wx)
@@ -333,37 +333,37 @@ SUB toggle_door(di)
 	DIM coll = door_collider[di]
 	DIM is_disabled = FALSE
 	IF op = 1 THEN is_disabled = TRUE
-	IF coll <> 0 THEN GODOT.SET(coll, "disabled", is_disabled)
+	IF coll <> 0 THEN GDX.SET(coll, "disabled", is_disabled)
 	DIM vis = door_visual[di]
 	IF vis <> 0 THEN
 		DIM tgt = 0.0
 		IF op = 1 THEN tgt = -PI * 0.5
-		DIM tw = GODOT.CALL(self_h, "create_tween")
-		DIM pr = GODOT.CALL(tw, "tween_property", GODOT.REF(vis), "rotation:y", tgt, 0.35)
-		GODOT.CALL(pr, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
-		GODOT.CALL(pr, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+		DIM tw = GDX.CALL(self_h, "create_tween")
+		DIM pr = GDX.CALL(tw, "tween_property", GDX.REF(vis), "rotation:y", tgt, 0.35)
+		GDX.CALL(pr, "set_trans", GDX.ENUM("Tween", "TRANS_QUAD"))
+		GDX.CALL(pr, "set_ease",  GDX.ENUM("Tween", "EASE_OUT"))
 	ENDIF
 ENDSUB
 
 SUB fire_trap(ti)
 	DIM sp = trap_spikes[ti]
 	IF sp <> 0 THEN
-		DIM tw = GODOT.CALL(self_h, "create_tween")
-		DIM p1 = GODOT.CALL(tw, "tween_property", GODOT.REF(sp), "position:y", 0.0, 0.14)
-		GODOT.CALL(p1, "set_trans", GODOT.ENUM("Tween", "TRANS_BACK"))
-		GODOT.CALL(p1, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
-		GODOT.CALL(tw, "tween_interval", 1.6)
-		DIM p2 = GODOT.CALL(tw, "tween_property", GODOT.REF(sp), "position:y", -2.2, 0.45)
-		GODOT.CALL(p2, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
-		GODOT.CALL(p2, "set_ease",  GODOT.ENUM("Tween", "EASE_IN"))
+		DIM tw = GDX.CALL(self_h, "create_tween")
+		DIM p1 = GDX.CALL(tw, "tween_property", GDX.REF(sp), "position:y", 0.0, 0.14)
+		GDX.CALL(p1, "set_trans", GDX.ENUM("Tween", "TRANS_BACK"))
+		GDX.CALL(p1, "set_ease",  GDX.ENUM("Tween", "EASE_OUT"))
+		GDX.CALL(tw, "tween_interval", 1.6)
+		DIM p2 = GDX.CALL(tw, "tween_property", GDX.REF(sp), "position:y", -2.2, 0.45)
+		GDX.CALL(p2, "set_trans", GDX.ENUM("Tween", "TRANS_QUAD"))
+		GDX.CALL(p2, "set_ease",  GDX.ENUM("Tween", "EASE_IN"))
 	ENDIF
 	' Red damage flash.
 	IF splat_h <> 0 THEN
-		GODOT.SET(splat_h, "modulate", GODOT.COLOR(1.0, 1.0, 1.0, 1.0))
-		DIM tws = GODOT.CALL(self_h, "create_tween")
-		DIM ps = GODOT.CALL(tws, "tween_property", GODOT.REF(splat_h), "modulate:a", 0.0, 0.6)
-		GODOT.CALL(ps, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
-		GODOT.CALL(ps, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+		GDX.SET(splat_h, "modulate", GDX.COLOR(1.0, 1.0, 1.0, 1.0))
+		DIM tws = GDX.CALL(self_h, "create_tween")
+		DIM ps = GDX.CALL(tws, "tween_property", GDX.REF(splat_h), "modulate:a", 0.0, 0.6)
+		GDX.CALL(ps, "set_trans", GDX.ENUM("Tween", "TRANS_QUAD"))
+		GDX.CALL(ps, "set_ease",  GDX.ENUM("Tween", "EASE_OUT"))
 	ENDIF
 
 	trap_state[ti] = 1
@@ -371,10 +371,10 @@ SUB fire_trap(ti)
 ENDSUB
 
 SUB _ready()
-	self_h   = GODOT.SELF()
-	player_h = GODOT.CALL(self_h, "get_node", "../Player")
+	self_h   = GDX.SELF()
+	player_h = GDX.CALL(self_h, "get_node", "../Player")
 
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
 	DIM all = JSON.PARSE$(src)
 	IF LEN(all) = 0 THEN
 		PRINT "dungeon: no specs"
@@ -436,28 +436,28 @@ SUB _ready()
 	place_traps(spec{"traps"})
 
 	' Full-screen red damage vignette, flashed when a trap fires.
-	DIM layer = GODOT.NEW("CanvasLayer")
-	GODOT.ADD_CHILD(self_h, layer)
-	splat_h = GODOT.NEW("ColorRect")
-	GODOT.SET(splat_h, "color", GODOT.COLOR(0.7, 0.0, 0.0, 0.55))
-	GODOT.SET(splat_h, "anchor_right", 1.0)
-	GODOT.SET(splat_h, "anchor_bottom", 1.0)
-	GODOT.SET(splat_h, "mouse_filter", 2)
-	GODOT.SET(splat_h, "modulate", GODOT.COLOR(1.0, 1.0, 1.0, 0.0))
-	GODOT.ADD_CHILD(layer, splat_h)
+	DIM layer = GDX.NEW("CanvasLayer")
+	GDX.ADD_CHILD(self_h, layer)
+	splat_h = GDX.NEW("ColorRect")
+	GDX.SET(splat_h, "color", GDX.COLOR(0.7, 0.0, 0.0, 0.55))
+	GDX.SET(splat_h, "anchor_right", 1.0)
+	GDX.SET(splat_h, "anchor_bottom", 1.0)
+	GDX.SET(splat_h, "mouse_filter", 2)
+	GDX.SET(splat_h, "modulate", GDX.COLOR(1.0, 1.0, 1.0, 0.0))
+	GDX.ADD_CHILD(layer, splat_h)
 
 	PRINT "dungeon: " + STR$(grid_w) + "x" + STR$(grid_h) + " grid, " + STR$(door_count) + " doors, " + STR$(trap_count) + " traps"
 ENDSUB
 
 SUB _process(delta)
 	IF player_h = 0 THEN RETURN
-	DIM pp = GODOT.GET(player_h, "global_position")
+	DIM pp = GDX.GET(player_h, "global_position")
 
 	' Nearest door within reach: show its [E] hint; E toggles it.
 	DIM best = -1
 	DIM bestd = 12.25
 	FOR di = 0 TO door_count - 1
-		DIM dp = GODOT.GET(door_body[di], "global_position")
+		DIM dp = GDX.GET(door_body[di], "global_position")
 		DIM ex = dp[0] - pp[0]
 		DIM ez = dp[2] - pp[2]
 		DIM d2 = ex * ex + ez * ez
@@ -472,14 +472,14 @@ SUB _process(delta)
 			IF di = best THEN
 				DIM txt = "[E] Open door"
 				IF door_open[di] = 1 THEN txt = "[E] Close door"
-				GODOT.SET(pr, "text", txt)
-				GODOT.SET(pr, "visible", TRUE)
+				GDX.SET(pr, "text", txt)
+				GDX.SET(pr, "visible", TRUE)
 			ELSE
-				GODOT.SET(pr, "visible", FALSE)
+				GDX.SET(pr, "visible", FALSE)
 			ENDIF
 		ENDIF
 	NEXT
-	IF best >= 0 ANDALSO GODOT.INPUT.IS_ACTION_JUST_PRESSED("use") THEN toggle_door(best)
+	IF best >= 0 ANDALSO GDX.INPUT.IS_ACTION_JUST_PRESSED("use") THEN toggle_door(best)
 
 	' Spike traps: armed tiles fire when stepped on, re-arm after the cycle.
 	FOR ti = 0 TO trap_count - 1

@@ -1,20 +1,20 @@
 EXTENDS Node
 
-' Headless check for GODOT.SINGLETON / GODOT.STATIC / GODOT.ENUM.
+' Headless check for GDX.SINGLETON / GDX.STATIC / GDX.ENUM.
 
 DIM self_h = 0
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 
-	PRINT "ENUM Tween.TRANS_BACK = " + STR$(GODOT.ENUM("Tween", "TRANS_BACK"))
+	PRINT "ENUM Tween.TRANS_BACK = " + STR$(GDX.ENUM("Tween", "TRANS_BACK"))
 
-	DIM time_h = GODOT.SINGLETON("Time")
-	PRINT "SINGLETON Time ticks = " + STR$(GODOT.CALL(time_h, "get_ticks_msec"))
+	DIM time_h = GDX.SINGLETON("Time")
+	PRINT "SINGLETON Time ticks = " + STR$(GDX.CALL(time_h, "get_ticks_msec"))
 
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://breakout.jdb")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://breakout.jdb")
 	PRINT "STATIC read breakout.jdb len=" + STR$(LEN(src)) + " head=" + LEFT$(src, 13)
 
-	DIM tree = GODOT.CALL(self_h, "get_tree")
-	GODOT.CALL(tree, "quit")
+	DIM tree = GDX.CALL(self_h, "get_tree")
+	GDX.CALL(tree, "quit")
 ENDSUB

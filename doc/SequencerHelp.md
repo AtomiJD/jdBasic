@@ -117,9 +117,9 @@ The host feeds those samples to its own audio engine each frame. In Godot:
 
 ```basic
 ' once: an AudioStreamGenerator at 44100 Hz on an AudioStreamPlayer
-DIM avail = GODOT.CALL(playback, "get_frames_available")
+DIM avail = GDX.CALL(playback, "get_frames_available")
 DIM buf = SOUND.RENDER(avail)
-GODOT.CALL(playback, "push_buffer", GODOT.PACKED_VEC2(buf))
+GDX.CALL(playback, "push_buffer", GDX.PACKED_VEC2(buf))
 ```
 
 All design commands (`SOUND.VOICE` / `SEQ` / `NOTE` / `FM` / `UNISON` / `REVERB`

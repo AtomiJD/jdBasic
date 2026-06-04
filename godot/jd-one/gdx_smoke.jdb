@@ -1,0 +1,31 @@
+EXTENDS Node
+
+' De-risk: prove the in-memory IMPORT GDX mechanism works in the embed.
+' GDX.* helpers are pure jdBasic over the GDX.* native primitives, pulled
+' in via a bundled in-memory module reader + an implicit IMPORT GDX at boot.
+
+DIM self_h = 0
+
+SUB _ready()
+	self_h = GDX.SELF()
+
+	' GDX.TIME_MS wraps GDX.CALL(GDX.SINGLETON("Time"), "get_ticks_msec")
+	DIM t = GDX.TIME_MS()
+	PRINT "GDX.TIME_MS = " + STR$(t)
+
+	DIM ts = GDX.TIME_SEC()
+	PRINT "GDX.TIME_SEC = " + STR$(ts)
+
+	' GDX.GET_VELOCITY on a plain Node3D (velocity prop only on bodies, so we
+	' just exercise the call path on a CharacterBody3D).
+	DIM body = GDX.NEW("CharacterBody3D")
+	GDX.ADD_CHILD(self_h, body)
+	GDX.SET_VELOCITY(body, GDX.VEC3(1.0, 2.0, 3.0))
+	DIM v = GDX.GET_VELOCITY(body)
+	PRINT "GDX velocity roundtrip = " + STR$(v)
+	PRINT "GDX.IS_ON_FLOOR = " + STR$(GDX.IS_ON_FLOOR(body))
+
+	PRINT "GDX SMOKE OK"
+	DIM tree = GDX.CALL(self_h, "get_tree")
+	GDX.CALL(tree, "quit")
+ENDSUB

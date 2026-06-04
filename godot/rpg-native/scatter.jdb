@@ -37,7 +37,7 @@ ENDFUNC
 ' Read dungeons.json and store each dungeon's world-space footprint (+pad)
 ' so no trees or bushes spawn on top of a dungeon.
 SUB load_dungeon_rects()
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
 	DIM all = JSON.PARSE$(src)
 	DIM pad = 2.0
 	FOR di = 0 TO LEN(all) - 1
@@ -79,20 +79,20 @@ FUNC too_close(wx, wz)
 ENDFUNC
 
 SUB place_plant(path, wx, wz, rad, hgt, sc)
-	DIM body  = GODOT.NEW("StaticBody3D")
-	DIM shape = GODOT.NEW("CollisionShape3D")
-	DIM cyl   = GODOT.NEW("CylinderShape3D")
-	GODOT.SET(cyl, "radius", rad * sc)
-	GODOT.SET(cyl, "height", hgt * sc)
-	GODOT.SET(shape, "shape", GODOT.REF(cyl))
-	GODOT.SET(shape, "position", GODOT.VEC3(0.0, hgt * sc * 0.5, 0.0))
-	GODOT.ADD_CHILD(body, shape)
-	DIM inst = GODOT.INSTANTIATE(path)
-	GODOT.SET(inst, "scale", GODOT.VEC3(sc, sc, sc))
-	GODOT.ADD_CHILD(body, inst)
-	GODOT.ADD_CHILD(self_h, body)
-	GODOT.SET(body, "global_position", GODOT.VEC3(wx, terrain_height(wx, wz), wz))
-	GODOT.SET(body, "rotation:y", RND(1) * 2.0 * PI)
+	DIM body  = GDX.NEW("StaticBody3D")
+	DIM shape = GDX.NEW("CollisionShape3D")
+	DIM cyl   = GDX.NEW("CylinderShape3D")
+	GDX.SET(cyl, "radius", rad * sc)
+	GDX.SET(cyl, "height", hgt * sc)
+	GDX.SET(shape, "shape", GDX.REF(cyl))
+	GDX.SET(shape, "position", GDX.VEC3(0.0, hgt * sc * 0.5, 0.0))
+	GDX.ADD_CHILD(body, shape)
+	DIM inst = GDX.INSTANTIATE(path)
+	GDX.SET(inst, "scale", GDX.VEC3(sc, sc, sc))
+	GDX.ADD_CHILD(body, inst)
+	GDX.ADD_CHILD(self_h, body)
+	GDX.SET(body, "global_position", GDX.VEC3(wx, terrain_height(wx, wz), wz))
+	GDX.SET(body, "rotation:y", RND(1) * 2.0 * PI)
 ENDSUB
 
 SUB place_trees(cx, cz, cell, count)
@@ -116,9 +116,9 @@ SUB place_bush(cx, cz, cell)
 ENDSUB
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 	load_dungeon_rects()
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_map.txt")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_map.txt")
 	DIM rows = SPLIT(src, CHR$(10))
 	DIM rn = LEN(rows)
 	DIM world_size = 96.0

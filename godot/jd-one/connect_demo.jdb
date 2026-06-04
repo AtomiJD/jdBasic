@@ -1,6 +1,6 @@
 EXTENDS Node2D
 
-' Pure-jdBasic demo of GODOT.CONNECT - wiring Godot signals to jdBasic SUBs.
+' Pure-jdBasic demo of GDX.CONNECT - wiring Godot signals to jdBasic SUBs.
 '
 ' No polling here: the SUBs below only run when their signal fires.
 '   Button "pressed"        -> on_click       (no-arg signal)
@@ -20,18 +20,18 @@ DIM slider_at = 0.0
 DIM btn_live  = TRUE
 
 SUB refresh()
-	DIM body = "GODOT.CONNECT demo" + CHR$(10)
+	DIM body = "GDX.CONNECT demo" + CHR$(10)
 	body = body + "clicks: " + STR$(clicks)
 	IF NOT btn_live THEN body = body + "  (button disconnected)"
 	body = body + CHR$(10) + "slider: " + STR$(slider_at)
 	body = body + CHR$(10) + "beats : " + STR$(beats) + "  (1/sec)"
-	GODOT.SET(status_h, "text", body)
+	GDX.SET(status_h, "text", body)
 ENDSUB
 
 SUB on_click()
 	clicks = clicks + 1
 	IF clicks >= 5 ANDALSO btn_live THEN
-		GODOT.DISCONNECT(btn_h, "pressed", "on_click")
+		GDX.DISCONNECT(btn_h, "pressed", "on_click")
 		btn_live = FALSE
 	ENDIF
 	refresh()
@@ -48,15 +48,15 @@ SUB on_beat()
 ENDSUB
 
 SUB _ready()
-	self_h   = GODOT.SELF()
-	btn_h    = GODOT.CALL(self_h, "get_node", "UI/Button")
-	slider_h = GODOT.CALL(self_h, "get_node", "UI/Slider")
-	status_h = GODOT.CALL(self_h, "get_node", "UI/Status")
+	self_h   = GDX.SELF()
+	btn_h    = GDX.CALL(self_h, "get_node", "UI/Button")
+	slider_h = GDX.CALL(self_h, "get_node", "UI/Slider")
+	status_h = GDX.CALL(self_h, "get_node", "UI/Status")
 
-	GODOT.CONNECT(btn_h, "pressed", "on_click")
-	GODOT.CONNECT(slider_h, "value_changed", "on_slide")
+	GDX.CONNECT(btn_h, "pressed", "on_click")
+	GDX.CONNECT(slider_h, "value_changed", "on_slide")
 
 	' One repeating timer, straight from code - no Timer node in the scene.
-	GODOT.TIMER(1.0, "on_beat", 1)
+	GDX.TIMER(1.0, "on_beat", 1)
 	refresh()
 ENDSUB

@@ -114,7 +114,7 @@ PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
         "BAND","BOR","BXOR","BNOT","SHL","SHR",
         // Native namespaces (the method after the dot also colours via the
         // entries below; mirrors the namespace rule in the tmLanguage grammar).
-        "GODOT","SOUND","SFX","MUSIC","GFX","AI","JSON","MAP","FILE","OS","HTTP",
+        "GDX","SOUND","SFX","MUSIC","GFX","AI","JSON","MAP","FILE","OS","HTTP",
         // SOUND.* sequencer method names
         "INIT","BPM","SEQ","SCALE","NOTE","VOICE","GAIN","PAN","FILTER","EQ",
         "LFO","FM","UNISON","BITCRUSH","RINGMOD","REVERBSEND","DELAYSEND",
@@ -251,8 +251,8 @@ TypedArray<Dictionary> JdbScriptLanguage::_get_built_in_templates(const StringNa
         content += String("DIM self_h = 0\n");
         content += String("\n");
         content += String("SUB _ready()\n");
-        content += String("\tself_h = GODOT.SELF()\n");
-        content += String("\tGODOT.PRINT(\"%CLASS% ready - speed =\", speed)\n");
+        content += String("\tself_h = GDX.SELF()\n");
+        content += String("\tGDX.PRINT(\"%CLASS% ready - speed =\", speed)\n");
         content += String("ENDSUB\n");
         content += String("\n");
         content += String("SUB _process(delta)\n");
@@ -276,8 +276,8 @@ TypedArray<Dictionary> JdbScriptLanguage::_get_built_in_templates(const StringNa
         content += String("DIM self_h = 0\n");
         content += String("\n");
         content += String("SUB _ready()\n");
-        content += String("\tself_h = GODOT.SELF()\n");
-        content += String("\tGODOT.PRINT(\"%CLASS% (tool) ready\")\n");
+        content += String("\tself_h = GDX.SELF()\n");
+        content += String("\tGDX.PRINT(\"%CLASS% (tool) ready\")\n");
         content += String("ENDSUB\n");
         content += String("\n");
         content += String("SUB _process(delta)\n");
@@ -293,7 +293,7 @@ TypedArray<Dictionary> JdbScriptLanguage::_get_built_in_templates(const StringNa
         Dictionary d;
         d[K_INHERIT]     = base;
         d[K_NAME]        = String("Spinner (Node3D)");
-        d[K_DESCRIPTION] = String("Continuously rotates the Node3D on Y using GODOT.SET.");
+        d[K_DESCRIPTION] = String("Continuously rotates the Node3D on Y using GDX.SET.");
         String content;
         content += String("EXTENDS Node3D\n");
         content += String("\n");
@@ -303,12 +303,12 @@ TypedArray<Dictionary> JdbScriptLanguage::_get_built_in_templates(const StringNa
         content += String("DIM angle  = 0.0\n");
         content += String("\n");
         content += String("SUB _ready()\n");
-        content += String("\tself_h = GODOT.SELF()\n");
+        content += String("\tself_h = GDX.SELF()\n");
         content += String("ENDSUB\n");
         content += String("\n");
         content += String("SUB _process(delta)\n");
         content += String("\tangle = angle + rot_speed * delta\n");
-        content += String("\tGODOT.SET(self_h, \"rotation:y\", angle)\n");
+        content += String("\tGDX.SET(self_h, \"rotation:y\", angle)\n");
         content += String("ENDSUB\n");
         d[K_CONTENT]    = content;
         d[K_ID]         = 3;
@@ -394,8 +394,8 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
     // Figure out what's right before the cursor so dotted-name
     // completions don't duplicate the qualifier. Godot replaces only the
     // partial-word at the cursor with insert_text, leaving anything before
-    // the last word-boundary alone - typing "GODOT." and picking "GODOT.SET"
-    // would otherwise produce "GODOT.GODOT.SET". Detect a "<qualifier>."
+    // the last word-boundary alone - typing "GDX." and picking "GDX.SET"
+    // would otherwise produce "GDX.GDX.SET". Detect a "<qualifier>."
     // prefix; if it's a known namespace, send only the suffix as insert_text
     // while keeping the full name in display so the user sees what they're
     // picking.
@@ -422,29 +422,29 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
         }
         qualifier = p_code.substr(q_start, q_end - q_start).to_upper();
     }
-    bool godot_dot_ctx = (qualifier == String("GODOT"));
+    bool godot_dot_ctx = (qualifier == String("GDX"));
 
-    // ── GODOT.* native suite (functions) ─────────────────────────
+    // ── GDX.* native suite (functions) ─────────────────────────
     static const char* godot_natives[] = {
-        "GODOT.SELF", "GODOT.GET", "GODOT.SET", "GODOT.CALL", "GODOT.EMIT",
-        "GODOT.CONNECT", "GODOT.DISCONNECT", "GODOT.TIMER",
-        "GODOT.AUDIO.PLAY", "GODOT.AUDIO.MUSIC", "GODOT.AUDIO.STOP_MUSIC", "GODOT.AUDIO.STOP",
-        "GODOT.LOAD", "GODOT.INSTANTIATE", "GODOT.NEW",
-        "GODOT.ADD_CHILD", "GODOT.QUEUE_FREE",
-        "GODOT.TIME_MS", "GODOT.TIME_SEC",
-        "GODOT.VEC2", "GODOT.VEC3", "GODOT.VEC2I", "GODOT.COLOR", "GODOT.RECT2", "GODOT.REF",
-        "GODOT.DRAW_TEXT", "GODOT.DRAW_STRING", "GODOT.TEXT_SIZE",
-        "GODOT.DRAW_CIRCLE", "GODOT.DRAW_RECT", "GODOT.DRAW_LINE",
-        "GODOT.DRAW_TEXTURE_RECT", "GODOT.DRAW_POLYGON",
-        "GODOT.MOVE_AND_SLIDE", "GODOT.IS_ON_FLOOR", "GODOT.IS_ON_WALL",
-        "GODOT.IS_ON_CEILING", "GODOT.GET_VELOCITY", "GODOT.SET_VELOCITY",
-        "GODOT.SINGLETON", "GODOT.STATIC", "GODOT.ENUM",
-        "GODOT.PACKED_VEC2", "GODOT.PACKED_VEC3", "GODOT.PACKED_INT32", "GODOT.PACKED_COLOR", "GODOT.PACKED_FLOAT32",
-        "GODOT.PRINT",
+        "GDX.SELF", "GDX.GET", "GDX.SET", "GDX.CALL", "GDX.EMIT",
+        "GDX.CONNECT", "GDX.DISCONNECT", "GDX.TIMER",
+        "GDX.AUDIO.PLAY", "GDX.AUDIO.MUSIC", "GDX.AUDIO.STOP_MUSIC", "GDX.AUDIO.STOP",
+        "GDX.LOAD", "GDX.INSTANTIATE", "GDX.NEW",
+        "GDX.ADD_CHILD", "GDX.QUEUE_FREE",
+        "GDX.TIME_MS", "GDX.TIME_SEC",
+        "GDX.VEC2", "GDX.VEC3", "GDX.VEC2I", "GDX.COLOR", "GDX.RECT2", "GDX.REF",
+        "GDX.DRAW_TEXT", "GDX.DRAW_STRING", "GDX.TEXT_SIZE",
+        "GDX.DRAW_CIRCLE", "GDX.DRAW_RECT", "GDX.DRAW_LINE",
+        "GDX.DRAW_TEXTURE_RECT", "GDX.DRAW_POLYGON",
+        "GDX.MOVE_AND_SLIDE", "GDX.IS_ON_FLOOR", "GDX.IS_ON_WALL",
+        "GDX.IS_ON_CEILING", "GDX.GET_VELOCITY", "GDX.SET_VELOCITY",
+        "GDX.SINGLETON", "GDX.STATIC", "GDX.ENUM",
+        "GDX.PACKED_VEC2", "GDX.PACKED_VEC3", "GDX.PACKED_INT32", "GDX.PACKED_COLOR", "GDX.PACKED_FLOAT32",
+        "GDX.PRINT",
     };
     for (const char* n : godot_natives) {
         String full = String(n);
-        // After "GODOT." the user already has the prefix; only insert the
+        // After "GDX." the user already has the prefix; only insert the
         // suffix so the dot doesn't get duplicated.
         String insert = godot_dot_ctx ? full.substr(6, full.length() - 6) : full;
         push_opt(1, full, insert, 0);

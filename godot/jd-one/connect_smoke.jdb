@@ -1,6 +1,6 @@
 EXTENDS Node
 
-' Headless smoke test for GODOT.CONNECT. A Timer's "timeout" signal is
+' Headless smoke test for GDX.CONNECT. A Timer's "timeout" signal is
 ' wired to on_beat(); after 3 beats we quit. Run with:
 '   Godot ... --headless --path godot/jd-one res://connect_smoke.tscn
 
@@ -13,12 +13,12 @@ SUB on_beat()
 	PRINT "BEAT " + STR$(n)
 	IF n >= 3 THEN
 		PRINT "oneshot fired " + STR$(oneshots) + " time(s) total"
-		DIM tree_h = GODOT.CALL(self_h, "get_tree")
-		GODOT.CALL(tree_h, "quit")
+		DIM tree_h = GDX.CALL(self_h, "get_tree")
+		GDX.CALL(tree_h, "quit")
 	ENDIF
 ENDSUB
 
-' Fired by a one-shot GODOT.TIMER. Must run exactly once even though the
+' Fired by a one-shot GDX.TIMER. Must run exactly once even though the
 ' scene lives long enough for a repeating timer to fire ~6 times.
 SUB on_oneshot()
 	oneshots = oneshots + 1
@@ -26,28 +26,28 @@ SUB on_oneshot()
 ENDSUB
 
 ' Object-arg path: the signal hands us the child Node as a bridge handle,
-' which GODOT.GET can resolve straight away.
+' which GDX.GET can resolve straight away.
 SUB on_child_added(child)
-	DIM nm = GODOT.GET(child, "name")
+	DIM nm = GDX.GET(child, "name")
 	PRINT "CHILD ADDED handle=" + STR$(child) + " name=" + nm
 ENDSUB
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 
-	' GODOT.TIMER: a repeating beat (replaces the .tscn Timer node) and a
+	' GDX.TIMER: a repeating beat (replaces the .tscn Timer node) and a
 	' one-shot that must fire exactly once.
-	GODOT.TIMER(0.3, "on_beat", 1)
-	GODOT.TIMER(0.15, "on_oneshot")
+	GDX.TIMER(0.3, "on_beat", 1)
+	GDX.TIMER(0.15, "on_oneshot")
 
 	' Re-entrancy path: ADD_CHILD emits child_entered_tree synchronously
 	' while we're still inside this _ready eval. The bridge must DEFER that
 	' dispatch and drain it after _ready returns - so "CHILD ADDED" prints
 	' after this line, not nested inside it.
-	GODOT.CONNECT(self_h, "child_entered_tree", "on_child_added")
-	DIM sprout = GODOT.NEW("Node")
-	GODOT.SET(sprout, "name", "Sprout")
-	GODOT.ADD_CHILD(self_h, sprout)
+	GDX.CONNECT(self_h, "child_entered_tree", "on_child_added")
+	DIM sprout = GDX.NEW("Node")
+	GDX.SET(sprout, "name", "Sprout")
+	GDX.ADD_CHILD(self_h, sprout)
 
 	PRINT "smoke: connected, timer started, child queued"
 ENDSUB

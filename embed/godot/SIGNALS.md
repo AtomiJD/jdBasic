@@ -1,18 +1,18 @@
 # GODOT signals - connecting Godot signals to jdBasic SUBs
 
-Godot is event-driven: buttons emit `pressed`, timers emit `timeout`, areas emit `body_entered`. `GODOT.CONNECT` wires any such signal straight to a jdBasic SUB, so a pure-jdBasic script can react to engine events without a GDScript relay and without polling.
+Godot is event-driven: buttons emit `pressed`, timers emit `timeout`, areas emit `body_entered`. `GDX.CONNECT` wires any such signal straight to a jdBasic SUB, so a pure-jdBasic script can react to engine events without a GDScript relay and without polling.
 
-These natives are registered automatically on every script VM, alongside `GODOT.CALL` / `GODOT.GET` / `GODOT.SET`.
+These natives are registered automatically on every script VM, alongside `GDX.CALL` / `GDX.GET` / `GDX.SET`.
 
 ## Functions
 
 | Function | Returns | Notes |
 |----------|---------|-------|
-| `GODOT.CONNECT(obj, "signal", "sub" [, flags])` | bool | Wire a signal on `obj` to `sub`. 1 on success, 0 if the handle is bad |
-| `GODOT.DISCONNECT(obj, "signal", "sub")` | bool | Remove that wiring. 1 if a match was found |
-| `GODOT.EMIT(obj, "signal" [, args...])` | bool | Fire a signal yourself (the other direction) |
+| `GDX.CONNECT(obj, "signal", "sub" [, flags])` | bool | Wire a signal on `obj` to `sub`. 1 on success, 0 if the handle is bad |
+| `GDX.DISCONNECT(obj, "signal", "sub")` | bool | Remove that wiring. 1 if a match was found |
+| `GDX.EMIT(obj, "signal" [, args...])` | bool | Fire a signal yourself (the other direction) |
 
-`obj` is a bridge handle (from `GODOT.SELF`, `GODOT.CALL(... "get_node" ...)`, etc.). `sub` is the name of a SUB in the running script.
+`obj` is a bridge handle (from `GDX.SELF`, `GDX.CALL(... "get_node" ...)`, etc.). `sub` is the name of a SUB in the running script.
 
 `flags` is Godot's `CONNECT_*` bitmask: `1` = DEFERRED, `4` = ONE_SHOT. Omit it for the normal immediate connection.
 
@@ -20,17 +20,17 @@ A duplicate `CONNECT` of the same `(obj, signal, sub)` is ignored, so calling it
 
 ## Signal arguments
 
-Whatever the signal carries is passed to the SUB, marshalled the same way `GODOT.GET` return values are:
+Whatever the signal carries is passed to the SUB, marshalled the same way `GDX.GET` return values are:
 
 | Signal arg type | Arrives in jdBasic as |
 |-----------------|-----------------------|
 | int / float / bool / String | the scalar |
 | Vector2 / Vector3 | `[x, y]` / `[x, y, z]` |
 | Color | `[r, g, b, a]` |
-| Object (Node, etc.) | a bridge handle - feed it straight back into `GODOT.GET/SET/CALL` |
+| Object (Node, etc.) | a bridge handle - feed it straight back into `GDX.GET/SET/CALL` |
 | Dictionary / packed arrays | not marshalled yet - arrive as `0` |
 
-So `body_entered(body)` hands your SUB a handle you can immediately query with `GODOT.GET(body, "name")`.
+So `body_entered(body)` hands your SUB a handle you can immediately query with `GDX.GET(body, "name")`.
 
 ## Example
 
@@ -43,18 +43,18 @@ DIM clicks = 0
 SUB on_click()
     clicks = clicks + 1
     IF clicks >= 5 THEN
-        GODOT.DISCONNECT(GODOT.CALL(self_h, "get_node", "UI/Button"), "pressed", "on_click")
+        GDX.DISCONNECT(GDX.CALL(self_h, "get_node", "UI/Button"), "pressed", "on_click")
     ENDIF
 ENDSUB
 
 SUB on_slide(v)         ' HSlider value_changed passes the new value
-    GODOT.SET(GODOT.CALL(self_h, "get_node", "UI/Status"), "text", "slider: " + STR$(v))
+    GDX.SET(GDX.CALL(self_h, "get_node", "UI/Status"), "text", "slider: " + STR$(v))
 ENDSUB
 
 SUB _ready()
-    self_h = GODOT.SELF()
-    GODOT.CONNECT(GODOT.CALL(self_h, "get_node", "UI/Button"), "pressed", "on_click")
-    GODOT.CONNECT(GODOT.CALL(self_h, "get_node", "UI/Slider"), "value_changed", "on_slide")
+    self_h = GDX.SELF()
+    GDX.CONNECT(GDX.CALL(self_h, "get_node", "UI/Button"), "pressed", "on_click")
+    GDX.CONNECT(GDX.CALL(self_h, "get_node", "UI/Slider"), "value_changed", "on_slide")
 ENDSUB
 ```
 
@@ -62,14 +62,14 @@ See `godot/jd-one/connect_demo.tscn` for a runnable version, and `connect_smoke.
 
 ## Timers
 
-`GODOT.TIMER` is a convenience built on the same dispatch path - it spawns a `Timer` child on the script's Node, wires its `timeout` to a SUB, and starts it. No Timer node needs to exist in the scene.
+`GDX.TIMER` is a convenience built on the same dispatch path - it spawns a `Timer` child on the script's Node, wires its `timeout` to a SUB, and starts it. No Timer node needs to exist in the scene.
 
 | Function | Returns | Notes |
 |----------|---------|-------|
-| `GODOT.TIMER(secs, "sub")` | handle | One-shot: fires `sub` once after `secs`, then frees itself |
-| `GODOT.TIMER(secs, "sub", 1)` | handle | Repeating: fires `sub` every `secs` until you stop/free it |
+| `GDX.TIMER(secs, "sub")` | handle | One-shot: fires `sub` once after `secs`, then frees itself |
+| `GDX.TIMER(secs, "sub", 1)` | handle | Repeating: fires `sub` every `secs` until you stop/free it |
 
-The returned handle works with `GODOT.CALL(h, "stop")` / `GODOT.CALL(h, "start")` and `GODOT.QUEUE_FREE(h)`. A one-shot frees its node automatically after firing; the handle then resolves to nothing, so a stray `GODOT.CALL` on it is a safe no-op rather than a crash.
+The returned handle works with `GDX.CALL(h, "stop")` / `GDX.CALL(h, "start")` and `GDX.QUEUE_FREE(h)`. A one-shot frees its node automatically after firing; the handle then resolves to nothing, so a stray `GDX.CALL` on it is a safe no-op rather than a crash.
 
 ```basic
 SUB on_cooldown_done()
@@ -79,7 +79,7 @@ ENDSUB
 SUB do_dash()
     can_dash = FALSE
     ' ... dash ...
-    GODOT.TIMER(0.6, "on_cooldown_done")   ' re-arm in 0.6s, fire-and-forget
+    GDX.TIMER(0.6, "on_cooldown_done")   ' re-arm in 0.6s, fire-and-forget
 ENDSUB
 ```
 

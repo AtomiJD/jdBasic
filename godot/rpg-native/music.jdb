@@ -22,7 +22,7 @@ DIM dun_z0 = 1.0
 DIM dun_z1 = -1.0
 
 SUB load_themes()
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/music.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/music.json")
 	DIM data = JSON.PARSE$(src)
 	themes = data{"themes"}
 ENDSUB
@@ -115,7 +115,7 @@ SUB set_theme(name)
 ENDSUB
 
 SUB load_dungeon_rect()
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dungeons.json")
 	DIM all = JSON.PARSE$(src)
 	IF LEN(all) = 0 THEN RETURN
 	DIM spec = all[0]
@@ -137,60 +137,60 @@ SUB load_dungeon_rect()
 ENDSUB
 
 SUB setup_bus()
-	DIM asrv = GODOT.SINGLETON("AudioServer")
-	IF GODOT.CALL(asrv, "get_bus_index", "Music") < 0 THEN
-		GODOT.CALL(asrv, "add_bus", -1)
-		DIM idx = GODOT.CALL(asrv, "get_bus_count") - 1
-		GODOT.CALL(asrv, "set_bus_name", idx, "Music")
+	DIM asrv = GDX.SINGLETON("AudioServer")
+	IF GDX.CALL(asrv, "get_bus_index", "Music") < 0 THEN
+		GDX.CALL(asrv, "add_bus", -1)
+		DIM idx = GDX.CALL(asrv, "get_bus_count") - 1
+		GDX.CALL(asrv, "set_bus_name", idx, "Music")
 	ENDIF
 ENDSUB
 
 FUNC want_theme()
-	DIM tree = GODOT.CALL(self_h, "get_tree")
-	IF GODOT.CALL(tree, "is_paused") THEN RETURN "dialog"
+	DIM tree = GDX.CALL(self_h, "get_tree")
+	IF GDX.CALL(tree, "is_paused") THEN RETURN "dialog"
 	IF player_h <> 0 ANDALSO dun_x1 > dun_x0 THEN
-		DIM pp = GODOT.GET(player_h, "global_position")
+		DIM pp = GDX.GET(player_h, "global_position")
 		IF pp[0] > dun_x0 ANDALSO pp[0] < dun_x1 ANDALSO pp[2] > dun_z0 ANDALSO pp[2] < dun_z1 THEN RETURN "dungeon"
 	ENDIF
 	RETURN "explore"
 ENDFUNC
 
 SUB _ready()
-	self_h = GODOT.SELF()
-	GODOT.SET(self_h, "process_mode", 3)
-	player_h = GODOT.CALL(self_h, "get_node", "../Player")
-	dialog_h = GODOT.CALL(self_h, "get_node", "../DialogManager")
+	self_h = GDX.SELF()
+	GDX.SET(self_h, "process_mode", 3)
+	player_h = GDX.CALL(self_h, "get_node", "../Player")
+	dialog_h = GDX.CALL(self_h, "get_node", "../DialogManager")
 
 	SOUND.INIT
 	load_themes()
 	load_dungeon_rect()
 	setup_bus()
 
-	DIM gen = GODOT.NEW("AudioStreamGenerator")
-	GODOT.SET(gen, "mix_rate", rate)
-	GODOT.SET(gen, "buffer_length", 0.3)
-	mplayer = GODOT.NEW("AudioStreamPlayer")
-	GODOT.SET(mplayer, "stream", GODOT.REF(gen))
-	GODOT.SET(mplayer, "bus", "Music")
-	GODOT.ADD_CHILD(self_h, mplayer)
+	DIM gen = GDX.NEW("AudioStreamGenerator")
+	GDX.SET(gen, "mix_rate", rate)
+	GDX.SET(gen, "buffer_length", 0.3)
+	mplayer = GDX.NEW("AudioStreamPlayer")
+	GDX.SET(mplayer, "stream", GDX.REF(gen))
+	GDX.SET(mplayer, "bus", "Music")
+	GDX.ADD_CHILD(self_h, mplayer)
 ENDSUB
 
 SUB _process(delta)
 	' Hold until the dialogue model has finished its blocking load.
 	IF NOT started THEN
 		IF dialog_h = 0 THEN RETURN
-		IF NOT GODOT.CALL(dialog_h, "get_meta", "llm_ready", FALSE) THEN RETURN
+		IF NOT GDX.CALL(dialog_h, "get_meta", "llm_ready", FALSE) THEN RETURN
 		set_theme(want_theme())
-		GODOT.CALL(mplayer, "play")
-		playback = GODOT.CALL(mplayer, "get_stream_playback")
+		GDX.CALL(mplayer, "play")
+		playback = GDX.CALL(mplayer, "get_stream_playback")
 		started = TRUE
 		PRINT "music: playback=" + STR$(playback)
 	ENDIF
 	IF playback = 0 THEN RETURN
 
 	set_theme(want_theme())
-	DIM avail = GODOT.CALL(playback, "get_frames_available")
+	DIM avail = GDX.CALL(playback, "get_frames_available")
 	IF avail <= 0 THEN RETURN
 	DIM buf = SOUND.RENDER(avail)
-	GODOT.CALL(playback, "push_buffer", GODOT.PACKED_VEC2(buf))
+	GDX.CALL(playback, "push_buffer", GDX.PACKED_VEC2(buf))
 ENDSUB

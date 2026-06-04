@@ -31,6 +31,32 @@ matches the live-tweak pattern from the launch video.
 
 ---
 
+## The `GDX` namespace
+
+Everything the engine exposes to a Tier-3 script lives under one prefix,
+`GDX.*` (renamed from the older `GODOT.*` for consistency). It comes in two
+layers:
+
+1. **Native primitives (C++)** - the hot path. `GDX.CALL` / `GDX.GET` /
+   `GDX.SET` / `GDX.NEW` / `GDX.ADD_CHILD` / `GDX.VEC3` / `GDX.SINGLETON` /
+   `GDX.SELF` / signals / audio / drawing / input, etc. These touch the
+   Godot API directly and must stay fast, so they're registered from
+   `embed/godot/src/jdb_godot_natives.cpp` (+ `jdb_godot_input.cpp`).
+
+2. **Convenience helpers (pure jdBasic)** - thin sugar over the primitives,
+   defined in the bundled `GDX` module (`GDX_MODULE_SRC` in
+   `src/jdb_embed_api.cpp`) and auto-imported via an implicit `IMPORT GDX`
+   at script-instance boot. Currently: `MOVE_AND_SLIDE`, `IS_ON_FLOOR`,
+   `IS_ON_WALL`, `IS_ON_CEILING`, `GET_VELOCITY`, `SET_VELOCITY`, `TIME_MS`,
+   `TIME_SEC`. Anything that doesn't need to be in C++ belongs here.
+
+The `IMPORT GDX` works in the embed because the host installs an in-memory
+`Parser::file_reader` (`bundled_module_reader`) that serves the module
+source from a string - no file on disk. The same mechanism is available to
+any future bundled module.
+
+---
+
 ## Etappen
 
 | Etappe | What | Status |

@@ -141,7 +141,7 @@ JDB_EMBED_API void jdb_embed_value_release(JdbEmbed* e, JdbValue h);
 // The host (e.g. the Godot GDExtension) registers callbacks that show
 // up as named functions in jdBasic. From the script:
 //
-//     GODOT.SET(GODOT.SELF(), "rotation:y", angle)
+//     GDX.SET(GDX.SELF(), "rotation:y", angle)
 //
 // On the C side, each callback gets the arg-handles, returns a single
 // result handle, and may store small state via the userdata pointer.

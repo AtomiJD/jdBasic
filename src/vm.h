@@ -86,7 +86,7 @@ public:
     // Per-VM no-vectorize extension. Names added here join the static
     // jdb_no_vectorize() set: a call to one of them will pass through
     // unmodified even if some of its args are arrays. Embed hosts
-    // register their natives this way - "GODOT.SET(node, prop, [r,g,b,a])"
+    // register their natives this way - "GDX.SET(node, prop, [r,g,b,a])"
     // should call the bridge once, not four times per colour channel.
     std::unordered_set<std::string> extra_no_vectorize;
 

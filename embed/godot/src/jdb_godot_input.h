@@ -1,23 +1,23 @@
-// GODOT.INPUT.* native function suite for jdBasic scripts running inside
+// GDX.INPUT.* native function suite for jdBasic scripts running inside
 // the JDBasicVM GDExtension.
 //
 // Two halves:
 //
 //   1. Stateless polling. Each native function reads Godot's Input
 //      singleton on demand. Cheap, no setup required.
-//        GODOT.INPUT.IS_ACTION_PRESSED("name") -> bool
-//        GODOT.INPUT.IS_ACTION_JUST_PRESSED("name") -> bool
-//        GODOT.INPUT.IS_ACTION_JUST_RELEASED("name") -> bool
-//        GODOT.INPUT.GET_ACTION_STRENGTH("name") -> double
-//        GODOT.INPUT.GET_AXIS("neg_action", "pos_action") -> double
-//        GODOT.INPUT.GET_VECTOR("l", "r", "u", "d") -> [x, y]
-//        GODOT.INPUT.IS_KEY_PRESSED(keycode) -> bool
-//        GODOT.INPUT.MOUSE_POSITION() -> [x, y]
-//        GODOT.INPUT.IS_MOUSE_BUTTON_PRESSED(button) -> bool
+//        GDX.INPUT.IS_ACTION_PRESSED("name") -> bool
+//        GDX.INPUT.IS_ACTION_JUST_PRESSED("name") -> bool
+//        GDX.INPUT.IS_ACTION_JUST_RELEASED("name") -> bool
+//        GDX.INPUT.GET_ACTION_STRENGTH("name") -> double
+//        GDX.INPUT.GET_AXIS("neg_action", "pos_action") -> double
+//        GDX.INPUT.GET_VECTOR("l", "r", "u", "d") -> [x, y]
+//        GDX.INPUT.IS_KEY_PRESSED(keycode) -> bool
+//        GDX.INPUT.MOUSE_POSITION() -> [x, y]
+//        GDX.INPUT.IS_MOUSE_BUTTON_PRESSED(button) -> bool
 //
 //   2. Event queue. GDScript-side _input(event) calls
 //      vm.push_input_event(...) to enqueue discrete events. jdBasic
-//      side drains them via GODOT.INPUT.POLL_EVENT() and gets a MAP:
+//      side drains them via GDX.INPUT.POLL_EVENT() and gets a MAP:
 //        { "kind": "action"|"key"|"mouse",
 //          "action": "ui_accept" (only for action events),
 //          "type":   "pressed" | "released",
@@ -63,7 +63,7 @@ private:
     std::deque<InputEventRecord> m_q;
 };
 
-// Register the GODOT.INPUT.* natives on the given embed VM. queue may
+// Register the GDX.INPUT.* natives on the given embed VM. queue may
 // be null - polling natives work without it; POLL_EVENT just returns NIL.
 void register_godot_input_natives(JdbEmbed* vm, InputEventQueue* queue);
 

@@ -1,7 +1,7 @@
 EXTENDS Node2D
 
 ' Breakout, 100% jdBasic - the dogfood game. No GDScript, no helper nodes:
-' everything is drawn in _draw, sounds come from GODOT.AUDIO, the playfield
+' everything is drawn in _draw, sounds come from GDX.AUDIO, the playfield
 ' size is read back from get_viewport_rect (a Rect2 round-trip).
 '
 '   Mouse  : move paddle
@@ -54,11 +54,11 @@ DIM lives = 3
 DIM mode = "serve"     ' serve / play / won / lost
 
 SUB blip(vol, pitch)
-	GODOT.AUDIO.PLAY("res://beep.wav", vol, pitch)
+	GDX.AUDIO.PLAY("res://beep.wav", vol, pitch)
 ENDSUB
 
 SUB relayout()
-	DIM vr = GODOT.CALL(self_h, "get_viewport_rect")
+	DIM vr = GDX.CALL(self_h, "get_viewport_rect")
 	DIM nw = vr{"w"}
 	DIM nh = vr{"h"}
 	IF nw <> fw ORELSE nh <> fh THEN
@@ -311,8 +311,8 @@ SUB update_effects(dt)
 ENDSUB
 
 SUB _ready()
-	self_h = GODOT.SELF()
-	GODOT.INPUT.SET_MOUSE_MODE(1)   ' hide the cursor - the paddle is the pointer
+	self_h = GDX.SELF()
+	GDX.INPUT.SET_MOUSE_MODE(1)   ' hide the cursor - the paddle is the pointer
 	relayout()
 	start_new_game()
 ENDSUB
@@ -320,20 +320,20 @@ ENDSUB
 SUB _process(delta)
 	relayout()
 
-	DIM mp = GODOT.INPUT.MOUSE_POSITION()
+	DIM mp = GDX.INPUT.MOUSE_POSITION()
 	pad_x = mp[0] - pad_w / 2.0
 	IF pad_x < 0.0 THEN pad_x = 0.0
 	IF pad_x > fw - pad_w THEN pad_x = fw - pad_w
 
 	IF mode = "play" THEN step_balls(delta)
 	update_effects(delta)
-	GODOT.CALL(self_h, "queue_redraw")
+	GDX.CALL(self_h, "queue_redraw")
 ENDSUB
 
 SUB _input(event)
-	DIM kind = GODOT.CALL(event, "get_class")
+	DIM kind = GDX.CALL(event, "get_class")
 	IF kind = "InputEventMouseButton" THEN
-		IF GODOT.GET(event, "pressed") THEN
+		IF GDX.GET(event, "pressed") THEN
 			IF mode = "serve" THEN
 				launch_ball()
 				blip(-9.0, 1.4)
@@ -345,7 +345,7 @@ SUB _input(event)
 ENDSUB
 
 SUB draw_box(x, y, w, h, r, g, b)
-	GODOT.DRAW_RECT(self_h, GODOT.RECT2(x, y, w, h), GODOT.COLOR(r, g, b, 1.0), TRUE)
+	GDX.DRAW_RECT(self_h, GDX.RECT2(x, y, w, h), GDX.COLOR(r, g, b, 1.0), TRUE)
 ENDSUB
 
 SUB _draw()
@@ -385,25 +385,25 @@ SUB _draw()
 			cb = 0.5
 		ENDIF
 		draw_box(c{"x"} - 13.0, c{"y"} - 9.0, 26.0, 18.0, cr, cg, cb)
-		GODOT.DRAW_STRING(self_h, GODOT.VEC2(c{"x"} - 13.0, c{"y"} + 5.0), LEFT$(ck, 1), 1, 26.0, 16, GODOT.COLOR(0.05, 0.05, 0.1, 1.0))
+		GDX.DRAW_STRING(self_h, GDX.VEC2(c{"x"} - 13.0, c{"y"} + 5.0), LEFT$(ck, 1), 1, 26.0, 16, GDX.COLOR(0.05, 0.05, 0.1, 1.0))
 	NEXT
 
 	' Explosion particles.
 	FOR i = 0 TO LEN(parts) - 1
 		DIM p = parts[i]
 		DIM pa = p{"life"} / p{"max"}
-		GODOT.DRAW_CIRCLE(self_h, GODOT.VEC2(p{"x"}, p{"y"}), 3.0, GODOT.COLOR(1.0, 0.6 + 0.4 * pa, 0.2, pa))
+		GDX.DRAW_CIRCLE(self_h, GDX.VEC2(p{"x"}, p{"y"}), 3.0, GDX.COLOR(1.0, 0.6 + 0.4 * pa, 0.2, pa))
 	NEXT
 
 	draw_box(pad_x, pad_y, pad_w, pad_h, 0.85, 0.9, 1.0)
 
 	' Balls (or the preview ball on the paddle while serving).
 	IF mode = "serve" THEN
-		GODOT.DRAW_CIRCLE(self_h, GODOT.VEC2(pad_x + pad_w / 2.0, pad_y - ball_r - 2.0), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+		GDX.DRAW_CIRCLE(self_h, GDX.VEC2(pad_x + pad_w / 2.0, pad_y - ball_r - 2.0), ball_r, GDX.COLOR(1.0, 0.95, 0.5, 1.0))
 	ELSE
 		FOR i = 0 TO LEN(balls) - 1
 			DIM b = balls[i]
-			GODOT.DRAW_CIRCLE(self_h, GODOT.VEC2(b{"x"}, b{"y"}), ball_r, GODOT.COLOR(1.0, 0.95, 0.5, 1.0))
+			GDX.DRAW_CIRCLE(self_h, GDX.VEC2(b{"x"}, b{"y"}), ball_r, GDX.COLOR(1.0, 0.95, 0.5, 1.0))
 		NEXT
 	ENDIF
 
@@ -411,18 +411,18 @@ SUB _draw()
 	FOR i = 0 TO LEN(pops) - 1
 		DIM q = pops[i]
 		DIM qa = q{"life"} / 0.8
-		GODOT.DRAW_STRING(self_h, GODOT.VEC2(q{"x"} - 40.0, q{"y"}), q{"txt"}, 1, 80.0, 18, GODOT.COLOR(1.0, 1.0, 0.6, qa))
+		GDX.DRAW_STRING(self_h, GDX.VEC2(q{"x"} - 40.0, q{"y"}), q{"txt"}, 1, 80.0, 18, GDX.COLOR(1.0, 1.0, 0.6, qa))
 	NEXT
 
 	' HUD.
-	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(side_off, 32.0), "Score " + STR$(score), 22, GODOT.COLOR(0.9, 0.95, 1.0, 1.0))
-	GODOT.DRAW_TEXT(self_h, GODOT.VEC2(fw - 140.0, 32.0), "Lives " + STR$(lives), 22, GODOT.COLOR(0.9, 0.95, 1.0, 1.0))
+	GDX.DRAW_TEXT(self_h, GDX.VEC2(side_off, 32.0), "Score " + STR$(score), 22, GDX.COLOR(0.9, 0.95, 1.0, 1.0))
+	GDX.DRAW_TEXT(self_h, GDX.VEC2(fw - 140.0, 32.0), "Lives " + STR$(lives), 22, GDX.COLOR(0.9, 0.95, 1.0, 1.0))
 
 	IF mode = "serve" THEN
-		GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, fh / 2.0), "Click to launch", 1, fw, 24, GODOT.COLOR(1.0, 1.0, 0.7, 1.0))
+		GDX.DRAW_STRING(self_h, GDX.VEC2(0.0, fh / 2.0), "Click to launch", 1, fw, 24, GDX.COLOR(1.0, 1.0, 0.7, 1.0))
 	ELSEIF mode = "won" THEN
-		GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, fh / 2.0), "YOU WIN - click to play again", 1, fw, 28, GODOT.COLOR(0.6, 1.0, 0.6, 1.0))
+		GDX.DRAW_STRING(self_h, GDX.VEC2(0.0, fh / 2.0), "YOU WIN - click to play again", 1, fw, 28, GDX.COLOR(0.6, 1.0, 0.6, 1.0))
 	ELSEIF mode = "lost" THEN
-		GODOT.DRAW_STRING(self_h, GODOT.VEC2(0.0, fh / 2.0), "GAME OVER - click to restart", 1, fw, 28, GODOT.COLOR(1.0, 0.5, 0.5, 1.0))
+		GDX.DRAW_STRING(self_h, GDX.VEC2(0.0, fh / 2.0), "GAME OVER - click to restart", 1, fw, 28, GDX.COLOR(1.0, 0.5, 0.5, 1.0))
 	ENDIF
 ENDSUB

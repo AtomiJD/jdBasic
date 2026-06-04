@@ -31,8 +31,8 @@ DIM target_x = 0.0
 DIM target_z = 0.0
 
 FUNC find_anim_player(node)
-	IF GODOT.CALL(node, "get_class") = "AnimationPlayer" THEN RETURN node
-	DIM kids = GODOT.CALL(node, "get_children")
+	IF GDX.CALL(node, "get_class") = "AnimationPlayer" THEN RETURN node
+	DIM kids = GDX.CALL(node, "get_children")
 	FOR i = 0 TO LEN(kids) - 1
 		DIM r = find_anim_player(kids[i])
 		IF r <> 0 THEN RETURN r
@@ -49,22 +49,22 @@ FUNC should_loop(nm)
 ENDFUNC
 
 SUB merge_anim_glb(path, lib)
-	DIM inst = GODOT.INSTANTIATE(path)
+	DIM inst = GDX.INSTANTIATE(path)
 	IF inst = 0 THEN RETURN
 	DIM src_ap = find_anim_player(inst)
 	IF src_ap <> 0 THEN
-		DIM names = GODOT.CALL(src_ap, "get_animation_list")
+		DIM names = GDX.CALL(src_ap, "get_animation_list")
 		FOR i = 0 TO LEN(names) - 1
 			DIM nm = names[i]
-			IF NOT GODOT.CALL(lib, "has_animation", nm) THEN
-				DIM clip = GODOT.CALL(src_ap, "get_animation", nm)
-				IF should_loop(nm) THEN GODOT.SET(clip, "loop_mode", GODOT.ENUM("Animation", "LOOP_LINEAR"))
-				GODOT.CALL(lib, "add_animation", nm, GODOT.REF(clip))
+			IF NOT GDX.CALL(lib, "has_animation", nm) THEN
+				DIM clip = GDX.CALL(src_ap, "get_animation", nm)
+				IF should_loop(nm) THEN GDX.SET(clip, "loop_mode", GDX.ENUM("Animation", "LOOP_LINEAR"))
+				GDX.CALL(lib, "add_animation", nm, GDX.REF(clip))
 				anim_names = APPEND(anim_names, nm)
 			ENDIF
 		NEXT
 	ENDIF
-	GODOT.QUEUE_FREE(inst)
+	GDX.QUEUE_FREE(inst)
 ENDSUB
 
 FUNC best_name(want)
@@ -82,20 +82,20 @@ FUNC best_name(want)
 ENDFUNC
 
 SUB setup_animation(model)
-	DIM lib = GODOT.NEW("AnimationLibrary")
+	DIM lib = GDX.NEW("AnimationLibrary")
 	anim_names = []
 	merge_anim_glb("res://assets/animations/Rig_Medium_General.glb", lib)
 	merge_anim_glb("res://assets/animations/Rig_Medium_MovementBasic.glb", lib)
-	anim_player_h = GODOT.NEW("AnimationPlayer")
-	GODOT.ADD_CHILD(model, anim_player_h)
-	GODOT.CALL(anim_player_h, "add_animation_library", "", GODOT.REF(lib))
+	anim_player_h = GDX.NEW("AnimationPlayer")
+	GDX.ADD_CHILD(model, anim_player_h)
+	GDX.CALL(anim_player_h, "add_animation_library", "", GDX.REF(lib))
 	anim_idle = best_name("Idle")
 	anim_walk = best_name("Walk")
 ENDSUB
 
 SUB play_anim(nm)
 	IF nm = "" ORELSE anim_player_h = 0 ORELSE current_anim = nm THEN RETURN
-	GODOT.CALL(anim_player_h, "play", nm, 0.2)
+	GDX.CALL(anim_player_h, "play", nm, 0.2)
 	current_anim = nm
 ENDSUB
 
@@ -107,18 +107,18 @@ SUB pick_target()
 ENDSUB
 
 SUB _ready()
-	self_h   = GODOT.SELF()
-	visual_h = GODOT.CALL(self_h, "get_node", "Visual")
-	name_h   = GODOT.CALL(self_h, "get_node", "NameLabel")
+	self_h   = GDX.SELF()
+	visual_h = GDX.CALL(self_h, "get_node", "Visual")
+	name_h   = GDX.CALL(self_h, "get_node", "NameLabel")
 
-	DIM model = GODOT.INSTANTIATE("res://assets/characters/" + character_type + ".glb")
-	GODOT.ADD_CHILD(visual_h, model)
+	DIM model = GDX.INSTANTIATE("res://assets/characters/" + character_type + ".glb")
+	GDX.ADD_CHILD(visual_h, model)
 	setup_animation(model)
 	play_anim(anim_idle)
 
-	GODOT.SET(name_h, "text", display_name)
+	GDX.SET(name_h, "text", display_name)
 
-	DIM pos = GODOT.GET(self_h, "position")
+	DIM pos = GDX.GET(self_h, "position")
 	home_x = pos[0]
 	home_z = pos[2]
 	npc_state = "idle"
@@ -126,9 +126,9 @@ SUB _ready()
 ENDSUB
 
 SUB _physics_process(delta)
-	DIM vel = GODOT.GET_VELOCITY(self_h)
+	DIM vel = GDX.GET_VELOCITY(self_h)
 	DIM vy = vel[1]
-	IF NOT GODOT.IS_ON_FLOOR(self_h) THEN vy = vy - gravity * delta
+	IF NOT GDX.IS_ON_FLOOR(self_h) THEN vy = vy - gravity * delta
 
 	DIM vx = 0.0
 	DIM vz = 0.0
@@ -141,7 +141,7 @@ SUB _physics_process(delta)
 			npc_state = "walk"
 		ENDIF
 	ELSE
-		DIM pos = GODOT.GET(self_h, "position")
+		DIM pos = GDX.GET(self_h, "position")
 		DIM dx = target_x - pos[0]
 		DIM dz = target_z - pos[2]
 		DIM dist = SQR(dx * dx + dz * dz)
@@ -152,11 +152,11 @@ SUB _physics_process(delta)
 		ELSE
 			vx = (dx / dist) * move_speed
 			vz = (dz / dist) * move_speed
-			GODOT.SET(visual_h, "rotation:y", ATAN2(dx, dz))
+			GDX.SET(visual_h, "rotation:y", ATAN2(dx, dz))
 			play_anim(anim_walk)
 		ENDIF
 	ENDIF
 
-	GODOT.SET_VELOCITY(self_h, GODOT.VEC3(vx, vy, vz))
-	GODOT.MOVE_AND_SLIDE(self_h)
+	GDX.SET_VELOCITY(self_h, GDX.VEC3(vx, vy, vz))
+	GDX.MOVE_AND_SLIDE(self_h)
 ENDSUB

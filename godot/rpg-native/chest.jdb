@@ -28,9 +28,9 @@ FUNC terrain_height(wx, wz)
 ENDFUNC
 
 FUNC find_lid(node)
-	DIM nm = LCASE$(GODOT.GET(node, "name"))
+	DIM nm = LCASE$(GDX.GET(node, "name"))
 	IF INSTR(nm, "lid") >= 0 THEN RETURN node
-	DIM kids = GODOT.CALL(node, "get_children")
+	DIM kids = GDX.CALL(node, "get_children")
 	FOR i = 0 TO LEN(kids) - 1
 		DIM r = find_lid(kids[i])
 		IF r <> 0 THEN RETURN r
@@ -40,37 +40,37 @@ ENDFUNC
 
 SUB on_enter(body)
 	' Only the player triggers the chest - NPCs wander through zones too.
-	IF INSTR(LCASE$(GODOT.GET(body, "name")), "player") < 0 THEN RETURN
+	IF INSTR(LCASE$(GDX.GET(body, "name")), "player") < 0 THEN RETURN
 	in_range = TRUE
-	IF NOT opened ANDALSO prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", TRUE)
+	IF NOT opened ANDALSO prompt_h <> 0 THEN GDX.SET(prompt_h, "visible", TRUE)
 ENDSUB
 
 SUB on_exit(body)
-	IF INSTR(LCASE$(GODOT.GET(body, "name")), "player") < 0 THEN RETURN
+	IF INSTR(LCASE$(GDX.GET(body, "name")), "player") < 0 THEN RETURN
 	in_range = FALSE
-	IF prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", FALSE)
+	IF prompt_h <> 0 THEN GDX.SET(prompt_h, "visible", FALSE)
 ENDSUB
 
 ' Float a loot item's model up out of the chest, then shrink it away.
 SUB spawn_loot_visual(item, idx)
-	DIM inst = GODOT.INSTANTIATE("res://assets/dungeon/" + item + ".gltf")
+	DIM inst = GDX.INSTANTIATE("res://assets/dungeon/" + item + ".gltf")
 	IF inst = 0 THEN RETURN
-	GODOT.ADD_CHILD(self_h, inst)
-	GODOT.SET(inst, "position", GODOT.VEC3((idx - 1) * 0.3, 0.7, 0.0))
-	DIM tw = GODOT.CALL(self_h, "create_tween")
-	DIM p = GODOT.CALL(tw, "tween_property", GODOT.REF(inst), "position:y", 1.9, 0.9)
-	GODOT.CALL(p, "set_trans", GODOT.ENUM("Tween", "TRANS_QUAD"))
-	GODOT.CALL(p, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
-	GODOT.CALL(tw, "tween_property", GODOT.REF(inst), "scale", GODOT.VEC3(0.01, 0.01, 0.01), 0.4)
+	GDX.ADD_CHILD(self_h, inst)
+	GDX.SET(inst, "position", GDX.VEC3((idx - 1) * 0.3, 0.7, 0.0))
+	DIM tw = GDX.CALL(self_h, "create_tween")
+	DIM p = GDX.CALL(tw, "tween_property", GDX.REF(inst), "position:y", 1.9, 0.9)
+	GDX.CALL(p, "set_trans", GDX.ENUM("Tween", "TRANS_QUAD"))
+	GDX.CALL(p, "set_ease",  GDX.ENUM("Tween", "EASE_OUT"))
+	GDX.CALL(tw, "tween_property", GDX.REF(inst), "scale", GDX.VEC3(0.01, 0.01, 0.01), 0.4)
 ENDSUB
 
 ' Hand the chest contents to the player: queue them on the DialogManager's
 ' loot_inbox meta (it owns the brain inventory and drains the inbox), and
 ' float each item out of the chest.
 SUB give_loot()
-	DIM dm = GODOT.CALL(self_h, "get_node", "/root/World/DialogManager")
+	DIM dm = GDX.CALL(self_h, "get_node", "/root/World/DialogManager")
 	DIM inbox AS ARRAY = []
-	IF dm <> 0 ANDALSO GODOT.CALL(dm, "has_meta", "loot_inbox") THEN inbox = GODOT.CALL(dm, "get_meta", "loot_inbox")
+	IF dm <> 0 ANDALSO GDX.CALL(dm, "has_meta", "loot_inbox") THEN inbox = GDX.CALL(dm, "get_meta", "loot_inbox")
 	FOR i = 0 TO LEN(contents) - 1
 		DIM c = contents[i]
 		DIM e AS MAP = {}
@@ -79,48 +79,48 @@ SUB give_loot()
 		inbox = APPEND(inbox, e)
 		spawn_loot_visual(c{"item"}, i)
 	NEXT
-	IF dm <> 0 THEN GODOT.CALL(dm, "set_meta", "loot_inbox", inbox)
+	IF dm <> 0 THEN GDX.CALL(dm, "set_meta", "loot_inbox", inbox)
 ENDSUB
 
 SUB open_chest()
 	opened = TRUE
-	IF prompt_h <> 0 THEN GODOT.SET(prompt_h, "visible", FALSE)
+	IF prompt_h <> 0 THEN GDX.SET(prompt_h, "visible", FALSE)
 	IF lid_h <> 0 THEN
-		DIM tw = GODOT.CALL(self_h, "create_tween")
-		DIM p = GODOT.CALL(tw, "tween_property", GODOT.REF(lid_h), "rotation:x", open_angle, open_duration)
-		GODOT.CALL(p, "set_trans", GODOT.ENUM("Tween", "TRANS_BACK"))
-		GODOT.CALL(p, "set_ease",  GODOT.ENUM("Tween", "EASE_OUT"))
+		DIM tw = GDX.CALL(self_h, "create_tween")
+		DIM p = GDX.CALL(tw, "tween_property", GDX.REF(lid_h), "rotation:x", open_angle, open_duration)
+		GDX.CALL(p, "set_trans", GDX.ENUM("Tween", "TRANS_BACK"))
+		GDX.CALL(p, "set_ease",  GDX.ENUM("Tween", "EASE_OUT"))
 	ENDIF
 	give_loot()
 	PRINT "opened: " + label
 ENDSUB
 
 SUB _ready()
-	self_h   = GODOT.SELF()
-	zone_h   = GODOT.CALL(self_h, "get_node", "Zone")
-	prompt_h = GODOT.CALL(self_h, "get_node", "Prompt")
+	self_h   = GDX.SELF()
+	zone_h   = GDX.CALL(self_h, "get_node", "Zone")
+	prompt_h = GDX.CALL(self_h, "get_node", "Prompt")
 
-	DIM model_node = GODOT.INSTANTIATE("res://assets/dungeon/" + model + ".gltf")
-	GODOT.ADD_CHILD(self_h, model_node)
+	DIM model_node = GDX.INSTANTIATE("res://assets/dungeon/" + model + ".gltf")
+	GDX.ADD_CHILD(self_h, model_node)
 	lid_h = find_lid(model_node)
 
 	' Find this chest's loot by label in chests.json.
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/chests.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/chests.json")
 	DIM arr = JSON.PARSE$(src)
 	FOR i = 0 TO LEN(arr) - 1
 		IF arr[i]{"label"} = label THEN contents = arr[i]{"contents"}
 	NEXT
 
-	GODOT.CONNECT(zone_h, "body_entered", "on_enter")
-	GODOT.CONNECT(zone_h, "body_exited",  "on_exit")
+	GDX.CONNECT(zone_h, "body_entered", "on_enter")
+	GDX.CONNECT(zone_h, "body_exited",  "on_exit")
 
 	' Drop onto the terrain surface.
-	DIM pos = GODOT.GET(self_h, "position")
-	GODOT.SET(self_h, "position:y", terrain_height(pos[0], pos[2]))
+	DIM pos = GDX.GET(self_h, "position")
+	GDX.SET(self_h, "position:y", terrain_height(pos[0], pos[2]))
 ENDSUB
 
 SUB _process(delta)
-	IF in_range ANDALSO NOT opened ANDALSO GODOT.INPUT.IS_ACTION_JUST_PRESSED("use") THEN
+	IF in_range ANDALSO NOT opened ANDALSO GDX.INPUT.IS_ACTION_JUST_PRESSED("use") THEN
 		open_chest()
 	ENDIF
 ENDSUB

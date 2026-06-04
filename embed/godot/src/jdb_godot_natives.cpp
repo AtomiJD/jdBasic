@@ -1,4 +1,4 @@
-// Tier 4 - GODOT.* native function suite. See header.
+// Tier 4 - GDX.* native function suite. See header.
 
 #ifdef GODOT
 
@@ -206,7 +206,7 @@ int64_t godot::variant_to_jdb_value(GodotBridge* bridge, const Variant& v) {
 
 // Reverse direction: jdBasic value -> Godot Variant. Numeric arrays of
 // length 2/3/4 are interpreted as Vector2 / Vector3 / Color so user
-// scripts can write `GODOT.SET(self, "position", [1.0, 2.0, 3.0])`.
+// scripts can write `GDX.SET(self, "position", [1.0, 2.0, 3.0])`.
 Variant godot::jdb_value_to_variant(GodotBridge* bridge, int64_t h) {
     if (!bridge || !h) return Variant();
     JdbEmbed* vm = bridge->vm();
@@ -512,7 +512,7 @@ int GodotBridge::connect_signal(int64_t obj_handle, const String& sig,
     Error err = src->connect(sig_n, cb, flags);
     if (err != OK) {
         UtilityFunctions::push_error(
-            String("[GODOT.CONNECT] connect '") + sig + String("' failed: ")
+            String("[GDX.CONNECT] connect '") + sig + String("' failed: ")
             + String::num_int64((int64_t)err));
         return -1;
     }
@@ -668,10 +668,10 @@ int64_t GodotBridge::make_timer(double secs, const String& sub, bool repeat) {
 
     if (!repeat) {
         // Self-clean: a one-shot timer queue_frees itself once it fires so
-        // repeated GODOT.TIMER calls (cooldowns, delays) don't pile up
+        // repeated GDX.TIMER calls (cooldowns, delays) don't pile up
         // stopped Timer nodes. Deferred so it frees after the timeout has
         // been fully processed. lookup() resolves the now-dead handle to
-        // null, so a stale GODOT.CALL on it is a safe no-op rather than a
+        // null, so a stale GDX.CALL on it is a safe no-op rather than a
         // dangling deref.
         t->connect("timeout", Callable(t, "queue_free"),
                    Object::CONNECT_ONE_SHOT | Object::CONNECT_DEFERRED);
@@ -686,7 +686,7 @@ int64_t GodotBridge::audio_play(const String& path, double volume_db, double pit
     if (!owner_node) return 0;
     Ref<AudioStream> stream = ResourceLoader::get_singleton()->load(path);
     if (stream.is_null()) {
-        UtilityFunctions::push_error(String("[GODOT.AUDIO.PLAY] cannot load ") + path);
+        UtilityFunctions::push_error(String("[GDX.AUDIO.PLAY] cannot load ") + path);
         return 0;
     }
     AudioStreamPlayer* p = memnew(AudioStreamPlayer);
@@ -707,7 +707,7 @@ int64_t GodotBridge::audio_music(const String& path, double volume_db) {
     if (!owner_node) return 0;
     Ref<AudioStream> stream = ResourceLoader::get_singleton()->load(path);
     if (stream.is_null()) {
-        UtilityFunctions::push_error(String("[GODOT.AUDIO.MUSIC] cannot load ") + path);
+        UtilityFunctions::push_error(String("[GDX.AUDIO.MUSIC] cannot load ") + path);
         return 0;
     }
     AudioStreamPlayer* p = nullptr;
@@ -750,7 +750,7 @@ static GodotBridge* bridge_of(void* userdata) {
     return reinterpret_cast<GodotBridge*>(userdata);
 }
 
-// GODOT.SELF() -> int handle to the Node this script is attached to.
+// GDX.SELF() -> int handle to the Node this script is attached to.
 static int64_t native_self(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* ud) {
     GodotBridge* bridge = bridge_of(ud);
     if (!bridge || !bridge->owner()) return 0;
@@ -758,7 +758,7 @@ static int64_t native_self(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, 
     return jdb_embed_make_int(vm, handle);
 }
 
-// GODOT.GET(handle, "property") -> variant
+// GDX.GET(handle, "property") -> variant
 //
 // Both flat names ("position") and sub-property paths ("position:x")
 // are supported by routing through Object::get_indexed (which falls
@@ -781,25 +781,25 @@ static int64_t native_get(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
     return variant_to_jdb_value(bridge, v);
 }
 
-// GODOT.SET(handle, "property", value)
+// GDX.SET(handle, "property", value)
 //
 // Property paths like "rotation:y" go through set_indexed so the script
 // can poke individual Vector3 / Color / etc. components without first
 // having to read-modify-write the whole struct.
 static int64_t native_set(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 3) {
-        UtilityFunctions::push_error(String("[GODOT.SET] argc < 3"));
+        UtilityFunctions::push_error(String("[GDX.SET] argc < 3"));
         return jdb_embed_make_bool(vm, 0);
     }
     GodotBridge* bridge = bridge_of(ud);
     if (!bridge) {
-        UtilityFunctions::push_error(String("[GODOT.SET] no bridge"));
+        UtilityFunctions::push_error(String("[GDX.SET] no bridge"));
         return jdb_embed_make_bool(vm, 0);
     }
     int64_t handle = jdb_embed_value_int(vm, args[0]);
     Object* obj = bridge->lookup(handle);
     if (!obj) {
-        UtilityFunctions::push_error(String("[GODOT.SET] no obj for handle ") + String::num_int64(handle));
+        UtilityFunctions::push_error(String("[GDX.SET] no obj for handle ") + String::num_int64(handle));
         return jdb_embed_make_bool(vm, 0);
     }
     const char* prop_name = jdb_embed_value_string(vm, args[1]);
@@ -839,7 +839,7 @@ static int64_t native_set(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
     return jdb_embed_make_bool(vm, 1);
 }
 
-// GODOT.CALL(handle, "method", args...) -> return value
+// GDX.CALL(handle, "method", args...) -> return value
 static int64_t native_call(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 2) return jdb_embed_make_nil(vm);
     GodotBridge* bridge = bridge_of(ud);
@@ -857,7 +857,7 @@ static int64_t native_call(JdbEmbed* vm, int argc, const int64_t* args, void* ud
     return variant_to_jdb_value(bridge, ret);
 }
 
-// GODOT.VEC3(x, y, z) -> 3-element numeric array (which marshals as Vector3
+// GDX.VEC3(x, y, z) -> 3-element numeric array (which marshals as Vector3
 // on the way back into Godot)
 static int64_t native_vec3(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     double x = (argc > 0) ? jdb_embed_value_double(vm, args[0]) : 0.0;
@@ -873,7 +873,7 @@ static int64_t native_vec3(JdbEmbed* vm, int argc, const int64_t* args, void* /*
     return arr;
 }
 
-// GODOT.VEC2(x, y) -> 2-element numeric array
+// GDX.VEC2(x, y) -> 2-element numeric array
 static int64_t native_vec2(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     double x = (argc > 0) ? jdb_embed_value_double(vm, args[0]) : 0.0;
     double y = (argc > 1) ? jdb_embed_value_double(vm, args[1]) : 0.0;
@@ -886,7 +886,7 @@ static int64_t native_vec2(JdbEmbed* vm, int argc, const int64_t* args, void* /*
     return arr;
 }
 
-// GODOT.COLOR(r, g, b, a) -> 4-element numeric array (a defaults to 1.0)
+// GDX.COLOR(r, g, b, a) -> 4-element numeric array (a defaults to 1.0)
 static int64_t native_color(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     double r = (argc > 0) ? jdb_embed_value_double(vm, args[0]) : 1.0;
     double g = (argc > 1) ? jdb_embed_value_double(vm, args[1]) : 1.0;
@@ -903,7 +903,7 @@ static int64_t native_color(JdbEmbed* vm, int argc, const int64_t* args, void* /
     return arr;
 }
 
-// GODOT.RECT2(x, y, w, h) -> a "__gd"-tagged map that marshals to a Godot
+// GDX.RECT2(x, y, w, h) -> a "__gd"-tagged map that marshals to a Godot
 // Rect2. Needed because a plain 4-element numeric array is taken as a Color.
 static int64_t native_rect2(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     double f[4] = {
@@ -916,7 +916,7 @@ static int64_t native_rect2(JdbEmbed* vm, int argc, const int64_t* args, void* /
     return make_gd_typed(vm, "Rect2", k, f, 4);
 }
 
-// GODOT.VEC2I(x, y) -> a "__gd"-tagged map that marshals to a Godot
+// GDX.VEC2I(x, y) -> a "__gd"-tagged map that marshals to a Godot
 // Vector2i (integer vector), distinct from the float Vector2 a [x,y] makes.
 static int64_t native_vec2i(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     double f[2] = {
@@ -927,10 +927,10 @@ static int64_t native_vec2i(JdbEmbed* vm, int argc, const int64_t* args, void* /
     return make_gd_typed(vm, "Vector2i", k, f, 2);
 }
 
-// GODOT.REF(handle) -> wraps a bridge handle so it marshals back to the
+// GDX.REF(handle) -> wraps a bridge handle so it marshals back to the
 // actual Object when passed as a *value* (property or method argument).
-// A bare handle is just an int, so GODOT.SET(sprite, "texture", tex) would
-// store the integer; GODOT.SET(sprite, "texture", GODOT.REF(tex)) stores the
+// A bare handle is just an int, so GDX.SET(sprite, "texture", tex) would
+// store the integer; GDX.SET(sprite, "texture", GDX.REF(tex)) stores the
 // Texture. Returns a "__gd"-tagged map the reverse marshaller decodes.
 static int64_t native_ref(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     if (argc < 1) return jdb_embed_make_nil(vm);
@@ -972,9 +972,9 @@ static int64_t native_packed_float32(JdbEmbed* vm, int argc, const int64_t* args
     return make_packed_tag(vm, "PackedFloat32Array", args[0]);
 }
 
-// GODOT.EMIT(handle, "signal_name", arg1, arg2, ...) -> emit a signal
+// GDX.EMIT(handle, "signal_name", arg1, arg2, ...) -> emit a signal
 // on the target Object. The first arg is the bridge handle (typically
-// GODOT.SELF for emitting from self). Returns 1 on success.
+// GDX.SELF for emitting from self). Returns 1 on success.
 static int64_t native_emit(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 2) return jdb_embed_make_bool(vm, 0);
     GodotBridge* bridge = bridge_of(ud);
@@ -997,11 +997,11 @@ static int64_t native_emit(JdbEmbed* vm, int argc, const int64_t* args, void* ud
     return jdb_embed_make_bool(vm, 1);
 }
 
-// GODOT.CONNECT(handle, "signal_name", "sub_name" [, flags]) -> 1 on success
+// GDX.CONNECT(handle, "signal_name", "sub_name" [, flags]) -> 1 on success
 //
 // Wires a Godot signal on the target object to a jdBasic SUB. When the
 // signal fires, sub_name(arg, ...) runs in this script's VM; signal args
-// marshal the same way GODOT.GET return values do (Object args arrive as
+// marshal the same way GDX.GET return values do (Object args arrive as
 // bridge handles). Optional flags map to Godot's CONNECT_* bitmask
 // (1=DEFERRED, 4=ONE_SHOT).
 static int64_t native_connect(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
@@ -1017,7 +1017,7 @@ static int64_t native_connect(JdbEmbed* vm, int argc, const int64_t* args, void*
     return jdb_embed_make_bool(vm, rc == 0 ? 1 : 0);
 }
 
-// GODOT.DISCONNECT(handle, "signal_name", "sub_name") -> 1 if a matching
+// GDX.DISCONNECT(handle, "signal_name", "sub_name") -> 1 if a matching
 // connection was found and removed.
 static int64_t native_disconnect(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 3) return jdb_embed_make_bool(vm, 0);
@@ -1031,12 +1031,12 @@ static int64_t native_disconnect(JdbEmbed* vm, int argc, const int64_t* args, vo
     return jdb_embed_make_bool(vm, ok ? 1 : 0);
 }
 
-// GODOT.TIMER(secs, "sub" [, repeat]) -> Timer handle
+// GDX.TIMER(secs, "sub" [, repeat]) -> Timer handle
 //
 // Fires sub() after `secs` seconds. repeat (default false / 0) makes it a
 // one-shot that frees itself after firing; a truthy repeat keeps it ticking
-// every `secs`. The returned handle works with GODOT.CALL(h, "stop"/"start")
-// and GODOT.QUEUE_FREE(h) for a repeating timer.
+// every `secs`. The returned handle works with GDX.CALL(h, "stop"/"start")
+// and GDX.QUEUE_FREE(h) for a repeating timer.
 static int64_t native_timer(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 2) return jdb_embed_make_nil(vm);
     GodotBridge* bridge = bridge_of(ud);
@@ -1049,7 +1049,7 @@ static int64_t native_timer(JdbEmbed* vm, int argc, const int64_t* args, void* u
     return h ? jdb_embed_make_int(vm, h) : jdb_embed_make_nil(vm);
 }
 
-// GODOT.AUDIO.PLAY("res://shoot.wav" [, volume_db [, pitch]]) -> player handle
+// GDX.AUDIO.PLAY("res://shoot.wav" [, volume_db [, pitch]]) -> player handle
 //
 // Fire-and-forget sound effect: spawns an AudioStreamPlayer, plays the
 // stream, and frees the player when it finishes. volume_db default 0 (full),
@@ -1066,7 +1066,7 @@ static int64_t native_audio_play(JdbEmbed* vm, int argc, const int64_t* args, vo
     return h ? jdb_embed_make_int(vm, h) : jdb_embed_make_nil(vm);
 }
 
-// GODOT.AUDIO.MUSIC("res://music.ogg" [, volume_db]) -> player handle
+// GDX.AUDIO.MUSIC("res://music.ogg" [, volume_db]) -> player handle
 //
 // Looping background music on a single reusable player. Calling it again
 // swaps the track. volume_db default 0.
@@ -1081,14 +1081,14 @@ static int64_t native_audio_music(JdbEmbed* vm, int argc, const int64_t* args, v
     return h ? jdb_embed_make_int(vm, h) : jdb_embed_make_nil(vm);
 }
 
-// GODOT.AUDIO.STOP_MUSIC() -> stop and free the looping music player.
+// GDX.AUDIO.STOP_MUSIC() -> stop and free the looping music player.
 static int64_t native_audio_stop_music(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* ud) {
     GodotBridge* bridge = bridge_of(ud);
     if (bridge) bridge->audio_stop_music();
     return jdb_embed_make_nil(vm);
 }
 
-// GODOT.AUDIO.STOP(handle) -> stop and free a player started by AUDIO.PLAY
+// GDX.AUDIO.STOP(handle) -> stop and free a player started by AUDIO.PLAY
 // or AUDIO.MUSIC. Returns 1 if the handle was an audio player.
 static int64_t native_audio_stop(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_bool(vm, 0);
@@ -1098,7 +1098,7 @@ static int64_t native_audio_stop(JdbEmbed* vm, int argc, const int64_t* args, vo
     return jdb_embed_make_bool(vm, bridge->audio_stop(handle) ? 1 : 0);
 }
 
-// GODOT.LOAD("res://path.png") -> Resource handle (Texture2D, Mesh, etc.)
+// GDX.LOAD("res://path.png") -> Resource handle (Texture2D, Mesh, etc.)
 static int64_t native_load(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_nil(vm);
     GodotBridge* bridge = bridge_of(ud);
@@ -1112,7 +1112,7 @@ static int64_t native_load(JdbEmbed* vm, int argc, const int64_t* args, void* ud
     return jdb_embed_make_int(vm, handle);
 }
 
-// GODOT.INSTANTIATE("res://prefab.tscn") -> Node handle (instantiated)
+// GDX.INSTANTIATE("res://prefab.tscn") -> Node handle (instantiated)
 static int64_t native_instantiate(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_nil(vm);
     GodotBridge* bridge = bridge_of(ud);
@@ -1126,7 +1126,7 @@ static int64_t native_instantiate(JdbEmbed* vm, int argc, const int64_t* args, v
     return jdb_embed_make_int(vm, handle);
 }
 
-// GODOT.NEW("ClassName") -> Object handle (e.g. "StandardMaterial3D")
+// GDX.NEW("ClassName") -> Object handle (e.g. "StandardMaterial3D")
 static int64_t native_new(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_nil(vm);
     GodotBridge* bridge = bridge_of(ud);
@@ -1142,7 +1142,7 @@ static int64_t native_new(JdbEmbed* vm, int argc, const int64_t* args, void* ud)
     return jdb_embed_make_int(vm, handle);
 }
 
-// GODOT.ADD_CHILD(parent_handle, child_handle) - parent.add_child(child)
+// GDX.ADD_CHILD(parent_handle, child_handle) - parent.add_child(child)
 static int64_t native_add_child(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 2) return jdb_embed_make_bool(vm, 0);
     GodotBridge* bridge = bridge_of(ud);
@@ -1157,7 +1157,7 @@ static int64_t native_add_child(JdbEmbed* vm, int argc, const int64_t* args, voi
     return jdb_embed_make_bool(vm, 1);
 }
 
-// GODOT.QUEUE_FREE(handle) - obj.queue_free()
+// GDX.QUEUE_FREE(handle) - obj.queue_free()
 static int64_t native_queue_free(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_bool(vm, 0);
     GodotBridge* bridge = bridge_of(ud);
@@ -1170,19 +1170,7 @@ static int64_t native_queue_free(JdbEmbed* vm, int argc, const int64_t* args, vo
     return jdb_embed_make_bool(vm, 1);
 }
 
-// GODOT.TIME.MS() -> int64 millisecond ticks since process start
-static int64_t native_time_ms(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* /*ud*/) {
-    uint64_t ms = Time::get_singleton()->get_ticks_msec();
-    return jdb_embed_make_int(vm, (int64_t)ms);
-}
-
-// GODOT.TIME.SEC() -> double seconds since process start (high precision)
-static int64_t native_time_sec(JdbEmbed* vm, int /*argc*/, const int64_t* /*args*/, void* /*ud*/) {
-    uint64_t us = Time::get_singleton()->get_ticks_usec();
-    return jdb_embed_make_double(vm, (double)us / 1'000'000.0);
-}
-
-// GODOT.PRINT(value) -> print into Godot's output panel
+// GDX.PRINT(value) -> print into Godot's output panel
 static int64_t native_print(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     GodotBridge* bridge = bridge_of(ud);
     String out;
@@ -1195,13 +1183,13 @@ static int64_t native_print(JdbEmbed* vm, int argc, const int64_t* args, void* u
     return jdb_embed_make_nil(vm);
 }
 
-// GODOT.DRAW_TEXT(node, pos, "text" [, font_size [, color]])
+// GDX.DRAW_TEXT(node, pos, "text" [, font_size [, color]])
 //
 // Draw a string in a CanvasItem's _draw using the engine's fallback font,
 // so pure-jdBasic _draw can render a HUD without a Label node. pos is a
 // [x, y] (the text baseline); color a [r, g, b, a], default white; font
 // size defaults to 16. Must be called from inside _draw, like the other
-// draw_* calls routed through GODOT.CALL.
+// draw_* calls routed through GDX.CALL.
 static int64_t native_draw_text(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 3) return jdb_embed_make_bool(vm, 0);
     GodotBridge* bridge = bridge_of(ud);
@@ -1224,7 +1212,7 @@ static int64_t native_draw_text(JdbEmbed* vm, int argc, const int64_t* args, voi
     return jdb_embed_make_bool(vm, 1);
 }
 
-// GODOT.DRAW_STRING(node, pos, "text" [, align [, width [, font_size [, color]]]])
+// GDX.DRAW_STRING(node, pos, "text" [, align [, width [, font_size [, color]]]])
 //
 // 1:1 with CanvasItem.draw_string using the ThemeDB fallback font: exposes
 // alignment (0=left, 1=center, 2=right, 3=fill) and the layout width so
@@ -1255,7 +1243,7 @@ static int64_t native_draw_string(JdbEmbed* vm, int argc, const int64_t* args, v
     return jdb_embed_make_bool(vm, 1);
 }
 
-// GODOT.TEXT_SIZE("text" [, font_size]) -> [w, h]
+// GDX.TEXT_SIZE("text" [, font_size]) -> [w, h]
 //
 // Measures a string in the fallback font so scripts can centre / right-align
 // / lay out HUD text precisely. Companion to DRAW_TEXT / DRAW_STRING.
@@ -1270,7 +1258,7 @@ static int64_t native_text_size(JdbEmbed* vm, int argc, const int64_t* args, voi
 }
 
 // ── Dedicated drawing primitives (hot path - called many times per _draw) ──
-// Same as GODOT.CALL(node, "draw_*", ...) but a direct typed call: no
+// Same as GDX.CALL(node, "draw_*", ...) but a direct typed call: no
 // StringName interning, no name-based method dispatch.
 
 static int64_t native_draw_circle(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
@@ -1317,7 +1305,7 @@ static int64_t native_draw_texture_rect(JdbEmbed* vm, int argc, const int64_t* a
     GodotBridge* b = bridge_of(ud);
     CanvasItem* ci = b ? Object::cast_to<CanvasItem>(b->lookup(jdb_embed_value_int(vm, args[0]))) : nullptr;
     if (!ci) return jdb_embed_make_bool(vm, 0);
-    Variant texv = jdb_value_to_variant(b, args[1]);   // pass via GODOT.REF(tex)
+    Variant texv = jdb_value_to_variant(b, args[1]);   // pass via GDX.REF(tex)
     Texture2D* tex = Object::cast_to<Texture2D>((Object*)texv);
     if (!tex) return jdb_embed_make_bool(vm, 0);
     Rect2 rect = jdb_value_to_variant(b, args[2]);
@@ -1350,66 +1338,12 @@ static int64_t native_draw_polygon(JdbEmbed* vm, int argc, const int64_t* args, 
 // CharacterBody2D and 3D don't share these in a common base, so each
 // native tries both casts.
 
-static int64_t native_move_and_slide(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
-    if (argc < 1) return jdb_embed_make_bool(vm, 0);
-    GodotBridge* b = bridge_of(ud);
-    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
-    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) { c3->move_and_slide(); return jdb_embed_make_bool(vm, 1); }
-    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) { c2->move_and_slide(); return jdb_embed_make_bool(vm, 1); }
-    return jdb_embed_make_bool(vm, 0);
-}
-
-static int64_t native_is_on_floor(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
-    if (argc < 1) return jdb_embed_make_bool(vm, 0);
-    GodotBridge* b = bridge_of(ud);
-    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
-    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return jdb_embed_make_bool(vm, c3->is_on_floor() ? 1 : 0);
-    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return jdb_embed_make_bool(vm, c2->is_on_floor() ? 1 : 0);
-    return jdb_embed_make_bool(vm, 0);
-}
-
-static int64_t native_is_on_wall(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
-    if (argc < 1) return jdb_embed_make_bool(vm, 0);
-    GodotBridge* b = bridge_of(ud);
-    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
-    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return jdb_embed_make_bool(vm, c3->is_on_wall() ? 1 : 0);
-    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return jdb_embed_make_bool(vm, c2->is_on_wall() ? 1 : 0);
-    return jdb_embed_make_bool(vm, 0);
-}
-
-static int64_t native_is_on_ceiling(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
-    if (argc < 1) return jdb_embed_make_bool(vm, 0);
-    GodotBridge* b = bridge_of(ud);
-    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
-    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return jdb_embed_make_bool(vm, c3->is_on_ceiling() ? 1 : 0);
-    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return jdb_embed_make_bool(vm, c2->is_on_ceiling() ? 1 : 0);
-    return jdb_embed_make_bool(vm, 0);
-}
-
-static int64_t native_get_velocity(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
-    if (argc < 1) return jdb_embed_make_nil(vm);
-    GodotBridge* b = bridge_of(ud);
-    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
-    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) return variant_to_jdb_value(b, c3->get_velocity());
-    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) return variant_to_jdb_value(b, c2->get_velocity());
-    return jdb_embed_make_nil(vm);
-}
-
-static int64_t native_set_velocity(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
-    if (argc < 2) return jdb_embed_make_bool(vm, 0);
-    GodotBridge* b = bridge_of(ud);
-    Object* o = b ? b->lookup(jdb_embed_value_int(vm, args[0])) : nullptr;
-    if (auto* c3 = Object::cast_to<CharacterBody3D>(o)) { c3->set_velocity(jdb_value_to_variant(b, args[1])); return jdb_embed_make_bool(vm, 1); }
-    if (auto* c2 = Object::cast_to<CharacterBody2D>(o)) { c2->set_velocity(jdb_value_to_variant(b, args[1])); return jdb_embed_make_bool(vm, 1); }
-    return jdb_embed_make_bool(vm, 0);
-}
-
 // ── Generic API reach: singletons, static methods, enum constants ──
 // These keep the real Godot API names so a GDScript user's knowledge
 // transfers 1:1 - only the call shape is jdBasic.
 
-// GODOT.SINGLETON("Name") -> handle to an engine singleton (ProjectSettings,
-// OS, Time, Input, RenderingServer, ...). Then GODOT.CALL on it as usual.
+// GDX.SINGLETON("Name") -> handle to an engine singleton (ProjectSettings,
+// OS, Time, Input, RenderingServer, ...). Then GDX.CALL on it as usual.
 static int64_t native_singleton(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 1) return jdb_embed_make_nil(vm);
     GodotBridge* b = bridge_of(ud);
@@ -1420,7 +1354,7 @@ static int64_t native_singleton(JdbEmbed* vm, int argc, const int64_t* args, voi
     return jdb_embed_make_int(vm, b->store(o));
 }
 
-// GODOT.STATIC("Class", "method", args...) -> call a static method on any
+// GDX.STATIC("Class", "method", args...) -> call a static method on any
 // class by its real name (e.g. FileAccess.get_file_as_string).
 static int64_t native_static(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
     if (argc < 2) return jdb_embed_make_nil(vm);
@@ -1444,13 +1378,13 @@ static int64_t native_static(JdbEmbed* vm, int argc, const int64_t* args, void* 
         case 3: ret = cdb->class_call_static(c, m, a[0], a[1], a[2]); break;
         case 4: ret = cdb->class_call_static(c, m, a[0], a[1], a[2], a[3]); break;
         default:
-            UtilityFunctions::push_error(String("[GODOT.STATIC] too many args (max 4)"));
+            UtilityFunctions::push_error(String("[GDX.STATIC] too many args (max 4)"));
             return jdb_embed_make_nil(vm);
     }
     return variant_to_jdb_value(b, ret);
 }
 
-// GODOT.ENUM("Class", "CONSTANT") -> integer value of a class constant /
+// GDX.ENUM("Class", "CONSTANT") -> integer value of a class constant /
 // enum (e.g. Tween.TRANS_BACK, MouseButton.MOUSE_BUTTON_LEFT).
 static int64_t native_enum(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     if (argc < 2) return jdb_embed_make_int(vm, 0);
@@ -1462,54 +1396,46 @@ static int64_t native_enum(JdbEmbed* vm, int argc, const int64_t* args, void* /*
 }
 
 void GodotBridge::register_all() {
-    jdb_embed_register_native(m_vm, "GODOT.SELF",   0, 0,  &native_self,  this);
-    jdb_embed_register_native(m_vm, "GODOT.GET",    2, 2,  &native_get,   this);
-    jdb_embed_register_native(m_vm, "GODOT.SET",    3, 3,  &native_set,   this);
-    jdb_embed_register_native(m_vm, "GODOT.CALL",   2, -1, &native_call,  this);
-    jdb_embed_register_native(m_vm, "GODOT.VEC2",   2, 2,  &native_vec2,  this);
-    jdb_embed_register_native(m_vm, "GODOT.VEC3",   3, 3,  &native_vec3,  this);
-    jdb_embed_register_native(m_vm, "GODOT.COLOR",  3, 4,  &native_color, this);
-    jdb_embed_register_native(m_vm, "GODOT.RECT2",  4, 4,  &native_rect2, this);
-    jdb_embed_register_native(m_vm, "GODOT.VEC2I",  2, 2,  &native_vec2i, this);
-    jdb_embed_register_native(m_vm, "GODOT.REF",    1, 1,  &native_ref,   this);
-    jdb_embed_register_native(m_vm, "GODOT.PACKED_VEC2",    1, 1, &native_packed_vec2,    this);
-    jdb_embed_register_native(m_vm, "GODOT.PACKED_VEC3",    1, 1, &native_packed_vec3,    this);
-    jdb_embed_register_native(m_vm, "GODOT.PACKED_INT32",   1, 1, &native_packed_int32,   this);
-    jdb_embed_register_native(m_vm, "GODOT.PACKED_COLOR",   1, 1, &native_packed_color,   this);
-    jdb_embed_register_native(m_vm, "GODOT.PACKED_FLOAT32", 1, 1, &native_packed_float32, this);
-    jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXT",   3, 5,  &native_draw_text,   this);
-    jdb_embed_register_native(m_vm, "GODOT.DRAW_STRING", 3, 7,  &native_draw_string, this);
-    jdb_embed_register_native(m_vm, "GODOT.TEXT_SIZE",   1, 2,  &native_text_size,   this);
-    jdb_embed_register_native(m_vm, "GODOT.DRAW_CIRCLE",       2, 5, &native_draw_circle,       this);
-    jdb_embed_register_native(m_vm, "GODOT.DRAW_RECT",         3, 4, &native_draw_rect,         this);
-    jdb_embed_register_native(m_vm, "GODOT.DRAW_LINE",         4, 5, &native_draw_line,         this);
-    jdb_embed_register_native(m_vm, "GODOT.DRAW_TEXTURE_RECT", 3, 4, &native_draw_texture_rect, this);
-    jdb_embed_register_native(m_vm, "GODOT.DRAW_POLYGON",      2, 3, &native_draw_polygon,      this);
-    jdb_embed_register_native(m_vm, "GODOT.MOVE_AND_SLIDE", 1, 1, &native_move_and_slide, this);
-    jdb_embed_register_native(m_vm, "GODOT.IS_ON_FLOOR",    1, 1, &native_is_on_floor,    this);
-    jdb_embed_register_native(m_vm, "GODOT.IS_ON_WALL",     1, 1, &native_is_on_wall,     this);
-    jdb_embed_register_native(m_vm, "GODOT.IS_ON_CEILING",  1, 1, &native_is_on_ceiling,  this);
-    jdb_embed_register_native(m_vm, "GODOT.GET_VELOCITY",   1, 1, &native_get_velocity,   this);
-    jdb_embed_register_native(m_vm, "GODOT.SET_VELOCITY",   2, 2, &native_set_velocity,   this);
-    jdb_embed_register_native(m_vm, "GODOT.SINGLETON", 1,  1, &native_singleton, this);
-    jdb_embed_register_native(m_vm, "GODOT.STATIC",    2, -1, &native_static,    this);
-    jdb_embed_register_native(m_vm, "GODOT.ENUM",      2,  2, &native_enum,      this);
-    jdb_embed_register_native(m_vm, "GODOT.EMIT",        2, -1, &native_emit,        this);
-    jdb_embed_register_native(m_vm, "GODOT.CONNECT",     3, 4,  &native_connect,     this);
-    jdb_embed_register_native(m_vm, "GODOT.DISCONNECT",  3, 3,  &native_disconnect,  this);
-    jdb_embed_register_native(m_vm, "GODOT.TIMER",       2, 3,  &native_timer,       this);
-    jdb_embed_register_native(m_vm, "GODOT.AUDIO.PLAY",       1, 3, &native_audio_play,       this);
-    jdb_embed_register_native(m_vm, "GODOT.AUDIO.MUSIC",      1, 2, &native_audio_music,      this);
-    jdb_embed_register_native(m_vm, "GODOT.AUDIO.STOP_MUSIC", 0, 0, &native_audio_stop_music, this);
-    jdb_embed_register_native(m_vm, "GODOT.AUDIO.STOP",       1, 1, &native_audio_stop,       this);
-    jdb_embed_register_native(m_vm, "GODOT.LOAD",        1, 1,  &native_load,        this);
-    jdb_embed_register_native(m_vm, "GODOT.INSTANTIATE", 1, 1,  &native_instantiate, this);
-    jdb_embed_register_native(m_vm, "GODOT.NEW",         1, 1,  &native_new,         this);
-    jdb_embed_register_native(m_vm, "GODOT.ADD_CHILD",   2, 2,  &native_add_child,   this);
-    jdb_embed_register_native(m_vm, "GODOT.QUEUE_FREE",  1, 1,  &native_queue_free,  this);
-    jdb_embed_register_native(m_vm, "GODOT.TIME_MS",     0, 0,  &native_time_ms,     nullptr);
-    jdb_embed_register_native(m_vm, "GODOT.TIME_SEC",    0, 0,  &native_time_sec,    nullptr);
-    jdb_embed_register_native(m_vm, "GODOT.PRINT",       1, -1, &native_print,       this);
+    jdb_embed_register_native(m_vm, "GDX.SELF",   0, 0,  &native_self,  this);
+    jdb_embed_register_native(m_vm, "GDX.GET",    2, 2,  &native_get,   this);
+    jdb_embed_register_native(m_vm, "GDX.SET",    3, 3,  &native_set,   this);
+    jdb_embed_register_native(m_vm, "GDX.CALL",   2, -1, &native_call,  this);
+    jdb_embed_register_native(m_vm, "GDX.VEC2",   2, 2,  &native_vec2,  this);
+    jdb_embed_register_native(m_vm, "GDX.VEC3",   3, 3,  &native_vec3,  this);
+    jdb_embed_register_native(m_vm, "GDX.COLOR",  3, 4,  &native_color, this);
+    jdb_embed_register_native(m_vm, "GDX.RECT2",  4, 4,  &native_rect2, this);
+    jdb_embed_register_native(m_vm, "GDX.VEC2I",  2, 2,  &native_vec2i, this);
+    jdb_embed_register_native(m_vm, "GDX.REF",    1, 1,  &native_ref,   this);
+    jdb_embed_register_native(m_vm, "GDX.PACKED_VEC2",    1, 1, &native_packed_vec2,    this);
+    jdb_embed_register_native(m_vm, "GDX.PACKED_VEC3",    1, 1, &native_packed_vec3,    this);
+    jdb_embed_register_native(m_vm, "GDX.PACKED_INT32",   1, 1, &native_packed_int32,   this);
+    jdb_embed_register_native(m_vm, "GDX.PACKED_COLOR",   1, 1, &native_packed_color,   this);
+    jdb_embed_register_native(m_vm, "GDX.PACKED_FLOAT32", 1, 1, &native_packed_float32, this);
+    jdb_embed_register_native(m_vm, "GDX.DRAW_TEXT",   3, 5,  &native_draw_text,   this);
+    jdb_embed_register_native(m_vm, "GDX.DRAW_STRING", 3, 7,  &native_draw_string, this);
+    jdb_embed_register_native(m_vm, "GDX.TEXT_SIZE",   1, 2,  &native_text_size,   this);
+    jdb_embed_register_native(m_vm, "GDX.DRAW_CIRCLE",       2, 5, &native_draw_circle,       this);
+    jdb_embed_register_native(m_vm, "GDX.DRAW_RECT",         3, 4, &native_draw_rect,         this);
+    jdb_embed_register_native(m_vm, "GDX.DRAW_LINE",         4, 5, &native_draw_line,         this);
+    jdb_embed_register_native(m_vm, "GDX.DRAW_TEXTURE_RECT", 3, 4, &native_draw_texture_rect, this);
+    jdb_embed_register_native(m_vm, "GDX.DRAW_POLYGON",      2, 3, &native_draw_polygon,      this);
+    jdb_embed_register_native(m_vm, "GDX.SINGLETON", 1,  1, &native_singleton, this);
+    jdb_embed_register_native(m_vm, "GDX.STATIC",    2, -1, &native_static,    this);
+    jdb_embed_register_native(m_vm, "GDX.ENUM",      2,  2, &native_enum,      this);
+    jdb_embed_register_native(m_vm, "GDX.EMIT",        2, -1, &native_emit,        this);
+    jdb_embed_register_native(m_vm, "GDX.CONNECT",     3, 4,  &native_connect,     this);
+    jdb_embed_register_native(m_vm, "GDX.DISCONNECT",  3, 3,  &native_disconnect,  this);
+    jdb_embed_register_native(m_vm, "GDX.TIMER",       2, 3,  &native_timer,       this);
+    jdb_embed_register_native(m_vm, "GDX.AUDIO.PLAY",       1, 3, &native_audio_play,       this);
+    jdb_embed_register_native(m_vm, "GDX.AUDIO.MUSIC",      1, 2, &native_audio_music,      this);
+    jdb_embed_register_native(m_vm, "GDX.AUDIO.STOP_MUSIC", 0, 0, &native_audio_stop_music, this);
+    jdb_embed_register_native(m_vm, "GDX.AUDIO.STOP",       1, 1, &native_audio_stop,       this);
+    jdb_embed_register_native(m_vm, "GDX.LOAD",        1, 1,  &native_load,        this);
+    jdb_embed_register_native(m_vm, "GDX.INSTANTIATE", 1, 1,  &native_instantiate, this);
+    jdb_embed_register_native(m_vm, "GDX.NEW",         1, 1,  &native_new,         this);
+    jdb_embed_register_native(m_vm, "GDX.ADD_CHILD",   2, 2,  &native_add_child,   this);
+    jdb_embed_register_native(m_vm, "GDX.QUEUE_FREE",  1, 1,  &native_queue_free,  this);
+    jdb_embed_register_native(m_vm, "GDX.PRINT",       1, -1, &native_print,       this);
 }
 
 #endif  // GODOT

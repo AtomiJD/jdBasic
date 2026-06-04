@@ -108,7 +108,7 @@ private:
     // and set_property writes here so the .tscn override round-trip works.
     Dictionary                         m_editor_values;
 
-    // Tier 4 - GODOT.* native suite. Lives as long as the instance does.
+    // Tier 4 - GDX.* native suite. Lives as long as the instance does.
     class GodotBridge*                 m_bridge = nullptr;
 
     static std::string variant_to_jdb_arg_(const Variant& v);

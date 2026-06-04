@@ -7,40 +7,40 @@ EXTENDS Node3D
 DIM self_h = 0
 
 SUB spawn_npcs()
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/npcs.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/npcs.json")
 	DIM arr = JSON.PARSE$(src)
 	DIM cnt = LEN(arr)
 	FOR i = 0 TO cnt - 1
 		DIM e = arr[i]
-		DIM npc = GODOT.INSTANTIATE("res://npc.tscn")
-		GODOT.SET(npc, "npc_id", e{"id"})
-		GODOT.SET(npc, "character_type", e{"character"})
-		GODOT.SET(npc, "display_name", e{"name"})
+		DIM npc = GDX.INSTANTIATE("res://npc.tscn")
+		GDX.SET(npc, "npc_id", e{"id"})
+		GDX.SET(npc, "character_type", e{"character"})
+		GDX.SET(npc, "display_name", e{"name"})
 		' Drop in above the spawn point; gravity settles it onto the terrain.
 		DIM sp = e{"spawn"}
-		GODOT.SET(npc, "position", GODOT.VEC3(sp[0], 6.0, sp[2]))
-		GODOT.ADD_CHILD(self_h, npc)
+		GDX.SET(npc, "position", GDX.VEC3(sp[0], 6.0, sp[2]))
+		GDX.ADD_CHILD(self_h, npc)
 	NEXT
 	PRINT "spawned " + STR$(cnt) + " npcs"
 ENDSUB
 
 SUB spawn_chests()
-	DIM src = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/chests.json")
+	DIM src = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/chests.json")
 	DIM arr = JSON.PARSE$(src)
 	FOR i = 0 TO LEN(arr) - 1
 		DIM e = arr[i]
-		DIM ch = GODOT.INSTANTIATE("res://chest.tscn")
-		GODOT.SET(ch, "model", e{"model"})
-		GODOT.SET(ch, "label", e{"label"})
+		DIM ch = GDX.INSTANTIATE("res://chest.tscn")
+		GDX.SET(ch, "model", e{"model"})
+		GDX.SET(ch, "label", e{"label"})
 		DIM p = e{"pos"}
-		GODOT.SET(ch, "position", GODOT.VEC3(p[0], 0.0, p[2]))
-		GODOT.ADD_CHILD(self_h, ch)
+		GDX.SET(ch, "position", GDX.VEC3(p[0], 0.0, p[2]))
+		GDX.ADD_CHILD(self_h, ch)
 	NEXT
 	PRINT "spawned " + STR$(LEN(arr)) + " chests"
 ENDSUB
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 	spawn_npcs()
 	spawn_chests()
 ENDSUB

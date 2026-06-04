@@ -18,8 +18,8 @@ feature-complete for daily use:
     the running VM with state preserved
   * Typed Variant marshalling - numeric arrays return as
     `PackedFloat64Array`, maps as `Dictionary`, etc.
-  * `GODOT.*` native suite lets jdBasic call Godot APIs directly -
-    `GODOT.SET(self, "rotation:y", angle)` works without any GDScript glue
+  * `GDX.*` native suite lets jdBasic call Godot APIs directly -
+    `GDX.SET(self, "rotation:y", angle)` works without any GDScript glue
 
 The demo scenes prove every layer of the stack:
 
@@ -36,31 +36,31 @@ The demo scenes prove every layer of the stack:
 
 ### Shipped after Tier 4
 
-- **GODOT.INPUT.\*** - full polling + event-queue input suite. See `INPUT.md`.
-- **GODOT.CONNECT / GODOT.DISCONNECT** (2026-06-01) - runtime, code-driven
+- **GDX.INPUT.\*** - full polling + event-queue input suite. See `INPUT.md`.
+- **GDX.CONNECT / GDX.DISCONNECT** (2026-06-01) - runtime, code-driven
   signal wiring straight into jdBasic SUBs. Signal args marshal like
-  `GODOT.GET` returns (Objects arrive as bridge handles). Re-entrant
+  `GDX.GET` returns (Objects arrive as bridge handles). Re-entrant
   dispatch is queued and drained after the outer callback so the
   single-threaded interpreter is never nested. Connections are owned by
   the script bridge and dropped on hot-reload / detach. See `SIGNALS.md`,
   `connect_demo.tscn`, `connect_smoke.tscn`. This is the *runtime* path and
   sidesteps the parked "Missing connected method" editor warning below,
   which only affects connections authored in the editor's Signal panel.
-- **GODOT.TIMER** (2026-06-01) - `GODOT.TIMER(secs, "sub" [, repeat])`
+- **GDX.TIMER** (2026-06-01) - `GDX.TIMER(secs, "sub" [, repeat])`
   spawns a Timer child, wires its timeout to a SUB, and starts it. One-shots
   free themselves after firing. Built on CONNECT. See `SIGNALS.md`.
 - **Self-validating handles** (2026-06-01) - the bridge handle table now
   stores `ObjectID` and resolves through `ObjectDB` on every `lookup`, so a
   handle to a freed object (one-shot timer, queue_freed node) returns null
   instead of dangling.
-- **GODOT.DRAW_TEXT / DRAW_STRING / TEXT_SIZE** (2026-06-01..02) -
-  `GODOT.DRAW_TEXT(node, pos, "text" [, font_size [, color]])` draws a
+- **GDX.DRAW_TEXT / DRAW_STRING / TEXT_SIZE** (2026-06-01..02) -
+  `GDX.DRAW_TEXT(node, pos, "text" [, font_size [, color]])` draws a
   string in a CanvasItem's `_draw` using the ThemeDB fallback font, so a
   pure-jdBasic HUD lives entirely in `_draw` with no Label node.
-  `GODOT.DRAW_STRING(node, pos, "text" [, align [, width [, font_size [, color]]]])`
+  `GDX.DRAW_STRING(node, pos, "text" [, align [, width [, font_size [, color]]]])`
   is the 1:1 of `CanvasItem.draw_string`: `align` 0/1/2/3 (left/center/right/fill)
   inside a `width` box gives centred / right-aligned text.
-  `GODOT.TEXT_SIZE("text" [, font_size])` -> `[w, h]` measures a string in
+  `GDX.TEXT_SIZE("text" [, font_size])` -> `[w, h]` measures a string in
   the fallback font for manual layout. Demo: `draw_text_demo.tscn`; headless
   regression: `draw_text_smoke.tscn`, `drawstr_smoke.tscn`.
 - **Mouse-click / `_input` fix** (2026-06-02) - two stacked bugs killed
@@ -77,11 +77,11 @@ The demo scenes prove every layer of the stack:
      the signal dispatch uses. `store()` self-prunes dead entries during its
      scan so the per-event objects don't accumulate. Regression:
      `input_inject_smoke.tscn` (synthetic click, end to end).
-- **GODOT.REF** (2026-06-02) - `GODOT.REF(handle)` wraps a bridge handle so
+- **GDX.REF** (2026-06-02) - `GDX.REF(handle)` wraps a bridge handle so
   it marshals back to the actual Object when passed as a property/method
-  *value*: `GODOT.SET(sprite, "texture", GODOT.REF(tex))`. A bare handle is
+  *value*: `GDX.SET(sprite, "texture", GDX.REF(tex))`. A bare handle is
   just an int. Uses the same `__gd`-tagged-map machinery as RECT2/VEC2I.
-- **GODOT.NEW / GODOT.LOAD RefCounted retain** (2026-06-02) - a freshly
+- **GDX.NEW / GDX.LOAD RefCounted retain** (2026-06-02) - a freshly
   instantiated RefCounted (InputEvent, Material, Resource) was freed the
   instant the native's local Ref dropped, leaving a dead handle. The bridge
   now retains these for its lifetime.
@@ -90,8 +90,8 @@ The demo scenes prove every layer of the stack:
   Godot types that a plain numeric array can't disambiguate use a `__gd`
   tag inside a map: `Rect2` (vs a 4-float `Color`) and `Vector2i` (vs a
   float `Vector2`) round-trip via `{__gd: "Rect2", x, y, w, h}`. Builders:
-  `GODOT.RECT2(x, y, w, h)`, `GODOT.VEC2I(x, y)`. Regression: `type_smoke.tscn`.
-- **GODOT.AUDIO.\*** (2026-06-01) - `PLAY(path [, vol_db [, pitch]])`
+  `GDX.RECT2(x, y, w, h)`, `GDX.VEC2I(x, y)`. Regression: `type_smoke.tscn`.
+- **GDX.AUDIO.\*** (2026-06-01) - `PLAY(path [, vol_db [, pitch]])`
   (fire-and-forget SFX, self-freeing), `MUSIC(path [, vol_db])` (looping
   music on one reusable player, swappable), `STOP_MUSIC()`, `STOP(handle)`.
   Players parent to the script's Node; music loops format-agnostically by
@@ -103,18 +103,18 @@ The demo scenes prove every layer of the stack:
   dispatch no longer re-lexes/parses/compiles a stub each frame -
   `jdb_embed_call` invokes the compiled SUB directly with marshalled value
   handles (no source-text round-trip). Dedicated hot-path natives that skip
-  the `GODOT.CALL` StringName+`callv` dispatch (~18% per call, benchmarked):
+  the `GDX.CALL` StringName+`callv` dispatch (~18% per call, benchmarked):
   draw (`DRAW_CIRCLE/RECT/LINE/POLYGON/TEXTURE_RECT`) and physics
   (`MOVE_AND_SLIDE`, `IS_ON_FLOOR/WALL/CEILING`, `GET/SET_VELOCITY`). Generic
-  API reach kept for the long tail: `GODOT.SINGLETON` / `GODOT.STATIC` /
-  `GODOT.ENUM` (real Godot names, e.g. `FileAccess.get_file_as_string`,
+  API reach kept for the long tail: `GDX.SINGLETON` / `GDX.STATIC` /
+  `GDX.ENUM` (real Godot names, e.g. `FileAccess.get_file_as_string`,
   `Tween.TRANS_BACK`).
 - **Pure-jdBasic RPG rewrite (dogfood, in progress)** - `godot/rpg-native/`
   is a fresh project where the RPG is being rebuilt with zero GDScript, one
   node at a time, to find remaining gaps. First slice done: `player.jdb`
   (CharacterBody3D, camera-relative WASD + run + jump + mouse-orbit) running
   on the physics natives. Gaps surfaced: `Transform3D`/`Basis` not marshalled
-  (workaround: `GODOT.GET(n, "global_transform:basis:x")` sub-path resolves);
+  (workaround: `GDX.GET(n, "global_transform:basis:x")` sub-path resolves);
   `@GlobalScope` enums (`KEY_SHIFT`) need a literal int or a global-enum
   lookup; GLB + AnimationPlayer (AnimLoader) is the next slice.
 
@@ -122,7 +122,7 @@ The demo scenes prove every layer of the stack:
 
 - Remaining un-marshalled Variant types: `Transform2D` / `Transform3D` /
   `Basis` / `Quaternion` / `Vector4` / `Plane`. Each could follow the same
-  `__gd`-tagged-map pattern with a matching `GODOT.*` builder if a use case
+  `__gd`-tagged-map pattern with a matching `GDX.*` builder if a use case
   shows up. 2D node transforms are already reachable by setting
   `position` / `rotation` / `scale` separately, so this is low priority.
 
@@ -161,7 +161,7 @@ fixed before the showcase post lands.
 
 - **"Missing connected method 'X'" editor warning** for signal handlers
   defined as jdBasic SUBs. The signal connection works at runtime (the
-  SUB fires when the signal emits, confirmed by `GODOT.PRINT` output),
+  SUB fires when the signal emits, confirmed by `GDX.PRINT` output),
   but Godot's editor still warns at scene-load. `JdbScriptResource::_has_method`
   AND `_get_script_method_list` are both implemented and return the
   scanned FUNC/SUB names; diagnostic confirmed neither was actually
@@ -184,8 +184,8 @@ following round out the editor side:
 - **Inspector hint types** - parse `INSPECTOR DIM hp AS RANGE(0, 100)`,
   `INSPECTOR DIM source AS FILE("*.txt")` into PROPERTY_HINT values so
   the Inspector renders sliders / file pickers / colour pickers
-- **Signal declarations** - *runtime side shipped*: `GODOT.CONNECT` /
-  `GODOT.DISCONNECT` / `GODOT.EMIT` wire and fire signals from code. What's
+- **Signal declarations** - *runtime side shipped*: `GDX.CONNECT` /
+  `GDX.DISCONNECT` / `GDX.EMIT` wire and fire signals from code. What's
   left is the *editor* side: a `SIGNAL hit(damage)` declaration at the top
   of a .jdb surfaced through `_get_script_signal_list` so the Inspector's
   "Signals" tab lists them and editor-authored connections verify (this is
@@ -199,7 +199,7 @@ following round out the editor side:
 ### Tier 6 - editor tooling (1-2 weeks each)
 
 - **Autocomplete** - `_complete_code` actually completes against the
-  parsed symbol table (FUNC / SUB / DIM in scope, plus the `GODOT.*`
+  parsed symbol table (FUNC / SUB / DIM in scope, plus the `GDX.*`
   builtin set)
 - **Symbol lookup** - Ctrl-click jump to definition via `_lookup_code`,
   scanning the FUNC / SUB declarations
@@ -363,9 +363,9 @@ Key decisions:
   results across; needed for CPU-heavy procedural / AI scripts
 - **`res://` aware IMPORT** - jdBasic's IMPORT resolves through Godot's
   virtual filesystem instead of OS paths
-- ~~**More GODOT.* natives**~~ - *shipped*: `GODOT.NEW`, `GODOT.CONNECT`,
-  `GODOT.LOAD`, `GODOT.INSTANTIATE`, `GODOT.TIME_MS` / `GODOT.TIME_SEC`,
-  plus `GODOT.TIMER` / `GODOT.DRAW_TEXT` / `GODOT.RECT2` / `GODOT.VEC2I`.
+- ~~**More GDX.* natives**~~ - *shipped*: `GDX.NEW`, `GDX.CONNECT`,
+  `GDX.LOAD`, `GDX.INSTANTIATE`, `GDX.TIME_MS` / `GDX.TIME_SEC`,
+  plus `GDX.TIMER` / `GDX.DRAW_TEXT` / `GDX.RECT2` / `GDX.VEC2I`.
 - **Distribution tiering** - `jdbrt-mini.dll` (interpreter only,
   ~1 MB), `jdbrt-llm.dll` (+ LLM bridge, ~150 MB + weights) so users
   pick what they need
@@ -379,21 +379,21 @@ no jdBasic surface, and were originally parked as "only if a community
 shows up". Building the input demo + the RPG made them worth doing now, so
 two shipped ahead of schedule:
 
-- ~~**T9 - `GODOT.INPUT.*` natives**~~ - **shipped** (2026-05-31). Full
+- ~~**T9 - `GDX.INPUT.*` natives**~~ - **shipped** (2026-05-31). Full
   polling suite (`is_action_pressed`, `get_axis`, `get_vector`,
   `is_key_pressed`, mouse position/velocity/buttons) plus an event queue
   and `_input(event)` introspection. See `INPUT.md`.
-- **T10 - `GODOT.MESH.*` natives** - still open.
+- **T10 - `GDX.MESH.*` natives** - still open.
   `ArrayMesh.add_surface_from_arrays` binding + `HeightMapShape3D.map_data`
   setter. The math-heavy compute (heightmaps, voxel fields) is already a
   jdBasic strength; this would let jdBasic drive the mesh-build side too,
   without marshalling raw arrays back to GDScript.
-- **T11 - Static engine singletons via `GODOT.CALL`** - still open. `Time.*`,
-  `ProjectSettings.*`, `Engine.*`, `OS.*` - `GODOT.CALL` needs an object
+- **T11 - Static engine singletons via `GDX.CALL`** - still open. `Time.*`,
+  `ProjectSettings.*`, `Engine.*`, `OS.*` - `GDX.CALL` needs an object
   handle, so static-class methods are unreachable. Extend with a
-  string-keyed singleton table (e.g. `GODOT.SINGLETON("OS")` -> handle).
-- **T12 - `GODOT.AWAIT$` for engine signals** - **core shipped** via
-  `GODOT.CONNECT` (2026-06-01): the event-loop bridge that pumps Godot
+  string-keyed singleton table (e.g. `GDX.SINGLETON("OS")` -> handle).
+- **T12 - `GDX.AWAIT$` for engine signals** - **core shipped** via
+  `GDX.CONNECT` (2026-06-01): the event-loop bridge that pumps Godot
   signals into the VM (with re-entrancy-safe deferred dispatch) is exactly
   what `await node.body_entered` needed, just expressed as a connected SUB
   instead of an inline `await`. A literal `AWAIT$` expression that parks a

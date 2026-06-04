@@ -1903,111 +1903,111 @@ DIM j_was = FALSE
 DIM want_edit = FALSE   ' grab the input box once (set on open / after a reply)
 
 SUB set_rect(node, a1, a2, a3, a4, f1, f2, f3, f4)
-	GODOT.SET(node, "anchor_left", a1)
-	GODOT.SET(node, "anchor_top", a2)
-	GODOT.SET(node, "anchor_right", a3)
-	GODOT.SET(node, "anchor_bottom", a4)
-	GODOT.SET(node, "offset_left", f1)
-	GODOT.SET(node, "offset_top", f2)
-	GODOT.SET(node, "offset_right", f3)
-	GODOT.SET(node, "offset_bottom", f4)
+	GDX.SET(node, "anchor_left", a1)
+	GDX.SET(node, "anchor_top", a2)
+	GDX.SET(node, "anchor_right", a3)
+	GDX.SET(node, "anchor_bottom", a4)
+	GDX.SET(node, "offset_left", f1)
+	GDX.SET(node, "offset_top", f2)
+	GDX.SET(node, "offset_right", f3)
+	GDX.SET(node, "offset_bottom", f4)
 ENDSUB
 
 SUB build_ui()
-	ui_layer = GODOT.NEW("CanvasLayer")
-	GODOT.ADD_CHILD(self_h, ui_layer)
+	ui_layer = GDX.NEW("CanvasLayer")
+	GDX.ADD_CHILD(self_h, ui_layer)
 
-	ui_panel = GODOT.NEW("Panel")
+	ui_panel = GDX.NEW("Panel")
 	set_rect(ui_panel, 0.0, 1.0, 1.0, 1.0, 24.0, -470.0, -24.0, -24.0)
-	GODOT.SET(ui_panel, "visible", FALSE)
-	GODOT.ADD_CHILD(ui_layer, ui_panel)
+	GDX.SET(ui_panel, "visible", FALSE)
+	GDX.ADD_CHILD(ui_layer, ui_panel)
 
-	ui_name = GODOT.NEW("Label")
+	ui_name = GDX.NEW("Label")
 	set_rect(ui_name, 0.0, 0.0, 1.0, 0.0, 16.0, 8.0, -48.0, 38.0)
-	GODOT.ADD_CHILD(ui_panel, ui_name)
+	GDX.ADD_CHILD(ui_panel, ui_name)
 
-	ui_close = GODOT.NEW("Button")
+	ui_close = GDX.NEW("Button")
 	set_rect(ui_close, 1.0, 0.0, 1.0, 0.0, -40.0, 6.0, -10.0, 36.0)
-	GODOT.SET(ui_close, "text", "X")
-	GODOT.ADD_CHILD(ui_panel, ui_close)
-	GODOT.CONNECT(ui_close, "pressed", "on_close_pressed")
+	GDX.SET(ui_close, "text", "X")
+	GDX.ADD_CHILD(ui_panel, ui_close)
+	GDX.CONNECT(ui_close, "pressed", "on_close_pressed")
 
-	ui_hist = GODOT.NEW("RichTextLabel")
+	ui_hist = GDX.NEW("RichTextLabel")
 	set_rect(ui_hist, 0.0, 0.0, 1.0, 1.0, 16.0, 42.0, -16.0, -92.0)
-	GODOT.SET(ui_hist, "bbcode_enabled", TRUE)
-	GODOT.SET(ui_hist, "scroll_following", TRUE)
-	GODOT.SET(ui_hist, "focus_mode", 0)
-	GODOT.ADD_CHILD(ui_panel, ui_hist)
+	GDX.SET(ui_hist, "bbcode_enabled", TRUE)
+	GDX.SET(ui_hist, "scroll_following", TRUE)
+	GDX.SET(ui_hist, "focus_mode", 0)
+	GDX.ADD_CHILD(ui_panel, ui_hist)
 
-	ui_quest = GODOT.NEW("Label")
+	ui_quest = GDX.NEW("Label")
 	set_rect(ui_quest, 0.0, 1.0, 1.0, 1.0, 16.0, -86.0, -180.0, -54.0)
-	GODOT.SET(ui_quest, "modulate", GODOT.COLOR(1.0, 0.82, 0.38, 1.0))
-	GODOT.SET(ui_quest, "visible", FALSE)
-	GODOT.ADD_CHILD(ui_panel, ui_quest)
+	GDX.SET(ui_quest, "modulate", GDX.COLOR(1.0, 0.82, 0.38, 1.0))
+	GDX.SET(ui_quest, "visible", FALSE)
+	GDX.ADD_CHILD(ui_panel, ui_quest)
 
-	ui_accept = GODOT.NEW("Button")
+	ui_accept = GDX.NEW("Button")
 	set_rect(ui_accept, 1.0, 1.0, 1.0, 1.0, -172.0, -88.0, -16.0, -52.0)
-	GODOT.SET(ui_accept, "text", "Accept Quest")
-	GODOT.SET(ui_accept, "visible", FALSE)
-	GODOT.ADD_CHILD(ui_panel, ui_accept)
-	GODOT.CONNECT(ui_accept, "pressed", "on_accept_pressed")
+	GDX.SET(ui_accept, "text", "Accept Quest")
+	GDX.SET(ui_accept, "visible", FALSE)
+	GDX.ADD_CHILD(ui_panel, ui_accept)
+	GDX.CONNECT(ui_accept, "pressed", "on_accept_pressed")
 
-	ui_input = GODOT.NEW("LineEdit")
+	ui_input = GDX.NEW("LineEdit")
 	set_rect(ui_input, 0.0, 1.0, 1.0, 1.0, 16.0, -48.0, -210.0, -14.0)
-	GODOT.SET(ui_input, "placeholder_text", "Type a message and press Enter (Esc to leave)...")
-	GODOT.SET(ui_input, "focus_mode", 2)
-	GODOT.ADD_CHILD(ui_panel, ui_input)
-	GODOT.CONNECT(ui_input, "text_submitted", "on_submit")
+	GDX.SET(ui_input, "placeholder_text", "Type a message and press Enter (Esc to leave)...")
+	GDX.SET(ui_input, "focus_mode", 2)
+	GDX.ADD_CHILD(ui_panel, ui_input)
+	GDX.CONNECT(ui_input, "text_submitted", "on_submit")
 
-	ui_status = GODOT.NEW("Label")
+	ui_status = GDX.NEW("Label")
 	set_rect(ui_status, 1.0, 1.0, 1.0, 1.0, -200.0, -46.0, -16.0, -14.0)
-	GODOT.ADD_CHILD(ui_panel, ui_status)
+	GDX.ADD_CHILD(ui_panel, ui_status)
 
-	hint_lbl = GODOT.NEW("Label")
+	hint_lbl = GDX.NEW("Label")
 	set_rect(hint_lbl, 0.5, 1.0, 0.5, 1.0, -160.0, -96.0, 160.0, -64.0)
-	GODOT.SET(hint_lbl, "horizontal_alignment", 1)
-	GODOT.SET(hint_lbl, "visible", FALSE)
-	GODOT.ADD_CHILD(ui_layer, hint_lbl)
+	GDX.SET(hint_lbl, "horizontal_alignment", 1)
+	GDX.SET(hint_lbl, "visible", FALSE)
+	GDX.ADD_CHILD(ui_layer, hint_lbl)
 ENDSUB
 
 ' Full-screen overlay shown while the language model loads.
 SUB build_splash()
-	splash_layer = GODOT.NEW("CanvasLayer")
-	GODOT.SET(splash_layer, "layer", 100)
-	GODOT.ADD_CHILD(self_h, splash_layer)
-	DIM bg = GODOT.NEW("ColorRect")
-	GODOT.SET(bg, "color", GODOT.COLOR(0.05, 0.07, 0.1, 1.0))
+	splash_layer = GDX.NEW("CanvasLayer")
+	GDX.SET(splash_layer, "layer", 100)
+	GDX.ADD_CHILD(self_h, splash_layer)
+	DIM bg = GDX.NEW("ColorRect")
+	GDX.SET(bg, "color", GDX.COLOR(0.05, 0.07, 0.1, 1.0))
 	set_rect(bg, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)
-	GODOT.ADD_CHILD(splash_layer, bg)
-	DIM lbl = GODOT.NEW("Label")
-	GODOT.SET(lbl, "text", "Loading dialogue model...")
-	GODOT.SET(lbl, "horizontal_alignment", 1)
-	GODOT.SET(lbl, "vertical_alignment", 1)
+	GDX.ADD_CHILD(splash_layer, bg)
+	DIM lbl = GDX.NEW("Label")
+	GDX.SET(lbl, "text", "Loading dialogue model...")
+	GDX.SET(lbl, "horizontal_alignment", 1)
+	GDX.SET(lbl, "vertical_alignment", 1)
 	set_rect(lbl, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)
-	GODOT.ADD_CHILD(bg, lbl)
+	GDX.ADD_CHILD(bg, lbl)
 ENDSUB
 
 ' Journal overlay with one tab per topic. Q = Quests, I = Inventory, J = World.
 FUNC make_tab(node_name)
-	DIM rt = GODOT.NEW("RichTextLabel")
-	GODOT.SET(rt, "name", node_name)
-	GODOT.SET(rt, "bbcode_enabled", TRUE)
-	GODOT.SET(rt, "focus_mode", 0)
-	GODOT.ADD_CHILD(journal_tabs, rt)
+	DIM rt = GDX.NEW("RichTextLabel")
+	GDX.SET(rt, "name", node_name)
+	GDX.SET(rt, "bbcode_enabled", TRUE)
+	GDX.SET(rt, "focus_mode", 0)
+	GDX.ADD_CHILD(journal_tabs, rt)
 	RETURN rt
 ENDFUNC
 
 SUB build_journal()
-	journal_layer = GODOT.NEW("CanvasLayer")
-	GODOT.SET(journal_layer, "layer", 60)
-	GODOT.ADD_CHILD(self_h, journal_layer)
-	journal_panel = GODOT.NEW("Panel")
+	journal_layer = GDX.NEW("CanvasLayer")
+	GDX.SET(journal_layer, "layer", 60)
+	GDX.ADD_CHILD(self_h, journal_layer)
+	journal_panel = GDX.NEW("Panel")
 	set_rect(journal_panel, 0.15, 0.1, 0.85, 0.9, 0.0, 0.0, 0.0, 0.0)
-	GODOT.SET(journal_panel, "visible", FALSE)
-	GODOT.ADD_CHILD(journal_layer, journal_panel)
-	journal_tabs = GODOT.NEW("TabContainer")
+	GDX.SET(journal_panel, "visible", FALSE)
+	GDX.ADD_CHILD(journal_layer, journal_panel)
+	journal_tabs = GDX.NEW("TabContainer")
 	set_rect(journal_tabs, 0.0, 0.0, 1.0, 1.0, 12.0, 12.0, -12.0, -12.0)
-	GODOT.ADD_CHILD(journal_panel, journal_tabs)
+	GDX.ADD_CHILD(journal_panel, journal_tabs)
 	journal_q = make_tab("Quests")
 	journal_i = make_tab("Inventory")
 	journal_w = make_tab("World")
@@ -2065,26 +2065,26 @@ FUNC world_text()
 ENDFUNC
 
 SUB refresh_journal()
-	GODOT.SET(journal_q, "text", quests_text())
-	GODOT.SET(journal_i, "text", inventory_text())
-	GODOT.SET(journal_w, "text", world_text())
+	GDX.SET(journal_q, "text", quests_text())
+	GDX.SET(journal_i, "text", inventory_text())
+	GDX.SET(journal_w, "text", world_text())
 ENDSUB
 
 SUB open_journal()
 	refresh_journal()
-	GODOT.SET(journal_panel, "visible", TRUE)
+	GDX.SET(journal_panel, "visible", TRUE)
 	journal_open = TRUE
-	GODOT.INPUT.SET_MOUSE_MODE(0)
-	GODOT.CALL(player_h, "set_physics_process", FALSE)
-	GODOT.CALL(player_h, "set_process_unhandled_input", FALSE)
+	GDX.INPUT.SET_MOUSE_MODE(0)
+	GDX.CALL(player_h, "set_physics_process", FALSE)
+	GDX.CALL(player_h, "set_process_unhandled_input", FALSE)
 ENDSUB
 
 SUB close_journal()
-	GODOT.SET(journal_panel, "visible", FALSE)
+	GDX.SET(journal_panel, "visible", FALSE)
 	journal_open = FALSE
-	GODOT.INPUT.SET_MOUSE_MODE(2)
-	GODOT.CALL(player_h, "set_physics_process", TRUE)
-	GODOT.CALL(player_h, "set_process_unhandled_input", TRUE)
+	GDX.INPUT.SET_MOUSE_MODE(2)
+	GDX.CALL(player_h, "set_physics_process", TRUE)
+	GDX.CALL(player_h, "set_process_unhandled_input", TRUE)
 ENDSUB
 
 ' A topic key (0=Quests,1=Inventory,2=World): open to that tab, or close if
@@ -2096,27 +2096,27 @@ SUB journal_key(tab)
 	ENDIF
 	IF NOT journal_open THEN open_journal()
 	journal_tab = tab
-	GODOT.SET(journal_tabs, "current_tab", tab)
+	GDX.SET(journal_tabs, "current_tab", tab)
 ENDSUB
 
 ' Drain chest loot queued on our "loot_inbox" meta into the brain inventory.
 SUB drain_loot()
-	IF NOT GODOT.CALL(self_h, "has_meta", "loot_inbox") THEN RETURN
-	DIM inbox = GODOT.CALL(self_h, "get_meta", "loot_inbox")
+	IF NOT GDX.CALL(self_h, "has_meta", "loot_inbox") THEN RETURN
+	DIM inbox = GDX.CALL(self_h, "get_meta", "loot_inbox")
 	IF LEN(inbox) = 0 THEN RETURN
 	FOR i = 0 TO LEN(inbox) - 1
 		add_inventory_item(inbox[i]{"name"}, inbox[i]{"source"})
 	NEXT
-	GODOT.CALL(self_h, "set_meta", "loot_inbox", [])
+	GDX.CALL(self_h, "set_meta", "loot_inbox", [])
 ENDSUB
 
 SUB load_data()
-	g_files{"npcs"}     = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/npcs.json")
-	g_files{"lore"}     = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_lore.json")
-	g_files{"rules"}    = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dialog_rules.json")
-	g_files{"state"}    = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_state.json")
-	g_files{"story"}    = GODOT.STATIC("FileAccess", "get_file_as_string", "res://assets/data/story.json")
-	g_files{"template"} = GODOT.STATIC("FileAccess", "get_file_as_string", "res://prompts/dialog_system.tmpl")
+	g_files{"npcs"}     = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/npcs.json")
+	g_files{"lore"}     = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_lore.json")
+	g_files{"rules"}    = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/dialog_rules.json")
+	g_files{"state"}    = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/world_state.json")
+	g_files{"story"}    = GDX.STATIC("FileAccess", "get_file_as_string", "res://assets/data/story.json")
+	g_files{"template"} = GDX.STATIC("FileAccess", "get_file_as_string", "res://prompts/dialog_system.tmpl")
 	load_npcs("npcs")
 	load_world_lore("lore")
 	load_dialog_rules("rules")
@@ -2128,12 +2128,12 @@ ENDSUB
 
 SUB find_npcs()
 	npcs_found = TRUE
-	spawner_h = GODOT.CALL(self_h, "get_node", "../Spawner")
+	spawner_h = GDX.CALL(self_h, "get_node", "../Spawner")
 	IF spawner_h = 0 THEN RETURN
-	DIM kids = GODOT.CALL(spawner_h, "get_children")
+	DIM kids = GDX.CALL(spawner_h, "get_children")
 	FOR i = 0 TO LEN(kids) - 1
 		DIM k = kids[i]
-		DIM id = GODOT.GET(k, "npc_id")
+		DIM id = GDX.GET(k, "npc_id")
 		IF LEN(id) > 0 THEN
 			npc_nodes = APPEND(npc_nodes, k)
 			npc_ids = APPEND(npc_ids, id)
@@ -2146,7 +2146,7 @@ FUNC nearest_npc(px, pz)
 	DIM best = -1
 	DIM bestd = talk_range2
 	FOR i = 0 TO LEN(npc_nodes) - 1
-		DIM p = GODOT.GET(npc_nodes[i], "global_position")
+		DIM p = GDX.GET(npc_nodes[i], "global_position")
 		DIM dx = p[0] - px
 		DIM dz = p[2] - pz
 		DIM d2 = dx * dx + dz * dz
@@ -2182,15 +2182,15 @@ FUNC fmt_stage(s)
 ENDFUNC
 
 SUB append_player(t)
-	GODOT.CALL(ui_hist, "append_text", "[color=#9fd0ff]You:[/color] " + t + CHR$(10))
+	GDX.CALL(ui_hist, "append_text", "[color=#9fd0ff]You:[/color] " + t + CHR$(10))
 ENDSUB
 
 SUB append_npc(t)
-	GODOT.CALL(ui_hist, "append_text", "[color=#ffd96b]" + npc_display_name(active_npc) + ":[/color] " + fmt_stage(t) + CHR$(10))
+	GDX.CALL(ui_hist, "append_text", "[color=#ffd96b]" + npc_display_name(active_npc) + ":[/color] " + fmt_stage(t) + CHR$(10))
 ENDSUB
 
 SUB append_system(t)
-	GODOT.CALL(ui_hist, "append_text", "[color=#bbe0a0][i]" + t + "[/i][/color]" + CHR$(10))
+	GDX.CALL(ui_hist, "append_text", "[color=#bbe0a0][i]" + t + "[/i][/color]" + CHR$(10))
 ENDSUB
 
 ' Render a one-line system message straight from dialog_rules.system_lines.
@@ -2287,18 +2287,18 @@ SUB drain_events()
 		IF e{"kind"} = "act_started" THEN lk = "act_started"
 		DIM ve AS MAP = {}
 		ve{"title"} = e{"title"}
-		GODOT.CALL(ui_hist, "append_text", "[color=#d8c280][b]" + rule("system_lines", lk, ve) + "[/b][/color]" + CHR$(10))
+		GDX.CALL(ui_hist, "append_text", "[color=#d8c280][b]" + rule("system_lines", lk, ve) + "[/b][/color]" + CHR$(10))
 	NEXT
 ENDSUB
 
 SUB refresh_quest()
 	IF active_npc <> "" ANDALSO has_offerable_quest(active_npc) THEN
-		GODOT.SET(ui_quest, "text", "Quest: " + npcs{active_npc}{"quests"}[0]{"description"})
-		GODOT.SET(ui_quest, "visible", TRUE)
-		GODOT.SET(ui_accept, "visible", TRUE)
+		GDX.SET(ui_quest, "text", "Quest: " + npcs{active_npc}{"quests"}[0]{"description"})
+		GDX.SET(ui_quest, "visible", TRUE)
+		GDX.SET(ui_accept, "visible", TRUE)
 	ELSE
-		GODOT.SET(ui_quest, "visible", FALSE)
-		GODOT.SET(ui_accept, "visible", FALSE)
+		GDX.SET(ui_quest, "visible", FALSE)
+		GDX.SET(ui_accept, "visible", FALSE)
 	ENDIF
 ENDSUB
 
@@ -2308,7 +2308,7 @@ SUB on_accept_pressed()
 	DIM q = npcs{active_npc}{"quests"}[0]{"description"}
 	DIM res = accept_quest(active_npc)
 	IF res = "accepted" THEN
-		GODOT.CALL(ui_hist, "append_text", "[color=#e0d090][i]Quest accepted: " + q + "[/i][/color]" + CHR$(10))
+		GDX.CALL(ui_hist, "append_text", "[color=#e0d090][i]Quest accepted: " + q + "[/i][/color]" + CHR$(10))
 		refresh_quest()
 		want_edit = TRUE
 	ENDIF
@@ -2322,16 +2322,16 @@ SUB open_dialog(idx)
 	active_npc  = npc_ids[idx]
 	active_node = npc_nodes[idx]
 	awaiting = FALSE
-	GODOT.SET(hint_lbl, "visible", FALSE)
-	GODOT.SET(ui_name, "text", npc_display_name(active_npc))
-	GODOT.SET(ui_hist, "text", "")
-	GODOT.SET(ui_status, "text", "")
-	GODOT.SET(ui_panel, "visible", TRUE)
-	GODOT.INPUT.SET_MOUSE_MODE(0)
+	GDX.SET(hint_lbl, "visible", FALSE)
+	GDX.SET(ui_name, "text", npc_display_name(active_npc))
+	GDX.SET(ui_hist, "text", "")
+	GDX.SET(ui_status, "text", "")
+	GDX.SET(ui_panel, "visible", TRUE)
+	GDX.INPUT.SET_MOUSE_MODE(0)
 	' Pause the whole tree (player, NPCs, day/night) so there's no input
 	' contention; this manager + its UI run with PROCESS_MODE_ALWAYS, set in
 	' _ready, so the dialog stays live and the LineEdit reliably gets text.
-	GODOT.SET(GODOT.CALL(self_h, "get_tree"), "paused", TRUE)
+	GDX.SET(GDX.CALL(self_h, "get_tree"), "paused", TRUE)
 	focus_clear = TRUE
 	want_edit = TRUE
 	DIM g = start_dialog(active_npc)
@@ -2343,10 +2343,10 @@ SUB close_dialog()
 	active_npc  = ""
 	active_node = 0
 	awaiting = FALSE
-	GODOT.SET(ui_panel, "visible", FALSE)
-	GODOT.CALL(ui_input, "clear")
-	GODOT.SET(GODOT.CALL(self_h, "get_tree"), "paused", FALSE)
-	GODOT.INPUT.SET_MOUSE_MODE(2)
+	GDX.SET(ui_panel, "visible", FALSE)
+	GDX.CALL(ui_input, "clear")
+	GDX.SET(GDX.CALL(self_h, "get_tree"), "paused", FALSE)
+	GDX.INPUT.SET_MOUSE_MODE(2)
 ENDSUB
 
 SUB on_submit(t)
@@ -2354,18 +2354,18 @@ SUB on_submit(t)
 	IF awaiting THEN RETURN
 	IF LEN(t) = 0 THEN RETURN
 	append_player(t)
-	GODOT.CALL(ui_input, "clear")
+	GDX.CALL(ui_input, "clear")
 	awaiting = TRUE
-	GODOT.SET(ui_status, "text", "...thinking")
+	GDX.SET(ui_status, "text", "...thinking")
 	continue_dialog(active_npc, t)
 ENDSUB
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 	' PROCESS_MODE_ALWAYS (3): keep this manager + its dialog UI running even
 	' while the tree is paused during a conversation.
-	GODOT.SET(self_h, "process_mode", 3)
-	player_h = GODOT.CALL(self_h, "get_node", "../Player")
+	GDX.SET(self_h, "process_mode", 3)
+	player_h = GDX.CALL(self_h, "get_node", "../Player")
 	load_data()
 	build_ui()
 	build_journal()
@@ -2383,9 +2383,9 @@ SUB _process(delta)
 		boot_phase = 3
 		dialog_init_with(g_model_path, 99)
 		IF g_llm <> 0 THEN g_ready = TRUE
-		GODOT.CALL(splash_layer, "queue_free")
+		GDX.CALL(splash_layer, "queue_free")
 		' Signal the music manager that the (blocking) model load is done.
-		GODOT.CALL(self_h, "set_meta", "llm_ready", TRUE)
+		GDX.CALL(self_h, "set_meta", "llm_ready", TRUE)
 		RETURN
 	ENDIF
 	IF NOT g_ready THEN RETURN
@@ -2393,9 +2393,9 @@ SUB _process(delta)
 	drain_loot()
 
 	' Journal tabs: Q = Quests, I = Inventory, J = World (only outside dialog).
-	DIM kq = GODOT.INPUT.IS_KEY_PRESSED(81)
-	DIM ki = GODOT.INPUT.IS_KEY_PRESSED(73)
-	DIM kj = GODOT.INPUT.IS_KEY_PRESSED(74)
+	DIM kq = GDX.INPUT.IS_KEY_PRESSED(81)
+	DIM ki = GDX.INPUT.IS_KEY_PRESSED(73)
+	DIM kj = GDX.INPUT.IS_KEY_PRESSED(74)
 	IF active_npc = "" THEN
 		IF kq ANDALSO NOT q_was THEN journal_key(0)
 		IF ki ANDALSO NOT i_was THEN journal_key(1)
@@ -2405,7 +2405,7 @@ SUB _process(delta)
 	i_was = ki
 	j_was = kj
 	IF journal_open THEN
-		IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("ui_cancel") THEN close_journal()
+		IF GDX.INPUT.IS_ACTION_JUST_PRESSED("ui_cancel") THEN close_journal()
 		RETURN
 	ENDIF
 
@@ -2413,9 +2413,9 @@ SUB _process(delta)
 		' Grab the input box only when needed (not every frame) so a click on
 		' the Accept Quest button isn't stolen back by a constant re-focus.
 		IF want_edit ANDALSO NOT awaiting THEN
-			GODOT.CALL(ui_input, "edit")
+			GDX.CALL(ui_input, "edit")
 			IF focus_clear THEN
-				GODOT.CALL(ui_input, "clear")
+				GDX.CALL(ui_input, "clear")
 				focus_clear = FALSE
 			ENDIF
 			want_edit = FALSE
@@ -2424,24 +2424,24 @@ SUB _process(delta)
 			DIM acts = poll_reply(active_npc)
 			IF LEN(acts) > 0 THEN
 				awaiting = FALSE
-				GODOT.SET(ui_status, "text", "")
+				GDX.SET(ui_status, "text", "")
 				dispatch_actions(acts)
 				drain_events()
 				refresh_quest()
 				want_edit = TRUE
 			ENDIF
 		ENDIF
-		IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("ui_cancel") THEN close_dialog()
+		IF GDX.INPUT.IS_ACTION_JUST_PRESSED("ui_cancel") THEN close_dialog()
 		RETURN
 	ENDIF
 
-	DIM pp = GODOT.GET(player_h, "global_position")
+	DIM pp = GDX.GET(player_h, "global_position")
 	DIM idx = nearest_npc(pp[0], pp[2])
 	IF idx >= 0 THEN
-		GODOT.SET(hint_lbl, "text", "[E] Talk to " + npc_display_name(npc_ids[idx]))
-		GODOT.SET(hint_lbl, "visible", TRUE)
-		IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("use") THEN open_dialog(idx)
+		GDX.SET(hint_lbl, "text", "[E] Talk to " + npc_display_name(npc_ids[idx]))
+		GDX.SET(hint_lbl, "visible", TRUE)
+		IF GDX.INPUT.IS_ACTION_JUST_PRESSED("use") THEN open_dialog(idx)
 	ELSE
-		GODOT.SET(hint_lbl, "visible", FALSE)
+		GDX.SET(hint_lbl, "visible", FALSE)
 	ENDIF
 ENDSUB

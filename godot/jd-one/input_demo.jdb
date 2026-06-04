@@ -1,9 +1,9 @@
 EXTENDS Node2D
 
-' Pure-jdBasic mini-game showcasing GODOT.INPUT.*.
+' Pure-jdBasic mini-game showcasing GDX.INPUT.*.
 '
 ' No GDScript wrapper. This .jdb IS the script. _ready / _process /
-' _input / _draw are engine callbacks (Tier 3); GODOT.* + GODOT.INPUT.*
+' _input / _draw are engine callbacks (Tier 3); GDX.* + GDX.INPUT.*
 ' do everything else (Tier 4 natives).
 '
 ' Game rules:
@@ -84,18 +84,18 @@ SUB reset_world()
 ENDSUB
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 	' Background lives on a CanvasLayer below Node2D so it doesn't
 	' cover the _draw output; HUD lives on a CanvasLayer above it.
-	hud_h  = GODOT.CALL(self_h, "get_node", "UILayer/HUD")
-	hint_h = GODOT.CALL(self_h, "get_node", "UILayer/Hint")
-	bg_h   = GODOT.CALL(self_h, "get_node", "BackgroundLayer/Background")
+	hud_h  = GDX.CALL(self_h, "get_node", "UILayer/HUD")
+	hint_h = GDX.CALL(self_h, "get_node", "UILayer/Hint")
+	bg_h   = GDX.CALL(self_h, "get_node", "BackgroundLayer/Background")
 
 	field_w = 1024.0
 	field_h = 720.0
 
 	dot_target = dot_target_init
-	GODOT.SET(hint_h, "text", "WASD: move    Shift: sprint    Space: dash    R: reset    E: spawn    LMB: flag    Esc: pause")
+	GDX.SET(hint_h, "text", "WASD: move    Shift: sprint    Space: dash    R: reset    E: spawn    LMB: flag    Esc: pause")
 	reset_world()
 ENDSUB
 
@@ -103,15 +103,15 @@ SUB tick_player(dt)
 	IF dash_cooldown > 0.0 THEN dash_cooldown = dash_cooldown - dt
 	IF dash_until > 0.0 THEN dash_until = dash_until - dt
 
-	DIM mv = GODOT.INPUT.GET_VECTOR("move_left", "move_right", "move_up", "move_down")
+	DIM mv = GDX.INPUT.GET_VECTOR("move_left", "move_right", "move_up", "move_down")
 	DIM mx = mv[0]
 	DIM my = mv[1]
 
 	DIM speed = speed_base
-	IF GODOT.INPUT.IS_ACTION_PRESSED("sprint") THEN speed = speed * sprint_mul
+	IF GDX.INPUT.IS_ACTION_PRESSED("sprint") THEN speed = speed * sprint_mul
 	IF dash_until > 0.0 THEN speed = dash_speed
 
-	IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("dash") ANDALSO dash_cooldown <= 0.0 THEN
+	IF GDX.INPUT.IS_ACTION_JUST_PRESSED("dash") ANDALSO dash_cooldown <= 0.0 THEN
 		IF mx <> 0.0 ORELSE my <> 0.0 THEN
 			dash_until = dash_dur
 			dash_cooldown = dash_cool
@@ -119,7 +119,7 @@ SUB tick_player(dt)
 		ENDIF
 	ENDIF
 
-	IF GODOT.INPUT.IS_ACTION_JUST_PRESSED("reset") THEN
+	IF GDX.INPUT.IS_ACTION_JUST_PRESSED("reset") THEN
 		reset_world()
 		RETURN
 	ENDIF
@@ -160,15 +160,15 @@ SUB tick_pickups()
 ENDSUB
 
 SUB update_hud()
-	DIM mp = GODOT.INPUT.MOUSE_POSITION()
+	DIM mp = GDX.INPUT.MOUSE_POSITION()
 	DIM mx_i = INT(mp[0])
 	DIM my_i = INT(mp[1])
 	DIM flags = ""
-	IF GODOT.INPUT.IS_ACTION_PRESSED("sprint") THEN flags = flags + "SPRINT "
+	IF GDX.INPUT.IS_ACTION_PRESSED("sprint") THEN flags = flags + "SPRINT "
 	IF paused THEN flags = flags + "PAUSED "
 	DIM txt = "Score: " + STR$(score) + "    " + flags + "   dash CD: " + STR$(dash_cooldown)
 	txt = txt + CHR$(10) + "mouse: (" + STR$(mx_i) + ", " + STR$(my_i) + ")    last: " + last_event
-	GODOT.SET(hud_h, "text", txt)
+	GDX.SET(hud_h, "text", txt)
 ENDSUB
 
 SUB _process(delta)
@@ -177,20 +177,20 @@ SUB _process(delta)
 		tick_pickups()
 	ENDIF
 	update_hud()
-	GODOT.CALL(self_h, "queue_redraw")
+	GDX.CALL(self_h, "queue_redraw")
 ENDSUB
 
 ' Discrete-action handling. _input gets one InputEvent per fired event.
 ' We only react to the ones not covered by the polling actions above
 ' (Esc pause, E spawn, LMB plant flag). The event handle marshals as a
-' Godot Object so GODOT.GET reads its fields.
+' Godot Object so GDX.GET reads its fields.
 SUB _input(event)
-	DIM gdcls = GODOT.CALL(event, "get_class")
+	DIM gdcls = GDX.CALL(event, "get_class")
 	IF gdcls = "InputEventKey" THEN
-		DIM pressed = GODOT.GET(event, "pressed")
-		DIM echo    = GODOT.GET(event, "echo")
+		DIM pressed = GDX.GET(event, "pressed")
+		DIM echo    = GDX.GET(event, "echo")
 		IF pressed ANDALSO NOT echo THEN
-			DIM kc = GODOT.GET(event, "keycode")
+			DIM kc = GDX.GET(event, "keycode")
 			IF kc = KEY_ESCAPE THEN
 				paused = NOT paused
 				IF paused THEN
@@ -204,11 +204,11 @@ SUB _input(event)
 			ENDIF
 		ENDIF
 	ELSEIF gdcls = "InputEventMouseButton" THEN
-		IF GODOT.GET(event, "pressed") THEN
-			DIM btn = GODOT.GET(event, "button_index")
+		IF GDX.GET(event, "pressed") THEN
+			DIM btn = GDX.GET(event, "button_index")
 			' MOUSE_BUTTON_LEFT == 1
 			IF btn = 1 THEN
-				DIM mp = GODOT.INPUT.MOUSE_POSITION()
+				DIM mp = GDX.INPUT.MOUSE_POSITION()
 				flag_x = mp[0]
 				flag_y = mp[1]
 				last_event = "flag planted at " + STR$(INT(flag_x)) + "," + STR$(INT(flag_y))
@@ -224,56 +224,56 @@ SUB _draw()
 	' reject the typeless arg.
 
 	' Dots first, so the player covers them when standing on top.
-	DIM yellow      = GODOT.COLOR(1.0, 0.85, 0.3, 1.0)
-	DIM yellow_core = GODOT.COLOR(1.0, 1.0, 0.6, 1.0)
+	DIM yellow      = GDX.COLOR(1.0, 0.85, 0.3, 1.0)
+	DIM yellow_core = GDX.COLOR(1.0, 1.0, 0.6, 1.0)
 	FOR i = 0 TO LEN(dots) - 1
 		DIM d = dots[i]
-		DIM c = GODOT.VEC2(d{"x"}, d{"y"})
-		GODOT.CALL(self_h, "draw_circle", c, dot_radius, yellow)
-		GODOT.CALL(self_h, "draw_circle", c, dot_radius * 0.45, yellow_core)
+		DIM c = GDX.VEC2(d{"x"}, d{"y"})
+		GDX.CALL(self_h, "draw_circle", c, dot_radius, yellow)
+		GDX.CALL(self_h, "draw_circle", c, dot_radius * 0.45, yellow_core)
 	NEXT
 
 	' Player colour cycles by state.
-	DIM player_col = GODOT.COLOR(0.45, 0.78, 1.0, 1.0)
+	DIM player_col = GDX.COLOR(0.45, 0.78, 1.0, 1.0)
 	IF dash_until > 0.0 THEN
-		player_col = GODOT.COLOR(1.0, 0.55, 0.3, 1.0)
-	ELSEIF GODOT.INPUT.IS_ACTION_PRESSED("sprint") THEN
-		player_col = GODOT.COLOR(0.55, 1.0, 0.55, 1.0)
+		player_col = GDX.COLOR(1.0, 0.55, 0.3, 1.0)
+	ELSEIF GDX.INPUT.IS_ACTION_PRESSED("sprint") THEN
+		player_col = GDX.COLOR(0.55, 1.0, 0.55, 1.0)
 	ENDIF
-	DIM ppos = GODOT.VEC2(player_x, player_y)
-	GODOT.CALL(self_h, "draw_circle", ppos, player_radius, player_col)
+	DIM ppos = GDX.VEC2(player_x, player_y)
+	GDX.CALL(self_h, "draw_circle", ppos, player_radius, player_col)
 
 	' Direction indicator - a short line pointing in the way the
 	' player is moving. Length tracks speed.
 	IF player_vx <> 0.0 ORELSE player_vy <> 0.0 THEN
 		DIM nose_x = player_x + player_vx * 0.08
 		DIM nose_y = player_y + player_vy * 0.08
-		DIM nose   = GODOT.VEC2(nose_x, nose_y)
-		DIM dark   = GODOT.COLOR(0.0, 0.0, 0.0, 0.55)
-		GODOT.CALL(self_h, "draw_line", ppos, nose, dark, 3.0)
+		DIM nose   = GDX.VEC2(nose_x, nose_y)
+		DIM dark   = GDX.COLOR(0.0, 0.0, 0.0, 0.55)
+		GDX.CALL(self_h, "draw_line", ppos, nose, dark, 3.0)
 	ENDIF
 
 	' Mouse cursor + aim line.
-	DIM mp = GODOT.INPUT.MOUSE_POSITION()
-	DIM gdcursor = GODOT.VEC2(mp[0], mp[1])
-	DIM faint  = GODOT.COLOR(0.7, 0.7, 0.9, 0.25)
-	DIM cur_c  = GODOT.COLOR(0.9, 0.9, 1.0, 0.7)
-	GODOT.CALL(self_h, "draw_line", ppos, gdcursor, faint, 1.0)
-	GODOT.CALL(self_h, "draw_circle", gdcursor, 4.0, cur_c)
+	DIM mp = GDX.INPUT.MOUSE_POSITION()
+	DIM gdcursor = GDX.VEC2(mp[0], mp[1])
+	DIM faint  = GDX.COLOR(0.7, 0.7, 0.9, 0.25)
+	DIM cur_c  = GDX.COLOR(0.9, 0.9, 1.0, 0.7)
+	GDX.CALL(self_h, "draw_line", ppos, gdcursor, faint, 1.0)
+	GDX.CALL(self_h, "draw_circle", gdcursor, 4.0, cur_c)
 
 	' Planted flag (if any).
 	IF flag_x >= 0.0 ANDALSO flag_y >= 0.0 THEN
-		DIM pole_top = GODOT.VEC2(flag_x, flag_y - 18.0)
-		DIM pole_bot = GODOT.VEC2(flag_x, flag_y + 4.0)
-		DIM white    = GODOT.COLOR(1.0, 1.0, 1.0, 1.0)
-		GODOT.CALL(self_h, "draw_line", pole_top, pole_bot, white, 2.0)
+		DIM pole_top = GDX.VEC2(flag_x, flag_y - 18.0)
+		DIM pole_bot = GDX.VEC2(flag_x, flag_y + 4.0)
+		DIM white    = GDX.COLOR(1.0, 1.0, 1.0, 1.0)
+		GDX.CALL(self_h, "draw_line", pole_top, pole_bot, white, 2.0)
 		' A small red triangle as the flag itself (3 line segments).
-		DIM red = GODOT.COLOR(0.95, 0.25, 0.3, 1.0)
-		DIM p1  = GODOT.VEC2(flag_x, flag_y - 18.0)
-		DIM p2  = GODOT.VEC2(flag_x + 14.0, flag_y - 12.0)
-		DIM p3  = GODOT.VEC2(flag_x, flag_y - 6.0)
-		GODOT.CALL(self_h, "draw_line", p1, p2, red, 2.0)
-		GODOT.CALL(self_h, "draw_line", p2, p3, red, 2.0)
-		GODOT.CALL(self_h, "draw_line", p3, p1, red, 2.0)
+		DIM red = GDX.COLOR(0.95, 0.25, 0.3, 1.0)
+		DIM p1  = GDX.VEC2(flag_x, flag_y - 18.0)
+		DIM p2  = GDX.VEC2(flag_x + 14.0, flag_y - 12.0)
+		DIM p3  = GDX.VEC2(flag_x, flag_y - 6.0)
+		GDX.CALL(self_h, "draw_line", p1, p2, red, 2.0)
+		GDX.CALL(self_h, "draw_line", p2, p3, red, 2.0)
+		GDX.CALL(self_h, "draw_line", p3, p1, red, 2.0)
 	ENDIF
 ENDSUB

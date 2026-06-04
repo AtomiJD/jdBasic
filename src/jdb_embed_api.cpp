@@ -78,10 +78,49 @@ struct JdbEmbedImpl {
     }
 };
 
+// Bundled jdBasic modules served to IMPORT from memory. The embed has no
+// filesystem module reader, so IMPORT was unavailable; this re-enables it for
+// libraries we ship inside the runtime. GDX is the convenience layer over the
+// GDX.* native primitives (CharacterBody helpers, timing, ...).
+static const char* GDX_MODULE_SRC =
+    "EXPORT MODULE GDX\n"
+    "EXPORT FUNC MOVE_AND_SLIDE(n)\n"
+    "    RETURN GDX.CALL(n, \"move_and_slide\")\n"
+    "ENDFUNC\n"
+    "EXPORT FUNC IS_ON_FLOOR(n)\n"
+    "    RETURN GDX.CALL(n, \"is_on_floor\")\n"
+    "ENDFUNC\n"
+    "EXPORT FUNC IS_ON_WALL(n)\n"
+    "    RETURN GDX.CALL(n, \"is_on_wall\")\n"
+    "ENDFUNC\n"
+    "EXPORT FUNC IS_ON_CEILING(n)\n"
+    "    RETURN GDX.CALL(n, \"is_on_ceiling\")\n"
+    "ENDFUNC\n"
+    "EXPORT FUNC GET_VELOCITY(n)\n"
+    "    RETURN GDX.GET(n, \"velocity\")\n"
+    "ENDFUNC\n"
+    "EXPORT FUNC SET_VELOCITY(n, v)\n"
+    "    RETURN GDX.SET(n, \"velocity\", v)\n"
+    "ENDFUNC\n"
+    "EXPORT FUNC TIME_MS()\n"
+    "    RETURN GDX.CALL(GDX.SINGLETON(\"Time\"), \"get_ticks_msec\")\n"
+    "ENDFUNC\n"
+    "EXPORT FUNC TIME_SEC()\n"
+    "    RETURN GDX.CALL(GDX.SINGLETON(\"Time\"), \"get_ticks_usec\") / 1000000.0\n"
+    "ENDFUNC\n";
+
+static std::pair<std::string, std::string> bundled_module_reader(const std::string& name) {
+    std::string up = name;
+    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+    if (up == "GDX") return { std::string(GDX_MODULE_SRC), std::string("res://__bundled__/gdx.jdb") };
+    return { std::string(), std::string() };
+}
+
 void run_source(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
     Parser parser(tokens);
+    parser.file_reader = bundled_module_reader;
     auto ast = parser.parse();
     Compiler c;
     c.compile(ast);
@@ -97,6 +136,7 @@ std::string recompile_source(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
     Parser parser(tokens);
+    parser.file_reader = bundled_module_reader;
     auto ast = parser.parse();
     Compiler c;
     c.compile(ast);
@@ -119,6 +159,7 @@ void setup(JdbEmbedImpl* e) {
             Lexer lexer(code + "\n");
             auto tokens = lexer.tokenize();
             Parser parser(tokens);
+            parser.file_reader = bundled_module_reader;
             (void)parser.parse();
             return "";
         } catch (const std::exception& ex) {
@@ -371,6 +412,7 @@ JDB_EMBED_API char* jdb_embed_check_standalone(const char* source) {
         Lexer lexer(src);
         auto tokens = lexer.tokenize();
         Parser parser(tokens);
+        parser.file_reader = bundled_module_reader;
         (void)parser.parse();
         return nullptr;  // success
     } catch (const std::exception& ex) {
@@ -636,7 +678,7 @@ JDB_EMBED_API int jdb_embed_register_native(JdbEmbed* eh,
     };
     e->vm.register_native(name, min_args, max_args, wrapper);
     // Host-supplied natives must never broadcast: when a script passes
-    // an array (e.g. GODOT.COLOR result), the host expects ONE call with
+    // an array (e.g. GDX.COLOR result), the host expects ONE call with
     // the whole array, not N calls with element scalars.
     e->vm.extra_no_vectorize.insert(name);
     return 1;

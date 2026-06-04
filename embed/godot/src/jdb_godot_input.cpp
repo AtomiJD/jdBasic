@@ -1,4 +1,4 @@
-// GODOT.INPUT.* native suite - implementation.
+// GDX.INPUT.* native suite - implementation.
 
 #ifdef GODOT
 
@@ -145,7 +145,7 @@ static int64_t native_is_mouse_button_pressed(JdbEmbed* vm, int argc, const int6
     return jdb_embed_make_bool(vm, v ? 1 : 0);
 }
 
-// GODOT.INPUT.SET_MOUSE_MODE(mode) - 0 visible, 1 hidden, 2 captured,
+// GDX.INPUT.SET_MOUSE_MODE(mode) - 0 visible, 1 hidden, 2 captured,
 // 3 confined, 4 confined+hidden.
 static int64_t native_set_mouse_mode(JdbEmbed* vm, int argc, const int64_t* args, void* /*ud*/) {
     if (argc < 1) return jdb_embed_make_nil(vm);
@@ -192,19 +192,19 @@ static int64_t native_pending_events(JdbEmbed* vm, int /*argc*/, const int64_t* 
 void godot::register_godot_input_natives(JdbEmbed* vm, InputEventQueue* queue) {
     if (!vm) return;
     void* q = static_cast<void*>(queue);
-    jdb_embed_register_native(vm, "GODOT.INPUT.IS_ACTION_PRESSED",       1, 1, &native_is_action_pressed,       nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.IS_ACTION_JUST_PRESSED",  1, 1, &native_is_action_just_pressed,  nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.IS_ACTION_JUST_RELEASED", 1, 1, &native_is_action_just_released, nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.GET_ACTION_STRENGTH",     1, 1, &native_get_action_strength,     nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.GET_AXIS",                2, 2, &native_get_axis,                nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.GET_VECTOR",              4, 4, &native_get_vector,              nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.IS_KEY_PRESSED",          1, 1, &native_is_key_pressed,          nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.MOUSE_POSITION",          0, 0, &native_mouse_position,          nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.MOUSE_VELOCITY",          0, 0, &native_mouse_velocity,          nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.IS_MOUSE_BUTTON_PRESSED", 1, 1, &native_is_mouse_button_pressed, nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.SET_MOUSE_MODE",          1, 1, &native_set_mouse_mode,          nullptr);
-    jdb_embed_register_native(vm, "GODOT.INPUT.POLL_EVENT",              0, 0, &native_poll_event,              q);
-    jdb_embed_register_native(vm, "GODOT.INPUT.PENDING_EVENTS",          0, 0, &native_pending_events,          q);
+    jdb_embed_register_native(vm, "GDX.INPUT.IS_ACTION_PRESSED",       1, 1, &native_is_action_pressed,       nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.IS_ACTION_JUST_PRESSED",  1, 1, &native_is_action_just_pressed,  nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.IS_ACTION_JUST_RELEASED", 1, 1, &native_is_action_just_released, nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.GET_ACTION_STRENGTH",     1, 1, &native_get_action_strength,     nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.GET_AXIS",                2, 2, &native_get_axis,                nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.GET_VECTOR",              4, 4, &native_get_vector,              nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.IS_KEY_PRESSED",          1, 1, &native_is_key_pressed,          nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.MOUSE_POSITION",          0, 0, &native_mouse_position,          nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.MOUSE_VELOCITY",          0, 0, &native_mouse_velocity,          nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.IS_MOUSE_BUTTON_PRESSED", 1, 1, &native_is_mouse_button_pressed, nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.SET_MOUSE_MODE",          1, 1, &native_set_mouse_mode,          nullptr);
+    jdb_embed_register_native(vm, "GDX.INPUT.POLL_EVENT",              0, 0, &native_poll_event,              q);
+    jdb_embed_register_native(vm, "GDX.INPUT.PENDING_EVENTS",          0, 0, &native_pending_events,          q);
 }
 
 #endif  // GODOT

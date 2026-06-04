@@ -38,7 +38,7 @@ public:
 
     // Push an InputEvent description into the per-VM queue. GDScript
     // wires its own _input(event) hook to this. From jdBasic, drain
-    // via GODOT.INPUT.POLL_EVENT().
+    // via GDX.INPUT.POLL_EVENT().
     void push_input_event(const String& kind,
                           const String& action,
                           const String& type,

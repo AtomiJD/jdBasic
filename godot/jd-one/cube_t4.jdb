@@ -3,7 +3,7 @@ EXTENDS Node3D
 ' Tier 4 demo - pure-jdBasic cube spinner.
 '
 ' No GDScript glue: this .jdb IS the script. _ready / _process are
-' engine callbacks (Tier 3); the GODOT.* native suite (Tier 4) lets us
+' engine callbacks (Tier 3); the GDX.* native suite (Tier 4) lets us
 ' reach the owning Node and set its rotation directly.
 
 SIGNAL spin_changed(new_speed)
@@ -17,46 +17,46 @@ DIM self_h   = 0
 DIM cube_h   = 0
 
 SUB Flupp()
-	GODOT.PRINT("Flupp")
+	GDX.PRINT("Flupp")
 ENDSUB
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 	' The cube is the first MeshInstance3D child - look it up once via
 	' the Node API and cache the handle.
-	cube_h = GODOT.CALL(self_h, "get_node", "Cube")
-	GODOT.PRINT("cube_t4 ready - rot_speed =", rot_speed, ", wobble =", wobble)
+	cube_h = GDX.CALL(self_h, "get_node", "Cube")
+	GDX.PRINT("cube_t4 ready - rot_speed =", rot_speed, ", wobble =", wobble)
 ENDSUB
 
 SUB _process(delta)
 	angle    = angle + rot_speed * delta
 	time_acc = time_acc + delta
 	DIM y = angle + SIN(time_acc * 6.0) * wobble
-	'GODOT.PRINT("lall", delta, "y: ", y, "rot_speed: ", rot_speed)
+	'GDX.PRINT("lall", delta, "y: ", y, "rot_speed: ", rot_speed)
 	' rotation:y indexes into the Vector3 'rotation' property.
 	' Rotate the cube CHILD, NOT the root - rotating the root would
 	' carry the Camera + Sun along and the cube would look static.
-	GODOT.SET(cube_h, "rotation:y", y)
+	GDX.SET(cube_h, "rotation:y", y)
 	' Hue cycle on the cube's material colour (cube has an Override).
 	DIM hue_norm = (angle * 0.15) MOD 1.0
-	DIM mat_h = GODOT.GET(cube_h, "material_override")
+	DIM mat_h = GDX.GET(cube_h, "material_override")
 	' RGB rotation: shift by hue_norm * 3.0 across the channels.
 	DIM phase = hue_norm * 6.2831853
 	DIM r = 0.5 + 0.45 * SIN(phase)
 	DIM g = 0.5 + 0.45 * SIN(phase + 2.0944)
 	DIM b = 0.5 + 0.45 * SIN(phase + 4.1888)
-	GODOT.SET(mat_h, "albedo_color", GODOT.COLOR(r, g, b, 1.0))
-	'GODOT.PRINT("lall", angle)
+	GDX.SET(mat_h, "albedo_color", GDX.COLOR(r, g, b, 1.0))
+	'GDX.PRINT("lall", angle)
 	IF angle > 6.28 THEN
-	  GODOT.EMIT(self_h, "spin_changed", rot_speed)
+	  GDX.EMIT(self_h, "spin_changed", rot_speed)
 	  angle = 0.0
 	ENDIF
-	print(vm.eval_expr('GODOT.INPUT.IS_ACTION_PRESSED("ui_accept")'))
+	print(vm.eval_expr('GDX.INPUT.IS_ACTION_PRESSED("ui_accept")'))
 ENDSUB
 
 SUB _lall(w)
-	GODOT.PRINT("Chrissi")
-	GODOT.PRINT("Signal at", GODOT.TIME_MS(), "ms with speed", w)
+	GDX.PRINT("Chrissi")
+	GDX.PRINT("Signal at", GDX.TIME_MS(), "ms with speed", w)
 	FLUPP()
 	
 ENDSUB

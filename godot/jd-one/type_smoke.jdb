@@ -7,26 +7,26 @@ EXTENDS Node
 DIM self_h = 0
 
 SUB _ready()
-	self_h = GODOT.SELF()
+	self_h = GDX.SELF()
 
 	' MAP <-> Dictionary
 	DIM m AS MAP = {}
 	m{"hp"} = 100
 	m{"name"} = "Tylen"
-	GODOT.CALL(self_h, "set_meta", "blob", m)
-	DIM back = GODOT.CALL(self_h, "get_meta", "blob")
+	GDX.CALL(self_h, "set_meta", "blob", m)
+	DIM back = GDX.CALL(self_h, "get_meta", "blob")
 	PRINT "MAP   hp=" + STR$(back{"hp"}) + " name=" + back{"name"}
 
 	' Rect2 (would otherwise collide with Color as a 4-float array)
-	GODOT.CALL(self_h, "set_meta", "r", GODOT.RECT2(10.0, 20.0, 30.0, 40.0))
-	DIM r = GODOT.CALL(self_h, "get_meta", "r")
+	GDX.CALL(self_h, "set_meta", "r", GDX.RECT2(10.0, 20.0, 30.0, 40.0))
+	DIM r = GDX.CALL(self_h, "get_meta", "r")
 	PRINT "RECT2 gd=" + r{"__gd"} + " x=" + STR$(r{"x"}) + " w=" + STR$(r{"w"})
 
 	' Vector2i (integer vector, distinct from float Vector2)
-	GODOT.CALL(self_h, "set_meta", "vi", GODOT.VEC2I(3, 7))
-	DIM vi = GODOT.CALL(self_h, "get_meta", "vi")
+	GDX.CALL(self_h, "set_meta", "vi", GDX.VEC2I(3, 7))
+	DIM vi = GDX.CALL(self_h, "get_meta", "vi")
 	PRINT "VEC2I gd=" + vi{"__gd"} + " x=" + STR$(vi{"x"}) + " y=" + STR$(vi{"y"})
 
-	DIM tree_h = GODOT.CALL(self_h, "get_tree")
-	GODOT.CALL(tree_h, "quit")
+	DIM tree_h = GDX.CALL(self_h, "get_tree")
+	GDX.CALL(tree_h, "quit")
 ENDSUB
