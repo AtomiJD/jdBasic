@@ -260,6 +260,12 @@ private:
     // name hash. native_novec is computed lazily on first call (-1 = unknown).
     std::vector<NativeFunc> native_table;
     std::vector<int8_t>     native_novec;
+    // Reusable per-depth argument buffers for native calls, so a hot loop of
+    // CALL_NATIVE doesn't heap-allocate a std::vector every call. A deque keeps
+    // element references stable when a re-entrant native (one that calls back
+    // into the VM) grows the pool at a deeper level.
+    std::deque<std::vector<Value>> m_arg_pool;
+    size_t                         m_arg_depth = 0;
 
     // Bumped whenever owned_funcs / func_map changes. Per-chunk inline CALL
     // caches store this value so they can invalidate themselves on reload.

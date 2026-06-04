@@ -1740,26 +1740,33 @@ void VM::run() {
                 native_novec[slot] = nv;
             }
 
-            std::vector<Value> args(argc);
-            for (int i = argc - 1; i >= 0; i--) args[i] = pop();
-            try {
-                push(invoke_native(*fn, args, nv != 0));
-            } catch (const jdError&) {
-                throw;
-            } catch (const std::out_of_range&) {
-                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
-                throw jdError(ErrCode::WRONG_ARG_COUNT,
-                    jdb_native_name(slot) + ": wrong number of arguments (got " + std::to_string(argc) + ")", eline);
-            } catch (const std::bad_alloc&) {
-                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
-                throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": out of memory", eline);
-            } catch (const std::exception& e) {
-                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
-                throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": " + e.what(), eline);
-            } catch (...) {
-                int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
-                throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": internal error", eline);
+            // Pooled, depth-indexed arg buffer: reused across calls so a hot
+            // CALL_NATIVE loop performs no per-call heap allocation. Cleanup
+            // (release elements, pop depth) runs exactly once.
+            Value nat_result;
+            {
+                if (m_arg_depth >= m_arg_pool.size()) m_arg_pool.emplace_back();
+                std::vector<Value>& args = m_arg_pool[m_arg_depth];
+                args.resize(argc);
+                ++m_arg_depth;
+                for (int i = argc - 1; i >= 0; i--) args[i] = pop();
+                try {
+                    nat_result = invoke_native(*fn, args, nv != 0);
+                } catch (const jdError&) {
+                    args.clear(); --m_arg_depth; throw;
+                } catch (const std::exception& e) {
+                    args.clear(); --m_arg_depth;
+                    int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                    throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": " + e.what(), eline);
+                } catch (...) {
+                    args.clear(); --m_arg_depth;
+                    int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                    throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": internal error", eline);
+                }
+                args.clear();
+                --m_arg_depth;
             }
+            push(std::move(nat_result));
             break;
         }
 
