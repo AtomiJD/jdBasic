@@ -136,15 +136,6 @@ SUB load_dungeon_rect()
 	dun_z1 = org[2] + (gh + 1) * 4.0
 ENDSUB
 
-SUB setup_bus()
-	DIM asrv = GDX.SINGLETON("AudioServer")
-	IF GDX.CALL(asrv, "get_bus_index", "Music") < 0 THEN
-		GDX.CALL(asrv, "add_bus", -1)
-		DIM idx = GDX.CALL(asrv, "get_bus_count") - 1
-		GDX.CALL(asrv, "set_bus_name", idx, "Music")
-	ENDIF
-ENDSUB
-
 FUNC want_theme()
 	DIM tree = GDX.CALL(self_h, "get_tree")
 	IF GDX.CALL(tree, "is_paused") THEN RETURN "dialog"
@@ -164,8 +155,10 @@ SUB _ready()
 	SOUND.INIT
 	load_themes()
 	load_dungeon_rect()
-	setup_bus()
 
+	' The Master/Music/SFX buses come from res://default_bus_layout.tres
+	' (Project Settings -> Audio), so they exist at edit time and you can add
+	' effects / set volume on them live in the editor's Audio panel.
 	DIM gen = GDX.NEW("AudioStreamGenerator")
 	GDX.SET(gen, "mix_rate", rate)
 	GDX.SET(gen, "buffer_length", 0.3)

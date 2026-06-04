@@ -14,6 +14,10 @@ config/name="jdRPG (native)"
 run/main_scene="res://world.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 
+[audio]
+
+buses/default_bus_layout="res://default_bus_layout.tres"
+
 [input]
 
 move_left={
