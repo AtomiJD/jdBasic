@@ -200,13 +200,12 @@ SUB _ready()
 	GDX.CALL(mesh, "add_surface_from_arrays", GDX.ENUM("Mesh", "PRIMITIVE_TRIANGLES"), sa)
 	DIM mat = GDX.NEW("StandardMaterial3D")
 	GDX.SET(mat, "vertex_color_use_as_albedo", TRUE)
+	' Render both faces. Without this, slopes that face away from the camera
+	' (and the underside) get back-culled, so the ground "disappears" in the
+	' distance. Two-sided is the reliable fix for the procedural patch.
+	GDX.SET(mat, "cull_mode", GDX.ENUM("BaseMaterial3D", "CULL_DISABLED"))
 	GDX.CALL(mesh, "surface_set_material", 0, GDX.REF(mat))
 	GDX.SET(mesh_h, "mesh", GDX.REF(mesh))
-	' The procedurally built ArrayMesh sometimes gets a too-tight / degenerate
-	' cull AABB, so Godot frustum-culls the whole patch when the camera turns
-	' (the terrain "pops out"). A generous extra cull margin (terrain half-
-	' extent is ~48) keeps it always considered for drawing.
-	GDX.SET(mesh_h, "extra_cull_margin", 256.0)
 
 	' Collision: a HeightMapShape3D fed the same row-major height grid.
 	' The shape samples at 1-unit spacing, so scale the collider by

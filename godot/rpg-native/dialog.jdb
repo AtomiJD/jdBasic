@@ -77,6 +77,9 @@ EXPORT FUNC npc_init(id, data)
 	s{"color"} = data{"color"}
 	s{"quest_offered"} = FALSE
 	s{"quest_completed"} = FALSE
+	' Merchants carry a "shop" block (wares + sell_price); keep it so the
+	' dialog can show the Trade button and open the shop panel.
+	IF MAP.EXISTS(data, "shop") = TRUE THEN s{"shop"} = data{"shop"}
 	' Affinity: -100 (hates you) .. 0 (neutral) .. +100 (trusts you).
 	' Optional starting_affinity in npcs.json lets a character begin
 	' biased - default neutral 0.
