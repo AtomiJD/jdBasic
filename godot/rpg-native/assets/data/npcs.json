@@ -77,5 +77,25 @@
     "quests": [
       {"id": "deliver_parcel", "description": "Take this parcel to Maelyn. Don't open it. Don't ask. Friend.", "reward": "twelve silver", "item_given": "Sealed Parcel", "target_npc": "maelyn"}
     ]
+  },
+  {
+    "id": "rosalind",
+    "name": "Rosalind",
+    "character": "Druid",
+    "color": "#9ad8a0",
+    "lore_tags": ["arcane_and_herbs", "factions_and_rumors", "geography_and_places", "forest_and_wildlife"],
+    "spawn": [0.0, 0.0, -8.0],
+    "patrol": [
+      [0.0, 0.0, -8.0],
+      [3.0, 0.0, -8.0],
+      [3.0, 0.0, -5.0],
+      [0.0, 0.0, -5.0]
+    ],
+    "persona": "A warm, shrewd traveling merchant who runs a little stall of potions, charms and dried herbs. Cheerful and chatty, she is always (gently) trying to sell you something, dotes on customers with 'dear' and 'love', and carries a snippet of gossip from every village she has passed through.",
+    "legend": "Once a hedge-witch's apprentice, she found she was far better at haggling than at spellcraft and took her remedies on the road instead.",
+    "knowledge": "She sells healing potions, antidotes and lucky charms - 'always a fair price, dear'. The scholar Maelyn pays well for moon-herb. The blacksmith Hilda restocks her with iron charms.",
+    "quests": [
+      {"id": "restock_charms", "description": "Bring me five iron nails from old Hilda's forge and I'll make you a charm that wards off the night-cold - half price, just for you, love.", "reward": "iron charm", "item_given": "", "completes_on_flag": "charms_restocked"}
+    ]
   }
 ]
