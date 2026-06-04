@@ -132,8 +132,20 @@ SUB build_ray_hud()
 	GDX.ADD_CHILD(lay, ray_lbl)
 ENDSUB
 
+FUNC fmt3(v)
+	RETURN STR$(INT(v[0])) + "," + STR$(INT(v[1])) + "," + STR$(INT(v[2]))
+ENDFUNC
+
+FUNC fmt3f(v)
+	RETURN STR$(v[0]) + "," + STR$(v[1]) + "," + STR$(v[2])
+ENDFUNC
+
 SUB update_ray()
 	IF cam_h = 0 THEN RETURN
+	DIM pp = GDX.GET(self_h, "global_position")
+	DIM txt = "Du @ " + fmt3(pp) + CHR$(10)
+
+	' What the crosshair points at.
 	DIM cp = GDX.GET(cam_h, "global_position")
 	DIM bz = GDX.GET(cam_h, "global_transform:basis:z")
 	DIM frm = GDX.VEC3(cp[0], cp[1], cp[2])
@@ -141,13 +153,21 @@ SUB update_ray()
 	DIM hit = GDX.RAYCAST(frm, tov, -1, self_h)
 	IF hit{"hit"} THEN
 		DIM col = hit{"collider"}
-		DIM nm  = GDX.GET(col, "name")
-		DIM kls = GDX.CALL(col, "get_class")
-		DIM p   = hit{"position"}
-		GDX.SET(ray_lbl, "text", "Ziel: " + nm + " [" + kls + "]  @ " + STR$(INT(p[0])) + "," + STR$(INT(p[1])) + "," + STR$(INT(p[2])))
+		txt = txt + "Ziel: " + GDX.GET(col, "name") + " [" + GDX.CALL(col, "get_class") + "] @ " + fmt3(hit{"position"}) + "  n=" + fmt3f(hit{"normal"}) + CHR$(10)
 	ELSE
-		GDX.SET(ray_lbl, "text", "Ziel: (kein Collider - Himmel / zu weit)")
+		txt = txt + "Ziel: (kein Collider - Himmel / zu weit)" + CHR$(10)
 	ENDIF
+
+	' What is directly above the player.
+	DIM up0 = GDX.VEC3(pp[0], pp[1] + 0.5, pp[2])
+	DIM up1 = GDX.VEC3(pp[0], pp[1] + 500.0, pp[2])
+	DIM uh = GDX.RAYCAST(up0, up1, -1, self_h)
+	IF uh{"hit"} THEN
+		txt = txt + "Oben: " + GDX.GET(uh{"collider"}, "name") + " [" + GDX.CALL(uh{"collider"}, "get_class") + "] @ y=" + STR$(INT(uh{"position"}[1]))
+	ELSE
+		txt = txt + "Oben: (frei / Himmel)"
+	ENDIF
+	GDX.SET(ray_lbl, "text", txt)
 ENDSUB
 
 SUB _ready()
