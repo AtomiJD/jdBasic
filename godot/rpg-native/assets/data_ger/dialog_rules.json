@@ -1,4 +1,24 @@
 {
+  "ui": {
+    "accept_quest": "Heuer annehmen",
+    "input_placeholder": "Nachricht tippen, Enter zum Senden (Esc zum Gehen)...",
+    "loading": "Lade Schiffsorakel...",
+    "tab_quests": "Auftraege",
+    "tab_inventory": "Beutel",
+    "tab_world": "Welt",
+    "quest_prefix": "Auftrag: ",
+    "quest_accepted_log": "Auftrag angenommen: ",
+    "talk_hint": "[E] Anquatschen: ",
+    "you_label": "Du:",
+    "thinking": "...gruebelt",
+    "no_quests": "Keine offenen Auftraege.",
+    "reward_label": " - Lohn: ",
+    "completed_header": "Erledigt",
+    "inventory_empty": "Leer.",
+    "from_label": "(von ",
+    "world_nothing": "Noch hat sich nichts in der Bucht getan."
+  },
+
   "acceptance_signals": [
     "yes", "ja", "sure", "ok", "okay",
     "I'll do it", "mach ich", "ich mach das", "ich nehme das",
@@ -44,20 +64,20 @@
   },
 
   "synthetic_replies": {
-    "delivery_thanks": "*{npc} takes the {item} from you with a small smile.* The {item} from {giver} - thank you, traveler."
+    "delivery_thanks": "*{npc} nimmt dir {item} mit einem Laecheln ab.* {item} von {giver} - hab Dank, Matrose."
   },
 
   "system_lines": {
     "received_item": "+ {name}",
     "gave_item": "- {name}",
-    "quest_accepted": "Quest accepted from {npc}",
-    "quest_completed": "Quest completed: {id}",
-    "world_shifts": "World shifts: {key}",
-    "no_reply": "(no reply - try again)",
-    "affinity_up": "{npc} warms to you ({delta}, now {score})",
-    "affinity_down": "{npc} grows colder ({delta}, now {score})",
-    "act_started": "A new chapter begins: {title}",
-    "act_completed": "Chapter complete: {title}"
+    "quest_accepted": "Auftrag angenommen von {npc}",
+    "quest_completed": "Auftrag erledigt: {title}",
+    "world_shifts": "Etwas in der Bucht hat sich veraendert.",
+    "no_reply": "(keine Antwort - nochmal versuchen)",
+    "affinity_up": "{npc} mag dich mehr ({delta}, jetzt {score})",
+    "affinity_down": "{npc} wird kuehler ({delta}, jetzt {score})",
+    "act_started": "Ein neues Kapitel beginnt: {title}",
+    "act_completed": "Kapitel abgeschlossen: {title}"
   },
 
   "story_block": {
@@ -71,12 +91,12 @@
   },
 
   "rumor_templates": {
-    "saw_tracks":          "{npc} found strange tracks at the river bend",
-    "scouted_north":       "{npc} walked the northern ridge",
-    "delivered_parcel":    "{npc} delivered Vex's sealed parcel to Maelyn",
-    "wolves_thinned":      "{npc} thinned the wolf pack",
-    "keep_investigated":   "{npc} entered the old keep on the northern peak",
-    "moon_herb_collected": "{npc} brought Maelyn three moon-herb sprigs"
+    "saw_tracks":          "{npc} fand seltsame Spuren am Riff",
+    "scouted_north":       "{npc} ging den Nordkamm ab",
+    "delivered_parcel":    "{npc} brachte Kraehes Paeckchen zu Morgaine",
+    "wolves_thinned":      "{npc} vertrieb die dreisten Haie",
+    "keep_investigated":   "{npc} betrat die alte Schmugglerhoehle am Nordfelsen",
+    "moon_herb_collected": "{npc} brachte Morgaine drei Bueschel Mondkraut"
   },
 
   "rumor_max": 6,

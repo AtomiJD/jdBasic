@@ -1240,6 +1240,19 @@ EXPORT FUNC npc_display_name(id)
 	RETURN npcs{id}{"name"}
 ENDFUNC
 
+' Readable (localized) quest text for a quest id, so notifications show the
+' quest description instead of the raw internal id (e.g. "wolf_pelts").
+EXPORT FUNC quest_title_by_id$(qid)
+	DIM ids = MAP.KEYS(npcs)
+	FOR i = 0 TO LEN(ids) - 1
+		DIM qs = npcs{ids[i]}{"quests"}
+		FOR j = 0 TO LEN(qs) - 1
+			IF qs[j]{"id"} = qid THEN RETURN qs[j]{"description"}
+		NEXT
+	NEXT
+	RETURN qid
+ENDFUNC
+
 ' Render the rumors block for an NPC's system prompt, omitting rumors the
 ' NPC itself was the source of.
 FUNC build_rumor_block(id)
@@ -1966,14 +1979,14 @@ SUB build_ui()
 
 	ui_accept = GDX.NEW("Button")
 	set_rect(ui_accept, 1.0, 1.0, 1.0, 1.0, -172.0, -88.0, -16.0, -52.0)
-	GDX.SET(ui_accept, "text", "Accept Quest")
+	GDX.SET(ui_accept, "text", rule("ui", "accept_quest", {}))
 	GDX.SET(ui_accept, "visible", FALSE)
 	GDX.ADD_CHILD(ui_panel, ui_accept)
 	GDX.CONNECT(ui_accept, "pressed", "on_accept_pressed")
 
 	ui_input = GDX.NEW("LineEdit")
 	set_rect(ui_input, 0.0, 1.0, 1.0, 1.0, 16.0, -48.0, -210.0, -14.0)
-	GDX.SET(ui_input, "placeholder_text", "Type a message and press Enter (Esc to leave)...")
+	GDX.SET(ui_input, "placeholder_text", rule("ui", "input_placeholder", {}))
 	GDX.SET(ui_input, "focus_mode", 2)
 	GDX.ADD_CHILD(ui_panel, ui_input)
 	GDX.CONNECT(ui_input, "text_submitted", "on_submit")
@@ -1999,7 +2012,7 @@ SUB build_splash()
 	set_rect(bg, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)
 	GDX.ADD_CHILD(splash_layer, bg)
 	DIM lbl = GDX.NEW("Label")
-	GDX.SET(lbl, "text", "Loading dialogue model...")
+	GDX.SET(lbl, "text", rule("ui", "loading", {}))
 	GDX.SET(lbl, "horizontal_alignment", 1)
 	GDX.SET(lbl, "vertical_alignment", 1)
 	set_rect(lbl, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)
@@ -2027,25 +2040,25 @@ SUB build_journal()
 	journal_tabs = GDX.NEW("TabContainer")
 	set_rect(journal_tabs, 0.0, 0.0, 1.0, 1.0, 12.0, 12.0, -12.0, -12.0)
 	GDX.ADD_CHILD(journal_panel, journal_tabs)
-	journal_q = make_tab("Quests")
-	journal_i = make_tab("Inventory")
-	journal_w = make_tab("World")
+	journal_q = make_tab(rule("ui", "tab_quests", {}))
+	journal_i = make_tab(rule("ui", "tab_inventory", {}))
+	journal_w = make_tab(rule("ui", "tab_world", {}))
 ENDSUB
 
 FUNC quests_text()
 	DIM s = ""
 	DIM act = player_state{"active"}
 	IF LEN(act) = 0 THEN
-		s = s + "[color=#888888]No active quests.[/color]" + CHR$(10)
+		s = s + "[color=#888888]" + rule("ui", "no_quests", {}) + "[/color]" + CHR$(10)
 	ELSE
 		FOR i = 0 TO LEN(act) - 1
 			DIM q = act[i]
-			s = s + "[color=#ffd96b]- " + q{"description"} + "[/color]" + CHR$(10) + "    [color=#888888]" + q{"giver_name"} + " - reward: " + q{"reward"} + "[/color]" + CHR$(10)
+			s = s + "[color=#ffd96b]- " + q{"description"} + "[/color]" + CHR$(10) + "    [color=#888888]" + q{"giver_name"} + rule("ui", "reward_label", {}) + q{"reward"} + "[/color]" + CHR$(10)
 		NEXT
 	ENDIF
 	DIM don = player_state{"completed"}
 	IF LEN(don) > 0 THEN
-		s = s + CHR$(10) + "[color=#7fc77f][b]Completed[/b][/color]" + CHR$(10)
+		s = s + CHR$(10) + "[color=#7fc77f][b]" + rule("ui", "completed_header", {}) + "[/b][/color]" + CHR$(10)
 		FOR i = 0 TO LEN(don) - 1
 			s = s + "[color=#7fc77f]- " + don[i]{"description"} + "[/color]" + CHR$(10)
 		NEXT
@@ -2057,10 +2070,10 @@ FUNC inventory_text()
 	DIM s = ""
 	DIM inv = player_state{"inventory"}
 	IF LEN(inv) = 0 THEN
-		s = s + "[color=#888888]Empty.[/color]" + CHR$(10)
+		s = s + "[color=#888888]" + rule("ui", "inventory_empty", {}) + "[/color]" + CHR$(10)
 	ELSE
 		FOR i = 0 TO LEN(inv) - 1
-			s = s + "- " + inv[i]{"name"} + " [color=#888888](from " + inv[i]{"source"} + ")[/color]" + CHR$(10)
+			s = s + "- " + inv[i]{"name"} + " [color=#888888]" + rule("ui", "from_label", {}) + inv[i]{"source"} + ")[/color]" + CHR$(10)
 		NEXT
 	ENDIF
 	RETURN s
@@ -2079,7 +2092,7 @@ FUNC world_text()
 			ENDIF
 		NEXT
 	ENDIF
-	IF NOT any_flag THEN s = s + "[color=#888888]Nothing has shifted in the world yet.[/color]" + CHR$(10)
+	IF NOT any_flag THEN s = s + "[color=#888888]" + rule("ui", "world_nothing", {}) + "[/color]" + CHR$(10)
 	RETURN s
 ENDFUNC
 
@@ -2201,7 +2214,7 @@ FUNC fmt_stage(s)
 ENDFUNC
 
 SUB append_player(t)
-	GDX.CALL(ui_hist, "append_text", "[color=#9fd0ff]You:[/color] " + t + CHR$(10))
+	GDX.CALL(ui_hist, "append_text", "[color=#9fd0ff]" + rule("ui", "you_label", {}) + "[/color] " + t + CHR$(10))
 ENDSUB
 
 SUB append_npc(t)
@@ -2262,6 +2275,7 @@ SUB dispatch_actions(acts)
 				complete_quest_by_id(qid)
 				DIM vc AS MAP = {}
 				vc{"id"} = qid
+				vc{"title"} = quest_title_by_id$(qid)
 				emit_line("quest_completed", vc)
 			ENDIF
 		ELSEIF tool = "set_flag" THEN
@@ -2312,7 +2326,7 @@ ENDSUB
 
 SUB refresh_quest()
 	IF active_npc <> "" ANDALSO has_offerable_quest(active_npc) THEN
-		GDX.SET(ui_quest, "text", "Quest: " + npcs{active_npc}{"quests"}[0]{"description"})
+		GDX.SET(ui_quest, "text", rule("ui", "quest_prefix", {}) + npcs{active_npc}{"quests"}[0]{"description"})
 		GDX.SET(ui_quest, "visible", TRUE)
 		GDX.SET(ui_accept, "visible", TRUE)
 	ELSE
@@ -2327,7 +2341,7 @@ SUB on_accept_pressed()
 	DIM q = npcs{active_npc}{"quests"}[0]{"description"}
 	DIM res = accept_quest(active_npc)
 	IF res = "accepted" THEN
-		GDX.CALL(ui_hist, "append_text", "[color=#e0d090][i]Quest accepted: " + q + "[/i][/color]" + CHR$(10))
+		GDX.CALL(ui_hist, "append_text", "[color=#e0d090][i]" + rule("ui", "quest_accepted_log", {}) + q + "[/i][/color]" + CHR$(10))
 		refresh_quest()
 		want_edit = TRUE
 	ENDIF
@@ -2375,7 +2389,7 @@ SUB on_submit(t)
 	append_player(t)
 	GDX.CALL(ui_input, "clear")
 	awaiting = TRUE
-	GDX.SET(ui_status, "text", "...thinking")
+	GDX.SET(ui_status, "text", rule("ui", "thinking", {}))
 	continue_dialog(active_npc, t)
 ENDSUB
 
@@ -2457,7 +2471,7 @@ SUB _process(delta)
 	DIM pp = GDX.GET(player_h, "global_position")
 	DIM idx = nearest_npc(pp[0], pp[2])
 	IF idx >= 0 THEN
-		GDX.SET(hint_lbl, "text", "[E] Talk to " + npc_display_name(npc_ids[idx]))
+		GDX.SET(hint_lbl, "text", rule("ui", "talk_hint", {}) + npc_display_name(npc_ids[idx]))
 		GDX.SET(hint_lbl, "visible", TRUE)
 		IF GDX.INPUT.IS_ACTION_JUST_PRESSED("use") THEN open_dialog(idx)
 	ELSE

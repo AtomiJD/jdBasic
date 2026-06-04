@@ -1,4 +1,24 @@
 {
+  "ui": {
+    "accept_quest": "Accept Quest",
+    "input_placeholder": "Type a message and press Enter (Esc to leave)...",
+    "loading": "Loading dialogue model...",
+    "tab_quests": "Quests",
+    "tab_inventory": "Inventory",
+    "tab_world": "World",
+    "quest_prefix": "Quest: ",
+    "quest_accepted_log": "Quest accepted: ",
+    "talk_hint": "[E] Talk to ",
+    "you_label": "You:",
+    "thinking": "...thinking",
+    "no_quests": "No active quests.",
+    "reward_label": " - reward: ",
+    "completed_header": "Completed",
+    "inventory_empty": "Empty.",
+    "from_label": "(from ",
+    "world_nothing": "Nothing has shifted in the world yet."
+  },
+
   "acceptance_signals": [
     "yes", "ja", "sure", "ok", "okay",
     "I'll do it", "mach ich", "ich mach das", "ich nehme das",
@@ -51,8 +71,8 @@
     "received_item": "+ {name}",
     "gave_item": "- {name}",
     "quest_accepted": "Quest accepted from {npc}",
-    "quest_completed": "Quest completed: {id}",
-    "world_shifts": "World shifts: {key}",
+    "quest_completed": "Quest completed: {title}",
+    "world_shifts": "Something in the world has shifted.",
     "no_reply": "(no reply - try again)",
     "affinity_up": "{npc} warms to you ({delta}, now {score})",
     "affinity_down": "{npc} grows colder ({delta}, now {score})",
