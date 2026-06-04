@@ -1,0 +1,38 @@
+EXTENDS Node3D
+
+' Validate GDX.RAYCAST against a real collider: a StaticBody3D with a box
+' shape sits at the origin; from _physics_process (space state live) we cast
+' a ray straight down onto it and expect a hit.
+
+DIM self_h = 0
+DIM did_cast = 0
+
+SUB _ready()
+	self_h = GDX.SELF()
+
+	DIM body = GDX.NEW("StaticBody3D")
+	DIM cshape = GDX.NEW("CollisionShape3D")
+	DIM box = GDX.NEW("BoxShape3D")
+	GDX.SET(box, "size", GDX.VEC3(10.0, 1.0, 10.0))
+	GDX.SET(cshape, "shape", GDX.REF(box))
+	GDX.ADD_CHILD(body, cshape)
+	GDX.ADD_CHILD(self_h, body)
+	PRINT "raycast_smoke: collider built"
+ENDSUB
+
+SUB _physics_process(delta)
+	IF did_cast = 1 THEN RETURN
+	did_cast = 1
+
+	' In _physics_process the space state is live, so RAYCAST returns a MAP.
+	DIM hit = GDX.RAYCAST(GDX.VEC3(0.0, 5.0, 0.0), GDX.VEC3(0.0, -5.0, 0.0))
+	PRINT "RAYCAST hit = " + STR$(hit{"hit"})
+	IF hit{"hit"} THEN
+		PRINT "  position = " + STR$(hit{"position"})
+		PRINT "  normal   = " + STR$(hit{"normal"})
+		PRINT "  collider != 0 = " + STR$(hit{"collider"} <> 0)
+	ENDIF
+
+	PRINT "RAYCAST SMOKE OK"
+	GDX.QUIT(self_h)
+ENDSUB

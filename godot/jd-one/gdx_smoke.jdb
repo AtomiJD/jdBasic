@@ -1,31 +1,52 @@
 EXTENDS Node
 
-' De-risk: prove the in-memory IMPORT GDX mechanism works in the embed.
-' GDX.* helpers are pure jdBasic over the GDX.* native primitives, pulled
-' in via a bundled in-memory module reader + an implicit IMPORT GDX at boot.
+' Smoke test for the extended GDX surface: in-memory IMPORT GDX, the jdBasic
+' convenience helpers (navigation / property / vector-math / meta / tween),
+' and the C++ RAYCAST native.
 
 DIM self_h = 0
 
 SUB _ready()
 	self_h = GDX.SELF()
 
-	' GDX.TIME_MS wraps GDX.CALL(GDX.SINGLETON("Time"), "get_ticks_msec")
-	DIM t = GDX.TIME_MS()
-	PRINT "GDX.TIME_MS = " + STR$(t)
+	' Time helpers (jdBasic module over GDX.SINGLETON).
+	PRINT "TIME_MS = " + STR$(GDX.TIME_MS())
 
-	DIM ts = GDX.TIME_SEC()
-	PRINT "GDX.TIME_SEC = " + STR$(ts)
+	' Vector math - pure jdBasic on the marshalled float arrays, no bridge.
+	DIM a = GDX.VEC3(3.0, 4.0, 0.0)
+	DIM b = GDX.VEC3(0.0, 0.0, 0.0)
+	PRINT "V3_LEN = " + STR$(GDX.V3_LEN(a))
+	PRINT "V3_DIST = " + STR$(GDX.V3_DIST(a, b))
+	PRINT "V3_DOT = " + STR$(GDX.V3_DOT(GDX.VEC3(1.0,2.0,3.0), GDX.VEC3(4.0,5.0,6.0)))
+	DIM n = GDX.V3_NORM(a)
+	PRINT "V3_NORM = " + STR$(n)
+	DIM cr = GDX.V3_CROSS(GDX.VEC3(1.0,0.0,0.0), GDX.VEC3(0.0,1.0,0.0))
+	PRINT "V3_CROSS = " + STR$(cr)
 
-	' GDX.GET_VELOCITY on a plain Node3D (velocity prop only on bodies, so we
-	' just exercise the call path on a CharacterBody3D).
+	' A normalised vector flows straight back into SET as a Vector3.
 	DIM body = GDX.NEW("CharacterBody3D")
 	GDX.ADD_CHILD(self_h, body)
-	GDX.SET_VELOCITY(body, GDX.VEC3(1.0, 2.0, 3.0))
-	DIM v = GDX.GET_VELOCITY(body)
-	PRINT "GDX velocity roundtrip = " + STR$(v)
-	PRINT "GDX.IS_ON_FLOOR = " + STR$(GDX.IS_ON_FLOOR(body))
+	GDX.SET_VELOCITY(body, GDX.V3_NORM(GDX.VEC3(0.0, 0.0, 10.0)))
+	PRINT "velocity after V3_NORM = " + STR$(GDX.GET_VELOCITY(body))
 
-	PRINT "GDX SMOKE OK"
-	DIM tree = GDX.CALL(self_h, "get_tree")
-	GDX.CALL(tree, "quit")
+	' Property / navigation sugar.
+	DIM lbl = GDX.NEW("Label")
+	GDX.ADD_CHILD(self_h, lbl)
+	GDX.SET_TEXT(lbl, "hello GDX")
+	PRINT "GET_TEXT = " + GDX.GET_TEXT(lbl)
+	GDX.SET_VISIBLE(lbl, FALSE)
+	PRINT "IS_VISIBLE = " + STR$(GDX.IS_VISIBLE(lbl))
+	PRINT "GET_PARENT == self = " + STR$(GDX.GET_PARENT(lbl) = self_h)
+
+	' Metadata.
+	GDX.SET_META(self_h, "score", 42)
+	PRINT "GET_META score = " + STR$(GDX.GET_META(self_h, "score"))
+	PRINT "HAS_META score = " + STR$(GDX.HAS_META(self_h, "score"))
+
+	' Tween (just verify it constructs and returns a handle).
+	DIM tw = GDX.TWEEN_TO(lbl, "modulate:a", 0.0, 0.5)
+	PRINT "TWEEN_TO handle != 0 = " + STR$(tw <> 0)
+
+	PRINT "GDX EXT SMOKE OK"
+	GDX.QUIT(self_h)
 ENDSUB

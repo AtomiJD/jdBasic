@@ -439,8 +439,20 @@ Dictionary JdbScriptLanguage::_complete_code(const String& p_code,
         "GDX.MOVE_AND_SLIDE", "GDX.IS_ON_FLOOR", "GDX.IS_ON_WALL",
         "GDX.IS_ON_CEILING", "GDX.GET_VELOCITY", "GDX.SET_VELOCITY",
         "GDX.SINGLETON", "GDX.STATIC", "GDX.ENUM",
+        "GDX.RAYCAST", "GDX.RAYCAST_2D",
         "GDX.PACKED_VEC2", "GDX.PACKED_VEC3", "GDX.PACKED_INT32", "GDX.PACKED_COLOR", "GDX.PACKED_FLOAT32",
         "GDX.PRINT",
+        // jdBasic GDX module helpers (auto-imported via IMPORT GDX)
+        "GDX.GET_NODE", "GDX.GET_TREE", "GDX.GET_PARENT", "GDX.GET_CHILDREN", "GDX.FIND_CHILD", "GDX.QUIT",
+        "GDX.POS", "GDX.SET_POS", "GDX.GLOBAL_POS", "GDX.SET_GLOBAL_POS",
+        "GDX.ROTATE_X", "GDX.ROTATE_Y", "GDX.LOOK_AT",
+        "GDX.SET_VISIBLE", "GDX.IS_VISIBLE", "GDX.SET_TEXT", "GDX.GET_TEXT",
+        "GDX.SET_META", "GDX.GET_META", "GDX.HAS_META",
+        "GDX.SET_PROCESS", "GDX.SET_PHYSICS_PROCESS", "GDX.SET_PROCESS_INPUT", "GDX.SET_PROCESS_UNHANDLED_INPUT",
+        "GDX.TWEEN_TO", "GDX.TWEEN_TO_EASE",
+        "GDX.TIME_MS", "GDX.TIME_SEC",
+        "GDX.V3_LEN", "GDX.V3_DIST", "GDX.V3_DOT", "GDX.V3_CROSS", "GDX.V3_NORM", "GDX.V3_LERP", "GDX.V3_DIR_TO",
+        "GDX.V2_LEN", "GDX.V2_DIST", "GDX.V2_DOT", "GDX.V2_NORM", "GDX.V2_LERP",
     };
     for (const char* n : godot_natives) {
         String full = String(n);

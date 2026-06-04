@@ -49,6 +49,18 @@
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/packed_color_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+// Physics ray queries (GDX.RAYCAST / GDX.RAYCAST_2D)
+#include <godot_cpp/classes/viewport.hpp>
+#include <godot_cpp/classes/world3d.hpp>
+#include <godot_cpp/classes/world2d.hpp>
+#include <godot_cpp/classes/physics_direct_space_state3d.hpp>
+#include <godot_cpp/classes/physics_direct_space_state2d.hpp>
+#include <godot_cpp/classes/physics_ray_query_parameters3d.hpp>
+#include <godot_cpp/classes/physics_ray_query_parameters2d.hpp>
+#include <godot_cpp/classes/collision_object3d.hpp>
+#include <godot_cpp/classes/collision_object2d.hpp>
+#include <godot_cpp/variant/rid.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 
 #include <cstring>
 #include <vector>
@@ -1395,6 +1407,129 @@ static int64_t native_enum(JdbEmbed* vm, int argc, const int64_t* args, void* /*
     return jdb_embed_make_int(vm, v);
 }
 
+// ── Physics ray queries ───────────────────────────────────────────
+// GDX.RAYCAST(from_vec3, to_vec3 [, collision_mask] [, exclude]) and the
+// 2D twin. These need a PhysicsDirectSpaceState + a query-parameters object
+// that generic GDX.CALL can't construct, so they live in C++. Must be called
+// from _physics_process - the space state is only valid during the physics
+// step. Returns a MAP {hit, position, normal, collider}; hit=FALSE on miss.
+// `exclude` may be a single body handle or an array of handles (their RIDs
+// are excluded - the common "don't hit myself" case).
+
+// Build a {hit:FALSE,...} miss result.
+static int64_t raycast_miss(JdbEmbed* vm) {
+    const char* keys[4] = { "hit", "position", "normal", "collider" };
+    int64_t vals[4] = {
+        jdb_embed_make_bool(vm, 0),
+        jdb_embed_make_nil(vm),
+        jdb_embed_make_nil(vm),
+        jdb_embed_make_nil(vm),
+    };
+    int64_t map = jdb_embed_make_map(vm, keys, vals, 4);
+    for (int i = 0; i < 4; ++i) jdb_embed_value_release(vm, vals[i]);
+    return map;
+}
+
+static int64_t native_raycast(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_nil(vm);
+    GodotBridge* b = bridge_of(ud);
+    Node* owner = (b && b->owner()) ? Object::cast_to<Node>(b->owner()->get_owner()) : nullptr;
+    if (!owner) return jdb_embed_make_nil(vm);
+    Viewport* vp = owner->get_viewport();
+    if (!vp) return jdb_embed_make_nil(vm);
+    Ref<World3D> world = vp->get_world_3d();
+    if (world.is_null()) return jdb_embed_make_nil(vm);
+    PhysicsDirectSpaceState3D* ss = world->get_direct_space_state();
+    if (!ss) return jdb_embed_make_nil(vm);
+
+    Vector3 from = jdb_value_to_variant(b, args[0]);
+    Vector3 to   = jdb_value_to_variant(b, args[1]);
+    uint32_t mask = (argc >= 3) ? (uint32_t)jdb_embed_value_int(vm, args[2]) : 0xFFFFFFFFu;
+
+    Ref<PhysicsRayQueryParameters3D> params =
+        PhysicsRayQueryParameters3D::create(from, to, mask);
+    if (argc >= 4 && params.is_valid()) {
+        TypedArray<RID> excl;
+        int eh = args[3];
+        if (jdb_embed_value_tag(vm, eh) == JDB_T_ARRAY) {
+            int n = jdb_embed_array_len(vm, eh);
+            for (int i = 0; i < n; ++i) {
+                int64_t el = jdb_embed_array_get(vm, eh, i);
+                if (auto* co = Object::cast_to<CollisionObject3D>(b->lookup(jdb_embed_value_int(vm, el))))
+                    excl.push_back(co->get_rid());
+                jdb_embed_value_release(vm, el);
+            }
+        } else if (auto* co = Object::cast_to<CollisionObject3D>(b->lookup(jdb_embed_value_int(vm, eh)))) {
+            excl.push_back(co->get_rid());
+        }
+        params->set_exclude(excl);
+    }
+
+    Dictionary res = ss->intersect_ray(params);
+    if (res.is_empty()) return raycast_miss(vm);
+
+    const char* keys[4] = { "hit", "position", "normal", "collider" };
+    int64_t vals[4];
+    vals[0] = jdb_embed_make_bool(vm, 1);
+    vals[1] = variant_to_jdb_value(b, res.get("position", Vector3()));
+    vals[2] = variant_to_jdb_value(b, res.get("normal", Vector3()));
+    Object* col = Object::cast_to<Object>(res.get("collider", Variant()));
+    vals[3] = col ? jdb_embed_make_int(vm, b->store(col)) : jdb_embed_make_nil(vm);
+    int64_t map = jdb_embed_make_map(vm, keys, vals, 4);
+    for (int i = 0; i < 4; ++i) jdb_embed_value_release(vm, vals[i]);
+    return map;
+}
+
+static int64_t native_raycast_2d(JdbEmbed* vm, int argc, const int64_t* args, void* ud) {
+    if (argc < 2) return jdb_embed_make_nil(vm);
+    GodotBridge* b = bridge_of(ud);
+    Node* owner = (b && b->owner()) ? Object::cast_to<Node>(b->owner()->get_owner()) : nullptr;
+    if (!owner) return jdb_embed_make_nil(vm);
+    Viewport* vp = owner->get_viewport();
+    if (!vp) return jdb_embed_make_nil(vm);
+    Ref<World2D> world = vp->get_world_2d();
+    if (world.is_null()) return jdb_embed_make_nil(vm);
+    PhysicsDirectSpaceState2D* ss = world->get_direct_space_state();
+    if (!ss) return jdb_embed_make_nil(vm);
+
+    Vector2 from = jdb_value_to_variant(b, args[0]);
+    Vector2 to   = jdb_value_to_variant(b, args[1]);
+    uint32_t mask = (argc >= 3) ? (uint32_t)jdb_embed_value_int(vm, args[2]) : 0xFFFFFFFFu;
+
+    Ref<PhysicsRayQueryParameters2D> params =
+        PhysicsRayQueryParameters2D::create(from, to, mask);
+    if (argc >= 4 && params.is_valid()) {
+        TypedArray<RID> excl;
+        int eh = args[3];
+        if (jdb_embed_value_tag(vm, eh) == JDB_T_ARRAY) {
+            int n = jdb_embed_array_len(vm, eh);
+            for (int i = 0; i < n; ++i) {
+                int64_t el = jdb_embed_array_get(vm, eh, i);
+                if (auto* co = Object::cast_to<CollisionObject2D>(b->lookup(jdb_embed_value_int(vm, el))))
+                    excl.push_back(co->get_rid());
+                jdb_embed_value_release(vm, el);
+            }
+        } else if (auto* co = Object::cast_to<CollisionObject2D>(b->lookup(jdb_embed_value_int(vm, eh)))) {
+            excl.push_back(co->get_rid());
+        }
+        params->set_exclude(excl);
+    }
+
+    Dictionary res = ss->intersect_ray(params);
+    if (res.is_empty()) return raycast_miss(vm);
+
+    const char* keys[4] = { "hit", "position", "normal", "collider" };
+    int64_t vals[4];
+    vals[0] = jdb_embed_make_bool(vm, 1);
+    vals[1] = variant_to_jdb_value(b, res.get("position", Vector2()));
+    vals[2] = variant_to_jdb_value(b, res.get("normal", Vector2()));
+    Object* col = Object::cast_to<Object>(res.get("collider", Variant()));
+    vals[3] = col ? jdb_embed_make_int(vm, b->store(col)) : jdb_embed_make_nil(vm);
+    int64_t map = jdb_embed_make_map(vm, keys, vals, 4);
+    for (int i = 0; i < 4; ++i) jdb_embed_value_release(vm, vals[i]);
+    return map;
+}
+
 void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GDX.SELF",   0, 0,  &native_self,  this);
     jdb_embed_register_native(m_vm, "GDX.GET",    2, 2,  &native_get,   this);
@@ -1422,6 +1557,8 @@ void GodotBridge::register_all() {
     jdb_embed_register_native(m_vm, "GDX.SINGLETON", 1,  1, &native_singleton, this);
     jdb_embed_register_native(m_vm, "GDX.STATIC",    2, -1, &native_static,    this);
     jdb_embed_register_native(m_vm, "GDX.ENUM",      2,  2, &native_enum,      this);
+    jdb_embed_register_native(m_vm, "GDX.RAYCAST",    2, 4, &native_raycast,    this);
+    jdb_embed_register_native(m_vm, "GDX.RAYCAST_2D", 2, 4, &native_raycast_2d, this);
     jdb_embed_register_native(m_vm, "GDX.EMIT",        2, -1, &native_emit,        this);
     jdb_embed_register_native(m_vm, "GDX.CONNECT",     3, 4,  &native_connect,     this);
     jdb_embed_register_native(m_vm, "GDX.DISCONNECT",  3, 3,  &native_disconnect,  this);

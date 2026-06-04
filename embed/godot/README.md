@@ -37,18 +37,40 @@ Everything the engine exposes to a Tier-3 script lives under one prefix,
 `GDX.*` (renamed from the older `GODOT.*` for consistency). It comes in two
 layers:
 
-1. **Native primitives (C++)** - the hot path. `GDX.CALL` / `GDX.GET` /
+1. **Native primitives (C++)** - the hot path, plus anything that needs
+   typed engine access generic `CALL` can't express. `GDX.CALL` / `GDX.GET` /
    `GDX.SET` / `GDX.NEW` / `GDX.ADD_CHILD` / `GDX.VEC3` / `GDX.SINGLETON` /
-   `GDX.SELF` / signals / audio / drawing / input, etc. These touch the
-   Godot API directly and must stay fast, so they're registered from
-   `embed/godot/src/jdb_godot_natives.cpp` (+ `jdb_godot_input.cpp`).
+   `GDX.SELF` / `GDX.REF` / signals / audio / drawing / input, and the
+   physics ray queries `GDX.RAYCAST(from, to [,mask] [,exclude])` /
+   `GDX.RAYCAST_2D` (return a MAP `{hit, position, normal, collider}`; must
+   be called from `_physics_process` where the space state is live). All
+   registered from `embed/godot/src/jdb_godot_natives.cpp`
+   (+ `jdb_godot_input.cpp`).
 
 2. **Convenience helpers (pure jdBasic)** - thin sugar over the primitives,
    defined in the bundled `GDX` module (`GDX_MODULE_SRC` in
    `src/jdb_embed_api.cpp`) and auto-imported via an implicit `IMPORT GDX`
-   at script-instance boot. Currently: `MOVE_AND_SLIDE`, `IS_ON_FLOOR`,
-   `IS_ON_WALL`, `IS_ON_CEILING`, `GET_VELOCITY`, `SET_VELOCITY`, `TIME_MS`,
-   `TIME_SEC`. Anything that doesn't need to be in C++ belongs here.
+   at script-instance boot. Anything that doesn't need to be in C++ lives
+   here:
+   - *Movement:* `MOVE_AND_SLIDE`, `IS_ON_FLOOR/WALL/CEILING`,
+     `GET_VELOCITY`, `SET_VELOCITY`
+   - *Time:* `TIME_MS`, `TIME_SEC`
+   - *Navigation:* `GET_NODE`, `GET_TREE`, `GET_PARENT`, `GET_CHILDREN`,
+     `FIND_CHILD`, `QUIT`
+   - *Transform/property:* `POS`/`SET_POS`, `GLOBAL_POS`/`SET_GLOBAL_POS`,
+     `ROTATE_X/Y`, `LOOK_AT`, `SET_VISIBLE`/`IS_VISIBLE`,
+     `SET_TEXT`/`GET_TEXT`
+   - *Metadata:* `SET_META`, `GET_META`, `HAS_META`
+   - *Process control:* `SET_PROCESS`, `SET_PHYSICS_PROCESS`,
+     `SET_PROCESS_INPUT`, `SET_PROCESS_UNHANDLED_INPUT`
+   - *Tween sugar:* `TWEEN_TO`, `TWEEN_TO_EASE`
+   - *Vector math (pure jdBasic on the float arrays, no bridge call):*
+     `V3_LEN/DIST/DOT/CROSS/NORM/LERP/DIR_TO`, `V2_LEN/DIST/DOT/NORM/LERP`.
+     A Vec returned as a 3-array marshals straight back into `GDX.SET`.
+
+   Note: when a node is passed as a method *argument* (not the receiver),
+   wrap it in `GDX.REF(handle)` so it marshals back to an Object rather than
+   a plain int - that's what `TWEEN_TO` does for `tween_property`.
 
 The `IMPORT GDX` works in the embed because the host installs an in-memory
 `Parser::file_reader` (`bundled_module_reader`) that serves the module
