@@ -16,10 +16,7 @@ config/features=PackedStringArray("4.6", "Forward Plus")
 
 [game]
 
-; Content pack the scripts load from. Flip to "res://assets/data_ger" for the
-; German pirate theme. All NPCs/lore/quests/music/maps + the LLM system prompt
-; live under this folder.
-data_dir="res://assets/data"
+data_dir="res://assets/data_ger"
 
 [audio]
 

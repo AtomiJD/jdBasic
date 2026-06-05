@@ -1,63 +1,62 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene format=3 uid="uid://c0saxdkoi6vvp"]
 
-[ext_resource type="Script" path="res://player.jdb" id="1_player"]
-[ext_resource type="Script" path="res://terrain.jdb" id="2_terrain"]
-[ext_resource type="Script" path="res://scatter.jdb" id="3_scatter"]
-[ext_resource type="Script" path="res://spawner.jdb" id="4_spawner"]
-[ext_resource type="Script" path="res://daynight.jdb" id="5_daynight"]
-[ext_resource type="Script" path="res://dungeon.jdb" id="6_dungeon"]
-[ext_resource type="Script" path="res://dialog.jdb" id="7_dialog"]
-[ext_resource type="Script" path="res://music.jdb" id="8_music"]
+[ext_resource type="Script" uid="uid://b1qs7o86p6an5" path="res://player.jdb" id="1_player"]
+[ext_resource type="Script" uid="uid://66nwgpe3mk06" path="res://terrain.jdb" id="2_terrain"]
+[ext_resource type="Script" uid="uid://cf4g8hyjnporp" path="res://scatter.jdb" id="3_scatter"]
+[ext_resource type="Script" uid="uid://dvalcludwro53" path="res://spawner.jdb" id="4_spawner"]
+[ext_resource type="Script" uid="uid://omjbnqx206kb" path="res://daynight.jdb" id="5_daynight"]
+[ext_resource type="Script" uid="uid://h7b3bu83h7ri" path="res://dungeon.jdb" id="6_dungeon"]
+[ext_resource type="Script" uid="uid://bb34ktlq8b13f" path="res://dialog.jdb" id="7_dialog"]
+[ext_resource type="Script" uid="uid://dum5yrg2a0cng" path="res://music.jdb" id="8_music"]
 
 [sub_resource type="CapsuleShape3D" id="Cap_col"]
 radius = 0.4
-height = 2.0
 
-[node name="World" type="Node3D"]
+[node name="World" type="Node3D" unique_id=1756361]
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=2122020665]
 transform = Transform3D(1, 0, 0, 0, 0.7, 0.7, 0, -0.7, 0.7, 0, 8, 0)
 shadow_enabled = true
 script = ExtResource("5_daynight")
 
-[node name="Terrain" type="StaticBody3D" parent="."]
+[node name="Terrain" type="StaticBody3D" parent="." unique_id=1576166897]
 script = ExtResource("2_terrain")
 
-[node name="Mesh" type="MeshInstance3D" parent="Terrain"]
+[node name="Mesh" type="MeshInstance3D" parent="Terrain" unique_id=1018056885]
 
-[node name="Collision" type="CollisionShape3D" parent="Terrain"]
+[node name="Collision" type="CollisionShape3D" parent="Terrain" unique_id=1935481209]
 
-[node name="Scatter" type="Node3D" parent="."]
+[node name="Scatter" type="Node3D" parent="." unique_id=1447735488]
 script = ExtResource("3_scatter")
 
-[node name="Spawner" type="Node3D" parent="."]
+[node name="Spawner" type="Node3D" parent="." unique_id=948412359]
 script = ExtResource("4_spawner")
 
-[node name="Dungeon" type="Node3D" parent="."]
+[node name="Dungeon" type="Node3D" parent="." unique_id=147625270]
 script = ExtResource("6_dungeon")
 
-[node name="DialogManager" type="Node3D" parent="."]
+[node name="DialogManager" type="Node3D" parent="." unique_id=1404166988]
 script = ExtResource("7_dialog")
 
-[node name="MusicManager" type="Node3D" parent="."]
+[node name="MusicManager" type="Node3D" parent="." unique_id=1669191965]
 script = ExtResource("8_music")
 
-[node name="Player" type="CharacterBody3D" parent="."]
+[node name="Player" type="CharacterBody3D" parent="." unique_id=503155474]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6, 0)
 script = ExtResource("1_player")
 
-[node name="Col" type="CollisionShape3D" parent="Player"]
+[node name="Col" type="CollisionShape3D" parent="Player" unique_id=911605268]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 shape = SubResource("Cap_col")
 
-[node name="Visual" type="Node3D" parent="Player"]
+[node name="Visual" type="Node3D" parent="Player" unique_id=955164760]
 
-[node name="YawPivot" type="Node3D" parent="Player"]
+[node name="YawPivot" type="Node3D" parent="Player" unique_id=587817999]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 
-[node name="PitchPivot" type="Node3D" parent="Player/YawPivot"]
+[node name="PitchPivot" type="Node3D" parent="Player/YawPivot" unique_id=2129277278]
 
-[node name="SpringArm3D" type="SpringArm3D" parent="Player/YawPivot/PitchPivot"]
+[node name="SpringArm3D" type="SpringArm3D" parent="Player/YawPivot/PitchPivot" unique_id=554757685]
 spring_length = 5.0
 
-[node name="Camera3D" type="Camera3D" parent="Player/YawPivot/PitchPivot/SpringArm3D"]
+[node name="Camera3D" type="Camera3D" parent="Player/YawPivot/PitchPivot/SpringArm3D" unique_id=850304784]

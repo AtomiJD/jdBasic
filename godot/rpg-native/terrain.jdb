@@ -1,10 +1,17 @@
 EXTENDS StaticBody3D
 
-' Walkable procedural terrain. One vectorised height grid drives both the
-' visual ArrayMesh (per-vertex colour) and a HeightMapShape3D collider.
+' Walkable procedural terrain.
 '
-'   Mesh       child: MeshInstance3D - gets the ArrayMesh
-'   Collision  child: CollisionShape3D - gets the HeightMapShape3D
+' One precomputed height grid drives two things:
+'   - the visual mesh  (SurfaceTool, per-tile colour from world_map.txt)
+'   - the collider     (HeightMapShape3D - the player walks on this)
+'
+' The grid is flattened under every dungeon (dungeons.json) so the dungeon
+' floor sits flush on level ground.
+'
+' Scene children (world.tscn):
+'   Mesh       MeshInstance3D    - receives the ArrayMesh
+'   Collision  CollisionShape3D  - receives the HeightMapShape3D
 
 INSPECTOR DIM grid_n    = 96    AS RANGE(8, 192, 1)
 INSPECTOR DIM cell_size = 1.0   AS RANGE(0.25, 2.0, 0.05)
@@ -16,15 +23,20 @@ DIM self_h = 0
 DIM mesh_h = 0
 DIM col_h  = 0
 
-' Same height formula the dungeon builder uses, so a dungeon's computed
-' ground-y matches the terrain we flatten under it.
-FUNC terrain_height(wx, wz)
-	DIM cx = wx / 14.0
-	DIM cy = wz / 14.0
-	DIM a1 = SIN(cx + 0.70) * COS(cy + 0.91)
-	DIM a2 = SIN(cx * 2.1 + 4.90) * COS(cy * 2.3 + 13.30) * 0.5
-	DIM a3 = SIN(cx * 4.7 + 14.70) * COS(cy * 4.1 + 2.80) * 0.25
-	RETURN (a1 + a2 + a3) * 2.0
+' Content-pack root (Project Settings -> game/data_dir): assets/data, or
+' assets/data_ger for the German pirate theme.
+FUNC data_dir$()
+	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
+ENDFUNC
+
+' Terrain height at a world (x, z).
+FUNC height_at(wx, wz)
+	DIM cx = wx / freq
+	DIM cy = wz / freq
+	DIM a1 = SIN(cx + seed * 0.10) * COS(cy + seed * 0.13)
+	DIM a2 = SIN(cx * 2.1 + seed * 0.7) * COS(cy * 2.3 + seed * 1.9) * 0.5
+	DIM a3 = SIN(cx * 4.7 + seed * 2.1) * COS(cy * 4.1 + seed * 0.4) * 0.25
+	RETURN (a1 + a2 + a3) * amp
 ENDFUNC
 
 SUB _ready()
@@ -32,31 +44,29 @@ SUB _ready()
 	mesh_h = GDX.CALL(self_h, "get_node", "Mesh")
 	col_h  = GDX.CALL(self_h, "get_node", "Collision")
 
-	DIM n = grid_n
+	DIM n     = grid_n
 	DIM total = n * n
-	DIM half = n / 2.0
+	DIM half  = n / 2.0
 
-	' Heights - one vectorised pass.
-	DIM idx = IOTA(total)
-	DIM gx = idx MOD n
-	DIM gy = (idx - gx) / n
-	DIM cx = (gx - half) / freq
-	DIM cy = (gy - half) / freq
-	DIM h1 = SIN(cx + seed * 0.10) * COS(cy + seed * 0.13)
-	DIM h2 = SIN(cx * 2.1 + seed * 0.7) * COS(cy * 2.3 + seed * 1.9) * 0.5
-	DIM h3 = SIN(cx * 4.7 + seed * 2.1) * COS(cy * 4.1 + seed * 0.4) * 0.25
-	DIM hh = (h1 + h2 + h3) * amp
+	' Height grid: gx is the column (X), gy the row (Z), each 0..n-1.
+	DIM idx = IOTA(total,0)
+	DIM gx  = idx MOD n
+	DIM gy  = (idx - gx) / n
+	DIM cx  = (gx - half) * cell_size / freq
+	DIM cy  = (gy - half) * cell_size / freq
+	DIM h1  = SIN(cx + seed * 0.10) * COS(cy + seed * 0.13)
+	DIM h2  = SIN(cx * 2.1 + seed * 0.7) * COS(cy * 2.3 + seed * 1.9) * 0.5
+	DIM h3  = SIN(cx * 4.7 + seed * 2.1) * COS(cy * 4.1 + seed * 0.4) * 0.25
+	DIM hh  = (h1 + h2 + h3) * amp
 
-	' Flatten the heightmap under every dungeon (read dungeons.json) so the
-	' dungeon floors sit on level ground - both the visual mesh and the
-	' collider, since the player walks on the terrain collider in there.
+	' Flatten the grid under each dungeon (dungeons.json) to its floor level.
 	DIM dsrc = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/dungeons.json")
 	DIM dall = JSON.PARSE$(dsrc)
 	FOR di = 0 TO LEN(dall) - 1
-		DIM dspec = dall[di]
-		DIM dorg  = dspec{"origin"}
-		DIM dox = dorg[0]
-		DIM doz = dorg[2]
+		DIM dspec  = dall[di]
+		DIM dorg   = dspec{"origin"}
+		DIM dox    = dorg[0]
+		DIM doz    = dorg[2]
 		DIM drooms = dspec{"rooms"}
 		DIM dgw = 0
 		DIM dgh = 0
@@ -70,18 +80,16 @@ SUB _ready()
 		DIM dfw = (dgw + 1) * 4.0
 		DIM dfh = (dgh + 1) * 4.0
 
-		' max-of-9 terrain height across the footprint, sunk to max-0.3.
 		DIM dmax = -1000.0
 		DIM dss AS ARRAY = [0.1, 0.5, 0.9]
 		FOR sa = 0 TO 2
 			FOR sb = 0 TO 2
-				DIM dth = terrain_height(dox + dss[sa] * dfw, doz + dss[sb] * dfh)
+				DIM dth = height_at(dox + dss[sa] * dfw, doz + dss[sb] * dfh)
 				IF dth > dmax THEN dmax = dth
 			NEXT
 		NEXT
 		DIM carve_y = dmax - 0.35
 
-		' Grid cells overlapping [dox, dox+dfw] x [doz, doz+dfh].
 		DIM cgx0 = INT(dox / cell_size + half)
 		DIM cgx1 = INT((dox + dfw) / cell_size + half)
 		DIM cgz0 = INT(doz / cell_size + half)
@@ -91,125 +99,68 @@ SUB _ready()
 		IF cgx1 > n - 1 THEN cgx1 = n - 1
 		IF cgz1 > n - 1 THEN cgz1 = n - 1
 		FOR cz = cgz0 TO cgz1
-			FOR cx = cgx0 TO cgx1
-				hh[cz * n + cx] = carve_y
+			FOR cxx = cgx0 TO cgx1
+				hh[cz * n + cxx] = carve_y
 			NEXT
 		NEXT
 	NEXT
 
-	' Tile map -> per-vertex colour (paths / clearings / trees). Read the
-	' raw .txt via the real Godot API (FileAccess.get_file_as_string).
+	' Per-vertex tile type from world_map.txt (grass / path / clearing / tree).
 	DIM map_src  = GDX.STATIC("FileAccess", "get_file_as_string", data_dir$() + "/world_map.txt")
 	DIM map_rows = SPLIT(map_src, CHR$(10))
 	DIM map_rn   = LEN(map_rows)
 	DIM map_cols = LEN(map_rows[0])
 
-	' Vertices (flat x,y,z), per-vertex colour (r,g,b,a) and normals (x,y,z).
 	DIM verts = ZEROS(total * 3)
-	DIM cols  = ZEROS(total * 4)
-	DIM nrm   = ZEROS(total * 3)
+	DIM tt    = ZEROS(total)
 	FOR k = 0 TO total - 1
-		DIM y = hh[k]
 		verts[k * 3]     = (gx[k] - half) * cell_size
-		verts[k * 3 + 1] = y
+		verts[k * 3 + 1] = hh[k]
 		verts[k * 3 + 2] = (gy[k] - half) * cell_size
-		' Grass base, shaded by height; overridden by the tile under it.
-		DIM t = (y / amp + 1.0) * 0.5
-		DIM rr = 0.26 + 0.20 * t
-		DIM gg = 0.50 + 0.22 * t
-		DIM bb = 0.28
 		DIM my = INT(gy[k] * map_rn / n)
 		DIM mx = INT(gx[k] * map_cols / n)
 		IF my >= 0 ANDALSO my < map_rn THEN
-			DIM row = map_rows[my]
-			IF mx >= 0 ANDALSO mx < LEN(row) THEN
-				DIM ch = MID$(row, mx, 1)
-				IF ch = "#" THEN
-					rr = 0.50
-					gg = 0.40
-					bb = 0.28
-				ELSEIF ch = "o" THEN
-					rr = 0.56
-					gg = 0.62
-					bb = 0.40
-				ELSEIF ch = "T" THEN
-					rr = 0.16
-					gg = 0.34
-					bb = 0.20
-				ENDIF
+			DIM mrow = map_rows[my]
+			IF mx >= 0 ANDALSO mx < LEN(mrow) THEN
+				DIM mch = MID$(mrow, mx, 1)
+				IF mch = "#" THEN tt[k] = 1
+				IF mch = "o" THEN tt[k] = 2
+				IF mch = "T" THEN tt[k] = 3
 			ENDIF
 		ENDIF
-		cols[k * 4]     = rr
-		cols[k * 4 + 1] = gg
-		cols[k * 4 + 2] = bb
-		cols[k * 4 + 3] = 1.0
-
-		' Normal from the height gradient (clamped neighbours) - needed for
-		' lighting AND so Godot culls the underside (no normals = double-sided).
-		' Derive grid coords from k (0-based) to index hh safely.
-		DIM gyk = INT(k / n)
-		DIM gxk = k - gyk * n
-		DIM xl = gxk - 1
-		IF xl < 0 THEN xl = 0
-		DIM xr = gxk + 1
-		IF xr > n - 1 THEN xr = n - 1
-		DIM zd = gyk - 1
-		IF zd < 0 THEN zd = 0
-		DIM zu = gyk + 1
-		IF zu > n - 1 THEN zu = n - 1
-		DIM nx = hh[gyk * n + xl] - hh[gyk * n + xr]
-		DIM nz = hh[zd * n + gxk] - hh[zu * n + gxk]
-		DIM ny = 2.0 * cell_size
-		DIM nl = SQR(nx * nx + ny * ny + nz * nz)
-		nrm[k * 3]     = nx / nl
-		nrm[k * 3 + 1] = ny / nl
-		nrm[k * 3 + 2] = nz / nl
 	NEXT
 
-	' Two triangles per grid quad.
-	DIM quads = (n - 1) * (n - 1)
-	DIM inds = ZEROS(quads * 6)
-	DIM w = 0
+	' Visual mesh: SurfaceTool builds 6 verts per quad with their tile colour,
+	' generate_normals, then commit into the ArrayMesh. Two-sided material with
+	' per-vertex colour as albedo.
+	DIM palette AS ARRAY = [ GDX.COLOR(0.45, 0.60, 0.30, 1.0), GDX.COLOR(0.50, 0.40, 0.28, 1.0), GDX.COLOR(0.55, 0.65, 0.40, 1.0), GDX.COLOR(0.18, 0.36, 0.22, 1.0) ]
+	DIM st = GDX.NEW("SurfaceTool")
+	GDX.CALL(st, "begin", GDX.ENUM("Mesh", "PRIMITIVE_TRIANGLES"))
 	FOR gyq = 0 TO n - 2
 		FOR gxq = 0 TO n - 2
 			DIM i00 = gyq * n + gxq
 			DIM i10 = i00 + 1
 			DIM i01 = (gyq + 1) * n + gxq
 			DIM i11 = i01 + 1
-			inds[w]     = i00
-			inds[w + 1] = i10
-			inds[w + 2] = i11
-			inds[w + 3] = i00
-			inds[w + 4] = i11
-			inds[w + 5] = i01
-			w = w + 6
+			emit_v(st, palette, tt, verts, i00)
+			emit_v(st, palette, tt, verts, i11)
+			emit_v(st, palette, tt, verts, i10)
+			emit_v(st, palette, tt, verts, i00)
+			emit_v(st, palette, tt, verts, i01)
+			emit_v(st, palette, tt, verts, i11)
 		NEXT
 	NEXT
-
-	' Visual mesh via ArrayMesh.add_surface_from_arrays. Empty slots NONE.
-	DIM sa AS ARRAY = []
-	FOR i = 0 TO 12
-		sa = APPEND(sa, NULL)
-	NEXT
-	sa[0]  = GDX.PACKED_VEC3(verts)
-	sa[1]  = GDX.PACKED_VEC3(nrm)
-	sa[3]  = GDX.PACKED_COLOR(cols)
-	sa[12] = GDX.PACKED_INT32(inds)
+	GDX.CALL(st, "generate_normals")
 
 	DIM mesh = GDX.NEW("ArrayMesh")
-	GDX.CALL(mesh, "add_surface_from_arrays", GDX.ENUM("Mesh", "PRIMITIVE_TRIANGLES"), sa)
+	GDX.CALL(st, "commit", GDX.REF(mesh))
 	DIM mat = GDX.NEW("StandardMaterial3D")
 	GDX.SET(mat, "vertex_color_use_as_albedo", TRUE)
-	' Render both faces. Without this, slopes that face away from the camera
-	' (and the underside) get back-culled, so the ground "disappears" in the
-	' distance. Two-sided is the reliable fix for the procedural patch.
 	GDX.SET(mat, "cull_mode", GDX.ENUM("BaseMaterial3D", "CULL_DISABLED"))
 	GDX.CALL(mesh, "surface_set_material", 0, GDX.REF(mat))
 	GDX.SET(mesh_h, "mesh", GDX.REF(mesh))
 
-	' Collision: a HeightMapShape3D fed the same row-major height grid.
-	' The shape samples at 1-unit spacing, so scale the collider by
-	' cell_size in X/Z to line up with the visual mesh.
+	' Walkable collider: HeightMapShape3D on the same grid, scaled by cell_size.
 	DIM shape = GDX.NEW("HeightMapShape3D")
 	GDX.SET(shape, "map_width", n)
 	GDX.SET(shape, "map_depth", n)
@@ -220,8 +171,8 @@ SUB _ready()
 	PRINT "terrain: " + STR$(total) + " verts, walkable HeightMapShape " + STR$(n) + "x" + STR$(n)
 ENDSUB
 
-' Content-pack root (Project Settings -> Game -> data_dir). Flip to
-' res://assets/data_ger for the German pirate theme.
-FUNC data_dir$()
-	RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/data_dir", "res://assets/data")
-ENDFUNC
+' Emit one SurfaceTool vertex k: its flat tile colour, then its position.
+SUB emit_v(st, palette, tt, verts, k)
+	GDX.CALL(st, "set_color", palette[tt[k]])
+	GDX.CALL(st, "add_vertex", GDX.VEC3(verts[k * 3], verts[k * 3 + 1], verts[k * 3 + 2]))
+ENDSUB

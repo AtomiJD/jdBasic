@@ -15,7 +15,6 @@ DIM visual_h = 0
 DIM yaw_h    = 0
 DIM pitch_h  = 0
 DIM cam_h    = 0
-DIM ray_lbl  = 0
 
 DIM gravity = 9.8
 DIM mouse_captured = FALSE
@@ -119,64 +118,12 @@ SUB play_anim(nm)
 	current_anim = nm
 ENDSUB
 
-' Debug crosshair ray: each physics frame, cast from the camera straight ahead
-' and print the name of whatever collider it hits (player excluded). Things with
-' no collider - the sky / a far horizon band - simply report no hit.
-SUB build_ray_hud()
-	DIM lay = GDX.NEW("CanvasLayer")
-	GDX.ADD_CHILD(self_h, lay)
-	ray_lbl = GDX.NEW("Label")
-	GDX.SET(ray_lbl, "position", GDX.VEC2(12.0, 12.0))
-	GDX.SET(ray_lbl, "modulate", GDX.COLOR(1.0, 1.0, 0.55, 1.0))
-	GDX.SET(ray_lbl, "text", "Ziel: -")
-	GDX.ADD_CHILD(lay, ray_lbl)
-ENDSUB
-
-FUNC fmt3(v)
-	RETURN STR$(INT(v[0])) + "," + STR$(INT(v[1])) + "," + STR$(INT(v[2]))
-ENDFUNC
-
-FUNC fmt3f(v)
-	RETURN STR$(v[0]) + "," + STR$(v[1]) + "," + STR$(v[2])
-ENDFUNC
-
-SUB update_ray()
-	IF cam_h = 0 THEN RETURN
-	DIM pp = GDX.GET(self_h, "global_position")
-	DIM txt = "Du @ " + fmt3(pp) + CHR$(10)
-
-	' What the crosshair points at.
-	DIM cp = GDX.GET(cam_h, "global_position")
-	DIM bz = GDX.GET(cam_h, "global_transform:basis:z")
-	DIM frm = GDX.VEC3(cp[0], cp[1], cp[2])
-	DIM tov = GDX.VEC3(cp[0] - bz[0] * 1000.0, cp[1] - bz[1] * 1000.0, cp[2] - bz[2] * 1000.0)
-	DIM hit = GDX.RAYCAST(frm, tov, -1, self_h)
-	IF hit{"hit"} THEN
-		DIM col = hit{"collider"}
-		txt = txt + "Ziel: " + GDX.GET(col, "name") + " [" + GDX.CALL(col, "get_class") + "] @ " + fmt3(hit{"position"}) + "  n=" + fmt3f(hit{"normal"}) + CHR$(10)
-	ELSE
-		txt = txt + "Ziel: (kein Collider - Himmel / zu weit)" + CHR$(10)
-	ENDIF
-
-	' What is directly above the player.
-	DIM up0 = GDX.VEC3(pp[0], pp[1] + 0.5, pp[2])
-	DIM up1 = GDX.VEC3(pp[0], pp[1] + 500.0, pp[2])
-	DIM uh = GDX.RAYCAST(up0, up1, -1, self_h)
-	IF uh{"hit"} THEN
-		txt = txt + "Oben: " + GDX.GET(uh{"collider"}, "name") + " [" + GDX.CALL(uh{"collider"}, "get_class") + "] @ y=" + STR$(INT(uh{"position"}[1]))
-	ELSE
-		txt = txt + "Oben: (frei / Himmel)"
-	ENDIF
-	GDX.SET(ray_lbl, "text", txt)
-ENDSUB
-
 SUB _ready()
 	self_h   = GDX.SELF()
 	visual_h = GDX.CALL(self_h, "get_node", "Visual")
 	yaw_h    = GDX.CALL(self_h, "get_node", "YawPivot")
 	pitch_h  = GDX.CALL(self_h, "get_node", "YawPivot/PitchPivot")
 	cam_h    = GDX.CALL(self_h, "get_node", "YawPivot/PitchPivot/SpringArm3D/Camera3D")
-	build_ray_hud()
 
 	DIM ps = GDX.SINGLETON("ProjectSettings")
 	gravity = GDX.CALL(ps, "get_setting", "physics/3d/default_gravity", 9.8)
@@ -253,6 +200,4 @@ SUB _physics_process(delta)
 	ELSE
 		play_anim(anim_walk)
 	ENDIF
-
-	update_ray()
 ENDSUB

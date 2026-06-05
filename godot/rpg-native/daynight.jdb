@@ -21,6 +21,8 @@ SUB _ready()
 	GDX.SET(env, "sky", GDX.REF(sky))
 	GDX.SET(env, "ambient_light_source", GDX.ENUM("Environment", "AMBIENT_SOURCE_SKY"))
 
+	GDX.SET(env, "fog_enabled", FALSE)
+
 	DIM we = GDX.NEW("WorldEnvironment")
 	GDX.SET(we, "environment", GDX.REF(env))
 	' Defer: the parent is still building its children during _ready.
