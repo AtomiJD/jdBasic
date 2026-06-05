@@ -1,0 +1,74 @@
+' SVD low-rank image compression. Build a small structured grayscale image,
+' decompose it with SVD, then rebuild it one rank-1 layer at a time:
+'   image ~= sum_i  S[i] * outer(U[:,i], V[:,i])
+' The reconstruction (right) sharpens toward the original (left) as the rank
+' climbs - a handful of singular values already carry most of the picture.
+
+DIM N = 48
+
+' Source image (values ~0..1), built vectorised then reshaped to N x N.
+DIM idx = IOTA(N * N, 0)
+DIM jj = idx MOD N
+DIM ii = (idx - jj) / N
+DIM flatG = 0.5 + 0.30 * SIN(ii * 0.35) * COS(jj * 0.25) + 0.12 * SIN((ii + jj) * 0.2)
+DIM G = RESHAPE(flatG, [N, N])
+
+DIM d = SVD(G)
+DIM U = d{"U"}
+DIM S = d{"S"}
+DIM V = d{"V"}
+DIM rank = LEN(S)
+
+SCREEN 900, 500, "SVD image compression"
+DIM scale = 7.0
+DIM origPix = to_pixels(G, N)
+
+' Accumulate rank-1 layers, one per frame.
+DIM acc = OUTER(SLICE(U, 1, 0), SLICE(V, 1, 0), "*") * S[0]
+DIM k = 1
+DIM recPix
+DIM kept
+
+DO
+    CLS
+    PLOTRAW 40, 80, origPix, scale, scale
+    TEXT 40, 44, "Original  " + STR$(N) + "x" + STR$(N), 200, 200, 200
+
+    recPix = to_pixels(acc, N)
+    PLOTRAW 470, 80, recPix, scale, scale
+    ' rank-k stores k*(2N+1) numbers vs N*N for the full image.
+    kept = INT(100.0 * k * (2 * N + 1) / (N * N))
+    TEXT 470, 44, "Rank " + STR$(k) + " / " + STR$(rank) + "   (" + STR$(kept) + "% of data)", 200, 230, 120
+
+    TEXT 40, 470, "SVD low-rank reconstruction  -  Esc to quit", 150, 150, 150
+    SCREENFLIP
+    SLEEP 350
+
+    IF k < rank THEN
+        acc = acc + OUTER(SLICE(U, 1, k), SLICE(V, 1, k), "*") * S[k]
+        k = k + 1
+    ENDIF
+    K$ = INKEY$()
+LOOP UNTIL K$ = CHR$(27)
+
+' Element-wise min(a, b) and clamp to [0,1], all vectorised over arrays.
+FUNC emin(a, b)
+    RETURN (a + b - ABS(a - b)) / 2.0
+ENDFUNC
+
+FUNC clamp01(x)
+    DIM lo = (x + ABS(x)) / 2.0       ' max(x, 0)
+    DIM hi = 1.0 - lo
+    RETURN 1.0 - (hi + ABS(hi)) / 2.0  ' min(., 1)
+ENDFUNC
+
+' Value matrix (0..1) -> N x N packed-RGB matrix using a jet colormap
+' (blue -> cyan -> green -> yellow -> red), so the image reads as a heatmap.
+FUNC to_pixels(M, sz)
+    DIM v = FLATTEN(M)
+    DIM rr = clamp01(emin(4.0 * v - 1.5, 4.5 - 4.0 * v))
+    DIM gg = clamp01(emin(4.0 * v - 0.5, 3.5 - 4.0 * v))
+    DIM bb = clamp01(emin(4.0 * v + 0.5, 2.5 - 4.0 * v))
+    DIM packed = INT(rr * 255.0) * 65536 + INT(gg * 255.0) * 256 + INT(bb * 255.0)
+    RETURN RESHAPE(packed, [sz, sz])
+ENDFUNC

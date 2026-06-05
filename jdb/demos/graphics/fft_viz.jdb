@@ -1,50 +1,80 @@
-' Load the new numerical functions from the DLL
-DLLIMPORT "numerics.dll"
+' Fancy FFT spectrum analyzer. Each frame synthesizes a signal from three
+' drifting sine partials, runs the built-in FFT, and draws the lower-half
+' magnitude as rainbow bars with a soft glow and falling peak-hold caps,
+' plus a time-domain oscilloscope line across the top.
 
-SCREEN 800, 600, "FFT Visualizer"
-SOUND.INIT
-SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE" ' Play a beat to visualize
-SOUND.SEQ 1, "~ c3 ~ c3", "TRIANGLE" ' Play a beat to visualize
-SOUND.VOICE 2, "SAW", 0.1, 0.1, 0.1, 0.1
-SOUND.SEQ 2, "c5 c5 c5 c5", "VOICE" ' Play a beat to visualize
+SCREEN 800, 600, "FFT Visualizer", 2
 
-DIM WaveData, Spectrum, Mag
-DIM RealPart, ImagPart
-DIM BarHeight
+DIM Nsamp = 256
+DIM tt = IOTA(Nsamp, 0)
+DIM count = Nsamp / 2
+DIM peak = ZEROS(count)
+DIM bw = 800.0 / count
+DIM wstep = 800.0 / Nsamp
+
+DIM ph = 0.0
+DIM cph = 0.0
+
+DIM sig, Spectrum
+DIM re, im, mag, BarHeight, x, bf, th, i, j
+DIM r, g, b
+DIM f1, f2, f3, a2
+DIM wy, wyp, wx
 
 DO
     CLS
-    
-    ' 1. Get raw audio (Time Domain)
-    WaveData = SOUND.GET_WAVE()
-    
-    ' 2. Perform FFT (Frequency Domain)
-    ' Returns a 2D array: [Frequency_Index, 2] 
-    ' Column 0 = Real, Column 1 = Imaginary
-    Spectrum = FFT(WaveData)
-    
-    ' 3. Draw the Spectrum (The first half is the useful part)
-    ' We step by 2 or 4 to fit bars on screen
-    count = LEN(Spectrum)[0] / 2 
 
-    FOR i = 0 TO count - 1 STEP 4
-        ' Extract Complex Numbers
-        RealPart = Spectrum[i, 0]
-        ImagPart = Spectrum[i, 1]
-        
-        ' Calculate Magnitude (Pythagoras)
-        ' Mag = SQR(Real^2 + Imag^2)
-        Mag = SQR(RealPart^2 + ImagPart^2)
-        
-        ' Normalize/Scale for screen (Logarithmic scaling looks best for audio)
-        BarHeight = LOG(Mag + 1) * 50 
-        
-        ' Draw Bar
-        RECT i * 2, 600 - BarHeight, 6, BarHeight, TRUE, [0, 100, 0]
+    ' Three drifting partials -> time-domain signal.
+    f1 = 0.15 + 0.10 * SIN(ph * 0.70)
+    f2 = 0.45 + 0.15 * SIN(ph * 0.30 + 1.0)
+    f3 = 0.90 + 0.20 * SIN(ph * 0.50 + 2.0)
+    a2 = 0.6 + 0.4 * SIN(ph)
+    sig = SIN(tt * f1) + a2 * SIN(tt * f2) + 0.4 * SIN(tt * f3)
+
+    Spectrum = FFT(sig)
+
+    FOR i = 0 TO count - 1
+        re = Spectrum[i][0]
+        im = Spectrum[i][1]
+        mag = SQR(re * re + im * im)
+        BarHeight = mag * 3.5
+        IF BarHeight > 560 THEN BarHeight = 560
+
+        ' Peak-hold: jump up instantly, fall back slowly.
+        IF BarHeight > peak[i] THEN
+            peak[i] = BarHeight
+        ELSE
+            peak[i] = peak[i] * 0.94
+        ENDIF
+
+        ' Rainbow hue from bin + time; brightness rides the magnitude.
+        th = i * 0.09 + cph
+        bf = 0.30 + 0.70 * (BarHeight / 560.0)
+        r = INT((128 + 127 * SIN(th)) * bf)
+        g = INT((128 + 127 * SIN(th + 2.094)) * bf)
+        b = INT((128 + 127 * SIN(th + 4.188)) * bf)
+        x = i * bw
+
+        ' Soft glow behind, the solid bar, then a bright peak cap.
+        ' (cc colour order: RECT x,y,w,h, r,g,b, fill - separate scalars.)
+        RECT x - 1, 600 - BarHeight, bw + 1, BarHeight, INT(r * 0.4), INT(g * 0.4), INT(b * 0.4), TRUE
+        RECT x, 600 - BarHeight, bw - 1, BarHeight, r, g, b, TRUE
+        RECT x, 600 - peak[i], bw - 1, 3, 255, 255, 255, TRUE
     NEXT
-    
-    SCREENFLIP
-    SLEEP 16
-    K$ = INKEY$()
 
+    ' Time-domain oscilloscope line across the top.
+    wyp = 70 + sig[0] * 22
+    FOR j = 1 TO Nsamp - 1
+        wy = 70 + sig[j] * 22
+        wx = j * wstep
+        LINE wx - wstep, wyp, wx, wy, 120, 220, 255
+        wyp = wy
+    NEXT
+
+    TEXT 8, 8, "FFT spectrum  -  Esc to quit", 220, 220, 220
+    SCREENFLIP
+    SLEEP 33
+    ph = ph + 0.06
+    cph = cph + 0.04
+    K$ = INKEY$()
 LOOP UNTIL K$ = CHR$(27)
