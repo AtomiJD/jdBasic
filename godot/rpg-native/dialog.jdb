@@ -857,9 +857,12 @@ EXPORT FUNC dialog_init(model_path)
 	RETURN dialog_init_with(model_path, 99)
 ENDFUNC
 
-' Load the model with an explicit GPU-layer count.
+' Load the model with an explicit GPU-layer count. Context size comes from
+' the game/llm_ctx project setting (default 8192) so a low-VRAM machine can
+' shrink the KV cache via override.cfg without touching code.
 EXPORT FUNC dialog_init_with(model_path, n_gpu)
-	g_llm = AI.LOAD_LLM(model_path, 8192, n_gpu)
+	DIM ctx = GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/llm_ctx", 8192)
+	g_llm = AI.LOAD_LLM(model_path, ctx, n_gpu)
 	AI.SET(g_llm, "max_tokens", 400)
 	AI.SET(g_llm, "temperature", 0.7)
 	' The prompt asks for JSON only; parse_actions wraps any non-JSON output
@@ -2573,7 +2576,8 @@ SUB _process(delta)
 	ENDIF
 	IF boot_phase = 2 THEN
 		boot_phase = 3
-		dialog_init_with(resolve_model_path(), g_gpu_layers)
+		DIM ngpu = GDX.CALL(GDX.SINGLETON("ProjectSettings"), "get_setting", "game/llm_gpu_layers", g_gpu_layers)
+		dialog_init_with(resolve_model_path(), ngpu)
 		IF g_llm <> 0 THEN g_ready = TRUE
 		GDX.CALL(splash_layer, "queue_free")
 		' Signal the music manager that the (blocking) model load is done.
