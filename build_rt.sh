@@ -82,17 +82,31 @@ elif [ "$WANT_IMGUI" = "1" ]; then
 fi
 
 if [ "$WANT_LLM" = "1" ]; then
-    LLAMA_DIR="libs/llama"
-    for a in libllama.a libggml.a libggml-base.a libggml-cpu.a; do
-        [ -f "$LLAMA_DIR/$a" ] || { echo "ERROR: $LLAMA_DIR/$a missing - run ./build_libs.sh first"; exit 1; }
-    done
-    CXXFLAGS="$CXXFLAGS -DLLM -I$LLAMA_DIR"
-    LLM_LIBS="$LLAMA_DIR/libllama.a $LLAMA_DIR/libggml.a $LLAMA_DIR/libggml-cpu.a $LLAMA_DIR/libggml-base.a"
-    if [ -f "$LLAMA_DIR/libggml-cuda.a" ]; then
-        LLM_LIBS="$LLM_LIBS $LLAMA_DIR/libggml-cuda.a -lcudart -lcublas -lcublasLt -lcuda"
+    if [ "${LLM_SYSTEM:-0}" = "1" ]; then
+        # System-installed llama.cpp - e.g. inside the Strix-Halo vulkan
+        # distrobox where /lib64 has libllama.so + libggml-vulkan.so wired to
+        # the Radeon iGPU. Build (and run Godot) inside that container. ggml's
+        # backend split varies by build (base/cpu/vulkan/cuda), so link only
+        # the ggml-* libs that are actually installed.
+        CXXFLAGS="$CXXFLAGS -DLLM"
+        LLM_LIBS="-lllama -lggml"
+        for b in ggml-base ggml-cpu ggml-vulkan ggml-cuda; do
+            if ldconfig -p 2>/dev/null | grep -q "lib$b\.so"; then LLM_LIBS="$LLM_LIBS -l$b"; fi
+        done
+        LDFLAGS="$LDFLAGS $LLM_LIBS"
+    else
+        LLAMA_DIR="libs/llama"
+        for a in libllama.a libggml.a libggml-base.a libggml-cpu.a; do
+            [ -f "$LLAMA_DIR/$a" ] || { echo "ERROR: $LLAMA_DIR/$a missing - run ./build_libs.sh first (or set LLM_SYSTEM=1)"; exit 1; }
+        done
+        CXXFLAGS="$CXXFLAGS -DLLM -I$LLAMA_DIR"
+        LLM_LIBS="$LLAMA_DIR/libllama.a $LLAMA_DIR/libggml.a $LLAMA_DIR/libggml-cpu.a $LLAMA_DIR/libggml-base.a"
+        if [ -f "$LLAMA_DIR/libggml-cuda.a" ]; then
+            LLM_LIBS="$LLM_LIBS $LLAMA_DIR/libggml-cuda.a -lcudart -lcublas -lcublasLt -lcuda"
+        fi
+        # Static archives go AFTER the objects on the link line.
+        LDFLAGS="$LDFLAGS $LLM_LIBS"
     fi
-    # Static archives go AFTER the objects on the link line.
-    LDFLAGS="$LDFLAGS $LLM_LIBS"
 fi
 
 # ── Parallel compile to build/obj_pic, then link the .so ─────────
