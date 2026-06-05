@@ -28,7 +28,7 @@ if [ -z "${CXX:-}" ]; then
     esac
 fi
 JOBS=${JOBS:-$(default_jobs)}
-CXXFLAGS="-std=c++17 -O2 -DNDEBUG -fPIC -DJDRT_EXPORTS -Isrc"
+CXXFLAGS="-std=c++17 -O2 -DNDEBUG -fPIC -DJDRT_EXPORTS -Isrc -Ilibs/eigen"
 LDFLAGS="-shared -ldl -lpthread -lm"
 
 WANT_HTTP=${HTTP:-0}
@@ -43,7 +43,7 @@ WANT_SOUND=${SOUND:-0}
 SRC="src/vm_bridge.cpp src/vm.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-     src/jdb_embed_api.cpp"
+     src/jdb_embed_api.cpp src/numerics.cpp"
 
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"

@@ -16,6 +16,7 @@
 #include "parser.h"
 #include "compiler.h"
 #include "ai.h"
+#include "numerics.h"
 #include "llm.h"
 #include "sound.h"
 #ifdef HTTP
@@ -318,6 +319,7 @@ void setup(JdbEmbedImpl* e) {
     // GFX flags get those surfaces too. Functions live at global scope so
     // we use ::-qualified names to escape the anonymous namespace.
     ::register_ai_builtins(e->vm);
+    ::register_numerics_builtins(e->vm);
     ::register_llm_builtins(e->vm);
 #if defined(GFX) || defined(SOUND_DSP)
     // SOUND.* sequencer (pull-mode under SOUND_DSP: no device, host renders).

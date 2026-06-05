@@ -1433,6 +1433,11 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
 * **`SOLVE(matrix A, vextor b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
 * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
+* **`DET(matrix) -> number`**: Determinant of a square matrix (Eigen).
+* **`SVD(matrix) -> map`**: Singular Value Decomposition. Returns a map `{ "U", "S", "V" }` where `S` is the vector of singular values and `U`/`V` are the (thin) factor matrices (Eigen JacobiSVD).
+* **`QR(matrix) -> map`**: Householder QR decomposition. Returns `{ "Q", "R" }` (Eigen).
+* **`EIG(square matrix) -> map`**: Eigen-decomposition. Returns `{ "EIGENVALUES", "EIGENVECTORS" }`; eigenvalues are an `[n][2]` array of `[real, imag]` pairs and eigenvectors an `[n][n][2]` complex array (Eigen EigenSolver).
+* **`FFT(signal) -> array`** / **`IFFT(spectrum) -> array`**: Fast Fourier transform and its inverse. Input is a 1-D array of reals (or `[real, imag]` pairs); the result is an `[N][2]` array of complex `[real, imag]` pairs. Any length N (Eigen unsupported/FFT, kissfft backend).
 * **`NORMALIZE(array) -> array`**: Scales the elements of a numeric array to the range [0.0, 1.0].
 * **`UNIQUE(array) -> array`**: Returns a new array containing only the unique elements from the source.
 * **`SHUFFLE(array) -> array`**: Returns a new array with the elements of the source array randomly shuffled.

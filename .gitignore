@@ -73,6 +73,8 @@ libs/*
 # (compiled .obj + ftxui.lib) ignored.
 !libs/ftxui
 libs/ftxui/build/
+# Eigen 3.4.0 vendored (header-only) for the numerics builtins (SVD/QR/DET/EIG/FFT).
+!libs/eigen
 
 # ── LLM models (huge binary blobs) ────────────────────────────────
 models/

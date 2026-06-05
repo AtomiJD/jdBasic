@@ -163,8 +163,8 @@ REM mismatched runtimes show up as unresolved __imp__* symbols.
   /I"%SDK%\Include\%SDKV%\ucrt" ^
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
-  /Isrc !EXTRA_INC! ^
-  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp !EXTRA_SRC! ^
+  /Isrc /Ilibs\eigen !EXTRA_INC! ^
+  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp !EXTRA_SRC! ^
   /Fe:build\jdBasic.exe ^
   /Fo:build\ ^
   /link ^

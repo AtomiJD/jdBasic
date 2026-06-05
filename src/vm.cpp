@@ -618,6 +618,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE", "GRADE",
         "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE",
         "SOLVE", "INVERT", "CONVOLVE", "PLACE",
+        "SVD", "QR", "DET", "EIG", "FFT", "IFFT",
         "OUTER", "ROTATE", "SHIFT", "XSORT", "INTEGRATE",
         "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
         "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",

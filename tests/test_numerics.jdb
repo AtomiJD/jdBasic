@@ -1,0 +1,52 @@
+' Regression tests for the Eigen-backed numerics builtins:
+' SVD, QR, DET, EIG, FFT, IFFT. Runs identically under the interpreter
+' and native -c.
+
+FUNC chk(nm AS STRING, got AS DOUBLE, want AS DOUBLE, tol AS DOUBLE) AS INTEGER
+    IF ABS(got - want) > tol THEN
+        PRINT "FAIL "; nm; "  got="; got; "  want="; want
+        RETURN 1
+    ENDIF
+    PRINT "ok   "; nm
+    RETURN 0
+ENDFUNC
+
+DIM fails AS INTEGER = 0
+DIM A = [[1.0, 2.0], [3.0, 4.0]]
+
+' DET([[1,2],[3,4]]) = 1*4 - 2*3 = -2
+fails = fails + chk("DET", DET(A), -2.0, 0.000000001)
+
+' SVD singular values of A: 5.4649857, 0.3659662
+DIM sv = SVD(A){"S"}
+fails = fails + chk("SVD S0", sv[0], 5.4649857, 0.00001)
+fails = fails + chk("SVD S1", sv[1], 0.3659662, 0.00001)
+
+' QR: R[0][0] = -||first column|| = -sqrt(1+9) = -3.1622777
+DIM qr = QR(A)
+fails = fails + chk("QR R00", qr{"R"}[0][0], -3.1622777, 0.00001)
+
+' EIG: eigenvalues of A are (5 +/- sqrt(33))/2; their real parts sum to the
+' trace (5) and their product equals the determinant (-2).
+DIM ev = EIG(A){"EIGENVALUES"}
+fails = fails + chk("EIG trace", ev[0][0] + ev[1][0], 5.0, 0.000001)
+fails = fails + chk("EIG prod", ev[0][0] * ev[1][0], -2.0, 0.000001)
+
+' FFT -> IFFT round-trips the original signal.
+DIM sig = [1.0, 2.0, 3.0, 4.0]
+DIM rt = IFFT(FFT(sig))
+fails = fails + chk("FFT roundtrip[0]", rt[0][0], 1.0, 0.000000001)
+fails = fails + chk("FFT roundtrip[2]", rt[2][0], 3.0, 0.000000001)
+
+' FFT of a DC signal [1,1,1,1] -> bin 0 = 4, others = 0.
+DIM dc = FFT([1.0, 1.0, 1.0, 1.0])
+fails = fails + chk("FFT DC bin0", dc[0][0], 4.0, 0.000000001)
+fails = fails + chk("FFT DC bin1", dc[1][0], 0.0, 0.000000001)
+
+PRINT "==============================="
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "FAILURES: "; fails
+ENDIF
+PRINT "==============================="

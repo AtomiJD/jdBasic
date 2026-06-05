@@ -51,6 +51,7 @@
 #include "dap.h"
 #include "ffi.h"
 #include "ai.h"
+#include "numerics.h"
 #include "llm.h"
 #include "version.h"
 #ifdef LLVM_CODEGEN
@@ -331,6 +332,7 @@ static void setup_dynamic_code(VM& vm) {
     register_sound_builtins(vm);
     register_ffi_builtins(vm);
     register_ai_builtins(vm);
+    register_numerics_builtins(vm);
     register_llm_builtins(vm);
 
     // HELP (available in both file and console mode)

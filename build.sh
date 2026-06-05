@@ -25,7 +25,7 @@ if [ -z "${CXX:-}" ]; then
     esac
 fi
 JOBS=${JOBS:-$(default_jobs)}
-CXXFLAGS="-std=c++17 -O2 -DNDEBUG -Isrc"
+CXXFLAGS="-std=c++17 -O2 -DNDEBUG -Isrc -Ilibs/eigen"
 LDFLAGS="-ldl -lpthread"
 
 # Homebrew on Apple Silicon installs to /opt/homebrew; on Intel to /usr/local.
@@ -215,6 +215,7 @@ fi
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
+     src/numerics.cpp \
      $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $FTXUI_SRC $TUI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
@@ -298,6 +299,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     RT_SRC="src/vm_bridge.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
             src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
             src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
+            src/numerics.cpp \
             $HTTP_SRC $GFX_SRC $IMGUI_SRC $TUI_SRC"
     RT_FLAGS_HASH=$(echo "$CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS" | sha1sum | cut -c1-12)
     RT_STAMP="build/obj_pic/.flags-$RT_FLAGS_HASH"

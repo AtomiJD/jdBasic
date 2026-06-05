@@ -792,6 +792,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
                 "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
                 "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+                "FFT", "IFFT",
                 "XSORT", "SPLIT", "LINES", "WORDS", "CHARS",
                 "KEYS", "VALUES", "CHUNK", "ENUMERATE",
                 "REGEX_FINDALL", "REGEX.FINDALL",
@@ -1214,6 +1215,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
                     "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
                     "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+                    "FFT", "IFFT",
                     "XSORT"
                 };
                 if (arr_calls.count(e.func_name)) return JD_TAG_ARR;
@@ -1997,6 +1999,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "MIN","MAX","ANY","ALL","COUNT","INDEXOF","REVERSE","SORT",
                             "TAKE","DROP","UNIQUE","APPEND","PUSH","POP","FLATTEN",
                             "TRANSPOSE","MATMUL","DOT","CROSS","CUMSUM","CUMPROD",
+                            "SVD","QR","DET","EIG","FFT","IFFT",
                             "SCAN","SELECT","FILTER","REDUCE","TYPEOF","IIF",
                             "ZEROS","ONES","IOTA","RANGE","LINSPACE","TENSOR","RESHAPE",
                             "SPLIT","JOIN","FORMAT$","FRMV$","PACK$","UNPACK",
@@ -2037,6 +2040,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                             "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
                             "HTTP.REQUEST",
+                            "SVD", "QR", "EIG",
                             // MAT4.* returns a TENSOR Value; flat-array path
                             // can't carry the shape, so route through VM handle.
                             "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
@@ -7724,6 +7728,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE",
         "GRADE", "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE", "SOLVE",
         "INVERT", "CONVOLVE", "PLACE", "OUTER", "ROTATE", "SHIFT", "XSORT",
+        "SVD", "QR", "DET", "EIG", "FFT", "IFFT",
         "INTEGRATE", "FLATTEN", "ZIP", "DOT", "CROSS", "CUMSUM", "CUMPROD",
         "HISTOGRAM", "COUNT", "INDEXOF", "SORT",
         // Aggregations
@@ -8372,6 +8377,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "FILE.STAT", "DATE.PARTS",
                 "HTTP.REQUEST",
                 "OS.EXEC",
+                "SVD", "QR", "EIG",
                 // Channel RECV returns whatever Value the producer sent —
                 // could be i64, f64, string, array, map, or the EOF marker.
                 // VM_HANDLE keeps the tag intact so CHAN.IS_EOF and the
@@ -8409,6 +8415,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
                 "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
                 "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+                "FFT", "IFFT",
                 "XSORT", "TAKE", "DROP",
                 // APL-style scan / generators / shape ops. Without these
                 // tags the bridge classifies the result as f64 and the

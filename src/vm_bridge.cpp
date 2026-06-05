@@ -38,6 +38,7 @@ static std::mutex& bin_mx() { static std::mutex m; return m; }
 extern void register_sound_builtins(VM& vm);
 extern void register_ffi_builtins(VM& vm);
 extern void register_ai_builtins(VM& vm);
+extern void register_numerics_builtins(VM& vm);
 extern void register_llm_builtins(VM& vm);
 #ifdef COM
 extern void register_com_builtins(VM& vm);
@@ -143,6 +144,7 @@ static void setup_all_builtins(VM& vm) {
     register_sound_builtins(vm);
     register_ffi_builtins(vm);
     register_ai_builtins(vm);
+    register_numerics_builtins(vm);
     register_llm_builtins(vm);
 }
 

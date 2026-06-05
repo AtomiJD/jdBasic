@@ -946,6 +946,30 @@ Description: Numerically integrates a function over a given domain.
 Syntax: INVERT(matrix)
 Description: Computes the inverse of a square matrix.
 
+[DET]
+Syntax: DET(matrix)
+Description: Determinant of a square matrix (Eigen).
+
+[SVD]
+Syntax: SVD(matrix)
+Description: Singular Value Decomposition. Returns a map { "U", "S", "V" } - S is the singular-value vector, U/V the thin factor matrices (Eigen).
+
+[QR]
+Syntax: QR(matrix)
+Description: Householder QR decomposition. Returns a map { "Q", "R" } (Eigen).
+
+[EIG]
+Syntax: EIG(matrix)
+Description: Eigen-decomposition of a square matrix. Returns { "EIGENVALUES", "EIGENVECTORS" } as complex [real,imag] arrays (Eigen).
+
+[FFT]
+Syntax: FFT(signal)
+Description: Fast Fourier transform of a 1-D array (reals or [real,imag] pairs). Returns an [N][2] array of complex [real,imag] pairs. Any length N (Eigen/kissfft).
+
+[IFFT]
+Syntax: IFFT(spectrum)
+Description: Inverse FFT. Input/output are [N][2] complex arrays; round-trips FFT.
+
 [IOTA]
 Syntax: IOTA(N, [base=1], [step=1])
 Description: Generates a 1D array of N numbers.

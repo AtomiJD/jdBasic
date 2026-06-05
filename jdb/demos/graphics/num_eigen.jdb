@@ -1,11 +1,8 @@
-' Load the new numerical functions from the DLL
-DLLIMPORT "numerics.dll"
-
-' --- Now you can use the functions ---
+' Eigen-backed numerics are built in (SVD, QR, DET, EIG, FFT, IFFT) - no import.
 
 ' Test FFT
 PRINT "--- FFT Test ---"
-Signal = SIN(IOTA(16) * PI / 8)
+Signal = SIN(IOTA(16, 0) * PI / 8)
 FreqData = FFT(Signal)
 PRINT "Frequency Data (Real/Imaginary):"
 PRINT FRMV$(FreqData)
@@ -20,3 +17,10 @@ PRINT FRMV$(EigResult{"EIGENVALUES"})
 PRINT "Eigenvectors (Complex):"
 ' This will be a 2x2x2 array [row, col, (real/imag)]
 PRINT EigResult{"EIGENVECTORS"}
+PRINT
+
+' Test SVD / QR / DET
+PRINT "--- SVD / QR / DET ---"
+Decomp = SVD(A)
+PRINT "Singular values: "; FRMV$(Decomp{"S"})
+PRINT "Determinant: "; DET(A)
