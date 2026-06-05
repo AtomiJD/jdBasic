@@ -46,6 +46,8 @@ dist/
 *.obj
 *.exe
 *.dll
+*.so
+*.os
 *.lib
 *.exp
 *.pdb
