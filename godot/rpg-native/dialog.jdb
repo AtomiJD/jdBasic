@@ -871,9 +871,17 @@ ENDFUNC
 ' res://models/<g_model_file> (globalized to an absolute path for AI.LOAD_LLM),
 ' otherwise fall back to the original absolute dev path.
 FUNC resolve_model_path()
+	DIM ps = GDX.SINGLETON("ProjectSettings")
+	' Project Settings -> game/llm_model: an absolute OS path, or a res:// path
+	' that gets globalized. Lets each machine point at its own .gguf.
+	DIM cfg = GDX.CALL(ps, "get_setting", "game/llm_model", "")
+	IF cfg <> "" THEN
+		IF LEFT$(cfg, 6) = "res://" THEN RETURN GDX.CALL(ps, "globalize_path", cfg)
+		RETURN cfg
+	ENDIF
 	DIM rp = "res://models/" + g_model_file
 	IF GDX.STATIC("FileAccess", "file_exists", rp) THEN
-		RETURN GDX.CALL(GDX.SINGLETON("ProjectSettings"), "globalize_path", rp)
+		RETURN GDX.CALL(ps, "globalize_path", rp)
 	ENDIF
 	RETURN g_model_fallback
 ENDFUNC
