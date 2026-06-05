@@ -1,0 +1,134 @@
+EXTENDS Node3D
+
+' Reactive audio tunnel - 100% jdBasic driving Godot.
+' Captures the microphone via an AudioEffectCapture bus, FFTs the samples
+' (built-in FFT), and flies a tunnel of emissive torus rings toward the
+' camera. Bass pumps the ring size, the spectrum tints them, and the colours
+' cycle. If no mic data is available it falls back to a synth signal so it
+' always moves.
+
+DIM self_h = 0
+DIM cap_h  = 0
+
+DIM N_RINGS = 28
+DIM SPACING = 2.2
+DIM DEPTH   = 0.0
+DIM NB      = 256          ' FFT window
+
+DIM rings AS ARRAY = []     ' MeshInstance3D handles
+DIM mats  AS ARRAY = []     ' StandardMaterial3D handles
+DIM zpos  AS ARRAY = []     ' current z of each ring
+
+DIM tacc   = 0.0
+DIM bass   = 0.0
+DIM treble = 0.0
+DIM tt                       ' IOTA window for the synth fallback
+
+SUB setup_mic()
+	DIM srv = GDX.SINGLETON("AudioServer")
+	DIM idx = GDX.CALL(srv, "get_bus_count")
+	GDX.CALL(srv, "add_bus", idx)
+	GDX.CALL(srv, "set_bus_name", idx, "MicCap")
+	GDX.CALL(srv, "set_bus_mute", idx, TRUE)        ' no speaker feedback
+	cap_h = GDX.NEW("AudioEffectCapture")
+	GDX.CALL(srv, "add_bus_effect", idx, GDX.REF(cap_h))
+
+	DIM player = GDX.NEW("AudioStreamPlayer")
+	DIM mic = GDX.NEW("AudioStreamMicrophone")
+	GDX.SET(player, "stream", GDX.REF(mic))
+	GDX.SET(player, "bus", "MicCap")
+	GDX.ADD_CHILD(self_h, player)
+	GDX.CALL(player, "play")
+ENDSUB
+
+SUB build_tunnel()
+	DEPTH = N_RINGS * SPACING
+	DIM i, inst, torus, mat
+	FOR i = 0 TO N_RINGS - 1
+		torus = GDX.NEW("TorusMesh")
+		GDX.SET(torus, "inner_radius", 2.2)
+		GDX.SET(torus, "outer_radius", 2.6)
+		inst = GDX.NEW("MeshInstance3D")
+		GDX.SET(inst, "mesh", GDX.REF(torus))
+		mat = GDX.NEW("StandardMaterial3D")
+		GDX.SET(mat, "emission_enabled", TRUE)
+		GDX.SET(mat, "emission_energy_multiplier", 3.0)
+		GDX.SET(mat, "albedo_color", GDX.COLOR(0.02, 0.02, 0.03, 1.0))
+		GDX.SET(inst, "material_override", GDX.REF(mat))
+		' Stand the torus up so its hole faces down the tunnel (the Z axis).
+		GDX.SET(inst, "rotation:x", 1.5708)
+		GDX.SET(inst, "position", GDX.VEC3(0.0, 0.0, -i * SPACING))
+		GDX.ADD_CHILD(self_h, inst)
+		rings = APPEND(rings, inst)
+		mats  = APPEND(mats, mat)
+		zpos  = APPEND(zpos, -i * SPACING)
+	NEXT
+ENDSUB
+
+' Magnitude sum over a spectrum band [lo, hi).
+FUNC band_energy(spec, lo, hi)
+	DIM en = 0.0
+	DIM k, re, im
+	FOR k = lo TO hi - 1
+		re = spec[k][0]
+		im = spec[k][1]
+		en = en + SQR(re * re + im * im)
+	NEXT
+	RETURN en
+ENDFUNC
+
+' Mic samples (mono) or a synth fallback so the tunnel always moves.
+FUNC get_signal()
+	DIM sig = ZEROS(NB)
+	DIM avail = 0
+	IF cap_h <> 0 THEN avail = GDX.CALL(cap_h, "get_frames_available")
+	IF avail >= NB THEN
+		DIM buf = GDX.CALL(cap_h, "get_buffer", NB)
+		DIM j
+		FOR j = 0 TO NB - 1
+			sig[j] = buf[j][0] * 12.0
+		NEXT
+	ELSE
+		sig = SIN(tt * (0.18 + 0.10 * SIN(tacc))) * (0.5 + 0.5 * SIN(tacc * 2.2))
+	ENDIF
+	RETURN sig
+ENDFUNC
+
+SUB _ready()
+	self_h = GDX.SELF()
+	tt = IOTA(NB, 0)
+	setup_mic()
+	build_tunnel()
+	GDX.PRINT("tunnel ready -", LEN(rings), "rings, FFT window", NB)
+ENDSUB
+
+SUB _process(delta)
+	tacc = tacc + delta
+
+	DIM spec = FFT(get_signal())
+	DIM half = LEN(spec) / 2
+	bass   = band_energy(spec, 1, 6) * 0.5 + bass * 0.5
+	treble = band_energy(spec, 30, half) * 0.5 + treble * 0.5
+
+	DIM pump = 1.0 + bass * 0.05
+	DIM scroll = (6.0 + bass * 0.4) * delta
+
+	DIM i, s, ph, rr, gg, bb, glow
+	FOR i = 0 TO N_RINGS - 1
+		' Fly toward the camera; recycle to the far end.
+		zpos[i] = zpos[i] + scroll
+		IF zpos[i] > 6.0 THEN zpos[i] = zpos[i] - DEPTH
+		GDX.SET(rings[i], "position:z", zpos[i])
+
+		s = pump + 0.10 * SIN(tacc * 3.0 + i * 0.5)
+		GDX.SET(rings[i], "scale", GDX.VEC3(s, s, s))
+
+		' Rainbow by ring + time, brightness rides bass + treble.
+		ph = i * 0.30 + tacc * 1.6
+		glow = 0.35 + (bass + treble) * 0.03
+		rr = (0.5 + 0.5 * SIN(ph)) * glow
+		gg = (0.5 + 0.5 * SIN(ph + 2.094)) * glow
+		bb = (0.5 + 0.5 * SIN(ph + 4.188)) * glow
+		GDX.SET(mats[i], "emission", GDX.COLOR(rr, gg, bb, 1.0))
+	NEXT
+ENDSUB

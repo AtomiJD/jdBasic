@@ -1,0 +1,261 @@
+EXTENDS Node3D
+
+' 3D audio spectrum waterfall - 100% jdBasic driving Godot.
+' Mic -> FFT (built-in) -> log-binned magnitudes (bass/mids spread across the
+' width) -> two mirrored rainbow curves (left up, right down). A ring of H
+' history lines scrolls into the depth. The camera auto-orbits when idle; WASD
+' / mouse-drag / wheel take over on input.
+
+INSPECTOR DIM gain        = 20.0  AS RANGE(0.5, 120.0, 0.5)
+INSPECTOR DIM noise_floor = 0.004 AS RANGE(0.0, 0.10, 0.001)
+INSPECTOR DIM height      = 6.0   AS RANGE(1.0, 24.0, 0.5)
+INSPECTOR DIM max_bin     = 96    AS RANGE(16, 255, 1)
+
+DIM self_h = 0
+DIM cap_h  = 0
+DIM cam_h  = 0
+
+DIM W       = 80        ' frequency columns
+DIM H       = 56        ' history rows (depth)
+DIM NB      = 512       ' FFT window
+DIM SPACING = 0.55      ' z gap between rows
+DIM XW      = 34.0      ' total x width
+DIM CENTER_Z = -15.0
+
+DIM rows   AS ARRAY = []
+DIM meshes AS ARRAY = []
+DIM edges  AS ARRAY = []
+DIM front  = 0
+DIM tt
+DIM sigL
+DIM sigR
+DIM rowmat = 0
+
+' Orbit camera state.
+DIM yaw      = 0.5
+DIM pitch    = 0.45
+DIM rad      = 30.0
+DIM idle     = 3.0
+DIM dragging = FALSE
+
+DIM KEY_W = 87
+DIM KEY_A = 65
+DIM KEY_S = 83
+DIM KEY_D = 68
+DIM KEY_Q = 81
+DIM KEY_E = 69
+
+SUB setup_mic()
+	DIM srv = GDX.SINGLETON("AudioServer")
+	DIM idx = GDX.CALL(srv, "get_bus_count")
+	GDX.CALL(srv, "add_bus", idx)
+	GDX.CALL(srv, "set_bus_name", idx, "MicCap")
+	GDX.CALL(srv, "set_bus_mute", idx, TRUE)
+	cap_h = GDX.NEW("AudioEffectCapture")
+	GDX.CALL(srv, "add_bus_effect", idx, GDX.REF(cap_h))
+	DIM player = GDX.NEW("AudioStreamPlayer")
+	DIM mic = GDX.NEW("AudioStreamMicrophone")
+	GDX.SET(player, "stream", GDX.REF(mic))
+	GDX.SET(player, "bus", "MicCap")
+	GDX.ADD_CHILD(self_h, player)
+	GDX.CALL(player, "play")
+ENDSUB
+
+SUB setup_world()
+	DIM env = GDX.NEW("Environment")
+	GDX.SET(env, "background_mode", GDX.ENUM("Environment", "BG_COLOR"))
+	GDX.SET(env, "background_color", GDX.COLOR(0.0, 0.0, 0.02, 1.0))
+	GDX.SET(env, "glow_enabled", TRUE)
+	GDX.SET(env, "glow_bloom", 0.25)
+	GDX.SET(env, "glow_hdr_threshold", 0.6)
+	DIM we = GDX.NEW("WorldEnvironment")
+	GDX.SET(we, "environment", GDX.REF(env))
+	GDX.ADD_CHILD(self_h, we)
+
+	cam_h = GDX.NEW("Camera3D")
+	GDX.ADD_CHILD(self_h, cam_h)
+	GDX.SET(cam_h, "current", TRUE)
+	place_cam()
+ENDSUB
+
+SUB place_cam()
+	DIM cx = SIN(yaw) * COS(pitch) * rad
+	DIM cy = SIN(pitch) * rad
+	DIM cz = COS(yaw) * COS(pitch) * rad + CENTER_Z
+	GDX.SET(cam_h, "position", GDX.VEC3(cx, cy, cz))
+	GDX.CALL(cam_h, "look_at", GDX.VEC3(0.0, 0.0, CENTER_Z), GDX.VEC3(0.0, 1.0, 0.0))
+ENDSUB
+
+SUB update_cam(delta)
+	DIM moved = FALSE
+	IF GDX.INPUT.IS_KEY_PRESSED(KEY_A) THEN
+		yaw = yaw - 1.2 * delta
+		moved = TRUE
+	ENDIF
+	IF GDX.INPUT.IS_KEY_PRESSED(KEY_D) THEN
+		yaw = yaw + 1.2 * delta
+		moved = TRUE
+	ENDIF
+	IF GDX.INPUT.IS_KEY_PRESSED(KEY_W) THEN
+		rad = rad - 14.0 * delta
+		moved = TRUE
+	ENDIF
+	IF GDX.INPUT.IS_KEY_PRESSED(KEY_S) THEN
+		rad = rad + 14.0 * delta
+		moved = TRUE
+	ENDIF
+	IF GDX.INPUT.IS_KEY_PRESSED(KEY_Q) THEN
+		pitch = pitch - 1.0 * delta
+		moved = TRUE
+	ENDIF
+	IF GDX.INPUT.IS_KEY_PRESSED(KEY_E) THEN
+		pitch = pitch + 1.0 * delta
+		moved = TRUE
+	ENDIF
+	IF moved THEN idle = 0.0 ELSE idle = idle + delta
+	IF idle > 2.0 ANDALSO NOT dragging THEN yaw = yaw + 0.18 * delta
+
+	IF rad < 9.0 THEN rad = 9.0
+	IF rad > 70.0 THEN rad = 70.0
+	IF pitch < 0.05 THEN pitch = 0.05
+	IF pitch > 1.45 THEN pitch = 1.45
+	place_cam()
+ENDSUB
+
+SUB _unhandled_input(event)
+	DIM klass = GDX.CALL(event, "get_class")
+	IF klass = "InputEventMouseButton" THEN
+		DIM btn = GDX.GET(event, "button_index")
+		IF btn = 1 THEN dragging = GDX.GET(event, "pressed")
+		IF btn = 4 THEN rad = rad - 2.0
+		IF btn = 5 THEN rad = rad + 2.0
+	ELSEIF klass = "InputEventMouseMotion" ANDALSO dragging THEN
+		DIM rel = GDX.GET(event, "relative")
+		yaw = yaw + rel[0] * 0.006
+		pitch = pitch + rel[1] * 0.006
+		idle = 0.0
+	ENDIF
+ENDSUB
+
+' Log-spaced bin boundaries up to max_bin: low freqs get many columns.
+SUB build_edges()
+	DIM bmin = 2.0
+	DIM ratio = LOG(max_bin / bmin)
+	DIM x
+	FOR x = 0 TO W
+		edges = APPEND(edges, INT(bmin * EXP((x / W) * ratio)))
+	NEXT
+ENDSUB
+
+SUB build_rows()
+	rowmat = GDX.NEW("StandardMaterial3D")
+	GDX.SET(rowmat, "shading_mode", GDX.ENUM("BaseMaterial3D", "SHADING_MODE_UNSHADED"))
+	GDX.SET(rowmat, "vertex_color_use_as_albedo", TRUE)
+	DIM i, im, inst
+	FOR i = 0 TO H - 1
+		im = GDX.NEW("ImmediateMesh")
+		inst = GDX.NEW("MeshInstance3D")
+		GDX.SET(inst, "mesh", GDX.REF(im))
+		GDX.SET(inst, "material_override", GDX.REF(rowmat))
+		GDX.SET(inst, "position", GDX.VEC3(0.0, 0.0, -i * SPACING))
+		GDX.ADD_CHILD(self_h, inst)
+		rows   = APPEND(rows, inst)
+		meshes = APPEND(meshes, im)
+	NEXT
+ENDSUB
+
+SUB capture_stereo()
+	sigL = ZEROS(NB)
+	sigR = ZEROS(NB)
+	DIM avail = 0
+	IF cap_h <> 0 THEN avail = GDX.CALL(cap_h, "get_frames_available")
+	IF avail >= NB THEN
+		DIM buf = GDX.CALL(cap_h, "get_buffer", NB)
+		DIM j
+		FOR j = 0 TO NB - 1
+			sigL[j] = buf[j][0]
+			sigR[j] = buf[j][1]
+		NEXT
+	ENDIF
+ENDSUB
+
+FUNC col_at(mag, x)
+	DIM lo = edges[x]
+	DIM hi = edges[x + 1]
+	IF hi <= lo THEN RETURN mag[lo]
+	DIM s = 0.0
+	DIM k
+	FOR k = lo TO hi - 1
+		s = s + mag[k]
+	NEXT
+	RETURN s / (hi - lo)
+ENDFUNC
+
+FUNC shape_mag(m)
+	DIM v = (m - noise_floor) * gain
+	IF v < 0.0 THEN v = 0.0
+	IF v > 1.5 THEN v = 1.5
+	RETURN v
+ENDFUNC
+
+' One rainbow line strip; `dir` = +1 up / -1 down, `chan` dims the channel.
+SUB strip(im, cols, dir, chan)
+	GDX.CALL(im, "surface_begin", GDX.ENUM("Mesh", "PRIMITIVE_LINE_STRIP"))
+	DIM x, m, xpos, ph, bf, r, g, b
+	FOR x = 0 TO W - 1
+		m = cols[x]
+		xpos = (x / (W - 1.0) - 0.5) * XW
+		ph = x * (6.2831853 / W) * 1.5
+		bf = (0.25 + m * 1.7) * chan
+		r = (0.5 + 0.5 * SIN(ph)) * bf
+		g = (0.5 + 0.5 * SIN(ph + 2.094)) * bf
+		b = (0.5 + 0.5 * SIN(ph + 4.188)) * bf
+		GDX.CALL(im, "surface_set_color", GDX.COLOR(r, g, b, 1.0))
+		GDX.CALL(im, "surface_add_vertex", GDX.VEC3(xpos, dir * m * height, 0.0))
+	NEXT
+	GDX.CALL(im, "surface_end")
+ENDSUB
+
+SUB _ready()
+	self_h = GDX.SELF()
+	tt = IOTA(NB, 0)
+	build_edges()
+	setup_mic()
+	setup_world()
+	build_rows()
+	GDX.PRINT("spectrum ready -", H, "rows x", W, "cols (log), stereo, FFT", NB)
+ENDSUB
+
+SUB _process(delta)
+	update_cam(delta)
+	capture_stereo()
+
+	DIM specL = FFT(sigL)
+	DIM specR = FFT(sigR)
+	DIM reL = SLICE(specL, 1, 0)
+	DIM imL = SLICE(specL, 1, 1)
+	DIM reR = SLICE(specR, 1, 0)
+	DIM imR = SLICE(specR, 1, 1)
+	DIM magL = SQR(reL * reL + imL * imL) / NB
+	DIM magR = SQR(reR * reR + imR * imR) / NB
+
+	DIM colsL = ZEROS(W)
+	DIM colsR = ZEROS(W)
+	DIM x
+	FOR x = 0 TO W - 1
+		colsL[x] = shape_mag(col_at(magL, x))
+		colsR[x] = shape_mag(col_at(magR, x))
+	NEXT
+
+	front = (front - 1 + H) MOD H
+	DIM im = meshes[front]
+	GDX.CALL(im, "clear_surfaces")
+	strip(im, colsL,  1.0, 1.0)
+	strip(im, colsR, -1.0, 0.82)
+
+	DIM d, idx
+	FOR d = 0 TO H - 1
+		idx = (front + d) MOD H
+		GDX.SET(rows[idx], "position:z", -d * SPACING)
+	NEXT
+ENDSUB
