@@ -50,6 +50,9 @@ dist/
 *.os
 *.lib
 *.exp
+
+# Godot per-machine setting overrides (e.g. absolute LLM model path on render).
+godot/rpg-native/override.cfg
 *.pdb
 *.ilk
 *.res
