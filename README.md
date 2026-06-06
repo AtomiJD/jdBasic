@@ -1,6 +1,6 @@
 # jdBasic — A Persistent Experimental BASIC Environment
 
-**jdBasic** is a modern BASIC interpreter built around a custom **bytecode virtual machine** with APL-style array programming, hot-reloadable code, a persistent REPL workspace, and first-class graphics, GUI, audio, networking, and AI integration.
+**jdBasic** is a modern BASIC interpreter built around a custom **bytecode virtual machine** with APL-style array programming, hot-reloadable code, a persistent REPL workspace, and first-class graphics, GUI, audio, networking, AI, and **Godot-engine** integration.
 
 It combines the immediacy of classic BASIC with powerful built-in capabilities and a "stay in the session" philosophy — no constant restarts, no rebuild loops, just **think and run**.
 
@@ -14,6 +14,7 @@ You can:
 - save and restore entire sessions with `SAVEWS` / `LOADWS`
 - write vectorized data pipelines using APL-inspired array operators
 - prototype graphics, games, and tools with SDL3 + Dear ImGui
+- embed in **Godot 4** and script whole 3D games, tools, and visualizers in pure BASIC
 - talk to local LLMs (llama.cpp) and run ONNX models inline
 - build automation tools, REST clients, and serial-device controllers
 - extend the language with native modules
@@ -63,8 +64,11 @@ This is the **v2 rewrite**. Compared to the original tree-walking interpreter, j
 
 - A **bytecode compiler + virtual machine** with inline caches, opcode fusion, and a fast intrusive‑refcount value type
 - **APL-style vectorization** — `SIN`, `COS`, `+`, `*`, scatter/gather, `IOTA`, `REDUCE`, `SCAN`, `FILTER`, `SELECT` all operate over arrays in a single op
+- **Eigen-backed linear algebra & DSP** — `SVD`, `QR`, `DET`, `EIG`, and `FFT`/`IFFT` as first-class array builtins
 - **SDL3** graphics with letterboxed logical presentation, `TOGGLE_FULLSCREEN`, and a streaming-texture batch plotter (`GFX.PLOT_POINTS_TEX`) that can push 70k coloured pixels per frame at 30+ FPS from pure BASIC
 - **Dear ImGui** integration for instant-mode tools and debuggers
+- **Godot 4 embed (GDExtension)** — run jdBasic *inside* Godot: `.jdb` files become engine scripts and the `GDX.*` suite reaches the whole engine (nodes, physics, 3D meshes, audio, signals), with an in-editor debugger and Inspector-exposed variables — see [`embed/godot/`](embed/godot/)
+- **Music sequencer** — a tracker-style `SOUND.*` engine (patterns, voices, effects) with a device-less `SOUND_DSP` pull mode for embedding — see [`doc/SequencerHelp.md`](doc/SequencerHelp.md)
 - **llama.cpp** for local LLM inference (CPU + optional CUDA)
 - **ONNX Runtime** for classical ML inference
 - **HTTP/HTTPS** client (OpenSSL), **COM** automation (Windows), **Serial** I/O for embedded
@@ -153,6 +157,35 @@ Numbers from the latest run: **[bench/Results.md](bench/Results.md)**.
 
 ---
 
+## jdBasic in Godot
+
+jdBasic embeds in **Godot 4** as a GDExtension: a `.jdb` file *is* a Godot script. The `GDX.*` native suite reaches the engine directly — nodes, the physics server, 3D meshes and materials, audio buses, and signals — so you can build whole scenes without a line of GDScript and step through them in the in-editor debugger.
+
+```basic
+EXTENDS Node3D            ' this .jdb file IS the Godot script
+
+DIM cube_h = 0
+
+SUB _ready()
+    cube_h = GDX.CALL(GDX.SELF(), "get_node", "Cube")
+ENDSUB
+
+SUB _process(delta)
+    ' spin the cube; rotation:y indexes into the Vector3 property
+    GDX.SET(cube_h, "rotation:y", GDX.GET(cube_h, "rotation:y") + delta)
+ENDSUB
+```
+
+Three projects under [`godot/`](godot/) show how far it goes — all logic in jdBasic, running on Windows and Linux (NVIDIA/CUDA and AMD/Vulkan):
+
+- **`rpg-native`** — a 3D action-RPG: procedural heightmap terrain, a data-driven dungeon, day/night, an item shop, and **NPCs whose entire dialogue brain is a local LLM** (llama.cpp) with RAG over the world lore — quests, memory, and tool-calling, all in jdBasic.
+- **`audioviz`** — a live **microphone → FFT → 3D spectrum waterfall**, built on the new `FFT` builtin with an orbiting camera.
+- **`jd-one`** — a sandbox of small scenes (Breakout, a spinning cube, a reactive audio tunnel, GDScript-vs-jdBasic benchmarks).
+
+See [`embed/godot/README.md`](embed/godot/README.md) for the embed architecture and the `GDX.*` reference.
+
+---
+
 ## Getting started
 
 ### Run it
@@ -177,9 +210,11 @@ Numbers from the latest run: **[bench/Results.md](bench/Results.md)**.
 
 ```
 src/        — interpreter source (lexer, parser, compiler, VM, runtime modules)
+embed/      — Godot GDExtension (jdb_godot) that embeds the VM in Godot 4
+godot/      — Godot projects: rpg-native (LLM RPG), audioviz, jd-one sandbox
 jdb/        — example .jdb programs
 doc/        — language reference and build guide
-tests/      — regression suite (comprehensive_test.jdb + crash_test.jdb)
+tests/      — regression suite; tests/gate/ holds the four pre-commit suites
 fonts/      — bundled TTF fonts
 sfx/        — bundled sound effects
 resources/  — icon, manifest, version info
@@ -198,13 +233,13 @@ dist/       — packaged distribution (not in git)
 Contributions, bug reports, and feedback are welcome! Please make sure that the regression suite still passes after your changes — four test files cover the language, the native compiler, and the APL pipeline:
 
 ```bash
-build\jdBasic.exe tests\comprehensive_test.jdb
-build\jdBasic.exe tests\native_test.jdb
-build\jdBasic.exe tests\test_apl_complete.jdb
-build\jdBasic.exe tests\test_apl_pipelines.jdb
+build\jdBasic.exe tests\gate\comprehensive_test.jdb
+build\jdBasic.exe tests\gate\native_test.jdb
+build\jdBasic.exe tests\gate\test_apl_complete.jdb
+build\jdBasic.exe tests\gate\test_apl_pipelines.jdb
 ```
 
-All four should report `0 failed` (1139 tests total at the time of writing). For changes that touch the LLVM codegen, run each suite again through the compiler — `build\jdBasic.exe -c tests\<suite>.jdb && tests\<suite>.exe` — so both the interpreter and native paths stay green.
+All four should report `0 failed`. For changes that touch the LLVM codegen, run each suite again through the compiler — `build\jdBasic.exe -c tests\gate\<suite>.jdb && tests\gate\<suite>.exe` — so both the interpreter and native paths stay green.
 
 ---
 
