@@ -3,9 +3,9 @@
 ' can see the small-array/big-array crossover and quantify any speedup
 ' a future optimisation delivers.
 '
-' Run interpreted:  build/jdBasic.exe bench/bench_apl_compute.jdb
-' Run native:       build/jdBasic.exe -c bench/bench_apl_compute.jdb
-'                   ./bench/bench_apl_compute.exe
+' Run interpreted:  build/jdBasic.exe jdb/bench/bench_apl_compute.jdb
+' Run native:       build/jdBasic.exe -c jdb/bench/bench_apl_compute.jdb
+'                   ./jdb/bench/bench_apl_compute.exe
 
 OPTION "EXPLICIT"
 

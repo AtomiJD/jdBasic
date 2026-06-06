@@ -1,6 +1,6 @@
 ' Phase 4d — Improved DPLL: pure-literal elimination + DLIS pick.
 '
-' Aufbauend auf bench/sat_brute_dpll.jdb (Phase 3b). Zwei zusaetzliche
+' Aufbauend auf jdb/bench/sat_brute_dpll.jdb (Phase 3b). Zwei zusaetzliche
 ' Optimierungen:
 '   1) Pure-literal elimination: wenn eine Variable in allen offenen
 '      Klauseln nur positiv (oder nur negativ) vorkommt, kann sie

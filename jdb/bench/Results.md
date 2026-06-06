@@ -18,7 +18,7 @@ implemented five ways and produces bit-identical results.
 | Timing            | `time.perf_counter()` around `subprocess.run`,        |
 |                   | wall-clock end-to-end (incl. interpreter startup)     |
 
-Run with: `python bench/run_bench.py` from the project root.
+Run with: `python jdb/bench/run_bench.py` from the project root.
 
 ## Results
 
@@ -73,7 +73,7 @@ per inner iteration. Sums the iteration count over all pixels as a checksum.
 ## Files
 
 ```
-bench/
+jdb/bench/
   bench_pi.{jdb,cpp,py}              -- Pi (interpreter / native / CPython)
   bench_pi_numba.py                  -- Pi via Numba LLVM-JIT
   bench_mandel.{jdb,cpp,py}          -- Mandelbrot, same split
@@ -97,12 +97,12 @@ applicable): native-loop, APL-vectorised, ONNX-Conv/MatMul.
 | Date        | 2026-04-24                                        |
 | jdBasic     | post commit 49ec2ab, full-feature build           |
 | Build flags | COM HTTP SERIAL GFX IMGUI LLM ONNX NATIVEC, /MP32 |
-| ONNX Models | bench/matmul.onnx (136 B), bench/conv3x3.onnx (213 B); generate via `python3 bench/gen_*.py` |
+| ONNX Models | jdb/bench/matmul.onnx (136 B), jdb/bench/conv3x3.onnx (213 B); generate via `python3 jdb/bench/gen_*.py` |
 
 ## Subset-Sum (Phase 1+2)
 
-Files: `bench/subset_sum_apl.jdb`, `bench/subset_sum_dp.jdb`,
-`bench/subset_sum_dp_native.jdb`. Random N-element instance with
+Files: `jdb/bench/subset_sum_apl.jdb`, `jdb/bench/subset_sum_dp.jdb`,
+`jdb/bench/subset_sum_dp_native.jdb`. Random N-element instance with
 target = 1234. Loop = nested FOR over all 2^N masks. APL = OUTER +
 BAND + MATMUL pipeline. DP = `reach BOR SHIFT(reach, num)` (interp)
 or scalar inner loop (native-safe).
@@ -130,7 +130,7 @@ class change (O(N·target)), regardless of language.
 
 ## ONNX as a generic compute backend (Phase 3a + conv)
 
-File: `bench/matmul_onnx.jdb`, `bench/conv_onnx.jdb`. Tiny one-op
+File: `jdb/bench/matmul_onnx.jdb`, `jdb/bench/conv_onnx.jdb`. Tiny one-op
 .onnx with dynamic shapes; all sizes covered by the same model.
 
 Square N × N MatMul:
@@ -157,7 +157,7 @@ compute is small and ONNX per-call overhead doesn't amortise.
 
 ## 3-SAT brute force vs DPLL (Phase 3b)
 
-File: `bench/sat_brute_dpll.jdb`. Random 3-SAT at phase transition
+File: `jdb/bench/sat_brute_dpll.jdb`. Random 3-SAT at phase transition
 M/V ≈ 4.2.
 
 | V  | M   | Brute [ms] | DPLL [ms] | speedup |
@@ -167,7 +167,7 @@ M/V ≈ 4.2.
 | 22 | 92  | (∞)        | 3.6       | ∞       |
 | 30 | 126 | (∞)        | 104       | ∞       |
 
-DPLL+ (pure-literal + DLIS, `bench/sat_dpll_plus.jdb`) on top of
+DPLL+ (pure-literal + DLIS, `jdb/bench/sat_dpll_plus.jdb`) on top of
 basic DPLL:
 
 | V  | basic [ms] | plus [ms] | speedup |
@@ -178,7 +178,7 @@ basic DPLL:
 
 ## Game of Life (Phase 4)
 
-File: `bench/life_bench.jdb`. One Conway step.
+File: `jdb/bench/life_bench.jdb`. One Conway step.
 
 | Field    | Native loop | APL (8 SHIFT+ADD) | ONNX Conv | ONNX vs native |
 |----------|-------------|-------------------|-----------|----------------|
@@ -190,7 +190,7 @@ update (~1.8M cell-updates / second).
 
 ## Mandelbrot (Phase 4b — honest counterexample)
 
-File: `bench/mandelbrot_bench.jdb`. 200 × 150 image, max_iter = 60.
+File: `jdb/bench/mandelbrot_bench.jdb`. 200 × 150 image, max_iter = 60.
 
 | Impl          | [ms] |
 |---------------|------|
@@ -229,7 +229,7 @@ Live demos, no comparison bench:
 ## Files in repo (this wave)
 
 ```
-bench/
+jdb/bench/
   gen_matmul_onnx.py        -- generates matmul.onnx (one MatMul op)
   gen_conv_onnx.py          -- generates conv3x3.onnx (one Conv op)
   matmul.onnx, conv3x3.onnx -- the models (committed binary)

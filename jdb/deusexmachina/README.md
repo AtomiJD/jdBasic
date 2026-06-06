@@ -23,7 +23,7 @@ Verteilter persönlicher AI-Agent ("Jarvis-Klasse") gebaut **vollständig in jdB
 ## Komponenten
 
 ```
-deusexmachina/
+jdb/deusexmachina/
   bus.jdb          # Pub/Sub-Topic-Bus (CHAN-basiert)
   config.jdb       # JSON-Loader mit mtime-Cache
   persist.jdb      # SQLite + Event-Log + RAG-Hook
@@ -68,7 +68,7 @@ Volles Flag-Set nötig:
 
 ### Foundation-Showcase (alle 4 Module zusammen, ~30s)
 ```bash
-cd deusexmachina
+cd jdb/deusexmachina
 cp ../bridges/sqlitebridge/sqlitebridge.dll .
 ../build/jdBasic.exe demo.jdb
 ```
@@ -76,18 +76,18 @@ Zeigt Persist+RAG+LLM+Bus+Dispatch im Zusammenspiel — ingestet 3 Wissens-Chunk
 
 ### MCP-Server für Claude Code
 ```bash
-./build/jdBasic.exe --mcp --tools deusexmachina/tools/
+./build/jdBasic.exe --mcp --tools jdb/deusexmachina/tools/
 ```
 Exposiert `deus_echo`, `deus_health`, `deus_now` zusätzlich zu den eingebauten `jdb_*` Tools. Drop ein neues `tools/foo.json` rein, schreib `EXPORT FUNC tool_foo(args$) AS STRING` in irgendein .jdb das die Manifest referenziert, neustarten — Claude sieht das neue Tool sofort.
 
 ### Unit-Tests
 ```bash
-deusexmachina/run_unit_tests.sh    # Sprint 1+3 Unit-Suites + MCP-E2E
+jdb/deusexmachina/run_unit_tests.sh    # Sprint 1+3 Unit-Suites + MCP-E2E
 ```
 
 ### Integration-Tests (LLM-/RAG-Modelle, manuell)
 ```bash
-cd deusexmachina
+cd jdb/deusexmachina
 ../build/jdBasic.exe test_persist_rag.jdb   # ~5s
 ../build/jdBasic.exe test_llm_brain.jdb     # ~10s
 ../build/jdBasic.exe test_dispatch.jdb      # ~3s, belegt Port 8765

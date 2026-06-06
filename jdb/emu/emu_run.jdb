@@ -13,7 +13,7 @@
 
 IMPORT APPLE2
 
-CD "D:\usr\dev\cc\jdb"
+'CD "D:\usr\dev\cc\jdb"
 
 ' ─── Host-side IO dispatch ─────────────────────────────────────
 ' The CPU's bus_read / bus_write call IO_READ / IO_WRITE by name when

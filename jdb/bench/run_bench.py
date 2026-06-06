@@ -1,6 +1,6 @@
 """Run all benchmark implementations and print a comparison table.
 
-Usage: python bench/run_bench.py   (run from project root)
+Usage: python jdb/bench/run_bench.py   (run from project root)
 """
 import os
 import subprocess

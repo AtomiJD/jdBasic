@@ -228,7 +228,7 @@ ENDSUB
 ' Procedurally builds a 4x4 spritesheet (16x16 frames, 64x64 total):
 '   row 0=right, row 1=down, row 2=left, row 3=up
 '   col 0=closed, col 1=quarter, col 2=open, col 3=quarter
-' Sheet is saved as art/pacman_sheet.png, then SPRITE.LOAD'd so the
+' Sheet is saved as jdb/art/pacman_sheet.png, then SPRITE.LOAD'd so the
 ' standard frame-slicing path works for animation.
 SUB init_pacman()
     DIM pp_rgba = ZEROS(64 * 64 * 4)
@@ -305,10 +305,10 @@ SUB init_pacman()
     ' Build the sheet via tmp sprite + save, then load as proper spritesheet
     DIM pp_tmp AS INTEGER = SPRITE.CREATE(64, 64)
     SPRITE.SETBUFFER pp_tmp, pp_rgba
-    SPRITE.SAVE pp_tmp, "art/pacman_sheet.png"
+    SPRITE.SAVE pp_tmp, "jdb/art/pacman_sheet.png"
     SPRITE.DELETE pp_tmp
 
-    pac_sid = SPRITE.LOAD("art/pacman_sheet.png", 16, 16)
+    pac_sid = SPRITE.LOAD("jdb/art/pacman_sheet.png", 16, 16)
     SPRITE.SCALE pac_sid, 3.0, 3.0
     SPRITE.SET_ORIGIN pac_sid, 8, 8
 
@@ -401,7 +401,7 @@ ENDSUB
 '   row 0=Blinky (red), row 1=Pinky (pink),
 '   row 2=Inky (cyan),  row 3=Clyde (orange)
 '   cols 0/2 = "feet pattern A", cols 1/3 = "feet pattern B"
-' Eyes always look forward (down). Sheet saved as art/ghost_sheet.png,
+' Eyes always look forward (down). Sheet saved as jdb/art/ghost_sheet.png,
 ' then loaded 4 times — one Sprite per ghost, each playing its own row.
 SUB init_ghosts()
     DIM g_rgba = ZEROS(64 * 64 * 4)
@@ -478,7 +478,7 @@ SUB init_ghosts()
 
     DIM gh_tmp AS INTEGER = SPRITE.CREATE(64, 64)
     SPRITE.SETBUFFER gh_tmp, g_rgba
-    SPRITE.SAVE gh_tmp, "art/ghost_sheet.png"
+    SPRITE.SAVE gh_tmp, "jdb/art/ghost_sheet.png"
     SPRITE.DELETE gh_tmp
 
     ' 8 ghost slots — each plays its color-row's 4 frames. Slots
@@ -487,7 +487,7 @@ SUB init_ghosts()
     DIM gi AS INTEGER
     DIM base AS INTEGER
     FOR gi = 0 TO 7
-        ghost_sids[gi] = SPRITE.LOAD("art/ghost_sheet.png", 16, 16)
+        ghost_sids[gi] = SPRITE.LOAD("jdb/art/ghost_sheet.png", 16, 16)
         SPRITE.SCALE ghost_sids[gi], 3.0, 3.0
         base = (gi MOD 4) * 4
         SPRITE.ANIM ghost_sids[gi], "walk", [base, base + 1, base + 2, base + 3], 6
@@ -560,13 +560,13 @@ SUB init_frightened_ghosts()
 
     DIM fr_tmp AS INTEGER = SPRITE.CREATE(64, 64)
     SPRITE.SETBUFFER fr_tmp, g_rgba
-    SPRITE.SAVE fr_tmp, "art/ghost_blue_sheet.png"
+    SPRITE.SAVE fr_tmp, "jdb/art/ghost_blue_sheet.png"
     SPRITE.DELETE fr_tmp
 
     DIM gi AS INTEGER
     DIM base AS INTEGER
     FOR gi = 0 TO 7
-        frght_sids[gi] = SPRITE.LOAD("art/ghost_blue_sheet.png", 16, 16)
+        frght_sids[gi] = SPRITE.LOAD("jdb/art/ghost_blue_sheet.png", 16, 16)
         SPRITE.SCALE frght_sids[gi], 3.0, 3.0
         base = (gi MOD 4) * 4
         SPRITE.ANIM frght_sids[gi], "walk", [base, base + 1, base + 2, base + 3], 6

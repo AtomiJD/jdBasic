@@ -12,7 +12,7 @@
 '   C) ONNX: 3x3-Conv mit Sum-Kernel ueber das ganze Feld in einer
 '      Op (gleiche conv3x3.onnx aus Phase 3).
 '
-' Setup: python3 bench/gen_conv_onnx.py  (einmal, fuer C)
+' Setup: python3 jdb/bench/gen_conv_onnx.py  (einmal, fuer C)
 '
 ' Erwartung: A langsam (kubisch in size). B besser (lineare Anzahl
 ' an Vector-Passes). C deutlich besser fuer grosse Felder (ONNX-Conv
@@ -191,7 +191,7 @@ LET b_apl = LIFE_APL(blinker)
 PRINT "native row 2: "; b_native[2]      ' [0,1,1,1,0]
 PRINT "APL    row 2: "; b_apl[2]         ' [0,1,1,1,0] (zero-padded outside, same in centre)
 
-CONV_MID = AI.LOAD("bench/conv3x3.onnx")
+CONV_MID = AI.LOAD("jdb/bench/conv3x3.onnx")
 LET b_onnx = LIFE_ONNX(blinker)
 PRINT "ONNX   row 2: "; b_onnx[2]
 

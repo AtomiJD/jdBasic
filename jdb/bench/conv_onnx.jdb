@@ -7,7 +7,7 @@
 ' Kernel kommt als Input ins ONNX-Modell, also ein Modell fuer
 ' beliebige 3x3 Filter. Bild-Groesse ist dynamic (H, W symbolisch).
 '
-' Setup: python3 bench/gen_conv_onnx.py
+' Setup: python3 jdb/bench/gen_conv_onnx.py
 
 OPTION "EXPLICIT"
 
@@ -76,7 +76,7 @@ LET edge = [[-1.0, -1.0, -1.0], _
             [-1.0, -1.0, -1.0]]
 
 ' ── Sanity: tiny native + ONNX, compare values ────────────────
-DIM mid = AI.LOAD("bench/conv3x3.onnx")
+DIM mid = AI.LOAD("jdb/bench/conv3x3.onnx")
 PRINT "model id="; mid
 
 ' ONNX expects [1, 1, H, W] — wrap the image in two extra dims, same for kernel.

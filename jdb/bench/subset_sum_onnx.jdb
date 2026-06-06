@@ -8,11 +8,11 @@
 ' Jetzt: ONNX hat im matmul_onnx-Bench bei N=512 124x speedup gezeigt.
 ' Frage: gewinnt die APL-Pipeline jetzt den brute-force-Vergleich?
 '
-' Setup:  python3 bench/gen_matmul_onnx.py
+' Setup:  python3 jdb/bench/gen_matmul_onnx.py
 
 OPTION "EXPLICIT"
 
-DIM mid = AI.LOAD("bench/matmul.onnx")
+DIM mid = AI.LOAD("jdb/bench/matmul.onnx")
 
 ' ── Loop reference (Phase 1 baseline) ──────────────────────────
 FUNC HasSubsetSumLoop(xs, t)

@@ -6,7 +6,7 @@ practical to push real workloads — physics, cellular automata, SAT,
 DSP — through whole-array operations instead of per-element loops.
 
 This tutorial walks the path from "tight FOR loops" to "one line per
-update step" using the demos under `bench/` and `jdb/`. Each section
+update step" using the demos under `jdb/bench/` and `jdb/`. Each section
 ends with a take-away so you can decide *when* the APL form pays off
 and when it doesn't.
 
@@ -77,7 +77,7 @@ as element-wise comparisons. `SHIFT` is 1D in jdBasic; you build a 2D
 shift from a row-shift then a column-shift:
 
 ```basic
-' Inner step (per iteration in bench/life_bench.jdb)
+' Inner step (per iteration in jdb/bench/life_bench.jdb)
 LET shifted = SHIFT_2D_COLS(SHIFT_2D_ROWS(field, dx), dy)
 nf = ADD_2D(nf, shifted)
 ' …after summing eight (dy, dx) pairs, the update rule is vectorised:
@@ -90,7 +90,7 @@ LET nxt  = (stay + born) > 0
 
 ## 3. The whole-grid update pattern (Game of Life)
 
-`bench/life_bench.jdb` runs Conway three ways: triple-loop native,
+`jdb/bench/life_bench.jdb` runs Conway three ways: triple-loop native,
 APL with 8 SHIFTs, ONNX 3×3-conv. Same 64×64 grid, same step:
 
 | Backend            |  Time per step |
@@ -110,7 +110,7 @@ the ONNX backend.
 
 ## 4. When APL loses — Mandelbrot
 
-`bench/mandelbrot_bench.jdb` is the honest counter-example. The
+`jdb/bench/mandelbrot_bench.jdb` is the honest counter-example. The
 Mandelbrot escape iteration has two facts working against the vector
 form:
 
@@ -135,7 +135,7 @@ inner code (Mandelbrot, Newton iteration) is where you want native.
 
 ## 5. Algorithm > notation — Subset-Sum
 
-`bench/subset_sum_*.jdb` shows that algorithmic improvements dominate
+`jdb/bench/subset_sum_*.jdb` shows that algorithmic improvements dominate
 notation-level speedups. The same problem, three implementations:
 
 | N  | 2^N    | Brute APL [ms] | DP (vector) [ms] |
@@ -155,8 +155,8 @@ a substitute for choosing the right algorithm.
 ## 6. ONNX as a generic SIMD backend (Phase 3a)
 
 Tiny one-op `.onnx` files can act as accelerated kernels for any dense
-linear-algebra primitive. `bench/matmul.onnx` is **136 bytes** of MatMul
-with dynamic shapes — same model handles every size. `bench/conv3x3.onnx`
+linear-algebra primitive. `jdb/bench/matmul.onnx` is **136 bytes** of MatMul
+with dynamic shapes — same model handles every size. `jdb/bench/conv3x3.onnx`
 is 213 bytes and runs every 3×3 convolution.
 
 Square N × N MatMul versus the native interpreter triple-loop:
@@ -177,14 +177,14 @@ When *not* to use ONNX:
   on per-cell state. ONNX gives you whole-tensor ops; it does not give
   you "iterate while mask is true."
 
-Generate the models once with `python bench/gen_matmul_onnx.py` /
-`bench/gen_conv_onnx.py`. They're committed in the repo.
+Generate the models once with `python jdb/bench/gen_matmul_onnx.py` /
+`jdb/bench/gen_conv_onnx.py`. They're committed in the repo.
 
 ---
 
 ## 7. Putting it together — the SAT solver
 
-`bench/sat_dpll_plus.jdb` combines several APL idioms with classical
+`jdb/bench/sat_dpll_plus.jdb` combines several APL idioms with classical
 algorithm tricks. Pure-literal elimination needs a per-variable
 positive-vs-negative occurrence count over all open clauses — that's a
 loop over clauses, but each clause's contribution is a vector
@@ -227,14 +227,14 @@ keeping in mind:
 | `jdb/synth_apl.jdb`           | Additive synthesis (5 vector ops/frame)   |
 | `jdb/boids_apl.jdb`           | 5000 particles at 630 FPS                 |
 | `jdb/life_demo.jdb`           | Live Conway 200×150 via ONNX-Conv         |
-| `bench/life_bench.jdb`        | Native vs APL vs ONNX comparison          |
-| `bench/mandelbrot_bench.jdb`  | Counter-example — APL loses to native loop |
-| `bench/subset_sum_*.jdb`      | Brute → APL → DP progression              |
-| `bench/sat_brute_dpll.jdb`    | Vectorised brute + basic DPLL             |
-| `bench/sat_dpll_plus.jdb`     | DPLL with pure-literal + DLIS             |
-| `bench/matmul_onnx.jdb`       | ONNX as a SIMD MatMul backend             |
-| `bench/conv_onnx.jdb`         | ONNX as a 3×3 conv backend                |
-| `bench/Results.md`            | Numbers from a recent run                 |
+| `jdb/bench/life_bench.jdb`        | Native vs APL vs ONNX comparison          |
+| `jdb/bench/mandelbrot_bench.jdb`  | Counter-example — APL loses to native loop |
+| `jdb/bench/subset_sum_*.jdb`      | Brute → APL → DP progression              |
+| `jdb/bench/sat_brute_dpll.jdb`    | Vectorised brute + basic DPLL             |
+| `jdb/bench/sat_dpll_plus.jdb`     | DPLL with pure-literal + DLIS             |
+| `jdb/bench/matmul_onnx.jdb`       | ONNX as a SIMD MatMul backend             |
+| `jdb/bench/conv_onnx.jdb`         | ONNX as a 3×3 conv backend                |
+| `jdb/bench/Results.md`            | Numbers from a recent run                 |
 
 For the bigger picture — interpreter vs native compiler, classic Pi/
-Mandelbrot benches against C++ and Python — see `bench/Results.md`.
+Mandelbrot benches against C++ and Python — see `jdb/bench/Results.md`.

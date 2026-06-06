@@ -1,8 +1,8 @@
 """
 Generate a tiny ONNX model with a single MatMul op and dynamic shapes.
 
-Usage:  python3 bench/gen_matmul_onnx.py
-Output: bench/matmul.onnx
+Usage:  python3 jdb/bench/gen_matmul_onnx.py
+Output: jdb/bench/matmul.onnx
 
 Model:
   Input  A: float32 [M, K]
@@ -34,6 +34,6 @@ model = helper.make_model(graph, producer_name="jdbasic-bench", opset_imports=[o
 model.ir_version = 7
 
 onnx.checker.check_model(model)
-out_path = "bench/matmul.onnx"
+out_path = "jdb/bench/matmul.onnx"
 onnx.save(model, out_path)
 print(f"wrote {out_path} ({len(model.SerializeToString())} bytes)")

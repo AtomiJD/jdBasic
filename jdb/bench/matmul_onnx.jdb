@@ -9,8 +9,8 @@
 ' SIMD/threading erst dann ueber den Call-Overhead dominiert. Bei N<32
 ' verliert ONNX wegen Setup-Kosten.
 '
-' Setup:  python3 bench/gen_matmul_onnx.py  (einmal, generiert
-'         bench/matmul.onnx — dynamic shapes, opset 13).
+' Setup:  python3 jdb/bench/gen_matmul_onnx.py  (einmal, generiert
+'         jdb/bench/matmul.onnx — dynamic shapes, opset 13).
 
 OPTION "EXPLICIT"
 
@@ -31,7 +31,7 @@ ENDFUNC
 
 ' ── Sanity check ──────────────────────────────────────────────────
 PRINT "── Sanity check (3x3 * 3x3) ──"
-DIM mid = AI.LOAD("bench/matmul.onnx")
+DIM mid = AI.LOAD("jdb/bench/matmul.onnx")
 LET A0 = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
 LET B0 = [[9.0, 8.0, 7.0], [6.0, 5.0, 4.0], [3.0, 2.0, 1.0]]
 LET nat3 = MATMUL(A0, B0)

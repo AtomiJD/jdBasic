@@ -1,8 +1,8 @@
 """
 Generate a tiny ONNX model with a single Conv2D op (3x3 kernel).
 
-Usage:  python3 bench/gen_conv_onnx.py
-Output: bench/conv3x3.onnx
+Usage:  python3 jdb/bench/gen_conv_onnx.py
+Output: jdb/bench/conv3x3.onnx
 
 Model:
   Input  X : float32 [1, 1, H, W]    (single grayscale image)
@@ -38,6 +38,6 @@ model = helper.make_model(graph, producer_name="jdbasic-bench", opset_imports=[o
 model.ir_version = 7
 
 onnx.checker.check_model(model)
-out = "bench/conv3x3.onnx"
+out = "jdb/bench/conv3x3.onnx"
 onnx.save(model, out)
 print(f"wrote {out} ({len(model.SerializeToString())} bytes)")
