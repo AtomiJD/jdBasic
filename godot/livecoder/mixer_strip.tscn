@@ -13,3 +13,18 @@ min_value = 0.0
 max_value = 2.0
 step = 0.01
 value = 1.0
+
+[node name="Pan" type="HSlider" parent="."]
+custom_minimum_size = Vector2(110, 16)
+min_value = -1.0
+max_value = 1.0
+step = 0.05
+value = 0.0
+
+[node name="Btns" type="HBoxContainer" parent="."]
+
+[node name="Mute" type="CheckButton" parent="Btns"]
+text = "M"
+
+[node name="Solo" type="CheckButton" parent="Btns"]
+text = "S"

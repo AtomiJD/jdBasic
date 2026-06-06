@@ -21,6 +21,9 @@ DIM TR_KIND$
 DIM TR_NAME$
 DIM TR_SEQ$
 DIM TR_GAIN
+DIM TR_PAN
+DIM TR_MUTE
+DIM TR_SOLO
 
 DIM self_h   = 0
 DIM code_h   = 0
@@ -35,6 +38,9 @@ DIM lay        = 0
 DIM mixer_box  = 0
 DIM MIXER_GAIN
 DIM MIXER_STRIP
+DIM MIXER_PAN
+DIM MIXER_MUTE
+DIM MIXER_SOLO
 
 DIM Q$  = CHR$(34)
 DIM NL$ = CHR$(10)
@@ -47,6 +53,9 @@ SUB studio_reset()
 	TR_NAME$ = ["", "", "", "", "", "", "", ""]
 	TR_SEQ$  = ["", "", "", "", "", "", "", ""]
 	TR_GAIN  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+	TR_PAN   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	TR_MUTE  = [0, 0, 0, 0, 0, 0, 0, 0]
+	TR_SOLO  = [0, 0, 0, 0, 0, 0, 0, 0]
 ENDSUB
 
 ' ── LV_* wrappers: call SQ + record track state ─────────────────────
@@ -119,7 +128,7 @@ SUB setup_ui()
 
 	code_h = GDX.NEW("CodeEdit")
 	GDX.SET(code_h, "position", GDX.VEC2(16.0, 44.0))
-	GDX.SET(code_h, "size", GDX.VEC2(1000.0, 680.0))
+	GDX.SET(code_h, "size", GDX.VEC2(1000.0, 560.0))
 	GDX.SET(code_h, "text", DEFAULT_CODE$)
 	GDX.ADD_CHILD(lay, code_h)
 	GDX.CALL(code_h, "grab_focus")
@@ -142,12 +151,12 @@ SUB setup_ui()
 
 	' Mixer: one strip per active track, rebuilt after each run.
 	DIM mlabel = GDX.NEW("Label")
-	GDX.SET(mlabel, "position", GDX.VEC2(16.0, 732.0))
-	GDX.SET(mlabel, "text", "Mixer")
+	GDX.SET(mlabel, "position", GDX.VEC2(16.0, 612.0))
+	GDX.SET(mlabel, "text", "Mixer   (M = mute, S = solo)")
 	GDX.ADD_CHILD(lay, mlabel)
 
 	mixer_box = GDX.NEW("HBoxContainer")
-	GDX.SET(mixer_box, "position", GDX.VEC2(16.0, 756.0))
+	GDX.SET(mixer_box, "position", GDX.VEC2(16.0, 636.0))
 	GDX.ADD_CHILD(lay, mixer_box)
 ENDSUB
 
@@ -160,6 +169,9 @@ SUB rebuild_mixer()
 		IF MIXER_STRIP[t] <> 0 THEN GDX.QUEUE_FREE(MIXER_STRIP[t])
 		MIXER_STRIP[t] = 0
 		MIXER_GAIN[t]  = 0
+		MIXER_PAN[t]   = 0
+		MIXER_MUTE[t]  = 0
+		MIXER_SOLO[t]  = 0
 	NEXT
 
 	DIM made = 0
@@ -169,24 +181,51 @@ SUB rebuild_mixer()
 			GDX.ADD_CHILD(mixer_box, strip)
 			DIM nm = GDX.CALL(strip, "get_node", "Name")
 			DIM gs = GDX.CALL(strip, "get_node", "Gain")
+			DIM ps = GDX.CALL(strip, "get_node", "Pan")
+			DIM mb = GDX.CALL(strip, "get_node", "Btns/Mute")
+			DIM sb = GDX.CALL(strip, "get_node", "Btns/Solo")
 			GDX.SET(nm, "text", STR$(t) + ": " + TR_NAME$[t])
+			' Set values before connecting so the programmatic init doesn't fire.
 			GDX.SET(gs, "value", TR_GAIN[t])
-			GDX.CONNECT(gs, "value_changed", "on_mixer_changed")
+			GDX.SET(ps, "value", TR_PAN[t])
+			GDX.SET(mb, "button_pressed", TR_MUTE[t])
+			GDX.SET(sb, "button_pressed", TR_SOLO[t])
+			GDX.CONNECT(gs, "value_changed", "on_mix_changed")
+			GDX.CONNECT(ps, "value_changed", "on_mix_changed")
+			GDX.CONNECT(mb, "toggled", "on_mix_changed")
+			GDX.CONNECT(sb, "toggled", "on_mix_changed")
 			MIXER_STRIP[t] = strip
 			MIXER_GAIN[t]  = gs
+			MIXER_PAN[t]   = ps
+			MIXER_MUTE[t]  = mb
+			MIXER_SOLO[t]  = sb
 			made = made + 1
 		ENDIF
 	NEXT
 	GDX.PRINT("mixer rebuilt: " + STR$(made) + " strips")
 ENDSUB
 
-SUB on_mixer_changed(v)
+' Re-read every strip and apply effective gain (gain * mute * solo) + pan.
+SUB on_mix_changed(v)
 	DIM t
+	DIM any_solo = FALSE
+	FOR t = 0 TO 7
+		IF MIXER_SOLO[t] <> 0 ANDALSO GDX.GET(MIXER_SOLO[t], "button_pressed") THEN any_solo = TRUE
+	NEXT
 	FOR t = 0 TO 7
 		IF MIXER_GAIN[t] <> 0 THEN
 			DIM g = GDX.GET(MIXER_GAIN[t], "value")
+			DIM muted  = GDX.GET(MIXER_MUTE[t], "button_pressed")
+			DIM soloed = GDX.GET(MIXER_SOLO[t], "button_pressed")
 			TR_GAIN[t] = g
-			SOUND.GAIN t, g
+			TR_PAN[t]  = GDX.GET(MIXER_PAN[t], "value")
+			TR_MUTE[t] = muted
+			TR_SOLO[t] = soloed
+			DIM eff = g
+			IF muted THEN eff = 0.0
+			IF any_solo ANDALSO NOT soloed THEN eff = 0.0
+			SOUND.GAIN t, eff
+			SOUND.PAN t, TR_PAN[t]
 		ENDIF
 	NEXT
 ENDSUB
@@ -217,6 +256,9 @@ SUB _ready()
 	self_h = GDX.SELF()
 	MIXER_GAIN  = [0, 0, 0, 0, 0, 0, 0, 0]
 	MIXER_STRIP = [0, 0, 0, 0, 0, 0, 0, 0]
+	MIXER_PAN   = [0, 0, 0, 0, 0, 0, 0, 0]
+	MIXER_MUTE  = [0, 0, 0, 0, 0, 0, 0, 0]
+	MIXER_SOLO  = [0, 0, 0, 0, 0, 0, 0, 0]
 	studio_reset()
 	SQ.START()
 	build_default()
