@@ -1,12 +1,13 @@
 EXTENDS Node
 
 ' jdBasic live-coding music sequencer in Godot, powered by the SQ module.
-' A CodeEdit holds SQ/SOUND commands; F5 EXECUTEs them in the running VM so the
-' sequence changes live. SQ (drum kits, instruments, scales, euclidean rhythms)
-' is imported from disk; sq_data.json and the Roland TR-808 sample set live next
-' to this script and resolve against the project directory. The jdBasic SOUND
-' engine renders (SOUND_DSP pull mode) into a Godot AudioStreamGenerator each
-' frame - no audio device needed.
+' A CodeEdit holds LV_*/SQ/SOUND commands; F5 EXECUTEs them in the running VM so
+' the sequence changes live. The LV_* wrappers call SQ and record per-track state
+' into parallel TR_* arrays, so the GUI (mixer strips, later voice editors) can
+' reflect and edit what is playing. SQ (drum kits, instruments, scales, euclidean
+' rhythms) is imported from disk; sq_data.json and the Roland TR-808 sample set
+' live next to this script. The jdBasic SOUND engine renders (SOUND_DSP pull mode)
+' into a Godot AudioStreamGenerator each frame - no audio device needed.
 
 IMPORT SQ
 
@@ -14,6 +15,12 @@ IMPORT SQ
 DIM CONFIG AS MAP
 DIM SFX_CACHE AS MAP
 DIM NEXT_SFX_ID AS INTEGER = 100
+
+' Per-track studio state, rebuilt from the LV_* wrappers on every run.
+DIM TR_KIND$
+DIM TR_NAME$
+DIM TR_SEQ$
+DIM TR_GAIN
 
 DIM self_h   = 0
 DIM code_h   = 0
@@ -24,19 +31,71 @@ DIM started  = FALSE
 DIM rate     = 44100.0
 DIM KEY_F5   = 4194336
 
+DIM lay        = 0
+DIM mixer_box  = 0
+DIM MIXER_GAIN
+DIM MIXER_STRIP
+
 DIM Q$  = CHR$(34)
 DIM NL$ = CHR$(10)
 DIM DEFAULT_CODE$ = ""
 
+' ── Studio state ────────────────────────────────────────────────────
+
+SUB studio_reset()
+	TR_KIND$ = ["empty", "empty", "empty", "empty", "empty", "empty", "empty", "empty"]
+	TR_NAME$ = ["", "", "", "", "", "", "", ""]
+	TR_SEQ$  = ["", "", "", "", "", "", "", ""]
+	TR_GAIN  = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+ENDSUB
+
+' ── LV_* wrappers: call SQ + record track state ─────────────────────
+
+SUB LV_VOICE(track, code$)
+	SQ.V(track, code$)
+	TR_KIND$[track] = "synth"
+	TR_NAME$[track] = code$
+ENDSUB
+
+SUB LV_DRUM(rhythm, kit)
+	SQ.D(rhythm, kit)
+	TR_KIND$[0] = "drum"
+	TR_NAME$[0] = "Kick"
+	TR_KIND$[1] = "drum"
+	TR_NAME$[1] = "Snare"
+	TR_KIND$[2] = "drum"
+	TR_NAME$[2] = "Hat"
+	IF kit = 8 THEN
+		TR_KIND$[3] = "drum"
+		TR_NAME$[3] = "Clap"
+	ENDIF
+ENDSUB
+
+SUB LV_SEQ(track, pat$)
+	SQ.S(track, pat$)
+	TR_SEQ$[track] = pat$
+ENDSUB
+
+SUB LV_OFF(track)
+	SOUND.GAIN track, 0.0
+	TR_KIND$[track] = "empty"
+	TR_NAME$[track] = ""
+	TR_SEQ$[track]  = ""
+ENDSUB
+
+' ── Default patch ───────────────────────────────────────────────────
+
 SUB build_default()
 	DEFAULT_CODE$ = "' jdBasic Live Coder - edit, then press F5 to (re)run." + NL$
 	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.BPM 120" + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.D(8, 8)" + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.V(4, " + Q$ + "TP" + Q$ + ")" + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.S(4, " + Q$ + "[c4 e4 g4] ~ [d4 f4 a4] ~ [e4 g4 b4] ~ [d4 f4 a4] ~" + Q$ + ")" + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.V(5, " + Q$ + "RB" + Q$ + ")" + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.S(5, " + Q$ + "c2 ~ c2 ~ g1 ~ a1 ~" + Q$ + ")"
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "LV_DRUM 8, 8" + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "LV_VOICE 4, " + Q$ + "TP" + Q$ + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "LV_SEQ 4, " + Q$ + "[c4 e4 g4] ~ [d4 f4 a4] ~ [e4 g4 b4] ~ [d4 f4 a4] ~" + Q$ + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "LV_VOICE 5, " + Q$ + "RB" + Q$ + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "LV_SEQ 5, " + Q$ + "c2 ~ c2 ~ g1 ~ a1 ~" + Q$
 ENDSUB
+
+' ── Audio + UI setup ────────────────────────────────────────────────
 
 SUB setup_audio()
 	DIM gen = GDX.NEW("AudioStreamGenerator")
@@ -45,30 +104,109 @@ SUB setup_audio()
 	mplayer = GDX.NEW("AudioStreamPlayer")
 	GDX.SET(mplayer, "stream", GDX.REF(gen))
 	GDX.SET(mplayer, "bus", "Master")
+	GDX.SET(mplayer, "volume_db", -1.94)
 	GDX.ADD_CHILD(self_h, mplayer)
 ENDSUB
 
 SUB setup_ui()
-	DIM lay = GDX.NEW("CanvasLayer")
+	lay = GDX.NEW("CanvasLayer")
 	GDX.ADD_CHILD(self_h, lay)
 
 	status_h = GDX.NEW("Label")
 	GDX.SET(status_h, "position", GDX.VEC2(16.0, 10.0))
-	GDX.SET(status_h, "text", "jdBasic Live Coder   -   F5 = run   (SQ.D/V/S/SC/P + SOUND.*)")
+	GDX.SET(status_h, "text", "jdBasic Live Coder   -   F5 = run   (LV_DRUM/LV_VOICE/LV_SEQ + SOUND.*)")
 	GDX.ADD_CHILD(lay, status_h)
 
 	code_h = GDX.NEW("CodeEdit")
 	GDX.SET(code_h, "position", GDX.VEC2(16.0, 44.0))
-	GDX.SET(code_h, "size", GDX.VEC2(1000.0, 700.0))
+	GDX.SET(code_h, "size", GDX.VEC2(1000.0, 680.0))
 	GDX.SET(code_h, "text", DEFAULT_CODE$)
 	GDX.ADD_CHILD(lay, code_h)
 	GDX.CALL(code_h, "grab_focus")
+
+	' Master volume (live-bound, proven binding spike).
+	DIM vlabel = GDX.NEW("Label")
+	GDX.SET(vlabel, "position", GDX.VEC2(1040.0, 20.0))
+	GDX.SET(vlabel, "text", "Master Volume")
+	GDX.ADD_CHILD(lay, vlabel)
+
+	DIM vol = GDX.NEW("HSlider")
+	GDX.SET(vol, "position", GDX.VEC2(1040.0, 44.0))
+	GDX.SET(vol, "size", GDX.VEC2(220.0, 24.0))
+	GDX.SET(vol, "min_value", 0.0)
+	GDX.SET(vol, "max_value", 1.0)
+	GDX.SET(vol, "step", 0.01)
+	GDX.SET(vol, "value", 0.8)
+	GDX.ADD_CHILD(lay, vol)
+	GDX.CONNECT(vol, "value_changed", "on_master_vol")
+
+	' Mixer: one strip per active track, rebuilt after each run.
+	DIM mlabel = GDX.NEW("Label")
+	GDX.SET(mlabel, "position", GDX.VEC2(16.0, 732.0))
+	GDX.SET(mlabel, "text", "Mixer")
+	GDX.ADD_CHILD(lay, mlabel)
+
+	mixer_box = GDX.NEW("HBoxContainer")
+	GDX.SET(mixer_box, "position", GDX.VEC2(16.0, 756.0))
+	GDX.ADD_CHILD(lay, mixer_box)
 ENDSUB
 
+' ── Mixer ───────────────────────────────────────────────────────────
+
+SUB rebuild_mixer()
+	DIM t
+	' Free previous strips.
+	FOR t = 0 TO 7
+		IF MIXER_STRIP[t] <> 0 THEN GDX.QUEUE_FREE(MIXER_STRIP[t])
+		MIXER_STRIP[t] = 0
+		MIXER_GAIN[t]  = 0
+	NEXT
+
+	DIM made = 0
+	FOR t = 0 TO 7
+		IF TR_KIND$[t] <> "empty" THEN
+			DIM strip = GDX.INSTANTIATE("res://mixer_strip.tscn")
+			GDX.ADD_CHILD(mixer_box, strip)
+			DIM nm = GDX.CALL(strip, "get_node", "Name")
+			DIM gs = GDX.CALL(strip, "get_node", "Gain")
+			GDX.SET(nm, "text", STR$(t) + ": " + TR_NAME$[t])
+			GDX.SET(gs, "value", TR_GAIN[t])
+			GDX.CONNECT(gs, "value_changed", "on_mixer_changed")
+			MIXER_STRIP[t] = strip
+			MIXER_GAIN[t]  = gs
+			made = made + 1
+		ENDIF
+	NEXT
+	GDX.PRINT("mixer rebuilt: " + STR$(made) + " strips")
+ENDSUB
+
+SUB on_mixer_changed(v)
+	DIM t
+	FOR t = 0 TO 7
+		IF MIXER_GAIN[t] <> 0 THEN
+			DIM g = GDX.GET(MIXER_GAIN[t], "value")
+			TR_GAIN[t] = g
+			SOUND.GAIN t, g
+		ENDIF
+	NEXT
+ENDSUB
+
+SUB on_master_vol(v)
+	DIM db = -80.0
+	IF v > 0.001 THEN db = 20.0 * LOG(v) / LOG(10.0)
+	GDX.SET(mplayer, "volume_db", db)
+ENDSUB
+
+' ── Run / lifecycle ─────────────────────────────────────────────────
+
 SUB run_code()
+	' Additive: each run updates/adds the tracks it addresses; tracks from
+	' earlier runs keep playing (track-slot model). STUDIO is only cleared at
+	' startup. Use LV_OFF track to silence and drop a track.
 	DIM src$ = GDX.GET(code_h, "text")
 	TRY
 		EXECUTE(src$)
+		rebuild_mixer()
 		GDX.SET(status_h, "text", "Running   -   F5 to re-run")
 	CATCH
 		GDX.SET(status_h, "text", "Error - check the console output")
@@ -77,6 +215,9 @@ ENDSUB
 
 SUB _ready()
 	self_h = GDX.SELF()
+	MIXER_GAIN  = [0, 0, 0, 0, 0, 0, 0, 0]
+	MIXER_STRIP = [0, 0, 0, 0, 0, 0, 0, 0]
+	studio_reset()
 	SQ.START()
 	build_default()
 	setup_audio()

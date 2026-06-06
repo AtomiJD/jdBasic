@@ -1,0 +1,15 @@
+[gd_scene format=3]
+
+[node name="Strip" type="VBoxContainer"]
+custom_minimum_size = Vector2(120, 0)
+
+[node name="Name" type="Label" parent="."]
+text = "T"
+horizontal_alignment = 1
+
+[node name="Gain" type="HSlider" parent="."]
+custom_minimum_size = Vector2(110, 16)
+min_value = 0.0
+max_value = 2.0
+step = 0.01
+value = 1.0
