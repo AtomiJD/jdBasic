@@ -14,6 +14,7 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/engine_debugger.hpp>
 #include <godot_cpp/classes/node.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/script_language.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -24,6 +25,14 @@
 #include <cctype>
 #include <cstring>
 #include <cstdio>
+
+#ifdef _WIN32
+#include <direct.h>
+#define jdb_chdir _chdir
+#else
+#include <unistd.h>
+#define jdb_chdir chdir
+#endif
 
 using namespace godot;
 
@@ -242,6 +251,13 @@ JdbScriptInstance::JdbScriptInstance(Ref<JdbScriptResource> p_script, Object* p_
     if (!m_vm) {
         UtilityFunctions::push_error(String("[JdbScriptInstance] jdb_embed_init returned NULL"));
         return;
+    }
+
+    // Resolve IMPORT and relative file I/O (TXTREADER$, SFX.LOAD, ...) against
+    // the project directory instead of wherever Godot was launched from.
+    if (ProjectSettings::get_singleton()) {
+        String proj = ProjectSettings::get_singleton()->globalize_path("res://");
+        if (!proj.is_empty()) jdb_chdir(proj.utf8().get_data());
     }
 
     // Tier 4 - register GDX.* natives BEFORE the boot eval so the script

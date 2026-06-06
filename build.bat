@@ -49,6 +49,10 @@ for %%A in (%*) do (
         set COPY_DLLS=1
         echo [+] Graphics/Audio - SDL3 + TTF + Image + Mixer
     )
+    if /I "%%A"=="SOUND" (
+        set DEFS=!DEFS! /DSOUND_DSP
+        echo [+] SOUND - sequencer DSP, pull mode, no device
+    )
     if /I "%%A"=="IMGUI" (
         set DEFS=!DEFS! /DIMGUI
         set EXTRA_SRC=!EXTRA_SRC! libs\imgui\imgui.cpp libs\imgui\imgui_draw.cpp libs\imgui\imgui_tables.cpp libs\imgui\imgui_widgets.cpp libs\imgui\backends\imgui_impl_sdl3.cpp libs\imgui\backends\imgui_impl_sdlrenderer3.cpp

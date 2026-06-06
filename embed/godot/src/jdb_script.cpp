@@ -13,6 +13,14 @@
 
 #include <cstdio>
 
+#ifdef _WIN32
+#include <direct.h>
+#define jdb_chdir _chdir
+#else
+#include <unistd.h>
+#define jdb_chdir chdir
+#endif
+
 using namespace godot;
 
 void JDBScript::_bind_methods() {
@@ -108,6 +116,12 @@ void JDBScript::_ready() {
     if (!m_vm) {
         m_last_error = "JDBScript: jdb_embed_init() returned NULL";
         return;
+    }
+    // Resolve IMPORT and relative file I/O (TXTREADER$, SFX.LOAD, ...) against
+    // the project directory rather than wherever Godot was launched from.
+    if (ProjectSettings::get_singleton()) {
+        String proj = ProjectSettings::get_singleton()->globalize_path("res://");
+        if (!proj.is_empty()) jdb_chdir(proj.utf8().get_data());
     }
     load_source_();
     if (m_has_ready) {

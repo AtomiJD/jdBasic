@@ -257,9 +257,28 @@ static const char* GDX_MODULE_SRC =
     "ENDFUNC\n";
 
 static std::pair<std::string, std::string> bundled_module_reader(const std::string& name) {
-    std::string up = name;
+    std::string up = name, low = name;
     std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+    std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+
+    // Modules shipped inside the runtime take precedence.
     if (up == "GDX") return { std::string(GDX_MODULE_SRC), std::string("res://__bundled__/gdx.jdb") };
+
+    // Disk fallback: resolve <name>.jdb relative to the process working
+    // directory (the host is expected to chdir into the project dir), plus a
+    // one-level modules/ subdir. Mirrors the standalone reader's cwd lookup.
+    std::vector<std::string> candidates = {
+        up + ".jdb", low + ".jdb",
+        "modules/" + up + ".jdb", "modules/" + low + ".jdb"
+    };
+    for (auto& cand : candidates) {
+        std::ifstream f(cand);
+        if (f.is_open()) {
+            std::stringstream ss;
+            ss << f.rdbuf();
+            return { ss.str(), cand };
+        }
+    }
     return { std::string(), std::string() };
 }
 

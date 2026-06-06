@@ -100,7 +100,7 @@ for %%A in (%*) do (
     if /I "%%A"=="SOUND" (
         REM Sequencer DSP without an SDL device - the host pulls via SOUND.RENDER.
         set DEFS=!DEFS! /DSOUND_DSP
-        echo [+] SOUND - sequencer DSP (pull mode, no device)
+        echo [+] SOUND - sequencer DSP, pull mode, no device
     )
     if /I "%%A"=="FTXUI" (
         REM /D UNICODE/_UNICODE matches the ftxui.lib ABI (same rule as build.bat).

@@ -24,6 +24,8 @@ void register_sound_builtins(VM& vm) {
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -1192,8 +1194,83 @@ void register_sound_builtins(VM& vm) {
 
     vm.register_native("SFX.LOAD", 2, 2, [](const std::vector<Value>& args) -> Value {
 #ifndef GFX
-        (void)args;
-        throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD requires a GFX build");
+        // SDL-free WAV loader for headless/SOUND_DSP builds: parses canonical
+        // RIFF/PCM (8/16/24/32-bit int, 32-bit float; mono or stereo) and
+        // resamples to the engine rate, producing interleaved-stereo float.
+        int id = (int)args[0].to_int();
+        std::string path = args[1].as_string()->data;
+
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: cannot open " + path);
+        fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
+        if (fsz < 44) { fclose(f); throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: file too small: " + path); }
+        std::vector<uint8_t> b((size_t)fsz);
+        size_t got = fread(b.data(), 1, (size_t)fsz, f);
+        fclose(f);
+        if (got != (size_t)fsz) throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: short read: " + path);
+
+        auto rd16 = [&](size_t o) -> uint16_t { return (uint16_t)(b[o] | (b[o + 1] << 8)); };
+        auto rd32 = [&](size_t o) -> uint32_t {
+            return (uint32_t)b[o] | ((uint32_t)b[o + 1] << 8) | ((uint32_t)b[o + 2] << 16) | ((uint32_t)b[o + 3] << 24);
+        };
+        if (memcmp(b.data(), "RIFF", 4) != 0 || memcmp(b.data() + 8, "WAVE", 4) != 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: not a WAV: " + path);
+
+        uint16_t fmt = 0, channels = 0, bits = 0;
+        uint32_t srate = 0, dataOff = 0, dataLen = 0;
+        size_t p = 12;
+        while (p + 8 <= (size_t)fsz) {
+            uint32_t csz = rd32(p + 4);
+            if (memcmp(&b[p], "fmt ", 4) == 0 && p + 24 <= (size_t)fsz) {
+                fmt = rd16(p + 8); channels = rd16(p + 10); srate = rd32(p + 12); bits = rd16(p + 22);
+            } else if (memcmp(&b[p], "data", 4) == 0) {
+                dataOff = (uint32_t)(p + 8); dataLen = csz;
+            }
+            p += 8 + csz + (csz & 1); // chunks are word-aligned
+        }
+        if (dataOff == 0 || channels == 0 || bits == 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "SFX.LOAD failed: malformed WAV: " + path);
+        if ((size_t)dataOff + dataLen > (size_t)fsz) dataLen = (uint32_t)fsz - dataOff;
+
+        size_t bytesPerSample = bits / 8;
+        size_t frameStride = bytesPerSample * channels;
+        size_t frameCount = frameStride ? (dataLen / frameStride) : 0;
+
+        std::vector<float> srcL(frameCount), srcR(frameCount);
+        for (size_t i = 0; i < frameCount; ++i) {
+            for (int c = 0; c < channels; ++c) {
+                size_t so = (size_t)dataOff + i * frameStride + (size_t)c * bytesPerSample;
+                float s = 0.0f;
+                if (fmt == 3 && bits == 32) { float v; memcpy(&v, &b[so], 4); s = v; }
+                else if (bits == 16) { s = (int16_t)rd16(so) / 32768.0f; }
+                else if (bits == 8)  { s = ((int)b[so] - 128) / 128.0f; }
+                else if (bits == 24) { int32_t v = (int32_t)(b[so] | (b[so + 1] << 8) | (b[so + 2] << 16)); if (v & 0x800000) v |= ~0xFFFFFF; s = v / 8388608.0f; }
+                else if (bits == 32) { s = (int32_t)rd32(so) / 2147483648.0f; }
+                if (c == 0) srcL[i] = s;
+                if (c == 1) srcR[i] = s;
+            }
+            if (channels == 1) srcR[i] = srcL[i];
+        }
+
+        SoundChunk chunk;
+        if (srate == 0) srate = SAMPLE_RATE;
+        if (srate == (uint32_t)SAMPLE_RATE) {
+            chunk.data.resize(frameCount * 2);
+            for (size_t i = 0; i < frameCount; ++i) { chunk.data[i * 2] = srcL[i]; chunk.data[i * 2 + 1] = srcR[i]; }
+        } else {
+            double ratio = (double)SAMPLE_RATE / (double)srate;
+            size_t outFrames = (size_t)(frameCount * ratio);
+            chunk.data.resize(outFrames * 2);
+            for (size_t i = 0; i < outFrames; ++i) {
+                double sp = i / ratio;
+                size_t i0 = (size_t)sp; double fr = sp - i0;
+                size_t i1 = (i0 + 1 < frameCount) ? i0 + 1 : i0;
+                chunk.data[i * 2]     = (float)(srcL[i0] * (1.0 - fr) + srcL[i1] * fr);
+                chunk.data[i * 2 + 1] = (float)(srcR[i0] * (1.0 - fr) + srcR[i1] * fr);
+            }
+        }
+        g_sound.samples[id] = std::move(chunk);
+        return Value::make_none();
 #else
         int id = (int)args[0].to_int();
         std::string path = args[1].as_string()->data;

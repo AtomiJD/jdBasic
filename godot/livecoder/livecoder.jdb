@@ -1,9 +1,19 @@
 EXTENDS Node
 
-' jdBasic live-coding music sequencer in Godot.
-' A CodeEdit holds SOUND.* commands; F5 EXECUTEs them in the running VM, so
-' the sequence changes live. The jdBasic SOUND engine renders (SOUND_DSP pull
-' mode) into a Godot AudioStreamGenerator each frame - no audio device needed.
+' jdBasic live-coding music sequencer in Godot, powered by the SQ module.
+' A CodeEdit holds SQ/SOUND commands; F5 EXECUTEs them in the running VM so the
+' sequence changes live. SQ (drum kits, instruments, scales, euclidean rhythms)
+' is imported from disk; sq_data.json and the Roland TR-808 sample set live next
+' to this script and resolve against the project directory. The jdBasic SOUND
+' engine renders (SOUND_DSP pull mode) into a Godot AudioStreamGenerator each
+' frame - no audio device needed.
+
+IMPORT SQ
+
+' SQ keeps its sequencer state in these caller-side globals.
+DIM CONFIG AS MAP
+DIM SFX_CACHE AS MAP
+DIM NEXT_SFX_ID AS INTEGER = 100
 
 DIM self_h   = 0
 DIM code_h   = 0
@@ -20,14 +30,15 @@ DIM DEFAULT_CODE$ = ""
 
 SUB build_default()
 	DEFAULT_CODE$ = "' jdBasic Live Coder - edit, then press F5 to (re)run." + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.BPM 110" + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.SEQ 0, " + Q$ + "c3 e3 g3 c4 g3 e3 c4 g3" + Q$ + ", " + Q$ + "SQUARE" + Q$ + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.SEQ 1, " + Q$ + "c2 ~ c2 ~ g1 ~ c2 ~" + Q$ + ", " + Q$ + "TRIANGLE" + Q$ + NL$
-	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.FILTER 0.55, 0.20"
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.BPM 120" + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.D(8, 8)" + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.V(4, " + Q$ + "TP" + Q$ + ")" + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.S(4, " + Q$ + "[c4 e4 g4] ~ [d4 f4 a4] ~ [e4 g4 b4] ~ [d4 f4 a4] ~" + Q$ + ")" + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.V(5, " + Q$ + "RB" + Q$ + ")" + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SQ.S(5, " + Q$ + "c2 ~ c2 ~ g1 ~ a1 ~" + Q$ + ")"
 ENDSUB
 
 SUB setup_audio()
-	SOUND.INIT
 	DIM gen = GDX.NEW("AudioStreamGenerator")
 	GDX.SET(gen, "mix_rate", rate)
 	GDX.SET(gen, "buffer_length", 0.3)
@@ -43,7 +54,7 @@ SUB setup_ui()
 
 	status_h = GDX.NEW("Label")
 	GDX.SET(status_h, "position", GDX.VEC2(16.0, 10.0))
-	GDX.SET(status_h, "text", "jdBasic Live Coder   -   F5 = run   (edit SOUND.* below)")
+	GDX.SET(status_h, "text", "jdBasic Live Coder   -   F5 = run   (SQ.D/V/S/SC/P + SOUND.*)")
 	GDX.ADD_CHILD(lay, status_h)
 
 	code_h = GDX.NEW("CodeEdit")
@@ -66,6 +77,7 @@ ENDSUB
 
 SUB _ready()
 	self_h = GDX.SELF()
+	SQ.START()
 	build_default()
 	setup_audio()
 	setup_ui()

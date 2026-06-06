@@ -219,3 +219,10 @@ embed/godot/godot-cpp/gen/
 
 # rpg-native: project-local LLM model(s) - large, carried via USB not git
 godot/rpg-native/models/
+
+# Drum-machine sample sets - licensed audio, carried locally not via git
+# (SQ sequencer / livecoder: code + sq_data.json are tracked, the WAVs are not)
+Roland TR-808/
+Korg_KPR77/
+Roland_CR-80/
+.DS_Store
