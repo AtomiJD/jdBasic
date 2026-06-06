@@ -1,0 +1,19 @@
+[configuration]
+entry_symbol = "jdb_godot_library_init"
+compatibility_minimum = "4.3"
+
+[libraries]
+windows.debug.x86_64   = "res://addons/jdb_godot/bin/jdb_godot.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/jdb_godot/bin/jdb_godot.windows.template_release.x86_64.dll"
+
+[dependencies]
+windows.debug.x86_64   = { "res://addons/jdb_godot/bin/jdbrt.dll" : "" }
+windows.release.x86_64 = { "res://addons/jdb_godot/bin/jdbrt.dll" : "" }
+
+# Class icons - Godot picks these up at GDExtension load time and shows
+# them in the FileSystem dock, Attach-Script dialog dropdown, and any
+# other place the editor renders the class.
+[icons]
+JdbScriptResource = "res://addons/jdb_godot/icon.svg"
+JDBScript         = "res://addons/jdb_godot/icon.svg"
+JDBasicVM         = "res://addons/jdb_godot/icon.svg"

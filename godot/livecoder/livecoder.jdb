@@ -1,0 +1,95 @@
+EXTENDS Node
+
+' jdBasic live-coding music sequencer in Godot.
+' A CodeEdit holds SOUND.* commands; F5 EXECUTEs them in the running VM, so
+' the sequence changes live. The jdBasic SOUND engine renders (SOUND_DSP pull
+' mode) into a Godot AudioStreamGenerator each frame - no audio device needed.
+
+DIM self_h   = 0
+DIM code_h   = 0
+DIM status_h = 0
+DIM mplayer  = 0
+DIM playback = 0
+DIM started  = FALSE
+DIM rate     = 44100.0
+DIM KEY_F5   = 4194336
+
+DIM Q$  = CHR$(34)
+DIM NL$ = CHR$(10)
+DIM DEFAULT_CODE$ = ""
+
+SUB build_default()
+	DEFAULT_CODE$ = "' jdBasic Live Coder - edit, then press F5 to (re)run." + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.BPM 110" + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.SEQ 0, " + Q$ + "c3 e3 g3 c4 g3 e3 c4 g3" + Q$ + ", " + Q$ + "SQUARE" + Q$ + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.SEQ 1, " + Q$ + "c2 ~ c2 ~ g1 ~ c2 ~" + Q$ + ", " + Q$ + "TRIANGLE" + Q$ + NL$
+	DEFAULT_CODE$ = DEFAULT_CODE$ + "SOUND.FILTER 0.55, 0.20"
+ENDSUB
+
+SUB setup_audio()
+	SOUND.INIT
+	DIM gen = GDX.NEW("AudioStreamGenerator")
+	GDX.SET(gen, "mix_rate", rate)
+	GDX.SET(gen, "buffer_length", 0.3)
+	mplayer = GDX.NEW("AudioStreamPlayer")
+	GDX.SET(mplayer, "stream", GDX.REF(gen))
+	GDX.SET(mplayer, "bus", "Master")
+	GDX.ADD_CHILD(self_h, mplayer)
+ENDSUB
+
+SUB setup_ui()
+	DIM lay = GDX.NEW("CanvasLayer")
+	GDX.ADD_CHILD(self_h, lay)
+
+	status_h = GDX.NEW("Label")
+	GDX.SET(status_h, "position", GDX.VEC2(16.0, 10.0))
+	GDX.SET(status_h, "text", "jdBasic Live Coder   -   F5 = run   (edit SOUND.* below)")
+	GDX.ADD_CHILD(lay, status_h)
+
+	code_h = GDX.NEW("CodeEdit")
+	GDX.SET(code_h, "position", GDX.VEC2(16.0, 44.0))
+	GDX.SET(code_h, "size", GDX.VEC2(1000.0, 700.0))
+	GDX.SET(code_h, "text", DEFAULT_CODE$)
+	GDX.ADD_CHILD(lay, code_h)
+	GDX.CALL(code_h, "grab_focus")
+ENDSUB
+
+SUB run_code()
+	DIM src$ = GDX.GET(code_h, "text")
+	TRY
+		EXECUTE(src$)
+		GDX.SET(status_h, "text", "Running   -   F5 to re-run")
+	CATCH
+		GDX.SET(status_h, "text", "Error - check the console output")
+	ENDTRY
+ENDSUB
+
+SUB _ready()
+	self_h = GDX.SELF()
+	build_default()
+	setup_audio()
+	setup_ui()
+	run_code()
+	GDX.PRINT("livecoder ready")
+ENDSUB
+
+SUB _process(delta)
+	IF NOT started THEN
+		GDX.CALL(mplayer, "play")
+		playback = GDX.CALL(mplayer, "get_stream_playback")
+		started = TRUE
+	ENDIF
+	IF playback = 0 THEN RETURN
+	DIM avail = GDX.CALL(playback, "get_frames_available")
+	IF avail <= 0 THEN RETURN
+	DIM buf = SOUND.RENDER(avail)
+	GDX.CALL(playback, "push_buffer", GDX.PACKED_VEC2(buf))
+ENDSUB
+
+SUB _unhandled_input(event)
+	IF GDX.CALL(event, "get_class") = "InputEventKey" THEN
+		IF GDX.GET(event, "pressed") ANDALSO GDX.GET(event, "keycode") = KEY_F5 THEN
+			run_code()
+		ENDIF
+	ENDIF
+ENDSUB

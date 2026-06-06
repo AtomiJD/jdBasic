@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://livecoder.jdb" id="1_lc"]
+
+[node name="LiveCoder" type="Node"]
+script = ExtResource("1_lc")
