@@ -102,3 +102,49 @@ SUB CO_SEARCH(query$, k)
 		PRINT "    "; LEFT$(h{"text"}, 150)
 	NEXT
 ENDSUB
+
+' ── Tier 1: bulk LLM offload (the calling agent stays the reasoner; the local
+' model does the volume) ─────────────────────────────────────────────────────
+
+DIM CO_LLM = 0
+DIM CO_LLM_PATH$ = "D:/usr/dev/cc/models/qwen2.5-3b-instruct-q4_k_m.gguf"
+DIM CO_MAX_CHARS = 9000   ' truncate file to fit the LLM context window
+
+SUB CO_LLM_INIT()
+	IF CO_LLM = 0 THEN CO_LLM = AI.LOAD_LLM(CO_LLM_PATH$, 4096, 99)
+ENDSUB
+
+FUNC CO_CLIP$(s$)
+	IF LEN(s$) > CO_MAX_CHARS THEN RETURN LEFT$(s$, CO_MAX_CHARS)
+	RETURN s$
+ENDFUNC
+
+' Summarize one file in a few terse lines - offload reading the whole file.
+FUNC CO_DIGEST$(path$)
+	CO_LLM_INIT()
+	AI.CLEAR_HISTORY(CO_LLM)
+	DIM p$ = "Summarize what this source file does in 2-4 terse lines (purpose + key functions/symbols). No preamble, no markdown." + CHR$(10) + "FILE: " + path$ + CHR$(10) + CO_CLIP$(TXTREADER$(path$)) + CHR$(10) + "/no_think"
+	RETURN AI.CHAT(CO_LLM, p$)
+ENDFUNC
+
+SUB CO_DIGEST(path$)
+	PRINT path$
+	PRINT CO_DIGEST$(path$)
+ENDSUB
+
+' Structured extraction - grammar-constrained JSON (returns a parsed OBJECT,
+' not a string). instruction$ says what to pull.
+FUNC CO_EXTRACT(path$, instruction$)
+	CO_LLM_INIT()
+	AI.CLEAR_HISTORY(CO_LLM)
+	DIM p$ = instruction$ + " Output JSON only, no prose." + CHR$(10) + CO_CLIP$(TXTREADER$(path$)) + CHR$(10) + "/no_think"
+	RETURN AI.CHAT_JSON(CO_LLM, p$)
+ENDFUNC
+
+' One-label classification of a free-text item.
+FUNC CO_CLASSIFY$(item$, labels$)
+	CO_LLM_INIT()
+	AI.CLEAR_HISTORY(CO_LLM)
+	DIM p$ = "Classify the item into exactly ONE of these labels: " + labels$ + ". Reply with only the label, nothing else." + CHR$(10) + "ITEM: " + item$ + CHR$(10) + "/no_think"
+	RETURN TRIM$(AI.CHAT(CO_LLM, p$))
+ENDFUNC
