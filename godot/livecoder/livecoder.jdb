@@ -30,6 +30,26 @@ DIM TR_DEC
 DIM TR_SUS
 DIM TR_REL
 DIM TR_CUT
+DIM TR_FM_ON
+DIM TR_FM_AMT
+DIM TR_FM_RATIO
+DIM TR_EQ_ON
+DIM TR_EQ_LO
+DIM TR_EQ_MID
+DIM TR_EQ_HI
+DIM TR_UNI_ON
+DIM TR_UNI_V
+DIM TR_UNI_DET
+DIM TR_UNI_SPR
+DIM TR_LFO_ON
+DIM TR_LFO_RATE
+DIM TR_LFO_DEP
+DIM TR_BC_ON
+DIM TR_BC_BITS
+DIM TR_BC_RATE
+DIM TR_RM_ON
+DIM TR_RM_FREQ
+DIM TR_RM_MIX
 
 DIM self_h   = 0
 DIM code_h   = 0
@@ -59,12 +79,36 @@ DIM ed_dec   = 0
 DIM ed_sus   = 0
 DIM ed_rel   = 0
 DIM ed_cut   = 0
+DIM ed_fm_on = 0
+DIM ed_fm_amt = 0
+DIM ed_fm_ratio = 0
+DIM ed_eq_on = 0
+DIM ed_eq_lo = 0
+DIM ed_eq_mid = 0
+DIM ed_eq_hi = 0
+DIM ed_uni_on = 0
+DIM ed_uni_v = 0
+DIM ed_uni_det = 0
+DIM ed_uni_spr = 0
+DIM ed_lfo_on = 0
+DIM ed_lfo_rate = 0
+DIM ed_lfo_dep = 0
+DIM ed_bc_on = 0
+DIM ed_bc_bits = 0
+DIM ed_bc_rate = 0
+DIM ed_rm_on = 0
+DIM ed_rm_freq = 0
+DIM ed_rm_mix = 0
 
 DIM Q$  = CHR$(34)
 DIM NL$ = CHR$(10)
 DIM DEFAULT_CODE$ = ""
 
 ' ── Studio state ────────────────────────────────────────────────────
+
+FUNC fill8(v)
+	RETURN [v, v, v, v, v, v, v, v]
+ENDFUNC
 
 SUB studio_reset()
 	TR_KIND$ = ["empty", "empty", "empty", "empty", "empty", "empty", "empty", "empty"]
@@ -80,6 +124,26 @@ SUB studio_reset()
 	TR_SUS   = [0.80, 0.80, 0.80, 0.80, 0.80, 0.80, 0.80, 0.80]
 	TR_REL   = [0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
 	TR_CUT   = [4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0]
+	TR_FM_ON    = fill8(0)
+	TR_FM_AMT   = fill8(0.0)
+	TR_FM_RATIO = fill8(2.0)
+	TR_EQ_ON    = fill8(0)
+	TR_EQ_LO    = fill8(1.0)
+	TR_EQ_MID   = fill8(1.0)
+	TR_EQ_HI    = fill8(1.0)
+	TR_UNI_ON   = fill8(0)
+	TR_UNI_V    = fill8(1)
+	TR_UNI_DET  = fill8(0.0)
+	TR_UNI_SPR  = fill8(0.0)
+	TR_LFO_ON   = fill8(0)
+	TR_LFO_RATE = fill8(5.0)
+	TR_LFO_DEP  = fill8(0.0)
+	TR_BC_ON    = fill8(0)
+	TR_BC_BITS  = fill8(8.0)
+	TR_BC_RATE  = fill8(1.0)
+	TR_RM_ON    = fill8(0)
+	TR_RM_FREQ  = fill8(200.0)
+	TR_RM_MIX   = fill8(0.0)
 ENDSUB
 
 ' ── LV_* wrappers: call SQ + record track state ─────────────────────
@@ -113,6 +177,44 @@ SUB LV_VOICE(track, code$)
 		TR_DEC[track] = a[1]
 		TR_SUS[track] = a[2]
 		TR_REL[track] = a[3]
+	ENDIF
+	IF MAP.EXISTS(inst, "fm") THEN
+		DIM fm = inst{"fm"}
+		TR_FM_ON[track] = 1
+		TR_FM_AMT[track] = fm[0]
+		TR_FM_RATIO[track] = fm[1]
+	ENDIF
+	IF MAP.EXISTS(inst, "eq") THEN
+		DIM eq = inst{"eq"}
+		TR_EQ_ON[track] = 1
+		TR_EQ_LO[track] = eq[0]
+		TR_EQ_MID[track] = eq[1]
+		TR_EQ_HI[track] = eq[2]
+	ENDIF
+	IF MAP.EXISTS(inst, "unison") THEN
+		DIM un = inst{"unison"}
+		TR_UNI_ON[track] = 1
+		TR_UNI_V[track] = un[0]
+		TR_UNI_DET[track] = un[1]
+		TR_UNI_SPR[track] = un[2]
+	ENDIF
+	IF MAP.EXISTS(inst, "lfo") THEN
+		DIM lf = inst{"lfo"}
+		TR_LFO_ON[track] = 1
+		TR_LFO_RATE[track] = lf[0]
+		TR_LFO_DEP[track] = lf[1]
+	ENDIF
+	IF MAP.EXISTS(inst, "bitcrush") THEN
+		DIM bc = inst{"bitcrush"}
+		TR_BC_ON[track] = 1
+		TR_BC_BITS[track] = bc[0]
+		TR_BC_RATE[track] = bc[1]
+	ENDIF
+	IF MAP.EXISTS(inst, "ringmod") THEN
+		DIM rm = inst{"ringmod"}
+		TR_RM_ON[track] = 1
+		TR_RM_FREQ[track] = rm[0]
+		TR_RM_MIX[track] = rm[1]
 	ENDIF
 ENDSUB
 
@@ -212,14 +314,34 @@ SUB setup_ui()
 	' Voice editor: a single panel, populated for EDIT_TRACK on demand.
 	ed_panel = GDX.INSTANTIATE("res://voice_editor.tscn")
 	GDX.ADD_CHILD(lay, ed_panel)
-	ed_title = GDX.CALL(ed_panel, "get_node", "VB/Title")
-	ed_wave  = GDX.CALL(ed_panel, "get_node", "VB/Wave")
-	ed_atk   = GDX.CALL(ed_panel, "get_node", "VB/Atk")
-	ed_dec   = GDX.CALL(ed_panel, "get_node", "VB/Dec")
-	ed_sus   = GDX.CALL(ed_panel, "get_node", "VB/Sus")
-	ed_rel   = GDX.CALL(ed_panel, "get_node", "VB/Rel")
-	ed_cut   = GDX.CALL(ed_panel, "get_node", "VB/Cut")
-	DIM ed_close = GDX.CALL(ed_panel, "get_node", "VB/Close")
+	ed_title    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Title")
+	ed_wave     = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Wave")
+	ed_atk      = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Atk")
+	ed_dec      = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Dec")
+	ed_sus      = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Sus")
+	ed_rel      = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Rel")
+	ed_cut      = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Cut")
+	ed_fm_on    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/FmOn")
+	ed_fm_amt   = GDX.CALL(ed_panel, "get_node", "Scroll/VB/FmAmt")
+	ed_fm_ratio = GDX.CALL(ed_panel, "get_node", "Scroll/VB/FmRatio")
+	ed_eq_on    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/EqOn")
+	ed_eq_lo    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/EqLo")
+	ed_eq_mid   = GDX.CALL(ed_panel, "get_node", "Scroll/VB/EqMid")
+	ed_eq_hi    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/EqHi")
+	ed_uni_on   = GDX.CALL(ed_panel, "get_node", "Scroll/VB/UniOn")
+	ed_uni_v    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/UniV")
+	ed_uni_det  = GDX.CALL(ed_panel, "get_node", "Scroll/VB/UniDet")
+	ed_uni_spr  = GDX.CALL(ed_panel, "get_node", "Scroll/VB/UniSpr")
+	ed_lfo_on   = GDX.CALL(ed_panel, "get_node", "Scroll/VB/LfoOn")
+	ed_lfo_rate = GDX.CALL(ed_panel, "get_node", "Scroll/VB/LfoRate")
+	ed_lfo_dep  = GDX.CALL(ed_panel, "get_node", "Scroll/VB/LfoDep")
+	ed_bc_on    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/BcOn")
+	ed_bc_bits  = GDX.CALL(ed_panel, "get_node", "Scroll/VB/BcBits")
+	ed_bc_rate  = GDX.CALL(ed_panel, "get_node", "Scroll/VB/BcRate")
+	ed_rm_on    = GDX.CALL(ed_panel, "get_node", "Scroll/VB/RmOn")
+	ed_rm_freq  = GDX.CALL(ed_panel, "get_node", "Scroll/VB/RmFreq")
+	ed_rm_mix   = GDX.CALL(ed_panel, "get_node", "Scroll/VB/RmMix")
+	DIM ed_close = GDX.CALL(ed_panel, "get_node", "Scroll/VB/Close")
 
 	DIM wi
 	FOR wi = 0 TO LEN(WAVES$) - 1
@@ -232,6 +354,26 @@ SUB setup_ui()
 	GDX.CONNECT(ed_sus, "value_changed", "on_voice_param")
 	GDX.CONNECT(ed_rel, "value_changed", "on_voice_param")
 	GDX.CONNECT(ed_cut, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_fm_on, "toggled", "on_voice_param")
+	GDX.CONNECT(ed_fm_amt, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_fm_ratio, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_eq_on, "toggled", "on_voice_param")
+	GDX.CONNECT(ed_eq_lo, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_eq_mid, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_eq_hi, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_uni_on, "toggled", "on_voice_param")
+	GDX.CONNECT(ed_uni_v, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_uni_det, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_uni_spr, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_lfo_on, "toggled", "on_voice_param")
+	GDX.CONNECT(ed_lfo_rate, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_lfo_dep, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_bc_on, "toggled", "on_voice_param")
+	GDX.CONNECT(ed_bc_bits, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_bc_rate, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_rm_on, "toggled", "on_voice_param")
+	GDX.CONNECT(ed_rm_freq, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_rm_mix, "value_changed", "on_voice_param")
 	GDX.CONNECT(ed_close, "pressed", "on_voice_close")
 	GDX.SET(ed_panel, "visible", FALSE)
 ENDSUB
@@ -322,6 +464,26 @@ SUB open_voice_editor(track)
 	GDX.SET(ed_sus, "value", TR_SUS[track])
 	GDX.SET(ed_rel, "value", TR_REL[track])
 	GDX.SET(ed_cut, "value", TR_CUT[track])
+	GDX.SET(ed_fm_on, "button_pressed", TR_FM_ON[track])
+	GDX.SET(ed_fm_amt, "value", TR_FM_AMT[track])
+	GDX.SET(ed_fm_ratio, "value", TR_FM_RATIO[track])
+	GDX.SET(ed_eq_on, "button_pressed", TR_EQ_ON[track])
+	GDX.SET(ed_eq_lo, "value", TR_EQ_LO[track])
+	GDX.SET(ed_eq_mid, "value", TR_EQ_MID[track])
+	GDX.SET(ed_eq_hi, "value", TR_EQ_HI[track])
+	GDX.SET(ed_uni_on, "button_pressed", TR_UNI_ON[track])
+	GDX.SET(ed_uni_v, "value", TR_UNI_V[track])
+	GDX.SET(ed_uni_det, "value", TR_UNI_DET[track])
+	GDX.SET(ed_uni_spr, "value", TR_UNI_SPR[track])
+	GDX.SET(ed_lfo_on, "button_pressed", TR_LFO_ON[track])
+	GDX.SET(ed_lfo_rate, "value", TR_LFO_RATE[track])
+	GDX.SET(ed_lfo_dep, "value", TR_LFO_DEP[track])
+	GDX.SET(ed_bc_on, "button_pressed", TR_BC_ON[track])
+	GDX.SET(ed_bc_bits, "value", TR_BC_BITS[track])
+	GDX.SET(ed_bc_rate, "value", TR_BC_RATE[track])
+	GDX.SET(ed_rm_on, "button_pressed", TR_RM_ON[track])
+	GDX.SET(ed_rm_freq, "value", TR_RM_FREQ[track])
+	GDX.SET(ed_rm_mix, "value", TR_RM_MIX[track])
 	EDIT_TRACK = track
 	GDX.SET(ed_panel, "visible", TRUE)
 ENDSUB
@@ -339,6 +501,62 @@ SUB on_voice_param(v)
 	TR_CUT[tk] = GDX.GET(ed_cut, "value")
 	SOUND.VOICE tk, TR_WAVE$[tk], TR_ATK[tk], TR_DEC[tk], TR_SUS[tk], TR_REL[tk]
 	SOUND.FILTER tk, TR_CUT[tk]
+
+	TR_FM_ON[tk]    = GDX.GET(ed_fm_on, "button_pressed")
+	TR_FM_AMT[tk]   = GDX.GET(ed_fm_amt, "value")
+	TR_FM_RATIO[tk] = GDX.GET(ed_fm_ratio, "value")
+	IF TR_FM_ON[tk] THEN
+		SOUND.FM tk, TR_FM_AMT[tk], TR_FM_RATIO[tk]
+	ELSE
+		SOUND.FM tk, 0.0, TR_FM_RATIO[tk]
+	ENDIF
+
+	TR_EQ_ON[tk]  = GDX.GET(ed_eq_on, "button_pressed")
+	TR_EQ_LO[tk]  = GDX.GET(ed_eq_lo, "value")
+	TR_EQ_MID[tk] = GDX.GET(ed_eq_mid, "value")
+	TR_EQ_HI[tk]  = GDX.GET(ed_eq_hi, "value")
+	IF TR_EQ_ON[tk] THEN
+		SOUND.EQ tk, TR_EQ_LO[tk], TR_EQ_MID[tk], TR_EQ_HI[tk]
+	ELSE
+		SOUND.EQ tk, 1.0, 1.0, 1.0
+	ENDIF
+
+	TR_UNI_ON[tk]  = GDX.GET(ed_uni_on, "button_pressed")
+	TR_UNI_V[tk]   = GDX.GET(ed_uni_v, "value")
+	TR_UNI_DET[tk] = GDX.GET(ed_uni_det, "value")
+	TR_UNI_SPR[tk] = GDX.GET(ed_uni_spr, "value")
+	IF TR_UNI_ON[tk] THEN
+		SOUND.UNISON tk, TR_UNI_V[tk], TR_UNI_DET[tk], TR_UNI_SPR[tk]
+	ELSE
+		SOUND.UNISON tk, 1, 0.0, 0.0
+	ENDIF
+
+	TR_LFO_ON[tk]   = GDX.GET(ed_lfo_on, "button_pressed")
+	TR_LFO_RATE[tk] = GDX.GET(ed_lfo_rate, "value")
+	TR_LFO_DEP[tk]  = GDX.GET(ed_lfo_dep, "value")
+	IF TR_LFO_ON[tk] THEN
+		SOUND.LFO tk, TR_LFO_RATE[tk], TR_LFO_DEP[tk]
+	ELSE
+		SOUND.LFO tk, TR_LFO_RATE[tk], 0.0
+	ENDIF
+
+	TR_BC_ON[tk]   = GDX.GET(ed_bc_on, "button_pressed")
+	TR_BC_BITS[tk] = GDX.GET(ed_bc_bits, "value")
+	TR_BC_RATE[tk] = GDX.GET(ed_bc_rate, "value")
+	IF TR_BC_ON[tk] THEN
+		SOUND.BITCRUSH tk, TR_BC_BITS[tk], TR_BC_RATE[tk]
+	ELSE
+		SOUND.BITCRUSH tk, 16.0, 1.0
+	ENDIF
+
+	TR_RM_ON[tk]   = GDX.GET(ed_rm_on, "button_pressed")
+	TR_RM_FREQ[tk] = GDX.GET(ed_rm_freq, "value")
+	TR_RM_MIX[tk]  = GDX.GET(ed_rm_mix, "value")
+	IF TR_RM_ON[tk] THEN
+		SOUND.RINGMOD tk, TR_RM_FREQ[tk], TR_RM_MIX[tk]
+	ELSE
+		SOUND.RINGMOD tk, TR_RM_FREQ[tk], 0.0
+	ENDIF
 ENDSUB
 
 SUB on_voice_close()

@@ -2,73 +2,235 @@
 
 [node name="VoiceEditor" type="Panel"]
 offset_left = 640.0
-offset_top = 60.0
-offset_right = 1264.0
-offset_bottom = 600.0
+offset_top = 24.0
+offset_right = 1268.0
+offset_bottom = 784.0
 
-[node name="VB" type="VBoxContainer" parent="."]
+[node name="Scroll" type="ScrollContainer" parent="."]
 offset_left = 12.0
 offset_top = 12.0
-offset_right = 612.0
-offset_bottom = 528.0
+offset_right = 616.0
+offset_bottom = 748.0
+horizontal_scroll_mode = 0
 
-[node name="Title" type="Label" parent="VB"]
+[node name="VB" type="VBoxContainer" parent="Scroll"]
+custom_minimum_size = Vector2(590, 0)
+
+[node name="Title" type="Label" parent="Scroll/VB"]
 text = "Voice"
 
-[node name="WaveLabel" type="Label" parent="VB"]
+[node name="WaveLabel" type="Label" parent="Scroll/VB"]
 text = "Waveform"
 
-[node name="Wave" type="OptionButton" parent="VB"]
+[node name="Wave" type="OptionButton" parent="Scroll/VB"]
 
-[node name="AtkLabel" type="Label" parent="VB"]
+[node name="AtkLabel" type="Label" parent="Scroll/VB"]
 text = "Attack"
 
-[node name="Atk" type="HSlider" parent="VB"]
+[node name="Atk" type="HSlider" parent="Scroll/VB"]
 custom_minimum_size = Vector2(0, 16)
 min_value = 0.0
 max_value = 2.0
 step = 0.001
 value = 0.01
 
-[node name="DecLabel" type="Label" parent="VB"]
+[node name="DecLabel" type="Label" parent="Scroll/VB"]
 text = "Decay"
 
-[node name="Dec" type="HSlider" parent="VB"]
+[node name="Dec" type="HSlider" parent="Scroll/VB"]
 custom_minimum_size = Vector2(0, 16)
 min_value = 0.0
 max_value = 2.0
 step = 0.001
 value = 0.1
 
-[node name="SusLabel" type="Label" parent="VB"]
+[node name="SusLabel" type="Label" parent="Scroll/VB"]
 text = "Sustain"
 
-[node name="Sus" type="HSlider" parent="VB"]
+[node name="Sus" type="HSlider" parent="Scroll/VB"]
 custom_minimum_size = Vector2(0, 16)
 min_value = 0.0
 max_value = 1.0
 step = 0.01
 value = 0.8
 
-[node name="RelLabel" type="Label" parent="VB"]
+[node name="RelLabel" type="Label" parent="Scroll/VB"]
 text = "Release"
 
-[node name="Rel" type="HSlider" parent="VB"]
+[node name="Rel" type="HSlider" parent="Scroll/VB"]
 custom_minimum_size = Vector2(0, 16)
 min_value = 0.0
 max_value = 3.0
 step = 0.001
 value = 0.2
 
-[node name="CutLabel" type="Label" parent="VB"]
+[node name="CutLabel" type="Label" parent="Scroll/VB"]
 text = "Filter Cutoff"
 
-[node name="Cut" type="HSlider" parent="VB"]
+[node name="Cut" type="HSlider" parent="Scroll/VB"]
 custom_minimum_size = Vector2(0, 16)
 min_value = 100.0
 max_value = 8000.0
 step = 10.0
 value = 4000.0
 
-[node name="Close" type="Button" parent="VB"]
+[node name="FmOn" type="CheckButton" parent="Scroll/VB"]
+text = "FM"
+
+[node name="FmAmtLabel" type="Label" parent="Scroll/VB"]
+text = "FM Amount"
+
+[node name="FmAmt" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 30.0
+step = 0.1
+value = 0.0
+
+[node name="FmRatioLabel" type="Label" parent="Scroll/VB"]
+text = "FM Ratio"
+
+[node name="FmRatio" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.25
+max_value = 8.0
+step = 0.05
+value = 2.0
+
+[node name="EqOn" type="CheckButton" parent="Scroll/VB"]
+text = "EQ"
+
+[node name="EqLoLabel" type="Label" parent="Scroll/VB"]
+text = "EQ Low"
+
+[node name="EqLo" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 3.0
+step = 0.05
+value = 1.0
+
+[node name="EqMidLabel" type="Label" parent="Scroll/VB"]
+text = "EQ Mid"
+
+[node name="EqMid" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 3.0
+step = 0.05
+value = 1.0
+
+[node name="EqHiLabel" type="Label" parent="Scroll/VB"]
+text = "EQ High"
+
+[node name="EqHi" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 3.0
+step = 0.05
+value = 1.0
+
+[node name="UniOn" type="CheckButton" parent="Scroll/VB"]
+text = "Unison"
+
+[node name="UniVLabel" type="Label" parent="Scroll/VB"]
+text = "Unison Voices"
+
+[node name="UniV" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 1.0
+max_value = 16.0
+step = 1.0
+value = 1.0
+
+[node name="UniDetLabel" type="Label" parent="Scroll/VB"]
+text = "Unison Detune"
+
+[node name="UniDet" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 1.0
+step = 0.01
+value = 0.0
+
+[node name="UniSprLabel" type="Label" parent="Scroll/VB"]
+text = "Unison Spread"
+
+[node name="UniSpr" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 1.0
+step = 0.01
+value = 0.0
+
+[node name="LfoOn" type="CheckButton" parent="Scroll/VB"]
+text = "LFO"
+
+[node name="LfoRateLabel" type="Label" parent="Scroll/VB"]
+text = "LFO Rate"
+
+[node name="LfoRate" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 50.0
+step = 0.1
+value = 5.0
+
+[node name="LfoDepLabel" type="Label" parent="Scroll/VB"]
+text = "LFO Depth"
+
+[node name="LfoDep" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 500.0
+step = 1.0
+value = 0.0
+
+[node name="BcOn" type="CheckButton" parent="Scroll/VB"]
+text = "Bitcrush"
+
+[node name="BcBitsLabel" type="Label" parent="Scroll/VB"]
+text = "Bitcrush Bits"
+
+[node name="BcBits" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 1.0
+max_value = 16.0
+step = 1.0
+value = 8.0
+
+[node name="BcRateLabel" type="Label" parent="Scroll/VB"]
+text = "Bitcrush Rate"
+
+[node name="BcRate" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.05
+max_value = 1.0
+step = 0.05
+value = 1.0
+
+[node name="RmOn" type="CheckButton" parent="Scroll/VB"]
+text = "Ringmod"
+
+[node name="RmFreqLabel" type="Label" parent="Scroll/VB"]
+text = "Ringmod Freq"
+
+[node name="RmFreq" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 5000.0
+step = 10.0
+value = 200.0
+
+[node name="RmMixLabel" type="Label" parent="Scroll/VB"]
+text = "Ringmod Mix"
+
+[node name="RmMix" type="HSlider" parent="Scroll/VB"]
+custom_minimum_size = Vector2(0, 16)
+min_value = 0.0
+max_value = 1.0
+step = 0.01
+value = 0.0
+
+[node name="Close" type="Button" parent="Scroll/VB"]
 text = "Close"
