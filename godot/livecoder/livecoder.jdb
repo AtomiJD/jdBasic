@@ -62,6 +62,15 @@ DIM KEY_F5   = 4194336
 
 DIM lay        = 0
 DIM mixer_box  = 0
+DIM N_BARS = 48
+DIM BARS
+DIM cap_h = 0
+DIM NB = 512
+DIM ANAL_X0   = 16.0
+DIM ANAL_BASE = 600.0
+DIM ANAL_MAXH = 180.0
+DIM ANAL_BARW = 18.0
+DIM ANAL_STEP = 20.5
 DIM MIXER_GAIN
 DIM MIXER_STRIP
 DIM MIXER_PAN
@@ -269,6 +278,15 @@ SUB setup_audio()
 	GDX.ADD_CHILD(self_h, mplayer)
 ENDSUB
 
+' Tap the Master bus with an AudioEffectCapture so the analyzer can FFT the
+' actual mixed output (the audioviz pattern).
+SUB setup_capture()
+	DIM srv = GDX.SINGLETON("AudioServer")
+	DIM midx = GDX.CALL(srv, "get_bus_index", "Master")
+	cap_h = GDX.NEW("AudioEffectCapture")
+	GDX.CALL(srv, "add_bus_effect", midx, GDX.REF(cap_h))
+ENDSUB
+
 SUB setup_ui()
 	lay = GDX.NEW("CanvasLayer")
 	GDX.ADD_CHILD(self_h, lay)
@@ -280,7 +298,7 @@ SUB setup_ui()
 
 	code_h = GDX.NEW("CodeEdit")
 	GDX.SET(code_h, "position", GDX.VEC2(16.0, 44.0))
-	GDX.SET(code_h, "size", GDX.VEC2(1000.0, 560.0))
+	GDX.SET(code_h, "size", GDX.VEC2(1000.0, 340.0))
 	GDX.SET(code_h, "text", DEFAULT_CODE$)
 	GDX.ADD_CHILD(lay, code_h)
 	GDX.CALL(code_h, "grab_focus")
@@ -302,13 +320,30 @@ SUB setup_ui()
 	GDX.CONNECT(vol, "value_changed", "on_master_vol")
 
 	' Mixer: one strip per active track, rebuilt after each run.
+	DIM alabel = GDX.NEW("Label")
+	GDX.SET(alabel, "position", GDX.VEC2(16.0, 392.0))
+	GDX.SET(alabel, "text", "Spectrum")
+	GDX.ADD_CHILD(lay, alabel)
+
+	BARS = []
+	DIM bi
+	FOR bi = 0 TO N_BARS - 1
+		DIM bar = GDX.NEW("ColorRect")
+		GDX.SET(bar, "position", GDX.VEC2(ANAL_X0 + bi * ANAL_STEP, ANAL_BASE - 1.0))
+		GDX.SET(bar, "size", GDX.VEC2(ANAL_BARW, 1.0))
+		DIM r = bi / N_BARS
+		GDX.SET(bar, "color", GDX.COLOR(0.2 + 0.8 * r, 0.55, 1.0 - 0.7 * r))
+		GDX.ADD_CHILD(lay, bar)
+		BARS = APPEND(BARS, bar)
+	NEXT
+
 	DIM mlabel = GDX.NEW("Label")
-	GDX.SET(mlabel, "position", GDX.VEC2(16.0, 612.0))
+	GDX.SET(mlabel, "position", GDX.VEC2(16.0, 632.0))
 	GDX.SET(mlabel, "text", "Mixer   (M = mute, S = solo)")
 	GDX.ADD_CHILD(lay, mlabel)
 
 	mixer_box = GDX.NEW("HBoxContainer")
-	GDX.SET(mixer_box, "position", GDX.VEC2(16.0, 636.0))
+	GDX.SET(mixer_box, "position", GDX.VEC2(16.0, 656.0))
 	GDX.ADD_CHILD(lay, mixer_box)
 
 	' Voice editor: a single panel, populated for EDIT_TRACK on demand.
@@ -422,6 +457,44 @@ SUB rebuild_mixer()
 		ENDIF
 	NEXT
 	GDX.PRINT("mixer rebuilt: " + STR$(made) + " strips")
+ENDSUB
+
+' Spectrum analyzer: FFT the master wave, drive the bar heights. Bars are
+' log-banded over the lower half of the spectrum.
+SUB update_analyzer()
+	IF LEN(BARS) < N_BARS THEN RETURN
+	IF cap_h = 0 THEN RETURN
+	DIM avail = GDX.CALL(cap_h, "get_frames_available")
+	IF avail < NB THEN RETURN
+	DIM buf = GDX.CALL(cap_h, "get_buffer", NB)
+	DIM sig = ZEROS(NB)
+	DIM j
+	FOR j = 0 TO NB - 1
+		sig[j] = 0.5 * (buf[j][0] + buf[j][1])
+	NEXT
+	DIM spec = FFT(sig)
+	DIM half = INT(NB / 2)
+	DIM b
+	FOR b = 0 TO N_BARS - 1
+		DIM flo = b / N_BARS
+		DIM fhi = (b + 1) / N_BARS
+		DIM lo = INT(flo * flo * half)
+		DIM hi = INT(fhi * fhi * half)
+		IF hi <= lo THEN hi = lo + 1
+		DIM mag = 0.0
+		DIM k
+		FOR k = lo TO hi - 1
+			DIM re = spec[k][0]
+			DIM im = spec[k][1]
+			DIM m = SQR(re * re + im * im)
+			IF m > mag THEN mag = m
+		NEXT
+		DIM h = LOG(mag + 1.0) * 28.0
+		IF h > ANAL_MAXH THEN h = ANAL_MAXH
+		IF h < 1.0 THEN h = 1.0
+		GDX.SET(BARS[b], "size", GDX.VEC2(ANAL_BARW, h))
+		GDX.SET(BARS[b], "position", GDX.VEC2(ANAL_X0 + b * ANAL_STEP, ANAL_BASE - h))
+	NEXT
 ENDSUB
 
 ' Re-read every strip and apply effective gain (gain * mute * solo) + pan.
@@ -624,6 +697,7 @@ SUB _ready()
 	SQ.START()
 	build_default()
 	setup_audio()
+	setup_capture()
 	setup_ui()
 	run_code()
 	GDX.PRINT("livecoder ready")
@@ -640,6 +714,7 @@ SUB _process(delta)
 	IF avail <= 0 THEN RETURN
 	DIM buf = SOUND.RENDER(avail)
 	GDX.CALL(playback, "push_buffer", GDX.PACKED_VEC2(buf))
+	update_analyzer()
 ENDSUB
 
 SUB _unhandled_input(event)
