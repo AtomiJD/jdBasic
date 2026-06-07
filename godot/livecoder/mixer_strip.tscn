@@ -3,9 +3,8 @@
 [node name="Strip" type="VBoxContainer"]
 custom_minimum_size = Vector2(120, 0)
 
-[node name="Name" type="Label" parent="."]
+[node name="Name" type="Button" parent="."]
 text = "T"
-horizontal_alignment = 1
 
 [node name="Gain" type="HSlider" parent="."]
 custom_minimum_size = Vector2(110, 16)

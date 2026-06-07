@@ -24,6 +24,12 @@ DIM TR_GAIN
 DIM TR_PAN
 DIM TR_MUTE
 DIM TR_SOLO
+DIM TR_WAVE$
+DIM TR_ATK
+DIM TR_DEC
+DIM TR_SUS
+DIM TR_REL
+DIM TR_CUT
 
 DIM self_h   = 0
 DIM code_h   = 0
@@ -42,6 +48,18 @@ DIM MIXER_PAN
 DIM MIXER_MUTE
 DIM MIXER_SOLO
 
+' Voice editor (a single reused panel targeting EDIT_TRACK).
+DIM EDIT_TRACK = -1
+DIM WAVES$
+DIM ed_panel = 0
+DIM ed_title = 0
+DIM ed_wave  = 0
+DIM ed_atk   = 0
+DIM ed_dec   = 0
+DIM ed_sus   = 0
+DIM ed_rel   = 0
+DIM ed_cut   = 0
+
 DIM Q$  = CHR$(34)
 DIM NL$ = CHR$(10)
 DIM DEFAULT_CODE$ = ""
@@ -56,14 +74,46 @@ SUB studio_reset()
 	TR_PAN   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	TR_MUTE  = [0, 0, 0, 0, 0, 0, 0, 0]
 	TR_SOLO  = [0, 0, 0, 0, 0, 0, 0, 0]
+	TR_WAVE$ = ["SAW", "SAW", "SAW", "SAW", "SAW", "SAW", "SAW", "SAW"]
+	TR_ATK   = [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+	TR_DEC   = [0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+	TR_SUS   = [0.80, 0.80, 0.80, 0.80, 0.80, 0.80, 0.80, 0.80]
+	TR_REL   = [0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
+	TR_CUT   = [4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0]
 ENDSUB
 
 ' ── LV_* wrappers: call SQ + record track state ─────────────────────
+
+FUNC find_instr(code$)
+	DIM up$ = UCASE$(code$)
+	FOR EACH it IN CONFIG{"instruments"}
+		IF UCASE$(it{"code"}) = up$ THEN RETURN it
+	NEXT
+	RETURN {}
+ENDFUNC
+
+FUNC wave_index(w$)
+	DIM i
+	FOR i = 0 TO LEN(WAVES$) - 1
+		IF UCASE$(WAVES$[i]) = UCASE$(w$) THEN RETURN i
+	NEXT
+	RETURN 0
+ENDFUNC
 
 SUB LV_VOICE(track, code$)
 	SQ.V(track, code$)
 	TR_KIND$[track] = "synth"
 	TR_NAME$[track] = code$
+	DIM inst = find_instr(code$)
+	IF MAP.EXISTS(inst, "waveform") THEN TR_WAVE$[track] = inst{"waveform"}
+	IF MAP.EXISTS(inst, "filter") THEN TR_CUT[track] = inst{"filter"}
+	IF MAP.EXISTS(inst, "adsr") THEN
+		DIM a = inst{"adsr"}
+		TR_ATK[track] = a[0]
+		TR_DEC[track] = a[1]
+		TR_SUS[track] = a[2]
+		TR_REL[track] = a[3]
+	ENDIF
 ENDSUB
 
 SUB LV_DRUM(rhythm, kit)
@@ -158,6 +208,32 @@ SUB setup_ui()
 	mixer_box = GDX.NEW("HBoxContainer")
 	GDX.SET(mixer_box, "position", GDX.VEC2(16.0, 636.0))
 	GDX.ADD_CHILD(lay, mixer_box)
+
+	' Voice editor: a single panel, populated for EDIT_TRACK on demand.
+	ed_panel = GDX.INSTANTIATE("res://voice_editor.tscn")
+	GDX.ADD_CHILD(lay, ed_panel)
+	ed_title = GDX.CALL(ed_panel, "get_node", "VB/Title")
+	ed_wave  = GDX.CALL(ed_panel, "get_node", "VB/Wave")
+	ed_atk   = GDX.CALL(ed_panel, "get_node", "VB/Atk")
+	ed_dec   = GDX.CALL(ed_panel, "get_node", "VB/Dec")
+	ed_sus   = GDX.CALL(ed_panel, "get_node", "VB/Sus")
+	ed_rel   = GDX.CALL(ed_panel, "get_node", "VB/Rel")
+	ed_cut   = GDX.CALL(ed_panel, "get_node", "VB/Cut")
+	DIM ed_close = GDX.CALL(ed_panel, "get_node", "VB/Close")
+
+	DIM wi
+	FOR wi = 0 TO LEN(WAVES$) - 1
+		GDX.CALL(ed_wave, "add_item", WAVES$[wi])
+	NEXT
+
+	GDX.CONNECT(ed_wave, "item_selected", "on_voice_param")
+	GDX.CONNECT(ed_atk, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_dec, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_sus, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_rel, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_cut, "value_changed", "on_voice_param")
+	GDX.CONNECT(ed_close, "pressed", "on_voice_close")
+	GDX.SET(ed_panel, "visible", FALSE)
 ENDSUB
 
 ' ── Mixer ───────────────────────────────────────────────────────────
@@ -185,6 +261,7 @@ SUB rebuild_mixer()
 			DIM mb = GDX.CALL(strip, "get_node", "Btns/Mute")
 			DIM sb = GDX.CALL(strip, "get_node", "Btns/Solo")
 			GDX.SET(nm, "text", STR$(t) + ": " + TR_NAME$[t])
+			GDX.CONNECT(nm, "pressed", "on_edit_" + STR$(t))
 			' Set values before connecting so the programmatic init doesn't fire.
 			GDX.SET(gs, "value", TR_GAIN[t])
 			GDX.SET(ps, "value", TR_PAN[t])
@@ -230,6 +307,70 @@ SUB on_mix_changed(v)
 	NEXT
 ENDSUB
 
+' ── Voice editor ────────────────────────────────────────────────────
+
+SUB open_voice_editor(track)
+	IF TR_KIND$[track] <> "synth" THEN
+		GDX.PRINT("track " + STR$(track) + " has no synth voice editor")
+		RETURN
+	ENDIF
+	EDIT_TRACK = -1
+	GDX.SET(ed_title, "text", "Voice " + STR$(track) + ": " + TR_NAME$[track])
+	GDX.SET(ed_wave, "selected", wave_index(TR_WAVE$[track]))
+	GDX.SET(ed_atk, "value", TR_ATK[track])
+	GDX.SET(ed_dec, "value", TR_DEC[track])
+	GDX.SET(ed_sus, "value", TR_SUS[track])
+	GDX.SET(ed_rel, "value", TR_REL[track])
+	GDX.SET(ed_cut, "value", TR_CUT[track])
+	EDIT_TRACK = track
+	GDX.SET(ed_panel, "visible", TRUE)
+ENDSUB
+
+SUB on_voice_param(v)
+	IF EDIT_TRACK < 0 THEN RETURN
+	DIM tk = EDIT_TRACK
+	DIM wsel = GDX.GET(ed_wave, "selected")
+	IF wsel < 0 THEN wsel = 0
+	TR_WAVE$[tk] = WAVES$[wsel]
+	TR_ATK[tk] = GDX.GET(ed_atk, "value")
+	TR_DEC[tk] = GDX.GET(ed_dec, "value")
+	TR_SUS[tk] = GDX.GET(ed_sus, "value")
+	TR_REL[tk] = GDX.GET(ed_rel, "value")
+	TR_CUT[tk] = GDX.GET(ed_cut, "value")
+	SOUND.VOICE tk, TR_WAVE$[tk], TR_ATK[tk], TR_DEC[tk], TR_SUS[tk], TR_REL[tk]
+	SOUND.FILTER tk, TR_CUT[tk]
+ENDSUB
+
+SUB on_voice_close()
+	EDIT_TRACK = -1
+	GDX.SET(ed_panel, "visible", FALSE)
+ENDSUB
+
+SUB on_edit_0()
+	open_voice_editor(0)
+ENDSUB
+SUB on_edit_1()
+	open_voice_editor(1)
+ENDSUB
+SUB on_edit_2()
+	open_voice_editor(2)
+ENDSUB
+SUB on_edit_3()
+	open_voice_editor(3)
+ENDSUB
+SUB on_edit_4()
+	open_voice_editor(4)
+ENDSUB
+SUB on_edit_5()
+	open_voice_editor(5)
+ENDSUB
+SUB on_edit_6()
+	open_voice_editor(6)
+ENDSUB
+SUB on_edit_7()
+	open_voice_editor(7)
+ENDSUB
+
 SUB on_master_vol(v)
 	DIM db = -80.0
 	IF v > 0.001 THEN db = 20.0 * LOG(v) / LOG(10.0)
@@ -254,6 +395,8 @@ ENDSUB
 
 SUB _ready()
 	self_h = GDX.SELF()
+	WAVES$ = ["SAW", "SQUARE", "TRIANGLE", "SINE", "NOISE", "VOICE"]
+	EDIT_TRACK = -1
 	MIXER_GAIN  = [0, 0, 0, 0, 0, 0, 0, 0]
 	MIXER_STRIP = [0, 0, 0, 0, 0, 0, 0, 0]
 	MIXER_PAN   = [0, 0, 0, 0, 0, 0, 0, 0]
