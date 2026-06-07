@@ -107,6 +107,8 @@ struct EmbedEngine {
 struct RagChunk {
     std::string text;
     std::string source;                                  // filename or label
+    int line_start = 0;                                  // 1-based first line in source (0 = unknown)
+    int line_end = 0;                                    // 1-based last line in source
     std::vector<std::pair<std::string, double>> sparse;  // TF-IDF (sparse mode)
     std::vector<float> dense;                            // dense embedding (LLM mode)
 };
@@ -136,12 +138,18 @@ struct RagStore {
     bool has_hnsw() const { return hnsw_index && !hnsw_dirty; }
 
     void add_text(const std::string& text, const std::string& source) {
-        // Split into chunks
+        // Split into chunks. Track the line number of each chunk's start offset
+        // (1-based) by counting newlines incrementally - O(n) over the file.
         std::vector<size_t> new_chunk_indices;
+        size_t scan = 0; int line = 1;
         for (size_t i = 0; i < text.size(); i += (chunk_size - chunk_overlap)) {
             std::string chunk = text.substr(i, chunk_size);
             if (chunk.empty()) continue;
+            while (scan < i) { if (text[scan] == '\n') ++line; ++scan; }
+            int nlines = (int)std::count(chunk.begin(), chunk.end(), '\n');
             RagChunk rc;
+            rc.line_start = line;
+            rc.line_end = line + nlines;
             rc.text = std::move(chunk);
             rc.source = source;
             new_chunk_indices.push_back(chunks.size());
@@ -276,7 +284,7 @@ struct RagStore {
         std::ofstream o(path, std::ios::binary);
         if (!o) throw std::runtime_error("RAG_SAVE: cannot write " + path);
         o.write("JRAG", 4);
-        w_u32(o, 2); // version 2 = mit optionalem HNSW
+        w_u32(o, 3); // version 3 = + chunk line numbers (line_start/line_end)
         w_i32(o, chunk_size);
         w_i32(o, chunk_overlap);
         bool dense = dense_mode();
@@ -298,6 +306,8 @@ struct RagStore {
         for (auto& c : chunks) {
             w_str(o, c.text);
             w_str(o, c.source);
+            w_i32(o, c.line_start);
+            w_i32(o, c.line_end);
             if (dense) {
                 w_i32(o, (int32_t)c.dense.size());
                 for (float v : c.dense) w_f32(o, v);
@@ -323,7 +333,7 @@ struct RagStore {
         if (std::string(magic, 4) != "JRAG")
             throw std::runtime_error("RAG_LOAD: bad magic in " + path);
         uint32_t ver = r_u32(i);
-        if (ver != 1 && ver != 2)
+        if (ver != 1 && ver != 2 && ver != 3)
             throw std::runtime_error("RAG_LOAD: unsupported version " + std::to_string(ver));
         chunk_size = r_i32(i);
         chunk_overlap = r_i32(i);
@@ -350,6 +360,10 @@ struct RagStore {
             RagChunk c;
             c.text = r_str(i);
             c.source = r_str(i);
+            if (ver >= 3) {
+                c.line_start = r_i32(i);
+                c.line_end = r_i32(i);
+            }
             if (dense) {
                 int32_t dim = r_i32(i);
                 c.dense.resize(dim);
@@ -1934,6 +1948,8 @@ void register_llm_builtins(VM& vm) {
             Value entry = Value::make_object();
             entry.as_object()->set("text", Value::make_string(it->second->chunks[idx].text));
             entry.as_object()->set("source", Value::make_string(it->second->chunks[idx].source));
+            entry.as_object()->set("line_start", Value::make_i64(it->second->chunks[idx].line_start));
+            entry.as_object()->set("line_end", Value::make_i64(it->second->chunks[idx].line_end));
             entry.as_object()->set("score", Value::make_f64(score));
             entry.as_object()->set("index", Value::make_i64(idx));
             arr.as_array()->elements.push_back(std::move(entry));
@@ -1984,6 +2000,8 @@ void register_llm_builtins(VM& vm) {
             if (score < 0.01) continue;
             Value src = Value::make_object();
             src.as_object()->set("source", Value::make_string(store->chunks[idx].source));
+            src.as_object()->set("line_start", Value::make_i64(store->chunks[idx].line_start));
+            src.as_object()->set("line_end", Value::make_i64(store->chunks[idx].line_end));
             src.as_object()->set("score",  Value::make_f64(score));
             src.as_object()->set("text",   Value::make_string(store->chunks[idx].text));
             src.as_object()->set("index",  Value::make_i64(idx));

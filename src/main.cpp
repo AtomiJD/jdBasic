@@ -64,6 +64,15 @@
 #include "repl_ftxui.h"
 #endif
 
+#ifdef LLM
+// llm.cpp's ensure_backend() references this embed-API global to locate ggml
+// backend DLLs in a non-standard directory (the Godot embed case). In the
+// standalone EXE the backends auto-register from DLLs beside the binary, so an
+// empty value is correct; only jdb_embed_api.cpp (compiled into jdbrt.dll)
+// actually sets it. Defined here so the LLM-enabled EXE links.
+std::string g_jdb_embed_dll_dir;
+#endif
+
 static std::string read_file(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {

@@ -5,6 +5,9 @@
 # ── User convention: anything starting with "_" is private ────────
 _*
 
+# ── Local AI co-processor: per-repo semantic index + file lists ──
+.jdco*
+
 # ── Personal scratch / current tests (not for git) ────────────────
 fluppi/tiled/
 fluppi/generated_sprites/
