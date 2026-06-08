@@ -1,4 +1,5 @@
 #include "parser.h"
+#include <algorithm>
 
 Parser::Parser(const std::vector<Token>& tokens) : tokens(tokens) {}
 
@@ -637,23 +638,86 @@ StmtPtr Parser::parse_statement() {
         }
         case TokenType::IDENTIFIER: return parse_ident_stmt();
         case TokenType::LBRACKET: {
-            // Destructuring: [A, B, C] = expr
+            // Destructuring: [t0, t1, ...] = expr
+            // Targets may be plain variables ([A, B] = [B, A]) OR indexed
+            // lvalues ([arr[i], arr[j]] = [...], [m{k1}, m{k2}] = [...]),
+            // which makes in-place array/map swaps a one-liner.
             int ln = current().line;
             advance(); // [
-            std::vector<std::string> vars;
-            vars.push_back(expect(TokenType::IDENTIFIER, "variable name").value);
-            while (match(TokenType::COMMA)) {
-                vars.push_back(expect(TokenType::IDENTIFIER, "variable name").value);
-            }
+            std::vector<ExprPtr> targets;
+            targets.push_back(parse_expr());
+            while (match(TokenType::COMMA)) targets.push_back(parse_expr());
             expect(TokenType::RBRACKET, "']'");
             expect(TokenType::ASSIGN, "'='");
             ExprPtr val = parse_expr();
             expect_newline();
+
+            bool all_simple = true;
+            for (auto& t : targets) {
+                if (t->kind == ExprKind::VARIABLE) continue;
+                if (t->kind == ExprKind::INDEX) { all_simple = false; continue; }
+                throw std::runtime_error("Parse error at line " + std::to_string(ln) +
+                    ": destructuring target must be a variable or an indexed element");
+            }
+
             auto s = std::make_unique<Stmt>();
             s->kind = StmtKind::DESTRUCTURE;
-            s->destruct_vars = std::move(vars);
-            s->expr = std::move(val);
             s->line = ln;
+
+            if (all_simple) {
+                // Fast path (unchanged): plain variable targets.
+                for (auto& t : targets) s->destruct_vars.push_back(t->str_val);
+                s->expr = std::move(val);
+                return s;
+            }
+
+            // Indexed / mixed targets: desugar into temps + per-target stores
+            // so the RHS is evaluated ONCE, up front (swap-safe), and each
+            // store reuses the existing ASSIGN / INDEX_ASSIGN paths.
+            static int destr_seq = 0;
+            std::vector<ExprPtr> rvals;
+            if (val->kind == ExprKind::ARRAY_LITERAL &&
+                val->args.size() == targets.size()) {
+                // [t..] = [e0, e1, ...] — capture each element in its OWN typed
+                // temp. Keeps a string element a string (a temp array would make
+                // the element reads runtime-tagged, and `strarr[i] = <rt-str>`
+                // mis-coerces via jdb_val on the native path).
+                for (size_t i = 0; i < val->args.size(); i++) {
+                    std::string t = "__destr_" + std::to_string(destr_seq++);
+                    s->body.push_back(make_let(t, VarType::NONE,
+                                               std::move(val->args[i]), ln));
+                    rvals.push_back(make_var(t, ln));
+                }
+            } else {
+                // [t..] = <array expression> — one temp array, indexed per target.
+                std::string tmp = "__destr_" + std::to_string(destr_seq++);
+                s->body.push_back(make_let(tmp, VarType::NONE, std::move(val), ln));
+                for (size_t i = 0; i < targets.size(); i++)
+                    rvals.push_back(make_index(make_var(tmp, ln),
+                                               make_int_lit((int64_t)i, ln), ln));
+            }
+            for (size_t i = 0; i < targets.size(); i++) {
+                if (targets[i]->kind == ExprKind::VARIABLE) {
+                    s->body.push_back(make_let(targets[i]->str_val, VarType::NONE,
+                                               std::move(rvals[i]), ln));
+                    continue;
+                }
+                // INDEX target → flatten container[i0][i1]... to base var + chain
+                // (covers a[i], m{k} since both parse to ExprKind::INDEX, plus
+                // nested a[i][j]).
+                std::vector<ExprPtr> chain;
+                ExprPtr node = std::move(targets[i]);
+                while (node->kind == ExprKind::INDEX) {
+                    chain.push_back(std::move(node->right));
+                    node = std::move(node->left);
+                }
+                if (node->kind != ExprKind::VARIABLE)
+                    throw std::runtime_error("Parse error at line " + std::to_string(ln) +
+                        ": destructuring index target must have a variable base");
+                std::reverse(chain.begin(), chain.end());
+                s->body.push_back(make_index_assign(node->str_val, std::move(chain),
+                                                     std::move(rvals[i]), ln));
+            }
             return s;
         }
         default:

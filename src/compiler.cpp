@@ -1261,6 +1261,13 @@ void Compiler::compile_expr_stmt(const Stmt& stmt) {
 }
 
 void Compiler::compile_destructure(const Stmt& stmt) {
+    // Indexed / mixed targets are pre-desugared by the parser into a temp
+    // LET + per-target ASSIGN/INDEX_ASSIGN statements (swap-safe). Just run
+    // them in order.
+    if (!stmt.body.empty()) {
+        for (auto& sub : stmt.body) if (sub) compile_stmt(*sub);
+        return;
+    }
     // Evaluate RHS (should produce an array)
     compile_expr(*stmt.expr);
 

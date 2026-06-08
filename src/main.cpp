@@ -1249,6 +1249,9 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                             break;
                         case StmtKind::DESTRUCTURE:
                             for (auto& v : s->destruct_vars) declared.insert(v);
+                            // Desugared (indexed/mixed) form carries its temp +
+                            // variable targets as LET/INDEX_ASSIGN sub-statements.
+                            collect(s->body);
                             break;
                         case StmtKind::IF:
                         case StmtKind::SWITCH_STMT:

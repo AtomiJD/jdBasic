@@ -2247,6 +2247,17 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             for (auto& vn : stmt->destruct_vars) {
                 if (!lookup_var(vn)) create_var(vn, JD_TAG_F64);  // f64 from array_get
             }
+            // Desugared (indexed/mixed) form: register plain-variable targets
+            // so a SUB compiled earlier can still see them. Skip the synthetic
+            // `__destr_*` temp (it holds the whole array and is created inline).
+            for (auto& sub : stmt->body) {
+                if (!sub || sub->kind != StmtKind::LET || sub->var_name.empty()) continue;
+                if (sub->var_name.rfind("__destr_", 0) == 0) continue;
+                if (!lookup_var(sub->var_name)) {
+                    bool is_str = sub->var_name.back() == '$';
+                    create_var(sub->var_name, is_str ? JD_TAG_STR : JD_TAG_F64);
+                }
+            }
         }
     }
 
@@ -2480,6 +2491,12 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             // Already registered in the pre-pass — no-op here.
             break;
         case StmtKind::DESTRUCTURE: {
+            // Indexed / mixed targets are pre-desugared by the parser into a
+            // temp LET + per-target ASSIGN/INDEX_ASSIGN statements (swap-safe).
+            if (!stmt.body.empty()) {
+                for (auto& sub : stmt.body) if (sub) codegen_stmt(*sub);
+                break;
+            }
             // [a, b, c] = expr — evaluate expr, then assign each element.
             if (!stmt.expr) break;
             TypedValue arr = codegen_expr(*stmt.expr);

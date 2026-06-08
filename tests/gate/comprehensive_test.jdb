@@ -335,6 +335,63 @@ Assert(da = 100, "destruct a")
 Assert(db = 200, "destruct b")
 Assert(dc = 300, "destruct c")
 
+' Destructuring into INDEXED / MAP / MIXED targets (not just plain vars).
+' The whole RHS is evaluated before any store, so in-place swaps are safe.
+' Plain variable swap (fast path)
+DIM dsw1 = 1
+DIM dsw2 = 2
+[dsw1, dsw2] = [dsw2, dsw1]
+Assert(dsw1 = 2, "destruct plain swap a")
+Assert(dsw2 = 1, "destruct plain swap b")
+
+' Numeric array element swap in place
+DIM dna = [10, 20, 30]
+[dna[0], dna[2]] = [dna[2], dna[0]]
+Assert(dna[0] = 30, "destruct num-array idx swap [0]")
+Assert(dna[2] = 10, "destruct num-array idx swap [2]")
+
+' String array element swap in place
+DIM dsa = ["x", "y", "z"]
+[dsa[0], dsa[2]] = [dsa[2], dsa[0]]
+DIM dsa0 AS STRING = dsa[0]
+DIM dsa2 AS STRING = dsa[2]
+Assert(dsa0 = "z", "destruct str-array idx swap [0]")
+Assert(dsa2 = "x", "destruct str-array idx swap [2]")
+
+' Map value swap (m{key} targets)
+DIM dmap AS MAP
+dmap{"a"} = 11
+dmap{"b"} = 22
+[dmap{"a"}, dmap{"b"}] = [dmap{"b"}, dmap{"a"}]
+Assert(dmap{"a"} = 22, "destruct map swap a")
+Assert(dmap{"b"} = 11, "destruct map swap b")
+
+' Mixed targets (variable + array element + map key), numeric values
+DIM dmx_v = 0
+DIM dmx_a = [100, 200]
+DIM dmx_m AS MAP
+[dmx_v, dmx_a[0], dmx_m{"lall"}] = [dmx_a[1], 55, 3]
+Assert(dmx_v = 200, "destruct mixed: var <- array elem")
+Assert(dmx_a[0] = 55, "destruct mixed: array-idx target")
+Assert(dmx_m{"lall"} = 3, "destruct mixed: map-key target")
+
+' Mixed value types in one statement (string into a map value, number into var)
+DIM dmt_b = [7, 8]
+DIM dmt_d AS MAP
+DIM dmt_a = 0
+[dmt_a, dmt_d{"lall"}] = [dmt_b[1], "Bert"]
+Assert(dmt_a = 8, "destruct mixed-type: numeric var")
+Assert(dmt_d{"lall"} = "Bert", "destruct mixed-type: string into map")
+
+' Non-literal RHS (a FUNC returning an array) into indexed targets
+FUNC dg_triple()
+    RETURN [10, 20, 30]
+ENDFUNC
+DIM dgrid = [0, 0, 0]
+[dgrid[0], dgrid[2]] = dg_triple()
+Assert(dgrid[0] = 10, "destruct from FUNC return [0] <- rhs[0]")
+Assert(dgrid[2] = 20, "destruct from FUNC return [2] <- rhs[1]")
+
 ' IN operator
 Assert("B" IN ["A", "B", "C"], "in array")
 Assert(NOT ("D" IN ["A", "B", "C"]), "not in array")

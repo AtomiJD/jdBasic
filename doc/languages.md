@@ -266,6 +266,27 @@ ENDFUNC
 PRINT A, B, C ' Output: 10 20 30
 ```
 
+Targets are not limited to plain variables — an **indexed array element** (`arr[i]`)
+or a **map value** (`m{key}`) may also appear on the left, so an in-place swap of
+two array slots (or map entries) is a one-liner. The whole right-hand side is
+evaluated before any assignment, so swaps are safe.
+
+```basic
+DIM nums = [10, 20, 30]
+' Swap two array elements in place
+[nums[0], nums[2]] = [nums[2], nums[0]]
+PRINT nums[0], nums[2] ' Output: 30 10
+
+DIM scores AS MAP
+scores{"a"} = 1 : scores{"b"} = 2
+[scores{"a"}, scores{"b"}] = [scores{"b"}, scores{"a"}]   ' swap map values
+
+' Mixed targets and mixed value types in one statement
+DIM x : DIM b = [100, 200]
+[x, b[0]] = [b[1], "hello"]
+PRINT x, b[0] ' Output: 200 hello
+```
+
 ## Reactive Variables and Assignment
 
 Reactive variables needs to be created explicitly with `DIM`.
