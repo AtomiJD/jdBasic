@@ -1241,6 +1241,18 @@ Use to gate VM-only paths in programs that may run from a --compile'd .exe.
 Names: NATIVEC, INTERPRETER, COM, HTTP, SERIAL, GFX, IMGUI, LLM, ONNX, LLVMC.
 Example: IF NOT OS.FEATURE("NATIVEC") THEN ... ENDIF
 
+[OS.SCREENSHOT]
+Syntax: OS.SCREENSHOT(path$, [mode$], [caption$]) -> INTEGER
+Description: Capture the screen or a window to an image file (Windows only;
+returns -100 elsewhere). Returns 0 on success, negative on error. The image
+format is taken from the extension: .png .jpg/.jpeg .bmp .tif/.tiff .gif
+(encoded via the Windows Imaging Component).
+mode$: "screen" (default) = whole desktop; "window" = window incl. frame;
+"client" = window content only. caption$: optional FindWindow title for
+window/client; empty = foreground window.
+Example: OS.SCREENSHOT("shot.png")
+Example: OS.SCREENSHOT("calc.jpg", "client", "Calculator")
+
 [OUTER]
 Syntax: OUTER(vectorA, vectorB, operator)
 Description: Creates an outer product table from two vectors and an operator.

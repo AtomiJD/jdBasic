@@ -13,7 +13,7 @@ if not exist build mkdir build
 set DEFS=/DNDEBUG /DJDRT_EXPORTS
 set EXTRA_SRC=
 set EXTRA_INC=
-set EXTRA_LIB=user32.lib ws2_32.lib iphlpapi.lib
+set EXTRA_LIB=user32.lib ws2_32.lib iphlpapi.lib gdi32.lib windowscodecs.lib ole32.lib
 set EXTRA_LIBPATH=
 
 REM Parse arguments for optional modules.
@@ -149,7 +149,7 @@ REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\jdb_embed_api.cpp src\numerics.cpp !EXTRA_SRC! ^
+  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\jdb_embed_api.cpp src\numerics.cpp src\screencap.cpp !EXTRA_SRC! ^
   /Fe:build\jdbrt.dll ^
   /Fo:build\ ^
   /link ^

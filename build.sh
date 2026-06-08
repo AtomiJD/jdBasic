@@ -215,7 +215,7 @@ fi
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-     src/numerics.cpp \
+     src/numerics.cpp src/screencap.cpp \
      $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $FTXUI_SRC $TUI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────

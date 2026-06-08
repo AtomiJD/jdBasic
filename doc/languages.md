@@ -1005,6 +1005,19 @@ The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Stan
         ' VM-only features go here (REACTIVE bindings, EXECUTE, EVAL, ...)
     ENDIF
     ```
+* **`OS.SCREENSHOT(path$, [mode$], [caption$]) -> INTEGER`**: Captures the screen or a window to an image file and returns `0` on success (negative on error). **Windows only** (returns `-100` on other platforms). The image format is chosen from the file extension — `.png`, `.jpg`/`.jpeg`, `.bmp`, `.tif`/`.tiff`, `.gif` — and encoded via the Windows Imaging Component. `mode$` selects what to grab:
+    * `"screen"` (default) — the whole (virtual) desktop.
+    * `"window"` — a window including its title bar and borders.
+    * `"client"` — only a window's client area (its content, no frame).
+
+    For `"window"` / `"client"`, the optional `caption$` is a window title matched with `FindWindow`; if omitted (or empty) the current **foreground** window is captured.
+
+    ```basic
+    OS.SCREENSHOT("desktop.png")                   ' full screen -> PNG
+    OS.SCREENSHOT("shot.jpg", "window")            ' foreground window frame -> JPG
+    rc = OS.SCREENSHOT("calc.bmp", "client", "Calculator")
+    IF rc <> 0 THEN PRINT "capture failed: "; rc
+    ```
 
 #### Setting EXE file properties (`.jdb.props` sidecar)
 

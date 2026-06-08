@@ -12,7 +12,7 @@ if not exist build mkdir build
 set DEFS=/DNDEBUG
 set EXTRA_SRC=
 set EXTRA_INC=
-set EXTRA_LIB=user32.lib ws2_32.lib iphlpapi.lib
+set EXTRA_LIB=user32.lib ws2_32.lib iphlpapi.lib gdi32.lib windowscodecs.lib ole32.lib
 set EXTRA_LIBPATH=
 set COPY_DLLS=
 
@@ -168,7 +168,7 @@ REM mismatched runtimes show up as unresolved __imp__* symbols.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp !EXTRA_SRC! ^
+  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp src\screencap.cpp !EXTRA_SRC! ^
   /Fe:build\jdBasic.exe ^
   /Fo:build\ ^
   /link ^

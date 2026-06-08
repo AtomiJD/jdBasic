@@ -48,6 +48,10 @@
 // block above, otherwise winsock1.h leaks in via windows.h and collides.
 #include "jdb_encoding.h"
 
+// OS.SCREENSHOT backing (src/screencap.cpp). GDI+WIC on Windows, stub
+// elsewhere. rc 0 = ok, negative = error.
+extern "C" int jdb_screencap(const char* path, const char* mode, const char* caption);
+
 // ── Windows SEH → C++ exception translator ───────────────────
 // Without this, an access violation, divide-by-zero, stack overflow, etc.
 // inside a native function tears down the whole interpreter. With this
@@ -646,7 +650,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
         "CODEC.SHA256$", "CODEC.UUID$",
         "OS.GETOS", "OS.GETOS$", "OS.ARGS", "OS.EXEC",
-        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD", "OS.FEATURE",
+        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD", "OS.FEATURE", "OS.SCREENSHOT",
         "DIR$", "DIR", "CD", "PWD", "MKDIR", "KILL", "RMDIR", "MKTEMP$",
         "FILE.EXISTS", "FILE.SIZE", "FILE.ISDIR", "FILE.STAT",
         "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
@@ -6770,6 +6774,25 @@ void VM::register_builtins() {
         if (name == "LLVMC") on = true;  // compiler available (--compile)
 #endif
         return Value::make_bool(on);
+    });
+
+    register_native("OS.SCREENSHOT", 1, 3, [](const std::vector<Value>& args) -> Value {
+        // OS.SCREENSHOT(path$ [, mode$] [, caption$]) -> int rc (0 = ok).
+        //   mode$    : "screen" (default) | "window" (frame) | "client" (content)
+        //   caption$ : optional FindWindow title; empty => foreground window
+        // The image format (.png / .jpg / .bmp / .tif / .gif) is taken from the
+        // path's extension. Windows-only; returns -100 on other platforms.
+        if (args.empty() || args[0].type != ValueType::STRING)
+            return Value::make_i64(-1);
+        std::string path = args[0].as_string()->data;
+        std::string mode = (args.size() >= 2 && args[1].type == ValueType::STRING)
+                           ? args[1].as_string()->data : std::string();
+        std::string cap  = (args.size() >= 3 && args[2].type == ValueType::STRING)
+                           ? args[2].as_string()->data : std::string();
+        int rc = jdb_screencap(path.c_str(),
+                               mode.empty() ? nullptr : mode.c_str(),
+                               cap.empty()  ? nullptr : cap.c_str());
+        return Value::make_i64(rc);
     });
 
     register_native("OS.LOAD", 0, -1, [](const std::vector<Value>& args) -> Value {
