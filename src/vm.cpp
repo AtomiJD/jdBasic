@@ -6171,10 +6171,13 @@ void VM::register_builtins() {
 
     // REGEX.MATCH(pattern, text) → TRUE/FALSE or array of captures
     register_native("REGEX.MATCH", [](const std::vector<Value>& args) -> Value {
-        std::string pat = args[0].as_string()->data;
+        const std::string& pat = args[0].as_string()->data;
         std::string text = args[1].as_string()->data;
         try {
-            std::regex re(pat);
+            static std::unordered_map<std::string, std::regex> cache;
+            auto cit = cache.find(pat);
+            if (cit == cache.end()) cit = cache.emplace(pat, std::regex(pat)).first;
+            const std::regex& re = cit->second;
             std::smatch m;
             if (!std::regex_match(text, m, re)) return Value::make_bool(false);
             // No capture groups → just TRUE
@@ -6189,11 +6192,14 @@ void VM::register_builtins() {
 
     // REGEX.FINDALL(pattern, text) → 1D array of matches or 2D if groups
     register_native("REGEX.FINDALL", [](const std::vector<Value>& args) -> Value {
-        std::string pat = args[0].as_string()->data;
+        const std::string& pat = args[0].as_string()->data;
         std::string text = args[1].as_string()->data;
         Value r = Value::make_array();
         try {
-            std::regex re(pat);
+            static std::unordered_map<std::string, std::regex> cache;
+            auto cit = cache.find(pat);
+            if (cit == cache.end()) cit = cache.emplace(pat, std::regex(pat)).first;
+            const std::regex& re = cit->second;
             std::sregex_iterator it(text.begin(), text.end(), re), end;
             bool has_groups = false;
             for (; it != end; ++it) {
@@ -6215,10 +6221,17 @@ void VM::register_builtins() {
 
     // REGEX.REPLACE(pattern, text, replacement) → string
     register_native("REGEX.REPLACE", [](const std::vector<Value>& args) -> Value {
-        std::string pat = args[0].as_string()->data;
-        std::string text = args[1].as_string()->data;
-        std::string repl = args[2].as_string()->data;
-        try { return Value::make_string(std::regex_replace(text, std::regex(pat), repl)); }
+        const std::string& pat = args[0].as_string()->data;
+        const std::string& text = args[1].as_string()->data;
+        const std::string& repl = args[2].as_string()->data;
+        try {
+            // Cache compiled patterns - std::regex construction is the dominant
+            // cost when the same pattern runs over many lines (e.g. log triage).
+            static std::unordered_map<std::string, std::regex> cache;
+            auto it = cache.find(pat);
+            if (it == cache.end()) it = cache.emplace(pat, std::regex(pat)).first;
+            return Value::make_string(std::regex_replace(text, it->second, repl));
+        }
         catch (...) { return Value::make_string(text); }
     });
 

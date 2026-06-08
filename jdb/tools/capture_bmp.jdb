@@ -1,0 +1,75 @@
+' =========================================================
+' capture_bmp.jdb - Screenshot / window capture to .bmp via DECLARE FFI
+'
+' Uses the screencap.dll bridge (bridges/screencap) for the GDI work,
+' because the FFI RETURN marshaller decodes buffers as NUL-terminated
+' strings and would truncate raw 32-bit pixel data at the first zero
+' byte. The bridge does GetDIBits + the BMP write in C; jdBasic only
+' picks the target (a window handle or the whole screen) and a path.
+'
+' Windows only. Build the bridge first:  bridges\screencap\build.bat
+' =========================================================
+
+' --- user32: find/activate a window by its title ---
+DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" _
+    (className AS INTEGER, windowName AS STRING) AS INTEGER
+
+DECLARE FUNC ShowWindow LIB "user32.dll" ALIAS "ShowWindow" _
+    (hwnd AS INTEGER, cmd AS INTEGER) AS INTEGER
+
+DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" _
+    (hwnd AS INTEGER) AS INTEGER
+
+' --- our bridge: the actual capture + BMP encode ---
+DECLARE FUNC screencap_window LIB "screencap" ALIAS "screencap_window" _
+    (hwnd AS INTEGER, path AS STRING) AS INTEGER
+
+DECLARE FUNC screencap_screen LIB "screencap" ALIAS "screencap_screen" _
+    (path AS STRING) AS INTEGER
+
+CONST SW_RESTORE = 9
+
+
+' Capture the whole primary screen to `outfile$`. Returns the path.
+FUNC capture_screen(outfile$)
+    IF OS.GETOS$() <> "WINDOWS" THEN THROW "capture_bmp funktioniert nur unter Windows."
+    rc = screencap_screen(outfile$)
+    IF rc <> 0 THEN THROW "Screen-Capture fehlgeschlagen, Code " + STR$(rc)
+    RETURN outfile$
+ENDFUNC
+
+
+' Capture the client area of the window titled `title$` to `outfile$`.
+' Brings the window to the front first. Returns the path.
+FUNC capture_window(title$, outfile$)
+    IF OS.GETOS$() <> "WINDOWS" THEN THROW "capture_bmp funktioniert nur unter Windows."
+
+    hwnd = FindWindow(0, title$)
+    IF hwnd = 0 THEN THROW "Fenster nicht gefunden: " + title$
+
+    ShowWindow(hwnd, SW_RESTORE)
+    SetForegroundWindow(hwnd)
+    SLEEP 300
+
+    rc = screencap_window(hwnd, outfile$)
+    IF rc <> 0 THEN THROW "Window-Capture fehlgeschlagen, Code " + STR$(rc)
+    RETURN outfile$
+ENDFUNC
+
+
+' --------------------- Demo ---------------------
+PRINT "jdBasic Screen Capture (DECLARE/FFI -> screencap.dll)"
+PRINT "  [1] ganzer Bildschirm"
+PRINT "  [2] Fenster nach Titel"
+INPUT "Auswahl: ", choice$
+
+IF choice$ = "2" THEN
+    INPUT "Fenstertitel: ", t$
+    out$ = PATH.JOIN$(PWD(), "capture_" + REPLACE$(t$, " ", "_") + ".bmp")
+    shot$ = capture_window(t$, out$)
+ELSE
+    out$ = PATH.JOIN$(PWD(), "capture_screen.bmp")
+    shot$ = capture_screen(out$)
+ENDIF
+
+PRINT "Gespeichert: " + shot$

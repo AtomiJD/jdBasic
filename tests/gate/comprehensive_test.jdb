@@ -2090,6 +2090,39 @@ DIM nsa_m2 AS STRING = nsa_made[2]
 Assert(nsa_m0 = "alpha", "user-FUNC result [0] decodes as string")
 Assert(nsa_m2 = "charlie", "user-FUNC result [2] decodes as string")
 
+' APPEND(arr, s$) where the value is a BARE scalar string variable (not a
+' [s$] literal, not a string array). An empty [] is inferred as a double
+' array; before the 2026-06-07 codegen fix the appended string was punned
+' to f64 and read back as ~6.95e-310. The scalar-string second arg must
+' tag the result as a string array. Mixed scalar-var + literal too.
+DIM nsa_sv = []
+DIM nsa_one$ = "uno"
+nsa_sv = APPEND(nsa_sv, nsa_one$)
+nsa_sv = APPEND(nsa_sv, "dos")
+Assert(LEN(nsa_sv) = 2, "APPEND scalar-strvar length")
+DIM nsa_sv0 AS STRING = nsa_sv[0]
+DIM nsa_sv1 AS STRING = nsa_sv[1]
+Assert(nsa_sv0 = "uno", "APPEND scalar-strvar [0] decodes as string")
+Assert(nsa_sv1 = "dos", "APPEND scalar-strvar [1] decodes as string")
+
+' jdtriage shape: a GLOBAL string array built inside a SUB by APPENDing a
+' scalar string variable, then indexed at top level AND inside a FUNC.
+DIM nsa_glob = []
+SUB nsa_fill()
+  DIM s$ = "first"
+  nsa_glob = APPEND(nsa_glob, s$)
+  nsa_glob = APPEND(nsa_glob, "second")
+ENDSUB
+FUNC nsa_read0$()
+  RETURN nsa_glob[0]
+ENDFUNC
+nsa_fill()
+Assert(LEN(nsa_glob) = 2, "SUB-built global str-array length")
+DIM nsa_g0 AS STRING = nsa_glob[0]
+Assert(nsa_g0 = "first", "SUB-built global str-array [0] at top level")
+DIM nsa_gr AS STRING = nsa_read0$()
+Assert(nsa_gr = "first", "global str-array [0] read inside FUNC")
+
 ' ══════════════════════════════════════════════════════════════════
 ' DIM shadowing inside FUNC/SUB
 '

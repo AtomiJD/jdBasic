@@ -2565,11 +2565,17 @@ char* jdb_txtreader(const char* path) {
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc(len + 1);
-    fread(buf, 1, len, f);
-    buf[len] = '\0';
+    std::string raw((size_t)(len > 0 ? len : 0), '\0');
+    if (len > 0) fread(&raw[0], 1, len, f);
     fclose(f);
-    return buf;
+    // Auto-detect UTF-16 (BOM or NUL pattern) and decode to UTF-8 so the
+    // resulting C-string isn't truncated at the first interior NUL byte.
+    try {
+        std::string out = jdb_enc::decode_to_utf8(raw, "");
+        return _strdup(out.c_str());
+    } catch (const std::exception&) {
+        return _strdup(raw.c_str());
+    }
 }
 
 void jdb_txtwriter(const char* path, const char* content) {

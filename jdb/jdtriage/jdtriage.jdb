@@ -1,0 +1,202 @@
+OPTION EXPLICIT
+OPTION STRICT
+
+' jdtriage - offline AI log-triage TUI (MVP-1: ingest + template + table).
+' Collapses a log into distinct templates with counts (cheap regex
+' normalization), shows them ranked in a TUI table. AI clustering/summaries
+' (Tier 2) and interactivity come later.
+'
+'   jdBasic jdb/jdtriage/jdtriage.jdb <logfile>
+' Dev/agent snapshot (renders one frame to stdout as text):
+'   jdBasic jdb/jdtriage/jdtriage.jdb <logfile> --snapshot
+
+' ── Template engine: mask the variable bits so near-identical lines collapse ──
+FUNC JT_NORM$(s$)
+	DIM t$ = s$
+	t$ = REGEX.REPLACE("\d{4}-\d{2}-\d{2}[ T,]\d{2}:\d{2}:\d{2}([:.]\d+)?", t$, "<ts>")
+	t$ = REGEX.REPLACE("\d{2}:\d{2}:\d{2}([:.]\d+)?", t$, "<ts>")
+	t$ = REGEX.REPLACE("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", t$, "<uuid>")
+	t$ = REGEX.REPLACE("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", t$, "<ip>")
+	t$ = REGEX.REPLACE("0x[0-9a-fA-F]+", t$, "<hex>")
+	t$ = REGEX.REPLACE("/[\w./\-]+", t$, "<path>")
+	t$ = REGEX.REPLACE("\d+", t$, "<n>")
+	RETURN t$
+ENDFUNC
+
+FUNC JT_SEV$(line$)
+	DIM u$ = UCASE$(line$)
+	IF INSTR(u$, "FATAL") >= 0 ORELSE INSTR(u$, "ERROR") >= 0 ORELSE INSTR(u$, "CRIT") >= 0 THEN RETURN "E"
+	IF INSTR(u$, "WARN") >= 0 THEN RETURN "W"
+	RETURN "I"
+ENDFUNC
+
+FUNC JT_PADL$(s$, w)
+	DIM r$ = s$
+	DIM k
+	FOR k = LEN(s$) TO w - 1
+		r$ = " " + r$
+	NEXT
+	RETURN r$
+ENDFUNC
+
+FUNC JT_PADR$(s$, w)
+	DIM r$ = s$
+	DIM k
+	FOR k = LEN(s$) TO w - 1
+		r$ = r$ + " "
+	NEXT
+	RETURN r$
+ENDFUNC
+
+' Inner content width for the snapshot frame (frame width minus the border).
+DIM JT_W = 96
+
+' ── Template table state ─────────────────────────────────────────────────────
+DIM JT_TMPL
+DIM JT_COUNT AS MAP
+DIM JT_SAMPLE AS MAP
+DIM JT_RAW AS MAP    ' template -> array of raw lines (capped)
+DIM JT_LINES = 0
+
+SUB JT_BUILD(path$)
+	JT_TMPL = []
+	JT_COUNT = {}
+	JT_SAMPLE = {}
+	JT_RAW = {}
+	JT_LINES = 0
+	PRINT "[1/3] reading  " + path$
+	' TXTREADER$ auto-detects UTF-16 (Windows service logs) and decodes to UTF-8.
+	DIM raw$ = TXTREADER$(path$)
+	DIM lines = SPLIT(raw$, CHR$(10))
+	PRINT "[2/3] " + STR$(LEN(lines)) + " lines, normalizing ..."
+	DIM i
+	FOR i = 0 TO LEN(lines) - 1
+		DIM ln$ = lines[i]
+		ln$ = REPLACE$(ln$, CHR$(13), "")
+		IF LEN(TRIM$(ln$)) > 0 THEN
+			JT_LINES = JT_LINES + 1
+			IF (JT_LINES MOD 5000) = 0 THEN PRINT "[2/3]   " + STR$(JT_LINES) + " / " + STR$(LEN(lines)) + "  (" + STR$(LEN(JT_TMPL)) + " templates)"
+			DIM t$ = JT_NORM$(ln$)
+			IF MAP.EXISTS(JT_COUNT, t$) THEN
+				JT_COUNT{t$} = JT_COUNT{t$} + 1
+				IF LEN(JT_RAW{t$}) < 30 THEN JT_RAW{t$} = APPEND(JT_RAW{t$}, ln$)
+			ELSE
+				JT_COUNT{t$} = 1
+				JT_SAMPLE{t$} = ln$
+				JT_RAW{t$} = [ln$]
+				JT_TMPL = APPEND(JT_TMPL, t$)
+			ENDIF
+		ENDIF
+	NEXT
+ENDSUB
+
+' Selection sort of JT_TMPL by count, descending.
+SUB JT_SORT()
+	PRINT "[3/3] ranking " + STR$(LEN(JT_TMPL)) + " templates by count..."
+	DIM n = LEN(JT_TMPL)
+	DIM i
+	FOR i = 0 TO n - 2
+		DIM mx = i
+		DIM j
+		FOR j = i + 1 TO n - 1
+			DIM cj AS INTEGER = JT_COUNT{JT_TMPL[j]}
+			DIM cm AS INTEGER = JT_COUNT{JT_TMPL[mx]}
+			IF cj > cm THEN mx = j
+		NEXT
+		IF mx <> i THEN
+			DIM tmp$ = JT_TMPL[i]
+			JT_TMPL[i] = JT_TMPL[mx]
+			JT_TMPL[mx] = tmp$
+		ENDIF
+	NEXT
+ENDSUB
+
+' ── View state ───────────────────────────────────────────────────────────────
+DIM JT_SEL = 0
+DIM JT_VIEW$ = "table"
+
+FUNC JT_TITLE$()
+	IF JT_VIEW$ = "detail" THEN RETURN "jdtriage  -  cluster " + STR$(JT_SEL + 1) + " / " + STR$(LEN(JT_TMPL))
+	RETURN "jdtriage  -  (" + STR$(JT_LINES) + " lines -> " + STR$(LEN(JT_TMPL)) + " templates)"
+ENDFUNC
+
+' Cluster table - an arrow-navigable menu; Enter (handled by the loop) drills in.
+SUB JT_RENDER_TABLE()
+	DIM rows = []
+	DIM i
+	FOR i = 0 TO LEN(JT_TMPL) - 1
+		DIM tp$ = JT_TMPL[i]
+		DIM row$ = JT_PADL$(STR$(JT_COUNT{tp$}), 6) + "   " + JT_SEV$(JT_SAMPLE{tp$}) + "   " + LEFT$(tp$, 76)
+		rows = APPEND(rows, JT_PADR$(row$, JT_W - 2))
+	NEXT
+	JT_SEL = TUI.MENU("  count  sev  template", rows, JT_SEL)
+	TUI.SEPARATOR
+	TUI.TEXT JT_PADR$("  arrows=move   Enter=drill   q=quit", JT_W)
+ENDSUB
+
+' Drill-down: the selected cluster's template + a sample of its raw lines.
+SUB JT_RENDER_DETAIL()
+	DIM tp$ = JT_TMPL[JT_SEL]
+	TUI.TEXT JT_PADR$("template:  " + LEFT$(tp$, 84), JT_W)
+	TUI.TEXT JT_PADR$("severity:  " + JT_SEV$(JT_SAMPLE{tp$}) + "     count:  " + STR$(JT_COUNT{tp$}), JT_W)
+	TUI.SEPARATOR
+	TUI.TEXT JT_PADR$("raw lines (sample):", JT_W)
+	DIM ls = JT_RAW{tp$}
+	DIM mx = LEN(ls) - 1
+	IF mx > 11 THEN mx = 11
+	DIM i
+	FOR i = 0 TO mx
+		TUI.TEXT JT_PADR$("  " + LEFT$(ls[i], 92), JT_W)
+	NEXT
+	TUI.SEPARATOR
+	TUI.TEXT JT_PADR$("  Esc=back   q=quit", JT_W)
+ENDSUB
+
+SUB JT_RENDER_VIEW()
+	IF JT_VIEW$ = "detail" THEN
+		JT_RENDER_DETAIL()
+	ELSE
+		JT_RENDER_TABLE()
+	ENDIF
+ENDSUB
+
+' ── Main ─────────────────────────────────────────────────────────────────────
+DIM ARGS = OS.ARGS
+DIM path$ = "D:/usr/dev/cc/tmp/jdtriage_sample.log"
+IF LEN(ARGS) >= 2 THEN path$ = ARGS[1]
+DIM SNAP = FALSE
+DIM ai
+FOR ai = 2 TO LEN(ARGS) - 1
+	IF ARGS[ai] = "--snapshot" THEN SNAP = TRUE
+	IF LEFT$(ARGS[ai], 7) = "--snap=" THEN
+		SNAP = TRUE
+		JT_SEL = VAL(MID$(ARGS[ai], 7))
+		JT_VIEW$ = "detail"
+	ENDIF
+NEXT
+
+JT_BUILD(path$)
+JT_SORT()
+PRINT "[ok] " + STR$(JT_LINES) + " lines -> " + STR$(LEN(JT_TMPL)) + " templates. starting UI..."
+
+IF SNAP THEN
+	' Dev/agent path: render one frame to stdout as text (no terminal needed).
+	TUI.BEGIN JT_TITLE$()
+	JT_RENDER_VIEW()
+	DIM f$ = TUI.RENDER_HEADLESS$(100, 24)
+	TUI.END
+	PRINT f$
+ELSE
+	' Interactive: live TUI loop.
+	DO
+		DIM k$ = TUI.KEY$()
+		IF k$ = "q" THEN TUI.EXIT
+		IF k$ = "Enter" ANDALSO JT_VIEW$ = "table" THEN JT_VIEW$ = "detail"
+		IF k$ = "Esc" ANDALSO JT_VIEW$ = "detail" THEN JT_VIEW$ = "table"
+		TUI.BEGIN JT_TITLE$()
+		JT_RENDER_VIEW()
+		TUI.END
+		TUI.RENDER
+		SLEEP 16
+	LOOP UNTIL TUI.QUIT()
+ENDIF

@@ -1332,8 +1332,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     return !extended;
                 }
                 if (u == "APPEND" && e.args.size() >= 2 && e.args[0] && e.args[1]) {
-                    // Liberal: either side proves string-array-ness.
-                    return is_str_arr_expr(*e.args[0]) || is_str_arr_expr(*e.args[1]);
+                    // Liberal: either side proves string-array-ness. A scalar
+                    // string as the appended value (APPEND(arr, s$)) also makes
+                    // the result a string array, not just a string-array RHS.
+                    return is_str_arr_expr(*e.args[0]) || is_str_arr_expr(*e.args[1]) ||
+                           is_string_scalar(*e.args[1]);
                 }
                 auto cit = decls.find(e.func_name);
                 if (cit != decls.end() && cit->second.returns_string_array) return true;
@@ -3216,7 +3219,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             // the first append even when g_paths started as an empty `[]`
             // and isn't yet in string_array_vars.
             if (is_string_arr_expr(stmt.expr->args[0].get()) ||
-                is_string_arr_expr(stmt.expr->args[1].get())) {
+                is_string_arr_expr(stmt.expr->args[1].get()) ||
+                is_string_scalar_expr(stmt.expr->args[1].get())) {
                 string_array_vars.insert(stmt.var_name);
             }
         }
@@ -3941,7 +3945,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             // the first append even when g_paths started as an empty `[]`
             // and isn't yet in string_array_vars.
             if (is_string_arr_expr(stmt.expr->args[0].get()) ||
-                is_string_arr_expr(stmt.expr->args[1].get())) {
+                is_string_arr_expr(stmt.expr->args[1].get()) ||
+                is_string_scalar_expr(stmt.expr->args[1].get())) {
                 string_array_vars.insert(stmt.var_name);
             }
         }
@@ -6589,7 +6594,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 : (b.tag == JD_TAG_F64 ? b.val : coerce_to(b, f64_type));
             auto& fn = runtime_funcs["APPEND"];
             LLVMValueRef args[] = { a.val, bf };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "app"), JD_TAG_ARR };
+            LLVMValueRef appended = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "app");
+            // A string scalar is stored bit-punned but UNTAGGED by jdb_array_append.
+            // Mark the result's elements as strings so the tag survives a pass
+            // through the VM bridge — e.g. TUI.MENU doing arr->elements[i].as_string()
+            // reads blank otherwise. Mirrors the ARRAY_LITERAL string path.
+            if (b.tag == JD_TAG_STR) {
+                auto* set_str = get_runtime_func("__arr_set_string_elems");
+                if (set_str) {
+                    LLVMValueRef ss[] = { appended };
+                    LLVMBuildCall2(builder, set_str->fn_type, set_str->fn, ss, 1, "");
+                }
+            }
+            return { appended, JD_TAG_ARR };
         }
     }
 
@@ -8231,6 +8248,34 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, rf.fn_type, rf.fn,
                                                   args.empty() ? nullptr : args.data(),
                                                   (unsigned)args.size(), "call");
+            // APPEND(arr, <string scalar>) stores the string ptr bit-punned but
+            // UNTAGGED via jdb_array_append. The codegen-side string_array_vars
+            // flag lets arr[i] reads decode, but the element carries no runtime
+            // JdTag — so passing the array through the VM bridge into a
+            // register_native (TUI.MENU/TEXT doing arr->elements[i].as_string())
+            // reads blank. Mark the result's elements as strings, mirroring the
+            // ARRAY_LITERAL string path, so the tag travels with the array.
+            if (upper == "APPEND" && expr.args.size() >= 2 && expr.args[1]) {
+                const Expr* v = expr.args[1].get();
+                bool val_is_string = false;
+                if (v->kind == ExprKind::LITERAL_STRING) val_is_string = true;
+                else if (v->kind == ExprKind::VARIABLE)
+                    val_is_string = (!v->str_val.empty() && v->str_val.back() == '$') ||
+                                    string_scalar_vars.count(v->str_val) != 0;
+                else if (v->kind == ExprKind::CALL) {
+                    std::string fu = v->func_name;
+                    std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
+                    val_is_string = (!v->func_name.empty() && v->func_name.back() == '$') ||
+                                    fu == "JOIN";
+                }
+                if (val_is_string) {
+                    auto* set_str = get_runtime_func("__arr_set_string_elems");
+                    if (set_str) {
+                        LLVMValueRef ss[] = { result };
+                        LLVMBuildCall2(builder, set_str->fn_type, set_str->fn, ss, 1, "");
+                    }
+                }
+            }
             return { result, rf.return_tag };
         }
     }

@@ -1,0 +1,84 @@
+' =========================================================
+' capture_demo.jdb - Full screen / Window / Context capture to .bmp
+' via DECLARE FFI + the screencap.dll bridge.
+' Windows only.  Build first:  bridges\screencap\build.bat
+' =========================================================
+
+DECLARE FUNC GetForegroundWindow LIB "user32.dll" ALIAS "GetForegroundWindow" () AS INTEGER
+
+DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" _
+    (className AS INTEGER, windowName AS STRING) AS INTEGER
+
+DECLARE FUNC ShowWindow LIB "user32.dll" ALIAS "ShowWindow" _
+    (hwnd AS INTEGER, cmd AS INTEGER) AS INTEGER
+
+DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" _
+    (hwnd AS INTEGER) AS INTEGER
+
+DECLARE FUNC screencap_window LIB "screencap" ALIAS "screencap_window" _
+    (hwnd AS INTEGER, path AS STRING) AS INTEGER
+
+DECLARE FUNC screencap_screen LIB "screencap" ALIAS "screencap_screen" _
+    (path AS STRING) AS INTEGER
+
+CONST SW_RESTORE = 9
+
+
+FUNC save_screen(out$)
+    rc = screencap_screen(out$)
+    IF rc <> 0 THEN THROW "Screen-Capture fehlgeschlagen, Code " + STR$(rc)
+    RETURN out$
+ENDFUNC
+
+FUNC save_window(hwnd, out$)
+    IF hwnd = 0 THEN THROW "Ungueltiges Fensterhandle."
+    rc = screencap_window(hwnd, out$)
+    IF rc <> 0 THEN THROW "Window-Capture fehlgeschlagen, Code " + STR$(rc)
+    RETURN out$
+ENDFUNC
+
+FUNC save_window_by_title(title$, out$)
+    hwnd = FindWindow(0, title$)
+    IF hwnd = 0 THEN THROW "Fenster nicht gefunden: " + title$
+    ShowWindow(hwnd, SW_RESTORE)
+    SetForegroundWindow(hwnd)
+    SLEEP 300
+    RETURN save_window(hwnd, out$)
+ENDFUNC
+
+
+' --------------------- Demo ---------------------
+IF OS.GETOS$() <> "WINDOWS" THEN
+    PRINT "Demo laeuft nur unter Windows."
+    END
+ENDIF
+
+' Merke das eigene (Kontext-)Fenster, BEVOR ein anderes nach vorn geholt wird.
+ctxHwnd = GetForegroundWindow()
+dir$ = PWD()
+
+PRINT "jdBasic Capture Demo"
+PRINT "===================="
+
+' 1) FULL SCREEN
+PRINT "[1] Full screen ..."
+f1$ = save_screen(PATH.JOIN$(dir$, "shot_fullscreen.bmp"))
+PRINT "    -> " + f1$
+
+' 2) WINDOW (nach Titel) - Standard: Windows-Rechner. Bei Bedarf anpassen.
+PRINT "[2] Window (Titel 'Rechner') ..."
+TRY
+    f2$ = save_window_by_title("Rechner", PATH.JOIN$(dir$, "shot_window.bmp"))
+    PRINT "    -> " + f2$
+CATCH
+    PRINT "    uebersprungen: " + ERRMSG$
+ENDTRY
+
+' 3) CONTEXT ONLY - nur das eigene Konsolenfenster.
+PRINT "[3] Context only (eigenes Fenster) ..."
+SetForegroundWindow(ctxHwnd)
+SLEEP 300
+f3$ = save_window(ctxHwnd, PATH.JOIN$(dir$, "shot_context.bmp"))
+PRINT "    -> " + f3$
+
+PRINT "Fertig."

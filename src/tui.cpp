@@ -679,14 +679,10 @@ ftxui::Color theme_band(const std::string& name) {
 ftxui::Color active_theme_tint() { return theme_tint(jdb_tui::state().theme); }
 ftxui::Color active_theme_band() { return theme_band(jdb_tui::state().theme); }
 
-void render_once(jdb_tui::TuiState& s) {
+// Build the FTXUI document from the current frame state. Drains the root
+// frame's children (consumes them) so the NEXT TUI.BEGIN sees a fresh state.
+ftxui::Element build_tui_doc(jdb_tui::TuiState& s) {
     using namespace ftxui;
-    using namespace std::chrono;
-    auto t0 = steady_clock::now();
-    enter_alt_screen_once();
-    // Drain the root frame's children into the rendered doc, then
-    // restore an empty root collector so the NEXT TUI.BEGIN sees
-    // a fresh state without needing extra bookkeeping.
     Element body;
     if (s.layout_stack.empty()) {
         body = text("");
@@ -708,6 +704,15 @@ void render_once(jdb_tui::TuiState& s) {
         doc = dbox({doc, overlay});
         s.modal.captured_body.reset();
     }
+    return doc;
+}
+
+void render_once(jdb_tui::TuiState& s) {
+    using namespace ftxui;
+    using namespace std::chrono;
+    auto t0 = steady_clock::now();
+    enter_alt_screen_once();
+    Element doc = build_tui_doc(s);
     auto screen = Screen::Create(Dimension::Full(), Dimension::Full());
     Render(screen, doc);
     std::cout << "\033[H";  // home; alt buffer is already clear underneath
@@ -837,7 +842,28 @@ void register_tui_natives(VM& vm) {
         return Value::make_string("TUI.* / FTXUI bridge (Phase G)");
     });
 
-    TUI_STUB("TUI.RENDER_HEADLESS$", 0, 0)
+    // Render the current frame to a fixed-size off-screen buffer and return it
+    // as plain text (no terminal, no ANSI) - lets an agent "see" the TUI layout
+    // via stdout. Optional args: width (default 120), height (default 40).
+    vm.register_native("TUI.RENDER_HEADLESS$", 0, 2, [&vm](V args) -> Value {
+        (void)vm;
+        using namespace ftxui;
+        auto& s = jdb_tui::state();
+        int W = (args.size() >= 1) ? (int)args[0].to_int() : 120;
+        int H = (args.size() >= 2) ? (int)args[1].to_int() : 40;
+        if (W < 1) W = 120;
+        if (H < 1) H = 40;
+        Element doc = build_tui_doc(s);
+        auto screen = Screen::Create(Dimension::Fixed(W), Dimension::Fixed(H));
+        Render(screen, doc);
+        std::string out;
+        for (int y = 0; y < screen.dimy(); ++y) {
+            for (int x = 0; x < screen.dimx(); ++x)
+                out += screen.PixelAt(x, y).character;
+            out += '\n';
+        }
+        return Value::make_string(out);
+    });
 
     // ── Layout primitives (Phase C) ─────────────────────────
     vm.register_native("TUI.HBOX_BEGIN", 0, 0, [&vm](V) -> Value {
