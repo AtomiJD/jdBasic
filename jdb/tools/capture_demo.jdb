@@ -1,84 +1,43 @@
 ' =========================================================
-' capture_demo.jdb - Full screen / Window / Context capture to .bmp
-' via DECLARE FFI + the screencap.dll bridge.
-' Windows only.  Build first:  bridges\screencap\build.bat
+' capture_demo.jdb - screen / window capture via the built-in OS.SCREENSHOT.
+'
+'   OS.SCREENSHOT(path$, [mode$], [caption$]) -> INTEGER   (0 = ok, <0 = error)
+'     mode$    : "screen" (default) | "window" (frame) | "client" (content only)
+'     caption$ : optional FindWindow title; empty => the foreground window
+'     format   : chosen from the file extension (.png .jpg .bmp .tif .gif)
+'
+' Windows only. No external bridge/DLL needed - OS.SCREENSHOT is a core
+' builtin (GDI capture + WIC encode).
 ' =========================================================
 
-DECLARE FUNC GetForegroundWindow LIB "user32.dll" ALIAS "GetForegroundWindow" () AS INTEGER
-
-DECLARE FUNC FindWindow LIB "user32.dll" ALIAS "FindWindowA" _
-    (className AS INTEGER, windowName AS STRING) AS INTEGER
-
-DECLARE FUNC ShowWindow LIB "user32.dll" ALIAS "ShowWindow" _
-    (hwnd AS INTEGER, cmd AS INTEGER) AS INTEGER
-
-DECLARE FUNC SetForegroundWindow LIB "user32.dll" ALIAS "SetForegroundWindow" _
-    (hwnd AS INTEGER) AS INTEGER
-
-DECLARE FUNC screencap_window LIB "screencap" ALIAS "screencap_window" _
-    (hwnd AS INTEGER, path AS STRING) AS INTEGER
-
-DECLARE FUNC screencap_screen LIB "screencap" ALIAS "screencap_screen" _
-    (path AS STRING) AS INTEGER
-
-CONST SW_RESTORE = 9
-
-
-FUNC save_screen(out$)
-    rc = screencap_screen(out$)
-    IF rc <> 0 THEN THROW "Screen-Capture fehlgeschlagen, Code " + STR$(rc)
-    RETURN out$
-ENDFUNC
-
-FUNC save_window(hwnd, out$)
-    IF hwnd = 0 THEN THROW "Ungueltiges Fensterhandle."
-    rc = screencap_window(hwnd, out$)
-    IF rc <> 0 THEN THROW "Window-Capture fehlgeschlagen, Code " + STR$(rc)
-    RETURN out$
-ENDFUNC
-
-FUNC save_window_by_title(title$, out$)
-    hwnd = FindWindow(0, title$)
-    IF hwnd = 0 THEN THROW "Fenster nicht gefunden: " + title$
-    ShowWindow(hwnd, SW_RESTORE)
-    SetForegroundWindow(hwnd)
-    SLEEP 300
-    RETURN save_window(hwnd, out$)
-ENDFUNC
-
-
-' --------------------- Demo ---------------------
 IF OS.GETOS$() <> "WINDOWS" THEN
-    PRINT "Demo laeuft nur unter Windows."
+    PRINT "OS.SCREENSHOT is Windows-only."
     END
 ENDIF
 
-' Merke das eigene (Kontext-)Fenster, BEVOR ein anderes nach vorn geholt wird.
-ctxHwnd = GetForegroundWindow()
-dir$ = PWD()
+DIM dir$ = PWD()
 
-PRINT "jdBasic Capture Demo"
-PRINT "===================="
+PRINT "jdBasic Screenshot Demo (OS.SCREENSHOT)"
+PRINT "======================================="
 
-' 1) FULL SCREEN
-PRINT "[1] Full screen ..."
-f1$ = save_screen(PATH.JOIN$(dir$, "shot_fullscreen.bmp"))
-PRINT "    -> " + f1$
+' 1) FULL SCREEN -> PNG
+PRINT "[1] Full (virtual) desktop -> shot_fullscreen.png ..."
+DIM rc1 = OS.SCREENSHOT(PATH.JOIN$(dir$, "shot_fullscreen.png"))
+PRINT "    rc=" + STR$(rc1)
 
-' 2) WINDOW (nach Titel) - Standard: Windows-Rechner. Bei Bedarf anpassen.
-PRINT "[2] Window (Titel 'Rechner') ..."
-TRY
-    f2$ = save_window_by_title("Rechner", PATH.JOIN$(dir$, "shot_window.bmp"))
-    PRINT "    -> " + f2$
-CATCH
-    PRINT "    uebersprungen: " + ERRMSG$
-ENDTRY
+' 2) FOREGROUND WINDOW including its frame -> JPG
+PRINT "[2] Foreground window (frame) -> shot_window.jpg ..."
+DIM rc2 = OS.SCREENSHOT(PATH.JOIN$(dir$, "shot_window.jpg"), "window")
+PRINT "    rc=" + STR$(rc2)
 
-' 3) CONTEXT ONLY - nur das eigene Konsolenfenster.
-PRINT "[3] Context only (eigenes Fenster) ..."
-SetForegroundWindow(ctxHwnd)
-SLEEP 300
-f3$ = save_window(ctxHwnd, PATH.JOIN$(dir$, "shot_context.bmp"))
-PRINT "    -> " + f3$
+' 3) A NAMED WINDOW's CLIENT AREA (content only) -> BMP.
+'    Change "Calculator" to a window that is open right now.
+PRINT "[3] Client area of 'Calculator' -> shot_client.bmp ..."
+DIM rc3 = OS.SCREENSHOT(PATH.JOIN$(dir$, "shot_client.bmp"), "client", "Calculator")
+IF rc3 = 0 THEN
+    PRINT "    rc=0"
+ELSE
+    PRINT "    skipped (window not found): rc=" + STR$(rc3)
+ENDIF
 
-PRINT "Fertig."
+PRINT "Done."
