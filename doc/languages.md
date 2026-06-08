@@ -1963,12 +1963,12 @@ Focus advances via **Tab / Shift+Tab**. The focused widget inverts; Enter / arro
 
 * **`TUI.BUTTON(label$) -> bool`**: TRUE the frame Enter fires on a focused button.
 * **`TUI.CHECKBOX(label$, checked) -> int`**: Returns new state (0/1).
-* **`TUI.RADIO(label$, options[], sel) -> int`**: Up/Down cycles when focused.
+* **`TUI.RADIO(label$, options[], sel) -> int`**: Up/Down cycles when focused. Long lists scroll inside a vertical frame, keeping the selection in view.
 * **`TUI.INPUT(label$, text$) -> string`**: Type / Backspace edit the buffer.
 * **`TUI.INPUT_INT(label$, value) -> int`**: Digit append, Backspace delete, Up/Down ±1.
 * **`TUI.INPUT_DOUBLE(label$, value) -> double`**: Up/Down ±1, Left/Right ±0.1.
 * **`TUI.SLIDER(label$, value, min, max, [step]) -> double`**: Left/Right by step.
-* **`TUI.MENU(label$, options[], sel) -> int`**: Vertical menu list.
+* **`TUI.MENU(label$, options[], sel) -> int`**: Vertical menu list. Long lists scroll inside a vertical frame (with a scroll indicator), keeping the selection in view.
 * **`TUI.DROPDOWN(label$, options[], sel) -> int`**: Compact picker; Left/Right cycles.
 * **`TUI.SELECTABLE(label$, selected) -> bool`**: Row-style clickable.
 

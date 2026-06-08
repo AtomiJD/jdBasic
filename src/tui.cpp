@@ -1028,17 +1028,19 @@ void register_tui_natives(VM& vm) {
             if (consume_action("Down")) sel = (sel + 1) % n;
         }
         std::vector<Element> rows;
-        rows.push_back(text(args[0].as_string()->data) | bold);
         ftxui::Color tint = active_theme_tint();
         for (int i = 0; i < n; ++i) {
             std::string s = std::string(i == sel ? "(*) " : "( ) ")
                           + arr->elements[i].as_string()->data;
             Element row = text(s);
-            if (i == sel)              row = row | color(tint) | bold;
+            if (i == sel)              row = row | color(tint) | bold | focus;
             if (focused && i == sel)   row = row | inverted;
             rows.push_back(row);
         }
-        emit_element(vbox(std::move(rows)));
+        // Title fixed; options scroll in a vertical frame so the selection
+        // stays visible for long lists (focus drives the scroll).
+        Element list = vbox(std::move(rows)) | vscroll_indicator | yframe;
+        emit_element(vbox({ text(args[0].as_string()->data) | bold, list }));
         return Value::make_i64(sel);
     });
 
@@ -1166,17 +1168,22 @@ void register_tui_natives(VM& vm) {
             if (consume_action("Down")) sel = (sel + 1) % n;
         }
         std::vector<Element> rows;
-        rows.push_back(text(args[0].as_string()->data) | bold);
         ftxui::Color tint = active_theme_tint();
         for (int i = 0; i < n; ++i) {
             Element row = text("  " + arr->elements[i].as_string()->data);
             if (i == sel) {
-                row = row | color(tint) | bold;
+                // `focus` marks the selected row so the enclosing yframe
+                // scrolls it into view; without it a long list runs the
+                // highlight off the bottom of the visible area.
+                row = row | color(tint) | bold | focus;
                 if (focused) row = row | inverted;
             }
             rows.push_back(row);
         }
-        emit_element(vbox(std::move(rows)));
+        // Title stays fixed; the option list scrolls inside a vertical frame
+        // so the selection is always visible no matter how long the list is.
+        Element list = vbox(std::move(rows)) | vscroll_indicator | yframe;
+        emit_element(vbox({ text(args[0].as_string()->data) | bold, list }));
         return Value::make_i64(sel);
     });
 
