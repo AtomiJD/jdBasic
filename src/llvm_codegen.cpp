@@ -2035,6 +2035,18 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "LEN","COUNT","ANY","ALL","INDEXOF"
                         };
                         if (int_reducers.count(upper)) return JD_TAG_I64;
+                        // TUI selection widgets return an i64 index / 0-1 flag.
+                        // Without their true return type, `sel = TUI.MENU(...)`
+                        // infers -1 (unknown) and poisons the assigned global's
+                        // slot to array, so STR$(sel) / arr[sel] read garbage.
+                        static const std::unordered_set<std::string> tui_int_returners = {
+                            "TUI.MENU", "TUI.RADIO", "TUI.DROPDOWN", "TUI.CHECKBOX"
+                        };
+                        if (tui_int_returners.count(upper)) return JD_TAG_I64;
+                        static const std::unordered_set<std::string> tui_f64_returners = {
+                            "TUI.SLIDER", "TUI.SPINNER"
+                        };
+                        if (tui_f64_returners.count(upper)) return JD_TAG_F64;
                         // VM-Value-handle returners (sync with bridge).
                         // TILED.OBJECTS returns an array of maps — the
                         // flat-JdbArray path can't carry OBJECT elements,
@@ -7816,6 +7828,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "GL.TEX.LOAD", "GL.TEX.BIND", "GL.TEX.DELETE", "GL.EBO",
         "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
         "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
+        // TUI selection widgets take the options array as a whole payload.
+        // Auto-vectorising TUI.MENU(label, items[], sel) maps the call over
+        // each item and returns an ARRAY, which poisons the assigned global's
+        // tag (e.g. `JT_SEL = TUI.MENU(...)` then STR$(JT_SEL) reads "[]").
+        "TUI.MENU", "TUI.RADIO", "TUI.DROPDOWN",
         // Assert is a user SUB but if used as native:
     };
 
