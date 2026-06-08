@@ -1768,6 +1768,10 @@ In addition to the high-level drawing commands above, the `GFX.*` namespace expo
 * **`GFX.LOADIMAGE(path$) -> image_id`**: Loads a PNG/JPG/BMP/etc. image via SDL_image and returns a handle.
 * **`GFX.DRAWIMAGE(image_id, x, y, [w], [h])`**: Blits the image at `(x, y)`, optionally scaled to `w × h`.
 * **`GFX.FREEIMAGE(image_id)`**: Releases the image.
+* **`GFX.SAVE_SCREENSHOT(path$, [x, y, w, h])`**: Saves the current renderer contents to a PNG. With no rectangle it captures the whole viewport; with `x, y, w, h` it captures that region. **Call it BEFORE `SCREENFLIP`** — after the flip the back buffer is cleared and you'd capture an empty frame. Great for verifying rendered output headlessly.
+* **`GFX.SAVE_IMAGE(image_id, path$)`**: Saves a loaded (and possibly modified) image handle to a PNG.
+* **`GFX.CAPTURE() -> image_id`**: Snapshots the current renderer into a reusable image handle (e.g. for transitions). **`GFX.DRAW_CAPTURE(image_id)`** blits such a snapshot back over the whole screen.
+* **`GL.SAVE_SCREENSHOT(path$)`**: OpenGL counterpart of `GFX.SAVE_SCREENSHOT` — saves the current `GL.WINDOW` back buffer to a PNG (glReadPixels, flipped to top-down). **Call it BEFORE `GL.FLIP`** (the swap leaves the back buffer undefined). Lets you verify OpenGL / 3D output to a file the same way the 2D renderer does.
 * **`GFX.TEXTSIZE(text$, [size]) -> [w, h]`**: Measures the rendered size of a string with the current font.
 
 #### Audio File Playback (SDL_mixer)

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -450,6 +451,36 @@ void register_opengl_builtins(VM& vm) {
             gfx_push_event(ev);
         }
         SDL_GL_SwapWindow(g_gl_window);
+        return Value::make_none();
+    });
+
+    // GL.SAVE_SCREENSHOT(path$) - read the GL back buffer into a PNG. Call it
+    // BEFORE GL.FLIP (after the swap the back buffer is undefined). glReadPixels
+    // returns bottom-up rows, so the frame is flipped vertically before saving.
+    vm.register_native("GL.SAVE_SCREENSHOT", 1, 1, [](const std::vector<Value>& args) -> Value {
+        require_window("GL.SAVE_SCREENSHOT");
+        std::string path = args[0].as_string()->data;
+        int w = 0, h = 0;
+        SDL_GetWindowSizeInPixels(g_gl_window, &w, &h);
+        if (w <= 0 || h <= 0)
+            throw jdError(ErrCode::RUNTIME_ERROR, "GL.SAVE_SCREENSHOT: bad drawable size");
+        std::vector<unsigned char> px((size_t)w * (size_t)h * 4u);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        SDL_Surface* surf = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+        if (!surf)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("GL.SAVE_SCREENSHOT: ") + SDL_GetError());
+        for (int y = 0; y < h; ++y) {  // flip: GL row 0 = bottom, PNG row 0 = top
+            const unsigned char* src = px.data() + (size_t)(h - 1 - y) * (size_t)w * 4u;
+            unsigned char* dst = (unsigned char*)surf->pixels + (size_t)y * (size_t)surf->pitch;
+            memcpy(dst, src, (size_t)w * 4u);
+        }
+        bool ok = IMG_SavePNG(surf, path.c_str());
+        SDL_DestroySurface(surf);
+        if (!ok)
+            throw jdError(ErrCode::RUNTIME_ERROR,
+                std::string("GL.SAVE_SCREENSHOT: ") + SDL_GetError());
         return Value::make_none();
     });
 
