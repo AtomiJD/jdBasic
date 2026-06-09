@@ -1,0 +1,47 @@
+' ============================================================
+' Pulling APL out of loops - idioms lifted from the console games.
+' Each one replaces a nested FOR loop with a single whole-array op.
+' ============================================================
+
+PRINT "=== 1. Rotate a matrix 90 degrees (Tetris piece) ==="
+' The whole rotation is reverse-of-transpose - no element copying loop.
+FUNC rotate90(m)
+    RETURN REVERSE(TRANSPOSE(m))
+ENDFUNC
+DIM piece = [[0, 0, 1], [1, 1, 1], [0, 0, 0]]
+PRINT "before:"
+PRINT FRMV$(piece, "  {} {} {}")
+PRINT "after rotate90:"
+PRINT FRMV$(rotate90(piece), "  {} {} {}")
+
+PRINT ""
+PRINT "=== 2. Minesweeper neighbour counts via CONVOLVE ==="
+' A 3x3 kernel of 1s with a 0 centre sums each cell's 8 neighbours.
+' One CONVOLVE replaces the classic four-deep dr/dc FOR loop.
+DIM mines  = [[0, 1, 0, 0], [0, 0, 0, 1], [1, 0, 0, 0], [0, 0, 1, 0]]
+DIM kernel = [[1, 1, 1], [1, 0, 1], [1, 1, 1]]
+DIM counts = CONVOLVE(mines, kernel, 0)
+PRINT "mine grid:"
+PRINT FRMV$(mines, "  {} {} {} {}")
+PRINT "neighbouring-mine counts:"
+PRINT FRMV$(counts, "  {} {} {} {}")
+
+PRINT ""
+PRINT "=== 3. Tetris line clear: drop full rows, refill from the top ==="
+' A row is full when its minimum cell is non-zero. Keep the rows that
+' still have a gap, then push back as many empty rows as were cleared.
+DIM board = [[0, 0, 0], [1, 1, 1], [1, 0, 1], [1, 1, 1]]
+DIM kept  = FILTER(LAMBDA row -> MIN(row) = 0, board)
+DIM cleared = LEN(board) - LEN(kept)
+DIM empty = RESHAPE([0], [LEN(board[0])])
+DIM r
+FOR r = 1 TO cleared
+    kept = MVINS(kept, 0, 0, empty)
+NEXT
+PRINT "before:"
+PRINT FRMV$(board, "  {} {} {}")
+PRINT cleared; " full line(s) cleared:"
+PRINT FRMV$(kept, "  {} {} {}")
+
+PRINT ""
+PRINT "Done."
