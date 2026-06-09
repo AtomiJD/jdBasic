@@ -2095,6 +2095,61 @@ IF NOT OS.FEATURE("NATIVEC") THEN
     Assert(mvs3_0 = "Z", "MVINS scalar-string broadcast")
 ENDIF
 
+' ── EOMONTH — last day of month (Excel-style), vectorized ──
+Assert(DAY(EOMONTH(CVDATE("2016-02-10"))) = 29, "EOMONTH Feb 2016 leap = 29")
+Assert(DAY(EOMONTH(CVDATE("2015-02-10"))) = 28, "EOMONTH Feb 2015 = 28")
+Assert(DAY(EOMONTH(CVDATE("2016-04-01"))) = 30, "EOMONTH Apr = 30")
+Assert(DAY(EOMONTH(CVDATE("2016-07-15"), 1)) = 31, "EOMONTH offset +1 month day")
+Assert(MONTH(EOMONTH(CVDATE("2016-07-15"), 1)) = 8, "EOMONTH offset +1 month")
+
+' ── DATERANGE — inclusive date vector by unit/step ──
+DIM dr_d AS ARRAY = DATERANGE(CVDATE("2016-07-01"), CVDATE("2016-07-05"))
+Assert(LEN(dr_d) = 5, "DATERANGE daily inclusive len")
+Assert(DAY(dr_d[0]) = 1, "DATERANGE daily first")
+Assert(DAY(dr_d[4]) = 5, "DATERANGE daily last")
+DIM dr_w AS ARRAY = DATERANGE(CVDATE("2016-07-01"), CVDATE("2016-07-22"), "W")
+Assert(LEN(dr_w) = 4, "DATERANGE weekly len")
+DIM dr_m AS ARRAY = DATERANGE(CVDATE("2016-01-15"), CVDATE("2016-04-15"), "M")
+Assert(LEN(dr_m) = 4, "DATERANGE monthly len")
+Assert(MONTH(dr_m[2]) = 3, "DATERANGE monthly step")
+DIM dr_n AS ARRAY = DATERANGE(CVDATE("2016-07-05"), CVDATE("2016-07-01"), "D", -1)
+Assert(LEN(dr_n) = 5, "DATERANGE negative-step len")
+Assert(DAY(dr_n[0]) = 5, "DATERANGE negative-step first")
+
+' ── TALLY — distinct values + counts (numeric path is native-safe) ──
+DIM tly AS ARRAY = TALLY([1, 2, 2, 3, 3, 3])
+Assert(LEN(tly) = 3, "TALLY distinct rows")
+Assert(tly[0][0] = 1, "TALLY value 0")
+Assert(tly[0][1] = 1, "TALLY count 0")
+Assert(tly[2][0] = 3, "TALLY value 2")
+Assert(tly[2][1] = 3, "TALLY count 2")
+
+' AGG (group + reduce table) and string-key TALLY are interp-only: AGG takes
+' an array-group funcref the scalar native HOF machinery can't pass, and the
+' native VM bridge marshals nested string cells back as 0.
+IF NOT OS.FEATURE("NATIVEC") THEN
+    ' EOMONTH vectorized over a date array returns an array; its scalar form is
+    ' the native-tagged one, so the array form is interp-only.
+    DIM eom_vec AS ARRAY = EOMONTH([CVDATE("2016-02-01"), CVDATE("2016-07-01")])
+    Assert(DAY(eom_vec[0]) = 29, "EOMONTH vectorized [0]")
+    Assert(DAY(eom_vec[1]) = 31, "EOMONTH vectorized [1]")
+    DIM agg_k AS ARRAY = [201601, 201601, 201602, 201601, 201602]
+    DIM agg_v AS ARRAY = [10, 20, 5, 7, 3]
+    DIM agg_s AS ARRAY = AGG(agg_k, agg_v, LAMBDA g -> SUM(g))
+    Assert(LEN(agg_s) = 2, "AGG group count")
+    Assert(agg_s[0][0] = 201601, "AGG key 0 preserved")
+    Assert(agg_s[0][1] = 37, "AGG sum group 0")
+    Assert(agg_s[1][1] = 8, "AGG sum group 1")
+    DIM agg_c AS ARRAY = AGG(agg_k, agg_v, LAMBDA g -> LEN(g))
+    Assert(agg_c[0][1] = 3, "AGG count group 0")
+    DIM agg_f AS ARRAY = AGG(agg_k, agg_v, SUM@)
+    Assert(agg_f[0][1] = 37, "AGG with SUM@ funcref")
+    DIM tly_s AS ARRAY = TALLY(["a", "b", "a", "a", "c"])
+    DIM tly_s_v AS STRING = tly_s[0][0]
+    Assert(tly_s_v = "a", "TALLY string value")
+    Assert(tly_s[0][1] = 3, "TALLY string count")
+ENDIF
+
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.
 ' (Was breaking TEST_INNER.ADD_THING via TEST_OUTER.ADD_VIA_OUTER.)

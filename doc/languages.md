@@ -1459,6 +1459,8 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`CHUNK(array, size) -> array`**: Splits `array` into sub-arrays of length `size`; the last chunk may be shorter. `size >= 1`.
 * **`ENUMERATE(array) -> array`**: Pairs each element with its 0-based index, returning `[[0, a0], [1, a1], ...]`.
 * **`GROUPBY(key_fn@, array) -> map`**: Buckets elements into a map keyed by `key_fn(element)` (coerced to string). Each value is the list of matching elements. (Interpreter only.)
+* **`AGG(keys, values, fn@) -> array`**: Group-and-reduce in one O(n) pass (APL's dyadic *key*). Groups `values` by the matching `keys` entry, applies `fn` to each group's value-array, and returns a 2-column table `[[key, fn(group)], ...]` in first-seen key order. The key type is preserved (numbers stay numbers, unlike `GROUPBY`). Example: `AGG(months, nights, LAMBDA g -> SUM(g))` → room-nights per month; `AGG(months, nights, LEN@)` counts per group. (Interpreter only — `fn` receives an array group, which the native scalar HOF path can't pass.)
+* **`TALLY(array) -> array`**: Distinct values with their counts, `[[value, count], ...]`, in first-seen order (pandas `value_counts`). `TALLY([1,2,2,3,3,3])` → `[[1,1],[2,2],[3,3]]`. Numeric arrays compile native; string-key tallies are interpreter-only (the native bridge marshals nested string cells as 0).
 * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
 * **`REVERSE(array)`**: Reverses the elements of an array.
 * **`TRANSPOSE(matrix)`**: Transposes a 2D matrix.
@@ -1562,6 +1564,8 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`YEAR(date)`**, **`MONTH(date)`**, **`DAY(date)`**: Extract the year (four digits), month (1-12), or day of month (1-31) from a `DateTime`.
 * **`HOUR(date)`**, **`MINUTE(date)`**, **`SECOND(date)`**: Extract the time-of-day components.
 * **`WEEKDAY(date) -> number`**: Returns the day of the week (0=Sunday ... 6=Saturday).
+* **`EOMONTH(date [, offset_months]) -> DateTime`**: Returns the last day (midnight, local) of the month `offset_months` away from `date` (Excel-style; `offset` defaults to 0). Days-in-month is then just `DAY(EOMONTH(d))` — leap years handled, no lookup table. Vectorises element-wise over a date array.
+* **`DATERANGE(start, end [, unit$="D"] [, step=1]) -> array`**: Array of `DateTime`s from `start` to `end` **inclusive**, stepping by `step` units. Calendar units `D`/`W`/`M`/`Y` advance by whole local calendar days/weeks/months/years (DST-safe — a "day" never drifts by an hour); clock units `H`/`N`/`S` advance by fixed seconds. A negative `step` counts down. Example: `DATERANGE(checkin, checkout, "D")`.
 
 ### Type Inspection
 

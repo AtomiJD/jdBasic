@@ -1,0 +1,37 @@
+' ============================================================================
+' booking_occupancy.jdb - resort occupancy per month from hotel_bookings.csv
+'
+' The whole analysis in four data-language primitives:
+'   DATERANGE - expand each booking into its occupied night-dates
+'   FLATTEN   - one long vector of every occupied night
+'   AGG       - group those nights by month and reduce to a finished row,
+'               with the group's real dates in hand (APL key / "verdichtung")
+'   EOMONTH   - days-in-month for the capacity denominator (no leap-year table)
+'
+'   run from this folder:  jdBasic booking_occupancy.jdb
+' ============================================================================
+
+CONST CAPACITY = 200
+CONST CSV = "hotel_bookings.csv"
+
+CD "D:\usr\dev\cc\jdb\analytic"
+
+' read + keep non-cancelled bookings (col 5 = is_canceled)
+DIM mat  = CSVREADER(CSV, ",", TRUE)
+DIM kept = FILTER(LAMBDA r -> r[5] = 0, mat)
+
+' every occupied night of every booking: the date range check-in..check-out
+' minus the check-out day itself (you don't occupy the night you leave).
+' SORT so the month groups come out in calendar order.
+DIM stays = SORT(FLATTEN(SELECT(LAMBDA r -> DROP(-1, DATERANGE(CVDATE(r[3]), CVDATE(r[4]), "D")), kept)))
+
+' Group the nights by month. The reducer gets the group's real dates, so a
+' representative date g[0] yields BOTH the label (FORMAT_DATE) and the
+' days-in-month (DAY(EOMONTH)). occupancy % = nights / (capacity * days-in-month).
+'   AGG row = [ym_key, [label, nights, occ%]]
+DIM ym     = SELECT(LAMBDA d -> YEAR(d) * 100 + MONTH(d), stays)
+DIM rows   = AGG(ym, stays, LAMBDA g -> [FORMAT_DATE(g[0], "%Y-%m"), LEN(g), INT(LEN(g) / (CAPACITY * DAY(EOMONTH(g[0]))) * 100)])
+
+PRINT "Resort occupancy  (capacity "; CAPACITY; " rooms,  "; LEN(stays); " room-nights total)"
+PRINT "  month      nights   occ%"
+PRINT FRMV$(SELECT(LAMBDA row -> row[1], rows), "  {}   {:>7}   {:>3}%")

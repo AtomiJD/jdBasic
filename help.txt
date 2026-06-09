@@ -271,6 +271,14 @@ Description: Adds a specified time interval to a date. Optional tz_hours (numeri
 Syntax: DATEDIFF(part$, date1, date2 [, tz_hours])
 Description: Returns the difference between two dates in a specified time unit. Optional tz_hours accepted but has no effect (difference is TZ-independent).
 
+[DATERANGE]
+Syntax: DATERANGE(start, end [, unit$="D"] [, step=1])
+Description: Array of DateTimes from start to end inclusive, stepping by step units. Calendar units D/W/M/Y advance by whole local calendar days/weeks/months/years (DST-safe); clock units H/N/S advance by fixed seconds. Negative step counts down.
+
+[EOMONTH]
+Syntax: EOMONTH(date [, offset_months])
+Description: Last day (midnight, local) of the month offset_months away from date (Excel-style; offset defaults to 0). Days-in-month = DAY(EOMONTH(d)), leap years handled. Vectorises over a date array.
+
 [DATE.UTC]
 Syntax: DATE.UTC(year, month, day [, hour [, minute [, second]]])
 Description: Builds a DateTime from UTC components. Month is 1-12, day is 1-31. Omitted time components default to zero.
@@ -557,6 +565,14 @@ Description: Returns a vector of indices that would sort the input vector.
 [GROUPBY]
 Syntax: GROUPBY(key_fn@, array)
 Description: Buckets elements into a map keyed by key_fn(elem) coerced to string. Interpreter only.
+
+[AGG]
+Syntax: AGG(keys, values, fn@)
+Description: Group-and-reduce in one O(n) pass (APL key). Groups values by the matching keys entry, applies fn to each group's value-array, returns [[key, fn(group)], ...] in first-seen order with key type preserved. E.g. AGG(months, nights, LAMBDA g -> SUM(g)). Interpreter only.
+
+[TALLY]
+Syntax: TALLY(array)
+Description: Distinct values with counts, [[value, count], ...], in first-seen order (value_counts). Numeric arrays compile native; string-key tallies are interpreter-only.
 
 [GUI.BEGIN]
 Syntax: GUI.BEGIN(title$, [x, y, w, h], [p_open], [flags])

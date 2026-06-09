@@ -796,7 +796,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 "XSORT", "SPLIT", "LINES", "WORDS", "CHARS",
                 "KEYS", "VALUES", "CHUNK", "ENUMERATE",
                 "REGEX_FINDALL", "REGEX.FINDALL",
-                "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS"
+                "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
+                "DATERANGE", "TALLY"
             };
             if (arr_fns.count(e.func_name)) return JD_TAG_ARR;
         }
@@ -1216,7 +1217,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
                     "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
                     "FFT", "IFFT",
-                    "XSORT"
+                    "XSORT", "DATERANGE", "TALLY"
                 };
                 if (arr_calls.count(e.func_name)) return JD_TAG_ARR;
             }
@@ -7789,7 +7790,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Scalar-returning date/time (note: DATEADD/DATEDIFF/FORMAT_DATE DO vectorize)
         "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
         "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
-        "DATE.UTC", "DATE.PARTS",
+        "DATE.UTC", "DATE.PARTS", "EOMONTH", "DATERANGE", "TALLY",
         "MKTEMP$", "RMDIR", "MKDIR", "KILL",
         // Bitwise/math helpers (scalars-only)
         "ROTL", "ROTR", "GCD", "LCM",
@@ -8505,6 +8506,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "IOTA", "CUMSUM", "CUMPROD", "FLATTEN", "RANGE",
                 "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
                 "NORMALIZE", "DIFF", "APPEND",
+                // Date-vector + verdichtung producers
+                "DATERANGE", "TALLY",
                 // Array of strings from common helpers
                 "TILED.LAYERS", "FILE.LIST",
                 // File I/O readers that return parsed-row arrays

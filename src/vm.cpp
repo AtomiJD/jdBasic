@@ -616,7 +616,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "IOTA", "RESHAPE", "LEN", "LENV", "PUSH", "POP",
         "TENSOR", "TYPEOF", "APPEND", "DIFF", "FILLV", "COPYV",
         "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL",
-        "SCAN", "SELECT", "FILTER", "REDUCE",
+        "SCAN", "SELECT", "FILTER", "REDUCE", "AGG", "TALLY",
         "TAKE_WHILE", "DROP_WHILE", "CHUNK", "ENUMERATE", "GROUPBY",
         "SORT", "TAKE", "DROP", "REVERSE", "UNIQUE", "SHUFFLE",
         "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE", "GRADE",
@@ -626,7 +626,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "OUTER", "ROTATE", "SHIFT", "XSORT", "INTEGRATE",
         "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
         "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
-        "DATE.UTC", "DATE.PARTS",
+        "DATE.UTC", "DATE.PARTS", "EOMONTH", "DATERANGE",
         // DATEADD/DATEDIFF/FORMAT_DATE intentionally vectorize so e.g.
         // DATEDIFF("D", scalar, [d1,d2,d3]) → element-wise.
         "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
@@ -4624,6 +4624,63 @@ void VM::register_builtins() {
         return r;
     });
 
+    register_native("AGG", 3, 3, [this](const std::vector<Value>& args) -> Value {
+        // AGG(keys, values, fn@) — group `values` by the matching `keys` entry,
+        // apply fn to each group's value-array, and return a 2-column table
+        // [[key, fn(group)], ...] in first-seen key order. O(n), one pass. This
+        // is APL's dyadic Key (⌸): group + reduce + assemble in one primitive.
+        auto* keys = args[0].as_array();
+        auto* vals = args[1].as_array();
+        Value fn = args[2];
+        size_t n = std::min(keys->elements.size(), vals->elements.size());
+        std::unordered_map<std::string, size_t> idx;
+        std::vector<Value> repr;     // original key Value per group (type preserved)
+        std::vector<Value> groups;   // array of grouped values per group
+        for (size_t i = 0; i < n; i++) {
+            std::string k = keys->elements[i].to_string();
+            auto it = idx.find(k);
+            size_t gi;
+            if (it == idx.end()) {
+                gi = groups.size();
+                idx.emplace(k, gi);
+                repr.push_back(keys->elements[i]);
+                groups.push_back(Value::make_array());
+            } else gi = it->second;
+            groups[gi].as_array()->elements.push_back(vals->elements[i]);
+        }
+        Value r = Value::make_array();
+        for (size_t gi = 0; gi < groups.size(); gi++) {
+            Value row = Value::make_array();
+            row.as_array()->elements.push_back(repr[gi]);
+            row.as_array()->elements.push_back(call_funcref(fn, {groups[gi]}));
+            r.as_array()->elements.push_back(std::move(row));
+        }
+        return r;
+    });
+
+    register_native("TALLY", 1, 1, [](const std::vector<Value>& args) -> Value {
+        // TALLY(array) — [[value, count], ...] of distinct values in first-seen
+        // order. The most common "verdichtung" (value_counts).
+        auto* arr = args[0].as_array();
+        std::unordered_map<std::string, size_t> idx;
+        std::vector<Value> repr;
+        std::vector<int64_t> cnt;
+        for (auto& e : arr->elements) {
+            std::string k = e.to_string();
+            auto it = idx.find(k);
+            if (it == idx.end()) { idx.emplace(k, repr.size()); repr.push_back(e); cnt.push_back(1); }
+            else cnt[it->second]++;
+        }
+        Value r = Value::make_array();
+        for (size_t i = 0; i < repr.size(); i++) {
+            Value row = Value::make_array();
+            row.as_array()->elements.push_back(repr[i]);
+            row.as_array()->elements.push_back(Value::make_i64(cnt[i]));
+            r.as_array()->elements.push_back(std::move(row));
+        }
+        return r;
+    });
+
     // ── REDUCE (higher-order) ────────────────────────────────
     register_native("REDUCE", [this](const std::vector<Value>& args) -> Value {
         // REDUCE(func, array, [init])   — function first
@@ -4973,6 +5030,87 @@ void VM::register_builtins() {
         o->set("weekday", Value::make_i64(tm.tm_wday));
         o->set("yday",    Value::make_i64(tm.tm_yday));
         return m;
+    });
+
+    register_native("EOMONTH", 1, 2, [value_to_epoch](const std::vector<Value>& args) -> Value {
+        // EOMONTH(date, [offset_months]) → DATE epoch of the last day (midnight,
+        // local time) of the month `offset_months` away from `date`. Excel-style.
+        // Vectorizes element-wise over a date array. `days-in-month(d)` =
+        // DAY(EOMONTH(d)).
+        int offset = (args.size() >= 2) ? (int)args[1].to_int() : 0;
+        std::function<Value(const Value&)> one = [&](const Value& v) -> Value {
+            if (v.type == ValueType::ARRAY) {
+                Value arr = Value::make_array();
+                for (auto& e : v.as_array()->elements)
+                    arr.as_array()->elements.push_back(one(e));
+                return arr;
+            }
+            std::time_t t = static_cast<std::time_t>(value_to_epoch(v));
+            std::tm tm{};
+        #ifdef _WIN32
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+            tm.tm_mon += offset + 1;  // first day of the month *after* the target
+            tm.tm_mday = 0;           // day 0 normalizes back to the target month's last day
+            tm.tm_hour = 0; tm.tm_min = 0; tm.tm_sec = 0;
+            tm.tm_isdst = -1;
+            return Value::make_date(static_cast<double>(std::mktime(&tm)));
+        };
+        return one(args[0]);
+    });
+
+    register_native("DATERANGE", 2, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
+        // DATERANGE(start, end, [unit$="D"], [step=1]) → array of DATE epochs from
+        // start to end INCLUSIVE, stepping by `step` units. Calendar units D/W/M/Y
+        // advance via tm (so a "day" stays a local calendar day across DST, never
+        // drifts by an hour); clock units H/N/S advance by fixed epoch seconds.
+        double start = value_to_epoch(args[0]);
+        double end   = value_to_epoch(args[1]);
+        std::string unit = (args.size() >= 3) ? args[2].as_string()->data : "D";
+        for (auto& c : unit) c = (char)std::toupper((unsigned char)c);
+        long step = (args.size() >= 4) ? (long)args[3].to_int() : 1;
+        if (step == 0) step = 1;
+        Value r = Value::make_array();
+        auto* out = r.as_array();
+        bool calendar = (unit == "D" || unit == "W" || unit == "M" || unit == "Y");
+        if (calendar) {
+            int dday = 0, dmon = 0, dyear = 0;
+            if (unit == "D")      dday = (int)step;
+            else if (unit == "W") dday = 7 * (int)step;
+            else if (unit == "M") dmon = (int)step;
+            else                  dyear = (int)step;
+            std::time_t t = static_cast<std::time_t>(start);
+            std::tm tm{};
+        #ifdef _WIN32
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+            while (true) {
+                std::tm cur = tm; cur.tm_isdst = -1;
+                double e = static_cast<double>(std::mktime(&cur));
+                if ((step > 0 && e > end) || (step < 0 && e < end)) break;
+                out->elements.push_back(Value::make_date(e));
+                tm.tm_mday += dday; tm.tm_mon += dmon; tm.tm_year += dyear;
+                tm.tm_isdst = -1;
+                std::time_t nt = std::mktime(&tm);  // normalize the rolled-over fields
+            #ifdef _WIN32
+                localtime_s(&tm, &nt);
+            #else
+                localtime_r(&nt, &tm);
+            #endif
+            }
+        } else {
+            double sec = 3600.0;                 // H
+            if (unit == "N")      sec = 60.0;
+            else if (unit == "S") sec = 1.0;
+            double inc = sec * step;
+            if (inc > 0) for (double e = start; e <= end + 0.5; e += inc) out->elements.push_back(Value::make_date(e));
+            else         for (double e = start; e >= end - 0.5; e += inc) out->elements.push_back(Value::make_date(e));
+        }
+        return r;
     });
 
     // ── MAP functions ────────────────────────────────────────
