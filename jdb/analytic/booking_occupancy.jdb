@@ -8,6 +8,9 @@
 '               with the group's real dates in hand (APL key / "verdichtung")
 '   EOMONTH   - days-in-month for the capacity denominator (no leap-year table)
 '
+'   data:  hotel_bookings.csv - Maven Analytics "Booking Breakdown" drill,
+'          download from https://mavenanalytics.io/data-drills/booking-breakdown
+'          (not in the repo; place it next to this script)
 '   run from this folder:  jdBasic booking_occupancy.jdb
 ' ============================================================================
 
