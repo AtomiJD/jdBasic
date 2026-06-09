@@ -1,0 +1,54 @@
+' ============================================================
+' DATERANGE - build an inclusive vector of dates.
+'   DATERANGE(start, end, [unit$="D"], [step=1]) -> array
+' Calendar units D/W/M/Y step whole local days (DST-safe);
+' clock units H/N/S step fixed seconds. Negative step counts down.
+' ============================================================
+
+PRINT "=== DATERANGE: date vectors by unit & step ==="
+PRINT ""
+
+' --- every day in a week ---
+DIM week = DATERANGE(CVDATE("2026-06-01"), CVDATE("2026-06-07"), "D")
+PRINT "A week, daily ("; LEN(week); " days):"
+DIM i
+FOR i = 0 TO LEN(week) - 1
+    PRINT "  "; FORMAT_DATE(week[i], "%a %Y-%m-%d")
+NEXT
+
+' --- weekly standups across a quarter ---
+DIM standups = DATERANGE(CVDATE("2026-01-05"), CVDATE("2026-03-30"), "W")
+PRINT ""
+PRINT "Weekly standups Jan-Mar: "; LEN(standups); " Mondays"
+PRINT "  first "; FORMAT_DATE(standups[0], "%Y-%m-%d"); " ... last "; FORMAT_DATE(standups[LEN(standups) - 1], "%Y-%m-%d")
+
+' --- monthly + yearly steps ---
+DIM months = DATERANGE(CVDATE("2026-01-01"), CVDATE("2026-12-01"), "M")
+DIM years  = DATERANGE(CVDATE("2020-07-15"), CVDATE("2026-07-15"), "Y")
+PRINT ""
+PRINT "Monthly report dates: "; LEN(months); "   Yearly anniversaries: "; LEN(years)
+
+' --- hourly slots within a day (step 2 hours) ---
+DIM slots = DATERANGE(CVDATE("2026-06-01 09:00:00"), CVDATE("2026-06-01 17:00:00"), "H", 2)
+PRINT ""
+PRINT "Booking slots every 2 hours, 09-17:"
+FOR i = 0 TO LEN(slots) - 1
+    PRINT "  "; FORMAT_DATE(slots[i], "%H:%M")
+NEXT
+
+' --- countdown with a negative step ---
+DIM cd = DATERANGE(CVDATE("2026-01-05"), CVDATE("2026-01-01"), "D", -1)
+PRINT ""
+PRINT "Launch countdown:"
+FOR i = 0 TO LEN(cd) - 1
+    PRINT "  T-"; LEN(cd) - 1 - i; "  "; FORMAT_DATE(cd[i], "%Y-%m-%d")
+NEXT
+
+' --- keep only weekdays: DATERANGE + FILTER + WEEKDAY ---
+DIM fortnight = DATERANGE(CVDATE("2026-06-01"), CVDATE("2026-06-14"), "D")
+DIM workdays  = FILTER(LAMBDA d -> WEEKDAY(d) >= 1 ANDALSO WEEKDAY(d) <= 5, fortnight)
+PRINT ""
+PRINT "Weekdays in the first fortnight of June: "; LEN(workdays); " of "; LEN(fortnight)
+
+PRINT ""
+PRINT "Done."

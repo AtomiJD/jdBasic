@@ -1,0 +1,50 @@
+' ============================================================
+' AGG - group values by key, reduce each group, get a table.
+'   AGG(keys, values, fn@) -> [[key, fn(group)], ...]
+' One O(n) pass (APL's dyadic key). The reducer gets the whole
+' value-group as an array, so any array function works.
+' ============================================================
+
+PRINT "=== AGG: group + reduce in one pass ==="
+PRINT ""
+
+' --- total sales per region (SUM) ---
+DIM region = ["West", "East", "West", "North", "East", "West"]
+DIM sales  = [120, 90, 60, 200, 75, 40]
+PRINT "Total sales per region:"
+PRINT FRMV$(AGG(region, sales, LAMBDA g -> SUM(g)), "  {:<6} {:>5}")
+
+' --- average score per class (MEAN) ---
+DIM class = ["A", "B", "A", "B", "A", "C"]
+DIM score = [80, 70, 90, 60, 100, 55]
+PRINT ""
+PRINT "Average score per class:"
+PRINT FRMV$(AGG(class, score, LAMBDA g -> MEAN(g)), "  {:<3} {:>5}")
+
+' --- how many items per category (count = LEN of the group) ---
+DIM cat = ["fruit", "veg", "fruit", "fruit", "veg", "grain", "veg"]
+PRINT ""
+PRINT "Items per category:"
+PRINT FRMV$(AGG(cat, cat, LAMBDA g -> LEN(g)), "  {:<7} {:>3}")
+
+' --- peak temperature per city (MAX) ---
+DIM city = ["Berlin", "Rome", "Berlin", "Rome", "Berlin"]
+DIM temp = [21, 30, 19, 33, 24]
+PRINT ""
+PRINT "Peak temperature per city:"
+PRINT FRMV$(AGG(city, temp, LAMBDA g -> MAX(g)), "  {:<7} {:>3}")
+
+' --- spread (max - min) per group, a custom reducer ---
+PRINT ""
+PRINT "Temperature spread per city:"
+PRINT FRMV$(AGG(city, temp, LAMBDA g -> MAX(g) - MIN(g)), "  {:<7} {:>3}")
+
+' --- numeric keys stay numeric (GROUPBY would stringify them) ---
+DIM bucket = [1, 2, 1, 3, 2, 1]
+DIM amount = [10, 20, 30, 40, 50, 60]
+PRINT ""
+PRINT "Sum by numeric bucket (key type preserved):"
+PRINT FRMV$(AGG(bucket, amount, SUM@), "  bucket {} -> {}")
+
+PRINT ""
+PRINT "Done."

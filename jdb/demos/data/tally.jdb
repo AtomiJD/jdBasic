@@ -1,0 +1,44 @@
+' ============================================================
+' TALLY - distinct values with their counts (pandas value_counts).
+'   TALLY(array) -> [[value, count], ...]  in first-seen order
+' ============================================================
+
+PRINT "=== TALLY: count occurrences of each distinct value ==="
+PRINT ""
+
+' --- dice roll frequency ---
+DIM rolls = [3, 6, 1, 6, 3, 3, 5, 2, 6, 4, 3, 1]
+PRINT "Dice roll frequency:"
+PRINT FRMV$(TALLY(rolls), "  face {} -> {} times")
+
+' --- survey responses ---
+DIM votes = ["yes", "no", "yes", "yes", "abstain", "no", "yes"]
+PRINT ""
+PRINT "Survey responses:"
+PRINT FRMV$(TALLY(votes), "  {:<8} {:>2}")
+
+' --- letter frequency in a word (unary - splits a string into chars) ---
+DIM word$ = "mississippi"
+PRINT ""
+PRINT "Letter frequency in '"; word$; "':"
+PRINT FRMV$(TALLY(-word$), "  '{}' x{}")
+
+' --- the mode (highest frequency) from the tally table ---
+DIM t = TALLY(rolls)
+DIM counts = SELECT(LAMBDA r -> r[1], t)
+PRINT ""
+PRINT "Highest single-face frequency in the dice rolls: "; MAX(counts)
+
+' --- sort a tally DESCENDING by frequency ---
+'   GRADE returns the ascending sort indices; grading the NEGATED counts
+'   flips it to descending, then SELECT reorders the rows by those indices.
+DIM sentence$ = "she sells sea shells by the sea shore"
+DIM letters = FILTER(LAMBDA c -> c <> " ", -sentence$)   ' -str = char array
+DIM freq    = TALLY(letters)
+DIM order   = GRADE(SELECT(LAMBDA r -> -r[1], freq))
+PRINT ""
+PRINT "Letter frequency in a sentence, most common first:"
+PRINT FRMV$(SELECT(LAMBDA i -> freq[i], order), "  '{}' x{}")
+
+PRINT ""
+PRINT "Done."

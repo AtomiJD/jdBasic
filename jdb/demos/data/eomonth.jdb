@@ -1,0 +1,52 @@
+' ============================================================
+' EOMONTH - last day of a month (Excel-style), leap-safe.
+'   EOMONTH(date, [offset_months]) -> DateTime
+'   days-in-month = DAY(EOMONTH(any_day_in_month))
+' Vectorises element-wise over a date array.
+' ============================================================
+
+PRINT "=== EOMONTH: month-ends & days-in-month ==="
+PRINT ""
+
+' --- days in each month: 2024 (leap) vs 2025 ---
+PRINT "Days per month  (2024 leap | 2025):"
+DIM m
+DIM d24
+DIM d25
+FOR m = 1 TO 12
+    d24 = DAY(EOMONTH(CVDATE("2024-" + STR$(m) + "-01")))
+    d25 = DAY(EOMONTH(CVDATE("2025-" + STR$(m) + "-01")))
+    PRINT "  " + FORMAT$("{:>2}", m) + " : " + FORMAT$("{:>2}", d24) + " | " + FORMAT$("{:>2}", d25)
+NEXT
+
+' --- month-end navigation from a reference date ---
+DIM ref = CVDATE("2026-06-09")
+PRINT ""
+PRINT "Relative month-ends from 2026-06-09:"
+PRINT "  this month : "; FORMAT_DATE(EOMONTH(ref),     "%Y-%m-%d")
+PRINT "  next month : "; FORMAT_DATE(EOMONTH(ref, 1),  "%Y-%m-%d")
+PRINT "  prev month : "; FORMAT_DATE(EOMONTH(ref, -1), "%Y-%m-%d")
+PRINT "  quarter-end: "; FORMAT_DATE(EOMONTH(ref, 2),  "%Y-%m-%d")
+
+' --- vectorised over an array of dates ---
+DIM ds = [CVDATE("2024-02-15"), CVDATE("2024-12-25"), CVDATE("2025-02-10")]
+PRINT ""
+PRINT "Month-ends for a whole list of dates:"
+DIM ends = EOMONTH(ds)
+DIM j
+FOR j = 0 TO LEN(ends) - 1
+    PRINT "  "; FORMAT_DATE(ds[j], "%Y-%m-%d"); "  ->  "; FORMAT_DATE(ends[j], "%Y-%m-%d")
+NEXT
+
+' --- leap-year test: February has 29 days ---
+PRINT ""
+PRINT "Leap year? (February = 29 days):"
+DIM y
+DIM feb
+FOR y = 2020 TO 2025
+    feb = DAY(EOMONTH(CVDATE(STR$(y) + "-02-01")))
+    PRINT "  "; y; " -> "; IIF(feb = 29, "leap", "no")
+NEXT
+
+PRINT ""
+PRINT "Done."
