@@ -91,6 +91,10 @@ static std::string g_session_buffer;
 // caller doesn't have to pass it again every iteration.
 static std::string g_last_loaded_path;
 
+// Defined in vm.cpp (global linkage). Declared here at file scope so the
+// VM worker thread can install the per-thread SEH→C++ exception translator.
+void install_seh_translator_for_this_thread();
+
 namespace {
 
 // ── Framing ─────────────────────────────────────────────────────
@@ -282,6 +286,12 @@ inline bool worker_busy_or_queued_locked() {
 }
 
 void worker_loop(VM& vm) {
+    // The SEH→C++ translator is per-thread; the main thread installs it at
+    // static-init, but this worker runs native code on a fresh thread and must
+    // install it itself - otherwise a structured exception (access violation,
+    // etc.) inside a job is NOT caught by the catch(...) below and tears down
+    // the whole MCP server ("Connection closed") instead of becoming an error.
+    install_seh_translator_for_this_thread();
     while (true) {
         VmJob job;
         {

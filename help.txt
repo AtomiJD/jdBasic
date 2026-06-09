@@ -1174,6 +1174,15 @@ Description: Stops the currently playing background music.
 Syntax: MVLET(matrix, dimension, index, vector)
 Description: Returns a new matrix with a specified row or column replaced by a vector.
 
+[MVINS]
+Syntax: MVINS(matrix, dimension, index, value)
+Description: Returns a new matrix with a row (dimension 0) or column (dimension 1)
+INSERTED at index. Use index = the current row/column count to append at the end.
+value is a vector (one entry per row/column) or a scalar broadcast to fill it.
+The original matrix is not modified.
+Example: m2 = MVINS(m, 1, 6, nights)   ' append a computed 7th column
+Example: m3 = MVINS(m, 1, 0, 0)        ' insert a leading column of zeros
+
 [NEW]
 Syntax: NEW
 Description: Clears the current source code from memory.

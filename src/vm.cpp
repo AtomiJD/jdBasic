@@ -620,7 +620,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "TAKE_WHILE", "DROP_WHILE", "CHUNK", "ENUMERATE", "GROUPBY",
         "SORT", "TAKE", "DROP", "REVERSE", "UNIQUE", "SHUFFLE",
         "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE", "GRADE",
-        "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE",
+        "TRANSPOSE", "MATMUL", "MVLET", "MVINS", "STACK", "SLICE",
         "SOLVE", "INVERT", "CONVOLVE", "PLACE",
         "SVD", "QR", "DET", "EIG", "FFT", "IFFT",
         "OUTER", "ROTATE", "SHIFT", "XSORT", "INTEGRATE",
@@ -4291,6 +4291,48 @@ void VM::register_builtins() {
         return r;
     });
 
+    // ── MVINS ────────────────────────────────────────────────
+    // MVINS(matrix, dim, index, value) — INSERT a row (dim 0) or column
+    // (dim 1) into a 2D matrix at `index`. index == size appends at the end.
+    // `value` is a vector (one entry per row/col) OR a scalar broadcast to
+    // fill the new row/column. Returns a new matrix (the original is untouched).
+    register_native("MVINS", [](const std::vector<Value>& args) -> Value {
+        int rows, cols; get_2d(args[0], rows, cols);
+        int dim = (int)args[1].to_int();
+        int idx = (int)args[2].to_int();
+        const Value& val = args[3];
+        bool is_vec = (val.type == ValueType::ARRAY);
+        const std::vector<Value>* vec = is_vec ? &val.as_array()->elements : nullptr;
+        auto pick = [&](int i) -> Value {
+            if (!is_vec) return val;                       // scalar broadcast
+            return (i >= 0 && i < (int)vec->size()) ? (*vec)[i] : Value::make_i64(0);
+        };
+        // Deep copy the rows so the source matrix is not mutated.
+        Value r = Value::make_array();
+        for (auto& row : args[0].as_array()->elements) {
+            Value nr = Value::make_array();
+            nr.as_array()->elements = row.as_array()->elements;
+            r.as_array()->elements.push_back(std::move(nr));
+        }
+        auto& R = r.as_array()->elements;
+        if (dim == 0) {                                    // insert a new ROW
+            if (idx < 0) idx = 0;
+            if (idx > rows) idx = rows;
+            Value nr = Value::make_array();
+            for (int c = 0; c < cols; c++) nr.as_array()->elements.push_back(pick(c));
+            R.insert(R.begin() + idx, std::move(nr));
+        } else {                                           // insert a new COLUMN
+            for (int ro = 0; ro < rows; ro++) {
+                auto& cells = R[ro].as_array()->elements;
+                int ci = idx;
+                if (ci < 0) ci = 0;
+                if (ci > (int)cells.size()) ci = (int)cells.size();
+                cells.insert(cells.begin() + ci, pick(ro));
+            }
+        }
+        return r;
+    });
+
     // ── STACK ────────────────────────────────────────────────
     register_native("STACK", [](const std::vector<Value>& args) -> Value {
         int dim = (int)args[0].to_int();
@@ -4857,24 +4899,31 @@ void VM::register_builtins() {
         // instant in UTC+tz instead of local time.
         double epoch = value_to_epoch(args[0]);
         std::string fmt = (args.size() >= 2) ? args[1].as_string()->data : "%Y-%m-%d %H:%M:%S";
-        std::tm tm;
+        // Zero-init: if the (out-of-range) conversion below fails it leaves tm
+        // untouched, and a garbage tm fed to strftime trips MSVC's invalid-
+        // parameter handler -> __fastfail (an uncatchable crash). So we both
+        // zero-init AND check the converter's result, returning "" on failure.
+        std::tm tm{};
+        bool ok;
         if (args.size() >= 3) {
             double shifted = epoch + args[2].to_double() * 3600.0;
             std::time_t t = static_cast<std::time_t>(shifted);
         #ifdef _WIN32
-            gmtime_s(&tm, &t);
+            ok = (gmtime_s(&tm, &t) == 0);
         #else
-            gmtime_r(&t, &tm);
+            ok = (gmtime_r(&t, &tm) != nullptr);
         #endif
         } else {
             std::time_t t = static_cast<std::time_t>(epoch);
         #ifdef _WIN32
-            localtime_s(&tm, &t);
+            ok = (localtime_s(&tm, &t) == 0);
         #else
-            localtime_r(&t, &tm);
+            ok = (localtime_r(&t, &tm) != nullptr);
         #endif
         }
+        if (!ok) return Value::make_string("");  // out-of-range date -> "", never crash
         char buf[128];
+        buf[0] = '\0';
         std::strftime(buf, sizeof(buf), fmt.c_str(), &tm);
         return Value::make_string(buf);
     });

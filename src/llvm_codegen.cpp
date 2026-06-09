@@ -790,7 +790,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 "TAKE", "DROP", "UNIQUE", "REVERSE", "FLATTEN", "SHUFFLE",
                 "APPEND", "DIFF", "CUMSUM", "CUMPROD", "GRADE",
                 "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
+                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
                 "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
                 "FFT", "IFFT",
                 "XSORT", "SPLIT", "LINES", "WORDS", "CHARS",
@@ -1213,7 +1213,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 // to produce arrays): SHIFT, OUTER, MATMUL, etc.
                 static const std::unordered_set<std::string> arr_calls = {
                     "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-                    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
+                    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
                     "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
                     "FFT", "IFFT",
                     "XSORT"
@@ -7772,7 +7772,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Array/matrix operations that consume arrays as a whole
         "LEN", "PUSH", "POP", "APPEND", "DIFF", "TAKE", "DROP", "REVERSE", "FILLV", "COPYV",
         "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE",
-        "GRADE", "TRANSPOSE", "MATMUL", "MVLET", "STACK", "SLICE", "SOLVE",
+        "GRADE", "TRANSPOSE", "MATMUL", "MVLET", "MVINS", "STACK", "SLICE", "SOLVE",
         "INVERT", "CONVOLVE", "PLACE", "OUTER", "ROTATE", "SHIFT", "XSORT",
         "SVD", "QR", "DET", "EIG", "FFT", "IFFT",
         "INTEGRATE", "FLATTEN", "ZIP", "DOT", "CROSS", "CUMSUM", "CUMPROD",
@@ -8492,7 +8492,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // them as f64-returning and the result came back as an
                 // empty / garbage array.
                 "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET",
+                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
                 "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
                 "FFT", "IFFT",
                 "XSORT", "TAKE", "DROP",

@@ -1464,6 +1464,16 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`TRANSPOSE(matrix)`**: Transposes a 2D matrix.
 * **`MATMUL(matrixA, matrixB)`**: Performs matrix multiplication.
 * **`MVLET(matrix, dimension, index, vector) -> matrix`**: Replaces a row or column in a matrix with a vector, returning a new matrix.
+* **`MVINS(matrix, dimension, index, value) -> matrix`**: **Inserts** a new row (`dimension = 0`) or column (`dimension = 1`) into a 2D matrix at `index`, returning a new matrix (the original is untouched). Pass `index = ` the current row/column count to **append** at the end. `value` is either a vector (one entry per row/column — e.g. a computed column) or a **scalar**, which is broadcast to fill the whole new row/column. Faster and clearer than rebuilding via `SELECT(APPEND(...))` or `ZIP`/`TRANSPOSE`.
+
+    ```basic
+    ' Append a computed column (e.g. nights per booking) as the last column:
+    m2 = MVINS(m, 1, COLS, nights)        ' COLS = current column count
+    ' Insert a constant column of 0 at position 2:
+    m3 = MVINS(m, 1, 2, 0)
+    ' Append a row (vector) at the bottom:
+    m4 = MVINS(m, 0, ROWS, [1, 2, 3])
+    ```
 * **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
 * **`SOLVE(matrix A, vextor b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
 * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
