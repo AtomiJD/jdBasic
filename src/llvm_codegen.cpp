@@ -3741,6 +3741,17 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 tag = JD_TAG_I64;
                 init = LLVMConstInt(i64_type, 0, 0);
                 break;
+            case VarType::NONE:
+                // Bare untyped `DIM x` with no initializer. Give it a concrete
+                // INTEGER slot (numbers are not double-by-default — see STRICT)
+                // so a later `x = <double>` goes through the normal i64<-double
+                // coercion (FPToSI) instead of bit-storing the double's raw bits
+                // into an untyped slot (the 4.6e18 silent-garbage bug). An array
+                // or string assigned later still retags the slot in the assign
+                // path, so `DIM x : x = IOTA(n)` keeps working.
+                tag = JD_TAG_I64;
+                init = LLVMConstInt(i64_type, 0, 0);
+                break;
             default:
                 break;  // unknown — fall through to existing paths
         }
