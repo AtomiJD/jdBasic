@@ -21,15 +21,15 @@ The `-c` flag compiles a script to a native EXE; the runtime `jdbrt.dll` is auto
 
 ```
 jdb/
-├── modules/     reusable libraries — see "Modules" below
 ├── demos/       polished showcase samples, by domain
-│   ├── games/   space shooter, snake, tetris, chess, mines, ...
+│   ├── games/   space shooter, snake, tetris, chess, mines, raytracer, ...
 │   ├── graphics/ fractals, sine fields, N-body, plots, raytracer
 │   ├── gl/      OpenGL P1-P4 (raw GL, shaders, VBO, textures)
 │   ├── ai/      LLM, RAG, ONNX, classifier, GPT clients
 │   ├── gui/     Dear ImGui apps + spreadsheet + sequencer studio
 │   ├── sound/   SOUND.* synth, sequencer parts, APL additive synth
-│   ├── apl/     vectorised idioms — Game of Life, primes, OUTER
+│   ├── apl/     vectorised idioms — Game of Life, primes, OUTER, one-liners
+│   ├── data/    vectors / matrices / dates — AGG, TALLY, EOMONTH, DATERANGE, MVINS
 │   ├── tui/     terminal UI, FTXUI, markdown browser, cowsay
 │   ├── web/     HTTP client + server + weather/ticker/wflib
 │   ├── bridges/ FFI, COM (Excel/Word/Access/Outlook), SQLite, serial
@@ -40,11 +40,16 @@ jdb/
 │   └── tensor/  TF-style tensor + neural-net step-by-step series
 ├── tutorials/   bite-size language exercises (DIM, MAP, IF, lambda, TRY, ...)
 ├── tools/       small utilities you might use day-to-day
+├── analytic/    end-to-end data-analysis pipelines (occupancy, ...)
+├── bench/       benchmarks — APL vs loop, SAT, subset-sum, Mandelbrot, ONNX
 ├── emu/         6502 + Apple II emulator core, tests + bench
+├── deusexmachina/ multi-file agent framework (event bus, dispatch, LLM brain, RAG)
+├── jdtriage/    log-triage TUI (UTF-16 aware)
 ├── tv/          jdBasic-TV pipeline (lesson scripts + director)
 ├── parallax_game/ multi-file game project
 ├── udt_full_demo/ multi-file UDT demo (INIT/DISPOSE lifecycle)
 ├── doom/        DOOM port (frozen, see release/ notes)
+├── art/         shared image / sprite assets used by the demos
 └── _scratch/    development-time scratch — not curated, not for newcomers
 ```
 
@@ -52,24 +57,25 @@ jdb/
 
 ## Modules — reusable libraries
 
-`jdb/modules/` houses the `IMPORT`-able libraries. The interpreter walks up from any script's directory looking for a sibling `modules/` folder, so a demo in `jdb/demos/games/` can `IMPORT CLAUDE_LIVE` and pick up `jdb/modules/claude_live.jdb` transparently.
+There is no central `modules/` folder: each `IMPORT`-able library lives **next to
+the scripts that use it**. jdBasic's `IMPORT` resolves a module from the importing
+script's own directory first (then walks up), so co-locating a library with its
+consumers just works — a demo in `demos/sound/` can `IMPORT SQ` and pick up
+`demos/sound/SQ.jdb` transparently.
 
-| Module | What it gives you |
-|---|---|
-| `MATH.jdb`         | math constants + helpers used by other modules |
-| `MLAB.jdb`         | matrix / statistical functions, mortgage calc, financial |
-| `PLOTTER.jdb`      | 2D chart routine (`DATA_PLOTTER`) used by graphics demos |
-| `plot_lib.jdb`     | older plotting library, kept for back-compat with samples |
-| `text_viz.jdb`     | text-mode `PLOTTER` for terminals |
-| `SQ.jdb`           | sequencer engine driving the `demos/sound/` series |
-| `claude_live.jdb`  | MCP live-coding hooks + window positioning + Alt-press refocus |
-| `cpu6502.jdb`      | pure 6502 CPU emulator core |
-| `apple2.jdb`       | Apple II platform skeleton on top of `cpu6502` |
-| `sqlite.jdb`       | DECLARE-FUNC wrapper around `sqlitebridge.dll` |
-| `sprite_core.jdb`  | sprite engine wrapper used by `demos/sprites/` |
-| `sys_paths.jdb`    | OS-agnostic path joining |
-| `modglob.jdb`      | module-global mutation test fixture + helpers |
-| `modwrap.jdb`      | wrapper for `MODGLOB.BULK_WRITE` (cross-module write chain) |
+Where the main libraries live now:
+
+| Module | Home | What it gives you |
+|---|---|---|
+| `MATH.jdb` / `MLAB.jdb`      | `tutorials/`      | math constants + matrix / statistical / financial helpers |
+| `sys_paths.jdb`             | `tutorials/`      | OS-agnostic path joining |
+| `PLOTTER.jdb`               | `demos/graphics/` | 2D chart routine (`DATA_PLOTTER`) for the graphics demos |
+| `text_viz.jdb`              | `demos/tui/`      | text-mode plotter for terminals |
+| `SQ.jdb`                    | `demos/sound/`    | sequencer engine driving the `demos/sound/` series |
+| `sprite_core.jdb`           | `demos/sprites/`  | sprite engine wrapper used by `demos/sprites/` |
+| `sqlite.jdb`                | `demos/bridges/`  | DECLARE-FUNC wrapper around `sqlitebridge.dll` |
+| `cpu6502.jdb` / `apple2.jdb`| `emu/`            | 6502 CPU core + Apple II platform skeleton |
+| `claude_live.jdb`           | `tools/`          | MCP live-coding hooks + window positioning + Alt-press refocus |
 
 ---
 
@@ -79,7 +85,7 @@ A short curated list — the demos most likely to make a "wait, that's nice" imp
 
 ### Games
 
-* **`demos/games/space_shooter.jdb`** — *Stellar Drift*, 80s-style vector shooter. Also the canonical test bed for live-coding via MCP (`/jdvibe` skill).
+* **`demos/games/space_shooter/space_shooter.jdb`** — *Stellar Drift*, 80s-style vector shooter. Also the canonical test bed for live-coding via MCP (`/jdvibe` skill).
 * **`demos/games/snake_game.jdb`** — console snake with `ON "KEYDOWN"` (the POSIX `KEYDOWN` raw-mode bridge lives here).
 * **`demos/games/chess_engine.jdb`** — a chess engine in one file.
 * **`demos/games/raytracer.jdb`** — software raytracer rendered pixel by pixel.
@@ -121,6 +127,17 @@ A short curated list — the demos most likely to make a "wait, that's nice" imp
 * **`demos/apl/prime_sieve.jdb`** — sieve via set membership.
 * **`demos/apl/outer_prod.jdb`** — `OUTER` patterns.
 * **`demos/apl/fib_reduce.jdb`** — Fibonacci via `REDUCE`.
+* **`demos/apl/oneliners.jdb`** — one-line array art (sine wave, biorhythm, ASCII table, `|>` pipeline).
+* **`demos/apl/array_idioms.jdb`** — loops turned into APL: rotate as `REVERSE(TRANSPOSE)`, neighbour counts via `CONVOLVE`, Tetris line-clear via `FILTER`.
+
+### Data / vectors / matrices
+
+* **`demos/data/agg.jdb`** — group + reduce with `AGG` (sum / mean / max / count per key).
+* **`demos/data/tally.jdb`** — `TALLY` value-counts and descending sort via `GRADE`.
+* **`demos/data/daterange.jdb`** — `DATERANGE` / `EOMONTH` date vectors and leap-safe days-in-month.
+* **`demos/data/mvins.jdb`** — insert rows / columns into a matrix with `MVINS`.
+
+See [`doc/howto-vector-matrix-data.md`](../doc/howto-vector-matrix-data.md) for the full field guide.
 
 ### TUI
 
@@ -158,7 +175,7 @@ A short curated list — the demos most likely to make a "wait, that's nice" imp
 
 ### Tutorials
 
-`tutorials/` is the right place to send a beginner. Each file is ~30 lines and demonstrates exactly one feature: `if_blocks`, `loop_control`, `map_basics`, `str_format`, `try_catch`, `enum_types`, `lambda_capture`, `destructure`, ... 45 of them, naming should be self-explanatory.
+`tutorials/` is the right place to send a beginner. Each file is ~30 lines and demonstrates exactly one feature: `if_blocks`, `loop_control`, `map_basics`, `str_format`, `try_catch`, `enum_types`, `lambda_capture`, `destructure`, ... 48 of them, naming should be self-explanatory.
 
 ---
 
@@ -171,7 +188,7 @@ Standalone subdir with the emulator core + a graphical front-end and a fistful o
 * `bench_cpu_speed.jdb` — tight-loop benchmark of the 6502 step rate.
 * `test_*.jdb` — self-tests for opcodes, glyph cache, PC hooks, module-global persistence, etc.
 
-The CPU + Apple II modules themselves live in `jdb/modules/` (`cpu6502.jdb` + `apple2.jdb`) and are picked up via the auto-IMPORT walk.
+The CPU + Apple II modules (`cpu6502.jdb` + `apple2.jdb`) live right here in `jdb/emu/` and are picked up by `IMPORT`'s in-directory resolution.
 
 ---
 
