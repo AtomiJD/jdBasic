@@ -79,25 +79,12 @@ SUB PlaceMines(safe_r, safe_c)
     
     LOOP 
 
-    ' Calculate numbers for non-mine cells
-    FOR r = 0 TO ROWS - 1
-        FOR c = 0 TO COLS - 1
-            IF Grid[r, c] <> CELL_MINE THEN
-                count = 0
-                ' Check all 8 neighbors
-                FOR dr = -1 TO 1
-                    FOR dc = -1 TO 1
-                        nr = r + dr
-                        nc = c + dc
-                        IF nr >= 0 AND nr < ROWS AND nc >= 0 AND nc < COLS THEN
-                            IF Grid[nr, nc] = CELL_MINE THEN count = count + 1
-                        ENDIF
-                    NEXT dc
-                NEXT dr
-                Grid[r, c] = count
-            ENDIF
-        NEXT c
-    NEXT r
+    ' Number each cell with its neighbouring-mine count in one convolution:
+    ' a 3x3 ones-kernel with a 0 centre sums the 8 neighbours of every cell.
+    ' Mines stay CELL_MINE; every other cell takes its neighbour count.
+    mineMask = ABS(Grid = CELL_MINE)
+    counts = CONVOLVE(mineMask, [[1, 1, 1], [1, 0, 1], [1, 1, 1]], 0)
+    Grid = mineMask * CELL_MINE + (1 - mineMask) * counts
 ENDSUB
 
 ' ==========================================================

@@ -112,36 +112,23 @@ SUB LockPiece()
 ENDSUB
 
 SUB CheckLines()
-    LinesInTurn = 0
-    FOR r = 0 TO ROWS - 1
-        RowFilled = TRUE
-        FOR c = 0 TO COLS - 1
-            IF Board[r, c] = EMPTY THEN 
-                RowFilled = FALSE
-                EXITFOR 
-            ENDIF
-        NEXT c
-        
-        IF RowFilled THEN
-            LinesInTurn = LinesInTurn + 1
-            ' Move everything down
-            FOR downR = r TO 1 STEP -1
-                FOR k = 0 TO COLS - 1
-                    Board[downR, k] = Board[downR - 1, k]
-                NEXT k
-            NEXT downR
-            ' Clear top row
-            FOR k = 0 TO COLS - 1
-                Board[0, k] = EMPTY
-            NEXT k
-        ENDIF
-    NEXT r
-    
+    ' A row is full when it has no EMPTY cell, i.e. its minimum is non-zero.
+    ' Keep the rows that still have a gap, then push back as many blank rows
+    ' on top as were cleared - no per-cell shifting.
+    kept = FILTER(LAMBDA row -> MIN(row) = EMPTY, Board)
+    LinesInTurn = ROWS - LEN(kept)
+
     IF LinesInTurn > 0 THEN
+        emptyRow = RESHAPE([EMPTY], [COLS])
+        FOR i = 1 TO LinesInTurn
+            kept = MVINS(kept, 0, 0, emptyRow)
+        NEXT i
+        Board = kept
+
         LinesCleared = LinesCleared + LinesInTurn
         Score = Score + (LinesInTurn * 100 * LinesInTurn)
         Level = 1 + INT(LinesCleared / 10)
-        Speed = sMAX([1, 20 - Level])
+        Speed = MAX([1, 20 - Level])
     ENDIF
 ENDSUB
 
@@ -202,12 +189,6 @@ SUB DrawBoard()
     LOCATE 4, 42 : PRINT Level
     LOCATE 6, 42 : PRINT LinesCleared
 ENDSUB
-
-FUNC sMAX(arr)
-    m = arr[0]
-    IF arr[1] > m THEN m = arr[1]
-    RETURN m
-ENDFUNC
 
 ' --- INITIALIZATION ---
 RND(-1.0)
