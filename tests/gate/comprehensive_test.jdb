@@ -2294,6 +2294,17 @@ Assert(selstr[2] = "3", "SELECT lambda->string [2]")
 DIM redsum = REDUCE(LAMBDA a, b -> a + b, [1.0, 2.0, 3.0], 100.0)
 Assert(redsum = 106, "REDUCE with numeric init")
 
+' C9c: a funcref-literal passed to an inferred-FUNCREF user param builds a
+' wrapper matching the target's REAL arity (was hardcoded to 1, so a 2-arg
+' target was miscalled).
+FUNC c9_add(c9x, c9y)
+  RETURN c9x + c9y
+ENDFUNC
+FUNC c9_apply2(c9fn, c9p, c9q)
+  RETURN c9fn(c9p, c9q)
+ENDFUNC
+Assert(c9_apply2(c9_add@, 3.0, 4.0) = 7, "funcref-literal 2-arg wrapper arity")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.

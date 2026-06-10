@@ -7178,15 +7178,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // fn-ptr; passing the string would route through the VM
             // bridge and die with "Undefined function: FN".
             //
-            // Arity defaults to 1 (the common HOF shape: fn(elem)). If
-            // the user function takes a 2-arg funcref, callers can
-            // declare AS FUNC and the wrapper signature will match
-            // through the param's declared type — for now arity 1
-            // covers MAP-style HOFs which is what people write.
+            // Match the wrapper arity to the referenced function's real
+            // parameter count (was hardcoded to 1, so a 2-arg target such as a
+            // comparator/reducer passed as `fn@` was miscalled). Fall back to 1
+            // only when the function is unknown.
             if (expected_tag == JD_TAG_FUNCREF && expr.args[i] &&
                 expr.args[i]->kind == ExprKind::LITERAL_STRING &&
                 expr.args[i]->is_funcref_lit) {
-                int arity = 1;
+                auto uf = user_functions.find(expr.args[i]->str_val);
+                int arity = (uf != user_functions.end() && !uf->second.param_tags.empty())
+                    ? (int)uf->second.param_tags.size() : 1;
                 LLVMValueRef wrap = build_funcref_wrapper(expr.args[i]->str_val, arity);
                 if (wrap) {
                     args.push_back(wrap);

@@ -293,6 +293,7 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
     bool has_tagged = (arr->flags & 8) != 0 && arr->elem_tags != nullptr;
     bool has_ptr = (arr->flags & 1) != 0;
     bool has_string = (arr->flags & 2) != 0;
+    bool has_bool = (arr->flags & 4) != 0;
     for (int64_t i = 0; i < arr->length; i++) {
         double d = arr->data[i];
         if (has_tagged) {
@@ -307,8 +308,10 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
             } else if (t == jd_tag(JdTag::ARR)) {
                 JdbArrayFwd* inner = (JdbArrayFwd*)(intptr_t)u.i;
                 out->elements.push_back(inner ? jdbarray_to_value(inner) : Value::make_none());
+            } else if (t == jd_tag(JdTag::BOOL)) {
+                out->elements.push_back(Value::make_bool(d != 0.0));
             } else {
-                // F64 / I64 / BOOL — numeric.
+                // F64 / I64 — numeric.
                 out->elements.push_back(Value::make_f64(d));
             }
             continue;
@@ -326,6 +329,9 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
                 // Nested array: recurse
                 out->elements.push_back(jdbarray_to_value((JdbArrayFwd*)p));
             }
+        } else if (has_bool) {
+            // Comparison-result array (flags bit2): cells are 0/1 booleans.
+            out->elements.push_back(Value::make_bool(d != 0.0));
         } else {
             // Either uniform f64 array, or a numeric cell inside a mixed-
             // type literal like [1, "x", 3] — the bit pattern reveals it
@@ -388,6 +394,13 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                     vargs.push_back(it->second);
                 else
                     vargs.push_back(Value::make_none());
+                break;
+            }
+            case JdTag::BOOL: {
+                // Wire carries the bool as a 0/1 integer. Without this case it
+                // fell through to default and memcpy'd the i64 bits into a
+                // double (1 -> the denormal 5e-324), not the boolean.
+                vargs.push_back(Value::make_bool(args[i] != 0));
                 break;
             }
             case JdTag::FUNCREF:
