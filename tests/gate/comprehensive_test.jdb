@@ -2149,6 +2149,39 @@ ce_calls = 0
 DIM ce_m AS DOUBLE = MAX([ce_bump(3), ce_bump(9)])
 Assert(ce_calls = 2, "MAX over distinct calls evaluates each once")
 
+' Broader single-eval coverage across the builtin dispatch paths (audit
+' 2026-06-10): array-consuming, vectorized (native_vec), string, and a HOF
+' array arg must each evaluate a side-effecting argument exactly once.
+FUNC ce_arr()
+    ce_calls = ce_calls + 1
+    RETURN [3.0, 1.0, 2.0]
+ENDFUNC
+FUNC ce_str$()
+    ce_calls = ce_calls + 1
+    RETURN "hello"
+ENDFUNC
+FUNC ce_dbl(ce_x AS DOUBLE)
+    RETURN ce_x * 2.0
+ENDFUNC
+ce_calls = 0
+DIM ce_e1 AS DOUBLE = SUM(ce_arr())
+Assert(ce_calls = 1, "SUM evaluates its array arg exactly once")
+ce_calls = 0
+DIM ce_e2 AS ARRAY = REVERSE(ce_arr())
+Assert(ce_calls = 1, "REVERSE evaluates its array arg exactly once")
+ce_calls = 0
+DIM ce_e3 AS ARRAY = SIN(ce_arr())
+Assert(ce_calls = 1, "vectorized SIN evaluates its array arg exactly once")
+ce_calls = 0
+DIM ce_e4 AS STRING = UCASE$(ce_str$())
+Assert(ce_calls = 1, "UCASE$ evaluates its arg exactly once")
+ce_calls = 0
+DIM ce_e5 AS ARRAY = APPEND(ce_arr(), 9.0)
+Assert(ce_calls = 1, "APPEND evaluates its array arg exactly once")
+ce_calls = 0
+DIM ce_e6 AS ARRAY = SELECT(ce_dbl@, ce_arr())
+Assert(ce_calls = 1, "SELECT evaluates its array arg exactly once")
+
 ' EOMONTH vectorized over a date array returns an array; its scalar form is
 ' the native-tagged one, so only the array form is interp-only.
 IF NOT OS.FEATURE("NATIVEC") THEN
