@@ -1222,7 +1222,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
                     "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
                     "FFT", "IFFT",
-                    "XSORT", "DATERANGE", "TALLY"
+                    "XSORT", "DATERANGE", "TALLY", "SCAN", "CUMSUM", "CUMPROD"
                 };
                 if (arr_calls.count(e.func_name)) return JD_TAG_ARR;
             }
@@ -2030,7 +2030,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "LINES", "WORDS", "CHARS", "UNPACK",
                             "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
                             "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS",
-                            "DIR$"
+                            "DIR$", "SCAN", "CUMSUM", "CUMPROD"
                         };
                         if (arr_returners.count(upper)) return JD_TAG_ARR;
                         static const std::unordered_set<std::string> scalar_reducers = {
@@ -8778,7 +8778,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // arithmetic — e.g. `signs = 1 - 2 * (CUMSUM(flips) MOD 2)`
                 // collapses to a single number, so SOUND.PLAYBUFFER then
                 // refuses its first argument as "not an array".
-                "IOTA", "CUMSUM", "CUMPROD", "FLATTEN", "RANGE",
+                "IOTA", "CUMSUM", "CUMPROD", "SCAN", "FLATTEN", "RANGE",
                 "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
                 "NORMALIZE", "DIFF", "APPEND",
                 // Date-vector + verdichtung producers

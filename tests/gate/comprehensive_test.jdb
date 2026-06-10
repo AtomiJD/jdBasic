@@ -2213,6 +2213,15 @@ DIM tly_s_v AS STRING = tly_s[0][0]
 Assert(tly_s_v = "a", "TALLY string value")
 Assert(tly_s[0][1] = 3, "TALLY string count")
 
+' SCAN (cumulative reduce, string operator) returns an array native — it was
+' classified as f64 by the VM bridge and came back as 0.
+DIM scn AS ARRAY = SCAN("+", [1.0, 2.0, 3.0, 4.0])
+Assert(LEN(scn) = 4, "SCAN length")
+Assert(scn[0] = 1, "SCAN prefix [0]")
+Assert(scn[3] = 10, "SCAN prefix [3]")
+DIM scn_m AS ARRAY = SCAN("*", [1.0, 2.0, 3.0, 4.0])
+Assert(scn_m[3] = 24, "SCAN product prefix [3]")
+
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.
 ' (Was breaking TEST_INNER.ADD_THING via TEST_OUTER.ADD_VIA_OUTER.)
