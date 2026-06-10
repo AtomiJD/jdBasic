@@ -4738,7 +4738,16 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
         // Special case: PRINT arr[idx] — use runtime-aware printer that
         // handles ptr-encoded strings in nested arrays (e.g. SPLIT results).
         const Expr& pe = *stmt.print_exprs[i];
-        if (pe.kind == ExprKind::INDEX && pe.left && pe.right) {
+        // A string key (`arr{"k"}`) parses to INDEX too; routing it through the
+        // numeric __print_arr_elem would hand an i8* where an i64 index is
+        // expected and the IR verifier aborts the whole compile. Only take this
+        // fast path for a non-string index; string keys fall through to the
+        // generic INDEX codegen (map/UDT dispatch, valid IR).
+        bool pe_str_key = pe.right &&
+            (pe.right->kind == ExprKind::LITERAL_STRING ||
+             (pe.right->kind == ExprKind::VARIABLE && !pe.right->str_val.empty() &&
+              pe.right->str_val.back() == '$'));
+        if (pe.kind == ExprKind::INDEX && pe.left && pe.right && !pe_str_key) {
             TypedValue arr = codegen_expr(*pe.left);
             if (arr.tag == JD_TAG_ARR) {
                 TypedValue idx = codegen_expr(*pe.right);
@@ -5793,6 +5802,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // match"). Coerce both i64 and bool back to f64 before ret.
             if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL)
                 ret_val = LLVMBuildSIToFP(builder, ret_val, f64_type, "itof");
+            else if (body.tag == JD_TAG_STR || body.tag == JD_TAG_ARR ||
+                     body.tag == JD_TAG_NATIVE_MAP)
+                // A string/array/map body is a pointer; pun its bits into the
+                // f64 return slot (the funcref calling convention is double(..))
+                // instead of letting an i8* flow into an f64 Ret — that made the
+                // IR verifier abort the WHOLE compile. Consumers that handle the
+                // result (e.g. SELECT marking the result array string) recover
+                // the pointer from the f64 bits.
+                ret_val = pun_i64_to_f64(
+                    LLVMBuildPtrToInt(builder, ret_val, i64_type, "lret2i"));
+            else if (body.tag == JD_TAG_RUNTIME)
+                ret_val = coerce_to(body, f64_type);
             LLVMBuildRet(builder, ret_val);
 
             // Restore state — position builder back at the EXACT block we were in
@@ -7454,6 +7475,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // funcref literal or a named FUNC whose return tag is STR. Used to flag
     // SELECT's result array so the punned-f64 string ptrs decode on read.
     auto funcref_returns_str = [&](const Expr& e) -> bool {
+        // Lambda funcref: inspect the body's return shape (a $-suffixed call or
+        // string literal => string-typed result, so SELECT must flag the array).
+        if (e.kind == ExprKind::LAMBDA_EXPR && e.right) {
+            const Expr& b = *e.right;
+            if (b.kind == ExprKind::LITERAL_STRING) return true;
+            if (b.kind == ExprKind::CALL && !b.func_name.empty() &&
+                b.func_name.back() == '$') return true;
+            if (b.kind == ExprKind::CALL) {
+                auto it = user_functions.find(b.func_name);
+                return it != user_functions.end() && it->second.return_tag == JD_TAG_STR;
+            }
+            return false;
+        }
         if (e.kind != ExprKind::LITERAL_STRING) return false;
         if (!e.str_val.empty() && e.str_val.back() == '$') return true;
         auto it = user_functions.find(e.str_val);
@@ -7497,12 +7531,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(arr_val.val);
                 arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             }
-            LLVMValueRef init_val = (expr.args.size() >= 3)
-                ? codegen_expr(*expr.args[2]).val
-                : LLVMConstReal(f64_type, 0.0);
+            // Evaluate the accumulator init exactly once and coerce to the f64
+            // the reducer signature expects. A string/array init is punned (not
+            // passed as a raw i8*, which made the IR verifier abort the whole
+            // compile); numeric reduction stays exact.
+            LLVMValueRef init_val;
             if (expr.args.size() >= 3) {
                 TypedValue iv = codegen_expr(*expr.args[2]);
-                init_val = iv.tag == JD_TAG_I64 ? LLVMBuildSIToFP(builder, iv.val, f64_type, "itof") : iv.val;
+                if (iv.tag == JD_TAG_I64 || iv.tag == JD_TAG_BOOL)
+                    init_val = LLVMBuildSIToFP(builder, iv.val, f64_type, "itof");
+                else if (iv.tag == JD_TAG_F64)
+                    init_val = iv.val;
+                else if (iv.tag == JD_TAG_RUNTIME)
+                    init_val = coerce_to(iv, f64_type);
+                else
+                    init_val = pun_i64_to_f64(
+                        LLVMBuildPtrToInt(builder, iv.val, i64_type, "init2i"));
+            } else {
+                init_val = LLVMConstReal(f64_type, 0.0);
             }
             auto& fn = runtime_funcs["__reduce_fn"];
             LLVMValueRef args[] = { fn_val.val, arr_ptr, init_val };

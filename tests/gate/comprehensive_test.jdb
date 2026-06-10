@@ -484,6 +484,11 @@ Assert(v.Length() = 5.0, "udt method length")
 v.Scale(2)
 Assert(v{"X"} = 6.0, "udt method scale x")
 Assert(v{"Y"} = 8.0, "udt method scale y")
+' C8 (audit): PRINT of a brace-key index on an ARR-tagged base (a UDT instance
+' is ARR-tagged in native) used to route through the numeric __print_arr_elem
+' with the string key as the index -> IR verifier aborted the whole compile.
+' The PRINT fast-path now skips string keys and falls to the generic path.
+PRINT "  udt brace-field via PRINT: "; v{"X"}
 
 ' Method call on a LOCAL object inside a SUB.
 ' Regression: the parser turns `obj.method(args)` into a CALL "OBJ.METHOD",
@@ -2275,6 +2280,20 @@ Assert(scat[1] = "bd", "string-array concat [1]")
 ' C6c: jdb_frmv must not overflow its fixed buffer on a large array.
 DIM bigstr = FRMV$(IOTA(3000))
 Assert(LEN(bigstr) > 100, "FRMV$ large array no-overflow")
+
+' C5a: a string-returning LAMBDA must not abort native compilation (the body
+' is a pointer; it is punned into the f64 funcref-return slot). SELECT flags
+' the result as a string array so the cells read back as strings.
+DIM selstr = SELECT(LAMBDA x -> STR$(x), [1.0, 2.0, 3.0])
+Assert(LEN(selstr) = 3, "SELECT lambda->string length")
+Assert(selstr[0] = "1", "SELECT lambda->string [0]")
+Assert(selstr[2] = "3", "SELECT lambda->string [2]")
+
+' C5b: REDUCE with an explicit numeric accumulator (3-arg form). The init is
+' evaluated once and coerced; non-numeric inits no longer abort the compile.
+DIM redsum = REDUCE(LAMBDA a, b -> a + b, [1.0, 2.0, 3.0], 100.0)
+Assert(redsum = 106, "REDUCE with numeric init")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.
