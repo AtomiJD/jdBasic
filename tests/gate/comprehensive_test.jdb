@@ -2996,6 +2996,36 @@ dyn_m = {"k": 42}
 Assert(dyn_m{"k"} = 42, "DIM AS MAP then assign map")
 
 ' ══════════════════════════════════════════════════════════════════
+' HOFs over string arrays - native parity (SELECT string param/return,
+' FILTER element-type preservation). See reference for the typed-param rule.
+' ══════════════════════════════════════════════════════════════════
+FUNC hsel_up$(s$)
+  RETURN UCASE$(s$)
+ENDFUNC
+FUNC hsel_len(s$)
+  RETURN LEN(s$)
+ENDFUNC
+FUNC hflt_long(s$)
+  RETURN LEN(s$) > 1
+ENDFUNC
+
+Header("HOFs over string arrays")
+
+DIM hof_words = ["aa", "b", "ccc"]
+DIM hof_up = SELECT(hsel_up$@, hof_words)
+Assert(hof_up[0] = "AA",  "SELECT string param+return [0]")
+Assert(hof_up[2] = "CCC", "SELECT string param+return [2]")
+DIM hof_ln = SELECT(hsel_len@, hof_words)
+Assert(hof_ln[0] = 2, "SELECT string param numeric return [0]")
+Assert(hof_ln[1] = 1, "SELECT string param numeric return [1]")
+DIM hof_kept = FILTER(hflt_long@, hof_words)
+Assert(LEN(hof_kept) = 2,   "FILTER over string array count")
+Assert(hof_kept[0] = "aa",  "FILTER string element [0]")
+Assert(hof_kept[1] = "ccc", "FILTER string element [1]")
+DIM hof_nums = [10, 20, 30]
+Assert(REDUCE(LAMBDA a, b -> a + b, hof_nums) = 60, "REDUCE numeric sum")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

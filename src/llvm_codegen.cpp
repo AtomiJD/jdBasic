@@ -7371,6 +7371,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return codegen_expr(e);
     };
 
+    // A funcref maps each element to a string when it's a $-suffixed
+    // funcref literal or a named FUNC whose return tag is STR. Used to flag
+    // SELECT's result array so the punned-f64 string ptrs decode on read.
+    auto funcref_returns_str = [&](const Expr& e) -> bool {
+        if (e.kind != ExprKind::LITERAL_STRING) return false;
+        if (!e.str_val.empty() && e.str_val.back() == '$') return true;
+        auto it = user_functions.find(e.str_val);
+        return it != user_functions.end() && it->second.return_tag == JD_TAG_STR;
+    };
     if ((upper == "SELECT" || upper == "FILTER") && expr.args.size() >= 2) {
         TypedValue fn_val = resolve_funcref(*expr.args[0], 1);
         TypedValue arr_val = codegen_expr(*expr.args[1]);
@@ -7385,6 +7394,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs[rt_name];
             LLVMValueRef args[] = { fn_val.val, arr_ptr };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "hof");
+            // SELECT mapping to strings → flag the result array so reads/PRINT
+            // decode the per-cell ptrs instead of showing the f64 bits as 0.
+            // FILTER returns source elements, so it inherits the source's flag
+            // via the runtime, not the predicate's return type.
+            if (upper == "SELECT" && funcref_returns_str(*expr.args[0])) {
+                auto* set_str = get_runtime_func("__arr_set_string_elems");
+                if (set_str) {
+                    LLVMValueRef ss[] = { result };
+                    LLVMBuildCall2(builder, set_str->fn_type, set_str->fn, ss, 1, "");
+                }
+            }
             return { result, JD_TAG_ARR };  // returns array
         }
     }

@@ -3598,6 +3598,12 @@ JdbArray* jdb_filter_fn(JdbMapFn fn, JdbArray* arr) {
     int64_t j = 0;
     for (int64_t i = 0; i < arr->length; i++)
         if (fn(arr->data[i]) != 0.0) r->data[j++] = arr->data[i];
+    // Preserve element-type flags (string / nested-ptr / bool) - FILTER
+    // returns source elements verbatim, so they keep their type. Exclude the
+    // per-cell-tags bit (8): the source's elem_tags is indexed by the ORIGINAL
+    // positions and would be wrong post-filter; the flag-based classifier
+    // recovers strings/arrays without it.
+    r->flags = arr->flags & ~(int32_t)8;
     return r;
 }
 
