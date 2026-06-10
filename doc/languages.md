@@ -1460,7 +1460,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`ENUMERATE(array) -> array`**: Pairs each element with its 0-based index, returning `[[0, a0], [1, a1], ...]`.
 * **`GROUPBY(key_fn@, array) -> map`**: Buckets elements into a map keyed by `key_fn(element)` (coerced to string). Each value is the list of matching elements. (Interpreter only.)
 * **`AGG(keys, values, fn@) -> array`**: Group-and-reduce in one O(n) pass (APL's dyadic *key*). Groups `values` by the matching `keys` entry, applies `fn` to each group's value-array, and returns a 2-column table `[[key, fn(group)], ...]` in first-seen key order. The key type is preserved (numbers stay numbers, unlike `GROUPBY`). Example: `AGG(months, nights, LAMBDA g -> SUM(g))` → room-nights per month; `AGG(months, nights, LEN@)` counts per group. (Interpreter only — `fn` receives an array group, which the native scalar HOF path can't pass.)
-* **`TALLY(array) -> array`**: Distinct values with their counts, `[[value, count], ...]`, in first-seen order (pandas `value_counts`). `TALLY([1,2,2,3,3,3])` → `[[1,1],[2,2],[3,3]]`. Numeric arrays compile native; string-key tallies are interpreter-only (the native bridge marshals nested string cells as 0).
+* **`TALLY(array) -> array`**: Distinct values with their counts, `[[value, count], ...]`, in first-seen order (pandas `value_counts`). `TALLY([1,2,2,3,3,3])` → `[[1,1],[2,2],[3,3]]`. Both numeric and string-key tallies compile native (e.g. `TALLY(-"banana")` → `[["b",1],["a",3],["n",2]]`).
 * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
 * **`REVERSE(array)`**: Reverses the elements of an array.
 * **`TRANSPOSE(matrix)`**: Transposes a 2D matrix.

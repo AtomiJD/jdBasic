@@ -178,6 +178,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_new",  "__array_new",  i8_ptr_type, {i64_type}, 3);
     reg("jdb_array_set",  "__array_set",  void_type, {i8_ptr_type, i64_type, f64_type}, -1);
     reg("jdb_array_get",  "__array_get",  f64_type, {i8_ptr_type, i64_type}, 1);
+    // Unary `-"abc"` → string char-split array (UTF-8 aware).
+    reg("jdb_str_to_chars", "__str_to_chars", i8_ptr_type, {i8_ptr_type}, 3);
     // Fancy/vector indexing helper: arr[indices_array] → new array.
     reg("jdb_array_gather", "__array_gather", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_array_len",  "LEN",          i64_type, {i8_ptr_type}, 0);
@@ -271,6 +273,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_map_get_obj","__map_get_obj",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 4);
     reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_str_slice",  "__str_slice",  i8_ptr_type, {i8_ptr_type, i64_type, i32_type}, 2);
     // Native generic vectorization helpers (avoid VM bridge overhead)
     reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_array_apply_ss",   "__arr_apply_ss",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -3153,6 +3156,21 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         else if (has_str && has_non_str) mixed_array_vars.insert(stmt.var_name);
         else if (has_str)                string_array_vars.insert(stmt.var_name);
     }
+    // -"string" / -word$ (unary MINUS on a string) compiles to a char-split
+    // array (see codegen_unary). Track the destination as a string array so
+    // subscripts and bridge-arg marshalling decode the cells as strings.
+    if (stmt.expr && stmt.expr->kind == ExprKind::UNARY &&
+        stmt.expr->op == TokenType::MINUS && stmt.expr->right) {
+        const Expr* o = stmt.expr->right.get();
+        bool op_is_str =
+            o->kind == ExprKind::LITERAL_STRING ||
+            (o->kind == ExprKind::VARIABLE &&
+             ((!o->str_val.empty() && o->str_val.back() == '$') ||
+              string_scalar_vars.count(o->str_val))) ||
+            (o->kind == ExprKind::CALL && !o->func_name.empty() &&
+             o->func_name.back() == '$');
+        if (op_is_str) string_array_vars.insert(stmt.var_name);
+    }
     if (stmt.expr && stmt.expr->kind == ExprKind::CALL &&
         !stmt.expr->func_name.empty()) {
         std::string u = stmt.expr->func_name;
@@ -3938,6 +3956,19 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (has_runtime)                 mixed_array_vars.insert(stmt.var_name);
         else if (has_str && has_non_str) mixed_array_vars.insert(stmt.var_name);
         else if (has_str)                string_array_vars.insert(stmt.var_name);
+    }
+    // -"string" / -word$ char-split → track destination as a string array.
+    if (stmt.expr && stmt.expr->kind == ExprKind::UNARY &&
+        stmt.expr->op == TokenType::MINUS && stmt.expr->right) {
+        const Expr* o = stmt.expr->right.get();
+        bool op_is_str =
+            o->kind == ExprKind::LITERAL_STRING ||
+            (o->kind == ExprKind::VARIABLE &&
+             ((!o->str_val.empty() && o->str_val.back() == '$') ||
+              string_scalar_vars.count(o->str_val))) ||
+            (o->kind == ExprKind::CALL && !o->func_name.empty() &&
+             o->func_name.back() == '$');
+        if (op_is_str) string_array_vars.insert(stmt.var_name);
     }
     if (stmt.expr->kind == ExprKind::CALL &&
         !stmt.expr->func_name.empty()) {
@@ -6028,6 +6059,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_h_m");
                 return { as_ptr, JD_TAG_NATIVE_MAP };
             }
+            // Element of a nested array (`arr` itself came from an inner
+            // INDEX, e.g. `grid[i][j]`). The inner array's element type is
+            // statically unknown — none of the var-keyed sets above apply
+            // because expr.left is an INDEX, not a VARIABLE. Recover the
+            // per-cell JdTag at runtime (elem_tags, else the looks-ptr
+            // heuristic over the array-wide string/nested flags) and return
+            // RUNTIME so PRINT / typed-DIM dispatch per element instead of
+            // printing a string/array cell as the f64 bit-pattern (→ 0).
+            if (expr.left && expr.left->kind == ExprKind::INDEX) {
+                auto& gtg = runtime_funcs["__arr_get_tagged"];
+                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "nest_gt_tag");
+                LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
+                LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
+                    getargs, 3, "nest_gt");
+                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "nest_gt_tagv");
+                LLVMValueRef as_i64 = pun_f64_to_i64(val);
+                return { as_i64, JD_TAG_RUNTIME, tag_v };
+            }
             // Plain numeric / untyped array: legacy f64 element.
             return { result, JD_TAG_F64 };
         }
@@ -6424,6 +6473,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ssub"), JD_TAG_STR };
     }
 
+    // String slicing via `/`:  "str" / n → last n chars; n / "str" → first n.
+    // Exactly one operand is a string (string/string falls through to concat).
+    if (expr.op == TokenType::SLASH &&
+        ((lhs.tag == JD_TAG_STR) != (rhs.tag == JD_TAG_STR))) {
+        LLVMValueRef str_v = (lhs.tag == JD_TAG_STR) ? lhs.val : rhs.val;
+        TypedValue n_tv    = (lhs.tag == JD_TAG_STR) ? rhs : lhs;
+        LLVMValueRef n     = coerce_to(n_tv, i64_type);
+        // lhs is the string → take from the right (last n); else from the left.
+        int from_left = (lhs.tag == JD_TAG_STR) ? 0 : 1;
+        auto& fn = runtime_funcs["__str_slice"];
+        LLVMValueRef args[] = { str_v, n, LLVMConstInt(i32_type, from_left, 0) };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "sslice"), JD_TAG_STR };
+    }
+
     // Tag 7 (runtime-tagged) must be materialised to f64 before arithmetic.
     if (lhs.tag == JD_TAG_RUNTIME) { lhs.val = coerce_to(lhs, f64_type); lhs.tag = JD_TAG_F64; }
     if (rhs.tag == JD_TAG_RUNTIME) { rhs.val = coerce_to(rhs, f64_type); rhs.tag = JD_TAG_F64; }
@@ -6508,6 +6571,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
     if (expr.op == TokenType::MINUS) {
         if (operand.tag == JD_TAG_F64)
             return { LLVMBuildFNeg(builder, operand.val, "fneg"), JD_TAG_F64 };
+        if (operand.tag == JD_TAG_STR) {
+            // -"abc" → ["a","b","c"] (UTF-8 char split), matching the
+            // interpreter. Without this the integer-negate fallthrough below
+            // would negate the string POINTER and any later use crashes.
+            auto& fn = runtime_funcs["__str_to_chars"];
+            LLVMValueRef args[] = { operand.val };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "str_chars"),
+                     JD_TAG_ARR };
+        }
         if (operand.tag == JD_TAG_ARR) {
             // Element-wise negate via arr * -1.0 (scalar_op code 2 = MUL).
             auto& fn = runtime_funcs["__arr_scalar_op"];

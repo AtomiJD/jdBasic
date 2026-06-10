@@ -1265,6 +1265,43 @@ char* jdb_str_repeat(const char* s, int64_t n) {
     return out;
 }
 
+// Unary `-"abc"` → ["a","b","c"], UTF-8 aware. Mirrors the interpreter's
+// OpCode::NEG string case. Returns a fresh array of one strdup'd string per
+// code point, flagged as a nested string array (bit0 ptr + bit1 string) with
+// explicit per-cell STR tags (bit3) so both the tagged INDEX getter and the
+// VM-bridge arg marshaller treat the cells as strings, not punned f64s.
+JdbArray* jdb_str_to_chars(const char* s) {
+    if (!s) return jdb_array_new(0);
+    size_t slen = strlen(s);
+    int64_t n = 0;
+    for (size_t i = 0; i < slen; ) {
+        unsigned char c = (unsigned char)s[i];
+        int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+        if (i + (size_t)len > slen) len = (int)(slen - i);
+        i += len; n++;
+    }
+    JdbArray* arr = jdb_array_new(n);
+    int64_t k = 0;
+    for (size_t i = 0; i < slen; ) {
+        unsigned char c = (unsigned char)s[i];
+        int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+        if (i + (size_t)len > slen) len = (int)(slen - i);
+        char* cp = (char*)malloc((size_t)len + 1);
+        memcpy(cp, s + i, len);
+        cp[len] = '\0';
+        union { int64_t iv; double d; } u; u.iv = (int64_t)(intptr_t)cp;
+        arr->data[k++] = u.d;
+        i += len;
+    }
+    arr->flags |= 3;  // nested ptr + string
+    if (n > 0) {
+        arr->elem_tags = (int8_t*)malloc((size_t)n);
+        for (int64_t i = 0; i < n; i++) arr->elem_tags[i] = (int8_t)2;  // STR
+        arr->flags |= 8;  // per-cell tags present
+    }
+    return arr;
+}
+
 // ── Maps / Objects (string-keyed) ──────────────────────────────
 // Simple linear-scan map; fine for the small maps used in tests.
 // Layout: { count, capacity, char** keys, double* values, int32* tags }
@@ -1575,6 +1612,22 @@ char* jdb_str_sub(const char* a, const char* b) {
         }
     }
     out[oi] = '\0';
+    return out;
+}
+
+// BASIC string slicing via `/`. `from_left` picks the side:
+//   n / "str"  → first n chars  (from_left = 1)
+//   "str" / n  → last  n chars  (from_left = 0)
+// Byte-based, mirroring the interpreter's substr semantics exactly.
+char* jdb_str_slice(const char* s, int64_t n, int32_t from_left) {
+    if (!s) return _strdup("");
+    size_t slen = strlen(s);
+    if (n < 0) n = 0;
+    if ((size_t)n >= slen) return _strdup(s);
+    char* out = (char*)malloc((size_t)n + 1);
+    const char* src = from_left ? s : (s + (slen - (size_t)n));
+    memcpy(out, src, (size_t)n);
+    out[n] = '\0';
     return out;
 }
 
