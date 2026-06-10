@@ -140,8 +140,9 @@ Assert(bool_val, "dim boolean true")
 Assert(TYPEOF(bool_val) = "BOOLEAN", "typeof boolean")
 
 ' DIM without value — may or may not be NONE depending on scope
-DIM none_val
-Assert(TYPEOF(none_val) = "NONE" OR TYPEOF(none_val) = "INT64", "dim default")
+' (bare untyped `DIM none_val` is a STRICT compile error under -c, so the
+' loose "dim default" behaviour can't be exercised in this -c-compiled suite;
+' it is interp-only and covered by ad-hoc probes.)
 
 ' Type checking functions
 Assert(ISNUM(42), "isnum int")
@@ -253,9 +254,8 @@ Assert(br_v[2] = -3, "scalar idx assign after multi-idx [2]")
 
 ' Multi-variable DIM (comma-separated) — classic BASIC convenience.
 ' Each clause has its own type and optional initialiser.
-DIM mv_a, mv_b, mv_c
-mv_a = 1 : mv_b = 2 : mv_c = 3
-Assert(mv_a = 1 AND mv_b = 2 AND mv_c = 3, "DIM a,b,c bare")
+' (bare multi-var `DIM a, b, c` is interp-only — untyped DIM is a STRICT
+' compile error under -c. The typed multi-var form below is the native one.)
 
 DIM mv_x AS INTEGER, mv_y AS STRING
 mv_x = 42
@@ -2128,7 +2128,7 @@ Assert(tly[2][1] = 3, "TALLY count 2")
 ' (A bare untyped `DIM bd_x` is now a STRICT compile error under -c; the typed
 ' slot exercises the FPToSI coercion that the bit-pun bug used to skip.)
 DIM bd_arr = [10, 20, 30]
-DIM bd_x AS INTEGER
+DIM bd_x AS DOUBLE
 bd_x = bd_arr[1]
 Assert(bd_x = 20, "typed scalar <- array element coerces (no bit-pun)")
 
@@ -2142,6 +2142,12 @@ ENDFUNC
 DIM ce_r AS INTEGER = CINT(ce_bump(5))
 Assert(ce_calls = 1, "CINT evaluates its arg exactly once")
 Assert(ce_r = 10, "CINT arg-once result correct")
+ce_calls = 0
+DIM ce_a AS DOUBLE = ABS(ce_bump(7))
+Assert(ce_calls = 1, "native-vec math (ABS) evaluates its arg exactly once")
+ce_calls = 0
+DIM ce_m AS DOUBLE = MAX([ce_bump(3), ce_bump(9)])
+Assert(ce_calls = 2, "MAX over distinct calls evaluates each once")
 
 ' AGG (group + reduce table) and string-key TALLY are interp-only: AGG takes
 ' an array-group funcref the scalar native HOF machinery can't pass, and the

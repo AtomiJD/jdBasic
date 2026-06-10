@@ -7946,6 +7946,25 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         {"ASC",    {"__arr_apply_ifs", "jdb_asc",     "ifs"}},
     };
 
+    // Evaluate every argument exactly once, up front, with the scalar runtime
+    // binding's param-type hints. Every dispatch path below (direct-array math,
+    // native/generic vectorize, the per-builtin special cases, the scalar call,
+    // and the VM-bridge fallback) reuses these — so a side-effecting arg
+    // (ABS(f()), CINT(f()), MAP.EXISTS(m, f())) is run exactly once, never 2-3x.
+    std::vector<TypedValue> arg_cache;
+    {
+        auto rit_h = runtime_funcs.find(upper);
+        unsigned pc_h = (rit_h != runtime_funcs.end()) ? LLVMCountParamTypes(rit_h->second.fn_type) : 0;
+        std::vector<LLVMTypeRef> pts_h(pc_h);
+        if (pc_h) LLVMGetParamTypes(rit_h->second.fn_type, pts_h.data());
+        arg_cache.reserve(expr.args.size());
+        for (size_t i = 0; i < expr.args.size(); i++) {
+            int hint = (i < pc_h && (pts_h[i] == f64_type || pts_h[i] == i64_type)) ? JD_TAG_F64 : -1;
+            ScopedLeafTag _lt(this, hint);
+            arg_cache.push_back(codegen_expr(*expr.args[i]));
+        }
+    }
+
     // Direct array specializations — bypass the apply_ff function-pointer
     // callback for unary math that can inline + vectorise.
     {
@@ -7960,7 +7979,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         };
         auto dit = direct_array_unary.find(upper);
         if (dit != direct_array_unary.end() && expr.args.size() == 1) {
-            TypedValue av = codegen_expr(*expr.args[0]);
+            TypedValue av = arg_cache[0];
             if (av.tag == JD_TAG_ARR) {
                 auto rit = runtime_funcs.find(dit->second);
                 if (rit != runtime_funcs.end()) {
@@ -7977,7 +7996,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     {
         auto vit = native_vec.find(upper);
         if (vit != native_vec.end() && !expr.args.empty()) {
-            TypedValue av = codegen_expr(*expr.args[0]);
+            TypedValue av = arg_cache[0];
             if (av.tag == JD_TAG_ARR) {
                 const VecSpec& spec = vit->second;
                 // Look up the scalar runtime function's LLVMValueRef (by name via runtime_funcs)
@@ -8004,7 +8023,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     return { result, JD_TAG_ARR };
                 }
                 if (strcmp(spec.sig, "sfi") == 0 && expr.args.size() == 2) {
-                    TypedValue nv = codegen_expr(*expr.args[1]);
+                    TypedValue nv = arg_cache[1];
                     LLVMValueRef n = coerce_to(nv, i64_type);
                     LLVMValueRef args[] = { av.val, n, scalar_fn };
                     LLVMValueRef result = LLVMBuildCall2(builder, applier->fn_type,
@@ -8012,8 +8031,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     return { result, JD_TAG_ARR };
                 }
                 if (strcmp(spec.sig, "sfii") == 0 && expr.args.size() == 3) {
-                    TypedValue av2 = codegen_expr(*expr.args[1]);
-                    TypedValue av3 = codegen_expr(*expr.args[2]);
+                    TypedValue av2 = arg_cache[1];
+                    TypedValue av3 = arg_cache[2];
                     LLVMValueRef a2 = coerce_to(av2, i64_type);
                     LLVMValueRef a3 = coerce_to(av3, i64_type);
                     LLVMValueRef args[] = { av.val, a2, a3, scalar_fn };
@@ -8026,22 +8045,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         no_native_vec:;
     }
 
-    // Evaluate each arg exactly once: the array-check loop here and the scalar
-    // runtime call below both consume the args. Re-evaluating in both ran a
-    // side-effecting arg twice (CINT(f()) called f twice). When the args are
-    // scalar (no vectorization), stash them and let the scalar path reuse them.
-    std::vector<TypedValue> arg_cache;
-    bool arg_cache_valid = false;
     // Check if any argument is an array AND the function is not blocklisted.
     if (!no_vectorize.count(upper) && !expr.args.empty()) {
-        std::vector<TypedValue> vals;
-        vals.reserve(expr.args.size());
+        std::vector<TypedValue> vals(arg_cache.begin(), arg_cache.end());
         bool has_array = false;
-        for (auto& a : expr.args) {
-            TypedValue v = codegen_expr(*a);
-            vals.push_back(v);
-            if (v.tag == JD_TAG_ARR) has_array = true;
-        }
+        for (auto& v : vals) if (v.tag == JD_TAG_ARR) has_array = true;
         if (has_array) {
             // Special case: DATEDIFF vectorization has a native fast path
             if (upper == "DATEDIFF" && vals.size() == 3 && vals[2].tag == JD_TAG_ARR && vals[1].tag != JD_TAG_ARR) {
@@ -8091,10 +8099,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMConstInt(i32_type, nargs, 0) };
             LLVMValueRef result = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec");
             return { result, JD_TAG_ARR };
-        } else {
-            // Scalar args: reuse them in the scalar runtime call below.
-            arg_cache = std::move(vals);
-            arg_cache_valid = true;
         }
     }
 
@@ -8105,7 +8109,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     };
     auto dit = date_accessors.find(upper);
     if (dit != date_accessors.end() && expr.args.size() == 1) {
-        TypedValue av = codegen_expr(*expr.args[0]);
+        TypedValue av = arg_cache[0];
         if (av.tag == JD_TAG_STR) {  // string arg → use _str variant
             auto sit = runtime_funcs.find(dit->second);
             if (sit != runtime_funcs.end()) {
@@ -8120,9 +8124,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // Handle IIF with strings: IIF(cond, str1, str2) → VM bridge
     if (upper == "IIF" && expr.args.size() == 3) {
-        TypedValue cond = codegen_expr(*expr.args[0]);
-        TypedValue val1 = codegen_expr(*expr.args[1]);
-        TypedValue val2 = codegen_expr(*expr.args[2]);
+        TypedValue cond = arg_cache[0];
+        TypedValue val1 = arg_cache[1];
+        TypedValue val2 = arg_cache[2];
         if (val1.tag == JD_TAG_STR || val2.tag == JD_TAG_STR) {
             // String IIF: use native select
             LLVMValueRef cond_i1 = to_i1(cond);
@@ -8153,7 +8157,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         std::string fn_name = (upper == "MIN") ? "__arr_min" : "__arr_max";
         auto ait = runtime_funcs.find(fn_name);
         if (ait != runtime_funcs.end()) {
-            TypedValue av = codegen_expr(*expr.args[0]);
+            TypedValue av = arg_cache[0];
             LLVMValueRef arr_ptr = av.val;
             if (av.tag == JD_TAG_F64) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(av.val);
@@ -8172,10 +8176,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // m2{k}=m{k}` (classic JSON-to-map forwarding) — exactly the pattern
     // rpg_engine.jdb uses to build per-NPC data from Tiled properties.
     if (upper == "MAP.EXISTS" && expr.args.size() == 2) {
-        TypedValue mtv = codegen_expr(*expr.args[0]);
+        TypedValue mtv = arg_cache[0];
         bool is_var = (expr.args[0]->kind == ExprKind::VARIABLE);
         if (mtv.tag == JD_TAG_NATIVE_MAP || (is_var && mtv.tag == JD_TAG_F64) || (is_var && mtv.tag == JD_TAG_I64)) {
-            TypedValue ktv = codegen_expr(*expr.args[1]);
+            TypedValue ktv = arg_cache[1];
             LLVMValueRef kptr = coerce_to(ktv, i8_ptr_type);
             LLVMValueRef mptr;
             if (mtv.tag == JD_TAG_NATIVE_MAP) {
@@ -8197,7 +8201,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // f64 bridge path runs MAP.EXISTS under the autovec guard, and
         // the handle's tag mapping into the typed-args helper loses info.
         if (mtv.tag == JD_TAG_VM_HANDLE) {
-            TypedValue ktv = codegen_expr(*expr.args[1]);
+            TypedValue ktv = arg_cache[1];
             LLVMValueRef kptr = coerce_to(ktv, i8_ptr_type);
             LLVMValueRef handle_g = LLVMGetNamedGlobal(module, "__jdrt_handle");
             LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, handle_g, "rt");
@@ -8208,7 +8212,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Runtime-tagged: branch on runtime_tag — if VM_HANDLE, use
         // obj_exists; else fall to __map_has on the punned pointer.
         if (mtv.tag == JD_TAG_RUNTIME && mtv.runtime_tag) {
-            TypedValue ktv = codegen_expr(*expr.args[1]);
+            TypedValue ktv = arg_cache[1];
             LLVMValueRef kptr = coerce_to(ktv, i8_ptr_type);
             LLVMValueRef is_vm = LLVMBuildICmp(builder, LLVMIntEQ, mtv.runtime_tag,
                 LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "isvm");
@@ -8245,7 +8249,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // Handle VAL with pointer-encoded doubles (from OS.ARGS array elements)
     if (upper == "VAL" && expr.args.size() == 1) {
-        TypedValue av = codegen_expr(*expr.args[0]);
+        TypedValue av = arg_cache[0];
         if (av.tag == JD_TAG_F64) {
             // f64 value — might be a pointer-encoded string from OS.ARGS
             auto& fn = runtime_funcs["__val_ptr"];
@@ -8293,19 +8297,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // a string-arg builtin (STR$, CONCAT) from an array-arg one
             // (JOIN, PUSH, SORT). For i8_ptr we let the arg codegen pick
             // the tagged path; coerce_to handles the resulting RUNTIME tag.
-            LLVMTypeRef pt = param_types[i];
-            int param_hint = -1;
-            if (pt == f64_type || pt == i64_type) param_hint = JD_TAG_F64;
-            // RAII-scoped: the per-arg hint never leaks past the codegen call,
-            // so a builtin used as an outer INDEX's idx (e.g. `m{"k"}[ABS(x)]`)
-            // can't clobber the outer's pending hint.
-            TypedValue av;
-            if (arg_cache_valid && i < arg_cache.size()) {
-                av = arg_cache[i];   // evaluated once in the array-check above
-            } else {
-                ScopedLeafTag _lt(this, param_hint);
-                av = codegen_expr(*expr.args[i]);
-            }
+            // Already evaluated exactly once up top with this param's hint.
+            TypedValue av = arg_cache[i];
             args.push_back(coerce_to(av, param_types[i]));
         }
         // Pad any unsupplied parameters with type-appropriate defaults so the
@@ -8412,11 +8405,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     // this, the F64 fast-path stripped the ARR tag and the
                     // bridge handed the bridge a numeric Value, so GUI.COMBO
                     // saw an empty array.
-                    TypedValue av;
-                    {
-                        ScopedLeafTag _lt(this, -1);
-                        av = codegen_expr(*expr.args[i]);
-                    }
+                    TypedValue av = arg_cache[i];  // evaluated exactly once up top
 
                     // Encode every arg into an i64 slot and pick a wire
                     // tag. Only tags the bridge decodes are emitted here;
