@@ -3410,6 +3410,7 @@ char* jdb_typeof_tag(int64_t tag) {
 
 char* jdb_frmv(JdbArray* arr) {
     if (!arr || arr->length == 0) return _strdup("[]");
+    bool has_tagged = (arr->flags & 8) != 0 && arr->elem_tags != nullptr;
     bool is_str = (arr->flags & 2) != 0;
     bool is_nested = (arr->flags & 1) != 0 && !is_str;
     bool is_bool = (arr->flags & 4) != 0;
@@ -3417,7 +3418,26 @@ char* jdb_frmv(JdbArray* arr) {
     int pos = 1;
     for (int64_t i = 0; i < arr->length && pos < 8180; i++) {
         if (i > 0) { buf[pos++] = ','; buf[pos++] = ' '; }
-        if (is_str) {
+        if (has_tagged) {
+            // Per-cell JdTag (mixed arrays, e.g. AGG/TALLY rows [key, n]).
+            int8_t t = arr->elem_tags[i];
+            union { double d; int64_t i; } u; u.d = arr->data[i];
+            if (t == 2) {  // STR
+                const char* s = (const char*)(intptr_t)u.i;
+                pos += snprintf(buf + pos, 8190 - pos, "%s", s ? s : "");
+            } else if (t == 3) {  // ARR
+                char* sub = jdb_frmv((JdbArray*)(intptr_t)u.i);
+                pos += snprintf(buf + pos, 8190 - pos, "%s", sub ? sub : "[]");
+                free(sub);
+            } else if (t == 8) {  // BOOL
+                pos += snprintf(buf + pos, 8190 - pos, "%s",
+                    arr->data[i] != 0.0 ? "TRUE" : "FALSE");
+            } else {       // F64 / I64 / unknown
+                char num[64];
+                jdb_format_double(num, sizeof(num), arr->data[i]);
+                pos += snprintf(buf + pos, 8190 - pos, "%s", num);
+            }
+        } else if (is_str) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
             const char* s = (const char*)(intptr_t)u.i;
             pos += snprintf(buf + pos, 8190 - pos, "%s", s ? s : "");
@@ -3585,6 +3605,70 @@ JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
     auto* r = jdb_array_new(arr->length);
     for (int64_t i = 0; i < arr->length; i++)
         r->data[i] = fn(arr->data[i]);
+    return r;
+}
+
+// AGG(keys, values, reducer) — group `values` by the matching `keys` entry
+// (first-seen order), call reducer(group) per group, return [[key, reduced],
+// ...]. `reducer` is the funcref wrapper (double(double)); it receives the
+// group as a punned array ptr and returns a numeric result. Key cells keep
+// the key array's type (string vs numeric); each result row carries per-cell
+// tags so nested reads (row[0]=key, row[1]=reduced) decode correctly.
+JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals) {
+    if (!keys || !vals) return jdb_array_new(0);
+    int64_t n = keys->length < vals->length ? keys->length : vals->length;
+    bool key_is_str = (keys->flags & 2) != 0;
+    int32_t grp_flags = vals->flags & ~(int32_t)8;  // group element-type flags
+
+    std::vector<double> key_cell;               // raw key bits per group
+    std::vector<std::vector<double>> gdata;     // value bits per group
+    auto same_key = [&](double a, double b) -> bool {
+        if (!key_is_str) return a == b;
+        union { double d; int64_t i; } ua, ub; ua.d = a; ub.d = b;
+        const char* sa = (const char*)(intptr_t)ua.i;
+        const char* sb = (const char*)(intptr_t)ub.i;
+        if (!sa || !sb) return sa == sb;
+        return strcmp(sa, sb) == 0;
+    };
+    for (int64_t i = 0; i < n; i++) {
+        double kc = keys->data[i];
+        int64_t g = -1;
+        for (size_t s = 0; s < key_cell.size(); s++)
+            if (same_key(key_cell[s], kc)) { g = (int64_t)s; break; }
+        if (g < 0) { g = (int64_t)key_cell.size(); key_cell.push_back(kc); gdata.push_back({}); }
+        gdata[(size_t)g].push_back(vals->data[i]);
+    }
+
+    int64_t ng = (int64_t)key_cell.size();
+    JdbArray* r = jdb_array_new(ng);
+    for (int64_t g = 0; g < ng; g++) {
+        JdbArray* grp = jdb_array_new((int64_t)gdata[(size_t)g].size());
+        for (size_t j = 0; j < gdata[(size_t)g].size(); j++) grp->data[j] = gdata[(size_t)g][j];
+        grp->flags = grp_flags;
+        union { double d; int64_t i; } ug; ug.i = (int64_t)(intptr_t)grp;
+        double reduced = reducer(ug.d);
+
+        JdbArray* row = jdb_array_new(2);
+        row->data[0] = key_cell[(size_t)g];
+        row->data[1] = reduced;
+        row->elem_tags = (int8_t*)malloc(2);
+        row->elem_tags[0] = key_is_str ? (int8_t)2 : (int8_t)1;  // STR or F64
+        row->elem_tags[1] = (int8_t)1;                            // F64
+        // A mixed [key, number] row is tagged per-cell ONLY (flag 8). Do NOT
+        // set the array-wide nested(bit0)/string(bit1) flags: bit0 would make
+        // array walkers recurse into the numeric cell as a JdbArray* (crash),
+        // and the per-cell tags already drive every typed read.
+        row->flags |= 8;
+
+        union { double d; int64_t i; } ur; ur.i = (int64_t)(intptr_t)row;
+        r->data[g] = ur.d;
+    }
+    r->flags |= 1;  // rows are nested arrays
+    if (ng > 0) {
+        r->elem_tags = (int8_t*)malloc((size_t)ng);
+        for (int64_t g = 0; g < ng; g++) r->elem_tags[g] = (int8_t)3;  // ARR
+        r->flags |= 8;
+    }
     return r;
 }
 

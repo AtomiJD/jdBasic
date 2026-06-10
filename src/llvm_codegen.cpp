@@ -461,6 +461,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     // jdb_reduce_fn(fn_ptr, array, init) -> double
     reg("jdb_reduce_fn", "__reduce_fn", f64_type, {i8_ptr_type, i8_ptr_type, f64_type}, 1);
+    // jdb_agg_fn(reducer_fn, keys, values) -> [[key, reduced], ...]
+    reg("jdb_agg_fn", "__agg_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
 
     // VM Bridge (for builtins not in the static runtime)
     reg("jdrt_init",     "__jdrt_init",     i8_ptr_type, {}, -1);
@@ -7430,6 +7432,100 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "red");
             return { result, JD_TAG_F64 };
         }
+    }
+
+    // AGG(keys, values, reducer@) — group + reduce. The reducer receives each
+    // group as an ARRAY, so it can't go through the f64(f64) funcref path used
+    // by SELECT: its single parameter must be array-typed. Two native forms:
+    //   - LAMBDA g -> SUM(g)         (compiled here with an ARR-bound param)
+    //   - a user FUNC with an `AS ARRAY` parameter (the generic wrapper puns)
+    // A bare builtin funcref (SUM@) has no user body to type its param, so it
+    // stays interpreter-only and reports a clear compile error.
+    if (upper == "AGG" && expr.args.size() == 3 && expr.args[2]) {
+        const Expr& fe = *expr.args[2];
+        LLVMValueRef reducer = nullptr;
+        if (fe.kind == ExprKind::LAMBDA_EXPR && fe.lambda_params.size() == 1 && fe.right) {
+            static int agg_lambda_counter = 0;
+            std::string nm = "__agg_reducer_" + std::to_string(agg_lambda_counter++);
+            LLVMTypeRef rty = LLVMFunctionType(f64_type, &f64_type, 1, 0);
+            LLVMValueRef rfn = LLVMAddFunction(module, nm.c_str(), rty);
+            LLVMValueRef saved_fn = current_fn;
+            LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+            current_fn = rfn;
+            scopes.push_back(Scope{});
+            LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, rfn, "entry");
+            LLVMPositionBuilderAtEnd(builder, entry);
+            // f64 param holds the punned group-array ptr; bind it as an ARR var.
+            VarInfo& vi = create_var(fe.lambda_params[0], JD_TAG_ARR);
+            LLVMValueRef as_i = pun_f64_to_i64(LLVMGetParam(rfn, 0));
+            LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "g_ptr");
+            LLVMBuildStore(builder, as_ptr, vi.alloca_val);
+            TypedValue body = codegen_expr(*fe.right);
+            LLVMValueRef rv = body.val;
+            if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL)
+                rv = LLVMBuildSIToFP(builder, rv, f64_type, "itof");
+            else if (body.tag != JD_TAG_F64)
+                rv = coerce_to(body, f64_type);
+            LLVMBuildRet(builder, rv);
+            scopes.pop_back();
+            current_fn = saved_fn;
+            LLVMPositionBuilderAtEnd(builder, saved_bb);
+            reducer = rfn;
+        } else if (fe.kind == ExprKind::LITERAL_STRING) {
+            if (user_functions.count(fe.str_val)) {
+                // Named user FUNC; works when its parameter is AS ARRAY.
+                reducer = build_funcref_wrapper(fe.str_val, 1);
+            } else {
+                // Bare array-reducer builtin (SUM@/MEAN@/LEN@): wrap the
+                // runtime aggregator in a double(double) trampoline that puns
+                // the f64 group ptr back to an array.
+                std::string bu = fe.str_val;
+                std::transform(bu.begin(), bu.end(), bu.begin(), ::toupper);
+                const char* rt = (bu == "SUM")  ? "SUM"  :
+                                 (bu == "MEAN") ? "MEAN" :
+                                 (bu == "LEN")  ? "LEN"  : nullptr;
+                if (rt) {
+                    static int agg_blt_counter = 0;
+                    std::string nm = "__agg_blt_" + bu + "_" + std::to_string(agg_blt_counter++);
+                    LLVMTypeRef rty = LLVMFunctionType(f64_type, &f64_type, 1, 0);
+                    LLVMValueRef rfn = LLVMAddFunction(module, nm.c_str(), rty);
+                    LLVMValueRef saved_fn = current_fn;
+                    LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+                    current_fn = rfn;
+                    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, rfn, "entry");
+                    LLVMPositionBuilderAtEnd(builder, entry);
+                    LLVMValueRef as_i = pun_f64_to_i64(LLVMGetParam(rfn, 0));
+                    LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "g_ptr");
+                    auto& bfn = runtime_funcs[rt];
+                    LLVMValueRef bargs[] = { as_ptr };
+                    LLVMValueRef bres = LLVMBuildCall2(builder, bfn.fn_type, bfn.fn, bargs, 1, "blt");
+                    LLVMValueRef rv = (bfn.return_tag == 0)  // LEN returns i64
+                        ? LLVMBuildSIToFP(builder, bres, f64_type, "itof") : bres;
+                    LLVMBuildRet(builder, rv);
+                    current_fn = saved_fn;
+                    LLVMPositionBuilderAtEnd(builder, saved_bb);
+                    reducer = rfn;
+                }
+            }
+        }
+        if (reducer) {
+            TypedValue keys_tv = codegen_expr(*expr.args[0]);
+            TypedValue vals_tv = codegen_expr(*expr.args[1]);
+            auto to_ptr = [&](TypedValue tv) -> LLVMValueRef {
+                if (tv.tag == JD_TAG_F64) {
+                    LLVMValueRef as_i = pun_f64_to_i64(tv.val);
+                    return LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr");
+                }
+                return tv.val;
+            };
+            auto& fn = runtime_funcs["__agg_fn"];
+            LLVMValueRef args[] = { reducer, to_ptr(keys_tv), to_ptr(vals_tv) };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "agg");
+            return { result, JD_TAG_ARR };
+        }
+        // Reducer we can't shape natively (a non-array-typed named FUNC, an
+        // exotic funcref): fall through to the generic dispatch so behaviour
+        // is unchanged rather than a hard compile error.
     }
 
     // Handle PUSH: PUSH arr, val → arr = APPEND(arr, val)
