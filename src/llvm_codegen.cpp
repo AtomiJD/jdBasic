@@ -2995,12 +2995,16 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
-    // Protect built-in constants: assignments to PI/E (case-insensitive)
-    // throw at runtime (matches interpreter) so TRY/CATCH can observe them.
+    // Protect built-in constants: assignments to PI/E/VBNEWLINE/VBCRLF/VBTAB
+    // (case-insensitive) throw at runtime (matches interpreter for PI/E) so
+    // TRY/CATCH can observe them.
     {
+        static const std::unordered_set<std::string> kBuiltinConsts = {
+            "PI", "E", "VBNEWLINE", "VBCRLF", "VBTAB"
+        };
         std::string up = stmt.var_name;
         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-        if (up == "PI" || up == "E") {
+        if (kBuiltinConsts.count(up)) {
             std::string msg = "Cannot assign to constant '" + stmt.var_name + "'";
             LLVMValueRef msg_str = LLVMBuildGlobalStringPtr(builder, msg.c_str(), ".const_err");
             auto& es = runtime_funcs["__err_set"];
@@ -3654,6 +3658,37 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         codegen_static_dim(stmt);
         return;
     }
+
+    // Built-in constants are not assignable — `DIM PI` / `DIM VBTAB` (case-
+    // insensitive) is a compile error. The strict compiler protects the whole
+    // set (PI, E, VBNEWLINE, VBCRLF, VBTAB) even though the loose interpreter
+    // only guards PI/E — shadowing any of them is a footgun.
+    {
+        static const std::unordered_set<std::string> kBuiltinConsts = {
+            "PI", "E", "VBNEWLINE", "VBCRLF", "VBTAB"
+        };
+        std::string cup = stmt.var_name;
+        std::transform(cup.begin(), cup.end(), cup.begin(), ::toupper);
+        if (kBuiltinConsts.count(cup)) {
+            report_error(stmt.source_file, stmt.line,
+                "Cannot DIM built-in constant '" + stmt.var_name +
+                "' — choose another name");
+        }
+    }
+
+    // STRICT: a DIM must commit to a type — either an explicit `AS` clause or an
+    // initializer whose type is inferable (DIM a=1 -> INTEGER, b=1.0 -> DOUBLE,
+    // c="x" -> STRING, d=CVDATE(..) -> DATE). A bare `DIM x` with neither is the
+    // untyped-slot footgun (silent bit-pun on a later foreign assignment), so
+    // require the author to commit to a type.
+    if (is_strict_here(stmt.source_file) &&
+        stmt.var_type == VarType::NONE && !stmt.expr &&
+        (stmt.label.empty() || stmt.label == "__EXPORT__")) {
+        report_error(stmt.source_file, stmt.line,
+            "STRICT: untyped DIM '" + stmt.var_name +
+            "' has no type and no initializer — add `AS <type>` or initialise it");
+    }
+
     // Phase 4 STRICT: DIM with declared type + initializer must match.
     // `DIM x AS INTEGER = "hello"` is the canonical bug this catches.
     // ARRAY and multi-dim shape inits are exempt — the initializer shape

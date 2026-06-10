@@ -2124,12 +2124,13 @@ Assert(tly[0][1] = 1, "TALLY count 0")
 Assert(tly[2][0] = 3, "TALLY value 2")
 Assert(tly[2][1] = 3, "TALLY count 2")
 
-' Bare untyped DIM receiving a numeric array element must coerce, not bit-pun.
-' (Native used to store the double's raw bits into the i64 slot -> ~4.6e18.)
+' A typed scalar receiving a numeric array element must coerce, not bit-pun.
+' (A bare untyped `DIM bd_x` is now a STRICT compile error under -c; the typed
+' slot exercises the FPToSI coercion that the bit-pun bug used to skip.)
 DIM bd_arr = [10, 20, 30]
-DIM bd_x
+DIM bd_x AS INTEGER
 bd_x = bd_arr[1]
-Assert(bd_x = 20, "bare DIM <- array element coerces (no bit-pun)")
+Assert(bd_x = 20, "typed scalar <- array element coerces (no bit-pun)")
 
 ' AGG (group + reduce table) and string-key TALLY are interp-only: AGG takes
 ' an array-group funcref the scalar native HOF machinery can't pass, and the
