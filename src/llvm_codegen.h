@@ -27,15 +27,16 @@ public:
     bool debug_log = false;  // emit line-by-line runtime trace
 
     // STRICT/EXPLICIT compile mode. Defaults are OFF during the staged
-    // rollout (Phases 3/4 add enforcement, Phase 6 migrates the stdlib
-    // + tests, then the defaults flip to true). Opt in per-translation-
-    // unit today via OPTION "EXPLICIT" / OPTION "STRICT" at the top of
-    // a source file. Opt out later via OPTION "EXPLICITOFF"/"NOSTRICT".
+    // The native compiler (`-c`) is STRICT + EXPLICIT by default: every native
+    // compile must declare its variables and types. The interpreter stays loose
+    // (it never runs this codegen). A *main* file opts out per-unit with
+    // OPTION "EXPLICITOFF" / OPTION "NOSTRICT"; IMPORTed modules are loose
+    // unless they opt in (is_strict_here keys on file.empty() = the main file).
     //   explicit_mode: undeclared variable use is a compile error.
     //   strict_mode:   every DIM needs a declared type, every assignment/call
     //                  is type-checked, diagnostics include file:line.
-    bool explicit_mode = false;
-    bool strict_mode = false;
+    bool explicit_mode = true;
+    bool strict_mode = true;
 
     // Accumulated compile diagnostics under STRICT/EXPLICIT. Reported after
     // the codegen pass so the user sees every mismatch, not just the first.

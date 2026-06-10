@@ -1,0 +1,1280 @@
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic Native Compiler Test Suite
+'  Tests the features supported by the LLVM native compiler
+' ══════════════════════════════════════════════════════════════════
+
+DIM PASS = 0
+DIM FAIL = 0
+
+DIM test_num = 0
+SUB Assert(N,cond)
+    test_num = test_num + 1
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        PRINT "FAIL Test #";N
+        FAIL = FAIL + 1
+    ENDIF
+ENDSUB
+
+' ── 1. ARITHMETIC ────────────────────────────────────────────
+PRINT "── Arithmetic ──"
+Assert(2,2 + 3 = 5)
+Assert(3,10 - 4 = 6)
+Assert(4,3 * 7 = 21)
+Assert(5,15 / 3 = 5)
+Assert(6,17 MOD 5 = 2)
+Assert(7,2 ^ 10 = 1024)
+Assert(8,-5 + 10 = 5)
+
+' ── 2. COMPARISONS ───────────────────────────────────────────
+PRINT "── Comparisons ──"
+Assert(9,5 > 3)
+Assert(10,3 < 5)
+Assert(11,5 >= 5)
+Assert(12,5 <= 5)
+Assert(13,5 = 5)
+Assert(14,5 <> 3)
+
+' ── 3. LOGIC ─────────────────────────────────────────────────
+PRINT "── Logic ──"
+Assert(15,1 AND 1)
+Assert(16,1 OR 0)
+Assert(17,NOT 0)
+Assert(18,NOT (1 AND 0))
+
+' ── 4. VARIABLES ─────────────────────────────────────────────
+PRINT "── Variables ──"
+DIM x = 42
+Assert(19,x = 42)
+x = x + 1
+Assert(20,x = 43)
+DIM y = 3.14
+Assert(21,y > 3)
+
+' ── 5. IF/ELSEIF/ELSE ────────────────────────────────────────
+PRINT "── IF/ELSE ──"
+DIM a = 10
+IF a > 5 THEN
+    Assert(22,1)
+ELSE
+    Assert(23,0)
+ENDIF
+
+IF a > 100 THEN
+    Assert(24,0)
+ELSEIF a > 5 THEN
+    Assert(25,1)
+ELSE
+    Assert(26,0)
+ENDIF
+
+' ── 6. FOR LOOP ──────────────────────────────────────────────
+PRINT "── FOR Loop ──"
+DIM s = 0
+FOR i = 1 TO 10
+    s = s + i
+NEXT i
+Assert(27,s = 55)
+
+DIM s2 = 0
+FOR i = 0 TO 10 STEP 2
+    s2 = s2 + i
+NEXT i
+Assert(28,s2 = 30)
+
+' ── 7. DO LOOP ───────────────────────────────────────────────
+PRINT "── DO Loop ──"
+DIM c = 0
+DO WHILE c < 5
+    c = c + 1
+LOOP
+Assert(29,c = 5)
+
+DIM d = 10
+DO
+    d = d - 1
+LOOP UNTIL d = 5
+Assert(30,d = 5)
+
+' ── 8. FUNC/SUB ──────────────────────────────────────────────
+PRINT "── FUNC/SUB ──"
+
+FUNC Add(a, b)
+    RETURN a + b
+ENDFUNC
+
+FUNC Factorial(n)
+    IF n <= 1 THEN RETURN 1
+    RETURN n * Factorial(n - 1)
+ENDFUNC
+
+Assert(31,Add(3, 7) = 10)
+Assert(32,Factorial(5) = 120)
+Assert(33,Factorial(10) = 3628800)
+
+' ── 9. GLOBAL VARS IN FUNC ──────────────────────────────────
+PRINT "── Globals in FUNC ──"
+DIM counter = 0
+SUB Increment()
+    counter = counter + 1
+ENDSUB
+Increment
+Increment
+Increment
+Assert(34,counter = 3)
+
+' ── 10. ARRAYS ───────────────────────────────────────────────
+PRINT "── Arrays ──"
+DIM arr[5]
+FOR i = 0 TO 4
+    arr[i] = (i + 1) * 10
+NEXT i
+Assert(35,arr[0] = 10)
+Assert(36,arr[4] = 50)
+Assert(37,LEN(arr) = 5)
+
+DIM b = IOTA(5)
+Assert(38,b[0] = 1)
+Assert(39,b[4] = 5)
+Assert(40,SUM(b) = 15)
+
+' ── 11. MATH BUILTINS ────────────────────────────────────────
+PRINT "── Math ──"
+Assert(41,ABS(-42) = 42)
+Assert(42,SQR(144) = 12)
+Assert(43,SIN(0) = 0)
+Assert(44,COS(0) = 1)
+Assert(45,INT(3.7) = 3)
+Assert(46,ROUND(3.5) = 4)
+Assert(47,FAC(7) = 5040)
+Assert(48,SIGN(-5) = -1)
+
+' ── 12. STRING OPS ───────────────────────────────────────────
+PRINT "── Strings ──"
+Assert(49,UPPER$("hello") = "HELLO")
+Assert(50,LOWER$("WORLD") = "world")
+Assert(51,LEFT$("Hello", 3) = "Hel")
+Assert(52,RIGHT$("Hello", 3) = "llo")
+Assert(53,MID$("Hello World", 6, 5) = "World")
+Assert(54,LEN("test") = 4)
+Assert(55,CHR$(65) = "A")
+Assert(56,ASC("A") = 65)
+Assert(57,INSTR("Hello World", "World") = 6)
+
+' ── 13. STRING CONCAT ────────────────────────────────────────
+PRINT "── String Concat ──"
+Assert(58,"Hello" + " " + "World" = "Hello World")
+Assert(59,"x=" + "42" = "x=42")
+
+' ── 14. DATE/TIME ────────────────────────────────────────────
+PRINT "── Date/Time ──"
+DIM n = NOW()
+Assert(60,YEAR(n) >= 2025)
+Assert(61,MONTH(n) >= 1 AND MONTH(n) <= 12)
+
+' ── 15. ARRAY OPS ────────────────────────────────────────────
+PRINT "── Array Ops ──"
+DIM v = IOTA(5)
+Assert(62,MIN(v) = 1)
+Assert(63,MAX(v) = 5)
+Assert(64,MEAN(v) = 3)
+Assert(65,PRODUCT(v) = 120)
+
+DIM rv = REVERSE(v)
+Assert(66,rv[0] = 5)
+Assert(67,rv[4] = 1)
+
+' ── 16. CODEC ────────────────────────────────────────────────
+PRINT "── Codec ──"
+DIM enc$ = CODEC.BASE64_ENCODE$("Hello")
+Assert(68,enc$ = "SGVsbG8=")
+DIM dec$ = CODEC.BASE64_DECODE$(enc$)
+Assert(69,dec$ = "Hello")
+
+' ── 17. EXITDO ───────────────────────────────────────────────
+PRINT "── EXITDO ──"
+DIM z = 0
+DO
+    z = z + 1
+    IF z = 5 THEN EXITDO
+LOOP
+Assert(70,z = 5)
+
+' ── 18. TYPEOF ───────────────────────────────────────────────
+PRINT "── TYPEOF ──"
+Assert(71,TYPEOF(42) = "INT64")
+Assert(72,TYPEOF(3.14) = "FLOAT64")
+Assert(73,TYPEOF("hi") = "STRING")
+
+' ── 19. NEGATIVE STEP FOR ─────────────────────────────────────
+PRINT "── Negative Step FOR ──"
+DIM ns = 0
+FOR i = 10 TO 1 STEP -1
+    ns = ns + i
+NEXT i
+Assert(74,ns = 55)
+
+' ── 20. EXITFOR ──────────────────────────────────────────────
+PRINT "── EXITFOR ──"
+DIM ef = 0
+FOR i = 1 TO 100
+    IF i = 6 THEN EXITFOR
+    ef = ef + i
+NEXT i
+Assert(75,ef = 15)
+
+' ── 21. CONTINUEFOR ──────────────────────────────────────────
+PRINT "── CONTINUEFOR ──"
+DIM cf = 0
+FOR i = 1 TO 5
+    IF i = 3 THEN CONTINUEFOR
+    cf = cf + i
+NEXT i
+Assert(76,cf = 12)
+
+' ── 22. DO UNTIL (top) ───────────────────────────────────────
+PRINT "── DO UNTIL top ──"
+DIM du = 0
+DO UNTIL du = 7
+    du = du + 1
+LOOP
+Assert(77,du = 7)
+
+' ── 23. DO LOOP WHILE ────────────────────────────────────────
+PRINT "── DO LOOP WHILE ──"
+DIM dlw = 0
+DO
+    dlw = dlw + 1
+LOOP WHILE dlw < 5
+Assert(78,dlw = 5)
+
+' ── 24. CONTINUEDO ───────────────────────────────────────────
+PRINT "── CONTINUEDO ──"
+DIM cd = 0
+DIM cd_sum = 0
+DO WHILE cd < 5
+    cd = cd + 1
+    IF cd = 3 THEN CONTINUEDO
+    cd_sum = cd_sum + cd
+LOOP
+Assert(79,cd_sum = 12)
+
+' ── 25. NESTED LOOPS ─────────────────────────────────────────
+PRINT "── Nested Loops ──"
+DIM nested = 0
+FOR i = 1 TO 3
+    FOR j = 1 TO 3
+        nested = nested + 1
+    NEXT j
+NEXT i
+Assert(80,nested = 9)
+
+' ── 26. FUNCTIONS ADVANCED ───────────────────────────────────
+PRINT "── Functions Advanced ──"
+
+FUNC Square(x)
+    RETURN x * x
+ENDFUNC
+
+FUNC SumOfSquares(a, b)
+    RETURN Square(a) + Square(b)
+ENDFUNC
+
+Assert(81,SumOfSquares(3, 4) = 25)
+
+' SUB modifying globals
+DIM sub_counter = 0
+SUB CountUp(n)
+    FOR ci = 1 TO n
+        sub_counter = sub_counter + 1
+    NEXT ci
+ENDSUB
+CountUp 5
+Assert(82,sub_counter = 5)
+
+' ── 27. MATH ADVANCED ────────────────────────────────────────
+PRINT "── Math Advanced ──"
+Assert(83,ABS(-42) = 42)
+Assert(84,ABS(42) = 42)
+Assert(85,INT(-3.7) = -3)
+Assert(86,FLOOR(3.7) = 3)
+Assert(87,CEIL(3.2) = 4)
+Assert(88,FAC(6) = 720)
+Assert(89,FAC(0) = 1)
+Assert(90,SQR(144) = 12)
+Assert(91,ABS(SIN(0)) < 0.001)
+Assert(92,ABS(COS(0) - 1) < 0.001)
+Assert(93,CLAMP(15, 0, 10) = 10)
+Assert(94,CLAMP(-5, 0, 10) = 0)
+Assert(95,CLAMP(5, 0, 10) = 5)
+
+' ── 28. STRING ADVANCED ──────────────────────────────────────
+PRINT "── String Advanced ──"
+Assert(96,REPLACE$("Hello World", "World", "jdBasic") = "Hello jdBasic")
+Assert(97,TRIM$("  hi  ") = "hi")
+Assert(98,LTRIM$("  hi") = "hi")
+Assert(99,RTRIM$("hi  ") = "hi")
+Assert(100,STARTSWITH("Hello", "He"))
+Assert(101,ENDSWITH("Hello", "lo"))
+Assert(102,NOT STARTSWITH("Hello", "lo"))
+
+' ── 29. FORMAT$ ──────────────────────────────────────────────
+PRINT "── FORMAT$ ──"
+Assert(103,FORMAT$("{:.2f}", 3.14159) = "3.14")
+Assert(104,FORMAT$("{}", 42) = "42")
+
+' ── 30. FILE I/O ─────────────────────────────────────────────
+PRINT "── File I/O ──"
+TXTWRITER "native_test_tmp.txt", "test data 123"
+DIM tmp$ = TXTREADER$("native_test_tmp.txt")
+Assert(105,tmp$ = "test data 123")
+Assert(106,FILE.EXISTS("native_test_tmp.txt"))
+KILL "native_test_tmp.txt"
+Assert(107,NOT FILE.EXISTS("native_test_tmp.txt"))
+
+' ── 31. DATE/TIME ────────────────────────────────────────────
+PRINT "── Date/Time ──"
+DIM now_val = NOW()
+Assert(108,YEAR(now_val) >= 2025)
+Assert(109,MONTH(now_val) >= 1 AND MONTH(now_val) <= 12)
+Assert(110,DAY(now_val) >= 1 AND DAY(now_val) <= 31)
+DIM tomorrow = DATEADD("D", 1, now_val)
+Assert(111,DATEDIFF("D", now_val, tomorrow) = 1)
+
+' ── 32. CODEC ────────────────────────────────────────────────
+PRINT "── Codec ──"
+Assert(112,CODEC.BASE64_ENCODE$("Hello") = "SGVsbG8=")
+Assert(113,CODEC.BASE64_DECODE$("SGVsbG8=") = "Hello")
+Assert(114,LEN(CODEC.UUID$()) > 30)
+Assert(115,LEN(CODEC.SHA256$("test")) = 64)
+
+' ── 33. ARRAY ADVANCED ───────────────────────────────────────
+PRINT "── Array Advanced ──"
+DIM va = IOTA(10)
+Assert(116,SUM(va) = 55)
+Assert(117,PRODUCT(IOTA(5)) = 120)
+Assert(118,MEAN(IOTA(5)) = 3)
+Assert(119,MEDIAN(IOTA(5)) = 3)
+Assert(120,MIN(va) = 1)
+Assert(121,MAX(va) = 10)
+Assert(122,INDEXOF(va, 5) = 4)
+Assert(123,COUNT(va, 5) = 1)
+Assert(124,ANY(va))
+Assert(125,ALL(va))
+
+DIM sorted = SORT(REVERSE(IOTA(5)))
+Assert(126,sorted[0] = 1)
+Assert(127,sorted[4] = 5)
+
+DIM cs = CUMSUM(IOTA(4))
+Assert(128,cs[0] = 1)
+Assert(129,cs[3] = 10)
+
+' ── 34. REGEX ────────────────────────────────────────────────
+PRINT "── Regex ──"
+' REGEX.MATCH(pattern$, text$) — entire-text match. Patterns must
+' anchor or cover the whole string; the legacy underscore form
+' REGEX_MATCH(text$, pattern$) does substring search instead.
+Assert(130,REGEX.MATCH("[a-z0-9]+", "abc123"))
+Assert(131,NOT REGEX.MATCH("^[0-9]+$", "abcdef"))
+Assert(132,REGEX.REPLACE("[0-9]+", "Hello 2026", "XXXX") = "Hello XXXX")
+
+' ── 35. SYSTEM ───────────────────────────────────────────────
+PRINT "── System ──"
+Assert(133,LEN(PWD()) > 0)
+Assert(134,LEN(GETENV$("PATH")) > 0)
+Assert(135,OS.GETOS$() = "WINDOWS" OR OS.GETOS$() = "LINUX" OR OS.GETOS$() = "MACOS")
+Assert(136,TICK() > 0)
+
+' ── 36. POWER & SPECIAL OPS ──────────────────────────────────
+PRINT "── Power & Special ──"
+Assert(137,2 ^ 0 = 1)
+Assert(138,2 ^ 1 = 2)
+Assert(139,2 ^ 16 = 65536)
+Assert(140,IIF(1, 42, 99) = 42)
+Assert(141,IIF(0, 42, 99) = 99)
+
+' ── 37. SWITCH ────────────────────────────────────────────────
+PRINT "── SWITCH ──"
+DIM sw_val = 2
+DIM sw_result = 0
+SWITCH sw_val
+CASE 1
+    sw_result = 10
+CASE 2
+    sw_result = 20
+CASE 3
+    sw_result = 30
+DEFAULT
+    sw_result = -1
+ENDSWITCH
+Assert(142,sw_result = 20)
+
+sw_val = 99
+SWITCH sw_val
+CASE 1
+    sw_result = 10
+DEFAULT
+    sw_result = -1
+ENDSWITCH
+Assert(143,sw_result = -1)
+
+' ── 38. ENUM ──────────────────────────────────────────────────
+PRINT "── ENUM ──"
+ENUM Directions
+    NORTH = 0
+    EAST = 1
+    SOUTH = 2
+    WEST = 3
+ENDENUM
+Assert(144,Directions.NORTH = 0)
+Assert(145,Directions.EAST = 1)
+Assert(146,Directions.SOUTH = 2)
+Assert(147,Directions.WEST = 3)
+
+' ── 39. BITWISE ──────────────────────────────────────────────
+PRINT "── Bitwise ──"
+Assert(148,(5 BAND 3) = 1)
+Assert(149,(5 BOR 3) = 7)
+Assert(150,(5 XOR 3) = 6)
+
+' ── 40. ANDALSO/ORELSE ───────────────────────────────────────
+PRINT "── ANDALSO/ORELSE ──"
+Assert(151,1 ANDALSO 1)
+Assert(152,NOT (1 ANDALSO 0))
+Assert(153,1 ORELSE 0)
+Assert(154,NOT (0 ORELSE 0))
+
+' ── 41. FOR EACH ─────────────────────────────────────────────
+PRINT "── FOR EACH ──"
+DIM nums = IOTA(5)
+DIM each_sum = 0.0
+FOR EACH n IN nums
+    each_sum = each_sum + n
+NEXT n
+Assert(155,each_sum = 15)
+
+' ── 42. HEX LITERALS ────────────────────────────────────────
+PRINT "── Hex Literals ──"
+Assert(156,$FF = 255)
+Assert(157,$0A = 10)
+Assert(158,$80000 = 524288)
+
+' ── 43. NESTED IF/SWITCH ─────────────────────────────────────
+PRINT "── Nested IF/SWITCH ──"
+DIM grade = 85
+DIM result$ = ""
+IF grade >= 90 THEN
+    result$ = "A"
+ELSEIF grade >= 80 THEN
+    result$ = "B"
+ELSEIF grade >= 70 THEN
+    result$ = "C"
+ELSE
+    result$ = "F"
+ENDIF
+Assert(159,result$ = "B")
+
+' ── 44. LAMBDA + SELECT ───────────────────────────────────────
+PRINT "── Lambda + SELECT ──"
+DIM la_doubled = SELECT(lambda x -> x * 2, IOTA(5))
+Assert(160,la_doubled[0] = 2)
+Assert(161,la_doubled[4] = 10)
+Assert(162,SUM(la_doubled) = 30)
+
+' ── 45. LAMBDA + FILTER ──────────────────────────────────────
+PRINT "── Lambda + FILTER ──"
+DIM la_evens = FILTER(lambda x -> (x MOD 2) = 0, IOTA(10))
+Assert(163,la_evens[0] = 2)
+Assert(164,la_evens[4] = 10)
+Assert(165,LEN(la_evens) = 5)
+
+' ── 46. LAMBDA + REDUCE ──────────────────────────────────────
+PRINT "── Lambda + REDUCE ──"
+DIM la_sum = REDUCE(lambda acc, x -> acc + x, IOTA(10), 0)
+Assert(166,la_sum = 55)
+DIM la_prod = REDUCE(lambda acc, x -> acc * x, IOTA(5), 1)
+Assert(167,la_prod = 120)
+
+' ── 47. LAMBDA CAPTURES (globals) ────────────────────────────
+PRINT "── Lambda Captures ──"
+DIM la_offset = 1000
+DIM la_result = SELECT(lambda x -> x + la_offset, IOTA(3))
+Assert(168,la_result[0] = 1001)
+Assert(169,la_result[2] = 1003)
+
+DIM la_min_val = 5
+DIM la_filtered = FILTER(lambda x -> x >= la_min_val, IOTA(10))
+Assert(170,LEN(la_filtered) = 6)
+Assert(171,la_filtered[0] = 5)
+
+' ── 48. PIPE OPERATOR ────────────────────────────────────────
+PRINT "── PIPE ──"
+DIM pipe_r1 = 21 |> lambda x -> x * 2
+Assert(172,pipe_r1 = 42)
+
+FUNC PipeDouble(x)
+    RETURN x * 2
+ENDFUNC
+DIM pipe_r2 = 25 |> PipeDouble
+Assert(173,pipe_r2 = 50)
+
+DIM pipe_r3 = IOTA(5) |> FILTER(lambda x -> x > 3, ?)
+Assert(174,LEN(pipe_r3) = 2)
+Assert(175,pipe_r3[0] = 4)
+
+' ── 49. LAMBDA SQUARES + CHAIN ───────────────────────────────
+PRINT "── Lambda Chain ──"
+DIM la_chain = FILTER(lambda x -> x > 10, SELECT(lambda x -> x ^ 2, IOTA(5)))
+Assert(176,la_chain[0] = 16)
+Assert(177,la_chain[1] = 25)
+Assert(178,LEN(la_chain) = 2)
+
+' ── 50. STRING-ARRAY ELEMENT EXTRACTION ──────────────────────
+'   Regression for native codegen bugs (2026-05-01) where arr[i]
+'   and FOR EACH over dynamically-typed string arrays returned 0
+'   instead of the actual string. DIR$(FALSE) and OS.ARGS were
+'   the production triggers.
+PRINT "── String-Array Element Extraction ──"
+
+' Literal: already tracked, sanity guard.
+DIM sa_lits = ["alpha", "beta", "gamma"]
+Assert(179, sa_lits[0] = "alpha")
+Assert(180, sa_lits[2] = "gamma")
+
+' SPLIT: already tracked, sanity guard.
+DIM sa_parts = SPLIT("a,b,c,d", ",")
+Assert(181, sa_parts[0] = "a")
+Assert(182, sa_parts[3] = "d")
+
+' DIR$(*, FALSE) — was broken.
+MKDIR "_sa_tmp"
+TXTWRITER "_sa_tmp/alpha.txt", "a"
+TXTWRITER "_sa_tmp/bravo.txt", "b"
+TXTWRITER "_sa_tmp/charlie.txt", "c"
+DIM sa_names = DIR$("_sa_tmp/*", FALSE)
+Assert(183, LEN(sa_names) = 3)
+Assert(184, LEN(sa_names[0]) > 0)
+DIM sa_saw = 0
+DIM sa_i = 0
+FOR sa_i = 0 TO LEN(sa_names) - 1
+    IF sa_names[sa_i] = "alpha.txt" THEN sa_saw = 1
+NEXT sa_i
+Assert(185, sa_saw = 1)
+
+' FOR EACH over string array — iter-var was 0 in native.
+DIM sa_concat = ""
+DIM sa_s = ""
+FOR EACH sa_s IN sa_parts
+    sa_concat = sa_concat + sa_s
+NEXT
+Assert(186, sa_concat = "abcd")
+
+DIM sa_seen = 0
+DIM sa_nm = ""
+FOR EACH sa_nm IN sa_names
+    IF LEN(sa_nm) > 0 THEN sa_seen = sa_seen + 1
+NEXT
+Assert(187, sa_seen = 3)
+
+KILL "_sa_tmp/alpha.txt"
+KILL "_sa_tmp/bravo.txt"
+KILL "_sa_tmp/charlie.txt"
+RMDIR "_sa_tmp"
+
+' OS.ARGS — runtime-test of element type. When this script is invoked
+' as `jdBasic.exe -c native_test.jdb` (no extra args), OS.ARGS is
+' empty; the dedicated tests/test_native_os_args.jdb is the runner
+' that asserts non-empty OS.ARGS()[0] is a real string.
+DIM sa_args = OS.ARGS()
+Assert(188, LEN(sa_args) >= 0)
+
+' APPEND(string_arr_a, string_arr_b) — result must keep its strings.
+DIM sa_x = ["aa", "bb"]
+DIM sa_y = ["cc", "dd"]
+DIM sa_xy = APPEND(sa_x, sa_y)
+Assert(189, LEN(sa_xy) = 4)
+DIM sa_xy0 = ""
+DIM sa_xy3 = ""
+sa_xy0 = sa_xy[0]
+sa_xy3 = sa_xy[3]
+Assert(190, sa_xy0 = "aa")
+Assert(191, sa_xy3 = "dd")
+
+' ── 51. DIM SHADOWING INSIDE FUNC/SUB ────────────────────────
+'   Native regression: `DIM x` inside a FUNC/SUB used to find an
+'   outer same-named global via lookup_var and write into THAT slot
+'   instead of allocating a fresh local. Recursive walk()'s `DIM i`
+'   then clobbered the caller's `DIM i AS INTEGER` loop counter →
+'   wedge.
+PRINT "── DIM Shadowing ──"
+
+EXPORT DIM shd_calls = 0   ' written from the recursive FUNC — EXPORT so the module global is shared
+FUNC shd_walk(depth AS INTEGER)
+    shd_calls = shd_calls + 1
+    IF depth = 0 THEN RETURN 0
+    DIM i AS INTEGER
+    DIM total AS DOUBLE = 0
+    FOR i = 0 TO 2
+        total = total + shd_walk(depth - 1)
+    NEXT i
+    RETURN total
+ENDFUNC
+
+DIM i AS INTEGER
+DIM shd_outer = 0
+FOR i = 0 TO 1
+    shd_outer = shd_outer + 1
+    shd_walk(2)
+NEXT i
+Assert(192, shd_outer = 2)
+Assert(193, shd_calls = 26)
+
+DIM shd_x = 5
+SUB shd_local_only()
+    DIM shd_x AS INTEGER
+    shd_x = 99
+ENDSUB
+shd_local_only
+Assert(194, shd_x = 5)
+
+DIM shd_v = 7
+FUNC shd_get_v(shd_v AS INTEGER)
+    RETURN shd_v + 1
+ENDFUNC
+Assert(195, shd_get_v(40) = 41)
+Assert(196, shd_v = 7)
+
+' ── 52. VECTOR STRING EQUALITY + UNIQUE ──────────────────────
+'   `(string_arr = scalar_str)` and UNIQUE(string_arr) used to
+'   compare punned-pointer bits in native; identical text in
+'   separate allocations slipped through.
+PRINT "── Vector String Equality ──"
+
+DIM vse_xs = SPLIT("aa,bb,aa,cc,aa", ",")
+DIM vse_h = "aa"
+DIM vse_mask = (vse_xs = vse_h)
+Assert(197, SUM(vse_mask) = 3)
+Assert(198, LEN(vse_mask) = 5)
+DIM vse_neq = (vse_xs <> vse_h)
+Assert(199, SUM(vse_neq) = 2)
+
+DIM vse_a = SPLIT("alpha,beta,alpha,gamma,beta", ",")
+DIM vse_u = UNIQUE(vse_a)
+Assert(200, LEN(vse_u) = 3)
+
+DIM vse_sa = CODEC.SHA256$("hello")
+DIM vse_sb = CODEC.SHA256$("hello")
+DIM vse_sc = CODEC.SHA256$("world")
+DIM vse_hashes = [vse_sa, vse_sb, vse_sc]
+DIM vse_huniq = UNIQUE(vse_hashes)
+Assert(201, LEN(vse_huniq) = 2)
+
+' ── 53. ARRAY-TRANSFORMER FLAG PROPAGATION ───────────────────
+'   Runtime audit: each transformer (REVERSE / SORT / TAKE / DROP /
+'   APPEND / DIFF / FLATTEN / SHUFFLE / UNIQUE / STR$ / apply_ss)
+'   must preserve the string-elements flag on its result so the
+'   PRINT path's flag-driven dispatch keeps rendering strings.
+PRINT "── String-array flag propagation ──"
+
+DIM tfp_xs = SPLIT("alpha,beta,gamma", ",")
+DIM tfp_x0 = ""
+tfp_x0 = tfp_xs[0]
+Assert(202, tfp_x0 = "alpha")
+DIM tfp_x2 = ""
+tfp_x2 = tfp_xs[2]
+Assert(203, tfp_x2 = "gamma")
+
+DIM tfp_rev = REVERSE(tfp_xs)
+DIM tfp_r0 = ""
+tfp_r0 = tfp_rev[0]
+Assert(204, tfp_r0 = "gamma")
+
+DIM tfp_tk = TAKE(2, tfp_xs)
+DIM tfp_tk0 = ""
+tfp_tk0 = tfp_tk[0]
+Assert(205, tfp_tk0 = "alpha")
+
+DIM tfp_dr = DROP(1, tfp_xs)
+DIM tfp_dr0 = ""
+tfp_dr0 = tfp_dr[0]
+Assert(206, tfp_dr0 = "beta")
+
+DIM tfp_ext = APPEND(tfp_xs, ["delta"])
+Assert(207, LEN(tfp_ext) = 4)
+DIM tfp_e3 = ""
+tfp_e3 = tfp_ext[3]
+Assert(208, tfp_e3 = "delta")
+
+DIM tfp_chain = UNIQUE(APPEND(REVERSE(tfp_xs), ["alpha"]))
+Assert(209, LEN(tfp_chain) = 3)
+DIM tfp_c0 = ""
+DIM tfp_c2 = ""
+tfp_c0 = tfp_chain[0]
+tfp_c2 = tfp_chain[2]
+Assert(210, tfp_c0 = "gamma")
+Assert(211, tfp_c2 = "alpha")
+
+DIM tfp_nums = [10, 20, 30]
+DIM tfp_strs = STR$(tfp_nums)
+Assert(212, LEN(tfp_strs) = 3)
+DIM tfp_s0 = ""
+tfp_s0 = tfp_strs[0]
+Assert(213, tfp_s0 = "10")
+
+' ══════════════════════════════════════════════════════════════════
+' FUNC AS TYPE return-type annotations
+' ──────────────────────────────────────────────────────────────────
+' Regression for the codegen: explicit `AS STRING / ARRAY / OBJECT
+' / DOUBLE` on a FUNC must override the f64-default that historically
+' bit-pun'd ptr returns through a double. Covers literal returns,
+' nested wrapping, and module-crossing flow.
+' ══════════════════════════════════════════════════════════════════
+PRINT "── FUNC AS TYPE ──"
+
+IMPORT NATIVE_TEST_MODX
+
+' AS STRING — single FUNC, $-suffix harmless
+FUNC ft_str$() AS STRING
+    RETURN "abc"
+ENDFUNC
+DIM ftS$ = ft_str$()
+Assert(214, ftS$ = "abc")
+Assert(215, LEN(ft_str$()) = 3)
+
+' AS STRING — nested FUNC chain
+FUNC ft_str_inner$() AS STRING
+    RETURN "deep"
+ENDFUNC
+FUNC ft_str_outer$() AS STRING
+    RETURN ft_str_inner$() + "_W"
+ENDFUNC
+DIM ftSW$ = ft_str_outer$()
+Assert(216, ftSW$ = "deep_W")
+
+' AS ARRAY — direct
+FUNC ft_arr() AS ARRAY
+    RETURN [1, 2, 3, 4]
+ENDFUNC
+DIM ftA = ft_arr()
+Assert(217, LEN(ftA) = 4)
+Assert(218, ftA[0] = 1)
+Assert(219, ftA[3] = 4)
+
+' AS ARRAY — nested wrapper
+FUNC ft_arr_wrap() AS ARRAY
+    RETURN ft_arr()
+ENDFUNC
+DIM ftAW = ft_arr_wrap()
+Assert(220, LEN(ftAW) = 4)
+Assert(221, ftAW[2] = 3)
+
+' AS OBJECT — JSON handle direct
+FUNC ft_obj(s$) AS OBJECT
+    RETURN JSON.PARSE$(s$)
+ENDFUNC
+DIM ftO = ft_obj("[100,200,300]")
+Assert(222, LEN(ftO) = 3)
+' VM_HANDLE-element equality: stringify then compare so the test
+' doesn't depend on the (separately-tracked) runtime-tagged-equals
+' codegen path. The element value itself is materialised correctly,
+' as PRINT confirms — only `=` on a raw RUNTIME tag is unfinished.
+Assert(223, STR$(ftO[1]) = "200")
+
+' AS OBJECT — nested chain
+FUNC ft_obj_outer(s$) AS OBJECT
+    RETURN ft_obj(s$)
+ENDFUNC
+DIM ftOO = ft_obj_outer("[1,2,3,4,5]")
+Assert(224, LEN(ftOO) = 5)
+Assert(225, STR$(ftOO[4]) = "5")
+
+' AS DOUBLE — direct
+FUNC ft_dbl(x AS DOUBLE) AS DOUBLE
+    RETURN x * 1.5
+ENDFUNC
+DIM ftD = ft_dbl(4.0)
+Assert(226, ftD = 6.0)
+
+' Cross-module STRING
+DIM mxS$ = NATIVE_TEST_MODX.mx_str$("hello")
+Assert(227, mxS$ = "hello_X")
+
+' Cross-module ARRAY
+DIM mxA = NATIVE_TEST_MODX.mx_arr()
+Assert(228, LEN(mxA) = 3)
+Assert(229, mxA[1] = 20)
+
+' Cross-module OBJECT
+DIM mxO = NATIVE_TEST_MODX.mx_obj("[7,8,9]")
+Assert(230, LEN(mxO) = 3)
+Assert(231, STR$(mxO[2]) = "9")
+
+' Cross-module + nested OBJECT (the SQLITE.QUERY → DB.QROWS pattern)
+DIM mxOW = NATIVE_TEST_MODX.mx_obj_wrap("[42]")
+Assert(232, LEN(mxOW) = 1)
+Assert(233, STR$(mxOW[0]) = "42")
+
+' Cross-module DOUBLE
+DIM mxD = NATIVE_TEST_MODX.mx_dbl(4.0)
+Assert(234, mxD = 10.0)
+
+' OBJECT handle stored into a MAP slot (the vstate{"list"} = QROWS()
+' pattern — caused vstate{"list"} to read back garbage when map_set
+' coerce'd the handle through __jdrt_val_to_f64 instead of pun-storing
+' the raw key bits).
+DIM ftMap AS MAP
+ftMap{"data"} = ft_obj("[10,20,30,40]")
+DIM ftMapData = ftMap{"data"}
+Assert(235, LEN(ftMapData) = 4)
+Assert(236, STR$(ftMapData[2]) = "30")
+
+' Multi-statement OBJECT-returning FUNC with empty-array fallback
+' (equivalent of SQLITE.QUERY's `RETURN []` in the error path).
+FUNC ft_maybe_obj(empty AS INTEGER) AS OBJECT
+    IF empty <> 0 THEN
+        RETURN JSON.PARSE$("[]")
+    ENDIF
+    RETURN JSON.PARSE$("[1,2,3]")
+ENDFUNC
+DIM ftMaybe = ft_maybe_obj(0)
+Assert(237, LEN(ftMaybe) = 3)
+
+' ══════════════════════════════════════════════════════════════════
+' Tests 238-265: ARRAY_LITERAL with map-lookup elements (per-cell tags),
+' tag-aware FUNC ABI for FUNCs that use TYPEOF on a parameter, BINARY
+' comparison BOOL inference, and ambient-state-leak audit across user
+' FUNC / SUB / builtin / VM-bridge call sites.
+' ══════════════════════════════════════════════════════════════════
+DIM mxMap AS MAP
+mxMap{"name"} = "Anna"
+mxMap{"email"} = "anna@example.com"
+mxMap{"age"} = 42
+mxMap{"score"} = 99.5
+
+' Simple: ARRAY_LITERAL with single map-lookup element. Pre-fix segfaulted
+' on PRINT and arr[0] returned the empty-array repr "[]".
+DIM mxArr1 = [mxMap{"name"}]
+Assert(238, mxArr1[0] = "Anna")
+
+' All-string map values
+DIM mxArr2 = [mxMap{"name"}, mxMap{"email"}]
+Assert(239, mxArr2[0] = "Anna")
+Assert(240, mxArr2[1] = "anna@example.com")
+
+' Mixed string + number map values — per-cell tags must distinguish
+DIM mxArr3 = [mxMap{"name"}, mxMap{"age"}, mxMap{"score"}, mxMap{"email"}]
+Assert(241, mxArr3[0] = "Anna")
+Assert(242, STR$(mxArr3[1]) = "42")
+Assert(243, STR$(mxArr3[2]) = "99.5")
+Assert(244, mxArr3[3] = "anna@example.com")
+
+' Map-stored array literal containing map-lookups. The outer
+' vstate{"items"}[i] reads must dispatch to the per-cell tag.
+DIM mxState AS MAP
+mxState{"items"} = [mxMap{"name"}, mxMap{"age"}]
+Assert(245, mxState{"items"}[0] = "Anna")
+Assert(246, STR$(mxState{"items"}[1]) = "42")
+
+' Tag-aware FUNC ABI: a FUNC param used with TYPEOF becomes RUNTIME-typed
+' (i64 val + i32 tag pair). Calling such a FUNC across a boundary must
+' preserve the per-cell tag through the ABI.
+FUNC mxQuoteForSql$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "STRING" THEN
+        RETURN "'" + v + "'"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+' Direct: scalar string literal — tag survives through the param.
+Assert(247, mxQuoteForSql$("foo") = "'foo'")
+
+' Direct: scalar number — tag survives, no quotes.
+Assert(248, mxQuoteForSql$(42) = "42")
+
+' Cross-FUNC: param value read from map-of-mixed-tagged-array.
+Assert(249, mxQuoteForSql$(mxArr3[0]) = "'Anna'")
+Assert(250, mxQuoteForSql$(mxArr3[1]) = "42")
+Assert(251, mxQuoteForSql$(mxArr3[3]) = "'anna@example.com'")
+
+' Cross-FUNC: param value read from a map directly — also RUNTIME-tagged.
+Assert(252, mxQuoteForSql$(mxMap{"name"}) = "'Anna'")
+Assert(253, mxQuoteForSql$(mxMap{"score"}) = "99.5")
+
+' Cross-FUNC via INNER FUNC — tagged value flows through two FUNC
+' calls (caller -> fmt$ -> q$).
+FUNC mxFmt$(template$, params AS DYNAMIC)
+    DIM out$ = ""
+    DIM pidx AS INTEGER = 0
+    DIM n AS INTEGER = LEN(template$)
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        DIM c$ = MID$(template$, i, 1)
+        IF c$ = "?" THEN
+            out$ = out$ + mxQuoteForSql$(params[pidx])
+            pidx = pidx + 1
+        ELSE
+            out$ = out$ + c$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+DIM mxSql$ = mxFmt$("INSERT t(name,age,email) VALUES (?,?,?)", _
+    [mxMap{"name"}, mxMap{"age"}, mxMap{"email"}])
+Assert(254, mxSql$ = "INSERT t(name,age,email) VALUES ('Anna',42,'anna@example.com')")
+
+' Pre-pass infer_tag for BINARY: comparison ops yield BOOL, not the operand
+' tag. Without this, `DIM x = ("a" <> "b")` mis-inferred x's slot as STR
+' (taking the tag of the left operand) and the codegen STR-pun'd a 1/0
+' boolean into a bogus pointer.
+DIM mxBool1 = ("a" <> "b")
+Assert(255, mxBool1 = TRUE)
+DIM mxBool2 = ("a" = "b")
+Assert(256, mxBool2 = FALSE)
+DIM mxBool3 = (1 < 2)
+Assert(257, mxBool3 = TRUE)
+DIM mxBool4 = (3.14 >= 3.0)
+Assert(258, mxBool4 = TRUE)
+
+' Comparison binding to BOOLEAN slot — the BOOL tag must thread through
+' to make STRICT mode accept the assignment.
+DIM mxBool5 AS BOOLEAN = ("foo" = "foo")
+Assert(259, mxBool5 = TRUE)
+DIM mxBool6 AS BOOLEAN = (10 > 5) AND ("a" <> "b")
+Assert(260, mxBool6 = TRUE)
+
+' Ambient-state-leak audit: outer assignment hint must not leak into
+' inner FUNC call args, builtin args, or VM-bridge args. Without the
+' RAII guards / scoped hints these patterns silently returned wrong
+' types or segfaulted.
+
+' Outer assignment to STR slot wrapping a JOIN whose array arg is a
+' map-lookup. Pre-fix the STR hint leaked into JOIN's i8_ptr arg,
+' picking the map_get_str fast-path that snprintf'd the array bits
+' as "%g" and then JOIN read it as a JdbArray* -> segfault.
+DIM mxStrArr AS MAP
+mxStrArr{"items"} = ["alpha", "beta", "gamma"]
+DIM mxJoined$ = JOIN(mxStrArr{"items"}, ",")
+Assert(261, mxJoined$ = "alpha,beta,gamma")
+
+' Outer INTEGER-slot assignment + map-lookup arg to a builtin. Pre-fix
+' the I64 hint leaked, the inner map-get took the F64 fast-path and
+' the array silently came back empty.
+DIM mxLen AS INTEGER = LEN(mxStrArr{"items"})
+Assert(262, mxLen = 3)
+
+' User FUNC call with map-lookup arg. The leaf-hint scoping fix at the
+' user-FUNC call site keeps the inner INDEX dispatch tag-aware so the
+' callee receives a real STRING.
+FUNC mxIdent$(s$)
+    RETURN s$
+ENDFUNC
+DIM mxId$ = mxIdent$(mxMap{"name"})
+Assert(263, mxId$ = "Anna")
+
+' SUB call (no return) — same path. Side-effect via map mutation.
+SUB mxStashName(target AS MAP, val$)
+    target{"stash"} = val$
+ENDSUB
+DIM mxSink AS MAP
+mxStashName(mxSink, mxMap{"name"})
+Assert(264, mxSink{"stash"} = "Anna")
+
+' Tagged array passed across FUNC boundary; iterating each element must
+' not crash even when caller is a fresh literal.
+SUB mxRead(arr AS DYNAMIC)
+    DIM ri AS INTEGER
+    FOR ri = 0 TO LEN(arr) - 1
+        DIM tmp = arr[ri]
+    NEXT ri
+ENDSUB
+mxRead([mxMap{"name"}, mxMap{"age"}, mxMap{"email"}])
+Assert(265, TRUE)
+
+' ── 19. DIM AS DOUBLE = <int-literal> ────────────────────────
+' Regression: AS clause must win over the int-literal RHS.
+' Without the fix in codegen_dim (llvm_codegen.cpp), `DIM TA AS DOUBLE = 0`
+' tags the slot i64; a later `TA = TA + 0.5` truncates 0.5 to int 0 and
+' the add is a no-op. The wavi.jdb animation loop froze on exactly this.
+PRINT "── DIM AS DOUBLE with int-literal init ──"
+DIM dasd_TA AS DOUBLE = 0
+DIM dasd_i AS INTEGER
+FOR dasd_i = 1 TO 5
+    dasd_TA = dasd_TA + 0.5
+NEXT dasd_i
+Assert(266, CINT(dasd_TA * 1000) = 2500)         ' 5 * 0.5 = 2.5
+
+' Sehr kleiner Increment (CONST DOUBLE) — der wavi-Original-Pattern.
+CONST DASD_DTA = 0.00628318530717959
+DIM dasd_TC AS DOUBLE = 0
+FOR dasd_i = 1 TO 3
+    dasd_TC = dasd_TC + DASD_DTA
+NEXT dasd_i
+Assert(267, CINT(dasd_TC * 1000000) >= 18847 AND CINT(dasd_TC * 1000000) <= 18851)
+
+' Reset to int literal inside loop must keep slot f64.
+DIM dasd_TD AS DOUBLE = 0.0
+FOR dasd_i = 1 TO 10
+    dasd_TD = dasd_TD + 0.5
+    IF dasd_TD >= 2.0 THEN dasd_TD = 0
+NEXT dasd_i
+Assert(268, CINT(dasd_TD * 1000) >= 0 AND CINT(dasd_TD * 1000) < 2000)
+
+' AS SINGLE (FLOAT32) — same code path through codegen_dim.
+DIM dasd_TE AS SINGLE = 0
+FOR dasd_i = 1 TO 3
+    dasd_TE = dasd_TE + 0.5
+NEXT dasd_i
+Assert(269, CINT(dasd_TE * 1000) = 1500)
+
+' ── 64. STRING-ARRAY ELEMENT ASSIGN (DIM arr$[N], arr$[i] = "..." ) ─
+'   Regression 2026-05-20: native INDEX_ASSIGN of a STRING into an
+'   integer-keyed array silently coerced the char* through f64 and
+'   never set the string-array flag. Reading back returned 0 instead
+'   of the original string. Production trigger was the DOOM port's
+'   wad_name$[] directory (lump names) — every name read back as 0
+'   so wad_find never matched anything.
+PRINT "── String-Array Element Assign ──"
+DIM sea_arr$[5]
+DIM sea_i AS INTEGER
+FOR sea_i = 0 TO 4
+    sea_arr$[sea_i] = "lump" + STR$(sea_i)
+NEXT sea_i
+Assert(270, sea_arr$[0] = "lump0")
+Assert(271, sea_arr$[3] = "lump3")
+Assert(272, LEN(sea_arr$[2]) = 5)
+
+' Mixed-typed string array (DIM arr$[N] AS STRING) — same bug class.
+DIM sea_typed$[3] AS STRING
+sea_typed$[0] = "alpha"
+sea_typed$[1] = "beta"
+sea_typed$[2] = "gamma"
+Assert(273, sea_typed$[1] = "beta")
+Assert(274, sea_typed$[0] + sea_typed$[2] = "alphagamma")
+
+' Re-assign after first write — must not stay stuck on first value.
+sea_typed$[1] = "delta"
+Assert(275, sea_typed$[1] = "delta")
+
+' Regression 2026-05-20 (second pass): assignment to a top-level `arr$[i]`
+' from inside a SUB silently dropped under -c. Root cause was the pre-pass
+' force-tagging any $-suffix DIM as STR scalar, even when the RHS was
+' ZEROS([N]) - codegen_index_assign's guard then early-returned because
+' the var wasn't tagged ARR. Production trigger was the DOOM port's
+' module structure (W_WAD.INIT_NAMES → write into module-level array).
+DIM sea_outer$[5] AS STRING
+SUB sea_fill()
+    sea_outer$[0] = "outer0"
+    sea_outer$[2] = "outer2"
+    sea_outer$[4] = "outer4"
+ENDSUB
+sea_fill()
+Assert(2751, sea_outer$[0] = "outer0")
+Assert(2752, sea_outer$[2] = "outer2")
+Assert(2753, sea_outer$[4] = "outer4")
+
+' ── 66. BUILT-IN CONSTS INSIDE FUNC BODY ─────────────────────
+'   Regression 2026-05-20: PI/E read as NONE inside a FUNC/SUB body in
+'   interp because the compiler's `should_use_global` consulted
+'   `known_globals` which only seeded ERR/ERL/ERRMSG$/STACK$. Without
+'   the math-const names there, function-scope LOAD emitted LOAD_VAR for
+'   a slot never STORE'd -> NONE. Production trigger: P_SETUP doing
+'   `ta * (PI / 180)` stored 0 into P_PLAYER_A. Fix in compiler.cpp:
+'   include PI/E/VBNEWLINE/VBCRLF/VBTAB in k_vm_globals seed.
+PRINT "── Built-in CONST visibility in FUNC ──"
+
+FUNC bc_pi_in_func() AS DOUBLE
+    RETURN PI
+ENDFUNC
+
+FUNC bc_e_in_func() AS DOUBLE
+    RETURN E
+ENDFUNC
+
+FUNC bc_pi_deg_to_rad(deg AS INTEGER) AS DOUBLE
+    RETURN deg * (PI / 180.0)
+ENDFUNC
+
+Assert(295, bc_pi_in_func() > 3.14159 AND bc_pi_in_func() < 3.14160)
+Assert(296, bc_e_in_func() > 2.71828 AND bc_e_in_func() < 2.71829)
+Assert(297, CINT(bc_pi_deg_to_rad(90) * 1000000) = 1570796)
+
+' ── 65. BINARY-SAFE MID$ / INSTR / CHR$(0) ───────────────────
+'   Regression 2026-05-20: jdb_mid_lax / jdb_instr used strlen()
+'   internally, so any slice past the first 0x00 byte of a BINREADER$
+'   buffer returned an empty string. INSTR(buf, CHR$(0)) returned 0
+'   (treating CHR$(0) as an empty needle) instead of the real index.
+'   Production trigger: the DOOM WAD directory parser - lump names
+'   are 8-byte NUL-padded fields, MID$+INSTR is the only way to read
+'   them.
+PRINT "── Binary-Safe MID$ / INSTR / CHR$(0) ──"
+
+' Build a binary buffer with an embedded NUL: "ABC\0DEF" via PACK$.
+DIM bn_buf$ AS STRING = PACK$("bbbbbbb", 65, 66, 67, 0, 68, 69, 70)
+Assert(276, LEN(bn_buf$) = 7)
+Assert(277, BYTEAT(bn_buf$, 3) = 0)
+Assert(278, BYTEAT(bn_buf$, 5) = 69)
+
+' MID$ past the embedded NUL must return real bytes, not "".
+DIM bn_tail$ AS STRING = MID$(bn_buf$, 4, 3)
+Assert(279, LEN(bn_tail$) = 3)
+Assert(280, BYTEAT(bn_tail$, 0) = 68)
+Assert(281, BYTEAT(bn_tail$, 2) = 70)
+
+' MID$ result must itself be binary-safe (length survives further slicing).
+DIM bn_mid$ AS STRING = MID$(bn_buf$, 2, 4)
+Assert(282, LEN(bn_mid$) = 4)
+Assert(283, BYTEAT(bn_mid$, 1) = 0)
+DIM bn_left$ AS STRING = LEFT$(bn_mid$, 3)
+Assert(284, LEN(bn_left$) = 3)
+Assert(285, BYTEAT(bn_left$, 1) = 0)
+Assert(2851, BYTEAT(bn_left$, 2) = 68)
+
+' CHR$(0) is a 1-byte string, not empty.
+DIM bn_nul$ AS STRING = CHR$(0)
+Assert(286, LEN(bn_nul$) = 1)
+Assert(287, BYTEAT(bn_nul$, 0) = 0)
+
+' INSTR finds the NUL at the right offset.
+Assert(288, INSTR(bn_buf$, CHR$(0)) = 3)
+
+' INSTR returns -1 when needle isn't present (no fallthrough to 0).
+Assert(289, INSTR(bn_buf$, "Z") = -1)
+
+' DOOM-shape regression: 8-byte NUL-padded name → INSTR finds the cut.
+DIM bn_name$ AS STRING = PACK$("bbbbbbbb", 80, 76, 65, 89, 80, 65, 76, 0)
+Assert(290, LEN(bn_name$) = 8)
+Assert(291, INSTR(bn_name$, CHR$(0)) = 7)
+DIM bn_trim$ AS STRING = LEFT$(bn_name$, INSTR(bn_name$, CHR$(0)))
+Assert(292, LEN(bn_trim$) = 7)
+Assert(293, BYTEAT(bn_trim$, 0) = 80)
+Assert(294, BYTEAT(bn_trim$, 6) = 76)
+
+' ══════════════════════════════════════════════════════════════════
+' Module-qualified indexed assignment (DOOM regression 2026-05-20)
+' ══════════════════════════════════════════════════════════════════
+PRINT "── Module-qualified MOD.ARR[i, j] = v ──"
+
+NATIVE_TEST_MODX.mx_grid[0, 0] = 11
+NATIVE_TEST_MODX.mx_grid[3, 5] = 77
+NATIVE_TEST_MODX.mx_grid[7, 7] = 99
+Assert(298, NATIVE_TEST_MODX.mx_grid_at(0, 0) = 11)
+Assert(299, NATIVE_TEST_MODX.mx_grid_at(3, 5) = 77)
+Assert(300, NATIVE_TEST_MODX.mx_grid_at(7, 7) = 99)
+
+NATIVE_TEST_MODX.mx_row[0]  = 1.5
+NATIVE_TEST_MODX.mx_row[15] = 99.25
+Assert(301, NATIVE_TEST_MODX.mx_row_at(0)  = 1.5)
+Assert(302, NATIVE_TEST_MODX.mx_row_at(15) = 99.25)
+
+NATIVE_TEST_MODX.mx_names$[0] = "alpha"
+NATIVE_TEST_MODX.mx_names$[3] = "delta"
+Assert(303, NATIVE_TEST_MODX.mx_name_at$(0) = "alpha")
+Assert(304, NATIVE_TEST_MODX.mx_name_at$(3) = "delta")
+
+' Write-through-loop also has to work (DOOM's sprite column draw shape).
+DIM mqi AS INTEGER
+DIM mqj AS INTEGER
+FOR mqi = 0 TO 3
+    FOR mqj = 0 TO 3
+        NATIVE_TEST_MODX.mx_grid[mqi, mqj] = mqi * 10 + mqj
+    NEXT mqj
+NEXT mqi
+Assert(305, NATIVE_TEST_MODX.mx_grid_at(0, 0) = 0)
+Assert(306, NATIVE_TEST_MODX.mx_grid_at(2, 3) = 23)
+Assert(307, NATIVE_TEST_MODX.mx_grid_at(3, 3) = 33)
+
+' ══════════════════════════════════════════════════════════════════
+' FILLV / COPYV bulk array mutators (2026-05-21)
+' ══════════════════════════════════════════════════════════════════
+PRINT "── FILLV / COPYV ──"
+
+' FILLV statement form, INTEGER 1D
+DIM fv1[5] AS INTEGER
+FILLV fv1, 42
+Assert(308, fv1[0] = 42)
+Assert(309, fv1[4] = 42)
+
+' FILLV function form returns same array handle
+DIM fv2[4] AS INTEGER
+DIM fv2_ref = FILLV(fv2, 7)
+Assert(310, fv2[0] = 7)
+Assert(311, fv2_ref[3] = 7)
+fv2_ref[0] = 99
+Assert(312, fv2[0] = 99)   ' aliasing — fv2_ref is fv2
+
+' FILLV 2D
+DIM fv3[3, 3] AS INTEGER
+FILLV fv3, 11
+Assert(313, fv3[0, 0] = 11)
+Assert(314, fv3[1, 1] = 11)
+Assert(315, fv3[2, 2] = 11)
+
+' FILLV DOUBLE
+DIM fv4[4] AS DOUBLE
+FILLV fv4, 3.14
+Assert(316, ABS(fv4[0] - 3.14) < 0.0001)
+Assert(317, ABS(fv4[3] - 3.14) < 0.0001)
+
+' COPYV same shape
+DIM cv_src[5] AS INTEGER
+cv_src[0] = 10
+cv_src[1] = 20
+cv_src[2] = 30
+cv_src[3] = 40
+cv_src[4] = 50
+DIM cv_dst[5] AS INTEGER
+COPYV cv_dst, cv_src
+Assert(318, cv_dst[0] = 10)
+Assert(319, cv_dst[2] = 30)
+Assert(320, cv_dst[4] = 50)
+
+' COPYV cyclic (src shorter than dst)
+DIM cv_s2[3] AS INTEGER
+cv_s2[0] = 1
+cv_s2[1] = 2
+cv_s2[2] = 3
+DIM cv_d2[7] AS INTEGER
+COPYV cv_d2, cv_s2
+Assert(321, cv_d2[0] = 1)
+Assert(322, cv_d2[1] = 2)
+Assert(323, cv_d2[2] = 3)
+Assert(324, cv_d2[3] = 1)   ' wraps
+Assert(325, cv_d2[6] = 1)   ' wraps again
+
+' COPYV truncate (src longer)
+DIM cv_s3[10] AS INTEGER
+FILLV cv_s3, 9
+DIM cv_d3[4] AS INTEGER
+COPYV cv_d3, cv_s3
+Assert(326, cv_d3[0] = 9)
+Assert(327, cv_d3[3] = 9)
+
+' COPYV with scalar (= FILLV semantic)
+DIM cv_d4[3] AS INTEGER
+COPYV cv_d4, 77
+Assert(328, cv_d4[0] = 77)
+Assert(329, cv_d4[2] = 77)
+
+' ══════════════════════════════════════════════════════════════════
+' RESULTS
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " NATIVE COMPILER TEST RESULTS"
+PRINT "══════════════════════════════════════════"
+PRINT " PASS:     "; PASS
+PRINT " FAIL:     "; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED!"
+ELSE
+    PRINT " SOME TESTS FAILED!"
+ENDIF
+PRINT "══════════════════════════════════════════"
+

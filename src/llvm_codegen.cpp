@@ -1621,6 +1621,7 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
             StaticType r = e.right ? infer_expr_type(*e.right) : make(K::UNKNOWN);
             switch (e.op) {
                 case TokenType::EQ: case TokenType::NE:
+                case TokenType::ASSIGN:   // BASIC `=` doubles as equality
                 case TokenType::LT: case TokenType::LE:
                 case TokenType::GT: case TokenType::GE:
                 case TokenType::AND: case TokenType::OR:
