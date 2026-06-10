@@ -1338,7 +1338,7 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 ### JSON Functions
 
 * **`JSON.PARSE$(json_string$)`**: Parses a JSON string and returns a special `JsonObject`. This object can be accessed like a `Map` or an `Array`.
-* **`JSON.STRINGIFY$(map_or_array)`**: Takes a `Map` or `Array` variable and returns its compact JSON string representation. Ideal for creating API payloads.
+* **`JSON.STRINGIFY$(map_or_array)`**: Takes a `Map` or `Array` variable and returns its compact JSON string representation. Ideal for creating API payloads. **Native (`-c`):** only `Map`/`Array` are supported — a UDT instance does not marshal across the VM bridge and is rejected at compile time (the interpreter still stringifies a UDT to `{"__TYPE__":...}`). To serialise a UDT under `-c`, copy its fields into a `Map` first, or build the JSON string from the fields directly.
 
 ### COM Automation Functions
 

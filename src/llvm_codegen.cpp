@@ -7069,6 +7069,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string upper = name;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
 
+    // JSON.STRINGIFY$ supports MAP and ARRAY only. A native UDT instance does
+    // not marshal across the VM bridge — it would silently stringify to "".
+    // Fail loud at compile time instead (use a MAP, or build the JSON from the
+    // fields). Detect a UDT-typed argument via var_udt_type / infer_expr_type.
+    if (upper == "JSON.STRINGIFY$" && !expr.args.empty() && expr.args[0]) {
+        const Expr& a0 = *expr.args[0];
+        std::string udt_name;
+        if (a0.kind == ExprKind::VARIABLE) {
+            auto it = var_udt_type.find(a0.str_val);
+            if (it != var_udt_type.end()) udt_name = it->second;
+        }
+        if (udt_name.empty()) {
+            StaticType at = infer_expr_type(a0);
+            if (at.kind == StaticType::Kind::UDT) udt_name = at.name.empty() ? "UDT" : at.name;
+        }
+        if (!udt_name.empty()) {
+            report_error(m_current_stmt_file, expr.line,
+                "JSON.STRINGIFY$ does not support a UDT instance (type '" + udt_name +
+                "') under -c — pass a MAP/ARRAY, or build the JSON from its fields");
+        }
+    }
+
     // STR$(arg) — tag-aware. Default `jdb_str(double)` punnes strings
     // and prints booleans as 1/0; route to specific helpers when the
     // input tag is known.
