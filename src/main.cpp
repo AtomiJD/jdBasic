@@ -25,6 +25,57 @@
 #include <windows.h>
 #endif
 
+#if defined(_WIN32) && defined(LLVM_CODEGEN)
+#include <vector>
+// Parse a PE file's import directory and return the names of the DLLs it
+// statically imports (e.g. "SDL3.dll"). Best-effort: returns empty on any
+// malformed/unreadable input. Used by the `-c` path to copy a compiled
+// .exe's runtime DLL closure next to it so it runs outside build/.
+static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& file) {
+    std::vector<std::string> out;
+    std::ifstream f(file, std::ios::binary);
+    if (!f) return out;
+    std::vector<char> buf((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    if (buf.size() < sizeof(IMAGE_DOS_HEADER)) return out;
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(buf.data());
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return out;
+    if (dos->e_lfanew < 0 ||
+        (size_t)dos->e_lfanew + sizeof(IMAGE_NT_HEADERS64) > buf.size()) return out;
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(buf.data() + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return out;
+    if (nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return out;  // x64 only
+    auto& imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (imp.VirtualAddress == 0 || imp.Size == 0) return out;
+
+    // Map an RVA to a raw-file offset via the section table.
+    auto* sec = IMAGE_FIRST_SECTION(nt);
+    int nsec = nt->FileHeader.NumberOfSections;
+    auto rva_to_off = [&](DWORD rva) -> long long {
+        for (int i = 0; i < nsec; i++) {
+            DWORD va = sec[i].VirtualAddress;
+            DWORD sz = sec[i].SizeOfRawData;
+            if (rva >= va && rva < va + sz)
+                return (long long)sec[i].PointerToRawData + (rva - va);
+        }
+        return -1;
+    };
+    long long imp_off = rva_to_off(imp.VirtualAddress);
+    if (imp_off < 0) return out;
+    for (auto* d = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(buf.data() + imp_off);
+         (char*)(d + 1) <= buf.data() + buf.size(); d++) {
+        if (d->Name == 0) break;
+        long long noff = rva_to_off(d->Name);
+        if (noff < 0 || (size_t)noff >= buf.size()) break;
+        const char* nm = buf.data() + noff;
+        size_t maxlen = buf.size() - (size_t)noff, l = 0;
+        while (l < maxlen && nm[l]) l++;
+        if (l > 0 && l < maxlen) out.emplace_back(nm, l);
+    }
+    return out;
+}
+#endif
+
 #ifdef COM
 #include "com.h"
 #include <objbase.h>
@@ -1572,7 +1623,9 @@ int main(int argc, char* argv[]) {
               "  jdbasic -d 5678 my_script.jdb          # wait for DAP attach on :5678\n"
               "\n"
               "NOTES\n"
-              "  Compiled .exes need jdbrt.dll next to them at runtime — copy it from build/.\n"
+              "  -c copies the runtime DLL closure (jdbrt.dll + SDL3*/openssl) next to the\n"
+              "  produced .exe, so it runs from any directory. LLM features (llama/ggml/cuda)\n"
+              "  load on demand — keep build/ on PATH or copy those DLLs for AI .exes.\n"
               "  Everything after the script filename is passed through to the script via OS.ARGS.\n"
               "  Run without arguments to drop into the interactive workspace (see HELP inside).\n";
             return 0;
@@ -1772,35 +1825,54 @@ int main(int argc, char* argv[]) {
                          "jdBasic.exe)." << std::endl;
             return 1;
         }
-        // Auto-copy jdbrt.dll next to the produced .exe so the user
-        // doesn't have to. Without it the .exe exits silently on
-        // Windows when DLL load fails. Source: same dir as jdBasic.exe.
+        // Auto-copy the produced .exe's runtime DLL closure next to it so it
+        // runs from anywhere, not just build/. The .exe statically imports
+        // jdbrt.dll, which in turn statically imports SDL3*/openssl; Windows
+        // resolves those relative to the EXE dir, not jdbrt.dll's dir, so
+        // without this the .exe exits 127 outside build/. We walk jdbrt.dll's
+        // PE import closure and copy every dependency that lives beside the
+        // compiler — this is exactly SDL3*/libssl/libcrypto (~19 MB), and
+        // naturally excludes LLVM-C.dll (compiler-only, not a runtime dep) and
+        // the giant on-demand LLM DLLs (ggml/cuda/llama, LoadLibrary'd lazily).
         try {
             std::string self = argv[0];
             size_t s_sep = self.find_last_of("/\\");
-            std::string self_dir = (s_sep != std::string::npos)
+            std::filesystem::path self_dir = (s_sep != std::string::npos)
                 ? self.substr(0, s_sep) : ".";
             size_t o_sep = compile_output.find_last_of("/\\");
-            std::string out_dir = (o_sep != std::string::npos)
+            std::filesystem::path out_dir = (o_sep != std::string::npos)
                 ? compile_output.substr(0, o_sep) : ".";
-            std::filesystem::path src_dll = self_dir + "/jdbrt.dll";
-            std::filesystem::path dst_dll = out_dir + "/jdbrt.dll";
-            if (std::filesystem::exists(src_dll) &&
-                (!std::filesystem::exists(dst_dll) ||
-                 !std::filesystem::equivalent(src_dll, dst_dll))) {
-                std::filesystem::copy_file(src_dll, dst_dll,
-                    std::filesystem::copy_options::overwrite_existing);
+
+            auto copy_beside = [&](const std::string& name) -> bool {
+                std::filesystem::path src = self_dir / name;
+                std::filesystem::path dst = out_dir / name;
+                std::error_code ec;
+                if (!std::filesystem::exists(src, ec)) return false;  // system DLL / absent
+                if (std::filesystem::exists(dst, ec) &&
+                    std::filesystem::equivalent(src, dst, ec)) return true;  // same dir
+                std::filesystem::copy_file(src, dst,
+                    std::filesystem::copy_options::overwrite_existing, ec);
+                return true;
+            };
+
+            // BFS over jdbrt.dll's static import closure. Only DLLs that exist
+            // beside the compiler are followed; system DLLs (USER32, KERNEL32,
+            // …) aren't present there, so they're skipped automatically.
+            std::unordered_set<std::string> seen;
+            std::vector<std::string> queue = { "jdbrt.dll" };
+            while (!queue.empty()) {
+                std::string name = queue.back(); queue.pop_back();
+                std::string key = name;
+                std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+                if (!seen.insert(key).second) continue;
+                if (!copy_beside(name)) continue;  // not a sibling DLL — don't recurse
+                for (auto& dep : pe_imported_dlls(self_dir / name))
+                    queue.push_back(dep);
             }
-            // Same treatment for the bundled default font (used by SCREEN
-            // auto-load so demos don't need a SETFONT boilerplate).
-            std::filesystem::path src_ttf = self_dir + "/jdbasic_default.ttf";
-            std::filesystem::path dst_ttf = out_dir + "/jdbasic_default.ttf";
-            if (std::filesystem::exists(src_ttf) &&
-                (!std::filesystem::exists(dst_ttf) ||
-                 !std::filesystem::equivalent(src_ttf, dst_ttf))) {
-                std::filesystem::copy_file(src_ttf, dst_ttf,
-                    std::filesystem::copy_options::overwrite_existing);
-            }
+
+            // Bundled default font (used by SCREEN auto-load so demos don't
+            // need SETFONT boilerplate).
+            copy_beside("jdbasic_default.ttf");
         } catch (...) { /* best-effort — do not fail the compile */ }
         std::cout << "Compiled: " << compile_output << std::endl;
         return 0;
