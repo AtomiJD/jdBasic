@@ -2222,6 +2222,21 @@ Assert(scn[3] = 10, "SCAN prefix [3]")
 DIM scn_m AS ARRAY = SCAN("*", [1.0, 2.0, 3.0, 4.0])
 Assert(scn_m[3] = 24, "SCAN product prefix [3]")
 
+' Bare DIM (no AS ARRAY) of a VM-bridge array returner: the slot type comes
+' purely from inference. NORMALIZE lived in the bridge array set but was
+' missing from every DIM-inference list, so `DIM x = NORMALIZE(a)` typed the
+' slot scalar and the array collapsed natively. The four inference paths now
+' union the bridge set, so a bridge array returner is array-typed everywhere.
+DIM nrm = NORMALIZE([2.0, 0.0, 4.0])
+Assert(LEN(nrm) = 3, "NORMALIZE bare-DIM length")
+Assert(nrm[0] = 0.5, "NORMALIZE bare-DIM [0]")
+Assert(nrm[1] = 0, "NORMALIZE bare-DIM [1]")
+Assert(nrm[2] = 1, "NORMALIZE bare-DIM [2]")
+' Bare-DIM SCAN exercises the inference path (the asserts above use AS ARRAY).
+DIM scn_b = SCAN("+", [1.0, 2.0, 3.0, 4.0])
+Assert(LEN(scn_b) = 4, "SCAN bare-DIM length")
+Assert(scn_b[3] = 10, "SCAN bare-DIM [3]")
+
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.
 ' (Was breaking TEST_INNER.ADD_THING via TEST_OUTER.ADD_VIA_OUTER.)

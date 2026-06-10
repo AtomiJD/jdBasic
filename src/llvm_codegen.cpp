@@ -19,6 +19,49 @@
 #include <functional>
 #include <cstring>
 
+namespace {
+// Canonical set of builtins that return an ARRAY through the VM bridge (i.e.
+// they have no dedicated native runtime_func and fall through to
+// __jdrt_call_typed_*). This is the single source of truth: the bridge
+// dispatch routes these to __jdrt_call_typed_arr, and every DIM/return-type
+// inference path unions this set so a bridge array returner is array-typed
+// everywhere. Adding a name here fixes both the bridge return shape AND
+// inference at once — no more drift between the (formerly four) parallel lists.
+const std::unordered_set<std::string> kBridgeArrayReturners = {
+    "SPLIT", "KEYS", "VALUES", "SORTBY",
+    "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
+    "OS.LIST", "OS.ARGS",
+    "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
+    "LINES", "WORDS", "CHARS", "UNPACK",
+    "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
+    "GFX.HSV_RGB", "GFX.TEXTSIZE",
+    "SPRITE.COLLISIONS",
+    "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE",
+    "DIR$",
+    // APL-style array primitives that lack a dedicated native runtime function.
+    "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
+    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
+    "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+    "FFT", "IFFT",
+    "XSORT", "TAKE", "DROP",
+    "IOTA", "CUMSUM", "CUMPROD", "SCAN", "FLATTEN", "RANGE",
+    "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
+    "NORMALIZE", "DIFF", "APPEND",
+    "DATERANGE", "TALLY",
+    "TILED.LAYERS", "FILE.LIST",
+    "CSVREADER",
+    // Audio / tilemap / GUI / AI array returners (audit 2026-06-10): each is
+    // register_native-only (no native runtime_func) and returns a flat or
+    // nested array, so it fell through to the bridge and collapsed to f64=0
+    // under -c. The AI.* entries are flat/nested (id/score/embedding/token)
+    // arrays; the array-of-map AI returners (RAG_SEARCH/GET_HISTORY/...) need
+    // per-cell map marshalling and are intentionally left out for now.
+    "SOUND.RENDER", "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
+    "TILEMAP.SIZE", "GUI.ITEM_RECT",
+    "AI.LIST", "AI.TOPK", "AI.EMBED", "AI.EMBED_LLM", "AI.TOKENIZE",
+};
+} // namespace
+
 
 // ── Constructor / Destructor ────────────────────────────────
 
@@ -788,8 +831,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 return fit->second.return_tag;
             }
             // Names like ZEROS/IOTA/RANGE/SHIFT/OUTER etc. are array-returners
-            // known to the static native whitelist. Use the same list the
-            // call-site uses later to tag VM-bridge returns.
+            // known to the static native whitelist. ZEROS/ONES/LINSPACE etc.
+            // are kept here; everything that crosses the VM bridge is unioned
+            // in via kBridgeArrayReturners below (single source of truth).
             static const std::unordered_set<std::string> arr_fns = {
                 "ZEROS", "ONES", "IOTA", "RANGE", "LINSPACE",
                 "TAKE", "DROP", "UNIQUE", "REVERSE", "FLATTEN", "SHUFFLE",
@@ -804,7 +848,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
                 "DATERANGE", "TALLY"
             };
-            if (arr_fns.count(e.func_name)) return JD_TAG_ARR;
+            if (arr_fns.count(e.func_name) ||
+                kBridgeArrayReturners.count(e.func_name)) return JD_TAG_ARR;
         }
         return JD_TAG_F64;
     };
@@ -1224,7 +1269,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     "FFT", "IFFT",
                     "XSORT", "DATERANGE", "TALLY", "SCAN", "CUMSUM", "CUMPROD"
                 };
-                if (arr_calls.count(e.func_name)) return JD_TAG_ARR;
+                if (arr_calls.count(e.func_name) ||
+                    kBridgeArrayReturners.count(e.func_name)) return JD_TAG_ARR;
             }
         }
         int kind = 0;
@@ -2032,7 +2078,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS",
                             "DIR$", "SCAN", "CUMSUM", "CUMPROD"
                         };
-                        if (arr_returners.count(upper)) return JD_TAG_ARR;
+                        if (arr_returners.count(upper) ||
+                            kBridgeArrayReturners.count(upper)) return JD_TAG_ARR;
                         static const std::unordered_set<std::string> scalar_reducers = {
                             "SUM","PRODUCT","MIN","MAX","MEAN","STDEV","MEDIAN",
                             "VARIANCE","DOT","CROSS","REDUCE"
@@ -8751,44 +8798,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             };
             bool is_object_fn = object_returners.count(upper);
 
-            static const std::unordered_set<std::string> array_returners = {
-                "SPLIT", "KEYS", "VALUES", "SORTBY",
-                "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
-                "OS.LIST", "OS.ARGS",
-                "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
-                "LINES", "WORDS", "CHARS", "UNPACK",
-                "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
-                "GFX.HSV_RGB", "GFX.TEXTSIZE",
-                "SPRITE.COLLISIONS",
-                "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE",
-                "DIR$",
-                // APL-style array primitives that lack a dedicated native
-                // runtime function and fall through to the VM bridge.
-                // Without a tag here, the bridge dispatch was treating
-                // them as f64-returning and the result came back as an
-                // empty / garbage array.
-                "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
-                "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
-                "FFT", "IFFT",
-                "XSORT", "TAKE", "DROP",
-                // APL-style scan / generators / shape ops. Without these
-                // tags the bridge classifies the result as f64 and the
-                // downstream array operators silently degrade to scalar
-                // arithmetic — e.g. `signs = 1 - 2 * (CUMSUM(flips) MOD 2)`
-                // collapses to a single number, so SOUND.PLAYBUFFER then
-                // refuses its first argument as "not an array".
-                "IOTA", "CUMSUM", "CUMPROD", "SCAN", "FLATTEN", "RANGE",
-                "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
-                "NORMALIZE", "DIFF", "APPEND",
-                // Date-vector + verdichtung producers
-                "DATERANGE", "TALLY",
-                // Array of strings from common helpers
-                "TILED.LAYERS", "FILE.LIST",
-                // File I/O readers that return parsed-row arrays
-                "CSVREADER"
-            };
-            bool is_array_fn = array_returners.count(upper) ||
+            // array_returners lives at file scope (kBridgeArrayReturners) so
+            // the DIM/return type-inference paths share the exact same set.
+            bool is_array_fn = kBridgeArrayReturners.count(upper) ||
                                ffi_array_returners.count(upper);
             bool is_void_fn  = ffi_void_returners.count(upper);
 
