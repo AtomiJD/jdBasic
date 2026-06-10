@@ -8026,9 +8026,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         no_native_vec:;
     }
 
+    // Evaluate each arg exactly once: the array-check loop here and the scalar
+    // runtime call below both consume the args. Re-evaluating in both ran a
+    // side-effecting arg twice (CINT(f()) called f twice). When the args are
+    // scalar (no vectorization), stash them and let the scalar path reuse them.
+    std::vector<TypedValue> arg_cache;
+    bool arg_cache_valid = false;
     // Check if any argument is an array AND the function is not blocklisted.
     if (!no_vectorize.count(upper) && !expr.args.empty()) {
-        // Evaluate args first
         std::vector<TypedValue> vals;
         vals.reserve(expr.args.size());
         bool has_array = false;
@@ -8086,6 +8091,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMConstInt(i32_type, nargs, 0) };
             LLVMValueRef result = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec");
             return { result, JD_TAG_ARR };
+        } else {
+            // Scalar args: reuse them in the scalar runtime call below.
+            arg_cache = std::move(vals);
+            arg_cache_valid = true;
         }
     }
 
@@ -8291,7 +8300,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // so a builtin used as an outer INDEX's idx (e.g. `m{"k"}[ABS(x)]`)
             // can't clobber the outer's pending hint.
             TypedValue av;
-            {
+            if (arg_cache_valid && i < arg_cache.size()) {
+                av = arg_cache[i];   // evaluated once in the array-check above
+            } else {
                 ScopedLeafTag _lt(this, param_hint);
                 av = codegen_expr(*expr.args[i]);
             }

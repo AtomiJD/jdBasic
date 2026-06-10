@@ -2132,6 +2132,17 @@ DIM bd_x AS INTEGER
 bd_x = bd_arr[1]
 Assert(bd_x = 20, "typed scalar <- array element coerces (no bit-pun)")
 
+' A side-effecting arg inside a scalar builtin must be evaluated exactly once.
+' (Native used to codegen the arg twice — CINT(f()) ran f twice.)
+EXPORT DIM ce_calls = 0
+FUNC ce_bump(ce_n AS INTEGER)
+    ce_calls = ce_calls + 1
+    RETURN ce_n * 2
+ENDFUNC
+DIM ce_r AS INTEGER = CINT(ce_bump(5))
+Assert(ce_calls = 1, "CINT evaluates its arg exactly once")
+Assert(ce_r = 10, "CINT arg-once result correct")
+
 ' AGG (group + reduce table) and string-key TALLY are interp-only: AGG takes
 ' an array-group funcref the scalar native HOF machinery can't pass, and the
 ' native VM bridge marshals nested string cells back as 0.
