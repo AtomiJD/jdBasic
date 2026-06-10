@@ -2967,6 +2967,35 @@ Assert(FORMAT$("{:5d}",  42)        = "   42",    "FORMAT$ width on int")
 Assert(FORMAT$("{:#x}",  255)       = "0xff",     "FORMAT$ hex with hash flag")
 
 ' ══════════════════════════════════════════════════════════════════
+' Nested string arrays, string operators, AS ARRAY / AS MAP slots
+' (native parity — see feedback_native_nested_string_arrays)
+' ══════════════════════════════════════════════════════════════════
+Header("Nested strings + string ops + AS ARRAY/MAP")
+
+DIM grid = [["a", "b"], ["c", "d"]]
+Assert(grid[0][1] = "b", "nested string cell read grid[0][1]")
+Assert(grid[1][0] = "c", "nested string cell read grid[1][0]")
+
+DIM mixrow = [[1, "two"], [3, "four"]]
+Assert(mixrow[1][1] = "four", "nested mixed-row string cell")
+Assert(mixrow[0][0] = 1,      "nested mixed-row numeric cell")
+
+Assert(("Atomi " * 2) = "Atomi Atomi ", "string * int repeat")
+Assert((2 / "Atomi")  = "At",           "int / string slice (left)")
+Assert(("Welcome" / 4) = "come",        "string / int slice (right)")
+Assert(("ababababc" - "ab") = "c",      "string - string remove")
+Assert(LEN(-"banana") = 6,              "unary minus char-split length")
+
+DIM dyn_a AS ARRAY
+dyn_a = [10, 20, 30]
+Assert(LEN(dyn_a) = 3,  "DIM AS ARRAY then assign array")
+Assert(dyn_a[2] = 30,   "DIM AS ARRAY index read")
+
+DIM dyn_m AS MAP
+dyn_m = {"k": 42}
+Assert(dyn_m{"k"} = 42, "DIM AS MAP then assign map")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

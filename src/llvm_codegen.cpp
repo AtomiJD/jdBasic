@@ -3833,6 +3833,24 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
     }
 
+    // DIM x AS ARRAY → empty array (mirrors the OBJECT/MAP case below). The
+    // no-init switch above only covers scalar tags; without this an
+    // `AS ARRAY` slot would stay JD_TAG_I64 and the first array assignment
+    // would trip the STRICT "cannot assign ARRAY to INTEGER" check.
+    if (stmt.var_type == VarType::ARRAY && stmt.label.empty() && !stmt.expr) {
+        auto& arr_new = runtime_funcs["__array_new"];
+        LLVMValueRef size_arg[] = { LLVMConstInt(i64_type, 0, 0) };
+        LLVMValueRef a = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn,
+                                         size_arg, 1, "arr");
+        VarInfo* vi = lookup_var(stmt.var_name);
+        if (vi) { LLVMBuildStore(builder, a, vi->alloca_val); vi->tag = JD_TAG_ARR; }
+        else {
+            VarInfo& nv = create_var(stmt.var_name, JD_TAG_ARR);
+            LLVMBuildStore(builder, a, nv.alloca_val);
+        }
+        return;
+    }
+
     // DIM x AS OBJECT (or MAP) → empty native map
     if (stmt.var_type == VarType::OBJECT && stmt.label.empty() && !stmt.expr) {
         auto& map_new = runtime_funcs["__map_new"];
