@@ -1042,6 +1042,24 @@ static inline double encode_inner(JdbArray* arr) {
     union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)arr;
     return u.d;
 }
+// String cells in a string array are char* pointers punned into the double.
+static inline const char* decode_str(double val) {
+    union { double d; int64_t i; } u; u.d = val;
+    return (const char*)(intptr_t)u.i;
+}
+static inline double encode_str(const char* s) {
+    union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)s;
+    return u.d;
+}
+static inline char* str_concat2(const char* a, const char* b) {
+    if (!a) a = ""; if (!b) b = "";
+    size_t la = strlen(a), lb = strlen(b);
+    char* r = (char*)malloc(la + lb + 1);
+    memcpy(r, a, la); memcpy(r + la, b, lb); r[la + lb] = '\0';
+    return r;
+}
+// Binary-safe 3-way string compare (defined below, next to jdb_str_eq).
+int64_t jdb_str_cmp(const char* a, const char* b);
 
 static inline double scalar_op(double a, double b, int op) {
     switch (op) {
@@ -1086,7 +1104,20 @@ static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
     if (!a || !b) return jdb_array_new(0);
     int64_t n = a->length < b->length ? a->length : b->length;
     auto* r = jdb_array_new(n);
-    bool nested = (a->flags & 1) || (b->flags & 1);
+    // String arrays carry bit0(ptr)+bit1(str). Element-wise '+' (op 0)
+    // concatenates; treating a string cell as a JdbArray* (the nested path)
+    // would dereference a char* and segfault.
+    if ((a->flags & 2) && (b->flags & 2)) {
+        for (int64_t i = 0; i < n; i++)
+            r->data[i] = (op == 0)
+                ? encode_str(str_concat2(decode_str(a->data[i]), decode_str(b->data[i])))
+                : encode_str(_strdup(""));
+        r->flags |= 3;
+        return r;
+    }
+    // Genuine nested array (array of arrays) — bit0 set WITHOUT the string bit.
+    bool nested = ((a->flags & 1) && !(a->flags & 2)) ||
+                  ((b->flags & 1) && !(b->flags & 2));
     if (nested) {
         r->flags |= 1;
         for (int64_t i = 0; i < n; i++) {
@@ -1104,7 +1135,7 @@ static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
 static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) {
     if (!a) return jdb_array_new(0);
     auto* r = jdb_array_new(a->length);
-    if (a->flags & 1) {
+    if ((a->flags & 1) && !(a->flags & 2)) {
         r->flags |= 1;
         for (int64_t i = 0; i < a->length; i++) {
             auto* inner = arr_scalar_op(decode_inner(a->data[i]), s, op, scalar_left);
@@ -1123,7 +1154,7 @@ static JdbArray* arr_scalar_op(JdbArray* a, double s, int op, bool scalar_left) 
 static JdbArray* arr_cmp_scalar(JdbArray* a, double s, int op) {
     if (!a) return jdb_array_new(0);
     auto* r = jdb_array_new(a->length);
-    if (a->flags & 1) {
+    if ((a->flags & 1) && !(a->flags & 2)) {
         r->flags |= 1;
         for (int64_t i = 0; i < a->length; i++) {
             auto* inner = arr_cmp_scalar(decode_inner(a->data[i]), s, op);
@@ -1141,7 +1172,28 @@ static JdbArray* arr_cmp_arr(JdbArray* a, JdbArray* b, int op) {
     if (!a || !b) return jdb_array_new(0);
     int64_t n = a->length < b->length ? a->length : b->length;
     auto* r = jdb_array_new(n);
-    bool nested = (a->flags & 1) || (b->flags & 1);
+    // String arrays: element-wise content comparison (binary-safe), not a
+    // numeric compare of the punned pointer bits.
+    // op: 0=eq,1=ne,4=lt,5=le,6=gt,7=ge.
+    if ((a->flags & 2) && (b->flags & 2)) {
+        for (int64_t i = 0; i < n; i++) {
+            int64_t c = jdb_str_cmp(decode_str(a->data[i]), decode_str(b->data[i]));
+            double res;
+            switch (op) {
+                case 0:  res = (c == 0); break;
+                case 1:  res = (c != 0); break;
+                case 4:  res = (c < 0);  break;
+                case 5:  res = (c <= 0); break;
+                case 6:  res = (c > 0);  break;
+                case 7:  res = (c >= 0); break;
+                default: res = 0.0;      break;
+            }
+            r->data[i] = res;
+        }
+        return r;
+    }
+    bool nested = ((a->flags & 1) && !(a->flags & 2)) ||
+                  ((b->flags & 1) && !(b->flags & 2));
     if (nested) {
         r->flags |= 1;
         for (int64_t i = 0; i < n; i++) {
@@ -2484,6 +2536,21 @@ int64_t jdb_str_ne(const char* a, const char* b) {
     return !jdb_str_eq(a, b);
 }
 
+// Binary-safe 3-way compare: <0 if a<b, 0 if equal, >0 if a>b. Powers the
+// native string ordering operators (<,>,<=,>=) and string-array compares.
+int64_t jdb_str_cmp(const char* a, const char* b) {
+    if (a == b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    int64_t la = jdrt_strlen(a); if (la < 0) la = (int64_t)strlen(a);
+    int64_t lb = jdrt_strlen(b); if (lb < 0) lb = (int64_t)strlen(b);
+    int64_t n = la < lb ? la : lb;
+    int c = n > 0 ? memcmp(a, b, (size_t)n) : 0;
+    if (c != 0) return c < 0 ? -1 : 1;
+    if (la == lb) return 0;
+    return la < lb ? -1 : 1;
+}
+
 char* jdb_ltrim(const char* s) {
     if (!s) return _strdup("");
     while (*s && isspace((unsigned char)*s)) s++;
@@ -3416,44 +3483,51 @@ char* jdb_frmv(JdbArray* arr) {
     bool is_bool = (arr->flags & 4) != 0;
     char buf[8192] = "[";
     int pos = 1;
-    for (int64_t i = 0; i < arr->length && pos < 8180; i++) {
+    // snprintf returns the INTENDED length, which can exceed the space left;
+    // emit() clamps pos so neither the in-loop writes nor the trailing ']'
+    // ever run past buf[8191].
+    const int CAP = 8190;
+    auto emit = [&](const char* s) {
+        if (pos >= CAP || !s) return;
+        int w = snprintf(buf + pos, (size_t)(CAP - pos), "%s", s);
+        if (w < 0) return;
+        pos += w;
+        if (pos > CAP) pos = CAP;
+    };
+    for (int64_t i = 0; i < arr->length && pos < CAP; i++) {
         if (i > 0) { buf[pos++] = ','; buf[pos++] = ' '; }
         if (has_tagged) {
             // Per-cell JdTag (mixed arrays, e.g. AGG/TALLY rows [key, n]).
             int8_t t = arr->elem_tags[i];
             union { double d; int64_t i; } u; u.d = arr->data[i];
             if (t == 2) {  // STR
-                const char* s = (const char*)(intptr_t)u.i;
-                pos += snprintf(buf + pos, 8190 - pos, "%s", s ? s : "");
+                emit((const char*)(intptr_t)u.i ? (const char*)(intptr_t)u.i : "");
             } else if (t == 3) {  // ARR
                 char* sub = jdb_frmv((JdbArray*)(intptr_t)u.i);
-                pos += snprintf(buf + pos, 8190 - pos, "%s", sub ? sub : "[]");
+                emit(sub ? sub : "[]");
                 free(sub);
             } else if (t == 8) {  // BOOL
-                pos += snprintf(buf + pos, 8190 - pos, "%s",
-                    arr->data[i] != 0.0 ? "TRUE" : "FALSE");
+                emit(arr->data[i] != 0.0 ? "TRUE" : "FALSE");
             } else {       // F64 / I64 / unknown
                 char num[64];
                 jdb_format_double(num, sizeof(num), arr->data[i]);
-                pos += snprintf(buf + pos, 8190 - pos, "%s", num);
+                emit(num);
             }
         } else if (is_str) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
             const char* s = (const char*)(intptr_t)u.i;
-            pos += snprintf(buf + pos, 8190 - pos, "%s", s ? s : "");
+            emit(s ? s : "");
         } else if (is_nested) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
-            JdbArray* inner = (JdbArray*)(intptr_t)u.i;
-            char* sub = jdb_frmv(inner);
-            pos += snprintf(buf + pos, 8190 - pos, "%s", sub ? sub : "[]");
+            char* sub = jdb_frmv((JdbArray*)(intptr_t)u.i);
+            emit(sub ? sub : "[]");
             free(sub);
         } else if (is_bool) {
-            pos += snprintf(buf + pos, 8190 - pos, "%s",
-                arr->data[i] != 0.0 ? "TRUE" : "FALSE");
+            emit(arr->data[i] != 0.0 ? "TRUE" : "FALSE");
         } else {
             char num[64];
             jdb_format_double(num, sizeof(num), arr->data[i]);
-            pos += snprintf(buf + pos, 8190 - pos, "%s", num);
+            emit(num);
         }
     }
     buf[pos++] = ']'; buf[pos] = '\0';

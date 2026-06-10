@@ -408,6 +408,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_str",      "STR",      i8_ptr_type, {f64_type}, 2);
     reg("jdb_space",    "SPACE$",   i8_ptr_type, {i64_type}, 2);
     reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_str_cmp",  "__str_cmp", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
@@ -6494,9 +6495,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
 
     // (String repeat is now handled below via native jdb_str_repeat)
 
-    // String comparison: str = other, str <> other (when one side might not be str)
+    // String comparison: =, <>, and ordering <,>,<=,>= (when one side is a
+    // string). Ordering goes through __str_cmp (content compare) — without it
+    // the operands fell through to PtrToInt+ICmp and compared heap addresses.
     if ((lhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_STR) &&
-        (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN || expr.op == TokenType::NE)) {
+        (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN ||
+         expr.op == TokenType::NE || expr.op == TokenType::LT ||
+         expr.op == TokenType::LE || expr.op == TokenType::GT ||
+         expr.op == TokenType::GE)) {
         // Convert both to strings if needed
         auto to_str2 = [&](TypedValue tv) -> LLVMValueRef {
             if (tv.tag == JD_TAG_STR) return tv.val;
@@ -6512,14 +6518,31 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             }
             return to_string_ptr(tv);
         };
+        LLVMValueRef ls = to_str2(lhs), rs = to_str2(rhs);
         if (expr.op == TokenType::NE) {
             auto& fn = runtime_funcs["__str_ne"];
-            LLVMValueRef args[] = { to_str2(lhs), to_str2(rhs) };
+            LLVMValueRef args[] = { ls, rs };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strne"), JD_TAG_BOOL };
-        } else {
+        } else if (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN) {
             auto& fn = runtime_funcs["__str_eq"];
-            LLVMValueRef args[] = { to_str2(lhs), to_str2(rhs) };
+            LLVMValueRef args[] = { ls, rs };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "streq"), JD_TAG_BOOL };
+        } else {
+            // Ordering: __str_cmp returns <0 / 0 / >0; compare to 0.
+            auto& fn = runtime_funcs["__str_cmp"];
+            LLVMValueRef args[] = { ls, rs };
+            LLVMValueRef c = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "strcmp");
+            LLVMIntPredicate p = LLVMIntSLT;
+            switch (expr.op) {
+                case TokenType::LT: p = LLVMIntSLT; break;
+                case TokenType::LE: p = LLVMIntSLE; break;
+                case TokenType::GT: p = LLVMIntSGT; break;
+                case TokenType::GE: p = LLVMIntSGE; break;
+                default: break;
+            }
+            LLVMValueRef zero = LLVMConstInt(i64_type, 0, 0);
+            LLVMValueRef cmp = LLVMBuildICmp(builder, p, c, zero, "scmp");
+            return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), JD_TAG_BOOL };
         }
     }
 
@@ -6635,6 +6658,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
     TypedValue operand = codegen_expr(*expr.right);
+    // A nested-index cell arrives RUNTIME-tagged carrying the f64 bit pattern;
+    // materialise it to a real f64 before MINUS/BNOT (otherwise they operate
+    // on the bit pattern / negate a punned pointer).
+    if (operand.tag == JD_TAG_RUNTIME) {
+        operand.val = coerce_to(operand, f64_type);
+        operand.tag = JD_TAG_F64;
+    }
     if (expr.op == TokenType::MINUS) {
         if (operand.tag == JD_TAG_F64)
             return { LLVMBuildFNeg(builder, operand.val, "fneg"), JD_TAG_F64 };
@@ -8875,6 +8905,9 @@ LLVMCodegen::TypedValue LLVMCodegen::promote_to_f64(TypedValue tv) {
     // BOOL is bit-identical to I64 (0/1) — same conversion path.
     if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL)
         return { LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"), JD_TAG_F64 };
+    // Runtime-tagged (nested-index) cell: branch on its per-cell tag.
+    if (tv.tag == JD_TAG_RUNTIME)
+        return { coerce_to(tv, f64_type), JD_TAG_F64 };
     return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
 }
 

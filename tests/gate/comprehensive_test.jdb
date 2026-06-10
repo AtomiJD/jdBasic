@@ -2237,6 +2237,45 @@ DIM scn_b = SCAN("+", [1.0, 2.0, 3.0, 4.0])
 Assert(LEN(scn_b) = 4, "SCAN bare-DIM length")
 Assert(scn_b[3] = 10, "SCAN bare-DIM [3]")
 
+' ══════════════════════════════════════════════════════════════════
+' Native audit cluster 3/6/7: runtime-tag materialisation, scalar string
+' ordering, string-array element-wise ops (no segfault), mixed APPEND,
+' large-array FRMV$ buffer safety.
+' ══════════════════════════════════════════════════════════════════
+Header("Audit fixes: nested-cell ops / string ordering / mixed arrays")
+
+' C3: a nested-index cell is RUNTIME-tagged; power (^) and unary minus must
+' materialise it to f64 first (were yielding 0 / a negated bit pattern).
+DIM gnest = [[2.0, 3.0], [4.0, 5.0]]
+Assert(gnest[0][1] ^ 2 = 9, "power on nested-index cell")
+Assert(-gnest[0][1] = -3, "unary minus on nested-index cell")
+Assert(gnest[1][0] ^ 2 = 16, "power on nested-index cell [1][0]")
+
+' C7: scalar string ordering must compare content, not heap pointers.
+Assert(("apple" < "banana") = TRUE, "string < lexicographic")
+Assert(("banana" < "apple") = FALSE, "string < reverse")
+Assert(("abc" <= "abc") = TRUE, "string <= equal")
+Assert(("abc" >= "abd") = FALSE, "string >= less")
+Assert(("zebra" > "apple") = TRUE, "string > greater")
+
+' C6a: string-array element-wise compare/concat must not segfault (string
+' arrays carry the nested-ptr flag bit) and must match the interpreter.
+DIM sne = ["a", "b", "c"] <> ["a", "x", "c"]
+Assert(sne[0] = 0, "string-array <> [0]")
+Assert(sne[1] = 1, "string-array <> [1]")
+Assert(sne[2] = 0, "string-array <> [2]")
+DIM sgt = ["b", "b"] > ["a", "c"]
+Assert(sgt[0] = 1, "string-array > [0]")
+Assert(sgt[1] = 0, "string-array > [1]")
+DIM scat = ["a", "b"] + ["c", "d"]
+Assert(LEN(scat) = 2, "string-array concat length")
+Assert(scat[0] = "ac", "string-array concat [0]")
+Assert(scat[1] = "bd", "string-array concat [1]")
+
+' C6c: jdb_frmv must not overflow its fixed buffer on a large array.
+DIM bigstr = FRMV$(IOTA(3000))
+Assert(LEN(bigstr) > 100, "FRMV$ large array no-overflow")
+
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.
 ' (Was breaking TEST_INNER.ADD_THING via TEST_OUTER.ADD_VIA_OUTER.)
