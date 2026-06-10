@@ -2114,7 +2114,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             // MAT4.* returns a TENSOR Value; flat-array path
                             // can't carry the shape, so route through VM handle.
                             "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
-                            "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL"
+                            "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
+                            // AI array-of-map returners — VM_HANDLE, see the
+                            // object_returners set in the bridge dispatch.
+                            "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -8872,6 +8875,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // the 16-element flat doesn't get unboxed into a scalar.
                 "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
                 "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
+                // AI returners that yield an ARRAY of map rows (or a single
+                // map). Routed through VM_HANDLE, NOT the flat array path:
+                // the whole Value stays in the value_store so res[i]{"field"}
+                // drills via jdrt_val_arr_get -> jdrt_obj_get. The flat path
+                // (value_to_jdbarray) has no OBJECT-cell support and would
+                // drop every map to 0.
+                "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST",
             };
             bool is_object_fn = object_returners.count(upper);
 
