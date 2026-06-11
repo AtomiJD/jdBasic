@@ -101,6 +101,7 @@ jdbasic_history.txt
 
 # ── Claude Code workspace ─────────────────────────────────────────
 .claude/
+CLAUDE.md
 
 # ── OS junk ───────────────────────────────────────────────────────
 Thumbs.db
