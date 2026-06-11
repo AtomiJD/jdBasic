@@ -3324,9 +3324,17 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             // Lets `g_paths = APPEND(g_paths, [JOIN(...)])` tag g_paths on
             // the first append even when g_paths started as an empty `[]`
             // and isn't yet in string_array_vars.
-            if (is_string_arr_expr(stmt.expr->args[0].get()) ||
-                is_string_arr_expr(stmt.expr->args[1].get()) ||
-                is_string_scalar_expr(stmt.expr->args[1].get())) {
+            bool a0_strarr = is_string_arr_expr(stmt.expr->args[0].get());
+            bool a1_str = is_string_arr_expr(stmt.expr->args[1].get()) ||
+                          is_string_scalar_expr(stmt.expr->args[1].get());
+            bool a1_num_lit = stmt.expr->args[1] &&
+                (stmt.expr->args[1]->kind == ExprKind::LITERAL_INT ||
+                 stmt.expr->args[1]->kind == ExprKind::LITERAL_FLOAT);
+            if (a0_strarr && a1_num_lit) {
+                // string array + numeric scalar → mixed array; arr[i] reads
+                // per-cell so the numeric tail isn't decoded as a string ptr.
+                mixed_array_vars.insert(stmt.var_name);
+            } else if (a0_strarr || a1_str) {
                 string_array_vars.insert(stmt.var_name);
             }
         }
@@ -4123,9 +4131,17 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             // Lets `g_paths = APPEND(g_paths, [JOIN(...)])` tag g_paths on
             // the first append even when g_paths started as an empty `[]`
             // and isn't yet in string_array_vars.
-            if (is_string_arr_expr(stmt.expr->args[0].get()) ||
-                is_string_arr_expr(stmt.expr->args[1].get()) ||
-                is_string_scalar_expr(stmt.expr->args[1].get())) {
+            bool a0_strarr = is_string_arr_expr(stmt.expr->args[0].get());
+            bool a1_str = is_string_arr_expr(stmt.expr->args[1].get()) ||
+                          is_string_scalar_expr(stmt.expr->args[1].get());
+            bool a1_num_lit = stmt.expr->args[1] &&
+                (stmt.expr->args[1]->kind == ExprKind::LITERAL_INT ||
+                 stmt.expr->args[1]->kind == ExprKind::LITERAL_FLOAT);
+            if (a0_strarr && a1_num_lit) {
+                // string array + numeric scalar → mixed array; arr[i] reads
+                // per-cell so the numeric tail isn't decoded as a string ptr.
+                mixed_array_vars.insert(stmt.var_name);
+            } else if (a0_strarr || a1_str) {
                 string_array_vars.insert(stmt.var_name);
             }
         }
@@ -5392,10 +5408,25 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             bool all_bool_elems = !expr.args.empty();
             // Pre-scan: any INDEX-typed element forces tagged storage so
             // each cell carries its own JdTag and arr[i] reads can recover
-            // the real type at runtime instead of statically guessing.
+            // the real type at runtime instead of statically guessing. A
+            // statically MIXED literal ([1.0, "abc", 2.0]) needs the same:
+            // the DIM-inference marks the destination mixed_array_vars (so
+            // arr[i] reads via __arr_get_tagged), but without per-cell tags
+            // the numeric cells would be flagged string and read as pointers
+            // (segfault). Detect string-vs-number mixing syntactically here.
             bool any_runtime = false;
-            for (auto& a : expr.args)
-                if (a && (a->kind == ExprKind::INDEX)) { any_runtime = true; break; }
+            bool saw_str_lit = false, saw_nonstr_lit = false;
+            for (auto& a : expr.args) {
+                if (!a) continue;
+                if (a->kind == ExprKind::INDEX) { any_runtime = true; break; }
+                bool s = (a->kind == ExprKind::LITERAL_STRING) ||
+                         (a->kind == ExprKind::VARIABLE && !a->str_val.empty() &&
+                          a->str_val.back() == '$') ||
+                         (a->kind == ExprKind::CALL && !a->func_name.empty() &&
+                          a->func_name.back() == '$');
+                if (s) saw_str_lit = true; else saw_nonstr_lit = true;
+            }
+            if (saw_str_lit && saw_nonstr_lit) any_runtime = true;
             if (!expr.args.empty()) {
                 auto& arr_append = runtime_funcs["APPEND"];
                 auto& arr_append_tg = runtime_funcs["__arr_append_tagged"];
@@ -5875,6 +5906,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // clear so nested runtime helper calls below don't see it.
                 int leaf_hint = m_want_leaf_tag;
                 ScopedLeafTag _lt(this, -1);
+                // A string key on a GENUINE array variable is map syntax on an
+                // array (a user error). The map/UDT getters below would deref
+                // the JdbArray* as a map and segfault. Guard ONLY the case we
+                // can prove is a plain array: a variable that is NOT a UDT
+                // instance (UDTs are also ARR-tagged but map-backed). UDT
+                // variables (var_udt_type) and non-variable bases (e.g. a
+                // UDT-returning call) fall through to the real field getter.
+                if (arr_tv.tag == JD_TAG_ARR && expr.left &&
+                    expr.left->kind == ExprKind::VARIABLE &&
+                    var_udt_type.find(expr.left->str_val) == var_udt_type.end()) {
+                    return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
+                }
                 // Runtime-tagged (tag 7): dispatch via unified C function
                 // that handles both native map and VM handle.
                 if (arr_tv.tag == JD_TAG_RUNTIME && arr_tv.runtime_tag) {

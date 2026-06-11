@@ -2318,6 +2318,31 @@ Assert(c9m{"zzz"} + 5 = 5, "map miss still coerces to 0 in arithmetic")
 ' (A no-RETURN function returns 0 natively, not a detectable NONE sentinel, so
 '  ISNONE on a function result stays a known divergence - not asserted here.)
 
+' C8-rest: a string key on a GENUINE array variable must compile + run without
+' crashing (map syntax on an array is invalid - native yields 0 instead of
+' dereferencing the array pointer as a map). The value differs from the
+' interpreter (which coerces the key to index 0), so only no-crash is checked.
+' UDT brace-field access (v{"X"}) above is unaffected by the guard.
+DIM c8arr = [10.0, 20.0, 30.0]
+DIM c8dummy = c8arr{"zz"}
+Assert(LEN(c8arr) = 3, "string-key on genuine array compiled+ran (no crash)")
+
+' C6b: a statically-mixed array literal and APPEND(strArr, numeric) both yield
+' a mixed array that reads back PER-CELL (string head, numeric tail). Was a
+' crash: the result was tagged a pure string array and the numeric cell read
+' as a pointer. Now stored tagged / marked mixed so arr[i] dispatches per cell.
+DIM c6lit = [1.0, "two", 3.0]
+DIM c6ls AS STRING = c6lit[1]
+Assert(c6ls = "two", "mixed literal string cell")
+DIM c6ld AS DOUBLE = c6lit[2]
+Assert(c6ld = 3, "mixed literal numeric cell")
+DIM c6mix = APPEND(["a", "b"], 9.0)
+Assert(LEN(c6mix) = 3, "mixed APPEND length")
+DIM c6s AS STRING = c6mix[0]
+Assert(c6s = "a", "mixed APPEND string head")
+DIM c6d AS DOUBLE = c6mix[2]
+Assert(c6d = 9, "mixed APPEND numeric tail")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.
