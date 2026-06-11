@@ -1,0 +1,79 @@
+' Two camps: Piper vs. Dotter: one job: chain a value through processing steps.
+'   The Piper:  built-in |> operator - pure value flow, no scaffolding.
+'   The Dotter: fluent UDT - each method returns THIS, so calls chain,
+'               and the object carries STATE the pipe cannot (error flag,
+'               step counter), giving promise-style semantics.
+' Inside a TYPE method a bare member name silently creates a LOCAL -
+' member reads and writes must go through THIS.
+
+TYPE Go_TYPE
+	DIM val1
+	DIM ok
+	DIM err$
+	DIM n_steps
+
+	FUNC Start(strFileName AS STRING)
+		THIS.ok = TRUE
+		THIS.err$ = ""
+		THIS.n_steps = 0
+		TRY
+			THIS.val1 = TXTREADER$(strFileName)
+		CATCH
+			THIS.ok = FALSE
+			THIS.err$ = "start: " + ERRMSG$
+		ENDTRY
+		RETURN THIS
+	ENDFUNC
+
+	' Promise semantics: once a step failed, the rest of the chain is
+	' skipped and the first error is preserved.
+	FUNC AndThen(f, v)
+		IF NOT THIS.ok THEN RETURN THIS
+		TRY
+			THIS.val1 = f(THIS.val1, v)
+			THIS.n_steps = THIS.n_steps + 1
+		CATCH
+			THIS.ok = FALSE
+			THIS.err$ = "step " + (THIS.n_steps + 1) + ": " + ERRMSG$
+		ENDTRY
+		RETURN THIS
+	ENDFUNC
+
+	' Recovery: replace the value after a failure and let the chain go on.
+	FUNC Rescue(fallback)
+		IF THIS.ok THEN RETURN THIS
+		THIS.val1 = fallback
+		THIS.ok = TRUE
+		THIS.err$ = ""
+		RETURN THIS
+	ENDFUNC
+ENDTYPE
+
+' A chain step is anything with the (value, arg) shape - builtin refs
+' (SPLIT@, SORT@) and user FUNCs mix freely.
+FUNC KEEP_NONEMPTY(a, unused)
+	RETURN FILTER(LAMBDA s -> LEN(s) > 0, a)
+ENDFUNC
+
+' ── The Piper ────────────────────────────────────────────────────
+DIM piped = TXTREADER$("readme.md") |> SPLIT(?, CHR$(10)) |> KEEP_NONEMPTY(?, 0) |> SORT(?)
+PRINT "pipe |>    : "; LEN(piped); " sorted lines, first: "; piped[0]
+
+' ── The Dotter, happy path ───────────────────────────────────────
+DIM processor AS Go_TYPE
+processor.Start("readme.md").AndThen(SPLIT@, CHR$(10)).AndThen(KEEP_NONEMPTY@, 0).AndThen(SORT@, 0)
+PRINT "fluent UDT : "; LEN(processor.val1); " sorted lines in "; processor.n_steps; " steps, first: "; processor.val1[0]
+
+' ── State advantage 1: a failure short-circuits the chain ────────
+' The missing file poisons the chain; both AndThen steps are skipped,
+' nothing crashes, and the FIRST error is still readable at the end.
+DIM broken AS Go_TYPE
+broken.Start("no_such_file.txt").AndThen(SPLIT@, CHR$(10)).AndThen(SORT@, 0)
+PRINT "short-circuit: ok="; broken.ok; ", steps run="; broken.n_steps; ", err: "; broken.err$
+
+' ── State advantage 2: Rescue recovers mid-chain ─────────────────
+' Same poisoned start, but Rescue swaps in a fallback value and the
+' remaining steps run normally.
+DIM rescued AS Go_TYPE
+rescued.Start("no_such_file.txt").Rescue("delta" + CHR$(10) + "alpha").AndThen(SPLIT@, CHR$(10)).AndThen(SORT@, 0)
+PRINT "recovered  : ok="; rescued.ok; ", steps run="; rescued.n_steps; ", value: "; rescued.val1
