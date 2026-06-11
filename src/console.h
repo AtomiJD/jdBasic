@@ -157,6 +157,11 @@ private:
     // old prompt) this becomes stale — reset it to 0 to force a fresh
     // redraw at the current cursor position without backing up.
     int prompt_drawn_visual_len = 0;
+    // Absolute buffer row where the current prompt begins (Windows render).
+    // Tracked explicitly instead of derived from the cursor, which clamps at
+    // the bottom row and made a wrapping input back up over earlier output.
+    // -1 = re-anchor at the cursor on the next render.
+    int prompt_start_row = -1;
 
     // Raw mode
     void enable_raw_mode();

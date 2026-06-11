@@ -1207,20 +1207,31 @@ void Console::render_prompt() {
     int rows = std::max(new_rows, last_rows);
     if (rows < 1) rows = 1;
 
-    // Anchor the redraw area. The cursor after the previous render sits at the
-    // row offset `last_drawn / cols` below the start (integer division!). This
-    // is different from `last_rows - 1` when last_drawn is an exact multiple of
-    // cols — in that case the cursor wrapped to the start of a fresh row and
-    // is one row further down.
-    int cursor_row_offset = 0;
-    if (last_drawn_total_visual_len > 0)
-        cursor_row_offset = last_drawn_total_visual_len / cols;
-    COORD startPos = { 0, (SHORT)(csbi.dwCursorPosition.Y - cursor_row_offset) };
-    if (startPos.Y < 0) startPos.Y = 0;
-    // Clip the vertical region to the visible buffer
-    int max_rows_from_start = csbi.dwSize.Y - startPos.Y;
-    if (max_rows_from_start < 1) max_rows_from_start = 1;
-    if (rows > max_rows_from_start) rows = max_rows_from_start;
+    // Anchor the redraw at the row where THIS prompt began, tracked explicitly
+    // in prompt_start_row. Deriving the anchor from the cursor breaks at the
+    // bottom of the buffer: the cursor clamps to the last row while the input
+    // keeps wrapping, so the old `cursorY - last_drawn/cols` math backed the
+    // prompt up over the previous command's output. A fresh prompt
+    // (last_drawn == 0) re-anchors at the current cursor row.
+    if (last_drawn_total_visual_len == 0 || prompt_start_row < 0)
+        prompt_start_row = csbi.dwCursorPosition.Y;
+    if (rows > csbi.dwSize.Y) rows = csbi.dwSize.Y;  // input taller than screen
+    // The prompt + (wrapped) input must fit between prompt_start_row and the
+    // bottom. If a freshly-started wrapped row would fall below the buffer,
+    // scroll up by the deficit FIRST (newlines at the bottom row shift the
+    // whole buffer - earlier output included - up) and move the anchor up with
+    // it, instead of overwriting the rows above.
+    int deficit = (prompt_start_row + rows) - csbi.dwSize.Y;
+    if (deficit > 0) {
+        COORD bottom = { 0, (SHORT)(csbi.dwSize.Y - 1) };
+        SetConsoleCursorPosition(hOut, bottom);
+        for (int sN = 0; sN < deficit; sN++) std::cout << '\n';
+        std::cout.flush();
+        prompt_start_row -= deficit;
+        if (prompt_start_row < 0) prompt_start_row = 0;
+        GetConsoleScreenBufferInfo(hOut, &csbi);
+    }
+    COORD startPos = { 0, (SHORT)prompt_start_row };
 
     // Build CHAR_INFO buffer filled with spaces
     std::vector<CHAR_INFO> buf((size_t)rows * (size_t)cols);
