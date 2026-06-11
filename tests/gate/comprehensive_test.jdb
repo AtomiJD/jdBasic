@@ -2352,6 +2352,24 @@ DIM c5cr = AGG(c5ck, c5cv, LAMBDA g -> JOIN(g, ","))
 DIM c5cs AS STRING = c5cr[0][1]
 Assert(c5cs = "x,y", "AGG string reducer (JOIN) concatenates per group")
 
+' SWITCH on a RUNTIME-tagged string (read from an untyped-param map, the
+' JSON-RPC dispatch pattern) generated an i64 icmp against the string CASE
+' constant -> invalid IR. The switch value is now coerced to a char* for
+' string CASE labels. (Found compiling mcp/server.jdb native.)
+FUNC sw_pick(sw_m)
+  DIM sw_k AS STRING = sw_m{"k"}
+  SWITCH sw_k
+    CASE "alpha"
+      RETURN 1
+    CASE "beta"
+      RETURN 2
+    DEFAULT
+      RETURN 0
+  ENDSWITCH
+ENDFUNC
+DIM sw_map AS MAP = {"k": "beta"}
+Assert(sw_pick(sw_map) = 2, "SWITCH on a map-read (RUNTIME) string value")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.

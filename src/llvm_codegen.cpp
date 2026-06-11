@@ -5074,9 +5074,17 @@ void LLVMCodegen::codegen_switch(const Stmt& stmt) {
     // a hard compile-time error, surfaced as an LLVM verification fail
     // upstream — left as a future ergonomic.
     auto build_cmp = [&](TypedValue sv, TypedValue cv, int op_kind) -> LLVMValueRef {
-        if (sv.tag == JD_TAG_STR && cv.tag == JD_TAG_STR) {
+        // A string CASE label → string equality. The switch value may be STR
+        // or RUNTIME-tagged (e.g. `SWITCH method$` where method$ was read from
+        // an untyped-param map), so coerce it to a char* rather than requiring
+        // a static STR tag on both sides (which dropped to an i64 icmp against
+        // the string-constant pointer -> invalid IR).
+        if (cv.tag == JD_TAG_STR &&
+            (sv.tag == JD_TAG_STR || sv.tag == JD_TAG_RUNTIME)) {
+            LLVMValueRef sp = (sv.tag == JD_TAG_STR) ? sv.val
+                                                     : coerce_to(sv, i8_ptr_type);
             auto& fn = runtime_funcs["__str_eq"];
-            LLVMValueRef args[] = { sv.val, cv.val };
+            LLVMValueRef args[] = { sp, cv.val };
             return LLVMBuildICmp(builder, LLVMIntNE,
                 LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "eq"),
                 LLVMConstInt(i64_type, 0, 0), "cmp");
