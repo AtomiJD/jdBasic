@@ -257,7 +257,7 @@ struct OutputCapture {
 // short and the caller wants the result. While the worker is
 // running a long script, eval is rejected ("VM busy") rather than
 // queued, because waiting would re-introduce the very hang the
-// async model is meant to avoid. Atomi must call jdb_stop first.
+// async model is meant to avoid. The client must call jdb_stop first.
 //
 // jdb_vars / jdb_funcs / jdb_savews / jdb_loadws read or mutate
 // VM state and stay on the main thread — they take the worker
@@ -545,10 +545,40 @@ bool is_user_func(const std::string& name) {
     return boot_set().funcs.count(name) == 0;
 }
 
-Value tool_jdb_vars(VM& vm, const Value&) {
+// Shape of a nested array as "[d0, d1, ...]" — outer length, then descend
+// first elements while they are arrays (same convention as the LENV builtin).
+std::string array_shape_str(const Value& v) {
+    std::string s = "[";
+    const Value* cur = &v;
+    bool first = true;
+    while (cur->type == ValueType::ARRAY) {
+        auto* a = cur->as_array();
+        if (!first) s += ", ";
+        s += std::to_string(a->elements.size());
+        first = false;
+        if (a->elements.empty()) break;
+        cur = &a->elements[0];
+    }
+    s += "]";
+    return s;
+}
+
+Value tool_jdb_vars(VM& vm, const Value& args) {
     std::lock_guard<std::mutex> lk(g_worker.m);
     if (worker_busy_or_queued_locked()) {
         return make_text_result("VM busy — call jdb_stop first.", true);
+    }
+    // Per-variable value preview cap; 0 = no cap (full dump). Clients may
+    // send the parameter as a JSON number or as a string.
+    int64_t max_chars = 160;
+    if (Value* m = obj_get(args, "max_chars")) {
+        double d = -1.0;
+        if (m->type == ValueType::STRING) {
+            try { d = std::stod(m->as_string()->data); } catch (...) {}
+        } else {
+            d = m->to_double();
+        }
+        if (d >= 0) max_chars = (int64_t)d;
     }
     auto& names = vm.get_global_names();
     auto& globals = vm.get_globals();
@@ -556,7 +586,20 @@ Value tool_jdb_vars(VM& vm, const Value&) {
     for (auto& [name, slot] : names) {
         if (slot >= globals.size()) continue;
         if (!is_user_var(name)) continue;
-        kept.push_back("  " + name + " = " + globals[slot].to_string());
+        const Value& val = globals[slot];
+        std::string prefix;
+        if (val.type == ValueType::ARRAY) {
+            prefix = "ARRAY " + array_shape_str(val) + " ";
+        }
+        std::string body = val.to_string();
+        if (max_chars > 0 && body.size() > (size_t)max_chars) {
+            size_t cut = (size_t)max_chars;
+            // Don't split a UTF-8 sequence: back off over continuation bytes.
+            while (cut > 0 && (static_cast<unsigned char>(body[cut]) & 0xC0) == 0x80) cut--;
+            body = body.substr(0, cut) + "... (+" +
+                   std::to_string(body.size() - cut) + " chars)";
+        }
+        kept.push_back("  " + name + " = " + prefix + body);
     }
     if (kept.empty()) return make_text_result("(no user variables)", false);
     std::string out;
@@ -761,6 +804,13 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
     std::lock_guard<std::mutex> lk(g_worker.m);
     if (worker_busy_or_queued_locked()) {
         return make_text_result("VM busy — call jdb_stop first.", true);
+    }
+    // load_workspace returns silently when the file is missing — without
+    // this check the tool would report success on a no-op load.
+    if (!std::filesystem::exists(name + ".jsws") &&
+        !std::filesystem::exists(name + ".jdws")) {
+        return make_text_result("Error: workspace '" + name +
+            ".jsws' not found in the server's working directory — VM state unchanged.", true);
     }
     OutputCapture cap(vm);
     try {
@@ -1013,8 +1063,8 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_vars",
-        "List user-defined global variables on the persistent VM. Server internals and engine-noise (dotted, __-prefixed) are filtered out.",
-        build_input_schema({}, {})));
+        "List user-defined global variables on the persistent VM. Server internals and engine-noise (dotted, __-prefixed) are filtered out. Arrays are prefixed with their shape; each value is previewed up to max_chars characters (default 160) so large datasets don't flood the context.",
+        build_input_schema({{"max_chars", "Per-variable value preview cap in characters (default 160; 0 = full dump)."}}, {})));
 
     a.push_back(tool_descriptor(
         "jdb_funcs",
@@ -1038,7 +1088,7 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_loadws",
-        "Reset the VM and restore variables + functions from '<name>.jsws'. Falls back to legacy '<name>.jdws' if no .jsws exists. Replaces the current state — anything defined this session is lost unless you saved it first. Mirrors the REPL's LOADWS command.",
+        "Reset the VM and restore variables + functions from '<name>.jsws'. Falls back to legacy '<name>.jdws' if no .jsws exists; errors if neither file exists (VM state stays untouched). Replaces the current state — anything defined this session is lost unless you saved it first. Mirrors the REPL's LOADWS command.",
         build_input_schema({{"name", "Workspace name (file '<name>.jsws' is read; .jdws as fallback)."}}, {"name"})));
 
     a.push_back(tool_descriptor(
