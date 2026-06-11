@@ -1855,9 +1855,12 @@ int main(int argc, char* argv[]) {
                 return true;
             };
 
+#ifdef _WIN32
             // BFS over jdbrt.dll's static import closure. Only DLLs that exist
             // beside the compiler are followed; system DLLs (USER32, KERNEL32,
             // …) aren't present there, so they're skipped automatically.
+            // POSIX has no PE closure to walk — the produced binary finds
+            // libjdbrt.so via rpath / LD_LIBRARY_PATH instead.
             std::unordered_set<std::string> seen;
             std::vector<std::string> queue = { "jdbrt.dll" };
             while (!queue.empty()) {
@@ -1869,6 +1872,7 @@ int main(int argc, char* argv[]) {
                 for (auto& dep : pe_imported_dlls(self_dir / name))
                     queue.push_back(dep);
             }
+#endif
 
             // Bundled default font (used by SCREEN auto-load so demos don't
             // need SETFONT boilerplate).
