@@ -1409,7 +1409,8 @@ All numeric functions are vectorized — they also accept arrays and apply eleme
 
 #### Random Numbers
 
-* **`RND([max])`**: Returns a pseudo-random number. Without arguments, a double in `[0, 1)`; with an integer argument, an integer in `[0, max)`. Also available as `RANDOM`.
+* **`RND()`**: Returns a pseudo-random double in `[0, 1]` — **both ends inclusive**; exactly 1.0 is rare (about 1 in 32768 draws) but real. Arguments are accepted and silently ignored. For a random integer in `[1, n]` use `INT(RND() * n) MOD n + 1` (the `MOD` clamps the 1.0 case).
+* **`RANDOM([lo], [hi])`**: Uniform double in `[lo, hi]` (hi inclusive). `RANDOM()` is `[0, 1]`, `RANDOM(hi)` is `[0, hi]`. The range form is interpreter-only — under native `-c`, `RANDOM` compiles to the same zero-argument generator as `RND` and ignores its arguments.
 * **`RANDOMSEED(seed)`**: Seeds the PRNG. Using the same seed twice produces the same sequence — useful for reproducible tests.
 
 #### Conversion

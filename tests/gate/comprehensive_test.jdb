@@ -895,6 +895,21 @@ Assert(SQR(144) = 12, "sqr 144")
 Assert(ABS(SIN(0)) < 0.001, "sin 0")
 Assert(ABS(COS(0) - 1) < 0.001, "cos 0")
 
+' RND/RANDOM: RND() is [0,1] inclusive; the argument forms are interp-only
+' (native maps both names to the zero-argument generator).
+RANDOMSEED 42
+DIM rnd_s = RND()
+Assert(rnd_s >= 0 AND rnd_s <= 1, "rnd in [0,1]")
+DIM rndm0 = RANDOM()
+Assert(rndm0 >= 0 AND rndm0 <= 1, "random() in [0,1]")
+IF OS.FEATURE("INTERPRETER") THEN
+  Assert(RND(365) >= 0 AND RND(365) <= 1, "rnd arg ignored, still [0,1]")
+  DIM rndm1 = RANDOM(5)
+  Assert(rndm1 >= 0 AND rndm1 <= 5, "random(hi) in [0,hi]")
+  DIM rndm2 = RANDOM(2, 3)
+  Assert(rndm2 >= 2 AND rndm2 <= 3, "random(lo,hi) in [lo,hi]")
+ENDIF
+
 ' ══════════════════════════════════════════════════════════════════
 ' 14a. CONVERSION FUNCTIONS — classic BASIC cast family, scalar + vector
 ' ══════════════════════════════════════════════════════════════════

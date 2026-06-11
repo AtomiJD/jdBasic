@@ -1382,6 +1382,14 @@ Returns the Python docstring for a given module or function.
 Syntax: RAISEEVENT "event_name", data
 Description: Triggers a custom event that can be handled by an ON...CALL statement.
 
+[RANDOM]
+Syntax: RANDOM([lo], [hi])
+Description: Uniform random double in [lo, hi], hi inclusive. RANDOM() gives [0, 1], RANDOM(hi) gives [0, hi]. Interpreter only - under native -c the arguments are ignored (behaves like RND).
+
+[RANDOMSEED]
+Syntax: RANDOMSEED(seed)
+Description: Seeds the PRNG. The same seed reproduces the same sequence.
+
 [REACT]
 Syntax: DIM variable AS REACT type
 Description: Declares a reactive variable whose value automatically updates when its dependencies change.
@@ -1447,8 +1455,8 @@ Syntax: RMDIR "path"
 Description: Removes an empty directory.
 
 [RND]
-Syntax: RND(number)
-Description: Returns a random floating-point number between 0.0 and 1.0.
+Syntax: RND()
+Description: Returns a random double in [0, 1], both ends inclusive. Arguments are ignored. For an integer in [1, n] use INT(RND() * n) MOD n + 1.
 
 [ROTATE]
 Syntax: ROTATE(array, shift_vector)

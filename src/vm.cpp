@@ -6253,7 +6253,9 @@ void VM::register_builtins() {
         (void)args; return Value::make_string("\t");
     });
     register_native("RANDOM", [](const std::vector<Value>& args) -> Value {
-        double lo = args[0].to_double(), hi = args[1].to_double();
+        double lo = 0.0, hi = 1.0;
+        if (args.size() == 1)      { hi = args[0].to_double(); }
+        else if (args.size() >= 2) { lo = args[0].to_double(); hi = args[1].to_double(); }
         return Value::make_f64(lo + (double)rand() / RAND_MAX * (hi - lo));
     });
     register_native("RANDOMSEED", [](const std::vector<Value>& args) -> Value {
