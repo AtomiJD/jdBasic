@@ -8064,6 +8064,53 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
          upper == "ISARR" || upper == "ISMAP" || upper == "ISNONE" ||
          upper == "ISNULL") && expr.args.size() == 1) {
         const Expr& arg = *expr.args[0];
+        // ISNONE/ISNULL: runtime detection. Two NONE sources are detectable:
+        //   (a) a map miss — ISNONE(m{"k"}) == NOT exists(m, k);
+        //   (b) the f64 NaN sentinel a no-RETURN function leaves behind.
+        // The map value representation is unchanged (a miss still reads as 0 in
+        // arithmetic); only ISNONE/ISNULL learn to spot the missing case.
+        if (upper == "ISNONE" || upper == "ISNULL") {
+            bool str_key = arg.kind == ExprKind::INDEX && arg.left && arg.right &&
+                (arg.right->kind == ExprKind::LITERAL_STRING ||
+                 (arg.right->kind == ExprKind::VARIABLE && !arg.right->str_val.empty() &&
+                  arg.right->str_val.back() == '$'));
+            if (str_key) {
+                TypedValue base = codegen_expr(*arg.left);
+                TypedValue key  = codegen_expr(*arg.right);
+                LLVMValueRef kptr = coerce_to(key, i8_ptr_type);
+                bool base_is_var = (arg.left->kind == ExprKind::VARIABLE);
+                LLVMValueRef has = nullptr;
+                if (base.tag == JD_TAG_NATIVE_MAP ||
+                    (base_is_var && (base.tag == JD_TAG_F64 || base.tag == JD_TAG_I64))) {
+                    LLVMValueRef mptr;
+                    if (base.tag == JD_TAG_NATIVE_MAP) mptr = coerce_to(base, i8_ptr_type);
+                    else if (base.tag == JD_TAG_F64) {
+                        LLVMValueRef ai = pun_f64_to_i64(base.val);
+                        mptr = LLVMBuildIntToPtr(builder, ai, i8_ptr_type, "itoptr");
+                    } else mptr = LLVMBuildIntToPtr(builder, base.val, i8_ptr_type, "itoptr");
+                    auto& fn = runtime_funcs["__map_has"];
+                    LLVMValueRef a[] = { mptr, kptr };
+                    has = LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 2, "ihas");
+                } else if (base.tag == JD_TAG_VM_HANDLE) {
+                    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                    LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                    auto& fn = runtime_funcs["__jdrt_obj_exists"];
+                    LLVMValueRef a[] = { rt, base.val, kptr };
+                    has = LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "ioex");
+                }
+                if (has) {
+                    LLVMValueRef isn = LLVMBuildICmp(builder, LLVMIntEQ, has,
+                        LLVMConstInt(i64_type, 0, 0), "isnone");
+                    return { LLVMBuildZExt(builder, isn, i64_type, "ext"), JD_TAG_BOOL };
+                }
+                // RUNTIME / unknown base: can't tell — conservatively not none.
+                return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+            }
+            // Any other arg: native has no NONE representation for it (a
+            // no-RETURN function returns 0, not a sentinel; a math NaN is a
+            // number, not NONE per the interpreter). Conservatively not-none.
+            return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+        }
         bool result = false;
         if (upper == "ISBOOL") {
             result = (arg.kind == ExprKind::LITERAL_BOOL);

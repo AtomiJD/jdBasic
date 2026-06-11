@@ -2305,6 +2305,19 @@ FUNC c9_apply2(c9fn, c9p, c9q)
 ENDFUNC
 Assert(c9_apply2(c9_add@, 3.0, 4.0) = 7, "funcref-literal 2-arg wrapper arity")
 
+' C9a: ISNONE/ISNULL detect a map miss (compiled as NOT exists) and the f64
+' NaN sentinel a no-RETURN function leaves behind. Map-miss arithmetic still
+' coerces to 0 (the value representation is unchanged - only ISNONE/ISNULL
+' learned to recognise the "missing" cases).
+DIM c9m AS MAP = {"a": 1.0}
+Assert(ISNONE(c9m{"zzz"}) = TRUE, "ISNONE map miss")
+Assert(ISNULL(c9m{"zzz"}) = TRUE, "ISNULL map miss")
+Assert(ISNONE(c9m{"a"}) = FALSE, "ISNONE map present key")
+Assert(ISNONE(5) = FALSE, "ISNONE plain number")
+Assert(c9m{"zzz"} + 5 = 5, "map miss still coerces to 0 in arithmetic")
+' (A no-RETURN function returns 0 natively, not a detectable NONE sentinel, so
+'  ISNONE on a function result stays a known divergence - not asserted here.)
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.
