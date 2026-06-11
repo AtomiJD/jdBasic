@@ -1671,17 +1671,8 @@ char* jdb_str_sub(const char* a, const char* b) {
 //   n / "str"  → first n chars  (from_left = 1)
 //   "str" / n  → last  n chars  (from_left = 0)
 // Byte-based, mirroring the interpreter's substr semantics exactly.
-char* jdb_str_slice(const char* s, int64_t n, int32_t from_left) {
-    if (!s) return _strdup("");
-    size_t slen = strlen(s);
-    if (n < 0) n = 0;
-    if ((size_t)n >= slen) return _strdup(s);
-    char* out = (char*)malloc((size_t)n + 1);
-    const char* src = from_left ? s : (s + (slen - (size_t)n));
-    memcpy(out, src, (size_t)n);
-    out[n] = '\0';
-    return out;
-}
+// jdb_str_slice is defined below, next to jdb_str_blen, so it can be
+// binary-safe (honour embedded NULs and register the result length).
 
 // ── Generic native vectorization ──────────────────────────────
 //
@@ -2278,6 +2269,22 @@ static inline int64_t jdb_str_blen(const char* s) {
     int64_t blen = jdrt_strlen(s);
     if (blen >= 0) return blen;
     return (int64_t)strlen(s);
+}
+
+// String slicing via `/`:  "str" / n → last n chars; n / "str" → first n.
+// Binary-safe: uses the byte length registry (embedded NULs survive) and
+// registers the result so downstream slices/compares see its true length.
+char* jdb_str_slice(const char* s, int64_t n, int32_t from_left) {
+    if (!s) return _strdup("");
+    int64_t slen = jdb_str_blen(s);
+    if (n < 0) n = 0;
+    if (n > slen) n = slen;
+    char* out = (char*)malloc((size_t)n + 1);
+    const char* src = from_left ? s : (s + (slen - n));
+    memcpy(out, src, (size_t)n);
+    out[n] = '\0';
+    jdrt_register_binary(out, n);
+    return out;
 }
 
 int64_t jdb_len_str(const char* s) {
