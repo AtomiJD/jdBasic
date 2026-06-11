@@ -3521,15 +3521,24 @@ char* jdb_frmv(JdbArray* arr) {
                 jdb_format_double(num, sizeof(num), arr->data[i]);
                 emit(num);
             }
-        } else if (is_str) {
+        } else if (is_str || is_nested) {
+            // Flags mark the array as carrying pointers, but individual
+            // cells may still be plain numbers (mixed rows like ["bob", 30]).
+            // Classify per cell instead of dereferencing every slot.
+            int32_t ct = jdb_array_classify_elem(arr, arr->data[i]);
             union { double d; int64_t i; } u; u.d = arr->data[i];
-            const char* s = (const char*)(intptr_t)u.i;
-            emit(s ? s : "");
-        } else if (is_nested) {
-            union { double d; int64_t i; } u; u.d = arr->data[i];
-            char* sub = jdb_frmv((JdbArray*)(intptr_t)u.i);
-            emit(sub ? sub : "[]");
-            free(sub);
+            if (ct == 2) {
+                const char* s = (const char*)(intptr_t)u.i;
+                emit(s ? s : "");
+            } else if (ct == 3) {
+                char* sub = jdb_frmv((JdbArray*)(intptr_t)u.i);
+                emit(sub ? sub : "[]");
+                free(sub);
+            } else {
+                char num[64];
+                jdb_format_double(num, sizeof(num), arr->data[i]);
+                emit(num);
+            }
         } else if (is_bool) {
             emit(arr->data[i] != 0.0 ? "TRUE" : "FALSE");
         } else {

@@ -1501,7 +1501,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, \*, /, MOD, \>, \<, =, ^) or a reference to a function (srq@).
 * **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array.
 * **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Non-cyclically shifts an N-dimensional array.
-* **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix.
+* **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix. Sorts numbers and strings (lexicographic); in a mixed array numbers order before strings. For a 2D matrix, `dimension` selects the column whose values order the rows — string key columns work (`XSORT(rows, 0)` sorts `[["bob",30],["alice",25]]` by name).
 * **`CONVOLVE(array, kernel, wrap_mode) -> array`**: Performs a 2D convolution of an array with a kernel.
 * **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.
 

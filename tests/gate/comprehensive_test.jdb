@@ -1868,9 +1868,9 @@ IF OS.FEATURE("HTTP") THEN
     Header("Group D: HTTP cookies / params / timeout")
 
     HTTP.SETCOOKIE "s_id", "abc123"
-    HTTP.SETCOOKIE "user", "atomi"
+    HTTP.SETCOOKIE "user", "tester"
     Assert(HTTP.GETCOOKIE$("s_id") = "abc123", "SETCOOKIE+GETCOOKIE$ s_id")
-    Assert(HTTP.GETCOOKIE$("user") = "atomi",  "SETCOOKIE+GETCOOKIE$ user")
+    Assert(HTTP.GETCOOKIE$("user") = "tester",  "SETCOOKIE+GETCOOKIE$ user")
     Assert(HTTP.GETCOOKIE$("missing") = "",    "GETCOOKIE$ unknown key -> empty")
     HTTP.CLEARCOOKIES
     Assert(HTTP.GETCOOKIE$("s_id") = "", "CLEARCOOKIES drops all cookies")
@@ -1972,6 +1972,19 @@ LET ng_F = FLATTEN([[1,2,3],[4,5,6]])
 Assert(LEN(ng_F) = 6,   "FLATTEN 2D length")
 Assert(ng_F[0] = 1,     "FLATTEN 2D first")
 Assert(ng_F[5] = 6,     "FLATTEN 2D last")
+
+' XSORT over strings — the numeric-only comparator left string arrays
+' silently unsorted, 1D and 2D-by-string-column alike.
+LET ng_xs = XSORT(["delta", "alpha", "charlie"])
+Assert(ng_xs[0] = "alpha" AND ng_xs[2] = "delta", "XSORT 1D strings asc")
+LET ng_xd = XSORT(["delta", "alpha", "charlie"], 0, TRUE)
+Assert(ng_xd[0] = "delta" AND ng_xd[2] = "alpha", "XSORT 1D strings desc")
+LET ng_xt = XSORT([["bob", 30], ["alice", 25], ["carl", 28]], 0)
+Assert(ng_xt[0][0] = "alice" AND ng_xt[2][0] = "carl", "XSORT 2D by string column")
+LET ng_xn = XSORT([["bob", 30], ["alice", 25], ["carl", 28]], 1)
+Assert(ng_xn[0][1] = 25 AND ng_xn[2][1] = 30, "XSORT 2D by numeric column")
+LET ng_xm = XSORT([3, 1, 2])
+Assert(ng_xm[0] = 1 AND ng_xm[2] = 3, "XSORT 1D numeric unchanged")
 
 ' ══════════════════════════════════════════════════════════════════
 ' UDT lifecycle — SUB INIT(args), SUB DISPOSE(), DIM x AS T(args)

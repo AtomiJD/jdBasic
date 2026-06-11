@@ -4102,6 +4102,16 @@ void VM::register_builtins() {
         return r;
     });
     register_native("XSORT", [](const std::vector<Value>& args) -> Value {
+        // Type-aware ordering: numerics sort before strings, strings compare
+        // lexicographically. Shared by the 1D path and the 2D
+        // sort-rows-by-column path, so string columns work as sort keys.
+        auto value_less = [](const Value& a, const Value& b) -> bool {
+            bool a_str = (a.type == ValueType::STRING);
+            bool b_str = (b.type == ValueType::STRING);
+            if (a_str != b_str) return !a_str;
+            if (a_str) return a.as_string()->data < b.as_string()->data;
+            return a.to_double() < b.to_double();
+        };
         Value r = Value::make_array();
         r.as_array()->elements = args[0].as_array()->elements;
         bool desc = (args.size() >= 3 && args[2].to_bool());
@@ -4110,14 +4120,14 @@ void VM::register_builtins() {
         if (args.size() >= 2 && args[0].as_array()->elements.size() > 0 &&
             args[0].as_array()->elements[0].type == ValueType::ARRAY) {
             int dim = (int)args[1].to_int();
-            std::sort(elems.begin(), elems.end(), [dim, desc](const Value& a, const Value& b) {
-                double va = a.as_array()->elements[dim].to_double();
-                double vb = b.as_array()->elements[dim].to_double();
-                return desc ? va > vb : va < vb;
+            std::sort(elems.begin(), elems.end(), [dim, desc, &value_less](const Value& a, const Value& b) {
+                const Value& va = a.as_array()->elements[dim];
+                const Value& vb = b.as_array()->elements[dim];
+                return desc ? value_less(vb, va) : value_less(va, vb);
             });
         } else {
-            std::sort(elems.begin(), elems.end(), [desc](const Value& a, const Value& b) {
-                return desc ? a.to_double() > b.to_double() : a.to_double() < b.to_double();
+            std::sort(elems.begin(), elems.end(), [desc, &value_less](const Value& a, const Value& b) {
+                return desc ? value_less(b, a) : value_less(a, b);
             });
         }
         return r;
