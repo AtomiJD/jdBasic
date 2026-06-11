@@ -152,13 +152,14 @@ ENDFUNC
 
 ' map tool names to capability labels
 FUNC CAP_FROM_TOOL$(tool$)
-    SWITCH CASE UCASE$(tool$)
+    SWITCH UCASE$(tool$)
         CASE "SPEECH_TO_TEXT":   RETURN "STT"
         CASE "OCR_IMAGE":        RETURN "OCR"
         CASE "EXCEL_WRITE_CELL": RETURN "WINDOWS_COM"
         CASE "HTTP_GET","SHELL_RUN","SQLITE_EXEC": RETURN "" ' any
         CASE "LLM_GENERATE","EMBEDDINGS": RETURN "LLM"
-        DEFAULT RETURN "" ' default: any
+        DEFAULT 
+            RETURN "" ' default: any
     ENDSWITCH
 ENDFUNC
 
@@ -198,9 +199,9 @@ FUNC POST_JSON$(url$, body$, token$)
         ' curl fallback
         PRINT "Error POST_JSON$: ", url$, body$, token$
         DIM r
-        r = OS.EXEC("curl", ["-sS","--max-time","20",
-                             "-H","Authorization: Bearer "+token$,
-                             "-H","Content-Type: application/json",
+        r = OS.EXEC("curl", ["-sS","--max-time","20", _
+                             "-H","Authorization: Bearer "+token$, _
+                             "-H","Content-Type: application/json", _
                              "-X","POST","--data",body$, url$])
         RETURN r{"output"}
     ENDTRY
