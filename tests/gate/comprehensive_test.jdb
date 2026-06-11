@@ -603,9 +603,9 @@ ENDIF
 Assert(ol_outer = 0, "one-liner doesn't steal outer ELSE")
 
 ' SWITCH
-DIM day = 3
+DIM day_no = 3
 DIM day_name = ""
-SWITCH day
+SWITCH day_no
   CASE 1
     day_name = "Monday"
   CASE 2
@@ -895,19 +895,19 @@ Assert(SQR(144) = 12, "sqr 144")
 Assert(ABS(SIN(0)) < 0.001, "sin 0")
 Assert(ABS(COS(0) - 1) < 0.001, "cos 0")
 
-' RND/RANDOM: RND() is [0,1] inclusive; the argument forms are interp-only
-' (native maps both names to the zero-argument generator).
+' RND/RANDOM: RND() is [0,1] inclusive and takes no arguments (interp ignores
+' extras); RANDOM supports 0/1/2 args in both backends.
 RANDOMSEED 42
 DIM rnd_s = RND()
 Assert(rnd_s >= 0 AND rnd_s <= 1, "rnd in [0,1]")
 DIM rndm0 = RANDOM()
 Assert(rndm0 >= 0 AND rndm0 <= 1, "random() in [0,1]")
+DIM rndm1 = RANDOM(5)
+Assert(rndm1 >= 0 AND rndm1 <= 5, "random(hi) in [0,hi]")
+DIM rndm2 = RANDOM(2, 3)
+Assert(rndm2 >= 2 AND rndm2 <= 3, "random(lo,hi) in [lo,hi]")
 IF OS.FEATURE("INTERPRETER") THEN
   Assert(RND(365) >= 0 AND RND(365) <= 1, "rnd arg ignored, still [0,1]")
-  DIM rndm1 = RANDOM(5)
-  Assert(rndm1 >= 0 AND rndm1 <= 5, "random(hi) in [0,hi]")
-  DIM rndm2 = RANDOM(2, 3)
-  Assert(rndm2 >= 2 AND rndm2 <= 3, "random(lo,hi) in [lo,hi]")
 ENDIF
 
 ' ══════════════════════════════════════════════════════════════════
@@ -3229,8 +3229,8 @@ DIM mixrow = [[1, "two"], [3, "four"]]
 Assert(mixrow[1][1] = "four", "nested mixed-row string cell")
 Assert(mixrow[0][0] = 1,      "nested mixed-row numeric cell")
 
-Assert(("Atomi " * 2) = "Atomi Atomi ", "string * int repeat")
-Assert((2 / "Atomi")  = "At",           "int / string slice (left)")
+Assert(("Echo " * 2) = "Echo Echo ", "string * int repeat")
+Assert((2 / "Echo")  = "Ec",         "int / string slice (left)")
 Assert(("Welcome" / 4) = "come",        "string / int slice (right)")
 Assert(("ababababc" - "ab") = "c",      "string - string remove")
 Assert(LEN(-"banana") = 6,              "unary minus char-split length")

@@ -211,6 +211,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_val",    "VAL",    f64_type, {i8_ptr_type}, 1);
     reg("jdb_rnd",    "RND",    f64_type, {}, 1);
     reg("jdb_rnd",    "RANDOM", f64_type, {}, 1);
+    reg("jdb_random2","__random2", f64_type, {f64_type, f64_type}, 1);
 
     // System
     reg("jdb_tick",       "TICK",       f64_type, {}, 1);
@@ -3091,7 +3092,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
-    // Check for dotted UDT field assignment: Player1.Name = "Atomi"
+    // Check for dotted UDT field assignment: Player1.Name = "Alice"
     size_t dot_pos = stmt.var_name.find('.');
     if (dot_pos != std::string::npos) {
         std::string obj_name = stmt.var_name.substr(0, dot_pos);
@@ -8013,6 +8014,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "iota3"), JD_TAG_ARR };
     }
 
+    // RANDOM(hi) / RANDOM(lo, hi) → native 2-arg form. Bare RANDOM() falls
+    // through to the zero-argument generator registered above.
+    if (upper == "RANDOM" && (expr.args.size() == 1 || expr.args.size() == 2)) {
+        LLVMValueRef lo_val = (expr.args.size() == 2)
+            ? coerce_to(codegen_expr(*expr.args[0]), f64_type)
+            : LLVMConstReal(f64_type, 0.0);
+        LLVMValueRef hi_val = coerce_to(codegen_expr(*expr.args[expr.args.size() - 1]), f64_type);
+        auto& fn = runtime_funcs["__random2"];
+        LLVMValueRef args[] = { lo_val, hi_val };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "random2"), JD_TAG_F64 };
+    }
+
     // POP(arr) — remove last element; return type follows the array's
     // string-flag (bit 1 of JdbArray::flags). We branch at runtime.
     if (upper == "POP" && expr.args.size() == 1) {
@@ -8326,7 +8339,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // Auto-vectorization blocklist for native codegen.
     // Any function NOT listed here vectorizes element-wise when any arg is
-    // an array (e.g. RIGHT$(["Atomi","Bert"], 2) → ["mi","rt"]).
+    // an array (e.g. RIGHT$(["Alice","Bert"], 2) → ["ce","rt"]).
     // This list is codegen-specific and does NOT mirror vm.cpp — the VM
     // bridge has its own smaller list in vm.cpp (VM::call_function).
     static const std::unordered_set<std::string> no_vectorize = {

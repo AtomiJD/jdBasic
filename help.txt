@@ -1384,7 +1384,7 @@ Description: Triggers a custom event that can be handled by an ON...CALL stateme
 
 [RANDOM]
 Syntax: RANDOM([lo], [hi])
-Description: Uniform random double in [lo, hi], hi inclusive. RANDOM() gives [0, 1], RANDOM(hi) gives [0, hi]. Interpreter only - under native -c the arguments are ignored (behaves like RND).
+Description: Uniform random double in [lo, hi], hi inclusive. RANDOM() gives [0, 1], RANDOM(hi) gives [0, hi]. All arities work in interpreter and native -c.
 
 [RANDOMSEED]
 Syntax: RANDOMSEED(seed)
