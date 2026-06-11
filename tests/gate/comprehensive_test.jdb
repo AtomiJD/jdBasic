@@ -2343,6 +2343,15 @@ Assert(c6s = "a", "mixed APPEND string head")
 DIM c6d AS DOUBLE = c6mix[2]
 Assert(c6d = 9, "mixed APPEND numeric tail")
 
+' C5c: AGG with a string-producing reducer (JOIN) tags the reduced row cell STR,
+' not F64, so r[group][1] reads back as the joined string. Numeric reducers
+' (SUM/MEAN/...) are unchanged - the reducer's return type is passed to jdb_agg_fn.
+DIM c5ck = ["a", "a", "b"]
+DIM c5cv = ["x", "y", "z"]
+DIM c5cr = AGG(c5ck, c5cv, LAMBDA g -> JOIN(g, ","))
+DIM c5cs AS STRING = c5cr[0][1]
+Assert(c5cs = "x,y", "AGG string reducer (JOIN) concatenates per group")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.

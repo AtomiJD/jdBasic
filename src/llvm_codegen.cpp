@@ -505,8 +505,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     // jdb_reduce_fn(fn_ptr, array, init) -> double
     reg("jdb_reduce_fn", "__reduce_fn", f64_type, {i8_ptr_type, i8_ptr_type, f64_type}, 1);
-    // jdb_agg_fn(reducer_fn, keys, values) -> [[key, reduced], ...]
-    reg("jdb_agg_fn", "__agg_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
+    // jdb_agg_fn(reducer_fn, keys, values, reduced_tag) -> [[key, reduced], ...]
+    reg("jdb_agg_fn", "__agg_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 3);
 
     // VM Bridge (for builtins not in the static runtime)
     reg("jdrt_init",     "__jdrt_init",     i8_ptr_type, {}, -1);
@@ -7614,6 +7614,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "AGG" && expr.args.size() == 3 && expr.args[2]) {
         const Expr& fe = *expr.args[2];
         LLVMValueRef reducer = nullptr;
+        int reduced_tag = JD_TAG_F64;  // the reducer's real return type
         if (fe.kind == ExprKind::LAMBDA_EXPR && fe.lambda_params.size() == 1 && fe.right) {
             static int agg_lambda_counter = 0;
             std::string nm = "__agg_reducer_" + std::to_string(agg_lambda_counter++);
@@ -7632,10 +7633,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMBuildStore(builder, as_ptr, vi.alloca_val);
             TypedValue body = codegen_expr(*fe.right);
             LLVMValueRef rv = body.val;
-            if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL)
+            if (body.tag == JD_TAG_I64 || body.tag == JD_TAG_BOOL) {
                 rv = LLVMBuildSIToFP(builder, rv, f64_type, "itof");
-            else if (body.tag != JD_TAG_F64)
+            } else if (body.tag == JD_TAG_STR || body.tag == JD_TAG_ARR ||
+                       body.tag == JD_TAG_NATIVE_MAP) {
+                // A string/array reducer (e.g. JOIN) returns a pointer; pun it
+                // into the f64 result slot and tag the output cell so the row's
+                // reduced value reads back as a string/array, not a number.
+                rv = pun_i64_to_f64(LLVMBuildPtrToInt(builder, rv, i64_type, "r2i"));
+                reduced_tag = body.tag;
+            } else if (body.tag != JD_TAG_F64) {
                 rv = coerce_to(body, f64_type);
+            }
             LLVMBuildRet(builder, rv);
             scopes.pop_back();
             current_fn = saved_fn;
@@ -7689,8 +7698,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return tv.val;
             };
             auto& fn = runtime_funcs["__agg_fn"];
-            LLVMValueRef args[] = { reducer, to_ptr(keys_tv), to_ptr(vals_tv) };
-            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "agg");
+            LLVMValueRef args[] = { reducer, to_ptr(keys_tv), to_ptr(vals_tv),
+                                    LLVMConstInt(i32_type, reduced_tag, 0) };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "agg");
             return { result, JD_TAG_ARR };
         }
         // Reducer we can't shape natively (a non-array-typed named FUNC, an

@@ -3688,7 +3688,7 @@ JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
 // group as a punned array ptr and returns a numeric result. Key cells keep
 // the key array's type (string vs numeric); each result row carries per-cell
 // tags so nested reads (row[0]=key, row[1]=reduced) decode correctly.
-JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals) {
+JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals, int32_t reduced_tag) {
     if (!keys || !vals) return jdb_array_new(0);
     int64_t n = keys->length < vals->length ? keys->length : vals->length;
     bool key_is_str = (keys->flags & 2) != 0;
@@ -3727,7 +3727,10 @@ JdbArray* jdb_agg_fn(JdbMapFn reducer, JdbArray* keys, JdbArray* vals) {
         row->data[1] = reduced;
         row->elem_tags = (int8_t*)malloc(2);
         row->elem_tags[0] = key_is_str ? (int8_t)2 : (int8_t)1;  // STR or F64
-        row->elem_tags[1] = (int8_t)1;                            // F64
+        // The reducer's real return type (F64 for SUM/MEAN/..., STR/ARR for a
+        // string/array-producing reducer like JOIN). reduced holds the punned
+        // pointer for STR/ARR, so the per-cell tag drives the typed read.
+        row->elem_tags[1] = (int8_t)reduced_tag;
         // A mixed [key, number] row is tagged per-cell ONLY (flag 8). Do NOT
         // set the array-wide nested(bit0)/string(bit1) flags: bit0 would make
         // array walkers recurse into the numeric cell as a JdbArray* (crash),
