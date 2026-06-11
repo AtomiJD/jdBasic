@@ -2385,6 +2385,17 @@ Assert(pi_add(3, 4) = 7, "AS INTEGER params: FUNC int sum")
 pi_set 9
 Assert(pi_g = 9, "AS INTEGER param: assign to INTEGER global (no CINT needed)")
 
+' OUTER with a USER funcref operator (FUNC as operator) was routed through the
+' VM bridge, which can't call a compiled user function by name -> runtime
+' "Undefined function". OUTER(a, b, op@) now has a native path (jdb_outer_fn);
+' the string-operator form still goes through the bridge.
+FUNC ou_op(ou_a AS DOUBLE, ou_b AS DOUBLE) AS DOUBLE
+  RETURN ou_a * ou_b + 1.0
+ENDFUNC
+DIM ou_t AS ARRAY = OUTER([1.0, 2.0], [3.0, 4.0], ou_op@)
+Assert(ou_t[0][0] = 4, "OUTER with a FUNC operator [0][0]")
+Assert(ou_t[1][1] = 9, "OUTER with a FUNC operator [1][1]")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.

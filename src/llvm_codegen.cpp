@@ -505,6 +505,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     // jdb_reduce_fn(fn_ptr, array, init) -> double
     reg("jdb_reduce_fn", "__reduce_fn", f64_type, {i8_ptr_type, i8_ptr_type, f64_type}, 1);
+    // jdb_outer_fn(a, b, op_fn) -> 2D table; op is a double(double,double) funcref
+    reg("jdb_outer_fn", "__outer_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
     // jdb_agg_fn(reducer_fn, keys, values, reduced_tag) -> [[key, reduced], ...]
     reg("jdb_agg_fn", "__agg_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 3);
 
@@ -7558,6 +7560,27 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         auto it = user_functions.find(e.str_val);
         return it != user_functions.end() && it->second.return_tag == JD_TAG_STR;
     };
+    // OUTER(a, b, op@) with a USER funcref operator → native jdb_outer_fn.
+    // The string-operator form (OUTER(a, b, "+")) leaves op as a STRING and
+    // falls through to the VM bridge, which knows the operator codes.
+    if (upper == "OUTER" && expr.args.size() == 3) {
+        TypedValue op_val = resolve_funcref(*expr.args[2], 2);
+        if (op_val.tag == JD_TAG_FUNCREF) {
+            TypedValue a_val = codegen_expr(*expr.args[0]);
+            TypedValue b_val = codegen_expr(*expr.args[1]);
+            auto to_ptr = [&](TypedValue tv) -> LLVMValueRef {
+                if (tv.tag == JD_TAG_F64) {
+                    LLVMValueRef as_i = pun_f64_to_i64(tv.val);
+                    return LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr");
+                }
+                return tv.val;
+            };
+            auto& fn = runtime_funcs["__outer_fn"];
+            LLVMValueRef args[] = { to_ptr(a_val), to_ptr(b_val), op_val.val };
+            LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "outer");
+            return { result, JD_TAG_ARR };
+        }
+    }
     if ((upper == "SELECT" || upper == "FILTER") && expr.args.size() >= 2) {
         TypedValue fn_val = resolve_funcref(*expr.args[0], 1);
         TypedValue arr_val = codegen_expr(*expr.args[1]);

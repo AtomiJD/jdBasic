@@ -1,0 +1,219 @@
+' showcase.jdb - comprehensive type + function showcase / native validation.
+' Exercises every scalar type and its assignments, arrays + maps, IMPORT/EXPORT
+' modules, global vs local scope (incl. shadowing), funcrefs for higher-order
+' functions, and a FUNC used as an operator. Self-testing: counts pass/fail and
+' prints a verdict, so it doubles as a native-vs-interpreter regression program.
+
+IMPORT GEOM
+
+' ── tiny assert harness ────────────────────────────────────────────────
+DIM sc_pass AS INTEGER = 0
+DIM sc_fail AS INTEGER = 0
+
+SUB ok(cond, msg$)
+  IF cond THEN
+    sc_pass = sc_pass + 1
+  ELSE
+    sc_fail = sc_fail + 1
+    PRINT "  FAIL: "; msg$
+  ENDIF
+ENDSUB
+
+' ════════════════════════════════════════════════════════════════════════
+' 1. Scalar types + assignments + explicit conversions
+' ════════════════════════════════════════════════════════════════════════
+DIM i AS INTEGER = 42
+DIM d AS DOUBLE  = 3.5
+DIM s AS STRING  = "hello"
+DIM b AS BOOLEAN = TRUE
+
+ok(i = 42,        "INTEGER literal")
+ok(d = 3.5,       "DOUBLE literal")
+ok(s = "hello",   "STRING literal")
+ok(b = TRUE,      "BOOLEAN literal")
+
+' implicit widening INTEGER -> DOUBLE (classic BASIC, lossless)
+DIM dw AS DOUBLE = i
+ok(dw = 42.0,     "INTEGER -> DOUBLE widen")
+
+' explicit narrowing / parsing with the documented conversion builtins
+DIM ni AS INTEGER = CINT(d)
+ok(ni = 3,        "CINT(3.5) truncates to 3")
+DIM dd AS DOUBLE = CDBL(i)
+ok(dd = 42.0,     "CDBL(int)")
+DIM si AS STRING = STR$(i)
+ok(si = "42",     "STR$(int)")
+DIM vi AS DOUBLE = VAL("3.14")
+ok(vi = 3.14,     "VAL(string)")
+
+' boolean from a comparison
+DIM cmp AS BOOLEAN = (i > 40)
+ok(cmp = TRUE,    "BOOLEAN from comparison")
+
+' ════════════════════════════════════════════════════════════════════════
+' 2. Compound types: ARRAY and MAP
+' ════════════════════════════════════════════════════════════════════════
+DIM arr AS ARRAY = [10, 20, 30, 40]
+ok(LEN(arr) = 4, "ARRAY length")
+ok(arr[1] = 20,  "ARRAY index read")
+arr[1] = 99
+ok(arr[1] = 99,  "ARRAY index assign")
+
+DIM strs AS ARRAY = ["alpha", "beta", "gamma"]
+DIM sc AS STRING = strs[2]
+ok(sc = "gamma", "STRING ARRAY index read")
+
+DIM m AS MAP = {"x": 1, "y": 2}
+ok(m{"x"} = 1,   "MAP get")
+m{"z"} = 3
+ok(m{"z"} = 3,   "MAP set + get")
+ok(MAP.EXISTS(m, "y"),         "MAP.EXISTS present")
+ok(NOT MAP.EXISTS(m, "nope"),  "MAP.EXISTS absent")
+
+' vectorised (APL-style) array math before any loop
+DIM doubled AS ARRAY = arr * 2
+ok(doubled[0] = 20, "vectorised array * scalar")
+DIM total AS DOUBLE = SUM(arr)
+ok(total = 179, "SUM over array")   ' [10, 99, 30, 40]
+
+' ════════════════════════════════════════════════════════════════════════
+' 3. IMPORT / EXPORT - module members reached as GEOM.<name>
+' ════════════════════════════════════════════════════════════════════════
+DIM a2 AS DOUBLE = GEOM.area(2.0)            ' tau*0.5*4 = ~12.566
+ok(a2 > 12.5 ANDALSO a2 < 12.6, "imported FUNC (DOUBLE return)")
+DIM mx AS INTEGER = GEOM.maxi(7, 4)
+ok(mx = 7,       "imported FUNC (INTEGER params + return)")
+DIM lbl AS STRING = GEOM.label$(5)
+ok(lbl = "item-5", "imported FUNC (STRING return)")
+ok(GEOM.GEOM_TAU > 6.28, "imported CONST")
+
+' module-level state mutated through the imported FUNC/SUB and read back
+GEOM.bump()
+ok(GEOM.geom_calls >= 3, "imported module global counter")
+
+' ════════════════════════════════════════════════════════════════════════
+' 4. Global vs local scope (including a local that shadows a global)
+' ════════════════════════════════════════════════════════════════════════
+DIM g_total AS INTEGER = 100
+
+SUB add_to_total(n AS INTEGER)
+  ' g_total is the global; n is a local param
+  g_total = g_total + n
+ENDSUB
+
+FUNC scoped(seed AS INTEGER) AS INTEGER
+  ' local `g_total` shadows the global for the duration of this FUNC
+  DIM g_total AS INTEGER = seed * 10
+  RETURN g_total + 1
+ENDFUNC
+
+add_to_total 5
+add_to_total 3
+ok(g_total = 108,        "global mutated from SUB")
+ok(scoped(2) = 21,       "local shadows global inside FUNC")
+ok(g_total = 108,        "global untouched by the shadowing FUNC")
+
+' ════════════════════════════════════════════════════════════════════════
+' 5. Funcrefs / higher-order functions
+' ════════════════════════════════════════════════════════════════════════
+' NB: avoid the builtin name SQR (square root) - jdBasic is case-insensitive,
+' so a user `sqr` would be shadowed by the builtin. Use a distinct name.
+FUNC usquare(x AS DOUBLE) AS DOUBLE
+  RETURN x * x
+ENDFUNC
+
+FUNC is_big(x AS DOUBLE) AS BOOLEAN
+  RETURN x > 2.5
+ENDFUNC
+
+' named funcref into a builtin HOF
+DIM sq3 AS ARRAY = SELECT(usquare@, [1.0, 2.0, 3.0, 4.0])
+ok(sq3[3] = 16, "SELECT with named funcref")
+
+' lambda into a builtin HOF
+DIM evens AS ARRAY = FILTER(is_big@, [1.0, 2.0, 3.0, 4.0])
+ok(LEN(evens) = 2, "FILTER with funcref predicate")
+
+DIM red AS DOUBLE = REDUCE(LAMBDA acc, x -> acc + x, [1.0, 2.0, 3.0, 4.0], 0.0)
+ok(red = 10, "REDUCE with lambda + init")
+
+' funcref passed into a USER function param (call-site-inferred FUNCREF)
+FUNC apply2(fn, x, y)
+  RETURN fn(x, y)
+ENDFUNC
+
+FUNC add2(a AS DOUBLE, b AS DOUBLE) AS DOUBLE
+  RETURN a + b
+ENDFUNC
+
+ok(apply2(add2@, 3.0, 4.0) = 7,        "funcref arg to a user HOF (2-arg)")
+ok(apply2(GEOM.combine@, 3.0, 4.0) = 13, "imported funcref arg to a user HOF")
+
+' ════════════════════════════════════════════════════════════════════════
+' 6. FUNC used as an operator (OUTER product with a binary funcref)
+' ════════════════════════════════════════════════════════════════════════
+FUNC mul_plus(a AS DOUBLE, b AS DOUBLE) AS DOUBLE
+  RETURN a * b + 1.0
+ENDFUNC
+
+DIM tbl AS ARRAY = OUTER([1.0, 2.0], [3.0, 4.0], mul_plus@)
+ok(tbl[0][0] = 4, "OUTER with FUNC operator [0][0]")
+ok(tbl[1][1] = 9, "OUTER with FUNC operator [1][1]")
+
+' OUTER with a string-operator and with the imported funcref
+DIM tbl2 AS ARRAY = OUTER([2.0, 3.0], [4.0, 5.0], GEOM.combine@)
+ok(tbl2[1][0] = 13, "OUTER with imported FUNC operator")
+
+' ════════════════════════════════════════════════════════════════════════
+' 7. DATE type
+' ════════════════════════════════════════════════════════════════════════
+DIM dt = CVDATE("2026-06-11")
+ok(YEAR(dt) = 2026, "DATE year")
+ok(MONTH(dt) = 6,   "DATE month")
+ok(DAY(dt) = 11,    "DATE day")
+DIM dt2 = DATEADD("D", 5, dt)
+ok(DATEDIFF("D", dt, dt2) = 5, "DATEDIFF after DATEADD")
+ok(DAY(dt2) = 16,   "DATEADD advances the day")
+DIM tomorrow = GEOM.day_after(dt)
+ok(DAY(tomorrow) = 12, "imported FUNC returning DATE")
+
+' ════════════════════════════════════════════════════════════════════════
+' 8. UDT (user-defined type) - typed fields and a method
+' ════════════════════════════════════════════════════════════════════════
+TYPE Vec
+  X AS DOUBLE
+  Y AS DOUBLE
+  FUNC mag() AS DOUBLE
+    RETURN SQR(THIS.X * THIS.X + THIS.Y * THIS.Y)
+  ENDFUNC
+ENDTYPE
+
+DIM v AS Vec
+v{"X"} = 3.0
+v{"Y"} = 4.0
+ok(v{"X"} = 3,   "UDT field read")
+ok(v.mag() = 5,  "UDT method")
+v{"X"} = 6.0
+v{"Y"} = 8.0
+ok(v.mag() = 10, "UDT method after field mutation")
+
+' ════════════════════════════════════════════════════════════════════════
+' 9. Imported compound / special types: MAP / ARRAY / BOOLEAN across IMPORT
+' ════════════════════════════════════════════════════════════════════════
+DIM o AS MAP = GEOM.origin()
+ok(o{"name"} = "origin", "imported FUNC returning MAP")
+DIM iseq AS ARRAY = GEOM.seq(4)
+ok(LEN(iseq) = 4,        "imported FUNC returning ARRAY")
+ok(GEOM.even(8) = TRUE,  "imported FUNC returning BOOLEAN (true)")
+ok(GEOM.even(7) = FALSE, "imported FUNC returning BOOLEAN (false)")
+
+' ════════════════════════════════════════════════════════════════════════
+' Verdict
+' ════════════════════════════════════════════════════════════════════════
+PRINT "─────────────────────────────────"
+PRINT "PASS: "; sc_pass; "   FAIL: "; sc_fail
+IF sc_fail = 0 THEN
+  PRINT "ALL SHOWCASE CHECKS PASSED!"
+ELSE
+  PRINT "SOME SHOWCASE CHECKS FAILED!"
+ENDIF

@@ -3783,4 +3783,22 @@ double jdb_reduce_fn(JdbReduceFn fn, JdbArray* arr, double init) {
     return acc;
 }
 
+// OUTER(a, b, op) with a user funcref operator: a 2D table whose cell [i][j]
+// is op(a[i], b[j]). The string-operator form ("+", "*", ...) goes through the
+// VM bridge; this native path exists so a FUNC used as an operator (op@) can be
+// called directly instead of by-name through the bridge (which can't resolve a
+// compiled user function).
+JdbArray* jdb_outer_fn(JdbArray* a, JdbArray* b, JdbReduceFn op) {
+    if (!a || !b) return jdb_array_new(0);
+    auto* r = jdb_array_new(a->length);
+    for (int64_t i = 0; i < a->length; i++) {
+        auto* row = jdb_array_new(b->length);
+        for (int64_t j = 0; j < b->length; j++)
+            row->data[j] = op(a->data[i], b->data[j]);
+        r->data[i] = encode_inner(row);
+    }
+    if (a->length > 0) r->flags |= 1;  // rows are nested arrays
+    return r;
+}
+
 } // extern "C"

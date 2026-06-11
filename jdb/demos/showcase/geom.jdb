@@ -1,0 +1,57 @@
+' geom.jdb - exported helpers for the type / function showcase.
+' Imported by showcase.jdb via `IMPORT GEOM`. Module file name is lowercase;
+' callers reach members as GEOM.<name>. Demonstrates EXPORT of CONST, module
+' state (DIM), typed FUNCs (numeric / string return) and a SUB.
+
+EXPORT CONST GEOM_TAU = 6.283185307
+
+' Module-level state - mutated by the exported FUNC/SUB, read back by the
+' caller to prove EXPORT'd module globals survive the native bridge.
+EXPORT DIM geom_calls AS INTEGER = 0
+
+' Numeric-returning FUNC with typed params (the AS INTEGER / AS DOUBLE params
+' that the native compiler now decodes with their real width).
+EXPORT FUNC area(r AS DOUBLE) AS DOUBLE
+  geom_calls = geom_calls + 1
+  RETURN GEOM_TAU * 0.5 * r * r
+ENDFUNC
+
+EXPORT FUNC maxi(a AS INTEGER, b AS INTEGER) AS INTEGER
+  geom_calls = geom_calls + 1
+  IF a > b THEN RETURN a
+  RETURN b
+ENDFUNC
+
+' String-returning FUNC ($-suffix return convention).
+EXPORT FUNC label$(n AS INTEGER) AS STRING
+  RETURN "item-" + STR$(n)
+ENDFUNC
+
+' A binary operator usable as a funcref (passed to OUTER / REDUCE / a HOF param).
+EXPORT FUNC combine(a AS DOUBLE, b AS DOUBLE) AS DOUBLE
+  RETURN a * b + 1.0
+ENDFUNC
+
+EXPORT SUB bump()
+  geom_calls = geom_calls + 1
+ENDSUB
+
+' ── Exported value-returning FUNCs covering the remaining types, so the
+'    caller exercises MAP / ARRAY / DATE / BOOLEAN across the IMPORT boundary.
+EXPORT FUNC origin() AS MAP
+  RETURN {"x": 0.0, "y": 0.0, "name": "origin"}
+ENDFUNC
+
+EXPORT FUNC seq(n AS INTEGER) AS ARRAY
+  RETURN IOTA(n)
+ENDFUNC
+
+' DATE in and out: native needs the AS DATE annotation - an untyped/inferred
+' return drops the date value (it isn't a plain f64). Interp infers it loosely.
+EXPORT FUNC day_after(d AS DATE) AS DATE
+  RETURN DATEADD("D", 1, d)
+ENDFUNC
+
+EXPORT FUNC even(n AS INTEGER) AS BOOLEAN
+  RETURN (n MOD 2) = 0
+ENDFUNC
