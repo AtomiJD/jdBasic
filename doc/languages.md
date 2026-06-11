@@ -1456,11 +1456,11 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
   > **Native (`-c`) and string arrays:** `SELECT`/`FILTER` over string arrays compile native, including string-returning mappers (`SELECT(upper$@, names)`) and predicates over strings — `FILTER` preserves the element type of its source. The one rule the compiler can't infer: a mapper/predicate that *receives* a string must declare its parameter as a string (`FUNC f(s$)` or `AS STRING`). An untyped parameter (`FUNC f(s)`) is treated as a number under `-c` and reads the string as garbage — the interpreter is loose here, native is strict. (`AGG` with a function reference stays interpreter-only — its reducer runs in the bridged VM, which can't call a natively-compiled function.)
 * **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
 * **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
-* **`TAKE_WHILE(predicate@, array) -> array`**: Returns the longest prefix of `array` for which `predicate(element)` is true. Stops at the first false. (Interpreter only — not yet supported in native compile.)
-* **`DROP_WHILE(predicate@, array) -> array`**: Drops the longest prefix where `predicate(element)` is true, returning the remainder. (Interpreter only.)
+* **`TAKE_WHILE(predicate@, array) -> array`**: Returns the longest prefix of `array` for which `predicate(element)` is true. Stops at the first false. Compiles native (the predicate runs through its funcref wrapper).
+* **`DROP_WHILE(predicate@, array) -> array`**: Drops the longest prefix where `predicate(element)` is true, returning the remainder. Compiles native.
 * **`CHUNK(array, size) -> array`**: Splits `array` into sub-arrays of length `size`; the last chunk may be shorter. `size >= 1`.
 * **`ENUMERATE(array) -> array`**: Pairs each element with its 0-based index, returning `[[0, a0], [1, a1], ...]`.
-* **`GROUPBY(key_fn@, array) -> map`**: Buckets elements into a map keyed by `key_fn(element)` (coerced to string). Each value is the list of matching elements. (Interpreter only.)
+* **`GROUPBY(key_fn@, array) -> map`**: Buckets elements into a map keyed by `key_fn(element)` (coerced to string). Each value is the list of matching elements. Interpreter only — native `-c` rejects it at compile time (the funcref can't be resolved by name through the bridge); use `AGG`, which has a native funcref path and preserves the key type.
 * **`AGG(keys, values, fn@) -> array`**: Group-and-reduce in one O(n) pass (APL's dyadic *key*). Groups `values` by the matching `keys` entry, applies `fn` to each group's value-array, and returns a 2-column table `[[key, fn(group)], ...]` in first-seen key order. The key type is preserved (numbers stay numbers, unlike `GROUPBY`). Example: `AGG(months, nights, LAMBDA g -> SUM(g))` → room-nights per month; `AGG(months, nights, LEN@)` counts per group. Compiles native: the reducer may be a `LAMBDA g -> ...`, one of the array builtins `SUM@`/`MEAN@`/`LEN@`, or a user `FUNC` whose parameter is declared `AS ARRAY` (an untyped parameter is treated as a number under `-c` — see the SELECT/FILTER note above). String keys are preserved.
 * **`TALLY(array) -> array`**: Distinct values with their counts, `[[value, count], ...]`, in first-seen order (pandas `value_counts`). `TALLY([1,2,2,3,3,3])` → `[[1,1],[2,2],[3,3]]`. Both numeric and string-key tallies compile native (e.g. `TALLY(-"banana")` → `[["b",1],["a",3],["n",2]]`).
 * **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
@@ -1478,7 +1478,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
     ' Append a row (vector) at the bottom:
     m4 = MVINS(m, 0, ROWS, [1, 2, 3])
     ```
-* **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum.
+* **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum. Interpreter only — native `-c` rejects it at compile time (the integrand funcref can't be resolved by name through the bridge).
 * **`SOLVE(matrix A, vextor b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
 * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
 * **`DET(matrix) -> number`**: Determinant of a square matrix (Eigen).

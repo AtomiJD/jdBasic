@@ -503,6 +503,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_select_fn", "__select_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     // jdb_filter_fn(fn_ptr, array) -> array
     reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_take_while_fn", "__take_while_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_drop_while_fn", "__drop_while_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     // jdb_reduce_fn(fn_ptr, array, init) -> double
     reg("jdb_reduce_fn", "__reduce_fn", f64_type, {i8_ptr_type, i8_ptr_type, f64_type}, 1);
     // jdb_outer_fn(a, b, op_fn) -> 2D table; op is a double(double,double) funcref
@@ -7326,6 +7328,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string upper = name;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
 
+    // GROUPBY / INTEGRATE take a user function reference but have no native
+    // path: the operator is called by name through the VM bridge, which can't
+    // resolve a compiled user function (it crashes at runtime with "Undefined
+    // function"). Fail loud at compile time instead - run these in the
+    // interpreter, or use a HOF that has a native funcref path (SELECT / FILTER
+    // / REDUCE / AGG / OUTER / TAKE_WHILE / DROP_WHILE).
+    if (upper == "GROUPBY" || upper == "INTEGRATE") {
+        report_error(m_current_stmt_file, expr.line,
+            upper + " with a function reference is not supported in native -c "
+            "(the compiled program can't resolve the funcref by name) - run it "
+            "in the interpreter");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
+
     // JSON.STRINGIFY$ supports MAP and ARRAY only. A native UDT instance does
     // not marshal across the VM bridge — it would silently stringify to "".
     // Fail loud at compile time instead (use a MAP, or build the JSON from the
@@ -7581,7 +7597,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { result, JD_TAG_ARR };
         }
     }
-    if ((upper == "SELECT" || upper == "FILTER") && expr.args.size() >= 2) {
+    if ((upper == "SELECT" || upper == "FILTER" ||
+         upper == "TAKE_WHILE" || upper == "DROP_WHILE") && expr.args.size() >= 2) {
         TypedValue fn_val = resolve_funcref(*expr.args[0], 1);
         TypedValue arr_val = codegen_expr(*expr.args[1]);
         if (fn_val.tag == JD_TAG_FUNCREF) {
@@ -7591,7 +7608,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(arr_val.val);
                 arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             }
-            std::string rt_name = (upper == "SELECT") ? "__select_fn" : "__filter_fn";
+            std::string rt_name = (upper == "SELECT")     ? "__select_fn"     :
+                                  (upper == "FILTER")     ? "__filter_fn"     :
+                                  (upper == "TAKE_WHILE") ? "__take_while_fn" :
+                                                            "__drop_while_fn";
             auto& fn = runtime_funcs[rt_name];
             LLVMValueRef args[] = { fn_val.val, arr_ptr };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "hof");

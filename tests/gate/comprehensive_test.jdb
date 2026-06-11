@@ -2396,6 +2396,18 @@ DIM ou_t AS ARRAY = OUTER([1.0, 2.0], [3.0, 4.0], ou_op@)
 Assert(ou_t[0][0] = 4, "OUTER with a FUNC operator [0][0]")
 Assert(ou_t[1][1] = 9, "OUTER with a FUNC operator [1][1]")
 
+' TAKE_WHILE / DROP_WHILE now have a native funcref path (were interp-only,
+' crashing native with "Undefined function"). Predicate over an array.
+FUNC tw_lt3(tw_x AS DOUBLE) AS BOOLEAN
+  RETURN tw_x < 3.0
+ENDFUNC
+DIM tw_r AS ARRAY = TAKE_WHILE(tw_lt3@, [1.0, 2.0, 5.0, 1.0])
+Assert(LEN(tw_r) = 2, "TAKE_WHILE native length")
+Assert(tw_r[1] = 2,   "TAKE_WHILE native prefix")
+DIM dw_r AS ARRAY = DROP_WHILE(tw_lt3@, [1.0, 2.0, 5.0, 1.0])
+Assert(LEN(dw_r) = 2, "DROP_WHILE native length")
+Assert(dw_r[0] = 5,   "DROP_WHILE native remainder")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.

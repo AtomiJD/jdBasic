@@ -3783,6 +3783,29 @@ double jdb_reduce_fn(JdbReduceFn fn, JdbArray* arr, double init) {
     return acc;
 }
 
+// TAKE_WHILE(pred@, arr): longest prefix where pred(elem) is true.
+JdbArray* jdb_take_while_fn(JdbMapFn pred, JdbArray* arr) {
+    if (!arr) return jdb_array_new(0);
+    int64_t n = 0;
+    while (n < arr->length && pred(arr->data[n]) != 0.0) n++;
+    auto* r = jdb_array_new(n);
+    for (int64_t i = 0; i < n; i++) r->data[i] = arr->data[i];
+    r->flags = arr->flags & ~(int32_t)8;  // keep type flags; drop per-cell tags
+    return r;
+}
+
+// DROP_WHILE(pred@, arr): drop the longest true-prefix, return the remainder.
+JdbArray* jdb_drop_while_fn(JdbMapFn pred, JdbArray* arr) {
+    if (!arr) return jdb_array_new(0);
+    int64_t start = 0;
+    while (start < arr->length && pred(arr->data[start]) != 0.0) start++;
+    int64_t n = arr->length - start;
+    auto* r = jdb_array_new(n);
+    for (int64_t i = 0; i < n; i++) r->data[i] = arr->data[start + i];
+    r->flags = arr->flags & ~(int32_t)8;
+    return r;
+}
+
 // OUTER(a, b, op) with a user funcref operator: a 2D table whose cell [i][j]
 // is op(a[i], b[j]). The string-operator form ("+", "*", ...) goes through the
 // VM bridge; this native path exists so a FUNC used as an operator (op@) can be
