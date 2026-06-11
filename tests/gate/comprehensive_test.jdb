@@ -2370,6 +2370,21 @@ ENDFUNC
 DIM sw_map AS MAP = {"k": "beta"}
 Assert(sw_pick(sw_map) = 2, "SWITCH on a map-read (RUNTIME) string value")
 
+' SUB/FUNC params declared AS INTEGER are i64-typed (were decoded as DOUBLE, so
+' `intvar = intparam` tripped the STRICT DOUBLE->INTEGER check and forced CINT()
+' everywhere). Found making space_shooter.jdb native. Pass integer args - native
+' truncates a fractional arg to an INTEGER param (strict), interp stays loose.
+FUNC pi_add(pa AS INTEGER, pb AS INTEGER)
+  RETURN pa + pb
+ENDFUNC
+DIM pi_g AS INTEGER = 0
+SUB pi_set(pn AS INTEGER)
+  pi_g = pn
+ENDSUB
+Assert(pi_add(3, 4) = 7, "AS INTEGER params: FUNC int sum")
+pi_set 9
+Assert(pi_g = 9, "AS INTEGER param: assign to INTEGER global (no CINT needed)")
+
 
 ' Regression for param-shadowing-globals: a top-level DIM with the same
 ' name as a SUB parameter must NOT poison the parameter's tag.

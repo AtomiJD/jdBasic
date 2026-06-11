@@ -775,6 +775,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 case VarType::ARRAY:                             t = 3; break;
                 case VarType::OBJECT:                            t = 4; break;
                 case VarType::ANY:                               t = 3; break;
+                // Integer params: an `AS INTEGER` (and the sized int aliases)
+                // param is i64-typed, not f64. Without this `SUB f(n AS INTEGER)`
+                // decoded n as a double, so `intvar = n` tripped the STRICT
+                // DOUBLE->INTEGER check and forced CINT() everywhere.
+                case VarType::BYTE:  case VarType::CHAR:
+                case VarType::INT16: case VarType::INT32:
+                case VarType::INT64:                             t = JD_TAG_I64; break;
                 default: break;
             }
             if (is_event_handler && pi == 0) t = 3;  // event data: JdbArray*
@@ -1516,7 +1523,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 param_types.push_back(i32_type);
             } else {
                 param_types.push_back((t == 2 || t == 3 || t == 4 || t == 5) ? i8_ptr_type :
-                                      (t == 6) ? i64_type : f64_type);
+                                      (t == JD_TAG_I64 || t == 6) ? i64_type : f64_type);
             }
         }
 
@@ -5372,8 +5379,11 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
                 } else {
                     bool sp = p.type == VarType::STRING ||
                               (!p.name.empty() && p.name.back() == '$');
-                    ptypes.push_back(sp ? i8_ptr_type : f64_type);
-                    ptags.push_back(sp ? 2 : 1);
+                    bool ip = p.type == VarType::INT64 || p.type == VarType::INT32 ||
+                              p.type == VarType::INT16 || p.type == VarType::BYTE ||
+                              p.type == VarType::CHAR;
+                    ptypes.push_back(sp ? i8_ptr_type : ip ? i64_type : f64_type);
+                    ptags.push_back(sp ? 2 : ip ? JD_TAG_I64 : 1);
                 }
             }
             LLVMTypeRef mft = LLVMFunctionType(
@@ -7293,7 +7303,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
             LLVMTypeRef pt = (expected_tag == 2 || expected_tag == 3 || expected_tag == 4 ||
                               expected_tag == 5) ? i8_ptr_type :
-                             (expected_tag == 6) ? i64_type : f64_type;
+                             (expected_tag == JD_TAG_I64 || expected_tag == 6) ? i64_type : f64_type;
             args.push_back(coerce_to(av, pt));
         }
         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
