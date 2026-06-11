@@ -410,6 +410,8 @@ void Console::run() {
             FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
             while (!utf8_buffer.empty()) utf8_buffer.pop();
             high_surrogate = 0;
+            prompt_drawn_visual_len = 0;  // anchor the next prompt at the
+                                          // current row (mirror the Linux path)
 #else
             tcflush(STDIN_FILENO, TCIFLUSH);
             while (!input_queue.empty()) input_queue.pop();
@@ -427,6 +429,8 @@ void Console::run() {
             FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
             while (!utf8_buffer.empty()) utf8_buffer.pop();
             high_surrogate = 0;
+            prompt_drawn_visual_len = 0;  // anchor the next prompt at the
+                                          // current row (mirror the Linux path)
 #else
             tcflush(STDIN_FILENO, TCIFLUSH);
             while (!input_queue.empty()) input_queue.pop();
@@ -820,6 +824,12 @@ void Console::execute_current_line() {
                 FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
                 while (!utf8_buffer.empty()) utf8_buffer.pop();
                 high_surrogate = 0;
+                // The command's output advanced the cursor onto fresh lines.
+                // Drop the previous prompt's drawn length so the next
+                // render_prompt anchors at the current row instead of backing
+                // up `last_drawn / cols` rows (which, after a WRAPPED input,
+                // overwrote the command's output with the new prompt).
+                prompt_drawn_visual_len = 0;
 #else
                 tcflush(STDIN_FILENO, TCIFLUSH);
                 while (!input_queue.empty()) input_queue.pop();
