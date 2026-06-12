@@ -189,6 +189,19 @@ if [ "$WANT_SQLITE" = "1" ]; then
     fi
     LDFLAGS="$LDFLAGS build/obj/sqlite3.o -lpthread -ldl -lm"
 fi
+
+WANT_PYTHON=${PYTHON:-0}
+if [ "$WANT_PYTHON" = "1" ]; then
+    PYCFG="${PYTHON_CONFIG:-python3-config}"
+    if ! command -v "$PYCFG" >/dev/null 2>&1; then
+        echo "ERROR: PYTHON needs $PYCFG on PATH (install the python3 dev package,"
+        echo "       or set PYTHON_CONFIG to the python3-config of your interpreter)"
+        exit 1
+    fi
+    CXXFLAGS="$CXXFLAGS -DPYTHON $($PYCFG --includes)"
+    # --embed gives the libpython link flags on 3.8+; fall back without it.
+    LDFLAGS="$LDFLAGS $($PYCFG --ldflags --embed 2>/dev/null || $PYCFG --ldflags)"
+fi
 FTXUI_SRC=""
 if [ "$WANT_FTXUI" = "1" ]; then
     FTXUI_DIR="libs/ftxui"
@@ -233,7 +246,7 @@ fi
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-     src/numerics.cpp src/screencap.cpp \
+     src/numerics.cpp src/screencap.cpp src/pybridge.cpp \
      $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────

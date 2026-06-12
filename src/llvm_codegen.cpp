@@ -7354,6 +7354,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
+    // The PYTHON / PY.* family drives an embedded CPython interpreter through
+    // the C-API, which a standalone compiled binary has no access to. Run
+    // these in the interpreter (the MCP workshop VM).
+    if (upper == "PYTHON$" || upper.rfind("PY.", 0) == 0) {
+        report_error(m_current_stmt_file, expr.line,
+            upper + " is interpreter-only (the embedded CPython runtime isn't "
+            "linked into compiled programs) - run it in the interpreter");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
+
     // JSON.STRINGIFY$ supports MAP and ARRAY only. A native UDT instance does
     // not marshal across the VM bridge — it would silently stringify to "".
     // Fail loud at compile time instead (use a MAP, or build the JSON from the

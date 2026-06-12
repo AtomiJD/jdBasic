@@ -1,0 +1,60 @@
+' PYTHON / PY.* regression — interpreter run only (the embedded CPython
+' C-API isn't linked into compiled binaries; native -c rejects these at
+' compile time). Needs the PYTHON build flag.
+IF NOT OS.FEATURE("PYTHON") THEN
+    PRINT "SKIP: built without PYTHON"
+    END
+ENDIF
+
+DIM pass = 0
+DIM fail = 0
+SUB Check(cond, msg)
+    IF cond THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+' Scalars round-trip both ways.
+Check(PY.SET("n", 21), "set integer")
+Check(PY.EVAL("n * 2") = 42, "eval integer arithmetic")
+Check(PY.EVAL("3.5 + 0.5") = 4.0, "eval float")
+Check(PY.EVAL("2 > 1") = TRUE, "eval boolean")
+Check(PY.EVAL("'a' + 'b'") = "ab", "eval string concat")
+
+' Arrays <-> lists.
+Check(PY.SET("xs", [3, 1, 2]), "set array")
+DIM srt = PY.EVAL("sorted(xs)")
+Check(srt[0] = 1 ANDALSO srt[2] = 3, "list sorted back to array")
+
+' Dicts -> objects.
+DIM d = PY.EVAL("{'k': 7, 'v': [1, 2]}")
+Check(d{"k"} = 7, "dict scalar member")
+Check(d{"v"}[1] = 2, "dict nested-list member")
+
+' GET reads a name set inside a code block; PYTHON$ captures stdout.
+DIM ignore = PYTHON$("greeting = 'hello'")
+Check(PY.GET("greeting") = "hello", "get name set in PYTHON$ block")
+Check(PYTHON$("print(sum(range(5)))") = "10", "PYTHON$ stdout capture")
+
+' A buffer of doubles becomes a Tensor.
+DIM j = PYTHON$("import array" + CHR$(10) + "buf = array.array('d', [1.0, 2.0, 3.0])")
+DIM tns = PY.GET("buf")
+Check(TYPEOF(tns) = "TENSOR", "double buffer -> Tensor")
+
+' Introspection helpers return strings.
+Check(INSTR(PY.DIR$(), "greeting") >= 0, "DIR lists namespace names")
+Check(LEN(PY.HELP$("len")) > 0, "HELP returns a docstring")
+
+' Python exceptions surface as catchable jdBasic errors.
+DIM threw = FALSE
+TRY
+    DIM bad = PY.EVAL("1 / 0")
+CATCH
+    threw = TRUE
+ENDTRY
+Check(threw, "eval error throws")
+
+PRINT "RESULTS: "; pass; " passed, "; fail; " failed"

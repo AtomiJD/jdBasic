@@ -1000,7 +1000,7 @@ The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Stan
 * **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
 * **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
 * **`OS.LOAD() -> Number`**: Returns the current system-wide CPU load as a percentage (0.0 to 100.0). Accuracy and behavior are OS-dependent.
-* **`OS.FEATURE(name$) -> BOOLEAN`**: Returns `TRUE` when the running binary advertises the named build feature, `FALSE` otherwise. Useful to gate code paths the current backend cannot run — for example, programs that should skip reactive variables or `EXECUTE`/`EVAL` blocks when running from a natively compiled `.exe`. Recognised feature names: `"NATIVEC"` (running from `--compile` output), `"INTERPRETER"` (running in the VM), `"COM"`, `"HTTP"`, `"SERIAL"`, `"GFX"`, `"IMGUI"`, `"LLM"`, `"ONNX"`, `"LLVMC"` (compiler available). Unknown names return `FALSE`.
+* **`OS.FEATURE(name$) -> BOOLEAN`**: Returns `TRUE` when the running binary advertises the named build feature, `FALSE` otherwise. Useful to gate code paths the current backend cannot run — for example, programs that should skip reactive variables or `EXECUTE`/`EVAL` blocks when running from a natively compiled `.exe`. Recognised feature names: `"NATIVEC"` (running from `--compile` output), `"INTERPRETER"` (running in the VM), `"COM"`, `"HTTP"`, `"SERIAL"`, `"GFX"`, `"IMGUI"`, `"LLM"`, `"ONNX"`, `"SQLITE"`, `"PYTHON"`, `"LLVMC"` (compiler available). Unknown names return `FALSE`.
 
     ```basic
     IF NOT OS.FEATURE("NATIVEC") THEN
@@ -1573,6 +1573,31 @@ PRINT rows[0]{"name"}                       ' interpreter: maps per row
 DIM t = SQL.TABLE(db, "SELECT name, score FROM people")
 PRINT SQL.COLUMNS(db, "SELECT name, score FROM people"); " "; t   ' native-safe
 SQL.CLOSE(db)
+```
+
+#### Python bridge (build flag `PYTHON`)
+
+The `PYTHON` build flag embeds a CPython interpreter, so jdBasic can borrow the whole Python ecosystem (numpy, pandas, scikit-learn, requests, …) without leaving the language. Check availability with `OS.FEATURE("PYTHON")`. One namespace persists across every call for the life of the process, mirroring the warm state of the MCP workshop VM.
+
+The interpreter home is resolved at first use: the `JDB_PYTHON_HOME` environment variable wins, otherwise the per-user `pythoncore` package the build is wired against. The matching `python3xx.dll` must sit next to the executable (or on `PATH`).
+
+Values convert recursively in both directions: jdBasic array ↔ Python list, MAP/object ↔ dict, plus scalar strings, integers, floats and booleans. A jdBasic `Tensor` maps to a `{ "buffer": memoryview, "shape": tuple }` dict whose buffer aliases the C++ doubles **zero-copy** (numpy can wrap it without copying); any Python object exposing a contiguous buffer of doubles converts back to a `Tensor`.
+
+* **`PYTHON$(code$) -> string$`**: Runs a multi-line code block in the persistent namespace and returns whatever it printed to stdout. A Python exception throws a jdBasic error (catch with `TRY`). Use `CHR$(10)` for line breaks — jdBasic strings have no `\n` escape.
+* **`PY.EVAL(expr$) -> value`**: Evaluates a single expression and returns the result converted to a native jdBasic value.
+* **`PY.SET(name$, value) -> bool`**: Injects a jdBasic value into the Python namespace under `name$`.
+* **`PY.GET(name$) -> value`**: Reads a Python variable back as a jdBasic value (errors if the name is undefined).
+* **`PY.DIR$([target$]) -> string$`**: With no argument, lists the namespace's own names; with a target, lists the public members of that object/module — a comma-separated string.
+* **`PY.HELP$(target$) -> string$`**: Returns `inspect.getdoc(target)` for a module or function.
+
+All six are **interpreter-only** (the CPython C-API isn't linked into compiled binaries); `-c` rejects them at compile time.
+
+```basic
+IF OS.FEATURE("PYTHON") THEN
+    PY.SET("xs", [3, 1, 4, 1, 5, 9, 2, 6])
+    PRINT PY.EVAL("sorted(set(xs))")            ' [1, 2, 3, 4, 5, 6, 9]
+    PRINT PYTHON$("import statistics" + CHR$(10) + "print(statistics.mean(xs))")
+ENDIF
 ```
 
 ### System and Time Functions

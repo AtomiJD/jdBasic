@@ -61,6 +61,10 @@ inline std::string jdbasic_features() {
     if (!f.empty()) f += ", ";
     f += "SQLite";
 #endif
+#ifdef PYTHON
+    if (!f.empty()) f += ", ";
+    f += "Python";
+#endif
     if (f.empty()) f = "Core";
     return f;
 }

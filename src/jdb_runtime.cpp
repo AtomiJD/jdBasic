@@ -234,6 +234,9 @@ int64_t jdb_os_feature(const char* name) {
 #ifdef SQLITE
     if (strcmp(up, "SQLITE")      == 0) return 1;
 #endif
+#ifdef PYTHON
+    if (strcmp(up, "PYTHON")      == 0) return 1;
+#endif
     return 0;
 }
 

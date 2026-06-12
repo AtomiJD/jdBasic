@@ -1750,6 +1750,30 @@ Description: Returns the result column names of a query as a string array.
 Syntax: SQL.ERRMSG$(handle)
 Description: Last SQLite error message for the handle (handle 0 = last failed SQL.OPEN).
 
+[PYTHON$]
+Syntax: PYTHON$(code$)
+Description: Runs a multi-line Python code block in the persistent namespace and returns its captured stdout. Needs the PYTHON build flag; check OS.FEATURE("PYTHON"). Use CHR$(10) for line breaks. Interpreter only.
+
+[PY.EVAL]
+Syntax: PY.EVAL(expr$)
+Description: Evaluates a single Python expression and returns the result as a native jdBasic value (list->array, dict->object, double buffer->Tensor). Interpreter only.
+
+[PY.SET]
+Syntax: PY.SET(name$, value)
+Description: Injects a jdBasic value into the Python namespace under name$. Interpreter only.
+
+[PY.GET]
+Syntax: PY.GET(name$)
+Description: Reads a Python variable back as a jdBasic value (errors if undefined). Interpreter only.
+
+[PY.DIR$]
+Syntax: PY.DIR$([target$])
+Description: Lists the namespace's own names, or the public members of a target object/module, as a comma-separated string. Interpreter only.
+
+[PY.HELP$]
+Syntax: PY.HELP$(target$)
+Description: Returns inspect.getdoc(target) for a Python module or function. Interpreter only.
+
 [SPRITE.ADD_TO_GROUP]
 Syntax: SPRITE.ADD_TO_GROUP(group_id, instance_id)
 Description: Adds a sprite instance to a collision group.

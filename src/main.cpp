@@ -106,6 +106,7 @@ static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& fi
 #ifdef SQLITE
 #include "sql.h"
 #endif
+#include "pybridge.h"
 #include "llm.h"
 #include "version.h"
 #ifdef LLVM_CODEGEN
@@ -403,6 +404,7 @@ static void setup_dynamic_code(VM& vm) {
 #ifdef SQLITE
     register_sql_builtins(vm);
 #endif
+    register_python_builtins(vm);
     register_llm_builtins(vm);
 
     // HELP (available in both file and console mode)

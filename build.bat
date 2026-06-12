@@ -94,6 +94,11 @@ for %%A in (%*) do (
         set WANT_SQLITE=1
         echo [+] SQLite - embedded database engine, statically linked
     )
+    if /I "%%A"=="PYTHON" (
+        set DEFS=!DEFS! /DPYTHON
+        set WANT_PYTHON=1
+        echo [+] Python - embedded CPython interpreter (PYTHON$ / PY.*)
+    )
     if /I "%%A"=="OPENGL" (
         REM Requires GFX (shares SDL3 init + event loop). We don't auto-imply
         REM GFX here — caller must pass GFX explicitly so they see the cost.
@@ -162,6 +167,25 @@ if defined WANT_SQLITE (
     set EXTRA_LIB=!EXTRA_LIB! build\sqlite3.obj
 )
 
+REM PYTHON embeds CPython. Resolve the interpreter home (JDB_PYTHON_HOME wins,
+REM else the per-user pythoncore package) and wire its headers + import lib.
+if defined WANT_PYTHON (
+    if defined JDB_PYTHON_HOME (
+        set "PYHOME=%JDB_PYTHON_HOME%"
+    ) else (
+        set "PYHOME=%LOCALAPPDATA%\python\pythoncore-3.14-64"
+    )
+    if not exist "!PYHOME!\include\Python.h" (
+        echo [!] PYTHON needs CPython dev headers at !PYHOME!\include\Python.h
+        echo     Set JDB_PYTHON_HOME to a Python install with include\ + libs\
+        exit /b 1
+    )
+    set EXTRA_INC=!EXTRA_INC! /I"!PYHOME!\include"
+    set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:"!PYHOME!\libs"
+    set EXTRA_LIB=!EXTRA_LIB! python314.lib
+    echo [+] Python home: !PYHOME!
+)
+
 REM TUI implies FTXUI — pull the lib in if the user only passed TUI.
 if defined WANT_TUI if not defined HAVE_FTXUI (
     set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
@@ -190,7 +214,7 @@ REM mismatched runtimes show up as unresolved __imp__* symbols.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp src\screencap.cpp !EXTRA_SRC! ^
+  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp !EXTRA_SRC! ^
   /Fe:build\jdBasic.exe ^
   /Fo:build\ ^
   /link ^
@@ -253,6 +277,13 @@ if %ERRORLEVEL%==0 (
         copy /Y libs\llama\cublasLt64_12.dll build\ >nul 2>&1
         copy /Y libs\llama\cudart64_12.dll build\ >nul 2>&1
         echo LLM DLLs copied to build\
+    )
+    if defined WANT_PYTHON (
+        REM Bundle the CPython runtime DLL so the exe loads without relying on
+        REM PATH. The standard library is found via PYHOME at runtime.
+        copy /Y "!PYHOME!\python314.dll" build\ >nul 2>&1
+        copy /Y "!PYHOME!\python3.dll" build\ >nul 2>&1
+        echo Python DLL copied to build\
     )
 ) else (
     echo.

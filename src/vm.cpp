@@ -682,6 +682,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "CSVREADER", "CSVWRITER", "CSVHEADER", "IIF",
         "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
         "SQL.QUERY", "SQL.TABLE", "SQL.COLUMNS",
+        "PYTHON$", "PY.EVAL", "PY.SET", "PY.GET", "PY.DIR$", "PY.HELP$",
         "JOIN", "REGEX_MATCH", "REGEX_REPLACE$",
         "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
         "MEAN", "MEDIAN", "VARIANCE", "STDEV",
@@ -7138,6 +7139,9 @@ void VM::register_builtins() {
 #endif
 #ifdef SQLITE
         if (name == "SQLITE") on = true;
+#endif
+#ifdef PYTHON
+        if (name == "PYTHON") on = true;
 #endif
 #ifdef LLVM_CODEGEN
         if (name == "LLVMC") on = true;  // compiler available (--compile)
