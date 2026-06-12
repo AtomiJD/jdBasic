@@ -1142,16 +1142,30 @@ see `jdb/sqlite.jdb` and `jdb/sqlite_demo.jdb` for the full pattern.
 * **Linux/macOS**: `dlopen` / `dlsym` path is in place; build & validation
   pending — see `src/ffi.cpp`.
 
-### Python Integration (FFI)
+### Python Integration (build flag `PYTHON`)
 
-Available when the interpreter is compiled with `PYTHON` support. These functions allow seamless data exchange and code execution between jdBasic and a sandboxed Python environment.
+The `PYTHON` build flag embeds a CPython interpreter, so jdBasic can borrow the whole Python ecosystem (numpy, scipy, scikit-learn, requests, …) without leaving the language. Check availability with `OS.FEATURE("PYTHON")`. One namespace persists across every call for the life of the process, mirroring the warm state of the MCP workshop VM — define a function or import a module once and reuse it in later calls.
 
-* **`PYTHON$(python_code$) -> string$`**: Executes a block of Python code in an isolated workspace dictionary and returns the captured standard output (`stdout`) as a string.
-* **`PY.SET("python_var_name", jdbasic_value)`**: Injects a jdBasic value (scalar, Array, Map, Tensor) directly into the Python environment's memory.
-* **`PY.GET("python_var_name") -> value`**: Retrieves a variable from the Python environment and converts it back to native jdBasic types.
-* **`PY.EVAL("expression_string") -> value`**: Evaluates a Python expression and returns the result directly as a jdBasic variant.
-* **`PY.DIR$([target$]) -> string$`**: Returns a comma-separated string listing the local workspace variables, or methods available on a specific Python object if `target$` is provided.
-* **`PY.HELP$("target") -> string$`**: Returns the Python documentation (docstring) for a specified module or function (e.g., `"math.cos"`).
+The interpreter home is resolved at first use: the `JDB_PYTHON_HOME` environment variable wins, otherwise the per-user `pythoncore` package the build is wired against. The matching `python3xx.dll` must sit next to the executable (or on `PATH`).
+
+Values convert recursively in both directions: jdBasic array ↔ Python list, MAP/object ↔ dict, plus scalar strings, integers, floats and booleans. Any Python object exposing `tolist()` — numpy arrays, `array.array` — converts to a native (possibly nested) jdBasic array, shape- and dtype-agnostic, so the result is usable straight away (`SUM`, indexing, vector ops).
+
+* **`PYTHON$(code$) -> string$`**: Runs a multi-line code block in the persistent namespace and returns whatever it printed to stdout. A Python exception throws a jdBasic error (catch with `TRY`). Use `CHR$(10)` for line breaks — jdBasic strings have no `\n` escape.
+* **`PY.EVAL(expr$) -> value`**: Evaluates a single expression and returns the result converted to a native jdBasic value.
+* **`PY.SET(name$, value) -> bool`**: Injects a jdBasic value into the Python namespace under `name$`.
+* **`PY.GET(name$) -> value`**: Reads a Python variable back as a jdBasic value (errors if the name is undefined).
+* **`PY.DIR$([target$]) -> string$`**: With no argument, lists the namespace's own names; with a target, lists the public members of that object/module — a comma-separated string.
+* **`PY.HELP$(target$) -> string$`**: Returns `inspect.getdoc(target)` for a module or function.
+
+All six are **interpreter-only** (the CPython C-API isn't linked into compiled binaries); `-c` rejects them at compile time.
+
+```basic
+IF OS.FEATURE("PYTHON") THEN
+    PY.SET("xs", [3, 1, 4, 1, 5, 9, 2, 6])
+    PRINT PY.EVAL("sorted(set(xs))")            ' [1, 2, 3, 4, 5, 6, 9]
+    PRINT PYTHON$("import statistics" + CHR$(10) + "print(statistics.mean(xs))")
+ENDIF
+```
 
 ## Functions
 
@@ -1573,31 +1587,6 @@ PRINT rows[0]{"name"}                       ' interpreter: maps per row
 DIM t = SQL.TABLE(db, "SELECT name, score FROM people")
 PRINT SQL.COLUMNS(db, "SELECT name, score FROM people"); " "; t   ' native-safe
 SQL.CLOSE(db)
-```
-
-#### Python bridge (build flag `PYTHON`)
-
-The `PYTHON` build flag embeds a CPython interpreter, so jdBasic can borrow the whole Python ecosystem (numpy, pandas, scikit-learn, requests, …) without leaving the language. Check availability with `OS.FEATURE("PYTHON")`. One namespace persists across every call for the life of the process, mirroring the warm state of the MCP workshop VM.
-
-The interpreter home is resolved at first use: the `JDB_PYTHON_HOME` environment variable wins, otherwise the per-user `pythoncore` package the build is wired against. The matching `python3xx.dll` must sit next to the executable (or on `PATH`).
-
-Values convert recursively in both directions: jdBasic array ↔ Python list, MAP/object ↔ dict, plus scalar strings, integers, floats and booleans. Any Python object exposing `tolist()` — numpy arrays, `array.array` — converts to a native (possibly nested) jdBasic array, shape- and dtype-agnostic, so the result is usable straight away (`SUM`, indexing, vector ops).
-
-* **`PYTHON$(code$) -> string$`**: Runs a multi-line code block in the persistent namespace and returns whatever it printed to stdout. A Python exception throws a jdBasic error (catch with `TRY`). Use `CHR$(10)` for line breaks — jdBasic strings have no `\n` escape.
-* **`PY.EVAL(expr$) -> value`**: Evaluates a single expression and returns the result converted to a native jdBasic value.
-* **`PY.SET(name$, value) -> bool`**: Injects a jdBasic value into the Python namespace under `name$`.
-* **`PY.GET(name$) -> value`**: Reads a Python variable back as a jdBasic value (errors if the name is undefined).
-* **`PY.DIR$([target$]) -> string$`**: With no argument, lists the namespace's own names; with a target, lists the public members of that object/module — a comma-separated string.
-* **`PY.HELP$(target$) -> string$`**: Returns `inspect.getdoc(target)` for a module or function.
-
-All six are **interpreter-only** (the CPython C-API isn't linked into compiled binaries); `-c` rejects them at compile time.
-
-```basic
-IF OS.FEATURE("PYTHON") THEN
-    PY.SET("xs", [3, 1, 4, 1, 5, 9, 2, 6])
-    PRINT PY.EVAL("sorted(set(xs))")            ' [1, 2, 3, 4, 5, 6, 9]
-    PRINT PYTHON$("import statistics" + CHR$(10) + "print(statistics.mean(xs))")
-ENDIF
 ```
 
 ### System and Time Functions

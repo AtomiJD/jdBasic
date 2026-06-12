@@ -88,13 +88,24 @@ All tools share a single persistent VM instance — variables, `FUNC`s, and load
 | Tool | Purpose |
 |---|---|
 | `echo` | Connectivity smoke test. Returns the input. |
-| `jdb_eval` | Execute jdBasic statements. Captured stdout is returned. State persists. |
+| `jdb_eval` | Execute jdBasic statements; captured stdout is returned and state persists. Optional `result` expression ships a second pure-JSON block; optional `timeout_ms` watchdog (default 30000, 0 = off) parks a runaway chunk without wedging the VM. |
 | `jdb_check` | Lint without running. Faster than the `--lint` subprocess. |
 | `jdb_load` | Load a `.jdb` file into the VM (so subsequent `jdb_eval` can call its functions). |
-| `jdb_vars` | List currently-bound variables and their tags / shapes. |
+| `jdb_recompile` | Re-read a `.jdb` from disk and merge its `FUNC`/`SUB` into the live VM — live-coding while a script is STOPped. |
+| `jdb_vars` | List currently-bound variables, each with its shape and a length-capped value preview (`max_chars`). |
 | `jdb_funcs` | List user-defined `FUNC` / `SUB` / `ASYNC FUNC` with signatures. |
 | `jdb_doc` | Substring lookup against `doc/languages.md`. Authoritative answer for "does jdBasic have function X". |
+| `jdb_savews` / `jdb_loadws` | Persist / restore user globals + `FUNC`/`SUB` definitions to a `<name>.jsws` workspace file. |
+| `jdb_reset` | Clear the VM to a clean slate (the `CLEARWS` equivalent); workspace files on disk are untouched. |
+| `jdb_stop` / `jdb_status` / `jdb_resume` | Pause a running script, report VM state (`running` / `stopped` / `idle`), and continue after a `STOP`. The reader thread fast-paths `jdb_stop`/`jdb_status` so they answer even while another call is busy. |
 | `jdb_run_native` | Compile a snippet via the LLVM backend, run the resulting binary, capture stdout. **Requires the Full build (`NATIVEC=1`).** |
+
+### Optional builtin namespaces (build-flag gated)
+
+`jdb_eval` exposes whatever the binary was built with — gate on `OS.FEATURE(name$)`:
+
+- `SQLITE` — `SQL.*`: an embedded SQLite engine, statically linked (no DLL/install). Query a `.db` straight from the VM.
+- `PYTHON` — `PYTHON$` / `PY.EVAL` / `PY.SET` / `PY.GET` / `PY.DIR$` / `PY.HELP$`: an embedded CPython interpreter with one persistent namespace, so you can reach numpy/scipy/etc. for what jdBasic can't do natively, handing arrays back and forth with zero subprocess cost. Values convert recursively (list↔array, dict↔map, numpy/`array.array`→native array). The **first** heavy import (e.g. `numpy`) in a cold process can exceed the default 30 s `timeout_ms` — raise it on that first call, then it stays warm.
 
 ### Why the persistent VM matters
 
@@ -158,4 +169,4 @@ This is intentional — it is a developer tool. **Do not expose the HTTP transpo
 
 - **Client shows "tool not found"** — confirm `jdbasic --version` lists `MCP` in its features. If not, the binary was built without `MCPSERVER=1`.
 - **`jdb_run_native` errors with "native backend not built in"** — you have the Core build. Switch to Full.
-- **Hung calls** — set `JDBASIC_MCP_LOG=1` and check stderr; long-running `jdb_eval` calls may simply be a slow user program (e.g. an infinite `DO LOOP`).
+- **Hung calls** — set `JDBASIC_MCP_LOG=1` and check stderr; long-running `jdb_eval` calls may simply be a slow user program (e.g. an infinite `DO LOOP`). The first `import numpy` (or another big package) in a `PYTHON` build can take tens of seconds on a cold process while the OS / antivirus scans its native modules — raise `timeout_ms` on that first call; later imports are instant.
