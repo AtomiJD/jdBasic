@@ -177,7 +177,7 @@ inline const std::unordered_set<std::string>& native_names() {
         "VOICE", "VOLUME", "VOLUMEMUS", "WAITKEY$",
         "WAIT_EVENT", "WEEKDAY", "WIDTH", "WINDOW",
         "WINDOW_HEIGHT", "WINDOW_WIDTH", "WRITE", "X",
-        "XSORT", "Y", "YEAR", "ZEROS",
+        "SQL", "XSORT", "Y", "YEAR", "ZEROS",
         "ZIP", "ZORDER"
     };
     return ns;

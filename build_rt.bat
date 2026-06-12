@@ -102,6 +102,13 @@ for %%A in (%*) do (
         set DEFS=!DEFS! /DSOUND_DSP
         echo [+] SOUND - sequencer DSP, pull mode, no device
     )
+    if /I "%%A"=="SQLITE" (
+        set DEFS=!DEFS! /DSQLITE
+        set EXTRA_SRC=!EXTRA_SRC! src\sql.cpp
+        set EXTRA_INC=!EXTRA_INC! /Ibridges\sqlitebridge
+        set WANT_SQLITE=1
+        echo [+] SQLite - embedded database engine
+    )
     if /I "%%A"=="FTXUI" (
         REM /D UNICODE/_UNICODE matches the ftxui.lib ABI (same rule as build.bat).
         set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
@@ -139,6 +146,29 @@ REM ftxui.lib is /MD; mixing /MT vm_bridge with /MD ftxui hits LNK2038.
 REM Match the CRT whenever FTXUI is in the mix.
 set CRT_FLAG=/MT
 if defined HAVE_FTXUI set CRT_FLAG=/MD
+
+REM SQLITE: the amalgamation obj must match the DLL's CRT, so each CRT
+REM variant gets its own cached obj (build.bat's /MD exe reuses sqlite3.obj).
+if defined WANT_SQLITE (
+    if not exist bridges\sqlitebridge\sqlite3.c (
+        echo [!] SQLITE needs the amalgamation - download sqlite3.c/sqlite3.h
+        echo     from https://sqlite.org/download.html into bridges\sqlitebridge\
+        exit /b 1
+    )
+    if "!CRT_FLAG!"=="/MD" (
+        if not exist build\sqlite3.obj (
+            echo [+] Compiling SQLite amalgamation one-time /MD...
+            "%CC%" /nologo /c /O2 /MD /I"%MSVC%\include" /I"%SDK%\Include\%SDKV%\ucrt" /I"%SDK%\Include\%SDKV%\um" /I"%SDK%\Include\%SDKV%\shared" /Ibridges\sqlitebridge /Fo:build\sqlite3.obj bridges\sqlitebridge\sqlite3.c
+        )
+        set EXTRA_LIB=!EXTRA_LIB! build\sqlite3.obj
+    ) else (
+        if not exist build\sqlite3_mt.obj (
+            echo [+] Compiling SQLite amalgamation one-time /MT...
+            "%CC%" /nologo /c /O2 /MT /I"%MSVC%\include" /I"%SDK%\Include\%SDKV%\ucrt" /I"%SDK%\Include\%SDKV%\um" /I"%SDK%\Include\%SDKV%\shared" /Ibridges\sqlitebridge /Fo:build\sqlite3_mt.obj bridges\sqlitebridge\sqlite3.c
+        )
+        set EXTRA_LIB=!EXTRA_LIB! build\sqlite3_mt.obj
+    )
+)
 
 echo Building jdbrt.dll ...
 

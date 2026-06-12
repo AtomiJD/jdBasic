@@ -87,6 +87,13 @@ for %%A in (%*) do (
         set EXTRA_SRC=!EXTRA_SRC! src\mcp_stdio.cpp
         echo [+] MCP Server - Model Context Protocol stdio
     )
+    if /I "%%A"=="SQLITE" (
+        set DEFS=!DEFS! /DSQLITE
+        set EXTRA_SRC=!EXTRA_SRC! src\sql.cpp
+        set EXTRA_INC=!EXTRA_INC! /Ibridges\sqlitebridge
+        set WANT_SQLITE=1
+        echo [+] SQLite - embedded database engine, statically linked
+    )
     if /I "%%A"=="OPENGL" (
         REM Requires GFX (shares SDL3 init + event loop). We don't auto-imply
         REM GFX here — caller must pass GFX explicitly so they see the cost.
@@ -138,6 +145,21 @@ if defined WANT_OPENGL (
         echo [!] OPENGL needs GFX - aborting. Pass GFX OPENGL together.
         exit /b 1
     )
+)
+
+REM SQLITE links the amalgamation; compile it once into build\sqlite3.obj
+REM (plain C, slow to compile, never changes - same caching idea as ftxui).
+if defined WANT_SQLITE (
+    if not exist bridges\sqlitebridge\sqlite3.c (
+        echo [!] SQLITE needs the amalgamation - download sqlite3.c/sqlite3.h
+        echo     from https://sqlite.org/download.html into bridges\sqlitebridge\
+        exit /b 1
+    )
+    if not exist build\sqlite3.obj (
+        echo [+] Compiling SQLite amalgamation one-time...
+        "%CC%" /nologo /c /O2 /MD /I"%MSVC%\include" /I"%SDK%\Include\%SDKV%\ucrt" /I"%SDK%\Include\%SDKV%\um" /I"%SDK%\Include\%SDKV%\shared" /Ibridges\sqlitebridge /Fo:build\sqlite3.obj bridges\sqlitebridge\sqlite3.c
+    )
+    set EXTRA_LIB=!EXTRA_LIB! build\sqlite3.obj
 )
 
 REM TUI implies FTXUI — pull the lib in if the user only passed TUI.
@@ -209,8 +231,9 @@ if %ERRORLEVEL%==0 (
     if defined COPY_LLVM (
         copy /Y libs\LLVM\bin\LLVM-C.dll build\ >nul 2>&1
         echo LLVM DLL copied to build\
-        REM Pre-compile jdb_runtime.obj for linking into generated executables
-        "%CC%" /std:c++17 /O2 /EHsc /c src\jdb_runtime.cpp ^
+        REM Pre-compile jdb_runtime.obj for linking into generated executables.
+        REM Pass the feature DEFS so jdb_os_feature reports the build's flags.
+        "%CC%" /std:c++17 /O2 /EHsc /c !DEFS! src\jdb_runtime.cpp ^
             "/I%MSVC%\include" "/I%SDK%\Include\%SDKV%\ucrt" ^
             "/I%SDK%\Include\%SDKV%\um" "/I%SDK%\Include\%SDKV%\shared" ^
             /Isrc /Fo:build\jdb_runtime.obj

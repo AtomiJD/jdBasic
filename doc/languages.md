@@ -1552,6 +1552,29 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.
 * **`BINWRITER filename$, data$`**: Writes a raw string of bytes to a file, overwriting it.
 
+#### SQLite (build flag `SQLITE`)
+
+The `SQLITE` build flag links the SQLite engine statically into the binary — no DLL, no installation, every `.db` file just works. Check availability with `OS.FEATURE("SQLITE")`. Handles are plain integers.
+
+* **`SQL.OPEN(path$) -> handle`**: Opens (or creates) a database file. Returns `0` on failure; `SQL.ERRMSG$(0)` carries the reason.
+* **`SQL.CLOSE(handle) -> bool`**: Closes the database.
+* **`SQL.EXEC(handle, sql$) -> n`**: Runs a non-query statement (DDL/INSERT/UPDATE/DELETE; multiple statements separated by `;` are allowed). Returns the affected row count, or `-1` on error (`SQL.ERRMSG$` explains).
+* **`SQL.QUERY(handle, sql$) -> array of maps`**: Runs a SELECT and returns one map per row keyed by column name, with real cell types (INTEGER → int, REAL → double, TEXT → string, NULL → NONE). Errors throw (catch with `TRY`). **Interpreter-only** — row maps can't cross the native bridge; `-c` rejects it at compile time.
+* **`SQL.TABLE(handle, sql$) -> 2D array`**: The compiled-friendly twin of `SQL.QUERY`: rows as plain arrays with the same per-cell typing. Works in interpreter and native `-c`.
+* **`SQL.COLUMNS(handle, sql$) -> array`**: The result column names of a query as a string array (prepares without executing). Pair with `SQL.TABLE`.
+* **`SQL.ERRMSG$(handle) -> string$`**: Last error message for the handle (or the last failed `SQL.OPEN` when called with `0`).
+
+```basic
+DIM db = SQL.OPEN("crm.db")
+SQL.EXEC(db, "CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY, name TEXT, score REAL)")
+SQL.EXEC(db, "INSERT INTO people(name, score) VALUES ('ada', 9.5), ('bob', 7)")
+DIM rows = SQL.QUERY(db, "SELECT * FROM people ORDER BY score DESC")
+PRINT rows[0]{"name"}                       ' interpreter: maps per row
+DIM t = SQL.TABLE(db, "SELECT name, score FROM people")
+PRINT SQL.COLUMNS(db, "SELECT name, score FROM people"); " "; t   ' native-safe
+SQL.CLOSE(db)
+```
+
 ### System and Time Functions
 
 * **`GETENV$(var_name$)`**: Gets the value of a system environment variable.

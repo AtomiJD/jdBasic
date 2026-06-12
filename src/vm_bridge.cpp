@@ -40,6 +40,9 @@ extern void register_ffi_builtins(VM& vm);
 extern void register_ai_builtins(VM& vm);
 extern void register_numerics_builtins(VM& vm);
 extern void register_llm_builtins(VM& vm);
+#ifdef SQLITE
+extern void register_sql_builtins(VM& vm);
+#endif
 #ifdef COM
 extern void register_com_builtins(VM& vm);
 #endif
@@ -146,6 +149,9 @@ static void setup_all_builtins(VM& vm) {
     register_ai_builtins(vm);
     register_numerics_builtins(vm);
     register_llm_builtins(vm);
+#ifdef SQLITE
+    register_sql_builtins(vm);
+#endif
 }
 
 // One VM instance per jdrt_init() caller, plus the side tables used to

@@ -36,6 +36,7 @@ WANT_GFX=${GFX:-0}
 WANT_IMGUI=${IMGUI:-0}
 WANT_LLM=${LLM:-0}
 WANT_SOUND=${SOUND:-0}
+WANT_SQLITE=${SQLITE:-0}
 
 # Base translation units - mirror build_rt.bat's always-on list. gui.cpp and
 # sound.cpp guard their device code behind #ifdef GFX / SOUND_DSP, so they
@@ -109,6 +110,22 @@ if [ "$WANT_LLM" = "1" ]; then
     fi
 fi
 
+if [ "$WANT_SQLITE" = "1" ]; then
+    if [ ! -f bridges/sqlitebridge/sqlite3.c ]; then
+        echo "ERROR: SQLITE needs the amalgamation - download sqlite3.c/sqlite3.h"
+        echo "       from https://sqlite.org/download.html into bridges/sqlitebridge/"
+        exit 1
+    fi
+    CXXFLAGS="$CXXFLAGS -DSQLITE -Ibridges/sqlitebridge"
+    SRC="$SRC src/sql.cpp"
+    mkdir -p build/obj_pic
+    if [ ! -f build/obj_pic/sqlite3.o ]; then
+        echo "[+] Compiling SQLite amalgamation one-time (PIC)..."
+        cc -O2 -fPIC -c bridges/sqlitebridge/sqlite3.c -o build/obj_pic/sqlite3.o
+    fi
+    LDFLAGS="$LDFLAGS build/obj_pic/sqlite3.o -lpthread -ldl -lm"
+fi
+
 # ── Parallel compile to build/obj_pic, then link the .so ─────────
 FLAGS_HASH=$(echo "$CXX $CXXFLAGS" | sha1sum | cut -c1-12)
 STAMP="build/obj_pic/.rtflags-$FLAGS_HASH"
@@ -131,6 +148,7 @@ features="embed"
 [ "$WANT_LLM"   = "1" ] && features="$features+LLM"
 [ "$WANT_GFX"   = "1" ] && features="$features+GFX"
 [ "$WANT_IMGUI" = "1" ] && features="$features+IMGUI"
+[ "$WANT_SQLITE" = "1" ] && features="$features+SQLITE"
 echo "== Building libjdbrt.so ($features) - $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 export CXX CXXFLAGS

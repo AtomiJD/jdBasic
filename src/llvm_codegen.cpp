@@ -50,6 +50,7 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
     "DATERANGE", "TALLY",
     "TILED.LAYERS", "FILE.LIST",
     "CSVREADER", "CSVHEADER",
+    "SQL.TABLE", "SQL.COLUMNS",
     // Audio / tilemap / GUI / AI array returners (audit 2026-06-10): each is
     // register_native-only (no native runtime_func) and returns a flat or
     // nested array, so it fell through to the bridge and collapsed to f64=0
@@ -2082,6 +2083,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         }
                         // Known array-returning functions (sync with bridge)
                         static const std::unordered_set<std::string> arr_returners = {
+                            "SQL.TABLE", "SQL.COLUMNS",
                             "SPLIT", "KEYS", "VALUES", "SORTBY", "GROUPBY",
                             "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
                             "OS.LIST", "OS.ARGS",
@@ -7343,6 +7345,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
+    // SQL.QUERY returns an array of row MAPS, which cannot cross the
+    // native bridge. The table-shaped twins work compiled.
+    if (upper == "SQL.QUERY") {
+        report_error(m_current_stmt_file, expr.line,
+            "SQL.QUERY is interpreter-only (row maps can't cross the native "
+            "bridge) - use SQL.TABLE + SQL.COLUMNS in compiled programs");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
+
     // JSON.STRINGIFY$ supports MAP and ARRAY only. A native UDT instance does
     // not marshal across the VM bridge — it would silently stringify to "".
     // Fail loud at compile time instead (use a MAP, or build the JSON from the
@@ -8384,6 +8395,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // File I/O
         "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
         "CSVREADER", "CSVWRITER", "CSVHEADER",
+        "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
+        "SQL.TABLE", "SQL.COLUMNS",
         // System/console
         "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
         "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",

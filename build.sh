@@ -51,6 +51,7 @@ WANT_LLM=${LLM:-0}
 WANT_ONNX=${ONNX:-0}
 WANT_NATIVEC=${NATIVEC:-0}
 WANT_MCPSERVER=${MCPSERVER:-0}
+WANT_SQLITE=${SQLITE:-0}
 WANT_FTXUI=${FTXUI:-0}
 WANT_TUI=${TUI:-0}
 # TUI implies FTXUI — drag the lib in if only TUI was passed.
@@ -171,6 +172,23 @@ if [ "$WANT_MCPSERVER" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DMCPSERVER"
     MCPSERVER_SRC="src/mcp_stdio.cpp"
 fi
+SQL_SRC=""
+if [ "$WANT_SQLITE" = "1" ]; then
+    if [ ! -f bridges/sqlitebridge/sqlite3.c ]; then
+        echo "ERROR: SQLITE needs the amalgamation - download sqlite3.c/sqlite3.h"
+        echo "       from https://sqlite.org/download.html into bridges/sqlitebridge/"
+        exit 1
+    fi
+    CXXFLAGS="$CXXFLAGS -DSQLITE -Ibridges/sqlitebridge"
+    SQL_SRC="src/sql.cpp"
+    # The amalgamation is plain C and never changes — compile once.
+    mkdir -p build/obj
+    if [ ! -f build/obj/sqlite3.o ]; then
+        echo "[+] Compiling SQLite amalgamation one-time..."
+        cc -O2 -fPIC -c bridges/sqlitebridge/sqlite3.c -o build/obj/sqlite3.o
+    fi
+    LDFLAGS="$LDFLAGS build/obj/sqlite3.o -lpthread -ldl -lm"
+fi
 FTXUI_SRC=""
 if [ "$WANT_FTXUI" = "1" ]; then
     FTXUI_DIR="libs/ftxui"
@@ -216,7 +234,7 @@ SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
      src/numerics.cpp src/screencap.cpp \
-     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $FTXUI_SRC $TUI_SRC"
+     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.

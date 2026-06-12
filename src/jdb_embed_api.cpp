@@ -17,6 +17,9 @@
 #include "compiler.h"
 #include "ai.h"
 #include "numerics.h"
+#ifdef SQLITE
+#include "sql.h"
+#endif
 #include "llm.h"
 #include "sound.h"
 #ifdef HTTP
@@ -340,6 +343,9 @@ void setup(JdbEmbedImpl* e) {
     ::register_ai_builtins(e->vm);
     ::register_numerics_builtins(e->vm);
     ::register_llm_builtins(e->vm);
+#ifdef SQLITE
+    ::register_sql_builtins(e->vm);
+#endif
 #if defined(GFX) || defined(SOUND_DSP)
     // SOUND.* sequencer (pull-mode under SOUND_DSP: no device, host renders).
     ::register_sound_builtins(e->vm);

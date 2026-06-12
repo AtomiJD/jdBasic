@@ -1,0 +1,47 @@
+' SQL.* regression — interpreter run only (SQL.QUERY returns row maps,
+' which native -c rejects at compile time). Needs the SQLITE build flag.
+IF NOT OS.FEATURE("SQLITE") THEN
+    PRINT "SKIP: built without SQLITE"
+    END
+ENDIF
+
+DIM pass = 0
+DIM fail = 0
+SUB Check(cond, msg)
+    IF cond THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+DIM db = SQL.OPEN("tmp_test_sql.db")
+Check(db > 0, "open")
+Check(SQL.EXEC(db, "CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT, score REAL, note TEXT)") = 0, "create")
+Check(SQL.EXEC(db, "INSERT INTO people(name, score, note) VALUES ('ada', 9.5, NULL), ('bob', 7, 'x')") = 2, "insert")
+
+DIM rows = SQL.QUERY(db, "SELECT * FROM people ORDER BY score DESC")
+Check(LEN(rows) = 2, "query row count")
+Check(rows[0]{"name"} = "ada", "query map string cell")
+Check(rows[0]{"score"} = 9.5, "query map real cell")
+Check(rows[0]{"id"} = 1, "query map integer cell")
+Check(ISNONE(rows[0]{"note"}), "query NULL becomes NONE")
+
+' Errors throw on bad SELECTs - catchable.
+DIM threw = FALSE
+TRY
+    DIM bad = SQL.QUERY(db, "SELECT nope FROM missing")
+CATCH
+    threw = TRUE
+ENDTRY
+Check(threw, "query error throws")
+
+' Aggregates flow straight into the language.
+DIM t = SQL.TABLE(db, "SELECT name, score FROM people ORDER BY name")
+Check(SUM(SLICE(t, 1, 1)) = 16.5, "table column into SUM")
+
+Check(SQL.CLOSE(db), "close")
+KILL "tmp_test_sql.db"
+
+PRINT "RESULTS: "; pass; " passed, "; fail; " failed"

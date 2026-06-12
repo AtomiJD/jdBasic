@@ -1722,6 +1722,34 @@ Description: Closes the audio stream and releases the audio device.
 Syntax: SPLIT(source$, delimiter$)
 Description: Splits a string by a delimiter and returns a 1D array of strings.
 
+[SQL.OPEN]
+Syntax: SQL.OPEN(path$)
+Description: Opens or creates a SQLite database file, returns an integer handle (0 = failure). Needs the SQLITE build flag; check OS.FEATURE("SQLITE").
+
+[SQL.CLOSE]
+Syntax: SQL.CLOSE(handle)
+Description: Closes a SQLite database handle.
+
+[SQL.EXEC]
+Syntax: SQL.EXEC(handle, sql$)
+Description: Runs a non-query SQL statement. Returns affected rows, -1 on error (see SQL.ERRMSG$).
+
+[SQL.QUERY]
+Syntax: SQL.QUERY(handle, sql$)
+Description: Runs a SELECT and returns an array of row maps keyed by column name, with typed cells. Interpreter only - use SQL.TABLE + SQL.COLUMNS in compiled programs.
+
+[SQL.TABLE]
+Syntax: SQL.TABLE(handle, sql$)
+Description: Runs a SELECT and returns a 2D array of typed row values. Works in interpreter and native -c.
+
+[SQL.COLUMNS]
+Syntax: SQL.COLUMNS(handle, sql$)
+Description: Returns the result column names of a query as a string array.
+
+[SQL.ERRMSG$]
+Syntax: SQL.ERRMSG$(handle)
+Description: Last SQLite error message for the handle (handle 0 = last failed SQL.OPEN).
+
 [SPRITE.ADD_TO_GROUP]
 Syntax: SPRITE.ADD_TO_GROUP(group_id, instance_id)
 Description: Adds a sprite instance to a collision group.

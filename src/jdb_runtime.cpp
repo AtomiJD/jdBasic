@@ -225,6 +225,15 @@ int64_t jdb_os_feature(const char* name) {
 #ifdef USE_SERIAL
     if (strcmp(up, "SERIAL")      == 0) return 1;
 #endif
+#ifdef LLM
+    if (strcmp(up, "LLM")         == 0) return 1;
+#endif
+#ifdef ONNX
+    if (strcmp(up, "ONNX")        == 0) return 1;
+#endif
+#ifdef SQLITE
+    if (strcmp(up, "SQLITE")      == 0) return 1;
+#endif
     return 0;
 }
 

@@ -57,6 +57,10 @@ inline std::string jdbasic_features() {
     if (!f.empty()) f += ", ";
     f += "MCP";
 #endif
+#ifdef SQLITE
+    if (!f.empty()) f += ", ";
+    f += "SQLite";
+#endif
     if (f.empty()) f = "Core";
     return f;
 }

@@ -1831,6 +1831,24 @@ Assert(YEAR(csv_t[0][3]) = 1815 AND YEAR(csv_t[1][3]) = 1990, "types DATE iso + 
 Assert(csv_t[0][4] = TRUE AND csv_t[1][4] = FALSE, "types BOOLEAN")
 KILL csv_p
 
+' SQLite (SQLITE build flag) — typed cells, native-safe TABLE/COLUMNS twins.
+' SQL.QUERY is compile-rejected under -c, so it lives in
+' tests/regression/test_sql.jdb instead of this dual-backend suite.
+IF OS.FEATURE("SQLITE") THEN
+    DIM sq_db = SQL.OPEN("tmp_sql_gate.db")
+    Assert(sq_db > 0, "SQL.OPEN returns handle")
+    Assert(SQL.EXEC(sq_db, "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT, score REAL)") = 0, "SQL.EXEC create")
+    Assert(SQL.EXEC(sq_db, "INSERT INTO t(name, score) VALUES ('ada', 9.5), ('bob', 7)") = 2, "SQL.EXEC insert count")
+    DIM sq_t = SQL.TABLE(sq_db, "SELECT id, name, score FROM t ORDER BY name")
+    Assert(LEN(sq_t) = 2 AND sq_t[0][1] = "ada" AND sq_t[0][2] = 9.5, "SQL.TABLE typed cells")
+    DIM sq_c = SQL.COLUMNS(sq_db, "SELECT id, name FROM t")
+    Assert(LEN(sq_c) = 2 AND sq_c[1] = "name", "SQL.COLUMNS names")
+    Assert(SQL.EXEC(sq_db, "BOGUS") = -1, "SQL.EXEC error returns -1")
+    Assert(LEN(SQL.ERRMSG$(sq_db)) > 0, "SQL.ERRMSG$ has message")
+    Assert(SQL.CLOSE(sq_db), "SQL.CLOSE")
+    KILL "tmp_sql_gate.db"
+ENDIF
+
 ' ══════════════════════════════════════════════════════════════════
 ' GROUP C — Timezone-aware dates, DATE.UTC, DATE.PARTS
 ' ══════════════════════════════════════════════════════════════════
