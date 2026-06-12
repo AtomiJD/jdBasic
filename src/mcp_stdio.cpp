@@ -200,6 +200,17 @@ bool obj_has(const Value& v, const std::string& key) {
     return obj_get(v, key) != nullptr;
 }
 
+// Numeric parameter that clients may send as JSON number or string.
+// Returns def when absent or unparseable.
+int64_t obj_get_num(const Value& v, const std::string& key, int64_t def) {
+    Value* f = obj_get(v, key);
+    if (!f) return def;
+    if (f->type == ValueType::STRING) {
+        try { return (int64_t)std::stod(f->as_string()->data); } catch (...) { return def; }
+    }
+    return (int64_t)f->to_double();
+}
+
 Value parse_json(VM& vm, const std::string& s) {
     return vm.call_function("JSON.PARSE$", { Value::make_string(s) });
 }
@@ -220,6 +231,27 @@ Value make_text_result(const std::string& text, bool is_error) {
     obj_set(block, "type", make_string_v("text"));
     obj_set(block, "text", make_string_v(text));
     content.as_array()->elements.push_back(std::move(block));
+
+    Value r = Value::make_object();
+    obj_set(r, "content", std::move(content));
+    if (is_error) obj_set(r, "isError", Value::make_bool(true));
+    return r;
+}
+
+// Two text blocks: human-readable output first, machine-readable payload
+// (pure JSON) second. An empty first block is skipped.
+Value make_text2_result(const std::string& text, const std::string& payload, bool is_error) {
+    Value content = Value::make_array();
+    if (!text.empty()) {
+        Value block = Value::make_object();
+        obj_set(block, "type", make_string_v("text"));
+        obj_set(block, "text", make_string_v(text));
+        content.as_array()->elements.push_back(std::move(block));
+    }
+    Value pblock = Value::make_object();
+    obj_set(pblock, "type", make_string_v("text"));
+    obj_set(pblock, "text", make_string_v(payload));
+    content.as_array()->elements.push_back(std::move(pblock));
 
     Value r = Value::make_object();
     obj_set(r, "content", std::move(content));
@@ -334,6 +366,7 @@ Value tool_echo(VM&, const Value& args) {
 
 Value tool_jdb_eval(VM& vm, const Value& args) {
     std::string code = obj_get_str(args, "code");
+    std::string result_expr = obj_get_str(args, "result");
     {
         std::lock_guard<std::mutex> lk(g_worker.m);
         if (worker_busy_or_queued_locked()) {
@@ -344,7 +377,7 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
     }
     auto promise = std::make_shared<std::promise<Value>>();
     auto fut = promise->get_future();
-    post_job([code, promise](VM& v) {
+    post_job([code, result_expr, promise](VM& v) {
         OutputCapture cap(v);
         try {
             run_on_vm(v, code + "\n");
@@ -354,6 +387,30 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
             // would prevent any later restore from succeeding.
             g_session_buffer += code;
             if (code.empty() || code.back() != '\n') g_session_buffer += '\n';
+            if (!result_expr.empty()) {
+                // Machine-readable channel: evaluate the expression against
+                // the post-chunk VM state and ship it as a pure-JSON block.
+                std::string json;
+                try {
+                    Value rv = v.call_function("EVAL", { Value::make_string(result_expr) });
+                    json = stringify_json(v, rv);
+                } catch (const std::exception& e) {
+                    promise->set_value(make_text2_result(cap.buf,
+                        std::string("Result error (the code chunk itself ran and is kept): ") +
+                        e.what(), true));
+                    return;
+                }
+                const size_t JSON_CAP = 100000;
+                if (json.size() > JSON_CAP) {
+                    promise->set_value(make_text2_result(cap.buf,
+                        "Result error: JSON payload is " + std::to_string(json.size()) +
+                        " chars (cap " + std::to_string(JSON_CAP) +
+                        ") — narrow the expression (TAKE / SLICE / aggregate).", true));
+                    return;
+                }
+                promise->set_value(make_text2_result(cap.buf, json, false));
+                return;
+            }
             promise->set_value(make_text_result(cap.buf, false));
         } catch (const std::exception& e) {
             std::string err = "Error: ";
@@ -362,7 +419,26 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
             promise->set_value(make_text_result(body, true));
         }
     });
-    return fut.get();
+    // Watchdog: a runaway chunk (infinite loop) must not hang the MCP
+    // client forever. 0 disables the timeout.
+    int64_t timeout_ms = obj_get_num(args, "timeout_ms", 30000);
+    if (timeout_ms <= 0) return fut.get();
+    if (fut.wait_for(std::chrono::milliseconds(timeout_ms)) == std::future_status::ready)
+        return fut.get();
+    // Ask the VM to park the chunk (external STOP), then give it a grace
+    // period to acknowledge. State changes made before the stop persist.
+    vm.stop_requested.store(true);
+    if (fut.wait_for(std::chrono::seconds(5)) == std::future_status::ready) {
+        (void)fut.get();  // discard the parked chunk's output
+        return make_text_result(
+            "Error: eval exceeded timeout_ms=" + std::to_string(timeout_ms) +
+            " — the chunk was stopped (resumable via jdb_resume, or simply continue "
+            "with new evals). State changes before the stop persist.", true);
+    }
+    return make_text_result(
+        "Error: eval exceeded timeout_ms=" + std::to_string(timeout_ms) +
+        " and the VM did not acknowledge the stop within 5s (blocked in a native "
+        "call?). The worker is still busy — poll jdb_status before further calls.", true);
 }
 
 Value tool_jdb_check(VM& vm, const Value& args) {
@@ -828,36 +904,63 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
 }
 
 // jdb_run_native — popen() the command, capture combined stdout+stderr,
-// return banner + body. No timeout (caller's responsibility) — same
-// limitation as the .jdb version.
+// return banner + body. The read runs on a helper thread so a hanging
+// process cannot hang the MCP client: on timeout the reader is detached
+// and an error is returned (popen exposes no PID, so the child itself
+// cannot be killed portably — the message says it may still be running).
 
 Value tool_jdb_run_native(VM&, const Value& args) {
     std::string cmd = obj_get_str(args, "command");
     if (cmd.empty()) return make_text_result("command is empty", true);
+    int64_t timeout_ms = obj_get_num(args, "timeout_ms", 120000);
 
-    auto t0 = std::clock();
+    auto t0 = std::chrono::steady_clock::now();
     std::string redirected = cmd + " 2>&1";
     FILE* p = MCP_POPEN(redirected.c_str(), "r");
     if (!p) return make_text_result("popen failed: " + cmd, true);
-    std::string output;
-    char buf[4096];
-    while (size_t n = std::fread(buf, 1, sizeof(buf), p)) {
-        output.append(buf, n);
-    }
-    int rc = MCP_PCLOSE(p);
-#ifdef _WIN32
-    // _pclose returns the spawned process's exit code directly (or -1 on error).
-    int exit_code = rc;
-#else
-    int exit_code = WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
-#endif
-    auto t1 = std::clock();
-    int elapsed_ms = (int)(((t1 - t0) * 1000) / CLOCKS_PER_SEC);
 
-    std::string banner = "[exit=" + std::to_string(exit_code)
+    struct RunState {
+        std::string output;
+        int exit_code = -1;
+    };
+    auto state = std::make_shared<RunState>();
+    auto done_p = std::make_shared<std::promise<void>>();
+    auto done_f = done_p->get_future();
+    std::thread reader([p, state, done_p]() {
+        char buf[4096];
+        while (size_t n = std::fread(buf, 1, sizeof(buf), p)) {
+            state->output.append(buf, n);
+        }
+        int rc = MCP_PCLOSE(p);
+#ifdef _WIN32
+        // _pclose returns the spawned process's exit code directly (or -1 on error).
+        state->exit_code = rc;
+#else
+        state->exit_code = WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
+#endif
+        done_p->set_value();
+    });
+    bool done = true;
+    if (timeout_ms > 0) {
+        done = (done_f.wait_for(std::chrono::milliseconds(timeout_ms))
+                == std::future_status::ready);
+    } else {
+        done_f.wait();
+    }
+    if (!done) {
+        reader.detach();
+        return make_text_result("Error: command exceeded timeout_ms=" +
+            std::to_string(timeout_ms) + " — output reader detached; the process "
+            "may still be running: " + cmd, true);
+    }
+    reader.join();
+    auto t1 = std::chrono::steady_clock::now();
+    int elapsed_ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+    std::string banner = "[exit=" + std::to_string(state->exit_code)
                        + " " + std::to_string(elapsed_ms) + "ms] " + cmd;
-    std::string body = output.empty() ? banner : (banner + "\n" + output);
-    return make_text_result(body, exit_code != 0);
+    std::string body = state->output.empty() ? banner : (banner + "\n" + state->output);
+    return make_text_result(body, state->exit_code != 0);
 }
 
 // ── Tool descriptors (served by tools/list) ─────────────────────
@@ -1028,8 +1131,10 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_eval",
-        "Execute jdBasic statements on the persistent VM and return any captured stdout. Variables defined here persist between calls.",
-        build_input_schema({{"code", "jdBasic source to EXECUTE. Use PRINT to surface values."}}, {"code"})));
+        "Execute jdBasic statements on the persistent VM and return any captured stdout. Variables defined here persist between calls. With the optional 'result' expression, the response carries a second text block of pure JSON — use that for machine-readable values instead of parsing PRINT output.",
+        build_input_schema({{"code", "jdBasic source to EXECUTE. Use PRINT to surface values."},
+                            {"result", "Optional expression evaluated AFTER the code chunk; its value is appended as a pure-JSON text block (capped at 100000 chars — narrow with TAKE/SLICE if exceeded)."},
+                            {"timeout_ms", "Watchdog in milliseconds (default 30000; 0 = no timeout). On timeout the chunk is stopped via the external-STOP path; state changes before the stop persist."}}, {"code"})));
 
     a.push_back(tool_descriptor(
         "jdb_check",
@@ -1078,8 +1183,9 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_run_native",
-        "Run a command in a child process and capture combined stdout+stderr plus the exit code. No timeout; long-running processes block.",
-        build_input_schema({{"command", "Shell command line to execute."}}, {"command"})));
+        "Run a command in a child process and capture combined stdout+stderr plus the exit code. Times out after timeout_ms (default 120000) — on timeout the call returns an error but the process may keep running.",
+        build_input_schema({{"command", "Shell command line to execute."},
+                            {"timeout_ms", "Max wait in milliseconds (default 120000; 0 = wait forever)."}}, {"command"})));
 
     a.push_back(tool_descriptor(
         "jdb_savews",
