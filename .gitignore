@@ -118,6 +118,7 @@ desktop.ini
 # Re-block specific files even though jdb/**/*.csv is whitelisted.
 jdb/luli.csv
 jdb/luli.clf
+jdb/mixdata.csv
 # Maven Analytics "Booking Breakdown" data drill - large, download separately:
 # https://mavenanalytics.io/data-drills/booking-breakdown
 jdb/analytic/hotel_bookings.csv
