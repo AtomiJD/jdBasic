@@ -243,9 +243,13 @@ Description: Roundtrips a number through 32-bit float precision — useful for f
 Syntax: CSTR(x)
 Description: Converts any value to its string representation. Alias for TOSTR / STR.
 
+[CSVHEADER]
+Syntax: CSVHEADER(filename$, [delimiter$])
+Description: Returns the first CSV line as a string array of column names.
+
 [CSVREADER]
-Syntax: CSVREADER(filename$, [delimiter$], [has_header])
-Description: Reads a CSV file into a 2D array.
+Syntax: CSVREADER(filename$, [delimiter$], [has_header], [types])
+Description: Reads a CSV file into a 2D array with per-cell type inference (int, double, string). Optional types array forces column types using the AS type names: AUTO, STRING, INTEGER, DOUBLE, DATE, BOOLEAN.
 
 [CSVWRITER]
 Syntax: CSVWRITER filename$, array, [delimiter$], [header_array]

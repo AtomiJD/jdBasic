@@ -38,7 +38,7 @@ inline const std::unordered_set<std::string>& native_names() {
         "COMPRESSOR", "CONVOLVE", "COPYV", "COS",
         "COSH", "COSINE_SIM", "COUNT", "CREATE",
         "CREATEOBJECT", "CROSS", "CSNG", "CSTR",
-        "CSVREADER", "CSVWRITER", "CUMPROD", "CUMSUM",
+        "CSVHEADER", "CSVREADER", "CSVWRITER", "CUMPROD", "CUMSUM",
         "CURSOR", "CVDATE", "DATE", "DATE$",
         "DATEADD", "DATEDIFF", "DATERANGE", "DAY",
         "DEBUG", "DELAY", "DELAYSEND", "DELETE",

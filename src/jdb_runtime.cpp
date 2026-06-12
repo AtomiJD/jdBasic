@@ -2829,19 +2829,59 @@ double jdb_now_epoch() {
     return (double)time(NULL);
 }
 
+// Civil calendar fallback (Howard Hinnant's algorithm): localtime returns
+// nullptr for epochs the CRT cannot represent (pre-1970 on Windows), so
+// the date accessors fall back to UTC civil components computed here.
+static void rt_civil_from_days(int64_t z, int64_t& y, int64_t& m, int64_t& d) {
+    z += 719468;
+    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const int64_t doe = z - era * 146097;
+    const int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const int64_t yy = yoe + era * 400;
+    const int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const int64_t mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    m = mp < 10 ? mp + 3 : mp - 9;
+    y = yy + (m <= 2);
+}
+
+static void rt_epoch_to_civil_utc(double epoch, int64_t& y, int64_t& mo, int64_t& d,
+                                  int64_t& h, int64_t& mi, int64_t& se, int64_t& wd) {
+    int64_t t = (int64_t)floor(epoch);
+    int64_t days = t / 86400;
+    int64_t rem = t % 86400;
+    if (rem < 0) { rem += 86400; days -= 1; }
+    h = rem / 3600; mi = (rem % 3600) / 60; se = rem % 60;
+    rt_civil_from_days(days, y, mo, d);
+    wd = (days + 4) % 7;           // epoch day 0 = Thursday
+    if (wd < 0) wd += 7;
+}
+
 char* jdb_date_str(double epoch) {
     time_t t = (time_t)epoch;
-    struct tm* tm = localtime(&t);
     char buf[32];
-    strftime(buf, sizeof(buf), "%Y-%m-%d", tm);
+    if (struct tm* tm = localtime(&t)) {
+        strftime(buf, sizeof(buf), "%Y-%m-%d", tm);
+    } else {
+        int64_t y, mo, d, h, mi, se, wd;
+        rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+        snprintf(buf, sizeof(buf), "%04lld-%02lld-%02lld",
+                 (long long)y, (long long)mo, (long long)d);
+    }
     return _strdup(buf);
 }
 
 char* jdb_time_str(double epoch) {
     time_t t = (time_t)epoch;
-    struct tm* tm = localtime(&t);
     char buf[32];
-    strftime(buf, sizeof(buf), "%H:%M:%S", tm);
+    if (struct tm* tm = localtime(&t)) {
+        strftime(buf, sizeof(buf), "%H:%M:%S", tm);
+    } else {
+        int64_t y, mo, d, h, mi, se, wd;
+        rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+        snprintf(buf, sizeof(buf), "%02lld:%02lld:%02lld",
+                 (long long)h, (long long)mi, (long long)se);
+    }
     return _strdup(buf);
 }
 
@@ -2851,31 +2891,52 @@ char* jdb_time_str(double epoch) {
 // jdb_year_str etc. (called via string-tagged CVDATE result).
 int64_t jdb_year(double epoch) {
     time_t t = (time_t)epoch;
-    return localtime(&t)->tm_year + 1900;
+    if (struct tm* p = localtime(&t)) return p->tm_year + 1900;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    return y;
 }
 int64_t jdb_month(double epoch) {
     time_t t = (time_t)epoch;
-    return localtime(&t)->tm_mon + 1;
+    if (struct tm* p = localtime(&t)) return p->tm_mon + 1;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    return mo;
 }
 int64_t jdb_day(double epoch) {
     time_t t = (time_t)epoch;
-    return localtime(&t)->tm_mday;
+    if (struct tm* p = localtime(&t)) return p->tm_mday;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    return d;
 }
 int64_t jdb_hour(double epoch) {
     time_t t = (time_t)epoch;
-    return localtime(&t)->tm_hour;
+    if (struct tm* p = localtime(&t)) return p->tm_hour;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    return h;
 }
 int64_t jdb_minute(double epoch) {
     time_t t = (time_t)epoch;
-    return localtime(&t)->tm_min;
+    if (struct tm* p = localtime(&t)) return p->tm_min;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    return mi;
 }
 int64_t jdb_second(double epoch) {
     time_t t = (time_t)epoch;
-    return localtime(&t)->tm_sec;
+    if (struct tm* p = localtime(&t)) return p->tm_sec;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    return se;
 }
 int64_t jdb_weekday(double epoch) {
     time_t t = (time_t)epoch;
-    return localtime(&t)->tm_wday;
+    if (struct tm* p = localtime(&t)) return p->tm_wday;
+    int64_t y, mo, d, h, mi, se, wd;
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    return wd;
 }
 
 // String-based date accessors: take ISO date string

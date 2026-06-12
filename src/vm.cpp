@@ -52,6 +52,47 @@
 // elsewhere. rc 0 = ok, negative = error.
 extern "C" int jdb_screencap(const char* path, const char* mode, const char* caption);
 
+// ── Civil calendar arithmetic (Howard Hinnant's algorithms) ──────
+// Proleptic Gregorian, free of CRT range limits: MSVC's mktime/localtime
+// reject pre-1970 dates (mktime returns -1, localtime returns nullptr),
+// so date parsing and Y/M/D extraction fall back to these.
+
+static int64_t jdb_days_from_civil(int64_t y, int64_t m, int64_t d) {
+    y -= m <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const int64_t yoe = y - era * 400;
+    const int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+static void jdb_civil_from_days(int64_t z, int64_t& y, int64_t& m, int64_t& d) {
+    z += 719468;
+    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const int64_t doe = z - era * 146097;
+    const int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const int64_t yy = yoe + era * 400;
+    const int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const int64_t mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    m = mp < 10 ? mp + 3 : mp - 9;
+    y = yy + (m <= 2);
+}
+
+// Split an epoch into UTC civil components. Only used when the CRT's
+// localtime cannot represent the value (negative epochs on Windows).
+static void jdb_epoch_to_civil_utc(double epoch, int64_t& y, int64_t& mo, int64_t& d,
+                                   int64_t& h, int64_t& mi, int64_t& se, int64_t& wd) {
+    int64_t t = (int64_t)std::floor(epoch);
+    int64_t days = t / 86400;
+    int64_t rem = t % 86400;
+    if (rem < 0) { rem += 86400; days -= 1; }
+    h = rem / 3600; mi = (rem % 3600) / 60; se = rem % 60;
+    jdb_civil_from_days(days, y, mo, d);
+    wd = (days + 4) % 7;           // epoch day 0 = Thursday
+    if (wd < 0) wd += 7;
+}
+
 // ── Windows SEH → C++ exception translator ───────────────────
 // Without this, an access violation, divide-by-zero, stack overflow, etc.
 // inside a native function tears down the whole interpreter. With this
@@ -638,7 +679,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "SPLIT", "FORMAT$", "FRMV$", "INSERT$",
         "REPLACE$", "REVERSE$", "PACK$", "UNPACK",
         "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
-        "CSVREADER", "CSVWRITER", "IIF",
+        "CSVREADER", "CSVWRITER", "CSVHEADER", "IIF",
         "JOIN", "REGEX_MATCH", "REGEX_REPLACE$",
         "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
         "MEAN", "MEDIAN", "VARIANCE", "STDEV",
@@ -5669,16 +5710,101 @@ void VM::register_builtins() {
         return Value::make_none();
     });
 
-    register_native("CSVREADER", [](const std::vector<Value>& args) -> Value {
+    // "YYYY-MM-DD[ HH:MM:SS]", "YYYY-MM-DDTHH:MM:SS" or "DD.MM.YYYY" →
+    // local epoch. Two-digit years are rejected as ambiguous.
+    auto parse_csv_date = [](const std::string& s, double& out_epoch) -> bool {
+        int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
+        int m = std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se);
+        if (m < 3) m = std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &se);
+        if (m < 3) {
+            h = mi = se = 0;
+            m = std::sscanf(s.c_str(), "%d.%d.%d", &d, &mo, &y);
+            if (m < 3) return false;
+        }
+        if (y < 100 || mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+        std::tm tm = {};
+        tm.tm_year = y - 1900; tm.tm_mon = mo - 1; tm.tm_mday = d;
+        tm.tm_hour = h; tm.tm_min = mi; tm.tm_sec = se; tm.tm_isdst = -1;
+        std::time_t t = std::mktime(&tm);
+        if (t == (std::time_t)-1) {
+            // Outside the CRT's range (pre-1970 on Windows) — UTC civil epoch.
+            out_epoch = (double)(jdb_days_from_civil(y, mo, d) * 86400 +
+                                 h * 3600 + mi * 60 + se);
+            return true;
+        }
+        out_epoch = static_cast<double>(t);
+        return true;
+    };
+
+    // One CSV cell → Value, honoring a per-column target type. Type names
+    // follow the AS declaration types: AUTO (infer int → double → string),
+    // STRING, INTEGER, DOUBLE, DATE, BOOLEAN.
+    auto csv_cell_value = [parse_csv_date](const std::string& cell, const std::string& want) -> Value {
+        if (want == "STRING") return Value::make_string(cell);
+        if (want == "INTEGER") {
+            try {
+                size_t np;
+                double d = std::stod(cell, &np);
+                if (np == cell.size()) return Value::make_i64((int64_t)d);
+            } catch (...) {}
+            return Value::make_i64(0);
+        }
+        if (want == "DOUBLE") {
+            try {
+                size_t np;
+                double d = std::stod(cell, &np);
+                if (np == cell.size()) return Value::make_f64(d);
+            } catch (...) {}
+            return Value::make_f64(0.0);
+        }
+        if (want == "DATE") {
+            double ep;
+            if (parse_csv_date(cell, ep)) return Value::make_date(ep);
+            return Value::make_date(0);
+        }
+        if (want == "BOOLEAN") {
+            std::string lo = cell;
+            for (auto& c : lo) c = (char)std::tolower((unsigned char)c);
+            return Value::make_bool(lo == "1" || lo == "true" || lo == "yes");
+        }
+        // AUTO / unknown type name: infer.
+        try {
+            size_t np;
+            int64_t iv = std::stoll(cell, &np);
+            if (np == cell.size()) return Value::make_i64(iv);
+            double dv = std::stod(cell, &np);
+            if (np == cell.size()) return Value::make_f64(dv);
+        } catch (...) {}
+        return Value::make_string(cell);
+    };
+
+    auto strip_utf8_bom = [](std::string& line) {
+        if (line.size() >= 3 && (unsigned char)line[0] == 0xEF &&
+            (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF)
+            line.erase(0, 3);
+    };
+
+    register_native("CSVREADER", [csv_cell_value, strip_utf8_bom](const std::vector<Value>& args) -> Value {
         std::string fname = args[0].as_string()->data;
         std::string delim = (args.size() >= 2) ? args[1].as_string()->data : ",";
         bool has_header = (args.size() >= 3) ? args[2].to_bool() : false;
+        // Optional per-column target types; columns beyond the list infer.
+        std::vector<std::string> col_types;
+        if (args.size() >= 4 && args[3].type == ValueType::ARRAY) {
+            for (auto& t : args[3].as_array()->elements) {
+                std::string u = t.to_string();
+                for (auto& c : u) c = (char)std::toupper((unsigned char)c);
+                col_types.push_back(u);
+            }
+        }
         std::ifstream f(fname);
         if (!f) throw std::runtime_error("Cannot open file: " + fname);
         Value result = Value::make_array();
         std::string line;
         bool first = true;
+        static const std::string kAuto = "AUTO";
         while (std::getline(f, line)) {
+            if (first) strip_utf8_bom(line);
             // Skip header row
             if (first && has_header) { first = false; continue; }
             first = false;
@@ -5687,6 +5813,7 @@ void VM::register_builtins() {
             // Split by delimiter
             Value row = Value::make_array();
             size_t pos = 0;
+            size_t col = 0;
             while (true) {
                 size_t found = line.find(delim, pos);
                 std::string cell = (found == std::string::npos)
@@ -5694,25 +5821,40 @@ void VM::register_builtins() {
                 // Strip quotes
                 if (cell.size() >= 2 && cell.front() == '"' && cell.back() == '"')
                     cell = cell.substr(1, cell.size() - 2);
-                // Try to parse as number
-                try {
-                    size_t np;
-                    int64_t iv = std::stoll(cell, &np);
-                    if (np == cell.size()) { row.as_array()->elements.push_back(Value::make_i64(iv)); }
-                    else {
-                        double dv = std::stod(cell, &np);
-                        if (np == cell.size()) row.as_array()->elements.push_back(Value::make_f64(dv));
-                        else row.as_array()->elements.push_back(Value::make_string(cell));
-                    }
-                } catch (...) {
-                    row.as_array()->elements.push_back(Value::make_string(cell));
-                }
+                const std::string& want = (col < col_types.size()) ? col_types[col] : kAuto;
+                row.as_array()->elements.push_back(csv_cell_value(cell, want));
+                col++;
                 if (found == std::string::npos) break;
                 pos = found + delim.size();
             }
             result.as_array()->elements.push_back(std::move(row));
         }
         return result;
+    });
+
+    // Header row as a string array (CSVREADER discards it on skip).
+    register_native("CSVHEADER", [strip_utf8_bom](const std::vector<Value>& args) -> Value {
+        std::string fname = args[0].as_string()->data;
+        std::string delim = (args.size() >= 2) ? args[1].as_string()->data : ",";
+        std::ifstream f(fname);
+        if (!f) throw std::runtime_error("Cannot open file: " + fname);
+        Value r = Value::make_array();
+        std::string line;
+        if (!std::getline(f, line)) return r;
+        strip_utf8_bom(line);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t pos = 0;
+        while (true) {
+            size_t found = line.find(delim, pos);
+            std::string cell = (found == std::string::npos)
+                ? line.substr(pos) : line.substr(pos, found - pos);
+            if (cell.size() >= 2 && cell.front() == '"' && cell.back() == '"')
+                cell = cell.substr(1, cell.size() - 2);
+            r.as_array()->elements.push_back(Value::make_string(cell));
+            if (found == std::string::npos) break;
+            pos = found + delim.size();
+        }
+        return r;
     });
 
     register_native("CSVWRITER", [](const std::vector<Value>& args) -> Value {
@@ -6690,33 +6832,56 @@ void VM::register_builtins() {
 
     // ── 8. DateTime Extraction ───────────────────────────────
 
+    // localtime returns nullptr for epochs outside the CRT's range
+    // (pre-1970 on Windows) — fall back to UTC civil components then.
     register_native("YEAR", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
-        return Value::make_i64(std::localtime(&t)->tm_year + 1900);
+        if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_year + 1900);
+        int64_t y, mo, d, h, mi, se, wd;
+        jdb_epoch_to_civil_utc(args[0].to_double(), y, mo, d, h, mi, se, wd);
+        return Value::make_i64(y);
     });
     register_native("MONTH", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
-        return Value::make_i64(std::localtime(&t)->tm_mon + 1);
+        if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_mon + 1);
+        int64_t y, mo, d, h, mi, se, wd;
+        jdb_epoch_to_civil_utc(args[0].to_double(), y, mo, d, h, mi, se, wd);
+        return Value::make_i64(mo);
     });
     register_native("DAY", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
-        return Value::make_i64(std::localtime(&t)->tm_mday);
+        if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_mday);
+        int64_t y, mo, d, h, mi, se, wd;
+        jdb_epoch_to_civil_utc(args[0].to_double(), y, mo, d, h, mi, se, wd);
+        return Value::make_i64(d);
     });
     register_native("HOUR", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
-        return Value::make_i64(std::localtime(&t)->tm_hour);
+        if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_hour);
+        int64_t y, mo, d, h, mi, se, wd;
+        jdb_epoch_to_civil_utc(args[0].to_double(), y, mo, d, h, mi, se, wd);
+        return Value::make_i64(h);
     });
     register_native("MINUTE", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
-        return Value::make_i64(std::localtime(&t)->tm_min);
+        if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_min);
+        int64_t y, mo, d, h, mi, se, wd;
+        jdb_epoch_to_civil_utc(args[0].to_double(), y, mo, d, h, mi, se, wd);
+        return Value::make_i64(mi);
     });
     register_native("SECOND", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
-        return Value::make_i64(std::localtime(&t)->tm_sec);
+        if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_sec);
+        int64_t y, mo, d, h, mi, se, wd;
+        jdb_epoch_to_civil_utc(args[0].to_double(), y, mo, d, h, mi, se, wd);
+        return Value::make_i64(se);
     });
     register_native("WEEKDAY", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
-        return Value::make_i64(std::localtime(&t)->tm_wday);
+        if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_wday);
+        int64_t y, mo, d, h, mi, se, wd;
+        jdb_epoch_to_civil_utc(args[0].to_double(), y, mo, d, h, mi, se, wd);
+        return Value::make_i64(wd);
     });
 
     // ── CODEC: Encoding & Hashing ───────────────────────────

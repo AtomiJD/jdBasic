@@ -1546,7 +1546,8 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
     src$ = REPLACE$(src$, "Datensätze", "Datensätze (geprüft)")
     TXTWRITER "modAuftragFachlich.bas", src$, FALSE, "cp1252"
     ```
-* **`CSVREADER(filename$, [delimiter$], [has_header])`**: Reads a CSV file into a 2D array of numbers.
+* **`CSVREADER(filename$, [delimiter$], [has_header], [types])`**: Reads a CSV file into a 2D array of rows. Each cell is inferred per value (integer → double → string), so mixed files load with real types. The optional `types` array forces a target type per column, using the `AS` declaration type names: `"AUTO"`, `"STRING"`, `"INTEGER"`, `"DOUBLE"`, `"DATE"` (ISO `YYYY-MM-DD[ HH:MM:SS]` or `DD.MM.YYYY`; pre-1970 dates work), `"BOOLEAN"` (`1`/`true`/`yes`); columns beyond the list keep inferring. Use `"STRING"` to protect values that would otherwise lose information to inference (ZIP codes, phone numbers, IDs with leading zeros). A UTF-8 BOM on the first line is stripped. Example: `CSVREADER("people.csv", ";", TRUE, ["INTEGER", "STRING", "INTEGER", "DATE", "BOOLEAN"])`.
+* **`CSVHEADER(filename$, [delimiter$]) -> array`**: Returns the first line of a CSV file as a string array of column names (which `CSVREADER` discards when `has_header` is set).
 * **`CSVWRITER filename$, array, [delimiter$], [header_array]`**: Writes a 2D array to a CSV file.
 * **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.
 * **`BINWRITER filename$, data$`**: Writes a raw string of bytes to a file, overwriting it.

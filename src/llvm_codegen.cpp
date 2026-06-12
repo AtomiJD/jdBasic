@@ -49,7 +49,7 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
     "NORMALIZE", "DIFF", "APPEND",
     "DATERANGE", "TALLY",
     "TILED.LAYERS", "FILE.LIST",
-    "CSVREADER",
+    "CSVREADER", "CSVHEADER",
     // Audio / tilemap / GUI / AI array returners (audit 2026-06-10): each is
     // register_native-only (no native runtime_func) and returns a flat or
     // nested array, so it fell through to the bridge and collapsed to f64=0
@@ -8383,7 +8383,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
         // File I/O
         "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
-        "CSVREADER", "CSVWRITER",
+        "CSVREADER", "CSVWRITER", "CSVHEADER",
         // System/console
         "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
         "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",

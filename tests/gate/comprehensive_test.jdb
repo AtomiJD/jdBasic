@@ -1817,6 +1817,20 @@ ENDIF
 KILL f_probe
 RMDIR "jdb_dir_probe"
 
+' CSV: per-cell type inference, UTF-8 BOM strip, forced column types, header
+DIM csv_p = MKTEMP$("jdbCsv")
+TXTWRITER csv_p, CHR$(239) + CHR$(187) + CHR$(191) + "id;name;score;born;flag" + CHR$(10) + "01;ada;9.5;1815-12-10;1" + CHR$(10) + "2;bob;7;15.03.1990;0"
+DIM csv_h = CSVHEADER(csv_p, ";")
+Assert(LEN(csv_h) = 5 AND csv_h[0] = "id" AND csv_h[4] = "flag", "CSVHEADER names, BOM stripped")
+DIM csv_m = CSVREADER(csv_p, ";", TRUE)
+Assert(csv_m[0][0] = 1 AND csv_m[0][1] = "ada" AND csv_m[0][2] = 9.5, "CSVREADER mixed inference")
+DIM csv_t = CSVREADER(csv_p, ";", TRUE, ["STRING", "STRING", "INTEGER", "DATE", "BOOLEAN"])
+Assert(csv_t[0][0] = "01", "types STRING keeps leading zero")
+Assert(csv_t[0][2] = 9 AND csv_t[1][2] = 7, "types INTEGER truncates")
+Assert(YEAR(csv_t[0][3]) = 1815 AND YEAR(csv_t[1][3]) = 1990, "types DATE iso + dd.mm.yyyy, pre-1970")
+Assert(csv_t[0][4] = TRUE AND csv_t[1][4] = FALSE, "types BOOLEAN")
+KILL csv_p
+
 ' ══════════════════════════════════════════════════════════════════
 ' GROUP C — Timezone-aware dates, DATE.UTC, DATE.PARTS
 ' ══════════════════════════════════════════════════════════════════

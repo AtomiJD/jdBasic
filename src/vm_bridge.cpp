@@ -620,12 +620,12 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     auto* arr = v.as_array();
     r->length = (int64_t)arr->elements.size();
     r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
-    bool has_ptr = false, has_string = false;
+    bool has_ptr = false, has_string = false, has_other = false;
     std::vector<int8_t> cell_tags((size_t)(r->length > 0 ? r->length : 1), 1);
     for (int64_t i = 0; i < r->length; i++) {
         const auto& e = arr->elements[i];
         if (e.type == ValueType::ARRAY) {
-            has_ptr = true;
+            has_ptr = true; has_other = true;
             cell_tags[(size_t)i] = 3;  // JD_TAG_ARR
             JdbArray* inner = value_to_jdbarray(e);
             union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)inner;
@@ -638,15 +638,17 @@ static JdbArray* value_to_jdbarray(const Value& v) {
             union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)copy;
             r->data[i] = u.d;
         } else {
+            has_other = true;
             r->data[i] = e.to_double();
         }
     }
     if (has_ptr) r->flags |= 1;
     if (has_string) r->flags |= 2;
-    // Pointer cells make flags-only decoding ambiguous (a numeric cell in a
-    // string-flagged row would be dereferenced as char*). Per-element tags
-    // give jdb_frmv / jdb_array_get_tagged the exact layout.
-    if (has_ptr) {
+    // String cells mixed with anything else make flags-only decoding
+    // ambiguous (a numeric cell in a string-flagged row would be
+    // dereferenced as char*) — per-element tags pin the layout for those.
+    // Uniform arrays keep the plain flags encoding.
+    if (has_string && has_other) {
         r->elem_tags = (int8_t*)malloc((size_t)(r->length > 0 ? r->length : 1));
         memcpy(r->elem_tags, cell_tags.data(), (size_t)(r->length > 0 ? r->length : 1));
         r->flags |= 8;
