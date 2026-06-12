@@ -1,0 +1,156 @@
+' chart.jdb - one-call charts rendered to PNG via the 2D GFX layer.
+'
+' Public API (all render 640x400, save to path$, then close the window):
+'   CHART.PLOT(xs, ys, title$, path$)        line chart
+'   CHART.SCATTER(xs, ys, title$, path$)     point cloud
+'   CHART.BARS(labels, values, title$, path$) bars with category labels
+'   CHART.HIST(vals, n_bins, title$, path$)  histogram
+'
+' The screenshot is taken BEFORE SCREENFLIP (after the flip the back
+' buffer is cleared). Use absolute output paths when the caller's working
+' directory is uncertain (MCP server runs in the repo root).
+
+EXPORT MODULE CHART
+
+' Frame layout shared by every chart: margins sized so tick labels and
+' title never collide with the data area.
+CONST M_LEFT = 64
+CONST M_RIGHT = 16
+CONST M_TOP = 30
+CONST M_BOT = 34
+CONST CW = 640
+CONST CH = 400
+
+' Draws background, gridlines, tick labels and title; returns nothing.
+' Axis ranges are padded by the caller where needed.
+SUB FRAME(x_min, x_max, y_min, y_max, title$, x_is_index)
+    DIM aw = CW - M_LEFT - M_RIGHT
+    DIM ah = CH - M_TOP - M_BOT
+    DRAWCOLOR 18, 18, 28
+    RECT 0, 0, CW, CH, TRUE
+    DIM g
+    FOR g = 0 TO 4
+        DIM gy = M_TOP + INT(ah * g / 4)
+        DRAWCOLOR 55, 55, 75
+        LINE M_LEFT, gy, M_LEFT + aw, gy
+        DIM gv = y_max - (y_max - y_min) * g / 4
+        DRAWCOLOR 140, 140, 160
+        TEXT 4, gy - 7, FORMAT$("{:>7.0f}", gv)
+    NEXT g
+    FOR g = 0 TO 4
+        DIM gx = M_LEFT + INT(aw * g / 4)
+        DRAWCOLOR 55, 55, 75
+        LINE gx, M_TOP, gx, M_TOP + ah
+        IF x_is_index = FALSE THEN
+            DIM xv = x_min + (x_max - x_min) * g / 4
+            DRAWCOLOR 140, 140, 160
+            TEXT gx - 12, M_TOP + ah + 8, FORMAT$("{:.0f}", xv)
+        ENDIF
+    NEXT g
+    DRAWCOLOR 230, 230, 230
+    TEXT M_LEFT, 8, title$
+ENDSUB
+
+' Scale data values into the plot rectangle. flip=TRUE for the y axis
+' (pixel y grows downward).
+FUNC TO_PX(vals, v_min, v_max, flip)
+    DIM span = v_max - v_min
+    IF span = 0 THEN span = 1
+    DIM unit = (vals - v_min) / span
+    IF flip THEN
+        RETURN M_TOP + (CH - M_TOP - M_BOT) * (1 - unit)
+    ENDIF
+    RETURN M_LEFT + (CW - M_LEFT - M_RIGHT) * unit
+ENDFUNC
+
+SUB SAVE_AND_CLOSE(path$)
+    GFX.SAVE_SCREENSHOT(path$)
+    SCREENFLIP
+    GFX.CLOSE
+ENDSUB
+
+EXPORT SUB PLOT(xs, ys, title$, path$)
+    SCREEN CW, CH, title$
+    DIM x_min = MIN(xs)
+    DIM x_max = MAX(xs)
+    DIM y_min = MIN(ys)
+    DIM y_max = MAX(ys)
+    FRAME(x_min, x_max, y_min, y_max, title$, FALSE)
+    DIM px = TO_PX(xs, x_min, x_max, FALSE)
+    DIM py = TO_PX(ys, y_min, y_max, TRUE)
+    DIM n = LEN(xs)
+    IF n >= 2 THEN
+        DIM segs = TRANSPOSE(STACK(0, TAKE(n - 1, px), TAKE(n - 1, py), DROP(1, px), DROP(1, py)))
+        DRAWCOLOR 80, 200, 255
+        LINE segs
+    ENDIF
+    SAVE_AND_CLOSE(path$)
+ENDSUB
+
+EXPORT SUB SCATTER(xs, ys, title$, path$)
+    SCREEN CW, CH, title$
+    DIM x_min = MIN(xs)
+    DIM x_max = MAX(xs)
+    DIM y_min = MIN(ys)
+    DIM y_max = MAX(ys)
+    FRAME(x_min, x_max, y_min, y_max, title$, FALSE)
+    DIM px = TO_PX(xs, x_min, x_max, FALSE)
+    DIM py = TO_PX(ys, y_min, y_max, TRUE)
+    DIM dots = TRANSPOSE(STACK(0, px, py, px * 0 + 2))
+    DRAWCOLOR 80, 200, 255
+    CIRCLE dots, TRUE
+    SAVE_AND_CLOSE(path$)
+ENDSUB
+
+' labels: string (or numeric) array, one per bar. Bars start at zero so
+' relative heights stay honest; negative values extend below the axis.
+EXPORT SUB BARS(labels, values, title$, path$)
+    SCREEN CW, CH, title$
+    DIM y_min = MIN(values)
+    IF y_min > 0 THEN y_min = 0
+    DIM y_max = MAX(values)
+    IF y_max < 0 THEN y_max = 0
+    FRAME(0, 1, y_min, y_max, title$, TRUE)
+    DIM n = LEN(values)
+    DIM aw = CW - M_LEFT - M_RIGHT
+    DIM slot = aw / n
+    DIM bar_w = INT(slot * 0.7)
+    DIM y0 = TO_PX([0], y_min, y_max, TRUE)[0]
+    DIM i
+    FOR i = 0 TO n - 1
+        DIM bx = M_LEFT + INT(slot * i + slot * 0.15)
+        DIM by = TO_PX([values[i]], y_min, y_max, TRUE)[0]
+        DRAWCOLOR 80, 200, 255
+        IF by <= y0 THEN
+            RECT bx, by, bar_w, y0 - by, TRUE
+        ELSE
+            RECT bx, y0, bar_w, by - y0, TRUE
+        ENDIF
+        DRAWCOLOR 140, 140, 160
+        DIM label$ = "" + labels[i]
+        IF LEN(label$) > 9 THEN label$ = LEFT$(label$, 8) + "."
+        TEXT bx + INT(bar_w / 2) - LEN(label$) * 4, M_TOP + (CH - M_TOP - M_BOT) + 8, label$
+    NEXT i
+    SAVE_AND_CLOSE(path$)
+ENDSUB
+
+EXPORT SUB HIST(vals, n_bins, title$, path$)
+    DIM lo = MIN(vals)
+    DIM hi = MAX(vals)
+    DIM w = (hi - lo) / n_bins
+    IF w = 0 THEN w = 1
+    DIM counts = ZEROS([n_bins])
+    DIM bin_labels = []
+    ' More than ~6 labels collide at 640px - label every k-th bin only.
+    DIM lbl_step = INT((n_bins + 5) / 6)
+    DIM b
+    FOR b = 0 TO n_bins - 1
+        DIM b_lo = lo + b * w
+        counts[b] = SUM((vals >= b_lo) * (vals < b_lo + w))
+        DIM lab$ = ""
+        IF b MOD lbl_step = 0 THEN lab$ = FORMAT$("{:.1f}", b_lo)
+        bin_labels = APPEND(bin_labels, lab$)
+    NEXT b
+    counts[n_bins - 1] = counts[n_bins - 1] + SUM(vals = hi)
+    BARS(bin_labels, counts, title$, path$)
+ENDSUB

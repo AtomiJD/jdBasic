@@ -170,6 +170,10 @@ static Parser::FileReader make_module_reader() {
         }
         candidates.push_back(upper + ".jdb");
         candidates.push_back(lower + ".jdb");
+        // CWD-anchored execution (REPL, MCP evals) has no base_dir — give
+        // it the same one-level "modules/" lookup the script dir gets.
+        candidates.push_back("modules/" + upper + ".jdb");
+        candidates.push_back("modules/" + lower + ".jdb");
 
         for (auto& cand : candidates) {
             std::ifstream f(cand);

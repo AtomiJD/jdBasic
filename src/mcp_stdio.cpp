@@ -18,6 +18,9 @@
 #include "mcp_stdio.h"
 #include "vm.h"
 #include "value.h"
+#ifdef GFX
+#include "graphics.h"
+#endif
 
 // Defined in main.cpp / vm_bridge.cpp — directory of the currently-loaded
 // script. Set by tool_jdb_load so that IMPORT inside a loaded script can
@@ -903,6 +906,25 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
     }
 }
 
+// jdb_reset — the MCP equivalent of the REPL's CLEARWS: wipe the session
+// source buffer and reset the VM (variables + functions). Workspace files
+// on disk stay untouched, so jdb_loadws can restore a saved state after.
+
+Value tool_jdb_reset(VM& vm, const Value&) {
+    std::lock_guard<std::mutex> lk(g_worker.m);
+    if (worker_busy_or_queued_locked()) {
+        return make_text_result("VM busy — call jdb_stop first.", true);
+    }
+    g_session_buffer.clear();
+    vm.reset();
+#ifdef GFX
+    gfx_shutdown();
+#endif
+    return make_text_result(
+        "VM reset — source, variables and functions cleared. Workspace files "
+        "on disk are untouched; jdb_loadws restores one.", false);
+}
+
 // jdb_run_native — popen() the command, capture combined stdout+stderr,
 // return banner + body. The read runs on a helper thread so a hanging
 // process cannot hang the MCP client: on timeout the reader is detached
@@ -1198,6 +1220,11 @@ Value build_tools() {
         build_input_schema({{"name", "Workspace name (file '<name>.jsws' is read; .jdws as fallback)."}}, {"name"})));
 
     a.push_back(tool_descriptor(
+        "jdb_reset",
+        "Reset the persistent VM to a clean slate: session source, variables and functions are cleared (the MCP equivalent of the REPL's CLEARWS). Workspace files on disk are untouched — jdb_loadws restores one afterwards.",
+        build_input_schema({}, {})));
+
+    a.push_back(tool_descriptor(
         "echo",
         "Echo back the message you sent. Connectivity smoke test.",
         build_input_schema({{"message", "Text to echo back"}}, {"message"})));
@@ -1226,6 +1253,7 @@ Value dispatch_tool(VM& vm, const std::string& name, const Value& args) {
     if (name == "jdb_run_native") return tool_jdb_run_native(vm, args);
     if (name == "jdb_savews")     return tool_jdb_savews(vm, args);
     if (name == "jdb_loadws")     return tool_jdb_loadws(vm, args);
+    if (name == "jdb_reset")      return tool_jdb_reset(vm, args);
     if (name == "echo")           return tool_echo(vm, args);
     // User tools registered via --tools <dir>.
     for (auto& t : g_user_tools) {
