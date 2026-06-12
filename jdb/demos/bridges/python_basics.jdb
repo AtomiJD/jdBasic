@@ -1,0 +1,43 @@
+' Python bridge - the essentials. jdBasic embeds a CPython interpreter when
+' built with the PYTHON flag, so you can reach the Python ecosystem (numpy,
+' scipy, ...) for what jdBasic can't do natively. One namespace persists for
+' the whole run - define or import once, reuse later.
+
+IF NOT OS.FEATURE("PYTHON") THEN
+    PRINT "This demo needs a PYTHON-enabled build."
+    END
+ENDIF
+
+' 1. PY.EVAL - evaluate one expression, get a native jdBasic value back.
+PRINT "PY.EVAL:        "; PY.EVAL("sum(range(1, 101))")        ' 5050
+
+' 2. PY.SET / PY.GET - hand values across the bridge.
+DIM ok = PY.SET("greeting", "hello from jdBasic")
+PRINT "round-trip:     "; PY.GET("greeting")
+
+' 3. Arrays convert to Python lists and back.
+PY.SET("nums", [5, 3, 8, 1, 9, 2])
+PRINT "sorted unique:  "; PY.EVAL("sorted(set(nums))")
+
+' 4. PYTHON$ runs a multi-line block and returns its stdout. jdBasic strings
+'    have no escapes - join lines with CHR$(10).
+DIM code$ = "import statistics" + CHR$(10)
+code$ = code$ + "print('mean', statistics.mean(nums))" + CHR$(10)
+code$ = code$ + "print('stdev', round(statistics.stdev(nums), 3))"
+PRINT PYTHON$(code$)
+
+' 5. State persists across calls: define a function now, call it later.
+DIM def$ = "def squares(n):" + CHR$(10) + "    return [i*i for i in range(1, n+1)]"
+DIM ignore$ = PYTHON$(def$)
+PRINT "squares(6):     "; PY.EVAL("squares(6)")
+
+' 6. numpy arrives as a native jdBasic array (via tolist) - immediately usable.
+DIM g = PYTHON$("import numpy as np")
+PY.SET("xs", IOTA(10))
+DIM doubled = PY.EVAL("(np.array(xs) * 2).tolist()")
+PRINT "numpy * 2:      "; doubled
+PRINT "SUM of that:    "; SUM(doubled)
+
+' 7. Introspection helpers.
+DIM m$ = PYTHON$("import math")
+PRINT "dir(math) has sqrt: "; INSTR(PY.DIR$("math"), "sqrt") >= 0
