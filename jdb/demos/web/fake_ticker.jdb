@@ -1,16 +1,25 @@
-' 1. Setup a Python environment to simulate live data (or use real libraries like 'psutil' / 'yfinance')
-py_setup$ = "import random\n"
-py_setup$ = py_setup$ + "def get_market_data():\n"
-py_setup$ = py_setup$ + "    return {'symbol': 'BTC', 'price': round(random.uniform(50000, 52000), 2)}\n"
-PRINT PYTHON$(py_setup$)
+' Live ticker driven by Python. The embedded interpreter holds a function
+' across calls; a background RECUR task pulls a fresh quote every 2 seconds.
+' Needs the PYTHON build flag (OS.FEATURE("PYTHON")). jdBasic strings have no
+' escapes - lines are joined with CHR$(10).
 
-' 2. Create the background jdBasic script
-' It triggers Python, fetches the dict, and prints it at the top of the screen
-bg_task$ = "PYTHON$(""live_data = get_market_data()""): "
-bg_task$ = bg_task$ + "ticker = PY.GET(""live_data""): "
+IF NOT OS.FEATURE("PYTHON") THEN
+    PRINT "This demo needs a PYTHON-enabled build."
+    END
+ENDIF
+
+' 1. Define the data source once. It lives in the persistent namespace, so
+'    later calls can just invoke get_market_data().
+DIM py_setup$ = "import random" + CHR$(10)
+py_setup$ = py_setup$ + "def get_market_data():" + CHR$(10)
+py_setup$ = py_setup$ + "    return {'symbol': 'BTC', 'price': round(random.uniform(50000, 52000), 2)}"
+DIM ignore$ = PYTHON$(py_setup$)
+
+' 2. A background task: fetch the dict and print it on the top row.
+DIM bg_task$ = "ticker = PY.EVAL(""get_market_data()""): "
 bg_task$ = bg_task$ + "LOCATE 0, 50: PRINT ticker{""symbol""}; "" Price: $""; ticker{""price""}; ""   "";"
 
-' 3. Start the background loop (Updates every 2 seconds)
-TickerID = RECUR(2000, bg_task$)
+' 3. Update every 2 seconds. Keep using the console while it runs.
+DIM TickerID = RECUR(2000, bg_task$)
 
-PRINT "Live ticker started! You can keep typing and running commands..."
+PRINT "Live ticker started - the quote refreshes every 2s."

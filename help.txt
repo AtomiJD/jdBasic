@@ -1756,7 +1756,7 @@ Description: Runs a multi-line Python code block in the persistent namespace and
 
 [PY.EVAL]
 Syntax: PY.EVAL(expr$)
-Description: Evaluates a single Python expression and returns the result as a native jdBasic value (list->array, dict->object, double buffer->Tensor). Interpreter only.
+Description: Evaluates a single Python expression and returns the result as a native jdBasic value (list->array, dict->object, numpy/array.array via tolist()->array). Interpreter only.
 
 [PY.SET]
 Syntax: PY.SET(name$, value)

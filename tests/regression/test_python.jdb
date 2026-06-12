@@ -1,6 +1,6 @@
-' PYTHON / PY.* regression — interpreter run only (the embedded CPython
-' C-API isn't linked into compiled binaries; native -c rejects these at
-' compile time). Needs the PYTHON build flag.
+' PYTHON / PY.* regression — interpreter only (the embedded CPython C-API
+' isn't linked into compiled binaries; native -c rejects these at compile
+' time). Needs the PYTHON build flag.
 IF NOT OS.FEATURE("PYTHON") THEN
     PRINT "SKIP: built without PYTHON"
     END
@@ -17,44 +17,132 @@ SUB Check(cond, msg)
     ENDIF
 ENDSUB
 
-' Scalars round-trip both ways.
-Check(PY.SET("n", 21), "set integer")
-Check(PY.EVAL("n * 2") = 42, "eval integer arithmetic")
-Check(PY.EVAL("3.5 + 0.5") = 4.0, "eval float")
-Check(PY.EVAL("2 > 1") = TRUE, "eval boolean")
-Check(PY.EVAL("'a' + 'b'") = "ab", "eval string concat")
+' ── Scalars: PY.EVAL ─────────────────────────────────────────
+Check(PY.EVAL("40 + 2") = 42, "eval integer")
+Check(PY.EVAL("-7") = -7, "eval negative integer")
+Check(PY.EVAL("0") = 0, "eval zero")
+Check(PY.EVAL("2 ** 40") = 1099511627776, "eval large integer")
+Check(PY.EVAL("3.5 + 0.25") = 3.75, "eval float")
+Check(PY.EVAL("10 / 4") = 2.5, "eval true division -> float")
+Check(PY.EVAL("1 == 1") = TRUE, "eval boolean true")
+Check(PY.EVAL("1 > 2") = FALSE, "eval boolean false")
+Check(PY.EVAL("'jd' + 'Basic'") = "jdBasic", "eval string concat")
+Check(ISNONE(PY.EVAL("None")), "eval None -> NONE")
+Check(TYPEOF(PY.EVAL("5")) = "INT64", "eval int keeps integer type")
+Check(ISSTR(PY.EVAL("str(123)")), "eval str() stays string")
 
-' Arrays <-> lists.
-Check(PY.SET("xs", [3, 1, 2]), "set array")
-DIM srt = PY.EVAL("sorted(xs)")
-Check(srt[0] = 1 ANDALSO srt[2] = 3, "list sorted back to array")
+' ── PY.SET / PY.GET round-trips ──────────────────────────────
+Check(PY.SET("vi", 99), "set integer")
+Check(PY.GET("vi") = 99, "get integer")
+Check(PY.SET("vf", 2.71828), "set float")
+Check(PY.GET("vf") = 2.71828, "get float")
+Check(PY.SET("vs", "hello"), "set string")
+Check(PY.GET("vs") = "hello", "get string")
+Check(PY.SET("vb", TRUE), "set boolean")
+Check(PY.GET("vb") = TRUE, "get boolean")
+Check(PY.SET("va", [10, 20, 30]), "set array")
+DIM gota = PY.GET("va")
+Check(ISARR(gota) ANDALSO gota[1] = 20, "get array element")
 
-' Dicts -> objects.
+' ── Arrays <-> lists ─────────────────────────────────────────
+DIM srt = PY.EVAL("sorted([3, 1, 2])")
+Check(srt[0] = 1 ANDALSO srt[2] = 3, "list sorted -> array")
+DIM empty = PY.EVAL("[]")
+Check(ISARR(empty) ANDALSO LEN(empty) = 0, "empty list -> empty array")
+DIM nested = PY.EVAL("[[1, 2], [3, 4]]")
+Check(nested[1][0] = 3, "nested list -> nested array")
+DIM mixed = PY.EVAL("[1, 'two', 3.5, True]")
+Check(mixed[0] = 1 ANDALSO mixed[1] = "two" ANDALSO mixed[3] = TRUE, "mixed-type list")
+DIM tup = PY.EVAL("(7, 8, 9)")
+Check(ISARR(tup) ANDALSO tup[2] = 9, "tuple -> array")
+
+' ── Dicts <-> maps/objects ───────────────────────────────────
 DIM d = PY.EVAL("{'k': 7, 'v': [1, 2]}")
 Check(d{"k"} = 7, "dict scalar member")
 Check(d{"v"}[1] = 2, "dict nested-list member")
+DIM nd = PY.EVAL("{'outer': {'inner': 42}}")
+Check(nd{"outer"}{"inner"} = 42, "nested dict")
+DIM ed = PY.EVAL("{}")
+Check(ISMAP(ed) ANDALSO LEN(ed) = 0, "empty dict -> empty map")
+' jdBasic map -> python dict -> back, value-preserving
+Check(PY.SET("m", {"name": "ada", "score": 9}), "set map")
+Check(PY.EVAL("m['name'] + str(m['score'])") = "ada9", "map seen as dict in python")
 
-' GET reads a name set inside a code block; PYTHON$ captures stdout.
-DIM ignore = PYTHON$("greeting = 'hello'")
-Check(PY.GET("greeting") = "hello", "get name set in PYTHON$ block")
-Check(PYTHON$("print(sum(range(5)))") = "10", "PYTHON$ stdout capture")
+' ── numpy / array.array -> native array (no Tensor type) ─────
+DIM ig = PYTHON$("import numpy as np")
+DIM nv = PY.EVAL("np.array([1.0, 2.0, 3.0, 4.0])")
+Check(ISARR(nv), "numpy 1D -> array")
+Check(SUM(nv) = 10, "numpy array is usable (SUM)")
+DIM nm = PY.EVAL("np.arange(6).reshape(2, 3).tolist()")
+Check(nm[1][2] = 5, "numpy 2D -> nested array")
+DIM nd2 = PY.EVAL("np.arange(6, dtype='float64').reshape(2, 3)")
+Check(ISARR(nd2) ANDALSO nd2[0][1] = 1, "numpy 2D ndarray -> nested array")
+DIM ni = PY.EVAL("np.array([5, 6, 7])")
+Check(SUM(ni) = 18, "numpy int dtype -> usable array")
+DIM ag = PYTHON$("import array" + CHR$(10) + "buf = array.array('d', [1.5, 2.5])")
+DIM gb = PY.GET("buf")
+Check(ISARR(gb) ANDALSO gb[1] = 2.5, "array.array -> array")
 
-' A buffer of doubles becomes a Tensor.
-DIM j = PYTHON$("import array" + CHR$(10) + "buf = array.array('d', [1.0, 2.0, 3.0])")
-DIM tns = PY.GET("buf")
-Check(TYPEOF(tns) = "TENSOR", "double buffer -> Tensor")
+' ── State persistence across separate calls ──────────────────
+DIM s1 = PYTHON$("counter = 0" + CHR$(10) + "def bump():" + CHR$(10) + "    global counter" + CHR$(10) + "    counter += 1" + CHR$(10) + "    return counter")
+Check(PY.EVAL("bump()") = 1, "function defined earlier, called later (1)")
+Check(PY.EVAL("bump()") = 2, "state mutates across calls (2)")
+Check(PY.GET("counter") = 2, "counter persists")
+DIM s2 = PYTHON$("import math as _m")
+Check(PY.EVAL("round(_m.pi, 2)") = 3.14, "import persists across calls")
+Check(PY.SET("base", 100), "set base for cross-call use")
+Check(PYTHON$("print(base + bump())") = "103", "PY.SET value visible in later PYTHON$")
 
-' Introspection helpers return strings.
-Check(INSTR(PY.DIR$(), "greeting") >= 0, "DIR lists namespace names")
+' ── PYTHON$ stdout capture ───────────────────────────────────
+Check(PYTHON$("print('x')") = "x", "single print, trailing newline stripped")
+Check(PYTHON$("print(sum(range(5)))") = "10", "computed print")
+Check(PYTHON$("print(1)" + CHR$(10) + "print(2)") = "1" + CHR$(10) + "2", "two prints joined by newline")
+Check(PYTHON$("y = 5") = "", "no output -> empty string")
+
+' ── Introspection helpers ────────────────────────────────────
+Check(INSTR(PY.DIR$(), "counter") >= 0, "DIR lists namespace names")
+DIM im = PYTHON$("import math")
+Check(INSTR(PY.DIR$("math"), "sqrt") >= 0, "DIR lists module members")
 Check(LEN(PY.HELP$("len")) > 0, "HELP returns a docstring")
 
-' Python exceptions surface as catchable jdBasic errors.
-DIM threw = FALSE
+' ── Standard library reach ───────────────────────────────────
+Check(PY.EVAL("__import__('math').sqrt(144)") = 12, "stdlib math.sqrt")
+DIM js = PYTHON$("import json")
+Check(PY.EVAL("json.loads(json.dumps({'a': 1}))['a']") = 1, "json round-trip")
+DIM st = PYTHON$("import statistics")
+Check(PY.EVAL("statistics.median([1, 3, 5, 7])") = 4, "statistics.median")
+
+' ── Errors surface as catchable jdBasic errors ───────────────
+DIM e1 = FALSE
 TRY
-    DIM bad = PY.EVAL("1 / 0")
+    DIM b1 = PY.EVAL("1 / 0")
 CATCH
-    threw = TRUE
+    e1 = TRUE
 ENDTRY
-Check(threw, "eval error throws")
+Check(e1, "runtime error (div by zero) throws")
+
+DIM e2 = FALSE
+TRY
+    DIM b2 = PY.EVAL("undefined_name_xyz")
+CATCH
+    e2 = TRUE
+ENDTRY
+Check(e2, "name error throws")
+
+DIM e3 = FALSE
+TRY
+    DIM b3 = PYTHON$("def broken(:")
+CATCH
+    e3 = TRUE
+ENDTRY
+Check(e3, "syntax error in PYTHON$ throws")
+
+DIM e4 = FALSE
+TRY
+    DIM b4 = PY.GET("never_defined_var")
+CATCH
+    e4 = TRUE
+ENDTRY
+Check(e4, "PY.GET of undefined name throws")
 
 PRINT "RESULTS: "; pass; " passed, "; fail; " failed"

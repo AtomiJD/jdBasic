@@ -1,17 +1,29 @@
+' jdBasic generates the data with vectorised APL; Python's matplotlib renders
+' it to a PNG. Shows the array handoff (PY.SET) and a multi-line PYTHON$ block.
+' Needs a PYTHON-enabled build with matplotlib available.
+
+IF NOT OS.FEATURE("PYTHON") THEN
+    PRINT "This demo needs a PYTHON-enabled build."
+    END
+ENDIF
+
 PRINT "Generating data using jdBasic APL..."
 
-' 1. jdBasic handles the high-speed data generation natively
-X_Vals = IOTA(100)
-Y_Vals = SIN(X_Vals * 0.1) * 50
+' 1. jdBasic handles the high-speed data generation natively.
+DIM X_Vals = IOTA(100)
+DIM Y_Vals = SIN(X_Vals * 0.1) * 50
 
-' 2. Hand the arrays directly to Python
-PY.SET("x_data", X_Vals)
-PY.SET("y_data", Y_Vals)
+' 2. Hand the arrays straight to Python - they arrive as lists.
+DIM ok1 = PY.SET("x_data", X_Vals)
+DIM ok2 = PY.SET("y_data", Y_Vals)
 
 PRINT "Handing data to Python for rendering..."
 
-' 3. Let Python's ecosystem handle the image encoding and rendering
-py_plot$ = "import matplotlib.pyplot as plt" + CHR$(10)
+' 3. Let Python's ecosystem handle the rendering. Agg = headless backend.
+DIM py_plot$ = "import matplotlib" + CHR$(10)
+py_plot$ = py_plot$ + "matplotlib.use('Agg')" + CHR$(10)
+py_plot$ = py_plot$ + "import matplotlib.pyplot as plt" + CHR$(10)
+py_plot$ = py_plot$ + "plt.figure()" + CHR$(10)
 py_plot$ = py_plot$ + "plt.plot(x_data, y_data, color='cyan')" + CHR$(10)
 py_plot$ = py_plot$ + "plt.title('jdBasic APL Output')" + CHR$(10)
 py_plot$ = py_plot$ + "plt.grid(True)" + CHR$(10)
@@ -19,5 +31,3 @@ py_plot$ = py_plot$ + "plt.savefig('jdbasic_chart.png')" + CHR$(10)
 py_plot$ = py_plot$ + "print('Chart saved to disk as jdbasic_chart.png')"
 
 PRINT PYTHON$(py_plot$)
-
-OS.EXEC("cmd.exe /c start jdbasic_chart.png")

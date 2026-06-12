@@ -1581,7 +1581,7 @@ The `PYTHON` build flag embeds a CPython interpreter, so jdBasic can borrow the 
 
 The interpreter home is resolved at first use: the `JDB_PYTHON_HOME` environment variable wins, otherwise the per-user `pythoncore` package the build is wired against. The matching `python3xx.dll` must sit next to the executable (or on `PATH`).
 
-Values convert recursively in both directions: jdBasic array ↔ Python list, MAP/object ↔ dict, plus scalar strings, integers, floats and booleans. A jdBasic `Tensor` maps to a `{ "buffer": memoryview, "shape": tuple }` dict whose buffer aliases the C++ doubles **zero-copy** (numpy can wrap it without copying); any Python object exposing a contiguous buffer of doubles converts back to a `Tensor`.
+Values convert recursively in both directions: jdBasic array ↔ Python list, MAP/object ↔ dict, plus scalar strings, integers, floats and booleans. Any Python object exposing `tolist()` — numpy arrays, `array.array` — converts to a native (possibly nested) jdBasic array, shape- and dtype-agnostic, so the result is usable straight away (`SUM`, indexing, vector ops).
 
 * **`PYTHON$(code$) -> string$`**: Runs a multi-line code block in the persistent namespace and returns whatever it printed to stdout. A Python exception throws a jdBasic error (catch with `TRY`). Use `CHR$(10)` for line breaks — jdBasic strings have no `\n` escape.
 * **`PY.EVAL(expr$) -> value`**: Evaluates a single expression and returns the result converted to a native jdBasic value.

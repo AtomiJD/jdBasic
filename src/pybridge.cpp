@@ -9,9 +9,9 @@
 //
 // One persistent namespace (the `__jdb__` module dict) survives across every
 // call, mirroring how the workshop VM keeps state warm. Values convert
-// recursively: list<->array, dict<->object/map, str/int/float/bool scalars,
-// and a Tensor maps to {buffer, shape} with a zero-copy memoryview over the
-// C++ doubles (any Python buffer of doubles converts back to a Tensor).
+// recursively: list<->array, dict<->object/map, str/int/float/bool scalars.
+// Any Python object exposing tolist() (numpy arrays, array.array) lands as a
+// native jdBasic array, shape- and dtype-agnostic.
 //
 // Interpreter-only: the CPython C-API can't be driven from a compiled -c
 // binary, so llvm_codegen rejects PYTHON$/PY.* at compile time.
@@ -178,19 +178,12 @@ PyObject* value_to_py(const Value& v) {
             return dict;
         }
         case ValueType::TENSOR: {
+            // Legacy internal type, not user-facing — flatten to a list.
             auto* t = v.as_tensor();
-            PyObject* dict = PyDict_New();
-            PyObject* mv = PyMemoryView_FromMemory(
-                reinterpret_cast<char*>(t->data.data()),
-                (Py_ssize_t)(t->data.size() * sizeof(double)), PyBUF_WRITE);
-            PyDict_SetItemString(dict, "buffer", mv);
-            Py_DECREF(mv);
-            PyObject* shape = PyTuple_New((Py_ssize_t)t->shape.size());
-            for (size_t i = 0; i < t->shape.size(); i++)
-                PyTuple_SetItem(shape, (Py_ssize_t)i, PyLong_FromSize_t(t->shape[i]));
-            PyDict_SetItemString(dict, "shape", shape);
-            Py_DECREF(shape);
-            return dict;
+            PyObject* list = PyList_New((Py_ssize_t)t->data.size());
+            for (size_t i = 0; i < t->data.size(); i++)
+                PyList_SetItem(list, (Py_ssize_t)i, PyFloat_FromDouble(t->data[i]));
+            return list;
         }
     }
     Py_RETURN_NONE;
@@ -236,21 +229,18 @@ Value py_to_value(PyObject* o) {
         }
         return obj;
     }
-    if (PyObject_CheckBuffer(o)) {
-        Py_buffer view;
-        if (PyObject_GetBuffer(o, &view, PyBUF_ND | PyBUF_FORMAT | PyBUF_C_CONTIGUOUS) == 0) {
-            if (view.format && std::strcmp(view.format, "d") == 0 && view.buf) {
-                std::vector<size_t> shape;
-                for (int i = 0; i < view.ndim; i++) shape.push_back((size_t)view.shape[i]);
-                size_t n = (size_t)(view.len / (Py_ssize_t)sizeof(double));
-                std::vector<double> data(n);
-                std::memcpy(data.data(), view.buf, (size_t)view.len);
-                PyBuffer_Release(&view);
-                if (shape.empty()) shape = { n };
-                return Value::make_tensor(std::move(shape), std::move(data));
-            }
-            PyBuffer_Release(&view);
+    // numpy arrays, array.array, and anything else exposing tolist() convert
+    // through Python into native (possibly nested) jdBasic arrays — shape- and
+    // dtype-agnostic. jdBasic has no Tensor type, so a plain numeric array is
+    // the right landing place.
+    if (PyObject_HasAttrString(o, "tolist")) {
+        PyObject* lst = PyObject_CallMethod(o, "tolist", nullptr);
+        if (lst) {
+            Value v = py_to_value(lst);
+            Py_DECREF(lst);
+            return v;
         }
+        PyErr_Clear();
     }
     // Last resort: stringify so the caller at least sees something.
     PyObject* s = PyObject_Str(o);
