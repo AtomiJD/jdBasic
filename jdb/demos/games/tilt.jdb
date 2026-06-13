@@ -64,8 +64,19 @@ FUNC COLOR_FOR(id)
         CASE 5: RETURN [110, 200, 95]
         CASE 6: RETURN [200, 110, 210]
         CASE 7: RETURN [220, 90, 90]
+        CASE 8: RETURN [240, 110, 60]
+        CASE 9: RETURN [120, 230, 245]
+        CASE 10: RETURN [245, 215, 80]
     ENDSWITCH
     RETURN [200, 200, 200]
+ENDFUNC
+
+' Buchstabe einer Sonderkiste (ab id 8)
+FUNC PU_LABEL$(id)
+    IF id = 8 THEN RETURN "B"
+    IF id = 9 THEN RETURN "L"
+    IF id = 10 THEN RETURN "$"
+    RETURN ""
 ENDFUNC
 
 SUB SfxLock()  : SOUND.PLAY 0, "c3" : ENDSUB
@@ -83,6 +94,9 @@ FUNC PIECE_POINTS(id)
         CASE 5: RETURN 20    ' S
         CASE 6: RETURN 25    ' T (am kniffligsten)
         CASE 7: RETURN 20    ' Z
+        CASE 8: RETURN 0     ' Sonderkisten: Punkte kommen vom Effekt
+        CASE 9: RETURN 0
+        CASE 10: RETURN 0
     ENDSWITCH
     RETURN 10
 ENDFUNC
@@ -141,6 +155,18 @@ FUNC GhostY()
 ENDFUNC
 
 SUB RollNext()
+    IF RND(1) < 0.12 THEN
+        NextPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]]   ' Sonderkiste (1 Zelle)
+        rp = RND(1)
+        IF rp < 0.45 THEN
+            NextColor = 8       ' Bombe
+        ELSEIF rp < 0.85 THEN
+            NextColor = 9       ' Laser
+        ELSE
+            NextColor = 10      ' Gold
+        ENDIF
+        RETURN
+    ENDIF
     t = INT(RND(1) * 7)
     SWITCH t
         CASE 0: NextPiece = [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]] : NextColor = 1
@@ -284,12 +310,59 @@ SUB ApplyTilt()
     ENDIF
 ENDSUB
 
+' Sonderkiste ausloesen: Bombe (3x3), Laser (Reihe+Spalte), Gold (Punkte)
+SUB TriggerPowerup(kind, br, bc)
+    IF kind = 8 THEN
+        FOR dr = -1 TO 1
+            FOR dc = -1 TO 1
+                rr2 = br + dr
+                cc2 = bc + dc
+                IF rr2 >= 0 ANDALSO rr2 < Rows ANDALSO cc2 >= 0 ANDALSO cc2 < Cols THEN Board[rr2, cc2] = 0
+            NEXT dc
+        NEXT dr
+        Score = Score + 150
+        AddPopup(BX + bc * CELL, BY + br * CELL, 150)
+        shake = 18 : flash = 14
+        SfxTilt()
+    ELSEIF kind = 9 THEN
+        FOR cc2 = 0 TO Cols - 1
+            Board[br, cc2] = 0
+        NEXT cc2
+        FOR rr2 = 0 TO Rows - 1
+            Board[rr2, bc] = 0
+        NEXT rr2
+        Score = Score + 250
+        AddPopup(BX + bc * CELL, BY + br * CELL, 250)
+        shake = 16 : flash = 14
+        SfxClear()
+    ELSEIF kind = 10 THEN
+        Board[br, bc] = 0
+        Score = Score + 500
+        AddPopup(BX + bc * CELL, BY + br * CELL, 500)
+        SfxClear()
+    ENDIF
+    SettleDown()
+    ClearLines()
+ENDSUB
+
 SUB LockSequence()
     LockPiece()
     SfxLock()
     pts = PIECE_POINTS(PieceColor)
     Score = Score + pts
-    AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
+    IF pts > 0 THEN AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
+    ' Sonderkisten im gerade gesetzten Stein ausloesen
+    FOR pr = 0 TO 3
+        FOR pc = 0 TO 3
+            IF CurrentPiece[pr, pc] <> 0 THEN
+                pbr = PieceY + pr
+                pbc = PieceX + pc
+                IF pbr >= 0 ANDALSO pbr < Rows ANDALSO pbc >= 0 ANDALSO pbc < Cols THEN
+                    IF Board[pbr, pbc] >= 8 THEN TriggerPowerup(Board[pbr, pbc], pbr, pbc)
+                ENDIF
+            ENDIF
+        NEXT pc
+    NEXT pr
     ClearLines()
     ApplyTilt()
     IF ABS(Torque()) < TILT_LOW THEN Score = Score + 20   ' Bonus fuers Schiff-im-Lot-Halten
@@ -326,6 +399,10 @@ SUB DrawCell(r, c, id)
         RECT px + 1, py + 1, CELL - 2, CELL - 2, TRUE
         DRAWCOLOR col[0] + 30, col[1] + 30, col[2] + 30
         RECT px + 1, py + 1, CELL - 2, CELL - 2, FALSE
+        IF id >= 8 THEN
+            DRAWCOLOR 25, 25, 30
+            TEXT px + CELL / 2 - 5, py + CELL / 2 - 9, PU_LABEL$(id)
+        ENDIF
     ENDIF
 ENDSUB
 
@@ -337,6 +414,10 @@ SUB DrawMini(p, colId, ox0, oy0, csz)
                 col = COLOR_FOR(colId)
                 DRAWCOLOR col[0], col[1], col[2]
                 RECT ox0 + mj * csz, oy0 + mi * csz, csz - 2, csz - 2, TRUE
+                IF colId >= 8 THEN
+                    DRAWCOLOR 25, 25, 30
+                    TEXT ox0 + mj * csz + 2, oy0 + mi * csz - 2, PU_LABEL$(colId)
+                ENDIF
             ENDIF
         NEXT mj
     NEXT mi
@@ -498,6 +579,24 @@ IF testmode ANDALSO testtab$ = "pop" THEN
     SOUND.SHUTDOWN
     GFX.CLOSE
     PRINT "pop shot saved"
+    END
+ENDIF
+
+IF testmode ANDALSO testtab$ = "pu" THEN
+    FOR cc = 3 TO 6
+        Board[14, cc] = 3 : Board[13, cc] = 4 : Board[12, cc] = 5
+    NEXT cc
+    Board[14, 0] = 8 : Board[14, 1] = 9 : Board[14, 8] = 10   ' Kisten-Buchstaben zeigen
+    CurrentPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]] : PieceColor = 8
+    PieceX = 3 : PieceY = 1
+    Draw() : SLEEP 30 : Draw()
+    GFX.SAVE_SCREENSHOT("tmp/pu_before.png")
+    HardDrop()
+    Draw() : SLEEP 30 : Draw()
+    GFX.SAVE_SCREENSHOT("tmp/pu_after.png")
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "pu shots saved"
     END
 ENDIF
 
