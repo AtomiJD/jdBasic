@@ -5,11 +5,21 @@
 ' Run:  jdBasic wm_dashboard.jdb            (ESC quits)
 ' Test: jdBasic wm_dashboard.jdb shot [nat|match]   (one screenshot to tmp/dash.png)
 
-SCREEN 1100, 740, "WM 2026 Dashboard", 2
+SCREEN 1100, 740, "Fussball Dashboard", 2
 
-DIM SB$ = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
-DIM SUMURL$ = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event="
+DIM SITE$ = "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+DIM V2$ = "https://site.api.espn.com/apis/v2/sports/soccer/"
+DIM CORE$ = "https://sports.core.api.espn.com/v2/sports/soccer/leagues/"
+DIM LEAGUES$ = ["fifa.world", "ger.1", "ger.2", "uefa.champions", "uefa.europa"]
+DIM LEAGUE_NAMES$ = ["WM 2026", "Bundesliga", "2. Bundesliga", "Champions League", "Europa League"]
+DIM gLeague$ = "fifa.world"
+DIM gIsClub = FALSE
+DIM gLeagueIdx = 0
+DIM gPendingLeague = -1
+DIM gLastRefresh = 0
 DIM gFlags AS MAP
+DIM gLogoUrl AS MAP
+DIM gStand = []
 DIM gTeams = []
 DIM gSched = []
 DIM gSum AS MAP
@@ -19,6 +29,12 @@ DIM gImg AS MAP
 DIM gRoster AS MAP
 DIM gNews = []
 DIM gScorers = []
+
+' fifa.world spans the WC window; club leagues use the live/last scoreboard
+FUNC DATESPAN$()
+    IF gLeague$ = "fifa.world" THEN RETURN "?dates=20260611-20260703"
+    RETURN ""
+ENDFUNC
 
 FUNC TXT$(v)
     IF ISNONE(v) THEN RETURN ""
@@ -60,14 +76,27 @@ SUB SPLASH(msg$, frac)
     SCREENFLIP
 ENDSUB
 
-' flag cache: ESPN flag URL is deterministic from the lowercase team code
+' emblem cache: country flag (deterministic from the code) for the WC,
+' club crest (logos[0].href via gLogoUrl) for domestic / continental leagues
 FUNC FLAG(code$)
     IF code$ = "" THEN RETURN -1
     IF MAP.EXISTS(gFlags, code$) THEN RETURN gFlags{code$}
-    DIM url$ = "https://a.espncdn.com/i/teamlogos/countries/500/" + LCASE$(code$) + ".png"
+    DIM url$ = ""
+    IF gIsClub THEN
+        IF MAP.EXISTS(gLogoUrl, code$) THEN url$ = gLogoUrl{code$}
+    ELSE
+        url$ = "https://a.espncdn.com/i/teamlogos/countries/500/" + LCASE$(code$) + ".png"
+    ENDIF
+    IF LEN(url$) < 8 THEN
+        gFlags{code$} = -1
+        RETURN -1
+    ENDIF
     DIM png$ = HTTP.GET$(url$)
-    IF LEN(png$) < 100 THEN RETURN -1
-    DIM fn$ = "tmp/flag_" + code$ + ".png"
+    IF LEN(png$) < 100 THEN
+        gFlags{code$} = -1
+        RETURN -1
+    ENDIF
+    DIM fn$ = "tmp/emb_" + gLeague$ + "_" + code$ + ".png"
     BINWRITER fn$, png$
     DIM sid = SPRITE.LOAD(fn$)
     gFlags{code$} = sid
@@ -133,14 +162,14 @@ ENDFUNC
 
 FUNC GET_SQUAD(tid$)
     IF MAP.EXISTS(gRoster, tid$) THEN RETURN gRoster{tid$}
-    DIM ath = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/" + tid$ + "?enable=roster")){"team"}{"athletes"}
+    DIM ath = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/teams/" + tid$ + "?enable=roster")){"team"}{"athletes"}
     gRoster{tid$} = ath
     RETURN ath
 ENDFUNC
 
 FUNC GET_SUMMARY(eid$)
     IF MAP.EXISTS(gSum, eid$) THEN RETURN gSum{eid$}
-    DIM sjj = JSON.PARSE$(HTTP.GET$(SUMURL$ + eid$))
+    DIM sjj = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/summary?event=" + eid$))
     gSum{eid$} = sjj
     RETURN sjj
 ENDFUNC
@@ -183,7 +212,7 @@ SUB GROUP_TABLE(grp)
             IF fid >= 0 THEN GUI.IMAGE fid, 26, 17
             GUI.TABLE_NEXT_COLUMN
             DIM mk$ = "   "
-            IF j < 2 THEN mk$ = "+ "
+            IF (NOT gIsClub) ANDALSO j < 2 THEN mk$ = "+ "
             GUI.TEXT mk$ + code$ + "  " + TXT$(tm{"displayName"})
             GUI.TABLE_NEXT_COLUMN
             GUI.TEXT STATD$(st, "gamesPlayed")
@@ -215,7 +244,7 @@ SUB NATIONS_GRID()
             DIM fid = FLAG(TXT$(t{"code"}))
             IF fid >= 0 THEN GUI.IMAGE fid, 60, 40
             IF GUI.SELECTABLE(TXT$(t{"code"}) + " " + TXT$(t{"name"}) + "##n" + FORMAT$("{}", i)) THEN gSelTeam$ = TXT$(t{"code"})
-            GUI.TEXT "Gr. " + TXT$(t{"grp"})
+            IF NOT gIsClub THEN GUI.TEXT "Gr. " + TXT$(t{"grp"})
         NEXT i
         GUI.END_TABLE
     ENDIF
@@ -464,6 +493,97 @@ SUB SCHEDULE_TAB()
     ENDIF
 ENDSUB
 
+' ── live view ────────────────────────────────────────────────
+FUNC IS_LIVE(ev)
+    RETURN TXT$(ev{"competitions"}[0]{"status"}{"type"}{"state"}) = "in"
+ENDFUNC
+
+' big card for one in-progress match: score, last action, live stats, ticker
+SUB LIVE_CARD(ev)
+    DIM cp = ev{"competitions"}[0]
+    DIM co = cp{"competitors"}
+    DIM ta = co[0]{"team"}
+    DIM tb = co[1]{"team"}
+    DIM fa = FLAG(TXT$(ta{"abbreviation"}))
+    IF fa >= 0 THEN GUI.IMAGE fa, 78, 52
+    GUI.SAME_LINE
+    GUI.TEXT "  " + TXT$(co[0]{"score"}) + " : " + TXT$(co[1]{"score"}) + "  "
+    GUI.SAME_LINE
+    DIM fb = FLAG(TXT$(tb{"abbreviation"}))
+    IF fb >= 0 THEN GUI.IMAGE fb, 78, 52
+    GUI.TEXT TXT$(ta{"displayName"}) + "   -   " + TXT$(tb{"displayName"})
+    GUI.TEXT "LIVE  " + TXT$(cp{"status"}{"type"}{"shortDetail"})
+    DIM sit = cp{"situation"}
+    IF NOT ISNONE(sit) ANDALSO NOT ISNONE(sit{"lastPlay"}) THEN
+        GUI.TEXT_WRAPPED("Letzte Aktion: " + TXT$(sit{"lastPlay"}{"text"}))
+    ENDIF
+    MATCH_STATS TXT$(ev{"id"})
+    GUI.SEPARATOR_TEXT("Ticker")
+    DIM det = cp{"details"}
+    IF ISNONE(det) ORELSE LEN(det) = 0 THEN
+        GUI.TEXT "(noch keine Ereignisse)"
+    ELSE
+        DIM lo = LEN(det) - 10
+        IF lo < 0 THEN lo = 0
+        DIM k
+        FOR k = LEN(det) - 1 TO lo STEP -1
+            DIM d = det[k]
+            DIM who$ = ""
+            DIM ath = d{"athletesInvolved"}
+            IF NOT ISNONE(ath) ANDALSO LEN(ath) > 0 THEN who$ = TXT$(ath[0]{"displayName"})
+            GUI.TEXT TXT$(d{"clock"}{"displayValue"}) + "  " + TXT$(d{"type"}{"text"}) + "  " + who$
+        NEXT k
+    ENDIF
+ENDSUB
+
+SUB LIVE_TAB()
+    DIM lv = []
+    DIM i
+    FOR i = 0 TO LEN(gSched) - 1
+        IF IS_LIVE(gSched[i]) THEN lv = APPEND(lv, i)
+    NEXT i
+    IF LEN(lv) > 0 THEN
+        GUI.TEXT FORMAT$("{}", LEN(lv)) + " Spiel(e) live   -   Auto-Refresh ~30s"
+        DIM n
+        FOR n = 0 TO LEN(lv) - 1
+            GUI.SEPARATOR
+            LIVE_CARD gSched[lv[n]]
+        NEXT n
+    ELSE
+        GUI.TEXT "Aktuell laeuft kein Spiel."
+        GUI.SEPARATOR_TEXT("Naechste Spiele")
+        DIM shown = 0
+        DIM j
+        FOR j = 0 TO LEN(gSched) - 1
+            IF shown < 8 ANDALSO TXT$(gSched[j]{"competitions"}[0]{"status"}{"type"}{"state"}) = "pre" THEN
+                DIM cp = gSched[j]{"competitions"}[0]
+                DIM co = cp{"competitors"}
+                DIM fa = FLAG(TXT$(co[0]{"team"}{"abbreviation"}))
+                IF fa >= 0 THEN GUI.IMAGE fa, 24, 16
+                GUI.SAME_LINE
+                GUI.TEXT DTSHORT$(TXT$(gSched[j]{"date"})) + "   " + TXT$(co[0]{"team"}{"abbreviation"}) + " - " + TXT$(co[1]{"team"}{"abbreviation"})
+                shown = shown + 1
+            ENDIF
+        NEXT j
+        IF shown = 0 THEN GUI.TEXT "(keine angesetzten Spiele)"
+    ENDIF
+ENDSUB
+
+' periodic refresh: re-pull the scoreboard and re-fetch every live summary
+SUB REFRESH_LIVE()
+    DIM scj = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/scoreboard" + DATESPAN$()))
+    DIM ev = scj{"events"}
+    IF NOT ISNONE(ev) THEN gSched = ev
+    DIM i
+    FOR i = 0 TO LEN(gSched) - 1
+        IF IS_LIVE(gSched[i]) THEN
+            DIM eid$ = TXT$(gSched[i]{"id"})
+            gSum{eid$} = JSON.PARSE$(HTTP.GET$(SITE$ + gLeague$ + "/summary?event=" + eid$))
+        ENDIF
+    NEXT i
+    BUILD_SCORERS()
+ENDSUB
+
 ' aggregate a tournament top-scorer list from every match's goal events
 ' (ESPN's leaders endpoint isn't supported for fifa.world)
 SUB BUILD_SCORERS()
@@ -549,7 +669,7 @@ ENDSUB
 FUNC GET_ODDS(eid$)
     DIM key$ = "odds" + eid$
     IF MAP.EXISTS(gSum, key$) THEN RETURN gSum{key$}
-    DIM oj = JSON.PARSE$(HTTP.GET$("https://sports.core.api.espn.com/v2/sports/soccer/leagues/fifa.world/events/" + eid$ + "/competitions/" + eid$ + "/odds")){"items"}
+    DIM oj = JSON.PARSE$(HTTP.GET$(CORE$ + gLeague$ + "/events/" + eid$ + "/competitions/" + eid$ + "/odds")){"items"}
     DIM res AS MAP
     IF NOT ISNONE(oj) ANDALSO LEN(oj) > 0 THEN res = oj[0]
     gSum{key$} = res
@@ -594,43 +714,79 @@ SUB NEWS_TAB()
     NEXT i
 ENDSUB
 
-' ── load data ────────────────────────────────────────────────
-SPLASH "Anpfiff! Verbinde mit der WM 2026 - Daten werden geladen...", 0.15
-DIM sj = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"))
-DIM gStand = sj{"children"}
-DIM gi
-FOR gi = 0 TO LEN(gStand) - 1
-    DIM grp = gStand[gi]
-    DIM gn$ = TXT$(grp{"name"})
-    DIM ent = grp{"standings"}{"entries"}
-    DIM j
-    FOR j = 0 TO LEN(ent) - 1
-        DIM tm = ent[j]{"team"}
-        DIM rec AS MAP
-        rec{"code"} = TXT$(tm{"abbreviation"})
-        rec{"name"} = TXT$(tm{"displayName"})
-        rec{"grp"} = gn$
-        gTeams = APPEND(gTeams, rec)
-    NEXT j
-NEXT gi
-SPLASH "Spielplan wird geladen...", 0.3
-DIM scj = JSON.PARSE$(HTTP.GET$(SB$ + "?dates=20260611-20260703"))
-gSched = scj{"events"}
-SPLASH "Nachrichten werden geladen...", 0.32
-gNews = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/news")){"articles"}
-BUILD_SCORERS()
-DIM pf
-FOR pf = 0 TO LEN(gTeams) - 1
-    SPLASH "Hole die Flaggen aus aller Welt...  " + FORMAT$("{}", pf + 1) + "/" + FORMAT$("{}", LEN(gTeams)), 0.3 + 0.7 * (pf + 1) / LEN(gTeams)
-    DIM ig = FLAG(TXT$(gTeams[pf]{"code"}))
-NEXT pf
+' ── load one league (startup + on switch) ───────────────────
+SUB LOAD_LEAGUE(lg$, isclub)
+    gLeague$ = lg$
+    gIsClub = isclub
+    DIM c1 AS MAP
+    gFlags = c1
+    DIM c2 AS MAP
+    gLogoUrl = c2
+    DIM c3 AS MAP
+    gSum = c3
+    DIM c4 AS MAP
+    gImg = c4
+    DIM c5 AS MAP
+    gRoster = c5
+    gStand = []
+    gTeams = []
+    gSched = []
+    gNews = []
+    gScorers = []
+    gSelIdx = -1
+    gSelTeam$ = ""
+
+    SPLASH "Lade Tabellen...", 0.15
+    DIM sj = JSON.PARSE$(HTTP.GET$(V2$ + lg$ + "/standings"))
+    gStand = sj{"children"}
+    IF ISNONE(gStand) THEN gStand = []
+    DIM gi
+    FOR gi = 0 TO LEN(gStand) - 1
+        DIM grp = gStand[gi]
+        DIM gn$ = TXT$(grp{"name"})
+        DIM ent = grp{"standings"}{"entries"}
+        DIM j
+        FOR j = 0 TO LEN(ent) - 1
+            DIM tm = ent[j]{"team"}
+            DIM code$ = TXT$(tm{"abbreviation"})
+            DIM rec AS MAP
+            rec{"code"} = code$
+            rec{"name"} = TXT$(tm{"displayName"})
+            rec{"grp"} = gn$
+            gTeams = APPEND(gTeams, rec)
+            DIM lo = tm{"logos"}
+            IF NOT ISNONE(lo) ANDALSO LEN(lo) > 0 THEN gLogoUrl{code$} = TXT$(lo[0]{"href"})
+        NEXT j
+    NEXT gi
+    SPLASH "Lade Spielplan...", 0.3
+    DIM scj = JSON.PARSE$(HTTP.GET$(SITE$ + lg$ + "/scoreboard" + DATESPAN$()))
+    gSched = scj{"events"}
+    IF ISNONE(gSched) THEN gSched = []
+    SPLASH "Lade Nachrichten...", 0.32
+    gNews = JSON.PARSE$(HTTP.GET$(SITE$ + lg$ + "/news")){"articles"}
+    IF ISNONE(gNews) THEN gNews = []
+    BUILD_SCORERS()
+    DIM pf
+    FOR pf = 0 TO LEN(gTeams) - 1
+        SPLASH "Hole die Wappen...  " + FORMAT$("{}", pf + 1) + "/" + FORMAT$("{}", LEN(gTeams)), 0.3 + 0.7 * (pf + 1) / LEN(gTeams)
+        DIM ig = FLAG(TXT$(gTeams[pf]{"code"}))
+    NEXT pf
+ENDSUB
+
+SPLASH "Anpfiff! Daten werden geladen...", 0.1
+LOAD_LEAGUE LEAGUES$[0], FALSE
+gLastRefresh = TICK()
 PRINT "teams: "; LEN(gTeams); "  matches: "; LEN(gSched)
 
 DIM args = OS.ARGS()
 DIM testmode = (LEN(args) >= 2 ANDALSO args[1] = "shot")
 DIM testtab$ = ""
 IF LEN(args) >= 3 THEN testtab$ = args[2]
-IF testmode ANDALSO (testtab$ = "match" ORELSE testtab$ = "stats" ORELSE testtab$ = "lineup") THEN
+IF testmode ANDALSO LEN(args) >= 4 THEN
+    gLeagueIdx = VAL(args[3])
+    LOAD_LEAGUE LEAGUES$[gLeagueIdx], (gLeagueIdx <> 0)
+ENDIF
+IF testmode ANDALSO (testtab$ = "match" ORELSE testtab$ = "stats" ORELSE testtab$ = "lineup" ORELSE testtab$ = "livecard") THEN
     DIM ti
     FOR ti = 0 TO LEN(gSched) - 1
         IF gSelIdx < 0 ANDALSO TXT$(gSched[ti]{"competitions"}[0]{"status"}{"type"}{"state"}) = "post" THEN gSelIdx = ti
@@ -639,8 +795,12 @@ ENDIF
 
 DIM frame = 0
 DO
+    IF (NOT testmode) ANDALSO LEN(gSched) > 0 ANDALSO (TICK() - gLastRefresh) > 30000 THEN
+        REFRESH_LIVE()
+        gLastRefresh = TICK()
+    ENDIF
     CLS
-    IF GUI.BEGIN("FIFA World Cup 2026", 0, 0, 1100, 740) THEN
+    IF GUI.BEGIN("Fussball Dashboard", 0, 0, 1100, 740) THEN
         IF testmode ANDALSO testtab$ = "nat" THEN
             NATIONS_GRID()
         ELSEIF testmode ANDALSO testtab$ = "match" THEN
@@ -656,16 +816,32 @@ DO
             NEWS_TAB()
         ELSEIF testmode ANDALSO testtab$ = "scorers" THEN
             TOPSCORER_TAB()
+        ELSEIF testmode ANDALSO testtab$ = "live" THEN
+            LIVE_TAB()
+        ELSEIF testmode ANDALSO testtab$ = "livecard" THEN
+            LIVE_CARD gSched[gSelIdx]
         ELSE
+            DIM ni = GUI.COMBO("Liga", gLeagueIdx, LEAGUE_NAMES$)
+            IF ni <> gLeagueIdx THEN gPendingLeague = ni
+            DIM tabStand$ = "Gruppen"
+            DIM tabTeams$ = "Nationen"
+            IF gIsClub THEN
+                tabStand$ = "Tabelle"
+                tabTeams$ = "Vereine"
+            ENDIF
             IF GUI.BEGIN_TAB_BAR("tabs") THEN
-                IF GUI.BEGIN_TAB_ITEM("Gruppen") THEN
+                IF GUI.BEGIN_TAB_ITEM("Live") THEN
+                    LIVE_TAB()
+                    GUI.END_TAB_ITEM
+                ENDIF
+                IF GUI.BEGIN_TAB_ITEM(tabStand$) THEN
                     DIM g2
                     FOR g2 = 0 TO LEN(gStand) - 1
                         GROUP_TABLE gStand[g2]
                     NEXT g2
                     GUI.END_TAB_ITEM
                 ENDIF
-                IF GUI.BEGIN_TAB_ITEM("Nationen") THEN
+                IF GUI.BEGIN_TAB_ITEM(tabTeams$) THEN
                     IF gSelTeam$ = "" THEN
                         NATIONS_GRID()
                     ELSE
@@ -692,6 +868,12 @@ DO
     ENDIF
     frame = frame + 1
     SCREENFLIP
+    IF gPendingLeague >= 0 THEN
+        gLeagueIdx = gPendingLeague
+        gPendingLeague = -1
+        LOAD_LEAGUE LEAGUES$[gLeagueIdx], (gLeagueIdx <> 0)
+        gLastRefresh = TICK()
+    ENDIF
     IF testmode THEN
         IF frame = 6 THEN GFX.SAVE_SCREENSHOT("tmp/dash.png")
         IF frame >= 6 THEN EXITDO
