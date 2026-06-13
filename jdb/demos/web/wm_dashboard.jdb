@@ -17,6 +17,7 @@ DIM gSelIdx = -1
 DIM gSelTeam$ = ""
 DIM gImg AS MAP
 DIM gRoster AS MAP
+DIM gNews = []
 
 FUNC TXT$(v)
     IF ISNONE(v) THEN RETURN ""
@@ -36,6 +37,15 @@ FUNC HHMM$(iso$)
     s$ = REPLACE$(s$, "Z", "")
     DIM dt = CVDATE(s$, 0)
     RETURN ZP2$(HOUR(dt)) + ":" + ZP2$(MINUTE(dt))
+ENDFUNC
+
+' ISO -> local "DD.MM. HH:MM"
+FUNC DTSHORT$(iso$)
+    IF LEN(iso$) < 16 THEN RETURN ""
+    DIM s$ = REPLACE$(iso$, "T", " ")
+    s$ = REPLACE$(s$, "Z", "")
+    DIM dt = CVDATE(s$, 0)
+    RETURN ZP2$(DAY(dt)) + "." + ZP2$(MONTH(dt)) + ". " + ZP2$(HOUR(dt)) + ":" + ZP2$(MINUTE(dt))
 ENDFUNC
 
 ' one loading-screen frame with a little wait line + progress bar
@@ -452,6 +462,19 @@ SUB SCHEDULE_TAB()
     ENDIF
 ENDSUB
 
+SUB NEWS_TAB()
+    DIM mx = LEN(gNews)
+    IF mx > 10 THEN mx = 10
+    IF mx = 0 THEN GUI.TEXT "(keine News)"
+    DIM i
+    FOR i = 0 TO mx - 1
+        DIM a = gNews[i]
+        GUI.SEPARATOR_TEXT(TXT$(a{"headline"}))
+        GUI.TEXT DTSHORT$(TXT$(a{"published"})) + "    [" + TXT$(a{"type"}) + "]"
+        GUI.TEXT_WRAPPED(TXT$(a{"description"}))
+    NEXT i
+ENDSUB
+
 ' ── load data ────────────────────────────────────────────────
 SPLASH "Anpfiff! Verbinde mit der WM 2026 - Daten werden geladen...", 0.15
 DIM sj = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"))
@@ -474,6 +497,8 @@ NEXT gi
 SPLASH "Spielplan wird geladen...", 0.3
 DIM scj = JSON.PARSE$(HTTP.GET$(SB$ + "?dates=20260611-20260703"))
 gSched = scj{"events"}
+SPLASH "Nachrichten werden geladen...", 0.32
+gNews = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/news")){"articles"}
 DIM pf
 FOR pf = 0 TO LEN(gTeams) - 1
     SPLASH "Hole die Flaggen aus aller Welt...  " + FORMAT$("{}", pf + 1) + "/" + FORMAT$("{}", LEN(gTeams)), 0.3 + 0.7 * (pf + 1) / LEN(gTeams)
@@ -507,6 +532,8 @@ DO
             MATCH_LINEUPS TXT$(gSched[gSelIdx]{"id"})
         ELSEIF testmode ANDALSO testtab$ = "team" THEN
             TEAM_DETAIL "MEX"
+        ELSEIF testmode ANDALSO testtab$ = "news" THEN
+            NEWS_TAB()
         ELSE
             IF GUI.BEGIN_TAB_BAR("tabs") THEN
                 IF GUI.BEGIN_TAB_ITEM("Gruppen") THEN
@@ -526,6 +553,10 @@ DO
                 ENDIF
                 IF GUI.BEGIN_TAB_ITEM("Spielplan") THEN
                     SCHEDULE_TAB()
+                    GUI.END_TAB_ITEM
+                ENDIF
+                IF GUI.BEGIN_TAB_ITEM("News") THEN
+                    NEWS_TAB()
                     GUI.END_TAB_ITEM
                 ENDIF
                 GUI.END_TAB_BAR
