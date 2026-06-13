@@ -22,7 +22,9 @@ AY = 80
 BX = AX                 ' Brett-Ursprung (pro Frame zentriert gesetzt)
 BY = AY
 
-THRESHOLD = 35          ' Schlagseite-Schwelle: ab hier kippt das Deck
+TILT_HIGH = 50          ' ab dieser Schlagseite kippt das Deck
+TILT_LOW = 18           ' erst wieder "scharf" unter diesem Wert (gegen Hin-und-Her)
+tiltArmed = TRUE
 
 SCREEN SCRW, SCRH, "TILT - Schlagseite", 1
 
@@ -150,16 +152,23 @@ ENDSUB
 ' Deck 90 Grad kippen (Hoch- <-> Querformat), dann nachrutschen + raeumen
 SUB ApplyTilt()
     tq = Torque()
-    IF tq > THRESHOLD THEN
+    ' Hysterese: nach einem Kippen erst wieder scharf, wenn ausbalanciert
+    IF tiltArmed = FALSE THEN
+        IF ABS(tq) < TILT_LOW THEN tiltArmed = TRUE
+        RETURN
+    ENDIF
+    IF tq > TILT_HIGH THEN
         Board = TRANSPOSE(REVERSE(Board))   ' CW: rechte Seite nach unten
         tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
         ClearLines()
-    ELSEIF tq < -THRESHOLD THEN
+        tiltArmed = FALSE
+    ELSEIF tq < -TILT_HIGH THEN
         Board = REVERSE(TRANSPOSE(Board))   ' CCW: linke Seite nach unten
         tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
         ClearLines()
+        tiltArmed = FALSE
     ENDIF
 ENDSUB
 
@@ -230,13 +239,18 @@ SUB Draw()
     myc = AY + AREA + 100
     DRAWCOLOR 50, 62, 78
     RECT mxc - 150, myc, 300, 12, TRUE
+    hi = CINT(TILT_HIGH * 2)
     DRAWCOLOR 150, 70, 70
-    RECT mxc - 108, myc - 4, 3, 20, TRUE
-    RECT mxc + 105, myc - 4, 3, 20, TRUE
-    np = Torque() * 3.0
+    RECT mxc - hi, myc - 4, 3, 20, TRUE
+    RECT mxc + hi, myc - 4, 3, 20, TRUE
+    np = Torque() * 2.0
     IF np > 150 THEN np = 150
     IF np < -150 THEN np = -150
-    DRAWCOLOR 240, 225, 120
+    IF tiltArmed THEN
+        DRAWCOLOR 240, 225, 120
+    ELSE
+        DRAWCOLOR 120, 130, 145
+    ENDIF
     RECT mxc + CINT(np) - 3, myc - 6, 6, 24, TRUE
     DRAWCOLOR 150, 165, 180
     TEXT mxc - 40, myc - 26, "Schlagseite"
