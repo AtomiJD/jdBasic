@@ -1,8 +1,8 @@
 ' ============================================================
 ' TILT - "Schlagseite"  (jdBasic GFX)
-' Tetris mit Twist: wird die Fracht zu einseitig, bekommt das
-' Schiff Schlagseite und das DECK kippt 90 Grad - lose Fracht
-' rutscht nach. Das Brett wechselt dabei Hoch- <-> Querformat.
+' Tetris mit Twist: wird die Fracht zu einseitig, KENTERT das
+' Schiff - alle Kisten rutschen runter, legen sich flach an den
+' Boden, volle Reihen werden geraeumt, Schiff wieder im Lot.
 ' Steuerung: Pfeile/WASD bewegen+drehen, Space Hard-Drop, ESC.
 ' Test:  jdBasic tilt.jdb shot        -> tmp/tilt.png
 '        jdBasic tilt.jdb shot tilt   -> tmp/tilt_before/after.png
@@ -144,43 +144,47 @@ FUNC Torque()
     RETURN tq
 ENDFUNC
 
-' lose Fracht rutscht nach unten (pro Spalte verdichten)
-SUB SettleDown()
-    FOR c = 0 TO Cols - 1
-        write = Rows - 1
-        FOR r = Rows - 1 TO 0 STEP -1
-            IF Board[r, c] <> 0 THEN
-                v = Board[r, c]
-                Board[r, c] = 0
-                Board[write, c] = v
-                write = write - 1
+' Kentern: alle Kisten rutschen runter und legen sich flach an den Boden
+' (von unten links aufgefuellt), volle Reihen werden geraeumt. Grosse
+' Aufraeum-Aktion - das Schiff liegt danach wieder im Lot.
+SUB Capsize()
+    bag = []
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            IF Board[r, c] <> 0 THEN bag = APPEND(bag, Board[r, c])
+        NEXT c
+    NEXT r
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            Board[r, c] = 0
+        NEXT c
+    NEXT r
+    k = 0
+    total = LEN(bag)
+    FOR r = Rows - 1 TO 0 STEP -1
+        FOR c = 0 TO Cols - 1
+            IF k < total THEN
+                Board[r, c] = bag[k]
+                k = k + 1
             ENDIF
-        NEXT r
-    NEXT c
+        NEXT c
+    NEXT r
+    ClearLines()
 ENDSUB
 
-' Deck 90 Grad kippen (Hoch- <-> Querformat), dann nachrutschen + raeumen
+' Bei zu grosser Schlagseite kentert das Schiff. Hysterese: danach erst
+' wieder "scharf", wenn ausbalanciert (kein Dauer-Kentern).
 SUB ApplyTilt()
     tq = Torque()
-    ' Hysterese: nach einem Kippen erst wieder scharf, wenn ausbalanciert
     IF tiltArmed = FALSE THEN
         IF ABS(tq) < TILT_LOW THEN tiltArmed = TRUE
         RETURN
     ENDIF
-    IF tq > TILT_HIGH THEN
-        Board = TRANSPOSE(REVERSE(Board))   ' CW: rechte Seite nach unten
-        tmp = Rows : Rows = Cols : Cols = tmp
-        SettleDown()
-        ClearLines()
+    IF ABS(tq) > TILT_HIGH THEN
+        Capsize()
         tiltArmed = FALSE
-        shake = 14 : flash = 16
-    ELSEIF tq < -TILT_HIGH THEN
-        Board = REVERSE(TRANSPOSE(Board))   ' CCW: linke Seite nach unten
-        tmp = Rows : Rows = Cols : Cols = tmp
-        SettleDown()
-        ClearLines()
-        tiltArmed = FALSE
-        shake = 14 : flash = 16
+        shake = 16 : flash = 18
+        Score = Score + 30
     ENDIF
 ENDSUB
 
