@@ -15,6 +15,8 @@ DIM gSched = []
 DIM gSum AS MAP
 DIM gSelIdx = -1
 DIM gSelTeam$ = ""
+DIM gImg AS MAP
+DIM gRoster AS MAP
 
 FUNC TXT$(v)
     IF ISNONE(v) THEN RETURN ""
@@ -69,6 +71,66 @@ FUNC STATD$(stats, nm$)
     RETURN "-"
 ENDFUNC
 
+' generic image cache (player headshots etc.), keyed by a fs-safe key
+FUNC IMG(url$, key$)
+    IF key$ = "" ORELSE LEN(url$) < 8 THEN RETURN -1
+    IF MAP.EXISTS(gImg, key$) THEN RETURN gImg{key$}
+    DIM png$ = HTTP.GET$(url$)
+    IF LEN(png$) < 100 THEN
+        gImg{key$} = -1
+        RETURN -1
+    ENDIF
+    DIM fn$ = "tmp/img_" + key$ + ".png"
+    BINWRITER fn$, png$
+    DIM sid = SPRITE.LOAD(fn$)
+    gImg{key$} = sid
+    RETURN sid
+ENDFUNC
+
+' player avatar: real headshot if present, else the team flag as fallback
+' (ESPN's WC2026 headshots are largely missing)
+FUNC AVATAR(hs, code$, key$)
+    IF NOT ISNONE(hs) THEN
+        DIM u$ = TXT$(hs{"href"})
+        IF LEN(u$) > 8 THEN
+            DIM sid = IMG(u$, key$)
+            IF sid >= 0 THEN RETURN sid
+        ENDIF
+    ENDIF
+    RETURN FLAG(code$)
+ENDFUNC
+
+' halftime score computed from goal events with minute <= 45
+FUNC HT$(ev)
+    DIM cp = ev{"competitions"}[0]
+    DIM det = cp{"details"}
+    IF ISNONE(det) ORELSE LEN(det) = 0 THEN RETURN ""
+    DIM id0$ = TXT$(cp{"competitors"}[0]{"team"}{"id"})
+    DIM ha = 0
+    DIM hb = 0
+    DIM k
+    FOR k = 0 TO LEN(det) - 1
+        DIM d = det[k]
+        IF d{"scoringPlay"} THEN
+            IF VAL(TXT$(d{"clock"}{"displayValue"})) <= 45 THEN
+                IF TXT$(d{"team"}{"id"}) = id0$ THEN
+                    ha = ha + 1
+                ELSE
+                    hb = hb + 1
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN "HZ " + FORMAT$("{}", ha) + "-" + FORMAT$("{}", hb)
+ENDFUNC
+
+FUNC GET_SQUAD(tid$)
+    IF MAP.EXISTS(gRoster, tid$) THEN RETURN gRoster{tid$}
+    DIM ath = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/" + tid$ + "?enable=roster")){"team"}{"athletes"}
+    gRoster{tid$} = ath
+    RETURN ath
+ENDFUNC
+
 FUNC GET_SUMMARY(eid$)
     IF MAP.EXISTS(gSum, eid$) THEN RETURN gSum{eid$}
     DIM sjj = JSON.PARSE$(HTTP.GET$(SUMURL$ + eid$))
@@ -91,17 +153,31 @@ SUB GROUP_TABLE(grp)
         GUI.TABLE_SETUP_COLUMN("Pkt")
         GUI.TABLE_HEADERS_ROW
         DIM ent = grp{"standings"}{"entries"}
+        DIM nn = LEN(ent)
+        DIM ord = IOTA(nn, 0)
+        DIM a, b, tmp
+        FOR a = 0 TO nn - 2
+            FOR b = a + 1 TO nn - 1
+                IF VAL(STATD$(ent[ord[b]]{"stats"}, "rank")) < VAL(STATD$(ent[ord[a]]{"stats"}, "rank")) THEN
+                    tmp = ord[a]
+                    ord[a] = ord[b]
+                    ord[b] = tmp
+                ENDIF
+            NEXT b
+        NEXT a
         DIM j
-        FOR j = 0 TO LEN(ent) - 1
-            DIM tm = ent[j]{"team"}
+        FOR j = 0 TO nn - 1
+            DIM tm = ent[ord[j]]{"team"}
             DIM code$ = TXT$(tm{"abbreviation"})
-            DIM st = ent[j]{"stats"}
+            DIM st = ent[ord[j]]{"stats"}
             GUI.TABLE_NEXT_ROW
             GUI.TABLE_NEXT_COLUMN
             DIM fid = FLAG(code$)
             IF fid >= 0 THEN GUI.IMAGE fid, 26, 17
             GUI.TABLE_NEXT_COLUMN
-            GUI.TEXT code$ + "  " + TXT$(tm{"displayName"})
+            DIM mk$ = "   "
+            IF j < 2 THEN mk$ = "+ "
+            GUI.TEXT mk$ + code$ + "  " + TXT$(tm{"displayName"})
             GUI.TABLE_NEXT_COLUMN
             GUI.TEXT STATD$(st, "gamesPlayed")
             GUI.TABLE_NEXT_COLUMN
@@ -198,6 +274,23 @@ SUB TEAM_DETAIL(code$)
         NEXT i
         GUI.END_TABLE
     ENDIF
+    GUI.SEPARATOR_TEXT("Kader")
+    IF NOT ISNONE(ent{"team"}) THEN
+        DIM squad = GET_SQUAD(TXT$(ent{"team"}{"id"}))
+        IF NOT ISNONE(squad) ANDALSO GUI.BEGIN_TABLE("sq", 4) THEN
+            DIM s
+            FOR s = 0 TO LEN(squad) - 1
+                IF s MOD 4 = 0 THEN GUI.TABLE_NEXT_ROW
+                GUI.TABLE_NEXT_COLUMN
+                DIM pa = squad[s]
+                DIM av = AVATAR(pa{"headshot"}, code$, "p" + TXT$(pa{"id"}))
+                IF av >= 0 THEN GUI.IMAGE av, 40, 40
+                GUI.SAME_LINE
+                GUI.TEXT "#" + TXT$(pa{"jersey"}) + " " + TXT$(pa{"position"}{"abbreviation"}) + " " + TXT$(pa{"displayName"})
+            NEXT s
+            GUI.END_TABLE
+        ENDIF
+    ENDIF
 ENDSUB
 
 ' ── match detail ─────────────────────────────────────────────
@@ -260,17 +353,25 @@ SUB MATCH_STATS(eid$)
     ENDIF
 ENDSUB
 
+SUB PLAYER_ROW(p, code$)
+    DIM av = AVATAR(p{"athlete"}{"headshot"}, code$, "p" + TXT$(p{"athlete"}{"id"}))
+    IF av >= 0 THEN GUI.IMAGE av, 22, 22
+    GUI.SAME_LINE
+    GUI.TEXT TXT$(p{"jersey"}) + " " + TXT$(p{"position"}{"abbreviation"}) + "  " + TXT$(p{"athlete"}{"displayName"})
+ENDSUB
+
 SUB LINEUP_COL(rost)
     GUI.SEPARATOR_TEXT(TXT$(rost{"team"}{"abbreviation"}))
+    DIM code$ = TXT$(rost{"team"}{"abbreviation"})
     DIM pl = rost{"roster"}
     DIM k
     GUI.TEXT "Start-XI:"
     FOR k = 0 TO LEN(pl) - 1
-        IF pl[k]{"starter"} THEN GUI.TEXT "  " + TXT$(pl[k]{"jersey"}) + "  " + TXT$(pl[k]{"athlete"}{"displayName"})
+        IF pl[k]{"starter"} THEN PLAYER_ROW pl[k], code$
     NEXT k
     GUI.TEXT "Bank:"
     FOR k = 0 TO LEN(pl) - 1
-        IF NOT pl[k]{"starter"} THEN GUI.TEXT "  " + TXT$(pl[k]{"jersey"}) + "  " + TXT$(pl[k]{"athlete"}{"displayName"})
+        IF NOT pl[k]{"starter"} THEN PLAYER_ROW pl[k], code$
     NEXT k
 ENDSUB
 
@@ -295,6 +396,14 @@ SUB MATCH_DETAIL(ev)
     MATCH_HEADER ev
     DIM eid$ = TXT$(ev{"id"})
     DIM state$ = TXT$(ev{"competitions"}[0]{"status"}{"type"}{"state"})
+    DIM ht$ = HT$(ev)
+    IF ht$ <> "" THEN GUI.TEXT ht$
+    IF state$ <> "pre" THEN
+        DIM ginf = GET_SUMMARY(eid$){"gameInfo"}
+        DIM ref$ = ""
+        IF NOT ISNONE(ginf{"officials"}) ANDALSO LEN(ginf{"officials"}) > 0 THEN ref$ = TXT$(ginf{"officials"}[0]{"displayName"})
+        GUI.TEXT "Schiri: " + ref$ + "    Zuschauer: " + TXT$(ginf{"attendance"})
+    ENDIF
     IF GUI.BEGIN_TAB_BAR("md") THEN
         IF GUI.BEGIN_TAB_ITEM("Ereignisse") THEN
             MATCH_EVENTS ev
