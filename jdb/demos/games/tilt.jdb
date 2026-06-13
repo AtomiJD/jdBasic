@@ -28,6 +28,14 @@ tiltArmed = TRUE
 
 SCREEN SCRW, SCRH, "TILT - Schlagseite", 1
 
+SOUND.INIT
+SOUND.VOICE 0, "TRIANGLE", 0.004, 0.10, 0.0, 0.08   ' Kiste setzt auf
+SOUND.GAIN 0, 0.5
+SOUND.VOICE 1, "SQUARE", 0.004, 0.09, 0.0, 0.07      ' Reihe geraeumt
+SOUND.GAIN 1, 0.4
+SOUND.VOICE 2, "SAW", 0.02, 0.28, 0.0, 0.30          ' Kippen / Knarzen
+SOUND.GAIN 2, 0.5
+
 DIM Board[Rows, Cols]   ' 0 = leer, 1..7 = Kistentyp
 DIM CurrentPiece
 DIM PieceX, PieceY, PieceColor
@@ -40,6 +48,12 @@ DIM Level = 1
 DIM shake = 0, flash = 0
 DIM NextPiece, NextColor
 DIM rearmIn = 0         ' Zuege bis die Schlagseite wieder scharf wird
+DIM HighScore = 0
+DIM NPOP = 16           ' Pool fuer fliegende Punkte-Popups
+DIM pop_x = ZEROS(NPOP)
+DIM pop_y = ZEROS(NPOP)
+DIM pop_life = ZEROS(NPOP)
+DIM pop_val = ZEROS(NPOP)
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -52,6 +66,78 @@ FUNC COLOR_FOR(id)
         CASE 7: RETURN [220, 90, 90]
     ENDSWITCH
     RETURN [200, 200, 200]
+ENDFUNC
+
+SUB SfxLock()  : SOUND.PLAY 0, "c3" : ENDSUB
+SUB SfxClear() : SOUND.PLAY 1, "g4" : ENDSUB
+SUB SfxTilt()  : SOUND.PLAY 2, "c2" : ENDSUB
+SUB SfxOver()  : SOUND.PLAY 2, "c1" : ENDSUB
+
+' kniffligere Steine geben mehr Punkte
+FUNC PIECE_POINTS(id)
+    SWITCH id
+        CASE 1: RETURN 10    ' I
+        CASE 2: RETURN 15    ' J
+        CASE 3: RETURN 15    ' L
+        CASE 4: RETURN 5     ' O (am einfachsten)
+        CASE 5: RETURN 20    ' S
+        CASE 6: RETURN 25    ' T (am kniffligsten)
+        CASE 7: RETURN 20    ' Z
+    ENDSWITCH
+    RETURN 10
+ENDFUNC
+
+' fliegendes Punkte-Popup an einer Bildschirmposition starten
+SUB AddPopup(sx, sy, val)
+    FOR pi = 0 TO NPOP - 1
+        IF pop_life[pi] <= 0 THEN
+            pop_x[pi] = sx
+            pop_y[pi] = sy
+            pop_val[pi] = val
+            pop_life[pi] = 55
+            RETURN
+        ENDIF
+    NEXT pi
+ENDSUB
+
+' sichtbare 90-Grad-Drehung des Decks (dir +1 = CW, -1 = CCW)
+SUB AnimateTilt(dir)
+    cx = AX + AREA / 2
+    cy = AY + AREA / 2
+    FOR f = 1 TO 8
+        ang = dir * (3.14159 / 2.0) * f / 8.0
+        sa = SIN(ang)
+        ca = COS(ang)
+        CLS
+        DRAWCOLOR 12, 26, 44
+        RECT 0, 0, SCRW, SCRH, TRUE
+        FOR r = 0 TO Rows - 1
+            FOR c = 0 TO Cols - 1
+                IF Board[r, c] <> 0 THEN
+                    lx = (c + 0.5) * CELL - Cols * CELL / 2.0
+                    ly = (r + 0.5) * CELL - Rows * CELL / 2.0
+                    rx = lx * ca - ly * sa
+                    ry = lx * sa + ly * ca
+                    col = COLOR_FOR(Board[r, c])
+                    DRAWCOLOR col[0], col[1], col[2]
+                    RECT cx + CINT(rx) - CELL / 2, cy + CINT(ry) - CELL / 2, CELL - 2, CELL - 2, TRUE
+                ENDIF
+            NEXT c
+        NEXT r
+        SCREENFLIP
+        SLEEP 16
+    NEXT f
+ENDSUB
+
+' Y-Position, auf der die aktuelle Kiste landen wuerde (Ghost)
+FUNC GhostY()
+    gy = PieceY
+    DO
+        IF gy > Rows THEN EXITDO
+        IF CheckCollision(CurrentPiece, PieceX, gy + 1) THEN EXITDO
+        gy = gy + 1
+    LOOP
+    RETURN gy
 ENDFUNC
 
 SUB RollNext()
@@ -113,8 +199,11 @@ SUB ClearLines()
         NEXT i
         Board = kept
         LinesCleared = LinesCleared + cleared
-        Score = Score + (cleared * 100 * cleared)
+        gain = cleared * 100 * cleared
+        Score = Score + gain
         Level = 1 + INT(LinesCleared / 10)
+        SfxClear()
+        AddPopup(BX + Cols * CELL / 2 - 16, BY + Rows * CELL / 2, gain)
     ENDIF
 ENDSUB
 
@@ -173,6 +262,8 @@ SUB ApplyTilt()
         RETURN
     ENDIF
     IF tq > TILT_HIGH THEN
+        SfxTilt()
+        AnimateTilt(1)
         Board = TRANSPOSE(REVERSE(Board))   ' CW: rechte Seite nach unten
         tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
@@ -181,6 +272,8 @@ SUB ApplyTilt()
         rearmIn = 2 + INT(RND(1) * 4)
         shake = 16 : flash = 18
     ELSEIF tq < -TILT_HIGH THEN
+        SfxTilt()
+        AnimateTilt(-1)
         Board = REVERSE(TRANSPOSE(Board))   ' CCW: linke Seite nach unten
         tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
@@ -193,11 +286,22 @@ ENDSUB
 
 SUB LockSequence()
     LockPiece()
+    SfxLock()
+    pts = PIECE_POINTS(PieceColor)
+    Score = Score + pts
+    AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
     ClearLines()
     ApplyTilt()
     IF ABS(Torque()) < TILT_LOW THEN Score = Score + 20   ' Bonus fuers Schiff-im-Lot-Halten
     SpawnPiece()
-    IF CheckCollision(CurrentPiece, PieceX, PieceY) THEN GameOver = TRUE
+    IF CheckCollision(CurrentPiece, PieceX, PieceY) THEN
+        GameOver = TRUE
+        SfxOver()
+        IF Score > HighScore THEN
+            HighScore = Score
+            BINWRITER "tmp/tilt_high.txt", "" + HighScore
+        ENDIF
+    ENDIF
 ENDSUB
 
 SUB HardDrop()
@@ -269,6 +373,17 @@ SUB Draw()
         NEXT c
     NEXT r
     IF NOT GameOver THEN
+        gy = GhostY()
+        FOR r = 0 TO 3
+            FOR c = 0 TO 3
+                IF CurrentPiece[r, c] <> 0 ANDALSO (gy + r) >= 0 ANDALSO (gy + r) < Rows THEN
+                    DRAWCOLOR 70, 84, 100
+                    RECT BX + (PieceX + c) * CELL + 4, BY + (gy + r) * CELL + 4, CELL - 8, CELL - 8, FALSE
+                ENDIF
+            NEXT c
+        NEXT r
+    ENDIF
+    IF NOT GameOver THEN
         FOR r = 0 TO 3
             FOR c = 0 TO 3
                 IF CurrentPiece[r, c] <> 0 THEN DrawCell PieceY + r, PieceX + c, PieceColor
@@ -278,6 +393,8 @@ SUB Draw()
     ' Kopfzeile
     DRAWCOLOR 235, 235, 245
     TEXT AX, 28, "TILT - Schlagseite"
+    DRAWCOLOR 200, 210, 160
+    TEXT AX + AREA - 150, 28, "Best: " + HighScore
     DRAWCOLOR 150, 165, 180
     TEXT AX, 52, "Pfeile/WASD bewegen+drehen   Space=Drop   ESC=Ende"
     ' untere Leiste
@@ -318,6 +435,17 @@ SUB Draw()
         TEXT AX + AREA / 2 - 95, AY + AREA / 2 - 60, "* SCHLAGSEITE! *"
         flash = flash - 1
     ENDIF
+    ' fliegende Punkte-Popups
+    FOR pi = 0 TO NPOP - 1
+        IF pop_life[pi] > 0 THEN
+            pop_y[pi] = pop_y[pi] - 1.4
+            pop_life[pi] = pop_life[pi] - 1
+            ff = pop_life[pi] / 55.0
+            br = CINT(80 + 175 * ff)
+            DRAWCOLOR br, br, 80
+            TEXT CINT(pop_x[pi]), CINT(pop_y[pi]), "+" + CINT(pop_val[pi])
+        ENDIF
+    NEXT pi
     IF GameOver THEN
         DRAWCOLOR 240, 90, 90
         TEXT AX + AREA / 2 - 80, AY + AREA / 2, "GAME OVER"
@@ -329,6 +457,7 @@ ENDSUB
 RND(-1.0)
 RollNext()
 SpawnPiece()
+IF LEN(DIR$("tmp/tilt_high.txt")) > 0 THEN HighScore = VAL(TXTREADER$("tmp/tilt_high.txt"))
 
 DIM args = OS.ARGS()
 DIM testmode = (LEN(args) >= 2 ANDALSO args[1] = "shot")
@@ -344,14 +473,31 @@ IF testmode ANDALSO testtab$ = "tilt" THEN
     NEXT rr
     Board[14, 0] = 5 : Board[14, 1] = 5
     Board[12, 7] = 0 : Board[13, 8] = 0 : Board[11, 9] = 0   ' Luecken
-    CurrentPiece = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
     Draw() : SLEEP 30 : Draw()
     GFX.SAVE_SCREENSHOT("tmp/tilt_before.png")
     ApplyTilt()
     Draw() : SLEEP 30 : Draw()
     GFX.SAVE_SCREENSHOT("tmp/tilt_after.png")
+    SOUND.SHUTDOWN
     GFX.CLOSE
     PRINT "tilt shots saved"
+    END
+ENDIF
+
+IF testmode ANDALSO testtab$ = "pop" THEN
+    Board[14, 4] = 6 : Board[14, 5] = 6
+    Draw()
+    AddPopup(BX + 4 * CELL, BY + 11 * CELL, 25)
+    AddPopup(BX + 6 * CELL, BY + 8 * CELL, 400)
+    DIM pf2
+    FOR pf2 = 0 TO 9
+        Draw()
+        SLEEP 20
+    NEXT pf2
+    GFX.SAVE_SCREENSHOT("tmp/tilt_pop.png")
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "pop shot saved"
     END
 ENDIF
 
@@ -367,6 +513,7 @@ IF testmode THEN
         SLEEP 30
     NEXT f
     GFX.SAVE_SCREENSHOT("tmp/tilt.png")
+    SOUND.SHUTDOWN
     GFX.CLOSE
     PRINT "shot saved"
     END
@@ -420,5 +567,6 @@ DO
     IF GFX.KEYSTATE("Escape") OR GFX.KEYSTATE("Return") THEN EXITDO
     SLEEP 30
 LOOP UNTIL TICK() - endt > 6000
+SOUND.SHUTDOWN
 GFX.CLOSE
 PRINT "done"
