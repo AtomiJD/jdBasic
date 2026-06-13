@@ -21,6 +21,32 @@ FUNC TXT$(v)
     RETURN "" + v
 ENDFUNC
 
+FUNC ZP2$(n)
+    DIM s$ = FORMAT$("{}", INT(n))
+    IF LEN(s$) < 2 THEN RETURN "0" + s$
+    RETURN s$
+ENDFUNC
+
+' ISO UTC kickoff -> local HH:MM (CVDATE+HOUR give local time)
+FUNC HHMM$(iso$)
+    IF LEN(iso$) < 16 THEN RETURN "--:--"
+    DIM s$ = REPLACE$(iso$, "T", " ")
+    s$ = REPLACE$(s$, "Z", "")
+    DIM dt = CVDATE(s$, 0)
+    RETURN ZP2$(HOUR(dt)) + ":" + ZP2$(MINUTE(dt))
+ENDFUNC
+
+' one loading-screen frame with a little wait line + progress bar
+SUB SPLASH(msg$, frac)
+    CLS
+    IF GUI.BEGIN("Bitte warten", 330, 320, 440, 110) THEN
+        GUI.TEXT msg$
+        GUI.PROGRESS frac
+        GUI.END
+    ENDIF
+    SCREENFLIP
+ENDSUB
+
 ' flag cache: ESPN flag URL is deterministic from the lowercase team code
 FUNC FLAG(code$)
     IF code$ = "" THEN RETURN -1
@@ -301,7 +327,7 @@ SUB SCHEDULE_TAB()
             ENDIF
             DIM cp = ev{"competitions"}[0]
             DIM co = cp{"competitors"}
-            DIM lbl$ = TXT$(co[0]{"team"}{"abbreviation"}) + " " + TXT$(co[0]{"score"}) + "-" + TXT$(co[1]{"score"}) + " " + TXT$(co[1]{"team"}{"abbreviation"})
+            DIM lbl$ = HHMM$(TXT$(ev{"date"})) + "  " + TXT$(co[0]{"team"}{"abbreviation"}) + " " + TXT$(co[0]{"score"}) + "-" + TXT$(co[1]{"score"}) + " " + TXT$(co[1]{"team"}{"abbreviation"})
             IF GUI.SELECTABLE(lbl$ + "##" + FORMAT$("{}", i), i = gSelIdx) THEN gSelIdx = i
         NEXT i
         GUI.END_CHILD
@@ -318,7 +344,7 @@ SUB SCHEDULE_TAB()
 ENDSUB
 
 ' ── load data ────────────────────────────────────────────────
-PRINT "Loading standings..."
+SPLASH "Anpfiff! Verbinde mit der WM 2026 - Daten werden geladen...", 0.15
 DIM sj = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"))
 DIM gStand = sj{"children"}
 DIM gi
@@ -336,9 +362,14 @@ FOR gi = 0 TO LEN(gStand) - 1
         gTeams = APPEND(gTeams, rec)
     NEXT j
 NEXT gi
-PRINT "Loading schedule..."
+SPLASH "Spielplan wird geladen...", 0.3
 DIM scj = JSON.PARSE$(HTTP.GET$(SB$ + "?dates=20260611-20260703"))
 gSched = scj{"events"}
+DIM pf
+FOR pf = 0 TO LEN(gTeams) - 1
+    SPLASH "Hole die Flaggen aus aller Welt...  " + FORMAT$("{}", pf + 1) + "/" + FORMAT$("{}", LEN(gTeams)), 0.3 + 0.7 * (pf + 1) / LEN(gTeams)
+    DIM ig = FLAG(TXT$(gTeams[pf]{"code"}))
+NEXT pf
 PRINT "teams: "; LEN(gTeams); "  matches: "; LEN(gSched)
 
 DIM args = OS.ARGS()
