@@ -1,0 +1,163 @@
+' wm_dashboard.jdb - FIFA World Cup 2026 dashboard (GFX/ImGui).
+' Phase 1: group tables + nations grid, with real flags.
+' Data: ESPN hidden API (no key). Flags: HTTP.GET$ -> BINWRITER -> SPRITE.LOAD
+' -> GUI.IMAGE. Run:  jdBasic wm_dashboard.jdb     (ESC to quit)
+' Test:  jdBasic wm_dashboard.jdb shot [nat]       (one screenshot to tmp/dash.png)
+
+SCREEN 1100, 740, "WM 2026 Dashboard", 1
+
+DIM gFlags AS MAP
+DIM gTeams = []
+
+FUNC TXT$(v)
+    IF ISNONE(v) THEN RETURN ""
+    RETURN "" + v
+ENDFUNC
+
+FUNC STATD$(stats, nm$)
+    DIM k
+    FOR k = 0 TO LEN(stats) - 1
+        IF stats[k]{"name"} = nm$ THEN RETURN "" + stats[k]{"displayValue"}
+    NEXT k
+    RETURN "-"
+ENDFUNC
+
+' lazy flag cache: code -> sprite id (downloads + loads on first use)
+FUNC FLAG(code$, url$)
+    IF MAP.EXISTS(gFlags, code$) THEN RETURN gFlags{code$}
+    IF LEN(url$) < 8 THEN RETURN -1
+    DIM png$ = HTTP.GET$(url$)
+    IF LEN(png$) < 100 THEN RETURN -1
+    DIM fn$ = "tmp/flag_" + code$ + ".png"
+    BINWRITER fn$, png$
+    DIM sid = SPRITE.LOAD(fn$)
+    gFlags{code$} = sid
+    RETURN sid
+ENDFUNC
+
+SUB GROUP_TABLE(grp)
+    GUI.SEPARATOR_TEXT(TXT$(grp{"name"}))
+    IF GUI.BEGIN_TABLE("t" + TXT$(grp{"name"}), 9) THEN
+        GUI.TABLE_SETUP_COLUMN("")
+        GUI.TABLE_SETUP_COLUMN("Nation")
+        GUI.TABLE_SETUP_COLUMN("Sp")
+        GUI.TABLE_SETUP_COLUMN("S")
+        GUI.TABLE_SETUP_COLUMN("U")
+        GUI.TABLE_SETUP_COLUMN("N")
+        GUI.TABLE_SETUP_COLUMN("Tore")
+        GUI.TABLE_SETUP_COLUMN("Diff")
+        GUI.TABLE_SETUP_COLUMN("Pkt")
+        GUI.TABLE_HEADERS_ROW
+        DIM ent = grp{"standings"}{"entries"}
+        DIM j
+        FOR j = 0 TO LEN(ent) - 1
+            DIM en = ent[j]
+            DIM tm = en{"team"}
+            DIM code$ = TXT$(tm{"abbreviation"})
+            DIM st = en{"stats"}
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            DIM fid = FLAG(code$, TXT$(tm{"logos"}[0]{"href"}))
+            IF fid >= 0 THEN GUI.IMAGE fid, 26, 17
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT code$ + "  " + TXT$(tm{"displayName"})
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT STATD$(st, "gamesPlayed")
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT STATD$(st, "wins")
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT STATD$(st, "ties")
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT STATD$(st, "losses")
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT STATD$(st, "pointsFor") + ":" + STATD$(st, "pointsAgainst")
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT STATD$(st, "pointDifferential")
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT STATD$(st, "points")
+        NEXT j
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB NATIONS_GRID()
+    DIM cols = 6
+    IF GUI.BEGIN_TABLE("nat", cols) THEN
+        DIM i
+        FOR i = 0 TO LEN(gTeams) - 1
+            IF i MOD cols = 0 THEN GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            DIM t = gTeams[i]
+            DIM fid = FLAG(TXT$(t{"code"}), TXT$(t{"url"}))
+            IF fid >= 0 THEN GUI.IMAGE fid, 60, 40
+            GUI.TEXT TXT$(t{"code"}) + " " + TXT$(t{"name"})
+            GUI.TEXT "Gr. " + TXT$(t{"grp"})
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+PRINT "Loading standings..."
+DIM sj = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"))
+DIM gStand = sj{"children"}
+PRINT "groups: "; LEN(gStand)
+
+' flatten all teams for the nations grid
+DIM gi
+FOR gi = 0 TO LEN(gStand) - 1
+    DIM grp = gStand[gi]
+    DIM gn$ = TXT$(grp{"name"})
+    DIM ent = grp{"standings"}{"entries"}
+    DIM j
+    FOR j = 0 TO LEN(ent) - 1
+        DIM tm = ent[j]{"team"}
+        DIM rec AS MAP
+        rec{"code"} = TXT$(tm{"abbreviation"})
+        rec{"name"} = TXT$(tm{"displayName"})
+        rec{"url"} = TXT$(tm{"logos"}[0]{"href"})
+        rec{"grp"} = gn$
+        gTeams = APPEND(gTeams, rec)
+    NEXT j
+NEXT gi
+PRINT "teams: "; LEN(gTeams)
+
+DIM args = OS.ARGS()
+DIM testmode = (LEN(args) >= 2 ANDALSO args[1] = "shot")
+DIM testtab$ = ""
+IF LEN(args) >= 3 THEN testtab$ = args[2]
+
+DIM frame = 0
+DO
+    CLS
+    IF GUI.BEGIN("FIFA World Cup 2026", 0, 0, 1100, 740) THEN
+        IF testmode ANDALSO testtab$ = "nat" THEN
+            NATIONS_GRID()
+        ELSE
+            IF GUI.BEGIN_TAB_BAR("tabs") THEN
+                IF GUI.BEGIN_TAB_ITEM("Gruppen") THEN
+                    DIM g2
+                    FOR g2 = 0 TO LEN(gStand) - 1
+                        GROUP_TABLE gStand[g2]
+                    NEXT g2
+                    GUI.END_TAB_ITEM
+                ENDIF
+                IF GUI.BEGIN_TAB_ITEM("Nationen") THEN
+                    NATIONS_GRID()
+                    GUI.END_TAB_ITEM
+                ENDIF
+                GUI.END_TAB_BAR
+            ENDIF
+        ENDIF
+        GUI.END
+    ENDIF
+    frame = frame + 1
+    SCREENFLIP
+    IF testmode THEN
+        IF frame = 5 THEN GFX.SAVE_SCREENSHOT("tmp/dash.png")
+        IF frame >= 5 THEN EXITDO
+    ELSE
+        IF INKEY$() = CHR$(27) THEN EXITDO
+    ENDIF
+LOOP
+GFX.CLOSE
+PRINT "done"
