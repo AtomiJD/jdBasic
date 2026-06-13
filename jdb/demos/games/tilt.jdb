@@ -23,7 +23,7 @@ BX = AX                 ' Brett-Ursprung (pro Frame zentriert gesetzt)
 BY = AY
 
 TILT_HIGH = 50          ' ab dieser Schlagseite kippt das Deck
-TILT_LOW = 18           ' erst wieder "scharf" unter diesem Wert (gegen Hin-und-Her)
+TILT_LOW = 18           ' Schiff "im Lot" - Schwelle fuer den Balance-Bonus
 tiltArmed = TRUE
 
 SCREEN SCRW, SCRH, "TILT - Schlagseite", 1
@@ -39,6 +39,7 @@ DIM prevL = FALSE, prevR = FALSE, prevRot = FALSE, prevHard = FALSE
 DIM Level = 1
 DIM shake = 0, flash = 0
 DIM NextPiece, NextColor
+DIM rearmIn = 0         ' Zuege bis die Schlagseite wieder scharf wird
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -165,8 +166,10 @@ ENDSUB
 ' Luecken. Hysterese: danach erst wieder scharf, wenn ausbalanciert.
 SUB ApplyTilt()
     tq = Torque()
+    ' nach einem Kippen 2-5 Zuege Schonfrist, dann wieder scharf
     IF tiltArmed = FALSE THEN
-        IF ABS(tq) < TILT_LOW THEN tiltArmed = TRUE
+        rearmIn = rearmIn - 1
+        IF rearmIn <= 0 THEN tiltArmed = TRUE
         RETURN
     ENDIF
     IF tq > TILT_HIGH THEN
@@ -175,6 +178,7 @@ SUB ApplyTilt()
         SettleDown()
         ClearLines()
         tiltArmed = FALSE
+        rearmIn = 2 + INT(RND(1) * 4)
         shake = 16 : flash = 18
     ELSEIF tq < -TILT_HIGH THEN
         Board = REVERSE(TRANSPOSE(Board))   ' CCW: linke Seite nach unten
@@ -182,6 +186,7 @@ SUB ApplyTilt()
         SettleDown()
         ClearLines()
         tiltArmed = FALSE
+        rearmIn = 2 + INT(RND(1) * 4)
         shake = 16 : flash = 18
     ENDIF
 ENDSUB
@@ -303,6 +308,10 @@ SUB Draw()
     RECT mxc + CINT(np) - 3, myc - 6, 6, 24, TRUE
     DRAWCOLOR 150, 165, 180
     TEXT mxc - 40, myc - 26, "Schlagseite"
+    IF NOT tiltArmed THEN
+        DRAWCOLOR 130, 145, 160
+        TEXT mxc - 56, myc + 22, "wieder scharf in " + rearmIn
+    ENDIF
     ' Flash-Banner beim Kippen
     IF flash > 0 THEN
         DRAWCOLOR 250, 230, 90
