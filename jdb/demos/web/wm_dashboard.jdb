@@ -178,15 +178,15 @@ ENDFUNC
 SUB GROUP_TABLE(grp)
     GUI.SEPARATOR_TEXT(TXT$(grp{"name"}))
     IF GUI.BEGIN_TABLE("t" + TXT$(grp{"name"}), 9) THEN
-        GUI.TABLE_SETUP_COLUMN("")
-        GUI.TABLE_SETUP_COLUMN("Nation")
-        GUI.TABLE_SETUP_COLUMN("Sp")
-        GUI.TABLE_SETUP_COLUMN("S")
-        GUI.TABLE_SETUP_COLUMN("U")
-        GUI.TABLE_SETUP_COLUMN("N")
-        GUI.TABLE_SETUP_COLUMN("Tore")
-        GUI.TABLE_SETUP_COLUMN("Diff")
-        GUI.TABLE_SETUP_COLUMN("Pkt")
+        GUI.TABLE_SETUP_COLUMN("", 16, 30)
+        GUI.TABLE_SETUP_COLUMN("Nation", 16, 370)
+        GUI.TABLE_SETUP_COLUMN("Sp", 16, 45)
+        GUI.TABLE_SETUP_COLUMN("S", 16, 40)
+        GUI.TABLE_SETUP_COLUMN("U", 16, 40)
+        GUI.TABLE_SETUP_COLUMN("N", 16, 40)
+        GUI.TABLE_SETUP_COLUMN("Tore", 16, 70)
+        GUI.TABLE_SETUP_COLUMN("Diff", 16, 55)
+        GUI.TABLE_SETUP_COLUMN("Pkt", 16, 50)
         GUI.TABLE_HEADERS_ROW
         DIM ent = grp{"standings"}{"entries"}
         DIM nn = LEN(ent)
@@ -816,6 +816,11 @@ DO
             NEWS_TAB()
         ELSEIF testmode ANDALSO testtab$ = "scorers" THEN
             TOPSCORER_TAB()
+        ELSEIF testmode ANDALSO testtab$ = "table" THEN
+            DIM gt
+            FOR gt = 0 TO LEN(gStand) - 1
+                GROUP_TABLE gStand[gt]
+            NEXT gt
         ELSEIF testmode ANDALSO testtab$ = "live" THEN
             LIVE_TAB()
         ELSEIF testmode ANDALSO testtab$ = "livecard" THEN
@@ -823,6 +828,8 @@ DO
         ELSE
             DIM ni = GUI.COMBO("Liga", gLeagueIdx, LEAGUE_NAMES$)
             IF ni <> gLeagueIdx THEN gPendingLeague = ni
+            GUI.SAME_LINE
+            GUI.TEXT "   [F] Vollbild   [ESC] Ende"
             DIM tabStand$ = "Gruppen"
             DIM tabTeams$ = "Nationen"
             IF gIsClub THEN
@@ -878,7 +885,9 @@ DO
         IF frame = 6 THEN GFX.SAVE_SCREENSHOT("tmp/dash.png")
         IF frame >= 6 THEN EXITDO
     ELSE
-        IF INKEY$() = CHR$(27) THEN EXITDO
+        DIM kk$ = INKEY$()
+        IF kk$ = CHR$(27) THEN EXITDO
+        IF kk$ = "f" ORELSE kk$ = "F" THEN TOGGLE_FULLSCREEN
     ENDIF
 LOOP
 GFX.CLOSE
