@@ -1,0 +1,112 @@
+' wc_team.jdb - human-readable FIFA World Cup 2026 team summary.
+' Source: ESPN hidden JSON API (no key needed).
+' Usage:  jdBasic wc_team.jdb [teamId]      teamId defaults to 481 (Germany)
+' Team ids: 481 Germany  205 Brazil  202 Argentina  478 France  164 Spain
+'           448 England  449 Netherlands  482 Portugal  203 Mexico  206 Canada
+' Full list: .../teams  (sports[0].leagues[0].teams[].team.id)
+' Times are shown in the machine's LOCAL time.
+
+DIM ESPN$ = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/teams/"
+
+' zero-pad an integer to 2 digits
+FUNC ZP$(n)
+    DIM s$ = FORMAT$("{}", INT(n))
+    IF LEN(s$) < 2 THEN RETURN "0" + s$
+    RETURN s$
+ENDFUNC
+
+' NONE-safe string
+FUNC TXT$(v)
+    IF ISNONE(v) THEN RETURN ""
+    RETURN "" + v
+ENDFUNC
+
+' ISO UTC ("2026-06-14T17:00Z") -> local "DD.MM.YYYY HH:MM" (CVDATE+HOUR give local)
+FUNC LOCALDT$(iso$)
+    IF iso$ = "" THEN RETURN "?"
+    DIM s$ = REPLACE$(iso$, "T", " ")
+    s$ = REPLACE$(s$, "Z", "")
+    DIM dt = CVDATE(s$, 0)
+    RETURN ZP$(DAY(dt)) + "." + ZP$(MONTH(dt)) + "." + FORMAT$("{}", YEAR(dt)) + "  " + ZP$(HOUR(dt)) + ":" + ZP$(MINUTE(dt))
+ENDFUNC
+
+' find a record stat by name
+FUNC STATV(stats, nm$)
+    DIM k
+    FOR k = 0 TO LEN(stats) - 1
+        IF stats[k]{"name"} = nm$ THEN RETURN stats[k]{"value"}
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+' --- pick team id from arg 1, default Germany ---
+DIM args = OS.ARGS()
+DIM id$ = "481"
+IF LEN(args) >= 2 THEN id$ = args[1]
+
+PRINT "Fetching team "; id$; " ..."
+DIM body$ = HTTP.GET$(ESPN$ + id$)
+IF LEN(body$) < 10 THEN
+    PRINT "No data - network problem or bad id."
+    END
+ENDIF
+
+DIM j = JSON.PARSE$(body$)
+DIM tm = j{"team"}
+IF ISNONE(tm) THEN
+    PRINT "Team "; id$; " not found."
+    END
+ENDIF
+
+PRINT ""
+PRINT "===================================="
+PRINT "  "; TXT$(tm{"displayName"}); "  ("; TXT$(tm{"abbreviation"}); ")"
+PRINT "===================================="
+PRINT "  slug    : "; TXT$(tm{"slug"})
+PRINT "  colors  : #"; TXT$(tm{"color"}); " / #"; TXT$(tm{"alternateColor"})
+
+DIM ss = j{"standingSummary"}
+IF NOT ISNONE(ss) ANDALSO TXT$(ss) <> "" THEN PRINT "  standing: "; TXT$(ss)
+
+DIM grp = tm{"groups"}
+IF NOT ISNONE(grp) THEN PRINT "  group id: "; TXT$(grp{"id"})
+
+' --- record ---
+DIM recobj = tm{"record"}
+IF NOT ISNONE(recobj) THEN
+    DIM rec = recobj{"items"}
+    IF NOT ISNONE(rec) ANDALSO LEN(rec) > 0 THEN
+        DIM st = rec[0]{"stats"}
+        PRINT ""
+        PRINT "  Record:"
+        PRINT "    played "; STATV(st, "gamesPlayed"); "   W "; STATV(st, "wins"); "  D "; STATV(st, "ties"); "  L "; STATV(st, "losses")
+        PRINT "    goals  "; STATV(st, "pointsFor"); ":"; STATV(st, "pointsAgainst"); "   diff "; STATV(st, "pointDifferential")
+        PRINT "    points "; STATV(st, "points"); "   rank "; STATV(st, "rank")
+    ENDIF
+ENDIF
+
+' --- next match ---
+DIM ne = tm{"nextEvent"}
+IF NOT ISNONE(ne) ANDALSO LEN(ne) > 0 THEN
+    DIM cp = ne[0]{"competitions"}[0]
+    DIM co = cp{"competitors"}
+    DIM opp$ = "?"
+    DIM ha$ = "?"
+    DIM idx
+    FOR idx = 0 TO LEN(co) - 1
+        IF TXT$(co[idx]{"team"}{"id"}) = id$ THEN
+            ha$ = TXT$(co[idx]{"homeAway"})
+        ELSE
+            opp$ = TXT$(co[idx]{"team"}{"displayName"})
+        ENDIF
+    NEXT idx
+    PRINT ""
+    PRINT "  Next match:"
+    PRINT "    vs "; opp$; "   ("; ha$; ")"
+    PRINT "    "; LOCALDT$(TXT$(ne[0]{"date"})); "  (local)"
+    PRINT "    @ "; TXT$(cp{"venue"}{"fullName"}); ", "; TXT$(cp{"venue"}{"address"}{"city"})
+ELSE
+    PRINT ""
+    PRINT "  No upcoming match listed."
+ENDIF
+PRINT "===================================="

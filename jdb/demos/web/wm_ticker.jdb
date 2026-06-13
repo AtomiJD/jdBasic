@@ -1,0 +1,286 @@
+' wm_ticker.jdb - two-zone, 80-col FIFA World Cup 2026 marquee for the jdBasic
+' REPL. LEFT zone scrolls the current/next match (live -> score, goals, cards,
+' scorers); RIGHT zone scrolls the tracked team's next 1-2 fixtures. Only the
+' team CODES (GER, QAT, SUI, ...) are tinted with each team's own colour
+' (ANSI truecolor, brightened if too dark). Scroll 0.5 s; HTTP refresh 5 min.
+' Source: ESPN hidden JSON API (no key). Times in the machine's LOCAL time.
+'
+' RECUR is a REPL feature - run this INSIDE the jdBasic REPL:
+'     LOAD "jdb/demos/web/wm_ticker.jdb"
+' Stop with: CLEAR_RECUR(WM_TASK)
+
+FUNC TEAMCODE$()
+    RETURN "GER"
+ENDFUNC
+
+FUNC ZP$(n)
+    DIM s$ = FORMAT$("{}", INT(n))
+    IF LEN(s$) < 2 THEN RETURN "0" + s$
+    RETURN s$
+ENDFUNC
+
+FUNC TXT$(v)
+    IF ISNONE(v) THEN RETURN ""
+    RETURN "" + v
+ENDFUNC
+
+FUNC ASCIIONLY$(s$)
+    DIM r$ = ""
+    DIM i
+    FOR i = 0 TO LEN(s$) - 1
+        DIM c$ = MID$(s$, i, 1)
+        IF ASC(c$) < 128 THEN r$ = r$ + c$
+    NEXT i
+    RETURN r$
+ENDFUNC
+
+FUNC FOLD$(s$)
+    DIM r$ = s$
+    r$ = REPLACE$(r$, "ä", "ae")
+    r$ = REPLACE$(r$, "ö", "oe")
+    r$ = REPLACE$(r$, "ü", "ue")
+    r$ = REPLACE$(r$, "ß", "ss")
+    r$ = REPLACE$(r$, "ñ", "n")
+    r$ = REPLACE$(r$, "ç", "c")
+    r$ = REPLACE$(r$, "á", "a")
+    r$ = REPLACE$(r$, "à", "a")
+    r$ = REPLACE$(r$, "â", "a")
+    r$ = REPLACE$(r$, "ã", "a")
+    r$ = REPLACE$(r$, "é", "e")
+    r$ = REPLACE$(r$, "è", "e")
+    r$ = REPLACE$(r$, "ê", "e")
+    r$ = REPLACE$(r$, "í", "i")
+    r$ = REPLACE$(r$, "ó", "o")
+    r$ = REPLACE$(r$, "ô", "o")
+    r$ = REPLACE$(r$, "õ", "o")
+    r$ = REPLACE$(r$, "ú", "u")
+    RETURN ASCIIONLY$(r$)
+ENDFUNC
+
+FUNC ISO2DT(iso$)
+    DIM s$ = REPLACE$(iso$, "T", " ")
+    s$ = REPLACE$(s$, "Z", "")
+    RETURN CVDATE(s$, 0)
+ENDFUNC
+
+FUNC DKEY$(dt)
+    RETURN FORMAT$("{}", YEAR(dt)) + ZP$(MONTH(dt)) + ZP$(DAY(dt))
+ENDFUNC
+
+FUNC HM$(dt)
+    RETURN ZP$(HOUR(dt)) + ":" + ZP$(MINUTE(dt))
+ENDFUNC
+
+FUNC DM$(dt)
+    RETURN ZP$(DAY(dt)) + "." + ZP$(MONTH(dt))
+ENDFUNC
+
+FUNC WIN$(s$, pos, w)
+    IF LEN(s$) <= w THEN RETURN LEFT$(s$ + SPACE$(w), w)
+    DIM f$ = s$ + "   " + s$ + "   "
+    RETURN MID$(f$, pos MOD (LEN(s$) + 3), w)
+ENDFUNC
+
+FUNC HEXV(h$)
+    DIM digs$ = "0123456789abcdef"
+    DIM lo$ = LCASE$(h$)
+    DIM v = 0
+    DIM i
+    FOR i = 0 TO LEN(lo$) - 1
+        DIM p = INSTR(digs$, MID$(lo$, i, 1))
+        IF p >= 0 THEN v = v * 16 + p
+    NEXT i
+    RETURN v
+ENDFUNC
+
+' ANSI truecolor prefix for a 6-hex colour, brightened so dark colours stay
+' readable on a dark terminal. "" if no colour.
+FUNC COL$(hex$)
+    IF LEN(hex$) < 6 THEN RETURN ""
+    DIM r = HEXV(MID$(hex$, 0, 2))
+    DIM g = HEXV(MID$(hex$, 2, 2))
+    DIM b = HEXV(MID$(hex$, 4, 2))
+    DIM mx = r
+    IF g > mx THEN mx = g
+    IF b > mx THEN mx = b
+    IF mx < 40 THEN
+        r = 205
+        g = 205
+        b = 205
+    ELSE
+        IF mx < 150 THEN
+            DIM k = 150.0 / mx
+            r = INT(r * k)
+            g = INT(g * k)
+            b = INT(b * k)
+        ENDIF
+    ENDIF
+    RETURN CHR$(27) + "[38;2;" + FORMAT$("{}", INT(r)) + ";" + FORMAT$("{}", INT(g)) + ";" + FORMAT$("{}", INT(b)) + "m"
+ENDFUNC
+
+FUNC ISUPC(c$)
+    DIM a = ASC(c$)
+    RETURN a >= 65 ANDALSO a <= 90
+ENDFUNC
+
+FUNC ISALPHA(c$)
+    DIM a = ASC(c$)
+    RETURN (a >= 65 ANDALSO a <= 90) ORELSE (a >= 97 ANDALSO a <= 122)
+ENDFUNC
+
+' is there a 3-uppercase-letter token at i, bounded by non-letters?
+FUNC ISUP3(s$, i, n)
+    IF i + 3 > n THEN RETURN FALSE
+    IF NOT ISUPC(MID$(s$, i, 1)) THEN RETURN FALSE
+    IF NOT ISUPC(MID$(s$, i + 1, 1)) THEN RETURN FALSE
+    IF NOT ISUPC(MID$(s$, i + 2, 1)) THEN RETURN FALSE
+    IF i > 0 ANDALSO ISALPHA(MID$(s$, i - 1, 1)) THEN RETURN FALSE
+    IF i + 3 < n ANDALSO ISALPHA(MID$(s$, i + 3, 1)) THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
+' wrap every known 3-letter team code inside the visible window with its colour
+FUNC COLORIZE$(s$, cmap)
+    DIM rst$ = CHR$(27) + "[0m"
+    DIM out$ = ""
+    DIM n = LEN(s$)
+    DIM i = 0
+    DO
+        IF i >= n THEN EXITDO
+        IF ISUP3(s$, i, n) THEN
+            DIM code$ = MID$(s$, i, 3)
+            IF MAP.EXISTS(cmap, code$) THEN
+                out$ = out$ + cmap{code$} + code$ + rst$
+            ELSE
+                out$ = out$ + code$
+            ENDIF
+            i = i + 3
+        ELSE
+            out$ = out$ + MID$(s$, i, 1)
+            i = i + 1
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC WM_LIVE$(ev)
+    DIM cp = ev{"competitions"}[0]
+    DIM co = cp{"competitors"}
+    DIM out$ = "LIVE " + TXT$(co[0]{"team"}{"abbreviation"}) + " " + TXT$(co[0]{"score"}) + "-" + TXT$(co[1]{"score"}) + " " + TXT$(co[1]{"team"}{"abbreviation"}) + " " + TXT$(cp{"status"}{"type"}{"shortDetail"})
+    DIM det = cp{"details"}
+    DIM goals$ = ""
+    DIM cards$ = ""
+    IF NOT ISNONE(det) THEN
+        DIM k
+        FOR k = 0 TO LEN(det) - 1
+            DIM d = det[k]
+            DIM clk$ = TXT$(d{"clock"}{"displayValue"})
+            DIM who$ = ""
+            DIM ath = d{"athletesInvolved"}
+            IF NOT ISNONE(ath) ANDALSO LEN(ath) > 0 THEN who$ = FOLD$(TXT$(ath[0]{"shortName"}))
+            IF d{"scoringPlay"} THEN
+                goals$ = goals$ + who$ + " " + clk$ + ", "
+            ELSE
+                DIM typ$ = TXT$(d{"type"}{"text"})
+                IF INSTR(typ$, "Yellow") >= 0 THEN cards$ = cards$ + who$ + " " + clk$ + "Y, "
+                IF INSTR(typ$, "Red") >= 0 THEN cards$ = cards$ + who$ + " " + clk$ + "R, "
+            ENDIF
+        NEXT k
+    ENDIF
+    IF goals$ <> "" THEN out$ = out$ + "  G: " + goals$
+    IF cards$ <> "" THEN out$ = out$ + " C: " + cards$
+    RETURN out$
+ENDFUNC
+
+' fetch once, return [left$, right$, codeColorMap]
+FUNC WM_BUILD2()
+    DIM tc$ = TEAMCODE$()
+    DIM cmap AS MAP
+    DIM base$ = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+    DIM tnow = NOW()
+    DIM body$ = HTTP.GET$(base$ + "?dates=" + DKEY$(tnow) + "-" + DKEY$(DATEADD("D", 10, tnow)))
+    IF LEN(body$) < 10 THEN RETURN ["WM2026 (kein Netz)", tc$ + " ?", cmap]
+    DIM j = JSON.PARSE$(body$)
+    DIM evs = j{"events"}
+    DIM today$ = DKEY$(tnow)
+    DIM i
+
+    ' colour map: every team code -> its ANSI colour
+    FOR i = 0 TO LEN(evs) - 1
+        DIM xco = evs[i]{"competitions"}[0]{"competitors"}
+        DIM ka$ = TXT$(xco[0]{"team"}{"abbreviation"})
+        DIM kb$ = TXT$(xco[1]{"team"}{"abbreviation"})
+        IF ka$ <> "" THEN cmap{ka$} = COL$(TXT$(xco[0]{"team"}{"color"}))
+        IF kb$ <> "" THEN cmap{kb$} = COL$(TXT$(xco[1]{"team"}{"color"}))
+    NEXT i
+
+    DIM lft$ = ""
+    DIM liveidx = -1
+    FOR i = 0 TO LEN(evs) - 1
+        IF liveidx < 0 ANDALSO TXT$(evs[i]{"competitions"}[0]{"status"}{"type"}{"state"}) = "in" THEN liveidx = i
+    NEXT i
+    IF liveidx >= 0 THEN
+        lft$ = WM_LIVE$(evs[liveidx])
+    ELSE
+        FOR i = 0 TO LEN(evs) - 1
+            DIM cp2 = evs[i]{"competitions"}[0]
+            DIM dt = ISO2DT(TXT$(evs[i]{"date"}))
+            IF lft$ = "" ANDALSO DKEY$(dt) = today$ ANDALSO TXT$(cp2{"status"}{"type"}{"state"}) = "pre" THEN
+                DIM co2 = cp2{"competitors"}
+                lft$ = "NEXT " + TXT$(co2[0]{"team"}{"abbreviation"}) + "-" + TXT$(co2[1]{"team"}{"abbreviation"}) + " " + HM$(dt)
+            ENDIF
+        NEXT i
+        IF lft$ = "" THEN lft$ = "WM2026"
+    ENDIF
+
+    DIM rgt$ = tc$
+    DIM cnt = 0
+    FOR i = 0 TO LEN(evs) - 1
+        IF cnt < 2 THEN
+            DIM cp3 = evs[i]{"competitions"}[0]
+            DIM co3 = cp3{"competitors"}
+            DIM a3$ = TXT$(co3[0]{"team"}{"abbreviation"})
+            DIM b3$ = TXT$(co3[1]{"team"}{"abbreviation"})
+            IF (a3$ = tc$ ORELSE b3$ = tc$) ANDALSO TXT$(cp3{"status"}{"type"}{"state"}) = "pre" THEN
+                DIM dt3 = ISO2DT(TXT$(evs[i]{"date"}))
+                DIM opp$ = b3$
+                IF a3$ <> tc$ THEN opp$ = a3$
+                IF cnt > 0 THEN rgt$ = rgt$ + "  |"
+                rgt$ = rgt$ + " " + DM$(dt3) + " " + HM$(dt3) + " vs " + opp$ + " @ " + ASCIIONLY$(TXT$(cp3{"venue"}{"fullName"})) + ", " + ASCIIONLY$(TXT$(cp3{"venue"}{"address"}{"city"}))
+                cnt = cnt + 1
+            ENDIF
+        ENDIF
+    NEXT i
+
+    RETURN [lft$, rgt$, cmap]
+ENDFUNC
+
+' one frame: two zones (38 | 39 = 80), each scrolling; only team codes tinted.
+SUB WM_STEP()
+    STATIC DIM mL$ AS STRING = ""
+    STATIC DIM mR$ AS STRING = ""
+    STATIC DIM cmap AS MAP
+    STATIC DIM pL AS INTEGER = 0
+    STATIC DIM pR AS INTEGER = 0
+    STATIC DIM tk AS INTEGER = 0
+    IF mL$ = "" ORELSE tk >= 600 THEN
+        DIM b = WM_BUILD2()
+        mL$ = b[0]
+        mR$ = b[1]
+        cmap = b[2]
+        tk = 0
+    ENDIF
+    tk = tk + 1
+    ' cursor trick: save where the user is typing (ESC 7), jump to line 1,
+    ' draw the ticker, then restore the cursor (ESC 8) so typing is undisturbed
+    DIM esc$ = CHR$(27)
+    PRINT esc$ + "7" + esc$ + "[1;1H" + COLORIZE$(WIN$(mL$, pL, 38), cmap) + " | " + COLORIZE$(WIN$(mR$, pR, 39), cmap) + esc$ + "8";
+    pL = pL + 1
+    pR = pR + 1
+ENDSUB
+
+' --- activate: draw once, then scroll every 0.5 s (REPL only) ---
+WM_STEP()
+DIM WM_TASK = RECUR(500, "WM_STEP()")
+PRINT ""
+PRINT "WM-Ticker laeuft (80 col, Team-Codes farbig). Stop: CLEAR_RECUR(" + FORMAT$("{}", WM_TASK) + ")"
