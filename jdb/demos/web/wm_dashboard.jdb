@@ -18,6 +18,7 @@ DIM gSelTeam$ = ""
 DIM gImg AS MAP
 DIM gRoster AS MAP
 DIM gNews = []
+DIM gScorers = []
 
 FUNC TXT$(v)
     IF ISNONE(v) THEN RETURN ""
@@ -414,6 +415,7 @@ SUB MATCH_DETAIL(ev)
         IF NOT ISNONE(ginf{"officials"}) ANDALSO LEN(ginf{"officials"}) > 0 THEN ref$ = TXT$(ginf{"officials"}[0]{"displayName"})
         GUI.TEXT "Schiri: " + ref$ + "    Zuschauer: " + TXT$(ginf{"attendance"})
     ENDIF
+    MATCH_ODDS ev, eid$
     IF GUI.BEGIN_TAB_BAR("md") THEN
         IF GUI.BEGIN_TAB_ITEM("Ereignisse") THEN
             MATCH_EVENTS ev
@@ -459,6 +461,112 @@ SUB SCHEDULE_TAB()
             GUI.TEXT "Spiel links waehlen ..."
         ENDIF
         GUI.END_CHILD
+    ENDIF
+ENDSUB
+
+' aggregate a tournament top-scorer list from every match's goal events
+' (ESPN's leaders endpoint isn't supported for fifa.world)
+SUB BUILD_SCORERS()
+    DIM idx AS MAP
+    gScorers = []
+    DIM gx
+    FOR gx = 0 TO LEN(gSched) - 1
+        DIM cp = gSched[gx]{"competitions"}[0]
+        DIM det = cp{"details"}
+        IF NOT ISNONE(det) THEN
+            DIM co = cp{"competitors"}
+            DIM id0$ = TXT$(co[0]{"team"}{"id"})
+            DIM ab0$ = TXT$(co[0]{"team"}{"abbreviation"})
+            DIM ab1$ = TXT$(co[1]{"team"}{"abbreviation"})
+            DIM k
+            FOR k = 0 TO LEN(det) - 1
+                DIM d = det[k]
+                IF d{"scoringPlay"} ANDALSO INSTR(TXT$(d{"type"}{"text"}), "Goal") >= 0 THEN
+                    DIM ath = d{"athletesInvolved"}
+                    IF NOT ISNONE(ath) ANDALSO LEN(ath) > 0 THEN
+                        DIM nm$ = TXT$(ath[0]{"displayName"})
+                        DIM tm$ = ab1$
+                        IF TXT$(d{"team"}{"id"}) = id0$ THEN tm$ = ab0$
+                        IF MAP.EXISTS(idx, nm$) THEN
+                            DIM ix = idx{nm$}
+                            gScorers[ix]{"goals"} = gScorers[ix]{"goals"} + 1
+                        ELSE
+                            DIM rec AS MAP
+                            rec{"name"} = nm$
+                            rec{"team"} = tm$
+                            rec{"goals"} = 1
+                            gScorers = APPEND(gScorers, rec)
+                            idx{nm$} = LEN(gScorers) - 1
+                        ENDIF
+                    ENDIF
+                ENDIF
+            NEXT k
+        ENDIF
+    NEXT gx
+    DIM n = LEN(gScorers)
+    DIM a, b, tmp
+    FOR a = 0 TO n - 2
+        FOR b = a + 1 TO n - 1
+            IF gScorers[b]{"goals"} > gScorers[a]{"goals"} THEN
+                tmp = gScorers[a]
+                gScorers[a] = gScorers[b]
+                gScorers[b] = tmp
+            ENDIF
+        NEXT b
+    NEXT a
+ENDSUB
+
+SUB TOPSCORER_TAB()
+    IF LEN(gScorers) = 0 THEN GUI.TEXT "(noch keine Tore)"
+    IF GUI.BEGIN_TABLE("ts", 4) THEN
+        GUI.TABLE_SETUP_COLUMN("#")
+        GUI.TABLE_SETUP_COLUMN("Tore")
+        GUI.TABLE_SETUP_COLUMN("Spieler")
+        GUI.TABLE_SETUP_COLUMN("Team")
+        GUI.TABLE_HEADERS_ROW
+        DIM mx = LEN(gScorers)
+        IF mx > 25 THEN mx = 25
+        DIM i
+        FOR i = 0 TO mx - 1
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT FORMAT$("{}", i + 1)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT FORMAT$("{}", INT(gScorers[i]{"goals"}))
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT TXT$(gScorers[i]{"name"})
+            GUI.TABLE_NEXT_COLUMN
+            DIM fid = FLAG(TXT$(gScorers[i]{"team"}))
+            IF fid >= 0 THEN GUI.IMAGE fid, 22, 15
+            GUI.SAME_LINE
+            GUI.TEXT TXT$(gScorers[i]{"team"})
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+' match odds from the core API (cached in gSum under an "odds" key)
+FUNC GET_ODDS(eid$)
+    DIM key$ = "odds" + eid$
+    IF MAP.EXISTS(gSum, key$) THEN RETURN gSum{key$}
+    DIM oj = JSON.PARSE$(HTTP.GET$("https://sports.core.api.espn.com/v2/sports/soccer/leagues/fifa.world/events/" + eid$ + "/competitions/" + eid$ + "/odds")){"items"}
+    DIM res AS MAP
+    IF NOT ISNONE(oj) ANDALSO LEN(oj) > 0 THEN res = oj[0]
+    gSum{key$} = res
+    RETURN res
+ENDFUNC
+
+SUB MATCH_ODDS(ev, eid$)
+    DIM od = GET_ODDS(eid$)
+    IF NOT ISNONE(od{"provider"}) THEN
+        DIM co = ev{"competitions"}[0]{"competitors"}
+        DIM hA$ = TXT$(co[0]{"team"}{"abbreviation"})
+        DIM aA$ = TXT$(co[1]{"team"}{"abbreviation"})
+        IF TXT$(co[0]{"homeAway"}) = "away" THEN
+            hA$ = TXT$(co[1]{"team"}{"abbreviation"})
+            aA$ = TXT$(co[0]{"team"}{"abbreviation"})
+        ENDIF
+        GUI.TEXT_WRAPPED("Quoten (" + TXT$(od{"provider"}{"name"}) + "):  " + TXT$(od{"details"}) + "    ML  " + hA$ + " " + TXT$(od{"homeTeamOdds"}{"moneyLine"}) + "  /  X " + TXT$(od{"drawOdds"}{"moneyLine"}) + "  /  " + aA$ + " " + TXT$(od{"awayTeamOdds"}{"moneyLine"}) + "    O/U " + TXT$(od{"overUnder"}))
     ENDIF
 ENDSUB
 
@@ -510,6 +618,7 @@ DIM scj = JSON.PARSE$(HTTP.GET$(SB$ + "?dates=20260611-20260703"))
 gSched = scj{"events"}
 SPLASH "Nachrichten werden geladen...", 0.32
 gNews = JSON.PARSE$(HTTP.GET$("https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/news")){"articles"}
+BUILD_SCORERS()
 DIM pf
 FOR pf = 0 TO LEN(gTeams) - 1
     SPLASH "Hole die Flaggen aus aller Welt...  " + FORMAT$("{}", pf + 1) + "/" + FORMAT$("{}", LEN(gTeams)), 0.3 + 0.7 * (pf + 1) / LEN(gTeams)
@@ -545,6 +654,8 @@ DO
             TEAM_DETAIL "MEX"
         ELSEIF testmode ANDALSO testtab$ = "news" THEN
             NEWS_TAB()
+        ELSEIF testmode ANDALSO testtab$ = "scorers" THEN
+            TOPSCORER_TAB()
         ELSE
             IF GUI.BEGIN_TAB_BAR("tabs") THEN
                 IF GUI.BEGIN_TAB_ITEM("Gruppen") THEN
@@ -568,6 +679,10 @@ DO
                 ENDIF
                 IF GUI.BEGIN_TAB_ITEM("News") THEN
                     NEWS_TAB()
+                    GUI.END_TAB_ITEM
+                ENDIF
+                IF GUI.BEGIN_TAB_ITEM("Torschuetzen") THEN
+                    TOPSCORER_TAB()
                     GUI.END_TAB_ITEM
                 ENDIF
                 GUI.END_TAB_BAR
