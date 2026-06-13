@@ -462,6 +462,11 @@ SUB SCHEDULE_TAB()
     ENDIF
 ENDSUB
 
+' open a URL in the system default browser (standalone GFX app, not via MCP)
+SUB OPEN_URL(u$)
+    IF LEN(u$) > 8 THEN DIM r = OS.EXEC("cmd", ["/c", "start", "", u$])
+ENDSUB
+
 SUB NEWS_TAB()
     DIM mx = LEN(gNews)
     IF mx > 10 THEN mx = 10
@@ -469,8 +474,14 @@ SUB NEWS_TAB()
     DIM i
     FOR i = 0 TO mx - 1
         DIM a = gNews[i]
-        GUI.SEPARATOR_TEXT(TXT$(a{"headline"}))
-        GUI.TEXT DTSHORT$(TXT$(a{"published"})) + "    [" + TXT$(a{"type"}) + "]"
+        GUI.SEPARATOR
+        IF GUI.SELECTABLE(TXT$(a{"headline"}) + "##news" + FORMAT$("{}", i)) THEN OPEN_URL TXT$(a{"links"}{"web"}{"href"})
+        DIM im = a{"images"}
+        IF NOT ISNONE(im) ANDALSO LEN(im) > 0 THEN
+            DIM nid = IMG(TXT$(im[0]{"url"}), "news" + FORMAT$("{}", i))
+            IF nid >= 0 THEN GUI.IMAGE nid, 240, 135
+        ENDIF
+        GUI.TEXT DTSHORT$(TXT$(a{"published"})) + "    [" + TXT$(a{"type"}) + "]   (Titel klicken -> Browser)"
         GUI.TEXT_WRAPPED(TXT$(a{"description"}))
     NEXT i
 ENDSUB
