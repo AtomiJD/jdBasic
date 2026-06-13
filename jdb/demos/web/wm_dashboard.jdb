@@ -5,6 +5,10 @@
 ' Run:  jdBasic wm_dashboard.jdb            (ESC quits)
 ' Test: jdBasic wm_dashboard.jdb shot [nat|match]   (one screenshot to tmp/dash.png)
 
+' cache dir for downloaded crests/images - create it if missing so the app
+' runs from any folder it's copied into (MKDIR is a no-op if it exists)
+MKDIR "tmp"
+
 SCREEN 1100, 740, "Fussball Dashboard", 2
 
 DIM SITE$ = "https://site.api.espn.com/apis/site/v2/sports/soccer/"
