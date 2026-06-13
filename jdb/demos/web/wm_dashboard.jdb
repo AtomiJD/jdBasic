@@ -87,17 +87,13 @@ FUNC IMG(url$, key$)
     RETURN sid
 ENDFUNC
 
-' player avatar: real headshot if present, else the team flag as fallback
-' (ESPN's WC2026 headshots are largely missing)
+' player headshot sprite if ESPN has one, else -1 (caller shows no image).
+' (ESPN's WC2026 headshots are largely missing - no flag fallback by choice.)
 FUNC AVATAR(hs, code$, key$)
-    IF NOT ISNONE(hs) THEN
-        DIM u$ = TXT$(hs{"href"})
-        IF LEN(u$) > 8 THEN
-            DIM sid = IMG(u$, key$)
-            IF sid >= 0 THEN RETURN sid
-        ENDIF
-    ENDIF
-    RETURN FLAG(code$)
+    IF ISNONE(hs) THEN RETURN -1
+    DIM u$ = TXT$(hs{"href"})
+    IF LEN(u$) < 8 THEN RETURN -1
+    RETURN IMG(u$, key$)
 ENDFUNC
 
 ' halftime score computed from goal events with minute <= 45
@@ -284,8 +280,10 @@ SUB TEAM_DETAIL(code$)
                 GUI.TABLE_NEXT_COLUMN
                 DIM pa = squad[s]
                 DIM av = AVATAR(pa{"headshot"}, code$, "p" + TXT$(pa{"id"}))
-                IF av >= 0 THEN GUI.IMAGE av, 40, 40
-                GUI.SAME_LINE
+                IF av >= 0 THEN
+                    GUI.IMAGE av, 40, 40
+                    GUI.SAME_LINE
+                ENDIF
                 GUI.TEXT "#" + TXT$(pa{"jersey"}) + " " + TXT$(pa{"position"}{"abbreviation"}) + " " + TXT$(pa{"displayName"})
             NEXT s
             GUI.END_TABLE
@@ -355,8 +353,10 @@ ENDSUB
 
 SUB PLAYER_ROW(p, code$)
     DIM av = AVATAR(p{"athlete"}{"headshot"}, code$, "p" + TXT$(p{"athlete"}{"id"}))
-    IF av >= 0 THEN GUI.IMAGE av, 22, 22
-    GUI.SAME_LINE
+    IF av >= 0 THEN
+        GUI.IMAGE av, 22, 22
+        GUI.SAME_LINE
+    ENDIF
     GUI.TEXT TXT$(p{"jersey"}) + " " + TXT$(p{"position"}{"abbreviation"}) + "  " + TXT$(p{"athlete"}{"displayName"})
 ENDSUB
 
