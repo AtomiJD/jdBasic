@@ -14,6 +14,7 @@ DIM gTeams = []
 DIM gSched = []
 DIM gSum AS MAP
 DIM gSelIdx = -1
+DIM gSelTeam$ = ""
 
 FUNC TXT$(v)
     IF ISNONE(v) THEN RETURN ""
@@ -104,8 +105,70 @@ SUB NATIONS_GRID()
             DIM t = gTeams[i]
             DIM fid = FLAG(TXT$(t{"code"}))
             IF fid >= 0 THEN GUI.IMAGE fid, 60, 40
-            GUI.TEXT TXT$(t{"code"}) + " " + TXT$(t{"name"})
+            IF GUI.SELECTABLE(TXT$(t{"code"}) + " " + TXT$(t{"name"}) + "##n" + FORMAT$("{}", i)) THEN gSelTeam$ = TXT$(t{"code"})
             GUI.TEXT "Gr. " + TXT$(t{"grp"})
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+' ── team detail page ─────────────────────────────────────────
+FUNC FIND_ENTRY(code$)
+    DIM g
+    FOR g = 0 TO LEN(gStand) - 1
+        DIM ent = gStand[g]{"standings"}{"entries"}
+        DIM ee
+        FOR ee = 0 TO LEN(ent) - 1
+            IF TXT$(ent[ee]{"team"}{"abbreviation"}) = code$ THEN RETURN ent[ee]
+        NEXT ee
+    NEXT g
+    DIM empty AS MAP
+    RETURN empty
+ENDFUNC
+
+SUB TEAM_DETAIL(code$)
+    IF GUI.BUTTON("<- Zurueck") THEN gSelTeam$ = ""
+    DIM ent = FIND_ENTRY(code$)
+    DIM nm$ = code$
+    IF NOT ISNONE(ent{"team"}) THEN nm$ = TXT$(ent{"team"}{"displayName"})
+    DIM fid = FLAG(code$)
+    IF fid >= 0 THEN GUI.IMAGE fid, 120, 80
+    GUI.SAME_LINE
+    GUI.TEXT "  " + nm$ + "  (" + code$ + ")"
+    IF NOT ISNONE(ent{"team"}) THEN
+        DIM st = ent{"stats"}
+        GUI.TEXT "Bilanz:  Sp " + STATD$(st, "gamesPlayed") + "    S " + STATD$(st, "wins") + "  U " + STATD$(st, "ties") + "  N " + STATD$(st, "losses") + "    Tore " + STATD$(st, "pointsFor") + ":" + STATD$(st, "pointsAgainst") + "    Pkt " + STATD$(st, "points") + "    Rang " + STATD$(st, "rank")
+    ENDIF
+    GUI.SEPARATOR_TEXT("Spiele")
+    IF GUI.BEGIN_TABLE("tm", 4) THEN
+        GUI.TABLE_SETUP_COLUMN("Datum")
+        GUI.TABLE_SETUP_COLUMN("Gegner")
+        GUI.TABLE_SETUP_COLUMN("Ergebnis")
+        GUI.TABLE_SETUP_COLUMN("Ort")
+        GUI.TABLE_HEADERS_ROW
+        DIM i
+        FOR i = 0 TO LEN(gSched) - 1
+            DIM ev = gSched[i]
+            DIM cp = ev{"competitions"}[0]
+            DIM co = cp{"competitors"}
+            DIM a$ = TXT$(co[0]{"team"}{"abbreviation"})
+            DIM b$ = TXT$(co[1]{"team"}{"abbreviation"})
+            IF a$ = code$ ORELSE b$ = code$ THEN
+                DIM opp$ = b$
+                IF a$ <> code$ THEN opp$ = a$
+                GUI.TABLE_NEXT_ROW
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT LEFT$(TXT$(ev{"date"}), 10)
+                GUI.TABLE_NEXT_COLUMN
+                DIM ofid = FLAG(opp$)
+                IF ofid >= 0 THEN GUI.IMAGE ofid, 22, 15
+                GUI.SAME_LINE
+                GUI.TEXT opp$
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT TXT$(co[0]{"score"}) + "-" + TXT$(co[1]{"score"}) + "  " + TXT$(cp{"status"}{"type"}{"shortDetail"})
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT TXT$(cp{"venue"}{"fullName"})
+            ENDIF
         NEXT i
         GUI.END_TABLE
     ENDIF
@@ -302,6 +365,8 @@ DO
             MATCH_STATS TXT$(gSched[gSelIdx]{"id"})
         ELSEIF testmode ANDALSO testtab$ = "lineup" THEN
             MATCH_LINEUPS TXT$(gSched[gSelIdx]{"id"})
+        ELSEIF testmode ANDALSO testtab$ = "team" THEN
+            TEAM_DETAIL "MEX"
         ELSE
             IF GUI.BEGIN_TAB_BAR("tabs") THEN
                 IF GUI.BEGIN_TAB_ITEM("Gruppen") THEN
@@ -312,7 +377,11 @@ DO
                     GUI.END_TAB_ITEM
                 ENDIF
                 IF GUI.BEGIN_TAB_ITEM("Nationen") THEN
-                    NATIONS_GRID()
+                    IF gSelTeam$ = "" THEN
+                        NATIONS_GRID()
+                    ELSE
+                        TEAM_DETAIL gSelTeam$
+                    ENDIF
                     GUI.END_TAB_ITEM
                 ENDIF
                 IF GUI.BEGIN_TAB_ITEM("Spielplan") THEN
