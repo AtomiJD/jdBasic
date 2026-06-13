@@ -1,53 +1,56 @@
 ' ============================================================
 ' TILT - "Schlagseite"  (jdBasic GFX)
-' Tetris-Kern. Phase 1: fallen / bewegen / drehen / sperren /
-' Reihen raeumen / Game Over. Der Twist (Deck dreht beim Sperren)
-' kommt in Phase 2.
-' Steuerung: Pfeile/WASD bewegen+drehen, Space Hard-Drop, ESC Ende.
-' Test:  jdBasic tilt.jdb shot   -> ein Screenshot nach tmp/tilt.png
+' Tetris mit Twist: wird die Fracht zu einseitig, bekommt das
+' Schiff Schlagseite und das DECK kippt 90 Grad - lose Fracht
+' rutscht nach. Das Brett wechselt dabei Hoch- <-> Querformat.
+' Steuerung: Pfeile/WASD bewegen+drehen, Space Hard-Drop, ESC.
+' Test:  jdBasic tilt.jdb shot        -> tmp/tilt.png
+'        jdBasic tilt.jdb shot tilt   -> tmp/tilt_before/after.png
 ' ============================================================
 
 MKDIR "tmp"
 
-N = 10                  ' quadratisches Feld (drehfreundlich)
-CELL = 44
-BX = 160                ' Brett-Ursprung in Pixeln
-BY = 140
-SCRW = 760
-SCRH = 860
+Rows = 15               ' aktuelle Brett-Hoehe (kippt mit)
+Cols = 10               ' aktuelle Brett-Breite
+CELL = 36
+MAXD = 15               ' groesste Kantenlaenge -> quadratische Spielflaeche
+AREA = MAXD * CELL
+SCRW = 660
+SCRH = 800
+AX = (SCRW - AREA) / 2  ' Ursprung der quadratischen See-Flaeche
+AY = 80
+BX = AX                 ' Brett-Ursprung (pro Frame zentriert gesetzt)
+BY = AY
+
+THRESHOLD = 35          ' Schlagseite-Schwelle: ab hier kippt das Deck
 
 SCREEN SCRW, SCRH, "TILT - Schlagseite", 1
 
-CENTER = (N - 1) / 2.0
-THRESHOLD = 35          ' Schlagseite-Schwelle: ab hier kippt das Deck
-
-DIM Board[N, N]         ' 0 = leer, 1..7 = Kistentyp
+DIM Board[Rows, Cols]   ' 0 = leer, 1..7 = Kistentyp
 DIM CurrentPiece
 DIM PieceX, PieceY, PieceColor
 DIM Score = 0
 DIM LinesCleared = 0
 DIM GameOver = FALSE
 
-' Edge-Detection fuer Tastendruck (einmal pro Druck)
 DIM prevL = FALSE, prevR = FALSE, prevRot = FALSE, prevHard = FALSE
 
-' --- Farben je Kistentyp -------------------------------------
 FUNC COLOR_FOR(id)
     SWITCH id
-        CASE 1: RETURN [90, 210, 230]    ' I
-        CASE 2: RETURN [80, 120, 230]    ' J
-        CASE 3: RETURN [235, 150, 60]    ' L
-        CASE 4: RETURN [235, 205, 70]    ' O
-        CASE 5: RETURN [110, 200, 95]    ' S
-        CASE 6: RETURN [200, 110, 210]   ' T
-        CASE 7: RETURN [220, 90, 90]     ' Z
+        CASE 1: RETURN [90, 210, 230]
+        CASE 2: RETURN [80, 120, 230]
+        CASE 3: RETURN [235, 150, 60]
+        CASE 4: RETURN [235, 205, 70]
+        CASE 5: RETURN [110, 200, 95]
+        CASE 6: RETURN [200, 110, 210]
+        CASE 7: RETURN [220, 90, 90]
     ENDSWITCH
     RETURN [200, 200, 200]
 ENDFUNC
 
 SUB SpawnPiece()
     t = INT(RND(1) * 7)
-    PieceX = INT(N / 2) - 2
+    PieceX = INT(Cols / 2) - 2
     PieceY = 0
     SWITCH t
         CASE 0: CurrentPiece = [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]] : PieceColor = 1
@@ -66,7 +69,7 @@ FUNC CheckCollision(p, px, py)
             IF p[r, c] <> 0 THEN
                 br = py + r
                 bc = px + c
-                IF bc < 0 OR bc >= N OR br >= N THEN RETURN TRUE
+                IF bc < 0 OR bc >= Cols OR br >= Rows THEN RETURN TRUE
                 IF br >= 0 THEN
                     IF Board[br, bc] <> 0 THEN RETURN TRUE
                 ENDIF
@@ -82,18 +85,17 @@ SUB LockPiece()
             IF CurrentPiece[r, c] <> 0 THEN
                 br = PieceY + r
                 bc = PieceX + c
-                IF br >= 0 AND br < N AND bc >= 0 AND bc < N THEN Board[br, bc] = PieceColor
+                IF br >= 0 AND br < Rows AND bc >= 0 AND bc < Cols THEN Board[br, bc] = PieceColor
             ENDIF
         NEXT c
     NEXT r
 ENDSUB
 
 SUB ClearLines()
-    ' Reihen mit einer Luecke behalten (min = 0), volle fallen weg.
     kept = FILTER(LAMBDA row -> MIN(row) = 0, Board)
-    cleared = N - LEN(kept)
+    cleared = Rows - LEN(kept)
     IF cleared > 0 THEN
-        emptyRow = RESHAPE([0], [N])
+        emptyRow = RESHAPE([0], [Cols])
         FOR i = 1 TO cleared
             kept = MVINS(kept, 0, 0, emptyRow)
         NEXT i
@@ -107,22 +109,34 @@ FUNC RotateMatrix(m)
     RETURN REVERSE(TRANSPOSE(m))
 ENDFUNC
 
+SUB TryRotate()
+    rp = RotateMatrix(CurrentPiece)
+    IF NOT CheckCollision(rp, PieceX, PieceY) THEN
+        CurrentPiece = rp
+    ELSEIF NOT CheckCollision(rp, PieceX - 1, PieceY) THEN
+        PieceX = PieceX - 1 : CurrentPiece = rp
+    ELSEIF NOT CheckCollision(rp, PieceX + 1, PieceY) THEN
+        PieceX = PieceX + 1 : CurrentPiece = rp
+    ENDIF
+ENDSUB
+
 ' Drehmoment: >0 = rechts-lastig, <0 = links-lastig
 FUNC Torque()
-    t = 0.0
-    FOR r = 0 TO N - 1
-        FOR c = 0 TO N - 1
-            IF Board[r, c] <> 0 THEN t = t + (c - CENTER)
+    tq = 0.0
+    cen = (Cols - 1) / 2.0
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            IF Board[r, c] <> 0 THEN tq = tq + (c - cen)
         NEXT c
     NEXT r
-    RETURN t
+    RETURN tq
 ENDFUNC
 
-' lose Fracht rutscht in der Schwerkraft nach unten (pro Spalte verdichten)
+' lose Fracht rutscht nach unten (pro Spalte verdichten)
 SUB SettleDown()
-    FOR c = 0 TO N - 1
-        write = N - 1
-        FOR r = N - 1 TO 0 STEP -1
+    FOR c = 0 TO Cols - 1
+        write = Rows - 1
+        FOR r = Rows - 1 TO 0 STEP -1
             IF Board[r, c] <> 0 THEN
                 v = Board[r, c]
                 Board[r, c] = 0
@@ -133,28 +147,19 @@ SUB SettleDown()
     NEXT c
 ENDSUB
 
-' Deck 90 Grad in Richtung der schweren Seite kippen, dann nachrutschen
+' Deck 90 Grad kippen (Hoch- <-> Querformat), dann nachrutschen + raeumen
 SUB ApplyTilt()
     tq = Torque()
     IF tq > THRESHOLD THEN
         Board = TRANSPOSE(REVERSE(Board))   ' CW: rechte Seite nach unten
+        tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
         ClearLines()
     ELSEIF tq < -THRESHOLD THEN
         Board = REVERSE(TRANSPOSE(Board))   ' CCW: linke Seite nach unten
+        tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
         ClearLines()
-    ENDIF
-ENDSUB
-
-SUB TryRotate()
-    rp = RotateMatrix(CurrentPiece)
-    IF NOT CheckCollision(rp, PieceX, PieceY) THEN
-        CurrentPiece = rp
-    ELSEIF NOT CheckCollision(rp, PieceX - 1, PieceY) THEN
-        PieceX = PieceX - 1 : CurrentPiece = rp
-    ELSEIF NOT CheckCollision(rp, PieceX + 1, PieceY) THEN
-        PieceX = PieceX + 1 : CurrentPiece = rp
     ENDIF
 ENDSUB
 
@@ -176,7 +181,7 @@ ENDSUB
 
 ' --- Zeichnen ------------------------------------------------
 SUB DrawCell(r, c, id)
-    IF r < 0 OR r >= N OR c < 0 OR c >= N THEN RETURN
+    IF r < 0 OR r >= Rows OR c < 0 OR c >= Cols THEN RETURN
     px = BX + c * CELL
     py = BY + r * CELL
     IF id = 0 THEN
@@ -195,16 +200,16 @@ SUB Draw()
     CLS
     DRAWCOLOR 12, 26, 44
     RECT 0, 0, SCRW, SCRH, TRUE
-    ' Deck-Rahmen
+    ' Brett in der quadratischen See-Flaeche zentrieren
+    BX = AX + CINT((AREA - Cols * CELL) / 2)
+    BY = AY + CINT((AREA - Rows * CELL) / 2)
     DRAWCOLOR 70, 52, 34
-    RECT BX - 8, BY - 8, N * CELL + 16, N * CELL + 16, TRUE
-    ' Zellen
-    FOR r = 0 TO N - 1
-        FOR c = 0 TO N - 1
+    RECT BX - 8, BY - 8, Cols * CELL + 16, Rows * CELL + 16, TRUE
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
             DrawCell r, c, Board[r, c]
         NEXT c
     NEXT r
-    ' aktive Kiste
     IF NOT GameOver THEN
         FOR r = 0 TO 3
             FOR c = 0 TO 3
@@ -214,15 +219,15 @@ SUB Draw()
     ENDIF
     ' HUD
     DRAWCOLOR 235, 235, 245
-    TEXT 160, 70, "TILT - Schlagseite"
+    TEXT AX, 48, "TILT - Schlagseite"
     DRAWCOLOR 180, 195, 210
-    TEXT 160, 620, "Score: " + Score
-    TEXT 160, 648, "Reihen: " + LinesCleared
-    TEXT 400, 620, "Pfeile/WASD  Space=Drop"
-    TEXT 400, 648, "ESC = Ende"
+    TEXT AX, AY + AREA + 24, "Score: " + Score
+    TEXT AX, AY + AREA + 48, "Reihen: " + LinesCleared
+    TEXT AX + 230, AY + AREA + 24, "Pfeile/WASD  Space=Drop"
+    TEXT AX + 230, AY + AREA + 48, "ESC = Ende"
     ' Schlagseite-Anzeige
-    mxc = BX + (N * CELL) / 2
-    myc = 700
+    mxc = AX + AREA / 2
+    myc = AY + AREA + 100
     DRAWCOLOR 50, 62, 78
     RECT mxc - 150, myc, 300, 12, TRUE
     DRAWCOLOR 150, 70, 70
@@ -237,7 +242,7 @@ SUB Draw()
     TEXT mxc - 40, myc - 26, "Schlagseite"
     IF GameOver THEN
         DRAWCOLOR 240, 90, 90
-        TEXT 300, 350, "GAME OVER"
+        TEXT AX + AREA / 2 - 80, AY + AREA / 2, "GAME OVER"
     ENDIF
     SCREENFLIP
 ENDSUB
@@ -253,12 +258,12 @@ IF LEN(args) >= 3 THEN testtab$ = args[2]
 
 IF testmode ANDALSO testtab$ = "tilt" THEN
     DIM rr, cc
-    FOR rr = 5 TO 9
+    FOR rr = 9 TO 14
         FOR cc = 6 TO 9
             Board[rr, cc] = 3 + (rr MOD 3)
         NEXT cc
     NEXT rr
-    Board[9, 0] = 5 : Board[9, 1] = 5
+    Board[14, 0] = 5 : Board[14, 1] = 5
     CurrentPiece = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
     Draw() : SLEEP 30 : Draw()
     GFX.SAVE_SCREENSHOT("tmp/tilt_before.png")
@@ -271,10 +276,9 @@ IF testmode ANDALSO testtab$ = "tilt" THEN
 ENDIF
 
 IF testmode THEN
-    ' deterministische Szene fuer den Screenshot
-    Board[9,0]=3 : Board[9,1]=3 : Board[9,2]=4 : Board[9,3]=4 : Board[9,5]=5 : Board[9,6]=5 : Board[9,7]=2
-    Board[8,0]=3 : Board[8,3]=4 : Board[8,6]=5 : Board[8,7]=2
-    Board[7,7]=1
+    Board[14,0]=3 : Board[14,1]=3 : Board[14,2]=4 : Board[14,3]=4 : Board[14,5]=5 : Board[14,6]=5 : Board[14,7]=2
+    Board[13,0]=3 : Board[13,3]=4 : Board[13,6]=5 : Board[13,7]=2
+    Board[12,7]=1
     CurrentPiece = [[0,1,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]] : PieceColor = 6
     PieceX = 4 : PieceY = 1
     DIM f
@@ -330,7 +334,6 @@ DO
     SLEEP 16
 LOOP UNTIL GameOver
 
-' GameOver kurz stehen lassen
 DIM endt = TICK()
 DO
     Draw()
