@@ -1901,6 +1901,7 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 * **`GUI.RADIO(label$, current_value, button_value) -> value`**: Displays a radio button. Returns `button_value` if selected, otherwise returns `current_value`.
 * **`GUI.SLIDER(label$, value, min, max) -> number`**: Displays a slider. Returns the new value.
 * **`GUI.PROGRESS(fraction, [overlay_text$])`**: Displays a progress bar (0.0 to 1.0).
+* **`GUI.IMAGE(sprite_id, [width, height]) -> boolean`**: Draws a `SPRITE.LOAD`'d texture inside the current ImGui window (e.g. a downloaded flag/logo PNG). Defaults to the texture's native pixel size; pass `width`/`height` to scale. Returns `FALSE` for an unknown sprite id. The image scrolls and clips with the surrounding ImGui layout (tables, child regions), unlike `SPRITE.DRAW` which paints on the raw canvas.
 * **`GUI.COLOR(label$, color_array) -> boolean`**: Displays a color picker. Updates the array (`[r, g, b, a]`) in place. Returns `TRUE` if the color changed.
 * **`GUI.HELPMARKER(text$)`**: Displays a `(?)` icon that shows a tooltip when hovered.
 * **`GUI.TOOLTIP(text$)`**: Sets a tooltip for the item immediately preceding this call.

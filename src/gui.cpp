@@ -3,6 +3,7 @@
 #include "gui.h"
 #include "vm.h"
 #include "errors.h"
+#include "sprites.h"
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
@@ -511,6 +512,20 @@ void register_gui_builtins(VM& vm) {
         }
         ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 0), overlay);
         return Value::make_none();
+    });
+
+    // GUI.IMAGE(sprite_id, [w], [h]) -> bool
+    // Draws a SPRITE.LOAD'd texture inside the current ImGui window. Defaults
+    // to the texture's native pixel size. Returns FALSE for an unknown id.
+    vm.register_native("GUI.IMAGE", 1, 3, [](const std::vector<Value>& args) -> Value {
+        ensure_imgui("GUI.IMAGE");
+        int tw = 0, th = 0;
+        SDL_Texture* tex = sprite_texture((int)args[0].to_int(), &tw, &th);
+        if (!tex) return Value::make_bool(false);
+        float w = (args.size() >= 2) ? (float)args[1].to_double() : (float)tw;
+        float h = (args.size() >= 3) ? (float)args[2].to_double() : (float)th;
+        ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(w, h));
+        return Value::make_bool(true);
     });
 
     // GUI.COLOR(label$, color_array) -> bool

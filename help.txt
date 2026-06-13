@@ -786,6 +786,10 @@ Description: Pops the last ID pushed to the stack.
 Syntax: GUI.PROGRESS(fraction, [overlay_text$])
 Description: Displays a progress bar (0.0 to 1.0).
 
+[GUI.IMAGE]
+Syntax: GUI.IMAGE(sprite_id, [width, height])
+Description: Draws a SPRITE.LOAD'd texture (e.g. a flag/logo PNG) inside the current ImGui window. Defaults to native pixel size; pass width/height to scale. Returns FALSE for an unknown sprite id. Scrolls/clips with the ImGui layout, unlike SPRITE.DRAW.
+
 [GUI.PUSH_ID]
 Syntax: GUI.PUSH_ID(id)
 Description: Pushes an integer or string ID to the stack to avoid collisions.

@@ -37,6 +37,23 @@ Sprite& get_sprite(const char* fn, int id) {
     return it->second;
 }
 
+// Texture handle for a sprite id, for GUI.IMAGE (ImGui::Image). nullptr if the
+// id or its texture is unknown; fills the pixel size when out_w/out_h given.
+SDL_Texture* sprite_texture(int id, int* out_w, int* out_h) {
+    auto it = g_sprites.find(id);
+    if (it == g_sprites.end()) return nullptr;
+    auto im = g_images.find(it->second.texture_id);
+    if (im == g_images.end()) return nullptr;
+    SDL_Texture* tex = im->second;
+    if (out_w || out_h) {
+        float w = 0.0f, h = 0.0f;
+        SDL_GetTextureSize(tex, &w, &h);
+        if (out_w) *out_w = (int)w;
+        if (out_h) *out_h = (int)h;
+    }
+    return tex;
+}
+
 static void draw_one_sprite(const Sprite& sp) {
     auto it = g_images.find(sp.texture_id);
     if (it == g_images.end()) return;
