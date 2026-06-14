@@ -1002,6 +1002,12 @@ SUB UpdateOptions(eU, eDn, eEnter, eEsc)
     IF eEsc THEN gState$ = "title"
 ENDSUB
 
+' Index 0..25 = A..Z, 26 = Leerzeichen
+FUNC ENTER_CHAR$(idx)
+    IF idx >= 26 THEN RETURN " "
+    RETURN CHR$(65 + idx)
+ENDFUNC
+
 ' ── Kuerzel-Eingabe nach Highscore ───────────────────────────
 SUB DrawEnter()
     CLS
@@ -1014,20 +1020,22 @@ SUB DrawEnter()
     TEXT AX + 90, 200, "Punkte: " + Score
     FOR i = 0 TO 2
         IF i = enterPos THEN DRAWCOLOR 250, 230, 120 ELSE DRAWCOLOR 200, 210, 220
-        TEXT AX + 120 + i * 60, 290, CHR$(65 + enterName[i])
+        dch$ = ENTER_CHAR$(enterName[i])
+        IF dch$ = " " THEN dch$ = "_"
+        TEXT AX + 120 + i * 60, 290, dch$
     NEXT i
     DRAWCOLOR 160, 175, 190
-    TEXT AX + 30, 380, "Hoch/Runter = Buchstabe"
+    TEXT AX + 30, 380, "Hoch/Runter = Buchstabe (inkl. Leer)"
     TEXT AX + 30, 410, "Links/Rechts = Stelle, Enter = OK"
 ENDSUB
 
 SUB UpdateEnter(eU, eDn, eL, eR, eEnter)
-    IF eU THEN enterName[enterPos] = (enterName[enterPos] + 1) MOD 26
-    IF eDn THEN enterName[enterPos] = (enterName[enterPos] + 25) MOD 26
+    IF eU THEN enterName[enterPos] = (enterName[enterPos] + 1) MOD 27
+    IF eDn THEN enterName[enterPos] = (enterName[enterPos] + 26) MOD 27
     IF eL ANDALSO enterPos > 0 THEN enterPos = enterPos - 1
     IF eR ANDALSO enterPos < 2 THEN enterPos = enterPos + 1
     IF eEnter THEN
-        nm$ = CHR$(65 + enterName[0]) + CHR$(65 + enterName[1]) + CHR$(65 + enterName[2])
+        nm$ = ENTER_CHAR$(enterName[0]) + ENTER_CHAR$(enterName[1]) + ENTER_CHAR$(enterName[2])
         HS_INSERT(enterRank, nm$, Score)
         gState$ = "title"
     ENDIF
