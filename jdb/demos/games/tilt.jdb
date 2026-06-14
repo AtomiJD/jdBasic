@@ -1,9 +1,9 @@
 ' ============================================================
 ' TILT - "Schlagseite"  (jdBasic GFX)
-' Tetris mit Twist: wird die Fracht zu einseitig, kippt das DECK
-' 90 Grad in Richtung der schweren Seite - die Kisten fallen auf
-' den neuen Boden und schliessen Luecken (Hoch- <-> Querformat).
-' Steuerung: Pfeile/WASD bewegen+drehen, Space Hard-Drop, ESC.
+' Tetris twist: when the cargo gets too one-sided the deck tips
+' 90 degrees toward the heavy side - boxes fall onto the new
+' floor and close gaps (portrait <-> landscape).
+' Controls: arrows/WASD move+rotate, Space hard-drop, ESC.
 ' Test:  jdBasic tilt.jdb shot        -> tmp/tilt.png
 '        jdBasic tilt.jdb shot tilt   -> tmp/tilt_before/after.png
 ' ============================================================
@@ -11,27 +11,27 @@
 OPTION "NOEXPLICIT"
 MKDIR "tmp"
 
-Rows = 15               ' aktuelle Brett-Hoehe (kippt mit)
-Cols = 10               ' aktuelle Brett-Breite
+Rows = 15               ' current board height (swaps on tilt)
+Cols = 10               ' current board width
 CELL = 36
-MAXD = 15               ' groesste Kantenlaenge -> quadratische Spielflaeche
+MAXD = 15               ' largest edge -> square play area
 AREA = MAXD * CELL
 SCRW = 660
 SCRH = 800
-DIM AX AS DOUBLE = (SCRW - AREA) / 2.0   ' Ursprung der quadratischen See-Flaeche
+DIM AX AS DOUBLE = (SCRW - AREA) / 2.0   ' origin of the square sea area
 DIM AY AS DOUBLE = 80.0
-DIM BX AS DOUBLE = 0.0                    ' Brett-Ursprung (pro Frame gesetzt)
+DIM BX AS DOUBLE = 0.0                    ' board origin (set per frame)
 DIM BY AS DOUBLE = 0.0
 
-TILT_HIGH = 40          ' ab dieser Schlagseite kippt das Deck (empfindlicher)
-TILT_LOW = 18           ' Schiff "im Lot" - Schwelle fuer den Balance-Bonus
+TILT_HIGH = 40          ' deck tips above this list
+TILT_LOW = 18           ' ship level - balance bonus threshold
 tiltArmed = TRUE
 
 SCREEN SCRW, SCRH, "TILT - Schlagseite", 1
 
 SOUND.INIT
 SOUND.BPM 125
-' Musik: Melodie (Track 0) + Bass (Track 1) - RPG-"overworld"-Theme
+' music: melody (track 0) + bass (track 1)
 SOUND.VOICE 0, "SQUARE", 0.01, 0.15, 0.3, 0.25
 SOUND.FILTER 0, 2000
 SOUND.GAIN 0, 0.55
@@ -40,7 +40,7 @@ SOUND.FILTER 1, 500
 SOUND.GAIN 1, 0.6
 SOUND.REVERB 0.7, 0.3, 0.8, 0.25
 SOUND.REVERBSEND 0, 0.4
-' SFX: Setzen (3), Raeumen (4), Kippen (5)
+' sfx: lock (3), clear (4), tilt (5)
 SOUND.VOICE 3, "TRIANGLE", 0.004, 0.10, 0.0, 0.08
 SOUND.GAIN 3, 0.5
 SOUND.VOICE 4, "SQUARE", 0.004, 0.09, 0.0, 0.07
@@ -49,7 +49,7 @@ SOUND.VOICE 5, "SAW", 0.02, 0.28, 0.0, 0.30
 SOUND.GAIN 5, 0.5
 StartMusic()
 
-DIM Board[Rows, Cols]   ' 0 = leer, 1..7 = Kistentyp
+DIM Board[Rows, Cols]   ' 0 = empty, 1..7 = box type
 DIM CurrentPiece = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
 DIM PieceX = 0
 DIM PieceY = 0
@@ -62,9 +62,9 @@ DIM gain = 0
 DIM pts = 0
 DIM cbonus = 0
 DIM cleared = 0
-DIM cellv AS INTEGER    ' typisierter Empfaenger fuer Board-Wertlesungen (native!)
+DIM cellv AS INTEGER    ' typed receiver for board value reads (native)
 DIM v AS INTEGER
-DIM puKind = 0          ' in LockPiece gemerkte Sonderkiste
+DIM puKind = 0          ' special box recorded in LockPiece
 DIM puBr = 0
 DIM puBc = 0
 
@@ -73,24 +73,24 @@ DIM Level = 1
 DIM shake = 0, flash = 0
 DIM NextPiece = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
 DIM NextColor = 0
-DIM rearmIn = 0         ' Zuege bis die Schlagseite wieder scharf wird
+DIM rearmIn = 0         ' locks until tilt re-arms
 DIM HighScore = 0
-DIM NPOP = 16           ' Pool fuer fliegende Punkte-Popups
+DIM NPOP = 16           ' flying score popup pool
 DIM pop_x = ZEROS(NPOP)
 DIM pop_y = ZEROS(NPOP)
 DIM pop_life = ZEROS(NPOP)
 DIM pop_val = ZEROS(NPOP)
-DIM combo = 0           ' Kette aufeinanderfolgender Raeumungen
-DIM clearedTurn = 0     ' in diesem Zug geraeumte Reihen
+DIM combo = 0           ' consecutive-clear chain
+DIM clearedTurn = 0     ' rows cleared this turn
 DIM comboFlash = 0
 DIM comboShow = 0
-DIM NSTAR = 6           ' einsammelbare Sterne auf dem Feld
+DIM NSTAR = 6           ' collectible stars on the field
 DIM star_r = ZEROS(NSTAR)
 DIM star_c = ZEROS(NSTAR)
 DIM star_on = ZEROS(NSTAR)
 DIM musicOn = TRUE
 DIM prevM = FALSE
-DIM NPART = 140         ' Partikel-Pool (Funken/Staub/Explosion)
+DIM NPART = 140         ' particle pool (sparks/dust/explosion)
 DIM par_x = ZEROS(NPART)
 DIM par_y = ZEROS(NPART)
 DIM par_vx = ZEROS(NPART)
@@ -99,18 +99,18 @@ DIM par_life = ZEROS(NPART)
 DIM par_r = ZEROS(NPART)
 DIM par_g = ZEROS(NPART)
 DIM par_b = ZEROS(NPART)
-DIM NSTREAK = 8         ' Hard-Drop-Lichtspuren
+DIM NSTREAK = 8         ' hard-drop light streaks
 DIM str_x = ZEROS(NSTREAK)
 DIM str_y0 = ZEROS(NSTREAK)
 DIM str_y1 = ZEROS(NSTREAK)
 DIM str_life = ZEROS(NSTREAK)
-DIM shockLife = 0       ' Combo-Schockwelle
+DIM shockLife = 0       ' combo shockwave
 DIM shockX AS DOUBLE = 0.0
 DIM shockY AS DOUBLE = 0.0
-DIM NBG = 40            ' Hintergrund-Sterne
+DIM NBG = 40            ' background stars
 DIM bgstar_x = ZEROS(NBG)
 DIM bgstar_y = ZEROS(NBG)
-DIM lightning = 0       ' Blitz-Countdown
+DIM lightning = 0       ' lightning countdown
 DIM boltX = 0
 DIM gState$ = "title"   ' title | play | pause | options | enter
 DIM sfxOn = TRUE
@@ -143,7 +143,7 @@ FUNC COLOR_FOR(id)
     RETURN [200, 200, 200]
 ENDFUNC
 
-' Buchstabe einer Sonderkiste (ab id 8)
+' letter for a special box (id >= 8)
 FUNC PU_LABEL$(id)
     IF id = 8 THEN RETURN "B"
     IF id = 9 THEN RETURN "L"
@@ -166,31 +166,31 @@ SUB SfxOver()
     IF sfxOn THEN SOUND.PLAY 5, "c1"
 ENDSUB
 
-' eingaengige Schleife (original RPG-"overworld"-Theme, kein Copyright)
+' catchy loop (original overworld theme)
 SUB StartMusic()
     DIM mel$ = "[c5 e5 g5 e5] [a4 c5 e5 c5] [f4 a4 c5 [d5 c5]] [g4 b4 d5 ~] [e5 g5 [a5 g5] e5] [d5 f5 [e5 d5] c5] [c5 [b4 c5] d5 e5] [c5 ~ ~ ~]"
     DIM bas$ = "[[c2 c3]*4] [[a1 a2]*4] [[f1 f2]*4] [[g1 g2]*4] [[c2 c3]*4] [[d2 d3]*2 [f1 f2]*2] [[g1 g2]*2 [g1 b1]*2] [[c2 c3]*4]"
     SOUND.NOTE "< " + mel$ + " , " + bas$ + " >", TRUE
 ENDSUB
 
-' kniffligere Steine geben mehr Punkte
+' trickier pieces score more
 FUNC PIECE_POINTS(id)
     SWITCH id
         CASE 1: RETURN 10    ' I
         CASE 2: RETURN 15    ' J
         CASE 3: RETURN 15    ' L
-        CASE 4: RETURN 5     ' O (am einfachsten)
+        CASE 4: RETURN 5     ' O (easiest)
         CASE 5: RETURN 20    ' S
-        CASE 6: RETURN 25    ' T (am kniffligsten)
+        CASE 6: RETURN 25    ' T (trickiest)
         CASE 7: RETURN 20    ' Z
-        CASE 8: RETURN 0     ' Sonderkisten: Punkte kommen vom Effekt
+        CASE 8: RETURN 0     ' specials: points come from the effect
         CASE 9: RETURN 0
         CASE 10: RETURN 0
     ENDSWITCH
     RETURN 10
 ENDFUNC
 
-' fliegendes Punkte-Popup an einer Bildschirmposition starten
+' start a flying score popup at a screen position
 SUB AddPopup(sx, sy, val)
     FOR pi = 0 TO NPOP - 1
         IF pop_life[pi] <= 0 THEN
@@ -215,7 +215,7 @@ SUB AddPart(x, y, vx, vy, lifev, rr, gg, bb)
     NEXT qi
 ENDSUB
 
-' n Funken radial verstreuen
+' scatter n sparks radially
 SUB Burst(x, y, n, spd, rr, gg, bb)
     FOR qj = 1 TO n
         ang = RND(1) * 6.2832
@@ -233,7 +233,7 @@ SUB AddStreak(x, y0v, y1v)
     NEXT qk
 ENDSUB
 
-' sichtbare 90-Grad-Drehung des Decks (dir +1 = CW, -1 = CCW)
+' visible 90-degree deck rotation (dir +1 = CW, -1 = CCW)
 SUB AnimateTilt(dir)
     cx = AX + AREA / 2
     cy = AY + AREA / 2
@@ -241,7 +241,7 @@ SUB AnimateTilt(dir)
         ang = dir * (3.14159 / 2.0) * f / 8.0
         sa = SIN(ang)
         ca = COS(ang)
-        scl = 1.0 + 0.18 * SIN(ABS(ang))   ' Kamera-Punch: zoomt rein
+        scl = 1.0 + 0.18 * SIN(ABS(ang))   ' camera punch: zooms in
         CLS
         DRAWCOLOR 12, 26, 44
         RECT 0, 0, SCRW, SCRH, TRUE
@@ -264,7 +264,7 @@ SUB AnimateTilt(dir)
     NEXT f
 ENDSUB
 
-' Y-Position, auf der die aktuelle Kiste landen wuerde (Ghost)
+' Y where the current box would land (ghost)
 FUNC GhostY()
     gy = PieceY
     DO
@@ -277,18 +277,18 @@ ENDFUNC
 
 SUB RollNext()
     IF RND(1) < 0.15 THEN
-        NextPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]]   ' Sonderkiste (1 Zelle)
+        NextPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]]   ' special box (1 cell)
         rp = RND(1)
         IF rp < 0.25 THEN
-            NextColor = 8       ' Bombe
+            NextColor = 8       ' bomb
         ELSEIF rp < 0.47 THEN
-            NextColor = 9       ' Laser
+            NextColor = 9       ' laser
         ELSEIF rp < 0.60 THEN
-            NextColor = 10      ' Gold
+            NextColor = 10      ' gold
         ELSEIF rp < 0.80 THEN
-            NextColor = 11      ' Anker (zaehlt doppelt fuers Drehmoment)
+            NextColor = 11      ' anchor (double torque weight)
         ELSE
-            NextColor = 12      ' Joker (fuellt seine Reihe auf)
+            NextColor = 12      ' joker (fills its row)
         ENDIF
         RETURN
     ENDIF
@@ -336,7 +336,7 @@ SUB LockPiece()
                 bc = PieceX + c
                 IF br >= 0 AND br < Rows AND bc >= 0 AND bc < Cols THEN
                     Board[br, bc] = PieceColor
-                    ' Sonderkiste hier merken (PieceColor liest nativ zuverlaessig)
+                    ' record special here (PieceColor reads reliably native)
                     IF PieceColor >= 8 ANDALSO PieceColor <> 11 THEN
                         puKind = PieceColor : puBr = CINT(br) : puBc = CINT(bc)
                     ENDIF
@@ -347,7 +347,7 @@ SUB LockPiece()
 ENDSUB
 
 SUB ClearLines()
-    ' volle Reihen aufblitzen + nach innen schrumpfen lassen, dann Funken
+    ' flash full rows + shrink inward, then sparks
     fullrows = []
     FOR fr0 = 0 TO Rows - 1
         isfull = TRUE
@@ -407,7 +407,7 @@ SUB TryRotate()
     ENDIF
 ENDSUB
 
-' Drehmoment: >0 = rechts-lastig, <0 = links-lastig
+' torque: >0 = right-heavy, <0 = left-heavy
 FUNC Torque()
     tq = 0.0
     cen = (Cols - 1) / 2.0
@@ -416,7 +416,7 @@ FUNC Torque()
             cellv = Board[r, c]
             IF cellv <> 0 THEN
                 w = c - cen
-                IF cellv = 11 THEN w = w * 2.0   ' Anker ist schwer
+                IF cellv = 11 THEN w = w * 2.0   ' anchor is heavy
                 tq = tq + w
             ENDIF
         NEXT c
@@ -424,8 +424,8 @@ FUNC Torque()
     RETURN tq
 ENDFUNC
 
-' Nach dem Kippen fallen die Kisten auf den neuen Boden (pro Spalte
-' verdichten) - schliesst Luecken, Kisten bleiben erhalten.
+' after a tilt, boxes fall onto the new floor (compact per
+' column) - closes gaps, boxes are preserved.
 SUB SettleDown()
     FOR c = 0 TO Cols - 1
         write = Rows - 1
@@ -440,12 +440,12 @@ SUB SettleDown()
     NEXT c
 ENDSUB
 
-' Bei zu grosser Schlagseite kippt das Deck 90 Grad in Richtung der
-' schweren Seite; die Kisten fallen auf den neuen Boden und schliessen
-' Luecken. Hysterese: danach erst wieder scharf, wenn ausbalanciert.
+' on too much list the deck tips 90 degrees toward the heavy
+' side; boxes fall onto the new floor and close gaps.
+' hysteresis: re-arms only after a few locks.
 SUB ApplyTilt()
     tq = Torque()
-    ' nach einem Kippen 2-5 Zuege Schonfrist, dann wieder scharf
+    ' 2-5 locks of grace after a tilt, then re-arm
     IF tiltArmed = FALSE THEN
         rearmIn = rearmIn - 1
         IF rearmIn <= 0 THEN tiltArmed = TRUE
@@ -454,7 +454,7 @@ SUB ApplyTilt()
     IF tq > TILT_HIGH THEN
         SfxTilt()
         AnimateTilt(1)
-        Board = TRANSPOSE(REVERSE(Board))   ' CW: rechte Seite nach unten
+        Board = TRANSPOSE(REVERSE(Board))   ' CW: right side goes down
         tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
         ClearLines()
@@ -464,7 +464,7 @@ SUB ApplyTilt()
     ELSEIF tq < -TILT_HIGH THEN
         SfxTilt()
         AnimateTilt(-1)
-        Board = REVERSE(TRANSPOSE(Board))   ' CCW: linke Seite nach unten
+        Board = REVERSE(TRANSPOSE(Board))   ' CCW: left side goes down
         tmp = Rows : Rows = Cols : Cols = tmp
         SettleDown()
         ClearLines()
@@ -474,7 +474,7 @@ SUB ApplyTilt()
     ENDIF
 ENDSUB
 
-' Sonderkiste ausloesen: Bombe (3x3), Laser (Reihe+Spalte), Gold (Punkte)
+' trigger special: bomb (3x3), laser (row+col), gold (points)
 SUB TriggerPowerup(kind, br, bc)
     IF kind = 8 THEN
         FOR dr = -1 TO 1
@@ -518,7 +518,7 @@ SUB TriggerPowerup(kind, br, bc)
     ClearLines()
 ENDSUB
 
-' einen Stern auf eine freie Zelle im oberen Feldbereich setzen
+' place a star on a free cell in the upper field
 SUB SpawnStar()
     rrow = 2 + INT(RND(1) * (Rows / 2))
     rcol = INT(RND(1) * Cols)
@@ -533,7 +533,7 @@ SUB SpawnStar()
     NEXT si
 ENDSUB
 
-' Sterne einsammeln, die die fallende Kiste gerade ueberlappt
+' collect stars the falling box overlaps
 SUB CollectStars()
     FOR r = 0 TO 3
         FOR c = 0 TO 3
@@ -566,8 +566,8 @@ SUB LockSequence()
     IF pts > 0 THEN AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
     ClearLines()
     ApplyTilt()
-    IF ABS(Torque()) < TILT_LOW THEN Score = Score + 20   ' Bonus fuers Schiff-im-Lot-Halten
-    ' Combo-Kette auswerten
+    IF ABS(Torque()) < TILT_LOW THEN Score = Score + 20   ' bonus for keeping the ship level
+    ' evaluate combo chain
     IF clearedTurn > 0 THEN
         combo = combo + 1
         IF combo >= 2 THEN
@@ -604,7 +604,7 @@ SUB HardDrop()
     LockSequence()
 ENDSUB
 
-' --- Zeichnen ------------------------------------------------
+' --- Drawing -------------------------------------------------
 SUB DrawCell(r, c, id)
     IF r < 0 OR r >= Rows OR c < 0 OR c >= Cols THEN RETURN
     px = BX + c * CELL
@@ -629,7 +629,7 @@ SUB DrawCell(r, c, id)
     ENDIF
 ENDSUB
 
-' kleine 4x4-Vorschau (naechster Stein)
+' small 4x4 preview (next piece)
 SUB DrawMini(p, colId, ox0, oy0, csz)
     FOR mi = 0 TO 3
         FOR mj = 0 TO 3
@@ -654,7 +654,7 @@ SUB DrawCloud(x, y)
 ENDSUB
 
 SUB DrawSky()
-    ' Mond (Scheibe aus Scanlines)
+    ' moon (disc of scanlines)
     mx = SCRW - 92
     my = 66
     mr = 26
@@ -663,10 +663,10 @@ SUB DrawSky()
         hw = CINT(SQR(mr * mr - yy * yy))
         LINE mx - hw, my + yy, mx + hw, my + yy
     NEXT yy
-    ' driftende Wolken
+    ' drifting clouds
     DrawCloud((INT(TICK() / 60) MOD (SCRW + 200)) - 180, 48)
     DrawCloud((INT(TICK() / 90) MOD (SCRW + 240)) - 220, 104)
-    ' funkelnde Sterne
+    ' twinkling stars
     FOR bi = 0 TO NBG - 1
         tw = (SIN(TICK() / 280.0 + bi) + 1) / 2
         sb = CINT(90 + 140 * tw)
@@ -677,7 +677,7 @@ ENDSUB
 
 SUB Draw()
     CLS
-    ' Stapelhoehe (fuer Stimmung + Gefahr)
+    ' stack height (for mood + danger)
     topRow = Rows
     rfound = FALSE
     FOR r = 0 TO Rows - 1
@@ -691,11 +691,11 @@ SUB Draw()
     danger = topRow <= 3
     fillF = (Rows - topRow) / (Rows + 0.0)
     IF fillF < 0.0 THEN fillF = 0.0
-    ' Stimmungs-Hintergrund: ruhig blau -> stuermisch dunkel/rot je voller
+    ' mood background: calm blue -> stormy dark/red as it fills
     DRAWCOLOR CINT(12 + 60 * fillF), CINT(26 - 14 * fillF), CINT(44 - 22 * fillF)
     RECT 0, 0, SCRW, SCRH, TRUE
     DrawSky()
-    ' kippende, wogende See
+    ' listing, rolling sea
     listPx = Torque() * 0.7
     IF listPx > 70 THEN listPx = 70
     IF listPx < -70 THEN listPx = -70
@@ -709,17 +709,17 @@ SUB Draw()
             LINE sxx, hy + wob + slope, sxx + 24, hy + wob + slope
         NEXT sxx
     NEXT hyi
-    ' Screenshake beim Kippen
+    ' screenshake on tilt
     ox = 0 : oy = 0
     IF shake > 0 THEN
         ox = CINT(SIN(shake * 1.9) * shake * 0.7)
         oy = CINT(COS(shake * 2.3) * shake * 0.5)
         shake = shake - 1
     ENDIF
-    ' Brett in der quadratischen See-Flaeche zentrieren (+ Shake)
+    ' center board in the square sea area (+ shake)
     BX = AX + CINT((AREA - Cols * CELL) / 2) + ox
     BY = AY + CINT((AREA - Rows * CELL) / 2) + oy
-    ' Gefahr-Puls: Rahmen pulsiert rot, wenn der Stapel oben ankommt
+    ' danger pulse: frame reddens when the stack nears the top
     fr2 = 70 : fg2 = 52 : fb2 = 34
     IF danger THEN
         pulse = (SIN(TICK() / 110.0) + 1) / 2
@@ -734,7 +734,7 @@ SUB Draw()
             DrawCell r, c, Board[r, c]
         NEXT c
     NEXT r
-    ' einsammelbare Sterne (als Raute)
+    ' collectible stars (as diamonds)
     FOR si = 0 TO NSTAR - 1
         IF star_on[si] = 1 THEN
             sxp = BX + star_c[si] * CELL + CELL / 2
@@ -764,14 +764,14 @@ SUB Draw()
             NEXT c
         NEXT r
     ENDIF
-    ' Kopfzeile
+    ' header
     DRAWCOLOR 235, 235, 245
     TEXT AX, 28, "TILT - Schlagseite"
     DRAWCOLOR 200, 210, 160
     TEXT AX + AREA - 150, 28, "Best: " + hs_score[0]
     DRAWCOLOR 150, 165, 180
     TEXT AX, 52, "Pfeile/WASD  Space=Drop  M=Musik  ESC=Ende"
-    ' untere Leiste
+    ' bottom bar
     DRAWCOLOR 180, 195, 210
     TEXT AX, AY + AREA + 22, "Score:  " + Score
     TEXT AX, AY + AREA + 44, "Reihen: " + LinesCleared
@@ -779,7 +779,7 @@ SUB Draw()
     DRAWCOLOR 150, 165, 180
     TEXT AX + AREA - 66, AY + AREA + 6, "Naechste"
     DrawMini NextPiece, NextColor, AX + AREA - 62, AY + AREA + 24, 13
-    ' Schlagseite-Anzeige
+    ' list meter
     mxc = AX + AREA / 2
     myc = AY + AREA + 96
     DRAWCOLOR 50, 62, 78
@@ -803,7 +803,7 @@ SUB Draw()
         DRAWCOLOR 130, 145, 160
         TEXT mxc - 56, myc + 22, "wieder scharf in " + rearmIn
     ENDIF
-    ' Flash-Banner beim Kippen
+    ' flash banner on tilt
     IF flash > 0 THEN
         DRAWCOLOR 250, 230, 90
         TEXT AX + AREA / 2 - 95, AY + AREA / 2 - 60, "* SCHLAGSEITE! *"
@@ -814,7 +814,7 @@ SUB Draw()
         TEXT AX + AREA / 2 - 60, AY + AREA / 2 + 30, "COMBO x" + comboShow
         comboFlash = comboFlash - 1
     ENDIF
-    ' fliegende Punkte-Popups (grosse Werte golden)
+    ' flying score popups (large values gold)
     FOR pi = 0 TO NPOP - 1
         IF pop_life[pi] > 0 THEN
             pop_y[pi] = pop_y[pi] - 1.4
@@ -829,7 +829,7 @@ SUB Draw()
             TEXT CINT(pop_x[pi]), CINT(pop_y[pi]), "+" + CINT(pop_val[pi])
         ENDIF
     NEXT pi
-    ' Partikel (Funken / Staub / Explosion)
+    ' particles (sparks / dust / explosion)
     FOR qi = 0 TO NPART - 1
         IF par_life[qi] > 0 THEN
             par_x[qi] = par_x[qi] + par_vx[qi]
@@ -840,7 +840,7 @@ SUB Draw()
             RECT CINT(par_x[qi]), CINT(par_y[qi]), 3, 3, TRUE
         ENDIF
     NEXT qi
-    ' Hard-Drop-Lichtspuren
+    ' hard-drop light streaks
     FOR qi = 0 TO NSTREAK - 1
         IF str_life[qi] > 0 THEN
             br = CINT(120 + 120 * (str_life[qi] / 8.0))
@@ -849,14 +849,14 @@ SUB Draw()
             str_life[qi] = str_life[qi] - 1
         ENDIF
     NEXT qi
-    ' Combo-Schockwelle
+    ' combo shockwave
     IF shockLife > 0 THEN
         sz = (17 - shockLife) * 11
         DRAWCOLOR 255, 180, 80
         RECT shockX - sz, shockY - sz, sz * 2, sz * 2, FALSE
         shockLife = shockLife - 1
     ENDIF
-    ' Sturm bei Gefahr: Regen + gelegentlicher Blitz
+    ' storm on danger: rain + occasional lightning
     IF danger THEN
         DRAWCOLOR 120, 140, 180
         FOR ri = 0 TO 24
@@ -897,7 +897,7 @@ SUB Draw()
     SCREENFLIP
 ENDSUB
 
-' ── Highscore-Tabelle (Top 5, mit Kuerzel) ───────────────────
+' --- Highscore table (top 5, with initials) -----------------
 SUB LoadHigh()
     IF LEN(DIR$("tmp/tilt_high.txt")) = 0 THEN RETURN
     lines = SPLIT(TXTREADER$("tmp/tilt_high.txt"), CHR$(10))
@@ -937,7 +937,7 @@ SUB HS_INSERT(pos, nm$, sc)
     SaveHigh()
 ENDSUB
 
-' ── neue Runde vorbereiten ───────────────────────────────────
+' --- prepare a new round ------------------------------------
 SUB ResetGame()
     Rows = 15 : Cols = 10
     Board = RESHAPE([0], [15, 10])
@@ -953,7 +953,7 @@ SUB ResetGame()
     lastDrop = TICK()
 ENDSUB
 
-' ── Titelschirm ──────────────────────────────────────────────
+' --- Title screen -------------------------------------------
 SUB DrawTitle()
     CLS
     DRAWCOLOR 12, 26, 44
@@ -975,7 +975,7 @@ SUB DrawTitle()
     TEXT AX + 20, 510, "O = Optionen   M = Musik   ESC = Beenden"
 ENDSUB
 
-' ── Optionen ─────────────────────────────────────────────────
+' --- Options ------------------------------------------------
 SUB DrawOptions()
     CLS
     DRAWCOLOR 12, 26, 44
@@ -1013,13 +1013,13 @@ SUB UpdateOptions(eU, eDn, eEnter, eEsc)
     IF eEsc THEN gState$ = "title"
 ENDSUB
 
-' Index 0..25 = A..Z, 26 = Leerzeichen
+' index 0..25 = A..Z, 26 = space
 FUNC ENTER_CHAR$(idx)
     IF idx >= 26 THEN RETURN " "
     RETURN CHR$(65 + idx)
 ENDFUNC
 
-' ── Kuerzel-Eingabe nach Highscore ───────────────────────────
+' --- Initials entry after a highscore -----------------------
 SUB DrawEnter()
     CLS
     DRAWCOLOR 12, 26, 44
@@ -1074,7 +1074,7 @@ IF testmode ANDALSO testtab$ = "tilt" THEN
         NEXT cc
     NEXT rr
     Board[14, 0] = 5 : Board[14, 1] = 5
-    Board[12, 7] = 0 : Board[13, 8] = 0 : Board[11, 9] = 0   ' Luecken
+    Board[12, 7] = 0 : Board[13, 8] = 0 : Board[11, 9] = 0   ' gaps
     Draw() : SLEEP 30 : Draw()
     GFX.SAVE_SCREENSHOT("tmp/tilt_before.png")
     ApplyTilt()
@@ -1107,7 +1107,7 @@ IF testmode ANDALSO testtab$ = "pu" THEN
         Board[14, cc] = 3 : Board[13, cc] = 4 : Board[12, cc] = 5
     NEXT cc
     Board[14, 0] = 8 : Board[14, 1] = 9 : Board[14, 8] = 10   ' B / L / $
-    Board[13, 0] = 11 : Board[13, 1] = 12                     ' A (Anker) / * (Joker)
+    Board[13, 0] = 11 : Board[13, 1] = 12                     ' A (anchor) / * (joker)
     star_on[0] = 1 : star_r[0] = 5 : star_c[0] = 7
     star_on[1] = 1 : star_r[1] = 4 : star_c[1] = 2
     CurrentPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]] : PieceColor = 8
@@ -1192,7 +1192,7 @@ IF testmode THEN
     END
 ENDIF
 
-' --- Hauptschleife (Zustandsautomat) ------------------------
+' --- Main loop (state machine) ------------------------------
 DO
     now = TICK()
     kL = GFX.KEYSTATE("Left") OR GFX.KEYSTATE("A")
