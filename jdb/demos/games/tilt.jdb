@@ -22,7 +22,7 @@ AY = 80
 BX = AX                 ' Brett-Ursprung (pro Frame zentriert gesetzt)
 BY = AY
 
-TILT_HIGH = 50          ' ab dieser Schlagseite kippt das Deck
+TILT_HIGH = 40          ' ab dieser Schlagseite kippt das Deck (empfindlicher)
 TILT_LOW = 18           ' Schiff "im Lot" - Schwelle fuer den Balance-Bonus
 tiltArmed = TRUE
 
@@ -54,6 +54,14 @@ DIM pop_x = ZEROS(NPOP)
 DIM pop_y = ZEROS(NPOP)
 DIM pop_life = ZEROS(NPOP)
 DIM pop_val = ZEROS(NPOP)
+DIM combo = 0           ' Kette aufeinanderfolgender Raeumungen
+DIM clearedTurn = 0     ' in diesem Zug geraeumte Reihen
+DIM comboFlash = 0
+DIM comboShow = 0
+DIM NSTAR = 6           ' einsammelbare Sterne auf dem Feld
+DIM star_r = ZEROS(NSTAR)
+DIM star_c = ZEROS(NSTAR)
+DIM star_on = ZEROS(NSTAR)
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -67,6 +75,8 @@ FUNC COLOR_FOR(id)
         CASE 8: RETURN [240, 110, 60]
         CASE 9: RETURN [120, 230, 245]
         CASE 10: RETURN [245, 215, 80]
+        CASE 11: RETURN [110, 120, 140]
+        CASE 12: RETURN [245, 200, 250]
     ENDSWITCH
     RETURN [200, 200, 200]
 ENDFUNC
@@ -76,6 +86,8 @@ FUNC PU_LABEL$(id)
     IF id = 8 THEN RETURN "B"
     IF id = 9 THEN RETURN "L"
     IF id = 10 THEN RETURN "$"
+    IF id = 11 THEN RETURN "A"
+    IF id = 12 THEN RETURN "*"
     RETURN ""
 ENDFUNC
 
@@ -155,15 +167,19 @@ FUNC GhostY()
 ENDFUNC
 
 SUB RollNext()
-    IF RND(1) < 0.12 THEN
+    IF RND(1) < 0.15 THEN
         NextPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]]   ' Sonderkiste (1 Zelle)
         rp = RND(1)
-        IF rp < 0.45 THEN
+        IF rp < 0.25 THEN
             NextColor = 8       ' Bombe
-        ELSEIF rp < 0.85 THEN
+        ELSEIF rp < 0.47 THEN
             NextColor = 9       ' Laser
-        ELSE
+        ELSEIF rp < 0.60 THEN
             NextColor = 10      ' Gold
+        ELSEIF rp < 0.80 THEN
+            NextColor = 11      ' Anker (zaehlt doppelt fuers Drehmoment)
+        ELSE
+            NextColor = 12      ' Joker (fuellt seine Reihe auf)
         ENDIF
         RETURN
     ENDIF
@@ -225,6 +241,7 @@ SUB ClearLines()
         NEXT i
         Board = kept
         LinesCleared = LinesCleared + cleared
+        clearedTurn = clearedTurn + cleared
         gain = cleared * 100 * cleared
         Score = Score + gain
         Level = 1 + INT(LinesCleared / 10)
@@ -254,7 +271,11 @@ FUNC Torque()
     cen = (Cols - 1) / 2.0
     FOR r = 0 TO Rows - 1
         FOR c = 0 TO Cols - 1
-            IF Board[r, c] <> 0 THEN tq = tq + (c - cen)
+            IF Board[r, c] <> 0 THEN
+                w = c - cen
+                IF Board[r, c] = 11 THEN w = w * 2.0   ' Anker ist schwer
+                tq = tq + w
+            ENDIF
         NEXT c
     NEXT r
     RETURN tq
@@ -340,25 +361,69 @@ SUB TriggerPowerup(kind, br, bc)
         Score = Score + 500
         AddPopup(BX + bc * CELL, BY + br * CELL, 500)
         SfxClear()
+    ELSEIF kind = 12 THEN
+        FOR cc2 = 0 TO Cols - 1
+            IF Board[br, cc2] = 0 THEN Board[br, cc2] = 4
+        NEXT cc2
+        Score = Score + 100
+        AddPopup(BX + bc * CELL, BY + br * CELL, 100)
+        flash = 14
+        SfxClear()
     ENDIF
     SettleDown()
     ClearLines()
 ENDSUB
 
+' einen Stern auf eine freie Zelle im oberen Feldbereich setzen
+SUB SpawnStar()
+    rrow = 2 + INT(RND(1) * (Rows / 2))
+    rcol = INT(RND(1) * Cols)
+    IF Board[rrow, rcol] <> 0 THEN RETURN
+    FOR si = 0 TO NSTAR - 1
+        IF star_on[si] = 0 THEN
+            star_r[si] = rrow
+            star_c[si] = rcol
+            star_on[si] = 1
+            RETURN
+        ENDIF
+    NEXT si
+ENDSUB
+
+' Sterne einsammeln, die die fallende Kiste gerade ueberlappt
+SUB CollectStars()
+    FOR pr = 0 TO 3
+        FOR pc = 0 TO 3
+            IF CurrentPiece[pr, pc] <> 0 THEN
+                cbr = PieceY + pr
+                cbc = PieceX + pc
+                FOR si = 0 TO NSTAR - 1
+                    IF star_on[si] = 1 ANDALSO star_r[si] = cbr ANDALSO star_c[si] = cbc THEN
+                        star_on[si] = 0
+                        Score = Score + 250
+                        AddPopup(BX + cbc * CELL, BY + cbr * CELL, 250)
+                        SfxClear()
+                    ENDIF
+                NEXT si
+            ENDIF
+        NEXT pc
+    NEXT pr
+ENDSUB
+
 SUB LockSequence()
+    clearedTurn = 0
     LockPiece()
     SfxLock()
     pts = PIECE_POINTS(PieceColor)
     Score = Score + pts
     IF pts > 0 THEN AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
-    ' Sonderkisten im gerade gesetzten Stein ausloesen
+    ' Sonderkisten im gerade gesetzten Stein ausloesen (Anker 11 zaehlt nur Gewicht)
     FOR pr = 0 TO 3
         FOR pc = 0 TO 3
             IF CurrentPiece[pr, pc] <> 0 THEN
                 pbr = PieceY + pr
                 pbc = PieceX + pc
                 IF pbr >= 0 ANDALSO pbr < Rows ANDALSO pbc >= 0 ANDALSO pbc < Cols THEN
-                    IF Board[pbr, pbc] >= 8 THEN TriggerPowerup(Board[pbr, pbc], pbr, pbc)
+                    IF Board[pbr, pbc] >= 8 ANDALSO Board[pbr, pbc] <> 11 THEN TriggerPowerup(Board[pbr, pbc], pbr, pbc)
                 ENDIF
             ENDIF
         NEXT pc
@@ -366,6 +431,19 @@ SUB LockSequence()
     ClearLines()
     ApplyTilt()
     IF ABS(Torque()) < TILT_LOW THEN Score = Score + 20   ' Bonus fuers Schiff-im-Lot-Halten
+    ' Combo-Kette auswerten
+    IF clearedTurn > 0 THEN
+        combo = combo + 1
+        IF combo >= 2 THEN
+            cbonus = (combo - 1) * 75
+            Score = Score + cbonus
+            comboShow = combo
+            comboFlash = 45
+        ENDIF
+    ELSE
+        combo = 0
+    ENDIF
+    IF RND(1) < 0.30 THEN SpawnStar()
     SpawnPiece()
     IF CheckCollision(CurrentPiece, PieceX, PieceY) THEN
         GameOver = TRUE
@@ -453,6 +531,18 @@ SUB Draw()
             DrawCell r, c, Board[r, c]
         NEXT c
     NEXT r
+    ' einsammelbare Sterne (als Raute)
+    FOR si = 0 TO NSTAR - 1
+        IF star_on[si] = 1 THEN
+            sxp = BX + star_c[si] * CELL + CELL / 2
+            syp = BY + star_r[si] * CELL + CELL / 2
+            DRAWCOLOR 250, 225, 90
+            LINE sxp, syp - 9, sxp + 9, syp
+            LINE sxp + 9, syp, sxp, syp + 9
+            LINE sxp, syp + 9, sxp - 9, syp
+            LINE sxp - 9, syp, sxp, syp - 9
+        ENDIF
+    NEXT si
     IF NOT GameOver THEN
         gy = GhostY()
         FOR r = 0 TO 3
@@ -515,6 +605,11 @@ SUB Draw()
         DRAWCOLOR 250, 230, 90
         TEXT AX + AREA / 2 - 95, AY + AREA / 2 - 60, "* SCHLAGSEITE! *"
         flash = flash - 1
+    ENDIF
+    IF comboFlash > 0 THEN
+        DRAWCOLOR 255, 180, 80
+        TEXT AX + AREA / 2 - 60, AY + AREA / 2 + 30, "COMBO x" + comboShow
+        comboFlash = comboFlash - 1
     ENDIF
     ' fliegende Punkte-Popups
     FOR pi = 0 TO NPOP - 1
@@ -586,7 +681,10 @@ IF testmode ANDALSO testtab$ = "pu" THEN
     FOR cc = 3 TO 6
         Board[14, cc] = 3 : Board[13, cc] = 4 : Board[12, cc] = 5
     NEXT cc
-    Board[14, 0] = 8 : Board[14, 1] = 9 : Board[14, 8] = 10   ' Kisten-Buchstaben zeigen
+    Board[14, 0] = 8 : Board[14, 1] = 9 : Board[14, 8] = 10   ' B / L / $
+    Board[13, 0] = 11 : Board[13, 1] = 12                     ' A (Anker) / * (Joker)
+    star_on[0] = 1 : star_r[0] = 5 : star_c[0] = 7
+    star_on[1] = 1 : star_r[1] = 4 : star_c[1] = 2
     CurrentPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]] : PieceColor = 8
     PieceX = 3 : PieceY = 1
     Draw() : SLEEP 30 : Draw()
@@ -655,6 +753,7 @@ DO
         lastDrop = now
     ENDIF
 
+    CollectStars()
     Draw()
     IF GFX.KEYSTATE("Escape") THEN EXITDO
     SLEEP 16
