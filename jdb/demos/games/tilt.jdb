@@ -76,6 +76,23 @@ DIM star_c = ZEROS(NSTAR)
 DIM star_on = ZEROS(NSTAR)
 DIM musicOn = TRUE
 DIM prevM = FALSE
+DIM NPART = 140         ' Partikel-Pool (Funken/Staub/Explosion)
+DIM par_x = ZEROS(NPART)
+DIM par_y = ZEROS(NPART)
+DIM par_vx = ZEROS(NPART)
+DIM par_vy = ZEROS(NPART)
+DIM par_life = ZEROS(NPART)
+DIM par_r = ZEROS(NPART)
+DIM par_g = ZEROS(NPART)
+DIM par_b = ZEROS(NPART)
+DIM NSTREAK = 8         ' Hard-Drop-Lichtspuren
+DIM str_x = ZEROS(NSTREAK)
+DIM str_y0 = ZEROS(NSTREAK)
+DIM str_y1 = ZEROS(NSTREAK)
+DIM str_life = ZEROS(NSTREAK)
+DIM shockLife = 0       ' Combo-Schockwelle
+DIM shockX = 0
+DIM shockY = 0
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -147,6 +164,36 @@ SUB AddPopup(sx, sy, val)
     NEXT pi
 ENDSUB
 
+SUB AddPart(x, y, vx, vy, lifev, rr, gg, bb)
+    FOR qi = 0 TO NPART - 1
+        IF par_life[qi] <= 0 THEN
+            par_x[qi] = x : par_y[qi] = y
+            par_vx[qi] = vx : par_vy[qi] = vy
+            par_life[qi] = lifev
+            par_r[qi] = rr : par_g[qi] = gg : par_b[qi] = bb
+            RETURN
+        ENDIF
+    NEXT qi
+ENDSUB
+
+' n Funken radial verstreuen
+SUB Burst(x, y, n, spd, rr, gg, bb)
+    FOR qj = 1 TO n
+        ang = RND(1) * 6.2832
+        sp = spd * (0.4 + RND(1))
+        AddPart(x, y, COS(ang) * sp, SIN(ang) * sp - 1.2, 22 + INT(RND(1) * 14), rr, gg, bb)
+    NEXT qj
+ENDSUB
+
+SUB AddStreak(x, y0v, y1v)
+    FOR qk = 0 TO NSTREAK - 1
+        IF str_life[qk] <= 0 THEN
+            str_x[qk] = x : str_y0[qk] = y0v : str_y1[qk] = y1v : str_life[qk] = 8
+            RETURN
+        ENDIF
+    NEXT qk
+ENDSUB
+
 ' sichtbare 90-Grad-Drehung des Decks (dir +1 = CW, -1 = CCW)
 SUB AnimateTilt(dir)
     cx = AX + AREA / 2
@@ -155,19 +202,21 @@ SUB AnimateTilt(dir)
         ang = dir * (3.14159 / 2.0) * f / 8.0
         sa = SIN(ang)
         ca = COS(ang)
+        scl = 1.0 + 0.18 * SIN(ABS(ang))   ' Kamera-Punch: zoomt rein
         CLS
         DRAWCOLOR 12, 26, 44
         RECT 0, 0, SCRW, SCRH, TRUE
         FOR r = 0 TO Rows - 1
             FOR c = 0 TO Cols - 1
                 IF Board[r, c] <> 0 THEN
-                    lx = (c + 0.5) * CELL - Cols * CELL / 2.0
-                    ly = (r + 0.5) * CELL - Rows * CELL / 2.0
+                    lx = ((c + 0.5) * CELL - Cols * CELL / 2.0) * scl
+                    ly = ((r + 0.5) * CELL - Rows * CELL / 2.0) * scl
                     rx = lx * ca - ly * sa
                     ry = lx * sa + ly * ca
+                    sz = CELL * scl
                     col = COLOR_FOR(Board[r, c])
                     DRAWCOLOR col[0], col[1], col[2]
-                    RECT cx + CINT(rx) - CELL / 2, cy + CINT(ry) - CELL / 2, CELL - 2, CELL - 2, TRUE
+                    RECT cx + CINT(rx) - CINT(sz / 2), cy + CINT(ry) - CINT(sz / 2), CINT(sz) - 2, CINT(sz) - 2, TRUE
                 ENDIF
             NEXT c
         NEXT r
@@ -253,6 +302,33 @@ SUB LockPiece()
 ENDSUB
 
 SUB ClearLines()
+    ' volle Reihen aufblitzen + nach innen schrumpfen lassen, dann Funken
+    fullrows = []
+    FOR fr0 = 0 TO Rows - 1
+        isfull = TRUE
+        FOR fc0 = 0 TO Cols - 1
+            IF Board[fr0, fc0] = 0 THEN isfull = FALSE
+        NEXT fc0
+        IF isfull THEN fullrows = APPEND(fullrows, fr0)
+    NEXT fr0
+    IF LEN(fullrows) > 0 THEN
+        FOR ff0 = 0 TO 3
+            FOR fi0 = 0 TO LEN(fullrows) - 1
+                rr4 = fullrows[fi0]
+                inset = ff0 * (CELL / 2 - 1)
+                DRAWCOLOR 255, 255, 255
+                RECT BX, BY + rr4 * CELL + inset, Cols * CELL, CELL - 2 * inset, TRUE
+            NEXT fi0
+            SCREENFLIP
+            SLEEP 16
+        NEXT ff0
+        FOR fi0 = 0 TO LEN(fullrows) - 1
+            rr4 = fullrows[fi0]
+            FOR sc0 = 0 TO Cols - 1 STEP 2
+                Burst(BX + sc0 * CELL + CELL / 2, BY + rr4 * CELL + CELL / 2, 3, 5, 250, 250, 200)
+            NEXT sc0
+        NEXT fi0
+    ENDIF
     kept = FILTER(LAMBDA row -> MIN(row) = 0, Board)
     cleared = Rows - LEN(kept)
     IF cleared > 0 THEN
@@ -365,6 +441,7 @@ SUB TriggerPowerup(kind, br, bc)
         Score = Score + 150
         AddPopup(BX + bc * CELL, BY + br * CELL, 150)
         shake = 18 : flash = 14
+        Burst(BX + bc * CELL + CELL / 2, BY + br * CELL + CELL / 2, 26, 7, 250, 160, 60)
         SfxTilt()
     ELSEIF kind = 9 THEN
         FOR cc2 = 0 TO Cols - 1
@@ -422,6 +499,7 @@ SUB CollectStars()
                         star_on[si] = 0
                         Score = Score + 250
                         AddPopup(BX + cbc * CELL, BY + cbr * CELL, 250)
+                        Burst(BX + cbc * CELL + CELL / 2, BY + cbr * CELL + CELL / 2, 14, 5, 250, 225, 90)
                         SfxClear()
                     ENDIF
                 NEXT si
@@ -434,6 +512,7 @@ SUB LockSequence()
     clearedTurn = 0
     LockPiece()
     SfxLock()
+    Burst(BX + (PieceX + 1) * CELL + CELL / 2, BY + (PieceY + 2) * CELL, 5, 2, 170, 160, 140)
     pts = PIECE_POINTS(PieceColor)
     Score = Score + pts
     IF pts > 0 THEN AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
@@ -460,6 +539,9 @@ SUB LockSequence()
             Score = Score + cbonus
             comboShow = combo
             comboFlash = 45
+            shockLife = 16
+            shockX = AX + AREA / 2
+            shockY = AY + AREA / 2
         ENDIF
     ELSE
         combo = 0
@@ -477,10 +559,16 @@ SUB LockSequence()
 ENDSUB
 
 SUB HardDrop()
+    sy0 = PieceY
     DO
         IF CheckCollision(CurrentPiece, PieceX, PieceY + 1) THEN EXITDO
         PieceY = PieceY + 1
     LOOP
+    FOR pr = 0 TO 3
+        FOR pc = 0 TO 3
+            IF CurrentPiece[pr, pc] <> 0 THEN AddStreak(BX + (PieceX + pc) * CELL + CELL / 2, BY + (sy0 + pr) * CELL, BY + (PieceY + pr) * CELL)
+        NEXT pc
+    NEXT pr
     LockSequence()
 ENDSUB
 
@@ -496,8 +584,12 @@ SUB DrawCell(r, c, id)
         col = COLOR_FOR(id)
         DRAWCOLOR col[0], col[1], col[2]
         RECT px + 1, py + 1, CELL - 2, CELL - 2, TRUE
-        DRAWCOLOR col[0] + 30, col[1] + 30, col[2] + 30
-        RECT px + 1, py + 1, CELL - 2, CELL - 2, FALSE
+        DRAWCOLOR col[0] + 55, col[1] + 55, col[2] + 55
+        RECT px + 1, py + 1, CELL - 2, 3, TRUE
+        RECT px + 1, py + 1, 3, CELL - 2, TRUE
+        DRAWCOLOR col[0] - 60, col[1] - 60, col[2] - 60
+        RECT px + 1, py + CELL - 4, CELL - 2, 3, TRUE
+        RECT px + CELL - 4, py + 1, 3, CELL - 2, TRUE
         IF id >= 8 THEN
             DRAWCOLOR 25, 25, 30
             TEXT px + CELL / 2 - 5, py + CELL / 2 - 9, PU_LABEL$(id)
@@ -545,7 +637,25 @@ SUB Draw()
     ' Brett in der quadratischen See-Flaeche zentrieren (+ Shake)
     BX = AX + CINT((AREA - Cols * CELL) / 2) + ox
     BY = AY + CINT((AREA - Rows * CELL) / 2) + oy
-    DRAWCOLOR 70, 52, 34
+    ' Gefahr-Puls: Rahmen pulsiert rot, wenn der Stapel oben ankommt
+    topRow = Rows
+    rfound = FALSE
+    FOR r = 0 TO Rows - 1
+        IF NOT rfound THEN
+            FOR c = 0 TO Cols - 1
+                IF Board[r, c] <> 0 THEN rfound = TRUE
+            NEXT c
+            IF rfound THEN topRow = r
+        ENDIF
+    NEXT r
+    fr2 = 70 : fg2 = 52 : fb2 = 34
+    IF topRow <= 3 THEN
+        pulse = (SIN(TICK() / 110.0) + 1) / 2
+        fr2 = CINT(70 + 170 * pulse)
+        fg2 = CINT(52 - 20 * pulse)
+        fb2 = CINT(34 - 10 * pulse)
+    ENDIF
+    DRAWCOLOR fr2, fg2, fb2
     RECT BX - 8, BY - 8, Cols * CELL + 16, Rows * CELL + 16, TRUE
     FOR r = 0 TO Rows - 1
         FOR c = 0 TO Cols - 1
@@ -632,17 +742,48 @@ SUB Draw()
         TEXT AX + AREA / 2 - 60, AY + AREA / 2 + 30, "COMBO x" + comboShow
         comboFlash = comboFlash - 1
     ENDIF
-    ' fliegende Punkte-Popups
+    ' fliegende Punkte-Popups (grosse Werte golden)
     FOR pi = 0 TO NPOP - 1
         IF pop_life[pi] > 0 THEN
             pop_y[pi] = pop_y[pi] - 1.4
             pop_life[pi] = pop_life[pi] - 1
             ff = pop_life[pi] / 55.0
-            br = CINT(80 + 175 * ff)
-            DRAWCOLOR br, br, 80
+            IF pop_val[pi] >= 200 THEN
+                DRAWCOLOR CINT(120 + 135 * ff), CINT(90 + 125 * ff), 40
+            ELSE
+                br = CINT(80 + 175 * ff)
+                DRAWCOLOR br, br, 90
+            ENDIF
             TEXT CINT(pop_x[pi]), CINT(pop_y[pi]), "+" + CINT(pop_val[pi])
         ENDIF
     NEXT pi
+    ' Partikel (Funken / Staub / Explosion)
+    FOR qi = 0 TO NPART - 1
+        IF par_life[qi] > 0 THEN
+            par_x[qi] = par_x[qi] + par_vx[qi]
+            par_y[qi] = par_y[qi] + par_vy[qi]
+            par_vy[qi] = par_vy[qi] + 0.18
+            par_life[qi] = par_life[qi] - 1
+            DRAWCOLOR par_r[qi], par_g[qi], par_b[qi]
+            RECT CINT(par_x[qi]), CINT(par_y[qi]), 3, 3, TRUE
+        ENDIF
+    NEXT qi
+    ' Hard-Drop-Lichtspuren
+    FOR qi = 0 TO NSTREAK - 1
+        IF str_life[qi] > 0 THEN
+            br = CINT(120 + 120 * (str_life[qi] / 8.0))
+            DRAWCOLOR br, br, 170
+            LINE str_x[qi], str_y0[qi], str_x[qi], str_y1[qi]
+            str_life[qi] = str_life[qi] - 1
+        ENDIF
+    NEXT qi
+    ' Combo-Schockwelle
+    IF shockLife > 0 THEN
+        sz = (17 - shockLife) * 11
+        DRAWCOLOR 255, 180, 80
+        RECT shockX - sz, shockY - sz, sz * 2, sz * 2, FALSE
+        shockLife = shockLife - 1
+    ENDIF
     IF GameOver THEN
         DRAWCOLOR 240, 90, 90
         TEXT AX + AREA / 2 - 80, AY + AREA / 2, "GAME OVER"
