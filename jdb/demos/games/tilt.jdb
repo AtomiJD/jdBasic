@@ -535,11 +535,11 @@ ENDSUB
 
 ' Sterne einsammeln, die die fallende Kiste gerade ueberlappt
 SUB CollectStars()
-    FOR pr = 0 TO 3
-        FOR pc = 0 TO 3
-            IF CurrentPiece[pr, pc] <> 0 THEN
-                cbr = PieceY + pr
-                cbc = PieceX + pc
+    FOR r = 0 TO 3
+        FOR c = 0 TO 3
+            IF CurrentPiece[r, c] <> 0 THEN
+                cbr = PieceY + r
+                cbc = PieceX + c
                 FOR si = 0 TO NSTAR - 1
                     IF star_on[si] = 1 ANDALSO star_r[si] = cbr ANDALSO star_c[si] = cbc THEN
                         star_on[si] = 0
@@ -550,8 +550,8 @@ SUB CollectStars()
                     ENDIF
                 NEXT si
             ENDIF
-        NEXT pc
-    NEXT pr
+        NEXT c
+    NEXT r
 ENDSUB
 
 SUB LockSequence()
@@ -596,11 +596,11 @@ SUB HardDrop()
         IF CheckCollision(CurrentPiece, PieceX, PieceY + 1) THEN EXITDO
         PieceY = PieceY + 1
     LOOP
-    FOR pr = 0 TO 3
-        FOR pc = 0 TO 3
-            IF CurrentPiece[pr, pc] <> 0 THEN AddStreak(BX + (PieceX + pc) * CELL + CELL / 2, BY + (sy0 + pr) * CELL, BY + (PieceY + pr) * CELL)
-        NEXT pc
-    NEXT pr
+    FOR r = 0 TO 3
+        FOR c = 0 TO 3
+            IF CurrentPiece[r, c] <> 0 THEN AddStreak(BX + (PieceX + c) * CELL + CELL / 2, BY + (sy0 + r) * CELL, BY + (PieceY + r) * CELL)
+        NEXT c
+    NEXT r
     LockSequence()
 ENDSUB
 
