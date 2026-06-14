@@ -62,6 +62,11 @@ DIM gain = 0
 DIM pts = 0
 DIM cbonus = 0
 DIM cleared = 0
+DIM cellv AS INTEGER    ' typisierter Empfaenger fuer Board-Wertlesungen (native!)
+DIM v AS INTEGER
+DIM puKind = 0          ' in LockPiece gemerkte Sonderkiste
+DIM puBr = 0
+DIM puBc = 0
 
 DIM prevL = FALSE, prevR = FALSE, prevRot = FALSE, prevHard = FALSE
 DIM Level = 1
@@ -329,7 +334,13 @@ SUB LockPiece()
             IF CurrentPiece[r, c] <> 0 THEN
                 br = PieceY + r
                 bc = PieceX + c
-                IF br >= 0 AND br < Rows AND bc >= 0 AND bc < Cols THEN Board[br, bc] = PieceColor
+                IF br >= 0 AND br < Rows AND bc >= 0 AND bc < Cols THEN
+                    Board[br, bc] = PieceColor
+                    ' Sonderkiste hier merken (PieceColor liest nativ zuverlaessig)
+                    IF PieceColor >= 8 ANDALSO PieceColor <> 11 THEN
+                        puKind = PieceColor : puBr = CINT(br) : puBc = CINT(bc)
+                    ENDIF
+                ENDIF
             ENDIF
         NEXT c
     NEXT r
@@ -402,9 +413,10 @@ FUNC Torque()
     cen = (Cols - 1) / 2.0
     FOR r = 0 TO Rows - 1
         FOR c = 0 TO Cols - 1
-            IF Board[r, c] <> 0 THEN
+            cellv = Board[r, c]
+            IF cellv <> 0 THEN
                 w = c - cen
-                IF Board[r, c] = 11 THEN w = w * 2.0   ' Anker ist schwer
+                IF cellv = 11 THEN w = w * 2.0   ' Anker ist schwer
                 tq = tq + w
             ENDIF
         NEXT c
@@ -544,24 +556,14 @@ ENDSUB
 
 SUB LockSequence()
     clearedTurn = 0
+    puKind = 0
     LockPiece()
+    IF puKind > 0 THEN TriggerPowerup(puKind, puBr, puBc)
     SfxLock()
     Burst(BX + (PieceX + 1) * CELL + CELL / 2, BY + (PieceY + 2) * CELL, 5, 2, 170, 160, 140)
     pts = CINT(PIECE_POINTS(PieceColor))
     Score = Score + pts
     IF pts > 0 THEN AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
-    ' Sonderkisten im gerade gesetzten Stein ausloesen (Anker 11 zaehlt nur Gewicht)
-    FOR pr = 0 TO 3
-        FOR pc = 0 TO 3
-            IF CurrentPiece[pr, pc] <> 0 THEN
-                pbr = PieceY + pr
-                pbc = PieceX + pc
-                IF pbr >= 0 ANDALSO pbr < Rows ANDALSO pbc >= 0 ANDALSO pbc < Cols THEN
-                    IF Board[pbr, pbc] >= 8 ANDALSO Board[pbr, pbc] <> 11 THEN TriggerPowerup(Board[pbr, pbc], pbr, pbc)
-                ENDIF
-            ENDIF
-        NEXT pc
-    NEXT pr
     ClearLines()
     ApplyTilt()
     IF ABS(Torque()) < TILT_LOW THEN Score = Score + 20   ' Bonus fuers Schiff-im-Lot-Halten
@@ -1134,6 +1136,22 @@ IF testmode ANDALSO testtab$ = "storm" THEN
     GFX.CLOSE
     PRINT "storm shot saved"
     END
+ENDIF
+
+IF testmode ANDALSO testtab$ = "qbomb" THEN
+    Rows = 10 : Cols = 15
+    Board = RESHAPE([0], [10, 15])
+    FOR cc = 4 TO 9
+        Board[9, cc] = 3 : Board[8, cc] = 4
+    NEXT cc
+    CurrentPiece = [[0,0,0,0],[0,1,0,0],[0,0,0,0],[0,0,0,0]] : PieceColor = 8
+    PieceX = 5 : PieceY = 1
+    Draw() : SLEEP 30 : Draw()
+    GFX.SAVE_SCREENSHOT("tmp/q_before.png")
+    HardDrop()
+    Draw() : SLEEP 30 : Draw()
+    GFX.SAVE_SCREENSHOT("tmp/q_after.png")
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "qbomb done" : END
 ENDIF
 
 IF testmode ANDALSO testtab$ = "title" THEN
