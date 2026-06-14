@@ -8,6 +8,7 @@
 '        jdBasic tilt.jdb shot tilt   -> tmp/tilt_before/after.png
 ' ============================================================
 
+OPTION "NOEXPLICIT"
 MKDIR "tmp"
 
 Rows = 15               ' aktuelle Brett-Hoehe (kippt mit)
@@ -17,10 +18,10 @@ MAXD = 15               ' groesste Kantenlaenge -> quadratische Spielflaeche
 AREA = MAXD * CELL
 SCRW = 660
 SCRH = 800
-AX = (SCRW - AREA) / 2  ' Ursprung der quadratischen See-Flaeche
-AY = 80
-BX = AX                 ' Brett-Ursprung (pro Frame zentriert gesetzt)
-BY = AY
+DIM AX AS DOUBLE = (SCRW - AREA) / 2.0   ' Ursprung der quadratischen See-Flaeche
+DIM AY AS DOUBLE = 80.0
+DIM BX AS DOUBLE = 0.0                    ' Brett-Ursprung (pro Frame gesetzt)
+DIM BY AS DOUBLE = 0.0
 
 TILT_HIGH = 40          ' ab dieser Schlagseite kippt das Deck (empfindlicher)
 TILT_LOW = 18           ' Schiff "im Lot" - Schwelle fuer den Balance-Bonus
@@ -49,16 +50,24 @@ SOUND.GAIN 5, 0.5
 StartMusic()
 
 DIM Board[Rows, Cols]   ' 0 = leer, 1..7 = Kistentyp
-DIM CurrentPiece
-DIM PieceX, PieceY, PieceColor
+DIM CurrentPiece = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
+DIM PieceX = 0
+DIM PieceY = 0
+DIM PieceColor = 0
 DIM Score = 0
 DIM LinesCleared = 0
 DIM GameOver = FALSE
+DIM tmp = 0
+DIM gain = 0
+DIM pts = 0
+DIM cbonus = 0
+DIM cleared = 0
 
 DIM prevL = FALSE, prevR = FALSE, prevRot = FALSE, prevHard = FALSE
 DIM Level = 1
 DIM shake = 0, flash = 0
-DIM NextPiece, NextColor
+DIM NextPiece = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
+DIM NextColor = 0
 DIM rearmIn = 0         ' Zuege bis die Schlagseite wieder scharf wird
 DIM HighScore = 0
 DIM NPOP = 16           ' Pool fuer fliegende Punkte-Popups
@@ -91,8 +100,8 @@ DIM str_y0 = ZEROS(NSTREAK)
 DIM str_y1 = ZEROS(NSTREAK)
 DIM str_life = ZEROS(NSTREAK)
 DIM shockLife = 0       ' Combo-Schockwelle
-DIM shockX = 0
-DIM shockY = 0
+DIM shockX AS DOUBLE = 0.0
+DIM shockY AS DOUBLE = 0.0
 DIM NBG = 40            ' Hintergrund-Sterne
 DIM bgstar_x = ZEROS(NBG)
 DIM bgstar_y = ZEROS(NBG)
@@ -100,7 +109,7 @@ DIM lightning = 0       ' Blitz-Countdown
 DIM boltX = 0
 DIM gState$ = "title"   ' title | play | pause | options | enter
 DIM sfxOn = TRUE
-DIM lastDrop = 0
+DIM lastDrop AS DOUBLE = 0.0
 DIM hs_name = ["---", "---", "---", "---", "---"]
 DIM hs_score = [0, 0, 0, 0, 0]
 DIM enterName = [0, 0, 0]
@@ -108,8 +117,8 @@ DIM enterPos = 0
 DIM enterRank = -1
 DIM optSel = 0
 DIM quitFlag = FALSE
-DIM pL = FALSE, pR = FALSE, pU = FALSE, pDn = FALSE
-DIM pSpace = FALSE, pEnter = FALSE, pP = FALSE, pO = FALSE, pMk = FALSE, pEsc = FALSE
+DIM pL = 0.0, pR = 0.0, pU = 0.0, pDn = 0.0
+DIM pSpace = 0.0, pEnter = 0.0, pP = 0.0, pO = 0.0, pMk = 0.0, pEsc = 0.0
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -538,7 +547,7 @@ SUB LockSequence()
     LockPiece()
     SfxLock()
     Burst(BX + (PieceX + 1) * CELL + CELL / 2, BY + (PieceY + 2) * CELL, 5, 2, 170, 160, 140)
-    pts = PIECE_POINTS(PieceColor)
+    pts = CINT(PIECE_POINTS(PieceColor))
     Score = Score + pts
     IF pts > 0 THEN AddPopup(BX + (PieceX + 1) * CELL, BY + (PieceY + 1) * CELL, pts)
     ' Sonderkisten im gerade gesetzten Stein ausloesen (Anker 11 zaehlt nur Gewicht)
@@ -1057,7 +1066,6 @@ DIM testtab$ = ""
 IF LEN(args) >= 3 THEN testtab$ = args[2]
 
 IF testmode ANDALSO testtab$ = "tilt" THEN
-    DIM rr, cc
     FOR rr = 9 TO 14
         FOR cc = 6 TO 9
             Board[rr, cc] = 3 + (rr MOD 3)
@@ -1081,7 +1089,6 @@ IF testmode ANDALSO testtab$ = "pop" THEN
     Draw()
     AddPopup(BX + 4 * CELL, BY + 11 * CELL, 25)
     AddPopup(BX + 6 * CELL, BY + 8 * CELL, 400)
-    DIM pf2
     FOR pf2 = 0 TO 9
         Draw()
         SLEEP 20
@@ -1156,7 +1163,6 @@ IF testmode THEN
     Board[12,7]=1
     CurrentPiece = [[0,1,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]] : PieceColor = 6
     PieceX = 4 : PieceY = 1
-    DIM f
     FOR f = 0 TO 3
         Draw()
         SLEEP 30
@@ -1249,7 +1255,7 @@ DO
             ENDIF
             CollectStars()
             IF GameOver THEN
-                enterRank = HS_RANK(Score)
+                enterRank = CINT(HS_RANK(Score))
                 IF enterRank >= 0 THEN
                     enterName = [0, 0, 0]
                     enterPos = 0
