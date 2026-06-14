@@ -29,16 +29,16 @@ tiltArmed = TRUE
 SCREEN SCRW, SCRH, "TILT - Schlagseite", 1
 
 SOUND.INIT
-SOUND.BPM 142
-' Musik: Melodie (Track 0) + Bass (Track 1)
-SOUND.VOICE 0, "SQUARE", 0.01, 0.18, 0.32, 0.22
-SOUND.FILTER 0, 2400
-SOUND.GAIN 0, 0.42
-SOUND.VOICE 1, "SAW", 0.005, 0.10, 0.45, 0.10
-SOUND.FILTER 1, 600
-SOUND.GAIN 1, 0.5
-SOUND.REVERB 0.6, 0.3, 0.8, 0.25
-SOUND.REVERBSEND 0, 0.35
+SOUND.BPM 125
+' Musik: Melodie (Track 0) + Bass (Track 1) - RPG-"overworld"-Theme
+SOUND.VOICE 0, "SQUARE", 0.01, 0.15, 0.3, 0.25
+SOUND.FILTER 0, 2000
+SOUND.GAIN 0, 0.55
+SOUND.VOICE 1, "SAW", 0.005, 0.08, 0.5, 0.08
+SOUND.FILTER 1, 500
+SOUND.GAIN 1, 0.6
+SOUND.REVERB 0.7, 0.3, 0.8, 0.25
+SOUND.REVERBSEND 0, 0.4
 ' SFX: Setzen (3), Raeumen (4), Kippen (5)
 SOUND.VOICE 3, "TRIANGLE", 0.004, 0.10, 0.0, 0.08
 SOUND.GAIN 3, 0.5
@@ -93,6 +93,11 @@ DIM str_life = ZEROS(NSTREAK)
 DIM shockLife = 0       ' Combo-Schockwelle
 DIM shockX = 0
 DIM shockY = 0
+DIM NBG = 40            ' Hintergrund-Sterne
+DIM bgstar_x = ZEROS(NBG)
+DIM bgstar_y = ZEROS(NBG)
+DIM lightning = 0       ' Blitz-Countdown
+DIM boltX = 0
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -127,10 +132,10 @@ SUB SfxClear() : SOUND.PLAY 4, "g4" : ENDSUB
 SUB SfxTilt()  : SOUND.PLAY 5, "c2" : ENDSUB
 SUB SfxOver()  : SOUND.PLAY 5, "c1" : ENDSUB
 
-' eingaengige, Tetris-nahe Schleife (Korobeiniki-Stil, a-Moll)
+' eingaengige Schleife (original RPG-"overworld"-Theme, kein Copyright)
 SUB StartMusic()
-    DIM mel$ = "[e5 [b4 c5] d5 [c5 b4]] [a4 [a4 c5] e5 [d5 c5]] [b4 c5 d5 ~] [e5 c5 a4 ~] [d5 [f5 a5] g5 [f5 e5]] [c5 e5 [d5 c5] b4] [b4 c5 d5 e5] [c5 a4 a4 ~]"
-    DIM bas$ = "[[a1 a2]*4] [[a1 a2]*4] [[e2 e3]*4] [[a1 a2]*4] [[d2 d3]*4] [[c2 c3]*4] [[e2 e3]*4] [[a1 a2]*4]"
+    DIM mel$ = "[c5 e5 g5 e5] [a4 c5 e5 c5] [f4 a4 c5 [d5 c5]] [g4 b4 d5 ~] [e5 g5 [a5 g5] e5] [d5 f5 [e5 d5] c5] [c5 [b4 c5] d5 e5] [c5 ~ ~ ~]"
+    DIM bas$ = "[[c2 c3]*4] [[a1 a2]*4] [[f1 f2]*4] [[g1 g2]*4] [[c2 c3]*4] [[d2 d3]*2 [f1 f2]*2] [[g1 g2]*2 [g1 b1]*2] [[c2 c3]*4]"
     SOUND.NOTE "< " + mel$ + " , " + bas$ + " >", TRUE
 ENDSUB
 
@@ -614,18 +619,68 @@ SUB DrawMini(p, colId, ox0, oy0, csz)
     NEXT mi
 ENDSUB
 
+SUB DrawCloud(x, y)
+    DRAWCOLOR 38, 48, 70
+    RECT x, y, 64, 16, TRUE
+    RECT x + 22, y - 10, 52, 18, TRUE
+    RECT x + 48, y + 2, 52, 14, TRUE
+ENDSUB
+
+SUB DrawSky()
+    ' Mond (Scheibe aus Scanlines)
+    mx = SCRW - 92
+    my = 66
+    mr = 26
+    DRAWCOLOR 232, 230, 200
+    FOR yy = -mr TO mr
+        hw = CINT(SQR(mr * mr - yy * yy))
+        LINE mx - hw, my + yy, mx + hw, my + yy
+    NEXT yy
+    ' driftende Wolken
+    DrawCloud((INT(TICK() / 60) MOD (SCRW + 200)) - 180, 48)
+    DrawCloud((INT(TICK() / 90) MOD (SCRW + 240)) - 220, 104)
+    ' funkelnde Sterne
+    FOR bi = 0 TO NBG - 1
+        tw = (SIN(TICK() / 280.0 + bi) + 1) / 2
+        sb = CINT(90 + 140 * tw)
+        DRAWCOLOR sb, sb, CINT(sb * 0.8)
+        RECT bgstar_x[bi], bgstar_y[bi], 2, 2, TRUE
+    NEXT bi
+ENDSUB
+
 SUB Draw()
     CLS
-    DRAWCOLOR 12, 26, 44
+    ' Stapelhoehe (fuer Stimmung + Gefahr)
+    topRow = Rows
+    rfound = FALSE
+    FOR r = 0 TO Rows - 1
+        IF NOT rfound THEN
+            FOR c = 0 TO Cols - 1
+                IF Board[r, c] <> 0 THEN rfound = TRUE
+            NEXT c
+            IF rfound THEN topRow = r
+        ENDIF
+    NEXT r
+    danger = topRow <= 3
+    fillF = (Rows - topRow) / (Rows + 0.0)
+    IF fillF < 0.0 THEN fillF = 0.0
+    ' Stimmungs-Hintergrund: ruhig blau -> stuermisch dunkel/rot je voller
+    DRAWCOLOR CINT(12 + 60 * fillF), CINT(26 - 14 * fillF), CINT(44 - 22 * fillF)
     RECT 0, 0, SCRW, SCRH, TRUE
-    ' kippender Horizont - zeigt die Schlagseite des Schiffs
+    DrawSky()
+    ' kippende, wogende See
     listPx = Torque() * 0.7
     IF listPx > 70 THEN listPx = 70
     IF listPx < -70 THEN listPx = -70
-    DRAWCOLOR 18, 36, 58
-    FOR hyi = 0 TO 2
-        hy = 150 + hyi * 220
-        LINE 0, hy - listPx, SCRW, hy + listPx
+    ph = TICK() / 260.0
+    DRAWCOLOR CINT(18 + 26 * fillF), CINT(36 - 8 * fillF), CINT(58 - 18 * fillF)
+    FOR hyi = 0 TO 3
+        hy = 130 + hyi * 175
+        FOR sxx = 0 TO SCRW - 1 STEP 24
+            wob = CINT(SIN(ph + sxx / 70.0 + hyi) * 5)
+            slope = CINT(listPx * (sxx - SCRW / 2) / (SCRW / 2))
+            LINE sxx, hy + wob + slope, sxx + 24, hy + wob + slope
+        NEXT sxx
     NEXT hyi
     ' Screenshake beim Kippen
     ox = 0 : oy = 0
@@ -638,18 +693,8 @@ SUB Draw()
     BX = AX + CINT((AREA - Cols * CELL) / 2) + ox
     BY = AY + CINT((AREA - Rows * CELL) / 2) + oy
     ' Gefahr-Puls: Rahmen pulsiert rot, wenn der Stapel oben ankommt
-    topRow = Rows
-    rfound = FALSE
-    FOR r = 0 TO Rows - 1
-        IF NOT rfound THEN
-            FOR c = 0 TO Cols - 1
-                IF Board[r, c] <> 0 THEN rfound = TRUE
-            NEXT c
-            IF rfound THEN topRow = r
-        ENDIF
-    NEXT r
     fr2 = 70 : fg2 = 52 : fb2 = 34
-    IF topRow <= 3 THEN
+    IF danger THEN
         pulse = (SIN(TICK() / 110.0) + 1) / 2
         fr2 = CINT(70 + 170 * pulse)
         fg2 = CINT(52 - 20 * pulse)
@@ -784,6 +829,32 @@ SUB Draw()
         RECT shockX - sz, shockY - sz, sz * 2, sz * 2, FALSE
         shockLife = shockLife - 1
     ENDIF
+    ' Sturm bei Gefahr: Regen + gelegentlicher Blitz
+    IF danger THEN
+        DRAWCOLOR 120, 140, 180
+        FOR ri = 0 TO 24
+            rx = (ri * 53 + INT(TICK() / 2)) MOD SCRW
+            ry = (ri * 80 + INT(TICK() * 6)) MOD SCRH
+            LINE rx, ry, rx - 3, ry + 12
+        NEXT ri
+        IF lightning <= 0 ANDALSO RND(1) < 0.02 THEN
+            lightning = 3
+            boltX = 80 + INT(RND(1) * (SCRW - 160))
+        ENDIF
+    ENDIF
+    IF lightning > 0 THEN
+        DRAWCOLOR 235, 240, 255
+        bx0 = boltX
+        by0 = 0
+        FOR seg = 0 TO 5
+            bx1 = bx0 + INT(RND(1) * 44) - 22
+            by1 = by0 + 55
+            LINE bx0, by0, bx1, by1
+            bx0 = bx1
+            by0 = by1
+        NEXT seg
+        lightning = lightning - 1
+    ENDIF
     IF GameOver THEN
         DRAWCOLOR 240, 90, 90
         TEXT AX + AREA / 2 - 80, AY + AREA / 2, "GAME OVER"
@@ -793,6 +864,10 @@ ENDSUB
 
 ' --- Init ----------------------------------------------------
 RND(-1.0)
+FOR bi = 0 TO NBG - 1
+    bgstar_x[bi] = INT(RND(1) * SCRW)
+    bgstar_y[bi] = INT(RND(1) * (AY + 30))
+NEXT bi
 RollNext()
 SpawnPiece()
 IF LEN(DIR$("tmp/tilt_high.txt")) > 0 THEN HighScore = VAL(TXTREADER$("tmp/tilt_high.txt"))
@@ -860,6 +935,21 @@ IF testmode ANDALSO testtab$ = "pu" THEN
     END
 ENDIF
 
+IF testmode ANDALSO testtab$ = "storm" THEN
+    FOR rr = 1 TO 14
+        FOR cc = 0 TO Cols - 1
+            IF RND(1) < 0.6 THEN Board[rr, cc] = 2 + INT(RND(1) * 5)
+        NEXT cc
+    NEXT rr
+    lightning = 3 : boltX = 300
+    Draw() : SLEEP 30 : Draw()
+    GFX.SAVE_SCREENSHOT("tmp/tilt_storm.png")
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "storm shot saved"
+    END
+ENDIF
+
 IF testmode THEN
     Board[14,0]=3 : Board[14,1]=3 : Board[14,2]=4 : Board[14,3]=4 : Board[14,5]=5 : Board[14,6]=5 : Board[14,7]=2
     Board[13,0]=3 : Board[13,3]=4 : Board[13,6]=5 : Board[13,7]=2
@@ -919,7 +1009,7 @@ DO
     IF kM AND NOT prevM THEN
         musicOn = NOT musicOn
         IF musicOn THEN
-            SOUND.GAIN 0, 0.42 : SOUND.GAIN 1, 0.5
+            SOUND.GAIN 0, 0.55 : SOUND.GAIN 1, 0.6
         ELSE
             SOUND.GAIN 0, 0.0 : SOUND.GAIN 1, 0.0
         ENDIF
