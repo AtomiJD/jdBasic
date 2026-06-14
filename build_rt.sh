@@ -31,6 +31,20 @@ JOBS=${JOBS:-$(default_jobs)}
 CXXFLAGS="-std=c++17 -O2 -DNDEBUG -fPIC -DJDRT_EXPORTS -Isrc -Ilibs/eigen"
 LDFLAGS="-shared -ldl -lpthread -lm"
 
+# Homebrew (freetype, harfbuzz, libpng, openssl etc.) lives under brew's prefix
+# on macOS and needs explicit -I/-L paths. Mirrors build.sh.
+BREW_PREFIX=""
+if [ "$(uname -s)" = "Darwin" ]; then
+    if command -v brew >/dev/null 2>&1; then BREW_PREFIX="$(brew --prefix)"
+    elif [ -d /opt/homebrew ]; then BREW_PREFIX=/opt/homebrew
+    elif [ -d /usr/local/Homebrew ]; then BREW_PREFIX=/usr/local
+    fi
+    if [ -n "$BREW_PREFIX" ]; then
+        CXXFLAGS="$CXXFLAGS -I$BREW_PREFIX/include -I$BREW_PREFIX/opt/openssl@3/include"
+        LDFLAGS="$LDFLAGS -L$BREW_PREFIX/lib -L$BREW_PREFIX/opt/openssl@3/lib"
+    fi
+fi
+
 WANT_HTTP=${HTTP:-0}
 WANT_GFX=${GFX:-0}
 WANT_IMGUI=${IMGUI:-0}
@@ -69,6 +83,16 @@ if [ "$WANT_GFX" = "1" ]; then
     LDFLAGS="$LDFLAGS $SDL3_IMG_DIR/build/libSDL3_image.a $SDL3_TTF_DIR/build/libSDL3_ttf.a \
         $SDL3_MIX_DIR/build/libSDL3_mixer.a $SDL3_DIR/build/libSDL3.a \
         -lfreetype -lharfbuzz -lpng -ljpeg -ltiff -lwebp -lwebpdemux"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        LDFLAGS="$LDFLAGS \
+            -framework Cocoa -framework IOKit -framework CoreVideo \
+            -framework CoreAudio -framework AudioToolbox -framework Carbon \
+            -framework ForceFeedback -framework Metal -framework MetalKit \
+            -framework GameController -framework CoreHaptics \
+            -framework CoreFoundation -framework UniformTypeIdentifiers \
+            -framework AVFoundation -framework CoreMedia \
+            -framework QuartzCore"
+    fi
     SRC="$SRC src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
     if [ "$WANT_IMGUI" = "1" ]; then
         IMGUI_LIB="libs/imgui"
