@@ -98,6 +98,18 @@ DIM bgstar_x = ZEROS(NBG)
 DIM bgstar_y = ZEROS(NBG)
 DIM lightning = 0       ' Blitz-Countdown
 DIM boltX = 0
+DIM gState$ = "title"   ' title | play | pause | options | enter
+DIM sfxOn = TRUE
+DIM lastDrop = 0
+DIM hs_name = ["---", "---", "---", "---", "---"]
+DIM hs_score = [0, 0, 0, 0, 0]
+DIM enterName = [0, 0, 0]
+DIM enterPos = 0
+DIM enterRank = -1
+DIM optSel = 0
+DIM quitFlag = FALSE
+DIM pL = FALSE, pR = FALSE, pU = FALSE, pDn = FALSE
+DIM pSpace = FALSE, pEnter = FALSE, pP = FALSE, pO = FALSE, pMk = FALSE, pEsc = FALSE
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -127,10 +139,18 @@ FUNC PU_LABEL$(id)
     RETURN ""
 ENDFUNC
 
-SUB SfxLock()  : SOUND.PLAY 3, "c3" : ENDSUB
-SUB SfxClear() : SOUND.PLAY 4, "g4" : ENDSUB
-SUB SfxTilt()  : SOUND.PLAY 5, "c2" : ENDSUB
-SUB SfxOver()  : SOUND.PLAY 5, "c1" : ENDSUB
+SUB SfxLock()
+    IF sfxOn THEN SOUND.PLAY 3, "c3"
+ENDSUB
+SUB SfxClear()
+    IF sfxOn THEN SOUND.PLAY 4, "g4"
+ENDSUB
+SUB SfxTilt()
+    IF sfxOn THEN SOUND.PLAY 5, "c2"
+ENDSUB
+SUB SfxOver()
+    IF sfxOn THEN SOUND.PLAY 5, "c1"
+ENDSUB
 
 ' eingaengige Schleife (original RPG-"overworld"-Theme, kein Copyright)
 SUB StartMusic()
@@ -556,10 +576,6 @@ SUB LockSequence()
     IF CheckCollision(CurrentPiece, PieceX, PieceY) THEN
         GameOver = TRUE
         SfxOver()
-        IF Score > HighScore THEN
-            HighScore = Score
-            BINWRITER "tmp/tilt_high.txt", "" + HighScore
-        ENDIF
     ENDIF
 ENDSUB
 
@@ -741,7 +757,7 @@ SUB Draw()
     DRAWCOLOR 235, 235, 245
     TEXT AX, 28, "TILT - Schlagseite"
     DRAWCOLOR 200, 210, 160
-    TEXT AX + AREA - 150, 28, "Best: " + HighScore
+    TEXT AX + AREA - 150, 28, "Best: " + hs_score[0]
     DRAWCOLOR 150, 165, 180
     TEXT AX, 52, "Pfeile/WASD  Space=Drop  M=Musik  ESC=Ende"
     ' untere Leiste
@@ -859,7 +875,162 @@ SUB Draw()
         DRAWCOLOR 240, 90, 90
         TEXT AX + AREA / 2 - 80, AY + AREA / 2, "GAME OVER"
     ENDIF
+    IF gState$ = "pause" THEN
+        DRAWCOLOR 20, 24, 34
+        RECT AX + AREA / 2 - 110, AY + AREA / 2 - 40, 220, 80, TRUE
+        DRAWCOLOR 250, 230, 120
+        TEXT AX + AREA / 2 - 48, AY + AREA / 2 - 12, "PAUSE"
+        DRAWCOLOR 180, 195, 210
+        TEXT AX + AREA / 2 - 92, AY + AREA / 2 + 14, "P = weiter   ESC = Titel"
+    ENDIF
     SCREENFLIP
+ENDSUB
+
+' ── Highscore-Tabelle (Top 5, mit Kuerzel) ───────────────────
+SUB LoadHigh()
+    IF LEN(DIR$("tmp/tilt_high.txt")) = 0 THEN RETURN
+    lines = SPLIT(TXTREADER$("tmp/tilt_high.txt"), CHR$(10))
+    FOR i = 0 TO 4
+        IF i < LEN(lines) THEN
+            pair = SPLIT(lines[i], ";")
+            IF LEN(pair) >= 2 THEN
+                hs_name[i] = pair[0]
+                hs_score[i] = VAL(pair[1])
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB SaveHigh()
+    parts = []
+    FOR i = 0 TO 4
+        parts = APPEND(parts, hs_name[i] + ";" + ("" + hs_score[i]))
+    NEXT i
+    BINWRITER "tmp/tilt_high.txt", JOIN(parts, CHR$(10))
+ENDSUB
+
+FUNC HS_RANK(sc)
+    FOR i = 0 TO 4
+        IF sc > hs_score[i] THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+SUB HS_INSERT(pos, nm$, sc)
+    FOR i = 4 TO pos + 1 STEP -1
+        hs_name[i] = hs_name[i - 1]
+        hs_score[i] = hs_score[i - 1]
+    NEXT i
+    hs_name[pos] = nm$
+    hs_score[pos] = sc
+    SaveHigh()
+ENDSUB
+
+' ── neue Runde vorbereiten ───────────────────────────────────
+SUB ResetGame()
+    Rows = 15 : Cols = 10
+    Board = RESHAPE([0], [15, 10])
+    Score = 0 : LinesCleared = 0 : Level = 1 : GameOver = FALSE
+    combo = 0 : clearedTurn = 0 : comboFlash = 0 : shockLife = 0
+    tiltArmed = TRUE : rearmIn = 0 : lightning = 0
+    FOR i = 0 TO NPART - 1 : par_life[i] = 0 : NEXT i
+    FOR i = 0 TO NSTAR - 1 : star_on[i] = 0 : NEXT i
+    FOR i = 0 TO NPOP - 1 : pop_life[i] = 0 : NEXT i
+    FOR i = 0 TO NSTREAK - 1 : str_life[i] = 0 : NEXT i
+    RollNext()
+    SpawnPiece()
+    lastDrop = TICK()
+ENDSUB
+
+' ── Titelschirm ──────────────────────────────────────────────
+SUB DrawTitle()
+    CLS
+    DRAWCOLOR 12, 26, 44
+    RECT 0, 0, SCRW, SCRH, TRUE
+    DrawSky()
+    DRAWCOLOR 245, 245, 255
+    TEXT AX + 90, 120, "T I L T"
+    DRAWCOLOR 170, 190, 210
+    TEXT AX + 60, 158, "- Schlagseite -"
+    DRAWCOLOR 200, 210, 160
+    TEXT AX + 80, 230, "HIGHSCORES"
+    FOR i = 0 TO 4
+        DRAWCOLOR 210, 215, 225
+        TEXT AX + 55, 270 + i * 30, "" + (i + 1) + ".   " + hs_name[i] + "    " + hs_score[i]
+    NEXT i
+    DRAWCOLOR 250, 230, 120
+    TEXT AX + 70, 470, "SPACE = Start"
+    DRAWCOLOR 160, 175, 190
+    TEXT AX + 20, 510, "O = Optionen   M = Musik   ESC = Beenden"
+ENDSUB
+
+' ── Optionen ─────────────────────────────────────────────────
+SUB DrawOptions()
+    CLS
+    DRAWCOLOR 12, 26, 44
+    RECT 0, 0, SCRW, SCRH, TRUE
+    DrawSky()
+    DRAWCOLOR 245, 245, 255
+    TEXT AX + 90, 150, "OPTIONEN"
+    ms$ = "an"
+    IF NOT musicOn THEN ms$ = "aus"
+    ss$ = "an"
+    IF NOT sfxOn THEN ss$ = "aus"
+    IF optSel = 0 THEN DRAWCOLOR 250, 230, 120 ELSE DRAWCOLOR 200, 210, 220
+    TEXT AX + 70, 250, "Musik:  " + ms$
+    IF optSel = 1 THEN DRAWCOLOR 250, 230, 120 ELSE DRAWCOLOR 200, 210, 220
+    TEXT AX + 70, 290, "Sound:  " + ss$
+    DRAWCOLOR 160, 175, 190
+    TEXT AX + 30, 380, "Hoch/Runter waehlen, Enter umschalten"
+    TEXT AX + 30, 410, "ESC = zurueck"
+ENDSUB
+
+SUB UpdateOptions(eU, eDn, eEnter, eEsc)
+    IF eU OR eDn THEN optSel = (optSel + 1) MOD 2
+    IF eEnter THEN
+        IF optSel = 0 THEN
+            musicOn = NOT musicOn
+            IF musicOn THEN
+                SOUND.GAIN 0, 0.55 : SOUND.GAIN 1, 0.6
+            ELSE
+                SOUND.GAIN 0, 0.0 : SOUND.GAIN 1, 0.0
+            ENDIF
+        ELSE
+            sfxOn = NOT sfxOn
+        ENDIF
+    ENDIF
+    IF eEsc THEN gState$ = "title"
+ENDSUB
+
+' ── Kuerzel-Eingabe nach Highscore ───────────────────────────
+SUB DrawEnter()
+    CLS
+    DRAWCOLOR 12, 26, 44
+    RECT 0, 0, SCRW, SCRH, TRUE
+    DrawSky()
+    DRAWCOLOR 250, 230, 120
+    TEXT AX + 40, 150, "NEUER HIGHSCORE!"
+    DRAWCOLOR 220, 225, 235
+    TEXT AX + 90, 200, "Punkte: " + Score
+    FOR i = 0 TO 2
+        IF i = enterPos THEN DRAWCOLOR 250, 230, 120 ELSE DRAWCOLOR 200, 210, 220
+        TEXT AX + 120 + i * 60, 290, CHR$(65 + enterName[i])
+    NEXT i
+    DRAWCOLOR 160, 175, 190
+    TEXT AX + 30, 380, "Hoch/Runter = Buchstabe"
+    TEXT AX + 30, 410, "Links/Rechts = Stelle, Enter = OK"
+ENDSUB
+
+SUB UpdateEnter(eU, eDn, eL, eR, eEnter)
+    IF eU THEN enterName[enterPos] = (enterName[enterPos] + 1) MOD 26
+    IF eDn THEN enterName[enterPos] = (enterName[enterPos] + 25) MOD 26
+    IF eL ANDALSO enterPos > 0 THEN enterPos = enterPos - 1
+    IF eR ANDALSO enterPos < 2 THEN enterPos = enterPos + 1
+    IF eEnter THEN
+        nm$ = CHR$(65 + enterName[0]) + CHR$(65 + enterName[1]) + CHR$(65 + enterName[2])
+        HS_INSERT(enterRank, nm$, Score)
+        gState$ = "title"
+    ENDIF
 ENDSUB
 
 ' --- Init ----------------------------------------------------
@@ -870,7 +1041,7 @@ FOR bi = 0 TO NBG - 1
 NEXT bi
 RollNext()
 SpawnPiece()
-IF LEN(DIR$("tmp/tilt_high.txt")) > 0 THEN HighScore = VAL(TXTREADER$("tmp/tilt_high.txt"))
+LoadHigh()
 
 DIM args = OS.ARGS()
 DIM testmode = (LEN(args) >= 2 ANDALSO args[1] = "shot")
@@ -950,6 +1121,27 @@ IF testmode ANDALSO testtab$ = "storm" THEN
     END
 ENDIF
 
+IF testmode ANDALSO testtab$ = "title" THEN
+    hs_name = ["JON", "ABE", "ZED", "QUI", "---"]
+    hs_score = [12000, 8400, 5000, 1200, 0]
+    DrawTitle() : SCREENFLIP : SLEEP 30 : DrawTitle() : SCREENFLIP
+    GFX.SAVE_SCREENSHOT("tmp/tilt_title.png")
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "title shot" : END
+ENDIF
+
+IF testmode ANDALSO testtab$ = "opts" THEN
+    DrawOptions() : SCREENFLIP : SLEEP 30 : DrawOptions() : SCREENFLIP
+    GFX.SAVE_SCREENSHOT("tmp/tilt_opts.png")
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "opts shot" : END
+ENDIF
+
+IF testmode ANDALSO testtab$ = "enter" THEN
+    Score = 9999 : enterName = [19, 8, 11] : enterPos = 1
+    DrawEnter() : SCREENFLIP : SLEEP 30 : DrawEnter() : SCREENFLIP
+    GFX.SAVE_SCREENSHOT("tmp/tilt_enter.png")
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "enter shot" : END
+ENDIF
+
 IF testmode THEN
     Board[14,0]=3 : Board[14,1]=3 : Board[14,2]=4 : Board[14,3]=4 : Board[14,5]=5 : Board[14,6]=5 : Board[14,7]=2
     Board[13,0]=3 : Board[13,3]=4 : Board[13,6]=5 : Board[13,7]=2
@@ -968,45 +1160,24 @@ IF testmode THEN
     END
 ENDIF
 
-' --- Hauptschleife -------------------------------------------
-DIM lastDrop = TICK()
+' --- Hauptschleife (Zustandsautomat) ------------------------
 DO
     now = TICK()
-
     kL = GFX.KEYSTATE("Left") OR GFX.KEYSTATE("A")
     kR = GFX.KEYSTATE("Right") OR GFX.KEYSTATE("D")
-    kRot = GFX.KEYSTATE("Up") OR GFX.KEYSTATE("W")
-    kHard = GFX.KEYSTATE("Space")
-    kDown = GFX.KEYSTATE("Down") OR GFX.KEYSTATE("S")
+    kU = GFX.KEYSTATE("Up") OR GFX.KEYSTATE("W")
+    kDn = GFX.KEYSTATE("Down") OR GFX.KEYSTATE("S")
+    kSpace = GFX.KEYSTATE("Space")
+    kEnter = GFX.KEYSTATE("Return")
+    kP = GFX.KEYSTATE("P")
+    kO = GFX.KEYSTATE("O")
+    kMk = GFX.KEYSTATE("M")
+    kEsc = GFX.KEYSTATE("Escape")
+    eL = kL AND NOT pL : eR = kR AND NOT pR : eU = kU AND NOT pU : eDn = kDn AND NOT pDn
+    eSpace = kSpace AND NOT pSpace : eEnter = kEnter AND NOT pEnter
+    eP = kP AND NOT pP : eO = kO AND NOT pO : eMk = kMk AND NOT pMk : eEsc = kEsc AND NOT pEsc
 
-    IF kL AND NOT prevL THEN
-        IF NOT CheckCollision(CurrentPiece, PieceX - 1, PieceY) THEN PieceX = PieceX - 1
-    ENDIF
-    IF kR AND NOT prevR THEN
-        IF NOT CheckCollision(CurrentPiece, PieceX + 1, PieceY) THEN PieceX = PieceX + 1
-    ENDIF
-    IF kRot AND NOT prevRot THEN TryRotate()
-    IF kHard AND NOT prevHard THEN
-        HardDrop()
-        lastDrop = TICK()
-    ENDIF
-
-    prevL = kL : prevR = kR : prevRot = kRot : prevHard = kHard
-
-    stepEvery = MAX([200, 600 - (Level - 1) * 40])
-    IF kDown THEN stepEvery = 45
-
-    IF now - lastDrop >= stepEvery THEN
-        IF NOT CheckCollision(CurrentPiece, PieceX, PieceY + 1) THEN
-            PieceY = PieceY + 1
-        ELSE
-            LockSequence()
-        ENDIF
-        lastDrop = now
-    ENDIF
-
-    kM = GFX.KEYSTATE("M")
-    IF kM AND NOT prevM THEN
+    IF eMk THEN
         musicOn = NOT musicOn
         IF musicOn THEN
             SOUND.GAIN 0, 0.55 : SOUND.GAIN 1, 0.6
@@ -1014,20 +1185,79 @@ DO
             SOUND.GAIN 0, 0.0 : SOUND.GAIN 1, 0.0
         ENDIF
     ENDIF
-    prevM = kM
 
-    CollectStars()
-    Draw()
-    IF GFX.KEYSTATE("Escape") THEN EXITDO
+    IF gState$ = "title" THEN
+        IF eSpace THEN
+            ResetGame()
+            gState$ = "play"
+        ELSEIF eO THEN
+            optSel = 0
+            gState$ = "options"
+        ELSEIF eEsc THEN
+            quitFlag = TRUE
+        ENDIF
+        DrawTitle()
+        SCREENFLIP
+
+    ELSEIF gState$ = "options" THEN
+        UpdateOptions(eU, eDn, eEnter, eEsc)
+        DrawOptions()
+        SCREENFLIP
+
+    ELSEIF gState$ = "enter" THEN
+        UpdateEnter(eU, eDn, eL, eR, eEnter)
+        DrawEnter()
+        SCREENFLIP
+
+    ELSEIF gState$ = "pause" THEN
+        IF eP OR eSpace THEN gState$ = "play"
+        IF eEsc THEN gState$ = "title"
+        Draw()
+
+    ELSEIF gState$ = "play" THEN
+        IF eP OR eEsc THEN
+            gState$ = "pause"
+        ELSE
+            IF eL THEN
+                IF NOT CheckCollision(CurrentPiece, PieceX - 1, PieceY) THEN PieceX = PieceX - 1
+            ENDIF
+            IF eR THEN
+                IF NOT CheckCollision(CurrentPiece, PieceX + 1, PieceY) THEN PieceX = PieceX + 1
+            ENDIF
+            IF eU THEN TryRotate()
+            IF eSpace THEN
+                HardDrop()
+                lastDrop = TICK()
+            ENDIF
+            stepEvery = MAX([200, 600 - (Level - 1) * 40])
+            IF kDn THEN stepEvery = 45
+            IF now - lastDrop >= stepEvery THEN
+                IF NOT CheckCollision(CurrentPiece, PieceX, PieceY + 1) THEN
+                    PieceY = PieceY + 1
+                ELSE
+                    LockSequence()
+                ENDIF
+                lastDrop = now
+            ENDIF
+            CollectStars()
+            IF GameOver THEN
+                enterRank = HS_RANK(Score)
+                IF enterRank >= 0 THEN
+                    enterName = [0, 0, 0]
+                    enterPos = 0
+                    gState$ = "enter"
+                ELSE
+                    gState$ = "title"
+                ENDIF
+            ENDIF
+        ENDIF
+        Draw()
+    ENDIF
+
+    pL = kL : pR = kR : pU = kU : pDn = kDn
+    pSpace = kSpace : pEnter = kEnter : pP = kP : pO = kO : pMk = kMk : pEsc = kEsc
     SLEEP 16
-LOOP UNTIL GameOver
-
-DIM endt = TICK()
-DO
-    Draw()
-    IF GFX.KEYSTATE("Escape") OR GFX.KEYSTATE("Return") THEN EXITDO
-    SLEEP 30
-LOOP UNTIL TICK() - endt > 6000
+LOOP UNTIL quitFlag
 SOUND.SHUTDOWN
 GFX.CLOSE
 PRINT "done"
