@@ -29,12 +29,24 @@ tiltArmed = TRUE
 SCREEN SCRW, SCRH, "TILT - Schlagseite", 1
 
 SOUND.INIT
-SOUND.VOICE 0, "TRIANGLE", 0.004, 0.10, 0.0, 0.08   ' Kiste setzt auf
-SOUND.GAIN 0, 0.5
-SOUND.VOICE 1, "SQUARE", 0.004, 0.09, 0.0, 0.07      ' Reihe geraeumt
-SOUND.GAIN 1, 0.4
-SOUND.VOICE 2, "SAW", 0.02, 0.28, 0.0, 0.30          ' Kippen / Knarzen
-SOUND.GAIN 2, 0.5
+SOUND.BPM 142
+' Musik: Melodie (Track 0) + Bass (Track 1)
+SOUND.VOICE 0, "SQUARE", 0.01, 0.18, 0.32, 0.22
+SOUND.FILTER 0, 2400
+SOUND.GAIN 0, 0.42
+SOUND.VOICE 1, "SAW", 0.005, 0.10, 0.45, 0.10
+SOUND.FILTER 1, 600
+SOUND.GAIN 1, 0.5
+SOUND.REVERB 0.6, 0.3, 0.8, 0.25
+SOUND.REVERBSEND 0, 0.35
+' SFX: Setzen (3), Raeumen (4), Kippen (5)
+SOUND.VOICE 3, "TRIANGLE", 0.004, 0.10, 0.0, 0.08
+SOUND.GAIN 3, 0.5
+SOUND.VOICE 4, "SQUARE", 0.004, 0.09, 0.0, 0.07
+SOUND.GAIN 4, 0.45
+SOUND.VOICE 5, "SAW", 0.02, 0.28, 0.0, 0.30
+SOUND.GAIN 5, 0.5
+StartMusic()
 
 DIM Board[Rows, Cols]   ' 0 = leer, 1..7 = Kistentyp
 DIM CurrentPiece
@@ -62,6 +74,8 @@ DIM NSTAR = 6           ' einsammelbare Sterne auf dem Feld
 DIM star_r = ZEROS(NSTAR)
 DIM star_c = ZEROS(NSTAR)
 DIM star_on = ZEROS(NSTAR)
+DIM musicOn = TRUE
+DIM prevM = FALSE
 
 FUNC COLOR_FOR(id)
     SWITCH id
@@ -91,10 +105,17 @@ FUNC PU_LABEL$(id)
     RETURN ""
 ENDFUNC
 
-SUB SfxLock()  : SOUND.PLAY 0, "c3" : ENDSUB
-SUB SfxClear() : SOUND.PLAY 1, "g4" : ENDSUB
-SUB SfxTilt()  : SOUND.PLAY 2, "c2" : ENDSUB
-SUB SfxOver()  : SOUND.PLAY 2, "c1" : ENDSUB
+SUB SfxLock()  : SOUND.PLAY 3, "c3" : ENDSUB
+SUB SfxClear() : SOUND.PLAY 4, "g4" : ENDSUB
+SUB SfxTilt()  : SOUND.PLAY 5, "c2" : ENDSUB
+SUB SfxOver()  : SOUND.PLAY 5, "c1" : ENDSUB
+
+' eingaengige, Tetris-nahe Schleife (Korobeiniki-Stil, a-Moll)
+SUB StartMusic()
+    DIM mel$ = "[e5 [b4 c5] d5 [c5 b4]] [a4 [a4 c5] e5 [d5 c5]] [b4 c5 d5 ~] [e5 c5 a4 ~] [d5 [f5 a5] g5 [f5 e5]] [c5 e5 [d5 c5] b4] [b4 c5 d5 e5] [c5 a4 a4 ~]"
+    DIM bas$ = "[[a1 a2]*4] [[a1 a2]*4] [[e2 e3]*4] [[a1 a2]*4] [[d2 d3]*4] [[c2 c3]*4] [[e2 e3]*4] [[a1 a2]*4]"
+    SOUND.NOTE "< " + mel$ + " , " + bas$ + " >", TRUE
+ENDSUB
 
 ' kniffligere Steine geben mehr Punkte
 FUNC PIECE_POINTS(id)
@@ -567,7 +588,7 @@ SUB Draw()
     DRAWCOLOR 200, 210, 160
     TEXT AX + AREA - 150, 28, "Best: " + HighScore
     DRAWCOLOR 150, 165, 180
-    TEXT AX, 52, "Pfeile/WASD bewegen+drehen   Space=Drop   ESC=Ende"
+    TEXT AX, 52, "Pfeile/WASD  Space=Drop  M=Musik  ESC=Ende"
     ' untere Leiste
     DRAWCOLOR 180, 195, 210
     TEXT AX, AY + AREA + 22, "Score:  " + Score
@@ -752,6 +773,17 @@ DO
         ENDIF
         lastDrop = now
     ENDIF
+
+    kM = GFX.KEYSTATE("M")
+    IF kM AND NOT prevM THEN
+        musicOn = NOT musicOn
+        IF musicOn THEN
+            SOUND.GAIN 0, 0.42 : SOUND.GAIN 1, 0.5
+        ELSE
+            SOUND.GAIN 0, 0.0 : SOUND.GAIN 1, 0.0
+        ENDIF
+    ENDIF
+    prevM = kM
 
     CollectStars()
     Draw()
