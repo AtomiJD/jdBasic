@@ -1,0 +1,1 @@
+Pricing: the appliance is licensed per server. The Strix Halo edition runs large models locally on AMD Radeon via Vulkan. Data never leaves the machine, which satisfies GDPR for internal documents.

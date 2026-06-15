@@ -1,0 +1,470 @@
+' ══════════════════════════════════════════════════════════════════
+'  jdBasic RAG Appliance - zero-config local document Q&A over HTTP
+'
+'  Drop this next to a folder of documents (PDF / Markdown / text / code),
+'  run it, open http://localhost:8080. It indexes the folder recursively,
+'  persists the index, and serves a chat UI + a JSON /ask endpoint.
+'  All local: llama.cpp + nomic embeddings + HNSW. No cloud, no Python.
+'
+'  Config is optional (appliance.cfg, key = value lines). Defaults below
+'  work out of the box. Designed to run web-only (GFX=0 LLM=1 HTTP=1).
+' ══════════════════════════════════════════════════════════════════
+
+' ── Defaults (override via appliance.cfg) ─────────────────────────
+DIM gDocsDir$    = "docs"
+DIM gPattern$    = "*.{pdf,md,txt,csv,log,cpp,h,jdb}"
+DIM gPort        = 8080
+DIM gBind$       = "0.0.0.0"
+DIM gLlmPath$    = "models/qwen2.5-7b-instruct-q4_k_m.gguf"
+DIM gEmbPath$    = "models/nomic-embed-text-v1.5.Q4_K_M.gguf"
+DIM gModelDirs$  = "models"
+DIM gGpuLayers   = 99
+DIM gChunkSize   = 500
+DIM gChunkOver   = 50
+DIM gTopK        = 4
+DIM gMaxTokens   = 400
+DIM gTemp        = 0.2
+DIM gNoThink     = 0
+DIM gSysPrompt$  = "You answer questions strictly from the provided context, which contains excerpts from the user's own documents. Quote or paraphrase the relevant parts and stay concise. If the context does not contain the answer, say so plainly instead of inventing one."
+
+' ── Runtime state ─────────────────────────────────────────────────
+DIM gLlmId  = 0
+DIM gEmbId  = 0
+DIM gRagId  = 0
+DIM gChunks = 0
+DIM gBusy   = FALSE
+DIM gStop   = FALSE
+DIM gIdxPath$  = ""
+DIM gDirsPath$ = ""
+DIM gDirList$  = ""
+DIM gLastMsg$  = "ready"
+DIM gDense     = FALSE
+
+' ── Optional config file ──────────────────────────────────────────
+SUB LoadConfig()
+  IF NOT FILE.EXISTS("appliance.cfg") THEN RETURN
+  DIM lines = SPLIT(TXTREADER$("appliance.cfg"), CHR$(10))
+  DIM i
+  FOR i = 0 TO LEN(lines) - 1
+    DIM ln$ = TRIM$(lines[i])
+    IF LEN(ln$) = 0 OR LEFT$(ln$, 1) = "#" THEN CONTINUEFOR
+    DIM eq = INSTR(ln$, "=")
+    IF eq < 0 THEN CONTINUEFOR
+    DIM k$ = TRIM$(LEFT$(ln$, eq))
+    DIM v$ = TRIM$(MID$(ln$, eq + 1))
+    IF k$ = "docs_dir"      THEN gDocsDir$  = v$
+    IF k$ = "pattern"       THEN gPattern$  = v$
+    IF k$ = "port"          THEN gPort      = VAL(v$)
+    IF k$ = "bind"          THEN gBind$     = v$
+    IF k$ = "llm_model"     THEN gLlmPath$  = v$
+    IF k$ = "emb_model"     THEN gEmbPath$  = v$
+    IF k$ = "model_dirs"    THEN gModelDirs$ = v$
+    IF k$ = "gpu_layers"    THEN gGpuLayers = VAL(v$)
+    IF k$ = "chunk_size"    THEN gChunkSize = VAL(v$)
+    IF k$ = "chunk_overlap" THEN gChunkOver = VAL(v$)
+    IF k$ = "top_k"         THEN gTopK      = VAL(v$)
+    IF k$ = "max_tokens"    THEN gMaxTokens = VAL(v$)
+    IF k$ = "no_think"      THEN gNoThink   = VAL(v$)
+  NEXT i
+ENDSUB
+
+' ── Index build / load ────────────────────────────────────────────
+SUB EnsureRag()
+  IF gRagId <> 0 THEN RETURN
+  IF gDense THEN
+    gRagId = AI.RAG_CREATE(gLlmId, gChunkSize, gChunkOver, gEmbId)
+  ELSE
+    gRagId = AI.RAG_CREATE(gLlmId, gChunkSize, gChunkOver)
+  ENDIF
+ENDSUB
+
+' Persist / restore the list of indexed directories alongside the index.
+SUB SaveDirs()
+  TXTWRITER gDirsPath$, gDirList$
+ENDSUB
+
+SUB RememberDir(dir$)
+  IF LEN(gDirList$) = 0 THEN
+    gDirList$ = dir$
+  ELSE
+    gDirList$ = gDirList$ + CHR$(10) + dir$
+  ENDIF
+  SaveDirs()
+ENDSUB
+
+' Add one directory to the live store, rebuild HNSW, persist. Returns the
+' number of files added (or -1 on error, message left in gLastMsg$).
+FUNC IndexDir(dir$, pattern$)
+  EnsureRag()
+  DIM added = -1
+  TRY
+    DIM stats = AI.RAG_ADD_DIR(gRagId, dir$, pattern$, 1)
+    added = stats{"files_added"}
+    DIM info = AI.RAG_INFO(gRagId)
+    gChunks = info{"chunks"}
+    IF gChunks > 0 THEN AI.RAG_BUILD_INDEX(gRagId, 16, 200)
+    AI.RAG_SAVE(gRagId, gIdxPath$)
+    RememberDir(dir$ + "  [" + pattern$ + "]")
+    gLastMsg$ = "indexed " + STR(added) + " files from " + dir$ + " (" + STR(gChunks) + " chunks total)"
+  CATCH
+    gLastMsg$ = "index error: " + ERRMSG$
+  ENDTRY
+  RETURN added
+ENDFUNC
+
+SUB BuildOrLoadIndex()
+  gIdxPath$  = gDocsDir$ + "/.rag_appliance.idx"
+  gDirsPath$ = gDocsDir$ + "/.rag_appliance.dirs"
+
+  IF FILE.EXISTS(gIdxPath$) THEN
+    PRINT "Loading saved index: "; gIdxPath$
+    IF gDense THEN
+      gRagId = AI.RAG_LOAD(gIdxPath$, gLlmId, gEmbId)
+    ELSE
+      gRagId = AI.RAG_LOAD(gIdxPath$, gLlmId)
+    ENDIF
+    DIM info = AI.RAG_INFO(gRagId)
+    gChunks = info{"chunks"}
+    IF FILE.EXISTS(gDirsPath$) THEN gDirList$ = TXTREADER$(gDirsPath$)
+    PRINT "  loaded "; gChunks; " chunks (skip reindex)."
+    RETURN
+  ENDIF
+
+  PRINT "Indexing "; gDocsDir$; " recursively ("; gPattern$; ") ..."
+  EnsureRag()
+  IF FILE.EXISTS(gDocsDir$) THEN
+    IndexDir(gDocsDir$, gPattern$)
+    PRINT "  "; gLastMsg$
+  ELSE
+    PRINT "  default docs dir not found - add one via /admin."
+  ENDIF
+ENDSUB
+
+' ── Model discovery + hot-swap ────────────────────────────────────
+' List *.gguf across the configured dirs, dropping embedding models.
+FUNC ModelList()
+  DIM dirs = SPLIT(gModelDirs$, ",")
+  DIM out = []
+  DIM di
+  FOR di = 0 TO LEN(dirs) - 1
+    DIM d$ = TRIM$(dirs[di])
+    IF LEN(d$) = 0 THEN CONTINUEFOR
+    DIM files = []
+    TRY
+      files = DIR$(d$ + "/*.gguf")
+    CATCH
+      files = []
+    ENDTRY
+    DIM fi
+    FOR fi = 0 TO LEN(files) - 1
+      DIM b$ = files[fi]
+      DIM u$ = UCASE$(b$)
+      IF INSTR(u$, "EMBED") >= 0 OR INSTR(u$, "NOMIC") >= 0 OR INSTR(u$, "BGE") >= 0 THEN CONTINUEFOR
+      out = APPEND(out, d$ + "/" + b$)
+    NEXT fi
+  NEXT di
+  RETURN out
+ENDFUNC
+
+' Load a new LLM, re-point the RAG store at it (index unchanged), free the
+' old one. Returns "" on success or an error message.
+FUNC SwitchModel(path$)
+  IF gBusy THEN RETURN "busy - a query or switch is running, retry shortly"
+  gBusy = TRUE
+  DIM err$ = ""
+  TRY
+    DIM newId = AI.LOAD_LLM(path$, 4096, gGpuLayers)
+    AI.SET(newId, "temperature", gTemp)
+    AI.SET(newId, "max_tokens", gMaxTokens)
+    AI.SET(newId, "system", gSysPrompt$)
+    DIM newRag = 0
+    IF FILE.EXISTS(gIdxPath$) THEN
+      IF gDense THEN
+        newRag = AI.RAG_LOAD(gIdxPath$, newId, gEmbId)
+      ELSE
+        newRag = AI.RAG_LOAD(gIdxPath$, newId)
+      ENDIF
+    ELSE
+      IF gDense THEN
+        newRag = AI.RAG_CREATE(newId, gChunkSize, gChunkOver, gEmbId)
+      ELSE
+        newRag = AI.RAG_CREATE(newId, gChunkSize, gChunkOver)
+      ENDIF
+    ENDIF
+    DIM oldId = gLlmId
+    gLlmId = newId
+    gRagId = newRag
+    gLlmPath$ = path$
+    IF oldId <> 0 THEN AI.FREE_LLM(oldId)
+  CATCH
+    err$ = ERRMSG$
+  ENDTRY
+  gBusy = FALSE
+  RETURN err$
+ENDFUNC
+
+' ── Strip chat-template / thinking artefacts some models leak ─────
+FUNC CleanAnswer$(s$)
+  DIM r$ = s$
+  ' gpt-oss harmony: keep only the final channel.
+  DIM fc = INSTR(r$, "final<|message|>")
+  IF fc >= 0 THEN r$ = MID$(r$, fc + 16)
+  DIM te = INSTR(r$, "</think>")
+  IF te >= 0 THEN r$ = MID$(r$, te + 8)
+  r$ = REPLACE$(r$, "<think>", "")
+  r$ = REPLACE$(r$, "</think>", "")
+  r$ = REPLACE$(r$, "<|im_start|>", "")
+  r$ = REPLACE$(r$, "<|im_end|>", "")
+  r$ = REPLACE$(r$, "<|end|>", "")
+  r$ = REPLACE$(r$, "<|endoftext|>", "")
+  r$ = REPLACE$(r$, "<|system|>", "")
+  r$ = REPLACE$(r$, "<|user|>", "")
+  r$ = REPLACE$(r$, "<|assistant|>", "")
+  r$ = REPLACE$(r$, "<|channel|>", "")
+  r$ = REPLACE$(r$, "<|message|>", "")
+  r$ = REPLACE$(r$, "<|start|>", "")
+  r$ = REPLACE$(r$, "<|return|>", "")
+  r$ = TRIM$(r$)
+  IF UCASE$(LEFT$(r$, 10)) = "ASSISTANT:" THEN r$ = TRIM$(MID$(r$, 10))
+  RETURN r$
+ENDFUNC
+
+' ── HTML escape for safe display of model output ──────────────────
+FUNC EscapeHtml$(s$)
+  DIM r$ = s$
+  r$ = REPLACE$(r$, "&", "&amp;")
+  r$ = REPLACE$(r$, "<", "&lt;")
+  r$ = REPLACE$(r$, ">", "&gt;")
+  RETURN r$
+ENDFUNC
+
+' ── Web page (single file, no external assets) ────────────────────
+FUNC PageHtml$()
+  DIM h$ = ""
+  h$ = h$ + "<!DOCTYPE html>" + CHR$(10)
+  h$ = h$ + "<html lang='en'><head><meta charset='UTF-8'>" + CHR$(10)
+  h$ = h$ + "<meta name='viewport' content='width=device-width, initial-scale=1'>" + CHR$(10)
+  h$ = h$ + "<title>jdBasic RAG Appliance</title>" + CHR$(10)
+  h$ = h$ + "<style>" + CHR$(10)
+  h$ = h$ + "  body{font-family:system-ui,sans-serif;background:#12141c;color:#e6e6e6;margin:0}" + CHR$(10)
+  h$ = h$ + "  .wrap{max-width:860px;margin:0 auto;padding:24px}" + CHR$(10)
+  h$ = h$ + "  h1{color:#6fd0ff;font-size:20px;margin:0 0 2px}" + CHR$(10)
+  h$ = h$ + "  .sub{color:#8893a7;font-size:13px;margin-bottom:18px}" + CHR$(10)
+  h$ = h$ + "  #log{min-height:120px}" + CHR$(10)
+  h$ = h$ + "  .q{color:#9ad}.a{white-space:pre-wrap;margin:6px 0 14px}" + CHR$(10)
+  h$ = h$ + "  .turn{border-bottom:1px solid #232838;padding:12px 0}" + CHR$(10)
+  h$ = h$ + "  .src{font-size:12px;color:#8893a7;margin-top:6px}" + CHR$(10)
+  h$ = h$ + "  .src b{color:#cdb87a}" + CHR$(10)
+  h$ = h$ + "  .bar{display:flex;gap:8px;margin-top:14px}" + CHR$(10)
+  h$ = h$ + "  input{flex:1;padding:10px;border-radius:6px;border:1px solid #2a3146;background:#1a1f2c;color:#fff}" + CHR$(10)
+  h$ = h$ + "  button{padding:10px 18px;border:0;border-radius:6px;background:#2d7dd2;color:#fff;cursor:pointer}" + CHR$(10)
+  h$ = h$ + "  button:disabled{background:#33404f}" + CHR$(10)
+  h$ = h$ + "  select{background:#1a1f2c;color:#fff;border:1px solid #2a3146;border-radius:5px;padding:4px}" + CHR$(10)
+  h$ = h$ + "</style></head><body><div class='wrap'>" + CHR$(10)
+  h$ = h$ + "<h1>jdBasic RAG Appliance <a href='/admin' style='font-size:13px;color:#6fd0ff;float:right'>admin</a></h1>" + CHR$(10)
+  h$ = h$ + "<div class='sub' id='meta'>local document Q&amp;A - all on this machine</div>" + CHR$(10)
+  h$ = h$ + "<div class='sub'>Model: <select id='model'></select><span id='mstat'></span></div>" + CHR$(10)
+  h$ = h$ + "<div id='log'></div>" + CHR$(10)
+  h$ = h$ + "<div class='bar'><input id='q' placeholder='Ask about your documents...' autofocus>" + CHR$(10)
+  h$ = h$ + "<button id='go'>Ask</button></div>" + CHR$(10)
+  h$ = h$ + "<script>" + CHR$(10)
+  h$ = h$ + "var log=document.getElementById('log'),q=document.getElementById('q'),go=document.getElementById('go');" + CHR$(10)
+  h$ = h$ + "fetch('/health').then(r=>r.json()).then(d=>{document.getElementById('meta').textContent='indexed '+d.chunks+' chunks';});" + CHR$(10)
+  h$ = h$ + "var sel=document.getElementById('model'),ms=document.getElementById('mstat');" + CHR$(10)
+  h$ = h$ + "fetch('/models').then(r=>r.json()).then(d=>{sel.innerHTML='';d.models.forEach(function(m){var o=document.createElement('option');o.value=m;o.textContent=m.split('/').pop();if(m===d.current)o.selected=true;sel.appendChild(o);});});" + CHR$(10)
+  h$ = h$ + "sel.onchange=function(){var p=sel.value;ms.textContent=' loading model (large ones take a while)...';sel.disabled=true;go.disabled=true;" + CHR$(10)
+  h$ = h$ + "fetch('/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})}).then(r=>r.json()).then(d=>{ms.textContent=d.error?(' error: '+d.error):(' active: '+d.current.split('/').pop());sel.disabled=false;go.disabled=false;}).catch(e=>{ms.textContent=' switch failed';sel.disabled=false;go.disabled=false;});};" + CHR$(10)
+  h$ = h$ + "function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}" + CHR$(10)
+  h$ = h$ + "function ask(){var text=q.value.trim();if(!text)return;go.disabled=true;q.disabled=true;" + CHR$(10)
+  h$ = h$ + "var turn=document.createElement('div');turn.className='turn';turn.innerHTML='<div class=" + CHR$(34) + "q" + CHR$(34) + ">&gt; '+esc(text)+'</div><div class=" + CHR$(34) + "a" + CHR$(34) + ">...</div>';" + CHR$(10)
+  h$ = h$ + "log.appendChild(turn);var ans=turn.querySelector('.a');q.value='';" + CHR$(10)
+  h$ = h$ + "fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:text})})" + CHR$(10)
+  h$ = h$ + ".then(r=>r.json()).then(d=>{ans.textContent=d.answer||d.error||'(no answer)';" + CHR$(10)
+  h$ = h$ + "if(d.sources&&d.sources.length){var s=document.createElement('div');s.className='src';" + CHR$(10)
+  h$ = h$ + "s.innerHTML='sources: '+d.sources.map(x=>'<b>'+esc(x.source)+'</b> ('+Math.round(x.score*100)+'%)').join(', ');turn.appendChild(s);}" + CHR$(10)
+  h$ = h$ + "go.disabled=false;q.disabled=false;q.focus();}).catch(e=>{ans.textContent='request failed';go.disabled=false;q.disabled=false;});}" + CHR$(10)
+  h$ = h$ + "go.onclick=ask;q.addEventListener('keydown',e=>{if(e.key==='Enter')ask();});" + CHR$(10)
+  h$ = h$ + "</script></div></body></html>"
+  RETURN h$
+ENDFUNC
+
+' ── Admin page (manage indexed directories) ──────────────────────
+FUNC AdminHtml$()
+  DIM h$ = ""
+  h$ = h$ + "<!DOCTYPE html>" + CHR$(10)
+  h$ = h$ + "<html lang='en'><head><meta charset='UTF-8'>" + CHR$(10)
+  h$ = h$ + "<meta name='viewport' content='width=device-width, initial-scale=1'>" + CHR$(10)
+  h$ = h$ + "<title>RAG Appliance - Admin</title>" + CHR$(10)
+  h$ = h$ + "<style>" + CHR$(10)
+  h$ = h$ + "  body{font-family:system-ui,sans-serif;background:#12141c;color:#e6e6e6;margin:0}" + CHR$(10)
+  h$ = h$ + "  .wrap{max-width:760px;margin:0 auto;padding:24px}" + CHR$(10)
+  h$ = h$ + "  h1{color:#6fd0ff;font-size:20px}a{color:#6fd0ff}" + CHR$(10)
+  h$ = h$ + "  label{display:block;font-size:13px;color:#8893a7;margin:12px 0 4px}" + CHR$(10)
+  h$ = h$ + "  input{width:100%;box-sizing:border-box;padding:10px;border-radius:6px;border:1px solid #2a3146;background:#1a1f2c;color:#fff}" + CHR$(10)
+  h$ = h$ + "  button{margin-top:14px;padding:10px 18px;border:0;border-radius:6px;background:#2d7dd2;color:#fff;cursor:pointer}" + CHR$(10)
+  h$ = h$ + "  button.warn{background:#a23b3b}" + CHR$(10)
+  h$ = h$ + "  .stat{background:#1a1f2c;border:1px solid #232838;border-radius:8px;padding:14px;margin:16px 0;font-size:14px}" + CHR$(10)
+  h$ = h$ + "  pre{white-space:pre-wrap;color:#cdb87a;margin:6px 0 0}" + CHR$(10)
+  h$ = h$ + "  #msg{color:#7fd18a;min-height:20px;margin-top:10px}" + CHR$(10)
+  h$ = h$ + "</style></head><body><div class='wrap'>" + CHR$(10)
+  h$ = h$ + "<h1>Admin <a href='/' style='font-size:13px;float:right'>&larr; back to chat</a></h1>" + CHR$(10)
+  h$ = h$ + "<div class='stat'><b>" + STR(gChunks) + "</b> chunks indexed<br>Indexed directories:" + CHR$(10)
+  IF LEN(gDirList$) = 0 THEN
+    h$ = h$ + "<pre>(none yet)</pre>"
+  ELSE
+    h$ = h$ + "<pre>" + EscapeHtml$(gDirList$) + "</pre>"
+  ENDIF
+  h$ = h$ + "</div>" + CHR$(10)
+  h$ = h$ + "<label>Directory to index (absolute or relative to the appliance)</label>" + CHR$(10)
+  h$ = h$ + "<input id='dir' placeholder='C:/docs/handbooks  or  /home/me/reports'>" + CHR$(10)
+  h$ = h$ + "<label>File pattern</label>" + CHR$(10)
+  h$ = h$ + "<input id='pat' value='" + gPattern$ + "'>" + CHR$(10)
+  h$ = h$ + "<button id='add'>Add &amp; index</button> " + CHR$(10)
+  h$ = h$ + "<button id='clr' class='warn'>Clear index</button>" + CHR$(10)
+  h$ = h$ + "<div id='msg'></div>" + CHR$(10)
+  h$ = h$ + "<script>" + CHR$(10)
+  h$ = h$ + "var msg=document.getElementById('msg');" + CHR$(10)
+  h$ = h$ + "document.getElementById('add').onclick=function(){var dir=document.getElementById('dir').value.trim();var pat=document.getElementById('pat').value.trim();if(!dir)return;msg.textContent='indexing '+dir+' ... (this can take a while)';" + CHR$(10)
+  h$ = h$ + "fetch('/admin/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:dir,pattern:pat})}).then(r=>r.json()).then(d=>{msg.textContent=d.message;setTimeout(()=>location.reload(),900);});};" + CHR$(10)
+  h$ = h$ + "document.getElementById('clr').onclick=function(){if(!confirm('Clear the whole index?'))return;msg.textContent='clearing ...';" + CHR$(10)
+  h$ = h$ + "fetch('/admin/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(d=>{msg.textContent=d.message;setTimeout(()=>location.reload(),700);});};" + CHR$(10)
+  h$ = h$ + "</script></div></body></html>"
+  RETURN h$
+ENDFUNC
+
+' ── HTTP handlers ─────────────────────────────────────────────────
+FUNC HandleRoot(request)
+  RETURN PageHtml$()
+ENDFUNC
+
+FUNC HandleAdmin(request)
+  RETURN AdminHtml$()
+ENDFUNC
+
+FUNC HandleAdminAdd(request)
+  IF gBusy THEN RETURN { "message": "busy - a query or index is running, retry shortly" }
+  DIM body = JSON.PARSE$(request{"BODY"})
+  DIM dir$ = TRIM$(body{"dir"})
+  DIM pat$ = TRIM$(body{"pattern"})
+  IF LEN(dir$) = 0 THEN RETURN { "message": "no directory given" }
+  IF LEN(pat$) = 0 THEN pat$ = gPattern$
+  IF NOT FILE.EXISTS(dir$) THEN RETURN { "message": "directory not found: " + dir$ }
+
+  gBusy = TRUE
+  DIM added = IndexDir(dir$, pat$)
+  gBusy = FALSE
+  RETURN { "message": gLastMsg$, "files_added": added, "chunks": gChunks }
+ENDFUNC
+
+FUNC HandleAdminClear(request)
+  IF gBusy THEN RETURN { "message": "busy - retry shortly" }
+  gBusy = TRUE
+  TRY
+    IF gRagId <> 0 THEN AI.RAG_CLEAR(gRagId)
+    gChunks = 0
+    gDirList$ = ""
+    SaveDirs()
+    IF gRagId <> 0 THEN AI.RAG_SAVE(gRagId, gIdxPath$)
+    gLastMsg$ = "index cleared"
+  CATCH
+    gLastMsg$ = "clear error: " + ERRMSG$
+  ENDTRY
+  gBusy = FALSE
+  RETURN { "message": gLastMsg$, "chunks": gChunks }
+ENDFUNC
+
+FUNC HandleHealth(request)
+  RETURN { "status": "ok", "chunks": gChunks, "model": gLlmPath$, "docs": gDocsDir$ }
+ENDFUNC
+
+FUNC HandleModels(request)
+  RETURN { "current": gLlmPath$, "models": ModelList() }
+ENDFUNC
+
+FUNC HandleModelSet(request)
+  DIM body = JSON.PARSE$(request{"BODY"})
+  DIM p$ = TRIM$(body{"path"})
+  IF LEN(p$) = 0 THEN RETURN { "error": "no model path" }
+  IF NOT FILE.EXISTS(p$) THEN RETURN { "error": "model not found: " + p$ }
+  DIM err$ = SwitchModel(p$)
+  IF LEN(err$) > 0 THEN RETURN { "error": err$ }
+  RETURN { "ok": TRUE, "current": gLlmPath$ }
+ENDFUNC
+
+FUNC HandleAsk(request)
+  IF gChunks = 0 THEN RETURN { "error": "index is empty - no documents were found" }
+  IF gBusy THEN RETURN { "error": "busy - one query at a time, please retry" }
+
+  DIM body = JSON.PARSE$(request{"BODY"})
+  DIM q$ = body{"q"}
+  IF LEN(TRIM$(q$)) = 0 THEN RETURN { "error": "empty question" }
+
+  ' Qwen3 and friends emit <think> blocks unless /no_think rides in the user
+  ' message (system-prompt position leaks the tags); append it when configured.
+  DIM qq$ = q$
+  IF gNoThink <> 0 THEN qq$ = q$ + " /no_think"
+
+  gBusy = TRUE
+  DIM out
+  TRY
+    DIM t0 = TICK()
+    DIM full = AI.RAG_QUERY_FULL(gRagId, qq$, gTopK)
+    DIM ms = INT(TICK() - t0)
+    out = { "answer": CleanAnswer$(full{"answer"}), "sources": full{"sources"}, "ms": ms }
+  CATCH
+    out = { "error": ERRMSG$ }
+  ENDTRY
+  gBusy = FALSE
+  RETURN out
+ENDFUNC
+
+' ── Boot ──────────────────────────────────────────────────────────
+LoadConfig()
+
+PRINT "Loading embedding model: "; gEmbPath$
+TRY
+  gEmbId = AI.LOAD_EMBEDDINGS(gEmbPath$, 2048, gGpuLayers)
+  gDense = TRUE
+  PRINT "  dense embeddings active."
+CATCH
+  gDense = FALSE
+  PRINT "  no embedding model - falling back to TF-IDF retrieval."
+ENDTRY
+
+PRINT "Loading LLM: "; gLlmPath$
+gLlmId = AI.LOAD_LLM(gLlmPath$, 4096, gGpuLayers)
+AI.SET(gLlmId, "temperature", gTemp)
+AI.SET(gLlmId, "max_tokens", gMaxTokens)
+AI.SET(gLlmId, "system", gSysPrompt$)
+
+BuildOrLoadIndex()
+
+' Handler names are passed as strings; the lexer upper-cases identifiers,
+' so a FUNC is stored under its UPPERCASE name - match that here.
+HTTP.SERVER.ON_GET("/", "HANDLEROOT")
+HTTP.SERVER.ON_GET("/health", "HANDLEHEALTH")
+HTTP.SERVER.ON_GET("/models", "HANDLEMODELS")
+HTTP.SERVER.ON_GET("/admin", "HANDLEADMIN")
+HTTP.SERVER.ON_POST("/ask", "HANDLEASK")
+HTTP.SERVER.ON_POST("/model", "HANDLEMODELSET")
+HTTP.SERVER.ON_POST("/admin/add", "HANDLEADMINADD")
+HTTP.SERVER.ON_POST("/admin/clear", "HANDLEADMINCLEAR")
+
+IF HTTP.SERVER.START(gPort, gBind$) THEN
+  PRINT ""
+  PRINT "RAG Appliance ready -> bound on "; gBind$; ":"; gPort
+  PRINT "  reach it at http://<this-machine-ip>:"; gPort
+  PRINT "  serving "; gChunks; " chunks from "; gDocsDir$
+  PRINT "  stop with Ctrl-C."
+  ' Park here in C++ so request handlers are the only VM users. A jdBasic
+  ' keep-alive loop would step the VM concurrently with a (long) handler.
+  HTTP.SERVER.WAIT()
+ELSE
+  PRINT "Error: could not start server on port "; gPort; " ("; ERRMSG$; ")"
+ENDIF
+
+PRINT "Shutting down ..."
+HTTP.SERVER.STOP()
+IF gLlmId <> 0 THEN AI.FREE_LLM(gLlmId)
+IF gEmbId <> 0 THEN AI.FREE_LLM(gEmbId)
+PRINT "Stopped."

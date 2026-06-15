@@ -644,6 +644,25 @@ void register_http_builtins(VM& vm) {
         }
         return Value::make_none();
     });
+
+    // Block the calling thread until the server stops, without stepping the
+    // VM. Handlers run on httplib worker threads sharing this single VM; a
+    // jdBasic `DO ... SLEEP ... LOOP` keep-alive on the main thread would step
+    // the VM concurrently with a handler and corrupt it (fatal for handlers
+    // that run for seconds, e.g. an LLM query). Parking here in C++ leaves the
+    // serialized handlers as the only VM users. Returns when the server is
+    // stopped (HTTP.SERVER.STOP from a handler, or process exit).
+    vm.register_native("HTTP.SERVER.WAIT", [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lock(g_server_mutex);
+                if (!g_server || !g_server->is_running()) break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+        return Value::make_none();
+    });
 }
 
 #endif // HTTP

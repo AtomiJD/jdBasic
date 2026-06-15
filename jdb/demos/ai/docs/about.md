@@ -1,0 +1,1 @@
+The jdBasic RAG Appliance is a single executable that indexes a folder of documents and serves a chat UI over HTTP. It uses llama.cpp for the LLM, nomic embeddings, and an HNSW vector index. No cloud, no Python, no Docker.
