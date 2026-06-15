@@ -234,3 +234,8 @@ Roland TR-808/
 Korg_KPR77/
 Roland_CR-80/
 .DS_Store
+
+# RAG appliance generated indexes
+.rag_appliance.idx
+.rag_appliance.dirs
+.rag_appliance.tfidf

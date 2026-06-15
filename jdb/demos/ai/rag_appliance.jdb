@@ -21,7 +21,7 @@ DIM gModelDirs$  = "models"
 DIM gGpuLayers   = 99
 DIM gChunkSize   = 500
 DIM gChunkOver   = 50
-DIM gTopK        = 4
+DIM gTopK        = 5
 DIM gMaxTokens   = 400
 DIM gTemp        = 0.2
 DIM gNoThink     = 0
@@ -39,6 +39,8 @@ DIM gDirsPath$ = ""
 DIM gDirList$  = ""
 DIM gLastMsg$  = "ready"
 DIM gDense     = FALSE
+DIM gRagSparse = 0
+DIM gCtx       = 8192
 
 ' ── Optional config file ──────────────────────────────────────────
 SUB LoadConfig()
@@ -65,46 +67,80 @@ SUB LoadConfig()
     IF k$ = "top_k"         THEN gTopK      = VAL(v$)
     IF k$ = "max_tokens"    THEN gMaxTokens = VAL(v$)
     IF k$ = "no_think"      THEN gNoThink   = VAL(v$)
+    IF k$ = "ctx"           THEN gCtx       = VAL(v$)
   NEXT i
 ENDSUB
 
 ' ── Index build / load ────────────────────────────────────────────
+' Two stores: gRagId is the primary (dense if an embedding model loaded,
+' else TF-IDF). When dense, gRagSparse is a parallel TF-IDF store so queries
+' fuse semantic recall (dense) with exact-term recall (TF-IDF) - the latter
+' nails function names and rare keywords the dense model dilutes.
 SUB EnsureRag()
-  IF gRagId <> 0 THEN RETURN
-  IF gDense THEN
-    gRagId = AI.RAG_CREATE(gLlmId, gChunkSize, gChunkOver, gEmbId)
-  ELSE
-    gRagId = AI.RAG_CREATE(gLlmId, gChunkSize, gChunkOver)
+  IF gRagId = 0 THEN
+    IF gDense THEN
+      gRagId = AI.RAG_CREATE(gLlmId, gChunkSize, gChunkOver, gEmbId)
+    ELSE
+      gRagId = AI.RAG_CREATE(gLlmId, gChunkSize, gChunkOver)
+    ENDIF
   ENDIF
+  IF gDense AND gRagSparse = 0 THEN gRagSparse = AI.RAG_CREATE(0, gChunkSize, gChunkOver)
 ENDSUB
 
-' Persist / restore the list of indexed directories alongside the index.
 SUB SaveDirs()
   TXTWRITER gDirsPath$, gDirList$
 ENDSUB
 
-SUB RememberDir(dir$)
+' Remember a (dir, pattern) as a parseable "dir|pattern" line so the TF-IDF
+' store can be rebuilt from source on the next boot.
+SUB RememberDir(dir$, pattern$)
+  DIM entry$ = dir$ + "|" + pattern$
   IF LEN(gDirList$) = 0 THEN
-    gDirList$ = dir$
+    gDirList$ = entry$
   ELSE
-    gDirList$ = gDirList$ + CHR$(10) + dir$
+    gDirList$ = gDirList$ + CHR$(10) + entry$
   ENDIF
   SaveDirs()
 ENDSUB
 
-' Add one directory to the live store, rebuild HNSW, persist. Returns the
-' number of files added (or -1 on error, message left in gLastMsg$).
+' Rebuild the TF-IDF store from the remembered dirs (cheap - no embeddings).
+SUB RebuildSparse()
+  IF NOT gDense THEN RETURN
+  IF gRagSparse = 0 THEN gRagSparse = AI.RAG_CREATE(0, gChunkSize, gChunkOver)
+  IF LEN(gDirList$) = 0 THEN RETURN
+  DIM lines = SPLIT(gDirList$, CHR$(10))
+  DIM i
+  FOR i = 0 TO LEN(lines) - 1
+    DIM ln$ = TRIM$(lines[i])
+    IF LEN(ln$) = 0 THEN CONTINUEFOR
+    DIM bar = INSTR(ln$, "|")
+    DIM d$ = ln$
+    DIM p$ = gPattern$
+    IF bar >= 0 THEN
+      d$ = LEFT$(ln$, bar)
+      p$ = MID$(ln$, bar + 1)
+    ENDIF
+    TRY
+      AI.RAG_ADD_DIR(gRagSparse, d$, p$, 1)
+    CATCH
+    ENDTRY
+  NEXT i
+ENDSUB
+
+' Add one directory to both stores, rebuild HNSW, persist. Returns files added
+' (or -1 on error, message in gLastMsg$).
 FUNC IndexDir(dir$, pattern$)
   EnsureRag()
   DIM added = -1
   TRY
     DIM stats = AI.RAG_ADD_DIR(gRagId, dir$, pattern$, 1)
     added = stats{"files_added"}
+    IF gDense AND gRagSparse <> 0 THEN AI.RAG_ADD_DIR(gRagSparse, dir$, pattern$, 1)
     DIM info = AI.RAG_INFO(gRagId)
     gChunks = info{"chunks"}
-    IF gChunks > 0 THEN AI.RAG_BUILD_INDEX(gRagId, 16, 200)
+    IF gChunks > 0 AND gDense THEN AI.RAG_BUILD_INDEX(gRagId, 16, 200)
     AI.RAG_SAVE(gRagId, gIdxPath$)
-    RememberDir(dir$ + "  [" + pattern$ + "]")
+    RememberDir(dir$, pattern$)
     gLastMsg$ = "indexed " + STR(added) + " files from " + dir$ + " (" + STR(gChunks) + " chunks total)"
   CATCH
     gLastMsg$ = "index error: " + ERRMSG$
@@ -123,10 +159,10 @@ SUB BuildOrLoadIndex()
     ELSE
       gRagId = AI.RAG_LOAD(gIdxPath$, gLlmId)
     ENDIF
-    DIM info = AI.RAG_INFO(gRagId)
-    gChunks = info{"chunks"}
+    gChunks = AI.RAG_INFO(gRagId){"chunks"}
     IF FILE.EXISTS(gDirsPath$) THEN gDirList$ = TXTREADER$(gDirsPath$)
-    PRINT "  loaded "; gChunks; " chunks (skip reindex)."
+    RebuildSparse()
+    PRINT "  loaded "; gChunks; " chunks; TF-IDF store rebuilt."
     RETURN
   ENDIF
 
@@ -139,6 +175,29 @@ SUB BuildOrLoadIndex()
     PRINT "  default docs dir not found - add one via /admin."
   ENDIF
 ENDSUB
+
+' Hybrid retrieval: round-robin merge of dense + TF-IDF hits, de-duplicated.
+FUNC PushUnique(lst, hit)
+  DIM j
+  FOR j = 0 TO LEN(lst) - 1
+    IF lst[j]{"text"} = hit{"text"} THEN RETURN lst
+  NEXT j
+  RETURN APPEND(lst, hit)
+ENDFUNC
+
+FUNC HybridRetrieve(q$, nEach)
+  DIM dense = AI.RAG_SEARCH(gRagId, q$, nEach)
+  DIM sparse = []
+  IF gDense AND gRagSparse <> 0 THEN sparse = AI.RAG_SEARCH(gRagSparse, q$, nEach)
+  DIM merged = []
+  DIM i = 0
+  DO WHILE (i < LEN(dense)) OR (i < LEN(sparse))
+    IF i < LEN(dense) THEN merged = PushUnique(merged, dense[i])
+    IF i < LEN(sparse) THEN merged = PushUnique(merged, sparse[i])
+    i = i + 1
+  LOOP
+  RETURN merged
+ENDFUNC
 
 ' ── Model discovery + hot-swap ────────────────────────────────────
 ' List *.gguf across the configured dirs, dropping embedding models.
@@ -166,34 +225,20 @@ FUNC ModelList()
   RETURN out
 ENDFUNC
 
-' Load a new LLM, re-point the RAG store at it (index unchanged), free the
-' old one. Returns "" on success or an error message.
+' Hot-swap the generation LLM. Retrieval uses the embedding model and the
+' stores stay as they are, so only gLlmId needs to change. Returns "" on
+' success or an error message.
 FUNC SwitchModel(path$)
   IF gBusy THEN RETURN "busy - a query or switch is running, retry shortly"
   gBusy = TRUE
   DIM err$ = ""
   TRY
-    DIM newId = AI.LOAD_LLM(path$, 4096, gGpuLayers)
+    DIM newId = AI.LOAD_LLM(path$, gCtx, gGpuLayers)
     AI.SET(newId, "temperature", gTemp)
     AI.SET(newId, "max_tokens", gMaxTokens)
     AI.SET(newId, "system", gSysPrompt$)
-    DIM newRag = 0
-    IF FILE.EXISTS(gIdxPath$) THEN
-      IF gDense THEN
-        newRag = AI.RAG_LOAD(gIdxPath$, newId, gEmbId)
-      ELSE
-        newRag = AI.RAG_LOAD(gIdxPath$, newId)
-      ENDIF
-    ELSE
-      IF gDense THEN
-        newRag = AI.RAG_CREATE(newId, gChunkSize, gChunkOver, gEmbId)
-      ELSE
-        newRag = AI.RAG_CREATE(newId, gChunkSize, gChunkOver)
-      ENDIF
-    ENDIF
     DIM oldId = gLlmId
     gLlmId = newId
-    gRagId = newRag
     gLlmPath$ = path$
     IF oldId <> 0 THEN AI.FREE_LLM(oldId)
   CATCH
@@ -312,7 +357,7 @@ FUNC AdminHtml$()
   IF LEN(gDirList$) = 0 THEN
     h$ = h$ + "<pre>(none yet)</pre>"
   ELSE
-    h$ = h$ + "<pre>" + EscapeHtml$(gDirList$) + "</pre>"
+    h$ = h$ + "<pre>" + EscapeHtml$(REPLACE$(gDirList$, "|", "   pattern: ")) + "</pre>"
   ENDIF
   h$ = h$ + "</div>" + CHR$(10)
   h$ = h$ + "<label>Directory to index (absolute or relative to the appliance)</label>" + CHR$(10)
@@ -408,9 +453,17 @@ FUNC HandleAsk(request)
   DIM out
   TRY
     DIM t0 = TICK()
-    DIM full = AI.RAG_QUERY_FULL(gRagId, qq$, gTopK)
+    DIM hits = HybridRetrieve(q$, gTopK)
+    DIM ctx$ = ""
+    DIM i
+    FOR i = 0 TO LEN(hits) - 1
+      ctx$ = ctx$ + "[" + STR(i + 1) + "] (" + hits[i]{"source"} + ")" + CHR$(10) + hits[i]{"text"} + CHR$(10) + CHR$(10)
+    NEXT i
+    DIM prompt$ = "Answer the question using only the context below. If the answer is not in the context, say so plainly." + CHR$(10) + CHR$(10) + "CONTEXT:" + CHR$(10) + ctx$ + "QUESTION: " + qq$
+    AI.CLEAR_HISTORY(gLlmId)
+    DIM raw$ = AI.CHAT(gLlmId, prompt$)
     DIM ms = INT(TICK() - t0)
-    out = { "answer": CleanAnswer$(full{"answer"}), "sources": full{"sources"}, "ms": ms }
+    out = { "answer": CleanAnswer$(raw$), "sources": hits, "ms": ms }
   CATCH
     out = { "error": ERRMSG$ }
   ENDTRY
@@ -432,7 +485,7 @@ CATCH
 ENDTRY
 
 PRINT "Loading LLM: "; gLlmPath$
-gLlmId = AI.LOAD_LLM(gLlmPath$, 4096, gGpuLayers)
+gLlmId = AI.LOAD_LLM(gLlmPath$, gCtx, gGpuLayers)
 AI.SET(gLlmId, "temperature", gTemp)
 AI.SET(gLlmId, "max_tokens", gMaxTokens)
 AI.SET(gLlmId, "system", gSysPrompt$)
