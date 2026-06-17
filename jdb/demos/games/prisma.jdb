@@ -1,0 +1,1266 @@
+' ============================================================
+' PRISMA - Color Alchemy  (jdBasic GFX)
+' Match-3 twist: primaries fuse into secondaries instead of
+' vanishing. Match 3 primaries (R/G/B) -> 1 mixed secondary
+' (R->Y, G->C, B->M). Match 3 secondaries -> rainbow burst +
+' a Prism wild. Secondaries are earned, never spawned.
+' Controls: arrows move cursor, Space pick up + arrow to swap.
+' Test:  jdBasic prisma.jdb shot       -> tmp/prisma.png
+' ============================================================
+
+OPTION "NOEXPLICIT"
+MKDIR "tmp"
+
+Cols = 8
+Rows = 8
+CELL = 52
+SCRW = 740
+SCRH = 700
+DIM BX AS DOUBLE = 40.0
+DIM BY AS DOUBLE = 130.0
+DIM PANX = 480           ' left edge of the side panel
+
+DIM Board[Rows, Cols]
+DIM matched[Rows, Cols]
+DIM Score = 0
+DIM combo = 0
+DIM cursorR = 4, cursorC = 4
+DIM selR = 0, selC = 0
+DIM picked = FALSE
+DIM stepScore = 0
+DIM shake = 0
+DIM comboFlash = 0, comboShow = 0
+DIM gState$ = "title"
+DIM quitFlag = FALSE
+DIM sfxOn = TRUE
+DIM levelNo = 1
+DIM goalType$ = "color"   ' color | fuse | special | score
+DIM goalColor = 1
+DIM goalTarget = 10
+DIM goalProg = 0
+DIM limitType$ = "moves"  ' moves | time
+DIM limitVal = 20
+DIM movesLeft = 20
+DIM levelStartTick = 0.0
+DIM levelBaseScore = 0
+DIM g = 0, v2 = 0, tmp = 0
+
+DIM spawnR = []
+DIM spawnC = []
+DIM spawnId = []
+DIM fallB[Rows, Cols]
+DIM fallOff[Rows, Cols]
+DIM inH[Rows, Cols]
+DIM inV[Rows, Cols]
+DIM detR = []
+DIM detC = []
+DIM detId = []
+DIM dhead = 0
+
+DIM NPART = 160
+DIM par_x = ZEROS(NPART)
+DIM par_y = ZEROS(NPART)
+DIM par_vx = ZEROS(NPART)
+DIM par_vy = ZEROS(NPART)
+DIM par_life = ZEROS(NPART)
+DIM par_r = ZEROS(NPART)
+DIM par_g = ZEROS(NPART)
+DIM par_b = ZEROS(NPART)
+DIM NPOP = 14
+DIM pop_x = ZEROS(NPOP)
+DIM pop_y = ZEROS(NPOP)
+DIM pop_life = ZEROS(NPOP)
+DIM pop_val = ZEROS(NPOP)
+DIM NBUB = 18
+DIM bub_x = ZEROS(NBUB)
+DIM bub_y = ZEROS(NBUB)
+DIM bub_s = ZEROS(NBUB)
+
+DIM pL = 0, pR = 0, pU = 0, pDn = 0, pSp = 0, pEsc = 0, pEnt = 0
+DIM pMouseBtn = FALSE
+
+SCREEN SCRW, SCRH, "PRISMA - Color Alchemy", 1
+
+SOUND.INIT
+SOUND.VOICE 3, "TRIANGLE", 0.004, 0.10, 0.0, 0.08
+SOUND.GAIN 3, 0.45
+SOUND.VOICE 4, "SQUARE", 0.004, 0.10, 0.0, 0.09
+SOUND.GAIN 4, 0.40
+SOUND.VOICE 5, "SAW", 0.01, 0.22, 0.0, 0.22
+SOUND.GAIN 5, 0.45
+
+' 1=R 2=G 3=B (primary)  4=Y 5=C 6=M (secondary)  7=Prism (wild)
+FUNC COLOR_FOR(id)
+    SWITCH id
+        CASE 1: RETURN [235, 80, 80]
+        CASE 2: RETURN [90, 200, 110]
+        CASE 3: RETURN [80, 130, 235]
+        CASE 4: RETURN [240, 215, 75]
+        CASE 5: RETURN [90, 220, 220]
+        CASE 6: RETURN [220, 95, 200]
+        CASE 7: RETURN [240, 240, 250]
+        CASE 10: RETURN [205, 212, 238]
+        CASE 11: RETURN [205, 212, 238]
+        CASE 12: RETURN [58, 58, 78]
+    ENDSWITCH
+    RETURN [60, 72, 92]
+ENDFUNC
+
+FUNC IS_PRIMARY(id)
+    RETURN id >= 1 ANDALSO id <= 3
+ENDFUNC
+
+FUNC IS_SECONDARY(id)
+    RETURN id >= 4 ANDALSO id <= 6
+ENDFUNC
+
+FUNC IS_SPECIAL(id)
+    RETURN id = 7 ORELSE id = 10 ORELSE id = 11 ORELSE id = 12
+ENDFUNC
+
+FUNC COLOR_NAME$(id)
+    SWITCH id
+        CASE 1: RETURN "Rote"
+        CASE 2: RETURN "Gruene"
+        CASE 3: RETURN "Blaue"
+        CASE 4: RETURN "Gelbe"
+        CASE 5: RETURN "Cyan"
+        CASE 6: RETURN "Magenta"
+    ENDSWITCH
+    RETURN "Steine"
+ENDFUNC
+
+' derive this level's goal + limit from its number (scales forever)
+SUB GenLevel(n)
+    levelNo = n
+    gt = (n - 1) MOD 4
+    IF gt = 0 THEN
+        goalType$ = "color"
+        goalColor = 1 + INT(RND(1) * 3)
+        goalTarget = 15 + n * 5
+    ELSEIF gt = 1 THEN
+        goalType$ = "fuse"
+        goalColor = 4 + INT(RND(1) * 3)
+        goalTarget = 4 + n * 2
+    ELSEIF gt = 2 THEN
+        goalType$ = "special"
+        goalColor = 0
+        goalTarget = 2 + n
+    ELSE
+        goalType$ = "score"
+        goalColor = 0
+        goalTarget = 1500 + n * 800
+    ENDIF
+    IF (n MOD 2) = 0 THEN
+        limitType$ = "time"
+        limitVal = MAX([40, 80 - n * 3])
+    ELSE
+        limitType$ = "moves"
+        limitVal = MAX([12, 26 - n])
+    ENDIF
+    goalProg = 0
+ENDSUB
+
+FUNC GOAL_SHORT$()
+    IF goalType$ = "color" THEN RETURN "Raeume " + goalTarget + " " + COLOR_NAME$(goalColor)
+    IF goalType$ = "fuse" THEN RETURN "Schmelze " + goalTarget + " " + COLOR_NAME$(goalColor)
+    IF goalType$ = "special" THEN RETURN "Zuende " + goalTarget + " Specials"
+    IF goalType$ = "score" THEN RETURN "Hole " + goalTarget + " Punkte"
+    RETURN ""
+ENDFUNC
+
+FUNC GOAL_PROG_VAL()
+    IF goalType$ = "score" THEN RETURN Score - levelBaseScore
+    RETURN goalProg
+ENDFUNC
+
+FUNC CONSTRAINT_STR$()
+    IF limitType$ = "moves" THEN RETURN "in " + limitVal + " Zuegen"
+    RETURN "in " + limitVal + " Sekunden"
+ENDFUNC
+
+FUNC TIME_STR$(sec)
+    mm = INT(sec / 60)
+    ss = sec - mm * 60
+    s2$ = "" + ss
+    IF ss < 10 THEN s2$ = "0" + ss
+    RETURN "" + mm + ":" + s2$
+ENDFUNC
+
+FUNC GOAL_MET()
+    IF goalType$ = "score" THEN RETURN (Score - levelBaseScore) >= goalTarget
+    RETURN goalProg >= goalTarget
+ENDFUNC
+
+' progress hooks fired during resolution
+SUB OnCleared(id)
+    IF goalType$ = "color" ANDALSO id = goalColor THEN goalProg = goalProg + 1
+ENDSUB
+
+SUB OnFused(id)
+    IF goalType$ = "fuse" ANDALSO id = goalColor THEN goalProg = goalProg + 1
+ENDSUB
+
+SUB OnSpecial()
+    IF goalType$ = "special" THEN goalProg = goalProg + 1
+ENDSUB
+
+SUB SfxSwap()
+    IF sfxOn THEN SOUND.PLAY 3, "e4"
+ENDSUB
+SUB SfxBad()
+    IF sfxOn THEN SOUND.PLAY 3, "c3"
+ENDSUB
+SUB SfxFuse()
+    IF sfxOn THEN SOUND.PLAY 4, "a4"
+ENDSUB
+SUB SfxBurst()
+    IF sfxOn THEN SOUND.PLAY 5, "c5"
+ENDSUB
+
+SUB AddPart(x, y, vx, vy, lifev, rr, gg, bb)
+    FOR qi = 0 TO NPART - 1
+        IF par_life[qi] <= 0 THEN
+            par_x[qi] = x : par_y[qi] = y
+            par_vx[qi] = vx : par_vy[qi] = vy
+            par_life[qi] = lifev
+            par_r[qi] = rr : par_g[qi] = gg : par_b[qi] = bb
+            RETURN
+        ENDIF
+    NEXT qi
+ENDSUB
+
+SUB Burst(x, y, n, spd, rr, gg, bb)
+    FOR qj = 1 TO n
+        ang = RND(1) * 6.2832
+        sp = spd * (0.4 + RND(1))
+        AddPart(x, y, COS(ang) * sp, SIN(ang) * sp - 0.8, 20 + INT(RND(1) * 16), rr, gg, bb)
+    NEXT qj
+ENDSUB
+
+SUB AddPopup(x, y, valv)
+    FOR pi = 0 TO NPOP - 1
+        IF pop_life[pi] <= 0 THEN
+            pop_x[pi] = x : pop_y[pi] = y
+            pop_val[pi] = valv : pop_life[pi] = 50
+            RETURN
+        ENDIF
+    NEXT pi
+ENDSUB
+
+' fill with primaries only, avoiding any pre-made 3-run
+SUB GenBoard()
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            DO
+                gid = 1 + INT(RND(1) * 3)
+                bad = FALSE
+                IF c >= 2 ANDALSO Board[r, c - 1] = gid ANDALSO Board[r, c - 2] = gid THEN bad = TRUE
+                IF r >= 2 ANDALSO Board[r - 1, c] = gid ANDALSO Board[r - 2, c] = gid THEN bad = TRUE
+            LOOP WHILE bad
+            Board[r, c] = gid
+        NEXT c
+    NEXT r
+ENDSUB
+
+FUNC FindAnyMatch()
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            g = Board[r, c]
+            IF g <> 0 THEN
+                IF c <= Cols - 3 ANDALSO Board[r, c + 1] = g ANDALSO Board[r, c + 2] = g THEN RETURN TRUE
+                IF r <= Rows - 3 ANDALSO Board[r + 1, c] = g ANDALSO Board[r + 2, c] = g THEN RETURN TRUE
+            ENDIF
+        NEXT c
+    NEXT r
+    RETURN FALSE
+ENDFUNC
+
+SUB AddSpawn(r, c, id)
+    spawnR = APPEND(spawnR, r)
+    spawnC = APPEND(spawnC, c)
+    spawnId = APPEND(spawnId, id)
+ENDSUB
+
+' record what a matched run leaves behind + its score.
+' length 5+ -> prism, length 4 -> beam, length 3 -> fuse/clear
+SUB MarkRun(orient$, ar, ac, gid, runLen)
+    IF runLen >= 5 THEN
+        AddSpawn(ar, ac, 7)
+        stepScore = stepScore + runLen * 60
+    ELSEIF runLen = 4 THEN
+        IF orient$ = "H" THEN AddSpawn(ar, ac, 10) ELSE AddSpawn(ar, ac, 11)
+        stepScore = stepScore + runLen * 40
+    ELSE
+        IF IS_PRIMARY(gid) THEN
+            AddSpawn(ar, ac, gid + 3)
+            OnFused(gid + 3)
+            stepScore = stepScore + runLen * 10
+        ELSEIF IS_SECONDARY(gid) THEN
+            stepScore = stepScore + runLen * 50
+            IF RND(1) < 0.30 THEN AddSpawn(ar, ac, 7)
+        ELSE
+            stepScore = stepScore + runLen * 200
+        ENDIF
+    ENDIF
+ENDSUB
+
+' one cascade pass: scan, clear, fuse, return cells cleared
+FUNC ResolveStep()
+    matched = RESHAPE([0], [Rows, Cols])
+    inH = RESHAPE([0], [Rows, Cols])
+    inV = RESHAPE([0], [Rows, Cols])
+    spawnR = [] : spawnC = [] : spawnId = []
+    stepScore = 0
+    cleared = 0
+    ' horizontal runs
+    FOR r = 0 TO Rows - 1
+        cc = 0
+        DO
+            IF cc >= Cols THEN EXITDO
+            gid = Board[r, cc]
+            IF gid = 0 THEN
+                cc = cc + 1
+                CONTINUEDO
+            ENDIF
+            runEnd = cc
+            DO
+                IF runEnd + 1 < Cols ANDALSO Board[r, runEnd + 1] = gid THEN
+                    runEnd = runEnd + 1
+                ELSE
+                    EXITDO
+                ENDIF
+            LOOP
+            runLen = runEnd - cc + 1
+            IF runLen >= 3 THEN
+                FOR k = cc TO runEnd : matched[r, k] = 1 : inH[r, k] = 1 : NEXT k
+                MarkRun("H", r, INT((cc + runEnd) / 2), gid, runLen)
+            ENDIF
+            cc = runEnd + 1
+        LOOP
+    NEXT r
+    ' vertical runs
+    FOR c = 0 TO Cols - 1
+        rr = 0
+        DO
+            IF rr >= Rows THEN EXITDO
+            gid = Board[rr, c]
+            IF gid = 0 THEN
+                rr = rr + 1
+                CONTINUEDO
+            ENDIF
+            runEnd = rr
+            DO
+                IF runEnd + 1 < Rows ANDALSO Board[runEnd + 1, c] = gid THEN
+                    runEnd = runEnd + 1
+                ELSE
+                    EXITDO
+                ENDIF
+            LOOP
+            runLen = runEnd - rr + 1
+            IF runLen >= 3 THEN
+                FOR k = rr TO runEnd : matched[k, c] = 1 : inV[k, c] = 1 : NEXT k
+                MarkRun("V", INT((rr + runEnd) / 2), c, gid, runLen)
+            ENDIF
+            rr = runEnd + 1
+        LOOP
+    NEXT c
+    ' an H-run crossing a V-run (L / T / + shape) leaves a bomb
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            IF inH[r, c] = 1 ANDALSO inV[r, c] = 1 THEN AddSpawn(r, c, 12)
+        NEXT c
+    NEXT r
+    ' clear marked cells with a burst in their own colour
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            IF matched[r, c] = 1 THEN
+                col = COLOR_FOR(Board[r, c])
+                Burst(BX + c * CELL + CELL / 2, BY + r * CELL + CELL / 2, 6, 4, col[0], col[1], col[2])
+                OnCleared(Board[r, c])
+                Board[r, c] = 0
+                cleared = cleared + 1
+            ENDIF
+        NEXT c
+    NEXT r
+    ' drop fused / special gems onto their anchors (bombs last = win ties)
+    FOR i = 0 TO LEN(spawnId) - 1
+        Board[spawnR[i], spawnC[i]] = spawnId[i]
+        scol = COLOR_FOR(spawnId[i])
+        Burst(BX + spawnC[i] * CELL + CELL / 2, BY + spawnR[i] * CELL + CELL / 2, 14, 6, scol[0], scol[1], scol[2])
+    NEXT i
+    RETURN cleared
+ENDFUNC
+
+SUB BeginResolve()
+    detR = [] : detC = [] : detId = [] : dhead = 0
+ENDSUB
+
+SUB QueueDet(r, c, id)
+    detR = APPEND(detR, r)
+    detC = APPEND(detC, c)
+    detId = APPEND(detId, id)
+ENDSUB
+
+' clear one cell; a special caught here is queued to detonate too
+SUB ClearCell(r, c)
+    cid = Board[r, c]
+    IF cid = 0 THEN RETURN
+    col = COLOR_FOR(cid)
+    Burst(BX + c * CELL + CELL / 2, BY + r * CELL + CELL / 2, 5, 4, col[0], col[1], col[2])
+    OnCleared(cid)
+    Board[r, c] = 0
+    IF IS_SPECIAL(cid) THEN
+        QueueDet(r, c, cid)
+    ELSE
+        Score = Score + 5
+    ENDIF
+ENDSUB
+
+SUB ApplySpecial(sr, sc, sid)
+    SWITCH sid
+        CASE 10
+            FOR c = 0 TO Cols - 1 : ClearCell(sr, c) : NEXT c
+            Score = Score + 60
+            AddPopup(BX + CELL, BY + sr * CELL, 60)
+        CASE 11
+            FOR r = 0 TO Rows - 1 : ClearCell(r, sc) : NEXT r
+            Score = Score + 60
+            AddPopup(BX + sc * CELL, BY + CELL, 60)
+        CASE 12
+            FOR dr = -1 TO 1
+                FOR dc = -1 TO 1
+                    rr2 = sr + dr : cc2 = sc + dc
+                    IF rr2 >= 0 ANDALSO rr2 < Rows ANDALSO cc2 >= 0 ANDALSO cc2 < Cols THEN ClearCell(rr2, cc2)
+                NEXT dc
+            NEXT dr
+            Score = Score + 90
+            AddPopup(BX + sc * CELL, BY + sr * CELL, 90)
+        CASE 7
+            tgt = 1 + INT(RND(1) * 6)
+            FOR r = 0 TO Rows - 1
+                FOR c = 0 TO Cols - 1
+                    IF Board[r, c] = tgt THEN ClearCell(r, c)
+                NEXT c
+            NEXT r
+    ENDSWITCH
+ENDSUB
+
+SUB RunDetonations()
+    DO
+        IF dhead >= LEN(detId) THEN EXITDO
+        sr = detR[dhead] : sc = detC[dhead] : sid = detId[dhead]
+        dhead = dhead + 1
+        shake = 10
+        OnSpecial()
+        ApplySpecial(sr, sc, sid)
+        IF NOT testmode THEN
+            Draw() : SCREENFLIP : SLEEP 45
+        ENDIF
+    LOOP
+ENDSUB
+
+' player swapped a special into play: fire it
+SUB ActivateSpecialSwap(sr, sc, sid, otherId)
+    IF sid = 7 THEN
+        tgt = otherId
+        IF tgt = 0 ORELSE IS_SPECIAL(tgt) THEN tgt = 1 + INT(RND(1) * 6)
+        pc = COLOR_FOR(7)
+        Burst(BX + sc * CELL + CELL / 2, BY + sr * CELL + CELL / 2, 28, 7, pc[0], pc[1], pc[2])
+        Board[sr, sc] = 0
+        FOR r = 0 TO Rows - 1
+            FOR c = 0 TO Cols - 1
+                IF Board[r, c] = tgt THEN ClearCell(r, c)
+            NEXT c
+        NEXT r
+        Score = Score + 120
+        AddPopup(BX + sc * CELL, BY + sr * CELL, 120)
+        SfxBurst()
+    ELSE
+        ClearCell(sr, sc)
+    ENDIF
+ENDSUB
+
+' gradient strip above the board, to clip gems sliding in from the top
+SUB DrawTopMask()
+    FOR yb = 0 TO CINT(BY) - 7 STEP 4
+        ff = yb / (SCRH + 0.0)
+        DRAWCOLOR CINT(28 + 22 * ff), CINT(18 + 30 * ff), CINT(48 + 36 * ff)
+        RECT 0, yb, SCRW, 4, TRUE
+    NEXT yb
+ENDSUB
+
+' draw a falling frame: each gem sits 'frac' of its fall distance above home
+SUB DrawFalling(frac)
+    CLS
+    DrawBackground()
+    DRAWCOLOR 22, 26, 44
+    RECT BX - 6, BY - 6, Cols * CELL + 12, Rows * CELL + 12, TRUE
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            DRAWCOLOR 34, 40, 60
+            RECT BX + c * CELL + 2, BY + r * CELL + 2, CELL - 4, CELL - 4, TRUE
+        NEXT c
+    NEXT r
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            id = fallB[r, c]
+            IF id <> 0 THEN
+                ry = r - fallOff[r, c] * frac
+                DrawGemPx(BX + c * CELL, CINT(BY + ry * CELL), id)
+            ENDIF
+        NEXT c
+    NEXT r
+    DrawTopMask()
+    DRAWCOLOR 235, 235, 250
+    TEXT 30, 28, "P R I S M A"
+    DRAWCOLOR 150, 162, 185
+    TEXT 30, 54, "Maus klicken oder Pfeile + Space"
+    DrawSidePanel()
+    DrawParticles()
+    DRAWCOLOR 200, 210, 225
+    TEXT 30, BY + Rows * CELL + 24, "Score:  " + Score
+    IF comboFlash > 0 THEN
+        DRAWCOLOR 255, 190, 90
+        TEXT BX + Cols * CELL / 2 - 70, BY + Rows * CELL / 2 - 10, "COMBO x" + comboShow
+    ENDIF
+ENDSUB
+
+' compute settled board + per-gem fall distance, then tween it down
+SUB AnimateFall()
+    fallB = RESHAPE([0], [Rows, Cols])
+    fallOff = RESHAPE([0], [Rows, Cols])
+    maxOff = 0
+    FOR c = 0 TO Cols - 1
+        write = Rows - 1
+        FOR r = Rows - 1 TO 0 STEP -1
+            IF Board[r, c] <> 0 THEN
+                fallB[write, c] = Board[r, c]
+                fallOff[write, c] = write - r
+                IF write - r > maxOff THEN maxOff = write - r
+                write = write - 1
+            ENDIF
+        NEXT r
+        nnew = write + 1
+        IF nnew > maxOff THEN maxOff = nnew
+        FOR r = write TO 0 STEP -1
+            fallB[r, c] = 1 + INT(RND(1) * 3)
+            fallOff[r, c] = nnew
+        NEXT r
+    NEXT c
+    IF maxOff <= 0 THEN
+        Board = fallB
+        RETURN
+    ENDIF
+    frames = 6 + maxOff
+    IF frames > 16 THEN frames = 16
+    FOR f = 1 TO frames
+        p = f / (frames + 0.0)
+        frac = 1.0 - p * p
+        DrawFalling(frac)
+        SCREENFLIP
+        SLEEP 18
+    NEXT f
+    Board = fallB
+ENDSUB
+
+SUB ApplyGravity()
+    FOR c = 0 TO Cols - 1
+        write = Rows - 1
+        FOR r = Rows - 1 TO 0 STEP -1
+            IF Board[r, c] <> 0 THEN
+                v2 = Board[r, c]
+                Board[r, c] = 0
+                Board[write, c] = v2
+                write = write - 1
+            ENDIF
+        NEXT r
+    NEXT c
+ENDSUB
+
+SUB Refill()
+    FOR c = 0 TO Cols - 1
+        FOR r = 0 TO Rows - 1
+            IF Board[r, c] = 0 THEN Board[r, c] = 1 + INT(RND(1) * 3)
+        NEXT r
+    NEXT c
+ENDSUB
+
+SUB ResolveCascades()
+    combo = 0
+    DO
+        cleared = ResolveStep()
+        IF cleared <= 0 THEN EXITDO
+        combo = combo + 1
+        Score = Score + stepScore * combo
+        AddPopup(BX + Cols * CELL / 2 - 16, BY + Rows * CELL / 2, stepScore * combo)
+        IF LEN(spawnId) > 0 THEN SfxFuse()
+        IF combo >= 2 THEN
+            comboShow = combo
+            comboFlash = 42
+            shake = 10
+            SfxBurst()
+        ENDIF
+        IF NOT testmode THEN
+            Draw() : SCREENFLIP : SLEEP 120     ' show the cleared holes + fused gems
+            AnimateFall()                        ' tween gravity + refill into place
+            Draw() : SCREENFLIP : SLEEP 70       ' settled, before the next rescan
+        ELSE
+            ApplyGravity()
+            Refill()
+        ENDIF
+    LOOP
+ENDSUB
+
+' is any single swap able to make a match?
+FUNC HasMove()
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            IF c < Cols - 1 THEN
+                tmp = Board[r, c] : Board[r, c] = Board[r, c + 1] : Board[r, c + 1] = tmp
+                IF FindAnyMatch() THEN
+                    tmp = Board[r, c] : Board[r, c] = Board[r, c + 1] : Board[r, c + 1] = tmp
+                    RETURN TRUE
+                ENDIF
+                tmp = Board[r, c] : Board[r, c] = Board[r, c + 1] : Board[r, c + 1] = tmp
+            ENDIF
+            IF r < Rows - 1 THEN
+                tmp = Board[r, c] : Board[r, c] = Board[r + 1, c] : Board[r + 1, c] = tmp
+                IF FindAnyMatch() THEN
+                    tmp = Board[r, c] : Board[r, c] = Board[r + 1, c] : Board[r + 1, c] = tmp
+                    RETURN TRUE
+                ENDIF
+                tmp = Board[r, c] : Board[r, c] = Board[r + 1, c] : Board[r + 1, c] = tmp
+            ENDIF
+        NEXT c
+    NEXT r
+    RETURN FALSE
+ENDFUNC
+
+SUB Reshuffle()
+    DO
+        GenBoard()
+    LOOP WHILE NOT HasMove()
+ENDSUB
+
+' one swap frame: board static except the two cells, whose gems
+' slide past each other by fraction tt (idA: A->B, idB: B->A)
+SUB DrawSwapFrame(rA, cA, rB, cB, idA, idB, tt)
+    CLS
+    DrawBackground()
+    DRAWCOLOR 22, 26, 44
+    RECT BX - 6, BY - 6, Cols * CELL + 12, Rows * CELL + 12, TRUE
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            DRAWCOLOR 34, 40, 60
+            RECT BX + c * CELL + 2, BY + r * CELL + 2, CELL - 4, CELL - 4, TRUE
+        NEXT c
+    NEXT r
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            IF NOT ((r = rA ANDALSO c = cA) ORELSE (r = rB ANDALSO c = cB)) THEN
+                DrawGem r, c, Board[r, c]
+            ENDIF
+        NEXT c
+    NEXT r
+    axp = BX + (cA + (cB - cA) * tt) * CELL
+    ayp = BY + (rA + (rB - rA) * tt) * CELL
+    bxp = BX + (cB + (cA - cB) * tt) * CELL
+    byp = BY + (rB + (rA - rB) * tt) * CELL
+    DrawGemPx(CINT(axp), CINT(ayp), idA)
+    DrawGemPx(CINT(bxp), CINT(byp), idB)
+    DRAWCOLOR 235, 235, 250
+    TEXT 30, 28, "P R I S M A"
+    DRAWCOLOR 150, 162, 185
+    TEXT 30, 54, "Maus klicken oder Pfeile + Space"
+    DrawSidePanel()
+    DrawParticles()
+    DRAWCOLOR 200, 210, 225
+    TEXT 30, BY + Rows * CELL + 24, "Score:  " + Score
+ENDSUB
+
+SUB AnimateSwap(rA, cA, rB, cB, idA, idB)
+    frames = 6
+    FOR f = 0 TO frames
+        tt = f / (frames + 0.0)
+        DrawSwapFrame(rA, cA, rB, cB, idA, idB, tt)
+        SCREENFLIP
+        SLEEP 16
+    NEXT f
+ENDSUB
+
+SUB TrySwap(r1, c1, r2, c2)
+    IF r2 < 0 OR r2 >= Rows OR c2 < 0 OR c2 >= Cols THEN RETURN
+    idA = Board[r1, c1]
+    idB = Board[r2, c2]
+    specialMove = IS_SPECIAL(idA) OR IS_SPECIAL(idB)
+    tmp = Board[r1, c1] : Board[r1, c1] = Board[r2, c2] : Board[r2, c2] = tmp
+    legal = FindAnyMatch()
+    tmp = Board[r1, c1] : Board[r1, c1] = Board[r2, c2] : Board[r2, c2] = tmp
+    IF NOT testmode THEN AnimateSwap(r1, c1, r2, c2, idA, idB)
+    IF specialMove THEN
+        movesLeft = movesLeft - 1
+        Board[r1, c1] = idB : Board[r2, c2] = idA
+        SfxSwap()
+        BeginResolve()
+        IF IS_SPECIAL(idB) THEN ActivateSpecialSwap(r1, c1, idB, idA)
+        IF IS_SPECIAL(idA) THEN ActivateSpecialSwap(r2, c2, idA, idB)
+        RunDetonations()
+        IF NOT testmode THEN
+            AnimateFall()
+        ELSE
+            ApplyGravity() : Refill()
+        ENDIF
+        ResolveCascades()
+        IF NOT HasMove() THEN Reshuffle()
+    ELSEIF legal THEN
+        movesLeft = movesLeft - 1
+        Board[r1, c1] = idB : Board[r2, c2] = idA
+        SfxSwap()
+        ResolveCascades()
+        IF NOT HasMove() THEN Reshuffle()
+    ELSE
+        SfxBad()
+        IF NOT testmode THEN AnimateSwap(r1, c1, r2, c2, idB, idA)   ' bounce back
+        shake = 5
+    ENDIF
+ENDSUB
+
+' --- Drawing -------------------------------------------------
+SUB DrawGem(r, c, id)
+    DrawGemPx(BX + c * CELL, BY + r * CELL, id)
+ENDSUB
+
+SUB DrawGemPx(px, py, id)
+    IF id = 0 THEN RETURN
+    col = COLOR_FOR(id)
+    DRAWCOLOR col[0], col[1], col[2]
+    RECT px + 4, py + 4, CELL - 8, CELL - 8, TRUE
+    DRAWCOLOR MIN([255, col[0] + 60]), MIN([255, col[1] + 60]), MIN([255, col[2] + 60])
+    RECT px + 4, py + 4, CELL - 8, 4, TRUE
+    RECT px + 4, py + 4, 4, CELL - 8, TRUE
+    DRAWCOLOR MAX([0, col[0] - 60]), MAX([0, col[1] - 60]), MAX([0, col[2] - 60])
+    RECT px + 4, py + CELL - 8, CELL - 8, 4, TRUE
+    RECT px + CELL - 8, py + 4, 4, CELL - 8, TRUE
+    IF IS_SECONDARY(id) THEN
+        DRAWCOLOR 255, 255, 255
+        sxp = px + CELL / 2 : syp = py + CELL / 2
+        LINE sxp, syp - 6, sxp + 6, syp
+        LINE sxp + 6, syp, sxp, syp + 6
+        LINE sxp, syp + 6, sxp - 6, syp
+        LINE sxp - 6, syp, sxp, syp - 6
+    ELSEIF id = 7 THEN
+        FOR pr = 1 TO 6
+            pc = COLOR_FOR(pr)
+            DRAWCOLOR pc[0], pc[1], pc[2]
+            RECT px + 8 + (pr - 1) * 6, py + CELL / 2 - 4, 5, 8, TRUE
+        NEXT pr
+    ELSEIF id = 10 THEN
+        mx = px + CELL / 2 : my = py + CELL / 2
+        DRAWCOLOR 40, 50, 95
+        RECT px + 8, my - 3, CELL - 16, 6, TRUE
+        LINE px + 8, my, px + 17, my - 8
+        LINE px + 8, my, px + 17, my + 8
+        LINE px + CELL - 8, my, px + CELL - 17, my - 8
+        LINE px + CELL - 8, my, px + CELL - 17, my + 8
+    ELSEIF id = 11 THEN
+        mx = px + CELL / 2 : my = py + CELL / 2
+        DRAWCOLOR 40, 50, 95
+        RECT mx - 3, py + 8, 6, CELL - 16, TRUE
+        LINE mx, py + 8, mx - 8, py + 17
+        LINE mx, py + 8, mx + 8, py + 17
+        LINE mx, py + CELL - 8, mx - 8, py + CELL - 17
+        LINE mx, py + CELL - 8, mx + 8, py + CELL - 17
+    ELSEIF id = 12 THEN
+        cx2 = px + CELL / 2 : cy2 = py + CELL / 2
+        DRAWCOLOR 250, 150, 50
+        FOR yy = -8 TO 8
+            hw = CINT(SQR(64 - yy * yy))
+            LINE cx2 - hw, cy2 + yy, cx2 + hw, cy2 + yy
+        NEXT yy
+        DRAWCOLOR 255, 225, 130
+        RECT cx2 - 3, cy2 - 3, 6, 6, TRUE
+        DRAWCOLOR 255, 190, 90
+        LINE cx2, cy2 - 13, cx2, cy2 + 13
+        LINE cx2 - 13, cy2, cx2 + 13, cy2
+    ENDIF
+ENDSUB
+
+SUB DrawBackground()
+    FOR yb = 0 TO SCRH - 1 STEP 4
+        ff = yb / (SCRH + 0.0)
+        DRAWCOLOR CINT(28 + 22 * ff), CINT(18 + 30 * ff), CINT(48 + 36 * ff)
+        RECT 0, yb, SCRW, 4, TRUE
+    NEXT yb
+    FOR bi = 0 TO NBUB - 1
+        bub_y[bi] = bub_y[bi] - (0.3 + bub_s[bi] * 0.05)
+        IF bub_y[bi] < -20 THEN
+            bub_y[bi] = SCRH + 10
+            bub_x[bi] = INT(RND(1) * SCRW)
+        ENDIF
+        sb = CINT(40 + bub_s[bi] * 6)
+        DRAWCOLOR sb, sb + 10, sb + 24
+        RECT CINT(bub_x[bi]), CINT(bub_y[bi]), CINT(bub_s[bi]), CINT(bub_s[bi]), TRUE
+    NEXT bi
+ENDSUB
+
+SUB DrawParticles()
+    FOR qi = 0 TO NPART - 1
+        IF par_life[qi] > 0 THEN
+            par_x[qi] = par_x[qi] + par_vx[qi]
+            par_y[qi] = par_y[qi] + par_vy[qi]
+            par_vy[qi] = par_vy[qi] + 0.16
+            par_life[qi] = par_life[qi] - 1
+            DRAWCOLOR par_r[qi], par_g[qi], par_b[qi]
+            RECT CINT(par_x[qi]), CINT(par_y[qi]), 4, 4, TRUE
+        ENDIF
+    NEXT qi
+ENDSUB
+
+SUB DrawLadder()
+    lx = PANX
+    ly = 392
+    DRAWCOLOR 150, 160, 185
+    TEXT lx, ly, "ALCHEMY"
+    pairs = [[1, 4], [2, 5], [3, 6]]
+    FOR i = 0 TO 2
+        a = pairs[i][0]
+        b = pairs[i][1]
+        ca = COLOR_FOR(a)
+        cb = COLOR_FOR(b)
+        yy = ly + 22 + i * 24
+        DRAWCOLOR ca[0], ca[1], ca[2]
+        RECT lx, yy, 18, 18, TRUE
+        DRAWCOLOR 150, 160, 185
+        TEXT lx + 24, yy + 2, "x3 ="
+        DRAWCOLOR cb[0], cb[1], cb[2]
+        RECT lx + 70, yy, 18, 18, TRUE
+    NEXT i
+ENDSUB
+
+' right-hand panel: current level goal + progress + limit, then ladder
+SUB DrawSidePanel()
+    DRAWCOLOR 20, 24, 42
+    RECT PANX - 14, 124, SCRW - PANX, 470, TRUE
+    DRAWCOLOR 245, 235, 130
+    TEXT PANX, 146, "LEVEL " + levelNo
+    DRAWCOLOR 150, 165, 190
+    TEXT PANX, 182, "Ziel:"
+    DRAWCOLOR 215, 222, 235
+    TEXT PANX, 206, GOAL_SHORT$()
+    IF goalColor > 0 THEN
+        gc = COLOR_FOR(goalColor)
+        DRAWCOLOR gc[0], gc[1], gc[2]
+        RECT PANX + 200, 202, 20, 20, TRUE
+    ENDIF
+    cur = GOAL_PROG_VAL()
+    IF cur > goalTarget THEN cur = goalTarget
+    frac = cur / (goalTarget + 0.0)
+    DRAWCOLOR 38, 46, 66
+    RECT PANX, 246, 230, 18, TRUE
+    DRAWCOLOR 110, 210, 140
+    RECT PANX, 246, CINT(230 * frac), 18, TRUE
+    DRAWCOLOR 220, 228, 240
+    TEXT PANX, 274, cur + " / " + goalTarget
+    IF limitType$ = "moves" THEN
+        IF movesLeft <= 3 THEN DRAWCOLOR 245, 110, 90 ELSE DRAWCOLOR 240, 220, 120
+        TEXT PANX, 330, "Zuege:  " + movesLeft
+    ELSE
+        tl = limitVal - INT((TICK() - levelStartTick) / 1000.0)
+        IF tl < 0 THEN tl = 0
+        IF tl <= 5 THEN DRAWCOLOR 245, 110, 90 ELSE DRAWCOLOR 240, 220, 120
+        TEXT PANX, 330, "Zeit:  " + TIME_STR$(tl)
+    ENDIF
+    DrawLadder()
+ENDSUB
+
+SUB Draw()
+    CLS
+    DrawBackground()
+    ox = 0 : oy = 0
+    IF shake > 0 THEN
+        ox = CINT(SIN(shake * 1.8) * shake * 0.6)
+        oy = CINT(COS(shake * 2.2) * shake * 0.5)
+        shake = shake - 1
+    ENDIF
+    bx0 = BX + ox
+    by0 = BY + oy
+    DRAWCOLOR 235, 235, 250
+    TEXT 30, 28, "P R I S M A"
+    DRAWCOLOR 150, 162, 185
+    TEXT 30, 54, "Maus klicken oder Pfeile + Space"
+    DrawSidePanel()
+    ' board frame + wells
+    DRAWCOLOR 22, 26, 44
+    RECT bx0 - 6, by0 - 6, Cols * CELL + 12, Rows * CELL + 12, TRUE
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            DRAWCOLOR 34, 40, 60
+            RECT bx0 + c * CELL + 2, by0 + r * CELL + 2, CELL - 4, CELL - 4, TRUE
+        NEXT c
+    NEXT r
+    ' temporarily offset board origin for gem drawing
+    sBX = BX : sBY = BY
+    BX = bx0 : BY = by0
+    FOR r = 0 TO Rows - 1
+        FOR c = 0 TO Cols - 1
+            DrawGem r, c, Board[r, c]
+        NEXT c
+    NEXT r
+    BX = sBX : BY = sBY
+    ' selection highlight
+    IF picked THEN
+        pul = CINT(120 + 110 * (SIN(TICK() / 90.0) + 1) / 2)
+        DRAWCOLOR pul, pul, 140
+        RECT bx0 + selC * CELL + 1, by0 + selR * CELL + 1, CELL - 2, CELL - 2, FALSE
+        RECT bx0 + selC * CELL + 2, by0 + selR * CELL + 2, CELL - 4, CELL - 4, FALSE
+    ENDIF
+    ' cursor
+    cpul = CINT(160 + 90 * (SIN(TICK() / 70.0) + 1) / 2)
+    DRAWCOLOR cpul, cpul, cpul
+    RECT bx0 + cursorC * CELL, by0 + cursorR * CELL, CELL, CELL, FALSE
+    RECT bx0 + cursorC * CELL - 1, by0 + cursorR * CELL - 1, CELL + 2, CELL + 2, FALSE
+    DrawParticles()
+    ' popups
+    FOR pi = 0 TO NPOP - 1
+        IF pop_life[pi] > 0 THEN
+            pop_y[pi] = pop_y[pi] - 1.3
+            pop_life[pi] = pop_life[pi] - 1
+            ff = pop_life[pi] / 50.0
+            DRAWCOLOR CINT(120 + 135 * ff), CINT(110 + 130 * ff), 70
+            TEXT CINT(pop_x[pi]), CINT(pop_y[pi]), "+" + CINT(pop_val[pi])
+        ENDIF
+    NEXT pi
+    ' score bar
+    DRAWCOLOR 200, 210, 225
+    TEXT 30, by0 + Rows * CELL + 24, "Score:  " + Score
+    IF comboFlash > 0 THEN
+        DRAWCOLOR 255, 190, 90
+        TEXT bx0 + Cols * CELL / 2 - 70, by0 + Rows * CELL / 2 - 10, "COMBO x" + comboShow
+        comboFlash = comboFlash - 1
+    ENDIF
+ENDSUB
+
+SUB DrawTitle()
+    CLS
+    DrawBackground()
+    DRAWCOLOR 245, 245, 255
+    TEXT 268, 150, "P R I S M A"
+    DRAWCOLOR 170, 185, 210
+    TEXT 262, 188, "- Color Alchemy -"
+    yy = 256
+    DRAWCOLOR 160, 172, 195
+    TEXT 232, yy, "Match 3 primaries -> they fuse:"
+    pairs = [[1, 4], [2, 5], [3, 6]]
+    FOR i = 0 TO 2
+        a = pairs[i][0] : b = pairs[i][1]
+        ca = COLOR_FOR(a) : cb = COLOR_FOR(b)
+        py = yy + 28 + i * 32
+        DRAWCOLOR ca[0], ca[1], ca[2]
+        RECT 280, py, 22, 22, TRUE
+        DRAWCOLOR 160, 172, 195
+        TEXT 314, py + 3, "x3  ="
+        DRAWCOLOR cb[0], cb[1], cb[2]
+        RECT 398, py, 22, 22, TRUE
+    NEXT i
+    DRAWCOLOR 150, 172, 195
+    TEXT 205, 450, "Match 4 = Strahl    Match 5 = Joker"
+    TEXT 205, 474, "L-Form = Bombe    Joker tauschen zuendet"
+    DRAWCOLOR 250, 230, 120
+    TEXT 300, 524, "SPACE = Start"
+    DRAWCOLOR 150, 165, 190
+    TEXT 300, 558, "ESC = Beenden"
+ENDSUB
+
+SUB StartLevelPlay()
+    Reshuffle()
+    combo = 0 : comboFlash = 0 : shake = 0
+    goalProg = 0
+    levelBaseScore = Score
+    movesLeft = limitVal
+    levelStartTick = TICK()
+    picked = FALSE
+    cursorR = 4 : cursorC = 4
+    gState$ = "play"
+ENDSUB
+
+SUB DrawLevelIntro()
+    CLS
+    DrawBackground()
+    DRAWCOLOR 245, 245, 255
+    TEXT 305, 175, "LEVEL " + levelNo
+    DRAWCOLOR 200, 210, 160
+    TEXT 320, 235, "Dein Ziel"
+    DRAWCOLOR 235, 240, 250
+    TEXT 240, 282, GOAL_SHORT$()
+    IF goalColor > 0 THEN
+        gc = COLOR_FOR(goalColor)
+        DRAWCOLOR gc[0], gc[1], gc[2]
+        RECT 478, 278, 26, 26, TRUE
+    ENDIF
+    DRAWCOLOR 240, 220, 120
+    TEXT 295, 345, CONSTRAINT_STR$()
+    DRAWCOLOR 250, 230, 120
+    TEXT 305, 445, "SPACE = Los!"
+ENDSUB
+
+SUB DrawLevelWin()
+    CLS
+    DrawBackground()
+    DRAWCOLOR 120, 240, 150
+    TEXT 245, 200, "LEVEL " + levelNo + " GESCHAFFT!"
+    DRAWCOLOR 220, 228, 240
+    TEXT 300, 262, "Score: " + Score
+    DRAWCOLOR 250, 230, 120
+    TEXT 250, 365, "SPACE = naechstes Level"
+ENDSUB
+
+SUB DrawLevelFail()
+    CLS
+    DrawBackground()
+    DRAWCOLOR 245, 110, 90
+    IF limitType$ = "moves" THEN TEXT 295, 200, "ZUEGE AUS!" ELSE TEXT 300, 200, "ZEIT AUS!"
+    DRAWCOLOR 220, 228, 240
+    TEXT 235, 258, "Level " + levelNo + " verfehlt - Score: " + Score
+    DRAWCOLOR 250, 230, 120
+    TEXT 290, 365, "SPACE = zum Titel"
+ENDSUB
+
+' --- Init ----------------------------------------------------
+RND(-1.0)
+FOR bi = 0 TO NBUB - 1
+    bub_x[bi] = INT(RND(1) * SCRW)
+    bub_y[bi] = INT(RND(1) * SCRH)
+    bub_s[bi] = 3 + INT(RND(1) * 9)
+NEXT bi
+Reshuffle()
+
+DIM args = OS.ARGS()
+DIM testmode = (LEN(args) >= 2 ANDALSO args[1] = "shot")
+
+DIM testsub$ = ""
+IF LEN(args) >= 3 THEN testsub$ = args[2]
+
+IF testmode ANDALSO testsub$ = "mouse" THEN
+    PRINT "mx="; GFX.MOUSEX(); " my="; GFX.MOUSEY(); " btn="; GFX.MOUSEBUTTON(1)
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "mouse ok" : END
+ENDIF
+
+IF testmode ANDALSO testsub$ = "intro" THEN
+    GenLevel(1)
+    DrawLevelIntro() : SCREENFLIP : SLEEP 30 : DrawLevelIntro() : SCREENFLIP
+    GFX.SAVE_SCREENSHOT("tmp/prisma_intro.png")
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "intro shot saved" : END
+ENDIF
+
+IF testmode ANDALSO testsub$ = "level" THEN
+    GenLevel(1)
+    Score = 340 : levelBaseScore = 0 : goalProg = 8 : movesLeft = 14
+    gState$ = "play"
+    Board[5, 2] = 4 : Board[5, 4] = 5 : Board[7, 6] = 10 : Board[7, 7] = 7
+    FOR f = 0 TO 3
+        Draw() : SCREENFLIP : SLEEP 30
+    NEXT f
+    GFX.SAVE_SCREENSHOT("tmp/prisma_level.png")
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "level shot saved" : END
+ENDIF
+
+IF testmode ANDALSO testsub$ = "detn" THEN
+    Board[7, 4] = 10        ' horizontal beam
+    Board[7, 2] = 11        ' vertical beam it will hit -> chain
+    s0 = Score
+    BeginResolve()
+    ClearCell(7, 4)
+    RunDetonations()
+    row7 = 0
+    FOR c = 0 TO Cols - 1 : row7 = row7 + Board[7, c] : NEXT c
+    col2 = 0
+    FOR r = 0 TO Rows - 1 : col2 = col2 + Board[r, 2] : NEXT r
+    PRINT "row7sum="; row7; " col2sum="; col2; " scoreDelta="; Score - s0
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "detn done"
+    END
+ENDIF
+
+IF testmode ANDALSO testsub$ = "spec" THEN
+    Board[7, 1] = 10 : Board[7, 3] = 11 : Board[7, 5] = 12 : Board[7, 7] = 7
+    Board[5, 2] = 4 : Board[5, 4] = 5 : Board[5, 6] = 6
+    Burst(BX + 5 * CELL, BY + 7 * CELL, 24, 6, 250, 150, 50)
+    FOR f = 0 TO 4
+        Draw() : SCREENFLIP : SLEEP 30
+    NEXT f
+    GFX.SAVE_SCREENSHOT("tmp/prisma_spec.png")
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "prisma spec shot saved"
+    END
+ENDIF
+
+IF testmode ANDALSO testsub$ = "swap" THEN
+    idA = Board[4, 3]
+    idB = Board[4, 4]
+    DrawSwapFrame(4, 3, 4, 4, idA, idB, 0.5) : SCREENFLIP
+    SLEEP 30
+    DrawSwapFrame(4, 3, 4, 4, idA, idB, 0.5) : SCREENFLIP
+    GFX.SAVE_SCREENSHOT("tmp/prisma_swap.png")
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "prisma swap shot saved"
+    END
+ENDIF
+
+IF testmode ANDALSO testsub$ = "fall" THEN
+    Board[5, 1] = 1 : Board[2, 1] = 2 : Board[0, 1] = 3   ' a column with gaps to settle
+    Board[6, 3] = 4 : Board[4, 3] = 5
+    Board[7, 6] = 6 : Board[5, 6] = 7
+    fallB = RESHAPE([0], [Rows, Cols])
+    fallOff = RESHAPE([0], [Rows, Cols])
+    FOR c = 0 TO Cols - 1
+        write = Rows - 1
+        FOR r = Rows - 1 TO 0 STEP -1
+            IF Board[r, c] <> 0 THEN
+                fallB[write, c] = Board[r, c]
+                fallOff[write, c] = write - r
+                write = write - 1
+            ENDIF
+        NEXT r
+        nnew = write + 1
+        FOR r = write TO 0 STEP -1
+            fallB[r, c] = 1 + INT(RND(1) * 3)
+            fallOff[r, c] = nnew
+        NEXT r
+    NEXT c
+    DrawFalling(0.55) : SCREENFLIP : SLEEP 30 : DrawFalling(0.55) : SCREENFLIP
+    GFX.SAVE_SCREENSHOT("tmp/prisma_fall.png")
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "prisma fall shot saved"
+    END
+ENDIF
+
+IF testmode THEN
+    Board[7, 1] = 1 : Board[7, 2] = 1 : Board[6, 1] = 1   ' R cluster pre-fuse
+    Board[7, 5] = 4 : Board[7, 6] = 4 : Board[6, 5] = 5   ' some secondaries
+    Board[5, 3] = 6 : Board[4, 3] = 6
+    Board[3, 7] = 7                                        ' a prism wild
+    cursorR = 7 : cursorC = 1 : picked = TRUE : selR = 7 : selC = 1
+    comboFlash = 30 : comboShow = 3
+    Burst(BX + 2 * CELL, BY + 7 * CELL, 20, 5, 240, 215, 75)
+    FOR f = 0 TO 4
+        Draw() : SCREENFLIP : SLEEP 30
+    NEXT f
+    GFX.SAVE_SCREENSHOT("tmp/prisma.png")
+    SOUND.SHUTDOWN
+    GFX.CLOSE
+    PRINT "prisma shot saved"
+    END
+ENDIF
+
+' --- Main loop -----------------------------------------------
+DO
+    kL = GFX.KEYSTATE("Left") OR GFX.KEYSTATE("A")
+    kR = GFX.KEYSTATE("Right") OR GFX.KEYSTATE("D")
+    kU = GFX.KEYSTATE("Up") OR GFX.KEYSTATE("W")
+    kDn = GFX.KEYSTATE("Down") OR GFX.KEYSTATE("S")
+    kSp = GFX.KEYSTATE("Space")
+    kEnt = GFX.KEYSTATE("Return")
+    kEsc = GFX.KEYSTATE("Escape")
+    eL = kL AND NOT pL : eR = kR AND NOT pR : eU = kU AND NOT pU : eDn = kDn AND NOT pDn
+    eSp = (kSp AND NOT pSp) OR (kEnt AND NOT pEnt) : eEsc = kEsc AND NOT pEsc
+    mxp = GFX.MOUSEX() : myp = GFX.MOUSEY()
+    mbtn = GFX.MOUSEBUTTON(1)
+    eClick = mbtn AND NOT pMouseBtn
+    inBoard = mxp >= BX ANDALSO mxp < BX + Cols * CELL ANDALSO myp >= BY ANDALSO myp < BY + Rows * CELL
+    hovC = INT((mxp - BX) / CELL)
+    hovR = INT((myp - BY) / CELL)
+
+    IF gState$ = "title" THEN
+        IF eSp OR eClick THEN
+            Score = 0
+            GenLevel(1)
+            gState$ = "levelintro"
+        ELSEIF eEsc THEN
+            quitFlag = TRUE
+        ENDIF
+        DrawTitle()
+        SCREENFLIP
+
+    ELSEIF gState$ = "levelintro" THEN
+        IF eSp OR eClick THEN
+            StartLevelPlay()
+        ELSEIF eEsc THEN
+            gState$ = "title"
+        ENDIF
+        DrawLevelIntro()
+        SCREENFLIP
+
+    ELSEIF gState$ = "levelwin" THEN
+        IF eSp OR eClick THEN
+            GenLevel(levelNo + 1)
+            gState$ = "levelintro"
+        ENDIF
+        DrawLevelWin()
+        SCREENFLIP
+
+    ELSEIF gState$ = "levelfail" THEN
+        IF eSp OR eClick THEN gState$ = "title"
+        DrawLevelFail()
+        SCREENFLIP
+
+    ELSEIF gState$ = "play" THEN
+        IF eEsc THEN
+            gState$ = "title"
+        ELSE
+            IF picked THEN
+                IF eL THEN TrySwap(selR, selC, selR, selC - 1) : picked = FALSE
+                IF eR THEN TrySwap(selR, selC, selR, selC + 1) : picked = FALSE
+                IF eU THEN TrySwap(selR, selC, selR - 1, selC) : picked = FALSE
+                IF eDn THEN TrySwap(selR, selC, selR + 1, selC) : picked = FALSE
+                IF eSp THEN picked = FALSE
+            ELSE
+                IF eL ANDALSO cursorC > 0 THEN cursorC = cursorC - 1
+                IF eR ANDALSO cursorC < Cols - 1 THEN cursorC = cursorC + 1
+                IF eU ANDALSO cursorR > 0 THEN cursorR = cursorR - 1
+                IF eDn ANDALSO cursorR < Rows - 1 THEN cursorR = cursorR + 1
+                IF eSp THEN
+                    picked = TRUE
+                    selR = cursorR : selC = cursorC
+                ENDIF
+            ENDIF
+            IF inBoard THEN cursorR = hovR : cursorC = hovC
+            IF eClick ANDALSO inBoard THEN
+                IF picked THEN
+                    IF hovR = selR ANDALSO hovC = selC THEN
+                        picked = FALSE
+                    ELSEIF ABS(hovR - selR) + ABS(hovC - selC) = 1 THEN
+                        TrySwap(selR, selC, hovR, hovC)
+                        picked = FALSE
+                    ELSE
+                        selR = hovR : selC = hovC
+                    ENDIF
+                ELSE
+                    picked = TRUE : selR = hovR : selC = hovC
+                ENDIF
+            ENDIF
+            IF GOAL_MET() THEN
+                gState$ = "levelwin"
+            ELSEIF limitType$ = "moves" ANDALSO movesLeft <= 0 THEN
+                gState$ = "levelfail"
+            ELSEIF limitType$ = "time" ANDALSO (TICK() - levelStartTick) / 1000.0 >= limitVal THEN
+                gState$ = "levelfail"
+            ENDIF
+        ENDIF
+        Draw()
+        SCREENFLIP
+    ENDIF
+
+    pL = kL : pR = kR : pU = kU : pDn = kDn
+    pSp = kSp : pEnt = kEnt : pEsc = kEsc
+    pMouseBtn = mbtn
+    SLEEP 16
+LOOP UNTIL quitFlag
+
+SOUND.SHUTDOWN
+GFX.CLOSE
+PRINT "done"
