@@ -1022,6 +1022,7 @@ void VM::run() {
         }
 
         size_t trace_ip = cf.ip;
+        const Chunk* trace_chunk = cf.chunk;
         OpCode op = static_cast<OpCode>(cf.chunk->code[cf.ip++]);
 
         if (trace_enabled && !frames.empty()) {
@@ -1037,8 +1038,10 @@ void VM::run() {
                 int dline = frame().chunk->line_info[trace_ip];
                 if (dline > 0) {
                     debug_check(dline);
-                    // If IP was changed by goto during pause, restart the fetch cycle
-                    if (frame().ip != trace_ip + 1) continue;
+                    // If IP was moved (goto) or the chunk was hot-swapped
+                    // (recompile) during the pause, discard the already-fetched
+                    // opcode and restart the fetch cycle against the new code.
+                    if (frame().ip != trace_ip + 1 || frame().chunk != trace_chunk) continue;
                 }
             }
         }
@@ -3463,6 +3466,68 @@ bool VM::debug_goto_line(int target_line) {
         prev_line = li[i];
     }
     return false;
+}
+
+bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, int target_line) {
+    if (frames.empty()) return false;
+
+    // A function whose body is currently executing must not be overwritten:
+    // the live frame holds a pointer into its chunk and an ip into its
+    // bytecode. Recompiling it under the running frame would jump into
+    // re-laid-out code. Skip those; merge everything else.
+    auto on_stack = [&](const Chunk* c) {
+        for (auto& fr : frames) if (fr.chunk == c) return true;
+        return false;
+    };
+    for (auto& f : new_funcs) {
+        auto it = func_map.find(f.name);
+        if (it != func_map.end()) {
+            if (on_stack(&owned_funcs[it->second].chunk)) continue;
+            owned_funcs[it->second] = std::move(f);
+        } else {
+            func_map[f.name] = owned_funcs.size();
+            owned_funcs.push_back(std::move(f));
+        }
+    }
+    func_protos = &owned_funcs;
+    func_map_generation++;
+
+    // Register top-level globals the recompiled chunk introduces (mirrors
+    // load()), so a freshly added variable resolves to a real slot rather
+    // than tripping LOAD_GLOBAL's NONE-name-as-native fallback.
+    for (uint16_t i = 0; i < new_main.var_names.size(); i++) {
+        const std::string& name = new_main.var_names[i];
+        if (global_names.count(name)) continue;
+        global_names[name] = static_cast<uint16_t>(globals.size());
+        globals.push_back(Value::make_none());
+    }
+
+    // Reposition only when paused at top level (just the main frame). Inside a
+    // function call the main chunk is not the active one, so we keep the
+    // current position and let only the merged off-stack bodies take effect.
+    if (frames.size() != 1) return true;
+
+    CallFrame& f = frames[0];
+    f.chunk = &new_main;
+
+    const auto& li = new_main.line_info;
+    int prev_line = 0;
+    for (size_t i = 0; i < li.size(); i++) {
+        if (li[i] == target_line && li[i] != prev_line) {
+            f.ip = i;
+            sp = f.stack_base;
+            try_handlers.clear();
+            if (debug) debug->last_debug_line = -1;
+            return true;
+        }
+        prev_line = li[i];
+    }
+    // Target line no longer exists (deleted or blank now): restart the chunk.
+    f.ip = 0;
+    sp = f.stack_base;
+    try_handlers.clear();
+    if (debug) debug->last_debug_line = -1;
+    return true;
 }
 
 std::vector<VM::DebugFrame> VM::debug_get_stack_frames() const {

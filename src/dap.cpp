@@ -238,10 +238,13 @@ void DAPHandler::process_command(const std::string& command_line) {
     else if (command == "recompile") {
         int line = -1;
         if (!args.empty()) { try { line = std::stoi(args[0]); } catch (...) {} }
-        if (on_recompile && on_recompile(vm, program_path)) {
-            // Recompile succeeded — reposition is handled by the callback
-        }
-        send_stopped_message("goto", line > 0 ? line : 1, program_path);
+        // Recompile the file and reposition; the callback reports errors via
+        // an output message. Either way we re-issue a stopped event so the
+        // client refreshes its stack/variables against the (possibly) new code.
+        bool ok = on_recompile ? on_recompile(vm, program_path, line) : false;
+        (void)ok;
+        int report = line > 0 ? line : vm.debug_current_line();
+        send_stopped_message("goto", report > 0 ? report : 1, program_path);
     }
     else if (command == "goto") {
         int line = -1;

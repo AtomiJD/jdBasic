@@ -57,8 +57,9 @@ public:
     using ReplFunc = std::function<std::string(VM&, const std::string&)>;
     ReplFunc on_repl_eval;
 
-    // Callback: recompile from file (set by main.cpp)
-    using RecompileFunc = std::function<bool(VM&, const std::string&)>;
+    // Callback: recompile from file and reposition to the given source line
+    // (set by main.cpp). Returns true if the running program was updated.
+    using RecompileFunc = std::function<bool(VM&, const std::string&, int)>;
     RecompileFunc on_recompile;
 
     // Program file path

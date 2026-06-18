@@ -146,6 +146,12 @@ public:
     std::string debug_current_file() const;        // current source file path
     size_t debug_call_depth() const;               // current call stack depth
     bool debug_goto_line(int target_line);         // move IP to source line
+    // Hot-reload: swap the running main chunk for a freshly compiled one,
+    // merge the new function bodies (skipping any currently on the call
+    // stack), and reposition the main frame's IP to target_line. Called
+    // from the DAP thread while the VM is parked at a pause. Returns false
+    // only when there is no frame to reposition.
+    bool debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, int target_line);
     // Returns {line, func_name, source_file} per stack frame
     struct DebugFrame { int line; std::string name; std::string file; };
     std::vector<DebugFrame> debug_get_stack_frames() const;

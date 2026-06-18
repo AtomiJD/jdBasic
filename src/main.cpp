@@ -1931,34 +1931,155 @@ int main(int argc, char* argv[]) {
         vm.debug->dap = &dap;
         dap.program_path = filename;
 
-        // REPL callback: evaluate input as an expression and return its value.
-        // Wraps the input in `LET __REPL_RESULT__ = <expr>` then reads back the global.
+        // REPL callback for the Debug Console. The Console must both evaluate
+        // expressions (`counter`, `x + 1` -> show the value) and execute
+        // statements (`PRINT ...`, `FOR ...`, assignments). A bare expression
+        // compiles fine as a statement (the parser reads it as a call) and only
+        // fails at run time, so "statement-first" can't tell the two apart.
+        // Instead: an assignment (`x = 42`) runs as a statement; anything else
+        // is tried as an expression first and falls back to a statement only
+        // when it won't compile as one (PRINT/FOR/...). Each input runs once.
         dap.on_repl_eval = [](VM& v, const std::string& code) -> std::string {
-            // Trim leading/trailing whitespace
-            std::string expr = code;
-            while (!expr.empty() && (expr.front() == ' ' || expr.front() == '\t')) expr.erase(0, 1);
-            while (!expr.empty() && (expr.back() == ' ' || expr.back() == '\t' ||
-                                     expr.back() == '\r' || expr.back() == '\n')) expr.pop_back();
-            if (expr.empty()) return "";
+            std::string src = code;
+            while (!src.empty() && (src.front() == ' ' || src.front() == '\t')) src.erase(0, 1);
+            while (!src.empty() && (src.back() == ' ' || src.back() == '\t' ||
+                                    src.back() == '\r' || src.back() == '\n')) src.pop_back();
+            if (src.empty()) return "";
+
+            // Redirect program output into a buffer for the duration of the
+            // eval so PRINT lands in the Debug Console, then restore.
+            auto prev_output = v.on_output;
+            std::string captured;
+            v.on_output = [&captured](const std::string& s) { captured += s; };
+            struct OutGuard {
+                VM& v; std::function<void(const std::string&)> prev;
+                ~OutGuard() { v.on_output = prev; }
+            } out_guard{v, prev_output};
+
+            auto trim_tail = [](std::string& s) {
+                while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+            };
+
+            // Detect a plain assignment: a single lvalue chain followed by a
+            // top-level '=' that isn't part of ==, <=, >=, <> or !=. A leading
+            // keyword (FOR k =, LET x =, DIM a =) leaves a top-level space in
+            // the LHS and is rejected, so those route to the statement path.
+            auto is_assignment = [](const std::string& s) -> bool {
+                int depth = 0; bool in_str = false;
+                for (size_t i = 0; i < s.size(); i++) {
+                    char c = s[i];
+                    if (in_str) { if (c == '"') in_str = false; continue; }
+                    if (c == '"') { in_str = true; continue; }
+                    if (c == '(' || c == '[') { depth++; continue; }
+                    if (c == ')' || c == ']') { if (depth > 0) depth--; continue; }
+                    if (depth != 0) continue;
+                    if (c == ':') return false;  // multi-statement
+                    if (c == '=') {
+                        char prev = (i > 0) ? s[i - 1] : 0;
+                        char next = (i + 1 < s.size()) ? s[i + 1] : 0;
+                        if (prev == '=' || prev == '<' || prev == '>' ||
+                            prev == '!' || next == '=') continue;  // comparison
+                        std::string lhs = s.substr(0, i);
+                        size_t a = 0, b = lhs.size();
+                        while (a < b && std::isspace((unsigned char)lhs[a])) a++;
+                        while (b > a && std::isspace((unsigned char)lhs[b - 1])) b--;
+                        lhs = lhs.substr(a, b - a);
+                        if (lhs.empty() ||
+                            !(std::isalpha((unsigned char)lhs[0]) || lhs[0] == '_'))
+                            return false;
+                        int d2 = 0;
+                        for (char d : lhs) {
+                            if (d == '(' || d == '[') d2++;
+                            else if (d == ')' || d == ']') { if (d2 > 0) d2--; }
+                            else if (std::isspace((unsigned char)d) && d2 == 0)
+                                return false;  // keyword prefix, not an lvalue
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            // Run the input as a statement chunk; surface captured output.
+            auto run_statement = [&]() -> std::string {
+                Compiler c;
+                try {
+                    Lexer lexer(src + "\n");
+                    auto tokens = lexer.tokenize();
+                    Parser parser(tokens);
+                    setup_parser_modules(parser);
+                    auto ast = parser.parse();
+                    c.compile(ast);
+                } catch (const std::exception& e) {
+                    return std::string("Error: ") + e.what();
+                }
+                try {
+                    v.run_code(c.main_chunk(), c.functions());
+                } catch (const std::exception& e) {
+                    std::string body = captured;
+                    body += std::string("Error: ") + e.what();
+                    return body;
+                }
+                trim_tail(captured);
+                return captured.empty() ? std::string("Ready.") : captured;
+            };
+
+            if (is_assignment(src)) return run_statement();
+
+            // Try as an expression. If it won't compile as one (PRINT, FOR, ...)
+            // run it as a statement instead.
+            Compiler ec;
             try {
-                std::string wrapped = "LET __REPL_RESULT__ = " + expr + "\n";
-                Lexer lexer(wrapped);
+                Lexer lexer("LET __REPL_RESULT__ = " + src + "\n");
                 auto tokens = lexer.tokenize();
                 Parser parser(tokens);
                 setup_parser_modules(parser);
                 auto ast = parser.parse();
-                Compiler compiler;
-                compiler.compile(ast);
-                v.run_code(compiler.main_chunk(), compiler.functions());
-
+                ec.compile(ast);
+            } catch (...) {
+                return run_statement();
+            }
+            try {
+                v.run_code(ec.main_chunk(), ec.functions());
                 auto& names = v.get_global_names();
                 auto& globals = v.get_globals();
                 auto it = names.find("__REPL_RESULT__");
-                if (it != names.end() && it->second < globals.size())
-                    return globals[it->second].to_string();
-                return "NONE";
+                std::string val = (it != names.end() && it->second < globals.size())
+                    ? globals[it->second].to_string() : std::string("NONE");
+                trim_tail(captured);
+                return captured.empty() ? val : (captured + "\n" + val);
             } catch (const std::exception& e) {
                 return std::string("Error: ") + e.what();
+            }
+        };
+
+        // Persistent storage for compiled programs: the running VM frames hold
+        // pointers into a Compiler's chunk data, so every compile (initial +
+        // each save-triggered recompile) must outlive the session.
+        auto compiler_store = std::make_shared<std::vector<std::unique_ptr<Compiler>>>();
+
+        // Recompile callback: re-read the file on save, hot-swap the running
+        // main chunk for the freshly compiled one, merge updated function
+        // bodies, and reposition execution to `line`.
+        dap.on_recompile = [compiler_store, abs_filename](VM& v, const std::string& path, int line) -> bool {
+            try {
+                std::string source = read_file(path);
+                Lexer lexer(source);
+                auto tokens = lexer.tokenize();
+                Parser parser(tokens);
+                setup_parser_modules(parser, abs_filename);
+                auto ast = parser.parse();
+                auto comp = std::make_unique<Compiler>();
+                comp->compile(ast, abs_filename);
+                bool ok = v.debug_reload_main(comp->main_chunk(), comp->functions(),
+                                              line > 0 ? line : 1);
+                compiler_store->push_back(std::move(comp));  // keep chunk alive
+                return ok;
+            } catch (const std::exception& e) {
+                if (v.debug && v.debug->dap)
+                    v.debug->dap->send_output_message(
+                        std::string("Recompile failed: ") + e.what() + "\n");
+                return false;
             }
         };
 
@@ -1971,8 +2092,9 @@ int main(int argc, char* argv[]) {
             vm.debug->launch_cv.wait(lock, [&] { return vm.debug->launch_ready; });
         }
 
-        // Compile the program (compiler must stay alive — VM references its data)
-        Compiler compiler;
+        // Compile the program. The compiler must stay alive (the VM references
+        // its chunk data), so it lives in compiler_store alongside every later
+        // recompile.
         bool ok = false;
         try {
             std::string source = read_file(filename);
@@ -1981,8 +2103,10 @@ int main(int argc, char* argv[]) {
             Parser parser(tokens);
             setup_parser_modules(parser, abs_filename);
             auto ast = parser.parse();
-            compiler.compile(ast, abs_filename);
-            vm.load(compiler.main_chunk(), compiler.functions());
+            auto compiler = std::make_unique<Compiler>();
+            compiler->compile(ast, abs_filename);
+            vm.load(compiler->main_chunk(), compiler->functions());
+            compiler_store->push_back(std::move(compiler));
             ok = true;
         } catch (const std::exception& e) {
             dap.send_output_message(std::string("Compilation error: ") + e.what() + "\n");
