@@ -228,6 +228,7 @@ REM mismatched runtimes show up as unresolved __imp__* symbols.
 if %ERRORLEVEL%==0 (
     echo.
     echo BUILD OK: build\jdBasic.exe
+    if exist help.txt copy /Y help.txt build\ >nul 2>&1
     if defined COPY_DLLS (
         copy /Y libs\SDL3-3.4.8\lib\x64\SDL3.dll build\ >nul 2>&1
         copy /Y libs\SDL3_ttf-3.2.2\lib\x64\SDL3_ttf.dll build\ >nul 2>&1

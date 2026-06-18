@@ -23,6 +23,11 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <unistd.h>
+#else
+#include <unistd.h>
 #endif
 
 #if defined(_WIN32) && defined(LLVM_CODEGEN)
@@ -717,9 +722,43 @@ static std::string cmd_arg(const std::string& cmd) {
 
 // ── Help system ──────────────────────────────────────────────
 
+// Directory of the running executable, so help.txt (shipped next to the exe)
+// is found regardless of the current working directory.
+static std::string jdb_exe_dir() {
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, buf, (int)n, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
+    std::string path((size_t)len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, buf, (int)n, &path[0], len, nullptr, nullptr);
+    auto pos = path.find_last_of("\\/");
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#elif defined(__APPLE__)
+    char buf[4096]; uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0) return "";
+    std::string path(buf);
+    auto pos = path.find_last_of('/');
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#else
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf));
+    if (n <= 0) return "";
+    std::string path(buf, (size_t)n);
+    auto pos = path.find_last_of('/');
+    return (pos == std::string::npos) ? "" : path.substr(0, pos);
+#endif
+}
+
 static void load_help_file() {
-    // Try multiple locations for help.txt
-    std::vector<std::string> paths = {"help.txt", "D:\\usr\\dev\\cc\\help.txt"};
+    // Look next to the executable first (help.txt ships there), then the cwd,
+    // then a dev fallback.
+    std::vector<std::string> paths;
+    std::string ed = jdb_exe_dir();
+    if (!ed.empty()) paths.push_back(ed + "/help.txt");
+    paths.push_back("help.txt");
+    paths.push_back("D:\\usr\\dev\\cc\\help.txt");
     for (auto& p : paths) {
         std::ifstream f(p);
         if (!f) continue;
