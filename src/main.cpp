@@ -2123,6 +2123,9 @@ int main(int argc, char* argv[]) {
             try {
                 vm.run();
             } catch (const jdError& e) {
+                // Ship the message first so exceptionInfoRequest (sent by the
+                // client after the stopped event) has the details ready.
+                dap.send_exception_message(e.what());
                 dap.send_stopped_message("exception", e.line, filename);
                 dap.send_output_message(std::string("Runtime error: ") + e.what() + "\n");
                 std::cerr << "\033[91mRuntime error:\033[0m " << e.what();

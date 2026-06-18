@@ -5,6 +5,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 #include <functional>
 #include <memory>
 #include "bytecode.h"
@@ -159,7 +160,41 @@ public:
     std::vector<std::pair<std::string, std::string>> debug_get_locals() const;   // innermost frame
     std::vector<std::pair<std::string, std::string>> debug_get_locals_at(int level) const; // 0 = innermost
 
+    // Structured variable inspection for the DAP (expandable arrays/maps/UDTs).
+    // ref 0 = leaf; ref > 0 is a handle the client passes back to
+    // debug_var_children to drill in. Handles hold a copy of the Value (a
+    // cheap refcount bump for heap objects) so navigation needs no re-resolve
+    // and sees frame locals directly. Cleared on every pause.
+    struct DebugVar {
+        std::string name;       // display name ("ARR", "[2]", "field")
+        std::string value;      // to_string() of the value
+        std::string eval_name;  // full evaluatable path (for watch / copy)
+        int ref = 0;            // 0 = leaf, > 0 = expandable handle
+    };
+    std::vector<DebugVar> debug_vars_global();
+    std::vector<DebugVar> debug_vars_local(int frame_index);  // vm frame index (1..n)
+    std::vector<DebugVar> debug_var_children(int ref);
+    void debug_clear_var_handles();
+
+    // Resolve a hover/watch expression: navigates real Values (so it sees the
+    // innermost frame's locals) for plain names, array indexing and field/key
+    // access; falls back to the global-scope evaluator otherwise. Returns
+    // {to_string(result), expandable-handle} (handle 0 = leaf/none/error).
+    std::pair<std::string, int> debug_eval_watch(const std::string& expr);
+
+    // Evaluate an expression to a Value in the current debug context (locals
+    // of the innermost frame are visible). Returns false if it can't be
+    // resolved/evaluated. Used by hover/watch and conditional breakpoints.
+    bool debug_eval_value(const std::string& expr, Value& out);
+
 private:
+    // Handle table for debug_var_* (one entry per expandable value handed to
+    // the client this pause). Stores a Value copy + the evaluatable path.
+    struct VarHandleEntry { Value value; std::string eval_name; };
+    std::map<int, VarHandleEntry> debug_var_handles_;
+    int debug_next_var_handle_ = 1;
+    int debug_register_var(const Value& v, const std::string& eval_name);
+
     // Execution state
     size_t min_frame_depth = 0;  // for nested call_function
     std::vector<CallFrame> frames;

@@ -3338,6 +3338,25 @@ static Value make_matrix(int rows, int cols, double fill = 0.0) {
 
 // ── Debug adapter support ────────────────────────────────────────
 
+// Evaluate a DAP hitCondition (">5", "<=10", "==3", "%4", or a bare "7")
+// against the current hit count. A bare number breaks exactly on that hit.
+static bool dap_hit_cond_met(const std::string& cond, int count) {
+    size_t i = 0; std::string op;
+    while (i < cond.size() && (cond[i] == '>' || cond[i] == '<' ||
+                               cond[i] == '=' || cond[i] == '%' || cond[i] == '!'))
+        op += cond[i++];
+    while (i < cond.size() && std::isspace((unsigned char)cond[i])) i++;
+    int n = 0;
+    try { n = std::stoi(cond.substr(i)); } catch (...) { return true; }
+    if (op == ">")  return count > n;
+    if (op == ">=") return count >= n;
+    if (op == "<")  return count < n;
+    if (op == "<=") return count <= n;
+    if (op == "%")  return n != 0 && (count % n) == 0;
+    if (op == "==" || op == "=") return count == n;
+    return count == n;  // bare number
+}
+
 void VM::debug_check(int line) {
     if (!debug || line <= 0) return;
     // Need either the socket DAP or a host hook to have somewhere to break to.
@@ -3361,19 +3380,53 @@ void VM::debug_check(int line) {
     bool should_pause = false;
     std::string pause_reason = "step";
 
-    // 1. Breakpoint check (highest priority) — match normalized file + line
+    // 1. Breakpoint check (highest priority) - match normalized file + line
     {
+        BreakpointInfo* bp = nullptr;
         auto it = debug->breakpoints.find(cur_file_norm);
-        if (it != debug->breakpoints.end() && it->second.count(line)) {
-            should_pause = true;
-            pause_reason = "breakpoint";
+        if (it != debug->breakpoints.end()) {
+            auto j = it->second.find(line);
+            if (j != it->second.end()) bp = &j->second;
         }
-        // Also check by line-only for backward compat (breakpoints set without file)
-        if (!should_pause) {
+        if (!bp) {  // line-only fallback (breakpoints set without a file)
             auto it2 = debug->breakpoints.find("");
-            if (it2 != debug->breakpoints.end() && it2->second.count(line)) {
-                should_pause = true;
-                pause_reason = "breakpoint";
+            if (it2 != debug->breakpoints.end()) {
+                auto j = it2->second.find(line);
+                if (j != it2->second.end()) bp = &j->second;
+            }
+        }
+        if (bp) {
+            bp->hit_count++;
+            bool fire = true;
+            if (fire && !bp->hit_condition.empty())
+                fire = dap_hit_cond_met(bp->hit_condition, bp->hit_count);
+            if (fire && !bp->condition.empty()) {
+                Value cv;
+                fire = debug_eval_value(bp->condition, cv) && cv.to_bool();
+            }
+            if (fire) {
+                if (!bp->log_message.empty()) {
+                    // Logpoint: interpolate {expr} parts, emit, and keep going.
+                    std::string out;
+                    const std::string& m = bp->log_message;
+                    for (size_t k = 0; k < m.size(); ) {
+                        if (m[k] == '{') {
+                            size_t e = m.find('}', k);
+                            if (e != std::string::npos) {
+                                Value lv;
+                                std::string ex = m.substr(k + 1, e - k - 1);
+                                out += debug_eval_value(ex, lv) ? lv.to_string() : "?";
+                                k = e + 1;
+                                continue;
+                            }
+                        }
+                        out += m[k++];
+                    }
+                    debug->dap->send_output_message(out + "\n");
+                } else {
+                    should_pause = true;
+                    pause_reason = "breakpoint";
+                }
             }
         }
         // Host-supplied breakpoint source (Godot editor breakpoints, polled
@@ -3422,6 +3475,9 @@ void VM::debug_check(int line) {
                 pause_reason = "entry";
                 debug->is_entry = false;
             }
+            // Fresh variable handles for this stop; the client re-requests
+            // scopes/variables after every stopped event.
+            debug_clear_var_handles();
             debug->dap->send_stopped_message(pause_reason, line,
                 cur_file.empty() ? debug->program_path : cur_file);
             debug->pause();
@@ -3594,6 +3650,202 @@ std::vector<std::pair<std::string, std::string>> VM::debug_get_locals_at(int lev
         }
     }
     return result;
+}
+
+// ── Structured variable inspection (expandable arrays/maps/UDTs) ──
+
+int VM::debug_register_var(const Value& v, const std::string& eval_name) {
+    bool expandable =
+        (v.type == ValueType::ARRAY  && !v.as_array()->elements.empty()) ||
+        (v.type == ValueType::OBJECT && !v.as_object()->fields.empty());
+    if (!expandable) return 0;
+    int ref = debug_next_var_handle_++;
+    debug_var_handles_[ref] = { v, eval_name };
+    return ref;
+}
+
+void VM::debug_clear_var_handles() {
+    debug_var_handles_.clear();
+    debug_next_var_handle_ = 1;
+}
+
+std::vector<VM::DebugVar> VM::debug_vars_global() {
+    std::vector<DebugVar> out;
+    for (auto& [name, slot] : global_names) {
+        if (slot >= globals.size()) continue;
+        if (name.find("__") != std::string::npos) continue;
+        const Value& v = globals[slot];
+        out.push_back({ name, v.to_string(), name, debug_register_var(v, name) });
+    }
+    std::sort(out.begin(), out.end(),
+        [](const DebugVar& a, const DebugVar& b) { return a.name < b.name; });
+    return out;
+}
+
+std::vector<VM::DebugVar> VM::debug_vars_local(int frame_index) {
+    std::vector<DebugVar> out;
+    if (frame_index <= 0 || frame_index >= (int)frames.size()) return out;
+    auto& f = frames[frame_index];
+    // Locals live between this frame's base and the next frame's base (or sp
+    // for the innermost), so deeper frames don't bleed their slots in.
+    size_t upper = (frame_index + 1 < (int)frames.size())
+                   ? frames[frame_index + 1].stack_base : sp;
+    for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
+        size_t abs = f.stack_base + i;
+        if (abs >= upper) continue;
+        const std::string& name = f.chunk->var_names[i];
+        const Value& v = stack[abs];
+        out.push_back({ name, v.to_string(), name, debug_register_var(v, name) });
+    }
+    return out;
+}
+
+std::vector<VM::DebugVar> VM::debug_var_children(int ref) {
+    std::vector<DebugVar> out;
+    auto it = debug_var_handles_.find(ref);
+    if (it == debug_var_handles_.end()) return out;
+    const Value& v = it->second.value;
+    const std::string base = it->second.eval_name;  // copy: map may rehash below
+    if (v.type == ValueType::ARRAY) {
+        auto* a = v.as_array();
+        for (size_t i = 0; i < a->elements.size(); i++) {
+            const Value& e = a->elements[i];
+            std::string en = base + "[" + std::to_string(i) + "]";
+            out.push_back({ "[" + std::to_string(i) + "]", e.to_string(), en,
+                            debug_register_var(e, en) });
+        }
+    } else if (v.type == ValueType::OBJECT) {
+        auto* o = v.as_object();
+        for (auto& [k, val] : o->fields) {
+            std::string en = base + "." + k;
+            out.push_back({ k, val.to_string(), en, debug_register_var(val, en) });
+        }
+    }
+    return out;
+}
+
+std::pair<std::string, int> VM::debug_eval_watch(const std::string& expr) {
+    Value v;
+    if (!debug_eval_value(expr, v)) return { "", 0 };
+    return { v.to_string(), debug_register_var(v, expr) };
+}
+
+bool VM::debug_eval_value(const std::string& expr, Value& result_out) {
+    // Find a root variable by name (innermost frame locals first, then
+    // globals). jdBasic identifiers are case-insensitive (stored upper).
+    auto find_root = [&](const std::string& name_in, Value& out) -> bool {
+        std::string name = name_in;
+        std::transform(name.begin(), name.end(), name.begin(), ::toupper);
+        if (frames.size() > 1) {
+            auto& f = frames.back();
+            for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
+                size_t abs = f.stack_base + i;
+                if (abs < sp && f.chunk->var_names[i] == name) { out = stack[abs]; return true; }
+            }
+        }
+        auto it = global_names.find(name);
+        if (it != global_names.end() && it->second < globals.size()) {
+            out = globals[it->second]; return true;
+        }
+        return false;
+    };
+    auto nav_field = [](Value& cur, const std::string& key) -> bool {
+        if (cur.type != ValueType::OBJECT) return false;
+        auto* o = cur.as_object();
+        for (auto& [k, val] : o->fields) if (k == key) { cur = val; return true; }
+        for (auto& [k, val] : o->fields) {  // case-insensitive fallback
+            if (k.size() == key.size() &&
+                std::equal(k.begin(), k.end(), key.begin(), [](char a, char b) {
+                    return std::toupper((unsigned char)a) == std::toupper((unsigned char)b); }))
+                { cur = val; return true; }
+        }
+        return false;
+    };
+
+    // Try to parse + navigate a simple lvalue path: root ( .field | [idx] | ["key"] )*
+    auto resolve_path = [&](const std::string& s, Value& out) -> bool {
+        size_t i = 0, n = s.size();
+        while (i < n && std::isspace((unsigned char)s[i])) i++;
+        if (i >= n || !(std::isalpha((unsigned char)s[i]) || s[i] == '_')) return false;
+        size_t st = i;
+        while (i < n && (std::isalnum((unsigned char)s[i]) || s[i] == '_' || s[i] == '$')) i++;
+        Value cur;
+        if (!find_root(s.substr(st, i - st), cur)) return false;
+        while (i < n) {
+            while (i < n && std::isspace((unsigned char)s[i])) i++;
+            if (i >= n) break;
+            if (s[i] == '.') {
+                i++; size_t fs = i;
+                while (i < n && (std::isalnum((unsigned char)s[i]) || s[i] == '_' || s[i] == '$')) i++;
+                if (i == fs || !nav_field(cur, s.substr(fs, i - fs))) return false;
+            } else if (s[i] == '[') {
+                i++; size_t bs = i; int depth = 1;
+                while (i < n && depth > 0) {
+                    if (s[i] == '[') depth++;
+                    else if (s[i] == ']') { depth--; if (depth == 0) break; }
+                    i++;
+                }
+                if (depth != 0) return false;
+                std::string inside = s.substr(bs, i - bs); i++;  // skip ']'
+                size_t a = 0, b = inside.size();
+                while (a < b && std::isspace((unsigned char)inside[a])) a++;
+                while (b > a && std::isspace((unsigned char)inside[b - 1])) b--;
+                inside = inside.substr(a, b - a);
+                if (inside.size() >= 2 && inside.front() == '"' && inside.back() == '"') {
+                    if (!nav_field(cur, inside.substr(1, inside.size() - 2))) return false;
+                } else {
+                    if (cur.type != ValueType::ARRAY) return false;
+                    char* end = nullptr;
+                    long idx = std::strtol(inside.c_str(), &end, 10);
+                    if (end == inside.c_str() || *end != '\0') return false;
+                    auto* arr = cur.as_array();
+                    if (idx < 0 || (size_t)idx >= arr->elements.size()) return false;
+                    cur = arr->elements[idx];
+                }
+            } else {
+                return false;  // operator / something complex: not a simple path
+            }
+        }
+        out = cur; return true;
+    };
+
+    Value v;
+    bool found = resolve_path(expr, v);
+    if (!found && on_eval) {
+        // Complex expression: fall back to the global-scope evaluator, but
+        // first expose the innermost frame's locals as temporary globals so
+        // expressions over locals (n * 10, a + b) resolve. Restore exactly
+        // afterwards so no local leaks into the global namespace.
+        std::vector<std::pair<uint16_t, Value>> saved;   // pre-existing globals to restore
+        std::vector<std::pair<uint16_t, std::string>> created;  // slots/names we added
+        if (frames.size() > 1) {
+            auto& f = frames.back();
+            for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
+                size_t abs = f.stack_base + i;
+                if (abs >= sp) continue;
+                const std::string& nm = f.chunk->var_names[i];
+                auto it = global_names.find(nm);
+                uint16_t slot;
+                if (it != global_names.end()) {
+                    slot = it->second;
+                    saved.push_back({ slot, globals[slot] });
+                } else {
+                    slot = (uint16_t)globals.size();
+                    globals.push_back(Value::make_none());
+                    global_names[nm] = slot;
+                    created.push_back({ slot, nm });
+                }
+                globals[slot] = stack[abs];
+            }
+        }
+        try { v = on_eval(*this, expr); found = true; }
+        catch (...) { found = false; }
+        for (auto& [slot, old] : saved) globals[slot] = old;
+        for (auto& [slot, nm] : created) { globals[slot] = Value::make_none(); global_names.erase(nm); }
+    }
+    if (!found) return false;
+    result_out = v;
+    return true;
 }
 
 void VM::register_builtins() {

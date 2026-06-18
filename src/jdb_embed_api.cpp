@@ -979,7 +979,7 @@ JDB_EMBED_API void jdb_embed_debug_set_line_hook(JdbEmbed* eh, JdbLineHook hook,
 
 JDB_EMBED_API void jdb_embed_debug_set_breakpoint(JdbEmbed* eh, int line) {
     if (!eh) return;
-    dbg_(reinterpret_cast<JdbEmbedImpl*>(eh))->breakpoints[""].insert(line);
+    dbg_(reinterpret_cast<JdbEmbedImpl*>(eh))->breakpoints[""][line];  // default BreakpointInfo
 }
 
 JDB_EMBED_API void jdb_embed_debug_clear_breakpoint(JdbEmbed* eh, int line) {

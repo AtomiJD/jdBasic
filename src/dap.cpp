@@ -38,6 +38,28 @@ static std::string dap_b64(const std::string& in) {
     return out.empty() ? "=" : out;
 }
 
+// Decode a base64 field received from the client (inverse of dap_b64). The
+// lone "=" marker (and any all-padding token) decodes to the empty string.
+static std::string dap_unb64(const std::string& in) {
+    static int8_t T[256];
+    static bool init = false;
+    if (!init) {
+        for (int i = 0; i < 256; i++) T[i] = -1;
+        const char* A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; i++) T[(unsigned char)A[i]] = (int8_t)i;
+        init = true;
+    }
+    std::string out;
+    int val = 0, bits = -8;
+    for (unsigned char c : in) {
+        if (c == '=' || T[c] < 0) continue;
+        val = (val << 6) | T[c];
+        bits += 6;
+        if (bits >= 0) { out += (char)((val >> bits) & 0xFF); bits -= 8; }
+    }
+    return out;
+}
+
 // ── DebugInfo pause/resume ──────────────────────────────────────
 
 void DebugInfo::pause() {
@@ -253,6 +275,10 @@ void DAPHandler::process_command(const std::string& command_line) {
     else if (command == "get_vars") {
         on_get_vars(args);
     }
+    else if (command == "get_children") {
+        int ref = args.empty() ? 0 : atoi(args[0].c_str());
+        on_get_children(ref);
+    }
     else if (command == "repl") {
         std::string rest = command_line.substr(command_line.find("repl ") + 5);
         on_repl_cmd(rest);
@@ -314,17 +340,28 @@ void DAPHandler::on_start() {
 }
 
 void DAPHandler::on_set_breakpoint(const std::vector<std::string>& args) {
-    // Format: set_breakpoint <file_path> <line>
+    // v2: set_breakpoint <file...> <line> <b64cond> <b64hit> <b64log>
+    // legacy: set_breakpoint <file...> <line>
     if (args.size() < 2) return;
     try {
-        // Last arg is the line number, everything before is the file path
-        int line = std::stoi(args.back());
+        BreakpointInfo bi;
+        size_t line_idx;
+        if (args.size() >= 5) {
+            size_t n = args.size();
+            bi.log_message  = dap_unb64(args[n - 1]);
+            bi.hit_condition = dap_unb64(args[n - 2]);
+            bi.condition    = dap_unb64(args[n - 3]);
+            line_idx = n - 4;
+        } else {
+            line_idx = args.size() - 1;  // legacy: line is the last token
+        }
+        int line = std::stoi(args[line_idx]);
         std::string file;
-        for (size_t i = 0; i < args.size() - 1; i++) {
+        for (size_t i = 0; i < line_idx; i++) {
             if (!file.empty()) file += " ";
             file += args[i];
         }
-        if (line > 0) vm.debug->breakpoints[normalize_path(file)].insert(line);
+        if (line > 0) vm.debug->breakpoints[normalize_path(file)][line] = bi;
     } catch (...) {}
 }
 
@@ -352,52 +389,37 @@ void DAPHandler::on_get_stacktrace() {
 
 void DAPHandler::on_get_vars(const std::vector<std::string>& args) {
     if (args.empty()) return;
-
-    // Send global variables (scope "2")
-    auto globals = vm.debug_get_globals();
-    for (auto& [name, val] : globals) {
-        send_variable_message("2", name, val);
+    std::vector<VM::DebugVar> vars;
+    if (args[0] == "local") {
+        // get_vars local <frameIndex>: locals of a specific stack frame.
+        int frame_index = (args.size() >= 2) ? atoi(args[1].c_str()) : -1;
+        vars = vm.debug_vars_local(frame_index);
+    } else {
+        vars = vm.debug_vars_global();
     }
+    for (auto& dv : vars) send_variable_message(dv.name, dv.value, dv.eval_name, dv.ref);
+    send_message("varsdone");
+}
 
-    // Send local variables (scope "1")
-    auto locals = vm.debug_get_locals();
-    for (auto& [name, val] : locals) {
-        send_variable_message("1", name, val);
-    }
-
+void DAPHandler::on_get_children(int ref) {
+    auto vars = vm.debug_var_children(ref);
+    for (auto& dv : vars) send_variable_message(dv.name, dv.value, dv.eval_name, dv.ref);
     send_message("varsdone");
 }
 
 void DAPHandler::on_watch(const std::string& input) {
-    std::string var_name = input;
-    // Trim
-    while (!var_name.empty() && (var_name.back() == ' ' || var_name.back() == '\r'))
-        var_name.pop_back();
-    // Check if single word
-    if (var_name.find(' ') != std::string::npos) return;
+    std::string expr = input;
+    while (!expr.empty() && (expr.back() == ' ' || expr.back() == '\r' || expr.back() == '\n'))
+        expr.pop_back();
+    while (!expr.empty() && (expr.front() == ' ' || expr.front() == '\t'))
+        expr.erase(0, 1);
+    if (expr.empty()) { send_repl_message("", 0); return; }
 
-    std::transform(var_name.begin(), var_name.end(), var_name.begin(), ::toupper);
-
-    // Look up in globals
-    auto globals = vm.debug_get_globals();
-    for (auto& [name, val] : globals) {
-        if (name == var_name) {
-            send_repl_message(val);
-            return;
-        }
-    }
-
-    // Look up in locals
-    auto locals = vm.debug_get_locals();
-    for (auto& [name, val] : locals) {
-        // Locals may be prefixed with function name
-        size_t us = name.find('_');
-        std::string short_name = (us != std::string::npos) ? name.substr(us + 1) : name;
-        if (short_name == var_name || name == var_name) {
-            send_repl_message(val);
-            return;
-        }
-    }
+    // Full expression resolution: plain names, array indexing, field/key
+    // access (sees frame locals), with a global-scope eval fallback. An
+    // array/map/UDT result comes back with an expandable handle.
+    auto [value, ref] = vm.debug_eval_watch(expr);
+    send_repl_message(value, ref);
 }
 
 void DAPHandler::on_repl_cmd(const std::string& input) {
@@ -452,8 +474,12 @@ void DAPHandler::send_output_message(const std::string& msg) {
     send_message("output " + dap_b64(msg));
 }
 
-void DAPHandler::send_repl_message(const std::string& msg) {
-    send_message("repl: " + dap_b64(msg));
+void DAPHandler::send_exception_message(const std::string& msg) {
+    send_message("exception: " + dap_b64(msg));
+}
+
+void DAPHandler::send_repl_message(const std::string& msg, int ref) {
+    send_message("repl: " + dap_b64(msg) + " " + std::to_string(ref));
 }
 
 void DAPHandler::send_program_ended_message() {
@@ -466,9 +492,11 @@ void DAPHandler::send_stack_frame_message(int index, int frames, int line,
                  " " + std::to_string(line) + " " + dap_b64(func_name) + " " + dap_b64(path));
 }
 
-void DAPHandler::send_variable_message(const std::string& scope, const std::string& name,
-                                        const std::string& value) {
-    // Format: var: <scope> b64(name) b64(value). name + value are base64 so
-    // multi-line array/map values and any spaces survive intact.
-    send_message("var: " + scope + " " + dap_b64(name) + " " + dap_b64(value));
+void DAPHandler::send_variable_message(const std::string& name, const std::string& value,
+                                        const std::string& eval_name, int ref) {
+    // Format: var: b64(name) b64(value) b64(eval_name) ref. All free-text
+    // fields are base64 so multi-line values and spaces survive intact; ref
+    // is the expandable-child handle (0 = leaf).
+    send_message("var: " + dap_b64(name) + " " + dap_b64(value) + " " +
+                 dap_b64(eval_name) + " " + std::to_string(ref));
 }

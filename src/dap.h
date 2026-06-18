@@ -46,12 +46,15 @@ public:
     void send_message(const std::string& msg);
     void send_stopped_message(const std::string& reason, int line, const std::string& path);
     void send_output_message(const std::string& msg);
-    void send_repl_message(const std::string& msg);
+    void send_exception_message(const std::string& msg);  // exception: b64(msg)
+    // repl: b64(msg) ref   (ref 0 = leaf; >0 = expandable hover/watch result)
+    void send_repl_message(const std::string& msg, int ref = 0);
     void send_program_ended_message();
     void send_stack_frame_message(int index, int frames, int line,
                                   const std::string& func_name, const std::string& path);
-    void send_variable_message(const std::string& scope, const std::string& name,
-                               const std::string& value);
+    // var: b64(name) b64(value) b64(eval_name) ref   (ref 0 = leaf)
+    void send_variable_message(const std::string& name, const std::string& value,
+                               const std::string& eval_name, int ref);
 
     // Callback: compile and run code for REPL (set by main.cpp)
     using ReplFunc = std::function<std::string(VM&, const std::string&)>;
@@ -89,17 +92,28 @@ private:
     void on_clear_breakpoints(const std::string& file);
     void on_get_stacktrace();
     void on_get_vars(const std::vector<std::string>& args);
+    void on_get_children(int ref);
     void on_watch(const std::string& input);
     void on_repl_cmd(const std::string& input);
     void on_goto(int line);
 };
 
 // Debug state stored in VM — these are the hooks
+// Per-breakpoint metadata. An empty condition/hit_condition/log_message means
+// that facet is unused. log_message turns the breakpoint into a logpoint:
+// it emits the (interpolated) message and continues instead of pausing.
+struct BreakpointInfo {
+    std::string condition;      // pause only if this expression is truthy
+    std::string hit_condition;  // e.g. ">5", "10", "%3" against the hit count
+    std::string log_message;    // logpoint message ({expr} parts interpolated)
+    int hit_count = 0;
+};
+
 struct DebugInfo {
     DAPHandler* dap = nullptr;
     DebugState state = DebugState::RUNNING;
-    // Breakpoints keyed by file path → set of line numbers
-    std::map<std::string, std::set<int>> breakpoints;
+    // Breakpoints keyed by normalized file path -> line -> metadata.
+    std::map<std::string, std::map<int, BreakpointInfo>> breakpoints;
     std::string program_path;
 
     // Stepping
