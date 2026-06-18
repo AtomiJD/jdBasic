@@ -1304,6 +1304,22 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             setup_parser_modules(parser);
             auto ast = parser.parse();
 
+            // Interpreter bytecode compile-check: catches semantic errors the
+            // parse misses (undefined GOTO labels, STATIC/DIM misuse, DIM
+            // shadowing a parameter, TYPE constructor args without SUB INIT,
+            // ...). Uses a fresh parse so the AST above stays intact for the
+            // undeclared-reference walk. A throw lands in the outer catch and
+            // is reported as a "LINT error:". No native codegen, no .exe.
+            {
+                Lexer l2(program_buffer);
+                auto t2 = l2.tokenize();
+                Parser p2(t2);
+                setup_parser_modules(p2);
+                auto ast2 = p2.parse();
+                Compiler check_compiler;
+                check_compiler.compile(ast2);
+            }
+
             // Per-file OPTION state mirrors the LLVM codegen pre-pass —
             // EXPLICIT/STRICT are file-scoped, so an imported loose module
             // stays lintable against a strict main file.

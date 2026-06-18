@@ -1,50 +1,64 @@
-# Getting Started with the jdBasic Debug Extension (v1.0.8)
+# jdBasic for Visual Studio Code (v1.0.19)
 
-Welcome! This guide will walk you through installing, configuring, and using the `jdbasic-debug` extension for Visual Studio Code to debug your `jdBASIC` programs.
+The `jdbasic-debug` extension turns VS Code into a small IDE for jdBasic: a
+full debugger plus editor language features (linting, autocomplete, hover
+docs, signature help, go-to-definition and an outline). All language features
+talk to the jdBasic runtime itself, so they never drift from the real build.
 
 ## 1. Prerequisites
 
-Before you begin, ensure you have the following:
-
-1.  **Visual Studio Code**: Installed and up to date.
-2.  **jdBASIC.exe**: The jdBASIC interpreter must be installed on your system. For the easiest setup, make sure the folder containing `jdBASIC.exe` is included in your system's `PATH` environment variable.
+1. **Visual Studio Code**, up to date.
+2. **jdBasic.exe** (the interpreter/runtime). For the debugger you can rely on
+   `PATH`, but for the editor features point the extension at a current build
+   (see Settings below). The editor features need a build new enough to
+   support `--lint`, `--dump-symbols` and `--dump-help`.
 
 ## 2. Installation
 
-1.  Open VS Code.
-2.  Go to the **Extensions** view (you can use the shortcut `Ctrl+Shift+X`).
-3.  Click the **...** (More Actions) menu at the top of the Extensions view.
-4.  Select **Install from VSIX...**.
-5.  Locate and select the `jdbasic-debug-1.0.8.vsix` file to install it.
+1. Extensions view (`Ctrl+Shift+X`) -> `...` menu -> **Install from VSIX...**.
+2. Pick `jdbasic-debug-1.0.19.vsix`.
+3. **Reload Window** when prompted.
 
-## 3. Your First Debug Session
+## 3. Settings
 
-The quickest way to start debugging is to use the default configuration.
+Open Settings (`Ctrl+,`) and search for `jdbasic`, or edit `settings.json`:
 
-1.  Open your jdBasic project folder in VS Code.
-2.  Open the `.bas` file you want to debug (e.g., `test.bas`).
-3.  Press `F5`.
-4.  VS Code will show a dropdown menu asking you to select a debugger. Choose **"jdBasic Debug"**.
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `jdbasic.runtime` | `jdBasic.exe` | Path to the runtime used for linting, autocomplete and hover. A bare name resolves via `PATH`; set a full path to pin a build, e.g. `D:/usr/dev/cc/build/jdBasic.exe`. |
+| `jdbasic.lint.enable` | `true` | Show parse/compile errors and undeclared-reference warnings as diagnostics. |
+| `jdbasic.lint.onType` | `true` | Re-lint while typing (debounced). When off, lint only on open and save. |
 
-The debugger will start, and because `stopOnEntry` is `true` by default, it will pause on the very first line of your `test.bas` file.
+> Tip: if completions or hovers are empty, your `jdbasic.runtime` is probably
+> an older build without the dump flags. Point it at a current `jdBasic.exe`.
 
-## 4. Setting Up `launch.json` for Full Control
+## 4. Editor features (no debug session needed)
 
-For more complex projects and repeatable debugging sessions, you should create a `launch.json` file.
+These work as soon as you open a `.jdb` file.
 
-1.  Go to the **Run and Debug** view on the Activity Bar (or use the shortcut `Ctrl+Shift+D`).
-2.  Click on the link **"create a launch.json file"**.
-3.  Again, select **"jdBasic Debug"** from the dropdown.
-4.  VS Code will create a `.vscode/launch.json` file with an initial configuration. You can now add more configurations.
+- **Linting / diagnostics**: parse errors and interpreter compile-check errors
+  (undefined GOTO labels, `STATIC DIM` misuse, `DIM` shadowing a parameter,
+  `TYPE` constructor args without `SUB INIT`, ...) show as red squiggles;
+  undeclared references show as yellow warnings. Errors also appear in the
+  Problems panel (`Ctrl+Shift+M`). Diagnostics come from `jdBasic --lint`.
+- **Autocomplete**: keywords, all built-in functions, namespaced methods
+  (after typing `GFX.`), constants, and the `FUNC`/`SUB`/`DIM`/`LET` names from
+  the current file. Sourced from `jdBasic --dump-symbols`.
+- **Hover docs**: hover a function or keyword to see its syntax and
+  description (from `jdBasic --dump-help`).
+- **Signature help**: typing `LEFT$(` shows the parameters; the active
+  parameter is highlighted as you type past each comma.
+- **Go to Definition**: jump to a `FUNC`/`SUB`/`TYPE` definition or a
+  `DIM`/`LET` declaration.
+- **Outline / symbols**: `FUNC`/`SUB`/`TYPE` appear in the Outline view,
+  breadcrumbs, and the Go-to-Symbol list.
 
-### Adding Debug Configurations
+## 5. Debugging
 
-Click the **"Add Configuration..."** button in the bottom-right of the `launch.json` editor. You will see snippets to help you:
+### Launch configuration
 
-* **`jdbasic Debug: Launch`**: This is a standard configuration that runs the debugger silently in the background.
-* **`jdbasic Debug in Integrated Terminal`**: **(Recommended)** This runs your program inside VS Code's integrated terminal, which is very useful for seeing `PRINT` statements and other program output directly.
-
-Here is an example `launch.json` file with both configurations:
+Run and Debug view (`Ctrl+Shift+D`) -> create a `launch.json`, choose
+**jdBasic Debug**. Example:
 
 ```json
 {
@@ -56,64 +70,101 @@ Here is an example `launch.json` file with both configurations:
       "name": "jdBasic: Debug in Terminal",
       "program": "${file}",
       "stopOnEntry": true,
-      "runtime": "jdBASIC.exe",
+      "runtime": "D:/usr/dev/cc/build/jdBasic.exe",
       "console": "integratedTerminal"
-    },
-    {
-      "type": "jdbasic",
-      "request": "launch",
-      "name": "jdBasic: Debug a specific file",
-      "program": "${file}",
-      "stopOnEntry": true,
-      "runtime": "C:/path/to/your/jdBASIC.exe"
     }
   ]
 }
 ```
 
-## 5. Using the Debugger
+`stopOnEntry: false` runs straight to your first breakpoint instead of
+pausing on the first line.
 
-Once you have a configuration in your `launch.json`, you can start debugging.
+### Breakpoints
 
-1.  Go to the **Run and Debug** view.
-2.  Select the configuration you want to use from the dropdown menu at the top (e.g., "jdBasic: Debug in Terminal").
-3.  Click the green **Start Debugging** play button (or press `F5`).
+Click the gutter (or `F9`) to set a breakpoint. Right-click a breakpoint ->
+**Edit Breakpoint** to add:
 
-### Setting Breakpoints
+- **Expression** (conditional): pause only when it is true, e.g. `i = 4`
+  (jdBasic uses a single `=` for equality, not `==`).
+- **Hit Count**: e.g. `3`, `>5`, `%4`.
+- **Log Message** (logpoint): logs without stopping; `{expr}` parts are
+  evaluated, e.g. `loop i={i}`.
 
-Before starting, you can set breakpoints. Simply click in the gutter to the left of the line numbers in your `.bas` file. A red dot will appear. When the program execution reaches this line, it will pause.
+### Inspecting state
 
-### Controlling Execution
+- The **Variables** panel shows the selected stack frame's **Locals** plus
+  **Globals**. Arrays, maps and UDTs are **expandable** (drill into elements
+  and fields).
+- **Hover** over a variable or expression in the editor to see its value
+  (handles `arr[2]`, `obj.field` and computed expressions).
+- **Watch** panel: add any expression; array/map results are expandable.
+- Right-click a variable for **Copy Value** / **Add to Watch**.
 
-When the debugger is paused, a toolbar will appear at the top of the editor, allowing you to control the program's flow:
+### Debug Console (REPL)
 
-* **Continue (`F5`)**: Resumes execution until the next breakpoint or the end of the program.
-* **Step Over (`F10`)**: Executes the current line and pauses on the next one.
-* **Step In (`F11`)**: If the current line is a function/subroutine call, it will step into that function.
-* **Step Out (`Shift+F11`)**: If you are inside a function, it will execute the rest of the function and pause after it returns.
-* **Restart (`Ctrl+Shift+F5`)**: Stops and restarts the debugging session.
-* **Stop (`Shift+F5`)**: Terminates the debugging session.
+While paused, the Debug Console runs full jdBasic, not just expressions:
 
-### Inspecting Variables
+```
+PRINT 6 * 7
+x = 42
+FOR k = 1 TO 3 : PRINT k : NEXT k
+```
 
-While the debugger is paused, the **Variables** panel on the left will show you the current values of all your variables. They are conveniently sorted into **Local** and **Global** scopes, making it easy to track the state of your program.
+Plain expressions print their value (`counter`, `x + 1`).
 
-### Using the Debug Console (REPL)
+### Edit while debugging (recompile on save)
 
-At the bottom of the VS Code window, the **Debug Console** panel is a powerful tool for interacting directly with the running `jdBASIC.exe` interpreter while it is paused.
+While paused you can edit the source and **save** (`Ctrl+S`). The running
+program is recompiled and the instruction pointer is repositioned to the same
+line, so execution continues in place.
 
-You can type commands here and press Enter to execute them. This is useful for:
+### Break on error
 
-* **Checking a variable's value**:
-    ```
-    print a
-    ```
+Any jdBasic runtime error pauses execution at the offending line and shows the
+error details. This is always on.
 
-* **Changing a variable's value**:
-    ```
-    a = 5
-    ```
+## 6. Keyboard shortcuts (VS Code keys jdBasic supports)
 
-* **Executing other runtime commands**: The `jdBASIC.exe` interpreter might support special commands. You can try commands like `pwd` or `cd "cource"`. The entirely features of `jdBASIC.exe` can be found in [Language Reference](https://github.com/AtomiJD/jdBasic/blob/master/doc/languages.md).
+| Key | Action |
+| --- | --- |
+| `F5` | Start debugging / Continue |
+| `Shift+F5` | Stop debugging |
+| `Ctrl+Shift+F5` | Restart debugging |
+| `F9` | Toggle breakpoint on the current line |
+| `F10` | Step Over |
+| `F11` | Step In |
+| `Shift+F11` | Step Out |
+| `Ctrl+S` | Save (recompiles + repositions while debugging) |
+| `F12` / `Ctrl+Click` | Go to Definition |
+| `Ctrl+Shift+O` | Go to Symbol in file (FUNC/SUB/TYPE) |
+| `Ctrl+Space` | Trigger autocomplete |
+| `Ctrl+Shift+Space` | Trigger signature help |
+| mouse hover | Variable value (debugging) or function docs (editing) |
+| `Ctrl+Shift+M` | Problems panel (diagnostics) |
+| `Ctrl+Shift+D` | Run and Debug view |
+| `Ctrl+Shift+X` | Extensions view |
 
-Happy Debugging!
+You can also right-click a `.jdb` file or use the editor title icons to
+**Run File** (no debugging) or **Debug File**.
+
+## 7. Command palette
+
+`Ctrl+Shift+P`, then:
+
+- **jdBasic: Lint Current File** forces a lint and opens the `jdBasic Lint`
+  output channel (handy for troubleshooting the runtime path).
+
+## 8. Troubleshooting
+
+- **No squiggles / empty autocomplete / empty hovers**: `jdbasic.runtime`
+  points at a build too old for `--lint` / `--dump-symbols` / `--dump-help`.
+  Set it to a current `jdBasic.exe`. The linter shows a warning with an
+  **Open Settings** action when it detects this.
+- **Garbled debug output**: the debugger and runtime versions are mismatched.
+  Use a matching `jdBasic.exe` and this extension version.
+
+The full language reference is at
+https://github.com/AtomiJD/jdBasic/blob/master/doc/languages.md
+
+Happy coding!
