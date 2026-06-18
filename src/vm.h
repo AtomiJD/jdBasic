@@ -77,6 +77,8 @@ public:
     // Register a constant (cannot be overwritten by user code)
     void register_const(const std::string& name, Value val);
     bool is_const(const std::string& name) const;
+    // Names of registered constants (PI, E, TRUE, ...) for symbol dumps.
+    const std::unordered_set<std::string>& const_names() const { return const_globals; }
 
     // Register a native/built-in function
     using NativeFunc = std::function<Value(const std::vector<Value>&)>;

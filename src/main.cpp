@@ -1648,6 +1648,19 @@ int main(int argc, char* argv[]) {
                       << "OS:       " << jdbasic_os() << "\n";
             return 0;
         }
+        if (a == "--dump-symbols") {
+            // Authoritative symbol list for editor tooling (autocomplete).
+            // One "<kind> <NAME>" per line: keywords from the lexer, functions
+            // from the live native registry (dotted names are namespaced
+            // methods), constants from the const registry. Single source of
+            // truth, so completions never drift from the runtime.
+            VM vm;
+            setup_dynamic_code(vm);
+            for (auto& kv : keywords()) std::cout << "keyword " << kv.first << "\n";
+            for (auto& name : vm.native_names()) std::cout << "func " << name << "\n";
+            for (auto& name : vm.const_names()) std::cout << "const " << name << "\n";
+            return 0;
+        }
         if (a == "--time" || a == "-t") { timing = true; continue; }
         if (a == "--verbose" || a == "-v") { /* old-style flag, ignore */ continue; }
         if (a == "--debug" || a == "-d") {
