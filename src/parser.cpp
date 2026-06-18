@@ -452,7 +452,18 @@ StmtPtr Parser::parse_statement() {
         case TokenType::OPTION_KW: {
             int ln = current().line; advance();
             auto s = std::make_unique<Stmt>(); s->kind = StmtKind::OPTION_STMT; s->line = ln;
-            s->expr = parse_expr(); expect_newline(); return s;
+            // Accept both OPTION "EXPLICIT" (string) and the classic bare
+            // OPTION EXPLICIT / OPTION STRICT. Normalize the bare keyword to a
+            // string literal so the codegen + lint option pre-pass (which match
+            // string literals) recognize it, and so the bare keyword is not
+            // walked as an undeclared identifier reference.
+            if (check(TokenType::STRING_LIT)) {
+                s->expr = parse_expr();
+            } else if (!check(TokenType::NEWLINE) && !check(TokenType::COLON) &&
+                       !check(TokenType::EOF_TOKEN)) {
+                s->expr = make_string_lit(advance().value, ln);
+            }
+            expect_newline(); return s;
         }
         case TokenType::EXITFOR: case TokenType::EXITDO: case TokenType::EXITFUNC: {
             int ln = current().line;
@@ -1238,6 +1249,10 @@ StmtPtr Parser::parse_for() {
     expect(TokenType::ASSIGN, "'='");
     ExprPtr start_expr = parse_expr();
     expect(TokenType::TO, "'TO'");
+    if (check(TokenType::NEWLINE) || check(TokenType::COLON) || check(TokenType::EOF_TOKEN)) {
+        throw std::runtime_error("Parse error at line " + std::to_string(ln) +
+            ": FOR is missing its end value after TO");
+    }
     ExprPtr end_val = parse_expr();
     ExprPtr step_val;
     if (match(TokenType::STEP)) {
