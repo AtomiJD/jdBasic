@@ -43,6 +43,8 @@ DIM limitVal = 20
 DIM movesLeft = 20
 DIM levelStartTick = 0.0
 DIM levelBaseScore = 0
+DIM bestScore = 0
+DIM bestLevel = 0
 DIM g = 0, v2 = 0, tmp = 0
 
 DIM spawnR = []
@@ -191,6 +193,26 @@ FUNC GOAL_MET()
     IF goalType$ = "score" THEN RETURN (Score - levelBaseScore) >= goalTarget
     RETURN goalProg >= goalTarget
 ENDFUNC
+
+SUB LoadHigh()
+    IF LEN(DIR$("tmp/prisma_high.txt")) = 0 THEN RETURN
+    parts = SPLIT(TXTREADER$("tmp/prisma_high.txt"), ";")
+    IF LEN(parts) >= 2 THEN
+        bestScore = VAL(parts[0])
+        bestLevel = VAL(parts[1])
+    ENDIF
+ENDSUB
+
+SUB SaveHigh()
+    BINWRITER "tmp/prisma_high.txt", ("" + bestScore) + ";" + ("" + bestLevel)
+ENDSUB
+
+SUB UpdateHigh()
+    changed = FALSE
+    IF Score > bestScore THEN bestScore = Score : changed = TRUE
+    IF levelNo > bestLevel THEN bestLevel = levelNo : changed = TRUE
+    IF changed THEN SaveHigh()
+ENDSUB
 
 ' progress hooks fired during resolution
 SUB OnCleared(id)
@@ -948,7 +970,9 @@ SUB DrawTitle()
     TEXT 268, 150, "P R I S M A"
     DRAWCOLOR 170, 185, 210
     TEXT 262, 188, "- Color Alchemy -"
-    yy = 256
+    DRAWCOLOR 200, 210, 160
+    TEXT 238, 220, "Best:  Level " + bestLevel + "   Score " + bestScore
+    yy = 262
     DRAWCOLOR 160, 172, 195
     TEXT 232, yy, "Match 3 primaries -> they fuse:"
     pairs = [[1, 4], [2, 5], [3, 6]]
@@ -1011,8 +1035,10 @@ SUB DrawLevelWin()
     TEXT 245, 200, "LEVEL " + levelNo + " GESCHAFFT!"
     DRAWCOLOR 220, 228, 240
     TEXT 300, 262, "Score: " + Score
+    DRAWCOLOR 200, 210, 160
+    TEXT 260, 300, "Bestes Level: " + bestLevel
     DRAWCOLOR 250, 230, 120
-    TEXT 250, 365, "SPACE = naechstes Level"
+    TEXT 250, 375, "SPACE = naechstes Level"
 ENDSUB
 
 SUB DrawLevelFail()
@@ -1022,8 +1048,10 @@ SUB DrawLevelFail()
     IF limitType$ = "moves" THEN TEXT 295, 200, "ZUEGE AUS!" ELSE TEXT 300, 200, "ZEIT AUS!"
     DRAWCOLOR 220, 228, 240
     TEXT 235, 258, "Level " + levelNo + " verfehlt - Score: " + Score
+    DRAWCOLOR 200, 210, 160
+    TEXT 250, 300, "Best:  Level " + bestLevel + "   Score " + bestScore
     DRAWCOLOR 250, 230, 120
-    TEXT 290, 365, "SPACE = zum Titel"
+    TEXT 290, 375, "SPACE = zum Titel"
 ENDSUB
 
 ' --- Init ----------------------------------------------------
@@ -1034,12 +1062,24 @@ FOR bi = 0 TO NBUB - 1
     bub_s[bi] = 3 + INT(RND(1) * 9)
 NEXT bi
 Reshuffle()
+LoadHigh()
 
 DIM args = OS.ARGS()
 DIM testmode = (LEN(args) >= 2 ANDALSO args[1] = "shot")
 
 DIM testsub$ = ""
 IF LEN(args) >= 3 THEN testsub$ = args[2]
+
+IF testmode ANDALSO testsub$ = "high" THEN
+    bestScore = 4242 : bestLevel = 7
+    SaveHigh()
+    bestScore = 0 : bestLevel = 0
+    LoadHigh()
+    PRINT "loaded score="; bestScore; " level="; bestLevel
+    DrawTitle() : SCREENFLIP : SLEEP 30 : DrawTitle() : SCREENFLIP
+    GFX.SAVE_SCREENSHOT("tmp/prisma_high.png")
+    SOUND.SHUTDOWN : GFX.CLOSE : PRINT "high ok" : END
+ENDIF
 
 IF testmode ANDALSO testsub$ = "mouse" THEN
     PRINT "mx="; GFX.MOUSEX(); " my="; GFX.MOUSEY(); " btn="; GFX.MOUSEBUTTON(1)
@@ -1210,6 +1250,7 @@ DO
 
     ELSEIF gState$ = "play" THEN
         IF eEsc THEN
+            UpdateHigh()
             gState$ = "title"
         ELSE
             IF picked THEN
@@ -1244,10 +1285,13 @@ DO
                 ENDIF
             ENDIF
             IF GOAL_MET() THEN
+                UpdateHigh()
                 gState$ = "levelwin"
             ELSEIF limitType$ = "moves" ANDALSO movesLeft <= 0 THEN
+                UpdateHigh()
                 gState$ = "levelfail"
             ELSEIF limitType$ = "time" ANDALSO (TICK() - levelStartTick) / 1000.0 >= limitVal THEN
+                UpdateHigh()
                 gState$ = "levelfail"
             ENDIF
         ENDIF
