@@ -1661,6 +1661,27 @@ int main(int argc, char* argv[]) {
             for (auto& name : vm.const_names()) std::cout << "const " << name << "\n";
             return 0;
         }
+        if (a == "--dump-help") {
+            // Per-symbol help for editor hover + signature help. One line each:
+            // NAME<TAB>SYNTAX<TAB>DESCRIPTION, parsed from help.txt's topics.
+            if (g_help_topics.empty()) load_help_file();
+            auto trim = [](std::string s) {
+                size_t a2 = s.find_first_not_of(" \t\r\n");
+                size_t b2 = s.find_last_not_of(" \t\r\n");
+                return (a2 == std::string::npos) ? std::string() : s.substr(a2, b2 - a2 + 1);
+            };
+            for (auto& kv : g_help_topics) {
+                std::string syntax, desc;
+                std::istringstream ss(kv.second);
+                std::string line;
+                while (std::getline(ss, line)) {
+                    if (line.rfind("Syntax:", 0) == 0) syntax = trim(line.substr(7));
+                    else if (line.rfind("Description:", 0) == 0) desc = trim(line.substr(12));
+                }
+                std::cout << kv.first << "\t" << syntax << "\t" << desc << "\n";
+            }
+            return 0;
+        }
         if (a == "--time" || a == "-t") { timing = true; continue; }
         if (a == "--verbose" || a == "-v") { /* old-style flag, ignore */ continue; }
         if (a == "--debug" || a == "-d") {
