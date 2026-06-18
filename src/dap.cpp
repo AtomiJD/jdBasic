@@ -18,6 +18,26 @@
 #define closesocket close
 #endif
 
+// Base64 so free-text fields (paths, REPL output, variable values) survive the
+// newline-delimited wire protocol intact - they may contain spaces or newlines
+// that would otherwise be split into bogus tokens or dropped lines.
+static std::string dap_b64(const std::string& in) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((in.size() + 2) / 3) * 4);
+    int val = 0, bits = -6;
+    for (unsigned char c : in) {
+        val = (val << 8) | c;
+        bits += 8;
+        while (bits >= 0) { out += T[(val >> bits) & 0x3F]; bits -= 6; }
+    }
+    if (bits > -6) out += T[((val << 8) >> (bits + 8)) & 0x3F];
+    while (out.size() % 4) out += '=';
+    // base64 of the empty string is empty; emit a marker so the field never
+    // collapses into a missing token on the wire.
+    return out.empty() ? "=" : out;
+}
+
 // ── DebugInfo pause/resume ──────────────────────────────────────
 
 void DebugInfo::pause() {
@@ -150,6 +170,12 @@ void DAPHandler::server_loop(int port) {
 // ── Receiving ───────────────────────────────────────────────────
 
 void DAPHandler::client_session() {
+    // Announce the wire-protocol version first thing, before any stopped/var
+    // message can race out from the VM thread. v2 = base64-encoded free-text
+    // fields. An old client that ignores this still works; a new client uses
+    // it to pick base64 vs legacy plain parsing.
+    send_message("proto 2");
+
     std::string buffer;
     while (server_running.load()) {
         char read_buf[1024];
@@ -327,16 +353,16 @@ void DAPHandler::on_get_stacktrace() {
 void DAPHandler::on_get_vars(const std::vector<std::string>& args) {
     if (args.empty()) return;
 
-    // Send global variables (scope "2 ")
+    // Send global variables (scope "2")
     auto globals = vm.debug_get_globals();
     for (auto& [name, val] : globals) {
-        send_variable_message("2 ", name, val);
+        send_variable_message("2", name, val);
     }
 
-    // Send local variables (scope "1 ")
+    // Send local variables (scope "1")
     auto locals = vm.debug_get_locals();
     for (auto& [name, val] : locals) {
-        send_variable_message("1 ", name, val);
+        send_variable_message("1", name, val);
     }
 
     send_message("varsdone");
@@ -416,18 +442,18 @@ void DAPHandler::send_message(const std::string& msg) {
 }
 
 void DAPHandler::send_stopped_message(const std::string& reason, int line, const std::string& path) {
-    std::string msg = "stopped " + reason;
-    if (line > 0) msg += " " + std::to_string(line);
-    if (!path.empty()) msg += " " + path;
-    send_message(msg);
+    // Fixed positions: reason line b64(path). path is base64 so spaces in
+    // Windows paths don't fragment the token.
+    send_message("stopped " + reason + " " + std::to_string(line > 0 ? line : 0) +
+                 " " + dap_b64(path));
 }
 
 void DAPHandler::send_output_message(const std::string& msg) {
-    send_message("output " + msg);
+    send_message("output " + dap_b64(msg));
 }
 
 void DAPHandler::send_repl_message(const std::string& msg) {
-    send_message("repl: " + msg);
+    send_message("repl: " + dap_b64(msg));
 }
 
 void DAPHandler::send_program_ended_message() {
@@ -437,10 +463,12 @@ void DAPHandler::send_program_ended_message() {
 void DAPHandler::send_stack_frame_message(int index, int frames, int line,
                                            const std::string& func_name, const std::string& path) {
     send_message("stack: " + std::to_string(index) + " " + std::to_string(frames) +
-                 " " + std::to_string(line) + " " + func_name + " " + path);
+                 " " + std::to_string(line) + " " + dap_b64(func_name) + " " + dap_b64(path));
 }
 
 void DAPHandler::send_variable_message(const std::string& scope, const std::string& name,
                                         const std::string& value) {
-    send_message("var: " + scope + name + " = " + value);
+    // Format: var: <scope> b64(name) b64(value). name + value are base64 so
+    // multi-line array/map values and any spaces survive intact.
+    send_message("var: " + scope + " " + dap_b64(name) + " " + dap_b64(value));
 }
