@@ -97,10 +97,10 @@ for %%A in (%*) do (
     if /I "%%A"=="PYTHON" (
         set DEFS=!DEFS! /DPYTHON
         set WANT_PYTHON=1
-        echo [+] Python - embedded CPython interpreter (PYTHON$ / PY.*)
+        echo [+] Python - embedded CPython interpreter [PYTHON$ / PY.*]
     )
     if /I "%%A"=="OPENGL" (
-        REM Requires GFX (shares SDL3 init + event loop). We don't auto-imply
+        REM Requires GFX - shares SDL3 init and event loop. We don't auto-imply
         REM GFX here — caller must pass GFX explicitly so they see the cost.
         set DEFS=!DEFS! /DOPENGL
         set EXTRA_SRC=!EXTRA_SRC! src\opengl.cpp
@@ -123,25 +123,28 @@ for %%A in (%*) do (
         echo [+] FTXUI - Terminal UI
     )
     if /I "%%A"=="TUI" (
-        REM TUI.* namespace (scripts target FTXUI through immediate-mode API).
+        REM TUI.* namespace - scripts target FTXUI through immediate-mode API.
         REM Implies FTXUI — drag the lib in if the user didn't pass it.
         set DEFS=!DEFS! /DTUI /DUNICODE /D_UNICODE
         set EXTRA_SRC=!EXTRA_SRC! src\tui.cpp src\tui_state.cpp
         set WANT_TUI=1
         echo [+] TUI - Script-facing terminal UI namespace
     )
-    if /I "%%A"=="RELEASE" (
-        REM Increment build number
-        set /p BNUM=< %BUILD_NUM_FILE%
-        set /a BNUM=!BNUM!+1
-        echo !BNUM!> %BUILD_NUM_FILE%
-        REM Get date/time
-        set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%-%time:~0,2%:%time:~3,2%.%time:~6,2%
-        set BDATE=!BDATE: =0!
-        set DEFS=!DEFS! /DJDBASIC_BUILD_NUM=\"!BNUM!\" /DJDBASIC_BUILD_DATE=\"!BDATE!\"
-        echo [+] RELEASE Build !BNUM! - !BDATE!
-    )
+    if /I "%%A"=="RELEASE" set WANT_RELEASE=1
 )
+
+REM Bump the build number for RELEASE builds. Done at top level, NOT inside the
+REM for-loop body, because a < or > file redirect inside that parenthesized
+REM block silently fails under cmd, so the old in-loop version never ran.
+if not defined WANT_RELEASE goto :after_release
+set /p BNUM=< %BUILD_NUM_FILE%
+set /a BNUM=BNUM+1
+> %BUILD_NUM_FILE% echo !BNUM!
+set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%-%time:~0,2%:%time:~3,2%.%time:~6,2%
+set BDATE=!BDATE: =0!
+set DEFS=!DEFS! /DJDBASIC_BUILD_NUM=\"!BNUM!\" /DJDBASIC_BUILD_DATE=\"!BDATE!\"
+echo [+] RELEASE Build !BNUM! - !BDATE!
+:after_release
 
 REM OPENGL requires GFX (SDL_Window + SDL init come from there).
 if defined WANT_OPENGL (
