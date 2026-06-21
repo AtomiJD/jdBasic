@@ -772,7 +772,9 @@ static std::string g_llama_log_buf;
 // dll's directory in here, and ensure_backend() then walks it for
 // ggml-*.dll entries via ggml_backend_load() so we don't depend on
 // ggml_backend_load_all()'s implicit EXE-dir scan.
+#ifdef _WIN32
 extern std::string g_jdb_embed_dll_dir;  // defined in jdb_embed_api.cpp
+#endif
 
 // Capture llama / ggml log lines so they show up in jdBasic stdout
 // instead of vanishing into the host process's stderr (which Godot's
@@ -789,6 +791,7 @@ static void ensure_backend() {
     llama_log_set(llama_log_cb, nullptr);
     ggml_backend_load_all();
 
+#ifdef _WIN32
     // Embed fallback: if load_all came up empty (host process directory
     // doesn't have the backend DLLs), explicitly load each ggml-*.dll
     // from the directory jdb_embed_api.cpp gave us.
@@ -808,6 +811,7 @@ static void ensure_backend() {
             ggml_backend_load(full.c_str());
         }
     }
+#endif
     llama_backend_init();
     g_llama_backend_init = true;
 }
