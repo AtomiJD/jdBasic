@@ -7,9 +7,13 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 LIBS="$ROOT/libs"
 
 JOBS=${JOBS:-$(nproc)}
+# Prefer Ninja, but fall back to Unix Makefiles when ninja isn't installed.
+# Kept in its own variable (passed quoted) because "Unix Makefiles" contains a
+# space that would otherwise word-split out of the unquoted $COMMON_FLAGS.
+if command -v ninja >/dev/null 2>&1; then GEN="Ninja"; else GEN="Unix Makefiles"; fi
 # PIC needed so the static archives can also be linked into libjdbrt.so
 # (the runtime shared lib used by native-compiled executables).
-COMMON_FLAGS="-G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+COMMON_FLAGS="-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
 
 build_one() {
     local name="$1"
@@ -20,7 +24,7 @@ build_one() {
         echo "MISSING: $LIBS/$name (clone it first)"; exit 1
     fi
     mkdir -p "$LIBS/$name/build"
-    (cd "$LIBS/$name/build" && cmake $COMMON_FLAGS $extra ..)
+    (cd "$LIBS/$name/build" && cmake -G "$GEN" $COMMON_FLAGS $extra ..)
     cmake --build "$LIBS/$name/build" -j "$JOBS"
     echo "done: $name"
 }
