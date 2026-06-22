@@ -81,7 +81,7 @@ If `libs/ftxui/build/libftxui-component.lib` is missing when you pass `FTXUI`, `
 ### Build commands
 
 ```bat
-REM Minimal — just the language and console
+REM Minimal - just the language and console
 build.bat
 
 REM Headless network / scripting
@@ -118,7 +118,7 @@ build\jdb_runtime.obj   ← VM-builtin shim (NATIVEC only)
 build\LLVM-C.dll        ← LLVM C-API runtime (NATIVEC only)
 ```
 
-### Runtime DLL — `build_rt.bat`
+### Runtime DLL - `build_rt.bat`
 
 `build.bat NATIVEC` only builds the interpreter and the `-c` machinery. The runtime DLL that generated EXEs link against is built by a separate script:
 
@@ -359,9 +359,9 @@ dist.bat GFX IMGUI HTTP NOBUILD
 
 Switches:
 
-- `NOCUDA` — skip the CUDA runtime DLLs even when `LLM` is selected
-- `NOBUILD` — don't recompile, just repackage from `build\`
-- `CLEAN` — wipe `dist\jdBasic\` before assembling
+- `NOCUDA` - skip the CUDA runtime DLLs even when `LLM` is selected
+- `NOBUILD` - don't recompile, just repackage from `build\`
+- `CLEAN` - wipe `dist\jdBasic\` before assembling
 
 ### Target machine requirements (Windows)
 
@@ -387,7 +387,7 @@ Match the llama.cpp release version with the headers in `libs/llama/`. If you re
 Download ONNX Runtime 1.20.0 from <https://github.com/microsoft/onnxruntime/releases>, unpack so that `libs/onnxruntime/include/` and `libs/onnxruntime/lib/` exist. For GPU, use the `-gpu-` variant of the tarball.
 
 **`MIX_Mixer / MIX_CreateMixerDevice not declared` (Linux)**
-Your `libs/SDL3_mixer/` is too old — pre-3.2.2 ships the legacy `Mix_*` API. Run `( cd libs/SDL3_mixer && git checkout release-3.2.2 )` and re-run `./build_libs.sh`.
+Your `libs/SDL3_mixer/` is too old - pre-3.2.2 ships the legacy `Mix_*` API. Run `( cd libs/SDL3_mixer && git checkout release-3.2.2 )` and re-run `./build_libs.sh`.
 
 **NATIVEC build fails / `LLVM-C.lib` not found (Windows)**
 Install LLVM 18.x for Windows from <https://github.com/llvm/llvm-project/releases> (pick the `LLVM-18.x.x-win64.exe` installer) and point it at `libs/LLVM/`. The build expects `libs/LLVM/include/llvm-c/`, `libs/LLVM/lib/LLVM-C.lib`, and `libs/LLVM/bin/LLVM-C.dll`.

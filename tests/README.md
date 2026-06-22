@@ -1,6 +1,6 @@
 # jdBasic Test Suite
 
-Roughly **284 tracked tests** covering language semantics, native codegen, APL primitives, GUI / TUI, FFI, modules, async, and per-feature corner cases. The directory is part regression bank, part scratch-pad — see the naming conventions below to tell them apart.
+Roughly **284 tracked tests** covering language semantics, native codegen, APL primitives, GUI / TUI, FFI, modules, async, and per-feature corner cases. The directory is part regression bank, part scratch-pad - see the naming conventions below to tell them apart.
 
 ---
 
@@ -10,11 +10,11 @@ Every commit must pass the gate from **both** the interpreter and the LLVM nativ
 
 | Suite | What it covers | Asserts |
 |---|---|---|
-| `comprehensive_test.jdb` | Loops, variables, types, FUNCs / SUBs, lambdas, pipes, react, strings, math, operators, Unicode — the big mixed bag (51 sections). | 705 |
+| `comprehensive_test.jdb` | Loops, variables, types, FUNCs / SUBs, lambdas, pipes, react, strings, math, operators, Unicode - the big mixed bag (51 sections). | 705 |
 | `native_test.jdb` | Subset known to lower through native codegen. Catches IR / runtime divergence. | 265 |
 | `test_apl_complete.jdb` | APL-style array primitives: `IOTA`, `RESHAPE`, `GRADE`, `OUTER`, `CONVOLVE`, `MATMUL`, etc. | 143 |
 | `test_apl_pipelines.jdb` | Multi-stage `\|>` pipe expressions exercising tag inference + auto-vectorization. | 52 |
-| `test_tui_smoke.jdb` | Every `TUI.*` native — symbol presence + return-value preservation. | 21 |
+| `test_tui_smoke.jdb` | Every `TUI.*` native - symbol presence + return-value preservation. | 21 |
 
 ### Interpreter pass
 
@@ -38,7 +38,7 @@ Every commit must pass the gate from **both** the interpreter and the LLVM nativ
 ./build/jdBasic.exe -c tests/test_tui_smoke.jdb     && ./tests/test_tui_smoke.exe
 ```
 
-If a native EXE returns **exit 127**, the DLL is missing next to it — `cp build/jdbrt.dll tests/` and retry.
+If a native EXE returns **exit 127**, the DLL is missing next to it - `cp build/jdbrt.dll tests/` and retry.
 
 ### GUI smokes
 
@@ -65,10 +65,10 @@ The full procedure (including how to react to LNK1104 build locks and giant-inte
 | `test_<feature>.jdb` | Single-feature focused test |
 | `test_<feature>_<v>.jdb` | Variant of the above (numbered or `a/b/c`) |
 | `*_smoke.jdb` | Minimal "imports / runs / exits clean" check |
-| `comprehensive_test.jdb` | The mega-suite — 705 asserts in 51 sections |
+| `comprehensive_test.jdb` | The mega-suite - 705 asserts in 51 sections |
 | `native_test.jdb` | Native-codegen-focused mirror of comprehensive |
 | `test_apl_*.jdb` | APL array primitives (the canonical guard since the great native audit) |
-| `test_tui_phase_*.jdb` | One file per TUI.* implementation phase (A..G) — useful as feature demos, not part of the gate |
+| `test_tui_phase_*.jdb` | One file per TUI.* implementation phase (A..G) - useful as feature demos, not part of the gate |
 | `crash_test.jdb` | Stress / fuzz suite, catches segfault classes |
 | `demo_group_<a-d>.jdb` | Curated demo bundles for the website |
 | `TEST_INNER.jdb` / `TEST_OUTER.jdb` | Module-loading pair (LOAD-inside-LOAD) |
@@ -93,7 +93,7 @@ PRINT "RESULTS: "; PASS; " passed, "; FAIL; " failed"
 IF FAIL = 0 THEN PRINT "ALL TESTS PASSED!"
 ```
 
-The gate harness greps for `ALL TESTS PASSED!` — a test that doesn't print that line counts as failed.
+The gate harness greps for `ALL TESTS PASSED!` - a test that doesn't print that line counts as failed.
 
 ---
 
@@ -152,14 +152,14 @@ These don't fit the self-checking pattern but are part of the canonical gate:
    * It's a new feature area with **≥5 distinct assertions**
    * It must run isolated (different `OPTION` flags, separate VM state)
 2. Use the self-checking shape (PASS/FAIL counters + final `ALL TESTS PASSED!` line). The gate harness automatically picks it up.
-3. **Run both backends** — interp green and native green. Many bugs hide on exactly one side; see `feedback_native_int_scalar_drops_array.md` for a known class.
+3. **Run both backends** - interp green and native green. Many bugs hide on exactly one side; see `feedback_native_int_scalar_drops_array.md` for a known class.
 4. **Throwaway debug repros** from a session go to `_quarantine/` and use the `_` prefix (auto-ignored by `.gitignore`). See `move_proposal.txt` in the repo root for the curation script.
 
 ---
 
 ## 📎 See also
 
-* **`doc/languages.md`** — Language reference
-* **`help.txt`** — Per-keyword help (loaded by `HELP <topic>`)
-* **`.claude/skills/jdbgate/SKILL.md`** — Detailed gate procedure for AI-assisted sessions
-* **`.claude/skills/jdbtest/SKILL.md`** — Single-file end-to-end verify procedure
+* **`doc/languages.md`** - Language reference
+* **`help.txt`** - Per-keyword help (loaded by `HELP <topic>`)
+* **`.claude/skills/jdbgate/SKILL.md`** - Detailed gate procedure for AI-assisted sessions
+* **`.claude/skills/jdbtest/SKILL.md`** - Single-file end-to-end verify procedure

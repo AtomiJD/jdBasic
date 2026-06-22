@@ -1,4 +1,4 @@
-# Vallys Reise — Kapitel 2: Der Weg zum Meer
+# Vallys Reise - Kapitel 2: Der Weg zum Meer
 
 ## Überblick
 
@@ -34,12 +34,12 @@ battle_bg = sprites/battle_beach.png
 
 ### Layer-Aufbau
 ```
-ground_base      — Sand/Gras Grundfläche
-ground_path      — Weg-Tiles (Trampelpfad)
-collision        — Klippen, Wasser, Felsen, dichtes Gebüsch
-decor_below      — Blumen, kleine Steine, Muscheln
-entities         — NPCs, Monster, Chests, Portale (Object Layer)
-decor_above      — Palmenkronen, Klippenüberhänge
+ground_base      - Sand/Gras Grundfläche
+ground_path      - Weg-Tiles (Trampelpfad)
+collision        - Klippen, Wasser, Felsen, dichtes Gebüsch
+decor_below      - Blumen, kleine Steine, Muscheln
+entities         - NPCs, Monster, Chests, Portale (Object Layer)
+decor_above      - Palmenkronen, Klippenüberhänge
 ```
 
 ---
@@ -89,7 +89,7 @@ decor_above      — Palmenkronen, Klippenüberhänge
 - **Funktion**: Gibt Hinweis auf Hafen und neue Monster. Gibt Quest `map_fragment_1`.
 
 #### 4. Verletzte Hasi (Quest-Trigger)
-- **Hinweis**: Hasi steht anfangs nicht normal herum — sie wird von 2 Strandkrabben umzingelt. Der Spieler muss die Krabben besiegen, bevor Hasi ansprechbar wird.
+- **Hinweis**: Hasi steht anfangs nicht normal herum - sie wird von 2 Strandkrabben umzingelt. Der Spieler muss die Krabben besiegen, bevor Hasi ansprechbar wird.
 - **Umsetzung**: Hasi-NPC hat Property `prereq_defeat=crab_beach_01,crab_beach_02`. Solange diese Monster existieren, zeigt Hasi den Dialog: *"Hilfe! Diese Krabben lassen mich nicht in Ruhe!"*. Nach dem Besiegen ändert sich der Dialog und die Rekrutierung wird möglich.
 
 ---
@@ -135,9 +135,9 @@ decor_above      — Palmenkronen, Klippenüberhänge
 
 ### Monster-Platzierung (entities Layer)
 ```
-3× crab       — Strand-Bereich (2 davon bei Hasi)
-3× sand_blobb — Küstenweg-Bereich
-1× crab       — Höhleneingang bewachend
+3× crab       - Strand-Bereich (2 davon bei Hasi)
+3× sand_blobb - Küstenweg-Bereich
+1× crab       - Höhleneingang bewachend
 ```
 
 ---
@@ -327,10 +327,10 @@ x, y = unten rechts
 - **Bereiche**:
   - Links: Eingang vom Küstenweg (Portal)
   - Mitte-oben: Marktplatz mit Brunnen
-  - Rechts-oben: Fischhändler "Tentakel-Toni" — Krakis Käfig
+  - Rechts-oben: Fischhändler "Tentakel-Toni" - Krakis Käfig
   - Mitte: Wohnhäuser, Taverne "Zur salzigen Möwe"
   - Unten-links: Hafenmeisterei (Bootsführerschein)
-  - Unten-rechts: Anleger mit Booten (Portal zur nächsten Insel — gesperrt bis Führerschein)
+  - Unten-rechts: Anleger mit Booten (Portal zur nächsten Insel - gesperrt bis Führerschein)
   - Mitte-rechts: Lagerhäuser (eines davon betretbar für Quest)
 
 ### Map Properties (TMX)
@@ -342,12 +342,12 @@ battle_bg = sprites/battle_harbor.png
 
 ### Layer-Aufbau
 ```
-ground_base      — Holzplanken, Stein, Wasser
-ground_path      — Pflasterwege
-collision        — Wasser, Hauswände, Kaimauer
-decor_below      — Kisten, Fässer, Netze, Anker
-entities         — NPCs, Monster, Portale
-decor_above      — Hausdächer, Laternen, Segel
+ground_base      - Holzplanken, Stein, Wasser
+ground_path      - Pflasterwege
+collision        - Wasser, Hauswände, Kaimauer
+decor_below      - Kisten, Fässer, Netze, Anker
+entities         - NPCs, Monster, Portale
+decor_above      - Hausdächer, Laternen, Segel
 ```
 
 ---
@@ -368,7 +368,7 @@ decor_above      — Hausdächer, Laternen, Segel
 
 #### 2. Kraki (im Käfig)
 - **Position**: Direkt neben Toni, in einem Käfig-Tile-Bereich
-- **Sprite**: Noch nicht vorhanden — kraki.png muss erstellt werden (blauer Tintenfisch)
+- **Sprite**: Noch nicht vorhanden - kraki.png muss erstellt werden (blauer Tintenfisch)
 - **Typ**: `npc` (nicht rekrutierbar bis Quest abgeschlossen)
 - **Properties**:
   ```
@@ -389,7 +389,7 @@ decor_above      — Hausdächer, Laternen, Segel
   ```
   name = Kapitänin Britta
   type = npc
-  dialog = Ohne Bootsführerschein fährt hier niemand raus! Ich kann dir die Prüfung abnehmen — aber du musst erst den Theorie-Teil bestehen und eine praktische Aufgabe erledigen.
+  dialog = Ohne Bootsführerschein fährt hier niemand raus! Ich kann dir die Prüfung abnehmen - aber du musst erst den Theorie-Teil bestehen und eine praktische Aufgabe erledigen.
   ```
 - **Funktion**: Quest `boat_license_theory` (Wissensfragen) und `boat_license_practical` (Monster im Hafenbecken besiegen).
 
@@ -467,7 +467,7 @@ decor_above      — Hausdächer, Laternen, Segel
 }
 ```
 
-#### Riesenkrabbe (giant_crab) — Mini-Boss im Hafenbecken
+#### Riesenkrabbe (giant_crab) - Mini-Boss im Hafenbecken
 ```json
 {
     "id": "giant_crab",
@@ -485,9 +485,9 @@ decor_above      — Hausdächer, Laternen, Segel
 
 ### Monster-Platzierung
 ```
-3× harbor_rat  — Lagerhausbereich
-2× jellyfish   — Am Wasser/Steg
-1× giant_crab  — Hafenbecken (Bootsführerschein-Prüfung)
+3× harbor_rat  - Lagerhausbereich
+2× jellyfish   - Am Wasser/Steg
+1× giant_crab  - Hafenbecken (Bootsführerschein-Prüfung)
 ```
 
 ---
@@ -725,19 +725,19 @@ Bei 2/3 richtig → bestanden. Bei Fehler → "Nicht bestanden, versuch's nochma
 ## Zusammenfassung: Was muss erstellt werden
 
 ### Sprites (müssen gezeichnet/generiert werden)
-- [ ] `crab.png` — Strandkrabbe (64×64, 3 Frames)
-- [ ] `sand_blobb.png` — Sandblobb (64×64, 3 Frames)
-- [ ] `harbor_rat.png` — Hafenratte (64×64, 3 Frames)
-- [ ] `jellyfish.png` — Giftqualle (64×64, 3 Frames)
-- [ ] `giant_crab.png` — Riesenkrabbe (64×64, 3 Frames)
-- [ ] `kraki.png` — Kraki Charakter (64×64, 3×4 Spritesheet wie andere Chars)
-- [ ] `battle_beach.png` — Battle-Hintergrund Strand
-- [ ] `battle_harbor.png` — Battle-Hintergrund Hafen
+- [ ] `crab.png` - Strandkrabbe (64×64, 3 Frames)
+- [ ] `sand_blobb.png` - Sandblobb (64×64, 3 Frames)
+- [ ] `harbor_rat.png` - Hafenratte (64×64, 3 Frames)
+- [ ] `jellyfish.png` - Giftqualle (64×64, 3 Frames)
+- [ ] `giant_crab.png` - Riesenkrabbe (64×64, 3 Frames)
+- [ ] `kraki.png` - Kraki Charakter (64×64, 3×4 Spritesheet wie andere Chars)
+- [ ] `battle_beach.png` - Battle-Hintergrund Strand
+- [ ] `battle_harbor.png` - Battle-Hintergrund Hafen
 
 ### Maps (in Tiled erstellen)
-- [ ] `beach_path.tmx` — Küstenweg (40×30)
-- [ ] `harbor_city.tmx` — Hafen von Muschelbucht (50×40)
-- [ ] `toni_warehouse.tmx` — Tonis Lagerhaus (8×6, optional)
+- [ ] `beach_path.tmx` - Küstenweg (40×30)
+- [ ] `harbor_city.tmx` - Hafen von Muschelbucht (50×40)
+- [ ] `toni_warehouse.tmx` - Tonis Lagerhaus (8×6, optional)
 
 ### Tilesets
 - [ ] Sand/Strand-Tiles
@@ -745,11 +745,11 @@ Bei 2/3 richtig → bestanden. Bei Fehler → "Nicht bestanden, versuch's nochma
 - [ ] Wasser/Klippen-Tiles
 
 ### JSON-Dateien aktualisieren
-- [ ] `enemies.json` — 5 neue Monster
-- [ ] `items.json` — 8 neue Items
-- [ ] `quests.json` — 7 neue Quests
-- [ ] `music.json` — 2 neue Themes
-- [ ] `characters.json` — Kraki ist bereits vorhanden
+- [ ] `enemies.json` - 5 neue Monster
+- [ ] `items.json` - 8 neue Items
+- [ ] `quests.json` - 7 neue Quests
+- [ ] `music.json` - 2 neue Themes
+- [ ] `characters.json` - Kraki ist bereits vorhanden
 
 ### Code-Änderungen
 - [ ] Portal-Blocking: `prereq_item` Property auf Portalen auswerten

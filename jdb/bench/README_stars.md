@@ -1,8 +1,8 @@
-# update_stars — Vectorisation Benchmark
+# update_stars - Vectorisation Benchmark
 
 ## Files
-- `bench_stars.jdb` — single-N (140) detailed comparison of three impls
-- `bench_stars_sweep.jdb` — crossover sweep N ∈ {140 … 14000}, v1 vs v3
+- `bench_stars.jdb` - single-N (140) detailed comparison of three impls
+- `bench_stars_sweep.jdb` - crossover sweep N ∈ {140 … 14000}, v1 vs v3
 
 ## Result
 
@@ -30,7 +30,7 @@ N=14000     607   1781  0.34x       37    323   0.12x
   fast immer in den No-Op-Pfad.
 * Native compile inlinet den FOR-loop sehr aggressiv (~17× speedup gegen
   Interp). Vektor-Ops gehen weiter durch Arena-Alloc + Runtime-Dispatch
-  und gewinnen nur ~4× — Ergebnis: v3 ist **immer** schlechter, nicht
+  und gewinnen nur ~4× - Ergebnis: v3 ist **immer** schlechter, nicht
   nur bei kleinem N.
 
 ## Conclusion
@@ -45,17 +45,17 @@ Ergänzung zu `feedback_vectorize_loops.md`:
 
 * **N groß UND dense Bedingung** (jedes Element braucht die Operation)
 * **Reine Arithmetik** ohne Verzweigung (z. B. `star_y = star_y + speed`
-  bleibt vektor — DAS Element wird intern auch in einer Schleife mit
+  bleibt vektor - DAS Element wird intern auch in einer Schleife mit
   SIMD-Potenzial verarbeitet, aber ohne Allokations-Overhead pro Op)
 * **Pairwise / Outer-Product** Patterns (Collision-Detection, Distanz-
-  Matrizen) — da gewinnt der Vektor-Approach um Größenordnungen
+  Matrizen) - da gewinnt der Vektor-Approach um Größenordnungen
 * **Kein per-Element-FUNC-Call** (SELECT mit Lambda hat hohe Overhead;
   dann lieber FOR)
 
 ## Wann FOR gewinnt (oder gleich gut ist)
 
 * **N klein** (≤ ein paar Tausend) UND **sparse Bedingung** (≤ 10 % der
-  Elemente betroffen) — dann Branch-Prediction + In-Place-Schreiben
+  Elemente betroffen) - dann Branch-Prediction + In-Place-Schreiben
   schlagen die Allokations-Kosten der Vektor-Ops
 * **Per-Element komplexe Logik** mit verschiedenen Code-Pfaden je
   Element-Typ (z. B. `e_kind`-dispatch in `update_enemies`)
@@ -63,8 +63,8 @@ Ergänzung zu `feedback_vectorize_loops.md`:
 
 ## Suspected real wins in space_shooter (untested)
 
-* **collisions()** — pairwise N_BULLETS × N_ENEMIES = 64 × 24 = 1536
+* **collisions()** - pairwise N_BULLETS × N_ENEMIES = 64 × 24 = 1536
   Paare. Outer-product `dx² + dy² < r²` Vektor-Form sollte gut gewinnen.
-* **update_fx** — wenn alle aktiven FX gleichbehandelt werden, vektor
+* **update_fx** - wenn alle aktiven FX gleichbehandelt werden, vektor
   arithmetik OHNE intermediate masks könnte schneller sein
-* **draw_*** — schon batched via GFX.PLOT_POINTS / matrix-LINE
+* **draw_*** - schon batched via GFX.PLOT_POINTS / matrix-LINE

@@ -4,7 +4,7 @@
 
 Jede Map im Spiel ist eine eigenständige TMX-Datei, die ALLE Informationen enthält:
 Spieler-Startposition, NPCs, Monster, Portale, Truhen, Kollision.
-Die Engine lädt jede konforme Map generisch — kein Code muss geändert werden.
+Die Engine lädt jede konforme Map generisch - kein Code muss geändert werden.
 
 ---
 
@@ -82,7 +82,7 @@ decor_objects      ← OBJEKT-LAYER: visuelle Props (Fässer etc.)
 
 Objekte werden in **Object Layers** platziert. Der **Type**-Feld bestimmt was es ist.
 
-### 3.1 `player_spawn` — Spieler-Startpunkt
+### 3.1 `player_spawn` - Spieler-Startpunkt
 
 Wo Vally erscheint wenn sie die Map betritt.
 
@@ -95,7 +95,7 @@ Wo Vally erscheint wenn sie die Map betritt.
 - Weitere Spawns für Portale: `"from_shop"`, `"from_cave"`, etc.
 - **Pro Map:** Genau EIN `default_spawn`, beliebig viele benannte Spawns
 
-### 3.2 `npc` — Nicht-Spieler-Charakter
+### 3.2 `npc` - Nicht-Spieler-Charakter
 
 | Eigenschaft     | Typ    | Pflicht | Beschreibung                              |
 |-----------------|--------|---------|-------------------------------------------|
@@ -110,7 +110,7 @@ Wo Vally erscheint wenn sie die Map betritt.
 - **Name:** Anzeigename im Dialog: `"Hasi"`, `"Möhrchen"`
 - **Geometrie:** Punkt an der Spawn-Position
 
-### 3.3 `monster` — Overworld-Monster
+### 3.3 `monster` - Overworld-Monster
 
 | Eigenschaft     | Typ    | Pflicht | Beschreibung                        |
 |-----------------|--------|---------|-------------------------------------|
@@ -120,7 +120,7 @@ Wo Vally erscheint wenn sie die Map betritt.
 - **Name:** Eindeutige ID für Speicherstand: `"blobb_dock_01"`
 - **Geometrie:** Punkt an der Spawn-Position
 
-### 3.4 `portal` — Map-Übergang
+### 3.4 `portal` - Map-Übergang
 
 | Eigenschaft       | Typ    | Pflicht | Beschreibung                           |
 |-------------------|--------|---------|----------------------------------------|
@@ -133,7 +133,7 @@ Wo Vally erscheint wenn sie die Map betritt.
 | `requires_key`    | string | Nein    | Benötigter Schlüssel-Item              |
 
 - **Name:** Portal-ID: `"door_to_shop"`, `"cave_entrance"`
-- **Geometrie:** **Rechteck** — Spieler löst Portal aus wenn er darüber läuft
+- **Geometrie:** **Rechteck** - Spieler löst Portal aus wenn er darüber läuft
 
 **Bidirektionale Türen:**
 ```
@@ -143,7 +143,7 @@ Map B: Portal "door_to_A"  → target_map="A.tmx", target_spawn="from_B"
 Map A: Spawn "from_B"      → Punkt vor der Tür
 ```
 
-### 3.5 `chest` — Truhe
+### 3.5 `chest` - Truhe
 
 | Eigenschaft      | Typ    | Pflicht | Beschreibung                       |
 |------------------|--------|---------|------------------------------------|
@@ -154,13 +154,13 @@ Map A: Spawn "from_B"      → Punkt vor der Tür
 - **Name:** Eindeutige ID: `"chest_beach_01"`
 - **Geometrie:** Punkt oder Tile-Objekt
 
-### 3.6 `sign` — Schild
+### 3.6 `sign` - Schild
 
 | Eigenschaft | Typ    | Pflicht | Beschreibung                     |
 |-------------|--------|---------|----------------------------------|
 | `text`      | string | Ja      | Angezeigter Text. `{PLAYER}` OK  |
 
-### 3.7 `item_pickup` — Sammelgegenstand
+### 3.7 `item_pickup` - Sammelgegenstand
 
 | Eigenschaft | Typ    | Pflicht | Beschreibung                     |
 |-------------|--------|---------|----------------------------------|
@@ -183,7 +183,7 @@ Map A: Spawn "from_B"      → Punkt vor der Tür
 
 ---
 
-## 5. Neue Map erstellen — Checkliste
+## 5. Neue Map erstellen - Checkliste
 
 ```
 □ Map-Properties setzen (map_id, music, display_name)
@@ -265,9 +265,9 @@ Jede Map speichert ihren eigenen Zustand:
 ## 8. Wichtige Regeln
 
 1. **Jedes veränderbare Objekt braucht einen eindeutigen Namen** (für den Speicherstand)
-2. **`ground_*` Prefix = begehbar** — die Engine erkennt das automatisch
-3. **`collision` Layer = blockiert** — unsichtbar, malt Hindernisse
-4. **Portale sind Rechtecke**, nicht Punkte — der Spieler muss drüber laufen
-5. **Player Spawns sind Punkte** — genau wo Vally steht
-6. **Type-Feld ist Pflicht** — ohne Type wird das Objekt ignoriert
-7. **Keine externen JSON-Dateien für Map-Daten** — alles in der TMX
+2. **`ground_*` Prefix = begehbar** - die Engine erkennt das automatisch
+3. **`collision` Layer = blockiert** - unsichtbar, malt Hindernisse
+4. **Portale sind Rechtecke**, nicht Punkte - der Spieler muss drüber laufen
+5. **Player Spawns sind Punkte** - genau wo Vally steht
+6. **Type-Feld ist Pflicht** - ohne Type wird das Objekt ignoriert
+7. **Keine externen JSON-Dateien für Map-Daten** - alles in der TMX

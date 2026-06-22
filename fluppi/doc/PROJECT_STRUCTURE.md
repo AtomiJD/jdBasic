@@ -59,16 +59,16 @@ fluppi/
 
 ## Warum diese Struktur?
 
-### `maps/` — Fertige Spielkarten
+### `maps/` - Fertige Spielkarten
 - Alle TMX-Dateien an EINEM Ort
 - Die Engine sucht Maps hier
 - TSX-Referenzen in den TMX zeigen auf `../tiled/tilesets/`
 
-### `sprites/` — Charakter-Spritesheets
+### `sprites/` - Charakter-Spritesheets
 - Nur die Sprites die im Spiel geladen werden
 - Kein Durcheinander mit Tileset-Bildern
 
-### `tiled/` — Arbeitsverzeichnis für Tiled
+### `tiled/` - Arbeitsverzeichnis für Tiled
 - Hier liegen alle Tileset-Quelldateien
 - Die TMX-Dateien in `maps/` referenzieren diese per relativem Pfad
 - Wird NICHT direkt vom Spiel geladen
@@ -85,7 +85,7 @@ fluppi/
   - `portal "exit_door"` → `village.tmx`, spawn `"from_vally_house"`
   - `chest "chest_vally_01"` → Vallys Schatz
   - `sign "vallys_diary"` → "Heute fängt mein Abenteuer an!"
-- **So lernst du:** Grundlagen — Layer, Collision, ein Portal
+- **So lernst du:** Grundlagen - Layer, Collision, ein Portal
 
 ### Map 2: `village.tmx` (Dorf)
 - **Größe:** 30x30 Tiles (960x960 Pixel)
@@ -119,12 +119,12 @@ fluppi/
 ### Map 4: `harbor_city.tmx` (Hafenstadt = vally_home)
 - **Größe:** 60x40 Tiles (1920x1280 Pixel)
 - **Tilesets:** Pirat-Tilesets (die bestehenden)
-- **Basiert auf:** Deine bestehende `vally_home.tmx` — umbenannte Layer
+- **Basiert auf:** Deine bestehende `vally_home.tmx` - umbenannte Layer
 - **So lernst du:** Große Map, viele Deko-Layer, Object-Layer Props
 
 ---
 
-## Deine Tileset-Sammlung — Tipps
+## Deine Tileset-Sammlung - Tipps
 
 ### Was du SOFORT verwenden kannst:
 
@@ -157,7 +157,7 @@ tiled/village/
 │   └── wizard/                 ← Zauberer
 └── Buildings/                   ← Fertige Gebäude als große PNGs
 ```
-→ `Premade_houses.tsx` ist GOLD — fertige Häuser die du direkt platzieren kannst!
+→ `Premade_houses.tsx` ist GOLD - fertige Häuser die du direkt platzieren kannst!
 
 **Für den Strand/Weg:**
 ```
@@ -170,15 +170,15 @@ tiled/grass/TiledMap Editor/Tilesets/
 ```
 
 **Für die Hafenstadt:**
-→ Deine bestehenden Pirat-Tilesets — die funktionieren schon!
+→ Deine bestehenden Pirat-Tilesets - die funktionieren schon!
 
 ### Mein Tipp zum Anfangen:
 
-1. **Öffne `tiled/village/TiledMap Editor/sample map.tmx`** — das ist ein fertiges Dorf-Beispiel!
-2. **Schau dir die Layer-Struktur an** — wie haben die das gemacht?
+1. **Öffne `tiled/village/TiledMap Editor/sample map.tmx`** - das ist ein fertiges Dorf-Beispiel!
+2. **Schau dir die Layer-Struktur an** - wie haben die das gemacht?
 3. **Kopiere die Struktur** für deine eigene `village.tmx`
-4. **Premade_houses verwenden** — nicht selbst Pixel für Pixel Häuser bauen
-5. **Collision-Layer als letztes** — erst die Map hübsch machen, dann blocken
+4. **Premade_houses verwenden** - nicht selbst Pixel für Pixel Häuser bauen
+5. **Collision-Layer als letztes** - erst die Map hübsch machen, dann blocken
 
 ### Was du NICHT brauchst:
 - Die `-Godot` Varianten (die sind für eine andere Engine)

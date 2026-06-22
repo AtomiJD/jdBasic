@@ -2,8 +2,8 @@
 
 jdBasic borrows two pages from APL and numpy: every arithmetic operator
 broadcasts over arrays, and bitwise operators do too. That makes it
-practical to push real workloads — physics, cellular automata, SAT,
-DSP — through whole-array operations instead of per-element loops.
+practical to push real workloads - physics, cellular automata, SAT,
+DSP - through whole-array operations instead of per-element loops.
 
 This tutorial walks the path from "tight FOR loops" to "one line per
 update step" using the demos under `jdb/bench/` and `jdb/`. Each section
@@ -18,7 +18,7 @@ and when it doesn't.
 
 ---
 
-## 1. The basics — broadcasting
+## 1. The basics - broadcasting
 
 Any arithmetic between an array and a scalar broadcasts the scalar:
 
@@ -35,7 +35,7 @@ LET b = [10, 20, 30]
 LET c = a + b           ' [11, 22, 33]
 ```
 
-Comparison operators return arrays of 0/1 — useful as masks:
+Comparison operators return arrays of 0/1 - useful as masks:
 
 ```basic
 LET hit = xs > 3        ' [0, 0, 0, 1, 1]
@@ -51,7 +51,7 @@ LET wave = SIN(2 * PI * 440 * t)   ' 4096 samples in one call
 
 This is what the synth demo uses: `jdb/synth_apl.jdb` builds a 4096-
 sample additive synthesis buffer with one `+ amp * SIN(2π f t)` per
-harmonic — five harmonics, five vector ops, no inner FOR.
+harmonic - five harmonics, five vector ops, no inner FOR.
 
 ---
 
@@ -103,12 +103,12 @@ The APL form wins by ~4× because every grid cell is updated in a fixed
 number of vector passes, regardless of grid size. ONNX wins again
 because the convolution kernel runs as a single SIMD operation.
 
-`jdb/life_demo.jdb` is the live version — 200 × 150 cells, 60 FPS via
+`jdb/life_demo.jdb` is the live version - 200 × 150 cells, 60 FPS via
 the ONNX backend.
 
 ---
 
-## 4. When APL loses — Mandelbrot
+## 4. When APL loses - Mandelbrot
 
 `jdb/bench/mandelbrot_bench.jdb` is the honest counter-example. The
 Mandelbrot escape iteration has two facts working against the vector
@@ -117,7 +117,7 @@ form:
 1. **Per-cell early escape.** Most pixels escape in a handful of
    iterations. A tight FOR loop with `EXITFOR` skips the work.
 2. **No cheap per-step compute.** Each iteration is 4–5 arithmetic
-   ops — the per-element work is too small to amortise dispatch
+   ops - the per-element work is too small to amortise dispatch
    overhead, and the vector form has to iterate every cell to
    `MAX_ITER` because there's no SIMD-friendly early exit.
 
@@ -126,14 +126,14 @@ form:
 | Native loop (FOR + EXITFOR)      | 116 ms |
 | APL (no early escape)            | 437 ms |
 
-**APL loses 4×.** This is fine — the right tool depends on the
+**APL loses 4×.** This is fine - the right tool depends on the
 workload. Whole-grid update steps without escape (Life, Boids, FFT,
 DSP) are where APL pays. Iterative per-cell convergence with cheap
 inner code (Mandelbrot, Newton iteration) is where you want native.
 
 ---
 
-## 5. Algorithm > notation — Subset-Sum
+## 5. Algorithm > notation - Subset-Sum
 
 `jdb/bench/subset_sum_*.jdb` shows that algorithmic improvements dominate
 notation-level speedups. The same problem, three implementations:
@@ -146,7 +146,7 @@ notation-level speedups. The same problem, three implementations:
 | 50 | 1.1e15 |          (∞)   |             0.94 |
 
 DP wins by **a complexity-class change** (O(N · target) instead of
-O(2^N)). APL form would never reach N = 50 — DP gets there in a
+O(2^N)). APL form would never reach N = 50 - DP gets there in a
 millisecond. Reach for vectorisation as a constant-factor lever, not
 a substitute for choosing the right algorithm.
 
@@ -156,7 +156,7 @@ a substitute for choosing the right algorithm.
 
 Tiny one-op `.onnx` files can act as accelerated kernels for any dense
 linear-algebra primitive. `jdb/bench/matmul.onnx` is **136 bytes** of MatMul
-with dynamic shapes — same model handles every size. `jdb/bench/conv3x3.onnx`
+with dynamic shapes - same model handles every size. `jdb/bench/conv3x3.onnx`
 is 213 bytes and runs every 3×3 convolution.
 
 Square N × N MatMul versus the native interpreter triple-loop:
@@ -169,7 +169,7 @@ Square N × N MatMul versus the native interpreter triple-loop:
 
 When *not* to use ONNX:
 
-* **Tall-thin matmul.** Per-call overhead doesn't amortise — barely a
+* **Tall-thin matmul.** Per-call overhead doesn't amortise - barely a
   win.
 * **Tiny grids.** Same reason. Below ~60 elements, the native loop is
   competitive.
@@ -182,21 +182,21 @@ Generate the models once with `python jdb/bench/gen_matmul_onnx.py` /
 
 ---
 
-## 7. Putting it together — the SAT solver
+## 7. Putting it together - the SAT solver
 
 `jdb/bench/sat_dpll_plus.jdb` combines several APL idioms with classical
 algorithm tricks. Pure-literal elimination needs a per-variable
-positive-vs-negative occurrence count over all open clauses — that's a
+positive-vs-negative occurrence count over all open clauses - that's a
 loop over clauses, but each clause's contribution is a vector
 update:
 
 ```basic
 LET col_v = (assigns SHR v) BAND 1   ' extract bit v of every assignment
-                                     ' — no materialised column needed
+                                     ' - no materialised column needed
 ```
 
 Combined with DLIS branching and unit propagation, DPLL+ reaches
-V = 50 (210 clauses) in ~280 ms — basic DPLL never gets there.
+V = 50 (210 clauses) in ~280 ms - basic DPLL never gets there.
 
 ---
 
@@ -206,7 +206,7 @@ A few things the demos taught us, fixed in the current build but worth
 keeping in mind:
 
 * **Identifiers are case-insensitive.** `v` and `V` share the same
-  storage slot. The compiler now rejects `DIM v` inside `FUNC F(V)` —
+  storage slot. The compiler now rejects `DIM v` inside `FUNC F(V)` -
   but `LET v = ...` will still happily overwrite the parameter `V`.
   Pick distinct names (e.g. `vidx` vs `V`).
 * **`LET row = arr[i]` is a reference, not a copy.** Earlier versions
@@ -228,7 +228,7 @@ keeping in mind:
 | `jdb/boids_apl.jdb`           | 5000 particles at 630 FPS                 |
 | `jdb/life_demo.jdb`           | Live Conway 200×150 via ONNX-Conv         |
 | `jdb/bench/life_bench.jdb`        | Native vs APL vs ONNX comparison          |
-| `jdb/bench/mandelbrot_bench.jdb`  | Counter-example — APL loses to native loop |
+| `jdb/bench/mandelbrot_bench.jdb`  | Counter-example - APL loses to native loop |
 | `jdb/bench/subset_sum_*.jdb`      | Brute → APL → DP progression              |
 | `jdb/bench/sat_brute_dpll.jdb`    | Vectorised brute + basic DPLL             |
 | `jdb/bench/sat_dpll_plus.jdb`     | DPLL with pure-literal + DLIS             |
@@ -236,5 +236,5 @@ keeping in mind:
 | `jdb/bench/conv_onnx.jdb`         | ONNX as a 3×3 conv backend                |
 | `jdb/bench/Results.md`            | Numbers from a recent run                 |
 
-For the bigger picture — interpreter vs native compiler, classic Pi/
-Mandelbrot benches against C++ and Python — see `jdb/bench/Results.md`.
+For the bigger picture - interpreter vs native compiler, classic Pi/
+Mandelbrot benches against C++ and Python - see `jdb/bench/Results.md`.
