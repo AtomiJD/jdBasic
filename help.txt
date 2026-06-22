@@ -2,6 +2,246 @@
 Syntax: ABS(numeric_expression)
 Description: Returns the absolute value of a number or an array of numbers.
 
+[ACOS]
+Syntax: ACOS(x)
+Description: Inverse cosine in radians. Vectorizes element-wise over arrays.
+
+[AI.ARGMAX]
+Syntax: AI.ARGMAX(vec) -> index
+Description: Returns the index of the largest element.
+
+[AI.CHAT]
+Syntax: AI.CHAT(id, prompt$) -> response$
+Description: Multi-turn chat using the model's chat template plus its running history.
+
+[AI.CHAT_JSON]
+Syntax: AI.CHAT_JSON(id, prompt$) -> object
+Description: One-shot JSON generation: temporarily enables JSON mode, generates, and returns the parsed object.
+
+[AI.CHAT_RAW]
+Syntax: AI.CHAT_RAW(id, raw_prompt$) -> text$
+Description: Bypasses the chat template and history; sends a raw prompt and returns raw text.
+
+[AI.CHAT_STREAM]
+Syntax: AI.CHAT_STREAM(id, prompt$, callback) -> response$
+Description: Like AI.CHAT but streams tokens to a callback FUNC OnToken(piece$); returning FALSE aborts generation.
+
+[AI.CHAT_TOKENS]
+Syntax: AI.CHAT_TOKENS(id, prompt$, [capacity=64]) -> chan
+Description: Channel-flavoured streaming chat: returns a CHAN handle that yields generated token strings. Works in interpreter and native -c.
+
+[AI.CLASSIFIER_ADD]
+Syntax: AI.CLASSIFIER_ADD(cls_id, text$, label$) -> count
+Description: Adds and embeds a single training sample.
+
+[AI.CLASSIFIER_ADD_BATCH]
+Syntax: AI.CLASSIFIER_ADD_BATCH(cls_id, texts_arr, labels_arr) -> count
+Description: Batch-imports two equal-length arrays of texts and labels.
+
+[AI.CLASSIFIER_BUILD_INDEX]
+Syntax: AI.CLASSIFIER_BUILD_INDEX(cls_id, [M=16], [ef_construction=200])
+Description: Builds an HNSW index over the training samples for fast prediction on large datasets.
+
+[AI.CLASSIFIER_CREATE]
+Syntax: AI.CLASSIFIER_CREATE(embed_llm_id) -> cls_id
+Description: Creates an empty k-NN text classifier bound to an embedding model.
+
+[AI.CLASSIFIER_FREE]
+Syntax: AI.CLASSIFIER_FREE(cls_id)
+Description: Releases a classifier.
+
+[AI.CLASSIFIER_INFO]
+Syntax: AI.CLASSIFIER_INFO(cls_id) -> object
+Description: Returns {samples, embed_dim, num_labels, labels, index}.
+
+[AI.CLASSIFIER_LOAD]
+Syntax: AI.CLASSIFIER_LOAD(path$, embed_llm_id) -> cls_id
+Description: Loads a saved classifier; must use the same embedding model.
+
+[AI.CLASSIFIER_PREDICT]
+Syntax: AI.CLASSIFIER_PREDICT(cls_id, text$, [k=5]) -> object
+Description: Predicts a label, returning {label, confidence, neighbors, votes}.
+
+[AI.CLASSIFIER_SAVE]
+Syntax: AI.CLASSIFIER_SAVE(cls_id, path$)
+Description: Serializes a classifier to a binary file (magic JCLF), including the HNSW graph.
+
+[AI.CLEAR_GRAMMAR]
+Syntax: AI.CLEAR_GRAMMAR(id)
+Description: Removes the active GBNF grammar.
+
+[AI.CLEAR_HISTORY]
+Syntax: AI.CLEAR_HISTORY(id)
+Description: Resets the chat history.
+
+[AI.COSINE_SIM]
+Syntax: AI.COSINE_SIM(a, b) -> number
+Description: Cosine similarity of two vectors.
+
+[AI.DETOKENIZE]
+Syntax: AI.DETOKENIZE(id, tokens) -> text$
+Description: Converts token ids back into text.
+
+[AI.EMBED]
+Syntax: AI.EMBED(text$) -> array
+Description: Fallback TF-IDF embedding that needs no loaded model, as [[word, weight], ...].
+
+[AI.EMBED_LLM]
+Syntax: AI.EMBED_LLM(id, text$) -> array
+Description: Returns the dense embedding vector for text$ using a loaded model.
+
+[AI.FREE]
+Syntax: AI.FREE(id)
+Description: Releases a loaded ONNX model.
+
+[AI.FREE_LLM]
+Syntax: AI.FREE_LLM(id)
+Description: Releases an LLM and frees its GPU memory.
+
+[AI.GET_HISTORY]
+Syntax: AI.GET_HISTORY(id) -> array
+Description: Returns the raw chat history as [{role, content}, ...].
+
+[AI.INFO]
+Syntax: AI.INFO(id) -> object
+Description: Returns {inputs, outputs}, each with name, shape and type, describing what an ONNX model expects.
+
+[AI.LIST]
+Syntax: AI.LIST() -> array
+Description: Returns the ids of all currently loaded ONNX models.
+
+[AI.LLM_INFO]
+Syntax: AI.LLM_INFO(id) -> object
+Description: Returns LLM metadata {n_ctx, n_vocab, n_embd, ...}.
+
+[AI.LOAD]
+Syntax: AI.LOAD(path$) -> id
+Description: Loads an .onnx model file and returns a model id (ONNX build flag).
+
+[AI.LOAD_EMBEDDINGS]
+Syntax: AI.LOAD_EMBEDDINGS(path$, [n_ctx=512], [n_gpu_layers=99]) -> id
+Description: Loads an embedding GGUF model in encoder mode (mean pooling over the sequence).
+
+[AI.LOAD_LLM]
+Syntax: AI.LOAD_LLM(path$, [n_ctx=2048], [n_gpu_layers=99]) -> id
+Description: Loads a generative GGUF model (llama.cpp). n_gpu_layers=99 offloads the whole model to GPU, 0 = pure CPU.
+
+[AI.NORMALIZE]
+Syntax: AI.NORMALIZE(vec) -> vec
+Description: L2-normalizes a vector.
+
+[AI.RAG_ADD]
+Syntax: AI.RAG_ADD(rag_id, text$, [source$="inline"]) -> chunks
+Description: Adds a text, splitting it into overlapping chunks tagged with source$.
+
+[AI.RAG_ADD_DIR]
+Syntax: AI.RAG_ADD_DIR(rag_id, dirpath$, [pattern$], [recursive=1]) -> stats
+Description: Indexes a directory by glob pattern; returns {files_added, files_failed, total_chunks}.
+
+[AI.RAG_ADD_FILE]
+Syntax: AI.RAG_ADD_FILE(rag_id, filepath$) -> chunks
+Description: Adds a file's contents; .pdf files are parsed with the built-in PDF extractor.
+
+[AI.RAG_BUILD_INDEX]
+Syntax: AI.RAG_BUILD_INDEX(rag_id, [M=16], [ef_construction=200])
+Description: Builds an HNSW index for fast approximate search (dense mode). Adding chunks afterwards marks it stale.
+
+[AI.RAG_CLEAR]
+Syntax: AI.RAG_CLEAR(rag_id)
+Description: Empties a RAG store.
+
+[AI.RAG_CREATE]
+Syntax: AI.RAG_CREATE(llm_id, [chunk_size=500], [overlap=50], [embed_llm_id=0]) -> rag_id
+Description: Creates a RAG store. Dense mode if an embedding model is given, otherwise TF-IDF.
+
+[AI.RAG_FREE]
+Syntax: AI.RAG_FREE(rag_id)
+Description: Destroys a RAG store.
+
+[AI.RAG_INFO]
+Syntax: AI.RAG_INFO(rag_id) -> object
+Description: Returns store statistics: chunks, num_labels, mode, embed_dim, chunk_size, index.
+
+[AI.RAG_LOAD]
+Syntax: AI.RAG_LOAD(path$, [llm_id], [embed_llm_id]) -> rag_id
+Description: Loads a saved RAG store; dense stores need the matching embedding model.
+
+[AI.RAG_QUERY]
+Syntax: AI.RAG_QUERY(rag_id, question$, [top_k=3]) -> answer$
+Description: Full RAG pipeline: search, build the prompt, and generate an answer.
+
+[AI.RAG_QUERY_FULL]
+Syntax: AI.RAG_QUERY_FULL(rag_id, question$, [top_k=3]) -> object
+Description: Like AI.RAG_QUERY but returns {answer, sources} with the chunks used.
+
+[AI.RAG_QUERY_STREAM]
+Syntax: AI.RAG_QUERY_STREAM(rag_id, question$, callback, [top_k=3]) -> answer$
+Description: Streaming RAG query; tokens are delivered to the callback as they are generated.
+
+[AI.RAG_SAVE]
+Syntax: AI.RAG_SAVE(rag_id, path$)
+Description: Writes a RAG store to a binary file (magic JRAG), including any HNSW graph.
+
+[AI.RAG_SEARCH]
+Syntax: AI.RAG_SEARCH(rag_id, query$, [top_k=3]) -> array
+Description: Raw similarity search returning [{score, text, source, index}, ...].
+
+[AI.RUN]
+Syntax: AI.RUN(id, input[, input2, ...]) -> result
+Description: Runs ONNX inference. The return shape matches the model output (scalar, flat or nested arrays).
+
+[AI.SET]
+Syntax: AI.SET(id, key$, value)
+Description: Sets a generation parameter: temperature, top_p, top_k, min_p, max_tokens, seed, or system (system prompt).
+
+[AI.SET_GRAMMAR]
+Syntax: AI.SET_GRAMMAR(id, gbnf$)
+Description: Constrains all subsequent generation to match a GBNF grammar.
+
+[AI.SET_JSON_MODE]
+Syntax: AI.SET_JSON_MODE(id)
+Description: Installs the built-in JSON grammar so the model can only emit valid JSON.
+
+[AI.SIMILARITY]
+Syntax: AI.SIMILARITY(text1$, text2$) -> number
+Description: Quick text similarity using TF-IDF.
+
+[AI.SOFTMAX]
+Syntax: AI.SOFTMAX(vec) -> vec
+Description: Applies softmax to a probability vector.
+
+[AI.TENSOR]
+Syntax: AI.TENSOR(data, [shape])
+Description: Creates a tensor value from nested arrays, optionally reshaping.
+
+[AI.TOKENIZE]
+Syntax: AI.TOKENIZE(id, text$) -> array
+Description: Returns the token ids for text$.
+
+[AI.TOKEN_COUNT]
+Syntax: AI.TOKEN_COUNT(id, text$) -> number
+Description: Counts the tokens in text$ without generating.
+
+[AI.TOOL_ADD]
+Syntax: AI.TOOL_ADD(id, name$, params$, description$, funcref)
+Description: Registers a jdBasic function as an LLM-callable tool. params$ is a human-readable argument description.
+
+[AI.TOOL_CHAT]
+Syntax: AI.TOOL_CHAT(id, prompt$, [max_rounds=5]) -> response$
+Description: Like AI.CHAT but executes tool calls automatically, looping up to max_rounds.
+
+[AI.TOOL_LIST]
+Syntax: AI.TOOL_LIST(id) -> array
+Description: Returns the registered tools as [{name, params, description}, ...].
+
+[AI.TOOL_REMOVE]
+Syntax: AI.TOOL_REMOVE(id, name$)
+Description: Unregisters a tool.
+
+[AI.TOPK]
+Syntax: AI.TOPK(vec, k) -> array
+Description: Returns the top-k {index, score} pairs.
+
 [ALL]
 Syntax: ALL(array)
 Description: Returns TRUE if all elements in an array are true, otherwise FALSE.
@@ -30,13 +270,29 @@ Description: Specifies the data type of a variable in a DIM statement.
 Syntax: ASC(char$)
 Description: Returns the ASCII code of a character.
 
+[ASIN]
+Syntax: ASIN(x)
+Description: Inverse sine in radians. Vectorizes element-wise over arrays.
+
 [ASYNC]
 Syntax: ASYNC FUNC function_name(args)
 Description: Marks a function as asynchronous, allowing it to be used with AWAIT.
 
+[ATAN]
+Syntax: ATAN(x)
+Description: Inverse tangent in radians. Vectorizes element-wise over arrays.
+
+[ATAN2]
+Syntax: ATAN2(y, x)
+Description: Two-argument arctangent returning the angle in the correct quadrant.
+
 [AWAIT]
 Syntax: AWAIT task_handle
 Description: Pauses execution until an asynchronous task is complete and retrieves its result.
+
+[BIN$]
+Syntax: BIN$(n) -> string$
+Description: Binary string representation of integer n.
 
 [BINREADER$]
 Syntax: BINREADER$(filename$)
@@ -88,7 +344,7 @@ Description: The block of code that executes when an error occurs within a TRY b
 
 [CBOOL]
 Syntax: CBOOL(x)
-Description: Converts any value to a boolean integer — returns 0 for zero, 1 for any non-zero value.
+Description: Converts any value to a boolean integer - returns 0 for zero, 1 for any non-zero value.
 
 [CD]
 Syntax: CD "path"
@@ -129,6 +385,34 @@ Description: Current depth of the channel buffer (queued items waiting for RECV)
 [CHAN.CAP]
 Syntax: CHAN.CAP(handle) -> integer
 Description: Capacity the channel was opened with. 0 means unbuffered rendezvous.
+
+[CLAMP]
+Syntax: CLAMP(value_or_array, min, max) -> number or array
+Description: Clamps the value (or each array element) into the [min, max] range.
+
+[COPYV]
+Syntax: COPYV(dst, src) -> dst
+Description: In-place bulk copy from src into dst (same-shape memcpy fast path; broadcasts cyclically on shape mismatch; a scalar src fills like FILLV). Returns dst.
+
+[COSH]
+Syntax: COSH(x)
+Description: Hyperbolic cosine. Vectorizes element-wise over arrays.
+
+[COUNT]
+Syntax: COUNT(array, [value]) -> number
+Description: Counts occurrences of value in array. Without the second argument, returns the total length.
+
+[CROSS]
+Syntax: CROSS(a, b) -> vector
+Description: Cross product of two 3D vectors.
+
+[CUMPROD]
+Syntax: CUMPROD(array) -> array
+Description: Cumulative product along the last axis.
+
+[CUMSUM]
+Syntax: CUMSUM(array) -> array
+Description: Cumulative sum along the last axis.
 
 [CVDATE]
 Syntax: CVDATE(date_string$ [, tz_hours])
@@ -237,7 +521,7 @@ Description: Creates an instance of a COM Automation object (Windows only).
 
 [CSNG]
 Syntax: CSNG(x)
-Description: Roundtrips a number through 32-bit float precision — useful for forcing single-precision loss on doubles.
+Description: Roundtrips a number through 32-bit float precision - useful for forcing single-precision loss on doubles.
 
 [CSTR]
 Syntax: CSTR(x)
@@ -278,6 +562,22 @@ Description: Returns the difference between two dates in a specified time unit. 
 [DATERANGE]
 Syntax: DATERANGE(start, end [, unit$="D"] [, step=1])
 Description: Array of DateTimes from start to end inclusive, stepping by step units. Calendar units D/W/M/Y advance by whole local calendar days/weeks/months/years (DST-safe); clock units H/N/S advance by fixed seconds. Negative step counts down.
+
+[DAY]
+Syntax: DAY(date) -> number
+Description: Extracts the day of month (1-31) from a DateTime.
+
+[DISTANCE]
+Syntax: DISTANCE(point1, point2) -> number
+Description: Euclidean distance between two points given as coordinate arrays.
+
+[DOT]
+Syntax: DOT(a, b) -> number
+Description: Dot product of two vectors.
+
+[ENDSWITH]
+Syntax: ENDSWITH(str$, suffix$) -> bool
+Description: TRUE if str$ ends with suffix$.
 
 [EOMONTH]
 Syntax: EOMONTH(date [, offset_months])
@@ -320,9 +620,25 @@ Description: Foreign function interface. Declares a function exported from a
 shared library so it can be called from jdBasic. The library name gets the
 correct platform extension auto-applied (.dll / lib.so / lib.dylib).
 Param types: INTEGER, STRING, RETURN (output buffer; caller passes the desired
-size in bytes — 0 = 64 KB default, max 64 MB). Up to 8 parameters.
+size in bytes - 0 = 64 KB default, max 64 MB). Up to 8 parameters.
 Return types: INTEGER, STRING, ARRAY, VOID.
 When RETURN slots or AS ARRAY are used, the call returns
+[EXP]
+Syntax: EXP(x)
+Description: Natural exponential e^x. Vectorizes element-wise over arrays.
+
+[FILLV]
+Syntax: FILLV(arr, value) -> arr
+Description: In-place bulk fill of every leaf element of arr with value (recurses into nested arrays). Returns the same array handle. Statement form: FILLV arr, value.
+
+[FLATTEN]
+Syntax: FLATTEN(array) -> vector
+Description: Flattens a multi-dimensional array into a 1D vector.
+
+[FUNCS]
+Syntax: FUNCS
+Description: Lists all user-defined FUNCs and SUBs with their parameter signatures (REPL / debugging helper).
+
 [function_result, return_buf_1, ...]. See doc/languages.md for the full FFI
 section, jdb/dll_magic.jdb for a Win32 example, jdb/sqlite_demo.jdb for a
 bridge-DLL example.
@@ -341,7 +657,7 @@ Description: Returns a new array with the first N (or last N if negative) elemen
 
 [DYNAMIC]
 Syntax: FUNC f(p AS DYNAMIC) ...   |   DIM x AS DYNAMIC
-Description: Tagged-mixed array — opt-in for FUNC params or DIM that
+Description: Tagged-mixed array - opt-in for FUNC params or DIM that
 receive arrays built from `[m{"a"}, m{"b"}, ...]` (any array literal whose
 elements are INDEX expressions). Stores per-cell JdTags so `p[i]` reads
 return the correct type at runtime instead of bit-pun'ing every element
@@ -349,7 +665,7 @@ through a double. Without it, native compile drops every string element to
 0 / loses every map handle.
 
 The native compiler emits a `[warn]` diagnostic when a mixed-element array
-literal is passed to a non-DYNAMIC parameter — annotate the param to fix.
+literal is passed to a non-DYNAMIC parameter - annotate the param to fix.
 Numeric arrays (e.g. `mem[]`, lookup tables) MUST stay un-annotated; AS
 DYNAMIC on a plain numeric array forces the tagged-storage path and slows
 reads with no benefit. Interpreter treats DYNAMIC like ARRAY.
@@ -480,7 +796,7 @@ Description: Opens a file for line-by-line reading. Returns an i64 handle. Use F
 
 [FILE.OPEN_TAIL]
 Syntax: FILE.OPEN_TAIL(path$) -> handle
-Description: Like FILE.OPEN_LINES but READLINE$ blocks polling for newly-appended data — analog to `tail -f`. AT_EOF is only true after FILE.CLOSE.
+Description: Like FILE.OPEN_LINES but READLINE$ blocks polling for newly-appended data - analog to `tail -f`. AT_EOF is only true after FILE.CLOSE.
 
 [FILE.READLINE$]
 Syntax: FILE.READLINE$(handle) -> string
@@ -573,6 +889,198 @@ Description: Buckets elements into a map keyed by key_fn(elem) coerced to string
 [AGG]
 Syntax: AGG(keys, values, fn@)
 Description: Group-and-reduce in one O(n) pass (APL key). Groups values by the matching keys entry, applies fn to each group's value-array, returns [[key, fn(group)], ...] in first-seen order with key type preserved. E.g. AGG(months, nights, LAMBDA g -> SUM(g)). Interpreter only.
+
+[HEX$]
+Syntax: HEX$(n) -> string$
+Description: Hexadecimal string representation of integer n.
+
+[HISTOGRAM]
+Syntax: HISTOGRAM(array, bins) -> array
+Description: Builds a histogram with the given number of bins. Returns [counts, edges] as two arrays.
+
+[HOUR]
+Syntax: HOUR(date) -> number
+Description: Extracts the hour (0-23) from a DateTime.
+
+[IIF]
+Syntax: IIF(condition, value_if_true, value_if_false) -> value or array
+Description: Vectorized ternary: selects element-wise from the true/false values according to the condition.
+
+[INDEXOF]
+Syntax: INDEXOF(array, value) -> number
+Description: Returns the first 0-based index of value in array, or -1 if not found (same as FIND_IN_ARRAY).
+
+[INSERT$]
+Syntax: INSERT$(target, text$, position) -> string or array
+Description: Inserts text$ into target at the given 0-based position. Vectorizes when target/text/position are arrays.
+
+[ISARR]
+Syntax: ISARR(v) -> bool
+Description: TRUE if v is an array.
+
+[ISBOOL]
+Syntax: ISBOOL(v) -> bool
+Description: TRUE if v is a boolean.
+
+[ISMAP]
+Syntax: ISMAP(v) -> bool
+Description: TRUE if v is a map/object.
+
+[ISNONE]
+Syntax: ISNONE(v) -> bool
+Description: TRUE if v is the NONE value.
+
+[ISNULL]
+Syntax: ISNULL(v) -> bool
+Description: TRUE if v is the NONE value (alias of ISNONE).
+
+[ISNUM]
+Syntax: ISNUM(v) -> bool
+Description: TRUE if v is a number (integer or double).
+
+[ISSTR]
+Syntax: ISSTR(v) -> bool
+Description: TRUE if v is a string.
+
+[LINSPACE]
+Syntax: LINSPACE(start, stop, n) -> vector
+Description: Returns n evenly spaced samples over [start, stop] inclusive.
+
+[MEAN]
+Syntax: MEAN(array) -> number
+Description: Arithmetic mean (average) of an array.
+
+[MEDIAN]
+Syntax: MEDIAN(array) -> number
+Description: Median (central value) of an array.
+
+[MINUTE]
+Syntax: MINUTE(date) -> number
+Description: Extracts the minute (0-59) from a DateTime.
+
+[MONTH]
+Syntax: MONTH(date) -> number
+Description: Extracts the month (1-12) from a DateTime.
+
+[OCT$]
+Syntax: OCT$(n) -> string$
+Description: Octal string representation of integer n.
+
+[ONES]
+Syntax: ONES(shape_vector) -> array
+Description: Creates an array of the given shape filled with ones.
+
+[POP]
+Syntax: POP(array) -> value
+Description: Removes and returns the last element of an array (stack pop).
+
+[PUSH]
+Syntax: PUSH(array, value)
+Description: Appends value to the end of an array (stack push).
+
+[RANGE]
+Syntax: RANGE(start, stop, [step]) -> vector
+Description: Python-style half-open range: [start, start+step, ..., stop). step defaults to 1.
+
+[REACT_BIND]
+Syntax: REACT_BIND(var_name$, formula$)
+Description: Binds a global variable to a formula string at runtime, equivalent to writing var -> formula in source.
+
+[REGEX_MATCH]
+Syntax: REGEX_MATCH(pattern$, text$) -> boolean or array
+Description: Back-compatible form of REGEX.MATCH. Returns TRUE/FALSE, or the captured groups if the pattern has any.
+
+[REGEX_REPLACE$]
+Syntax: REGEX_REPLACE$(pattern$, text$, replacement$) -> string$
+Description: Back-compatible form of REGEX.REPLACE. Replaces all matches; $1, $2 backreferences are allowed.
+
+[RELEASEALL]
+Syntax: RELEASEALL
+Description: Releases every COM object currently held by the runtime.
+
+[RELEASEOBJECT]
+Syntax: RELEASEOBJECT(com_obj)
+Description: Explicitly releases a single COM object reference.
+
+[SECOND]
+Syntax: SECOND(date) -> number
+Description: Extracts the second (0-59) from a DateTime.
+
+[SGN]
+Syntax: SGN(x)
+Description: Returns -1, 0, or +1 depending on the sign of x.
+
+[SHUFFLE]
+Syntax: SHUFFLE(array) -> array
+Description: Returns a new array with the elements randomly shuffled.
+
+[SIGN]
+Syntax: SIGN(x)
+Description: Returns -1, 0, or +1 depending on the sign of x.
+
+[SINH]
+Syntax: SINH(x)
+Description: Hyperbolic sine. Vectorizes element-wise over arrays.
+
+[SORT]
+Syntax: SORT(array, [descending]) -> array
+Description: Returns a new 1D array sorted ascending, or descending when the flag is TRUE. Numbers compare numerically, strings lexicographically.
+
+[SPACE$]
+Syntax: SPACE$(n) -> string$
+Description: Returns a string of n spaces, handy for padding.
+
+[SPRITE.ANIM]
+Syntax: SPRITE.ANIM(id, name$, frames_array, fps, [loop])
+Description: Defines a named animation clip from an array of frame indices played at fps. loop defaults to TRUE. Start it with SPRITE.PLAY.
+
+[SPRITE.COLLISIONS]
+Syntax: SPRITE.COLLISIONS(group1$, group2$) -> array
+Description: Returns all colliding pairs between two groups as [[id_a, id_b], ...] using an axis-aligned bounding-box test.
+
+[SPRITE.COLLISION_FIRST]
+Syntax: SPRITE.COLLISION_FIRST(id, group$) -> number
+Description: Returns the id of the first visible sprite in group$ whose bounding box overlaps sprite id, or -1 if none.
+
+[SPRITE.CREATE]
+Syntax: SPRITE.CREATE(w, h) -> sprite_id
+Description: Allocates a new transparent sprite texture of size w x h (1..4096) and returns its sprite id. Fill with SPRITE.SETPIXEL or SPRITE.SETBUFFER, persist via SPRITE.SAVE.
+
+[SPRITE.FLIP]
+Syntax: SPRITE.FLIP(id, flip_h, [flip_v])
+Description: Sets the horizontal (and optional vertical) mirror state of a sprite.
+
+[SPRITE.GET_VX]
+Syntax: SPRITE.GET_VX(id) -> number
+Description: Returns the sprite's current horizontal velocity (pixels per second).
+
+[SPRITE.GET_VY]
+Syntax: SPRITE.GET_VY(id) -> number
+Description: Returns the sprite's current vertical velocity (pixels per second).
+
+[SPRITE.GROUP]
+Syntax: SPRITE.GROUP(id, group_name$)
+Description: Assigns a sprite to a named collision group, used by SPRITE.COLLISIONS and SPRITE.COLLISION_FIRST.
+
+[SPRITE.PLAY]
+Syntax: SPRITE.PLAY(id, name$)
+Description: Starts playing the named animation clip (defined via SPRITE.ANIM) on a sprite. Raises an error if the clip name is unknown.
+
+[SPRITE.STOP]
+Syntax: SPRITE.STOP(id)
+Description: Stops the sprite's current animation playback.
+
+[SPRITE.VELOCITY]
+Syntax: SPRITE.VELOCITY(id, vx, vy)
+Description: Sets a sprite's velocity in pixels per second. SPRITE.UPDATE then advances its position; read back with SPRITE.GET_VX / SPRITE.GET_VY.
+
+[STARTSWITH]
+Syntax: STARTSWITH(str$, prefix$) -> bool
+Description: TRUE if str$ starts with prefix$.
+
+[STDEV]
+Syntax: STDEV(array) -> number
+Description: Standard deviation of an array.
 
 [TALLY]
 Syntax: TALLY(array)
@@ -1340,7 +1848,7 @@ Description: Draws a matrix of color values directly to the graphics screen.
 
 [PRETTY]
 Syntax: PRETTY [PREVIEW] [STYLE UPPER|VB]
-Description: Reformats the loaded source — 4-space indent, normalized keyword casing.
+Description: Reformats the loaded source - 4-space indent, normalized keyword casing.
   PREVIEW    show the result on screen without overwriting the buffer
   STYLE VB   Pascal-cased keywords (For, Print, Next) instead of UPPER (the default)
   Strings and ' / REM comments are passed through verbatim.
@@ -1361,30 +1869,6 @@ Description: Draws a single pixel on the graphics screen.
 [PWD]
 Syntax: PWD
 Description: Prints the current working directory.
-
-[PYTHON$]
-PYTHON$(python_code$) -> string$
-Executes Python code in a sandbox and returns the stdout result.
-
-[PY.SET]
-PY.SET(var_name$, jdbasic_value)
-Injects a jdBasic value into the Python environment.
-
-[PY.GET]
-PY.GET(var_name$) -> value
-Retrieves a value from the Python environment.
-
-[PY.EVAL]
-PY.EVAL(expression$) -> value
-Evaluates a Python expression and returns the result as a jdBasic variant.
-
-[PY.DIR$]
-PY.DIR$([target$]) -> string$
-Lists local variables or methods available on a specific Python object.
-
-[PY.HELP$]
-PY.HELP$(target$) -> string$
-Returns the Python docstring for a given module or function.
 
 [RAISEEVENT]
 Syntax: RAISEEVENT "event_name", data
@@ -1778,29 +2262,9 @@ Description: Lists the namespace's own names, or the public members of a target 
 Syntax: PY.HELP$(target$)
 Description: Returns inspect.getdoc(target) for a Python module or function. Interpreter only.
 
-[SPRITE.ADD_TO_GROUP]
-Syntax: SPRITE.ADD_TO_GROUP(group_id, instance_id)
-Description: Adds a sprite instance to a collision group.
-
 [SPRITE.COLLISION]
 Syntax: SPRITE.COLLISION(id1, id2)
 Description: Checks if two sprite instances are colliding.
-
-[SPRITE.COLLISION_GROUP]
-Syntax: SPRITE.COLLISION_GROUP(instance_id, group_id)
-Description: Checks if a sprite is colliding with any sprite in a group.
-
-[SPRITE.COLLISION_GROUPS]
-Syntax: SPRITE.COLLISION_GROUPS(group_id1, group_id2)
-Description: Checks for collisions between two sprite groups.
-
-[SPRITE.CREATE]
-Syntax: SPRITE.CREATE(type_id, x, y)
-Description: Creates an instance of a sprite at a given position and returns its unique ID.
-
-[SPRITE.CREATE_GROUP]
-Syntax: SPRITE.CREATE_GROUP()
-Description: Creates a new, empty sprite collision group and returns its ID.
 
 [SPRITE.DELETE]
 Syntax: SPRITE.DELETE(instance_id)
@@ -1822,14 +2286,6 @@ Description: Returns the Y coordinate of a sprite instance.
 Syntax: SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id
 Description: Loads a sprite image (optionally as a spritesheet with the given frame size) and returns its sprite id.
 
-[SPRITE.LOAD_ASEPRITE]
-Syntax: SPRITE.LOAD_ASEPRITE(type_id, "filename.json")
-Description: Loads a sprite sheet and animation data from an Aseprite export.
-
-[SPRITE.CREATE]
-Syntax: SPRITE.CREATE(w, h) -> sprite_id
-Description: Allocates a new transparent sprite texture of size w x h (1..4096) and returns its sprite id. Fill with SPRITE.SETPIXEL or SPRITE.SETBUFFER, persist via SPRITE.SAVE.
-
 [SPRITE.SETPIXEL]
 Syntax: SPRITE.SETPIXEL(id, x, y, r, g, b, a)
 Description: Writes one RGBA pixel into a SPRITE.CREATE'd sprite. Uploads the texture after the write; use SPRITE.SETBUFFER for bulk fills.
@@ -1845,18 +2301,6 @@ Description: Writes the CPU RGBA buffer of a SPRITE.CREATE'd sprite to a PNG fil
 [SPRITE.MOVE]
 Syntax: SPRITE.MOVE(instance_id, x, y)
 Description: Moves a sprite instance to a new position.
-
-[SPRITE.SET_ANIMATION]
-Syntax: SPRITE.SET_ANIMATION(instance_id, "animation_name$")
-Description: Sets the current animation for a sprite instance loaded from Aseprite.
-
-[SPRITE.SET_FLIP]
-Syntax: SPRITE.SET_FLIP(instance_id, flip_boolean)
-Description: Sets the horizontal flip state of a sprite.
-
-[SPRITE.SET_VELOCITY]
-Syntax: SPRITE.SET_VELOCITY(instance_id, vx, vy)
-Description: Sets the velocity for a sprite instance for use with SPRITE.UPDATE.
 
 [SPRITE.UPDATE]
 Syntax: SPRITE.UPDATE([delta_time])
@@ -1918,77 +2362,13 @@ Description: Returns the longest prefix of array for which predicate(elem) is TR
 Syntax: TAN(angle_in_radians)
 Description: Returns the tangent of an angle.
 
+[TANH]
+Syntax: TANH(x)
+Description: Hyperbolic tangent. Vectorizes element-wise over arrays.
+
 [TENSOR]
 Syntax: DIM variable AS TENSOR
 Description: Declares a variable to hold a tensor for AI operations.
-
-[TENSOR.BACKWARD]
-Syntax: TENSOR.BACKWARD(loss_tensor)
-Description: Performs backpropagation to compute gradients for all tensors in the computational graph.
-
-[TENSOR.CONV2D]
-Syntax: TENSOR.CONV2D(input, kernel, bias, stride, padding)
-Description: Performs a 2D convolution operation, essential for CNNs.
-
-[TENSOR.CREATE_LAYER]
-Syntax: TENSOR.CREATE_LAYER(type$, options_map)
-Description: A factory for creating neural network layers (e.g., "DENSE").
-
-[TENSOR.CREATE_OPTIMIZER]
-Syntax: TENSOR.CREATE_OPTIMIZER(type$, options_map)
-Description: A factory for creating optimizers (e.g., "SGD", "ADAM").
-
-[TENSOR.CROSS_ENTROPY_LOSS]
-Syntax: TENSOR.CROSS_ENTROPY_LOSS(logits, actual_one_hot)
-Description: Calculates the cross-entropy loss for classification models.
-
-[TENSOR.FROM]
-Syntax: TENSOR.FROM(array)
-Description: Converts a standard Array into a Tensor.
-
-[TENSOR.LAYERNORM]
-Syntax: TENSOR.LAYERNORM(input, gain, bias)
-Description: Applies layer normalization to an input tensor.
-
-[TENSOR.LOADMODEL]
-Syntax: TENSOR.LOADMODEL("filename.json")
-Description: Loads a model's weights and biases from a JSON file.
-
-[TENSOR.MAXPOOL2D]
-Syntax: TENSOR.MAXPOOL2D(input, pool_size, stride)
-Description: Performs a 2D max pooling operation.
-
-[TENSOR.POSITIONAL_ENCODING]
-Syntax: TENSOR.POSITIONAL_ENCODING(seq_len, d_model)
-Description: Generates a sinusoidal positional encoding Tensor, used to give the model information about the position of tokens in a sequence.
-
-[TENSOR.RELU]
-Syntax: TENSOR.RELU(tensor)
-Description: Applies the element-wise Rectified Linear Unit (ReLU) activation function.
-
-[TENSOR.SAVEMODEL]
-Syntax: TENSOR.SAVEMODEL(model_map, "filename.json")
-Description: Saves a model's weights and biases to a JSON file.
-
-[TENSOR.SIGMOID]
-Syntax: TENSOR.SIGMOID(tensor)
-Description: Applies the element-wise sigmoid activation function.
-
-[TENSOR.SOFTMAX]
-Syntax: TENSOR.SOFTMAX(tensor, [is_causal])
-Description: Applies the softmax function to the last dimension of a tensor.
-
-[TENSOR.TOARRAY]
-Syntax: TENSOR.TOARRAY(tensor)
-Description: Converts a Tensor back into a standard Array.
-
-[TENSOR.TOKENIZE]
-Syntax: TENSOR.TOKENIZE(text$, vocab_map)
-Description: Converts a string into an array of integer token IDs based on a vocabulary map.
-
-[TENSOR.UPDATE]
-Syntax: TENSOR.UPDATE(model_map, optimizer_map)
-Description: Updates the model's parameters using calculated gradients and an optimizer.
 
 [TEXT]
 Syntax: TEXT x, y, content$, [r, g, b]
@@ -2220,7 +2600,7 @@ Description: Separator with an inline centred label.
 
 [TUI.SPACER]
 Syntax: TUI.SPACER
-Description: filler() — stretches to consume free space in the parent box.
+Description: filler() - stretches to consume free space in the parent box.
 
 [TUI.SIZE]
 Syntax: TUI.SIZE(w, h)
@@ -2408,7 +2788,7 @@ Description: Mouse wheel delta accumulator.
 
 [TUI.ON]
 Syntax: TUI.ON(event$, handler$)
-Description: Register a callback by FUNC/SUB name (record-only today — dispatch lands with mouse events).
+Description: Register a callback by FUNC/SUB name (record-only today - dispatch lands with mouse events).
 
 [TUI.WIDTH]
 Syntax: TUI.WIDTH
@@ -2448,7 +2828,7 @@ Description: Optional constructor for a user-defined type. Runs after
 the implicit field defaults whenever an instance is created via
 DIM x AS TypeName(args). If INIT takes no parameters, the bare form
 DIM x AS TypeName also auto-calls it. For arrays:
-DIM arr[N] AS TypeName(vec1, vec2) — INIT runs once per slot with
+DIM arr[N] AS TypeName(vec1, vec2) - INIT runs once per slot with
 the vectors indexed element-wise.
 
 [DISPOSE]
@@ -2488,6 +2868,14 @@ Description: Specifies the condition that will end a DO loop.
 Syntax: VAL(string$)
 Description: Converts a string to a number.
 
+[VARIANCE]
+Syntax: VARIANCE(array) -> number
+Description: Variance (dispersion) of an array.
+
+[VARS]
+Syntax: VARS() -> array
+Description: Returns the names of all currently defined global variables.
+
 [VBNEWLINE]
 Syntax: VBNEWLINE
 Description: A constant representing the carriage return and line feed characters (CRLF).
@@ -2496,10 +2884,30 @@ Description: A constant representing the carriage return and line feed character
 Syntax: WAITKEY$()
 Description: Blocks execution and waits for a single key press, returning the key.
 
+[WEEKDAY]
+Syntax: WEEKDAY(date) -> number
+Description: Returns the day of the week (0=Sunday ... 6=Saturday).
+
 [WHILE]
 Syntax: DO WHILE condition ... LOOP
 Description: Specifies the condition that must be true for a DO loop to continue.
 
+[XSORT]
+Syntax: XSORT(array, [dimension], [descending]) -> array
+Description: High-performance sort that can order the rows of a 2D matrix by a chosen column. In mixed arrays numbers order before strings.
+
+[YEAR]
+Syntax: YEAR(date) -> number
+Description: Extracts the four-digit year from a DateTime.
+
 [YIELD]
 YIELD
 Pauses execution and yields to the host environment's event loop for one frame.
+
+[ZEROS]
+Syntax: ZEROS(shape_vector) -> array
+Description: Creates an array of the given shape filled with zeros.
+
+[ZIP]
+Syntax: ZIP(arr1, arr2, ...) -> matrix
+Description: Combines vectors into a matrix where each row is [arr1[i], arr2[i], ...].
