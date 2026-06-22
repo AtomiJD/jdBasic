@@ -27,7 +27,7 @@ NATIVE COMPILE REQUIREMENTS:
         STL helpers introduced in MSVC v14.40.
       - Windows SDK 10 (any recent version)
     The MCP server itself (jdb_eval / jdb_doc / etc.)
-    does NOT need MSVC — only the -c compile path does.
+    does NOT need MSVC - only the -c compile path does.
 
 doc\languages.md is read by jdb_doc at runtime;
 it's looked up next to the EXE first, so no "cwd"
