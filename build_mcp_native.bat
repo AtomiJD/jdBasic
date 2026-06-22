@@ -65,6 +65,7 @@ copy /Y build\SDL3_mixer.dll       "%OUT%\" >nul 2>&1
 
 REM Docs that jdb_doc reads at runtime + project-level licence.
 copy /Y LICENSE.txt        "%OUT%\"     >nul
+copy /Y THIRD_PARTY_LICENSES.txt "%OUT%\" >nul
 copy /Y doc\MCP.md         "%OUT%\doc\" >nul
 copy /Y doc\languages.md   "%OUT%\doc\" >nul
 

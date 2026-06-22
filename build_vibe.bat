@@ -46,6 +46,7 @@ copy /Y build\SDL3_mixer.dll       "%OUT%\" >nul 2>&1
 copy /Y build\libssl-3-x64.dll     "%OUT%\" >nul 2>&1
 copy /Y build\libcrypto-3-x64.dll  "%OUT%\" >nul 2>&1
 copy /Y LICENSE.txt                "%OUT%\"     >nul
+copy /Y THIRD_PARTY_LICENSES.txt "%OUT%\" >nul
 copy /Y doc\MCP.md                 "%OUT%\doc\" >nul
 copy /Y doc\languages.md           "%OUT%\doc\" >nul
 

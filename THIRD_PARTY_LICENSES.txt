@@ -1,0 +1,218 @@
+jdBasic - Third-Party Software Notices and Licenses
+===================================================
+
+jdBasic itself is distributed under the MIT License (see LICENSE.txt).
+
+This distribution also includes, or links against, third-party components
+listed below. Each retains its own copyright and license. Depending on which
+release bundle you downloaded (core / mcp-native / vibe-game-pack), only some
+of these are present - the per-component notes say where each one applies.
+
+The full text of every license referenced here is reproduced at the bottom of
+this file.
+
+---------------------------------------------------------------------------
+1. Redistributed binaries (shipped as DLLs in the bundle)
+---------------------------------------------------------------------------
+
+OpenSSL 3.5.0
+  Files:     libssl-3-x64.dll, libcrypto-3-x64.dll
+  Bundles:   core, mcp-native, vibe-game-pack
+  License:   Apache License 2.0
+  Copyright: (c) 1998-2024 The OpenSSL Project Authors. All Rights Reserved.
+  Upstream:  https://www.openssl.org/
+
+SDL 3 (Simple DirectMedia Layer), with SDL_image, SDL_mixer, SDL_ttf
+  Files:     SDL3.dll, SDL3_image.dll, SDL3_mixer.dll, SDL3_ttf.dll
+  Bundles:   mcp-native, vibe-game-pack
+  License:   zlib License
+  Copyright: (c) 1997-2025 Sam Lantinga and the SDL contributors
+  Upstream:  https://www.libsdl.org/
+
+LLVM (C API runtime)
+  Files:     LLVM-C.dll
+  Bundles:   mcp-native
+  License:   Apache License 2.0 WITH LLVM-exception
+  Copyright: (c) The LLVM Project contributors
+  Upstream:  https://llvm.org/
+  Note:      The "LLVM exception" is an additional permission granted on top
+             of Apache-2.0; see https://llvm.org/LICENSE.txt for the exact
+             wording.
+
+Microsoft Visual C++ Runtime
+  Files:     vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll
+  Bundles:   core, mcp-native, vibe-game-pack
+  License:   Microsoft Visual C++ Redistributable license terms (app-local
+             deployment, as permitted by the Visual Studio license).
+  Copyright: (c) Microsoft Corporation
+  Upstream:  https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files
+
+---------------------------------------------------------------------------
+2. Statically linked components (compiled into jdBasic.exe / jdbrt.dll)
+---------------------------------------------------------------------------
+
+Dear ImGui
+  Bundles:   mcp-native, vibe-game-pack (any GFX/ImGui build)
+  License:   MIT License
+  Copyright: (c) 2014-2025 Omar Cornut
+  Upstream:  https://github.com/ocornut/imgui
+
+Eigen
+  Bundles:   core, mcp-native, vibe-game-pack (array / linear-algebra builtins)
+  License:   Mozilla Public License 2.0 (MPL-2.0)
+  Copyright: (c) the Eigen authors
+  Upstream:  https://eigen.tuxfamily.org/
+  Note:      MPL-2.0 is file-level copyleft. Eigen is used as an unmodified
+             library; its source is available from the upstream URL above.
+
+kissfft
+  Bundles:   core, mcp-native, vibe-game-pack (FFT / IFFT builtins)
+  License:   BSD 3-Clause License
+  Copyright: (c) 2003-2010 Mark Borgerding. All rights reserved.
+  Upstream:  https://github.com/mborgerding/kissfft
+
+Components such as the llama.cpp / ggml LLM backend, ONNX Runtime, SQLite, and
+FTXUI are NOT included in these public Windows release bundles (they are only
+present in builds compiled with the corresponding feature flags).
+
+===========================================================================
+                              LICENSE TEXTS
+===========================================================================
+
+---------------------------------------------------------------------------
+Apache License 2.0   (applies to: OpenSSL, LLVM [with LLVM-exception])
+---------------------------------------------------------------------------
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+      "License" shall mean the terms and conditions for use, reproduction, and
+      distribution as defined by Sections 1 through 9 of this document.
+      "Licensor", "You", "Source", "Object", "Work", "Derivative Works",
+      "Contribution", and "Contributor" have the meanings given in the full
+      license text at http://www.apache.org/licenses/LICENSE-2.0
+
+   2. Grant of Copyright License. Subject to the terms and conditions of this
+      License, each Contributor hereby grants to You a perpetual, worldwide,
+      non-exclusive, no-charge, royalty-free, irrevocable copyright license to
+      reproduce, prepare Derivative Works of, publicly display, publicly
+      perform, sublicense, and distribute the Work and such Derivative Works
+      in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of this
+      License, each Contributor hereby grants to You a perpetual, worldwide,
+      non-exclusive, no-charge, royalty-free, irrevocable (except as stated in
+      this section) patent license to make, have made, use, offer to sell,
+      sell, import, and otherwise transfer the Work.
+
+   4. Redistribution. You may reproduce and distribute copies of the Work or
+      Derivative Works thereof in any medium, with or without modifications,
+      provided that You meet the following conditions: (a) give recipients a
+      copy of this License; (b) cause modified files to carry prominent
+      notices; (c) retain all copyright, patent, trademark, and attribution
+      notices; and (d) include a readable copy of any NOTICE file.
+
+   5. Submission of Contributions. Any Contribution intentionally submitted for
+      inclusion in the Work shall be under the terms of this License.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor.
+
+   7. Disclaimer of Warranty. The Work is provided on an "AS IS" BASIS, WITHOUT
+      WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+   8. Limitation of Liability. In no event shall any Contributor be liable for
+      damages arising out of the use or inability to use the Work.
+
+   9. Accepting Warranty or Additional Liability. You may offer support,
+      warranty, or other obligations at Your own risk, not on behalf of any
+      other Contributor.
+
+   The complete, authoritative license text is available at:
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   LLVM-exception (applies to LLVM only): see https://llvm.org/LICENSE.txt
+
+---------------------------------------------------------------------------
+MIT License   (applies to: Dear ImGui)
+---------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------------------------
+BSD 3-Clause License   (applies to: kissfft)
+---------------------------------------------------------------------------
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGE.
+
+---------------------------------------------------------------------------
+zlib License   (applies to: SDL3, SDL_image, SDL_mixer, SDL_ttf)
+---------------------------------------------------------------------------
+
+This software is provided 'as-is', without any express or implied warranty.
+In no event will the authors be held liable for any damages arising from the
+use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it freely,
+subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim
+   that you wrote the original software. If you use this software in a product,
+   an acknowledgment in the product documentation would be appreciated but is
+   not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+---------------------------------------------------------------------------
+Mozilla Public License 2.0   (applies to: Eigen)
+---------------------------------------------------------------------------
+
+This product includes Eigen, licensed under the Mozilla Public License,
+version 2.0. You may obtain a copy of the MPL-2.0 at:
+
+   https://www.mozilla.org/MPL/2.0/
+
+The Eigen source code (the "Covered Software") is available, unmodified, from
+the upstream project at https://eigen.tuxfamily.org/. As permitted by MPL-2.0
+Section 3.2, the Covered Software is distributed in Executable Form as part of
+a Larger Work (jdBasic) under jdBasic's own MIT terms, while Eigen itself
+remains under the MPL-2.0.

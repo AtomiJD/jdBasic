@@ -78,7 +78,7 @@ This is the **v2 rewrite**. Compared to the original tree-walking interpreter, j
 - A **persistent REPL workspace** that survives restarts via `SAVEWS`/`LOADWS`
 - An **MCP server** (`jdbasic --mcp`) that exposes the persistent VM to LLM agents like Claude Code, Cursor, or Cline - see [`doc/MCP.md`](doc/MCP.md)
 
-> The original v1 codebase is preserved on the [`legacy-v1`](https://github.com/AtomiJD/jdBasic/tree/legacy-v1) branch and the [`v1-legacy`](https://github.com/AtomiJD/jdBasic/releases/tag/v1-legacy) tag for archival and bugfixes.
+> The original v1 codebase is preserved on the [`legacy-v1`](https://github.com/AtomiJD/jdBasic/tree/legacy-v1) branch and the [`v1-legacy`](https://github.com/AtomiJD/jdBasic/tree/v1-legacy) tag for archival and bugfixes.
 
 ---
 

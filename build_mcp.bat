@@ -32,6 +32,7 @@ copy /Y build\jdBasic.exe         "%OUT%\" >nul
 copy /Y build\libssl-3-x64.dll    "%OUT%\" >nul 2>&1
 copy /Y build\libcrypto-3-x64.dll "%OUT%\" >nul 2>&1
 copy /Y LICENSE.txt               "%OUT%\" >nul
+copy /Y THIRD_PARTY_LICENSES.txt "%OUT%\" >nul
 
 REM jdb_doc reads doc/languages.md relative to CWD - must ship inside the
 REM bundle, layout-preserving, or jdb_doc returns "Cannot read doc/languages.md".
