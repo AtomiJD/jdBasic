@@ -1,9 +1,0 @@
-FUNC MAKE_MAP(k$)
-    DIM m AS MAP = {"static": "init"}
-    m{k$} = "set"
-    RETURN m
-ENDFUNC
-
-PRINT "1: "; MAKE_MAP("a")
-PRINT "2: "; MAKE_MAP("b")
-PRINT "3: "; MAKE_MAP("c")

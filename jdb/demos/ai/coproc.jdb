@@ -1,7 +1,7 @@
 ' coproc.jdb - local AI co-processor toolkit (CO_*) for coding agents.
 '
 ' Load into the persistent MCP VM once, then drive via jdb_eval:
-'   jdb_load  path="D:/usr/dev/cc/coproc/coproc.jdb"
+'   jdb_load  path="D:/usr/dev/cc/jdb/demos/ai/coproc.jdb"
 '   jdb_eval  CO_INDEX("D:/usr/dev/cc/src")      ' build + save the index
 '   jdb_eval  CO_SEARCH("where is X handled", 5) ' semantic search -> file:line
 '

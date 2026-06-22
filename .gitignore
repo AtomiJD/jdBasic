@@ -242,3 +242,6 @@ Roland_CR-80/
 .rag_appliance.idx
 .rag_appliance.dirs
 .rag_appliance.tfidf
+
+# Local-only backup (untracked, kept on disk)
+fluppi/backup/

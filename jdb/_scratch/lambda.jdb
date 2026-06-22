@@ -1,4 +1,0 @@
-PRINT "Simple Lambda Addtion of 1 to 10"
-PRINT SELECT(lambda i -> i + 1, iota(10))
-PRINT "Simple Lambda chained functions"
-PRINT SELECT(lambda i -> i + 1, iota(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)

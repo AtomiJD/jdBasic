@@ -1,4 +1,0 @@
-CD ".."
-PWD
-CD "cc"
-PRINT PWD()

@@ -1,8 +1,0 @@
-OPTION "EXPLICIT"
-DIM m AS MAP
-m{"a"} = "alpha"
-PRINT "before"
-DIM arr = [m{"a"}]
-PRINT "after dim"
-PRINT arr[0]
-PRINT "done"

@@ -1,5 +1,0 @@
-DIM C = [10, 20, 30, 40, 50]
-DIM Y = [1, 3]
-PRINT "C[1]=", C[1]
-PRINT "C[3]=", C[3]
-PRINT "C[Y]=", C[Y]

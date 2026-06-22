@@ -1,8 +1,0 @@
-FUNC Check(val)
-    IF val = 0 THEN RETURN "zero"
-    IF val > 0 THEN RETURN "positive" ELSE RETURN "negative"
-ENDFUNC
-
-PRINT Check(0)
-PRINT Check(5)
-PRINT Check(-3)

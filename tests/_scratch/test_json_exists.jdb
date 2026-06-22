@@ -1,4 +1,0 @@
-data = JSON.PARSE$(TXTREADER$("tests/test_items.json"))
-PRINT "data exists items="; MAP.EXISTS(data, "items")
-items = data{"items"}
-PRINT "items exists apple="; MAP.EXISTS(items, "apple")
