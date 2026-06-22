@@ -2290,32 +2290,107 @@ LOOP  UNTIL k$ = "q" OR k$ = "Q"
 
 ```
 
-#### Sprites and Maps
+#### Sprites
 
-* **`SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id`**: Loads a sprite image (optionally a spritesheet with the given frame size) and returns the sprite id. The returned id is what every other SPRITE.* call expects.
-* **`SPRITE.LOAD_ASEPRITE type_id, "filename.json"`**: Loads a sprite sheet and animation data from an Aseprite export.
-* **`SPRITE.CREATE(w, h) -> sprite_id`**: Creates a new empty (transparent) sprite texture with the given dimensions and returns the sprite id. The sprite is registered like one loaded via SPRITE.LOAD - the same SPRITE.POS / SPRITE.DRAW / SPRITE.DELETE work. Width and height must be 1..4096. Combine with SPRITE.SETPIXEL or SPRITE.SETBUFFER to fill in the artwork at runtime, then optionally SPRITE.SAVE to write a PNG.
-* **`SPRITE.SETPIXEL id, x, y, r, g, b, a`**: Set one pixel on a SPRITE.CREATE'd sprite. r/g/b/a are 0-255. Out-of-bounds raises a runtime error. The texture is uploaded after each call, so SETPIXEL is convenient but slow for large updates - use SPRITE.SETBUFFER for bulk fills.
-* **`SPRITE.SETBUFFER id, rgba_array`**: Bulk RGBA-fill. Pass a flat 1-D array `[r0, g0, b0, a0, r1, g1, b1, a1, ...]` with `width * height * 4` entries. Length mismatch raises a runtime error. Values are clamped to 0..255. This is the fast path and the one Claude uses when generating sprites via MCP.
-* **`SPRITE.SAVE id, path$`**: Write the sprite's RGBA buffer as a PNG. Only works on sprites created via SPRITE.CREATE (not SPRITE.LOAD'd sprites; for those use GFX.SAVE_IMAGE instead). Relative paths resolve against CWD then the script directory, like every other asset-aware builtin.
-* **`SPRITE.MOVE instance_id, x, y`**: Moves a sprite instance to a new position.
-* **`SPRITE.SET_VELOCITY instance_id, vx, vy`**: Sets the velocity for a sprite instance for use with `SPRITE.UPDATE`.
-* **`SPRITE.DELETE instance_id`**: Removes a sprite instance.
-* **`SPRITE.SET_ANIMATION instance_id, "animation_name$"`**: Sets the current animation for a sprite instance.
-* **`SPRITE.SET_FLIP instance_id, flip_boolean`**: Sets the horizontal flip state of a sprite.
-* **`SPRITE.UPDATE`**: Updates the positions of all sprites based on their velocities.
-* **`SPRITE.DRAW_ALL wx,wy`**: Draws all active sprite instances to the screen. If wx,wy is set it renderes as world coodinates.
-* **`SPRITE.GET_X(instance_id)` / `SPRITE.GET_Y(instance_id)`**: Returns the X or Y coordinate of a sprite instance.
-* **`SPRITE.COLLISION(id1, id2)`**: Returns `TRUE` if the bounding boxes of two sprite instances are colliding.
-* **`SPRITE.CREATE_GROUP() -> group_id`**: Creates a new, empty sprite group.
-* **`SPRITE.COLLISION_GROUPS(group_id1, group_id2) -> array[hit_id1, hit_id2]`**: Checks for collision between two groups of sprites.
-* **`SPRITE.COLLISION_GROUP(instance_id, group_id) -> hit_instance_id`**: Checks for collision between a single sprite and a group.
-* **`TILEMAP.LOAD "map_name", "filename.json"`**: Loads a Tiled map file.
-* **`TILEMAP.DRAW_LAYER "map_name", "layer_name", [world_offset_x], [world_offset_y]`**: Draws a specific tile layer from a loaded map.
-* **`TILEMAP.GET_OBJECTS("map_name", "object_type") -> Array of Objects`**: Retrieves all objects of a certain type from an object layer.
-* **`TILEMAP.COLLIDES(sprite_id, "map_name", "layer_name") -> boolean`**: Checks if a sprite is colliding with any solid tile on a given layer.
-* **`TILEMAP.GET_TILE_ID "mapname", "layername", tileX, tileY`**: Returns the tile id from the given position.
-* **`TILEMAP.DRAW_DEBUG_COLLISIONS player_id, "map", "layer"`**: For debug purpose. Draws a rect around the tile near x,y. CAM_X and CAM_Y must be set.
+A sprite is a drawable image handle. Load one from a file or create a blank
+texture; the returned `sprite_id` is what every other `SPRITE.*` call expects.
+
+**Loading & creation**
+
+* **`SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id`**: Loads a sprite image, optionally as a spritesheet with the given frame size, and returns its sprite id.
+* **`SPRITE.CREATE(w, h) -> sprite_id`**: Allocates a new transparent sprite texture (`w`, `h` in `1..4096`) and returns its sprite id. Fill it with `SPRITE.SETPIXEL` / `SPRITE.SETBUFFER`, then optionally `SPRITE.SAVE`.
+* **`SPRITE.DELETE(id)`**: Removes a sprite instance.
+* **`SPRITE.SETPIXEL(id, x, y, r, g, b, a)`**: Writes one RGBA pixel into a `SPRITE.CREATE`'d sprite (components 0-255). Uploads the texture after each write; use `SPRITE.SETBUFFER` for bulk fills.
+* **`SPRITE.SETBUFFER(id, rgba_array)`**: Bulk RGBA-fill from a flat array of length `width * height * 4`. Length mismatch raises an error; values are clamped to 0-255. This is the fast path (and the one Claude uses when generating sprites via MCP).
+* **`SPRITE.SAVE(id, path$)`**: Writes a `SPRITE.CREATE`'d sprite's RGBA buffer to a PNG. For `SPRITE.LOAD`'d images use `GFX.SAVE_IMAGE` instead.
+
+**Position & transform**
+
+* **`SPRITE.POS(id, x, y)`** / **`SPRITE.MOVE(id, x, y)`**: Sets the absolute position of a sprite.
+* **`SPRITE.GET_X(id)`** / **`SPRITE.GET_Y(id)`**: Returns the X or Y coordinate of a sprite.
+* **`SPRITE.WIDTH(id) -> number`** / **`SPRITE.HEIGHT(id) -> number`**: Returns the scaled pixel size of a sprite.
+* **`SPRITE.SCALE(id, scale_x, [scale_y])`**: Sets the sprite scale; `scale_y` defaults to `scale_x`.
+* **`SPRITE.ROTATE(id, angle)`**: Sets the rotation angle in degrees.
+* **`SPRITE.SET_ORIGIN(id, origin_x, origin_y)`**: Sets the rotation/scale origin point.
+* **`SPRITE.FLIP(id, flip_h, [flip_v])`**: Sets the horizontal (and optional vertical) mirror state.
+* **`SPRITE.ALPHA(id, alpha)`**: Sets the per-sprite transparency (0-255).
+* **`SPRITE.VISIBLE(id, visible)`**: Sets whether the sprite is drawn.
+* **`SPRITE.ZORDER(id, z)`**: Sets the draw order used by `SPRITE.DRAW_ALL`.
+
+**Animation**
+
+* **`SPRITE.ANIM(id, name$, frames_array, fps, [loop])`**: Defines a named animation clip from an array of frame indices played at `fps`. `loop` defaults to `TRUE`.
+* **`SPRITE.PLAY(id, name$)`**: Starts playing a named clip (errors if the clip is unknown).
+* **`SPRITE.STOP(id)`**: Stops the current animation playback.
+* **`SPRITE.FRAME(id, frame_index)`**: Sets a fixed frame, stopping any playing animation.
+* **`SPRITE.PLAYING(id) -> boolean`**: Returns `TRUE` while an animation is playing.
+
+**Velocity & simple physics**
+
+* **`SPRITE.VELOCITY(id, vx, vy)`**: Sets the velocity in pixels per second. `SPRITE.UPDATE` advances the position.
+* **`SPRITE.GET_VX(id)`** / **`SPRITE.GET_VY(id)`**: Reads back the current velocity.
+* **`SPRITE.GRAVITY(id, gravity)`**: Sets a per-second vertical gravity acceleration applied during `SPRITE.UPDATE`.
+* **`SPRITE.LAND(id, ground_y)`**: Snaps a falling sprite to rest on a ground y-line, zeroing vertical velocity and flagging it on-ground.
+* **`SPRITE.ON_GROUND(id) -> boolean`**: Returns `TRUE` if `SPRITE.LAND` flagged the sprite as grounded.
+* **`SPRITE.UPDATE([delta_time])`**: Advances the positions and animations of all sprites from their velocities (and gravity).
+
+**Drawing**
+
+* **`SPRITE.DRAW(id)`**: Draws a single sprite if visible.
+* **`SPRITE.DRAW_ALL([world_x, world_y])`**: Draws all active sprites in z-order, optionally offset by a camera/world position.
+
+**Collision**
+
+* **`SPRITE.COLLISION(id1, id2) -> boolean`**: Returns `TRUE` if two sprites' bounding boxes overlap.
+* **`SPRITE.GROUP(id, group_name$)`**: Assigns a sprite to a named collision group.
+* **`SPRITE.COLLISIONS(group1$, group2$) -> array`**: Returns all colliding pairs between two groups as `[[id_a, id_b], ...]`.
+* **`SPRITE.COLLISION_FIRST(id, group$) -> number`**: Returns the id of the first sprite in `group$` overlapping `id`, or `-1`.
+
+#### Tiled Maps (`TILED.*`)
+
+Load and render maps authored in the [Tiled](https://www.mapeditor.org/) editor. Maps are referenced by a name you choose at load time.
+
+* **`TILED.LOAD(name$, filename$) -> boolean`**: Loads a Tiled (`.tmx`) map under `name$`; returns `TRUE` on success.
+* **`TILED.FREE(name$)`**: Frees a loaded map and its resources.
+* **`TILED.DRAW(name$, [cam_x], [cam_y])`**: Draws all layers in order; uses the global camera offset when none is given.
+* **`TILED.DRAW_LAYER(name$, layer$, [cam_x], [cam_y])`**: Draws a single named layer.
+* **`TILED.LAYERS$(name$) -> array`**: Returns the layer name strings in draw order.
+* **`TILED.OBJECTS(name$, layer$) -> array`**: Returns the objects of an object layer, each with `id, name, type, x, y, width, height, gid` and any custom properties.
+* **`TILED.PROPERTIES(name$) -> object`**: Returns the map-level custom properties.
+* **`TILED.TILE_AT(name$, layer$, pixel_x, pixel_y) -> gid`**: Returns the tile gid at a pixel position in a layer (`0` = empty).
+* **`TILED.COLLIDES(sprite_id, name$, layer$) -> boolean`**: Returns `TRUE` if a sprite overlaps a non-empty tile in the layer.
+* **`TILED.SIZE(name$) -> [w, h]`** / **`TILED.TILE_SIZE(name$) -> [tile_w, tile_h]`**: Map size in pixels / single tile size.
+* **`TILED.UPDATE(dt)`**: Advances animated tiles of all loaded maps by `dt` seconds.
+
+#### Programmatic Tilemaps (`TILEMAP.*`)
+
+Build a tilemap in code from a 2D array of tile ids, drawn from a tileset image. Use this when you generate levels at runtime instead of loading a Tiled file.
+
+* **`TILEMAP.CREATE(name$, tileset_image_id, data, tile_w, tile_h)`**: Creates a named tilemap from a 2D array of 1-based tile ids (`0` = empty) using a tileset image loaded via `GFX.LOADIMAGE`.
+* **`TILEMAP.DRAW(name$, [cam_x], [cam_y])`**: Draws the tilemap; uses the global camera offset when none is given.
+* **`TILEMAP.GET(name$, col, row) -> tile_id`** / **`TILEMAP.SET(name$, col, row, tile_id)`**: Reads/writes a single cell (out-of-range reads return `0`).
+* **`TILEMAP.TILE_AT(name$, pixel_x, pixel_y) -> tile_id`**: Returns the tile id at a pixel position (`0` if out of range).
+* **`TILEMAP.SIZE(name$) -> [cols, rows]`**: Returns the grid dimensions.
+* **`TILEMAP.COLLIDES(sprite_id, name$) -> boolean`**: Returns `TRUE` if the sprite's bounding box overlaps any non-empty tile.
+
+#### Camera (`CAM.*`)
+
+A 2D camera offset applied by `SPRITE.DRAW_ALL`, `TILED.DRAW` and `TILEMAP.DRAW` when no explicit offset is passed.
+
+* **`CAM.SET(x, y)`**: Sets the camera position manually (disables following).
+* **`CAM.FOLLOW(sprite_id, [smooth])`**: Makes the camera track a sprite, with an optional smoothing factor for lerped movement.
+* **`CAM.BOUNDS(x, y, w, h)`**: Clamps the camera to a rectangular world boundary during `SPRITE.UPDATE`.
+* **`CAM.SHAKE(intensity, duration)`**: Starts a camera shake of the given intensity for `duration` seconds.
+* **`CAM.X() -> number`** / **`CAM.Y() -> number`**: Returns the current camera position including any shake offset.
+
+#### Particles (`PARTICLE.*`)
+
+A lightweight fire-and-forget particle system for effects (explosions, sparks, dust).
+
+* **`PARTICLE.EMIT(x, y, count, r, g, b, [speed], [life], [gravity], [size])`**: Emits a burst of `count` colored particles with optional speed, lifetime, gravity and size.
+* **`PARTICLE.DRAW([cam_x], [cam_y])`**: Draws all active particles with life-based fade; uses the global camera offset when none is given.
+* **`PARTICLE.COUNT() -> number`**: Returns the number of currently active particles.
+* **`PARTICLE.CLEAR()`**: Removes all active particles.
 
 #### Turtle
   

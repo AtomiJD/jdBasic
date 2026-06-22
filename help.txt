@@ -2795,8 +2795,8 @@ Syntax: TILED.UPDATE(dt)
 Description: Advances the animated tiles of all loaded Tiled maps by dt seconds.
 
 [TILEMAP.COLLIDES]
-Syntax: TILEMAP.COLLIDES(sprite_id, "map_name", "layer_name")
-Description: Checks if a sprite is colliding with any solid tile on a given map layer.
+Syntax: TILEMAP.COLLIDES(sprite_id, name$) -> boolean
+Description: Returns TRUE if the sprite's bounding box overlaps any non-empty tile in the named array tilemap.
 
 [TILEMAP.CREATE]
 Syntax: TILEMAP.CREATE(name$, tileset_image_id, data, tile_w, tile_h)
@@ -2806,29 +2806,9 @@ Description: Creates a named tilemap from a 2D array of 1-based tile ids drawn f
 Syntax: TILEMAP.DRAW(name$, [cam_x], [cam_y])
 Description: Draws a named tilemap, using the global camera offset when none is given.
 
-[TILEMAP.DRAW_DEBUG_COLLISIONS]
-Syntax: TILEMAP.DRAW_DEBUG_COLLISIONS(sprite_id, "map_name", "layer_name")
-Description: Draws debug rectangles around collision tiles near a sprite.
-
-[TILEMAP.DRAW_LAYER]
-Syntax: TILEMAP.DRAW_LAYER("map_name", "layer_name", [world_x, world_y])
-Description: Draws a specific tile layer from a loaded Tiled map.
-
 [TILEMAP.GET]
 Syntax: TILEMAP.GET(name$, col, row) -> tile_id
 Description: Returns the tile id at the given column and row of a tilemap, or 0 if out of range.
-
-[TILEMAP.GET_OBJECTS]
-Syntax: TILEMAP.GET_OBJECTS("map_name", "object_type")
-Description: Retrieves all objects of a certain type from a Tiled map's object layer.
-
-[TILEMAP.GET_TILE_ID]
-Syntax: TILEMAP.GET_TILE_ID("map_name", "layer_name", tileX, tileY)
-Description: Returns the tile ID at a specific coordinate on a map layer.
-
-[TILEMAP.LOAD]
-Syntax: TILEMAP.LOAD("map_name", "filename.json")
-Description: Loads a map file exported from the Tiled editor.
 
 [TILEMAP.SET]
 Syntax: TILEMAP.SET(name$, col, row, tile_id)
