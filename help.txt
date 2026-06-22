@@ -286,6 +286,70 @@ Description: Inverse tangent in radians. Vectorizes element-wise over arrays.
 Syntax: ATAN2(y, x)
 Description: Two-argument arctangent returning the angle in the correct quadrant.
 
+[AUDIO.CLOSE]
+Syntax: AUDIO.CLOSE
+Description: Frees all loaded chunks and music and shuts down the audio subsystem.
+
+[AUDIO.FREE]
+Syntax: AUDIO.FREE(sfx_id)
+Description: Releases a loaded chunk's memory.
+
+[AUDIO.FREEMUS]
+Syntax: AUDIO.FREEMUS(music_id)
+Description: Releases the music memory.
+
+[AUDIO.INIT]
+Syntax: AUDIO.INIT
+Description: Initialises the audio subsystem (mixer opens at 44.1 kHz, stereo). Must be called before any other AUDIO.* function.
+
+[AUDIO.LOADMUS]
+Syntax: AUDIO.LOADMUS(path$) -> music_id
+Description: Loads a streaming music file (MP3, OGG, FLAC, etc.).
+
+[AUDIO.LOADWAV]
+Syntax: AUDIO.LOADWAV(path$) -> sfx_id
+Description: Loads a short audio file (WAV, OGG, etc.) into a chunk for repeated fire-and-forget playback.
+
+[AUDIO.PAUSE]
+Syntax: AUDIO.PAUSE([channel])
+Description: Pauses the given channel, or all channels if omitted.
+
+[AUDIO.PAUSEMUS]
+Syntax: AUDIO.PAUSEMUS
+Description: Pauses the music track.
+
+[AUDIO.PLAY]
+Syntax: AUDIO.PLAY(sfx_id, [loops=0], [channel=-1]) -> channel
+Description: Plays a loaded chunk; loops=0 plays once, -1 loops forever. Returns the channel index it was scheduled on.
+
+[AUDIO.PLAYMUS]
+Syntax: AUDIO.PLAYMUS(music_id, [loops=-1])
+Description: Starts playing music; -1 (default) loops forever, 0 plays once.
+
+[AUDIO.RESUME]
+Syntax: AUDIO.RESUME([channel])
+Description: Resumes the given channel, or all channels if omitted.
+
+[AUDIO.RESUMEMUS]
+Syntax: AUDIO.RESUMEMUS
+Description: Resumes the music track.
+
+[AUDIO.STOP]
+Syntax: AUDIO.STOP([channel])
+Description: Halts playback on the given channel, or all channels if omitted.
+
+[AUDIO.STOPMUS]
+Syntax: AUDIO.STOPMUS
+Description: Halts the current music track.
+
+[AUDIO.VOLUME]
+Syntax: AUDIO.VOLUME(level, [channel]) -> previous
+Description: Sets the channel volume (0..128), or the master SFX volume if no channel is given. Returns the previous value.
+
+[AUDIO.VOLUMEMUS]
+Syntax: AUDIO.VOLUMEMUS(level) -> previous
+Description: Sets the music volume (0..128). Returns the previous value.
+
 [AWAIT]
 Syntax: AWAIT task_handle
 Description: Pauses execution until an asynchronous task is complete and retrieves its result.
@@ -333,6 +397,30 @@ Description: Returns the numeric byte value (0-255) at the specified index.
 [CALL]
 Syntax: CALL subroutine_name
 Description: Transfers control to a named SUB procedure.
+
+[CAM.BOUNDS]
+Syntax: CAM.BOUNDS(x, y, w, h)
+Description: Sets a rectangular boundary that clamps the camera during SPRITE.UPDATE.
+
+[CAM.FOLLOW]
+Syntax: CAM.FOLLOW(sprite_id, [smooth])
+Description: Makes the camera follow a sprite, with an optional smoothing factor for lerped tracking.
+
+[CAM.SET]
+Syntax: CAM.SET(x, y)
+Description: Sets the camera position manually and disables sprite following.
+
+[CAM.SHAKE]
+Syntax: CAM.SHAKE(intensity, duration)
+Description: Starts a camera shake of the given intensity for the given duration in seconds.
+
+[CAM.X]
+Syntax: CAM.X() -> number
+Description: Returns the camera's current x position including shake offset.
+
+[CAM.Y]
+Syntax: CAM.Y() -> number
+Description: Returns the camera's current y position including shake offset.
 
 [CASE]
 Syntax: CASE value[, value]... | CASE lo TO hi
@@ -874,6 +962,98 @@ Description: Returns the current column (X) position of the console cursor.
 Syntax: GETY()
 Description: Returns the current row (Y) position of the console cursor.
 
+[GFX.CAPTURE]
+Syntax: GFX.CAPTURE() -> id
+Description: Captures the current renderer contents as a reusable texture and returns its image id.
+
+[GFX.CLOSE]
+Syntax: GFX.CLOSE()
+Description: Closes the graphics window and releases all graphics resources.
+
+[GFX.COLOR_TO_ALPHA]
+Syntax: GFX.COLOR_TO_ALPHA(id, [r], [g], [b], [tolerance])
+Description: Flood-fills from the image edges to make the connected background color transparent, auto-detecting it from the top-left pixel unless an r,g,b color is given.
+
+[GFX.DELAY]
+Syntax: GFX.DELAY(ms)
+Description: Pauses execution for the given number of milliseconds.
+
+[GFX.DRAWIMAGE]
+Syntax: GFX.DRAWIMAGE(id, x, [y], [w], [h])
+Description: Draws a loaded image at the given position, using the texture's native size for any omitted width or height.
+
+[GFX.DRAWIMAGE_EX]
+Syntax: GFX.DRAWIMAGE_EX(id, x, y, [w], [h], [angle], [flip_h])
+Description: Draws a loaded image with optional size, rotation angle and horizontal flip.
+
+[GFX.DRAWIMAGE_REGION]
+Syntax: GFX.DRAWIMAGE_REGION(id, sx, sy, sw, sh, dx, dy, [dw], [dh])
+Description: Draws a sub-rectangle of a loaded image to the screen, optionally scaling it to a destination width and height.
+
+[GFX.DRAW_CAPTURE]
+Syntax: GFX.DRAW_CAPTURE(id)
+Description: Draws a previously captured image full-screen as a background.
+
+[GFX.FADE]
+Syntax: GFX.FADE(direction, duration, [r], [g], [b])
+Description: Blocks while fading the screen out to or in from a color (default black) over the given duration in seconds; direction 0 fades out, 1 fades in.
+
+[GFX.FREEIMAGE]
+Syntax: GFX.FREEIMAGE(id)
+Description: Frees a loaded image and its GPU texture.
+
+[GFX.HSV_RGB]
+Syntax: GFX.HSV_RGB(h, s, v) -> [r,g,b]
+Description: Converts an HSV color (hue in degrees, saturation and value 0-1) to an [r,g,b] array of 0-255 components.
+
+[GFX.KEYSTATE]
+Syntax: GFX.KEYSTATE(key) -> boolean
+Description: Returns TRUE if the given key (scancode name string or number) is currently held down.
+
+[GFX.LOADIMAGE]
+Syntax: GFX.LOADIMAGE(path$) -> id
+Description: Loads an image file into a GPU texture and returns its image id.
+
+[GFX.MOUSEBUTTON]
+Syntax: GFX.MOUSEBUTTON([button]) -> boolean
+Description: Returns TRUE if the given mouse button (default 1) is currently pressed.
+
+[GFX.MOUSEX]
+Syntax: GFX.MOUSEX() -> number
+Description: Returns the current mouse x coordinate.
+
+[GFX.MOUSEY]
+Syntax: GFX.MOUSEY() -> number
+Description: Returns the current mouse y coordinate.
+
+[GFX.PLOT_POINTS]
+Syntax: GFX.PLOT_POINTS(xs, ys, [rgb])
+Description: Fast-plots many pixels from parallel x and y arrays, optionally colored by a single [r,g,b], a flat per-pixel rgb stream, or the current draw color.
+
+[GFX.PLOT_POINTS_TEX]
+Syntax: GFX.PLOT_POINTS_TEX(xs, ys, rgb_lut, [bg_rgb])
+Description: Scatters many colored pixels into a streaming texture (with optional background fill) and uploads it in a single GPU call.
+
+[GFX.POLLEVENT]
+Syntax: GFX.POLLEVENT() -> string
+Description: Polls one pending window event and returns it as a string such as "QUIT", "KEYDOWN:Name", "MOUSEDOWN:n" or "NONE".
+
+[GFX.SAVE_IMAGE]
+Syntax: GFX.SAVE_IMAGE(id, filename$)
+Description: Saves a loaded (and possibly modified) image to a PNG file, preserving transparency.
+
+[GFX.SAVE_SCREENSHOT]
+Syntax: GFX.SAVE_SCREENSHOT(file$, [x], [y], [w], [h])
+Description: Saves the current screen, or a given rectangular region, to a PNG file.
+
+[GFX.TEXTSIZE]
+Syntax: GFX.TEXTSIZE(text$) -> [w,h]
+Description: Returns the pixel [width, height] the given text would occupy in the current font.
+
+[GFX.TICKS]
+Syntax: GFX.TICKS() -> number
+Description: Returns the number of milliseconds since the graphics system started.
+
 [GOTO]
 Syntax: GOTO label
 Description: Unconditionally jumps program execution to a specified label:.
@@ -890,6 +1070,34 @@ Description: Buckets elements into a map keyed by key_fn(elem) coerced to string
 Syntax: AGG(keys, values, fn@)
 Description: Group-and-reduce in one O(n) pass (APL key). Groups values by the matching keys entry, applies fn to each group's value-array, returns [[key, fn(group)], ...] in first-seen order with key type preserved. E.g. AGG(months, nights, LAMBDA g -> SUM(g)). Interpreter only.
 
+[GUI.AVAIL_HEIGHT]
+Syntax: GUI.AVAIL_HEIGHT() -> number
+Description: Returns the remaining available content height in the current ImGui window or child region.
+
+[GUI.AVAIL_WIDTH]
+Syntax: GUI.AVAIL_WIDTH() -> number
+Description: Returns the remaining available content width in the current ImGui window or child region.
+
+[GUI.POP_STYLE_COLOR]
+Syntax: GUI.POP_STYLE_COLOR([count])
+Description: Pops the given number of pushed style colors (default 1) off the ImGui style stack.
+
+[GUI.PUSH_STYLE_COLOR]
+Syntax: GUI.PUSH_STYLE_COLOR(style_idx, rgba)
+Description: Pushes a style color (given as an [r,g,b,a] 0-255 array) onto the ImGui style stack for the given style index.
+
+[GUI.TEXT_WRAPPED]
+Syntax: GUI.TEXT_WRAPPED(text$)
+Description: Draws word-wrapped text that wraps at the right edge of the current ImGui window or child.
+
+[GUI.WINDOW_HEIGHT]
+Syntax: GUI.WINDOW_HEIGHT() -> number
+Description: Returns the full height of the current ImGui window including title and padding.
+
+[GUI.WINDOW_WIDTH]
+Syntax: GUI.WINDOW_WIDTH() -> number
+Description: Returns the full width of the current ImGui window including title and padding.
+
 [HEX$]
 Syntax: HEX$(n) -> string$
 Description: Hexadecimal string representation of integer n.
@@ -901,6 +1109,22 @@ Description: Builds a histogram with the given number of bins. Returns [counts, 
 [HOUR]
 Syntax: HOUR(date) -> number
 Description: Extracts the hour (0-23) from a DateTime.
+
+[HTTP.GET_ASYNC$]
+Syntax: HTTP.GET_ASYNC$(url$) -> task_id
+Description: Starts an asynchronous HTTP GET request and returns a task id whose result is the response body.
+
+[HTTP.POST_ASYNC$]
+Syntax: HTTP.POST_ASYNC$(url$, data$, [content_type$]) -> task_id
+Description: Starts an asynchronous HTTP POST request (default content type application/json) and returns a task id whose result is the response body.
+
+[HTTP.PUT_ASYNC$]
+Syntax: HTTP.PUT_ASYNC$(url$, data$, [content_type$]) -> task_id
+Description: Starts an asynchronous HTTP PUT request (default content type application/json) and returns a task id whose result is the response body.
+
+[HTTP.SERVER.WAIT]
+Syntax: HTTP.SERVER.WAIT()
+Description: Blocks until the running HTTP server stops, polling every 150 ms.
 
 [IIF]
 Syntax: IIF(condition, value_if_true, value_if_false) -> value or array
@@ -942,6 +1166,18 @@ Description: TRUE if v is a number (integer or double).
 Syntax: ISSTR(v) -> bool
 Description: TRUE if v is a string.
 
+[JDB.CHECK$]
+Syntax: JDB.CHECK$(code$) -> string
+Description: Lexes and parses a code snippet without executing it, returning an empty string if syntactically valid or the error message otherwise.
+
+[JDB.GLOBAL_GET]
+Syntax: JDB.GLOBAL_GET(name$) -> value
+Description: Returns the value of a global variable by case-insensitive name, or NONE if the name is unknown.
+
+[JDB.GLOBAL_SET]
+Syntax: JDB.GLOBAL_SET(name$, value)
+Description: Writes a value to a global variable by case-insensitive name, allocating the slot if it is new.
+
 [LINSPACE]
 Syntax: LINSPACE(start, stop, n) -> vector
 Description: Returns n evenly spaced samples over [start, stop] inclusive.
@@ -969,6 +1205,26 @@ Description: Octal string representation of integer n.
 [ONES]
 Syntax: ONES(shape_vector) -> array
 Description: Creates an array of the given shape filled with ones.
+
+[OS.GETOS$]
+Syntax: OS.GETOS$() -> string
+Description: Returns the host operating system name: "WINDOWS", "MACOS" or "LINUX".
+
+[PARTICLE.CLEAR]
+Syntax: PARTICLE.CLEAR()
+Description: Removes all active particles.
+
+[PARTICLE.COUNT]
+Syntax: PARTICLE.COUNT() -> number
+Description: Returns the number of currently active particles.
+
+[PARTICLE.DRAW]
+Syntax: PARTICLE.DRAW([cam_x], [cam_y])
+Description: Draws all active particles with life-based fade, using the global camera offset when none is given.
+
+[PARTICLE.EMIT]
+Syntax: PARTICLE.EMIT(x, y, count, r, g, b, [speed], [life], [gravity], [size])
+Description: Emits a burst of count particles at a position with the given color and optional speed, lifetime, gravity and size.
 
 [POP]
 Syntax: POP(array) -> value
@@ -1026,9 +1282,45 @@ Description: Hyperbolic sine. Vectorizes element-wise over arrays.
 Syntax: SORT(array, [descending]) -> array
 Description: Returns a new 1D array sorted ascending, or descending when the flag is TRUE. Numbers compare numerically, strings lexicographically.
 
+[SOUND.DEBUG]
+Syntax: SOUND.DEBUG() -> object
+Description: Returns a diagnostic object reporting sound init state, active voice count and other audio engine internals.
+
+[SOUND.DELAYSEND]
+Syntax: SOUND.DELAYSEND(track, amount)
+Description: Sets how much of a track's signal is sent to the global delay bus.
+
+[SOUND.GET_BUS_WAVE]
+Syntax: SOUND.GET_BUS_WAVE(bus) -> array
+Description: Returns the waveform sample array of an effect bus (0 = reverb bus, otherwise delay bus).
+
+[SOUND.NOTE]
+Syntax: SOUND.NOTE(pattern$, [loop], [debug])
+Description: Parses and schedules a note pattern string into the sequencer, optionally looping it and printing debug info about the parsed tracks.
+
+[SOUND.REVERBSEND]
+Syntax: SOUND.REVERBSEND(track, amount)
+Description: Sets how much of a track's signal is sent to the global reverb bus.
+
+[SOUND.SIDECHAIN]
+Syntax: SOUND.SIDECHAIN(target_track, source_track, amount)
+Description: Sidechains a target track's level to a source track by the given amount.
+
+[SOUND.STATS]
+Syntax: SOUND.STATS() -> string
+Description: Returns and resets a debug string of voice trigger and allocation-failure counters.
+
+[SOUND.UNISON]
+Syntax: SOUND.UNISON(track, voices, detune, spread)
+Description: Configures unison on a track with the given voice count (clamped 1-16), detune and stereo spread.
+
 [SPACE$]
 Syntax: SPACE$(n) -> string$
 Description: Returns a string of n spaces, handy for padding.
+
+[SPRITE.ALPHA]
+Syntax: SPRITE.ALPHA(id, alpha)
+Description: Sets the per-sprite alpha transparency (0-255, clamped) of the given sprite instance.
 
 [SPRITE.ANIM]
 Syntax: SPRITE.ANIM(id, name$, frames_array, fps, [loop])
@@ -1046,9 +1338,17 @@ Description: Returns the id of the first visible sprite in group$ whose bounding
 Syntax: SPRITE.CREATE(w, h) -> sprite_id
 Description: Allocates a new transparent sprite texture of size w x h (1..4096) and returns its sprite id. Fill with SPRITE.SETPIXEL or SPRITE.SETBUFFER, persist via SPRITE.SAVE.
 
+[SPRITE.DRAW]
+Syntax: SPRITE.DRAW(id)
+Description: Draws the given sprite instance to the screen if it is visible.
+
 [SPRITE.FLIP]
 Syntax: SPRITE.FLIP(id, flip_h, [flip_v])
 Description: Sets the horizontal (and optional vertical) mirror state of a sprite.
+
+[SPRITE.FRAME]
+Syntax: SPRITE.FRAME(id, frame_index)
+Description: Manually sets a sprite to a fixed frame, stopping any playing animation.
 
 [SPRITE.GET_VX]
 Syntax: SPRITE.GET_VX(id) -> number
@@ -1058,13 +1358,49 @@ Description: Returns the sprite's current horizontal velocity (pixels per second
 Syntax: SPRITE.GET_VY(id) -> number
 Description: Returns the sprite's current vertical velocity (pixels per second).
 
+[SPRITE.GRAVITY]
+Syntax: SPRITE.GRAVITY(id, gravity)
+Description: Sets the per-second vertical gravity acceleration applied to a sprite during SPRITE.UPDATE.
+
 [SPRITE.GROUP]
 Syntax: SPRITE.GROUP(id, group_name$)
 Description: Assigns a sprite to a named collision group, used by SPRITE.COLLISIONS and SPRITE.COLLISION_FIRST.
 
+[SPRITE.HEIGHT]
+Syntax: SPRITE.HEIGHT(id) -> number
+Description: Returns the scaled pixel height of the sprite instance.
+
+[SPRITE.LAND]
+Syntax: SPRITE.LAND(id, ground_y)
+Description: Snaps a sprite to rest on a ground y-line, zeroing its vertical velocity and flagging it on-ground.
+
+[SPRITE.ON_GROUND]
+Syntax: SPRITE.ON_GROUND(id) -> boolean
+Description: Returns TRUE if the sprite was flagged as resting on the ground by SPRITE.LAND.
+
 [SPRITE.PLAY]
 Syntax: SPRITE.PLAY(id, name$)
 Description: Starts playing the named animation clip (defined via SPRITE.ANIM) on a sprite. Raises an error if the clip name is unknown.
+
+[SPRITE.PLAYING]
+Syntax: SPRITE.PLAYING(id) -> boolean
+Description: Returns TRUE if the sprite's animation is currently playing.
+
+[SPRITE.POS]
+Syntax: SPRITE.POS(id, x, y)
+Description: Sets the absolute position of the given sprite instance.
+
+[SPRITE.ROTATE]
+Syntax: SPRITE.ROTATE(id, angle)
+Description: Sets the rotation angle (degrees) of the given sprite instance.
+
+[SPRITE.SCALE]
+Syntax: SPRITE.SCALE(id, scale_x, [scale_y])
+Description: Sets the horizontal and vertical scale of a sprite; scale_y defaults to scale_x when omitted.
+
+[SPRITE.SET_ORIGIN]
+Syntax: SPRITE.SET_ORIGIN(id, origin_x, origin_y)
+Description: Sets the rotation/scale origin point of the given sprite instance.
 
 [SPRITE.STOP]
 Syntax: SPRITE.STOP(id)
@@ -1073,6 +1409,18 @@ Description: Stops the sprite's current animation playback.
 [SPRITE.VELOCITY]
 Syntax: SPRITE.VELOCITY(id, vx, vy)
 Description: Sets a sprite's velocity in pixels per second. SPRITE.UPDATE then advances its position; read back with SPRITE.GET_VX / SPRITE.GET_VY.
+
+[SPRITE.VISIBLE]
+Syntax: SPRITE.VISIBLE(id, visible)
+Description: Sets whether the given sprite instance is drawn.
+
+[SPRITE.WIDTH]
+Syntax: SPRITE.WIDTH(id) -> number
+Description: Returns the scaled pixel width of the sprite instance.
+
+[SPRITE.ZORDER]
+Syntax: SPRITE.ZORDER(id, z)
+Description: Sets the draw z-order of the sprite, controlling its layering in SPRITE.DRAW_ALL.
 
 [STARTSWITH]
 Syntax: STARTSWITH(str$, prefix$) -> bool
@@ -2398,9 +2746,65 @@ Description: Manually raises a user-defined error that can be caught by a TRY...
 Syntax: TICK()
 Description: Returns the number of milliseconds elapsed since the program started.
 
+[TILED.COLLIDES]
+Syntax: TILED.COLLIDES(sprite_id, name$, layer$) -> boolean
+Description: Returns TRUE if the sprite's bounding box collides with a non-empty tile in the named Tiled map layer.
+
+[TILED.DRAW]
+Syntax: TILED.DRAW(name$, [cam_x], [cam_y])
+Description: Draws all layers of a loaded Tiled map in order, using the global camera offset when none is given.
+
+[TILED.DRAW_LAYER]
+Syntax: TILED.DRAW_LAYER(name$, layer$, [cam_x], [cam_y])
+Description: Draws a single named layer of a loaded Tiled map, using the global camera offset when none is given.
+
+[TILED.FREE]
+Syntax: TILED.FREE(name$)
+Description: Frees a loaded Tiled map and its resources.
+
+[TILED.LAYERS$]
+Syntax: TILED.LAYERS$(name$) -> array
+Description: Returns an array of the layer name strings of a Tiled map in draw order.
+
+[TILED.LOAD]
+Syntax: TILED.LOAD(name$, filename$) -> boolean
+Description: Loads a Tiled (.tmx) map file under the given name and returns TRUE on success.
+
+[TILED.OBJECTS]
+Syntax: TILED.OBJECTS(name$, layer$) -> array
+Description: Returns an array of objects from a Tiled object layer, each with id, name, type, x, y, width, height, gid and any custom properties.
+
+[TILED.PROPERTIES]
+Syntax: TILED.PROPERTIES(name$) -> object
+Description: Returns an object of the map-level custom properties of a Tiled map.
+
+[TILED.SIZE]
+Syntax: TILED.SIZE(name$) -> [w,h]
+Description: Returns the [pixel_width, pixel_height] of a Tiled map.
+
+[TILED.TILE_AT]
+Syntax: TILED.TILE_AT(name$, layer$, pixel_x, pixel_y) -> gid
+Description: Returns the tile gid at a pixel position in a Tiled map layer (0 = empty).
+
+[TILED.TILE_SIZE]
+Syntax: TILED.TILE_SIZE(name$) -> [tile_w,tile_h]
+Description: Returns the [tile_width, tile_height] of a Tiled map.
+
+[TILED.UPDATE]
+Syntax: TILED.UPDATE(dt)
+Description: Advances the animated tiles of all loaded Tiled maps by dt seconds.
+
 [TILEMAP.COLLIDES]
 Syntax: TILEMAP.COLLIDES(sprite_id, "map_name", "layer_name")
 Description: Checks if a sprite is colliding with any solid tile on a given map layer.
+
+[TILEMAP.CREATE]
+Syntax: TILEMAP.CREATE(name$, tileset_image_id, data, tile_w, tile_h)
+Description: Creates a named tilemap from a 2D array of 1-based tile ids drawn from a tileset image (0 = empty).
+
+[TILEMAP.DRAW]
+Syntax: TILEMAP.DRAW(name$, [cam_x], [cam_y])
+Description: Draws a named tilemap, using the global camera offset when none is given.
 
 [TILEMAP.DRAW_DEBUG_COLLISIONS]
 Syntax: TILEMAP.DRAW_DEBUG_COLLISIONS(sprite_id, "map_name", "layer_name")
@@ -2409,6 +2813,10 @@ Description: Draws debug rectangles around collision tiles near a sprite.
 [TILEMAP.DRAW_LAYER]
 Syntax: TILEMAP.DRAW_LAYER("map_name", "layer_name", [world_x, world_y])
 Description: Draws a specific tile layer from a loaded Tiled map.
+
+[TILEMAP.GET]
+Syntax: TILEMAP.GET(name$, col, row) -> tile_id
+Description: Returns the tile id at the given column and row of a tilemap, or 0 if out of range.
 
 [TILEMAP.GET_OBJECTS]
 Syntax: TILEMAP.GET_OBJECTS("map_name", "object_type")
@@ -2421,6 +2829,18 @@ Description: Returns the tile ID at a specific coordinate on a map layer.
 [TILEMAP.LOAD]
 Syntax: TILEMAP.LOAD("map_name", "filename.json")
 Description: Loads a map file exported from the Tiled editor.
+
+[TILEMAP.SET]
+Syntax: TILEMAP.SET(name$, col, row, tile_id)
+Description: Sets the tile id at the given column and row of a tilemap.
+
+[TILEMAP.SIZE]
+Syntax: TILEMAP.SIZE(name$) -> [cols,rows]
+Description: Returns the [columns, rows] dimensions of a tilemap.
+
+[TILEMAP.TILE_AT]
+Syntax: TILEMAP.TILE_AT(name$, pixel_x, pixel_y) -> tile_id
+Description: Returns the tile id at a pixel position in a tilemap, or 0 if out of range.
 
 [TIME$]
 Syntax: TIME$
