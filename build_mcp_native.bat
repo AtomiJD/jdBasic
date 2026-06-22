@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM build_mcp_native.bat — MCP-native release bundle for Windows.
+REM build_mcp_native.bat - MCP-native release bundle for Windows.
 REM Wraps build.bat MCPSERVER HTTP NATIVEC RELEASE, then assembles a
 REM redistributable zip in release\. Includes the LLVM-18 native
 REM backend so jdb_run_native -c can produce EXEs out of the box.
@@ -16,11 +16,11 @@ set ZIP=release\%BUNDLE%.zip
 echo === build_mcp_native: compile EXE (MCPSERVER HTTP GFX IMGUI NATIVEC RELEASE) ===
 call .\build.bat MCPSERVER HTTP GFX IMGUI NATIVEC RELEASE
 if errorlevel 1 (
-    echo EXE BUILD FAILED — bundle not assembled.
+    echo EXE BUILD FAILED - bundle not assembled.
     exit /b 1
 )
 if not exist build\jdBasic.exe (
-    echo build\jdBasic.exe missing — bundle not assembled.
+    echo build\jdBasic.exe missing - bundle not assembled.
     exit /b 1
 )
 
@@ -28,11 +28,11 @@ echo.
 echo === build_mcp_native: build runtime DLL (GFX IMGUI) ===
 call .\build_rt.bat GFX IMGUI
 if errorlevel 1 (
-    echo RT BUILD FAILED — bundle not assembled.
+    echo RT BUILD FAILED - bundle not assembled.
     exit /b 1
 )
 if not exist build\jdbrt.dll (
-    echo build\jdbrt.dll missing after build_rt — bundle not assembled.
+    echo build\jdbrt.dll missing after build_rt - bundle not assembled.
     exit /b 1
 )
 
@@ -68,6 +68,14 @@ copy /Y LICENSE.txt        "%OUT%\"     >nul
 copy /Y doc\MCP.md         "%OUT%\doc\" >nul
 copy /Y doc\languages.md   "%OUT%\doc\" >nul
 
+REM Ship help.txt so the in-REPL HELP command and --dump-help work next to the exe.
+copy /Y help.txt "%OUT%\" >nul
+
+REM App-local VC++ runtime so the bundle runs on a clean Windows without the redist installed.
+copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
+copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
+copy /Y "%SystemRoot%\System32\msvcp140.dll"       "%OUT%\" >nul
+
 REM End-user README inside the bundle.
 > "%OUT%\README.txt" echo jdBasic MCP-native build (Windows x64)
 >>"%OUT%\README.txt" echo.
@@ -98,7 +106,7 @@ REM End-user README inside the bundle.
 >>"%OUT%\README.txt" echo         STL helpers introduced in MSVC v14.40.
 >>"%OUT%\README.txt" echo       - Windows SDK 10 ^(any recent version^)
 >>"%OUT%\README.txt" echo     The MCP server itself ^(jdb_eval / jdb_doc / etc.^)
->>"%OUT%\README.txt" echo     does NOT need MSVC — only the -c compile path does.
+>>"%OUT%\README.txt" echo     does NOT need MSVC - only the -c compile path does.
 >>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo doc\languages.md is read by jdb_doc at runtime;
 >>"%OUT%\README.txt" echo it's looked up next to the EXE first, so no "cwd"

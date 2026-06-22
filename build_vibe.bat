@@ -49,6 +49,14 @@ copy /Y LICENSE.txt                "%OUT%\"     >nul
 copy /Y doc\MCP.md                 "%OUT%\doc\" >nul
 copy /Y doc\languages.md           "%OUT%\doc\" >nul
 
+REM Ship help.txt so the in-REPL HELP command and --dump-help work next to the exe.
+copy /Y help.txt "%OUT%\" >nul
+
+REM App-local VC++ runtime so the bundle runs on a clean Windows without the redist installed.
+copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
+copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
+copy /Y "%SystemRoot%\System32\msvcp140.dll"       "%OUT%\" >nul
+
 REM ── BUILD_INFO.txt: stamp the current build number + date ──
 set /p BNUM=<build_number.txt
 set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%

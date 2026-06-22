@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM build_mcp.bat — Core MCP release bundle for Windows.
+REM build_mcp.bat - Core MCP release bundle for Windows.
 REM Wraps build.bat MCPSERVER HTTP RELEASE, then assembles a redistributable
 REM zip in release\. Full build (NATIVEC/GFX/IMGUI) uses build.bat directly.
 
@@ -15,11 +15,11 @@ set ZIP=release\%BUNDLE%.zip
 echo === build_mcp: compile (MCPSERVER HTTP RELEASE) ===
 call .\build.bat MCPSERVER HTTP RELEASE
 if errorlevel 1 (
-    echo BUILD FAILED — bundle not assembled.
+    echo BUILD FAILED - bundle not assembled.
     exit /b 1
 )
 if not exist build\jdBasic.exe (
-    echo build\jdBasic.exe missing — bundle not assembled.
+    echo build\jdBasic.exe missing - bundle not assembled.
     exit /b 1
 )
 
@@ -33,11 +33,19 @@ copy /Y build\libssl-3-x64.dll    "%OUT%\" >nul 2>&1
 copy /Y build\libcrypto-3-x64.dll "%OUT%\" >nul 2>&1
 copy /Y LICENSE.txt               "%OUT%\" >nul
 
-REM jdb_doc reads doc/languages.md relative to CWD — must ship inside the
+REM jdb_doc reads doc/languages.md relative to CWD - must ship inside the
 REM bundle, layout-preserving, or jdb_doc returns "Cannot read doc/languages.md".
 mkdir "%OUT%\doc"
 copy /Y doc\MCP.md       "%OUT%\doc\" >nul
 copy /Y doc\languages.md "%OUT%\doc\" >nul
+
+REM Ship help.txt so the in-REPL HELP command and --dump-help work next to the exe.
+copy /Y help.txt "%OUT%\" >nul
+
+REM App-local VC++ runtime so the bundle runs on a clean Windows without the redist installed.
+copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
+copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
+copy /Y "%SystemRoot%\System32\msvcp140.dll"       "%OUT%\" >nul
 
 REM End-user README inside the bundle (kept short on purpose).
 > "%OUT%\README.txt" echo jdBasic Core (MCP server build)
@@ -48,7 +56,7 @@ REM End-user README inside the bundle (kept short on purpose).
 >>"%OUT%\README.txt" echo Run as MCP HTTP server (loopback only by default):
 >>"%OUT%\README.txt" echo     jdBasic.exe --mcp-http 7321
 >>"%OUT%\README.txt" echo.
->>"%OUT%\README.txt" echo doc\languages.md ships next to the EXE on purpose —
+>>"%OUT%\README.txt" echo doc\languages.md ships next to the EXE on purpose -
 >>"%OUT%\README.txt" echo jdb_doc looks there first regardless of working dir,
 >>"%OUT%\README.txt" echo so no "cwd" config is required.
 >>"%OUT%\README.txt" echo.
