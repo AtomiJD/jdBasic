@@ -71,9 +71,34 @@ kissfft
   Copyright: (c) 2003-2010 Mark Borgerding. All rights reserved.
   Upstream:  https://github.com/mborgerding/kissfft
 
-Components such as the llama.cpp / ggml LLM backend, ONNX Runtime, SQLite, and
-FTXUI are NOT included in these public Windows release bundles (they are only
-present in builds compiled with the corresponding feature flags).
+---------------------------------------------------------------------------
+3. Optional components (present only in feature-flag builds)
+---------------------------------------------------------------------------
+
+The following are not part of the standard core / mcp-native / vibe-game-pack
+bundles. They are compiled in only when jdBasic is built with the matching
+feature flag (LLM, ONNX, SQLITE, FTXUI). Their licenses are listed here for
+completeness and to cover source builds and any specialised distributions.
+
+llama.cpp / ggml   (build flag: LLM)
+  License:   MIT License
+  Copyright: (c) 2023-2024 The ggml authors
+  Upstream:  https://github.com/ggml-org/llama.cpp
+
+ONNX Runtime   (build flag: ONNX)
+  License:   MIT License
+  Copyright: (c) Microsoft Corporation
+  Upstream:  https://github.com/microsoft/onnxruntime
+
+SQLite   (build flag: SQLITE)
+  License:   Public Domain (no license required)
+  Copyright: The authors disclaim copyright to the source code.
+  Upstream:  https://www.sqlite.org/
+
+FTXUI   (build flag: FTXUI)
+  License:   MIT License
+  Copyright: (c) 2019 Arthur Sonzogni
+  Upstream:  https://github.com/ArthurSonzogni/FTXUI
 
 ===========================================================================
                               LICENSE TEXTS
@@ -138,7 +163,7 @@ Apache License 2.0   (applies to: OpenSSL, LLVM [with LLVM-exception])
    LLVM-exception (applies to LLVM only): see https://llvm.org/LICENSE.txt
 
 ---------------------------------------------------------------------------
-MIT License   (applies to: Dear ImGui)
+MIT License   (applies to: Dear ImGui, llama.cpp/ggml, ONNX Runtime, FTXUI)
 ---------------------------------------------------------------------------
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -216,3 +241,18 @@ the upstream project at https://eigen.tuxfamily.org/. As permitted by MPL-2.0
 Section 3.2, the Covered Software is distributed in Executable Form as part of
 a Larger Work (jdBasic) under jdBasic's own MIT terms, while Eigen itself
 remains under the MPL-2.0.
+
+---------------------------------------------------------------------------
+Public Domain Dedication   (applies to: SQLite)
+---------------------------------------------------------------------------
+
+SQLite is in the Public Domain. The authors have dedicated the source code to
+the public domain:
+
+   "The author disclaims copyright to this source code. In place of a legal
+    notice, here is a blessing:
+       May you do good and not evil.
+       May you find forgiveness for yourself and forgive others.
+       May you share freely, never taking more than you give."
+
+See https://www.sqlite.org/copyright.html for details.
