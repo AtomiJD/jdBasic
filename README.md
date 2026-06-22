@@ -192,6 +192,14 @@ See [`embed/godot/README.md`](embed/godot/README.md) for the embed architecture 
 - **Online**: [jdbasic.org/live](https://jdbasic.org/live/index.html)
 - **Windows binaries**: see [Releases](https://github.com/AtomiJD/jdBasic/releases)
 
+> **First run on Windows.** The binaries are code-signed, but because the
+> certificate is new, Microsoft Defender SmartScreen may show a *"Windows
+> protected your PC - unrecognised app"* prompt the first time you run
+> `jdBasic.exe`. It is a reputation notice, **not** a malware detection - the
+> signed publisher is shown in the dialog. Click "More info" then "Run anyway".
+> To skip it, right-click the downloaded `.zip` -> Properties -> tick
+> **Unblock** before extracting.
+
 ### Build it from source
 - See **[doc/BUILD.md](doc/BUILD.md)** for the full build guide (prerequisites, third-party libraries, feature flags, packaging)
 
