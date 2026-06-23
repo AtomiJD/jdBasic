@@ -16,7 +16,10 @@ INC="-Isrc -Ilibs/eigen -Ilibs/imgui -Ilibs/imgui/backends \
      -Ibridges/sqlitebridge"
 DEF="-DGFX -DIMGUI -DSQLITE"
 OPT="${OPT:--O0}"
-CXXFLAGS="-std=c++17 $OPT $DEF $INC $PORTS"
+# -fexceptions: the jdBasic runtime throws on errors (bad SAVE, type errors, ...).
+# Without it a throw aborts the whole module; with it our jdb_run try/catch
+# reports the error and the REPL keeps running.
+CXXFLAGS="-std=c++17 $OPT $DEF $INC $PORTS -fexceptions"
 
 CORE="src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
       src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
@@ -43,11 +46,21 @@ if [ -f src/wasm_av_stub.c ]; then
     STUB_OBJ="$OUT/wasm_av_stub.o"
 fi
 
+# Demo programs (LOAD/RUN from the in-browser MEMFS), embedded at the FS root.
+DEMOS="jdb/demos/apl/oneliners.jdb jdb/demos/turtle/turtle_fib.jdb \
+       jdb/demos/turtle/turtle_tree.jdb jdb/demos/games/minesweeper.jdb \
+       jdb/demos/games/tetris_game.jdb jdb/demos/games/snake_game.jdb"
+EMBED=""
+for d in $DEMOS; do
+    [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$d")"
+done
+
 EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sEXIT_RUNTIME=0 \
+         -fexceptions \
          -sENVIRONMENT=web,node \
          -sMODULARIZE=1 -sEXPORT_NAME=createJdBasic \
          -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS'] \
-         ${LINKEXTRA:-}"
+         $EMBED ${LINKEXTRA:-}"
 
 emcc $CXXFLAGS $EMFLAGS \
   $CORE $GFX $IMGUI $SQL $ENTRY "$OUT/sqlite3.o" $STUB_OBJ \

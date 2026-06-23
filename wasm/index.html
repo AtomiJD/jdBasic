@@ -109,6 +109,36 @@
     }
     function hlProgram(src){ return src.split('\n').map(hlLine).join('\r\n'); }
 
+    // ---- LOAD / SAVE / DIR over the in-browser MEMFS (operate on the editor
+    //      program, so they stay consistent with RUN / EDIT / LIST) ----
+    function fnameOf(cmd){ const m = cmd.match(/^\w+\s+"?([^"]+?)"?\s*$/); return m ? m[1].trim() : ''; }
+    function listFiles(){
+      try {
+        const fs = Mod.FS.readdir('/').filter(f=>/\.(jdb|bas)$/i.test(f)).sort();
+        term.write('\r\n\x1b[2mprograms (LOAD "name" then RUN):\x1b[0m\r\n');
+        if (!fs.length) term.write('  (none)\r\n');
+        fs.forEach(f=> term.write('  ' + f + '\r\n'));
+      } catch(e){ term.write('\r\n'+e); }
+      prompt();
+    }
+    function loadProgram(cmd){
+      let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: LOAD "name.jdb"'); prompt(); return; }
+      if(!n.startsWith('/')) n='/'+n;
+      try { program = Mod.FS.readFile(n,{encoding:'utf8'}); if(editor) editor.setValue(program);
+        term.write('\r\n\x1b[32mloaded '+n+' ('+program.split('\n').length+' lines). Type RUN or EDIT.\x1b[0m'); }
+      catch(e){ term.write('\r\n\x1b[31mcannot load '+n+'\x1b[0m'); }
+      prompt();
+    }
+    function saveProgram(cmd){
+      let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: SAVE "name.jdb"'); prompt(); return; }
+      if(!/\.\w+$/.test(n)) n += '.jdb';
+      if(!n.startsWith('/')) n='/'+n;
+      const src = editor ? editor.getValue() : program; program = src;
+      try { Mod.FS.writeFile(n, src); term.write('\r\n\x1b[32msaved '+n+'\x1b[0m'); }
+      catch(e){ term.write('\r\n\x1b[31mcannot save '+n+'\x1b[0m'); }
+      prompt();
+    }
+
     function setStatus(t,c){ const s=document.getElementById('status');
       s.textContent=t; s.style.color=c||'var(--mut)'; }
 
@@ -134,6 +164,9 @@
       if (up === 'RUN'){ api.runProgram(); return; }
       if (up === 'LIST'){ term.write('\r\n' + hlProgram(program)); prompt(); return; }
       if (up === 'CLS' || up === 'CLEAR'){ term.clear(); prompt(); return; }
+      if (up === 'DIR' || up === 'FILES'){ listFiles(); return; }
+      if (up.indexOf('LOAD') === 0){ loadProgram(t); return; }
+      if (up.indexOf('SAVE') === 0){ saveProgram(t); return; }
       runCode(t); prompt();
     }
     function runCode(code){
@@ -218,7 +251,7 @@
     createJdBasic({
       jdbTermWrite: (bytes)=> term.write(latin1(bytes)),
       onJdbReady: ()=>{ ready=true; setStatus('runtime ready','var(--green)');
-        term.write('\r\n\x1b[2m(type a command and Enter, or EDIT for the editor)\x1b[0m'); prompt(); }
+        term.write('\r\n\x1b[2mDIR lists demos . LOAD "name" . RUN . EDIT . LIST . CLS\x1b[0m'); prompt(); }
     }).then(M=>{ Mod=M; }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
 
     const api = {
