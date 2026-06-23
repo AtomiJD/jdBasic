@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <cctype>
 
+#ifdef __EMSCRIPTEN__
+typedef unsigned short u_short;  // emscripten musl lacks the BSD alias
+#endif
+
 #ifdef _WIN32
 #define NOMINMAX
 #include <winsock2.h>
