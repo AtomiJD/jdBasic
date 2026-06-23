@@ -41,6 +41,11 @@
   .ebar .t{color:var(--green);font-weight:700;margin-right:8px;}
   .ebar .hint{color:var(--mut);font-size:12px;}
   #editor{flex:1;min-height:0;}
+
+  #gfx-overlay{position:fixed;inset:0;display:none;flex-direction:column;background:#000;z-index:40;}
+  #gfx-overlay.open{display:flex;}
+  .gfxwrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  #canvas{background:#000;max-width:100%;max-height:100%;outline:none;image-rendering:pixelated;}
 </style>
 </head>
 <body>
@@ -65,6 +70,14 @@
       <span class="hint">Edit your program, then Run or Close back to the REPL</span>
     </div>
     <div id="editor"></div>
+  </div>
+
+  <div id="gfx-overlay">
+    <div class="ebar">
+      <span class="brand">jdBasic</span><span class="t">GRAPHICS</span>
+      <span class="hint">running... use the program's quit key (often Esc) to return to the REPL</span>
+    </div>
+    <div class="gfxwrap"><canvas id="canvas" tabindex="0"></canvas></div>
   </div>
   <input type="file" id="fileopen" accept=".jdb,.bas,.txt" hidden>
 
@@ -154,7 +167,7 @@
     window.addEventListener('resize', ()=>{ try{ fit.fit(); }catch(e){} });
     function prompt(){ term.write('\r\n' + PROMPT); }
 
-    function processLine(line){
+    async function processLine(line){
       const t = line.trim();
       if (t === ''){ prompt(); return; }
       if (history[history.length-1] !== t) history.push(t);
@@ -167,16 +180,21 @@
       if (up === 'DIR' || up === 'FILES'){ listFiles(); return; }
       if (up.indexOf('LOAD') === 0){ loadProgram(t); return; }
       if (up.indexOf('SAVE') === 0){ saveProgram(t); return; }
-      runCode(t); prompt();
+      await runCode(t); prompt();
     }
-    function runCode(code){
+    // {async:true} returns a promise that resolves when jdb_run FULLY returns -
+    // including after the Asyncify suspends of a SLEEP/graphics loop. running
+    // gates terminal input while a program (e.g. a game) owns the canvas.
+    async function runCode(code){
       if (!ready){ term.write('\r\nruntime not ready'); return; }
-      try { Mod.ccall('jdb_run','void',['string'],[code]); }
+      running = true;
+      try { await Mod.ccall('jdb_run','void',['string'],[code],{async:true}); }
       catch(e){ term.write('\x1b[31m'+e+'\x1b[0m'); }
+      running = false;
     }
 
     term.onData(d=>{
-      if (editorOpen) return;
+      if (editorOpen || running) return;
       if (d === '\x1b[A'){ // up
         if (hpos>0){ hpos--; replaceLine(history[hpos]||''); } return; }
       if (d === '\x1b[B'){ // down
@@ -247,9 +265,18 @@
     // CHR$ tables render as the classic glyphs (byte value = code point).
     function latin1(u8){ let s=''; for(let i=0;i<u8.length;i++) s+=String.fromCharCode(u8[i]); return s; }
 
+    // ---- graphics canvas (revealed when the program calls SCREEN) ----
+    function showGfx(){ document.getElementById('gfx-overlay').classList.add('open');
+      const c=document.getElementById('canvas'); setTimeout(()=>{ try{c.focus();}catch(e){} },20); }
+    function hideGfx(){ document.getElementById('gfx-overlay').classList.remove('open');
+      try{ term.focus(); }catch(e){} }
+
     // ---- wasm runtime ----
     createJdBasic({
+      canvas: document.getElementById('canvas'),
       jdbTermWrite: (bytes)=> term.write(latin1(bytes)),
+      onScreenOpen: (w,h)=>{ showGfx(); },
+      onScreenClose: ()=>{ hideGfx(); },
       onJdbReady: ()=>{ ready=true; setStatus('runtime ready','var(--green)');
         term.write('\r\n\x1b[2mDIR lists demos . LOAD "name" . RUN . EDIT . LIST . CLS\x1b[0m'); prompt(); }
     }).then(M=>{ Mod=M; }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
@@ -260,10 +287,10 @@
       closeEditor(){ if(editor) program=editor.getValue();
         document.getElementById('editor-overlay').classList.remove('open');
         editorOpen=false; term.focus(); term.write('\r\n\x1b[2m[editor closed]\x1b[0m'); prompt(); },
-      runFromEditor(){ if(editor) program=editor.getValue();
+      async runFromEditor(){ if(editor) program=editor.getValue();
         document.getElementById('editor-overlay').classList.remove('open'); editorOpen=false;
-        term.focus(); term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); runCode(program); prompt(); },
-      runProgram(){ term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); runCode(program); prompt(); },
+        term.focus(); term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); await runCode(program); prompt(); },
+      async runProgram(){ term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); await runCode(program); prompt(); },
       clearTerm(){ term.clear(); prompt(); },
       openFile(){ document.getElementById('fileopen').click(); },
       saveFile(){ const code = editor?editor.getValue():program;

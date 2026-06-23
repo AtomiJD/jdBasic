@@ -10,6 +10,9 @@
 #include "graphics.h"
 #include <SDL3/SDL.h>
 #endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
@@ -673,7 +676,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
         "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",
         "JSON.PARSE$", "JSON.STRINGIFY$",
-        "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
+        "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP", "YIELD",
         "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",
         "CLIPBOARD.SET", "CLIPBOARD.GET$",
         "SPLIT", "FORMAT$", "FRMV$", "INSERT$",
@@ -5837,12 +5840,32 @@ void VM::register_builtins() {
         int remaining = ms;
         while (remaining > 0) {
             int chunk = remaining > slice_ms ? slice_ms : remaining;
+#ifdef __EMSCRIPTEN__
+            // Asyncify: hand control back to the browser so the canvas paints
+            // and key/quit events are delivered, then resume here.
+            emscripten_sleep(chunk);
+#else
             std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+#endif
             remaining -= chunk;
             if (on_tick) on_tick();
             if (!event_handlers.empty()) event_poll();
             if (is_halted) break; // event handler may have run END
         }
+        return Value::make_none();
+    });
+
+    // YIELD: hand a frame to the host event loop. On the web this lets the
+    // browser paint the canvas and deliver input mid-run; on desktop it just
+    // pumps ticks/events so a tight loop stays responsive.
+    register_native("YIELD", 0, 0, [this](const std::vector<Value>& args) -> Value {
+        (void)args;
+        std::fflush(stdout);
+#ifdef __EMSCRIPTEN__
+        emscripten_sleep(0);
+#endif
+        if (on_tick) on_tick();
+        if (!event_handlers.empty()) event_poll();
         return Value::make_none();
     });
 

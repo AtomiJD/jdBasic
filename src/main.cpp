@@ -2312,6 +2312,11 @@ void jdb_run(const char* src) {
         std::cout << "\033[31mError: " << e.what() << "\033[0m\r\n";
         std::cout.flush();
     }
+#ifdef GFX
+    // Close the graphics window/canvas when the program ends (a no-op if the
+    // program never called SCREEN). Fires Module.onScreenClose on the page.
+    gfx_shutdown();
+#endif
 }
 
 // Drop all state and start fresh.

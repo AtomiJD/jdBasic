@@ -12,6 +12,9 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <SDL3_image/SDL_image.h>
 #include <SDL_mixer.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include <cmath>
 #include <map>
 #include <unordered_map>
@@ -485,7 +488,12 @@ static void cleanup_graphics();
 
 // ── Public shutdown ─────────────────────────────────────────────
 
-void gfx_shutdown() { cleanup_graphics(); }
+void gfx_shutdown() {
+    cleanup_graphics();
+#ifdef __EMSCRIPTEN__
+    EM_ASM({ if (Module.onScreenClose) Module.onScreenClose(); });
+#endif
+}
 
 // Cross-thread resume signal. The REPL's RESUME command sets this from
 // the main thread; the worker thread parked in gfx_console_pause_wait
@@ -682,6 +690,12 @@ void register_graphics_builtins(VM& vm) {
             if (win_h > dm->h) win_h = dm->h - 80;
         }
 
+#ifdef __EMSCRIPTEN__
+        // Reveal + size the page canvas BEFORE the window/GL context is created,
+        // so the GL context binds to a visible, correctly-sized canvas.
+        EM_ASM({ if (Module.onScreenOpen) Module.onScreenOpen($0, $1); }, win_w, win_h);
+#endif
+
         g_window = SDL_CreateWindow(title.c_str(), win_w, win_h, SDL_WINDOW_RESIZABLE);
         if (!g_window)
             throw jdError(ErrCode::RUNTIME_ERROR,
@@ -743,6 +757,12 @@ void register_graphics_builtins(VM& vm) {
         gui_render(g_renderer);
 #endif
         SDL_RenderPresent(g_renderer);
+#ifdef __EMSCRIPTEN__
+        // Hand a turn to the browser so it composites the freshly presented
+        // frame to the canvas. A tight draw/SCREENFLIP loop with no SLEEP would
+        // otherwise never let the page paint or deliver input.
+        emscripten_sleep(0);
+#endif
 #ifdef IMGUI
         gui_new_frame();
 #endif
