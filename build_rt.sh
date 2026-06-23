@@ -155,7 +155,9 @@ FLAGS_HASH=$(echo "$CXX $CXXFLAGS" | sha1sum | cut -c1-12)
 STAMP="build/obj_pic/.rtflags-$FLAGS_HASH"
 if [ ! -f "$STAMP" ]; then
     rm -f build/obj_pic/.rtflags-* 2>/dev/null
-    rm -f build/obj_pic/*.o 2>/dev/null
+    # sqlite3.o is a C object built with `cc` (independent of CXX/CXXFLAGS) and
+    # compiled one-time earlier; deleting it here breaks the first SQLITE .so build.
+    find build/obj_pic -maxdepth 1 -name '*.o' ! -name 'sqlite3.o' -delete 2>/dev/null
     touch "$STAMP"
 fi
 
