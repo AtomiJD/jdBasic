@@ -1,0 +1,19 @@
+[Unit]
+Description=jdTrakr ticket board
+After=network.target
+
+[Service]
+Type=simple
+User=jdtrakr
+Group=jdtrakr
+WorkingDirectory=/opt/jdtrakr
+ExecStart=/opt/jdtrakr/jdBasic /opt/jdtrakr/jdtrakr.jdb
+Restart=on-failure
+RestartSec=3
+# jdtrakr.db is created and kept in WorkingDirectory; back that one file up.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
