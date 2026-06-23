@@ -261,7 +261,10 @@ FLAGS_HASH=$(echo "$CXX $CXXFLAGS" | sha1sum | cut -c1-12)
 STAMP="build/obj/.flags-$FLAGS_HASH"
 if [ ! -f "$STAMP" ]; then
     rm -f build/obj/.flags-* 2>/dev/null
-    rm -f build/obj/*.o 2>/dev/null
+    # sqlite3.o is a C object built with `cc` (independent of CXX/CXXFLAGS), so a
+    # C++ flag change must not delete it - it is compiled one-time earlier and
+    # referenced by the link. Wiping it here breaks the first SQLITE build.
+    find build/obj -maxdepth 1 -name '*.o' ! -name 'sqlite3.o' -delete 2>/dev/null
     touch "$STAMP"
 fi
 
