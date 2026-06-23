@@ -44,10 +44,12 @@ if [ -f src/wasm_av_stub.c ]; then
 fi
 
 EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sEXIT_RUNTIME=0 \
+         -sENVIRONMENT=web,node \
+         -sMODULARIZE=1 -sEXPORT_NAME=createJdBasic \
          -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS'] \
          ${LINKEXTRA:-}"
 
 emcc $CXXFLAGS $EMFLAGS \
   $CORE $GFX $IMGUI $SQL $ENTRY "$OUT/sqlite3.o" $STUB_OBJ \
-  -o "$OUT/index.html"
-echo "BUILD OK: $OUT/index.{html,js,wasm}"
+  -o "$OUT/jdbasic.js"
+echo "BUILD OK: $OUT/jdbasic.{js,wasm}  (factory: createJdBasic)"

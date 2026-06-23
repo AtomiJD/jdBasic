@@ -1558,6 +1558,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
     }
 }
 
+#ifndef __EMSCRIPTEN__
 int main(int argc, char* argv[]) {
     g_argc = argc; g_argv = argv;
 #if defined(_WIN32)
@@ -2259,3 +2260,55 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+#else  // __EMSCRIPTEN__ - browser entry for the WASM IDE
+
+#include <emscripten.h>
+
+// One persistent VM for the whole page session, so state (vars, FUNCs, the
+// SQLite handle, ...) survives across run / REPL calls - like the desktop REPL.
+static VM* g_wasm_vm = nullptr;
+
+static void wasm_init_vm() {
+    if (g_wasm_vm) { delete g_wasm_vm; g_wasm_vm = nullptr; }
+    g_wasm_vm = new VM();
+    setup_dynamic_code(*g_wasm_vm);
+    register_console_builtins(*g_wasm_vm, /*ansi_color=*/true);
+    static char arg0[] = "jdbasic";
+    static char* argv0[] = { arg0, nullptr };
+    set_os_args(*g_wasm_vm, 1, argv0);
+}
+
+extern "C" {
+
+// Run a chunk of jdBasic source on the persistent VM. Output goes to stdout,
+// which Emscripten routes to Module.print -> xterm. Errors print in red.
+EMSCRIPTEN_KEEPALIVE
+void jdb_run(const char* src) {
+    if (!g_wasm_vm) wasm_init_vm();
+    try {
+        run_on_vm(*g_wasm_vm, std::string(src ? src : ""));
+    } catch (const std::exception& e) {
+        std::cout << "\033[31mError: " << e.what() << "\033[0m\r\n";
+        std::cout.flush();
+    }
+}
+
+// Drop all state and start fresh.
+EMSCRIPTEN_KEEPALIVE
+void jdb_reset() {
+    wasm_init_vm();
+    std::cout << "Ready.\r\n";
+    std::cout.flush();
+}
+
+}  // extern "C"
+
+int main() {
+    wasm_init_vm();
+    std::cout << jdbasic_banner() << "\r\n";
+    std::cout.flush();
+    // Tell the page the runtime is ready to accept jdb_run calls.
+    EM_ASM({ if (typeof Module !== 'undefined' && Module.onJdbReady) Module.onJdbReady(); });
+    return 0;  // EXIT_RUNTIME=0 keeps the module alive for exported calls
+}
+#endif  // __EMSCRIPTEN__
