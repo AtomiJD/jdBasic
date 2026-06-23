@@ -56,7 +56,7 @@
 
   <div id="editor-overlay">
     <div class="ebar">
-      <span class="t">EDIT</span>
+      <span class="brand">jdBasic</span><span class="t">EDIT</span>
       <button class="run" onclick="ide.runFromEditor()">&#9654; Run (F5)</button>
       <button onclick="ide.openFile()">Open</button>
       <button onclick="ide.saveFile()">Save</button>
@@ -77,7 +77,7 @@
     let editor=null, term=null, fit=null, Mod=null, ready=false;
     let lineBuf='', editorOpen=false;
     const history=[]; let hpos=0;
-    const PROMPT='\x1b[38;2;0;255;65m]\x1b[0m ';
+    const PROMPT='\x1b[38;2;0;255;65m>\x1b[0m ';
     const SAMPLE =
       'PRINT "Hello from jdBasic!"\n' +
       'FOR i = 1 TO 5\n' +
@@ -85,13 +85,37 @@
       'NEXT i\n';
     let program = SAMPLE;
 
+    // jdBasic keywords - shared by the Monaco highlighter and the LIST colorizer.
+    const KEYWORDS = ['PRINT','FOR','TO','STEP','NEXT','IF','THEN','ELSE','ELSEIF','ENDIF','END',
+      'WHILE','WEND','DO','LOOP','UNTIL','FUNC','SUB','ENDFUNC','ENDSUB','RETURN','DIM','LET','AS',
+      'GOTO','GOSUB','EXIT','EXITFOR','EXITDO','EXITFUNC','CONTINUEFOR','CONTINUEDO','SELECT','CASE',
+      'SWITCH','DEFAULT','IMPORT','EXPORT','MODULE','AND','OR','NOT','XOR','MOD','ANDALSO','ORELSE',
+      'TRUE','FALSE','ON','CALL','STOP','RESUME','SLEEP','OPTION','TRY','CATCH','THROW','TYPE',
+      'ENDTYPE','EACH','IN','BY','REM','CONST','STATIC'];
+    const KW = new Set(KEYWORDS);
+    // ANSI colors so LIST output is highlighted like the editor.
+    const C = { kw:'\x1b[38;2;255;46;151m', str:'\x1b[38;2;0;229;255m',
+                com:'\x1b[38;2;95;174;111m', num:'\x1b[38;2;255;176;0m', rst:'\x1b[0m' };
+    function hlLine(line){
+      let out=''; const re=/("(?:[^"]*)")|('.*$)|([A-Za-z_][A-Za-z0-9_.$]*)|(\d+\.?\d*)|([\s\S])/g; let m;
+      while((m=re.exec(line))!==null){
+        if(m[1]) out+=C.str+m[1]+C.rst;
+        else if(m[2]){ out+=C.com+m[2]+C.rst; break; }
+        else if(m[3]) out+=(KW.has(m[3].toUpperCase())?C.kw+m[3]+C.rst:m[3]);
+        else if(m[4]) out+=C.num+m[4]+C.rst;
+        else out+=m[0];
+      }
+      return out;
+    }
+    function hlProgram(src){ return src.split('\n').map(hlLine).join('\r\n'); }
+
     function setStatus(t,c){ const s=document.getElementById('status');
       s.textContent=t; s.style.color=c||'var(--mut)'; }
 
     // ---- terminal ----
     term = new Terminal({
       fontFamily:"'Fira Code', monospace", fontSize:14, cursorBlink:true, convertEol:true,
-      theme:{ background:'#050805', foreground:'#d6ffe2', cursor:'#00FF41',
+      theme:{ background:'#050805', foreground:'#33ff6a', cursor:'#00FF41',
               green:'#00FF41', cyan:'#00e5ff', magenta:'#ff2e97', red:'#ff4141',
               yellow:'#ffb000', blue:'#adc7ff' }
     });
@@ -108,7 +132,7 @@
       const up = t.toUpperCase();
       if (up === 'EDIT'){ openEditor(); return; }
       if (up === 'RUN'){ api.runProgram(); return; }
-      if (up === 'LIST'){ term.write('\r\n' + program.replace(/\n/g,'\r\n')); prompt(); return; }
+      if (up === 'LIST'){ term.write('\r\n' + hlProgram(program)); prompt(); return; }
       if (up === 'CLS' || up === 'CLEAR'){ term.clear(); prompt(); return; }
       runCode(t); prompt();
     }
@@ -141,15 +165,36 @@
     // ---- monaco (the EDIT editor) ----
     require.config({ paths:{ vs:'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
     require(['vs/editor/editor.main'], function(){
+      monaco.languages.register({ id:'jdbasic' });
+      monaco.languages.setMonarchTokensProvider('jdbasic', {
+        ignoreCase:true, keywords:KEYWORDS,
+        tokenizer:{
+          root:[
+            [/'.*$/, 'comment'],
+            [/"/, { token:'string', next:'@str' }],
+            [/\b\d+(\.\d+)?\b/, 'number'],
+            [/[A-Za-z_][A-Za-z0-9_.]*\$?/, { cases:{ '@keywords':'keyword', '@default':'identifier' } }],
+            [/[-+*/\\^=<>:;,(){}\[\]]/, 'operator']
+          ],
+          str:[ [/[^"]+/, 'string'], [/"/, { token:'string', next:'@pop' }] ]
+        }
+      });
       monaco.editor.defineTheme('phosphor', {
         base:'vs-dark', inherit:true,
-        rules:[ {token:'string',foreground:'00e5ff'}, {token:'comment',foreground:'5fae6f'} ],
-        colors:{ 'editor.background':'#0a0e0c', 'editor.foreground':'#d6ffe2',
+        rules:[
+          {token:'keyword', foreground:'ff2e97', fontStyle:'bold'},
+          {token:'string', foreground:'00e5ff'},
+          {token:'comment', foreground:'5fae6f', fontStyle:'italic'},
+          {token:'number', foreground:'ffb000'},
+          {token:'operator', foreground:'5fae6f'},
+          {token:'identifier', foreground:'33ff6a'}
+        ],
+        colors:{ 'editor.background':'#0a0e0c', 'editor.foreground':'#33ff6a',
           'editorCursor.foreground':'#00FF41', 'editorLineNumber.foreground':'#2a5c35',
           'editor.lineHighlightBackground':'#0c1410' }
       });
       editor = monaco.editor.create(document.getElementById('editor'), {
-        value: program, language:'plaintext', theme:'phosphor',
+        value: program, language:'jdbasic', theme:'phosphor',
         fontFamily:"'Fira Code', monospace", fontSize:14, minimap:{enabled:false},
         scrollBeyondLastLine:false, automaticLayout:true, tabSize:4
       });
@@ -178,7 +223,7 @@
 
     const api = {
       openEditor,
-      eval(code){ runCode(code); prompt(); },
+      repl(line){ term.write(line + '\r\n'); processLine(line); },
       closeEditor(){ if(editor) program=editor.getValue();
         document.getElementById('editor-overlay').classList.remove('open');
         editorOpen=false; term.focus(); term.write('\r\n\x1b[2m[editor closed]\x1b[0m'); prompt(); },
