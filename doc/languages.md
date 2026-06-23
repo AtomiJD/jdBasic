@@ -1669,6 +1669,8 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.
 * **`HTTP.SERVER.ON_POST(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
 
+* **`HTTP.SERVER.ON_NOTFOUND(function_name$)`**: Registers a `jdBasic` function to render unmatched routes (HTTP 404). The function receives the request map and may return HTML (sent as `text/html` with status 404) or a rich-response map (`{__http_status, __http_body, __http_content_type, __http_headers}`). Wired through httplib's `set_error_handler`; it fires only for 404, so handler-set statuses like 401/500 keep their own output. Call it before `HTTP.SERVER.START`.
+
 ### Output capture
 
 These three natives redirect `PRINT`/all script output to an in-memory string buffer instead of letting it leak to stdout. Captures are stacked: each `OUTPUT.CAPTURE_BEGIN` saves the previous output handler so nested captures and host-installed routers (e.g. the Console workspace buffer) restore correctly.

@@ -45,6 +45,7 @@ static std::mutex g_server_vm_mutex;
 static VM* g_server_vm = nullptr;
 static std::unordered_map<std::string, std::string> g_get_handlers;  // path → func name
 static std::unordered_map<std::string, std::string> g_post_handlers;
+static std::string g_notfound_handler;  // optional jdBasic func for 404s ("" = none)
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -540,6 +541,16 @@ void register_http_builtins(VM& vm) {
         return Value::make_none();
     });
 
+    // Register a jdBasic function to render unmatched routes (HTTP 404). The
+    // handler receives the request map and may return HTML or a rich-response
+    // map ({__http_status, __http_body, ...}); it is wired via set_error_handler
+    // and only fires for 404 (other error statuses keep their handler output).
+    vm.register_native("HTTP.SERVER.ON_NOTFOUND", [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lock(g_server_mutex);
+        g_notfound_handler = args[0].as_string()->data;
+        return Value::make_none();
+    });
+
     vm.register_native("HTTP.SERVER.START", [&vm](const std::vector<Value>& args) -> Value {
         if (args.empty())
             throw std::runtime_error("HTTP.SERVER.START: port required");
@@ -619,6 +630,24 @@ void register_http_builtins(VM& vm) {
                               << "] ERROR: " << e.what() << std::endl;
                     res.status = 500;
                     res.set_content(std::string("Error: ") + e.what(), "text/plain");
+                }
+            });
+        }
+
+        // Custom 404: render unmatched routes through the jdBasic handler.
+        if (!g_notfound_handler.empty()) {
+            g_server->set_error_handler([](const httplib::Request& req, httplib::Response& res) {
+                if (res.status != 404) return;  // only customize not-found
+                try {
+                    std::lock_guard<std::mutex> vm_lock(g_server_vm_mutex);
+                    Value req_map = request_to_map(req);
+                    Value result = g_server_vm->call_function(g_notfound_handler, {req_map});
+                    if (!apply_rich_response(result, res)) {
+                        res.set_content(result.to_string(), "text/html");
+                        res.status = 404;
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "[404 " << req.path << "] handler error: " << e.what() << std::endl;
                 }
             });
         }

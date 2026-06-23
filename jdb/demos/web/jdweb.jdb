@@ -82,6 +82,9 @@ EXPORT FUNC THEME$()
     s$ = s$ + "  .login button{width:100%;margin-top:18px;padding:10px;}.login .err{color:var(--red);font-size:13px;min-height:18px;margin-top:10px;}" + nl$
     s$ = s$ + "  .cookiebar{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:14px;justify-content:center;flex-wrap:wrap;padding:11px 18px;background:#0c1410;border-top:1px solid var(--bd2);color:var(--mut);font-size:13px;box-shadow:0 -6px 22px rgba(0,255,65,.06);z-index:60;}" + nl$
     s$ = s$ + "  .cookiebar span{max-width:72ch;}.cookiebar button{padding:6px 16px;}" + nl$
+    s$ = s$ + "  .notfound{max-width:420px;margin:90px auto;text-align:center;color:var(--mut);}" + nl$
+    s$ = s$ + "  .notfound h1{font-size:64px;margin:0;color:var(--mag);text-shadow:0 0 16px rgba(255,46,151,.5);}" + nl$
+    s$ = s$ + "  .notfound p{margin:8px 0 18px;}.notfound a{display:inline-block;}" + nl$
     s$ = s$ + "</style>"
     RETURN s$
 ENDFUNC
@@ -137,6 +140,21 @@ EXPORT FUNC PAGE$(cfg, title$, navHtml$, content$)
     t$ = t$ + "<title>##title##</title>" + nl$ + "##theme##" + nl$ + "</head><body>" + nl$
     t$ = t$ + "##nav##" + nl$ + "##content##" + nl$ + "##cookiebar##" + nl$ + "</body></html>"
     RETURN RENDER$(t$, { "title": title$, "nav": navHtml$, "content": content$, "cookiebar": bar$ })
+ENDFUNC
+
+' Themed 404. Returns a rich-response map so the server sends status 404.
+' Wire it with: HTTP.SERVER.ON_NOTFOUND "HANDLE404" and a thin wrapper that
+' returns JDWEB.NOT_FOUND$(cfg).
+EXPORT FUNC NOT_FOUND$(cfg)
+    nl$ = CHR$(10)
+    app$ = "" + cfg{"app"}
+    c$ = "<div class='notfound'>" + nl$
+    c$ = c$ + "  <h1>404</h1>" + nl$
+    c$ = c$ + "  <p>This page does not exist.</p>" + nl$
+    c$ = c$ + "  <a class='navlink' href='/'>Back to start</a>" + nl$
+    c$ = c$ + "</div>"
+    html$ = PAGE$(cfg, app$ + " - 404", "", c$)
+    RETURN { "__http_status": 404, "__http_content_type": "text/html", "__http_body": html$ }
 ENDFUNC
 
 EXPORT FUNC LOGIN_PAGE$(cfg)

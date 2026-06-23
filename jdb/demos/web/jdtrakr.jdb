@@ -96,6 +96,10 @@ FUNC HandleLoginPage(request)
     RETURN JDWEB.LOGIN_PAGE$(gCfg)
 ENDFUNC
 
+FUNC Handle404(request)
+    RETURN JDWEB.NOT_FOUND$(gCfg)
+ENDFUNC
+
 ' --- ticket API ---
 
 FUNC HandleTickets(request)
@@ -389,6 +393,7 @@ HTTP.SERVER.ON_POST "/api/comment", "HANDLECOMMENT"
 HTTP.SERVER.ON_GET "/api/users", "HANDLEUSERS"
 HTTP.SERVER.ON_POST "/api/users/create", "HANDLEUSERCREATE"
 HTTP.SERVER.ON_POST "/api/users/delete", "HANDLEUSERDELETE"
+HTTP.SERVER.ON_NOTFOUND "HANDLE404"
 
 gPort = INT(gCfg{"port"})
 gHost$ = "127.0.0.1"

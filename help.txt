@@ -1754,6 +1754,10 @@ Description: Registers a function to handle incoming HTTP GET requests for the b
 Syntax: HTTP.SERVER.ON_POST(path$, function_name$)
 Description: Registers a function to handle incoming HTTP POST requests for the built-in server.
 
+[HTTP.SERVER.ON_NOTFOUND]
+Syntax: HTTP.SERVER.ON_NOTFOUND(function_name$)
+Description: Registers a function to render unmatched routes (HTTP 404). It receives the request map and returns HTML or a rich-response map. Fires only for 404. Call before HTTP.SERVER.START.
+
 [HTTP.SERVER.START]
 Syntax: HTTP.SERVER.START(port [, host$])
 Description: Starts the built-in non-blocking HTTP server on a specified port. host$ defaults to "127.0.0.1" (loopback only); pass "0.0.0.0" to expose the server to the LAN.
