@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>jdBasic - Web IDE</title>
+<title>jdBasic - Web</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
@@ -14,54 +14,57 @@
   }
   *{box-sizing:border-box;}
   html,body{height:100%;margin:0;}
-  body{display:flex;flex-direction:column;background:var(--bg);color:var(--ink);
+  body{display:flex;flex-direction:column;background:#050805;color:var(--ink);
        font-family:'Fira Code','Cascadia Code',Consolas,monospace;overflow:hidden;}
-
   .menubar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
-    padding:9px 14px;background:var(--panel);border-bottom:1px solid var(--bd);}
+    padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--bd);}
   .brand{font-weight:700;color:var(--green);text-shadow:0 0 8px rgba(0,255,65,.5);
     margin-right:10px;font-size:16px;}
   .brand span{color:var(--mut);font-weight:400;font-size:12px;text-shadow:none;}
-  .sep{width:1px;height:22px;background:var(--bd2);margin:0 6px;}
   .spacer{flex:1;}
   .status{color:var(--mut);font-size:12px;}
-  button{cursor:pointer;border:none;border-radius:4px;padding:6px 12px;font-size:13px;
+  button{cursor:pointer;border-radius:4px;padding:5px 11px;font-size:13px;
     font-weight:600;font-family:inherit;background:transparent;border:1px solid var(--bd2);
     color:var(--green);}
   button:hover{border-color:var(--green);box-shadow:0 0 8px rgba(0,255,65,.2);}
   button.run{background:var(--mag);color:#1a0410;border-color:var(--mag);
     box-shadow:0 0 12px rgba(255,46,151,.45);}
-  button.run:hover{box-shadow:0 0 16px rgba(255,46,151,.6);}
-  button.cyan{background:var(--cyan);color:#021014;border-color:var(--cyan);
-    box-shadow:0 0 12px rgba(0,229,255,.4);}
-
-  .main{flex:1;display:flex;min-height:0;}
-  #editor{flex:1;min-width:0;border-right:1px solid var(--bd);}
-  .termwrap{flex:1;min-width:0;display:flex;flex-direction:column;background:#050805;}
-  .termhdr{padding:5px 12px;font-size:11px;letter-spacing:1px;text-transform:uppercase;
-    color:var(--mut);border-bottom:1px solid var(--bd);background:var(--panel);}
+  button.cyan{background:var(--cyan);color:#021014;border-color:var(--cyan);}
   #term{flex:1;min-height:0;padding:6px 4px 4px 8px;}
+
+  /* EDIT editor overlay (opened by the EDIT command) */
+  #editor-overlay{position:fixed;inset:0;display:none;flex-direction:column;
+    background:var(--bg);z-index:50;}
+  #editor-overlay.open{display:flex;}
+  .ebar{display:flex;align-items:center;gap:6px;padding:8px 14px;
+    background:var(--panel);border-bottom:1px solid var(--bd);}
+  .ebar .t{color:var(--green);font-weight:700;margin-right:8px;}
+  .ebar .hint{color:var(--mut);font-size:12px;}
+  #editor{flex:1;min-height:0;}
 </style>
 </head>
 <body>
   <div class="menubar">
-    <span class="brand">jdBasic <span>web ide</span></span>
-    <button onclick="ide.newFile()">New</button>
-    <button onclick="ide.openFile()">Open</button>
-    <button onclick="ide.saveFile()">Save</button>
-    <span class="sep"></span>
-    <button class="run" onclick="ide.run()">&#9654; Run</button>
-    <button onclick="ide.reset()">Reset</button>
+    <span class="brand">jdBasic <span>web</span></span>
+    <button class="run" onclick="ide.runProgram()">&#9654; Run</button>
+    <button onclick="ide.openEditor()">Edit</button>
     <button onclick="ide.clearTerm()">Clear</button>
     <span class="spacer"></span>
     <span class="status" id="status">loading runtime...</span>
   </div>
-  <div class="main">
-    <div id="editor"></div>
-    <div class="termwrap">
-      <div class="termhdr">Terminal</div>
-      <div id="term"></div>
+  <div id="term"></div>
+
+  <div id="editor-overlay">
+    <div class="ebar">
+      <span class="t">EDIT</span>
+      <button class="run" onclick="ide.runFromEditor()">&#9654; Run (F5)</button>
+      <button onclick="ide.openFile()">Open</button>
+      <button onclick="ide.saveFile()">Save</button>
+      <button class="cyan" onclick="ide.closeEditor()">Close (Esc)</button>
+      <span class="spacer"></span>
+      <span class="hint">Edit your program, then Run or Close back to the REPL</span>
     </div>
+    <div id="editor"></div>
   </div>
   <input type="file" id="fileopen" accept=".jdb,.bas,.txt" hidden>
 
@@ -71,91 +74,129 @@
   <script src="jdbasic.js"></script>
   <script>
   const ide = (function(){
-    let editor = null, term = null, fit = null, Mod = null, ready = false;
+    let editor=null, term=null, fit=null, Mod=null, ready=false;
+    let lineBuf='', editorOpen=false;
+    const history=[]; let hpos=0;
+    const PROMPT='\x1b[38;2;0;255;65m]\x1b[0m ';
     const SAMPLE =
-      'PRINT "Hello from jdBasic in the browser!"\n' +
-      'PRINT "------------------------------------"\n' +
+      'PRINT "Hello from jdBasic!"\n' +
       'FOR i = 1 TO 5\n' +
       '    PRINT i, " squared is ", i * i\n' +
-      'NEXT i\n' +
-      '\n' +
-      'DIM xs = [10, 20, 30, 40]\n' +
-      'PRINT "sum  = "; SUM(xs)\n' +
-      'PRINT "mean = "; SUM(xs) / LEN(xs)\n';
+      'NEXT i\n';
+    let program = SAMPLE;
 
-    function setStatus(t, color){ const s=document.getElementById('status');
-      s.textContent=t; s.style.color=color||'var(--mut)'; }
+    function setStatus(t,c){ const s=document.getElementById('status');
+      s.textContent=t; s.style.color=c||'var(--mut)'; }
 
     // ---- terminal ----
     term = new Terminal({
-      fontFamily:"'Fira Code', monospace", fontSize:14, cursorBlink:true,
+      fontFamily:"'Fira Code', monospace", fontSize:14, cursorBlink:true, convertEol:true,
       theme:{ background:'#050805', foreground:'#d6ffe2', cursor:'#00FF41',
-              green:'#00FF41', brightGreen:'#39ff14', cyan:'#00e5ff',
-              magenta:'#ff2e97', red:'#ff4141', yellow:'#ffb000', blue:'#adc7ff' }
+              green:'#00FF41', cyan:'#00e5ff', magenta:'#ff2e97', red:'#ff4141',
+              yellow:'#ffb000', blue:'#adc7ff' }
     });
     fit = new FitAddon.FitAddon(); term.loadAddon(fit);
-    term.open(document.getElementById('term')); fit.fit();
+    term.open(document.getElementById('term')); fit.fit(); term.focus();
     window.addEventListener('resize', ()=>{ try{ fit.fit(); }catch(e){} });
-    function wr(line){ term.write(String(line).replace(/\n/g,'\r\n') + '\r\n'); }
+    function prompt(){ term.write('\r\n' + PROMPT); }
 
-    // ---- monaco ----
+    function processLine(line){
+      const t = line.trim();
+      if (t === ''){ prompt(); return; }
+      if (history[history.length-1] !== t) history.push(t);
+      hpos = history.length;
+      const up = t.toUpperCase();
+      if (up === 'EDIT'){ openEditor(); return; }
+      if (up === 'RUN'){ api.runProgram(); return; }
+      if (up === 'LIST'){ term.write('\r\n' + program.replace(/\n/g,'\r\n')); prompt(); return; }
+      if (up === 'CLS' || up === 'CLEAR'){ term.clear(); prompt(); return; }
+      runCode(t); prompt();
+    }
+    function runCode(code){
+      if (!ready){ term.write('\r\nruntime not ready'); return; }
+      try { Mod.ccall('jdb_run','void',['string'],[code]); }
+      catch(e){ term.write('\x1b[31m'+e+'\x1b[0m'); }
+    }
+
+    term.onData(d=>{
+      if (editorOpen) return;
+      if (d === '\x1b[A'){ // up
+        if (hpos>0){ hpos--; replaceLine(history[hpos]||''); } return; }
+      if (d === '\x1b[B'){ // down
+        if (hpos<history.length){ hpos++; replaceLine(history[hpos]||''); } return; }
+      if (d.charCodeAt(0) === 27) return; // other escape seqs
+      for (const ch of d){
+        const c = ch.charCodeAt(0);
+        if (ch === '\r'){ term.write('\r\n'); processLine(lineBuf); lineBuf=''; }
+        else if (c === 127){ if(lineBuf.length){ lineBuf=lineBuf.slice(0,-1); term.write('\b \b'); } }
+        else if (c === 3){ term.write('^C'); lineBuf=''; prompt(); }
+        else if (c >= 32){ lineBuf += ch; term.write(ch); }
+      }
+    });
+    function replaceLine(s){
+      term.write('\r' + PROMPT + '\x1b[K');  // CR, prompt, clear to EOL
+      term.write(s); lineBuf = s;
+    }
+
+    // ---- monaco (the EDIT editor) ----
     require.config({ paths:{ vs:'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
     require(['vs/editor/editor.main'], function(){
       monaco.editor.defineTheme('phosphor', {
         base:'vs-dark', inherit:true,
-        rules:[
-          { token:'comment', foreground:'5fae6f', fontStyle:'italic' },
-          { token:'string', foreground:'00e5ff' },
-          { token:'keyword', foreground:'ff2e97' },
-          { token:'number', foreground:'ffb000' }
-        ],
+        rules:[ {token:'string',foreground:'00e5ff'}, {token:'comment',foreground:'5fae6f'} ],
         colors:{ 'editor.background':'#0a0e0c', 'editor.foreground':'#d6ffe2',
           'editorCursor.foreground':'#00FF41', 'editorLineNumber.foreground':'#2a5c35',
-          'editor.selectionBackground':'#16321d', 'editor.lineHighlightBackground':'#0c1410' }
+          'editor.lineHighlightBackground':'#0c1410' }
       });
       editor = monaco.editor.create(document.getElementById('editor'), {
-        value: SAMPLE, language:'plaintext', theme:'phosphor',
+        value: program, language:'plaintext', theme:'phosphor',
         fontFamily:"'Fira Code', monospace", fontSize:14, minimap:{enabled:false},
         scrollBeyondLastLine:false, automaticLayout:true, tabSize:4
       });
-      // Ctrl/Cmd+Enter runs
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, ()=>api.run());
+      editor.addCommand(monaco.KeyCode.F5, ()=>api.runFromEditor());
+      editor.addCommand(monaco.KeyCode.Escape, ()=>api.closeEditor());
     });
+
+    function openEditor(){
+      if (editor) editor.setValue(program);
+      document.getElementById('editor-overlay').classList.add('open');
+      editorOpen = true;
+      if (editor) setTimeout(()=>editor.focus(), 30);
+    }
+
+    // jdBasic CHR$ is byte-oriented (CHR$(200) -> byte 0xC8), i.e. extended-ASCII
+    // / Latin-1, not UTF-8. Decode the runtime's raw output bytes as Latin-1 so
+    // CHR$ tables render as the classic glyphs (byte value = code point).
+    function latin1(u8){ let s=''; for(let i=0;i<u8.length;i++) s+=String.fromCharCode(u8[i]); return s; }
 
     // ---- wasm runtime ----
     createJdBasic({
-      print:    (t)=> term.write(String(t).replace(/\n/g,'\r\n') + '\r\n'),
-      printErr: (t)=> term.write('\x1b[31m' + String(t) + '\x1b[0m\r\n')
-    }).then(M=>{
-      Mod = M; ready = true;
-      setStatus('runtime ready', 'var(--green)');
-      term.write('\x1b[32m[jdBasic runtime ready - edit code, press Run or Ctrl+Enter]\x1b[0m\r\n');
-    }).catch(e=>{ setStatus('runtime failed', 'var(--red)'); wr('runtime load error: '+e); });
+      jdbTermWrite: (bytes)=> term.write(latin1(bytes)),
+      onJdbReady: ()=>{ ready=true; setStatus('runtime ready','var(--green)');
+        term.write('\r\n\x1b[2m(type a command and Enter, or EDIT for the editor)\x1b[0m'); prompt(); }
+    }).then(M=>{ Mod=M; }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
 
     const api = {
-      run(){
-        if(!ready){ wr('runtime not ready yet'); return; }
-        const code = editor ? editor.getValue() : '';
-        term.write('\x1b[90m--- run ---\x1b[0m\r\n');
-        try { Mod.ccall('jdb_run','void',['string'],[code]); }
-        catch(e){ term.write('\x1b[31m'+e+'\x1b[0m\r\n'); }
-      },
-      reset(){ if(ready){ Mod.ccall('jdb_reset','void',[],[]); } term.clear(); },
-      clearTerm(){ term.clear(); },
-      newFile(){ if(editor) editor.setValue('PRINT "Hello"\n'); term.clear(); },
+      openEditor,
+      eval(code){ runCode(code); prompt(); },
+      closeEditor(){ if(editor) program=editor.getValue();
+        document.getElementById('editor-overlay').classList.remove('open');
+        editorOpen=false; term.focus(); term.write('\r\n\x1b[2m[editor closed]\x1b[0m'); prompt(); },
+      runFromEditor(){ if(editor) program=editor.getValue();
+        document.getElementById('editor-overlay').classList.remove('open'); editorOpen=false;
+        term.focus(); term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); runCode(program); prompt(); },
+      runProgram(){ term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); runCode(program); prompt(); },
+      clearTerm(){ term.clear(); prompt(); },
       openFile(){ document.getElementById('fileopen').click(); },
-      saveFile(){
-        const code = editor ? editor.getValue() : '';
+      saveFile(){ const code = editor?editor.getValue():program;
         const blob = new Blob([code], {type:'text/plain'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob); a.download = 'program.jdb';
-        a.click(); URL.revokeObjectURL(a.href);
-      }
+        const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+        a.download='program.jdb'; a.click(); URL.revokeObjectURL(a.href); }
     };
     document.getElementById('fileopen').addEventListener('change', function(ev){
-      const f = ev.target.files[0]; if(!f) return;
-      const r = new FileReader();
-      r.onload = ()=>{ if(editor) editor.setValue(r.result); };
+      const f=ev.target.files[0]; if(!f) return;
+      const r=new FileReader();
+      r.onload=()=>{ program=r.result; if(editor) editor.setValue(program); };
       r.readAsText(f); ev.target.value='';
     });
     return api;

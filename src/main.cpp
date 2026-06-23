@@ -2263,6 +2263,27 @@ int main(int argc, char* argv[]) {
 #else  // __EMSCRIPTEN__ - browser entry for the WASM IDE
 
 #include <emscripten.h>
+#include <streambuf>
+
+// Ship raw stdout bytes straight to the page terminal. xterm decodes UTF-8
+// itself (correctly across chunk boundaries), so this avoids Emscripten's
+// per-line string decode that mangles CHR$ high bytes and split multi-byte
+// runes. It also flushes immediately, so PRINT without a trailing newline
+// (e.g. a prompt) shows up right away.
+// ptr is passed as a plain number (uintptr_t), NOT const char*, so EM_JS does
+// not try to UTF8-stringify it - we want the raw bytes.
+EM_JS(void, jdb_term_write_bytes, (uintptr_t ptr, int len), {
+    if (Module.jdbTermWrite) Module.jdbTermWrite(HEAPU8.slice(ptr, ptr + len));
+});
+struct TermBuf : std::streambuf {
+    int overflow(int c) override {
+        if (c != EOF) { char ch = (char)c; jdb_term_write_bytes((uintptr_t)&ch, 1); }
+        return c;
+    }
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        jdb_term_write_bytes((uintptr_t)s, (int)n); return n;
+    }
+};
 
 // One persistent VM for the whole page session, so state (vars, FUNCs, the
 // SQLite handle, ...) survives across run / REPL calls - like the desktop REPL.
@@ -2304,6 +2325,9 @@ void jdb_reset() {
 }  // extern "C"
 
 int main() {
+    static TermBuf term_buf;
+    std::cout.rdbuf(&term_buf);   // PRINT / cout -> raw bytes -> xterm
+    std::cerr.rdbuf(&term_buf);
     wasm_init_vm();
     std::cout << jdbasic_banner() << "\r\n";
     std::cout.flush();
