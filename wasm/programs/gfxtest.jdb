@@ -1,0 +1,23 @@
+' Minimal graphics test for the web build.
+' Moving shapes - if this animates, SCREEN / draw / SCREENFLIP / YIELD work.
+SCREEN 400, 300, "gfx test"
+
+done = FALSE
+SUB OnKey(d)
+    done = TRUE
+ENDSUB
+ON "KEYDOWN" CALL OnKey
+
+x = 0
+DO
+    CLS 12, 16, 40
+    RECT x, 110, 80, 80, 255, 46, 151
+    CIRCLE 200, 150, 60, 0, 229, 255
+    LINE 0, 0, 400, 300, 0, 255, 65
+    LINE 400, 0, 0, 300, 255, 176, 0
+    SCREENFLIP
+    YIELD
+    SLEEP 16
+    x = x + 4
+    IF x > 320 THEN x = 0
+LOOP UNTIL done

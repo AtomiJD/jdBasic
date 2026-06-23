@@ -88,7 +88,9 @@
   <script>
   const ide = (function(){
     let editor=null, term=null, fit=null, Mod=null, ready=false;
-    let lineBuf='', editorOpen=false;
+    let lineBuf='', editorOpen=false, running=false;
+    let inputResolver=null, inputBuf='';   // INPUT line-read mode (Asyncify)
+    let keyQueue=[];   // text-mode KEYDOWN / INKEY$ keys, drained by the runtime
     const history=[]; let hpos=0;
     const PROMPT='\x1b[38;2;0;255;65m>\x1b[0m ';
     const SAMPLE =
@@ -134,14 +136,19 @@
       } catch(e){ term.write('\r\n'+e); }
       prompt();
     }
+    function readMaybe(p){ try{ return Mod.FS.readFile(p,{encoding:'utf8'}); }catch(e){ return null; } }
     function loadProgram(cmd){
-      let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: LOAD "name.jdb"'); prompt(); return; }
-      if(!n.startsWith('/')) n='/'+n;
-      try { program = Mod.FS.readFile(n,{encoding:'utf8'}); if(editor) editor.setValue(program);
-        term.write('\r\n\x1b[32mloaded '+n+' ('+program.split('\n').length+' lines). Type RUN or EDIT.\x1b[0m'); }
-      catch(e){ term.write('\r\n\x1b[31mcannot load '+n+'\x1b[0m'); }
+      let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: LOAD name'); prompt(); return; }
+      let base = n.startsWith('/') ? n : '/'+n;
+      let data = readMaybe(base);
+      if(data===null && !/\.\w+$/.test(base)){ const d2=readMaybe(base+'.jdb'); if(d2!==null){ data=d2; base+='.jdb'; } }
+      if(data===null){ term.write('\r\n\x1b[31mcannot load '+n+'\x1b[0m'); prompt(); return; }
+      program = data; if(editor) editor.setValue(program);
+      term.write('\r\n\x1b[32mloaded '+base+' ('+program.split('\n').length+' lines). RUN or EDIT.\x1b[0m');
       prompt();
     }
+    function newProgram(){ program=''; if(editor) editor.setValue('');
+      term.write('\r\n\x1b[32mnew program\x1b[0m'); prompt(); }
     function saveProgram(cmd){
       let n = fnameOf(cmd); if(!n){ term.write('\r\nusage: SAVE "name.jdb"'); prompt(); return; }
       if(!/\.\w+$/.test(n)) n += '.jdb';
@@ -164,7 +171,20 @@
     });
     fit = new FitAddon.FitAddon(); term.loadAddon(fit);
     term.open(document.getElementById('term')); fit.fit(); term.focus();
+    // Keep the terminal focused so typing works immediately (and after clicks).
+    document.getElementById('term').addEventListener('mousedown', ()=>{ if(!editorOpen) term.focus(); });
     window.addEventListener('resize', ()=>{ try{ fit.fit(); }catch(e){} });
+    // Monaco loads asynchronously and grabs focus when its editor is created,
+    // so a single focus() right after load doesn't stick. Re-assert focus a few
+    // times (and once Monaco has settled) so typing works on a fresh page.
+    function focusTerm(){ if(!editorOpen && !running){ try{ term.focus(); }catch(e){} } }
+    [0,60,300,900].forEach(ms=> setTimeout(focusTerm, ms));
+    // Safety net: typing anywhere outside the overlays focuses the terminal.
+    document.addEventListener('keydown', (e)=>{
+      if(editorOpen||running) return;
+      if(e.target && e.target.closest && e.target.closest('#editor-overlay,#gfx-overlay,button,input')) return;
+      focusTerm();
+    }, true);
     function prompt(){ term.write('\r\n' + PROMPT); }
 
     async function processLine(line){
@@ -177,6 +197,7 @@
       if (up === 'RUN'){ api.runProgram(); return; }
       if (up === 'LIST'){ term.write('\r\n' + hlProgram(program)); prompt(); return; }
       if (up === 'CLS' || up === 'CLEAR'){ term.clear(); prompt(); return; }
+      if (up === 'NEW'){ newProgram(); return; }
       if (up === 'DIR' || up === 'FILES'){ listFiles(); return; }
       if (up.indexOf('LOAD') === 0){ loadProgram(t); return; }
       if (up.indexOf('SAVE') === 0){ saveProgram(t); return; }
@@ -187,14 +208,39 @@
     // gates terminal input while a program (e.g. a game) owns the canvas.
     async function runCode(code){
       if (!ready){ term.write('\r\nruntime not ready'); return; }
+      keyQueue.length = 0;   // drop keys left over from the previous run
       running = true;
       try { await Mod.ccall('jdb_run','void',['string'],[code],{async:true}); }
       catch(e){ term.write('\x1b[31m'+e+'\x1b[0m'); }
       running = false;
     }
 
+    // When the runtime asks for INPUT, the terminal collects one line and the
+    // jdbReadLine promise resolves it (Asyncify resumes the program).
+    function inputData(d){
+      if (d.charCodeAt(0) === 27) return;
+      for (const ch of d){
+        const c = ch.charCodeAt(0);
+        if (ch === '\r'){ term.write('\r\n'); const line=inputBuf; inputBuf='';
+          const r=inputResolver; inputResolver=null; r(line); }
+        else if (c === 127){ if(inputBuf.length){ inputBuf=inputBuf.slice(0,-1); term.write('\b \b'); } }
+        else if (c >= 32){ inputBuf += ch; term.write(ch); }
+      }
+    }
+    // While a program runs, terminal keystrokes feed the program's key queue
+    // (text-mode ON "KEYDOWN" / INKEY$ / WAITKEY$). Arrow keys map to the codes
+    // the games expect; everything else queues its byte value.
+    function pushKeys(d){
+      if (d === '\x1b[A'){ keyQueue.push(273); return; } // up
+      if (d === '\x1b[B'){ keyQueue.push(274); return; } // down
+      if (d === '\x1b[C'){ keyQueue.push(275); return; } // right
+      if (d === '\x1b[D'){ keyQueue.push(276); return; } // left
+      for (const ch of d) keyQueue.push(ch.charCodeAt(0) & 0xFF);
+    }
     term.onData(d=>{
-      if (editorOpen || running) return;
+      if (editorOpen) return;
+      if (inputResolver){ inputData(d); return; }
+      if (running){ pushKeys(d); return; }
       if (d === '\x1b[A'){ // up
         if (hpos>0){ hpos--; replaceLine(history[hpos]||''); } return; }
       if (d === '\x1b[B'){ // down
@@ -251,6 +297,7 @@
       });
       editor.addCommand(monaco.KeyCode.F5, ()=>api.runFromEditor());
       editor.addCommand(monaco.KeyCode.Escape, ()=>api.closeEditor());
+      focusTerm();   // Monaco grabs focus on create; hand it back to the REPL
     });
 
     function openEditor(){
@@ -275,10 +322,13 @@
     createJdBasic({
       canvas: document.getElementById('canvas'),
       jdbTermWrite: (bytes)=> term.write(latin1(bytes)),
+      jdbReadLine: ()=> new Promise(res=>{ inputResolver=res; inputBuf=''; if(!editorOpen) term.focus(); }),
+      jdbPollKey: ()=> keyQueue.length ? keyQueue.shift() : -1,
       onScreenOpen: (w,h)=>{ showGfx(); },
       onScreenClose: ()=>{ hideGfx(); },
       onJdbReady: ()=>{ ready=true; setStatus('runtime ready','var(--green)');
-        term.write('\r\n\x1b[2mDIR lists demos . LOAD "name" . RUN . EDIT . LIST . CLS\x1b[0m'); prompt(); }
+        term.write('\r\n\x1b[2mDIR . LOAD name . RUN . NEW . EDIT . SAVE name . LIST . CLS\x1b[0m');
+        prompt(); focusTerm(); }
     }).then(M=>{ Mod=M; }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
 
     const api = {

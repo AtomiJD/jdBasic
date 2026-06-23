@@ -54,12 +54,21 @@ EMBED=""
 for d in $DEMOS; do
     [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$d")"
 done
+# Web-specific programs (e.g. graphics tuned with YIELD) live under wasm/programs.
+if [ -d wasm/programs ]; then
+    for d in wasm/programs/*.jdb; do
+        [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$d")"
+    done
+fi
 
-EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sEXIT_RUNTIME=0 \
+# ASYNCIFY_STACK_SIZE: the default 4 KB is too small for our deeply-nested
+# bytecode interpreter - a suspend (INPUT, SLEEP, SCREENFLIP, YIELD) deep in
+# the dispatch loop overflows it and aborts with "unreachable". 1 MB is ample.
+EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=1048576 -sEXIT_RUNTIME=0 \
          -fexceptions \
          -sENVIRONMENT=web,node \
          -sMODULARIZE=1 -sEXPORT_NAME=createJdBasic \
-         -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS'] \
+         -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','stringToUTF8','lengthBytesUTF8'] \
          $EMBED ${LINKEXTRA:-}"
 
 emcc $CXXFLAGS $EMFLAGS \

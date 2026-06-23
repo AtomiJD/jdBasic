@@ -12,6 +12,27 @@
 #endif
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include <cstdlib>
+// Read one line from the page terminal. Asyncify suspends the call here until
+// the user submits a line, so INPUT works in the browser without std::cin.
+// Allocates with _malloc / writes via HEAPU8 (always available in EM_JS); the
+// caller frees the returned buffer.
+EM_ASYNC_JS(char*, jdb_read_line_js, (void), {
+    let s = "";
+    try { if (typeof Module !== 'undefined' && Module.jdbReadLine) s = await Module.jdbReadLine(); } catch (e) {}
+    const bytes = new TextEncoder().encode(String(s));
+    const ptr = _malloc(bytes.length + 1);
+    HEAPU8.set(bytes, ptr);
+    HEAPU8[ptr + bytes.length] = 0;
+    return ptr;
+});
+// Non-blocking single-key poll for text-mode KEYDOWN / INKEY$ in the browser.
+// The page feeds keystrokes from the terminal into a queue; returns the next
+// key code, or -1 when the queue is empty. Text games have no SDL window, so
+// SDL events never arrive - this is their key source.
+EM_JS(int, jdb_poll_key_js, (void), {
+    return (typeof Module !== 'undefined' && Module.jdbPollKey) ? Module.jdbPollKey() : -1;
+});
 #endif
 #include <iostream>
 #include <cmath>
@@ -2285,7 +2306,13 @@ void VM::run() {
             uint16_t name_idx = read_u16();
             std::string input;
             is_waiting_input = true;
+            std::fflush(stdout);
+#ifdef __EMSCRIPTEN__
+            { char* line = jdb_read_line_js();
+              if (line) { input = line; std::free(line); } }
+#else
             std::getline(std::cin, input);
+#endif
             is_waiting_input = false;
 
             Value val;
@@ -5903,6 +5930,11 @@ void VM::register_builtins() {
             return Value::make_string(gfx_has_key() ? gfx_get_key() : "");
         }
 #endif
+#ifdef __EMSCRIPTEN__
+        { int code = jdb_poll_key_js();
+          if (code >= 0) return Value::make_string(std::string(1, (char)(code & 0xFF))); }
+        return Value::make_string("");
+#endif
 #if defined(_WIN32)
         static auto last_check = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
@@ -5937,6 +5969,14 @@ void VM::register_builtins() {
                 if (is_halted) return Value::make_string("");
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
+        }
+#endif
+#ifdef __EMSCRIPTEN__
+        while (true) {
+            int code = jdb_poll_key_js();
+            if (code >= 0) return Value::make_string(std::string(1, (char)(code & 0xFF)));
+            if (is_halted) return Value::make_string("");
+            emscripten_sleep(16);
         }
 #endif
 #if defined(_WIN32)
@@ -8540,7 +8580,22 @@ void VM::event_poll() {
 #endif
 
     // Console mode: poll keyboard with 100ms throttle
-#if defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+    // Text-mode games: keys come from the page's key queue, not a SDL window.
+    {
+        auto kit = event_handlers.find("KEYDOWN");
+        if (kit != event_handlers.end()) {
+            int code;
+            while ((code = jdb_poll_key_js()) >= 0) {
+                Value info = Value::make_object();
+                info.as_object()->set("scancode", Value::make_i64(code));
+                info.as_object()->set("keycode", Value::make_i64(code));
+                info.as_object()->set("key", Value::make_string(std::string(1, (char)(code & 0xFF))));
+                event_raise("KEYDOWN", {info});
+            }
+        }
+    }
+#elif defined(_WIN32)
     static auto last_check = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_check).count() >= 100) {
