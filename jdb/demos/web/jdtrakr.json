@@ -1,0 +1,13 @@
+{
+  "app": "jdTrakr",
+  "sub": "kanban for the team",
+  "db": "jdtrakr.db",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "secure": false,
+  "cookies": true,
+  "nav": [
+    { "path": "/", "label": "Board" },
+    { "path": "/users", "label": "Users" }
+  ]
+}

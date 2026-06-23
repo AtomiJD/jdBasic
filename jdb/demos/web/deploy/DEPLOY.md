@@ -52,19 +52,26 @@ sudo mkdir -p /opt/jdtrakr
 sudo cp build/jdBasic /opt/jdtrakr/
 ```
 
-Upload `jdtrakr.jdb` to the box (from your machine):
+jdTrakr is three files that must sit together: the app `jdtrakr.jdb`, the shared
+framework module `jdweb.jdb`, and the config `jdtrakr.json`. Upload all three
+(from your machine):
 
 ```bash
-scp jdb/demos/web/jdtrakr.jdb you@your-vps:/tmp/jdtrakr.jdb
+scp jdb/demos/web/jdtrakr.jdb jdb/demos/web/jdweb.jdb jdb/demos/web/jdtrakr.json you@your-vps:/tmp/
 ```
 
-On the box, enable secure cookies (the app is served over HTTPS) and install it:
+On the box, turn on secure cookies (served over HTTPS) in the JSON config, then
+install all three:
 
 ```bash
-sudo sed -i 's/^gSecureCookies = FALSE/gSecureCookies = TRUE/' /tmp/jdtrakr.jdb
-sudo cp /tmp/jdtrakr.jdb /opt/jdtrakr/jdtrakr.jdb
+sudo sed -i 's/"secure": false/"secure": true/' /tmp/jdtrakr.json
+sudo cp /tmp/jdtrakr.jdb /tmp/jdweb.jdb /tmp/jdtrakr.json /opt/jdtrakr/
 sudo chown -R jdtrakr:jdtrakr /opt/jdtrakr
 ```
+
+`IMPORT JDWEB` and the config load resolve relative to the app file, so all
+three living in `/opt/jdtrakr` is all it takes. To restyle every future app at
+once, edit `jdweb.jdb` (the `THEME$` design tokens) and restart.
 
 ---
 
@@ -122,9 +129,10 @@ Open `https://YOUR.DOMAIN`. The board is empty and there are no users yet.
 ## Operating notes
 
 - **Backup:** `sudo cp /opt/jdtrakr/jdtrakr.db ~/jdtrakr-$(date +%F).db`
-- **Update the app:** upload a new `jdtrakr.jdb`, re-apply the `gSecureCookies`
-  edit, copy it into `/opt/jdtrakr/`, then `sudo systemctl restart jdtrakr`.
-  The `.db` is untouched by a restart.
+- **Update the app:** upload the changed file(s) (`jdtrakr.jdb`, `jdweb.jdb`
+  and/or `jdtrakr.json`) into `/opt/jdtrakr/`, then `sudo systemctl restart
+  jdtrakr`. The `.db` is untouched by a restart. `"secure": true` already lives
+  in the installed `jdtrakr.json`, so no per-update edit is needed.
 - **Logs:** `journalctl -u jdtrakr -f`
 - **Passwords** are stored as salted SHA-256 (per-user random salt). To reset a
   user's password, clear it and let them re-claim:

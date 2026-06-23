@@ -1,0 +1,257 @@
+' jdweb - a generic jdBasic web-app framework (terminal "Hot Phosphor" theme).
+' One shared module many apps reuse: the theme CSS, a ##token## template
+' renderer, the page chrome (head / nav / login), an EU cookie banner, and a
+' full cookie-session auth stack (users + sessions tables).
+'
+' An app supplies a JSON config (app name, db, nav, flags) plus its own domain
+' handlers, and wires pages through JDWEB.PAGE$ / JDWEB.RENDER$.
+'
+' Tokens understood by RENDER$: ##theme## (the stylesheet) plus one ##key## per
+' entry in the vars map.
+EXPORT MODULE JDWEB
+
+' ---- small internal helpers ----
+
+FUNC ESC$(s$)
+    RETURN REPLACE$(s$, "'", "''")
+ENDFUNC
+
+FUNC FIELD$(obj, key$)
+    v = obj{key$}
+    IF TYPEOF(v) = "NONE" THEN RETURN ""
+    RETURN TRIM$("" + v)
+ENDFUNC
+
+' ---- theme (all design tokens live in :root) ----
+
+EXPORT FUNC THEME$()
+    nl$ = CHR$(10)
+    s$ = "<style>" + nl$
+    s$ = s$ + "  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');" + nl$
+    s$ = s$ + "  :root{--bg:#0a0e0c;--panel:#0c1410;--card:#0e1512;--bd:#16321d;--bd2:#2a5c35;--ink:#d6ffe2;--mut:#5fae6f;--green:#00FF41;--blue:#adc7ff;--mag:#ff2e97;--cyan:#00e5ff;--amber:#ffb000;--red:#ff4141;}" + nl$
+    s$ = s$ + "  *{box-sizing:border-box;}" + nl$
+    s$ = s$ + "  body{margin:0;font-family:'Fira Code','Cascadia Code',Consolas,'Courier New',monospace;background:var(--bg);color:var(--ink);}" + nl$
+    s$ = s$ + "  header{display:flex;align-items:center;gap:20px;padding:15px 22px;background:var(--panel);border-bottom:1px solid var(--bd);}" + nl$
+    s$ = s$ + "  header h1{margin:0;font-size:19px;color:var(--green);text-shadow:0 0 8px rgba(0,255,65,.5);}header h1 span{color:var(--mut);font-size:12px;font-weight:400;text-shadow:none;}" + nl$
+    s$ = s$ + "  nav{display:flex;gap:6px;}.spacer{flex:1;}" + nl$
+    s$ = s$ + "  .navlink{color:var(--mut);text-decoration:none;padding:6px 12px;border-radius:4px;font-size:13px;border:1px solid transparent;}" + nl$
+    s$ = s$ + "  .navlink:hover{color:var(--green);background:#0f1a12;}.navlink.active{color:var(--blue);border-color:var(--blue);}" + nl$
+    s$ = s$ + "  .whoami{color:var(--mut);font-size:13px;display:flex;align-items:center;gap:10px;}" + nl$
+    s$ = s$ + "  form.add{display:flex;gap:8px;flex-wrap:wrap;padding:13px 22px;background:var(--panel);border-bottom:1px solid var(--bd);}" + nl$
+    s$ = s$ + "  form.add input,form.add select{background:var(--bg);color:var(--ink);border:1px solid var(--bd2);border-radius:4px;padding:8px 10px;font-size:14px;font-family:inherit;}" + nl$
+    s$ = s$ + "  form.add input.title{flex:1;min-width:180px;}form.add input.desc{flex:2;min-width:180px;}form.add input.grow{flex:1;min-width:220px;}" + nl$
+    s$ = s$ + "  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--green);box-shadow:0 0 8px rgba(0,255,65,.25);}" + nl$
+    s$ = s$ + "  button{cursor:pointer;border:none;border-radius:4px;padding:8px 13px;font-size:13px;font-weight:600;font-family:inherit;background:var(--mag);color:#1a0410;box-shadow:0 0 12px rgba(255,46,151,.45);}" + nl$
+    s$ = s$ + "  button.ghost{background:transparent;border:1px solid var(--bd2);color:var(--green);box-shadow:none;padding:5px 10px;}button.ghost:hover{border-color:var(--green);box-shadow:0 0 8px rgba(0,255,65,.2);}" + nl$
+    s$ = s$ + "  button.cyan{background:var(--cyan);color:#021014;box-shadow:0 0 12px rgba(0,229,255,.45);}" + nl$
+    s$ = s$ + "  button.danger{background:var(--red);color:#1a0404;box-shadow:0 0 12px rgba(255,65,65,.4);}" + nl$
+    s$ = s$ + "  #board{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:20px 22px;}" + nl$
+    s$ = s$ + "  .col{background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:12px;min-height:200px;}" + nl$
+    s$ = s$ + "  .col h2{margin:4px 6px 12px;font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);}" + nl$
+    s$ = s$ + "  .col h2 .count{background:#11251a;color:var(--green);border-radius:999px;padding:1px 8px;font-size:12px;margin-left:6px;}" + nl$
+    s$ = s$ + "  .card{background:var(--card);border:1px solid var(--bd);border-radius:5px;padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--mut);cursor:pointer;}" + nl$
+    s$ = s$ + "  .card:hover{border-color:var(--bd2);box-shadow:0 0 12px rgba(0,255,65,.06);}" + nl$
+    s$ = s$ + "  .card.prio-high{border-left-color:var(--mag);box-shadow:0 0 12px rgba(255,46,151,.08);}.card.prio-medium{border-left-color:var(--amber);}.card.prio-low{border-left-color:var(--green);}" + nl$
+    s$ = s$ + "  .card .title{font-weight:600;margin-bottom:4px;color:var(--ink);}" + nl$
+    s$ = s$ + "  .card .desc{color:var(--mut);font-size:13px;margin-bottom:6px;white-space:pre-wrap;}" + nl$
+    s$ = s$ + "  .card .meta{color:var(--mut);font-size:12px;margin-bottom:8px;}" + nl$
+    s$ = s$ + "  .card .bar{display:flex;gap:6px;}" + nl$
+    s$ = s$ + "  .wrap{max-width:560px;margin:24px;background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:8px 0;}" + nl$
+    s$ = s$ + "  .urow{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--bd);}" + nl$
+    s$ = s$ + "  .urow:last-child{border-bottom:none;}.uname{font-weight:600;color:var(--ink);}.empty{padding:18px;color:var(--mut);}" + nl$
+    s$ = s$ + "  .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;z-index:50;}" + nl$
+    s$ = s$ + "  .modal{background:var(--panel);border:1px solid var(--bd2);border-radius:8px;width:100%;max-width:620px;padding:20px 22px;box-shadow:0 0 30px rgba(0,255,65,.07);}" + nl$
+    s$ = s$ + "  .modal h3{margin:0 0 6px;color:var(--green);text-shadow:0 0 7px rgba(0,255,65,.4);}" + nl$
+    s$ = s$ + "  .modal label{display:block;font-size:11px;color:var(--mut);margin:10px 0 4px;text-transform:uppercase;letter-spacing:1px;}" + nl$
+    s$ = s$ + "  .modal input,.modal textarea,.modal select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--bd2);border-radius:4px;padding:8px 10px;font-size:14px;font-family:inherit;}" + nl$
+    s$ = s$ + "  .modal textarea{min-height:80px;resize:vertical;}" + nl$
+    s$ = s$ + "  .modal .row2{display:flex;gap:10px;}.modal .row2>div{flex:1;}" + nl$
+    s$ = s$ + "  .modal .actions{display:flex;gap:8px;margin-top:16px;align-items:center;}" + nl$
+    s$ = s$ + "  .modal .sec{margin-top:20px;border-top:1px solid var(--bd);padding-top:14px;}" + nl$
+    s$ = s$ + "  .modal .sec h4{margin:0 0 10px;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;}" + nl$
+    s$ = s$ + "  .cmt{background:var(--card);border:1px solid var(--bd);border-radius:5px;padding:8px 11px;margin-bottom:8px;}" + nl$
+    s$ = s$ + "  .cmt .who{font-weight:600;font-size:13px;color:var(--blue);}.cmt .when{color:var(--mut);font-size:11px;margin-left:6px;}" + nl$
+    s$ = s$ + "  .cmt .txt{margin-top:4px;font-size:14px;white-space:pre-wrap;color:var(--ink);}" + nl$
+    s$ = s$ + "  ul.hist{list-style:none;margin:0;padding:0;}" + nl$
+    s$ = s$ + "  ul.hist li{font-size:13px;color:var(--mut);padding:5px 0;border-bottom:1px solid var(--bd);}ul.hist li b{color:var(--green);}" + nl$
+    s$ = s$ + "  .when{color:var(--mut);font-size:11px;}" + nl$
+    s$ = s$ + "  .login{max-width:360px;margin:90px auto;background:var(--panel);border:1px solid var(--bd2);border-radius:8px;padding:26px;box-shadow:0 0 30px rgba(0,255,65,.07);}" + nl$
+    s$ = s$ + "  .login h1{margin:0 0 4px;font-size:22px;color:var(--green);text-shadow:0 0 9px rgba(0,255,65,.5);}.login p{margin:0 0 18px;color:var(--mut);font-size:13px;}" + nl$
+    s$ = s$ + "  .login label{display:block;font-size:11px;color:var(--mut);margin:12px 0 4px;text-transform:uppercase;letter-spacing:1px;}" + nl$
+    s$ = s$ + "  .login input{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--bd2);border-radius:4px;padding:9px 11px;font-size:14px;font-family:inherit;}" + nl$
+    s$ = s$ + "  .login button{width:100%;margin-top:18px;padding:10px;}.login .err{color:var(--red);font-size:13px;min-height:18px;margin-top:10px;}" + nl$
+    s$ = s$ + "  .cookiebar{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:14px;justify-content:center;flex-wrap:wrap;padding:11px 18px;background:#0c1410;border-top:1px solid var(--bd2);color:var(--mut);font-size:13px;box-shadow:0 -6px 22px rgba(0,255,65,.06);z-index:60;}" + nl$
+    s$ = s$ + "  .cookiebar span{max-width:72ch;}.cookiebar button{padding:6px 16px;}" + nl$
+    s$ = s$ + "</style>"
+    RETURN s$
+ENDFUNC
+
+' ---- template rendering ----
+
+EXPORT FUNC RENDER$(tpl$, vars)
+    out$ = REPLACE$(tpl$, "##theme##", THEME$())
+    keys = MAP.KEYS(vars)
+    FOR EACH k IN keys
+        out$ = REPLACE$(out$, "##" + k + "##", "" + vars{k})
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+EXPORT FUNC COOKIE_BANNER$()
+    nl$ = CHR$(10)
+    s$ = "<div id='cookiebar' class='cookiebar'>" + nl$
+    s$ = s$ + "  <span>This site uses a single, strictly necessary session cookie so you stay signed in. No tracking, no third parties.</span>" + nl$
+    s$ = s$ + "  <button id='cookieok'>OK</button>" + nl$
+    s$ = s$ + "</div>" + nl$
+    s$ = s$ + "<script>(function(){var b=document.getElementById('cookiebar');if(!b)return;" + nl$
+    s$ = s$ + "  if(localStorage.getItem('jdw_cookie_ok')){b.style.display='none';return;}b.style.display='flex';" + nl$
+    s$ = s$ + "  document.getElementById('cookieok').addEventListener('click',function(){localStorage.setItem('jdw_cookie_ok','1');b.style.display='none';});})();</script>"
+    RETURN s$
+ENDFUNC
+
+EXPORT FUNC NAV_HTML$(cfg, active$)
+    s$ = "<header><h1>" + ("" + cfg{"app"}) + " <span>" + ("" + cfg{"sub"}) + "</span></h1><nav>"
+    items = cfg{"nav"}
+    FOR EACH it IN items
+        cls$ = "navlink"
+        IF ("" + it{"path"}) = active$ THEN cls$ = "navlink active"
+        s$ = s$ + "<a class='" + cls$ + "' href='" + ("" + it{"path"}) + "'>" + ("" + it{"label"}) + "</a>"
+    NEXT it
+    s$ = s$ + "</nav><div class='spacer'></div>"
+    s$ = s$ + "<div class='whoami'><span id='whoami'></span><button id='logout' class='ghost'>Logout</button></div></header>"
+    s$ = s$ + "<script>(async function(){const me=await fetch('/api/me').then(r=>r.ok?r.json():null);"
+    s$ = s$ + "if(me&&me.name)document.getElementById('whoami').textContent='Logged in as '+me.name;"
+    s$ = s$ + "document.getElementById('logout').addEventListener('click',async()=>{await fetch('/api/logout',{method:'POST'});location='/login';});})();</script>"
+    RETURN s$
+ENDFUNC
+
+' Full HTML document. navHtml$ may be "" (e.g. the login page). The EU cookie
+' banner is appended only when the app config has "cookies": true.
+EXPORT FUNC PAGE$(cfg, title$, navHtml$, content$)
+    nl$ = CHR$(10)
+    bar$ = ""
+    ck = cfg{"cookies"}
+    IF TYPEOF(ck) <> "NONE" ANDALSO ck = TRUE THEN bar$ = COOKIE_BANNER$()
+    t$ = "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>" + nl$
+    t$ = t$ + "<meta name='viewport' content='width=device-width, initial-scale=1'>" + nl$
+    t$ = t$ + "<title>##title##</title>" + nl$ + "##theme##" + nl$ + "</head><body>" + nl$
+    t$ = t$ + "##nav##" + nl$ + "##content##" + nl$ + "##cookiebar##" + nl$ + "</body></html>"
+    RETURN RENDER$(t$, { "title": title$, "nav": navHtml$, "content": content$, "cookiebar": bar$ })
+ENDFUNC
+
+EXPORT FUNC LOGIN_PAGE$(cfg)
+    nl$ = CHR$(10)
+    app$ = "" + cfg{"app"}
+    c$ = "<form class='login' id='loginForm'>" + nl$
+    c$ = c$ + "  <h1>" + app$ + "</h1><p>Sign in to continue.</p>" + nl$
+    c$ = c$ + "  <label>Name</label><input name='name' autocomplete='username' autofocus>" + nl$
+    c$ = c$ + "  <label>Password</label><input name='password' type='password' autocomplete='current-password'>" + nl$
+    c$ = c$ + "  <button type='submit'>Sign in</button>" + nl$
+    c$ = c$ + "  <div class='err' id='err'></div>" + nl$
+    c$ = c$ + "  <p>First sign-in sets your password.</p>" + nl$
+    c$ = c$ + "</form>" + nl$
+    c$ = c$ + "<script>" + nl$
+    c$ = c$ + "document.getElementById('loginForm').addEventListener('submit',async(ev)=>{ev.preventDefault();const f=ev.target;" + nl$
+    c$ = c$ + "  const data={name:f.name.value.trim(),password:f.password.value};" + nl$
+    c$ = c$ + "  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});" + nl$
+    c$ = c$ + "  const j=await r.json();if(j.ok){location='/';}else{document.getElementById('err').textContent=j.error||'Login failed';}});" + nl$
+    c$ = c$ + "</script>"
+    RETURN PAGE$(cfg, app$ + " - Sign in", "", c$)
+ENDFUNC
+
+' ---- cookie-session auth (cookie name: jdwsession) ----
+
+EXPORT FUNC HASH_PW$(salt$, pw$)
+    RETURN CODEC.SHA256$(salt$ + ":" + pw$)
+ENDFUNC
+
+EXPORT FUNC COOKIE_VAL$(request, name$)
+    h = request{"HEADERS"}
+    IF TYPEOF(h) = "NONE" THEN RETURN ""
+    raw = h{"cookie"}
+    IF TYPEOF(raw) = "NONE" THEN RETURN ""
+    s$ = "; " + ("" + raw)
+    key$ = "; " + name$ + "="
+    p = INSTR(s$, key$)
+    IF p < 0 THEN RETURN ""
+    rest$ = MID$(s$, p + LEN(key$), LEN(s$))
+    pos = INSTR(rest$, ";")
+    IF pos < 0 THEN RETURN rest$
+    RETURN LEFT$(rest$, pos)
+ENDFUNC
+
+EXPORT FUNC AUTH_USER$(db, request)
+    token$ = COOKIE_VAL$(request, "jdwsession")
+    IF LEN(token$) = 0 THEN RETURN ""
+    rows = SQL.QUERY(db, "SELECT username FROM sessions WHERE token = '" + ESC$(token$) + "'")
+    IF LEN(rows) = 0 THEN RETURN ""
+    RETURN "" + rows[0]{"username"}
+ENDFUNC
+
+EXPORT FUNC UNAUTH()
+    RETURN { "__http_status": 401, "__http_content_type": "application/json", _
+        "__http_body": JSON.STRINGIFY$({ "error": "unauthorized" }) }
+ENDFUNC
+
+EXPORT FUNC REDIRECT_TO(loc$)
+    RETURN { "__http_status": 302, "__http_headers": { "Location": loc$ }, "__http_body": "" }
+ENDFUNC
+
+EXPORT SUB AUTH_INIT(db)
+    SQL.EXEC(db, "CREATE TABLE IF NOT EXISTS users (" + _
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, " + _
+        "salt TEXT, pass_hash TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    SQL.EXEC(db, "CREATE TABLE IF NOT EXISTS sessions (" + _
+        "token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    SQL.EXEC(db, "ALTER TABLE users ADD COLUMN salt TEXT")
+    SQL.EXEC(db, "ALTER TABLE users ADD COLUMN pass_hash TEXT")
+ENDSUB
+
+EXPORT FUNC AUTH_LOGIN(db, request, secure)
+    body = JSON.PARSE$(request{"BODY"})
+    name$ = FIELD$(body, "name")
+    pw$ = FIELD$(body, "password")
+    IF LEN(name$) = 0 ORELSE LEN(pw$) = 0 THEN RETURN { "error": "name and password required" }
+
+    rows = SQL.QUERY(db, "SELECT id, name, salt, pass_hash FROM users WHERE name = '" + ESC$(name$) + "'")
+    IF LEN(rows) = 0 THEN
+        cnt = SQL.QUERY(db, "SELECT COUNT(*) AS n FROM users")
+        IF INT(cnt[0]{"n"}) > 0 THEN RETURN { "error": "unknown user" }
+        SQL.EXEC(db, "INSERT INTO users (name) VALUES ('" + ESC$(name$) + "')")
+        rows = SQL.QUERY(db, "SELECT id, name, salt, pass_hash FROM users WHERE name = '" + ESC$(name$) + "'")
+    ENDIF
+    u = rows[0]
+
+    phv = u{"pass_hash"}
+    IF TYPEOF(phv) = "NONE" THEN
+        salt$ = CODEC.UUID$()
+        SQL.EXEC(db, "UPDATE users SET salt='" + salt$ + "', pass_hash='" + HASH_PW$(salt$, pw$) + _
+            "' WHERE id = " + STR$(INT(u{"id"})))
+    ELSE
+        salt$ = "" + u{"salt"}
+        IF HASH_PW$(salt$, pw$) <> ("" + phv) THEN RETURN { "error": "wrong password" }
+    ENDIF
+
+    token$ = CODEC.UUID$()
+    name2$ = "" + u{"name"}
+    SQL.EXEC(db, "INSERT INTO sessions (token, username) VALUES ('" + token$ + "', '" + ESC$(name2$) + "')")
+
+    cookie$ = "jdwsession=" + token$ + "; HttpOnly; Path=/; SameSite=Lax"
+    IF secure = TRUE THEN cookie$ = cookie$ + "; Secure"
+    RETURN { "__http_status": 200, "__http_headers": { "Set-Cookie": cookie$ }, _
+        "__http_content_type": "application/json", _
+        "__http_body": JSON.STRINGIFY$({ "ok": TRUE, "name": name2$ }) }
+ENDFUNC
+
+EXPORT FUNC AUTH_LOGOUT(db, request)
+    token$ = COOKIE_VAL$(request, "jdwsession")
+    IF LEN(token$) > 0 THEN SQL.EXEC(db, "DELETE FROM sessions WHERE token = '" + ESC$(token$) + "'")
+    RETURN { "__http_status": 200, "__http_headers": { "Set-Cookie": "jdwsession=; Path=/; Max-Age=0" }, _
+        "__http_content_type": "application/json", "__http_body": "{}" }
+ENDFUNC
+
+EXPORT FUNC AUTH_ME(db, request)
+    u$ = AUTH_USER$(db, request)
+    IF LEN(u$) = 0 THEN RETURN UNAUTH()
+    RETURN { "name": u$ }
+ENDFUNC
