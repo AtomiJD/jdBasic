@@ -1,0 +1,34 @@
+' SQLite demo - the engine is built into jdBasic, so this runs entirely in the
+' browser (no server). Creates an in-memory database, inserts rows, queries.
+
+PRINT "=== jdBasic SQLite demo ==="
+db = SQL.OPEN(":memory:")
+IF TYPEOF(db) = "NONE" THEN
+    PRINT "could not open database"
+    END
+ENDIF
+PRINT "opened an in-memory database"
+
+SQL.EXEC(db, "CREATE TABLE langs (id INTEGER PRIMARY KEY, name TEXT, year INTEGER)")
+SQL.EXEC(db, "INSERT INTO langs (name, year) VALUES ('BASIC', 1964)")
+SQL.EXEC(db, "INSERT INTO langs (name, year) VALUES ('APL', 1966)")
+SQL.EXEC(db, "INSERT INTO langs (name, year) VALUES ('C', 1972)")
+SQL.EXEC(db, "INSERT INTO langs (name, year) VALUES ('Python', 1991)")
+SQL.EXEC(db, "INSERT INTO langs (name, year) VALUES ('jdBasic', 2025)")
+PRINT "inserted 5 rows"
+PRINT
+
+PRINT "Languages before 1980, oldest first:"
+rows = SQL.QUERY(db, "SELECT name, year FROM langs WHERE year < 1980 ORDER BY year")
+FOR i = 0 TO LEN(rows) - 1
+    r = rows[i]
+    PRINT "  "; r{"year"}; "  "; r{"name"}
+NEXT i
+PRINT
+
+agg = SQL.QUERY(db, "SELECT COUNT(*) AS total, MIN(year) AS oldest, MAX(year) AS newest FROM langs")
+PRINT "total rows: "; agg[0]{"total"}; "   oldest: "; agg[0]{"oldest"}; "   newest: "; agg[0]{"newest"}
+
+SQL.CLOSE db
+PRINT "database closed."
+END
