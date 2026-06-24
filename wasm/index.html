@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>jdBasic - Web</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
+<link rel="stylesheet" href="vendor/fonts/fira-code.css">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
   :root{
     --bg:#0a0e0c; --panel:#0c1410; --bd:#16321d; --bd2:#2a5c35;
     --ink:#d6ffe2; --mut:#5fae6f; --green:#00FF41; --blue:#adc7ff;
@@ -81,9 +81,9 @@
   </div>
   <input type="file" id="fileopen" accept=".jdb,.bas,.txt" hidden>
 
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+  <script src="vendor/xterm/xterm.js"></script>
+  <script src="vendor/xterm/addon-fit.js"></script>
+  <script src="vendor/monaco/vs/loader.js"></script>
   <script src="jdbasic.js"></script>
   <script>
   const ide = (function(){
@@ -304,7 +304,7 @@
     }
 
     // ---- monaco (the EDIT editor) ----
-    require.config({ paths:{ vs:'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
+    require.config({ paths:{ vs:'vendor/monaco/vs' }});
     require(['vs/editor/editor.main'], function(){
       monaco.languages.register({ id:'jdbasic' });
       monaco.languages.setMonarchTokensProvider('jdbasic', {

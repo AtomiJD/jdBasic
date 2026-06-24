@@ -227,6 +227,14 @@ godot/**/addons/**/bin/*.pdb
 # SCons build cache from embed/godot/godot-cpp builds
 embed/godot/.sconsign.dblite
 embed/godot/godot-cpp/bin/
+
+# ── WASM browser IDE: deploy bundle (generated + vendored, ~23 MB) ──
+# jdbasic.js/.wasm come from build_wasm.sh; vendor/ holds the CDN libs
+# (xterm, monaco, Fira Code). Assembled locally and uploaded to the web
+# host - see wasm/DEPLOY.md. Kept out of git to avoid binaries in history.
+wasm/jdbasic.js
+wasm/jdbasic.wasm
+wasm/vendor/
 embed/godot/godot-cpp/gen/
 
 # rpg-native: project-local LLM model(s) - large, carried via USB not git
