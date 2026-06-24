@@ -62,6 +62,9 @@ done
 # Default TTF for graphics TEXT/SETFONT, embedded at the FS root where the
 # WASM build of try_load_default_font looks for it.
 [ -f jdbasic_default.ttf ] && EMBED="$EMBED --embed-file jdbasic_default.ttf@/jdbasic_default.ttf"
+# help.txt at the FS root so the HELP command finds it (load_help_file tries
+# "help.txt" relative to the MEMFS cwd, which is /).
+[ -f help.txt ] && EMBED="$EMBED --embed-file help.txt@/help.txt"
 # Web-specific programs (e.g. graphics tuned with YIELD) live under wasm/programs.
 if [ -d wasm/programs ]; then
     for d in wasm/programs/*.jdb; do
@@ -82,7 +85,14 @@ EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=104
          -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','stringToUTF8','lengthBytesUTF8'] \
          $EMBED ${LINKEXTRA:-}"
 
+# Stamp the build number (from build_number.txt, same source as build.bat) and
+# date into the banner. Quoted here so the macro expands to a string literal.
+BNUM=0
+[ -f build_number.txt ] && BNUM=$(tr -d '\r\n' < build_number.txt)
+BDATE=$(date +%Y-%m-%d)
+
 emcc $CXXFLAGS $EMFLAGS \
+  -DJDBASIC_BUILD_NUM="\"$BNUM\"" -DJDBASIC_BUILD_DATE="\"$BDATE\"" \
   $CORE $GFX $IMGUI $SQL $ENTRY "$OUT/sqlite3.o" $STUB_OBJ \
   -o "$OUT/jdbasic.js"
-echo "BUILD OK: $OUT/jdbasic.{js,wasm}  (factory: createJdBasic)"
+echo "BUILD OK: $OUT/jdbasic.{js,wasm} (Build $BNUM, $BDATE, factory: createJdBasic)"
