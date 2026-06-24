@@ -5835,12 +5835,26 @@ void VM::register_builtins() {
         return Value::make_none();
     });
 
-    register_native("COLOR", [](const std::vector<Value>& args) -> Value {
-#if defined(_WIN32)
+    register_native("COLOR", [this](const std::vector<Value>& args) -> Value {
         int fg = (int)args[0].to_int();
         int bg = (args.size() >= 2) ? (int)args[1].to_int() : 0;
+#if defined(_WIN32)
         HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
         SetConsoleTextAttribute(hOut, (WORD)(fg | (bg << 4)));
+#else
+        // Win console palette → ANSI SGR (same mapping as Console::set_color),
+        // so COLOR works in the browser REPL and on POSIX terminals - not just
+        // the Windows console.
+        auto map = [](int c) { int base = 0; if (c & 1) base |= 1; if (c & 2) base |= 2; if (c & 4) base |= 4; return base; };
+        int fg_base = 30 + map(fg & 0x07);
+        int bg_base = 40 + map(bg & 0x07);
+        bool fg_bright = (fg & 0x08) != 0;
+        bool bg_bright = (bg & 0x08) != 0;
+        std::string s = fg_bright ? ("\033[1;" + std::to_string(fg_base) + "m")
+                                  : ("\033[22;" + std::to_string(fg_base) + "m");
+        if (bg == 0) s += "\033[49m";
+        else s += "\033[" + std::to_string(bg_bright ? bg_base + 60 : bg_base) + "m";
+        emit(s);
 #endif
         return Value::make_none();
     });
@@ -5967,7 +5981,14 @@ void VM::register_builtins() {
                 if (on_tick) on_tick();
                 if (!event_handlers.empty()) event_poll();
                 if (is_halted) return Value::make_string("");
+#ifdef __EMSCRIPTEN__
+                // Must yield to the browser, otherwise it never delivers the
+                // canvas keydown events that gfx_pump_events polls - WAITKEY$
+                // would busy-loop forever.
+                emscripten_sleep(5);
+#else
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
+#endif
             }
         }
 #endif

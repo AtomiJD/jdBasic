@@ -94,6 +94,10 @@ inline std::string jdbasic_banner() {
     b += "Copyright (c) 2025-2026 Computerwelt AI Solutions LLC.\n";
     b += "All Rights Reserved.\n";
     b += "Type HELP for more infos.\n";
+#ifndef __EMSCRIPTEN__
+    // Function-key workspace / history / search shortcuts and EXIT are console
+    // features the browser REPL does not have.
     b += "[F1-F4 / Ctrl+F1-F4] Workspace  [F5] Run  [F7] History  [F8] Search  EXIT to Quit\n";
+#endif
     return b;
 }

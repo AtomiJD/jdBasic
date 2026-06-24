@@ -53,7 +53,8 @@ fi
 DEMOS="jdb/demos/apl/oneliners.jdb jdb/demos/turtle/turtle_fib.jdb \
        jdb/demos/turtle/turtle_tree.jdb jdb/demos/games/minesweeper.jdb \
        jdb/demos/games/tetris_game.jdb jdb/demos/games/snake_game.jdb \
-       jdb/demos/graphics/universe.jdb"
+       jdb/demos/graphics/universe.jdb \
+       jdb/demos/graphics/graph_demo.jdb"
 EMBED=""
 for d in $DEMOS; do
     [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$d")"

@@ -870,7 +870,7 @@ static void register_console_builtins(VM& vm, bool ansi_color) {
                 } else if (std::isdigit(c)) {
                     size_t st = i;
                     while (i < line.size() && (std::isdigit((unsigned char)line[i]) || line[i] == '.')) ++i;
-                    out += wrap(line.substr(st, i - st), "96");
+                    out += wrap(line.substr(st, i - st), "93");
                 } else if (std::isalpha(c) || c == '_') {
                     size_t st = i;
                     while (i < line.size() && (std::isalnum((unsigned char)line[i]) || line[i] == '_' || line[i] == '$')) ++i;
@@ -878,7 +878,7 @@ static void register_console_builtins(VM& vm, bool ansi_color) {
                     std::string up = upcase(word);
                     if (kw.find(up) != kw.end())      out += wrap(word, "95");
                     else if (nv.find(up) != nv.end()) out += wrap(word, "96");
-                    else                              out += word;
+                    else                              out += wrap(word, "96");
                 } else {
                     out += line[i];
                     ++i;
@@ -2317,6 +2317,65 @@ void jdb_run(const char* src) {
     // program never called SCREEN). Fires Module.onScreenClose on the page.
     gfx_shutdown();
 #endif
+}
+
+// Syntax-highlighted listing with line-number gutter, identical to the
+// console LIST native (main.cpp's register_console_builtins) so the browser
+// REPL matches the desktop output. Uses "|" instead of U+2502 because the page
+// terminal decodes bytes as Latin-1 (for CHR$), which would split a UTF-8 box
+// glyph into garbage.
+EMSCRIPTEN_KEEPALIVE
+void jdb_list(const char* src) {
+    if (!src || !*src) { std::cout << "No program loaded.\n"; std::cout.flush(); return; }
+    auto& kw = keywords();
+    auto& nv = native_names();
+    auto upcase = [](std::string s) { std::transform(s.begin(), s.end(), s.begin(), ::toupper); return s; };
+    auto wrap = [](const std::string& s, const char* code) -> std::string {
+        return std::string("\x1b[") + code + "m" + s + "\x1b[0m";
+    };
+    std::istringstream ss(src);
+    std::string line;
+    std::string acc;
+    int ln = 1;
+    while (std::getline(ss, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        char gutter[16];
+        std::snprintf(gutter, sizeof(gutter), "%4d", ln);
+        std::string out = wrap(std::string(gutter) + " | ", "90");
+        size_t i = 0;
+        while (i < line.size()) {
+            unsigned char c = (unsigned char)line[i];
+            if (c == '"') {
+                size_t st = i++;
+                while (i < line.size() && line[i] != '"') ++i;
+                if (i < line.size()) ++i;
+                out += wrap(line.substr(st, i - st), "33");
+            } else if (c == '\'') {
+                out += wrap(line.substr(i), "32");
+                break;
+            } else if (std::isdigit(c)) {
+                size_t st = i;
+                while (i < line.size() && (std::isdigit((unsigned char)line[i]) || line[i] == '.')) ++i;
+                out += wrap(line.substr(st, i - st), "93");
+            } else if (std::isalpha(c) || c == '_') {
+                size_t st = i;
+                while (i < line.size() && (std::isalnum((unsigned char)line[i]) || line[i] == '_' || line[i] == '$')) ++i;
+                std::string word = line.substr(st, i - st);
+                std::string up = upcase(word);
+                if (kw.find(up) != kw.end())      out += wrap(word, "95");
+                else if (nv.find(up) != nv.end()) out += wrap(word, "96");
+                else                              out += wrap(word, "96");
+            } else {
+                out += line[i];
+                ++i;
+            }
+        }
+        out += "\n";
+        acc += out;
+        ++ln;
+    }
+    std::cout << acc;
+    std::cout.flush();
 }
 
 // Drop all state and start fresh.

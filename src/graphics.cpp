@@ -1335,18 +1335,20 @@ void register_graphics_builtins(VM& vm) {
             }
             apply_draw_color();
         } else {
-            // CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [r, g, b], [fill]
+            // CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b]
+            // fill comes before the colour, matching CIRCLE and the documented
+            // signature. The old order grabbed the fill flag as the red channel
+            // and left fill=false, so a filled sector rendered as a near-invisible
+            // outline.
             float cx = (float)args[0].to_double();
             float cy = (float)args[1].to_double();
             float rad = (float)args[2].to_double();
             float sa = (float)args[3].to_double();
             float ea = (float)args[4].to_double();
+            bool fill = (args.size() >= 6) ? args[5].to_bool() : false;
             Uint8 r, g, b;
-            bool has = extract_rgb(args, 5, r, g, b);
+            bool has = extract_rgb(args, 6, r, g, b);
             ColorGuard cg(has, r, g, b);
-            bool fill = false;
-            if (has && args.size() >= 9) fill = args[8].to_bool();
-            else if (!has && args.size() >= 6) fill = args[5].to_bool();
             if (fill) draw_sector_filled(cx, cy, rad, sa, ea);
             else draw_sector_outline(cx, cy, rad, sa, ea);
         }

@@ -171,6 +171,16 @@
     });
     fit = new FitAddon.FitAddon(); term.loadAddon(fit);
     term.open(document.getElementById('term')); fit.fit(); term.focus();
+    // The web font (Fira Code) loads asynchronously, but xterm measures its
+    // fixed cell grid at open() time. If the font is not ready yet, glyphs
+    // later render at a slightly different width and columns drift (a grid
+    // game's borders "swim"). Re-raster and re-fit once the font has loaded.
+    if (document.fonts && document.fonts.load){
+      document.fonts.load("14px 'Fira Code'").then(()=>document.fonts.ready).then(()=>{
+        try{ if(term.clearTextureAtlas) term.clearTextureAtlas();
+             fit.fit(); term.refresh(0, term.rows-1); }catch(e){}
+      }).catch(()=>{});
+    }
     // Keep the terminal focused so typing works immediately (and after clicks).
     document.getElementById('term').addEventListener('mousedown', ()=>{ if(!editorOpen) term.focus(); });
     window.addEventListener('resize', ()=>{ try{ fit.fit(); }catch(e){} });
@@ -195,7 +205,10 @@
       const up = t.toUpperCase();
       if (up === 'EDIT'){ openEditor(); return; }
       if (up === 'RUN'){ api.runProgram(); return; }
-      if (up === 'LIST'){ term.write('\r\n' + hlProgram(program)); prompt(); return; }
+      if (up === 'LIST'){ term.write('\r\n');
+        if (Mod && program) Mod.ccall('jdb_list','void',['string'],[program]);
+        else term.write('No program loaded.\r\n');
+        prompt(); return; }
       if (up === 'CLS' || up === 'CLEAR'){ term.clear(); prompt(); return; }
       if (up === 'NEW'){ newProgram(); return; }
       if (up === 'DIR' || up === 'FILES'){ listFiles(); return; }
@@ -237,6 +250,37 @@
       if (d === '\x1b[D'){ keyQueue.push(276); return; } // left
       for (const ch of d) keyQueue.push(ch.charCodeAt(0) & 0xFF);
     }
+    // Clipboard. Ctrl+C copies the selection (execCommand fallback, since the
+    // async clipboard API is blocked on insecure LAN origins); without a
+    // selection it still sends ^C. Ctrl+V returns false so xterm does NOT eat
+    // the key - the browser's native paste then fires xterm's own paste handler
+    // (the same path the right-click menu uses), which feeds term.onData.
+    function execCopy(t){
+      const ta=document.createElement('textarea'); ta.value=t;
+      ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      try{ document.execCommand('copy'); }catch(e){}
+      document.body.removeChild(ta); term.focus();
+    }
+    function copyText(t){
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).catch(()=>execCopy(t));
+      else execCopy(t);
+    }
+    term.attachCustomKeyEventHandler((e)=>{
+      if (e.type !== 'keydown') return true;
+      const ctrl = (e.ctrlKey || e.metaKey) && !e.altKey;
+      if (!ctrl) return true;
+      if (e.code==='KeyC' || e.key==='c' || e.key==='C'){
+        if (term.hasSelection && term.hasSelection()){
+          copyText(term.getSelection());
+          if (term.clearSelection) term.clearSelection();
+          return false;
+        }
+        return true;  // no selection: let ^C through
+      }
+      if (e.code==='KeyV' || e.key==='v' || e.key==='V') return false;
+      return true;
+    });
     term.onData(d=>{
       if (editorOpen) return;
       if (inputResolver){ inputData(d); return; }
@@ -280,11 +324,11 @@
         base:'vs-dark', inherit:true,
         rules:[
           {token:'keyword', foreground:'ff2e97', fontStyle:'bold'},
-          {token:'string', foreground:'00e5ff'},
+          {token:'string', foreground:'ffb000'},
           {token:'comment', foreground:'5fae6f', fontStyle:'italic'},
-          {token:'number', foreground:'ffb000'},
+          {token:'number', foreground:'ffd700'},
           {token:'operator', foreground:'5fae6f'},
-          {token:'identifier', foreground:'33ff6a'}
+          {token:'identifier', foreground:'00e5ff'}
         ],
         colors:{ 'editor.background':'#0a0e0c', 'editor.foreground':'#33ff6a',
           'editorCursor.foreground':'#00FF41', 'editorLineNumber.foreground':'#2a5c35',
