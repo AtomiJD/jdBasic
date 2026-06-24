@@ -1166,16 +1166,14 @@ void register_graphics_builtins(VM& vm) {
             }
             apply_draw_color();
         } else {
-            // RECT x, y, w, h, [r, g, b], [fill]
+            // RECT x, y, w, h, [fill], [r, g, b] - fill before colour (matches the
+            // docs and the matrix path; the old order grabbed the fill flag as red).
             float x = (float)args[0].to_double(), y = (float)args[1].to_double();
             float w = (float)args[2].to_double(), h = (float)args[3].to_double();
+            bool fill = (args.size() >= 5) ? args[4].to_bool() : false;
             Uint8 r, g, b;
-            bool has = extract_rgb(args, 4, r, g, b);
+            bool has = extract_rgb(args, 5, r, g, b);
             ColorGuard cg(has, r, g, b);
-            // fill is the last arg (after optional RGB)
-            bool fill = false;
-            if (has && args.size() >= 8) fill = args[7].to_bool();
-            else if (!has && args.size() >= 5) fill = args[4].to_bool();
             SDL_FRect rect = {x, y, w, h};
             if (fill) SDL_RenderFillRect(g_renderer, &rect);
             else SDL_RenderRect(g_renderer, &rect);
@@ -1207,16 +1205,14 @@ void register_graphics_builtins(VM& vm) {
             }
             apply_draw_color();
         } else {
-            // CIRCLE cx, cy, r, [r, g, b], [fill]
+            // CIRCLE cx, cy, r, [fill], [r, g, b]
             float cx = (float)args[0].to_double();
             float cy = (float)args[1].to_double();
             float cr = (float)args[2].to_double();
+            bool fill = (args.size() >= 4) ? args[3].to_bool() : false;
             Uint8 r, g, b;
-            bool has = extract_rgb(args, 3, r, g, b);
+            bool has = extract_rgb(args, 4, r, g, b);
             ColorGuard cg(has, r, g, b);
-            bool fill = false;
-            if (has && args.size() >= 7) fill = args[6].to_bool();
-            else if (!has && args.size() >= 4) fill = args[3].to_bool();
             if (fill) draw_circle_filled(cx, cy, cr);
             else draw_circle_outline(cx, cy, cr);
         }
@@ -1248,17 +1244,15 @@ void register_graphics_builtins(VM& vm) {
             }
             apply_draw_color();
         } else {
-            // ELLIPSE cx, cy, rx, ry, [r, g, b], [fill]
+            // ELLIPSE cx, cy, rx, ry, [fill], [r, g, b]
             float cx = (float)args[0].to_double();
             float cy = (float)args[1].to_double();
             float rx = (float)args[2].to_double();
             float ry = (float)args[3].to_double();
+            bool fill = (args.size() >= 5) ? args[4].to_bool() : false;
             Uint8 r, g, b;
-            bool has = extract_rgb(args, 4, r, g, b);
+            bool has = extract_rgb(args, 5, r, g, b);
             ColorGuard cg(has, r, g, b);
-            bool fill = false;
-            if (has && args.size() >= 8) fill = args[7].to_bool();
-            else if (!has && args.size() >= 5) fill = args[4].to_bool();
             if (fill) draw_ellipse_filled(cx, cy, rx, ry);
             else draw_ellipse_outline(cx, cy, rx, ry);
         }
@@ -1291,18 +1285,16 @@ void register_graphics_builtins(VM& vm) {
             }
             apply_draw_color();
         } else {
-            // ROUNDED_RECT x, y, w, h, rad, [r, g, b], [fill]
+            // ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b]
             float x = (float)args[0].to_double();
             float y = (float)args[1].to_double();
             float w = (float)args[2].to_double();
             float h = (float)args[3].to_double();
             float rad = (float)args[4].to_double();
+            bool fill = (args.size() >= 6) ? args[5].to_bool() : false;
             Uint8 r, g, b;
-            bool has = extract_rgb(args, 5, r, g, b);
+            bool has = extract_rgb(args, 6, r, g, b);
             ColorGuard cg(has, r, g, b);
-            bool fill = false;
-            if (has && args.size() >= 9) fill = args[8].to_bool();
-            else if (!has && args.size() >= 6) fill = args[5].to_bool();
             if (fill) draw_rounded_rect_filled(x, y, w, h, rad);
             else draw_rounded_rect_outline(x, y, w, h, rad);
         }
