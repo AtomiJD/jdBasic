@@ -7380,7 +7380,9 @@ void VM::register_builtins() {
 
     auto getos_fn = [](const std::vector<Value>& args) -> Value {
         (void)args;
-#if defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+        return Value::make_string("WEB");
+#elif defined(_WIN32)
         return Value::make_string("WINDOWS");
 #elif defined(__APPLE__)
         return Value::make_string("MACOS");

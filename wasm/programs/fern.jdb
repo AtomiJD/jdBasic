@@ -1,0 +1,76 @@
+' Barnsley fern - cross-platform (desktop + WASM). The title font is chosen
+' via OS.GETOS$(); the web build uses fewer points and flushes more often so
+' the browser stays responsive while the fern fills in.
+
+RANDOMSEED 1
+
+IF OS.GETOS$() = "WEB" THEN
+    fontFile$ = "/jdbasic_default.ttf"
+    points = 200000
+    flushEvery = 4000
+ELSE
+    fontFile$ = "C:/Windows/Fonts/arial.ttf"
+    points = 1000000
+    flushEvery = 100000
+ENDIF
+
+DIM W AS INTEGER = 600
+DIM H AS INTEGER = 760
+DIM HW AS INTEGER = W \ 2
+DIM XSCALE AS INTEGER = W \ 6
+DIM YSCALE AS INTEGER = H \ 11
+
+SCREEN W, H, "Barnsley Fern", 1
+CLS 0, 0, 0
+
+' One density counter per pixel - revisited pixels deepen toward bright green.
+DIM density AS ARRAY = RESHAPE(0, [W * H])
+
+DIM x AS DOUBLE = 0.0
+DIM y AS DOUBLE = 0.0
+DIM xn AS DOUBLE = 0.0
+DIM rr AS DOUBLE = 0.0
+DIM xscr AS INTEGER = 0
+DIM yscr AS INTEGER = 0
+DIM idx AS INTEGER = 0
+DIM cg AS INTEGER = 0
+DIM p AS INTEGER
+
+FOR p = 1 TO points
+    rr = RND()
+    IF rr < 0.01 THEN
+        xn = 0.0
+        y = 0.16 * y
+    ELSEIF rr < 0.86 THEN
+        xn = 0.85 * x + 0.04 * y
+        y = -0.04 * x + 0.85 * y + 1.6
+    ELSEIF rr < 0.93 THEN
+        xn = 0.2 * x - 0.26 * y
+        y = 0.23 * x + 0.22 * y + 1.6
+    ELSE
+        xn = -0.15 * x + 0.28 * y
+        y = 0.26 * x + 0.24 * y + 0.44
+    ENDIF
+    x = xn
+
+    xscr = HW + INT(x * XSCALE)
+    yscr = H - INT(y * YSCALE)
+    IF xscr >= 0 AND xscr < W AND yscr >= 0 AND yscr < H THEN
+        idx = yscr * W + xscr
+        cg = density[idx]
+        IF cg < 255 THEN
+            cg = (7 * cg) \ 8 + 33
+            IF cg > 255 THEN cg = 255
+            density[idx] = cg
+            DRAWCOLOR 0, cg, 0
+            PSET xscr, yscr
+        ENDIF
+    ENDIF
+    IF p MOD flushEvery = 0 THEN SCREENFLIP
+NEXT p
+
+SETFONT fontFile$, 22
+TEXT 30, 40, "Barnsley Fern", 0, 200, 0
+SCREENFLIP
+SLEEP 2500
+END

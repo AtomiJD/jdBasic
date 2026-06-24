@@ -106,6 +106,14 @@ std::string resolve_asset_path(const std::string& p) {
 SDL_Window*   g_window   = nullptr;
 SDL_Renderer* g_renderer = nullptr;
 
+#ifdef __EMSCRIPTEN__
+// WebGL does not preserve the backbuffer across SDL_RenderPresent, so a
+// draw/flip/draw/flip program would keep only the last batch. We render into
+// this persistent target texture instead and blit it to the screen on
+// SCREENFLIP, matching the desktop's accumulate-until-CLS model.
+static SDL_Texture* g_screen_tex = nullptr;
+#endif
+
 // Streaming texture used by GFX.PLOT_POINTS_TEX. File-scope so it can be
 // freed in cleanup_graphics() — otherwise the dangling pointer survives a
 // SCREEN→GFX.CLOSE→SCREEN cycle and crashes the second run.
@@ -177,9 +185,14 @@ static bool g_ttf_init = false;
 // own "no font loaded" error when this falls through.
 static void try_load_default_font(float size_pt) {
     if (g_font) return;
+#ifdef __EMSCRIPTEN__
+    // No executable path in the browser; the font is embedded at the FS root.
+    std::string path = "/jdbasic_default.ttf";
+#else
     std::string dir = exe_directory();
     if (dir.empty()) return;
     std::string path = dir + "/jdbasic_default.ttf";
+#endif
     std::error_code ec;
     if (!std::filesystem::exists(path, ec)) return;
     if (!g_ttf_init) {
@@ -630,6 +643,14 @@ static void cleanup_graphics() {
     g_plot_buf.clear();
     g_plot_buf.shrink_to_fit();
 
+#ifdef __EMSCRIPTEN__
+    if (g_screen_tex) {
+        if (g_renderer) SDL_SetRenderTarget(g_renderer, nullptr);
+        SDL_DestroyTexture(g_screen_tex);
+        g_screen_tex = nullptr;
+    }
+#endif
+
     if (g_renderer) { SDL_DestroyRenderer(g_renderer); g_renderer = nullptr; }
     if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
     if (g_sdl_init) { SDL_Quit(); g_sdl_init = false; }
@@ -663,6 +684,13 @@ void register_graphics_builtins(VM& vm) {
         // to the freed renderer — the new one ends up with
         // PRESENTATION_DISABLED and draws 1:1 in the top-left.
         gui_shutdown();
+#endif
+#ifdef __EMSCRIPTEN__
+        if (g_screen_tex) {
+            if (g_renderer) SDL_SetRenderTarget(g_renderer, nullptr);
+            SDL_DestroyTexture(g_screen_tex);
+            g_screen_tex = nullptr;
+        }
 #endif
         if (g_renderer) { SDL_DestroyRenderer(g_renderer); g_renderer = nullptr; }
         if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
@@ -714,6 +742,19 @@ void register_graphics_builtins(VM& vm) {
         SDL_RenderClear(g_renderer);
         SDL_RenderPresent(g_renderer);
 
+#ifdef __EMSCRIPTEN__
+        // Persistent backbuffer: draw into a logical-size target texture; the
+        // demos draw in logical coordinates, which map 1:1 to it. SCREENFLIP
+        // blits it to the (logically-scaled) window.
+        g_screen_tex = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_RGBA8888,
+            SDL_TEXTUREACCESS_TARGET, w, h);
+        if (g_screen_tex) {
+            SDL_SetRenderTarget(g_renderer, g_screen_tex);
+            SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+            SDL_RenderClear(g_renderer);
+        }
+#endif
+
         // Bring window to front and give it focus
         SDL_RaiseWindow(g_window);
 
@@ -756,8 +797,18 @@ void register_graphics_builtins(VM& vm) {
 #ifdef IMGUI
         gui_render(g_renderer);
 #endif
+#ifdef __EMSCRIPTEN__
+        // Blit the persistent target texture to the window, then restore it as
+        // the draw target so the next frame keeps accumulating on it.
+        if (g_screen_tex) {
+            SDL_SetRenderTarget(g_renderer, nullptr);
+            SDL_RenderClear(g_renderer);
+            SDL_RenderTexture(g_renderer, g_screen_tex, nullptr, nullptr);
+        }
+#endif
         SDL_RenderPresent(g_renderer);
 #ifdef __EMSCRIPTEN__
+        if (g_screen_tex) SDL_SetRenderTarget(g_renderer, g_screen_tex);
         // Hand a turn to the browser so it composites the freshly presented
         // frame to the canvas. A tight draw/SCREENFLIP loop with no SLEEP would
         // otherwise never let the page paint or deliver input.
@@ -1489,7 +1540,13 @@ void register_graphics_builtins(VM& vm) {
     });
 
     vm.register_native("GFX.DELAY", 1, 1, [](const std::vector<Value>& args) -> Value {
+#ifdef __EMSCRIPTEN__
+        // SDL_Delay busy-waits without handing control back to the browser;
+        // emscripten_sleep yields so the page composites and stays responsive.
+        emscripten_sleep((unsigned)args[0].to_int());
+#else
         SDL_Delay((Uint32)args[0].to_int());
+#endif
         return Value::make_none();
     });
 

@@ -15,7 +15,10 @@ INC="-Isrc -Ilibs/eigen -Ilibs/imgui -Ilibs/imgui/backends \
      -Ilibs/SDL3_image/include -Ilibs/SDL3_mixer/include/SDL3_mixer \
      -Ibridges/sqlitebridge"
 DEF="-DGFX -DIMGUI -DSQLITE"
-OPT="${OPT:--O0}"
+# -O2: the interpreter dispatch + APL array ops are hot; -O0 makes compute
+# demos (universe, mandelbrot, ...) crawl in the browser. -O2 is the sweet
+# spot (much faster than -O0, smaller .wasm than -O3).
+OPT="${OPT:--O2}"
 # -fexceptions: the jdBasic runtime throws on errors (bad SAVE, type errors, ...).
 # Without it a throw aborts the whole module; with it our jdb_run try/catch
 # reports the error and the REPL keeps running.
@@ -49,11 +52,15 @@ fi
 # Demo programs (LOAD/RUN from the in-browser MEMFS), embedded at the FS root.
 DEMOS="jdb/demos/apl/oneliners.jdb jdb/demos/turtle/turtle_fib.jdb \
        jdb/demos/turtle/turtle_tree.jdb jdb/demos/games/minesweeper.jdb \
-       jdb/demos/games/tetris_game.jdb jdb/demos/games/snake_game.jdb"
+       jdb/demos/games/tetris_game.jdb jdb/demos/games/snake_game.jdb \
+       jdb/demos/graphics/universe.jdb"
 EMBED=""
 for d in $DEMOS; do
     [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$d")"
 done
+# Default TTF for graphics TEXT/SETFONT, embedded at the FS root where the
+# WASM build of try_load_default_font looks for it.
+[ -f jdbasic_default.ttf ] && EMBED="$EMBED --embed-file jdbasic_default.ttf@/jdbasic_default.ttf"
 # Web-specific programs (e.g. graphics tuned with YIELD) live under wasm/programs.
 if [ -d wasm/programs ]; then
     for d in wasm/programs/*.jdb; do
@@ -64,7 +71,10 @@ fi
 # ASYNCIFY_STACK_SIZE: the default 4 KB is too small for our deeply-nested
 # bytecode interpreter - a suspend (INPUT, SLEEP, SCREENFLIP, YIELD) deep in
 # the dispatch loop overflows it and aborts with "unreachable". 1 MB is ample.
-EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=1048576 -sEXIT_RUNTIME=0 \
+# STACK_SIZE: emscripten's 64 KB default C stack overflows on large programs
+# with deep SUB/expression nesting (e.g. space_shooter), surfacing as
+# "memory access out of bounds". 16 MB matches a roomy desktop stack.
+EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=1048576 -sSTACK_SIZE=16777216 -sEXIT_RUNTIME=0 \
          -fexceptions \
          -sENVIRONMENT=web,node \
          -sMODULARIZE=1 -sEXPORT_NAME=createJdBasic \

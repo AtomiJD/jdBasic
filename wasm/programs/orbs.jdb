@@ -1,0 +1,38 @@
+' Colourful orbs - runs on desktop and in the browser.
+' OS.GETOS$() picks a window size that fits each target.
+
+IF OS.GETOS$() = "WEB" THEN
+    sw = 900 : sh = 600
+ELSE
+    sw = 1380 : sh = 824
+ENDIF
+
+SCREEN sw, sh, "jdBasic Orbs", 1
+
+DO
+    CLS
+    rf = RND() * 16 + 1
+    gf = RND() * 16 + 1
+    bf = RND() * 16 + 1
+
+    FOR i = 1 TO 150
+        x = RND() * sw
+        y = RND() * sh
+        rad = RND() * 48 + 32
+        st = INT(rad) \ 15
+
+        CIRCLE x, y, rad, TRUE, 255, 255, 255
+        FOR m = 1 TO 15
+            DRAWCOLOR rf * m, gf * m, bf * m
+            CIRCLE x, y, rad, TRUE
+            rad = rad - st
+        NEXT
+
+        SCREENFLIP
+        SLEEP 1
+        IF INKEY$() <> "" THEN EXITDO
+    NEXT i
+
+    SLEEP 1200
+LOOP UNTIL INKEY$() <> ""
+END

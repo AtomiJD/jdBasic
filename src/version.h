@@ -70,7 +70,9 @@ inline std::string jdbasic_features() {
 }
 
 inline std::string jdbasic_os() {
-#if defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+    return "Web";
+#elif defined(_WIN32)
   #if defined(_WIN64)
     return "win32 64-bit";
   #else

@@ -1,0 +1,32 @@
+' Font + graphics showcase. The TTF is selected via OS.GETOS$(): the embedded
+' default on the web, a system font on the desktop. Animated colour bars
+' behind a couple of TEXT lines so the font is clearly visible.
+
+IF OS.GETOS$() = "WEB" THEN
+    fontFile$ = "/jdbasic_default.ttf"
+ELSE
+    fontFile$ = "C:/Windows/Fonts/arial.ttf"
+ENDIF
+
+os$ = OS.GETOS$()
+SCREEN 800, 500, "jdBasic font demo (" + os$ + ")", 1
+
+t = 0.0
+DO
+    CLS 8, 12, 20
+    FOR i = 0 TO 9
+        yb = i * 50 + INT(SIN(t + i * 0.6) * 14)
+        RECT 0, yb, 800, 22, TRUE, 20 + i * 18, 60, 200 - i * 16
+    NEXT
+
+    SETFONT fontFile$, 44
+    TEXT 70, 170, "Hello from jdBasic", 0, 255, 65
+    SETFONT fontFile$, 22
+    TEXT 70, 240, "running on " + os$, 173, 199, 255
+    TEXT 70, 290, "press any key to return to the REPL", 120, 150, 170
+
+    SCREENFLIP
+    SLEEP 33
+    t = t + 0.12
+LOOP UNTIL INKEY$() <> ""
+END
