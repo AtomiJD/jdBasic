@@ -1033,6 +1033,8 @@ StmtPtr Parser::parse_if() {
 
     // One-liner IF: IF cond THEN stmt [:stmt...] [ELSE stmt [:stmt...]]
     if (!check(TokenType::NEWLINE) && !check(TokenType::EOF_TOKEN)) {
+        bool saved_inline = in_inline_if_;
+        in_inline_if_ = true;
         // parse_statement() calls expect_newline() which consumes ':'.
         // So after each statement, check if we're still on the same line
         // and if the next token continues the one-liner body.
@@ -1058,6 +1060,7 @@ StmtPtr Parser::parse_if() {
             }
             s->branches.push_back(std::move(else_branch));
         }
+        in_inline_if_ = saved_inline;
         // Don't expect END IF for one-liners
         return s;
     }
@@ -1338,8 +1341,9 @@ StmtPtr Parser::parse_ident_stmt() {
         }
     }
 
-    // Label: identifier followed by ':'
-    if (peek_at(1).type == TokenType::COLON) {
+    // Label: identifier followed by ':'. Not inside a one-liner IF body, where
+    // `THEN Sub : ...` is a no-args call followed by the ':' separator.
+    if (peek_at(1).type == TokenType::COLON && !in_inline_if_) {
         advance(); // identifier
         advance(); // :
         if (check(TokenType::NEWLINE)) advance();
@@ -1830,9 +1834,13 @@ StmtPtr Parser::parse_ident_stmt() {
         }
     }
 
-    // Bare identifier: could be a no-args function call or a typo
-    if (peek_at(1).type == TokenType::NEWLINE || peek_at(1).type == TokenType::EOF_TOKEN) {
-        // Try as a no-args function call first (LIST, VARS, HELP, CLS, etc.)
+    // Bare identifier: a no-args SUB/FUNC call (LIST, VARS, HELP, CLS, ...).
+    // Terminated by end-of-statement: NEWLINE/EOF, or - inside a one-liner IF -
+    // ELSE or the ':' separator (so `IF c THEN Sub : x` / `THEN Sub ELSE x` call
+    // Sub instead of evaluating it as a discarded expression).
+    if (peek_at(1).type == TokenType::NEWLINE || peek_at(1).type == TokenType::EOF_TOKEN ||
+        peek_at(1).type == TokenType::ELSE ||
+        (in_inline_if_ && peek_at(1).type == TokenType::COLON)) {
         advance(); // consume identifier
         std::vector<ExprPtr> no_args;
         auto call = make_call(name, std::move(no_args), ln);

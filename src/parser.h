@@ -28,6 +28,11 @@ private:
     std::vector<Token> tokens;
     size_t pos = 0;
 
+    // True while parsing a one-liner IF body (IF c THEN stmt [:stmt] [ELSE ...]).
+    // There a bare identifier before ':' or ELSE is a no-args SUB/FUNC call, not
+    // a label - labels are meaningless inside an inline IF.
+    bool in_inline_if_ = false;
+
     // Queue of synthesised statements that should be returned by the next
     // parse_statement() calls before any new tokens are consumed. Used to
     // expand `DIM a, b, c` into multiple separate DIM statements.
