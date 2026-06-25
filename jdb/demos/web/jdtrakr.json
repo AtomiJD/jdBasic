@@ -9,6 +9,7 @@
   "nav": [
     { "path": "/", "label": "Board" },
     { "path": "/projects", "label": "Projects" },
+    { "path": "/settings", "label": "Settings" },
     { "path": "/users", "label": "Users" }
   ]
 }

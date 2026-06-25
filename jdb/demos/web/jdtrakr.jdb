@@ -40,6 +40,7 @@ SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS projects (" + _
 SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS deps (" + _
     "id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL, " + _
     "blocked_by INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 
 ' add new ticket columns once (SQLite has no IF NOT EXISTS for ADD COLUMN)
 IF NOT HAS_COLUMN("tickets", "project_id") THEN
@@ -66,6 +67,12 @@ gStop = FALSE
 
 FUNC ESC$(s$)
     RETURN REPLACE$(s$, "'", "''")
+ENDFUNC
+
+FUNC SETTING$(key$, default$)
+    r = SQL.QUERY(gDb, "SELECT value FROM settings WHERE key = '" + ESC$(key$) + "'")
+    IF LEN(r) = 0 THEN RETURN default$
+    RETURN "" + r[0]{"value"}
 ENDFUNC
 
 FUNC FIELD$(obj, key$)
@@ -448,6 +455,23 @@ FUNC HandleDepDel(request)
     RETURN { "ok": TRUE }
 ENDFUNC
 
+' --- settings ---
+
+FUNC HandleSettings(request)
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    RETURN { "board_rows": INT(VAL(SETTING$("board_rows", "5"))) }
+ENDFUNC
+
+FUNC HandleSettingsSave(request)
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    body = JSON.PARSE$(request{"BODY"})
+    n = INT(body{"board_rows"})
+    IF n < 1 THEN n = 1
+    IF n > 99 THEN n = 99
+    SQL.EXEC(gDb, "INSERT OR REPLACE INTO settings (key, value) VALUES ('board_rows', '" + STR$(n) + "')")
+    RETURN { "ok": TRUE, "board_rows": n }
+ENDFUNC
+
 ' --- user API ---
 
 FUNC HandleUsers(request)
@@ -503,6 +527,8 @@ FUNC BOARD_BODY$()
     h$ = h$ + ".lrow{cursor:pointer;}.lrow:hover{background:#0e1812;}.ltitle{color:#d6ffe2;}" + nl$
     h$ = h$ + ".ldesc{color:#5fae6f;font-size:11px;max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" + nl$
     h$ = h$ + ".lrow.prio-high td:first-child{border-left:3px solid #e44;}.lrow.prio-low td:first-child{border-left:3px solid #567;}" + nl$
+    h$ = h$ + ".card .desc{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;}" + nl$
+    h$ = h$ + ".morelink{cursor:pointer;color:#6db;font-size:12px;margin-top:8px;padding:2px 0;}.morelink:hover{text-decoration:underline;}" + nl$
     h$ = h$ + "</style>" + nl$
     h$ = h$ + "<div class='filterbar'>" + nl$
     h$ = h$ + "  <select id='fproj'></select>" + nl$
@@ -574,9 +600,12 @@ FUNC BOARD_BODY$()
     h$ = h$ + "function render(tickets){const board=document.getElementById('board');board.innerHTML='';" + nl$
     h$ = h$ + "  for(const st of STATUSES){const col=document.createElement('div');col.className='col col-'+st;" + nl$
     h$ = h$ + "    const items=tickets.filter(t=>t.status===st);" + nl$
+    h$ = h$ + "    const PR={high:0,medium:1,low:2};const sorted=items.slice().sort((a,b)=>(PR[a.priority]-PR[b.priority])||(b.id-a.id));const shown=sorted.slice(0,window.NROWS||5);" + nl$
     h$ = h$ + "    const head=document.createElement('h2');head.textContent=LABELS[st];head.className='collink';head.title='Open list view';head.addEventListener('click',()=>setList(st));" + nl$
     h$ = h$ + "    const c=document.createElement('span');c.className='count';c.textContent=items.length;head.appendChild(c);col.appendChild(head);" + nl$
-    h$ = h$ + "    for(const t of items)col.appendChild(card(t));board.appendChild(col);}}" + nl$
+    h$ = h$ + "    for(const t of shown)col.appendChild(card(t));" + nl$
+    h$ = h$ + "    if(items.length>shown.length){const ml=document.createElement('div');ml.className='morelink';ml.textContent='+ '+(items.length-shown.length)+' weitere →';ml.addEventListener('click',()=>setList(st));col.appendChild(ml);}" + nl$
+    h$ = h$ + "    board.appendChild(col);}}" + nl$
     h$ = h$ + "let LISTST=null;let LSORT={key:'id',dir:-1};" + nl$
     h$ = h$ + "function setList(st){LISTST=st;location.hash='#list='+st;load();window.scrollTo(0,0);}" + nl$
     h$ = h$ + "function closeList(){LISTST=null;location.hash='#';load();}" + nl$
@@ -662,7 +691,8 @@ FUNC BOARD_BODY$()
     h$ = h$ + "for(const id of ['fproj','fasg','fsev','ftype']){document.getElementById(id).addEventListener('change',load);}" + nl$
     h$ = h$ + "document.getElementById('fq').addEventListener('input',load);" + nl$
     h$ = h$ + "document.getElementById('addForm').addEventListener('submit',create);" + nl$
-    h$ = h$ + "loadProjects().then(loadUsers).then(()=>{load();checkHash();});" + nl$
+    h$ = h$ + "async function loadSettings(){const s=await api('/api/settings');window.NROWS=s.board_rows||5;}" + nl$
+    h$ = h$ + "loadProjects().then(loadUsers).then(loadSettings).then(()=>{load();checkHash();});" + nl$
     h$ = h$ + "</script>"
     RETURN h$
 ENDFUNC
@@ -689,6 +719,24 @@ FUNC USERS_BODY$()
     h$ = h$ + "async function addU(ev){ev.preventDefault();const f=ev.target;const name=f.uname.value.trim();if(!name)return;" + nl$
     h$ = h$ + "  const r=await api('/api/users/create',{name:name});if(r.error){alert(r.error);}f.reset();loadU();}" + nl$
     h$ = h$ + "document.getElementById('userForm').addEventListener('submit',addU);loadU();" + nl$
+    h$ = h$ + "</script>"
+    RETURN h$
+ENDFUNC
+
+FUNC SETTINGS_BODY$()
+    nl$ = CHR$(10)
+    h$ = "<div class='wrap'>" + nl$
+    h$ = h$ + "<form class='add' id='setForm'>" + nl$
+    h$ = h$ + "  <label style='align-self:center'>Rows shown per board column (top by priority)</label>" + nl$
+    h$ = h$ + "  <input name='rows' type='number' min='1' max='99' style='max-width:90px'>" + nl$
+    h$ = h$ + "  <button type='submit'>Save</button>" + nl$
+    h$ = h$ + "</form>" + nl$
+    h$ = h$ + "<div id='msg' class='empty'></div></div>" + nl$
+    h$ = h$ + "<script>" + nl$
+    h$ = h$ + "async function api(path,data){const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}" + nl$
+    h$ = h$ + "async function loadS(){const s=await api('/api/settings');document.querySelector('#setForm [name=rows]').value=s.board_rows||5;}" + nl$
+    h$ = h$ + "document.getElementById('setForm').addEventListener('submit',async(ev)=>{ev.preventDefault();const inp=ev.target.querySelector('[name=rows]');const n=parseInt(inp.value)||5;const r=await api('/api/settings/save',{board_rows:n});document.getElementById('msg').textContent='Saved: '+r.board_rows+' rows per column. Reload the board to apply.';});" + nl$
+    h$ = h$ + "loadS();" + nl$
     h$ = h$ + "</script>"
     RETURN h$
 ENDFUNC
@@ -727,6 +775,11 @@ FUNC HandleProjectsPage(request)
     RETURN JDWEB.PAGE$(gCfg, gApp$ + " - Projects", JDWEB.NAV_HTML$(gCfg, "/projects"), PROJECTS_BODY$())
 ENDFUNC
 
+FUNC HandleSettingsPage(request)
+    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.REDIRECT_TO("/login")
+    RETURN JDWEB.PAGE$(gCfg, gApp$ + " - Settings", JDWEB.NAV_HTML$(gCfg, "/settings"), SETTINGS_BODY$())
+ENDFUNC
+
 FUNC HandleUsersPage(request)
     IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.REDIRECT_TO("/login")
     RETURN JDWEB.PAGE$(gCfg, gApp$ + " - Users", JDWEB.NAV_HTML$(gCfg, "/users"), USERS_BODY$())
@@ -736,6 +789,7 @@ ENDFUNC
 
 HTTP.SERVER.ON_GET "/", "HANDLEROOT"
 HTTP.SERVER.ON_GET "/projects", "HANDLEPROJECTSPAGE"
+HTTP.SERVER.ON_GET "/settings", "HANDLESETTINGSPAGE"
 HTTP.SERVER.ON_GET "/users", "HANDLEUSERSPAGE"
 HTTP.SERVER.ON_GET "/login", "HANDLELOGINPAGE"
 HTTP.SERVER.ON_POST "/api/login", "HANDLELOGIN"
@@ -748,6 +802,8 @@ HTTP.SERVER.ON_POST "/api/update", "HANDLEUPDATE"
 HTTP.SERVER.ON_POST "/api/move", "HANDLEMOVE"
 HTTP.SERVER.ON_POST "/api/delete", "HANDLEDELETE"
 HTTP.SERVER.ON_POST "/api/comment", "HANDLECOMMENT"
+HTTP.SERVER.ON_GET "/api/settings", "HANDLESETTINGS"
+HTTP.SERVER.ON_POST "/api/settings/save", "HANDLESETTINGSSAVE"
 HTTP.SERVER.ON_GET "/api/projects", "HANDLEPROJECTS"
 HTTP.SERVER.ON_POST "/api/projects/create", "HANDLEPROJECTCREATE"
 HTTP.SERVER.ON_POST "/api/projects/delete", "HANDLEPROJECTDELETE"
