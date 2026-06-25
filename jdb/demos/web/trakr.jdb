@@ -1,0 +1,92 @@
+' trakr.jdb - a jdBasic client module for the jdTrakr ticket API.
+'
+' Reads the API key from the JDTRAKR_API environment variable and the base URL
+' from JDTRAKR_URL (default: the live site). It acts as the agent identity
+' "Kaiku". IMPORT it, then call the namespaced functions:
+'
+'   IMPORT TRAKR
+'   DIM t : t = TRAKR.NEXTTASK()                       ' next ticket for Kaiku, or NONE
+'   IF TYPEOF(t) <> "NONE" THEN
+'       TRAKR.MOVE(t{"id"}, "doing")
+'       TRAKR.COMMENT(t{"id"}, "On it.")
+'   ENDIF
+'   TRAKR.CREATE({ "title": "New bug", "type": "bug", "assignee": "Kaiku" })
+'
+EXPORT MODULE TRAKR
+
+' base URL, no trailing slash
+FUNC Base$()
+    DIM u$
+    u$ = GETENV$("JDTRAKR_URL")
+    IF LEN(u$) = 0 THEN u$ = "https://trakr.jdbasic.tech"
+    RETURN u$
+ENDFUNC
+
+' attach the API key to the next request
+SUB Auth()
+    HTTP.CLEARHEADERS
+    HTTP.SETHEADER "X-API-Key", GETENV$("JDTRAKR_API")
+ENDSUB
+
+FUNC GetJson(path$)
+    Auth
+    RETURN JSON.PARSE$(HTTP.GET$(Base$() + path$))
+ENDFUNC
+
+FUNC PostJson(path$, payload)
+    Auth
+    RETURN JSON.PARSE$(HTTP.POST$(Base$() + path$, JSON.STRINGIFY$(payload)))
+ENDFUNC
+
+' ── reads ────────────────────────────────────────────────────────────
+EXPORT FUNC PROJECTS()
+    RETURN GetJson("/api/projects"){"projects"}
+ENDFUNC
+
+' query$ is a raw filter string, e.g. "project=karma-kat&status=todo&assignee=Kaiku"
+EXPORT FUNC TICKETS(query$)
+    RETURN GetJson("/api/tickets?" + query$){"tickets"}
+ENDFUNC
+
+' full detail map: ticket + comments + history + blockers + blocks
+EXPORT FUNC DETAIL(id)
+    RETURN GetJson("/api/ticket?id=" + STR$(INT(id)))
+ENDFUNC
+
+' the single next actionable ticket for Kaiku, or NONE when nothing is queued
+EXPORT FUNC NEXTTASK()
+    DIM j
+    j = GetJson("/api/next?assignee=Kaiku&project=all")
+    IF TYPEOF(j{"ticket"}) <> "NONE" THEN RETURN j{"ticket"}
+    RETURN NONE
+ENDFUNC
+
+' ── writes (return the server's result map, e.g. { "ok": TRUE, "id": N }) ──
+' fields is a map: title, description, assignee, priority, severity, type, project
+EXPORT FUNC CREATE(fields)
+    RETURN PostJson("/api/create", fields)
+ENDFUNC
+
+EXPORT FUNC UPDATE(fields)
+    RETURN PostJson("/api/update", fields)
+ENDFUNC
+
+EXPORT FUNC MOVE(id, status$)
+    RETURN PostJson("/api/move", { "id": INT(id), "status": status$ })
+ENDFUNC
+
+EXPORT FUNC COMMENT(id, body$)
+    RETURN PostJson("/api/comment", { "ticket_id": INT(id), "body": body$ })
+ENDFUNC
+
+EXPORT FUNC BLOCK(id, blocker)
+    RETURN PostJson("/api/dep/add", { "ticket_id": INT(id), "blocked_by": INT(blocker) })
+ENDFUNC
+
+EXPORT FUNC UNBLOCK(id, blocker)
+    RETURN PostJson("/api/dep/del", { "ticket_id": INT(id), "blocked_by": INT(blocker) })
+ENDFUNC
+
+EXPORT FUNC NEWPROJECT(name$, key$)
+    RETURN PostJson("/api/projects/create", { "name": name$, "key": key$ })
+ENDFUNC
