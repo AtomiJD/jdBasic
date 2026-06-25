@@ -33,6 +33,33 @@ SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS history (" + _
     "id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL, " + _
     "actor TEXT, action TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
 
+' projects + ticket dependencies (predecessor / blocked-by)
+SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS projects (" + _
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE NOT NULL, " + _
+    "name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS deps (" + _
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL, " + _
+    "blocked_by INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+
+' add new ticket columns once (SQLite has no IF NOT EXISTS for ADD COLUMN)
+IF NOT HAS_COLUMN("tickets", "project_id") THEN
+    SQL.EXEC(gDb, "ALTER TABLE tickets ADD COLUMN project_id INTEGER")
+ENDIF
+IF NOT HAS_COLUMN("tickets", "severity") THEN
+    SQL.EXEC(gDb, "ALTER TABLE tickets ADD COLUMN severity TEXT DEFAULT 'minor'")
+ENDIF
+IF NOT HAS_COLUMN("tickets", "type") THEN
+    SQL.EXEC(gDb, "ALTER TABLE tickets ADD COLUMN type TEXT DEFAULT 'task'")
+ENDIF
+
+' ensure a default project and adopt any project-less tickets
+IF LEN(SQL.QUERY(gDb, "SELECT id FROM projects WHERE key = 'jdbasic'")) = 0 THEN
+    SQL.EXEC(gDb, "INSERT INTO projects (key, name) VALUES ('jdbasic', 'jdBasic')")
+ENDIF
+gDefProj = INT(SQL.QUERY(gDb, "SELECT id FROM projects WHERE key = 'jdbasic'")[0]{"id"})
+SQL.EXEC(gDb, "UPDATE tickets SET project_id = " + STR$(gDefProj) + _
+    " WHERE project_id IS NULL OR project_id = 0")
+
 gStop = FALSE
 
 ' --- app helpers ---
@@ -55,15 +82,89 @@ FUNC PARAM$(request, key$)
     RETURN "" + v
 ENDFUNC
 
+FUNC HAS_COLUMN(table$, col$)
+    rows = SQL.QUERY(gDb, "PRAGMA table_info(" + table$ + ")")
+    FOR i = 0 TO LEN(rows) - 1
+        IF ("" + rows[i]{"name"}) = col$ THEN RETURN TRUE
+    NEXT
+    RETURN FALSE
+ENDFUNC
+
+FUNC SLUG$(s$)
+    out$ = ""
+    FOR i = 0 TO LEN(s$) - 1
+        ch$ = MID$(s$, i, 1)
+        IF (ch$ >= "A" ANDALSO ch$ <= "Z") ORELSE (ch$ >= "a" ANDALSO ch$ <= "z") ORELSE (ch$ >= "0" ANDALSO ch$ <= "9") THEN
+            out$ = out$ + ch$
+        ELSEIF ch$ = " " ORELSE ch$ = "-" ORELSE ch$ = "_" THEN
+            IF LEN(out$) > 0 ANDALSO RIGHT$(out$, 1) <> "-" THEN out$ = out$ + "-"
+        ENDIF
+    NEXT
+    IF LEN(out$) = 0 THEN out$ = "p"
+    RETURN LOWER$(out$)
+ENDFUNC
+
+' --- API-key auth: machine clients send the key in a header; humans use cookies ---
+FUNC API_KEY$(request)
+    h = request{"HEADERS"}
+    IF TYPEOF(h) = "NONE" THEN RETURN ""
+    v = h{"x-api-key"}
+    IF TYPEOF(v) <> "NONE" THEN RETURN TRIM$("" + v)
+    a = h{"authorization"}
+    IF TYPEOF(a) = "NONE" THEN RETURN ""
+    s$ = TRIM$("" + a)
+    IF LEFT$(s$, 7) = "Bearer " THEN RETURN TRIM$(MID$(s$, 7, LEN(s$)))
+    RETURN s$
+ENDFUNC
+
+FUNC API_OK(request)
+    expected$ = TRIM$(GETENV$("JDTRAKR_API"))
+    IF LEN(expected$) = 0 THEN RETURN FALSE
+    RETURN API_KEY$(request) = expected$
+ENDFUNC
+
+' acting identity: a logged-in human, else "Kaiku" for a valid API key, else ""
+FUNC ACTOR$(request)
+    u$ = JDWEB.AUTH_USER$(gDb, request)
+    IF LEN(u$) > 0 THEN RETURN u$
+    IF API_OK(request) THEN RETURN "Kaiku"
+    RETURN ""
+ENDFUNC
+
+' resolve a project ref (numeric id or key slug) to an id; -1 if unknown, 0 if blank
+FUNC PROJ_ID(ref$)
+    s$ = TRIM$(ref$)
+    IF LEN(s$) = 0 THEN RETURN 0
+    isnum = TRUE
+    FOR i = 0 TO LEN(s$) - 1
+        ch$ = MID$(s$, i, 1)
+        IF ch$ < "0" ORELSE ch$ > "9" THEN isnum = FALSE
+    NEXT
+    IF isnum THEN RETURN INT(VAL(s$))
+    r = SQL.QUERY(gDb, "SELECT id FROM projects WHERE key = '" + ESC$(s$) + "'")
+    IF LEN(r) = 0 THEN RETURN -1
+    RETURN INT(r[0]{"id"})
+ENDFUNC
+
 FUNC VALID_STATUS(st$)
-    RETURN st$ = "todo" ORELSE st$ = "doing" ORELSE st$ = "done"
+    RETURN st$ = "todo" ORELSE st$ = "blocked" ORELSE st$ = "doing" ORELSE st$ = "review" ORELSE st$ = "done"
 ENDFUNC
 
 FUNC STATUS_LABEL$(st$)
     IF st$ = "todo" THEN RETURN "To Do"
+    IF st$ = "blocked" THEN RETURN "Blocked"
     IF st$ = "doing" THEN RETURN "In Progress"
+    IF st$ = "review" THEN RETURN "Review"
     IF st$ = "done" THEN RETURN "Done"
     RETURN st$
+ENDFUNC
+
+FUNC VALID_SEVERITY(s$)
+    RETURN s$ = "blocker" ORELSE s$ = "critical" ORELSE s$ = "major" ORELSE s$ = "minor" ORELSE s$ = "trivial"
+ENDFUNC
+
+FUNC VALID_TYPE(t$)
+    RETURN t$ = "bug" ORELSE t$ = "feature" ORELSE t$ = "chore" ORELSE t$ = "idea" ORELSE t$ = "task"
 ENDFUNC
 
 FUNC WHO_LABEL$(w$)
@@ -103,26 +204,45 @@ ENDFUNC
 ' --- ticket API ---
 
 FUNC HandleTickets(request)
-    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
-    rows = SQL.QUERY(gDb, "SELECT id, title, description, status, assignee, priority, created_at " + _
-        "FROM tickets ORDER BY id DESC")
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    where$ = "WHERE 1=1"
+    pj$ = PARAM$(request, "project")
+    IF LEN(pj$) > 0 ANDALSO pj$ <> "all" THEN where$ = where$ + " AND t.project_id = " + STR$(PROJ_ID(pj$))
+    as$ = PARAM$(request, "assignee")
+    IF LEN(as$) > 0 THEN where$ = where$ + " AND t.assignee = '" + ESC$(as$) + "'"
+    st$ = PARAM$(request, "status")
+    IF LEN(st$) > 0 THEN where$ = where$ + " AND t.status = '" + ESC$(st$) + "'"
+    sv$ = PARAM$(request, "severity")
+    IF LEN(sv$) > 0 THEN where$ = where$ + " AND t.severity = '" + ESC$(sv$) + "'"
+    ty$ = PARAM$(request, "type")
+    IF LEN(ty$) > 0 THEN where$ = where$ + " AND t.type = '" + ESC$(ty$) + "'"
+    q$ = PARAM$(request, "q")
+    IF LEN(q$) > 0 THEN where$ = where$ + " AND (t.title LIKE '%" + ESC$(q$) + "%' OR t.description LIKE '%" + ESC$(q$) + "%')"
+    rows = SQL.QUERY(gDb, "SELECT t.id, t.title, t.description, t.status, t.assignee, t.priority, " + _
+        "t.severity, t.type, t.project_id, p.key AS project_key, p.name AS project_name, t.created_at " + _
+        "FROM tickets t LEFT JOIN projects p ON p.id = t.project_id " + where$ + " ORDER BY t.id DESC")
     RETURN { "tickets": rows }
 ENDFUNC
 
 FUNC HandleTicket(request)
-    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
     id = INT(VAL(PARAM$(request, "id")))
-    rows = SQL.QUERY(gDb, "SELECT * FROM tickets WHERE id = " + STR$(id))
+    rows = SQL.QUERY(gDb, "SELECT t.*, p.key AS project_key, p.name AS project_name " + _
+        "FROM tickets t LEFT JOIN projects p ON p.id = t.project_id WHERE t.id = " + STR$(id))
     IF LEN(rows) = 0 THEN RETURN { "error": "not found" }
     comments = SQL.QUERY(gDb, "SELECT id, author, body, created_at FROM comments " + _
         "WHERE ticket_id = " + STR$(id) + " ORDER BY id")
     hist = SQL.QUERY(gDb, "SELECT actor, action, created_at FROM history " + _
         "WHERE ticket_id = " + STR$(id) + " ORDER BY id DESC")
-    RETURN { "ticket": rows[0], "comments": comments, "history": hist }
+    blockers = SQL.QUERY(gDb, "SELECT b.id, b.title, b.status FROM deps d " + _
+        "JOIN tickets b ON b.id = d.blocked_by WHERE d.ticket_id = " + STR$(id) + " ORDER BY b.id")
+    blocks = SQL.QUERY(gDb, "SELECT b.id, b.title, b.status FROM deps d " + _
+        "JOIN tickets b ON b.id = d.ticket_id WHERE d.blocked_by = " + STR$(id) + " ORDER BY b.id")
+    RETURN { "ticket": rows[0], "comments": comments, "history": hist, "blockers": blockers, "blocks": blocks }
 ENDFUNC
 
 FUNC HandleCreate(request)
-    u$ = JDWEB.AUTH_USER$(gDb, request)
+    u$ = ACTOR$(request)
     IF LEN(u$) = 0 THEN RETURN JDWEB.UNAUTH()
     body = JSON.PARSE$(request{"BODY"})
     title$ = FIELD$(body, "title")
@@ -132,18 +252,26 @@ FUNC HandleCreate(request)
     who$ = FIELD$(body, "assignee")
     prio$ = FIELD$(body, "priority")
     IF prio$ <> "low" ANDALSO prio$ <> "high" THEN prio$ = "medium"
+    sev$ = FIELD$(body, "severity")
+    IF NOT VALID_SEVERITY(sev$) THEN sev$ = "minor"
+    ty$ = FIELD$(body, "type")
+    IF NOT VALID_TYPE(ty$) THEN ty$ = "task"
+    pid = PROJ_ID(FIELD$(body, "project"))
+    IF pid <= 0 THEN pid = gDefProj
 
-    sql$ = "INSERT INTO tickets (title, description, status, assignee, priority) VALUES ('" + _
-        ESC$(title$) + "', '" + ESC$(desc$) + "', 'todo', '" + ESC$(who$) + "', '" + ESC$(prio$) + "')"
+    sql$ = "INSERT INTO tickets (title, description, status, assignee, priority, severity, type, project_id) VALUES ('" + _
+        ESC$(title$) + "', '" + ESC$(desc$) + "', 'todo', '" + ESC$(who$) + "', '" + ESC$(prio$) + "', '" + _
+        ESC$(sev$) + "', '" + ESC$(ty$) + "', " + STR$(pid) + ")"
     IF SQL.EXEC(gDb, sql$) < 0 THEN RETURN { "error": SQL.ERRMSG$(gDb) }
 
     r = SQL.QUERY(gDb, "SELECT last_insert_rowid() AS nid")
-    LOG_HIST INT(r[0]{"nid"}), u$, "created the ticket"
-    RETURN { "ok": TRUE }
+    nid = INT(r[0]{"nid"})
+    LOG_HIST nid, u$, "created the ticket"
+    RETURN { "ok": TRUE, "id": nid }
 ENDFUNC
 
 FUNC HandleUpdate(request)
-    actor$ = JDWEB.AUTH_USER$(gDb, request)
+    actor$ = ACTOR$(request)
     IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
     body = JSON.PARSE$(request{"BODY"})
     id = INT(body{"id"})
@@ -160,22 +288,36 @@ FUNC HandleUpdate(request)
     IF prio$ <> "low" ANDALSO prio$ <> "high" THEN prio$ = "medium"
     st$ = FIELD$(body, "status")
     IF NOT VALID_STATUS(st$) THEN st$ = "" + cur{"status"}
+    sev$ = FIELD$(body, "severity")
+    IF NOT VALID_SEVERITY(sev$) THEN sev$ = "" + cur{"severity"}
+    ty$ = FIELD$(body, "type")
+    IF NOT VALID_TYPE(ty$) THEN ty$ = "" + cur{"type"}
+    pid = INT(cur{"project_id"})
+    pref$ = FIELD$(body, "project")
+    IF LEN(pref$) > 0 THEN
+        np = PROJ_ID(pref$)
+        IF np > 0 THEN pid = np
+    ENDIF
 
     IF title$ <> ("" + cur{"title"}) THEN LOG_HIST id, actor$, "renamed to: " + title$
     IF desc$ <> ("" + cur{"description"}) THEN LOG_HIST id, actor$, "edited the description"
     IF who$ <> ("" + cur{"assignee"}) THEN LOG_HIST id, actor$, "assigned to " + WHO_LABEL$(who$)
     IF prio$ <> ("" + cur{"priority"}) THEN LOG_HIST id, actor$, "set priority to " + prio$
+    IF sev$ <> ("" + cur{"severity"}) THEN LOG_HIST id, actor$, "set severity to " + sev$
+    IF ty$ <> ("" + cur{"type"}) THEN LOG_HIST id, actor$, "set type to " + ty$
     IF st$ <> ("" + cur{"status"}) THEN LOG_HIST id, actor$, "moved to " + STATUS_LABEL$(st$)
+    IF pid <> INT(cur{"project_id"}) THEN LOG_HIST id, actor$, "moved to another project"
 
     sql$ = "UPDATE tickets SET title='" + ESC$(title$) + "', description='" + ESC$(desc$) + _
         "', assignee='" + ESC$(who$) + "', priority='" + ESC$(prio$) + "', status='" + ESC$(st$) + _
-        "' WHERE id = " + STR$(id)
+        "', severity='" + ESC$(sev$) + "', type='" + ESC$(ty$) + "', project_id=" + STR$(pid) + _
+        " WHERE id = " + STR$(id)
     IF SQL.EXEC(gDb, sql$) < 0 THEN RETURN { "error": SQL.ERRMSG$(gDb) }
     RETURN { "ok": TRUE }
 ENDFUNC
 
 FUNC HandleMove(request)
-    actor$ = JDWEB.AUTH_USER$(gDb, request)
+    actor$ = ACTOR$(request)
     IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
     body = JSON.PARSE$(request{"BODY"})
     id = INT(body{"id"})
@@ -194,11 +336,12 @@ FUNC HandleMove(request)
 ENDFUNC
 
 FUNC HandleDelete(request)
-    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
     body = JSON.PARSE$(request{"BODY"})
     id = INT(body{"id"})
     SQL.EXEC(gDb, "DELETE FROM comments WHERE ticket_id = " + STR$(id))
     SQL.EXEC(gDb, "DELETE FROM history WHERE ticket_id = " + STR$(id))
+    SQL.EXEC(gDb, "DELETE FROM deps WHERE ticket_id = " + STR$(id) + " OR blocked_by = " + STR$(id))
     IF SQL.EXEC(gDb, "DELETE FROM tickets WHERE id = " + STR$(id)) < 0 THEN
         RETURN { "error": SQL.ERRMSG$(gDb) }
     ENDIF
@@ -206,7 +349,7 @@ FUNC HandleDelete(request)
 ENDFUNC
 
 FUNC HandleComment(request)
-    author$ = JDWEB.AUTH_USER$(gDb, request)
+    author$ = ACTOR$(request)
     IF LEN(author$) = 0 THEN RETURN JDWEB.UNAUTH()
     body = JSON.PARSE$(request{"BODY"})
     id = INT(body{"ticket_id"})
@@ -221,16 +364,100 @@ FUNC HandleComment(request)
     RETURN { "ok": TRUE }
 ENDFUNC
 
+' --- projects + dependencies + agent helper ---
+
+FUNC HandleProjects(request)
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    rows = SQL.QUERY(gDb, "SELECT p.id, p.key, p.name, p.created_at, " + _
+        "(SELECT COUNT(*) FROM tickets t WHERE t.project_id = p.id) AS tickets, " + _
+        "(SELECT COUNT(*) FROM tickets t WHERE t.project_id = p.id AND t.status <> 'done') AS open " + _
+        "FROM projects p ORDER BY p.name")
+    RETURN { "projects": rows }
+ENDFUNC
+
+FUNC HandleProjectCreate(request)
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    body = JSON.PARSE$(request{"BODY"})
+    name$ = FIELD$(body, "name")
+    IF LEN(name$) = 0 THEN RETURN { "error": "name required" }
+    key$ = FIELD$(body, "key")
+    IF LEN(key$) = 0 THEN key$ = name$
+    key$ = SLUG$(key$)
+    IF SQL.EXEC(gDb, "INSERT INTO projects (key, name) VALUES ('" + ESC$(key$) + "', '" + ESC$(name$) + "')") < 0 THEN
+        RETURN { "error": "project key already exists" }
+    ENDIF
+    r = SQL.QUERY(gDb, "SELECT id, key, name FROM projects WHERE key = '" + ESC$(key$) + "'")
+    RETURN { "ok": TRUE, "project": r[0] }
+ENDFUNC
+
+FUNC HandleProjectDelete(request)
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    body = JSON.PARSE$(request{"BODY"})
+    pid = PROJ_ID(FIELD$(body, "project"))
+    IF pid <= 0 THEN RETURN { "error": "unknown project" }
+    IF pid = gDefProj THEN RETURN { "error": "cannot delete the default project" }
+    n = SQL.QUERY(gDb, "SELECT COUNT(*) AS c FROM tickets WHERE project_id = " + STR$(pid))
+    IF INT(n[0]{"c"}) > 0 THEN RETURN { "error": "project still has tickets" }
+    SQL.EXEC(gDb, "DELETE FROM projects WHERE id = " + STR$(pid))
+    RETURN { "ok": TRUE }
+ENDFUNC
+
+' the single most important thing to do next: highest-priority unblocked todo
+FUNC HandleNext(request)
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    who$ = PARAM$(request, "assignee")
+    IF LEN(who$) = 0 THEN who$ = "Kaiku"
+    pfilter$ = ""
+    pj$ = PARAM$(request, "project")
+    IF LEN(pj$) > 0 ANDALSO pj$ <> "all" THEN pfilter$ = " AND t.project_id = " + STR$(PROJ_ID(pj$))
+    sql$ = "SELECT t.*, p.key AS project_key, p.name AS project_name " + _
+        "FROM tickets t LEFT JOIN projects p ON p.id = t.project_id " + _
+        "WHERE t.assignee = '" + ESC$(who$) + "' AND t.status = 'todo'" + pfilter$ + _
+        " AND NOT EXISTS (SELECT 1 FROM deps d JOIN tickets b ON b.id = d.blocked_by " + _
+        "WHERE d.ticket_id = t.id AND b.status <> 'done') " + _
+        "ORDER BY CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, " + _
+        "CASE t.severity WHEN 'blocker' THEN 0 WHEN 'critical' THEN 1 WHEN 'major' THEN 2 WHEN 'minor' THEN 3 ELSE 4 END, " + _
+        "t.id ASC LIMIT 1"
+    rows = SQL.QUERY(gDb, sql$)
+    IF LEN(rows) = 0 THEN RETURN { "found": FALSE }
+    RETURN { "found": TRUE, "ticket": rows[0] }
+ENDFUNC
+
+FUNC HandleDepAdd(request)
+    actor$ = ACTOR$(request)
+    IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
+    body = JSON.PARSE$(request{"BODY"})
+    tid = INT(body{"ticket_id"})
+    bb = INT(body{"blocked_by"})
+    IF tid = bb THEN RETURN { "error": "a ticket cannot block itself" }
+    IF LEN(SQL.QUERY(gDb, "SELECT id FROM tickets WHERE id = " + STR$(tid))) = 0 THEN RETURN { "error": "ticket not found" }
+    IF LEN(SQL.QUERY(gDb, "SELECT id FROM tickets WHERE id = " + STR$(bb))) = 0 THEN RETURN { "error": "blocker not found" }
+    IF LEN(SQL.QUERY(gDb, "SELECT id FROM deps WHERE ticket_id = " + STR$(tid) + " AND blocked_by = " + STR$(bb))) > 0 THEN RETURN { "ok": TRUE }
+    SQL.EXEC(gDb, "INSERT INTO deps (ticket_id, blocked_by) VALUES (" + STR$(tid) + ", " + STR$(bb) + ")")
+    LOG_HIST tid, actor$, "marked as blocked by #" + STR$(bb)
+    RETURN { "ok": TRUE }
+ENDFUNC
+
+FUNC HandleDepDel(request)
+    actor$ = ACTOR$(request)
+    IF LEN(actor$) = 0 THEN RETURN JDWEB.UNAUTH()
+    body = JSON.PARSE$(request{"BODY"})
+    tid = INT(body{"ticket_id"})
+    bb = INT(body{"blocked_by"})
+    SQL.EXEC(gDb, "DELETE FROM deps WHERE ticket_id = " + STR$(tid) + " AND blocked_by = " + STR$(bb))
+    RETURN { "ok": TRUE }
+ENDFUNC
+
 ' --- user API ---
 
 FUNC HandleUsers(request)
-    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
     rows = SQL.QUERY(gDb, "SELECT id, name FROM users ORDER BY name")
     RETURN { "users": rows }
 ENDFUNC
 
 FUNC HandleUserCreate(request)
-    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
     body = JSON.PARSE$(request{"BODY"})
     name$ = FIELD$(body, "name")
     IF LEN(name$) = 0 THEN RETURN { "error": "name required" }
@@ -241,7 +468,7 @@ FUNC HandleUserCreate(request)
 ENDFUNC
 
 FUNC HandleUserDelete(request)
-    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.UNAUTH()
+    IF LEN(ACTOR$(request)) = 0 THEN RETURN JDWEB.UNAUTH()
     body = JSON.PARSE$(request{"BODY"})
     id = INT(body{"id"})
     IF SQL.EXEC(gDb, "DELETE FROM users WHERE id = " + STR$(id)) < 0 THEN
@@ -254,17 +481,42 @@ ENDFUNC
 
 FUNC BOARD_BODY$()
     nl$ = CHR$(10)
-    h$ = "<form class='add' id='addForm'>" + nl$
+    h$ = "<style>" + nl$
+    h$ = h$ + ".filterbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;}" + nl$
+    h$ = h$ + ".filterbar select,.filterbar input{padding:6px 8px;background:var(--bg);color:var(--ink);border:1px solid var(--bd2);border-radius:4px;font-family:inherit;}" + nl$
+    h$ = h$ + ".filterbar select:focus,.filterbar input:focus{outline:none;border-color:var(--green);box-shadow:0 0 8px rgba(0,255,65,.25);}" + nl$
+    h$ = h$ + ".filterbar select option{background:var(--bg);color:var(--ink);}.filterbar .grow{flex:1;min-width:140px;}" + nl$
+    h$ = h$ + ".badges{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0;}" + nl$
+    h$ = h$ + ".badge{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid #2a5c35;color:#bfe;text-transform:capitalize;}" + nl$
+    h$ = h$ + ".badge.bug{border-color:#c44;color:#f99;}.badge.feature{border-color:#3b8;color:#9fc;}.badge.chore{border-color:#778;color:#bcd;}.badge.idea{border-color:#b83;color:#fd9;}" + nl$
+    h$ = h$ + ".badge.blocker,.badge.critical{border-color:#e44;color:#f99;}.badge.major{border-color:#e93;color:#fc9;}.badge.high{border-color:#e44;color:#f99;}.badge.low{border-color:#567;color:#9ab;}" + nl$
+    h$ = h$ + ".ptag{color:#6db;font-size:11px;}" + nl$
+    h$ = h$ + ".col-blocked h2{color:#e88;}.col-review h2{color:#dd7;}" + nl$
+    h$ = h$ + ".mdprev{background:#0b1410;border:1px solid #1c3a24;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;min-height:20px;}" + nl$
+    h$ = h$ + ".mdprev pre{background:#000;padding:8px;overflow-x:auto;border-radius:4px;}.mdprev ul{margin:4px 0 4px 18px;}.mdprev code{background:#000;padding:1px 4px;border-radius:3px;}" + nl$
+    h$ = h$ + ".deprow{display:flex;align-items:center;gap:8px;margin:4px 0;}.depid{max-width:150px;}" + nl$
+    h$ = h$ + "</style>" + nl$
+    h$ = h$ + "<div class='filterbar'>" + nl$
+    h$ = h$ + "  <select id='fproj'></select>" + nl$
+    h$ = h$ + "  <select id='fasg'></select>" + nl$
+    h$ = h$ + "  <select id='fsev'><option value=''>Any severity</option><option>blocker</option><option>critical</option><option>major</option><option>minor</option><option>trivial</option></select>" + nl$
+    h$ = h$ + "  <select id='ftype'><option value=''>Any type</option><option>bug</option><option>feature</option><option>chore</option><option>idea</option><option>task</option></select>" + nl$
+    h$ = h$ + "  <input id='fq' class='grow' placeholder='Search...' autocomplete='off'>" + nl$
+    h$ = h$ + "</div>" + nl$
+    h$ = h$ + "<form class='add' id='addForm'>" + nl$
     h$ = h$ + "  <input class='title' name='title' placeholder='Ticket title' autocomplete='off'>" + nl$
-    h$ = h$ + "  <input class='desc' name='description' placeholder='Description (optional)' autocomplete='off'>" + nl$
+    h$ = h$ + "  <input class='desc' name='description' placeholder='Description (markdown, optional)' autocomplete='off'>" + nl$
+    h$ = h$ + "  <select id='addproj' name='project'></select>" + nl$
     h$ = h$ + "  <select id='assignee' name='assignee'></select>" + nl$
     h$ = h$ + "  <select name='priority'><option value='low'>Low</option><option value='medium' selected>Medium</option><option value='high'>High</option></select>" + nl$
+    h$ = h$ + "  <select name='severity'><option>minor</option><option>trivial</option><option>major</option><option>critical</option><option>blocker</option></select>" + nl$
+    h$ = h$ + "  <select name='type'><option>task</option><option>feature</option><option>bug</option><option>chore</option><option>idea</option></select>" + nl$
     h$ = h$ + "  <button type='submit'>Add ticket</button>" + nl$
     h$ = h$ + "</form>" + nl$
     h$ = h$ + "<div id='board'></div>" + nl$
     h$ = h$ + "<script>" + nl$
-    h$ = h$ + "const STATUSES=['todo','doing','done'];" + nl$
-    h$ = h$ + "const LABELS={todo:'To Do',doing:'In Progress',done:'Done'};" + nl$
+    h$ = h$ + "const STATUSES=['todo','blocked','doing','review','done'];" + nl$
+    h$ = h$ + "const LABELS={todo:'To Do',blocked:'Blocked',doing:'In Progress',review:'Review',done:'Done'};" + nl$
     h$ = h$ + "async function api(path,data){" + nl$
     h$ = h$ + "  const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};" + nl$
     h$ = h$ + "  const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}" + nl$
@@ -272,56 +524,93 @@ FUNC BOARD_BODY$()
     h$ = h$ + "  b.addEventListener('click',(e)=>{e.stopPropagation();fn();});return b;}" + nl$
     h$ = h$ + "function fieldEl(label,el){const w=document.createElement('div');const l=document.createElement('label');l.textContent=label;w.appendChild(l);w.appendChild(el);return w;}" + nl$
     h$ = h$ + "function selEl(options,val){const s=document.createElement('select');for(const o of options){const op=document.createElement('option');op.value=o[0];op.textContent=o[1];if(o[0]===val)op.selected=true;s.appendChild(op);}return s;}" + nl$
-    h$ = h$ + "async function loadUsers(){const res=await api('/api/users');window.USERS=res.users||[];" + nl$
+    h$ = h$ + "function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}" + nl$
+    h$ = h$ + "function mdToHtml(src){let s=esc(src);" + nl$
+    h$ = h$ + "  s=s.replace(/```([\s\S]*?)```/g,function(m,c){return '<pre>'+c.replace(/^\n/,'').replace(/\n/g,'@@NL@@')+'</pre>';});" + nl$
+    h$ = h$ + "  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');" + nl$
+    h$ = h$ + "  s=s.replace(/^###\s+(.*)$/gm,'<h5>$1</h5>').replace(/^##\s+(.*)$/gm,'<h4>$1</h4>').replace(/^#\s+(.*)$/gm,'<h3>$1</h3>');" + nl$
+    h$ = h$ + "  s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');" + nl$
+    h$ = h$ + "  s=s.replace(/^[\-\*]\s+(.*)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>(?:\n<li>[\s\S]*?<\/li>)*)/g,function(m){return '<ul>'+m.replace(/\n/g,'')+'</ul>';});" + nl$
+    h$ = h$ + "  s=s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'$1 ($2)');" + nl$
+    h$ = h$ + "  return s.replace(/\n/g,'<br>').replace(/@@NL@@/g,'\n');}" + nl$
+    h$ = h$ + "function fval(id){return document.getElementById(id).value;}" + nl$
+    h$ = h$ + "async function loadProjects(){const res=await api('/api/projects');window.PROJ=res.projects||[];" + nl$
+    h$ = h$ + "  const fp=document.getElementById('fproj');const ap=document.getElementById('addproj');fp.innerHTML='';ap.innerHTML='';" + nl$
+    h$ = h$ + "  const a0=document.createElement('option');a0.value='all';a0.textContent='Alle Projekte';fp.appendChild(a0);" + nl$
+    h$ = h$ + "  for(const p of window.PROJ){const o=document.createElement('option');o.value=p.key;o.textContent=p.name;fp.appendChild(o);" + nl$
+    h$ = h$ + "    const o2=document.createElement('option');o2.value=p.key;o2.textContent=p.name;ap.appendChild(o2);}}" + nl$
+    h$ = h$ + "async function loadUsers(){const res=await api('/api/users');window.USERS=res.users||[];const names=window.USERS.map(u=>u.name);" + nl$
+    h$ = h$ + "  const fa=document.getElementById('fasg');fa.innerHTML='';const a0=document.createElement('option');a0.value='';a0.textContent='Alle Personen';fa.appendChild(a0);" + nl$
+    h$ = h$ + "  for(const n of ['Unassigned'].concat(names)){const o=document.createElement('option');o.value=n;o.textContent=n;fa.appendChild(o);}" + nl$
     h$ = h$ + "  const sel=document.getElementById('assignee');sel.innerHTML='';" + nl$
-    h$ = h$ + "  const u0=document.createElement('option');u0.value='Unassigned';u0.textContent='Unassigned';sel.appendChild(u0);" + nl$
-    h$ = h$ + "  for(const u of window.USERS){const o=document.createElement('option');o.value=u.name;o.textContent=u.name;sel.appendChild(o);}}" + nl$
-    h$ = h$ + "async function load(){const res=await api('/api/tickets');render(res.tickets||[]);}" + nl$
+    h$ = h$ + "  for(const n of ['Unassigned'].concat(names)){const o=document.createElement('option');o.value=(n==='Unassigned'?'':n);o.textContent=n;sel.appendChild(o);}}" + nl$
+    h$ = h$ + "async function load(){const res=await api('/api/tickets?project='+encodeURIComponent(fval('fproj')));" + nl$
+    h$ = h$ + "  let ts=res.tickets||[];const asg=fval('fasg'),sev=fval('fsev'),ty=fval('ftype'),q=fval('fq').toLowerCase();" + nl$
+    h$ = h$ + "  ts=ts.filter(t=>{if(asg==='Unassigned'){if(t.assignee)return false;}else if(asg){if(t.assignee!==asg)return false;}" + nl$
+    h$ = h$ + "    if(sev&&t.severity!==sev)return false;if(ty&&t.type!==ty)return false;" + nl$
+    h$ = h$ + "    if(q&&!((t.title||'').toLowerCase().includes(q)||(t.description||'').toLowerCase().includes(q)))return false;return true;});" + nl$
+    h$ = h$ + "  render(ts);}" + nl$
+    h$ = h$ + "function badge(cls,txt){const s=document.createElement('span');s.className='badge '+cls;s.textContent=txt;return s;}" + nl$
     h$ = h$ + "function card(t){" + nl$
     h$ = h$ + "  const d=document.createElement('div');d.className='card prio-'+(t.priority||'medium');d.addEventListener('click',()=>openTicket(t.id));" + nl$
     h$ = h$ + "  const ti=document.createElement('div');ti.className='title';ti.textContent='#'+t.id+'  '+t.title;d.appendChild(ti);" + nl$
+    h$ = h$ + "  const bg=document.createElement('div');bg.className='badges';bg.appendChild(badge(t.type||'task',t.type||'task'));" + nl$
+    h$ = h$ + "  bg.appendChild(badge(t.severity||'minor',t.severity||'minor'));bg.appendChild(badge(t.priority||'medium',t.priority||'medium'));d.appendChild(bg);" + nl$
     h$ = h$ + "  if(t.description){const de=document.createElement('div');de.className='desc';de.textContent=t.description;d.appendChild(de);}" + nl$
-    h$ = h$ + "  const me=document.createElement('div');me.className='meta';me.textContent=(t.assignee||'Unassigned')+'  .  '+(t.priority||'medium');d.appendChild(me);" + nl$
+    h$ = h$ + "  const me=document.createElement('div');me.className='meta';me.textContent=(t.assignee||'Unassigned');" + nl$
+    h$ = h$ + "  if(fval('fproj')==='all'&&t.project_name){const pt=document.createElement('span');pt.className='ptag';pt.textContent='  '+t.project_name;me.appendChild(pt);}d.appendChild(me);" + nl$
     h$ = h$ + "  const bar=document.createElement('div');bar.className='bar';const idx=STATUSES.indexOf(t.status);" + nl$
-    h$ = h$ + "  if(idx>0)bar.appendChild(btn('< Back','ghost',()=>move(t.id,STATUSES[idx-1])));" + nl$
-    h$ = h$ + "  if(idx<STATUSES.length-1)bar.appendChild(btn('Next >','ghost',()=>move(t.id,STATUSES[idx+1])));" + nl$
+    h$ = h$ + "  if(idx>0)bar.appendChild(btn('Back','ghost',()=>move(t.id,STATUSES[idx-1])));" + nl$
+    h$ = h$ + "  if(idx<STATUSES.length-1)bar.appendChild(btn('Next','ghost',()=>move(t.id,STATUSES[idx+1])));" + nl$
     h$ = h$ + "  bar.appendChild(btn('Edit','ghost',()=>openTicket(t.id)));d.appendChild(bar);return d;}" + nl$
     h$ = h$ + "function render(tickets){const board=document.getElementById('board');board.innerHTML='';" + nl$
-    h$ = h$ + "  for(const st of STATUSES){const col=document.createElement('div');col.className='col';" + nl$
+    h$ = h$ + "  for(const st of STATUSES){const col=document.createElement('div');col.className='col col-'+st;" + nl$
     h$ = h$ + "    const items=tickets.filter(t=>t.status===st);" + nl$
     h$ = h$ + "    const head=document.createElement('h2');head.textContent=LABELS[st];" + nl$
     h$ = h$ + "    const c=document.createElement('span');c.className='count';c.textContent=items.length;head.appendChild(c);col.appendChild(head);" + nl$
     h$ = h$ + "    for(const t of items)col.appendChild(card(t));board.appendChild(col);}}" + nl$
     h$ = h$ + "async function move(id,status){await api('/api/move',{id:id,status:status});load();}" + nl$
     h$ = h$ + "async function create(ev){ev.preventDefault();const f=ev.target;" + nl$
-    h$ = h$ + "  const data={title:f.title.value.trim(),description:f.description.value.trim(),assignee:f.assignee.value,priority:f.priority.value};" + nl$
+    h$ = h$ + "  const data={title:f.title.value.trim(),description:f.description.value.trim(),project:f.project.value,assignee:f.assignee.value,priority:f.priority.value,severity:f.severity.value,type:f.type.value};" + nl$
     h$ = h$ + "  if(!data.title)return;await api('/api/create',data);f.reset();load();}" + nl$
     h$ = h$ + "let MODAL=null;function closeModal(){if(MODAL){MODAL.remove();MODAL=null;}}" + nl$
-    h$ = h$ + "async function openTicket(id){const res=await api('/api/ticket?id='+id);if(res.error){alert(res.error);return;}showModal(res.ticket,res.comments||[],res.history||[]);}" + nl$
-    h$ = h$ + "function showModal(t,comments,history){closeModal();" + nl$
+    h$ = h$ + "async function openTicket(id){const res=await api('/api/ticket?id='+id);if(res.error){alert(res.error);return;}showModal(res.ticket,res.comments||[],res.history||[],res.blockers||[]);}" + nl$
+    h$ = h$ + "function showModal(t,comments,history,blockers){closeModal();" + nl$
     h$ = h$ + "  const bd=document.createElement('div');bd.className='backdrop';bd.addEventListener('click',e=>{if(e.target===bd)closeModal();});" + nl$
     h$ = h$ + "  const m=document.createElement('div');m.className='modal';" + nl$
     h$ = h$ + "  const hh=document.createElement('h3');hh.textContent='Ticket #'+t.id;m.appendChild(hh);" + nl$
     h$ = h$ + "  const ti=document.createElement('input');ti.value=t.title;m.appendChild(fieldEl('Title',ti));" + nl$
-    h$ = h$ + "  const de=document.createElement('textarea');de.value=t.description||'';m.appendChild(fieldEl('Description',de));" + nl$
+    h$ = h$ + "  const prev=document.createElement('div');prev.className='mdprev';prev.innerHTML=mdToHtml(t.description||'');" + nl$
+    h$ = h$ + "  const de=document.createElement('textarea');de.value=t.description||'';de.addEventListener('input',()=>{prev.innerHTML=mdToHtml(de.value);});" + nl$
+    h$ = h$ + "  m.appendChild(fieldEl('Description (markdown)',prev));m.appendChild(de);" + nl$
     h$ = h$ + "  const row=document.createElement('div');row.className='row2';" + nl$
-    h$ = h$ + "  const aopts=[['','Unassigned']].concat((window.USERS||[]).map(u=>[u.name,u.name]));" + nl$
-    h$ = h$ + "  const asg=selEl(aopts,t.assignee||'');" + nl$
+    h$ = h$ + "  const prj=selEl((window.PROJ||[]).map(p=>[p.key,p.name]),t.project_key||'');" + nl$
+    h$ = h$ + "  const aopts=[['','Unassigned']].concat((window.USERS||[]).map(u=>[u.name,u.name]));const asg=selEl(aopts,t.assignee||'');" + nl$
+    h$ = h$ + "  const sta=selEl([['todo','To Do'],['blocked','Blocked'],['doing','In Progress'],['review','Review'],['done','Done']],t.status);" + nl$
+    h$ = h$ + "  row.appendChild(fieldEl('Project',prj));row.appendChild(fieldEl('Assignee',asg));row.appendChild(fieldEl('Status',sta));m.appendChild(row);" + nl$
+    h$ = h$ + "  const row2=document.createElement('div');row2.className='row2';" + nl$
     h$ = h$ + "  const pri=selEl([['low','Low'],['medium','Medium'],['high','High']],t.priority||'medium');" + nl$
-    h$ = h$ + "  const sta=selEl([['todo','To Do'],['doing','In Progress'],['done','Done']],t.status);" + nl$
-    h$ = h$ + "  row.appendChild(fieldEl('Assignee',asg));row.appendChild(fieldEl('Priority',pri));row.appendChild(fieldEl('Status',sta));m.appendChild(row);" + nl$
+    h$ = h$ + "  const sev=selEl([['blocker','blocker'],['critical','critical'],['major','major'],['minor','minor'],['trivial','trivial']],t.severity||'minor');" + nl$
+    h$ = h$ + "  const typ=selEl([['bug','bug'],['feature','feature'],['chore','chore'],['idea','idea'],['task','task']],t.type||'task');" + nl$
+    h$ = h$ + "  row2.appendChild(fieldEl('Priority',pri));row2.appendChild(fieldEl('Severity',sev));row2.appendChild(fieldEl('Type',typ));m.appendChild(row2);" + nl$
     h$ = h$ + "  const act=document.createElement('div');act.className='actions';" + nl$
-    h$ = h$ + "  act.appendChild(btn('Save changes','cyan',async()=>{const data={id:t.id,title:ti.value.trim(),description:de.value.trim(),assignee:asg.value,priority:pri.value,status:sta.value};" + nl$
+    h$ = h$ + "  act.appendChild(btn('Save changes','cyan',async()=>{const data={id:t.id,title:ti.value.trim(),description:de.value,project:prj.value,assignee:asg.value,priority:pri.value,severity:sev.value,type:typ.value,status:sta.value};" + nl$
     h$ = h$ + "    if(!data.title){alert('Title required');return;}const r=await api('/api/update',data);if(r.error){alert(r.error);return;}closeModal();load();}));" + nl$
     h$ = h$ + "  act.appendChild(btn('Close','ghost',()=>closeModal()));" + nl$
     h$ = h$ + "  const sp=document.createElement('div');sp.className='spacer';act.appendChild(sp);" + nl$
     h$ = h$ + "  act.appendChild(btn('Delete','danger',async()=>{await api('/api/delete',{id:t.id});closeModal();load();}));m.appendChild(act);" + nl$
+    h$ = h$ + "  const ds=document.createElement('div');ds.className='sec';const dh=document.createElement('h4');dh.textContent='Blocked by';ds.appendChild(dh);" + nl$
+    h$ = h$ + "  for(const b of blockers){const r=document.createElement('div');r.className='deprow';" + nl$
+    h$ = h$ + "    const s2=document.createElement('span');s2.textContent='#'+b.id+' '+b.title+' ['+b.status+']';r.appendChild(s2);" + nl$
+    h$ = h$ + "    r.appendChild(btn('remove','ghost',async()=>{await api('/api/dep/del',{ticket_id:t.id,blocked_by:b.id});openTicket(t.id);}));ds.appendChild(r);}" + nl$
+    h$ = h$ + "  const drow=document.createElement('div');drow.className='deprow';const din=document.createElement('input');din.placeholder='Blocker ticket id';din.className='depid';drow.appendChild(din);" + nl$
+    h$ = h$ + "  drow.appendChild(btn('Add blocker','',async()=>{const bid=parseInt(din.value);if(!bid)return;const r=await api('/api/dep/add',{ticket_id:t.id,blocked_by:bid});if(r.error){alert(r.error);return;}openTicket(t.id);}));ds.appendChild(drow);m.appendChild(ds);" + nl$
     h$ = h$ + "  const cs=document.createElement('div');cs.className='sec';const ch=document.createElement('h4');ch.textContent='Comments ('+comments.length+')';cs.appendChild(ch);" + nl$
     h$ = h$ + "  for(const c of comments){const cc=document.createElement('div');cc.className='cmt';" + nl$
     h$ = h$ + "    const wh=document.createElement('div');const who=document.createElement('span');who.className='who';who.textContent=c.author||'Someone';" + nl$
     h$ = h$ + "    const wn=document.createElement('span');wn.className='when';wn.textContent=c.created_at;wh.appendChild(who);wh.appendChild(wn);cc.appendChild(wh);" + nl$
-    h$ = h$ + "    const tx=document.createElement('div');tx.className='txt';tx.textContent=c.body;cc.appendChild(tx);cs.appendChild(cc);}" + nl$
-    h$ = h$ + "  const cin=document.createElement('textarea');cin.placeholder='Write a comment...';cs.appendChild(cin);" + nl$
+    h$ = h$ + "    const tx=document.createElement('div');tx.className='txt';tx.innerHTML=mdToHtml(c.body);cc.appendChild(tx);cs.appendChild(cc);}" + nl$
+    h$ = h$ + "  const cin=document.createElement('textarea');cin.placeholder='Write a comment (markdown)...';cs.appendChild(cin);" + nl$
     h$ = h$ + "  const cw=document.createElement('div');cw.className='actions';" + nl$
     h$ = h$ + "  cw.appendChild(btn('Add comment','',async()=>{const text=cin.value.trim();if(!text)return;const r=await api('/api/comment',{ticket_id:t.id,body:text});if(r.error){alert(r.error);return;}openTicket(t.id);}));" + nl$
     h$ = h$ + "  cs.appendChild(cw);m.appendChild(cs);" + nl$
@@ -334,7 +623,10 @@ FUNC BOARD_BODY$()
     h$ = h$ + "  bd.appendChild(m);document.body.appendChild(bd);MODAL=bd;}" + nl$
     h$ = h$ + "function checkHash(){const m=location.hash.match(/^#t=(\d+)/);if(m)openTicket(parseInt(m[1]));}" + nl$
     h$ = h$ + "window.addEventListener('hashchange',checkHash);" + nl$
-    h$ = h$ + "document.getElementById('addForm').addEventListener('submit',create);loadUsers().then(()=>{load();checkHash();});" + nl$
+    h$ = h$ + "for(const id of ['fproj','fasg','fsev','ftype']){document.getElementById(id).addEventListener('change',load);}" + nl$
+    h$ = h$ + "document.getElementById('fq').addEventListener('input',load);" + nl$
+    h$ = h$ + "document.getElementById('addForm').addEventListener('submit',create);" + nl$
+    h$ = h$ + "loadProjects().then(loadUsers).then(()=>{load();checkHash();});" + nl$
     h$ = h$ + "</script>"
     RETURN h$
 ENDFUNC
@@ -365,9 +657,38 @@ FUNC USERS_BODY$()
     RETURN h$
 ENDFUNC
 
+FUNC PROJECTS_BODY$()
+    nl$ = CHR$(10)
+    h$ = "<form class='add' id='projForm'>" + nl$
+    h$ = h$ + "  <input class='grow' name='pname' placeholder='Project name' autocomplete='off'>" + nl$
+    h$ = h$ + "  <input name='pkey' placeholder='key (optional)' autocomplete='off'>" + nl$
+    h$ = h$ + "  <button type='submit'>Add project</button>" + nl$
+    h$ = h$ + "</form>" + nl$
+    h$ = h$ + "<div class='wrap'><div id='plist'></div></div>" + nl$
+    h$ = h$ + "<script>" + nl$
+    h$ = h$ + "async function api(path,data){const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}" + nl$
+    h$ = h$ + "function btn(label,cls,fn){const b=document.createElement('button');b.textContent=label;b.className=cls;b.addEventListener('click',fn);return b;}" + nl$
+    h$ = h$ + "async function loadP(){const res=await api('/api/projects');const list=document.getElementById('plist');list.innerHTML='';const ps=res.projects||[];" + nl$
+    h$ = h$ + "  if(ps.length===0){const e=document.createElement('div');e.className='empty';e.textContent='No projects yet.';list.appendChild(e);return;}" + nl$
+    h$ = h$ + "  for(const p of ps){const row=document.createElement('div');row.className='urow';" + nl$
+    h$ = h$ + "    const nm=document.createElement('span');nm.className='uname';nm.textContent=p.name+'  ('+p.key+')   '+p.open+' open / '+p.tickets+' total';row.appendChild(nm);" + nl$
+    h$ = h$ + "    if(p.key!=='jdbasic')row.appendChild(btn('Remove','ghost',()=>delP(p.key)));list.appendChild(row);}}" + nl$
+    h$ = h$ + "async function delP(key){const r=await api('/api/projects/delete',{project:key});if(r.error){alert(r.error);}loadP();}" + nl$
+    h$ = h$ + "async function addP(ev){ev.preventDefault();const f=ev.target;const name=f.pname.value.trim();if(!name)return;" + nl$
+    h$ = h$ + "  const r=await api('/api/projects/create',{name:name,key:f.pkey.value.trim()});if(r.error){alert(r.error);}f.reset();loadP();}" + nl$
+    h$ = h$ + "document.getElementById('projForm').addEventListener('submit',addP);loadP();" + nl$
+    h$ = h$ + "</script>"
+    RETURN h$
+ENDFUNC
+
 FUNC HandleRoot(request)
     IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.REDIRECT_TO("/login")
     RETURN JDWEB.PAGE$(gCfg, gApp$, JDWEB.NAV_HTML$(gCfg, "/"), BOARD_BODY$())
+ENDFUNC
+
+FUNC HandleProjectsPage(request)
+    IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.REDIRECT_TO("/login")
+    RETURN JDWEB.PAGE$(gCfg, gApp$ + " - Projects", JDWEB.NAV_HTML$(gCfg, "/projects"), PROJECTS_BODY$())
 ENDFUNC
 
 FUNC HandleUsersPage(request)
@@ -378,6 +699,7 @@ ENDFUNC
 ' --- routes + server ---
 
 HTTP.SERVER.ON_GET "/", "HANDLEROOT"
+HTTP.SERVER.ON_GET "/projects", "HANDLEPROJECTSPAGE"
 HTTP.SERVER.ON_GET "/users", "HANDLEUSERSPAGE"
 HTTP.SERVER.ON_GET "/login", "HANDLELOGINPAGE"
 HTTP.SERVER.ON_POST "/api/login", "HANDLELOGIN"
@@ -390,6 +712,12 @@ HTTP.SERVER.ON_POST "/api/update", "HANDLEUPDATE"
 HTTP.SERVER.ON_POST "/api/move", "HANDLEMOVE"
 HTTP.SERVER.ON_POST "/api/delete", "HANDLEDELETE"
 HTTP.SERVER.ON_POST "/api/comment", "HANDLECOMMENT"
+HTTP.SERVER.ON_GET "/api/projects", "HANDLEPROJECTS"
+HTTP.SERVER.ON_POST "/api/projects/create", "HANDLEPROJECTCREATE"
+HTTP.SERVER.ON_POST "/api/projects/delete", "HANDLEPROJECTDELETE"
+HTTP.SERVER.ON_GET "/api/next", "HANDLENEXT"
+HTTP.SERVER.ON_POST "/api/dep/add", "HANDLEDEPADD"
+HTTP.SERVER.ON_POST "/api/dep/del", "HANDLEDEPDEL"
 HTTP.SERVER.ON_GET "/api/users", "HANDLEUSERS"
 HTTP.SERVER.ON_POST "/api/users/create", "HANDLEUSERCREATE"
 HTTP.SERVER.ON_POST "/api/users/delete", "HANDLEUSERDELETE"
@@ -404,9 +732,10 @@ IF HTTP.SERVER.START(gPort, gHost$) THEN
     PRINT "  Board: /        Users: /users"
     PRINT "DB:   " + gCfg{"db"}
     PRINT "Press Ctrl-C to stop."
-    DO
-        SLEEP 200
-    LOOP UNTIL gStop = TRUE
+    ' Park the main thread inside the server (C++ side). A DO...SLEEP loop would
+    ' keep running VM bytecode on this thread and race the handler pool threads
+    ' on the shared VM/SQLite -> access violation. WAIT does not touch the VM.
+    HTTP.SERVER.WAIT
 ELSE
     PRINT "Could not start server on port " + STR$(gPort) + ": " + ERRMSG$
 ENDIF

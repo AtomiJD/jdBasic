@@ -8,6 +8,7 @@
   "cookies": true,
   "nav": [
     { "path": "/", "label": "Board" },
+    { "path": "/projects", "label": "Projects" },
     { "path": "/users", "label": "Users" }
   ]
 }
