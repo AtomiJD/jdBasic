@@ -187,7 +187,7 @@ Assert("abcabc" - "bc" = "aa", "str subtract")
 Assert("ell" IN "Hello", "in string")
 Assert(NOT ("xyz" IN "Hello"), "not in string")
 
-' Sonderzeichen und Umlaute
+' Special characters and umlauts
 LET german = "Gr\u00fc\u00dfe aus Deutschland!"
 Assert(LEN(german) > 5, "german string len")
 
@@ -3318,6 +3318,66 @@ Assert(hof_kept[0] = "aa",  "FILTER string element [0]")
 Assert(hof_kept[1] = "ccc", "FILTER string element [1]")
 DIM hof_nums = [10, 20, 30]
 Assert(REDUCE(LAMBDA a, b -> a + b, hof_nums) = 60, "REDUCE numeric sum")
+
+' ══════════════════════════════════════════════════════════════════
+'  Inline (one-liner) IF with SUB / FUNC calls in THEN and ELSE.
+'  A bare SUB call in an inline IF branch must run even before a colon or
+'  before ELSE; earlier such a call became a label or a dropped expression.
+' ══════════════════════════════════════════════════════════════════
+DIM OICALLS = 0
+DIM OIQ = 0
+DIM OIFR = 0.0
+
+SUB OIBump()
+  OICALLS = OICALLS + 1
+ENDSUB
+FUNC OIFbump() AS INTEGER
+  OICALLS = OICALLS + 1
+  RETURN 7
+ENDFUNC
+
+Header("Inline IF with SUB calls")
+
+OICALLS = 0 : IF 1 = 1 THEN OIBump
+Assert(OICALLS = 1, "THEN bare SUB (no else)")
+
+OICALLS = 0 : IF 1 = 1 THEN OIBump()
+Assert(OICALLS = 1, "THEN SUB() with parens")
+
+OICALLS = 0 : OIQ = 0 : IF 1 = 1 THEN OIBump : OIQ = 9
+Assert(OICALLS = 1, "THEN bare SUB before ':' fired")
+Assert(OIQ = 9, "THEN trailing stmt after ':' ran")
+
+OICALLS = 0 : IF 1 = 1 THEN OIBump : OIBump : OIBump
+Assert(OICALLS = 3, "THEN three bare SUBs separated by ':'")
+
+OICALLS = 0 : IF 1 = 1 THEN OIBump : OIBump()
+Assert(OICALLS = 2, "THEN mixed bare + parens SUB via ':'")
+
+OICALLS = 0 : IF 1 = 1 THEN OIBump ELSE OIQ = 0
+Assert(OICALLS = 1, "THEN bare SUB before ELSE fired")
+
+OICALLS = 0 : IF 1 = 1 THEN OIBump() ELSE OIQ = 0
+Assert(OICALLS = 1, "THEN SUB() before ELSE fired")
+
+OICALLS = 0 : IF 0 = 1 THEN OIQ = 0 ELSE OIBump
+Assert(OICALLS = 1, "ELSE bare SUB fired")
+
+OICALLS = 0 : OIQ = 0 : IF 0 = 1 THEN OIQ = 1 ELSE OIBump : OIQ = 4
+Assert(OICALLS = 1, "ELSE bare SUB before ':' fired")
+Assert(OIQ = 4, "ELSE trailing stmt after ':' ran")
+
+OICALLS = 0 : IF 0 = 1 THEN OIQ = 0 ELSE OIBump : OIBump
+Assert(OICALLS = 2, "ELSE two bare SUBs separated by ':'")
+
+OICALLS = 0 : OIFR = 0 : IF 1 = 1 THEN OIFR = OIFbump() ELSE OIFR = 0
+Assert(OICALLS = 1 ANDALSO OIFR = 7, "THEN FUNC() assign with ELSE")
+
+OICALLS = 0 : IF 0 = 1 THEN OIBump
+Assert(OICALLS = 0, "THEN SUB not fired when condition false")
+
+OICALLS = 0 : IF 1 = 1 THEN OIQ = 0 ELSE OIBump
+Assert(OICALLS = 0, "ELSE SUB not fired when condition true")
 
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
