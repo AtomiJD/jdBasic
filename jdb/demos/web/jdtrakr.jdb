@@ -495,6 +495,14 @@ FUNC BOARD_BODY$()
     h$ = h$ + ".mdprev{background:#0b1410;border:1px solid #1c3a24;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;min-height:20px;}" + nl$
     h$ = h$ + ".mdprev pre{background:#000;padding:8px;overflow-x:auto;border-radius:4px;}.mdprev ul{margin:4px 0 4px 18px;}.mdprev code{background:#000;padding:1px 4px;border-radius:3px;}" + nl$
     h$ = h$ + ".deprow{display:flex;align-items:center;gap:8px;margin:4px 0;}.depid{max-width:150px;}" + nl$
+    h$ = h$ + ".collink{cursor:pointer;}.collink:hover{color:#9fe;text-decoration:underline;}" + nl$
+    h$ = h$ + ".listpanel{margin-top:2px;}.listhd{display:flex;align-items:center;gap:14px;margin-bottom:10px;}.listhd h2{margin:0;}" + nl$
+    h$ = h$ + "table.ltbl{width:100%;border-collapse:collapse;font-size:13px;}" + nl$
+    h$ = h$ + ".ltbl th{text-align:left;padding:7px 10px;border-bottom:1px solid #2a5c35;color:#9fc;cursor:pointer;user-select:none;white-space:nowrap;}" + nl$
+    h$ = h$ + ".ltbl td{padding:7px 10px;border-bottom:1px solid #14241a;vertical-align:top;}" + nl$
+    h$ = h$ + ".lrow{cursor:pointer;}.lrow:hover{background:#0e1812;}.ltitle{color:#d6ffe2;}" + nl$
+    h$ = h$ + ".ldesc{color:#5fae6f;font-size:11px;max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" + nl$
+    h$ = h$ + ".lrow.prio-high td:first-child{border-left:3px solid #e44;}.lrow.prio-low td:first-child{border-left:3px solid #567;}" + nl$
     h$ = h$ + "</style>" + nl$
     h$ = h$ + "<div class='filterbar'>" + nl$
     h$ = h$ + "  <select id='fproj'></select>" + nl$
@@ -549,7 +557,7 @@ FUNC BOARD_BODY$()
     h$ = h$ + "  ts=ts.filter(t=>{if(asg==='Unassigned'){if(t.assignee)return false;}else if(asg){if(t.assignee!==asg)return false;}" + nl$
     h$ = h$ + "    if(sev&&t.severity!==sev)return false;if(ty&&t.type!==ty)return false;" + nl$
     h$ = h$ + "    if(q&&!((t.title||'').toLowerCase().includes(q)||(t.description||'').toLowerCase().includes(q)))return false;return true;});" + nl$
-    h$ = h$ + "  render(ts);}" + nl$
+    h$ = h$ + "  if(LISTST){renderList(ts);}else{render(ts);}}" + nl$
     h$ = h$ + "function badge(cls,txt){const s=document.createElement('span');s.className='badge '+cls;s.textContent=txt;return s;}" + nl$
     h$ = h$ + "function card(t){" + nl$
     h$ = h$ + "  const d=document.createElement('div');d.className='card prio-'+(t.priority||'medium');d.addEventListener('click',()=>openTicket(t.id));" + nl$
@@ -566,9 +574,36 @@ FUNC BOARD_BODY$()
     h$ = h$ + "function render(tickets){const board=document.getElementById('board');board.innerHTML='';" + nl$
     h$ = h$ + "  for(const st of STATUSES){const col=document.createElement('div');col.className='col col-'+st;" + nl$
     h$ = h$ + "    const items=tickets.filter(t=>t.status===st);" + nl$
-    h$ = h$ + "    const head=document.createElement('h2');head.textContent=LABELS[st];" + nl$
+    h$ = h$ + "    const head=document.createElement('h2');head.textContent=LABELS[st];head.className='collink';head.title='Open list view';head.addEventListener('click',()=>setList(st));" + nl$
     h$ = h$ + "    const c=document.createElement('span');c.className='count';c.textContent=items.length;head.appendChild(c);col.appendChild(head);" + nl$
     h$ = h$ + "    for(const t of items)col.appendChild(card(t));board.appendChild(col);}}" + nl$
+    h$ = h$ + "let LISTST=null;let LSORT={key:'id',dir:-1};" + nl$
+    h$ = h$ + "function setList(st){LISTST=st;location.hash='#list='+st;load();window.scrollTo(0,0);}" + nl$
+    h$ = h$ + "function closeList(){LISTST=null;location.hash='#';load();}" + nl$
+    h$ = h$ + "function ageStr(s){if(!s)return '';const d=Math.floor((Date.now()-new Date(s.replace(' ','T')).getTime())/86400000);return d<=0?'today':d+'d';}" + nl$
+    h$ = h$ + "function tdt(txt){const td=document.createElement('td');td.textContent=txt;return td;}" + nl$
+    h$ = h$ + "function tde(el){const td=document.createElement('td');td.appendChild(el);return td;}" + nl$
+    h$ = h$ + "function renderList(allt){const board=document.getElementById('board');board.innerHTML='';const st=LISTST;" + nl$
+    h$ = h$ + "  let items=allt.filter(t=>t.status===st);" + nl$
+    h$ = h$ + "  const PR={high:0,medium:1,low:2},SV={blocker:0,critical:1,major:2,minor:3,trivial:4};" + nl$
+    h$ = h$ + "  const cols=[['id','#'],['title','Title'],['type','Type'],['severity','Severity'],['priority','Priority'],['assignee','Assignee'],['project_name','Project'],['created_at','Age']];" + nl$
+    h$ = h$ + "  items.sort((a,b)=>{const k=LSORT.key;let va,vb;if(k==='priority'){va=PR[a.priority];vb=PR[b.priority];}else if(k==='severity'){va=SV[a.severity];vb=SV[b.severity];}else if(k==='id'){va=a.id;vb=b.id;}else{va=(a[k]||'').toString().toLowerCase();vb=(b[k]||'').toString().toLowerCase();}return (va<vb?-1:va>vb?1:0)*LSORT.dir;});" + nl$
+    h$ = h$ + "  const panel=document.createElement('div');panel.className='listpanel';" + nl$
+    h$ = h$ + "  const hd=document.createElement('div');hd.className='listhd';hd.appendChild(btn('← Board','ghost',()=>closeList()));" + nl$
+    h$ = h$ + "  const h=document.createElement('h2');h.textContent=LABELS[st]+'  ('+items.length+')';hd.appendChild(h);panel.appendChild(hd);" + nl$
+    h$ = h$ + "  const tbl=document.createElement('table');tbl.className='ltbl';const thr=document.createElement('tr');" + nl$
+    h$ = h$ + "  for(const c of cols){const th=document.createElement('th');th.textContent=c[1]+(LSORT.key===c[0]?(LSORT.dir>0?' ▲':' ▼'):'');th.addEventListener('click',()=>{if(LSORT.key===c[0])LSORT.dir*=-1;else{LSORT.key=c[0];LSORT.dir=1;}renderList(allt);});thr.appendChild(th);}" + nl$
+    h$ = h$ + "  thr.appendChild(document.createElement('th'));tbl.appendChild(thr);" + nl$
+    h$ = h$ + "  for(const t of items){const tr=document.createElement('tr');tr.className='lrow prio-'+(t.priority||'medium');tr.addEventListener('click',()=>openTicket(t.id));" + nl$
+    h$ = h$ + "    tr.appendChild(tdt('#'+t.id));" + nl$
+    h$ = h$ + "    const tt=document.createElement('td');const tn=document.createElement('div');tn.className='ltitle';tn.textContent=t.title;tt.appendChild(tn);if(t.description){const ds=document.createElement('div');ds.className='ldesc';ds.textContent=t.description;tt.appendChild(ds);}tr.appendChild(tt);" + nl$
+    h$ = h$ + "    tr.appendChild(tde(badge(t.type||'task',t.type||'task')));tr.appendChild(tde(badge(t.severity||'minor',t.severity||'minor')));tr.appendChild(tde(badge(t.priority||'medium',t.priority||'medium')));" + nl$
+    h$ = h$ + "    tr.appendChild(tdt(t.assignee||'Unassigned'));tr.appendChild(tdt(t.project_name||''));tr.appendChild(tdt(ageStr(t.created_at)));" + nl$
+    h$ = h$ + "    const act=document.createElement('td');const idx=STATUSES.indexOf(t.status);" + nl$
+    h$ = h$ + "    if(idx>0)act.appendChild(btn('←','ghost',()=>move(t.id,STATUSES[idx-1])));" + nl$
+    h$ = h$ + "    if(idx<STATUSES.length-1)act.appendChild(btn('→','ghost',()=>move(t.id,STATUSES[idx+1])));" + nl$
+    h$ = h$ + "    tr.appendChild(act);tbl.appendChild(tr);}" + nl$
+    h$ = h$ + "  panel.appendChild(tbl);board.appendChild(panel);}" + nl$
     h$ = h$ + "async function move(id,status){await api('/api/move',{id:id,status:status});load();}" + nl$
     h$ = h$ + "async function create(ev){ev.preventDefault();const f=ev.target;" + nl$
     h$ = h$ + "  const data={title:f.title.value.trim(),description:f.description.value.trim(),project:f.project.value,assignee:f.assignee.value,priority:f.priority.value,severity:f.severity.value,type:f.type.value};" + nl$
@@ -621,7 +656,8 @@ FUNC BOARD_BODY$()
     h$ = h$ + "    li.appendChild(b);li.appendChild(document.createTextNode(ev.action+'  '));const wn=document.createElement('span');wn.className='when';wn.textContent=ev.created_at;li.appendChild(wn);ul.appendChild(li);}" + nl$
     h$ = h$ + "  hs.appendChild(ul);m.appendChild(hs);" + nl$
     h$ = h$ + "  bd.appendChild(m);document.body.appendChild(bd);MODAL=bd;}" + nl$
-    h$ = h$ + "function checkHash(){const m=location.hash.match(/^#t=(\d+)/);if(m)openTicket(parseInt(m[1]));}" + nl$
+    h$ = h$ + "function checkHash(){const m=location.hash.match(/^#t=(\d+)/);if(m){openTicket(parseInt(m[1]));return;}" + nl$
+    h$ = h$ + "  const l=location.hash.match(/^#list=([a-z]+)/);const want=(l&&STATUSES.indexOf(l[1])>=0)?l[1]:null;if(want!==LISTST){LISTST=want;load();}}" + nl$
     h$ = h$ + "window.addEventListener('hashchange',checkHash);" + nl$
     h$ = h$ + "for(const id of ['fproj','fasg','fsev','ftype']){document.getElementById(id).addEventListener('change',load);}" + nl$
     h$ = h$ + "document.getElementById('fq').addEventListener('input',load);" + nl$
