@@ -89,6 +89,15 @@ TXTWRITER "tmp/_row.html", "<li>{{ t.title }}</li>"
 TXTWRITER "tmp/_list.html", "<ul>{% for t in tickets %}{% include " + q$ + "_row.html" + q$ + " %}{% endfor %}</ul>"
 Check "include", TMPL.RENDER$("tmp/_list.html", mdl), "<ul><li>Alpha</li><li>Beta &amp; &lt;C&gt;</li></ul>"
 
+' --- layouts: extends / block ---
+Check "block-standalone", TMPL.RENDERSTR$("[{% block x %}inner{% endblock %}]", mdl), "[inner]"
+
+TXTWRITER "tmp/lay.html", "<h1>{% block title %}Default{% endblock %}</h1><main>{% block content %}none{% endblock %}</main>"
+TXTWRITER "tmp/pageA.html", "{% extends " + q$ + "lay.html" + q$ + " %}{% block title %}Alpha{% endblock %}{% block content %}Body A{% endblock %}"
+TXTWRITER "tmp/pageB.html", "{% extends " + q$ + "lay.html" + q$ + " %}{% block content %}Body B{% endblock %}"
+Check "extends-full", TMPL.RENDER$("tmp/pageA.html", mdl), "<h1>Alpha</h1><main>Body A</main>"
+Check "extends-fallback", TMPL.RENDER$("tmp/pageB.html", mdl), "<h1>Default</h1><main>Body B</main>"
+
 PRINT ""
 IF fails = 0 THEN
     PRINT "ALL TESTS PASSED!"

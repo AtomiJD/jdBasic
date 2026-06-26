@@ -17,18 +17,23 @@
 ' Control tags:
 '   {% if cond %} ... {% elseif cond %} ... {% else %} ... {% endif %}
 '   {% for item in items %} ... {% endfor %}
-'   {% include "partial.html" %}   (resolved next to the rendered file)
+'   {% include "partial.html" %}            (resolved next to the rendered file)
+'   {% extends "layout.html" %}             (this file fills the layout's blocks)
+'   {% block name %} ... {% endblock %}     (override point / default content)
 ' Conditions: a bare path (truthy), path == "lit", path != "lit", not path.
 
 EXPORT MODULE TMPL
 
-DIM gCache AS MAP        ' path -> compiled op tree
+DIM gCache AS MAP        ' path -> compiled template map
 DIM gMtime AS MAP        ' path -> mtime string captured at parse time
 DIM gVoid AS MAP         ' a missing key here yields a NONE value
+DIM gEmptyBlocks AS MAP  ' shared empty block-override set (never mutated)
 DIM gCompiles = 0        ' cache-miss parse count (diagnostics / tests)
-DIM gIncBase$ = ""       ' directory the current include paths resolve against
+DIM gIncBase$ = ""       ' directory include/extends paths resolve against
 DIM gToks = []           ' token stream for the active parse pass
 DIM gPos = 0             ' cursor into gToks
+DIM gExt$ = ""           ' extends target collected during the active parse
+DIM gBlocks AS MAP       ' block bodies collected during the active parse
 
 FUNC VoidVal()
     RETURN gVoid{"__none__"}
@@ -285,8 +290,13 @@ FUNC ParseSeq(stoppers$)
                 ops = APPEND(ops, ParseIf())
             ELSEIF word$ = "for" THEN
                 ops = APPEND(ops, ParseFor())
+            ELSEIF word$ = "block" THEN
+                ops = APPEND(ops, ParseBlock())
             ELSEIF word$ = "include" THEN
                 ops = APPEND(ops, IncOp(Unquote$(TagRest$(g$))))
+                gPos = gPos + 1
+            ELSEIF word$ = "extends" THEN
+                gExt$ = Unquote$(TagRest$(g$))
                 gPos = gPos + 1
             ELSE
                 ops = APPEND(ops, LitOp("{% " + g$ + " %}"))
@@ -350,26 +360,71 @@ FUNC ParseFor()
     RETURN m
 ENDFUNC
 
-FUNC BuildOps(src$)
-    gCompiles = gCompiles + 1
-    gToks = Lex(src$)
-    gPos = 0
-    RETURN ParseSeq("")
+FUNC ParseBlock()
+    DIM tk = gToks[gPos]
+    DIM nm$ = TRIM$(TagRest$(tk{"g"}))
+    gPos = gPos + 1
+    DIM body = ParseSeq("endblock")
+    IF gPos < LEN(gToks) THEN gPos = gPos + 1
+    gBlocks{nm$} = body
+    DIM m AS MAP
+    m{"t"} = "block"
+    m{"name"} = nm$
+    m{"body"} = body
+    RETURN m
 ENDFUNC
 
-' --- rendering ---
+' parse a source string into a compiled template: ops + extends + blocks
+FUNC BuildOps(src$)
+    gCompiles = gCompiles + 1
+    gExt$ = ""
+    DIM freshBlocks AS MAP
+    gBlocks = freshBlocks
+    gToks = Lex(src$)
+    gPos = 0
+    DIM ops = ParseSeq("")
+    DIM tpl AS MAP
+    tpl{"ops"} = ops
+    tpl{"ext"} = gExt$
+    tpl{"blocks"} = gBlocks
+    RETURN tpl
+ENDFUNC
 
-FUNC EmitIf$(op, scope)
+FUNC BadTpl(msg$)
+    DIM ops = []
+    ops = APPEND(ops, LitOp(msg$))
+    DIM tpl AS MAP
+    tpl{"ops"} = ops
+    tpl{"ext"} = ""
+    DIM b AS MAP
+    tpl{"blocks"} = b
+    RETURN tpl
+ENDFUNC
+
+FUNC LoadTpl(path$)
+    DIM st = FILE.STAT(path$)
+    IF NOT st{"exists"} THEN RETURN BadTpl("<!-- tmpl: not found: " + path$ + " -->")
+    DIM mt$ = st{"mtime"}
+    IF MAP.EXISTS(gCache, path$) ANDALSO gMtime{path$} = mt$ THEN RETURN gCache{path$}
+    DIM tpl = BuildOps(TXTREADER$(path$))
+    gCache{path$} = tpl
+    gMtime{path$} = mt$
+    RETURN tpl
+ENDFUNC
+
+' --- rendering (blocks = active override set for {% block %}) ---
+
+FUNC EmitIf$(op, scope, blocks)
     DIM branches = op{"branches"}
     DIM i
     FOR i = 0 TO LEN(branches) - 1
         DIM br = branches[i]
-        IF EvalCond(br{"cond"}, scope) THEN RETURN EmitOps$(br{"body"}, scope)
+        IF EvalCond(br{"cond"}, scope) THEN RETURN EmitOps$(br{"body"}, scope, blocks)
     NEXT i
-    RETURN EmitOps$(op{"else"}, scope)
+    RETURN EmitOps$(op{"else"}, scope, blocks)
 ENDFUNC
 
-FUNC EmitFor$(op, scope)
+FUNC EmitFor$(op, scope, blocks)
     DIM seq = PathGet(op{"src"}, scope)
     IF TYPEOF(seq) <> "ARRAY" THEN RETURN ""
     DIM vname$ = op{"var"}
@@ -379,28 +434,17 @@ FUNC EmitFor$(op, scope)
     FOR i = 0 TO LEN(seq) - 1
         DIM child = CloneMap(scope)
         child{vname$} = seq[i]
-        out$ = out$ + EmitOps$(body, child)
+        out$ = out$ + EmitOps$(body, child, blocks)
     NEXT i
     RETURN out$
 ENDFUNC
 
 FUNC EmitInc$(op, scope)
-    DIM full$ = gIncBase$ + op{"path"}
-    DIM st = FILE.STAT(full$)
-    IF NOT st{"exists"} THEN RETURN "<!-- tmpl: include not found: " + full$ + " -->"
-    DIM mt$ = st{"mtime"}
-    DIM ops = []
-    IF MAP.EXISTS(gCache, full$) ANDALSO gMtime{full$} = mt$ THEN
-        ops = gCache{full$}
-    ELSE
-        ops = BuildOps(TXTREADER$(full$))
-        gCache{full$} = ops
-        gMtime{full$} = mt$
-    ENDIF
-    RETURN EmitOps$(ops, scope)
+    DIM part = LoadTpl(gIncBase$ + op{"path"})
+    RETURN EmitOps$(part{"ops"}, scope, gEmptyBlocks)
 ENDFUNC
 
-FUNC EmitOps$(ops, scope)
+FUNC EmitOps$(ops, scope, blocks)
     DIM out$ = ""
     DIM i
     FOR i = 0 TO LEN(ops) - 1
@@ -416,14 +460,28 @@ FUNC EmitOps$(ops, scope)
                 out$ = out$ + EscHtml$(s$)
             ENDIF
         ELSEIF ty$ = "if" THEN
-            out$ = out$ + EmitIf$(op, scope)
+            out$ = out$ + EmitIf$(op, scope, blocks)
         ELSEIF ty$ = "for" THEN
-            out$ = out$ + EmitFor$(op, scope)
+            out$ = out$ + EmitFor$(op, scope, blocks)
         ELSEIF ty$ = "inc" THEN
             out$ = out$ + EmitInc$(op, scope)
+        ELSEIF ty$ = "block" THEN
+            DIM nm$ = op{"name"}
+            IF MAP.EXISTS(blocks, nm$) THEN
+                out$ = out$ + EmitOps$(blocks{nm$}, scope, blocks)
+            ELSE
+                out$ = out$ + EmitOps$(op{"body"}, scope, blocks)
+            ENDIF
         ENDIF
     NEXT i
     RETURN out$
+ENDFUNC
+
+' render a compiled template; if it extends a layout, fill the layout's blocks
+FUNC EmitTpl$(tpl, scope)
+    IF tpl{"ext"} = "" THEN RETURN EmitOps$(tpl{"ops"}, scope, gEmptyBlocks)
+    DIM layout = LoadTpl(gIncBase$ + tpl{"ext"})
+    RETURN EmitOps$(layout{"ops"}, scope, tpl{"blocks"})
 ENDFUNC
 
 ' directory portion of a path (with trailing slash), or "" if none
@@ -443,24 +501,13 @@ ENDFUNC
 ' render a template string directly (no caching, no file)
 EXPORT FUNC RENDERSTR$(src$, model)
     gIncBase$ = ""
-    RETURN EmitOps$(BuildOps(src$), model)
+    RETURN EmitTpl$(BuildOps(src$), model)
 ENDFUNC
 
 ' render a template file against the model; parses once, then serves from cache
 EXPORT FUNC RENDER$(path$, model)
-    DIM st = FILE.STAT(path$)
-    IF NOT st{"exists"} THEN RETURN "<!-- tmpl: not found: " + path$ + " -->"
     gIncBase$ = DirOf$(path$)
-    DIM mt$ = st{"mtime"}
-    DIM ops = []
-    IF MAP.EXISTS(gCache, path$) ANDALSO gMtime{path$} = mt$ THEN
-        ops = gCache{path$}
-    ELSE
-        ops = BuildOps(TXTREADER$(path$))
-        gCache{path$} = ops
-        gMtime{path$} = mt$
-    ENDIF
-    RETURN EmitOps$(ops, model)
+    RETURN EmitTpl$(LoadTpl(path$), model)
 ENDFUNC
 
 ' number of cache-miss parses so far (for tests / diagnostics)
