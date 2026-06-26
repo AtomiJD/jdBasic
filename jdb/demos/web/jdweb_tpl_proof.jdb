@@ -1,0 +1,56 @@
+' jdweb_tpl_proof.jdb - prove a tmpl.jdb layout reproduces JDWEB.PAGE$ exactly.
+' Renders the same shell two ways (jdweb's ##token## renderer vs tmpl.jdb) and
+' compares byte-for-byte. Run from the repo root:
+'   jdBasic jdb/demos/web/jdweb_tpl_proof.jdb
+
+IMPORT JDWEB
+IMPORT TMPL
+
+FUNC NavItem(path$, label$)
+    DIM m AS MAP
+    m{"path"} = path$
+    m{"label"} = label$
+    RETURN m
+ENDFUNC
+
+DIM cfg AS MAP
+cfg{"app"} = "jdTrakr"
+cfg{"sub"} = "kanban for the team"
+cfg{"cookies"} = TRUE
+DIM nav = []
+nav = APPEND(nav, NavItem("/", "Board"))
+nav = APPEND(nav, NavItem("/projects", "Projects"))
+nav = APPEND(nav, NavItem("/settings", "Settings"))
+cfg{"nav"} = nav
+
+DIM title$ = "jdTrakr - Settings"
+DIM navhtml$ = JDWEB.NAV_HTML$(cfg, "/settings")
+DIM content$ = "<div class='wrap'><p>page body here</p></div>"
+
+DIM oldp$ = JDWEB.PAGE$(cfg, title$, navhtml$, content$)
+
+DIM model AS MAP
+model{"title"} = title$
+model{"theme"} = JDWEB.THEME$()
+model{"nav"} = navhtml$
+model{"content"} = content$
+model{"cookiebar"} = JDWEB.COOKIE_BANNER$()
+DIM newp$ = TMPL.RENDER$("jdb/demos/web/jdweb_tpl/layout.html", model)
+
+PRINT "old bytes="; LEN(oldp$); "  new bytes="; LEN(newp$)
+IF oldp$ = newp$ THEN
+    PRINT "IDENTICAL - tmpl layout reproduces JDWEB.PAGE$ exactly."
+ELSE
+    PRINT "DIFFERENT - locating first mismatch..."
+    DIM lim = LEN(oldp$)
+    IF LEN(newp$) < lim THEN lim = LEN(newp$)
+    DIM i
+    FOR i = 0 TO lim - 1
+        IF MID$(oldp$, i, 1) <> MID$(newp$, i, 1) THEN
+            PRINT "first diff at byte "; i
+            PRINT "old: ["; MID$(oldp$, i, 40); "]"
+            PRINT "new: ["; MID$(newp$, i, 40); "]"
+            EXITFOR
+        ENDIF
+    NEXT i
+ENDIF
