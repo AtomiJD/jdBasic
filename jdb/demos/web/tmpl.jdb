@@ -139,6 +139,74 @@ FUNC EvalCond(expr$, scope)
     RETURN Truthy(PathGet(ex$, scope))
 ENDFUNC
 
+' --- filters: {{ value | name | name:arg }} ---
+
+DIM gFilters AS MAP      ' name -> custom filter funcref (value, arg$) -> value
+
+FUNC Zp2$(n)
+    DIM s$ = FORMAT$("{}", INT(n))
+    IF LEN(s$) < 2 THEN RETURN "0" + s$
+    RETURN s$
+ENDFUNC
+
+FUNC FilterLen(vv)
+    DIM ty$ = TYPEOF(vv)
+    IF ty$ = "ARRAY" ORELSE ty$ = "STRING" THEN RETURN LEN(vv)
+    RETURN 0
+ENDFUNC
+
+FUNC FilterMoney$(vv, arg$)
+    DIM s$ = FORMAT$("{:.2f}", VAL(AsText$(vv)))
+    s$ = REPLACE$(s$, ".", ",")
+    DIM cur$ = arg$
+    IF cur$ = "" THEN cur$ = "EUR"
+    RETURN s$ + " " + cur$
+ENDFUNC
+
+FUNC FilterDate$(s$, fmt$)
+    IF LEN(s$) < 8 THEN RETURN s$
+    DIM dt = CVDATE(s$, 0)
+    DIM f$ = fmt$
+    IF f$ = "" THEN f$ = "DD.MM.YYYY"
+    f$ = REPLACE$(f$, "YYYY", FORMAT$("{}", YEAR(dt)))
+    f$ = REPLACE$(f$, "MM", Zp2$(MONTH(dt)))
+    f$ = REPLACE$(f$, "DD", Zp2$(DAY(dt)))
+    f$ = REPLACE$(f$, "HH", Zp2$(HOUR(dt)))
+    f$ = REPLACE$(f$, "mm", Zp2$(MINUTE(dt)))
+    RETURN f$
+ENDFUNC
+
+FUNC ApplyFilter(name$, vv, arg$)
+    IF name$ = "upper" THEN RETURN UCASE$(AsText$(vv))
+    IF name$ = "lower" THEN RETURN LCASE$(AsText$(vv))
+    IF name$ = "trim" THEN RETURN TRIM$(AsText$(vv))
+    IF name$ = "length" THEN RETURN FilterLen(vv)
+    IF name$ = "money" THEN RETURN FilterMoney$(vv, arg$)
+    IF name$ = "date" THEN RETURN FilterDate$(AsText$(vv), arg$)
+    IF name$ = "default" THEN
+        IF Truthy(vv) THEN RETURN vv
+        RETURN arg$
+    ENDIF
+    IF MAP.EXISTS(gFilters, name$) THEN
+        DIM fn = gFilters{name$}
+        RETURN fn(vv, arg$)
+    ENDIF
+    RETURN vv
+ENDFUNC
+
+FUNC ParseFilter(seg$)
+    DIM m AS MAP
+    DIM cp = INSTR(0, seg$, ":")
+    IF cp < 0 THEN
+        m{"name"} = LCASE$(TRIM$(seg$))
+        m{"arg"} = ""
+    ELSE
+        m{"name"} = LCASE$(TRIM$(LEFT$(seg$, cp)))
+        m{"arg"} = Unquote$(TRIM$(MID$(seg$, cp + 1)))
+    ENDIF
+    RETURN m
+ENDFUNC
+
 ' --- token constructors ---
 
 FUNC LitTok(s$)
@@ -250,10 +318,18 @@ FUNC LitOp(s$)
 ENDFUNC
 
 FUNC VarOp(x$, raw)
+    DIM parts = SPLIT(x$, "|")
     DIM m AS MAP
     m{"t"} = "var"
-    m{"x"} = x$
+    m{"x"} = TRIM$(parts[0])
     m{"raw"} = raw
+    DIM filters = []
+    DIM i
+    FOR i = 1 TO LEN(parts) - 1
+        DIM seg$ = TRIM$(parts[i])
+        IF seg$ <> "" THEN filters = APPEND(filters, ParseFilter(seg$))
+    NEXT i
+    m{"filters"} = filters
     RETURN m
 ENDFUNC
 
@@ -453,7 +529,13 @@ FUNC EmitOps$(ops, scope, blocks)
         IF ty$ = "lit" THEN
             out$ = out$ + op{"s"}
         ELSEIF ty$ = "var" THEN
-            DIM s$ = AsText$(PathGet(op{"x"}, scope))
+            DIM vv = PathGet(op{"x"}, scope)
+            DIM fl = op{"filters"}
+            DIM fi
+            FOR fi = 0 TO LEN(fl) - 1
+                vv = ApplyFilter(fl[fi]{"name"}, vv, fl[fi]{"arg"})
+            NEXT fi
+            DIM s$ = AsText$(vv)
             IF op{"raw"} THEN
                 out$ = out$ + s$
             ELSE
@@ -509,6 +591,11 @@ EXPORT FUNC RENDER$(path$, model)
     gIncBase$ = DirOf$(path$)
     RETURN EmitTpl$(LoadTpl(path$), model)
 ENDFUNC
+
+' register a custom filter: fn is a funcref, called as fn(value, arg$) -> value
+EXPORT SUB ADDFILTER(name$, fn)
+    gFilters{LCASE$(name$)} = fn
+ENDSUB
 
 ' number of cache-miss parses so far (for tests / diagnostics)
 EXPORT FUNC COMPILES()

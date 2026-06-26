@@ -14,6 +14,10 @@ SUB Check(label$, got$, want$)
     ENDIF
 ENDSUB
 
+FUNC Excl(vv, a$)
+    RETURN "" + vv + "!"
+ENDFUNC
+
 DIM m1 AS MAP
 m1{"name"} = "<b>Kat</b>"
 Check "escape", TMPL.RENDERSTR$("Hi {{ name }}!", m1), "Hi &lt;b&gt;Kat&lt;/b&gt;!"
@@ -97,6 +101,19 @@ TXTWRITER "tmp/pageA.html", "{% extends " + q$ + "lay.html" + q$ + " %}{% block 
 TXTWRITER "tmp/pageB.html", "{% extends " + q$ + "lay.html" + q$ + " %}{% block content %}Body B{% endblock %}"
 Check "extends-full", TMPL.RENDER$("tmp/pageA.html", mdl), "<h1>Alpha</h1><main>Body A</main>"
 Check "extends-fallback", TMPL.RENDER$("tmp/pageB.html", mdl), "<h1>Default</h1><main>Body B</main>"
+
+' --- filters / pipes ---
+mdl{"created"} = "2026-06-26 10:11:55"
+mdl{"price"} = 3.5
+Check "upper", TMPL.RENDERSTR$("{{ title | upper }}", mdl), "BOARD"
+Check "chain", TMPL.RENDERSTR$("{{ title | upper | lower }}", mdl), "board"
+Check "length", TMPL.RENDERSTR$("{{ tickets | length }}", mdl), "2"
+Check "default", TMPL.RENDERSTR$("{{ missing | default:" + q$ + "n/a" + q$ + " }}", mdl), "n/a"
+Check "date", TMPL.RENDERSTR$("{{ created | date:" + q$ + "DD.MM.YYYY" + q$ + " }}", mdl), "26.06.2026"
+Check "money", TMPL.RENDERSTR$("{{ price | money:" + q$ + "EUR" + q$ + " }}", mdl), "3,50 EUR"
+
+TMPL.ADDFILTER "excl", Excl@
+Check "custom", TMPL.RENDERSTR$("{{ title | excl }}", mdl), "Board!"
 
 PRINT ""
 IF fails = 0 THEN

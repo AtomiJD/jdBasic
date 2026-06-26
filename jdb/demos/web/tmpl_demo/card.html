@@ -1,4 +1,4 @@
     <li class="card sev-{{ c.severity }}">
       <span class="t">{{ c.title }}</span>{% if c.blocked %}<span class="badge">blocked</span>{% endif %}
-      <div class="meta">{{ c.assignee }} - {{ c.severity }}</div>
+      <div class="meta">{{ c.assignee }} - {{ c.severity | upper }}</div>
     </li>
