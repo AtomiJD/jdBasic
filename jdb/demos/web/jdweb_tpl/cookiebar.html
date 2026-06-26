@@ -1,0 +1,7 @@
+<div id='cookiebar' class='cookiebar'>
+  <span>This site uses a single, strictly necessary session cookie so you stay signed in. No tracking, no third parties.</span>
+  <button id='cookieok'>OK</button>
+</div>
+<script>(function(){var b=document.getElementById('cookiebar');if(!b)return;
+  if(localStorage.getItem('jdw_cookie_ok')){b.style.display='none';return;}b.style.display='flex';
+  document.getElementById('cookieok').addEventListener('click',function(){localStorage.setItem('jdw_cookie_ok','1');b.style.display='none';});})();</script>

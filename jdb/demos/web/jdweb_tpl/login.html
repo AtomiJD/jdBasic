@@ -1,0 +1,14 @@
+<form class='login' id='loginForm'>
+  <h1>{{ app }}</h1><p>Sign in to continue.</p>
+  <label>Name</label><input name='name' autocomplete='username' autofocus>
+  <label>Password</label><input name='password' type='password' autocomplete='current-password'>
+  <button type='submit'>Sign in</button>
+  <div class='err' id='err'></div>
+  <p>First sign-in sets your password.</p>
+</form>
+<script>
+document.getElementById('loginForm').addEventListener('submit',async(ev)=>{ev.preventDefault();const f=ev.target;
+  const data={name:f.name.value.trim(),password:f.password.value};
+  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  const j=await r.json();if(j.ok){location='/';}else{document.getElementById('err').textContent=j.error||'Login failed';}});
+</script>

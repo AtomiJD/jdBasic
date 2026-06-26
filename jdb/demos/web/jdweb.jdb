@@ -16,6 +16,7 @@ IMPORT TMPL
 ' jdweb; resolve them the way the app resolves its own config.
 DIM gTplDir$ = PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "jdweb_tpl")
 DIM gThemeCache$ = ""
+DIM gEmptyModel AS MAP
 
 ' ---- small internal helpers ----
 
@@ -48,31 +49,16 @@ EXPORT FUNC RENDER$(tpl$, vars)
 ENDFUNC
 
 EXPORT FUNC COOKIE_BANNER$()
-    nl$ = CHR$(10)
-    s$ = "<div id='cookiebar' class='cookiebar'>" + nl$
-    s$ = s$ + "  <span>This site uses a single, strictly necessary session cookie so you stay signed in. No tracking, no third parties.</span>" + nl$
-    s$ = s$ + "  <button id='cookieok'>OK</button>" + nl$
-    s$ = s$ + "</div>" + nl$
-    s$ = s$ + "<script>(function(){var b=document.getElementById('cookiebar');if(!b)return;" + nl$
-    s$ = s$ + "  if(localStorage.getItem('jdw_cookie_ok')){b.style.display='none';return;}b.style.display='flex';" + nl$
-    s$ = s$ + "  document.getElementById('cookieok').addEventListener('click',function(){localStorage.setItem('jdw_cookie_ok','1');b.style.display='none';});})();</script>"
-    RETURN s$
+    RETURN TMPL.RENDER$(PATH.JOIN$(gTplDir$, "cookiebar.html"), gEmptyModel)
 ENDFUNC
 
 EXPORT FUNC NAV_HTML$(cfg, active$)
-    s$ = "<header><h1>" + ("" + cfg{"app"}) + " <span>" + ("" + cfg{"sub"}) + "</span></h1><nav>"
-    items = cfg{"nav"}
-    FOR EACH it IN items
-        cls$ = "navlink"
-        IF ("" + it{"path"}) = active$ THEN cls$ = "navlink active"
-        s$ = s$ + "<a class='" + cls$ + "' href='" + ("" + it{"path"}) + "'>" + ("" + it{"label"}) + "</a>"
-    NEXT it
-    s$ = s$ + "</nav><div class='spacer'></div>"
-    s$ = s$ + "<div class='whoami'><span id='whoami'></span><button id='logout' class='ghost'>Logout</button></div></header>"
-    s$ = s$ + "<script>(async function(){const me=await fetch('/api/me').then(r=>r.ok?r.json():null);"
-    s$ = s$ + "if(me&&me.name)document.getElementById('whoami').textContent='Logged in as '+me.name;"
-    s$ = s$ + "document.getElementById('logout').addEventListener('click',async()=>{await fetch('/api/logout',{method:'POST'});location='/login';});})();</script>"
-    RETURN s$
+    DIM model AS MAP
+    model{"app"} = "" + cfg{"app"}
+    model{"sub"} = "" + cfg{"sub"}
+    model{"nav"} = cfg{"nav"}
+    model{"active"} = active$
+    RETURN TMPL.RENDER$(PATH.JOIN$(gTplDir$, "nav.html"), model)
 ENDFUNC
 
 ' Full HTML document. navHtml$ may be "" (e.g. the login page). The EU cookie
@@ -94,34 +80,17 @@ ENDFUNC
 ' Wire it with: HTTP.SERVER.ON_NOTFOUND "HANDLE404" and a thin wrapper that
 ' returns JDWEB.NOT_FOUND$(cfg).
 EXPORT FUNC NOT_FOUND$(cfg)
-    nl$ = CHR$(10)
     app$ = "" + cfg{"app"}
-    c$ = "<div class='notfound'>" + nl$
-    c$ = c$ + "  <h1>404</h1>" + nl$
-    c$ = c$ + "  <p>This page does not exist.</p>" + nl$
-    c$ = c$ + "  <a class='navlink' href='/'>Back to start</a>" + nl$
-    c$ = c$ + "</div>"
+    c$ = TMPL.RENDER$(PATH.JOIN$(gTplDir$, "notfound.html"), gEmptyModel)
     html$ = PAGE$(cfg, app$ + " - 404", "", c$)
     RETURN { "__http_status": 404, "__http_content_type": "text/html", "__http_body": html$ }
 ENDFUNC
 
 EXPORT FUNC LOGIN_PAGE$(cfg)
-    nl$ = CHR$(10)
     app$ = "" + cfg{"app"}
-    c$ = "<form class='login' id='loginForm'>" + nl$
-    c$ = c$ + "  <h1>" + app$ + "</h1><p>Sign in to continue.</p>" + nl$
-    c$ = c$ + "  <label>Name</label><input name='name' autocomplete='username' autofocus>" + nl$
-    c$ = c$ + "  <label>Password</label><input name='password' type='password' autocomplete='current-password'>" + nl$
-    c$ = c$ + "  <button type='submit'>Sign in</button>" + nl$
-    c$ = c$ + "  <div class='err' id='err'></div>" + nl$
-    c$ = c$ + "  <p>First sign-in sets your password.</p>" + nl$
-    c$ = c$ + "</form>" + nl$
-    c$ = c$ + "<script>" + nl$
-    c$ = c$ + "document.getElementById('loginForm').addEventListener('submit',async(ev)=>{ev.preventDefault();const f=ev.target;" + nl$
-    c$ = c$ + "  const data={name:f.name.value.trim(),password:f.password.value};" + nl$
-    c$ = c$ + "  const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});" + nl$
-    c$ = c$ + "  const j=await r.json();if(j.ok){location='/';}else{document.getElementById('err').textContent=j.error||'Login failed';}});" + nl$
-    c$ = c$ + "</script>"
+    DIM lm AS MAP
+    lm{"app"} = app$
+    c$ = TMPL.RENDER$(PATH.JOIN$(gTplDir$, "login.html"), lm)
     RETURN PAGE$(cfg, app$ + " - Sign in", "", c$)
 ENDFUNC
 
