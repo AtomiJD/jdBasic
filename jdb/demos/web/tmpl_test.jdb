@@ -1,0 +1,66 @@
+' tmpl_test.jdb - checks for the tmpl.jdb template engine.
+' Run:  jdBasic jdb/demos/web/tmpl_test.jdb
+
+IMPORT TMPL
+
+DIM fails = 0
+
+SUB Check(label$, got$, want$)
+    IF got$ = want$ THEN
+        PRINT "ok   "; label$
+    ELSE
+        PRINT "FAIL "; label$; "  got=["; got$; "] want=["; want$; "]"
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM m1 AS MAP
+m1{"name"} = "<b>Kat</b>"
+Check "escape", TMPL.RENDERSTR$("Hi {{ name }}!", m1), "Hi &lt;b&gt;Kat&lt;/b&gt;!"
+Check "raw", TMPL.RENDERSTR$("X {{{ name }}} Y", m1), "X <b>Kat</b> Y"
+
+DIM usr AS MAP
+usr{"name"} = "Kaiku"
+DIM m2 AS MAP
+m2{"user"} = usr
+Check "dotted", TMPL.RENDERSTR$("{{ user.name }}", m2), "Kaiku"
+
+DIM a0 AS MAP
+a0{"title"} = "first"
+DIM arr = [a0]
+DIM m3 AS MAP
+m3{"items"} = arr
+Check "bracket", TMPL.RENDERSTR$("[{{ items[0].title }}]", m3), "[first]"
+
+Check "missing", TMPL.RENDERSTR$("a{{ nope.x }}b", m2), "ab"
+
+DIM m4 AS MAP
+m4{"q"} = "a & b " + CHR$(34) + "c" + CHR$(34)
+Check "amp+quote", TMPL.RENDERSTR$("{{ q }}", m4), "a &amp; b &quot;c&quot;"
+
+DIM literal$ = "no holes here"
+Check "literal", TMPL.RENDERSTR$(literal$, m1), literal$
+
+' file render + cache: a second render of the same file must not re-parse
+MKDIR "tmp"
+DIM tf$ = "tmp/_tmpl_cache_test.html"
+TXTWRITER tf$, "Hello {{ name }}"
+DIM before = TMPL.COMPILES()
+DIM r1$ = TMPL.RENDER$(tf$, m1)
+DIM midc = TMPL.COMPILES()
+DIM r2$ = TMPL.RENDER$(tf$, m1)
+DIM after = TMPL.COMPILES()
+Check "file render", r1$, "Hello &lt;b&gt;Kat&lt;/b&gt;"
+IF (midc = before + 1) ANDALSO (after = midc) THEN
+    PRINT "ok   cache (1 parse for 2 renders)"
+ELSE
+    PRINT "FAIL cache  before="; before; " midc="; midc; " after="; after
+    fails = fails + 1
+ENDIF
+
+PRINT ""
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT fails; " FAILED"
+ENDIF

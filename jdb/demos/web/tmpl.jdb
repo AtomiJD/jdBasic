@@ -1,0 +1,169 @@
+' tmpl.jdb - a small HTML template engine for jdBasic (jdweb view layer).
+'
+' Renders a template against a model MAP. Interpolation auto-escapes HTML;
+' a triple brace emits raw markup. Compiled templates are cached per path
+' and mtime, so a file is parsed once and re-rendered from the cache.
+'
+'   IMPORT TMPL
+'   DIM html$ = TMPL.RENDER$("page.html", { "name": "Kat" })
+'   DIM s$    = TMPL.RENDERSTR$("Hi {{ name }}", { "name": "<b>Kat</b>" })
+'
+' Holes are dotted/bracket lookups into the model:
+'   {{ name }}              escaped
+'   {{{ body }}}           raw (no escaping)
+'   {{ user.name }}        nested map
+'   {{ items[0].title }}   array index then map key
+' Control tags {% ... %} (if/for/include) are reserved for the next build.
+
+EXPORT MODULE TMPL
+
+DIM gCache AS MAP        ' path -> compiled op array
+DIM gMtime AS MAP        ' path -> mtime string captured at compile time
+DIM gVoid AS MAP         ' a missing key here yields a NONE value
+DIM gCompiles = 0        ' cache-miss parse count (diagnostics / tests)
+
+FUNC VoidVal()
+    RETURN gVoid{"__none__"}
+ENDFUNC
+
+FUNC EscHtml$(s$)
+    DIM r$ = REPLACE$(s$, "&", "&amp;")
+    r$ = REPLACE$(r$, "<", "&lt;")
+    r$ = REPLACE$(r$, ">", "&gt;")
+    r$ = REPLACE$(r$, CHR$(34), "&quot;")
+    r$ = REPLACE$(r$, "'", "&#39;")
+    RETURN r$
+ENDFUNC
+
+FUNC AsText$(v)
+    DIM ty$ = TYPEOF(v)
+    IF ty$ = "NONE" THEN RETURN ""
+    IF ty$ = "ARRAY" ORELSE ty$ = "OBJECT" THEN RETURN ""
+    RETURN "" + v
+ENDFUNC
+
+' walk a dotted/bracket path into the model; NONE if any step is missing
+FUNC PathGet(path$, scope)
+    DIM p$ = REPLACE$(path$, "[", ".")
+    p$ = REPLACE$(p$, "]", "")
+    DIM segs = SPLIT(p$, ".")
+    DIM cur = scope
+    DIM i
+    FOR i = 0 TO LEN(segs) - 1
+        DIM key$ = TRIM$(segs[i])
+        IF key$ = "" THEN CONTINUEFOR
+        DIM ty$ = TYPEOF(cur)
+        IF ty$ = "OBJECT" THEN
+            IF MAP.EXISTS(cur, key$) THEN
+                cur = cur{key$}
+            ELSE
+                RETURN VoidVal()
+            ENDIF
+        ELSEIF ty$ = "ARRAY" THEN
+            DIM idx = VAL(key$)
+            IF idx >= 0 ANDALSO idx < LEN(cur) THEN
+                cur = cur[idx]
+            ELSE
+                RETURN VoidVal()
+            ENDIF
+        ELSE
+            RETURN VoidVal()
+        ENDIF
+    NEXT i
+    RETURN cur
+ENDFUNC
+
+FUNC LitOp(s$)
+    DIM m AS MAP
+    m{"t"} = "lit"
+    m{"s"} = s$
+    RETURN m
+ENDFUNC
+
+FUNC VarOp(x$, raw)
+    DIM m AS MAP
+    m{"t"} = "var"
+    m{"x"} = x$
+    m{"raw"} = raw
+    RETURN m
+ENDFUNC
+
+' split a template into an op array: literal runs and {{ }} / {{{ }}} holes
+FUNC BuildOps(src$)
+    gCompiles = gCompiles + 1
+    DIM ops = []
+    DIM i = 0
+    DIM n = LEN(src$)
+    DO WHILE i < n
+        DIM op = INSTR(i, src$, "{{")
+        IF op < 0 THEN
+            ops = APPEND(ops, LitOp(MID$(src$, i)))
+            EXITDO
+        ENDIF
+        IF op > i THEN ops = APPEND(ops, LitOp(MID$(src$, i, op - i)))
+        DIM raw = 0
+        DIM clo$ = "}}"
+        DIM hdr = 2
+        IF MID$(src$, op, 3) = "{{{" THEN
+            raw = 1
+            clo$ = "}}}"
+            hdr = 3
+        ENDIF
+        DIM es = op + hdr
+        DIM ce = INSTR(es, src$, clo$)
+        IF ce < 0 THEN
+            ops = APPEND(ops, LitOp(MID$(src$, op)))
+            EXITDO
+        ENDIF
+        DIM expr$ = TRIM$(MID$(src$, es, ce - es))
+        ops = APPEND(ops, VarOp(expr$, raw))
+        i = ce + LEN(clo$)
+    LOOP
+    RETURN ops
+ENDFUNC
+
+FUNC EmitOps$(ops, scope)
+    DIM out$ = ""
+    DIM i
+    FOR i = 0 TO LEN(ops) - 1
+        DIM op = ops[i]
+        DIM ty$ = op{"t"}
+        IF ty$ = "lit" THEN
+            out$ = out$ + op{"s"}
+        ELSEIF ty$ = "var" THEN
+            DIM s$ = AsText$(PathGet(op{"x"}, scope))
+            IF op{"raw"} THEN
+                out$ = out$ + s$
+            ELSE
+                out$ = out$ + EscHtml$(s$)
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' render a template string directly (no caching, no file)
+EXPORT FUNC RENDERSTR$(src$, model)
+    RETURN EmitOps$(BuildOps(src$), model)
+ENDFUNC
+
+' render a template file against the model; parses once, then serves from cache
+EXPORT FUNC RENDER$(path$, model)
+    DIM st = FILE.STAT(path$)
+    IF NOT st{"exists"} THEN RETURN "<!-- tmpl: not found: " + path$ + " -->"
+    DIM mt$ = st{"mtime"}
+    DIM ops = []
+    IF MAP.EXISTS(gCache, path$) ANDALSO gMtime{path$} = mt$ THEN
+        ops = gCache{path$}
+    ELSE
+        ops = BuildOps(TXTREADER$(path$))
+        gCache{path$} = ops
+        gMtime{path$} = mt$
+    ENDIF
+    RETURN EmitOps$(ops, model)
+ENDFUNC
+
+' number of cache-miss parses so far (for tests / diagnostics)
+EXPORT FUNC COMPILES()
+    RETURN gCompiles
+ENDFUNC
