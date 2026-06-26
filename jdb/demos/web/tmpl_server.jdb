@@ -1,0 +1,61 @@
+' tmpl_server.jdb - serve tmpl.jdb-rendered pages over HTTP.SERVER.
+'
+'   GET /            full page (page.html + card partial + a filter)
+'   GET /frag        one rendered card fragment (hypermedia / HTMX style)
+'   GET /api/cards   the same model as JSON
+'
+' The template cache is warmed once before the server starts, so every
+' request after that renders from cache (read-only) - safe under the
+' handler thread pool. Run from the repo root:
+'   jdBasic jdb/demos/web/tmpl_server.jdb        (stop with Ctrl-C / kill)
+
+IMPORT TMPL
+
+DIM gPage$ = "jdb/demos/web/tmpl_demo/page.html"
+
+FUNC Card(title$, sev$, who$, blocked)
+    DIM m AS MAP
+    m{"title"} = title$
+    m{"severity"} = sev$
+    m{"assignee"} = who$
+    m{"blocked"} = blocked
+    RETURN m
+ENDFUNC
+
+DIM gCards = []
+gCards = APPEND(gCards, Card("Engine-Kern", "major", "Kaiku", FALSE))
+gCards = APPEND(gCards, Card("Kontroll-Tags", "major", "Kaiku", FALSE))
+gCards = APPEND(gCards, Card("Layouts", "minor", "Kaiku", TRUE))
+gCards = APPEND(gCards, Card("Filter und <Escape>", "critical", "Kaiku", FALSE))
+
+DIM gModel AS MAP
+gModel{"title"} = "jdweb Board (live)"
+gModel{"count"} = LEN(gCards)
+gModel{"cards"} = gCards
+
+FUNC HANDLEROOT(request)
+    RETURN TMPL.RENDER$(gPage$, gModel)
+ENDFUNC
+
+FUNC HANDLEFRAG(request)
+    RETURN TMPL.RENDERSTR$("<li>{{ title }} ({{ severity | upper }})</li>", gCards[0])
+ENDFUNC
+
+FUNC HANDLECARDS(request)
+    RETURN gModel
+ENDFUNC
+
+HTTP.SERVER.ON_GET "/", "HANDLEROOT"
+HTTP.SERVER.ON_GET "/frag", "HANDLEFRAG"
+HTTP.SERVER.ON_GET "/api/cards", "HANDLECARDS"
+
+DIM warm$ = TMPL.RENDER$(gPage$, gModel)
+PRINT "cache warmed ("; LEN(warm$); " bytes), parses="; TMPL.COMPILES()
+
+IF HTTP.SERVER.START(8099, "127.0.0.1") THEN
+    PRINT "tmpl_server on http://127.0.0.1:8099"
+    HTTP.SERVER.WAIT
+ELSE
+    PRINT "server start failed: "; ERRMSG$
+ENDIF
+HTTP.SERVER.STOP
