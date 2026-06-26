@@ -1,9 +1,8 @@
 ' wm_dashboard.jdb - FIFA World Cup 2026 dashboard (GFX/ImGui).
-' Phase 1: group tables + nations grid.  Phase 2: schedule + match detail
-' (events, boxscore stats, lineups). Data: ESPN hidden API (no key).
+' Group tables, nations grid, schedule, and match detail (events,
+' boxscore stats, lineups). Data: ESPN public API (no key).
 ' Flags: HTTP.GET$ -> BINWRITER -> SPRITE.LOAD -> GUI.IMAGE, cached by code.
-' Run:  jdBasic wm_dashboard.jdb            (ESC quits)
-' Test: jdBasic wm_dashboard.jdb shot [nat|match]   (one screenshot to tmp/dash.png)
+' Run:  jdBasic wm_dashboard.jdb            (ESC quits, F toggles fullscreen)
 
 ' cache dir for downloaded crests/images - create it if missing so the app
 ' runs from any folder it's copied into (MKDIR is a no-op if it exists)
@@ -178,7 +177,7 @@ FUNC GET_SUMMARY(eid$)
     RETURN sjj
 ENDFUNC
 
-' ── group standings table ─────────────────────────────────────
+' group standings table
 SUB GROUP_TABLE(grp)
     GUI.SEPARATOR_TEXT(TXT$(grp{"name"}))
     IF GUI.BEGIN_TABLE("t" + TXT$(grp{"name"}), 9) THEN
@@ -254,7 +253,7 @@ SUB NATIONS_GRID()
     ENDIF
 ENDSUB
 
-' ── team detail page ─────────────────────────────────────────
+' team detail page
 FUNC FIND_ENTRY(code$)
     DIM g
     FOR g = 0 TO LEN(gStand) - 1
@@ -335,7 +334,7 @@ SUB TEAM_DETAIL(code$)
     ENDIF
 ENDSUB
 
-' ── match detail ─────────────────────────────────────────────
+' match detail
 SUB MATCH_HEADER(ev)
     DIM cp = ev{"competitions"}[0]
     DIM co = cp{"competitors"}
@@ -497,7 +496,7 @@ SUB SCHEDULE_TAB()
     ENDIF
 ENDSUB
 
-' ── live view ────────────────────────────────────────────────
+' live view
 FUNC IS_LIVE(ev)
     RETURN TXT$(ev{"competitions"}[0]{"status"}{"type"}{"state"}) = "in"
 ENDFUNC
@@ -718,7 +717,7 @@ SUB NEWS_TAB()
     NEXT i
 ENDSUB
 
-' ── load one league (startup + on switch) ───────────────────
+' load one league (startup + on switch)
 SUB LOAD_LEAGUE(lg$, isclub)
     gLeague$ = lg$
     gIsClub = isclub
@@ -782,102 +781,59 @@ LOAD_LEAGUE LEAGUES$[0], FALSE
 gLastRefresh = TICK()
 PRINT "teams: "; LEN(gTeams); "  matches: "; LEN(gSched)
 
-DIM args = OS.ARGS()
-DIM testmode = (LEN(args) >= 2 ANDALSO args[1] = "shot")
-DIM testtab$ = ""
-IF LEN(args) >= 3 THEN testtab$ = args[2]
-IF testmode ANDALSO LEN(args) >= 4 THEN
-    gLeagueIdx = VAL(args[3])
-    LOAD_LEAGUE LEAGUES$[gLeagueIdx], (gLeagueIdx <> 0)
-ENDIF
-IF testmode ANDALSO (testtab$ = "match" ORELSE testtab$ = "stats" ORELSE testtab$ = "lineup" ORELSE testtab$ = "livecard") THEN
-    DIM ti
-    FOR ti = 0 TO LEN(gSched) - 1
-        IF gSelIdx < 0 ANDALSO TXT$(gSched[ti]{"competitions"}[0]{"status"}{"type"}{"state"}) = "post" THEN gSelIdx = ti
-    NEXT ti
-ENDIF
-
-DIM frame = 0
 DO
-    IF (NOT testmode) ANDALSO LEN(gSched) > 0 ANDALSO (TICK() - gLastRefresh) > 30000 THEN
+    IF LEN(gSched) > 0 ANDALSO (TICK() - gLastRefresh) > 30000 THEN
         REFRESH_LIVE()
         gLastRefresh = TICK()
     ENDIF
     CLS
     IF GUI.BEGIN("Fussball Dashboard", 0, 0, 1100, 740) THEN
-        IF testmode ANDALSO testtab$ = "nat" THEN
-            NATIONS_GRID()
-        ELSEIF testmode ANDALSO testtab$ = "match" THEN
-            SCHEDULE_TAB()
-        ELSEIF testmode ANDALSO testtab$ = "stats" THEN
-            MATCH_HEADER gSched[gSelIdx]
-            MATCH_STATS TXT$(gSched[gSelIdx]{"id"})
-        ELSEIF testmode ANDALSO testtab$ = "lineup" THEN
-            MATCH_LINEUPS TXT$(gSched[gSelIdx]{"id"})
-        ELSEIF testmode ANDALSO testtab$ = "team" THEN
-            TEAM_DETAIL "MEX"
-        ELSEIF testmode ANDALSO testtab$ = "news" THEN
-            NEWS_TAB()
-        ELSEIF testmode ANDALSO testtab$ = "scorers" THEN
-            TOPSCORER_TAB()
-        ELSEIF testmode ANDALSO testtab$ = "table" THEN
-            DIM gt
-            FOR gt = 0 TO LEN(gStand) - 1
-                GROUP_TABLE gStand[gt]
-            NEXT gt
-        ELSEIF testmode ANDALSO testtab$ = "live" THEN
-            LIVE_TAB()
-        ELSEIF testmode ANDALSO testtab$ = "livecard" THEN
-            LIVE_CARD gSched[gSelIdx]
-        ELSE
-            DIM ni = GUI.COMBO("Liga", gLeagueIdx, LEAGUE_NAMES$)
-            IF ni <> gLeagueIdx THEN gPendingLeague = ni
-            GUI.SAME_LINE
-            GUI.TEXT "   [F] Vollbild   [ESC] Ende"
-            DIM tabStand$ = "Gruppen"
-            DIM tabTeams$ = "Nationen"
-            IF gIsClub THEN
-                tabStand$ = "Tabelle"
-                tabTeams$ = "Vereine"
+        DIM ni = GUI.COMBO("Liga", gLeagueIdx, LEAGUE_NAMES$)
+        IF ni <> gLeagueIdx THEN gPendingLeague = ni
+        GUI.SAME_LINE
+        GUI.TEXT "   [F] Vollbild   [ESC] Ende"
+        DIM tabStand$ = "Gruppen"
+        DIM tabTeams$ = "Nationen"
+        IF gIsClub THEN
+            tabStand$ = "Tabelle"
+            tabTeams$ = "Vereine"
+        ENDIF
+        IF GUI.BEGIN_TAB_BAR("tabs") THEN
+            IF GUI.BEGIN_TAB_ITEM("Live") THEN
+                LIVE_TAB()
+                GUI.END_TAB_ITEM
             ENDIF
-            IF GUI.BEGIN_TAB_BAR("tabs") THEN
-                IF GUI.BEGIN_TAB_ITEM("Live") THEN
-                    LIVE_TAB()
-                    GUI.END_TAB_ITEM
-                ENDIF
-                IF GUI.BEGIN_TAB_ITEM(tabStand$) THEN
-                    DIM g2
-                    FOR g2 = 0 TO LEN(gStand) - 1
-                        GROUP_TABLE gStand[g2]
-                    NEXT g2
-                    GUI.END_TAB_ITEM
-                ENDIF
-                IF GUI.BEGIN_TAB_ITEM(tabTeams$) THEN
-                    IF gSelTeam$ = "" THEN
-                        NATIONS_GRID()
-                    ELSE
-                        TEAM_DETAIL gSelTeam$
-                    ENDIF
-                    GUI.END_TAB_ITEM
-                ENDIF
-                IF GUI.BEGIN_TAB_ITEM("Spielplan") THEN
-                    SCHEDULE_TAB()
-                    GUI.END_TAB_ITEM
-                ENDIF
-                IF GUI.BEGIN_TAB_ITEM("News") THEN
-                    NEWS_TAB()
-                    GUI.END_TAB_ITEM
-                ENDIF
-                IF GUI.BEGIN_TAB_ITEM("Torschuetzen") THEN
-                    TOPSCORER_TAB()
-                    GUI.END_TAB_ITEM
-                ENDIF
-                GUI.END_TAB_BAR
+            IF GUI.BEGIN_TAB_ITEM(tabStand$) THEN
+                DIM g2
+                FOR g2 = 0 TO LEN(gStand) - 1
+                    GROUP_TABLE gStand[g2]
+                NEXT g2
+                GUI.END_TAB_ITEM
             ENDIF
+            IF GUI.BEGIN_TAB_ITEM(tabTeams$) THEN
+                IF gSelTeam$ = "" THEN
+                    NATIONS_GRID()
+                ELSE
+                    TEAM_DETAIL gSelTeam$
+                ENDIF
+                GUI.END_TAB_ITEM
+            ENDIF
+            IF GUI.BEGIN_TAB_ITEM("Spielplan") THEN
+                SCHEDULE_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            IF GUI.BEGIN_TAB_ITEM("News") THEN
+                NEWS_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            IF GUI.BEGIN_TAB_ITEM("Torschuetzen") THEN
+                TOPSCORER_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            GUI.END_TAB_BAR
         ENDIF
         GUI.END
     ENDIF
-    frame = frame + 1
     SCREENFLIP
     IF gPendingLeague >= 0 THEN
         gLeagueIdx = gPendingLeague
@@ -885,14 +841,9 @@ DO
         LOAD_LEAGUE LEAGUES$[gLeagueIdx], (gLeagueIdx <> 0)
         gLastRefresh = TICK()
     ENDIF
-    IF testmode THEN
-        IF frame = 6 THEN GFX.SAVE_SCREENSHOT("tmp/dash.png")
-        IF frame >= 6 THEN EXITDO
-    ELSE
-        DIM kk$ = INKEY$()
-        IF kk$ = CHR$(27) THEN EXITDO
-        IF kk$ = "f" ORELSE kk$ = "F" THEN TOGGLE_FULLSCREEN
-    ENDIF
+    DIM kk$ = INKEY$()
+    IF kk$ = CHR$(27) THEN EXITDO
+    IF kk$ = "f" ORELSE kk$ = "F" THEN TOGGLE_FULLSCREEN
 LOOP
 GFX.CLOSE
 PRINT "done"
