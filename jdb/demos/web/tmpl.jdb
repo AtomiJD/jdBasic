@@ -13,14 +13,22 @@
 '   {{{ body }}}           raw (no escaping)
 '   {{ user.name }}        nested map
 '   {{ items[0].title }}   array index then map key
-' Control tags {% ... %} (if/for/include) are reserved for the next build.
+'
+' Control tags:
+'   {% if cond %} ... {% elseif cond %} ... {% else %} ... {% endif %}
+'   {% for item in items %} ... {% endfor %}
+'   {% include "partial.html" %}   (resolved next to the rendered file)
+' Conditions: a bare path (truthy), path == "lit", path != "lit", not path.
 
 EXPORT MODULE TMPL
 
-DIM gCache AS MAP        ' path -> compiled op array
-DIM gMtime AS MAP        ' path -> mtime string captured at compile time
+DIM gCache AS MAP        ' path -> compiled op tree
+DIM gMtime AS MAP        ' path -> mtime string captured at parse time
 DIM gVoid AS MAP         ' a missing key here yields a NONE value
 DIM gCompiles = 0        ' cache-miss parse count (diagnostics / tests)
+DIM gIncBase$ = ""       ' directory the current include paths resolve against
+DIM gToks = []           ' token stream for the active parse pass
+DIM gPos = 0             ' cursor into gToks
 
 FUNC VoidVal()
     RETURN gVoid{"__none__"}
@@ -73,6 +81,162 @@ FUNC PathGet(path$, scope)
     RETURN cur
 ENDFUNC
 
+FUNC CloneMap(m)
+    DIM c AS MAP
+    DIM ks = MAP.KEYS(m)
+    DIM i
+    FOR i = 0 TO LEN(ks) - 1
+        c{ks[i]} = m{ks[i]}
+    NEXT i
+    RETURN c
+ENDFUNC
+
+FUNC Truthy(v)
+    DIM ty$ = TYPEOF(v)
+    IF ty$ = "NONE" THEN RETURN FALSE
+    IF ty$ = "ARRAY" THEN RETURN LEN(v) > 0
+    IF ty$ = "OBJECT" THEN RETURN TRUE
+    IF ty$ = "STRING" THEN RETURN LEN(v) > 0
+    RETURN (v <> 0)
+ENDFUNC
+
+' resolve the right side of a comparison: a quoted literal, else a path
+FUNC RhsVal$(tok$, scope)
+    DIM t$ = TRIM$(tok$)
+    IF LEN(t$) >= 2 THEN
+        DIM f$ = LEFT$(t$, 1)
+        IF f$ = CHR$(34) ORELSE f$ = "'" THEN RETURN MID$(t$, 1, LEN(t$) - 2)
+    ENDIF
+    RETURN AsText$(PathGet(t$, scope))
+ENDFUNC
+
+FUNC EvalCond(expr$, scope)
+    DIM ex$ = TRIM$(expr$)
+    IF LCASE$(LEFT$(ex$, 4)) = "not " THEN
+        RETURN (NOT EvalCond(MID$(ex$, 4), scope))
+    ENDIF
+    DIM neg = 0
+    DIM oppos = INSTR(0, ex$, "==")
+    IF oppos < 0 THEN
+        DIM np = INSTR(0, ex$, "!=")
+        IF np >= 0 THEN
+            oppos = np
+            neg = 1
+        ENDIF
+    ENDIF
+    IF oppos >= 0 THEN
+        DIM lstr$ = AsText$(PathGet(TRIM$(LEFT$(ex$, oppos)), scope))
+        DIM rstr$ = RhsVal$(TRIM$(MID$(ex$, oppos + 2)), scope)
+        DIM eq = (lstr$ = rstr$)
+        IF neg THEN RETURN (NOT eq)
+        RETURN eq
+    ENDIF
+    RETURN Truthy(PathGet(ex$, scope))
+ENDFUNC
+
+' --- token constructors ---
+
+FUNC LitTok(s$)
+    DIM m AS MAP
+    m{"tt"} = "lit"
+    m{"s"} = s$
+    RETURN m
+ENDFUNC
+
+FUNC VarTok(x$, raw)
+    DIM m AS MAP
+    m{"tt"} = "var"
+    m{"x"} = x$
+    m{"raw"} = raw
+    RETURN m
+ENDFUNC
+
+FUNC TagTok(g$)
+    DIM m AS MAP
+    m{"tt"} = "tag"
+    m{"g"} = g$
+    RETURN m
+ENDFUNC
+
+' position of the next {{ or {% at/after i, earliest wins; -1 if none
+FUNC NextMark(src$, i)
+    DIM a = INSTR(i, src$, "{{")
+    DIM b = INSTR(i, src$, "{%")
+    IF a < 0 THEN RETURN b
+    IF b < 0 THEN RETURN a
+    IF a < b THEN RETURN a
+    RETURN b
+ENDFUNC
+
+' split a template into a flat token stream
+FUNC Lex(src$)
+    DIM toks = []
+    DIM i = 0
+    DIM n = LEN(src$)
+    DO WHILE i < n
+        DIM mk = NextMark(src$, i)
+        IF mk < 0 THEN
+            toks = APPEND(toks, LitTok(MID$(src$, i)))
+            EXITDO
+        ENDIF
+        IF mk > i THEN toks = APPEND(toks, LitTok(MID$(src$, i, mk - i)))
+        IF MID$(src$, mk, 2) = "{%" THEN
+            DIM ce = INSTR(mk + 2, src$, "%}")
+            IF ce < 0 THEN
+                toks = APPEND(toks, LitTok(MID$(src$, mk)))
+                EXITDO
+            ENDIF
+            toks = APPEND(toks, TagTok(TRIM$(MID$(src$, mk + 2, ce - (mk + 2)))))
+            i = ce + 2
+        ELSE
+            DIM raw = 0
+            DIM clo$ = "}}"
+            DIM hdr = 2
+            IF MID$(src$, mk, 3) = "{{{" THEN
+                raw = 1
+                clo$ = "}}}"
+                hdr = 3
+            ENDIF
+            DIM es = mk + hdr
+            DIM cce = INSTR(es, src$, clo$)
+            IF cce < 0 THEN
+                toks = APPEND(toks, LitTok(MID$(src$, mk)))
+                EXITDO
+            ENDIF
+            toks = APPEND(toks, VarTok(TRIM$(MID$(src$, es, cce - es)), raw))
+            i = cce + LEN(clo$)
+        ENDIF
+    LOOP
+    RETURN toks
+ENDFUNC
+
+' --- recursive-descent parser over gToks/gPos ---
+
+FUNC TagWord$(g$)
+    DIM sp = INSTR(0, g$, " ")
+    IF sp < 0 THEN RETURN LCASE$(TRIM$(g$))
+    RETURN LCASE$(TRIM$(LEFT$(g$, sp)))
+ENDFUNC
+
+FUNC TagRest$(g$)
+    DIM sp = INSTR(0, g$, " ")
+    IF sp < 0 THEN RETURN ""
+    RETURN TRIM$(MID$(g$, sp + 1))
+ENDFUNC
+
+FUNC Unquote$(t0$)
+    DIM t$ = TRIM$(t0$)
+    IF LEN(t$) >= 2 THEN
+        DIM f$ = LEFT$(t$, 1)
+        IF f$ = CHR$(34) ORELSE f$ = "'" THEN RETURN MID$(t$, 1, LEN(t$) - 2)
+    ENDIF
+    RETURN t$
+ENDFUNC
+
+FUNC InList(list$, w$)
+    RETURN INSTR(0, " " + list$ + " ", " " + w$ + " ") >= 0
+ENDFUNC
+
 FUNC LitOp(s$)
     DIM m AS MAP
     m{"t"} = "lit"
@@ -88,38 +252,152 @@ FUNC VarOp(x$, raw)
     RETURN m
 ENDFUNC
 
-' split a template into an op array: literal runs and {{ }} / {{{ }}} holes
-FUNC BuildOps(src$)
-    gCompiles = gCompiles + 1
+FUNC IncOp(path$)
+    DIM m AS MAP
+    m{"t"} = "inc"
+    m{"path"} = path$
+    RETURN m
+ENDFUNC
+
+FUNC Branch(cond$, body)
+    DIM m AS MAP
+    m{"cond"} = cond$
+    m{"body"} = body
+    RETURN m
+ENDFUNC
+
+FUNC ParseSeq(stoppers$)
     DIM ops = []
-    DIM i = 0
-    DIM n = LEN(src$)
-    DO WHILE i < n
-        DIM op = INSTR(i, src$, "{{")
-        IF op < 0 THEN
-            ops = APPEND(ops, LitOp(MID$(src$, i)))
-            EXITDO
+    DO WHILE gPos < LEN(gToks)
+        DIM tk = gToks[gPos]
+        DIM tt$ = tk{"tt"}
+        IF tt$ = "lit" THEN
+            ops = APPEND(ops, LitOp(tk{"s"}))
+            gPos = gPos + 1
+        ELSEIF tt$ = "var" THEN
+            ops = APPEND(ops, VarOp(tk{"x"}, tk{"raw"}))
+            gPos = gPos + 1
+        ELSE
+            DIM g$ = tk{"g"}
+            DIM word$ = TagWord$(g$)
+            IF InList(stoppers$, word$) THEN RETURN ops
+            IF word$ = "if" THEN
+                ops = APPEND(ops, ParseIf())
+            ELSEIF word$ = "for" THEN
+                ops = APPEND(ops, ParseFor())
+            ELSEIF word$ = "include" THEN
+                ops = APPEND(ops, IncOp(Unquote$(TagRest$(g$))))
+                gPos = gPos + 1
+            ELSE
+                ops = APPEND(ops, LitOp("{% " + g$ + " %}"))
+                gPos = gPos + 1
+            ENDIF
         ENDIF
-        IF op > i THEN ops = APPEND(ops, LitOp(MID$(src$, i, op - i)))
-        DIM raw = 0
-        DIM clo$ = "}}"
-        DIM hdr = 2
-        IF MID$(src$, op, 3) = "{{{" THEN
-            raw = 1
-            clo$ = "}}}"
-            hdr = 3
-        ENDIF
-        DIM es = op + hdr
-        DIM ce = INSTR(es, src$, clo$)
-        IF ce < 0 THEN
-            ops = APPEND(ops, LitOp(MID$(src$, op)))
-            EXITDO
-        ENDIF
-        DIM expr$ = TRIM$(MID$(src$, es, ce - es))
-        ops = APPEND(ops, VarOp(expr$, raw))
-        i = ce + LEN(clo$)
     LOOP
     RETURN ops
+ENDFUNC
+
+FUNC ParseIf()
+    DIM tk = gToks[gPos]
+    DIM branches = []
+    branches = APPEND(branches, Branch("", []))
+    DIM firstCond$ = TagRest$(tk{"g"})
+    gPos = gPos + 1
+    branches[0] = Branch(firstCond$, ParseSeq("elseif else endif"))
+    DIM elsebody = []
+    DO WHILE gPos < LEN(gToks)
+        DIM t2 = gToks[gPos]
+        DIM w$ = TagWord$(t2{"g"})
+        IF w$ = "elseif" THEN
+            DIM c2$ = TagRest$(t2{"g"})
+            gPos = gPos + 1
+            branches = APPEND(branches, Branch(c2$, ParseSeq("elseif else endif")))
+        ELSEIF w$ = "else" THEN
+            gPos = gPos + 1
+            elsebody = ParseSeq("endif")
+        ELSEIF w$ = "endif" THEN
+            gPos = gPos + 1
+            EXITDO
+        ELSE
+            EXITDO
+        ENDIF
+    LOOP
+    DIM m AS MAP
+    m{"t"} = "if"
+    m{"branches"} = branches
+    m{"else"} = elsebody
+    RETURN m
+ENDFUNC
+
+FUNC ParseFor()
+    DIM tk = gToks[gPos]
+    DIM rest$ = TagRest$(tk{"g"})
+    gPos = gPos + 1
+    DIM body = ParseSeq("endfor")
+    IF gPos < LEN(gToks) THEN gPos = gPos + 1
+    DIM vpos = INSTR(0, rest$, " in ")
+    DIM vname$ = ""
+    DIM src$ = ""
+    IF vpos >= 0 THEN
+        vname$ = TRIM$(LEFT$(rest$, vpos))
+        src$ = TRIM$(MID$(rest$, vpos + 4))
+    ENDIF
+    DIM m AS MAP
+    m{"t"} = "for"
+    m{"var"} = vname$
+    m{"src"} = src$
+    m{"body"} = body
+    RETURN m
+ENDFUNC
+
+FUNC BuildOps(src$)
+    gCompiles = gCompiles + 1
+    gToks = Lex(src$)
+    gPos = 0
+    RETURN ParseSeq("")
+ENDFUNC
+
+' --- rendering ---
+
+FUNC EmitIf$(op, scope)
+    DIM branches = op{"branches"}
+    DIM i
+    FOR i = 0 TO LEN(branches) - 1
+        DIM br = branches[i]
+        IF EvalCond(br{"cond"}, scope) THEN RETURN EmitOps$(br{"body"}, scope)
+    NEXT i
+    RETURN EmitOps$(op{"else"}, scope)
+ENDFUNC
+
+FUNC EmitFor$(op, scope)
+    DIM seq = PathGet(op{"src"}, scope)
+    IF TYPEOF(seq) <> "ARRAY" THEN RETURN ""
+    DIM vname$ = op{"var"}
+    DIM body = op{"body"}
+    DIM out$ = ""
+    DIM i
+    FOR i = 0 TO LEN(seq) - 1
+        DIM child = CloneMap(scope)
+        child{vname$} = seq[i]
+        out$ = out$ + EmitOps$(body, child)
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC EmitInc$(op, scope)
+    DIM full$ = gIncBase$ + op{"path"}
+    DIM st = FILE.STAT(full$)
+    IF NOT st{"exists"} THEN RETURN "<!-- tmpl: include not found: " + full$ + " -->"
+    DIM mt$ = st{"mtime"}
+    DIM ops = []
+    IF MAP.EXISTS(gCache, full$) ANDALSO gMtime{full$} = mt$ THEN
+        ops = gCache{full$}
+    ELSE
+        ops = BuildOps(TXTREADER$(full$))
+        gCache{full$} = ops
+        gMtime{full$} = mt$
+    ENDIF
+    RETURN EmitOps$(ops, scope)
 ENDFUNC
 
 FUNC EmitOps$(ops, scope)
@@ -137,13 +415,34 @@ FUNC EmitOps$(ops, scope)
             ELSE
                 out$ = out$ + EscHtml$(s$)
             ENDIF
+        ELSEIF ty$ = "if" THEN
+            out$ = out$ + EmitIf$(op, scope)
+        ELSEIF ty$ = "for" THEN
+            out$ = out$ + EmitFor$(op, scope)
+        ELSEIF ty$ = "inc" THEN
+            out$ = out$ + EmitInc$(op, scope)
         ENDIF
     NEXT i
     RETURN out$
 ENDFUNC
 
+' directory portion of a path (with trailing slash), or "" if none
+FUNC DirOf$(path$)
+    DIM p$ = REPLACE$(path$, "\", "/")
+    DIM last = -1
+    DIM i
+    FOR i = 0 TO LEN(p$) - 1
+        IF MID$(p$, i, 1) = "/" THEN last = i
+    NEXT i
+    IF last < 0 THEN RETURN ""
+    RETURN MID$(p$, 0, last + 1)
+ENDFUNC
+
+' --- public API ---
+
 ' render a template string directly (no caching, no file)
 EXPORT FUNC RENDERSTR$(src$, model)
+    gIncBase$ = ""
     RETURN EmitOps$(BuildOps(src$), model)
 ENDFUNC
 
@@ -151,6 +450,7 @@ ENDFUNC
 EXPORT FUNC RENDER$(path$, model)
     DIM st = FILE.STAT(path$)
     IF NOT st{"exists"} THEN RETURN "<!-- tmpl: not found: " + path$ + " -->"
+    gIncBase$ = DirOf$(path$)
     DIM mt$ = st{"mtime"}
     DIM ops = []
     IF MAP.EXISTS(gCache, path$) ANDALSO gMtime{path$} = mt$ THEN

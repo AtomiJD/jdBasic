@@ -58,6 +58,37 @@ ELSE
     fails = fails + 1
 ENDIF
 
+' --- control tags ---
+DIM t1 AS MAP
+t1{"title"} = "Alpha"
+t1{"done"} = TRUE
+DIM t2 AS MAP
+t2{"title"} = "Beta & <C>"
+t2{"done"} = FALSE
+DIM tickets = [t1, t2]
+DIM mdl AS MAP
+mdl{"tickets"} = tickets
+mdl{"title"} = "Board"
+
+Check "for", TMPL.RENDERSTR$("{% for t in tickets %}[{{ t.title }}]{% endfor %}", mdl), "[Alpha][Beta &amp; &lt;C&gt;]"
+Check "if-true", TMPL.RENDERSTR$("{% if title %}has{% endif %}", mdl), "has"
+Check "if-else", TMPL.RENDERSTR$("{% if missing %}x{% else %}none{% endif %}", mdl), "none"
+Check "nested", TMPL.RENDERSTR$("{% for t in tickets %}{% if t.done %}D{% else %}o{% endif %}{% endfor %}", mdl), "Do"
+
+DIM q$ = CHR$(34)
+Check "eq", TMPL.RENDERSTR$("{% if title == " + q$ + "Board" + q$ + " %}y{% else %}n{% endif %}", mdl), "y"
+Check "neq", TMPL.RENDERSTR$("{% if title != " + q$ + "X" + q$ + " %}y{% else %}n{% endif %}", mdl), "y"
+Check "not", TMPL.RENDERSTR$("{% if not missing %}y{% endif %}", mdl), "y"
+
+DIM mst AS MAP
+mst{"s"} = "doing"
+Check "elseif", TMPL.RENDERSTR$("{% if s == 'todo' %}T{% elseif s == 'doing' %}DO{% else %}?{% endif %}", mst), "DO"
+
+' include resolved next to the parent file
+TXTWRITER "tmp/_row.html", "<li>{{ t.title }}</li>"
+TXTWRITER "tmp/_list.html", "<ul>{% for t in tickets %}{% include " + q$ + "_row.html" + q$ + " %}{% endfor %}</ul>"
+Check "include", TMPL.RENDER$("tmp/_list.html", mdl), "<ul><li>Alpha</li><li>Beta &amp; &lt;C&gt;</li></ul>"
+
 PRINT ""
 IF fails = 0 THEN
     PRINT "ALL TESTS PASSED!"
