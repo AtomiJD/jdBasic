@@ -1,0 +1,39 @@
+' tmpl_demo.jdb - proof of value for the tmpl.jdb template engine.
+'
+' Builds a model MAP and renders an HTML page from templates (no hand-built
+' string concatenation), then writes it to tmp/tmpl_demo_out.html. The page
+' uses interpolation, a for-loop, an include partial, and an if-badge; the
+' fourth card carries markup in its title to show HTML auto-escaping.
+'
+' Run from the repo root:  jdBasic jdb/demos/web/tmpl_demo.jdb
+
+IMPORT TMPL
+
+FUNC Card(title$, sev$, who$, blocked)
+    DIM m AS MAP
+    m{"title"} = title$
+    m{"severity"} = sev$
+    m{"assignee"} = who$
+    m{"blocked"} = blocked
+    RETURN m
+ENDFUNC
+
+DIM cards = []
+cards = APPEND(cards, Card("Engine-Kern: Interpolation und Escape", "major", "Kaiku", FALSE))
+cards = APPEND(cards, Card("Kontroll-Tags: if / for / include", "major", "Kaiku", FALSE))
+cards = APPEND(cards, Card("Layouts: extends / block", "minor", "Kaiku", TRUE))
+cards = APPEND(cards, Card("Sicherheit: <script> & co. werden escaped", "critical", "Kaiku", FALSE))
+
+DIM model AS MAP
+model{"title"} = "jdweb Board"
+model{"count"} = LEN(cards)
+model{"cards"} = cards
+
+DIM html$ = TMPL.RENDER$("jdb/demos/web/tmpl_demo/page.html", model)
+
+MKDIR "tmp"
+DIM outp$ = "tmp/tmpl_demo_out.html"
+TXTWRITER outp$, html$
+PRINT "rendered "; LEN(cards); " cards -> "; outp$; " ("; LEN(html$); " bytes)"
+PRINT "----"
+PRINT html$

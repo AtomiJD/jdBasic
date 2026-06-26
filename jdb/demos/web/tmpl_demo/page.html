@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }}</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 640px; color: #1b1f24; }
+    h1 { margin: 0 0 .25rem; }
+    .sub { color: #6b7480; margin: 0 0 1.5rem; }
+    ul.cards { list-style: none; padding: 0; }
+    li.card { border: 1px solid #e3e7ec; border-left: 4px solid #b9c0c9; border-radius: 8px; padding: .6rem .8rem; margin: .5rem 0; }
+    li.card.sev-blocker, li.card.sev-critical { border-left-color: #e5484d; }
+    li.card.sev-major { border-left-color: #f0a020; }
+    .t { font-weight: 600; }
+    .meta { color: #6b7480; font-size: 13px; }
+    .badge { background: #e5484d; color: #fff; border-radius: 4px; font-size: 11px; padding: 1px 6px; margin-left: .4rem; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <p class="sub">{{ count }} offene Tickets, gerendert von tmpl.jdb</p>
+  <ul class="cards">
+{% for c in cards %}{% include "card.html" %}{% endfor %}
+  </ul>
+</body>
+</html>
