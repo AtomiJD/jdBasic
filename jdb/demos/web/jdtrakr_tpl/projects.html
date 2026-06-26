@@ -1,0 +1,19 @@
+<form class='add' id='projForm'>
+  <input class='grow' name='pname' placeholder='Project name' autocomplete='off'>
+  <input name='pkey' placeholder='key (optional)' autocomplete='off'>
+  <button type='submit'>Add project</button>
+</form>
+<div class='wrap'><div id='plist'></div></div>
+<script>
+async function api(path,data){const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}
+function btn(label,cls,fn){const b=document.createElement('button');b.textContent=label;b.className=cls;b.addEventListener('click',fn);return b;}
+async function loadP(){const res=await api('/api/projects');const list=document.getElementById('plist');list.innerHTML='';const ps=res.projects||[];
+  if(ps.length===0){const e=document.createElement('div');e.className='empty';e.textContent='No projects yet.';list.appendChild(e);return;}
+  for(const p of ps){const row=document.createElement('div');row.className='urow';
+    const nm=document.createElement('span');nm.className='uname';nm.textContent=p.name+'  ('+p.key+')   '+p.open+' open / '+p.tickets+' total';row.appendChild(nm);
+    if(p.key!=='jdbasic')row.appendChild(btn('Remove','ghost',()=>delP(p.key)));list.appendChild(row);}}
+async function delP(key){const r=await api('/api/projects/delete',{project:key});if(r.error){alert(r.error);}loadP();}
+async function addP(ev){ev.preventDefault();const f=ev.target;const name=f.pname.value.trim();if(!name)return;
+  const r=await api('/api/projects/create',{name:name,key:f.pkey.value.trim()});if(r.error){alert(r.error);}f.reset();loadP();}
+document.getElementById('projForm').addEventListener('submit',addP);loadP();
+</script>

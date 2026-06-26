@@ -1,0 +1,21 @@
+<form class='add' id='userForm'>
+  <input class='grow' name='uname' placeholder='Team member name' autocomplete='off'>
+  <button type='submit'>Add user</button>
+</form>
+<div class='wrap'><div id='ulist'></div></div>
+<script>
+async function api(path,data){
+  const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};
+  const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}
+function btn(label,cls,fn){const b=document.createElement('button');b.textContent=label;b.className=cls;b.addEventListener('click',fn);return b;}
+async function loadU(){const res=await api('/api/users');const list=document.getElementById('ulist');list.innerHTML='';
+  const users=res.users||[];
+  if(users.length===0){const e=document.createElement('div');e.className='empty';e.textContent='No users yet. Add your team above.';list.appendChild(e);return;}
+  for(const u of users){const row=document.createElement('div');row.className='urow';
+    const nm=document.createElement('span');nm.className='uname';nm.textContent=u.name;row.appendChild(nm);
+    row.appendChild(btn('Remove','ghost',()=>delU(u.id)));list.appendChild(row);}}
+async function delU(id){await api('/api/users/delete',{id:id});loadU();}
+async function addU(ev){ev.preventDefault();const f=ev.target;const name=f.uname.value.trim();if(!name)return;
+  const r=await api('/api/users/create',{name:name});if(r.error){alert(r.error);}f.reset();loadU();}
+document.getElementById('userForm').addEventListener('submit',addU);loadU();
+</script>

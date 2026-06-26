@@ -1,0 +1,189 @@
+<style>
+.filterbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;}
+.filterbar select,.filterbar input{padding:6px 8px;background:var(--bg);color:var(--ink);border:1px solid var(--bd2);border-radius:4px;font-family:inherit;}
+.filterbar select:focus,.filterbar input:focus{outline:none;border-color:var(--green);box-shadow:0 0 8px rgba(0,255,65,.25);}
+.filterbar select option{background:var(--bg);color:var(--ink);}.filterbar .grow{flex:1;min-width:140px;}
+.badges{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0;}
+.badge{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid #2a5c35;color:#bfe;text-transform:capitalize;}
+.badge.bug{border-color:#c44;color:#f99;}.badge.feature{border-color:#3b8;color:#9fc;}.badge.chore{border-color:#778;color:#bcd;}.badge.idea{border-color:#b83;color:#fd9;}
+.badge.blocker,.badge.critical{border-color:#e44;color:#f99;}.badge.major{border-color:#e93;color:#fc9;}.badge.high{border-color:#e44;color:#f99;}.badge.low{border-color:#567;color:#9ab;}
+.ptag{color:#6db;font-size:11px;}
+.col-blocked h2{color:#e88;}.col-review h2{color:#dd7;}
+.mdprev{background:#0b1410;border:1px solid #1c3a24;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;min-height:20px;}
+.mdprev pre{background:#000;padding:8px;overflow-x:auto;border-radius:4px;}.mdprev ul{margin:4px 0 4px 18px;}.mdprev code{background:#000;padding:1px 4px;border-radius:3px;}
+.deprow{display:flex;align-items:center;gap:8px;margin:4px 0;}.depid{max-width:150px;}
+.collink{cursor:pointer;}.collink:hover{color:#9fe;text-decoration:underline;}
+.listpanel{margin-top:2px;}.listhd{display:flex;align-items:center;gap:14px;margin-bottom:10px;}.listhd h2{margin:0;}
+table.ltbl{width:100%;border-collapse:collapse;font-size:13px;}
+.ltbl th{text-align:left;padding:7px 10px;border-bottom:1px solid #2a5c35;color:#9fc;cursor:pointer;user-select:none;white-space:nowrap;}
+.ltbl td{padding:7px 10px;border-bottom:1px solid #14241a;vertical-align:top;}
+.lrow{cursor:pointer;}.lrow:hover{background:#0e1812;}.ltitle{color:#d6ffe2;}
+.ldesc{color:#5fae6f;font-size:11px;max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lrow.prio-high td:first-child{border-left:3px solid #e44;}.lrow.prio-low td:first-child{border-left:3px solid #567;}
+.card .desc{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;}
+.morelink{cursor:pointer;color:#6db;font-size:12px;margin-top:8px;padding:2px 0;}.morelink:hover{text-decoration:underline;}
+</style>
+<div class='filterbar'>
+  <select id='fproj'></select>
+  <select id='fasg'></select>
+  <select id='fsev'><option value=''>Any severity</option><option>blocker</option><option>critical</option><option>major</option><option>minor</option><option>trivial</option></select>
+  <select id='ftype'><option value=''>Any type</option><option>bug</option><option>feature</option><option>chore</option><option>idea</option><option>task</option></select>
+  <input id='fq' class='grow' placeholder='Search...' autocomplete='off'>
+</div>
+<form class='add' id='addForm'>
+  <input class='title' name='title' placeholder='Ticket title' autocomplete='off'>
+  <input class='desc' name='description' placeholder='Description (markdown, optional)' autocomplete='off'>
+  <select id='addproj' name='project'></select>
+  <select id='assignee' name='assignee'></select>
+  <select name='priority'><option value='low'>Low</option><option value='medium' selected>Medium</option><option value='high'>High</option></select>
+  <select name='severity'><option>minor</option><option>trivial</option><option>major</option><option>critical</option><option>blocker</option></select>
+  <select name='type'><option>task</option><option>feature</option><option>bug</option><option>chore</option><option>idea</option></select>
+  <button type='submit'>Add ticket</button>
+</form>
+<div id='board'></div>
+<script>
+const STATUSES=['todo','blocked','doing','review','done'];
+const LABELS={todo:'To Do',blocked:'Blocked',doing:'In Progress',review:'Review',done:'Done'};
+async function api(path,data){
+  const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};
+  const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}
+function btn(label,cls,fn){const b=document.createElement('button');b.textContent=label;b.className=cls;
+  b.addEventListener('click',(e)=>{e.stopPropagation();fn();});return b;}
+function fieldEl(label,el){const w=document.createElement('div');const l=document.createElement('label');l.textContent=label;w.appendChild(l);w.appendChild(el);return w;}
+function selEl(options,val){const s=document.createElement('select');for(const o of options){const op=document.createElement('option');op.value=o[0];op.textContent=o[1];if(o[0]===val)op.selected=true;s.appendChild(op);}return s;}
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function mdToHtml(src){let s=esc(src);
+  s=s.replace(/```([\s\S]*?)```/g,function(m,c){return '<pre>'+c.replace(/^\n/,'').replace(/\n/g,'@@NL@@')+'</pre>';});
+  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  s=s.replace(/^###\s+(.*)$/gm,'<h5>$1</h5>').replace(/^##\s+(.*)$/gm,'<h4>$1</h4>').replace(/^#\s+(.*)$/gm,'<h3>$1</h3>');
+  s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+  s=s.replace(/^[\-\*]\s+(.*)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>(?:\n<li>[\s\S]*?<\/li>)*)/g,function(m){return '<ul>'+m.replace(/\n/g,'')+'</ul>';});
+  s=s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'$1 ($2)');
+  return s.replace(/\n/g,'<br>').replace(/@@NL@@/g,'\n');}
+function fval(id){return document.getElementById(id).value;}
+async function loadProjects(){const res=await api('/api/projects');window.PROJ=res.projects||[];
+  const fp=document.getElementById('fproj');const ap=document.getElementById('addproj');fp.innerHTML='';ap.innerHTML='';
+  const a0=document.createElement('option');a0.value='all';a0.textContent='Alle Projekte';fp.appendChild(a0);
+  for(const p of window.PROJ){const o=document.createElement('option');o.value=p.key;o.textContent=p.name;fp.appendChild(o);
+    const o2=document.createElement('option');o2.value=p.key;o2.textContent=p.name;ap.appendChild(o2);}}
+async function loadUsers(){const res=await api('/api/users');window.USERS=res.users||[];const names=window.USERS.map(u=>u.name);
+  const fa=document.getElementById('fasg');fa.innerHTML='';const a0=document.createElement('option');a0.value='';a0.textContent='Alle Personen';fa.appendChild(a0);
+  for(const n of ['Unassigned'].concat(names)){const o=document.createElement('option');o.value=n;o.textContent=n;fa.appendChild(o);}
+  const sel=document.getElementById('assignee');sel.innerHTML='';
+  for(const n of ['Unassigned'].concat(names)){const o=document.createElement('option');o.value=(n==='Unassigned'?'':n);o.textContent=n;sel.appendChild(o);}}
+async function load(){const res=await api('/api/tickets?project='+encodeURIComponent(fval('fproj')));
+  let ts=res.tickets||[];const asg=fval('fasg'),sev=fval('fsev'),ty=fval('ftype'),q=fval('fq').toLowerCase();
+  ts=ts.filter(t=>{if(asg==='Unassigned'){if(t.assignee)return false;}else if(asg){if(t.assignee!==asg)return false;}
+    if(sev&&t.severity!==sev)return false;if(ty&&t.type!==ty)return false;
+    if(q&&!((t.title||'').toLowerCase().includes(q)||(t.description||'').toLowerCase().includes(q)))return false;return true;});
+  if(LISTST){renderList(ts);}else{render(ts);}}
+function badge(cls,txt){const s=document.createElement('span');s.className='badge '+cls;s.textContent=txt;return s;}
+function card(t){
+  const d=document.createElement('div');d.className='card prio-'+(t.priority||'medium');d.addEventListener('click',()=>openTicket(t.id));
+  const ti=document.createElement('div');ti.className='title';ti.textContent='#'+t.id+'  '+t.title;d.appendChild(ti);
+  const bg=document.createElement('div');bg.className='badges';bg.appendChild(badge(t.type||'task',t.type||'task'));
+  bg.appendChild(badge(t.severity||'minor',t.severity||'minor'));bg.appendChild(badge(t.priority||'medium',t.priority||'medium'));d.appendChild(bg);
+  if(t.description){const de=document.createElement('div');de.className='desc';de.textContent=t.description;d.appendChild(de);}
+  const me=document.createElement('div');me.className='meta';me.textContent=(t.assignee||'Unassigned');
+  if(fval('fproj')==='all'&&t.project_name){const pt=document.createElement('span');pt.className='ptag';pt.textContent='  '+t.project_name;me.appendChild(pt);}d.appendChild(me);
+  const bar=document.createElement('div');bar.className='bar';const idx=STATUSES.indexOf(t.status);
+  if(idx>0)bar.appendChild(btn('Back','ghost',()=>move(t.id,STATUSES[idx-1])));
+  if(idx<STATUSES.length-1)bar.appendChild(btn('Next','ghost',()=>move(t.id,STATUSES[idx+1])));
+  bar.appendChild(btn('Edit','ghost',()=>openTicket(t.id)));d.appendChild(bar);return d;}
+function render(tickets){const board=document.getElementById('board');board.innerHTML='';
+  for(const st of STATUSES){const col=document.createElement('div');col.className='col col-'+st;
+    const items=tickets.filter(t=>t.status===st);
+    const sorted=items.slice().sort((a,b)=>{const da=a.created_at||'',db=b.created_at||'';return da<db?1:da>db?-1:b.id-a.id;});const shown=sorted.slice(0,window.NROWS||5);
+    const head=document.createElement('h2');head.textContent=LABELS[st];head.className='collink';head.title='Open list view';head.addEventListener('click',()=>setList(st));
+    const c=document.createElement('span');c.className='count';c.textContent=items.length;head.appendChild(c);col.appendChild(head);
+    for(const t of shown)col.appendChild(card(t));
+    if(items.length>shown.length){const ml=document.createElement('div');ml.className='morelink';ml.textContent='+ '+(items.length-shown.length)+' weitere →';ml.addEventListener('click',()=>setList(st));col.appendChild(ml);}
+    board.appendChild(col);}}
+let LISTST=null;let LSORT={key:'id',dir:-1};
+function setList(st){LISTST=st;location.hash='#list='+st;load();window.scrollTo(0,0);}
+function closeList(){LISTST=null;location.hash='#';load();}
+function ageStr(s){if(!s)return '';const d=Math.floor((Date.now()-new Date(s.replace(' ','T')).getTime())/86400000);return d<=0?'today':d+'d';}
+function tdt(txt){const td=document.createElement('td');td.textContent=txt;return td;}
+function tde(el){const td=document.createElement('td');td.appendChild(el);return td;}
+function renderList(allt){const board=document.getElementById('board');board.innerHTML='';const st=LISTST;
+  let items=allt.filter(t=>t.status===st);
+  const PR={high:0,medium:1,low:2},SV={blocker:0,critical:1,major:2,minor:3,trivial:4};
+  const cols=[['id','#'],['title','Title'],['type','Type'],['severity','Severity'],['priority','Priority'],['assignee','Assignee'],['project_name','Project'],['created_at','Age']];
+  items.sort((a,b)=>{const k=LSORT.key;let va,vb;if(k==='priority'){va=PR[a.priority];vb=PR[b.priority];}else if(k==='severity'){va=SV[a.severity];vb=SV[b.severity];}else if(k==='id'){va=a.id;vb=b.id;}else{va=(a[k]||'').toString().toLowerCase();vb=(b[k]||'').toString().toLowerCase();}return (va<vb?-1:va>vb?1:0)*LSORT.dir;});
+  const panel=document.createElement('div');panel.className='listpanel';
+  const hd=document.createElement('div');hd.className='listhd';hd.appendChild(btn('← Board','ghost',()=>closeList()));
+  const h=document.createElement('h2');h.textContent=LABELS[st]+'  ('+items.length+')';hd.appendChild(h);panel.appendChild(hd);
+  const tbl=document.createElement('table');tbl.className='ltbl';const thr=document.createElement('tr');
+  for(const c of cols){const th=document.createElement('th');th.textContent=c[1]+(LSORT.key===c[0]?(LSORT.dir>0?' ▲':' ▼'):'');th.addEventListener('click',()=>{if(LSORT.key===c[0])LSORT.dir*=-1;else{LSORT.key=c[0];LSORT.dir=1;}renderList(allt);});thr.appendChild(th);}
+  thr.appendChild(document.createElement('th'));tbl.appendChild(thr);
+  for(const t of items){const tr=document.createElement('tr');tr.className='lrow prio-'+(t.priority||'medium');tr.addEventListener('click',()=>openTicket(t.id));
+    tr.appendChild(tdt('#'+t.id));
+    const tt=document.createElement('td');const tn=document.createElement('div');tn.className='ltitle';tn.textContent=t.title;tt.appendChild(tn);if(t.description){const ds=document.createElement('div');ds.className='ldesc';ds.textContent=t.description;tt.appendChild(ds);}tr.appendChild(tt);
+    tr.appendChild(tde(badge(t.type||'task',t.type||'task')));tr.appendChild(tde(badge(t.severity||'minor',t.severity||'minor')));tr.appendChild(tde(badge(t.priority||'medium',t.priority||'medium')));
+    tr.appendChild(tdt(t.assignee||'Unassigned'));tr.appendChild(tdt(t.project_name||''));tr.appendChild(tdt(ageStr(t.created_at)));
+    const act=document.createElement('td');const idx=STATUSES.indexOf(t.status);
+    if(idx>0)act.appendChild(btn('←','ghost',()=>move(t.id,STATUSES[idx-1])));
+    if(idx<STATUSES.length-1)act.appendChild(btn('→','ghost',()=>move(t.id,STATUSES[idx+1])));
+    tr.appendChild(act);tbl.appendChild(tr);}
+  panel.appendChild(tbl);board.appendChild(panel);}
+async function move(id,status){await api('/api/move',{id:id,status:status});load();}
+async function create(ev){ev.preventDefault();const f=ev.target;
+  const data={title:f.title.value.trim(),description:f.description.value.trim(),project:f.project.value,assignee:f.assignee.value,priority:f.priority.value,severity:f.severity.value,type:f.type.value};
+  if(!data.title)return;await api('/api/create',data);f.reset();load();}
+let MODAL=null;function closeModal(){if(MODAL){MODAL.remove();MODAL=null;}}
+async function openTicket(id){const res=await api('/api/ticket?id='+id);if(res.error){alert(res.error);return;}showModal(res.ticket,res.comments||[],res.history||[],res.blockers||[]);}
+function showModal(t,comments,history,blockers){closeModal();
+  const bd=document.createElement('div');bd.className='backdrop';bd.addEventListener('click',e=>{if(e.target===bd)closeModal();});
+  const m=document.createElement('div');m.className='modal';
+  const hh=document.createElement('h3');hh.textContent='Ticket #'+t.id;m.appendChild(hh);
+  const ti=document.createElement('input');ti.value=t.title;m.appendChild(fieldEl('Title',ti));
+  const prev=document.createElement('div');prev.className='mdprev';prev.innerHTML=mdToHtml(t.description||'');
+  const de=document.createElement('textarea');de.value=t.description||'';de.addEventListener('input',()=>{prev.innerHTML=mdToHtml(de.value);});
+  m.appendChild(fieldEl('Description (markdown)',prev));m.appendChild(de);
+  const row=document.createElement('div');row.className='row2';
+  const prj=selEl((window.PROJ||[]).map(p=>[p.key,p.name]),t.project_key||'');
+  const aopts=[['','Unassigned']].concat((window.USERS||[]).map(u=>[u.name,u.name]));const asg=selEl(aopts,t.assignee||'');
+  const sta=selEl([['todo','To Do'],['blocked','Blocked'],['doing','In Progress'],['review','Review'],['done','Done']],t.status);
+  row.appendChild(fieldEl('Project',prj));row.appendChild(fieldEl('Assignee',asg));row.appendChild(fieldEl('Status',sta));m.appendChild(row);
+  const row2=document.createElement('div');row2.className='row2';
+  const pri=selEl([['low','Low'],['medium','Medium'],['high','High']],t.priority||'medium');
+  const sev=selEl([['blocker','blocker'],['critical','critical'],['major','major'],['minor','minor'],['trivial','trivial']],t.severity||'minor');
+  const typ=selEl([['bug','bug'],['feature','feature'],['chore','chore'],['idea','idea'],['task','task']],t.type||'task');
+  row2.appendChild(fieldEl('Priority',pri));row2.appendChild(fieldEl('Severity',sev));row2.appendChild(fieldEl('Type',typ));m.appendChild(row2);
+  const act=document.createElement('div');act.className='actions';
+  act.appendChild(btn('Save changes','cyan',async()=>{const data={id:t.id,title:ti.value.trim(),description:de.value,project:prj.value,assignee:asg.value,priority:pri.value,severity:sev.value,type:typ.value,status:sta.value};
+    if(!data.title){alert('Title required');return;}const r=await api('/api/update',data);if(r.error){alert(r.error);return;}closeModal();load();}));
+  act.appendChild(btn('Close','ghost',()=>closeModal()));
+  const sp=document.createElement('div');sp.className='spacer';act.appendChild(sp);
+  act.appendChild(btn('Delete','danger',async()=>{await api('/api/delete',{id:t.id});closeModal();load();}));m.appendChild(act);
+  const ds=document.createElement('div');ds.className='sec';const dh=document.createElement('h4');dh.textContent='Blocked by';ds.appendChild(dh);
+  for(const b of blockers){const r=document.createElement('div');r.className='deprow';
+    const s2=document.createElement('span');s2.textContent='#'+b.id+' '+b.title+' ['+b.status+']';r.appendChild(s2);
+    r.appendChild(btn('remove','ghost',async()=>{await api('/api/dep/del',{ticket_id:t.id,blocked_by:b.id});openTicket(t.id);}));ds.appendChild(r);}
+  const drow=document.createElement('div');drow.className='deprow';const din=document.createElement('input');din.placeholder='Blocker ticket id';din.className='depid';drow.appendChild(din);
+  drow.appendChild(btn('Add blocker','',async()=>{const bid=parseInt(din.value);if(!bid)return;const r=await api('/api/dep/add',{ticket_id:t.id,blocked_by:bid});if(r.error){alert(r.error);return;}openTicket(t.id);}));ds.appendChild(drow);m.appendChild(ds);
+  const cs=document.createElement('div');cs.className='sec';const ch=document.createElement('h4');ch.textContent='Comments ('+comments.length+')';cs.appendChild(ch);
+  for(const c of comments){const cc=document.createElement('div');cc.className='cmt';
+    const wh=document.createElement('div');const who=document.createElement('span');who.className='who';who.textContent=c.author||'Someone';
+    const wn=document.createElement('span');wn.className='when';wn.textContent=c.created_at;wh.appendChild(who);wh.appendChild(wn);cc.appendChild(wh);
+    const tx=document.createElement('div');tx.className='txt';tx.innerHTML=mdToHtml(c.body);cc.appendChild(tx);cs.appendChild(cc);}
+  const cin=document.createElement('textarea');cin.placeholder='Write a comment (markdown)...';cs.appendChild(cin);
+  const cw=document.createElement('div');cw.className='actions';
+  cw.appendChild(btn('Add comment','',async()=>{const text=cin.value.trim();if(!text)return;const r=await api('/api/comment',{ticket_id:t.id,body:text});if(r.error){alert(r.error);return;}openTicket(t.id);}));
+  cs.appendChild(cw);m.appendChild(cs);
+  const hs=document.createElement('div');hs.className='sec';const h4=document.createElement('h4');h4.textContent='History';hs.appendChild(h4);
+  const ul=document.createElement('ul');ul.className='hist';
+  if(history.length===0){const li=document.createElement('li');li.textContent='No activity yet.';ul.appendChild(li);}
+  for(const ev of history){const li=document.createElement('li');const b=document.createElement('b');b.textContent=(ev.actor||'Someone')+' ';
+    li.appendChild(b);li.appendChild(document.createTextNode(ev.action+'  '));const wn=document.createElement('span');wn.className='when';wn.textContent=ev.created_at;li.appendChild(wn);ul.appendChild(li);}
+  hs.appendChild(ul);m.appendChild(hs);
+  bd.appendChild(m);document.body.appendChild(bd);MODAL=bd;}
+function checkHash(){const m=location.hash.match(/^#t=(\d+)/);if(m){openTicket(parseInt(m[1]));return;}
+  const l=location.hash.match(/^#list=([a-z]+)/);const want=(l&&STATUSES.indexOf(l[1])>=0)?l[1]:null;if(want!==LISTST){LISTST=want;load();}}
+window.addEventListener('hashchange',checkHash);
+for(const id of ['fproj','fasg','fsev','ftype']){document.getElementById(id).addEventListener('change',load);}
+document.getElementById('fq').addEventListener('input',load);
+document.getElementById('addForm').addEventListener('submit',create);
+async function loadSettings(){const s=await api('/api/settings');window.NROWS=s.board_rows||5;}
+loadProjects().then(loadUsers).then(loadSettings).then(()=>{load();checkHash();});
+</script>

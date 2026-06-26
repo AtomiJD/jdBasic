@@ -7,6 +7,7 @@ IMPORT JDWEB
 gAppDir$ = PATH.DIRNAME$(OS.ARGS()[0])
 gCfg = JSON.PARSE$(TXTREADER$(PATH.JOIN$(gAppDir$, "jdtrakr.json")))
 gApp$ = "" + gCfg{"app"}
+gTrakrTpl$ = PATH.JOIN$(gAppDir$, "jdtrakr_tpl")
 gSecure = FALSE
 IF TYPEOF(gCfg{"secure"}) <> "NONE" ANDALSO gCfg{"secure"} = TRUE THEN gSecure = TRUE
 
@@ -504,265 +505,19 @@ ENDFUNC
 ' --- page bodies (wrapped by JDWEB.PAGE$; no double quotes inside) ---
 
 FUNC BOARD_BODY$()
-    nl$ = CHR$(10)
-    h$ = "<style>" + nl$
-    h$ = h$ + ".filterbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;}" + nl$
-    h$ = h$ + ".filterbar select,.filterbar input{padding:6px 8px;background:var(--bg);color:var(--ink);border:1px solid var(--bd2);border-radius:4px;font-family:inherit;}" + nl$
-    h$ = h$ + ".filterbar select:focus,.filterbar input:focus{outline:none;border-color:var(--green);box-shadow:0 0 8px rgba(0,255,65,.25);}" + nl$
-    h$ = h$ + ".filterbar select option{background:var(--bg);color:var(--ink);}.filterbar .grow{flex:1;min-width:140px;}" + nl$
-    h$ = h$ + ".badges{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0;}" + nl$
-    h$ = h$ + ".badge{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid #2a5c35;color:#bfe;text-transform:capitalize;}" + nl$
-    h$ = h$ + ".badge.bug{border-color:#c44;color:#f99;}.badge.feature{border-color:#3b8;color:#9fc;}.badge.chore{border-color:#778;color:#bcd;}.badge.idea{border-color:#b83;color:#fd9;}" + nl$
-    h$ = h$ + ".badge.blocker,.badge.critical{border-color:#e44;color:#f99;}.badge.major{border-color:#e93;color:#fc9;}.badge.high{border-color:#e44;color:#f99;}.badge.low{border-color:#567;color:#9ab;}" + nl$
-    h$ = h$ + ".ptag{color:#6db;font-size:11px;}" + nl$
-    h$ = h$ + ".col-blocked h2{color:#e88;}.col-review h2{color:#dd7;}" + nl$
-    h$ = h$ + ".mdprev{background:#0b1410;border:1px solid #1c3a24;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;min-height:20px;}" + nl$
-    h$ = h$ + ".mdprev pre{background:#000;padding:8px;overflow-x:auto;border-radius:4px;}.mdprev ul{margin:4px 0 4px 18px;}.mdprev code{background:#000;padding:1px 4px;border-radius:3px;}" + nl$
-    h$ = h$ + ".deprow{display:flex;align-items:center;gap:8px;margin:4px 0;}.depid{max-width:150px;}" + nl$
-    h$ = h$ + ".collink{cursor:pointer;}.collink:hover{color:#9fe;text-decoration:underline;}" + nl$
-    h$ = h$ + ".listpanel{margin-top:2px;}.listhd{display:flex;align-items:center;gap:14px;margin-bottom:10px;}.listhd h2{margin:0;}" + nl$
-    h$ = h$ + "table.ltbl{width:100%;border-collapse:collapse;font-size:13px;}" + nl$
-    h$ = h$ + ".ltbl th{text-align:left;padding:7px 10px;border-bottom:1px solid #2a5c35;color:#9fc;cursor:pointer;user-select:none;white-space:nowrap;}" + nl$
-    h$ = h$ + ".ltbl td{padding:7px 10px;border-bottom:1px solid #14241a;vertical-align:top;}" + nl$
-    h$ = h$ + ".lrow{cursor:pointer;}.lrow:hover{background:#0e1812;}.ltitle{color:#d6ffe2;}" + nl$
-    h$ = h$ + ".ldesc{color:#5fae6f;font-size:11px;max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" + nl$
-    h$ = h$ + ".lrow.prio-high td:first-child{border-left:3px solid #e44;}.lrow.prio-low td:first-child{border-left:3px solid #567;}" + nl$
-    h$ = h$ + ".card .desc{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;}" + nl$
-    h$ = h$ + ".morelink{cursor:pointer;color:#6db;font-size:12px;margin-top:8px;padding:2px 0;}.morelink:hover{text-decoration:underline;}" + nl$
-    h$ = h$ + "</style>" + nl$
-    h$ = h$ + "<div class='filterbar'>" + nl$
-    h$ = h$ + "  <select id='fproj'></select>" + nl$
-    h$ = h$ + "  <select id='fasg'></select>" + nl$
-    h$ = h$ + "  <select id='fsev'><option value=''>Any severity</option><option>blocker</option><option>critical</option><option>major</option><option>minor</option><option>trivial</option></select>" + nl$
-    h$ = h$ + "  <select id='ftype'><option value=''>Any type</option><option>bug</option><option>feature</option><option>chore</option><option>idea</option><option>task</option></select>" + nl$
-    h$ = h$ + "  <input id='fq' class='grow' placeholder='Search...' autocomplete='off'>" + nl$
-    h$ = h$ + "</div>" + nl$
-    h$ = h$ + "<form class='add' id='addForm'>" + nl$
-    h$ = h$ + "  <input class='title' name='title' placeholder='Ticket title' autocomplete='off'>" + nl$
-    h$ = h$ + "  <input class='desc' name='description' placeholder='Description (markdown, optional)' autocomplete='off'>" + nl$
-    h$ = h$ + "  <select id='addproj' name='project'></select>" + nl$
-    h$ = h$ + "  <select id='assignee' name='assignee'></select>" + nl$
-    h$ = h$ + "  <select name='priority'><option value='low'>Low</option><option value='medium' selected>Medium</option><option value='high'>High</option></select>" + nl$
-    h$ = h$ + "  <select name='severity'><option>minor</option><option>trivial</option><option>major</option><option>critical</option><option>blocker</option></select>" + nl$
-    h$ = h$ + "  <select name='type'><option>task</option><option>feature</option><option>bug</option><option>chore</option><option>idea</option></select>" + nl$
-    h$ = h$ + "  <button type='submit'>Add ticket</button>" + nl$
-    h$ = h$ + "</form>" + nl$
-    h$ = h$ + "<div id='board'></div>" + nl$
-    h$ = h$ + "<script>" + nl$
-    h$ = h$ + "const STATUSES=['todo','blocked','doing','review','done'];" + nl$
-    h$ = h$ + "const LABELS={todo:'To Do',blocked:'Blocked',doing:'In Progress',review:'Review',done:'Done'};" + nl$
-    h$ = h$ + "async function api(path,data){" + nl$
-    h$ = h$ + "  const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};" + nl$
-    h$ = h$ + "  const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}" + nl$
-    h$ = h$ + "function btn(label,cls,fn){const b=document.createElement('button');b.textContent=label;b.className=cls;" + nl$
-    h$ = h$ + "  b.addEventListener('click',(e)=>{e.stopPropagation();fn();});return b;}" + nl$
-    h$ = h$ + "function fieldEl(label,el){const w=document.createElement('div');const l=document.createElement('label');l.textContent=label;w.appendChild(l);w.appendChild(el);return w;}" + nl$
-    h$ = h$ + "function selEl(options,val){const s=document.createElement('select');for(const o of options){const op=document.createElement('option');op.value=o[0];op.textContent=o[1];if(o[0]===val)op.selected=true;s.appendChild(op);}return s;}" + nl$
-    h$ = h$ + "function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}" + nl$
-    h$ = h$ + "function mdToHtml(src){let s=esc(src);" + nl$
-    h$ = h$ + "  s=s.replace(/```([\s\S]*?)```/g,function(m,c){return '<pre>'+c.replace(/^\n/,'').replace(/\n/g,'@@NL@@')+'</pre>';});" + nl$
-    h$ = h$ + "  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');" + nl$
-    h$ = h$ + "  s=s.replace(/^###\s+(.*)$/gm,'<h5>$1</h5>').replace(/^##\s+(.*)$/gm,'<h4>$1</h4>').replace(/^#\s+(.*)$/gm,'<h3>$1</h3>');" + nl$
-    h$ = h$ + "  s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');" + nl$
-    h$ = h$ + "  s=s.replace(/^[\-\*]\s+(.*)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>(?:\n<li>[\s\S]*?<\/li>)*)/g,function(m){return '<ul>'+m.replace(/\n/g,'')+'</ul>';});" + nl$
-    h$ = h$ + "  s=s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'$1 ($2)');" + nl$
-    h$ = h$ + "  return s.replace(/\n/g,'<br>').replace(/@@NL@@/g,'\n');}" + nl$
-    h$ = h$ + "function fval(id){return document.getElementById(id).value;}" + nl$
-    h$ = h$ + "async function loadProjects(){const res=await api('/api/projects');window.PROJ=res.projects||[];" + nl$
-    h$ = h$ + "  const fp=document.getElementById('fproj');const ap=document.getElementById('addproj');fp.innerHTML='';ap.innerHTML='';" + nl$
-    h$ = h$ + "  const a0=document.createElement('option');a0.value='all';a0.textContent='Alle Projekte';fp.appendChild(a0);" + nl$
-    h$ = h$ + "  for(const p of window.PROJ){const o=document.createElement('option');o.value=p.key;o.textContent=p.name;fp.appendChild(o);" + nl$
-    h$ = h$ + "    const o2=document.createElement('option');o2.value=p.key;o2.textContent=p.name;ap.appendChild(o2);}}" + nl$
-    h$ = h$ + "async function loadUsers(){const res=await api('/api/users');window.USERS=res.users||[];const names=window.USERS.map(u=>u.name);" + nl$
-    h$ = h$ + "  const fa=document.getElementById('fasg');fa.innerHTML='';const a0=document.createElement('option');a0.value='';a0.textContent='Alle Personen';fa.appendChild(a0);" + nl$
-    h$ = h$ + "  for(const n of ['Unassigned'].concat(names)){const o=document.createElement('option');o.value=n;o.textContent=n;fa.appendChild(o);}" + nl$
-    h$ = h$ + "  const sel=document.getElementById('assignee');sel.innerHTML='';" + nl$
-    h$ = h$ + "  for(const n of ['Unassigned'].concat(names)){const o=document.createElement('option');o.value=(n==='Unassigned'?'':n);o.textContent=n;sel.appendChild(o);}}" + nl$
-    h$ = h$ + "async function load(){const res=await api('/api/tickets?project='+encodeURIComponent(fval('fproj')));" + nl$
-    h$ = h$ + "  let ts=res.tickets||[];const asg=fval('fasg'),sev=fval('fsev'),ty=fval('ftype'),q=fval('fq').toLowerCase();" + nl$
-    h$ = h$ + "  ts=ts.filter(t=>{if(asg==='Unassigned'){if(t.assignee)return false;}else if(asg){if(t.assignee!==asg)return false;}" + nl$
-    h$ = h$ + "    if(sev&&t.severity!==sev)return false;if(ty&&t.type!==ty)return false;" + nl$
-    h$ = h$ + "    if(q&&!((t.title||'').toLowerCase().includes(q)||(t.description||'').toLowerCase().includes(q)))return false;return true;});" + nl$
-    h$ = h$ + "  if(LISTST){renderList(ts);}else{render(ts);}}" + nl$
-    h$ = h$ + "function badge(cls,txt){const s=document.createElement('span');s.className='badge '+cls;s.textContent=txt;return s;}" + nl$
-    h$ = h$ + "function card(t){" + nl$
-    h$ = h$ + "  const d=document.createElement('div');d.className='card prio-'+(t.priority||'medium');d.addEventListener('click',()=>openTicket(t.id));" + nl$
-    h$ = h$ + "  const ti=document.createElement('div');ti.className='title';ti.textContent='#'+t.id+'  '+t.title;d.appendChild(ti);" + nl$
-    h$ = h$ + "  const bg=document.createElement('div');bg.className='badges';bg.appendChild(badge(t.type||'task',t.type||'task'));" + nl$
-    h$ = h$ + "  bg.appendChild(badge(t.severity||'minor',t.severity||'minor'));bg.appendChild(badge(t.priority||'medium',t.priority||'medium'));d.appendChild(bg);" + nl$
-    h$ = h$ + "  if(t.description){const de=document.createElement('div');de.className='desc';de.textContent=t.description;d.appendChild(de);}" + nl$
-    h$ = h$ + "  const me=document.createElement('div');me.className='meta';me.textContent=(t.assignee||'Unassigned');" + nl$
-    h$ = h$ + "  if(fval('fproj')==='all'&&t.project_name){const pt=document.createElement('span');pt.className='ptag';pt.textContent='  '+t.project_name;me.appendChild(pt);}d.appendChild(me);" + nl$
-    h$ = h$ + "  const bar=document.createElement('div');bar.className='bar';const idx=STATUSES.indexOf(t.status);" + nl$
-    h$ = h$ + "  if(idx>0)bar.appendChild(btn('Back','ghost',()=>move(t.id,STATUSES[idx-1])));" + nl$
-    h$ = h$ + "  if(idx<STATUSES.length-1)bar.appendChild(btn('Next','ghost',()=>move(t.id,STATUSES[idx+1])));" + nl$
-    h$ = h$ + "  bar.appendChild(btn('Edit','ghost',()=>openTicket(t.id)));d.appendChild(bar);return d;}" + nl$
-    h$ = h$ + "function render(tickets){const board=document.getElementById('board');board.innerHTML='';" + nl$
-    h$ = h$ + "  for(const st of STATUSES){const col=document.createElement('div');col.className='col col-'+st;" + nl$
-    h$ = h$ + "    const items=tickets.filter(t=>t.status===st);" + nl$
-    h$ = h$ + "    const sorted=items.slice().sort((a,b)=>{const da=a.created_at||'',db=b.created_at||'';return da<db?1:da>db?-1:b.id-a.id;});const shown=sorted.slice(0,window.NROWS||5);" + nl$
-    h$ = h$ + "    const head=document.createElement('h2');head.textContent=LABELS[st];head.className='collink';head.title='Open list view';head.addEventListener('click',()=>setList(st));" + nl$
-    h$ = h$ + "    const c=document.createElement('span');c.className='count';c.textContent=items.length;head.appendChild(c);col.appendChild(head);" + nl$
-    h$ = h$ + "    for(const t of shown)col.appendChild(card(t));" + nl$
-    h$ = h$ + "    if(items.length>shown.length){const ml=document.createElement('div');ml.className='morelink';ml.textContent='+ '+(items.length-shown.length)+' weitere →';ml.addEventListener('click',()=>setList(st));col.appendChild(ml);}" + nl$
-    h$ = h$ + "    board.appendChild(col);}}" + nl$
-    h$ = h$ + "let LISTST=null;let LSORT={key:'id',dir:-1};" + nl$
-    h$ = h$ + "function setList(st){LISTST=st;location.hash='#list='+st;load();window.scrollTo(0,0);}" + nl$
-    h$ = h$ + "function closeList(){LISTST=null;location.hash='#';load();}" + nl$
-    h$ = h$ + "function ageStr(s){if(!s)return '';const d=Math.floor((Date.now()-new Date(s.replace(' ','T')).getTime())/86400000);return d<=0?'today':d+'d';}" + nl$
-    h$ = h$ + "function tdt(txt){const td=document.createElement('td');td.textContent=txt;return td;}" + nl$
-    h$ = h$ + "function tde(el){const td=document.createElement('td');td.appendChild(el);return td;}" + nl$
-    h$ = h$ + "function renderList(allt){const board=document.getElementById('board');board.innerHTML='';const st=LISTST;" + nl$
-    h$ = h$ + "  let items=allt.filter(t=>t.status===st);" + nl$
-    h$ = h$ + "  const PR={high:0,medium:1,low:2},SV={blocker:0,critical:1,major:2,minor:3,trivial:4};" + nl$
-    h$ = h$ + "  const cols=[['id','#'],['title','Title'],['type','Type'],['severity','Severity'],['priority','Priority'],['assignee','Assignee'],['project_name','Project'],['created_at','Age']];" + nl$
-    h$ = h$ + "  items.sort((a,b)=>{const k=LSORT.key;let va,vb;if(k==='priority'){va=PR[a.priority];vb=PR[b.priority];}else if(k==='severity'){va=SV[a.severity];vb=SV[b.severity];}else if(k==='id'){va=a.id;vb=b.id;}else{va=(a[k]||'').toString().toLowerCase();vb=(b[k]||'').toString().toLowerCase();}return (va<vb?-1:va>vb?1:0)*LSORT.dir;});" + nl$
-    h$ = h$ + "  const panel=document.createElement('div');panel.className='listpanel';" + nl$
-    h$ = h$ + "  const hd=document.createElement('div');hd.className='listhd';hd.appendChild(btn('← Board','ghost',()=>closeList()));" + nl$
-    h$ = h$ + "  const h=document.createElement('h2');h.textContent=LABELS[st]+'  ('+items.length+')';hd.appendChild(h);panel.appendChild(hd);" + nl$
-    h$ = h$ + "  const tbl=document.createElement('table');tbl.className='ltbl';const thr=document.createElement('tr');" + nl$
-    h$ = h$ + "  for(const c of cols){const th=document.createElement('th');th.textContent=c[1]+(LSORT.key===c[0]?(LSORT.dir>0?' ▲':' ▼'):'');th.addEventListener('click',()=>{if(LSORT.key===c[0])LSORT.dir*=-1;else{LSORT.key=c[0];LSORT.dir=1;}renderList(allt);});thr.appendChild(th);}" + nl$
-    h$ = h$ + "  thr.appendChild(document.createElement('th'));tbl.appendChild(thr);" + nl$
-    h$ = h$ + "  for(const t of items){const tr=document.createElement('tr');tr.className='lrow prio-'+(t.priority||'medium');tr.addEventListener('click',()=>openTicket(t.id));" + nl$
-    h$ = h$ + "    tr.appendChild(tdt('#'+t.id));" + nl$
-    h$ = h$ + "    const tt=document.createElement('td');const tn=document.createElement('div');tn.className='ltitle';tn.textContent=t.title;tt.appendChild(tn);if(t.description){const ds=document.createElement('div');ds.className='ldesc';ds.textContent=t.description;tt.appendChild(ds);}tr.appendChild(tt);" + nl$
-    h$ = h$ + "    tr.appendChild(tde(badge(t.type||'task',t.type||'task')));tr.appendChild(tde(badge(t.severity||'minor',t.severity||'minor')));tr.appendChild(tde(badge(t.priority||'medium',t.priority||'medium')));" + nl$
-    h$ = h$ + "    tr.appendChild(tdt(t.assignee||'Unassigned'));tr.appendChild(tdt(t.project_name||''));tr.appendChild(tdt(ageStr(t.created_at)));" + nl$
-    h$ = h$ + "    const act=document.createElement('td');const idx=STATUSES.indexOf(t.status);" + nl$
-    h$ = h$ + "    if(idx>0)act.appendChild(btn('←','ghost',()=>move(t.id,STATUSES[idx-1])));" + nl$
-    h$ = h$ + "    if(idx<STATUSES.length-1)act.appendChild(btn('→','ghost',()=>move(t.id,STATUSES[idx+1])));" + nl$
-    h$ = h$ + "    tr.appendChild(act);tbl.appendChild(tr);}" + nl$
-    h$ = h$ + "  panel.appendChild(tbl);board.appendChild(panel);}" + nl$
-    h$ = h$ + "async function move(id,status){await api('/api/move',{id:id,status:status});load();}" + nl$
-    h$ = h$ + "async function create(ev){ev.preventDefault();const f=ev.target;" + nl$
-    h$ = h$ + "  const data={title:f.title.value.trim(),description:f.description.value.trim(),project:f.project.value,assignee:f.assignee.value,priority:f.priority.value,severity:f.severity.value,type:f.type.value};" + nl$
-    h$ = h$ + "  if(!data.title)return;await api('/api/create',data);f.reset();load();}" + nl$
-    h$ = h$ + "let MODAL=null;function closeModal(){if(MODAL){MODAL.remove();MODAL=null;}}" + nl$
-    h$ = h$ + "async function openTicket(id){const res=await api('/api/ticket?id='+id);if(res.error){alert(res.error);return;}showModal(res.ticket,res.comments||[],res.history||[],res.blockers||[]);}" + nl$
-    h$ = h$ + "function showModal(t,comments,history,blockers){closeModal();" + nl$
-    h$ = h$ + "  const bd=document.createElement('div');bd.className='backdrop';bd.addEventListener('click',e=>{if(e.target===bd)closeModal();});" + nl$
-    h$ = h$ + "  const m=document.createElement('div');m.className='modal';" + nl$
-    h$ = h$ + "  const hh=document.createElement('h3');hh.textContent='Ticket #'+t.id;m.appendChild(hh);" + nl$
-    h$ = h$ + "  const ti=document.createElement('input');ti.value=t.title;m.appendChild(fieldEl('Title',ti));" + nl$
-    h$ = h$ + "  const prev=document.createElement('div');prev.className='mdprev';prev.innerHTML=mdToHtml(t.description||'');" + nl$
-    h$ = h$ + "  const de=document.createElement('textarea');de.value=t.description||'';de.addEventListener('input',()=>{prev.innerHTML=mdToHtml(de.value);});" + nl$
-    h$ = h$ + "  m.appendChild(fieldEl('Description (markdown)',prev));m.appendChild(de);" + nl$
-    h$ = h$ + "  const row=document.createElement('div');row.className='row2';" + nl$
-    h$ = h$ + "  const prj=selEl((window.PROJ||[]).map(p=>[p.key,p.name]),t.project_key||'');" + nl$
-    h$ = h$ + "  const aopts=[['','Unassigned']].concat((window.USERS||[]).map(u=>[u.name,u.name]));const asg=selEl(aopts,t.assignee||'');" + nl$
-    h$ = h$ + "  const sta=selEl([['todo','To Do'],['blocked','Blocked'],['doing','In Progress'],['review','Review'],['done','Done']],t.status);" + nl$
-    h$ = h$ + "  row.appendChild(fieldEl('Project',prj));row.appendChild(fieldEl('Assignee',asg));row.appendChild(fieldEl('Status',sta));m.appendChild(row);" + nl$
-    h$ = h$ + "  const row2=document.createElement('div');row2.className='row2';" + nl$
-    h$ = h$ + "  const pri=selEl([['low','Low'],['medium','Medium'],['high','High']],t.priority||'medium');" + nl$
-    h$ = h$ + "  const sev=selEl([['blocker','blocker'],['critical','critical'],['major','major'],['minor','minor'],['trivial','trivial']],t.severity||'minor');" + nl$
-    h$ = h$ + "  const typ=selEl([['bug','bug'],['feature','feature'],['chore','chore'],['idea','idea'],['task','task']],t.type||'task');" + nl$
-    h$ = h$ + "  row2.appendChild(fieldEl('Priority',pri));row2.appendChild(fieldEl('Severity',sev));row2.appendChild(fieldEl('Type',typ));m.appendChild(row2);" + nl$
-    h$ = h$ + "  const act=document.createElement('div');act.className='actions';" + nl$
-    h$ = h$ + "  act.appendChild(btn('Save changes','cyan',async()=>{const data={id:t.id,title:ti.value.trim(),description:de.value,project:prj.value,assignee:asg.value,priority:pri.value,severity:sev.value,type:typ.value,status:sta.value};" + nl$
-    h$ = h$ + "    if(!data.title){alert('Title required');return;}const r=await api('/api/update',data);if(r.error){alert(r.error);return;}closeModal();load();}));" + nl$
-    h$ = h$ + "  act.appendChild(btn('Close','ghost',()=>closeModal()));" + nl$
-    h$ = h$ + "  const sp=document.createElement('div');sp.className='spacer';act.appendChild(sp);" + nl$
-    h$ = h$ + "  act.appendChild(btn('Delete','danger',async()=>{await api('/api/delete',{id:t.id});closeModal();load();}));m.appendChild(act);" + nl$
-    h$ = h$ + "  const ds=document.createElement('div');ds.className='sec';const dh=document.createElement('h4');dh.textContent='Blocked by';ds.appendChild(dh);" + nl$
-    h$ = h$ + "  for(const b of blockers){const r=document.createElement('div');r.className='deprow';" + nl$
-    h$ = h$ + "    const s2=document.createElement('span');s2.textContent='#'+b.id+' '+b.title+' ['+b.status+']';r.appendChild(s2);" + nl$
-    h$ = h$ + "    r.appendChild(btn('remove','ghost',async()=>{await api('/api/dep/del',{ticket_id:t.id,blocked_by:b.id});openTicket(t.id);}));ds.appendChild(r);}" + nl$
-    h$ = h$ + "  const drow=document.createElement('div');drow.className='deprow';const din=document.createElement('input');din.placeholder='Blocker ticket id';din.className='depid';drow.appendChild(din);" + nl$
-    h$ = h$ + "  drow.appendChild(btn('Add blocker','',async()=>{const bid=parseInt(din.value);if(!bid)return;const r=await api('/api/dep/add',{ticket_id:t.id,blocked_by:bid});if(r.error){alert(r.error);return;}openTicket(t.id);}));ds.appendChild(drow);m.appendChild(ds);" + nl$
-    h$ = h$ + "  const cs=document.createElement('div');cs.className='sec';const ch=document.createElement('h4');ch.textContent='Comments ('+comments.length+')';cs.appendChild(ch);" + nl$
-    h$ = h$ + "  for(const c of comments){const cc=document.createElement('div');cc.className='cmt';" + nl$
-    h$ = h$ + "    const wh=document.createElement('div');const who=document.createElement('span');who.className='who';who.textContent=c.author||'Someone';" + nl$
-    h$ = h$ + "    const wn=document.createElement('span');wn.className='when';wn.textContent=c.created_at;wh.appendChild(who);wh.appendChild(wn);cc.appendChild(wh);" + nl$
-    h$ = h$ + "    const tx=document.createElement('div');tx.className='txt';tx.innerHTML=mdToHtml(c.body);cc.appendChild(tx);cs.appendChild(cc);}" + nl$
-    h$ = h$ + "  const cin=document.createElement('textarea');cin.placeholder='Write a comment (markdown)...';cs.appendChild(cin);" + nl$
-    h$ = h$ + "  const cw=document.createElement('div');cw.className='actions';" + nl$
-    h$ = h$ + "  cw.appendChild(btn('Add comment','',async()=>{const text=cin.value.trim();if(!text)return;const r=await api('/api/comment',{ticket_id:t.id,body:text});if(r.error){alert(r.error);return;}openTicket(t.id);}));" + nl$
-    h$ = h$ + "  cs.appendChild(cw);m.appendChild(cs);" + nl$
-    h$ = h$ + "  const hs=document.createElement('div');hs.className='sec';const h4=document.createElement('h4');h4.textContent='History';hs.appendChild(h4);" + nl$
-    h$ = h$ + "  const ul=document.createElement('ul');ul.className='hist';" + nl$
-    h$ = h$ + "  if(history.length===0){const li=document.createElement('li');li.textContent='No activity yet.';ul.appendChild(li);}" + nl$
-    h$ = h$ + "  for(const ev of history){const li=document.createElement('li');const b=document.createElement('b');b.textContent=(ev.actor||'Someone')+' ';" + nl$
-    h$ = h$ + "    li.appendChild(b);li.appendChild(document.createTextNode(ev.action+'  '));const wn=document.createElement('span');wn.className='when';wn.textContent=ev.created_at;li.appendChild(wn);ul.appendChild(li);}" + nl$
-    h$ = h$ + "  hs.appendChild(ul);m.appendChild(hs);" + nl$
-    h$ = h$ + "  bd.appendChild(m);document.body.appendChild(bd);MODAL=bd;}" + nl$
-    h$ = h$ + "function checkHash(){const m=location.hash.match(/^#t=(\d+)/);if(m){openTicket(parseInt(m[1]));return;}" + nl$
-    h$ = h$ + "  const l=location.hash.match(/^#list=([a-z]+)/);const want=(l&&STATUSES.indexOf(l[1])>=0)?l[1]:null;if(want!==LISTST){LISTST=want;load();}}" + nl$
-    h$ = h$ + "window.addEventListener('hashchange',checkHash);" + nl$
-    h$ = h$ + "for(const id of ['fproj','fasg','fsev','ftype']){document.getElementById(id).addEventListener('change',load);}" + nl$
-    h$ = h$ + "document.getElementById('fq').addEventListener('input',load);" + nl$
-    h$ = h$ + "document.getElementById('addForm').addEventListener('submit',create);" + nl$
-    h$ = h$ + "async function loadSettings(){const s=await api('/api/settings');window.NROWS=s.board_rows||5;}" + nl$
-    h$ = h$ + "loadProjects().then(loadUsers).then(loadSettings).then(()=>{load();checkHash();});" + nl$
-    h$ = h$ + "</script>"
-    RETURN h$
+    RETURN TXTREADER$(PATH.JOIN$(gTrakrTpl$, "board.html"))
 ENDFUNC
 
 FUNC USERS_BODY$()
-    nl$ = CHR$(10)
-    h$ = "<form class='add' id='userForm'>" + nl$
-    h$ = h$ + "  <input class='grow' name='uname' placeholder='Team member name' autocomplete='off'>" + nl$
-    h$ = h$ + "  <button type='submit'>Add user</button>" + nl$
-    h$ = h$ + "</form>" + nl$
-    h$ = h$ + "<div class='wrap'><div id='ulist'></div></div>" + nl$
-    h$ = h$ + "<script>" + nl$
-    h$ = h$ + "async function api(path,data){" + nl$
-    h$ = h$ + "  const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};" + nl$
-    h$ = h$ + "  const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}" + nl$
-    h$ = h$ + "function btn(label,cls,fn){const b=document.createElement('button');b.textContent=label;b.className=cls;b.addEventListener('click',fn);return b;}" + nl$
-    h$ = h$ + "async function loadU(){const res=await api('/api/users');const list=document.getElementById('ulist');list.innerHTML='';" + nl$
-    h$ = h$ + "  const users=res.users||[];" + nl$
-    h$ = h$ + "  if(users.length===0){const e=document.createElement('div');e.className='empty';e.textContent='No users yet. Add your team above.';list.appendChild(e);return;}" + nl$
-    h$ = h$ + "  for(const u of users){const row=document.createElement('div');row.className='urow';" + nl$
-    h$ = h$ + "    const nm=document.createElement('span');nm.className='uname';nm.textContent=u.name;row.appendChild(nm);" + nl$
-    h$ = h$ + "    row.appendChild(btn('Remove','ghost',()=>delU(u.id)));list.appendChild(row);}}" + nl$
-    h$ = h$ + "async function delU(id){await api('/api/users/delete',{id:id});loadU();}" + nl$
-    h$ = h$ + "async function addU(ev){ev.preventDefault();const f=ev.target;const name=f.uname.value.trim();if(!name)return;" + nl$
-    h$ = h$ + "  const r=await api('/api/users/create',{name:name});if(r.error){alert(r.error);}f.reset();loadU();}" + nl$
-    h$ = h$ + "document.getElementById('userForm').addEventListener('submit',addU);loadU();" + nl$
-    h$ = h$ + "</script>"
-    RETURN h$
+    RETURN TXTREADER$(PATH.JOIN$(gTrakrTpl$, "users.html"))
 ENDFUNC
 
 FUNC SETTINGS_BODY$()
-    nl$ = CHR$(10)
-    h$ = "<div class='wrap'>" + nl$
-    h$ = h$ + "<form class='add' id='setForm'>" + nl$
-    h$ = h$ + "  <label style='align-self:center'>Rows shown per board column (top by priority)</label>" + nl$
-    h$ = h$ + "  <input name='rows' type='number' min='1' max='99' style='max-width:90px'>" + nl$
-    h$ = h$ + "  <button type='submit'>Save</button>" + nl$
-    h$ = h$ + "</form>" + nl$
-    h$ = h$ + "<div id='msg' class='empty'></div></div>" + nl$
-    h$ = h$ + "<script>" + nl$
-    h$ = h$ + "async function api(path,data){const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}" + nl$
-    h$ = h$ + "async function loadS(){const s=await api('/api/settings');document.querySelector('#setForm [name=rows]').value=s.board_rows||5;}" + nl$
-    h$ = h$ + "document.getElementById('setForm').addEventListener('submit',async(ev)=>{ev.preventDefault();const inp=ev.target.querySelector('[name=rows]');const n=parseInt(inp.value)||5;const r=await api('/api/settings/save',{board_rows:n});document.getElementById('msg').textContent='Saved: '+r.board_rows+' rows per column. Reload the board to apply.';});" + nl$
-    h$ = h$ + "loadS();" + nl$
-    h$ = h$ + "</script>"
-    RETURN h$
+    RETURN TXTREADER$(PATH.JOIN$(gTrakrTpl$, "settings.html"))
 ENDFUNC
 
 FUNC PROJECTS_BODY$()
-    nl$ = CHR$(10)
-    h$ = "<form class='add' id='projForm'>" + nl$
-    h$ = h$ + "  <input class='grow' name='pname' placeholder='Project name' autocomplete='off'>" + nl$
-    h$ = h$ + "  <input name='pkey' placeholder='key (optional)' autocomplete='off'>" + nl$
-    h$ = h$ + "  <button type='submit'>Add project</button>" + nl$
-    h$ = h$ + "</form>" + nl$
-    h$ = h$ + "<div class='wrap'><div id='plist'></div></div>" + nl$
-    h$ = h$ + "<script>" + nl$
-    h$ = h$ + "async function api(path,data){const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}" + nl$
-    h$ = h$ + "function btn(label,cls,fn){const b=document.createElement('button');b.textContent=label;b.className=cls;b.addEventListener('click',fn);return b;}" + nl$
-    h$ = h$ + "async function loadP(){const res=await api('/api/projects');const list=document.getElementById('plist');list.innerHTML='';const ps=res.projects||[];" + nl$
-    h$ = h$ + "  if(ps.length===0){const e=document.createElement('div');e.className='empty';e.textContent='No projects yet.';list.appendChild(e);return;}" + nl$
-    h$ = h$ + "  for(const p of ps){const row=document.createElement('div');row.className='urow';" + nl$
-    h$ = h$ + "    const nm=document.createElement('span');nm.className='uname';nm.textContent=p.name+'  ('+p.key+')   '+p.open+' open / '+p.tickets+' total';row.appendChild(nm);" + nl$
-    h$ = h$ + "    if(p.key!=='jdbasic')row.appendChild(btn('Remove','ghost',()=>delP(p.key)));list.appendChild(row);}}" + nl$
-    h$ = h$ + "async function delP(key){const r=await api('/api/projects/delete',{project:key});if(r.error){alert(r.error);}loadP();}" + nl$
-    h$ = h$ + "async function addP(ev){ev.preventDefault();const f=ev.target;const name=f.pname.value.trim();if(!name)return;" + nl$
-    h$ = h$ + "  const r=await api('/api/projects/create',{name:name,key:f.pkey.value.trim()});if(r.error){alert(r.error);}f.reset();loadP();}" + nl$
-    h$ = h$ + "document.getElementById('projForm').addEventListener('submit',addP);loadP();" + nl$
-    h$ = h$ + "</script>"
-    RETURN h$
+    RETURN TXTREADER$(PATH.JOIN$(gTrakrTpl$, "projects.html"))
 ENDFUNC
 
 FUNC HandleRoot(request)
@@ -784,6 +539,7 @@ FUNC HandleUsersPage(request)
     IF LEN(JDWEB.AUTH_USER$(gDb, request)) = 0 THEN RETURN JDWEB.REDIRECT_TO("/login")
     RETURN JDWEB.PAGE$(gCfg, gApp$ + " - Users", JDWEB.NAV_HTML$(gCfg, "/users"), USERS_BODY$())
 ENDFUNC
+
 
 ' --- routes + server ---
 

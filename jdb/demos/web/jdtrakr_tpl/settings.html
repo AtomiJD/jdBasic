@@ -1,0 +1,13 @@
+<div class='wrap'>
+<form class='add' id='setForm'>
+  <label style='align-self:center'>Rows shown per board column (top by priority)</label>
+  <input name='rows' type='number' min='1' max='99' style='max-width:90px'>
+  <button type='submit'>Save</button>
+</form>
+<div id='msg' class='empty'></div></div>
+<script>
+async function api(path,data){const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}
+async function loadS(){const s=await api('/api/settings');document.querySelector('#setForm [name=rows]').value=s.board_rows||5;}
+document.getElementById('setForm').addEventListener('submit',async(ev)=>{ev.preventDefault();const inp=ev.target.querySelector('[name=rows]');const n=parseInt(inp.value)||5;const r=await api('/api/settings/save',{board_rows:n});document.getElementById('msg').textContent='Saved: '+r.board_rows+' rows per column. Reload the board to apply.';});
+loadS();
+</script>
