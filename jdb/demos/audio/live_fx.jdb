@@ -5,11 +5,15 @@
 '   Pick devices with MON.START(inIdx, outIdx); see MON.DEVICES() for the indices.
 
 ' a crunch pedalboard (cabinet is offline-only, so not on the live path here)
+' "Brian May" - singing, mid-focused crunch + harmonised echo (cabinet faked
+' with the lowpass, since the IR convolution is offline-only on the live path)
 DIM ch = FX.NEW()
-DIM ok = FX.ADD(ch, "gain",    { "gain": 9 })                ' slam the input into the dirt
-ok = FX.ADD(ch, "drive",   { "amount": 60, "level": 0.7 })   ' heavy fuzz / wall of distortion
-ok = FX.ADD(ch, "lowpass", { "cutoff": 2800, "q": 0.9 })     ' tame the fizz
-ok = FX.ADD(ch, "delay",   { "time_ms": 420, "feedback": 0.45, "mix": 0.45 })  ' big obvious echo
+DIM ok = FX.ADD(ch, "compressor", { "threshold": 0.20, "ratio": 4, "makeup": 1.5 })  ' singing sustain
+ok = FX.ADD(ch, "gain",     { "gain": 6 })                   ' push toward breakup
+ok = FX.ADD(ch, "highpass", { "cutoff": 450, "q": 0.7 })     ' treble-booster (Rangemaster) feel
+ok = FX.ADD(ch, "drive",    { "amount": 13, "level": 0.72 }) ' AC30 edge-of-breakup
+ok = FX.ADD(ch, "lowpass",  { "cutoff": 3300, "q": 1.1 })    ' fake the AC30 2x12 cabinet roll-off
+ok = FX.ADD(ch, "delay",    { "time_ms": 430, "feedback": 0.35, "mix": 0.32 })  ' harmonised tape echo
 
 ' auto-pick the audio interface (iRig etc.) for input + output; else defaults
 DIM dev = MON.DEVICES()
