@@ -14,6 +14,7 @@
 #include <map>
 #include <mutex>
 #include <algorithm>
+#include <cstdio>
 
 namespace {
 
@@ -164,6 +165,19 @@ static void process_node(FxNode& n, float* buf, unsigned cnt, double rate) {
         for (unsigned i = 0; i < cnt; i++) buf[i] = out[i];
     }
     // unknown type: pass-through
+}
+
+// pre-populate a node's full parameter set, so a live FX.SET only ever updates an
+// existing value (no map insertion -> safe to tweak while the callback reads it).
+static void ensure_defaults(FxNode& n) {
+    auto def = [&](const char* k, double v) { if (n.p.find(k) == n.p.end()) n.p[k] = v; };
+    const std::string& t = n.type;
+    if      (t == "gain")       { def("gain", 1.0); }
+    else if (t == "drive")      { def("amount", 5.0); def("level", 0.7); }
+    else if (t == "lowpass" || t == "highpass") { def("cutoff", 2000.0); def("q", 0.707); }
+    else if (t == "delay")      { def("time_ms", 300.0); def("feedback", 0.35); def("mix", 0.3); }
+    else if (t == "compressor") { def("threshold", 0.5); def("ratio", 4.0); def("makeup", 1.0); }
+    else if (t == "cabinet")    { def("level", 0.7); def("mix", 1.0); }
 }
 
 } // namespace
@@ -320,6 +334,7 @@ void register_audiofx_builtins(VM& vm) {
                 }
             }
         }
+        ensure_defaults(node);
         it->second.nodes.push_back(std::move(node));
         return Value::make_bool(true);
     });
@@ -348,6 +363,44 @@ void register_audiofx_builtins(VM& vm) {
         std::lock_guard<std::mutex> lk(g_chain_mtx);
         g_chains.erase((int)args[0].to_int());
         return Value::make_none();
+    });
+
+    // FX.SET(chain, nodeIndex, param$, value) -> bool   tweak a node param LIVE.
+    // Only updates an existing param (RT-safe: no map insertion while monitoring).
+    vm.register_native("FX.SET", 4, 4, [](const std::vector<Value>& args) -> Value {
+        int h = (int)args[0].to_int(), idx = (int)args[1].to_int();
+        std::string key = args[2].to_string();
+        double val = args[3].to_double();
+        std::lock_guard<std::mutex> lk(g_chain_mtx);
+        auto it = g_chains.find(h);
+        if (it == g_chains.end() || idx < 0 || idx >= (int)it->second.nodes.size())
+            return Value::make_bool(false);
+        auto& p = it->second.nodes[idx].p;
+        auto pit = p.find(key);
+        if (pit == p.end()) return Value::make_bool(false);
+        pit->second = val;
+        return Value::make_bool(true);
+    });
+
+    // FX.DUMP$(chain) -> readable listing of the chain's nodes + params (for the REPL)
+    vm.register_native("FX.DUMP$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int h = (int)args[0].to_int();
+        std::lock_guard<std::mutex> lk(g_chain_mtx);
+        auto it = g_chains.find(h);
+        if (it == g_chains.end()) return Value::make_string("(no such chain)");
+        std::string s;
+        char buf[80];
+        for (size_t i = 0; i < it->second.nodes.size(); i++) {
+            auto& n = it->second.nodes[i];
+            snprintf(buf, sizeof(buf), "%u: %-10s", (unsigned)i, n.type.c_str());
+            s += buf;
+            for (auto& kv : n.p) {
+                snprintf(buf, sizeof(buf), " %s=%g", kv.first.c_str(), kv.second);
+                s += buf;
+            }
+            s += "\n";
+        }
+        return Value::make_string(s);
     });
 
     // array-taking builtins must not auto-vectorize (would run per element)
