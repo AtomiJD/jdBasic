@@ -1,0 +1,29 @@
+' synth_to_wav.jdb - render the jdBasic synth straight to a .wav file.
+' Needs a build with SOUND (sequencer DSP) + FX (WAV I/O):
+'   build.bat HTTP GFX IMGUI NATIVEC SOUND FX      (Windows)
+'   SOUND=1 FX=1 HTTP=1 GFX=1 ... ./build.sh        (Mac/Linux)
+' Run from the repo root. Output: tmp/synth_chord.wav
+
+SOUND.INIT
+
+' three saw voices forming an A-minor chord (a3, c4, e4)
+SOUND.VOICE 0, "SAW", 0.01, 0.30, 0.45, 0.7
+SOUND.VOICE 1, "SAW", 0.01, 0.30, 0.45, 0.7
+SOUND.VOICE 2, "SAW", 0.01, 0.30, 0.45, 0.7
+SOUND.FILTER 0, 2400
+
+SOUND.PLAY 0, "a3"
+SOUND.PLAY 1, "c4"
+SOUND.PLAY 2, "e4"
+
+DIM rate = 44100
+DIM secs = 2
+DIM samples = SOUND.RENDER(rate * secs)      ' interleaved stereo floats
+DIM frames = LEN(samples) / 2
+
+MKDIR "tmp"
+DIM ok = WAV.WRITE("tmp/synth_chord.wav", samples, rate, 2)
+PRINT "rendered "; frames; " stereo frames ("; secs; "s), WAV.WRITE ok="; ok
+
+DIM info = WAV.INFO("tmp/synth_chord.wav")
+PRINT "wrote tmp/synth_chord.wav: "; info{"rate"}; " Hz, "; info{"channels"}; " ch, "; info{"bits"}; " bit"
