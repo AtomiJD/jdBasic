@@ -12,6 +12,7 @@
 #define MA_NO_GENERATION
 #include "miniaudio.h"
 
+#include "audio_fx.h"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -21,15 +22,17 @@ namespace {
 ma_device          g_mon_device;
 std::atomic<bool>  g_mon_active{false};
 std::atomic<float> g_mon_gain{1.0f};
+std::atomic<int>   g_rt_chain{0};      // active realtime FX chain (0 = passthrough)
 
-// realtime passthrough: copy input -> output. NO allocation, NO locks, NO VM.
+// realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
-    float g = g_mon_gain.load(std::memory_order_relaxed);
-    size_t n = (size_t)frames * dev->playback.channels;
+    unsigned n = frames * dev->playback.channels;
     const float* in = (const float*)pIn;
     float* out = (float*)pOut;
-    if (g == 1.0f) std::memcpy(out, in, n * sizeof(float));
-    else for (size_t i = 0; i < n; i++) out[i] = in[i] * g;
+    float g = g_mon_gain.load(std::memory_order_relaxed);
+    for (unsigned i = 0; i < n; i++) out[i] = in[i] * g;
+    int chain = g_rt_chain.load(std::memory_order_relaxed);
+    if (chain > 0) fx_process_chain_rt(chain, out, n, 48000.0);
 }
 } // namespace
 
@@ -90,8 +93,8 @@ void register_audioio_builtins(VM& vm) {
             }
         }
         ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
-        cfg.capture.format   = ma_format_f32; cfg.capture.channels  = 2;
-        cfg.playback.format  = ma_format_f32; cfg.playback.channels = 2;
+        cfg.capture.format   = ma_format_f32; cfg.capture.channels  = 1;
+        cfg.playback.format  = ma_format_f32; cfg.playback.channels = 1;
         cfg.sampleRate        = 48000;
         cfg.periodSizeInFrames = 256;          // low-ish latency
         cfg.dataCallback      = mon_callback;
@@ -118,6 +121,20 @@ void register_audioio_builtins(VM& vm) {
     // MON.RUNNING() -> bool
     vm.register_native("MON.RUNNING", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_bool(g_mon_active.load());
+    });
+
+    // MON.FX(chainHandle)  route the live monitor through an FX chain (0 = bypass).
+    // Can be called before or during monitoring; swaps are picked up next block.
+    // Do not FX.ADD to a chain while it is the active monitor chain - build a new
+    // one and MON.FX to it. Cabinet nodes are skipped on the live path.
+    vm.register_native("MON.FX", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int chain = (int)args[0].to_int();
+        if (chain > 0) {
+            float warm[512] = { 0.0f };          // pre-size delay lines off the audio thread
+            fx_process_chain_rt(chain, warm, 256, 48000.0);
+        }
+        g_rt_chain.store(chain, std::memory_order_relaxed);
+        return Value::make_none();
     });
 }
 

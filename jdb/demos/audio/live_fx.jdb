@@ -1,0 +1,25 @@
+' live_fx.jdb - hear your instrument LIVE through an FX chain in jdBasic.
+' Needs the FX + MINIAUDIO build flags.
+'
+'   *** HEADPHONES + a guitar/line input. *** (mic -> speakers will howl.)
+'   Pick devices with MON.START(inIdx, outIdx); see MON.DEVICES() for the indices.
+
+' a crunch pedalboard (cabinet is offline-only, so not on the live path here)
+DIM ch = FX.NEW()
+DIM ok = FX.ADD(ch, "compressor", { "threshold": 0.30, "ratio": 4, "makeup": 1.3 })
+ok = FX.ADD(ch, "drive",   { "amount": 14, "level": 0.7 })
+ok = FX.ADD(ch, "lowpass", { "cutoff": 3500, "q": 0.8 })
+ok = FX.ADD(ch, "delay",   { "time_ms": 300, "feedback": 0.30, "mix": 0.28 })
+
+DIM mok = MON.START()
+IF NOT mok THEN
+    PRINT "could not open the audio device"
+ELSE
+    DIM g = MON.GAIN(0.7)
+    DIM f = MON.FX(ch)             ' route the live monitor through the chain
+    PRINT "LIVE pedalboard - play! (15 s)"
+    PRINT "  MON.FX(0) bypasses, MON.FX(otherChain) swaps live, MON.GAIN(x) sets level."
+    SLEEP 15000
+    DIM s = MON.STOP()
+    PRINT "stopped."
+ENDIF

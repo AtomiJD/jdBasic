@@ -111,58 +111,57 @@ static void biquad_coeffs(const std::string& type, double cutoff, double Q, doub
     b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
 }
 
-// run one effect node over the whole buffer (stateful, in place)
-static void process_node(FxNode& n, std::vector<float>& buf, double rate) {
+// run one effect node over a block of `cnt` samples (stateful, in place)
+static void process_node(FxNode& n, float* buf, unsigned cnt, double rate) {
     const std::string& t = n.type;
     if (t == "gain") {
         double g = n.param("gain", 1.0);
-        for (auto& s : buf) s = (float)(s * g);
+        for (unsigned i = 0; i < cnt; i++) buf[i] = (float)(buf[i] * g);
     } else if (t == "drive") {
-        double g = 1.0 + n.param("amount", 5.0);
-        double lvl = n.param("level", 0.7);
-        for (auto& s : buf) s = (float)(std::tanh(s * g) * lvl);
+        double g = 1.0 + n.param("amount", 5.0), lvl = n.param("level", 0.7);
+        for (unsigned i = 0; i < cnt; i++) buf[i] = (float)(std::tanh(buf[i] * g) * lvl);
     } else if (t == "lowpass" || t == "highpass") {
         double b0, b1, b2, a1, a2;
         biquad_coeffs(t, n.param("cutoff", 2000.0), n.param("q", 0.707), rate, b0, b1, b2, a1, a2);
-        for (auto& s : buf) {
-            double in = s;
+        for (unsigned i = 0; i < cnt; i++) {
+            double in = buf[i];
             double out = b0 * in + n.z1;
             n.z1 = b1 * in - a1 * out + n.z2;
             n.z2 = b2 * in - a2 * out;
-            s = (float)out;
+            buf[i] = (float)out;
         }
     } else if (t == "delay") {
         double ms = n.param("time_ms", 300.0), fb = n.param("feedback", 0.35), mix = n.param("mix", 0.3);
         size_t len = (size_t)std::max(1.0, ms / 1000.0 * rate);
         if (n.dl.size() != len) { n.dl.assign(len, 0.0f); n.dpos = 0; }
-        for (auto& s : buf) {
-            double in = s, wet = n.dl[n.dpos];
+        for (unsigned i = 0; i < cnt; i++) {
+            double in = buf[i], wet = n.dl[n.dpos];
             n.dl[n.dpos] = (float)(in + wet * fb);
             n.dpos = (n.dpos + 1) % len;
-            s = (float)(in + wet * mix);
+            buf[i] = (float)(in + wet * mix);
         }
     } else if (t == "compressor") {
         double thr = n.param("threshold", 0.5), ratio = n.param("ratio", 4.0), makeup = n.param("makeup", 1.0);
         double att = std::exp(-1.0 / (0.005 * rate)), rel = std::exp(-1.0 / (0.1 * rate));
-        for (auto& s : buf) {
-            double a = std::fabs((double)s);
+        for (unsigned i = 0; i < cnt; i++) {
+            double a = std::fabs((double)buf[i]);
             n.env = (a > n.env) ? (att * n.env + (1 - att) * a) : (rel * n.env + (1 - rel) * a);
             double red = 1.0;
             if (n.env > thr && n.env > 1e-9) red = (thr + (n.env - thr) / ratio) / n.env;
-            s = (float)(s * red * makeup);
+            buf[i] = (float)(buf[i] * red * makeup);
         }
     } else if (t == "cabinet") {
-        if (n.ir.empty()) return;                 // no IR loaded -> pass-through
+        if (n.ir.empty()) return;                 // no IR -> pass-through (offline only)
         double level = n.param("level", 0.7), mix = n.param("mix", 1.0);
         size_t M = n.ir.size();
-        std::vector<float> out(buf.size(), 0.0f);
-        for (size_t i = 0; i < buf.size(); i++) {
+        std::vector<float> out(cnt, 0.0f);
+        for (unsigned i = 0; i < cnt; i++) {
             double acc = 0.0;
-            size_t kmax = std::min(M, i + 1);
+            size_t kmax = std::min(M, (size_t)i + 1);
             for (size_t k = 0; k < kmax; k++) acc += (double)buf[i - k] * n.ir[k];
             out[i] = (float)(buf[i] * (1.0 - mix) + acc * level * mix);
         }
-        buf.swap(out);
+        for (unsigned i = 0; i < cnt; i++) buf[i] = out[i];
     }
     // unknown type: pass-through
 }
@@ -336,7 +335,7 @@ void register_audiofx_builtins(VM& vm) {
             std::lock_guard<std::mutex> lk(g_chain_mtx);
             auto it = g_chains.find(h);
             if (it != g_chains.end())
-                for (auto& n : it->second.nodes) process_node(n, buf, rate);
+                for (auto& n : it->second.nodes) process_node(n, buf.data(), (unsigned)buf.size(), rate);
         }
         Value out = Value::make_array();
         out.as_array()->elements.reserve(buf.size());
@@ -356,8 +355,18 @@ void register_audiofx_builtins(VM& vm) {
     vm.extra_no_vectorize.insert("FX.PROCESS");
 }
 
+// realtime block processing (called from the audio callback). No lock: the chain
+// must not be mutated while monitoring. Cabinet is skipped (it allocates).
+void fx_process_chain_rt(int handle, float* buf, unsigned frames, double rate) {
+    auto it = g_chains.find(handle);
+    if (it == g_chains.end()) return;
+    for (auto& n : it->second.nodes)
+        if (n.type != "cabinet") process_node(n, buf, frames, rate);
+}
+
 #else  // !FX
 
 void register_audiofx_builtins(VM&) {}
+void fx_process_chain_rt(int, float*, unsigned, double) {}
 
 #endif
