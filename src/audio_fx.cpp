@@ -39,12 +39,54 @@ static bool collect_floats(const Value& v, std::vector<float>& out) {
     return true;
 }
 
+// read a WAV file into a mono float buffer (left channel), for cabinet IRs
+static bool read_wav_mono(const std::string& path, std::vector<float>& out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
+                                    std::istreambuf_iterator<char>());
+    if (buf.size() < 44 || std::memcmp(&buf[0], "RIFF", 4) != 0 ||
+        std::memcmp(&buf[8], "WAVE", 4) != 0) return false;
+    uint16_t fmt = 1, ch = 1, bits = 16;
+    const unsigned char* data = nullptr;
+    uint32_t dataLen = 0;
+    size_t pos = 12;
+    while (pos + 8 <= buf.size()) {
+        const unsigned char* c = &buf[pos];
+        uint32_t sz = r32(c + 4);
+        if (std::memcmp(c, "fmt ", 4) == 0 && pos + 24 <= buf.size()) {
+            fmt = r16(c + 8); ch = r16(c + 10); bits = r16(c + 22);
+        } else if (std::memcmp(c, "data", 4) == 0) {
+            data = c + 8; dataLen = sz;
+            if (pos + 8 + (size_t)dataLen > buf.size())
+                dataLen = (uint32_t)(buf.size() - (pos + 8));
+        }
+        pos += 8 + sz + (sz & 1);
+    }
+    if (!data || ch < 1) return false;
+    std::vector<float> all;
+    if (fmt == 3 && bits == 32) {
+        uint32_t n = dataLen / 4; all.resize(n);
+        for (uint32_t i = 0; i < n; i++) std::memcpy(&all[i], data + i * 4, 4);
+    } else if (fmt == 1 && bits == 16) {
+        uint32_t n = dataLen / 2; all.resize(n);
+        for (uint32_t i = 0; i < n; i++) all[i] = (int16_t)r16(data + i * 2) / 32768.0f;
+    } else if (fmt == 1 && bits == 8) {
+        all.resize(dataLen);
+        for (uint32_t i = 0; i < dataLen; i++) all[i] = (data[i] - 128) / 128.0f;
+    } else return false;
+    out.clear();
+    for (size_t i = 0; i < all.size(); i += ch) out.push_back(all[i]);  // left channel
+    return true;
+}
+
 // ---- FX chain: offline effect nodes on a mono float buffer ----
 
 struct FxNode {
     std::string type;
     std::map<std::string, double> p;
     std::vector<float> dl;           // delay line
+    std::vector<float> ir;           // cabinet impulse response
     size_t dpos = 0;
     double z1 = 0.0, z2 = 0.0;       // biquad state
     double env = 0.0;                // compressor envelope
@@ -109,6 +151,18 @@ static void process_node(FxNode& n, std::vector<float>& buf, double rate) {
             if (n.env > thr && n.env > 1e-9) red = (thr + (n.env - thr) / ratio) / n.env;
             s = (float)(s * red * makeup);
         }
+    } else if (t == "cabinet") {
+        if (n.ir.empty()) return;                 // no IR loaded -> pass-through
+        double level = n.param("level", 0.7), mix = n.param("mix", 1.0);
+        size_t M = n.ir.size();
+        std::vector<float> out(buf.size(), 0.0f);
+        for (size_t i = 0; i < buf.size(); i++) {
+            double acc = 0.0;
+            size_t kmax = std::min(M, i + 1);
+            for (size_t k = 0; k < kmax; k++) acc += (double)buf[i - k] * n.ir[k];
+            out[i] = (float)(buf[i] * (1.0 - mix) + acc * level * mix);
+        }
+        buf.swap(out);
     }
     // unknown type: pass-through
 }
@@ -248,8 +302,25 @@ void register_audiofx_builtins(VM& vm) {
         if (it == g_chains.end()) return Value::make_bool(false);
         FxNode node;
         node.type = args[1].to_string();
-        if (args.size() >= 3 && args[2].type == ValueType::OBJECT)
-            for (auto& kv : args[2].as_object()->fields) node.p[kv.first] = kv.second.to_double();
+        if (args.size() >= 3 && args[2].type == ValueType::OBJECT) {
+            std::string ir_path;
+            for (auto& kv : args[2].as_object()->fields) {
+                if (kv.second.type == ValueType::STRING) {
+                    if (kv.first == "ir") ir_path = kv.second.to_string();
+                } else {
+                    node.p[kv.first] = kv.second.to_double();
+                }
+            }
+            if (node.type == "cabinet" && !ir_path.empty()) {
+                std::vector<float> ir;
+                if (read_wav_mono(ir_path, ir)) {
+                    float peak = 0.0f;
+                    for (float v : ir) peak = std::max(peak, std::fabs(v));
+                    if (peak > 1e-9f) for (float& v : ir) v /= peak;  // unit-peak normalize
+                    node.ir = std::move(ir);
+                }
+            }
+        }
         it->second.nodes.push_back(std::move(node));
         return Value::make_bool(true);
     });

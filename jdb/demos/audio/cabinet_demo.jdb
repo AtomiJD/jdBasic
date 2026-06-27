@@ -1,0 +1,50 @@
+' cabinet_demo.jdb - hear the cabinet IR convolution "realism jump":
+' the same driven synth tone, A = drive only (fizzy), B = drive + cabinet (amp-ish).
+' Needs SOUND + FX. Run from the repo root.
+
+' 1) build a quick cabinet-ish impulse response: bandpass a short impulse
+DIM imp = []
+DIM k
+FOR k = 0 TO 399
+    IF k = 0 THEN
+        imp = APPEND(imp, 1.0)
+    ELSE
+        imp = APPEND(imp, 0.0)
+    ENDIF
+NEXT k
+DIM irch = FX.NEW()
+DIM ok = FX.ADD(irch, "highpass", { "cutoff": 110, "q": 0.7 })
+ok = FX.ADD(irch, "lowpass", { "cutoff": 3600, "q": 1.2 })
+DIM ir = FX.PROCESS(irch, imp, 44100)
+DIM dummy = FX.FREE(irch)
+MKDIR "tmp"
+WAV.WRITE "tmp/cab_ir.wav", ir, 44100, 1
+
+' 2) render a driven synth note and take the left channel as mono
+SOUND.INIT
+SOUND.VOICE 0, "SAW", 0.005, 0.40, 0.55, 0.6
+SOUND.PLAY 0, "e3"
+DIM stereo = SOUND.RENDER(44100)        ' 1 s
+DIM mono = []
+DIM j
+FOR j = 0 TO LEN(stereo) - 1 STEP 2
+    mono = APPEND(mono, stereo[j])
+NEXT j
+
+' 3a) drive ONLY (raw, fizzy)
+DIM a = FX.NEW()
+ok = FX.ADD(a, "drive", { "amount": 18, "level": 0.8 })
+DIM fizz = FX.PROCESS(a, mono, 44100)
+dummy = FX.FREE(a)
+WAV.WRITE "tmp/cab_A_drive_only.wav", fizz, 44100, 1
+
+' 3b) drive -> CABINET (smoothed, amp-ish)
+DIM b = FX.NEW()
+ok = FX.ADD(b, "drive", { "amount": 18, "level": 0.8 })
+ok = FX.ADD(b, "cabinet", { "ir": "tmp/cab_ir.wav", "level": 0.9 })
+DIM amp = FX.PROCESS(b, mono, 44100)
+dummy = FX.FREE(b)
+WAV.WRITE "tmp/cab_B_with_cabinet.wav", amp, 44100, 1
+
+PRINT "A drive only   -> tmp/cab_A_drive_only.wav"
+PRINT "B with cabinet -> tmp/cab_B_with_cabinet.wav (IR "; LEN(ir); " taps)"
