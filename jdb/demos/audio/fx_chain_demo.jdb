@@ -1,0 +1,36 @@
+' fx_chain_demo.jdb - render a synth tone, run it through an offline FX chain,
+' export clean + wet WAVs so you can hear the difference.
+' Needs a build with SOUND + FX. Run from the repo root.
+'   build.bat HTTP GFX IMGUI NATIVEC SOUND FX
+
+SOUND.INIT
+SOUND.VOICE 0, "SAW", 0.005, 0.40, 0.55, 0.6
+SOUND.VOICE 1, "SAW", 0.005, 0.40, 0.55, 0.6
+SOUND.PLAY 0, "e3"
+SOUND.PLAY 1, "b3"                       ' a fifth -> power-chord flavour
+
+DIM rate = 44100
+DIM stereo = SOUND.RENDER(rate * 3 / 2)  ' 1.5 s, interleaved stereo
+
+' take the left channel as a mono signal for the FX chain
+DIM mono = []
+DIM j
+FOR j = 0 TO LEN(stereo) - 1 STEP 2
+    mono = APPEND(mono, stereo[j])
+NEXT j
+
+MKDIR "tmp"
+WAV.WRITE "tmp/fx_clean.wav", mono, rate, 1
+
+' a crunch pedalboard: compressor -> drive -> tone (lowpass) -> slap delay
+DIM ch = FX.NEW()
+DIM ok = FX.ADD(ch, "compressor", { "threshold": 0.30, "ratio": 4, "makeup": 1.4 })
+ok = FX.ADD(ch, "drive", { "amount": 14, "level": 0.7 })
+ok = FX.ADD(ch, "lowpass", { "cutoff": 3200, "q": 0.8 })
+ok = FX.ADD(ch, "delay", { "time_ms": 260, "feedback": 0.30, "mix": 0.28 })
+DIM wet = FX.PROCESS(ch, mono, rate)
+DIM freed = FX.FREE(ch)
+
+WAV.WRITE "tmp/fx_wet.wav", wet, rate, 1
+PRINT "clean: tmp/fx_clean.wav  ("; LEN(mono); " samples)"
+PRINT "wet:   tmp/fx_wet.wav    (compressor -> drive -> lowpass -> delay)"

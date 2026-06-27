@@ -11,6 +11,9 @@
 #include <cmath>
 #include <string>
 #include <iterator>
+#include <map>
+#include <mutex>
+#include <algorithm>
 
 namespace {
 
@@ -34,6 +37,80 @@ static bool collect_floats(const Value& v, std::vector<float>& out) {
     out.reserve(a->elements.size());
     for (auto& e : a->elements) out.push_back((float)e.to_double());
     return true;
+}
+
+// ---- FX chain: offline effect nodes on a mono float buffer ----
+
+struct FxNode {
+    std::string type;
+    std::map<std::string, double> p;
+    std::vector<float> dl;           // delay line
+    size_t dpos = 0;
+    double z1 = 0.0, z2 = 0.0;       // biquad state
+    double env = 0.0;                // compressor envelope
+    double param(const char* k, double def) const {
+        auto it = p.find(k); return it == p.end() ? def : it->second;
+    }
+};
+struct FxChain { std::vector<FxNode> nodes; };
+
+std::map<int, FxChain> g_chains;
+int        g_chain_next = 1;
+std::mutex g_chain_mtx;
+
+static void biquad_coeffs(const std::string& type, double cutoff, double Q, double rate,
+                          double& b0, double& b1, double& b2, double& a1, double& a2) {
+    double w0 = 2.0 * 3.14159265358979323846 * cutoff / rate;
+    double cw = std::cos(w0), sw = std::sin(w0);
+    double alpha = sw / (2.0 * (Q <= 0.0 ? 0.707 : Q));
+    if (type == "highpass") { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; }
+    else                    { b0 = (1 - cw) / 2; b1 =  (1 - cw); b2 = (1 - cw) / 2; }
+    double a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha;
+    b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+}
+
+// run one effect node over the whole buffer (stateful, in place)
+static void process_node(FxNode& n, std::vector<float>& buf, double rate) {
+    const std::string& t = n.type;
+    if (t == "gain") {
+        double g = n.param("gain", 1.0);
+        for (auto& s : buf) s = (float)(s * g);
+    } else if (t == "drive") {
+        double g = 1.0 + n.param("amount", 5.0);
+        double lvl = n.param("level", 0.7);
+        for (auto& s : buf) s = (float)(std::tanh(s * g) * lvl);
+    } else if (t == "lowpass" || t == "highpass") {
+        double b0, b1, b2, a1, a2;
+        biquad_coeffs(t, n.param("cutoff", 2000.0), n.param("q", 0.707), rate, b0, b1, b2, a1, a2);
+        for (auto& s : buf) {
+            double in = s;
+            double out = b0 * in + n.z1;
+            n.z1 = b1 * in - a1 * out + n.z2;
+            n.z2 = b2 * in - a2 * out;
+            s = (float)out;
+        }
+    } else if (t == "delay") {
+        double ms = n.param("time_ms", 300.0), fb = n.param("feedback", 0.35), mix = n.param("mix", 0.3);
+        size_t len = (size_t)std::max(1.0, ms / 1000.0 * rate);
+        if (n.dl.size() != len) { n.dl.assign(len, 0.0f); n.dpos = 0; }
+        for (auto& s : buf) {
+            double in = s, wet = n.dl[n.dpos];
+            n.dl[n.dpos] = (float)(in + wet * fb);
+            n.dpos = (n.dpos + 1) % len;
+            s = (float)(in + wet * mix);
+        }
+    } else if (t == "compressor") {
+        double thr = n.param("threshold", 0.5), ratio = n.param("ratio", 4.0), makeup = n.param("makeup", 1.0);
+        double att = std::exp(-1.0 / (0.005 * rate)), rel = std::exp(-1.0 / (0.1 * rate));
+        for (auto& s : buf) {
+            double a = std::fabs((double)s);
+            n.env = (a > n.env) ? (att * n.env + (1 - att) * a) : (rel * n.env + (1 - rel) * a);
+            double red = 1.0;
+            if (n.env > thr && n.env > 1e-9) red = (thr + (n.env - thr) / ratio) / n.env;
+            s = (float)(s * red * makeup);
+        }
+    }
+    // unknown type: pass-through
 }
 
 } // namespace
@@ -151,10 +228,61 @@ void register_audiofx_builtins(VM& vm) {
         return m;
     });
 
-    // WAV.WRITE takes a whole sample array as an argument; without this it would
-    // auto-vectorize (one call per sample). (Native -c path uses the codegen
-    // no_vectorize list separately - to wire when WAV.* is needed under -c.)
+    // ---- FX chain builtins ----
+
+    // FX.NEW() -> chain handle
+    vm.register_native("FX.NEW", 0, 0, [](const std::vector<Value>&) -> Value {
+        std::lock_guard<std::mutex> lk(g_chain_mtx);
+        int h = g_chain_next++;
+        g_chains[h] = FxChain{};
+        return Value::make_i64(h);
+    });
+
+    // FX.ADD(chain, type$, [params{}]) -> bool
+    // types: gain{gain} drive{amount,level} lowpass/highpass{cutoff,q}
+    //        delay{time_ms,feedback,mix} compressor{threshold,ratio,makeup}
+    vm.register_native("FX.ADD", 2, 3, [](const std::vector<Value>& args) -> Value {
+        int h = (int)args[0].to_int();
+        std::lock_guard<std::mutex> lk(g_chain_mtx);
+        auto it = g_chains.find(h);
+        if (it == g_chains.end()) return Value::make_bool(false);
+        FxNode node;
+        node.type = args[1].to_string();
+        if (args.size() >= 3 && args[2].type == ValueType::OBJECT)
+            for (auto& kv : args[2].as_object()->fields) node.p[kv.first] = kv.second.to_double();
+        it->second.nodes.push_back(std::move(node));
+        return Value::make_bool(true);
+    });
+
+    // FX.PROCESS(chain, samples[], [rate=44100]) -> samples[]  (offline, mono)
+    vm.register_native("FX.PROCESS", 2, 3, [](const std::vector<Value>& args) -> Value {
+        int h = (int)args[0].to_int();
+        std::vector<float> buf;
+        if (!collect_floats(args[1], buf)) return Value::make_array();
+        double rate = args.size() >= 3 ? args[2].to_double() : 44100.0;
+        if (rate <= 0) rate = 44100.0;
+        {
+            std::lock_guard<std::mutex> lk(g_chain_mtx);
+            auto it = g_chains.find(h);
+            if (it != g_chains.end())
+                for (auto& n : it->second.nodes) process_node(n, buf, rate);
+        }
+        Value out = Value::make_array();
+        out.as_array()->elements.reserve(buf.size());
+        for (float f : buf) out.as_array()->elements.push_back(Value::make_f64(f));
+        return out;
+    });
+
+    // FX.FREE(chain)
+    vm.register_native("FX.FREE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lk(g_chain_mtx);
+        g_chains.erase((int)args[0].to_int());
+        return Value::make_none();
+    });
+
+    // array-taking builtins must not auto-vectorize (would run per element)
     vm.extra_no_vectorize.insert("WAV.WRITE");
+    vm.extra_no_vectorize.insert("FX.PROCESS");
 }
 
 #else  // !FX
