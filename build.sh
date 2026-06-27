@@ -57,6 +57,9 @@ WANT_TUI=${TUI:-0}
 # TUI implies FTXUI — drag the lib in if only TUI was passed.
 if [ "$WANT_TUI" = "1" ]; then WANT_FTXUI=1; fi
 
+WANT_FX=${FX:-0}
+if [ "$WANT_FX" = "1" ]; then CXXFLAGS="$CXXFLAGS -DFX"; fi
+
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
     LDFLAGS="$LDFLAGS -lssl -lcrypto"
@@ -244,7 +247,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
 fi
 
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
-     src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
+     src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp src/audio_fx.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
      src/numerics.cpp src/screencap.cpp src/pybridge.cpp \
      $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC"
