@@ -11,15 +11,33 @@ ok = FX.ADD(ch, "drive",   { "amount": 14, "level": 0.7 })
 ok = FX.ADD(ch, "lowpass", { "cutoff": 3500, "q": 0.8 })
 ok = FX.ADD(ch, "delay",   { "time_ms": 300, "feedback": 0.30, "mix": 0.28 })
 
-DIM mok = MON.START()
+' auto-pick the audio interface (iRig etc.) for input + output; else defaults
+DIM dev = MON.DEVICES()
+DIM caps = dev{"capture"}
+DIM pbs = dev{"playback"}
+DIM inIdx = -1
+DIM outIdx = -1
+DIM i
+FOR i = 0 TO LEN(caps) - 1
+    IF INSTR(caps[i], "iRig") >= 0 THEN inIdx = i
+NEXT i
+FOR i = 0 TO LEN(pbs) - 1
+    IF INSTR(pbs[i], "iRig") >= 0 THEN outIdx = i
+NEXT i
+IF inIdx < 0 THEN inIdx = 0
+IF outIdx < 0 THEN outIdx = 0
+PRINT "input  ["; inIdx; "] "; caps[inIdx]
+PRINT "output ["; outIdx; "] "; pbs[outIdx]
+
+DIM mok = MON.START(inIdx, outIdx)
 IF NOT mok THEN
     PRINT "could not open the audio device"
 ELSE
     DIM g = MON.GAIN(0.7)
     DIM f = MON.FX(ch)             ' route the live monitor through the chain
-    PRINT "LIVE pedalboard - play! (15 s)"
-    PRINT "  MON.FX(0) bypasses, MON.FX(otherChain) swaps live, MON.GAIN(x) sets level."
-    SLEEP 15000
+    PRINT "LIVE pedalboard - play! (monitoring 60 s; Ctrl-C to stop early)"
+    PRINT "  MON.FX(0) bypasses, MON.GAIN(x) sets level."
+    SLEEP 60000
     DIM s = MON.STOP()
     PRINT "stopped."
 ENDIF
