@@ -8,12 +8,13 @@
 ' "Brian May" - singing, mid-focused crunch + harmonised echo (cabinet faked
 ' with the lowpass, since the IR convolution is offline-only on the live path)
 DIM ch = FX.NEW()
-DIM ok = FX.ADD(ch, "compressor", { "threshold": 0.20, "ratio": 4, "makeup": 1.5 })  ' singing sustain
-ok = FX.ADD(ch, "gain",     { "gain": 6 })                   ' push toward breakup
+DIM ok = FX.ADD(ch, "compressor", { "threshold": 0.15, "ratio": 4, "makeup": 1.4 })  ' even out the input
+ok = FX.ADD(ch, "gain",     { "gain": 7 })                   ' push toward breakup
 ok = FX.ADD(ch, "highpass", { "cutoff": 450, "q": 0.7 })     ' treble-booster (Rangemaster) feel
-ok = FX.ADD(ch, "drive",    { "amount": 13, "level": 0.72 }) ' AC30 edge-of-breakup
+ok = FX.ADD(ch, "drive",    { "amount": 16, "level": 0.72 }) ' AC30 gain = singing sustain
 ok = FX.ADD(ch, "lowpass",  { "cutoff": 3300, "q": 1.1 })    ' fake the AC30 2x12 cabinet roll-off
-ok = FX.ADD(ch, "delay",    { "time_ms": 430, "feedback": 0.35, "mix": 0.32 })  ' harmonised tape echo
+ok = FX.ADD(ch, "compressor", { "threshold": 0.10, "ratio": 8, "makeup": 1.8 })  ' SUSTAIN: lift the note tail
+ok = FX.ADD(ch, "delay",    { "time_ms": 90, "feedback": 0.0, "mix": 0.06 })   ' tiny thickening, no audible echo
 
 ' auto-pick the audio interface (iRig etc.) for input + output; else defaults
 DIM dev = MON.DEVICES()
