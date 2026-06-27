@@ -1,0 +1,105 @@
+' tone_designer.jdb - the AI tone-designer idea made concrete.
+' A text request ("Brian May, Bohemian Rhapsody") becomes an FX chain built from
+' the jdBasic primitives, rendered to a WAV. A small FFT "spectral ear" prints
+' the tonal balance before/after, so the designer (you or the AI) can reason
+' about the sound in numbers. Needs SOUND + FX. Run from the repo root.
+
+DIM RATE = 44100
+
+' --- spectral ear: band energy (low/mid/high) of a signal, in percent ---
+FUNC BANDS(sig)
+    DIM N = 4096
+    DIM st = (LEN(sig) - N) / 2
+    IF st < 0 THEN st = 0
+    DIM win = []
+    DIM i
+    FOR i = 0 TO N - 1
+        IF st + i < LEN(sig) THEN
+            win = APPEND(win, sig[st + i])
+        ELSE
+            win = APPEND(win, 0.0)
+        ENDIF
+    NEXT i
+    DIM spec = FFT(win)
+    DIM lo = 0.0
+    DIM mi = 0.0
+    DIM hi = 0.0
+    FOR i = 1 TO N / 2 - 1
+        DIM re = spec[i][0]
+        DIM im = spec[i][1]
+        DIM en = re * re + im * im
+        DIM hz = i * RATE / N
+        IF hz < 250 THEN
+            lo = lo + en
+        ELSEIF hz < 2500 THEN
+            mi = mi + en
+        ELSE
+            hi = hi + en
+        ENDIF
+    NEXT i
+    DIM tot = lo + mi + hi
+    IF tot <= 0 THEN tot = 1
+    DIM r AS MAP
+    r{"low"} = INT(lo / tot * 100)
+    r{"mid"} = INT(mi / tot * 100)
+    r{"high"} = INT(hi / tot * 100)
+    RETURN r
+ENDFUNC
+
+SUB SHOW(label$, sig)
+    DIM b = BANDS(sig)
+    PRINT label$; ":  low="; b{"low"}; "%  mid="; b{"mid"}; "%  high="; b{"high"}; "%"
+ENDSUB
+
+' --- a quick cabinet-ish impulse response (bandpass a short impulse) ---
+FUNC MAKE_CAB()
+    DIM imp = []
+    DIM k
+    FOR k = 0 TO 399
+        IF k = 0 THEN
+            imp = APPEND(imp, 1.0)
+        ELSE
+            imp = APPEND(imp, 0.0)
+        ENDIF
+    NEXT k
+    DIM c = FX.NEW()
+    DIM ok = FX.ADD(c, "highpass", { "cutoff": 110, "q": 0.7 })
+    ok = FX.ADD(c, "lowpass", { "cutoff": 3600, "q": 1.2 })
+    DIM ir = FX.PROCESS(c, imp, RATE)
+    DIM d = FX.FREE(c)
+    MKDIR "tmp"
+    WAV.WRITE "tmp/bm_cab_ir.wav", ir, RATE, 1
+    RETURN "tmp/bm_cab_ir.wav"
+ENDFUNC
+
+' --- render a sustained lead note (the Brian May "singing" register) ---
+SOUND.INIT
+SOUND.VOICE 0, "SAW", 0.004, 0.40, 0.6, 0.7
+SOUND.PLAY 0, "e4"
+DIM stereo = SOUND.RENDER(RATE * 2)
+DIM mono = []
+DIM j
+FOR j = 0 TO LEN(stereo) - 1 STEP 2
+    mono = APPEND(mono, stereo[j])
+NEXT j
+
+MKDIR "tmp"
+WAV.WRITE "tmp/tone_clean.wav", mono, RATE, 1
+SHOW "clean ", mono
+
+' === "Brian May / Bohemian Rhapsody" - designed from the primitives ===
+'   treble-booster feel (highpass)  -> AC30 edge-of-breakup drive
+'   -> cabinet IR (amp body)        -> harmonised tape delay
+DIM cab$ = MAKE_CAB()
+DIM bm = FX.NEW()
+DIM ok = FX.ADD(bm, "compressor", { "threshold": 0.25, "ratio": 3, "makeup": 1.3 })
+ok = FX.ADD(bm, "highpass", { "cutoff": 600, "q": 0.7 })
+ok = FX.ADD(bm, "drive", { "amount": 11, "level": 0.7 })
+ok = FX.ADD(bm, "cabinet", { "ir": cab$, "level": 0.9 })
+ok = FX.ADD(bm, "delay", { "time_ms": 435, "feedback": 0.33, "mix": 0.28 })
+DIM tone = FX.PROCESS(bm, mono, RATE)
+DIM freed = FX.FREE(bm)
+
+WAV.WRITE "tmp/tone_brian_may.wav", tone, RATE, 1
+SHOW "brianM", tone
+PRINT "wrote tmp/tone_clean.wav and tmp/tone_brian_may.wav"
