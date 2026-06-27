@@ -78,6 +78,8 @@ libs/*
 libs/ftxui/build/
 # Eigen 3.4.0 vendored (header-only) for the numerics builtins (SVD/QR/DET/EIG/FFT).
 !libs/eigen
+# RtMidi vendored (single .h/.cpp, MIT) for the MIDI builtins (CoreMIDI/WinMM/ALSA).
+!libs/rtmidi
 
 # ── LLM models (huge binary blobs) ────────────────────────────────
 models/

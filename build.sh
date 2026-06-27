@@ -60,6 +60,20 @@ if [ "$WANT_TUI" = "1" ]; then WANT_FTXUI=1; fi
 WANT_FX=${FX:-0}
 if [ "$WANT_FX" = "1" ]; then CXXFLAGS="$CXXFLAGS -DFX"; fi
 
+WANT_MIDI=${MIDI:-0}
+MIDI_SRC=""
+if [ "$WANT_MIDI" = "1" ]; then
+    CXXFLAGS="$CXXFLAGS -DMIDI -Ilibs/rtmidi"
+    MIDI_SRC="libs/rtmidi/RtMidi.cpp"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        CXXFLAGS="$CXXFLAGS -D__MACOSX_CORE__"
+        LDFLAGS="$LDFLAGS -framework CoreMIDI -framework CoreAudio -framework CoreFoundation"
+    else
+        CXXFLAGS="$CXXFLAGS -D__LINUX_ALSA__"
+        LDFLAGS="$LDFLAGS -lasound -lpthread"
+    fi
+fi
+
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
     LDFLAGS="$LDFLAGS -lssl -lcrypto"
@@ -247,10 +261,10 @@ if [ "$WANT_NATIVEC" = "1" ]; then
 fi
 
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
-     src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp src/audio_fx.cpp \
+     src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp src/audio_fx.cpp src/midi.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
      src/numerics.cpp src/screencap.cpp src/pybridge.cpp \
-     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC"
+     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC $MIDI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.
