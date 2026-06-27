@@ -64,6 +64,11 @@ for %%A in (%*) do (
         set EXTRA_LIB=!EXTRA_LIB! winmm.lib
         echo [+] MIDI - RtMidi WinMM
     )
+    if /I "%%A"=="MINIAUDIO" (
+        set DEFS=!DEFS! /DMINIAUDIO
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\miniaudio
+        echo [+] MINIAUDIO - realtime audio device engine
+    )
     if /I "%%A"=="IMGUI" (
         set DEFS=!DEFS! /DIMGUI
         set EXTRA_SRC=!EXTRA_SRC! libs\imgui\imgui.cpp libs\imgui\imgui_draw.cpp libs\imgui\imgui_tables.cpp libs\imgui\imgui_widgets.cpp libs\imgui\backends\imgui_impl_sdl3.cpp libs\imgui\backends\imgui_impl_sdlrenderer3.cpp
@@ -228,7 +233,7 @@ REM mismatched runtimes show up as unresolved __imp__* symbols.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\midi.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp !EXTRA_SRC! ^
+  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\midi.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp !EXTRA_SRC! ^
   /Fe:build\jdBasic.exe ^
   /Fo:build\ ^
   /link ^

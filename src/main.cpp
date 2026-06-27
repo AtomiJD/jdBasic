@@ -106,6 +106,7 @@ static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& fi
 #include "sound.h"
 #include "audio_fx.h"
 #include "midi.h"
+#include "audio_io.h"
 #include "dap.h"
 #include "ffi.h"
 #include "ai.h"
@@ -407,6 +408,7 @@ static void setup_dynamic_code(VM& vm) {
     register_sound_builtins(vm);
     register_audiofx_builtins(vm);
     register_midi_builtins(vm);
+    register_audioio_builtins(vm);
     register_ffi_builtins(vm);
     register_ai_builtins(vm);
     register_numerics_builtins(vm);

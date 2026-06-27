@@ -80,6 +80,8 @@ libs/ftxui/build/
 !libs/eigen
 # RtMidi vendored (single .h/.cpp, MIT) for the MIDI builtins (CoreMIDI/WinMM/ALSA).
 !libs/rtmidi
+# miniaudio vendored (single header, public domain) for the realtime audio engine.
+!libs/miniaudio
 
 # ── LLM models (huge binary blobs) ────────────────────────────────
 models/
