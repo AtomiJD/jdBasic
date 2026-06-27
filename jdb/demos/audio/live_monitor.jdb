@@ -1,0 +1,33 @@
+' live_monitor.jdb - hear your audio input live through jdBasic (passthrough).
+' Needs the MINIAUDIO build flag. Run from anywhere.
+'
+'   *** Use HEADPHONES with a guitar / line input. ***
+'   A microphone -> speakers will create a feedback howl.
+'
+' Pick specific devices with MON.START(captureIdx, playbackIdx) using the
+' indices printed below; MON.START() alone uses the system defaults.
+
+PRINT "backend: "; MON.BACKEND$()
+DIM d = MON.DEVICES()
+DIM cap = d{"capture"}
+DIM pb = d{"playback"}
+DIM i
+PRINT "capture (input) devices:"
+FOR i = 0 TO LEN(cap) - 1
+    PRINT "  ["; i; "] "; cap[i]
+NEXT i
+PRINT "playback (output) devices:"
+FOR i = 0 TO LEN(pb) - 1
+    PRINT "  ["; i; "] "; pb[i]
+NEXT i
+
+DIM ok = MON.START()                 ' or MON.START(inIdx, outIdx)
+IF NOT ok THEN
+    PRINT "could not open the audio device"
+ELSE
+    DIM g = MON.GAIN(0.8)
+    PRINT "LIVE monitoring - play something! (10 s)"
+    SLEEP 10000
+    DIM s = MON.STOP()
+    PRINT "stopped."
+ENDIF
