@@ -70,6 +70,11 @@
             "match": "(?i)\\b(TRUE|FALSE|PI|E|VBNEWLINE|VBCRLF|VBTAB|NONE|NULL|INF|NAN)\\b"
         },
         {
+            "comment": "Audio subsystem dotted calls (FX / MIDI / MON / WAV). Colours the whole call as one library token so new method names need no per-name upkeep.",
+            "name": "support.function.jdbasic",
+            "match": "(?i)\\b(FX|MIDI|MON|WAV)\\.[A-Z_]+\\$?"
+        },
+        {
             "comment": "Built-in namespaces — anything that appears before a '.' as a grouping prefix. Catches the bare namespace token; the methods after the dot are highlighted by the dotted-method rule further down.",
             "name": "entity.name.type.class.jdbasic",
             "match": "(?i)\\b(AI|AUDIO|CAM|CHAN|CLIPBOARD|CODEC|DATE|FILE|GFX|GL|GUI|HTTP|JDB|JOY|JSON|MAP|MAT4|MUSIC|OS|OUTPUT|PARTICLE|PATH|PY|REGEX|SERIAL|SFX|SOUND|SPRITE|SQL|THREAD|TILED|TILEMAP|TUI|TURTLE)\\b"

@@ -3315,3 +3315,127 @@ Description: Creates an array of the given shape filled with zeros.
 [ZIP]
 Syntax: ZIP(arr1, arr2, ...) -> matrix
 Description: Combines vectors into a matrix where each row is [arr1[i], arr2[i], ...].
+
+[WAV.WRITE]
+Syntax: WAV.WRITE(path$, samples[], [rate=44100], [channels=1]) -> bool
+Description: Write interleaved float samples in [-1,1] to a 16-bit PCM WAV file. Needs the FX build flag.
+
+[WAV.READ]
+Syntax: WAV.READ(path$) -> { samples, rate, channels, frames } or NONE
+Description: Read a WAV (PCM 8/16-bit or float32) into a mono float array.
+
+[WAV.INFO]
+Syntax: WAV.INFO(path$) -> { rate, channels, frames } or NONE
+Description: Read a WAV header without loading the audio data.
+
+[FX.NEW]
+Syntax: FX.NEW() -> chain
+Description: Create an empty FX chain and return its handle.
+
+[FX.ADD]
+Syntax: FX.ADD(chain, type$, params{}) -> bool
+Description: Append an effect node. Types: gain, drive, lowpass, highpass, delay, compressor, cabinet, chorus, flanger, vibrato, phaser, tremolo, fuzz, bitcrush, octave, autowah, noisegate, eq, reverb.
+
+[FX.PROCESS]
+Syntax: FX.PROCESS(chain, samples[], [rate=44100]) -> samples[]
+Description: Run a mono float buffer through the chain offline; returns the processed buffer.
+
+[FX.SET]
+Syntax: FX.SET(chain, nodeIndex, param$, value) -> bool
+Description: Live-tweak one existing parameter of a node; race-safe while the chain is monitoring.
+
+[FX.DUMP$]
+Syntax: FX.DUMP$(chain) -> string
+Description: Readable listing of the chain's nodes and their current parameters.
+
+[FX.FREE]
+Syntax: FX.FREE(chain)
+Description: Free an FX chain. Use the paren form: FX.FREE(ch).
+
+[MIDI.PORTS]
+Syntax: MIDI.PORTS() -> { in:[names], out:[names] }
+Description: List available MIDI input and output ports. Needs the MIDI build flag.
+
+[MIDI.OPEN_IN]
+Syntax: MIDI.OPEN_IN(portIndex) -> handle or -1
+Description: Open a MIDI input port for polling.
+
+[MIDI.OPEN_OUT]
+Syntax: MIDI.OPEN_OUT(portIndex) -> handle or -1
+Description: Open a MIDI output port for sending.
+
+[MIDI.SEND]
+Syntax: MIDI.SEND(handle, status, [data1], [data2]) -> bool
+Description: Send a raw MIDI message.
+
+[MIDI.NOTEON]
+Syntax: MIDI.NOTEON(handle, channel, note, velocity) -> bool
+Description: Send a Note On (channel 0-15).
+
+[MIDI.NOTEOFF]
+Syntax: MIDI.NOTEOFF(handle, channel, note) -> bool
+Description: Send a Note Off.
+
+[MIDI.CC]
+Syntax: MIDI.CC(handle, channel, cc, value) -> bool
+Description: Send a Control Change message.
+
+[MIDI.POLL]
+Syntax: MIDI.POLL(handle) -> [[status, data1, data2], ...]
+Description: Drain buffered incoming MIDI events (lock-free); empty array if none.
+
+[MIDI.CLOSE]
+Syntax: MIDI.CLOSE(handle)
+Description: Close a MIDI port.
+
+[MON.DEVICES]
+Syntax: MON.DEVICES() -> { playback:[names], capture:[names] }
+Description: List audio playback and capture devices. Needs the MINIAUDIO build flag.
+
+[MON.BACKEND$]
+Syntax: MON.BACKEND$() -> string
+Description: The audio backend in use (WASAPI / CoreAudio / ALSA).
+
+[MON.START]
+Syntax: MON.START([captureIdx], [playbackIdx]) -> bool
+Description: Start live input -> FX -> output monitoring. Use headphones with a line/instrument input.
+
+[MON.STOP]
+Syntax: MON.STOP()
+Description: Stop live monitoring.
+
+[MON.GAIN]
+Syntax: MON.GAIN(g)
+Description: Set the monitor output gain, applied lock-free in the audio callback.
+
+[MON.RUNNING]
+Syntax: MON.RUNNING() -> bool
+Description: Whether live monitoring is currently active.
+
+[MON.FX]
+Syntax: MON.FX(chain)
+Description: Route the live monitor through an FX chain (0 = bypass). Cabinet nodes are skipped on the live path.
+
+[MON.LEVEL]
+Syntax: MON.LEVEL() -> { in, out }
+Description: Decaying input/output peak levels for VU metering.
+
+[MON.SCOPE]
+Syntax: MON.SCOPE([count=1024]) -> [floats]
+Description: The last output samples for an oscilloscope or FFT spectrum.
+
+[MON.PITCH]
+Syntax: MON.PITCH() -> Hz
+Description: Detected fundamental of the dry input via autocorrelation, or 0 if no clear note.
+
+[MON.RECSTART]
+Syntax: MON.RECSTART() -> bool
+Description: Start tapping the wet output into the record buffer (up to 3 minutes).
+
+[MON.RECSTOP]
+Syntax: MON.RECSTOP(path$) -> seconds
+Description: Stop recording and save a 16-bit mono 48k WAV; returns seconds written.
+
+[MON.RECLEN]
+Syntax: MON.RECLEN() -> seconds
+Description: Seconds captured so far (for a recording indicator).

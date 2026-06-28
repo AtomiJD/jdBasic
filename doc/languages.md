@@ -2409,7 +2409,79 @@ A lightweight fire-and-forget particle system for effects (explosions, sparks, d
 * **`TURTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
 * **`TURTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
 
-Here is the documentation extension for **`languages.md`** covering the new Joystick/Gamepad commands.
+## Real-time Audio: WAV, FX Chain, MIDI & Live Monitor
+
+A self-contained audio toolchain that is separate from the SDL3 `SOUND.*` synth.
+Each part is behind its own build flag so it is opt-in and the SDL3 path stays
+untouched: `FX` (WAV + the effect chain), `MIDI` (RtMidi), `MINIAUDIO` (the
+real-time device monitor). A full guide is in `doc/HowTo-FX.md`; the effect
+vocabulary + tone cookbook is in `doc/AudioFX.md`.
+
+### WAV I/O (`FX` flag)
+
+| Function | Description |
+|---|---|
+| `WAV.WRITE(path$, samples[], [rate=44100], [channels=1])` -> bool | Write interleaved floats in [-1,1] as a 16-bit PCM WAV. |
+| `WAV.READ(path$)` -> `{ samples, rate, channels, frames }` or NONE | Read a WAV (PCM 8/16-bit or float32) into a mono float array. |
+| `WAV.INFO(path$)` -> `{ rate, channels, frames }` or NONE | Read the header without loading the audio. |
+
+`SOUND.RENDER(frames)` returns interleaved-stereo floats that drop straight into
+`WAV.WRITE` (take the left channel for the mono FX chain).
+
+### FX chain (`FX` flag)
+
+Build a named chain once, then process arrays offline or route it into the live
+monitor. `WAV.WRITE`, `FX.PROCESS` are non-vectorizing (they take whole arrays).
+
+| Function | Description |
+|---|---|
+| `FX.NEW()` -> chain | New empty chain handle. |
+| `FX.ADD(chain, type$, params{})` -> bool | Append an effect node (params optional; defaults fill in). |
+| `FX.PROCESS(chain, samples[], [rate=44100])` -> samples[] | Run a mono buffer through the chain (offline). |
+| `FX.SET(chain, nodeIndex, param$, value)` -> bool | Live-tweak one existing param; race-safe while monitoring. |
+| `FX.DUMP$(chain)` -> string | Readable nodeIndex / type / params listing (for the REPL). |
+| `FX.FREE(chain)` | Free the chain. Use the **paren form** `FX.FREE(ch)`. |
+
+Node `type$` values (see `doc/AudioFX.md` for params + ranges): `gain`, `drive`,
+`lowpass`, `highpass`, `delay`, `compressor`, `cabinet` (offline-only),
+`chorus`, `flanger`, `vibrato`, `phaser`, `tremolo`, `fuzz`, `bitcrush`,
+`octave`, `autowah`, `noisegate`, `eq`, `reverb`. All except `cabinet` are
+real-time-safe.
+
+### MIDI (`MIDI` flag)
+
+`channel` is 0-15. Incoming events are buffered lock-free; drain with `MIDI.POLL`.
+
+| Function | Description |
+|---|---|
+| `MIDI.PORTS()` -> `{ in:[names], out:[names] }` | List MIDI ports. |
+| `MIDI.OPEN_IN(portIndex)` / `MIDI.OPEN_OUT(portIndex)` -> handle or -1 | Open a port. |
+| `MIDI.SEND(handle, status, [data1], [data2])` -> bool | Send a raw message. |
+| `MIDI.NOTEON(handle, channel, note, velocity)` -> bool | Note On. |
+| `MIDI.NOTEOFF(handle, channel, note)` -> bool | Note Off. |
+| `MIDI.CC(handle, channel, cc, value)` -> bool | Control Change. |
+| `MIDI.POLL(handle)` -> `[[status, d1, d2], ...]` | Drain incoming events. |
+| `MIDI.CLOSE(handle)` | Close a port. |
+
+### Live monitor (`MINIAUDIO` flag)
+
+Duplex device: input -> gain -> FX chain -> output, in a lock-free audio callback.
+Use headphones with a line/instrument input (mic -> speakers howls).
+
+| Function | Description |
+|---|---|
+| `MON.DEVICES()` -> `{ playback:[names], capture:[names] }` | List devices. |
+| `MON.BACKEND$()` -> string | Backend in use (WASAPI / CoreAudio / ALSA). |
+| `MON.START([captureIdx], [playbackIdx])` -> bool | Start monitoring (defaults = system devices). |
+| `MON.STOP()` / `MON.RUNNING()` -> bool | Stop / query. |
+| `MON.GAIN(g)` | Output gain (lock-free). |
+| `MON.FX(chain)` | Route the monitor through a chain (0 = bypass; cabinet skipped live). |
+| `MON.LEVEL()` -> `{ in, out }` | Decaying peak levels for a VU meter. |
+| `MON.SCOPE([count=1024])` -> [floats] | Last output samples for an oscilloscope / FFT spectrum. |
+| `MON.PITCH()` -> Hz | Detected fundamental of the dry input (autocorrelation), 0 if none. |
+| `MON.RECSTART()` -> bool / `MON.RECSTOP(path$)` -> seconds / `MON.RECLEN()` -> seconds | Record the wet output to a WAV while monitoring. |
+
+The full ImGui pedalboard built on these is `jdb/demos/audio/fx_rack.jdb`.
 
 ### Mouse / Joystick / Gamepad Input
 
