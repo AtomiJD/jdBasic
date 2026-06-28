@@ -51,6 +51,24 @@ DIM x   = FX.FREE(ch)                               ' free (use the paren form!)
 Nodes run **in the order added**. `FX.PROCESS` works on a mono float buffer.
 Call `FX.FREE(ch)` in **paren form** - `FX.FREE ch` (statement form) mis-parses.
 
+### Live tuning (the FX REPL)
+
+While a chain is running (offline or under `MON.FX` live monitoring) you can
+inspect and tweak it from the REPL:
+
+```basic
+PRINT FX.DUMP$(ch)                       ' list nodes: index, type, all params
+DIM ok = FX.SET(ch, 3, "amount", 30)     ' set node 3's "amount" to 30 -> TRUE
+```
+
+`FX.SET(chain, nodeIndex, param$, value)` updates **one** parameter of an existing
+node and returns `TRUE`, or `FALSE` if the chain/index/param is unknown. It only
+writes parameters that already exist (every node type's full set is pre-populated
+at `FX.ADD` time), so it is safe to call while the lock-free audio callback is
+reading the chain. Build the chain, start monitoring, then turn knobs live -
+play, listen, `FX.SET`, repeat. Use the **paren form** with `PRINT` or `DIM x =`;
+the bare statement form with comma args mis-parses.
+
 ## The effect vocabulary
 
 | type | params (defaults) | what it does |
@@ -62,6 +80,22 @@ Call `FX.FREE(ch)` in **paren form** - `FX.FREE ch` (statement form) mis-parses.
 | `delay` | `time_ms` (300), `feedback` (0.35), `mix` (0.3) | feedback delay / echo |
 | `compressor` | `threshold` (0.5), `ratio` (4), `makeup` (1.0) | peak compressor (sustain, evenness) |
 | `cabinet` | `ir` (WAV path), `level` (0.7), `mix` (1.0) | convolve with a speaker-cabinet impulse response = the realism jump |
+| `chorus` | `rate` (0.8), `depth` (3), `delay` (14), `mix` (0.5) | LFO-modulated short delay; lush, doubled, shimmering |
+| `flanger` | `rate` (0.3), `depth` (2), `delay` (1), `mix` (0.5), `feedback` (0.5) | short modulated delay + feedback; jet-plane sweep |
+| `vibrato` | `rate` (5), `depth` (2), `delay` (14) | 100% wet pitch wobble (no dry) |
+| `phaser` | `rate` (0.5), `depth` (2 oct), `base` (500), `mix` (0.5), `feedback` (0.3) | 4-stage swept allpass; classic phasing swoosh |
+| `tremolo` | `rate` (5), `depth` (0.7) | amplitude modulation; pulsing volume |
+| `fuzz` | `amount` (10), `level` (0.6) | asymmetric hard clip; harsher/buzzier than `drive` |
+| `bitcrush` | `bits` (8), `downsample` (4), `mix` (1.0) | bit-depth + sample-rate reduction; lo-fi/digital grit |
+| `octave` | `amount` (8), `level` (0.5), `mix` (0.7) | full-wave-rectifier octave-up fuzz (DC-blocked) |
+| `autowah` | `base` (300), `range` (2200), `sensitivity` (8), `q` (4), `mix` (1.0) | envelope-following bandpass; funky auto-wah |
+| `noisegate` | `threshold` (0.02) | silences signal below threshold; tames high-gain hiss |
+| `eq` | `freq` (800), `q` (1), `gain` (6 dB) | single peaking band; cut/boost mids (negative `gain` = cut) |
+| `reverb` | `roomsize` (0.7), `damp` (0.5), `mix` (0.3) | Freeverb-style room/hall ambience |
+
+All nodes except `cabinet` are **real-time safe** (they allocate at most once), so
+they run on the live `MON.FX` path too. `cabinet` is offline-only (it allocates
+per block) and is skipped while monitoring.
 
 ### Cabinet IR
 `cabinet` loads a `.wav` impulse response (left channel, unit-peak normalized)
@@ -160,6 +194,27 @@ FX.ADD ch, "lowpass",  { "cutoff": 4500, "q": 0.9 }
 FX.ADD ch, "cabinet",  { "ir": "tmp/cab_ir.wav", "level": 0.95 }
 ```
 
+**Lush clean (chorus + reverb)** (ambient, dreamy):
+```basic
+FX.ADD ch, "compressor", { "threshold": 0.4, "ratio": 2, "makeup": 1.1 }
+FX.ADD ch, "chorus",     { "rate": 0.9, "depth": 3.5, "mix": 0.5 }
+FX.ADD ch, "reverb",     { "roomsize": 0.85, "damp": 0.4, "mix": 0.35 }
+```
+
+**Funk rhythm (auto-wah)** (envelope-following quack):
+```basic
+FX.ADD ch, "compressor", { "threshold": 0.3, "ratio": 4, "makeup": 1.4 }
+FX.ADD ch, "autowah",    { "base": 300, "range": 2400, "sensitivity": 10, "q": 5 }
+FX.ADD ch, "drive",      { "amount": 4, "level": 0.8 }
+```
+
+**Lo-fi crunch (fuzz + bitcrush)** (gritty, broken):
+```basic
+FX.ADD ch, "fuzz",     { "amount": 16, "level": 0.6 }
+FX.ADD ch, "bitcrush", { "bits": 6, "downsample": 6, "mix": 0.6 }
+FX.ADD ch, "lowpass",  { "cutoff": 3000 }
+```
+
 (Use `DIM ok = FX.ADD(...)` paren form in real code; shown bare here for brevity.)
 
 ---
@@ -169,5 +224,8 @@ FX.ADD ch, "cabinet",  { "ir": "tmp/cab_ir.wav", "level": 0.95 }
   `tone_designer.jdb`
 - WAV: `WAV.WRITE/READ/INFO`. MIDI: `MIDI.PORTS/OPEN_OUT/OPEN_IN/SEND/NOTEON/
   NOTEOFF/CC/POLL/CLOSE` (see the `audio` jdTrakr project + `notes/audio_midi_plan.md`).
-- Planned: real-time monitoring (`MINIAUDIO` flag, live guitar through the same
-  chain) and longer/partitioned convolution for full reverb IRs.
+- Real-time monitoring (`MINIAUDIO` flag): `MON.DEVICES/START/STOP/GAIN/FX/RUNNING`
+  run a live guitar/line input through an FX chain. Tune it live with `FX.SET` /
+  `FX.DUMP$` (see `jdb/demos/audio/live_fx.jdb`).
+- Planned: longer/partitioned convolution so `cabinet` (and full reverb IRs) can
+  run on the live path too.

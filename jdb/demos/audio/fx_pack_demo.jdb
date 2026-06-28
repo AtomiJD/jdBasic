@@ -1,0 +1,46 @@
+' fx_pack_demo.jdb - render a synth riff through the modulation / lo-fi / space
+' pedals and export one WAV per effect, so you can hear each without a guitar.
+' Needs a build with SOUND + FX. Run from the repo root.
+'   build.bat HTTP GFX IMGUI NATIVEC SOUND FX
+
+SOUND.INIT
+SOUND.VOICE 0, "SAW", 0.005, 0.40, 0.55, 0.6
+SOUND.VOICE 1, "SAW", 0.005, 0.40, 0.55, 0.6
+SOUND.PLAY 0, "e3"
+SOUND.PLAY 1, "b3"
+
+DIM rate = 44100
+DIM stereo = SOUND.RENDER(rate * 2)       ' 2 s, interleaved stereo
+
+DIM mono = []
+DIM j
+FOR j = 0 TO LEN(stereo) - 1 STEP 2
+    mono = APPEND(mono, stereo[j])
+NEXT j
+
+MKDIR "tmp"
+WAV.WRITE "tmp/pack_clean.wav", mono, rate, 1
+
+' one node per file: name, params
+DIM demos = [ ["chorus",   { "rate": 0.9, "depth": 4, "mix": 0.5 }], _
+              ["flanger",  { "rate": 0.4, "depth": 3, "feedback": 0.6, "mix": 0.5 }], _
+              ["phaser",   { "rate": 0.5, "depth": 2.5, "mix": 0.6 }], _
+              ["tremolo",  { "rate": 6, "depth": 0.8 }], _
+              ["fuzz",     { "amount": 16, "level": 0.6 }], _
+              ["bitcrush", { "bits": 6, "downsample": 6, "mix": 0.7 }], _
+              ["octave",   { "amount": 8, "level": 0.6, "mix": 0.7 }], _
+              ["autowah",  { "base": 300, "range": 2400, "sensitivity": 9, "q": 5 }], _
+              ["reverb",   { "roomsize": 0.85, "damp": 0.4, "mix": 0.4 }] ]
+
+DIM i
+FOR i = 0 TO LEN(demos) - 1
+    DIM nm = demos[i][0]
+    DIM ch = FX.NEW()
+    DIM ok = FX.ADD(ch, nm, demos[i][1])
+    DIM wet = FX.PROCESS(ch, mono, rate)
+    DIM freed = FX.FREE(ch)
+    WAV.WRITE "tmp/pack_" + nm + ".wav", wet, rate, 1
+    PRINT "tmp/pack_"; nm; ".wav"
+NEXT i
+
+PRINT "clean reference: tmp/pack_clean.wav"

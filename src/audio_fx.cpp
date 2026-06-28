@@ -89,8 +89,17 @@ struct FxNode {
     std::vector<float> dl;           // delay line
     std::vector<float> ir;           // cabinet impulse response
     size_t dpos = 0;
-    double z1 = 0.0, z2 = 0.0;       // biquad state
-    double env = 0.0;                // compressor envelope
+    double z1 = 0.0, z2 = 0.0;       // biquad state (also phaser feedback in z1)
+    double env = 0.0;                // compressor / wah / gate envelope
+    double lfo = 0.0;                // modulation LFO phase
+    double ap[8] = {0,0,0,0,0,0,0,0};// phaser allpass stages (x,y per stage)
+    double hold = 0.0;               // bitcrush sample-and-hold value
+    int    crush = 0;                // bitcrush downsample counter
+    double gr = 0.0;                 // noisegate gain smoothing
+    std::vector<std::vector<float>> cb;  // reverb comb buffers
+    std::vector<std::vector<float>> apb; // reverb allpass buffers
+    std::vector<float>  clp;         // reverb per-comb damping state
+    std::vector<size_t> cpos, appos; // reverb buffer positions
     double param(const char* k, double def) const {
         auto it = p.find(k); return it == p.end() ? def : it->second;
     }
@@ -101,14 +110,28 @@ std::map<int, FxChain> g_chains;
 int        g_chain_next = 1;
 std::mutex g_chain_mtx;
 
+static const double FX_PI    = 3.14159265358979323846;
+static const double FX_2PI   = 6.28318530717958647692;
+
 static void biquad_coeffs(const std::string& type, double cutoff, double Q, double rate,
-                          double& b0, double& b1, double& b2, double& a1, double& a2) {
-    double w0 = 2.0 * 3.14159265358979323846 * cutoff / rate;
+                          double& b0, double& b1, double& b2, double& a1, double& a2,
+                          double gainDb = 0.0) {
+    double w0 = FX_2PI * cutoff / rate;
     double cw = std::cos(w0), sw = std::sin(w0);
     double alpha = sw / (2.0 * (Q <= 0.0 ? 0.707 : Q));
-    if (type == "highpass") { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; }
-    else                    { b0 = (1 - cw) / 2; b1 =  (1 - cw); b2 = (1 - cw) / 2; }
-    double a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha;
+    double a0;
+    if (type == "bandpass") {            // 0 dB peak bandpass (BPF)
+        b0 = alpha; b1 = 0; b2 = -alpha;
+        a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha;
+    } else if (type == "peak") {         // peaking EQ, gainDb cut/boost
+        double A = std::pow(10.0, gainDb / 40.0);
+        b0 = 1 + alpha * A; b1 = -2 * cw; b2 = 1 - alpha * A;
+        a0 = 1 + alpha / A; a1 = -2 * cw; a2 = 1 - alpha / A;
+    } else {
+        if (type == "highpass") { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; }
+        else                    { b0 = (1 - cw) / 2; b1 =  (1 - cw); b2 = (1 - cw) / 2; }
+        a0 = 1 + alpha; a1 = -2 * cw; a2 = 1 - alpha;
+    }
     b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
 }
 
@@ -163,6 +186,153 @@ static void process_node(FxNode& n, float* buf, unsigned cnt, double rate) {
             out[i] = (float)(buf[i] * (1.0 - mix) + acc * level * mix);
         }
         for (unsigned i = 0; i < cnt; i++) buf[i] = out[i];
+    } else if (t == "chorus" || t == "flanger" || t == "vibrato") {
+        bool fl = (t == "flanger"), vb = (t == "vibrato");
+        double rt  = n.param("rate",  fl ? 0.3 : (vb ? 5.0 : 0.8));
+        double dep = n.param("depth", fl ? 2.0 : (vb ? 2.0 : 3.0));
+        double base = n.param("delay", fl ? 1.0 : 14.0);
+        double mix = vb ? 1.0 : n.param("mix", 0.5);
+        double fb  = fl ? n.param("feedback", 0.5) : 0.0;
+        size_t len = (size_t)((base + dep + 5.0) / 1000.0 * rate) + 4;
+        if (n.dl.size() != len) { n.dl.assign(len, 0.0f); n.dpos = 0; }
+        double inc = FX_2PI * rt / rate;
+        for (unsigned i = 0; i < cnt; i++) {
+            double m = 0.5 * (1.0 + std::sin(n.lfo));
+            n.lfo += inc; if (n.lfo > FX_2PI) n.lfo -= FX_2PI;
+            double dsamp = (base + dep * m) / 1000.0 * rate;
+            double rp = (double)n.dpos - dsamp;
+            while (rp < 0) rp += len;
+            size_t i0 = (size_t)rp; double fr = rp - i0;
+            double wet = n.dl[i0] * (1.0 - fr) + n.dl[(i0 + 1) % len] * fr;
+            double in = buf[i];
+            n.dl[n.dpos] = (float)(in + wet * fb);
+            n.dpos = (n.dpos + 1) % len;
+            buf[i] = (float)(in * (1.0 - mix) + wet * mix);
+        }
+    } else if (t == "phaser") {
+        double rt = n.param("rate", 0.5), oct = n.param("depth", 2.0);
+        double mix = n.param("mix", 0.5), fb = n.param("feedback", 0.3);
+        double base = n.param("base", 500.0);
+        double inc = FX_2PI * rt / rate;
+        for (unsigned i = 0; i < cnt; i++) {
+            double m = 0.5 * (1.0 + std::sin(n.lfo));
+            n.lfo += inc; if (n.lfo > FX_2PI) n.lfo -= FX_2PI;
+            double fc = base * std::pow(2.0, oct * m);
+            if (fc > rate * 0.45) fc = rate * 0.45;
+            double tn = std::tan(FX_PI * fc / rate);
+            double a = (1.0 - tn) / (1.0 + tn);
+            double in = buf[i] + fb * n.z1;
+            for (int s = 0; s < 4; s++) {
+                double xp = n.ap[2 * s], yp = n.ap[2 * s + 1];
+                double y = a * in + xp - a * yp;
+                n.ap[2 * s] = in; n.ap[2 * s + 1] = y;
+                in = y;
+            }
+            n.z1 = in;
+            buf[i] = (float)(buf[i] * (1.0 - mix) + in * mix);
+        }
+    } else if (t == "tremolo") {
+        double rt = n.param("rate", 5.0), dep = n.param("depth", 0.7);
+        double inc = FX_2PI * rt / rate;
+        for (unsigned i = 0; i < cnt; i++) {
+            double m = 0.5 * (1.0 + std::sin(n.lfo));
+            n.lfo += inc; if (n.lfo > FX_2PI) n.lfo -= FX_2PI;
+            buf[i] = (float)(buf[i] * (1.0 - dep * m));
+        }
+    } else if (t == "fuzz") {
+        double g = 1.0 + n.param("amount", 10.0), lvl = n.param("level", 0.6);
+        for (unsigned i = 0; i < cnt; i++) {
+            double v = buf[i] * g;
+            if (v > 1.0) v = 1.0; else if (v < -0.8) v = -0.8;   // asymmetric hard clip
+            buf[i] = (float)(v * lvl);
+        }
+    } else if (t == "bitcrush") {
+        double levels = std::pow(2.0, n.param("bits", 8.0));
+        int dv = (int)std::max(1.0, n.param("downsample", 4.0));
+        double mix = n.param("mix", 1.0);
+        for (unsigned i = 0; i < cnt; i++) {
+            if (n.crush <= 0) { n.hold = std::round(buf[i] * levels) / levels; n.crush = dv; }
+            n.crush--;
+            buf[i] = (float)(buf[i] * (1.0 - mix) + n.hold * mix);
+        }
+    } else if (t == "octave") {
+        double g = 1.0 + n.param("amount", 8.0), lvl = n.param("level", 0.5), mix = n.param("mix", 0.7);
+        for (unsigned i = 0; i < cnt; i++) {
+            double rec = std::tanh(std::fabs((double)buf[i]) * g);   // full-wave rectify -> octave up
+            double y = rec - n.z1 + 0.995 * n.z2;                    // DC blocker
+            n.z1 = rec; n.z2 = y;
+            buf[i] = (float)(buf[i] * (1.0 - mix) + y * lvl * mix);
+        }
+    } else if (t == "autowah") {
+        double base = n.param("base", 300.0), range = n.param("range", 2200.0);
+        double sens = n.param("sensitivity", 8.0), Q = n.param("q", 4.0), mix = n.param("mix", 1.0);
+        double att = std::exp(-1.0 / (0.005 * rate)), rel = std::exp(-1.0 / (0.05 * rate));
+        for (unsigned i = 0; i < cnt; i++) {
+            double av = std::fabs((double)buf[i]);
+            n.env = (av > n.env) ? (att * n.env + (1 - att) * av) : (rel * n.env + (1 - rel) * av);
+            double ef = n.env * sens; if (ef > 1.0) ef = 1.0;
+            double fc = base + range * ef;
+            double b0, b1, b2, a1, a2;
+            biquad_coeffs("bandpass", fc, Q, rate, b0, b1, b2, a1, a2);
+            double in = buf[i];
+            double out = b0 * in + n.z1;
+            n.z1 = b1 * in - a1 * out + n.z2;
+            n.z2 = b2 * in - a2 * out;
+            buf[i] = (float)(in * (1.0 - mix) + out * mix);
+        }
+    } else if (t == "noisegate") {
+        double thr = n.param("threshold", 0.02);
+        double att = std::exp(-1.0 / (0.001 * rate)), rel = std::exp(-1.0 / (0.08 * rate));
+        for (unsigned i = 0; i < cnt; i++) {
+            double av = std::fabs((double)buf[i]);
+            n.env = (av > n.env) ? (att * n.env + (1 - att) * av) : (rel * n.env + (1 - rel) * av);
+            double target = (n.env > thr) ? 1.0 : 0.0;
+            double c = (target > n.gr) ? att : rel;            // open fast, close slow
+            n.gr = c * n.gr + (1.0 - c) * target;
+            buf[i] = (float)(buf[i] * n.gr);
+        }
+    } else if (t == "eq") {
+        double b0, b1, b2, a1, a2;
+        biquad_coeffs("peak", n.param("freq", 800.0), n.param("q", 1.0), rate,
+                      b0, b1, b2, a1, a2, n.param("gain", 6.0));
+        for (unsigned i = 0; i < cnt; i++) {
+            double in = buf[i];
+            double out = b0 * in + n.z1;
+            n.z1 = b1 * in - a1 * out + n.z2;
+            n.z2 = b2 * in - a2 * out;
+            buf[i] = (float)out;
+        }
+    } else if (t == "reverb") {
+        static const int CT[8] = {1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617};
+        static const int AT[4] = {556, 441, 341, 225};
+        if (n.cb.empty()) {                                    // allocate once (Freeverb-style)
+            double sr = rate / 44100.0;
+            for (int k = 0; k < 8; k++) n.cb.push_back(std::vector<float>((size_t)std::max(1.0, CT[k] * sr), 0.0f));
+            for (int k = 0; k < 4; k++) n.apb.push_back(std::vector<float>((size_t)std::max(1.0, AT[k] * sr), 0.0f));
+            n.clp.assign(8, 0.0f); n.cpos.assign(8, 0); n.appos.assign(4, 0);
+        }
+        double room = n.param("roomsize", 0.7), damp = n.param("damp", 0.5), mix = n.param("mix", 0.3);
+        double fb = room * 0.28 + 0.7, damp1 = damp * 0.4, gain = 0.015;
+        for (unsigned i = 0; i < cnt; i++) {
+            double in = buf[i] * gain, acc = 0.0;
+            for (int k = 0; k < 8; k++) {
+                std::vector<float>& b = n.cb[k]; size_t& cp = n.cpos[k];
+                double out = b[cp];
+                n.clp[k] = (float)(out * (1.0 - damp1) + n.clp[k] * damp1);
+                b[cp] = (float)(in + n.clp[k] * fb);
+                cp = (cp + 1) % b.size();
+                acc += out;
+            }
+            for (int k = 0; k < 4; k++) {
+                std::vector<float>& b = n.apb[k]; size_t& ap = n.appos[k];
+                double bo = b[ap];
+                double out = -acc + bo;
+                b[ap] = (float)(acc + bo * 0.5);
+                ap = (ap + 1) % b.size();
+                acc = out;
+            }
+            buf[i] = (float)(buf[i] * (1.0 - mix) + acc * mix);
+        }
     }
     // unknown type: pass-through
 }
@@ -178,6 +348,18 @@ static void ensure_defaults(FxNode& n) {
     else if (t == "delay")      { def("time_ms", 300.0); def("feedback", 0.35); def("mix", 0.3); }
     else if (t == "compressor") { def("threshold", 0.5); def("ratio", 4.0); def("makeup", 1.0); }
     else if (t == "cabinet")    { def("level", 0.7); def("mix", 1.0); }
+    else if (t == "chorus")     { def("rate", 0.8); def("depth", 3.0); def("delay", 14.0); def("mix", 0.5); }
+    else if (t == "flanger")    { def("rate", 0.3); def("depth", 2.0); def("delay", 1.0); def("mix", 0.5); def("feedback", 0.5); }
+    else if (t == "vibrato")    { def("rate", 5.0); def("depth", 2.0); def("delay", 14.0); }
+    else if (t == "phaser")     { def("rate", 0.5); def("depth", 2.0); def("base", 500.0); def("mix", 0.5); def("feedback", 0.3); }
+    else if (t == "tremolo")    { def("rate", 5.0); def("depth", 0.7); }
+    else if (t == "fuzz")       { def("amount", 10.0); def("level", 0.6); }
+    else if (t == "bitcrush")   { def("bits", 8.0); def("downsample", 4.0); def("mix", 1.0); }
+    else if (t == "octave")     { def("amount", 8.0); def("level", 0.5); def("mix", 0.7); }
+    else if (t == "autowah")    { def("base", 300.0); def("range", 2200.0); def("sensitivity", 8.0); def("q", 4.0); def("mix", 1.0); }
+    else if (t == "noisegate")  { def("threshold", 0.02); }
+    else if (t == "eq")         { def("freq", 800.0); def("q", 1.0); def("gain", 6.0); }
+    else if (t == "reverb")     { def("roomsize", 0.7); def("damp", 0.5); def("mix", 0.3); }
 }
 
 } // namespace
