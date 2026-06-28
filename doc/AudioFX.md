@@ -31,11 +31,8 @@ SOUND.INIT
 SOUND.VOICE 0, "SAW", 0.005, 0.4, 0.55, 0.6
 SOUND.PLAY 0, "e3"
 DIM stereo = SOUND.RENDER(44100)        ' 1 s
-DIM mono = []
-DIM j
-FOR j = 0 TO LEN(stereo) - 1 STEP 2
-    mono = APPEND(mono, stereo[j])
-NEXT j
+' left channel only: every 2nd interleaved sample
+DIM mono = SELECT(LAMBDA i -> stereo[i * 2], IOTA(LEN(stereo) / 2, 0))
 ```
 
 ## The chain API
@@ -104,11 +101,8 @@ a miked amp. No IR file handy? Synthesize a usable one by band-passing a short
 impulse:
 
 ```basic
-DIM imp = []
-DIM k
-FOR k = 0 TO 399
-    IF k = 0 THEN imp = APPEND(imp, 1.0) ELSE imp = APPEND(imp, 0.0)
-NEXT k
+DIM imp = ZEROS(400)        ' a unit impulse: 1 at index 0, the rest zero
+imp[0] = 1.0
 DIM c = FX.NEW()
 DIM ok = FX.ADD(c, "highpass", { "cutoff": 110 })
 ok     = FX.ADD(c, "lowpass",  { "cutoff": 3600, "q": 1.2 })
@@ -130,10 +124,8 @@ low/mid/high to see the tonal balance shift after a chain - then reason
 FUNC BANDS(sig)                 ' -> { low, mid, high } in percent
     DIM N = 4096
     DIM st = (LEN(sig) - N) / 2 : IF st < 0 THEN st = 0
-    DIM win = [] : DIM i
-    FOR i = 0 TO N - 1
-        IF st + i < LEN(sig) THEN win = APPEND(win, sig[st+i]) ELSE win = APPEND(win, 0.0)
-    NEXT i
+    DIM i
+    DIM win = SELECT(LAMBDA USE(sig, st) k -> sig[st + k], IOTA(N, 0))   ' centered N-sample window
     DIM spec = FFT(win)
     DIM lo = 0.0 : DIM mi = 0.0 : DIM hi = 0.0
     FOR i = 1 TO N/2 - 1
