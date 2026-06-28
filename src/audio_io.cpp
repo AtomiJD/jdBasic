@@ -186,7 +186,7 @@ void register_audioio_builtins(VM& vm) {
         double msq = 0.0;
         for (int i = 0; i < N; i++) { buf[i] = (float)(buf[i] - mean); msq += (double)buf[i] * buf[i]; }
         msq /= N;
-        if (msq < 0.0001) return Value::make_f64(0.0);          // below noise floor
+        if (msq < 0.00001) return Value::make_f64(0.0);         // below noise floor (quiet dry guitar)
         const double rate = 48000.0;
         int minTau = (int)(rate / 1000.0);                      // up to 1000 Hz
         int maxTau = (int)(rate / 70.0);                        // down to 70 Hz
@@ -202,7 +202,7 @@ void register_audioio_builtins(VM& vm) {
             rbuf[tau] = r;
             if (r > bestR) bestR = r;
         }
-        if (bestR < 0.5 * r0) return Value::make_f64(0.0);      // not periodic enough
+        if (bestR < 0.35 * r0) return Value::make_f64(0.0);     // not periodic enough
         double thr = 0.93 * bestR;                              // earliest strong peak = fundamental
         int tsel = -1;
         for (int tau = minTau; tau <= maxTau; tau++)

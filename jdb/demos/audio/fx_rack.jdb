@@ -22,6 +22,8 @@ DIM appRunning = TRUE
 DIM showScope = TRUE
 DIM recArmed = FALSE
 DIM recCount = 0
+DIM lastHz = 0
+DIM lastHzTick = 0
 DIM aiCfg, aiOrder, aiProviders
 DIM aiProvSel = 0
 DIM aiPrompt$ = "warm clean with light reverb"
@@ -41,6 +43,7 @@ DIM learnNode = -1
 DIM learnKey$ = ""
 DIM learnLo = 0.0, learnHi = 1.0
 DIM midiMaps = []            ' each mapping: { cc, node, key, lo, hi }
+DIM midiLast$ = ""           ' last received message (port activity indicator)
 
 ' ---- model helpers ----
 
@@ -405,12 +408,14 @@ ENDSUB
 SUB CLOSE_MIDI()
     IF midiOpen THEN DIM c = MIDI.CLOSE(midiHandle)
     midiOpen = FALSE
+    midiLast$ = ""
     status$ = "MIDI closed"
 ENDSUB
 
 SUB SET_MIDI_DEV(idx)
     IF idx <> midiPortSel THEN
         midiPortSel = idx
+        midiLast$ = ""
         IF midiOpen THEN
             CLOSE_MIDI()
             OPEN_MIDI()
@@ -464,6 +469,7 @@ SUB POLL_MIDI()
         FOR q = 0 TO LEN(evs) - 1
             DIM ev = evs[q]
             IF LEN(ev) >= 3 THEN
+                midiLast$ = "last msg: " + ev[0] + " " + ev[1] + " " + ev[2]
                 DIM sb = ev[0]
                 IF sb >= 176 ANDALSO sb <= 191 THEN
                     DIM cc = ev[1]
@@ -584,14 +590,25 @@ DO
         GUI.SEPARATOR_TEXT("Tuner")
         DIM hz = MON.PITCH()
         IF hz > 0 THEN
-            DIM pinf = PITCH_INFO(hz)
-            GUI.TEXT "note  " + pinf{"note"} + "     " + INT(hz) + " Hz"
+            lastHz = hz
+            lastHzTick = TICK()
+        ENDIF
+        DIM showHz = 0
+        IF hz > 0 THEN
+            showHz = hz
+        ELSEIF lastHz > 0 ANDALSO (TICK() - lastHzTick) < 700 THEN
+            showHz = lastHz
+        ENDIF
+        IF showHz > 0 THEN
+            DIM pinf = PITCH_INFO(showHz)
             DIM cb = (pinf{"cents"} + 50) / 100.0
             IF cb < 0 THEN cb = 0
             IF cb > 1 THEN cb = 1
+            GUI.TEXT "note  " + pinf{"note"} + "     " + INT(showHz) + " Hz"
             GUI.PROGRESS cb, INT(pinf{"cents"}) + " cents"
         ELSE
             GUI.TEXT "play a single open string to tune"
+            GUI.PROGRESS 0.5, "---"
         ENDIF
 
         GUI.SEPARATOR_TEXT("Pedalboard")
@@ -675,6 +692,13 @@ DO
                 GUI.TEXT "LEARN active - move a knob on the device"
             ELSEIF midiOpen THEN
                 GUI.TEXT "expand a pedal, press L by a knob, then move a CC to bind"
+            ENDIF
+            IF midiOpen THEN
+                IF LEN(midiLast$) > 0 THEN
+                    GUI.TEXT midiLast$
+                ELSE
+                    GUI.TEXT "no MIDI activity yet - wiggle a knob to find the right port"
+                ENDIF
             ENDIF
             DIM mpDel = -1, mr
             FOR mr = 0 TO LEN(midiMaps) - 1
