@@ -133,6 +133,15 @@ Open `https://YOUR.DOMAIN`. The board is empty and there are no users yet.
   and/or `jdtrakr.json`) into `/opt/jdtrakr/`, then `sudo systemctl restart
   jdtrakr`. The `.db` is untouched by a restart. `"secure": true` already lives
   in the installed `jdtrakr.json`, so no per-update edit is needed.
+- **Updated a template with an inline `<script>`?** (e.g. `jdtrakr_tpl/board.html`,
+  any `jdweb_tpl/*.html`) you MUST refresh the CSP script hashes or the browser
+  silently blocks the script (page renders empty, no server error, curl looks
+  fine). After copying the template, run on the server:
+  `/opt/jdtrakr/deploy/update_csp.sh` (recomputes every inline-script sha256 from
+  the deployed templates, rewrites the nginx `script-src`, `nginx -t`, reload,
+  auto-rollback on failure; `--dry` to preview). The script self-installs from
+  `jdb/demos/web/deploy/update_csp.sh`. CSS-only or `.jdb`-only changes do not
+  need it.
 - **Logs:** `journalctl -u jdtrakr -f`
 - **Passwords** are stored as salted SHA-256 (per-user random salt). To reset a
   user's password, clear it and let them re-claim:
