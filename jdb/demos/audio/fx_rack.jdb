@@ -19,6 +19,8 @@ DIM saveName$ = "My Tone"
 DIM status$ = "press Start to monitor"
 DIM appRunning = TRUE
 DIM showScope = TRUE
+DIM recArmed = FALSE
+DIM recCount = 0
 DIM NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 DIM tapTimes = []
 DIM tapBpm = 0
@@ -31,10 +33,10 @@ DIM midiPortSel = 0
 DIM midiOpen = FALSE
 DIM midiHandle = -1
 DIM midiLearn = FALSE
-DIM midiCC = -1
-DIM midiNode = -1
-DIM midiKey$ = ""
-DIM midiLo = 0.0, midiHi = 1.0
+DIM learnNode = -1
+DIM learnKey$ = ""
+DIM learnLo = 0.0, learnHi = 1.0
+DIM midiMaps = []            ' each mapping: { cc, node, key, lo, hi }
 
 ' ---- model helpers ----
 
@@ -293,21 +295,56 @@ ENDSUB
 SUB CLOSE_MIDI()
     IF midiOpen THEN DIM c = MIDI.CLOSE(midiHandle)
     midiOpen = FALSE
-    midiCC = -1
     status$ = "MIDI closed"
+ENDSUB
+
+SUB SET_MIDI_DEV(idx)
+    IF idx <> midiPortSel THEN
+        midiPortSel = idx
+        IF midiOpen THEN
+            CLOSE_MIDI()
+            OPEN_MIDI()
+        ENDIF
+    ENDIF
 ENDSUB
 
 SUB START_LEARN(i, pkey$, plo, phi)
     IF midiOpen THEN
         midiLearn = TRUE
-        midiNode = i
-        midiKey$ = pkey$
-        midiLo = plo
-        midiHi = phi
-        status$ = "LEARN: move your pedal to bind it"
+        learnNode = i
+        learnKey$ = pkey$
+        learnLo = plo
+        learnHi = phi
+        status$ = "LEARN: move a knob/pedal on the MIDI device to bind it"
     ELSE
         status$ = "open a MIDI input first"
     ENDIF
+ENDSUB
+
+' bind the learn target to a CC; replace any map with the same CC or same node+param
+SUB ADD_MAP(cc)
+    DIM nm = [], q
+    FOR q = 0 TO LEN(midiMaps) - 1
+        DIM m = midiMaps[q]
+        IF NOT (m{"cc"} = cc) ANDALSO NOT (m{"node"} = learnNode ANDALSO m{"key"} = learnKey$) THEN
+            nm = APPEND(nm, m)
+        ENDIF
+    NEXT q
+    DIM mm AS MAP
+    mm{"cc"} = cc
+    mm{"node"} = learnNode
+    mm{"key"} = learnKey$
+    mm{"lo"} = learnLo
+    mm{"hi"} = learnHi
+    midiMaps = APPEND(nm, mm)
+ENDSUB
+
+SUB REMOVE_MAP(idx)
+    DIM nm = [], q
+    FOR q = 0 TO LEN(midiMaps) - 1
+        IF q <> idx THEN nm = APPEND(nm, midiMaps[q])
+    NEXT q
+    midiMaps = nm
 ENDSUB
 
 SUB POLL_MIDI()
@@ -322,12 +359,18 @@ SUB POLL_MIDI()
                     DIM cc = ev[1]
                     DIM vv = ev[2]
                     IF midiLearn THEN
-                        midiCC = cc
+                        ADD_MAP(cc)
                         midiLearn = FALSE
-                        status$ = "bound CC " + cc + " -> node " + midiNode + " " + midiKey$
-                    ELSEIF cc = midiCC ANDALSO midiNode >= 0 ANDALSO midiNode < LEN(rack) THEN
-                        DIM pv = midiLo + (midiHi - midiLo) * (vv / 127.0)
-                        SET_PARAM(midiNode, midiKey$, pv)
+                        status$ = "bound CC " + cc + " -> node " + learnNode + " " + learnKey$
+                    ELSE
+                        DIM r
+                        FOR r = 0 TO LEN(midiMaps) - 1
+                            DIM m = midiMaps[r]
+                            IF m{"cc"} = cc ANDALSO m{"node"} >= 0 ANDALSO m{"node"} < LEN(rack) THEN
+                                DIM pv = m{"lo"} + (m{"hi"} - m{"lo"}) * (vv / 127.0)
+                                SET_PARAM(m{"node"}, m{"key"}, pv)
+                            ENDIF
+                        NEXT r
                     ENDIF
                 ENDIF
             ENDIF
@@ -345,7 +388,7 @@ DIM mp = MIDI.PORTS()
 midiInNames = mp{"in"}
 LOAD_PRESET("Brian May")
 
-SCREEN 820, 1040, "jdBasic FX Rack", 2
+SCREEN 820, 1040, "jdBasic FX Rack", 1
 
 ' ---- main loop ----
 DO
@@ -384,6 +427,28 @@ DO
             IF GUI.BUTTON("Stop") THEN DIM st = MON.STOP()
         ELSE
             IF GUI.BUTTON("Start") THEN START_MON()
+        ENDIF
+        GUI.SAME_LINE
+        IF recArmed THEN
+            IF GUI.BUTTON("Stop rec") THEN
+                DIM rpath$ = PATH.JOIN$(cfgDir$, "rec_" + STR$(recCount) + ".wav")
+                DIM rsecs = MON.RECSTOP(rpath$)
+                recArmed = FALSE
+                recCount = recCount + 1
+                status$ = "saved " + rpath$ + " (" + STR$(INT(rsecs)) + "s)"
+            ENDIF
+            GUI.SAME_LINE
+            GUI.TEXT "REC " + INT(MON.RECLEN()) + "s"
+        ELSE
+            IF GUI.BUTTON("Record") THEN
+                IF MON.RUNNING() THEN
+                    DIM rok = MON.RECSTART()
+                    recArmed = TRUE
+                    status$ = "recording..."
+                ELSE
+                    status$ = "press Start before recording"
+                ENDIF
+            ENDIF
         ENDIF
 
         GUI.SEPARATOR_TEXT("Scope")
@@ -466,26 +531,35 @@ DO
         GUI.SAME_LINE
         IF GUI.BUTTON("Save Preset") THEN SAVE_PRESET(saveName$)
 
-        GUI.SEPARATOR_TEXT("MIDI foot pedal")
-        IF midiOpen THEN
-            GUI.TEXT "open: " + midiInNames[midiPortSel]
+        GUI.SEPARATOR_TEXT("MIDI control")
+        IF LEN(midiInNames) > 0 THEN
+            DIM mdsel = GUI.COMBO("##mididev", midiPortSel, midiInNames)
+            IF mdsel <> midiPortSel THEN SET_MIDI_DEV(mdsel)
             GUI.SAME_LINE
-            IF GUI.BUTTON("Close MIDI") THEN CLOSE_MIDI()
+            IF midiOpen THEN
+                IF GUI.BUTTON("Close") THEN CLOSE_MIDI()
+            ELSE
+                IF GUI.BUTTON("Open") THEN OPEN_MIDI()
+            ENDIF
             IF midiLearn THEN
-                GUI.TEXT "LEARN active - move your pedal"
-            ELSEIF midiCC >= 0 THEN
-                GUI.TEXT "CC " + midiCC + " -> node " + midiNode + " " + midiKey$
-            ELSE
-                GUI.TEXT "expand a pedal and press L next to a knob to bind"
+                GUI.TEXT "LEARN active - move a knob on the device"
+            ELSEIF midiOpen THEN
+                GUI.TEXT "expand a pedal, press L by a knob, then move a CC to bind"
             ENDIF
-        ELSE
-            IF LEN(midiInNames) > 0 THEN
-                midiPortSel = GUI.COMBO("##midiport", midiPortSel, midiInNames)
+            DIM mpDel = -1, mr
+            FOR mr = 0 TO LEN(midiMaps) - 1
+                DIM mm = midiMaps[mr]
+                DIM tnm$ = "?"
+                IF mm{"node"} >= 0 ANDALSO mm{"node"} < LEN(rack) THEN tnm$ = rack[mm{"node"}]{"type"}
+                GUI.PUSH_ID(1000 + mr)
+                GUI.TEXT "CC " + mm{"cc"} + " -> [" + mm{"node"} + "] " + tnm$ + " " + mm{"key"}
                 GUI.SAME_LINE
-                IF GUI.BUTTON("Open MIDI") THEN OPEN_MIDI()
-            ELSE
-                GUI.TEXT "no MIDI inputs detected"
-            ENDIF
+                IF GUI.BUTTON("x") THEN mpDel = mr
+                GUI.POP_ID()
+            NEXT mr
+            IF mpDel >= 0 THEN REMOVE_MAP(mpDel)
+        ELSE
+            GUI.TEXT "no MIDI inputs detected"
         ENDIF
 
         GUI.SEPARATOR

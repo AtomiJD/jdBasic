@@ -17,6 +17,8 @@
 #include <vector>
 #include <atomic>
 #include <cstring>
+#include <fstream>
+#include <cstdint>
 
 namespace {
 ma_device          g_mon_device;
@@ -31,6 +33,11 @@ float              g_scope[SCOPE_N] = {0};      // post-FX output (oscilloscope)
 float              g_scope_in[SCOPE_N] = {0};   // dry input (pitch detection)
 std::atomic<unsigned> g_scope_pos{0};
 std::atomic<unsigned> g_scope_in_pos{0};
+
+const unsigned     REC_CAP = 48000u * 180u;   // 3 min mono record buffer
+std::vector<float> g_rec;                      // pre-sized once; callback never reallocs
+std::atomic<unsigned> g_rec_pos{0};
+std::atomic<bool>  g_recording{false};
 
 // realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
@@ -56,6 +63,12 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
     unsigned sip = g_scope_in_pos.load(std::memory_order_relaxed);
     for (unsigned i = 0; i < n; i++) g_scope_in[(sip + i) & (SCOPE_N - 1)] = in[i];
     g_scope_in_pos.store(sip + n, std::memory_order_relaxed);
+    if (g_recording.load(std::memory_order_relaxed)) {
+        unsigned rp = g_rec_pos.load(std::memory_order_relaxed);
+        unsigned cap = (unsigned)g_rec.size();
+        for (unsigned i = 0; i < n && rp < cap; i++) g_rec[rp++] = out[i];
+        g_rec_pos.store(rp, std::memory_order_relaxed);
+    }
 }
 } // namespace
 
@@ -202,6 +215,40 @@ void register_audioio_builtins(VM& vm) {
             if (denom != 0.0) tau = tsel + 0.5 * (rm - rp) / denom;
         }
         return Value::make_f64(rate / tau);
+    });
+
+    // MON.RECSTART() -> bool   start tapping the wet output into the record buffer
+    vm.register_native("MON.RECSTART", 0, 0, [](const std::vector<Value>&) -> Value {
+        if (g_rec.size() < REC_CAP) g_rec.assign(REC_CAP, 0.0f);
+        g_rec_pos.store(0, std::memory_order_relaxed);
+        g_recording.store(true, std::memory_order_relaxed);
+        return Value::make_bool(true);
+    });
+
+    // MON.RECLEN() -> seconds captured so far (for the GUI)
+    vm.register_native("MON.RECLEN", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_f64(g_rec_pos.load(std::memory_order_relaxed) / 48000.0);
+    });
+
+    // MON.RECSTOP(path$) -> seconds written   stop and save a 16-bit mono 48k WAV
+    vm.register_native("MON.RECSTOP", 1, 1, [](const std::vector<Value>& args) -> Value {
+        g_recording.store(false, std::memory_order_relaxed);
+        unsigned cnt = g_rec_pos.load(std::memory_order_relaxed);
+        if (cnt > (unsigned)g_rec.size()) cnt = (unsigned)g_rec.size();
+        std::ofstream f(args[0].to_string(), std::ios::binary);
+        if (!f) return Value::make_f64(0.0);
+        uint32_t rate = 48000, dataBytes = cnt * 2, byteRate = rate * 2;
+        auto w32 = [&](uint32_t v) { f.put((char)(v & 0xff)); f.put((char)((v >> 8) & 0xff)); f.put((char)((v >> 16) & 0xff)); f.put((char)((v >> 24) & 0xff)); };
+        auto w16 = [&](uint16_t v) { f.put((char)(v & 0xff)); f.put((char)((v >> 8) & 0xff)); };
+        f.write("RIFF", 4); w32(36 + dataBytes); f.write("WAVE", 4);
+        f.write("fmt ", 4); w32(16); w16(1); w16(1); w32(rate); w32(byteRate); w16(2); w16(16);
+        f.write("data", 4); w32(dataBytes);
+        for (unsigned i = 0; i < cnt; i++) {
+            float s = g_rec[i];
+            if (s > 1.0f) s = 1.0f; else if (s < -1.0f) s = -1.0f;
+            w16((uint16_t)(int16_t)(s * 32767.0f));
+        }
+        return Value::make_f64(cnt / 48000.0);
     });
 
     // MON.GAIN(g)  monitor level, applied lock-free in the audio callback
