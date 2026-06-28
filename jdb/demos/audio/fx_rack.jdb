@@ -19,6 +19,12 @@ DIM saveName$ = "My Tone"
 DIM status$ = "press Start to monitor"
 DIM appRunning = TRUE
 DIM showScope = TRUE
+DIM NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+DIM tapTimes = []
+DIM tapBpm = 0
+DIM tapSubSel = 0
+DIM tapSubs = ["1/4", "1/8", "dotted 8th", "triplet"]
+DIM tapMul  = [1.0, 0.5, 0.75, 0.3333333]
 
 DIM midiInNames = []
 DIM midiPortSel = 0
@@ -79,6 +85,17 @@ FUNC SPECTRUM(samples, bins)
     RETURN out
 ENDFUNC
 
+FUNC PITCH_INFO(hz)
+    DIM r AS MAP
+    DIM midi = 69 + 12 * (LOG(hz / 440.0) / LOG(2))
+    DIM nearest = INT(midi + 0.5)
+    DIM idx = ((nearest MOD 12) + 12) MOD 12
+    DIM oct = INT(nearest / 12) - 1
+    r{"note"} = NOTE_NAMES[idx] + STR$(oct)
+    r{"cents"} = (midi - nearest) * 100
+    RETURN r
+ENDFUNC
+
 ' ---- engine sync ----
 
 SUB REBUILD()
@@ -128,6 +145,45 @@ ENDSUB
 SUB TOGGLE_BYPASS(i)
     rack[i]{"on"} = NOT rack[i]{"on"}
     REBUILD()
+ENDSUB
+
+SUB APPLY_TAP()
+    DIM acc = 0, z
+    FOR z = 1 TO LEN(tapTimes) - 1
+        acc = acc + (tapTimes[z] - tapTimes[z - 1])
+    NEXT z
+    DIM ival = acc / (LEN(tapTimes) - 1)
+    IF ival < 1 THEN ival = 1
+    tapBpm = 60000.0 / ival
+    DIM ms = ival * tapMul[tapSubSel]
+    IF ms > 1000 THEN ms = 1000
+    IF ms < 1 THEN ms = 1
+    DIM di = -1
+    FOR z = 0 TO LEN(rack) - 1
+        IF rack[z]{"type"} = "delay" ANDALSO di < 0 THEN di = z
+    NEXT z
+    IF di >= 0 THEN
+        SET_PARAM(di, "time_ms", ms)
+        status$ = "delay " + INT(ms) + " ms   " + INT(tapBpm) + " BPM"
+    ELSE
+        status$ = "tap: no delay node in the rack"
+    ENDIF
+ENDSUB
+
+SUB DO_TAP()
+    DIM now = TICK()
+    IF LEN(tapTimes) > 0 THEN
+        IF now - tapTimes[LEN(tapTimes) - 1] > 2000 THEN tapTimes = []
+    ENDIF
+    tapTimes = APPEND(tapTimes, now)
+    IF LEN(tapTimes) > 4 THEN
+        DIM nt = [], z
+        FOR z = LEN(tapTimes) - 4 TO LEN(tapTimes) - 1
+            nt = APPEND(nt, tapTimes[z])
+        NEXT z
+        tapTimes = nt
+    ENDIF
+    IF LEN(tapTimes) >= 2 THEN APPLY_TAP()
 ENDSUB
 
 SUB RESET_RACK()
@@ -339,6 +395,19 @@ DO
             GUI.PLOT_HISTOGRAM "Spectrum", mags, "", 0.0, 1.0
         ENDIF
 
+        GUI.SEPARATOR_TEXT("Tuner")
+        DIM hz = MON.PITCH()
+        IF hz > 0 THEN
+            DIM pinf = PITCH_INFO(hz)
+            GUI.TEXT "note  " + pinf{"note"} + "     " + INT(hz) + " Hz"
+            DIM cb = (pinf{"cents"} + 50) / 100.0
+            IF cb < 0 THEN cb = 0
+            IF cb > 1 THEN cb = 1
+            GUI.PROGRESS cb, INT(pinf{"cents"}) + " cents"
+        ELSE
+            GUI.TEXT "play a single open string to tune"
+        ENDIF
+
         GUI.SEPARATOR_TEXT("Pedalboard")
         DIM pendAct$ = ""
         DIM pendIdx = -1
@@ -378,6 +447,19 @@ DO
         addSel = GUI.COMBO("##addsel", addSel, typeNames)
         GUI.SAME_LINE
         IF GUI.BUTTON("Add") THEN rack = APPEND(rack, NEW_NODE(typeNames[addSel])) : REBUILD()
+
+        GUI.SEPARATOR_TEXT("Tap tempo")
+        IF GUI.BUTTON("TAP") THEN DO_TAP()
+        GUI.SAME_LINE
+        DIM tns = GUI.COMBO("##tapsub", tapSubSel, tapSubs)
+        IF tns <> tapSubSel THEN
+            tapSubSel = tns
+            IF LEN(tapTimes) >= 2 THEN APPLY_TAP()
+        ENDIF
+        IF tapBpm > 0 THEN
+            GUI.SAME_LINE
+            GUI.TEXT INT(tapBpm) + " BPM"
+        ENDIF
 
         GUI.SEPARATOR_TEXT("Save as preset")
         saveName$ = GUI.INPUT("Name", saveName$)

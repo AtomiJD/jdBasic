@@ -231,7 +231,8 @@ FX.ADD ch, "lowpass",  { "cutoff": 3000 }
 - **`jdb/demos/audio/fx_rack.jdb`** - a generic ImGui pedalboard: the controls are
   generated from `fx_effects.json` (one slider per param), `fx_presets.json` holds
   named tones that switch the whole chain, with add/reorder/bypass/remove, save+load,
-  an in/out level meter, a live oscilloscope + FFT spectrum (`MON.SCOPE`) and MIDI-CC
-  "learn" to map a foot pedal to any knob. Needs `GFX IMGUI SOUND FX MIDI MINIAUDIO`.
+  an in/out level meter, a live oscilloscope + FFT spectrum (`MON.SCOPE`), a chromatic
+  tuner (`MON.PITCH`, note + cents off the dry input), tap-tempo for the delay, and
+  MIDI-CC "learn" to map a foot pedal to any knob. Needs `GFX IMGUI SOUND FX MIDI MINIAUDIO`.
 - Planned: longer/partitioned convolution so `cabinet` (and full reverb IRs) can
   run on the live path too.

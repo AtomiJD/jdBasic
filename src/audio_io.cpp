@@ -26,9 +26,11 @@ std::atomic<int>   g_rt_chain{0};      // active realtime FX chain (0 = passthro
 std::atomic<float> g_in_peak{0.0f};    // decaying input / output peak for metering
 std::atomic<float> g_out_peak{0.0f};
 
-const unsigned     SCOPE_N = 4096;     // power of two: output sample ring for the scope
-float              g_scope[SCOPE_N] = {0};
+const unsigned     SCOPE_N = 4096;     // power of two: sample rings for scope + tuner
+float              g_scope[SCOPE_N] = {0};      // post-FX output (oscilloscope)
+float              g_scope_in[SCOPE_N] = {0};   // dry input (pitch detection)
 std::atomic<unsigned> g_scope_pos{0};
+std::atomic<unsigned> g_scope_in_pos{0};
 
 // realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
@@ -51,6 +53,9 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
     unsigned sp = g_scope_pos.load(std::memory_order_relaxed);
     for (unsigned i = 0; i < n; i++) g_scope[(sp + i) & (SCOPE_N - 1)] = out[i];
     g_scope_pos.store(sp + n, std::memory_order_relaxed);
+    unsigned sip = g_scope_in_pos.load(std::memory_order_relaxed);
+    for (unsigned i = 0; i < n; i++) g_scope_in[(sip + i) & (SCOPE_N - 1)] = in[i];
+    g_scope_in_pos.store(sip + n, std::memory_order_relaxed);
 }
 } // namespace
 
@@ -152,6 +157,51 @@ void register_audioio_builtins(VM& vm) {
         for (int i = cnt; i > 0; i--)
             arr.as_array()->elements.push_back(Value::make_f64(g_scope[(sp - (unsigned)i) & (SCOPE_N - 1)]));
         return arr;
+    });
+
+    // MON.PITCH() -> detected fundamental of the DRY input in Hz, or 0 if no clear
+    // note / too quiet. Autocorrelation with sub-octave guard + parabolic refine.
+    vm.register_native("MON.PITCH", 0, 0, [](const std::vector<Value>&) -> Value {
+        const int N = 2048;
+        static float buf[N];
+        unsigned sp = g_scope_in_pos.load(std::memory_order_relaxed);
+        for (int i = 0; i < N; i++)
+            buf[i] = g_scope_in[(sp - (unsigned)(N - i)) & (SCOPE_N - 1)];
+        double mean = 0.0;
+        for (int i = 0; i < N; i++) mean += buf[i];
+        mean /= N;
+        double msq = 0.0;
+        for (int i = 0; i < N; i++) { buf[i] = (float)(buf[i] - mean); msq += (double)buf[i] * buf[i]; }
+        msq /= N;
+        if (msq < 0.0001) return Value::make_f64(0.0);          // below noise floor
+        const double rate = 48000.0;
+        int minTau = (int)(rate / 1000.0);                      // up to 1000 Hz
+        int maxTau = (int)(rate / 70.0);                        // down to 70 Hz
+        int M = N - maxTau;                                     // common window, comparable taus
+        static double rbuf[1100];
+        double r0 = 0.0;
+        for (int i = 0; i < M; i++) r0 += (double)buf[i] * buf[i];
+        if (r0 <= 0.0) return Value::make_f64(0.0);
+        double bestR = 0.0;
+        for (int tau = minTau; tau <= maxTau; tau++) {
+            double r = 0.0;
+            for (int i = 0; i < M; i++) r += (double)buf[i] * buf[i + tau];
+            rbuf[tau] = r;
+            if (r > bestR) bestR = r;
+        }
+        if (bestR < 0.5 * r0) return Value::make_f64(0.0);      // not periodic enough
+        double thr = 0.93 * bestR;                              // earliest strong peak = fundamental
+        int tsel = -1;
+        for (int tau = minTau; tau <= maxTau; tau++)
+            if (rbuf[tau] >= thr) { tsel = tau; break; }
+        if (tsel < 0) return Value::make_f64(0.0);
+        double tau = tsel;
+        if (tsel > minTau && tsel < maxTau) {
+            double rm = rbuf[tsel - 1], rc = rbuf[tsel], rp = rbuf[tsel + 1];
+            double denom = rm - 2 * rc + rp;
+            if (denom != 0.0) tau = tsel + 0.5 * (rm - rp) / denom;
+        }
+        return Value::make_f64(rate / tau);
     });
 
     // MON.GAIN(g)  monitor level, applied lock-free in the audio callback
