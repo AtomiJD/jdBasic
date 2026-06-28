@@ -8,7 +8,7 @@
 .badge.bug{border-color:#c44;color:#f99;}.badge.feature{border-color:#3b8;color:#9fc;}.badge.chore{border-color:#778;color:#bcd;}.badge.idea{border-color:#b83;color:#fd9;}
 .badge.blocker,.badge.critical{border-color:#e44;color:#f99;}.badge.major{border-color:#e93;color:#fc9;}.badge.high{border-color:#e44;color:#f99;}.badge.low{border-color:#567;color:#9ab;}
 .ptag{color:#6db;font-size:11px;}
-.col-blocked h2{color:#e88;}.col-review h2{color:#dd7;}
+.col-blocked h2{color:#e88;}.col-review h2{color:#dd7;}.col-parked h2{color:#9ab;}
 .mdprev{background:#0b1410;border:1px solid #1c3a24;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;min-height:20px;}
 .mdprev pre{background:#000;padding:8px;overflow-x:auto;border-radius:4px;}.mdprev ul{margin:4px 0 4px 18px;}.mdprev code{background:#000;padding:1px 4px;border-radius:3px;}
 .deprow{display:flex;align-items:center;gap:8px;margin:4px 0;}.depid{max-width:150px;}
@@ -42,8 +42,8 @@ table.ltbl{width:100%;border-collapse:collapse;font-size:13px;}
 </form>
 <div id='board'></div>
 <script>
-const STATUSES=['todo','blocked','doing','review','done'];
-const LABELS={todo:'To Do',blocked:'Blocked',doing:'In Progress',review:'Review',done:'Done'};
+const STATUSES=['todo','blocked','doing','review','done','parked'];
+const LABELS={todo:'To Do',blocked:'Blocked',doing:'In Progress',review:'Review',done:'Done',parked:'Parked'};
 async function api(path,data){
   const opt=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};
   const r=await fetch(path,opt);if(r.status===401){location='/login';return {};}return r.json();}
@@ -143,7 +143,7 @@ function showModal(t,comments,history,blockers){closeModal();
   const row=document.createElement('div');row.className='row2';
   const prj=selEl((window.PROJ||[]).map(p=>[p.key,p.name]),t.project_key||'');
   const aopts=[['','Unassigned']].concat((window.USERS||[]).map(u=>[u.name,u.name]));const asg=selEl(aopts,t.assignee||'');
-  const sta=selEl([['todo','To Do'],['blocked','Blocked'],['doing','In Progress'],['review','Review'],['done','Done']],t.status);
+  const sta=selEl([['todo','To Do'],['blocked','Blocked'],['doing','In Progress'],['review','Review'],['done','Done'],['parked','Parked']],t.status);
   row.appendChild(fieldEl('Project',prj));row.appendChild(fieldEl('Assignee',asg));row.appendChild(fieldEl('Status',sta));m.appendChild(row);
   const row2=document.createElement('div');row2.className='row2';
   const pri=selEl([['low','Low'],['medium','Medium'],['high','High']],t.priority||'medium');

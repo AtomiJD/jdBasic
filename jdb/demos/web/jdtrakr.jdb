@@ -155,7 +155,7 @@ FUNC PROJ_ID(ref$)
 ENDFUNC
 
 FUNC VALID_STATUS(st$)
-    RETURN st$ = "todo" ORELSE st$ = "blocked" ORELSE st$ = "doing" ORELSE st$ = "review" ORELSE st$ = "done"
+    RETURN st$ = "todo" ORELSE st$ = "blocked" ORELSE st$ = "doing" ORELSE st$ = "review" ORELSE st$ = "done" ORELSE st$ = "parked"
 ENDFUNC
 
 FUNC STATUS_LABEL$(st$)
@@ -164,6 +164,7 @@ FUNC STATUS_LABEL$(st$)
     IF st$ = "doing" THEN RETURN "In Progress"
     IF st$ = "review" THEN RETURN "Review"
     IF st$ = "done" THEN RETURN "Done"
+    IF st$ = "parked" THEN RETURN "Parked"
     RETURN st$
 ENDFUNC
 
