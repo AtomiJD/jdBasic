@@ -12,6 +12,7 @@
     ],
     "Clean Chime": [
       { "type": "compressor", "params": { "threshold": 0.4, "ratio": 2, "makeup": 1.1 } },
+      { "type": "gain",       "params": { "gain": 8 } },
       { "type": "highpass",   "params": { "cutoff": 120, "q": 0.707 } },
       { "type": "chorus",     "params": { "rate": 0.9, "depth": 3, "delay": 14, "mix": 0.4 } },
       { "type": "delay",      "params": { "time_ms": 380, "feedback": 0.25, "mix": 0.22 } },
@@ -19,23 +20,26 @@
     ],
     "Lush Clean": [
       { "type": "compressor", "params": { "threshold": 0.4, "ratio": 2, "makeup": 1.1 } },
+      { "type": "gain",       "params": { "gain": 8 } },
       { "type": "chorus",     "params": { "rate": 0.9, "depth": 3.5, "delay": 14, "mix": 0.5 } },
       { "type": "reverb",     "params": { "roomsize": 0.85, "damp": 0.4, "mix": 0.35 } }
     ],
     "Metal Rhythm": [
-      { "type": "noisegate", "params": { "threshold": 0.03 } },
+      { "type": "noisegate", "params": { "threshold": 0.012 } },
+      { "type": "gain",      "params": { "gain": 2 } },
       { "type": "highpass",  "params": { "cutoff": 90, "q": 0.707 } },
-      { "type": "drive",     "params": { "amount": 18, "level": 0.7 } },
+      { "type": "drive",     "params": { "amount": 18, "level": 0.8 } },
       { "type": "eq",        "params": { "freq": 650, "q": 1.2, "gain": -6 } },
       { "type": "lowpass",   "params": { "cutoff": 4500, "q": 0.9 } }
     ],
     "Funk Wah": [
       { "type": "compressor", "params": { "threshold": 0.3, "ratio": 4, "makeup": 1.4 } },
-      { "type": "autowah",    "params": { "base": 300, "range": 2400, "sensitivity": 10, "q": 5, "mix": 1.0 } },
-      { "type": "drive",      "params": { "amount": 4, "level": 0.8 } }
+      { "type": "autowah",    "params": { "base": 300, "range": 2400, "sensitivity": 10, "q": 5, "mix": 0.7 } },
+      { "type": "drive",      "params": { "amount": 6, "level": 0.9 } },
+      { "type": "gain",       "params": { "gain": 2.5 } }
     ],
     "Lo-Fi Crunch": [
-      { "type": "fuzz",     "params": { "amount": 16, "level": 0.6 } },
+      { "type": "fuzz",     "params": { "amount": 16, "level": 0.7 } },
       { "type": "bitcrush", "params": { "bits": 6, "downsample": 6, "mix": 0.6 } },
       { "type": "lowpass",  "params": { "cutoff": 3000, "q": 0.707 } }
     ]
