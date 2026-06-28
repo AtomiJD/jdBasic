@@ -18,6 +18,7 @@ DIM addSel = 0
 DIM saveName$ = "My Tone"
 DIM status$ = "press Start to monitor"
 DIM appRunning = TRUE
+DIM showScope = TRUE
 
 DIM midiInNames = []
 DIM midiPortSel = 0
@@ -58,6 +59,24 @@ FUNC NODE_FROM(ptype$, given)
         IF TYPEOF(given{pk$}) <> "NONE" THEN nd{"params"}{pk$} = given{pk$}
     NEXT k
     RETURN nd
+ENDFUNC
+
+FUNC SPECTRUM(samples, bins)
+    DIM spec = FFT(samples)
+    DIM raw = []
+    DIM i, re, im, mag, mx = 0.0001
+    FOR i = 1 TO bins
+        re = spec[i][0]
+        im = spec[i][1]
+        mag = LOG(1 + SQR(re * re + im * im))
+        raw = APPEND(raw, mag)
+        IF mag > mx THEN mx = mag
+    NEXT i
+    DIM out = []
+    FOR i = 0 TO LEN(raw) - 1
+        out = APPEND(out, raw[i] / mx)
+    NEXT i
+    RETURN out
 ENDFUNC
 
 ' ---- engine sync ----
@@ -309,6 +328,15 @@ DO
             IF GUI.BUTTON("Stop") THEN DIM st = MON.STOP()
         ELSE
             IF GUI.BUTTON("Start") THEN START_MON()
+        ENDIF
+
+        GUI.SEPARATOR_TEXT("Scope")
+        showScope = GUI.CHECKBOX("Show", showScope)
+        IF showScope THEN
+            DIM wav = MON.SCOPE(512)
+            GUI.PLOT_LINES "Waveform", wav, "", -1.0, 1.0
+            DIM mags = SPECTRUM(MON.SCOPE(1024), 256)
+            GUI.PLOT_HISTOGRAM "Spectrum", mags, "", 0.0, 1.0
         ENDIF
 
         GUI.SEPARATOR_TEXT("Pedalboard")

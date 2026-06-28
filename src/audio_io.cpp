@@ -26,6 +26,10 @@ std::atomic<int>   g_rt_chain{0};      // active realtime FX chain (0 = passthro
 std::atomic<float> g_in_peak{0.0f};    // decaying input / output peak for metering
 std::atomic<float> g_out_peak{0.0f};
 
+const unsigned     SCOPE_N = 4096;     // power of two: output sample ring for the scope
+float              g_scope[SCOPE_N] = {0};
+std::atomic<unsigned> g_scope_pos{0};
+
 // realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
     unsigned n = frames * dev->playback.channels;
@@ -44,6 +48,9 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
     float pout = g_out_peak.load(std::memory_order_relaxed) * 0.92f; if (op > pout) pout = op;
     g_in_peak.store(pin, std::memory_order_relaxed);
     g_out_peak.store(pout, std::memory_order_relaxed);
+    unsigned sp = g_scope_pos.load(std::memory_order_relaxed);
+    for (unsigned i = 0; i < n; i++) g_scope[(sp + i) & (SCOPE_N - 1)] = out[i];
+    g_scope_pos.store(sp + n, std::memory_order_relaxed);
 }
 } // namespace
 
@@ -131,6 +138,20 @@ void register_audioio_builtins(VM& vm) {
         m.as_object()->set("in",  Value::make_f64(g_in_peak.load(std::memory_order_relaxed)));
         m.as_object()->set("out", Value::make_f64(g_out_peak.load(std::memory_order_relaxed)));
         return m;
+    });
+
+    // MON.SCOPE([count=1024]) -> the last `count` output samples (oldest..newest)
+    // for an oscilloscope / FFT spectrum. Reads without a lock: minor tearing is fine.
+    vm.register_native("MON.SCOPE", 0, 1, [](const std::vector<Value>& args) -> Value {
+        int cnt = args.empty() ? 1024 : (int)args[0].to_int();
+        if (cnt < 1) cnt = 1;
+        if (cnt > (int)SCOPE_N) cnt = (int)SCOPE_N;
+        unsigned sp = g_scope_pos.load(std::memory_order_relaxed);
+        Value arr = Value::make_array();
+        arr.as_array()->elements.reserve(cnt);
+        for (int i = cnt; i > 0; i--)
+            arr.as_array()->elements.push_back(Value::make_f64(g_scope[(sp - (unsigned)i) & (SCOPE_N - 1)]));
+        return arr;
     });
 
     // MON.GAIN(g)  monitor level, applied lock-free in the audio callback
