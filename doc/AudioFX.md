@@ -235,6 +235,9 @@ FX.ADD ch, "lowpass",  { "cutoff": 3000 }
   tuner (`MON.PITCH`, note + cents off the dry input), tap-tempo for the delay,
   record-while-monitoring to a WAV (`MON.RECSTART`/`MON.RECSTOP`/`MON.RECLEN`), a MIDI
   input-device dropdown, and MIDI-CC "learn" to map several CCs to several knobs at once.
-  Needs `GFX IMGUI SOUND FX MIDI MINIAUDIO`.
+  An **AI tone designer** (text field + provider dropdown) sends the effect schema plus
+  your request to an LLM and loads the returned chain; provider config in `fx_ai.json`
+  (claude / openai / local), API key from an env var. Needs `GFX IMGUI HTTP SOUND FX MIDI
+  MINIAUDIO` (HTTP for the AI call).
 - Planned: longer/partitioned convolution so `cabinet` (and full reverb IRs) can
   run on the live path too.
