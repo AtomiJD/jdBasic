@@ -224,8 +224,14 @@ FX.ADD ch, "lowpass",  { "cutoff": 3000 }
   `tone_designer.jdb`
 - WAV: `WAV.WRITE/READ/INFO`. MIDI: `MIDI.PORTS/OPEN_OUT/OPEN_IN/SEND/NOTEON/
   NOTEOFF/CC/POLL/CLOSE` (see the `audio` jdTrakr project + `notes/audio_midi_plan.md`).
-- Real-time monitoring (`MINIAUDIO` flag): `MON.DEVICES/START/STOP/GAIN/FX/RUNNING`
+- Real-time monitoring (`MINIAUDIO` flag): `MON.DEVICES/START/STOP/GAIN/FX/RUNNING/LEVEL`
   run a live guitar/line input through an FX chain. Tune it live with `FX.SET` /
-  `FX.DUMP$` (see `jdb/demos/audio/live_fx.jdb`).
+  `FX.DUMP$` (see `jdb/demos/audio/live_fx.jdb`). `MON.LEVEL()->{in,out}` gives
+  decaying peak levels for VU metering.
+- **`jdb/demos/audio/fx_rack.jdb`** - a generic ImGui pedalboard: the controls are
+  generated from `fx_effects.json` (one slider per param), `fx_presets.json` holds
+  named tones that switch the whole chain, with add/reorder/bypass/remove, save+load,
+  an in/out level meter and MIDI-CC "learn" to map a foot pedal to any knob. Needs
+  `GFX IMGUI SOUND FX MIDI MINIAUDIO`.
 - Planned: longer/partitioned convolution so `cabinet` (and full reverb IRs) can
   run on the live path too.

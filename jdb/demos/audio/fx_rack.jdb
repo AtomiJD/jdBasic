@@ -1,0 +1,393 @@
+' fx_rack.jdb - generic, JSON-driven ImGui pedalboard for the live FX engine.
+' fx_effects.json drives the controls (one slider per schema param); the rack
+' model is the source of truth and the engine chain is rebuilt from it.
+' Build flags: GFX IMGUI SOUND FX MIDI MINIAUDIO.
+
+DIM cfgDir$    = PATH.DIRNAME$(OS.ARGS()[0])
+DIM cfgEffects$ = PATH.JOIN$(cfgDir$, "fx_effects.json")
+DIM cfgPresets$ = PATH.JOIN$(cfgDir$, "fx_presets.json")
+DIM cfgRack$    = PATH.JOIN$(cfgDir$, "fx_rack_user.json")
+
+DIM schema, typeNames, presetsDoc, pnames
+DIM rack = []
+DIM eng = []                 ' engine node index per rack entry (-1 = bypassed)
+DIM chan = 0
+DIM inIdx = 0, outIdx = 0
+DIM mgain = 0.7
+DIM addSel = 0
+DIM saveName$ = "My Tone"
+DIM status$ = "press Start to monitor"
+DIM appRunning = TRUE
+
+DIM midiInNames = []
+DIM midiPortSel = 0
+DIM midiOpen = FALSE
+DIM midiHandle = -1
+DIM midiLearn = FALSE
+DIM midiCC = -1
+DIM midiNode = -1
+DIM midiKey$ = ""
+DIM midiLo = 0.0, midiHi = 1.0
+
+' ---- model helpers ----
+
+FUNC EFFECT_DEFS(ptype$)
+    RETURN schema{"effects"}{ptype$}{"params"}
+ENDFUNC
+
+FUNC NEW_NODE(ptype$)
+    DIM nd AS MAP
+    nd{"type"} = ptype$
+    nd{"on"} = TRUE
+    DIM pm AS MAP
+    DIM defs = EFFECT_DEFS(ptype$)
+    DIM k
+    FOR k = 0 TO LEN(defs) - 1
+        pm{defs[k]{"key"}} = defs[k]{"def"}
+    NEXT k
+    nd{"params"} = pm
+    RETURN nd
+ENDFUNC
+
+FUNC NODE_FROM(ptype$, given)
+    DIM nd = NEW_NODE(ptype$)
+    DIM defs = EFFECT_DEFS(ptype$)
+    DIM k, pk$
+    FOR k = 0 TO LEN(defs) - 1
+        pk$ = defs[k]{"key"}
+        IF TYPEOF(given{pk$}) <> "NONE" THEN nd{"params"}{pk$} = given{pk$}
+    NEXT k
+    RETURN nd
+ENDFUNC
+
+' ---- engine sync ----
+
+SUB REBUILD()
+    DIM oldchan = chan
+    chan = FX.NEW()
+    eng = []
+    DIM z, ePos = 0, ok
+    FOR z = 0 TO LEN(rack) - 1
+        IF rack[z]{"on"} THEN
+            ok = FX.ADD(chan, rack[z]{"type"}, rack[z]{"params"})
+            eng = APPEND(eng, ePos)
+            ePos = ePos + 1
+        ELSE
+            eng = APPEND(eng, -1)
+        ENDIF
+    NEXT z
+    DIM rr = MON.FX(chan)        ' pre-warms + atomically swaps the live chain
+    SLEEP 30                     ' let any in-flight callback finish with oldchan
+    IF oldchan > 0 THEN DIM f = FX.FREE(oldchan)
+ENDSUB
+
+SUB SET_PARAM(i, pkey$, pval)
+    rack[i]{"params"}{pkey$} = pval
+    IF rack[i]{"on"} ANDALSO eng[i] >= 0 THEN DIM ok = FX.SET(chan, eng[i], pkey$, pval)
+ENDSUB
+
+SUB MOVE_NODE(i, delta)
+    DIM j = i + delta
+    IF j >= 0 ANDALSO j < LEN(rack) THEN
+        DIM tmp = rack[i]
+        rack[i] = rack[j]
+        rack[j] = tmp
+        REBUILD()
+    ENDIF
+ENDSUB
+
+SUB REMOVE_NODE(i)
+    DIM nr = []
+    DIM k
+    FOR k = 0 TO LEN(rack) - 1
+        IF k <> i THEN nr = APPEND(nr, rack[k])
+    NEXT k
+    rack = nr
+    REBUILD()
+ENDSUB
+
+SUB TOGGLE_BYPASS(i)
+    rack[i]{"on"} = NOT rack[i]{"on"}
+    REBUILD()
+ENDSUB
+
+SUB RESET_RACK()
+    rack = []
+    REBUILD()
+    status$ = "reset"
+ENDSUB
+
+' ---- presets + persistence ----
+
+SUB LOAD_PRESET(pname$)
+    DIM lst = presetsDoc{"presets"}{pname$}
+    rack = []
+    DIM k
+    FOR k = 0 TO LEN(lst) - 1
+        rack = APPEND(rack, NODE_FROM(lst[k]{"type"}, lst[k]{"params"}))
+    NEXT k
+    REBUILD()
+    status$ = "loaded preset: " + pname$
+ENDSUB
+
+SUB SAVE_RACK()
+    DIM doc AS MAP
+    doc{"rack"} = rack
+    DIM ok = TXTWRITER(cfgRack$, JSON.STRINGIFY$(doc))
+    status$ = "saved: " + cfgRack$
+ENDSUB
+
+SUB LOAD_RACK()
+    DIM raw$ = TXTREADER$(cfgRack$)
+    IF raw$ = "" THEN
+        status$ = "no saved rack yet"
+    ELSE
+        DIM doc = JSON.PARSE$(raw$)
+        DIM lst = doc{"rack"}
+        rack = []
+        DIM k
+        FOR k = 0 TO LEN(lst) - 1
+            rack = APPEND(rack, NODE_FROM(lst[k]{"type"}, lst[k]{"params"}))
+        NEXT k
+        REBUILD()
+        status$ = "loaded: " + cfgRack$
+    ENDIF
+ENDSUB
+
+SUB SAVE_PRESET(pname$)
+    DIM lst = []
+    DIM k
+    FOR k = 0 TO LEN(rack) - 1
+        DIM nd AS MAP
+        nd{"type"} = rack[k]{"type"}
+        nd{"params"} = rack[k]{"params"}
+        lst = APPEND(lst, nd)
+    NEXT k
+    presetsDoc{"presets"}{pname$} = lst
+    DIM found = FALSE
+    FOR k = 0 TO LEN(pnames) - 1
+        IF pnames[k] = pname$ THEN found = TRUE
+    NEXT k
+    IF NOT found THEN
+        pnames = APPEND(pnames, pname$)
+        presetsDoc{"names"} = pnames
+    ENDIF
+    DIM ok = TXTWRITER(cfgPresets$, JSON.STRINGIFY$(presetsDoc))
+    status$ = "saved preset: " + pname$
+ENDSUB
+
+' ---- monitor + midi ----
+
+SUB START_MON()
+    DIM d = MON.DEVICES()
+    DIM caps = d{"capture"}
+    DIM pbs = d{"playback"}
+    inIdx = 0
+    outIdx = 0
+    DIM z
+    FOR z = 0 TO LEN(caps) - 1
+        IF INSTR(caps[z], "iRig") >= 0 THEN inIdx = z
+    NEXT z
+    FOR z = 0 TO LEN(pbs) - 1
+        IF INSTR(pbs[z], "iRig") >= 0 THEN outIdx = z
+    NEXT z
+    DIM m = MON.START(inIdx, outIdx)
+    IF m THEN
+        DIM g = MON.GAIN(mgain)
+        DIM rr = MON.FX(chan)
+        status$ = "monitoring: " + caps[inIdx]
+    ELSE
+        status$ = "could not open audio device"
+    ENDIF
+ENDSUB
+
+SUB OPEN_MIDI()
+    IF LEN(midiInNames) > 0 THEN
+        midiHandle = MIDI.OPEN_IN(midiPortSel)
+        IF midiHandle >= 1 THEN
+            midiOpen = TRUE
+            status$ = "MIDI in: " + midiInNames[midiPortSel]
+        ELSE
+            status$ = "could not open MIDI port"
+        ENDIF
+    ELSE
+        status$ = "no MIDI inputs found"
+    ENDIF
+ENDSUB
+
+SUB CLOSE_MIDI()
+    IF midiOpen THEN DIM c = MIDI.CLOSE(midiHandle)
+    midiOpen = FALSE
+    midiCC = -1
+    status$ = "MIDI closed"
+ENDSUB
+
+SUB START_LEARN(i, pkey$, plo, phi)
+    IF midiOpen THEN
+        midiLearn = TRUE
+        midiNode = i
+        midiKey$ = pkey$
+        midiLo = plo
+        midiHi = phi
+        status$ = "LEARN: move your pedal to bind it"
+    ELSE
+        status$ = "open a MIDI input first"
+    ENDIF
+ENDSUB
+
+SUB POLL_MIDI()
+    IF midiOpen THEN
+        DIM evs = MIDI.POLL(midiHandle)
+        DIM q
+        FOR q = 0 TO LEN(evs) - 1
+            DIM ev = evs[q]
+            IF LEN(ev) >= 3 THEN
+                DIM sb = ev[0]
+                IF sb >= 176 ANDALSO sb <= 191 THEN
+                    DIM cc = ev[1]
+                    DIM vv = ev[2]
+                    IF midiLearn THEN
+                        midiCC = cc
+                        midiLearn = FALSE
+                        status$ = "bound CC " + cc + " -> node " + midiNode + " " + midiKey$
+                    ELSEIF cc = midiCC ANDALSO midiNode >= 0 ANDALSO midiNode < LEN(rack) THEN
+                        DIM pv = midiLo + (midiHi - midiLo) * (vv / 127.0)
+                        SET_PARAM(midiNode, midiKey$, pv)
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT q
+    ENDIF
+ENDSUB
+
+' ---- init ----
+
+schema = JSON.PARSE$(TXTREADER$(cfgEffects$))
+typeNames = schema{"types"}
+presetsDoc = JSON.PARSE$(TXTREADER$(cfgPresets$))
+pnames = presetsDoc{"names"}
+DIM mp = MIDI.PORTS()
+midiInNames = mp{"in"}
+LOAD_PRESET("Brian May")
+
+SCREEN 820, 1040, "jdBasic FX Rack", 2
+
+' ---- main loop ----
+DO
+    CLS
+
+    IF GUI.BEGIN_MAIN_MENU_BAR() THEN
+        IF GUI.BEGIN_MENU("File") THEN
+            IF GUI.MENU_ITEM("Save Rack") THEN SAVE_RACK()
+            IF GUI.MENU_ITEM("Load Rack") THEN LOAD_RACK()
+            IF GUI.MENU_ITEM("Reset") THEN RESET_RACK()
+            GUI.SEPARATOR
+            IF GUI.MENU_ITEM("Exit") THEN appRunning = FALSE
+            GUI.END_MENU()
+        ENDIF
+        IF GUI.BEGIN_MENU("Presets") THEN
+            DIM pj
+            FOR pj = 0 TO LEN(pnames) - 1
+                IF GUI.MENU_ITEM(pnames[pj]) THEN LOAD_PRESET(pnames[pj])
+            NEXT pj
+            GUI.END_MENU()
+        ENDIF
+        GUI.END_MAIN_MENU_BAR()
+    ENDIF
+
+    GUI.BEGIN "FX Rack", 0, 24, 820, 1010
+
+        GUI.SEPARATOR_TEXT("Monitor")
+        DIM lvl = MON.LEVEL()
+        DIM lin = lvl{"in"}   : IF lin > 1 THEN lin = 1
+        DIM lout = lvl{"out"} : IF lout > 1 THEN lout = 1
+        GUI.TEXT "In"  : GUI.SAME_LINE : GUI.PROGRESS lin, ""
+        GUI.TEXT "Out" : GUI.SAME_LINE : GUI.PROGRESS lout, ""
+        DIM ng = GUI.SLIDER("Master Gain", mgain, 0, 2)
+        IF ng <> mgain THEN mgain = ng : DIM gs = MON.GAIN(mgain)
+        IF MON.RUNNING() THEN
+            IF GUI.BUTTON("Stop") THEN DIM st = MON.STOP()
+        ELSE
+            IF GUI.BUTTON("Start") THEN START_MON()
+        ENDIF
+
+        GUI.SEPARATOR_TEXT("Pedalboard")
+        DIM pendAct$ = ""
+        DIM pendIdx = -1
+        DIM i
+        FOR i = 0 TO LEN(rack) - 1
+            GUI.PUSH_ID(i)
+            DIM hdr$ = "" + i + "   " + schema{"effects"}{rack[i]{"type"}}{"label"}
+            IF NOT rack[i]{"on"} THEN hdr$ = hdr$ + "   (bypassed)"
+            IF GUI.COLLAPSING_HEADER(hdr$) THEN
+                DIM onNew = GUI.CHECKBOX("Enabled", rack[i]{"on"})
+                IF onNew <> rack[i]{"on"} THEN pendAct$ = "bypass" : pendIdx = i
+                DIM defs = EFFECT_DEFS(rack[i]{"type"})
+                DIM k, pk$, cur, nv
+                FOR k = 0 TO LEN(defs) - 1
+                    pk$ = defs[k]{"key"}
+                    cur = rack[i]{"params"}{pk$}
+                    nv = GUI.SLIDER(defs[k]{"label"}, cur, defs[k]{"min"}, defs[k]{"max"})
+                    IF nv <> cur THEN SET_PARAM(i, pk$, nv)
+                    GUI.SAME_LINE
+                    IF GUI.BUTTON("L##" + pk$) THEN START_LEARN(i, pk$, defs[k]{"min"}, defs[k]{"max"})
+                NEXT k
+                IF GUI.BUTTON("Up")     THEN pendAct$ = "up"     : pendIdx = i
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Down")   THEN pendAct$ = "down"   : pendIdx = i
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Remove") THEN pendAct$ = "remove" : pendIdx = i
+            ENDIF
+            GUI.POP_ID()
+        NEXT i
+
+        IF pendAct$ = "up"     THEN MOVE_NODE(pendIdx, -1)
+        IF pendAct$ = "down"   THEN MOVE_NODE(pendIdx, 1)
+        IF pendAct$ = "remove" THEN REMOVE_NODE(pendIdx)
+        IF pendAct$ = "bypass" THEN TOGGLE_BYPASS(pendIdx)
+
+        GUI.SEPARATOR_TEXT("Add effect")
+        addSel = GUI.COMBO("##addsel", addSel, typeNames)
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Add") THEN rack = APPEND(rack, NEW_NODE(typeNames[addSel])) : REBUILD()
+
+        GUI.SEPARATOR_TEXT("Save as preset")
+        saveName$ = GUI.INPUT("Name", saveName$)
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Save Preset") THEN SAVE_PRESET(saveName$)
+
+        GUI.SEPARATOR_TEXT("MIDI foot pedal")
+        IF midiOpen THEN
+            GUI.TEXT "open: " + midiInNames[midiPortSel]
+            GUI.SAME_LINE
+            IF GUI.BUTTON("Close MIDI") THEN CLOSE_MIDI()
+            IF midiLearn THEN
+                GUI.TEXT "LEARN active - move your pedal"
+            ELSEIF midiCC >= 0 THEN
+                GUI.TEXT "CC " + midiCC + " -> node " + midiNode + " " + midiKey$
+            ELSE
+                GUI.TEXT "expand a pedal and press L next to a knob to bind"
+            ENDIF
+        ELSE
+            IF LEN(midiInNames) > 0 THEN
+                midiPortSel = GUI.COMBO("##midiport", midiPortSel, midiInNames)
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Open MIDI") THEN OPEN_MIDI()
+            ELSE
+                GUI.TEXT "no MIDI inputs detected"
+            ENDIF
+        ENDIF
+
+        GUI.SEPARATOR
+        GUI.TEXT status$
+
+    GUI.END
+
+    POLL_MIDI()
+    SCREENFLIP
+    SLEEP 10
+    DIM a$ = INKEY$()
+LOOP UNTIL a$ = CHR$(27) ORELSE appRunning = FALSE
+
+IF MON.RUNNING() THEN DIM se = MON.STOP()
+IF midiOpen THEN DIM ce = MIDI.CLOSE(midiHandle)

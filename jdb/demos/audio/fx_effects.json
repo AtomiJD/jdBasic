@@ -1,0 +1,80 @@
+{
+  "types": [
+    "gain", "compressor", "noisegate", "eq", "highpass", "lowpass",
+    "drive", "fuzz", "octave", "bitcrush",
+    "chorus", "flanger", "phaser", "vibrato", "tremolo", "autowah",
+    "delay", "reverb"
+  ],
+  "effects": {
+    "gain":       { "label": "Gain",        "params": [
+      { "key": "gain", "label": "Gain", "min": 0, "max": 10, "def": 1 } ] },
+    "compressor": { "label": "Compressor",  "params": [
+      { "key": "threshold", "label": "Threshold", "min": 0, "max": 1, "def": 0.5 },
+      { "key": "ratio",     "label": "Ratio",     "min": 1, "max": 20, "def": 4 },
+      { "key": "makeup",    "label": "Makeup",    "min": 0, "max": 4, "def": 1 } ] },
+    "noisegate":  { "label": "Noise Gate",  "params": [
+      { "key": "threshold", "label": "Threshold", "min": 0, "max": 0.3, "def": 0.02 } ] },
+    "eq":         { "label": "EQ (peak)",   "params": [
+      { "key": "freq", "label": "Freq Hz", "min": 50, "max": 12000, "def": 800 },
+      { "key": "q",    "label": "Q",       "min": 0.2, "max": 8, "def": 1 },
+      { "key": "gain", "label": "Gain dB", "min": -24, "max": 24, "def": 6 } ] },
+    "highpass":   { "label": "High Pass",   "params": [
+      { "key": "cutoff", "label": "Cutoff Hz", "min": 20, "max": 12000, "def": 2000 },
+      { "key": "q",      "label": "Q",         "min": 0.1, "max": 8, "def": 0.707 } ] },
+    "lowpass":    { "label": "Low Pass",    "params": [
+      { "key": "cutoff", "label": "Cutoff Hz", "min": 200, "max": 18000, "def": 2000 },
+      { "key": "q",      "label": "Q",         "min": 0.1, "max": 8, "def": 0.707 } ] },
+    "drive":      { "label": "Drive",       "params": [
+      { "key": "amount", "label": "Amount", "min": 0, "max": 40, "def": 5 },
+      { "key": "level",  "label": "Level",  "min": 0, "max": 1, "def": 0.7 } ] },
+    "fuzz":       { "label": "Fuzz",        "params": [
+      { "key": "amount", "label": "Amount", "min": 0, "max": 40, "def": 10 },
+      { "key": "level",  "label": "Level",  "min": 0, "max": 1, "def": 0.6 } ] },
+    "octave":     { "label": "Octave Up",   "params": [
+      { "key": "amount", "label": "Amount", "min": 0, "max": 30, "def": 8 },
+      { "key": "level",  "label": "Level",  "min": 0, "max": 1, "def": 0.5 },
+      { "key": "mix",    "label": "Mix",    "min": 0, "max": 1, "def": 0.7 } ] },
+    "bitcrush":   { "label": "Bitcrush",    "params": [
+      { "key": "bits",       "label": "Bits",       "min": 1, "max": 16, "def": 8 },
+      { "key": "downsample", "label": "Downsample", "min": 1, "max": 32, "def": 4 },
+      { "key": "mix",        "label": "Mix",        "min": 0, "max": 1, "def": 1 } ] },
+    "chorus":     { "label": "Chorus",      "params": [
+      { "key": "rate",  "label": "Rate Hz",  "min": 0.05, "max": 8, "def": 0.8 },
+      { "key": "depth", "label": "Depth ms", "min": 0, "max": 10, "def": 3 },
+      { "key": "delay", "label": "Delay ms", "min": 1, "max": 40, "def": 14 },
+      { "key": "mix",   "label": "Mix",      "min": 0, "max": 1, "def": 0.5 } ] },
+    "flanger":    { "label": "Flanger",     "params": [
+      { "key": "rate",     "label": "Rate Hz",  "min": 0.05, "max": 8, "def": 0.3 },
+      { "key": "depth",    "label": "Depth ms", "min": 0, "max": 8, "def": 2 },
+      { "key": "delay",    "label": "Delay ms", "min": 0.1, "max": 10, "def": 1 },
+      { "key": "feedback", "label": "Feedback", "min": 0, "max": 0.95, "def": 0.5 },
+      { "key": "mix",      "label": "Mix",      "min": 0, "max": 1, "def": 0.5 } ] },
+    "phaser":     { "label": "Phaser",      "params": [
+      { "key": "rate",     "label": "Rate Hz",   "min": 0.05, "max": 8, "def": 0.5 },
+      { "key": "depth",    "label": "Depth oct", "min": 0, "max": 4, "def": 2 },
+      { "key": "base",     "label": "Base Hz",   "min": 100, "max": 2000, "def": 500 },
+      { "key": "feedback", "label": "Feedback",  "min": 0, "max": 0.95, "def": 0.3 },
+      { "key": "mix",      "label": "Mix",       "min": 0, "max": 1, "def": 0.5 } ] },
+    "vibrato":    { "label": "Vibrato",     "params": [
+      { "key": "rate",  "label": "Rate Hz",  "min": 0.1, "max": 12, "def": 5 },
+      { "key": "depth", "label": "Depth ms", "min": 0, "max": 8, "def": 2 },
+      { "key": "delay", "label": "Delay ms", "min": 1, "max": 40, "def": 14 } ] },
+    "tremolo":    { "label": "Tremolo",     "params": [
+      { "key": "rate",  "label": "Rate Hz", "min": 0.1, "max": 20, "def": 5 },
+      { "key": "depth", "label": "Depth",   "min": 0, "max": 1, "def": 0.7 } ] },
+    "autowah":    { "label": "Auto Wah",    "params": [
+      { "key": "base",        "label": "Base Hz",     "min": 50, "max": 2000, "def": 300 },
+      { "key": "range",       "label": "Range Hz",    "min": 100, "max": 4000, "def": 2200 },
+      { "key": "sensitivity", "label": "Sensitivity", "min": 1, "max": 30, "def": 8 },
+      { "key": "q",           "label": "Q",           "min": 0.5, "max": 12, "def": 4 },
+      { "key": "mix",         "label": "Mix",         "min": 0, "max": 1, "def": 1 } ] },
+    "delay":      { "label": "Delay",       "params": [
+      { "key": "time_ms",  "label": "Time ms",  "min": 1, "max": 1000, "def": 300 },
+      { "key": "feedback", "label": "Feedback", "min": 0, "max": 0.95, "def": 0.35 },
+      { "key": "mix",      "label": "Mix",      "min": 0, "max": 1, "def": 0.3 } ] },
+    "reverb":     { "label": "Reverb",      "params": [
+      { "key": "roomsize", "label": "Room Size", "min": 0, "max": 1, "def": 0.7 },
+      { "key": "damp",     "label": "Damping",   "min": 0, "max": 1, "def": 0.5 },
+      { "key": "mix",      "label": "Mix",       "min": 0, "max": 1, "def": 0.3 } ] }
+  }
+}

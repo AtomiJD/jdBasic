@@ -23,6 +23,8 @@ ma_device          g_mon_device;
 std::atomic<bool>  g_mon_active{false};
 std::atomic<float> g_mon_gain{1.0f};
 std::atomic<int>   g_rt_chain{0};      // active realtime FX chain (0 = passthrough)
+std::atomic<float> g_in_peak{0.0f};    // decaying input / output peak for metering
+std::atomic<float> g_out_peak{0.0f};
 
 // realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
@@ -33,6 +35,15 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
     for (unsigned i = 0; i < n; i++) out[i] = in[i] * g;
     int chain = g_rt_chain.load(std::memory_order_relaxed);
     if (chain > 0) fx_process_chain_rt(chain, out, n, 48000.0);
+    float ip = 0.0f, op = 0.0f;
+    for (unsigned i = 0; i < n; i++) {
+        float a = in[i];  if (a < 0) a = -a;  if (a > ip) ip = a;
+        float b = out[i]; if (b < 0) b = -b;  if (b > op) op = b;
+    }
+    float pin = g_in_peak.load(std::memory_order_relaxed) * 0.92f;  if (ip > pin) pin = ip;
+    float pout = g_out_peak.load(std::memory_order_relaxed) * 0.92f; if (op > pout) pout = op;
+    g_in_peak.store(pin, std::memory_order_relaxed);
+    g_out_peak.store(pout, std::memory_order_relaxed);
 }
 } // namespace
 
@@ -109,7 +120,17 @@ void register_audioio_builtins(VM& vm) {
     // MON.STOP()
     vm.register_native("MON.STOP", 0, 0, [](const std::vector<Value>&) -> Value {
         if (g_mon_active.exchange(false)) ma_device_uninit(&g_mon_device);
+        g_in_peak.store(0.0f, std::memory_order_relaxed);
+        g_out_peak.store(0.0f, std::memory_order_relaxed);
         return Value::make_none();
+    });
+
+    // MON.LEVEL() -> { in, out }  decaying peak levels (0..1+) for VU metering
+    vm.register_native("MON.LEVEL", 0, 0, [](const std::vector<Value>&) -> Value {
+        Value m = Value::make_object();
+        m.as_object()->set("in",  Value::make_f64(g_in_peak.load(std::memory_order_relaxed)));
+        m.as_object()->set("out", Value::make_f64(g_out_peak.load(std::memory_order_relaxed)));
+        return m;
     });
 
     // MON.GAIN(g)  monitor level, applied lock-free in the audio callback

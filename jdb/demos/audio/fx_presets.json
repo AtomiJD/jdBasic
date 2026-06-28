@@ -1,0 +1,43 @@
+{
+  "names": ["Brian May", "Clean Chime", "Lush Clean", "Metal Rhythm", "Funk Wah", "Lo-Fi Crunch"],
+  "presets": {
+    "Brian May": [
+      { "type": "compressor", "params": { "threshold": 0.18, "ratio": 3, "makeup": 1.3 } },
+      { "type": "gain",       "params": { "gain": 7 } },
+      { "type": "highpass",   "params": { "cutoff": 450, "q": 0.7 } },
+      { "type": "drive",      "params": { "amount": 22, "level": 0.72 } },
+      { "type": "lowpass",    "params": { "cutoff": 3900, "q": 1.0 } },
+      { "type": "compressor", "params": { "threshold": 0.12, "ratio": 5, "makeup": 2.3 } },
+      { "type": "delay",      "params": { "time_ms": 150, "feedback": 0.26, "mix": 0.18 } }
+    ],
+    "Clean Chime": [
+      { "type": "compressor", "params": { "threshold": 0.4, "ratio": 2, "makeup": 1.1 } },
+      { "type": "highpass",   "params": { "cutoff": 120, "q": 0.707 } },
+      { "type": "chorus",     "params": { "rate": 0.9, "depth": 3, "delay": 14, "mix": 0.4 } },
+      { "type": "delay",      "params": { "time_ms": 380, "feedback": 0.25, "mix": 0.22 } },
+      { "type": "reverb",     "params": { "roomsize": 0.7, "damp": 0.5, "mix": 0.25 } }
+    ],
+    "Lush Clean": [
+      { "type": "compressor", "params": { "threshold": 0.4, "ratio": 2, "makeup": 1.1 } },
+      { "type": "chorus",     "params": { "rate": 0.9, "depth": 3.5, "delay": 14, "mix": 0.5 } },
+      { "type": "reverb",     "params": { "roomsize": 0.85, "damp": 0.4, "mix": 0.35 } }
+    ],
+    "Metal Rhythm": [
+      { "type": "noisegate", "params": { "threshold": 0.03 } },
+      { "type": "highpass",  "params": { "cutoff": 90, "q": 0.707 } },
+      { "type": "drive",     "params": { "amount": 18, "level": 0.7 } },
+      { "type": "eq",        "params": { "freq": 650, "q": 1.2, "gain": -6 } },
+      { "type": "lowpass",   "params": { "cutoff": 4500, "q": 0.9 } }
+    ],
+    "Funk Wah": [
+      { "type": "compressor", "params": { "threshold": 0.3, "ratio": 4, "makeup": 1.4 } },
+      { "type": "autowah",    "params": { "base": 300, "range": 2400, "sensitivity": 10, "q": 5, "mix": 1.0 } },
+      { "type": "drive",      "params": { "amount": 4, "level": 0.8 } }
+    ],
+    "Lo-Fi Crunch": [
+      { "type": "fuzz",     "params": { "amount": 16, "level": 0.6 } },
+      { "type": "bitcrush", "params": { "bits": 6, "downsample": 6, "mix": 0.6 } },
+      { "type": "lowpass",  "params": { "cutoff": 3000, "q": 0.707 } }
+    ]
+  }
+}
