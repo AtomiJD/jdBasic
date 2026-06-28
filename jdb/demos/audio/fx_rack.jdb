@@ -7,6 +7,7 @@ DIM cfgDir$    = PATH.DIRNAME$(OS.ARGS()[0])
 DIM cfgEffects$ = PATH.JOIN$(cfgDir$, "fx_effects.json")
 DIM cfgPresets$ = PATH.JOIN$(cfgDir$, "fx_presets.json")
 DIM cfgRack$    = PATH.JOIN$(cfgDir$, "fx_rack_user.json")
+DIM cfgAi$      = PATH.JOIN$(cfgDir$, "fx_ai.json")
 
 DIM schema, typeNames, presetsDoc, pnames
 DIM rack = []
@@ -21,6 +22,9 @@ DIM appRunning = TRUE
 DIM showScope = TRUE
 DIM recArmed = FALSE
 DIM recCount = 0
+DIM aiCfg, aiOrder, aiProviders
+DIM aiProvSel = 0
+DIM aiPrompt$ = "warm clean with light reverb"
 DIM NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 DIM tapTimes = []
 DIM tapBpm = 0
@@ -97,6 +101,112 @@ FUNC PITCH_INFO(hz)
     r{"cents"} = (midi - nearest) * 100
     RETURN r
 ENDFUNC
+
+' ---- AI tone designer ----
+
+FUNC AI_VOCAB$()
+    DIM s$ = "", i, k
+    FOR i = 0 TO LEN(typeNames) - 1
+        DIM ty$ = typeNames[i]
+        DIM defs = schema{"effects"}{ty$}{"params"}
+        s$ = s$ + ty$ + ": "
+        FOR k = 0 TO LEN(defs) - 1
+            s$ = s$ + defs[k]{"key"} + "(" + STR$(defs[k]{"min"}) + ".." + STR$(defs[k]{"max"}) + ")"
+            IF k < LEN(defs) - 1 THEN s$ = s$ + " "
+        NEXT k
+        s$ = s$ + "; "
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+' pull the model's text out of a provider response
+FUNC AI_EXTRACT$(resp$, kind$)
+    DIM j = JSON.PARSE$(resp$)
+    IF TYPEOF(j) = "NONE" THEN RETURN ""
+    IF kind$ = "claude" THEN
+        IF TYPEOF(j{"content"}) = "NONE" THEN RETURN ""
+        RETURN "" + j{"content"}[0]{"text"}
+    ENDIF
+    IF TYPEOF(j{"choices"}) = "NONE" THEN RETURN ""
+    RETURN "" + j{"choices"}[0]{"message"}{"content"}
+ENDFUNC
+
+' slice out the first JSON array (tolerates prose / code fences around it)
+FUNC AI_ARRAY$(t$)
+    DIM p = INSTR(t$, "[")
+    IF p < 0 THEN RETURN ""
+    DIM q = -1, i
+    FOR i = LEN(t$) - 1 TO 0 STEP -1
+        IF MID$(t$, i, 1) = "]" THEN
+            q = i
+            EXITFOR
+        ENDIF
+    NEXT i
+    IF q < p THEN RETURN ""
+    RETURN MID$(t$, p, q - p + 1)
+ENDFUNC
+
+SUB AI_GENERATE()
+    DIM pkey$ = aiOrder[aiProvSel]
+    DIM prov = aiProviders{pkey$}
+    DIM key$ = ""
+    IF LEN("" + prov{"key_env"}) > 0 THEN key$ = GETENV$(prov{"key_env"})
+    IF LEN("" + prov{"key_env"}) > 0 ANDALSO key$ = "" THEN
+        status$ = "set " + prov{"key_env"} + " in the environment"
+        EXITSUB
+    ENDIF
+    DIM prompt$ = "You design guitar pedalboard FX chains. Effect types with params and ranges: " + _
+        AI_VOCAB$() + " Build a chain for: " + aiPrompt$ + ". Order matters as signal flow. " + _
+        "Reply with ONLY a JSON array; each item has fields type (one of the listed types) and " + _
+        "params (an object mapping param name to a number within its range). No prose, no code fences."
+    DIM msg AS MAP
+    msg{"role"} = "user"
+    msg{"content"} = prompt$
+    DIM bd AS MAP
+    bd{"model"} = prov{"model"}
+    bd{"messages"} = [msg]
+    DIM kind$ = "" + prov{"kind"}
+    HTTP.CLEARHEADERS()
+    IF kind$ = "claude" THEN
+        bd{"max_tokens"} = 1024
+        HTTP.SETHEADER("x-api-key", key$)
+        HTTP.SETHEADER("anthropic-version", "2023-06-01")
+    ELSE
+        bd{"temperature"} = 0.4
+        IF LEN(key$) > 0 THEN HTTP.SETHEADER("Authorization", "Bearer " + key$)
+    ENDIF
+    HTTP.SETTIMEOUT(60)
+    status$ = "asking " + pkey$ + "..."
+    DIM resp$ = HTTP.POST$("" + prov{"url"}, JSON.STRINGIFY$(bd))
+    DIM code = HTTP.STATUSCODE()
+    IF code < 200 ORELSE code >= 300 THEN
+        status$ = pkey$ + " HTTP " + code + ": " + LEFT$(resp$, 100)
+        EXITSUB
+    ENDIF
+    DIM txt$ = AI_EXTRACT$(resp$, kind$)
+    DIM arr$ = AI_ARRAY$(txt$)
+    IF LEN(arr$) = 0 THEN
+        status$ = "AI gave no JSON chain"
+        EXITSUB
+    ENDIF
+    DIM nodes = JSON.PARSE$(arr$)
+    IF TYPEOF(nodes) = "NONE" THEN
+        status$ = "AI chain did not parse"
+        EXITSUB
+    ENDIF
+    DIM nr = [], k
+    FOR k = 0 TO LEN(nodes) - 1
+        DIM ty$ = "" + nodes[k]{"type"}
+        IF TYPEOF(schema{"effects"}{ty$}) <> "NONE" THEN nr = APPEND(nr, NODE_FROM(ty$, nodes[k]{"params"}))
+    NEXT k
+    IF LEN(nr) = 0 THEN
+        status$ = "AI chain had no valid effect types"
+        EXITSUB
+    ENDIF
+    rack = nr
+    REBUILD()
+    status$ = "AI loaded " + LEN(rack) + " nodes from " + pkey$
+ENDSUB
 
 ' ---- engine sync ----
 
@@ -386,6 +496,17 @@ presetsDoc = JSON.PARSE$(TXTREADER$(cfgPresets$))
 pnames = presetsDoc{"names"}
 DIM mp = MIDI.PORTS()
 midiInNames = mp{"in"}
+
+aiCfg = JSON.PARSE$(TXTREADER$(cfgAi$))
+IF TYPEOF(aiCfg) <> "NONE" THEN
+    aiOrder = aiCfg{"order"}
+    aiProviders = aiCfg{"providers"}
+    DIM ai
+    FOR ai = 0 TO LEN(aiOrder) - 1
+        IF aiOrder[ai] = ("" + aiCfg{"provider"}) THEN aiProvSel = ai
+    NEXT ai
+ENDIF
+
 LOAD_PRESET("Brian May")
 
 SCREEN 820, 1040, "jdBasic FX Rack", 1
@@ -524,6 +645,15 @@ DO
         IF tapBpm > 0 THEN
             GUI.SAME_LINE
             GUI.TEXT INT(tapBpm) + " BPM"
+        ENDIF
+
+        IF TYPEOF(aiCfg) <> "NONE" THEN
+            GUI.SEPARATOR_TEXT("AI tone")
+            aiPrompt$ = GUI.INPUT("Describe", aiPrompt$)
+            DIM apv = GUI.COMBO("##aiprov", aiProvSel, aiOrder)
+            IF apv <> aiProvSel THEN aiProvSel = apv
+            GUI.SAME_LINE
+            IF GUI.BUTTON("Generate") THEN AI_GENERATE()
         ENDIF
 
         GUI.SEPARATOR_TEXT("Save as preset")

@@ -1,0 +1,24 @@
+{
+  "provider": "claude",
+  "order": ["claude", "openai", "strix"],
+  "providers": {
+    "claude": {
+      "url": "https://api.anthropic.com/v1/messages",
+      "model": "claude-opus-4-8",
+      "key_env": "ANTHROPIC_API_KEY",
+      "kind": "claude"
+    },
+    "openai": {
+      "url": "https://api.openai.com/v1/chat/completions",
+      "model": "gpt-4o",
+      "key_env": "OPENAI_API_KEY",
+      "kind": "openai"
+    },
+    "strix": {
+      "url": "http://192.168.0.113:8080/v1/chat/completions",
+      "model": "local",
+      "key_env": "",
+      "kind": "openai"
+    }
+  }
+}
