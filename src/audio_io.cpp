@@ -19,6 +19,7 @@
 #include <cstring>
 #include <fstream>
 #include <cstdint>
+#include <cmath>
 
 namespace {
 ma_device          g_mon_device;
@@ -186,7 +187,7 @@ void register_audioio_builtins(VM& vm) {
         double msq = 0.0;
         for (int i = 0; i < N; i++) { buf[i] = (float)(buf[i] - mean); msq += (double)buf[i] * buf[i]; }
         msq /= N;
-        if (msq < 0.00001) return Value::make_f64(0.0);         // below noise floor (quiet dry guitar)
+        if (msq < 0.000001) return Value::make_f64(0.0);        // below noise floor; the thin high e is very quiet (nconf below guards noise)
         const double rate = 48000.0;
         int minTau = (int)(rate / 1000.0);                      // up to 1000 Hz
         int maxTau = (int)(rate / 70.0);                        // down to 70 Hz
@@ -202,12 +203,19 @@ void register_audioio_builtins(VM& vm) {
             rbuf[tau] = r;
             if (r > bestR) bestR = r;
         }
-        if (bestR < 0.35 * r0) return Value::make_f64(0.0);     // not periodic enough
+        if (bestR <= 0.0) return Value::make_f64(0.0);
         double thr = 0.93 * bestR;                              // earliest strong peak = fundamental
         int tsel = -1;
         for (int tau = minTau; tau <= maxTau; tau++)
             if (rbuf[tau] >= thr) { tsel = tau; break; }
         if (tsel < 0) return Value::make_f64(0.0);
+        // normalized cross-correlation at the chosen lag: robust to fast string
+        // decay (the high e drops in amplitude across the window) - the raw
+        // bestR/r0 ratio would wrongly reject it.
+        double e2 = 0.0;
+        for (int i = 0; i < M; i++) e2 += (double)buf[i + tsel] * buf[i + tsel];
+        double nconf = (e2 > 0.0) ? rbuf[tsel] / std::sqrt(r0 * e2) : 0.0;
+        if (nconf < 0.5) return Value::make_f64(0.0);
         double tau = tsel;
         if (tsel > minTau && tsel < maxTau) {
             double rm = rbuf[tsel - 1], rc = rbuf[tsel], rp = rbuf[tsel + 1];
