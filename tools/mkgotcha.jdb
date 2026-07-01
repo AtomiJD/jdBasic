@@ -1,0 +1,178 @@
+' Curated gotcha/idiom training pack: the recurring jdBasic mistakes as
+' wrong/right pairs. Emits ChatML JSONL (two records per item: a diagnose-fix
+' and an idiom question). Output: dataset/gotcha_train.jsonl + _heldout.jsonl.
+
+DIM Q$ = CHR$(34)
+DIM NL$ = CHR$(10)
+DIM HELD_EVERY = 5
+
+FUNC chatml(task$, answer$)
+    DIM sysm = {}
+    sysm{"role"} = "system"
+    sysm{"content"} = "You are a jdBasic coding assistant. Write correct, idiomatic jdBasic."
+    DIM usrm = {}
+    usrm{"role"} = "user"
+    usrm{"content"} = task$
+    DIM astm = {}
+    astm{"role"} = "assistant"
+    astm{"content"} = answer$
+    DIM rec = {}
+    rec{"messages"} = [sysm, usrm, astm]
+    RETURN JSON.STRINGIFY$(rec)
+ENDFUNC
+
+FUNC gg(ask$, bad$, good$, why$)
+    DIM m = {}
+    m{"ask"} = ask$
+    m{"bad"} = bad$
+    m{"good"} = good$
+    m{"why"} = why$
+    RETURN m
+ENDFUNC
+
+DIM items = []
+
+items = APPEND(items, gg( _
+    "Why can't I name a variable pi or line in jdBasic?", _
+    "DIM pi = 3.0", _
+    "DIM radius = 3.0", _
+    "Identifiers are case-insensitive and collide with builtins/constants (PI, E, LINE, STEP, VAL, MIN, MAX, MAP). Pick a non-reserved English name."))
+
+items = APPEND(items, gg( _
+    "How do I get a 0-based index range in jdBasic?", _
+    "r = IOTA(5)", _
+    "r = IOTA(5, 0)", _
+    "IOTA is 1-based: IOTA(5) is [1,2,3,4,5]. Pass a second argument 0 for a 0-based range [0,1,2,3,4]."))
+
+items = APPEND(items, gg( _
+    "How do I read the first character of a string in jdBasic?", _
+    "c = MID$(s, 1, 1)", _
+    "c = MID$(s, 0, 1)", _
+    "Arrays and string functions are 0-based: arr[0] is the first element and MID$(s, 0, 1) is the first char."))
+
+items = APPEND(items, gg( _
+    "How do I test whether a substring is present in jdBasic?", _
+    "IF INSTR(s, x) > 0 THEN found = TRUE", _
+    "IF INSTR(s, x) >= 0 THEN found = TRUE", _
+    "INSTR is 0-based and returns -1 when absent. Test >= 0, never > 0, otherwise a match at position 0 is missed."))
+
+items = APPEND(items, gg( _
+    "How do I add 7 days to a date in jdBasic?", _
+    "d2 = DATEADD(" + Q$ + "d" + Q$ + ", d, 7)", _
+    "d2 = DATEADD(" + Q$ + "d" + Q$ + ", 7, d)", _
+    "DATEADD(part$, num, date): the count comes before the date, not after."))
+
+items = APPEND(items, gg( _
+    "How do I put a newline inside a string in jdBasic?", _
+    "PRINT " + Q$ + "a\nb" + Q$, _
+    "PRINT " + Q$ + "a" + Q$ + " + CHR$(10) + " + Q$ + "b" + Q$, _
+    "jdBasic strings have no escape sequences. Backslash-n is literal. Use CHR$(10) for a newline and CHR$(34) for a quote."))
+
+items = APPEND(items, gg( _
+    "How do I append an element to an array in jdBasic?", _
+    "APPEND arr, v", _
+    "arr = APPEND(arr, v)", _
+    "APPEND is a function that returns the new array. Assign its result; it is not a statement."))
+
+items = APPEND(items, gg( _
+    "How do I apply a function to every element of an array in jdBasic?", _
+    "result = MAP(fn@, arr)", _
+    "result = SELECT(fn@, arr)", _
+    "Higher-order map is SELECT(fn@, arr). MAP is the hashmap type, not a map operation."))
+
+items = APPEND(items, gg( _
+    "How do I short-circuit a condition whose right side could fault in jdBasic?", _
+    "IF n > 0 AND arr[n-1] > 0 THEN ok = TRUE", _
+    "IF n > 0 ANDALSO arr[n-1] > 0 THEN ok = TRUE", _
+    "AND/OR evaluate both sides. Use ANDALSO/ORELSE to short-circuit when the right side would fault."))
+
+items = APPEND(items, gg( _
+    "How do I measure per-frame time in milliseconds in jdBasic?", _
+    "dt = TIMER", _
+    "dt = TICK()", _
+    "TICK() returns milliseconds for per-frame timing. TIMER is integer seconds."))
+
+items = APPEND(items, gg( _
+    "How do I get the larger of two values a and b in jdBasic?", _
+    "m = MAX(a, b)", _
+    "m = MAX([a, b])", _
+    "MIN/MAX are array reducers. MAX(a, b) reduces only the first argument. Wrap the pair in an array: MAX([a, b])."))
+
+items = APPEND(items, gg( _
+    "How do I check whether a map key is missing in jdBasic?", _
+    "IF m{" + Q$ + "k" + Q$ + "} = NONE THEN missing = TRUE", _
+    "IF TYPEOF(m{" + Q$ + "k" + Q$ + "}) = " + Q$ + "NONE" + Q$ + " THEN missing = TRUE", _
+    "x = NONE is TRUE even for non-NONE values. Test a missing key with TYPEOF(v) = " + Q$ + "NONE" + Q$ + "."))
+
+items = APPEND(items, gg( _
+    "Why does mutating a copied array change the original in jdBasic?", _
+    "b = a" + NL$ + "b[0] = 9", _
+    "b = a + 0" + NL$ + "b[0] = 9", _
+    "A bare = may share array storage. Force a fresh copy with + 0 before mutating."))
+
+items = APPEND(items, gg( _
+    "Why does my number have a leading space when I build a filename in jdBasic?", _
+    "name$ = " + Q$ + "cand_" + Q$ + " + STR$(n)", _
+    "name$ = " + Q$ + "cand_" + Q$ + " + TRIM$(STR$(n))", _
+    "STR$ adds a leading space for the sign. Wrap it with TRIM$ when concatenating into a string."))
+
+items = APPEND(items, gg( _
+    "What is the function to serialize a map to JSON in jdBasic?", _
+    "s$ = JSON.STRINGIFY(m)", _
+    "s$ = JSON.STRINGIFY$(m)", _
+    "The builtin is JSON.STRINGIFY$ with a $ suffix. It takes a Map or Array."))
+
+items = APPEND(items, gg( _
+    "How do I read the exit code and output of OS.EXEC in jdBasic?", _
+    "r = OS.EXEC(cmd$, args)" + NL$ + "code = r{" + Q$ + "exit_code" + Q$ + "}", _
+    "r = OS.EXEC(cmd$, args)" + NL$ + "code = r{" + Q$ + "EXIT_CODE" + Q$ + "}", _
+    "OS.EXEC returns a map with UPPERCASE keys EXIT_CODE and OUTPUT. Lower-case keys yield NONE."))
+
+items = APPEND(items, gg( _
+    "How do I break out of a FOR loop in jdBasic?", _
+    "EXIT FOR", _
+    "EXITFOR", _
+    "EXITFOR, EXITDO, EXITFUNC, CONTINUEFOR and CONTINUEDO are single tokens, not two words."))
+
+DIM recs = []
+DIM it = {}
+DIM u1$ = ""
+DIM a1$ = ""
+DIM a2$ = ""
+DIM i = 0
+FOR i = 0 TO LEN(items) - 1
+    it = items[i]
+    u1$ = "The following jdBasic code is wrong. Explain why and give the corrected version:" + NL$ + it{"bad"}
+    a1$ = it{"why"} + NL$ + NL$ + "Correct:" + NL$ + it{"good"}
+    recs = APPEND(recs, chatml(u1$, a1$))
+    a2$ = it{"good"} + NL$ + NL$ + it{"why"}
+    recs = APPEND(recs, chatml(it{"ask"}, a2$))
+NEXT i
+
+TRY
+    MKDIR "dataset"
+CATCH
+ENDTRY
+
+DIM train$ = ""
+DIM held$ = ""
+DIM n_train = 0
+DIM n_held = 0
+DIM r = 0
+FOR r = 0 TO LEN(recs) - 1
+    IF (r MOD HELD_EVERY) = 0 THEN
+        held$ = held$ + recs[r] + NL$
+        n_held = n_held + 1
+    ELSE
+        train$ = train$ + recs[r] + NL$
+        n_train = n_train + 1
+    ENDIF
+NEXT r
+
+TXTWRITER "dataset/gotcha_train.jsonl", train$
+TXTWRITER "dataset/gotcha_heldout.jsonl", held$
+
+PRINT "gotcha items  : "; LEN(items)
+PRINT "records       : "; LEN(recs)
+PRINT "train records : "; n_train
+PRINT "held records  : "; n_held
