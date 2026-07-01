@@ -1,0 +1,196 @@
+' Model eval harness: scores candidate jdBasic completions on the compiler
+' matrix (lint + native-compile, optional interp/native run). Two modes:
+'   gold  - score the reference answers from the held-out set (no model)
+'   model - query a local endpoint (Ollama/llama.cpp) for each prompt
+' Config via environment: EVAL_MODE, EVAL_ENDPOINT, EVAL_MODEL, EVAL_RUN,
+' EVAL_LIMIT, EVAL_HELDOUT. Report: dataset/eval_report.json + a table.
+
+DIM EXE$ = GETENV$("EVAL_EXE")
+IF EXE$ = "" THEN EXE$ = "build" + CHR$(92) + "jdBasic.exe"
+DIM WORKDIR$ = "dataset/eval_work"
+DIM REPORTFILE$ = "dataset/eval_report.json"
+DIM CODE_MARK$ = "Write a jdBasic program"
+
+DIM HELDOUT$ = GETENV$("EVAL_HELDOUT")
+IF HELDOUT$ = "" THEN HELDOUT$ = "dataset/heldout.jsonl"
+DIM MODE$ = GETENV$("EVAL_MODE")
+IF MODE$ = "" THEN MODE$ = "gold"
+DIM ENDPOINT$ = GETENV$("EVAL_ENDPOINT")
+IF ENDPOINT$ = "" THEN ENDPOINT$ = "http://localhost:11434/api/chat"
+DIM MODEL$ = GETENV$("EVAL_MODEL")
+IF MODEL$ = "" THEN MODEL$ = "qwen2.5-coder"
+DIM DORUN$ = GETENV$("EVAL_RUN")
+DIM LIMIT = 0
+DIM LIMIT$ = GETENV$("EVAL_LIMIT")
+IF LIMIT$ <> "" THEN LIMIT = VAL(LIMIT$)
+
+FUNC extract_code(text$)
+    DIM p1 = INSTR(text$, "```")
+    IF p1 < 0 THEN
+        RETURN text$
+    ENDIF
+    DIM nl = INSTR(p1, text$, CHR$(10))
+    IF nl < 0 THEN
+        RETURN text$
+    ENDIF
+    DIM start = nl + 1
+    DIM p2 = INSTR(start, text$, "```")
+    IF p2 < 0 THEN
+        RETURN MID$(text$, start)
+    ENDIF
+    RETURN MID$(text$, start, p2 - start)
+ENDFUNC
+
+FUNC query_model(user$)
+    DIM sysm = {}
+    sysm{"role"} = "system"
+    sysm{"content"} = "You are a jdBasic coding assistant. Reply with jdBasic code only."
+    DIM usrm = {}
+    usrm{"role"} = "user"
+    usrm{"content"} = user$
+    DIM req = {}
+    req{"model"} = MODEL$
+    req{"messages"} = [sysm, usrm]
+    req{"stream"} = FALSE
+    DIM body$ = JSON.STRINGIFY$(req)
+    DIM resp$ = ""
+    TRY
+        resp$ = HTTP.POST$(ENDPOINT$, body$, "application/json")
+    CATCH
+        RETURN ""
+    ENDTRY
+    IF TRIM$(resp$) = "" THEN
+        RETURN ""
+    ENDIF
+    DIM o = JSON.PARSE$(resp$)
+    DIM msg = o{"message"}
+    IF TYPEOF(msg) = "NONE" THEN
+        RETURN ""
+    ENDIF
+    RETURN extract_code(msg{"content"})
+ENDFUNC
+
+FUNC stage_ok(exe$, flag$, file$, marker$)
+    DIM r = OS.EXEC(exe$, [flag$, file$])
+    IF r{"EXIT_CODE"} <> 0 THEN
+        RETURN FALSE
+    ENDIF
+    RETURN INSTR(r{"OUTPUT"}, marker$) >= 0
+ENDFUNC
+
+FUNC run_timed(target$)
+    DIM cmd$ = "timeout 8 " + REPLACE$(target$, CHR$(92), "/")
+    DIM r = OS.EXEC("bash", ["-c", cmd$])
+    RETURN r{"EXIT_CODE"}
+ENDFUNC
+
+TRY
+    MKDIR "dataset"
+CATCH
+ENDTRY
+TRY
+    MKDIR WORKDIR$
+CATCH
+ENDTRY
+
+DIM raw$ = TXTREADER$(HELDOUT$)
+DIM lines = SPLIT(raw$, CHR$(10))
+
+DIM n_total = 0
+DIM n_lint = 0
+DIM n_compile = 0
+DIM n_irun = 0
+DIM n_nrun = 0
+DIM n_run_seen = 0
+
+DIM li = 0
+DIM ln$ = ""
+DIM o = {}
+DIM msgs = []
+DIM user$ = ""
+DIM cand$ = ""
+DIM fjdb$ = ""
+DIM fexe$ = ""
+DIM ok_c = FALSE
+DIM rc = 0
+
+FOR li = 0 TO LEN(lines) - 1
+    ln$ = TRIM$(lines[li])
+    IF ln$ = "" THEN
+        CONTINUEFOR
+    ENDIF
+    o = JSON.PARSE$(ln$)
+    msgs = o{"messages"}
+    user$ = msgs[1]{"content"}
+    IF LEFT$(user$, LEN(CODE_MARK$)) <> CODE_MARK$ THEN
+        CONTINUEFOR
+    ENDIF
+    IF LIMIT > 0 ANDALSO n_total >= LIMIT THEN
+        EXITFOR
+    ENDIF
+
+    IF MODE$ = "gold" THEN
+        cand$ = msgs[2]{"content"}
+    ELSE
+        cand$ = query_model(user$)
+    ENDIF
+
+    n_total = n_total + 1
+    fjdb$ = WORKDIR$ + CHR$(92) + "cand_" + TRIM$(STR$(n_total)) + ".jdb"
+    fexe$ = WORKDIR$ + CHR$(92) + "cand_" + TRIM$(STR$(n_total)) + ".exe"
+    TXTWRITER fjdb$, cand$
+
+    IF stage_ok(EXE$, "--lint", fjdb$, "Parsed OK") THEN
+        n_lint = n_lint + 1
+    ENDIF
+    ok_c = stage_ok(EXE$, "-c", fjdb$, "Compiled:")
+    IF ok_c THEN
+        n_compile = n_compile + 1
+    ENDIF
+
+    IF DORUN$ = "1" THEN
+        n_run_seen = n_run_seen + 1
+        rc = run_timed(EXE$ + " " + fjdb$)
+        IF rc = 0 THEN
+            n_irun = n_irun + 1
+        ENDIF
+        IF ok_c THEN
+            rc = run_timed(fexe$)
+            IF rc = 0 THEN
+                n_nrun = n_nrun + 1
+            ENDIF
+        ENDIF
+    ENDIF
+NEXT li
+
+FUNC rate(hit, tot)
+    IF tot = 0 THEN
+        RETURN 0.0
+    ENDIF
+    RETURN INT((hit * 1000.0) / tot) / 10.0
+ENDFUNC
+
+DIM rep = {}
+rep{"mode"} = MODE$
+rep{"model"} = MODEL$
+rep{"code_tasks"} = n_total
+rep{"lint_pass"} = n_lint
+rep{"lint_rate"} = rate(n_lint, n_total)
+rep{"compile_pass"} = n_compile
+rep{"compile_rate"} = rate(n_compile, n_total)
+rep{"run_scored"} = n_run_seen
+rep{"interp_run_pass"} = n_irun
+rep{"native_run_pass"} = n_nrun
+TXTWRITER REPORTFILE$, JSON.STRINGIFY$(rep)
+
+PRINT "=== eval matrix ("; MODE$; ") ==="
+PRINT "code tasks    : "; n_total
+PRINT "lint    pass  : "; n_lint; "  ("; rate(n_lint, n_total); "%)"
+PRINT "compile pass  : "; n_compile; "  ("; rate(n_compile, n_total); "%)"
+IF DORUN$ = "1" THEN
+    PRINT "interp  run   : "; n_irun; " / "; n_run_seen
+    PRINT "native  run   : "; n_nrun; " / "; n_run_seen
+ELSE
+    PRINT "run stages    : skipped (set EVAL_RUN=1 to enable)"
+ENDIF
+PRINT "report        : "; REPORTFILE$
