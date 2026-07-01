@@ -1,0 +1,267 @@
+' Training-data generator: walks a tree of .jdb sources plus the whole doc/
+' markdown reference and emits ChatML JSONL for LoRA fine-tuning.
+' Output: dataset/train.jsonl and dataset/heldout.jsonl (deterministic 90/10).
+
+DIM SRC_ROOT$ = "jdb"
+DIM DOC_ROOT$ = "doc"
+DIM OUT_DIR$ = "dataset"
+DIM OUT_TRAIN$ = "dataset/train.jsonl"
+DIM OUT_HELD$ = "dataset/heldout.jsonl"
+DIM HELD_EVERY = 10
+DIM MAX_BODY = 6000
+
+FUNC chatml(task$, answer$)
+    DIM sysm = {}
+    sysm{"role"} = "system"
+    sysm{"content"} = "You are a jdBasic coding assistant. Write correct, idiomatic jdBasic."
+    DIM usrm = {}
+    usrm{"role"} = "user"
+    usrm{"content"} = task$
+    DIM astm = {}
+    astm{"role"} = "assistant"
+    astm{"content"} = answer$
+    DIM rec = {}
+    rec{"messages"} = [sysm, usrm, astm]
+    RETURN JSON.STRINGIFY$(rec)
+ENDFUNC
+
+FUNC strip_hashes(s$)
+    DIM p = 0
+    FOR p = 0 TO LEN(s$) - 1
+        IF MID$(s$, p, 1) <> "#" ANDALSO MID$(s$, p, 1) <> " " THEN
+            EXITFOR
+        ENDIF
+    NEXT p
+    RETURN TRIM$(MID$(s$, p))
+ENDFUNC
+
+FUNC clip_body(body$)
+    DIM b$ = TRIM$(body$)
+    IF LEN(b$) > MAX_BODY THEN
+        RETURN LEFT$(b$, MAX_BODY)
+    ENDIF
+    RETURN b$
+ENDFUNC
+
+FUNC lead_task(src$)
+    DIM lines = SPLIT(src$, CHR$(10))
+    DIM task$ = ""
+    DIM t$ = ""
+    DIM body$ = ""
+    DIM probe$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        t$ = TRIM$(lines[i])
+        IF t$ = "" THEN
+            CONTINUEFOR
+        ENDIF
+        IF LEFT$(t$, 1) = "'" THEN
+            body$ = TRIM$(MID$(t$, 1, LEN(t$) - 1))
+            probe$ = REPLACE$(body$, "=", "")
+            probe$ = REPLACE$(probe$, "-", "")
+            probe$ = REPLACE$(probe$, "*", "")
+            probe$ = REPLACE$(probe$, "#", "")
+            IF TRIM$(probe$) = "" THEN
+                CONTINUEFOR
+            ENDIF
+            IF body$ <> "" THEN
+                IF task$ = "" THEN
+                    task$ = body$
+                ELSE
+                    task$ = task$ + " " + body$
+                ENDIF
+            ENDIF
+        ELSE
+            EXITFOR
+        ENDIF
+    NEXT i
+    RETURN task$
+ENDFUNC
+
+FUNC collect(dir$)
+    DIM out = []
+    DIM entries = DIR$(dir$ + CHR$(92) + "*", TRUE)
+    DIM nm$ = ""
+    DIM ty$ = ""
+    DIM child$ = ""
+    DIM kids = []
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(entries) - 1
+        nm$ = entries[i][0]
+        ty$ = entries[i][2]
+        child$ = dir$ + CHR$(92) + nm$
+        IF ty$ = "DIR" THEN
+            kids = collect(child$)
+            FOR j = 0 TO LEN(kids) - 1
+                out = APPEND(out, kids[j])
+            NEXT j
+        ELSE
+            IF RIGHT$(nm$, 4) = ".jdb" THEN
+                out = APPEND(out, child$)
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC doc_bullets(path$)
+    DIM out = []
+    DIM raw$ = ""
+    TRY
+        raw$ = TXTREADER$(path$)
+    CATCH
+        RETURN out
+    ENDTRY
+    DIM lines = SPLIT(raw$, CHR$(10))
+    DIM t$ = ""
+    DIM sig$ = ""
+    DIM rest$ = ""
+    DIM q$ = ""
+    DIM p1 = 0.0
+    DIM p2 = 0.0
+    DIM dpos = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        t$ = TRIM$(lines[i])
+        IF LEFT$(t$, 5) = "* **`" THEN
+            p1 = INSTR(t$, "`")
+            p2 = INSTR(p1 + 1, t$, "`")
+            IF p2 > p1 THEN
+                sig$ = MID$(t$, p1 + 1, p2 - p1 - 1)
+                dpos = INSTR(p2, t$, "**:")
+                IF dpos >= 0 THEN
+                    rest$ = TRIM$(MID$(t$, dpos + 3))
+                    IF rest$ <> "" THEN
+                        q$ = "What does " + sig$ + " do in jdBasic?"
+                        out = APPEND(out, chatml(q$, rest$))
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC md_sections(path$)
+    DIM out = []
+    DIM raw$ = ""
+    TRY
+        raw$ = TXTREADER$(path$)
+    CATCH
+        RETURN out
+    ENDTRY
+    DIM lines = SPLIT(raw$, CHR$(10))
+    DIM title$ = ""
+    DIM body$ = ""
+    DIM t$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        t$ = TRIM$(lines[i])
+        IF LEFT$(t$, 1) = "#" THEN
+            IF title$ <> "" ANDALSO LEN(TRIM$(body$)) >= 40 THEN
+                out = APPEND(out, chatml("Explain this jdBasic documentation topic: " + title$, clip_body(body$)))
+            ENDIF
+            title$ = strip_hashes(t$)
+            body$ = ""
+        ELSE
+            body$ = body$ + lines[i] + CHR$(10)
+        ENDIF
+    NEXT i
+    IF title$ <> "" ANDALSO LEN(TRIM$(body$)) >= 40 THEN
+        out = APPEND(out, chatml("Explain this jdBasic documentation topic: " + title$, clip_body(body$)))
+    ENDIF
+    RETURN out
+ENDFUNC
+
+TRY
+    MKDIR OUT_DIR$
+CATCH
+ENDTRY
+
+DIM code_recs = []
+DIM files = collect(SRC_ROOT$)
+DIM path$ = ""
+DIM src$ = ""
+DIM task$ = ""
+DIM i = 0
+FOR i = 0 TO LEN(files) - 1
+    path$ = files[i]
+    src$ = ""
+    TRY
+        src$ = TXTREADER$(path$)
+    CATCH
+        CONTINUEFOR
+    ENDTRY
+    IF TRIM$(src$) = "" THEN
+        CONTINUEFOR
+    ENDIF
+    task$ = lead_task(src$)
+    IF task$ = "" THEN
+        task$ = "Write a jdBasic program."
+    ELSE
+        task$ = "Write a jdBasic program that does the following: " + task$
+    ENDIF
+    code_recs = APPEND(code_recs, chatml(task$, src$))
+NEXT i
+
+DIM doc_recs = []
+DIM docnames = DIR$(DOC_ROOT$ + CHR$(92) + "*.md", FALSE)
+DIM dname$ = ""
+DIM dpath$ = ""
+DIM secs = []
+DIM di = 0
+DIM si = 0
+FOR di = 0 TO LEN(docnames) - 1
+    dname$ = docnames[di]
+    dpath$ = DOC_ROOT$ + CHR$(92) + dname$
+    secs = md_sections(dpath$)
+    FOR si = 0 TO LEN(secs) - 1
+        doc_recs = APPEND(doc_recs, secs[si])
+    NEXT si
+    IF dname$ = "languages.md" THEN
+        secs = doc_bullets(dpath$)
+        FOR si = 0 TO LEN(secs) - 1
+            doc_recs = APPEND(doc_recs, secs[si])
+        NEXT si
+    ENDIF
+NEXT di
+
+DIM train$ = ""
+DIM held$ = ""
+DIM n_train = 0
+DIM n_held = 0
+DIM rec$ = ""
+DIM idx = 0
+
+FOR idx = 0 TO LEN(code_recs) - 1
+    rec$ = code_recs[idx]
+    IF (idx MOD HELD_EVERY) = 0 THEN
+        held$ = held$ + rec$ + CHR$(10)
+        n_held = n_held + 1
+    ELSE
+        train$ = train$ + rec$ + CHR$(10)
+        n_train = n_train + 1
+    ENDIF
+NEXT idx
+
+FOR idx = 0 TO LEN(doc_recs) - 1
+    rec$ = doc_recs[idx]
+    IF (idx MOD HELD_EVERY) = 0 THEN
+        held$ = held$ + rec$ + CHR$(10)
+        n_held = n_held + 1
+    ELSE
+        train$ = train$ + rec$ + CHR$(10)
+        n_train = n_train + 1
+    ENDIF
+NEXT idx
+
+TXTWRITER OUT_TRAIN$, train$
+TXTWRITER OUT_HELD$, held$
+
+PRINT "source files : "; LEN(files)
+PRINT "code records : "; LEN(code_recs)
+PRINT "doc files    : "; LEN(docnames)
+PRINT "doc records  : "; LEN(doc_recs)
+PRINT "train records: "; n_train
+PRINT "held records : "; n_held
