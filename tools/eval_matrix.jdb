@@ -52,22 +52,29 @@ FUNC query_model(user$)
     req{"model"} = MODEL$
     req{"messages"} = [sysm, usrm]
     req{"stream"} = FALSE
+    req{"temperature"} = 0.2
+    req{"max_tokens"} = 2048
     DIM body$ = JSON.STRINGIFY$(req)
-    DIM resp$ = ""
-    TRY
-        resp$ = HTTP.POST$(ENDPOINT$, body$, "application/json")
-    CATCH
+    DIM reqfile$ = WORKDIR$ + "/_req.json"
+    TXTWRITER reqfile$, body$
+    DIM r = OS.EXEC("curl", ["-s", "-m", "180", "-X", "POST", "-H", "Content-Type: application/json", "-d", "@" + reqfile$, ENDPOINT$])
+    IF r{"EXIT_CODE"} <> 0 THEN
         RETURN ""
-    ENDTRY
+    ENDIF
+    DIM resp$ = r{"OUTPUT"}
     IF TRIM$(resp$) = "" THEN
         RETURN ""
     ENDIF
     DIM o = JSON.PARSE$(resp$)
-    DIM msg = o{"message"}
-    IF TYPEOF(msg) = "NONE" THEN
-        RETURN ""
+    DIM ch = o{"choices"}
+    IF TYPEOF(ch) <> "NONE" THEN
+        RETURN extract_code(ch[0]{"message"}{"content"})
     ENDIF
-    RETURN extract_code(msg{"content"})
+    DIM msg = o{"message"}
+    IF TYPEOF(msg) <> "NONE" THEN
+        RETURN extract_code(msg{"content"})
+    ENDIF
+    RETURN ""
 ENDFUNC
 
 FUNC stage_ok(exe$, flag$, file$, marker$)
@@ -136,8 +143,8 @@ FOR li = 0 TO LEN(lines) - 1
     ENDIF
 
     n_total = n_total + 1
-    fjdb$ = WORKDIR$ + CHR$(92) + "cand_" + TRIM$(STR$(n_total)) + ".jdb"
-    fexe$ = WORKDIR$ + CHR$(92) + "cand_" + TRIM$(STR$(n_total)) + ".exe"
+    fjdb$ = WORKDIR$ + "/" + "cand_" + TRIM$(STR$(n_total)) + ".jdb"
+    fexe$ = WORKDIR$ + "/" + "cand_" + TRIM$(STR$(n_total)) + ".exe"
     TXTWRITER fjdb$, cand$
 
     IF stage_ok(EXE$, "--lint", fjdb$, "Parsed OK") THEN
