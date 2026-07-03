@@ -57,7 +57,7 @@ FUNC query_model(user$)
     DIM body$ = JSON.STRINGIFY$(req)
     DIM reqfile$ = WORKDIR$ + "/_req.json"
     TXTWRITER reqfile$, body$
-    DIM r = OS.EXEC("curl", ["-s", "-m", "180", "-X", "POST", "-H", "Content-Type: application/json", "-d", "@" + reqfile$, ENDPOINT$])
+    DIM r = OS.EXEC("curl", ["-s", "-m", "180", "-X", "POST", "-H", "Content-Type:application/json", "-d", "@" + reqfile$, ENDPOINT$])
     IF r{"EXIT_CODE"} <> 0 THEN
         RETURN ""
     ENDIF
