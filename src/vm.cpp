@@ -1348,15 +1348,16 @@ void VM::run() {
                     globals[oit->second].type == ValueType::OBJECT) {
 {
                     Value new_val = pop();
-                    Value* old_val = globals[oit->second].as_object()->get(field);
-                    bool changed = !old_val || !values_equal(*old_val, new_val);
 #ifdef COM
+                    // COM first: as_object() on a ComObj is an invalid cast
                     if (com_try_set_field(globals[oit->second], field, new_val)) {
-                        if (changed && !reactive_bindings.empty() && !reactive_updating)
+                        if (!reactive_bindings.empty() && !reactive_updating)
                             reactive_pending.push_back(full);
                         break;
                     }
 #endif
+                    Value* old_val = globals[oit->second].as_object()->get(field);
+                    bool changed = !old_val || !values_equal(*old_val, new_val);
                     globals[oit->second].as_object()->set(field, std::move(new_val));
                     if (changed && !reactive_bindings.empty() && !reactive_updating)
                         reactive_pending.push_back(full);
