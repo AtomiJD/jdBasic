@@ -362,6 +362,10 @@ Description: Binary string representation of integer n.
 Syntax: BINREADER$(filename$)
 Description: Reads the entire content of a binary file into a single string (raw bytes, no newline translation).
 
+[PDF.TEXT$]
+Syntax: PDF.TEXT$(filename$)
+Description: Extracts the text of a PDF file using the built-in extractor (uncompressed, FlateDecode, ASCIIHex/ASCII85 streams). Encrypted or image-only PDFs yield only what is decodable. Interpreter runtime.
+
 [BINWRITER]
 Syntax: BINWRITER filename$, data$
 Description: Writes a raw string of bytes to a file, overwriting it.

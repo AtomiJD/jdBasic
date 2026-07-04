@@ -1,18 +1,18 @@
-// Minimaler PDF-Text-Extraktor — header-only.
+// Minimal PDF text extractor - header-only.
 //
-// Unterstützt:
-//  - Unkomprimierte Streams
-//  - FlateDecode (zlib/deflate)         <-- via eingebauter tinfl
-//  - ASCIIHexDecode, ASCII85Decode      <-- einfache Filter
-//  - Text-Operatoren Tj, TJ, ', "
-//  - Hex-Strings <ABCD>
-//  - Literal-Strings (mit Escapes)
+// Supported:
+//  - uncompressed streams
+//  - FlateDecode (zlib/deflate)         <-- via the built-in tinfl
+//  - ASCIIHexDecode, ASCII85Decode      <-- simple filters
+//  - text operators Tj, TJ, ', "
+//  - hex strings <ABCD>
+//  - literal strings (with escapes)
 //
-// Nicht unterstützt: LZW, RunLength, CCITT, DCT (JPEG), JBIG2, verschlüsselte PDFs,
-// CMaps für CID-Fonts, komplexe Encoding-Tabellen. Für solche Dateien gibt der
-// Extraktor das raus, was er entziffern konnte und der Rest wird einfach ignoriert.
+// Not supported: LZW, RunLength, CCITT, DCT (JPEG), JBIG2, encrypted PDFs,
+// CMaps for CID fonts, complex encoding tables. For such files the extractor
+// returns whatever it could decode and silently ignores the rest.
 //
-// Kein C++-Standard-Erweiterung — kompiliert mit C++17.
+// No C++ language extensions - compiles with plain C++17.
 
 #pragma once
 
@@ -27,8 +27,8 @@
 namespace pdf_extract {
 
 // ─────────────────────────────────────────────────────────────────────────
-// tinfl: kompakter Inflate-Decoder (public domain, basiert auf miniz/tinfl)
-// Nur die Decoder-Hälfte. Eingedampft für Header-Only-Verwendung.
+// tinfl: compact inflate decoder (public domain, based on miniz/tinfl)
+// Only the decoder half, boiled down for header-only use.
 // ─────────────────────────────────────────────────────────────────────────
 
 namespace tinfl {
@@ -38,19 +38,19 @@ constexpr int FLAG_HAS_MORE_INPUT    = 2;
 constexpr int FLAG_USING_NON_WRAPPING_OUTPUT_BUF = 4;
 constexpr int FLAG_COMPUTE_ADLER32   = 8;
 
-// Sehr einfacher, aber kompletter inflate. Kein Streaming, alles im Speicher.
-// Eingabe: deflate-stream (oder zlib mit Header). Ausgabe: dekomprimiert.
-// Returns: true = ok, false = Fehler.
+// Very simple but complete inflate. No streaming, everything in memory.
+// Input: deflate stream (or zlib with header). Output: decompressed bytes.
+// Returns: true = ok, false = error.
 inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out, bool zlib_header = true) {
     if (in_size < 2) return false;
 
     size_t ip = 0;
     if (zlib_header) {
-        // CMF + FLG, optional FDICT/FCHECK — wir prüfen nur auf deflate (CM=8)
+        // CMF + FLG, optional FDICT/FCHECK - we only check for deflate (CM=8)
         if ((in[0] & 0x0F) != 8) return false;
         ip = 2;
         if (in[1] & 0x20) {
-            // FDICT — wir unterstützen kein preset dict
+            // FDICT - preset dictionaries are not supported
             return false;
         }
     }
@@ -75,7 +75,7 @@ inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out
         return v;
     };
 
-    // Huffman-Tabelle: code -> symbol über einfache lookup
+    // Huffman table: code -> symbol via a simple lookup
     struct Huff {
         std::vector<int> count;   // count[len] = number of codes of len
         std::vector<int> symbol;  // sorted symbols
@@ -114,7 +114,7 @@ inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out
         return -1;
     };
 
-    // Static Huffman-Tabellen (RFC 1951 §3.2.6)
+    // Static Huffman tables (RFC 1951 §3.2.6)
     auto build_static = [&](Huff& lit, Huff& dist) {
         std::vector<int> ll(288), dl(30);
         for (int i = 0;   i <= 143; i++) ll[i] = 8;
@@ -126,7 +126,7 @@ inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out
         build_huff(dist, dl);
     };
 
-    // Längen- und Distanz-Basistabellen (RFC 1951 §3.2.5)
+    // Length and distance base tables (RFC 1951 section 3.2.5)
     static const int LEN_BASE[] = {
         3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,
         35,43,51,59,67,83,99,115,131,163,195,227,258
@@ -252,18 +252,18 @@ inline std::string read_file_bytes(const std::string& path) {
     return ss.str();
 }
 
-// Suche im Bytestream nach dem n-ten Vorkommen von needle, ab pos
+// Search the byte stream for the next occurrence of needle, starting at pos
 inline size_t find_seq(const std::string& hay, const std::string& needle, size_t pos = 0) {
     return hay.find(needle, pos);
 }
 
-// Extrahiere alle stream...endstream Blöcke aus dem PDF
+// Extract all stream...endstream blocks from the PDF
 struct PdfStream {
     size_t dict_start;
     size_t dict_end;
     size_t data_start;
     size_t data_end;
-    std::string filter;       // FlateDecode, ASCIIHexDecode, oder leer
+    std::string filter;       // FlateDecode, ASCIIHexDecode, or empty
     bool has_filter = false;
 };
 
@@ -287,7 +287,7 @@ inline std::vector<PdfStream> find_streams(const std::string& pdf) {
         if (data_end > data_start && pdf[data_end - 1] == '\n') data_end--;
         if (data_end > data_start && pdf[data_end - 1] == '\r') data_end--;
 
-        // Dictionary davor finden: rückwärts << ... >> suchen
+        // Find the dictionary before it: scan backwards for << ... >>
         size_t dict_end = pdf.rfind(">>", s);
         size_t dict_start = (dict_end != std::string::npos) ? pdf.rfind("<<", dict_end) : std::string::npos;
 
@@ -302,7 +302,7 @@ inline std::vector<PdfStream> find_streams(const std::string& pdf) {
             size_t fpos = dict.find("/Filter");
             if (fpos != std::string::npos) {
                 st.has_filter = true;
-                // einfacher Parse: erstes /XxxDecode finden
+                // simple parse: find the first /XxxDecode
                 size_t slash = dict.find('/', fpos + 7);
                 if (slash != std::string::npos) {
                     size_t end = slash + 1;
@@ -317,8 +317,8 @@ inline std::vector<PdfStream> find_streams(const std::string& pdf) {
     return streams;
 }
 
-// PDF-String-Literal parsen: (text mit \\escapes)
-// Returns extracted text plus position nach dem schließenden ')'
+// Parse a PDF string literal: (text with \\escapes)
+// Returns the extracted text plus the position after the closing ')'
 inline std::pair<std::string, size_t> parse_pdf_string(const std::string& s, size_t pos) {
     std::string out;
     int depth = 1;
@@ -383,7 +383,7 @@ inline std::pair<std::string, size_t> parse_hex_string(const std::string& s, siz
     return {out, pos};
 }
 
-// Aus einem dekomprimierten Content-Stream alle Tj/TJ-Texte extrahieren
+// Extract all Tj/TJ texts from a decompressed content stream
 inline std::string extract_text_from_content(const std::string& content) {
     std::string out;
     size_t i = 0;
@@ -391,12 +391,12 @@ inline std::string extract_text_from_content(const std::string& content) {
         char c = content[i];
         if (c == '(') {
             auto [text, np] = parse_pdf_string(content, i);
-            // Suche nächsten Operator: Tj, TJ, ', "
+            // Find the next operator: Tj, TJ, ', "
             size_t op = np;
             while (op < content.size() && (content[op] == ' ' || content[op] == '\t' || content[op] == '\r' || content[op] == '\n')) op++;
-            // Wir akzeptieren den Text einfach immer (etwas zu liberal, aber funktioniert)
+            // Accept the text unconditionally (a bit liberal, but works)
             out += text;
-            // Newline nach Tj-artigen Operatoren
+            // Newline after Tj-style operators
             if (op < content.size() && (content[op] == 'T' || content[op] == '\'' || content[op] == '"')) {
                 out += ' ';
             }
@@ -433,7 +433,35 @@ inline std::string extract_text_from_content(const std::string& content) {
     return out;
 }
 
-// Haupt-API: PDF-Datei einlesen und Text extrahieren
+// Collects text only from BT..ET blocks. Per spec, text-showing operators are
+// only valid inside them; binary streams (fonts, images) that happen to
+// contain the byte pairs "BT"/"Tj" no longer leak garbage into the output.
+inline std::string extract_text_blocks(const std::string& content) {
+    std::string out;
+    auto delim_after = [&](size_t idx) {
+        if (idx >= content.size()) return true;
+        unsigned char c = content[idx];
+        return std::isspace(c) != 0 || c == '/' || c == '[' || c == '(' || c == '<';
+    };
+    size_t pos = 0;
+    while (true) {
+        size_t bt = content.find("BT", pos);
+        if (bt == std::string::npos) break;
+        bool ok_before = (bt == 0) || std::isspace((unsigned char)content[bt - 1]) != 0;
+        if (!ok_before || !delim_after(bt + 2)) { pos = bt + 2; continue; }
+        size_t et = content.find("ET", bt + 2);
+        while (et != std::string::npos) {
+            if (std::isspace((unsigned char)content[et - 1]) != 0 && delim_after(et + 2)) break;
+            et = content.find("ET", et + 2);
+        }
+        if (et == std::string::npos) break;
+        out += extract_text_from_content(content.substr(bt + 2, et - bt - 2));
+        pos = et + 2;
+    }
+    return out;
+}
+
+// Main API: read a PDF file and extract its text
 inline std::string extract_text(const std::string& filepath) {
     std::string pdf = read_file_bytes(filepath);
     if (pdf.empty()) return {};
@@ -453,7 +481,7 @@ inline std::string extract_text(const std::string& filepath) {
             if (tinfl::inflate((const uint8_t*)raw.data(), raw.size(), decoded, true)) {
                 content.assign((const char*)decoded.data(), decoded.size());
             } else {
-                continue; // skip — kann diesen Stream nicht dekomprimieren
+                continue; // skip - cannot decompress this stream
             }
         } else if (st.filter == "ASCIIHexDecode" || st.filter == "AHx") {
             for (size_t i = 0; i + 1 < raw.size(); ) {
@@ -465,17 +493,15 @@ inline std::string extract_text(const std::string& filepath) {
                 i += 2;
             }
         } else {
-            // unbekannter Filter (LZW, DCT, JBIG2, …) — skip
+            // unknown filter (LZW, DCT, JBIG2, ...) - skip
             continue;
         }
 
-        // Aus dem (jetzt dekomprimierten) Content den Text ziehen
-        // Heuristik: nur wenn der Content wie ein Content-Stream aussieht
-        // (enthält BT/ET oder Tj-Operatoren)
-        if (content.find("BT") != std::string::npos ||
-            content.find("Tj") != std::string::npos ||
-            content.find("TJ") != std::string::npos) {
-            all_text += extract_text_from_content(content);
+        // Pull the text from the (now decompressed) content, strictly from
+        // BT..ET text blocks
+        std::string txt = extract_text_blocks(content);
+        if (!txt.empty()) {
+            all_text += txt;
             all_text += '\n';
         }
     }

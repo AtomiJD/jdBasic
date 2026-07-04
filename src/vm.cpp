@@ -71,6 +71,7 @@ EM_JS(int, jdb_poll_key_js, (void), {
 // jdb_encoding.h pulls <windows.h>; must come after the winsock2 / ws2tcpip
 // block above, otherwise winsock1.h leaks in via windows.h and collides.
 #include "jdb_encoding.h"
+#include "pdf_extract.h"
 
 // OS.SCREENSHOT backing (src/screencap.cpp). GDI+WIC on Windows, stub
 // elsewhere. rc 0 = ok, negative = error.
@@ -703,6 +704,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "SPLIT", "FORMAT$", "FRMV$", "INSERT$",
         "REPLACE$", "REVERSE$", "PACK$", "UNPACK",
         "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
+        "PDF.TEXT$",
         "CSVREADER", "CSVWRITER", "CSVHEADER", "IIF",
         "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
         "SQL.QUERY", "SQL.TABLE", "SQL.COLUMNS",
@@ -6112,6 +6114,42 @@ void VM::register_builtins() {
         if (!f) throw std::runtime_error("Cannot write file: " + fname);
         f.write(data.c_str(), data.size());
         return Value::make_none();
+    });
+
+    // Text extraction from PDF files (uncompressed, FlateDecode, ASCIIHex/85
+    // streams). Encrypted PDFs and image-only pages yield what is decodable.
+    // Simple PDFs carry WinAnsi (cp1252) string bytes, so a non-UTF-8 extract
+    // is re-decoded as cp1252 to keep umlauts intact.
+    register_native("PDF.TEXT$", [](const std::vector<Value>& args) -> Value {
+        std::string fname = args[0].as_string()->data;
+        std::ifstream probe(fname, std::ios::binary);
+        if (!probe) throw std::runtime_error("Cannot open file: " + fname);
+        probe.close();
+        std::string txt = pdf_extract::extract_text(fname);
+        auto valid_utf8 = [](const std::string& s) {
+            size_t i = 0;
+            while (i < s.size()) {
+                unsigned char c = s[i];
+                size_t need;
+                if (c < 0x80) need = 0;
+                else if ((c >> 5) == 0x6) need = 1;
+                else if ((c >> 4) == 0xE) need = 2;
+                else if ((c >> 3) == 0x1E) need = 3;
+                else return false;
+                if (need > 0 && i + need >= s.size()) return false;
+                for (size_t k = 1; k <= need; k++)
+                    if ((static_cast<unsigned char>(s[i + k]) >> 6) != 0x2) return false;
+                i += need + 1;
+            }
+            return true;
+        };
+        if (!valid_utf8(txt)) txt = jdb_enc::decode_to_utf8(txt, "cp1252");
+        std::string clean;
+        clean.reserve(txt.size());
+        for (unsigned char c : txt) {
+            if (c >= 0x20 || c == '\n' || c == '\t') clean += static_cast<char>(c);
+        }
+        return Value::make_string(clean);
     });
 
     // "YYYY-MM-DD[ HH:MM:SS]", "YYYY-MM-DDTHH:MM:SS" or "DD.MM.YYYY" →

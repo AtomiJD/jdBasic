@@ -1564,6 +1564,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`CSVHEADER(filename$, [delimiter$]) -> array`**: Returns the first line of a CSV file as a string array of column names (which `CSVREADER` discards when `has_header` is set).
 * **`CSVWRITER filename$, array, [delimiter$], [header_array]`**: Writes a 2D array to a CSV file.
 * **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.
+* **`PDF.TEXT$(filename$) -> string$`**: Extracts the text of a PDF file with the built-in PDF extractor (uncompressed streams, FlateDecode, ASCIIHex/ASCII85). Encrypted or image-only PDFs yield only what is decodable. Interpreter runtime (native `-c` rejects it). The same extractor backs `AI.RAG_ADD_FILE` for `.pdf` sources.
 * **`BINWRITER filename$, data$`**: Writes a raw string of bytes to a file, overwriting it.
 
 #### SQLite (build flag `SQLITE`)
