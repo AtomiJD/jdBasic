@@ -1,0 +1,13 @@
+' Split a sentence into words and print the number of words and each word
+' on its own line.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM sentence$ = "the quick brown fox jumps over the lazy dog"
+DIM words = SPLIT(sentence$, " ")
+DIM i = 0
+DIM w$ = ""
+PRINT "words: "; LEN(words)
+FOR i = 0 TO LEN(words) - 1
+    w$ = words[i]
+    PRINT w$
+NEXT i

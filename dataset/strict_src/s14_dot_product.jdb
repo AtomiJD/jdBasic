@@ -1,0 +1,8 @@
+' Compute the dot product of two vectors using element-wise multiplication
+' and SUM.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM va = [1, 2, 3, 4]
+DIM vb = [5, 6, 7, 8]
+DIM dot = SUM(va * vb)
+PRINT "dot product = "; dot

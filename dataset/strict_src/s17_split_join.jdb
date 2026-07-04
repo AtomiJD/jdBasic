@@ -1,0 +1,12 @@
+' Split a comma-separated list, trim each entry, and join it back with
+' a semicolon.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+FUNC trim_one$(s$)
+    RETURN TRIM$(s$)
+ENDFUNC
+DIM csv$ = "alpha, beta , gamma,delta"
+DIM parts = SPLIT(csv$, ",")
+DIM clean = SELECT(trim_one$@, parts)
+DIM joined$ = JOIN(clean, ";")
+PRINT joined$

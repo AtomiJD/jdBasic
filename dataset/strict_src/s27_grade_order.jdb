@@ -1,0 +1,14 @@
+' Use GRADE to get the indices that sort an array of scores, then print
+' the scores in ascending order without modifying the original.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM scores = [74, 91, 62, 88, 55]
+DIM order = GRADE(scores)
+DIM i = 0
+DIM idx = 0
+PRINT "order indices: "; order
+FOR i = 0 TO LEN(order) - 1
+    idx = CINT(order[i])
+    PRINT scores[idx]; " ";
+NEXT i
+PRINT ""

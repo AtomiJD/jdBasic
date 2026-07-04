@@ -258,5 +258,9 @@ Roland_CR-80/
 
 # Local-only backup (untracked, kept on disk)
 fluppi/backup/
-dataset/
+# dataset/ is generated - except the hand-written strict training sources
+dataset/*
+!dataset/strict_src/
+dataset/strict_src/*
+!dataset/strict_src/*.jdb
 notes/

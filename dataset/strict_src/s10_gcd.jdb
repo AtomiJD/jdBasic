@@ -1,0 +1,13 @@
+' Compute the greatest common divisor of 252 and 105 with the Euclidean
+' algorithm and print it.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM a = 252
+DIM b = 105
+DIM r = 0
+DO WHILE b <> 0
+    r = a MOD b
+    a = b
+    b = r
+LOOP
+PRINT "gcd = "; a

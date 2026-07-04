@@ -1,0 +1,6 @@
+' Square the numbers 1 to 10, keep those greater than 20, and print them,
+' using SELECT and FILTER chained with the pipe operator.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM result = SELECT(LAMBDA v -> v * v, IOTA(10)) |> FILTER(LAMBDA v -> v > 20, ?)
+PRINT result

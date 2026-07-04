@@ -1,0 +1,8 @@
+' Report the mean, minimum and maximum of a measurement series.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM readings = [20.5, 21.0, 19.8, 22.4, 20.1, 21.7]
+PRINT "n    = "; LEN(readings)
+PRINT "mean = "; MEAN(readings)
+PRINT "min  = "; MIN(readings)
+PRINT "max  = "; MAX(readings)

@@ -1,0 +1,13 @@
+' Print the numbers 1 to 30, replacing multiples of 3 with Fizz, multiples
+' of 5 with Buzz, and multiples of both with FizzBuzz.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM i = 0
+DIM out$ = ""
+FOR i = 1 TO 30
+    out$ = ""
+    IF i MOD 3 = 0 THEN out$ = out$ + "Fizz"
+    IF i MOD 5 = 0 THEN out$ = out$ + "Buzz"
+    IF out$ = "" THEN out$ = TRIM$(STR$(i))
+    PRINT out$
+NEXT i

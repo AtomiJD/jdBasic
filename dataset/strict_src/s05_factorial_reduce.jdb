@@ -1,0 +1,8 @@
+' Compute the factorial of 8 with REDUCE over the numbers 1 to 8.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+FUNC mul_pair(acc, v)
+    RETURN acc * v
+ENDFUNC
+DIM fact = REDUCE(mul_pair@, IOTA(8), 1)
+PRINT "8! = "; fact

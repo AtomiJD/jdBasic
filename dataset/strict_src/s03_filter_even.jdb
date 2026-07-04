@@ -1,0 +1,7 @@
+' Keep only the even numbers from 1 to 20 and print the resulting array.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM nums = IOTA(20)
+DIM evens = FILTER(LAMBDA v -> v MOD 2 = 0, nums)
+PRINT "evens: "; evens
+PRINT "count: "; LEN(evens)

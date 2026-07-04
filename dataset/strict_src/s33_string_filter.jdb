@@ -1,0 +1,10 @@
+' Filter names that start with a given letter. A predicate that receives
+' a string declares its parameter with a $ suffix so it compiles native.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+FUNC starts_with_b(s$)
+    RETURN LEFT$(s$, 1) = "b"
+ENDFUNC
+DIM names = ["anna", "ben", "bela", "chris", "bo"]
+DIM hits = FILTER(starts_with_b@, names)
+PRINT "names starting with b: "; hits

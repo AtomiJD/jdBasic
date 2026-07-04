@@ -1,0 +1,199 @@
+' Strict-pack generator: turns the verified native/strict example programs in
+' dataset/strict_src/ into ChatML JSONL for LoRA fine-tuning. Every source is
+' gated through --lint and -c before emission; a mechanically de-stricted
+' loose variant (OPTION lines removed, DIM initialisations turned into bare
+' assignments) must FAIL -c, and becomes a convert-to-strict training pair.
+' Output: dataset/strict_train.jsonl + dataset/strict_heldout.jsonl.
+' Run from the repo root (the native compiler resolves jdb_runtime.obj
+' relative to it).
+
+DIM SRC_DIR$ = "dataset/strict_src"
+DIM WORKDIR$ = "dataset/strict_work"
+DIM OUT_TRAIN$ = "dataset/strict_train.jsonl"
+DIM OUT_HELD$ = "dataset/strict_heldout.jsonl"
+DIM EXE$ = GETENV$("EVAL_EXE")
+IF EXE$ = "" THEN EXE$ = "build" + CHR$(92) + "jdBasic.exe"
+DIM HELD_EVERY = 5
+DIM NL$ = CHR$(10)
+
+FUNC chatml(task$, answer$)
+    DIM sysm = {}
+    sysm{"role"} = "system"
+    sysm{"content"} = "You are a jdBasic coding assistant. Write correct, idiomatic jdBasic."
+    DIM usrm = {}
+    usrm{"role"} = "user"
+    usrm{"content"} = task$
+    DIM astm = {}
+    astm{"role"} = "assistant"
+    astm{"content"} = answer$
+    DIM rec = {}
+    rec{"messages"} = [sysm, usrm, astm]
+    RETURN JSON.STRINGIFY$(rec)
+ENDFUNC
+
+FUNC lead_task(src$)
+    DIM lines = SPLIT(src$, CHR$(10))
+    DIM task$ = ""
+    DIM t$ = ""
+    DIM body$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        t$ = TRIM$(lines[i])
+        IF t$ = "" THEN
+            CONTINUEFOR
+        ENDIF
+        IF LEFT$(t$, 1) = "'" THEN
+            body$ = TRIM$(MID$(t$, 1, LEN(t$) - 1))
+            IF body$ <> "" THEN
+                IF task$ = "" THEN
+                    task$ = body$
+                ELSE
+                    task$ = task$ + " " + body$
+                ENDIF
+            ENDIF
+        ELSE
+            EXITFOR
+        ENDIF
+    NEXT i
+    RETURN task$
+ENDFUNC
+
+FUNC leading_ws$(s$)
+    DIM p = 0
+    FOR p = 0 TO LEN(s$) - 1
+        IF MID$(s$, p, 1) <> " " THEN
+            EXITFOR
+        ENDIF
+    NEXT p
+    RETURN LEFT$(s$, p)
+ENDFUNC
+
+' Remove OPTION EXPLICIT/STRICT lines and rewrite every initialised DIM as a
+' bare assignment, producing the loose interpreter style that -c rejects.
+FUNC de_strict$(src$)
+    DIM lines = SPLIT(src$, CHR$(10))
+    DIM out$ = ""
+    DIM raw$ = ""
+    DIM t$ = ""
+    DIM u$ = ""
+    DIM name$ = ""
+    DIM indent$ = ""
+    DIM epos = 0.0
+    DIM apos = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        raw$ = lines[i]
+        t$ = TRIM$(raw$)
+        u$ = UCASE$(t$)
+        IF LEFT$(u$, 7) = "OPTION " THEN
+            IF INSTR(u$, "EXPLICIT") >= 0 ORELSE INSTR(u$, "STRICT") >= 0 THEN
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        IF LEFT$(u$, 4) = "DIM " THEN
+            epos = INSTR(t$, "=")
+            IF epos >= 0 THEN
+                name$ = TRIM$(MID$(t$, 4, epos - 4))
+                apos = INSTR(UCASE$(name$), " AS ")
+                IF apos >= 0 THEN
+                    name$ = TRIM$(LEFT$(name$, apos))
+                ENDIF
+                indent$ = leading_ws$(raw$)
+                out$ = out$ + indent$ + name$ + " " + MID$(t$, epos) + NL$
+                CONTINUEFOR
+            ELSE
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        out$ = out$ + raw$ + NL$
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC stage_ok(flag$, file$, marker$)
+    DIM r = OS.EXEC(EXE$, [flag$, file$])
+    IF r{"EXIT_CODE"} <> 0 THEN
+        RETURN FALSE
+    ENDIF
+    RETURN INSTR(r{"OUTPUT"}, marker$) >= 0
+ENDFUNC
+
+TRY
+    MKDIR WORKDIR$
+CATCH
+ENDTRY
+
+DIM names = DIR$(SRC_DIR$ + CHR$(92) + "*.jdb", FALSE)
+DIM task_recs = []
+DIM conv_recs = []
+DIM n_bad = 0
+DIM fname$ = ""
+DIM path$ = ""
+DIM src$ = ""
+DIM task$ = ""
+DIM loose$ = ""
+DIM loosefile$ = ""
+DIM prompt$ = ""
+DIM i = 0
+FOR i = 0 TO LEN(names) - 1
+    fname$ = names[i]
+    path$ = SRC_DIR$ + CHR$(92) + fname$
+    src$ = TXTREADER$(path$)
+    IF NOT stage_ok("--lint", path$, "Parsed OK") THEN
+        PRINT "SKIP (lint red)    : "; fname$
+        n_bad = n_bad + 1
+        CONTINUEFOR
+    ENDIF
+    IF NOT stage_ok("-c", path$, "Compiled:") THEN
+        PRINT "SKIP (compile red) : "; fname$
+        n_bad = n_bad + 1
+        CONTINUEFOR
+    ENDIF
+    task$ = lead_task(src$)
+    IF task$ = "" THEN
+        PRINT "SKIP (no lead task): "; fname$
+        n_bad = n_bad + 1
+        CONTINUEFOR
+    ENDIF
+    loose$ = de_strict$(src$)
+    loosefile$ = WORKDIR$ + "/loose_" + TRIM$(STR$(i)) + ".jdb"
+    TXTWRITER loosefile$, loose$
+    IF stage_ok("-c", loosefile$, "Compiled:") THEN
+        PRINT "SKIP (loose compiles, no contrast): "; fname$
+        n_bad = n_bad + 1
+        CONTINUEFOR
+    ENDIF
+    prompt$ = "Write a jdBasic program (native/strict) that does the following: " + task$
+    task_recs = APPEND(task_recs, chatml(prompt$, src$))
+    prompt$ = "This jdBasic program runs in the interpreter but fails native compilation with -c (STRICT and EXPLICIT are enforced there). Rewrite it in strict native style so it compiles:" + NL$ + loose$
+    conv_recs = APPEND(conv_recs, chatml(prompt$, src$))
+NEXT i
+
+DIM train$ = ""
+DIM held$ = ""
+DIM n_train = 0
+DIM n_held = 0
+DIM r = 0
+FOR r = 0 TO LEN(task_recs) - 1
+    IF (r MOD HELD_EVERY) = 0 THEN
+        held$ = held$ + task_recs[r] + NL$
+        n_held = n_held + 1
+    ELSE
+        train$ = train$ + task_recs[r] + NL$
+        n_train = n_train + 1
+    ENDIF
+NEXT r
+FOR r = 0 TO LEN(conv_recs) - 1
+    train$ = train$ + conv_recs[r] + NL$
+    n_train = n_train + 1
+NEXT r
+
+TXTWRITER OUT_TRAIN$, train$
+TXTWRITER OUT_HELD$, held$
+
+PRINT "strict sources : "; LEN(names)
+PRINT "rejected       : "; n_bad
+PRINT "task records   : "; LEN(task_recs)
+PRINT "convert records: "; LEN(conv_recs)
+PRINT "train records  : "; n_train
+PRINT "held records   : "; n_held

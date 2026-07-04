@@ -1,0 +1,26 @@
+' Binary search in a sorted array: return the 0-based index of the target
+' or -1 if it is missing.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+FUNC bsearch(arr, target)
+    DIM lo = 0
+    DIM hi = LEN(arr) - 1
+    DIM mid = 0
+    DIM v = 0.0
+    DO WHILE lo <= hi
+        mid = INT((lo + hi) / 2)
+        v = arr[mid]
+        IF v = target THEN
+            RETURN mid
+        ENDIF
+        IF v < target THEN
+            lo = mid + 1
+        ELSE
+            hi = mid - 1
+        ENDIF
+    LOOP
+    RETURN -1
+ENDFUNC
+DIM sorted_nums = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]
+PRINT "index of 23: "; bsearch(sorted_nums, 23)
+PRINT "index of 40: "; bsearch(sorted_nums, 40)

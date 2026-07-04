@@ -1,0 +1,11 @@
+' Print the smallest and largest value of an array, and the larger of two
+' scalars a and b. MIN and MAX are array reducers, so scalars are wrapped
+' in an array.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM nums = [12, 5, 31, 8, 24]
+PRINT "min = "; MIN(nums)
+PRINT "max = "; MAX(nums)
+DIM a = 17
+DIM b = 9
+PRINT "larger of a and b = "; MAX([a, b])

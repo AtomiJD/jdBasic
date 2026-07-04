@@ -134,6 +134,48 @@ items = APPEND(items, gg( _
     "EXITFOR", _
     "EXITFOR, EXITDO, EXITFUNC, CONTINUEFOR and CONTINUEDO are single tokens, not two words."))
 
+items = APPEND(items, gg( _
+    "Why does my jdBasic program fail native compilation with: undeclared variable?", _
+    "total = 0" + NL$ + "total = total + 5", _
+    "DIM total = 0" + NL$ + "total = total + 5", _
+    "The native compiler (-c) enforces EXPLICIT: every variable must be declared with DIM before first use. The interpreter is loose, native is strict."))
+
+items = APPEND(items, gg( _
+    "Why does the FOR loop variable fail native compilation in jdBasic?", _
+    "FOR i = 1 TO 10" + NL$ + "    PRINT i" + NL$ + "NEXT i", _
+    "DIM i = 0" + NL$ + "FOR i = 1 TO 10" + NL$ + "    PRINT i" + NL$ + "NEXT i", _
+    "Under EXPLICIT (enforced by -c) loop variables must be declared with DIM before the FOR."))
+
+items = APPEND(items, gg( _
+    "Why does reading an array element into a variable fail with: STRICT: cannot assign DOUBLE to INTEGER?", _
+    "DIM v = 0" + NL$ + "v = arr[i]", _
+    "DIM v = 0.0" + NL$ + "v = arr[i]", _
+    "DIM v = 0 makes an INTEGER slot, but array element reads yield DOUBLE under -c. Initialise the receiver with 0.0, or convert explicitly with v = CINT(arr[i]) when an integer is needed."))
+
+items = APPEND(items, gg( _
+    "Why does my FILTER predicate over strings return garbage when compiled natively?", _
+    "FUNC starts_a(s)" + NL$ + "    RETURN LEFT$(s, 1) = " + Q$ + "a" + Q$ + NL$ + "ENDFUNC", _
+    "FUNC starts_a(s$)" + NL$ + "    RETURN LEFT$(s$, 1) = " + Q$ + "a" + Q$ + NL$ + "ENDFUNC", _
+    "A SELECT/FILTER callback that receives a string must declare its parameter as a string (s$ or AS STRING). An untyped parameter is treated as a number under -c and reads the string as garbage."))
+
+items = APPEND(items, gg( _
+    "Why does my AGG reducer function fail under native compilation in jdBasic?", _
+    "FUNC group_sum(g)" + NL$ + "    RETURN SUM(g)" + NL$ + "ENDFUNC", _
+    "FUNC group_sum(g AS ARRAY)" + NL$ + "    RETURN SUM(g)" + NL$ + "ENDFUNC", _
+    "An AGG reducer FUNC must declare its parameter AS ARRAY to compile native; an untyped parameter is treated as a number. A LAMBDA g -> SUM(g) works too."))
+
+items = APPEND(items, gg( _
+    "How do I group and reduce values by key in jdBasic code that must compile natively?", _
+    "buckets = GROUPBY(key_fn@, rows)", _
+    "table = AGG(keys, values, LAMBDA g -> SUM(g))", _
+    "GROUPBY is interpreter-only; -c rejects it. AGG(keys, values, fn@) groups and reduces in one pass, compiles native, and preserves the key type."))
+
+items = APPEND(items, gg( _
+    "How should a jdBasic file that targets the native compiler start?", _
+    "' no options" + NL$ + "DIM total = 0", _
+    "OPTION " + Q$ + "EXPLICIT" + Q$ + NL$ + "OPTION " + Q$ + "STRICT" + Q$ + NL$ + "DIM total = 0", _
+    "-c always enforces STRICT and EXPLICIT. Declaring OPTION EXPLICIT and OPTION STRICT at the top makes the interpreter enforce the same rules, so errors surface before compilation."))
+
 DIM recs = []
 DIM it = {}
 DIM u1$ = ""

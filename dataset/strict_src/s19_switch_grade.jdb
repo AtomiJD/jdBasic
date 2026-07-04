@@ -1,0 +1,21 @@
+' Classify test scores into grades with SWITCH and CASE ranges.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM scores = [95, 72, 58, 88, 41]
+DIM i = 0
+DIM sc = 0
+DIM grade$ = ""
+FOR i = 0 TO LEN(scores) - 1
+    sc = CINT(scores[i])
+    SWITCH sc
+        CASE 90 TO 100
+            grade$ = "A"
+        CASE 80 TO 89
+            grade$ = "B"
+        CASE 60 TO 79
+            grade$ = "C"
+        DEFAULT
+            grade$ = "F"
+    ENDSWITCH
+    PRINT sc; " -> "; grade$
+NEXT i

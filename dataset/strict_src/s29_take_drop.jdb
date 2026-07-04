@@ -1,0 +1,7 @@
+' Show TAKE, DROP and TAKE_WHILE on a numeric array.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM nums = [1, 3, 5, 8, 2, 9, 4]
+PRINT "first three : "; TAKE(3, nums)
+PRINT "without them: "; DROP(3, nums)
+PRINT "leading odd : "; TAKE_WHILE(LAMBDA v -> v MOD 2 = 1, nums)

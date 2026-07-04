@@ -1,0 +1,15 @@
+' Define a safe division function that returns 0 on error using
+' TRY/CATCH, and demonstrate it with a division by zero.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+FUNC safe_div(a, b)
+    DIM q = 0.0
+    TRY
+        q = a / b
+    CATCH
+        q = 0.0
+    ENDTRY
+    RETURN q
+ENDFUNC
+PRINT "10 / 4 = "; safe_div(10.0, 4.0)
+PRINT "10 / 0 = "; safe_div(10.0, 0.0)

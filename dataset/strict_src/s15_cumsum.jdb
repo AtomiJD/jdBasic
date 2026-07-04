@@ -1,0 +1,7 @@
+' Print the running total of a list of daily sales using CUMSUM.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM sales = [120, 80, 200, 150, 90]
+DIM running = CUMSUM(sales)
+PRINT "daily  : "; sales
+PRINT "running: "; running

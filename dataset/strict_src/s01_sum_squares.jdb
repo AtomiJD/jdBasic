@@ -1,0 +1,6 @@
+' Compute the sum of the squares of the numbers 1 to 20 and print it.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM nums = IOTA(20)
+DIM total = SUM(nums ^ 2)
+PRINT "sum of squares 1..20 = "; total

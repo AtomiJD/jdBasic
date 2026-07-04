@@ -1,0 +1,8 @@
+' Sort an array of numbers and print the sorted array and its median.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM nums = [7, 2, 9, 4, 1, 8, 3]
+DIM sorted_nums = SORT(nums)
+DIM mid = INT(LEN(sorted_nums) / 2)
+PRINT "sorted: "; sorted_nums
+PRINT "median: "; sorted_nums[mid]

@@ -1,0 +1,14 @@
+' Format numbers as 4-digit strings with leading zeros. STR$ adds a
+' leading sign space, so the number is trimmed first.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+FUNC pad4$(n)
+    RETURN RIGHT$("0000" + TRIM$(STR$(n)), 4)
+ENDFUNC
+DIM ids = [7, 42, 998, 1234]
+DIM i = 0
+DIM one_id = 0
+FOR i = 0 TO LEN(ids) - 1
+    one_id = CINT(ids[i])
+    PRINT pad4$(one_id)
+NEXT i

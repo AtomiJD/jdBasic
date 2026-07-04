@@ -1,0 +1,9 @@
+' Parse a date, add 7 days, and print both dates and the difference in
+' days. DATEADD takes the amount before the date.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM start_date = CVDATE("2026-07-04")
+DIM later = DATEADD("D", 7, start_date)
+PRINT "start: "; FORMAT_DATE(start_date, "%Y-%m-%d")
+PRINT "later: "; FORMAT_DATE(later, "%Y-%m-%d")
+PRINT "days between: "; DATEDIFF("D", start_date, later)

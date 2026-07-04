@@ -1,0 +1,10 @@
+' Print a Celsius to Fahrenheit conversion table from 0 to 100 degrees
+' in steps of 20.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM c = 0
+DIM f = 0.0
+FOR c = 0 TO 100 STEP 20
+    f = c * 9.0 / 5.0 + 32.0
+    PRINT c; " C = "; f; " F"
+NEXT c

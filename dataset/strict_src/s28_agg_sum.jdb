@@ -1,0 +1,13 @@
+' Sum revenue per region in one pass with AGG. The reducer is a LAMBDA
+' over each group's value array.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM regions = ["north", "south", "north", "west", "south", "north"]
+DIM revenue = [100, 250, 80, 120, 60, 40]
+DIM per_region = AGG(regions, revenue, LAMBDA g -> SUM(g))
+DIM i = 0
+DIM row = []
+FOR i = 0 TO LEN(per_region) - 1
+    row = per_region[i]
+    PRINT row[0]; ": "; row[1]
+NEXT i

@@ -1,0 +1,23 @@
+' Define a primality test function and print all primes below 50.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+FUNC is_prime(n)
+    IF n < 2 THEN
+        RETURN FALSE
+    ENDIF
+    DIM d = 2
+    DO WHILE d * d <= n
+        IF n MOD d = 0 THEN
+            RETURN FALSE
+        ENDIF
+        d = d + 1
+    LOOP
+    RETURN TRUE
+ENDFUNC
+DIM i = 0
+FOR i = 2 TO 49
+    IF is_prime(i) THEN
+        PRINT i; " ";
+    ENDIF
+NEXT i
+PRINT ""
