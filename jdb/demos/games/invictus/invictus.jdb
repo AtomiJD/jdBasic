@@ -1,0 +1,596 @@
+' INVICTUS - The Unbeatable Duel
+' Local 2-player top-down twin-stick arena duel.
+' Run: build/jdBasic.exe invictus.jdb [shot]
+' "shot" mode plays a scripted demo, saves screenshots, exits.
+
+BASE$ = "D:/usr/dev/cc/jdb/demos/games/invictus/"
+NAME1$ = "DAD"
+NAME2$ = "SON"
+
+' --- tweakables (balancing is live-editable through this map) ---
+TW = {}
+TW{"move_speed"}   = 240
+TW{"dash_speed"}   = 720
+TW{"dash_s"}       = 0.15
+TW{"dash_cool"}    = 0.8
+TW{"bullet_speed"} = 560
+TW{"bullet_ttl"}   = 1.4
+TW{"fire_cool"}    = 0.18
+TW{"hp_max"}       = 5
+TW{"lives_max"}    = 3
+TW{"respawn_s"}    = 1.2
+TW{"inv_s"}        = 1.5
+TW{"crowns_win"}   = 5
+TW{"deadzone"}     = 0.25
+TW{"aim_ax_x"}     = 2
+TW{"aim_ax_y"}     = 3
+
+' --- arena: 40x22 tiles of 32px = 1280x704 ---
+' legend: # wall, . floor, C crate, w weapon pad, p powerup pad, 1/2 spawns
+arena_rows$ = [ _
+  "########################################", _
+  "#......................................#", _
+  "#......................................#", _
+  "#..................ww..................#", _
+  "#......####..................####......#", _
+  "#......#........................#......#", _
+  "#......#..CC................CC..#......#", _
+  "#......#........................#......#", _
+  "#.................CCCC.................#", _
+  "#......................................#", _
+  "#..1.........C.....pp.....C............#", _
+  "#............C.....pp.....C.........2..#", _
+  "#......................................#", _
+  "#.................CCCC.................#", _
+  "#......#........................#......#", _
+  "#......#..CC................CC..#......#", _
+  "#......#........................#......#", _
+  "#......####..................####......#", _
+  "#..................ww..................#", _
+  "#......................................#", _
+  "#......................................#", _
+  "########################################" ]
+
+TILE_PX = 32
+COLS = 40
+ROWS = 22
+
+' tile ids in tileset strip: 1-3 floor variants, 4 wall, 5 crate, 6 cracked crate, 7 weapon pad, 8 powerup pad
+
+SUB BUILD_ARENA()
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM tid AS INTEGER
+    DIM solid AS INTEGER
+    DIM rowstr$ AS STRING
+    DIM tile_flat = []
+    DIM coll_flat = []
+    FOR r = 0 TO ROWS - 1
+        rowstr$ = arena_rows$[r]
+        IF LEN(rowstr$) <> COLS THEN
+            PRINT "MAP ERROR row "; r; " has "; LEN(rowstr$); " cols"
+            END
+        ENDIF
+        DIM chars = -rowstr$
+        FOR c = 0 TO COLS - 1
+            DIM ch$ = chars[c]
+            tid = 1 + ((r * 7 + c * 13) MOD 3)
+            solid = 0
+            IF ch$ = "#" THEN
+                tid = 4
+                solid = 1
+            ELSEIF ch$ = "C" THEN
+                tid = 5
+                solid = 1
+            ELSEIF ch$ = "w" THEN
+                tid = 7
+            ELSEIF ch$ = "p" THEN
+                tid = 8
+            ELSEIF ch$ = "1" THEN
+                spawn1 = [c * TILE_PX, r * TILE_PX]
+            ELSEIF ch$ = "2" THEN
+                spawn2 = [c * TILE_PX, r * TILE_PX]
+            ENDIF
+            tile_flat = APPEND(tile_flat, tid)
+            coll_flat = APPEND(coll_flat, solid)
+        NEXT c
+    NEXT r
+    tile_grid = RESHAPE(tile_flat, [ROWS, COLS])
+    coll_grid = RESHAPE(coll_flat, [ROWS, COLS])
+ENDSUB
+
+' --- players ---
+
+FUNC NEW_PLAYER(sheet$, sx, sy, face_x, kb_set, pad_idx)
+    DIM p = {}
+    DIM sid = SPRITE.LOAD(BASE$ + "assets/" + sheet$, 32, 32)
+    SPRITE.ANIM sid, "idle_down",  [0], 1
+    SPRITE.ANIM sid, "idle_left",  [4], 1
+    SPRITE.ANIM sid, "idle_right", [8], 1
+    SPRITE.ANIM sid, "idle_up",    [12], 1
+    SPRITE.ANIM sid, "walk_down",  [0, 1, 2, 3], 8
+    SPRITE.ANIM sid, "walk_left",  [4, 5, 6, 7], 8
+    SPRITE.ANIM sid, "walk_right", [8, 9, 10, 11], 8
+    SPRITE.ANIM sid, "walk_up",    [12, 13, 14, 15], 8
+    SPRITE.PLAY sid, "idle_right"
+    SPRITE.POS sid, sx, sy
+    p{"sid"} = sid
+    p{"spawnx"} = sx
+    p{"spawny"} = sy
+    p{"hp"} = TW{"hp_max"}
+    p{"lives"} = TW{"lives_max"}
+    p{"crowns"} = 0
+    p{"aimx"} = face_x
+    p{"aimy"} = 0
+    p{"cool"} = 0
+    p{"dash_t"} = 0
+    p{"dash_cd"} = 0
+    p{"inv"} = 0
+    p{"resp"} = 0
+    p{"alive"} = TRUE
+    p{"kb"} = kb_set
+    p{"pad"} = pad_idx
+    p{"kills"} = 0
+    RETURN p
+ENDFUNC
+
+' --- input ---
+' kb set 0: WASD move, IJKL aim, Space fire, E dash
+' kb set 1: arrows move, aim follows movement, Return fire, Backspace dash
+' pad: left stick move, right stick aim, A or RB fire, B or LB dash
+
+FUNC AXIS_DZ(v)
+    IF ABS(v) < TW{"deadzone"} THEN RETURN 0
+    RETURN v
+ENDFUNC
+
+FUNC READ_INPUT(p)
+    DIM r = {}
+    r{"mx"} = 0
+    r{"my"} = 0
+    r{"ax"} = 0
+    r{"ay"} = 0
+    r{"fire"} = FALSE
+    r{"dash"} = FALSE
+    IF p{"pad"} >= 0 THEN
+        r{"mx"} = AXIS_DZ(JOY.AXIS(p{"pad"}, 0))
+        r{"my"} = AXIS_DZ(JOY.AXIS(p{"pad"}, 1))
+        r{"ax"} = AXIS_DZ(JOY.AXIS(p{"pad"}, TW{"aim_ax_x"}))
+        r{"ay"} = AXIS_DZ(JOY.AXIS(p{"pad"}, TW{"aim_ax_y"}))
+        IF JOY.BUTTON(p{"pad"}, 0) OR JOY.BUTTON(p{"pad"}, 5) THEN r{"fire"} = TRUE
+        IF JOY.BUTTON(p{"pad"}, 1) OR JOY.BUTTON(p{"pad"}, 4) THEN r{"dash"} = TRUE
+    ELSEIF p{"kb"} = 0 THEN
+        IF GFX.KEYSTATE("A") THEN r{"mx"} = -1
+        IF GFX.KEYSTATE("D") THEN r{"mx"} = 1
+        IF GFX.KEYSTATE("W") THEN r{"my"} = -1
+        IF GFX.KEYSTATE("S") THEN r{"my"} = 1
+        IF GFX.KEYSTATE("J") THEN r{"ax"} = -1
+        IF GFX.KEYSTATE("L") THEN r{"ax"} = 1
+        IF GFX.KEYSTATE("I") THEN r{"ay"} = -1
+        IF GFX.KEYSTATE("K") THEN r{"ay"} = 1
+        IF GFX.KEYSTATE("Space") THEN r{"fire"} = TRUE
+        IF GFX.KEYSTATE("E") THEN r{"dash"} = TRUE
+    ELSE
+        IF GFX.KEYSTATE("Left") THEN r{"mx"} = -1
+        IF GFX.KEYSTATE("Right") THEN r{"mx"} = 1
+        IF GFX.KEYSTATE("Up") THEN r{"my"} = -1
+        IF GFX.KEYSTATE("Down") THEN r{"my"} = 1
+        r{"ax"} = r{"mx"}
+        r{"ay"} = r{"my"}
+        IF GFX.KEYSTATE("Return") THEN r{"fire"} = TRUE
+        IF GFX.KEYSTATE("Backspace") THEN r{"dash"} = TRUE
+    ENDIF
+    RETURN r
+ENDFUNC
+
+' --- bullets: fixed pool per player ---
+
+POOL_PER_PLAYER = 24
+
+SUB INIT_BULLETS()
+    DIM i AS INTEGER
+    DIM ow AS INTEGER
+    blts = []
+    FOR ow = 0 TO 1
+        DIM png$ = "bullet_p" + STR$(ow + 1) + ".png"
+        FOR i = 1 TO POOL_PER_PLAYER
+            DIM b = {}
+            b{"sid"} = SPRITE.LOAD(BASE$ + "assets/" + png$)
+            SPRITE.VISIBLE b{"sid"}, FALSE
+            b{"owner"} = ow
+            b{"vx"} = 0
+            b{"vy"} = 0
+            b{"ttl"} = 0
+            b{"live"} = FALSE
+            blts = APPEND(blts, b)
+        NEXT i
+    NEXT ow
+ENDSUB
+
+SUB FIRE_BULLET(p, ow)
+    DIM i AS INTEGER
+    DIM n = SQR(p{"aimx"} * p{"aimx"} + p{"aimy"} * p{"aimy"})
+    IF n = 0 THEN RETURN
+    DIM dx = p{"aimx"} / n
+    DIM dy = p{"aimy"} / n
+    FOR i = 0 TO LEN(blts) - 1
+        DIM b = blts[i]
+        IF b{"owner"} = ow ANDALSO NOT b{"live"} THEN
+            DIM bx = SPRITE.GET_X(p{"sid"}) + 16 + dx * 18 - 4
+            DIM by = SPRITE.GET_Y(p{"sid"}) + 16 + dy * 18 - 4
+            SPRITE.POS b{"sid"}, bx, by
+            SPRITE.VISIBLE b{"sid"}, TRUE
+            b{"vx"} = dx * TW{"bullet_speed"}
+            b{"vy"} = dy * TW{"bullet_speed"}
+            b{"ttl"} = TW{"bullet_ttl"}
+            b{"live"} = TRUE
+            EXITFOR
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB KILL_BULLET(b)
+    b{"live"} = FALSE
+    SPRITE.VISIBLE b{"sid"}, FALSE
+ENDSUB
+
+SUB UPDATE_BULLETS(dt_s)
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO LEN(blts) - 1
+        DIM b = blts[i]
+        IF NOT b{"live"} THEN CONTINUEFOR
+        b{"ttl"} = b{"ttl"} - dt_s
+        IF b{"ttl"} <= 0 THEN
+            KILL_BULLET(b)
+            CONTINUEFOR
+        ENDIF
+        SPRITE.MOVE b{"sid"}, b{"vx"} * dt_s, b{"vy"} * dt_s
+        IF TILEMAP.COLLIDES(b{"sid"}, "coll") THEN
+            KILL_BULLET(b)
+            CONTINUEFOR
+        ENDIF
+        FOR j = 0 TO 1
+            DIM tgt = plrs[j]
+            IF j <> b{"owner"} ANDALSO tgt{"alive"} ANDALSO tgt{"inv"} <= 0 THEN
+                IF SPRITE.COLLISION(b{"sid"}, tgt{"sid"}) THEN
+                    KILL_BULLET(b)
+                    DAMAGE(tgt, b{"owner"})
+                    EXITFOR
+                ENDIF
+            ENDIF
+        NEXT j
+    NEXT i
+ENDSUB
+
+SUB CLEAR_BULLETS()
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(blts) - 1
+        KILL_BULLET(blts[i])
+    NEXT i
+ENDSUB
+
+' --- combat ---
+
+SUB DAMAGE(victim, attacker_idx)
+    victim{"hp"} = victim{"hp"} - 1
+    victim{"flash"} = 0.12
+    IF victim{"hp"} <= 0 THEN
+        DIM killer = plrs[attacker_idx]
+        killer{"kills"} = killer{"kills"} + 1
+        PLAYER_DIES(victim, attacker_idx)
+    ENDIF
+ENDSUB
+
+SUB PLAYER_DIES(victim, attacker_idx)
+    victim{"lives"} = victim{"lives"} - 1
+    victim{"alive"} = FALSE
+    SPRITE.VISIBLE victim{"sid"}, FALSE
+    IF victim{"lives"} <= 0 THEN
+        DIM w = plrs[attacker_idx]
+        w{"crowns"} = w{"crowns"} + 1
+        round_winner = attacker_idx
+        IF w{"crowns"} >= TW{"crowns_win"} THEN
+            gstate$ = "match_end"
+        ELSE
+            gstate$ = "round_end"
+            round_t = 2.5
+        ENDIF
+    ELSE
+        victim{"resp"} = TW{"respawn_s"}
+    ENDIF
+ENDSUB
+
+SUB RESPAWN(p)
+    p{"hp"} = TW{"hp_max"}
+    p{"alive"} = TRUE
+    p{"inv"} = TW{"inv_s"}
+    SPRITE.POS p{"sid"}, p{"spawnx"}, p{"spawny"}
+    SPRITE.VISIBLE p{"sid"}, TRUE
+ENDSUB
+
+SUB RESET_ROUND()
+    DIM i AS INTEGER
+    FOR i = 0 TO 1
+        DIM p = plrs[i]
+        p{"lives"} = TW{"lives_max"}
+        p{"cool"} = 0
+        p{"dash_t"} = 0
+        p{"dash_cd"} = 0
+        p{"resp"} = 0
+        RESPAWN(p)
+    NEXT i
+    CLEAR_BULLETS()
+    fight_t = 1.0
+    gstate$ = "play"
+ENDSUB
+
+' --- per-frame player update ---
+
+SUB UPDATE_PLAYER(p, inp, dt_s)
+    p{"cool"} = p{"cool"} - dt_s
+    p{"inv"} = p{"inv"} - dt_s
+    p{"dash_t"} = p{"dash_t"} - dt_s
+    p{"dash_cd"} = p{"dash_cd"} - dt_s
+    p{"flash"} = p{"flash"} - dt_s
+
+    IF NOT p{"alive"} THEN
+        p{"resp"} = p{"resp"} - dt_s
+        IF p{"resp"} <= 0 ANDALSO p{"lives"} > 0 THEN RESPAWN(p)
+        RETURN
+    ENDIF
+
+    ' movement, normalized, per-axis wall slide
+    DIM mx = inp{"mx"}
+    DIM my = inp{"my"}
+    DIM n = SQR(mx * mx + my * my)
+    IF n > 1 THEN
+        mx = mx / n
+        my = my / n
+    ENDIF
+    DIM spd = TW{"move_speed"}
+    IF p{"dash_t"} > 0 THEN spd = TW{"dash_speed"}
+    DIM dx = mx * spd * dt_s
+    DIM dy = my * spd * dt_s
+    IF dx <> 0 THEN
+        SPRITE.MOVE p{"sid"}, dx, 0
+        IF TILEMAP.COLLIDES(p{"sid"}, "coll") THEN SPRITE.MOVE p{"sid"}, -dx, 0
+    ENDIF
+    IF dy <> 0 THEN
+        SPRITE.MOVE p{"sid"}, 0, dy
+        IF TILEMAP.COLLIDES(p{"sid"}, "coll") THEN SPRITE.MOVE p{"sid"}, 0, -dy
+    ENDIF
+
+    ' aim: keep last direction when stick/keys are idle
+    IF inp{"ax"} <> 0 OR inp{"ay"} <> 0 THEN
+        p{"aimx"} = inp{"ax"}
+        p{"aimy"} = inp{"ay"}
+    ENDIF
+
+    ' dash grants a short invulnerability window
+    IF inp{"dash"} ANDALSO p{"dash_cd"} <= 0 THEN
+        p{"dash_t"} = TW{"dash_s"}
+        p{"dash_cd"} = TW{"dash_cool"}
+        IF p{"inv"} < 0.2 THEN p{"inv"} = 0.2
+    ENDIF
+
+    IF inp{"fire"} ANDALSO p{"cool"} <= 0 ANDALSO fight_t <= 0 THEN
+        FIRE_BULLET(p, p{"idx"})
+        p{"cool"} = TW{"fire_cool"}
+    ENDIF
+
+    ' facing follows aim, walk anim while moving
+    DIM dir$ = "right"
+    IF ABS(p{"aimy"}) > ABS(p{"aimx"}) THEN
+        dir$ = "down"
+        IF p{"aimy"} < 0 THEN dir$ = "up"
+    ELSE
+        IF p{"aimx"} < 0 THEN dir$ = "left"
+    ENDIF
+    IF n > 0 THEN
+        SPRITE.PLAY p{"sid"}, "walk_" + dir$
+    ELSE
+        SPRITE.PLAY p{"sid"}, "idle_" + dir$
+    ENDIF
+
+    ' invulnerability blink / hit flash
+    DIM a = 255
+    IF p{"inv"} > 0 THEN
+        IF (INT(TICK() / 90) MOD 2) = 0 THEN a = 110
+    ENDIF
+    IF p{"flash"} > 0 THEN a = 140
+    SPRITE.ALPHA p{"sid"}, a
+ENDSUB
+
+' --- HUD / overlays ---
+
+SUB DRAW_PLAYER_HUD(p, x, name$, cr, cg, cb)
+    DIM i AS INTEGER
+    TEXT x, 8, name$, cr, cg, cb
+    FOR i = 1 TO TW{"hp_max"}
+        DIM fr = 60
+        DIM fg = 60
+        DIM fb = 70
+        IF p{"hp"} >= i ANDALSO p{"alive"} THEN
+            fr = cr
+            fg = cg
+            fb = cb
+        ENDIF
+        RECT x + 50 + i * 14, 10, 10, 10, fr, fg, fb, TRUE
+    NEXT i
+    FOR i = 1 TO TW{"lives_max"}
+        IF p{"lives"} >= i THEN
+            RECT x + 50 + i * 14, 26, 10, 4, 220, 220, 230, TRUE
+        ENDIF
+    NEXT i
+    FOR i = 1 TO TW{"crowns_win"}
+        DIM gr = 50
+        DIM gg = 45
+        DIM gb = 25
+        IF p{"crowns"} >= i THEN
+            gr = 255
+            gg = 210
+            gb = 60
+        ENDIF
+        RECT x + 130 + i * 14, 8, 10, 10, gr, gg, gb, TRUE
+    NEXT i
+ENDSUB
+
+SUB DRAW_AIM(p, cr, cg, cb)
+    IF NOT p{"alive"} THEN RETURN
+    DIM n = SQR(p{"aimx"} * p{"aimx"} + p{"aimy"} * p{"aimy"})
+    IF n = 0 THEN RETURN
+    DIM cx = SPRITE.GET_X(p{"sid"}) + 16
+    DIM cy = SPRITE.GET_Y(p{"sid"}) + 16
+    DRAWCOLOR cr, cg, cb
+    LINE cx + p{"aimx"} / n * 14, cy + p{"aimy"} / n * 14, cx + p{"aimx"} / n * 26, cy + p{"aimy"} / n * 26
+ENDSUB
+
+SUB DRAW_BANNER(msg$, sub$)
+    RECT 240, 290, 800, 110, 12, 14, 22, TRUE
+    RECT 240, 290, 800, 3, 255, 210, 60, TRUE
+    RECT 240, 397, 800, 3, 255, 210, 60, TRUE
+    TEXT 640 - LEN(msg$) * 5, 320, msg$, 255, 210, 60
+    IF sub$ <> "" THEN TEXT 640 - LEN(sub$) * 4, 355, sub$, 200, 200, 210
+ENDSUB
+
+' ==================== setup ====================
+
+shot_mode = FALSE
+cli_args = OS.ARGS()
+DIM ai AS INTEGER
+FOR ai = 0 TO LEN(cli_args) - 1
+    IF cli_args[ai] = "shot" THEN shot_mode = TRUE
+NEXT ai
+
+SCREEN COLS * TILE_PX, ROWS * TILE_PX, "INVICTUS - The Unbeatable Duel"
+SETFONT "C:/Windows/Fonts/arialbd.ttf", 16
+
+' globals written by SUBs must exist before the call (SUB writes to unknown names stay local)
+spawn1 = [3 * TILE_PX, 10 * TILE_PX]
+spawn2 = [36 * TILE_PX, 11 * TILE_PX]
+tile_grid = 0
+coll_grid = 0
+blts = []
+BUILD_ARENA()
+tileset_img = GFX.LOADIMAGE(BASE$ + "assets/tileset_arena.png")
+TILEMAP.CREATE "arena", tileset_img, tile_grid, TILE_PX, TILE_PX
+TILEMAP.CREATE "coll", tileset_img, coll_grid, TILE_PX, TILE_PX
+
+' pad assignment: 2 pads = both, 1 pad = P1, 0 pads = both on keyboard
+n_pads = JOY.COUNT()
+pad1 = -1
+pad2 = -1
+kb1 = 0
+kb2 = 1
+IF n_pads >= 2 THEN
+    pad1 = 0
+    pad2 = 1
+ELSEIF n_pads = 1 THEN
+    pad1 = 0
+    kb2 = 0
+ENDIF
+
+plr1 = NEW_PLAYER("fighter_p1.png", spawn1[0], spawn1[1], 1, kb1, pad1)
+plr2 = NEW_PLAYER("fighter_p2.png", spawn2[0], spawn2[1], -1, kb2, pad2)
+plr1{"idx"} = 0
+plr2{"idx"} = 1
+plr1{"flash"} = 0
+plr2{"flash"} = 0
+plrs = [plr1, plr2]
+
+INIT_BULLETS()
+
+gstate$ = "play"
+round_winner = -1
+round_t = 0
+fight_t = 1.0
+running = 1
+frame_no = 0
+last_ms = TICK()
+
+' ==================== main loop ====================
+
+DO WHILE running = 1
+    ev$ = GFX.POLLEVENT()
+    IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN running = 0
+
+    now_ms = TICK()
+    dt_s = (now_ms - last_ms) / 1000.0
+    last_ms = now_ms
+    IF dt_s > 0.05 THEN dt_s = 0.05
+    frame_no = frame_no + 1
+    fight_t = fight_t - dt_s
+
+    inp1 = READ_INPUT(plr1)
+    inp2 = READ_INPUT(plr2)
+
+    IF shot_mode THEN
+        ' scripted demo: P2 is parked in P1's line of fire, P1 shoots until the kill
+        IF frame_no = 1 THEN
+            SPRITE.POS plr2{"sid"}, 216, 320
+            fight_t = 0
+        ENDIF
+        inp1{"ax"} = 1
+        inp1{"ay"} = 0
+        IF frame_no > 20 THEN inp1{"fire"} = TRUE
+        inp2{"ax"} = -1
+        inp2{"ay"} = 0
+    ENDIF
+
+    IF gstate$ = "play" THEN
+        UPDATE_PLAYER(plr1, inp1, dt_s)
+        UPDATE_PLAYER(plr2, inp2, dt_s)
+        UPDATE_BULLETS(dt_s)
+    ELSEIF gstate$ = "round_end" THEN
+        round_t = round_t - dt_s
+        IF round_t <= 0 THEN RESET_ROUND()
+    ELSE
+        IF GFX.KEYSTATE("R") THEN
+            plr1{"crowns"} = 0
+            plr2{"crowns"} = 0
+            plr1{"kills"} = 0
+            plr2{"kills"} = 0
+            RESET_ROUND()
+        ENDIF
+    ENDIF
+
+    ' --- draw ---
+    CLS 10, 11, 16
+    TILEMAP.DRAW "arena"
+    DRAW_AIM(plr1, 40, 200, 230)
+    DRAW_AIM(plr2, 255, 130, 50)
+    SPRITE.UPDATE
+    SPRITE.DRAW_ALL
+    DRAW_PLAYER_HUD(plr1, 16, NAME1$, 40, 200, 230)
+    DRAW_PLAYER_HUD(plr2, 1020, NAME2$, 255, 130, 50)
+
+    IF gstate$ = "play" ANDALSO fight_t > 0 THEN
+        TEXT 610, 330, "FIGHT!", 255, 210, 60
+    ELSEIF gstate$ = "round_end" THEN
+        DIM wname$ = NAME1$
+        IF round_winner = 1 THEN wname$ = NAME2$
+        DRAW_BANNER(wname$ + " TAKES THE CROWN", "")
+    ELSEIF gstate$ = "match_end" THEN
+        DIM mname$ = NAME1$
+        IF round_winner = 1 THEN mname$ = NAME2$
+        DRAW_BANNER(mname$ + " IS UNBEATABLE!", "R = rematch    ESC = quit")
+    ENDIF
+
+    ' back-buffer capture: must happen before SCREENFLIP
+    IF shot_mode THEN
+        IF frame_no = 60 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot1.png"
+        IF frame_no = 200 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot2.png"
+        IF frame_no >= 300 THEN
+            PRINT "SHOT STATS p1 kills="; plr1{"kills"}; " p2 hp="; plr2{"hp"}; " p2 lives="; plr2{"lives"}; " p2 alive="; plr2{"alive"}
+            running = 0
+        ENDIF
+    ENDIF
+
+    SCREENFLIP
+
+    SLEEP 8
+LOOP
+
+GFX.CLOSE
+END
