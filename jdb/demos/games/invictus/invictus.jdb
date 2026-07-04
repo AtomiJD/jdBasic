@@ -2,6 +2,7 @@
 ' Local 2-player top-down twin-stick arena duel.
 ' Run: build/jdBasic.exe invictus.jdb [shot]
 ' "shot" mode plays a scripted demo, saves screenshots, exits.
+' F fullscreen, ESC quit, R rematch.
 
 BASE$ = "D:/usr/dev/cc/jdb/demos/games/invictus/"
 NAME1$ = "DAD"
@@ -13,9 +14,6 @@ TW{"move_speed"}   = 240
 TW{"dash_speed"}   = 720
 TW{"dash_s"}       = 0.15
 TW{"dash_cool"}    = 0.8
-TW{"bullet_speed"} = 560
-TW{"bullet_ttl"}   = 1.4
-TW{"fire_cool"}    = 0.18
 TW{"hp_max"}       = 5
 TW{"lives_max"}    = 3
 TW{"respawn_s"}    = 1.2
@@ -24,10 +22,120 @@ TW{"crowns_win"}   = 5
 TW{"deadzone"}     = 0.25
 TW{"aim_ax_x"}     = 2
 TW{"aim_ax_y"}     = 3
+TW{"pad_first_s"}  = 3.0
+TW{"pad_respawn_s"} = 8.0
+TW{"pickup_reach"} = 24
+TW{"star_s"}       = 5.0
+TW{"over_s"}       = 8.0
+TW{"boots_s"}      = 8.0
+TW{"ghost_s"}      = 6.0
+TW{"boots_mult"}   = 1.4
 
-' --- arena: 40x22 tiles of 32px = 1280x704 ---
+' --- weapons ---
+
+FUNC MK_WPN(wname$, kind$, cool, dmg, spd, ammo, pellets, spread, ttl, splash)
+    DIM w = {}
+    w{"name"} = wname$
+    w{"kind"} = kind$
+    w{"cool"} = cool
+    w{"dmg"} = dmg
+    w{"spd"} = spd
+    w{"ammo"} = ammo
+    w{"pellets"} = pellets
+    w{"spread"} = spread
+    w{"ttl"} = ttl
+    w{"splash"} = splash
+    RETURN w
+ENDFUNC
+
+WPN = []
+WPN = APPEND(WPN, MK_WPN("BLASTER",  "proj",    0.18, 1, 560, -1, 1, 0.00, 1.40, 0))
+WPN = APPEND(WPN, MK_WPN("SHOTGUN",  "proj",    0.70, 1, 620,  8, 6, 0.50, 0.34, 0))
+WPN = APPEND(WPN, MK_WPN("SMG",      "proj",    0.07, 1, 640, 40, 1, 0.14, 1.00, 0))
+WPN = APPEND(WPN, MK_WPN("RAIL",     "rail",    1.10, 3,   0,  4, 1, 0.00, 0.00, 0))
+WPN = APPEND(WPN, MK_WPN("ROCKET",   "rocket",  0.90, 3, 420,  4, 1, 0.00, 2.60, 60))
+WPN = APPEND(WPN, MK_WPN("FLAMER",   "flame",   0.12, 1, 300, 45, 1, 0.30, 0.30, 0))
+WPN = APPEND(WPN, MK_WPN("DISC",     "disc",    0.80, 2, 520,  5, 1, 0.00, 3.00, 0))
+WPN = APPEND(WPN, MK_WPN("GRENADE",  "grenade", 0.80, 3, 380,  5, 1, 0.10, 9.00, 56))
+WPN = APPEND(WPN, MK_WPN("MINE",     "mine",    0.50, 2,   0,  3, 1, 0.00, 20.0, 48))
+WPN = APPEND(WPN, MK_WPN("SWORD",    "sword",   0.50, 5,   0,  8, 1, 0.00, 0.00, 0))
+
+' --- arenas: 40x22 tiles of 32px = 1280x704 ---
 ' legend: # wall, . floor, C crate, w weapon pad, p powerup pad, 1/2 spawns
-arena_rows$ = [ _
+
+rows_field$ = [ _
+  "########################################", _
+  "#......................................#", _
+  "#......................................#", _
+  "#.........w..................w.........#", _
+  "#......................................#", _
+  "#......##....................##........#", _
+  "#......................................#", _
+  "#..........C..............C............#", _
+  "#......................................#", _
+  "#......................................#", _
+  "#..1...............pp..............2...#", _
+  "#..................pp..................#", _
+  "#......................................#", _
+  "#......................................#", _
+  "#..........C..............C............#", _
+  "#......................................#", _
+  "#......##....................##........#", _
+  "#......................................#", _
+  "#.........w..................w.........#", _
+  "#......................................#", _
+  "#......................................#", _
+  "########################################" ]
+
+rows_maze$ = [ _
+  "########################################", _
+  "#........#............#................#", _
+  "#..1.....#.....w......#..........2.....#", _
+  "#........#............#................#", _
+  "#####.#######.############.#####.#######", _
+  "#......................................#", _
+  "#......................................#", _
+  "#.####.#####..####..####..#####.#####..#", _
+  "#.#w......#....................#....w#.#", _
+  "#.#.......#..C..............C..#.......#", _
+  "#.........#.......p..p.........#.......#", _
+  "#.........#.......p..p.........#.......#", _
+  "#.#.......#..C..............C..#.......#", _
+  "#.#.......#....................#.......#", _
+  "#.####.#####..####..####..#####.#####..#", _
+  "#......................................#", _
+  "#......................................#", _
+  "#####.#######.############.#####.#######", _
+  "#........#............#................#", _
+  "#........#.....w......#................#", _
+  "#........#............#................#", _
+  "########################################" ]
+
+rows_yard$ = [ _
+  "########################################", _
+  "#......................................#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#......................................#", _
+  "#.....w....................w...........#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#......................................#", _
+  "#......................................#", _
+  "#..1.......CC......pp......CC.......2..#", _
+  "#..........CC......pp......CC..........#", _
+  "#......................................#", _
+  "#......................................#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#.....w....................w...........#", _
+  "#......................................#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#..CC......CC......CC......CC......CC..#", _
+  "#......................................#", _
+  "########################################" ]
+
+rows_colo$ = [ _
   "########################################", _
   "#......................................#", _
   "#......................................#", _
@@ -51,11 +159,29 @@ arena_rows$ = [ _
   "#......................................#", _
   "########################################" ]
 
+ARENA_NAMES$ = ["OPEN FIELD", "THE MAZE", "CRATE YARD", "COLOSSEUM"]
+
 TILE_PX = 32
 COLS = 40
 ROWS = 22
 
+SUB SELECT_ARENA(idx)
+    IF idx = 0 THEN
+        arena_rows$ = rows_field$
+    ELSEIF idx = 1 THEN
+        arena_rows$ = rows_maze$
+    ELSEIF idx = 2 THEN
+        arena_rows$ = rows_yard$
+    ELSE
+        arena_rows$ = rows_colo$
+    ENDIF
+ENDSUB
+
 ' tile ids in tileset strip: 1-3 floor variants, 4 wall, 5 crate, 6 cracked crate, 7 weapon pad, 8 powerup pad
+
+FUNC FLOOR_TILE(r, c)
+    RETURN 1 + ((r * 7 + c * 13) MOD 3)
+ENDFUNC
 
 SUB BUILD_ARENA()
     DIM r AS INTEGER
@@ -65,6 +191,8 @@ SUB BUILD_ARENA()
     DIM rowstr$ AS STRING
     DIM tile_flat = []
     DIM coll_flat = []
+    wpads = []
+    ppads = []
     FOR r = 0 TO ROWS - 1
         rowstr$ = arena_rows$[r]
         IF LEN(rowstr$) <> COLS THEN
@@ -74,7 +202,7 @@ SUB BUILD_ARENA()
         DIM chars = -rowstr$
         FOR c = 0 TO COLS - 1
             DIM ch$ = chars[c]
-            tid = 1 + ((r * 7 + c * 13) MOD 3)
+            tid = FLOOR_TILE(r, c)
             solid = 0
             IF ch$ = "#" THEN
                 tid = 4
@@ -84,8 +212,22 @@ SUB BUILD_ARENA()
                 solid = 1
             ELSEIF ch$ = "w" THEN
                 tid = 7
+                DIM wp = {}
+                wp{"x"} = c * TILE_PX + 16
+                wp{"y"} = r * TILE_PX + 16
+                wp{"timer"} = TW{"pad_first_s"}
+                wp{"active"} = FALSE
+                wp{"wid"} = 0
+                wpads = APPEND(wpads, wp)
             ELSEIF ch$ = "p" THEN
                 tid = 8
+                DIM pp = {}
+                pp{"x"} = c * TILE_PX + 16
+                pp{"y"} = r * TILE_PX + 16
+                pp{"timer"} = TW{"pad_first_s"} + 2
+                pp{"active"} = FALSE
+                pp{"wid"} = 0
+                ppads = APPEND(ppads, pp)
             ELSEIF ch$ = "1" THEN
                 spawn1 = [c * TILE_PX, r * TILE_PX]
             ELSEIF ch$ = "2" THEN
@@ -97,6 +239,11 @@ SUB BUILD_ARENA()
     NEXT r
     tile_grid = RESHAPE(tile_flat, [ROWS, COLS])
     coll_grid = RESHAPE(coll_flat, [ROWS, COLS])
+ENDSUB
+
+SUB REBUILD_TILEMAPS()
+    TILEMAP.CREATE "arena", tileset_img, tile_grid, TILE_PX, TILE_PX
+    TILEMAP.CREATE "coll", tileset_img, coll_grid, TILE_PX, TILE_PX
 ENDSUB
 
 ' --- players ---
@@ -113,6 +260,8 @@ FUNC NEW_PLAYER(sheet$, sx, sy, face_x, kb_set, pad_idx)
     SPRITE.ANIM sid, "walk_right", [8, 9, 10, 11], 8
     SPRITE.ANIM sid, "walk_up",    [12, 13, 14, 15], 8
     SPRITE.PLAY sid, "idle_right"
+    ' slightly under tile size so 1-tile corridors do not stick
+    SPRITE.SCALE sid, 1.0
     SPRITE.POS sid, sx, sy
     p{"sid"} = sid
     p{"spawnx"} = sx
@@ -131,7 +280,23 @@ FUNC NEW_PLAYER(sheet$, sx, sy, face_x, kb_set, pad_idx)
     p{"kb"} = kb_set
     p{"pad"} = pad_idx
     p{"kills"} = 0
+    p{"flash"} = 0
+    p{"wpn"} = 0
+    p{"ammo"} = -1
+    p{"star_t"} = 0
+    p{"over_t"} = 0
+    p{"boots_t"} = 0
+    p{"ghost_t"} = 0
+    p{"shield_n"} = 0
     RETURN p
+ENDFUNC
+
+FUNC PCX(p)
+    RETURN SPRITE.GET_X(p{"sid"}) + 16
+ENDFUNC
+
+FUNC PCY(p)
+    RETURN SPRITE.GET_Y(p{"sid"}) + 16
 ENDFUNC
 
 ' --- input ---
@@ -183,9 +348,96 @@ FUNC READ_INPUT(p)
     RETURN r
 ENDFUNC
 
+' --- particles (pooled) ---
+
+MAX_PARTS = 256
+
+SUB INIT_PARTS()
+    DIM i AS INTEGER
+    parts = []
+    FOR i = 1 TO MAX_PARTS
+        DIM pt = {}
+        pt{"life"} = 0
+        pt{"x"} = 0
+        pt{"y"} = 0
+        pt{"vx"} = 0
+        pt{"vy"} = 0
+        pt{"r"} = 255
+        pt{"g"} = 255
+        pt{"b"} = 255
+        pt{"sz"} = 2
+        parts = APPEND(parts, pt)
+    NEXT i
+    part_cursor = 0
+ENDSUB
+
+SUB SPAWN_PARTS(px, py, n, spd, cr, cg, cb, life)
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        DIM pt = parts[part_cursor]
+        part_cursor = (part_cursor + 1) MOD MAX_PARTS
+        DIM ang = RND() * 6.2832
+        DIM v = spd * (0.3 + RND() * 0.7)
+        pt{"x"} = px
+        pt{"y"} = py
+        pt{"vx"} = COS(ang) * v
+        pt{"vy"} = SIN(ang) * v
+        pt{"life"} = life * (0.5 + RND() * 0.5)
+        pt{"r"} = cr
+        pt{"g"} = cg
+        pt{"b"} = cb
+        pt{"sz"} = 2 + INT(RND() * 3)
+    NEXT i
+ENDSUB
+
+SUB UPDATE_DRAW_PARTS(dt_s, camx, camy)
+    DIM i AS INTEGER
+    FOR i = 0 TO MAX_PARTS - 1
+        DIM pt = parts[i]
+        IF pt{"life"} <= 0 THEN CONTINUEFOR
+        pt{"life"} = pt{"life"} - dt_s
+        pt{"x"} = pt{"x"} + pt{"vx"} * dt_s
+        pt{"y"} = pt{"y"} + pt{"vy"} * dt_s
+        pt{"vx"} = pt{"vx"} * 0.94
+        pt{"vy"} = pt{"vy"} * 0.94
+        RECT pt{"x"} - camx, pt{"y"} - camy, pt{"sz"}, pt{"sz"}, pt{"r"}, pt{"g"}, pt{"b"}, TRUE
+    NEXT i
+ENDSUB
+
+' --- beams (rail trace / sword slash visuals) ---
+
+SUB ADD_BEAM(x1, y1, x2, y2, cr, cg, cb)
+    DIM bm = {}
+    bm{"x1"} = x1
+    bm{"y1"} = y1
+    bm{"x2"} = x2
+    bm{"y2"} = y2
+    bm{"ttl"} = 0.12
+    bm{"r"} = cr
+    bm{"g"} = cg
+    bm{"b"} = cb
+    beams = APPEND(beams, bm)
+ENDSUB
+
+SUB UPDATE_DRAW_BEAMS(dt_s, camx, camy)
+    DIM i AS INTEGER
+    DIM keep = []
+    FOR i = 0 TO LEN(beams) - 1
+        DIM bm = beams[i]
+        bm{"ttl"} = bm{"ttl"} - dt_s
+        IF bm{"ttl"} > 0 THEN
+            DRAWCOLOR bm{"r"}, bm{"g"}, bm{"b"}
+            LINE bm{"x1"} - camx, bm{"y1"} - camy, bm{"x2"} - camx, bm{"y2"} - camy
+            LINE bm{"x1"} - camx, bm{"y1"} - camy + 1, bm{"x2"} - camx, bm{"y2"} - camy + 1
+            keep = APPEND(keep, bm)
+        ENDIF
+    NEXT i
+    beams = keep
+ENDSUB
+
 ' --- bullets: fixed pool per player ---
 
-POOL_PER_PLAYER = 24
+POOL_PER_PLAYER = 32
 
 SUB INIT_BULLETS()
     DIM i AS INTEGER
@@ -198,35 +450,186 @@ SUB INIT_BULLETS()
             b{"sid"} = SPRITE.LOAD(BASE$ + "assets/" + png$)
             SPRITE.VISIBLE b{"sid"}, FALSE
             b{"owner"} = ow
+            b{"live"} = FALSE
             b{"vx"} = 0
             b{"vy"} = 0
             b{"ttl"} = 0
-            b{"live"} = FALSE
+            b{"kind"} = "proj"
+            b{"dmg"} = 1
+            b{"splash"} = 0
+            b{"bounce"} = 0
+            b{"fuse"} = 0
             blts = APPEND(blts, b)
         NEXT i
     NEXT ow
 ENDSUB
 
-SUB FIRE_BULLET(p, ow)
+FUNC AIM_ANGLE(p)
+    RETURN ATAN2(p{"aimy"}, p{"aimx"})
+ENDFUNC
+
+FUNC DMG_MULT(p)
+    IF p{"over_t"} > 0 THEN RETURN 2
+    RETURN 1
+ENDFUNC
+
+SUB SPAWN_PROJ(p, ow, w, ang)
     DIM i AS INTEGER
-    DIM n = SQR(p{"aimx"} * p{"aimx"} + p{"aimy"} * p{"aimy"})
-    IF n = 0 THEN RETURN
-    DIM dx = p{"aimx"} / n
-    DIM dy = p{"aimy"} / n
     FOR i = 0 TO LEN(blts) - 1
         DIM b = blts[i]
         IF b{"owner"} = ow ANDALSO NOT b{"live"} THEN
-            DIM bx = SPRITE.GET_X(p{"sid"}) + 16 + dx * 18 - 4
-            DIM by = SPRITE.GET_Y(p{"sid"}) + 16 + dy * 18 - 4
-            SPRITE.POS b{"sid"}, bx, by
+            DIM dx = COS(ang)
+            DIM dy = SIN(ang)
+            SPRITE.POS b{"sid"}, PCX(p) + dx * 18 - 4, PCY(p) + dy * 18 - 4
             SPRITE.VISIBLE b{"sid"}, TRUE
-            b{"vx"} = dx * TW{"bullet_speed"}
-            b{"vy"} = dy * TW{"bullet_speed"}
-            b{"ttl"} = TW{"bullet_ttl"}
+            DIM sc = 1
+            IF w{"kind"} = "rocket" THEN sc = 1.8
+            IF w{"kind"} = "disc" THEN sc = 1.5
+            IF w{"kind"} = "grenade" THEN sc = 1.3
+            IF w{"kind"} = "mine" THEN sc = 1.5
+            SPRITE.SCALE b{"sid"}, sc
+            b{"vx"} = dx * w{"spd"}
+            b{"vy"} = dy * w{"spd"}
+            b{"ttl"} = w{"ttl"}
             b{"live"} = TRUE
-            EXITFOR
+            b{"kind"} = w{"kind"}
+            b{"dmg"} = w{"dmg"} * DMG_MULT(p)
+            b{"splash"} = w{"splash"}
+            b{"bounce"} = 0
+            b{"fuse"} = 0
+            IF w{"kind"} = "grenade" THEN b{"fuse"} = 1.0
+            IF w{"kind"} = "mine" THEN
+                b{"fuse"} = 0.6
+                SPRITE.POS b{"sid"}, PCX(p) - 4, PCY(p) - 4
+            ENDIF
+            RETURN
         ENDIF
     NEXT i
+ENDSUB
+
+SUB FIRE_RAIL(p, ow, w)
+    DIM sx = PCX(p)
+    DIM sy = PCY(p)
+    DIM ang = AIM_ANGLE(p)
+    DIM dx = COS(ang)
+    DIM dy = SIN(ang)
+    DIM dist = 0
+    DIM hx = sx
+    DIM hy = sy
+    DIM tgt = plrs[1 - ow]
+    DO WHILE dist < 900
+        hx = hx + dx * 8
+        hy = hy + dy * 8
+        dist = dist + 8
+        IF TILEMAP.TILE_AT("coll", hx, hy) > 0 THEN EXITDO
+        IF tgt{"alive"} ANDALSO tgt{"inv"} <= 0 THEN
+            IF ABS(hx - PCX(tgt)) < 16 ANDALSO ABS(hy - PCY(tgt)) < 16 THEN
+                DAMAGE(tgt, ow, w{"dmg"} * DMG_MULT(p))
+                SPAWN_PARTS(hx, hy, 8, 160, 255, 240, 120, 0.4)
+            ENDIF
+        ENDIF
+    LOOP
+    ADD_BEAM(sx, sy, hx, hy, 255, 240, 120)
+    SPAWN_PARTS(hx, hy, 6, 120, 255, 240, 120, 0.3)
+    shake_t = 0.15
+    shake_amp = 4
+ENDSUB
+
+SUB FIRE_SWORD(p, ow, w)
+    DIM ang = AIM_ANGLE(p)
+    DIM sx = PCX(p)
+    DIM sy = PCY(p)
+    ADD_BEAM(sx, sy, sx + COS(ang - 0.5) * 44, sy + SIN(ang - 0.5) * 44, 220, 230, 255)
+    ADD_BEAM(sx, sy, sx + COS(ang) * 50, sy + SIN(ang) * 50, 220, 230, 255)
+    ADD_BEAM(sx, sy, sx + COS(ang + 0.5) * 44, sy + SIN(ang + 0.5) * 44, 220, 230, 255)
+    DIM tgt = plrs[1 - ow]
+    IF NOT tgt{"alive"} ORELSE tgt{"inv"} > 0 THEN RETURN
+    DIM ex = PCX(tgt) - sx
+    DIM ey = PCY(tgt) - sy
+    DIM d = SQR(ex * ex + ey * ey)
+    IF d > 52 THEN RETURN
+    IF d > 0 ANDALSO (ex * COS(ang) + ey * SIN(ang)) / d < 0.4 THEN RETURN
+    DAMAGE(tgt, ow, w{"dmg"})
+    shake_t = 0.2
+    shake_amp = 5
+ENDSUB
+
+SUB FIRE_WEAPON(p, ow)
+    DIM w = WPN[p{"wpn"}]
+    DIM k AS INTEGER
+    IF w{"kind"} = "rail" THEN
+        FIRE_RAIL(p, ow, w)
+    ELSEIF w{"kind"} = "sword" THEN
+        FIRE_SWORD(p, ow, w)
+    ELSE
+        DIM base_ang = AIM_ANGLE(p)
+        FOR k = 1 TO w{"pellets"}
+            DIM ang = base_ang + (RND() - 0.5) * w{"spread"}
+            IF w{"pellets"} > 1 THEN
+                ang = base_ang + (k - (w{"pellets"} + 1) / 2) * (w{"spread"} / w{"pellets"}) + (RND() - 0.5) * 0.06
+            ENDIF
+            SPAWN_PROJ(p, ow, w, ang)
+        NEXT k
+        SPAWN_PARTS(PCX(p) + COS(base_ang) * 18, PCY(p) + SIN(base_ang) * 18, 2, 90, 255, 220, 120, 0.15)
+    ENDIF
+    IF p{"ammo"} > 0 THEN
+        p{"ammo"} = p{"ammo"} - 1
+        IF p{"ammo"} = 0 THEN
+            p{"wpn"} = 0
+            p{"ammo"} = -1
+        ENDIF
+    ENDIF
+    p{"cool"} = w{"cool"}
+ENDSUB
+
+' --- explosions / destructible crates ---
+
+SUB DESTROY_CRATES(ex, ey, radius)
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM changed = FALSE
+    DIM r0 = INT((ey - radius) / TILE_PX)
+    DIM r1 = INT((ey + radius) / TILE_PX)
+    DIM c0 = INT((ex - radius) / TILE_PX)
+    DIM c1 = INT((ex + radius) / TILE_PX)
+    IF r0 < 0 THEN r0 = 0
+    IF c0 < 0 THEN c0 = 0
+    IF r1 > ROWS - 1 THEN r1 = ROWS - 1
+    IF c1 > COLS - 1 THEN c1 = COLS - 1
+    FOR r = r0 TO r1
+        FOR c = c0 TO c1
+            DIM tid = tile_grid[r][c]
+            IF tid <> 5 ANDALSO tid <> 6 THEN CONTINUEFOR
+            DIM tx = c * TILE_PX + 16
+            DIM ty = r * TILE_PX + 16
+            DIM dd = SQR((tx - ex) * (tx - ex) + (ty - ey) * (ty - ey))
+            IF dd > radius + 12 THEN CONTINUEFOR
+            IF tid = 5 THEN
+                tile_grid[r][c] = 6
+            ELSE
+                tile_grid[r][c] = FLOOR_TILE(r, c)
+                coll_grid[r][c] = 0
+            ENDIF
+            changed = TRUE
+            SPAWN_PARTS(tx, ty, 10, 170, 150, 105, 50, 0.5)
+        NEXT c
+    NEXT r
+    IF changed THEN REBUILD_TILEMAPS()
+ENDSUB
+
+SUB EXPLODE(ex, ey, radius, amount, attacker_idx)
+    DIM j AS INTEGER
+    SPAWN_PARTS(ex, ey, 26, 260, 255, 170, 60, 0.6)
+    SPAWN_PARTS(ex, ey, 12, 120, 255, 90, 40, 0.8)
+    shake_t = 0.3
+    shake_amp = 7
+    FOR j = 0 TO 1
+        DIM tgt = plrs[j]
+        IF NOT tgt{"alive"} THEN CONTINUEFOR
+        DIM dd = SQR((PCX(tgt) - ex) * (PCX(tgt) - ex) + (PCY(tgt) - ey) * (PCY(tgt) - ey))
+        IF dd <= radius THEN DAMAGE(tgt, attacker_idx, amount)
+    NEXT j
+    DESTROY_CRATES(ex, ey, radius)
 ENDSUB
 
 SUB KILL_BULLET(b)
@@ -240,22 +643,102 @@ SUB UPDATE_BULLETS(dt_s)
     FOR i = 0 TO LEN(blts) - 1
         DIM b = blts[i]
         IF NOT b{"live"} THEN CONTINUEFOR
+        DIM bx = SPRITE.GET_X(b{"sid"}) + 4
+        DIM by = SPRITE.GET_Y(b{"sid"}) + 4
+
         b{"ttl"} = b{"ttl"} - dt_s
         IF b{"ttl"} <= 0 THEN
+            IF b{"kind"} = "mine" ORELSE b{"kind"} = "grenade" THEN EXPLODE(bx, by, b{"splash"}, b{"dmg"}, b{"owner"})
             KILL_BULLET(b)
             CONTINUEFOR
         ENDIF
-        SPRITE.MOVE b{"sid"}, b{"vx"} * dt_s, b{"vy"} * dt_s
+
+        ' mines: sit still, arm, proximity-trigger
+        IF b{"kind"} = "mine" THEN
+            b{"fuse"} = b{"fuse"} - dt_s
+            IF b{"fuse"} <= 0 THEN
+                DIM foe = plrs[1 - b{"owner"}]
+                IF foe{"alive"} THEN
+                    DIM md = SQR((PCX(foe) - bx) * (PCX(foe) - bx) + (PCY(foe) - by) * (PCY(foe) - by))
+                    IF md < 32 THEN
+                        EXPLODE(bx, by, b{"splash"}, b{"dmg"}, b{"owner"})
+                        KILL_BULLET(b)
+                        CONTINUEFOR
+                    ENDIF
+                ENDIF
+                DIM ma = 90
+                IF (INT(TICK() / 300) MOD 2) = 0 THEN ma = 230
+                SPRITE.ALPHA b{"sid"}, ma
+            ENDIF
+            CONTINUEFOR
+        ENDIF
+
+        ' grenades: fuse + friction
+        IF b{"kind"} = "grenade" THEN
+            b{"fuse"} = b{"fuse"} - dt_s
+            IF b{"fuse"} <= 0 THEN
+                EXPLODE(bx, by, b{"splash"}, b{"dmg"}, b{"owner"})
+                KILL_BULLET(b)
+                CONTINUEFOR
+            ENDIF
+            b{"vx"} = b{"vx"} * (1 - 1.6 * dt_s)
+            b{"vy"} = b{"vy"} * (1 - 1.6 * dt_s)
+        ENDIF
+
+        IF b{"kind"} = "rocket" THEN SPAWN_PARTS(bx, by, 1, 30, 200, 200, 210, 0.25)
+
+        ' movement: bouncing kinds reflect per axis, the rest die on walls
+        DIM bounced = FALSE
+        DIM dx = b{"vx"} * dt_s
+        DIM dy = b{"vy"} * dt_s
+        SPRITE.MOVE b{"sid"}, dx, 0
         IF TILEMAP.COLLIDES(b{"sid"}, "coll") THEN
-            KILL_BULLET(b)
-            CONTINUEFOR
+            IF b{"kind"} = "disc" ORELSE b{"kind"} = "grenade" THEN
+                SPRITE.MOVE b{"sid"}, -dx, 0
+                b{"vx"} = -b{"vx"}
+                bounced = TRUE
+            ELSE
+                IF b{"kind"} = "rocket" THEN EXPLODE(bx, by, b{"splash"}, b{"dmg"}, b{"owner"})
+                SPAWN_PARTS(bx, by, 4, 110, 200, 210, 230, 0.25)
+                KILL_BULLET(b)
+                CONTINUEFOR
+            ENDIF
         ENDIF
+        SPRITE.MOVE b{"sid"}, 0, dy
+        IF TILEMAP.COLLIDES(b{"sid"}, "coll") THEN
+            IF b{"kind"} = "disc" ORELSE b{"kind"} = "grenade" THEN
+                SPRITE.MOVE b{"sid"}, 0, -dy
+                b{"vy"} = -b{"vy"}
+                bounced = TRUE
+            ELSE
+                IF b{"kind"} = "rocket" THEN EXPLODE(bx, by, b{"splash"}, b{"dmg"}, b{"owner"})
+                SPAWN_PARTS(bx, by, 4, 110, 200, 210, 230, 0.25)
+                KILL_BULLET(b)
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        IF bounced ANDALSO b{"kind"} = "disc" THEN
+            b{"bounce"} = b{"bounce"} + 1
+            SPAWN_PARTS(bx, by, 3, 100, 160, 240, 255, 0.2)
+            IF b{"bounce"} > 3 THEN
+                KILL_BULLET(b)
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+
+        ' player hits: discs also hit their owner after the first bounce
         FOR j = 0 TO 1
             DIM tgt = plrs[j]
-            IF j <> b{"owner"} ANDALSO tgt{"alive"} ANDALSO tgt{"inv"} <= 0 THEN
+            DIM can_hit = (j <> b{"owner"})
+            IF b{"kind"} = "disc" ANDALSO b{"bounce"} >= 1 THEN can_hit = TRUE
+            IF can_hit ANDALSO tgt{"alive"} ANDALSO tgt{"inv"} <= 0 THEN
                 IF SPRITE.COLLISION(b{"sid"}, tgt{"sid"}) THEN
+                    IF b{"splash"} > 0 THEN
+                        EXPLODE(SPRITE.GET_X(b{"sid"}), SPRITE.GET_Y(b{"sid"}), b{"splash"}, b{"dmg"}, b{"owner"})
+                    ELSE
+                        DAMAGE(tgt, b{"owner"}, b{"dmg"})
+                    ENDIF
                     KILL_BULLET(b)
-                    DAMAGE(tgt, b{"owner"})
                     EXITFOR
                 ENDIF
             ENDIF
@@ -270,11 +753,109 @@ SUB CLEAR_BULLETS()
     NEXT i
 ENDSUB
 
+' --- pads (weapon / powerup spawns) ---
+
+PU_NAMES$ = ["CROWN STAR", "OVERDRIVE", "BOOTS", "SHIELD", "MEDKIT", "GHOST"]
+PU_MARKS$ = ["*", "2", ">", "#", "+", "~"]
+
+SUB GRANT_WEAPON(p, wid)
+    p{"wpn"} = wid
+    p{"ammo"} = WPN[wid]{"ammo"}
+ENDSUB
+
+SUB GRANT_POWERUP(p, pu)
+    IF pu = 0 THEN
+        p{"star_t"} = TW{"star_s"}
+    ELSEIF pu = 1 THEN
+        p{"over_t"} = TW{"over_s"}
+    ELSEIF pu = 2 THEN
+        p{"boots_t"} = TW{"boots_s"}
+    ELSEIF pu = 3 THEN
+        p{"shield_n"} = 2
+    ELSEIF pu = 4 THEN
+        p{"hp"} = p{"hp"} + 2
+        IF p{"hp"} > TW{"hp_max"} THEN p{"hp"} = TW{"hp_max"}
+    ELSE
+        p{"ghost_t"} = TW{"ghost_s"}
+    ENDIF
+ENDSUB
+
+SUB UPDATE_PADS(pads, is_weapon, dt_s)
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO LEN(pads) - 1
+        DIM pd = pads[i]
+        IF NOT pd{"active"} THEN
+            pd{"timer"} = pd{"timer"} - dt_s
+            IF pd{"timer"} <= 0 THEN
+                pd{"active"} = TRUE
+                IF is_weapon THEN
+                    pd{"wid"} = INT(RND() * 9) MOD 9 + 1
+                ELSE
+                    pd{"wid"} = INT(RND() * 6) MOD 6
+                ENDIF
+            ENDIF
+            CONTINUEFOR
+        ENDIF
+        FOR j = 0 TO 1
+            DIM p = plrs[j]
+            IF NOT p{"alive"} THEN CONTINUEFOR
+            DIM dd = SQR((PCX(p) - pd{"x"}) * (PCX(p) - pd{"x"}) + (PCY(p) - pd{"y"}) * (PCY(p) - pd{"y"}))
+            IF dd < TW{"pickup_reach"} THEN
+                IF is_weapon THEN
+                    GRANT_WEAPON(p, pd{"wid"})
+                ELSE
+                    GRANT_POWERUP(p, pd{"wid"})
+                ENDIF
+                SPAWN_PARTS(pd{"x"}, pd{"y"}, 8, 130, 255, 230, 120, 0.4)
+                pd{"active"} = FALSE
+                pd{"timer"} = TW{"pad_respawn_s"}
+                EXITFOR
+            ENDIF
+        NEXT j
+    NEXT i
+ENDSUB
+
+SUB DRAW_PADS(pads, is_weapon, camx, camy)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(pads) - 1
+        DIM pd = pads[i]
+        IF NOT pd{"active"} THEN CONTINUEFOR
+        DIM px = pd{"x"} - camx
+        DIM py = pd{"y"} - camy
+        IF is_weapon THEN
+            CIRCLE px, py, 11, TRUE, 30, 60, 70
+            CIRCLE px, py, 11, FALSE, 90, 220, 255
+            TEXT px - 4, py - 9, LEFT$(WPN[pd{"wid"}]{"name"}, 1), 200, 245, 255
+        ELSE
+            CIRCLE px, py, 11, TRUE, 70, 60, 25
+            CIRCLE px, py, 11, FALSE, 255, 210, 80
+            TEXT px - 4, py - 9, PU_MARKS$[pd{"wid"}], 255, 230, 150
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB RESET_PADS(pads)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(pads) - 1
+        DIM pd = pads[i]
+        pd{"active"} = FALSE
+        pd{"timer"} = TW{"pad_first_s"}
+    NEXT i
+ENDSUB
+
 ' --- combat ---
 
-SUB DAMAGE(victim, attacker_idx)
-    victim{"hp"} = victim{"hp"} - 1
+SUB DAMAGE(victim, attacker_idx, amount)
+    IF victim{"inv"} > 0 THEN RETURN
+    IF victim{"shield_n"} > 0 THEN
+        victim{"shield_n"} = victim{"shield_n"} - 1
+        SPAWN_PARTS(PCX(victim), PCY(victim), 8, 140, 120, 190, 255, 0.35)
+        RETURN
+    ENDIF
+    victim{"hp"} = victim{"hp"} - amount
     victim{"flash"} = 0.12
+    SPAWN_PARTS(PCX(victim), PCY(victim), 6, 130, 255, 70, 70, 0.4)
     IF victim{"hp"} <= 0 THEN
         DIM killer = plrs[attacker_idx]
         killer{"kills"} = killer{"kills"} + 1
@@ -283,6 +864,9 @@ SUB DAMAGE(victim, attacker_idx)
 ENDSUB
 
 SUB PLAYER_DIES(victim, attacker_idx)
+    SPAWN_PARTS(PCX(victim), PCY(victim), 30, 240, 255, 120, 120, 0.8)
+    shake_t = 0.4
+    shake_amp = 8
     victim{"lives"} = victim{"lives"} - 1
     victim{"alive"} = FALSE
     SPRITE.VISIBLE victim{"sid"}, FALSE
@@ -305,12 +889,25 @@ SUB RESPAWN(p)
     p{"hp"} = TW{"hp_max"}
     p{"alive"} = TRUE
     p{"inv"} = TW{"inv_s"}
+    p{"wpn"} = 0
+    p{"ammo"} = -1
     SPRITE.POS p{"sid"}, p{"spawnx"}, p{"spawny"}
     SPRITE.VISIBLE p{"sid"}, TRUE
 ENDSUB
 
 SUB RESET_ROUND()
     DIM i AS INTEGER
+    round_no = round_no + 1
+    arena_idx = round_no MOD 4
+    SELECT_ARENA(arena_idx)
+    BUILD_ARENA()
+    REBUILD_TILEMAPS()
+    RESET_PADS(wpads)
+    RESET_PADS(ppads)
+    plr1{"spawnx"} = spawn1[0]
+    plr1{"spawny"} = spawn1[1]
+    plr2{"spawnx"} = spawn2[0]
+    plr2{"spawny"} = spawn2[1]
     FOR i = 0 TO 1
         DIM p = plrs[i]
         p{"lives"} = TW{"lives_max"}
@@ -318,6 +915,11 @@ SUB RESET_ROUND()
         p{"dash_t"} = 0
         p{"dash_cd"} = 0
         p{"resp"} = 0
+        p{"star_t"} = 0
+        p{"over_t"} = 0
+        p{"boots_t"} = 0
+        p{"ghost_t"} = 0
+        p{"shield_n"} = 0
         RESPAWN(p)
     NEXT i
     CLEAR_BULLETS()
@@ -333,12 +935,19 @@ SUB UPDATE_PLAYER(p, inp, dt_s)
     p{"dash_t"} = p{"dash_t"} - dt_s
     p{"dash_cd"} = p{"dash_cd"} - dt_s
     p{"flash"} = p{"flash"} - dt_s
+    p{"star_t"} = p{"star_t"} - dt_s
+    p{"over_t"} = p{"over_t"} - dt_s
+    p{"boots_t"} = p{"boots_t"} - dt_s
+    p{"ghost_t"} = p{"ghost_t"} - dt_s
 
     IF NOT p{"alive"} THEN
         p{"resp"} = p{"resp"} - dt_s
         IF p{"resp"} <= 0 ANDALSO p{"lives"} > 0 THEN RESPAWN(p)
         RETURN
     ENDIF
+
+    ' crown star: rolling invulnerability while it lasts
+    IF p{"star_t"} > 0 ANDALSO p{"inv"} < 0.1 THEN p{"inv"} = 0.1
 
     ' movement, normalized, per-axis wall slide
     DIM mx = inp{"mx"}
@@ -349,6 +958,7 @@ SUB UPDATE_PLAYER(p, inp, dt_s)
         my = my / n
     ENDIF
     DIM spd = TW{"move_speed"}
+    IF p{"boots_t"} > 0 THEN spd = spd * TW{"boots_mult"}
     IF p{"dash_t"} > 0 THEN spd = TW{"dash_speed"}
     DIM dx = mx * spd * dt_s
     DIM dy = my * spd * dt_s
@@ -361,10 +971,13 @@ SUB UPDATE_PLAYER(p, inp, dt_s)
         IF TILEMAP.COLLIDES(p{"sid"}, "coll") THEN SPRITE.MOVE p{"sid"}, 0, -dy
     ENDIF
 
-    ' aim: keep last direction when stick/keys are idle
+    ' aim: explicit aim input wins, otherwise the weapon follows the run direction
     IF inp{"ax"} <> 0 OR inp{"ay"} <> 0 THEN
         p{"aimx"} = inp{"ax"}
         p{"aimy"} = inp{"ay"}
+    ELSEIF n > 0 THEN
+        p{"aimx"} = mx
+        p{"aimy"} = my
     ENDIF
 
     ' dash grants a short invulnerability window
@@ -372,20 +985,24 @@ SUB UPDATE_PLAYER(p, inp, dt_s)
         p{"dash_t"} = TW{"dash_s"}
         p{"dash_cd"} = TW{"dash_cool"}
         IF p{"inv"} < 0.2 THEN p{"inv"} = 0.2
+        SPAWN_PARTS(PCX(p), PCY(p), 5, 110, 200, 220, 255, 0.3)
     ENDIF
 
-    IF inp{"fire"} ANDALSO p{"cool"} <= 0 ANDALSO fight_t <= 0 THEN
-        FIRE_BULLET(p, p{"idx"})
-        p{"cool"} = TW{"fire_cool"}
-    ENDIF
+    IF inp{"fire"} ANDALSO p{"cool"} <= 0 ANDALSO fight_t <= 0 THEN FIRE_WEAPON(p, p{"idx"})
 
-    ' facing follows aim, walk anim while moving
+    ' facing follows the run direction while moving, else the aim
+    DIM fx = p{"aimx"}
+    DIM fy = p{"aimy"}
+    IF n > 0 THEN
+        fx = mx
+        fy = my
+    ENDIF
     DIM dir$ = "right"
-    IF ABS(p{"aimy"}) > ABS(p{"aimx"}) THEN
+    IF ABS(fy) > ABS(fx) THEN
         dir$ = "down"
-        IF p{"aimy"} < 0 THEN dir$ = "up"
+        IF fy < 0 THEN dir$ = "up"
     ELSE
-        IF p{"aimx"} < 0 THEN dir$ = "left"
+        IF fx < 0 THEN dir$ = "left"
     ENDIF
     IF n > 0 THEN
         SPRITE.PLAY p{"sid"}, "walk_" + dir$
@@ -393,8 +1010,9 @@ SUB UPDATE_PLAYER(p, inp, dt_s)
         SPRITE.PLAY p{"sid"}, "idle_" + dir$
     ENDIF
 
-    ' invulnerability blink / hit flash
+    ' alpha: hit flash > invuln blink > ghost > normal
     DIM a = 255
+    IF p{"ghost_t"} > 0 THEN a = 70
     IF p{"inv"} > 0 THEN
         IF (INT(TICK() / 90) MOD 2) = 0 THEN a = 110
     ENDIF
@@ -434,14 +1052,21 @@ SUB DRAW_PLAYER_HUD(p, x, name$, cr, cg, cb)
         ENDIF
         RECT x + 130 + i * 14, 8, 10, 10, gr, gg, gb, TRUE
     NEXT i
+    ' weapon + ammo + shield
+    DIM ammo$ = ""
+    IF p{"ammo"} >= 0 THEN ammo$ = " " + STR$(p{"ammo"})
+    TEXT x + 60, 40, WPN[p{"wpn"}]{"name"} + ammo$, 190, 200, 215
+    FOR i = 1 TO p{"shield_n"}
+        RECT x + 30 + i * 12, 42, 8, 8, 120, 190, 255, TRUE
+    NEXT i
 ENDSUB
 
-SUB DRAW_AIM(p, cr, cg, cb)
+SUB DRAW_AIM(p, cr, cg, cb, camx, camy)
     IF NOT p{"alive"} THEN RETURN
     DIM n = SQR(p{"aimx"} * p{"aimx"} + p{"aimy"} * p{"aimy"})
     IF n = 0 THEN RETURN
-    DIM cx = SPRITE.GET_X(p{"sid"}) + 16
-    DIM cy = SPRITE.GET_Y(p{"sid"}) + 16
+    DIM cx = PCX(p) - camx
+    DIM cy = PCY(p) - camy
     DRAWCOLOR cr, cg, cb
     LINE cx + p{"aimx"} / n * 14, cy + p{"aimy"} / n * 14, cx + p{"aimx"} / n * 26, cy + p{"aimy"} / n * 26
 ENDSUB
@@ -472,10 +1097,21 @@ spawn2 = [36 * TILE_PX, 11 * TILE_PX]
 tile_grid = 0
 coll_grid = 0
 blts = []
+parts = []
+part_cursor = 0
+beams = []
+wpads = []
+ppads = []
+shake_t = 0
+shake_amp = 0
+round_no = 0
+arena_idx = 0
+arena_rows$ = rows_field$
+
+SELECT_ARENA(0)
 BUILD_ARENA()
 tileset_img = GFX.LOADIMAGE(BASE$ + "assets/tileset_arena.png")
-TILEMAP.CREATE "arena", tileset_img, tile_grid, TILE_PX, TILE_PX
-TILEMAP.CREATE "coll", tileset_img, coll_grid, TILE_PX, TILE_PX
+REBUILD_TILEMAPS()
 
 ' pad assignment: 2 pads = both, 1 pad = P1, 0 pads = both on keyboard
 n_pads = JOY.COUNT()
@@ -495,11 +1131,10 @@ plr1 = NEW_PLAYER("fighter_p1.png", spawn1[0], spawn1[1], 1, kb1, pad1)
 plr2 = NEW_PLAYER("fighter_p2.png", spawn2[0], spawn2[1], -1, kb2, pad2)
 plr1{"idx"} = 0
 plr2{"idx"} = 1
-plr1{"flash"} = 0
-plr2{"flash"} = 0
 plrs = [plr1, plr2]
 
 INIT_BULLETS()
+INIT_PARTS()
 
 gstate$ = "play"
 round_winner = -1
@@ -514,6 +1149,7 @@ last_ms = TICK()
 DO WHILE running = 1
     ev$ = GFX.POLLEVENT()
     IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN running = 0
+    IF ev$ = "KEYDOWN:F" THEN TOGGLE_FULLSCREEN
 
     now_ms = TICK()
     dt_s = (now_ms - last_ms) / 1000.0
@@ -526,14 +1162,32 @@ DO WHILE running = 1
     inp2 = READ_INPUT(plr2)
 
     IF shot_mode THEN
-        ' scripted demo: P2 is parked in P1's line of fire, P1 shoots until the kill
+        ' scripted demo: rocket a crate, then shotgun P2 through a full round
         IF frame_no = 1 THEN
-            SPRITE.POS plr2{"sid"}, 216, 320
             fight_t = 0
+            wpads[0]{"timer"} = 0.05
+        ENDIF
+        ' walk-over pickup check on the first weapon pad
+        IF frame_no = 20 THEN SPRITE.POS plr1{"sid"}, wpads[0]{"x"} - 16, wpads[0]{"y"} - 16
+        IF frame_no = 40 THEN PRINT "F40 pad pickup: wpn="; WPN[plr1{"wpn"}]{"name"}; " ammo="; plr1{"ammo"}
+        IF frame_no = 45 THEN
+            SPRITE.POS plr1{"sid"}, plr1{"spawnx"}, plr1{"spawny"}
+            GRANT_WEAPON(plr1, 4)
+            plr1{"ammo"} = 99
         ENDIF
         inp1{"ax"} = 1
-        inp1{"ay"} = 0
-        IF frame_no > 20 THEN inp1{"fire"} = TRUE
+        inp1{"ay"} = -0.26
+        IF frame_no > 50 ANDALSO frame_no < 150 THEN inp1{"fire"} = TRUE
+        IF frame_no = 160 THEN
+            GRANT_WEAPON(plr1, 1)
+            plr1{"ammo"} = 99
+        ENDIF
+        IF frame_no > 160 THEN
+            inp1{"ay"} = 0
+            ' re-park P2 in the line of fire after each respawn
+            IF plr2{"alive"} ANDALSO PCX(plr2) > 400 ANDALSO gstate$ = "play" THEN SPRITE.POS plr2{"sid"}, 216, 320
+            inp1{"fire"} = TRUE
+        ENDIF
         inp2{"ax"} = -1
         inp2{"ay"} = 0
     ENDIF
@@ -542,6 +1196,8 @@ DO WHILE running = 1
         UPDATE_PLAYER(plr1, inp1, dt_s)
         UPDATE_PLAYER(plr2, inp2, dt_s)
         UPDATE_BULLETS(dt_s)
+        UPDATE_PADS(wpads, TRUE, dt_s)
+        UPDATE_PADS(ppads, FALSE, dt_s)
     ELSEIF gstate$ = "round_end" THEN
         round_t = round_t - dt_s
         IF round_t <= 0 THEN RESET_ROUND()
@@ -551,26 +1207,41 @@ DO WHILE running = 1
             plr2{"crowns"} = 0
             plr1{"kills"} = 0
             plr2{"kills"} = 0
+            round_no = -1
             RESET_ROUND()
         ENDIF
     ENDIF
 
+    ' screenshake camera
+    shake_t = shake_t - dt_s
+    cam_x = 0
+    cam_y = 0
+    IF shake_t > 0 THEN
+        cam_x = (RND() * 2 - 1) * shake_amp
+        cam_y = (RND() * 2 - 1) * shake_amp
+    ENDIF
+
     ' --- draw ---
     CLS 10, 11, 16
-    TILEMAP.DRAW "arena"
-    DRAW_AIM(plr1, 40, 200, 230)
-    DRAW_AIM(plr2, 255, 130, 50)
+    TILEMAP.DRAW "arena", cam_x, cam_y
+    DRAW_PADS(wpads, TRUE, cam_x, cam_y)
+    DRAW_PADS(ppads, FALSE, cam_x, cam_y)
+    DRAW_AIM(plr1, 40, 200, 230, cam_x, cam_y)
+    DRAW_AIM(plr2, 255, 130, 50, cam_x, cam_y)
     SPRITE.UPDATE
-    SPRITE.DRAW_ALL
+    SPRITE.DRAW_ALL cam_x, cam_y
+    UPDATE_DRAW_PARTS(dt_s, cam_x, cam_y)
+    UPDATE_DRAW_BEAMS(dt_s, cam_x, cam_y)
     DRAW_PLAYER_HUD(plr1, 16, NAME1$, 40, 200, 230)
     DRAW_PLAYER_HUD(plr2, 1020, NAME2$, 255, 130, 50)
+    TEXT 590, 8, ARENA_NAMES$[arena_idx], 130, 140, 160
 
     IF gstate$ = "play" ANDALSO fight_t > 0 THEN
         TEXT 610, 330, "FIGHT!", 255, 210, 60
     ELSEIF gstate$ = "round_end" THEN
         DIM wname$ = NAME1$
         IF round_winner = 1 THEN wname$ = NAME2$
-        DRAW_BANNER(wname$ + " TAKES THE CROWN", "")
+        DRAW_BANNER(wname$ + " TAKES THE CROWN", "next arena: " + ARENA_NAMES$[(round_no + 1) MOD 4])
     ELSEIF gstate$ = "match_end" THEN
         DIM mname$ = NAME1$
         IF round_winner = 1 THEN mname$ = NAME2$
@@ -579,16 +1250,17 @@ DO WHILE running = 1
 
     ' back-buffer capture: must happen before SCREENFLIP
     IF shot_mode THEN
-        IF frame_no = 60 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot1.png"
-        IF frame_no = 200 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot2.png"
-        IF frame_no >= 300 THEN
-            PRINT "SHOT STATS p1 kills="; plr1{"kills"}; " p2 hp="; plr2{"hp"}; " p2 lives="; plr2{"lives"}; " p2 alive="; plr2{"alive"}
+        IF frame_no = 100 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot1.png"
+        IF frame_no = 150 THEN PRINT "F150 crate12_7="; tile_grid[7][12]; " (5=intact 6=cracked 1-3=gone)"
+        IF frame_no = 500 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot2.png"
+        IF frame_no = 1240 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot3.png"
+        IF frame_no >= 1260 THEN
+            PRINT "SHOT STATS p1 kills="; plr1{"kills"}; " p1 crowns="; plr1{"crowns"}; " arena="; arena_idx; " crate12_7="; tile_grid[7][12]
             running = 0
         ENDIF
     ENDIF
 
     SCREENFLIP
-
     SLEEP 8
 LOOP
 
