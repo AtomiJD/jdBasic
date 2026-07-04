@@ -20,8 +20,8 @@ TW{"respawn_s"}    = 1.2
 TW{"inv_s"}        = 1.5
 TW{"crowns_win"}   = 5
 TW{"deadzone"}     = 0.25
-TW{"aim_ax_x"}     = 2
-TW{"aim_ax_y"}     = 3
+TW{"aim_ax_x"}     = 3
+TW{"aim_ax_y"}     = 4
 TW{"pad_first_s"}  = 3.0
 TW{"pad_respawn_s"} = 8.0
 TW{"pickup_reach"} = 24
@@ -30,6 +30,124 @@ TW{"over_s"}       = 8.0
 TW{"boots_s"}      = 8.0
 TW{"ghost_s"}      = 6.0
 TW{"boots_mult"}   = 1.4
+
+' --- sound: music loop on voices 0/1, SFX on 2-7 ---
+
+SUB SOUND_SETUP()
+    SOUND.INIT
+    SOUND.BPM 140
+
+    SOUND.VOICE 0, "SQUARE", 0.01, 0.15, 0.30, 0.22
+    SOUND.FILTER 0, 2400
+    SOUND.GAIN 0, 0.32
+
+    SOUND.VOICE 1, "SAW", 0.005, 0.12, 0.45, 0.10
+    SOUND.FILTER 1, 600
+    SOUND.GAIN 1, 0.42
+
+    SOUND.VOICE 2, "SQUARE", 0.005, 0.05, 0.0, 0.04
+    SOUND.FILTER 2, 4200
+    SOUND.GAIN 2, 0.26
+
+    SOUND.VOICE 3, "NOISE", 0.005, 0.28, 0.0, 0.22
+    SOUND.FILTER 3, 750
+    SOUND.GAIN 3, 0.6
+    SOUND.BITCRUSH 3, 0.4, 6
+
+    SOUND.VOICE 4, "SQUARE", 0.003, 0.06, 0.0, 0.05
+    SOUND.FILTER 4, 2600
+    SOUND.GAIN 4, 0.3
+
+    SOUND.VOICE 5, "TRIANGLE", 0.003, 0.12, 0.0, 0.1
+    SOUND.FILTER 5, 3000
+    SOUND.GAIN 5, 0.4
+
+    SOUND.VOICE 6, "NOISE", 0.005, 0.5, 0.0, 0.4
+    SOUND.FILTER 6, 300
+    SOUND.GAIN 6, 0.7
+
+    SOUND.VOICE 7, "TRIANGLE", 0.005, 0.15, 0.0, 0.12
+    SOUND.FILTER 7, 800
+    SOUND.GAIN 7, 0.45
+
+    SOUND.REVERB 0.7, 0.3, 0.8, 0.25
+    SOUND.REVERBSEND 0, 0.35
+    SOUND.REVERBSEND 3, 0.3
+    SOUND.REVERBSEND 6, 0.4
+
+    DIM melody$ = _
+        "[a4 ~ c5 e5] [a5 g5 e5 c5] [d5 ~ f5 a5] [g5 f5 e5 d5] " + _
+        "[c5 ~ e5 g5] [f5 e5 d5 c5] [b4 ~ d5 f5] [e5 d5 b4 g4]"
+    DIM bass$ = _
+        "[[a2 a3]*4] [[a2 a3]*4] [[d2 d3]*4] [[g2 g3]*4] " + _
+        "[[c2 c3]*4] [[f2 f3]*4] [[e2 e3]*4] [[e2 e3]*4]"
+    SOUND.NOTE "< " + melody$ + " , " + bass$ + " >", TRUE
+ENDSUB
+
+SUB SFX_SHOT(kind$)
+    IF kind$ = "rocket" ORELSE kind$ = "grenade" THEN
+        SOUND.PLAY 7, "e3"
+    ELSEIF kind$ = "flame" THEN
+        SOUND.PLAY 2, "c4"
+    ELSEIF kind$ = "disc" THEN
+        SOUND.PLAY 2, "e6"
+    ELSE
+        SOUND.PLAY 2, "g6"
+    ENDIF
+ENDSUB
+
+SUB SFX_BOOM()
+    SOUND.PLAY 3, "c2"
+ENDSUB
+
+SUB SFX_RAIL()
+    SOUND.PLAY 3, "c5"
+    SOUND.PLAY 2, "c7"
+ENDSUB
+
+SUB SFX_SWORD()
+    SOUND.PLAY 7, "a3"
+ENDSUB
+
+SUB SFX_HIT()
+    SOUND.PLAY 4, "e5"
+ENDSUB
+
+SUB SFX_SHIELD()
+    SOUND.PLAY 4, "b5"
+ENDSUB
+
+SUB SFX_PICKUP()
+    SOUND.PLAY 5, "c6"
+ENDSUB
+
+SUB SFX_DEATH()
+    SOUND.PLAY 6, "c2"
+ENDSUB
+
+SUB SFX_CROWN()
+    SOUND.PLAY 5, "g6"
+    SOUND.PLAY 6, "c2"
+ENDSUB
+
+' 0-sustain SFX voices hold their gate; drain every frame so notes retrigger
+SUB SFX_DRAIN()
+    DIM t AS INTEGER
+    FOR t = 2 TO 7
+        SOUND.RELEASE t
+    NEXT t
+ENDSUB
+
+SUB MUSIC_TOGGLE()
+    music_on = NOT music_on
+    IF music_on THEN
+        SOUND.GAIN 0, 0.32
+        SOUND.GAIN 1, 0.42
+    ELSE
+        SOUND.GAIN 0, 0
+        SOUND.GAIN 1, 0
+    ENDIF
+ENDSUB
 
 ' --- weapons ---
 
@@ -587,10 +705,13 @@ SUB FIRE_WEAPON(p, ow)
     DIM w = WPN[p{"wpn"}]
     DIM k AS INTEGER
     IF w{"kind"} = "rail" THEN
+        SFX_RAIL()
         FIRE_RAIL(p, ow, w)
     ELSEIF w{"kind"} = "sword" THEN
+        SFX_SWORD()
         FIRE_SWORD(p, ow, w)
     ELSE
+        SFX_SHOT(w{"kind"})
         DIM base_ang = AIM_ANGLE(p)
         FOR k = 1 TO w{"pellets"}
             DIM ang = base_ang + (RND() - 0.5) * w{"spread"}
@@ -648,6 +769,7 @@ ENDSUB
 
 SUB EXPLODE(ex, ey, radius, amount, attacker_idx)
     DIM j AS INTEGER
+    SFX_BOOM()
     SPAWN_PARTS(ex, ey, 26, 260, 255, 170, 60, 0.6)
     SPAWN_PARTS(ex, ey, 12, 120, 255, 90, 40, 0.8)
     shake_t = 0.3
@@ -831,6 +953,7 @@ SUB UPDATE_PADS(pads, is_weapon, dt_s)
             IF NOT p{"alive"} THEN CONTINUEFOR
             DIM dd = SQR((PCX(p) - pd{"x"}) * (PCX(p) - pd{"x"}) + (PCY(p) - pd{"y"}) * (PCY(p) - pd{"y"}))
             IF dd < TW{"pickup_reach"} THEN
+                SFX_PICKUP()
                 IF is_weapon THEN
                     GRANT_WEAPON(p, pd{"wid"})
                 ELSE
@@ -882,9 +1005,11 @@ SUB DAMAGE(victim, attacker_idx, amount)
     IF victim{"inv"} > 0 THEN RETURN
     IF victim{"shield_n"} > 0 THEN
         victim{"shield_n"} = victim{"shield_n"} - 1
+        SFX_SHIELD()
         SPAWN_PARTS(PCX(victim), PCY(victim), 8, 140, 120, 190, 255, 0.35)
         RETURN
     ENDIF
+    SFX_HIT()
     victim{"hp"} = victim{"hp"} - amount
     victim{"flash"} = 0.12
     SPAWN_PARTS(PCX(victim), PCY(victim), 6, 130, 255, 70, 70, 0.4)
@@ -896,6 +1021,7 @@ SUB DAMAGE(victim, attacker_idx, amount)
 ENDSUB
 
 SUB PLAYER_DIES(victim, attacker_idx)
+    SFX_DEATH()
     SPAWN_PARTS(PCX(victim), PCY(victim), 30, 240, 255, 120, 120, 0.8)
     shake_t = 0.4
     shake_amp = 8
@@ -905,6 +1031,7 @@ SUB PLAYER_DIES(victim, attacker_idx)
     IF victim{"lives"} <= 0 THEN
         DIM w = plrs[attacker_idx]
         w{"crowns"} = w{"crowns"} + 1
+        SFX_CROWN()
         round_winner = attacker_idx
         IF w{"crowns"} >= TW{"crowns_win"} THEN
             gstate$ = "match_end"
@@ -1232,6 +1359,9 @@ ELSEIF n_pads = 1 THEN
 ENDIF
 CALIB_PADS()
 
+music_on = TRUE
+SOUND_SETUP()
+
 plr1 = NEW_PLAYER("fighter_p1.png", spawn1[0], spawn1[1], 1, kb1, pad1)
 plr2 = NEW_PLAYER("fighter_p2.png", spawn2[0], spawn2[1], -1, kb2, pad2)
 plr1{"idx"} = 0
@@ -1256,6 +1386,7 @@ DO WHILE running = 1
     IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN running = 0
     IF ev$ = "KEYDOWN:F" THEN TOGGLE_FULLSCREEN
     IF ev$ = "KEYDOWN:G" THEN debug_axes = NOT debug_axes
+    IF ev$ = "KEYDOWN:M" THEN MUSIC_TOGGLE()
 
     now_ms = TICK()
     dt_s = (now_ms - last_ms) / 1000.0
@@ -1371,8 +1502,10 @@ DO WHILE running = 1
     ENDIF
 
     SCREENFLIP
+    SFX_DRAIN()
     SLEEP 8
 LOOP
 
+SOUND.SHUTDOWN
 GFX.CLOSE
 END
