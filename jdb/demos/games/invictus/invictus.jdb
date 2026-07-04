@@ -309,6 +309,35 @@ FUNC AXIS_DZ(v)
     RETURN v
 ENDFUNC
 
+' triggers mapped onto aim axes rest at -1/+1 and would lock the aim;
+' record each axis rest value at startup and read deltas against it
+SUB CALIB_PADS()
+    DIM pd AS INTEGER
+    DIM a AS INTEGER
+    FOR pd = 0 TO 1
+        IF pd >= JOY.COUNT() THEN CONTINUEFOR
+        FOR a = 0 TO 5
+            TRY
+                rest_axes[pd][a] = JOY.AXIS(pd, a)
+            CATCH
+                rest_axes[pd][a] = 0
+            ENDTRY
+        NEXT a
+    NEXT pd
+ENDSUB
+
+FUNC PAD_AXIS(pd, a)
+    DIM v = 0
+    TRY
+        v = JOY.AXIS(pd, a) - rest_axes[pd][a]
+    CATCH
+        v = 0
+    ENDTRY
+    IF v > 1 THEN v = 1
+    IF v < -1 THEN v = -1
+    RETURN AXIS_DZ(v)
+ENDFUNC
+
 FUNC READ_INPUT(p)
     DIM r = {}
     r{"mx"} = 0
@@ -318,10 +347,10 @@ FUNC READ_INPUT(p)
     r{"fire"} = FALSE
     r{"dash"} = FALSE
     IF p{"pad"} >= 0 THEN
-        r{"mx"} = AXIS_DZ(JOY.AXIS(p{"pad"}, 0))
-        r{"my"} = AXIS_DZ(JOY.AXIS(p{"pad"}, 1))
-        r{"ax"} = AXIS_DZ(JOY.AXIS(p{"pad"}, TW{"aim_ax_x"}))
-        r{"ay"} = AXIS_DZ(JOY.AXIS(p{"pad"}, TW{"aim_ax_y"}))
+        r{"mx"} = PAD_AXIS(p{"pad"}, 0)
+        r{"my"} = PAD_AXIS(p{"pad"}, 1)
+        r{"ax"} = PAD_AXIS(p{"pad"}, TW{"aim_ax_x"})
+        r{"ay"} = PAD_AXIS(p{"pad"}, TW{"aim_ax_y"})
         IF JOY.BUTTON(p{"pad"}, 0) OR JOY.BUTTON(p{"pad"}, 5) THEN r{"fire"} = TRUE
         IF JOY.BUTTON(p{"pad"}, 1) OR JOY.BUTTON(p{"pad"}, 4) THEN r{"dash"} = TRUE
     ELSEIF p{"kb"} = 0 THEN
@@ -823,13 +852,16 @@ SUB DRAW_PADS(pads, is_weapon, camx, camy)
         IF NOT pd{"active"} THEN CONTINUEFOR
         DIM px = pd{"x"} - camx
         DIM py = pd{"y"} - camy
+        DIM pulse = 11 + SIN(TICK() / 150.0) * 2.5
         IF is_weapon THEN
             CIRCLE px, py, 11, TRUE, 30, 60, 70
             CIRCLE px, py, 11, FALSE, 90, 220, 255
+            CIRCLE px, py, pulse + 3, FALSE, 45, 110, 128
             TEXT px - 4, py - 9, LEFT$(WPN[pd{"wid"}]{"name"}, 1), 200, 245, 255
         ELSE
             CIRCLE px, py, 11, TRUE, 70, 60, 25
             CIRCLE px, py, 11, FALSE, 255, 210, 80
+            CIRCLE px, py, pulse + 3, FALSE, 128, 105, 40
             TEXT px - 4, py - 9, PU_MARKS$[pd{"wid"}], 255, 230, 150
         ENDIF
     NEXT i
@@ -1025,6 +1057,7 @@ ENDSUB
 SUB DRAW_PLAYER_HUD(p, x, name$, cr, cg, cb)
     DIM i AS INTEGER
     TEXT x, 8, name$, cr, cg, cb
+    RECT x, 28, 40, 2, cr, cg, cb, TRUE
     FOR i = 1 TO TW{"hp_max"}
         DIM fr = 60
         DIM fg = 60
@@ -1067,8 +1100,77 @@ SUB DRAW_AIM(p, cr, cg, cb, camx, camy)
     IF n = 0 THEN RETURN
     DIM cx = PCX(p) - camx
     DIM cy = PCY(p) - camy
+    DIM dx = p{"aimx"} / n
+    DIM dy = p{"aimy"} / n
+    DRAWCOLOR cr / 2, cg / 2, cb / 2
+    LINE cx + dx * 14 - dy, cy + dy * 14 + dx, cx + dx * 28 - dy, cy + dy * 28 + dx
+    LINE cx + dx * 14 + dy, cy + dy * 14 - dx, cx + dx * 28 + dy, cy + dy * 28 - dx
     DRAWCOLOR cr, cg, cb
-    LINE cx + p{"aimx"} / n * 14, cy + p{"aimy"} / n * 14, cx + p{"aimx"} / n * 26, cy + p{"aimy"} / n * 26
+    LINE cx + dx * 14, cy + dy * 14, cx + dx * 30, cy + dy * 30
+    CIRCLE cx + dx * 32, cy + dy * 32, 2, TRUE, 255, 255, 255
+ENDSUB
+
+SUB DRAW_PLAYER_RING(p, cr, cg, cb, camx, camy)
+    IF NOT p{"alive"} THEN RETURN
+    DIM rr = 17 + SIN(TICK() / 200.0) * 2
+    DIM c2r = cr
+    DIM c2g = cg
+    DIM c2b = cb
+    IF p{"star_t"} > 0 THEN
+        rr = rr + 3
+        c2r = 255
+        c2g = 210
+        c2b = 60
+    ENDIF
+    CIRCLE PCX(p) - camx, PCY(p) - camy, rr, FALSE, c2r / 2, c2g / 2, c2b / 2
+    CIRCLE PCX(p) - camx, PCY(p) - camy, rr + 1, FALSE, c2r / 3, c2g / 3, c2b / 3
+ENDSUB
+
+SUB DRAW_BULLET_HALOS(camx, camy)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(blts) - 1
+        DIM b = blts[i]
+        IF NOT b{"live"} THEN CONTINUEFOR
+        DIM hr = 6
+        IF b{"kind"} = "rocket" THEN hr = 9
+        IF b{"kind"} = "disc" THEN hr = 8
+        DIM cr = 40
+        DIM cg = 190
+        DIM cb = 230
+        IF b{"owner"} = 1 THEN
+            cr = 255
+            cg = 140
+            cb = 50
+        ENDIF
+        CIRCLE SPRITE.GET_X(b{"sid"}) + 4 - camx, SPRITE.GET_Y(b{"sid"}) + 4 - camy, hr, FALSE, cr / 2, cg / 2, cb / 2
+    NEXT i
+ENDSUB
+
+SUB DRAW_AXES_DEBUG()
+    DIM pd AS INTEGER
+    DIM a AS INTEGER
+    DIM ln$ AS STRING
+    TEXT 16, 620, "PAD DEBUG (G to hide)  pads: " + STR$(JOY.COUNT()), 255, 240, 120
+    FOR pd = 0 TO JOY.COUNT() - 1
+        IF pd > 1 THEN EXITFOR
+        ln$ = STR$(pd) + " " + JOY.NAME$(pd) + "  ax:"
+        FOR a = 0 TO 5
+            DIM v = 0
+            TRY
+                v = JOY.AXIS(pd, a)
+            CATCH
+                v = 0
+            ENDTRY
+            ln$ = ln$ + " " + STR$(a) + "=" + FORMAT$("{:0.2f}", v)
+        NEXT a
+        FOR a = 0 TO 9
+            TRY
+                IF JOY.BUTTON(pd, a) THEN ln$ = ln$ + "  B" + STR$(a)
+            CATCH
+            ENDTRY
+        NEXT a
+        TEXT 16, 644 + pd * 22, ln$, 220, 230, 255
+    NEXT pd
 ENDSUB
 
 SUB DRAW_BANNER(msg$, sub$)
@@ -1107,6 +1209,8 @@ shake_amp = 0
 round_no = 0
 arena_idx = 0
 arena_rows$ = rows_field$
+rest_axes = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]]
+debug_axes = FALSE
 
 SELECT_ARENA(0)
 BUILD_ARENA()
@@ -1126,6 +1230,7 @@ ELSEIF n_pads = 1 THEN
     pad1 = 0
     kb2 = 0
 ENDIF
+CALIB_PADS()
 
 plr1 = NEW_PLAYER("fighter_p1.png", spawn1[0], spawn1[1], 1, kb1, pad1)
 plr2 = NEW_PLAYER("fighter_p2.png", spawn2[0], spawn2[1], -1, kb2, pad2)
@@ -1150,6 +1255,7 @@ DO WHILE running = 1
     ev$ = GFX.POLLEVENT()
     IF ev$ = "QUIT" OR ev$ = "KEYDOWN:Escape" THEN running = 0
     IF ev$ = "KEYDOWN:F" THEN TOGGLE_FULLSCREEN
+    IF ev$ = "KEYDOWN:G" THEN debug_axes = NOT debug_axes
 
     now_ms = TICK()
     dt_s = (now_ms - last_ms) / 1000.0
@@ -1222,19 +1328,23 @@ DO WHILE running = 1
     ENDIF
 
     ' --- draw ---
-    CLS 10, 11, 16
+    CLS 7, 8, 16
     TILEMAP.DRAW "arena", cam_x, cam_y
     DRAW_PADS(wpads, TRUE, cam_x, cam_y)
     DRAW_PADS(ppads, FALSE, cam_x, cam_y)
+    DRAW_PLAYER_RING(plr1, 40, 200, 230, cam_x, cam_y)
+    DRAW_PLAYER_RING(plr2, 255, 130, 50, cam_x, cam_y)
     DRAW_AIM(plr1, 40, 200, 230, cam_x, cam_y)
     DRAW_AIM(plr2, 255, 130, 50, cam_x, cam_y)
     SPRITE.UPDATE
     SPRITE.DRAW_ALL cam_x, cam_y
+    DRAW_BULLET_HALOS(cam_x, cam_y)
     UPDATE_DRAW_PARTS(dt_s, cam_x, cam_y)
     UPDATE_DRAW_BEAMS(dt_s, cam_x, cam_y)
     DRAW_PLAYER_HUD(plr1, 16, NAME1$, 40, 200, 230)
     DRAW_PLAYER_HUD(plr2, 1020, NAME2$, 255, 130, 50)
-    TEXT 590, 8, ARENA_NAMES$[arena_idx], 130, 140, 160
+    TEXT 590, 8, ARENA_NAMES$[arena_idx], 185, 150, 255
+    IF debug_axes THEN DRAW_AXES_DEBUG()
 
     IF gstate$ = "play" ANDALSO fight_t > 0 THEN
         TEXT 610, 330, "FIGHT!", 255, 210, 60
