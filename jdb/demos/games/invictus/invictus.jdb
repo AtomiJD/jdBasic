@@ -24,6 +24,7 @@ TW{"aim_ax_x"}     = 3
 TW{"aim_ax_y"}     = 4
 TW{"pad_first_s"}  = 3.0
 TW{"pad_respawn_s"} = 8.0
+TW{"pu_respawn_s"} = 8.0
 TW{"pickup_reach"} = 24
 TW{"star_s"}       = 5.0
 TW{"over_s"}       = 8.0
@@ -84,50 +85,54 @@ SUB SOUND_SETUP()
     SOUND.NOTE "< " + melody$ + " , " + bass$ + " >", TRUE
 ENDSUB
 
+SUB SFX(track, note$)
+    IF sfx_on THEN SOUND.PLAY track, note$
+ENDSUB
+
 SUB SFX_SHOT(kind$)
     IF kind$ = "rocket" ORELSE kind$ = "grenade" THEN
-        SOUND.PLAY 7, "e3"
+        SFX(7, "e3")
     ELSEIF kind$ = "flame" THEN
-        SOUND.PLAY 2, "c4"
+        SFX(2, "c4")
     ELSEIF kind$ = "disc" THEN
-        SOUND.PLAY 2, "e6"
+        SFX(2, "e6")
     ELSE
-        SOUND.PLAY 2, "g6"
+        SFX(2, "g6")
     ENDIF
 ENDSUB
 
 SUB SFX_BOOM()
-    SOUND.PLAY 3, "c2"
+    SFX(3, "c2")
 ENDSUB
 
 SUB SFX_RAIL()
-    SOUND.PLAY 3, "c5"
-    SOUND.PLAY 2, "c7"
+    SFX(3, "c5")
+    SFX(2, "c7")
 ENDSUB
 
 SUB SFX_SWORD()
-    SOUND.PLAY 7, "a3"
+    SFX(7, "a3")
 ENDSUB
 
 SUB SFX_HIT()
-    SOUND.PLAY 4, "e5"
+    SFX(4, "e5")
 ENDSUB
 
 SUB SFX_SHIELD()
-    SOUND.PLAY 4, "b5"
+    SFX(4, "b5")
 ENDSUB
 
 SUB SFX_PICKUP()
-    SOUND.PLAY 5, "c6"
+    SFX(5, "c6")
 ENDSUB
 
 SUB SFX_DEATH()
-    SOUND.PLAY 6, "c2"
+    SFX(6, "c2")
 ENDSUB
 
 SUB SFX_CROWN()
-    SOUND.PLAY 5, "g6"
-    SOUND.PLAY 6, "c2"
+    SFX(5, "g6")
+    SFX(6, "c2")
 ENDSUB
 
 ' 0-sustain SFX voices hold their gate; drain every frame so notes retrigger
@@ -547,7 +552,7 @@ SUB UPDATE_DRAW_PARTS(dt_s, camx, camy)
         pt{"y"} = pt{"y"} + pt{"vy"} * dt_s
         pt{"vx"} = pt{"vx"} * 0.94
         pt{"vy"} = pt{"vy"} * 0.94
-        RECT pt{"x"} - camx, pt{"y"} - camy, pt{"sz"}, pt{"sz"}, pt{"r"}, pt{"g"}, pt{"b"}, TRUE
+        RECT pt{"x"} - camx, pt{"y"} - camy, pt{"sz"}, pt{"sz"}, TRUE, pt{"r"}, pt{"g"}, pt{"b"}
     NEXT i
 ENDSUB
 
@@ -961,7 +966,11 @@ SUB UPDATE_PADS(pads, is_weapon, dt_s)
                 ENDIF
                 SPAWN_PARTS(pd{"x"}, pd{"y"}, 8, 130, 255, 230, 120, 0.4)
                 pd{"active"} = FALSE
-                pd{"timer"} = TW{"pad_respawn_s"}
+                IF is_weapon THEN
+                    pd{"timer"} = TW{"pad_respawn_s"}
+                ELSE
+                    pd{"timer"} = TW{"pu_respawn_s"}
+                ENDIF
                 EXITFOR
             ENDIF
         NEXT j
@@ -1184,7 +1193,7 @@ ENDSUB
 SUB DRAW_PLAYER_HUD(p, x, name$, cr, cg, cb)
     DIM i AS INTEGER
     TEXT x, 8, name$, cr, cg, cb
-    RECT x, 28, 40, 2, cr, cg, cb, TRUE
+    RECT x, 28, 40, 2, TRUE, cr, cg, cb
     FOR i = 1 TO TW{"hp_max"}
         DIM fr = 60
         DIM fg = 60
@@ -1194,11 +1203,11 @@ SUB DRAW_PLAYER_HUD(p, x, name$, cr, cg, cb)
             fg = cg
             fb = cb
         ENDIF
-        RECT x + 50 + i * 14, 10, 10, 10, fr, fg, fb, TRUE
+        RECT x + 50 + i * 14, 10, 10, 10, TRUE, fr, fg, fb
     NEXT i
     FOR i = 1 TO TW{"lives_max"}
         IF p{"lives"} >= i THEN
-            RECT x + 50 + i * 14, 26, 10, 4, 220, 220, 230, TRUE
+            RECT x + 50 + i * 14, 26, 10, 4, TRUE, 220, 220, 230
         ENDIF
     NEXT i
     FOR i = 1 TO TW{"crowns_win"}
@@ -1210,14 +1219,14 @@ SUB DRAW_PLAYER_HUD(p, x, name$, cr, cg, cb)
             gg = 210
             gb = 60
         ENDIF
-        RECT x + 130 + i * 14, 8, 10, 10, gr, gg, gb, TRUE
+        RECT x + 130 + i * 14, 8, 10, 10, TRUE, gr, gg, gb
     NEXT i
     ' weapon + ammo + shield
     DIM ammo$ = ""
     IF p{"ammo"} >= 0 THEN ammo$ = " " + STR$(p{"ammo"})
     TEXT x + 60, 40, WPN[p{"wpn"}]{"name"} + ammo$, 190, 200, 215
     FOR i = 1 TO p{"shield_n"}
-        RECT x + 30 + i * 12, 42, 8, 8, 120, 190, 255, TRUE
+        RECT x + 30 + i * 12, 42, 8, 8, TRUE, 120, 190, 255
     NEXT i
 ENDSUB
 
@@ -1273,6 +1282,109 @@ SUB DRAW_BULLET_HALOS(camx, camy)
     NEXT i
 ENDSUB
 
+' --- title screen / match setup ---
+
+DIFF_LABELS$ = ["1 CASUAL - powerups rain", "2 WARRIOR - standard", "3 LEGEND - powerups are rare"]
+
+SUB APPLY_DIFFICULTY()
+    IF difficulty = 1 THEN
+        TW{"pu_respawn_s"} = 4.0
+    ELSEIF difficulty = 2 THEN
+        TW{"pu_respawn_s"} = 8.0
+    ELSE
+        TW{"pu_respawn_s"} = 14.0
+    ENDIF
+ENDSUB
+
+SUB START_MATCH()
+    IF p1_is_dad THEN
+        NAME1$ = "DAD"
+        NAME2$ = "SON"
+    ELSE
+        NAME1$ = "SON"
+        NAME2$ = "DAD"
+    ENDIF
+    APPLY_DIFFICULTY()
+    plr1{"crowns"} = 0
+    plr2{"crowns"} = 0
+    plr1{"kills"} = 0
+    plr2{"kills"} = 0
+    round_no = -1
+    RESET_ROUND()
+ENDSUB
+
+FUNC ONOFF$(b)
+    IF b THEN RETURN "ON"
+    RETURN "OFF"
+ENDFUNC
+
+SUB DRAW_TITLE(dt_s)
+    ' ambient drifting sparks
+    IF (frame_no MOD 5) = 0 THEN
+        IF (frame_no MOD 10) = 0 THEN
+            SPAWN_PARTS(RND() * 1280, RND() * 704, 1, 15, 40, 160, 190, 1.4)
+        ELSE
+            SPAWN_PARTS(RND() * 1280, RND() * 704, 1, 15, 200, 110, 40, 1.4)
+        ENDIF
+    ENDIF
+    UPDATE_DRAW_PARTS(dt_s, 0, 0)
+
+    ' crown
+    DIM cx = 640
+    DIM gy = 120 + SIN(TICK() / 400.0) * 4
+    RECT cx - 44, gy, 88, 14, TRUE, 255, 210, 60
+    RECT cx - 44, gy - 18, 12, 18, TRUE, 255, 210, 60
+    RECT cx - 6, gy - 26, 12, 26, TRUE, 255, 210, 60
+    RECT cx + 32, gy - 18, 12, 18, TRUE, 255, 210, 60
+    CIRCLE cx - 38, gy - 22, 4, TRUE, 90, 220, 255
+    CIRCLE cx, gy - 30, 4, TRUE, 255, 120, 60
+    CIRCLE cx + 38, gy - 22, 4, TRUE, 90, 220, 255
+
+    SETFONT "C:/Windows/Fonts/arialbd.ttf", 52
+    DIM ts = GFX.TEXTSIZE("INVICTUS")
+    TEXT cx - ts[0] / 2 + 2, 152 + 2, "INVICTUS", 40, 30, 10
+    TEXT cx - ts[0] / 2, 152, "INVICTUS", 255, 210, 60
+    SETFONT "C:/Windows/Fonts/arialbd.ttf", 16
+    TEXT cx - 92, 214, "THE  UNBEATABLE  DUEL", 185, 150, 255
+
+    ' versus banner reflecting the current side pick
+    DIM lname$ = "DAD"
+    DIM rname$ = "SON"
+    IF NOT p1_is_dad THEN
+        lname$ = "SON"
+        rname$ = "DAD"
+    ENDIF
+    SETFONT "C:/Windows/Fonts/arialbd.ttf", 30
+    TEXT cx - 190, 258, lname$, 40, 200, 230
+    TEXT cx - 24, 258, "VS", 220, 220, 235
+    TEXT cx + 130, 258, rname$, 255, 130, 50
+    SETFONT "C:/Windows/Fonts/arialbd.ttf", 16
+
+    ' menu
+    DIM items$ = ["", "", "", "", ""]
+    items$[0] = "LEFT FIGHTER (CYAN):  " + lname$
+    items$[1] = "MUSIC:  " + ONOFF$(music_on)
+    items$[2] = "SOUND FX:  " + ONOFF$(sfx_on)
+    items$[3] = "DIFFICULTY:  " + DIFF_LABELS$[difficulty - 1]
+    items$[4] = "START THE DUEL"
+    DIM i AS INTEGER
+    FOR i = 0 TO 4
+        DIM iy = 340 + i * 38
+        IF i = 4 THEN iy = iy + 14
+        IF i = menu_idx THEN
+            RECT 400, iy - 6, 480, 30, TRUE, 18, 22, 40
+            RECT 400, iy - 6, 3, 30, TRUE, 255, 210, 60
+            RECT 877, iy - 6, 3, 30, TRUE, 255, 210, 60
+            TEXT 420, iy, items$[i], 255, 230, 140
+        ELSE
+            TEXT 420, iy, items$[i], 150, 160, 190
+        ENDIF
+    NEXT i
+
+    TEXT 340, 620, "W/S or stick: navigate    SPACE/ENTER or pad A: change / start", 110, 120, 150
+    TEXT 340, 644, "in game:  F fullscreen   M music   G pad debug   ESC quit", 110, 120, 150
+ENDSUB
+
 SUB DRAW_AXES_DEBUG()
     DIM pd AS INTEGER
     DIM a AS INTEGER
@@ -1301,9 +1413,9 @@ SUB DRAW_AXES_DEBUG()
 ENDSUB
 
 SUB DRAW_BANNER(msg$, sub$)
-    RECT 240, 290, 800, 110, 12, 14, 22, TRUE
-    RECT 240, 290, 800, 3, 255, 210, 60, TRUE
-    RECT 240, 397, 800, 3, 255, 210, 60, TRUE
+    RECT 240, 290, 800, 110, TRUE, 12, 14, 22
+    RECT 240, 290, 800, 3, TRUE, 255, 210, 60
+    RECT 240, 397, 800, 3, TRUE, 255, 210, 60
     TEXT 640 - LEN(msg$) * 5, 320, msg$, 255, 210, 60
     IF sub$ <> "" THEN TEXT 640 - LEN(sub$) * 4, 355, sub$, 200, 200, 210
 ENDSUB
@@ -1311,10 +1423,12 @@ ENDSUB
 ' ==================== setup ====================
 
 shot_mode = FALSE
+title_shot = FALSE
 cli_args = OS.ARGS()
 DIM ai AS INTEGER
 FOR ai = 0 TO LEN(cli_args) - 1
     IF cli_args[ai] = "shot" THEN shot_mode = TRUE
+    IF cli_args[ai] = "shot_title" THEN title_shot = TRUE
 NEXT ai
 
 SCREEN COLS * TILE_PX, ROWS * TILE_PX, "INVICTUS - The Unbeatable Duel"
@@ -1338,6 +1452,15 @@ arena_idx = 0
 arena_rows$ = rows_field$
 rest_axes = [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]]
 debug_axes = FALSE
+sfx_on = TRUE
+p1_is_dad = TRUE
+difficulty = 2
+menu_idx = 0
+menu_cd = 0
+t_nav = 0
+t_act = FALSE
+t_pd = 0
+t_sy = 0
 
 SELECT_ARENA(0)
 BUILD_ARENA()
@@ -1371,7 +1494,8 @@ plrs = [plr1, plr2]
 INIT_BULLETS()
 INIT_PARTS()
 
-gstate$ = "play"
+gstate$ = "title"
+IF shot_mode THEN gstate$ = "play"
 round_winner = -1
 round_t = 0
 fight_t = 1.0
@@ -1394,6 +1518,55 @@ DO WHILE running = 1
     IF dt_s > 0.05 THEN dt_s = 0.05
     frame_no = frame_no + 1
     fight_t = fight_t - dt_s
+
+    IF gstate$ = "title" THEN
+        menu_cd = menu_cd - dt_s
+        t_nav = 0
+        t_act = FALSE
+        IF ev$ = "KEYDOWN:Down" OR ev$ = "KEYDOWN:S" THEN t_nav = 1
+        IF ev$ = "KEYDOWN:Up" OR ev$ = "KEYDOWN:W" THEN t_nav = -1
+        IF ev$ = "KEYDOWN:Return" OR ev$ = "KEYDOWN:Space" THEN t_act = TRUE
+        FOR t_pd = 0 TO JOY.COUNT() - 1
+            IF t_pd > 1 THEN EXITFOR
+            IF menu_cd <= 0 THEN
+                t_sy = PAD_AXIS(t_pd, 1)
+                IF t_sy > 0.5 THEN t_nav = 1
+                IF t_sy < -0.5 THEN t_nav = -1
+                IF JOY.BUTTON(t_pd, 0) THEN t_act = TRUE
+            ENDIF
+        NEXT t_pd
+        IF t_nav <> 0 THEN
+            menu_idx = (menu_idx + t_nav + 5) MOD 5
+            menu_cd = 0.22
+            SFX_HIT()
+        ENDIF
+        IF t_act ANDALSO menu_cd <= 0 THEN
+            menu_cd = 0.25
+            SFX_PICKUP()
+            IF menu_idx = 0 THEN
+                p1_is_dad = NOT p1_is_dad
+            ELSEIF menu_idx = 1 THEN
+                MUSIC_TOGGLE()
+            ELSEIF menu_idx = 2 THEN
+                sfx_on = NOT sfx_on
+            ELSEIF menu_idx = 3 THEN
+                difficulty = difficulty + 1
+                IF difficulty > 3 THEN difficulty = 1
+            ELSE
+                START_MATCH()
+            ENDIF
+        ENDIF
+        CLS 7, 8, 16
+        DRAW_TITLE(dt_s)
+        IF title_shot THEN
+            IF frame_no = 60 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_title.png"
+            IF frame_no >= 80 THEN running = 0
+        ENDIF
+        SCREENFLIP
+        SFX_DRAIN()
+        SLEEP 8
+        CONTINUEDO
+    ENDIF
 
     inp1 = READ_INPUT(plr1)
     inp2 = READ_INPUT(plr2)
@@ -1439,14 +1612,8 @@ DO WHILE running = 1
         round_t = round_t - dt_s
         IF round_t <= 0 THEN RESET_ROUND()
     ELSE
-        IF GFX.KEYSTATE("R") THEN
-            plr1{"crowns"} = 0
-            plr2{"crowns"} = 0
-            plr1{"kills"} = 0
-            plr2{"kills"} = 0
-            round_no = -1
-            RESET_ROUND()
-        ENDIF
+        IF GFX.KEYSTATE("R") THEN START_MATCH()
+        IF GFX.KEYSTATE("T") THEN gstate$ = "title"
     ENDIF
 
     ' screenshake camera
@@ -1486,7 +1653,7 @@ DO WHILE running = 1
     ELSEIF gstate$ = "match_end" THEN
         DIM mname$ = NAME1$
         IF round_winner = 1 THEN mname$ = NAME2$
-        DRAW_BANNER(mname$ + " IS UNBEATABLE!", "R = rematch    ESC = quit")
+        DRAW_BANNER(mname$ + " IS UNBEATABLE!", "R = rematch    T = title    ESC = quit")
     ENDIF
 
     ' back-buffer capture: must happen before SCREENFLIP
