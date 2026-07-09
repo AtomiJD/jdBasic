@@ -291,6 +291,9 @@ static inline bool bits_look_like_ptr(double d) {
     return u.u != 0 && u.u < (1ULL << 47);
 }
 
+struct JdbMapFwd;
+static Value jdbmap_to_value(JdbMapFwd* m);
+
 static Value jdbarray_to_value(JdbArrayFwd* arr) {
     if (!arr) return Value::make_array();
     Value r = Value::make_array();
@@ -316,6 +319,9 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
                 out->elements.push_back(inner ? jdbarray_to_value(inner) : Value::make_none());
             } else if (t == jd_tag(JdTag::BOOL)) {
                 out->elements.push_back(Value::make_bool(d != 0.0));
+            } else if (t == jd_tag(JdTag::NATIVE_MAP)) {
+                JdbMapFwd* m = (JdbMapFwd*)(intptr_t)u.i;
+                out->elements.push_back(m ? jdbmap_to_value(m) : Value::make_none());
             } else {
                 // F64 / I64 — numeric.
                 out->elements.push_back(Value::make_f64(d));
@@ -675,13 +681,12 @@ struct JdbMapFwd {
 };
 
 // Walk a native JdbMap*, build a fresh Value::OBJECT mirroring its
-// entries, store it in value_store, return the new handle. Caller
-// retains ownership of the JdbMap. Tag values follow JdTag enum.
-JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
-    auto* rt = (JdRTImpl*)handle;
+// entries. Recurses into nested arrays and maps so array-of-map and
+// map-of-map values marshal faithfully. Caller retains ownership of
+// the JdbMap. Tag values follow JdTag enum.
+static Value jdbmap_to_value(JdbMapFwd* m) {
     Value v = Value::make_object();
-    if (!m_ptr) return rt->store_value(std::move(v));
-    auto* m = (JdbMapFwd*)m_ptr;
+    if (!m) return v;
     auto* obj = v.as_object();
     for (int64_t i = 0; i < m->count; i++) {
         std::string k = m->keys[i] ? m->keys[i] : "";
@@ -705,16 +710,13 @@ JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
             case JdTag::ARR: {
                 int64_t bits;
                 memcpy(&bits, &d, sizeof(bits));
-                JdbArrayFwd* arr = (JdbArrayFwd*)(intptr_t)bits;
-                cell = jdbarray_to_value(arr);
+                cell = jdbarray_to_value((JdbArrayFwd*)(intptr_t)bits);
                 break;
             }
             case JdTag::NATIVE_MAP: {
                 int64_t bits;
                 memcpy(&bits, &d, sizeof(bits));
-                int64_t inner = jdrt_map_to_handle(handle, (void*)(intptr_t)bits);
-                auto inner_it = rt->value_store.find(inner);
-                cell = (inner_it != rt->value_store.end()) ? inner_it->second : Value::make_object();
+                cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits);
                 break;
             }
             case JdTag::F64:
@@ -724,6 +726,14 @@ JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
         }
         obj->set(k, std::move(cell));
     }
+    return v;
+}
+
+// Box a native JdbMap* into a Value::OBJECT, store it in value_store,
+// return the new handle. Caller retains ownership of the JdbMap.
+JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
+    auto* rt = (JdRTImpl*)handle;
+    Value v = jdbmap_to_value(m_ptr ? (JdbMapFwd*)m_ptr : nullptr);
     return rt->store_value(std::move(v));
 }
 

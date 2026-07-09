@@ -1006,7 +1006,7 @@ FOR dasd_i = 1 TO 5
 NEXT dasd_i
 Assert(266, CINT(dasd_TA * 1000) = 2500)         ' 5 * 0.5 = 2.5
 
-' Sehr kleiner Increment (CONST DOUBLE) — der wavi-Original-Pattern.
+' Very small increment (CONST DOUBLE), the original wavi pattern.
 CONST DASD_DTA = 0.00628318530717959
 DIM dasd_TC AS DOUBLE = 0
 FOR dasd_i = 1 TO 3
@@ -1257,6 +1257,33 @@ DIM cv_d4[3] AS INTEGER
 COPYV cv_d4, 77
 Assert(328, cv_d4[0] = 77)
 Assert(329, cv_d4[2] = 77)
+
+' Regression #73: JSON.STRINGIFY$ of a map holding an array of maps.
+' Array elements that are maps must marshal as nested objects, both as
+' map-literal elements and as bare map-variable elements (the ChatML
+' mkdataset pattern).
+DIM j73q$ = CHR$(34)
+DIM j73a AS MAP
+j73a{"role"} = "system"
+j73a{"content"} = "hi"
+DIM j73rec AS MAP
+j73rec{"messages"} = [j73a]
+DIM j73s$ = JSON.STRINGIFY$(j73rec)
+DIM j73exp$ = "{" + j73q$+"messages"+j73q$ + ":[{" + j73q$+"role"+j73q$ + ":" + j73q$+"system"+j73q$ + "," + j73q$+"content"+j73q$ + ":" + j73q$+"hi"+j73q$ + "}]}"
+Assert(330, j73s$ = j73exp$)
+
+DIM j73b AS MAP
+j73b{"role"} = "user"
+j73b{"content"} = "there"
+DIM j73rec2 AS MAP
+j73rec2{"messages"} = [j73a, j73b]
+DIM j73s2$ = JSON.STRINGIFY$(j73rec2)
+Assert(331, INSTR(j73s2$, j73q$+"system"+j73q$) >= 0)
+Assert(332, INSTR(j73s2$, j73q$+"there"+j73q$) >= 0)
+
+DIM j73s3$ = JSON.STRINGIFY$([{"a": 1}, {"b": 2}])
+Assert(333, INSTR(j73s3$, j73q$+"a"+j73q$+":1") >= 0)
+Assert(334, INSTR(j73s3$, j73q$+"b"+j73q$+":2") >= 0)
 
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS

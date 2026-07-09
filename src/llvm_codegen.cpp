@@ -5455,8 +5455,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             if (!expr.args.empty()) {
                 auto& arr_append = runtime_funcs["APPEND"];
                 auto& arr_append_tg = runtime_funcs["__arr_append_tagged"];
+                // Codegen elements up front: a NATIVE_MAP element (e.g. a
+                // bare map variable, whose type is only known post-inference)
+                // must force the tagged storage path. On the untagged
+                // flags-only path a map pointer is indistinguishable from a
+                // nested-array pointer and gets reinterpreted as one when
+                // marshalled, dereferencing the JdbMap struct as a JdbArray.
+                std::vector<TypedValue> elems;
+                elems.reserve(expr.args.size());
                 for (size_t i = 0; i < expr.args.size(); i++) {
-                    TypedValue elem = codegen_expr(*expr.args[i]);
+                    TypedValue e = codegen_expr(*expr.args[i]);
+                    if (e.tag == JD_TAG_NATIVE_MAP) any_runtime = true;
+                    elems.push_back(e);
+                }
+                for (size_t i = 0; i < elems.size(); i++) {
+                    TypedValue elem = elems[i];
                     if (elem.tag != JD_TAG_BOOL) all_bool_elems = false;
                     LLVMValueRef fval = elem.val;
                     int store_tag = elem.tag;
