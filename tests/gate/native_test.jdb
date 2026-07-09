@@ -1285,6 +1285,26 @@ DIM j73s3$ = JSON.STRINGIFY$([{"a": 1}, {"b": 2}])
 Assert(333, INSTR(j73s3$, j73q$+"a"+j73q$+":1") >= 0)
 Assert(334, INSTR(j73s3$, j73q$+"b"+j73q$+":2") >= 0)
 
+' Regression #93: DIM x = arr[i] on a map-bearing array preserves the map
+' tag (TYPEOF OBJECT, field read, JSON round-trip), not FLOAT64. Covers
+' both `DIM m AS MAP` and `DIM m = {}` element forms, and mixed arrays.
+DIM k93a AS MAP
+k93a{"role"} = "system"
+DIM k93b = {}
+k93b{"role"} = "user"
+DIM k93arr = [k93a, k93b]
+DIM k93x = k93arr[0]
+Assert(335, TYPEOF(k93x) = "OBJECT")
+Assert(336, k93x{"role"} = "system")
+Assert(337, JSON.STRINGIFY$(k93x) = "{" + j73q$+"role"+j73q$ + ":" + j73q$+"system"+j73q$ + "}")
+DIM k93y = k93arr[1]
+Assert(338, k93y{"role"} = "user")
+DIM k93m = {}
+k93m{"n"} = "Ann"
+DIM k93mix = [k93m, "hi", 7]
+Assert(339, TYPEOF(k93mix[0]) = "OBJECT")
+Assert(340, STR$(k93mix[2]) = "7")
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

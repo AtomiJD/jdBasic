@@ -216,6 +216,12 @@ private:
     // rather than literals.
     std::unordered_set<std::string> string_scalar_vars;
 
+    // Vars that hold a scalar map (DIM m = {} / MAP_LITERAL RHS). Lets
+    // ARRAY_LITERAL tracking recognise `[m1, m2]` as a map-bearing array so
+    // its element reads route through the per-cell-tag getter instead of
+    // falling through to the numeric F64 default.
+    std::unordered_set<std::string> map_scalar_vars;
+
     // Vars holding mixed-type array literals (e.g. [1, "Alice", 90]). INDEX
     // on these can't be tagged statically — every cell could be either a
     // numeric f64 or a string pointer. The runtime classifier

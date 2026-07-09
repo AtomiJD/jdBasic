@@ -3185,6 +3185,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$';
         if (wants_str_slot || rhs_is_str_lit || rhs_is_str_call)
             string_scalar_vars.insert(stmt.var_name);
+        if (stmt.expr && stmt.expr->kind == ExprKind::MAP_LITERAL)
+            map_scalar_vars.insert(stmt.var_name);
     }
     if (stmt.expr && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
         auto el_is_string = [&](const Expr* e) -> bool {
@@ -3203,14 +3205,16 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             }
             return false;
         };
-        // INDEX-expressions (map / VM-handle / UDT field reads) return a
-        // INDEX expressions (map / VM-handle / UDT field reads) resolve to
-        // RUNTIME-tagged values whose real type is execution-time only —
-        // mark the destination as mixed so arr[i] reads dispatch per cell
-        // via __arr_classify instead of punning every element as a number.
+        // INDEX expressions (map / VM-handle / UDT field reads) and map
+        // elements resolve to values whose real type is execution-time only —
+        // mark the destination as mixed so arr[i] reads dispatch per cell via
+        // the per-cell-tag getter instead of punning every element as a number.
         auto el_is_runtime_typed = [&](const Expr* e) -> bool {
             if (!e) return false;
-            return e->kind == ExprKind::INDEX;
+            if (e->kind == ExprKind::INDEX) return true;
+            if (e->kind == ExprKind::MAP_LITERAL) return true;
+            if (e->kind == ExprKind::VARIABLE) return map_scalar_vars.count(e->str_val) != 0;
+            return false;
         };
         bool has_str = false, has_non_str = false, has_runtime = false;
         for (auto& a : stmt.expr->args) {
@@ -3753,6 +3757,15 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         return;
     }
 
+    // A scalar map/object DIM (`DIM m AS MAP`, `DIM m = {}`) can be used as a
+    // map element inside an array literal. Track it here, before the no-init
+    // delegation below, so even a bare `DIM m AS MAP` is covered and `[m, ...]`
+    // element reads route through the per-cell-tag getter instead of the
+    // numeric default. UDT instances carry a non-empty label and are excluded.
+    if ((stmt.var_type == VarType::OBJECT && stmt.label.empty()) ||
+        (stmt.expr && stmt.expr->kind == ExprKind::MAP_LITERAL))
+        map_scalar_vars.insert(stmt.var_name);
+
     // Built-in constants are not assignable — `DIM PI` / `DIM VBTAB` (case-
     // insensitive) is a compile error. The strict compiler protects the whole
     // set (PI, E, VBNEWLINE, VBCRLF, VBTAB) even though the loose interpreter
@@ -4015,6 +4028,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             !stmt.expr->func_name.empty() && stmt.expr->func_name.back() == '$';
         if (wants_str_slot || rhs_is_str_lit || rhs_is_str_call)
             string_scalar_vars.insert(stmt.var_name);
+        if (stmt.expr && stmt.expr->kind == ExprKind::MAP_LITERAL)
+            map_scalar_vars.insert(stmt.var_name);
     }
     if (stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
         auto el_is_string = [&](const Expr* e) -> bool {
@@ -4033,11 +4048,14 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             }
             return false;
         };
-        // Same as the LET path: INDEX-typed elements force the destination
-        // to mixed-storage so per-cell tags survive.
+        // Same as the LET path: INDEX-typed and map elements force the
+        // destination to mixed-storage so per-cell tags survive.
         auto el_is_runtime_typed = [&](const Expr* e) -> bool {
             if (!e) return false;
-            return e->kind == ExprKind::INDEX;
+            if (e->kind == ExprKind::INDEX) return true;
+            if (e->kind == ExprKind::MAP_LITERAL) return true;
+            if (e->kind == ExprKind::VARIABLE) return map_scalar_vars.count(e->str_val) != 0;
+            return false;
         };
         bool has_str = false, has_non_str = false, has_runtime = false;
         for (auto& a : stmt.expr->args) {
@@ -8978,6 +8996,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     // wire representation and fall back to raw i64 bits.
                     LLVMValueRef encoded;
                     int32_t tag;
+                    // Set when the wire tag is only known at runtime (a
+                    // RUNTIME arg whose companion tag decides map-vs-scalar).
+                    LLVMValueRef wire_tag_val = nullptr;
 
                     if (av.tag == JD_TAG_STR) {
                         encoded = LLVMBuildPtrToInt(builder, av.val, i64_type, "stoi");
@@ -9012,8 +9033,48 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         encoded = pun_f64_to_i64(av.val);
                         tag = JD_TAG_F64;
                     } else if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
-                        encoded = av.val;
-                        // Wire tag comes from the runtime_tag alloca below.
+                        // A RUNTIME arg can carry a native map (tag 4), which
+                        // has no wire representation. Box it into a VM_HANDLE
+                        // at runtime when the companion tag says NATIVE_MAP;
+                        // otherwise pass the raw bits under the runtime tag.
+                        auto* boxer = get_runtime_func("__jdrt_map_to_handle");
+                        if (boxer) {
+                            LLVMValueRef is_map = LLVMBuildICmp(builder, LLVMIntEQ,
+                                av.runtime_tag, LLVMConstInt(i32_type, JD_TAG_NATIVE_MAP, 0),
+                                "rtarg_ismap");
+                            LLVMBasicBlockRef bb_map = LLVMAppendBasicBlock(current_fn, "rtarg.map");
+                            LLVMBasicBlockRef bb_non = LLVMAppendBasicBlock(current_fn, "rtarg.non");
+                            LLVMBasicBlockRef bb_mrg = LLVMAppendBasicBlock(current_fn, "rtarg.mrg");
+                            LLVMBuildCondBr(builder, is_map, bb_map, bb_non);
+
+                            LLVMPositionBuilderAtEnd(builder, bb_map);
+                            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                            LLVMValueRef mptr = LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "rtarg_mptr");
+                            LLVMValueRef bargs[] = { rt, mptr };
+                            LLVMValueRef boxed = LLVMBuildCall2(builder, boxer->fn_type,
+                                boxer->fn, bargs, 2, "rtarg_mtoh");
+                            LLVMBuildBr(builder, bb_mrg);
+                            LLVMBasicBlockRef bb_map_end = LLVMGetInsertBlock(builder);
+
+                            LLVMPositionBuilderAtEnd(builder, bb_non);
+                            LLVMBuildBr(builder, bb_mrg);
+                            LLVMBasicBlockRef bb_non_end = LLVMGetInsertBlock(builder);
+
+                            LLVMPositionBuilderAtEnd(builder, bb_mrg);
+                            LLVMValueRef enc_phi = LLVMBuildPhi(builder, i64_type, "rtarg_enc");
+                            LLVMValueRef evs[] = { boxed, av.val };
+                            LLVMBasicBlockRef ebs[] = { bb_map_end, bb_non_end };
+                            LLVMAddIncoming(enc_phi, evs, ebs, 2);
+                            encoded = enc_phi;
+                            LLVMValueRef wt_phi = LLVMBuildPhi(builder, i32_type, "rtarg_wtag");
+                            LLVMValueRef wvs[] = { LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0),
+                                                   av.runtime_tag };
+                            LLVMAddIncoming(wt_phi, wvs, ebs, 2);
+                            wire_tag_val = wt_phi;
+                        } else {
+                            encoded = av.val;
+                        }
                     } else {
                         encoded = av.val;
                         tag = JD_TAG_I64;
@@ -9025,7 +9086,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
                     LLVMValueRef tidx[] = { LLVMConstInt(i32_type, i, 0) };
                     LLVMValueRef tptr = LLVMBuildGEP2(builder, i32_type, tags_ptr, tidx, 1, "tag");
-                    if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
+                    if (wire_tag_val) {
+                        LLVMBuildStore(builder, wire_tag_val, tptr);
+                    } else if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
                         LLVMBuildStore(builder, av.runtime_tag, tptr);
                     } else {
                         LLVMBuildStore(builder, LLVMConstInt(i32_type, tag, 0), tptr);
