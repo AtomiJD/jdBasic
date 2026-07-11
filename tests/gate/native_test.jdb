@@ -1305,6 +1305,29 @@ DIM k93mix = [k93m, "hi", 7]
 Assert(339, TYPEOF(k93mix[0]) = "OBJECT")
 Assert(340, STR$(k93mix[2]) = "7")
 
+' Regression: DIM q = arr[i] on a UDT array preserves the object. The
+' DIM-init form read back 0 because var_udt_type[q] was never registered,
+' so the dotted field read/write fell through to a literal 0. Covers typed
+' arrays, array literals, field write, and shared-object mutation.
+TYPE UdtRegPt
+    ux AS INTEGER
+    uy AS INTEGER
+ENDTYPE
+DIM urpa[1] AS UdtRegPt
+urpa[0].ux = 7
+urpa[0].uy = 9
+DIM urq = urpa[0]
+Assert(341, urq.ux = 7)
+Assert(342, urq.uy = 9)
+urq.ux = 99
+Assert(343, urq.ux = 99)
+Assert(344, urpa[0].ux = 99)
+DIM urp AS UdtRegPt
+urp.ux = 3
+DIM urarr = [urp]
+DIM urq2 = urarr[0]
+Assert(345, urq2.ux = 3)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

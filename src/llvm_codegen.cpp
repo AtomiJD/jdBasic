@@ -1974,9 +1974,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         }
                     }
                 }
-                // LET/ASSIGN lhs = arr[i]  → var_udt_type[lhs] = var_udt_type[arr[]]
-                // LET/ASSIGN lhs = var     → var_udt_type[lhs] = var_udt_type[var]
-                if ((s->kind == StmtKind::LET || s->kind == StmtKind::ASSIGN) &&
+                // LET/ASSIGN/DIM lhs = arr[i] → var_udt_type[lhs] = var_udt_type[arr[]]
+                // LET/ASSIGN/DIM lhs = var    → var_udt_type[lhs] = var_udt_type[var]
+                // DIM is included so `DIM q = arr[i]` (init form) registers q as
+                // a UDT; without it the dotted field read q.x is not recognized
+                // as a UDT access and codegen emits a literal 0.
+                if ((s->kind == StmtKind::LET || s->kind == StmtKind::ASSIGN ||
+                     s->kind == StmtKind::DIM) &&
                     !s->var_name.empty() && s->expr) {
                     if (s->expr->kind == ExprKind::INDEX && s->expr->left &&
                         s->expr->left->kind == ExprKind::VARIABLE) {
@@ -1990,6 +1994,20 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (it != var_udt_type.end()) {
                             auto& slot = var_udt_type[s->var_name];
                             if (slot != it->second) { slot = it->second; changed = true; }
+                        }
+                    } else if (s->expr->kind == ExprKind::ARRAY_LITERAL) {
+                        // DIM arr = [udt_var, ...] → register the element UDT
+                        // type (arr[]), so arr[i] extraction and arr[i].field
+                        // resolve like a typed `DIM arr[N] AS T` array does.
+                        for (auto& a : s->expr->args) {
+                            if (a && a->kind == ExprKind::VARIABLE) {
+                                auto it = var_udt_type.find(a->str_val);
+                                if (it != var_udt_type.end()) {
+                                    auto& slot = var_udt_type[s->var_name + "[]"];
+                                    if (slot != it->second) { slot = it->second; changed = true; }
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -2014,7 +2032,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             size_t dp = stmt->var_name.find('.');
             if (dp != std::string::npos) {
                 std::string prefix = stmt->var_name.substr(0, dp);
-                if (udt_var_names.count(prefix)) continue;
+                if (udt_var_names.count(prefix) || var_udt_type.count(prefix)) continue;
             }
             // Don't shadow built-in constants PI/E
             {
