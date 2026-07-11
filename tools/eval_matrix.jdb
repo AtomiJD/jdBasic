@@ -23,6 +23,15 @@ DIM DORUN$ = GETENV$("EVAL_RUN")
 DIM LIMIT = 0
 DIM LIMIT$ = GETENV$("EVAL_LIMIT")
 IF LIMIT$ <> "" THEN LIMIT = VAL(LIMIT$)
+DIM HTTP_TIMEOUT$ = GETENV$("EVAL_TIMEOUT")
+IF HTTP_TIMEOUT$ = "" THEN HTTP_TIMEOUT$ = "600"
+DIM GEN_TEMP = 0.0
+DIM GEN_TEMP$ = GETENV$("EVAL_TEMP")
+IF GEN_TEMP$ <> "" THEN GEN_TEMP = VAL(GEN_TEMP$)
+DIM GEN_MAXTOK = 4096
+DIM GEN_MAXTOK$ = GETENV$("EVAL_MAXTOK")
+IF GEN_MAXTOK$ <> "" THEN GEN_MAXTOK = VAL(GEN_MAXTOK$)
+DIM MODDIR$ = GETENV$("EVAL_MODDIR")
 
 FUNC extract_code(text$)
     DIM p1 = INSTR(text$, "```")
@@ -52,12 +61,12 @@ FUNC query_model(user$)
     req{"model"} = MODEL$
     req{"messages"} = [sysm, usrm]
     req{"stream"} = FALSE
-    req{"temperature"} = 0.2
-    req{"max_tokens"} = 2048
+    req{"temperature"} = GEN_TEMP
+    req{"max_tokens"} = GEN_MAXTOK
     DIM body$ = JSON.STRINGIFY$(req)
     DIM reqfile$ = WORKDIR$ + "/_req.json"
     TXTWRITER reqfile$, body$
-    DIM r = OS.EXEC("curl", ["-s", "-m", "180", "-X", "POST", "-H", "Content-Type:application/json", "-d", "@" + reqfile$, ENDPOINT$])
+    DIM r = OS.EXEC("curl", ["-s", "-m", HTTP_TIMEOUT$, "-X", "POST", "-H", "Content-Type:application/json", "-d", "@" + reqfile$, ENDPOINT$])
     IF r{"EXIT_CODE"} <> 0 THEN
         RETURN ""
     ENDIF
@@ -99,6 +108,24 @@ TRY
     MKDIR WORKDIR$
 CATCH
 ENDTRY
+
+' Seed the workdir with library modules so a candidate's `IMPORT X`
+' resolves script-relative during lint instead of failing on a module the
+' repo actually ships. EVAL_MODDIR holds a flat dir of *.jdb modules. Each
+' module is passed as its own OS.EXEC argument: a single "bash -c" string
+' gets word-split by OS.EXEC, so a shell glob would reach cp as no operands.
+IF MODDIR$ <> "" THEN
+    DIM mods = DIR$(MODDIR$ + "/*.jdb")
+    IF LEN(mods) > 0 THEN
+        DIM cpargs = ["-n"]
+        DIM mi
+        FOR mi = 0 TO LEN(mods) - 1
+            cpargs = APPEND(cpargs, MODDIR$ + "/" + mods[mi])
+        NEXT mi
+        cpargs = APPEND(cpargs, WORKDIR$ + "/")
+        DIM seedr = OS.EXEC("cp", cpargs)
+    ENDIF
+ENDIF
 
 DIM raw$ = TXTREADER$(HELDOUT$)
 DIM lines = SPLIT(raw$, CHR$(10))
