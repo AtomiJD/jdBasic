@@ -176,6 +176,36 @@ items = APPEND(items, gg( _
     "OPTION " + Q$ + "EXPLICIT" + Q$ + NL$ + "OPTION " + Q$ + "STRICT" + Q$ + NL$ + "DIM total = 0", _
     "-c always enforces STRICT and EXPLICIT. Declaring OPTION EXPLICIT and OPTION STRICT at the top makes the interpreter enforce the same rules, so errors surface before compilation."))
 
+items = APPEND(items, gg( _
+    "How do I write a hexadecimal literal in jdBasic?", _
+    "flags = &HFF", _
+    "flags = $FF", _
+    "jdBasic hex literals use a $ prefix ($FF), binary a % prefix (%1010). The VB-style &H, &O and &B prefixes are not valid. For bitwise operations use BAND, BOR, BXOR, BNOT, SHL, SHR, not & or |."))
+
+items = APPEND(items, gg( _
+    "Why does DIM step = 1 fail to parse in jdBasic?", _
+    "DIM step AS INTEGER = 1", _
+    "DIM stepSize AS INTEGER = 1", _
+    "STEP is a reserved keyword (FOR ... TO ... STEP). Identifiers are case-insensitive, so even lowercase step collides. Rename with an English qualifier like stepSize. The same applies to SUB, ON, LINE, VAL, MAP, COUNT, MIN, MAX."))
+
+items = APPEND(items, gg( _
+    "Why is FUNC Count(s, sub) rejected in jdBasic?", _
+    "FUNC Count(s, sub)", _
+    "FUNC Count(s, subStr)", _
+    "SUB is a reserved keyword, so it cannot be a parameter name either. Rename to a non-reserved English word like subStr. Reserved words are never valid as variable, parameter, or function names."))
+
+items = APPEND(items, gg( _
+    "How do I put two statements on one line in jdBasic?", _
+    "IF idx = 4 THEN g_status = " + Q$ + "Exit" + Q$ + "; EXITFUNC", _
+    "IF idx = 4 THEN g_status = " + Q$ + "Exit" + Q$ + " : EXITFUNC", _
+    "The statement separator is a colon, not a semicolon. A semicolon is only a PRINT item separator. Write A = 1 : B = 2 to run both statements on one line."))
+
+items = APPEND(items, gg( _
+    "How do I unpack a nested array like [1, [2, 3], 4] in jdBasic?", _
+    "[a, [b, c], d] = [1, [2, 3], 4]", _
+    "[a, inner, d] = [1, [2, 3], 4]" + NL$ + "b = inner[0]" + NL$ + "c = inner[1]", _
+    "Destructuring targets must be plain variables or indexed elements, not nested array patterns. Unpack the outer level, then index the inner array."))
+
 DIM recs = []
 DIM it = {}
 DIM u1$ = ""
