@@ -1834,6 +1834,61 @@ In addition to the high-level drawing commands above, the `GFX.*` namespace expo
 * **`GL.SAVE_SCREENSHOT(path$)`**: OpenGL counterpart of `GFX.SAVE_SCREENSHOT` - saves the current `GL.WINDOW` back buffer to a PNG (glReadPixels, flipped to top-down). **Call it BEFORE `GL.FLIP`** (the swap leaves the back buffer undefined). Lets you verify OpenGL / 3D output to a file the same way the 2D renderer does.
 * **`GFX.TEXTSIZE(text$, [size]) -> [w, h]`**: Measures the rendered size of a string with the current font.
 
+#### OpenGL 3D (`GL.*`)
+
+The `GL.*` namespace is a thin wrapper over OpenGL 3.3-core for custom 3D rendering, separate from the 2D `GFX.*`/`SCREEN` renderer. It runs its own window (`GL.WINDOW`) and pairs with the `MAT4.*` matrix helpers for transforms. Every `GL.*` call except `GL.WINDOW`/`GL.CLOSE` requires an open GL window (they throw otherwise). Handle-returning calls (`GL.SHADER`, `GL.VBO`, `GL.EBO`, `GL.VAO`, `GL.TEX.LOAD`) return an integer id.
+
+Window and frame:
+
+* **`GL.WINDOW(width, height, [title$="jdBasic GL"])`**: Creates or replaces the SDL OpenGL 3.3-core window and makes it current.
+* **`GL.CLOSE()`**: Destroys the GL window and context.
+* **`GL.CLEAR(r, g, b, [a=255])`**: Clears the color and depth buffers. Components are `0..255`.
+* **`GL.FLIP()`**: Pumps SDL events into the gfx queue and swaps the double buffer (presents the frame).
+* **`GL.VIEWPORT(x, y, width, height)`**: Sets the GL viewport rectangle.
+* **`GL.ENABLE(flag$)`** / **`GL.DISABLE(flag$)`**: Enables/disables a capability; `flag$` is `"DEPTH_TEST"`, `"BLEND"` or `"CULL_FACE"`.
+
+Shaders and uniforms (uniform setters act on the currently `GL.USE`'d program; an unknown uniform name silently no-ops):
+
+* **`GL.SHADER(vertexSrc$, fragmentSrc$) -> int`**: Compiles and links a shader program from GLSL source strings; returns the program id (throws on a compile/link error).
+* **`GL.SHADER.DELETE(program)`**: Deletes a shader program.
+* **`GL.USE(program)`**: Makes a shader program current (required before setting uniforms).
+* **`GL.UNIFORM.F1(name$, x)`** / **`GL.UNIFORM.F3(name$, x, y, z)`** / **`GL.UNIFORM.F4(name$, x, y, z, w)`**: Set a float / vec3 / vec4 uniform.
+* **`GL.UNIFORM.I1(name$, i)`**: Sets an int or sampler uniform.
+* **`GL.UNIFORM.MAT4(name$, mat4)`**: Uploads a 16-element column-major `mat4` uniform (feed it a `MAT4.*` result).
+
+Buffers, arrays and attributes:
+
+* **`GL.VBO(data) -> int`**: Creates a vertex buffer from a numeric TENSOR/ARRAY (floats, `GL_STATIC_DRAW`), leaves it bound; returns the id.
+* **`GL.VBO.BIND(vbo)`**: Binds a vertex buffer to `GL_ARRAY_BUFFER`.
+* **`GL.EBO(indices) -> int`**: Creates an element (index) buffer from an integer TENSOR/ARRAY, leaves it bound; returns the id.
+* **`GL.VAO() -> int`** / **`GL.VAO.BIND(vao)`** / **`GL.VAO.DELETE(vao)`**: Create/bind/delete a vertex array object.
+* **`GL.BUFFER.DELETE(buffer)`**: Deletes a buffer (VBO or EBO).
+* **`GL.ATTRIB(index, components, stride_bytes, offset_bytes)`**: Defines and enables a `GL_FLOAT` vertex attribute on the bound VAO/VBO. `stride`/`offset` are in **bytes**.
+
+Textures:
+
+* **`GL.TEX.LOAD(path$) -> int`**: Loads a PNG/JPG via SDL_image (RGBA32, LINEAR, REPEAT); path resolves against the script dir. Returns the texture id.
+* **`GL.TEX.BIND(tex, slot)`**: Binds a texture to `GL_TEXTURE0 + slot`.
+* **`GL.TEX.DELETE(tex)`**: Deletes a texture.
+
+Drawing and debug:
+
+* **`GL.DRAW.LINES(first, count)`** / **`GL.DRAW.TRIS(first, count)`**: `glDrawArrays` as `GL_LINES` / `GL_TRIANGLES`.
+* **`GL.DRAW.TRIS.IDX(count)`**: `glDrawElements` as `GL_TRIANGLES` using the bound EBO (`GL_UNSIGNED_INT` indices).
+* **`GL.SAVE_SCREENSHOT(path$)`**: Saves the GL back buffer to a PNG. **Call it BEFORE `GL.FLIP`** (the swap leaves the back buffer undefined).
+
+#### 4x4 Matrix Math (`MAT4.*`)
+
+The `MAT4.*` helpers build 4x4 transforms for OpenGL. Every function returns a 16-element flat numeric tensor in **column-major** (OpenGL) order; any `m` / `mat4` argument accepts such a tensor. Feed results to `GL.UNIFORM.MAT4`. Note the angle-unit trap: `MAT4.PERSPECTIVE` takes degrees, `MAT4.ROTATE` takes radians.
+
+* **`MAT4.IDENTITY() -> mat4`**: The identity matrix.
+* **`MAT4.PERSPECTIVE(fov_deg, aspect, near, far) -> mat4`**: Perspective projection; `fov_deg` in **degrees**.
+* **`MAT4.LOOKAT(ex, ey, ez, tx, ty, tz, ux, uy, uz) -> mat4`**: View matrix from eye, target and up vectors (9 scalars).
+* **`MAT4.MUL(a, b) -> mat4`**: Matrix product `a * b`.
+* **`MAT4.TRANSLATE(m, x, y, z) -> mat4`**: `m * Translation(x, y, z)`.
+* **`MAT4.ROTATE(m, angle_rad, ax, ay, az) -> mat4`**: `m * Rotation(angle about axis)`; `angle_rad` in **radians**.
+* **`MAT4.SCALE(m, sx, sy, sz) -> mat4`**: `m * Scale(sx, sy, sz)`.
+
 #### Audio File Playback (SDL_mixer)
 
 The `AUDIO.*` family provides file-based playback for sound effects (WAV) and music (MP3/OGG/FLAC), powered by SDL_mixer. This is separate from the `SOUND.*` live-coding sequencer/synth described further below - use `AUDIO.*` to play pre-recorded audio files, and `SOUND.*` to programmatically synthesize notes and rhythms.

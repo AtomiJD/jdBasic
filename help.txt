@@ -1058,6 +1058,126 @@ Description: Returns the pixel [width, height] the given text would occupy in th
 Syntax: GFX.TICKS() -> number
 Description: Returns the number of milliseconds since the graphics system started.
 
+[GL.ATTRIB]
+Syntax: GL.ATTRIB(index, components, stride_bytes, offset_bytes)
+Description: Defines and enables a float vertex attribute on the bound VAO/VBO. Type is GL_FLOAT, not normalized; stride and offset are in bytes.
+
+[GL.BUFFER.DELETE]
+Syntax: GL.BUFFER.DELETE(buffer)
+Description: Deletes a buffer object (works for a VBO or EBO id).
+
+[GL.CLEAR]
+Syntax: GL.CLEAR(r, g, b, [a=255])
+Description: Clears the color and depth buffers. r/g/b/a are 0..255.
+
+[GL.CLOSE]
+Syntax: GL.CLOSE()
+Description: Destroys the GL window and context.
+
+[GL.DISABLE]
+Syntax: GL.DISABLE(flag$)
+Description: Disables a GL capability. flag$ is one of "DEPTH_TEST", "BLEND", "CULL_FACE".
+
+[GL.DRAW.LINES]
+Syntax: GL.DRAW.LINES(first, count)
+Description: Draws GL_LINES from the bound arrays (glDrawArrays).
+
+[GL.DRAW.TRIS]
+Syntax: GL.DRAW.TRIS(first, count)
+Description: Draws GL_TRIANGLES from the bound arrays (glDrawArrays).
+
+[GL.DRAW.TRIS.IDX]
+Syntax: GL.DRAW.TRIS.IDX(count)
+Description: Draws GL_TRIANGLES using the bound EBO (glDrawElements, GL_UNSIGNED_INT indices, offset 0).
+
+[GL.EBO]
+Syntax: GL.EBO(indices) -> int
+Description: Creates an element buffer from a numeric integer TENSOR/ARRAY (uploaded as GLuint), leaves it bound; returns the buffer id.
+
+[GL.ENABLE]
+Syntax: GL.ENABLE(flag$)
+Description: Enables a GL capability. flag$ is one of "DEPTH_TEST", "BLEND", "CULL_FACE".
+
+[GL.FLIP]
+Syntax: GL.FLIP()
+Description: Pumps SDL events into the gfx queue and swaps the double buffer (presents the frame).
+
+[GL.SAVE_SCREENSHOT]
+Syntax: GL.SAVE_SCREENSHOT(path$)
+Description: Reads the GL back buffer and saves it as a top-down PNG. Call it BEFORE GL.FLIP (the swap leaves the back buffer undefined).
+
+[GL.SHADER]
+Syntax: GL.SHADER(vertexSrc$, fragmentSrc$) -> int
+Description: Compiles and links a shader program from GLSL source strings; returns the program id. Throws on a compile or link error.
+
+[GL.SHADER.DELETE]
+Syntax: GL.SHADER.DELETE(program)
+Description: Deletes a shader program (glDeleteProgram).
+
+[GL.TEX.BIND]
+Syntax: GL.TEX.BIND(tex, slot)
+Description: Binds a texture to GL_TEXTURE0 + slot (slot is 0..N).
+
+[GL.TEX.DELETE]
+Syntax: GL.TEX.DELETE(tex)
+Description: Deletes a texture (glDeleteTextures).
+
+[GL.TEX.LOAD]
+Syntax: GL.TEX.LOAD(path$) -> int
+Description: Loads a PNG/JPG via SDL_image (RGBA32, LINEAR filter, REPEAT wrap); path resolves against the script dir. Returns the texture id.
+
+[GL.UNIFORM.F1]
+Syntax: GL.UNIFORM.F1(name$, x)
+Description: Sets a float uniform on the current program. No-op if the name is absent.
+
+[GL.UNIFORM.F3]
+Syntax: GL.UNIFORM.F3(name$, x, y, z)
+Description: Sets a vec3 uniform on the current program. No-op if the name is absent.
+
+[GL.UNIFORM.F4]
+Syntax: GL.UNIFORM.F4(name$, x, y, z, w)
+Description: Sets a vec4 uniform on the current program. No-op if the name is absent.
+
+[GL.UNIFORM.I1]
+Syntax: GL.UNIFORM.I1(name$, i)
+Description: Sets an int or sampler uniform on the current program. No-op if the name is absent.
+
+[GL.UNIFORM.MAT4]
+Syntax: GL.UNIFORM.MAT4(name$, mat4)
+Description: Uploads a 16-element mat4 (column-major) as a mat4 uniform. No-op if the name is absent.
+
+[GL.USE]
+Syntax: GL.USE(program)
+Description: Makes a shader program current (glUseProgram). Required before setting uniforms.
+
+[GL.VAO]
+Syntax: GL.VAO() -> int
+Description: Creates a vertex array object and leaves it bound; returns the VAO id.
+
+[GL.VAO.BIND]
+Syntax: GL.VAO.BIND(vao)
+Description: Binds a vertex array object (glBindVertexArray).
+
+[GL.VAO.DELETE]
+Syntax: GL.VAO.DELETE(vao)
+Description: Deletes a vertex array object (glDeleteVertexArrays).
+
+[GL.VBO]
+Syntax: GL.VBO(data) -> int
+Description: Creates a vertex buffer from a numeric TENSOR/ARRAY (uploaded as floats, GL_STATIC_DRAW), leaves it bound; returns the buffer id.
+
+[GL.VBO.BIND]
+Syntax: GL.VBO.BIND(vbo)
+Description: Binds a vertex buffer to GL_ARRAY_BUFFER (glBindBuffer).
+
+[GL.VIEWPORT]
+Syntax: GL.VIEWPORT(x, y, width, height)
+Description: Sets the GL viewport rectangle (integers).
+
+[GL.WINDOW]
+Syntax: GL.WINDOW(width, height, [title$="jdBasic GL"])
+Description: Creates or replaces the SDL OpenGL 3.3-core window and makes it current.
+
 [GOTO]
 Syntax: GOTO label
 Description: Unconditionally jumps program execution to a specified label:.
@@ -2005,6 +2125,34 @@ Description: Returns the number of items in a map.
 [MAP.VALUES]
 Syntax: MAP.VALUES(map_variable)
 Description: Returns a 1D array of all values in a map.
+
+[MAT4.IDENTITY]
+Syntax: MAT4.IDENTITY() -> mat4
+Description: Returns a 4x4 identity matrix as a 16-element column-major tensor.
+
+[MAT4.LOOKAT]
+Syntax: MAT4.LOOKAT(ex, ey, ez, tx, ty, tz, ux, uy, uz) -> mat4
+Description: Builds a view matrix from eye (e), target (t) and up (u) vectors (9 scalar args).
+
+[MAT4.MUL]
+Syntax: MAT4.MUL(a, b) -> mat4
+Description: Returns the matrix product a * b.
+
+[MAT4.PERSPECTIVE]
+Syntax: MAT4.PERSPECTIVE(fov_deg, aspect, near, far) -> mat4
+Description: Perspective projection matrix. fov_deg is the field of view in DEGREES.
+
+[MAT4.ROTATE]
+Syntax: MAT4.ROTATE(m, angle_rad, ax, ay, az) -> mat4
+Description: Returns m * Rotation(angle about axis ax,ay,az). angle_rad is in RADIANS.
+
+[MAT4.SCALE]
+Syntax: MAT4.SCALE(m, sx, sy, sz) -> mat4
+Description: Returns m * Scale(sx, sy, sz).
+
+[MAT4.TRANSLATE]
+Syntax: MAT4.TRANSLATE(m, x, y, z) -> mat4
+Description: Returns m * Translation(x, y, z).
 
 [MATMUL]
 Syntax: MATMUL(matrixA, matrixB)
