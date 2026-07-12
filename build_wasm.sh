@@ -26,6 +26,7 @@ CXXFLAGS="-std=c++17 $OPT $DEF $INC $PORTS -fexceptions"
 
 CORE="src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
       src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
+      src/audio_fx.cpp src/audio_io.cpp src/midi.cpp \
       src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
       src/numerics.cpp src/screencap.cpp src/pybridge.cpp"
 GFX="src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
