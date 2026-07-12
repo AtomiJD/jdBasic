@@ -193,6 +193,7 @@ syntaxes/jdbasic.tmLanguage_org.json
 
 # ── Release bundles (built by dist.bat, not for source repo) ──────
 release/*.zip
+release/*.tar.gz
 release/*.sha256
 release/jdbasic-*-windows-x64/
 # Release planning notes (drafts, scratch, launch logistics) — these
