@@ -1,0 +1,65 @@
+' ask_coder.jdb - send a coding task to the jdBasic coder model (v2) on the
+' Strix Halo and print its reply.
+'
+' Usage:  jdBasic ask_coder.jdb "Write a function that reverses a string"
+'         jdBasic ask_coder.jdb          (uses DEFAULT_TASK below)
+
+DIM ENDPOINT$ = "http://192.168.0.113:8082/v1/chat/completions"
+DIM MODEL$ = "jdbasic-coder-32b-v2"
+DIM DEFAULT_TASK$ = "Write a jdBasic function that reverses a string. Output only code."
+
+' Task = everything after the script name; fall back to the default.
+DIM args = OS.ARGS()
+DIM task$ = ""
+DIM ai
+FOR ai = 1 TO LEN(args) - 1
+    IF task$ = "" THEN
+        task$ = args[ai]
+    ELSE
+        task$ = task$ + " " + args[ai]
+    ENDIF
+NEXT ai
+IF task$ = "" THEN task$ = DEFAULT_TASK$
+
+PRINT "Task : "; task$
+PRINT "Model: "; MODEL$
+PRINT "Asking (20-60s at ~11 tok/s) ..."
+PRINT ""
+
+' Build the OpenAI chat-completions request body.
+DIM sysm = {}
+sysm{"role"} = "system"
+sysm{"content"} = "You are a jdBasic coding assistant. Reply with correct, idiomatic jdBasic code only."
+DIM usrm = {}
+usrm{"role"} = "user"
+usrm{"content"} = task$
+DIM req = {}
+req{"model"} = MODEL$
+req{"messages"} = [sysm, usrm]
+req{"temperature"} = 0.2
+req{"max_tokens"} = 700
+' Break repetition death-spirals (the model can otherwise loop on a
+' variable-name pattern until it hits max_tokens).
+req{"repeat_penalty"} = 1.1
+DIM body$ = JSON.STRINGIFY$(req)
+
+' The model is slow; the default 10s HTTP timeout is far too short.
+HTTP.SETTIMEOUT(180)
+DIM resp$ = HTTP.POST$(ENDPOINT$, body$, "application/json")
+
+IF TRIM$(resp$) = "" THEN
+    PRINT "ERROR: empty response - server down or timed out."
+    PRINT "Check: curl http://192.168.0.113:8082/health"
+    END
+ENDIF
+
+DIM o = JSON.PARSE$(resp$)
+DIM ch = o{"choices"}
+IF TYPEOF(ch) = "NONE" THEN
+    PRINT "ERROR: unexpected response:"
+    PRINT resp$
+    END
+ENDIF
+
+PRINT "--- reply ---"
+PRINT ch[0]{"message"}{"content"}

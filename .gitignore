@@ -256,6 +256,13 @@ Roland_CR-80/
 .rag_appliance.dirs
 .rag_appliance.tfidf
 
+# devrig workspace state (local per-user, see D:\usr\dev\jd-devrig)
+*.rig
+*.rig.meta
+rig_manifest.txt
+rig_ledger.log
+/episodes.log
+
 # Local-only backup (untracked, kept on disk)
 fluppi/backup/
 # dataset/ is generated - except the hand-written strict training sources

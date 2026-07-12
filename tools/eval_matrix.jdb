@@ -31,6 +31,9 @@ IF GEN_TEMP$ <> "" THEN GEN_TEMP = VAL(GEN_TEMP$)
 DIM GEN_MAXTOK = 4096
 DIM GEN_MAXTOK$ = GETENV$("EVAL_MAXTOK")
 IF GEN_MAXTOK$ <> "" THEN GEN_MAXTOK = VAL(GEN_MAXTOK$)
+DIM GEN_RPEN = 1.1
+DIM GEN_RPEN$ = GETENV$("EVAL_REPEAT_PENALTY")
+IF GEN_RPEN$ <> "" THEN GEN_RPEN = VAL(GEN_RPEN$)
 DIM MODDIR$ = GETENV$("EVAL_MODDIR")
 
 FUNC extract_code(text$)
@@ -63,6 +66,7 @@ FUNC query_model(user$)
     req{"stream"} = FALSE
     req{"temperature"} = GEN_TEMP
     req{"max_tokens"} = GEN_MAXTOK
+    req{"repeat_penalty"} = GEN_RPEN
     DIM body$ = JSON.STRINGIFY$(req)
     DIM reqfile$ = WORKDIR$ + "/_req.json"
     TXTWRITER reqfile$, body$
