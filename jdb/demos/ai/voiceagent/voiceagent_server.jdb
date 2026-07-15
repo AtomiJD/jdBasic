@@ -1,17 +1,33 @@
-' voiceagent_server.jdb - TwiML dialog server for the voice assistant (P2).
+' voiceagent_server.jdb - TwiML dialog server for the voice assistant.
 ' Twilio connects an outbound (or inbound) call to /voice; jdBasic serves the
-' spoken turns: Say (Twilio TTS) -> Gather speech (Twilio STT) -> reply -> loop.
-' Turn-based, no WebSocket needed. Expose it publicly with ngrok and point the
-' Twilio call's Url at https://<tunnel>/voice.
+' spoken turns: Say (Twilio TTS) -> Gather speech (Twilio STT) -> LLM -> reply
+' -> loop. Turn-based, no WebSocket. Expose it publicly with ngrok (region us)
+' and point the Twilio call's Url at https://<tunnel>/voice.
+'
+' All on-screen text lives in prompts.json (localizable per twilio_lang). Each
+' call's turns are stored in a SQLite table so the LLM gets real conversation
+' context and the transcript survives a server restart.
 
 DIM gPort = 5005
 DIM gBind$ = "0.0.0.0"
-DIM gLang$ = "de-DE"
 ' A pending announcement (event summary) the outbound trigger drops here; the
-' first /voice turn reads and consumes it, else falls back to a plain greeting.
+' first /voice turn reads it, then clears it so it plays only once.
 DIM gPendingFile$ = "/tmp/va_pending.txt"
 ' The LLM brain: a local llama-server (OpenAI-compatible chat endpoint).
 DIM gBrainUrl$ = "http://127.0.0.1:8082/v1/chat/completions"
+DIM gPromptsPath$ = "prompts.json"
+DIM gDbPath$ = "conversations.db"
+' Cap how many past messages ride along as context (keeps latency + tokens sane).
+DIM gHistoryWindow = 16
+
+FUNC loadPrompts(path$, locale$)
+    DIM raw$ = TXTREADER$(path$)
+    DIM all = JSON.PARSE$(raw$)
+    DIM locs = all{"locales"}
+    DIM p = locs{locale$}
+    IF TYPEOF(p) = "NONE" THEN p = locs{all{"default_locale"}}
+    RETURN p
+ENDFUNC
 
 FUNC xmlEsc$(s$)
     DIM r$ = REPLACE$(s$, "&", "&amp;")
@@ -39,25 +55,59 @@ FUNC xmlResponse(body$)
     RETURN { "__http_status": 200, "__http_content_type": "text/xml", "__http_body": body$ }
 ENDFUNC
 
-' The "brain": a single-turn German reply from the local LLM. Kept short so
-' Twilio's TTS stays snappy and the /gather turn returns well inside Twilio's
-' TwiML-fetch timeout.
-FUNC brainReply$(userText$)
+FUNC sqlEsc$(s$)
+    RETURN REPLACE$(s$, "'", "''")
+ENDFUNC
+
+FUNC loadHistory(callSid$)
+    IF gDb = 0 OR callSid$ = "" THEN RETURN []
+    RETURN SQL.QUERY(gDb, "SELECT role, content FROM turns WHERE call_sid='" + sqlEsc$(callSid$) + "' ORDER BY seq ASC")
+ENDFUNC
+
+SUB saveTurn(callSid$, seq, role$, content$)
+    IF gDb = 0 OR callSid$ = "" THEN EXITSUB
+    DIM ts$ = DATE$() + " " + TIME$()
+    SQL.EXEC(gDb, "INSERT INTO turns(call_sid, seq, role, content, ts) VALUES ('" + sqlEsc$(callSid$) + "', " + STR$(seq) + ", '" + sqlEsc$(role$) + "', '" + sqlEsc$(content$) + "', '" + sqlEsc$(ts$) + "')")
+ENDSUB
+
+' A context-aware German reply from the local LLM: system prompt + recent
+' conversation turns + the new utterance. Persists the turn pair afterwards.
+FUNC brainReply$(callSid$, userText$)
     DIM t$ = TRIM$(userText$)
-    IF t$ = "" THEN RETURN "Ich habe dich leider nicht verstanden."
+    IF t$ = "" THEN RETURN gP{"not_understood"}
+
+    DIM hist = loadHistory(callSid$)
+    DIM nHist = LEN(hist)
+
+    DIM msgs = []
     DIM sysm = {}
     sysm{"role"} = "system"
-    sysm{"content"} = "Du bist ein freundlicher, knapper deutscher Telefonassistent. Antworte in hoechstens zwei kurzen, gesprochenen Saetzen. Keine Aufzaehlungen, keine Emojis, keine Sonderzeichen."
+    sysm{"content"} = gP{"system"}
+    msgs = APPEND(msgs, sysm)
+
+    DIM start = nHist - gHistoryWindow
+    IF start < 0 THEN start = 0
+    DIM i
+    FOR i = start TO nHist - 1
+        DIM hm = {}
+        hm{"role"} = hist[i]{"role"}
+        hm{"content"} = hist[i]{"content"}
+        msgs = APPEND(msgs, hm)
+    NEXT i
+
     DIM usrm = {}
     usrm{"role"} = "user"
     usrm{"content"} = t$
+    msgs = APPEND(msgs, usrm)
+
     DIM req = {}
-    req{"messages"} = [sysm, usrm]
-    req{"temperature"} = 0.4
-    req{"max_tokens"} = 90
+    req{"messages"} = msgs
+    req{"temperature"} = 0.5
+    req{"max_tokens"} = 120
     DIM body$ = JSON.STRINGIFY$(req)
+
     HTTP.SETTIMEOUT(12)
-    DIM reply$ = "Entschuldige, mein Gehirn ist gerade nicht erreichbar."
+    DIM reply$ = gP{"brain_error"}
     TRY
         DIM resp$ = HTTP.POST$(gBrainUrl$, body$, "application/json")
         DIM o = JSON.PARSE$(resp$)
@@ -69,45 +119,71 @@ FUNC brainReply$(userText$)
             ENDIF
         ENDIF
     CATCH
-        reply$ = "Entschuldige, ich hatte gerade einen Aussetzer."
+        reply$ = gP{"brain_error"}
     ENDTRY
+
+    saveTurn(callSid$, nHist, "user", t$)
+    saveTurn(callSid$, nHist + 1, "assistant", reply$)
     RETURN reply$
 ENDFUNC
 
 FUNC isBye(userText$)
     DIM t$ = LCASE$(userText$)
-    IF INSTR(t$, "tschuess") >= 0 THEN RETURN TRUE
-    IF INSTR(t$, "wiederhoeren") >= 0 THEN RETURN TRUE
-    IF INSTR(t$, "beenden") >= 0 THEN RETURN TRUE
-    IF INSTR(t$, "ende") >= 0 THEN RETURN TRUE
+    DIM words = gP{"bye_words"}
+    DIM i
+    FOR i = 0 TO LEN(words) - 1
+        IF INSTR(t$, LCASE$(words[i])) >= 0 THEN RETURN TRUE
+    NEXT i
     RETURN FALSE
 ENDFUNC
 
+FUNC paramVal$(params, key$)
+    IF TYPEOF(params{key$}) = "NONE" THEN RETURN ""
+    RETURN params{key$}
+ENDFUNC
+
 FUNC HandleVoice(request)
-    DIM msg$ = "Hallo! Hier ist dein jdBasic Assistent."
+    DIM msg$ = gP{"greeting"}
     IF FILE.EXISTS(gPendingFile$) THEN
-        DIM p$ = TRIM$(TXTREADER$(gPendingFile$))
-        IF p$ <> "" THEN msg$ = p$
+        DIM pnd$ = TRIM$(TXTREADER$(gPendingFile$))
+        IF pnd$ <> "" THEN
+            msg$ = pnd$
+            TXTWRITER gPendingFile$, ""
+        ENDIF
     ENDIF
-    DIM body$ = mkSay$(msg$) + mkGather$("Wie kann ich dir helfen?") + mkSay$("Ich habe nichts gehoert. Bis spaeter.")
+    DIM body$ = mkSay$(msg$) + mkGather$(gP{"gather_prompt"}) + mkSay$(gP{"no_input"})
     RETURN xmlResponse(mkTwiml$(body$))
 ENDFUNC
 
 FUNC HandleGather(request)
     DIM params = request{"PARAMS"}
-    DIM speech$ = ""
-    IF TYPEOF(params{"SpeechResult"}) <> "NONE" THEN speech$ = params{"SpeechResult"}
+    DIM speech$ = paramVal$(params, "SpeechResult")
+    DIM callSid$ = paramVal$(params, "CallSid")
     IF isBye(speech$) THEN
-        RETURN xmlResponse(mkTwiml$(mkSay$("Alles klar, bis bald!") + "<Hangup/>"))
+        RETURN xmlResponse(mkTwiml$(mkSay$(gP{"goodbye"}) + "<Hangup/>"))
     ENDIF
-    DIM reply$ = brainReply$(speech$)
-    DIM body$ = mkSay$(reply$) + mkGather$("Was kann ich sonst tun?") + mkSay$("Bis spaeter.")
+    DIM reply$ = brainReply$(callSid$, speech$)
+    DIM body$ = mkSay$(reply$) + mkGather$(gP{"gather_reprompt"}) + mkSay$(gP{"no_input"})
     RETURN xmlResponse(mkTwiml$(body$))
 ENDFUNC
 
 FUNC HandleHealth(request)
-    RETURN { "status": "ok", "service": "voiceagent", "port": gPort }
+    RETURN { "status": "ok", "service": "voiceagent", "locale": gLocale$, "db": gDb }
 ENDFUNC
+
+' Boot
+DIM gLocale$ = GETENV$("VA_LOCALE")
+IF gLocale$ = "" THEN gLocale$ = "de"
+DIM gP = loadPrompts(gPromptsPath$, gLocale$)
+DIM gLang$ = gP{"twilio_lang"}
+
+DIM gDb = SQL.OPEN(gDbPath$)
+IF gDb = 0 THEN
+    PRINT "WARN: no SQLite DB (" + SQL.ERRMSG$(0) + ") - running without memory"
+ELSE
+    SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS turns (call_sid TEXT, seq INTEGER, role TEXT, content TEXT, ts TEXT)")
+    SQL.EXEC(gDb, "CREATE INDEX IF NOT EXISTS idx_turns_call ON turns(call_sid, seq)")
+ENDIF
 
 HTTP.SERVER.ON_POST("/voice", "HANDLEVOICE")
 HTTP.SERVER.ON_GET("/voice", "HANDLEVOICE")
@@ -116,9 +192,9 @@ HTTP.SERVER.ON_GET("/gather", "HANDLEGATHER")
 HTTP.SERVER.ON_GET("/health", "HANDLEHEALTH")
 
 IF HTTP.SERVER.START(gPort, gBind$) THEN
-    PRINT "Voice agent TwiML server on " + gBind$ + ":" + STR$(gPort)
-    PRINT "  POST /voice   -> greeting + Gather"
-    PRINT "  POST /gather  -> reply + Gather loop"
+    PRINT "Voice agent on " + gBind$ + ":" + STR$(gPort) + "  locale=" + gLocale$ + " (" + gLang$ + ")"
+    PRINT "  brain: " + gBrainUrl$
+    PRINT "  memory: " + gDbPath$
     HTTP.SERVER.WAIT()
     HTTP.SERVER.STOP()
 ELSE

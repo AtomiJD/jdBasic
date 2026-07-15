@@ -11,8 +11,16 @@ the interface - no browser needed.
   this out" notification.
 - **`voiceagent_server.jdb`** - the dialog server (`HTTP.SERVER` on `:5005`).
   `/voice` returns a greeting plus a `<Gather input="speech">`; `/gather` reads
-  the recognized speech from `request{"PARAMS"}{"SpeechResult"}`, replies, and
-  loops. The reply is rule-based here - swap `brainReply$` for an LLM call.
+  the recognized speech from `request{"PARAMS"}{"SpeechResult"}`, asks the LLM
+  (`brainReply$`) for a short reply with the call's history as context, and
+  loops.
+- **`prompts.json`** - all on-screen text (system prompt, greeting, prompts,
+  fallbacks, hang-up words), one section per locale keyed by `twilio_lang`.
+  Pick the locale with the `VA_LOCALE` env var (default `de`).
+- **`conversations.db`** - SQLite, written at runtime. One row per turn
+  (`call_sid, seq, role, content, ts`); `brainReply$` loads the last turns of
+  the current `CallSid` so the model has real conversation context, and the
+  transcript survives a restart.
 - **`voiceagent_dial.jdb`** - places an *interactive* call. It auto-detects the
   public tunnel URL from the local ngrok API, writes the announcement to
   `/tmp/va_pending.txt`, and points Twilio's `Url` at `<tunnel>/voice`.
