@@ -1,0 +1,99 @@
+' voiceagent_server.jdb - TwiML dialog server for the voice assistant (P2).
+' Twilio connects an outbound (or inbound) call to /voice; jdBasic serves the
+' spoken turns: Say (Twilio TTS) -> Gather speech (Twilio STT) -> reply -> loop.
+' Turn-based, no WebSocket needed. Expose it publicly with ngrok and point the
+' Twilio call's Url at https://<tunnel>/voice.
+
+DIM gPort = 5005
+DIM gBind$ = "0.0.0.0"
+DIM gLang$ = "de-DE"
+' A pending announcement (event summary) the outbound trigger drops here; the
+' first /voice turn reads and consumes it, else falls back to a plain greeting.
+DIM gPendingFile$ = "/tmp/va_pending.txt"
+
+FUNC xmlEsc$(s$)
+    DIM r$ = REPLACE$(s$, "&", "&amp;")
+    r$ = REPLACE$(r$, "<", "&lt;")
+    r$ = REPLACE$(r$, ">", "&gt;")
+    r$ = REPLACE$(r$, CHR$(34), "&quot;")
+    RETURN r$
+ENDFUNC
+
+FUNC mkTwiml$(bodyXml$)
+    DIM q$ = CHR$(34)
+    RETURN "<?xml version=" + q$ + "1.0" + q$ + " encoding=" + q$ + "UTF-8" + q$ + "?>" + "<Response>" + bodyXml$ + "</Response>"
+ENDFUNC
+
+FUNC mkSay$(text$)
+    RETURN "<Say language=" + CHR$(34) + gLang$ + CHR$(34) + ">" + xmlEsc$(text$) + "</Say>"
+ENDFUNC
+
+FUNC mkGather$(promptText$)
+    DIM q$ = CHR$(34)
+    RETURN "<Gather input=" + q$ + "speech" + q$ + " action=" + q$ + "/gather" + q$ + " method=" + q$ + "POST" + q$ + " language=" + q$ + gLang$ + q$ + " speechTimeout=" + q$ + "auto" + q$ + ">" + mkSay$(promptText$) + "</Gather>"
+ENDFUNC
+
+FUNC xmlResponse(body$)
+    RETURN { "__http_status": 200, "__http_content_type": "text/xml", "__http_body": body$ }
+ENDFUNC
+
+' The "brain" - for P2 a simple rule-based reply. P4 swaps in the served LLM.
+FUNC brainReply$(userText$)
+    DIM t$ = LCASE$(TRIM$(userText$))
+    IF t$ = "" THEN RETURN "Ich habe dich leider nicht verstanden."
+    IF INSTR(t$, "wetter") >= 0 THEN RETURN "Das Wetter kann ich noch nicht abrufen, das kommt bald."
+    IF INSTR(t$, "danke") >= 0 THEN RETURN "Sehr gerne!"
+    IF INSTR(t$, "wer bist du") >= 0 THEN RETURN "Ich bin dein jdBasic Sprachassistent auf dem Cortex Server."
+    RETURN "Ich habe verstanden: " + userText$ + ". Das kann ich bald fuer dich bearbeiten."
+ENDFUNC
+
+FUNC isBye(userText$)
+    DIM t$ = LCASE$(userText$)
+    IF INSTR(t$, "tschuess") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "wiederhoeren") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "beenden") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "ende") >= 0 THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+FUNC HandleVoice(request)
+    DIM msg$ = "Hallo! Hier ist dein jdBasic Assistent."
+    IF FILE.EXISTS(gPendingFile$) THEN
+        DIM p$ = TRIM$(TXTREADER$(gPendingFile$))
+        IF p$ <> "" THEN msg$ = p$
+    ENDIF
+    DIM body$ = mkSay$(msg$) + mkGather$("Wie kann ich dir helfen?") + mkSay$("Ich habe nichts gehoert. Bis spaeter.")
+    RETURN xmlResponse(mkTwiml$(body$))
+ENDFUNC
+
+FUNC HandleGather(request)
+    DIM params = request{"PARAMS"}
+    DIM speech$ = ""
+    IF TYPEOF(params{"SpeechResult"}) <> "NONE" THEN speech$ = params{"SpeechResult"}
+    IF isBye(speech$) THEN
+        RETURN xmlResponse(mkTwiml$(mkSay$("Alles klar, bis bald!") + "<Hangup/>"))
+    ENDIF
+    DIM reply$ = brainReply$(speech$)
+    DIM body$ = mkSay$(reply$) + mkGather$("Was kann ich sonst tun?") + mkSay$("Bis spaeter.")
+    RETURN xmlResponse(mkTwiml$(body$))
+ENDFUNC
+
+FUNC HandleHealth(request)
+    RETURN { "status": "ok", "service": "voiceagent", "port": gPort }
+ENDFUNC
+
+HTTP.SERVER.ON_POST("/voice", "HANDLEVOICE")
+HTTP.SERVER.ON_GET("/voice", "HANDLEVOICE")
+HTTP.SERVER.ON_POST("/gather", "HANDLEGATHER")
+HTTP.SERVER.ON_GET("/gather", "HANDLEGATHER")
+HTTP.SERVER.ON_GET("/health", "HANDLEHEALTH")
+
+IF HTTP.SERVER.START(gPort, gBind$) THEN
+    PRINT "Voice agent TwiML server on " + gBind$ + ":" + STR$(gPort)
+    PRINT "  POST /voice   -> greeting + Gather"
+    PRINT "  POST /gather  -> reply + Gather loop"
+    HTTP.SERVER.WAIT()
+    HTTP.SERVER.STOP()
+ELSE
+    PRINT "FEHLER: HTTP-Server-Start fehlgeschlagen auf Port " + STR$(gPort)
+ENDIF

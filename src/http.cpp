@@ -579,6 +579,13 @@ void register_http_builtins(VM& vm) {
 
         g_server = std::make_unique<httplib::Server>();
 
+        // Close each connection after one request. Reverse proxies (ngrok,
+        // cloudflared) pool upstream sockets; cpp-httplib drops idle keep-alive
+        // sockets after a few seconds, so a proxy reusing a just-closed socket
+        // reads an incomplete response (ngrok 3004). One request per connection
+        // emits a clean `Connection: close` with no Keep-Alive header.
+        g_server->set_keep_alive_max_count(1);
+
         // Register all GET handlers
         for (auto& [path, func_name] : g_get_handlers) {
             std::string fn = func_name;

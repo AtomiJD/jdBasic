@@ -1,0 +1,75 @@
+' voiceagent_call.jdb - place a Twilio phone call that speaks a message (P1).
+' Reads Twilio credentials from ~/.voiceagent.env (KEY=VALUE per line).
+' Uses inline TwiML, so no public webhook / ngrok is needed for this test.
+'
+' Usage:  jdBasic voiceagent_call.jdb "text to speak"
+'         jdBasic voiceagent_call.jdb          (uses a default greeting)
+
+FUNC envval$(cfg$, key$)
+    DIM lines = SPLIT(cfg$, CHR$(10))
+    DIM i
+    FOR i = 0 TO LEN(lines) - 1
+        DIM ln$ = TRIM$(lines[i])
+        DIM eq = INSTR(ln$, "=")
+        IF eq >= 0 THEN
+            IF LEFT$(ln$, eq) = key$ THEN RETURN MID$(ln$, eq + 1)
+        ENDIF
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+DIM home$ = GETENV$("HOME")
+DIM cfg$ = TXTREADER$(home$ + "/.voiceagent.env")
+DIM sid$ = envval$(cfg$, "TWILIO_SID")
+DIM tok$ = envval$(cfg$, "TWILIO_TOKEN")
+DIM fromNum$ = envval$(cfg$, "TWILIO_FROM")
+DIM destNum$ = envval$(cfg$, "CALL_TO")
+
+IF sid$ = "" OR tok$ = "" THEN
+    PRINT "FEHLER: Creds fehlen in " + home$ + "/.voiceagent.env"
+    END
+ENDIF
+
+' Message from the command line, else a default greeting.
+DIM args = OS.ARGS()
+DIM msg$ = ""
+DIM ai
+FOR ai = 1 TO LEN(args) - 1
+    IF msg$ = "" THEN
+        msg$ = args[ai]
+    ELSE
+        msg$ = msg$ + " " + args[ai]
+    ENDIF
+NEXT ai
+IF msg$ = "" THEN msg$ = "Hallo, dein jdBasic Sprachassistent ist am Netz."
+
+' Inline TwiML written to a file: the angle brackets must never reach a shell
+' (OS.EXEC routes through sh, which would read < > as redirections). curl's
+' --data-urlencode name@file reads + encodes the file content, so the command
+' line stays free of any shell metacharacters.
+DIM q$ = CHR$(34)
+DIM twiml$ = "<Response><Say language=" + q$ + "de-DE" + q$ + ">" + msg$ + "</Say></Response>"
+DIM twimlFile$ = "/tmp/va_twiml.xml"
+TXTWRITER twimlFile$, twiml$
+DIM url$ = "https://api.twilio.com/2010-04-01/Accounts/" + sid$ + "/Calls.json"
+
+PRINT "Rufe " + destNum$ + " an ..."
+DIM r = OS.EXEC("curl", ["-s", "-u", sid$ + ":" + tok$, _
+    "--data-urlencode", "To=" + destNum$, _
+    "--data-urlencode", "From=" + fromNum$, _
+    "--data-urlencode", "Twiml@" + twimlFile$, url$])
+
+IF r{"EXIT_CODE"} <> 0 THEN
+    PRINT "curl-Fehler, exit " + STR$(r{"EXIT_CODE"})
+    END
+ENDIF
+
+DIM resp$ = r{"OUTPUT"}
+DIM o = JSON.PARSE$(resp$)
+DIM callSid = o{"sid"}
+IF TYPEOF(callSid) = "NONE" THEN
+    PRINT "Twilio-Fehler:"
+    PRINT resp$
+ELSE
+    PRINT "Anruf gestartet. Call-SID: " + callSid + "  Status: " + o{"status"}
+ENDIF

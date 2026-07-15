@@ -1,0 +1,99 @@
+' voiceagent_dial.jdb - place an INTERACTIVE Twilio call (P2).
+' The call points Twilio at <tunnel>/voice, so the TwiML dialog server drives
+' the conversation (Say -> Gather speech -> reply -> loop). An optional message
+' is spoken first as the announcement.
+'
+' Usage:  jdBasic voiceagent_dial.jdb ["announcement text"]
+'         jdBasic voiceagent_dial.jdb https://host/voice-base ["announcement"]
+' The public base URL is auto-detected from the local ngrok API unless given.
+
+FUNC envval$(cfg$, key$)
+    DIM lines = SPLIT(cfg$, CHR$(10))
+    DIM i
+    FOR i = 0 TO LEN(lines) - 1
+        DIM ln$ = TRIM$(lines[i])
+        DIM eq = INSTR(ln$, "=")
+        IF eq >= 0 THEN
+            IF LEFT$(ln$, eq) = key$ THEN RETURN MID$(ln$, eq + 1)
+        ENDIF
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+FUNC ngrokBase$()
+    TRY
+        DIM tj$ = HTTP.GET$("http://127.0.0.1:4040/api/tunnels")
+        DIM tobj = JSON.PARSE$(tj$)
+        DIM tuns = tobj{"tunnels"}
+        DIM ti
+        FOR ti = 0 TO LEN(tuns) - 1
+            IF tuns[ti]{"proto"} = "https" THEN RETURN tuns[ti]{"public_url"}
+        NEXT ti
+    CATCH
+        RETURN ""
+    ENDTRY
+    RETURN ""
+ENDFUNC
+
+DIM home$ = GETENV$("HOME")
+DIM cfg$ = TXTREADER$(home$ + "/.voiceagent.env")
+DIM sid$ = envval$(cfg$, "TWILIO_SID")
+DIM tok$ = envval$(cfg$, "TWILIO_TOKEN")
+DIM fromNum$ = envval$(cfg$, "TWILIO_FROM")
+DIM destNum$ = envval$(cfg$, "CALL_TO")
+
+IF sid$ = "" OR tok$ = "" THEN
+    PRINT "FEHLER: Creds fehlen in " + home$ + "/.voiceagent.env"
+    END
+ENDIF
+
+DIM args = OS.ARGS()
+DIM base$ = ""
+DIM msgStart = 1
+IF LEN(args) > 1 THEN
+    IF LEFT$(args[1], 4) = "http" THEN
+        base$ = args[1]
+        msgStart = 2
+    ENDIF
+ENDIF
+IF base$ = "" THEN base$ = ngrokBase$()
+IF base$ = "" THEN
+    PRINT "FEHLER: keine oeffentliche URL - laeuft ngrok? (http://127.0.0.1:4040)"
+    END
+ENDIF
+
+DIM msg$ = ""
+DIM ai
+FOR ai = msgStart TO LEN(args) - 1
+    IF msg$ = "" THEN
+        msg$ = args[ai]
+    ELSE
+        msg$ = msg$ + " " + args[ai]
+    ENDIF
+NEXT ai
+IF msg$ <> "" THEN TXTWRITER "/tmp/va_pending.txt", msg$
+
+DIM voiceUrl$ = base$ + "/voice"
+PRINT "Tunnel:  " + base$
+PRINT "Rufe " + destNum$ + " an -> " + voiceUrl$
+
+DIM url$ = "https://api.twilio.com/2010-04-01/Accounts/" + sid$ + "/Calls.json"
+DIM r = OS.EXEC("curl", ["-s", "-u", sid$ + ":" + tok$, _
+    "--data-urlencode", "To=" + destNum$, _
+    "--data-urlencode", "From=" + fromNum$, _
+    "--data-urlencode", "Url=" + voiceUrl$, url$])
+
+IF r{"EXIT_CODE"} <> 0 THEN
+    PRINT "curl-Fehler, exit " + STR$(r{"EXIT_CODE"})
+    END
+ENDIF
+
+DIM resp$ = r{"OUTPUT"}
+DIM o = JSON.PARSE$(resp$)
+DIM callSid = o{"sid"}
+IF TYPEOF(callSid) = "NONE" THEN
+    PRINT "Twilio-Fehler:"
+    PRINT resp$
+ELSE
+    PRINT "Anruf gestartet. Call-SID: " + callSid + "  Status: " + o{"status"}
+ENDIF
