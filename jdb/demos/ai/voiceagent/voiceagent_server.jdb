@@ -10,6 +10,8 @@ DIM gLang$ = "de-DE"
 ' A pending announcement (event summary) the outbound trigger drops here; the
 ' first /voice turn reads and consumes it, else falls back to a plain greeting.
 DIM gPendingFile$ = "/tmp/va_pending.txt"
+' The LLM brain: a local llama-server (OpenAI-compatible chat endpoint).
+DIM gBrainUrl$ = "http://127.0.0.1:8082/v1/chat/completions"
 
 FUNC xmlEsc$(s$)
     DIM r$ = REPLACE$(s$, "&", "&amp;")
@@ -37,14 +39,39 @@ FUNC xmlResponse(body$)
     RETURN { "__http_status": 200, "__http_content_type": "text/xml", "__http_body": body$ }
 ENDFUNC
 
-' The "brain" - for P2 a simple rule-based reply. P4 swaps in the served LLM.
+' The "brain": a single-turn German reply from the local LLM. Kept short so
+' Twilio's TTS stays snappy and the /gather turn returns well inside Twilio's
+' TwiML-fetch timeout.
 FUNC brainReply$(userText$)
-    DIM t$ = LCASE$(TRIM$(userText$))
+    DIM t$ = TRIM$(userText$)
     IF t$ = "" THEN RETURN "Ich habe dich leider nicht verstanden."
-    IF INSTR(t$, "wetter") >= 0 THEN RETURN "Das Wetter kann ich noch nicht abrufen, das kommt bald."
-    IF INSTR(t$, "danke") >= 0 THEN RETURN "Sehr gerne!"
-    IF INSTR(t$, "wer bist du") >= 0 THEN RETURN "Ich bin dein jdBasic Sprachassistent auf dem Cortex Server."
-    RETURN "Ich habe verstanden: " + userText$ + ". Das kann ich bald fuer dich bearbeiten."
+    DIM sysm = {}
+    sysm{"role"} = "system"
+    sysm{"content"} = "Du bist ein freundlicher, knapper deutscher Telefonassistent. Antworte in hoechstens zwei kurzen, gesprochenen Saetzen. Keine Aufzaehlungen, keine Emojis, keine Sonderzeichen."
+    DIM usrm = {}
+    usrm{"role"} = "user"
+    usrm{"content"} = t$
+    DIM req = {}
+    req{"messages"} = [sysm, usrm]
+    req{"temperature"} = 0.4
+    req{"max_tokens"} = 90
+    DIM body$ = JSON.STRINGIFY$(req)
+    HTTP.SETTIMEOUT(12)
+    DIM reply$ = "Entschuldige, mein Gehirn ist gerade nicht erreichbar."
+    TRY
+        DIM resp$ = HTTP.POST$(gBrainUrl$, body$, "application/json")
+        DIM o = JSON.PARSE$(resp$)
+        DIM ch = o{"choices"}
+        IF TYPEOF(ch) <> "NONE" THEN
+            DIM c$ = ch[0]{"message"}{"content"}
+            IF TYPEOF(c$) <> "NONE" THEN
+                IF TRIM$(c$) <> "" THEN reply$ = TRIM$(c$)
+            ENDIF
+        ENDIF
+    CATCH
+        reply$ = "Entschuldige, ich hatte gerade einen Aussetzer."
+    ENDTRY
+    RETURN reply$
 ENDFUNC
 
 FUNC isBye(userText$)
