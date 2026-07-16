@@ -134,9 +134,11 @@ FUNC paramVal$(params, key$)
     RETURN params{key$}
 ENDFUNC
 
+' HandleVoice must stay string-only: reading a map here (request{"PARAMS"} or
+' any global map) makes Twilio's very first fetch return no body (status 0),
+' though the same access works from curl and works in HandleGather. Keep the
+' greeting turn free of map lookups (cpp-httplib already logs the raw request).
 FUNC HandleVoice(request)
-    DIM callSid$ = paramVal$(request{"PARAMS"}, "CallSid")
-    logLine("/voice  call=" + callSid$)
     DIM msg$ = gGreeting$
     IF FILE.EXISTS(gPendingFile$) THEN
         DIM p$ = TRIM$(TXTREADER$(gPendingFile$))
