@@ -1,33 +1,24 @@
 ' voiceagent_server.jdb - TwiML dialog server for the voice assistant.
-' Twilio connects an outbound (or inbound) call to /voice; jdBasic serves the
-' spoken turns: Say (Twilio TTS) -> Gather speech (Twilio STT) -> LLM -> reply
-' -> loop. Turn-based, no WebSocket. Expose it publicly with ngrok (region us)
-' and point the Twilio call's Url at https://<tunnel>/voice.
+' Twilio connects a call to /voice; jdBasic serves the spoken turns: Say
+' (Twilio TTS) -> Gather speech (Twilio STT) -> LLM -> reply -> loop.
 '
-' All on-screen text lives in prompts.json (localizable per twilio_lang). Each
-' call's turns are stored in a SQLite table so the LLM gets real conversation
-' context and the transcript survives a server restart.
+' Prompts live in prompts.json and are extracted into plain string globals at
+' boot - the request handlers must NEVER read the JSON map directly (reading a
+' shared map object from a handler thread breaks Twilio's response). Each call's
+' turns are stored in SQLite so the LLM gets conversation context.
 
 DIM gPort = 5005
 DIM gBind$ = "0.0.0.0"
-' A pending announcement (event summary) the outbound trigger drops here; the
-' first /voice turn reads it, then clears it so it plays only once.
 DIM gPendingFile$ = "/tmp/va_pending.txt"
-' The LLM brain: a local llama-server (OpenAI-compatible chat endpoint).
 DIM gBrainUrl$ = "http://127.0.0.1:8082/v1/chat/completions"
 DIM gPromptsPath$ = "prompts.json"
 DIM gDbPath$ = "conversations.db"
-' Cap how many past messages ride along as context (keeps latency + tokens sane).
 DIM gHistoryWindow = 16
+DIM gMaxTokens = 110
 
-FUNC loadPrompts(path$, locale$)
-    DIM raw$ = TXTREADER$(path$)
-    DIM all = JSON.PARSE$(raw$)
-    DIM locs = all{"locales"}
-    DIM p = locs{locale$}
-    IF TYPEOF(p) = "NONE" THEN p = locs{all{"default_locale"}}
-    RETURN p
-ENDFUNC
+SUB logLine(msg$)
+    PRINT DATE$() + " " + TIME$() + "  " + msg$
+ENDSUB
 
 FUNC xmlEsc$(s$)
     DIM r$ = REPLACE$(s$, "&", "&amp;")
@@ -43,7 +34,7 @@ FUNC mkTwiml$(bodyXml$)
 ENDFUNC
 
 FUNC mkSay$(text$)
-    RETURN "<Say language=" + CHR$(34) + gLang$ + CHR$(34) + ">" + xmlEsc$(text$) + "</Say>"
+    RETURN "<Say voice=" + CHR$(34) + gVoice$ + CHR$(34) + ">" + xmlEsc$(text$) + "</Say>"
 ENDFUNC
 
 FUNC mkGather$(promptText$)
@@ -70,11 +61,9 @@ SUB saveTurn(callSid$, seq, role$, content$)
     SQL.EXEC(gDb, "INSERT INTO turns(call_sid, seq, role, content, ts) VALUES ('" + sqlEsc$(callSid$) + "', " + STR$(seq) + ", '" + sqlEsc$(role$) + "', '" + sqlEsc$(content$) + "', '" + sqlEsc$(ts$) + "')")
 ENDSUB
 
-' A context-aware German reply from the local LLM: system prompt + recent
-' conversation turns + the new utterance. Persists the turn pair afterwards.
 FUNC brainReply$(callSid$, userText$)
     DIM t$ = TRIM$(userText$)
-    IF t$ = "" THEN RETURN gP{"not_understood"}
+    IF t$ = "" THEN RETURN gNotUnderstood$
 
     DIM hist = loadHistory(callSid$)
     DIM nHist = LEN(hist)
@@ -82,7 +71,7 @@ FUNC brainReply$(callSid$, userText$)
     DIM msgs = []
     DIM sysm = {}
     sysm{"role"} = "system"
-    sysm{"content"} = gP{"system"}
+    sysm{"content"} = gSystem$
     msgs = APPEND(msgs, sysm)
 
     DIM start = nHist - gHistoryWindow
@@ -103,11 +92,12 @@ FUNC brainReply$(callSid$, userText$)
     DIM req = {}
     req{"messages"} = msgs
     req{"temperature"} = 0.5
-    req{"max_tokens"} = 120
+    req{"max_tokens"} = gMaxTokens
     DIM body$ = JSON.STRINGIFY$(req)
 
     HTTP.SETTIMEOUT(12)
-    DIM reply$ = gP{"brain_error"}
+    DIM reply$ = gBrainError$
+    DIM t0 = TICK()
     TRY
         DIM resp$ = HTTP.POST$(gBrainUrl$, body$, "application/json")
         DIM o = JSON.PARSE$(resp$)
@@ -119,8 +109,9 @@ FUNC brainReply$(callSid$, userText$)
             ENDIF
         ENDIF
     CATCH
-        reply$ = gP{"brain_error"}
+        reply$ = gBrainError$
     ENDTRY
+    logLine("  brain " + STR$(INT(TICK() - t0)) + "ms  ctx=" + STR$(nHist) + " turns  reply=" + reply$)
 
     saveTurn(callSid$, nHist, "user", t$)
     saveTurn(callSid$, nHist + 1, "assistant", reply$)
@@ -129,11 +120,12 @@ ENDFUNC
 
 FUNC isBye(userText$)
     DIM t$ = LCASE$(userText$)
-    DIM words = gP{"bye_words"}
-    DIM i
-    FOR i = 0 TO LEN(words) - 1
-        IF INSTR(t$, LCASE$(words[i])) >= 0 THEN RETURN TRUE
-    NEXT i
+    IF INSTR(t$, "tschuess") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "tschuss") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "wiederhoeren") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "wiederhoren") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "beenden") >= 0 THEN RETURN TRUE
+    IF INSTR(t$, "auf wiedersehen") >= 0 THEN RETURN TRUE
     RETURN FALSE
 ENDFUNC
 
@@ -143,15 +135,17 @@ FUNC paramVal$(params, key$)
 ENDFUNC
 
 FUNC HandleVoice(request)
-    DIM msg$ = gP{"greeting"}
+    DIM callSid$ = paramVal$(request{"PARAMS"}, "CallSid")
+    logLine("/voice  call=" + callSid$)
+    DIM msg$ = gGreeting$
     IF FILE.EXISTS(gPendingFile$) THEN
-        DIM pnd$ = TRIM$(TXTREADER$(gPendingFile$))
-        IF pnd$ <> "" THEN
-            msg$ = pnd$
+        DIM p$ = TRIM$(TXTREADER$(gPendingFile$))
+        IF p$ <> "" THEN
+            msg$ = p$
             TXTWRITER gPendingFile$, ""
         ENDIF
     ENDIF
-    DIM body$ = mkSay$(msg$) + mkGather$(gP{"gather_prompt"}) + mkSay$(gP{"no_input"})
+    DIM body$ = mkSay$(msg$) + mkGather$(gGatherPrompt$) + mkSay$(gNoInput$)
     RETURN xmlResponse(mkTwiml$(body$))
 ENDFUNC
 
@@ -159,27 +153,42 @@ FUNC HandleGather(request)
     DIM params = request{"PARAMS"}
     DIM speech$ = paramVal$(params, "SpeechResult")
     DIM callSid$ = paramVal$(params, "CallSid")
+    logLine("/gather call=" + callSid$ + "  heard=" + speech$)
     IF isBye(speech$) THEN
-        RETURN xmlResponse(mkTwiml$(mkSay$(gP{"goodbye"}) + "<Hangup/>"))
+        RETURN xmlResponse(mkTwiml$(mkSay$(gGoodbye$) + "<Hangup/>"))
     ENDIF
     DIM reply$ = brainReply$(callSid$, speech$)
-    DIM body$ = mkSay$(reply$) + mkGather$(gP{"gather_reprompt"}) + mkSay$(gP{"no_input"})
+    DIM body$ = mkSay$(reply$) + mkGather$(gGatherReprompt$) + mkSay$(gNoInput$)
     RETURN xmlResponse(mkTwiml$(body$))
 ENDFUNC
 
 FUNC HandleHealth(request)
-    RETURN { "status": "ok", "service": "voiceagent", "locale": gLocale$, "db": gDb }
+    RETURN { "status": "ok", "service": "voiceagent", "port": gPort }
 ENDFUNC
 
-' Boot
+' Boot: load prompts once, extract into plain string globals (never read the
+' map from a handler), then open the conversation store.
 DIM gLocale$ = GETENV$("VA_LOCALE")
 IF gLocale$ = "" THEN gLocale$ = "de"
-DIM gP = loadPrompts(gPromptsPath$, gLocale$)
-DIM gLang$ = gP{"twilio_lang"}
+DIM gRaw$ = TXTREADER$(gPromptsPath$)
+DIM gAll = JSON.PARSE$(gRaw$)
+DIM gLocs = gAll{"locales"}
+DIM gPr = gLocs{gLocale$}
+IF TYPEOF(gPr) = "NONE" THEN gPr = gLocs{gAll{"default_locale"}}
+DIM gLang$ = gPr{"twilio_lang"}
+DIM gVoice$ = gPr{"voice"}
+DIM gGreeting$ = gPr{"greeting"}
+DIM gGatherPrompt$ = gPr{"gather_prompt"}
+DIM gGatherReprompt$ = gPr{"gather_reprompt"}
+DIM gNoInput$ = gPr{"no_input"}
+DIM gGoodbye$ = gPr{"goodbye"}
+DIM gNotUnderstood$ = gPr{"not_understood"}
+DIM gBrainError$ = gPr{"brain_error"}
+DIM gSystem$ = gPr{"system"}
 
 DIM gDb = SQL.OPEN(gDbPath$)
 IF gDb = 0 THEN
-    PRINT "WARN: no SQLite DB (" + SQL.ERRMSG$(0) + ") - running without memory"
+    logLine("WARN: no SQLite (" + SQL.ERRMSG$(0) + ") - running without memory")
 ELSE
     SQL.EXEC(gDb, "CREATE TABLE IF NOT EXISTS turns (call_sid TEXT, seq INTEGER, role TEXT, content TEXT, ts TEXT)")
     SQL.EXEC(gDb, "CREATE INDEX IF NOT EXISTS idx_turns_call ON turns(call_sid, seq)")
@@ -192,11 +201,10 @@ HTTP.SERVER.ON_GET("/gather", "HANDLEGATHER")
 HTTP.SERVER.ON_GET("/health", "HANDLEHEALTH")
 
 IF HTTP.SERVER.START(gPort, gBind$) THEN
-    PRINT "Voice agent on " + gBind$ + ":" + STR$(gPort) + "  locale=" + gLocale$ + " (" + gLang$ + ")"
-    PRINT "  brain: " + gBrainUrl$
-    PRINT "  memory: " + gDbPath$
+    logLine("Voice agent on " + gBind$ + ":" + STR$(gPort) + " locale=" + gLocale$ + " voice=" + gVoice$)
+    logLine("  brain=" + gBrainUrl$ + "  memory=" + gDbPath$)
     HTTP.SERVER.WAIT()
     HTTP.SERVER.STOP()
 ELSE
-    PRINT "FEHLER: HTTP-Server-Start fehlgeschlagen auf Port " + STR$(gPort)
+    logLine("FEHLER: HTTP-Server-Start fehlgeschlagen auf Port " + STR$(gPort))
 ENDIF
