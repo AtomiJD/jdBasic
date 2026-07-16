@@ -272,3 +272,7 @@ dataset/*
 dataset/strict_src/*
 !dataset/strict_src/*.jdb
 notes/
+jderg/*.db
+jderg/*.db-shm
+jderg/*.db-wal
+jderg/smoke_xrechnung.xml
