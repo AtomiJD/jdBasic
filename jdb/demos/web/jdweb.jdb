@@ -100,10 +100,12 @@ EXPORT FUNC HASH_PW$(salt$, pw$)
     RETURN CODEC.SHA256$(salt$ + ":" + pw$)
 ENDFUNC
 
+' Locals here must not reuse common app-global names: an undeclared
+' assignment in a FUNC binds to an existing global of the same name.
 EXPORT FUNC COOKIE_VAL$(request, name$)
-    h = request{"HEADERS"}
-    IF TYPEOF(h) = "NONE" THEN RETURN ""
-    raw = h{"cookie"}
+    reqHdrs = request{"HEADERS"}
+    IF TYPEOF(reqHdrs) = "NONE" THEN RETURN ""
+    raw = reqHdrs{"cookie"}
     IF TYPEOF(raw) = "NONE" THEN RETURN ""
     s$ = "; " + ("" + raw)
     key$ = "; " + name$ + "="
