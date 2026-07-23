@@ -1,0 +1,80 @@
+' deusexmachina / agent loop tests.
+' Runs the communication-loop core against a stub brain - no LLM, no
+' network. Verifies reply shape and that both directions land in the
+' persist event log.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT AGENT
+IMPORT PERSIST
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+FUNC stub_brain(question$, ctx$) AS STRING
+    RETURN "echo: " + question$
+ENDFUNC
+
+' ── Setup ────────────────────────────────────────────────────
+Header("Setup")
+PERSIST.init_db "data/agent_test.db"
+Assert(PERSIST.is_open(),                 "DB open")
+Assert(NOT PERSIST.rag_ready(),           "no RAG attached in unit test")
+
+' ── One loop step ────────────────────────────────────────────
+Header("handle")
+DIM msg AS MAP
+msg{"chat_id"} = 4242
+msg{"from_user"} = "alice"
+msg{"msg_text"} = "what is jdBasic?"
+DIM reply = AGENT.handle(msg, stub_brain@)
+Assert(reply{"chat_id"} = 4242,           "reply targets the same chat")
+Assert(reply{"msg_text"} = "echo: what is jdBasic?", "stub brain answered")
+
+' ── Event log has both directions ────────────────────────────
+Header("Event log")
+DIM ev_in = PERSIST.events_by_topic("msg.in", 10)
+DIM ev_out = PERSIST.events_by_topic("msg.out", 10)
+Assert(LEN(ev_in) = 1,                    "inbound logged")
+Assert(LEN(ev_out) = 1,                   "outbound logged")
+DIM logged_in = JSON.PARSE$(ev_in[0]{"payload"})
+Assert(logged_in{"msg_text"} = "what is jdBasic?", "inbound payload survives JSON round-trip")
+Assert(ev_in[0]{"ts"} > 1750000000,       "wallclock epoch timestamp")
+
+' ── Second step appends, order stable ────────────────────────
+Header("Second step")
+msg{"msg_text"} = "ping"
+DIM reply2 = AGENT.handle(msg, stub_brain@)
+Assert(reply2{"msg_text"} = "echo: ping", "second reply")
+Assert(LEN(PERSIST.events_by_topic("msg.in", 10)) = 2, "two inbound events")
+
+' ── Cleanup ──────────────────────────────────────────────────
+Header("Cleanup")
+PERSIST.close
+Assert(NOT PERSIST.is_open(),             "DB closed")
+KILL "data/agent_test.db"
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " AGENT: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

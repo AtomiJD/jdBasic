@@ -1,0 +1,163 @@
+' deusexmachina / Phase B demo - the communication loop.
+'
+' Wires source -> bus -> agent -> sink. With a Telegram bot token in
+' conf/deus.json the loop serves a real chat via long polling; without
+' one it feeds three simulated messages through the same path and
+' prints the replies.
+'
+' Brain selection via conf llm.mode:
+'   stub   - deterministic echo, no model needed (default)
+'   local  - AI.LOAD_LLM on llm.local_model
+'   remote - OpenAI-compatible server at llm.remote_url
+'
+' Run from jdb/deusexmachina/:
+'   ../../build/jdBasic.exe demo_phase_b.jdb
+OPTION "EXPLICIT"
+
+IMPORT CONFIG
+IMPORT PERSIST
+IMPORT BUS
+IMPORT AGENT
+IMPORT TELEGRAM
+IMPORT LLM_BRAIN
+
+PRINT "══════════════════════════════════════════"
+PRINT " deusexmachina - Phase B Communication Loop"
+PRINT "══════════════════════════════════════════"
+
+' ── Config + persistence ──────────────────────────────────────
+DIM conf_path$ = "conf/deus.json"
+DIM cstat = FILE.STAT(conf_path$)
+IF NOT cstat{"exists"} THEN conf_path$ = "conf/deus.example.json"
+DIM conf = CONFIG.load(conf_path$)
+PRINT "config: "; conf_path$
+
+PERSIST.init_db "data/phase_b.db"
+
+' ── Brain selection ───────────────────────────────────────────
+DIM g_llm = 0
+DIM g_remote_url$ = conf{"llm"}{"remote_url"}
+DIM g_remote_model$ = conf{"llm"}{"remote_model"}
+DIM g_system$ = conf{"llm"}{"system"}
+
+FUNC brain_stub(question$, ctx$) AS STRING
+    IF LEN(question$) = 0 THEN RETURN "(non-text message received)"
+    RETURN "deus heard: " + question$
+ENDFUNC
+
+FUNC brain_local(question$, ctx$) AS STRING
+    DIM p$ = question$
+    IF LEN(ctx$) > 0 THEN
+        p$ = "Context:" + CHR$(10) + ctx$ + CHR$(10) + "Question: " + question$
+    ENDIF
+    RETURN LLM_BRAIN.ask(g_llm, p$)
+ENDFUNC
+
+FUNC brain_remote(question$, ctx$) AS STRING
+    DIM p$ = question$
+    IF LEN(ctx$) > 0 THEN
+        p$ = "Context:" + CHR$(10) + ctx$ + CHR$(10) + "Question: " + question$
+    ENDIF
+    RETURN LLM_BRAIN.ask_remote(g_remote_url$, g_remote_model$, g_system$, p$, 256)
+ENDFUNC
+
+DIM mode$ = conf{"llm"}{"mode"}
+DIM brain_fn = brain_stub@
+IF mode$ = "local" THEN
+    PRINT "loading local model..."
+    g_llm = LLM_BRAIN.init(conf{"llm"}{"local_model"}, 2048, 99)
+    LLM_BRAIN.set_system g_llm, g_system$
+    brain_fn = brain_local@
+ELSEIF mode$ = "remote" THEN
+    brain_fn = brain_remote@
+ENDIF
+PRINT "brain: "; mode$
+
+' ── Sink: one reply leaves the loop ───────────────────────────
+DIM g_token$ = conf{"telegram"}{"token"}
+
+SUB deliver(reply AS MAP)
+    IF LEN(g_token$) > 0 THEN
+        DIM sent = TELEGRAM.send_text(g_token$, reply{"chat_id"}, reply{"msg_text"})
+        IF NOT sent THEN PRINT "  ! sendMessage failed for chat "; reply{"chat_id"}
+    ELSE
+        PRINT "  -> ["; reply{"chat_id"}; "] "; reply{"msg_text"}
+    ENDIF
+ENDSUB
+
+' ── Loop driver ───────────────────────────────────────────────
+DIM ch_in = BUS.subscribe("msg.in", 16)
+
+IF LEN(g_token$) > 0 THEN
+    ' Real channel: long-poll Telegram, publish inbound to the bus,
+    ' drain + answer. Ctrl-C ends the loop.
+    PRINT "polling Telegram (Ctrl-C to stop)..."
+    DIM tg_offset = 0
+    DO
+        DIM batch = TELEGRAM.poll(g_token$, tg_offset, conf{"poll_timeout_s"})
+        FOR EACH m IN batch
+            BUS.publish "msg.in", m
+        NEXT
+        IF LEN(batch) > 0 THEN
+            tg_offset = TELEGRAM.max_update_id(batch) + 1
+        ENDIF
+        DIM drained = 0
+        DO
+            IF LEN(batch) = 0 ORELSE drained >= LEN(batch) THEN EXITDO
+            DIM v = CHAN.RECV(ch_in)
+            IF CHAN.IS_EOF(v) THEN EXITDO
+            drained = drained + 1
+            IF LEN(v{"msg_text"}) > 0 THEN
+                PRINT "["; v{"from_user"}; "] "; v{"msg_text"}
+                DIM rep = AGENT.handle(v, brain_fn)
+                deliver rep
+            ENDIF
+        LOOP
+    LOOP
+ELSE
+    ' Simulated channel: an ASYNC producer feeds three messages through
+    ' the same bus topic the real source would use.
+    PRINT "no Telegram token - running simulated conversation"
+    PRINT ""
+
+    ASYNC FUNC fake_source(handle)
+        DIM texts = ["Hallo deus, bist du wach?", _
+                     "Was ist deusexmachina?", _
+                     "Danke, das war alles."]
+        DIM i = 0
+        FOR i = 0 TO LEN(texts) - 1
+            DIM m AS MAP
+            m{"update_id"} = 1000 + i
+            m{"chat_id"} = 4242
+            m{"from_user"} = "sim"
+            m{"msg_text"} = texts[i]
+            CHAN.SEND handle, m
+        NEXT
+        CHAN.CLOSE handle
+        RETURN LEN(texts)
+    ENDFUNC
+
+    DIM src = fake_source(ch_in)
+    DO
+        DIM v = CHAN.RECV(ch_in)
+        IF CHAN.IS_EOF(v) THEN EXITDO
+        PRINT "["; v{"from_user"}; "] "; v{"msg_text"}
+        DIM rep = AGENT.handle(v, brain_fn)
+        deliver rep
+    LOOP
+    DIM n_sent = AWAIT src
+    PRINT ""
+    PRINT "loop done - "; n_sent; " messages in, event log:"
+    FOR EACH ev IN PERSIST.recent_events(10)
+        PRINT "  "; ev{"ts"}; " "; ev{"topic"}; " "; LEFT$(ev{"payload"}, 60)
+    NEXT
+ENDIF
+
+' ── Shutdown ──────────────────────────────────────────────────
+IF g_llm <> 0 THEN LLM_BRAIN.free g_llm
+PERSIST.close
+KILL "data/phase_b.db"
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " Phase B: source -> bus -> agent -> sink"
+PRINT "══════════════════════════════════════════"

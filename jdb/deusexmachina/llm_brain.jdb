@@ -1,17 +1,17 @@
-' deusexmachina / llm_brain — Wrapper um die lokale LLM-Schicht.
+' deusexmachina / llm_brain - wrapper around the LLM layer.
 '
-' Hostet eine geladene LLM-Session und stellt drei Aufruf-Stile bereit:
-'   * ask(id, prompt)             — synchron, fertige Antwort
-'   * ask_streaming(id, prompt)   — Channel mit Token-Stream (für UI)
-'   * ask_rag(id, rag, q, k)      — RAG-augmented synchron
+' Hosts a loaded local LLM session and offers four call styles:
+'   * ask(id, prompt)             - synchronous, full answer
+'   * ask_streaming(id, prompt)   - channel with token stream (for UIs)
+'   * ask_rag(id, rag, q, k)      - RAG-augmented synchronous
+'   * ask_remote(url, model, ...) - OpenAI-compatible HTTP backend
 '
-' Der Channel-Pfad nutzt AI.CHAT_TOKENS aus Phase 3a — Producer ist
-' der LLM-Generations-Thread, Consumer kann live in Telegram, ImGui
-' oder Voice-TTS streamen.
+' The channel path uses AI.CHAT_TOKENS - producer is the LLM generation
+' thread, the consumer can stream live into Telegram, ImGui or TTS.
 
 EXPORT MODULE LLM_BRAIN
 
-DIM g_llm_id = 0           ' aktuelle Hauptsession
+DIM g_llm_id = 0           ' current main session
 DIM g_model_path AS STRING = ""
 
 ' ── Lifecycle ───────────────────────────────────────────────────
@@ -58,22 +58,22 @@ EXPORT FUNC ask(llm_id AS INTEGER, prompt$) AS STRING
     RETURN AI.CHAT(llm_id, prompt$)
 ENDFUNC
 
-' ── Streaming via Channel ──────────────────────────────────────
+' ── Streaming via channel ──────────────────────────────────────
 '
-' Returnt ein CHAN-Handle. Consumer drained mit:
+' Returns a CHAN handle. Consumers drain with:
 '   FOR EACH tok$ IN ch
 '     PRINT tok$;
 '   NEXT
-' Oder explizit:
+' Or explicitly:
 '   DO
 '     DIM t$ = CHAN.RECV(ch)
 '     IF CHAN.IS_EOF(t$) THEN EXITDO
 '     ...
 '   LOOP
 '
-' Buffer-Capacity: 64 ist Default — produces back-pressure auf den
-' LLM-Generations-Thread wenn der Consumer langsamer ist (Telegram-
-' Rate-Limit, GUI-Render).
+' Buffer capacity 64 is the default - it produces back-pressure on the
+' LLM generation thread when the consumer is slower (Telegram rate
+' limit, GUI render).
 
 EXPORT FUNC ask_streaming(llm_id AS INTEGER, prompt$, capacity AS INTEGER) AS INTEGER
     RETURN AI.CHAT_TOKENS(llm_id, prompt$, capacity)
@@ -81,32 +81,60 @@ ENDFUNC
 
 ' ── RAG-augmented ───────────────────────────────────────────────
 '
-' Holt top-k-Chunks aus dem RAG-Index und präfix den Prompt mit dem
-' Kontext. Synchron — für streaming-RAG ruft man ask_streaming nach
-' dem RAG-Lookup auf.
+' Fetches top-k chunks from the RAG index and prefixes the prompt with
+' the context. Synchronous - for streaming RAG call ask_streaming after
+' the RAG lookup.
 
-EXPORT FUNC ask_rag(llm_id AS INTEGER, rag_id AS INTEGER, question$, top_k AS INTEGER) AS STRING
+FUNC rag_prompt$(rag_id AS INTEGER, question$, top_k AS INTEGER) AS STRING
     DIM ctx = AI.RAG_SEARCH(rag_id, question$, top_k)
     DIM ctx_str$ = ""
     FOR EACH chunk IN ctx
         ctx_str$ = ctx_str$ + chunk{"text"} + CHR$(10) + "---" + CHR$(10)
     NEXT
-    DIM prompt$ = "Beantworte die Frage gestützt auf den folgenden Kontext. " + _
-                  "Wenn der Kontext nicht ausreicht, sag das ehrlich." + CHR$(10) + _
-                  CHR$(10) + "Kontext:" + CHR$(10) + ctx_str$ + _
-                  CHR$(10) + "Frage: " + question$
-    RETURN AI.CHAT(llm_id, prompt$)
+    RETURN "Beantworte die Frage gestützt auf den folgenden Kontext. " + _
+           "Wenn der Kontext nicht ausreicht, sag das ehrlich." + CHR$(10) + _
+           CHR$(10) + "Kontext:" + CHR$(10) + ctx_str$ + _
+           CHR$(10) + "Frage: " + question$
+ENDFUNC
+
+EXPORT FUNC ask_rag(llm_id AS INTEGER, rag_id AS INTEGER, question$, top_k AS INTEGER) AS STRING
+    RETURN AI.CHAT(llm_id, rag_prompt$(rag_id, question$, top_k))
 ENDFUNC
 
 EXPORT FUNC ask_rag_streaming(llm_id AS INTEGER, rag_id AS INTEGER, question$, top_k AS INTEGER, capacity AS INTEGER) AS INTEGER
-    DIM ctx = AI.RAG_SEARCH(rag_id, question$, top_k)
-    DIM ctx_str$ = ""
-    FOR EACH chunk IN ctx
-        ctx_str$ = ctx_str$ + chunk{"text"} + CHR$(10) + "---" + CHR$(10)
-    NEXT
-    DIM prompt$ = "Beantworte die Frage gestützt auf den folgenden Kontext. " + _
-                  "Wenn der Kontext nicht ausreicht, sag das ehrlich." + CHR$(10) + _
-                  CHR$(10) + "Kontext:" + CHR$(10) + ctx_str$ + _
-                  CHR$(10) + "Frage: " + question$
-    RETURN AI.CHAT_TOKENS(llm_id, prompt$, capacity)
+    RETURN AI.CHAT_TOKENS(llm_id, rag_prompt$(rag_id, question$, top_k), capacity)
+ENDFUNC
+
+' ── Remote backend (OpenAI-compatible chat/completions) ─────────
+'
+' Talks to any llama-server / vLLM / OpenAI-style endpoint. The JSON
+' body goes through a temp file (curl -d @file) so prompt content never
+' touches the shell. curl instead of HTTP.POST$ because generation
+' regularly exceeds the built-in client's socket timeout.
+
+EXPORT FUNC ask_remote(base_url$, model$, system$, prompt$, max_tokens AS INTEGER) AS STRING
+    DIM messages = []
+    IF LEN(system$) > 0 THEN
+        messages = APPEND(messages, {"role": "system", "content": system$})
+    ENDIF
+    messages = APPEND(messages, {"role": "user", "content": prompt$})
+    DIM body AS MAP
+    body{"model"} = model$
+    body{"messages"} = messages
+    body{"max_tokens"} = max_tokens
+    DIM body_file$ = MKTEMP$("deusllm")
+    TXTWRITER body_file$, JSON.STRINGIFY$(body)
+    DIM r = OS.EXEC("curl", ["-s", "-m", "300", _
+        "-H", "Content-Type: application/json", _
+        "-d", "@" + body_file$, _
+        base_url$ + "/v1/chat/completions"])
+    KILL body_file$
+    IF r{"EXIT_CODE"} <> 0 THEN
+        THROW "LLM_BRAIN.ask_remote: curl exit " + STR$(r{"EXIT_CODE"})
+    ENDIF
+    DIM resp = JSON.PARSE$(r{"OUTPUT"})
+    IF TYPEOF(resp) <> "OBJECT" ORELSE NOT MAP.EXISTS(resp, "choices") THEN
+        THROW "LLM_BRAIN.ask_remote: unexpected response: " + LEFT$(r{"OUTPUT"}, 200)
+    ENDIF
+    RETURN resp{"choices"}[0]{"message"}{"content"}
 ENDFUNC

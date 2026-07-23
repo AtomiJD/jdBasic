@@ -5,3 +5,4 @@ data/*.db-journal
 *.obj
 *.exp
 *.lib
+conf/deus.json

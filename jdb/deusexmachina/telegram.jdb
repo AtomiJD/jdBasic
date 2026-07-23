@@ -1,0 +1,105 @@
+' deusexmachina / telegram - Telegram Bot API connector.
+'
+' Pure parse/build helpers are separated from the curl transport so the
+' unit tests run offline. Transport is curl via OS.EXEC; message bodies
+' travel through --data-urlencode name@file so no shell metacharacters
+' ever reach the command line. Inbound uses long polling (getUpdates),
+' which works behind NAT without a public URL or tunnel.
+
+EXPORT MODULE TELEGRAM
+
+DIM g_api_base$ = "https://api.telegram.org"
+
+' Point the transport at a fake server (integration tests).
+EXPORT SUB set_api_base(url$)
+    g_api_base$ = url$
+ENDSUB
+
+EXPORT FUNC api_url$(token$, method$) AS STRING
+    RETURN g_api_base$ + "/bot" + token$ + "/" + method$
+ENDFUNC
+
+' ── Parsing (offline-testable) ───────────────────────────────────
+
+' Normalises one getUpdates entry into a flat map:
+'   { update_id, chat_id, from_user, msg_text }
+' Non-text updates (stickers, joins, channel posts) yield msg_text = "".
+EXPORT FUNC parse_update(update AS MAP) AS MAP
+    DIM out AS MAP
+    out{"update_id"} = update{"update_id"}
+    out{"chat_id"} = 0
+    out{"from_user"} = ""
+    out{"msg_text"} = ""
+    IF MAP.EXISTS(update, "message") THEN
+        DIM m = update{"message"}
+        IF MAP.EXISTS(m, "chat") THEN
+            out{"chat_id"} = m{"chat"}{"id"}
+        ENDIF
+        IF MAP.EXISTS(m, "from") THEN
+            DIM sender = m{"from"}
+            IF MAP.EXISTS(sender, "username") THEN
+                out{"from_user"} = sender{"username"}
+            ELSEIF MAP.EXISTS(sender, "first_name") THEN
+                out{"from_user"} = sender{"first_name"}
+            ENDIF
+        ENDIF
+        IF MAP.EXISTS(m, "text") THEN
+            out{"msg_text"} = m{"text"}
+        ENDIF
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' Parses a full getUpdates response body into an array of normalised
+' messages. Returns [] when ok=false or the result list is empty.
+EXPORT FUNC parse_updates$(json$) AS ARRAY
+    DIM out = []
+    DIM resp = JSON.PARSE$(json$)
+    IF TYPEOF(resp) <> "OBJECT" THEN RETURN out
+    IF NOT MAP.EXISTS(resp, "ok") THEN RETURN out
+    IF NOT resp{"ok"} THEN RETURN out
+    FOR EACH u IN resp{"result"}
+        out = APPEND(out, parse_update(u))
+    NEXT
+    RETURN out
+ENDFUNC
+
+' Highest update_id in a batch; pass max_id + 1 as the next poll offset.
+EXPORT FUNC max_update_id(msgs AS ARRAY) AS INTEGER
+    DIM top = 0
+    FOR EACH m IN msgs
+        IF m{"update_id"} > top THEN top = m{"update_id"}
+    NEXT
+    RETURN top
+ENDFUNC
+
+' ── Transport (curl) ─────────────────────────────────────────────
+
+' Long-poll getUpdates. Blocks up to timeout_s server-side; the curl
+' deadline gets a grace window on top. Returns normalised messages.
+EXPORT FUNC poll(token$, offset AS INTEGER, timeout_s AS INTEGER) AS ARRAY
+    DIM url$ = api_url$(token$, "getUpdates") + _
+        "?timeout=" + STR$(timeout_s) + "&offset=" + STR$(offset)
+    DIM r = OS.EXEC("curl", ["-s", "-m", STR$(timeout_s + 10), url$])
+    IF r{"EXIT_CODE"} <> 0 THEN
+        THROW "TELEGRAM.poll: curl exit " + STR$(r{"EXIT_CODE"})
+    ENDIF
+    RETURN parse_updates$(r{"OUTPUT"})
+ENDFUNC
+
+' Send a plain-text message. The text goes through a temp file so
+' quotes/newlines/URLs survive unescaped.
+EXPORT FUNC send_text(token$, chat_id, body$) AS BOOLEAN
+    DIM body_file$ = MKTEMP$("deustg")
+    TXTWRITER body_file$, body$
+    DIM r = OS.EXEC("curl", ["-s", "-m", "30", _
+        "--data-urlencode", "chat_id=" + STR$(chat_id), _
+        "--data-urlencode", "text@" + body_file$, _
+        api_url$(token$, "sendMessage")])
+    KILL body_file$
+    IF r{"EXIT_CODE"} <> 0 THEN RETURN FALSE
+    DIM resp = JSON.PARSE$(r{"OUTPUT"})
+    IF TYPEOF(resp) <> "OBJECT" THEN RETURN FALSE
+    IF NOT MAP.EXISTS(resp, "ok") THEN RETURN FALSE
+    RETURN resp{"ok"}
+ENDFUNC

@@ -1,0 +1,39 @@
+' deusexmachina / agent - the communication-loop core.
+'
+' One step = inbound message in, reply out, everything logged to the
+' persist event log. The brain is injected as a FUNC reference
+' brain(question$, context$) AS STRING - a local LLM, the remote
+' backend, or a test stub all fit the same slot. When PERSIST has a
+' RAG index attached, the top-k chunks are passed as context.
+
+EXPORT MODULE AGENT
+IMPORT PERSIST
+
+DIM g_rag_top_k = 3
+
+EXPORT SUB set_rag_top_k(n AS INTEGER)
+    g_rag_top_k = n
+ENDSUB
+
+' Handles one normalised message ({ chat_id, from_user, msg_text })
+' and returns the reply map ({ chat_id, msg_text }).
+EXPORT FUNC handle(msg AS MAP, brain) AS MAP
+    DIM question$ = msg{"msg_text"}
+    PERSIST.log_event "msg.in", JSON.STRINGIFY$(msg)
+
+    DIM ctx$ = ""
+    IF PERSIST.rag_ready() AND LEN(question$) > 0 THEN
+        DIM hits = PERSIST.recall(question$, g_rag_top_k)
+        FOR EACH h IN hits
+            ctx$ = ctx$ + h{"text"} + CHR$(10)
+        NEXT
+    ENDIF
+
+    DIM answer$ = brain(question$, ctx$)
+
+    DIM reply AS MAP
+    reply{"chat_id"} = msg{"chat_id"}
+    reply{"msg_text"} = answer$
+    PERSIST.log_event "msg.out", JSON.STRINGIFY$(reply)
+    RETURN reply
+ENDFUNC

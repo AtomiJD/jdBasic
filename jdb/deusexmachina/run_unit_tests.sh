@@ -10,7 +10,7 @@ EXE=../../build/jdBasic.exe
 mkdir -p data
 
 ok=0; fail=0
-for t in test_bus.jdb test_config.jdb test_persist.jdb; do
+for t in test_bus.jdb test_config.jdb test_persist.jdb test_telegram.jdb test_agent.jdb; do
     echo "── $t ──"
     if "$EXE" "$t" 2>&1 | tail -5 | grep -q "ALL TESTS PASSED"; then
         ok=$((ok+1))

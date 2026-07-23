@@ -1,0 +1,81 @@
+' deusexmachina / telegram connector tests - offline only.
+' Exercises URL building and update parsing on canned payloads built
+' via JSON round-trip; the curl transport is not touched.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+IMPORT TELEGRAM
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Assert(cond, msg)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        FAIL = FAIL + 1
+        PRINT "  FAIL: "; msg
+    ENDIF
+ENDSUB
+
+SUB Header(t$)
+    PRINT ""
+    PRINT "── "; t$; " ──"
+ENDSUB
+
+' ── URL building ─────────────────────────────────────────────
+Header("api_url")
+DIM u$ = TELEGRAM.api_url$("123:abc", "getUpdates")
+Assert(u$ = "https://api.telegram.org/bot123:abc/getUpdates", "default base URL")
+TELEGRAM.set_api_base "http://localhost:9999"
+Assert(TELEGRAM.api_url$("t", "sendMessage") = "http://localhost:9999/bott/sendMessage", "base override")
+TELEGRAM.set_api_base "https://api.telegram.org"
+
+' ── parse_update: text message ───────────────────────────────
+Header("parse_update")
+DIM upd = {"update_id": 101, "message": { _
+    "text": "hello bot", _
+    "chat": {"id": 4242}, _
+    "from": {"username": "alice", "first_name": "Alice"}}}
+DIM msg = TELEGRAM.parse_update(upd)
+Assert(msg{"update_id"} = 101,        "update_id carried")
+Assert(msg{"chat_id"} = 4242,         "chat_id extracted")
+Assert(msg{"from_user"} = "alice",    "username preferred")
+Assert(msg{"msg_text"} = "hello bot", "text extracted")
+
+' first_name fallback when no username
+DIM upd2 = {"update_id": 102, "message": { _
+    "text": "hi", "chat": {"id": 1}, "from": {"first_name": "Bob"}}}
+Assert(TELEGRAM.parse_update(upd2){"from_user"} = "Bob", "first_name fallback")
+
+' non-text update degrades to empty text
+DIM upd3 = {"update_id": 103, "message": {"chat": {"id": 7}}}
+DIM msg3 = TELEGRAM.parse_update(upd3)
+Assert(msg3{"msg_text"} = "",         "sticker/join yields empty text")
+Assert(msg3{"chat_id"} = 7,           "chat_id still present")
+
+' ── parse_updates$: full response bodies ─────────────────────
+Header("parse_updates$")
+DIM ok_body$ = JSON.STRINGIFY$({"ok": TRUE, "result": [upd, upd2]})
+DIM batch = TELEGRAM.parse_updates$(ok_body$)
+Assert(LEN(batch) = 2,                "two updates parsed")
+Assert(batch[1]{"update_id"} = 102,   "order preserved")
+
+Assert(LEN(TELEGRAM.parse_updates$(JSON.STRINGIFY$({"ok": FALSE, "result": []}))) = 0, "ok=false yields []")
+Assert(LEN(TELEGRAM.parse_updates$(JSON.STRINGIFY$({"ok": TRUE, "result": []}))) = 0,  "empty result yields []")
+
+' ── max_update_id ────────────────────────────────────────────
+Header("max_update_id")
+Assert(TELEGRAM.max_update_id(batch) = 102, "max id over batch")
+Assert(TELEGRAM.max_update_id([]) = 0,      "empty batch yields 0")
+
+' ══════════════════════════════════════════════════════════════════
+PRINT ""
+PRINT "══════════════════════════════════════════"
+PRINT " TELEGRAM: PASS="; PASS; "  FAIL="; FAIL
+PRINT "══════════════════════════════════════════"
+IF FAIL = 0 THEN
+    PRINT " ALL TESTS PASSED"
+ELSE
+    PRINT " SOME TESTS FAILED"
+ENDIF

@@ -17,15 +17,24 @@ Distributed personal AI agent ("Jarvis class") built **entirely in jdBasic**. De
 | Polish | dispatch (HTTP receiver + bus routing) | 10 |
 | 4 | modernization: SQL.* natives, NOW_EPOCH, path fixes | (same suites) |
 
-**Total: 67 asserts green.**
+**Phase B - Communication loop: first slice live**
+
+| Sprint | Modules | Asserts |
+|---|---|---:|
+| B1 | telegram (long-poll connector), agent (loop core), llm_brain remote backend | 15 + 11 |
+
+**Total: 93 asserts green.**
 
 Sprint 4 replaced the FFI SQLite bridge with the built-in `SQL.*` natives
 (SQLITE build flag), registered `NOW_EPOCH()` in the interpreter VM (the
 event log now stores real wallclock epochs instead of `TICK()`), and fixed
 all relative paths after the move to `jdb/deusexmachina/`.
 
-**Phase B - Communication loop** is next: source connectors (Telegram
-webhook first) feeding dispatch routes, plus a remote LLM backend.
+Sprint B1 added the communication loop: `telegram.jdb` (Bot API via curl
+long polling - no public URL or tunnel needed), `agent.jdb` (one loop
+step: inbound -> event log -> optional RAG context -> injected brain FUNC
+-> reply -> event log) and `LLM_BRAIN.ask_remote` (OpenAI-compatible
+chat/completions endpoint, verified against a llama-server on the LAN).
 deusexmachina stays a standalone demo project; voice channels come later.
 
 ## Components
@@ -35,11 +44,14 @@ jdb/deusexmachina/
   bus.jdb          # pub/sub topic bus (CHAN based)
   config.jdb       # JSON loader with mtime cache
   persist.jdb      # SQLite (SQL.* natives) + event log + RAG hook
-  llm_brain.jdb    # AI.LOAD_LLM + AI.CHAT_TOKENS streaming + RAG-augmented ask
+  llm_brain.jdb    # AI.LOAD_LLM + AI.CHAT_TOKENS streaming + RAG ask + remote backend
   dispatch.jdb     # HTTP receiver, maps POST paths onto bus topics
+  telegram.jdb     # Telegram Bot API connector (curl long polling)
+  agent.jdb        # communication-loop core (brain injected as FUNC ref)
   tools.jdb        # MCP tool handler FUNCs
 
-  conf/            # JSON configs (per host) - arrives with Phase D distribution
+  conf/            # deus.example.json template; copy to deus.json (gitignored)
+                   # and fill in the Telegram bot token / LLM backend
   data/            # runtime files (DB, caches) - gitignored
   tools/           # MCP tool manifests
     deus_echo.json   # connectivity smoke
@@ -52,6 +64,7 @@ jdb/deusexmachina/
   test_mcp.sh          # end-to-end: MCP server roundtrip
   test_dispatch.jdb    # end-to-end: HTTP to bus
   demo.jdb             # Phase A foundation demo (everything together, ~30s)
+  demo_phase_b.jdb     # Phase B loop: simulated chat, or real Telegram with token
   run_unit_tests.sh    # wrapper: cd + all suites
 ```
 
@@ -89,6 +102,18 @@ Exposes `deus_echo`, `deus_health`, `deus_now` in addition to the built-in
 `jdb_*` tools. Drop a new `tools/foo.json` in, write
 `EXPORT FUNC tool_foo(args$) AS STRING` in any .jdb the manifest references,
 restart - Claude sees the new tool immediately.
+
+### Phase B communication loop
+```bash
+cd jdb/deusexmachina
+../../build/jdBasic.exe demo_phase_b.jdb
+```
+Without config this runs a simulated conversation through
+source -> bus -> agent -> sink with the stub brain. For the real thing:
+`cp conf/deus.example.json conf/deus.json`, put a Telegram bot token in
+(create one via @BotFather), optionally switch `llm.mode` to `remote`
+(any OpenAI-compatible server) or `local` (GGUF via AI.LOAD_LLM), then
+run again - the loop long-polls the bot and answers incoming chats.
 
 ### Unit tests
 ```bash
