@@ -2239,6 +2239,10 @@ Description: Performs a logical NOT operation.
 Syntax: NOW()
 Description: Returns a DateTime object representing the current moment.
 
+[NOW_EPOCH]
+Syntax: NOW_EPOCH()
+Description: Returns the current wallclock time as seconds since 1970-01-01 UTC (a plain number, monotonic across program runs). Available in both interpreter and native -c.
+
 [ON]
 Syntax: ON "event" CALL subroutine
 Description: Registers an event handler (deprecated for error handling).

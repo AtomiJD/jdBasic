@@ -1,8 +1,8 @@
-' deusexmachina / persist+RAG — Integration-Smoke.
+' deusexmachina / persist+RAG - integration smoke.
 '
-' Lädt bge-m3-Q4_K_M.gguf als Embedding-Modell, hängt das in PERSIST
-' ein, schreibt + sucht Chunks. Läuft NICHT im pre-commit-Gate weil
-' Modell-Load + Embed-Init ~3-8s kostet.
+' Loads bge-m3-Q4_K_M.gguf as embedding model, attaches it to PERSIST,
+' writes + searches chunks. NOT part of the pre-commit gate because
+' model load + embed init costs ~3-8s.
 OPTION "EXPLICIT"
 
 IMPORT PERSIST
@@ -30,7 +30,7 @@ PERSIST.init_db "data/rag_test.db"
 Assert(PERSIST.is_open(),            "DB open")
 
 PRINT "  loading bge-m3 (~700 MB)..."
-DIM embed = AI.LOAD_EMBEDDINGS("../models/bge-m3-Q4_K_M.gguf", 512, 99)
+DIM embed = AI.LOAD_EMBEDDINGS("../../models/bge-m3-Q4_K_M.gguf", 512, 99)
 Assert(embed > 0,                    "AI.LOAD_EMBEDDINGS returned id")
 
 PERSIST.init_rag embed
@@ -39,9 +39,9 @@ Assert(PERSIST.rag_ready(),          "rag_ready true after init_rag")
 ' ── Add knowledge ──────────────────────────────────────────────
 Header("Remember")
 PERSIST.remember _
-    "Atomi entwickelt jdBasic, ein modernes BASIC mit APL-style array " + _
-    "operations, native LLVM compile, Channels und FFI.", _
-    "about:atomi"
+    "jdBasic ist ein modernes BASIC mit APL-style array operations, " + _
+    "native LLVM compile, Channels und FFI.", _
+    "about:jdbasic"
 PERSIST.remember _
     "deusexmachina ist ein verteilter persönlicher AI-Agent " + _
     "geschrieben vollständig in jdBasic.", _
@@ -60,9 +60,9 @@ PERSIST.remember _
     "about:channels"
 
 ' ── Recall ─────────────────────────────────────────────────────
-' Embedding-Ranking ist semantisch — wir asserten dass die richtige
-' Quelle in den TOP-K landet, nicht zwingend Position 0. bge-m3 hat
-' eigene Vorlieben über Spracherweiterungen / Begriffe.
+' Embedding ranking is semantic - assert that the right source lands
+' in the top-k, not necessarily at position 0. bge-m3 has its own
+' preferences across languages / terms.
 SUB AssertSourceInHits(hits, expected$, label$)
     DIM found = FALSE
     FOR EACH h IN hits
@@ -72,14 +72,14 @@ SUB AssertSourceInHits(hits, expected$, label$)
 ENDSUB
 
 Header("Recall by similarity")
-DIM hits = PERSIST.recall("Wer hat jdBasic gemacht?", 3)
+DIM hits = PERSIST.recall("Was für eine Sprache ist jdBasic?", 3)
 Assert(LEN(hits) > 0,                "recall returns at least one hit")
 Assert(LEN(hits) <= 3,               "recall respects top-k")
 DIM top = hits[0]
 Assert(MAP.EXISTS(top, "text"),      "hit has text field")
 Assert(MAP.EXISTS(top, "source"),    "hit has source field")
 PRINT "  top hit source: "; top{"source"}
-AssertSourceInHits(hits, "about:atomi", "atomi-jdBasic chunk in top 3")
+AssertSourceInHits(hits, "about:jdbasic", "jdBasic chunk in top 3")
 
 ' ── Recall: another query ──────────────────────────────────────
 Header("Recall: different topic")

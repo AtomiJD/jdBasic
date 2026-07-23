@@ -5248,6 +5248,13 @@ void VM::register_builtins() {
         return Value::make_f64(epoch);
     });
 
+    register_native("NOW_EPOCH", 0, -1, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        auto t = std::chrono::system_clock::now();
+        double epoch = std::chrono::duration<double>(t.time_since_epoch()).count();
+        return Value::make_f64(epoch);
+    });
+
     // Helper: portable UTC tm → epoch (seconds since 1970-01-01 UTC).
     auto tm_to_utc_epoch = [](std::tm tm) -> double {
     #ifdef _WIN32

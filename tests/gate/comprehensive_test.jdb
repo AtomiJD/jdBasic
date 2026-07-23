@@ -1224,6 +1224,13 @@ Assert(dt_days[0] = 7,  "DATEDIFF vec [0]")
 Assert(dt_days[1] = 21, "DATEDIFF vec [1]")
 Assert(dt_days[2] = 42, "DATEDIFF vec [2]")
 
+' NOW_EPOCH: plain seconds since 1970 UTC, present in both runtimes.
+DIM ne_a = NOW_EPOCH()
+DIM ne_b = NOW_EPOCH()
+Assert(ne_a > 1750000000, "NOW_EPOCH is a post-2025 epoch")
+Assert(ne_a < 4102444800, "NOW_EPOCH is a pre-2100 epoch")
+Assert(ne_b >= ne_a,      "NOW_EPOCH is monotonic")
+
 ' ══════════════════════════════════════════════════════════════════
 ' Number literals + binary I/O
 ' ══════════════════════════════════════════════════════════════════

@@ -1599,6 +1599,7 @@ SQL.CLOSE(db)
 * **`TICK()`**: Returns the number of milliseconds since the program started.
 * **`DATE$()` / `TIME$()`**: Returns the current system date/time as a string.
 * **`NOW()`**: Returns a `DateTime` object for the current moment.
+* **`NOW_EPOCH()`**: Returns the current wallclock time as plain seconds since 1970-01-01 UTC. Unlike `TICK()` it is comparable across program runs; unlike `NOW()` it is an untagged number, safe to store in databases or JSON.
 * **`DATEADD(part$, num, date [, tz_hours])`**: Adds an interval to a `DateTime` object. Interval part$: D,H,N,S. Optional numeric UTC offset (hours, may be fractional e.g. `5.5`) is accepted for symmetry but has no effect on the arithmetic.
 * **`DATEDIFF(part$, date1, date2 [, tz_hours]) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S. Optional `tz_hours` accepted but has no effect (difference is TZ-independent).
 * **`CVDATE(date_string$ [, tz_hours])`**: Converts a string (`"YYYY-MM-DD[ HH:MM[:SS]]"`) to a `DateTime` object. When `tz_hours` is given, the input string is interpreted as wall-clock time in that UTC offset (e.g. `CVDATE("2024-01-15 14:00:00", 2)` yields the same instant as `CVDATE("2024-01-15 12:00:00", 0)`).

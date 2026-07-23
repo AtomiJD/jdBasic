@@ -1,19 +1,19 @@
-' deusexmachina / Phase-A-Demo
+' deusexmachina / Phase A demo
 '
-' Zeigt alle vier Foundation-Module zusammen am Werk:
+' Shows all four foundation modules working together:
 '   1. persist (SQLite + RAG)
-'   2. llm_brain (lokales Phi-3 mit RAG-Kontext + Token-Streaming)
-'   3. bus (Pub/Sub-Channels)
-'   4. dispatch (HTTP-Receiver)
+'   2. llm_brain (local Phi-3 with RAG context + token streaming)
+'   3. bus (pub/sub channels)
+'   4. dispatch (HTTP receiver)
 '
-' Lauft aus deusexmachina/ heraus:
-'   ../build/jdBasic.exe demo.jdb
+' Run from jdb/deusexmachina/:
+'   ../../build/jdBasic.exe demo.jdb
 '
-' Vorbedingungen:
-'   - cwd = deusexmachina/
-'   - sqlitebridge.dll danebenliegend (run_unit_tests.sh kopiert das)
+' Prerequisites:
+'   - cwd = jdb/deusexmachina/
+'   - build with the SQLITE flag (SQL.* natives)
 '   - models/Phi-3-mini-4k-instruct-q4.gguf + models/bge-m3-Q4_K_M.gguf
-'     unter ../models/
+'     under ../../models/
 OPTION "EXPLICIT"
 
 IMPORT PERSIST
@@ -22,7 +22,7 @@ IMPORT BUS
 IMPORT DISPATCH
 
 PRINT "══════════════════════════════════════════"
-PRINT " deusexmachina — Phase A Foundation Demo"
+PRINT " deusexmachina - Phase A Foundation Demo"
 PRINT "══════════════════════════════════════════"
 
 ' ── 1) Persist + RAG ──────────────────────────────────────────
@@ -31,13 +31,13 @@ PRINT "[1] Persist + RAG hochfahren..."
 PERSIST.init_db "data/demo.db"
 PRINT "    SQLite open"
 PRINT "    bge-m3 Embedding-Modell laden..."
-DIM embed = AI.LOAD_EMBEDDINGS("../models/bge-m3-Q4_K_M.gguf", 512, 99)
+DIM embed = AI.LOAD_EMBEDDINGS("../../models/bge-m3-Q4_K_M.gguf", 512, 99)
 PERSIST.init_rag embed
 PRINT "    RAG bereit (embed_id="; embed; ")"
 
-' ── 2) Wissen einpflegen ──────────────────────────────────────
+' ── 2) Ingest knowledge ───────────────────────────────────────
 PRINT ""
-PRINT "[2] Atomi-Wissen ingesten..."
+PRINT "[2] Projekt-Wissen ingesten..."
 PERSIST.remember _
     "deusexmachina ist ein verteilter persönlicher AI-Agent komplett " + _
     "in jdBasic. Phase A liefert die Foundation: bus, config, persist, " + _
@@ -50,20 +50,20 @@ PERSIST.remember _
     "doc:channels"
 PERSIST.remember _
     "Phi-3-mini-4k-instruct ist ein 3.8B-LLM von Microsoft. Wir nutzen " + _
-    "die Q4-Quantisierung — passt mit allen 32 Layern auf eine 4070 Ti " + _
+    "die Q4-Quantisierung - passt mit allen 32 Layern auf eine 4070 Ti " + _
     "SUPER mit 16 GB VRAM.", _
     "doc:llm"
 PRINT "    3 Chunks im RAG-Index"
 
-' ── 3) LLM laden ──────────────────────────────────────────────
+' ── 3) Load the LLM ───────────────────────────────────────────
 PRINT ""
 PRINT "[3] Phi-3-mini auf CUDA hochfahren (~5s)..."
-DIM llm = LLM_BRAIN.init("../models/Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
+DIM llm = LLM_BRAIN.init("../../models/Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
 LLM_BRAIN.set_system llm, _
     "Du bist ein präziser, deutsch-sprechender Assistent. Antworte in 1-2 Sätzen."
 PRINT "    LLM bereit (id="; llm; ")"
 
-' ── 4) Bus + Dispatch + ASYNC-Producer ────────────────────────
+' ── 4) Bus + dispatch + ASYNC producer ────────────────────────
 PRINT ""
 PRINT "[4] Bus + Dispatch + ASYNC-Producer..."
 DIM ch_events = BUS.subscribe("demo.events", 8)
@@ -94,7 +94,7 @@ DIM r = AWAIT pub
 PRINT "    Producer schickte "; r; " Events, Consumer drained "; cnt
 PRINT "    Stream: "; acc$
 
-' ── 5) RAG-augmented Frage über Streaming-Channel ─────────────
+' ── 5) RAG-augmented question over a streaming channel ────────
 PRINT ""
 PRINT "[5] RAG-augmentierte Frage als Token-Stream..."
 PRINT "    Frage: 'Was ist Phase A von deusexmachina?'"

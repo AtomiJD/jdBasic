@@ -1,13 +1,13 @@
-' deusexmachina / tools — Handler-FUNCs für die MCP-Tools.
+' deusexmachina / tools - handler FUNCs for the MCP tools.
 '
-' Jede FUNC hier kriegt die Args-as-JSON-String vom MCP-Dispatcher
-' und liefert einen String zurück (der wird als Tool-Output gerendert).
-' Schema-Validierung lebt in den .json-Manifests und macht die MCP-
-' Schicht bereits — hier bauen wir nur die Logik.
+' Each FUNC receives the args as a JSON string from the MCP dispatcher
+' and returns a string (rendered as the tool output). Schema validation
+' lives in the .json manifests and is done by the MCP layer already -
+' only the logic lives here.
 
 EXPORT MODULE TOOLS
 
-' deus_echo — Connectivity-Smoke-Test, parsed args, returnt nachricht.
+' deus_echo - connectivity smoke test, parses args, returns the message.
 EXPORT FUNC tool_echo(args_json$) AS STRING
     DIM args = JSON.PARSE$(args_json$)
     DIM msg$ = "(no message)"
@@ -15,22 +15,23 @@ EXPORT FUNC tool_echo(args_json$) AS STRING
     RETURN "echo from deusexmachina: " + msg$
 ENDFUNC
 
-' deus_health — Liefert kompakten Runtime-Status. Keine Args.
+' deus_health - compact runtime status. No args.
 EXPORT FUNC tool_health(args_json$) AS STRING
     DIM out AS MAP
     out{"server"} = "deusexmachina"
     out{"phase"} = "A"
-    out{"sprint"} = 3
-    out{"build"} = "GFX IMGUI NATIVEC LLM ONNX HTTP MCPSERVER"
+    out{"sprint"} = 4
+    out{"build"} = "GFX IMGUI NATIVEC LLM ONNX HTTP MCPSERVER SQLITE"
     out{"tick_ms"} = TICK()
     RETURN JSON.STRINGIFY$(out)
 ENDFUNC
 
-' deus_now — Aktueller Zeitstempel + Locale.
+' deus_now - current timestamp + locale.
 EXPORT FUNC tool_now(args_json$) AS STRING
     DIM out AS MAP
     out{"date"} = DATE$()
     out{"time"} = TIME$()
+    out{"epoch"} = INT(NOW_EPOCH())
     out{"tick_ms"} = TICK()
     RETURN JSON.STRINGIFY$(out)
 ENDFUNC

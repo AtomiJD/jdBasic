@@ -1,7 +1,7 @@
 {
   "name": "deus_health",
   "description": "Returns a compact JSON status of the deusexmachina runtime: which phase, which sprint, build flags, current uptime tick. No arguments.",
-  "module": "deusexmachina/tools.jdb",
+  "module": "jdb/deusexmachina/tools.jdb",
   "handler": "tool_health",
   "inputSchema": {
     "type": "object",

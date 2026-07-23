@@ -28,7 +28,7 @@ ENDSUB
 ' ── Init ───────────────────────────────────────────────────────
 Header("Init Phi-3-mini")
 PRINT "  loading model... (10-30s on first run)"
-DIM llm = LLM_BRAIN.init("../models/Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
+DIM llm = LLM_BRAIN.init("../../models/Phi-3-mini-4k-instruct-q4.gguf", 2048, 99)
 Assert(llm > 0,                      "AI.LOAD_LLM returned valid id")
 Assert(LLM_BRAIN.is_loaded(),        "is_loaded reports true")
 

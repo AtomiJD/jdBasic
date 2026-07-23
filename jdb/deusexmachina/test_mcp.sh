@@ -4,10 +4,10 @@
 # prüft auf erwartete Strings. Lauft direkt aus dem Repo-Root.
 
 set -e
-cd "$(dirname "$0")/.."  # repo root
+cd "$(dirname "$0")/../.."  # repo root
 
 EXE=build/jdBasic.exe
-TOOLS_DIR=deusexmachina/tools
+TOOLS_DIR=jdb/deusexmachina/tools
 LOG=/tmp/deus_mcp_test.log
 
 if [[ ! -x "$EXE" ]]; then
