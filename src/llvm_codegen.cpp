@@ -3385,6 +3385,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
     TypedValue rhs;
+    // Return tag of the FUNC a `name@` RHS points at, carried onto the
+    // variable so an indirect call through it decodes the result.
+    int fr_ret_tag = -1;
     {
         // Apply the LHS-derived leaf hint ONLY for the RHS codegen scope.
         // RAII auto-restores the outer caller's hint on scope exit, so an
@@ -3394,7 +3397,24 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
             auto fit = user_functions.find(stmt.expr->str_val);
             if (fit != user_functions.end()) {
-                rhs = { fit->second.fn, JD_TAG_FUNCREF };
+                // Store the uniform double(double...) wrapper rather than the
+                // raw function: an indirect call through the variable builds
+                // that signature, so a FUNC taking a STRING would otherwise
+                // be called with a mismatched ABI and read a junk pointer.
+                LLVMValueRef w = build_funcref_wrapper(stmt.expr->str_val,
+                                                       (int)fit->second.param_tags.size());
+                rhs = { w ? w : fit->second.fn, JD_TAG_FUNCREF };
+                fr_ret_tag = fit->second.return_tag;
+            } else if (stmt.expr->is_funcref_lit) {
+                // `LET f = SQR@`: store the uniform wrapper, otherwise the
+                // name lands in the variable as a plain string and the
+                // indirect call later resolves against nothing. Gated on the
+                // funcref marker so a plain "SQR" string stays a string -
+                // the interpreter lets either one be called, but only one
+                // representation can also print.
+                LLVMValueRef bw = builtin_funcref_by_name(stmt.expr->str_val);
+                if (bw) rhs = { bw, JD_TAG_FUNCREF };
+                else    rhs = codegen_expr(*stmt.expr);
             } else {
                 rhs = codegen_expr(*stmt.expr);
             }
@@ -3527,6 +3547,10 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     };
 
     if (vi) {
+        // Re-pointing an existing slot at another FUNC re-points its return
+        // tag too; a plain value assignment clears it so a stale funcref
+        // tag can't decode an ordinary number as a pointer.
+        vi->funcref_return_tag = fr_ret_tag;
         // STRICT: silent slot-type changes hide bit-puns in native — `DIM x = 0`
         // gives x an i64 slot, a later `x = 3.0` SIToFP-converts the float, but
         // when the codegen path is something less innocent (a func returning a
@@ -3656,6 +3680,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             var_tag = JD_TAG_F64;
         }
         VarInfo& nv = create_var(stmt.var_name, var_tag);
+        nv.funcref_return_tag = fr_ret_tag;
         LLVMBuildStore(builder, rhs.val, nv.alloca_val);
     }
 }
@@ -6878,13 +6903,89 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_unary(const Expr& expr) {
 // generate a thin trampoline that forwards the call with proper
 // SIToFP/FPToSI coercions. Cached per (name, arity) so each FUNC
 // only gets one wrapper per .exe.
+// `SQR@` and friends: a reference to a registered builtin rather than to a
+// user FUNC. Higher-order callers expect the uniform double(double...)
+// shape, so wrap the runtime binding and coerce across it. Only builtins
+// whose params and return are scalar-shaped can be wrapped - a string- or
+// array-typed binding has no meaningful f64 transit here, and returning
+// nullptr lets the caller report it instead of emitting a wrong call.
+LLVMValueRef LLVMCodegen::build_builtin_funcref_wrapper(const std::string& fn_name,
+                                                       int arity) {
+    std::string upper = fn_name;
+    for (auto& c : upper) c = (char)toupper((unsigned char)c);
+    auto rit = runtime_funcs.find(upper);
+    if (rit == runtime_funcs.end() || !rit->second.fn) return nullptr;
+
+    LLVMTypeRef fn_ty = rit->second.fn_type;
+    unsigned pc = LLVMCountParamTypes(fn_ty);
+    if ((int)pc != arity) return nullptr;
+    std::vector<LLVMTypeRef> pts(pc);
+    if (pc) LLVMGetParamTypes(fn_ty, pts.data());
+    auto scalar_shaped = [&](LLVMTypeRef t) {
+        return t == f64_type || t == i64_type || t == i32_type;
+    };
+    for (unsigned i = 0; i < pc; i++)
+        if (!scalar_shaped(pts[i])) return nullptr;
+    LLVMTypeRef ret_ty = LLVMGetReturnType(fn_ty);
+    if (!scalar_shaped(ret_ty)) return nullptr;
+
+    std::string key = upper + "/" + std::to_string(arity);
+    auto cached = funcref_wrappers.find(key);
+    if (cached != funcref_wrappers.end()) return cached->second;
+
+    std::vector<LLVMTypeRef> wrap_params(arity, f64_type);
+    LLVMTypeRef wrap_ty = LLVMFunctionType(f64_type,
+        wrap_params.empty() ? nullptr : wrap_params.data(), arity, 0);
+    std::string wrap_name = "__funcref_bi_" + upper + "_" + std::to_string(arity);
+    for (auto& c : wrap_name) if (c == '.' || c == '$' || c == '@') c = '_';
+    LLVMValueRef wrap_fn = LLVMAddFunction(module, wrap_name.c_str(), wrap_ty);
+
+    LLVMValueRef saved_fn = current_fn;
+    LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+    current_fn = wrap_fn;
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, wrap_fn, "entry");
+    LLVMPositionBuilderAtEnd(builder, entry);
+
+    std::vector<LLVMValueRef> inner_args;
+    for (int i = 0; i < arity; i++) {
+        LLVMValueRef p = LLVMGetParam(wrap_fn, i);
+        if (pts[i] == i64_type || pts[i] == i32_type)
+            p = LLVMBuildFPToSI(builder, p, pts[i], "ftoi");
+        inner_args.push_back(p);
+    }
+    LLVMValueRef call = LLVMBuildCall2(builder, fn_ty, rit->second.fn,
+        inner_args.empty() ? nullptr : inner_args.data(),
+        (unsigned)inner_args.size(), "bicall");
+    LLVMValueRef ret_val = (ret_ty == f64_type)
+        ? call
+        : LLVMBuildSIToFP(builder, call, f64_type, "itof");
+    LLVMBuildRet(builder, ret_val);
+
+    current_fn = saved_fn;
+    LLVMPositionBuilderAtEnd(builder, saved_bb);
+    funcref_wrappers[key] = wrap_fn;
+    return wrap_fn;
+}
+
+// Same wrapper, but for sites that have no call to read the arity from
+// (`LET f = SQR@`): take the arity from the builtin's own registration.
+LLVMValueRef LLVMCodegen::builtin_funcref_by_name(const std::string& fn_name) {
+    std::string upper = fn_name;
+    for (auto& c : upper) c = (char)toupper((unsigned char)c);
+    auto rit = runtime_funcs.find(upper);
+    if (rit == runtime_funcs.end() || !rit->second.fn) return nullptr;
+    return build_builtin_funcref_wrapper(upper,
+                                         (int)LLVMCountParamTypes(rit->second.fn_type));
+}
+
 LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int arity) {
     std::string key = fn_name + "/" + std::to_string(arity);
     auto cached = funcref_wrappers.find(key);
     if (cached != funcref_wrappers.end()) return cached->second;
 
     auto fit = user_functions.find(fn_name);
-    if (fit == user_functions.end()) return nullptr;
+    if (fit == user_functions.end())
+        return build_builtin_funcref_wrapper(fn_name, arity);
     auto& fi = fit->second;
     if ((int)fi.param_tags.size() < arity) return nullptr;
 
@@ -7219,7 +7320,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             std::vector<LLVMTypeRef> arg_types;
             for (auto& a : expr.args) {
                 TypedValue av = codegen_expr(*a);
-                args.push_back(coerce_to(av, f64_type));
+                // Pointer-shaped args ride across the uniform f64 ABI as
+                // punned bits - the wrapper on the other side puns them
+                // back. Coercing numerically would hand the callee a 0.
+                if (av.tag == JD_TAG_STR || av.tag == JD_TAG_ARR ||
+                    av.tag == JD_TAG_NATIVE_MAP || av.tag == JD_TAG_VM_HANDLE) {
+                    LLVMValueRef as_i = LLVMBuildPtrToInt(builder, av.val,
+                                                          i64_type, "ptoi");
+                    args.push_back(pun_i64_to_f64(as_i));
+                } else {
+                    args.push_back(coerce_to(av, f64_type));
+                }
                 arg_types.push_back(f64_type);
             }
             LLVMTypeRef fn_ty = LLVMFunctionType(f64_type,
@@ -7228,6 +7339,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, fn_ty, fn_ptr,
                 args.empty() ? nullptr : args.data(),
                 (unsigned)args.size(), "icall");
+            // The wrapper hands ptr-shaped results back as punned f64 bits.
+            // When the referenced FUNC's return tag is known, pun them back
+            // so the caller sees a string/array instead of a float.
+            int rt = vi_fn->funcref_return_tag;
+            if (rt == JD_TAG_STR || rt == JD_TAG_ARR || rt == JD_TAG_NATIVE_MAP) {
+                LLVMValueRef as_i = pun_f64_to_i64(result);
+                return { LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr"), rt };
+            }
             return { result, JD_TAG_F64 };
         }
     }
@@ -7413,6 +7532,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         report_error(m_current_stmt_file, expr.line,
             "SQL.QUERY is interpreter-only (row maps can't cross the native "
             "bridge) - use SQL.TABLE + SQL.COLUMNS in compiled programs");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
+
+    // HELP reads the REPL's help.txt, which a standalone binary neither ships
+    // nor locates. It used to compile clean and only throw "Undefined
+    // function: HELP" once the program ran.
+    if (upper == "HELP" || upper == "HELP$") {
+        report_error(m_current_stmt_file, expr.line,
+            upper + " is interpreter-only (the help text ships with the REPL, "
+            "not with compiled programs) - run it in the interpreter");
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
@@ -9351,6 +9480,17 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
     if (e.kind == ExprKind::LITERAL_STRING) return true;
     if (e.kind == ExprKind::VARIABLE && !e.str_val.empty() && e.str_val.back() == '$') return true;
     if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') return true;
+    // A builtin can return a string without carrying the $ convention (STR
+    // is registered alongside STR$). Its registration knows the return tag,
+    // so trust that over the spelling. Only JD_TAG_STR counts - the other
+    // ptr-returning builtins hand back arrays or maps.
+    if (e.kind == ExprKind::CALL && !e.func_name.empty()) {
+        std::string up = e.func_name;
+        for (auto& c : up) c = (char)toupper((unsigned char)c);
+        auto rit = runtime_funcs.find(up);
+        if (rit != runtime_funcs.end() && rit->second.return_tag == JD_TAG_STR)
+            return true;
+    }
     // String concatenation: any arm being a string makes the result string.
     if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) {
         if (e.left && expr_involves_strings(*e.left)) return true;

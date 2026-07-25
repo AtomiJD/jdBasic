@@ -1,0 +1,68 @@
+' Function references through the native backend. Builtin refs (SQR@) had
+' no codegen path at all and fell back to a plain string; user refs stored
+' the raw function, so an indirect call built a mismatched signature.
+'
+' Untyped params carrying strings are still open (see jdTrakr #155) and are
+' deliberately not exercised here.
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB CheckNum(got AS DOUBLE, want AS DOUBLE, label AS STRING)
+    IF got = want THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label; " got "; got; " want "; want
+    ENDIF
+ENDSUB
+
+SUB CheckStr(got AS STRING, want AS STRING, label AS STRING)
+    IF got = want THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label; " got "; got; " want "; want
+    ENDIF
+ENDSUB
+
+FUNC Twice(n AS DOUBLE) AS DOUBLE
+    RETURN n * 2
+ENDFUNC
+
+FUNC Shout(s AS STRING) AS STRING
+    RETURN UCASE$(s)
+ENDFUNC
+
+FUNC Tag(n AS DOUBLE) AS STRING
+    RETURN STR(n)
+ENDFUNC
+
+FUNC ApplyOne(fn, x AS DOUBLE) AS DOUBLE
+    RETURN fn(x)
+ENDFUNC
+
+PRINT "=== builtin funcref ==="
+LET fsqr = sqr@
+CheckNum(fsqr(144), 12, "builtin ref via global")
+CheckNum(ApplyOne(sqr@, 81), 9, "builtin ref as parameter")
+DIM sq AS ARRAY
+sq = SELECT(sqr@, [4, 9, 16])
+CheckNum(sq[0], 2, "builtin ref in SELECT, elem 0")
+CheckNum(sq[2], 4, "builtin ref in SELECT, elem 2")
+
+PRINT "=== user funcref ==="
+LET ftw = Twice@
+CheckNum(ftw(21), 42, "user ref, numeric arg")
+CheckNum(ApplyOne(Twice@, 5), 10, "user ref as parameter")
+
+PRINT "=== user funcref carrying strings ==="
+LET fsh = Shout@
+CheckStr(fsh("hello"), "HELLO", "typed string arg and return")
+LET ftg = Tag@
+CheckStr(ftg(7), "7", "string return from numeric arg")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL TESTS PASSED!"

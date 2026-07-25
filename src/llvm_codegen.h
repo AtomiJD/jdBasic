@@ -134,6 +134,10 @@ private:
         LLVMValueRef alloca_val;
         int tag;  // JdTag (see jdb_tags.h)
         LLVMValueRef runtime_tag_alloca = nullptr;  // i32 runtime type; used when tag == JD_TAG_RUNTIME
+        // For tag == JD_TAG_FUNCREF: the referenced function's return tag,
+        // so an indirect call through this variable decodes its result
+        // instead of assuming f64. -1 when unknown.
+        int funcref_return_tag = -1;
     };
 
     // Scope stack for local variables (functions push/pop scopes)
@@ -160,6 +164,8 @@ private:
     // Wrapper is generated lazily on first reference.
     std::unordered_map<std::string, LLVMValueRef> funcref_wrappers;
     LLVMValueRef build_funcref_wrapper(const std::string& fn_name, int arity);
+    LLVMValueRef build_builtin_funcref_wrapper(const std::string& fn_name, int arity);
+    LLVMValueRef builtin_funcref_by_name(const std::string& fn_name);
 
     // Loop control: stack of {break_bb, continue_bb} for EXITDO/EXITFOR/CONTINUE
     struct LoopCtx {
@@ -359,7 +365,7 @@ private:
     LLVMValueRef to_i1(TypedValue tv);
     TypedValue promote_to_f64(TypedValue tv);
     bool is_udt_string_field(const std::string& var_name, const std::string& field_name);
-    static bool expr_involves_strings(const Expr& e);
+    bool expr_involves_strings(const Expr& e);
     void emit_trace(int line, const std::string& source_file = "");
     // Emit a divisor-zero check: if rhs == 0, record "Division by zero"
     // and branch to the top-of-stack catch block (or abort if none).
