@@ -1466,6 +1466,15 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
 * **`IOTA(N, [B=1], [S=1]) -> vector`**: Generates a vector of N numbers starting from B with step S. B,S defaults to 1 if not provided.
 * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
+
+  A reducer takes **one** array. The optional second argument names the axis of a matrix; it is never a second value to compare against. `MAX(3, 9)` is a malformed reduction, not a two-argument maximum - write `MAX([3, 9])`. `SUM`, `MIN` and `MAX` implement the axis form; the remaining reducers currently ignore it and reduce the whole array.
+
+  ```basic
+  DIM m = RESHAPE([1,2,3,4,5,6], [2,3])   ' [[1,2,3],[4,5,6]]
+  PRINT MAX(m)      ' 6         - whole matrix
+  PRINT MAX(m, 0)   ' [4, 5, 6] - one value per column
+  PRINT MAX(m, 1)   ' [3, 6]    - one value per row
+  ```
 * **`SCAN(operator, array) -> array`**: Performs a cumulative reduction (scan) along the last axis of an array.
 * **`SELECT(function@, array, [row_wise_bool]) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument. If the optional third argument 'row_wise_bool' is TRUE, it applies the function to each row of a 2D matrix instead. The result of a row-wise select is always a 1D array.
 * **`FILTER(function@, array) -> array`**: Filters an array by applying a user-defined predicate function to each element. It returns a new 1D array containing only the elements for which the predicate function returned `TRUE`. The provided function must accept one argument and should return a boolean value.

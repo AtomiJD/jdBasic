@@ -202,8 +202,11 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_clamp",  "CLAMP",  f64_type, {f64_type, f64_type, f64_type}, 1);
     reg("jdb_fac",    "FAC",    f64_type, {f64_type}, 1);
     reg("jdb_fmod",   "FMOD",   f64_type, {f64_type, f64_type}, 1);
-    reg("jdb_min2",   "MIN",    f64_type, {f64_type, f64_type}, 1);
-    reg("jdb_max2",   "MAX",    f64_type, {f64_type, f64_type}, 1);
+    // Internal names only. MIN/MAX are unary array reducers with an optional
+    // axis; binding those names to a two-argument scalar min/max is what made
+    // MAX(3, 9) answer 9 compiled and 3 interpreted.
+    reg("jdb_min2",   "__min2", f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_max2",   "__max2", f64_type, {f64_type, f64_type}, 1);
     reg("jdb_pi",     "PI",     f64_type, {}, 1);
     reg("jdb_e",      "E",      f64_type, {}, 1);
 
@@ -240,6 +243,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_variance","VARIANCE",  f64_type, {i8_ptr_type}, 1);
     reg("jdb_array_sum",  "SUM",          f64_type, {i8_ptr_type}, 1);
     reg("jdb_array_product","PRODUCT",    f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_reduce_axis", "__arr_reduce_axis", i8_ptr_type,
+        {i8_ptr_type, i64_type, i32_type}, 3);
     reg("jdb_array_min",  "__arr_min",    f64_type, {i8_ptr_type}, 1);
     reg("jdb_array_max",  "__arr_max",    f64_type, {i8_ptr_type}, 1);
     reg("jdb_array_any",  "ANY",          i64_type, {i8_ptr_type}, 0);
@@ -7763,6 +7768,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (e.kind == ExprKind::LITERAL_STRING) {
             LLVMValueRef wrap = build_funcref_wrapper(e.str_val, arity);
             if (wrap) return { wrap, JD_TAG_FUNCREF };
+            if (e.is_funcref_lit) {
+                // Nothing to point at. Falling through emits the name as a
+                // string, which the higher-order call then reads as a
+                // function pointer and quietly answers 0.
+                report_error(m_current_stmt_file, e.line,
+                    "'" + e.str_val + "@' cannot be used as a function reference "
+                    "here (no FUNC of that name, and no builtin with a matching "
+                    "scalar signature for " + std::to_string(arity) + " argument(s))");
+                return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
+            }
         }
         return codegen_expr(e);
     };
@@ -8924,7 +8939,33 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Handle MIN/MAX — scalar (2 args) or array (1 arg)
+    // Reducers take one array. A second argument names the axis of a matrix
+    // and yields one value per lane; it is never a second value to compare
+    // against, which is what the old MIN/MAX binding to jdb_min2/jdb_max2
+    // silently made it.
+    if ((upper == "SUM" || upper == "MIN" || upper == "MAX") &&
+        expr.args.size() == 2) {
+        if (arg_cache[0].tag != JD_TAG_ARR) {
+            report_error(m_current_stmt_file, expr.line,
+                upper + " takes one array; the second argument is the axis of a "
+                "matrix, not a second value - use " + upper + "([a, b])");
+            return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
+        }
+        auto* ax = get_runtime_func("__arr_reduce_axis");
+        if (ax) {
+            int op = (upper == "SUM") ? 0 : (upper == "MIN") ? 1 : 2;
+            LLVMValueRef args[] = {
+                coerce_to(arg_cache[0], i8_ptr_type),
+                coerce_to(arg_cache[1], i64_type),
+                LLVMConstInt(i32_type, op, 0)
+            };
+            LLVMValueRef result = LLVMBuildCall2(builder, ax->fn_type, ax->fn,
+                                                 args, 3, "redax");
+            return { result, JD_TAG_ARR };
+        }
+    }
+
+    // Handle MIN/MAX — array (1 arg)
     if ((upper == "MIN" || upper == "MAX") && expr.args.size() == 1) {
         // Array version
         std::string fn_name = (upper == "MIN") ? "__arr_min" : "__arr_max";

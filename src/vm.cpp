@@ -3355,6 +3355,59 @@ static double elem2d(const Value& m, int r, int c) {
     return m.as_array()->elements[r].as_array()->elements[c].to_double();
 }
 
+// Reduction argument shape. A reducer takes one array; a second argument
+// names the axis and is only meaningful for a matrix.
+enum class ReduceForm { WHOLE, ALONG_AXIS, BAD_SCALAR };
+
+static ReduceForm reduce_form(const std::vector<Value>& args) {
+    if (args.empty()) return ReduceForm::WHOLE;
+    bool arr = args[0].type == ValueType::ARRAY;
+    if (args.size() < 2) return arr ? ReduceForm::WHOLE : ReduceForm::WHOLE;
+    // Second argument present: only an array of rows can be reduced along
+    // an axis. A scalar here means someone wrote MAX(a, b) expecting a
+    // two-argument maximum, which these functions have never been.
+    if (!arr) return ReduceForm::BAD_SCALAR;
+    auto* a = args[0].as_array();
+    if (a->elements.empty() || a->elements[0].type != ValueType::ARRAY)
+        return ReduceForm::WHOLE;
+    return ReduceForm::ALONG_AXIS;
+}
+
+static double lane_sum(const std::vector<double>& v) {
+    double s = 0; for (double d : v) s += d; return s;
+}
+static double lane_min(const std::vector<double>& v) {
+    if (v.empty()) return 0;
+    double m = v[0]; for (double d : v) if (d < m) m = d; return m;
+}
+static double lane_max(const std::vector<double>& v) {
+    if (v.empty()) return 0;
+    double m = v[0]; for (double d : v) if (d > m) m = d; return m;
+}
+
+// Gather each lane along `dim` and reduce it. dim 0 walks down the rows and
+// yields one value per column; dim 1 walks across a row.
+static Value reduce_along_axis(const Value& m, int dim,
+        const std::function<double(const std::vector<double>&)>& reduce_lane) {
+    int rows, cols; get_2d(m, rows, cols);
+    Value r = Value::make_array();
+    std::vector<double> lane;
+    if (dim == 0) {
+        for (int c = 0; c < cols; c++) {
+            lane.clear();
+            for (int ro = 0; ro < rows; ro++) lane.push_back(elem2d(m, ro, c));
+            r.as_array()->elements.push_back(Value::make_f64(reduce_lane(lane)));
+        }
+    } else {
+        for (int ro = 0; ro < rows; ro++) {
+            lane.clear();
+            for (int c = 0; c < cols; c++) lane.push_back(elem2d(m, ro, c));
+            r.as_array()->elements.push_back(Value::make_f64(reduce_lane(lane)));
+        }
+    }
+    return r;
+}
+
 static Value make_matrix(int rows, int cols, double fill = 0.0) {
     Value m = Value::make_array();
     auto* ma = m.as_array();
@@ -4572,24 +4625,11 @@ void VM::register_builtins() {
 
     // ── Reductions: SUM, PRODUCT, MIN, MAX, ANY, ALL ─────────
     register_native("SUM", 1, 2, [](const std::vector<Value>& args) -> Value {
-        if (args.size() >= 2 && args[0].as_array()->elements[0].type == ValueType::ARRAY) {
-            // 2D with dimension
-            int dim = (int)args[1].to_int();
-            int rows, cols; get_2d(args[0], rows, cols);
-            Value r = Value::make_array();
-            if (dim == 0) { // reduce rows → one row of col sums
-                for (int c = 0; c < cols; c++) {
-                    double s = 0; for (int ro = 0; ro < rows; ro++) s += elem2d(args[0], ro, c);
-                    r.as_array()->elements.push_back(Value::make_f64(s));
-                }
-            } else { // reduce cols → one col of row sums
-                for (int ro = 0; ro < rows; ro++) {
-                    double s = 0; for (int c = 0; c < cols; c++) s += elem2d(args[0], ro, c);
-                    r.as_array()->elements.push_back(Value::make_f64(s));
-                }
-            }
-            return r;
-        }
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("SUM takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_sum);
         auto flat = flatten_values(args[0]);
         double s = 0; for (auto& v : flat) s += v.to_double();
         return Value::make_f64(s);
@@ -4601,7 +4641,12 @@ void VM::register_builtins() {
         return Value::make_f64(s);
     });
 
-    register_native("MIN", [](const std::vector<Value>& args) -> Value {
+    register_native("MIN", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("MIN takes one array; the second argument "
+                "is the axis of a matrix, not a second value - use MIN([a, b])");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_min);
         auto flat = flatten_values(args[0]);
         if (flat.empty()) return Value::make_f64(0);
         double m = flat[0].to_double();
@@ -4609,7 +4654,12 @@ void VM::register_builtins() {
         return Value::make_f64(m);
     });
 
-    register_native("MAX", [](const std::vector<Value>& args) -> Value {
+    register_native("MAX", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("MAX takes one array; the second argument "
+                "is the axis of a matrix, not a second value - use MAX([a, b])");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_max);
         auto flat = flatten_values(args[0]);
         if (flat.empty()) return Value::make_f64(0);
         double m = flat[0].to_double();

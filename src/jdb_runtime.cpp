@@ -492,6 +492,39 @@ double jdb_array_sum(JdbArray* arr) {
     return s;
 }
 
+// Reduce a matrix along one axis. dim 0 walks down the rows and yields one
+// value per column; dim 1 walks across each row. op picks the reduction:
+// 0 = sum, 1 = min, 2 = max. Mirrors reduce_along_axis in the interpreter.
+JdbArray* jdb_array_reduce_axis(JdbArray* arr, int64_t dim, int32_t op) {
+    if (!arr || arr->length == 0 || !(arr->flags & 1)) return jdb_array_new(0);
+    int64_t rows = arr->length;
+    int64_t cols = 0;
+    for (int64_t r = 0; r < rows; r++) {
+        JdbArray* row = decode_inner(arr->data[r]);
+        if (row && row->length > cols) cols = row->length;
+    }
+    auto cell = [&](int64_t r, int64_t c) -> double {
+        JdbArray* row = decode_inner(arr->data[r]);
+        return (row && c < row->length) ? row->data[c] : 0.0;
+    };
+    auto fold = [&](double acc, double v) {
+        if (op == 1) return v < acc ? v : acc;
+        if (op == 2) return v > acc ? v : acc;
+        return acc + v;
+    };
+    int64_t out_len = (dim == 0) ? cols : rows;
+    int64_t lane_len = (dim == 0) ? rows : cols;
+    auto* out = jdb_array_new(out_len);
+    for (int64_t i = 0; i < out_len; i++) {
+        if (lane_len == 0) { out->data[i] = 0.0; continue; }
+        double acc = (dim == 0) ? cell(0, i) : cell(i, 0);
+        for (int64_t k = 1; k < lane_len; k++)
+            acc = fold(acc, (dim == 0) ? cell(k, i) : cell(i, k));
+        out->data[i] = acc;
+    }
+    return out;
+}
+
 double jdb_array_product(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
     double s = 1.0;

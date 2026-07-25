@@ -1,0 +1,57 @@
+' Reduction functions take one array. A second argument names the axis of a
+' matrix - axis 0 reduces down the rows and yields one value per column,
+' axis 1 reduces across each row. It is never a second value to compare
+' against; MAX(3, 9) is a malformed reduction, not a two-argument maximum.
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB CheckNum(got AS DOUBLE, want AS DOUBLE, label AS STRING)
+    IF got = want THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label; " got "; got; " want "; want
+    ENDIF
+ENDSUB
+
+SUB CheckArr(got AS STRING, want AS STRING, label AS STRING)
+    IF got = want THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label; " got "; got; " want "; want
+    ENDIF
+ENDSUB
+
+DIM m AS ARRAY
+m = RESHAPE([1, 2, 3, 4, 5, 6], [2, 3])
+
+PRINT "=== vector: one argument ==="
+CheckNum(SUM([3, 1, 2]), 6, "SUM vector")
+CheckNum(MIN([3, 1, 2]), 1, "MIN vector")
+CheckNum(MAX([3, 1, 2]), 3, "MAX vector")
+
+PRINT "=== matrix without an axis reduces the whole thing ==="
+CheckNum(SUM(m), 21, "SUM matrix")
+CheckNum(MIN(m), 1, "MIN matrix")
+CheckNum(MAX(m), 6, "MAX matrix")
+
+PRINT "=== matrix along axis 0 (per column) ==="
+CheckArr(JOIN(SUM(m, 0), ","), "5,7,9", "SUM axis 0")
+CheckArr(JOIN(MIN(m, 0), ","), "1,2,3", "MIN axis 0")
+CheckArr(JOIN(MAX(m, 0), ","), "4,5,6", "MAX axis 0")
+
+PRINT "=== matrix along axis 1 (per row) ==="
+CheckArr(JOIN(SUM(m, 1), ","), "6,15", "SUM axis 1")
+CheckArr(JOIN(MIN(m, 1), ","), "1,4", "MIN axis 1")
+CheckArr(JOIN(MAX(m, 1), ","), "3,6", "MAX axis 1")
+
+PRINT "=== two values go in an array, not two arguments ==="
+CheckNum(MAX([3, 9]), 9, "MAX of a two-element array")
+CheckNum(MIN([3, 9]), 3, "MIN of a two-element array")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL TESTS PASSED!"
