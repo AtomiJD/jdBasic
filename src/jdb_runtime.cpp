@@ -34,6 +34,7 @@ extern "C" JdbArray* jdb_array_new(int64_t size);
 extern "C" {
 
 static inline JdbArray* decode_inner(double val);
+static void flatten_into(JdbArray* arr, std::vector<double>& out);
 
 // ── I/O ─────────────────────────────────────────────────────
 
@@ -459,23 +460,29 @@ char* jdb_array_pop_str(JdbArray* arr) {
     return _strdup(s ? s : "");
 }
 
+// Statistics walk leaves, not cells: on a matrix the top-level cells are
+// inner-array pointers, and summing those bits as numbers is meaningless.
 double jdb_mean(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
+    std::vector<double> flat;
+    flatten_into(arr, flat);
+    if (flat.empty()) return 0.0;
     double sum = 0.0;
-    for (int64_t i = 0; i < arr->length; i++)
-        sum += arr->data[i];
-    return sum / arr->length;
+    for (double d : flat) sum += d;
+    return sum / (double)flat.size();
 }
 
 double jdb_stdev(JdbArray* arr) {
     if (!arr || arr->length <= 1) return 0.0;
-    double avg = jdb_mean(arr);
+    std::vector<double> flat;
+    flatten_into(arr, flat);
+    if (flat.size() < 2) return 0.0;
+    double avg = 0.0;
+    for (double d : flat) avg += d;
+    avg /= (double)flat.size();
     double sum_sq = 0.0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        double d = arr->data[i] - avg;
-        sum_sq += d * d;
-    }
-    return sqrt(sum_sq / arr->length);  // population stdev (matches VM)
+    for (double d : flat) { double x = d - avg; sum_sq += x * x; }
+    return sqrt(sum_sq / (double)flat.size());  // population stdev (matches VM)
 }
 
 // ── Array operations ────────────────────────────────────────
@@ -493,8 +500,10 @@ double jdb_array_sum(JdbArray* arr) {
 }
 
 // Reduce a matrix along one axis. dim 0 walks down the rows and yields one
-// value per column; dim 1 walks across each row. op picks the reduction:
-// 0 = sum, 1 = min, 2 = max. Mirrors reduce_along_axis in the interpreter.
+// value per column; dim 1 walks across each row. Mirrors reduce_along_axis
+// in the interpreter; the op codes match JdbReduceOp there.
+//   0 sum  1 min  2 max  3 product  4 mean
+//   5 median  6 variance  7 stdev  8 any  9 all
 JdbArray* jdb_array_reduce_axis(JdbArray* arr, int64_t dim, int32_t op) {
     if (!arr || arr->length == 0 || !(arr->flags & 1)) return jdb_array_new(0);
     int64_t rows = arr->length;
@@ -507,21 +516,44 @@ JdbArray* jdb_array_reduce_axis(JdbArray* arr, int64_t dim, int32_t op) {
         JdbArray* row = decode_inner(arr->data[r]);
         return (row && c < row->length) ? row->data[c] : 0.0;
     };
-    auto fold = [&](double acc, double v) {
-        if (op == 1) return v < acc ? v : acc;
-        if (op == 2) return v > acc ? v : acc;
-        return acc + v;
+    auto reduce_lane = [&](const std::vector<double>& v) -> double {
+        if (v.empty()) return 0.0;
+        switch (op) {
+            case 1: { double m = v[0]; for (double d : v) if (d < m) m = d; return m; }
+            case 2: { double m = v[0]; for (double d : v) if (d > m) m = d; return m; }
+            case 3: { double s = 1.0; for (double d : v) s *= d; return s; }
+            case 8: { for (double d : v) if (d != 0.0) return 1.0; return 0.0; }
+            case 9: { for (double d : v) if (d == 0.0) return 0.0; return 1.0; }
+            case 5: {
+                std::vector<double> s = v;
+                std::sort(s.begin(), s.end());
+                size_t n = s.size();
+                return (n % 2) ? s[n/2] : (s[n/2-1] + s[n/2]) / 2.0;
+            }
+            default: break;
+        }
+        double sum = 0.0;
+        for (double d : v) sum += d;
+        if (op == 0) return sum;
+        double mean = sum / (double)v.size();
+        if (op == 4) return mean;
+        if (v.size() < 2) return 0.0;
+        double ss = 0.0;
+        for (double d : v) { double x = d - mean; ss += x * x; }
+        double var = ss / (double)v.size();
+        return (op == 7) ? sqrt(var) : var;
     };
     int64_t out_len = (dim == 0) ? cols : rows;
     int64_t lane_len = (dim == 0) ? rows : cols;
     auto* out = jdb_array_new(out_len);
+    std::vector<double> lane;
     for (int64_t i = 0; i < out_len; i++) {
-        if (lane_len == 0) { out->data[i] = 0.0; continue; }
-        double acc = (dim == 0) ? cell(0, i) : cell(i, 0);
-        for (int64_t k = 1; k < lane_len; k++)
-            acc = fold(acc, (dim == 0) ? cell(k, i) : cell(i, k));
-        out->data[i] = acc;
+        lane.clear();
+        for (int64_t k = 0; k < lane_len; k++)
+            lane.push_back((dim == 0) ? cell(k, i) : cell(i, k));
+        out->data[i] = reduce_lane(lane);
     }
+    if (op == 8 || op == 9) out->flags |= 4;  // render as TRUE/FALSE
     return out;
 }
 
@@ -1056,24 +1088,25 @@ JdbArray* jdb_array_shuffle(JdbArray* arr) {
 
 double jdb_array_median(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
-    auto* sorted = jdb_array_sort(arr);
-    double result;
-    int64_t n = sorted->length;
-    if (n % 2 == 1) result = sorted->data[n/2];
-    else result = (sorted->data[n/2-1] + sorted->data[n/2]) / 2.0;
-    free(sorted->data); free(sorted);
-    return result;
+    std::vector<double> flat;
+    flatten_into(arr, flat);
+    if (flat.empty()) return 0.0;
+    std::sort(flat.begin(), flat.end());
+    size_t n = flat.size();
+    return (n % 2) ? flat[n/2] : (flat[n/2-1] + flat[n/2]) / 2.0;
 }
 
 double jdb_array_variance(JdbArray* arr) {
     if (!arr || arr->length == 0) return 0.0;
-    double avg = jdb_mean(arr);
+    std::vector<double> flat;
+    flatten_into(arr, flat);
+    if (flat.size() < 2) return 0.0;
+    double avg = 0.0;
+    for (double d : flat) avg += d;
+    avg /= (double)flat.size();
     double ss = 0.0;
-    for (int64_t i = 0; i < arr->length; i++) {
-        double d = arr->data[i] - avg;
-        ss += d * d;
-    }
-    return ss / arr->length;
+    for (double d : flat) { double x = d - avg; ss += x * x; }
+    return ss / (double)flat.size();
 }
 
 JdbArray* jdb_linspace(double start, double stop, int64_t n) {
@@ -2706,6 +2739,7 @@ char* jdb_oct(int64_t val) {
 char* jdb_join_arr(JdbArray* arr, const char* delim) {
     if (!arr || arr->length == 0) return _strdup("");
     bool is_str = (arr->flags & 2) != 0;
+    bool is_bool = !is_str && (arr->flags & 4) != 0;
     size_t dlen = delim ? strlen(delim) : 0;
     // First pass: compute needed length
     size_t total = 0;
@@ -2728,6 +2762,11 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
             const char* s = (const char*)(intptr_t)u.i;
             size_t sl = s ? strlen(s) : 0;
             if (sl) memcpy(out + pos, s, sl);
+            pos += sl;
+        } else if (is_bool) {
+            const char* s = (arr->data[i] != 0.0) ? "TRUE" : "FALSE";
+            size_t sl = strlen(s);
+            memcpy(out + pos, s, sl);
             pos += sl;
         } else {
             pos += snprintf(out + pos, total + 1 - pos, "%g", arr->data[i]);

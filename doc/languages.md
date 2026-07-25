@@ -1467,7 +1467,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`IOTA(N, [B=1], [S=1]) -> vector`**: Generates a vector of N numbers starting from B with step S. B,S defaults to 1 if not provided.
 * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
 
-  A reducer takes **one** array. The optional second argument names the axis of a matrix; it is never a second value to compare against. `MAX(3, 9)` is a malformed reduction, not a two-argument maximum - write `MAX([3, 9])`. `SUM`, `MIN` and `MAX` implement the axis form; the remaining reducers currently ignore it and reduce the whole array.
+  A reducer takes **one** array. The optional second argument names the axis of a matrix; it is never a second value to compare against. `MAX(3, 9)` is a malformed reduction, not a two-argument maximum - write `MAX([3, 9])`. The axis form is available on `SUM`, `MIN`, `MAX`, `PRODUCT`, `MEAN`, `MEDIAN`, `VARIANCE`, `STDEV`, `ANY` and `ALL`.
 
   ```basic
   DIM m = RESHAPE([1,2,3,4,5,6], [2,3])   ' [[1,2,3],[4,5,6]]

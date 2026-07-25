@@ -48,6 +48,28 @@ CheckArr(JOIN(SUM(m, 1), ","), "6,15", "SUM axis 1")
 CheckArr(JOIN(MIN(m, 1), ","), "1,4", "MIN axis 1")
 CheckArr(JOIN(MAX(m, 1), ","), "3,6", "MAX axis 1")
 
+PRINT "=== the remaining reducers, whole matrix ==="
+CheckNum(PRODUCT(m), 720, "PRODUCT matrix")
+CheckNum(MEAN(m), 3.5, "MEAN matrix")
+CheckNum(MEDIAN(m), 3.5, "MEDIAN matrix")
+CheckNum(VARIANCE(m), 35.0 / 12.0, "VARIANCE matrix")
+
+PRINT "=== the remaining reducers, along an axis ==="
+CheckArr(JOIN(PRODUCT(m, 0), ","), "4,10,18", "PRODUCT axis 0")
+CheckArr(JOIN(PRODUCT(m, 1), ","), "6,120", "PRODUCT axis 1")
+CheckArr(JOIN(MEAN(m, 0), ","), "2.5,3.5,4.5", "MEAN axis 0")
+CheckArr(JOIN(MEAN(m, 1), ","), "2,5", "MEAN axis 1")
+CheckArr(JOIN(MEDIAN(m, 0), ","), "2.5,3.5,4.5", "MEDIAN axis 0")
+CheckArr(JOIN(VARIANCE(m, 0), ","), "2.25,2.25,2.25", "VARIANCE axis 0")
+CheckArr(JOIN(STDEV(m, 0), ","), "1.5,1.5,1.5", "STDEV axis 0")
+
+PRINT "=== ANY / ALL along an axis ==="
+DIM b AS ARRAY
+b = RESHAPE([1, 0, 1, 1, 1, 1], [2, 3])
+CheckArr(JOIN(ANY(b, 0), ","), "TRUE,TRUE,TRUE", "ANY axis 0")
+CheckArr(JOIN(ALL(b, 0), ","), "TRUE,FALSE,TRUE", "ALL axis 0")
+CheckArr(JOIN(ALL(b, 1), ","), "FALSE,TRUE", "ALL axis 1")
+
 PRINT "=== two values go in an array, not two arguments ==="
 CheckNum(MAX([3, 9]), 9, "MAX of a two-element array")
 CheckNum(MIN([3, 9]), 3, "MIN of a two-element array")

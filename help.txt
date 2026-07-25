@@ -243,7 +243,7 @@ Syntax: AI.TOPK(vec, k) -> array
 Description: Returns the top-k {index, score} pairs.
 
 [ALL]
-Syntax: ALL(array)
+Syntax: ALL(array) or ALL(matrix, dimension)
 Description: Returns TRUE if all elements in an array are true, otherwise FALSE.
 
 [AND]
@@ -255,7 +255,7 @@ Syntax: expression ANDALSO expression
 Description: Performs a short-circuiting logical AND operation.
 
 [ANY]
-Syntax: ANY(array)
+Syntax: ANY(array) or ANY(matrix, dimension)
 Description: Returns TRUE if any element in an array is true, otherwise FALSE.
 
 [APPEND]
@@ -1307,11 +1307,11 @@ Syntax: LINSPACE(start, stop, n) -> vector
 Description: Returns n evenly spaced samples over [start, stop] inclusive.
 
 [MEAN]
-Syntax: MEAN(array) -> number
+Syntax: MEAN(array) or MEAN(matrix, dimension) -> number or array
 Description: Arithmetic mean (average) of an array.
 
 [MEDIAN]
-Syntax: MEDIAN(array) -> number
+Syntax: MEDIAN(array) or MEDIAN(matrix, dimension) -> number or array
 Description: Median (central value) of an array.
 
 [MINUTE]
@@ -1551,7 +1551,7 @@ Syntax: STARTSWITH(str$, prefix$) -> bool
 Description: TRUE if str$ starts with prefix$.
 
 [STDEV]
-Syntax: STDEV(array) -> number
+Syntax: STDEV(array) or STDEV(matrix, dimension) -> number or array
 Description: Standard deviation of an array.
 
 [TALLY]
@@ -2373,7 +2373,7 @@ PRINT [expressionlist] [{; | ,}]
 Outputs text or variable values to the console.
 
 [PRODUCT]
-Syntax: PRODUCT(array)
+Syntax: PRODUCT(array) or PRODUCT(matrix, dimension)
 Description: Returns the product of all elements in an array.
 
 [PSET]
@@ -3437,7 +3437,7 @@ Syntax: VAL(string$)
 Description: Converts a string to a number.
 
 [VARIANCE]
-Syntax: VARIANCE(array) -> number
+Syntax: VARIANCE(array) or VARIANCE(matrix, dimension) -> number or array
 Description: Variance (dispersion) of an array.
 
 [VARS]

@@ -3384,25 +3384,62 @@ static double lane_max(const std::vector<double>& v) {
     if (v.empty()) return 0;
     double m = v[0]; for (double d : v) if (d > m) m = d; return m;
 }
+static double lane_product(const std::vector<double>& v) {
+    if (v.empty()) return 0;
+    double s = 1; for (double d : v) s *= d; return s;
+}
+static double lane_mean(const std::vector<double>& v) {
+    if (v.empty()) return 0;
+    return lane_sum(v) / (double)v.size();
+}
+static double lane_median(const std::vector<double>& v) {
+    if (v.empty()) return 0;
+    std::vector<double> s = v;
+    std::sort(s.begin(), s.end());
+    size_t n = s.size();
+    return n % 2 ? s[n/2] : (s[n/2-1] + s[n/2]) / 2.0;
+}
+static double lane_variance(const std::vector<double>& v) {
+    if (v.size() < 2) return 0;
+    double m = lane_mean(v), ss = 0;
+    for (double d : v) { double x = d - m; ss += x * x; }
+    return ss / (double)v.size();
+}
+static double lane_stdev(const std::vector<double>& v) {
+    return std::sqrt(lane_variance(v));
+}
+static double lane_any(const std::vector<double>& v) {
+    for (double d : v) if (d != 0.0) return 1.0;
+    return 0.0;
+}
+static double lane_all(const std::vector<double>& v) {
+    for (double d : v) if (d == 0.0) return 0.0;
+    return 1.0;
+}
 
 // Gather each lane along `dim` and reduce it. dim 0 walks down the rows and
 // yields one value per column; dim 1 walks across a row.
 static Value reduce_along_axis(const Value& m, int dim,
-        const std::function<double(const std::vector<double>&)>& reduce_lane) {
+        const std::function<double(const std::vector<double>&)>& reduce_lane,
+        bool as_bool = false) {
     int rows, cols; get_2d(m, rows, cols);
     Value r = Value::make_array();
     std::vector<double> lane;
+    auto emit = [&](double d) {
+        r.as_array()->elements.push_back(
+            as_bool ? Value::make_bool(d != 0.0) : Value::make_f64(d));
+    };
     if (dim == 0) {
         for (int c = 0; c < cols; c++) {
             lane.clear();
             for (int ro = 0; ro < rows; ro++) lane.push_back(elem2d(m, ro, c));
-            r.as_array()->elements.push_back(Value::make_f64(reduce_lane(lane)));
+            emit(reduce_lane(lane));
         }
     } else {
         for (int ro = 0; ro < rows; ro++) {
             lane.clear();
             for (int c = 0; c < cols; c++) lane.push_back(elem2d(m, ro, c));
-            r.as_array()->elements.push_back(Value::make_f64(reduce_lane(lane)));
+            emit(reduce_lane(lane));
         }
     }
     return r;
@@ -4635,7 +4672,12 @@ void VM::register_builtins() {
         return Value::make_f64(s);
     });
 
-    register_native("PRODUCT", [](const std::vector<Value>& args) -> Value {
+    register_native("PRODUCT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("PRODUCT takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_product);
         auto flat = flatten_values(args[0]);
         double s = 1; for (auto& v : flat) s *= v.to_double();
         return Value::make_f64(s);
@@ -4667,13 +4709,23 @@ void VM::register_builtins() {
         return Value::make_f64(m);
     });
 
-    register_native("ANY", [](const std::vector<Value>& args) -> Value {
+    register_native("ANY", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("ANY takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_any, true);
         auto flat = flatten_values(args[0]);
         for (auto& v : flat) if (v.to_bool()) return Value::make_bool(true);
         return Value::make_bool(false);
     });
 
-    register_native("ALL", [](const std::vector<Value>& args) -> Value {
+    register_native("ALL", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("ALL takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_all, true);
         auto flat = flatten_values(args[0]);
         for (auto& v : flat) if (!v.to_bool()) return Value::make_bool(false);
         return Value::make_bool(true);
@@ -7082,13 +7134,23 @@ void VM::register_builtins() {
 
     // ── 3. Statistics ────────────────────────────────────────
 
-    register_native("MEAN", [](const std::vector<Value>& args) -> Value {
+    register_native("MEAN", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("MEAN takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_mean);
         auto flat = flatten_values(args[0]);
         if (flat.empty()) return Value::make_f64(0);
         double s = 0; for (auto& v : flat) s += v.to_double();
         return Value::make_f64(s / flat.size());
     });
-    register_native("MEDIAN", [](const std::vector<Value>& args) -> Value {
+    register_native("MEDIAN", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("MEDIAN takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_median);
         auto flat = flatten_values(args[0]);
         if (flat.empty()) return Value::make_f64(0);
         std::vector<double> vals; for (auto& v : flat) vals.push_back(v.to_double());
@@ -7096,7 +7158,12 @@ void VM::register_builtins() {
         size_t n = vals.size();
         return Value::make_f64(n % 2 ? vals[n/2] : (vals[n/2-1] + vals[n/2]) / 2.0);
     });
-    register_native("VARIANCE", [](const std::vector<Value>& args) -> Value {
+    register_native("VARIANCE", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("VARIANCE takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_variance);
         auto flat = flatten_values(args[0]);
         if (flat.size() < 2) return Value::make_f64(0);
         double s = 0; for (auto& v : flat) s += v.to_double();
@@ -7104,7 +7171,12 @@ void VM::register_builtins() {
         for (auto& v : flat) { double d = v.to_double() - mean; ss += d * d; }
         return Value::make_f64(ss / flat.size());
     });
-    register_native("STDEV", [](const std::vector<Value>& args) -> Value {
+    register_native("STDEV", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (reduce_form(args) == ReduceForm::BAD_SCALAR)
+            throw std::runtime_error("STDEV takes one array; the second argument "
+                "is the axis of a matrix, not a second value");
+        if (reduce_form(args) == ReduceForm::ALONG_AXIS)
+            return reduce_along_axis(args[0], (int)args[1].to_int(), lane_stdev);
         auto flat = flatten_values(args[0]);
         if (flat.size() < 2) return Value::make_f64(0);
         double s = 0; for (auto& v : flat) s += v.to_double();

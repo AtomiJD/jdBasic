@@ -8943,8 +8943,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // and yields one value per lane; it is never a second value to compare
     // against, which is what the old MIN/MAX binding to jdb_min2/jdb_max2
     // silently made it.
-    if ((upper == "SUM" || upper == "MIN" || upper == "MAX") &&
-        expr.args.size() == 2) {
+    static const std::unordered_map<std::string, int> reduce_ops = {
+        {"SUM", 0}, {"MIN", 1}, {"MAX", 2}, {"PRODUCT", 3}, {"MEAN", 4},
+        {"MEDIAN", 5}, {"VARIANCE", 6}, {"STDEV", 7}, {"ANY", 8}, {"ALL", 9},
+    };
+    auto rop = reduce_ops.find(upper);
+    if (rop != reduce_ops.end() && expr.args.size() == 2) {
         if (arg_cache[0].tag != JD_TAG_ARR) {
             report_error(m_current_stmt_file, expr.line,
                 upper + " takes one array; the second argument is the axis of a "
@@ -8953,7 +8957,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         auto* ax = get_runtime_func("__arr_reduce_axis");
         if (ax) {
-            int op = (upper == "SUM") ? 0 : (upper == "MIN") ? 1 : 2;
+            int op = rop->second;
             LLVMValueRef args[] = {
                 coerce_to(arg_cache[0], i8_ptr_type),
                 coerce_to(arg_cache[1], i64_type),
