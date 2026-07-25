@@ -934,6 +934,18 @@ static inline JdbArray* decode_inner(double val);
 // Recursive helper: walk any-depth nested array, push all leaf values into out.
 static void flatten_into(JdbArray* arr, std::vector<double>& out) {
     if (!arr) return;
+    // Per-element tags win when present: a ragged array ([3, [4,5]]) mixes
+    // plain cells with inner-array pointers, so the array-wide nested bit
+    // cannot describe it and decoding every cell as a pointer would fault.
+    if (arr->elem_tags && (arr->flags & 8)) {
+        for (int64_t i = 0; i < arr->length; i++) {
+            if (arr->elem_tags[i] == JD_TAG_ARR)
+                flatten_into(decode_inner(arr->data[i]), out);
+            else
+                out.push_back(arr->data[i]);
+        }
+        return;
+    }
     if (arr->flags & 1) {
         // Nested: each element is a pointer to an inner JdbArray
         for (int64_t i = 0; i < arr->length; i++)
@@ -946,8 +958,10 @@ static void flatten_into(JdbArray* arr, std::vector<double>& out) {
 
 JdbArray* jdb_array_flatten(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
-    // Fast path: 1D is identity.
-    if (!(arr->flags & 1)) {
+    // Fast path: 1D is identity. A tagged array may still carry inner-array
+    // cells without the array-wide nested bit, so it takes the walking path.
+    bool tagged = arr->elem_tags && (arr->flags & 8);
+    if (!(arr->flags & 1) && !tagged) {
         auto* r = jdb_array_new(arr->length);
         memcpy(r->data, arr->data, arr->length * sizeof(double));
         r->flags = arr->flags;
@@ -959,8 +973,39 @@ JdbArray* jdb_array_flatten(JdbArray* arr) {
     auto* r = jdb_array_new((int64_t)flat.size());
     if (!flat.empty()) memcpy(r->data, flat.data(), flat.size() * sizeof(double));
     // Carry over the string-elements bit; the nested-array bit is gone
-    // by definition because we just flattened it out.
-    r->flags = arr->flags & ~1;
+    // by definition because we just flattened it out. Bit 3 goes with it -
+    // the result carries no elem_tags, and a set bit with a NULL array
+    // would send every tag-aware reader through a null dereference.
+    r->flags = arr->flags & ~(1 | 8);
+    return r;
+}
+
+// INSERT$ on an array: insert one cell at pos, clamped to [0, length].
+// The tag travels with the value so a ragged result stays readable.
+JdbArray* jdb_array_insert(JdbArray* arr, double val, int64_t pos, int32_t tag) {
+    int64_t oldlen = arr ? arr->length : 0;
+    if (pos < 0) pos = 0;
+    if (pos > oldlen) pos = oldlen;
+    auto* r = jdb_array_new(oldlen + 1);
+    if (arr && pos > 0) memcpy(r->data, arr->data, pos * sizeof(double));
+    r->data[pos] = val;
+    if (arr && pos < oldlen)
+        memcpy(r->data + pos + 1, arr->data + pos, (oldlen - pos) * sizeof(double));
+
+    bool src_tagged = arr && arr->elem_tags && (arr->flags & 8);
+    bool need_tags = src_tagged || tag == JD_TAG_ARR || tag == JD_TAG_STR ||
+                     tag == JD_TAG_NATIVE_MAP || tag == JD_TAG_VM_HANDLE;
+    if (need_tags) {
+        r->flags = (arr ? arr->flags : 0) | 8;
+        r->elem_tags = (int8_t*)malloc((size_t)oldlen + 1);
+        for (int64_t i = 0; i < pos; i++)
+            r->elem_tags[i] = src_tagged ? arr->elem_tags[i] : (int8_t)JD_TAG_F64;
+        r->elem_tags[pos] = (int8_t)tag;
+        for (int64_t i = pos; i < oldlen; i++)
+            r->elem_tags[i + 1] = src_tagged ? arr->elem_tags[i] : (int8_t)JD_TAG_F64;
+    } else {
+        r->flags = arr ? arr->flags : 0;
+    }
     return r;
 }
 

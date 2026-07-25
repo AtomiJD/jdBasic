@@ -292,6 +292,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_diff", "DIFF",         i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_array_flatten","FLATTEN",    i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_shuffle","SHUFFLE",    i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_insert", "__arr_insert", i8_ptr_type,
+        {i8_ptr_type, f64_type, i64_type, i32_type}, 3);
     reg("jdb_linspace",   "LINSPACE",     i8_ptr_type, {f64_type, f64_type, i64_type}, 3);
     reg("jdb_range",      "RANGE",        i8_ptr_type, {i64_type, i64_type, i64_type}, 3);
     reg("jdb_grade",      "GRADE",        i8_ptr_type, {i8_ptr_type}, 3);
@@ -5499,11 +5501,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // marshalled, dereferencing the JdbMap struct as a JdbArray.
                 std::vector<TypedValue> elems;
                 elems.reserve(expr.args.size());
+                bool saw_ptr_elem = false, saw_plain_elem = false;
                 for (size_t i = 0; i < expr.args.size(); i++) {
                     TypedValue e = codegen_expr(*expr.args[i]);
                     if (e.tag == JD_TAG_NATIVE_MAP) any_runtime = true;
+                    if (e.tag == JD_TAG_ARR || e.tag == JD_TAG_STR ||
+                        e.tag == JD_TAG_NATIVE_MAP || e.tag == JD_TAG_VM_HANDLE)
+                        saw_ptr_elem = true;
+                    else
+                        saw_plain_elem = true;
                     elems.push_back(e);
                 }
+                // Ragged literal ([3, [4,5]]): the array-wide nested bit would
+                // claim every cell is a pointer, so readers decode the plain
+                // ones as addresses. Per-element tags are the only encoding
+                // that survives the mix.
+                if (saw_ptr_elem && saw_plain_elem) any_runtime = true;
                 for (size_t i = 0; i < elems.size(); i++) {
                     TypedValue elem = elems[i];
                     if (elem.tag != JD_TAG_BOOL) all_bool_elems = false;
@@ -8699,6 +8712,36 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef call_args[] = { handle, name_str, args_p, tags_p,
                 LLVMConstInt(i32_type, nargs, 0) };
             LLVMValueRef result = LLVMBuildCall2(builder, vfn.fn_type, vfn.fn, call_args, 5, "vec");
+            return { result, JD_TAG_ARR };
+        }
+    }
+
+    // INSERT$ is two builtins behind one name: the string form and the array
+    // form. Only the string one has a runtime binding, so an array argument
+    // would be handed to jdb_insert_str as a char* and strlen'd.
+    if (upper == "INSERT$" && expr.args.size() == 3 &&
+        arg_cache[0].tag == JD_TAG_ARR) {
+        auto* ins = get_runtime_func("__arr_insert");
+        if (ins) {
+            TypedValue v = arg_cache[1];
+            LLVMValueRef cell = v.val;
+            int cell_tag = v.tag;
+            if (v.tag == JD_TAG_I64 || v.tag == JD_TAG_BOOL) {
+                cell = LLVMBuildSIToFP(builder, cell, f64_type, "itof");
+                cell_tag = JD_TAG_F64;
+            } else if (v.tag == JD_TAG_STR || v.tag == JD_TAG_ARR ||
+                       v.tag == JD_TAG_NATIVE_MAP || v.tag == JD_TAG_VM_HANDLE) {
+                LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, cell, i64_type, "ptoi");
+                cell = pun_i64_to_f64(as_i64);
+            }
+            LLVMValueRef args[] = {
+                coerce_to(arg_cache[0], i8_ptr_type),
+                cell,
+                coerce_to(arg_cache[2], i64_type),
+                LLVMConstInt(i32_type, cell_tag, 0)
+            };
+            LLVMValueRef result = LLVMBuildCall2(builder, ins->fn_type, ins->fn,
+                                                 args, 4, "arrins");
             return { result, JD_TAG_ARR };
         }
     }

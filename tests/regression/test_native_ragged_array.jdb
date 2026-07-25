@@ -1,0 +1,40 @@
+' Ragged arrays through the native backend: a literal mixing plain cells
+' with inner-array cells must round-trip the same way it does in the
+' interpreter. Guards INSERT$ on arrays and FLATTEN at depth > 1.
+'
+' Arrays are rendered with JOIN: STR$ vectorizes element-wise and assigning
+' an array to a STRING variable keeps it an ARRAY, so neither yields text
+' that can be compared.
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(got AS STRING, want AS STRING, label AS STRING)
+    IF got = want THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label; " got "; got; " want "; want
+    ENDIF
+ENDSUB
+
+PRINT "=== INSERT$ on arrays ==="
+Check(JOIN(INSERT$([1, 2, 3], 99, 0), ","), "99,1,2,3", "insert at front")
+Check(JOIN(INSERT$([1, 2, 3], 99, 1), ","), "1,99,2,3", "insert in middle")
+Check(JOIN(INSERT$([1, 2, 3], 99, 3), ","), "1,2,3,99", "insert at end")
+Check(JOIN(INSERT$([1, 2, 3], 99, 99), ","), "1,2,3,99", "position clamps high")
+Check(JOIN(INSERT$([1, 2, 3], 99, -5), ","), "99,1,2,3", "position clamps low")
+
+PRINT "=== INSERT$ on strings still works ==="
+Check(INSERT$("HelloWorld", " ", 5), "Hello World", "string overload")
+
+PRINT "=== FLATTEN ==="
+Check(JOIN(FLATTEN([1, 2, 3]), ","), "1,2,3", "flat input")
+Check(JOIN(FLATTEN([[1, 2], [3, 4]]), ","), "1,2,3,4", "uniform nesting")
+Check(JOIN(FLATTEN([[1, 2], [3, [4, 5]]]), ","), "1,2,3,4,5", "ragged nesting")
+Check(JOIN(FLATTEN([[1, [2, [3]]]]), ","), "1,2,3", "three levels deep")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL TESTS PASSED!"
