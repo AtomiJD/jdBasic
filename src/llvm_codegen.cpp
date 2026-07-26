@@ -86,6 +86,35 @@ LLVMCodegen::VarInfo* LLVMCodegen::lookup_var(const std::string& name) {
     return nullptr;
 }
 
+// LLVM slot type a parameter of the given JdTag is passed in. I64 and BOOL
+// are integer-shaped: the old inline form listed only STR/ARR/MAP and VM
+// handles, so tag 0 fell through to f64 and a `SUB m(by AS INTEGER)` was
+// called with a double, which the IR verifier rejects.
+// Name of the function a funcref RHS points at, upper-cased to match the
+// interpreter's rendering. Empty for anything that is not a funcref.
+std::string LLVMCodegen::dim_funcref_name(const TypedValue& tv) {
+    if (tv.tag != JD_TAG_FUNCREF || !tv.val || !LLVMIsAFunction(tv.val)) return "";
+    size_t nlen = 0;
+    const char* n = LLVMGetValueName2(tv.val, &nlen);
+    if (!n || !nlen) return "";
+    std::string s(n, nlen);
+    for (auto& c : s) c = (char)toupper((unsigned char)c);
+    return s;
+}
+
+LLVMTypeRef LLVMCodegen::param_slot_type(int tag) const {
+    switch (tag) {
+        case JD_TAG_STR:
+        case JD_TAG_ARR:
+        case JD_TAG_NATIVE_MAP:
+        case JD_TAG_FUNCREF:    return i8_ptr_type;
+        case JD_TAG_I64:
+        case JD_TAG_BOOL:
+        case JD_TAG_VM_HANDLE:  return i64_type;
+        default:                return f64_type;
+    }
+}
+
 LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) {
     LLVMTypeRef var_type = (tag == JD_TAG_F64)        ? f64_type :
                            (tag == JD_TAG_STR)        ? i8_ptr_type :
@@ -3503,6 +3532,18 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
+    // The referenced function is an LLVM constant right here; once it has been
+    // stored and loaded back it is just a pointer, so capture the name now.
+    std::string fr_name;
+    if (rhs.tag == JD_TAG_FUNCREF && rhs.val && LLVMIsAFunction(rhs.val)) {
+        size_t nlen = 0;
+        const char* n = LLVMGetValueName2(rhs.val, &nlen);
+        if (n && nlen) {
+            fr_name.assign(n, nlen);
+            for (auto& c : fr_name) c = (char)toupper((unsigned char)c);
+        }
+    }
+
     VarInfo* vi = lookup_var(stmt.var_name);
     // Cross-module isolation: a bare-name assignment inside a SUB/FUNC
     // imported from one file must not write to a same-named global DIM'd
@@ -3631,6 +3672,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // tag too; a plain value assignment clears it so a stale funcref
         // tag can't decode an ordinary number as a pointer.
         vi->funcref_return_tag = fr_ret_tag;
+        vi->funcref_name = fr_name;
         // STRICT: silent slot-type changes hide bit-puns in native — `DIM x = 0`
         // gives x an i64 slot, a later `x = 3.0` SIToFP-converts the float, but
         // when the codegen path is something less innocent (a func returning a
@@ -3761,6 +3803,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
         VarInfo& nv = create_var(stmt.var_name, var_tag);
         nv.funcref_return_tag = fr_ret_tag;
+        nv.funcref_name = fr_name;
         LLVMBuildStore(builder, rhs.val, nv.alloca_val);
     }
 }
@@ -4624,9 +4667,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     }
     if (vi) {
         if (rhs.tag == JD_TAG_F64 && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
+        vi->funcref_name = dim_funcref_name(rhs);
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
         VarInfo& nv = create_var(stmt.var_name, rhs.tag);
+        nv.funcref_name = dim_funcref_name(rhs);
         LLVMBuildStore(builder, rhs.val, nv.alloca_val);
     }
 }
@@ -4938,6 +4983,19 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             }
         }
 
+        // A funcref is a code pointer; formatting it as a string prints raw
+        // bytes. The interpreter shows the referenced function's name, so
+        // print that - it is recorded on the variable at assignment.
+        if (stmt.print_exprs[i]->kind == ExprKind::VARIABLE) {
+            VarInfo* fvi = lookup_var(stmt.print_exprs[i]->str_val);
+            if (fvi && fvi->tag == JD_TAG_FUNCREF && !fvi->funcref_name.empty()) {
+                LLVMValueRef s = LLVMBuildGlobalStringPtr(
+                    builder, fvi->funcref_name.c_str(), ".fref");
+                LLVMValueRef fargs[] = { s };
+                LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, fargs, 1, "");
+                continue;
+            }
+        }
         TypedValue tv = codegen_expr(*stmt.print_exprs[i]);
         if (tv.tag == JD_TAG_BOOL) {
             auto& pr_bool = runtime_funcs["__print_bool"];
@@ -5788,6 +5846,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             else if (tag == 2)  load_type = i8_ptr_type;
             else if (tag == 3)  load_type = i8_ptr_type;
             else if (tag == 4)  load_type = i8_ptr_type;  // map ptr
+            // create_var allocates a FUNCREF slot as i8*, so it has to be
+            // read back as one; the catch-all below made the load i64 and
+            // any consumer expecting a pointer got invalid IR.
+            else if (tag == JD_TAG_FUNCREF) load_type = i8_ptr_type;
             else                load_type = i64_type;  // covers 0, 6, 7
             if (tag == 7 && vi->runtime_tag_alloca) {
                 LLVMValueRef val = LLVMBuildLoad2(builder, load_type, vi->alloca_val,
@@ -7329,9 +7391,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 for (size_t ai = 0; ai < expr.args.size(); ai++) {
                     TypedValue av = codegen_expr(*expr.args[ai]);
                     int expected = (ai + 1 < fi.param_tags.size()) ? fi.param_tags[ai + 1] : 1;
-                    LLVMTypeRef pt = (expected == 2 || expected == 3 || expected == 4) ? i8_ptr_type :
-                                     (expected == 6) ? i64_type : f64_type;
-                    args.push_back(coerce_to(av, pt));
+                    args.push_back(coerce_to(av, param_slot_type(expected)));
                 }
                 LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
                 if (fi.return_tag == -1) {
@@ -7370,9 +7430,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         for (size_t ai = 0; ai < expr.args.size(); ai++) {
                             TypedValue av = codegen_expr(*expr.args[ai]);
                             int expected = (ai + 1 < fi.param_tags.size()) ? fi.param_tags[ai + 1] : 1;
-                            LLVMTypeRef pt = (expected == 2 || expected == 3 || expected == 4) ? i8_ptr_type :
-                                             (expected == 6) ? i64_type : f64_type;
-                            args.push_back(coerce_to(av, pt));
+                            args.push_back(coerce_to(av, param_slot_type(expected)));
                         }
                         LLVMTypeRef fn_type = LLVMGlobalGetValueType(fi.fn);
                         if (fi.return_tag == -1) {

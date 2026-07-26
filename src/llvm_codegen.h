@@ -138,6 +138,10 @@ private:
         // so an indirect call through this variable decodes its result
         // instead of assuming f64. -1 when unknown.
         int funcref_return_tag = -1;
+        // For tag == JD_TAG_FUNCREF: the referenced function's name, so PRINT
+        // can render it the way the interpreter does instead of formatting the
+        // raw pointer.
+        std::string funcref_name;
     };
 
     // Scope stack for local variables (functions push/pop scopes)
@@ -148,6 +152,7 @@ private:
 
     VarInfo* lookup_var(const std::string& name);
     VarInfo& create_var(const std::string& name, int tag);
+    LLVMTypeRef param_slot_type(int tag) const;
 
     // User-defined functions: name -> {LLVMValueRef, return_tag, param_tags}
     struct FuncInfo {
@@ -307,6 +312,8 @@ private:
         int tag;  // JdTag (see jdb_tags.h)
         LLVMValueRef runtime_tag = nullptr;  // i32 runtime type when tag == JD_TAG_RUNTIME
     };
+
+    std::string dim_funcref_name(const TypedValue& tv);
 
     // Setup
     void init_module();
