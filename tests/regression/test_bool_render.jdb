@@ -1,0 +1,56 @@
+' A truth value renders as TRUE/FALSE, not 1/0, in both backends.
+' Natively a boolean is an i64 like any other integer, so the tag has to
+' travel with it - through ANY/ALL results, BOOLEAN slots and the logical
+' operators.
+'
+' Two cases are deliberately absent because they are still split (jdTrakr
+' #157 stays open for them): a boolean assigned into an INTEGER-declared
+' slot, and a boolean stored in a MAP. Both are about a truth value
+' surviving storage, not about how it renders.
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(got AS STRING, want AS STRING, label AS STRING)
+    IF got = want THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label; " got "; got; " want "; want
+    ENDIF
+ENDSUB
+
+DIM t AS BOOLEAN = TRUE
+DIM f AS BOOLEAN = FALSE
+
+PRINT "=== literals and comparisons ==="
+Check(STR$(TRUE), "TRUE", "TRUE literal")
+Check(STR$(FALSE), "FALSE", "FALSE literal")
+Check(STR$(3 > 2), "TRUE", "comparison true")
+Check(STR$(2 > 3), "FALSE", "comparison false")
+
+PRINT "=== BOOLEAN variables ==="
+Check(STR$(t), "TRUE", "BOOLEAN var holding TRUE")
+Check(STR$(f), "FALSE", "BOOLEAN var holding FALSE")
+
+PRINT "=== logical operators are logical, not bitwise ==="
+Check(STR$(5 AND 2), "TRUE", "AND of two nonzero numbers")
+Check(STR$(4 OR 2), "TRUE", "OR of two nonzero numbers")
+Check(STR$(0 OR 0), "FALSE", "OR of two zeros")
+Check(STR$(t AND f), "FALSE", "AND of two booleans")
+Check(STR$(t OR f), "TRUE", "OR of two booleans")
+Check(STR$(NOT t), "FALSE", "NOT")
+
+PRINT "=== ANY / ALL scalars ==="
+Check(STR$(ANY([1, 2, 3])), "TRUE", "ANY all nonzero")
+Check(STR$(ANY([0, 0])), "FALSE", "ANY all zero")
+Check(STR$(ALL([1, 0, 1])), "FALSE", "ALL with a zero")
+Check(STR$(ALL([1, 1])), "TRUE", "ALL all nonzero")
+
+PRINT "=== booleans inside arrays ==="
+Check(JOIN([TRUE, FALSE], ","), "TRUE,FALSE", "array of booleans")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL TESTS PASSED!"

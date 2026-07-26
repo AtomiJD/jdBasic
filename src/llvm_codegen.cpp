@@ -247,8 +247,10 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i32_type}, 3);
     reg("jdb_array_min",  "__arr_min",    f64_type, {i8_ptr_type}, 1);
     reg("jdb_array_max",  "__arr_max",    f64_type, {i8_ptr_type}, 1);
-    reg("jdb_array_any",  "ANY",          i64_type, {i8_ptr_type}, 0);
-    reg("jdb_array_all",  "ALL",          i64_type, {i8_ptr_type}, 0);
+    // Backed by i64, but tagged BOOL so PRINT/STR$ render TRUE/FALSE the way
+    // the interpreter does rather than 1/0.
+    reg("jdb_array_any",  "ANY",          i64_type, {i8_ptr_type}, JD_TAG_BOOL);
+    reg("jdb_array_all",  "ALL",          i64_type, {i8_ptr_type}, JD_TAG_BOOL);
     reg("jdb_array_dot",  "DOT",          f64_type, {i8_ptr_type, i8_ptr_type}, 1);
     // Unary array math: bypass the function-pointer-callback applier so
     // the compiler can inline + vectorise the inner loop.
@@ -5722,6 +5724,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 TypedValue r; r.val = val; r.tag = JD_TAG_RUNTIME; r.runtime_tag = rt;
                 return r;
             }
+            // A BOOLEAN slot is an i64 like any other integer, so a plain load
+            // loses the bool-ness and PRINT renders 1/0 instead of TRUE/FALSE.
+            // bool_vars already tracks the declaration for TYPEOF; reuse it.
+            if (tag == JD_TAG_I64) {
+                std::string up = expr.str_val;
+                std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                if (bool_vars.count(up)) tag = JD_TAG_BOOL;
+            }
             return { LLVMBuildLoad2(builder, load_type, vi->alloca_val,
                                     expr.str_val.c_str()), tag };
         }
@@ -6396,7 +6406,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         incoming_bbs[1] = rhs_end_bb;
         LLVMAddIncoming(phi, incoming_vals, incoming_bbs, 2);
 
-        return { phi, JD_TAG_I64 };
+        // Backed by i64, but the value is a truth value: AND/OR are logical
+        // here (5 AND 2 is TRUE, not the bitwise 0), so tag it BOOL and let
+        // PRINT/STR$ render it the way the interpreter does.
+        return { phi, JD_TAG_BOOL };
         } // end scalar short-circuit block
     }
 
