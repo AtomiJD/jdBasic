@@ -1064,6 +1064,28 @@ If `rc.exe` (the Windows resource compiler) is unavailable or fails, the
 linker continues without the version resource and a warning is printed to
 stderr - compilation never fails because of a bad props file.
 
+### What `-c` will not compile
+
+The native compiler covers the language, not the whole REPL. Everything below
+is rejected at **compile time** with a message naming the reason, so nothing
+fails silently at runtime. The interpreter runs all of it.
+
+| Construct | Why | What to do instead |
+|---|---|---|
+| `PYTHON$`, `PY.*` | the embedded CPython runtime is not linked into a standalone binary | run it in the interpreter (the MCP workshop VM) |
+| `SQL.QUERY` | returns an array of row MAPs, which cannot cross the native bridge | `SQL.TABLE` + `SQL.COLUMNS` compile fine |
+| `GROUPBY(fn@, ...)`, `INTEGRATE(fn@, ...)` | a compiled program cannot resolve a funcref by name at runtime | run in the interpreter |
+| `HELP`, `HELP$` | the help text ships with the REPL, not with your `.exe` | run in the interpreter |
+| `JSON.STRINGIFY$(<UDT>)` | a UDT instance does not marshal across the bridge | pass a MAP or ARRAY, or build the JSON from the fields |
+| `name@` that resolves to nothing | there is no FUNC of that name and no builtin with a matching scalar signature | check the name and arity |
+
+**`-c` is also STRICT + EXPLICIT, always.** Every variable must be declared and
+every type must line up; there is no flag to turn that off for the main file
+(an IMPORTed module stays loose unless it opts in). The interpreter is
+deliberately permissive, so loose code that runs interpreted and is rejected by
+`-c` is the two backends working as designed, not a bug. `tests/gate/native_test.jdb`
+and its strict twin `native_test.strict.jdb` are the same suite either way.
+
 ### Foreign Function Interface (DECLARE FUNC)
 
 `DECLARE FUNC` / `DECLARE SUB` lets jdBasic call any C-style function exported
