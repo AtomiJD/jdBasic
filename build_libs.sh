@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build SDL3 + SDL3_ttf + SDL3_image as static libs in libs/<lib>/build/.
-# Run once after cloning the SDL3 repos. ImGui has no separate build —
+# Run once after cloning the SDL3 repos. ImGui has no separate build,
 # its .cpp files are compiled directly into jdbasic by build.sh.
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -29,7 +29,7 @@ build_one() {
     echo "done: $name"
 }
 
-# SDL3 first — others link against it. SDL_TEST disabled to skip tests.
+# SDL3 first, others link against it. SDL_TEST disabled to skip tests.
 build_one SDL3 \
     -DSDL_STATIC=ON -DSDL_SHARED=OFF \
     -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_INSTALL_TESTS=OFF
@@ -68,7 +68,7 @@ build_one SDL3_mixer \
     -DSDLMIXER_MIDI=OFF -DSDLMIXER_MIDI_FLUIDSYNTH=OFF \
     -DSDLMIXER_FLAC=OFF
 
-# llama.cpp — built into libs/llama_src/build/, then headers + static
+# llama.cpp: built into libs/llama_src/build/, then headers + static
 # archives copied/symlinked into libs/llama/ to match the directory shape
 # expected by jdBasic's build flags. Skip when the source isn't there.
 if [ -d "$LIBS/llama_src" ]; then

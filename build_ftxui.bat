@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM build_ftxui.bat — one-time build of the FTXUI static library.
+REM build_ftxui.bat: one-time build of the FTXUI static library.
 REM Compiles all production .cpp under libs\ftxui\src (excluding _test /
 REM _fuzzer / _benchmark) and packs them into libs\ftxui\build\ftxui.lib.
 REM Re-run manually after pulling FTXUI updates; build.bat picks the lib up
@@ -31,11 +31,11 @@ REM /Ilibs\ftxui\src is required because FTXUI keeps private headers
 REM (node_decorator.hpp, box_helper.hpp, terminal_input_parser.hpp, ...)
 REM next to the .cpp files. CMake adds it automatically; we do it here.
 REM /DUNICODE /D_UNICODE: FTXUI's screen_interactive.cpp errors out
-REM otherwise — needs WindowsW APIs to talk to the modern Win console.
+REM otherwise, needs WindowsW APIs to talk to the modern Win console.
 set CL_FLAGS=/nologo /std:c++17 /O2 /EHsc /MP32 /c /MD /DUNICODE /D_UNICODE
 set CL_INCS=/I"%MSVC%\include" /I"%SDK%\Include\%SDKV%\ucrt" /I"%SDK%\Include\%SDKV%\um" /I"%SDK%\Include\%SDKV%\shared" /Ilibs\ftxui\include /Ilibs\ftxui\src
 
-REM util/ subdir contains only ref_test.cpp (test file) — skip it.
+REM util/ subdir contains only ref_test.cpp (test file), skip it.
 for %%S in (component dom screen) do (
     echo === build_ftxui: %%S ===
     if not exist libs\ftxui\build\%%S mkdir libs\ftxui\build\%%S

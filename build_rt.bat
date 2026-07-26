@@ -129,7 +129,7 @@ for %%A in (%*) do (
     )
 )
 
-REM TUI implies FTXUI — pull the lib in if only TUI was passed.
+REM TUI implies FTXUI, pull the lib in if only TUI was passed.
 if defined WANT_TUI if not defined HAVE_FTXUI (
     set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
     set EXTRA_INC=!EXTRA_INC! /Ilibs\ftxui\include

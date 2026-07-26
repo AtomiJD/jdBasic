@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM ──────────────────────────────────────────────────────────────────
-REM dist.bat — build jdBasic with a chosen feature set and assemble
+REM dist.bat: build jdBasic with a chosen feature set and assemble
 REM            a clean redistributable directory in dist\jdBasic\.
 REM
 REM Usage:   dist.bat [FEATURES...]
@@ -53,13 +53,13 @@ if not defined NOBUILD (
     echo === Building jdBasic with:%BUILD_FLAGS% ===
     call build.bat%BUILD_FLAGS%
     if errorlevel 1 (
-        echo BUILD FAILED — aborting dist
+        echo BUILD FAILED, aborting dist
         exit /b 1
     )
 )
 
 if not exist build\jdBasic.exe (
-    echo build\jdBasic.exe not found — run build.bat first or omit NOBUILD
+    echo build\jdBasic.exe not found, run build.bat first or omit NOBUILD
     exit /b 1
 )
 
