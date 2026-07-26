@@ -117,7 +117,7 @@ for %%A in (%*) do (
     )
     if /I "%%A"=="OPENGL" (
         REM Requires GFX - shares SDL3 init and event loop. We don't auto-imply
-        REM GFX here — caller must pass GFX explicitly so they see the cost.
+        REM GFX here, caller must pass GFX explicitly so they see the cost.
         set DEFS=!DEFS! /DOPENGL
         set EXTRA_SRC=!EXTRA_SRC! src\opengl.cpp
         set EXTRA_LIB=!EXTRA_LIB! opengl32.lib
@@ -140,7 +140,7 @@ for %%A in (%*) do (
     )
     if /I "%%A"=="TUI" (
         REM TUI.* namespace - scripts target FTXUI through immediate-mode API.
-        REM Implies FTXUI — drag the lib in if the user didn't pass it.
+        REM Implies FTXUI, drag the lib in if the user didn't pass it.
         set DEFS=!DEFS! /DTUI /DUNICODE /D_UNICODE
         set EXTRA_SRC=!EXTRA_SRC! src\tui.cpp src\tui_state.cpp
         set WANT_TUI=1
@@ -205,7 +205,7 @@ if defined WANT_PYTHON (
     echo [+] Python home: !PYHOME!
 )
 
-REM TUI implies FTXUI — pull the lib in if the user only passed TUI.
+REM TUI implies FTXUI, pull the lib in if the user only passed TUI.
 if defined WANT_TUI if not defined HAVE_FTXUI (
     set DEFS=!DEFS! /DFTXUI /DUNICODE /D_UNICODE
     set EXTRA_SRC=!EXTRA_SRC! src\repl_ftxui.cpp

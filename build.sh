@@ -54,7 +54,7 @@ WANT_MCPSERVER=${MCPSERVER:-0}
 WANT_SQLITE=${SQLITE:-0}
 WANT_FTXUI=${FTXUI:-0}
 WANT_TUI=${TUI:-0}
-# TUI implies FTXUI — drag the lib in if only TUI was passed.
+# TUI implies FTXUI, drag the lib in if only TUI was passed.
 if [ "$WANT_TUI" = "1" ]; then WANT_FTXUI=1; fi
 
 WANT_FX=${FX:-0}
@@ -105,7 +105,7 @@ if [ "$WANT_GFX" = "1" ]; then
     for d in "$SDL3_DIR/build/libSDL3.a" "$SDL3_TTF_DIR/build/libSDL3_ttf.a" \
              "$SDL3_IMG_DIR/build/libSDL3_image.a" "$SDL3_MIX_DIR/build/libSDL3_mixer.a"; do
         if [ ! -f "$d" ]; then
-            echo "ERROR: $d missing — run ./build_libs.sh first"; exit 1
+            echo "ERROR: $d missing, run ./build_libs.sh first"; exit 1
         fi
     done
     CXXFLAGS="$CXXFLAGS -DGFX \
@@ -121,7 +121,7 @@ if [ "$WANT_GFX" = "1" ]; then
         -lfreetype -lharfbuzz -lpng -ljpeg -ltiff -lwebp -lwebpdemux \
         -lm"
     # macOS: SDL3's static lib doesn't auto-pull its Cocoa/Metal/IOKit/
-    # AudioToolbox dependencies — they have to ride on the link line.
+    # AudioToolbox dependencies, they have to ride on the link line.
     # QuartzCore is for CAMetalLayer (cocoavulkan in SDL3).
     if [ "$(uname -s)" = "Darwin" ]; then
         LDFLAGS="$LDFLAGS \
@@ -156,7 +156,7 @@ fi
 
 if [ "$WANT_LLM" = "1" ]; then
     if [ "${LLM_SYSTEM:-0}" = "1" ]; then
-        # System-installed llama.cpp — e.g., when building inside the
+        # System-installed llama.cpp, e.g. when building inside the
         # Strix-Halo distrobox where /usr/lib64 already has libllama.so
         # + libggml-vulkan.so wired up against the Radeon iGPU.
         CXXFLAGS="$CXXFLAGS -DLLM"
@@ -165,7 +165,7 @@ if [ "$WANT_LLM" = "1" ]; then
         LLAMA_DIR="libs/llama"
         for a in libllama.a libggml.a libggml-base.a libggml-cpu.a; do
             if [ ! -f "$LLAMA_DIR/$a" ]; then
-                echo "ERROR: $LLAMA_DIR/$a missing — run ./build_libs.sh first (or set LLM_SYSTEM=1 if libs are at /usr)"; exit 1
+                echo "ERROR: $LLAMA_DIR/$a missing, run ./build_libs.sh first (or set LLM_SYSTEM=1 if libs are at /usr)"; exit 1
             fi
         done
         CXXFLAGS="$CXXFLAGS -DLLM -I$LLAMA_DIR"
@@ -184,7 +184,7 @@ fi
 if [ "$WANT_ONNX" = "1" ]; then
     ORT_DIR="libs/onnxruntime"
     if [ ! -f "$ORT_DIR/lib/libonnxruntime.so" ]; then
-        echo "ERROR: $ORT_DIR/lib/libonnxruntime.so missing — fetch the prebuilt tarball"; exit 1
+        echo "ERROR: $ORT_DIR/lib/libonnxruntime.so missing, fetch the prebuilt tarball"; exit 1
     fi
     CXXFLAGS="$CXXFLAGS -DONNX -I$ORT_DIR/include"
     # Dynamic-link onnxruntime; rpath \$ORIGIN/../libs/onnxruntime/lib so
@@ -208,7 +208,7 @@ if [ "$WANT_SQLITE" = "1" ]; then
     fi
     CXXFLAGS="$CXXFLAGS -DSQLITE -Ibridges/sqlitebridge"
     SQL_SRC="src/sql.cpp"
-    # The amalgamation is plain C and never changes — compile once.
+    # The amalgamation is plain C and never changes, compile once.
     mkdir -p build/obj
     if [ ! -f build/obj/sqlite3.o ]; then
         echo "[+] Compiling SQLite amalgamation one-time..."
@@ -234,7 +234,7 @@ if [ "$WANT_FTXUI" = "1" ]; then
     FTXUI_DIR="libs/ftxui"
     for a in libftxui-component.a libftxui-dom.a libftxui-screen.a; do
         if [ ! -f "$FTXUI_DIR/build/$a" ]; then
-            echo "ERROR: $FTXUI_DIR/build/$a missing — build ftxui first:"
+            echo "ERROR: $FTXUI_DIR/build/$a missing, build ftxui first:"
             echo "  cd libs/ftxui && mkdir -p build && cd build && \\"
             echo "    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \\"
             echo "          -DFTXUI_BUILD_EXAMPLES=OFF -DFTXUI_BUILD_TESTS=OFF -DFTXUI_BUILD_DOCS=OFF .. && \\"
@@ -261,7 +261,7 @@ NATIVEC_SRC=""
 if [ "$WANT_NATIVEC" = "1" ]; then
     LLVM_CONFIG=${LLVM_CONFIG:-llvm-config-18}
     if ! command -v "$LLVM_CONFIG" >/dev/null 2>&1; then
-        echo "ERROR: $LLVM_CONFIG not found — install llvm-18-dev or set LLVM_CONFIG="; exit 1
+        echo "ERROR: $LLVM_CONFIG not found, install llvm-18-dev or set LLVM_CONFIG="; exit 1
     fi
     LLVM_INC=$($LLVM_CONFIG --includedir)
     CXXFLAGS="$CXXFLAGS -DLLVM_CODEGEN -I$LLVM_INC"
@@ -314,11 +314,11 @@ features="console"
 [ "$WANT_MCPSERVER" = "1" ] && features="$features+MCPSERVER"
 [ "$WANT_FTXUI" = "1" ] && features="$features+FTXUI"
 [ "$WANT_TUI" = "1" ] && features="$features+TUI"
-echo "== Building jdBasic ($features) — $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
+echo "== Building jdBasic ($features): $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 # xargs -P parallelises; each line is "src|obj".
 # CXX/CXXFLAGS are exported so the per-iteration bash -c stays short.
-# We use -n1 (one input per exec, passed as $0) instead of -I{} — the
+# We use -n1 (one input per exec, passed as $0) instead of -I{}, the
 # BSD xargs on macOS chokes on -I{} substitution into a multi-line
 # body with a "command line cannot be assembled, too long" even when
 # the actual command size is well under ARG_MAX.
@@ -338,14 +338,14 @@ echo "OK: build/jdbasic"
 
 # Bundle the default font next to the binary so SCREEN can auto-load it
 # (TEXT no longer requires an explicit SETFONT call). Silent skip if the
-# source font is missing — keeps minimal-checkout builds working.
+# source font is missing, keeps minimal-checkout builds working.
 if [ -f fonts/JetBrainsMono-Regular.ttf ]; then
     cp -f fonts/JetBrainsMono-Regular.ttf build/jdbasic_default.ttf
 fi
 
 # When NATIVEC is on, build the runtime support pieces too:
 #  - build/jdb_runtime.o: small static obj statically linked into every
-#    generated exe (basic intrinsics — printf, math, time, etc.)
+#    generated exe (basic intrinsics: printf, math, time, etc.)
 #  - build/libjdbrt.so:   shared library providing the full VM via the
 #    jdrt_* C-API, dlopen-style dependency of every generated exe
 if [ "$WANT_NATIVEC" = "1" ]; then
@@ -375,7 +375,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
         o="build/obj_pic/$(basename "$s" .cpp).o"; RT_OBJS+=("$o")
         if [ ! -f "$o" ] || [ "$s" -nt "$o" ]; then RT_TO_BUILD+=("$s|$o"); fi
     done
-    echo "== Building libjdbrt.so — ${#RT_TO_BUILD[@]} of ${#RT_OBJS[@]} stale =="
+    echo "== Building libjdbrt.so: ${#RT_TO_BUILD[@]} of ${#RT_OBJS[@]} stale =="
     if [ "${#RT_TO_BUILD[@]}" -gt 0 ]; then
         printf '%s\n' "${RT_TO_BUILD[@]}" | \
             xargs -P "$JOBS" -n1 bash -c '
