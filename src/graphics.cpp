@@ -1167,7 +1167,7 @@ void register_graphics_builtins(VM& vm) {
             apply_draw_color();
         } else {
             // RECT x, y, w, h, [fill], [r, g, b] - fill before colour (matches the
-            // docs and the matrix path; the old order grabbed the fill flag as red).
+            // docs and the matrix path; the reverse order reads the fill flag as red).
             float x = (float)args[0].to_double(), y = (float)args[1].to_double();
             float w = (float)args[2].to_double(), h = (float)args[3].to_double();
             bool fill = (args.size() >= 5) ? args[4].to_bool() : false;
@@ -2265,7 +2265,7 @@ void register_graphics_builtins(VM& vm) {
 
     // Music: streamed MIX_Audio + a single dedicated MIX_Track shared
     // across all music ids (only one piece of music plays at a time, same
-    // as the old Mix_PlayMusic semantics).
+    // as Mix_PlayMusic semantics).
     static std::unordered_map<int, MIX_Audio*> s_musics;
     static int s_next_music_id = 1;
     static MIX_Track* s_music_track = nullptr;

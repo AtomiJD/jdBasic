@@ -1,10 +1,9 @@
 // ============================================================
 // TUI.* — FTXUI bridge for jdBasic.
 //
-// Phase B implements the core loop: BEGIN / END / RENDER /
-// WAIT_EVENT / QUIT / EXIT, plus a minimal TUI.TEXT so a script
-// can actually display something. The remaining 56 names stay
-// as Phase-A stubs until their phase lands.
+// The core loop is BEGIN / END / RENDER / WAIT_EVENT / QUIT /
+// EXIT, plus TUI.TEXT so a script can display something. Names
+// beyond that set are registered as stubs.
 //
 // Compiled only under /DTUI. The #else branch at the bottom
 // provides a no-op register_tui_natives so callers don't have
@@ -166,10 +165,10 @@ void enter_alt_screen_once() {
 
 // ── Key polling ───────────────────────────────────────────
 //
-// Phase B only cares about Ctrl+Q (sets quit_requested) and
-// raw printable bytes (stored in last_key for the script to
-// observe via TUI.KEY$). Phase G fleshes out arrow/F-key
-// decoding and mouse events.
+// Only Ctrl+Q (sets quit_requested) and raw printable bytes
+// (stored in last_key for the script to observe via TUI.KEY$)
+// are recognised. Arrow/F-key decoding and mouse events are not
+// implemented.
 
 #ifdef _WIN32
 // Map Windows virtual-key codes for arrow / F-key / nav keys to the
@@ -738,7 +737,7 @@ void register_tui_natives(VM& vm) {
             return Value::make_none(); \
         });
 
-    // ── Core loop (Phase B — real impl) ─────────────────────
+    // ── Core loop ─────────────────────
     vm.register_native("TUI.BEGIN", 0, 1, [&vm](V args) -> Value {
         auto& s = jdb_tui::state();
         if (s.in_frame) {
@@ -787,7 +786,7 @@ void register_tui_natives(VM& vm) {
         auto& s = jdb_tui::state();
         if (s.host_screen != nullptr) {
             // REPL is driving the terminal; TUI.* embedding deferred.
-            // Phase B contract: refuse politely instead of fighting it.
+            // Refuse politely instead of fighting the REPL for the terminal.
             static bool warned = false;
             if (!warned) {
                 vm.emit("[TUI] TUI.RENDER not yet supported from inside the FTXUI REPL — run the script standalone.\n");
@@ -803,8 +802,8 @@ void register_tui_natives(VM& vm) {
     vm.register_native("TUI.WAIT_EVENT", 0, 1, [&vm](V args) -> Value {
         (void)args;
         auto& s = jdb_tui::state();
-        // Spin-poll until a key arrives. Phase G will replace this
-        // with a proper blocking read or FTXUI task-receiver path.
+        // Spin-poll until a key arrives; there is no blocking read or
+        // FTXUI task-receiver path yet.
         std::string k;
         while (!poll_one_event(k)) {
 #ifdef _WIN32
@@ -831,7 +830,7 @@ void register_tui_natives(VM& vm) {
     vm.register_native("TUI.TEXT", 1, 2, [&vm](V args) -> Value {
         (void)vm;
         using namespace ftxui;
-        // args[1] (optional style hint) parsed in Phase G.
+        // args[1] (optional style hint) is not parsed.
         emit_element(text(args[0].as_string()->data));
         return Value::make_none();
     });
@@ -839,7 +838,7 @@ void register_tui_natives(VM& vm) {
     // ── Diagnostics — VERSION$ lands now because it's free ──
     vm.register_native("TUI.VERSION$", 0, 0, [&vm](V) -> Value {
         (void)vm;
-        return Value::make_string("TUI.* / FTXUI bridge (Phase G)");
+        return Value::make_string("TUI.* / FTXUI bridge");
     });
 
     // Render the current frame to a fixed-size off-screen buffer and return it
@@ -865,7 +864,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_string(out);
     });
 
-    // ── Layout primitives (Phase C) ─────────────────────────
+    // ── Layout primitives ─────────────────────────
     vm.register_native("TUI.HBOX_BEGIN", 0, 0, [&vm](V) -> Value {
         (void)vm; push_layout(jdb_tui::LayoutFrame::HBOX); return Value::make_none();
     });
@@ -945,7 +944,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Text / headings / links (Phase E) ───────────────────
+    // ── Text / headings / links ───────────────────
     vm.register_native("TUI.PARAGRAPH", 1, 1, [&vm](V args) -> Value {
         (void)vm;
         emit_element(ftxui::paragraph(args[0].as_string()->data));
@@ -972,7 +971,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Input widgets (Phase D) ─────────────────────────────
+    // ── Input widgets ─────────────────────────────
     //
     // Contract: value-in / value-out (same shape as GUI.SLIDER).
     // Each widget call returns the (possibly mutated) state; the
@@ -1091,8 +1090,8 @@ void register_tui_natives(VM& vm) {
     });
 
     // TUI.INPUT_DOUBLE(label$, value, [width]) -> double
-    // Phase D keeps editing arrow-based; full free-text float
-    // parsing arrives in Phase G with a real edit-buffer.
+    // Editing is arrow-based: there is no edit-buffer, so free-text
+    // float entry is not supported.
     vm.register_native("TUI.INPUT_DOUBLE", 2, 3, [&vm](V args) -> Value {
         (void)vm;
         using namespace ftxui;
@@ -1228,7 +1227,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_bool(clicked);
     });
 
-    // ── Display widgets (Phase E) ───────────────────────────
+    // ── Display widgets ───────────────────────────
     // TUI.PROGRESS(frac, [label$])  bar with optional inline label
     vm.register_native("TUI.PROGRESS", 1, 2, [&vm](V args) -> Value {
         (void)vm;
@@ -1273,7 +1272,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Canvas (Phase E) ────────────────────────────────────
+    // ── Canvas ────────────────────────────────────
     //
     // BEGIN seeds the ops buffer. LINE/PIXEL append closures that
     // know how to draw themselves. END constructs ONE canvas()
@@ -1344,7 +1343,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Tables (Phase E) ────────────────────────────────────
+    // ── Tables ────────────────────────────────────
     vm.register_native("TUI.TABLE_BEGIN", 1, 1, [&vm](V args) -> Value {
         auto& s = jdb_tui::state();
         if (s.table.active) {
@@ -1399,7 +1398,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Modal (Phase F) ─────────────────────────────────────
+    // ── Modal ─────────────────────────────────────
     vm.register_native("TUI.MODAL_OPEN", 1, 1, [&vm](V args) -> Value {
         (void)vm;
         jdb_tui::state().modal.active_id = args[0].as_string()->data;
@@ -1447,7 +1446,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Menu bar (Phase F) ──────────────────────────────────
+    // ── Menu bar ──────────────────────────────────
     vm.register_native("TUI.MENUBAR_BEGIN", 0, 0, [&vm](V) -> Value {
         (void)vm;
         auto& s = jdb_tui::state();
@@ -1543,7 +1542,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_bool(clicked);
     });
 
-    // ── Tab bar (Phase F) ───────────────────────────────────
+    // ── Tab bar ───────────────────────────────────
     vm.register_native("TUI.TAB_BAR_BEGIN", 2, 2, [&vm](V args) -> Value {
         (void)vm;
         using namespace ftxui;
@@ -1605,7 +1604,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Colour + theme + style (Phase G) ────────────────────
+    // ── Colour + theme + style ────────────────────
     vm.register_native("TUI.COLOR", 3, 3, [&vm](V args) -> Value {
         (void)vm;
         auto& s = jdb_tui::state();
@@ -1671,7 +1670,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Events (Phase G) ────────────────────────────────────
+    // ── Events ────────────────────────────────────
     // TUI.KEY$ is one-shot: returns the buffered key and clears it
     // so a single press only fires once. Without this, scripts that
     // `IF TUI.KEY$() = "..." THEN ...` inside their main loop
@@ -1701,13 +1700,12 @@ void register_tui_natives(VM& vm) {
         (void)vm; return Value::make_i64(jdb_tui::state().mouse_wheel);
     });
     // TUI.ON(event$, handler$) — register a script callback by name.
-    // Phase G stores the binding; actual dispatch (QUIT, KEY, MOUSE,
-    // RESIZE) lands when we wire ReadConsoleInput. For now it's a
-    // no-op recorder so scripts can use the API today and benefit
-    // from it once the dispatch ships.
+    // Records the binding only. Dispatch (QUIT, KEY, MOUSE, RESIZE)
+    // needs ReadConsoleInput and is not wired, so this is a no-op
+    // recorder that keeps the API callable.
     TUI_STUB("TUI.ON", 2, 2)
 
-    // ── Diagnostics (Phase G) ───────────────────────────────
+    // ── Diagnostics ───────────────────────────────
     vm.register_native("TUI.WIDTH", 0, 0, [&vm](V) -> Value {
         (void)vm; return Value::make_i64(ftxui::Terminal::Size().dimx);
     });

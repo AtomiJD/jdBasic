@@ -1,9 +1,9 @@
-' Function references through the native backend. Builtin refs (SQR@) had
-' no codegen path at all and fell back to a plain string; user refs stored
-' the raw function, so an indirect call built a mismatched signature.
+' Function references through the native backend: a reference to a builtin
+' (SQR@) and to a user FUNC, reached through a variable, as a parameter and
+' inside a higher-order call.
 '
-' Untyped params carrying strings are still open (see jdTrakr #155) and are
-' deliberately not exercised here.
+' Untyped parameters carrying strings are exercised in
+' test_funcref_untyped_param.jdb, not here.
 OPTION "EXPLICIT"
 
 DIM N_PASS AS INTEGER = 0

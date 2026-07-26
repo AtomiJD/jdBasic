@@ -37,7 +37,7 @@ inline const ftxui::Color func_sig     = ftxui::Color::Magenta;
 
 inline const ftxui::Color error        = ftxui::Color::RedLight;
 
-// Reference for a future Atomi-warm scheme:
+// Reference for a warm-toned scheme:
 // inline const ftxui::Color accent     = ftxui::Color::Orange1;
 // inline const ftxui::Color accent_bg  = ftxui::Color::DarkRed;
 // inline const ftxui::Color input_text = ftxui::Color::Yellow3;

@@ -6,7 +6,7 @@
 //
 // Linux/macOS support is intentionally limited to "" / "utf-8" pass-through
 // for now — the codepage families that matter (cp1252 / cp850) are
-// Windows-legacy formats and Atomi's Linux port doesn't touch VBA sources.
+// Windows-legacy formats, and the POSIX build does not read VBA sources.
 #pragma once
 
 #include <string>

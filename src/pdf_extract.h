@@ -434,8 +434,8 @@ inline std::string extract_text_from_content(const std::string& content) {
 }
 
 // Collects text only from BT..ET blocks. Per spec, text-showing operators are
-// only valid inside them; binary streams (fonts, images) that happen to
-// contain the byte pairs "BT"/"Tj" no longer leak garbage into the output.
+// only valid inside them, so binary streams (fonts, images) that happen to
+// contain the byte pairs "BT"/"Tj" cannot leak garbage into the output.
 inline std::string extract_text_blocks(const std::string& content) {
     std::string out;
     auto delim_after = [&](size_t idx) {

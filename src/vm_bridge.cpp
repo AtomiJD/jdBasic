@@ -195,17 +195,14 @@ static std::vector<Value> args_to_values(const double* args, int nargs) {
 
 extern "C" {
 
-// A compiled program calls jdrt_init() once and stores the handle in a
-// module global, so every ASYNC task would reach the bridge through the
-// same JdRTImpl - one VM, one value_store and a non-atomic next_handle
-// touched from several OS threads at once. The interpreter avoids this by
-// giving each async task its own VM; do the same here.
+// A compiled program calls jdrt_init() once and keeps the handle in a module
+// global, so every ASYNC task reaches the bridge through it. JdRTImpl holds a
+// VM, a value_store and a non-atomic next_handle, none of which is safe to
+// share across threads, so each thread gets its own instance.
 //
-// The bridge VM carries builtins only (no user functions, no globals), so
-// a per-thread instance is equivalent, and handles never have to cross a
-// thread boundary: whichever thread stores a Value is the one that reads
-// it back. Serialising the bridge instead would deadlock - AWAIT and the
-// CHAN.* natives block inside a bridge call while waiting on another task.
+// The bridge VM carries builtins only (no user functions, no globals), which
+// makes a per-thread instance equivalent, and no handle crosses a thread:
+// whichever thread stores a Value is the one that reads it back.
 static JdRTImpl* g_primary_rt = nullptr;
 static std::thread::id g_primary_thread;
 

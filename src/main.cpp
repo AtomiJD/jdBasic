@@ -1844,11 +1844,11 @@ int main(int argc, char* argv[]) {
     // ── Native compilation (LLVM) ────────────────────────────────
     if (compile_native || emit_ir_only) {
 #ifdef LLVM_CODEGEN
-        // Phase markers + try/catch on every step — without these the
-        // process used to die silently on the deployment machine when
-        // any phase threw (parser, IMPORT-resolve, LLVM-C.dll loader,
-        // codegen). std::cerr is unbuffered, but we flush after each
-        // marker so an abort()/terminate() in LLVM still leaves a trail.
+        // Progress markers and a try/catch around every step, so a throw in
+        // the parser, IMPORT resolution, the LLVM-C.dll loader or codegen
+        // says where it happened instead of exiting silently. std::cerr is
+        // unbuffered and each marker is flushed, so an abort() inside LLVM
+        // still leaves a trail.
         auto mark = [](const char* msg) {
             std::cerr << "[jdbasic -c] " << msg << std::endl;
             std::cerr.flush();

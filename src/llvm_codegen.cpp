@@ -86,10 +86,6 @@ LLVMCodegen::VarInfo* LLVMCodegen::lookup_var(const std::string& name) {
     return nullptr;
 }
 
-// LLVM slot type a parameter of the given JdTag is passed in. I64 and BOOL
-// are integer-shaped: the old inline form listed only STR/ARR/MAP and VM
-// handles, so tag 0 fell through to f64 and a `SUB m(by AS INTEGER)` was
-// called with a double, which the IR verifier rejects.
 // Name of the function a funcref RHS points at, upper-cased to match the
 // interpreter's rendering. Empty for anything that is not a funcref.
 std::string LLVMCodegen::dim_funcref_name(const TypedValue& tv) {
@@ -102,6 +98,8 @@ std::string LLVMCodegen::dim_funcref_name(const TypedValue& tv) {
     return s;
 }
 
+// LLVM slot type a parameter of the given JdTag is passed in: ptr-shaped tags
+// take i8*, integer-shaped ones i64, everything else f64.
 LLVMTypeRef LLVMCodegen::param_slot_type(int tag) const {
     switch (tag) {
         case JD_TAG_STR:
@@ -231,9 +229,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_clamp",  "CLAMP",  f64_type, {f64_type, f64_type, f64_type}, 1);
     reg("jdb_fac",    "FAC",    f64_type, {f64_type}, 1);
     reg("jdb_fmod",   "FMOD",   f64_type, {f64_type, f64_type}, 1);
-    // Internal names only. MIN/MAX are unary array reducers with an optional
-    // axis; binding those names to a two-argument scalar min/max is what made
-    // MAX(3, 9) answer 9 compiled and 3 interpreted.
+    // Internal names only: MIN/MAX are unary array reducers with an optional
+    // axis, so those names must not resolve to a two-argument scalar min/max.
     reg("jdb_min2",   "__min2", f64_type, {f64_type, f64_type}, 1);
     reg("jdb_max2",   "__max2", f64_type, {f64_type, f64_type}, 1);
     reg("jdb_pi",     "PI",     f64_type, {}, 1);
@@ -3069,9 +3066,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         if (s) codegen_stmt(*s);
     }
 
-    // If no terminator yet, branch to the unified exit block. Implicit
-    // return value is zero for numeric funcs and nullptr for ptr funcs —
-    // matches the old behaviour.
+    // If no terminator yet, branch to the unified exit block. The implicit
+    // return is zero for numeric funcs and nullptr for ptr funcs.
     if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
         if (current_retval_alloca) {
             LLVMBuildStore(builder, LLVMConstNull(ret_ty), current_retval_alloca);
@@ -4390,10 +4386,9 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             LLVMValueRef n = size_val.tag == JD_TAG_F64
                 ? LLVMBuildFPToSI(builder, size_val.val, i64_type, "ftoi") : size_val.val;
 
-            // Pre-size the array to N. Previously this allocated size 0 and
-            // grew via APPEND per slot — APPEND is O(N) per call (full copy
-            // realloc) so the old path was O(N²). For N=50000 that meant
-            // ~2.5B copies; now we just write into a fixed-size buffer.
+            // Pre-size the array to N and write into the fixed-size buffer.
+            // Growing it via APPEND per slot would be quadratic: APPEND is
+            // O(N) per call because it copy-reallocs.
             LLVMValueRef size_args[] = { n };
             LLVMValueRef outer = LLVMBuildCall2(builder, arr_new.fn_type, arr_new.fn, size_args, 1, "outer");
 
@@ -5573,11 +5568,10 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
             }
             int ret_tag = is_sub ? -1 : (returns_str ? 2 : 1);
 
-            // Build parameter types from declared params
-            // Parser already added THIS as first param with type OBJECT.
-            // For other params, honour AS STRING explicitly (was previously
-            // only inferred from the $-suffix convention — broke method
-            // params like `n AS STRING`).
+            // Build parameter types from declared params. The parser already
+            // added THIS as the first param with type OBJECT. Other params
+            // honour an explicit AS STRING, not just the $-suffix convention,
+            // so `n AS STRING` types correctly.
             std::vector<LLVMTypeRef> ptypes;
             std::vector<int> ptags;
             for (auto& p : method->params) {
@@ -5846,9 +5840,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             else if (tag == 2)  load_type = i8_ptr_type;
             else if (tag == 3)  load_type = i8_ptr_type;
             else if (tag == 4)  load_type = i8_ptr_type;  // map ptr
-            // create_var allocates a FUNCREF slot as i8*, so it has to be
-            // read back as one; the catch-all below made the load i64 and
-            // any consumer expecting a pointer got invalid IR.
+            // create_var allocates a FUNCREF slot as i8*, so it reads back
+            // as one rather than through the integer catch-all below.
             else if (tag == JD_TAG_FUNCREF) load_type = i8_ptr_type;
             else                load_type = i64_type;  // covers 0, 6, 7
             if (tag == 7 && vi->runtime_tag_alloca) {
@@ -7208,17 +7201,11 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
 
-    // Phase 1: Channels are interp-only. The runtime data structure
-    // (mutex + condvars + std::deque<Value>) lives behind native bridge
-    // calls we haven't shaped yet, and it's not worth the API surface
-    // until ASYNC FUNC is shippable in native too. Fail clear and early.
-    // CHAN.* / FILE.* streaming primitives + AI.CHAT_TOKENS used to be
-    // rejected here in Phase 1 — they now route through the generic VM-
-    // bridge dispatch (jdrt_call_typed_*), so the runtime DLL handles
-    // them via its in-process VM exactly like every other native. The
-    // return-type classification sets below (object_returners for
-    // CHAN.RECV, the trailing-$ heuristic for FILE.READLINE$, etc.) pick
-    // the right __jdrt_call_typed_* variant.
+    // CHAN.* and the FILE.* streaming primitives route through the generic
+    // VM-bridge dispatch (jdrt_call_typed_*), so the runtime DLL serves them
+    // from its in-process VM like any other native. The return-type
+    // classification sets below (object_returners for CHAN.RECV, the
+    // trailing-$ heuristic for FILE.READLINE$) pick the right variant.
 
     // UNIQUE on a string-tracked array dedupes by strcmp instead of by
     // raw double bits (which only catches pointer-identity duplicates).
@@ -7685,8 +7672,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // HELP reads the REPL's help.txt, which a standalone binary neither ships
-    // nor locates. It used to compile clean and only throw "Undefined
-    // function: HELP" once the program ran.
+    // nor locates.
     if (upper == "HELP" || upper == "HELP$") {
         report_error(m_current_stmt_file, expr.line,
             upper + " is interpreter-only (the help text ships with the REPL, "
@@ -9085,8 +9071,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
     // Reducers take one array. A second argument names the axis of a matrix
     // and yields one value per lane; it is never a second value to compare
-    // against, which is what the old MIN/MAX binding to jdb_min2/jdb_max2
-    // silently made it.
+    // against.
     static const std::unordered_map<std::string, int> reduce_ops = {
         {"SUM", 0}, {"MIN", 1}, {"MAX", 2}, {"PRODUCT", 3}, {"MEAN", 4},
         {"MEDIAN", 5}, {"VARIANCE", 6}, {"STDEV", 7}, {"ANY", 8}, {"ALL", 9},
@@ -10109,8 +10094,8 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         return false;
     }
 #ifdef _WIN32
-    // Same probe for the runtime's import library — `-c` used to hard-code
-    // build\jdbrt.lib, which broke any flat-layout deployment.
+    // Same probe for the runtime's import library, so a flat-layout
+    // deployment resolves jdbrt.lib as well.
     std::string jdbrt_lib;
     for (auto& candidate : {
             "build\\jdbrt.lib", "jdbrt.lib" }) {

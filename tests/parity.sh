@@ -64,8 +64,7 @@ classify() {
     # The pass marker wins: a suite may print "Error #" while exercising TRY/CATCH
     # and still be green.
     # Suites name themselves in the marker ("ALL BNOT TESTS PASSED"), so the
-    # pattern has to allow that middle word - matching only the bare form
-    # scored seven passing tests as failures.
+    # pattern allows that middle word.
     if grep -qE 'ALL [A-Z0-9 _-]*TESTS PASSED|0 failed' "$log" 2>/dev/null; then echo "PASS"; return; fi
     if grep -qE '(^|[[:space:]])FAIL:|[1-9][0-9]* failed' "$log" 2>/dev/null; then echo "FAIL"; return; fi
     if [ "$code" = "0" ]; then echo "OK"; return; fi

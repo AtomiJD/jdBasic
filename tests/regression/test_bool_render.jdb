@@ -3,10 +3,9 @@
 ' travel with it - through ANY/ALL results, BOOLEAN slots and the logical
 ' operators.
 '
-' Two cases are deliberately absent because they are still split (jdTrakr
-' #157 stays open for them): a boolean assigned into an INTEGER-declared
-' slot, and a boolean stored in a MAP. Both are about a truth value
-' surviving storage, not about how it renders.
+' Two cases are deliberately absent, because they are about a truth value
+' surviving storage rather than how it renders: a boolean assigned into an
+' INTEGER-declared slot, and a boolean stored in a MAP.
 OPTION "EXPLICIT"
 
 DIM N_PASS AS INTEGER = 0

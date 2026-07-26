@@ -1116,7 +1116,7 @@ void Console::render_prompt() {
     const int cols = csbi.dwSize.X;
     if (cols <= 0) return;
 
-    // Colour attributes matching the old set_color palette
+    // Colour attributes matching the set_color palette
     const WORD ATTR_DEFAULT = csbi.wAttributes;
     const WORD ATTR_PROMPT  = FOREGROUND_GREEN | FOREGROUND_INTENSITY;      // 10
     const WORD ATTR_STRING  = FOREGROUND_BLUE  | FOREGROUND_GREEN;          // 3
@@ -1210,7 +1210,7 @@ void Console::render_prompt() {
     // Anchor the redraw at the row where THIS prompt began, tracked explicitly
     // in prompt_start_row. Deriving the anchor from the cursor breaks at the
     // bottom of the buffer: the cursor clamps to the last row while the input
-    // keeps wrapping, so the old `cursorY - last_drawn/cols` math backed the
+    // keeps wrapping, so deriving it as `cursorY - last_drawn/cols` backs the
     // prompt up over the previous command's output. A fresh prompt
     // (last_drawn == 0) re-anchors at the current cursor row.
     if (last_drawn_total_visual_len == 0 || prompt_start_row < 0)

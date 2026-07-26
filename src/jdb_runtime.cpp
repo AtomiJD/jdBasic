@@ -1414,8 +1414,8 @@ void jdb_array_set_bool_elems(JdbArray* arr) {
 int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
     if (!arr) return 1;  // F64
     // Per-cell tags from the tagged ARRAY_LITERAL path. The classifier
-    // is called via mixed_array_vars dispatch and used to need a heuristic
-    // (looks_ptr); now we trust the explicit per-cell tag when present.
+    // is called via mixed_array_vars dispatch and trusts the explicit
+    // per-cell tag when present, rather than the looks_ptr heuristic.
     if ((arr->flags & 8) != 0 && arr->elem_tags != nullptr) {
         // Find this cell's index by pointer arithmetic — d here is a copy
         // of arr->data[idx], but the caller doesn't pass idx. Fall through

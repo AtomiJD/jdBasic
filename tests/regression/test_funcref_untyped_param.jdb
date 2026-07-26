@@ -4,9 +4,9 @@
 ' is inferred from the call site - which for a funcref is either the
 ' variable it was assigned to or the higher-order call it was handed to.
 '
-' Still open (jdTrakr #155): a funcref passed as a FUNC *parameter*, e.g.
+' Not covered: a funcref passed as a FUNC *parameter*, e.g.
 ' `FUNC ap(fn, x) ... fn(x)` called as `ap(h@, "zz")`. That needs
-' interprocedural inference; annotate the parameter as a workaround.
+' interprocedural inference; annotate the parameter instead.
 OPTION "EXPLICIT"
 
 DIM N_PASS AS INTEGER = 0
